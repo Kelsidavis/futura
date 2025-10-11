@@ -25,9 +25,9 @@
  *   Constants
  * ============================================================ */
 
-#define FUT_PAGE_SIZE   4096u
-#define FUT_PAGE_SHIFT  12u
-#define FUT_PAGE_ALIGN(x) (((x) + FUT_PAGE_SIZE - 1u) & ~(FUT_PAGE_SIZE - 1u))
+#define FUT_PAGE_SIZE   4096ULL
+#define FUT_PAGE_SHIFT  12ULL
+#define FUT_PAGE_ALIGN(x) (((x) + FUT_PAGE_SIZE - 1ULL) & ~(FUT_PAGE_SIZE - 1ULL))
 
 /* ============================================================
  *   Physical Memory Manager (PMM)

@@ -101,10 +101,8 @@ void fut_heap_init(uintptr_t heap_start, uintptr_t heap_end) {
 
     // Create initial free block spanning entire heap
     free_list = (block_hdr_t *)heap_base;
-    *free_list = (block_hdr_t){
-        .size = heap_limit - heap_base - sizeof(block_hdr_t),
-        .next = nullptr
-    };
+    free_list->size = heap_limit - heap_base - sizeof(block_hdr_t);
+    free_list->next = nullptr;
 }
 
 /**
@@ -117,10 +115,8 @@ static void split_block(block_hdr_t *block, size_t size) {
     // Only split if remainder is large enough to be useful
     if (remain > sizeof(block_hdr_t)) {
         block_hdr_t *newb = (block_hdr_t *)((uintptr_t)block + sizeof(block_hdr_t) + size);
-        *newb = (block_hdr_t){
-            .size = remain,
-            .next = block->next
-        };
+        newb->size = remain;
+        newb->next = block->next;
 
         block->size = size;
         block->next = newb;

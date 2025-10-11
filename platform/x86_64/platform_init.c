@@ -499,11 +499,14 @@ static void fut_idt_init(void) {
 void fut_platform_init(uint32_t multiboot_magic __attribute__((unused)),
                        uint32_t multiboot_addr __attribute__((unused))) {
     /* Early debug marker: Write 'I' to show we entered the function */
+    /* Use minimal assembly that doesn't depend on stack setup */
     __asm__ volatile(
         "movw $0x3F8, %%dx\n"
         "movb $'I', %%al\n"
         "outb %%al, %%dx\n"
-        ::: "%dx", "%al"
+        :
+        :
+        : "%dx", "%al", "memory"
     );
 
     /* Initialize serial port for early debugging */

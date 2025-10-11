@@ -172,32 +172,46 @@ void *fut_malloc(size_t size) {
 
 /**
  * Helper: Coalesce adjacent free blocks to reduce fragmentation.
- * Walks the free list and merges contiguous blocks.
+ * Repeatedly scans the free list and merges contiguous blocks until no more merges are possible.
  */
-__attribute__((unused))
 static void coalesce_free_blocks(void) {
-    for (block_hdr_t *cur = free_list; cur; cur = cur->next) {
-        // Calculate where the next contiguous block would be
-        uintptr_t expected_next = (uintptr_t)cur + sizeof(block_hdr_t) + cur->size;
+    // Keep merging until no more adjacent blocks are found
+    bool merged;
+    do {
+        merged = false;
 
-        // Search free list for a block at that address
-        for (block_hdr_t *prev = nullptr, *search = free_list; search; prev = search, search = search->next) {
-            if ((uintptr_t)search == expected_next) {
-                // Found adjacent block - merge it
-                cur->size += sizeof(block_hdr_t) + search->size;
+        // For each block in the free list
+        for (block_hdr_t *cur = free_list; cur && !merged; cur = cur->next) {
+            // Calculate where the next contiguous block would be in physical memory
+            uintptr_t cur_end = (uintptr_t)cur + sizeof(block_hdr_t) + cur->size;
 
-                // Remove merged block from free list
-                if (prev) {
-                    prev->next = search->next;
-                } else {
-                    free_list = search->next;
+            // Search for a block that starts immediately after this one
+            block_hdr_t *prev = nullptr;
+            for (block_hdr_t *search = free_list; search; prev = search, search = search->next) {
+                // Skip if it's the same block
+                if (search == cur) {
+                    continue;
                 }
 
-                // Restart coalescing from current block (might have more neighbors)
-                break;
+                // Check if this block is physically adjacent
+                if ((uintptr_t)search == cur_end) {
+                    // Found adjacent block - merge it into cur
+                    cur->size += sizeof(block_hdr_t) + search->size;
+
+                    // Remove the merged block from free list
+                    if (prev) {
+                        prev->next = search->next;
+                    } else {
+                        free_list = search->next;
+                    }
+
+                    // Mark that we merged something and restart the outer loop
+                    merged = true;
+                    break;
+                }
             }
         }
-    }
+    } while (merged);  // Repeat until no more merges happen
 }
 
 void fut_free(void *ptr) {
@@ -219,9 +233,7 @@ void fut_free(void *ptr) {
     free_list = blk;
 
     // Coalesce adjacent free blocks to reduce fragmentation
-    // TEMPORARILY DISABLED - coalescing has a bug that corrupts the free list
-    // TODO: Fix coalescing logic before re-enabling
-    // coalesce_free_blocks();
+    coalesce_free_blocks();
 }
 
 void *fut_realloc(void *ptr, size_t new_size) {

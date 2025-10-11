@@ -80,7 +80,7 @@ static bool check_dependencies(struct fui_service *service) {
     /* Phase 3: Would iterate through depends array and check each service state */
     for (int i = 0; service->depends[i] != NULL; i++) {
         struct fui_service *dep = find_service(service->depends[i]);
-        if (!dep || dep->state != FUI_STATE_RUNNING) {
+        if (!dep || dep->state != SERVICE_RUNNING) {
             return false;
         }
     }
@@ -103,7 +103,7 @@ static int spawn_service(struct fui_service *service) {
 
     /* Stub implementation */
     service->pid = 0;  /* Would be actual PID */
-    service->state = FUI_STATE_RUNNING;
+    service->state = SERVICE_RUNNING;
 
     return 0;
 }
@@ -118,12 +118,12 @@ int init_service_start(const char *name) {
     }
 
     /* Check if already running */
-    if (service->state == FUI_STATE_RUNNING) {
+    if (service->state == SERVICE_RUNNING) {
         return 0;  /* Already running */
     }
 
     /* Check if already starting */
-    if (service->state == FUI_STATE_STARTING) {
+    if (service->state == SERVICE_STARTING) {
         return 0;  /* Start in progress */
     }
 
@@ -143,17 +143,17 @@ int init_service_start(const char *name) {
     }
 
     /* Update state */
-    service->state = FUI_STATE_STARTING;
+    service->state = SERVICE_STARTING;
 
     /* Spawn the service process */
     int ret = spawn_service(service);
     if (ret < 0) {
-        service->state = FUI_STATE_FAILED;
+        service->state = SERVICE_FAILED;
         return -1;
     }
 
     /* Service is now running */
-    service->state = FUI_STATE_RUNNING;
+    service->state = SERVICE_RUNNING;
 
     return 0;
 }
@@ -167,12 +167,12 @@ int init_service_stop(const char *name) {
         return -1;
     }
 
-    if (service->state != FUI_STATE_RUNNING) {
+    if (service->state != SERVICE_RUNNING) {
         return 0;  /* Not running */
     }
 
     /* Update state */
-    service->state = FUI_STATE_STOPPING;
+    service->state = SERVICE_STOPPING;
 
     /* Phase 3: Would send STOP message via FIPC channel:
      * 1. Send FUI_MSG_SERVICE_STOP to service
@@ -182,7 +182,7 @@ int init_service_stop(const char *name) {
      */
 
     /* Stub: Mark as stopped */
-    service->state = FUI_STATE_STOPPED;
+    service->state = SERVICE_STOPPED;
     service->pid = 0;
 
     return 0;
@@ -241,7 +241,7 @@ void init_service_monitor(void) {
         if (!service) continue;
 
         /* Check if service died unexpectedly */
-        if (service->state == FUI_STATE_RUNNING && service->pid == 0) {
+        if (service->state == SERVICE_RUNNING && service->pid == 0) {
             /* Process died */
             if (service->respawn) {
                 /* Check respawn limit */
@@ -250,11 +250,11 @@ void init_service_monitor(void) {
                 tracker->count++;
 
                 /* Respawn the service */
-                service->state = FUI_STATE_STOPPED;
+                service->state = SERVICE_STOPPED;
                 init_service_start(service->name);
             } else {
                 /* Don't respawn - mark as failed */
-                service->state = FUI_STATE_FAILED;
+                service->state = SERVICE_FAILED;
             }
         }
     }
@@ -266,7 +266,7 @@ void init_service_monitor(void) {
 enum fui_service_state init_service_get_state(const char *name) {
     struct fui_service *service = find_service(name);
     if (!service) {
-        return FUI_STATE_STOPPED;
+        return SERVICE_STOPPED;
     }
     return service->state;
 }

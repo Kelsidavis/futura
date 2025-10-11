@@ -14,6 +14,11 @@
 #include <stdbool.h>
 #include <kernel/fut_fipc.h>
 
+/* Forward declare pid_t (defined in futura_posix.h) */
+#ifndef __POSIX_TYPES_DEFINED
+typedef int32_t pid_t;
+#endif
+
 /* ============================================================
  *   Service States
  * ============================================================ */

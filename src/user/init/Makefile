@@ -11,18 +11,22 @@ AR := ar
 BUILD_DIR := ../../../build
 OBJ_DIR := $(BUILD_DIR)/obj/user/init
 BIN_DIR := $(BUILD_DIR)/bin/user
+LIB_DIR := $(BUILD_DIR)/lib
 
 # Includes
 INCLUDES := -I../../../include
 
 # Compiler flags
-CFLAGS := -std=c23 -ffreestanding -nostdlib -fno-builtin -fno-stack-protector
+CFLAGS := -std=c2x -ffreestanding -nostdlib -fno-builtin -fno-stack-protector
 CFLAGS += -Wall -Wextra -Werror
 CFLAGS += -g -O2
 CFLAGS += $(INCLUDES)
 
 # Linker flags
-LDFLAGS := -nostdlib -static
+LDSCRIPT := ../libfutura/userland.ld
+LDFLAGS := -nostdlib -static -T $(LDSCRIPT)
+CRT0 := $(OBJ_DIR)/../libfutura/crt0.o
+LIBFUTURA := $(LIB_DIR)/libfutura.a
 
 # Source files
 SRCS := main.c config.c service.c
@@ -36,8 +40,8 @@ TARGET := $(BIN_DIR)/init
 
 all: $(TARGET)
 
-$(TARGET): $(OBJS) | $(BIN_DIR)
-	$(LD) $(LDFLAGS) -o $@ $(OBJS)
+$(TARGET): $(OBJS) $(CRT0) $(LIBFUTURA) | $(BIN_DIR)
+	$(LD) $(LDFLAGS) -o $@ $(CRT0) $(OBJS) $(LIBFUTURA)
 	@echo "Built init system: $@"
 
 $(OBJ_DIR)/%.o: %.c | $(OBJ_DIR)

@@ -132,27 +132,27 @@ void init_handle_message(struct fut_fipc_msg *msg) {
 
     /* Parse message type */
     switch (msg->type) {
-    case FUI_MSG_SERVICE_START:
+    case INIT_MSG_START:
         /* Request to start a service */
         /* Phase 3: Parse service name from payload and start it */
         break;
 
-    case FUI_MSG_SERVICE_STOP:
+    case INIT_MSG_STOP:
         /* Request to stop a service */
         /* Phase 3: Parse service name and stop it gracefully */
         break;
 
-    case FUI_MSG_SERVICE_RESTART:
+    case INIT_MSG_RESTART:
         /* Request to restart a service */
         /* Phase 3: Stop then start service */
         break;
 
-    case FUI_MSG_SERVICE_STATUS:
+    case INIT_MSG_STATUS:
         /* Query service status */
         /* Phase 3: Send status response */
         break;
 
-    case FUI_MSG_SHUTDOWN:
+    case INIT_MSG_SHUTDOWN:
         /* System shutdown request */
         running = false;
         break;

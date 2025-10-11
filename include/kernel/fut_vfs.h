@@ -23,6 +23,7 @@ struct fut_vnode;
 struct fut_mount;
 struct fut_file;
 struct fut_vfs_ops;
+struct fut_stat;
 
 /* ============================================================
  *   File Types

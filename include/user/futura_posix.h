@@ -11,7 +11,30 @@
 
 #include <stdint.h>
 #include <stddef.h>
+#include <stdbool.h>
 #include <kernel/fut_fipc.h>
+
+/* ============================================================
+ *   POSIX Types (for freestanding environment)
+ * ============================================================ */
+
+#ifndef __POSIX_TYPES_DEFINED
+#define __POSIX_TYPES_DEFINED
+
+typedef int64_t ssize_t;
+typedef int64_t off_t;
+typedef uint32_t mode_t;
+typedef uint32_t uid_t;
+typedef uint32_t gid_t;
+typedef uint64_t dev_t;
+typedef uint64_t ino_t;
+typedef uint32_t nlink_t;
+typedef uint32_t blksize_t;
+typedef uint64_t blkcnt_t;
+typedef int64_t time_t;
+typedef int32_t pid_t;
+
+#endif /* __POSIX_TYPES_DEFINED */
 
 /* ============================================================
  *   POSIX Daemon Message Types
@@ -332,8 +355,9 @@ int futura_close(int fd);
 ssize_t futura_read(int fd, void *buf, size_t count);
 ssize_t futura_write(int fd, const void *buf, size_t count);
 off_t futura_lseek(int fd, off_t offset, int whence);
-int futura_stat(const char *pathname, struct stat *statbuf);
-int futura_fstat(int fd, struct stat *statbuf);
+/* Phase 3: Implement stat functions */
+/* int futura_stat(const char *pathname, struct stat *statbuf); */
+/* int futura_fstat(int fd, struct stat *statbuf); */
 
 pid_t futura_fork(void);
 int futura_execve(const char *pathname, char *const argv[], char *const envp[]);
@@ -348,25 +372,3 @@ int futura_pipe2(int pipefd[2], int flags);
 void *futura_brk(void *addr);
 void *futura_mmap(void *addr, size_t length, int prot, int flags, int fd, off_t offset);
 int futura_munmap(void *addr, size_t length);
-
-/* ============================================================
- *   POSIX Types (for freestanding environment)
- * ============================================================ */
-
-#ifndef __POSIX_TYPES_DEFINED
-#define __POSIX_TYPES_DEFINED
-
-typedef int64_t ssize_t;
-typedef int64_t off_t;
-typedef uint32_t mode_t;
-typedef uint32_t uid_t;
-typedef uint32_t gid_t;
-typedef uint64_t dev_t;
-typedef uint64_t ino_t;
-typedef uint32_t nlink_t;
-typedef uint32_t blksize_t;
-typedef uint64_t blkcnt_t;
-typedef int64_t time_t;
-typedef int32_t pid_t;
-
-#endif /* __POSIX_TYPES_DEFINED */

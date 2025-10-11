@@ -16,7 +16,7 @@ BIN_DIR := $(BUILD_DIR)/bin/user
 INCLUDES := -I../../../include
 
 # Compiler flags
-CFLAGS := -std=c23 -ffreestanding -nostdlib -fno-builtin -fno-stack-protector
+CFLAGS := -std=c2x -ffreestanding -nostdlib -fno-builtin -fno-stack-protector
 CFLAGS += -Wall -Wextra -Werror
 CFLAGS += -g -O2
 CFLAGS += $(INCLUDES)

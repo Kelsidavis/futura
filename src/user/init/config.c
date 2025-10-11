@@ -53,6 +53,7 @@ static void str_copy(char *dest, const char *src, size_t max) {
 /**
  * Parse a key=value line.
  */
+__attribute__((unused))
 static int parse_key_value(const char *line, char *key, char *value, size_t max_len) {
     const char *p = line;
     size_t key_len = 0;
@@ -89,6 +90,7 @@ static int parse_key_value(const char *line, char *key, char *value, size_t max_
 /**
  * Parse global configuration section.
  */
+__attribute__((unused))
 static void parse_global_section(const char *key, const char *value) {
     if (str_equals(key, "hostname")) {
         str_copy(global_config.hostname, value, sizeof(global_config.hostname));
@@ -104,6 +106,7 @@ static void parse_global_section(const char *key, const char *value) {
 /**
  * Parse service definition section.
  */
+__attribute__((unused))
 static int parse_service_section(const char *name, const char **lines, int num_lines) {
     (void)name;
     (void)lines;
@@ -147,7 +150,7 @@ int init_config_parse(const char *path) {
         .priority = 1,
         .respawn = true,
         .depends = NULL,
-        .state = FUI_STATE_STOPPED,
+        .state = SERVICE_STOPPED,
         .channel = NULL,
     };
     (void)fsd;  /* Suppress warning - would be registered */
@@ -161,7 +164,7 @@ int init_config_parse(const char *path) {
         .priority = 2,
         .respawn = true,
         .depends = NULL,  /* Would be ["fsd"] */
-        .state = FUI_STATE_STOPPED,
+        .state = SERVICE_STOPPED,
         .channel = NULL,
     };
     (void)posixd;
@@ -175,7 +178,7 @@ int init_config_parse(const char *path) {
         .priority = 3,
         .respawn = true,
         .depends = NULL,  /* Would be ["fsd"] */
-        .state = FUI_STATE_STOPPED,
+        .state = SERVICE_STOPPED,
         .channel = NULL,
     };
     (void)futurawayd;

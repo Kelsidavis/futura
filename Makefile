@@ -89,6 +89,8 @@ KERNEL_SOURCES := \
     kernel/ipc/fut_fipc.c \
     kernel/vfs/fut_vfs.c \
     kernel/vfs/ramfs.c \
+    kernel/blockdev/fut_blockdev.c \
+    kernel/blockdev/ramdisk.c \
 
 # Platform-specific sources
 ifeq ($(PLATFORM),x86_64)
@@ -137,6 +139,7 @@ $(OBJ_DIR) $(BIN_DIR):
 	@mkdir -p $(OBJ_DIR)/kernel/interrupts
 	@mkdir -p $(OBJ_DIR)/kernel/ipc
 	@mkdir -p $(OBJ_DIR)/kernel/vfs
+	@mkdir -p $(OBJ_DIR)/kernel/blockdev
 	@mkdir -p $(OBJ_DIR)/platform/$(PLATFORM)
 	@mkdir -p $(OBJ_DIR)/subsystems/posix_compat
 

@@ -17,6 +17,8 @@
 #include <kernel/fut_fipc.h>
 #include <kernel/fut_vfs.h>
 #include <kernel/fut_ramfs.h>
+#include <kernel/fut_blockdev.h>
+#include <kernel/fut_ramdisk.h>
 #include <platform/platform.h>
 
 /* ============================================================
@@ -153,6 +155,132 @@ static void test_vfs_operations(void) {
     fut_printf("[VFS-TEST] ===========================================\n");
     fut_printf("[VFS-TEST] VFS file I/O test complete!\n");
     fut_printf("[VFS-TEST] ===========================================\n\n");
+}
+
+/**
+ * Test block device operations.
+ * Creates a ramdisk, writes data, reads it back, and verifies.
+ */
+static void test_blockdev_operations(void) {
+    fut_printf("[BLOCKDEV-TEST] Starting block device I/O test...\n");
+
+    /* Test 1: Create ramdisk */
+    fut_printf("[BLOCKDEV-TEST] Test 1: Creating 1 MB ramdisk\n");
+    struct fut_blockdev *ramdisk = fut_ramdisk_create("ramdisk0", 1, 512);
+    if (!ramdisk) {
+        fut_printf("[BLOCKDEV-TEST] ✗ Failed to create ramdisk\n");
+        return;
+    }
+    fut_printf("[BLOCKDEV-TEST] ✓ Ramdisk created: %s (%llu blocks, %u bytes/block)\n",
+               ramdisk->name, ramdisk->num_blocks, ramdisk->block_size);
+
+    /* Test 2: Register ramdisk */
+    fut_printf("[BLOCKDEV-TEST] Test 2: Registering ramdisk\n");
+    int ret = fut_blockdev_register(ramdisk);
+    if (ret < 0) {
+        fut_printf("[BLOCKDEV-TEST] ✗ Failed to register: error %d\n", ret);
+        return;
+    }
+    fut_printf("[BLOCKDEV-TEST] ✓ Ramdisk registered\n");
+
+    /* Test 3: Write blocks */
+    fut_printf("[BLOCKDEV-TEST] Test 3: Writing test data\n");
+    uint8_t write_buffer[512];
+    for (int i = 0; i < 512; i++) {
+        write_buffer[i] = (uint8_t)(i % 256);
+    }
+
+    ret = fut_blockdev_write(ramdisk, 0, 1, write_buffer);
+    if (ret < 0) {
+        fut_printf("[BLOCKDEV-TEST] ✗ Write failed: error %d\n", ret);
+        return;
+    }
+    fut_printf("[BLOCKDEV-TEST] ✓ Wrote 1 block (512 bytes)\n");
+
+    /* Test 4: Read blocks back */
+    fut_printf("[BLOCKDEV-TEST] Test 4: Reading test data\n");
+    uint8_t read_buffer[512];
+    for (int i = 0; i < 512; i++) {
+        read_buffer[i] = 0;
+    }
+
+    ret = fut_blockdev_read(ramdisk, 0, 1, read_buffer);
+    if (ret < 0) {
+        fut_printf("[BLOCKDEV-TEST] ✗ Read failed: error %d\n", ret);
+        return;
+    }
+    fut_printf("[BLOCKDEV-TEST] ✓ Read 1 block (512 bytes)\n");
+
+    /* Test 5: Verify data */
+    fut_printf("[BLOCKDEV-TEST] Test 5: Verifying data integrity\n");
+    int match = 1;
+    for (int i = 0; i < 512; i++) {
+        if (read_buffer[i] != write_buffer[i]) {
+            fut_printf("[BLOCKDEV-TEST] ✗ Mismatch at byte %d: expected %u, got %u\n",
+                       i, write_buffer[i], read_buffer[i]);
+            match = 0;
+            break;
+        }
+    }
+
+    if (match) {
+        fut_printf("[BLOCKDEV-TEST] ✓ Data verification PASSED\n");
+    } else {
+        fut_printf("[BLOCKDEV-TEST] ✗ Data verification FAILED\n");
+    }
+
+    /* Test 6: Byte-level I/O */
+    fut_printf("[BLOCKDEV-TEST] Test 6: Testing byte-level I/O\n");
+    const char *test_msg = "Block device test message!";
+    size_t msg_len = 27;
+
+    ssize_t written = fut_blockdev_write_bytes(ramdisk, 100, msg_len, test_msg);
+    if (written < 0) {
+        fut_printf("[BLOCKDEV-TEST] ✗ Byte write failed: error %lld\n", (long long)written);
+    } else {
+        fut_printf("[BLOCKDEV-TEST] ✓ Wrote %lld bytes at offset 100\n", (long long)written);
+
+        char read_msg[32];
+        ssize_t bytes_read = fut_blockdev_read_bytes(ramdisk, 100, msg_len, read_msg);
+        if (bytes_read < 0) {
+            fut_printf("[BLOCKDEV-TEST] ✗ Byte read failed: error %lld\n", (long long)bytes_read);
+        } else {
+            read_msg[bytes_read] = '\0';
+            fut_printf("[BLOCKDEV-TEST] ✓ Read %lld bytes: '%s'\n", (long long)bytes_read, read_msg);
+
+            int msg_match = 1;
+            for (size_t i = 0; i < msg_len; i++) {
+                if (read_msg[i] != test_msg[i]) {
+                    msg_match = 0;
+                    break;
+                }
+            }
+
+            if (msg_match) {
+                fut_printf("[BLOCKDEV-TEST] ✓ Byte-level verification PASSED\n");
+            } else {
+                fut_printf("[BLOCKDEV-TEST] ✗ Byte-level verification FAILED\n");
+            }
+        }
+    }
+
+    /* Test 7: Device statistics */
+    fut_printf("[BLOCKDEV-TEST] Test 7: Device statistics\n");
+    fut_printf("[BLOCKDEV-TEST]   Reads: %llu, Writes: %llu, Errors: %llu\n",
+               ramdisk->reads, ramdisk->writes, ramdisk->errors);
+
+    /* Test 8: Device lookup */
+    fut_printf("[BLOCKDEV-TEST] Test 8: Device lookup\n");
+    struct fut_blockdev *found = fut_blockdev_find("ramdisk0");
+    if (found == ramdisk) {
+        fut_printf("[BLOCKDEV-TEST] ✓ Device lookup successful\n");
+    } else {
+        fut_printf("[BLOCKDEV-TEST] ✗ Device lookup failed\n");
+    }
+
+    fut_printf("[BLOCKDEV-TEST] ===========================================\n");
+    fut_printf("[BLOCKDEV-TEST] Block device test complete!\n");
+    fut_printf("[BLOCKDEV-TEST] ===========================================\n\n");
 }
 
 /**
@@ -323,7 +451,18 @@ void fut_kernel_main(void) {
     test_vfs_operations();
 
     /* ========================================
-     *   Step 4: Initialize Scheduler
+     *   Step 4: Initialize Block Device Subsystem
+     * ======================================== */
+
+    fut_printf("[INIT] Initializing block device subsystem...\n");
+    fut_blockdev_init();
+    fut_printf("[INIT] Block device subsystem initialized\n");
+
+    /* Test block device operations */
+    test_blockdev_operations();
+
+    /* ========================================
+     *   Step 5: Initialize Scheduler
      * ======================================== */
 
     fut_printf("[INIT] Initializing scheduler...\n");
@@ -331,7 +470,7 @@ void fut_kernel_main(void) {
     fut_printf("[INIT] Scheduler initialized with idle thread\n");
 
     /* ========================================
-     *   Step 5: Create Test Task and FIPC Channel
+     *   Step 6: Create Test Task and FIPC Channel
      * ======================================== */
 
     fut_printf("[INIT] Creating test task for FIPC demonstration...\n");
@@ -363,7 +502,7 @@ void fut_kernel_main(void) {
     fut_printf("[INIT] FIPC channel created (ID %llu)\n", g_test_channel->id);
 
     /* ========================================
-     *   Step 6: Create FIPC Test Threads
+     *   Step 7: Create FIPC Test Threads
      * ======================================== */
 
     fut_printf("[INIT] Creating FIPC test threads...\n");
@@ -401,7 +540,7 @@ void fut_kernel_main(void) {
     fut_printf("[INIT] FIPC receiver thread created (TID %llu)\n", receiver_thread->tid);
 
     /* ========================================
-     *   Step 7: Start Scheduling
+     *   Step 8: Start Scheduling
      * ======================================== */
 
     fut_printf("\n");

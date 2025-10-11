@@ -161,16 +161,20 @@ struct futurafs_inode {
 **Location:** `kernel/memory/fut_memory.c`
 
 **Root Causes Identified:**
-1. **Coalescing Bug**: The `coalesce_free_blocks()` function corrupts the free list when merging adjacent blocks
-2. **Split Block Issues**: Block splitting may not correctly maintain the free list structure
-3. **Free List Corruption**: After `fut_free()` calls, block headers show corrupted sizes (-16 bytes)
-4. **Virtual Memory**: No dynamic page mapping - PMM allocations beyond 8MB are unmapped
+1. ~~**Coalescing Bug**: The `coalesce_free_blocks()` function corrupts the free list when merging adjacent blocks~~ **FIXED**
+2. **Virtual Memory Mapping**: Boot.S only maps 8MB, large allocations cause page faults
+3. **Page Fault Location**: Faults occur at ~870KB into 1MB allocations (address 0xFFFFFFFF80103000)
+4. **Ramdisk API Limitation**: Only accepts integer MB sizes, can't create 512KB test ramdisks
 
-**Solutions Needed:**
-1. **Immediate**: Disable coalescing (done) and fix split_block logic
-2. **Short-term**: Rewrite heap allocator with proper free list management
-3. **Long-term**: Implement slab allocator for common sizes + buddy allocator for large blocks
-4. **Virtual Memory**: Implement `fut_map_range()` from paging.h to map PMM pages dynamically
+**Solutions Implemented:**
+1. ✅ **Fixed Coalescing**: Rewrote `coalesce_free_blocks()` with proper restart logic
+2. ✅ **Heap Size Increased**: From 4MB to 6MB (within mapped region)
+
+**Solutions Still Needed:**
+1. **Expand Boot Mapping**: Map more than 8MB in boot.S (16MB or 32MB)
+2. **Dynamic Page Mapping**: Implement `fut_map_range()` from paging.h
+3. **Flexible Ramdisk API**: Support KB-sized ramdisks for testing
+4. **Or**: Use PMM directly with automatic page mapping
 
 ### 2. Directory Operations (Not Yet Implemented)
 

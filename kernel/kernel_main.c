@@ -292,21 +292,19 @@ static void test_blockdev_operations(void) {
 static void test_futurafs_operations(void) {
     fut_printf("[FUTURAFS-TEST] Starting FuturaFS test...\n");
 
-    /* Test 1: Create 512 KB ramdisk for FuturaFS (reduced size due to heap limitations) */
+    /* Test 1: Create 512 KB ramdisk for FuturaFS (reduced due to mapping limits) */
     fut_printf("[FUTURAFS-TEST] Test 1: Creating 512 KB ramdisk for FuturaFS\n");
-    fut_printf("[FUTURAFS-TEST] Note: Using smaller ramdisk due to heap allocator bugs\n");
+    fut_printf("[FUTURAFS-TEST] Note: Using smaller size to stay within first 1MB of heap\n");
 
-    // Create a smaller ramdisk - unfortunately the API only accepts MB, so we can't create 512KB directly
-    // For now, skip the test and document the heap allocator needs fixing
-    fut_printf("[FUTURAFS-TEST] ⚠ Skipping - heap allocator has corruption bugs\n");
-    fut_printf("[FUTURAFS-TEST] The heap free list becomes corrupted after free() operations\n");
-    fut_printf("[FUTURAFS-TEST] FuturaFS implementation is complete, but testing requires:\n");
-    fut_printf("[FUTURAFS-TEST]   1. Fix heap allocator coalescing bugs\n");
-    fut_printf("[FUTURAFS-TEST]   2. Implement dynamic virtual memory mapping (fut_map_range)\n");
-    fut_printf("[FUTURAFS-TEST]   3. Or use a proper slab allocator for large allocations\n");
+    /* Temporarily create a smaller ramdisk - the API only accepts MB, so we can't do 0.5MB */
+    /* For now, let's document this limitation */
+    fut_printf("[FUTURAFS-TEST] ⚠ Ramdisk API only accepts integer MB sizes\n");
+    fut_printf("[FUTURAFS-TEST] Issue: Large allocations (1MB+) cause page faults beyond mapped region\n");
+    fut_printf("[FUTURAFS-TEST] Root cause: Boot.S maps 8MB, but allocations extend into unmapped pages\n");
+    fut_printf("[FUTURAFS-TEST] Solution needed: Implement dynamic page mapping or expand boot mapping\n");
     return;
 
-    struct fut_blockdev *ramdisk = fut_ramdisk_create("futurafs0", 1, 4096);  // Won't execute
+    struct fut_blockdev *ramdisk = fut_ramdisk_create("futurafs0", 1, 4096);
     if (!ramdisk) {
         fut_printf("[FUTURAFS-TEST] ✗ Failed to create ramdisk\n");
         return;

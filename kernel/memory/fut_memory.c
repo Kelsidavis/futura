@@ -103,6 +103,7 @@ void fut_heap_init(uintptr_t heap_start, uintptr_t heap_end) {
     free_list = (block_hdr_t *)heap_base;
     free_list->size = heap_limit - heap_base - sizeof(block_hdr_t);
     free_list->next = nullptr;
+
 }
 
 /**
@@ -137,13 +138,16 @@ void *fut_malloc(size_t size) {
     // Round up to page alignment for simplicity and performance
     size = FUT_PAGE_ALIGN(size);
 
-    // For large allocations (>=1MB), use PMM directly
-    // This preserves heap space and reduces fragmentation
-    const size_t LARGE_ALLOC_THRESHOLD = 1024 * 1024;  // 1MB
-    if (size >= LARGE_ALLOC_THRESHOLD) {
-        size_t num_pages = size / FUT_PAGE_SIZE;
-        return fut_malloc_pages(num_pages);
-    }
+
+    // For very large allocations (>=4MB), use PMM directly
+    // Note: PMM allocations are not automatically mapped, so this is disabled
+    // until proper virtual memory mapping is implemented.
+    // const size_t LARGE_ALLOC_THRESHOLD = 4 * 1024 * 1024;  // 4MB
+    // if (size >= LARGE_ALLOC_THRESHOLD) {
+    //     size_t num_pages = size / FUT_PAGE_SIZE;
+    //     return fut_malloc_pages(num_pages);
+    // }
+    // For now, all allocations go through the heap (which is pre-mapped).
 
     // Search free list for suitable block (first-fit)
     for (block_hdr_t *prev = nullptr, *cur = free_list; cur; prev = cur, cur = cur->next) {
@@ -170,6 +174,7 @@ void *fut_malloc(size_t size) {
  * Helper: Coalesce adjacent free blocks to reduce fragmentation.
  * Walks the free list and merges contiguous blocks.
  */
+__attribute__((unused))
 static void coalesce_free_blocks(void) {
     for (block_hdr_t *cur = free_list; cur; cur = cur->next) {
         // Calculate where the next contiguous block would be
@@ -214,7 +219,9 @@ void fut_free(void *ptr) {
     free_list = blk;
 
     // Coalesce adjacent free blocks to reduce fragmentation
-    coalesce_free_blocks();
+    // TEMPORARILY DISABLED - coalescing has a bug that corrupts the free list
+    // TODO: Fix coalescing logic before re-enabling
+    // coalesce_free_blocks();
 }
 
 void *fut_realloc(void *ptr, size_t new_size) {

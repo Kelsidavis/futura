@@ -141,8 +141,12 @@ $(OBJ_DIR) $(BIN_DIR):
 kernel: $(BIN_DIR)/futura_kernel.elf
 
 $(BIN_DIR)/futura_kernel.elf: $(OBJECTS) | $(BIN_DIR)
-	@echo "LD $@"
-	@$(LD) $(LDFLAGS) -o $@ $(OBJECTS)
+	@echo "LD $@.tmp"
+	@$(LD) $(LDFLAGS) -o $@.tmp $(OBJECTS)
+	@cp $@.tmp /tmp/kernel_before_fix.elf
+	@echo "FIX-ELF $@"
+	@python3 tools/fix_multiboot_offset.py $@.tmp $@
+	@rm $@.tmp
 	@echo "Build complete: $@"
 
 # Build userland services

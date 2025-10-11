@@ -42,26 +42,31 @@ gdt64_pointer:
     .word gdt64_end - gdt64 - 1         /* Limit */
     .long gdt64                         /* Base */
 
-/* Page tables in .boot.bss (outside 8KB, pre-populated) */
-.section .boot.bss
+/* Page tables in .boot.data (pre-populated with values) */
+.section .boot.data
 .align 4096
 boot_pml4:
-    .quad 0x0000000000102023            /* PML4[0] at offset 0 */
+    .quad 0x0000000000102003            /* PML4[0]: Present + Writable, points to boot_pdpt */
     .skip 4080                          /* Skip to offset 4088 (511*8) */
-    .quad 0x0000000000102023            /* PML4[511] at offset 4088 */
+    .quad 0x0000000000102003            /* PML4[511]: Present + Writable, points to boot_pdpt */
 
 .align 4096
 boot_pdpt:
-    .quad 0x0000000000103023            /* PDPT[0] at offset 0 */
+    .quad 0x0000000000103003            /* PDPT[0]: Present + Writable, points to boot_pd */
     .skip 4072                          /* Skip to offset 4080 (510*8) */
-    .quad 0x0000000000103023            /* PDPT[510] at offset 4080 */
+    .quad 0x0000000000103003            /* PDPT[510]: Present + Writable, points to boot_pd */
     .skip 8                             /* Pad to 4096 */
 
 .align 4096
 boot_pd:
-    .quad 0x0000000000000083            /* PD[0] -> 2MB huge page */
-    .skip 4088                          /* Rest of page table */
+    .quad 0x0000000000000083            /* PD[0] -> 2MB huge page at 0MB (Present + Writable + Huge) */
+    .quad 0x0000000000200083            /* PD[1] -> 2MB huge page at 2MB */
+    .quad 0x0000000000400083            /* PD[2] -> 2MB huge page at 4MB */
+    .quad 0x0000000000600083            /* PD[3] -> 2MB huge page at 6MB */
+    .skip 4064                          /* Rest of page table */
 
+/* Boot stack in .boot.bss (this can stay as BSS since we just need zero-initialized space) */
+.section .boot.bss
 .align 16
 boot_stack_bottom:
     .skip 16384                         /* 16KB stack */
@@ -94,9 +99,9 @@ _start:
     movb $'P', %al
     outb %al, %dx
 
-    /* Enable PAE (Physical Address Extension) */
+    /* Enable PAE (Physical Address Extension) and PSE (Page Size Extension) */
     movl %cr4, %eax
-    orl $0x20, %eax                     /* Set PAE bit */
+    orl $0x30, %eax                     /* Set PAE bit (5) and PSE bit (4) */
     movl %eax, %cr4
 
     /* Debug: Write 'A' after PAE enabled */
@@ -107,7 +112,7 @@ _start:
     /* Enable long mode in EFER MSR */
     movl $0xC0000080, %ecx              /* EFER MSR */
     rdmsr
-    orl $0x100, %eax                    /* Set LME (Long Mode Enable) */
+    orl $0x900, %eax                    /* Set LME (bit 8) and NXE (bit 11) */
     wrmsr
 
     /* Debug: Write 'E' after EFER set */
@@ -180,16 +185,17 @@ higher_half_entry:
     /* RDI = Multiboot2 magic (already set from boot) */
     /* RSI = Multiboot2 info pointer (already set from boot) */
 
-    /* Call platform initialization (use indirect call for large offset) */
-    movabs $fut_platform_init, %rax
+    /* Workaround: Call via identity-mapped address instead of higher-half */
+    /* fut_platform_init is at virtual 0xffffffff8000c94b, physical 0xc94b */
+    movl $0xc94b, %ecx           /* Save address in ECX */
 
     /* Debug: Write 'M' after loading address */
     movw $0x3F8, %dx
     movb $'M', %al
     outb %al, %dx
 
-    /* Call the platform init function */
-    call *%rax
+    /* Call the platform init function via identity mapping */
+    call *%rcx
 
     /* Debug: Write 'R' if call returns */
     movw $0x3F8, %dx

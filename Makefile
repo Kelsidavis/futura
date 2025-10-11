@@ -118,10 +118,10 @@ OBJECTS += $(patsubst %.S,$(OBJ_DIR)/%.o,$(filter %.S,$(ALL_SOURCES)))
 #   Build Targets
 # ============================================================
 
-.PHONY: all clean kernel
+.PHONY: all clean kernel userland
 
 # Default target
-all: kernel
+all: kernel userland
 
 # Create output directories
 $(OBJ_DIR) $(BIN_DIR):
@@ -144,6 +144,11 @@ $(BIN_DIR)/futura_kernel.elf: $(OBJECTS) | $(BIN_DIR)
 	@$(LD) $(LDFLAGS) -o $@ $(OBJECTS)
 	@echo "Build complete: $@"
 
+# Build userland services
+userland:
+	@echo "Building userland services..."
+	@$(MAKE) -C src/user all
+
 # Compile C sources
 $(OBJ_DIR)/%.o: %.c | $(OBJ_DIR)
 	@echo "CC $<"
@@ -158,6 +163,7 @@ $(OBJ_DIR)/%.o: %.S | $(OBJ_DIR)
 clean:
 	@echo "Cleaning build artifacts..."
 	@rm -rf $(BUILD_DIR)
+	@$(MAKE) -C src/user clean
 	@echo "Clean complete"
 
 # ============================================================
@@ -188,11 +194,12 @@ qemu-arm64: platform-arm64
 .PHONY: help
 
 help:
-	@echo "Futura OS Build System - Phase 2 Multi-Architecture"
+	@echo "Futura OS Build System - Phase 3 Userland Genesis"
 	@echo ""
 	@echo "Targets:"
-	@echo "  all               - Build kernel (default)"
+	@echo "  all               - Build kernel and userland (default)"
 	@echo "  kernel            - Build kernel only"
+	@echo "  userland          - Build userland services only"
 	@echo "  clean             - Remove build artifacts"
 	@echo "  help              - Show this help message"
 	@echo ""
@@ -204,13 +211,21 @@ help:
 	@echo "  qemu-x86_64       - Build and run x86-64 kernel in QEMU"
 	@echo "  qemu-arm64        - Build and run ARM64 kernel in QEMU"
 	@echo ""
+	@echo "Userland Services:"
+	@echo "  - init            - System init daemon (PID 1)"
+	@echo "  - fsd             - Filesystem daemon"
+	@echo "  - posixd          - POSIX compatibility daemon"
+	@echo "  - futurawayd      - FuturaWay display compositor"
+	@echo ""
 	@echo "Variables:"
 	@echo "  PLATFORM          - Target platform (x86_64, arm64)"
 	@echo "  BUILD_MODE        - Build mode (debug, release)"
 	@echo "  CROSS_COMPILE     - Cross-compiler prefix (for ARM64)"
 	@echo ""
 	@echo "Examples:"
-	@echo "  make                          - Build for x86-64 in debug mode"
+	@echo "  make                          - Build kernel and userland"
+	@echo "  make kernel                   - Build kernel only"
+	@echo "  make userland                 - Build userland only"
 	@echo "  make PLATFORM=arm64           - Build for ARM64"
 	@echo "  make BUILD_MODE=release       - Build optimized release"
 	@echo "  make qemu-x86_64              - Test x86-64 kernel in QEMU"

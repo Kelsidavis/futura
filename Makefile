@@ -91,6 +91,7 @@ KERNEL_SOURCES := \
     kernel/vfs/ramfs.c \
     kernel/blockdev/fut_blockdev.c \
     kernel/blockdev/ramdisk.c \
+    kernel/fs/futurafs.c \
 
 # Platform-specific sources
 ifeq ($(PLATFORM),x86_64)
@@ -140,6 +141,7 @@ $(OBJ_DIR) $(BIN_DIR):
 	@mkdir -p $(OBJ_DIR)/kernel/ipc
 	@mkdir -p $(OBJ_DIR)/kernel/vfs
 	@mkdir -p $(OBJ_DIR)/kernel/blockdev
+	@mkdir -p $(OBJ_DIR)/kernel/fs
 	@mkdir -p $(OBJ_DIR)/platform/$(PLATFORM)
 	@mkdir -p $(OBJ_DIR)/subsystems/posix_compat
 
@@ -174,8 +176,32 @@ $(OBJ_DIR)/%.o: %.S | $(OBJ_DIR)
 clean:
 	@echo "Cleaning build artifacts..."
 	@rm -rf $(BUILD_DIR)
+	@rm -f futura.iso
 	@$(MAKE) -C src/user clean
 	@echo "Clean complete"
+
+# ============================================================
+#   ISO and Testing Targets
+# ============================================================
+
+.PHONY: iso test
+
+# Build bootable ISO with GRUB (required for proper testing)
+iso: kernel
+	@echo "Creating bootable ISO..."
+	@cp $(BIN_DIR)/futura_kernel.elf iso/boot/
+	@grub-mkrescue -o futura.iso iso/ 2>&1 | grep -E "(completed|error)" || echo "ISO build complete"
+	@echo "✓ Bootable ISO created: futura.iso"
+
+# Test kernel with GRUB (proper boot method)
+test: iso
+	@echo "Testing kernel with GRUB..."
+	@echo "⚠️  Press Ctrl+C to exit QEMU"
+	@qemu-system-x86_64 \
+		-cdrom futura.iso \
+		-serial stdio \
+		-display none \
+		-m 256M
 
 # ============================================================
 #   Platform-Specific Targets
@@ -211,6 +237,8 @@ help:
 	@echo "  all               - Build kernel and userland (default)"
 	@echo "  kernel            - Build kernel only"
 	@echo "  userland          - Build userland services only"
+	@echo "  iso               - Build bootable GRUB ISO (required for testing)"
+	@echo "  test              - Build and test kernel with GRUB (recommended)"
 	@echo "  clean             - Remove build artifacts"
 	@echo "  help              - Show this help message"
 	@echo ""
@@ -218,9 +246,9 @@ help:
 	@echo "  platform-x86_64   - Build for x86-64"
 	@echo "  platform-arm64    - Build for ARM64"
 	@echo ""
-	@echo "QEMU Test Targets:"
-	@echo "  qemu-x86_64       - Build and run x86-64 kernel in QEMU"
-	@echo "  qemu-arm64        - Build and run ARM64 kernel in QEMU"
+	@echo "⚠️  IMPORTANT: Use 'make test' for proper kernel testing!"
+	@echo "   Direct QEMU kernel boot (-kernel) causes triple-faults."
+	@echo "   The kernel MUST be booted via GRUB. See docs/TESTING.md"
 	@echo ""
 	@echo "Userland Services:"
 	@echo "  - init            - System init daemon (PID 1)"

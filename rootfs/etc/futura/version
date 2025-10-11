@@ -1,0 +1,6 @@
+Futura OS 0.3.0 - Userland Genesis
+Build: 2025-10-11
+Architecture: Multi-arch (x86_64, ARM64)
+Kernel: Nanokernel with FIPC
+Compositor: FuturaWay (Wayland-compatible)
+License: MPL 2.0

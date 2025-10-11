@@ -38,22 +38,82 @@ extern char _bss_end[];
  *   Test Thread Functions
  * ============================================================ */
 
+/* Global FIPC channel for testing */
+static struct fut_fipc_channel *g_test_channel = NULL;
+
 /**
- * Test thread entry point - demonstrates scheduler is working.
+ * FIPC sender thread - sends test messages.
  */
-static void test_thread_entry(void *arg) {
-    uint64_t thread_id = (uint64_t)arg;
+static void fipc_sender_thread(void *arg) {
+    (void)arg;
+    fut_printf("[FIPC-SENDER] Starting sender thread\n");
 
-    fut_printf("[TEST-THREAD-%llu] Hello from test thread!\n", thread_id);
+    /* Wait a bit for receiver to be ready */
+    fut_thread_yield();
 
-    /* Thread runs for a few iterations then exits */
-    for (int i = 0; i < 5; i++) {
-        fut_printf("[TEST-THREAD-%llu] Iteration %d\n", thread_id, i);
-        fut_thread_yield();  /* Yield to other threads */
+    /* Send test messages */
+    for (int i = 0; i < 3; i++) {
+        char msg[64];
+        fut_printf("[FIPC-SENDER] Sending message %d\n", i);
+
+        /* Build message payload */
+        msg[0] = 'M';
+        msg[1] = 'S';
+        msg[2] = 'G';
+        msg[3] = '0' + i;
+        msg[4] = '\0';
+
+        /* Send through FIPC channel */
+        int ret = fut_fipc_send(g_test_channel, FIPC_MSG_USER_BASE, msg, 5);
+        if (ret < 0) {
+            fut_printf("[FIPC-SENDER] Send failed with error %d\n", ret);
+        }
+
+        fut_thread_yield();
     }
 
-    fut_printf("[TEST-THREAD-%llu] Exiting...\n", thread_id);
-    fut_thread_exit();  /* This should never return */
+    fut_printf("[FIPC-SENDER] All messages sent, exiting\n");
+    fut_thread_exit();
+}
+
+/**
+ * FIPC receiver thread - receives and processes messages.
+ */
+static void fipc_receiver_thread(void *arg) {
+    (void)arg;
+    fut_printf("[FIPC-RECEIVER] Starting receiver thread\n");
+
+    /* Receive messages */
+    for (int i = 0; i < 3; i++) {
+        fut_printf("[FIPC-RECEIVER] Waiting for message %d...\n", i);
+
+        /* Allocate buffer for message (header + payload) */
+        uint8_t buf[128];
+
+        /* Poll until message arrives */
+        while (fut_fipc_poll(g_test_channel, FIPC_EVENT_MESSAGE) == 0) {
+            fut_thread_yield();
+        }
+
+        /* Receive message */
+        ssize_t received = fut_fipc_recv(g_test_channel, buf, sizeof(buf));
+        if (received < 0) {
+            fut_printf("[FIPC-RECEIVER] Receive failed with error %lld\n", (long long)received);
+            continue;
+        }
+
+        /* Parse message */
+        struct fut_fipc_msg *msg = (struct fut_fipc_msg *)buf;
+        char *payload = (char *)msg->payload;
+
+        fut_printf("[FIPC-RECEIVER] Received message: type=0x%x, len=%u, payload='%s'\n",
+                   msg->type, msg->length, payload);
+
+        fut_thread_yield();
+    }
+
+    fut_printf("[FIPC-RECEIVER] All messages received, exiting\n");
+    fut_thread_exit();
 }
 
 /* ============================================================
@@ -134,10 +194,10 @@ void fut_kernel_main(void) {
     fut_printf("[INIT] Scheduler initialized with idle thread\n");
 
     /* ========================================
-     *   Step 4: Create Test Threads
+     *   Step 4: Create Test Task and FIPC Channel
      * ======================================== */
 
-    fut_printf("[INIT] Creating test task and threads...\n");
+    fut_printf("[INIT] Creating test task for FIPC demonstration...\n");
 
     /* Create a test task (process container) */
     fut_task_t *test_task = fut_task_create();
@@ -148,40 +208,63 @@ void fut_kernel_main(void) {
 
     fut_printf("[INIT] Test task created (PID %llu)\n", test_task->pid);
 
-    /* Create first test thread */
-    fut_thread_t *thread1 = fut_thread_create(
-        test_task,
-        test_thread_entry,
-        (void *)1,              /* Thread ID = 1 */
-        16 * 1024,              /* 16 KB stack */
-        128                     /* Normal priority */
+    /* Create FIPC channel for inter-thread communication */
+    fut_printf("[INIT] Creating FIPC test channel...\n");
+    int ret = fut_fipc_channel_create(
+        test_task,              /* Sender task */
+        test_task,              /* Receiver task (same task, different threads) */
+        4096,                   /* 4KB message queue */
+        FIPC_CHANNEL_NONBLOCKING,  /* Non-blocking mode */
+        &g_test_channel
     );
 
-    if (!thread1) {
-        fut_printf("[ERROR] Failed to create test thread 1!\n");
-        fut_platform_panic("Failed to create test thread");
+    if (ret != 0) {
+        fut_printf("[ERROR] Failed to create FIPC channel (error %d)\n", ret);
+        fut_platform_panic("Failed to create FIPC channel");
     }
 
-    fut_printf("[INIT] Test thread 1 created (TID %llu)\n", thread1->tid);
-
-    /* Create second test thread */
-    fut_thread_t *thread2 = fut_thread_create(
-        test_task,
-        test_thread_entry,
-        (void *)2,              /* Thread ID = 2 */
-        16 * 1024,              /* 16 KB stack */
-        128                     /* Normal priority */
-    );
-
-    if (!thread2) {
-        fut_printf("[ERROR] Failed to create test thread 2!\n");
-        fut_platform_panic("Failed to create test thread");
-    }
-
-    fut_printf("[INIT] Test thread 2 created (TID %llu)\n", thread2->tid);
+    fut_printf("[INIT] FIPC channel created (ID %llu)\n", g_test_channel->id);
 
     /* ========================================
-     *   Step 5: Start Scheduling
+     *   Step 5: Create FIPC Test Threads
+     * ======================================== */
+
+    fut_printf("[INIT] Creating FIPC test threads...\n");
+
+    /* Create sender thread */
+    fut_thread_t *sender_thread = fut_thread_create(
+        test_task,
+        fipc_sender_thread,
+        NULL,                   /* No argument needed */
+        16 * 1024,              /* 16 KB stack */
+        128                     /* Normal priority */
+    );
+
+    if (!sender_thread) {
+        fut_printf("[ERROR] Failed to create sender thread!\n");
+        fut_platform_panic("Failed to create sender thread");
+    }
+
+    fut_printf("[INIT] FIPC sender thread created (TID %llu)\n", sender_thread->tid);
+
+    /* Create receiver thread */
+    fut_thread_t *receiver_thread = fut_thread_create(
+        test_task,
+        fipc_receiver_thread,
+        NULL,                   /* No argument needed */
+        16 * 1024,              /* 16 KB stack */
+        128                     /* Normal priority */
+    );
+
+    if (!receiver_thread) {
+        fut_printf("[ERROR] Failed to create receiver thread!\n");
+        fut_platform_panic("Failed to create receiver thread");
+    }
+
+    fut_printf("[INIT] FIPC receiver thread created (TID %llu)\n", receiver_thread->tid);
+
+    /* ========================================
+     *   Step 6: Start Scheduling
      * ======================================== */
 
     fut_printf("\n");

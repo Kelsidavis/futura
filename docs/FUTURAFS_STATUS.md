@@ -149,20 +149,28 @@ struct futurafs_inode {
 
 ### 1. Heap Allocator (Critical Blocker)
 
-**Problem:** Current 4 MB kernel heap insufficient for ramdisk allocation
+**Problem:** Heap allocator has fundamental bugs causing free list corruption
 
 **Impact:**
-- Cannot test block device operations
-- Cannot test FuturaFS format/mount
-- Cannot run full filesystem test suite
+- Free list becomes corrupted after `fut_free()` operations
+- Block sizes show as -16 (0xFFFFFFFFFFFFFFF0) after freeing
+- Large allocations (>=1MB) fail or cause corruption
+- Cannot test FuturaFS format/mount operations
+- Cannot test block device operations with ramdisks
 
-**Location:** `kernel/memory/fut_memory.c` heap allocator
+**Location:** `kernel/memory/fut_memory.c`
 
-**Solution Needed:**
-- Implement proper slab allocator
-- Add heap expansion capability
-- Support larger contiguous allocations
-- Or: Use different memory region for block devices
+**Root Causes Identified:**
+1. **Coalescing Bug**: The `coalesce_free_blocks()` function corrupts the free list when merging adjacent blocks
+2. **Split Block Issues**: Block splitting may not correctly maintain the free list structure
+3. **Free List Corruption**: After `fut_free()` calls, block headers show corrupted sizes (-16 bytes)
+4. **Virtual Memory**: No dynamic page mapping - PMM allocations beyond 8MB are unmapped
+
+**Solutions Needed:**
+1. **Immediate**: Disable coalescing (done) and fix split_block logic
+2. **Short-term**: Rewrite heap allocator with proper free list management
+3. **Long-term**: Implement slab allocator for common sizes + buddy allocator for large blocks
+4. **Virtual Memory**: Implement `fut_map_range()` from paging.h to map PMM pages dynamically
 
 ### 2. Directory Operations (Not Yet Implemented)
 

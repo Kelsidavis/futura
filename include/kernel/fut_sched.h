@@ -29,7 +29,7 @@
  * Spinlock for SMP synchronization (stubbed for single CPU).
  */
 typedef struct {
-    _Atomic uint32_t locked;
+    _Atomic uint64_t locked;
 } fut_spinlock_t;
 
 /**
@@ -108,4 +108,4 @@ void fut_sched_remove_thread(fut_thread_t *thread);
  * @param ready_count    Output: number of ready threads
  * @param running_count  Output: number of running threads
  */
-void fut_sched_stats(uint32_t *ready_count, uint32_t *running_count);
+void fut_sched_stats(uint64_t *ready_count, uint64_t *running_count);

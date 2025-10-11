@@ -35,26 +35,26 @@ enum fut_object_type {
  * ============================================================ */
 
 /* Rights bitfield for capability-based access control */
-typedef uint32_t fut_rights_t;
+typedef uint64_t fut_rights_t;
 
-#define FUT_RIGHT_READ      (1u << 0)   // Read access
-#define FUT_RIGHT_WRITE     (1u << 1)   // Write access
-#define FUT_RIGHT_EXECUTE   (1u << 2)   // Execute permission
-#define FUT_RIGHT_SHARE     (1u << 3)   // Can share with other tasks
-#define FUT_RIGHT_DESTROY   (1u << 4)   // Can destroy/close object
-#define FUT_RIGHT_WAIT      (1u << 5)   // Can wait on object (events/threads)
-#define FUT_RIGHT_SIGNAL    (1u << 6)   // Can signal object (events)
-#define FUT_RIGHT_ADMIN     (1u << 7)   // Administrative rights
+#define FUT_RIGHT_READ      (1ULL << 0)   // Read access
+#define FUT_RIGHT_WRITE     (1ULL << 1)   // Write access
+#define FUT_RIGHT_EXECUTE   (1ULL << 2)   // Execute permission
+#define FUT_RIGHT_SHARE     (1ULL << 3)   // Can share with other tasks
+#define FUT_RIGHT_DESTROY   (1ULL << 4)   // Can destroy/close object
+#define FUT_RIGHT_WAIT      (1ULL << 5)   // Can wait on object (events/threads)
+#define FUT_RIGHT_SIGNAL    (1ULL << 6)   // Can signal object (events)
+#define FUT_RIGHT_ADMIN     (1ULL << 7)   // Administrative rights
 
-#define FUT_RIGHT_ALL       (0xFFFFFFFFu)  // All rights
-#define FUT_RIGHT_NONE      (0u)           // No rights
+#define FUT_RIGHT_ALL       (0xFFFFFFFFFFFFFFFFULL)  // All rights
+#define FUT_RIGHT_NONE      (0ULL)                    // No rights
 
 /* ============================================================
  *   Handle Type
  * ============================================================ */
 
 /* Opaque handle to kernel objects */
-typedef uint32_t fut_handle_t;
+typedef uint64_t fut_handle_t;
 
 #define FUT_INVALID_HANDLE  ((fut_handle_t)0)
 
@@ -69,7 +69,7 @@ typedef uint32_t fut_handle_t;
 typedef struct fut_object {
     enum fut_object_type type;      // Object type
     fut_rights_t rights;            // Capability rights
-    uint32_t refcount;              // Reference count
+    uint64_t refcount;              // Reference count (64-bit)
     void *data;                     // Type-specific data pointer
     struct fut_object *next;        // Next in free list or hash chain
 } fut_object_t;
@@ -131,11 +131,11 @@ bool fut_object_has_rights(fut_handle_t handle, fut_rights_t required_rights);
  * Share an object with another task (creates new handle with reduced rights).
  *
  * @param handle Source handle
- * @param target_task Task to share with
+ * @param target_task Task PID to share with (64-bit)
  * @param shared_rights Rights to grant to new handle
  * @return New handle in target task, or FUT_INVALID_HANDLE on failure
  */
-fut_handle_t fut_object_share(fut_handle_t handle, uint32_t target_task, fut_rights_t shared_rights);
+fut_handle_t fut_object_share(fut_handle_t handle, uint64_t target_task, fut_rights_t shared_rights);
 
 /* ============================================================
  *   Message Passing (Async IPC)

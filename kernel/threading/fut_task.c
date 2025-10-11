@@ -1,8 +1,10 @@
 /* fut_task.c - Futura OS Task Implementation (C23)
  *
- * Copyright (c) 2025 Kelsi Davis / Licensed under the MPL v2.0 — see LICENSE for details
+ * Copyright (c) 2025 Kelsi Davis
+ * Licensed under the MPL v2.0 — see LICENSE for details.
  *
  * Tasks are process containers that hold threads and resources.
+ * Migrated to x86-64 long mode architecture.
  */
 
 #include "../../include/kernel/fut_task.h"
@@ -15,8 +17,8 @@
  * ============================================================ */
 
 /* Global task list */
-fut_task_t *fut_task_list = nullptr;  /* Exposed for stats/debugging */
-static _Atomic uint32_t next_pid = 1;
+fut_task_t *fut_task_list = NULL;  /* Exposed for stats/debugging */
+static _Atomic uint64_t next_pid = 1;  /* 64-bit PID counter */
 
 /* Task list lock */
 static fut_spinlock_t task_list_lock = { .locked = 0 };
@@ -26,18 +28,18 @@ static fut_spinlock_t task_list_lock = { .locked = 0 };
  */
 fut_task_t *fut_task_create(void) {
     // Allocate task structure
-    auto task = (fut_task_t *)kmalloc(sizeof(fut_task_t));
+    fut_task_t *task = (fut_task_t *)fut_malloc(sizeof(fut_task_t));
     if (!task) {
-        return nullptr;
+        return NULL;
     }
 
     // Initialize task
     *task = (fut_task_t){
         .pid = atomic_fetch_add_explicit(&next_pid, 1, memory_order_seq_cst),
         .page_table_root = 0,  // Future: allocate page table
-        .threads = nullptr,
+        .threads = NULL,
         .thread_count = 0,
-        .next = nullptr
+        .next = NULL
     };
 
     // Add to global task list
@@ -62,7 +64,7 @@ void fut_task_add_thread(fut_task_t *task, fut_thread_t *thread) {
     if (task->threads) {
         task->threads->prev = thread;
     }
-    thread->prev = nullptr;
+    thread->prev = NULL;
     task->threads = thread;
 
     task->thread_count++;
@@ -87,8 +89,8 @@ void fut_task_remove_thread(fut_task_t *task, fut_thread_t *thread) {
         thread->next->prev = thread->prev;
     }
 
-    thread->next = nullptr;
-    thread->prev = nullptr;
+    thread->next = NULL;
+    thread->prev = NULL;
 
     task->thread_count--;
 }
@@ -104,9 +106,9 @@ void fut_task_destroy(fut_task_t *task) {
     // Free all threads (stub - proper cleanup later)
     fut_thread_t *thread = task->threads;
     while (thread) {
-        auto next = thread->next;
-        kfree(thread->stack_base);
-        kfree(thread);
+        fut_thread_t *next = thread->next;
+        fut_free(thread->stack_base);
+        fut_free(thread);
         thread = next;
     }
 
@@ -126,5 +128,5 @@ void fut_task_destroy(fut_task_t *task) {
     fut_spinlock_release(&task_list_lock);
 
     // Free task structure
-    kfree(task);
+    fut_free(task);
 }

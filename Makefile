@@ -9,14 +9,14 @@
 #   Build Configuration
 # ============================================================
 
-# Platform selection (x86, arm64, apple_silicon)
-PLATFORM ?= x86
+# Platform selection (x86_64, arm64, apple_silicon)
+PLATFORM ?= x86_64
 
 # Build mode (debug, release)
 BUILD_MODE ?= debug
 
 # Compiler and tools
-CC := gcc
+CC := gcc-14
 AS := as
 LD := ld
 AR := ar
@@ -24,7 +24,8 @@ AR := ar
 # C standard and compiler flags
 CFLAGS := -std=c23 -ffreestanding -nostdlib -fno-builtin
 CFLAGS += -Wall -Wextra -Wpedantic -Werror
-CFLAGS += -m32 -march=i686  # x86-32 specific
+CFLAGS += -m64 -mcmodel=kernel -mno-red-zone  # x86-64 specific
+CFLAGS += -fno-pic -fno-pie  # Disable PIC/PIE for kernel code
 CFLAGS += -I./include
 
 # Debug vs Release flags
@@ -35,10 +36,10 @@ else
 endif
 
 # Assembly flags
-ASFLAGS := --32  # x86-32 specific
+ASFLAGS := --64  # x86-64 specific
 
 # Linker flags
-LDFLAGS := -m elf_i386 -nostdlib
+LDFLAGS := -m elf_x86_64 -nostdlib -T platform/x86_64/link.ld
 
 # Output directories
 BUILD_DIR := build
@@ -57,15 +58,16 @@ KERNEL_SOURCES := \
     kernel/scheduler/fut_sched.c \
     kernel/scheduler/fut_stats.c \
     kernel/timer/fut_timer.c \
-    kernel/interrupts/fut_idt.c \
     kernel/ipc/fut_object.c
 
-# Platform-specific sources (x86)
-ifeq ($(PLATFORM),x86)
+# Platform-specific sources (x86_64)
+ifeq ($(PLATFORM),x86_64)
     PLATFORM_SOURCES := \
-        platform/x86/asm/fut_context.S \
-        platform/x86/asm/fut_isr.S \
-        platform/x86/asm/fut_thread_entry.S
+        platform/x86_64/boot.S \
+        platform/x86_64/gdt_idt.S \
+        platform/x86_64/isr_stubs.S \
+        platform/x86_64/context_switch.S \
+        platform/x86_64/platform_init.c
 endif
 
 # Subsystem sources (POSIX compat)
@@ -97,7 +99,7 @@ $(OBJ_DIR) $(BIN_DIR):
 	@mkdir -p $(OBJ_DIR)/kernel/timer
 	@mkdir -p $(OBJ_DIR)/kernel/interrupts
 	@mkdir -p $(OBJ_DIR)/kernel/ipc
-	@mkdir -p $(OBJ_DIR)/platform/x86/asm
+	@mkdir -p $(OBJ_DIR)/platform/x86_64
 	@mkdir -p $(OBJ_DIR)/subsystems/posix_compat
 
 # Build kernel
@@ -128,10 +130,10 @@ clean:
 #   Platform-Specific Targets
 # ============================================================
 
-.PHONY: platform-x86 platform-arm64 platform-apple-silicon
+.PHONY: platform-x86_64 platform-arm64 platform-apple-silicon
 
-platform-x86:
-	@$(MAKE) PLATFORM=x86
+platform-x86_64:
+	@$(MAKE) PLATFORM=x86_64
 
 platform-arm64:
 	@$(MAKE) PLATFORM=arm64
@@ -155,16 +157,16 @@ help:
 	@echo "  help           - Show this help message"
 	@echo ""
 	@echo "Platform Targets:"
-	@echo "  platform-x86   - Build for x86-32"
-	@echo "  platform-arm64 - Build for ARM64"
+	@echo "  platform-x86_64 - Build for x86-64"
+	@echo "  platform-arm64  - Build for ARM64"
 	@echo "  platform-apple-silicon - Build for Apple Silicon"
 	@echo ""
 	@echo "Variables:"
-	@echo "  PLATFORM       - Target platform (x86, arm64, apple_silicon)"
+	@echo "  PLATFORM       - Target platform (x86_64, arm64, apple_silicon)"
 	@echo "  BUILD_MODE     - Build mode (debug, release)"
 	@echo ""
 	@echo "Examples:"
-	@echo "  make                     - Build for x86 in debug mode"
+	@echo "  make                     - Build for x86-64 in debug mode"
 	@echo "  make PLATFORM=arm64      - Build for ARM64"
 	@echo "  make BUILD_MODE=release  - Build optimized release"
 	@echo "  make clean               - Clean build artifacts"

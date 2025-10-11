@@ -21,12 +21,12 @@ typedef struct fut_task fut_task_t;
  * ============================================================ */
 
 struct fut_task {
-    uint32_t pid;                      // Process ID
+    uint64_t pid;                      // Process ID (64-bit)
 
     uintptr_t page_table_root;         // Page table root (future VMM)
 
     fut_thread_t *threads;             // Linked list of threads
-    uint32_t thread_count;             // Number of threads in task
+    uint64_t thread_count;             // Number of threads in task
 
     fut_task_t *next;                  // Next task in system list
 };

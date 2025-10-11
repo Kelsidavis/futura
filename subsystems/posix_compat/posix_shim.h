@@ -15,6 +15,9 @@
 #include <stddef.h>
 #include <stdint.h>
 
+/* Define ssize_t for freestanding environment */
+typedef int64_t ssize_t;
+
 /* ============================================================
  *   File Descriptor Compatibility
  * ============================================================ */

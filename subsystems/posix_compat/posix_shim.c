@@ -32,7 +32,7 @@ static void init_fd_table(void) {
 }
 
 /* Allocate a new FD */
-static posix_fd_t alloc_fd(fut_handle_t handle) {
+__attribute__((unused)) static posix_fd_t alloc_fd(fut_handle_t handle) {
     init_fd_table();
     for (int i = 3; i < MAX_FDS; ++i) {  // Reserve 0,1,2 for stdin/stdout/stderr
         if (fd_table[i] == FUT_INVALID_HANDLE) {

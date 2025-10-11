@@ -11,8 +11,8 @@
 #include "../../include/kernel/fut_stats.h"
 #include <stdatomic.h>
 
-/* External context switch from fut_context.S */
-extern void fut_switch_context(fut_context_t *old, fut_context_t *new);
+/* External context switch from platform/x86_64/context_switch.S */
+extern void fut_switch_context(fut_cpu_context_t *old, fut_cpu_context_t *new);
 extern void fut_switch_context_irq(fut_thread_t *prev, fut_thread_t *next, fut_interrupt_frame_t *prev_frame);
 
 /* External printf for debugging */
@@ -26,27 +26,24 @@ extern void fut_printf(const char *fmt, ...);
 _Atomic bool fut_in_interrupt = false;
 
 /* Points to the current interrupt frame when in interrupt context */
-fut_interrupt_frame_t *fut_current_frame = nullptr;
+fut_interrupt_frame_t *fut_current_frame = NULL;
 
 /* ============================================================
  *   Scheduler State
  * ============================================================ */
 
 /* Ready queue (simple linked list for now) */
-static fut_thread_t *ready_queue_head = nullptr;
-static fut_thread_t *ready_queue_tail = nullptr;
-
-/* Current running thread (per-CPU, single CPU for now) */
-static fut_thread_t *current_thread = nullptr;
+static fut_thread_t *ready_queue_head = NULL;
+static fut_thread_t *ready_queue_tail = NULL;
 
 /* Idle thread */
-static fut_thread_t *idle_thread = nullptr;
+static fut_thread_t *idle_thread = NULL;
 
 /* Scheduler lock */
 static fut_spinlock_t sched_lock = { .locked = 0 };
 
 /* Statistics */
-static uint32_t ready_count = 0;
+static uint64_t ready_count = 0;
 
 /* ============================================================
  *   Idle Thread
@@ -87,7 +84,7 @@ void fut_sched_init(void) {
     fut_stats_init();
 
     // Create idle task and thread
-    auto idle_task = fut_task_create();
+    fut_task_t *idle_task = fut_task_create();
     if (!idle_task) {
         fut_printf("[SCHED] Failed to create idle task\n");
         return;
@@ -97,7 +94,7 @@ void fut_sched_init(void) {
     idle_thread = fut_thread_create(
         idle_task,
         idle_thread_entry,
-        nullptr,
+        NULL,
         4096,  // Small stack for idle
         FUT_IDLE_PRIORITY
     );
@@ -124,7 +121,7 @@ void fut_sched_add_thread(fut_thread_t *thread) {
     fut_spinlock_acquire(&sched_lock);
 
     // Simple FIFO for now - insert at tail
-    thread->next = nullptr;
+    thread->next = NULL;
     thread->prev = ready_queue_tail;
 
     if (ready_queue_tail) {
@@ -162,8 +159,8 @@ void fut_sched_remove_thread(fut_thread_t *thread) {
         ready_queue_tail = thread->prev;
     }
 
-    thread->next = nullptr;
-    thread->prev = nullptr;
+    thread->next = NULL;
+    thread->prev = NULL;
 
     if (ready_count > 0) {
         ready_count--;
@@ -189,13 +186,13 @@ static fut_thread_t *select_next_thread(void) {
     // Remove from head of ready queue
     ready_queue_head = next->next;
     if (ready_queue_head) {
-        ready_queue_head->prev = nullptr;
+        ready_queue_head->prev = NULL;
     } else {
-        ready_queue_tail = nullptr;
+        ready_queue_tail = NULL;
     }
 
-    next->next = nullptr;
-    next->prev = nullptr;
+    next->next = NULL;
+    next->prev = NULL;
 
     if (ready_count > 0) {
         ready_count--;
@@ -210,7 +207,7 @@ static fut_thread_t *select_next_thread(void) {
  * Main scheduler - select and switch to next thread.
  */
 void fut_schedule(void) {
-    fut_thread_t *prev = current_thread;
+    fut_thread_t *prev = fut_thread_current();
     fut_thread_t *next = select_next_thread();
 
     if (!next) {
@@ -225,7 +222,7 @@ void fut_schedule(void) {
 
     // Mark next thread as running
     next->state = FUT_THREAD_RUNNING;
-    current_thread = next;
+    fut_thread_set_current(next);
 
     // Record context switch for performance instrumentation
     fut_stats_record_switch(prev, next);
@@ -271,7 +268,7 @@ void fut_schedule(void) {
                 fut_switch_context(&prev->context, &next->context);
             } else {
                 // First time - just jump to thread
-                fut_switch_context(nullptr, &next->context);
+                fut_switch_context(NULL, &next->context);
             }
             serial_puts("[SCHED] Returned from fut_switch_context\n");
         }
@@ -281,27 +278,13 @@ void fut_schedule(void) {
 /**
  * Get scheduler statistics.
  */
-void fut_sched_stats(uint32_t *ready_cnt, uint32_t *running_cnt) {
+void fut_sched_stats(uint64_t *ready_cnt, uint64_t *running_cnt) {
     if (ready_cnt) {
         *ready_cnt = ready_count;
     }
     if (running_cnt) {
-        *running_cnt = current_thread ? 1 : 0;
+        *running_cnt = fut_thread_current() ? 1 : 0;
     }
-}
-
-/**
- * Get current thread (external access).
- */
-fut_thread_t *fut_thread_current(void) {
-    return current_thread;
-}
-
-/**
- * Set current thread (internal use).
- */
-void fut_thread_set_current(fut_thread_t *thread) {
-    current_thread = thread;
 }
 
 /**
@@ -316,7 +299,7 @@ void fut_sched_tick(void) {
 
     // Don't try to schedule if no thread is currently running
     // (can't launch first thread from IRQ context)
-    fut_thread_t *curr = current_thread;
+    fut_thread_t *curr = fut_thread_current();
     if (!curr) {
         // Silent return - can't use serial_puts from IRQ context
         return;

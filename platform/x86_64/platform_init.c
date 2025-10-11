@@ -423,8 +423,117 @@ void __attribute__((weak)) fut_timer_irq(void) {
     fut_pic_send_eoi(0);
 }
 
-void __attribute__((weak)) fut_isr_handler(void *regs __attribute__((unused))) {
-    fut_serial_puts("[ISR] Exception occurred!\n");
+/* Helper function to print hex value */
+static void print_hex64(uint64_t val) {
+    const char *hex = "0123456789ABCDEF";
+    char buf[17];
+    buf[16] = '\0';
+
+    for (int i = 15; i >= 0; i--) {
+        buf[i] = hex[val & 0xF];
+        val >>= 4;
+    }
+
+    fut_serial_puts(buf);
+}
+
+/* Interrupt frame structure matching ISR stub stack layout */
+struct interrupt_frame {
+    /* Segment registers (pushed by ISR stub) */
+    uint64_t gs, fs, es, ds;                    /* Offsets 0-24 */
+    /* General-purpose registers (pushed by ISR stub) */
+    uint64_t rax, rbx, rcx, rdx;                /* Offsets 32-56 */
+    uint64_t rsi, rdi, rbp;                     /* Offsets 64-80 */
+    uint64_t r8, r9, r10, r11;                  /* Offsets 88-112 */
+    uint64_t r12, r13, r14, r15;                /* Offsets 120-144 */
+    /* ISR stub pushes vector and error code */
+    uint64_t vector;                            /* Offset 152 */
+    uint64_t error_code;                        /* Offset 160 */
+    /* CPU automatically pushes these on interrupt */
+    uint64_t rip, cs, rflags, rsp, ss;          /* Offsets 168-200 */
+} __attribute__((packed));
+
+/* Exception names for debugging output */
+static const char *exception_names[32] = {
+    "Divide Error", "Debug", "NMI", "Breakpoint",
+    "Overflow", "Bound Range Exceeded", "Invalid Opcode", "Device Not Available",
+    "Double Fault", "Coprocessor Segment Overrun", "Invalid TSS", "Segment Not Present",
+    "Stack-Segment Fault", "General Protection Fault", "Page Fault", "Reserved",
+    "x87 FPU Error", "Alignment Check", "Machine Check", "SIMD Exception",
+    "Virtualization Exception", "Reserved", "Reserved", "Reserved",
+    "Reserved", "Reserved", "Reserved", "Reserved",
+    "Reserved", "Reserved", "Security Exception", "Reserved"
+};
+
+void __attribute__((weak)) fut_isr_handler(void *regs_ptr) {
+    struct interrupt_frame *regs = (struct interrupt_frame *)regs_ptr;
+
+    fut_disable_interrupts();
+    fut_serial_puts("\n\n");
+    fut_serial_puts("========================================\n");
+    fut_serial_puts("  KERNEL EXCEPTION\n");
+    fut_serial_puts("========================================\n");
+
+    /* Read CR2 register (fault address for page faults) */
+    uint64_t cr2 = 0;
+    __asm__ volatile("mov %%cr2, %0" : "=r"(cr2));
+
+    /* Display exception type based on vector number */
+    fut_serial_puts("Exception #");
+    print_hex64(regs->vector);
+    fut_serial_puts(": ");
+
+    if (regs->vector < 32) {
+        fut_serial_puts(exception_names[regs->vector]);
+    } else {
+        fut_serial_puts("Unknown");
+    }
+    fut_serial_puts("\n");
+
+    /* For page faults (#14), display additional information */
+    if (regs->vector == 14) {
+        fut_serial_puts("Fault Address (CR2): 0x");
+        print_hex64(cr2);
+        fut_serial_puts("\n");
+
+        fut_serial_puts("Error Code: ");
+        if (regs->error_code & 0x1) fut_serial_puts("PRESENT ");
+        else fut_serial_puts("NOT-PRESENT ");
+        if (regs->error_code & 0x2) fut_serial_puts("WRITE ");
+        else fut_serial_puts("READ ");
+        if (regs->error_code & 0x4) fut_serial_puts("USER ");
+        else fut_serial_puts("SUPERVISOR ");
+        if (regs->error_code & 0x10) fut_serial_puts("INSTRUCTION-FETCH ");
+        fut_serial_puts("(0x");
+        print_hex64(regs->error_code);
+        fut_serial_puts(")\n");
+    } else {
+        fut_serial_puts("Error Code: 0x");
+        print_hex64(regs->error_code);
+        fut_serial_puts("\n");
+    }
+
+    fut_serial_puts("\nRegisters:\n");
+    fut_serial_puts("  RIP: 0x"); print_hex64(regs->rip); fut_serial_puts("\n");
+    fut_serial_puts("  RSP: 0x"); print_hex64(regs->rsp); fut_serial_puts("\n");
+    fut_serial_puts("  RBP: 0x"); print_hex64(regs->rbp); fut_serial_puts("\n");
+    fut_serial_puts("  RAX: 0x"); print_hex64(regs->rax); fut_serial_puts("\n");
+    fut_serial_puts("  RBX: 0x"); print_hex64(regs->rbx); fut_serial_puts("\n");
+    fut_serial_puts("  RCX: 0x"); print_hex64(regs->rcx); fut_serial_puts("\n");
+    fut_serial_puts("  RDX: 0x"); print_hex64(regs->rdx); fut_serial_puts("\n");
+    fut_serial_puts("  RSI: 0x"); print_hex64(regs->rsi); fut_serial_puts("\n");
+    fut_serial_puts("  RDI: 0x"); print_hex64(regs->rdi); fut_serial_puts("\n");
+    fut_serial_puts("  RFL: 0x"); print_hex64(regs->rflags); fut_serial_puts("\n");
+    fut_serial_puts("  CR2: 0x"); print_hex64(cr2); fut_serial_puts("\n");
+
+    fut_serial_puts("\nSegments:\n");
+    fut_serial_puts("  CS: 0x"); print_hex64(regs->cs); fut_serial_puts("\n");
+    fut_serial_puts("  DS: 0x"); print_hex64(regs->ds); fut_serial_puts("\n");
+    fut_serial_puts("  SS: 0x"); print_hex64(regs->ss); fut_serial_puts("\n");
+
+    fut_serial_puts("\nSystem halted.\n");
+    fut_serial_puts("========================================\n");
+
     while (1) {
         __asm__ volatile("cli; hlt");
     }
@@ -433,4 +542,27 @@ void __attribute__((weak)) fut_isr_handler(void *regs __attribute__((unused))) {
 void __attribute__((weak)) fut_irq_handler(void *regs __attribute__((unused))) {
     /* Generic IRQ handler - send EOI */
     fut_pic_send_eoi(0);
+}
+
+/* Platform panic - halt system with error message */
+void fut_platform_panic(const char *message) {
+    fut_disable_interrupts();
+    fut_serial_puts("\n\n");
+    fut_serial_puts("========================================\n");
+    fut_serial_puts("  KERNEL PANIC\n");
+    fut_serial_puts("========================================\n");
+    fut_serial_puts(message);
+    fut_serial_puts("\n");
+    fut_serial_puts("System halted.\n");
+    fut_serial_puts("========================================\n");
+
+    /* Halt forever */
+    while (1) {
+        __asm__ volatile("cli; hlt");
+    }
+}
+
+/* CPU halt function */
+void fut_platform_cpu_halt(void) {
+    __asm__ volatile("hlt");
 }

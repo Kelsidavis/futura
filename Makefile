@@ -78,6 +78,7 @@ BIN_DIR := $(BUILD_DIR)/bin
 
 # Kernel core sources
 KERNEL_SOURCES := \
+    kernel/kernel_main.c \
     kernel/memory/fut_memory.c \
     kernel/threading/fut_task.c \
     kernel/threading/fut_thread.c \
@@ -127,6 +128,7 @@ all: kernel userland
 # Create output directories
 $(OBJ_DIR) $(BIN_DIR):
 	@mkdir -p $@
+	@mkdir -p $(OBJ_DIR)/kernel
 	@mkdir -p $(OBJ_DIR)/kernel/memory
 	@mkdir -p $(OBJ_DIR)/kernel/threading
 	@mkdir -p $(OBJ_DIR)/kernel/scheduler

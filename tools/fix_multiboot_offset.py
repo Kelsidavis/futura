@@ -96,13 +96,22 @@ def fix_elf_offset(input_file, output_file):
 
     # Parse all segments for reorganization
     segments = []
+    boot_phdr_idx = None
+    PT_LOAD = 1
+
     for i in range(e_phnum):
         phdr_offset = e_phoff + i * e_phentsize
         p_type = struct.unpack('<I', elf_data[phdr_offset:phdr_offset+4])[0]
         p_offset = struct.unpack('<Q', elf_data[phdr_offset+8:phdr_offset+16])[0]
+        p_vaddr = struct.unpack('<Q', elf_data[phdr_offset+16:phdr_offset+24])[0]
+        p_paddr = struct.unpack('<Q', elf_data[phdr_offset+24:phdr_offset+32])[0]
         p_filesz = struct.unpack('<Q', elf_data[phdr_offset+32:phdr_offset+40])[0]
 
-        if p_filesz > 0:
+        # Identify empty boot PT_LOAD segment (first PT_LOAD with filesz==0)
+        if p_type == PT_LOAD and p_filesz == 0 and boot_phdr_idx is None:
+            boot_phdr_idx = i
+            print(f"  Found empty boot PT_LOAD segment at index {i}")
+        elif p_filesz > 0:
             segments.append({
                 'idx': i,
                 'phdr_offset': phdr_offset,
@@ -112,19 +121,26 @@ def fix_elf_offset(input_file, output_file):
                 'data': bytes(elf_data[p_offset:p_offset+p_filesz]) if p_offset + p_filesz <= len(elf_data) else b''
             })
 
+    # If no empty boot PT_LOAD found, we need to create one
+    create_new_boot_phdr = (boot_phdr_idx is None)
+    if create_new_boot_phdr:
+        print(f"  No empty boot PT_LOAD found, will create new one")
+        boot_phdr_idx = 0  # Insert at beginning
+
     print(f"\nBoot data: offset 0x{boot_data_start:x}, size 0x{boot_data_size:x}")
 
     if boot_data_size >= 0x8000:
         print(f"Error: Boot data too large ({boot_data_size} bytes) for 32KB limit")
         return False
 
-    # Calculate new layout: boot data after headers, others follow
-    headers_end = e_phoff + e_phentsize * e_phnum
-    new_boot_offset = ((headers_end + 0x1ff) // 0x200) * 0x200  # Align to 512 bytes
+    # Calculate new layout: boot data after headers (accounting for potential new phdr)
+    new_phnum = e_phnum + 1 if create_new_boot_phdr else e_phnum
+    new_headers_end = e_phoff + e_phentsize * new_phnum
+    new_boot_offset = ((new_headers_end + 0x1ff) // 0x200) * 0x200  # Align to 512 bytes
 
     if new_boot_offset + boot_data_size >= 0x8000:
         print(f"Error: Boot data won't fit in first 32KB!")
-        print(f"  Headers end at 0x{headers_end:x}")
+        print(f"  Headers end at 0x{new_headers_end:x}")
         print(f"  Boot data needs 0x{boot_data_size:x} bytes")
         return False
 
@@ -132,7 +148,33 @@ def fix_elf_offset(input_file, output_file):
     print(f"  Boot data: 0x{boot_data_start:x} -> 0x{new_boot_offset:x}")
 
     # Build new file layout
-    new_elf_data = bytearray(elf_data[:headers_end])
+    # Start with ELF header and program headers (with space for new boot phdr if needed)
+    if create_new_boot_phdr:
+        # Copy ELF header (64 bytes)
+        new_elf_data = bytearray(elf_data[:e_phoff])
+
+        # Create new boot PT_LOAD program header as first entry
+        boot_phdr_data = bytearray(e_phentsize)
+        # ELF64 program header structure:
+        struct.pack_into('<I', boot_phdr_data, 0, PT_LOAD)  # p_type
+        struct.pack_into('<I', boot_phdr_data, 4, 7)  # p_flags = RWE
+        struct.pack_into('<Q', boot_phdr_data, 8, new_boot_offset)  # p_offset (temporary)
+        struct.pack_into('<Q', boot_phdr_data, 16, 0x100000)  # p_vaddr
+        struct.pack_into('<Q', boot_phdr_data, 24, 0x100000)  # p_paddr
+        struct.pack_into('<Q', boot_phdr_data, 32, boot_data_size)  # p_filesz
+        struct.pack_into('<Q', boot_phdr_data, 40, boot_data_size)  # p_memsz
+        struct.pack_into('<Q', boot_phdr_data, 48, 0x1000)  # p_align
+        new_elf_data.extend(boot_phdr_data)
+
+        # Copy existing program headers
+        new_elf_data.extend(elf_data[e_phoff:e_phoff + e_phentsize * e_phnum])
+
+        # Update e_phnum in ELF header
+        struct.pack_into('<H', new_elf_data, 56, new_phnum)
+    else:
+        # Just copy up to old headers_end
+        headers_end = e_phoff + e_phentsize * e_phnum
+        new_elf_data = bytearray(elf_data[:headers_end])
 
     # Pad to boot data start
     new_elf_data.extend(b'\x00' * (new_boot_offset - len(new_elf_data)))
@@ -168,50 +210,44 @@ def fix_elf_offset(input_file, output_file):
         current_offset = ((len(new_elf_data) + 0xfff) // 0x1000) * 0x1000
 
     # Update program headers with new offsets
+    # If we created a new boot phdr, all existing indices shift by 1
+    phdr_index_offset = 1 if create_new_boot_phdr else 0
     for idx, new_offset in segment_relocations.items():
-        phdr_offset = e_phoff + idx * e_phentsize
+        phdr_offset = e_phoff + (idx + phdr_index_offset) * e_phentsize
         struct.pack_into('<Q', new_elf_data, phdr_offset + 8, new_offset)
 
-    # Update section headers and their offsets
-    if e_shoff > 0:
-        # Place section headers at end of file
-        new_shoff = len(new_elf_data)
-        old_shoff_end = e_shoff + e_shentsize * e_shnum
-        section_headers = bytearray(elf_data[e_shoff:old_shoff_end])
+    # Boot PT_LOAD segment was already set up when creating new phdrs, or update existing
+    if not create_new_boot_phdr and boot_phdr_idx is not None:
+        boot_phdr_offset = e_phoff + boot_phdr_idx * e_phentsize
+        # ELF64 program header structure:
+        # Offset 0: p_type (4 bytes) - already PT_LOAD
+        # Offset 4: p_flags (4 bytes) - set to 7 (RWE)
+        # Offset 8: p_offset (8 bytes) - file offset
+        # Offset 16: p_vaddr (8 bytes) - virtual address
+        # Offset 24: p_paddr (8 bytes) - physical address
+        # Offset 32: p_filesz (8 bytes) - size in file
+        # Offset 40: p_memsz (8 bytes) - size in memory
+        # Offset 48: p_align (8 bytes) - alignment
+        struct.pack_into('<I', new_elf_data, boot_phdr_offset + 4, 7)  # p_flags = RWE
+        struct.pack_into('<Q', new_elf_data, boot_phdr_offset + 8, new_boot_offset)  # p_offset
+        struct.pack_into('<Q', new_elf_data, boot_phdr_offset + 16, 0x100000)  # p_vaddr
+        struct.pack_into('<Q', new_elf_data, boot_phdr_offset + 24, 0x100000)  # p_paddr
+        struct.pack_into('<Q', new_elf_data, boot_phdr_offset + 32, boot_data_size)  # p_filesz
+        struct.pack_into('<Q', new_elf_data, boot_phdr_offset + 40, boot_data_size)  # p_memsz
+        struct.pack_into('<Q', new_elf_data, boot_phdr_offset + 48, 0x1000)  # p_align
 
-        # Update ALL section header file offsets
-        for i in range(e_shnum):
-            sh_offset_pos = i * e_shentsize + 24  # sh_offset
-            sh_type_pos = i * e_shentsize + 4     # sh_type
-            sh_offset = struct.unpack('<Q', section_headers[sh_offset_pos:sh_offset_pos+8])[0]
-            sh_type = struct.unpack('<I', section_headers[sh_type_pos:sh_type_pos+4])[0]
+    print(f"  Boot PT_LOAD: offset=0x{new_boot_offset:x}, vaddr=0x100000, paddr=0x100000, size=0x{boot_data_size:x}")
 
-            if sh_offset > 0 and sh_type != 8:  # Not NOBITS
-                # Check if this is one of the boot sections we relocated
-                if sh_offset in section_relocations:
-                    struct.pack_into('<Q', section_headers, sh_offset_pos, section_relocations[sh_offset])
-                    continue
+    # Add minimal section header table at end of file (just null section)
+    # Some bootloaders expect e_shoff to point to valid location even if e_shnum=1
+    new_shoff = len(new_elf_data)
+    null_shdr = bytearray(64)  # 64-byte null section header
+    new_elf_data.extend(null_shdr)
 
-                # Find which segment contains this section
-                section_relocated = False
-                for seg in segments:
-                    seg_start = seg['offset']
-                    seg_end = seg['offset'] + seg['filesz']
-
-                    if seg_start <= sh_offset < seg_end:
-                        # Section is in this segment
-                        new_seg_offset = segment_relocations[seg['idx']]
-                        offset_within_seg = sh_offset - seg_start
-                        new_sh_offset = new_seg_offset + offset_within_seg
-                        struct.pack_into('<Q', section_headers, sh_offset_pos, new_sh_offset)
-                        section_relocated = True
-                        break
-
-                # If section wasn't in any segment, leave it as is (might be debug section)
-
-        new_elf_data.extend(section_headers)
-        struct.pack_into('<Q', new_elf_data, 40, new_shoff)
-        print(f"  Section headers: 0x{e_shoff:x} -> 0x{new_shoff:x}")
+    struct.pack_into('<Q', new_elf_data, 40, new_shoff)  # Set e_shoff
+    struct.pack_into('<H', new_elf_data, 60, 1)  # Set e_shnum = 1 (just null section)
+    struct.pack_into('<H', new_elf_data, 62, 0)  # Set e_shstrndx = 0
+    print(f"  Section headers: minimal table at 0x{new_shoff:x}")
 
     # Write output file
     with open(output_file, 'wb') as f:

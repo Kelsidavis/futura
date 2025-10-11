@@ -21,6 +21,7 @@ PAGE_SIZE = 0x1000;
 
 PHDRS
 {
+    boot PT_LOAD FLAGS(7);          /* Boot section: readable, writable, executable */
     note PT_NOTE FLAGS(4);          /* Note section: readable */
     text PT_LOAD FLAGS(5);          /* Text section: readable, executable */
     rodata PT_LOAD FLAGS(4);        /* Read-only data: readable */
@@ -46,7 +47,7 @@ SECTIONS
         *(.boot.data)           /* Boot data (GDT and page tables) */
         . = ALIGN(PAGE_SIZE);
         _boot_code_end = .;
-    }
+    } :boot
 
     /* Separate section for boot BSS (boot stack) - doesn't need to be in first 32KB */
     .boot_bss ALIGN(PAGE_SIZE) :
@@ -56,7 +57,7 @@ SECTIONS
         . = ALIGN(PAGE_SIZE);
         _boot_bss_end = .;
         _boot_end = .;
-    }
+    } :boot
 
     /* PVH boot note for QEMU direct boot */
     .note.Xen :

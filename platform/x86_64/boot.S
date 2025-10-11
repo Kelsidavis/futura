@@ -42,28 +42,19 @@ gdt64_pointer:
     .word gdt64_end - gdt64 - 1         /* Limit */
     .long gdt64                         /* Base */
 
-/* Page tables in .boot.data (pre-populated with values) */
+/* Page tables in .boot.data (zero-initialized, will be populated at runtime) */
 .section .boot.data
 .align 4096
 boot_pml4:
-    .quad 0x0000000000102003            /* PML4[0]: Present + Writable, points to boot_pdpt */
-    .skip 4080                          /* Skip to offset 4088 (511*8) */
-    .quad 0x0000000000102003            /* PML4[511]: Present + Writable, points to boot_pdpt */
+    .skip 4096                          /* 512 entries * 8 bytes */
 
 .align 4096
 boot_pdpt:
-    .quad 0x0000000000103003            /* PDPT[0]: Present + Writable, points to boot_pd */
-    .skip 4072                          /* Skip to offset 4080 (510*8) */
-    .quad 0x0000000000103003            /* PDPT[510]: Present + Writable, points to boot_pd */
-    .skip 8                             /* Pad to 4096 */
+    .skip 4096                          /* 512 entries * 8 bytes */
 
 .align 4096
 boot_pd:
-    .quad 0x0000000000000083            /* PD[0] -> 2MB huge page at 0MB (Present + Writable + Huge) */
-    .quad 0x0000000000200083            /* PD[1] -> 2MB huge page at 2MB */
-    .quad 0x0000000000400083            /* PD[2] -> 2MB huge page at 4MB */
-    .quad 0x0000000000600083            /* PD[3] -> 2MB huge page at 6MB */
-    .skip 4064                          /* Rest of page table */
+    .skip 4096                          /* 512 entries * 8 bytes */
 
 /* Boot stack in .boot.bss (this can stay as BSS since we just need zero-initialized space) */
 .section .boot.bss
@@ -89,8 +80,35 @@ _start:
     movl %eax, %edi                     /* Multiboot2 magic in eax */
     movl %ebx, %esi                     /* Multiboot2 info pointer in ebx */
 
-    /* Page tables are pre-populated in .boot.data section */
-    /* Just load PML4 address into CR3 */
+    /* Initialize page tables at runtime with correct physical addresses */
+
+    /* Setup PML4: identity map low 2MB and higher-half kernel */
+    movl $boot_pdpt, %eax               /* Get physical address of PDPT */
+    orl $0x03, %eax                     /* Present + Writable */
+    movl %eax, boot_pml4                /* PML4[0] low dword */
+    movl $0, boot_pml4 + 4              /* PML4[0] high dword */
+    movl %eax, boot_pml4 + 4088         /* PML4[511] low dword */
+    movl $0, boot_pml4 + 4092           /* PML4[511] high dword */
+
+    /* Setup PDPT: map first and second-to-last entries */
+    movl $boot_pd, %eax                 /* Get physical address of PD */
+    orl $0x03, %eax                     /* Present + Writable */
+    movl %eax, boot_pdpt                /* PDPT[0] low dword */
+    movl $0, boot_pdpt + 4              /* PDPT[0] high dword */
+    movl %eax, boot_pdpt + 4080         /* PDPT[510] low dword */
+    movl $0, boot_pdpt + 4084           /* PDPT[510] high dword */
+
+    /* Setup PD: identity map first 8MB with 2MB huge pages */
+    movl $0x00000083, boot_pd           /* PD[0] low dword: 0MB-2MB */
+    movl $0, boot_pd + 4                /* PD[0] high dword */
+    movl $0x00200083, boot_pd + 8       /* PD[1] low dword: 2MB-4MB */
+    movl $0, boot_pd + 12               /* PD[1] high dword */
+    movl $0x00400083, boot_pd + 16      /* PD[2] low dword: 4MB-6MB */
+    movl $0, boot_pd + 20               /* PD[2] high dword */
+    movl $0x00600083, boot_pd + 24      /* PD[3] low dword: 6MB-8MB */
+    movl $0, boot_pd + 28               /* PD[3] high dword */
+
+    /* Load PML4 address into CR3 */
     movl $boot_pml4, %eax
     movl %eax, %cr3
 
@@ -176,38 +194,46 @@ higher_half_entry:
     movb $'H', %al
     outb %al, %dx
 
-    /* Debug: Write 'L' before loading address */
+    /* Debug: Write 'K' before stack switch */
     movw $0x3F8, %dx
-    movb $'L', %al
+    movb $'K', %al
+    outb %al, %dx
+
+    /* Switch to higher-half kernel stack before calling C code */
+    /* The boot stack is identity-mapped at low addresses, */
+    /* but we need a higher-half stack for C function calls */
+    movabs $_stack_top, %rsp
+    movabs $_stack_top, %rbp
+
+    /* Debug: Write 'S' after stack switch */
+    movw $0x3F8, %dx
+    movb $'S', %al
     outb %al, %dx
 
     /* Prepare arguments for platform init */
-    /* RDI = Multiboot2 magic (already set from boot) */
-    /* RSI = Multiboot2 info pointer (already set from boot) */
+    /* EDI/RDI = Multiboot2 magic (saved from boot in 32-bit mode) */
+    /* ESI/RSI = Multiboot2 info pointer (saved from boot in 32-bit mode) */
+    /* Zero-extend to 64-bit */
+    movl %edi, %edi
+    movl %esi, %esi
 
-    /* Workaround: Call via identity-mapped address instead of higher-half */
-    /* fut_platform_init is at virtual 0xffffffff8000c94b, physical 0xc94b */
-    movl $0xc94b, %ecx           /* Save address in ECX */
-
-    /* Debug: Write 'M' after loading address */
+    /* Debug: Write 'C' before call */
     movw $0x3F8, %dx
-    movb $'M', %al
+    movb $'C', %al
     outb %al, %dx
 
-    /* Call the platform init function via identity mapping */
-    call *%rcx
+    /* Load absolute address of fut_platform_init and call it */
+    /* Can't use relative call because function is too far away */
+    movabs $fut_platform_init, %rax
 
-    /* Debug: Write 'R' if call returns */
+    /* Call the platform initialization function */
+    call *%rax
+
+    /* Debug: Write 'R' if call returns (should never happen) */
     movw $0x3F8, %dx
     movb $'R', %al
     outb %al, %dx
 
-    /* Should never return, but write 'X' if we do */
-    movw $0x3F8, %dx
-    movb $'X', %al
-    outb %al, %dx
-
-    /* Should never return, but halt if it does */
 halt_loop:
     cli
     hlt

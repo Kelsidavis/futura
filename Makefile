@@ -83,7 +83,9 @@ KERNEL_SOURCES := \
     kernel/scheduler/fut_sched.c \
     kernel/scheduler/fut_stats.c \
     kernel/timer/fut_timer.c \
-    kernel/ipc/fut_object.c
+    kernel/ipc/fut_object.c \
+    kernel/ipc/fut_fipc.c \
+    kernel/vfs/fut_vfs.c
 
 # Platform-specific sources
 ifeq ($(PLATFORM),x86_64)
@@ -102,7 +104,8 @@ endif
 
 # Subsystem sources (POSIX compat)
 SUBSYSTEM_SOURCES := \
-    subsystems/posix_compat/posix_shim.c
+    subsystems/posix_compat/posix_shim.c \
+    subsystems/posix_compat/posix_syscall.c
 
 # All sources
 ALL_SOURCES := $(KERNEL_SOURCES) $(PLATFORM_SOURCES) $(SUBSYSTEM_SOURCES)
@@ -129,6 +132,7 @@ $(OBJ_DIR) $(BIN_DIR):
 	@mkdir -p $(OBJ_DIR)/kernel/timer
 	@mkdir -p $(OBJ_DIR)/kernel/interrupts
 	@mkdir -p $(OBJ_DIR)/kernel/ipc
+	@mkdir -p $(OBJ_DIR)/kernel/vfs
 	@mkdir -p $(OBJ_DIR)/platform/$(PLATFORM)
 	@mkdir -p $(OBJ_DIR)/subsystems/posix_compat
 

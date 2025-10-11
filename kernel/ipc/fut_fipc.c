@@ -1,0 +1,328 @@
+/* fut_fipc.c - Futura IPC Implementation
+ *
+ * Copyright (c) 2025 Kelsi Davis
+ * Licensed under the MPL v2.0 — see LICENSE for details.
+ *
+ * Shared memory regions and event channels for inter-process communication.
+ */
+
+#include <kernel/fut_fipc.h>
+#include <kernel/fut_memory.h>
+#include <kernel/fut_timer.h>
+#include <stddef.h>
+
+/* ============================================================
+ *   FIPC State
+ * ============================================================ */
+
+static struct fut_fipc_region *region_list = NULL;
+static struct fut_fipc_channel *channel_list = NULL;
+static uint64_t next_region_id = 1;
+static uint64_t next_channel_id = 1;
+
+/* ============================================================
+ *   FIPC Initialization
+ * ============================================================ */
+
+void fut_fipc_init(void) {
+    region_list = NULL;
+    channel_list = NULL;
+}
+
+/* ============================================================
+ *   Shared Memory Regions
+ * ============================================================ */
+
+int fut_fipc_region_create(size_t size, uint32_t flags, struct fut_fipc_region **region_out) {
+    if (!region_out) {
+        return FIPC_EINVAL;
+    }
+
+    /* Allocate region structure */
+    struct fut_fipc_region *region = fut_malloc(sizeof(struct fut_fipc_region));
+    if (!region) {
+        return FIPC_ENOMEM;
+    }
+
+    /* Allocate backing memory (should be page-aligned) */
+    void *base = fut_malloc(size);
+    if (!base) {
+        fut_free(region);
+        return FIPC_ENOMEM;
+    }
+
+    /* Initialize region */
+    region->id = next_region_id++;
+    region->base = base;
+    region->size = size;
+    region->flags = flags;
+    region->refcount = 1;
+    region->owner = NULL;  /* Set by caller */
+    region->permissions = FIPC_REGION_READ | FIPC_REGION_WRITE;
+
+    /* Add to region list */
+    region->next = region_list;
+    region_list = region;
+
+    *region_out = region;
+    return 0;
+}
+
+void fut_fipc_region_destroy(struct fut_fipc_region *region) {
+    if (!region) {
+        return;
+    }
+
+    /* Decrement reference count */
+    if (region->refcount > 0) {
+        region->refcount--;
+    }
+
+    if (region->refcount == 0) {
+        /* Remove from region list */
+        struct fut_fipc_region **prev = &region_list;
+        struct fut_fipc_region *curr = region_list;
+
+        while (curr) {
+            if (curr == region) {
+                *prev = curr->next;
+                break;
+            }
+            prev = &curr->next;
+            curr = curr->next;
+        }
+
+        /* Free backing memory */
+        if (region->base) {
+            fut_free(region->base);
+        }
+
+        /* Free region structure */
+        fut_free(region);
+    }
+}
+
+void *fut_fipc_region_map(struct fut_task *task, struct fut_fipc_region *region, void *addr) {
+    /* Phase 2: Stub implementation */
+    /* Full implementation would:
+     * 1. Allocate virtual address range in task's address space
+     * 2. Map physical pages to virtual address
+     * 3. Set page table entries with appropriate permissions
+     */
+    (void)task;
+    (void)addr;
+
+    if (region) {
+        region->refcount++;
+        return region->base;  /* Return kernel virtual address */
+    }
+
+    return NULL;
+}
+
+void fut_fipc_region_unmap(struct fut_task *task, struct fut_fipc_region *region) {
+    /* Phase 2: Stub implementation */
+    /* Full implementation would:
+     * 1. Remove page table mappings
+     * 2. Flush TLB
+     * 3. Decrement region reference count
+     */
+    (void)task;
+
+    if (region && region->refcount > 0) {
+        region->refcount--;
+    }
+}
+
+/* ============================================================
+ *   Event Channels
+ * ============================================================ */
+
+int fut_fipc_channel_create(struct fut_task *sender, struct fut_task *receiver,
+                             size_t queue_size, uint32_t flags,
+                             struct fut_fipc_channel **channel_out) {
+    if (!channel_out) {
+        return FIPC_EINVAL;
+    }
+
+    /* Allocate channel structure */
+    struct fut_fipc_channel *channel = fut_malloc(sizeof(struct fut_fipc_channel));
+    if (!channel) {
+        return FIPC_ENOMEM;
+    }
+
+    /* Allocate message queue */
+    void *queue = fut_malloc(queue_size);
+    if (!queue) {
+        fut_free(channel);
+        return FIPC_ENOMEM;
+    }
+
+    /* Initialize channel */
+    channel->id = next_channel_id++;
+    channel->sender = sender;
+    channel->receiver = receiver;
+    channel->msg_queue = queue;
+    channel->queue_size = queue_size;
+    channel->queue_head = 0;
+    channel->queue_tail = 0;
+    channel->pending = false;
+    channel->event_mask = 0;
+    channel->flags = flags;
+
+    /* Add to channel list */
+    channel->next = channel_list;
+    channel_list = channel;
+
+    *channel_out = channel;
+    return 0;
+}
+
+void fut_fipc_channel_destroy(struct fut_fipc_channel *channel) {
+    if (!channel) {
+        return;
+    }
+
+    /* Remove from channel list */
+    struct fut_fipc_channel **prev = &channel_list;
+    struct fut_fipc_channel *curr = channel_list;
+
+    while (curr) {
+        if (curr == channel) {
+            *prev = curr->next;
+            break;
+        }
+        prev = &curr->next;
+        curr = curr->next;
+    }
+
+    /* Free message queue */
+    if (channel->msg_queue) {
+        fut_free(channel->msg_queue);
+    }
+
+    /* Free channel structure */
+    fut_free(channel);
+}
+
+/* ============================================================
+ *   Message Passing
+ * ============================================================ */
+
+int fut_fipc_send(struct fut_fipc_channel *channel, uint32_t type,
+                  const void *data, size_t size) {
+    if (!channel || !data) {
+        return FIPC_EINVAL;
+    }
+
+    /* Calculate total message size (header + payload) */
+    size_t total_size = sizeof(struct fut_fipc_msg) + size;
+
+    /* Check if queue has enough space */
+    size_t queue_used = (channel->queue_head - channel->queue_tail + channel->queue_size) % channel->queue_size;
+    size_t queue_free = channel->queue_size - queue_used - 1;
+
+    if (total_size > queue_free) {
+        if (channel->flags & FIPC_CHANNEL_NONBLOCKING) {
+            return FIPC_EAGAIN;
+        }
+        /* For blocking channels, would wait here */
+        return FIPC_EBUSY;
+    }
+
+    /* Build message header */
+    struct fut_fipc_msg msg_hdr;
+    msg_hdr.type = type;
+    msg_hdr.size = size;
+    msg_hdr.timestamp = fut_timer_get_ticks();
+    msg_hdr.sender_id = 0;  /* Phase 2: Should be sender task ID */
+
+    /* Copy header to queue */
+    uint8_t *queue_buf = (uint8_t *)channel->msg_queue;
+    size_t head = channel->queue_head;
+
+    /* Copy header */
+    for (size_t i = 0; i < sizeof(msg_hdr); i++) {
+        queue_buf[head] = ((uint8_t *)&msg_hdr)[i];
+        head = (head + 1) % channel->queue_size;
+    }
+
+    /* Copy payload */
+    const uint8_t *data_buf = (const uint8_t *)data;
+    for (size_t i = 0; i < size; i++) {
+        queue_buf[head] = data_buf[i];
+        head = (head + 1) % channel->queue_size;
+    }
+
+    /* Update queue head */
+    channel->queue_head = head;
+
+    /* Set pending flag */
+    channel->pending = true;
+    channel->event_mask |= FIPC_EVENT_MESSAGE;
+
+    return 0;
+}
+
+ssize_t fut_fipc_recv(struct fut_fipc_channel *channel, void *buf, size_t buf_size) {
+    if (!channel || !buf) {
+        return FIPC_EINVAL;
+    }
+
+    /* Check if queue is empty */
+    if (channel->queue_head == channel->queue_tail) {
+        if (channel->flags & FIPC_CHANNEL_NONBLOCKING) {
+            return FIPC_EAGAIN;
+        }
+        /* For blocking channels, would wait here */
+        return 0;
+    }
+
+    /* Read message header */
+    uint8_t *queue_buf = (uint8_t *)channel->msg_queue;
+    size_t tail = channel->queue_tail;
+
+    struct fut_fipc_msg msg_hdr;
+    for (size_t i = 0; i < sizeof(msg_hdr); i++) {
+        ((uint8_t *)&msg_hdr)[i] = queue_buf[tail];
+        tail = (tail + 1) % channel->queue_size;
+    }
+
+    /* Check if buffer is large enough */
+    size_t total_size = sizeof(msg_hdr) + msg_hdr.size;
+    if (total_size > buf_size) {
+        return FIPC_EINVAL;
+    }
+
+    /* Copy header to buffer */
+    uint8_t *dest_buf = (uint8_t *)buf;
+    for (size_t i = 0; i < sizeof(msg_hdr); i++) {
+        dest_buf[i] = ((uint8_t *)&msg_hdr)[i];
+    }
+
+    /* Copy payload to buffer */
+    for (size_t i = 0; i < msg_hdr.size; i++) {
+        dest_buf[sizeof(msg_hdr) + i] = queue_buf[tail];
+        tail = (tail + 1) % channel->queue_size;
+    }
+
+    /* Update queue tail */
+    channel->queue_tail = tail;
+
+    /* Clear pending flag if queue is now empty */
+    if (channel->queue_head == channel->queue_tail) {
+        channel->pending = false;
+        channel->event_mask &= ~FIPC_EVENT_MESSAGE;
+    }
+
+    return (ssize_t)total_size;
+}
+
+uint32_t fut_fipc_poll(struct fut_fipc_channel *channel, uint32_t mask) {
+    if (!channel) {
+        return FIPC_EVENT_NONE;
+    }
+
+    /* Return pending events matching mask */
+    return channel->event_mask & mask;
+}

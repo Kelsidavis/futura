@@ -120,12 +120,12 @@ See [PHASE1_COMPLETE.md](docs/PHASE1_COMPLETE.md) for detailed completion report
 
 ## 🗺️ Roadmap
 
-### Phase 2: Core Services
-- Virtual filesystem (VFS) layer
-- Block device drivers
-- Native Futura filesystem
-- Async network stack foundation
-- IPC channels and message queues
+### Phase 2: Core Services (In Progress)
+- ✅ Virtual filesystem (VFS) layer - **Complete**
+- ✅ RamFS (in-memory filesystem) - **Complete**
+- 🔄 Block device drivers - In Progress
+- ⏳ Native Futura filesystem
+- ⏳ Async network stack foundation
 
 ### Phase 3: Advanced Features
 - GUI compositor and window manager

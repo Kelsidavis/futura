@@ -261,6 +261,13 @@ void fut_vfs_init(void);
 void fut_vfs_set_root(struct fut_vnode *vnode);
 
 /**
+ * Get root vnode (for testing and direct access).
+ *
+ * @return Root vnode or NULL if not mounted
+ */
+struct fut_vnode *fut_vfs_get_root(void);
+
+/**
  * Increment vnode reference count.
  *
  * @param vnode VNode to reference

@@ -9,24 +9,49 @@
 #   Build Configuration
 # ============================================================
 
-# Platform selection (x86_64, arm64, apple_silicon)
+# Platform selection (x86_64, arm64)
 PLATFORM ?= x86_64
 
 # Build mode (debug, release)
 BUILD_MODE ?= debug
 
-# Compiler and tools
-CC := gcc-14
-AS := as
-LD := ld
-AR := ar
+# ============================================================
+#   Platform-Specific Toolchain Configuration
+# ============================================================
+
+ifeq ($(PLATFORM),x86_64)
+    # x86-64 toolchain
+    CC := gcc-14
+    AS := as
+    LD := ld
+    AR := ar
+    ARCH_CFLAGS := -m64 -mcmodel=kernel -mno-red-zone
+    ARCH_ASFLAGS := --64
+    ARCH_LDFLAGS := -m elf_x86_64 -T platform/x86_64/link.ld
+else ifeq ($(PLATFORM),arm64)
+    # ARM64 cross-compilation toolchain
+    CROSS_COMPILE ?= aarch64-linux-gnu-
+    CC := $(CROSS_COMPILE)gcc
+    AS := $(CROSS_COMPILE)as
+    LD := $(CROSS_COMPILE)ld
+    AR := $(CROSS_COMPILE)ar
+    ARCH_CFLAGS := -march=armv8-a -mtune=cortex-a53
+    ARCH_ASFLAGS :=
+    ARCH_LDFLAGS := -T platform/arm64/link.ld
+else
+    $(error Unsupported platform: $(PLATFORM))
+endif
+
+# ============================================================
+#   Common Compiler Flags
+# ============================================================
 
 # C standard and compiler flags
 CFLAGS := -std=c23 -ffreestanding -nostdlib -fno-builtin
 CFLAGS += -Wall -Wextra -Wpedantic -Werror
-CFLAGS += -m64 -mcmodel=kernel -mno-red-zone  # x86-64 specific
 CFLAGS += -fno-pic -fno-pie  # Disable PIC/PIE for kernel code
 CFLAGS += -I./include
+CFLAGS += $(ARCH_CFLAGS)
 
 # Debug vs Release flags
 ifeq ($(BUILD_MODE),debug)
@@ -36,10 +61,10 @@ else
 endif
 
 # Assembly flags
-ASFLAGS := --64  # x86-64 specific
+ASFLAGS := $(ARCH_ASFLAGS)
 
 # Linker flags
-LDFLAGS := -m elf_x86_64 -nostdlib -T platform/x86_64/link.ld
+LDFLAGS := -nostdlib $(ARCH_LDFLAGS)
 
 # Output directories
 BUILD_DIR := build
@@ -60,7 +85,7 @@ KERNEL_SOURCES := \
     kernel/timer/fut_timer.c \
     kernel/ipc/fut_object.c
 
-# Platform-specific sources (x86_64)
+# Platform-specific sources
 ifeq ($(PLATFORM),x86_64)
     PLATFORM_SOURCES := \
         platform/x86_64/boot.S \
@@ -68,6 +93,11 @@ ifeq ($(PLATFORM),x86_64)
         platform/x86_64/isr_stubs.S \
         platform/x86_64/context_switch.S \
         platform/x86_64/platform_init.c
+else ifeq ($(PLATFORM),arm64)
+    PLATFORM_SOURCES := \
+        platform/arm64/boot.S \
+        platform/arm64/context_switch.S \
+        platform/arm64/platform_init.c
 endif
 
 # Subsystem sources (POSIX compat)
@@ -99,7 +129,7 @@ $(OBJ_DIR) $(BIN_DIR):
 	@mkdir -p $(OBJ_DIR)/kernel/timer
 	@mkdir -p $(OBJ_DIR)/kernel/interrupts
 	@mkdir -p $(OBJ_DIR)/kernel/ipc
-	@mkdir -p $(OBJ_DIR)/platform/x86_64
+	@mkdir -p $(OBJ_DIR)/platform/$(PLATFORM)
 	@mkdir -p $(OBJ_DIR)/subsystems/posix_compat
 
 # Build kernel
@@ -130,7 +160,7 @@ clean:
 #   Platform-Specific Targets
 # ============================================================
 
-.PHONY: platform-x86_64 platform-arm64 platform-apple-silicon
+.PHONY: platform-x86_64 platform-arm64 qemu-x86_64 qemu-arm64
 
 platform-x86_64:
 	@$(MAKE) PLATFORM=x86_64
@@ -138,8 +168,14 @@ platform-x86_64:
 platform-arm64:
 	@$(MAKE) PLATFORM=arm64
 
-platform-apple-silicon:
-	@$(MAKE) PLATFORM=apple_silicon
+# QEMU test targets
+qemu-x86_64: platform-x86_64
+	@echo "Running x86_64 kernel in QEMU..."
+	@qemu-system-x86_64 -kernel $(BIN_DIR)/futura_kernel.elf -serial stdio -nographic
+
+qemu-arm64: platform-arm64
+	@echo "Running ARM64 kernel in QEMU..."
+	@qemu-system-aarch64 -M virt -cpu cortex-a53 -kernel $(BIN_DIR)/futura_kernel.elf -serial stdio -nographic
 
 # ============================================================
 #   Help
@@ -148,28 +184,34 @@ platform-apple-silicon:
 .PHONY: help
 
 help:
-	@echo "Futura OS Build System"
+	@echo "Futura OS Build System - Phase 2 Multi-Architecture"
 	@echo ""
 	@echo "Targets:"
-	@echo "  all            - Build kernel (default)"
-	@echo "  kernel         - Build kernel only"
-	@echo "  clean          - Remove build artifacts"
-	@echo "  help           - Show this help message"
+	@echo "  all               - Build kernel (default)"
+	@echo "  kernel            - Build kernel only"
+	@echo "  clean             - Remove build artifacts"
+	@echo "  help              - Show this help message"
 	@echo ""
 	@echo "Platform Targets:"
-	@echo "  platform-x86_64 - Build for x86-64"
-	@echo "  platform-arm64  - Build for ARM64"
-	@echo "  platform-apple-silicon - Build for Apple Silicon"
+	@echo "  platform-x86_64   - Build for x86-64"
+	@echo "  platform-arm64    - Build for ARM64"
+	@echo ""
+	@echo "QEMU Test Targets:"
+	@echo "  qemu-x86_64       - Build and run x86-64 kernel in QEMU"
+	@echo "  qemu-arm64        - Build and run ARM64 kernel in QEMU"
 	@echo ""
 	@echo "Variables:"
-	@echo "  PLATFORM       - Target platform (x86_64, arm64, apple_silicon)"
-	@echo "  BUILD_MODE     - Build mode (debug, release)"
+	@echo "  PLATFORM          - Target platform (x86_64, arm64)"
+	@echo "  BUILD_MODE        - Build mode (debug, release)"
+	@echo "  CROSS_COMPILE     - Cross-compiler prefix (for ARM64)"
 	@echo ""
 	@echo "Examples:"
-	@echo "  make                     - Build for x86-64 in debug mode"
-	@echo "  make PLATFORM=arm64      - Build for ARM64"
-	@echo "  make BUILD_MODE=release  - Build optimized release"
-	@echo "  make clean               - Clean build artifacts"
+	@echo "  make                          - Build for x86-64 in debug mode"
+	@echo "  make PLATFORM=arm64           - Build for ARM64"
+	@echo "  make BUILD_MODE=release       - Build optimized release"
+	@echo "  make qemu-x86_64              - Test x86-64 kernel in QEMU"
+	@echo "  make qemu-arm64               - Test ARM64 kernel in QEMU"
+	@echo "  make clean                    - Clean build artifacts"
 
 # ============================================================
 #   Dependency Generation (Future)

@@ -233,9 +233,11 @@ int fut_fipc_send(struct fut_fipc_channel *channel, uint32_t type,
     /* Build message header */
     struct fut_fipc_msg msg_hdr;
     msg_hdr.type = type;
-    msg_hdr.size = size;
-    msg_hdr.timestamp = fut_timer_get_ticks();
-    msg_hdr.sender_id = 0;  /* Phase 2: Should be sender task ID */
+    msg_hdr.length = size;
+    msg_hdr.timestamp = fut_get_ticks();
+    msg_hdr.src_pid = 0;        /* Phase 3: Should be sender task ID */
+    msg_hdr.dst_pid = 0;        /* Phase 3: Should be receiver task ID */
+    msg_hdr.capability = 0;     /* Phase 4: Security capability token */
 
     /* Copy header to queue */
     uint8_t *queue_buf = (uint8_t *)channel->msg_queue;
@@ -289,7 +291,7 @@ ssize_t fut_fipc_recv(struct fut_fipc_channel *channel, void *buf, size_t buf_si
     }
 
     /* Check if buffer is large enough */
-    size_t total_size = sizeof(msg_hdr) + msg_hdr.size;
+    size_t total_size = sizeof(msg_hdr) + msg_hdr.length;
     if (total_size > buf_size) {
         return FIPC_EINVAL;
     }
@@ -301,7 +303,7 @@ ssize_t fut_fipc_recv(struct fut_fipc_channel *channel, void *buf, size_t buf_si
     }
 
     /* Copy payload to buffer */
-    for (size_t i = 0; i < msg_hdr.size; i++) {
+    for (size_t i = 0; i < msg_hdr.length; i++) {
         dest_buf[sizeof(msg_hdr) + i] = queue_buf[tail];
         tail = (tail + 1) % channel->queue_size;
     }

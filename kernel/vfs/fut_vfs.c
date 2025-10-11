@@ -139,6 +139,7 @@ int fut_vfs_unmount(const char *mountpoint) {
  *   File Descriptor Management
  * ============================================================ */
 
+__attribute__((unused))
 static int alloc_fd(struct fut_file *file) {
     for (int i = 0; i < MAX_OPEN_FILES; i++) {
         if (file_table[i] == NULL) {

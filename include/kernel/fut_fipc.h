@@ -12,6 +12,12 @@
 #include <stddef.h>
 #include <stdbool.h>
 
+/* Freestanding environment: define ssize_t */
+#ifndef _SSIZE_T_DEFINED
+#define _SSIZE_T_DEFINED
+typedef long ssize_t;
+#endif
+
 /* Forward declarations */
 struct fut_task;
 struct fut_fipc_channel;
@@ -93,15 +99,18 @@ struct fut_fipc_channel {
 /**
  * FIPC message header.
  * Prepended to all messages sent through channels.
+ * Aligned with FIPC_SPEC.md specification.
  */
 struct fut_fipc_msg {
-    uint32_t type;                  /* Message type */
-    uint32_t size;                  /* Payload size in bytes */
-    uint64_t timestamp;             /* Timestamp (ticks) */
-    uint64_t sender_id;             /* Sender task ID */
+    uint32_t type;                  /* Message type (SYS, FS, UI, NET, USER, etc.) */
+    uint32_t length;                /* Payload length in bytes */
+    uint64_t timestamp;             /* Timestamp (kernel tick counter) */
+    uint32_t src_pid;               /* Source process ID */
+    uint32_t dst_pid;               /* Destination process ID */
+    uint64_t capability;            /* Channel or permission token */
 
     /* Message payload follows this header */
-    uint8_t data[];
+    uint8_t payload[];
 };
 
 /* Message types */

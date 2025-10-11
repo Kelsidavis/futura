@@ -12,6 +12,12 @@
 #include <stddef.h>
 #include <stdbool.h>
 
+/* Freestanding environment: define ssize_t */
+#ifndef _SSIZE_T_DEFINED
+#define _SSIZE_T_DEFINED
+typedef long ssize_t;
+#endif
+
 /* Forward declarations */
 struct fut_vnode;
 struct fut_mount;

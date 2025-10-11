@@ -44,6 +44,118 @@ extern char _bss_end[];
 static struct fut_fipc_channel *g_test_channel = NULL;
 
 /**
+ * Test VFS file operations.
+ * Creates files using vnode operations, writes data, reads it back.
+ */
+static void test_vfs_operations(void) {
+    fut_printf("[VFS-TEST] Starting VFS file I/O test...\n");
+
+    /* Test 1: Verify root filesystem is accessible */
+    fut_printf("[VFS-TEST] Test 1: Checking root filesystem\n");
+    struct fut_stat st;
+    int ret = fut_vfs_stat("/", &st);
+    if (ret == 0) {
+        fut_printf("[VFS-TEST] ✓ Root accessible (inode %llu, mode 0%o)\n", st.st_ino, st.st_mode);
+    } else {
+        fut_printf("[VFS-TEST] ✗ Failed to stat root: error %d\n", ret);
+        return;
+    }
+
+    /* Test 2: Create test directory using vnode operations */
+    fut_printf("[VFS-TEST] Test 2: Creating directory /testdir\n");
+
+    /* Get root vnode directly (hack: use internal VFS function) */
+    extern void fut_vfs_set_root(struct fut_vnode *vnode);  /* Forward declaration */
+
+    /* Access root through lookup */
+    struct fut_vnode *root_vnode = NULL;
+
+    /* Simple hack to get root vnode - use external linkage */
+    extern struct fut_vnode *fut_vfs_get_root(void);
+    root_vnode = fut_vfs_get_root();
+
+    if (!root_vnode) {
+        fut_printf("[VFS-TEST] ✗ Could not access root vnode\n");
+        fut_printf("[VFS-TEST] Note: Full file I/O test requires vnode API access\n");
+        fut_printf("[VFS-TEST] VFS basic validation complete\n");
+        return;
+    }
+
+    /* Create directory using vnode operations */
+    if (root_vnode->ops && root_vnode->ops->mkdir) {
+        ret = root_vnode->ops->mkdir(root_vnode, "testdir", 0755);
+        if (ret == 0) {
+            fut_printf("[VFS-TEST] ✓ Directory created: /testdir\n");
+        } else {
+            fut_printf("[VFS-TEST] ✗ mkdir failed: error %d\n", ret);
+        }
+    }
+
+    /* Test 3: Create test file in root */
+    fut_printf("[VFS-TEST] Test 3: Creating file /test.txt\n");
+
+    if (root_vnode->ops && root_vnode->ops->create) {
+        struct fut_vnode *file_vnode = NULL;
+        ret = root_vnode->ops->create(root_vnode, "test.txt", 0644, &file_vnode);
+        if (ret == 0 && file_vnode) {
+            fut_printf("[VFS-TEST] ✓ File created: /test.txt (inode %llu)\n", file_vnode->ino);
+
+            /* Test 4: Write data to file */
+            fut_printf("[VFS-TEST] Test 4: Writing data to /test.txt\n");
+            const char *test_data = "Hello, VFS! This is a test.";
+            size_t data_len = 28;
+
+            if (file_vnode->ops && file_vnode->ops->write) {
+                ssize_t written = file_vnode->ops->write(file_vnode, test_data, data_len, 0);
+                if (written > 0) {
+                    fut_printf("[VFS-TEST] ✓ Wrote %lld bytes\n", (long long)written);
+
+                    /* Test 5: Read data back */
+                    fut_printf("[VFS-TEST] Test 5: Reading data from /test.txt\n");
+                    char read_buf[64];
+
+                    if (file_vnode->ops && file_vnode->ops->read) {
+                        ssize_t bytes_read = file_vnode->ops->read(file_vnode, read_buf, sizeof(read_buf), 0);
+                        if (bytes_read > 0) {
+                            read_buf[bytes_read] = '\0';
+                            fut_printf("[VFS-TEST] ✓ Read %lld bytes: '%s'\n", (long long)bytes_read, read_buf);
+
+                            /* Verify data matches */
+                            int match = 1;
+                            for (size_t i = 0; i < data_len; i++) {
+                                if (read_buf[i] != test_data[i]) {
+                                    match = 0;
+                                    break;
+                                }
+                            }
+
+                            if (match) {
+                                fut_printf("[VFS-TEST] ✓ Data verification PASSED\n");
+                            } else {
+                                fut_printf("[VFS-TEST] ✗ Data verification FAILED\n");
+                            }
+                        } else {
+                            fut_printf("[VFS-TEST] ✗ Read failed: %lld\n", (long long)bytes_read);
+                        }
+                    }
+                } else {
+                    fut_printf("[VFS-TEST] ✗ Write failed: %lld\n", (long long)written);
+                }
+            }
+
+            /* Decrement reference count */
+            fut_vnode_unref(file_vnode);
+        } else {
+            fut_printf("[VFS-TEST] ✗ create failed: error %d\n", ret);
+        }
+    }
+
+    fut_printf("[VFS-TEST] ===========================================\n");
+    fut_printf("[VFS-TEST] VFS file I/O test complete!\n");
+    fut_printf("[VFS-TEST] ===========================================\n\n");
+}
+
+/**
  * FIPC sender thread - sends test messages.
  */
 static void fipc_sender_thread(void *arg) {
@@ -206,6 +318,9 @@ void fut_kernel_main(void) {
     }
 
     fut_printf("[INIT] Root filesystem mounted (ramfs at /)\n");
+
+    /* Test VFS operations */
+    test_vfs_operations();
 
     /* ========================================
      *   Step 4: Initialize Scheduler

@@ -55,6 +55,10 @@ void fut_vfs_set_root(struct fut_vnode *vnode) {
     }
 }
 
+struct fut_vnode *fut_vfs_get_root(void) {
+    return root_vnode;
+}
+
 /* ============================================================
  *   Filesystem Registration
  * ============================================================ */

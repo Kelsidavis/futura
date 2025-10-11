@@ -4,8 +4,6 @@
 
 Copyright © 2025 Kelsi Davis
 Licensed under Mozilla Public License 2.0 — see [LICENSE](LICENSE) for details
-Contact: dumbandroid@gmail.com
-
 ---
 
 ## 🚀 Overview

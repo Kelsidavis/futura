@@ -347,8 +347,25 @@ static void fut_idt_init(void) {
 /* Main platform initialization entry point */
 void fut_platform_init(uint32_t multiboot_magic __attribute__((unused)),
                        uint32_t multiboot_addr __attribute__((unused))) {
+    /* Early debug marker: Write 'I' to show we entered the function */
+    __asm__ volatile(
+        "movw $0x3F8, %%dx\n"
+        "movb $'I', %%al\n"
+        "outb %%al, %%dx\n"
+        ::: "%dx", "%al"
+    );
+
     /* Initialize serial port for early debugging */
     fut_serial_init();
+
+    /* Debug marker after serial init: Write 'N' */
+    __asm__ volatile(
+        "movw $0x3F8, %%dx\n"
+        "movb $'N', %%al\n"
+        "outb %%al, %%dx\n"
+        ::: "%dx", "%al"
+    );
+
     fut_serial_puts("Futura OS x86_64 Platform Initialization\n");
 
     /* Load GDT */

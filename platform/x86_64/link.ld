@@ -19,6 +19,15 @@ KERNEL_PHYSICAL_BASE = 0x100000;
 /* Page size (4KB) */
 PAGE_SIZE = 0x1000;
 
+PHDRS
+{
+    boot PT_LOAD FLAGS(7);          /* Boot section: readable, writable, executable */
+    note PT_NOTE FLAGS(4);          /* Note section: readable */
+    text PT_LOAD FLAGS(5);          /* Text section: readable, executable */
+    rodata PT_LOAD FLAGS(4);        /* Read-only data: readable */
+    data PT_LOAD FLAGS(6);          /* Data section: readable, writable */
+}
+
 SECTIONS
 {
     /* ============================================================
@@ -27,27 +36,35 @@ SECTIONS
      * The boot code runs before paging is enabled, so it must be
      * identity-mapped at low physical addresses. We place the
      * multiboot2 header and boot code at 1MB physical.
+     *
+     * CRITICAL: The multiboot2 header must be in the first 8KB of
+     * the file for GRUB to find it. The linker will place this section
+     * early in the file. The VMA and LMA are both 0x100000 (1MB) since
+     * boot code runs in physical addressing mode.
      */
     . = KERNEL_PHYSICAL_BASE;
 
-    .boot ALIGN(PAGE_SIZE) : AT(ADDR(.boot))
+    .boot :
     {
         _boot_start = .;
-        *(.multiboot)           /* Multiboot2 header (must be in first 8KB) */
+        *(.multiboot2)          /* Multiboot2 header (must be in first 8KB) */
+        *(.multiboot)           /* Fallback for multiboot */
         *(.boot.text)           /* Boot code (boot.S) */
         *(.boot.data)           /* Small boot data (GDT only) */
         . = ALIGN(PAGE_SIZE);
-        _boot_end = .;
-    }
-
-    /* Boot BSS (page tables, stack) - after the 8KB boot limit */
-    .boot.bss ALIGN(PAGE_SIZE) : AT(ADDR(.boot.bss))
-    {
+        _boot_code_end = .;
         _boot_bss_start = .;
         *(.boot.bss)            /* Page tables and boot stack */
         . = ALIGN(PAGE_SIZE);
         _boot_bss_end = .;
-    }
+        _boot_end = .;
+    } :boot
+
+    /* PVH boot note for QEMU direct boot */
+    .note.Xen :
+    {
+        *(.note.Xen)
+    } :note
 
     /* ============================================================
      *   Kernel Sections (Virtual Addressing)
@@ -55,93 +72,97 @@ SECTIONS
      * The rest of the kernel runs in higher-half virtual address space.
      * We use AT() to specify physical load addresses while running at
      * virtual addresses.
+     *
+     * CRITICAL: Both VirtAddr and PhysAddr must have the same offset
+     * within the 2MB page mapping for the page tables to work!
      */
-    . = KERNEL_VIRTUAL_BASE + SIZEOF(.boot) + SIZEOF(.boot.bss);
+    _kernel_phys_offset = ALIGN(SIZEOF(.boot) + SIZEOF(.note.Xen), PAGE_SIZE);
+    . = KERNEL_VIRTUAL_BASE + _kernel_phys_offset;
 
-    .text ALIGN(PAGE_SIZE) : AT(ADDR(.text) - KERNEL_VIRTUAL_BASE)
+    .text ALIGN(PAGE_SIZE) : AT(_kernel_phys_offset)
     {
         _text_start = .;
         *(.text.entry)          /* Kernel entry point (after paging enabled) */
         *(.text .text.*)        /* Code sections */
         . = ALIGN(PAGE_SIZE);
         _text_end = .;
-    }
+    } :text
 
-    .rodata ALIGN(PAGE_SIZE) : AT(ADDR(.rodata) - KERNEL_VIRTUAL_BASE)
+    .rodata ALIGN(PAGE_SIZE) : AT(_kernel_phys_offset + SIZEOF(.text))
     {
         _rodata_start = .;
         *(.rodata .rodata.*)    /* Read-only data */
         *(.note.*)              /* ELF notes */
         . = ALIGN(PAGE_SIZE);
         _rodata_end = .;
-    }
+    } :rodata
 
-    .data ALIGN(PAGE_SIZE) : AT(ADDR(.data) - KERNEL_VIRTUAL_BASE)
+    .data ALIGN(PAGE_SIZE) : AT(_kernel_phys_offset + SIZEOF(.text) + SIZEOF(.rodata))
     {
         _data_start = .;
         *(.data .data.*)        /* Initialized data */
         . = ALIGN(8);           /* Align for pointers */
         _data_end = .;
-    }
+    } :data
 
     /* ============================================================
      *   Global Descriptor Table (GDT)
      * ============================================================ */
-    .gdt ALIGN(8) : AT(ADDR(.gdt) - KERNEL_VIRTUAL_BASE)
+    .gdt ALIGN(8) : AT(_kernel_phys_offset + SIZEOF(.text) + SIZEOF(.rodata) + SIZEOF(.data))
     {
         _gdt_start = .;
         *(.gdt)
         *(.gdt.*)
         . = ALIGN(8);
         _gdt_end = .;
-    }
+    } :data
 
     /* ============================================================
      *   Interrupt Descriptor Table (IDT)
      * ============================================================ */
-    .idt ALIGN(8) : AT(ADDR(.idt) - KERNEL_VIRTUAL_BASE)
+    .idt ALIGN(8) : AT(_kernel_phys_offset + SIZEOF(.text) + SIZEOF(.rodata) + SIZEOF(.data) + SIZEOF(.gdt))
     {
         _idt_start = .;
         *(.idt)
         *(.idt.*)
         . = ALIGN(8);
         _idt_end = .;
-    }
+    } :data
 
     /* ============================================================
      *   Task State Segment (TSS)
      * ============================================================ */
-    .tss ALIGN(8) : AT(ADDR(.tss) - KERNEL_VIRTUAL_BASE)
+    .tss ALIGN(8) : AT(_kernel_phys_offset + SIZEOF(.text) + SIZEOF(.rodata) + SIZEOF(.data) + SIZEOF(.gdt) + SIZEOF(.idt))
     {
         _tss_start = .;
         *(.tss)
         *(.tss.*)
         . = ALIGN(8);
         _tss_end = .;
-    }
+    } :data
 
     /* ============================================================
      *   BSS Section (Uninitialized Data)
      * ============================================================ */
-    .bss ALIGN(PAGE_SIZE) : AT(ADDR(.bss) - KERNEL_VIRTUAL_BASE)
+    .bss ALIGN(PAGE_SIZE) : AT(_kernel_phys_offset + SIZEOF(.text) + SIZEOF(.rodata) + SIZEOF(.data) + SIZEOF(.gdt) + SIZEOF(.idt) + SIZEOF(.tss))
     {
         _bss_start = .;
         *(.bss .bss.*)          /* Uninitialized data */
         *(COMMON)               /* Common symbols */
         . = ALIGN(PAGE_SIZE);
         _bss_end = .;
-    }
+    } :data
 
     /* ============================================================
      *   Kernel Stack
      * ============================================================ */
-    .stack ALIGN(PAGE_SIZE) : AT(ADDR(.stack) - KERNEL_VIRTUAL_BASE)
+    .stack ALIGN(PAGE_SIZE) : AT(_kernel_phys_offset + SIZEOF(.text) + SIZEOF(.rodata) + SIZEOF(.data) + SIZEOF(.gdt) + SIZEOF(.idt) + SIZEOF(.tss) + SIZEOF(.bss))
     {
         _stack_bottom = .;
         . += 0x4000;            /* 16KB kernel stack */
         . = ALIGN(16);          /* Stack must be 16-byte aligned */
         _stack_top = .;
-    }
+    } :data
 
     /* ============================================================
      *   Kernel End Marker
@@ -205,5 +226,6 @@ ASSERT(_kernel_size < 0x1000000, "Kernel exceeds 16MB size limit")
  *   Multiboot2 Assertion
  * ============================================================
  * Multiboot2 header must be in first 8KB of binary.
+ * The boot code section can be larger, only the header position matters.
  */
-ASSERT(_boot_end - _boot_start <= 0x2000, "Boot section exceeds 8KB (multiboot2 requirement)")
+ASSERT(_boot_code_end - _boot_start <= 0x2000, "Boot code exceeds 8KB (multiboot2 header must be in first 8KB)")

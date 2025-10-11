@@ -50,6 +50,7 @@ endif
 CFLAGS := -std=c23 -ffreestanding -nostdlib -fno-builtin
 CFLAGS += -Wall -Wextra -Wpedantic -Werror
 CFLAGS += -fno-pic -fno-pie  # Disable PIC/PIE for kernel code
+CFLAGS += -fcf-protection=none  # Disable CET (Control-flow Enforcement Technology)
 CFLAGS += -I./include
 CFLAGS += $(ARCH_CFLAGS)
 

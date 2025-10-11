@@ -7,6 +7,7 @@
 
 #include <stdint.h>
 #include <stddef.h>
+#include <stdarg.h>
 
 /* Serial port definitions for debugging */
 #define SERIAL_PORT_COM1 0x3F8
@@ -172,11 +173,161 @@ void serial_puts(const char *str) {
     fut_serial_puts(str);
 }
 
-/* Simple printf stub - just forwards format string to serial */
+/* Printf implementation with format string support */
+static void print_num(uint64_t num, int base, int uppercase, int sign, int width) {
+    char buf[32];
+    const char *digits = uppercase ? "0123456789ABCDEF" : "0123456789abcdef";
+    int i = 0;
+    int negative = 0;
+
+    /* Handle signed numbers */
+    if (sign && (int64_t)num < 0) {
+        negative = 1;
+        num = -(int64_t)num;
+    }
+
+    /* Convert to string (reverse order) */
+    if (num == 0) {
+        buf[i++] = '0';
+    } else {
+        while (num > 0) {
+            buf[i++] = digits[num % base];
+            num /= base;
+        }
+    }
+
+    /* Add sign */
+    if (negative) {
+        buf[i++] = '-';
+    }
+
+    /* Pad with spaces if needed */
+    while (i < width) {
+        buf[i++] = ' ';
+    }
+
+    /* Print in correct order */
+    while (i > 0) {
+        fut_serial_putc(buf[--i]);
+    }
+}
+
 void fut_printf(const char *fmt, ...) {
-    /* Phase 1: Basic implementation - just print the format string */
-    /* Future: Implement proper variadic printf with formatting */
-    fut_serial_puts(fmt);
+    va_list args;
+    va_start(args, fmt);
+
+    while (*fmt) {
+        if (*fmt == '%') {
+            fmt++;
+
+            /* Parse width */
+            int width = 0;
+            while (*fmt >= '0' && *fmt <= '9') {
+                width = width * 10 + (*fmt - '0');
+                fmt++;
+            }
+
+            /* Parse length modifiers */
+            int is_long = 0;
+            int is_longlong = 0;
+            if (*fmt == 'l') {
+                fmt++;
+                is_long = 1;
+                if (*fmt == 'l') {
+                    fmt++;
+                    is_longlong = 1;
+                }
+            }
+
+            /* Process format specifier */
+            switch (*fmt) {
+                case 'd':
+                case 'i': {
+                    int64_t val;
+                    if (is_longlong) {
+                        val = va_arg(args, int64_t);
+                    } else if (is_long) {
+                        val = va_arg(args, long);
+                    } else {
+                        val = va_arg(args, int);
+                    }
+                    print_num((uint64_t)val, 10, 0, 1, width);
+                    break;
+                }
+                case 'u': {
+                    uint64_t val;
+                    if (is_longlong) {
+                        val = va_arg(args, uint64_t);
+                    } else if (is_long) {
+                        val = va_arg(args, unsigned long);
+                    } else {
+                        val = va_arg(args, unsigned int);
+                    }
+                    print_num(val, 10, 0, 0, width);
+                    break;
+                }
+                case 'x': {
+                    uint64_t val;
+                    if (is_longlong) {
+                        val = va_arg(args, uint64_t);
+                    } else if (is_long) {
+                        val = va_arg(args, unsigned long);
+                    } else {
+                        val = va_arg(args, unsigned int);
+                    }
+                    print_num(val, 16, 0, 0, width);
+                    break;
+                }
+                case 'X': {
+                    uint64_t val;
+                    if (is_longlong) {
+                        val = va_arg(args, uint64_t);
+                    } else if (is_long) {
+                        val = va_arg(args, unsigned long);
+                    } else {
+                        val = va_arg(args, unsigned int);
+                    }
+                    print_num(val, 16, 1, 0, width);
+                    break;
+                }
+                case 'p': {
+                    void *ptr = va_arg(args, void *);
+                    fut_serial_puts("0x");
+                    print_num((uint64_t)ptr, 16, 0, 0, 16);
+                    break;
+                }
+                case 's': {
+                    const char *str = va_arg(args, const char *);
+                    if (str) {
+                        fut_serial_puts(str);
+                    } else {
+                        fut_serial_puts("(null)");
+                    }
+                    break;
+                }
+                case 'c': {
+                    char c = (char)va_arg(args, int);
+                    fut_serial_putc(c);
+                    break;
+                }
+                case '%': {
+                    fut_serial_putc('%');
+                    break;
+                }
+                default: {
+                    fut_serial_putc('%');
+                    fut_serial_putc(*fmt);
+                    break;
+                }
+            }
+            fmt++;
+        } else {
+            fut_serial_putc(*fmt);
+            fmt++;
+        }
+    }
+
+    va_end(args);
 }
 
 /* ============================================================

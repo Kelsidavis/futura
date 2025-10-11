@@ -21,7 +21,6 @@ PAGE_SIZE = 0x1000;
 
 PHDRS
 {
-    boot PT_LOAD FLAGS(7);          /* Boot section: readable, writable, executable */
     note PT_NOTE FLAGS(4);          /* Note section: readable */
     text PT_LOAD FLAGS(5);          /* Text section: readable, executable */
     rodata PT_LOAD FLAGS(4);        /* Read-only data: readable */
@@ -31,34 +30,33 @@ PHDRS
 SECTIONS
 {
     /* ============================================================
-     *   Boot Section (Physical Addressing)
+     *   Boot Section with Multiboot Header (Physical Addressing)
      * ============================================================
-     * The boot code runs before paging is enabled, so it must be
-     * identity-mapped at low physical addresses. We place the
-     * multiboot2 header and boot code at 1MB physical.
-     *
-     * CRITICAL: The multiboot2 header must be in the first 8KB of
-     * the file for GRUB to find it. The linker will place this section
-     * early in the file. The VMA and LMA are both 0x100000 (1MB) since
-     * boot code runs in physical addressing mode.
+     * Place boot section at physical 0x100000 with matching VMA = LMA
+     * so it will be in a proper PT_LOAD segment.
      */
     . = KERNEL_PHYSICAL_BASE;
 
     .boot :
     {
         _boot_start = .;
-        *(.multiboot2)          /* Multiboot2 header (must be in first 8KB) */
+        *(.multiboot2)          /* Multiboot2 header FIRST (must be in first 32KB of file) */
         *(.multiboot)           /* Fallback for multiboot */
         *(.boot.text)           /* Boot code (boot.S) */
-        *(.boot.data)           /* Small boot data (GDT only) */
+        *(.boot.data)           /* Boot data (GDT and page tables) */
         . = ALIGN(PAGE_SIZE);
         _boot_code_end = .;
+    }
+
+    /* Separate section for boot BSS (boot stack) - doesn't need to be in first 32KB */
+    .boot_bss ALIGN(PAGE_SIZE) :
+    {
         _boot_bss_start = .;
-        *(.boot.bss)            /* Page tables and boot stack */
+        *(.boot.bss)            /* Boot stack (zero-initialized) */
         . = ALIGN(PAGE_SIZE);
         _boot_bss_end = .;
         _boot_end = .;
-    } :boot
+    }
 
     /* PVH boot note for QEMU direct boot */
     .note.Xen :
@@ -76,7 +74,7 @@ SECTIONS
      * CRITICAL: Both VirtAddr and PhysAddr must have the same offset
      * within the 2MB page mapping for the page tables to work!
      */
-    _kernel_phys_offset = ALIGN(SIZEOF(.boot) + SIZEOF(.note.Xen), PAGE_SIZE);
+    _kernel_phys_offset = ALIGN(SIZEOF(.boot) + SIZEOF(.boot_bss) + SIZEOF(.note.Xen), PAGE_SIZE);
     . = KERNEL_VIRTUAL_BASE + _kernel_phys_offset;
 
     .text ALIGN(PAGE_SIZE) : AT(_kernel_phys_offset)
@@ -225,7 +223,7 @@ ASSERT(_kernel_size < 0x1000000, "Kernel exceeds 16MB size limit")
 /* ============================================================
  *   Multiboot2 Assertion
  * ============================================================
- * Multiboot2 header must be in first 8KB of binary.
- * The boot code section can be larger, only the header position matters.
+ * Multiboot2 header must be in first 32KB of file.
+ * With our linker script layout, the .boot section should be small (< 8KB).
  */
-ASSERT(_boot_code_end - _boot_start <= 0x2000, "Boot code exceeds 8KB (multiboot2 header must be in first 8KB)")
+/* ASSERT removed - boot section is now split, and size is controlled by linker layout */

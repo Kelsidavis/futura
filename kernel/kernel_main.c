@@ -15,6 +15,8 @@
 #include <kernel/fut_thread.h>
 #include <kernel/fut_task.h>
 #include <kernel/fut_fipc.h>
+#include <kernel/fut_vfs.h>
+#include <kernel/fut_ramfs.h>
 #include <platform/platform.h>
 
 /* ============================================================
@@ -186,7 +188,27 @@ void fut_kernel_main(void) {
     fut_printf("[INIT] FIPC initialized\n");
 
     /* ========================================
-     *   Step 3: Initialize Scheduler
+     *   Step 3: Initialize VFS and Root Filesystem
+     * ======================================== */
+
+    fut_printf("[INIT] Initializing VFS (Virtual Filesystem)...\n");
+    fut_vfs_init();
+
+    /* Register ramfs filesystem type */
+    fut_ramfs_init();
+    fut_printf("[INIT] Registered ramfs filesystem\n");
+
+    /* Mount ramfs as root filesystem */
+    int vfs_ret = fut_vfs_mount(NULL, "/", "ramfs", 0, NULL);
+    if (vfs_ret < 0) {
+        fut_printf("[ERROR] Failed to mount root filesystem (error %d)\n", vfs_ret);
+        fut_platform_panic("Failed to mount root filesystem");
+    }
+
+    fut_printf("[INIT] Root filesystem mounted (ramfs at /)\n");
+
+    /* ========================================
+     *   Step 4: Initialize Scheduler
      * ======================================== */
 
     fut_printf("[INIT] Initializing scheduler...\n");
@@ -194,7 +216,7 @@ void fut_kernel_main(void) {
     fut_printf("[INIT] Scheduler initialized with idle thread\n");
 
     /* ========================================
-     *   Step 4: Create Test Task and FIPC Channel
+     *   Step 5: Create Test Task and FIPC Channel
      * ======================================== */
 
     fut_printf("[INIT] Creating test task for FIPC demonstration...\n");
@@ -226,7 +248,7 @@ void fut_kernel_main(void) {
     fut_printf("[INIT] FIPC channel created (ID %llu)\n", g_test_channel->id);
 
     /* ========================================
-     *   Step 5: Create FIPC Test Threads
+     *   Step 6: Create FIPC Test Threads
      * ======================================== */
 
     fut_printf("[INIT] Creating FIPC test threads...\n");
@@ -264,7 +286,7 @@ void fut_kernel_main(void) {
     fut_printf("[INIT] FIPC receiver thread created (TID %llu)\n", receiver_thread->tid);
 
     /* ========================================
-     *   Step 6: Start Scheduling
+     *   Step 7: Start Scheduling
      * ======================================== */
 
     fut_printf("\n");

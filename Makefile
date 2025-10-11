@@ -87,7 +87,8 @@ KERNEL_SOURCES := \
     kernel/timer/fut_timer.c \
     kernel/ipc/fut_object.c \
     kernel/ipc/fut_fipc.c \
-    kernel/vfs/fut_vfs.c
+    kernel/vfs/fut_vfs.c \
+    kernel/vfs/ramfs.c \
 
 # Platform-specific sources
 ifeq ($(PLATFORM),x86_64)

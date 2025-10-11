@@ -254,6 +254,27 @@ struct fut_stat {
 void fut_vfs_init(void);
 
 /**
+ * Set root vnode (called when root filesystem is mounted).
+ *
+ * @param vnode Root vnode
+ */
+void fut_vfs_set_root(struct fut_vnode *vnode);
+
+/**
+ * Increment vnode reference count.
+ *
+ * @param vnode VNode to reference
+ */
+void fut_vnode_ref(struct fut_vnode *vnode);
+
+/**
+ * Decrement vnode reference count and free if zero.
+ *
+ * @param vnode VNode to unreference
+ */
+void fut_vnode_unref(struct fut_vnode *vnode);
+
+/**
  * Register a filesystem type.
  *
  * @param fs Filesystem type to register

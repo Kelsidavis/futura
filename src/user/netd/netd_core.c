@@ -19,14 +19,33 @@
 #include <unistd.h>
 
 #include <kernel/fut_fipc.h>
+#include "../svc_registryd/registry_client.h"
 
 /* Some builds may not expose a prototype publicly; declare if needed. */
 extern int fut_fipc_set_transport_ops(const struct fut_fipc_transport_ops *ops, void *context);
+
+struct netd_binding {
+    uint64_t local_id;
+    char name[64];
+    char host[64];
+    uint16_t port;
+    uint64_t cached_remote;
+};
+
+struct netd_counters {
+    uint64_t lookup_attempts;
+    uint64_t lookup_hits;
+    uint64_t lookup_miss;
+    uint64_t send_eagain;
+};
 
 struct netd {
     int                sock;
     struct sockaddr_in bind_addr;
     bool               running;
+    struct netd_binding bindings[64];
+    size_t             nb;
+    struct netd_counters ctrs;
 };
 
 /* ---------- CRC32 (standard polynomial) ---------- */
@@ -52,6 +71,18 @@ static int udp_send_cb(const struct fut_fipc_remote_endpoint *remote,
 static const struct fut_fipc_transport_ops g_udp_ops = {
     .send = udp_send_cb,
 };
+
+static struct netd_binding *find_binding(struct netd *nd, uint64_t local_id) {
+    if (!nd) {
+        return NULL;
+    }
+    for (size_t i = 0; i < nd->nb; i++) {
+        if (nd->bindings[i].local_id == local_id) {
+            return &nd->bindings[i];
+        }
+    }
+    return NULL;
+}
 
 struct netd *netd_bootstrap(const char *bind_ip, uint16_t port) {
     struct netd *nd = (struct netd *)calloc(1, sizeof(*nd));
@@ -96,6 +127,35 @@ struct netd *netd_bootstrap(const char *bind_ip, uint16_t port) {
 
 bool netd_is_running(const struct netd *nd) {
     return nd && nd->running;
+}
+
+bool netd_bind_service(struct netd *nd,
+                       uint64_t local_channel_id,
+                       const char *service_name,
+                       const char *registry_host,
+                       uint16_t registry_port) {
+    if (!nd || !service_name || !registry_host || local_channel_id == 0) {
+        return false;
+    }
+
+    struct netd_binding *binding = find_binding(nd, local_channel_id);
+    if (!binding) {
+        if (nd->nb >= (sizeof(nd->bindings) / sizeof(nd->bindings[0]))) {
+            return false;
+        }
+        binding = &nd->bindings[nd->nb++];
+        binding->local_id = local_channel_id;
+        binding->cached_remote = 0;
+    }
+
+    strncpy(binding->name, service_name, sizeof(binding->name) - 1);
+    binding->name[sizeof(binding->name) - 1] = '\0';
+
+    strncpy(binding->host, registry_host, sizeof(binding->host) - 1);
+    binding->host[sizeof(binding->host) - 1] = '\0';
+
+    binding->port = registry_port;
+    return true;
 }
 
 void netd_shutdown(struct netd *nd) {
@@ -206,7 +266,40 @@ static int udp_send_cb(const struct fut_fipc_remote_endpoint *remote,
         return FIPC_EINVAL;
     }
 
-    uint16_t port = (uint16_t)(remote->node_id & 0xFFFFu);
+    struct fut_fipc_remote_endpoint ep = *remote;
+    uint64_t effective_channel = hdr->channel_id;
+
+    if (ep.channel_id == 0) {
+        struct netd_binding *binding = find_binding(nd, effective_channel);
+        if (!binding) {
+            nd->ctrs.lookup_miss++;
+            nd->ctrs.send_eagain++;
+            return FIPC_EAGAIN;
+        }
+
+        nd->ctrs.lookup_attempts++;
+        uint64_t cached = binding->cached_remote;
+        if (cached == 0) {
+            uint64_t resolved = 0;
+            if (registry_client_lookup(binding->host, binding->port, binding->name, &resolved) == 0 && resolved != 0) {
+                binding->cached_remote = resolved;
+                ep.channel_id = resolved;
+                (void)fut_fipc_register_remote(binding->local_id, &ep);
+                nd->ctrs.lookup_hits++;
+                effective_channel = resolved;
+            } else {
+                nd->ctrs.lookup_miss++;
+                nd->ctrs.send_eagain++;
+                return FIPC_EAGAIN;
+            }
+        } else {
+            ep.channel_id = cached;
+            effective_channel = cached;
+            (void)fut_fipc_register_remote(binding->local_id, &ep);
+        }
+    }
+
+    uint16_t port = (uint16_t)(ep.node_id & 0xFFFFu);
 
     struct sockaddr_in dst;
     memset(&dst, 0, sizeof(dst));
@@ -215,6 +308,7 @@ static int udp_send_cb(const struct fut_fipc_remote_endpoint *remote,
     dst.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
 
     struct fut_fipc_net_hdr net_hdr = *hdr;
+    net_hdr.channel_id = effective_channel;
     net_hdr.crc = crc32_accum(payload, payload_len);
 
     size_t frame_len = sizeof(net_hdr) + payload_len;

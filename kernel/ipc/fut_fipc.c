@@ -7,6 +7,7 @@
  */
 
 #include <kernel/fut_fipc.h>
+#include <kernel/fut_fipc_sys.h>
 #include <kernel/fut_memory.h>
 #include <kernel/fut_timer.h>
 #include <stddef.h>
@@ -101,6 +102,18 @@ static int fut_fipc_enqueue_message(struct fut_fipc_channel *channel,
 void fut_fipc_init(void) {
     region_list = NULL;
     channel_list = NULL;
+    next_region_id = 1;
+    next_channel_id = 1;
+
+    struct fut_fipc_channel *sys_channel = NULL;
+    if (fut_fipc_channel_create(NULL,
+                                NULL,
+                                4096,
+                                FIPC_CHANNEL_NONBLOCKING,
+                                &sys_channel) == 0 && sys_channel) {
+        sys_channel->id = FIPC_SYS_CHANNEL_ID;
+        sys_channel->type = FIPC_CHANNEL_SYSTEM;
+    }
 }
 
 /* ============================================================

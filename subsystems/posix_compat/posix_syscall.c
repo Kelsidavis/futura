@@ -10,6 +10,7 @@
 #include "posix_shim.h"
 #include <stdint.h>
 #include <stddef.h>
+#include <kernel/syscalls.h>
 
 /* ============================================================
  *   Syscall Numbers
@@ -64,6 +65,16 @@
 typedef int64_t (*syscall_handler_t)(uint64_t arg1, uint64_t arg2,
                                       uint64_t arg3, uint64_t arg4,
                                       uint64_t arg5, uint64_t arg6);
+
+extern ssize_t sys_echo(const char *u_in, char *u_out, size_t n);
+
+static int64_t sys_echo_handler(uint64_t arg1, uint64_t arg2, uint64_t arg3,
+                                uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg4;
+    (void)arg5;
+    (void)arg6;
+    return (int64_t)sys_echo((const char *)arg1, (char *)arg2, (size_t)arg3);
+}
 
 /* ============================================================
  *   Syscall Handlers (Wrappers)
@@ -165,6 +176,7 @@ static syscall_handler_t syscall_table[MAX_SYSCALL] = {
     [SYS_exit]       = sys_exit_handler,
     [SYS_wait4]      = sys_wait4_handler,
     [SYS_brk]        = sys_brk_handler,
+    [SYS_echo]       = sys_echo_handler,
 };
 
 /* ============================================================
@@ -211,4 +223,10 @@ void posix_syscall_init(void) {
             syscall_table[i] = sys_unimplemented;
         }
     }
+}
+
+long syscall_entry_c(uint64_t nr,
+                     uint64_t a1, uint64_t a2, uint64_t a3,
+                     uint64_t a4, uint64_t a5, uint64_t a6) {
+    return (long)posix_syscall_dispatch(nr, a1, a2, a3, a4, a5, a6);
 }

@@ -9,6 +9,7 @@
 #include <kernel/fut_vfs.h>
 #include <kernel/fut_memory.h>
 #include <kernel/chrdev.h>
+#include <kernel/devfs.h>
 #include <kernel/errno.h>
 #include <stddef.h>
 
@@ -26,16 +27,6 @@ static int num_fs_types = 0;
 
 static struct fut_mount *mount_list = NULL;
 static struct fut_file *file_table[MAX_OPEN_FILES];
-
-struct fut_chr_path {
-    const char *path;
-    unsigned major;
-    unsigned minor;
-};
-
-static const struct fut_chr_path chr_static_table[] = {
-    { "/dev/fb0", 29u, 0u },
-};
 
 /* Root vnode - set when root filesystem is mounted */
 static struct fut_vnode *root_vnode = NULL;
@@ -470,36 +461,10 @@ static void free_fd(int fd) {
     }
 }
 
-static int str_equal(const char *a, const char *b) {
-    if (!a || !b) {
-        return 0;
-    }
-    while (*a && *b && *a == *b) {
-        ++a;
-        ++b;
-    }
-    return (*a == *b);
-}
-
-static int lookup_chr_path(const char *path, unsigned *major, unsigned *minor) {
-    for (size_t i = 0; i < (sizeof(chr_static_table) / sizeof(chr_static_table[0])); ++i) {
-        if (str_equal(path, chr_static_table[i].path)) {
-            if (major) {
-                *major = chr_static_table[i].major;
-            }
-            if (minor) {
-                *minor = chr_static_table[i].minor;
-            }
-            return 0;
-        }
-    }
-    return -ENOENT;
-}
-
 static int try_open_chrdev(const char *path, int flags) {
     unsigned major = 0;
     unsigned minor = 0;
-    if (lookup_chr_path(path, &major, &minor) != 0) {
+    if (devfs_lookup_chr(path, &major, &minor) != 0) {
         return -ENOENT;
     }
 

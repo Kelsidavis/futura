@@ -98,6 +98,7 @@ KERNEL_SOURCES := \
     kernel/rt/memory.c \
     kernel/rt/stack_chk.c \
     kernel/uaccess.c \
+    kernel/vfs/devfs.c \
     kernel/tests/echo_smoke.c \
     kernel/video/fb_mmio.c \
     drivers/video/fb.c

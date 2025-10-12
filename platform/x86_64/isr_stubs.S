@@ -92,7 +92,50 @@ IRQ 14, 46                              /* Primary ATA */
 IRQ 15, 47                              /* Secondary ATA */
 
 /* System call interrupt (128) */
-ISR_NO_ERROR 128
+.extern syscall_entry_c
+.global isr_syscall_int80_stub
+.type isr_syscall_int80_stub, @function
+isr_syscall_int80_stub:
+    pushq %rbp
+    pushq %rbx
+    pushq %r12
+    pushq %r13
+    pushq %r14
+    pushq %r15
+
+    pushq %r9
+    pushq %r8
+    pushq %r10
+    pushq %rdx
+    pushq %rsi
+    pushq %rdi
+    pushq %rax
+
+    movq 0(%rsp), %rdi        /* syscall number */
+    movq 8(%rsp), %rsi        /* arg1 */
+    movq 16(%rsp), %rdx       /* arg2 */
+    movq 24(%rsp), %rcx       /* arg3 */
+    movq 32(%rsp), %r8        /* arg4 */
+    movq 40(%rsp), %r9        /* arg5 */
+    movq 48(%rsp), %r11       /* arg6 */
+    pushq %r11
+
+    call syscall_entry_c
+
+    addq $8, %rsp             /* remove arg6 */
+    addq $56, %rsp            /* remove saved argument registers */
+
+    popq %r15
+    popq %r14
+    popq %r13
+    popq %r12
+    popq %rbx
+    popq %rbp
+    iretq
+.size isr_syscall_int80_stub, . - isr_syscall_int80_stub
+
+.global isr128
+.set isr128, isr_syscall_int80_stub
 
 /* Common ISR stub - saves all registers */
 .type isr_common_stub, @function

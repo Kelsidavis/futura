@@ -132,3 +132,9 @@ int pmap_probe_pte(fut_vmem_context_t *ctx, uint64_t vaddr, uint64_t *pte_out) {
     *pte_out = pte;
     return 0;
 }
+
+int pmap_map_user(fut_vmem_context_t *ctx, uint64_t uaddr, phys_addr_t paddr,
+                  size_t len, uint64_t prot) {
+    (void)ctx;
+    return pmap_map(uaddr, paddr, len, prot);
+}

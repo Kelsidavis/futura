@@ -45,14 +45,17 @@ gdt64_pointer:
 /* Page tables in .boot.data (zero-initialized, will be populated at runtime) */
 .section .boot.data
 .align 4096
+.global boot_pml4
 boot_pml4:
     .skip 4096                          /* 512 entries * 8 bytes */
 
 .align 4096
+.global boot_pdpt
 boot_pdpt:
     .skip 4096                          /* 512 entries * 8 bytes */
 
 .align 4096
+.global boot_pd
 boot_pd:
     .skip 4096                          /* 512 entries * 8 bytes */
 
@@ -98,7 +101,7 @@ _start:
     movl %eax, boot_pdpt + 4080         /* PDPT[510] low dword */
     movl $0, boot_pdpt + 4084           /* PDPT[510] high dword */
 
-    /* Setup PD: identity map first 8MB with 2MB huge pages */
+    /* Setup PD: identity map first 32MB with 2MB huge pages */
     movl $0x00000083, boot_pd           /* PD[0] low dword: 0MB-2MB */
     movl $0, boot_pd + 4                /* PD[0] high dword */
     movl $0x00200083, boot_pd + 8       /* PD[1] low dword: 2MB-4MB */
@@ -107,6 +110,30 @@ _start:
     movl $0, boot_pd + 20               /* PD[2] high dword */
     movl $0x00600083, boot_pd + 24      /* PD[3] low dword: 6MB-8MB */
     movl $0, boot_pd + 28               /* PD[3] high dword */
+    movl $0x00800083, boot_pd + 32      /* PD[4] low dword: 8MB-10MB */
+    movl $0, boot_pd + 36               /* PD[4] high dword */
+    movl $0x00A00083, boot_pd + 40      /* PD[5] low dword: 10MB-12MB */
+    movl $0, boot_pd + 44               /* PD[5] high dword */
+    movl $0x00C00083, boot_pd + 48      /* PD[6] low dword: 12MB-14MB */
+    movl $0, boot_pd + 52               /* PD[6] high dword */
+    movl $0x00E00083, boot_pd + 56      /* PD[7] low dword: 14MB-16MB */
+    movl $0, boot_pd + 60               /* PD[7] high dword */
+    movl $0x01000083, boot_pd + 64      /* PD[8] low dword: 16MB-18MB */
+    movl $0, boot_pd + 68               /* PD[8] high dword */
+    movl $0x01200083, boot_pd + 72      /* PD[9] low dword: 18MB-20MB */
+    movl $0, boot_pd + 76               /* PD[9] high dword */
+    movl $0x01400083, boot_pd + 80      /* PD[10] low dword: 20MB-22MB */
+    movl $0, boot_pd + 84               /* PD[10] high dword */
+    movl $0x01600083, boot_pd + 88      /* PD[11] low dword: 22MB-24MB */
+    movl $0, boot_pd + 92               /* PD[11] high dword */
+    movl $0x01800083, boot_pd + 96      /* PD[12] low dword: 24MB-26MB */
+    movl $0, boot_pd + 100              /* PD[12] high dword */
+    movl $0x01A00083, boot_pd + 104     /* PD[13] low dword: 26MB-28MB */
+    movl $0, boot_pd + 108              /* PD[13] high dword */
+    movl $0x01C00083, boot_pd + 112     /* PD[14] low dword: 28MB-30MB */
+    movl $0, boot_pd + 116              /* PD[14] high dword */
+    movl $0x01E00083, boot_pd + 120     /* PD[15] low dword: 30MB-32MB */
+    movl $0, boot_pd + 124              /* PD[15] high dword */
 
     /* Load PML4 address into CR3 */
     movl $boot_pml4, %eax

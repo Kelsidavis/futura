@@ -688,6 +688,40 @@ static void handle_message(struct futuraway_state *state,
     case FW_OP_SURFACE_COMMIT:
         (void)handle_surface_commit(state, msg);
         break;
+    case FW_OP_SURFACE_BUFFER:
+        if (msg->length >= sizeof(struct fw_surface_buffer)) {
+            (void)*(const struct fw_surface_buffer *)msg->payload;
+        }
+        break;
+    case FW_OP_PRESENT:
+        if (msg->length >= sizeof(struct fw_present)) {
+            const struct fw_present *req = (const struct fw_present *)msg->payload;
+            size_t count = (size_t)req->damage_count;
+            size_t extra = 0;
+            bool valid = true;
+            if (count != 0) {
+                if (count > (SIZE_MAX - sizeof(struct fw_present)) / sizeof(struct fw_surface_damage)) {
+                    valid = false;
+                } else {
+                    extra = count * sizeof(struct fw_surface_damage);
+                }
+            }
+            if (valid && msg->length >= sizeof(struct fw_present) + extra) {
+                /* consume payload to keep parser aligned; no state yet */
+            }
+        }
+        break;
+    case FW_OP_INPUT_FOCUS:
+        if (msg->length >= sizeof(uint64_t)) {
+            (void)*(const uint64_t *)msg->payload;
+        }
+        break;
+    case FW_OP_INPUT_POINTER:
+        if (msg->length >= sizeof(uint32_t) * 2u) {
+            (void)((const uint32_t *)msg->payload)[0];
+            (void)((const uint32_t *)msg->payload)[1];
+        }
+        break;
     case FW_OP_INPUT_EVENT:
     default:
         break;

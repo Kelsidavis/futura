@@ -87,3 +87,10 @@
 ## 12. Transport Header v1
 - The UDP framing now includes `magic`, `version`, `flags`, `seq`, `credits`, `channel_id`, `payload_len`, and `crc`. Version defaults to 1, preserving compatibility with earlier payload parsing (receivers can ignore fields they do not recognise).
 - `seq` increments with each transmitted frame per bound service, while `credits` remains advisory (current builds leave it at 0). Flow-control and acknowledgement flags are reserved for future implementations.
+
+## 13. Kernel Capability Ledger & Quotas (Phase K1)
+- Channels now carry a kernel-managed capability record: rights bits (`SEND`, `RECV`, `SYS`, `ADMIN`), message/byte quotas, and optional expiry tick.
+- `fut_fipc_cap_bind()` installs or refreshes the ledger (counters reset); `fut_fipc_cap_unbind()` clears restrictions, restoring legacy behaviour.
+- Enforcement occurs in both `fut_fipc_send()` and `fut_fipc_channel_inject()`. Rights violations return `FIPC_EPERM`; quota exhaustion maps to `FIPC_ENOSPC`.
+- Counters accumulate per-channel usage (messages/bytes sent/injected) and feed the kernel system metrics publisher so observability reflects real traffic.
+- Kernel metrics now originate from the core IPC code: the system stream reports live PMM totals and channel counts without relying on host shims.

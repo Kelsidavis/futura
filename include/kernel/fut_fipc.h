@@ -73,6 +73,19 @@ struct fut_fipc_remote_endpoint {
     uint32_t flags;
 };
 
+#define FIPC_CAP_R_SEND   (1u << 0)
+#define FIPC_CAP_R_RECV   (1u << 1)
+#define FIPC_CAP_R_SYS    (1u << 2)
+#define FIPC_CAP_R_ADMIN  (1u << 3)
+
+struct fut_fipc_cap {
+    uint32_t rights;
+    uint32_t reserved;
+    uint64_t max_msgs;
+    uint64_t max_bytes;
+    uint64_t expiry_tick;
+};
+
 /**
  * Header framing for remote FIPC transport packets.
  * Serialized ahead of the canonical fut_fipc_msg payload.
@@ -128,6 +141,11 @@ struct fut_fipc_channel {
     enum fut_fipc_channel_type type;/* Transport classification */
     uint64_t capability;            /* Capability token */
     struct fut_fipc_remote_endpoint remote; /* Remote metadata */
+    struct fut_fipc_cap cap_ledger; /* Capability + quota descriptor */
+    uint64_t msgs_sent;
+    uint64_t bytes_sent;
+    uint64_t msgs_injected;
+    uint64_t bytes_injected;
     struct fut_fipc_channel *next;  /* Next in channel list */
 };
 
@@ -233,6 +251,8 @@ uint64_t fut_fipc_channel_count(void);
 int fut_fipc_register_remote(uint64_t channel_id,
                              const struct fut_fipc_remote_endpoint *remote);
 int fut_fipc_bind_capability(struct fut_fipc_channel *channel, uint64_t capability);
+int fut_fipc_cap_bind(struct fut_fipc_channel *channel, const struct fut_fipc_cap *cap);
+int fut_fipc_cap_unbind(struct fut_fipc_channel *channel);
 int fut_fipc_channel_inject(struct fut_fipc_channel *channel,
                             uint32_t type,
                             const void *data,
@@ -241,6 +261,7 @@ int fut_fipc_channel_inject(struct fut_fipc_channel *channel,
                             uint32_t dst_pid,
                             uint64_t capability);
 int fut_fipc_set_transport_ops(const struct fut_fipc_transport_ops *ops, void *context);
+int fut_fipc_publish_kernel_metrics(void);
 
 /**
  * Destroy an event channel.
@@ -317,9 +338,12 @@ struct fut_surface {
 #define SURFACE_FLAG_TRANSPARENT    (1 << 2)
 
 /* Error codes */
+#define FIPC_EPERM      (-1)        /* Operation not permitted */
+#define FIPC_EIO        (-5)        /* I/O error */
 #define FIPC_ENOMEM     (-12)       /* Out of memory */
 #define FIPC_EINVAL     (-22)       /* Invalid argument */
 #define FIPC_EBUSY      (-16)       /* Resource busy */
 #define FIPC_EAGAIN     (-11)       /* Try again */
 #define FIPC_EPIPE      (-32)       /* Broken pipe */
+#define FIPC_ENOSPC     (-28)       /* No space left */
 #define FIPC_ENOTSUP    (-95)       /* Operation not supported */

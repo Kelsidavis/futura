@@ -11,6 +11,7 @@
 #include <kernel/fut_memory.h>
 #include <kernel/fut_timer.h>
 #include <stddef.h>
+#include <string.h>
 
 /* ============================================================
  *   FIPC State
@@ -262,6 +263,11 @@ int fut_fipc_channel_create(struct fut_task *sender, struct fut_task *receiver,
     channel->remote.channel_id = 0;
     channel->remote.mtu = 0;
     channel->remote.flags = 0;
+    memset(&channel->cap_ledger, 0, sizeof(channel->cap_ledger));
+    channel->msgs_sent = 0;
+    channel->bytes_sent = 0;
+    channel->msgs_injected = 0;
+    channel->bytes_injected = 0;
 
     /* Add to channel list */
     channel->next = channel_list;
@@ -312,6 +318,26 @@ int fut_fipc_bind_capability(struct fut_fipc_channel *channel, uint64_t capabili
     return 0;
 }
 
+int fut_fipc_cap_bind(struct fut_fipc_channel *channel, const struct fut_fipc_cap *cap) {
+    if (!channel || !cap) {
+        return FIPC_EINVAL;
+    }
+    channel->cap_ledger = *cap;
+    channel->msgs_sent = 0;
+    channel->bytes_sent = 0;
+    channel->msgs_injected = 0;
+    channel->bytes_injected = 0;
+    return 0;
+}
+
+int fut_fipc_cap_unbind(struct fut_fipc_channel *channel) {
+    if (!channel) {
+        return FIPC_EINVAL;
+    }
+    memset(&channel->cap_ledger, 0, sizeof(channel->cap_ledger));
+    return 0;
+}
+
 void fut_fipc_channel_destroy(struct fut_fipc_channel *channel) {
     if (!channel) {
         return;
@@ -345,8 +371,23 @@ void fut_fipc_channel_destroy(struct fut_fipc_channel *channel) {
 
 int fut_fipc_send(struct fut_fipc_channel *channel, uint32_t type,
                   const void *data, size_t size) {
-    if (!channel || !data) {
+    if (!channel || (!data && size > 0)) {
         return FIPC_EINVAL;
+    }
+
+    const struct fut_fipc_cap *cap = &channel->cap_ledger;
+    uint64_t now = fut_get_ticks();
+    if (cap->rights && !(cap->rights & FIPC_CAP_R_SEND)) {
+        return FIPC_EPERM;
+    }
+    if (cap->expiry_tick && now > cap->expiry_tick) {
+        return FIPC_EPERM;
+    }
+    if (cap->max_msgs && channel->msgs_sent >= cap->max_msgs) {
+        return FIPC_ENOSPC;
+    }
+    if (cap->max_bytes && (channel->bytes_sent + size) > cap->max_bytes) {
+        return FIPC_ENOSPC;
     }
 
     if (channel->type == FIPC_CHANNEL_REMOTE) {
@@ -397,11 +438,20 @@ int fut_fipc_send(struct fut_fipc_channel *channel, uint32_t type,
                                            (const uint8_t *)msg,
                                            total,
                                            transport_state.context);
+        if (rc == 0) {
+            channel->msgs_sent++;
+            channel->bytes_sent += size;
+        }
         fut_free(msg);
         return rc;
     }
 
-    return fut_fipc_enqueue_message(channel, type, data, size, 0, 0, channel->capability);
+    int rc = fut_fipc_enqueue_message(channel, type, data, size, 0, 0, channel->capability);
+    if (rc == 0) {
+        channel->msgs_sent++;
+        channel->bytes_sent += size;
+    }
+    return rc;
 }
 
 int fut_fipc_channel_inject(struct fut_fipc_channel *channel,
@@ -411,7 +461,104 @@ int fut_fipc_channel_inject(struct fut_fipc_channel *channel,
                             uint32_t src_pid,
                             uint32_t dst_pid,
                             uint64_t capability) {
-    return fut_fipc_enqueue_message(channel, type, data, size, src_pid, dst_pid, capability);
+    if (!channel || (!data && size > 0)) {
+        return FIPC_EINVAL;
+    }
+
+    const struct fut_fipc_cap *cap = &channel->cap_ledger;
+    uint64_t now = fut_get_ticks();
+    if (cap->rights && !(cap->rights & FIPC_CAP_R_RECV)) {
+        return FIPC_EPERM;
+    }
+    if (cap->expiry_tick && now > cap->expiry_tick) {
+        return FIPC_EPERM;
+    }
+    if (cap->max_msgs && channel->msgs_injected >= cap->max_msgs) {
+        return FIPC_ENOSPC;
+    }
+    if (cap->max_bytes && (channel->bytes_injected + size) > cap->max_bytes) {
+        return FIPC_ENOSPC;
+    }
+
+    int rc = fut_fipc_enqueue_message(channel, type, data, size, src_pid, dst_pid, capability);
+    if (rc == 0) {
+        channel->msgs_injected++;
+        channel->bytes_injected += size;
+    }
+    return rc;
+}
+
+static uint8_t *fipc_kernel_write_u64(uint8_t *cursor, uint8_t *end, uint8_t tag, uint64_t value) {
+    if (cursor >= end) {
+        return end;
+    }
+    *cursor++ = tag;
+    cursor = fipc_sys_varint_u64(cursor, value);
+    if (cursor > end) {
+        return end;
+    }
+    return cursor;
+}
+
+int fut_fipc_publish_kernel_metrics(void) {
+    struct fut_fipc_channel *sys = fut_fipc_channel_lookup(FIPC_SYS_CHANNEL_ID);
+    if (!sys) {
+        return FIPC_EINVAL;
+    }
+
+    uint64_t channel_count = 0;
+    uint64_t msgs_sent = 0;
+    uint64_t bytes_sent = 0;
+    uint64_t msgs_injected = 0;
+    uint64_t bytes_injected = 0;
+
+    for (struct fut_fipc_channel *c = channel_list; c; c = c->next) {
+        channel_count++;
+        msgs_sent += c->msgs_sent;
+        bytes_sent += c->bytes_sent;
+        msgs_injected += c->msgs_injected;
+        bytes_injected += c->bytes_injected;
+    }
+
+    uint64_t pmm_total = fut_pmm_total_pages();
+    uint64_t pmm_free = fut_pmm_free_pages();
+
+    uint8_t buffer[192];
+    uint8_t *cursor = buffer;
+    uint8_t *const end = buffer + sizeof(buffer);
+
+    if (cursor >= end) {
+        return FIPC_EIO;
+    }
+    *cursor++ = FIPC_SYS_K_METRIC_BEGIN;
+
+    cursor = fipc_kernel_write_u64(cursor, end, FIPC_SYS_K_PMM_TOTAL, pmm_total);
+    cursor = fipc_kernel_write_u64(cursor, end, FIPC_SYS_K_PMM_FREE, pmm_free);
+    cursor = fipc_kernel_write_u64(cursor, end, FIPC_SYS_K_FIPC_CHANNELS, channel_count);
+
+    if (cursor >= end) {
+        return FIPC_EIO;
+    }
+    *cursor++ = FIPC_SYS_K_METRIC_END;
+
+    size_t payload_len = (size_t)(cursor - buffer);
+    int rc = fut_fipc_channel_inject(sys,
+                                     FIPC_SYS_MSG_KERNEL_METRICS,
+                                     buffer,
+                                     payload_len,
+                                     0,
+                                     0,
+                                     0);
+    if (rc != 0) {
+        return rc;
+    }
+
+    (void)msgs_sent;
+    (void)bytes_sent;
+    (void)msgs_injected;
+    (void)bytes_injected;
+
+    return 0;
 }
 
 ssize_t fut_fipc_recv(struct fut_fipc_channel *channel, void *buf, size_t buf_size) {

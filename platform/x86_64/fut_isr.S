@@ -1,10 +1,11 @@
-/* fut_isr.S - Futura OS ISR Stubs (x86-32 Assembly)
+/* fut_isr.S - Futura OS ISR Stubs (legacy x86-32 assembly reference)
  *
  * Copyright (c) 2025 Kelsi Davis
  * Licensed under the MPL v2.0 — see LICENSE for details.
  *
- * Interrupt Service Routine stubs for hardware interrupts.
- * These stubs save CPU state, call C handlers, and restore state.
+ * Interrupt Service Routine stubs for the historic 32-bit bring-up path.
+ * Retained for reference only; the production x86-64 path uses separate
+ * entry stubs in C/ASM under platform/x86_64/.
  */
 
 .section .text

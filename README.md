@@ -11,7 +11,14 @@ Licensed under Mozilla Public License 2.0 — see [LICENSE](LICENSE)
 
 Futura OS is a capability-first nanokernel that keeps the core minimal—time, scheduling, IPC, and hardware mediation live in the kernel while everything else runs as message-passing services over FIPC. The current development focus is on building out a practical userland surface so real applications can execute against the kernel primitives.
 
-### What's new (Nov 2025)
+### Status Snapshot — Updated Nov 2025
+
+- **Kernel**: Per-task MM and wait queues landed; syscall surface now covers `mmap`, `munmap`, `brk`, `nanosleep`.
+- **VFS**: Path resolution + RamFS remain production-ready; ongoing work tracks integrating FuturaFS and file-backed `mmap`.
+- **Userland**: `libfutura` provides crt0, syscall veneers, heap allocator, and formatted I/O; framebuffer demo exercises the stack.
+- **Distributed FIPC**: Host transport and registry daemons stable; kernel transport hardening continues in Phase 4.
+
+### What's new — Updated Nov 2025
 
 - **Per-task MMU contexts**: `fut_mm` objects now own page tables, track VMAs, drive `CR3` switches, and manage heap growth via `brk(2)` plus anonymous `mmap(2)`.
 - **Syscall surface**: kernel exports `mmap`, `munmap`, `brk`, and `nanosleep`; userland gains inline wrappers in `include/user/sys.h` and a shared ABI header for `timespec`.
@@ -40,12 +47,17 @@ futura/
 │   ├── scheduler/           # Runqueue, wait queues, stats
 │   ├── sys_*                # System call implementations
 │   └── ...                  # IPC, VFS, device code
+├── platform/
+│   ├── x86_64/              # Primary hardware target (QEMU/KVM reference)
+│   └── arm64/               # Experimental bring-up scaffolding
 ├── src/user/
 │   ├── fbtest/              # Framebuffer sample app exercising syscalls
 │   └── libfutura/           # Minimal C runtime (crt0, malloc, printf, syscalls)
 └── subsystems/
     └── posix_compat/        # int80 dispatcher bridging POSIX ABIs to Futura
 ```
+
+Futura currently targets x86-64 as the primary architecture (QEMU/KVM reference builds). The legacy 32-bit path is archived only for historical context, and a nascent arm64 port lives under `platform/arm64/` with significant TODOs.
 
 ---
 
@@ -96,7 +108,7 @@ On boot you should see RAM/VMM init, device registration (including `/dev/consol
 - **Capability security**: tokens accompany every hop; remote transports bind the capability into header authentication to reject mismatches early.
 - **Per-task heap management**: executables inherit clean address spaces with kernel half mapped, ELF loaders seed a post-binary heap base, and `sys_brk` + `sys_mmap` drive growth.
 - **Wait queues**: scheduler-level queues unblock `waitpid` callers, timers, and future I/O without busy-waiting.
-- **Console + VFS**: `/dev/console` routes to serial; VFS scaffolding powers the RAM-backed root and ELF loader.
+- **Console + VFS**: `/dev/console` routes to serial; VFS scaffolding powering the RAM-backed root and ELF loader remains stable, while FuturaFS integration is the next milestone.
 - **Userland runtime**: crt0, syscall veneers, `malloc` backed by the kernel heap, and `printf`/`string` utilities make it possible to write small demos with predictable behaviour.
 
 ---

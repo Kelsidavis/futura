@@ -28,3 +28,8 @@ core
 tmp/
 temp/
 *.tmp
+
+# Codex CLI artifacts
+.codex/
+codex.log
+codex_*

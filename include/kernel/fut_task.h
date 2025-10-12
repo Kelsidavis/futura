@@ -12,6 +12,7 @@
 #include <stdint.h>
 #include <stddef.h>
 #include "fut_thread.h"
+#include "fut_waitq.h"
 
 struct fut_mm;
 
@@ -30,6 +31,7 @@ struct fut_task {
     struct fut_task *parent;           // Parent task
     struct fut_task *first_child;      // Child list head
     struct fut_task *sibling;          // Next sibling in parent list
+    fut_waitq_t child_waiters;         // Wait queue for waitpid callers
 
     enum {
         FUT_TASK_RUNNING = 0,

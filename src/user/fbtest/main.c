@@ -3,39 +3,17 @@
 #include <stdint.h>
 #include <stddef.h>
 #include <kernel/fb_ioctl.h>
+#include <shared/fut_timespec.h>
+#include <user/stdio.h>
 #include <user/sys.h>
+
+void *malloc(size_t size);
+void free(void *ptr);
+void *memcpy(void *dest, const void *src, size_t n);
 
 #define O_RDWR      0x0002
 #define PROT_WRITE  0x2
 #define MAP_SHARED  0x1
-
-static void write_str(const char *s) {
-    size_t len = 0;
-    while (s[len] != '\0') {
-        len++;
-    }
-    sys_write(1, s, (long)len);
-}
-
-static void write_u64(uint64_t value) {
-    char digits[32];
-    int pos = 0;
-    if (value == 0) {
-        digits[pos++] = '0';
-    } else {
-        char tmp[32];
-        int tpos = 0;
-        while (value > 0 && tpos < (int)sizeof(tmp)) {
-            tmp[tpos++] = (char)('0' + (value % 10u));
-            value /= 10u;
-        }
-        while (tpos > 0) {
-            digits[pos++] = tmp[--tpos];
-        }
-    }
-    digits[pos++] = '\n';
-    sys_write(1, digits, pos);
-}
 
 int main(void) {
     char input[] = "AbCd";
@@ -75,6 +53,14 @@ int main(void) {
         sys_exit(-1);
     }
 
+    uint32_t *line = malloc(width * sizeof(uint32_t));
+    if (!line) {
+        sys_close(fd);
+        sys_exit(-1);
+    }
+
+    fut_timespec_t sleep_ts = { .tv_sec = 0, .tv_nsec = 16 * 1000 * 1000 };
+
     const uint32_t frames = 120;
     uint64_t start_ms = (uint64_t)sys_time_millis_call();
 
@@ -84,18 +70,21 @@ int main(void) {
                 uint32_t r = (x + frame) & 0xFFu;
                 uint32_t g = (y + frame) & 0xFFu;
                 uint32_t b = 0x40u;
-                fb[y * stride + x] = (r << 16) | (g << 8) | b;
+                line[x] = (r << 16) | (g << 8) | b;
             }
+            memcpy(&fb[y * stride], line, width * sizeof(uint32_t));
         }
+
+        sys_nanosleep_call(&sleep_ts, NULL);
     }
 
     uint64_t end_ms = (uint64_t)sys_time_millis_call();
     uint64_t elapsed_ms = (end_ms > start_ms) ? (end_ms - start_ms) : 1u;
-    uint64_t fps_times100 = (frames * 100000ULL) / elapsed_ms; /* FPS scaled by 100 */
+    uint32_t fps_times100 = (uint32_t)((frames * 100000ULL) / elapsed_ms);
 
-    write_str("fbtest fps x100:\n");
-    write_u64(fps_times100);
+    printf("fbtest fps x100: %u\n", fps_times100);
 
+    free(line);
     sys_close(fd);
     sys_exit(0);
     return 0;

@@ -71,6 +71,7 @@ struct fut_thread {
 
     fut_thread_t *next;                   // Next in queue
     fut_thread_t *prev;                   // Previous in queue
+    fut_thread_t *wait_next;              // Next in wait queue
 };
 
 /* ============================================================

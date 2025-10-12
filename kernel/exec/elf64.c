@@ -498,6 +498,8 @@ int fut_exec_elf(const char *path, char *const argv[]) {
 
     fut_task_set_mm(task, mm);
 
+    uintptr_t heap_base_candidate = 0;
+
     for (uint16_t i = 0; i < ehdr.e_phnum; ++i) {
         if (phdrs[i].p_type != PT_LOAD) {
             continue;
@@ -509,7 +511,16 @@ int fut_exec_elf(const char *path, char *const argv[]) {
             fut_vfs_close(fd);
             return rc;
         }
+        uint64_t seg_end = phdrs[i].p_vaddr + phdrs[i].p_memsz;
+        if (seg_end > heap_base_candidate) {
+            heap_base_candidate = (uintptr_t)seg_end;
+        }
     }
+
+    uintptr_t default_heap = 0x00400000ULL;
+    uintptr_t heap_base = heap_base_candidate ? PAGE_ALIGN_UP(heap_base_candidate) : default_heap;
+    heap_base += PAGE_SIZE;
+    fut_mm_set_heap_base(mm, heap_base, 0);
 
     uint64_t stack_top = 0;
     rc = stage_stack_pages(mm, &stack_top);

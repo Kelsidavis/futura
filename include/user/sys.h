@@ -3,6 +3,7 @@
 #pragma once
 
 #include <stdint.h>
+#include <shared/fut_timespec.h>
 #include <user/sysnums.h>
 
 static inline long sys_call0(long nr) {
@@ -20,6 +21,17 @@ static inline long sys_call1(long nr, long a1) {
     __asm__ volatile("int $0x80"
                      : "+a"(rax)
                      : "D"(rdi)
+                     : "rcx", "r11", "memory");
+    return rax;
+}
+
+static inline long sys_call2(long nr, long a1, long a2) {
+    register long rax __asm__("rax") = nr;
+    register long rdi __asm__("rdi") = a1;
+    register long rsi __asm__("rsi") = a2;
+    __asm__ volatile("int $0x80"
+                     : "+a"(rax)
+                     : "D"(rdi), "S"(rsi)
                      : "rcx", "r11", "memory");
     return rax;
 }
@@ -74,6 +86,14 @@ static inline long sys_mmap(void *addr, long len, long prot, long flags, long fd
     return sys_call6(SYS_mmap, (long)addr, len, prot, flags, fd, off);
 }
 
+static inline long sys_munmap_call(void *addr, long len) {
+    return sys_call2(SYS_munmap, (long)addr, len);
+}
+
+static inline long sys_brk_call(void *addr) {
+    return sys_call1(SYS_brk, (long)addr);
+}
+
 static inline long sys_write(long fd, const void *buf, long len) {
     return sys_call3(SYS_write, fd, (long)buf, len);
 }
@@ -88,4 +108,8 @@ static inline long sys_echo_call(const char *in, char *out, long len) {
 
 static inline long sys_time_millis_call(void) {
     return sys_call0(SYS_time_millis);
+}
+
+static inline long sys_nanosleep_call(const fut_timespec_t *req, fut_timespec_t *rem) {
+    return sys_call2(SYS_nanosleep, (long)req, (long)rem);
 }

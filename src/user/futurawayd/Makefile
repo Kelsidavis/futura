@@ -21,6 +21,7 @@ COMMON_OBJS := \
 FUTURAWAYD_OBJS := \
 	$(OBJ_DIR)/futurawayd.o \
 	$(OBJ_DIR)/fb_host.o \
+	$(OBJ_DIR)/fb_hw.o \
 	$(OBJ_DIR)/main.o \
 	$(OBJ_DIR)/sys_fipc_sys_pub_futuraway.o \
 	$(COMMON_OBJS)

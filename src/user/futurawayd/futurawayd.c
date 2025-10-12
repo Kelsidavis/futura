@@ -27,6 +27,7 @@
 #include "../sys/fipc_sys.h"
 
 #include "fb_host.h"
+#include "fb_hw.h"
 
 #define FUTURAWAY_MAX_SURFACES   64u
 #define FUTURAWAY_MAX_DAMAGE     64u
@@ -755,7 +756,11 @@ static void futuraway_state_shutdown(struct futuraway_state *state) {
             surface_reset(&state->surfaces[i]);
         }
     }
-    fw_framebuffer_destroy(&state->fb);
+    if (state->fb.is_hw) {
+        fb_hw_close(&state->fb);
+    } else {
+        fw_framebuffer_destroy(&state->fb);
+    }
     if (state->listen) {
         fut_fipc_channel_destroy(state->listen);
         state->listen = NULL;
@@ -774,8 +779,14 @@ int futurawayd_run(const struct futurawayd_config *config) {
         return -EIO;
     }
 
-    if (fw_framebuffer_create(state.cfg.width, state.cfg.height, &state.fb) != 0) {
-        return -ENOMEM;
+    int fb_status = fb_hw_open(&state.fb);
+    if (fb_status == 0) {
+        state.cfg.width = state.fb.width;
+        state.cfg.height = state.fb.height;
+    } else {
+        if (fw_framebuffer_create(state.cfg.width, state.cfg.height, &state.fb) != 0) {
+            return -ENOMEM;
+        }
     }
     fw_framebuffer_clear(&state.fb, FUTURAWAY_BG_COLOR);
 
@@ -801,7 +812,7 @@ int futurawayd_run(const struct futurawayd_config *config) {
 
     size_t max_payload = sizeof(struct fut_fipc_msg) +
                          sizeof(struct fw_surface_commit_req) +
-                         ((size_t)state.cfg.width * (size_t)state.cfg.height * 4u);
+                         ((size_t)state.fb.width * (size_t)state.fb.height * 4u);
     uint8_t *buffer = (uint8_t *)malloc(max_payload);
     if (!buffer) {
         futuraway_state_shutdown(&state);

@@ -32,6 +32,8 @@ int fw_framebuffer_create(uint32_t width, uint32_t height, struct fw_framebuffer
     fb_out->stride_bytes = (uint32_t)stride;
     fb_out->pixels = pixels;
     fb_out->size_bytes = total;
+    fb_out->hw_fd = -1;
+    fb_out->is_hw = 0;
     return 0;
 }
 
@@ -39,7 +41,9 @@ void fw_framebuffer_destroy(struct fw_framebuffer *fb) {
     if (!fb) {
         return;
     }
-    free(fb->pixels);
+    if (!fb->is_hw) {
+        free(fb->pixels);
+    }
     memset(fb, 0, sizeof(*fb));
 }
 

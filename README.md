@@ -11,14 +11,14 @@ Licensed under Mozilla Public License 2.0 — see [LICENSE](LICENSE)
 
 Futura OS is a capability-first nanokernel that keeps the core minimal—time, scheduling, IPC, and hardware mediation live in the kernel while everything else runs as message-passing services over FIPC. The current development focus is on building out a practical userland surface so real applications can execute against the kernel primitives.
 
-### Status Snapshot — Updated Oct 2025
+### Status Snapshot — Updated Oct 12 2025
 
 - **Kernel**: Per-task MM and wait queues landed; syscall surface now covers `mmap`, `munmap`, `brk`, `nanosleep`.
 - **VFS**: Path resolution + RamFS remain production-ready; ongoing work tracks integrating FuturaFS and file-backed `mmap`.
 - **Userland**: `libfutura` provides crt0, syscall veneers, heap allocator, and formatted I/O; framebuffer demo exercises the stack.
 - **Distributed FIPC**: Host transport and registry daemons stable; kernel transport hardening continues in Phase 4.
 
-### What's new — Updated Oct 2025
+### What's new — Updated Oct 12 2025
 
 - **Per-task MMU contexts**: `fut_mm` objects now own page tables, track VMAs, drive `CR3` switches, and manage heap growth via `brk(2)` plus anonymous `mmap(2)`.
 - **Syscall surface**: kernel exports `mmap`, `munmap`, `brk`, and `nanosleep`; userland gains inline wrappers in `include/user/sys.h` and a shared ABI header for `timespec`.

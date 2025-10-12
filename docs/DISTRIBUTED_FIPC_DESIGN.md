@@ -66,3 +66,11 @@
 - Datagram layout: `fut_fipc_net_hdr { channel_id, payload_len, crc32 }` immediately followed by the serialized `fut_fipc_msg` header and payload bytes. CRC32 covers only the serialized message so transport metadata can change without recomputing hashes higher in the stack.
 - Loopback convention: the host harness maps `remote.node_id` to a UDP port on `127.0.0.1`, keeping distributed FIPC tests hermetic while mirroring on-wire framing.
 - Error handling: UDP send backpressure maps to `FIPC_EAGAIN`, hard transport failures escalate as `FIPC_EIO`, and missing transport ops surface as `FIPC_ENOTSUP` from the kernel send path.
+
+---
+
+## 9. Registry-Based Discovery (Test Harness)
+- The registry daemon binds to `127.0.0.1:<port>` and speaks a tiny UDP protocol (`SRG_MAGIC` / `SRG_REG`, `SRG_LOOKUP`, `SRG_LOOKUP_RESP`, `SRG_ERROR`).
+- `svc_registryd` keeps a fixed table (64 entries) of service name → channel_id mappings; registration overwrites existing entries and acknowledges with `SRG_LOOKUP_RESP`.
+- Tests drive discovery by registering the service channel first, then issuing a lookup to learn the remote channel_id before re-registering the FIPC endpoint.
+- The discovery test runs netd and the registry in-process: a polling thread services registry datagrams while the main thread performs lookups and exercises remote messaging.

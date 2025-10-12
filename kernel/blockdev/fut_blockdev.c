@@ -251,6 +251,12 @@ ssize_t fut_blockdev_write_bytes(struct fut_blockdev *dev, uint64_t offset, size
         return -12;  /* ENOMEM */
     }
 
+    fut_printf("[BLOCKDEV-WRITE-BYTES] dev=%s offset=%llu size=%llu block_size=%u blocks=%llu\n",
+               dev->name,
+               (unsigned long long)offset,
+               (unsigned long long)size,
+               block_size,
+               (unsigned long long)num_blocks);
     /* Read existing blocks first (for partial block writes) */
     int ret = fut_blockdev_read(dev, start_block, num_blocks, temp_buffer);
     if (ret < 0) {
@@ -274,6 +280,7 @@ ssize_t fut_blockdev_write_bytes(struct fut_blockdev *dev, uint64_t offset, size
         return ret;
     }
 
+    fut_printf("[BLOCKDEV-WRITE-BYTES] write complete dev=%s\n", dev->name);
     fut_free(temp_buffer);
     return (ssize_t)size;
 }

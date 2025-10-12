@@ -21,6 +21,9 @@
 #include <kernel/fut_ramdisk.h>
 #include <kernel/fut_futurafs.h>
 #include <platform/platform.h>
+#if defined(__x86_64__)
+#include <arch/x86_64/paging.h>
+#endif
 
 /* ============================================================
  *   External Symbols from Linker Script
@@ -37,7 +40,7 @@ extern char _bss_end[];
 
 /* Memory configuration - for now assume 128MB available in QEMU */
 #define TOTAL_MEMORY_SIZE       (128 * 1024 * 1024)  /* 128 MiB */
-#define KERNEL_HEAP_SIZE        (6 * 1024 * 1024)    /* 6 MiB heap (fits in 8MB mapped by boot.S) */
+#define KERNEL_HEAP_SIZE        (16 * 1024 * 1024)   /* 16 MiB heap for userland bootstrap */
 
 /* ============================================================
  *   Test Thread Functions
@@ -294,17 +297,8 @@ static void test_futurafs_operations(void) {
 
     /* Test 1: Create 512 KB ramdisk for FuturaFS (reduced due to mapping limits) */
     fut_printf("[FUTURAFS-TEST] Test 1: Creating 512 KB ramdisk for FuturaFS\n");
-    fut_printf("[FUTURAFS-TEST] Note: Using smaller size to stay within first 1MB of heap\n");
 
-    /* Temporarily create a smaller ramdisk - the API only accepts MB, so we can't do 0.5MB */
-    /* For now, let's document this limitation */
-    fut_printf("[FUTURAFS-TEST] ⚠ Ramdisk API only accepts integer MB sizes\n");
-    fut_printf("[FUTURAFS-TEST] Issue: Large allocations (1MB+) cause page faults beyond mapped region\n");
-    fut_printf("[FUTURAFS-TEST] Root cause: Boot.S maps 8MB, but allocations extend into unmapped pages\n");
-    fut_printf("[FUTURAFS-TEST] Solution needed: Implement dynamic page mapping or expand boot mapping\n");
-    return;
-
-    struct fut_blockdev *ramdisk = fut_ramdisk_create("futurafs0", 1, 4096);
+    struct fut_blockdev *ramdisk = fut_ramdisk_create_bytes("futurafs0", 512 * 1024u, 4096);
     if (!ramdisk) {
         fut_printf("[FUTURAFS-TEST] ✗ Failed to create ramdisk\n");
         return;
@@ -328,7 +322,7 @@ static void test_futurafs_operations(void) {
 
     /* Test 4: Format with FuturaFS */
     fut_printf("[FUTURAFS-TEST] Test 4: Formatting ramdisk with FuturaFS\n");
-    ret = fut_futurafs_format(ramdisk, "FuturaFS", 4);
+    ret = fut_futurafs_format(ramdisk, "FuturaFS", 4096);
     if (ret < 0) {
         fut_printf("[FUTURAFS-TEST] ✗ Format failed: error %d\n", ret);
         return;
@@ -461,6 +455,10 @@ void fut_kernel_main(void) {
     fut_printf("   Futura OS Nanokernel Initialization\n");
     fut_printf("=======================================================\n\n");
 
+#if defined(__x86_64__)
+    const uintptr_t min_phys = KERNEL_VIRTUAL_BASE + 0x100000ULL;
+#endif
+
     /* ========================================
      *   Step 1: Initialize Memory Subsystem
      * ======================================== */
@@ -471,6 +469,13 @@ void fut_kernel_main(void) {
     /* In a higher-half kernel, all memory accesses must use virtual addresses */
     uintptr_t kernel_virt_end = (uintptr_t)_kernel_end;
     uintptr_t mem_base = (kernel_virt_end + 0xFFF) & ~0xFFFULL;  /* Page-align */
+
+#if defined(__x86_64__)
+    /* Skip legacy VGA/BIOS hole below 1 MiB */
+    if (mem_base < min_phys) {
+        mem_base = min_phys;
+    }
+#endif
 
     /* Initialize PMM with total available memory */
     fut_pmm_init(TOTAL_MEMORY_SIZE, mem_base);
@@ -484,19 +489,20 @@ void fut_kernel_main(void) {
     /* Heap region in virtual memory (after kernel end) */
     uintptr_t heap_start = (uintptr_t)_kernel_end;
     heap_start = (heap_start + 0xFFF) & ~0xFFFULL;  /* Page-align */
+#if defined(__x86_64__)
+    if (heap_start < min_phys) {
+        heap_start = min_phys;
+    }
+#endif
     uintptr_t heap_end = heap_start + KERNEL_HEAP_SIZE;
 
     /* Debug: print heap addresses before initialization */
-    fut_printf("[DEBUG] _kernel_end address: 0x\n");
-    fut_printf("[DEBUG] heap_start: 0x\n");
-    fut_printf("[DEBUG] heap_end: 0x\n");
-    fut_printf("[DEBUG] heap_size: \n");
-
-    /* Test: Try writing to heap memory directly */
-    fut_printf("[DEBUG] Testing heap memory write...\n");
-    volatile uint64_t *test_ptr = (volatile uint64_t *)heap_start;
-    *test_ptr = 0xDEADBEEFCAFEBABE;
-    fut_printf("[DEBUG] Write test successful! Value: \n");
+    fut_printf("[DEBUG] _kernel_end address: 0x%llx\n",
+               (unsigned long long)(uintptr_t)_kernel_end);
+    fut_printf("[DEBUG] heap_start: 0x%llx\n", (unsigned long long)heap_start);
+    fut_printf("[DEBUG] heap_end: 0x%llx\n", (unsigned long long)heap_end);
+    fut_printf("[DEBUG] heap_size: %llu bytes\n",
+               (unsigned long long)KERNEL_HEAP_SIZE);
 
     fut_heap_init(heap_start, heap_end);
 

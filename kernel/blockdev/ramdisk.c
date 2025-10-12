@@ -109,24 +109,16 @@ static const struct fut_blockdev_ops ramdisk_ops = {
  * @param block_size Block size in bytes (512 or 4096)
  * @return Block device on success, NULL on failure
  */
-struct fut_blockdev *fut_ramdisk_create(const char *name, uint32_t size_mb, uint32_t block_size) {
-    /* Validate parameters */
-    if (!name || size_mb == 0) {
-        return NULL;
-    }
-
-    if (block_size != 512 && block_size != 4096) {
-        return NULL;  /* Only support standard block sizes */
-    }
-
+static struct fut_blockdev *ramdisk_create_common(const char *name,
+                                                  size_t size_bytes,
+                                                  uint32_t block_size) {
     /* Allocate ramdisk data structure */
     struct ramdisk_data *data = fut_malloc(sizeof(struct ramdisk_data));
     if (!data) {
         return NULL;
     }
-
-    /* Calculate size in bytes */
-    size_t size_bytes = (size_t)size_mb * 1024 * 1024;
+    data->storage = NULL;
+    data->size = 0;
 
     /* Allocate storage buffer */
     uint8_t *storage = fut_malloc(size_bytes);
@@ -140,7 +132,6 @@ struct fut_blockdev *fut_ramdisk_create(const char *name, uint32_t size_mb, uint
         storage[i] = 0;
     }
 
-    /* Initialize ramdisk data */
     data->storage = storage;
     data->size = size_bytes;
 
@@ -152,6 +143,11 @@ struct fut_blockdev *fut_ramdisk_create(const char *name, uint32_t size_mb, uint
         return NULL;
     }
 
+    /* Clear structure to avoid stale data */
+    for (size_t i = 0; i < sizeof(struct fut_blockdev); ++i) {
+        ((uint8_t *)dev)[i] = 0;
+    }
+
     /* Copy device name */
     size_t i = 0;
     while (i < 31 && name[i]) {
@@ -160,7 +156,7 @@ struct fut_blockdev *fut_ramdisk_create(const char *name, uint32_t size_mb, uint
     }
     dev->name[i] = '\0';
 
-    /* Initialize block device */
+    /* Initialize block device metadata */
     dev->type = BLOCKDEV_RAMDISK;
     dev->num_blocks = size_bytes / block_size;
     dev->block_size = block_size;
@@ -175,6 +171,43 @@ struct fut_blockdev *fut_ramdisk_create(const char *name, uint32_t size_mb, uint
     dev->next = NULL;
 
     return dev;
+}
+
+struct fut_blockdev *fut_ramdisk_create_bytes(const char *name, size_t size_bytes, uint32_t block_size) {
+    if (!name || size_bytes == 0) {
+        return NULL;
+    }
+
+    if (block_size != 512 && block_size != 4096) {
+        return NULL;
+    }
+
+    /* Round size up to whole blocks */
+    size_t blocks = (size_bytes + block_size - 1u) / block_size;
+    if (blocks == 0) {
+        return NULL;
+    }
+
+    size_t aligned_size = blocks * (size_t)block_size;
+    return ramdisk_create_common(name, aligned_size, block_size);
+}
+
+struct fut_blockdev *fut_ramdisk_create(const char *name, uint32_t size_mb, uint32_t block_size) {
+    if (!name) {
+        return NULL;
+    }
+
+    if (block_size != 512 && block_size != 4096) {
+        return NULL;
+    }
+
+    if (size_mb == 0) {
+        /* Preserve legacy behavior: default to 128 KiB ramdisk */
+        return fut_ramdisk_create_bytes(name, 128 * 1024u, block_size);
+    }
+
+    size_t size_bytes = (size_t)size_mb * 1024u * 1024u;
+    return fut_ramdisk_create_bytes(name, size_bytes, block_size);
 }
 
 /**

@@ -282,6 +282,16 @@ struct fut_fipc_channel *fut_fipc_channel_lookup(uint64_t id) {
     return NULL;
 }
 
+uint64_t fut_fipc_channel_count(void) {
+    uint64_t count = 0;
+    struct fut_fipc_channel *curr = channel_list;
+    while (curr) {
+        ++count;
+        curr = curr->next;
+    }
+    return count;
+}
+
 int fut_fipc_register_remote(uint64_t channel_id,
                              const struct fut_fipc_remote_endpoint *remote) {
     struct fut_fipc_channel *channel = fut_fipc_channel_lookup(channel_id);

@@ -21,7 +21,8 @@ TESTS := fipc_remote_loopback \
 	fipc_remote_autodiscover \
 	fipc_remote_metrics \
 	fipc_remote_header_v1 \
-	fipc_sys_metrics_subscriber
+	fipc_sys_metrics_subscriber \
+	fipc_sys_kernel_metrics
 
 .PHONY: all clean $(TESTS)
 
@@ -100,11 +101,23 @@ FIPC_SYSMET_SRCS := fipc_sys_metrics_subscriber.c \
 	$(ROOT)/src/user/netd/netd_core.c \
 	$(ROOT)/src/user/sys/fipc_sys_pub.c \
 	$(ROOT)/src/user/sys/fipc_sys_sub.c \
+	$(ROOT)/src/user/svc_registryd/registry_server.c \
 	$(ROOT)/src/user/svc_registryd/registry_client.c
 
 $(BIN_DIR)/fipc_sys_metrics_subscriber: $(FIPC_SYSMET_SRCS) $(LIBFIPC_HOST) | $(BIN_DIR)
 	@echo "CC $@"
 	@$(CC) $(CFLAGS) -o $@ $(FIPC_SYSMET_SRCS) $(LIBFIPC_HOST) $(LDFLAGS)
+
+# === Kernel + netd system metrics test ===
+FIPC_SYSK_SRCS := fipc_sys_kernel_metrics.c \
+	$(ROOT)/src/user/netd/netd_core.c \
+	$(ROOT)/src/user/sys/fipc_sys_pub.c \
+	$(ROOT)/src/user/sys/fipc_sys_pub_kernelshim.c \
+	$(ROOT)/src/user/svc_registryd/registry_client.c
+
+$(BIN_DIR)/fipc_sys_kernel_metrics: $(FIPC_SYSK_SRCS) $(LIBFIPC_HOST) | $(BIN_DIR)
+	@echo "CC $@"
+	@$(CC) $(CFLAGS) -o $@ $(FIPC_SYSK_SRCS) $(LIBFIPC_HOST) $(LDFLAGS)
 
 $(BIN_DIR):
 	@mkdir -p $(BIN_DIR)

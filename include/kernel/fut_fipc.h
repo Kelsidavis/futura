@@ -229,6 +229,7 @@ int fut_fipc_channel_create(struct fut_task *sender, struct fut_task *receiver,
                              struct fut_fipc_channel **channel_out);
 
 struct fut_fipc_channel *fut_fipc_channel_lookup(uint64_t id);
+uint64_t fut_fipc_channel_count(void);
 int fut_fipc_register_remote(uint64_t channel_id,
                              const struct fut_fipc_remote_endpoint *remote);
 int fut_fipc_bind_capability(struct fut_fipc_channel *channel, uint64_t capability);

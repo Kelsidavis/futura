@@ -1,73 +1,117 @@
 # Futura OS Architecture (Updated Oct 12 2025)
 
-## High-Level Design
-
-Futura OS keeps the trusted computing base intentionally small. The kernel owns timekeeping, scheduling, memory management, interrupt handling, and the FIPC message fabric. Everything else—including filesystems, networking, compositor, and user tools—lives in user space as replaceable services that communicate over FIPC.
+## Layered View
 
 ```
-┌─────────────┐      ┌────────────────────┐
-│ Applications│◀────▶│  User Services     │
-│  (fbtest,   │  FIPC│  (fsd, posixd,     │
-│  future CLI)│      │   futurawayd, …)   │
-└─────────────┘      └────────┬───────────┘
-                               │ FIPC channels
-┌──────────────────────────────┴───────────────────────────────┐
-│                        Futura Kernel                         │
-│  Scheduler & WaitQs │  Syscall Bridge │  VFS  │ FIPC Core    │
-│  Timer Wheel        │  MM Contexts    │  RamFS│ Capability AC│
-└─────────────────────┴─────────────────┴───────┴──────────────┘
-                 │ HW Abstraction │ Platform Drivers
-                 └────────────────┴────────────────────────────
+┌──────────────────────────────────────────────────────────────┐
+│                         User Dials                           │
+│  Applications, tests, host tooling, mkfutfs                  │
+└───────────────▲───────────────────────┬──────────────────────┘
+                │ FIPC channels & handles│
+┌───────────────┴──────────────────────┐ │
+│        Userland Services             │ │
+│  init · fsd · posixd · futurawayd    │ │
+│  libfutura runtime + subsystem libs  │ │
+└───────────────▲────────┬─────────────┘ │
+                │        │               │
+      Capability handles │               │
+┌───────────────┴────────▼──────────────┴──────────────────────┐
+│                     Futura Kernel                           │
+│  - Object table & rights (fut_object.c)                     │
+│  - Scheduler + wait queues                                  │
+│  - Virtual memory (fut_mm)                                  │
+│  - Syscall bridge (int 0x80)                                │
+│  - FIPC core & transport                                    │
+│  - VFS + block core (virtio-blk, AHCI, log FS bridge)       │
+└───────────────▲──────────────────────────────────────────────┘
+                │ Platform HAL (PCI, MMIO, traps, timers)
+┌───────────────┴──────────────────────────────────────────────┐
+│         Hardware / Virtual hardware (QEMU)                   │
+└──────────────────────────────────────────────────────────────┘
 ```
 
-## Kernel Components
+## Object Model & Rights
 
-- **Per-task MM contexts (`kernel/memory/fut_mm.c`)**  
-  A reference-counted wrapper around page tables. Each task receives a dedicated address space, the kernel half is shared, and the loader seeds a heap base after the last ELF segment. Anonymous mappings, `brk`, and heap reclamation operate through this layer.
+Futura OS treats every shareable resource—channels, tasks, block devices, inode
+handles—as an object managed by `fut_object.c`. Each object is tagged with a
+rights bitmap that mirrors Zircon’s handle model. The async block core extends
+this pattern: `fut_blk_open()` yields a handle whose rights (read, write,
+admin) are enforced on every I/O submission. The new log-structured FuturaFS
+skeleton derives capability rights directly from the inode policy recorded in
+its log; userland receives transient handles (read/write/admin) that mirror
+those policies.
 
-- **Scheduler & Wait Queues (`kernel/scheduler`, `kernel/threading`)**  
-  The run queue remains priority-aware and non-preemptive for now. New wait queue primitives (`fut_waitq`) allow syscalls such as `waitpid` and the timer subsystem to block threads without spinning.
+Rights summary:
 
-- **Syscall Surface (`kernel/sys_*.c`)**  
-  `int 0x80` bridges now cover `exit`, `waitpid`, `time_millis`, `brk`, `mmap`, `munmap`, `nanosleep`, and the diagnostic `echo`. The dispatcher is shared with the POSIX compatibility layer (`subsystems/posix_compat/`).
+- `FUT_RIGHT_READ/WRITE/ADMIN` – generic kernel objects.
+- `FUT_BLK_READ/WRITE/ADMIN` – block handles and FuturaFS inode capabilities.
+- `FUTFS_RIGHT_*` – userland-side mapping exposed by the log-structured FS.
 
-- **FIPC Core (`kernel/ipc/`)**  
-  Provides capability-tagged channels used by syscalls, compositor traffic, and remote transports. Phase 4 introduces CRC-backed remote framing and authenticated control paths.
+Handles are copied explicitly across FIPC messages, providing uniform security
+semantics for kernel subsystems, device drivers, and user services.
 
-- **Virtual File System (`kernel/vfs/`, `docs/VFS_IMPLEMENTATION.md`)**  
-  Stable path resolution and reference counting back the RAM-backed root volume. Ongoing work tracks integrating FuturaFS and file-backed `mmap`.
+## IPC Flow
 
-- **Device Layer (`drivers/`)**  
-  The new TTY console driver fronts `/dev/console` and feeds the serial backend. Framebuffer MMIO glue remains under `drivers/video/`.
+FIPC (Futura Inter-Process Communication) is the substrate tying the system
+together. Syscalls are marshalled into FIPC messages, composers use the same
+fabric for surface updates, and remote transports reuse the framing for
+host-side loopback tests. Highlights:
 
-## Userland Stack
+- Kernel exports `fipc_send/recv` plus credit-based back-pressure.
+- Userland services link against `libfipc_host` for deterministic tests.
+- Registry (`svc_registryd`) authenticates channel registrations with HMAC.
+- Async block completions fan out via wait queues instead of busy polling.
 
-- **libfutura (`src/user/libfutura/`)**  
-  Provides crt0, inline syscall veneers (`include/user/sys.h`), a `brk`-backed allocator, `printf`, and basic string utilities. Everything links statically.
+## Storage Stack
 
-- **Core Services**  
-  `init`, `fsd`, `posixd`, and `futurawayd` provide the bootstrap envelope, filesystem façade, POSIX compatibility, and compositor respectively. Tests and demos live under `src/user/`.
+1. **Block Core (`kernel/blk/blkcore.c`)** – queues BIOs, drives worker
+   threads, tracks debug counters, and enforces handle rights.
+2. **Drivers** – Virtio-blk and AHCI (new) discover PCI devices, negotiate
+   features, and bridge into the block core.
+3. **FuturaFS Log Skeleton (`subsystems/futura_fs/`)** – a minimal
+   log-structured design featuring superblock + segment headers + inode
+   records + append-only extents. Crash safety relies on ordered `pwrite`
+   + `fsync` and a monotonically advancing log tail in the superblock.
+4. **mkfutfs (`tools/mkfutfs`)** – formats an image, seeds the root inode, and
+   validates block size/segment alignment.
+5. **Kernel VFS** – still exposes the legacy bitmap-based FuturaFS for now; a
+   follow-up service will migrate fsd to the log skeleton via capability
+   handles.
 
-- **Host Tooling (`tests/`, `host/transport/`)**  
-  Reuses FIPC framing to deliver deterministic regression tests for remote transport, registry auth, and compositor output.
+## Scheduler & Concurrency
 
-## Memory Map Summary (x86-64 Reference)
+The kernel remains cooperative: threads yield on blocking syscalls, timer
+sleepers park in wait queues (`fut_waitq`), and the scheduler runs the highest
+priority READY thread. Blocking I/O (blkcore, wait queues) reuses the same
+mechanism, ensuring services such as fsd can multiplex work without busy loops.
 
-- **Higher-half kernel**: canonical mapping with direct-map identity for physical memory management.
-- **User space layout**:
-  - Text + data from ELF segments mapped read-only/read-write per header.
-  - Heap base seeded one page above the last load segment; grows via `sys_brk`.
-  - Anonymous `mmap` regions allocated above `mm->mmap_base`, respecting capability-enforced limits.
-  - Stack staged via `stage_stack_pages()` with guard pages.
+## Userland Services & Libraries
 
-## Concurrency Model
+- **libfutura** – crt0, syscall veneers, heap allocator, printf, string utils.
+- **fsd** – current filesystem daemon; will adopt the log-structured backend
+  through capability handles.
+- **posixd** – POSIX compatibility over FIPC.
+- **futurawayd** – compositor + demo tests.
+- **Host tooling** – registry/netd utilities, mkfutfs, and the
+  `tests/futfs_log_basic` regression harness.
 
-The kernel remains cooperative: threads yield on blocking calls, wait queues wake them when work arrives, and timer sleeps enqueue on a sorted wheel. Phase 5 will layer preemption and per-CPU scheduler shards atop the existing primitives.
+## Security & Performance Objectives
 
-## Roadmap Alignment
+Security OKRs:
 
-- **Phase 2** (current): mature user services, solidify syscall/runtime surface, and harden VFS integration.
-- **Phase 3**: compositor upgrades (multi-surface, metrics) and richer system telemetry over FIPC.
-- **Phase 4**: encrypted remote transport, registry hardening, and kernel metrics publication.
+1. 100% of new drivers and subsystems land in memory-safe languages (Rust) or
+   carry a documented performance exception; track the percentage of
+   memory-safe LOC in CI.
+2. Dev builds run with KASAN/UBSan (or equivalent) and nightly fuzzers hammer
+   IPC, the FuturaFS log parser, and the ELF loader.
+3. Releases are reproducible, cosign-signed, and published with TUF metadata.
 
-For historical milestones, see `docs/PHASE*_*.md`; for the latest operational summary, see `docs/CURRENT_STATUS.md`.
+Performance OKRs:
+
+1. Track IPC round-trip, context switch, and block I/O microbenchmarks on every
+   PR; fail the gate on regressions above 5%.
+2.“Fast path first”: keep async block completions in the low hundreds of
+   microseconds on QEMU baseline hardware, mirroring the seL4 ethos.
+
+These objectives complement the roadmap milestones (Phase 2–4). See
+`docs/STATUS.md` for live milestone tracking and doc-drift safeguards.

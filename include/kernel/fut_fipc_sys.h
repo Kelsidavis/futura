@@ -37,6 +37,8 @@ enum fipc_sys_kernel_tag {
     FIPC_SYS_K_DROPS_DEADLINE = 0x26,
     FIPC_SYS_K_PI_APPLIED   = 0x27,
     FIPC_SYS_K_PI_RESTORED  = 0x28,
+    FIPC_SYS_K_RL_TOKENS    = 0x29,
+    FIPC_SYS_K_DROPS_RL     = 0x2A,
     FIPC_SYS_K_METRIC_END   = 0x2F,
 };
 

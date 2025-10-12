@@ -99,3 +99,7 @@
 - Host/kernel timers now expose `fut_timer_start()` / `fut_timer_cancel()` so subsystems can register millisecond callbacks without polling.
 - Threads carry an absolute `deadline_tick`; sends past the deadline return `FIPC_EAGAIN` and contribute to the `FIPC_SYS_K_DROPS_DEADLINE` metric.
 - Reply-chain priority inheritance boosts the server thread registered as the channel owner when a higher-priority client issues a request; priorities are restored on reply and surfaced via `FIPC_SYS_K_PI_APPLIED` / `FIPC_SYS_K_PI_RESTORED` counters.
+
+## 15. Capability Revocation & Rate Limiting (Phase K4)
+- Capability bindings gain `lease_id` generations and explicit revoke flags; `fut_fipc_cap_revoke()` strips send/recv rights immediately while metrics continue to accrue.
+- `fut_fipc_set_rate()` enables per-channel token-bucket rate limiting. Rejections surface as `FIPC_EAGAIN` and roll into `FIPC_SYS_K_DROPS_RL`; aggregate token levels are reported via `FIPC_SYS_K_RL_TOKENS`.

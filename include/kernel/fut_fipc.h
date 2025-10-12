@@ -80,10 +80,11 @@ struct fut_fipc_remote_endpoint {
 
 struct fut_fipc_cap {
     uint32_t rights;
-    uint32_t reserved;
+    uint32_t revoke_flags;
     uint64_t max_msgs;
     uint64_t max_bytes;
     uint64_t expiry_tick;
+    uint64_t lease_id;
 };
 
 /**
@@ -120,6 +121,10 @@ struct fut_fipc_transport_ops {
                 void *context);
 };
 
+/* Capability revoke flags */
+#define FIPC_CAP_REVOKE_SEND  (1u << 0)
+#define FIPC_CAP_REVOKE_RECV  (1u << 1)
+
 struct fut_fipc_channel {
     uint64_t id;                    /* Unique channel ID */
 
@@ -150,6 +155,11 @@ struct fut_fipc_channel {
     uint64_t drops_deadline;        /* Deadline miss counter */
     uint64_t pi_applied;            /* Priority inheritance applied count */
     uint64_t pi_restored;           /* Priority inheritance restored count */
+    uint32_t rl_rate_per_ms;        /* Token bucket rate (msgs/ms) */
+    uint32_t rl_burst;              /* Token bucket burst capacity */
+    uint64_t rl_tokens;             /* Current tokens */
+    uint64_t rl_last_tick;          /* Last refill tick */
+    uint64_t drops_ratelimit;       /* Rate limit rejections */
     uint64_t msgs_sent;
     uint64_t bytes_sent;
     uint64_t msgs_injected;
@@ -266,8 +276,10 @@ int fut_fipc_register_remote(uint64_t channel_id,
 int fut_fipc_bind_capability(struct fut_fipc_channel *channel, uint64_t capability);
 int fut_fipc_cap_bind(struct fut_fipc_channel *channel, const struct fut_fipc_cap *cap);
 int fut_fipc_cap_unbind(struct fut_fipc_channel *channel);
+int fut_fipc_cap_revoke(struct fut_fipc_channel *channel, uint32_t revoke_flags);
 int fut_fipc_set_credits(struct fut_fipc_channel *channel, uint32_t initial, uint32_t refill);
 int fut_fipc_refill_credits(struct fut_fipc_channel *channel, uint32_t add);
+int fut_fipc_set_rate(struct fut_fipc_channel *channel, uint32_t rate_per_ms, uint32_t burst);
 int fut_fipc_channel_inject(struct fut_fipc_channel *channel,
                             uint32_t type,
                             const void *data,

@@ -12,6 +12,23 @@
 #include <stddef.h>
 #include <stdbool.h>
 
+/* Enable runtime invariants in debug/test builds */
+#ifndef FIPC_DEBUG
+#define FIPC_DEBUG 1
+#endif
+
+#if FIPC_DEBUG
+void fut_fipc_assert_fail(const char *expr, const char *file, int line);
+#define FIPC_ASSERT(expr) \
+    do { \
+        if (!(expr)) { \
+            fut_fipc_assert_fail(#expr, __FILE__, __LINE__); \
+        } \
+    } while (0)
+#else
+#define FIPC_ASSERT(expr) do { (void)(expr); } while (0)
+#endif
+
 /* Freestanding environment: define ssize_t */
 #ifndef _SSIZE_T_DEFINED
 #define _SSIZE_T_DEFINED

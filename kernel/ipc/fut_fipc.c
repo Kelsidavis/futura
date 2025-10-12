@@ -12,6 +12,7 @@
 #include <kernel/fut_timer.h>
 #include <stddef.h>
 #include <string.h>
+#include <stdatomic.h>
 
 /* ============================================================
  *   FIPC State
@@ -28,6 +29,9 @@ struct fut_fipc_transport_state {
 };
 
 static struct fut_fipc_transport_state transport_state = {0};
+static _Atomic uint64_t next_cap_lease = 1;
+
+static void fut_fipc_refill_tokens(struct fut_fipc_channel *channel, uint64_t now);
 
 int fut_fipc_set_transport_ops(const struct fut_fipc_transport_ops *ops, void *context) {
     if (!ops) {
@@ -271,6 +275,11 @@ int fut_fipc_channel_create(struct fut_task *sender, struct fut_task *receiver,
     channel->drops_deadline = 0;
     channel->pi_applied = 0;
     channel->pi_restored = 0;
+    channel->rl_rate_per_ms = 0;
+    channel->rl_burst = 0;
+    channel->rl_tokens = 0;
+    channel->rl_last_tick = 0;
+    channel->drops_ratelimit = 0;
     channel->msgs_sent = 0;
     channel->bytes_sent = 0;
     channel->msgs_injected = 0;
@@ -334,10 +343,8 @@ int fut_fipc_cap_bind(struct fut_fipc_channel *channel, const struct fut_fipc_ca
         return FIPC_EINVAL;
     }
     channel->cap_ledger = *cap;
-    channel->msgs_sent = 0;
-    channel->bytes_sent = 0;
-    channel->msgs_injected = 0;
-    channel->bytes_injected = 0;
+    channel->cap_ledger.revoke_flags = 0;
+    channel->cap_ledger.lease_id = atomic_fetch_add_explicit(&next_cap_lease, 1, memory_order_relaxed);
     return 0;
 }
 
@@ -349,6 +356,14 @@ int fut_fipc_cap_unbind(struct fut_fipc_channel *channel) {
     channel->credits_enabled = false;
     channel->tx_credits = 0;
     channel->credit_refill = 0;
+    return 0;
+}
+
+int fut_fipc_cap_revoke(struct fut_fipc_channel *channel, uint32_t revoke_flags) {
+    if (!channel) {
+        return FIPC_EINVAL;
+    }
+    channel->cap_ledger.revoke_flags |= revoke_flags;
     return 0;
 }
 
@@ -381,6 +396,22 @@ int fut_fipc_refill_credits(struct fut_fipc_channel *channel, uint32_t add) {
         current = channel->credit_refill;
     }
     channel->tx_credits = (uint32_t)current;
+    return 0;
+}
+
+int fut_fipc_set_rate(struct fut_fipc_channel *channel, uint32_t rate_per_ms, uint32_t burst) {
+    if (!channel) {
+        return FIPC_EINVAL;
+    }
+    channel->rl_rate_per_ms = rate_per_ms;
+    channel->rl_burst = burst;
+    if (rate_per_ms == 0 || burst == 0) {
+        channel->rl_tokens = 0;
+        channel->rl_last_tick = fut_get_ticks();
+    } else {
+        channel->rl_tokens = burst;
+        channel->rl_last_tick = fut_get_ticks();
+    }
     return 0;
 }
 
@@ -432,6 +463,9 @@ int fut_fipc_send(struct fut_fipc_channel *channel, uint32_t type,
     }
 
     const struct fut_fipc_cap *cap = &channel->cap_ledger;
+    if (cap->revoke_flags & FIPC_CAP_REVOKE_SEND) {
+        return FIPC_EPERM;
+    }
     if (cap->rights && !(cap->rights & FIPC_CAP_R_SEND)) {
         return FIPC_EPERM;
     }
@@ -448,6 +482,14 @@ int fut_fipc_send(struct fut_fipc_channel *channel, uint32_t type,
     if (channel->credits_enabled) {
         if (channel->tx_credits == 0) {
             channel->drops_backpressure++;
+            return FIPC_EAGAIN;
+        }
+    }
+
+    if (channel->rl_rate_per_ms > 0 && channel->rl_burst > 0) {
+        fut_fipc_refill_tokens(channel, now);
+        if (channel->rl_tokens == 0) {
+            channel->drops_ratelimit++;
             return FIPC_EAGAIN;
         }
     }
@@ -515,6 +557,9 @@ int fut_fipc_send(struct fut_fipc_channel *channel, uint32_t type,
             if (channel->credits_enabled && channel->tx_credits > 0) {
                 channel->tx_credits--;
             }
+            if (channel->rl_rate_per_ms > 0 && channel->rl_burst > 0 && channel->rl_tokens > 0) {
+                channel->rl_tokens--;
+            }
             channel->msgs_sent++;
             channel->bytes_sent += size;
             if (channel->owner_pi_active && self && self->tid == channel->owner_tid) {
@@ -534,6 +579,9 @@ int fut_fipc_send(struct fut_fipc_channel *channel, uint32_t type,
     if (rc == 0) {
         if (channel->credits_enabled && channel->tx_credits > 0) {
             channel->tx_credits--;
+        }
+        if (channel->rl_rate_per_ms > 0 && channel->rl_burst > 0 && channel->rl_tokens > 0) {
+            channel->rl_tokens--;
         }
         channel->msgs_sent++;
         channel->bytes_sent += size;
@@ -610,6 +658,9 @@ int fut_fipc_channel_inject(struct fut_fipc_channel *channel,
 
     const struct fut_fipc_cap *cap = &channel->cap_ledger;
     uint64_t now = fut_get_ticks();
+    if (cap->revoke_flags & FIPC_CAP_REVOKE_RECV) {
+        return FIPC_EPERM;
+    }
     if (cap->rights && !(cap->rights & FIPC_CAP_R_RECV)) {
         return FIPC_EPERM;
     }
@@ -641,6 +692,27 @@ static uint8_t *fipc_kernel_write_u64(uint8_t *cursor, uint8_t *end, uint8_t tag
         return end;
     }
     return cursor;
+}
+
+static void fut_fipc_refill_tokens(struct fut_fipc_channel *channel, uint64_t now) {
+    if (!channel || channel->rl_rate_per_ms == 0 || channel->rl_burst == 0) {
+        return;
+    }
+    if (channel->rl_last_tick == 0) {
+        channel->rl_last_tick = now;
+        return;
+    }
+    uint64_t elapsed = (now > channel->rl_last_tick) ? (now - channel->rl_last_tick) : 0;
+    if (elapsed == 0) {
+        return;
+    }
+    uint64_t add = (uint64_t)channel->rl_rate_per_ms * elapsed;
+    uint64_t tokens = channel->rl_tokens + add;
+    if (tokens > channel->rl_burst) {
+        tokens = channel->rl_burst;
+    }
+    channel->rl_tokens = tokens;
+    channel->rl_last_tick = now;
 }
 
 size_t fut_fipc_dequeue_bounded(struct fut_fipc_channel *channel, size_t max_msgs) {
@@ -685,6 +757,8 @@ int fut_fipc_publish_kernel_metrics(void) {
     uint64_t drops_deadline = 0;
     uint64_t pi_applied = 0;
     uint64_t pi_restored = 0;
+    uint64_t total_rl_tokens = 0;
+    uint64_t drops_ratelimit = 0;
 
     for (struct fut_fipc_channel *c = channel_list; c; c = c->next) {
         channel_count++;
@@ -699,6 +773,10 @@ int fut_fipc_publish_kernel_metrics(void) {
         drops_deadline += c->drops_deadline;
         pi_applied += c->pi_applied;
         pi_restored += c->pi_restored;
+        if (c->rl_rate_per_ms > 0 && c->rl_burst > 0) {
+            total_rl_tokens += c->rl_tokens;
+        }
+        drops_ratelimit += c->drops_ratelimit;
     }
 
     uint64_t pmm_total = fut_pmm_total_pages();
@@ -721,6 +799,8 @@ int fut_fipc_publish_kernel_metrics(void) {
     cursor = fipc_kernel_write_u64(cursor, end, FIPC_SYS_K_DROPS_DEADLINE, drops_deadline);
     cursor = fipc_kernel_write_u64(cursor, end, FIPC_SYS_K_PI_APPLIED, pi_applied);
     cursor = fipc_kernel_write_u64(cursor, end, FIPC_SYS_K_PI_RESTORED, pi_restored);
+    cursor = fipc_kernel_write_u64(cursor, end, FIPC_SYS_K_RL_TOKENS, total_rl_tokens);
+    cursor = fipc_kernel_write_u64(cursor, end, FIPC_SYS_K_DROPS_RL, drops_ratelimit);
 
     if (cursor >= end) {
         return FIPC_EIO;

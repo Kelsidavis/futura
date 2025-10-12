@@ -29,7 +29,9 @@ TESTS := fipc_remote_loopback \
 	fipc_kernel_caps_quota \
 	fipc_kernel_vecsend \
 	fipc_timer_deadline \
-	fipc_reply_pi
+	fipc_reply_pi \
+	fipc_cap_revoke \
+	fipc_rate_limit
 
 .PHONY: all clean $(TESTS)
 
@@ -163,6 +165,14 @@ $(BIN_DIR)/fipc_timer_deadline: fipc_timer_deadline.c $(LIBFIPC_HOST) | $(BIN_DI
 $(BIN_DIR)/fipc_reply_pi: fipc_reply_pi.c $(LIBFIPC_HOST) | $(BIN_DIR)
 	@echo "CC $@"
 	@$(CC) $(CFLAGS) -o $@ fipc_reply_pi.c $(LIBFIPC_HOST) $(LDFLAGS)
+
+$(BIN_DIR)/fipc_cap_revoke: fipc_cap_revoke.c $(LIBFIPC_HOST) | $(BIN_DIR)
+	@echo "CC $@"
+	@$(CC) $(CFLAGS) -o $@ fipc_cap_revoke.c $(LIBFIPC_HOST) $(LDFLAGS)
+
+$(BIN_DIR)/fipc_rate_limit: fipc_rate_limit.c $(LIBFIPC_HOST) | $(BIN_DIR)
+	@echo "CC $@"
+	@$(CC) $(CFLAGS) -o $@ fipc_rate_limit.c $(LIBFIPC_HOST) $(LDFLAGS)
 
 # === syswatch smoke helper ===
 $(BIN_DIR)/fipc_syswatch_smoke: fipc_syswatch_smoke.c \

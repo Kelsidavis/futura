@@ -7,6 +7,7 @@
 
 #include <stdbool.h>
 #include <stdint.h>
+#include <kernel/fut_fipc.h>
 
 struct netd;
 
@@ -20,3 +21,14 @@ bool netd_bind_service(struct netd *nd,
                        const char *service_name,
                        const char *registry_host,
                        uint16_t registry_port);
+
+struct netd_metrics {
+    uint64_t lookup_attempts;
+    uint64_t lookup_hits;
+    uint64_t lookup_miss;
+    uint64_t send_eagain;
+    uint64_t reserved0;
+};
+
+bool netd_metrics_snapshot(struct netd *nd, struct netd_metrics *out);
+bool netd_metrics_publish(struct netd *nd, struct fut_fipc_channel *sink);

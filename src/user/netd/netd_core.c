@@ -10,6 +10,7 @@
 #include <arpa/inet.h>
 #include <errno.h>
 #include <poll.h>
+#include <stdio.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -156,6 +157,56 @@ bool netd_bind_service(struct netd *nd,
 
     binding->port = registry_port;
     return true;
+}
+
+bool netd_metrics_snapshot(struct netd *nd, struct netd_metrics *out) {
+    if (!nd || !out) {
+        return false;
+    }
+
+    struct netd_metrics snap = {
+        .lookup_attempts = nd->ctrs.lookup_attempts,
+        .lookup_hits = nd->ctrs.lookup_hits,
+        .lookup_miss = nd->ctrs.lookup_miss,
+        .send_eagain = nd->ctrs.send_eagain,
+        .reserved0 = 0
+    };
+
+    *out = snap;
+    return true;
+}
+
+bool netd_metrics_publish(struct netd *nd, struct fut_fipc_channel *sink) {
+    if (!nd || !sink) {
+        return false;
+    }
+
+    struct netd_metrics m;
+    if (!netd_metrics_snapshot(nd, &m)) {
+        return false;
+    }
+
+    char record[256];
+    int n = snprintf(record, sizeof(record),
+                     "lookup_attempts=%llu lookup_hits=%llu lookup_miss=%llu send_eagain=%llu",
+                     (unsigned long long)m.lookup_attempts,
+                     (unsigned long long)m.lookup_hits,
+                     (unsigned long long)m.lookup_miss,
+                     (unsigned long long)m.send_eagain);
+    if (n < 0) {
+        return false;
+    }
+    if (n >= (int)sizeof(record)) {
+        n = (int)sizeof(record) - 1;
+    }
+
+    return fut_fipc_channel_inject(sink,
+                                   0x4D4554u,
+                                   record,
+                                   (size_t)n,
+                                   0,
+                                   0,
+                                   0) == 0;
 }
 
 void netd_shutdown(struct netd *nd) {

@@ -79,3 +79,7 @@
 ## 10. Lazy Auto-Discovery on First Send
 - `netd_bind_service()` associates a local channel with a registry name and host/port. When a remote endpoint has `channel_id == 0`, the first send triggers a registry lookup. The resolved channel id is cached and pushed back into the kernel via `fut_fipc_register_remote()`, so subsequent sends bypass the registry.
 - If the lookup fails (service not registered yet), `udp_send_cb()` returns `FIPC_EAGAIN`, allowing callers to retry once the service appears.
+
+## 11. Observability (Host netd)
+- `netd` maintains counters for registry lookups: `lookup_attempts`, `lookup_hits`, `lookup_miss`, and `send_eagain`.
+- `netd_metrics_snapshot()` copies these counters into a caller-provided struct; `netd_metrics_publish()` emits a one-line text record (key=value pairs) through a supplied FIPC channel for easy test/assertion.

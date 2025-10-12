@@ -33,6 +33,7 @@ extern void fut_echo_selftest(void);
 extern void fut_fb_userspace_smoke(void);
 extern void fut_blk_async_selftest_schedule(fut_task_t *task);
 extern void virtio_blk_init(void);
+extern void ahci_init(void);
 
 /* ============================================================
  *   External Symbols from Linker Script
@@ -668,6 +669,7 @@ void fut_kernel_main(void) {
     fut_blk_core_init();
     fut_printf("[INIT] Async block core initialized\n");
     virtio_blk_init();
+    ahci_init();
 
     /* Test block device operations - DISABLED (heap too small for 1MB ramdisk) */
     /* test_blockdev_operations(); */

@@ -119,7 +119,8 @@ KERNEL_SOURCES := \
     drivers/tty/console.c \
     kernel/blk/blkcore.c \
     kernel/tests/blk_async_smoke.c \
-    platform/x86_64/drivers/virtio/blk.c
+    platform/x86_64/drivers/virtio/blk.c \
+    platform/x86_64/drivers/ahci/ahci.c
 
 # Platform-specific sources
 ifeq ($(PLATFORM),x86_64)

@@ -303,6 +303,7 @@ static void fut_blk_async_selftest_thread(void *arg) {
                rights_enforced ? "ok" : "fail");
 
     run_hw_roundtrip_test("blk:vda");
+    run_hw_roundtrip_test("blk:sata0");
 
     fut_thread_exit();
 }

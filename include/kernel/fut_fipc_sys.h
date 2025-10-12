@@ -27,6 +27,17 @@ enum fipc_sys_tag {
     FIPC_SYS_T_METRIC_END   = 0x1F,
 };
 
+enum fipc_sys_kernel_tag {
+    FIPC_SYS_K_METRIC_BEGIN = 0x20,
+    FIPC_SYS_K_PMM_TOTAL    = 0x21,
+    FIPC_SYS_K_PMM_FREE     = 0x22,
+    FIPC_SYS_K_FIPC_CHANNELS= 0x23,
+    FIPC_SYS_K_METRIC_END   = 0x2F,
+};
+
+#define FIPC_SYS_MSG_SYSTEM_METRICS 0x5359534Du /* 'SYSM' */
+#define FIPC_SYS_MSG_KERNEL_METRICS 0x4B4D4554u /* 'KMET' */
+
 static inline uint8_t *fipc_sys_varint_u64(uint8_t *cursor, uint64_t value) {
     while (value >= 0x80u) {
         *cursor++ = (uint8_t)((value & 0x7Fu) | 0x80u);

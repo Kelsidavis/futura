@@ -11,8 +11,6 @@
 
 #include "../netd/netd_core.h"
 
-#define FIPC_SYS_MSG_TYPE 0x5359534Du /* 'SYSM' */
-
 static struct fut_fipc_channel *ensure_system_channel(void) {
     struct fut_fipc_channel *channel = fut_fipc_channel_lookup(FIPC_SYS_CHANNEL_ID);
     if (channel) {
@@ -87,7 +85,7 @@ bool fipc_sys_publish_metrics(struct netd *nd) {
     size_t payload_len = (size_t)(cursor - buffer);
 
     return fut_fipc_channel_inject(sys_channel,
-                                   FIPC_SYS_MSG_TYPE,
+                                   FIPC_SYS_MSG_SYSTEM_METRICS,
                                    buffer,
                                    payload_len,
                                    0,

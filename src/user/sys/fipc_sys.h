@@ -15,3 +15,4 @@ struct netd_metrics;
 
 bool fipc_sys_publish_metrics(struct netd *nd);
 bool fipc_sys_decode_metrics(const uint8_t *buffer, size_t length, struct netd_metrics *out);
+bool fipc_sys_publish_kernel_metrics(void);

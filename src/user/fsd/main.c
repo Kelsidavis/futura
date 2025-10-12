@@ -12,6 +12,7 @@
 #include <stdbool.h>
 #include <kernel/fut_fipc.h>
 #include <kernel/fut_vfs.h>
+#include <user/futura_posix.h>
 
 /* Message types for fsd (internal - not in public header yet) */
 #define FSD_MSG_MOUNT       0x4001
@@ -21,10 +22,108 @@
 #define FSD_MSG_READ        0x4005
 #define FSD_MSG_WRITE       0x4006
 #define FSD_MSG_STAT        0x4007
+#define FSD_MSG_OPENDIR     0x4008
+#define FSD_MSG_READDIR     0x4009
+#define FSD_MSG_CLOSEDIR    0x400A
+#define FSD_MSG_MKDIR       0x400B
+#define FSD_MSG_RMDIR       0x400C
+#define FSD_MSG_UNLINK      0x400D
 
 /* Global state */
 static bool running = true;
 static struct fut_fipc_channel *listen_channel = NULL;
+
+struct fsd_dir_handle {
+    bool in_use;
+    int64_t handle;
+    char path[POSIX_PATH_MAX];
+    uint64_t cookie;
+};
+
+#define FSD_MAX_DIR_HANDLES 64
+static struct fsd_dir_handle dir_table[FSD_MAX_DIR_HANDLES];
+static int64_t next_dir_handle = 1;
+
+#define FSD_S_IFDIR 0040000
+
+struct fsd_opendir_req {
+    char path[POSIX_PATH_MAX];
+};
+
+struct fsd_opendir_resp {
+    int result;
+    int64_t dir_handle;
+};
+
+struct fsd_readdir_req {
+    int64_t dir_handle;
+};
+
+struct fsd_path_req {
+    char path[POSIX_PATH_MAX];
+};
+
+struct fsd_result_resp {
+    int result;
+};
+
+static void fsd_str_copy(char *dest, const char *src, size_t max_len) {
+    size_t i = 0;
+    if (!dest || !src || max_len == 0) {
+        return;
+    }
+    while (i + 1 < max_len && src[i]) {
+        dest[i] = src[i];
+        i++;
+    }
+    dest[i] = '\0';
+}
+
+static struct fsd_dir_handle *fsd_dir_alloc(const char *path) {
+    for (int i = 0; i < FSD_MAX_DIR_HANDLES; i++) {
+        if (!dir_table[i].in_use) {
+            dir_table[i].in_use = true;
+            dir_table[i].handle = next_dir_handle++;
+            dir_table[i].cookie = 0;
+            fsd_str_copy(dir_table[i].path, path, sizeof(dir_table[i].path));
+            return &dir_table[i];
+        }
+    }
+    return NULL;
+}
+
+static struct fsd_dir_handle *fsd_dir_find(int64_t handle) {
+    for (int i = 0; i < FSD_MAX_DIR_HANDLES; i++) {
+        if (dir_table[i].in_use && dir_table[i].handle == handle) {
+            return &dir_table[i];
+        }
+    }
+    return NULL;
+}
+
+static void fsd_dir_release(struct fsd_dir_handle *dir) {
+    if (dir) {
+        dir->in_use = false;
+        dir->handle = 0;
+        dir->path[0] = '\0';
+        dir->cookie = 0;
+    }
+}
+
+static void fsd_send_response(uint32_t type, const void *payload, size_t size) {
+    if (listen_channel) {
+        fut_fipc_send(listen_channel, type, payload, size);
+    }
+}
+
+static int fsd_is_directory(const char *path) {
+    struct fut_stat st;
+    int ret = fut_vfs_stat(path, &st);
+    if (ret < 0) {
+        return ret;
+    }
+    return (st.st_mode & FSD_S_IFDIR) ? 0 : -ENOTDIR;
+}
 
 /**
  * Handle mount request.
@@ -89,6 +188,142 @@ static void handle_write(struct fut_fipc_msg *msg) {
      */
 }
 
+static void handle_opendir_msg(struct fut_fipc_msg *msg) {
+    const struct fsd_opendir_req *req = (const struct fsd_opendir_req *)msg->payload;
+    struct fsd_opendir_resp resp = { .result = 0, .dir_handle = -1 };
+
+    if (!req || req->path[0] == '\0') {
+        resp.result = -EINVAL;
+        fsd_send_response(FSD_MSG_OPENDIR, &resp, sizeof(resp));
+        return;
+    }
+
+    int ret = fsd_is_directory(req->path);
+    if (ret < 0) {
+        resp.result = ret;
+        fsd_send_response(FSD_MSG_OPENDIR, &resp, sizeof(resp));
+        return;
+    }
+
+    struct fsd_dir_handle *dir = fsd_dir_alloc(req->path);
+    if (!dir) {
+        resp.result = -ENFILE;
+    } else {
+        resp.dir_handle = dir->handle;
+    }
+
+    fsd_send_response(FSD_MSG_OPENDIR, &resp, sizeof(resp));
+}
+
+static void handle_readdir_msg(struct fut_fipc_msg *msg) {
+    const struct fsd_readdir_req *req = (const struct fsd_readdir_req *)msg->payload;
+    struct posixd_readdir_resp resp = {
+        .result = 0,
+        .has_entry = false,
+    };
+
+    if (!req) {
+        resp.result = -EINVAL;
+        fsd_send_response(FSD_MSG_READDIR, &resp, sizeof(resp));
+        return;
+    }
+
+    struct fsd_dir_handle *dir = fsd_dir_find(req->dir_handle);
+    if (!dir) {
+        resp.result = -ENOENT;
+        fsd_send_response(FSD_MSG_READDIR, &resp, sizeof(resp));
+        return;
+    }
+
+    uint64_t cookie = dir->cookie;
+    struct fut_vdirent dent;
+    int ret = fut_vfs_readdir(dir->path, &cookie, &dent);
+
+    if (ret == -ENOENT) {
+        dir->cookie = cookie;
+        resp.result = 0;
+        resp.has_entry = false;
+        fsd_send_response(FSD_MSG_READDIR, &resp, sizeof(resp));
+        return;
+    }
+
+    if (ret < 0) {
+        dir->cookie = cookie;
+        resp.result = ret;
+        fsd_send_response(FSD_MSG_READDIR, &resp, sizeof(resp));
+        return;
+    }
+
+    dir->cookie = cookie;
+    resp.has_entry = true;
+    resp.entry.d_ino = dent.d_ino;
+    resp.entry.d_off = dent.d_off;
+    resp.entry.d_reclen = dent.d_reclen;
+    resp.entry.d_type = dent.d_type;
+    fsd_str_copy(resp.entry.d_name, dent.d_name, sizeof(resp.entry.d_name));
+
+    fsd_send_response(FSD_MSG_READDIR, &resp, sizeof(resp));
+}
+
+static void handle_closedir_msg(struct fut_fipc_msg *msg) {
+    const struct posixd_closedir_req *req = (const struct posixd_closedir_req *)msg->payload;
+    struct fsd_result_resp resp = { .result = 0 };
+
+    if (!req) {
+        resp.result = -EINVAL;
+        fsd_send_response(FSD_MSG_CLOSEDIR, &resp, sizeof(resp));
+        return;
+    }
+
+    struct fsd_dir_handle *dir = fsd_dir_find(req->dir_handle);
+    if (!dir) {
+        resp.result = -ENOENT;
+    } else {
+        fsd_dir_release(dir);
+    }
+
+    fsd_send_response(FSD_MSG_CLOSEDIR, &resp, sizeof(resp));
+}
+
+static void handle_mkdir_msg(struct fut_fipc_msg *msg) {
+    const struct posixd_mkdir_req *req = (const struct posixd_mkdir_req *)msg->payload;
+    struct fsd_result_resp resp = { .result = 0 };
+
+    if (!req) {
+        resp.result = -EINVAL;
+    } else {
+        resp.result = fut_vfs_mkdir(req->path, req->mode);
+    }
+
+    fsd_send_response(FSD_MSG_MKDIR, &resp, sizeof(resp));
+}
+
+static void handle_rmdir_msg(struct fut_fipc_msg *msg) {
+    const struct fsd_path_req *req = (const struct fsd_path_req *)msg->payload;
+    struct fsd_result_resp resp = { .result = 0 };
+
+    if (!req || req->path[0] == '\0') {
+        resp.result = -EINVAL;
+    } else {
+        resp.result = fut_vfs_rmdir(req->path);
+    }
+
+    fsd_send_response(FSD_MSG_RMDIR, &resp, sizeof(resp));
+}
+
+static void handle_unlink_msg(struct fut_fipc_msg *msg) {
+    const struct fsd_path_req *req = (const struct fsd_path_req *)msg->payload;
+    struct fsd_result_resp resp = { .result = 0 };
+
+    if (!req || req->path[0] == '\0') {
+        resp.result = -EINVAL;
+    } else {
+        resp.result = fut_vfs_unlink(req->path);
+    }
+
+    fsd_send_response(FSD_MSG_UNLINK, &resp, sizeof(resp));
+}
+
 /**
  * Main event loop for fsd.
  */
@@ -125,6 +360,24 @@ static void fsd_main_loop(void) {
                 case FSD_MSG_STAT:
                     /* Phase 3: Handle stat */
                     break;
+                case FSD_MSG_OPENDIR:
+                    handle_opendir_msg(msg);
+                    break;
+                case FSD_MSG_READDIR:
+                    handle_readdir_msg(msg);
+                    break;
+                case FSD_MSG_CLOSEDIR:
+                    handle_closedir_msg(msg);
+                    break;
+                case FSD_MSG_MKDIR:
+                    handle_mkdir_msg(msg);
+                    break;
+                case FSD_MSG_RMDIR:
+                    handle_rmdir_msg(msg);
+                    break;
+                case FSD_MSG_UNLINK:
+                    handle_unlink_msg(msg);
+                    break;
                 default:
                     /* Unknown request */
                     break;
@@ -146,9 +399,6 @@ static int fsd_init(void) {
      * - Mount root filesystem
      * - Create FIPC listen channel
      */
-
-    /* Initialize VFS */
-    fut_vfs_init();
 
     /* Phase 3: Mount root filesystem */
     /* fut_vfs_mount(NULL, "/", "ramfs", 0, NULL); */

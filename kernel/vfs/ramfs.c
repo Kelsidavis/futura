@@ -324,6 +324,7 @@ static const struct fut_vnode_ops ramfs_vnode_ops = {
     .close = ramfs_close,
     .read = ramfs_read,
     .write = ramfs_write,
+    .readdir = NULL,    /* TODO: Implement readdir */
     .lookup = ramfs_lookup,
     .create = ramfs_create,
     .unlink = NULL,      /* TODO: Implement unlink */

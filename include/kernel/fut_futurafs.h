@@ -198,3 +198,4 @@ int fut_futurafs_sync(struct fut_mount *mount);
 #define FUTURAFS_EEXIST   -17    /* File exists */
 #define FUTURAFS_ENOTDIR  -20    /* Not a directory */
 #define FUTURAFS_EISDIR   -21    /* Is a directory */
+#define FUTURAFS_ENOTEMPTY -39   /* Directory not empty */

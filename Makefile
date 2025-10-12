@@ -47,7 +47,7 @@ endif
 # ============================================================
 
 # C standard and compiler flags
-CFLAGS := -std=c23 -ffreestanding -nostdlib -fno-builtin
+CFLAGS := -std=c23 -ffreestanding -nostdlib -fno-builtin -fno-stack-protector -fno-asynchronous-unwind-tables
 CFLAGS += -Wall -Wextra -Wpedantic -Werror
 CFLAGS += -fno-pic -fno-pie  # Disable PIC/PIE for kernel code
 CFLAGS += -fcf-protection=none  # Disable CET (Control-flow Enforcement Technology)
@@ -93,6 +93,8 @@ KERNEL_SOURCES := \
     kernel/blockdev/fut_blockdev.c \
     kernel/blockdev/ramdisk.c \
     kernel/fs/futurafs.c \
+    kernel/rt/memory.c \
+    kernel/rt/stack_chk.c
 
 # Platform-specific sources
 ifeq ($(PLATFORM),x86_64)
@@ -145,6 +147,7 @@ $(OBJ_DIR) $(BIN_DIR):
 	@mkdir -p $(OBJ_DIR)/kernel/vfs
 	@mkdir -p $(OBJ_DIR)/kernel/blockdev
 	@mkdir -p $(OBJ_DIR)/kernel/fs
+	@mkdir -p $(OBJ_DIR)/kernel/rt
 	@mkdir -p $(OBJ_DIR)/platform/$(PLATFORM)
 	@mkdir -p $(OBJ_DIR)/subsystems/posix_compat
 
@@ -176,11 +179,13 @@ tools:
 # Compile C sources
 $(OBJ_DIR)/%.o: %.c | $(OBJ_DIR)
 	@echo "CC $<"
+	@mkdir -p $(dir $@)
 	@$(CC) $(CFLAGS) -c $< -o $@
 
 # Assemble assembly sources
 $(OBJ_DIR)/%.o: %.S | $(OBJ_DIR)
 	@echo "AS $<"
+	@mkdir -p $(dir $@)
 	@$(AS) $(ASFLAGS) $< -o $@
 
 # Clean build artifacts

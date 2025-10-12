@@ -75,6 +75,21 @@ OBJ_DIR := $(BUILD_DIR)/obj
 BIN_DIR := $(BUILD_DIR)/bin
 
 # ============================================================
+#   Rust Toolchain Integration
+# ============================================================
+
+RUSTC := $(shell command -v rustc 2>/dev/null)
+CARGO := $(shell command -v cargo 2>/dev/null)
+RUST_AVAILABLE := $(if $(and $(RUSTC),$(CARGO)),yes,no)
+RUST_TARGET := x86_64-unknown-linux-gnu
+RUST_PROFILE := release
+RUST_ROOT := drivers/rust
+RUST_VIRTIO_DIR := $(RUST_ROOT)/virtio_blk
+RUST_BUILD_DIR := $(RUST_VIRTIO_DIR)/target/$(RUST_TARGET)/$(RUST_PROFILE)
+RUST_LIB := $(RUST_BUILD_DIR)/libvirtio_blk.a
+RUST_SOURCES := $(shell if [ -d $(RUST_ROOT) ]; then find $(RUST_ROOT) -type f \( -name '*.rs' -o -name 'Cargo.toml' -o -name 'build.rs' -o -name '*.toml' \); fi)
+
+# ============================================================
 #   Source Files
 # ============================================================
 
@@ -118,8 +133,8 @@ KERNEL_SOURCES := \
     drivers/video/fb.c \
     drivers/tty/console.c \
     kernel/blk/blkcore.c \
+    kernel/rust/rustffi.c \
     tests/test_blkcore.c \
-    platform/x86_64/drivers/virtio/blk.c \
     platform/x86_64/drivers/ahci/ahci.c
 
 # Platform-specific sources
@@ -162,10 +177,10 @@ OBJECTS += $(FBTEST_BLOB)
 #   Build Targets
 # ============================================================
 
-.PHONY: all clean kernel userland
+.PHONY: all clean kernel userland rust-drivers
 
 # Default target
-all: kernel userland
+all: rust-drivers kernel userland
 
 # Create output directories
 $(OBJ_DIR) $(BIN_DIR):
@@ -185,6 +200,7 @@ $(OBJ_DIR) $(BIN_DIR):
 	@mkdir -p $(OBJ_DIR)/kernel/fs
 	@mkdir -p $(OBJ_DIR)/kernel/rt
 	@mkdir -p $(OBJ_DIR)/kernel/video
+	@mkdir -p $(OBJ_DIR)/kernel/rust
 	@mkdir -p $(OBJ_DIR)/kernel/blobs
 	@mkdir -p $(OBJ_DIR)/platform/$(PLATFORM)
 ifeq ($(PLATFORM),x86_64)
@@ -196,14 +212,31 @@ endif
 # Build kernel
 kernel: $(BIN_DIR)/futura_kernel.elf
 
-$(BIN_DIR)/futura_kernel.elf: $(OBJECTS) | $(BIN_DIR)
+$(BIN_DIR)/futura_kernel.elf: $(OBJECTS) $(RUST_LIB) | $(BIN_DIR)
 	@echo "LD $@.tmp"
-	@$(LD) $(LDFLAGS) -o $@.tmp $(OBJECTS)
+	@$(LD) $(LDFLAGS) -o $@.tmp $(OBJECTS) $(RUST_LIB)
 	@cp $@.tmp /tmp/kernel_before_fix.elf
 	@echo "FIX-ELF $@"
 	@python3 tools/fix_multiboot_offset.py $@.tmp $@
 	@rm $@.tmp
 	@echo "Build complete: $@"
+
+ifeq ($(RUST_AVAILABLE),yes)
+rust-drivers: $(RUST_LIB)
+
+$(RUST_LIB): $(RUST_SOURCES)
+	@$(RUSTC) --print target-list | grep -q $(RUST_TARGET) >/dev/null || { \
+		echo "error: rust target '$(RUST_TARGET)' not installed for $(RUSTC)." >&2; exit 1; }
+	@echo "CARGO virtio_blk ($(RUST_PROFILE))"
+	@cd $(RUST_VIRTIO_DIR) && RUSTFLAGS="-C panic=abort -C force-unwind-tables=no" $(CARGO) build --release --target $(RUST_TARGET)
+	@tmpdir=$$(mktemp -d); \
+	cd $$tmpdir && ar x $(abspath $(RUST_LIB)) && for obj in *.o; do $(OBJCOPY) --remove-section='.gcc_except_table*' --remove-section='.eh_frame*' $$obj >/dev/null 2>&1 || true; done && ar rcs $(abspath $(RUST_LIB)) *.o; \
+	rm -rf $$tmpdir
+else
+rust-drivers:
+	@echo "error: Rust toolchain (rustc/cargo) not found; install Rust to build rust-drivers." >&2
+	@exit 1
+endif
 
 $(FBTEST_BIN):
 	@$(MAKE) -C src/user fbtest
@@ -245,6 +278,14 @@ clean:
 	@echo "Cleaning build artifacts..."
 	@rm -rf $(BUILD_DIR)
 	@rm -f futura.iso
+ifeq ($(RUST_AVAILABLE),yes)
+	@if [ -f $(RUST_VIRTIO_DIR)/Cargo.toml ]; then \
+		cd $(RUST_VIRTIO_DIR) && $(CARGO) clean --target $(RUST_TARGET); \
+	fi
+	@rm -rf $(RUST_ROOT)/target
+else
+	@echo "Rust toolchain unavailable; skipping cargo clean."
+endif
 	@$(MAKE) -C src/user clean
 	@echo "Clean complete"
 

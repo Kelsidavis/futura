@@ -5,6 +5,10 @@ build/
 *.iso
 *.bin
 *.img
+target/
+**/target/
+Cargo.lock
+drivers/rust/**/Cargo.lock
 
 # Editor files
 *.swp

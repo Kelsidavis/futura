@@ -310,6 +310,10 @@ static void fut_blk_async_selftest_thread(void *arg) {
     bool virtio_ok = run_hw_roundtrip_test("blk:vda");
     bool ahci_ok = run_hw_roundtrip_test("blk:sata0");
 
+    if (virtio_ok) {
+        fut_printf("virtio-blk: integration test PASSED\n");
+    }
+
     bool flush_optional_ok = (flush_rc == 0) || (flush_rc == -ENOTSUP);
     bool self_ok = write_ok && read_ok && flush_optional_ok && rights_enforced;
     if (self_ok && virtio_ok && ahci_ok) {

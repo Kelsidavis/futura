@@ -27,3 +27,7 @@ int64_t posix_syscall_dispatch(uint64_t syscall_num,
  * Must be called during kernel initialization.
  */
 void posix_syscall_init(void);
+
+long syscall_entry_c(uint64_t nr,
+                     uint64_t a1, uint64_t a2, uint64_t a3,
+                     uint64_t a4, uint64_t a5, uint64_t a6);

@@ -32,6 +32,8 @@
 
 #define PIC_EOI 0x20        /* End of Interrupt */
 
+#define INT_SYSCALL 128
+
 /* PIT (Programmable Interval Timer) definitions */
 #define PIT_CHANNEL0 0x40
 #define PIT_COMMAND 0x43
@@ -122,7 +124,7 @@ extern void irq14(void);
 extern void irq15(void);
 
 extern void irq0_timer(void);
-extern void isr128(void);
+extern void isr_syscall_int80_stub(void);
 
 /* Kernel main function */
 extern void fut_kernel_main(void);
@@ -491,7 +493,7 @@ static void fut_idt_init(void) {
     fut_idt_set_entry(47, (uint64_t)irq15, 0x08, flags);
 
     /* Install system call handler (128) with DPL=3 for user mode */
-    fut_idt_set_entry(128, (uint64_t)isr128, 0x08, 0xEE);
+    fut_idt_set_entry(INT_SYSCALL, (uint64_t)isr_syscall_int80_stub, 0x08, 0xEE);
 
     /* Load IDT */
     fut_idt_load();

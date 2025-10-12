@@ -83,6 +83,10 @@
 #define EMFILE      24
 #endif
 
+#ifndef ENOTTY
+#define ENOTTY      25
+#endif
+
 #ifndef ENOSPC
 #define ENOSPC      28
 #endif

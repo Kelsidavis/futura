@@ -4,9 +4,11 @@
  */
 
 #include <kernel/chrdev.h>
+#include <kernel/devfs.h>
 #include <kernel/uaccess.h>
 #include <kernel/errno.h>
 #include <kernel/fb.h>
+#include <kernel/fb_ioctl.h>
 
 #include <arch/x86_64/pmap.h>
 
@@ -55,6 +57,36 @@ static int fb_open(void *inode, void **private_data) {
     return 0;
 }
 
+static int fb_ioctl(void *inode, void *private_data,
+                    unsigned long req, unsigned long arg) {
+    (void)inode;
+
+    struct fb_device *fb = (struct fb_device *)private_data;
+    if (!fb) {
+        return -ENODEV;
+    }
+
+    if (req == FBIOGET_FSCREENINFO) {
+        struct fb_fix_screeninfo info = {
+            .smem_start = fb->info.phys,
+            .line_length = fb->info.pitch,
+            .smem_len = fb->info.pitch * fb->info.height,
+        };
+        return fut_copy_to_user((void *)arg, &info, sizeof info);
+    }
+
+    if (req == FBIOGET_VSCREENINFO) {
+        struct fb_var_screeninfo info = {
+            .xres = fb->info.width,
+            .yres = fb->info.height,
+            .bits_per_pixel = fb->info.bpp,
+        };
+        return fut_copy_to_user((void *)arg, &info, sizeof info);
+    }
+
+    return -ENOTTY;
+}
+
 static ssize_t fb_write(void *inode, void *private_data,
                         const void *u_buf, size_t n, off_t *pos) {
     (void)inode;
@@ -87,13 +119,52 @@ static ssize_t fb_write(void *inode, void *private_data,
     return (ssize_t)n;
 }
 
+static void *fb_mmap(void *inode, void *private_data, void *u_addr, size_t len,
+                     off_t off, int prot, int flags) {
+    (void)inode;
+    (void)flags;
+
+    struct fb_device *fb = (struct fb_device *)private_data;
+    if (!fb) {
+        return (void *)(intptr_t)(-ENODEV);
+    }
+
+    size_t fb_size = (size_t)fb->info.pitch * fb->info.height;
+    if ((off & (PAGE_SIZE - 1)) != 0) {
+        return (void *)(intptr_t)(-EINVAL);
+    }
+    if (len == 0 || off >= (off_t)fb_size) {
+        return (void *)(intptr_t)(-EINVAL);
+    }
+
+    if (off + (off_t)len > (off_t)fb_size) {
+        len = fb_size - (size_t)off;
+    }
+
+    uint64_t user_addr = (uint64_t)u_addr;
+    uint64_t phys_addr = (fb->info.phys + (uint64_t)off) & ~(uint64_t)(PAGE_SIZE - 1);
+    size_t map_len = (len + PAGE_SIZE - 1) & ~(size_t)(PAGE_SIZE - 1);
+
+    uint64_t prot_flags = PTE_PRESENT | PTE_USER;
+    if (prot & 0x2) {
+        prot_flags |= PTE_WRITABLE;
+    }
+
+    int rc = pmap_map_user(NULL, user_addr, phys_addr, map_len, prot_flags);
+    if (rc != 0) {
+        return (void *)(intptr_t)rc;
+    }
+
+    return u_addr;
+}
+
 static const struct fut_file_ops fb_fops = {
     .open = fb_open,
     .release = NULL,
     .read = NULL,
     .write = fb_write,
-    .ioctl = NULL,
-    .mmap = NULL,
+    .ioctl = fb_ioctl,
+    .mmap = fb_mmap,
 };
 
 void fb_char_init(void) {
@@ -105,4 +176,5 @@ void fb_char_init(void) {
     g_fb_dev.mapped = 0;
 
     chrdev_register(FB_MAJOR, FB_MINOR, &fb_fops, "fb0", &g_fb_dev);
+    devfs_create_chr("/dev/fb0", FB_MAJOR, FB_MINOR);
 }

@@ -299,7 +299,7 @@ static void handle_mkdir_msg(struct fut_fipc_msg *msg) {
 }
 
 static void handle_rmdir_msg(struct fut_fipc_msg *msg) {
-    const struct fsd_path_req *req = (const struct fsd_path_req *)msg->payload;
+    const struct posixd_unlink_req *req = (const struct posixd_unlink_req *)msg->payload;
     struct fsd_result_resp resp = { .result = 0 };
 
     if (!req || req->path[0] == '\0') {
@@ -312,7 +312,7 @@ static void handle_rmdir_msg(struct fut_fipc_msg *msg) {
 }
 
 static void handle_unlink_msg(struct fut_fipc_msg *msg) {
-    const struct fsd_path_req *req = (const struct fsd_path_req *)msg->payload;
+    const struct posixd_unlink_req *req = (const struct posixd_unlink_req *)msg->payload;
     struct fsd_result_resp resp = { .result = 0 };
 
     if (!req || req->path[0] == '\0') {

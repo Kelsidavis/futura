@@ -10,6 +10,7 @@
 - Implemented `lookup`, `create`, and `mkdir` in the FuturaFS vnode layer, including on-disk directory entry management and bitmap syncing.
 - Rounded out directory CRUD in FuturaFS: `readdir` now walks directory blocks deterministically, `unlink` reclaims inode data, and `rmdir` enforces emptiness while freeing blocks back to the allocator.
 - VFS exposes directory CRUD helpers (`fut_vfs_readdir/unlink/rmdir/mkdir`) and the boot self-test now exercises listing, unlinking, and ENOTEMPTY paths to guard regressions.
+- Userland scaffolding: `fsd` tracks directory handles/cookies and `posixd` mirrors the kernel helpers so libfutura can issue `opendir`/`readdir`/`mkdir`/`unlink` via FIPC once channel routing lands.
 - Boot-time self-test: format, mount, and stat of `/mnt` all succeed under GRUB/QEMU, confirming the filesystem pipeline.
 
 ## Next Up

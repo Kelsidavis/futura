@@ -264,6 +264,10 @@ int fut_fipc_channel_create(struct fut_task *sender, struct fut_task *receiver,
     channel->remote.mtu = 0;
     channel->remote.flags = 0;
     memset(&channel->cap_ledger, 0, sizeof(channel->cap_ledger));
+    channel->tx_credits = 0;
+    channel->credit_refill = 0;
+    channel->credits_enabled = false;
+    channel->drops_backpressure = 0;
     channel->msgs_sent = 0;
     channel->bytes_sent = 0;
     channel->msgs_injected = 0;
@@ -335,6 +339,41 @@ int fut_fipc_cap_unbind(struct fut_fipc_channel *channel) {
         return FIPC_EINVAL;
     }
     memset(&channel->cap_ledger, 0, sizeof(channel->cap_ledger));
+    channel->credits_enabled = false;
+    channel->tx_credits = 0;
+    channel->credit_refill = 0;
+    return 0;
+}
+
+int fut_fipc_set_credits(struct fut_fipc_channel *channel, uint32_t initial, uint32_t refill) {
+    if (!channel) {
+        return FIPC_EINVAL;
+    }
+    if (initial == 0 && refill == 0) {
+        channel->credits_enabled = false;
+        channel->tx_credits = 0;
+        channel->credit_refill = 0;
+        return 0;
+    }
+    channel->credits_enabled = true;
+    channel->credit_refill = refill;
+    channel->tx_credits = initial ? initial : refill;
+    return 0;
+}
+
+int fut_fipc_refill_credits(struct fut_fipc_channel *channel, uint32_t add) {
+    if (!channel) {
+        return FIPC_EINVAL;
+    }
+    if (!channel->credits_enabled) {
+        return 0;
+    }
+    uint64_t current = channel->tx_credits;
+    current += add;
+    if (channel->credit_refill != 0 && current > channel->credit_refill) {
+        current = channel->credit_refill;
+    }
+    channel->tx_credits = (uint32_t)current;
     return 0;
 }
 
@@ -390,6 +429,13 @@ int fut_fipc_send(struct fut_fipc_channel *channel, uint32_t type,
         return FIPC_ENOSPC;
     }
 
+    if (channel->credits_enabled) {
+        if (channel->tx_credits == 0) {
+            channel->drops_backpressure++;
+            return FIPC_EAGAIN;
+        }
+    }
+
     if (channel->type == FIPC_CHANNEL_REMOTE) {
         if (!transport_state.ops || !transport_state.ops->send) {
             return FIPC_ENOTSUP;
@@ -439,6 +485,9 @@ int fut_fipc_send(struct fut_fipc_channel *channel, uint32_t type,
                                            total,
                                            transport_state.context);
         if (rc == 0) {
+            if (channel->credits_enabled && channel->tx_credits > 0) {
+                channel->tx_credits--;
+            }
             channel->msgs_sent++;
             channel->bytes_sent += size;
         }
@@ -448,9 +497,60 @@ int fut_fipc_send(struct fut_fipc_channel *channel, uint32_t type,
 
     int rc = fut_fipc_enqueue_message(channel, type, data, size, 0, 0, channel->capability);
     if (rc == 0) {
+        if (channel->credits_enabled && channel->tx_credits > 0) {
+            channel->tx_credits--;
+        }
         channel->msgs_sent++;
         channel->bytes_sent += size;
     }
+    return rc;
+}
+
+int fut_fipc_sendv(struct fut_fipc_channel *channel,
+                   uint32_t type,
+                   const struct fipc_iovec *iov,
+                   size_t iovcnt) {
+    if (!channel || (iovcnt == 0 && iov != NULL)) {
+        return FIPC_EINVAL;
+    }
+    if (iovcnt == 0) {
+        return fut_fipc_send(channel, type, NULL, 0);
+    }
+    if (!iov) {
+        return FIPC_EINVAL;
+    }
+
+    uint64_t total = 0;
+    for (size_t i = 0; i < iovcnt; ++i) {
+        if (!iov[i].base && iov[i].len > 0) {
+            return FIPC_EINVAL;
+        }
+        total += iov[i].len;
+        if (total > SIZE_MAX) {
+            return FIPC_EINVAL;
+        }
+    }
+
+    if (total == 0) {
+        return fut_fipc_send(channel, type, NULL, 0);
+    }
+
+    uint8_t *buffer = (uint8_t *)fut_malloc((size_t)total);
+    if (!buffer) {
+        return FIPC_ENOMEM;
+    }
+
+    size_t offset = 0;
+    for (size_t i = 0; i < iovcnt; ++i) {
+        if (iov[i].len == 0) {
+            continue;
+        }
+        memcpy(buffer + offset, iov[i].base, iov[i].len);
+        offset += iov[i].len;
+    }
+
+    int rc = fut_fipc_send(channel, type, buffer, (size_t)total);
+    fut_free(buffer);
     return rc;
 }
 
@@ -500,6 +600,32 @@ static uint8_t *fipc_kernel_write_u64(uint8_t *cursor, uint8_t *end, uint8_t tag
     return cursor;
 }
 
+size_t fut_fipc_dequeue_bounded(struct fut_fipc_channel *channel, size_t max_msgs) {
+    if (!channel || max_msgs == 0) {
+        return 0;
+    }
+    if (channel->queue_size == 0) {
+        return 0;
+    }
+    uint8_t *scratch = (uint8_t *)fut_malloc(channel->queue_size);
+    if (!scratch) {
+        return 0;
+    }
+    size_t drained = 0;
+    while (drained < max_msgs) {
+        ssize_t r = fut_fipc_recv(channel, scratch, channel->queue_size);
+        if (r <= 0) {
+            if (r == FIPC_EAGAIN) {
+                break;
+            }
+            break;
+        }
+        drained++;
+    }
+    fut_free(scratch);
+    return drained;
+}
+
 int fut_fipc_publish_kernel_metrics(void) {
     struct fut_fipc_channel *sys = fut_fipc_channel_lookup(FIPC_SYS_CHANNEL_ID);
     if (!sys) {
@@ -511,6 +637,8 @@ int fut_fipc_publish_kernel_metrics(void) {
     uint64_t bytes_sent = 0;
     uint64_t msgs_injected = 0;
     uint64_t bytes_injected = 0;
+    uint64_t total_tx_credits = 0;
+    uint64_t drops_backpressure = 0;
 
     for (struct fut_fipc_channel *c = channel_list; c; c = c->next) {
         channel_count++;
@@ -518,6 +646,10 @@ int fut_fipc_publish_kernel_metrics(void) {
         bytes_sent += c->bytes_sent;
         msgs_injected += c->msgs_injected;
         bytes_injected += c->bytes_injected;
+        if (c->credits_enabled) {
+            total_tx_credits += c->tx_credits;
+        }
+        drops_backpressure += c->drops_backpressure;
     }
 
     uint64_t pmm_total = fut_pmm_total_pages();
@@ -535,6 +667,8 @@ int fut_fipc_publish_kernel_metrics(void) {
     cursor = fipc_kernel_write_u64(cursor, end, FIPC_SYS_K_PMM_TOTAL, pmm_total);
     cursor = fipc_kernel_write_u64(cursor, end, FIPC_SYS_K_PMM_FREE, pmm_free);
     cursor = fipc_kernel_write_u64(cursor, end, FIPC_SYS_K_FIPC_CHANNELS, channel_count);
+    cursor = fipc_kernel_write_u64(cursor, end, FIPC_SYS_K_TX_CREDITS, total_tx_credits);
+    cursor = fipc_kernel_write_u64(cursor, end, FIPC_SYS_K_DROPS_BP, drops_backpressure);
 
     if (cursor >= end) {
         return FIPC_EIO;

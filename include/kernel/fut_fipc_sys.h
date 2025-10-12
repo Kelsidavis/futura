@@ -32,6 +32,8 @@ enum fipc_sys_kernel_tag {
     FIPC_SYS_K_PMM_TOTAL    = 0x21,
     FIPC_SYS_K_PMM_FREE     = 0x22,
     FIPC_SYS_K_FIPC_CHANNELS= 0x23,
+    FIPC_SYS_K_TX_CREDITS   = 0x24,
+    FIPC_SYS_K_DROPS_BP     = 0x25,
     FIPC_SYS_K_METRIC_END   = 0x2F,
 };
 

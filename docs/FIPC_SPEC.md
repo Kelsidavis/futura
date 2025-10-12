@@ -53,6 +53,40 @@ typedef struct {
 
 ---
 
+## 🌐 Remote Transport
+Remote channels reuse the same message layout while sending frames over UDP.
+Every remote `fipc_msg_t` is wrapped by a 16-byte network header:
+
+| Field | Size | Description |
+|-------|------|-------------|
+| `channel_id` | 64-bit | Destination channel ID on the receiving node |
+| `payload_len` | 32-bit | Total bytes of the serialized `fipc_msg_t` |
+| `crc` | 32-bit | CRC32 (poly 0xEDB88320) over the serialized payload |
+
+**Pipeline overview**
+- `fipc_send()` packages the message header + payload, enforces MTU, and invokes
+  the registered transport ops.
+- `netd` publishes the frame as a UDP datagram using the endpoint metadata
+  (loopback harness maps `node_id` → UDP port on 127.0.0.1).
+- Incoming frames are verified by netd (CRC, length, capability) before they are
+  injected into the destination channel with `fipc_channel_inject()`.
+- Capability tokens stay authoritative on both sides—messages with mismatched
+  capabilities are dropped with `FIPC_EINVAL`.
+
+**Service discovery**
+- `svc_registryd` records service → channel mappings and optional remote
+  endpoints.  
+- `libfutura` keeps a local cache via
+  `fipc_register_remote_service()` / `fipc_lookup_service_id()` so userland can
+  connect without synchronous RPCs.
+
+**Diagnostics**
+- `netd` logs CRC failures, unknown channel IDs, and transport errors.
+- Loopback mode allows single-host testing: both endpoints can share a UDP port
+  while exercising the remote path.
+
+---
+
 ## ⚙️ Core API
 | Function | Purpose |
 |-----------|----------|
@@ -98,9 +132,10 @@ typedef struct {
 ---
 
 ## 🧪 Testing
-Use the **loopback IPC test** suite:  
+Use the **remote loopback** suite (covers CRC + latency):  
 ```bash
-make tests/fipc_loopback
+make tests/fipc_remote_loopback
+./build/tests/fipc_remote_loopback --net=127.0.0.1:49500
 ```
 
 ---

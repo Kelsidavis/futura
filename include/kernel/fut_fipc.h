@@ -77,10 +77,22 @@ struct fut_fipc_remote_endpoint {
  * Header framing for remote FIPC transport packets.
  * Serialized ahead of the canonical fut_fipc_msg payload.
  */
+#define FIPC_NET_MAGIC  0x31435046u /* 'FPC1' little-endian */
+#define FIPC_NET_V1     1
+#define FIPC_NET_F_NONE 0u
+#define FIPC_NET_F_ACK  1u
+#define FIPC_NET_F_CRED 2u
+
 struct fut_fipc_net_hdr {
-    uint64_t channel_id;             /* Destination channel identifier */
-    uint32_t payload_len;            /* Serialized fut_fipc_msg length */
-    uint32_t crc;                    /* CRC32 of payload (Ackermann) */
+    uint32_t magic;
+    uint8_t  version;
+    uint8_t  flags;
+    uint16_t reserved;
+    uint32_t seq;
+    uint32_t credits;
+    uint64_t channel_id;
+    uint32_t payload_len;
+    uint32_t crc;
 };
 
 /**

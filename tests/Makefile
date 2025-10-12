@@ -15,7 +15,7 @@ INCLUDES := -I$(ROOT)/include -I$(ROOT) -I$(ROOT)/src/user/netd -I$(ROOT)/src/us
 CFLAGS := -std=c2x -Wall -Wextra -Werror -g -O2 $(INCLUDES)
 LDFLAGS := -pthread -no-pie
 
-TESTS := fipc_remote_loopback fipc_remote_discovery fipc_remote_capability fipc_remote_autodiscover fipc_remote_metrics
+TESTS := fipc_remote_loopback fipc_remote_discovery fipc_remote_capability fipc_remote_autodiscover fipc_remote_metrics fipc_remote_header_v1
 
 .PHONY: all clean $(TESTS)
 
@@ -30,6 +30,7 @@ $(BIN_DIR)/fipc_remote_loopback: fipc_remote_loopback.c $(LIBFIPC_HOST) | $(BIN_
 	@echo "CC $@"
 	@$(CC) $(CFLAGS) -o $@ fipc_remote_loopback.c \
 		$(ROOT)/src/user/netd/netd_core.c \
+		$(ROOT)/src/user/svc_registryd/registry_client.c \
 		$(LIBFIPC_HOST) $(LDFLAGS)
 
 # === FIPC remote discovery test (links registry & netd directly) ===
@@ -71,6 +72,16 @@ FIPC_MET_SRCS := fipc_remote_metrics.c \
 $(BIN_DIR)/fipc_remote_metrics: $(FIPC_MET_SRCS) $(LIBFIPC_HOST) | $(BIN_DIR)
 	@echo "CC $@"
 	@$(CC) $(CFLAGS) -o $@ $(FIPC_MET_SRCS) $(LIBFIPC_HOST) $(LDFLAGS)
+
+# === FIPC header v1 test ===
+FIPC_HDRV1_SRCS := fipc_remote_header_v1.c \
+	$(ROOT)/src/user/netd/netd_core.c \
+	$(ROOT)/src/user/svc_registryd/registry_server.c \
+	$(ROOT)/src/user/svc_registryd/registry_client.c
+
+$(BIN_DIR)/fipc_remote_header_v1: $(FIPC_HDRV1_SRCS) $(LIBFIPC_HOST) | $(BIN_DIR)
+	@echo "CC $@"
+	@$(CC) $(CFLAGS) -o $@ $(FIPC_HDRV1_SRCS) $(LIBFIPC_HOST) $(LDFLAGS)
 
 $(BIN_DIR):
 	@mkdir -p $(BIN_DIR)

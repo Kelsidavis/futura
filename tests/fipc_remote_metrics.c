@@ -164,12 +164,13 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    if (!(metrics.lookup_attempts >= 1 && metrics.lookup_miss >= 1 && metrics.lookup_hits >= 1)) {
-        fprintf(stderr, "[FIPC-MET] counters not advanced: attempts=%llu hits=%llu miss=%llu eagain=%llu\n",
+    if (!(metrics.lookup_attempts >= 1 && metrics.lookup_miss >= 1 && metrics.lookup_hits >= 1 && metrics.tx_frames >= 1)) {
+        fprintf(stderr, "[FIPC-MET] counters not advanced: attempts=%llu hits=%llu miss=%llu eagain=%llu tx_frames=%llu\n",
                 (unsigned long long)metrics.lookup_attempts,
                 (unsigned long long)metrics.lookup_hits,
                 (unsigned long long)metrics.lookup_miss,
-                (unsigned long long)metrics.send_eagain);
+                (unsigned long long)metrics.send_eagain,
+                (unsigned long long)metrics.tx_frames);
         cleanup_channels(channels, 3);
         ctx.running = false;
         pthread_join(poll_thread, NULL);
@@ -201,7 +202,9 @@ int main(int argc, char **argv) {
     }
 
     if (msg->length == 0 || !strstr((const char *)msg->payload, "lookup_attempts=") ||
-        !strstr((const char *)msg->payload, "lookup_hits=")) {
+        !strstr((const char *)msg->payload, "lookup_hits=") ||
+        !strstr((const char *)msg->payload, "tx_frames=") ||
+        !strstr((const char *)msg->payload, "tx_blocked_credits=")) {
         fprintf(stderr, "[FIPC-MET] metrics payload malformed: %.*s\n",
                 (int)msg->length, msg->payload);
         cleanup_channels(channels, 3);

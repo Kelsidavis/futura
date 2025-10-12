@@ -31,6 +31,8 @@ struct netd_binding {
     char host[64];
     uint16_t port;
     uint64_t cached_remote;
+    uint32_t tx_seq;
+    uint32_t credit_window;
 };
 
 struct netd_counters {
@@ -38,6 +40,8 @@ struct netd_counters {
     uint64_t lookup_hits;
     uint64_t lookup_miss;
     uint64_t send_eagain;
+    uint64_t tx_frames;
+    uint64_t tx_blocked_credits;
 };
 
 struct netd {
@@ -78,7 +82,7 @@ static struct netd_binding *find_binding(struct netd *nd, uint64_t local_id) {
         return NULL;
     }
     for (size_t i = 0; i < nd->nb; i++) {
-        if (nd->bindings[i].local_id == local_id) {
+        if (nd->bindings[i].local_id == local_id || nd->bindings[i].cached_remote == local_id) {
             return &nd->bindings[i];
         }
     }
@@ -147,6 +151,8 @@ bool netd_bind_service(struct netd *nd,
         binding = &nd->bindings[nd->nb++];
         binding->local_id = local_channel_id;
         binding->cached_remote = 0;
+        binding->tx_seq = 1u;
+        binding->credit_window = 0;
     }
 
     strncpy(binding->name, service_name, sizeof(binding->name) - 1);
@@ -169,7 +175,9 @@ bool netd_metrics_snapshot(struct netd *nd, struct netd_metrics *out) {
         .lookup_hits = nd->ctrs.lookup_hits,
         .lookup_miss = nd->ctrs.lookup_miss,
         .send_eagain = nd->ctrs.send_eagain,
-        .reserved0 = 0
+        .reserved0 = 0,
+        .tx_frames = nd->ctrs.tx_frames,
+        .tx_blocked_credits = nd->ctrs.tx_blocked_credits
     };
 
     *out = snap;
@@ -188,11 +196,13 @@ bool netd_metrics_publish(struct netd *nd, struct fut_fipc_channel *sink) {
 
     char record[256];
     int n = snprintf(record, sizeof(record),
-                     "lookup_attempts=%llu lookup_hits=%llu lookup_miss=%llu send_eagain=%llu",
-                     (unsigned long long)m.lookup_attempts,
-                     (unsigned long long)m.lookup_hits,
-                     (unsigned long long)m.lookup_miss,
-                     (unsigned long long)m.send_eagain);
+        "lookup_attempts=%llu lookup_hits=%llu lookup_miss=%llu send_eagain=%llu tx_frames=%llu tx_blocked_credits=%llu",
+        (unsigned long long)m.lookup_attempts,
+        (unsigned long long)m.lookup_hits,
+        (unsigned long long)m.lookup_miss,
+        (unsigned long long)m.send_eagain,
+        (unsigned long long)m.tx_frames,
+        (unsigned long long)m.tx_blocked_credits);
     if (n < 0) {
         return false;
     }
@@ -358,8 +368,29 @@ static int udp_send_cb(const struct fut_fipc_remote_endpoint *remote,
     dst.sin_port = htons(port);
     dst.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
 
-    struct fut_fipc_net_hdr net_hdr = *hdr;
-    net_hdr.channel_id = effective_channel;
+    struct netd_binding *binding = find_binding(nd, effective_channel);
+
+    struct fut_fipc_net_hdr net_hdr = {
+        .magic   = FIPC_NET_MAGIC,
+        .version = FIPC_NET_V1,
+        .flags   = FIPC_NET_F_NONE,
+        .reserved= 0,
+        .seq     = binding ? binding->tx_seq : 0,
+        .credits = binding ? binding->credit_window : 0,
+        .channel_id = effective_channel,
+        .payload_len = (uint32_t)payload_len,
+        .crc     = 0
+    };
+
+    if (binding) {
+        if ((net_hdr.flags & FIPC_NET_F_CRED) && binding->credit_window == 0) {
+            nd->ctrs.tx_blocked_credits++;
+            return FIPC_EAGAIN;
+        }
+        binding->tx_seq++;
+        nd->ctrs.tx_frames++;
+    }
+
     net_hdr.crc = crc32_accum(payload, payload_len);
 
     size_t frame_len = sizeof(net_hdr) + payload_len;

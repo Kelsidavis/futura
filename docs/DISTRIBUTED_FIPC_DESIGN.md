@@ -83,3 +83,7 @@
 ## 11. Observability (Host netd)
 - `netd` maintains counters for registry lookups: `lookup_attempts`, `lookup_hits`, `lookup_miss`, and `send_eagain`.
 - `netd_metrics_snapshot()` copies these counters into a caller-provided struct; `netd_metrics_publish()` emits a one-line text record (key=value pairs) through a supplied FIPC channel for easy test/assertion.
+
+## 12. Transport Header v1
+- The UDP framing now includes `magic`, `version`, `flags`, `seq`, `credits`, `channel_id`, `payload_len`, and `crc`. Version defaults to 1, preserving compatibility with earlier payload parsing (receivers can ignore fields they do not recognise).
+- `seq` increments with each transmitted frame per bound service, while `credits` remains advisory (current builds leave it at 0). Flow-control and acknowledgement flags are reserved for future implementations.

@@ -239,7 +239,7 @@ typedef struct {
     uint64_t capacity_lba;
     uint32_t block_size;
     bool lba48;
-    fut_blkdev_t *blk_dev;
+    fut_blkdev_t blk_dev;
     char name[16];
 } ahci_device_t;
 
@@ -648,20 +648,18 @@ static bool ahci_port_configure(ahci_device_t *dev,
     name[9] = '\0';
     memcpy(dev->name, name, sizeof(dev->name));
 
-    fut_blkdev_t *blk_dev = NULL;
-    rc = fut_blk_register(dev->name,
-                          dev->block_size,
-                          dev->capacity_lba,
-                          FUT_BLK_READ | FUT_BLK_WRITE | FUT_BLK_ADMIN,
-                          &g_ahci_backend,
-                          dev,
-                          &blk_dev);
+    dev->blk_dev.name = dev->name;
+    dev->blk_dev.block_size = dev->block_size;
+    dev->blk_dev.block_count = dev->capacity_lba;
+    dev->blk_dev.allowed_rights = FUT_BLK_READ | FUT_BLK_WRITE | FUT_BLK_ADMIN;
+    dev->blk_dev.backend = &g_ahci_backend;
+    dev->blk_dev.backend_ctx = dev;
+
+    rc = fut_blk_register(&dev->blk_dev);
     if (rc != 0) {
         fut_printf("[ahci] register %s failed: %d\n", dev->name, rc);
         goto fail_ident;
     }
-
-    dev->blk_dev = blk_dev;
 
     fut_printf("[ahci] port %u -> %s (%llu sectors, %s LBA48)\n",
                index,

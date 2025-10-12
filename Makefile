@@ -116,7 +116,9 @@ KERNEL_SOURCES := \
     kernel/tests/fb_user_smoke.c \
     kernel/video/fb_mmio.c \
     drivers/video/fb.c \
-    drivers/tty/console.c
+    drivers/tty/console.c \
+    kernel/blk/blkcore.c \
+    kernel/tests/blk_async_smoke.c
 
 # Platform-specific sources
 ifeq ($(PLATFORM),x86_64)

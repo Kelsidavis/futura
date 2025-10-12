@@ -23,6 +23,7 @@
 #include <kernel/fut_futurafs.h>
 #include <kernel/fb.h>
 #include <kernel/console.h>
+#include <futura/blkdev.h>
 #include <platform/platform.h>
 #if defined(__x86_64__)
 #include <arch/x86_64/paging.h>
@@ -30,6 +31,7 @@
 
 extern void fut_echo_selftest(void);
 extern void fut_fb_userspace_smoke(void);
+extern void fut_blk_async_selftest_schedule(fut_task_t *task);
 
 /* ============================================================
  *   External Symbols from Linker Script
@@ -662,6 +664,8 @@ void fut_kernel_main(void) {
     fut_printf("[INIT] Initializing block device subsystem...\n");
     fut_blockdev_init();
     fut_printf("[INIT] Block device subsystem initialized\n");
+    fut_blk_core_init();
+    fut_printf("[INIT] Async block core initialized\n");
 
     /* Test block device operations - DISABLED (heap too small for 1MB ramdisk) */
     /* test_blockdev_operations(); */
@@ -710,6 +714,8 @@ void fut_kernel_main(void) {
     }
 
     fut_printf("[INIT] Test task created (PID %llu)\n", test_task->pid);
+
+    fut_blk_async_selftest_schedule(test_task);
 
     /* Create FIPC channel for inter-thread communication */
     fut_printf("[INIT] Creating FIPC test channel...\n");

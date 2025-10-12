@@ -185,7 +185,9 @@ static void str_copy(char *dest, const char *src, size_t max_len) {
  * @param max_comp   Maximum number of components
  * @return Number of components parsed
  */
-static int parse_path(const char *path, char components[][64], int max_comp) {
+static int parse_path(const char *path,
+                      char components[][FUT_VFS_NAME_MAX + 1],
+                      int max_comp) {
     int count = 0;
     const char *start = path;
 
@@ -204,7 +206,10 @@ static int parse_path(const char *path, char components[][64], int max_comp) {
 
         /* Copy component */
         size_t len = end - start;
-        if (len > 0 && len < 63) {
+        if (len > 0) {
+            if (len > FUT_VFS_NAME_MAX) {
+                return -ENAMETOOLONG;
+            }
             str_copy(components[count], start, len + 1);
             count++;
         }
@@ -243,8 +248,12 @@ static int lookup_vnode(const char *path, struct fut_vnode **vnode) {
     }
 
     /* Parse path into components */
-    char components[MAX_PATH_COMPONENTS][64];
+    char components[MAX_PATH_COMPONENTS][FUT_VFS_NAME_MAX + 1];
     int num_components = parse_path(path, components, MAX_PATH_COMPONENTS);
+
+    if (num_components < 0) {
+        return num_components;
+    }
 
     if (num_components == 0) {
         return -EINVAL;
@@ -286,6 +295,140 @@ static int lookup_vnode(const char *path, struct fut_vnode **vnode) {
 
     *vnode = current;
     return 0;
+}
+
+static int lookup_parent_and_name(const char *path,
+                                  struct fut_vnode **parent_out,
+                                  char name_out[FUT_VFS_NAME_MAX + 1]) {
+    if (!path || !parent_out || !name_out) {
+        return -EINVAL;
+    }
+
+    char components[MAX_PATH_COMPONENTS][FUT_VFS_NAME_MAX + 1];
+    int num_components = parse_path(path, components, MAX_PATH_COMPONENTS);
+    if (num_components < 0) {
+        return num_components;
+    }
+
+    if (num_components == 0) {
+        return -EINVAL;
+    }
+
+    if (!root_vnode) {
+        return -ENOENT;
+    }
+
+    struct fut_vnode *current = root_vnode;
+    fut_vnode_ref(current);
+
+    for (int i = 0; i < num_components - 1; i++) {
+        if (current->type != VN_DIR || !current->ops || !current->ops->lookup) {
+            fut_vnode_unref(current);
+            return -ENOTDIR;
+        }
+
+        struct fut_vnode *next = NULL;
+        int ret = current->ops->lookup(current, components[i], &next);
+        if (ret < 0) {
+            fut_vnode_unref(current);
+            return ret;
+        }
+
+        fut_vnode_unref(current);
+        current = next;
+    }
+
+    if (current->type != VN_DIR) {
+        fut_vnode_unref(current);
+        return -ENOTDIR;
+    }
+
+    str_copy(name_out, components[num_components - 1], FUT_VFS_NAME_MAX + 1);
+    *parent_out = current;
+    return 0;
+}
+
+int fut_vfs_readdir(const char *path, uint64_t *cookie, struct fut_vdirent *dirent) {
+    if (!path || !cookie || !dirent) {
+        return -EINVAL;
+    }
+
+    struct fut_vnode *dir = NULL;
+    int ret = lookup_vnode(path, &dir);
+    if (ret < 0) {
+        return ret;
+    }
+
+    if (dir->type != VN_DIR) {
+        fut_vnode_unref(dir);
+        return -ENOTDIR;
+    }
+
+    if (!dir->ops || !dir->ops->readdir) {
+        fut_vnode_unref(dir);
+        return -ENOSYS;
+    }
+
+    ret = dir->ops->readdir(dir, cookie, dirent);
+    fut_vnode_unref(dir);
+    return ret;
+}
+
+int fut_vfs_unlink(const char *path) {
+    struct fut_vnode *parent = NULL;
+    char leaf[FUT_VFS_NAME_MAX + 1];
+
+    int ret = lookup_parent_and_name(path, &parent, leaf);
+    if (ret < 0) {
+        return ret;
+    }
+
+    if (!parent->ops || !parent->ops->unlink) {
+        fut_vnode_unref(parent);
+        return -ENOSYS;
+    }
+
+    ret = parent->ops->unlink(parent, leaf);
+    fut_vnode_unref(parent);
+    return ret;
+}
+
+int fut_vfs_rmdir(const char *path) {
+    struct fut_vnode *parent = NULL;
+    char leaf[FUT_VFS_NAME_MAX + 1];
+
+    int ret = lookup_parent_and_name(path, &parent, leaf);
+    if (ret < 0) {
+        return ret;
+    }
+
+    if (!parent->ops || !parent->ops->rmdir) {
+        fut_vnode_unref(parent);
+        return -ENOSYS;
+    }
+
+    ret = parent->ops->rmdir(parent, leaf);
+    fut_vnode_unref(parent);
+    return ret;
+}
+
+int fut_vfs_mkdir(const char *path, uint32_t mode) {
+    struct fut_vnode *parent = NULL;
+    char leaf[FUT_VFS_NAME_MAX + 1];
+
+    int ret = lookup_parent_and_name(path, &parent, leaf);
+    if (ret < 0) {
+        return ret;
+    }
+
+    if (!parent->ops || !parent->ops->mkdir) {
+        fut_vnode_unref(parent);
+        return -ENOSYS;
+    }
+
+    ret = parent->ops->mkdir(parent, leaf, mode);
+    fut_vnode_unref(parent);
+    return ret;
 }
 
 /* ============================================================

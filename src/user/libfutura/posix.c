@@ -10,9 +10,15 @@
 #include <stddef.h>
 #include <kernel/fut_fipc.h>
 #include <user/futura_posix.h>
+#include <user/libfutura.h>
 
 /* Connection to posixd daemon */
 static struct fut_fipc_channel *posixd_channel = NULL;
+
+/* Temporary directory handle placeholder */
+struct fut_dir {
+    int64_t handle;
+};
 
 /**
  * Initialize POSIX subsystem (connect to posixd).
@@ -174,6 +180,38 @@ ssize_t write(int fd, const void *buf, size_t count) {
     struct posixd_write_resp *resp = (struct posixd_write_resp *)resp_msg->payload;
 
     return resp->bytes_written;
+}
+
+int unlink(const char *path) {
+    (void)path;
+    return -1;
+}
+
+int mkdir(const char *path, mode_t mode) {
+    (void)path;
+    (void)mode;
+    return -1;
+}
+
+int rmdir(const char *path) {
+    (void)path;
+    return -1;
+}
+
+fut_dir_t *opendir(const char *path) {
+    (void)path;
+    return NULL;
+}
+
+int closedir(fut_dir_t *dir) {
+    (void)dir;
+    return -1;
+}
+
+int readdir(fut_dir_t *dir, struct fut_dirent *entry) {
+    (void)dir;
+    (void)entry;
+    return -1;
 }
 
 /**

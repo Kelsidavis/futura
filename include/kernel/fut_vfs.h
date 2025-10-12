@@ -12,6 +12,8 @@
 #include <stddef.h>
 #include <stdbool.h>
 
+#define FUT_VFS_NAME_MAX 255
+
 /* Freestanding environment: define ssize_t */
 #ifndef _SSIZE_T_DEFINED
 #define _SSIZE_T_DEFINED
@@ -60,6 +62,27 @@ struct fut_vnode {
     const struct fut_vnode_ops *ops;
 };
 
+/* Directory entry types returned by readdir() */
+enum fut_vdir_type {
+    FUT_VDIR_TYPE_UNKNOWN = 0,
+    FUT_VDIR_TYPE_REG     = 1,
+    FUT_VDIR_TYPE_DIR     = 2,
+    FUT_VDIR_TYPE_CHAR    = 3,
+    FUT_VDIR_TYPE_BLOCK   = 4,
+    FUT_VDIR_TYPE_FIFO    = 5,
+    FUT_VDIR_TYPE_SOCKET  = 6,
+    FUT_VDIR_TYPE_SYMLINK = 7
+};
+
+/* Directory entry returned by filesystem backends */
+struct fut_vdirent {
+    uint64_t d_ino;
+    uint64_t d_off;
+    uint16_t d_reclen;
+    uint8_t d_type;
+    char d_name[FUT_VFS_NAME_MAX + 1];
+};
+
 /* ============================================================
  *   VNode Operations
  * ============================================================ */
@@ -103,6 +126,16 @@ struct fut_vnode_ops {
      * @return Number of bytes written, or negative error code
      */
     ssize_t (*write)(struct fut_vnode *vnode, const void *buf, size_t size, uint64_t offset);
+
+    /**
+     * Read a directory entry.
+     *
+     * @param dir     Directory vnode
+     * @param cookie  Iterator cookie (updated on success)
+     * @param dirent  Directory entry to populate
+     * @return 0 on success, negative error code on failure or end of directory
+     */
+    int (*readdir)(struct fut_vnode *dir, uint64_t *cookie, struct fut_vdirent *dirent);
 
     /**
      * Lookup a child vnode in a directory.
@@ -341,6 +374,16 @@ ssize_t fut_vfs_read(int fd, void *buf, size_t size);
 ssize_t fut_vfs_write(int fd, const void *buf, size_t size);
 
 /**
+ * Read a directory entry.
+ *
+ * @param path   Directory path
+ * @param cookie Iterator cookie (offset)
+ * @param dirent Directory entry to populate
+ * @return 0 on success, -ENOENT when no more entries, negative error code otherwise
+ */
+int fut_vfs_readdir(const char *path, uint64_t *cookie, struct fut_vdirent *dirent);
+
+/**
  * Close a file.
  *
  * @param fd File descriptor
@@ -367,6 +410,31 @@ int64_t fut_vfs_lseek(int fd, int64_t offset, int whence);
  */
 int fut_vfs_stat(const char *path, struct fut_stat *stat);
 
+/**
+ * Remove a file.
+ *
+ * @param path Path to file
+ * @return 0 on success or negative error code on failure
+ */
+int fut_vfs_unlink(const char *path);
+
+/**
+ * Remove a directory.
+ *
+ * @param path Path to directory
+ * @return 0 on success or negative error code on failure
+ */
+int fut_vfs_rmdir(const char *path);
+
+/**
+ * Create a directory.
+ *
+ * @param path Path to new directory
+ * @param mode Permission bits for directory
+ * @return 0 on success or negative error code on failure
+ */
+int fut_vfs_mkdir(const char *path, uint32_t mode);
+
 /* Seek modes */
 #define SEEK_SET    0
 #define SEEK_CUR    1
@@ -391,5 +459,10 @@ int fut_vfs_stat(const char *path, struct fut_stat *stat);
 #define ENOTDIR     20      /* Not a directory */
 #define EISDIR      21      /* Is a directory */
 #define EINVAL      22      /* Invalid argument */
+#define ENFILE      23      /* File table overflow */
+#define EMFILE      24      /* Too many open files */
 #define ENOSPC      28      /* No space left on device */
 #define EROFS       30      /* Read-only filesystem */
+#define ENAMETOOLONG 36     /* File name too long */
+#define ENOSYS      38      /* Function not implemented */
+#define ENOTEMPTY   39      /* Directory not empty */

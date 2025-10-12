@@ -82,6 +82,23 @@ int open(const char *path, int flags, ...);
 int close(int fd);
 ssize_t read(int fd, void *buf, size_t count);
 ssize_t write(int fd, const void *buf, size_t count);
+int unlink(const char *path);
+int mkdir(const char *path, mode_t mode);
+int rmdir(const char *path);
+
+/* Directory operations */
+typedef struct fut_dir fut_dir_t;
+
+fut_dir_t *opendir(const char *path);
+int closedir(fut_dir_t *dir);
+struct fut_dirent {
+    ino_t d_ino;
+    off_t d_off;
+    unsigned short d_reclen;
+    unsigned char d_type;
+    char d_name[POSIX_NAME_MAX + 1];
+};
+int readdir(fut_dir_t *dir, struct fut_dirent *entry);
 
 /* Process operations */
 int fork(void);

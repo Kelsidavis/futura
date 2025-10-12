@@ -120,7 +120,7 @@ static void composite_frame(void) {
 /**
  * Handle input event from kernel (keyboard, mouse, touch).
  */
-static void handle_input_event(uint32_t type, uint32_t code, int32_t value) {
+static void __attribute__((unused)) handle_input_event(uint32_t type, uint32_t code, int32_t value) {
     (void)type;
     (void)code;
     (void)value;

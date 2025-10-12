@@ -12,6 +12,8 @@
 
 /* Reserved channel identifier for the system metrics feed. */
 #define FIPC_SYS_CHANNEL_ID 1u
+/* Reserved channel identifier for admin control operations. */
+#define FIPC_CTL_CHANNEL_ID 2u
 
 /* IDL-v0 tags (one-byte identifiers followed by varints unless noted). */
 enum fipc_sys_tag {
@@ -63,6 +65,8 @@ enum fipc_fway_evt_kind {
 #define FIPC_SYS_MSG_KERNEL_METRICS 0x4B4D4554u /* 'KMET' */
 #define FIPC_SYS_MSG_FWAY_METRICS   0x46574159u /* 'FWAY' */
 #define FIPC_SYS_MSG_VFS_METRICS    0x5646534Du /* 'VFSM' */
+#define FIPC_SYS_MSG_ADMIN_OP       0x41444D49u /* 'ADMI' */
+#define FIPC_SYS_MSG_ADMIN_RP       0x41524C59u /* 'ARLY' */
 
 enum fipc_sys_vfs_tag {
     FIPC_VFS_BEGIN      = 0x40,
@@ -81,6 +85,31 @@ enum fipc_vfs_evt_kind {
     FIPC_VFS_READ  = 2,
     FIPC_VFS_WRITE = 3,
     FIPC_VFS_CLOSE = 4,
+};
+
+enum fipc_admin_tag {
+    FIPC_ADM_BEGIN    = 0x50,
+    FIPC_ADM_OP       = 0x51,
+    FIPC_ADM_TARGET   = 0x52,
+    FIPC_ADM_RIGHTS   = 0x53,
+    FIPC_ADM_MAX_MSGS = 0x54,
+    FIPC_ADM_MAX_BYTES= 0x55,
+    FIPC_ADM_EXP_TICK = 0x56,
+    FIPC_ADM_REVOKE   = 0x57,
+    FIPC_ADM_RATE     = 0x58,
+    FIPC_ADM_BURST    = 0x59,
+    FIPC_ADM_END      = 0x5F,
+
+    FIPC_ADM_RP_BEGIN = 0x60,
+    FIPC_ADM_RP_CODE  = 0x61,
+    FIPC_ADM_RP_END   = 0x6F,
+};
+
+enum fipc_admin_op {
+    FIPC_ADM_CAP_BIND   = 1,
+    FIPC_ADM_CAP_UNBIND = 2,
+    FIPC_ADM_CAP_REVOKE = 3,
+    FIPC_ADM_RATE_SET   = 4,
 };
 
 static inline uint8_t *fipc_sys_varint_u64(uint8_t *cursor, uint64_t value) {

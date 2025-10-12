@@ -32,7 +32,7 @@
 extern void fut_echo_selftest(void);
 extern void fut_fb_userspace_smoke(void);
 extern void fut_blk_async_selftest_schedule(fut_task_t *task);
-extern void virtio_blk_init(void);
+extern fut_status_t virtio_blk_init(uint64_t pci_addr);
 extern void ahci_init(void);
 
 /* ============================================================
@@ -668,7 +668,10 @@ void fut_kernel_main(void) {
     fut_printf("[INIT] Block device subsystem initialized\n");
     fut_blk_core_init();
     fut_printf("[INIT] Async block core initialized\n");
-    virtio_blk_init();
+    fut_status_t vblk_rc = virtio_blk_init(0);
+    if (vblk_rc != 0) {
+        fut_printf("[virtio-blk] init failed: %d\n", vblk_rc);
+    }
     ahci_init();
 
     /* Test block device operations - DISABLED (heap too small for 1MB ramdisk) */

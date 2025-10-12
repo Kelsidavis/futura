@@ -21,6 +21,7 @@ Futura OS is a capability-first nanokernel that keeps the core minimal—time, s
 ### What's new — Updated Oct 12 2025
 
 - **Per-task MMU contexts**: `fut_mm` objects now own page tables, track VMAs, drive `CR3` switches, and manage heap growth via `brk(2)` plus anonymous `mmap(2)`.
+- **Rust virtio-blk driver**: async blkcore now links against a Rust staticlib that probes PCI, negotiates queues, and registers `/dev/vda` through the new FFI layer.
 - **Syscall surface**: kernel exports `mmap`, `munmap`, `brk`, and `nanosleep`; userland gains inline wrappers in `include/user/sys.h` and a shared ABI header for `timespec`.
 - **Scheduler wait queues**: `fut_waitq` delivers blocking semantics to `waitpid`, timers, and future drivers without spinning.
 - **Console character device**: `/dev/console` is wired through a TTY driver that fans out to the serial backend with automatic newline normalization.
@@ -35,6 +36,7 @@ See `docs/CURRENT_STATUS.md` for a deeper dive into the latest changes and near-
 ```
 futura/
 ├── drivers/
+│   ├── rust/                # Rust staticlib drivers (virtio-blk, common FFI)
 │   ├── tty/                 # Console character device → serial
 │   └── video/               # Framebuffer MMIO glue
 ├── docs/                    # Architecture and status reports
@@ -67,6 +69,7 @@ Futura currently targets x86-64 as the primary architecture (QEMU/KVM reference 
 
 - GCC/Clang with C23 support
 - GNU Make & Binutils
+- Rust toolchain (`rustc` + `cargo`) for kernel drivers (`make rust-drivers`)
 - QEMU (optional, for kernel ISO boot tests)
 - Optional: OpenSSL (`-lcrypto`) if you want to run remote FIPC AEAD tests (auto-skip otherwise)
 
@@ -88,7 +91,8 @@ make -C tests
 ### Kernel (QEMU ISO)
 
 ```bash
-# Build kernel + ISO
+# Build Rust drivers + kernel + ISO
+make rust-drivers
 make
 cp build/bin/futura_kernel.elf iso/boot/
 grub-mkrescue -o futura.iso iso/
@@ -98,6 +102,16 @@ qemu-system-x86_64 -cdrom futura.iso -serial stdio -display none -m 128M
 ```
 
 On boot you should see RAM/VMM init, device registration (including `/dev/console`), FIPC bring-up, and bootstrap threads that exercise VFS and the framebuffer user smoke test.
+
+### Rust driver builds
+
+Rust drivers live under `drivers/rust/` and compile to `staticlib` artifacts that the kernel links directly. You can rebuild them without touching the C pieces via:
+
+```bash
+make rust-drivers
+```
+
+`make clean` tears down both the C objects and the Cargo `target/` directories.
 
 ---
 

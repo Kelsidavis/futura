@@ -1,0 +1,894 @@
+// SPDX-License-Identifier: MPL-2.0
+/*
+ * rust virtio-blk driver for Futura OS blkcore
+ */
+
+#![no_std]
+#![forbid(unsafe_op_in_unsafe_fn)]
+
+// # QEMU runline for testing:
+// #   qemu-system-x86_64 \
+// #      -serial stdio \
+// #      -drive if=virtio,file=disk.img,format=raw \
+// #      -m 512 -cdrom futura.iso
+
+use core::arch::asm;
+use core::cmp::min;
+use core::ffi::{c_char, c_void};
+use core::mem::{size_of, MaybeUninit};
+use core::ptr::{self, write_volatile};
+use core::sync::atomic::{AtomicU16, Ordering};
+
+use common::{
+    alloc, alloc_page, free, free_page, log, register, thread_yield, FutBlkBackend, FutBlkDev,
+    FutStatus, RawSpinLock, SpinLock, FUT_BLK_ADMIN, FUT_BLK_READ, FUT_BLK_WRITE,
+};
+
+const PCI_CONFIG_ADDRESS: u16 = 0xCF8;
+const PCI_CONFIG_DATA: u16 = 0xCFC;
+
+const PCI_CAP_ID_VNDR: u8 = 0x09;
+
+const VIRTIO_PCI_CAP_COMMON_CFG: u8 = 1;
+const VIRTIO_PCI_CAP_NOTIFY_CFG: u8 = 2;
+const VIRTIO_PCI_CAP_ISR_CFG: u8 = 3;
+const VIRTIO_PCI_CAP_DEVICE_CFG: u8 = 4;
+
+const VIRTIO_VENDOR_ID: u16 = 0x1AF4;
+const VIRTIO_DEVICE_ID_BLOCK_LEGACY: u16 = 0x1001;
+const VIRTIO_DEVICE_ID_BLOCK_MODERN: u16 = 0x1042;
+
+const PCI_COMMAND: u8 = 0x04;
+const PCI_COMMAND_IO: u16 = 0x1;
+const PCI_COMMAND_MEMORY: u16 = 0x2;
+const PCI_COMMAND_BUS_MASTER: u16 = 0x4;
+
+const VIRTQ_DESC_F_NEXT: u16 = 1;
+const VIRTQ_DESC_F_WRITE: u16 = 2;
+
+const VIRTIO_BLK_T_IN: u32 = 0;
+const VIRTIO_BLK_T_OUT: u32 = 1;
+const VIRTIO_BLK_T_FLUSH: u32 = 4;
+
+const VIRTIO_BLK_S_OK: u8 = 0;
+const VIRTIO_BLK_S_UNSUPP: u8 = 2;
+
+const VIRTIO_STATUS_ACKNOWLEDGE: u8 = 1;
+const VIRTIO_STATUS_DRIVER: u8 = 2;
+const VIRTIO_STATUS_DRIVER_OK: u8 = 4;
+const VIRTIO_STATUS_FEATURES_OK: u8 = 8;
+
+const PAGE_SIZE: usize = 4096;
+const QUEUE_SIZE: u16 = 8;
+const DMA_STATUS_OFFSET: u64 = size_of::<VirtioBlkReqHeader>() as u64;
+const PMAP_DIRECT_VIRT_BASE: usize = 0xFFFFFFFF80000000;
+
+const ENODEV: FutStatus = -19;
+const EIO: FutStatus = -5;
+const ENOMEM: FutStatus = -12;
+const EINVAL: FutStatus = -22;
+const ENOTSUP: FutStatus = -95;
+const ETIMEDOUT: FutStatus = -110;
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct PciAddress {
+    bus: u8,
+    device: u8,
+    function: u8,
+}
+
+#[repr(C, packed)]
+struct VirtioPciCap {
+    cap_vndr: u8,
+    cap_next: u8,
+    cap_len: u8,
+    cfg_type: u8,
+    bar: u8,
+    padding: [u8; 3],
+    offset: u32,
+    length: u32,
+}
+
+#[repr(C, packed)]
+struct VirtioPciNotifyCap {
+    cap: VirtioPciCap,
+    notify_off_multiplier: u32,
+}
+
+#[repr(C, packed)]
+struct VirtioPciCommonCfg {
+    device_feature_select: u32,
+    device_feature: u32,
+    driver_feature_select: u32,
+    driver_feature: u32,
+    msix_config: u16,
+    num_queues: u16,
+    device_status: u8,
+    config_generation: u8,
+    queue_select: u16,
+    queue_size: u16,
+    queue_msix_vector: u16,
+    queue_enable: u16,
+    queue_notify_off: u16,
+    queue_reserved: u16,
+    queue_desc_lo: u32,
+    queue_desc_hi: u32,
+    queue_avail_lo: u32,
+    queue_avail_hi: u32,
+    queue_used_lo: u32,
+    queue_used_hi: u32,
+}
+
+#[repr(C, packed)]
+struct VirtioBlkConfig {
+    capacity: u64,
+    size_max: u32,
+    seg_max: u32,
+    cylinders: u16,
+    heads: u8,
+    sectors: u8,
+    blk_size: u32,
+    topology: u32,
+    writeback: u8,
+    unused0: [u8; 3],
+    max_discard_sectors: u32,
+    max_discard_seg: u32,
+    discard_sector_alignment: u32,
+    max_write_zeroes_sectors: u32,
+    max_write_zeroes_seg: u32,
+    write_zeroes_may_unmap: u8,
+    unused1: [u8; 3],
+}
+
+#[repr(C, packed)]
+struct VirtqDesc {
+    addr: u64,
+    len: u32,
+    flags: u16,
+    next: u16,
+}
+
+#[repr(C, packed)]
+struct VirtqAvail {
+    flags: u16,
+    idx: u16,
+    ring: [u16; QUEUE_SIZE as usize],
+}
+
+#[repr(C, packed)]
+struct VirtqUsedElem {
+    id: u32,
+    len: u32,
+}
+
+#[repr(C, packed)]
+struct VirtqUsed {
+    flags: u16,
+    idx: u16,
+    ring: [VirtqUsedElem; QUEUE_SIZE as usize],
+}
+
+#[repr(C, packed)]
+struct VirtioBlkReqHeader {
+    req_type: u32,
+    reserved: u32,
+    sector: u64,
+}
+
+#[repr(C, align(16))]
+struct VirtioBlkDma {
+    header: VirtioBlkReqHeader,
+    status: u8,
+    pad: [u8; 7],
+}
+
+struct VirtQueue {
+    size: u16,
+    desc: *mut VirtqDesc,
+    avail: *mut VirtqAvail,
+    used: *mut VirtqUsed,
+    desc_phys: u64,
+    avail_phys: u64,
+    used_phys: u64,
+    notify_off: u16,
+    next_avail: AtomicU16,
+    last_used: AtomicU16,
+}
+
+impl VirtQueue {
+    const fn new() -> Self {
+        Self {
+            size: 0,
+            desc: ptr::null_mut(),
+            avail: ptr::null_mut(),
+            used: ptr::null_mut(),
+            desc_phys: 0,
+            avail_phys: 0,
+            used_phys: 0,
+            notify_off: 0,
+            next_avail: AtomicU16::new(0),
+            last_used: AtomicU16::new(0),
+        }
+    }
+
+    fn setup(&mut self, requested: u16) -> Result<(), FutStatus> {
+        unsafe {
+            let desc = alloc_page() as *mut VirtqDesc;
+            let avail = alloc_page() as *mut VirtqAvail;
+            let used = alloc_page() as *mut VirtqUsed;
+            if desc.is_null() || avail.is_null() || used.is_null() {
+                if !desc.is_null() {
+                    free_page(desc.cast());
+                }
+                if !avail.is_null() {
+                    free_page(avail.cast());
+                }
+                if !used.is_null() {
+                    free_page(used.cast());
+                }
+                return Err(ENOMEM);
+            }
+            ptr::write_bytes(desc.cast::<u8>(), 0, PAGE_SIZE);
+            ptr::write_bytes(avail.cast::<u8>(), 0, PAGE_SIZE);
+            ptr::write_bytes(used.cast::<u8>(), 0, PAGE_SIZE);
+
+            self.size = requested;
+            self.desc = desc;
+            self.avail = avail;
+            self.used = used;
+            self.desc_phys = virt_to_phys_addr(desc as usize);
+            self.avail_phys = virt_to_phys_addr(avail as usize);
+            self.used_phys = virt_to_phys_addr(used as usize);
+            self.next_avail.store(0, Ordering::Relaxed);
+            self.last_used.store(0, Ordering::Relaxed);
+        }
+        Ok(())
+    }
+
+    fn enqueue(
+        &self,
+        header_phys: u64,
+        data_phys: u64,
+        status_phys: u64,
+        req_type: u32,
+        data_len: usize,
+        write: bool,
+    ) -> Result<(), FutStatus> {
+        if self.desc.is_null() || self.avail.is_null() {
+            return Err(ENODEV);
+        }
+        let slot = self.next_avail.load(Ordering::Relaxed) % self.size;
+        unsafe {
+            write_volatile(self.desc.add(0), VirtqDesc {
+                addr: header_phys,
+                len: size_of::<VirtioBlkReqHeader>() as u32,
+                flags: VIRTQ_DESC_F_NEXT,
+                next: if req_type == VIRTIO_BLK_T_FLUSH { 2 } else { 1 },
+            });
+
+            if req_type != VIRTIO_BLK_T_FLUSH {
+                let mut flags = VIRTQ_DESC_F_NEXT;
+                if !write {
+                    flags |= VIRTQ_DESC_F_WRITE;
+                }
+                write_volatile(self.desc.add(1), VirtqDesc {
+                    addr: data_phys,
+                    len: data_len as u32,
+                    flags,
+                    next: 2,
+                });
+            }
+
+            write_volatile(self.desc.add(2), VirtqDesc {
+                addr: status_phys,
+                len: 1,
+                flags: VIRTQ_DESC_F_WRITE,
+                next: 0,
+            });
+
+            let avail = &mut *self.avail;
+            avail.ring[slot as usize] = 0;
+            core::sync::atomic::fence(Ordering::SeqCst);
+            avail.idx = avail.idx.wrapping_add(1);
+        }
+        self.next_avail.fetch_add(1, Ordering::Release);
+        Ok(())
+    }
+
+    fn poll_completion(&self) -> FutStatus {
+        let mut waited = 0u32;
+        loop {
+            let last = self.last_used.load(Ordering::Acquire);
+            let used_idx = unsafe { (*self.used).idx };
+            if used_idx != last {
+                self.last_used.store(last.wrapping_add(1), Ordering::Release);
+                return 0;
+            }
+            if waited > 10_000 {
+                return ETIMEDOUT;
+            }
+            thread_yield();
+            waited += 1;
+        }
+    }
+}
+
+struct VirtioBlkDevice {
+    pci: PciAddress,
+    bars: [u64; 6],
+    common: *mut VirtioPciCommonCfg,
+    isr: *mut u8,
+    config: *mut VirtioBlkConfig,
+    notify_base: *mut u8,
+    notify_off_multiplier: u32,
+    queue: VirtQueue,
+    dma: *mut VirtioBlkDma,
+    dma_phys: u64,
+    capacity_sectors: u64,
+    block_size: u32,
+    has_flush: bool,
+    io_lock: RawSpinLock,
+    blk_dev: MaybeUninit<FutBlkDev>,
+}
+
+unsafe impl Send for VirtioBlkDevice {}
+unsafe impl Sync for VirtioBlkDevice {}
+
+impl VirtioBlkDevice {
+    fn probe(pci_hint: u64) -> Result<Self, FutStatus> {
+        let pci = match find_device(pci_hint) {
+            Some(addr) => addr,
+            None => {
+                log("virtio-blk: no virtio device found");
+                return Err(ENODEV);
+            }
+        };
+
+        let mut dev = Self {
+            pci,
+            bars: [0; 6],
+            common: ptr::null_mut(),
+            isr: ptr::null_mut(),
+            config: ptr::null_mut(),
+            notify_base: ptr::null_mut(),
+            notify_off_multiplier: 0,
+            queue: VirtQueue::new(),
+            dma: ptr::null_mut(),
+            dma_phys: 0,
+            capacity_sectors: 0,
+            block_size: 512,
+            has_flush: false,
+            io_lock: RawSpinLock::new(),
+            blk_dev: MaybeUninit::uninit(),
+        };
+
+        dev.setup_bars();
+        if !dev.parse_capabilities() {
+            log("virtio-blk: capability discovery failed");
+            return Err(ENODEV);
+        }
+        dev.enable_bus_master();
+        dev.negotiate_features()?;
+        dev.init_queue()?;
+        dev.init_dma()?;
+        dev.read_geometry();
+        Ok(dev)
+    }
+
+    fn setup_bars(&mut self) {
+        for idx in 0..6u8 {
+            let offset = 0x10 + idx * 4;
+            let value = pci_config_read32(self.pci.bus, self.pci.device, self.pci.function, offset);
+            if (value & 0x1) != 0 {
+                self.bars[idx as usize] = 0;
+                continue;
+            }
+            let ty = (value >> 1) & 0x3;
+            let mut base = (value & 0xFFFF_FFF0) as u64;
+            if ty == 0x2 && idx + 1 < 6 {
+                let hi = pci_config_read32(self.pci.bus, self.pci.device, self.pci.function, offset + 4);
+                base |= (hi as u64) << 32;
+            }
+            self.bars[idx as usize] = base;
+        }
+    }
+
+    fn map_cap(&self, cap: &VirtioPciCap) -> *mut u8 {
+        if cap.bar as usize >= self.bars.len() {
+            return ptr::null_mut();
+        }
+        let base = self.bars[cap.bar as usize];
+        if base == 0 {
+            return ptr::null_mut();
+        }
+        phys_to_virt_addr(base + cap.offset as u64)
+    }
+
+    fn parse_capabilities(&mut self) -> bool {
+        let status = pci_config_read8(self.pci.bus, self.pci.device, self.pci.function, 0x06);
+        if (status & 0x10) == 0 {
+            return false;
+        }
+        let mut cap_ptr = pci_config_read8(self.pci.bus, self.pci.device, self.pci.function, 0x34);
+        while cap_ptr >= 0x40 {
+            let cap_hdr = read_cap(self.pci, cap_ptr);
+            if cap_hdr.cap_vndr == PCI_CAP_ID_VNDR {
+                let mapped = self.map_cap(&cap_hdr);
+                if mapped.is_null() {
+                    cap_ptr = cap_hdr.cap_next;
+                    continue;
+                }
+                match cap_hdr.cfg_type {
+                    VIRTIO_PCI_CAP_COMMON_CFG => {
+                        self.common = mapped as *mut VirtioPciCommonCfg;
+                    }
+                    VIRTIO_PCI_CAP_DEVICE_CFG => {
+                        self.config = mapped as *mut VirtioBlkConfig;
+                    }
+                    VIRTIO_PCI_CAP_ISR_CFG => {
+                        self.isr = mapped as *mut u8;
+                    }
+                    VIRTIO_PCI_CAP_NOTIFY_CFG => {
+                        let notify_cap = read_notify_cap(self.pci, cap_ptr);
+                        self.notify_off_multiplier = notify_cap.notify_off_multiplier;
+                        self.notify_base = mapped;
+                    }
+                    _ => {}
+                }
+            }
+            cap_ptr = cap_hdr.cap_next;
+        }
+        !self.common.is_null() && !self.config.is_null() && !self.notify_base.is_null()
+    }
+
+    fn enable_bus_master(&self) {
+        let mut command = pci_config_read16(self.pci.bus, self.pci.device, self.pci.function, PCI_COMMAND);
+        command |= PCI_COMMAND_MEMORY | PCI_COMMAND_BUS_MASTER | PCI_COMMAND_IO;
+        pci_config_write16(self.pci.bus, self.pci.device, self.pci.function, PCI_COMMAND, command);
+    }
+
+    fn negotiate_features(&mut self) -> Result<(), FutStatus> {
+        unsafe {
+            (*self.common).device_status = VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER;
+            (*self.common).device_feature_select = 0;
+            let feat_low = (*self.common).device_feature;
+            (*self.common).device_feature_select = 1;
+            let feat_high = (*self.common).device_feature;
+            let features = ((feat_high as u64) << 32) | feat_low as u64;
+            (*self.common).driver_feature_select = 0;
+            (*self.common).driver_feature = features as u32;
+            (*self.common).driver_feature_select = 1;
+            (*self.common).driver_feature = (features >> 32) as u32;
+            (*self.common).device_status |= VIRTIO_STATUS_FEATURES_OK;
+            if ((*self.common).device_status & VIRTIO_STATUS_FEATURES_OK) == 0 {
+                log("virtio-blk: feature negotiation failed");
+                return Err(ENODEV);
+            }
+            (*self.common).device_status |= VIRTIO_STATUS_DRIVER_OK;
+        }
+        Ok(())
+    }
+
+    fn init_queue(&mut self) -> Result<(), FutStatus> {
+        unsafe {
+            (*self.common).queue_select = 0;
+            let device_qsize = (*self.common).queue_size;
+            if device_qsize == 0 {
+                return Err(ENODEV);
+            }
+            let qsize = min(device_qsize, QUEUE_SIZE);
+            self.queue.setup(qsize)?;
+            (*self.common).queue_size = qsize;
+            (*self.common).queue_desc_lo = (self.queue.desc_phys & 0xFFFF_FFFF) as u32;
+            (*self.common).queue_desc_hi = (self.queue.desc_phys >> 32) as u32;
+            (*self.common).queue_avail_lo = (self.queue.avail_phys & 0xFFFF_FFFF) as u32;
+            (*self.common).queue_avail_hi = (self.queue.avail_phys >> 32) as u32;
+            (*self.common).queue_used_lo = (self.queue.used_phys & 0xFFFF_FFFF) as u32;
+            (*self.common).queue_used_hi = (self.queue.used_phys >> 32) as u32;
+            (*self.common).queue_enable = 1;
+            self.queue.notify_off = (*self.common).queue_notify_off;
+        }
+        Ok(())
+    }
+
+    fn init_dma(&mut self) -> Result<(), FutStatus> {
+        unsafe {
+            let page = alloc_page() as *mut VirtioBlkDma;
+            if page.is_null() {
+                return Err(ENOMEM);
+            }
+            ptr::write_bytes(page.cast::<u8>(), 0, PAGE_SIZE);
+            self.dma = page;
+            self.dma_phys = virt_to_phys_addr(page as usize);
+        }
+        Ok(())
+    }
+
+    fn read_geometry(&mut self) {
+        unsafe {
+            if self.config.is_null() {
+                return;
+            }
+            self.capacity_sectors = (*self.config).capacity;
+            let blk_size = (*self.config).blk_size;
+            self.block_size = if blk_size == 0 { 512 } else { blk_size };
+            self.has_flush = (*self.config).writeback != 0;
+        }
+    }
+
+    fn notify_queue(&self) {
+        unsafe {
+            let off = (self.queue.notify_off as u32 * self.notify_off_multiplier) as usize;
+            let ptr = self.notify_base.add(off) as *mut u16;
+            write_volatile(ptr, 0);
+        }
+    }
+
+    fn perform_io(
+        &self,
+        req_type: u32,
+        lba: u64,
+        nsectors: usize,
+        buf: *mut u8,
+        write: bool,
+    ) -> FutStatus {
+        if self.dma.is_null() {
+            return ENODEV;
+        }
+        let data_bytes = nsectors * self.block_size as usize;
+        let mut bounce = ptr::null_mut();
+        let mut data_phys = 0u64;
+
+        unsafe {
+            (*self.dma).header.req_type = req_type;
+            (*self.dma).header.reserved = 0;
+            (*self.dma).header.sector = lba;
+            (*self.dma).status = 0xFF;
+
+            if req_type != VIRTIO_BLK_T_FLUSH {
+                if buf.is_null() {
+                    return EINVAL;
+                }
+                if (buf as usize) >= PMAP_DIRECT_VIRT_BASE {
+                    data_phys = virt_to_phys_addr(buf as usize);
+                } else {
+                    bounce = alloc(data_bytes) as *mut u8;
+                    if bounce.is_null() {
+                        return ENOMEM;
+                    }
+                    if write {
+                        ptr::copy_nonoverlapping(buf, bounce, data_bytes);
+                    }
+                    data_phys = virt_to_phys_addr(bounce as usize);
+                }
+            }
+        }
+
+        let header_phys = self.dma_phys;
+        let status_phys = self.dma_phys + DMA_STATUS_OFFSET;
+
+        if let Err(err) = self.queue.enqueue(header_phys, data_phys, status_phys, req_type, data_bytes, write) {
+            if !bounce.is_null() {
+                unsafe { free(bounce); }
+            }
+            return err;
+        }
+        self.notify_queue();
+
+        let rc = self.queue.poll_completion();
+        if rc != 0 {
+            if !bounce.is_null() {
+                unsafe { free(bounce); }
+            }
+            return rc;
+        }
+
+        unsafe {
+            match (*self.dma).status {
+                VIRTIO_BLK_S_OK => {
+                    if req_type == VIRTIO_BLK_T_IN && !bounce.is_null() {
+                        ptr::copy_nonoverlapping(bounce, buf, data_bytes);
+                    }
+                    if !bounce.is_null() {
+                        free(bounce);
+                    }
+                    0
+                }
+                VIRTIO_BLK_S_UNSUPP => {
+                    if !bounce.is_null() {
+                        free(bounce);
+                    }
+                    ENOTSUP
+                }
+                _ => {
+                    if !bounce.is_null() {
+                        free(bounce);
+                    }
+                    EIO
+                }
+            }
+        }
+    }
+}
+
+struct DeviceHolder {
+    state: MaybeUninit<VirtioBlkDevice>,
+    ready: bool,
+}
+
+unsafe impl Send for DeviceHolder {}
+unsafe impl Sync for DeviceHolder {}
+
+static DEVICE: SpinLock<DeviceHolder> = SpinLock::new(DeviceHolder {
+    state: MaybeUninit::uninit(),
+    ready: false,
+});
+
+static DEVICE_NAME: &[u8] = b"blk:vda\0";
+
+static BACKEND: FutBlkBackend = FutBlkBackend {
+    read: Some(backend_read),
+    write: Some(backend_write),
+    flush: Some(backend_flush),
+};
+
+#[unsafe(no_mangle)]
+pub extern "C" fn virtio_blk_init(pci_addr: u64) -> FutStatus {
+    let mut rc = 0;
+    DEVICE.with(|holder| {
+        if holder.ready {
+            rc = 0;
+            return;
+        }
+        match VirtioBlkDevice::probe(pci_addr) {
+            Ok(device) => unsafe {
+                holder.state.as_mut_ptr().write(device);
+                let dev_ptr = holder.state.as_mut_ptr();
+                let dev = &mut *dev_ptr;
+                dev.blk_dev.as_mut_ptr().write(FutBlkDev {
+                    name: DEVICE_NAME.as_ptr() as *const c_char,
+                    block_size: dev.block_size,
+                    block_count: dev.capacity_sectors,
+                    allowed_rights: FUT_BLK_READ | FUT_BLK_WRITE | FUT_BLK_ADMIN,
+                    backend: &BACKEND,
+                    backend_ctx: dev_ptr.cast::<c_void>(),
+                    core: ptr::null_mut(),
+                });
+                if let Err(err) = register(dev.blk_dev.assume_init_mut()) {
+                    rc = err;
+                    log("virtio-blk: registration failed");
+                    return;
+                }
+                holder.ready = true;
+                log("virtio-blk: initialized OK");
+                log_capacity(dev.capacity_sectors, dev.block_size);
+                rc = 0;
+            },
+            Err(err) => {
+                rc = err;
+            }
+        }
+    });
+    rc
+}
+
+fn log_capacity(sectors: u64, block_size: u32) {
+    let mut buf = [0u8; 96];
+    let mut idx = 0;
+    let prefix = b"virtio-blk: /dev/vda capacity=";
+    buf[..prefix.len()].copy_from_slice(prefix);
+    idx += prefix.len();
+    idx += write_decimal(&mut buf[idx..], sectors);
+    let mid = b" sectors (block=";
+    buf[idx..idx + mid.len()].copy_from_slice(mid);
+    idx += mid.len();
+    idx += write_decimal(&mut buf[idx..], block_size as u64);
+    buf[idx] = b')';
+    idx += 1;
+    log(unsafe { core::str::from_utf8_unchecked(&buf[..idx]) });
+}
+
+fn write_decimal(buf: &mut [u8], mut value: u64) -> usize {
+    if buf.is_empty() {
+        return 0;
+    }
+    let mut tmp = [0u8; 20];
+    let mut i = 0;
+    if value == 0 {
+        tmp[0] = b'0';
+        i = 1;
+    } else {
+        while value > 0 && i < tmp.len() {
+            tmp[i] = b'0' + (value % 10) as u8;
+            value /= 10;
+            i += 1;
+        }
+    }
+    let written = min(i, buf.len());
+    for j in 0..written {
+        buf[j] = tmp[written - 1 - j];
+    }
+    written
+}
+
+unsafe extern "C" fn backend_read(ctx: *mut c_void, lba: u64, nsectors: usize, buf: *mut c_void) -> FutStatus {
+    if ctx.is_null() {
+        return ENODEV;
+    }
+    let dev = unsafe { &*(ctx as *mut VirtioBlkDevice) };
+    dev.io_lock.lock();
+    let status = dev.perform_io(VIRTIO_BLK_T_IN, lba, nsectors, buf as *mut u8, false);
+    dev.io_lock.unlock();
+    status
+}
+
+unsafe extern "C" fn backend_write(ctx: *mut c_void, lba: u64, nsectors: usize, buf: *const c_void) -> FutStatus {
+    if ctx.is_null() {
+        return ENODEV;
+    }
+    let dev = unsafe { &*(ctx as *mut VirtioBlkDevice) };
+    dev.io_lock.lock();
+    let status = dev.perform_io(VIRTIO_BLK_T_OUT, lba, nsectors, buf as *mut u8, true);
+    dev.io_lock.unlock();
+    status
+}
+
+unsafe extern "C" fn backend_flush(ctx: *mut c_void) -> FutStatus {
+    if ctx.is_null() {
+        return ENODEV;
+    }
+    let dev = unsafe { &*(ctx as *mut VirtioBlkDevice) };
+    if !dev.has_flush {
+        return ENOTSUP;
+    }
+    dev.io_lock.lock();
+    let status = dev.perform_io(VIRTIO_BLK_T_FLUSH, 0, 1, dev.dma.cast::<u8>(), true);
+    dev.io_lock.unlock();
+    status
+}
+
+fn find_device(pci_hint: u64) -> Option<PciAddress> {
+    if let Some(addr) = decode_pci_hint(pci_hint) {
+        let vendor = pci_config_read16(addr.bus, addr.device, addr.function, 0x00);
+        if vendor == VIRTIO_VENDOR_ID {
+            let device_id = pci_config_read16(addr.bus, addr.device, addr.function, 0x02);
+            if device_id == VIRTIO_DEVICE_ID_BLOCK_LEGACY || device_id == VIRTIO_DEVICE_ID_BLOCK_MODERN {
+                return Some(addr);
+            }
+        }
+    }
+    for bus in 0u8..=1 {
+        for device in 0u8..32 {
+            for function in 0u8..8 {
+                let vendor = pci_config_read16(bus, device, function, 0x00);
+                if vendor != VIRTIO_VENDOR_ID {
+                    continue;
+                }
+                let device_id = pci_config_read16(bus, device, function, 0x02);
+                if device_id == VIRTIO_DEVICE_ID_BLOCK_LEGACY || device_id == VIRTIO_DEVICE_ID_BLOCK_MODERN {
+                    return Some(PciAddress { bus, device, function });
+                }
+            }
+        }
+    }
+    None
+}
+
+fn decode_pci_hint(hint: u64) -> Option<PciAddress> {
+    if hint == 0 {
+        return None;
+    }
+    let bus = ((hint >> 16) & 0xFF) as u8;
+    let device = ((hint >> 8) & 0xFF) as u8;
+    let function = (hint & 0xFF) as u8;
+    Some(PciAddress { bus, device, function })
+}
+
+fn read_cap(pci: PciAddress, offset: u8) -> VirtioPciCap {
+    let mut cap = VirtioPciCap {
+        cap_vndr: 0,
+        cap_next: 0,
+        cap_len: 0,
+        cfg_type: 0,
+        bar: 0,
+        padding: [0; 3],
+        offset: 0,
+        length: 0,
+    };
+    let cap_len = pci_config_read8(pci.bus, pci.device, pci.function, offset + 2);
+    let mut i = 0;
+    while i < cap_len {
+        let word = pci_config_read32(pci.bus, pci.device, pci.function, offset + i);
+        let bytes = word.to_le_bytes();
+        let copy = min(4, (cap_len - i) as usize);
+        unsafe {
+            ptr::copy_nonoverlapping(bytes.as_ptr(), (&mut cap as *mut _ as *mut u8).add(i as usize), copy);
+        }
+        i += 4;
+    }
+    cap
+}
+
+fn read_notify_cap(pci: PciAddress, offset: u8) -> VirtioPciNotifyCap {
+    let mut cap = VirtioPciNotifyCap {
+        cap: read_cap(pci, offset),
+        notify_off_multiplier: 0,
+    };
+    let cap_len = pci_config_read8(pci.bus, pci.device, pci.function, offset + 2);
+    let mut i = 0;
+    while i < cap_len {
+        let word = pci_config_read32(pci.bus, pci.device, pci.function, offset + i);
+        let bytes = word.to_le_bytes();
+        let copy = min(4, (cap_len - i) as usize);
+        unsafe {
+            ptr::copy_nonoverlapping(bytes.as_ptr(), (&mut cap as *mut _ as *mut u8).add(i as usize), copy);
+        }
+        i += 4;
+    }
+    cap
+}
+
+fn pci_config_read32(bus: u8, device: u8, function: u8, offset: u8) -> u32 {
+    let address = (u32::from(bus) << 16)
+        | (u32::from(device) << 11)
+        | (u32::from(function) << 8)
+        | u32::from(offset & 0xFC)
+        | 0x8000_0000;
+    unsafe {
+        outl(PCI_CONFIG_ADDRESS, address);
+        inl(PCI_CONFIG_DATA)
+    }
+}
+
+fn pci_config_read16(bus: u8, device: u8, function: u8, offset: u8) -> u16 {
+    let value = pci_config_read32(bus, device, function, offset & 0xFC);
+    let shift = (offset & 2) * 8;
+    ((value >> shift) & 0xFFFF) as u16
+}
+
+fn pci_config_read8(bus: u8, device: u8, function: u8, offset: u8) -> u8 {
+    let value = pci_config_read32(bus, device, function, offset & 0xFC);
+    let shift = (offset & 3) * 8;
+    ((value >> shift) & 0xFF) as u8
+}
+
+fn pci_config_write16(bus: u8, device: u8, function: u8, offset: u8, value: u16) {
+    let mut current = pci_config_read32(bus, device, function, offset & 0xFC);
+    let shift = (offset & 2) * 8;
+    current &= !(0xFFFF << shift);
+    current |= u32::from(value) << shift;
+    pci_config_write32(bus, device, function, offset & 0xFC, current);
+}
+
+fn pci_config_write32(bus: u8, device: u8, function: u8, offset: u8, value: u32) {
+    let address = (u32::from(bus) << 16)
+        | (u32::from(device) << 11)
+        | (u32::from(function) << 8)
+        | u32::from(offset & 0xFC)
+        | 0x8000_0000;
+    unsafe {
+        outl(PCI_CONFIG_ADDRESS, address);
+        outl(PCI_CONFIG_DATA, value);
+    }
+}
+
+unsafe fn outl(port: u16, value: u32) {
+    unsafe { asm!("out dx, eax", in("dx") port, in("eax") value, options(nostack, preserves_flags)); }
+}
+
+unsafe fn inl(port: u16) -> u32 {
+    let value: u32;
+    unsafe { asm!("in eax, dx", in("dx") port, out("eax") value, options(nostack, preserves_flags)); }
+    value
+}
+#[inline(always)]
+fn phys_to_virt_addr(phys: u64) -> *mut u8 {
+    (phys + PMAP_DIRECT_VIRT_BASE as u64) as *mut u8
+}
+
+#[inline(always)]
+fn virt_to_phys_addr(addr: usize) -> u64 {
+    debug_assert!(addr >= PMAP_DIRECT_VIRT_BASE);
+    (addr - PMAP_DIRECT_VIRT_BASE) as u64
+}

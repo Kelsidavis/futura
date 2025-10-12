@@ -8,6 +8,7 @@
  */
 
 #include <arch/x86_64/paging.h>
+#include <arch/x86_64/pmap.h>
 #include <kernel/fut_memory.h>
 #include <stddef.h>
 #include <stdbool.h>
@@ -18,7 +19,7 @@ extern page_table_t boot_pdpt;
 extern page_table_t boot_pd;
 
 /* Kernel's PML4 (initialized to boot PML4) */
-static pte_t *kernel_pml4 = nullptr;
+static pte_t *kernel_pml4 = NULL;
 
 /**
  * Initialize paging subsystem.
@@ -46,17 +47,22 @@ pte_t *fut_get_kernel_pml4(void) {
  * Allocate a page table (512 entries, 4KB).
  * Returns physical address of new page table.
  */
-static pte_t *alloc_page_table(void) {
+static page_table_t *alloc_page_table(void) {
     /* Allocate a 4KB page for the page table */
     void *page = fut_pmm_alloc_page();
     if (!page) {
-        return nullptr;
+        return NULL;
+    }
+
+    phys_addr_t phys = pmap_virt_to_phys((uintptr_t)page);
+    page_table_t *table = (page_table_t *)pmap_kmap(phys);
+    if (!table) {
+        return NULL;
     }
 
     /* Zero-initialize all entries */
-    pte_t *table = (pte_t *)page;
     for (int i = 0; i < 512; i++) {
-        table[i] = 0;
+        table->entries[i] = 0;
     }
 
     return table;
@@ -100,7 +106,7 @@ int fut_map_page(fut_vmem_context_t *ctx, uint64_t vaddr, uint64_t paddr, uint64
     page_table_t *pdpt;
     if (!(pml4[pml4_idx] & PTE_PRESENT)) {
         /* Need to allocate new PDPT */
-        pdpt = (page_table_t *)alloc_page_table();
+        pdpt = alloc_page_table();
         if (!pdpt) {
 #if defined(DEBUG)
             fut_printf("[VM] Failed to allocate PDPT for vaddr=0x%llx\n",
@@ -108,16 +114,18 @@ int fut_map_page(fut_vmem_context_t *ctx, uint64_t vaddr, uint64_t paddr, uint64
 #endif
             return -1;
         }
-        pml4[pml4_idx] = fut_make_pte((uint64_t)pdpt, PTE_PRESENT | PTE_WRITABLE);
+        phys_addr_t pdpt_phys = pmap_virt_to_phys((uintptr_t)pdpt);
+        pml4[pml4_idx] = fut_make_pte(pdpt_phys, PTE_PRESENT | PTE_WRITABLE);
     } else {
-        pdpt = (page_table_t *)fut_pte_to_phys(pml4[pml4_idx]);
+        phys_addr_t pdpt_phys = fut_pte_to_phys(pml4[pml4_idx]);
+        pdpt = (page_table_t *)pmap_kmap(pdpt_phys);
     }
 
     /* Get or create PD */
     page_table_t *pd;
     if (!(pdpt->entries[pdpt_idx] & PTE_PRESENT)) {
         /* Need to allocate new PD */
-        pd = (page_table_t *)alloc_page_table();
+        pd = alloc_page_table();
         if (!pd) {
 #if defined(DEBUG)
             fut_printf("[VM] Failed to allocate PD for vaddr=0x%llx\n",
@@ -125,16 +133,18 @@ int fut_map_page(fut_vmem_context_t *ctx, uint64_t vaddr, uint64_t paddr, uint64
 #endif
             return -1;
         }
-        pdpt->entries[pdpt_idx] = fut_make_pte((uint64_t)pd, PTE_PRESENT | PTE_WRITABLE);
+        phys_addr_t pd_phys = pmap_virt_to_phys((uintptr_t)pd);
+        pdpt->entries[pdpt_idx] = fut_make_pte(pd_phys, PTE_PRESENT | PTE_WRITABLE);
     } else {
-        pd = (page_table_t *)fut_pte_to_phys(pdpt->entries[pdpt_idx]);
+        phys_addr_t pd_phys = fut_pte_to_phys(pdpt->entries[pdpt_idx]);
+        pd = (page_table_t *)pmap_kmap(pd_phys);
     }
 
     /* Get or create PT */
     page_table_t *pt;
     if (!(pd->entries[pd_idx] & PTE_PRESENT)) {
         /* Need to allocate new PT */
-        pt = (page_table_t *)alloc_page_table();
+        pt = alloc_page_table();
         if (!pt) {
 #if defined(DEBUG)
             fut_printf("[VM] Failed to allocate PT for vaddr=0x%llx\n",
@@ -142,7 +152,8 @@ int fut_map_page(fut_vmem_context_t *ctx, uint64_t vaddr, uint64_t paddr, uint64
 #endif
             return -1;
         }
-        pd->entries[pd_idx] = fut_make_pte((uint64_t)pt, PTE_PRESENT | PTE_WRITABLE);
+        phys_addr_t pt_phys = pmap_virt_to_phys((uintptr_t)pt);
+        pd->entries[pd_idx] = fut_make_pte(pt_phys, PTE_PRESENT | PTE_WRITABLE);
     } else if (pd->entries[pd_idx] & PTE_LARGE_PAGE) {
 #if defined(DEBUG)
         fut_printf("[VM] Splitting large page: vaddr=0x%llx paddr=0x%llx\n",
@@ -159,7 +170,7 @@ int fut_map_page(fut_vmem_context_t *ctx, uint64_t vaddr, uint64_t paddr, uint64
         uint64_t phys_base = fut_pte_to_phys(large_entry);
         uint64_t large_flags = fut_pte_flags(large_entry) & ~PTE_LARGE_PAGE;
 
-        page_table_t *new_pt = (page_table_t *)alloc_page_table();
+        page_table_t *new_pt = alloc_page_table();
         if (!new_pt) {
 #if defined(DEBUG)
             fut_printf("[VM] Failed to allocate replacement PT while splitting large page\n");
@@ -172,13 +183,15 @@ int fut_map_page(fut_vmem_context_t *ctx, uint64_t vaddr, uint64_t paddr, uint64
             new_pt->entries[i] = fut_make_pte(page_phys, large_flags);
         }
 
-        pd->entries[pd_idx] = fut_make_pte((uint64_t)new_pt, large_flags);
+        phys_addr_t new_pt_phys = pmap_virt_to_phys((uintptr_t)new_pt);
+        pd->entries[pd_idx] = fut_make_pte(new_pt_phys, large_flags);
         pt = new_pt;
 
         /* Ensure processors observe the replacement page table */
         fut_flush_tlb_all();
     } else {
-        pt = (page_table_t *)fut_pte_to_phys(pd->entries[pd_idx]);
+        phys_addr_t pt_phys = fut_pte_to_phys(pd->entries[pd_idx]);
+        pt = (page_table_t *)pmap_kmap(pt_phys);
     }
 
     /* Map the page in PT */
@@ -243,12 +256,12 @@ int fut_unmap_page(fut_vmem_context_t *ctx, uint64_t vaddr) {
         return -1;  /* Not mapped */
     }
 
-    page_table_t *pdpt = (page_table_t *)fut_pte_to_phys(pml4[pml4_idx]);
+    page_table_t *pdpt = (page_table_t *)pmap_kmap(fut_pte_to_phys(pml4[pml4_idx]));
     if (!(pdpt->entries[pdpt_idx] & PTE_PRESENT)) {
         return -1;
     }
 
-    page_table_t *pd = (page_table_t *)fut_pte_to_phys(pdpt->entries[pdpt_idx]);
+    page_table_t *pd = (page_table_t *)pmap_kmap(fut_pte_to_phys(pdpt->entries[pdpt_idx]));
     if (!(pd->entries[pd_idx] & PTE_PRESENT)) {
         return -1;
     }
@@ -261,7 +274,7 @@ int fut_unmap_page(fut_vmem_context_t *ctx, uint64_t vaddr) {
         return 0;
     }
 
-    page_table_t *pt = (page_table_t *)fut_pte_to_phys(pd->entries[pd_idx]);
+    page_table_t *pt = (page_table_t *)pmap_kmap(fut_pte_to_phys(pd->entries[pd_idx]));
 
     /* Unmap the page */
     pt->entries[pt_idx] = 0;
@@ -305,12 +318,12 @@ int fut_virt_to_phys(fut_vmem_context_t *ctx, uint64_t vaddr, uint64_t *paddr) {
         return -1;
     }
 
-    page_table_t *pdpt = (page_table_t *)fut_pte_to_phys(pml4[pml4_idx]);
+    page_table_t *pdpt = (page_table_t *)pmap_kmap(fut_pte_to_phys(pml4[pml4_idx]));
     if (!(pdpt->entries[pdpt_idx] & PTE_PRESENT)) {
         return -1;
     }
 
-    page_table_t *pd = (page_table_t *)fut_pte_to_phys(pdpt->entries[pdpt_idx]);
+    page_table_t *pd = (page_table_t *)pmap_kmap(fut_pte_to_phys(pdpt->entries[pdpt_idx]));
     if (!(pd->entries[pd_idx] & PTE_PRESENT)) {
         return -1;
     }
@@ -322,7 +335,7 @@ int fut_virt_to_phys(fut_vmem_context_t *ctx, uint64_t vaddr, uint64_t *paddr) {
         return 0;
     }
 
-    page_table_t *pt = (page_table_t *)fut_pte_to_phys(pd->entries[pd_idx]);
+    page_table_t *pt = (page_table_t *)pmap_kmap(fut_pte_to_phys(pd->entries[pd_idx]));
     if (!(pt->entries[pt_idx] & PTE_PRESENT)) {
         return -1;
     }

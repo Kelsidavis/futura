@@ -8,6 +8,8 @@
 
 #include <kernel/fut_vfs.h>
 #include <kernel/fut_memory.h>
+#include <kernel/chrdev.h>
+#include <kernel/errno.h>
 #include <stddef.h>
 
 /* ============================================================
@@ -24,6 +26,16 @@ static int num_fs_types = 0;
 
 static struct fut_mount *mount_list = NULL;
 static struct fut_file *file_table[MAX_OPEN_FILES];
+
+struct fut_chr_path {
+    const char *path;
+    unsigned major;
+    unsigned minor;
+};
+
+static const struct fut_chr_path chr_static_table[] = {
+    { "/dev/fb0", 29u, 0u },
+};
 
 /* Root vnode - set when root filesystem is mounted */
 static struct fut_vnode *root_vnode = NULL;
@@ -458,6 +470,78 @@ static void free_fd(int fd) {
     }
 }
 
+static int str_equal(const char *a, const char *b) {
+    if (!a || !b) {
+        return 0;
+    }
+    while (*a && *b && *a == *b) {
+        ++a;
+        ++b;
+    }
+    return (*a == *b);
+}
+
+static int lookup_chr_path(const char *path, unsigned *major, unsigned *minor) {
+    for (size_t i = 0; i < (sizeof(chr_static_table) / sizeof(chr_static_table[0])); ++i) {
+        if (str_equal(path, chr_static_table[i].path)) {
+            if (major) {
+                *major = chr_static_table[i].major;
+            }
+            if (minor) {
+                *minor = chr_static_table[i].minor;
+            }
+            return 0;
+        }
+    }
+    return -ENOENT;
+}
+
+static int try_open_chrdev(const char *path, int flags) {
+    unsigned major = 0;
+    unsigned minor = 0;
+    if (lookup_chr_path(path, &major, &minor) != 0) {
+        return -ENOENT;
+    }
+
+    void *inode = NULL;
+    const struct fut_file_ops *ops = chrdev_lookup(major, minor, &inode);
+    if (!ops) {
+        return -ENODEV;
+    }
+
+    struct fut_file *file = fut_malloc(sizeof(struct fut_file));
+    if (!file) {
+        return -ENOMEM;
+    }
+
+    file->vnode = NULL;
+    file->offset = 0;
+    file->flags = flags;
+    file->refcount = 1;
+    file->chr_ops = ops;
+    file->chr_inode = inode;
+    file->chr_private = NULL;
+
+    if (ops->open) {
+        int rc = ops->open(inode, &file->chr_private);
+        if (rc < 0) {
+            fut_free(file);
+            return rc;
+        }
+    }
+
+    int fd = alloc_fd(file);
+    if (fd < 0) {
+        if (ops->release) {
+            ops->release(inode, file->chr_private);
+        }
+        fut_free(file);
+        return fd;
+    }
+
+    return fd;
+}
+
 /* ============================================================
  *   File Operations
  * ============================================================ */
@@ -465,6 +549,11 @@ static void free_fd(int fd) {
 int fut_vfs_open(const char *path, int flags, int mode) {
     struct fut_vnode *vnode = NULL;
     int ret;
+
+    int chr_fd = try_open_chrdev(path, flags);
+    if (chr_fd != -ENOENT) {
+        return chr_fd;
+    }
 
     /* Lookup vnode */
     ret = lookup_vnode(path, &vnode);
@@ -504,6 +593,9 @@ int fut_vfs_open(const char *path, int flags, int mode) {
     file->offset = 0;
     file->flags = flags;
     file->refcount = 1;
+    file->chr_ops = NULL;
+    file->chr_inode = NULL;
+    file->chr_private = NULL;
 
     /* Allocate file descriptor */
     int fd = alloc_fd(file);
@@ -521,6 +613,18 @@ ssize_t fut_vfs_read(int fd, void *buf, size_t size) {
     struct fut_file *file = get_file(fd);
     if (!file) {
         return -EBADF;
+    }
+
+    if (file->chr_ops) {
+        if (!file->chr_ops->read) {
+            return -EINVAL;
+        }
+        off_t pos = (off_t)file->offset;
+        ssize_t ret = file->chr_ops->read(file->chr_inode, file->chr_private, buf, size, &pos);
+        if (ret > 0) {
+            file->offset = (uint64_t)pos;
+        }
+        return ret;
     }
 
     /* Call vnode read operation */
@@ -542,6 +646,18 @@ ssize_t fut_vfs_write(int fd, const void *buf, size_t size) {
         return -EBADF;
     }
 
+    if (file->chr_ops) {
+        if (!file->chr_ops->write) {
+            return -EINVAL;
+        }
+        off_t pos = (off_t)file->offset;
+        ssize_t ret = file->chr_ops->write(file->chr_inode, file->chr_private, buf, size, &pos);
+        if (ret > 0) {
+            file->offset = (uint64_t)pos;
+        }
+        return ret;
+    }
+
     /* Call vnode write operation */
     if (!file->vnode || !file->vnode->ops || !file->vnode->ops->write) {
         return -EINVAL;
@@ -561,6 +677,15 @@ int fut_vfs_close(int fd) {
         return -EBADF;
     }
 
+    if (file->chr_ops) {
+        if (file->chr_ops->release) {
+            file->chr_ops->release(file->chr_inode, file->chr_private);
+        }
+        free_fd(fd);
+        fut_free(file);
+        return 0;
+    }
+
     /* Call vnode close operation */
     if (file->vnode && file->vnode->ops && file->vnode->ops->close) {
         file->vnode->ops->close(file->vnode);
@@ -577,6 +702,10 @@ int64_t fut_vfs_lseek(int fd, int64_t offset, int whence) {
     struct fut_file *file = get_file(fd);
     if (!file) {
         return -EBADF;
+    }
+
+    if (file->chr_ops) {
+        return -ESPIPE;
     }
 
     uint64_t new_offset = file->offset;

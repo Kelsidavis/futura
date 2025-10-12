@@ -20,10 +20,13 @@
 #include <kernel/fut_blockdev.h>
 #include <kernel/fut_ramdisk.h>
 #include <kernel/fut_futurafs.h>
+#include <kernel/fb.h>
 #include <platform/platform.h>
 #if defined(__x86_64__)
 #include <arch/x86_64/paging.h>
 #endif
+
+extern void fut_echo_selftest(void);
 
 /* ============================================================
  *   External Symbols from Linker Script
@@ -598,6 +601,10 @@ void fut_kernel_main(void) {
 
     fut_printf("[INIT] Heap initialized: 0x%llx - 0x%llx (%llu MiB)\n",
                heap_start, heap_end, KERNEL_HEAP_SIZE / (1024 * 1024));
+
+    fb_boot_splash();
+    fb_char_init();
+    fut_echo_selftest();
 
     /* ========================================
      *   Step 2: Initialize FIPC Subsystem

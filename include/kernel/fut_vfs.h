@@ -26,6 +26,7 @@ struct fut_mount;
 struct fut_file;
 struct fut_vfs_ops;
 struct fut_stat;
+struct fut_file_ops;
 
 /* ============================================================
  *   File Types
@@ -256,6 +257,9 @@ struct fut_file {
     uint64_t offset;                /* Current file offset */
     int flags;                      /* Open flags */
     uint32_t refcount;              /* Reference count */
+    const struct fut_file_ops *chr_ops; /* Character device operations */
+    void *chr_inode;                /* Driver-provided inode pointer */
+    void *chr_private;              /* Driver private state */
 };
 
 /* ============================================================

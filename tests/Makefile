@@ -25,7 +25,9 @@ TESTS := fipc_remote_loopback \
 	fipc_sys_kernel_metrics \
 	fipc_sys_futuraway_metrics \
 	fipc_sys_vfs_metrics \
-	fipc_kernel_caps_quota
+fipc_kernel_flowcontrol \
+	fipc_kernel_caps_quota \
+	fipc_kernel_vecsend
 
 .PHONY: all clean $(TESTS)
 
@@ -140,9 +142,17 @@ $(BIN_DIR)/fipc_sys_vfs_metrics: $(FIPC_VFS_SRCS) $(LIBFIPC_HOST) | $(BIN_DIR)
 	@echo "CC $@"
 	@$(CC) $(CFLAGS) -o $@ $(FIPC_VFS_SRCS) $(LIBFIPC_HOST) $(LDFLAGS)
 
+$(BIN_DIR)/fipc_kernel_flowcontrol: fipc_kernel_flowcontrol.c $(LIBFIPC_HOST) | $(BIN_DIR)
+	@echo "CC $@"
+	@$(CC) $(CFLAGS) -o $@ fipc_kernel_flowcontrol.c $(LIBFIPC_HOST) $(LDFLAGS)
+
 $(BIN_DIR)/fipc_kernel_caps_quota: fipc_kernel_caps_quota.c $(LIBFIPC_HOST) | $(BIN_DIR)
 	@echo "CC $@"
 	@$(CC) $(CFLAGS) -o $@ fipc_kernel_caps_quota.c $(LIBFIPC_HOST) $(LDFLAGS)
+
+$(BIN_DIR)/fipc_kernel_vecsend: fipc_kernel_vecsend.c $(LIBFIPC_HOST) | $(BIN_DIR)
+	@echo "CC $@"
+	@$(CC) $(CFLAGS) -o $@ fipc_kernel_vecsend.c $(LIBFIPC_HOST) $(LDFLAGS)
 
 # === syswatch smoke helper ===
 $(BIN_DIR)/fipc_syswatch_smoke: fipc_syswatch_smoke.c \

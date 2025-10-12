@@ -142,6 +142,11 @@ struct fut_fipc_channel {
     uint64_t capability;            /* Capability token */
     struct fut_fipc_remote_endpoint remote; /* Remote metadata */
     struct fut_fipc_cap cap_ledger; /* Capability + quota descriptor */
+    uint32_t tx_credits;            /* Remaining transmit credits (0 = unlimited) */
+    uint32_t credit_refill;         /* Window refill size (0 = unlimited) */
+    bool credits_enabled;           /* Credits enforced when true */
+    uint8_t _pad_credit[3];         /* align */
+    uint64_t drops_backpressure;    /* Count of send rejections due to credits */
     uint64_t msgs_sent;
     uint64_t bytes_sent;
     uint64_t msgs_injected;
@@ -253,6 +258,8 @@ int fut_fipc_register_remote(uint64_t channel_id,
 int fut_fipc_bind_capability(struct fut_fipc_channel *channel, uint64_t capability);
 int fut_fipc_cap_bind(struct fut_fipc_channel *channel, const struct fut_fipc_cap *cap);
 int fut_fipc_cap_unbind(struct fut_fipc_channel *channel);
+int fut_fipc_set_credits(struct fut_fipc_channel *channel, uint32_t initial, uint32_t refill);
+int fut_fipc_refill_credits(struct fut_fipc_channel *channel, uint32_t add);
 int fut_fipc_channel_inject(struct fut_fipc_channel *channel,
                             uint32_t type,
                             const void *data,
@@ -262,6 +269,15 @@ int fut_fipc_channel_inject(struct fut_fipc_channel *channel,
                             uint64_t capability);
 int fut_fipc_set_transport_ops(const struct fut_fipc_transport_ops *ops, void *context);
 int fut_fipc_publish_kernel_metrics(void);
+struct fipc_iovec {
+    const void *base;
+    size_t len;
+};
+int fut_fipc_sendv(struct fut_fipc_channel *channel,
+                   uint32_t type,
+                   const struct fipc_iovec *iov,
+                   size_t iovcnt);
+size_t fut_fipc_dequeue_bounded(struct fut_fipc_channel *channel, size_t max_msgs);
 
 /**
  * Destroy an event channel.

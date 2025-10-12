@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MPL-2.0
-// fipc_kernel_caps_quota.c - Capability ledger and quota enforcement
+// fipc_kernel_caps_quota.c - Capability rights and quota enforcement
 
 #define _POSIX_C_SOURCE 200809L
 
@@ -36,7 +36,7 @@ int main(void) {
     }
     int rc = fut_fipc_send(ch, 0xC003u, "OK", 2);
     if (rc == 0 || rc != FIPC_ENOSPC) {
-        fprintf(stderr, "[CAPQ] send quota not enforced\n");
+        fprintf(stderr, "[CAPQ] quota not enforced\n");
         return 1;
     }
 
@@ -70,7 +70,6 @@ int main(void) {
         return 1;
     }
 
-    /* Capability drop should block future sends */
     if (fut_fipc_cap_unbind(ch) != 0) {
         fprintf(stderr, "[CAPQ] cap unbind failed\n");
         return 1;

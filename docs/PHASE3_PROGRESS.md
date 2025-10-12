@@ -7,10 +7,11 @@
 ## Storage & Filesystems
 - Introduced byte-sized ramdisk creation helpers and cleaned up the ramdisk allocator; this unblocks FuturaFS formatting on sub-megabyte test devices.
 - FuturaFS formatter now emits detailed instrumentation so byte-level I/O paths and bitmap initialization can be validated on boot.
-- Boot-time self-test: format, mount, and stat of `/mnt` all succeed under GRUB/QEMU, confirming the Phase 2 filesystem pipeline.
+- Implemented `lookup`, `create`, and `mkdir` in the FuturaFS vnode layer, including on-disk directory entry management and bitmap syncing.
+- Boot-time self-test: format, mount, and stat of `/mnt` all succeed under GRUB/QEMU, confirming the filesystem pipeline.
 
 ## Next Up
-1. Flesh out FuturaFS directory CRUD operations (`lookup`, `create`, `mkdir`, `readdir`, `unlink`, `rmdir`).
+1. Finish the remaining directory CRUD work in FuturaFS (`readdir`, `unlink`, `rmdir`).
 2. Restore userland builds (`initd`, `posixd`, `fsd`) and wire their FIPC protocols to the kernel bridges.
 3. Capture allocator metrics and trim debug logging before merging into release branches.
 

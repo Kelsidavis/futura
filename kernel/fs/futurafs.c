@@ -11,6 +11,8 @@
 #include <kernel/fut_vfs.h>
 #include <kernel/fut_blockdev.h>
 
+static const struct fut_vnode_ops futurafs_vnode_ops;
+
 /* ============================================================
  *   Helper Functions
  * ============================================================ */
@@ -113,7 +115,6 @@ static int futurafs_write_inode(struct futurafs_mount *mount, uint64_t ino,
 /**
  * Allocate a new inode.
  */
-__attribute__((unused))
 static int futurafs_alloc_inode(struct futurafs_mount *mount, uint64_t *ino_out) {
     if (mount->sb->free_inodes == 0) {
         return FUTURAFS_ENOSPC;
@@ -141,7 +142,6 @@ static int futurafs_alloc_inode(struct futurafs_mount *mount, uint64_t *ino_out)
 /**
  * Free an inode.
  */
-__attribute__((unused))
 static int futurafs_free_inode(struct futurafs_mount *mount, uint64_t ino) {
     if (ino == 0 || ino > mount->sb->total_inodes) {
         return FUTURAFS_EINVAL;
@@ -190,7 +190,6 @@ static int futurafs_alloc_block(struct futurafs_mount *mount, uint64_t *block_ou
 /**
  * Free a data block.
  */
-__attribute__((unused))
 static int futurafs_free_block(struct futurafs_mount *mount, uint64_t block_num) {
     if (block_num < mount->sb->data_blocks_start || block_num >= mount->sb->total_blocks) {
         return FUTURAFS_EINVAL;
@@ -203,6 +202,229 @@ static int futurafs_free_block(struct futurafs_mount *mount, uint64_t block_num)
     mount->data_bitmap[byte_index] &= ~(1 << bit_index);
     mount->sb->free_blocks++;
     mount->dirty = true;
+
+    return 0;
+}
+
+#define FUTURAFS_S_IFMT   0170000
+#define FUTURAFS_S_IFIFO  0010000
+#define FUTURAFS_S_IFCHR  0020000
+#define FUTURAFS_S_IFDIR  0040000
+#define FUTURAFS_S_IFBLK  0060000
+#define FUTURAFS_S_IFREG  0100000
+#define FUTURAFS_S_IFLNK  0120000
+#define FUTURAFS_S_IFSOCK 0140000
+
+static enum fut_vnode_type futurafs_mode_to_vtype(uint32_t mode) {
+    switch (mode & FUTURAFS_S_IFMT) {
+        case FUTURAFS_S_IFDIR:  return VN_DIR;
+        case FUTURAFS_S_IFCHR:  return VN_CHR;
+        case FUTURAFS_S_IFBLK:  return VN_BLK;
+        case FUTURAFS_S_IFIFO:  return VN_FIFO;
+        case FUTURAFS_S_IFSOCK: return VN_SOCK;
+        case FUTURAFS_S_IFLNK:  return VN_LNK;
+        default:                return VN_REG;
+    }
+}
+
+static uint8_t futurafs_mode_to_filetype(uint32_t mode) {
+    switch (mode & FUTURAFS_S_IFMT) {
+        case FUTURAFS_S_IFDIR:  return FUTURAFS_FT_DIR;
+        case FUTURAFS_S_IFCHR:  return FUTURAFS_FT_CHRDEV;
+        case FUTURAFS_S_IFBLK:  return FUTURAFS_FT_BLKDEV;
+        case FUTURAFS_S_IFIFO:  return FUTURAFS_FT_FIFO;
+        case FUTURAFS_S_IFSOCK: return FUTURAFS_FT_SOCK;
+        case FUTURAFS_S_IFLNK:  return FUTURAFS_FT_SYMLINK;
+        default:                return FUTURAFS_FT_REG_FILE;
+    }
+}
+
+static size_t futurafs_strnlen(const char *name, size_t max) {
+    size_t len = 0;
+    while (len < max && name[len]) {
+        len++;
+    }
+    return len;
+}
+
+static bool futurafs_name_equals(const struct futurafs_dirent *dent, const char *name, size_t name_len) {
+    if (dent->name_len != name_len) {
+        return false;
+    }
+    for (size_t i = 0; i < name_len; ++i) {
+        if ((uint8_t)dent->name[i] != (uint8_t)name[i]) {
+            return false;
+        }
+    }
+    return true;
+}
+
+static int futurafs_sync_metadata(struct futurafs_mount *mount) {
+    if (!mount->dirty) {
+        return 0;
+    }
+
+    size_t inode_bitmap_size = (mount->sb->total_inodes + 7) / 8;
+    ssize_t written = fut_blockdev_write_bytes(mount->dev,
+                                               mount->sb->inode_bitmap_block * FUTURAFS_BLOCK_SIZE,
+                                               inode_bitmap_size,
+                                               mount->inode_bitmap);
+    if (written < 0) {
+        return FUTURAFS_EIO;
+    }
+
+    size_t data_bitmap_size = ((mount->sb->total_blocks - mount->sb->data_blocks_start) + 7) / 8;
+    written = fut_blockdev_write_bytes(mount->dev,
+                                       mount->sb->data_bitmap_block * FUTURAFS_BLOCK_SIZE,
+                                       data_bitmap_size,
+                                       mount->data_bitmap);
+    if (written < 0) {
+        return FUTURAFS_EIO;
+    }
+
+    int ret = futurafs_write_superblock(mount->dev, mount->sb);
+    if (ret < 0) {
+        return ret;
+    }
+
+    mount->dirty = false;
+    return 0;
+}
+
+static int futurafs_create_vnode(struct fut_mount *vfs_mount,
+                                 struct futurafs_mount *fs_mount,
+                                 uint64_t ino,
+                                 struct fut_vnode **out) {
+    struct futurafs_inode_info *info = fut_malloc(sizeof(struct futurafs_inode_info));
+    if (!info) {
+        return FUTURAFS_EIO;
+    }
+
+    int ret = futurafs_read_inode(fs_mount, ino, &info->disk_inode);
+    if (ret < 0) {
+        fut_free(info);
+        return ret;
+    }
+
+    struct fut_vnode *vnode = fut_malloc(sizeof(struct fut_vnode));
+    if (!vnode) {
+        fut_free(info);
+        return FUTURAFS_EIO;
+    }
+
+    info->ino = ino;
+    info->mount = fs_mount;
+    info->dirty = false;
+
+    vnode->type = futurafs_mode_to_vtype(info->disk_inode.mode);
+    vnode->ino = ino;
+    vnode->mode = info->disk_inode.mode;
+    vnode->size = info->disk_inode.size;
+    vnode->nlinks = info->disk_inode.nlinks;
+    vnode->mount = vfs_mount;
+    vnode->fs_data = info;
+    vnode->refcount = 1;
+    vnode->ops = &futurafs_vnode_ops;
+
+    *out = vnode;
+    return 0;
+}
+
+static int futurafs_dir_add_entry(struct fut_vnode *dir,
+                                  struct futurafs_inode_info *dir_info,
+                                  const char *name,
+                                  size_t name_len,
+                                  uint64_t ino,
+                                  uint8_t file_type) {
+    struct futurafs_mount *mount = dir_info->mount;
+    uint8_t slot_buf[FUTURAFS_BLOCK_SIZE];
+    bool slot_buf_valid = false;
+    uint64_t slot_block = 0;
+    size_t slot_offset = 0;
+    int slot_index = -1;
+    int new_block_index = -1;
+
+    uint8_t block_buf[FUTURAFS_BLOCK_SIZE];
+
+    for (int i = 0; i < FUTURAFS_DIRECT_BLOCKS; ++i) {
+        uint64_t block_num = dir_info->disk_inode.direct[i];
+        if (block_num == 0) {
+            if (new_block_index == -1) {
+                new_block_index = i;
+            }
+            continue;
+        }
+
+        if (fut_blockdev_read(mount->dev, block_num, 1, block_buf) < 0) {
+            return FUTURAFS_EIO;
+        }
+
+        for (size_t offset = 0; offset < FUTURAFS_BLOCK_SIZE; offset += sizeof(struct futurafs_dirent)) {
+            struct futurafs_dirent *dent = (struct futurafs_dirent *)(block_buf + offset);
+            if (dent->ino != 0) {
+                if (futurafs_name_equals(dent, name, name_len)) {
+                    return FUTURAFS_EEXIST;
+                }
+            } else if (slot_index == -1) {
+                slot_index = i;
+                slot_block = block_num;
+                slot_offset = offset;
+                slot_buf_valid = true;
+                for (size_t j = 0; j < FUTURAFS_BLOCK_SIZE; ++j) {
+                    slot_buf[j] = block_buf[j];
+                }
+            }
+        }
+    }
+
+    bool allocated_block = false;
+    if (!slot_buf_valid) {
+        if (new_block_index == -1) {
+            return FUTURAFS_ENOSPC;
+        }
+
+        uint64_t new_block;
+        int ret = futurafs_alloc_block(mount, &new_block);
+        if (ret < 0) {
+            return ret;
+        }
+        allocated_block = true;
+
+        for (size_t i = 0; i < FUTURAFS_BLOCK_SIZE; ++i) {
+            slot_buf[i] = 0;
+        }
+        slot_buf_valid = true;
+        slot_block = new_block;
+        slot_offset = 0;
+        slot_index = new_block_index;
+
+        dir_info->disk_inode.direct[new_block_index] = new_block;
+        dir_info->disk_inode.blocks++;
+    }
+
+    struct futurafs_dirent *dent = (struct futurafs_dirent *)(slot_buf + slot_offset);
+    dent->ino = ino;
+    dent->rec_len = sizeof(struct futurafs_dirent);
+    dent->name_len = (uint8_t)name_len;
+    dent->file_type = file_type;
+    for (size_t i = 0; i < name_len; ++i) {
+        dent->name[i] = name[i];
+    }
+    dent->name[name_len] = '\0';
+
+    if (fut_blockdev_write(mount->dev, slot_block, 1, slot_buf) < 0) {
+        dent->ino = 0;
+        if (allocated_block) {
+            dir_info->disk_inode.direct[slot_index] = 0;
+            dir_info->disk_inode.blocks--;
+            futurafs_free_block(mount, slot_block);
+        }
+        return FUTURAFS_EIO;
+    }
+
+    dir_info->dirty = true;
+    dir_info->disk_inode.size = dir_info->disk_inode.blocks * FUTURAFS_BLOCK_SIZE;
+    dir->size = dir_info->disk_inode.size;
 
     return 0;
 }
@@ -343,29 +565,215 @@ static ssize_t futurafs_vnode_write(struct fut_vnode *vnode, const void *buf, si
 }
 
 static int futurafs_vnode_lookup(struct fut_vnode *dir, const char *name, struct fut_vnode **result) {
-    /* TODO: Implement directory lookup */
-    (void)dir;
-    (void)name;
-    (void)result;
+    if (!dir || !result) {
+        return FUTURAFS_EINVAL;
+    }
+
+    if (dir->type != VN_DIR) {
+        return FUTURAFS_ENOTDIR;
+    }
+
+    size_t name_len = futurafs_strnlen(name, FUTURAFS_NAME_MAX);
+    if (name_len == 0 || name_len > FUTURAFS_NAME_MAX) {
+        return FUTURAFS_EINVAL;
+    }
+
+    struct futurafs_inode_info *dir_info = (struct futurafs_inode_info *)dir->fs_data;
+    struct futurafs_mount *mount = dir_info->mount;
+    uint8_t block_buf[FUTURAFS_BLOCK_SIZE];
+
+    for (int i = 0; i < FUTURAFS_DIRECT_BLOCKS; ++i) {
+        uint64_t block_num = dir_info->disk_inode.direct[i];
+        if (block_num == 0) {
+            continue;
+        }
+
+        if (fut_blockdev_read(mount->dev, block_num, 1, block_buf) < 0) {
+            return FUTURAFS_EIO;
+        }
+
+        for (size_t offset = 0; offset < FUTURAFS_BLOCK_SIZE; offset += sizeof(struct futurafs_dirent)) {
+            struct futurafs_dirent *dent = (struct futurafs_dirent *)(block_buf + offset);
+            if (dent->ino == 0) {
+                continue;
+            }
+
+            if (futurafs_name_equals(dent, name, name_len)) {
+                return futurafs_create_vnode(dir->mount, mount, dent->ino, result);
+            }
+        }
+    }
+
+    *result = NULL;
     return FUTURAFS_ENOENT;
 }
 
 static int futurafs_vnode_create(struct fut_vnode *dir, const char *name, uint32_t mode,
                                  struct fut_vnode **result) {
-    /* TODO: Implement file creation */
-    (void)dir;
-    (void)name;
-    (void)mode;
-    (void)result;
-    return FUTURAFS_ENOSPC;
+    if (!dir || !result) {
+        return FUTURAFS_EINVAL;
+    }
+
+    if (dir->type != VN_DIR) {
+        return FUTURAFS_ENOTDIR;
+    }
+
+    size_t name_len = futurafs_strnlen(name, FUTURAFS_NAME_MAX);
+    if (name_len == 0 || name_len > FUTURAFS_NAME_MAX) {
+        return FUTURAFS_EINVAL;
+    }
+
+    struct futurafs_inode_info *dir_info = (struct futurafs_inode_info *)dir->fs_data;
+    struct futurafs_mount *mount = dir_info->mount;
+
+    uint64_t new_ino;
+    int ret = futurafs_alloc_inode(mount, &new_ino);
+    if (ret < 0) {
+        return ret;
+    }
+
+    struct futurafs_inode inode = {0};
+    inode.mode = mode ? mode : FUTURAFS_S_IFREG | 0644;
+    if ((inode.mode & FUTURAFS_S_IFMT) == 0) {
+        inode.mode |= FUTURAFS_S_IFREG;
+    }
+    inode.uid = 0;
+    inode.gid = 0;
+    inode.nlinks = 1;
+    inode.size = 0;
+    inode.blocks = 0;
+
+    ret = futurafs_write_inode(mount, new_ino, &inode);
+    if (ret < 0) {
+        futurafs_free_inode(mount, new_ino);
+        futurafs_sync_metadata(mount);
+        return ret;
+    }
+
+    ret = futurafs_dir_add_entry(dir, dir_info, name, name_len, new_ino,
+                                 futurafs_mode_to_filetype(inode.mode));
+    if (ret < 0) {
+        futurafs_free_inode(mount, new_ino);
+        futurafs_sync_metadata(mount);
+        return ret;
+    }
+
+    dir->size = dir_info->disk_inode.size;
+    if (futurafs_write_inode(mount, dir_info->ino, &dir_info->disk_inode) < 0) {
+        futurafs_sync_metadata(mount);
+        return FUTURAFS_EIO;
+    }
+    dir_info->dirty = false;
+
+    ret = futurafs_sync_metadata(mount);
+    if (ret < 0) {
+        return ret;
+    }
+
+    return futurafs_create_vnode(dir->mount, mount, new_ino, result);
 }
 
 static int futurafs_vnode_mkdir(struct fut_vnode *dir, const char *name, uint32_t mode) {
-    /* TODO: Implement directory creation */
-    (void)dir;
-    (void)name;
-    (void)mode;
-    return FUTURAFS_ENOSPC;
+    if (!dir) {
+        return FUTURAFS_EINVAL;
+    }
+
+    if (dir->type != VN_DIR) {
+        return FUTURAFS_ENOTDIR;
+    }
+
+    size_t name_len = futurafs_strnlen(name, FUTURAFS_NAME_MAX);
+    if (name_len == 0 || name_len > FUTURAFS_NAME_MAX) {
+        return FUTURAFS_EINVAL;
+    }
+
+    struct futurafs_inode_info *dir_info = (struct futurafs_inode_info *)dir->fs_data;
+    struct futurafs_mount *mount = dir_info->mount;
+
+    uint64_t new_ino;
+    int ret = futurafs_alloc_inode(mount, &new_ino);
+    if (ret < 0) {
+        return ret;
+    }
+
+    uint64_t new_block;
+    ret = futurafs_alloc_block(mount, &new_block);
+    if (ret < 0) {
+        futurafs_free_inode(mount, new_ino);
+        return ret;
+    }
+
+    uint8_t block_buf[FUTURAFS_BLOCK_SIZE];
+    for (size_t i = 0; i < FUTURAFS_BLOCK_SIZE; ++i) {
+        block_buf[i] = 0;
+    }
+
+    struct futurafs_dirent *dot = (struct futurafs_dirent *)block_buf;
+    dot->ino = new_ino;
+    dot->rec_len = sizeof(struct futurafs_dirent);
+    dot->name_len = 1;
+    dot->file_type = FUTURAFS_FT_DIR;
+    dot->name[0] = '.';
+    dot->name[1] = '\0';
+
+    struct futurafs_dirent *dotdot = (struct futurafs_dirent *)(block_buf + sizeof(struct futurafs_dirent));
+    dotdot->ino = dir->ino;
+    dotdot->rec_len = sizeof(struct futurafs_dirent);
+    dotdot->name_len = 2;
+    dotdot->file_type = FUTURAFS_FT_DIR;
+    dotdot->name[0] = '.';
+    dotdot->name[1] = '.';
+    dotdot->name[2] = '\0';
+
+    if (fut_blockdev_write(mount->dev, new_block, 1, block_buf) < 0) {
+        futurafs_free_block(mount, new_block);
+        futurafs_free_inode(mount, new_ino);
+        futurafs_sync_metadata(mount);
+        return FUTURAFS_EIO;
+    }
+
+    struct futurafs_inode inode = {0};
+    inode.mode = mode ? mode : (FUTURAFS_S_IFDIR | 0755);
+    if ((inode.mode & FUTURAFS_S_IFMT) == 0) {
+        inode.mode |= FUTURAFS_S_IFDIR;
+    }
+    inode.uid = 0;
+    inode.gid = 0;
+    inode.nlinks = 2;  /* '.' and '..' */
+    inode.size = 2 * sizeof(struct futurafs_dirent);
+    inode.blocks = 1;
+    inode.direct[0] = new_block;
+
+    ret = futurafs_write_inode(mount, new_ino, &inode);
+    if (ret < 0) {
+        futurafs_free_block(mount, new_block);
+        futurafs_free_inode(mount, new_ino);
+        futurafs_sync_metadata(mount);
+        return ret;
+    }
+
+    ret = futurafs_dir_add_entry(dir, dir_info, name, name_len, new_ino, FUTURAFS_FT_DIR);
+    if (ret < 0) {
+        futurafs_free_block(mount, new_block);
+        futurafs_free_inode(mount, new_ino);
+        futurafs_sync_metadata(mount);
+        return ret;
+    }
+
+    dir_info->disk_inode.nlinks++;
+    dir->nlinks = dir_info->disk_inode.nlinks;
+    if (futurafs_write_inode(mount, dir_info->ino, &dir_info->disk_inode) < 0) {
+        futurafs_sync_metadata(mount);
+        return FUTURAFS_EIO;
+    }
+    dir_info->dirty = false;
+
+    ret = futurafs_sync_metadata(mount);
+    if (ret < 0) {
+        return ret;
+    }
+
+    return 0;
 }
 
 static const struct fut_vnode_ops futurafs_vnode_ops = {

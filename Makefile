@@ -100,6 +100,7 @@ ifeq ($(PLATFORM),x86_64)
         platform/x86_64/gdt_idt.S \
         platform/x86_64/isr_stubs.S \
         platform/x86_64/context_switch.S \
+        platform/x86_64/paging.c \
         platform/x86_64/platform_init.c
 else ifeq ($(PLATFORM),arm64)
     PLATFORM_SOURCES := \

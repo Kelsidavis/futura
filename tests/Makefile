@@ -11,11 +11,11 @@ LIB_DIR := $(BUILD_DIR)/lib
 
 LIBFIPC_HOST := $(LIB_DIR)/libfipc_host.a
 
-INCLUDES := -I$(ROOT)/include -I$(ROOT)
+INCLUDES := -I$(ROOT)/include -I$(ROOT) -I$(ROOT)/src/user/netd -I$(ROOT)/src/user/svc_registryd
 CFLAGS := -std=c2x -Wall -Wextra -Werror -g -O2 $(INCLUDES)
 LDFLAGS := -pthread
 
-TESTS := fipc_remote_loopback
+TESTS := fipc_remote_loopback fipc_remote_discovery
 
 .PHONY: all clean $(TESTS)
 
@@ -31,6 +31,16 @@ $(BIN_DIR)/fipc_remote_loopback: fipc_remote_loopback.c $(LIBFIPC_HOST) | $(BIN_
 	@$(CC) $(CFLAGS) -o $@ fipc_remote_loopback.c \
 		$(ROOT)/src/user/netd/netd_core.c \
 		$(LIBFIPC_HOST) $(LDFLAGS)
+
+# === FIPC remote discovery test (links registry & netd directly) ===
+FIPC_DISCOVERY_SRCS := fipc_remote_discovery.c \
+	$(ROOT)/src/user/netd/netd_core.c \
+	$(ROOT)/src/user/svc_registryd/registry_server.c \
+	$(ROOT)/src/user/svc_registryd/registry_client.c
+
+$(BIN_DIR)/fipc_remote_discovery: $(FIPC_DISCOVERY_SRCS) $(LIBFIPC_HOST) | $(BIN_DIR)
+	@echo "CC $@"
+	@$(CC) $(CFLAGS) -o $@ $(FIPC_DISCOVERY_SRCS) $(LIBFIPC_HOST) $(LDFLAGS)
 
 $(BIN_DIR):
 	@mkdir -p $(BIN_DIR)

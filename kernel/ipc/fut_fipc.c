@@ -10,6 +10,7 @@
 #include <kernel/fut_fipc_sys.h>
 #include <kernel/fut_memory.h>
 #include <kernel/fut_timer.h>
+#include <kernel/fut_hmac.h>
 #include <stddef.h>
 #include <string.h>
 #include <stdatomic.h>
@@ -44,6 +45,8 @@ static void fut_fipc_refill_tokens(struct fut_fipc_channel *channel, uint64_t no
 static int fut_fipc_admin_handle(struct fut_fipc_channel *channel,
                                  const uint8_t *payload,
                                  size_t size);
+static uint8_t admin_token_current[FIPC_ADMIN_TOKEN_LEN] = FIPC_ADMIN_TOKEN_DEFAULT_INIT;
+static uint8_t admin_hmac_key_current[FIPC_ADMIN_HMAC_KEY_LEN] = FIPC_ADMIN_HMAC_KEY_DEFAULT_INIT;
 
 #if FIPC_DEBUG
 void fut_fipc_assert_fail(const char *expr, const char *file, int line) {
@@ -415,9 +418,24 @@ int fut_fipc_cap_bind(struct fut_fipc_channel *channel, const struct fut_fipc_ca
     if (!channel || !cap) {
         return FIPC_EINVAL;
     }
-    channel->cap_ledger = *cap;
-    channel->cap_ledger.revoke_flags = 0;
-    channel->cap_ledger.lease_id = atomic_fetch_add_explicit(&next_cap_lease, 1, memory_order_relaxed);
+    struct fut_fipc_cap new_cap = *cap;
+    new_cap.revoke_flags = 0;
+    if (new_cap.lease_id == 0) {
+        new_cap.lease_id = atomic_fetch_add_explicit(&next_cap_lease, 1, memory_order_relaxed);
+    } else {
+        uint64_t current = atomic_load_explicit(&next_cap_lease, memory_order_relaxed);
+        while (current <= new_cap.lease_id) {
+            uint64_t desired = new_cap.lease_id + 1;
+            if (atomic_compare_exchange_weak_explicit(&next_cap_lease,
+                                                      &current,
+                                                      desired,
+                                                      memory_order_relaxed,
+                                                      memory_order_relaxed)) {
+                break;
+            }
+        }
+    }
+    channel->cap_ledger = new_cap;
     return 0;
 }
 
@@ -838,6 +856,37 @@ static const uint8_t *fipc_admin_read_u64(const uint8_t *cursor,
     return NULL;
 }
 
+static const uint8_t *fipc_admin_read_bytes(const uint8_t *cursor,
+                                            const uint8_t *end,
+                                            uint8_t *dest,
+                                            size_t dest_cap,
+                                            size_t *out_len) {
+    uint64_t length = 0;
+    cursor = fipc_admin_read_u64(cursor, end, &length);
+    if (!cursor) {
+        return NULL;
+    }
+    if (length > dest_cap) {
+        return NULL;
+    }
+    if ((size_t)(end - cursor) < (size_t)length) {
+        return NULL;
+    }
+    if (dest && length > 0) {
+        memcpy(dest, cursor, (size_t)length);
+    }
+    if (out_len) {
+        *out_len = (size_t)length;
+    }
+    return cursor + length;
+}
+
+static void fipc_write_le64(uint8_t *dst, uint64_t value) {
+    for (size_t i = 0; i < 8; ++i) {
+        dst[i] = (uint8_t)((value >> (i * 8)) & 0xFFu);
+    }
+}
+
 static int fut_fipc_admin_handle(struct fut_fipc_channel *channel,
                                  const uint8_t *payload,
                                  size_t size) {
@@ -874,6 +923,14 @@ static int fut_fipc_admin_handle(struct fut_fipc_channel *channel,
         bool has_revoke;
         bool has_rate;
         bool has_burst;
+        uint8_t token[FIPC_ADMIN_TOKEN_LEN];
+        size_t token_len;
+        bool has_token;
+        uint64_t lease_id;
+        bool has_lease;
+        uint8_t hmac[FUT_SHA256_DIGEST_LEN];
+        size_t hmac_len;
+        bool has_hmac;
     } cmd = {0};
 
     while (cursor < end) {
@@ -881,11 +938,31 @@ static int fut_fipc_admin_handle(struct fut_fipc_channel *channel,
         if (tag == FIPC_ADM_END) {
             break;
         }
+
+        if (tag == FIPC_ADM_TOKEN || tag == FIPC_ADM_HMAC) {
+            uint8_t *dest = (tag == FIPC_ADM_TOKEN) ? cmd.token : cmd.hmac;
+            size_t cap = (tag == FIPC_ADM_TOKEN) ? sizeof(cmd.token) : sizeof(cmd.hmac);
+            size_t len = 0;
+            cursor = fipc_admin_read_bytes(cursor, end, dest, cap, &len);
+            if (!cursor) {
+                return FIPC_EINVAL;
+            }
+            if (tag == FIPC_ADM_TOKEN) {
+                cmd.token_len = len;
+                cmd.has_token = true;
+            } else {
+                cmd.hmac_len = len;
+                cmd.has_hmac = true;
+            }
+            continue;
+        }
+
         uint64_t value = 0;
         cursor = fipc_admin_read_u64(cursor, end, &value);
         if (!cursor) {
             return FIPC_EINVAL;
         }
+
         switch (tag) {
             case FIPC_ADM_OP:
                 cmd.op = value;
@@ -923,8 +1000,12 @@ static int fut_fipc_admin_handle(struct fut_fipc_channel *channel,
                 cmd.burst = value;
                 cmd.has_burst = true;
                 break;
+            case FIPC_ADM_LEASE:
+                cmd.lease_id = value;
+                cmd.has_lease = true;
+                break;
             default:
-                /* Ignore unknown tags */
+                /* Ignore unknown varint tags */
                 break;
         }
     }
@@ -936,24 +1017,58 @@ static int fut_fipc_admin_handle(struct fut_fipc_channel *channel,
     int rc = 0;
     if (!cmd.has_op || !cmd.has_target) {
         rc = FIPC_EINVAL;
+    } else if (!cmd.has_token || cmd.token_len != FIPC_ADMIN_TOKEN_LEN ||
+               memcmp(cmd.token, admin_token_current, FIPC_ADMIN_TOKEN_LEN) != 0) {
+        rc = FIPC_EPERM;
     } else {
         struct fut_fipc_channel *target = fut_fipc_channel_lookup(cmd.target);
         if (!target) {
             rc = FIPC_EINVAL;
         } else {
             switch ((int)cmd.op) {
-                case FIPC_ADM_CAP_BIND: {
+            case FIPC_ADM_CAP_BIND: {
                     if (!cmd.has_rights) {
                         rc = FIPC_EINVAL;
                         break;
                     }
+                    if (!cmd.has_lease) {
+                        rc = FIPC_EINVAL;
+                        break;
+                    }
+                    if (!cmd.has_hmac || cmd.hmac_len != FUT_SHA256_DIGEST_LEN) {
+                        rc = FIPC_EPERM;
+                        break;
+                    }
+                    uint8_t material[40];
+                    uint8_t *mat = material;
+                    fipc_write_le64(mat, cmd.lease_id);
+                    mat += 8;
+                    fipc_write_le64(mat, cmd.rights);
+                    mat += 8;
+                    fipc_write_le64(mat, cmd.has_max_msgs ? cmd.max_msgs : 0);
+                    mat += 8;
+                    fipc_write_le64(mat, cmd.has_max_bytes ? cmd.max_bytes : 0);
+                    mat += 8;
+                    fipc_write_le64(mat, cmd.has_expiry ? cmd.expiry_tick : 0);
+
+                    uint8_t expected[FUT_SHA256_DIGEST_LEN];
+                    fut_hmac_sha256(admin_hmac_key_current,
+                                    FIPC_ADMIN_HMAC_KEY_LEN,
+                                    material,
+                                    sizeof(material),
+                                    expected);
+                    if (memcmp(expected, cmd.hmac, FUT_SHA256_DIGEST_LEN) != 0) {
+                        rc = FIPC_EPERM;
+                        break;
+                    }
+
                     struct fut_fipc_cap new_cap = {
                         .rights = (uint32_t)cmd.rights,
                         .revoke_flags = 0,
                         .max_msgs = cmd.has_max_msgs ? cmd.max_msgs : 0,
                         .max_bytes = cmd.has_max_bytes ? cmd.max_bytes : 0,
                         .expiry_tick = cmd.has_expiry ? cmd.expiry_tick : 0,
-                        .lease_id = 0,
+                        .lease_id = cmd.lease_id,
                     };
                     rc = fut_fipc_cap_bind(target, &new_cap);
                     break;

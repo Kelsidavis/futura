@@ -19,6 +19,7 @@ CFLAGS := -std=c2x -Wall -Wextra -Werror -g -O2 -DFIPC_HOST_BUILD $(INCLUDES)
 
 SOURCES := \
 	$(ROOT)/kernel/ipc/fut_fipc.c \
+	$(ROOT)/kernel/crypto/fut_hmac.c \
 	fipc_host_shim.c
 
 OBJECTS := $(SOURCES:%.c=$(OBJ_DIR)/%.o)
@@ -35,6 +36,7 @@ $(TARGET): $(OBJECTS) | $(LIB_DIR)
 
 $(OBJ_DIR)/%.o: %.c | $(OBJ_DIR)
 	@echo "CC $<"
+	@mkdir -p $(dir $@)
 	@$(CC) $(CFLAGS) -c $< -o $@
 
 $(OBJ_DIR):

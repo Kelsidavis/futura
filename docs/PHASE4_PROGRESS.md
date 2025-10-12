@@ -21,6 +21,8 @@
 - Landed the Futuraway M1 compositor (`futurawayd`) with a software ARGB32 framebuffer backend and single-surface blitter.
 - Added `fw_demo` checkerboard client that exercises SURFACE_CREATE / SURFACE_COMMIT over FIPC and emits deterministic frames for CI validation.
 - Introduced `tests/futuraway_smoke` which spins the compositor + demo in-process, hashes the dumped framebuffer (`fb_000.ppm`), and verifies FWAY metrics publication.
+- M2 upgrade adds multi-surface support with z-ordering, premultiplied-alpha blending, and damage-aware partial compositing backed by shared-memory style payloads.
+- Demo now renders layered background + translucent label surfaces, and new harnesses (`tests/futuraway_m2_smoke`, `tests/futuraway_m2_bench`) validate deterministic output and quantify the damage-path speedup (>30%).
 
 ## Documentation
 - Extended `docs/FIPC_SPEC.md` with remote transport, control-channel auth, and registry signing details.

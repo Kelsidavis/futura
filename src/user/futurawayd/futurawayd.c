@@ -1,4 +1,4 @@
-/* futurawayd.c - Minimal FuturaWay compositor (software, single surface)
+/* futurawayd.c - Futuraway compositor (M2: multi-surface, damage-aware)
  *
  * Copyright (c) 2025 Kelsi Davis
  * Licensed under the MPL v2.0 — see LICENSE for details.
@@ -22,16 +22,20 @@
 #include <kernel/fut_timer.h>
 
 #include <user/futuraway_proto.h>
-#include <user/futura_way.h>
 
 #include "../svc_registryd/registry_client.h"
 #include "../sys/fipc_sys.h"
 
 #include "fb_host.h"
 
-#define FUTURAWAY_DEFAULT_SERVICE "futurawayd"
-#define FUTURAWAY_DEFAULT_HOST    "127.0.0.1"
-#define FUTURAWAY_SURFACE_MAX     1u
+#define FUTURAWAY_MAX_SURFACES   64u
+#define FUTURAWAY_MAX_DAMAGE     64u
+#define FUTURAWAY_BG_COLOR       0xFF20252Eu
+
+struct futuraway_damage_entry {
+    struct fw_surface_damage rect;
+    bool in_use;
+};
 
 struct futuraway_surface {
     bool in_use;
@@ -39,14 +43,19 @@ struct futuraway_surface {
     uint32_t width;
     uint32_t height;
     uint32_t stride_bytes;
+    uint32_t z_index;
+    bool premultiplied;
+    bool full_dirty;
     uint8_t *pixels;
+    size_t pixels_size;
+    struct futuraway_damage_entry damages[FUTURAWAY_MAX_DAMAGE];
 };
 
 struct futuraway_state {
     struct futurawayd_config cfg;
     struct fut_fipc_channel *listen;
     struct fw_framebuffer fb;
-    struct futuraway_surface surface;
+    struct futuraway_surface surfaces[FUTURAWAY_MAX_SURFACES];
     uint32_t frames_presented;
 };
 
@@ -99,39 +108,6 @@ static int ensure_parent_directory(const char *path) {
     return rc;
 }
 
-static void surface_reset(struct futuraway_surface *surface) {
-    if (!surface) {
-        return;
-    }
-    free(surface->pixels);
-    memset(surface, 0, sizeof(*surface));
-}
-
-static int surface_prepare(struct futuraway_surface *surface,
-                           uint64_t surface_id,
-                           uint32_t width,
-                           uint32_t height,
-                           uint32_t stride) {
-    if (!surface || width == 0 || height == 0 || stride == 0) {
-        return -EINVAL;
-    }
-
-    size_t needed = (size_t)stride * (size_t)height;
-    uint8_t *buffer = (uint8_t *)calloc(1, needed);
-    if (!buffer) {
-        return -ENOMEM;
-    }
-
-    surface_reset(surface);
-    surface->pixels = buffer;
-    surface->id = surface_id;
-    surface->width = width;
-    surface->height = height;
-    surface->stride_bytes = stride;
-    surface->in_use = true;
-    return 0;
-}
-
 static struct fut_fipc_channel *ensure_system_channel(void) {
     struct fut_fipc_channel *channel = fut_fipc_channel_lookup(FIPC_SYS_CHANNEL_ID);
     if (channel) {
@@ -149,111 +125,577 @@ static struct fut_fipc_channel *ensure_system_channel(void) {
     return channel;
 }
 
-static void publish_surface_commit(const struct futuraway_state *state, uint64_t surface_id) {
-    (void)state;
+static void publish_surface_commit(uint64_t surface_id) {
     uint64_t t_start = fut_get_ticks();
     uint64_t t_end = t_start + 1;
     (void)fipc_sys_fway_surface_commit(surface_id, 0, t_start, t_end);
 }
 
-static void blit_to_framebuffer(struct futuraway_state *state) {
-    if (!state || !state->surface.in_use || !state->fb.pixels) {
+static struct futuraway_surface *surface_lookup(struct futuraway_state *state, uint64_t surface_id) {
+    for (size_t i = 0; i < FUTURAWAY_MAX_SURFACES; ++i) {
+        if (state->surfaces[i].in_use && state->surfaces[i].id == surface_id) {
+            return &state->surfaces[i];
+        }
+    }
+    return NULL;
+}
+
+static struct futuraway_surface *surface_alloc(struct futuraway_state *state, uint64_t surface_id) {
+    struct futuraway_surface *slot = surface_lookup(state, surface_id);
+    if (slot) {
+        return slot;
+    }
+    for (size_t i = 0; i < FUTURAWAY_MAX_SURFACES; ++i) {
+        if (!state->surfaces[i].in_use) {
+            memset(&state->surfaces[i], 0, sizeof(state->surfaces[i]));
+            state->surfaces[i].in_use = true;
+            state->surfaces[i].id = surface_id;
+            return &state->surfaces[i];
+        }
+    }
+    return NULL;
+}
+
+static void surface_reset(struct futuraway_surface *surface) {
+    if (!surface) {
+        return;
+    }
+    free(surface->pixels);
+    memset(surface, 0, sizeof(*surface));
+}
+
+static struct fw_surface_damage clip_damage(const struct futuraway_surface *surface,
+                                            const struct fw_surface_damage *rect) {
+    struct fw_surface_damage out = *rect;
+    if (out.x >= surface->width || out.y >= surface->height) {
+        out.width = 0;
+        out.height = 0;
+        return out;
+    }
+
+    uint64_t max_w = surface->width - out.x;
+    uint64_t max_h = surface->height - out.y;
+    if (out.width > max_w) {
+        out.width = (uint32_t)max_w;
+    }
+    if (out.height > max_h) {
+        out.height = (uint32_t)max_h;
+    }
+    return out;
+}
+
+static bool damage_intersects(const struct fw_surface_damage *a,
+                              const struct fw_surface_damage *b) {
+    uint64_t ax2 = (uint64_t)a->x + a->width;
+    uint64_t ay2 = (uint64_t)a->y + a->height;
+    uint64_t bx2 = (uint64_t)b->x + b->width;
+    uint64_t by2 = (uint64_t)b->y + b->height;
+    return !(ax2 <= b->x || bx2 <= a->x || ay2 <= b->y || by2 <= a->y);
+}
+
+static struct fw_surface_damage damage_union(const struct fw_surface_damage *a,
+                                             const struct fw_surface_damage *b) {
+    uint64_t x1 = a->x < b->x ? a->x : b->x;
+    uint64_t y1 = a->y < b->y ? a->y : b->y;
+    uint64_t x2 = ((uint64_t)a->x + a->width) > ((uint64_t)b->x + b->width)
+                      ? ((uint64_t)a->x + a->width)
+                      : ((uint64_t)b->x + b->width);
+    uint64_t y2 = ((uint64_t)a->y + a->height) > ((uint64_t)b->y + b->height)
+                      ? ((uint64_t)a->y + a->height)
+                      : ((uint64_t)b->y + b->height);
+    struct fw_surface_damage result = {
+        .x = (uint32_t)x1,
+        .y = (uint32_t)y1,
+        .width = (uint32_t)(x2 - x1),
+        .height = (uint32_t)(y2 - y1),
+    };
+    return result;
+}
+
+static void surface_add_damage(struct futuraway_surface *surface,
+                               const struct fw_surface_damage *rect) {
+    if (!surface || !rect) {
+        return;
+    }
+    struct fw_surface_damage clipped = clip_damage(surface, rect);
+    if (clipped.width == 0 || clipped.height == 0) {
         return;
     }
 
-    const uint8_t *src = state->surface.pixels;
-    uint8_t *dst = state->fb.pixels;
-    uint32_t copy_stride = state->surface.stride_bytes;
-    uint32_t fb_stride = state->fb.stride_bytes;
+    for (size_t i = 0; i < FUTURAWAY_MAX_DAMAGE; ++i) {
+        if (!surface->damages[i].in_use) {
+            continue;
+        }
+        struct fw_surface_damage *existing = &surface->damages[i].rect;
+        if (damage_intersects(existing, &clipped)) {
+            *existing = damage_union(existing, &clipped);
+            return;
+        }
+        if (clipped.x >= existing->x &&
+            clipped.y >= existing->y &&
+            (clipped.x + clipped.width) <= (existing->x + existing->width) &&
+            (clipped.y + clipped.height) <= (existing->y + existing->height)) {
+            return;
+        }
+    }
 
-    uint32_t height = state->surface.height;
-    for (uint32_t row = 0; row < height; ++row) {
-        memcpy(dst + (size_t)row * fb_stride,
-               src + (size_t)row * copy_stride,
-               copy_stride);
+    for (size_t i = 0; i < FUTURAWAY_MAX_DAMAGE; ++i) {
+        if (!surface->damages[i].in_use) {
+            surface->damages[i].rect = clipped;
+            surface->damages[i].in_use = true;
+            return;
+        }
+    }
+
+    surface->full_dirty = true;
+    for (size_t i = 0; i < FUTURAWAY_MAX_DAMAGE; ++i) {
+        surface->damages[i].in_use = false;
     }
 }
 
-static void handle_create(struct futuraway_state *state, const struct fut_fipc_msg *msg) {
-    if (!state || !msg || msg->length < sizeof(struct fw_surface_create_req)) {
+static size_t surface_snapshot_damage(const struct futuraway_surface *surface,
+                                      struct fw_surface_damage *out,
+                                      size_t max_out,
+                                      bool *full_region) {
+    if (!surface || !out || max_out == 0) {
+        if (full_region) {
+            *full_region = false;
+        }
+        return 0;
+    }
+
+    if (surface->full_dirty) {
+        if (full_region) {
+            *full_region = true;
+        }
+        out[0] = (struct fw_surface_damage){
+            .x = 0,
+            .y = 0,
+            .width = surface->width,
+            .height = surface->height,
+        };
+        return 1;
+    }
+
+    size_t count = 0;
+    for (size_t i = 0; i < FUTURAWAY_MAX_DAMAGE && count < max_out; ++i) {
+        if (surface->damages[i].in_use) {
+            out[count++] = surface->damages[i].rect;
+        }
+    }
+
+    if (count == 0) {
+        if (full_region) {
+            *full_region = true;
+        }
+        out[0] = (struct fw_surface_damage){
+            .x = 0,
+            .y = 0,
+            .width = surface->width,
+            .height = surface->height,
+        };
+        return 1;
+    }
+
+    if (full_region) {
+        *full_region = false;
+    }
+    return count;
+}
+
+static void surface_clear_damage(struct futuraway_surface *surface) {
+    if (!surface) {
         return;
     }
-    const struct fw_surface_create_req *req =
-        (const struct fw_surface_create_req *)msg->payload;
+    surface->full_dirty = false;
+    for (size_t i = 0; i < FUTURAWAY_MAX_DAMAGE; ++i) {
+        surface->damages[i].in_use = false;
+    }
+}
+
+static inline uint32_t premultiply_pixel(uint32_t pixel) {
+    uint32_t a = (pixel >> 24) & 0xFFu;
+    if (a == 0u || a == 255u) {
+        return ((a & 0xFFu) << 24) | (pixel & 0x00FFFFFFu);
+    }
+    uint32_t r = (pixel >> 16) & 0xFFu;
+    uint32_t g = (pixel >> 8) & 0xFFu;
+    uint32_t b = pixel & 0xFFu;
+    r = (r * a + 127u) / 255u;
+    g = (g * a + 127u) / 255u;
+    b = (b * a + 127u) / 255u;
+    return (a << 24) | (r << 16) | (g << 8) | b;
+}
+
+static inline uint32_t clamp_u32(uint32_t value) {
+    return value > 255u ? 255u : value;
+}
+
+static inline uint32_t blend_premult(uint32_t dst, uint32_t src) {
+    uint32_t src_a = (src >> 24) & 0xFFu;
+    if (src_a == 0u) {
+        return dst;
+    }
+    if (src_a == 255u) {
+        return src;
+    }
+
+    uint32_t dst_a = (dst >> 24) & 0xFFu;
+    uint32_t inv = 255u - src_a;
+
+    uint32_t dst_r = (dst >> 16) & 0xFFu;
+    uint32_t dst_g = (dst >> 8) & 0xFFu;
+    uint32_t dst_b = dst & 0xFFu;
+
+    uint32_t src_r = (src >> 16) & 0xFFu;
+    uint32_t src_g = (src >> 8) & 0xFFu;
+    uint32_t src_b = src & 0xFFu;
+
+    uint32_t out_r = src_r + ((dst_r * inv) + 127u) / 255u;
+    uint32_t out_g = src_g + ((dst_g * inv) + 127u) / 255u;
+    uint32_t out_b = src_b + ((dst_b * inv) + 127u) / 255u;
+    uint32_t out_a = src_a + ((dst_a * inv) + 127u) / 255u;
+
+    return (clamp_u32(out_a) << 24) |
+           (clamp_u32(out_r) << 16) |
+           (clamp_u32(out_g) << 8) |
+           clamp_u32(out_b);
+}
+
+static size_t gather_surfaces_by_z(const struct futuraway_state *state,
+                                   const struct futuraway_surface **out,
+                                   size_t max_out) {
+    size_t count = 0;
+    for (size_t i = 0; i < FUTURAWAY_MAX_SURFACES && count < max_out; ++i) {
+        if (state->surfaces[i].in_use && state->surfaces[i].pixels) {
+            out[count++] = &state->surfaces[i];
+        }
+    }
+
+    for (size_t i = 1; i < count; ++i) {
+        const struct futuraway_surface *key = out[i];
+        size_t j = i;
+        while (j > 0 && out[j - 1]->z_index > key->z_index) {
+            out[j] = out[j - 1];
+            --j;
+        }
+        out[j] = key;
+    }
+
+    return count;
+}
+
+static void composite_rect(struct futuraway_state *state,
+                           const struct futuraway_surface **ordered,
+                           size_t surface_count,
+                           const struct fw_surface_damage *rect) {
+    if (!rect || rect->width == 0 || rect->height == 0) {
+        return;
+    }
+    uint32_t fb_w = state->fb.width;
+    uint32_t fb_h = state->fb.height;
+
+    uint32_t x0 = rect->x;
+    uint32_t y0 = rect->y;
+    uint32_t x1 = rect->x + rect->width;
+    uint32_t y1 = rect->y + rect->height;
+
+    if (x0 >= fb_w || y0 >= fb_h) {
+        return;
+    }
+
+    if (x1 > fb_w) {
+        x1 = fb_w;
+    }
+    if (y1 > fb_h) {
+        y1 = fb_h;
+    }
+
+    uint32_t stride_pixels = state->fb.stride_bytes / 4u;
+    uint32_t *fb_pixels = (uint32_t *)state->fb.pixels;
+
+    for (uint32_t y = y0; y < y1; ++y) {
+        for (uint32_t x = x0; x < x1; ++x) {
+            uint32_t color = FUTURAWAY_BG_COLOR;
+            for (size_t s = 0; s < surface_count; ++s) {
+                const struct futuraway_surface *surf = ordered[s];
+                if (x >= surf->width || y >= surf->height) {
+                    continue;
+                }
+                const uint32_t *surface_pixels = (const uint32_t *)surf->pixels;
+                uint32_t surface_stride = surf->stride_bytes / 4u;
+                uint32_t src = surface_pixels[(size_t)y * surface_stride + x];
+                color = blend_premult(color, src);
+            }
+            fb_pixels[(size_t)y * stride_pixels + x] = color;
+        }
+    }
+}
+
+static void composite_regions(struct futuraway_state *state,
+                              struct futuraway_surface *surface,
+                              const struct fw_surface_damage *rects,
+                              size_t rect_count) {
+    (void)surface;
+    if (rect_count == 0) {
+        return;
+    }
+    const struct futuraway_surface *ordered[FUTURAWAY_MAX_SURFACES];
+    size_t surface_count = gather_surfaces_by_z(state, ordered, FUTURAWAY_MAX_SURFACES);
+
+    for (size_t i = 0; i < rect_count; ++i) {
+        composite_rect(state, ordered, surface_count, &rects[i]);
+    }
+}
+
+static int surface_ensure_pixels(struct futuraway_surface *surface,
+                                 size_t bytes,
+                                 bool premult) {
+    if (!surface) {
+        return -EINVAL;
+    }
+    if (surface->pixels_size < bytes) {
+        uint8_t *mem = (uint8_t *)realloc(surface->pixels, bytes);
+        if (!mem) {
+            return -ENOMEM;
+        }
+        surface->pixels = mem;
+        surface->pixels_size = bytes;
+    }
+    surface->premultiplied = premult;
+    return 0;
+}
+
+static void premultiply_rectangles(uint32_t *pixels,
+                                   uint32_t stride_pixels,
+                                   const struct fw_surface_damage *rects,
+                                   size_t rect_count) {
+    if (!pixels || !rects) {
+        return;
+    }
+    for (size_t i = 0; i < rect_count; ++i) {
+        const struct fw_surface_damage *r = &rects[i];
+        for (uint32_t y = 0; y < r->height; ++y) {
+            uint32_t *row = pixels + (size_t)(r->y + y) * stride_pixels + r->x;
+            for (uint32_t x = 0; x < r->width; ++x) {
+                row[x] = premultiply_pixel(row[x]);
+            }
+        }
+    }
+}
+
+static int surface_update_pixels(struct futuraway_surface *surface,
+                                 const struct fw_surface_commit_req *req,
+                                 const uint8_t *payload,
+                                 const struct fw_surface_damage *rects,
+                                 size_t rect_count,
+                                 bool full_region) {
+    size_t required = (size_t)req->stride_bytes * (size_t)req->height;
+    int rc = surface_ensure_pixels(surface, required, surface->premultiplied);
+    if (rc != 0) {
+        return rc;
+    }
+
+    if (full_region) {
+        memcpy(surface->pixels, payload, required);
+        if (!surface->premultiplied) {
+            uint32_t *pixels = (uint32_t *)surface->pixels;
+            size_t count = ((size_t)req->stride_bytes / 4u) * req->height;
+            for (size_t i = 0; i < count; ++i) {
+                pixels[i] = premultiply_pixel(pixels[i]);
+            }
+            surface->premultiplied = true;
+        }
+        return 0;
+    }
+
+    uint32_t stride_pixels = req->stride_bytes / 4u;
+    for (size_t i = 0; i < rect_count; ++i) {
+        struct fw_surface_damage rect = rects[i];
+        if (rect.width == 0 || rect.height == 0) {
+            continue;
+        }
+        size_t copy_bytes = (size_t)rect.width * 4u;
+        for (uint32_t row = 0; row < rect.height; ++row) {
+            const uint8_t *src = payload + ((size_t)(rect.y + row) * req->stride_bytes) + rect.x * 4u;
+            uint8_t *dst = surface->pixels + ((size_t)(rect.y + row) * req->stride_bytes) + rect.x * 4u;
+            memcpy(dst, src, copy_bytes);
+        }
+    }
+
+    if (!surface->premultiplied) {
+        uint32_t *pixels = (uint32_t *)surface->pixels;
+        premultiply_rectangles(pixels, stride_pixels, rects, rect_count);
+        surface->premultiplied = true;
+    }
+
+    return 0;
+}
+
+static int handle_surface_create2(struct futuraway_state *state,
+                                  const struct fw_surface_create2_req *req) {
+    if (!req) {
+        return -EINVAL;
+    }
     if (req->format != FW_FORMAT_ARGB32) {
-        fprintf(stderr, "[futurawayd] unsupported format %u\n", req->format);
-        return;
+        return -EINVAL;
     }
-    if (req->width != state->fb.width || req->height != state->fb.height) {
-        fprintf(stderr,
-                "[futurawayd] surface %ux%u does not match framebuffer %ux%u\n",
-                req->width,
-                req->height,
-                state->fb.width,
-                state->fb.height);
-        return;
+    if (req->width == 0 || req->height == 0 ||
+        req->width > state->fb.width || req->height > state->fb.height) {
+        return -EINVAL;
     }
 
-    if (surface_prepare(&state->surface,
-                        req->surface_id,
-                        req->width,
-                        req->height,
-                        req->width * 4u) != 0) {
-        fprintf(stderr, "[futurawayd] failed to prepare surface\n");
+    struct futuraway_surface *surface = surface_alloc(state, req->surface_id);
+    if (!surface) {
+        return -ENOMEM;
     }
+
+    surface->width = req->width;
+    surface->height = req->height;
+    surface->stride_bytes = req->width * 4u;
+    surface->z_index = req->z_index;
+    surface->premultiplied = req->alpha_premultiplied != 0;
+    surface->full_dirty = true;
+
+    if (req->shm_bytes != 0 && req->shm_bytes < surface->stride_bytes * (uint64_t)req->height) {
+        surface->pixels_size = (size_t)req->shm_bytes;
+    }
+
+    return 0;
 }
 
-static void handle_commit(struct futuraway_state *state, const struct fut_fipc_msg *msg) {
-    if (!state || !msg || msg->length < sizeof(struct fw_surface_commit_req)) {
-        return;
+static int handle_surface_create(struct futuraway_state *state,
+                                 const struct fw_surface_create_req *req) {
+    if (!req) {
+        return -EINVAL;
     }
-    if (!state->surface.in_use) {
-        fprintf(stderr, "[futurawayd] commit before surface create ignored\n");
-        return;
-    }
+    struct fw_surface_create2_req up = {
+        .width = req->width,
+        .height = req->height,
+        .format = req->format,
+        .flags = req->flags,
+        .surface_id = req->surface_id,
+        .z_index = 0,
+        .alpha_premultiplied = 1,
+        .shm_bytes = 0,
+    };
+    return handle_surface_create2(state, &up);
+}
 
+static int handle_surface_set_z(struct futuraway_state *state,
+                                const struct fw_surface_set_z_req *req) {
+    if (!req) {
+        return -EINVAL;
+    }
+    struct futuraway_surface *surface = surface_lookup(state, req->surface_id);
+    if (!surface) {
+        return -ENOENT;
+    }
+    surface->z_index = req->z_index;
+    surface->full_dirty = true;
+    return 0;
+}
+
+static int handle_surface_damage(struct futuraway_state *state,
+                                 const struct fw_surface_damage_req *req) {
+    if (!req) {
+        return -EINVAL;
+    }
+    struct futuraway_surface *surface = surface_lookup(state, req->surface_id);
+    if (!surface) {
+        return -ENOENT;
+    }
+    surface_add_damage(surface, &req->rect);
+    return 0;
+}
+
+static int handle_surface_commit(struct futuraway_state *state,
+                                 const struct fut_fipc_msg *msg) {
+    if (!msg || msg->length < sizeof(struct fw_surface_commit_req)) {
+        return -EINVAL;
+    }
     const struct fw_surface_commit_req *req =
         (const struct fw_surface_commit_req *)msg->payload;
-    size_t pixel_bytes = (size_t)req->height * (size_t)req->stride_bytes;
-    size_t expected = sizeof(*req) + pixel_bytes;
-    if (req->surface_id != state->surface.id ||
-        req->width != state->surface.width ||
-        req->height != state->surface.height ||
-        req->stride_bytes != state->surface.stride_bytes ||
-        msg->length != expected) {
-        fprintf(stderr, "[futurawayd] commit mismatch (id=%llu len=%zu exp=%zu)\n",
-                (unsigned long long)req->surface_id,
-                (size_t)msg->length,
-                expected);
-        return;
+
+    struct futuraway_surface *surface = surface_lookup(state, req->surface_id);
+    if (!surface) {
+        return -ENOENT;
+    }
+    if (req->width != surface->width ||
+        req->height != surface->height ||
+        req->stride_bytes != surface->stride_bytes) {
+        return -EINVAL;
     }
 
-    memcpy(state->surface.pixels, req + 1, pixel_bytes);
-    blit_to_framebuffer(state);
+    size_t pixel_bytes = (size_t)req->stride_bytes * (size_t)req->height;
+    if (msg->length != sizeof(*req) + pixel_bytes) {
+        return -EINVAL;
+    }
+
+    struct fw_surface_damage rects[FUTURAWAY_MAX_DAMAGE + 1];
+    bool full_region = false;
+    size_t rect_count = surface_snapshot_damage(surface,
+                                                rects,
+                                                FUTURAWAY_MAX_DAMAGE + 1,
+                                                &full_region);
+    if (rect_count == 0) {
+        rects[0] = (struct fw_surface_damage){
+            .x = 0,
+            .y = 0,
+            .width = surface->width,
+            .height = surface->height,
+        };
+        rect_count = 1;
+        full_region = true;
+    }
+
+    int rc = surface_update_pixels(surface,
+                                   req,
+                                   msg->payload + sizeof(*req),
+                                   rects,
+                                   rect_count,
+                                   full_region);
+    if (rc != 0) {
+        return rc;
+    }
+
+    composite_regions(state, surface, rects, rect_count);
+    surface_clear_damage(surface);
+    publish_surface_commit(surface->id);
     state->frames_presented++;
-    publish_surface_commit(state, req->surface_id);
+    return 0;
 }
 
-static void handle_message(struct futuraway_state *state, const struct fut_fipc_msg *msg) {
-    if (!state || !msg) {
-        return;
-    }
+static void handle_message(struct futuraway_state *state,
+                           const struct fut_fipc_msg *msg) {
     switch (msg->type) {
-    case FWAY_MSG_CREATE_SURFACE:
-        handle_create(state, msg);
+    case FW_OP_SURFACE_CREATE:
+        (void)handle_surface_create(state,
+                                    (const struct fw_surface_create_req *)msg->payload);
         break;
-    case FWAY_MSG_COMMIT:
-        handle_commit(state, msg);
+    case FW_OP_SURFACE_CREATE2:
+        (void)handle_surface_create2(state,
+                                     (const struct fw_surface_create2_req *)msg->payload);
         break;
-    case FWAY_MSG_INPUT_EVENT:
-        /* Input handling placeholder */
+    case FW_OP_SURFACE_SET_Z:
+        (void)handle_surface_set_z(state,
+                                   (const struct fw_surface_set_z_req *)msg->payload);
         break;
+    case FW_OP_SURFACE_DAMAGE:
+        (void)handle_surface_damage(state,
+                                    (const struct fw_surface_damage_req *)msg->payload);
+        break;
+    case FW_OP_SURFACE_COMMIT:
+        (void)handle_surface_commit(state, msg);
+        break;
+    case FW_OP_INPUT_EVENT:
     default:
         break;
     }
 }
 
-static void apply_defaults(struct futuraway_state *state, const struct futurawayd_config *config) {
+static void futuraway_state_init(struct futuraway_state *state,
+                                 const struct futurawayd_config *config) {
     memset(state, 0, sizeof(*state));
     state->cfg = *config;
     if (state->cfg.width == 0) {
@@ -263,10 +705,26 @@ static void apply_defaults(struct futuraway_state *state, const struct futuraway
         state->cfg.height = 600;
     }
     if (!state->cfg.service_name) {
-        state->cfg.service_name = FUTURAWAY_DEFAULT_SERVICE;
+        state->cfg.service_name = "futurawayd";
     }
     if (!state->cfg.registry_host) {
-        state->cfg.registry_host = FUTURAWAY_DEFAULT_HOST;
+        state->cfg.registry_host = "127.0.0.1";
+    }
+}
+
+static void futuraway_state_shutdown(struct futuraway_state *state) {
+    if (!state) {
+        return;
+    }
+    for (size_t i = 0; i < FUTURAWAY_MAX_SURFACES; ++i) {
+        if (state->surfaces[i].in_use) {
+            surface_reset(&state->surfaces[i]);
+        }
+    }
+    fw_framebuffer_destroy(&state->fb);
+    if (state->listen) {
+        fut_fipc_channel_destroy(state->listen);
+        state->listen = NULL;
     }
 }
 
@@ -276,26 +734,24 @@ int futurawayd_run(const struct futurawayd_config *config) {
     }
 
     struct futuraway_state state;
-    apply_defaults(&state, config);
+    futuraway_state_init(&state, config);
 
     if (!ensure_system_channel()) {
-        fprintf(stderr, "[futurawayd] failed to prepare system channel\n");
         return -EIO;
     }
 
     if (fw_framebuffer_create(state.cfg.width, state.cfg.height, &state.fb) != 0) {
-        fprintf(stderr, "[futurawayd] framebuffer allocation failed\n");
         return -ENOMEM;
     }
+    fw_framebuffer_clear(&state.fb, FUTURAWAY_BG_COLOR);
 
     if (fut_fipc_channel_create(NULL,
                                 NULL,
-                                2u * 1024u * 1024u,
+                                8u * 1024u * 1024u,
                                 FIPC_CHANNEL_NONBLOCKING,
                                 &state.listen) != 0 ||
         !state.listen) {
-        fprintf(stderr, "[futurawayd] channel creation failed\n");
-        fw_framebuffer_destroy(&state.fb);
+        futuraway_state_shutdown(&state);
         return -EIO;
     }
 
@@ -304,9 +760,7 @@ int futurawayd_run(const struct futurawayd_config *config) {
                                      state.cfg.registry_port,
                                      state.cfg.service_name,
                                      state.listen->id) != 0) {
-            fprintf(stderr, "[futurawayd] registry registration failed\n");
-            fut_fipc_channel_destroy(state.listen);
-            fw_framebuffer_destroy(&state.fb);
+            futuraway_state_shutdown(&state);
             return -EIO;
         }
     }
@@ -316,13 +770,9 @@ int futurawayd_run(const struct futurawayd_config *config) {
                          ((size_t)state.cfg.width * (size_t)state.cfg.height * 4u);
     uint8_t *buffer = (uint8_t *)malloc(max_payload);
     if (!buffer) {
-        fprintf(stderr, "[futurawayd] buffer allocation failed\n");
-        fut_fipc_channel_destroy(state.listen);
-        fw_framebuffer_destroy(&state.fb);
+        futuraway_state_shutdown(&state);
         return -ENOMEM;
     }
-
-    fw_framebuffer_clear(&state.fb, 0xFF20252Eu);
 
     bool running = true;
     while (running) {
@@ -336,10 +786,10 @@ int futurawayd_run(const struct futurawayd_config *config) {
             struct timespec ts = { .tv_sec = 0, .tv_nsec = 1 * 1000 * 1000 };
             nanosleep(&ts, NULL);
         } else {
-            running = false;
+            break;
         }
 
-        if (state.cfg.frame_limit > 0 &&
+        if (state.cfg.frame_limit != 0 &&
             state.frames_presented >= state.cfg.frame_limit) {
             running = false;
         }
@@ -348,16 +798,10 @@ int futurawayd_run(const struct futurawayd_config *config) {
     if (state.cfg.dump_path && *state.cfg.dump_path) {
         if (ensure_parent_directory(state.cfg.dump_path) == 0) {
             (void)fw_framebuffer_dump_ppm(&state.fb, state.cfg.dump_path);
-        } else {
-            fprintf(stderr,
-                    "[futurawayd] failed to prepare dump path '%s'\n",
-                    state.cfg.dump_path);
         }
     }
 
     free(buffer);
-    surface_reset(&state.surface);
-    fw_framebuffer_destroy(&state.fb);
-    fut_fipc_channel_destroy(state.listen);
+    futuraway_state_shutdown(&state);
     return 0;
 }

@@ -13,6 +13,7 @@
 #include <stddef.h>
 #include <string.h>
 #include <stdatomic.h>
+#include <stdbool.h>
 
 /* ============================================================
  *   FIPC State
@@ -30,8 +31,10 @@ struct fut_fipc_transport_state {
 
 static struct fut_fipc_transport_state transport_state = {0};
 static _Atomic uint64_t next_cap_lease = 1;
-
 static void fut_fipc_refill_tokens(struct fut_fipc_channel *channel, uint64_t now);
+static int fut_fipc_admin_handle(struct fut_fipc_channel *channel,
+                                 const uint8_t *payload,
+                                 size_t size);
 
 int fut_fipc_set_transport_ops(const struct fut_fipc_transport_ops *ops, void *context) {
     if (!ops) {
@@ -118,6 +121,20 @@ void fut_fipc_init(void) {
                                 &sys_channel) == 0 && sys_channel) {
         sys_channel->id = FIPC_SYS_CHANNEL_ID;
         sys_channel->type = FIPC_CHANNEL_SYSTEM;
+        sys_channel->cap_ledger.rights = FIPC_CAP_R_SEND | FIPC_CAP_R_RECV | FIPC_CAP_R_ADMIN;
+        sys_channel->cap_ledger.lease_id = atomic_fetch_add_explicit(&next_cap_lease, 1, memory_order_relaxed);
+    }
+
+    struct fut_fipc_channel *ctl_channel = NULL;
+    if (fut_fipc_channel_create(NULL,
+                                NULL,
+                                4096,
+                                FIPC_CHANNEL_NONBLOCKING,
+                                &ctl_channel) == 0 && ctl_channel) {
+        ctl_channel->id = FIPC_CTL_CHANNEL_ID;
+        ctl_channel->type = FIPC_CHANNEL_SYSTEM;
+        ctl_channel->cap_ledger.rights = FIPC_CAP_R_SEND | FIPC_CAP_R_RECV | FIPC_CAP_R_ADMIN;
+        ctl_channel->cap_ledger.lease_id = atomic_fetch_add_explicit(&next_cap_lease, 1, memory_order_relaxed);
     }
 }
 
@@ -505,6 +522,30 @@ int fut_fipc_send(struct fut_fipc_channel *channel, uint32_t type,
         }
     }
 
+    if (channel->id == FIPC_CTL_CHANNEL_ID && type == FIPC_SYS_MSG_ADMIN_OP) {
+        const uint8_t *payload = (const uint8_t *)data;
+        int rc = fut_fipc_admin_handle(channel, payload, size);
+        if (rc == 0) {
+            if (channel->credits_enabled && channel->tx_credits > 0) {
+                channel->tx_credits--;
+            }
+            if (channel->rl_rate_per_ms > 0 && channel->rl_burst > 0 && channel->rl_tokens > 0) {
+                channel->rl_tokens--;
+            }
+            channel->msgs_sent++;
+            channel->bytes_sent += size;
+            if (channel->owner_pi_active && self && self->tid == channel->owner_tid) {
+                fut_thread_t *owner = fut_thread_find(channel->owner_tid);
+                if (owner) {
+                    fut_thread_priority_restore(owner);
+                }
+                channel->owner_pi_active = false;
+                channel->pi_restored++;
+            }
+        }
+        return rc;
+    }
+
     if (channel->type == FIPC_CHANNEL_REMOTE) {
         if (!transport_state.ops || !transport_state.ops->send) {
             return FIPC_ENOTSUP;
@@ -656,6 +697,10 @@ int fut_fipc_channel_inject(struct fut_fipc_channel *channel,
         return FIPC_EINVAL;
     }
 
+    if (channel->id == FIPC_CTL_CHANNEL_ID && type == FIPC_SYS_MSG_ADMIN_OP) {
+        return fut_fipc_admin_handle(channel, (const uint8_t *)data, size);
+    }
+
     const struct fut_fipc_cap *cap = &channel->cap_ledger;
     uint64_t now = fut_get_ticks();
     if (cap->revoke_flags & FIPC_CAP_REVOKE_RECV) {
@@ -713,6 +758,202 @@ static void fut_fipc_refill_tokens(struct fut_fipc_channel *channel, uint64_t no
     }
     channel->rl_tokens = tokens;
     channel->rl_last_tick = now;
+}
+
+static const uint8_t *fipc_admin_read_u64(const uint8_t *cursor,
+                                          const uint8_t *end,
+                                          uint64_t *out_value) {
+    uint64_t value = 0;
+    uint32_t shift = 0;
+    while (cursor < end) {
+        uint8_t byte = *cursor++;
+        value |= (uint64_t)(byte & 0x7Fu) << shift;
+        if ((byte & 0x80u) == 0) {
+            if (out_value) {
+                *out_value = value;
+            }
+            return cursor;
+        }
+        shift += 7;
+        if (shift >= 64) {
+            break;
+        }
+    }
+    return NULL;
+}
+
+static int fut_fipc_admin_handle(struct fut_fipc_channel *channel,
+                                 const uint8_t *payload,
+                                 size_t size) {
+    if (!channel || (!payload && size > 0)) {
+        return FIPC_EINVAL;
+    }
+
+    if (!(channel->cap_ledger.rights & FIPC_CAP_R_ADMIN)) {
+        return FIPC_EPERM;
+    }
+
+    const uint8_t *cursor = payload;
+    const uint8_t *end = payload + size;
+    if (cursor >= end || *cursor++ != FIPC_ADM_BEGIN) {
+        return FIPC_EINVAL;
+    }
+
+    struct {
+        uint64_t op;
+        uint64_t target;
+        uint64_t rights;
+        uint64_t max_msgs;
+        uint64_t max_bytes;
+        uint64_t expiry_tick;
+        uint64_t revoke;
+        uint64_t rate;
+        uint64_t burst;
+        bool has_op;
+        bool has_target;
+        bool has_rights;
+        bool has_max_msgs;
+        bool has_max_bytes;
+        bool has_expiry;
+        bool has_revoke;
+        bool has_rate;
+        bool has_burst;
+    } cmd = {0};
+
+    while (cursor < end) {
+        uint8_t tag = *cursor++;
+        if (tag == FIPC_ADM_END) {
+            break;
+        }
+        uint64_t value = 0;
+        cursor = fipc_admin_read_u64(cursor, end, &value);
+        if (!cursor) {
+            return FIPC_EINVAL;
+        }
+        switch (tag) {
+            case FIPC_ADM_OP:
+                cmd.op = value;
+                cmd.has_op = true;
+                break;
+            case FIPC_ADM_TARGET:
+                cmd.target = value;
+                cmd.has_target = true;
+                break;
+            case FIPC_ADM_RIGHTS:
+                cmd.rights = value;
+                cmd.has_rights = true;
+                break;
+            case FIPC_ADM_MAX_MSGS:
+                cmd.max_msgs = value;
+                cmd.has_max_msgs = true;
+                break;
+            case FIPC_ADM_MAX_BYTES:
+                cmd.max_bytes = value;
+                cmd.has_max_bytes = true;
+                break;
+            case FIPC_ADM_EXP_TICK:
+                cmd.expiry_tick = value;
+                cmd.has_expiry = true;
+                break;
+            case FIPC_ADM_REVOKE:
+                cmd.revoke = value;
+                cmd.has_revoke = true;
+                break;
+            case FIPC_ADM_RATE:
+                cmd.rate = value;
+                cmd.has_rate = true;
+                break;
+            case FIPC_ADM_BURST:
+                cmd.burst = value;
+                cmd.has_burst = true;
+                break;
+            default:
+                /* Ignore unknown tags */
+                break;
+        }
+    }
+
+    if (cursor == NULL || (cursor > payload + size)) {
+        return FIPC_EINVAL;
+    }
+
+    int rc = 0;
+    if (!cmd.has_op || !cmd.has_target) {
+        rc = FIPC_EINVAL;
+    } else {
+        struct fut_fipc_channel *target = fut_fipc_channel_lookup(cmd.target);
+        if (!target) {
+            rc = FIPC_EINVAL;
+        } else {
+            switch ((int)cmd.op) {
+                case FIPC_ADM_CAP_BIND: {
+                    if (!cmd.has_rights) {
+                        rc = FIPC_EINVAL;
+                        break;
+                    }
+                    struct fut_fipc_cap new_cap = {
+                        .rights = (uint32_t)cmd.rights,
+                        .revoke_flags = 0,
+                        .max_msgs = cmd.has_max_msgs ? cmd.max_msgs : 0,
+                        .max_bytes = cmd.has_max_bytes ? cmd.max_bytes : 0,
+                        .expiry_tick = cmd.has_expiry ? cmd.expiry_tick : 0,
+                        .lease_id = 0,
+                    };
+                    rc = fut_fipc_cap_bind(target, &new_cap);
+                    break;
+                }
+                case FIPC_ADM_CAP_UNBIND:
+                    rc = fut_fipc_cap_unbind(target);
+                    break;
+                case FIPC_ADM_CAP_REVOKE:
+                    if (!cmd.has_revoke) {
+                        rc = FIPC_EINVAL;
+                        break;
+                    }
+                    rc = fut_fipc_cap_revoke(target, (uint32_t)cmd.revoke);
+                    break;
+                case FIPC_ADM_RATE_SET:
+                    if (!cmd.has_rate || !cmd.has_burst) {
+                        rc = FIPC_EINVAL;
+                        break;
+                    }
+                    rc = fut_fipc_set_rate(target, (uint32_t)cmd.rate, (uint32_t)cmd.burst);
+                    break;
+                default:
+                    rc = FIPC_ENOTSUP;
+                    break;
+            }
+        }
+    }
+
+    uint64_t reply_code = (rc < 0) ? (uint64_t)(-rc) : (uint64_t)rc;
+
+    uint8_t reply[64];
+    uint8_t *w = reply;
+    uint8_t *const reply_end = reply + sizeof(reply);
+    if (w < reply_end) {
+        *w++ = FIPC_ADM_RP_BEGIN;
+        if (w < reply_end) {
+            *w++ = FIPC_ADM_RP_CODE;
+            w = fipc_sys_varint_u64(w, reply_code);
+        }
+        if (w < reply_end) {
+            *w++ = FIPC_ADM_RP_END;
+        }
+    }
+
+    size_t reply_len = (size_t)(w - reply);
+    int reply_rc = fut_fipc_enqueue_message(channel,
+                                            FIPC_SYS_MSG_ADMIN_RP,
+                                            reply,
+                                            reply_len,
+                                            0,
+                                            0,
+                                            0);
+    if (rc == 0 && reply_rc != 0) {
+        return reply_rc;
+    }
+    return rc;
 }
 
 size_t fut_fipc_dequeue_bounded(struct fut_fipc_channel *channel, size_t max_msgs) {

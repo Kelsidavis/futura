@@ -5,7 +5,7 @@ LDFLAGS :=
 LIBFIPC_HOST := $(ROOT)/build/lib/libfipc_host.a
 BIN_DIR := $(ROOT)/build/tools
 
-TOOLS := syswatch
+TOOLS := syswatch ctltool
 
 all: $(addprefix $(BIN_DIR)/,$(TOOLS))
 
@@ -17,5 +17,9 @@ $(BIN_DIR)/syswatch: syswatch.c \
 	$(ROOT)/src/user/sys/fipc_sys_sub.c | $(BIN_DIR)
 	@echo "CC $@"
 	@$(CC) $(CFLAGS) -o $@ $^ $(LIBFIPC_HOST) $(LDFLAGS)
+
+$(BIN_DIR)/ctltool: ctltool.c | $(BIN_DIR)
+	@echo "CC $@"
+	@$(CC) $(CFLAGS) -o $@ ctltool.c $(LIBFIPC_HOST) $(LDFLAGS)
 
 .PHONY: all

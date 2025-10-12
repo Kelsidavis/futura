@@ -75,3 +75,7 @@
 - `svc_registryd` keeps a fixed table (64 entries) of service name → channel_id mappings; registration overwrites existing entries and acknowledges with `SRG_LOOKUP_RESP`.
 - Tests drive discovery by registering the service channel first, then issuing a lookup to learn the remote channel_id before re-registering the FIPC endpoint.
 - The discovery test runs netd and the registry in-process: a polling thread services registry datagrams while the main thread performs lookups and exercises remote messaging.
+
+## 10. Lazy Auto-Discovery on First Send
+- `netd_bind_service()` associates a local channel with a registry name and host/port. When a remote endpoint has `channel_id == 0`, the first send triggers a registry lookup. The resolved channel id is cached and pushed back into the kernel via `fut_fipc_register_remote()`, so subsequent sends bypass the registry.
+- If the lookup fails (service not registered yet), `udp_send_cb()` returns `FIPC_EAGAIN`, allowing callers to retry once the service appears.

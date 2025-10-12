@@ -1,4 +1,4 @@
-# Futura OS API Overview (Updated Nov 2025)
+# Futura OS API Overview (Updated Oct 2025)
 
 This document captures the developer-facing interfaces that are stable (or stabilising) in the Phase 2 codebase.
 

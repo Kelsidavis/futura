@@ -2,7 +2,8 @@
  *
  * Copyright (c) 2025 Kelsi Davis / Licensed under the MPL v2.0 — see LICENSE for details
  *
- * Manages the Interrupt Descriptor Table for x86-32.
+ * Manages the Interrupt Descriptor Table for the legacy x86-32 configuration.
+ * The primary x86-64 path uses the 64-bit IDT helpers under arch/x86_64/.
  */
 
 #include "../../include/kernel/fut_idt.h"

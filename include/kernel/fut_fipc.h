@@ -345,6 +345,30 @@ int fut_fipc_send(struct fut_fipc_channel *channel, uint32_t type,
  */
 ssize_t fut_fipc_recv(struct fut_fipc_channel *channel, void *buf, size_t buf_size);
 
+int fut_fipc_recv_batch(struct fut_fipc_channel *channel,
+                        uint8_t *buf,
+                        size_t buf_cap,
+                        size_t *out_offsets,
+                        size_t *out_lengths,
+                        size_t max_msgs);
+
+struct fut_fipc_stage {
+    uint32_t type;
+    size_t   payload_len;
+    size_t   ring_pos;
+    size_t   total_size;
+    uint8_t  flags;
+};
+
+int fut_fipc_stage_begin(struct fut_fipc_channel *channel,
+                         uint32_t type,
+                         size_t payload_len,
+                         uint8_t **payload_out,
+                         struct fut_fipc_stage *stage);
+
+int fut_fipc_stage_commit(struct fut_fipc_channel *channel,
+                          struct fut_fipc_stage *stage);
+
 /**
  * Poll a channel for pending events.
  *

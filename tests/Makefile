@@ -35,6 +35,8 @@ TESTS := fipc_remote_loopback \
 	fipc_ring_wrap \
 	fipc_ring_prop \
 	fipc_admin_ops \
+	fipc_batch_recv \
+	fipc_big_send_stage \
 	registry_auth
 
 .PHONY: all clean $(TESTS)
@@ -189,6 +191,14 @@ $(BIN_DIR)/fipc_ring_prop: fipc_ring_prop.c ring_model.h $(LIBFIPC_HOST) | $(BIN
 $(BIN_DIR)/fipc_admin_ops: fipc_admin_ops.c $(LIBFIPC_HOST) | $(BIN_DIR)
 	@echo "CC $@"
 	@$(CC) $(CFLAGS) -o $@ fipc_admin_ops.c $(LIBFIPC_HOST) $(LDFLAGS)
+
+$(BIN_DIR)/fipc_batch_recv: fipc_batch_recv.c $(LIBFIPC_HOST) | $(BIN_DIR)
+	@echo "CC $@"
+	@$(CC) $(CFLAGS) -o $@ fipc_batch_recv.c $(LIBFIPC_HOST) $(LDFLAGS)
+
+$(BIN_DIR)/fipc_big_send_stage: fipc_big_send_stage.c $(LIBFIPC_HOST) | $(BIN_DIR)
+	@echo "CC $@"
+	@$(CC) $(CFLAGS) -o $@ fipc_big_send_stage.c $(LIBFIPC_HOST) $(LDFLAGS)
 
 $(BIN_DIR)/registry_auth: registry_auth.c \
 	$(ROOT)/src/user/svc_registryd/registry_server.c \

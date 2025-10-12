@@ -48,6 +48,33 @@ static int fut_fipc_admin_handle(struct fut_fipc_channel *channel,
 static uint8_t admin_token_current[FIPC_ADMIN_TOKEN_LEN] = FIPC_ADMIN_TOKEN_DEFAULT_INIT;
 static uint8_t admin_hmac_key_current[FIPC_ADMIN_HMAC_KEY_LEN] = FIPC_ADMIN_HMAC_KEY_DEFAULT_INIT;
 
+#define FIPC_STAGE_FLAG_CONSUME_CREDIT 0x01u
+#define FIPC_STAGE_FLAG_CONSUME_TOKEN  0x02u
+#define FIPC_STAGE_FLAG_VALID          0x80u
+
+static size_t fipc_ring_copy_out(uint8_t *dst,
+                                 const uint8_t *ring,
+                                 size_t ring_size,
+                                 size_t pos,
+                                 size_t len) {
+    if (len == 0) {
+        return pos;
+    }
+    size_t headroom = ring_size - pos;
+    if (len <= headroom) {
+        memcpy(dst, ring + pos, len);
+        pos += len;
+        if (pos == ring_size) {
+            pos = 0;
+        }
+        return pos;
+    }
+    memcpy(dst, ring + pos, headroom);
+    size_t remaining = len - headroom;
+    memcpy(dst + headroom, ring, remaining);
+    return remaining % ring_size;
+}
+
 #if FIPC_DEBUG
 void fut_fipc_assert_fail(const char *expr, const char *file, int line) {
 #ifdef FIPC_HOST_BUILD
@@ -712,6 +739,147 @@ int fut_fipc_send(struct fut_fipc_channel *channel, uint32_t type,
     return rc;
 }
 
+int fut_fipc_stage_begin(struct fut_fipc_channel *channel,
+                         uint32_t type,
+                         size_t payload_len,
+                         uint8_t **payload_out,
+                         struct fut_fipc_stage *stage) {
+    if (!channel || !payload_out || !stage) {
+        return FIPC_EINVAL;
+    }
+
+    fipc_ring_check(channel);
+
+    size_t total_size = sizeof(struct fut_fipc_msg) + payload_len;
+    if (total_size >= channel->queue_size) {
+        return FIPC_EINVAL;
+    }
+
+    uint64_t now = fut_get_ticks();
+    const struct fut_fipc_cap *cap = &channel->cap_ledger;
+
+    if (cap->revoke_flags & FIPC_CAP_REVOKE_SEND) {
+        return FIPC_EPERM;
+    }
+    if (cap->rights && !(cap->rights & FIPC_CAP_R_SEND)) {
+        return FIPC_EPERM;
+    }
+    if (cap->expiry_tick && now > cap->expiry_tick) {
+        return FIPC_EPERM;
+    }
+    if (cap->max_msgs && channel->msgs_sent >= cap->max_msgs) {
+        return FIPC_ENOSPC;
+    }
+    if (cap->max_bytes && (channel->bytes_sent + payload_len) > cap->max_bytes) {
+        return FIPC_ENOSPC;
+    }
+
+    if (channel->credits_enabled && channel->tx_credits == 0) {
+        return (channel->flags & FIPC_CHANNEL_NONBLOCKING) ? FIPC_EAGAIN : FIPC_EBUSY;
+    }
+
+    if (channel->rl_rate_per_ms > 0 && channel->rl_burst > 0) {
+        fut_fipc_refill_tokens(channel, now);
+        if (channel->rl_tokens == 0) {
+            return FIPC_EAGAIN;
+        }
+    }
+
+    size_t Q = channel->queue_size;
+    size_t head = channel->queue_head;
+    size_t tail = channel->queue_tail;
+    size_t used = (head + Q - tail) % Q;
+    size_t free_bytes = Q - used - 1;
+    if (total_size > free_bytes) {
+        return (channel->flags & FIPC_CHANNEL_NONBLOCKING) ? FIPC_EAGAIN : FIPC_EBUSY;
+    }
+    if (head + total_size > Q) {
+        return FIPC_EAGAIN;
+    }
+
+    struct fut_fipc_msg msg_hdr;
+    msg_hdr.type = type;
+    msg_hdr.length = (uint32_t)payload_len;
+    msg_hdr.timestamp = now;
+    msg_hdr.src_pid = 0;
+    msg_hdr.dst_pid = 0;
+    msg_hdr.capability = channel->capability;
+
+    uint8_t *queue_buf = (uint8_t *)channel->msg_queue;
+    memcpy(queue_buf + head, &msg_hdr, sizeof(msg_hdr));
+    *payload_out = queue_buf + head + sizeof(msg_hdr);
+
+    stage->type = type;
+    stage->payload_len = payload_len;
+    stage->ring_pos = head;
+    stage->total_size = total_size;
+    stage->flags = FIPC_STAGE_FLAG_VALID;
+    if (channel->credits_enabled && channel->tx_credits > 0) {
+        stage->flags |= FIPC_STAGE_FLAG_CONSUME_CREDIT;
+    }
+    if (channel->rl_rate_per_ms > 0 && channel->rl_burst > 0 && channel->rl_tokens > 0) {
+        stage->flags |= FIPC_STAGE_FLAG_CONSUME_TOKEN;
+    }
+
+    return 0;
+}
+
+int fut_fipc_stage_commit(struct fut_fipc_channel *channel,
+                          struct fut_fipc_stage *stage) {
+    if (!channel || !stage || !(stage->flags & FIPC_STAGE_FLAG_VALID)) {
+        return FIPC_EINVAL;
+    }
+
+    fipc_ring_check(channel);
+
+    size_t Q = channel->queue_size;
+    size_t new_head = stage->ring_pos + stage->total_size;
+    if (new_head >= Q) {
+        new_head -= Q;
+    }
+
+    fut_thread_t *self = fut_thread_current();
+    if (self && channel->owner_tid && channel->owner_tid != self->tid && !channel->owner_pi_active) {
+        fut_thread_t *owner = fut_thread_find(channel->owner_tid);
+        if (owner && self->priority > owner->priority) {
+            channel->owner_original_priority = owner->priority;
+            fut_thread_priority_raise(owner, self->priority);
+            channel->owner_pi_active = true;
+            channel->pi_client_tid = self->tid;
+            channel->pi_applied++;
+        }
+    }
+
+    channel->queue_head = new_head;
+    channel->pending = true;
+    channel->event_mask |= FIPC_EVENT_MESSAGE;
+
+    if ((stage->flags & FIPC_STAGE_FLAG_CONSUME_CREDIT) && channel->credits_enabled && channel->tx_credits > 0) {
+        channel->tx_credits--;
+    }
+    if ((stage->flags & FIPC_STAGE_FLAG_CONSUME_TOKEN) && channel->rl_rate_per_ms > 0 && channel->rl_burst > 0 && channel->rl_tokens > 0) {
+        channel->rl_tokens--;
+    }
+
+    channel->msgs_sent++;
+    channel->bytes_sent += stage->payload_len;
+
+    if (channel->owner_pi_active && self && self->tid == channel->owner_tid) {
+        fut_thread_t *owner = fut_thread_find(channel->owner_tid);
+        if (owner) {
+            fut_thread_priority_restore(owner);
+        }
+        channel->owner_pi_active = false;
+        channel->pi_restored++;
+    }
+
+    stage->flags = 0;
+    stage->total_size = 0;
+
+    fipc_ring_check(channel);
+    return 0;
+}
+
 int fut_fipc_sendv(struct fut_fipc_channel *channel,
                    uint32_t type,
                    const struct fipc_iovec *iov,
@@ -1302,6 +1470,68 @@ ssize_t fut_fipc_recv(struct fut_fipc_channel *channel, void *buf, size_t buf_si
     }
 
     return (ssize_t)total_size;
+}
+
+int fut_fipc_recv_batch(struct fut_fipc_channel *channel,
+                        uint8_t *buf,
+                        size_t buf_cap,
+                        size_t *out_offsets,
+                        size_t *out_lengths,
+                        size_t max_msgs) {
+    if (!channel || !buf || !out_offsets || !out_lengths || max_msgs == 0) {
+        return FIPC_EINVAL;
+    }
+
+    fipc_ring_check(channel);
+
+    if (channel->queue_head == channel->queue_tail) {
+        return FIPC_EAGAIN;
+    }
+
+    size_t Q = channel->queue_size;
+    uint8_t *queue_buf = (uint8_t *)channel->msg_queue;
+    size_t tail = channel->queue_tail;
+    size_t consumed = 0;
+    size_t count = 0;
+
+    while (count < max_msgs && tail != channel->queue_head) {
+        size_t tail_tmp = tail;
+        struct fut_fipc_msg msg_hdr;
+        tail_tmp = fipc_ring_copy_out((uint8_t *)&msg_hdr, queue_buf, Q, tail_tmp, sizeof(msg_hdr));
+
+        size_t total_size = sizeof(msg_hdr) + msg_hdr.length;
+        if (total_size > buf_cap - consumed) {
+            break;
+        }
+
+        memcpy(buf + consumed, &msg_hdr, sizeof(msg_hdr));
+        if (msg_hdr.length > 0) {
+            tail_tmp = fipc_ring_copy_out(buf + consumed + sizeof(msg_hdr),
+                                          queue_buf,
+                                          Q,
+                                          tail_tmp,
+                                          msg_hdr.length);
+        }
+
+        out_offsets[count] = consumed;
+        out_lengths[count] = total_size;
+        consumed += total_size;
+        count++;
+        tail = tail_tmp;
+    }
+
+    if (count == 0) {
+        return FIPC_EAGAIN;
+    }
+
+    channel->queue_tail = tail;
+    if (channel->queue_head == channel->queue_tail) {
+        channel->pending = false;
+        channel->event_mask &= ~FIPC_EVENT_MESSAGE;
+    }
+
+    fipc_ring_check(channel);
+    return (int)count;
 }
 
 uint32_t fut_fipc_poll(struct fut_fipc_channel *channel, uint32_t mask) {

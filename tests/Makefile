@@ -28,6 +28,9 @@ TESTS := fipc_remote_loopback \
 
 .PHONY: all clean $(TESTS)
 
+.PHONY: fipc_syswatch_smoke
+fipc_syswatch_smoke: $(BIN_DIR)/fipc_syswatch_smoke
+
 all: $(addprefix $(BIN_DIR)/,$(TESTS))
 
 $(TESTS): %: $(BIN_DIR)/%
@@ -136,6 +139,18 @@ FIPC_VFS_SRCS := fipc_sys_vfs_metrics.c \
 $(BIN_DIR)/fipc_sys_vfs_metrics: $(FIPC_VFS_SRCS) $(LIBFIPC_HOST) | $(BIN_DIR)
 	@echo "CC $@"
 	@$(CC) $(CFLAGS) -o $@ $(FIPC_VFS_SRCS) $(LIBFIPC_HOST) $(LDFLAGS)
+
+# === syswatch smoke helper ===
+$(BIN_DIR)/fipc_syswatch_smoke: fipc_syswatch_smoke.c \
+	$(ROOT)/src/user/sys/fipc_sys_pub.c \
+	$(ROOT)/src/user/sys/fipc_sys_pub_kernelshim.c \
+	$(ROOT)/src/user/sys/fipc_sys_pub_futuraway.c \
+	$(ROOT)/src/user/sys/fipc_sys_pub_vfs.c \
+	$(ROOT)/src/user/netd/netd_core.c \
+	$(ROOT)/src/user/svc_registryd/registry_client.c \
+	$(LIBFIPC_HOST) | $(BIN_DIR)
+	@echo "CC $@"
+	@$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
 $(BIN_DIR):
 	@mkdir -p $(BIN_DIR)

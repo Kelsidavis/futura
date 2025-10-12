@@ -163,6 +163,14 @@ userland:
 	@echo "Building userland services..."
 	@$(MAKE) -C src/user all
 
+.PHONY: tests tools
+
+tests:
+	@$(MAKE) -C tests
+
+tools:
+	@$(MAKE) -C tools
+
 # Compile C sources
 $(OBJ_DIR)/%.o: %.c | $(OBJ_DIR)
 	@echo "CC $<"

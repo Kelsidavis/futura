@@ -6,11 +6,21 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdbool.h>
+#include <ctype.h>
 
 #include <kernel/fut_fipc.h>
 #include <kernel/fut_fipc_sys.h>
+#include <kernel/fut_hmac.h>
 
 #define ADM_FIELD_MAX 11u
+static const uint8_t default_token[FIPC_ADMIN_TOKEN_LEN] = FIPC_ADMIN_TOKEN_DEFAULT_INIT;
+static const uint8_t default_hmac_key[FIPC_ADMIN_HMAC_KEY_LEN] = FIPC_ADMIN_HMAC_KEY_DEFAULT_INIT;
+
+static void write_le64(uint8_t *dst, uint64_t value) {
+    for (size_t i = 0; i < 8; ++i) {
+        dst[i] = (uint8_t)((value >> (i * 8)) & 0xFFu);
+    }
+}
 
 static void usage(const char *prog) {
     fprintf(stderr,
@@ -18,7 +28,8 @@ static void usage(const char *prog) {
             "  ops: cap-bind, cap-unbind, cap-revoke, rate-set\n"
             "  cap-bind options: --rights send,recv,admin [--max-msgs N --max-bytes N --expiry T]\n"
             "  cap-revoke options: --rights send,recv\n"
-            "  rate-set options: --rate R --burst B\n",
+            "  rate-set options: --rate R --burst B\n"
+            "  common options: --token <64-hex> [--lease value]\n",
             prog);
 }
 
@@ -59,6 +70,25 @@ static bool adm_emit(uint8_t **cursor, uint8_t *end, uint8_t tag, uint64_t value
     return *cursor <= end;
 }
 
+static bool adm_emit_bytes(uint8_t **cursor, uint8_t *end, uint8_t tag, const uint8_t *data, size_t len) {
+    if (!cursor || !*cursor) {
+        return false;
+    }
+    if ((size_t)(end - *cursor) < 1 + 2 + len) {
+        return false;
+    }
+    *(*cursor)++ = tag;
+    *cursor = fipc_sys_varint_u64(*cursor, (uint64_t)len);
+    if ((size_t)(end - *cursor) < len) {
+        return false;
+    }
+    if (len > 0 && data) {
+        memcpy(*cursor, data, len);
+    }
+    *cursor += len;
+    return *cursor <= end;
+}
+
 static const uint8_t *adm_read_u64(const uint8_t *cursor,
                                    const uint8_t *end,
                                    uint64_t *out_value) {
@@ -79,6 +109,27 @@ static const uint8_t *adm_read_u64(const uint8_t *cursor,
         }
     }
     return NULL;
+}
+
+static int parse_hex_token(const char *hex, uint8_t *out, size_t expected_len) {
+    if (!hex || !out) {
+        return -1;
+    }
+    size_t len = strlen(hex);
+    if (len != expected_len * 2) {
+        return -1;
+    }
+    for (size_t i = 0; i < expected_len; ++i) {
+        int hi = hex[i * 2];
+        int lo = hex[i * 2 + 1];
+        if (!isxdigit(hi) || !isxdigit(lo)) {
+            return -1;
+        }
+        int value = (isdigit(hi) ? hi - '0' : 10 + (tolower(hi) - 'a')) << 4;
+        value |= (isdigit(lo) ? lo - '0' : 10 + (tolower(lo) - 'a'));
+        out[i] = (uint8_t)value;
+    }
+    return 0;
 }
 
 static int send_admin_message(const uint8_t *payload, size_t len) {
@@ -160,6 +211,11 @@ int main(int argc, char **argv) {
     uint32_t burst = 0;
     bool has_rights = false, has_max_msgs = false, has_max_bytes = false, has_expiry = false;
     bool has_rate = false, has_burst = false;
+    uint8_t token[FIPC_ADMIN_TOKEN_LEN];
+    memcpy(token, default_token, sizeof(token));
+    size_t token_len = FIPC_ADMIN_TOKEN_LEN;
+    uint64_t lease_id = 0;
+    bool lease_custom = false;
 
     if (strcmp(argv[1], "cap-bind") == 0) {
         op = FIPC_ADM_CAP_BIND;
@@ -196,6 +252,14 @@ int main(int argc, char **argv) {
         } else if (strcmp(arg, "--burst") == 0 && i + 1 < argc) {
             burst = (uint32_t)strtoul(argv[++i], NULL, 0);
             has_burst = true;
+        } else if (strcmp(arg, "--token") == 0 && i + 1 < argc) {
+            if (parse_hex_token(argv[++i], token, FIPC_ADMIN_TOKEN_LEN) != 0) {
+                fprintf(stderr, "ctltool: invalid token (need %u hex chars)\n", FIPC_ADMIN_TOKEN_LEN * 2);
+                return 1;
+            }
+        } else if (strcmp(arg, "--lease") == 0 && i + 1 < argc) {
+            lease_id = strtoull(argv[++i], NULL, 0);
+            lease_custom = true;
         } else {
             usage(argv[0]);
             return 1;
@@ -205,6 +269,10 @@ int main(int argc, char **argv) {
     if (target == 0) {
         usage(argv[0]);
         return 1;
+    }
+
+    if (op == FIPC_ADM_CAP_BIND && !lease_custom) {
+        lease_id = ((uint64_t)target << 32) ^ (uint64_t)rights ^ max_msgs ^ max_bytes ^ expiry;
     }
 
     fut_fipc_init();
@@ -237,6 +305,28 @@ int main(int argc, char **argv) {
                 fprintf(stderr, "ctltool: message too large\n");
                 return 1;
             }
+            if (!adm_emit(&w, end, FIPC_ADM_LEASE, lease_id)) {
+                fprintf(stderr, "ctltool: failed to encode lease\n");
+                return 1;
+            }
+            {
+                uint64_t mm = has_max_msgs ? max_msgs : 0;
+                uint64_t mb = has_max_bytes ? max_bytes : 0;
+                uint64_t ex = has_expiry ? expiry : 0;
+                uint8_t material[40];
+                uint8_t *mat = material;
+                write_le64(mat, lease_id); mat += 8;
+                write_le64(mat, rights);   mat += 8;
+                write_le64(mat, mm);       mat += 8;
+                write_le64(mat, mb);       mat += 8;
+                write_le64(mat, ex);
+                uint8_t hmac[FUT_SHA256_DIGEST_LEN];
+                fut_hmac_sha256(default_hmac_key, sizeof(default_hmac_key), material, sizeof(material), hmac);
+                if (!adm_emit_bytes(&w, end, FIPC_ADM_HMAC, hmac, FUT_SHA256_DIGEST_LEN)) {
+                    fprintf(stderr, "ctltool: failed to encode hmac\n");
+                    return 1;
+                }
+            }
             break;
         case FIPC_ADM_CAP_REVOKE:
             if (!has_rights) {
@@ -265,6 +355,11 @@ int main(int argc, char **argv) {
         case FIPC_ADM_CAP_UNBIND:
         default:
             break;
+    }
+
+    if (!adm_emit_bytes(&w, end, FIPC_ADM_TOKEN, token, token_len)) {
+        fprintf(stderr, "ctltool: message too large for token\n");
+        return 1;
     }
 
     if (w >= end) {

@@ -15,6 +15,9 @@
 #include <string.h>
 #include <sys/socket.h>
 #include <unistd.h>
+#include <kernel/fut_hmac.h>
+
+extern uint64_t fut_get_ticks(void);
 
 struct registry_entry {
     char     name[64];
@@ -27,7 +30,67 @@ struct registryd {
     bool               running;
     struct registry_entry table[64];
     size_t             nentries;
+    uint8_t            key_current[SRG_KEY_LEN];
+    uint8_t            key_previous[SRG_KEY_LEN];
+    uint64_t           prev_valid_until_ms;
+    struct {
+        uint64_t nonce;
+        uint64_t expires_at;
+    } nonce_cache[SRG_NONCE_CACHE];
+    size_t             nonce_cursor;
 };
+
+static void registryd_nonce_record(struct registryd *rd, uint64_t nonce, uint64_t now) {
+    rd->nonce_cache[rd->nonce_cursor].nonce = nonce;
+    rd->nonce_cache[rd->nonce_cursor].expires_at = now + SRG_TS_TOLERANCE_MS;
+    rd->nonce_cursor = (rd->nonce_cursor + 1) % SRG_NONCE_CACHE;
+}
+
+static bool registryd_nonce_seen(struct registryd *rd, uint64_t nonce, uint64_t now) {
+    for (size_t i = 0; i < SRG_NONCE_CACHE; ++i) {
+        if (rd->nonce_cache[i].expires_at > now && rd->nonce_cache[i].nonce == nonce) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static bool registryd_check_hmac(struct registryd *rd,
+                                 const char *name,
+                                 size_t name_len,
+                                 uint64_t timestamp,
+                                 uint64_t nonce,
+                                 const uint8_t *candidate,
+                                 size_t candidate_len,
+                                 uint64_t now) {
+    if (!candidate || candidate_len != SRG_HMAC_LEN) {
+        return false;
+    }
+
+    uint8_t material[63 + 16];
+    uint8_t *m = material;
+    memcpy(m, name, name_len);
+    m += name_len;
+    for (size_t i = 0; i < 8; ++i) {
+        material[name_len + i] = (uint8_t)((timestamp >> (i * 8)) & 0xFFu);
+        material[name_len + 8 + i] = (uint8_t)((nonce >> (i * 8)) & 0xFFu);
+    }
+    size_t material_len = name_len + 16;
+
+    uint8_t digest[SRG_HMAC_LEN];
+    fut_hmac_sha256(rd->key_current, SRG_KEY_LEN, material, material_len, digest);
+    if (memcmp(digest, candidate, SRG_HMAC_LEN) == 0) {
+        return true;
+    }
+
+    if (rd->prev_valid_until_ms != 0 && now <= rd->prev_valid_until_ms) {
+        fut_hmac_sha256(rd->key_previous, SRG_KEY_LEN, material, material_len, digest);
+        if (memcmp(digest, candidate, SRG_HMAC_LEN) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
 
 struct registryd *registryd_start(uint16_t port) {
     struct registryd *rd = (struct registryd *)calloc(1, sizeof(*rd));
@@ -56,6 +119,11 @@ struct registryd *registryd_start(uint16_t port) {
     }
 
     rd->running = true;
+    memcpy(rd->key_current, (uint8_t[])SRG_KEY_DEFAULT_CURRENT_INIT, SRG_KEY_LEN);
+    memcpy(rd->key_previous, (uint8_t[])SRG_KEY_DEFAULT_PREVIOUS_INIT, SRG_KEY_LEN);
+    rd->prev_valid_until_ms = 0;
+    memset(rd->nonce_cache, 0, sizeof(rd->nonce_cache));
+    rd->nonce_cursor = 0;
     return rd;
 }
 
@@ -69,6 +137,24 @@ void registryd_stop(struct registryd *rd) {
         close(rd->sock);
     }
     free(rd);
+}
+
+int registryd_set_keys(struct registryd *rd,
+                       const uint8_t current[SRG_KEY_LEN],
+                       const uint8_t previous[SRG_KEY_LEN],
+                       uint64_t grace_ms) {
+    if (!rd || !current) {
+        return -1;
+    }
+    memcpy(rd->key_current, current, SRG_KEY_LEN);
+    if (previous) {
+        memcpy(rd->key_previous, previous, SRG_KEY_LEN);
+        rd->prev_valid_until_ms = fut_get_ticks() + grace_ms;
+    } else {
+        memset(rd->key_previous, 0, SRG_KEY_LEN);
+        rd->prev_valid_until_ms = 0;
+    }
+    return 0;
 }
 
 static void respond_error(int sock, const struct sockaddr_in *dst, socklen_t dlen, uint32_t err) {
@@ -92,7 +178,7 @@ static void handle_reg(struct registryd *rd,
 
     size_t nlen = ntohs(h->name_len);
     if (nlen == 0 || nlen >= sizeof(rd->table[0].name)) {
-        respond_error(rd->sock, src, slen, 2);
+        respond_error(rd->sock, src, slen, SRG_ERR_MALFORMED);
         return;
     }
 
@@ -110,7 +196,7 @@ static void handle_reg(struct registryd *rd,
         rd->table[rd->nentries].chan = srg_ntohll(h->channel_id);
         rd->nentries++;
     } else {
-        respond_error(rd->sock, src, slen, 2);
+        respond_error(rd->sock, src, slen, SRG_ERR_MALFORMED);
         return;
     }
 
@@ -136,7 +222,7 @@ static void handle_lookup(struct registryd *rd,
 
     size_t nlen = ntohs(h->name_len);
     if (nlen == 0 || nlen >= sizeof(rd->table[0].name)) {
-        respond_error(rd->sock, src, slen, 2);
+        respond_error(rd->sock, src, slen, SRG_ERR_MALFORMED);
         return;
     }
 
@@ -153,7 +239,7 @@ static void handle_lookup(struct registryd *rd,
         }
     }
 
-    respond_error(rd->sock, src, slen, 1);
+    respond_error(rd->sock, src, slen, SRG_ERR_NOT_FOUND);
 }
 
 bool registryd_poll_once(struct registryd *rd, uint32_t timeout_ms) {
@@ -205,6 +291,31 @@ bool registryd_poll_once(struct registryd *rd, uint32_t timeout_ms) {
         name[copy_len] = '\0';
     }
 
+    size_t auth_offset = sizeof(h) + nlen;
+    if ((size_t)n < auth_offset + SRG_HMAC_LEN) {
+        respond_error(rd->sock, &src, slen, SRG_ERR_AUTH);
+        return true;
+    }
+
+    uint64_t timestamp = srg_ntohll(h.timestamp_ms);
+    uint64_t nonce = srg_ntohll(h.nonce);
+    const uint8_t *hmac = buffer + auth_offset;
+    uint64_t now = fut_get_ticks();
+    uint64_t diff = (timestamp > now) ? (timestamp - now) : (now - timestamp);
+    if (diff > SRG_TS_TOLERANCE_MS) {
+        respond_error(rd->sock, &src, slen, SRG_ERR_AUTH);
+        return true;
+    }
+    if (registryd_nonce_seen(rd, nonce, now)) {
+        respond_error(rd->sock, &src, slen, SRG_ERR_AUTH);
+        return true;
+    }
+    if (!registryd_check_hmac(rd, name, nlen, timestamp, nonce, hmac, SRG_HMAC_LEN, now)) {
+        respond_error(rd->sock, &src, slen, SRG_ERR_AUTH);
+        return true;
+    }
+    registryd_nonce_record(rd, nonce, now);
+
     switch (ntohs(h.type)) {
     case SRG_REG:
         handle_reg(rd, &h, name, &src, slen);
@@ -213,7 +324,7 @@ bool registryd_poll_once(struct registryd *rd, uint32_t timeout_ms) {
         handle_lookup(rd, &h, name, &src, slen);
         break;
     default:
-        respond_error(rd->sock, &src, slen, 2);
+        respond_error(rd->sock, &src, slen, SRG_ERR_MALFORMED);
         break;
     }
 

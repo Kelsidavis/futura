@@ -87,6 +87,7 @@ KERNEL_SOURCES := \
     kernel/timer/fut_timer.c \
     kernel/ipc/fut_object.c \
     kernel/ipc/fut_fipc.c \
+    kernel/crypto/fut_hmac.c \
     kernel/vfs/fut_vfs.c \
     kernel/vfs/ramfs.c \
     kernel/blockdev/fut_blockdev.c \
@@ -138,6 +139,7 @@ $(OBJ_DIR) $(BIN_DIR):
 	@mkdir -p $(OBJ_DIR)/kernel/threading
 	@mkdir -p $(OBJ_DIR)/kernel/scheduler
 	@mkdir -p $(OBJ_DIR)/kernel/timer
+	@mkdir -p $(OBJ_DIR)/kernel/crypto
 	@mkdir -p $(OBJ_DIR)/kernel/interrupts
 	@mkdir -p $(OBJ_DIR)/kernel/ipc
 	@mkdir -p $(OBJ_DIR)/kernel/vfs

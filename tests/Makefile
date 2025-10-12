@@ -34,7 +34,8 @@ TESTS := fipc_remote_loopback \
 	fipc_rate_limit \
 	fipc_ring_wrap \
 	fipc_ring_prop \
-	fipc_admin_ops
+	fipc_admin_ops \
+	registry_auth
 
 .PHONY: all clean $(TESTS)
 
@@ -188,6 +189,16 @@ $(BIN_DIR)/fipc_ring_prop: fipc_ring_prop.c ring_model.h $(LIBFIPC_HOST) | $(BIN
 $(BIN_DIR)/fipc_admin_ops: fipc_admin_ops.c $(LIBFIPC_HOST) | $(BIN_DIR)
 	@echo "CC $@"
 	@$(CC) $(CFLAGS) -o $@ fipc_admin_ops.c $(LIBFIPC_HOST) $(LDFLAGS)
+
+$(BIN_DIR)/registry_auth: registry_auth.c \
+	$(ROOT)/src/user/svc_registryd/registry_server.c \
+	$(ROOT)/src/user/svc_registryd/registry_client.c \
+	$(LIBFIPC_HOST) | $(BIN_DIR)
+	@echo "CC $@"
+	@$(CC) $(CFLAGS) -o $@ registry_auth.c \
+		$(ROOT)/src/user/svc_registryd/registry_server.c \
+		$(ROOT)/src/user/svc_registryd/registry_client.c \
+		$(LIBFIPC_HOST) $(LDFLAGS)
 
 # === syswatch smoke helper ===
 $(BIN_DIR)/fipc_syswatch_smoke: fipc_syswatch_smoke.c \

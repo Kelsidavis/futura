@@ -1,47 +1,60 @@
-# Makefile for FuturaWay Compositor (futurawayd)
-# Copyright (c) 2025 Kelsi Davis
-# Licensed under MPL v2.0
+# Makefile - Futuraway M1 compositor + demo (host builds)
+# SPDX-License-Identifier: MPL-2.0
 
-# Toolchain
-CC := gcc
-LD := ld
-AR := ar
+CC ?= gcc
 
-# Directories
-BUILD_DIR := ../../../build
+ROOT := ../../..
+BUILD_DIR := $(ROOT)/build
 OBJ_DIR := $(BUILD_DIR)/obj/user/futurawayd
 BIN_DIR := $(BUILD_DIR)/bin/user
+LIB_DIR := $(BUILD_DIR)/lib
 
-# Includes
-INCLUDES := -I../../../include
+LIBFIPC_HOST := $(LIB_DIR)/libfipc_host.a
 
-# Compiler flags
-CFLAGS := -std=c2x -ffreestanding -nostdlib -fno-builtin -fno-stack-protector
-CFLAGS += -Wall -Wextra -Werror
-CFLAGS += -g -O2
-CFLAGS += $(INCLUDES)
+INCLUDES := -I$(ROOT)/include -I$(ROOT)/src/user
+CFLAGS := -std=c2x -Wall -Wextra -Werror -g -O2 $(INCLUDES)
+LDFLAGS := -pthread
 
-# Linker flags
-LDFLAGS := -nostdlib -static
+COMMON_OBJS := \
+	$(OBJ_DIR)/svc_registryd_registry_client.o
 
-# Source files
-SRCS := main.c
-OBJS := $(SRCS:%.c=$(OBJ_DIR)/%.o)
+FUTURAWAYD_OBJS := \
+	$(OBJ_DIR)/futurawayd.o \
+	$(OBJ_DIR)/fb_host.o \
+	$(OBJ_DIR)/main.o \
+	$(OBJ_DIR)/sys_fipc_sys_pub_futuraway.o \
+	$(COMMON_OBJS)
 
-# Target binary
-TARGET := $(BIN_DIR)/futurawayd
+FW_DEMO_OBJS := \
+	$(OBJ_DIR)/fw_demo.o \
+	$(OBJ_DIR)/fw_demo_main.o \
+	$(COMMON_OBJS)
 
-# Build rules
+TARGETS := $(BIN_DIR)/futurawayd $(BIN_DIR)/fw_demo
+
 .PHONY: all clean
 
-all: $(TARGET)
+all: $(TARGETS)
 
-$(TARGET): $(OBJS) | $(BIN_DIR)
-	$(LD) $(LDFLAGS) -o $@ $(OBJS)
-	@echo "Built futurawayd: $@"
+$(BIN_DIR)/futurawayd: $(FUTURAWAYD_OBJS) $(LIBFIPC_HOST) | $(BIN_DIR)
+	@echo "LD $@"
+	@$(CC) $(CFLAGS) -o $@ $(FUTURAWAYD_OBJS) $(LIBFIPC_HOST) $(LDFLAGS)
+
+$(BIN_DIR)/fw_demo: $(FW_DEMO_OBJS) $(LIBFIPC_HOST) | $(BIN_DIR)
+	@echo "LD $@"
+	@$(CC) $(CFLAGS) -o $@ $(FW_DEMO_OBJS) $(LIBFIPC_HOST) $(LDFLAGS)
 
 $(OBJ_DIR)/%.o: %.c | $(OBJ_DIR)
-	$(CC) $(CFLAGS) -c $< -o $@
+	@echo "CC $<"
+	@$(CC) $(CFLAGS) -c $< -o $@
+
+$(OBJ_DIR)/svc_registryd_registry_client.o: ../svc_registryd/registry_client.c | $(OBJ_DIR)
+	@echo "CC $<"
+	@$(CC) $(CFLAGS) -c $< -o $@
+
+$(OBJ_DIR)/sys_fipc_sys_pub_futuraway.o: ../sys/fipc_sys_pub_futuraway.c | $(OBJ_DIR)
+	@echo "CC $<"
+	@$(CC) $(CFLAGS) -c $< -o $@
 
 $(OBJ_DIR):
 	@mkdir -p $(OBJ_DIR)
@@ -49,8 +62,8 @@ $(OBJ_DIR):
 $(BIN_DIR):
 	@mkdir -p $(BIN_DIR)
 
-clean:
-	rm -rf $(OBJ_DIR) $(TARGET)
+$(LIBFIPC_HOST):
+	@$(MAKE) -C $(ROOT)/host/transport
 
-# Dependencies
-$(OBJ_DIR)/main.o: main.c ../../../include/user/futura_way.h
+clean:
+	@rm -rf $(OBJ_DIR) $(TARGETS)

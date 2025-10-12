@@ -35,8 +35,26 @@ enum fipc_sys_kernel_tag {
     FIPC_SYS_K_METRIC_END   = 0x2F,
 };
 
+enum fipc_sys_fway_tag {
+    FIPC_FWAY_BEGIN      = 0x30,
+    FIPC_FWAY_EVT        = 0x31,
+    FIPC_FWAY_SURF_ID    = 0x32,
+    FIPC_FWAY_CLIENT_PID = 0x33,
+    FIPC_FWAY_T_START    = 0x34,
+    FIPC_FWAY_T_END      = 0x35,
+    FIPC_FWAY_DUR_MS     = 0x36,
+    FIPC_FWAY_END        = 0x3F,
+};
+
+enum fipc_fway_evt_kind {
+    FIPC_FWAY_SURFACE_CREATE = 1,
+    FIPC_FWAY_SURFACE_COMMIT = 2,
+    FIPC_FWAY_INPUT_EVENT    = 3,
+};
+
 #define FIPC_SYS_MSG_SYSTEM_METRICS 0x5359534Du /* 'SYSM' */
 #define FIPC_SYS_MSG_KERNEL_METRICS 0x4B4D4554u /* 'KMET' */
+#define FIPC_SYS_MSG_FWAY_METRICS   0x46574159u /* 'FWAY' */
 
 static inline uint8_t *fipc_sys_varint_u64(uint8_t *cursor, uint64_t value) {
     while (value >= 0x80u) {

@@ -22,7 +22,8 @@ TESTS := fipc_remote_loopback \
 	fipc_remote_metrics \
 	fipc_remote_header_v1 \
 	fipc_sys_metrics_subscriber \
-	fipc_sys_kernel_metrics
+	fipc_sys_kernel_metrics \
+	fipc_sys_futuraway_metrics
 
 .PHONY: all clean $(TESTS)
 
@@ -118,6 +119,14 @@ FIPC_SYSK_SRCS := fipc_sys_kernel_metrics.c \
 $(BIN_DIR)/fipc_sys_kernel_metrics: $(FIPC_SYSK_SRCS) $(LIBFIPC_HOST) | $(BIN_DIR)
 	@echo "CC $@"
 	@$(CC) $(CFLAGS) -o $@ $(FIPC_SYSK_SRCS) $(LIBFIPC_HOST) $(LDFLAGS)
+
+# === FuturaWay compositor metrics test ===
+FIPC_FWAY_SRCS := fipc_sys_futuraway_metrics.c \
+	$(ROOT)/src/user/sys/fipc_sys_pub_futuraway.c
+
+$(BIN_DIR)/fipc_sys_futuraway_metrics: $(FIPC_FWAY_SRCS) $(LIBFIPC_HOST) | $(BIN_DIR)
+	@echo "CC $@"
+	@$(CC) $(CFLAGS) -o $@ $(FIPC_FWAY_SRCS) $(LIBFIPC_HOST) $(LDFLAGS)
 
 $(BIN_DIR):
 	@mkdir -p $(BIN_DIR)

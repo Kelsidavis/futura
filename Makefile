@@ -100,6 +100,7 @@ KERNEL_SOURCES := \
     kernel/uaccess.c \
     kernel/vfs/devfs.c \
     kernel/tests/echo_smoke.c \
+    kernel/tests/fb_user_smoke.c \
     kernel/video/fb_mmio.c \
     drivers/video/fb.c
 

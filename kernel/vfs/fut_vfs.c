@@ -12,6 +12,7 @@
 #include <kernel/devfs.h>
 #include <kernel/errno.h>
 #include <stddef.h>
+#include <stdint.h>
 
 /* ============================================================
  *   VFS State
@@ -729,6 +730,32 @@ int fut_vfs_stat(const char *path, struct fut_stat *stat) {
 
     fut_vnode_unref(vnode);
     return ret;
+}
+
+int fut_vfs_ioctl(int fd, unsigned long req, unsigned long arg) {
+    struct fut_file *file = get_file(fd);
+    if (!file) {
+        return -EBADF;
+    }
+
+    if (file->chr_ops && file->chr_ops->ioctl) {
+        return file->chr_ops->ioctl(file->chr_inode, file->chr_private, req, arg);
+    }
+
+    return -ENOTTY;
+}
+
+void *fut_vfs_mmap(int fd, void *addr, size_t len, int prot, int flags, off_t off) {
+    struct fut_file *file = get_file(fd);
+    if (!file) {
+        return (void *)(intptr_t)(-EBADF);
+    }
+
+    if (file->chr_ops && file->chr_ops->mmap) {
+        return file->chr_ops->mmap(file->chr_inode, file->chr_private, addr, len, off, prot, flags);
+    }
+
+    return (void *)(intptr_t)(-ENOTTY);
 }
 
 /* ============================================================

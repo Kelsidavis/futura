@@ -20,6 +20,11 @@
 typedef long ssize_t;
 #endif
 
+#ifndef _OFF_T_DEFINED
+#define _OFF_T_DEFINED
+typedef long off_t;
+#endif
+
 /* Forward declarations */
 struct fut_vnode;
 struct fut_mount;
@@ -413,6 +418,9 @@ int64_t fut_vfs_lseek(int fd, int64_t offset, int whence);
  * @return 0 on success, negative error code on failure
  */
 int fut_vfs_stat(const char *path, struct fut_stat *stat);
+
+int fut_vfs_ioctl(int fd, unsigned long req, unsigned long arg);
+void *fut_vfs_mmap(int fd, void *addr, size_t len, int prot, int flags, off_t off);
 
 /**
  * Remove a file.

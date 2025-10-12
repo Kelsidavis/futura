@@ -11,6 +11,10 @@
 #include <stdint.h>
 #include <stddef.h>
 #include <kernel/syscalls.h>
+#include <kernel/uaccess.h>
+#include <kernel/fut_vfs.h>
+#include <kernel/fut_memory.h>
+#include <kernel/errno.h>
 
 /* ============================================================
  *   Syscall Numbers
@@ -76,35 +80,116 @@ static int64_t sys_echo_handler(uint64_t arg1, uint64_t arg2, uint64_t arg3,
     return (int64_t)sys_echo((const char *)arg1, (char *)arg2, (size_t)arg3);
 }
 
+static int copy_user_string(const char *u_path, char *kbuf, size_t max_len) {
+    for (size_t i = 0; i < max_len; ++i) {
+        char ch = 0;
+        if (fut_copy_from_user(&ch, u_path + i, 1) != 0) {
+            return -EFAULT;
+        }
+        kbuf[i] = ch;
+        if (ch == '\0') {
+            return 0;
+        }
+    }
+    return -ENAMETOOLONG;
+}
+
+static int64_t sys_open_handler(uint64_t pathname, uint64_t flags, uint64_t mode,
+                                uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg4;
+    (void)arg5;
+    (void)arg6;
+
+    char kpath[256];
+    int rc = copy_user_string((const char *)pathname, kpath, sizeof(kpath));
+    if (rc != 0) {
+        return rc;
+    }
+    return (int64_t)fut_vfs_open(kpath, (int)flags, (int)mode);
+}
+
+static int64_t sys_close_handler(uint64_t fd, uint64_t arg2, uint64_t arg3,
+                                 uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg2;
+    (void)arg3;
+    (void)arg4;
+    (void)arg5;
+    (void)arg6;
+    return (int64_t)fut_vfs_close((int)fd);
+}
+
+static int64_t sys_write_handler(uint64_t fd, uint64_t buf, uint64_t count,
+                                 uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg4;
+    (void)arg5;
+    (void)arg6;
+
+    size_t len = (size_t)count;
+    if (len == 0) {
+        return 0;
+    }
+
+    void *kbuf = fut_malloc(len);
+    if (!kbuf) {
+        return -ENOMEM;
+    }
+
+    if (fut_copy_from_user(kbuf, (const void *)buf, len) != 0) {
+        fut_free(kbuf);
+        return -EFAULT;
+    }
+
+    ssize_t ret = fut_vfs_write((int)fd, kbuf, len);
+    fut_free(kbuf);
+    return (int64_t)ret;
+}
+
+static int64_t sys_read_handler(uint64_t fd, uint64_t buf, uint64_t count,
+                                uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg4;
+    (void)arg5;
+    (void)arg6;
+
+    size_t len = (size_t)count;
+    if (len == 0) {
+        return 0;
+    }
+
+    void *kbuf = fut_malloc(len);
+    if (!kbuf) {
+        return -ENOMEM;
+    }
+
+    ssize_t ret = fut_vfs_read((int)fd, kbuf, len);
+    if (ret > 0) {
+        if (fut_copy_to_user((void *)buf, kbuf, (size_t)ret) != 0) {
+            ret = -EFAULT;
+        }
+    }
+
+    fut_free(kbuf);
+    return (int64_t)ret;
+}
+
+static int64_t sys_ioctl_handler(uint64_t fd, uint64_t req, uint64_t argp,
+                                 uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg4;
+    (void)arg5;
+    (void)arg6;
+    return (int64_t)fut_vfs_ioctl((int)fd, req, argp);
+}
+
+static int64_t sys_mmap_handler(uint64_t addr, uint64_t len, uint64_t prot,
+                                uint64_t flags, uint64_t fd, uint64_t off) {
+    void *res = fut_vfs_mmap((int)fd, (void *)addr, (size_t)len, (int)prot, (int)flags, (off_t)off);
+    return (int64_t)(intptr_t)res;
+}
+
 /* ============================================================
  *   Syscall Handlers (Wrappers)
  * ============================================================ */
 
 /* File I/O */
-static int64_t sys_read_handler(uint64_t fd, uint64_t buf, uint64_t count,
-                                 uint64_t arg4, uint64_t arg5, uint64_t arg6) {
-    (void)arg4; (void)arg5; (void)arg6;
-    return (int64_t)posix_read((int)fd, (void *)buf, (size_t)count);
-}
-
-static int64_t sys_write_handler(uint64_t fd, uint64_t buf, uint64_t count,
-                                   uint64_t arg4, uint64_t arg5, uint64_t arg6) {
-    (void)arg4; (void)arg5; (void)arg6;
-    return (int64_t)posix_write((int)fd, (const void *)buf, (size_t)count);
-}
-
-static int64_t sys_open_handler(uint64_t pathname, uint64_t flags, uint64_t mode,
-                                  uint64_t arg4, uint64_t arg5, uint64_t arg6) {
-    (void)arg4; (void)arg5; (void)arg6;
-    return (int64_t)posix_open((const char *)pathname, (int)flags, (int)mode);
-}
-
-static int64_t sys_close_handler(uint64_t fd, uint64_t arg2, uint64_t arg3,
-                                   uint64_t arg4, uint64_t arg5, uint64_t arg6) {
-    (void)arg2; (void)arg3; (void)arg4; (void)arg5; (void)arg6;
-    return (int64_t)posix_close((int)fd);
-}
-
 /* File metadata */
 static int64_t sys_stat_handler(uint64_t pathname, uint64_t statbuf, uint64_t arg3,
                                  uint64_t arg4, uint64_t arg5, uint64_t arg6) {
@@ -177,6 +262,8 @@ static syscall_handler_t syscall_table[MAX_SYSCALL] = {
     [SYS_wait4]      = sys_wait4_handler,
     [SYS_brk]        = sys_brk_handler,
     [SYS_echo]       = sys_echo_handler,
+    [SYS_ioctl]      = sys_ioctl_handler,
+    [SYS_mmap]       = sys_mmap_handler,
 };
 
 /* ============================================================

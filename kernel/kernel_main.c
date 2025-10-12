@@ -27,6 +27,7 @@
 #endif
 
 extern void fut_echo_selftest(void);
+extern void fut_fb_userspace_smoke(void);
 
 /* ============================================================
  *   External Symbols from Linker Script
@@ -605,6 +606,7 @@ void fut_kernel_main(void) {
     fb_boot_splash();
     fb_char_init();
     fut_echo_selftest();
+    fut_fb_userspace_smoke();
 
     /* ========================================
      *   Step 2: Initialize FIPC Subsystem

@@ -87,6 +87,7 @@ KERNEL_SOURCES := \
     kernel/threading/fut_thread.c \
     kernel/scheduler/fut_sched.c \
     kernel/scheduler/fut_stats.c \
+    kernel/scheduler/fut_waitq.c \
     kernel/timer/fut_timer.c \
     kernel/ipc/fut_object.c \
     kernel/ipc/fut_fipc.c \
@@ -102,6 +103,9 @@ KERNEL_SOURCES := \
     kernel/sys_echo.c \
     kernel/sys_exit.c \
     kernel/sys_waitpid.c \
+    kernel/sys_brk.c \
+    kernel/sys_mmap.c \
+    kernel/sys_nanosleep.c \
     kernel/sys_time.c \
     kernel/signal/signal.c \
     kernel/rt/memory.c \
@@ -111,7 +115,8 @@ KERNEL_SOURCES := \
     kernel/tests/echo_smoke.c \
     kernel/tests/fb_user_smoke.c \
     kernel/video/fb_mmio.c \
-    drivers/video/fb.c
+    drivers/video/fb.c \
+    drivers/tty/console.c
 
 # Platform-specific sources
 ifeq ($(PLATFORM),x86_64)

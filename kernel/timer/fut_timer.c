@@ -64,9 +64,6 @@ void fut_sleep_until(fut_thread_t *thread, uint64_t millis) {
     thread->wake_time = current + millis;
     thread->state = FUT_THREAD_SLEEPING;
 
-    // Remove from scheduler ready queue
-    fut_sched_remove_thread(thread);
-
     // Insert into sleep queue (sorted by wake_time)
     fut_spinlock_acquire(&sleep_lock);
 

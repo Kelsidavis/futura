@@ -88,7 +88,8 @@ fut_thread_t *fut_thread_create(
         .wake_time = 0,
         .stats = {0},                 // Initialize performance counters to zero
         .next = NULL,
-        .prev = NULL
+        .prev = NULL,
+        .wait_next = NULL
     };
 
     // Calculate stack top (grows downward)
@@ -149,6 +150,7 @@ void fut_thread_yield(void) {
         }
         prev = &t->next;
     }
+    self->wait_next = NULL;
 
     // Schedule next thread (this never returns)
     fut_schedule();

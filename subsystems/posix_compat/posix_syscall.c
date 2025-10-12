@@ -28,9 +28,15 @@
 #define SYS_stat        4
 #define SYS_fstat       5
 #define SYS_lseek       8
+#ifndef SYS_mmap
 #define SYS_mmap        9
+#endif
+#ifndef SYS_munmap
 #define SYS_munmap      11
+#endif
+#ifndef SYS_brk
 #define SYS_brk         12
+#endif
 #define SYS_ioctl       16
 #define SYS_pipe        22
 #define SYS_select      23
@@ -79,6 +85,7 @@ typedef int64_t (*syscall_handler_t)(uint64_t arg1, uint64_t arg2,
 extern ssize_t sys_echo(const char *u_in, char *u_out, size_t n);
 extern long sys_exit(int status);
 extern long sys_waitpid(int pid, int *u_status, int flags);
+extern long sys_nanosleep(const fut_timespec_t *u_req, fut_timespec_t *u_rem);
 extern long sys_time_millis(void);
 
 static int64_t sys_echo_handler(uint64_t arg1, uint64_t arg2, uint64_t arg3,
@@ -190,8 +197,7 @@ static int64_t sys_ioctl_handler(uint64_t fd, uint64_t req, uint64_t argp,
 
 static int64_t sys_mmap_handler(uint64_t addr, uint64_t len, uint64_t prot,
                                 uint64_t flags, uint64_t fd, uint64_t off) {
-    void *res = fut_vfs_mmap((int)fd, (void *)addr, (size_t)len, (int)prot, (int)flags, (off_t)off);
-    return (int64_t)(intptr_t)res;
+    return sys_mmap((void *)addr, (size_t)len, (int)prot, (int)flags, (int)fd, (long)off);
 }
 
 /* ============================================================
@@ -239,6 +245,13 @@ static int64_t sys_wait4_handler(uint64_t pid, uint64_t status, uint64_t options
     return (int64_t)sys_waitpid((int)pid, (int *)(uintptr_t)status, (int)options);
 }
 
+static int64_t sys_nanosleep_handler(uint64_t req, uint64_t rem, uint64_t arg3,
+                                     uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg3; (void)arg4; (void)arg5; (void)arg6;
+    return (int64_t)sys_nanosleep((const fut_timespec_t *)(uintptr_t)req,
+                                  (fut_timespec_t *)(uintptr_t)rem);
+}
+
 static int64_t sys_time_millis_handler(uint64_t arg1, uint64_t arg2, uint64_t arg3,
                                        uint64_t arg4, uint64_t arg5, uint64_t arg6) {
     (void)arg1; (void)arg2; (void)arg3; (void)arg4; (void)arg5; (void)arg6;
@@ -248,9 +261,14 @@ static int64_t sys_time_millis_handler(uint64_t arg1, uint64_t arg2, uint64_t ar
 /* Memory management */
 static int64_t sys_brk_handler(uint64_t addr, uint64_t arg2, uint64_t arg3,
                                 uint64_t arg4, uint64_t arg5, uint64_t arg6) {
-    (void)addr; (void)arg2; (void)arg3; (void)arg4; (void)arg5; (void)arg6;
-    /* Phase 2: Stub - return current break */
-    return -1;
+    (void)arg2; (void)arg3; (void)arg4; (void)arg5; (void)arg6;
+    return sys_brk((uintptr_t)addr);
+}
+
+static int64_t sys_munmap_handler(uint64_t addr, uint64_t len, uint64_t arg3,
+                                  uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg3; (void)arg4; (void)arg5; (void)arg6;
+    return sys_munmap((void *)addr, (size_t)len);
 }
 
 /* Unimplemented syscall handler */
@@ -275,7 +293,9 @@ static syscall_handler_t syscall_table[MAX_SYSCALL] = {
     [SYS_execve]     = sys_execve_handler,
     [SYS_exit]       = sys_exit_handler,
     [SYS_wait4]      = sys_wait4_handler,
+    [SYS_nanosleep]  = sys_nanosleep_handler,
     [SYS_brk]        = sys_brk_handler,
+    [SYS_munmap]     = sys_munmap_handler,
     [SYS_echo]       = sys_echo_handler,
     [SYS_ioctl]      = sys_ioctl_handler,
     [SYS_mmap]       = sys_mmap_handler,

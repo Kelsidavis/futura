@@ -20,6 +20,12 @@ typedef struct fut_mm {
     fut_vmem_context_t ctx;
     atomic_uint_fast64_t refcnt;
     uint32_t flags;
+    uintptr_t brk_start;
+    uintptr_t brk_current;
+    uintptr_t heap_limit;
+    uintptr_t heap_mapped_end;
+    uintptr_t mmap_base;
+    struct fut_vma *vma_list;
 } fut_mm_t;
 
 enum {
@@ -37,3 +43,10 @@ void fut_mm_release(fut_mm_t *mm);
 void fut_mm_switch(fut_mm_t *mm);
 fut_mm_t *fut_mm_current(void);
 fut_vmem_context_t *fut_mm_context(fut_mm_t *mm);
+
+void fut_mm_set_heap_base(fut_mm_t *mm, uintptr_t base, uintptr_t limit);
+uintptr_t fut_mm_brk_current(const fut_mm_t *mm);
+uintptr_t fut_mm_brk_limit(const fut_mm_t *mm);
+void fut_mm_set_brk_current(fut_mm_t *mm, uintptr_t current);
+void *fut_mm_map_anonymous(fut_mm_t *mm, uintptr_t hint, size_t len, int prot, int flags);
+int fut_mm_unmap(fut_mm_t *mm, uintptr_t addr, size_t len);

@@ -22,6 +22,7 @@
 #include <kernel/fut_ramdisk.h>
 #include <kernel/fut_futurafs.h>
 #include <kernel/fb.h>
+#include <kernel/console.h>
 #include <platform/platform.h>
 #if defined(__x86_64__)
 #include <arch/x86_64/paging.h>
@@ -636,6 +637,17 @@ void fut_kernel_main(void) {
     if (vfs_ret < 0) {
         fut_printf("[ERROR] Failed to mount root filesystem (error %d)\n", vfs_ret);
         fut_platform_panic("Failed to mount root filesystem");
+    }
+
+    fut_console_init();
+    fut_printf("[INIT] Console device registered at /dev/console\n");
+
+    int fd0 = fut_vfs_open("/dev/console", O_RDWR, 0);
+    int fd1 = fut_vfs_open("/dev/console", O_RDWR, 0);
+    int fd2 = fut_vfs_open("/dev/console", O_RDWR, 0);
+    if (fd0 < 0 || fd1 < 0 || fd2 < 0) {
+        fut_printf("[WARN] Failed to seed /dev/console descriptors (fd0=%d fd1=%d fd2=%d)\n",
+                   fd0, fd1, fd2);
     }
 
     fut_printf("[INIT] Root filesystem mounted (ramfs at /)\n");

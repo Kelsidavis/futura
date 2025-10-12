@@ -76,6 +76,7 @@ fut_task_t *fut_task_create(void) {
         .thread_count = 0,
         .next = NULL
     };
+    fut_waitq_init(&task->child_waiters);
 
     fut_spinlock_acquire(&task_list_lock);
     if (parent) {
@@ -205,11 +206,17 @@ fut_task_t *fut_task_current(void) {
 }
 
 static void task_mark_exit(fut_task_t *task, int status, int signal) {
+    fut_task_t *parent = task ? task->parent : NULL;
+
     fut_spinlock_acquire(&task_list_lock);
     task->state = FUT_TASK_ZOMBIE;
     task->exit_code = status & 0xFF;
     task->term_signal = signal & 0x7F;
     fut_spinlock_release(&task_list_lock);
+
+    if (parent) {
+        fut_waitq_wake_all(&parent->child_waiters);
+    }
 }
 
 void fut_task_exit_current(int status) {
@@ -295,7 +302,6 @@ int fut_task_waitpid(int pid, int *status_out) {
             return (int)child_pid;
         }
 
-        fut_spinlock_release(&task_list_lock);
-        fut_thread_yield();
+        fut_waitq_sleep_locked(&parent->child_waiters, &task_list_lock, FUT_THREAD_BLOCKED);
     }
 }

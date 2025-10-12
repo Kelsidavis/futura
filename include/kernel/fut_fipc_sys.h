@@ -55,6 +55,26 @@ enum fipc_fway_evt_kind {
 #define FIPC_SYS_MSG_SYSTEM_METRICS 0x5359534Du /* 'SYSM' */
 #define FIPC_SYS_MSG_KERNEL_METRICS 0x4B4D4554u /* 'KMET' */
 #define FIPC_SYS_MSG_FWAY_METRICS   0x46574159u /* 'FWAY' */
+#define FIPC_SYS_MSG_VFS_METRICS    0x5646534Du /* 'VFSM' */
+
+enum fipc_sys_vfs_tag {
+    FIPC_VFS_BEGIN      = 0x40,
+    FIPC_VFS_EVT        = 0x41,
+    FIPC_VFS_PATH_HASH  = 0x42,
+    FIPC_VFS_BYTES      = 0x43,
+    FIPC_VFS_RESULT     = 0x44,
+    FIPC_VFS_T_START    = 0x45,
+    FIPC_VFS_T_END      = 0x46,
+    FIPC_VFS_DUR_MS     = 0x47,
+    FIPC_VFS_END        = 0x4F,
+};
+
+enum fipc_vfs_evt_kind {
+    FIPC_VFS_OPEN  = 1,
+    FIPC_VFS_READ  = 2,
+    FIPC_VFS_WRITE = 3,
+    FIPC_VFS_CLOSE = 4,
+};
 
 static inline uint8_t *fipc_sys_varint_u64(uint8_t *cursor, uint64_t value) {
     while (value >= 0x80u) {

@@ -16,6 +16,14 @@
 
 extern void fut_printf(const char *fmt, ...);
 
+#ifndef ETIMEDOUT
+#define ETIMEDOUT 110
+#endif
+
+#ifndef ENOTSUP
+#define ENOTSUP 95
+#endif
+
 #define TEST_BLOCKS      32u
 #define TEST_BLOCK_SIZE  512u
 
@@ -98,6 +106,114 @@ static bool test_io_wait(test_io_t *io, uint32_t retries) {
         fut_thread_sleep(1);
     }
     return io->done;
+}
+
+static int submit_and_wait(fut_handle_t handle,
+                           test_io_t *io,
+                           uint32_t retries,
+                           size_t expected_bytes) {
+    int rc = fut_blk_submit(handle, &io->bio);
+    if (rc != 0) {
+        return rc;
+    }
+    if (!test_io_wait(io, retries)) {
+        return -ETIMEDOUT;
+    }
+    if (expected_bytes && io->bytes != expected_bytes) {
+        return -EIO;
+    }
+    return io->status;
+}
+
+static void run_hw_roundtrip_test(const char *name) {
+    fut_handle_t handle = FUT_INVALID_HANDLE;
+    int rc = fut_blk_open(name, FUT_BLK_READ | FUT_BLK_WRITE | FUT_BLK_ADMIN, &handle);
+    if (rc != 0) {
+        fut_printf("[BLK] virtio test %s open failed: %d\n", name, rc);
+        return;
+    }
+
+    const size_t sectors = 4;
+    const size_t bytes = sectors * TEST_BLOCK_SIZE;
+    uint8_t *orig = fut_malloc(bytes);
+    uint8_t *write_buf = fut_malloc(bytes);
+    uint8_t *read_buf = fut_malloc(bytes);
+    bool write_ok = false;
+    bool read_ok = false;
+    int flush_rc = -ENOTSUP;
+
+    if (!orig || !write_buf || !read_buf) {
+        fut_printf("[BLK] virtio test %s allocation failure\n", name);
+        goto cleanup;
+    }
+
+    for (size_t i = 0; i < bytes; ++i) {
+        write_buf[i] = (uint8_t)((i * 37u) & 0xFFu);
+    }
+
+    test_io_t read_orig;
+    test_io_prepare(&read_orig, 16, sectors, orig, false);
+    rc = submit_and_wait(handle, &read_orig, 256, bytes);
+    if (rc != 0) {
+        fut_printf("[BLK] virtio test %s read original failed: %d\n", name, rc);
+        goto cleanup;
+    }
+
+    test_io_t write_req;
+    test_io_prepare(&write_req, 16, sectors, write_buf, true);
+    rc = submit_and_wait(handle, &write_req, 256, bytes);
+    if (rc != 0) {
+        fut_printf("[BLK] virtio test %s write failed: %d\n", name, rc);
+        goto cleanup_restore;
+    }
+    write_ok = true;
+
+    flush_rc = fut_blk_flush(handle);
+
+    test_io_t read_back;
+    test_io_prepare(&read_back, 16, sectors, read_buf, false);
+    rc = submit_and_wait(handle, &read_back, 256, bytes);
+    if (rc != 0) {
+        fut_printf("[BLK] virtio test %s readback failed: %d\n", name, rc);
+        goto cleanup_restore;
+    }
+
+    if (memcmp(read_buf, write_buf, bytes) == 0) {
+        read_ok = true;
+    }
+
+cleanup_restore:
+    if (write_ok) {
+        test_io_t restore_req;
+        test_io_prepare(&restore_req, 16, sectors, orig, true);
+        (void)submit_and_wait(handle, &restore_req, 256, bytes);
+        if (flush_rc == 0) {
+            (void)fut_blk_flush(handle);
+        }
+    }
+
+cleanup:
+    if (flush_rc != 0 && flush_rc != -ENOTSUP) {
+        flush_rc = -EIO;
+    }
+
+    fut_printf("[BLK] virtio %s write=%s read=%s flush=%s\n",
+               name,
+               write_ok ? "ok" : "fail",
+               read_ok ? "ok" : "fail",
+               (flush_rc == 0) ? "ok" : (flush_rc == -ENOTSUP ? "skip" : "fail"));
+
+    if (orig) {
+        fut_free(orig);
+    }
+    if (write_buf) {
+        fut_free(write_buf);
+    }
+    if (read_buf) {
+        fut_free(read_buf);
+    }
+
+    fut_blk_close(handle);
 }
 
 static void fut_blk_async_selftest_thread(void *arg) {
@@ -185,6 +301,8 @@ static void fut_blk_async_selftest_thread(void *arg) {
                read_ok ? "ok" : "fail",
                flush_ok ? "ok" : "fail",
                rights_enforced ? "ok" : "fail");
+
+    run_hw_roundtrip_test("blk:vda");
 
     fut_thread_exit();
 }

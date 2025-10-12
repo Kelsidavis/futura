@@ -65,20 +65,26 @@ Every remote `fipc_msg_t` is wrapped by a 16-byte network header:
 
 **Pipeline overview**
 - `fipc_send()` packages the message header + payload, enforces MTU, and invokes
-  the registered transport ops.
+  the registered transport ops. Remote sends now stash the capability lease ID
+  alongside the channel so audit logs and rate limiting can attribute traffic.
 - `netd` publishes the frame as a UDP datagram using the endpoint metadata
   (loopback harness maps `node_id` → UDP port on 127.0.0.1).
 - Incoming frames are verified by netd (CRC, length, capability) before they are
   injected into the destination channel with `fipc_channel_inject()`.
 - Capability tokens stay authoritative on both sides—messages with mismatched
-  capabilities are dropped with `FIPC_EINVAL`.
+  capabilities are dropped with `FIPC_EINVAL` and counted on the kernel metrics
+  stream.
 
-**Service discovery**
-- `svc_registryd` records service → channel mappings and optional remote
-  endpoints.  
+**Service discovery (HMAC-protected)**
+- `svc_registryd` records service → channel mappings and now requires an
+  HMAC-SHA256 signature covering the service name, timestamp, and nonce. Two
+  symmetric keys (current + previous) are maintained so rotations remain
+  seamless within a configurable grace window.
+- `registry_client` signs registrations/lookups, caches the grace deadline, and
+  retries with the previous key when the server is mid-rotation.
 - `libfutura` keeps a local cache via
-  `fipc_register_remote_service()` / `fipc_lookup_service_id()` so userland can
-  connect without synchronous RPCs.
+  `fipc_register_remote_service()` / `fipc_lookup_service_id()`; cache misses
+  trigger the signed registry exchange transparently.
 
 **Diagnostics**
 - `netd` logs CRC failures, unknown channel IDs, and transport errors.
@@ -116,8 +122,15 @@ Every remote `fipc_msg_t` is wrapped by a 16-byte network header:
 
 ## 🛡️ Security Model
 - Capabilities verified on send/receive.  
-- Each message stamped with capability ID and sender PID.  
+- Each message stamped with capability ID, sender PID, and (for remote bindings)
+  the capability lease ID that authorised the channel.  
 - Unauthorized send attempts cause `FIPC_ERR_CAP`.  
+- Control-plane operations (cap bind/unbind, rate changes) are gated by the
+  system control channel which now requires a shared 32-byte admin token plus an
+  HMAC-SHA256 signature over the capability lease parameters.  
+- Service discovery uses signed registry exchanges with nonce caching and
+  timestamp tolerance to prevent replay. HMAC failures surface as `SRG_ERR_AUTH`
+  and are logged by `svc_registryd`.  
 
 ---
 

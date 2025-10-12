@@ -180,6 +180,10 @@ bool netd_poll_once(struct netd *nd, uint32_t timeout_ms) {
             return true;
         }
 
+        if (channel->capability != 0 && channel->capability != msg->capability) {
+            return true;
+        }
+
         (void)fut_fipc_channel_inject(channel,
                                       msg->type,
                                       msg->payload,

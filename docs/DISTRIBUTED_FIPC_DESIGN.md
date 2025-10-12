@@ -66,6 +66,7 @@
 - Datagram layout: `fut_fipc_net_hdr { channel_id, payload_len, crc32 }` immediately followed by the serialized `fut_fipc_msg` header and payload bytes. CRC32 covers only the serialized message so transport metadata can change without recomputing hashes higher in the stack.
 - Loopback convention: the host harness maps `remote.node_id` to a UDP port on `127.0.0.1`, keeping distributed FIPC tests hermetic while mirroring on-wire framing.
 - Error handling: UDP send backpressure maps to `FIPC_EAGAIN`, hard transport failures escalate as `FIPC_EIO`, and missing transport ops surface as `FIPC_ENOTSUP` from the kernel send path.
+- Capability guard: once the destination channel binds a non-zero capability, netd drops remote frames whose `msg.capability` differs, keeping enforcement at the network boundary without altering queue semantics.
 
 ---
 

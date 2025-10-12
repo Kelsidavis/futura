@@ -28,3 +28,22 @@ bool fipc_sys_fway_input_event(uint64_t surface_id,
                                uint64_t client_pid,
                                uint64_t t_start,
                                uint64_t t_end);
+
+bool fipc_sys_vfs_open(const char *path,
+                       uint64_t result,
+                       uint64_t t_start,
+                       uint64_t t_end);
+bool fipc_sys_vfs_read(const char *path,
+                       uint64_t bytes,
+                       uint64_t result,
+                       uint64_t t_start,
+                       uint64_t t_end);
+bool fipc_sys_vfs_write(const char *path,
+                        uint64_t bytes,
+                        uint64_t result,
+                        uint64_t t_start,
+                        uint64_t t_end);
+bool fipc_sys_vfs_close(const char *path,
+                        uint64_t result,
+                        uint64_t t_start,
+                        uint64_t t_end);

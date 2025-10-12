@@ -13,9 +13,9 @@ LIBFIPC_HOST := $(LIB_DIR)/libfipc_host.a
 
 INCLUDES := -I$(ROOT)/include -I$(ROOT) -I$(ROOT)/src/user/netd -I$(ROOT)/src/user/svc_registryd
 CFLAGS := -std=c2x -Wall -Wextra -Werror -g -O2 $(INCLUDES)
-LDFLAGS := -pthread
+LDFLAGS := -pthread -no-pie
 
-TESTS := fipc_remote_loopback fipc_remote_discovery
+TESTS := fipc_remote_loopback fipc_remote_discovery fipc_remote_capability
 
 .PHONY: all clean $(TESTS)
 
@@ -41,6 +41,16 @@ FIPC_DISCOVERY_SRCS := fipc_remote_discovery.c \
 $(BIN_DIR)/fipc_remote_discovery: $(FIPC_DISCOVERY_SRCS) $(LIBFIPC_HOST) | $(BIN_DIR)
 	@echo "CC $@"
 	@$(CC) $(CFLAGS) -o $@ $(FIPC_DISCOVERY_SRCS) $(LIBFIPC_HOST) $(LDFLAGS)
+
+# === Capability enforcement test ===
+FIPC_CAP_SRCS := fipc_remote_capability.c \
+	$(ROOT)/src/user/netd/netd_core.c \
+	$(ROOT)/src/user/svc_registryd/registry_server.c \
+	$(ROOT)/src/user/svc_registryd/registry_client.c
+
+$(BIN_DIR)/fipc_remote_capability: $(FIPC_CAP_SRCS) $(LIBFIPC_HOST) | $(BIN_DIR)
+	@echo "CC $@"
+	@$(CC) $(CFLAGS) -o $@ $(FIPC_CAP_SRCS) $(LIBFIPC_HOST) $(LDFLAGS)
 
 $(BIN_DIR):
 	@mkdir -p $(BIN_DIR)

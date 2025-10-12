@@ -59,7 +59,11 @@ struct fut_thread {
     fut_cpu_context_t context;            // Saved CPU context (64-bit)
     fut_interrupt_frame_t *irq_frame;     // Saved interrupt frame (for IRQ context switches)
     enum fut_thread_state state;          // Current state
-    int priority;                         // Priority (0-255, higher = higher priority)
+    int priority;                         // Effective priority (0-255, higher = higher priority)
+    int base_priority;                    // Base priority (restored after PI)
+    int pi_saved_priority;                // Saved priority when boosted
+    bool pi_boosted;                      // Priority inheritance active
+    uint64_t deadline_tick;               // Absolute deadline tick (0 = none)
 
     uint64_t wake_time;                   // Wake tick for sleeping threads
 
@@ -121,6 +125,12 @@ fut_thread_t *fut_thread_current(void);
  * @param thread  Thread to set as current
  */
 void fut_thread_set_current(fut_thread_t *thread);
+
+fut_thread_t *fut_thread_find(uint64_t tid);
+void fut_thread_set_deadline(uint64_t abs_tick);
+uint64_t fut_thread_get_deadline(void);
+int fut_thread_priority_raise(fut_thread_t *thread, int new_priority);
+int fut_thread_priority_restore(fut_thread_t *thread);
 
 /* ============================================================
  *   Field Offset Verification (for assembly code)

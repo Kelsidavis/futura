@@ -32,6 +32,8 @@ TESTS := fipc_remote_loopback \
 	fipc_reply_pi \
 	fipc_cap_revoke \
 	fipc_rate_limit \
+	fipc_ring_wrap \
+	fipc_ring_prop \
 	fipc_admin_ops
 
 .PHONY: all clean $(TESTS)
@@ -174,6 +176,14 @@ $(BIN_DIR)/fipc_cap_revoke: fipc_cap_revoke.c $(LIBFIPC_HOST) | $(BIN_DIR)
 $(BIN_DIR)/fipc_rate_limit: fipc_rate_limit.c $(LIBFIPC_HOST) | $(BIN_DIR)
 	@echo "CC $@"
 	@$(CC) $(CFLAGS) -o $@ fipc_rate_limit.c $(LIBFIPC_HOST) $(LDFLAGS)
+
+$(BIN_DIR)/fipc_ring_wrap: fipc_ring_wrap.c $(LIBFIPC_HOST) | $(BIN_DIR)
+	@echo "CC $@"
+	@$(CC) $(CFLAGS) -o $@ fipc_ring_wrap.c $(LIBFIPC_HOST) $(LDFLAGS)
+
+$(BIN_DIR)/fipc_ring_prop: fipc_ring_prop.c ring_model.h $(LIBFIPC_HOST) | $(BIN_DIR)
+	@echo "CC $@"
+	@$(CC) $(CFLAGS) -o $@ fipc_ring_prop.c $(LIBFIPC_HOST) $(LDFLAGS)
 
 $(BIN_DIR)/fipc_admin_ops: fipc_admin_ops.c $(LIBFIPC_HOST) | $(BIN_DIR)
 	@echo "CC $@"

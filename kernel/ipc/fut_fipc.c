@@ -15,6 +15,15 @@
 #include <stdatomic.h>
 #include <stdbool.h>
 
+#if FIPC_DEBUG
+#ifdef FIPC_HOST_BUILD
+#include <stdio.h>
+#include <stdlib.h>
+#else
+#include <platform/platform.h>
+#endif
+#endif
+
 /* ============================================================
  *   FIPC State
  * ============================================================ */
@@ -35,6 +44,47 @@ static void fut_fipc_refill_tokens(struct fut_fipc_channel *channel, uint64_t no
 static int fut_fipc_admin_handle(struct fut_fipc_channel *channel,
                                  const uint8_t *payload,
                                  size_t size);
+
+#if FIPC_DEBUG
+void fut_fipc_assert_fail(const char *expr, const char *file, int line) {
+#ifdef FIPC_HOST_BUILD
+    fprintf(stderr, "[FIPC-ASSERT] %s:%d: %s\n", file, line, expr);
+    abort();
+#else
+    fut_printf("[FIPC-ASSERT] %s:%d: %s\n", file, line, expr);
+    fut_platform_panic("FIPC assertion failure");
+#endif
+}
+
+static inline void fipc_ring_check(struct fut_fipc_channel *ch) {
+    if (!ch) {
+        return;
+    }
+    size_t Q = ch->queue_size;
+    FIPC_ASSERT(Q > 1);
+    size_t h = ch->queue_head % Q;
+    size_t t = ch->queue_tail % Q;
+    FIPC_ASSERT(h < Q && t < Q);
+    size_t used = (h + Q - t) % Q;
+    FIPC_ASSERT(used <= Q - 1);
+    if (used == 0) {
+        FIPC_ASSERT(h == t);
+    } else if (used == Q - 1) {
+        FIPC_ASSERT(((h + 1) % Q) == t);
+    } else {
+        FIPC_ASSERT(((h + 1) % Q) != t);
+    }
+}
+#else
+void fut_fipc_assert_fail(const char *expr, const char *file, int line) {
+    (void)expr;
+    (void)file;
+    (void)line;
+}
+static inline void fipc_ring_check(struct fut_fipc_channel *ch) {
+    (void)ch;
+}
+#endif
 
 int fut_fipc_set_transport_ops(const struct fut_fipc_transport_ops *ops, void *context) {
     if (!ops) {
@@ -63,7 +113,10 @@ static int fut_fipc_enqueue_message(struct fut_fipc_channel *channel,
         return FIPC_EINVAL;
     }
 
+    fipc_ring_check(channel);
+
     size_t total_size = sizeof(struct fut_fipc_msg) + size;
+    FIPC_ASSERT(channel->queue_size > 0);
 
     size_t queue_used = (channel->queue_head - channel->queue_tail + channel->queue_size) % channel->queue_size;
     size_t queue_free = channel->queue_size - queue_used - 1;
@@ -100,6 +153,7 @@ static int fut_fipc_enqueue_message(struct fut_fipc_channel *channel,
     channel->queue_head = head;
     channel->pending = true;
     channel->event_mask |= FIPC_EVENT_MESSAGE;
+    fipc_ring_check(channel);
     return 0;
 }
 
@@ -309,6 +363,8 @@ int fut_fipc_channel_create(struct fut_task *sender, struct fut_task *receiver,
     /* Add to channel list */
     channel->next = channel_list;
     channel_list = channel;
+
+    fipc_ring_check(channel);
 
     *channel_out = channel;
     return 0;
@@ -1073,6 +1129,8 @@ ssize_t fut_fipc_recv(struct fut_fipc_channel *channel, void *buf, size_t buf_si
         return FIPC_EINVAL;
     }
 
+    fipc_ring_check(channel);
+
     /* Check if queue is empty */
     if (channel->queue_head == channel->queue_tail) {
         if (channel->flags & FIPC_CHANNEL_NONBLOCKING) {
@@ -1118,6 +1176,7 @@ ssize_t fut_fipc_recv(struct fut_fipc_channel *channel, void *buf, size_t buf_si
         channel->pending = false;
         channel->event_mask &= ~FIPC_EVENT_MESSAGE;
     }
+    fipc_ring_check(channel);
 
     fut_thread_t *receiver = fut_thread_current();
     if (receiver) {

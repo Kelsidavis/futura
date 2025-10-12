@@ -15,7 +15,7 @@ LIB_DIR := $(BUILD_DIR)/lib
 
 INCLUDES := -I$(ROOT)/include -I$(ROOT)
 
-CFLAGS := -std=c2x -Wall -Wextra -Werror -g -O2 $(INCLUDES)
+CFLAGS := -std=c2x -Wall -Wextra -Werror -g -O2 -DFIPC_HOST_BUILD $(INCLUDES)
 
 SOURCES := \
 	$(ROOT)/kernel/ipc/fut_fipc.c \

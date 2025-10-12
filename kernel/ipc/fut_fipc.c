@@ -359,6 +359,12 @@ int fut_fipc_send(struct fut_fipc_channel *channel, uint32_t type,
         }
 
         struct fut_fipc_net_hdr net_hdr;
+        net_hdr.magic = FIPC_NET_MAGIC;
+        net_hdr.version = FIPC_NET_V1;
+        net_hdr.flags = FIPC_NET_F_NONE;
+        net_hdr.reserved = 0;
+        net_hdr.seq = 0;
+        net_hdr.credits = 0;
         net_hdr.channel_id = channel->remote.channel_id ? channel->remote.channel_id : channel->id;
         net_hdr.payload_len = (uint32_t)total;
         net_hdr.crc = 0;

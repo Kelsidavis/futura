@@ -94,7 +94,8 @@ KERNEL_SOURCES := \
     kernel/blockdev/ramdisk.c \
     kernel/fs/futurafs.c \
     kernel/rt/memory.c \
-    kernel/rt/stack_chk.c
+    kernel/rt/stack_chk.c \
+    kernel/video/fb_mmio.c
 
 # Platform-specific sources
 ifeq ($(PLATFORM),x86_64)
@@ -148,6 +149,7 @@ $(OBJ_DIR) $(BIN_DIR):
 	@mkdir -p $(OBJ_DIR)/kernel/blockdev
 	@mkdir -p $(OBJ_DIR)/kernel/fs
 	@mkdir -p $(OBJ_DIR)/kernel/rt
+	@mkdir -p $(OBJ_DIR)/kernel/video
 	@mkdir -p $(OBJ_DIR)/platform/$(PLATFORM)
 	@mkdir -p $(OBJ_DIR)/subsystems/posix_compat
 

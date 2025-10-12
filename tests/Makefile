@@ -206,6 +206,7 @@ $(BIN_DIR)/fipc_big_send_stage: fipc_big_send_stage.c $(LIBFIPC_HOST) | $(BIN_DI
 FUTURAWAY_COMMON_SRCS := \
 	$(ROOT)/src/user/futurawayd/futurawayd.c \
 	$(ROOT)/src/user/futurawayd/fb_host.c \
+	$(ROOT)/src/user/futurawayd/fb_hw.c \
 	$(ROOT)/src/user/sys/fipc_sys_pub_futuraway.c \
 	$(ROOT)/src/user/svc_registryd/registry_server.c \
 	$(ROOT)/src/user/svc_registryd/registry_client.c

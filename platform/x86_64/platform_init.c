@@ -9,6 +9,7 @@
 #include <stddef.h>
 #include <stdarg.h>
 #include <arch/x86_64/paging.h>
+#include <kernel/fb.h>
 
 /* Serial port definitions for debugging */
 #define SERIAL_PORT_COM1 0x3F8
@@ -552,6 +553,9 @@ void fut_platform_init(uint32_t multiboot_magic __attribute__((unused)),
     /* Enable interrupts */
     fut_serial_puts("[INIT] Enabling interrupts...\n");
     fut_enable_interrupts();
+
+    /* Probe Multiboot framebuffer if present */
+    (void)fb_probe_from_multiboot((const void *)(uintptr_t)multiboot_addr);
 
     /* Print Multiboot info */
     fut_serial_puts("[INIT] Multiboot2 magic: 0x");

@@ -17,12 +17,16 @@ INCLUDES := -I$(ROOT)/include -I$(ROOT)
 
 CFLAGS := -std=c2x -Wall -Wextra -Werror -g -O2 -DFIPC_HOST_BUILD $(INCLUDES)
 
-SOURCES := \
-	$(ROOT)/kernel/ipc/fut_fipc.c \
-	$(ROOT)/kernel/crypto/fut_hmac.c \
+KERNEL_SOURCES := \
+	kernel/ipc/fut_fipc.c \
+	kernel/crypto/fut_hmac.c
+
+HOST_SOURCES := \
 	fipc_host_shim.c
 
-OBJECTS := $(SOURCES:%.c=$(OBJ_DIR)/%.o)
+SOURCES := $(KERNEL_SOURCES) $(HOST_SOURCES)
+
+OBJECTS := $(addprefix $(OBJ_DIR)/,$(SOURCES:.c=.o))
 
 TARGET := $(LIB_DIR)/libfipc_host.a
 
@@ -33,6 +37,11 @@ all: $(TARGET)
 $(TARGET): $(OBJECTS) | $(LIB_DIR)
 	@echo "AR $@"
 	@$(AR) rcs $@ $(OBJECTS)
+
+$(OBJ_DIR)/kernel/%.o: $(ROOT)/kernel/%.c | $(OBJ_DIR)
+	@echo "CC $<"
+	@mkdir -p $(dir $@)
+	@$(CC) $(CFLAGS) -c $< -o $@
 
 $(OBJ_DIR)/%.o: %.c | $(OBJ_DIR)
 	@echo "CC $<"

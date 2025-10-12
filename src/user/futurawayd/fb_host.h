@@ -15,6 +15,8 @@ struct fw_framebuffer {
     uint32_t stride_bytes;
     uint8_t *pixels;
     size_t size_bytes;
+    int hw_fd;
+    int is_hw;
 };
 
 int fw_framebuffer_create(uint32_t width, uint32_t height, struct fw_framebuffer *fb_out);

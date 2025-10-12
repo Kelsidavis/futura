@@ -10,8 +10,9 @@ BIN_DIR := $(BUILD_DIR)/tests
 LIB_DIR := $(BUILD_DIR)/lib
 
 LIBFIPC_HOST := $(LIB_DIR)/libfipc_host.a
+LIBFUTFS := $(LIB_DIR)/libfutfs.a
 
-INCLUDES := -I$(ROOT)/include -I$(ROOT) -I$(ROOT)/src/user/netd -I$(ROOT)/src/user/svc_registryd -I$(ROOT)/src/user/sys
+INCLUDES := -I$(ROOT)/include -I$(ROOT) -I$(ROOT)/src/user/netd -I$(ROOT)/src/user/svc_registryd -I$(ROOT)/src/user/sys -I$(ROOT)/subsystems/futura_fs
 CFLAGS := -std=c2x -Wall -Wextra -Werror -g -O2 $(INCLUDES)
 LDFLAGS := -pthread -no-pie
 
@@ -40,7 +41,8 @@ TESTS := fipc_remote_loopback \
 	futuraway_smoke \
 	futuraway_m2_smoke \
 	futuraway_m2_bench \
-	registry_auth
+	registry_auth \
+	futfs_log_basic
 
 .PHONY: all clean $(TESTS)
 
@@ -53,6 +55,9 @@ $(TESTS): %: $(BIN_DIR)/%
 
 $(LIBFIPC_HOST):
 	@$(MAKE) -C $(ROOT)/host/transport
+
+$(LIBFUTFS):
+	@$(MAKE) -C $(ROOT)/subsystems/futura_fs
 
 $(BIN_DIR)/fipc_remote_loopback: fipc_remote_loopback.c $(LIBFIPC_HOST) | $(BIN_DIR)
 	@echo "CC $@"
@@ -242,6 +247,10 @@ $(BIN_DIR)/registry_auth: registry_auth.c \
 		$(ROOT)/src/user/svc_registryd/registry_server.c \
 		$(ROOT)/src/user/svc_registryd/registry_client.c \
 		$(LIBFIPC_HOST) $(LDFLAGS)
+
+$(BIN_DIR)/futfs_log_basic: futfs_log_basic.c $(LIBFUTFS) | $(BIN_DIR)
+	@echo "CC $@"
+	@$(CC) $(CFLAGS) -o $@ futfs_log_basic.c $(LIBFUTFS) $(LDFLAGS)
 
 # === syswatch smoke helper ===
 $(BIN_DIR)/fipc_syswatch_smoke: fipc_syswatch_smoke.c \

@@ -1,4 +1,4 @@
-# Porting Guide (Updated Oct 2025)
+# Porting Guide (Updated Oct 12 2025)
 
 This guide outlines the current requirements for bringing Futura OS to a new hardware platform. The reference implementation targets x86-64 (QEMU/KVM). Arm64 bring-up has started but is incomplete; use it as inspiration rather than gospel.
 

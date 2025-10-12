@@ -1,4 +1,4 @@
-# Futura OS Architecture (Updated Oct 2025)
+# Futura OS Architecture (Updated Oct 12 2025)
 
 ## High-Level Design
 

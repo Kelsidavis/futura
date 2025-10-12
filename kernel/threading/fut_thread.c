@@ -81,6 +81,10 @@ fut_thread_t *fut_thread_create(
         .irq_frame = NULL,            // No saved interrupt frame initially
         .state = FUT_THREAD_READY,
         .priority = priority,
+        .base_priority = priority,
+        .pi_saved_priority = priority,
+        .pi_boosted = false,
+        .deadline_tick = 0,
         .wake_time = 0,
         .stats = {0},                 // Initialize performance counters to zero
         .next = NULL,
@@ -190,4 +194,54 @@ fut_thread_t *fut_thread_current(void) {
  */
 void fut_thread_set_current(fut_thread_t *thread) {
     current_thread = thread;
+}
+
+fut_thread_t *fut_thread_find(uint64_t tid) {
+    for (fut_thread_t *t = fut_thread_list; t; t = t->next) {
+        if (t->tid == tid) {
+            return t;
+        }
+    }
+    return NULL;
+}
+
+void fut_thread_set_deadline(uint64_t abs_tick) {
+    fut_thread_t *self = fut_thread_current();
+    if (!self) {
+        return;
+    }
+    self->deadline_tick = abs_tick;
+}
+
+uint64_t fut_thread_get_deadline(void) {
+    fut_thread_t *self = fut_thread_current();
+    if (!self) {
+        return 0;
+    }
+    return self->deadline_tick;
+}
+
+int fut_thread_priority_raise(fut_thread_t *thread, int new_priority) {
+    if (!thread) {
+        return -1;
+    }
+    if (new_priority < thread->priority) {
+        return 0;
+    }
+    thread->pi_saved_priority = thread->priority;
+    thread->priority = new_priority;
+    thread->pi_boosted = true;
+    return 0;
+}
+
+int fut_thread_priority_restore(fut_thread_t *thread) {
+    if (!thread) {
+        return -1;
+    }
+    if (!thread->pi_boosted) {
+        return 0;
+    }
+    thread->priority = thread->pi_saved_priority;
+    thread->pi_boosted = false;
+    return 0;
 }

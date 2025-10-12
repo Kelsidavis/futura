@@ -268,10 +268,17 @@ int fut_fipc_channel_create(struct fut_task *sender, struct fut_task *receiver,
     channel->credit_refill = 0;
     channel->credits_enabled = false;
     channel->drops_backpressure = 0;
+    channel->drops_deadline = 0;
+    channel->pi_applied = 0;
+    channel->pi_restored = 0;
     channel->msgs_sent = 0;
     channel->bytes_sent = 0;
     channel->msgs_injected = 0;
     channel->bytes_injected = 0;
+    channel->owner_tid = 0;
+    channel->owner_original_priority = 0;
+    channel->owner_pi_active = false;
+    channel->pi_client_tid = 0;
 
     /* Add to channel list */
     channel->next = channel_list;
@@ -414,8 +421,17 @@ int fut_fipc_send(struct fut_fipc_channel *channel, uint32_t type,
         return FIPC_EINVAL;
     }
 
-    const struct fut_fipc_cap *cap = &channel->cap_ledger;
+    fut_thread_t *self = fut_thread_current();
     uint64_t now = fut_get_ticks();
+    if (self) {
+        uint64_t deadline = fut_thread_get_deadline();
+        if (deadline && now > deadline) {
+            channel->drops_deadline++;
+            return FIPC_EAGAIN;
+        }
+    }
+
+    const struct fut_fipc_cap *cap = &channel->cap_ledger;
     if (cap->rights && !(cap->rights & FIPC_CAP_R_SEND)) {
         return FIPC_EPERM;
     }
@@ -433,6 +449,17 @@ int fut_fipc_send(struct fut_fipc_channel *channel, uint32_t type,
         if (channel->tx_credits == 0) {
             channel->drops_backpressure++;
             return FIPC_EAGAIN;
+        }
+    }
+
+    if (self && channel->owner_tid && channel->owner_tid != self->tid && !channel->owner_pi_active) {
+        fut_thread_t *owner = fut_thread_find(channel->owner_tid);
+        if (owner && self->priority > owner->priority) {
+            channel->owner_original_priority = owner->priority;
+            fut_thread_priority_raise(owner, self->priority);
+            channel->owner_pi_active = true;
+            channel->pi_client_tid = self->tid;
+            channel->pi_applied++;
         }
     }
 
@@ -490,6 +517,14 @@ int fut_fipc_send(struct fut_fipc_channel *channel, uint32_t type,
             }
             channel->msgs_sent++;
             channel->bytes_sent += size;
+            if (channel->owner_pi_active && self && self->tid == channel->owner_tid) {
+                fut_thread_t *owner = fut_thread_find(channel->owner_tid);
+                if (owner) {
+                    fut_thread_priority_restore(owner);
+                }
+                channel->owner_pi_active = false;
+                channel->pi_restored++;
+            }
         }
         fut_free(msg);
         return rc;
@@ -502,6 +537,14 @@ int fut_fipc_send(struct fut_fipc_channel *channel, uint32_t type,
         }
         channel->msgs_sent++;
         channel->bytes_sent += size;
+        if (channel->owner_pi_active && self && self->tid == channel->owner_tid) {
+            fut_thread_t *owner = fut_thread_find(channel->owner_tid);
+            if (owner) {
+                fut_thread_priority_restore(owner);
+            }
+            channel->owner_pi_active = false;
+            channel->pi_restored++;
+        }
     }
     return rc;
 }
@@ -639,6 +682,9 @@ int fut_fipc_publish_kernel_metrics(void) {
     uint64_t bytes_injected = 0;
     uint64_t total_tx_credits = 0;
     uint64_t drops_backpressure = 0;
+    uint64_t drops_deadline = 0;
+    uint64_t pi_applied = 0;
+    uint64_t pi_restored = 0;
 
     for (struct fut_fipc_channel *c = channel_list; c; c = c->next) {
         channel_count++;
@@ -650,6 +696,9 @@ int fut_fipc_publish_kernel_metrics(void) {
             total_tx_credits += c->tx_credits;
         }
         drops_backpressure += c->drops_backpressure;
+        drops_deadline += c->drops_deadline;
+        pi_applied += c->pi_applied;
+        pi_restored += c->pi_restored;
     }
 
     uint64_t pmm_total = fut_pmm_total_pages();
@@ -669,6 +718,9 @@ int fut_fipc_publish_kernel_metrics(void) {
     cursor = fipc_kernel_write_u64(cursor, end, FIPC_SYS_K_FIPC_CHANNELS, channel_count);
     cursor = fipc_kernel_write_u64(cursor, end, FIPC_SYS_K_TX_CREDITS, total_tx_credits);
     cursor = fipc_kernel_write_u64(cursor, end, FIPC_SYS_K_DROPS_BP, drops_backpressure);
+    cursor = fipc_kernel_write_u64(cursor, end, FIPC_SYS_K_DROPS_DEADLINE, drops_deadline);
+    cursor = fipc_kernel_write_u64(cursor, end, FIPC_SYS_K_PI_APPLIED, pi_applied);
+    cursor = fipc_kernel_write_u64(cursor, end, FIPC_SYS_K_PI_RESTORED, pi_restored);
 
     if (cursor >= end) {
         return FIPC_EIO;
@@ -744,6 +796,14 @@ ssize_t fut_fipc_recv(struct fut_fipc_channel *channel, void *buf, size_t buf_si
     if (channel->queue_head == channel->queue_tail) {
         channel->pending = false;
         channel->event_mask &= ~FIPC_EVENT_MESSAGE;
+    }
+
+    fut_thread_t *receiver = fut_thread_current();
+    if (receiver) {
+        channel->owner_tid = receiver->tid;
+        channel->owner_original_priority = receiver->priority;
+        channel->owner_pi_active = false;
+        channel->pi_client_tid = 0;
     }
 
     return (ssize_t)total_size;

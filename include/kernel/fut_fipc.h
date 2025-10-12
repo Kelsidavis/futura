@@ -147,10 +147,18 @@ struct fut_fipc_channel {
     bool credits_enabled;           /* Credits enforced when true */
     uint8_t _pad_credit[3];         /* align */
     uint64_t drops_backpressure;    /* Count of send rejections due to credits */
+    uint64_t drops_deadline;        /* Deadline miss counter */
+    uint64_t pi_applied;            /* Priority inheritance applied count */
+    uint64_t pi_restored;           /* Priority inheritance restored count */
     uint64_t msgs_sent;
     uint64_t bytes_sent;
     uint64_t msgs_injected;
     uint64_t bytes_injected;
+    uint64_t owner_tid;             /* Last thread to receive from channel */
+    int owner_original_priority;    /* Saved priority for restoration */
+    bool owner_pi_active;
+    uint8_t _pad_owner[3];
+    uint64_t pi_client_tid;
     struct fut_fipc_channel *next;  /* Next in channel list */
 };
 

@@ -8,6 +8,7 @@
 #include "../../include/kernel/fut_timer.h"
 #include "../../include/kernel/fut_thread.h"
 #include "../../include/kernel/fut_sched.h"
+#include "../../include/kernel/fut_memory.h"
 #include <stdatomic.h>
 
 /* I/O port access from platform layer */
@@ -35,6 +36,16 @@ static fut_thread_t *sleep_queue_head = nullptr;
 
 /* Sleep queue lock */
 static fut_spinlock_t sleep_lock = { .locked = 0 };
+
+typedef struct fut_timer_event {
+    uint64_t expiry;
+    void (*cb)(void *);
+    void *arg;
+    struct fut_timer_event *next;
+} fut_timer_event_t;
+
+static fut_timer_event_t *timer_events_head = nullptr;
+static fut_spinlock_t timer_events_lock = { .locked = 0 };
 
 /* ============================================================
  *   Sleep Queue Management
@@ -118,6 +129,24 @@ static void wake_sleeping_threads(void) {
     fut_spinlock_release(&sleep_lock);
 }
 
+static void process_timer_events(void) {
+    uint64_t current = atomic_load_explicit(&system_ticks, memory_order_relaxed);
+
+    fut_spinlock_acquire(&timer_events_lock);
+    while (timer_events_head && timer_events_head->expiry <= current) {
+        fut_timer_event_t *ev = timer_events_head;
+        timer_events_head = ev->next;
+
+        fut_spinlock_release(&timer_events_lock);
+        if (ev->cb) {
+            ev->cb(ev->arg);
+        }
+        fut_free(ev);
+        fut_spinlock_acquire(&timer_events_lock);
+    }
+    fut_spinlock_release(&timer_events_lock);
+}
+
 /* ============================================================
  *   Timer Tick Handler
  * ============================================================ */
@@ -134,6 +163,8 @@ void fut_timer_tick(void) {
     // Wake any threads whose sleep time has expired
     wake_sleeping_threads();
 
+    process_timer_events();
+
     // Only trigger preemptive scheduling if the scheduler has been started
     // (i.e., current_thread != NULL). This prevents premature scheduling
     // before the test harness has created any threads.
@@ -143,6 +174,66 @@ void fut_timer_tick(void) {
         // This will call fut_switch_context_irq() if a thread switch is needed
         fut_schedule();
     }
+}
+
+int fut_timer_start(uint64_t ticks_from_now, void (*cb)(void *), void *arg) {
+    if (!cb) {
+        return -1;
+    }
+    if (ticks_from_now == 0) {
+        cb(arg);
+        return 0;
+    }
+
+    fut_timer_event_t *ev = (fut_timer_event_t *)fut_malloc(sizeof(fut_timer_event_t));
+    if (!ev) {
+        return -1;
+    }
+    uint64_t current = atomic_load_explicit(&system_ticks, memory_order_relaxed);
+    ev->expiry = current + ticks_from_now;
+    ev->cb = cb;
+    ev->arg = arg;
+    ev->next = nullptr;
+
+    fut_spinlock_acquire(&timer_events_lock);
+    if (!timer_events_head || ev->expiry < timer_events_head->expiry) {
+        ev->next = timer_events_head;
+        timer_events_head = ev;
+    } else {
+        fut_timer_event_t *curr = timer_events_head;
+        while (curr->next && curr->next->expiry <= ev->expiry) {
+            curr = curr->next;
+        }
+        ev->next = curr->next;
+        curr->next = ev;
+    }
+    fut_spinlock_release(&timer_events_lock);
+    return 0;
+}
+
+int fut_timer_cancel(void (*cb)(void *), void *arg) {
+    if (!cb) {
+        return -1;
+    }
+    fut_spinlock_acquire(&timer_events_lock);
+    fut_timer_event_t *prev = NULL;
+    fut_timer_event_t *curr = timer_events_head;
+    while (curr) {
+        if (curr->cb == cb && curr->arg == arg) {
+            if (prev) {
+                prev->next = curr->next;
+            } else {
+                timer_events_head = curr->next;
+            }
+            fut_spinlock_release(&timer_events_lock);
+            fut_free(curr);
+            return 0;
+        }
+        prev = curr;
+        curr = curr->next;
+    }
+    fut_spinlock_release(&timer_events_lock);
+    return -1;
 }
 
 /**
@@ -192,6 +283,8 @@ void fut_timer_init(void) {
     atomic_store_explicit(&system_ticks, 0, memory_order_relaxed);
     sleep_queue_head = nullptr;
     fut_spinlock_init(&sleep_lock);
+    timer_events_head = nullptr;
+    fut_spinlock_init(&timer_events_lock);
 
     // Program PIT hardware
     pit_init(FUT_TIMER_HZ);

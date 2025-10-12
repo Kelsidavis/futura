@@ -94,3 +94,8 @@
 - Enforcement occurs in both `fut_fipc_send()` and `fut_fipc_channel_inject()`. Rights violations return `FIPC_EPERM`; quota exhaustion maps to `FIPC_ENOSPC`.
 - Counters accumulate per-channel usage (messages/bytes sent/injected) and feed the kernel system metrics publisher so observability reflects real traffic.
 - Kernel metrics now originate from the core IPC code: the system stream reports live PMM totals and channel counts without relying on host shims.
+
+## 14. Timers, Deadlines, and Reply-Chain PI (Phase K3)
+- Host/kernel timers now expose `fut_timer_start()` / `fut_timer_cancel()` so subsystems can register millisecond callbacks without polling.
+- Threads carry an absolute `deadline_tick`; sends past the deadline return `FIPC_EAGAIN` and contribute to the `FIPC_SYS_K_DROPS_DEADLINE` metric.
+- Reply-chain priority inheritance boosts the server thread registered as the channel owner when a higher-priority client issues a request; priorities are restored on reply and surfaced via `FIPC_SYS_K_PI_APPLIED` / `FIPC_SYS_K_PI_RESTORED` counters.

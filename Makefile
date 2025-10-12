@@ -93,9 +93,14 @@ KERNEL_SOURCES := \
     kernel/blockdev/fut_blockdev.c \
     kernel/blockdev/ramdisk.c \
     kernel/fs/futurafs.c \
+    kernel/chrdev.c \
+    kernel/sys_echo.c \
     kernel/rt/memory.c \
     kernel/rt/stack_chk.c \
-    kernel/video/fb_mmio.c
+    kernel/uaccess.c \
+    kernel/tests/echo_smoke.c \
+    kernel/video/fb_mmio.c \
+    drivers/video/fb.c
 
 # Platform-specific sources
 ifeq ($(PLATFORM),x86_64)
@@ -104,6 +109,7 @@ ifeq ($(PLATFORM),x86_64)
         platform/x86_64/gdt_idt.S \
         platform/x86_64/isr_stubs.S \
         platform/x86_64/context_switch.S \
+        platform/x86_64/pmap.c \
         platform/x86_64/paging.c \
         platform/x86_64/platform_init.c
 else ifeq ($(PLATFORM),arm64)

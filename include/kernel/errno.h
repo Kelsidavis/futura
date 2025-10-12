@@ -1,0 +1,104 @@
+// SPDX-License-Identifier: MPL-2.0
+/*
+ * errno.h - Kernel error code definitions
+ *
+ * Centralizes the minimal errno-style constants used across the kernel.  The
+ * values mirror the traditional POSIX assignments so that subsystems sharing
+ * codes (VFS, IPC, drivers) can agree on return values without having to pull
+ * in unrelated headers.  Guard each definition to avoid double-definition
+ * when legacy headers provide the same constant.
+ */
+
+#pragma once
+
+#ifndef EPERM
+#define EPERM       1
+#endif
+
+#ifndef ENOENT
+#define ENOENT      2
+#endif
+
+#ifndef ESRCH
+#define ESRCH       3
+#endif
+
+#ifndef EINTR
+#define EINTR       4
+#endif
+
+#ifndef EIO
+#define EIO         5
+#endif
+
+#ifndef ENXIO
+#define ENXIO       6
+#endif
+
+#ifndef E2BIG
+#define E2BIG       7
+#endif
+
+#ifndef ENOMEM
+#define ENOMEM      12
+#endif
+
+#ifndef EACCES
+#define EACCES      13
+#endif
+
+#ifndef EFAULT
+#define EFAULT      14
+#endif
+
+#ifndef EBUSY
+#define EBUSY       16
+#endif
+
+#ifndef EEXIST
+#define EEXIST      17
+#endif
+
+#ifndef ENODEV
+#define ENODEV      19
+#endif
+
+#ifndef ENOTDIR
+#define ENOTDIR     20
+#endif
+
+#ifndef EISDIR
+#define EISDIR      21
+#endif
+
+#ifndef EINVAL
+#define EINVAL      22
+#endif
+
+#ifndef ENFILE
+#define ENFILE      23
+#endif
+
+#ifndef EMFILE
+#define EMFILE      24
+#endif
+
+#ifndef ENOSPC
+#define ENOSPC      28
+#endif
+
+#ifndef ESPIPE
+#define ESPIPE      29
+#endif
+
+#ifndef EROFS
+#define EROFS       30
+#endif
+
+#ifndef ENOSYS
+#define ENOSYS      38
+#endif
+
+#ifndef ENOTEMPTY
+#define ENOTEMPTY   39
+#endif

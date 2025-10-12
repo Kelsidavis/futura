@@ -23,3 +23,5 @@ struct fut_fb_info {
 
 int fb_probe_from_multiboot(const void *mb_info);
 int fb_get_info(struct fut_fb_info *out);
+void fb_boot_splash(void);
+void fb_char_init(void);

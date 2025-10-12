@@ -20,6 +20,80 @@ static struct fut_fipc_channel *channel_list = NULL;
 static uint64_t next_region_id = 1;
 static uint64_t next_channel_id = 1;
 
+struct fut_fipc_transport_state {
+    const struct fut_fipc_transport_ops *ops;
+    void *context;
+};
+
+static struct fut_fipc_transport_state transport_state = {0};
+
+int fut_fipc_set_transport_ops(const struct fut_fipc_transport_ops *ops, void *context) {
+    if (!ops) {
+        transport_state.ops = NULL;
+        transport_state.context = NULL;
+        return 0;
+    }
+
+    if (!ops->send) {
+        return FIPC_EINVAL;
+    }
+
+    transport_state.ops = ops;
+    transport_state.context = context;
+    return 0;
+}
+
+static int fut_fipc_enqueue_message(struct fut_fipc_channel *channel,
+                                    uint32_t type,
+                                    const void *data,
+                                    size_t size,
+                                    uint32_t src_pid,
+                                    uint32_t dst_pid,
+                                    uint64_t capability) {
+    if (!channel || (!data && size > 0)) {
+        return FIPC_EINVAL;
+    }
+
+    size_t total_size = sizeof(struct fut_fipc_msg) + size;
+
+    size_t queue_used = (channel->queue_head - channel->queue_tail + channel->queue_size) % channel->queue_size;
+    size_t queue_free = channel->queue_size - queue_used - 1;
+
+    if (total_size > queue_free) {
+        if (channel->flags & FIPC_CHANNEL_NONBLOCKING) {
+            return FIPC_EAGAIN;
+        }
+        return FIPC_EBUSY;
+    }
+
+    struct fut_fipc_msg msg_hdr;
+    msg_hdr.type = type;
+    msg_hdr.length = size;
+    msg_hdr.timestamp = fut_get_ticks();
+    msg_hdr.src_pid = src_pid;
+    msg_hdr.dst_pid = dst_pid;
+    msg_hdr.capability = capability;
+
+    uint8_t *queue_buf = (uint8_t *)channel->msg_queue;
+    size_t head = channel->queue_head;
+
+    for (size_t i = 0; i < sizeof(msg_hdr); i++) {
+        queue_buf[head] = ((uint8_t *)&msg_hdr)[i];
+        head = (head + 1) % channel->queue_size;
+    }
+
+    const uint8_t *data_buf = (const uint8_t *)data;
+    for (size_t i = 0; i < size; i++) {
+        queue_buf[head] = data_buf[i];
+        head = (head + 1) % channel->queue_size;
+    }
+
+    channel->queue_head = head;
+    channel->pending = true;
+    channel->event_mask |= FIPC_EVENT_MESSAGE;
+    return 0;
+}
+
 /* ============================================================
  *   FIPC Initialization
  * ============================================================ */
@@ -169,12 +243,49 @@ int fut_fipc_channel_create(struct fut_task *sender, struct fut_task *receiver,
     channel->pending = false;
     channel->event_mask = 0;
     channel->flags = flags;
+    channel->type = FIPC_CHANNEL_LOCAL;
+    channel->capability = 0;
+    channel->remote.node_id = 0;
+    channel->remote.channel_id = 0;
+    channel->remote.mtu = 0;
+    channel->remote.flags = 0;
 
     /* Add to channel list */
     channel->next = channel_list;
     channel_list = channel;
 
     *channel_out = channel;
+    return 0;
+}
+
+struct fut_fipc_channel *fut_fipc_channel_lookup(uint64_t id) {
+    struct fut_fipc_channel *curr = channel_list;
+    while (curr) {
+        if (curr->id == id) {
+            return curr;
+        }
+        curr = curr->next;
+    }
+    return NULL;
+}
+
+int fut_fipc_register_remote(uint64_t channel_id,
+                             const struct fut_fipc_remote_endpoint *remote) {
+    struct fut_fipc_channel *channel = fut_fipc_channel_lookup(channel_id);
+    if (!channel || !remote) {
+        return FIPC_EINVAL;
+    }
+
+    channel->type = FIPC_CHANNEL_REMOTE;
+    channel->remote = *remote;
+    return 0;
+}
+
+int fut_fipc_bind_capability(struct fut_fipc_channel *channel, uint64_t capability) {
+    if (!channel) {
+        return FIPC_EINVAL;
+    }
+    channel->capability = capability;
     return 0;
 }
 
@@ -215,55 +326,63 @@ int fut_fipc_send(struct fut_fipc_channel *channel, uint32_t type,
         return FIPC_EINVAL;
     }
 
-    /* Calculate total message size (header + payload) */
-    size_t total_size = sizeof(struct fut_fipc_msg) + size;
-
-    /* Check if queue has enough space */
-    size_t queue_used = (channel->queue_head - channel->queue_tail + channel->queue_size) % channel->queue_size;
-    size_t queue_free = channel->queue_size - queue_used - 1;
-
-    if (total_size > queue_free) {
-        if (channel->flags & FIPC_CHANNEL_NONBLOCKING) {
-            return FIPC_EAGAIN;
+    if (channel->type == FIPC_CHANNEL_REMOTE) {
+        if (!transport_state.ops || !transport_state.ops->send) {
+            return FIPC_ENOTSUP;
         }
-        /* For blocking channels, would wait here */
-        return FIPC_EBUSY;
+
+        size_t total = sizeof(struct fut_fipc_msg) + size;
+        if (total == 0 || total > UINT32_MAX) {
+            return FIPC_EINVAL;
+        }
+
+        if (channel->remote.mtu && total > channel->remote.mtu) {
+            return FIPC_EINVAL;
+        }
+
+        struct fut_fipc_msg *msg = (struct fut_fipc_msg *)fut_malloc(total);
+        if (!msg) {
+            return FIPC_ENOMEM;
+        }
+
+        msg->type = type;
+        msg->length = (uint32_t)size;
+        msg->timestamp = fut_get_ticks();
+        msg->src_pid = 0;
+        msg->dst_pid = 0;
+        msg->capability = channel->capability;
+
+        uint8_t *dst = msg->payload;
+        const uint8_t *src = (const uint8_t *)data;
+        for (size_t i = 0; i < size; i++) {
+            dst[i] = src[i];
+        }
+
+        struct fut_fipc_net_hdr net_hdr;
+        net_hdr.channel_id = channel->remote.channel_id ? channel->remote.channel_id : channel->id;
+        net_hdr.payload_len = (uint32_t)total;
+        net_hdr.crc = 0;
+
+        int rc = transport_state.ops->send(&channel->remote,
+                                           &net_hdr,
+                                           (const uint8_t *)msg,
+                                           total,
+                                           transport_state.context);
+        fut_free(msg);
+        return rc;
     }
 
-    /* Build message header */
-    struct fut_fipc_msg msg_hdr;
-    msg_hdr.type = type;
-    msg_hdr.length = size;
-    msg_hdr.timestamp = fut_get_ticks();
-    msg_hdr.src_pid = 0;        /* Phase 3: Should be sender task ID */
-    msg_hdr.dst_pid = 0;        /* Phase 3: Should be receiver task ID */
-    msg_hdr.capability = 0;     /* Phase 4: Security capability token */
+    return fut_fipc_enqueue_message(channel, type, data, size, 0, 0, channel->capability);
+}
 
-    /* Copy header to queue */
-    uint8_t *queue_buf = (uint8_t *)channel->msg_queue;
-    size_t head = channel->queue_head;
-
-    /* Copy header */
-    for (size_t i = 0; i < sizeof(msg_hdr); i++) {
-        queue_buf[head] = ((uint8_t *)&msg_hdr)[i];
-        head = (head + 1) % channel->queue_size;
-    }
-
-    /* Copy payload */
-    const uint8_t *data_buf = (const uint8_t *)data;
-    for (size_t i = 0; i < size; i++) {
-        queue_buf[head] = data_buf[i];
-        head = (head + 1) % channel->queue_size;
-    }
-
-    /* Update queue head */
-    channel->queue_head = head;
-
-    /* Set pending flag */
-    channel->pending = true;
-    channel->event_mask |= FIPC_EVENT_MESSAGE;
-
-    return 0;
+int fut_fipc_channel_inject(struct fut_fipc_channel *channel,
+                            uint32_t type,
+                            const void *data,
+                            size_t size,
+                            uint32_t src_pid,
+                            uint32_t dst_pid,
+                            uint64_t capability) {
+    return fut_fipc_enqueue_message(channel, type, data, size, src_pid, dst_pid, capability);
 }
 
 ssize_t fut_fipc_recv(struct fut_fipc_channel *channel, void *buf, size_t buf_size) {

@@ -60,6 +60,41 @@ struct fut_fipc_region {
  * FIPC event channel.
  * Allows processes to send asynchronous events and messages.
  */
+enum fut_fipc_channel_type {
+    FIPC_CHANNEL_LOCAL = 0,
+    FIPC_CHANNEL_REMOTE = 1,
+    FIPC_CHANNEL_SYSTEM = 2
+};
+
+struct fut_fipc_remote_endpoint {
+    uint64_t node_id;
+    uint64_t channel_id;
+    uint32_t mtu;
+    uint32_t flags;
+};
+
+/**
+ * Header framing for remote FIPC transport packets.
+ * Serialized ahead of the canonical fut_fipc_msg payload.
+ */
+struct fut_fipc_net_hdr {
+    uint64_t channel_id;             /* Destination channel identifier */
+    uint32_t payload_len;            /* Serialized fut_fipc_msg length */
+    uint32_t crc;                    /* CRC32 of payload (Ackermann) */
+};
+
+/**
+ * Remote transport backend hooks supplied by networking stack.
+ * Implementations must provide a send function that emits framed packets.
+ */
+struct fut_fipc_transport_ops {
+    int (*send)(const struct fut_fipc_remote_endpoint *remote,
+                const struct fut_fipc_net_hdr *hdr,
+                const uint8_t *payload,
+                size_t payload_len,
+                void *context);
+};
+
 struct fut_fipc_channel {
     uint64_t id;                    /* Unique channel ID */
 
@@ -78,6 +113,9 @@ struct fut_fipc_channel {
     uint32_t event_mask;            /* Event type mask */
 
     uint32_t flags;                 /* Channel flags */
+    enum fut_fipc_channel_type type;/* Transport classification */
+    uint64_t capability;            /* Capability token */
+    struct fut_fipc_remote_endpoint remote; /* Remote metadata */
     struct fut_fipc_channel *next;  /* Next in channel list */
 };
 
@@ -178,6 +216,19 @@ int fut_fipc_channel_create(struct fut_task *sender, struct fut_task *receiver,
                              size_t queue_size, uint32_t flags,
                              struct fut_fipc_channel **channel_out);
 
+struct fut_fipc_channel *fut_fipc_channel_lookup(uint64_t id);
+int fut_fipc_register_remote(uint64_t channel_id,
+                             const struct fut_fipc_remote_endpoint *remote);
+int fut_fipc_bind_capability(struct fut_fipc_channel *channel, uint64_t capability);
+int fut_fipc_channel_inject(struct fut_fipc_channel *channel,
+                            uint32_t type,
+                            const void *data,
+                            size_t size,
+                            uint32_t src_pid,
+                            uint32_t dst_pid,
+                            uint64_t capability);
+int fut_fipc_set_transport_ops(const struct fut_fipc_transport_ops *ops, void *context);
+
 /**
  * Destroy an event channel.
  *
@@ -258,3 +309,4 @@ struct fut_surface {
 #define FIPC_EBUSY      (-16)       /* Resource busy */
 #define FIPC_EAGAIN     (-11)       /* Try again */
 #define FIPC_EPIPE      (-32)       /* Broken pipe */
+#define FIPC_ENOTSUP    (-95)       /* Operation not supported */

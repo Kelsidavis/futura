@@ -62,6 +62,7 @@ typedef int32_t pid_t;
 #define POSIXD_MSG_RMDIR      0x3014
 #define POSIXD_MSG_CHDIR      0x3015
 #define POSIXD_MSG_GETCWD     0x3016
+#define POSIXD_MSG_UNLINK     0x3017
 
 /* Process management */
 #define POSIXD_MSG_FORK       0x3020
@@ -178,7 +179,8 @@ struct posixd_opendir_req {
 };
 
 struct posixd_opendir_resp {
-    int64_t dir_handle;  /* Directory handle, or -errno */
+    int result;          /* 0 on success, -errno on error */
+    int64_t dir_handle;  /* Directory handle */
 };
 
 struct posixd_readdir_req {
@@ -211,6 +213,14 @@ struct posixd_mkdir_req {
 };
 
 struct posixd_mkdir_resp {
+    int result;
+};
+
+struct posixd_unlink_req {
+    char path[POSIX_PATH_MAX];
+};
+
+struct posixd_unlink_resp {
     int result;
 };
 

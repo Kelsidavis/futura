@@ -11,11 +11,11 @@
 #include <kernel/fut_fipc.h>
 #include <user/futura_posix.h>
 #include <user/libfutura.h>
+#include <stdlib.h>
 
 /* Connection to posixd daemon */
 static struct fut_fipc_channel *posixd_channel = NULL;
 
-/* Temporary directory handle placeholder */
 struct fut_dir {
     int64_t handle;
 };
@@ -25,7 +25,9 @@ struct fut_dir {
  */
 int posix_init(void) {
     /* Phase 3: Connect to posixd via FIPC */
-    /* posixd_channel = fipc_connect("posixd"); */
+    if (!posixd_channel) {
+        posixd_channel = fipc_connect("posixd");
+    }
     return posixd_channel ? 0 : -1;
 }
 
@@ -34,7 +36,12 @@ int posix_init(void) {
  */
 int open(const char *path, int flags, ...) {
     if (!posixd_channel || !path) {
-        return -1;
+        if (posix_init() < 0) {
+            return -1;
+        }
+        if (!posixd_channel) {
+            return -1;
+        }
     }
 
     /* Build request */
@@ -76,7 +83,7 @@ int open(const char *path, int flags, ...) {
  * Close a file descriptor.
  */
 int close(int fd) {
-    if (!posixd_channel) {
+    if (!posixd_channel && posix_init() < 0) {
         return -1;
     }
 
@@ -94,7 +101,7 @@ int close(int fd) {
  * Read from file descriptor.
  */
 ssize_t read(int fd, void *buf, size_t count) {
-    if (!posixd_channel || !buf) {
+    if ((!posixd_channel && posix_init() < 0) || !buf) {
         return -1;
     }
 
@@ -142,7 +149,7 @@ ssize_t read(int fd, void *buf, size_t count) {
  * Write to file descriptor.
  */
 ssize_t write(int fd, const void *buf, size_t count) {
-    if (!posixd_channel || !buf) {
+    if ((!posixd_channel && posix_init() < 0) || !buf) {
         return -1;
     }
 
@@ -183,35 +190,193 @@ ssize_t write(int fd, const void *buf, size_t count) {
 }
 
 int unlink(const char *path) {
-    (void)path;
-    return -1;
+    if ((!posixd_channel && posix_init() < 0) || !path) {
+        return -1;
+    }
+
+    struct posixd_unlink_req req;
+    size_t i;
+    for (i = 0; i < POSIX_PATH_MAX - 1 && path[i]; i++) {
+        req.path[i] = path[i];
+    }
+    req.path[i] = '\0';
+
+    int ret = fut_fipc_send(posixd_channel, POSIXD_MSG_UNLINK, &req, sizeof(req));
+    if (ret < 0) {
+        return ret;
+    }
+
+    uint8_t resp_buffer[256];
+    ssize_t recv_ret = fut_fipc_recv(posixd_channel, resp_buffer, sizeof(resp_buffer));
+    if (recv_ret < 0) {
+        return (int)recv_ret;
+    }
+
+    struct fut_fipc_msg *resp_msg = (struct fut_fipc_msg *)resp_buffer;
+    struct posixd_unlink_resp *resp = (struct posixd_unlink_resp *)resp_msg->payload;
+    return resp->result;
 }
 
 int mkdir(const char *path, mode_t mode) {
-    (void)path;
-    (void)mode;
-    return -1;
+    if ((!posixd_channel && posix_init() < 0) || !path) {
+        return -1;
+    }
+
+    struct posixd_mkdir_req req;
+    size_t i;
+    for (i = 0; i < POSIX_PATH_MAX - 1 && path[i]; i++) {
+        req.path[i] = path[i];
+    }
+    req.path[i] = '\0';
+    req.mode = mode;
+
+    int ret = fut_fipc_send(posixd_channel, POSIXD_MSG_MKDIR, &req, sizeof(req));
+    if (ret < 0) {
+        return ret;
+    }
+
+    uint8_t resp_buffer[256];
+    ssize_t recv_ret = fut_fipc_recv(posixd_channel, resp_buffer, sizeof(resp_buffer));
+    if (recv_ret < 0) {
+        return (int)recv_ret;
+    }
+
+    struct fut_fipc_msg *resp_msg = (struct fut_fipc_msg *)resp_buffer;
+    struct posixd_mkdir_resp *resp = (struct posixd_mkdir_resp *)resp_msg->payload;
+    return resp->result;
 }
 
 int rmdir(const char *path) {
-    (void)path;
-    return -1;
+    if ((!posixd_channel && posix_init() < 0) || !path) {
+        return -1;
+    }
+
+    struct posixd_unlink_req req;
+    size_t i;
+    for (i = 0; i < POSIX_PATH_MAX - 1 && path[i]; i++) {
+        req.path[i] = path[i];
+    }
+    req.path[i] = '\0';
+
+    int ret = fut_fipc_send(posixd_channel, POSIXD_MSG_RMDIR, &req, sizeof(req));
+    if (ret < 0) {
+        return ret;
+    }
+
+    uint8_t resp_buffer[256];
+    ssize_t recv_ret = fut_fipc_recv(posixd_channel, resp_buffer, sizeof(resp_buffer));
+    if (recv_ret < 0) {
+        return (int)recv_ret;
+    }
+
+    struct fut_fipc_msg *resp_msg = (struct fut_fipc_msg *)resp_buffer;
+    struct posixd_unlink_resp *resp = (struct posixd_unlink_resp *)resp_msg->payload;
+    return resp->result;
 }
 
 fut_dir_t *opendir(const char *path) {
-    (void)path;
-    return NULL;
+    if ((!posixd_channel && posix_init() < 0) || !path) {
+        return NULL;
+    }
+
+    struct posixd_opendir_req req;
+    size_t i;
+    for (i = 0; i < POSIX_PATH_MAX - 1 && path[i]; i++) {
+        req.path[i] = path[i];
+    }
+    req.path[i] = '\0';
+
+    int ret = fut_fipc_send(posixd_channel, POSIXD_MSG_OPENDIR, &req, sizeof(req));
+    if (ret < 0) {
+        return NULL;
+    }
+
+    uint8_t resp_buffer[256];
+    ssize_t recv_ret = fut_fipc_recv(posixd_channel, resp_buffer, sizeof(resp_buffer));
+    if (recv_ret < 0) {
+        return NULL;
+    }
+
+    struct fut_fipc_msg *resp_msg = (struct fut_fipc_msg *)resp_buffer;
+    struct posixd_opendir_resp *resp = (struct posixd_opendir_resp *)resp_msg->payload;
+    if (resp->result < 0 || resp->dir_handle < 0) {
+        return NULL;
+    }
+
+    fut_dir_t *dir = malloc(sizeof(*dir));
+    if (!dir) {
+        struct posixd_closedir_req creq = { .dir_handle = resp->dir_handle };
+        fut_fipc_send(posixd_channel, POSIXD_MSG_CLOSEDIR, &creq, sizeof(creq));
+        return NULL;
+    }
+    dir->handle = resp->dir_handle;
+    return dir;
 }
 
 int closedir(fut_dir_t *dir) {
-    (void)dir;
-    return -1;
+    if (!dir || (!posixd_channel && posix_init() < 0)) {
+        return -1;
+    }
+
+    struct posixd_closedir_req req = { .dir_handle = dir->handle };
+    int ret = fut_fipc_send(posixd_channel, POSIXD_MSG_CLOSEDIR, &req, sizeof(req));
+    if (ret < 0) {
+        return ret;
+    }
+
+    uint8_t resp_buffer[256];
+    ssize_t recv_ret = fut_fipc_recv(posixd_channel, resp_buffer, sizeof(resp_buffer));
+    if (recv_ret < 0) {
+        return (int)recv_ret;
+    }
+
+    struct fut_fipc_msg *resp_msg = (struct fut_fipc_msg *)resp_buffer;
+    struct posixd_closedir_resp *resp = (struct posixd_closedir_resp *)resp_msg->payload;
+    free(dir);
+    return resp->result;
 }
 
 int readdir(fut_dir_t *dir, struct fut_dirent *entry) {
-    (void)dir;
-    (void)entry;
-    return -1;
+    if (!dir || !entry || (!posixd_channel && posix_init() < 0)) {
+        return -1;
+    }
+
+    struct posixd_readdir_req req = { .dir_handle = dir->handle };
+    entry->d_name[0] = '\0';
+    int ret = fut_fipc_send(posixd_channel, POSIXD_MSG_READDIR, &req, sizeof(req));
+    if (ret < 0) {
+        return ret;
+    }
+
+    uint8_t resp_buffer[sizeof(struct fut_fipc_msg) + sizeof(struct posixd_readdir_resp)] = {0};
+    ssize_t recv_ret = fut_fipc_recv(posixd_channel, resp_buffer, sizeof(resp_buffer));
+    if (recv_ret < 0) {
+        return (int)recv_ret;
+    }
+
+    struct fut_fipc_msg *resp_msg = (struct fut_fipc_msg *)resp_buffer;
+    struct posixd_readdir_resp *resp = (struct posixd_readdir_resp *)resp_msg->payload;
+    if (resp->result < 0) {
+        return resp->result;
+    }
+
+    if (!resp->has_entry) {
+        return 0; /* End of directory */
+    }
+
+    entry->d_ino = resp->entry.d_ino;
+    entry->d_off = resp->entry.d_off;
+    entry->d_reclen = resp->entry.d_reclen;
+    entry->d_type = resp->entry.d_type;
+
+    size_t name_len = 0;
+    while (name_len < POSIX_NAME_MAX && resp->entry.d_name[name_len]) {
+        entry->d_name[name_len] = resp->entry.d_name[name_len];
+        name_len++;
+    }
+    entry->d_name[name_len] = '\0';
+
+    return 1;
 }
 
 /**

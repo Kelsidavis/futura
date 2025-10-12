@@ -38,7 +38,9 @@
 #define SYS_dup2        33
 #define SYS_fork        57
 #define SYS_execve      59
+#ifndef SYS_exit
 #define SYS_exit        60
+#endif
 #define SYS_wait4       61
 #define SYS_kill        62
 #define SYS_getpid      39
@@ -60,7 +62,11 @@
 #define SYS_getgid      104
 #define SYS_gettimeofday 96
 
-#define MAX_SYSCALL     256
+#ifndef SYS_time_millis
+#define SYS_time_millis  400
+#endif
+
+#define MAX_SYSCALL     512
 
 /* ============================================================
  *   Syscall Handler Type
@@ -71,6 +77,9 @@ typedef int64_t (*syscall_handler_t)(uint64_t arg1, uint64_t arg2,
                                       uint64_t arg5, uint64_t arg6);
 
 extern ssize_t sys_echo(const char *u_in, char *u_out, size_t n);
+extern long sys_exit(int status);
+extern long sys_waitpid(int pid, int *u_status, int flags);
+extern long sys_time_millis(void);
 
 static int64_t sys_echo_handler(uint64_t arg1, uint64_t arg2, uint64_t arg3,
                                 uint64_t arg4, uint64_t arg5, uint64_t arg6) {
@@ -220,14 +229,20 @@ static int64_t sys_execve_handler(uint64_t pathname, uint64_t argv, uint64_t env
 static int64_t sys_exit_handler(uint64_t status, uint64_t arg2, uint64_t arg3,
                                  uint64_t arg4, uint64_t arg5, uint64_t arg6) {
     (void)arg2; (void)arg3; (void)arg4; (void)arg5; (void)arg6;
-    posix_exit((int)status);
-    return 0;  /* Never reached */
+    sys_exit((int)status);
+    return 0;
 }
 
 static int64_t sys_wait4_handler(uint64_t pid, uint64_t status, uint64_t options,
                                    uint64_t rusage, uint64_t arg5, uint64_t arg6) {
-    (void)pid; (void)options; (void)rusage; (void)arg5; (void)arg6;
-    return (int64_t)posix_wait((int *)status);
+    (void)rusage; (void)arg5; (void)arg6;
+    return (int64_t)sys_waitpid((int)pid, (int *)(uintptr_t)status, (int)options);
+}
+
+static int64_t sys_time_millis_handler(uint64_t arg1, uint64_t arg2, uint64_t arg3,
+                                       uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg1; (void)arg2; (void)arg3; (void)arg4; (void)arg5; (void)arg6;
+    return sys_time_millis();
 }
 
 /* Memory management */
@@ -264,6 +279,7 @@ static syscall_handler_t syscall_table[MAX_SYSCALL] = {
     [SYS_echo]       = sys_echo_handler,
     [SYS_ioctl]      = sys_ioctl_handler,
     [SYS_mmap]       = sys_mmap_handler,
+    [SYS_time_millis] = sys_time_millis_handler,
 };
 
 /* ============================================================

@@ -10,6 +10,10 @@
 
 #include <stdint.h>
 
+/* Assembly helpers implemented in context_switch.S */
+uint64_t fut_get_rsp(void);
+uint64_t fut_get_rbp(void);
+
 /* ============================================================
  *   Interrupt Frame Structure
  * ============================================================ */
@@ -39,23 +43,24 @@ typedef struct fut_interrupt_frame {
     uint64_t ds;
 
     /* General purpose registers (pushed by ISR) */
-    uint64_t r15;
-    uint64_t r14;
-    uint64_t r13;
-    uint64_t r12;
-    uint64_t r11;
-    uint64_t r10;
-    uint64_t r9;
-    uint64_t r8;
-    uint64_t rbp;
-    uint64_t rdi;
-    uint64_t rsi;
-    uint64_t rdx;
-    uint64_t rcx;
-    uint64_t rbx;
     uint64_t rax;
+    uint64_t rbx;
+    uint64_t rcx;
+    uint64_t rdx;
+    uint64_t rsi;
+    uint64_t rdi;
+    uint64_t rbp;
+    uint64_t r8;
+    uint64_t r9;
+    uint64_t r10;
+    uint64_t r11;
+    uint64_t r12;
+    uint64_t r13;
+    uint64_t r14;
+    uint64_t r15;
 
-    /* Error code (pushed by CPU for some exceptions, or stub pushes 0) */
+    /* Vector number and error code (pushed by ISR macro/CPU) */
+    uint64_t vector;
     uint64_t error_code;
 
     /* CPU-pushed values (always present) */
@@ -68,7 +73,7 @@ typedef struct fut_interrupt_frame {
     uint64_t ss;
 } __attribute__((packed)) fut_interrupt_frame_t;
 
-static_assert(sizeof(fut_interrupt_frame_t) == 200, "Interrupt frame must be 200 bytes");
+static_assert(sizeof(fut_interrupt_frame_t) == 208, "Interrupt frame must be 208 bytes");
 
 /* ============================================================
  *   CPU Context Structure (for context switching)

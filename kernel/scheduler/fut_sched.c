@@ -7,8 +7,11 @@
 
 #include "../../include/kernel/fut_sched.h"
 #include "../../include/kernel/fut_task.h"
+#include "../../include/kernel/fut_mm.h"
 #include "../../include/kernel/fut_memory.h"
 #include "../../include/kernel/fut_stats.h"
+#include <arch/x86_64/gdt.h>
+#include <stdint.h>
 #include <stdatomic.h>
 
 /* External context switch from platform/x86_64/context_switch.S */
@@ -224,6 +227,11 @@ void fut_schedule(void) {
     next->state = FUT_THREAD_RUNNING;
     fut_thread_set_current(next);
 
+    if (next->stack_base && next->stack_size) {
+        uintptr_t stack_top = (uintptr_t)next->stack_base + next->stack_size;
+        fut_tss_set_kernel_stack(stack_top);
+    }
+
     // Record context switch for performance instrumentation
     fut_stats_record_switch(prev, next);
 
@@ -234,16 +242,19 @@ void fut_schedule(void) {
         // Check if we're in interrupt context
         bool in_irq = atomic_load_explicit(&fut_in_interrupt, memory_order_acquire);
 
+        fut_mm_t *prev_mm = (prev && prev->task) ? fut_task_get_mm(prev->task) : NULL;
+        fut_mm_t *next_mm = (next && next->task) ? fut_task_get_mm(next->task) : NULL;
+
+        if (prev_mm != next_mm) {
+            fut_mm_switch(next_mm);
+        }
+
         if (in_irq && prev) {
             // IRQ-safe context switch (uses IRET)
             // NOTE: Only valid when switching between threads, not from kernel to first thread
             // Cannot use serial_puts/fut_printf from IRQ context (not reentrant)
 
             // Placeholder for page table switch
-            if (prev && next && prev->task != next->task) {
-                // Future: load_page_table(next->task->page_table_root);
-            }
-
             // Perform IRQ-safe context switch
             fut_switch_context_irq(prev, next, fut_current_frame);
 
@@ -258,10 +269,6 @@ void fut_schedule(void) {
             }
 
             // Placeholder for page table switch
-            if (prev && next && prev->task != next->task) {
-                // Future: load_page_table(next->task->page_table_root);
-            }
-
             // Perform regular context switch
             serial_puts("[SCHED] About to call fut_switch_context\n");
             if (prev) {

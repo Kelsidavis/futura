@@ -18,5 +18,11 @@ typedef long ssize_t;
 #endif
 
 #define SYS_echo 42u
+#define SYS_exit 60u
+#define SYS_waitpid 61u
+#define SYS_time_millis 400u
 
 ssize_t sys_echo(const char *u_in, char *u_out, size_t n);
+long sys_exit(int status);
+long sys_waitpid(int pid, int *u_status, int flags);
+long sys_time_millis(void);

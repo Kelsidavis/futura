@@ -111,6 +111,11 @@ void fut_heap_init(uintptr_t heap_start, uintptr_t heap_end) {
  * This reduces fragmentation by returning excess space to the free list.
  */
 static void split_block(block_hdr_t *block, size_t size) {
+    /* Only split when there is enough space for a new header and payload. */
+    if (block->size <= size + sizeof(block_hdr_t)) {
+        return;
+    }
+
     const size_t remain = block->size - size - sizeof(block_hdr_t);
 
     // Only split if remainder is large enough to be useful

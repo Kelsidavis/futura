@@ -625,6 +625,7 @@ int fut_futurafs_format(struct fut_blockdev *dev, const char *label, uint32_t in
     if (ret < 0) {
         return ret;
     }
+    fut_printf("[FUTURAFS-FMT] Superblock written\n");
 
     /* Initialize inode table (all zeros) */
     uint8_t zero_block[FUTURAFS_BLOCK_SIZE] = {0};
@@ -634,6 +635,8 @@ int fut_futurafs_format(struct fut_blockdev *dev, const char *label, uint32_t in
             return FUTURAFS_EIO;
         }
     }
+    fut_printf("[FUTURAFS-FMT] Inode table zeroed (%llu blocks)\n",
+               (unsigned long long)inode_table_blocks);
 
     /* Create root inode */
     struct futurafs_inode root_inode = {0};
@@ -650,6 +653,7 @@ int fut_futurafs_format(struct fut_blockdev *dev, const char *label, uint32_t in
     if (ret < 0) {
         return FUTURAFS_EIO;
     }
+    fut_printf("[FUTURAFS-FMT] Root inode written\n");
 
     /* Initialize inode bitmap (mark root inode as allocated) */
     size_t inode_bitmap_size = (total_inodes + 7) / 8;
@@ -669,6 +673,7 @@ int fut_futurafs_format(struct fut_blockdev *dev, const char *label, uint32_t in
     if (ret < 0) {
         return FUTURAFS_EIO;
     }
+    fut_printf("[FUTURAFS-FMT] Inode bitmap initialized (%zu bytes)\n", inode_bitmap_size);
 
     /* Initialize data bitmap (all free) */
     size_t data_bitmap_size = ((total_blocks - data_blocks_start) + 7) / 8;
@@ -687,6 +692,7 @@ int fut_futurafs_format(struct fut_blockdev *dev, const char *label, uint32_t in
     if (ret < 0) {
         return FUTURAFS_EIO;
     }
+    fut_printf("[FUTURAFS-FMT] Data bitmap initialized (%zu bytes)\n", data_bitmap_size);
 
     return 0;
 }

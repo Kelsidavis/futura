@@ -8,6 +8,7 @@
 #include <stdint.h>
 #include <stddef.h>
 #include <stdarg.h>
+#include <arch/x86_64/paging.h>
 
 /* Serial port definitions for debugging */
 #define SERIAL_PORT_COM1 0x3F8
@@ -525,6 +526,10 @@ void fut_platform_init(uint32_t multiboot_magic __attribute__((unused)),
     /* Load GDT */
     fut_serial_puts("[INIT] Loading GDT...\n");
     fut_gdt_load();
+
+    /* Initialize paging structures */
+    fut_serial_puts("[INIT] Initializing paging...\n");
+    fut_paging_init();
 
     /* Initialize and load IDT */
     fut_serial_puts("[INIT] Initializing IDT...\n");

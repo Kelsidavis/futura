@@ -2,7 +2,7 @@
 **Project:** Futura OS — Phase 4  
 **Author:** Codex Agent  
 **Date:** April 2025  
-**Status:** Draft Implementation (netd prototype live, registry caching active)  
+**Status:** Authenticated Prototype (netd, registry signing, control-channel auth live)  
 **License:** MPL 2.0
 
 ---
@@ -27,17 +27,19 @@
 
 ---
 
-## 3. Service Discovery & Registry
-- `svc_registryd` accepts CLI flags (`--service`, `--remote`) to publish name → channel bindings and optional remote endpoints.
-- `libfutura` caches registry entries with `fipc_register_remote_service()` so clients can resolve handles without synchronous IPC.
-- Future work: expose an FIPC control channel so registry updates propagate dynamically instead of via command-line bootstrap.
+## 3. Service Discovery & Registry (Signed)
+- `svc_registryd` still consumes CLI bootstrap arguments but now requires every datagram to carry an HMAC-SHA256 signature over the service name, timestamp, and nonce. Requests without a valid signature return `SRG_ERR_AUTH`.
+- The daemon tracks current and previous keys. During a rotation the previous key remains valid until the configured grace window expires, allowing staggered clients to reconnect without interruption.
+- A nonce cache (64 entries) prevents replay within the timestamp tolerance window; timestamps outside ±5 minutes are rejected.
+- `libfutura` and the test harness use `registry_client_set_keys()` to supply the active/previous secrets. Lookups and registrations are signed automatically and retried with the previous key when necessary.
+- Future work: expose an FIPC registry control channel so initd can distribute and rotate secrets dynamically instead of relying on CLI bootstrap.
 
 ---
 
 ## 4. Security & Capability Ledger
-- Capability tokens remain the primary guard. A remote message is accepted only when the destination channel has an identical capability bound.
-- CRC32 ensures accidental corruption is detected; intentional tampering requires cryptographic transport (WireGuard planned for Phase 5).
-- `netd` never mutates channel metadata—only the kernel may transition a channel between local/remote/system types.
+- Capability tokens remain the primary guard. Remote messages are accepted only when the destination channel has an identical capability bound, and the binding itself is now authorised via the admin control channel using a shared token plus HMAC over the lease parameters.
+- CRC32 ensures accidental corruption is detected; intentional tampering still motivates a future encrypted transport, but both the control plane and the registry are already authenticated via shared secrets.
+- `netd` never mutates channel metadata—only the kernel may transition a channel between local/remote/system types. Admin operations (`cap_bind`, `cap_revoke`, `set_rate`) are signed and verified in `fut_fipc_admin_handle()` before the ledger is updated.
 
 ---
 
@@ -49,16 +51,18 @@
 
 ## 6. Testing Strategy
 - `make tests/fipc_remote_loopback` + `./build/tests/fipc_remote_loopback --net=127.0.0.1:49500` validates the end-to-end path (CRC + latency < 1 ms expectation).
+- `./build/tests/fipc_admin_ops` exercises the control-channel token + HMAC bindings: missing token, wrong token, and incorrect HMAC must all fail before a signed bind succeeds.
+- `./build/tests/registry_auth` spins up `svc_registryd`, proves that unsigned lookups are rejected, rotates keys, and confirms the grace window behaviour for the previous key.
 - CI should launch two instances with different UDP ports to exercise asymmetric latency and capability mismatches (TODO).
 - Host fuzzers can target the UDP frame parser inside netd to ensure malformed packets are ignored deterministically.
 
 ---
 
 ## 7. Next Steps
-1. Add WireGuard-backed transport module so netd can multiplex secure tunnels alongside raw UDP.
-2. Promote registry cache into an FIPC service (registry channel) instead of CLI flags.
+1. Add WireGuard-backed transport module so netd can multiplex secure tunnels alongside the current HMAC-protected UDP path.
+2. Promote registry caching into an FIPC service managed by initd so secrets can rotate without CLI orchestration.
 3. Teach netd to manage multiple sockets (multi-homing) and maintain per-peer statistics for observability.
-4. Integrate remote transport into initd boot sequencing (spawn netd + svc_registryd automatically when remote services enabled).
+4. Integrate remote transport into initd boot sequencing (spawn netd + svc_registryd automatically and provision secrets via the control channel).
 
 ---
 

@@ -38,6 +38,8 @@ TESTS := fipc_remote_loopback \
 	fipc_batch_recv \
 	fipc_big_send_stage \
 	futuraway_smoke \
+	futuraway_m2_smoke \
+	futuraway_m2_bench \
 	registry_auth
 
 .PHONY: all clean $(TESTS)
@@ -201,17 +203,34 @@ $(BIN_DIR)/fipc_big_send_stage: fipc_big_send_stage.c $(LIBFIPC_HOST) | $(BIN_DI
 	@echo "CC $@"
 	@$(CC) $(CFLAGS) -o $@ fipc_big_send_stage.c $(LIBFIPC_HOST) $(LDFLAGS)
 
-FUTURAWAY_SMOKE_SRCS := futuraway_smoke.c \
+FUTURAWAY_COMMON_SRCS := \
 	$(ROOT)/src/user/futurawayd/futurawayd.c \
 	$(ROOT)/src/user/futurawayd/fb_host.c \
-	$(ROOT)/src/user/futurawayd/fw_demo.c \
 	$(ROOT)/src/user/sys/fipc_sys_pub_futuraway.c \
 	$(ROOT)/src/user/svc_registryd/registry_server.c \
 	$(ROOT)/src/user/svc_registryd/registry_client.c
 
+FUTURAWAY_SMOKE_SRCS := futuraway_smoke.c \
+	$(ROOT)/src/user/futurawayd/fw_demo.c \
+	$(FUTURAWAY_COMMON_SRCS)
+
 $(BIN_DIR)/futuraway_smoke: $(FUTURAWAY_SMOKE_SRCS) $(LIBFIPC_HOST) | $(BIN_DIR)
 	@echo "CC $@"
 	@$(CC) $(CFLAGS) -o $@ $(FUTURAWAY_SMOKE_SRCS) $(LIBFIPC_HOST) $(LDFLAGS)
+
+FUTURAWAY_M2_SMOKE_SRCS := futuraway_m2_smoke.c \
+	$(ROOT)/src/user/futurawayd/fw_demo.c \
+	$(FUTURAWAY_COMMON_SRCS)
+
+$(BIN_DIR)/futuraway_m2_smoke: $(FUTURAWAY_M2_SMOKE_SRCS) $(LIBFIPC_HOST) | $(BIN_DIR)
+	@echo "CC $@"
+	@$(CC) $(CFLAGS) -o $@ $(FUTURAWAY_M2_SMOKE_SRCS) $(LIBFIPC_HOST) $(LDFLAGS)
+
+FUTURAWAY_M2_BENCH_SRCS := futuraway_m2_bench.c
+
+$(BIN_DIR)/futuraway_m2_bench: $(FUTURAWAY_M2_BENCH_SRCS) $(LIBFIPC_HOST) | $(BIN_DIR)
+	@echo "CC $@"
+	@$(CC) $(CFLAGS) -o $@ $(FUTURAWAY_M2_BENCH_SRCS) $(LIBFIPC_HOST) $(LDFLAGS)
 
 $(BIN_DIR)/registry_auth: registry_auth.c \
 	$(ROOT)/src/user/svc_registryd/registry_server.c \

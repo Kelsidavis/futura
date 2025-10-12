@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MPL-2.0
-// futuraway_smoke.c - Validate Futuraway M1 compositor rendering
+// futuraway_m2_smoke.c - Multi-surface Futuraway smoke test
 
 #define _POSIX_C_SOURCE 200809L
 
@@ -24,9 +24,9 @@
 #include "../src/user/sys/fipc_idlv0_codegen.h"
 #include "../src/user/sys/fipc_sys.h"
 
-#define FWAY_SMOKE_SERVICE "futurawayd"
-#define FWAY_SMOKE_REG_PORT 27991
-#define FWAY_DUMP_PATH "build/artifacts/futuraway_fb_000.ppm"
+#define FWAY_M2_SERVICE "futurawayd"
+#define FWAY_M2_REG_PORT 27992
+#define FWAY_M2_DUMP "build/artifacts/futuraway_m2.ppm"
 
 struct registry_ctx {
     struct registryd *daemon;
@@ -105,7 +105,7 @@ static int poll_commit_counts(struct fut_fipc_channel *sys_channel,
     uint8_t buffer[512];
     const struct timespec delay = { .tv_sec = 0, .tv_nsec = 2 * 1000 * 1000 };
 
-    for (int i = 0; i < 400; ++i) {
+    for (int iter = 0; iter < 512; ++iter) {
         ssize_t rc = fut_fipc_recv(sys_channel, buffer, sizeof(buffer));
         if (rc > 0) {
             struct fut_fipc_msg *msg = (struct fut_fipc_msg *)buffer;
@@ -135,13 +135,13 @@ static int poll_commit_counts(struct fut_fipc_channel *sys_channel,
     return -1;
 }
 
-struct compositor_thread_args {
+struct compositor_args {
     struct futurawayd_config cfg;
     int rc;
 };
 
 static void *compositor_entry(void *arg) {
-    struct compositor_thread_args *args = (struct compositor_thread_args *)arg;
+    struct compositor_args *args = (struct compositor_args *)arg;
     args->rc = futurawayd_run(&args->cfg);
     return NULL;
 }
@@ -149,28 +149,28 @@ static void *compositor_entry(void *arg) {
 int main(void) {
     fut_fipc_init();
 
-    struct registryd *reg = registryd_start(FWAY_SMOKE_REG_PORT);
+    struct registryd *reg = registryd_start(FWAY_M2_REG_PORT);
     if (!reg) {
-        fprintf(stderr, "[FWAY-SMOKE] registry start failed\n");
+        fprintf(stderr, "[FWAY-M2] registry start failed\n");
         return 1;
     }
 
     struct registry_ctx reg_ctx = { .daemon = reg, .running = true };
     pthread_t reg_thread;
     if (pthread_create(&reg_thread, NULL, registry_thread, &reg_ctx) != 0) {
-        fprintf(stderr, "[FWAY-SMOKE] registry thread launch failed\n");
+        fprintf(stderr, "[FWAY-M2] registry thread launch failed\n");
         registryd_stop(reg);
         return 1;
     }
 
-    struct compositor_thread_args comp_args = {
+    struct compositor_args comp_args = {
         .cfg = {
             .width = 800,
             .height = 600,
-            .dump_path = FWAY_DUMP_PATH,
-            .service_name = FWAY_SMOKE_SERVICE,
+            .dump_path = FWAY_M2_DUMP,
+            .service_name = FWAY_M2_SERVICE,
             .registry_host = "127.0.0.1",
-            .registry_port = FWAY_SMOKE_REG_PORT,
+            .registry_port = FWAY_M2_REG_PORT,
             .frame_limit = 3,
         },
         .rc = -1,
@@ -178,7 +178,7 @@ int main(void) {
 
     pthread_t comp_thread;
     if (pthread_create(&comp_thread, NULL, compositor_entry, &comp_args) != 0) {
-        fprintf(stderr, "[FWAY-SMOKE] compositor thread launch failed\n");
+        fprintf(stderr, "[FWAY-M2] compositor thread launch failed\n");
         reg_ctx.running = false;
         pthread_join(reg_thread, NULL);
         registryd_stop(reg);
@@ -188,14 +188,14 @@ int main(void) {
     struct fw_demo_config demo_cfg = {
         .width = 800,
         .height = 600,
-        .service_name = FWAY_SMOKE_SERVICE,
+        .service_name = FWAY_M2_SERVICE,
         .registry_host = "127.0.0.1",
-        .registry_port = FWAY_SMOKE_REG_PORT,
+        .registry_port = FWAY_M2_REG_PORT,
         .surface_id = 1,
     };
 
     if (fw_demo_run(&demo_cfg) != 0) {
-        fprintf(stderr, "[FWAY-SMOKE] demo execution failed\n");
+        fprintf(stderr, "[FWAY-M2] demo execution failed\n");
         reg_ctx.running = false;
         pthread_join(comp_thread, NULL);
         pthread_join(reg_thread, NULL);
@@ -209,13 +209,13 @@ int main(void) {
     registryd_stop(reg);
 
     if (comp_args.rc != 0) {
-        fprintf(stderr, "[FWAY-SMOKE] compositor returned %d\n", comp_args.rc);
+        fprintf(stderr, "[FWAY-M2] compositor returned %d\n", comp_args.rc);
         return 1;
     }
 
     uint8_t digest[FUT_SHA256_DIGEST_LEN];
-    if (sha256_file(FWAY_DUMP_PATH, digest) != 0) {
-        fprintf(stderr, "[FWAY-SMOKE] unable to hash framebuffer dump\n");
+    if (sha256_file(FWAY_M2_DUMP, digest) != 0) {
+        fprintf(stderr, "[FWAY-M2] unable to hash dump\n");
         return 1;
     }
 
@@ -227,13 +227,13 @@ int main(void) {
     };
 
     if (memcmp(digest, expected, sizeof(expected)) != 0) {
-        fprintf(stderr, "[FWAY-SMOKE] framebuffer hash mismatch\n");
+        fprintf(stderr, "[FWAY-M2] framebuffer hash mismatch\n");
         return 1;
     }
 
     struct fut_fipc_channel *sys_channel = ensure_system_channel();
     if (!sys_channel) {
-        fprintf(stderr, "[FWAY-SMOKE] missing system channel\n");
+        fprintf(stderr, "[FWAY-M2] missing system channel\n");
         return 1;
     }
 
@@ -244,12 +244,12 @@ int main(void) {
                            demo_cfg.surface_id + 1,
                            &bg_count,
                            &overlay_count) != 0) {
-        fprintf(stderr, "[FWAY-SMOKE] missing commit metrics (bg=%u overlay=%u)\n",
+        fprintf(stderr, "[FWAY-M2] missing commit metrics (bg=%u overlay=%u)\n",
                 bg_count,
                 overlay_count);
         return 1;
     }
 
-    printf("[FWAY-SMOKE] framebuffer hash + metrics — PASS\n");
+    printf("[FWAY-M2] multi-surface hash + metrics — PASS\n");
     return 0;
 }

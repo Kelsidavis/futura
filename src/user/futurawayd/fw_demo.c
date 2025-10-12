@@ -1,4 +1,4 @@
-/* fw_demo.c - Futuraway demo client renderer
+/* fw_demo.c - Futuraway demo client renderer (M2)
  *
  * Copyright (c) 2025 Kelsi Davis
  * Licensed under the MPL v2.0 — see LICENSE for details.
@@ -19,13 +19,11 @@
 #include <kernel/fut_fipc.h>
 
 #include <user/futuraway_proto.h>
-#include <user/futura_way.h>
 
 #include "../svc_registryd/registry_client.h"
 
 #define DEMO_DEFAULT_SERVICE "futurawayd"
 #define DEMO_DEFAULT_HOST    "127.0.0.1"
-#define DEMO_TILE            32u
 
 struct glyph {
     char ch;
@@ -40,7 +38,7 @@ static const struct glyph glyph_table[] = {
     { 'A', { 0x0E, 0x11, 0x11, 0x1F, 0x11, 0x11, 0x11 } },
 };
 
-static const uint8_t *glyph_lookup(char ch) {
+static const uint8_t *glyph_rows(char ch) {
     size_t count = sizeof(glyph_table) / sizeof(glyph_table[0]);
     for (size_t i = 0; i < count; ++i) {
         if (glyph_table[i].ch == ch) {
@@ -48,6 +46,16 @@ static const uint8_t *glyph_lookup(char ch) {
         }
     }
     return NULL;
+}
+
+static inline uint32_t premul_color(uint8_t a, uint8_t r, uint8_t g, uint8_t b) {
+    uint32_t pr = (uint32_t)r * a;
+    uint32_t pg = (uint32_t)g * a;
+    uint32_t pb = (uint32_t)b * a;
+    return ((uint32_t)a << 24) |
+           (((pr + 127u) / 255u) << 16) |
+           (((pg + 127u) / 255u) << 8) |
+           (((pb + 127u) / 255u));
 }
 
 static void draw_checkerboard(uint32_t *pixels,
@@ -74,10 +82,7 @@ static void fill_rect(uint32_t *pixels,
                       uint32_t w,
                       uint32_t h,
                       uint32_t color) {
-    if (!pixels) {
-        return;
-    }
-    if (x >= width || y >= height) {
+    if (!pixels || x >= width || y >= height) {
         return;
     }
     if (x + w > width) {
@@ -101,23 +106,23 @@ static void draw_glyph(uint32_t *pixels,
                        uint32_t origin_y,
                        const uint8_t rows[7],
                        uint32_t scale,
-                       uint32_t fg,
-                       uint32_t bg) {
+                       uint32_t fg) {
     if (!pixels || !rows) {
         return;
     }
     for (uint32_t r = 0; r < 7; ++r) {
         uint8_t bits = rows[r];
         for (uint32_t c = 0; c < 5; ++c) {
-            uint32_t color = (bits & (1u << (4u - c))) ? fg : bg;
-            fill_rect(pixels,
-                      width,
-                      height,
-                      origin_x + c * scale,
-                      origin_y + r * scale,
-                      scale,
-                      scale,
-                      color);
+            if (bits & (1u << (4u - c))) {
+                fill_rect(pixels,
+                          width,
+                          height,
+                          origin_x + c * scale,
+                          origin_y + r * scale,
+                          scale,
+                          scale,
+                          fg);
+            }
         }
     }
 }
@@ -139,18 +144,43 @@ static struct fut_fipc_channel *await_channel(const char *host,
     return NULL;
 }
 
-static int send_surface_create(struct fut_fipc_channel *channel,
-                               uint64_t surface_id,
-                               uint32_t width,
-                               uint32_t height) {
-    struct fw_surface_create_req req = {
+static int send_surface_create2(struct fut_fipc_channel *channel,
+                                uint64_t surface_id,
+                                uint32_t width,
+                                uint32_t height,
+                                uint32_t z_index,
+                                bool premult) {
+    struct fw_surface_create2_req req = {
         .width = width,
         .height = height,
         .format = FW_FORMAT_ARGB32,
         .flags = 0,
         .surface_id = surface_id,
+        .z_index = z_index,
+        .alpha_premultiplied = (uint8_t)(premult ? 1 : 0),
+        .shm_bytes = (uint64_t)width * height * 4u,
     };
-    return fut_fipc_send(channel, FWAY_MSG_CREATE_SURFACE, &req, sizeof(req));
+    return fut_fipc_send(channel, FW_OP_SURFACE_CREATE2, &req, sizeof(req));
+}
+
+static int send_surface_set_z(struct fut_fipc_channel *channel,
+                              uint64_t surface_id,
+                              uint32_t z_index) {
+    struct fw_surface_set_z_req req = {
+        .surface_id = surface_id,
+        .z_index = z_index,
+    };
+    return fut_fipc_send(channel, FW_OP_SURFACE_SET_Z, &req, sizeof(req));
+}
+
+static int send_surface_damage(struct fut_fipc_channel *channel,
+                               uint64_t surface_id,
+                               struct fw_surface_damage rect) {
+    struct fw_surface_damage_req req = {
+        .surface_id = surface_id,
+        .rect = rect,
+    };
+    return fut_fipc_send(channel, FW_OP_SURFACE_DAMAGE, &req, sizeof(req));
 }
 
 static int send_surface_commit(struct fut_fipc_channel *channel,
@@ -159,8 +189,8 @@ static int send_surface_commit(struct fut_fipc_channel *channel,
                                uint32_t height,
                                const uint32_t *pixels) {
     size_t stride = (size_t)width * 4u;
-    size_t payload = sizeof(struct fw_surface_commit_req) + stride * (size_t)height;
-    uint8_t *buffer = (uint8_t *)malloc(payload);
+    size_t payload_len = sizeof(struct fw_surface_commit_req) + stride * height;
+    uint8_t *buffer = (uint8_t *)malloc(payload_len);
     if (!buffer) {
         return -ENOMEM;
     }
@@ -170,44 +200,88 @@ static int send_surface_commit(struct fut_fipc_channel *channel,
     req->width = width;
     req->height = height;
     req->stride_bytes = (uint32_t)stride;
-    memcpy(req + 1, pixels, stride * (size_t)height);
+    memcpy(req + 1, pixels, stride * height);
 
-    int rc = fut_fipc_send(channel, FWAY_MSG_COMMIT, buffer, payload);
+    int rc = fut_fipc_send(channel, FW_OP_SURFACE_COMMIT, buffer, payload_len);
     free(buffer);
     return rc;
 }
 
-static int render_scene(uint32_t width, uint32_t height, uint32_t **pixels_out) {
-    size_t count = (size_t)width * (size_t)height;
+static int render_background(uint32_t width,
+                             uint32_t height,
+                             uint32_t **out_pixels) {
+    size_t count = (size_t)width * height;
     uint32_t *pixels = (uint32_t *)malloc(count * sizeof(uint32_t));
     if (!pixels) {
         return -ENOMEM;
     }
-    draw_checkerboard(pixels, width, height, DEMO_TILE);
+    draw_checkerboard(pixels, width, height, 32u);
+    *out_pixels = pixels;
+    return 0;
+}
 
-    uint32_t rect_w = width / 2u;
-    uint32_t rect_h = height / 3u;
-    uint32_t rect_x = width / 4u;
-    uint32_t rect_y = height / 5u;
-    fill_rect(pixels, width, height, rect_x, rect_y, rect_w, rect_h, 0xCC0B1734u);
+static int render_overlay(uint32_t width,
+                          uint32_t height,
+                          uint32_t **out_pixels,
+                          struct fw_surface_damage *label_bounds) {
+    size_t count = (size_t)width * height;
+    uint32_t *pixels = (uint32_t *)calloc(count, sizeof(uint32_t));
+    if (!pixels) {
+        return -ENOMEM;
+    }
+
+    uint32_t panel_w = width / 2u;
+    uint32_t panel_h = height / 4u;
+    uint32_t panel_x = width / 4u;
+    uint32_t panel_y = height / 5u;
+    uint32_t panel_color = premul_color(160, 18, 34, 58);
+    fill_rect(pixels, width, height, panel_x, panel_y, panel_w, panel_h, panel_color);
 
     const char *label = "FUTURA";
-    uint32_t scale = 8u;
-    uint32_t cursor_x = rect_x + scale;
-    uint32_t cursor_y = rect_y + scale;
-    uint32_t fg = 0xFFE3EAF5u;
-    uint32_t bg = 0x00000000u;
+    uint32_t scale = 10u;
+    uint32_t cursor_x = panel_x + scale * 2u;
+    uint32_t cursor_y = panel_y + scale * 2u;
+    uint32_t fg = premul_color(220, 226, 237, 249);
 
     for (const char *p = label; *p; ++p) {
-        const uint8_t *rows = glyph_lookup(*p);
+        const uint8_t *rows = glyph_rows(*p);
         if (rows) {
-            draw_glyph(pixels, width, height, cursor_x, cursor_y, rows, scale, fg, bg);
+            draw_glyph(pixels, width, height, cursor_x, cursor_y, rows, scale, fg);
         }
         cursor_x += (5u * scale) + scale;
     }
 
-    *pixels_out = pixels;
+    if (label_bounds) {
+        *label_bounds = (struct fw_surface_damage){
+            .x = panel_x,
+            .y = panel_y,
+            .width = panel_w,
+            .height = panel_h,
+        };
+    }
+
+    *out_pixels = pixels;
     return 0;
+}
+
+static void apply_highlight(uint32_t *pixels,
+                            uint32_t width,
+                            uint32_t height,
+                            struct fw_surface_damage *rect) {
+    if (!pixels || !rect) {
+        return;
+    }
+    uint32_t highlight = premul_color(200, 255, 154, 46);
+    uint32_t pad = 16u;
+    uint32_t hx = rect->x + pad;
+    uint32_t hy = rect->y + pad;
+    uint32_t hw = rect->width > 2 * pad ? rect->width - 2 * pad : rect->width;
+    uint32_t hh = rect->height > 2 * pad ? rect->height - 2 * pad : rect->height;
+    fill_rect(pixels, width, height, hx, hy, hw, hh, highlight);
+    rect->x = hx;
+    rect->y = hy;
+    rect->width = hw;
+    rect->height = hh;
 }
 
 int fw_demo_run(const struct fw_demo_config *config) {
@@ -235,27 +309,72 @@ int fw_demo_run(const struct fw_demo_config *config) {
     struct fut_fipc_channel *channel =
         await_channel(cfg.registry_host, cfg.registry_port, cfg.service_name);
     if (!channel) {
-        fprintf(stderr, "[fw_demo] failed to locate compositor channel\n");
+        fprintf(stderr, "[fw_demo] compositor channel lookup failed\n");
         return -EIO;
     }
 
-    if (send_surface_create(channel, cfg.surface_id, cfg.width, cfg.height) != 0) {
-        fprintf(stderr, "[fw_demo] surface create failed\n");
-        return -EIO;
-    }
-
-    uint32_t *pixels = NULL;
-    if (render_scene(cfg.width, cfg.height, &pixels) != 0 || !pixels) {
-        fprintf(stderr, "[fw_demo] render failed\n");
+    uint32_t *bg_pixels = NULL;
+    if (render_background(cfg.width, cfg.height, &bg_pixels) != 0) {
+        fprintf(stderr, "[fw_demo] background render failed\n");
         return -ENOMEM;
     }
 
-    int rc = send_surface_commit(channel, cfg.surface_id, cfg.width, cfg.height, pixels);
-    free(pixels);
-    if (rc != 0) {
-        fprintf(stderr, "[fw_demo] commit failed (%d)\n", rc);
+    uint32_t *overlay_pixels = NULL;
+    struct fw_surface_damage overlay_bounds = {0};
+    if (render_overlay(cfg.width, cfg.height, &overlay_pixels, &overlay_bounds) != 0) {
+        free(bg_pixels);
+        fprintf(stderr, "[fw_demo] overlay render failed\n");
+        return -ENOMEM;
+    }
+
+    uint64_t bg_surface = cfg.surface_id;
+    uint64_t overlay_surface = cfg.surface_id + 1u;
+
+    if (send_surface_create2(channel, bg_surface, cfg.width, cfg.height, 0, true) != 0 ||
+        send_surface_commit(channel, bg_surface, cfg.width, cfg.height, bg_pixels) != 0) {
+        fprintf(stderr, "[fw_demo] background submit failed\n");
+        free(bg_pixels);
+        free(overlay_pixels);
         return -EIO;
     }
 
+    if (send_surface_create2(channel, overlay_surface, cfg.width, cfg.height, 10, true) != 0 ||
+        send_surface_set_z(channel, overlay_surface, 10) != 0) {
+        fprintf(stderr, "[fw_demo] overlay setup failed\n");
+        free(bg_pixels);
+        free(overlay_pixels);
+        return -EIO;
+    }
+
+    struct fw_surface_damage rect1 = overlay_bounds;
+    if (rect1.width > 0 && rect1.height > 0) {
+        (void)send_surface_damage(channel, overlay_surface, rect1);
+        struct fw_surface_damage rect2 = rect1;
+        rect2.x += rect2.width / 4u;
+        rect2.width /= 2u;
+        (void)send_surface_damage(channel, overlay_surface, rect2);
+    }
+
+    if (send_surface_commit(channel, overlay_surface, cfg.width, cfg.height, overlay_pixels) != 0) {
+        fprintf(stderr, "[fw_demo] overlay commit failed\n");
+        free(bg_pixels);
+        free(overlay_pixels);
+        return -EIO;
+    }
+
+    struct fw_surface_damage highlight_rect = overlay_bounds;
+    apply_highlight(overlay_pixels, cfg.width, cfg.height, &highlight_rect);
+    if (highlight_rect.width > 0 && highlight_rect.height > 0) {
+        (void)send_surface_damage(channel, overlay_surface, highlight_rect);
+    }
+    if (send_surface_commit(channel, overlay_surface, cfg.width, cfg.height, overlay_pixels) != 0) {
+        fprintf(stderr, "[fw_demo] overlay highlight commit failed\n");
+        free(bg_pixels);
+        free(overlay_pixels);
+        return -EIO;
+    }
+
+    free(bg_pixels);
+    free(overlay_pixels);
     return 0;
 }

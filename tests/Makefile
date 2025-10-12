@@ -37,6 +37,7 @@ TESTS := fipc_remote_loopback \
 	fipc_admin_ops \
 	fipc_batch_recv \
 	fipc_big_send_stage \
+	futuraway_smoke \
 	registry_auth
 
 .PHONY: all clean $(TESTS)
@@ -199,6 +200,18 @@ $(BIN_DIR)/fipc_batch_recv: fipc_batch_recv.c $(LIBFIPC_HOST) | $(BIN_DIR)
 $(BIN_DIR)/fipc_big_send_stage: fipc_big_send_stage.c $(LIBFIPC_HOST) | $(BIN_DIR)
 	@echo "CC $@"
 	@$(CC) $(CFLAGS) -o $@ fipc_big_send_stage.c $(LIBFIPC_HOST) $(LDFLAGS)
+
+FUTURAWAY_SMOKE_SRCS := futuraway_smoke.c \
+	$(ROOT)/src/user/futurawayd/futurawayd.c \
+	$(ROOT)/src/user/futurawayd/fb_host.c \
+	$(ROOT)/src/user/futurawayd/fw_demo.c \
+	$(ROOT)/src/user/sys/fipc_sys_pub_futuraway.c \
+	$(ROOT)/src/user/svc_registryd/registry_server.c \
+	$(ROOT)/src/user/svc_registryd/registry_client.c
+
+$(BIN_DIR)/futuraway_smoke: $(FUTURAWAY_SMOKE_SRCS) $(LIBFIPC_HOST) | $(BIN_DIR)
+	@echo "CC $@"
+	@$(CC) $(CFLAGS) -o $@ $(FUTURAWAY_SMOKE_SRCS) $(LIBFIPC_HOST) $(LDFLAGS)
 
 $(BIN_DIR)/registry_auth: registry_auth.c \
 	$(ROOT)/src/user/svc_registryd/registry_server.c \

@@ -17,12 +17,17 @@
 - Strengthened coverage with `tests/fipc_admin_ops` (control-channel auth failure modes) and `tests/registry_auth` (registry signing + key rotation).
 - Updated build system with dedicated targets (`make tests/fipc_remote_loopback`, `make tests/fipc_admin_ops`, `make tests/registry_auth`) for CI-friendly invocation.
 
+## UI & Compositor
+- Landed the Futuraway M1 compositor (`futurawayd`) with a software ARGB32 framebuffer backend and single-surface blitter.
+- Added `fw_demo` checkerboard client that exercises SURFACE_CREATE / SURFACE_COMMIT over FIPC and emits deterministic frames for CI validation.
+- Introduced `tests/futuraway_smoke` which spins the compositor + demo in-process, hashes the dumped framebuffer (`fb_000.ppm`), and verifies FWAY metrics publication.
+
 ## Documentation
 - Extended `docs/FIPC_SPEC.md` with remote transport, control-channel auth, and registry signing details.
 - Updated `docs/DISTRIBUTED_FIPC_DESIGN.md` to document HMAC-protected discovery, nonce caching, and future secure transport goals.
 
 ## Next Steps
 1. Layer WireGuard or DTLS over the UDP skeleton for encrypted transport.
-2. Give `svc_registryd` a persistent FIPC control channel instead of CLI-driven setup, enabling runtime secret distribution.
+2. Add shared-memory surfaces, simple z-order, and alpha-aware compositing for Futuraway M2.
 3. Capture telemetry (latency histogram, auth failures, drop counters) in netd for observability.
-4. Integrate netd + registry startup into initd bootstrap sequencing with automated key rollout.
+4. Integrate netd + registry startup into initd bootstrap sequencing with automated key rollout and compositor launch.

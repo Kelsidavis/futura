@@ -24,7 +24,8 @@ TESTS := fipc_remote_loopback \
 	fipc_sys_metrics_subscriber \
 	fipc_sys_kernel_metrics \
 	fipc_sys_futuraway_metrics \
-	fipc_sys_vfs_metrics
+	fipc_sys_vfs_metrics \
+	fipc_kernel_caps_quota
 
 .PHONY: all clean $(TESTS)
 
@@ -117,7 +118,6 @@ $(BIN_DIR)/fipc_sys_metrics_subscriber: $(FIPC_SYSMET_SRCS) $(LIBFIPC_HOST) | $(
 FIPC_SYSK_SRCS := fipc_sys_kernel_metrics.c \
 	$(ROOT)/src/user/netd/netd_core.c \
 	$(ROOT)/src/user/sys/fipc_sys_pub.c \
-	$(ROOT)/src/user/sys/fipc_sys_pub_kernelshim.c \
 	$(ROOT)/src/user/svc_registryd/registry_client.c
 
 $(BIN_DIR)/fipc_sys_kernel_metrics: $(FIPC_SYSK_SRCS) $(LIBFIPC_HOST) | $(BIN_DIR)
@@ -140,10 +140,13 @@ $(BIN_DIR)/fipc_sys_vfs_metrics: $(FIPC_VFS_SRCS) $(LIBFIPC_HOST) | $(BIN_DIR)
 	@echo "CC $@"
 	@$(CC) $(CFLAGS) -o $@ $(FIPC_VFS_SRCS) $(LIBFIPC_HOST) $(LDFLAGS)
 
+$(BIN_DIR)/fipc_kernel_caps_quota: fipc_kernel_caps_quota.c $(LIBFIPC_HOST) | $(BIN_DIR)
+	@echo "CC $@"
+	@$(CC) $(CFLAGS) -o $@ fipc_kernel_caps_quota.c $(LIBFIPC_HOST) $(LDFLAGS)
+
 # === syswatch smoke helper ===
 $(BIN_DIR)/fipc_syswatch_smoke: fipc_syswatch_smoke.c \
 	$(ROOT)/src/user/sys/fipc_sys_pub.c \
-	$(ROOT)/src/user/sys/fipc_sys_pub_kernelshim.c \
 	$(ROOT)/src/user/sys/fipc_sys_pub_futuraway.c \
 	$(ROOT)/src/user/sys/fipc_sys_pub_vfs.c \
 	$(ROOT)/src/user/netd/netd_core.c \

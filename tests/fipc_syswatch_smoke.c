@@ -8,6 +8,7 @@
 #include <kernel/fut_fipc.h>
 #include <kernel/fut_fipc_sys.h>
 
+#include <kernel/fut_fipc.h>
 #include "../src/user/sys/fipc_sys.h"
 
 int main(void) {
@@ -26,7 +27,7 @@ int main(void) {
         sys_channel->type = FIPC_CHANNEL_SYSTEM;
     }
 
-    (void)fipc_sys_publish_kernel_metrics();
+    (void)fut_fipc_publish_kernel_metrics();
     (void)fipc_sys_fway_surface_create(1, 100, 10, 12);
     (void)fipc_sys_vfs_write("/tmp/syswatch", 512, 0, 12, 22);
 

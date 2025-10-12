@@ -10,6 +10,7 @@
 
 #include <kernel/fut_fipc.h>
 #include <kernel/fut_fipc_sys.h>
+#include <kernel/fut_memory.h>
 
 #include "../src/user/netd/netd_core.h"
 #include "../src/user/sys/fipc_sys.h"
@@ -71,7 +72,7 @@ int main(void) {
         return 1;
     }
 
-    if (!fipc_sys_publish_kernel_metrics()) {
+    if (fut_fipc_publish_kernel_metrics() != 0) {
         fprintf(stderr, "[SYSK] kernel metrics publish failed\n");
         netd_shutdown(nd);
         return 1;
@@ -121,8 +122,15 @@ int main(void) {
         return 1;
     }
 
-    if (kernel_metrics.pmm_total != 1024 || kernel_metrics.pmm_free != 512) {
-        fprintf(stderr, "[SYSK] kernel metrics unexpected values\n");
+    uint64_t expected_pmm_total = fut_pmm_total_pages();
+    uint64_t expected_pmm_free = fut_pmm_free_pages();
+    if (kernel_metrics.pmm_total != expected_pmm_total ||
+        kernel_metrics.pmm_free != expected_pmm_free) {
+        fprintf(stderr, "[SYSK] kernel metrics unexpected values (pmm_total=%llu expected %llu, pmm_free=%llu expected %llu)\n",
+                (unsigned long long)kernel_metrics.pmm_total,
+                (unsigned long long)expected_pmm_total,
+                (unsigned long long)kernel_metrics.pmm_free,
+                (unsigned long long)expected_pmm_free);
         netd_shutdown(nd);
         return 1;
     }

@@ -20,6 +20,7 @@
 #include <unistd.h>
 
 #include <kernel/fut_fipc.h>
+#include "../sys/fipc_sys.h"
 #include "../svc_registryd/registry_client.h"
 
 /* Some builds may not expose a prototype publicly; declare if needed. */
@@ -42,6 +43,8 @@ struct netd_counters {
     uint64_t send_eagain;
     uint64_t tx_frames;
     uint64_t tx_blocked_credits;
+    uint64_t auth_fail;
+    uint64_t replay_drop;
 };
 
 struct netd {
@@ -177,7 +180,9 @@ bool netd_metrics_snapshot(struct netd *nd, struct netd_metrics *out) {
         .send_eagain = nd->ctrs.send_eagain,
         .reserved0 = 0,
         .tx_frames = nd->ctrs.tx_frames,
-        .tx_blocked_credits = nd->ctrs.tx_blocked_credits
+        .tx_blocked_credits = nd->ctrs.tx_blocked_credits,
+        .auth_fail = nd->ctrs.auth_fail,
+        .replay_drop = nd->ctrs.replay_drop
     };
 
     *out = snap;
@@ -196,13 +201,15 @@ bool netd_metrics_publish(struct netd *nd, struct fut_fipc_channel *sink) {
 
     char record[256];
     int n = snprintf(record, sizeof(record),
-        "lookup_attempts=%llu lookup_hits=%llu lookup_miss=%llu send_eagain=%llu tx_frames=%llu tx_blocked_credits=%llu",
+        "lookup_attempts=%llu lookup_hits=%llu lookup_miss=%llu send_eagain=%llu tx_frames=%llu tx_blocked_credits=%llu auth_fail=%llu replay_drop=%llu",
         (unsigned long long)m.lookup_attempts,
         (unsigned long long)m.lookup_hits,
         (unsigned long long)m.lookup_miss,
         (unsigned long long)m.send_eagain,
         (unsigned long long)m.tx_frames,
-        (unsigned long long)m.tx_blocked_credits);
+        (unsigned long long)m.tx_blocked_credits,
+        (unsigned long long)m.auth_fail,
+        (unsigned long long)m.replay_drop);
     if (n < 0) {
         return false;
     }
@@ -210,13 +217,16 @@ bool netd_metrics_publish(struct netd *nd, struct fut_fipc_channel *sink) {
         n = (int)sizeof(record) - 1;
     }
 
-    return fut_fipc_channel_inject(sink,
-                                   0x4D4554u,
-                                   record,
-                                   (size_t)n,
-                                   0,
-                                   0,
-                                   0) == 0;
+    int rc = fut_fipc_channel_inject(sink,
+                                     0x4D4554u,
+                                     record,
+                                     (size_t)n,
+                                     0,
+                                     0,
+                                     0);
+
+    (void)fipc_sys_publish_metrics(nd);
+    return rc == 0;
 }
 
 void netd_shutdown(struct netd *nd) {

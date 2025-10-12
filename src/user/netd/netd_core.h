@@ -30,6 +30,8 @@ struct netd_metrics {
     uint64_t reserved0;
     uint64_t tx_frames;
     uint64_t tx_blocked_credits;
+    uint64_t auth_fail;
+    uint64_t replay_drop;
 };
 
 bool netd_metrics_snapshot(struct netd *nd, struct netd_metrics *out);

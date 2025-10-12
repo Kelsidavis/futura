@@ -17,6 +17,11 @@ enum fw_op {
     FW_OP_INPUT_EVENT = 0x2305,
 };
 
+#define FW_OP_SURFACE_BUFFER   0x2306u
+#define FW_OP_PRESENT          0x2307u
+#define FW_OP_INPUT_FOCUS      0x2308u
+#define FW_OP_INPUT_POINTER    0x2309u
+
 enum fw_pixel_format {
     FW_FORMAT_INVALID = 0,
     FW_FORMAT_ARGB32 = 1,
@@ -66,3 +71,17 @@ struct fw_surface_commit_req {
     uint32_t stride_bytes;
     /* Pixel data (width * height * 4 bytes) follows header. */
 };
+
+struct fw_surface_buffer {
+    uint64_t surface_id;
+    uint64_t shm_bytes;
+    uint32_t stride_bytes;
+    uint8_t premul;
+    uint8_t rsv[3];
+} __attribute__((packed));
+
+struct fw_present {
+    uint64_t surface_id;
+    uint32_t damage_count;
+    /* Followed by damage_count instances of struct fw_surface_damage. */
+} __attribute__((packed));

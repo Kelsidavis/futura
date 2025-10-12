@@ -10,14 +10,84 @@
 
 #include <kernel/uaccess.h>
 #include <kernel/errno.h>
+#include <kernel/fut_mm.h>
 
 #include <arch/x86_64/paging.h>
 #include <arch/x86_64/pmap.h>
 
+#include <stdbool.h>
 #include <string.h>
 
 uintptr_t g_user_lo = 0x0000000000400000ULL;
 uintptr_t g_user_hi = USER_SPACE_END + 1ULL; /* exclusive upper bound */
+
+#define COPY_CHUNK 64u
+
+typedef struct {
+    struct fut_uaccess_window window;
+    bool active;
+    bool faulted;
+    int error;
+} fut_uaccess_state_t;
+
+static fut_uaccess_state_t g_uaccess_state = {
+    .window = {
+        .user_ptr = NULL,
+        .length = 0,
+        .to_user = 0,
+        .resume = NULL,
+    },
+    .active = false,
+    .faulted = false,
+    .error = 0,
+};
+
+static inline void uaccess_activate(const void *user_ptr, size_t len, int to_user, void *resume) {
+    g_uaccess_state.window.user_ptr = user_ptr;
+    g_uaccess_state.window.length = len;
+    g_uaccess_state.window.to_user = to_user;
+    g_uaccess_state.window.resume = resume;
+    g_uaccess_state.active = true;
+    g_uaccess_state.faulted = false;
+    g_uaccess_state.error = 0;
+}
+
+static inline void uaccess_update(const void *user_ptr, size_t len) {
+    if (!g_uaccess_state.active) {
+        return;
+    }
+    g_uaccess_state.window.user_ptr = user_ptr;
+    g_uaccess_state.window.length = len;
+}
+
+static inline void uaccess_clear(void) {
+    g_uaccess_state.active = false;
+    g_uaccess_state.faulted = false;
+    g_uaccess_state.error = 0;
+    g_uaccess_state.window.user_ptr = NULL;
+    g_uaccess_state.window.length = 0;
+    g_uaccess_state.window.resume = NULL;
+    g_uaccess_state.window.to_user = 0;
+}
+
+const struct fut_uaccess_window *fut_uaccess_window_current(void) {
+    return g_uaccess_state.active ? &g_uaccess_state.window : NULL;
+}
+
+void fut_uaccess_window_fault(int error) {
+    if (!g_uaccess_state.active) {
+        return;
+    }
+    g_uaccess_state.faulted = true;
+    g_uaccess_state.error = error;
+}
+
+int fut_uaccess_window_error(void) {
+    if (g_uaccess_state.faulted && g_uaccess_state.error != 0) {
+        return g_uaccess_state.error;
+    }
+    return -EFAULT;
+}
 
 static inline int __range_user_ok(uintptr_t u, size_t n) {
     if (n == 0) {
@@ -50,9 +120,12 @@ int fut_access_ok(const void *u_ptr, size_t len, int write) {
     uintptr_t start = u & ~(uintptr_t)(PAGE_SIZE - 1ULL);
     uintptr_t end = (u + len - 1ULL) & ~(uintptr_t)(PAGE_SIZE - 1ULL);
 
+    fut_mm_t *mm = fut_mm_current();
+    fut_vmem_context_t *ctx = fut_mm_context(mm);
+
     for (uintptr_t addr = start; addr <= end; addr += PAGE_SIZE) {
         uint64_t pte = 0;
-        if (pmap_probe_pte(NULL, addr, &pte) != 0) {
+        if (pmap_probe_pte(ctx, addr, &pte) != 0) {
             return -EFAULT;
         }
 
@@ -68,30 +141,92 @@ int fut_access_ok(const void *u_ptr, size_t len, int write) {
     return 0;
 }
 
-static int __copy(void *dst, const void *src, size_t n, int to_user) {
+int fut_copy_from_user(void *k_dst, const void *u_src, size_t n) {
     if (n == 0) {
         return 0;
     }
 
-    int rc;
-    if (to_user) {
-        rc = fut_access_ok(dst, n, 1);
-    } else {
-        rc = fut_access_ok(src, n, 0);
-    }
-
+    int rc = fut_access_ok(u_src, n, 0);
     if (rc != 0) {
         return rc;
     }
 
-    memcpy(dst, src, n);
-    return 0;
-}
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wpedantic"
+    void *resume = &&copy_fault;
+#pragma GCC diagnostic pop
 
-int fut_copy_from_user(void *k_dst, const void *u_src, size_t n) {
-    return __copy(k_dst, u_src, n, 0);
+    uaccess_activate(u_src, n, 0, resume);
+
+    uint8_t *dst = (uint8_t *)k_dst;
+    const volatile uint8_t *src = (const volatile uint8_t *)u_src;
+
+    size_t remaining = n;
+    while (remaining > 0) {
+        size_t chunk = remaining > COPY_CHUNK ? COPY_CHUNK : remaining;
+        uaccess_update((const void *)src, chunk);
+
+        for (size_t i = 0; i < chunk; ++i) {
+            dst[i] = src[i];
+        }
+
+        dst += chunk;
+        src += chunk;
+        remaining -= chunk;
+    }
+
+    uaccess_clear();
+    return 0;
+
+copy_fault:
+    {
+        int err = fut_uaccess_window_error();
+        uaccess_clear();
+        return err;
+    }
 }
 
 int fut_copy_to_user(void *u_dst, const void *k_src, size_t n) {
-    return __copy(u_dst, k_src, n, 1);
+    if (n == 0) {
+        return 0;
+    }
+
+    int rc = fut_access_ok(u_dst, n, 1);
+    if (rc != 0) {
+        return rc;
+    }
+
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wpedantic"
+    void *resume = &&copy_fault;
+#pragma GCC diagnostic pop
+
+    uaccess_activate(u_dst, n, 1, resume);
+
+    volatile uint8_t *dst = (volatile uint8_t *)u_dst;
+    const uint8_t *src = (const uint8_t *)k_src;
+
+    size_t remaining = n;
+    while (remaining > 0) {
+        size_t chunk = remaining > COPY_CHUNK ? COPY_CHUNK : remaining;
+        uaccess_update((const void *)dst, chunk);
+
+        for (size_t i = 0; i < chunk; ++i) {
+            dst[i] = src[i];
+        }
+
+        dst += chunk;
+        src += chunk;
+        remaining -= chunk;
+    }
+
+    uaccess_clear();
+    return 0;
+
+copy_fault:
+    {
+        int err = fut_uaccess_window_error();
+        uaccess_clear();
+        return err;
+    }
 }

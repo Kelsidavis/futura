@@ -25,6 +25,7 @@ ifeq ($(PLATFORM),x86_64)
     AS := as
     LD := ld
     AR := ar
+    OBJCOPY := objcopy
     ARCH_CFLAGS := -m64 -mcmodel=kernel -mno-red-zone
     ARCH_ASFLAGS := --64
     ARCH_LDFLAGS := -m elf_x86_64 -T platform/x86_64/link.ld
@@ -35,6 +36,7 @@ else ifeq ($(PLATFORM),arm64)
     AS := $(CROSS_COMPILE)as
     LD := $(CROSS_COMPILE)ld
     AR := $(CROSS_COMPILE)ar
+    OBJCOPY := $(CROSS_COMPILE)objcopy
     ARCH_CFLAGS := -march=armv8-a -mtune=cortex-a53
     ARCH_ASFLAGS :=
     ARCH_LDFLAGS := -T platform/arm64/link.ld
@@ -80,6 +82,7 @@ BIN_DIR := $(BUILD_DIR)/bin
 KERNEL_SOURCES := \
     kernel/kernel_main.c \
     kernel/memory/fut_memory.c \
+    kernel/memory/fut_mm.c \
     kernel/threading/fut_task.c \
     kernel/threading/fut_thread.c \
     kernel/scheduler/fut_sched.c \
@@ -90,11 +93,17 @@ KERNEL_SOURCES := \
     kernel/crypto/fut_hmac.c \
     kernel/vfs/fut_vfs.c \
     kernel/vfs/ramfs.c \
+    kernel/exec/elf64.c \
+    kernel/trap/page_fault.c \
     kernel/blockdev/fut_blockdev.c \
     kernel/blockdev/ramdisk.c \
     kernel/fs/futurafs.c \
     kernel/chrdev.c \
     kernel/sys_echo.c \
+    kernel/sys_exit.c \
+    kernel/sys_waitpid.c \
+    kernel/sys_time.c \
+    kernel/signal/signal.c \
     kernel/rt/memory.c \
     kernel/rt/stack_chk.c \
     kernel/uaccess.c \
@@ -111,6 +120,8 @@ ifeq ($(PLATFORM),x86_64)
         platform/x86_64/gdt_idt.S \
         platform/x86_64/isr_stubs.S \
         platform/x86_64/context_switch.S \
+        platform/x86_64/gdt.c \
+        arch/x86_64/pat.c \
         platform/x86_64/pmap.c \
         platform/x86_64/paging.c \
         platform/x86_64/platform_init.c
@@ -133,6 +144,11 @@ ALL_SOURCES := $(KERNEL_SOURCES) $(PLATFORM_SOURCES) $(SUBSYSTEM_SOURCES)
 OBJECTS := $(patsubst %.c,$(OBJ_DIR)/%.o,$(filter %.c,$(ALL_SOURCES)))
 OBJECTS += $(patsubst %.S,$(OBJ_DIR)/%.o,$(filter %.S,$(ALL_SOURCES)))
 
+FBTEST_BIN := $(BIN_DIR)/user/fbtest
+FBTEST_BLOB := $(OBJ_DIR)/kernel/blobs/fbtest_blob.o
+
+OBJECTS += $(FBTEST_BLOB)
+
 # ============================================================
 #   Build Targets
 # ============================================================
@@ -154,11 +170,17 @@ $(OBJ_DIR) $(BIN_DIR):
 	@mkdir -p $(OBJ_DIR)/kernel/interrupts
 	@mkdir -p $(OBJ_DIR)/kernel/ipc
 	@mkdir -p $(OBJ_DIR)/kernel/vfs
+	@mkdir -p $(OBJ_DIR)/kernel/exec
+	@mkdir -p $(OBJ_DIR)/kernel/trap
 	@mkdir -p $(OBJ_DIR)/kernel/blockdev
 	@mkdir -p $(OBJ_DIR)/kernel/fs
 	@mkdir -p $(OBJ_DIR)/kernel/rt
 	@mkdir -p $(OBJ_DIR)/kernel/video
+	@mkdir -p $(OBJ_DIR)/kernel/blobs
 	@mkdir -p $(OBJ_DIR)/platform/$(PLATFORM)
+ifeq ($(PLATFORM),x86_64)
+	@mkdir -p $(OBJ_DIR)/arch/x86_64
+endif
 	@mkdir -p $(OBJ_DIR)/subsystems/posix_compat
 
 # Build kernel
@@ -172,6 +194,16 @@ $(BIN_DIR)/futura_kernel.elf: $(OBJECTS) | $(BIN_DIR)
 	@python3 tools/fix_multiboot_offset.py $@.tmp $@
 	@rm $@.tmp
 	@echo "Build complete: $@"
+
+$(FBTEST_BIN):
+	@$(MAKE) -C src/user fbtest
+
+$(OBJ_DIR)/kernel/blobs:
+	@mkdir -p $@
+
+$(FBTEST_BLOB): $(FBTEST_BIN) | $(OBJ_DIR)/kernel/blobs
+	@echo "OBJCOPY $@"
+	@$(OBJCOPY) -I binary -O elf64-x86-64 -B i386:x86-64 $< $@
 
 # Build userland services
 userland:

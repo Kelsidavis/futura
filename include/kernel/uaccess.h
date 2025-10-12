@@ -21,3 +21,14 @@ int fut_copy_to_user(void *u_dst, const void *k_src, size_t n);
 
 extern uintptr_t g_user_lo;
 extern uintptr_t g_user_hi;
+
+struct fut_uaccess_window {
+    const void *user_ptr;    /* Base address for most recent chunk */
+    size_t length;           /* Length of chunk currently being accessed */
+    int to_user;             /* Non-zero if copy direction is kernel->user */
+    void *resume;            /* Label to resume execution on fault */
+};
+
+const struct fut_uaccess_window *fut_uaccess_window_current(void);
+void fut_uaccess_window_fault(int error);
+int fut_uaccess_window_error(void);

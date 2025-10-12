@@ -56,6 +56,7 @@
 #define PTE_ACCESSED            (1ULL << 5)     /* Page has been accessed */
 #define PTE_DIRTY               (1ULL << 6)     /* Page has been written to */
 #define PTE_LARGE_PAGE          (1ULL << 7)     /* 2MB/1GB page (PD/PDPT only) */
+#define PTE_PAT                 (1ULL << 7)     /* PAT selector (PT level) */
 #define PTE_GLOBAL              (1ULL << 8)     /* Global page (not flushed on CR3 reload) */
 
 /* Available for OS use (bits 9-11, 52-62) */

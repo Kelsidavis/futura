@@ -3,7 +3,7 @@
 # Licensed under MPL v2.0
 
 # Subdirectories
-USERLAND_DIRS := libfutura init fsd posixd futurawayd
+USERLAND_DIRS := libfutura init fsd posixd futurawayd fbtest
 
 # Build targets
 .PHONY: all clean $(USERLAND_DIRS)
@@ -12,7 +12,7 @@ USERLAND_DIRS := libfutura init fsd posixd futurawayd
 all: libfutura $(USERLAND_DIRS)
 
 # Ensure services depend on libfutura
-init fsd posixd futurawayd: libfutura
+init fsd posixd futurawayd fbtest: libfutura
 
 $(USERLAND_DIRS):
 	@echo "Building $@..."

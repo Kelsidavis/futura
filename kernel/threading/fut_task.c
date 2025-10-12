@@ -9,7 +9,9 @@
 
 #include "../../include/kernel/fut_task.h"
 #include "../../include/kernel/fut_sched.h"
+#include "../../include/kernel/fut_mm.h"
 #include "../../include/kernel/fut_memory.h"
+#include "../../include/kernel/errno.h"
 #include <stdatomic.h>
 
 /* ============================================================
@@ -23,27 +25,62 @@ static _Atomic uint64_t next_pid = 1;  /* 64-bit PID counter */
 /* Task list lock */
 static fut_spinlock_t task_list_lock = { .locked = 0 };
 
+static void task_attach_child(fut_task_t *parent, fut_task_t *child) {
+    if (!parent || !child) {
+        return;
+    }
+    child->sibling = parent->first_child;
+    parent->first_child = child;
+}
+
+static void task_detach_child(fut_task_t *parent, fut_task_t *child) {
+    if (!parent || !child) {
+        return;
+    }
+    fut_task_t **it = &parent->first_child;
+    while (*it) {
+        if (*it == child) {
+            *it = child->sibling;
+            child->sibling = NULL;
+            return;
+        }
+        it = &(*it)->sibling;
+    }
+}
+
 /**
  * Create a new task (process container).
  */
 fut_task_t *fut_task_create(void) {
-    // Allocate task structure
     fut_task_t *task = (fut_task_t *)fut_malloc(sizeof(fut_task_t));
     if (!task) {
         return NULL;
     }
 
-    // Initialize task
+    fut_task_t *parent = NULL;
+    fut_thread_t *curr = fut_thread_current();
+    if (curr) {
+        parent = curr->task;
+    }
+
     *task = (fut_task_t){
         .pid = atomic_fetch_add_explicit(&next_pid, 1, memory_order_seq_cst),
-        .page_table_root = 0,  // Future: allocate page table
+        .mm = NULL,
+        .parent = parent,
+        .first_child = NULL,
+        .sibling = NULL,
+        .state = FUT_TASK_RUNNING,
+        .exit_code = 0,
+        .term_signal = 0,
         .threads = NULL,
         .thread_count = 0,
         .next = NULL
     };
 
-    // Add to global task list
     fut_spinlock_acquire(&task_list_lock);
+    if (parent) {
+        task_attach_child(parent, task);
+    }
     task->next = fut_task_list;
     fut_task_list = task;
     fut_spinlock_release(&task_list_lock);
@@ -103,7 +140,6 @@ void fut_task_destroy(fut_task_t *task) {
         return;
     }
 
-    // Free all threads (stub - proper cleanup later)
     fut_thread_t *thread = task->threads;
     while (thread) {
         fut_thread_t *next = thread->next;
@@ -112,8 +148,10 @@ void fut_task_destroy(fut_task_t *task) {
         thread = next;
     }
 
-    // Remove from task list
     fut_spinlock_acquire(&task_list_lock);
+    if (task->parent) {
+        task_detach_child(task->parent, task);
+    }
     if (fut_task_list == task) {
         fut_task_list = task->next;
     } else {
@@ -127,6 +165,137 @@ void fut_task_destroy(fut_task_t *task) {
     }
     fut_spinlock_release(&task_list_lock);
 
-    // Free task structure
+    if (task->mm) {
+        fut_mm_release(task->mm);
+        task->mm = NULL;
+    }
+
     fut_free(task);
+}
+
+void fut_task_set_mm(fut_task_t *task, struct fut_mm *mm) {
+    if (!task) {
+        return;
+    }
+    if (task->mm == mm) {
+        return;
+    }
+
+    if (mm) {
+        fut_mm_retain(mm);
+    }
+
+    if (task->mm) {
+        fut_mm_release(task->mm);
+    }
+
+    task->mm = mm;
+}
+
+struct fut_mm *fut_task_get_mm(const fut_task_t *task) {
+    if (!task) {
+        return NULL;
+    }
+    return task->mm;
+}
+
+fut_task_t *fut_task_current(void) {
+    fut_thread_t *thread = fut_thread_current();
+    return thread ? thread->task : NULL;
+}
+
+static void task_mark_exit(fut_task_t *task, int status, int signal) {
+    fut_spinlock_acquire(&task_list_lock);
+    task->state = FUT_TASK_ZOMBIE;
+    task->exit_code = status & 0xFF;
+    task->term_signal = signal & 0x7F;
+    fut_spinlock_release(&task_list_lock);
+}
+
+void fut_task_exit_current(int status) {
+    fut_task_t *task = fut_task_current();
+    if (!task) {
+        fut_thread_exit();
+    }
+
+    task_mark_exit(task, status, 0);
+
+    if (task->mm) {
+        fut_mm_switch(fut_mm_kernel());
+        fut_mm_release(task->mm);
+        task->mm = NULL;
+    }
+
+    fut_thread_exit();
+}
+
+void fut_task_signal_exit(int signal) {
+    fut_task_t *task = fut_task_current();
+    if (!task) {
+        fut_thread_exit();
+    }
+
+    task_mark_exit(task, 0, signal);
+
+    if (task->mm) {
+        fut_mm_switch(fut_mm_kernel());
+        fut_mm_release(task->mm);
+        task->mm = NULL;
+    }
+
+    fut_thread_exit();
+}
+
+static int encode_wait_status(const fut_task_t *task) {
+    if (task->term_signal) {
+        return task->term_signal & 0x7F;
+    }
+    return (task->exit_code & 0xFF) << 8;
+}
+
+int fut_task_waitpid(int pid, int *status_out) {
+    fut_task_t *parent = fut_task_current();
+    if (!parent) {
+        return -ECHILD;
+    }
+
+    for (;;) {
+        fut_spinlock_acquire(&task_list_lock);
+
+        bool has_children = parent->first_child != NULL;
+        fut_task_t *child = parent->first_child;
+        fut_task_t *match = NULL;
+
+        while (child) {
+            if ((pid <= 0) || ((int)child->pid == pid)) {
+                if (child->state == FUT_TASK_ZOMBIE) {
+                    match = child;
+                    break;
+                }
+            }
+            child = child->sibling;
+        }
+
+        if (!has_children) {
+            fut_spinlock_release(&task_list_lock);
+            return -ECHILD;
+        }
+
+        if (match) {
+            int status = encode_wait_status(match);
+            uint64_t child_pid = match->pid;
+            task_detach_child(parent, match);
+            fut_spinlock_release(&task_list_lock);
+
+            if (status_out) {
+                *status_out = status;
+            }
+
+            fut_task_destroy(match);
+            return (int)child_pid;
+        }
+
+        fut_spinlock_release(&task_list_lock);
+        fut_thread_yield();
+    }
 }

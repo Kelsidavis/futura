@@ -9,8 +9,10 @@
 #include <kernel/errno.h>
 #include <kernel/fb.h>
 #include <kernel/fb_ioctl.h>
+#include <kernel/fut_mm.h>
 
 #include <arch/x86_64/pmap.h>
+#include <arch/x86_64/pat.h>
 
 #include <stddef.h>
 #include <stdint.h>
@@ -37,10 +39,11 @@ static int fb_ensure_mapped(struct fb_device *fb) {
     size_t length = fb->info.pitch * fb->info.height + offset;
     length = PAGE_ALIGN_UP(length);
 
+    uint64_t flags = PTE_PRESENT | PTE_WRITABLE | pat_choose_page_attr_wc();
     int rc = pmap_map(virt_base,
                       phys_base,
                       length,
-                      PTE_PRESENT | PTE_WRITABLE | PTE_WRITE_THROUGH | PTE_CACHE_DISABLE);
+                      flags);
     if (rc != 0) {
         return rc;
     }
@@ -145,12 +148,13 @@ static void *fb_mmap(void *inode, void *private_data, void *u_addr, size_t len,
     uint64_t phys_addr = (fb->info.phys + (uint64_t)off) & ~(uint64_t)(PAGE_SIZE - 1);
     size_t map_len = (len + PAGE_SIZE - 1) & ~(size_t)(PAGE_SIZE - 1);
 
-    uint64_t prot_flags = PTE_PRESENT | PTE_USER;
+    uint64_t prot_flags = PTE_PRESENT | PTE_USER | pat_choose_page_attr_wc();
     if (prot & 0x2) {
         prot_flags |= PTE_WRITABLE;
     }
 
-    int rc = pmap_map_user(NULL, user_addr, phys_addr, map_len, prot_flags);
+    fut_vmem_context_t *ctx = fut_mm_context(fut_mm_current());
+    int rc = pmap_map_user(ctx, user_addr, phys_addr, map_len, prot_flags);
     if (rc != 0) {
         return (void *)(intptr_t)rc;
     }

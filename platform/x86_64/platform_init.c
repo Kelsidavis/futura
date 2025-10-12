@@ -9,7 +9,12 @@
 #include <stddef.h>
 #include <stdarg.h>
 #include <arch/x86_64/paging.h>
+#include <arch/x86_64/regs.h>
+#include <arch/x86_64/gdt.h>
+#include <arch/x86_64/pat.h>
+#include <kernel/fut_mm.h>
 #include <kernel/fb.h>
+#include <kernel/trap.h>
 
 /* Serial port definitions for debugging */
 #define SERIAL_PORT_COM1 0x3F8
@@ -529,10 +534,13 @@ void fut_platform_init(uint32_t multiboot_magic __attribute__((unused)),
     /* Load GDT */
     fut_serial_puts("[INIT] Loading GDT...\n");
     fut_gdt_load();
+    fut_tss_init();
 
     /* Initialize paging structures */
     fut_serial_puts("[INIT] Initializing paging...\n");
     fut_paging_init();
+    pat_init();
+    fut_mm_system_init();
 
     /* Initialize and load IDT */
     fut_serial_puts("[INIT] Initializing IDT...\n");
@@ -602,22 +610,6 @@ static void print_hex64(uint64_t val) {
     fut_serial_puts(buf);
 }
 
-/* Interrupt frame structure matching ISR stub stack layout */
-struct interrupt_frame {
-    /* Segment registers (pushed by ISR stub) */
-    uint64_t gs, fs, es, ds;                    /* Offsets 0-24 */
-    /* General-purpose registers (pushed by ISR stub) */
-    uint64_t rax, rbx, rcx, rdx;                /* Offsets 32-56 */
-    uint64_t rsi, rdi, rbp;                     /* Offsets 64-80 */
-    uint64_t r8, r9, r10, r11;                  /* Offsets 88-112 */
-    uint64_t r12, r13, r14, r15;                /* Offsets 120-144 */
-    /* ISR stub pushes vector and error code */
-    uint64_t vector;                            /* Offset 152 */
-    uint64_t error_code;                        /* Offset 160 */
-    /* CPU automatically pushes these on interrupt */
-    uint64_t rip, cs, rflags, rsp, ss;          /* Offsets 168-200 */
-} __attribute__((packed));
-
 /* Exception names for debugging output */
 static const char *exception_names[32] = {
     "Divide Error", "Debug", "NMI", "Breakpoint",
@@ -631,7 +623,13 @@ static const char *exception_names[32] = {
 };
 
 void __attribute__((weak)) fut_isr_handler(void *regs_ptr) {
-    struct interrupt_frame *regs = (struct interrupt_frame *)regs_ptr;
+    fut_interrupt_frame_t *regs = (fut_interrupt_frame_t *)regs_ptr;
+
+    if (regs->vector == 14) {
+        if (fut_trap_handle_page_fault(regs)) {
+            return;
+        }
+    }
 
     fut_disable_interrupts();
     fut_serial_puts("\n\n");

@@ -13,6 +13,8 @@
 #include <stddef.h>
 #include "fut_thread.h"
 
+struct fut_mm;
+
 /* Forward declaration */
 typedef struct fut_task fut_task_t;
 
@@ -23,7 +25,19 @@ typedef struct fut_task fut_task_t;
 struct fut_task {
     uint64_t pid;                      // Process ID (64-bit)
 
-    uintptr_t page_table_root;         // Page table root (future VMM)
+    struct fut_mm *mm;                 // Address space
+
+    struct fut_task *parent;           // Parent task
+    struct fut_task *first_child;      // Child list head
+    struct fut_task *sibling;          // Next sibling in parent list
+
+    enum {
+        FUT_TASK_RUNNING = 0,
+        FUT_TASK_ZOMBIE,
+    } state;
+
+    int exit_code;                     // Exit status (8-bit in low byte)
+    int term_signal;                   // Terminating signal (0 if normal exit)
 
     fut_thread_t *threads;             // Linked list of threads
     uint64_t thread_count;             // Number of threads in task
@@ -64,3 +78,18 @@ void fut_task_remove_thread(fut_task_t *task, fut_thread_t *thread);
  * @param task  Task to destroy
  */
 void fut_task_destroy(fut_task_t *task);
+
+/**
+ * Assign an address space to a task.
+ */
+void fut_task_set_mm(fut_task_t *task, struct fut_mm *mm);
+
+/**
+ * Fetch the address space associated with a task.
+ */
+struct fut_mm *fut_task_get_mm(const fut_task_t *task);
+
+fut_task_t *fut_task_current(void);
+void fut_task_exit_current(int status);
+int fut_task_waitpid(int pid, int *status_out);
+void fut_task_signal_exit(int signal);

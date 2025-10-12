@@ -15,6 +15,7 @@
 #include <kernel/fut_thread.h>
 #include <kernel/fut_task.h>
 #include <kernel/fut_fipc.h>
+#include <kernel/exec.h>
 #include <kernel/fut_vfs.h>
 #include <kernel/fut_ramfs.h>
 #include <kernel/fut_blockdev.h>
@@ -549,6 +550,9 @@ void fut_kernel_main(void) {
     fut_printf("   Futura OS Nanokernel Initialization\n");
     fut_printf("=======================================================\n\n");
 
+    int fb_stage = -1;
+    int fb_exec = -1;
+
 #if defined(__x86_64__)
     const uintptr_t min_phys = KERNEL_VIRTUAL_BASE + 0x100000ULL;
 #endif
@@ -653,6 +657,14 @@ void fut_kernel_main(void) {
     /* Test FuturaFS operations with smaller ramdisk */
     test_futurafs_operations();
 
+    fut_printf("[INIT] Staging fbtest user binary...\n");
+    fb_stage = fut_stage_fbtest_binary();
+    if (fb_stage != 0) {
+        fut_printf("[WARN] Failed to stage fbtest binary (error %d)\n", fb_stage);
+    } else {
+        fut_printf("[INIT] fbtest binary staged at /bin/fbtest\n");
+    }
+
     /* ========================================
      *   Step 5: Initialize Scheduler
      * ======================================== */
@@ -660,6 +672,17 @@ void fut_kernel_main(void) {
     fut_printf("[INIT] Initializing scheduler...\n");
     fut_sched_init();
     fut_printf("[INIT] Scheduler initialized with idle thread\n");
+
+    if (fb_stage == 0) {
+        char fbtest_name[] = "fbtest";
+        char *fbtest_args[] = { fbtest_name, NULL };
+        fb_exec = fut_exec_elf("/bin/fbtest", fbtest_args);
+        if (fb_exec != 0) {
+            fut_printf("[WARN] Failed to launch /bin/fbtest (error %d)\n", fb_exec);
+        } else {
+            fut_printf("[INIT] Scheduled /bin/fbtest user process\n");
+        }
+    }
 
     /* ========================================
      *   Step 6: Create Test Task and FIPC Channel

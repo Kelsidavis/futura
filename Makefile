@@ -118,7 +118,7 @@ KERNEL_SOURCES := \
     drivers/video/fb.c \
     drivers/tty/console.c \
     kernel/blk/blkcore.c \
-    kernel/tests/blk_async_smoke.c \
+    tests/test_blkcore.c \
     platform/x86_64/drivers/virtio/blk.c \
     platform/x86_64/drivers/ahci/ahci.c
 
@@ -190,6 +190,7 @@ $(OBJ_DIR) $(BIN_DIR):
 ifeq ($(PLATFORM),x86_64)
 	@mkdir -p $(OBJ_DIR)/arch/x86_64
 endif
+	@mkdir -p $(OBJ_DIR)/tests
 	@mkdir -p $(OBJ_DIR)/subsystems/posix_compat
 
 # Build kernel

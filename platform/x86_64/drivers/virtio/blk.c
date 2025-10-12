@@ -292,7 +292,7 @@ typedef struct virtio_blk_device {
     uint32_t negotiated_features_high;
     bool has_flush;
 
-    fut_blkdev_t *blk_dev;
+    fut_blkdev_t blk_dev;
     fut_spinlock_t io_lock;
 } virtio_blk_device_t;
 
@@ -746,20 +746,19 @@ static bool virtio_blk_register_device(virtio_blk_device_t *dev) {
     }
     dev->block_size = blk_size;
 
-    fut_blkdev_t *blk_dev = NULL;
-    int rc = fut_blk_register("blk:vda",
-                              dev->block_size,
-                              dev->capacity_sectors,
-                              FUT_BLK_READ | FUT_BLK_WRITE | FUT_BLK_ADMIN,
-                              &g_vblk_backend,
-                              dev,
-                              &blk_dev);
+    dev->blk_dev.name = "blk:vda";
+    dev->blk_dev.block_size = dev->block_size;
+    dev->blk_dev.block_count = dev->capacity_sectors;
+    dev->blk_dev.allowed_rights = FUT_BLK_READ | FUT_BLK_WRITE | FUT_BLK_ADMIN;
+    dev->blk_dev.backend = &g_vblk_backend;
+    dev->blk_dev.backend_ctx = dev;
+
+    int rc = fut_blk_register(&dev->blk_dev);
     if (rc != 0) {
         fut_printf("[virtio-blk] fut_blk_register failed: %d\n", rc);
         return false;
     }
 
-    dev->blk_dev = blk_dev;
     fut_spinlock_init(&dev->io_lock);
     fut_printf("[virtio-blk] registered /dev/vda (%llu sectors, %u-byte blocks)\n",
                (unsigned long long)dev->capacity_sectors,

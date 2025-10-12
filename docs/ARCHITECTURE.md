@@ -35,8 +35,9 @@
 Futura OS treats every shareable resource—channels, tasks, block devices, inode
 handles—as an object managed by `fut_object.c`. Each object is tagged with a
 rights bitmap that mirrors Zircon’s handle model. The async block core extends
-this pattern: `fut_blk_open()` yields a handle whose rights (read, write,
-admin) are enforced on every I/O submission. The new log-structured FuturaFS
+this pattern: `fut_blk_acquire()` grants a handle whose rights (read, write,
+admin) are enforced on every I/O submission, while `fut_blk_open()` lets privileged
+callers map a capability back to the device object without revalidating rights. The new log-structured FuturaFS
 skeleton derives capability rights directly from the inode policy recorded in
 its log; userland receives transient handles (read/write/admin) that mirror
 those policies.

@@ -308,6 +308,19 @@ static struct fut_mount *find_mount_for_path(
     return NULL;
 }
 
+static void release_lookup_ref(struct fut_vnode *vnode) {
+    if (!vnode) {
+        return;
+    }
+
+    if (vnode == root_vnode && vnode->refcount == 1) {
+        /* Preserve a persistent reference to the root filesystem vnode. */
+        fut_vnode_ref(vnode);
+    }
+
+    fut_vnode_unref(vnode);
+}
+
 /**
  * Lookup vnode by path.
  *
@@ -347,52 +360,105 @@ static int lookup_vnode(const char *path, struct fut_vnode **vnode) {
         return -ENOENT;
     }
 
-    fut_printf("[vfs] lookup_vnode path=%s\n", path);
-
     struct fut_vnode *current = root_vnode;
     fut_vnode_ref(current);
+    fut_printf("[vfs] lookup_vnode path=%s\n", path);
 
     /* Walk path components */
-    for (int i = 0; i < num_components; i++) {
+    unsigned int steps = 0;
+    unsigned int max_steps = (unsigned int)(num_components * 2 + 4);
+
+    for (int i = 0; i < num_components;) {
+        if (++steps > max_steps) {
+            fut_printf("[vfs] ELOOP: exceeded step budget walking '%s'\n", path);
+            release_lookup_ref(current);
+            return -ELOOP;
+        }
+
+        const char *component = components[i];
+
+        if (component[0] == '\0') {
+            i++;
+            continue;
+        }
+
+        if (component[0] == '.' && component[1] == '\0') {
+            i++;
+            continue;
+        }
+
+        if (component[0] == '.' && component[1] == '.' && component[2] == '\0') {
+            /* Parent traversal not yet supported - stay within current vnode */
+            fut_printf("[vfs]  '..' component ignored (unsupported)\n");
+            i++;
+            continue;
+        }
+
         struct fut_mount *mount = find_mount_for_path(components, i + 1);
         if (mount && mount->root) {
             fut_printf("[vfs]  component %d matched mount %s\n", i, mount->mountpoint);
-            fut_vnode_unref(current);
-            current = mount->root;
-            fut_vnode_ref(current);
+
+            if (current != mount->root) {
+                struct fut_vnode *prev = current;
+                current = mount->root;
+                fut_vnode_ref(current);
+                release_lookup_ref(prev);
+            }
+
+            fut_printf("[vfs]  after mount switch current=%p ref=%u (i=%d/%d)\n",
+                       (void *)current,
+                       current ? current->refcount : 0,
+                       i,
+                       num_components);
+
+            if (i == num_components - 1) {
+                *vnode = current;
+                fut_printf("[vfs] lookup_vnode done vnode=%p ino=%llu (mount root)\n",
+                           (void *)current,
+                           current ? (unsigned long long)current->ino : 0ULL);
+                return 0;
+            }
+
+            i++;
             continue;
         }
 
         /* Check if current is a directory */
         if (current->type != VN_DIR) {
-            fut_vnode_unref(current);
+            release_lookup_ref(current);
             return -ENOTDIR;
         }
 
         /* Lookup next component */
         if (!current->ops || !current->ops->lookup) {
-            fut_vnode_unref(current);
+            release_lookup_ref(current);
             return -ENOENT;
         }
 
         struct fut_vnode *next = NULL;
-        fut_printf("[vfs]  lookup component %s on vnode %p\n", components[i], (void *)current);
-        int ret = current->ops->lookup(current, components[i], &next);
+        fut_printf("[vfs]  lookup component %s on vnode %p\n", component, (void *)current);
+        int ret = current->ops->lookup(current, component, &next);
 
         if (ret < 0) {
-            fut_vnode_unref(current);
+            release_lookup_ref(current);
             fut_printf("[vfs]  component lookup failed ret=%d\n", ret);
             return ret;
         }
 
-        fut_vnode_unref(current);
+        fut_printf("[vfs]  -> lookup('%s') = %p (ino=%llu)\n",
+                   component,
+                   (void *)next,
+                   next ? (unsigned long long)next->ino : 0ULL);
+
+        release_lookup_ref(current);
         current = next;
+        i++;
     }
 
     *vnode = current;
     fut_printf("[vfs] lookup_vnode done vnode=%p ino=%llu\n",
                (void *)current,
-               current ? (unsigned long long)current->ino : 0);
+               current ? (unsigned long long)current->ino : 0ULL);
     return 0;
 }
 
@@ -423,30 +489,30 @@ static int lookup_parent_and_name(const char *path,
     for (int i = 0; i < num_components - 1; i++) {
         struct fut_mount *mount = find_mount_for_path(components, i + 1);
         if (mount && mount->root) {
-            fut_vnode_unref(current);
+            release_lookup_ref(current);
             current = mount->root;
             fut_vnode_ref(current);
             continue;
         }
 
         if (current->type != VN_DIR || !current->ops || !current->ops->lookup) {
-            fut_vnode_unref(current);
+            release_lookup_ref(current);
             return -ENOTDIR;
         }
 
         struct fut_vnode *next = NULL;
         int ret = current->ops->lookup(current, components[i], &next);
         if (ret < 0) {
-            fut_vnode_unref(current);
+            release_lookup_ref(current);
             return ret;
         }
 
-        fut_vnode_unref(current);
+        release_lookup_ref(current);
         current = next;
     }
 
     if (current->type != VN_DIR) {
-        fut_vnode_unref(current);
+        release_lookup_ref(current);
         return -ENOTDIR;
     }
 
@@ -467,17 +533,17 @@ int fut_vfs_readdir(const char *path, uint64_t *cookie, struct fut_vdirent *dire
     }
 
     if (dir->type != VN_DIR) {
-        fut_vnode_unref(dir);
+        release_lookup_ref(dir);
         return -ENOTDIR;
     }
 
     if (!dir->ops || !dir->ops->readdir) {
-        fut_vnode_unref(dir);
+        release_lookup_ref(dir);
         return -ENOSYS;
     }
 
     ret = dir->ops->readdir(dir, cookie, dirent);
-    fut_vnode_unref(dir);
+    release_lookup_ref(dir);
     return ret;
 }
 
@@ -491,12 +557,12 @@ int fut_vfs_unlink(const char *path) {
     }
 
     if (!parent->ops || !parent->ops->unlink) {
-        fut_vnode_unref(parent);
+        release_lookup_ref(parent);
         return -ENOSYS;
     }
 
     ret = parent->ops->unlink(parent, leaf);
-    fut_vnode_unref(parent);
+    release_lookup_ref(parent);
     return ret;
 }
 
@@ -510,12 +576,12 @@ int fut_vfs_rmdir(const char *path) {
     }
 
     if (!parent->ops || !parent->ops->rmdir) {
-        fut_vnode_unref(parent);
+        release_lookup_ref(parent);
         return -ENOSYS;
     }
 
     ret = parent->ops->rmdir(parent, leaf);
-    fut_vnode_unref(parent);
+    release_lookup_ref(parent);
     return ret;
 }
 
@@ -529,12 +595,12 @@ int fut_vfs_mkdir(const char *path, uint32_t mode) {
     }
 
     if (!parent->ops || !parent->ops->mkdir) {
-        fut_vnode_unref(parent);
+        release_lookup_ref(parent);
         return -ENOSYS;
     }
 
     ret = parent->ops->mkdir(parent, leaf, mode);
-    fut_vnode_unref(parent);
+    release_lookup_ref(parent);
     return ret;
 }
 
@@ -638,7 +704,7 @@ int fut_vfs_open(const char *path, int flags, int mode) {
 
     /* Check if trying to open directory with write flags */
     if (vnode->type == VN_DIR && (flags & (O_WRONLY | O_RDWR))) {
-        fut_vnode_unref(vnode);
+        release_lookup_ref(vnode);
         return -EISDIR;
     }
 
@@ -646,7 +712,7 @@ int fut_vfs_open(const char *path, int flags, int mode) {
     if (vnode->ops && vnode->ops->open) {
         ret = vnode->ops->open(vnode, flags);
         if (ret < 0) {
-            fut_vnode_unref(vnode);
+            release_lookup_ref(vnode);
             return ret;
         }
     }
@@ -654,7 +720,7 @@ int fut_vfs_open(const char *path, int flags, int mode) {
     /* Allocate file structure */
     struct fut_file *file = fut_malloc(sizeof(struct fut_file));
     if (!file) {
-        fut_vnode_unref(vnode);
+        release_lookup_ref(vnode);
         return -ENOMEM;
     }
 
@@ -670,7 +736,7 @@ int fut_vfs_open(const char *path, int flags, int mode) {
     int fd = alloc_fd(file);
     if (fd < 0) {
         fut_free(file);
-        fut_vnode_unref(vnode);
+        release_lookup_ref(vnode);
         return fd;
     }
 
@@ -831,7 +897,7 @@ int fut_vfs_stat(const char *path, struct fut_stat *stat) {
         ret = 0;
     }
 
-    fut_vnode_unref(vnode);
+    release_lookup_ref(vnode);
     return ret;
 }
 

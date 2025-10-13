@@ -99,6 +99,8 @@ def fix_elf_offset(input_file, output_file):
     boot_phdr_idx = None
     PT_LOAD = 1
 
+    boot_data_segment_idx = None
+
     for i in range(e_phnum):
         phdr_offset = e_phoff + i * e_phentsize
         p_type = struct.unpack('<I', elf_data[phdr_offset:phdr_offset+4])[0]
@@ -112,6 +114,8 @@ def fix_elf_offset(input_file, output_file):
             boot_phdr_idx = i
             print(f"  Found empty boot PT_LOAD segment at index {i}")
         elif p_filesz > 0:
+            if p_type == PT_LOAD and p_vaddr == 0x100000 and boot_data_segment_idx is None:
+                boot_data_segment_idx = i
             segments.append({
                 'idx': i,
                 'phdr_offset': phdr_offset,
@@ -126,6 +130,9 @@ def fix_elf_offset(input_file, output_file):
     if create_new_boot_phdr:
         print(f"  No empty boot PT_LOAD found, will create new one")
         boot_phdr_idx = 0  # Insert at beginning
+
+        if boot_data_segment_idx is not None:
+            segments = [seg for seg in segments if seg['idx'] != boot_data_segment_idx]
 
     print(f"\nBoot data: offset 0x{boot_data_start:x}, size 0x{boot_data_size:x}")
 
@@ -171,6 +178,17 @@ def fix_elf_offset(input_file, output_file):
 
         # Update e_phnum in ELF header
         struct.pack_into('<H', new_elf_data, 56, new_phnum)
+
+        if boot_data_segment_idx is not None:
+            old_boot_phdr_offset = e_phoff + (boot_data_segment_idx + 1) * e_phentsize
+            struct.pack_into('<I', new_elf_data, old_boot_phdr_offset + 0, 0)    # PT_NULL
+            struct.pack_into('<I', new_elf_data, old_boot_phdr_offset + 4, 0)    # flags
+            struct.pack_into('<Q', new_elf_data, old_boot_phdr_offset + 8, 0)    # offset
+            struct.pack_into('<Q', new_elf_data, old_boot_phdr_offset + 16, 0)   # vaddr
+            struct.pack_into('<Q', new_elf_data, old_boot_phdr_offset + 24, 0)   # paddr
+            struct.pack_into('<Q', new_elf_data, old_boot_phdr_offset + 32, 0)   # filesz
+            struct.pack_into('<Q', new_elf_data, old_boot_phdr_offset + 40, 0)   # memsz
+            struct.pack_into('<Q', new_elf_data, old_boot_phdr_offset + 48, 0x1000)  # align
     else:
         # Just copy up to old headers_end
         headers_end = e_phoff + e_phentsize * e_phnum

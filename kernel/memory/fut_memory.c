@@ -9,6 +9,10 @@
 
 #include "../../include/kernel/fut_memory.h"
 
+#if defined(__x86_64__)
+#include <arch/x86_64/pmap.h>
+#endif
+
 /* ============================================================
  *   Physical Memory Manager (Bitmap-based)
  * ============================================================ */
@@ -17,6 +21,7 @@ static uint8_t  *pmm_bitmap = nullptr;   // Allocation bitmap
 static uint64_t  pmm_total  = 0;         // Total pages
 static uint64_t  pmm_free   = 0;         // Free pages
 static uintptr_t pmm_base   = 0;         // Physical base address
+static uint64_t  pmm_reserved_pages = 0;
 
 /* Bitmap manipulation macros */
 #define BITMAP_SET(b)   (pmm_bitmap[(b)/8u] |=  (1u << ((b)%8u)))
@@ -26,12 +31,16 @@ static uintptr_t pmm_base   = 0;         // Physical base address
 void fut_pmm_init(uint64_t mem_size_bytes, uintptr_t phys_base) {
     // Calculate total number of pages
     pmm_total = mem_size_bytes / FUT_PAGE_SIZE;
-    pmm_free  = pmm_total;
     pmm_base  = phys_base;
 
     // Bitmap size: 1 bit per page
     uint64_t bitmap_bytes = (pmm_total + 7u) / 8u;
-    pmm_bitmap = (uint8_t *)phys_base;
+    pmm_bitmap =
+#if defined(__x86_64__)
+        (uint8_t *)(uintptr_t)pmap_phys_to_virt((phys_addr_t)phys_base);
+#else
+        (uint8_t *)(uintptr_t)phys_base;
+#endif
 
     // Clear the bitmap (all pages free initially)
     for (uint64_t i = 0; i < bitmap_bytes; ++i) {
@@ -40,20 +49,26 @@ void fut_pmm_init(uint64_t mem_size_bytes, uintptr_t phys_base) {
 
     // Reserve pages used by the bitmap itself
     uint64_t bitmap_pages = FUT_PAGE_ALIGN(bitmap_bytes) / FUT_PAGE_SIZE;
+    pmm_reserved_pages = bitmap_pages;
     for (uint64_t i = 0; i < bitmap_pages; ++i) {
         BITMAP_SET(i);
     }
 
-    pmm_free -= bitmap_pages;
+    pmm_free = (pmm_total > bitmap_pages) ? (pmm_total - bitmap_pages) : 0;
 }
 
 void *fut_pmm_alloc_page(void) {
     // Linear scan for first free page
-    for (uint64_t i = 0; i < pmm_total; ++i) {
+    for (uint64_t i = pmm_reserved_pages; i < pmm_total; ++i) {
         if (!BITMAP_TST(i)) {
             BITMAP_SET(i);
             --pmm_free;
-            return (void *)(uintptr_t)(pmm_base + i * FUT_PAGE_SIZE);
+            uintptr_t phys = pmm_base + i * FUT_PAGE_SIZE;
+#if defined(__x86_64__)
+            return (void *)(uintptr_t)pmap_phys_to_virt((phys_addr_t)phys);
+#else
+            return (void *)(uintptr_t)phys;
+#endif
         }
     }
 
@@ -64,7 +79,19 @@ void fut_pmm_free_page(void *addr) {
     if (!addr) return;
 
     // Calculate page index
-    uint64_t idx = ((uintptr_t)addr - pmm_base) / FUT_PAGE_SIZE;
+    uintptr_t addr_val = (uintptr_t)addr;
+
+#if defined(__x86_64__)
+    phys_addr_t phys = pmap_virt_to_phys(addr_val);
+#else
+    phys_addr_t phys = (phys_addr_t)addr_val;
+#endif
+
+    if (phys < pmm_base) {
+        return;
+    }
+
+    uint64_t idx = (phys - pmm_base) / FUT_PAGE_SIZE;
 
     // Validate and free
     if (idx < pmm_total && BITMAP_TST(idx)) {

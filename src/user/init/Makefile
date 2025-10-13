@@ -25,7 +25,7 @@ CFLAGS += $(INCLUDES)
 # Linker flags
 LDSCRIPT := ../libfutura/userland.ld
 LDFLAGS := -nostdlib -static -T $(LDSCRIPT)
-CRT0 := $(OBJ_DIR)/../libfutura/crt0.o
+CRT0 := $(LIB_DIR)/crt0.o
 LIBFUTURA := $(LIB_DIR)/libfutura.a
 
 # Source files

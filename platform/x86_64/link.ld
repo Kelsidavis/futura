@@ -49,6 +49,14 @@ SECTIONS
         _boot_code_end = .;
     } :boot
 
+    /* Dedicated page-aligned slot for boot page tables. */
+    . = ALIGN(PAGE_SIZE);
+    .boot.ptables ALIGN(PAGE_SIZE) :
+    {
+        KEEP(*(.boot.ptables))
+        . = ALIGN(PAGE_SIZE);
+    } :boot
+
     /* Separate section for boot BSS (boot stack) - doesn't need to be in first 32KB */
     .boot_bss ALIGN(PAGE_SIZE) :
     {
@@ -141,9 +149,24 @@ SECTIONS
     } :data
 
     /* ============================================================
+     *   Global Offset Tables
+     * ============================================================ */
+    .got ALIGN(8) : AT(_kernel_phys_offset + SIZEOF(.text) + SIZEOF(.rodata) + SIZEOF(.data) + SIZEOF(.gdt) + SIZEOF(.idt) + SIZEOF(.tss))
+    {
+        *(.got)
+        *(.igot)
+    } :data
+
+    .got.plt ALIGN(8) : AT(_kernel_phys_offset + SIZEOF(.text) + SIZEOF(.rodata) + SIZEOF(.data) + SIZEOF(.gdt) + SIZEOF(.idt) + SIZEOF(.tss) + SIZEOF(.got))
+    {
+        *(.got.plt)
+        *(.igot.plt)
+    } :data
+
+    /* ============================================================
      *   BSS Section (Uninitialized Data)
      * ============================================================ */
-    .bss ALIGN(PAGE_SIZE) : AT(_kernel_phys_offset + SIZEOF(.text) + SIZEOF(.rodata) + SIZEOF(.data) + SIZEOF(.gdt) + SIZEOF(.idt) + SIZEOF(.tss))
+    .bss ALIGN(PAGE_SIZE) : AT(_kernel_phys_offset + SIZEOF(.text) + SIZEOF(.rodata) + SIZEOF(.data) + SIZEOF(.gdt) + SIZEOF(.idt) + SIZEOF(.tss) + SIZEOF(.got) + SIZEOF(.got.plt))
     {
         _bss_start = .;
         *(.bss .bss.*)          /* Uninitialized data */
@@ -155,7 +178,7 @@ SECTIONS
     /* ============================================================
      *   Kernel Stack
      * ============================================================ */
-    .stack ALIGN(PAGE_SIZE) : AT(_kernel_phys_offset + SIZEOF(.text) + SIZEOF(.rodata) + SIZEOF(.data) + SIZEOF(.gdt) + SIZEOF(.idt) + SIZEOF(.tss) + SIZEOF(.bss))
+    .stack ALIGN(PAGE_SIZE) : AT(_kernel_phys_offset + SIZEOF(.text) + SIZEOF(.rodata) + SIZEOF(.data) + SIZEOF(.gdt) + SIZEOF(.idt) + SIZEOF(.tss) + SIZEOF(.got) + SIZEOF(.got.plt) + SIZEOF(.bss))
     {
         _stack_bottom = .;
         . += 0x4000;            /* 16KB kernel stack */

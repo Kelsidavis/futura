@@ -16,7 +16,7 @@ CFLAGS += -g -O2
 CFLAGS += $(INCLUDES)
 
 LDSCRIPT := ../libfutura/userland.ld
-CRT0 := $(OBJ_DIR)/../libfutura/crt0.o
+CRT0 := $(LIB_DIR)/crt0.o
 LIBFUTURA := $(LIB_DIR)/libfutura.a
 
 SRCS := main.c

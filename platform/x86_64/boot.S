@@ -42,22 +42,31 @@ gdt64_pointer:
     .word gdt64_end - gdt64 - 1         /* Limit */
     .long gdt64                         /* Base */
 
-/* Page tables in .boot.data (zero-initialized, will be populated at runtime) */
-.section .boot.data
+/* Page tables live in their dedicated boot.ptables section to avoid overlap with
+ * regular .bss data once the kernel relocates.
+ */
+.section .boot.ptables, "aw", @progbits
 .align 4096
 .global boot_pml4
+.global boot_ptables_start
+boot_ptables_start:
 boot_pml4:
-    .skip 4096                          /* 512 entries * 8 bytes */
+    .space 4096, 0                      /* 512 entries * 8 bytes */
+.set boot_pml4_phys, boot_pml4
 
 .align 4096
 .global boot_pdpt
 boot_pdpt:
-    .skip 4096                          /* 512 entries * 8 bytes */
+    .space 4096, 0                      /* 512 entries * 8 bytes */
+.set boot_pdpt_phys, boot_pdpt
 
 .align 4096
 .global boot_pd
 boot_pd:
-    .skip 4096                          /* 512 entries * 8 bytes */
+    .space 4096, 0                      /* 512 entries * 8 bytes */
+.set boot_pd_phys, boot_pd
+.global boot_ptables_end
+boot_ptables_end:
 
 /* Boot stack in .boot.bss (this can stay as BSS since we just need zero-initialized space) */
 .section .boot.bss
@@ -86,57 +95,37 @@ _start:
     /* Initialize page tables at runtime with correct physical addresses */
 
     /* Setup PML4: identity map low 2MB and higher-half kernel */
-    movl $boot_pdpt, %eax               /* Get physical address of PDPT */
+    movl $boot_pdpt_phys, %eax          /* Get physical address of PDPT */
     orl $0x03, %eax                     /* Present + Writable */
-    movl %eax, boot_pml4                /* PML4[0] low dword */
-    movl $0, boot_pml4 + 4              /* PML4[0] high dword */
-    movl %eax, boot_pml4 + 4088         /* PML4[511] low dword */
-    movl $0, boot_pml4 + 4092           /* PML4[511] high dword */
+    movl $boot_pml4_phys, %ebx
+    movl %eax, (%ebx)                   /* PML4[0] low dword */
+    movl $0, 4(%ebx)                   /* PML4[0] high dword */
+    movl %eax, 4088(%ebx)               /* PML4[511] low dword */
+    movl $0, 4092(%ebx)                /* PML4[511] high dword */
 
     /* Setup PDPT: map first and second-to-last entries */
-    movl $boot_pd, %eax                 /* Get physical address of PD */
+    movl $boot_pd_phys, %eax            /* Get physical address of PD */
     orl $0x03, %eax                     /* Present + Writable */
-    movl %eax, boot_pdpt                /* PDPT[0] low dword */
-    movl $0, boot_pdpt + 4              /* PDPT[0] high dword */
-    movl %eax, boot_pdpt + 4080         /* PDPT[510] low dword */
-    movl $0, boot_pdpt + 4084           /* PDPT[510] high dword */
+    movl $boot_pdpt_phys, %ebx
+    movl %eax, (%ebx)                   /* PDPT[0] low dword */
+    movl $0, 4(%ebx)                   /* PDPT[0] high dword */
+    movl %eax, 4080(%ebx)               /* PDPT[510] low dword */
+    movl $0, 4084(%ebx)                /* PDPT[510] high dword */
 
     /* Setup PD: identity map first 32MB with 2MB huge pages */
-    movl $0x00000083, boot_pd           /* PD[0] low dword: 0MB-2MB */
-    movl $0, boot_pd + 4                /* PD[0] high dword */
-    movl $0x00200083, boot_pd + 8       /* PD[1] low dword: 2MB-4MB */
-    movl $0, boot_pd + 12               /* PD[1] high dword */
-    movl $0x00400083, boot_pd + 16      /* PD[2] low dword: 4MB-6MB */
-    movl $0, boot_pd + 20               /* PD[2] high dword */
-    movl $0x00600083, boot_pd + 24      /* PD[3] low dword: 6MB-8MB */
-    movl $0, boot_pd + 28               /* PD[3] high dword */
-    movl $0x00800083, boot_pd + 32      /* PD[4] low dword: 8MB-10MB */
-    movl $0, boot_pd + 36               /* PD[4] high dword */
-    movl $0x00A00083, boot_pd + 40      /* PD[5] low dword: 10MB-12MB */
-    movl $0, boot_pd + 44               /* PD[5] high dword */
-    movl $0x00C00083, boot_pd + 48      /* PD[6] low dword: 12MB-14MB */
-    movl $0, boot_pd + 52               /* PD[6] high dword */
-    movl $0x00E00083, boot_pd + 56      /* PD[7] low dword: 14MB-16MB */
-    movl $0, boot_pd + 60               /* PD[7] high dword */
-    movl $0x01000083, boot_pd + 64      /* PD[8] low dword: 16MB-18MB */
-    movl $0, boot_pd + 68               /* PD[8] high dword */
-    movl $0x01200083, boot_pd + 72      /* PD[9] low dword: 18MB-20MB */
-    movl $0, boot_pd + 76               /* PD[9] high dword */
-    movl $0x01400083, boot_pd + 80      /* PD[10] low dword: 20MB-22MB */
-    movl $0, boot_pd + 84               /* PD[10] high dword */
-    movl $0x01600083, boot_pd + 88      /* PD[11] low dword: 22MB-24MB */
-    movl $0, boot_pd + 92               /* PD[11] high dword */
-    movl $0x01800083, boot_pd + 96      /* PD[12] low dword: 24MB-26MB */
-    movl $0, boot_pd + 100              /* PD[12] high dword */
-    movl $0x01A00083, boot_pd + 104     /* PD[13] low dword: 26MB-28MB */
-    movl $0, boot_pd + 108              /* PD[13] high dword */
-    movl $0x01C00083, boot_pd + 112     /* PD[14] low dword: 28MB-30MB */
-    movl $0, boot_pd + 116              /* PD[14] high dword */
-    movl $0x01E00083, boot_pd + 120     /* PD[15] low dword: 30MB-32MB */
-    movl $0, boot_pd + 124              /* PD[15] high dword */
+    movl $boot_pd_phys, %ebx
+    movl $0x00000083, %eax              /* Base: Present | RW | Large */
+    xorl %ecx, %ecx
+1:
+    movl %eax, (%ebx,%ecx,8)            /* Low dword */
+    movl $0, 4(%ebx,%ecx,8)             /* High dword */
+    addl $0x00200000, %eax              /* Next 2MB */
+    incl %ecx
+    cmpl $16, %ecx
+    jb 1b
 
     /* Load PML4 address into CR3 */
-    movl $boot_pml4, %eax
+    movl $boot_pml4_phys, %eax
     movl %eax, %cr3
 
     /* Debug: Write 'P' after CR3 loaded */
@@ -199,6 +188,19 @@ long_mode_start:
     /* Set up 64-bit stack - use boot_stack (identity-mapped and loaded) */
     movq $boot_stack_top, %rsp
     movq $boot_stack_top, %rbp
+
+    /* Enable SSE/FXSR for kernel use */
+    movq %cr0, %rax
+    andq $~(1 << 2), %rax                /* Clear EM */
+    orq  $(1 << 1), %rax                 /* Set MP */
+    orq  $(1 << 5), %rax                 /* Set NE */
+    movq %rax, %cr0
+
+    movq %cr4, %rax
+    orq  $((1 << 9) | (1 << 10)), %rax   /* OSFXSR | OSXMMEXCPT */
+    movq %rax, %cr4
+
+    fninit
 
     /* Clear RFLAGS first */
     pushq $0

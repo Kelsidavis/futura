@@ -37,16 +37,21 @@ ALL_OBJS := $(C_OBJS) $(ASM_OBJS)
 # Target library
 TARGET := $(LIB_DIR)/libfutura.a
 CRT0_OBJ := $(OBJ_DIR)/crt0.o
+CRT0_EXPORT := $(LIB_DIR)/crt0.o
 
 # Build rules
 .PHONY: all clean
 
-all: $(TARGET) $(CRT0_OBJ)
+all: $(TARGET) $(CRT0_EXPORT)
 
 $(TARGET): $(C_OBJS) | $(LIB_DIR)
 	@echo "AR $@"
 	@$(AR) rcs $@ $(C_OBJS)
 	@echo "Built libfutura: $@"
+
+$(CRT0_EXPORT): $(CRT0_OBJ) | $(LIB_DIR)
+	@echo "CP crt0 -> $(CRT0_EXPORT)"
+	@cp -f $(CRT0_OBJ) $(CRT0_EXPORT)
 
 # Compile C sources
 $(OBJ_DIR)/%.o: %.c | $(OBJ_DIR)
@@ -66,7 +71,7 @@ $(LIB_DIR):
 	@mkdir -p $(LIB_DIR)
 
 clean:
-	@rm -rf $(OBJ_DIR) $(TARGET)
+	@rm -rf $(OBJ_DIR) $(TARGET) $(CRT0_EXPORT)
 
 # Dependencies
 $(OBJ_DIR)/string.o: string.c

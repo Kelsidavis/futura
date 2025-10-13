@@ -32,12 +32,24 @@ static uintptr_t map_user_page(uintptr_t uaddr) {
     return uaddr;
 }
 
-#define SYS_read        0
-#define SYS_write       1
-#define SYS_open        2
-#define SYS_close       3
-#define SYS_ioctl       16
-#define SYS_mmap        9
+#ifndef SYS_read
+#define SYS_read        0u
+#endif
+#ifndef SYS_write
+#define SYS_write       1u
+#endif
+#ifndef SYS_open
+#define SYS_open        2u
+#endif
+#ifndef SYS_close
+#define SYS_close       3u
+#endif
+#ifndef SYS_ioctl
+#define SYS_ioctl       16u
+#endif
+#ifndef SYS_mmap
+#define SYS_mmap        9u
+#endif
 
 #define O_RDWR          0x0002
 #define PROT_WRITE      0x2

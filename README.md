@@ -111,6 +111,7 @@ Enable targeted tracing at build time by defining the relevant flag, for example
 make CFLAGS+=-DDEBUG_VFS   # verbose VFS path-walker logs
 make CFLAGS+=-DDEBUG_VM    # paging / large-page split diagnostics
 make CFLAGS+=-DDEBUG_BLK   # block stack + virtio-blk traces
+make CFLAGS+=-DDEBUG_NET   # FuturaNet + virtio-net driver traces
 ```
 
 `DEBUG_BLK` automatically propagates to the Rust virtio-blk driver (`--cfg debug_blk`) so the BAR/capability dumps only reappear when you opt in.

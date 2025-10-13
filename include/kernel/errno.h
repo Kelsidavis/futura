@@ -114,3 +114,11 @@
 #ifndef ELOOP
 #define ELOOP       40
 #endif
+
+#ifndef EMSGSIZE
+#define EMSGSIZE    90
+#endif
+
+#ifndef ENOTCONN
+#define ENOTCONN    107
+#endif

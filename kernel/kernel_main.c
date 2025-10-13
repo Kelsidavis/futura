@@ -26,6 +26,7 @@
 #include <kernel/console.h>
 #include <kernel/boot_banner.h>
 #include <futura/blkdev.h>
+#include <futura/net.h>
 #include <platform/platform.h>
 #include "tests/test_api.h"
 #if defined(__x86_64__)
@@ -37,7 +38,9 @@ extern void fut_echo_selftest(void);
 extern void fut_fb_userspace_smoke(void);
 extern void fut_blk_async_selftest_schedule(fut_task_t *task);
 extern void fut_futfs_selftest_schedule(fut_task_t *task);
+extern void fut_net_selftest_schedule(fut_task_t *task);
 extern fut_status_t virtio_blk_init(uint64_t pci_addr);
+extern fut_status_t virtio_net_init(void);
 extern void ahci_init(void);
 extern char boot_ptables_start[];
 extern char boot_ptables_end[];
@@ -739,7 +742,7 @@ void fut_kernel_main(void) {
 
     fut_printf("[INIT] Root filesystem mounted (ramfs at /)\n");
 
-    fut_test_plan(1);
+    fut_test_plan(3);
 
     /* Test VFS operations */
     test_vfs_operations();
@@ -758,6 +761,13 @@ void fut_kernel_main(void) {
         fut_printf("[virtio-blk] init failed: %d\n", vblk_rc);
     }
     ahci_init();
+
+    fut_printf("[INIT] Initializing network subsystem...\n");
+    fut_net_init();
+    fut_status_t vnet_rc = virtio_net_init();
+    if (vnet_rc != 0) {
+        fut_printf("[virtio-net] init failed: %d\n", vnet_rc);
+    }
 
     /* Test block device operations - DISABLED (heap too small for 1MB ramdisk) */
     /* test_blockdev_operations(); */
@@ -809,6 +819,7 @@ void fut_kernel_main(void) {
 
     fut_blk_async_selftest_schedule(test_task);
     fut_futfs_selftest_schedule(test_task);
+    fut_net_selftest_schedule(test_task);
 
     fut_thread_t *watchdog_thread = fut_thread_create(
         test_task,

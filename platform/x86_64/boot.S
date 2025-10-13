@@ -47,6 +47,7 @@ gdt64_pointer:
  */
 .section .boot.ptables, "aw", @progbits
 .align 4096
+.extern cpu_features_init
 .global boot_pml4
 .global boot_ptables_start
 boot_ptables_start:
@@ -189,19 +190,6 @@ long_mode_start:
     movq $boot_stack_top, %rsp
     movq $boot_stack_top, %rbp
 
-    /* Enable SSE/FXSR for kernel use */
-    movq %cr0, %rax
-    andq $~(1 << 2), %rax                /* Clear EM */
-    orq  $(1 << 1), %rax                 /* Set MP */
-    orq  $(1 << 5), %rax                 /* Set NE */
-    movq %rax, %cr0
-
-    movq %cr4, %rax
-    orq  $((1 << 9) | (1 << 10)), %rax   /* OSFXSR | OSXMMEXCPT */
-    movq %rax, %cr4
-
-    fninit
-
     /* Clear RFLAGS first */
     pushq $0
     popfq
@@ -238,6 +226,10 @@ higher_half_entry:
     movw $0x3F8, %dx
     movb $'S', %al
     outb %al, %dx
+
+    /* Negotiate CPU features in C (idempotent, may also run later) */
+    movabs $cpu_features_init, %rax
+    call *%rax
 
     /* Prepare arguments for platform init */
     /* EDI/RDI = Multiboot2 magic (saved from boot in 32-bit mode) */

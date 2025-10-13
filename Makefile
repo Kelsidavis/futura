@@ -15,6 +15,10 @@ PLATFORM ?= x86_64
 # Build mode (debug, release)
 BUILD_MODE ?= debug
 
+# QEMU test harness configuration
+QEMU_MEM       ?= 256
+QEMU_IMG_SIZE  ?= 64M
+
 # ============================================================
 #   Platform-Specific Toolchain Configuration
 # ============================================================
@@ -336,13 +340,12 @@ test: iso
 	@echo "Testing kernel under QEMU (isa-debug-exit)..."
 	@img=futura_disk.img; \
 		echo "[HARNESS] Preparing test disk $$img"; \
-		pkill -9 -f "qemu-system-x86_64" >/dev/null 2>&1 || true; \
 		rm -f $$img $$img.lck $$img.lock; \
-		truncate -s 64M $$img; \
+		truncate -s $(QEMU_IMG_SIZE) $$img; \
 		qemu-system-x86_64 \
 			-serial stdio \
 			-display none \
-			-m 512 \
+			-m $(QEMU_MEM) \
 			-no-reboot -no-shutdown \
 			-device isa-debug-exit,iobase=0xf4,iosize=0x4 \
 			-cdrom futura.iso \

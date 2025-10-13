@@ -85,29 +85,32 @@ static_assert(sizeof(fut_interrupt_frame_t) == 208, "Interrupt frame must be 208
  */
 typedef struct fut_cpu_context {
     /* Callee-saved registers (System V AMD64 ABI) */
+    uint64_t r15;
+    uint64_t r14;
+    uint64_t r13;
+    uint64_t r12;
     uint64_t rbx;
     uint64_t rbp;
-    uint64_t r12;
-    uint64_t r13;
-    uint64_t r14;
-    uint64_t r15;
 
-    /* Stack and instruction pointers */
-    uint64_t rsp;
+    /* Control flow state */
     uint64_t rip;
-
-    /* Flags */
+    uint64_t rsp;
     uint64_t rflags;
-
-    /* Segment registers */
     uint64_t cs;
     uint64_t ss;
 
-    /* FPU/SSE state pointer (512 bytes, allocated separately) */
-    void *fpu_state;
-} __attribute__((packed)) fut_cpu_context_t;
+    /* Caller-saved registers captured for bootstrap/debug */
+    uint64_t rdi;
+    uint64_t rsi;
+    uint64_t rdx;
+    uint64_t rcx;
+    uint64_t rax;
 
-static_assert(sizeof(fut_cpu_context_t) == 96, "CPU context must be 96 bytes");
+    /* Saved SIMD/FPU state (must be 16-byte aligned for FXSAVE) */
+    alignas(16) uint8_t fx_area[512];
+} __attribute__((aligned(16))) fut_cpu_context_t;
+
+static_assert(sizeof(fut_cpu_context_t) == 640, "CPU context must be 640 bytes");
 
 /* ============================================================
  *   Register Accessors

@@ -610,6 +610,15 @@ static void print_hex64(uint64_t val) {
     fut_serial_puts(buf);
 }
 
+static void print_hex8(uint8_t val) {
+    const char *hex = "0123456789ABCDEF";
+    char buf[3];
+    buf[0] = hex[(val >> 4) & 0xF];
+    buf[1] = hex[val & 0xF];
+    buf[2] = '\0';
+    fut_serial_puts(buf);
+}
+
 /* Exception names for debugging output */
 static const char *exception_names[32] = {
     "Divide Error", "Debug", "NMI", "Breakpoint",
@@ -671,9 +680,27 @@ void __attribute__((weak)) fut_isr_handler(void *regs_ptr) {
         print_hex64(regs->error_code);
         fut_serial_puts(")\n");
     } else {
-        fut_serial_puts("Error Code: 0x");
-        print_hex64(regs->error_code);
+    fut_serial_puts("Error Code: 0x");
+    print_hex64(regs->error_code);
+    fut_serial_puts("\n");
+
+    if (regs->vector == 6) {
+        fut_serial_puts("[#UD] Opcode bytes @0x");
+        print_hex64(regs->rip);
+        fut_serial_puts(": ");
+        if ((uintptr_t)regs->rip >= KERNEL_VIRTUAL_BASE) {
+            const uint8_t *p = (const uint8_t *)regs->rip;
+            for (int i = 0; i < 8; i++) {
+                print_hex8(p[i]);
+                if (i != 7) {
+                    fut_serial_puts(" ");
+                }
+            }
+        } else {
+            fut_serial_puts("<unmapped>");
+        }
         fut_serial_puts("\n");
+    }
     }
 
     fut_serial_puts("\nRegisters:\n");

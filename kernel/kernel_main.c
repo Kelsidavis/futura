@@ -20,6 +20,7 @@
 #include <kernel/fut_ramfs.h>
 #include <kernel/fut_blockdev.h>
 #include <kernel/fut_ramdisk.h>
+#include <kernel/fut_timer.h>
 #include <kernel/fut_futurafs.h>
 #include <kernel/fb.h>
 #include <kernel/console.h>
@@ -648,6 +649,9 @@ void fut_kernel_main(void) {
 
     fut_printf("[INIT] Heap initialized: 0x%llx - 0x%llx (%llu MiB)\n",
                heap_start, heap_end, KERNEL_HEAP_SIZE / (1024 * 1024));
+
+    fut_printf("[INIT] Initializing timer subsystem...\n");
+    fut_timer_subsystem_init();
 
     fut_boot_banner();
 

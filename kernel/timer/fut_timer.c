@@ -23,6 +23,7 @@ static inline uint8_t inb(uint16_t port) { return hal_inb(port); }
 extern void fut_printf(const char *fmt, ...);
 extern void fut_schedule(void);
 extern void serial_puts(const char *s);
+extern void fut_irq_send_eoi(uint8_t irq);
 
 /* ============================================================
  *   Timer State
@@ -240,6 +241,11 @@ uint64_t fut_get_ticks(void) {
     return atomic_load_explicit(&system_ticks, memory_order_relaxed);
 }
 
+void fut_timer_irq(void) {
+    fut_timer_tick();
+    fut_irq_send_eoi(0);
+}
+
 /* ============================================================
  *   PIT (Programmable Interval Timer) Hardware
  * ============================================================ */
@@ -276,7 +282,7 @@ static void pit_init(uint32_t frequency) {
  * Initialize timer subsystem.
  * Programs PIT hardware and initializes sleep queue.
  */
-void fut_timer_init(void) {
+void fut_timer_subsystem_init(void) {
     atomic_store_explicit(&system_ticks, 0, memory_order_relaxed);
     sleep_queue_head = nullptr;
     fut_spinlock_init(&sleep_lock);

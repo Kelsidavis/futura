@@ -409,6 +409,10 @@ void fut_pic_send_eoi(uint8_t irq) {
     outb(PIC1_COMMAND, PIC_EOI);
 }
 
+void fut_irq_send_eoi(uint8_t irq) {
+    fut_pic_send_eoi(irq);
+}
+
 void fut_irq_enable(uint8_t irq) {
     uint16_t port;
     uint8_t value;

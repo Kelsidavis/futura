@@ -20,6 +20,7 @@ extern "C" {
 #endif
 
 #define FUTFS_SUPER_MAGIC 0x46554653u /* "FUFS" */
+#define FUTFS_NAME_MAX   64u
 
 enum futfs_inode_type {
     FUTFS_INODE_REG = 1,
@@ -34,6 +35,12 @@ enum futfs_rights_bits {
 
 typedef struct futfs_handle futfs_handle_t;
 
+typedef struct futfs_dirent {
+    uint64_t ino;
+    uint32_t type;
+    char name[FUTFS_NAME_MAX + 1];
+} futfs_dirent_t;
+
 /// Mount the filesystem on the provided block device capability.
 fut_status_t futfs_mount(fut_handle_t dev);
 
@@ -42,6 +49,9 @@ fut_status_t futfs_unmount(void);
 
 /// Create a new file (only absolute paths rooted at "/" are currently supported).
 fut_status_t futfs_create(const char *path, fut_handle_t *out);
+
+/// Create a new directory (currently only at the root).
+fut_status_t futfs_mkdir(const char *path);
 
 /// Read from a file handle. Updates *out with bytes read.
 fut_status_t futfs_read(fut_handle_t h, void *buf, size_t len, size_t *out);
@@ -57,6 +67,15 @@ fut_status_t futfs_stat(fut_handle_t h, struct fut_stat *out);
 
 /// Close and release a capability handle returned by futfs_create().
 fut_status_t futfs_close(fut_handle_t h);
+
+/// Iterate directory entries. cookie is an opaque offset updated on success.
+fut_status_t futfs_readdir(const char *path, size_t *cookie, futfs_dirent_t *out);
+
+/// Remove a file.
+fut_status_t futfs_unlink(const char *path);
+
+/// Remove an empty directory.
+fut_status_t futfs_rmdir(const char *path);
 
 #ifdef __cplusplus
 }

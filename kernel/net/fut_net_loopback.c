@@ -15,7 +15,7 @@ static fut_status_t loopback_tx(fut_netdev_t *dev, const void *frame, size_t len
     if (!frame || len == 0) {
         return -EINVAL;
     }
-    fut_net_rx(dev, frame, len);
+    fut_net_provider_rx(dev, frame, len);
     return 0;
 }
 
@@ -23,6 +23,7 @@ void fut_net_loopback_init(void) {
     memset(&loopback_dev, 0, sizeof(loopback_dev));
     static const fut_netdev_ops_t ops = {
         .tx = loopback_tx,
+        .irq_ack = NULL,
     };
     loopback_dev.name = "loopback0";
     loopback_dev.mtu = 1500;

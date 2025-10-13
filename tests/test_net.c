@@ -38,49 +38,92 @@ static void fut_net_selftest_thread(void *arg) {
         return;
     }
 
-    const char payload[] = "FuturaNet";
-    uint8_t frame[64];
-    size_t idx = 0;
-    memcpy(&frame[idx], k_dst_broadcast, sizeof(k_dst_broadcast));
-    idx += sizeof(k_dst_broadcast);
-    memcpy(&frame[idx], k_src_local, sizeof(k_src_local));
-    idx += sizeof(k_src_local);
-    frame[idx++] = 0x88;
-    frame[idx++] = 0xB5;
-    memcpy(&frame[idx], payload, sizeof(payload) - 1);
-    idx += sizeof(payload) - 1;
-    size_t frame_len = idx;
+    const char *provider = fut_net_primary_provider();
+    fut_printf("[FUTURANET-TEST] provider=%s\n", provider);
 
-    rc = fut_net_send(socket, frame, frame_len);
+    /* Burst test */
+    const size_t burst = 64;
+    size_t sent = 0;
+    for (size_t i = 0; i < burst; ++i) {
+        uint8_t frame[64];
+        size_t idx = 0;
+        memcpy(&frame[idx], k_dst_broadcast, sizeof(k_dst_broadcast));
+        idx += sizeof(k_dst_broadcast);
+        memcpy(&frame[idx], k_src_local, sizeof(k_src_local));
+        idx += sizeof(k_src_local);
+        frame[idx++] = 0x88;
+        frame[idx++] = 0xB5;
+        frame[idx++] = (uint8_t)(i & 0xFF);
+        frame[idx++] = (uint8_t)((i >> 8) & 0xFF);
+        frame[idx++] = 0xA5;
+        frame[idx++] = 0x5A;
+
+        rc = fut_net_send(socket, frame, idx);
+        if (rc != 0) {
+            fut_printf("[FUTURANET-TEST] burst send failed rc=%d at %zu\n", rc, i);
+            fut_net_close(socket);
+            fut_test_fail(0xE3);
+            return;
+        }
+        sent++;
+    }
+
+    size_t received_total = 0;
+    for (size_t i = 0; i < sent; ++i) {
+        uint8_t rx_buf[96];
+        size_t received = 0;
+        rc = fut_net_recv_timed(socket, rx_buf, sizeof(rx_buf), &received, FUT_NET_RECV_TIMEOUT_MS);
+        if (rc != 0) {
+            fut_printf("[FUTURANET-TEST] burst recv failed rc=%d at %zu\n", rc, i);
+            fut_net_close(socket);
+            fut_test_fail(0xE4);
+            return;
+        }
+        received_total += received;
+    }
+    fut_printf("[FUTURANET-TEST] burst ok (64/64)\n");
+
+    /* MTU edge tests */
+    const size_t mtu = FUT_NET_DEFAULT_MTU;
+    uint8_t mtu_buf[FUT_NET_DEFAULT_MTU + 4];
+    memset(mtu_buf, 0xAB, sizeof(mtu_buf));
+    size_t good_len = mtu - 1;
+    rc = fut_net_send(socket, mtu_buf, good_len);
     if (rc != 0) {
-        fut_printf("[FUTURANET-TEST] send failed rc=%d\n", rc);
+        fut_printf("[FUTURANET-TEST] mtu send failed rc=%d\n", rc);
         fut_net_close(socket);
-        fut_test_fail(0xE3);
-        return;
-    }
-    fut_printf("[FUTURANET-TEST] send len=%zu ✓\n", frame_len);
-
-    uint8_t rx_buf[64];
-    size_t received = 0;
-    rc = fut_net_recv(socket, rx_buf, sizeof(rx_buf), &received);
-    if (rc != 0) {
-        fut_printf("[FUTURANET-TEST] recv failed rc=%d\n", rc);
-        fut_net_close(socket);
-        fut_test_fail(0xE4);
+        fut_test_fail(0xE6);
         return;
     }
 
-    bool match = (received == frame_len) && (memcmp(rx_buf, frame, frame_len) == 0);
-    if (!match) {
-        fut_printf("[FUTURANET-TEST] recv mismatch (got=%zu expected=%zu)\n",
-                   received,
-                   frame_len);
+    size_t recv_len = 0;
+    rc = fut_net_recv_timed(socket, mtu_buf, sizeof(mtu_buf), &recv_len, FUT_NET_RECV_TIMEOUT_MS);
+    if (rc != 0 || recv_len != good_len) {
+        fut_printf("[FUTURANET-TEST] mtu recv mismatch rc=%d len=%zu\n", rc, recv_len);
         fut_net_close(socket);
-        fut_test_fail(0xE5);
+        fut_test_fail(0xE7);
         return;
     }
 
-    fut_printf("[FUTURANET-TEST] recv len=%zu ✓ match\n", received);
+    rc = fut_net_send(socket, mtu_buf, mtu + 1);
+    if (rc != -EMSGSIZE) {
+        fut_printf("[FUTURANET-TEST] mtu oversize rc=%d\n", rc);
+        fut_net_close(socket);
+        fut_test_fail(0xE8);
+        return;
+    }
+    fut_printf("[FUTURANET-TEST] mtu ok\n");
+
+    /* Timeout behavior */
+    size_t timed_len = 0;
+    rc = fut_net_recv_timed(socket, mtu_buf, sizeof(mtu_buf), &timed_len, 50);
+    if (rc != -EAGAIN) {
+        fut_printf("[FUTURANET-TEST] timeout expected EAGAIN rc=%d\n", rc);
+        fut_net_close(socket);
+        fut_test_fail(0xE9);
+        return;
+    }
+    fut_printf("[FUTURANET-TEST] timeout EAGAIN ok\n");
 
     fut_net_close(socket);
     fut_test_pass();

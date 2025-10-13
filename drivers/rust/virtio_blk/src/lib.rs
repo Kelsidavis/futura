@@ -5,6 +5,7 @@
 
 #![no_std]
 #![forbid(unsafe_op_in_unsafe_fn)]
+#![allow(unexpected_cfgs)]
 
 // # QEMU runline for testing:
 // #   qemu-system-x86_64 \
@@ -83,6 +84,11 @@ const ENOMEM: FutStatus = -12;
 const EINVAL: FutStatus = -22;
 const ENOTSUP: FutStatus = -95;
 const ETIMEDOUT: FutStatus = -110;
+
+#[cfg(debug_blk)]
+const DEBUG_BLK_TRACE: bool = true;
+#[cfg(not(debug_blk))]
+const DEBUG_BLK_TRACE: bool = false;
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -939,6 +945,9 @@ pub extern "C" fn virtio_blk_init(pci_addr: u64) -> FutStatus {
 }
 
 fn log_capacity(sectors: u64, block_size: u32) {
+    if !DEBUG_BLK_TRACE {
+        return;
+    }
     let mut buf = [0u8; 96];
     let mut idx = 0;
     let prefix = b"virtio-blk: /dev/vda capacity=";
@@ -978,6 +987,9 @@ fn write_decimal(buf: &mut [u8], mut value: u64) -> usize {
 }
 
 fn log_bar(index: u8, raw: u32, base: u64) {
+    if !DEBUG_BLK_TRACE {
+        return;
+    }
     let mut buf = [0u8; 96];
     let mut pos = 0usize;
 
@@ -1001,6 +1013,9 @@ fn log_bar(index: u8, raw: u32, base: u64) {
 }
 
 fn log_cap(cfg_type: u8, bar: u8, offset: u32, length: u32, mapped: u64) {
+    if !DEBUG_BLK_TRACE {
+        return;
+    }
     let mut buf = [0u8; 128];
     let mut pos = 0usize;
 
@@ -1033,6 +1048,9 @@ fn log_cap(cfg_type: u8, bar: u8, offset: u32, length: u32, mapped: u64) {
 }
 
 fn log_vendor(bus: u8, device: u8, function: u8, device_id: u16, hinted: bool) {
+    if !DEBUG_BLK_TRACE {
+        return;
+    }
     let mut buf = [0u8; 128];
     let mut pos = 0usize;
 
@@ -1063,6 +1081,9 @@ fn log_vendor(bus: u8, device: u8, function: u8, device_id: u16, hinted: bool) {
 }
 
 fn log_cap_ptr(ptr: u8) {
+    if !DEBUG_BLK_TRACE {
+        return;
+    }
     let mut buf = [0u8; 48];
     let mut pos = 0usize;
 
@@ -1075,6 +1096,9 @@ fn log_cap_ptr(ptr: u8) {
 }
 
 fn log_cap_info(ptr: u16, vendor: u16, cfg_type: u8, next: u16) {
+    if !DEBUG_BLK_TRACE {
+        return;
+    }
     let mut buf = [0u8; 96];
     let mut pos = 0usize;
 
@@ -1208,6 +1232,9 @@ fn read_standard_capability<'a>(
 }
 
 fn log_cap_len(offset: u8, len: u8) {
+    if !DEBUG_BLK_TRACE {
+        return;
+    }
     let mut buf = [0u8; 64];
     let mut pos = 0usize;
 
@@ -1294,6 +1321,9 @@ fn read_ecam_bytes(pci: PciAddress, offset: u32, buf: &mut [u8]) -> bool {
 }
 
 fn log_ecam_failure(offset: u32, len: usize) {
+    if !DEBUG_BLK_TRACE {
+        return;
+    }
     let mut buf = [0u8; 96];
     let mut pos = 0usize;
 

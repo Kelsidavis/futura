@@ -112,7 +112,11 @@ static void fut_futfs_selftest_thread(void *arg) {
     size_t cookie = 0;
     futfs_dirent_t dent = {0};
     bool saw_file = false;
-    while (futfs_readdir("/", &cookie, &dent) == 0) {
+    while (true) {
+        fut_status_t rd = futfs_readdir("/", &cookie, &dent);
+        if (rd <= 0) {
+            break;
+        }
         if (futfs_name_equals(dent.name, file_name)) {
             saw_file = true;
         }
@@ -140,7 +144,11 @@ static void fut_futfs_selftest_thread(void *arg) {
 
     cookie = 0;
     bool still_present = false;
-    while (futfs_readdir("/", &cookie, &dent) == 0) {
+    while (true) {
+        fut_status_t rd = futfs_readdir("/", &cookie, &dent);
+        if (rd <= 0) {
+            break;
+        }
         if (futfs_name_equals(dent.name, file_name)) {
             still_present = true;
             break;
@@ -165,7 +173,11 @@ static void fut_futfs_selftest_thread(void *arg) {
 
     cookie = 0;
     bool saw_dir = false;
-    while (futfs_readdir("/", &cookie, &dent) == 0) {
+    while (true) {
+        fut_status_t rd = futfs_readdir("/", &cookie, &dent);
+        if (rd <= 0) {
+            break;
+        }
         if (futfs_name_equals(dent.name, "tmpdir") && dent.type == FUTFS_INODE_DIR) {
             saw_dir = true;
         }
@@ -189,7 +201,11 @@ static void fut_futfs_selftest_thread(void *arg) {
 
     cookie = 0;
     bool dir_present = false;
-    while (futfs_readdir("/", &cookie, &dent) == 0) {
+    while (true) {
+        fut_status_t rd = futfs_readdir("/", &cookie, &dent);
+        if (rd <= 0) {
+            break;
+        }
         if (futfs_name_equals(dent.name, "tmpdir")) {
             dir_present = true;
             break;

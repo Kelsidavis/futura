@@ -951,6 +951,9 @@ static int futurafs_vnode_create(struct fut_vnode *dir, const char *name, uint32
 }
 
 static int futurafs_vnode_mkdir(struct fut_vnode *dir, const char *name, uint32_t mode) {
+    fut_printf("[futurafs] mkdir enter dir=%llu name=%s\n",
+               dir ? (unsigned long long)dir->ino : 0,
+               name ? name : "<null>");
     if (!dir) {
         return FUTURAFS_EINVAL;
     }
@@ -1050,6 +1053,7 @@ static int futurafs_vnode_mkdir(struct fut_vnode *dir, const char *name, uint32_
         return ret;
     }
 
+    fut_printf("[futurafs] mkdir exit new_ino=%llu\n", (unsigned long long)new_ino);
     return 0;
 }
 

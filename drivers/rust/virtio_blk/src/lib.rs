@@ -20,15 +20,18 @@ use core::ptr::{self, write_volatile};
 use core::sync::atomic::{AtomicU16, Ordering};
 
 use common::{
-    alloc, alloc_page, free, free_page, log, map_mmio_region, register, thread_yield, FutBlkBackend,
-    FutBlkDev, FutStatus, RawSpinLock, SpinLock, FUT_BLK_ADMIN, FUT_BLK_READ, FUT_BLK_WRITE,
-    MMIO_DEFAULT_FLAGS,
+    alloc, alloc_page, free, free_page, log, map_mmio_region, register, thread_yield, unmap_mmio_region,
+    FutBlkBackend, FutBlkDev, FutStatus, RawSpinLock, SpinLock, FUT_BLK_ADMIN, FUT_BLK_READ,
+    FUT_BLK_WRITE, MMIO_DEFAULT_FLAGS,
 };
 
 const PCI_CONFIG_ADDRESS: u16 = 0xCF8;
 const PCI_CONFIG_DATA: u16 = 0xCFC;
 
 const PCI_CAP_ID_VNDR: u8 = 0x09;
+const PCI_CAP_ID_MSIX: u8 = 0x11;
+const PCI_EXT_CAP_ID_VSEC: u16 = 0x000B;
+const PCI_EXT_CAP_OFFSET: u32 = 0x100;
 
 const VIRTIO_PCI_CAP_COMMON_CFG: u8 = 1;
 const VIRTIO_PCI_CAP_NOTIFY_CFG: u8 = 2;
@@ -65,6 +68,14 @@ const DMA_STATUS_OFFSET: u64 = size_of::<VirtioBlkReqHeader>() as u64;
 const PMAP_DIRECT_VIRT_BASE: usize = 0xFFFFFFFF80000000;
 
 const MMIO_PTE_FLAGS: u64 = MMIO_DEFAULT_FLAGS;
+const MAX_CAP_LENGTH: usize = 64;
+const MAX_VSEC_LENGTH: usize = 256;
+
+const PCI_ECAM_BASE: u64 = 0xE000_0000;
+const PCI_ECAM_BUS_STRIDE: u64 = 1 << 20;
+const PCI_ECAM_DEVICE_STRIDE: u64 = 1 << 15;
+const PCI_ECAM_FUNCTION_STRIDE: u64 = 1 << 12;
+const PCI_ECAM_FN_SIZE: usize = 0x1000;
 
 const ENODEV: FutStatus = -19;
 const EIO: FutStatus = -5;
@@ -325,6 +336,12 @@ struct VirtioBlkDevice {
     config: *mut VirtioBlkConfig,
     notify_base: *mut u8,
     notify_off_multiplier: u32,
+    msix_table_bar: u8,
+    msix_table_offset: u32,
+    msix_pba_bar: u8,
+    msix_pba_offset: u32,
+    msix_table_size: u16,
+    msix_enabled: bool,
     queue: VirtQueue,
     dma: *mut VirtioBlkDma,
     dma_phys: u64,
@@ -356,6 +373,12 @@ impl VirtioBlkDevice {
             config: ptr::null_mut(),
             notify_base: ptr::null_mut(),
             notify_off_multiplier: 0,
+            msix_table_bar: 0,
+            msix_table_offset: 0,
+            msix_pba_bar: 0,
+            msix_pba_offset: 0,
+            msix_table_size: 0,
+            msix_enabled: false,
             queue: VirtQueue::new(),
             dma: ptr::null_mut(),
             dma_phys: 0,
@@ -420,46 +443,266 @@ impl VirtioBlkDevice {
         unsafe { map_mmio_region(phys, cap.length as usize, MMIO_PTE_FLAGS) }
     }
 
-fn parse_capabilities(&mut self) -> bool {
-        let status = pci_config_read8(self.pci.bus, self.pci.device, self.pci.function, 0x06);
-        if (status & 0x10) == 0 {
-            log("virtio-blk: PCI capability pointer missing");
-            return false;
+    fn parse_capabilities(&mut self) -> bool {
+        let mut found_vendor = self.parse_standard_capabilities();
+        if !found_vendor {
+            found_vendor = self.parse_extended_capabilities();
         }
-        let mut cap_ptr = pci_config_read8(self.pci.bus, self.pci.device, self.pci.function, 0x34);
-        log_cap_ptr(cap_ptr);
-        while cap_ptr >= 0x40 {
-            let cap_hdr = read_cap(self.pci, cap_ptr);
-            log_cap_info(cap_ptr, cap_hdr.cap_vndr, cap_hdr.cfg_type, cap_hdr.cap_next);
-            if cap_hdr.cap_vndr == PCI_CAP_ID_VNDR {
-                let mapped = self.map_cap(&cap_hdr);
-                log_cap(cap_hdr.cfg_type, cap_hdr.bar, cap_hdr.offset, cap_hdr.length, mapped as u64);
-                if mapped.is_null() {
-                    log("virtio-blk: map_cap returned null");
-                    cap_ptr = cap_hdr.cap_next;
-                    continue;
-                }
-                match cap_hdr.cfg_type {
-                    VIRTIO_PCI_CAP_COMMON_CFG => {
-                        self.common = mapped as *mut VirtioPciCommonCfg;
-                    }
-                    VIRTIO_PCI_CAP_DEVICE_CFG => {
-                        self.config = mapped as *mut VirtioBlkConfig;
-                    }
-                    VIRTIO_PCI_CAP_ISR_CFG => {
-                        self.isr = mapped as *mut u8;
-                    }
-                    VIRTIO_PCI_CAP_NOTIFY_CFG => {
-                        let notify_cap = read_notify_cap(self.pci, cap_ptr);
-                        self.notify_off_multiplier = notify_cap.notify_off_multiplier;
-                        self.notify_base = mapped;
-                    }
-                    _ => {}
-                }
-            }
-            cap_ptr = cap_hdr.cap_next;
+        if !found_vendor {
+            log("virtio-blk: no virtio vendor capabilities discovered");
         }
         !self.common.is_null() && !self.config.is_null() && !self.notify_base.is_null()
+    }
+
+    fn parse_standard_capabilities(&mut self) -> bool {
+        let status = pci_config_read8(self.pci.bus, self.pci.device, self.pci.function, 0x06);
+        if (status & 0x10) == 0 {
+            return false;
+        }
+
+        let mut cap_ptr = pci_config_read8(self.pci.bus, self.pci.device, self.pci.function, 0x34);
+        if cap_ptr < 0x40 {
+            return false;
+        }
+
+        log_cap_ptr(cap_ptr);
+        let mut found_vendor = false;
+        let mut guard = 0u32;
+
+        while cap_ptr >= 0x40 {
+            let mut raw = [0u8; MAX_CAP_LENGTH];
+            let slice = match read_standard_capability(self.pci, cap_ptr, &mut raw) {
+                Some(data) => data,
+                None => break,
+            };
+            if slice.is_empty() {
+                log("virtio-blk: empty capability entry");
+                break;
+            }
+            let cap_id = slice[0];
+            let next = pci_config_read8(self.pci.bus, self.pci.device, self.pci.function, cap_ptr.wrapping_add(1));
+            let cfg_type = if cap_id == PCI_CAP_ID_VNDR && slice.len() >= size_of::<VirtioPciCap>() {
+                slice[3]
+            } else {
+                0
+            };
+            log_cap_info(u16::from(cap_ptr), u16::from(cap_id), cfg_type, u16::from(next));
+
+            match cap_id {
+                PCI_CAP_ID_MSIX => {
+                    self.handle_msix_cap(cap_ptr);
+                }
+                PCI_CAP_ID_VNDR => {
+                    if slice.len() < size_of::<VirtioPciCap>() {
+                        log("virtio-blk: vendor capability too short, skipping");
+                    } else if self.consume_virtio_cap_from_slice(slice) {
+                        found_vendor = true;
+                    }
+                }
+                _ => {}
+            }
+
+            if next < 0x40 || next == cap_ptr {
+                break;
+            }
+            cap_ptr = next;
+            guard += 1;
+            if guard > 64 {
+                break;
+            }
+        }
+
+        found_vendor
+    }
+
+    fn parse_extended_capabilities(&mut self) -> bool {
+        let mut offset = PCI_EXT_CAP_OFFSET;
+        let mut found_vendor = false;
+        let mut guard = 0u32;
+
+        loop {
+            let header = match read_ecam_u32(self.pci, offset) {
+                Some(value) => value,
+                None => break,
+            };
+            if header == 0 {
+                break;
+            }
+
+            let cap_id = (header & 0xFFFF) as u16;
+            let next = ((header >> 20) & 0xFFF) as u32 * 4;
+            log_cap_info(offset as u16, cap_id, 0, next as u16);
+
+            match cap_id {
+                PCI_EXT_CAP_ID_VSEC => {
+                    if let Some(status) = self.process_vsec_capability(offset) {
+                        if status {
+                            found_vendor = true;
+                        }
+                    }
+                }
+                _ => {}
+            }
+
+            if next == 0 || next == offset {
+                break;
+            }
+            offset = next;
+            guard += 1;
+            if guard > 128 {
+                break;
+            }
+        }
+
+        found_vendor
+    }
+
+    fn consume_virtio_cap_from_slice(&mut self, data: &[u8]) -> bool {
+        if data.len() < size_of::<VirtioPciCap>() {
+            log("virtio-blk: capability slice too small");
+            return false;
+        }
+
+        let mut cap_bytes = [0u8; size_of::<VirtioPciCap>()];
+        cap_bytes.copy_from_slice(&data[..size_of::<VirtioPciCap>()]);
+        let cap = unsafe { core::ptr::read_unaligned(cap_bytes.as_ptr() as *const VirtioPciCap) };
+
+        match cap.cfg_type {
+            VIRTIO_PCI_CAP_COMMON_CFG => {
+                let mapped = self.map_cap(&cap);
+                log_cap(cap.cfg_type, cap.bar, cap.offset, cap.length, mapped as u64);
+                if mapped.is_null() {
+                    log("virtio-blk: failed to map common config capability");
+                    return false;
+                }
+                self.common = mapped as *mut VirtioPciCommonCfg;
+                true
+            }
+            VIRTIO_PCI_CAP_DEVICE_CFG => {
+                let mapped = self.map_cap(&cap);
+                log_cap(cap.cfg_type, cap.bar, cap.offset, cap.length, mapped as u64);
+                if mapped.is_null() {
+                    log("virtio-blk: failed to map device config capability");
+                    return false;
+                }
+                self.config = mapped as *mut VirtioBlkConfig;
+                true
+            }
+            VIRTIO_PCI_CAP_ISR_CFG => {
+                let mapped = self.map_cap(&cap);
+                log_cap(cap.cfg_type, cap.bar, cap.offset, cap.length, mapped as u64);
+                if mapped.is_null() {
+                    log("virtio-blk: failed to map ISR capability");
+                    return false;
+                }
+                self.isr = mapped as *mut u8;
+                true
+            }
+            VIRTIO_PCI_CAP_NOTIFY_CFG => {
+                if data.len() < size_of::<VirtioPciNotifyCap>() {
+                    log("virtio-blk: notify capability truncated");
+                    return false;
+                }
+                let mut notify_bytes = [0u8; size_of::<VirtioPciNotifyCap>()];
+                notify_bytes.copy_from_slice(&data[..size_of::<VirtioPciNotifyCap>()]);
+                let notify_cap =
+                    unsafe { core::ptr::read_unaligned(notify_bytes.as_ptr() as *const VirtioPciNotifyCap) };
+                let mapped = self.map_cap(&notify_cap.cap);
+                log_cap(
+                    notify_cap.cap.cfg_type,
+                    notify_cap.cap.bar,
+                    notify_cap.cap.offset,
+                    notify_cap.cap.length,
+                    mapped as u64,
+                );
+                if mapped.is_null() {
+                    log("virtio-blk: failed to map notify capability");
+                    return false;
+                }
+                self.notify_off_multiplier = notify_cap.notify_off_multiplier;
+                self.notify_base = mapped;
+                true
+            }
+            _ => false,
+        }
+    }
+
+    fn handle_msix_cap(&mut self, offset: u8) {
+        let control =
+            pci_config_read16(self.pci.bus, self.pci.device, self.pci.function, offset.wrapping_add(2));
+        self.msix_table_size = (control & 0x07FF) + 1;
+        let table =
+            pci_config_read32(self.pci.bus, self.pci.device, self.pci.function, offset.wrapping_add(4));
+        self.msix_table_bar = (table & 0x7) as u8;
+        self.msix_table_offset = table & !0x7;
+        let pba =
+            pci_config_read32(self.pci.bus, self.pci.device, self.pci.function, offset.wrapping_add(8));
+        self.msix_pba_bar = (pba & 0x7) as u8;
+        self.msix_pba_offset = pba & !0x7;
+
+        let enable_mask = (1u16 << 15) | (1u16 << 14);
+        let new_control = control | enable_mask;
+        pci_config_write16(
+            self.pci.bus,
+            self.pci.device,
+            self.pci.function,
+            offset.wrapping_add(2),
+            new_control,
+        );
+        self.msix_enabled = true;
+    }
+
+    fn process_vsec_capability(&mut self, offset: u32) -> Option<bool> {
+        let header = read_ecam_u32(self.pci, offset + 4)?;
+        let length_dw = ((header >> 20) & 0xFFF) as usize;
+        if length_dw == 0 {
+            log("virtio-blk: VSEC advertises zero length");
+            return Some(false);
+        }
+        let length_bytes = length_dw * 4;
+        if length_bytes < size_of::<VirtioPciCap>() {
+            log("virtio-blk: VSEC payload too small for virtio capability");
+            return Some(false);
+        }
+        if length_bytes > MAX_VSEC_LENGTH {
+            log("virtio-blk: VSEC payload exceeds driver limit");
+            return Some(false);
+        }
+
+        let buf_ptr = unsafe { alloc(length_bytes) };
+        if buf_ptr.is_null() {
+            log("virtio-blk: failed to allocate buffer for VSEC");
+            return Some(false);
+        }
+
+        let mut success = false;
+        unsafe {
+            let buffer = core::slice::from_raw_parts_mut(buf_ptr, length_bytes);
+            if !read_ecam_bytes(self.pci, offset + 8, buffer) {
+                log("virtio-blk: failed to read VSEC payload");
+                free(buf_ptr);
+                return Some(false);
+            }
+
+            let mut cursor = 0usize;
+            while cursor + size_of::<VirtioPciCap>() <= length_bytes {
+                let cap_len = buffer[cursor + 2] as usize;
+                if cap_len < size_of::<VirtioPciCap>() || cap_len > length_bytes - cursor {
+                    break;
+                }
+                if self.consume_virtio_cap_from_slice(&buffer[cursor..cursor + cap_len]) {
+                    success = true;
+                }
+                if cap_len == 0 {
+                    break;
+                }
+                cursor += cap_len;
+            }
+
+            free(buf_ptr);
+        }
+
+        Some(success)
     }
 
     fn enable_bus_master(&self) {
@@ -500,6 +743,8 @@ fn parse_capabilities(&mut self) -> bool {
             let qsize = min(device_qsize, QUEUE_SIZE);
             self.queue.setup(qsize)?;
             (*self.common).queue_size = qsize;
+            (*self.common).queue_msix_vector = 0xFFFF;
+            (*self.common).msix_config = 0xFFFF;
             (*self.common).queue_desc_lo = (self.queue.desc_phys & 0xFFFF_FFFF) as u32;
             (*self.common).queue_desc_hi = (self.queue.desc_phys >> 32) as u32;
             (*self.common).queue_avail_lo = (self.queue.avail_phys & 0xFFFF_FFFF) as u32;
@@ -829,7 +1074,7 @@ fn log_cap_ptr(ptr: u8) {
     log(unsafe { core::str::from_utf8_unchecked(&buf[..pos]) });
 }
 
-fn log_cap_info(ptr: u8, vendor: u8, cfg_type: u8, next: u8) {
+fn log_cap_info(ptr: u16, vendor: u16, cfg_type: u8, next: u16) {
     let mut buf = [0u8; 96];
     let mut pos = 0usize;
 
@@ -931,48 +1176,146 @@ fn decode_pci_hint(hint: u64) -> Option<PciAddress> {
     Some(PciAddress { bus, device, function })
 }
 
-fn read_cap(pci: PciAddress, offset: u8) -> VirtioPciCap {
-    let mut cap = VirtioPciCap {
-        cap_vndr: 0,
-        cap_next: 0,
-        cap_len: 0,
-        cfg_type: 0,
-        bar: 0,
-        padding: [0; 3],
-        offset: 0,
-        length: 0,
-    };
-    let cap_len = pci_config_read8(pci.bus, pci.device, pci.function, offset + 2);
-    let mut i = 0;
-    while i < cap_len {
-        let word = pci_config_read32(pci.bus, pci.device, pci.function, offset + i);
-        let bytes = word.to_le_bytes();
-        let copy = min(4, (cap_len - i) as usize);
-        unsafe {
-            ptr::copy_nonoverlapping(bytes.as_ptr(), (&mut cap as *mut _ as *mut u8).add(i as usize), copy);
-        }
-        i += 4;
+fn read_standard_capability<'a>(
+    pci: PciAddress,
+    offset: u8,
+    buffer: &'a mut [u8; MAX_CAP_LENGTH],
+) -> Option<&'a [u8]> {
+    let cap_len = pci_config_read8(pci.bus, pci.device, pci.function, offset.wrapping_add(2));
+    if cap_len == 0 || cap_len as usize > MAX_CAP_LENGTH {
+        log("virtio-blk: capability length out of range");
+        return None;
     }
-    cap
+    log_cap_len(offset, cap_len);
+    if u16::from(offset) + cap_len as u16 > 256 {
+        log("virtio-blk: capability crosses config space boundary");
+        return None;
+    }
+    let mut written = 0usize;
+    while written < cap_len as usize {
+        let byte_offset = offset.wrapping_add(written as u8);
+        let aligned = byte_offset & !0x3;
+        let word = pci_config_read32(pci.bus, pci.device, pci.function, aligned);
+        let bytes = word.to_le_bytes();
+        let start = (byte_offset & 0x3) as usize;
+        let available = 4 - start;
+        let remaining = cap_len as usize - written;
+        let copy = min(available, remaining);
+        buffer[written..written + copy].copy_from_slice(&bytes[start..start + copy]);
+        written += copy;
+    }
+    Some(&buffer[..cap_len as usize])
 }
 
-fn read_notify_cap(pci: PciAddress, offset: u8) -> VirtioPciNotifyCap {
-    let mut cap = VirtioPciNotifyCap {
-        cap: read_cap(pci, offset),
-        notify_off_multiplier: 0,
-    };
-    let cap_len = pci_config_read8(pci.bus, pci.device, pci.function, offset + 2);
-    let mut i = 0;
-    while i < cap_len {
-        let word = pci_config_read32(pci.bus, pci.device, pci.function, offset + i);
-        let bytes = word.to_le_bytes();
-        let copy = min(4, (cap_len - i) as usize);
-        unsafe {
-            ptr::copy_nonoverlapping(bytes.as_ptr(), (&mut cap as *mut _ as *mut u8).add(i as usize), copy);
+fn log_cap_len(offset: u8, len: u8) {
+    let mut buf = [0u8; 64];
+    let mut pos = 0usize;
+
+    const PREFIX: &[u8] = b"virtio-blk: cap_len off=";
+    buf[pos..pos + PREFIX.len()].copy_from_slice(PREFIX);
+    pos += PREFIX.len();
+    pos += write_decimal(&mut buf[pos..], offset as u64);
+
+    const LEN_LABEL: &[u8] = b" len=";
+    buf[pos..pos + LEN_LABEL.len()].copy_from_slice(LEN_LABEL);
+    pos += LEN_LABEL.len();
+    pos += write_decimal(&mut buf[pos..], len as u64);
+
+    log(unsafe { core::str::from_utf8_unchecked(&buf[..pos]) });
+}
+
+struct EcamWindow {
+    map_base: *mut u8,
+    size: usize,
+    cursor: *mut u8,
+}
+
+impl EcamWindow {
+    fn map(pci: PciAddress, offset: u32, len: usize) -> Option<Self> {
+        if len == 0 {
+            return None;
         }
-        i += 4;
+        if offset as usize + len > PCI_ECAM_FN_SIZE {
+            return None;
+        }
+        let start = ecam_phys_addr(pci, offset)?;
+        let end = ecam_phys_addr(pci, offset + len as u32 - 1)?;
+        let map_start = start & !0xFFF;
+        let map_end = (end & !0xFFF) + 0x1000;
+        let size = (map_end - map_start) as usize;
+        unsafe {
+            let mapped = map_mmio_region(map_start, size, MMIO_PTE_FLAGS);
+            if mapped.is_null() {
+                return None;
+            }
+            let cursor = mapped.add((start - map_start) as usize);
+            Some(Self { map_base: mapped, size, cursor })
+        }
     }
-    cap
+
+    fn ptr(&self) -> *mut u8 {
+        self.cursor
+    }
+}
+
+impl Drop for EcamWindow {
+    fn drop(&mut self) {
+        unsafe { unmap_mmio_region(self.map_base, self.size); }
+    }
+}
+
+fn ecam_phys_addr(pci: PciAddress, offset: u32) -> Option<u64> {
+    if offset as usize >= PCI_ECAM_FN_SIZE {
+        return None;
+    }
+    Some(
+        PCI_ECAM_BASE
+            + (pci.bus as u64) * PCI_ECAM_BUS_STRIDE
+            + (pci.device as u64) * PCI_ECAM_DEVICE_STRIDE
+            + (pci.function as u64) * PCI_ECAM_FUNCTION_STRIDE
+            + offset as u64,
+    )
+}
+
+fn read_ecam_bytes(pci: PciAddress, offset: u32, buf: &mut [u8]) -> bool {
+    if buf.is_empty() {
+        return true;
+    }
+    if offset as usize + buf.len() > PCI_ECAM_FN_SIZE {
+        return false;
+    }
+    if let Some(window) = EcamWindow::map(pci, offset, buf.len()) {
+        unsafe { ptr::copy_nonoverlapping(window.ptr(), buf.as_mut_ptr(), buf.len()); }
+        true
+    } else {
+        log_ecam_failure(offset, buf.len());
+        false
+    }
+}
+
+fn log_ecam_failure(offset: u32, len: usize) {
+    let mut buf = [0u8; 96];
+    let mut pos = 0usize;
+
+    const PREFIX: &[u8] = b"virtio-blk: ECAM map failed off=";
+    buf[pos..pos + PREFIX.len()].copy_from_slice(PREFIX);
+    pos += PREFIX.len();
+    pos += write_decimal(&mut buf[pos..], offset as u64);
+
+    const LEN_LABEL: &[u8] = b" len=";
+    buf[pos..pos + LEN_LABEL.len()].copy_from_slice(LEN_LABEL);
+    pos += LEN_LABEL.len();
+    pos += write_decimal(&mut buf[pos..], len as u64);
+
+    log(unsafe { core::str::from_utf8_unchecked(&buf[..pos]) });
+}
+
+fn read_ecam_u32(pci: PciAddress, offset: u32) -> Option<u32> {
+    let mut bytes = [0u8; 4];
+    if !read_ecam_bytes(pci, offset, &mut bytes) {
+        return None;
+    }
+    Some(u32::from_le_bytes(bytes))
 }
 
 fn pci_config_read32(bus: u8, device: u8, function: u8, offset: u8) -> u32 {

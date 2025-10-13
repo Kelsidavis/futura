@@ -75,6 +75,27 @@ BUILD_DIR := build
 OBJ_DIR := $(BUILD_DIR)/obj
 BIN_DIR := $(BUILD_DIR)/bin
 
+# --- Build metadata (auto-generated) ---
+GEN_DIR           := include/generated
+GEN_VERSION_HDR   := $(GEN_DIR)/version.h
+BUILD_DATE_UTC    := $(shell date -u +"%Y-%m-%dT%H:%M:%SZ")
+BUILD_GIT_DESC    := $(shell git describe --tags --always --dirty 2>/dev/null || echo "nogit")
+BUILD_HOST        := $(shell hostname)
+BUILD_USER        := $(shell whoami)
+
+KERNEL_DEPS       :=
+KERNEL_DEPS      += $(GEN_VERSION_HDR)
+
+$(GEN_VERSION_HDR):
+	@mkdir -p $(GEN_DIR)
+	@echo "/* Auto-generated. Do not edit. */"                     >  $(GEN_VERSION_HDR)
+	@echo "#pragma once"                                          >> $(GEN_VERSION_HDR)
+	@echo "#define FUT_BUILD_DATE    \"$(BUILD_DATE_UTC)\""       >> $(GEN_VERSION_HDR)
+	@echo "#define FUT_BUILD_GIT     \"$(BUILD_GIT_DESC)\""       >> $(GEN_VERSION_HDR)
+	@echo "#define FUT_BUILD_HOST    \"$(BUILD_HOST)\""           >> $(GEN_VERSION_HDR)
+	@echo "#define FUT_BUILD_USER    \"$(BUILD_USER)\""           >> $(GEN_VERSION_HDR)
+	@echo "#define FUT_VERSION_STR   \"Futura $(BUILD_GIT_DESC)\"" >> $(GEN_VERSION_HDR)
+
 # ============================================================
 #   Rust Toolchain Integration
 # ============================================================
@@ -97,8 +118,10 @@ RUST_SOURCES := $(shell if [ -d $(RUST_ROOT) ]; then find $(RUST_ROOT) -type f \
 # Kernel core sources
 KERNEL_SOURCES := \
     kernel/kernel_main.c \
+    kernel/boot/banner.c \
     kernel/memory/fut_memory.c \
     kernel/memory/fut_mm.c \
+    kernel/memory/mmap_dump.c \
     kernel/threading/fut_task.c \
     kernel/threading/fut_thread.c \
     kernel/scheduler/fut_sched.c \
@@ -136,6 +159,7 @@ KERNEL_SOURCES := \
     kernel/blk/blkcore.c \
     kernel/rust/rustffi.c \
     subsystems/futura_fs/futfs.c \
+    tests/test_api.c \
     tests/test_blkcore.c \
     tests/test_futfs.c \
     platform/x86_64/drivers/ahci/ahci.c
@@ -217,7 +241,7 @@ endif
 # Build kernel
 kernel: $(BIN_DIR)/futura_kernel.elf
 
-$(BIN_DIR)/futura_kernel.elf: $(OBJECTS) $(RUST_LIB) | $(BIN_DIR)
+$(BIN_DIR)/futura_kernel.elf: $(OBJECTS) $(RUST_LIB) $(KERNEL_DEPS) | $(BIN_DIR)
 	@echo "LD $@.tmp"
 	@$(LD) $(LDFLAGS) -o $@.tmp $(OBJECTS) $(RUST_LIB)
 	@cp $@.tmp /tmp/kernel_before_fix.elf
@@ -267,7 +291,7 @@ tools:
 	@$(MAKE) -C tools
 
 # Compile C sources
-$(OBJ_DIR)/%.o: %.c | $(OBJ_DIR)
+$(OBJ_DIR)/%.o: %.c $(GEN_VERSION_HDR) | $(OBJ_DIR)
 	@echo "CC $<"
 	@mkdir -p $(dir $@)
 	@$(CC) $(CFLAGS) -c $< -o $@
@@ -300,22 +324,39 @@ endif
 
 .PHONY: iso test
 
-# Build bootable ISO with GRUB (required for proper testing)
+# Build bootable ISO with GRUB (useful for manual boots)
 iso: kernel
 	@echo "Creating bootable ISO..."
 	@cp $(BIN_DIR)/futura_kernel.elf iso/boot/
 	@grub-mkrescue -o futura.iso iso/ 2>&1 | grep -E "(completed|error)" || echo "ISO build complete"
 	@echo "✓ Bootable ISO created: futura.iso"
 
-# Test kernel with GRUB (proper boot method)
+# Automated QEMU run with deterministic isa-debug-exit completion
 test: iso
-	@echo "Testing kernel with GRUB..."
-	@echo "⚠️  Press Ctrl+C to exit QEMU"
-	@qemu-system-x86_64 \
-		-cdrom futura.iso \
-		-serial stdio \
-		-display none \
-		-m 256M
+	@echo "Testing kernel under QEMU (isa-debug-exit)..."
+	@img=futura_disk.img; \
+		echo "[HARNESS] Preparing test disk $$img"; \
+		pkill -9 -f "qemu-system-x86_64" >/dev/null 2>&1 || true; \
+		rm -f $$img $$img.lck $$img.lock; \
+		truncate -s 64M $$img; \
+		qemu-system-x86_64 \
+			-serial stdio \
+			-display none \
+			-m 512 \
+			-no-reboot -no-shutdown \
+			-device isa-debug-exit,iobase=0xf4,iosize=0x4 \
+			-cdrom futura.iso \
+			-boot d \
+			-drive if=virtio,file=$$img,format=raw \
+		; \
+	code=$$?; \
+	if [ $$code -eq 1 ]; then \
+		echo "[HARNESS] PASS"; \
+		exit 0; \
+	else \
+		echo "[HARNESS] FAIL (qemu code $$code)"; \
+		exit $$code; \
+	fi
 
 # ============================================================
 #   Platform-Specific Targets

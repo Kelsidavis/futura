@@ -23,8 +23,10 @@
 #include <kernel/fut_futurafs.h>
 #include <kernel/fb.h>
 #include <kernel/console.h>
+#include <kernel/boot_banner.h>
 #include <futura/blkdev.h>
 #include <platform/platform.h>
+#include "tests/test_api.h"
 #if defined(__x86_64__)
 #include <arch/x86_64/paging.h>
 #include <arch/x86_64/pmap.h>
@@ -62,6 +64,22 @@ extern char _bss_end[];
 
 /* Global FIPC channel for testing */
 static struct fut_fipc_channel *g_test_channel = NULL;
+
+static void fut_test_watchdog_thread(void *arg) {
+    (void)arg;
+    const uint32_t timeout_ms = 20000;
+    uint32_t elapsed = 0;
+
+    while (elapsed < timeout_ms) {
+        if (fut_tests_completed()) {
+            fut_thread_exit();
+        }
+        fut_thread_sleep(1000);
+        elapsed += 1000;
+    }
+
+    fut_test_fail(0xEE);
+}
 
 /**
  * Test VFS file operations.
@@ -554,11 +572,6 @@ static void fipc_receiver_thread(void *arg) {
  * 3. Starts scheduling (never returns)
  */
 void fut_kernel_main(void) {
-    fut_printf("\n");
-    fut_printf("=======================================================\n");
-    fut_printf("   Futura OS Nanokernel Initialization\n");
-    fut_printf("=======================================================\n\n");
-
     int fb_stage = -1;
     int fb_exec = -1;
 
@@ -599,6 +612,12 @@ void fut_kernel_main(void) {
 #else
     phys_addr_t mem_base_phys = mem_base;
 #endif
+    fut_mmap_reset();
+    if (mem_base_phys > 0) {
+        fut_mmap_add(0, mem_base_phys, 2);
+    }
+    fut_mmap_add(mem_base_phys, TOTAL_MEMORY_SIZE, 1);
+
     fut_pmm_init(TOTAL_MEMORY_SIZE, mem_base_phys);
 
     fut_printf("[INIT] PMM initialized: %llu pages total, %llu pages free\n",
@@ -629,6 +648,8 @@ void fut_kernel_main(void) {
 
     fut_printf("[INIT] Heap initialized: 0x%llx - 0x%llx (%llu MiB)\n",
                heap_start, heap_end, KERNEL_HEAP_SIZE / (1024 * 1024));
+
+    fut_boot_banner();
 
     fb_boot_splash();
     fb_char_init();
@@ -740,8 +761,20 @@ void fut_kernel_main(void) {
 
     fut_printf("[INIT] Test task created (PID %llu)\n", test_task->pid);
 
+    fut_test_plan(2);
     fut_blk_async_selftest_schedule(test_task);
     fut_futfs_selftest_schedule(test_task);
+
+    fut_thread_t *watchdog_thread = fut_thread_create(
+        test_task,
+        fut_test_watchdog_thread,
+        NULL,
+        8 * 1024,
+        60
+    );
+    if (!watchdog_thread) {
+        fut_printf("[WARN] Failed to create test watchdog thread\n");
+    }
 
     /* Create FIPC channel for inter-thread communication */
     fut_printf("[INIT] Creating FIPC test channel...\n");

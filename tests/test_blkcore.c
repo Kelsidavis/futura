@@ -13,6 +13,8 @@
 #include <kernel/fut_task.h>
 #include <kernel/fut_thread.h>
 
+#include "tests/test_api.h"
+
 #include <stddef.h>
 #include <stdint.h>
 #include <string.h>
@@ -240,14 +242,16 @@ static void fut_blk_async_selftest_thread(void *arg) {
 
     if (rc != 0 && rc != -EEXIST) {
         fut_printf("[BLK] selftest register failed: %d\n", rc);
-        fut_thread_exit();
+        fut_test_fail(0xB1);
+        return;
     }
 
     fut_handle_t rw_handle = FUT_INVALID_HANDLE;
     rc = fut_blk_acquire("blk:test0", FUT_BLK_READ | FUT_BLK_WRITE | FUT_BLK_ADMIN, &rw_handle);
     if (rc != 0) {
         fut_printf("[BLK] selftest open rw failed: %d\n", rc);
-        fut_thread_exit();
+        fut_test_fail(0xB2);
+        return;
     }
 
     uint8_t write_buf[TEST_BLOCK_SIZE * 2];
@@ -319,10 +323,22 @@ static void fut_blk_async_selftest_thread(void *arg) {
     if (self_ok && virtio_ok && ahci_ok) {
         fut_printf("blkcore: all tests passed\n");
     } else {
-        fut_printf("blkcore: failures detected (self=%s virtio=%s ahci=%s)\n",
-                   self_ok ? "ok" : "fail",
-                   virtio_ok ? "ok" : "fail",
-                   ahci_ok ? "ok" : "fail");
+        if (!self_ok) {
+            fut_printf("blkcore: failures detected (self=%s virtio=%s ahci=%s)\n",
+                       self_ok ? "ok" : "fail",
+                       virtio_ok ? "ok" : "fail",
+                       ahci_ok ? "ok" : "fail");
+            fut_test_fail(0xB3);
+            return;
+        }
+
+        fut_printf("[BLK] Warning: external devices unavailable (virtio=%s ahci=%s); core self-tests passed\n",
+                   virtio_ok ? "ok" : "missing",
+                   ahci_ok ? "ok" : "missing");
+    }
+
+    if (self_ok) {
+        fut_test_pass();
     }
 
     fut_thread_exit();

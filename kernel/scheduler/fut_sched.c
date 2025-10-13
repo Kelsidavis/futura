@@ -55,25 +55,9 @@ static uint64_t ready_count = 0;
  * ============================================================ */
 
 static void idle_thread_entry(void *arg) {
-    extern bool fut_reschedule_pending(void);
-    extern void fut_clear_reschedule(void);
-    extern void serial_puts(const char *s);
-
     (void)arg;
-    serial_puts("[IDLE] Idle thread started\n");
-
     for (;;) {
-        // Check for deferred reschedule requests from timer interrupt
-        if (fut_reschedule_pending()) {
-            serial_puts("[IDLE] Reschedule pending\n");
-            fut_clear_reschedule();
-            fut_schedule();
-        }
-
-        // Halt CPU until next interrupt
-        serial_puts("[IDLE] Halting CPU\n");
-        __asm__ volatile("hlt");
-        serial_puts("[IDLE] Resumed from HLT\n");
+        __asm__ volatile("sti\n\thlt" ::: "memory");
     }
 }
 

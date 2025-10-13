@@ -13,6 +13,7 @@
 #include <kernel/errno.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <stdbool.h>
 
 /* ============================================================
  *   VFS State
@@ -165,6 +166,24 @@ int fut_vfs_unmount(const char *mountpoint) {
     return -ENOENT;
 }
 
+static int lookup_vnode(const char *path, struct fut_vnode **vnode);
+
+int fut_vfs_lookup(const char *path, struct fut_vnode **out_vnode) {
+    if (!out_vnode) {
+        return -EINVAL;
+    }
+    *out_vnode = NULL;
+
+    struct fut_vnode *vnode = NULL;
+    int ret = lookup_vnode(path, &vnode);
+    if (ret < 0) {
+        return ret;
+    }
+
+    *out_vnode = vnode;
+    return 0;
+}
+
 /* ============================================================
  *   Path Resolution
  * ============================================================ */
@@ -179,6 +198,17 @@ static void str_copy(char *dest, const char *src, size_t max_len) {
         i++;
     }
     dest[i] = '\0';
+}
+
+static bool str_equals(const char *a, const char *b) {
+    while (*a && *b) {
+        if (*a != *b) {
+            return false;
+        }
+        ++a;
+        ++b;
+    }
+    return *a == *b;
 }
 
 /**
@@ -229,6 +259,53 @@ static int parse_path(const char *path,
     return count;
 }
 
+static struct fut_mount *find_mount_for_path(
+    char components[][FUT_VFS_NAME_MAX + 1],
+    int count) {
+    if (count <= 0) {
+        return NULL;
+    }
+
+    struct fut_mount *mount = mount_list;
+    while (mount) {
+        if (!mount->mountpoint || mount->mountpoint[0] != '/') {
+            mount = mount->next;
+            continue;
+        }
+
+        if (mount->mountpoint[1] == '\0') {
+            /* Root mount handled separately via root_vnode */
+            mount = mount->next;
+            continue;
+        }
+
+        char mount_components[MAX_PATH_COMPONENTS][FUT_VFS_NAME_MAX + 1];
+        int mount_count = parse_path(mount->mountpoint,
+                                     mount_components,
+                                     MAX_PATH_COMPONENTS);
+        if (mount_count < 0 || mount_count != count) {
+            mount = mount->next;
+            continue;
+        }
+
+        bool match = true;
+        for (int i = 0; i < count; ++i) {
+            if (!str_equals(components[i], mount_components[i])) {
+                match = false;
+                break;
+            }
+        }
+
+        if (match) {
+            return mount;
+        }
+
+        mount = mount->next;
+    }
+
+    return NULL;
+}
+
 /**
  * Lookup vnode by path.
  *
@@ -273,6 +350,14 @@ static int lookup_vnode(const char *path, struct fut_vnode **vnode) {
 
     /* Walk path components */
     for (int i = 0; i < num_components; i++) {
+        struct fut_mount *mount = find_mount_for_path(components, i + 1);
+        if (mount && mount->root) {
+            fut_vnode_unref(current);
+            current = mount->root;
+            fut_vnode_ref(current);
+            continue;
+        }
+
         /* Check if current is a directory */
         if (current->type != VN_DIR) {
             fut_vnode_unref(current);
@@ -326,6 +411,14 @@ static int lookup_parent_and_name(const char *path,
     fut_vnode_ref(current);
 
     for (int i = 0; i < num_components - 1; i++) {
+        struct fut_mount *mount = find_mount_for_path(components, i + 1);
+        if (mount && mount->root) {
+            fut_vnode_unref(current);
+            current = mount->root;
+            fut_vnode_ref(current);
+            continue;
+        }
+
         if (current->type != VN_DIR || !current->ops || !current->ops->lookup) {
             fut_vnode_unref(current);
             return -ENOTDIR;

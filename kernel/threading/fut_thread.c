@@ -12,15 +12,14 @@
 #include "../../include/kernel/fut_sched.h"
 #include "../../include/kernel/fut_memory.h"
 #include <arch/x86_64/gdt.h>
+#include <string.h>
 #include <stdatomic.h>
+
+[[noreturn]] static void fut_thread_trampoline(void (*entry)(void *), void *arg) __attribute__((used));
 
 /* External declarations */
 extern void fut_printf(const char *fmt, ...);
 extern void fut_sleep_until(fut_thread_t *thread, uint64_t wake_time);
-
-/* Platform-specific context initialization (defined in platform/x86_64/context_switch.S) */
-extern void fut_init_context(fut_cpu_context_t *context, void *stack_top,
-                              void (*entry)(void *), void *arg);
 
 /* Thread ID counter (64-bit) */
 static _Atomic uint64_t next_tid = 1;
@@ -96,8 +95,24 @@ fut_thread_t *fut_thread_create(
     void *stack_top = (void *)((uintptr_t)stack + aligned_stack_size);
 
     // Initialize CPU context for this thread
-    // This sets up RIP, RSP, RFLAGS, and prepares the stack for execution
-    fut_init_context(&thread->context, stack_top, entry, arg);
+    fut_cpu_context_t *ctx = &thread->context;
+    memset(ctx, 0, sizeof(*ctx));
+
+    uintptr_t aligned_top = ((uintptr_t)stack_top) & ~0xFULL;
+    // Provide 16-byte alignment at the point of entry (post-ret => %rsp % 16 == 8)
+    ctx->rsp = aligned_top - 8;
+    ctx->rip = (uint64_t)(uintptr_t)&fut_thread_trampoline;
+    ctx->rflags = RFLAGS_IF;
+    ctx->cs = 0x08; // Kernel code segment
+    ctx->ss = 0x10; // Kernel data segment
+    ctx->rdi = (uint64_t)entry;
+    ctx->rsi = (uint64_t)arg;
+    ctx->rax = 0;
+    ctx->rcx = 0;
+    ctx->rdx = 0;
+
+    // Zeroed above but be explicit about SIMD state alignment
+    memset(ctx->fx_area, 0, sizeof(ctx->fx_area));
 
     // Add to parent task
     fut_task_add_thread(task, thread);
@@ -246,4 +261,8 @@ int fut_thread_priority_restore(fut_thread_t *thread) {
     thread->priority = thread->pi_saved_priority;
     thread->pi_boosted = false;
     return 0;
+}
+[[noreturn]] static void fut_thread_trampoline(void (*entry)(void *), void *arg) {
+    entry(arg);
+    fut_thread_exit();
 }

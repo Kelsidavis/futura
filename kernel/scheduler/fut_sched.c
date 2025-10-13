@@ -11,6 +11,8 @@
 #include "../../include/kernel/fut_memory.h"
 #include "../../include/kernel/fut_stats.h"
 #include <arch/x86_64/gdt.h>
+#include <arch/x86_64/paging.h>
+#include <platform/platform.h>
 #include <stdint.h>
 #include <stdatomic.h>
 
@@ -266,6 +268,17 @@ void fut_schedule(void) {
             extern void serial_puts(const char *s);
             if (!prev) {
                 serial_puts("[SCHED] First context switch to thread\n");
+            }
+
+            fut_printf("[SCHED] switch to rip=0x%llx rsp=0x%llx entry=%p\n",
+                       next->context.rip,
+                       next->context.rsp,
+                       (void *)next->context.rdi);
+            if (next->context.rip < KERNEL_VIRTUAL_BASE) {
+                fut_platform_panic("[SCHED] bad RIP for next thread");
+            }
+            if (((next->context.rsp + 8ULL) & 0xFULL) != 0) {
+                fut_platform_panic("[SCHED] stack misaligned for next thread");
             }
 
             // Placeholder for page table switch

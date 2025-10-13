@@ -7,6 +7,8 @@ use core::ffi::{c_char, c_void};
 use core::panic::PanicInfo;
 use core::sync::atomic::{AtomicBool, Ordering};
 
+pub mod mmio;
+
 pub type FutStatus = i32;
 
 pub const FUT_BLK_READ: u32 = 1 << 0;
@@ -147,3 +149,5 @@ fn panic(_info: &PanicInfo) -> ! {
         core::hint::spin_loop();
     }
 }
+
+pub use mmio::{map_mmio_region, unmap_mmio_region, MMIO_DEFAULT_FLAGS};

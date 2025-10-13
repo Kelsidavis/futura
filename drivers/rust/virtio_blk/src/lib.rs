@@ -20,8 +20,9 @@ use core::ptr::{self, write_volatile};
 use core::sync::atomic::{AtomicU16, Ordering};
 
 use common::{
-    alloc, alloc_page, free, free_page, log, register, thread_yield, FutBlkBackend, FutBlkDev,
-    FutStatus, RawSpinLock, SpinLock, FUT_BLK_ADMIN, FUT_BLK_READ, FUT_BLK_WRITE,
+    alloc, alloc_page, free, free_page, log, map_mmio_region, register, thread_yield, FutBlkBackend,
+    FutBlkDev, FutStatus, RawSpinLock, SpinLock, FUT_BLK_ADMIN, FUT_BLK_READ, FUT_BLK_WRITE,
+    MMIO_DEFAULT_FLAGS,
 };
 
 const PCI_CONFIG_ADDRESS: u16 = 0xCF8;
@@ -62,6 +63,8 @@ const PAGE_SIZE: usize = 4096;
 const QUEUE_SIZE: u16 = 8;
 const DMA_STATUS_OFFSET: u64 = size_of::<VirtioBlkReqHeader>() as u64;
 const PMAP_DIRECT_VIRT_BASE: usize = 0xFFFFFFFF80000000;
+
+const MMIO_PTE_FLAGS: u64 = MMIO_DEFAULT_FLAGS;
 
 const ENODEV: FutStatus = -19;
 const EIO: FutStatus = -5;
@@ -377,20 +380,31 @@ impl VirtioBlkDevice {
     }
 
     fn setup_bars(&mut self) {
-        for idx in 0..6u8 {
+        let mut idx = 0u8;
+        while idx < 6 {
             let offset = 0x10 + idx * 4;
             let value = pci_config_read32(self.pci.bus, self.pci.device, self.pci.function, offset);
             if (value & 0x1) != 0 {
                 self.bars[idx as usize] = 0;
+                idx += 1;
                 continue;
             }
+
             let ty = (value >> 1) & 0x3;
             let mut base = (value & 0xFFFF_FFF0) as u64;
+            let current = idx;
+
             if ty == 0x2 && idx + 1 < 6 {
                 let hi = pci_config_read32(self.pci.bus, self.pci.device, self.pci.function, offset + 4);
                 base |= (hi as u64) << 32;
+                self.bars[(idx + 1) as usize] = 0;
+                idx += 2;
+            } else {
+                idx += 1;
             }
-            self.bars[idx as usize] = base;
+
+            self.bars[current as usize] = base;
+            log_bar(current, value, base);
         }
     }
 
@@ -399,23 +413,29 @@ impl VirtioBlkDevice {
             return ptr::null_mut();
         }
         let base = self.bars[cap.bar as usize];
-        if base == 0 {
+        if base == 0 || cap.length == 0 {
             return ptr::null_mut();
         }
-        phys_to_virt_addr(base + cap.offset as u64)
+        let phys = base + cap.offset as u64;
+        unsafe { map_mmio_region(phys, cap.length as usize, MMIO_PTE_FLAGS) }
     }
 
-    fn parse_capabilities(&mut self) -> bool {
+fn parse_capabilities(&mut self) -> bool {
         let status = pci_config_read8(self.pci.bus, self.pci.device, self.pci.function, 0x06);
         if (status & 0x10) == 0 {
+            log("virtio-blk: PCI capability pointer missing");
             return false;
         }
         let mut cap_ptr = pci_config_read8(self.pci.bus, self.pci.device, self.pci.function, 0x34);
+        log_cap_ptr(cap_ptr);
         while cap_ptr >= 0x40 {
             let cap_hdr = read_cap(self.pci, cap_ptr);
+            log_cap_info(cap_ptr, cap_hdr.cap_vndr, cap_hdr.cfg_type, cap_hdr.cap_next);
             if cap_hdr.cap_vndr == PCI_CAP_ID_VNDR {
                 let mapped = self.map_cap(&cap_hdr);
+                log_cap(cap_hdr.cfg_type, cap_hdr.bar, cap_hdr.offset, cap_hdr.length, mapped as u64);
                 if mapped.is_null() {
+                    log("virtio-blk: map_cap returned null");
                     cap_ptr = cap_hdr.cap_next;
                     continue;
                 }
@@ -712,6 +732,130 @@ fn write_decimal(buf: &mut [u8], mut value: u64) -> usize {
     written
 }
 
+fn log_bar(index: u8, raw: u32, base: u64) {
+    let mut buf = [0u8; 96];
+    let mut pos = 0usize;
+
+    const PREFIX: &[u8] = b"virtio-blk: BAR";
+    buf[pos..pos + PREFIX.len()].copy_from_slice(PREFIX);
+    pos += PREFIX.len();
+    pos += write_decimal(&mut buf[pos..], index as u64);
+
+    const RAW_LABEL: &[u8] = b" raw=";
+    buf[pos..pos + RAW_LABEL.len()].copy_from_slice(RAW_LABEL);
+    pos += RAW_LABEL.len();
+    pos += write_decimal(&mut buf[pos..], raw as u64);
+
+    const BASE_LABEL: &[u8] = b" base=";
+    buf[pos..pos + BASE_LABEL.len()].copy_from_slice(BASE_LABEL);
+    pos += BASE_LABEL.len();
+    pos += write_decimal(&mut buf[pos..], base);
+
+    buf[pos] = 0;
+    log(unsafe { core::str::from_utf8_unchecked(&buf[..pos]) });
+}
+
+fn log_cap(cfg_type: u8, bar: u8, offset: u32, length: u32, mapped: u64) {
+    let mut buf = [0u8; 128];
+    let mut pos = 0usize;
+
+    const PREFIX: &[u8] = b"virtio-blk: cap type=";
+    buf[pos..pos + PREFIX.len()].copy_from_slice(PREFIX);
+    pos += PREFIX.len();
+    pos += write_decimal(&mut buf[pos..], cfg_type as u64);
+
+    const BAR_LABEL: &[u8] = b" bar=";
+    buf[pos..pos + BAR_LABEL.len()].copy_from_slice(BAR_LABEL);
+    pos += BAR_LABEL.len();
+    pos += write_decimal(&mut buf[pos..], bar as u64);
+
+    const OFF_LABEL: &[u8] = b" off=";
+    buf[pos..pos + OFF_LABEL.len()].copy_from_slice(OFF_LABEL);
+    pos += OFF_LABEL.len();
+    pos += write_decimal(&mut buf[pos..], offset as u64);
+
+    const LEN_LABEL: &[u8] = b" len=";
+    buf[pos..pos + LEN_LABEL.len()].copy_from_slice(LEN_LABEL);
+    pos += LEN_LABEL.len();
+    pos += write_decimal(&mut buf[pos..], length as u64);
+
+    const MAP_LABEL: &[u8] = b" map=";
+    buf[pos..pos + MAP_LABEL.len()].copy_from_slice(MAP_LABEL);
+    pos += MAP_LABEL.len();
+    pos += write_decimal(&mut buf[pos..], mapped);
+
+    log(unsafe { core::str::from_utf8_unchecked(&buf[..pos]) });
+}
+
+fn log_vendor(bus: u8, device: u8, function: u8, device_id: u16, hinted: bool) {
+    let mut buf = [0u8; 128];
+    let mut pos = 0usize;
+
+    const PREFIX: &[u8] = b"virtio-blk: pci ";
+    buf[pos..pos + PREFIX.len()].copy_from_slice(PREFIX);
+    pos += PREFIX.len();
+    pos += write_decimal(&mut buf[pos..], bus as u64);
+
+    buf[pos] = b':';
+    pos += 1;
+    pos += write_decimal(&mut buf[pos..], device as u64);
+    buf[pos] = b'.';
+    pos += 1;
+    pos += write_decimal(&mut buf[pos..], function as u64);
+
+    const DEV_LABEL: &[u8] = b" dev=";
+    buf[pos..pos + DEV_LABEL.len()].copy_from_slice(DEV_LABEL);
+    pos += DEV_LABEL.len();
+    pos += write_decimal(&mut buf[pos..], device_id as u64);
+
+    if hinted {
+        const HINT: &[u8] = b" (hint)";
+        buf[pos..pos + HINT.len()].copy_from_slice(HINT);
+        pos += HINT.len();
+    }
+
+    log(unsafe { core::str::from_utf8_unchecked(&buf[..pos]) });
+}
+
+fn log_cap_ptr(ptr: u8) {
+    let mut buf = [0u8; 48];
+    let mut pos = 0usize;
+
+    const PREFIX: &[u8] = b"virtio-blk: cap_ptr=";
+    buf[pos..pos + PREFIX.len()].copy_from_slice(PREFIX);
+    pos += PREFIX.len();
+    pos += write_decimal(&mut buf[pos..], ptr as u64);
+
+    log(unsafe { core::str::from_utf8_unchecked(&buf[..pos]) });
+}
+
+fn log_cap_info(ptr: u8, vendor: u8, cfg_type: u8, next: u8) {
+    let mut buf = [0u8; 96];
+    let mut pos = 0usize;
+
+    const PREFIX: &[u8] = b"virtio-blk: cap @";
+    buf[pos..pos + PREFIX.len()].copy_from_slice(PREFIX);
+    pos += PREFIX.len();
+    pos += write_decimal(&mut buf[pos..], ptr as u64);
+
+    const VNDR: &[u8] = b" vndr=";
+    buf[pos..pos + VNDR.len()].copy_from_slice(VNDR);
+    pos += VNDR.len();
+    pos += write_decimal(&mut buf[pos..], vendor as u64);
+
+    const TYPE_LABEL: &[u8] = b" type=";
+    buf[pos..pos + TYPE_LABEL.len()].copy_from_slice(TYPE_LABEL);
+    pos += TYPE_LABEL.len();
+    pos += write_decimal(&mut buf[pos..], cfg_type as u64);
+
+    const NEXT_LABEL: &[u8] = b" next=";
+    buf[pos..pos + NEXT_LABEL.len()].copy_from_slice(NEXT_LABEL);
+    pos += NEXT_LABEL.len();
+    pos += write_decimal(&mut buf[pos..], next as u64);
+
+    log(unsafe { core::str::from_utf8_unchecked(&buf[..pos]) });
+}
+
 unsafe extern "C" fn backend_read(ctx: *mut c_void, lba: u64, nsectors: usize, buf: *mut c_void) -> FutStatus {
     if ctx.is_null() {
         return ENODEV;
@@ -754,6 +898,7 @@ fn find_device(pci_hint: u64) -> Option<PciAddress> {
         if vendor == VIRTIO_VENDOR_ID {
             let device_id = pci_config_read16(addr.bus, addr.device, addr.function, 0x02);
             if device_id == VIRTIO_DEVICE_ID_BLOCK_LEGACY || device_id == VIRTIO_DEVICE_ID_BLOCK_MODERN {
+                log_vendor(addr.bus, addr.device, addr.function, device_id, true);
                 return Some(addr);
             }
         }
@@ -767,6 +912,7 @@ fn find_device(pci_hint: u64) -> Option<PciAddress> {
                 }
                 let device_id = pci_config_read16(bus, device, function, 0x02);
                 if device_id == VIRTIO_DEVICE_ID_BLOCK_LEGACY || device_id == VIRTIO_DEVICE_ID_BLOCK_MODERN {
+                    log_vendor(bus, device, function, device_id, false);
                     return Some(PciAddress { bus, device, function });
                 }
             }
@@ -882,11 +1028,6 @@ unsafe fn inl(port: u16) -> u32 {
     unsafe { asm!("in eax, dx", in("dx") port, out("eax") value, options(nostack, preserves_flags)); }
     value
 }
-#[inline(always)]
-fn phys_to_virt_addr(phys: u64) -> *mut u8 {
-    (phys + PMAP_DIRECT_VIRT_BASE as u64) as *mut u8
-}
-
 #[inline(always)]
 fn virt_to_phys_addr(addr: usize) -> u64 {
     debug_assert!(addr >= PMAP_DIRECT_VIRT_BASE);

@@ -353,8 +353,9 @@ void *fut_kernel_map_physical(uint64_t paddr, uint64_t size, uint64_t flags);
 /**
  * Unmap kernel virtual address.
  * @param vaddr Virtual address to unmap
+ * @param size  Size of region to unmap
  */
-void fut_kernel_unmap(void *vaddr);
+void fut_kernel_unmap(void *vaddr, uint64_t size);
 
 /* ============================================================
  *   Page Fault Handler

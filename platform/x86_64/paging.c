@@ -332,6 +332,40 @@ int fut_unmap_range(fut_vmem_context_t *ctx, uint64_t vaddr, uint64_t size) {
     return 0;
 }
 
+void *fut_kernel_map_physical(uint64_t paddr, uint64_t size, uint64_t flags) {
+    if (size == 0) {
+        return NULL;
+    }
+
+    uint64_t aligned_phys = PAGE_ALIGN_DOWN(paddr);
+    uint64_t offset = paddr - aligned_phys;
+    uint64_t map_len = PAGE_ALIGN_UP(size + offset);
+
+    uint64_t vaddr = pmap_phys_to_virt(aligned_phys);
+    uint64_t map_flags = flags | PTE_PRESENT;
+    if ((map_flags & PTE_WRITABLE) == 0) {
+        map_flags |= PTE_WRITABLE;
+    }
+
+    if (pmap_map(vaddr, aligned_phys, map_len, map_flags) != 0) {
+        return NULL;
+    }
+
+    return (void *)(uintptr_t)(vaddr + offset);
+}
+
+void fut_kernel_unmap(void *vaddr, uint64_t size) {
+    if (!vaddr || size == 0) {
+        return;
+    }
+
+    uintptr_t addr = (uintptr_t)vaddr;
+    uintptr_t aligned = PAGE_ALIGN_DOWN(addr);
+    uint64_t map_len = PAGE_ALIGN_UP(size + (addr - aligned));
+
+    pmap_unmap(aligned, map_len);
+}
+
 /**
  * Translate virtual address to physical address.
  */

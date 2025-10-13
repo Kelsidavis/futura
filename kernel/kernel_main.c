@@ -82,6 +82,16 @@ static void fut_test_watchdog_thread(void *arg) {
     fut_test_fail(0xEE);
 }
 
+enum futurafs_test_status {
+    FUTURAFS_TEST_ERR_RAMDISK = 0xA0,
+    FUTURAFS_TEST_ERR_REGISTER = 0xA1,
+    FUTURAFS_TEST_ERR_FORMAT = 0xA2,
+    FUTURAFS_TEST_ERR_MOUNT = 0xA3,
+    FUTURAFS_TEST_ERR_STAT = 0xA4,
+    FUTURAFS_TEST_ERR_LOOKUP_ROOT = 0xA5,
+    FUTURAFS_TEST_ERR_LOOKUP_DOT = 0xA6
+};
+
 /**
  * Test VFS file operations.
  * Creates files using vnode operations, writes data, reads it back.
@@ -334,6 +344,7 @@ static void test_futurafs_operations(void) {
     struct fut_blockdev *ramdisk = fut_ramdisk_create_bytes("futurafs0", 512 * 1024u, 4096);
     if (!ramdisk) {
         fut_printf("[FUTURAFS-TEST] ✗ Failed to create ramdisk\n");
+        fut_test_fail(FUTURAFS_TEST_ERR_RAMDISK);
         return;
     }
     fut_printf("[FUTURAFS-TEST] ✓ Ramdisk created: %s (%llu blocks, %u bytes/block)\n",
@@ -344,6 +355,7 @@ static void test_futurafs_operations(void) {
     int ret = fut_blockdev_register(ramdisk);
     if (ret < 0) {
         fut_printf("[FUTURAFS-TEST] ✗ Failed to register: error %d\n", ret);
+        fut_test_fail(FUTURAFS_TEST_ERR_REGISTER);
         return;
     }
     fut_printf("[FUTURAFS-TEST] ✓ Ramdisk registered\n");
@@ -358,6 +370,7 @@ static void test_futurafs_operations(void) {
     ret = fut_futurafs_format(ramdisk, "FuturaFS", 4096);
     if (ret < 0) {
         fut_printf("[FUTURAFS-TEST] ✗ Format failed: error %d\n", ret);
+        fut_test_fail(FUTURAFS_TEST_ERR_FORMAT);
         return;
     }
     fut_printf("[FUTURAFS-TEST] ✓ Ramdisk formatted with FuturaFS (label: FuturaFS, inode_ratio: 4)\n");
@@ -375,6 +388,7 @@ static void test_futurafs_operations(void) {
     ret = fut_vfs_mount("futurafs0", "/mnt", "futurafs", 0, NULL);
     if (ret < 0) {
         fut_printf("[FUTURAFS-TEST] ✗ Mount failed: error %d\n", ret);
+        fut_test_fail(FUTURAFS_TEST_ERR_MOUNT);
         return;
     }
     fut_printf("[FUTURAFS-TEST] ✓ FuturaFS mounted at /mnt\n");
@@ -387,7 +401,32 @@ static void test_futurafs_operations(void) {
         fut_printf("[FUTURAFS-TEST] ✓ Mount point accessible (inode %llu)\n", st.st_ino);
     } else {
         fut_printf("[FUTURAFS-TEST] ✗ Failed to stat mount point: error %d\n", ret);
+        fut_test_fail(FUTURAFS_TEST_ERR_STAT);
+        return;
     }
+
+    struct fut_vnode *verify_vnode = NULL;
+    ret = fut_vfs_lookup("/mnt", &verify_vnode);
+    if (ret < 0 || !verify_vnode) {
+        fut_printf("[FUTURAFS-TEST] ✗ fut_vfs_lookup(\"/mnt\") failed: error %d\n", ret);
+        if (verify_vnode) {
+            fut_vnode_unref(verify_vnode);
+        }
+        fut_test_fail(FUTURAFS_TEST_ERR_LOOKUP_ROOT);
+        return;
+    }
+    fut_vnode_unref(verify_vnode);
+
+    ret = fut_vfs_lookup("/mnt/.", &verify_vnode);
+    if (ret < 0 || !verify_vnode) {
+        fut_printf("[FUTURAFS-TEST] ✗ fut_vfs_lookup(\"/mnt/.\") failed: error %d\n", ret);
+        if (verify_vnode) {
+            fut_vnode_unref(verify_vnode);
+        }
+        fut_test_fail(FUTURAFS_TEST_ERR_LOOKUP_DOT);
+        return;
+    }
+    fut_vnode_unref(verify_vnode);
 
     /* Test 7: Directory CRUD via vnode + VFS wrappers */
     fut_printf("[FUTURAFS-TEST] Test 7: Directory and file operations\n");
@@ -397,6 +436,8 @@ static void test_futurafs_operations(void) {
     fut_printf("[FUTURAFS-TEST]   fut_vfs_lookup ret=%d vnode=%p\n", ret, (void *)mnt_dir);
     if (ret < 0 || !mnt_dir) {
         fut_printf("[FUTURAFS-TEST] ✗ Failed to locate /mnt vnode (error %d)\n", ret);
+        fut_test_fail(FUTURAFS_TEST_ERR_LOOKUP_ROOT);
+        return;
     } else {
         if (mnt_dir->ops && mnt_dir->ops->mkdir) {
             fut_printf("[FUTURAFS-TEST]   invoking vnode->mkdir\n");
@@ -480,6 +521,7 @@ static void test_futurafs_operations(void) {
     fut_printf("[FUTURAFS-TEST] ===========================================\n");
     fut_printf("[FUTURAFS-TEST] FuturaFS test complete!\n");
     fut_printf("[FUTURAFS-TEST] ===========================================\n\n");
+    fut_test_pass();
 }
 
 /**
@@ -697,6 +739,8 @@ void fut_kernel_main(void) {
 
     fut_printf("[INIT] Root filesystem mounted (ramfs at /)\n");
 
+    fut_test_plan(1);
+
     /* Test VFS operations */
     test_vfs_operations();
 
@@ -763,7 +807,6 @@ void fut_kernel_main(void) {
 
     fut_printf("[INIT] Test task created (PID %llu)\n", test_task->pid);
 
-    fut_test_plan(2);
     fut_blk_async_selftest_schedule(test_task);
     fut_futfs_selftest_schedule(test_task);
 

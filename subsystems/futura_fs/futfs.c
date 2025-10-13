@@ -213,56 +213,6 @@ static uint32_t futfs_checksum32(const uint8_t *data, size_t len) {
 /* Directory utilities                                                        */
 /* -------------------------------------------------------------------------- */
 
-static bool futfs_dirent_valid(const futfs_dirent_disk_t *entry) {
-    return entry && entry->ino != 0 && entry->name_len != 0;
-}
-
-static size_t futfs_dir_foreach(const struct futfs_inode_mem *dir,
-                                const char *match,
-                                uint64_t *ino_out) {
-    if (!dir || !dir->data || dir->size == 0) {
-        if (ino_out) {
-            *ino_out = 0;
-        }
-        return 0;
-    }
-
-    size_t count = 0;
-    size_t match_len = match ? futfs_strlen(match) : 0;
-    size_t offset = 0;
-
-    while (offset + sizeof(futfs_dirent_disk_t) <= dir->size) {
-        const futfs_dirent_disk_t *entry =
-            (const futfs_dirent_disk_t *)(dir->data + offset);
-        size_t entry_bytes = sizeof(futfs_dirent_disk_t) + entry->name_len;
-        size_t padded = futfs_align8(entry_bytes);
-        if (offset + padded > dir->size) {
-            break;
-        }
-
-        if (match &&
-            futfs_dirent_valid(entry) &&
-            entry->name_len == match_len &&
-            memcmp(entry->name, match, match_len) == 0) {
-            if (ino_out) {
-                *ino_out = entry->ino;
-            }
-            return (size_t)(-1);
-        }
-
-        if (futfs_dirent_valid(entry)) {
-            ++count;
-        }
-
-        offset += padded;
-    }
-
-    if (ino_out) {
-        *ino_out = 0;
-    }
-    return count;
-}
-
 static fut_status_t futfs_dir_append(struct futfs_inode_mem *dir,
                                      const char *name,
                                      uint64_t ino) {
@@ -295,57 +245,101 @@ static fut_status_t futfs_dir_append(struct futfs_inode_mem *dir,
     return 0;
 }
 
-static uint64_t futfs_dir_lookup(const struct futfs_inode_mem *dir,
-                                 const char *name) {
-    uint64_t ino = 0;
-    size_t res = futfs_dir_foreach(dir, name, &ino);
-    if (res == (size_t)(-1)) {
-        return ino;
+static fut_status_t futfs_dir_resolve_latest(const struct futfs_inode_mem *dir,
+                                             const char *name,
+                                             size_t name_len,
+                                             size_t *offset_out,
+                                             const futfs_dirent_disk_t **entry_out) {
+    if (!dir || !dir->data || dir->size == 0 ||
+        !name || name_len == 0 || name_len > FUTFS_NAME_MAX) {
+        return -ENOENT;
+    }
+
+    const futfs_dirent_disk_t *candidate = NULL;
+    size_t candidate_offset = 0;
+
+    size_t offset = 0;
+    while (offset + sizeof(futfs_dirent_disk_t) <= dir->size) {
+        const futfs_dirent_disk_t *entry =
+            (const futfs_dirent_disk_t *)(dir->data + offset);
+        size_t entry_bytes = sizeof(futfs_dirent_disk_t) + entry->name_len;
+        size_t padded = futfs_align8(entry_bytes);
+        if (offset + padded > dir->size) {
+            return -EINVAL;
+        }
+
+        if (entry->name_len == name_len &&
+            memcmp(entry->name, name, name_len) == 0) {
+            if (entry->ino == 0) {
+                candidate = NULL;
+            } else {
+                candidate = entry;
+                candidate_offset = offset;
+            }
+        }
+
+        offset += padded;
+    }
+
+    if (!candidate) {
+        return -ENOENT;
+    }
+
+    if (offset_out) {
+        *offset_out = candidate_offset;
+    }
+    if (entry_out) {
+        *entry_out = candidate;
     }
     return 0;
 }
 
-static fut_status_t futfs_dir_find_entry(struct futfs_inode_mem *dir,
-                                         const char *name,
-                                         size_t *offset_out,
-                                         futfs_dirent_disk_t **entry_out) {
-    if (!dir || !dir->data || dir->size == 0 || !name) {
-        return -ENOENT;
-    }
-
+static uint64_t futfs_dir_lookup(const struct futfs_inode_mem *dir,
+                                 const char *name) {
     size_t name_len = futfs_strlen(name);
-    if (name_len == 0 || name_len > FUTFS_NAME_MAX) {
-        return -EINVAL;
+    const futfs_dirent_disk_t *entry = NULL;
+    if (futfs_dir_resolve_latest(dir, name, name_len, NULL, &entry) == 0 && entry) {
+        return entry->ino;
+    }
+    return 0;
+}
+
+static size_t futfs_dir_count_entries(const struct futfs_inode_mem *dir) {
+    if (!dir || !dir->data || dir->size == 0) {
+        return 0;
     }
 
+    size_t count = 0;
     size_t offset = 0;
+
     while (offset + sizeof(futfs_dirent_disk_t) <= dir->size) {
-        futfs_dirent_disk_t *entry =
-            (futfs_dirent_disk_t *)(dir->data + offset);
+        const futfs_dirent_disk_t *entry =
+            (const futfs_dirent_disk_t *)(dir->data + offset);
         size_t entry_bytes = sizeof(futfs_dirent_disk_t) + entry->name_len;
         size_t padded = futfs_align8(entry_bytes);
         if (offset + padded > dir->size) {
             break;
         }
-        if (futfs_dirent_valid(entry) &&
-            entry->name_len == name_len &&
-            memcmp(entry->name, name, name_len) == 0) {
-            if (offset_out) {
-                *offset_out = offset;
+
+        if (entry->ino != 0 && entry->name_len != 0) {
+            const futfs_dirent_disk_t *latest = NULL;
+            if (futfs_dir_resolve_latest(dir, entry->name, entry->name_len,
+                                         NULL, &latest) == 0 &&
+                latest == entry) {
+                bool is_dot = (entry->name_len == 1 && entry->name[0] == '.');
+                bool is_dotdot = (entry->name_len == 2 &&
+                                  entry->name[0] == '.' &&
+                                  entry->name[1] == '.');
+                if (!is_dot && !is_dotdot) {
+                    count++;
+                }
             }
-            if (entry_out) {
-                *entry_out = entry;
-            }
-            return 0;
         }
+
         offset += padded;
     }
-    return -ENOENT;
-}
 
-static size_t futfs_dir_count_entries(const struct futfs_inode_mem *dir) {
-    size_t count = futfs_dir_foreach(dir, NULL, NULL);
-    return (count == (size_t)(-1)) ? 0 : count;
+    return count;
 }
 
 static bool futfs_dir_is_empty(const struct futfs_inode_mem *dir) {
@@ -1096,42 +1090,57 @@ fut_status_t futfs_readdir(const char *path, size_t *cookie, futfs_dirent_t *out
         return rc;
     }
 
-    if (!dir->data || dir->size == 0) {
-        *cookie = SIZE_MAX;
-        return -ENOENT;
+    if (!dir->data || dir->size == 0 || *cookie >= dir->size) {
+        *cookie = dir ? dir->size : 0;
+        return 0;
     }
 
-    size_t offset = (*cookie == SIZE_MAX) ? dir->size : *cookie;
+    size_t offset = *cookie;
 
     while (offset + sizeof(futfs_dirent_disk_t) <= dir->size) {
         const futfs_dirent_disk_t *entry =
             (const futfs_dirent_disk_t *)(dir->data + offset);
         size_t entry_bytes = sizeof(futfs_dirent_disk_t) + entry->name_len;
         size_t padded = futfs_align8(entry_bytes);
-        offset += padded;
-
-        if (!futfs_dirent_valid(entry)) {
-            continue;
+        if (offset + padded > dir->size) {
+            return -EINVAL;
         }
 
-        struct futfs_inode_mem *child = futfs_find_inode(entry->ino);
+        size_t next_offset = offset + padded;
 
-        memset(out, 0, sizeof(*out));
-        out->ino = entry->ino;
-        out->type = child ? child->type : 0;
+        if (entry->ino != 0 && entry->name_len != 0) {
+            const futfs_dirent_disk_t *latest = NULL;
+            if (futfs_dir_resolve_latest(dir, entry->name, entry->name_len,
+                                         NULL, &latest) == 0 &&
+                latest == entry) {
+                bool is_dot = (entry->name_len == 1 && entry->name[0] == '.');
+                bool is_dotdot = (entry->name_len == 2 &&
+                                  entry->name[0] == '.' &&
+                                  entry->name[1] == '.');
+                if (!is_dot && !is_dotdot) {
+                    struct futfs_inode_mem *child = futfs_find_inode(entry->ino);
 
-        size_t copy = entry->name_len < FUTFS_NAME_MAX
-                          ? entry->name_len
-                          : FUTFS_NAME_MAX;
-        memcpy(out->name, entry->name, copy);
-        out->name[copy] = '\0';
+                    memset(out, 0, sizeof(*out));
+                    out->ino = entry->ino;
+                    out->type = child ? child->type : 0;
 
-        *cookie = offset;
-        return 0;
+                    size_t copy = entry->name_len < FUTFS_NAME_MAX
+                                      ? entry->name_len
+                                      : FUTFS_NAME_MAX;
+                    memcpy(out->name, entry->name, copy);
+                    out->name[copy] = '\0';
+
+                    *cookie = next_offset;
+                    return 1;
+                }
+            }
+        }
+
+        offset = next_offset;
     }
 
-    *cookie = SIZE_MAX;
-    return -ENOENT;
+    *cookie = dir->size;
+    return 0;
 }
 
 fut_status_t futfs_unlink(const char *path) {
@@ -1142,11 +1151,11 @@ fut_status_t futfs_unlink(const char *path) {
         return rc;
     }
 
-    size_t offset = 0;
-    futfs_dirent_disk_t *entry = NULL;
-    rc = futfs_dir_find_entry(parent, name, &offset, &entry);
-    if (rc != 0) {
-        return rc;
+    size_t name_len = futfs_strlen(name);
+    const futfs_dirent_disk_t *entry = NULL;
+    rc = futfs_dir_resolve_latest(parent, name, name_len, NULL, &entry);
+    if (rc != 0 || !entry || entry->ino == 0) {
+        return -ENOENT;
     }
 
     struct futfs_inode_mem *target = futfs_find_inode(entry->ino);
@@ -1157,9 +1166,10 @@ fut_status_t futfs_unlink(const char *path) {
         return -EISDIR;
     }
 
-    entry->ino = 0;
-    entry->name_len = 0;
-    entry->reserved = 0;
+    rc = futfs_dir_append(parent, name, 0);
+    if (rc != 0) {
+        return rc;
+    }
 
     futfs_remove_inode(target);
     g_fs.dirty = true;
@@ -1174,11 +1184,11 @@ fut_status_t futfs_rmdir(const char *path) {
         return rc;
     }
 
-    size_t offset = 0;
-    futfs_dirent_disk_t *entry = NULL;
-    rc = futfs_dir_find_entry(parent, name, &offset, &entry);
-    if (rc != 0) {
-        return rc;
+    size_t name_len = futfs_strlen(name);
+    const futfs_dirent_disk_t *entry = NULL;
+    rc = futfs_dir_resolve_latest(parent, name, name_len, NULL, &entry);
+    if (rc != 0 || !entry || entry->ino == 0) {
+        return -ENOENT;
     }
 
     struct futfs_inode_mem *target = futfs_find_inode(entry->ino);
@@ -1192,9 +1202,10 @@ fut_status_t futfs_rmdir(const char *path) {
         return -ENOTEMPTY;
     }
 
-    entry->ino = 0;
-    entry->name_len = 0;
-    entry->reserved = 0;
+    rc = futfs_dir_append(parent, name, 0);
+    if (rc != 0) {
+        return rc;
+    }
 
     futfs_remove_inode(target);
     g_fs.dirty = true;

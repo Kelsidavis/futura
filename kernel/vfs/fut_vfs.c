@@ -17,6 +17,15 @@
 
 extern void fut_printf(const char *fmt, ...);
 
+/* Uncomment for verbose VFS tracing */
+/* #define DEBUG_VFS 1 */
+
+#ifdef DEBUG_VFS
+#define VFSDBG(...) fut_printf(__VA_ARGS__)
+#else
+#define VFSDBG(...) do { } while (0)
+#endif
+
 /* ============================================================
  *   VFS State
  * ============================================================ */
@@ -34,6 +43,7 @@ static struct fut_file *file_table[MAX_OPEN_FILES];
 
 /* Root vnode - set when root filesystem is mounted */
 static struct fut_vnode *root_vnode = NULL;
+static struct fut_vnode *root_vnode_base = NULL;
 
 /* ============================================================
  *   VFS Initialization
@@ -50,15 +60,24 @@ void fut_vfs_init(void) {
 
     /* Initialize root vnode */
     root_vnode = NULL;
+    root_vnode_base = NULL;
 }
 
 void fut_vfs_set_root(struct fut_vnode *vnode) {
-    if (root_vnode) {
-        fut_vnode_unref(root_vnode);
+    if (root_vnode_base) {
+        fut_vnode_unref(root_vnode_base);
+        root_vnode_base = NULL;
     }
+
     root_vnode = vnode;
     if (root_vnode) {
         fut_vnode_ref(root_vnode);
+        root_vnode_base = root_vnode;
+        VFSDBG("[vfs] root vnode set %p ref=%u\n",
+               (void *)root_vnode,
+               root_vnode ? root_vnode->refcount : 0);
+    } else {
+        VFSDBG("[vfs] root vnode cleared\n");
     }
 }
 
@@ -122,12 +141,18 @@ int fut_vfs_mount(const char *device, const char *mountpoint,
     mount->fs = fs;
     mount->flags = flags;
 
+    bool is_root_mount = (mountpoint && mountpoint[0] == '/' && mountpoint[1] == '\0');
+
+    if (mount->root && !is_root_mount) {
+        fut_vnode_ref(mount->root);
+    }
+
     /* Add to mount list */
     mount->next = mount_list;
     mount_list = mount;
 
     /* If mounting at root, set root vnode */
-    if (mountpoint && mountpoint[0] == '/' && mountpoint[1] == '\0') {
+    if (is_root_mount) {
         fut_vfs_set_root(mount->root);
     }
 
@@ -151,9 +176,21 @@ int fut_vfs_unmount(const char *mountpoint) {
             /* Found mount point */
             *prev = mount->next;
 
+            bool is_root_mount = (mount->mountpoint && mount->mountpoint[0] == '/' && mount->mountpoint[1] == '\0');
+            struct fut_vnode *root = mount->root;
+
             /* Unmount filesystem */
             if (mount->fs && mount->fs->unmount) {
                 mount->fs->unmount(mount);
+            }
+
+            if (is_root_mount) {
+                fut_vfs_set_root(NULL);
+                if (root) {
+                    fut_vnode_unref(root);
+                }
+            } else if (root) {
+                fut_vnode_unref(root);
             }
 
             /* Free mount structure */
@@ -312,12 +349,9 @@ static void release_lookup_ref(struct fut_vnode *vnode) {
     if (!vnode) {
         return;
     }
-
-    if (vnode == root_vnode && vnode->refcount == 1) {
-        /* Preserve a persistent reference to the root filesystem vnode. */
-        fut_vnode_ref(vnode);
+    if (vnode == root_vnode_base) {
+        return;
     }
-
     fut_vnode_unref(vnode);
 }
 
@@ -362,7 +396,10 @@ static int lookup_vnode(const char *path, struct fut_vnode **vnode) {
 
     struct fut_vnode *current = root_vnode;
     fut_vnode_ref(current);
-    fut_printf("[vfs] lookup_vnode path=%s\n", path);
+    VFSDBG("[vfs] lookup_vnode start current=%p ref=%u\n",
+           (void *)current,
+           current ? current->refcount : 0);
+    VFSDBG("[vfs] lookup_vnode path=%s\n", path);
 
     /* Walk path components */
     unsigned int steps = 0;
@@ -370,7 +407,7 @@ static int lookup_vnode(const char *path, struct fut_vnode **vnode) {
 
     for (int i = 0; i < num_components;) {
         if (++steps > max_steps) {
-            fut_printf("[vfs] ELOOP: exceeded step budget walking '%s'\n", path);
+            VFSDBG("[vfs] ELOOP: exceeded step budget walking '%s'\n", path);
             release_lookup_ref(current);
             return -ELOOP;
         }
@@ -389,33 +426,35 @@ static int lookup_vnode(const char *path, struct fut_vnode **vnode) {
 
         if (component[0] == '.' && component[1] == '.' && component[2] == '\0') {
             /* Parent traversal not yet supported - stay within current vnode */
-            fut_printf("[vfs]  '..' component ignored (unsupported)\n");
+            VFSDBG("[vfs]  '..' component ignored (unsupported)\n");
             i++;
             continue;
         }
 
         struct fut_mount *mount = find_mount_for_path(components, i + 1);
         if (mount && mount->root) {
-            fut_printf("[vfs]  component %d matched mount %s\n", i, mount->mountpoint);
+            VFSDBG("[vfs]  component %d matched mount %s root=%p\n", i, mount->mountpoint, (void *)mount->root);
 
             if (current != mount->root) {
                 struct fut_vnode *prev = current;
+                VFSDBG("[vfs]    switching from %p ref=%u to mount root\n", (void *)prev, prev ? prev->refcount : 0);
                 current = mount->root;
                 fut_vnode_ref(current);
                 release_lookup_ref(prev);
+                VFSDBG("[vfs]    prev released, new root ref=%u\n", current ? current->refcount : 0);
             }
 
-            fut_printf("[vfs]  after mount switch current=%p ref=%u (i=%d/%d)\n",
-                       (void *)current,
-                       current ? current->refcount : 0,
-                       i,
-                       num_components);
+            VFSDBG("[vfs]  after mount switch current=%p ref=%u (i=%d/%d)\n",
+                   (void *)current,
+                   current ? current->refcount : 0,
+                   i,
+                   num_components);
 
             if (i == num_components - 1) {
                 *vnode = current;
-                fut_printf("[vfs] lookup_vnode done vnode=%p ino=%llu (mount root)\n",
-                           (void *)current,
-                           current ? (unsigned long long)current->ino : 0ULL);
+                VFSDBG("[vfs] lookup_vnode done vnode=%p ino=%llu (mount root)\n",
+                       (void *)current,
+                       current ? (unsigned long long)current->ino : 0ULL);
                 return 0;
             }
 
@@ -436,19 +475,19 @@ static int lookup_vnode(const char *path, struct fut_vnode **vnode) {
         }
 
         struct fut_vnode *next = NULL;
-        fut_printf("[vfs]  lookup component %s on vnode %p\n", component, (void *)current);
+        VFSDBG("[vfs]  lookup component %s on vnode %p\n", component, (void *)current);
         int ret = current->ops->lookup(current, component, &next);
 
         if (ret < 0) {
             release_lookup_ref(current);
-            fut_printf("[vfs]  component lookup failed ret=%d\n", ret);
+            VFSDBG("[vfs]  component lookup failed ret=%d\n", ret);
             return ret;
         }
 
-        fut_printf("[vfs]  -> lookup('%s') = %p (ino=%llu)\n",
-                   component,
-                   (void *)next,
-                   next ? (unsigned long long)next->ino : 0ULL);
+        VFSDBG("[vfs]  -> lookup('%s') = %p (ino=%llu)\n",
+               component,
+               (void *)next,
+               next ? (unsigned long long)next->ino : 0ULL);
 
         release_lookup_ref(current);
         current = next;
@@ -456,9 +495,9 @@ static int lookup_vnode(const char *path, struct fut_vnode **vnode) {
     }
 
     *vnode = current;
-    fut_printf("[vfs] lookup_vnode done vnode=%p ino=%llu\n",
-               (void *)current,
-               current ? (unsigned long long)current->ino : 0ULL);
+    VFSDBG("[vfs] lookup_vnode done vnode=%p ino=%llu\n",
+           (void *)current,
+           current ? (unsigned long long)current->ino : 0ULL);
     return 0;
 }
 

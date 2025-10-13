@@ -17,6 +17,14 @@
 
 extern void fut_printf(const char *fmt, ...);
 
+/* #define DEBUG_VM 1 */
+
+#ifdef DEBUG_VM
+#define VMDBG(...) fut_printf(__VA_ARGS__)
+#else
+#define VMDBG(...) do { } while (0)
+#endif
+
 #ifndef PTE_ADDR_MASK
 #define PTE_ADDR_MASK 0x000FFFFFFFFFF000ULL
 #endif
@@ -172,10 +180,9 @@ int fut_map_page(fut_vmem_context_t *ctx, uint64_t vaddr, uint64_t paddr, uint64
         phys_addr_t pt_phys = pmap_virt_to_phys((uintptr_t)pt);
         pd->entries[pd_idx] = fut_make_pte(pt_phys, PTE_PRESENT | PTE_WRITABLE);
     } else if (pd->entries[pd_idx] & PTE_LARGE_PAGE) {
-#if defined(DEBUG)
-        fut_printf("[VM] Splitting large page: vaddr=0x%llx paddr=0x%llx\n",
-                   (unsigned long long)vaddr, (unsigned long long)paddr);
-#endif
+        VMDBG("[VM] Splitting large page: vaddr=0x%llx paddr=0x%llx\n",
+              (unsigned long long)vaddr,
+              (unsigned long long)paddr);
         /*
          * The region is currently mapped with a 2MB large page. To support
          * sub-page mappings (required for fut_map_range to extend the heap
@@ -186,12 +193,10 @@ int fut_map_page(fut_vmem_context_t *ctx, uint64_t vaddr, uint64_t paddr, uint64
         pte_t large_entry = pd->entries[pd_idx];
         uint64_t phys_base = fut_pte_to_phys(large_entry);
         uint64_t large_flags = fut_pte_flags(large_entry) & ~PTE_LARGE_PAGE;
-#if defined(DEBUG)
-        fut_printf("[VM] splitting large page: vaddr=0x%llx phys_base=0x%llx entry=0x%llx\n",
-                   (unsigned long long)vaddr,
-                   (unsigned long long)phys_base,
-                   (unsigned long long)large_entry);
-#endif
+        VMDBG("[VM] splitting large page: vaddr=0x%llx phys_base=0x%llx entry=0x%llx\n",
+              (unsigned long long)vaddr,
+              (unsigned long long)phys_base,
+              (unsigned long long)large_entry);
 
         page_table_t *new_pt = alloc_page_table();
         if (!new_pt) {

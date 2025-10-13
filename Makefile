@@ -20,6 +20,9 @@ QEMU_MEM       ?= 256
 QEMU_IMG_SIZE  ?= 64M
 QEMU_DISK_IMG  ?= futura_disk.img
 
+QEMU_FLAGS += -device isa-debug-exit,iobase=0xf4,iosize=0x4 -no-reboot -no-shutdown
+QEMU_FLAGS += -drive if=virtio,file=$(QEMU_DISK_IMG),format=raw
+
 # ============================================================
 #   Platform-Specific Toolchain Configuration
 # ============================================================
@@ -68,6 +71,12 @@ ifeq ($(BUILD_MODE),debug)
 else
     CFLAGS += -O2 -DNDEBUG
 endif
+
+# Propagate block debugging into Rust driver builds when enabled for C.
+ifneq (,$(findstring -DDEBUG_BLK,$(CFLAGS)))
+    RUSTFLAGS += --cfg debug_blk
+endif
+export RUSTFLAGS
 
 # Assembly flags
 ASFLAGS := $(ARCH_ASFLAGS)
@@ -336,23 +345,24 @@ iso: kernel
 	@grub-mkrescue -o futura.iso iso/ 2>&1 | grep -E "(completed|error)" || echo "ISO build complete"
 	@echo "✓ Bootable ISO created: futura.iso"
 
+$(QEMU_DISK_IMG):
+	dd if=/dev/zero of=$@ bs=1M count=64
+
+.PHONY: disk
+disk: $(QEMU_DISK_IMG)
+
 # Automated QEMU run with deterministic isa-debug-exit completion
-test: iso
+test: iso disk
 	@echo "Testing kernel under QEMU (isa-debug-exit)..."
 	@img=$(QEMU_DISK_IMG); \
-		echo "[HARNESS] Preparing test disk $$img"; \
-		rm -f $$img $$img.lck $$img.lock; \
-		truncate -s $(QEMU_IMG_SIZE) $$img; \
+		echo "[HARNESS] Using test disk $$img"; \
 		qemu-system-x86_64 \
 			-serial stdio \
 			-display none \
 			-m $(QEMU_MEM) \
-			-no-reboot -no-shutdown \
-			-device isa-debug-exit,iobase=0xf4,iosize=0x4 \
+			$(QEMU_FLAGS) \
 			-cdrom futura.iso \
 			-boot d \
-			-drive id=vda,if=none,file=$$img,format=raw \
-			-device virtio-blk-pci,drive=vda,id=virtio-disk0,disable-legacy=on \
 		; \
 	code=$$?; \
 	if [ $$code -eq 1 ]; then \

@@ -103,6 +103,18 @@ qemu-system-x86_64 -cdrom futura.iso -serial stdio -display none -m 128M
 
 On boot you should see RAM/VMM init, device registration (including `/dev/console`), FIPC bring-up, and bootstrap threads that exercise VFS and the framebuffer user smoke test.
 
+### Debugging
+
+Enable targeted tracing at build time by defining the relevant flag, for example:
+
+```bash
+make CFLAGS+=-DDEBUG_VFS   # verbose VFS path-walker logs
+make CFLAGS+=-DDEBUG_VM    # paging / large-page split diagnostics
+make CFLAGS+=-DDEBUG_BLK   # block stack + virtio-blk traces
+```
+
+`DEBUG_BLK` automatically propagates to the Rust virtio-blk driver (`--cfg debug_blk`) so the BAR/capability dumps only reappear when you opt in.
+
 ### Rust driver builds
 
 Rust drivers live under `drivers/rust/` and compile to `staticlib` artifacts that the kernel links directly. You can rebuild them without touching the C pieces via:

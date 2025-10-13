@@ -98,7 +98,7 @@ void fut_heap_init(uintptr_t heap_start, uintptr_t heap_end) {
 void fut_mem_print_stats(void) {
 }
 
-void fut_timer_init(void) {
+void fut_timer_subsystem_init(void) {
 }
 
 void fut_timer_tick(void) {

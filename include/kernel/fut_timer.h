@@ -22,7 +22,7 @@
  * Initialize timer subsystem.
  * Programs PIT to generate interrupts at FUT_TIMER_HZ.
  */
-void fut_timer_init(void);
+void fut_timer_subsystem_init(void);
 
 /**
  * Timer tick handler - called from IRQ0 handler.

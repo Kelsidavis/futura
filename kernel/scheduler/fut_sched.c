@@ -261,7 +261,10 @@ void fut_schedule(void) {
             if (next->context.rip < KERNEL_VIRTUAL_BASE) {
                 fut_platform_panic("[SCHED] bad RIP for next thread");
             }
-            if (((next->context.rsp + 8ULL) & 0xFULL) != 0) {
+            uintptr_t rsp = next->context.rsp;
+            bool aligned_16 = ((rsp & 0xFULL) == 0);
+            bool aligned_call = (((rsp + 8ULL) & 0xFULL) == 0);
+            if (!aligned_16 && !aligned_call) {
                 fut_platform_panic("[SCHED] stack misaligned for next thread");
             }
 

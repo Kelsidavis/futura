@@ -51,6 +51,10 @@
 #define EFAULT      14
 #endif
 
+#ifndef EAGAIN
+#define EAGAIN      11
+#endif
+
 #ifndef ECHILD
 #define ECHILD      10
 #endif

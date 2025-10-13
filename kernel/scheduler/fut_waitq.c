@@ -4,6 +4,7 @@
  */
 
 #include "../../include/kernel/fut_waitq.h"
+#include <stdbool.h>
 
 void fut_waitq_init(fut_waitq_t *q) {
     if (!q) {
@@ -104,4 +105,34 @@ void fut_waitq_wake_all(fut_waitq_t *q) {
         fut_waitq_make_ready(thread);
         thread = next;
     }
+}
+
+bool fut_waitq_remove_thread(fut_waitq_t *q, fut_thread_t *thread) {
+    if (!q || !thread) {
+        return false;
+    }
+
+    bool removed = false;
+    fut_spinlock_acquire(&q->lock);
+    fut_thread_t *prev = NULL;
+    fut_thread_t *curr = q->head;
+    while (curr) {
+        if (curr == thread) {
+            if (prev) {
+                prev->wait_next = curr->wait_next;
+            } else {
+                q->head = curr->wait_next;
+            }
+            if (q->tail == curr) {
+                q->tail = prev;
+            }
+            curr->wait_next = NULL;
+            removed = true;
+            break;
+        }
+        prev = curr;
+        curr = curr->wait_next;
+    }
+    fut_spinlock_release(&q->lock);
+    return removed;
 }

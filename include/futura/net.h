@@ -11,6 +11,7 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include <stdatomic.h>
 
 #include <kernel/fut_object.h>
 
@@ -35,10 +36,21 @@ typedef struct fut_net_frame {
     size_t len;
 } fut_net_frame_t;
 
+typedef struct fut_net_stats {
+    uint64_t rx_ok;
+    uint64_t rx_drop;
+    uint64_t tx_ok;
+    uint64_t tx_err;
+} fut_net_stats_t;
+
 #define FUT_NET_MAJOR 240u
+#define FUT_NET_DEFAULT_MTU 1514u
+#define FUT_NET_MAX_FRAME   2048u
+#define FUT_NET_RECV_TIMEOUT_MS 500u
 
 typedef struct fut_netdev_ops {
     fut_status_t (*tx)(fut_netdev_t *dev, const void *frame, size_t len);
+    void (*irq_ack)(fut_netdev_t *dev);
 } fut_netdev_ops_t;
 
 struct fut_netdev {
@@ -49,6 +61,10 @@ struct fut_netdev {
     const fut_netdev_ops_t *ops;
     fut_handle_t handle;
     struct fut_netdev *next;
+    _Atomic uint64_t stats_rx_ok;
+    _Atomic uint64_t stats_rx_drop;
+    _Atomic uint64_t stats_tx_ok;
+    _Atomic uint64_t stats_tx_err;
 };
 
 /* --------------------------------------------------------------------- */
@@ -60,8 +76,16 @@ void fut_net_init(void);
 fut_status_t fut_net_listen(uint16_t port, fut_socket_t **out);
 fut_status_t fut_net_accept(fut_socket_t *listener, fut_socket_t **out);
 fut_status_t fut_net_send(fut_socket_t *socket, const void *buf, size_t len);
-fut_status_t fut_net_recv(fut_socket_t *socket, void *buf, size_t len, size_t *out);
+fut_status_t fut_net_recv_timed(fut_socket_t *socket, void *buf, size_t len, size_t *out,
+                                uint32_t timeout_ms);
+static inline fut_status_t fut_net_recv(fut_socket_t *socket, void *buf, size_t len, size_t *out) {
+    return fut_net_recv_timed(socket, buf, len, out, FUT_NET_RECV_TIMEOUT_MS);
+}
 void fut_net_close(fut_socket_t *socket);
+const char *fut_net_primary_provider(void);
+void fut_net_get_stats(const fut_netdev_t *dev, fut_net_stats_t *out);
+void fut_net_set_primary_dev(fut_netdev_t *dev);
+void fut_net_debug_dump_stats(void);
 
 /* --------------------------------------------------------------------- */
 /* Provider registration (loopback + NICs)                               */
@@ -69,7 +93,8 @@ void fut_net_close(fut_socket_t *socket);
 
 fut_status_t fut_net_register(fut_netdev_t *dev);
 void fut_net_unregister(fut_netdev_t *dev);
-void fut_net_rx(fut_netdev_t *dev, const void *frame, size_t len);
+void fut_net_provider_rx(fut_netdev_t *dev, const void *frame, size_t len);
+void fut_net_provider_irq(fut_netdev_t *dev);
 
 #ifdef __cplusplus
 }

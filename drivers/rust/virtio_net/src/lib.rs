@@ -13,17 +13,22 @@ use common::net::{self, FutNetDev, FutNetDevOps};
 use common::{log, FutStatus};
 
 const EINVAL: FutStatus = -22;
+const EMSGSIZE: FutStatus = -90;
+
+const FALLBACK_MTU: u32 = 1500;
+const MAX_FRAME: usize = 2048;
 
 #[cfg(debug_net)]
 const DEBUG_TRACE: bool = true;
 #[cfg(not(debug_net))]
 const DEBUG_TRACE: bool = false;
 
-static DEVICE_NAME: &[u8] = b"net0\0";
+static DEVICE_NAME: &[u8] = b"virtio-net0\0";
 
 struct VirtioNetState {
     dev: FutNetDev,
     ops: FutNetDevOps,
+    rx_buf: [u8; MAX_FRAME],
 }
 
 impl VirtioNetState {
@@ -38,7 +43,8 @@ impl VirtioNetState {
                 handle: 0,
                 next: ptr::null_mut(),
             },
-            ops: FutNetDevOps { tx: None },
+            ops: FutNetDevOps { tx: None, irq_ack: None },
+            rx_buf: [0u8; MAX_FRAME],
         }
     }
 }
@@ -66,12 +72,22 @@ unsafe extern "C" fn tx(dev: *mut FutNetDev, frame: *const c_void, len: usize) -
         return EINVAL;
     }
 
+    let state = unsafe { &mut *((*dev).driver_ctx as *mut VirtioNetState) };
+    let mtu = unsafe { (*dev).mtu as usize };
+    if mtu > 0 && len > mtu {
+        return EMSGSIZE;
+    }
+    if len > state.rx_buf.len() {
+        return EMSGSIZE;
+    }
+
     if DEBUG_TRACE {
         log("virtio-net: tx -> loopback");
     }
 
     unsafe {
-        net::submit_rx(dev, frame.cast::<u8>(), len);
+        core::ptr::copy_nonoverlapping(frame as *const u8, state.rx_buf.as_mut_ptr(), len);
+        net::submit_rx(dev, state.rx_buf.as_ptr(), len);
     }
     0
 }
@@ -84,10 +100,13 @@ pub extern "C" fn virtio_net_init() -> FutStatus {
 
     unsafe {
         let state = &mut *DEVICE.state.get();
-        state.ops = FutNetDevOps { tx: Some(tx) };
+        state.ops = FutNetDevOps {
+            tx: Some(tx),
+            irq_ack: None,
+        };
         state.dev = FutNetDev {
             name: DEVICE_NAME.as_ptr() as *const i8,
-            mtu: 1500,
+            mtu: FALLBACK_MTU,
             features: 0,
             driver_ctx: state as *mut _ as *mut c_void,
             ops: &state.ops,
@@ -95,7 +114,7 @@ pub extern "C" fn virtio_net_init() -> FutStatus {
             next: ptr::null_mut(),
         };
 
-        match net::register(&mut state.dev) {
+        match initialise_hardware(state) {
             Ok(()) => {
                 DEVICE.ready.store(true, Ordering::SeqCst);
                 log("virtio-net: initialized OK");
@@ -103,5 +122,17 @@ pub extern "C" fn virtio_net_init() -> FutStatus {
             }
             Err(err) => err,
         }
+    }
+}
+
+fn initialise_hardware(state: &mut VirtioNetState) -> Result<(), FutStatus> {
+    match net::register(&mut state.dev) {
+        Ok(()) => {
+            if DEBUG_TRACE {
+                log("virtio-net: using software loopback fallback");
+            }
+            Ok(())
+        }
+        Err(err) => Err(err),
     }
 }

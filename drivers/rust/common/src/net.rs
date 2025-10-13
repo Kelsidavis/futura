@@ -11,6 +11,7 @@ pub struct FutNetDevOps {
     pub tx: Option<
         unsafe extern "C" fn(dev: *mut FutNetDev, frame: *const c_void, len: usize) -> FutStatus,
     >,
+    pub irq_ack: Option<unsafe extern "C" fn(dev: *mut FutNetDev)>,
 }
 
 #[repr(C)]
@@ -26,7 +27,8 @@ pub struct FutNetDev {
 
 unsafe extern "C" {
     fn fut_net_register(dev: *mut FutNetDev) -> FutStatus;
-    fn fut_net_rx(dev: *mut FutNetDev, frame: *const c_void, len: usize);
+    fn fut_net_provider_rx(dev: *mut FutNetDev, frame: *const c_void, len: usize);
+    fn fut_net_provider_irq(dev: *mut FutNetDev);
 }
 
 pub fn register(dev: &mut FutNetDev) -> Result<(), FutStatus> {
@@ -39,5 +41,9 @@ pub fn register(dev: &mut FutNetDev) -> Result<(), FutStatus> {
 }
 
 pub unsafe fn submit_rx(dev: *mut FutNetDev, frame: *const u8, len: usize) {
-    unsafe { fut_net_rx(dev, frame.cast(), len) };
+    unsafe { fut_net_provider_rx(dev, frame.cast(), len) };
+}
+
+pub unsafe fn signal_irq(dev: *mut FutNetDev) {
+    unsafe { fut_net_provider_irq(dev) };
 }

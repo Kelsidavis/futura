@@ -24,3 +24,4 @@ void fut_waitq_sleep_locked(fut_waitq_t *q, fut_spinlock_t *released_lock,
                             enum fut_thread_state state);
 void fut_waitq_wake_one(fut_waitq_t *q);
 void fut_waitq_wake_all(fut_waitq_t *q);
+bool fut_waitq_remove_thread(fut_waitq_t *q, fut_thread_t *thread);

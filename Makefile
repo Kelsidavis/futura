@@ -151,6 +151,7 @@ ifeq ($(PLATFORM),x86_64)
         arch/x86_64/pat.c \
         platform/x86_64/pmap.c \
         platform/x86_64/paging.c \
+        platform/x86_64/cpu_features.c \
         platform/x86_64/platform_init.c
 else ifeq ($(PLATFORM),arm64)
     PLATFORM_SOURCES := \

@@ -8,10 +8,13 @@
 #include <stdint.h>
 #include <stddef.h>
 #include <stdarg.h>
+#include <stdbool.h>
+#include <stdatomic.h>
 #include <arch/x86_64/paging.h>
 #include <arch/x86_64/regs.h>
 #include <arch/x86_64/gdt.h>
 #include <arch/x86_64/pat.h>
+#include <arch/x86_64/cpu.h>
 #include <kernel/fut_mm.h>
 #include <kernel/fb.h>
 #include <kernel/trap.h>
@@ -67,6 +70,12 @@ void hal_outb(uint16_t port, uint8_t value) {
 
 uint8_t hal_inb(uint16_t port) {
     return inb(port);
+}
+
+static _Atomic bool serial_ready = false;
+
+bool fut_serial_ready(void) {
+    return atomic_load_explicit(&serial_ready, memory_order_acquire);
 }
 
 /* External declarations */
@@ -160,6 +169,8 @@ static void fut_serial_init(void) {
 
     /* Enable IRQs, RTS/DSR set */
     outb(SERIAL_MODEM_CTRL(SERIAL_PORT_COM1), 0x0B);
+
+    atomic_store_explicit(&serial_ready, true, memory_order_release);
 }
 
 void fut_serial_putc(char c) {
@@ -520,6 +531,7 @@ void fut_platform_init(uint32_t multiboot_magic __attribute__((unused)),
 
     /* Initialize serial port for early debugging */
     fut_serial_init();
+    cpu_features_init();
 
     /* Debug marker after serial init: Write 'N' */
     __asm__ volatile(

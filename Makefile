@@ -22,6 +22,7 @@ QEMU_DISK_IMG  ?= futura_disk.img
 
 QEMU_FLAGS += -device isa-debug-exit,iobase=0xf4,iosize=0x4 -no-reboot -no-shutdown
 QEMU_FLAGS += -drive if=virtio,file=$(QEMU_DISK_IMG),format=raw
+QEMU_FLAGS += -netdev user,id=net0 -device virtio-net,netdev=net0
 
 # ============================================================
 #   Platform-Specific Toolchain Configuration
@@ -72,9 +73,12 @@ else
     CFLAGS += -O2 -DNDEBUG
 endif
 
-# Propagate block debugging into Rust driver builds when enabled for C.
+# Propagate driver debugging into Rust builds when enabled for C.
 ifneq (,$(findstring -DDEBUG_BLK,$(CFLAGS)))
     RUSTFLAGS += --cfg debug_blk
+endif
+ifneq (,$(findstring -DDEBUG_NET,$(CFLAGS)))
+    RUSTFLAGS += --cfg debug_net
 endif
 export RUSTFLAGS
 
@@ -120,9 +124,13 @@ RUST_AVAILABLE := $(if $(and $(RUSTC),$(CARGO)),yes,no)
 RUST_TARGET := x86_64-unknown-linux-gnu
 RUST_PROFILE := release
 RUST_ROOT := drivers/rust
-RUST_VIRTIO_DIR := $(RUST_ROOT)/virtio_blk
-RUST_BUILD_DIR := $(RUST_VIRTIO_DIR)/target/$(RUST_TARGET)/$(RUST_PROFILE)
-RUST_LIB := $(RUST_BUILD_DIR)/libvirtio_blk.a
+RUST_VIRTIO_BLK_DIR := $(RUST_ROOT)/virtio_blk
+RUST_VIRTIO_NET_DIR := $(RUST_ROOT)/virtio_net
+RUST_BUILD_DIR_BLK := $(RUST_VIRTIO_BLK_DIR)/target/$(RUST_TARGET)/$(RUST_PROFILE)
+RUST_BUILD_DIR_NET := $(RUST_VIRTIO_NET_DIR)/target/$(RUST_TARGET)/$(RUST_PROFILE)
+RUST_LIB_VIRTIO_BLK := $(RUST_BUILD_DIR_BLK)/libvirtio_blk.a
+RUST_LIB_VIRTIO_NET := $(RUST_BUILD_DIR_NET)/libvirtio_net.a
+RUST_LIBS := $(RUST_LIB_VIRTIO_BLK) $(RUST_LIB_VIRTIO_NET)
 RUST_SOURCES := $(shell if [ -d $(RUST_ROOT) ]; then find $(RUST_ROOT) -type f \( -name '*.rs' -o -name 'Cargo.toml' -o -name 'build.rs' -o -name '*.toml' \); fi)
 
 # ============================================================
@@ -144,6 +152,9 @@ KERNEL_SOURCES := \
     kernel/timer/fut_timer.c \
     kernel/ipc/fut_object.c \
     kernel/ipc/fut_fipc.c \
+    kernel/net/fut_net.c \
+    kernel/net/fut_net_dev.c \
+    kernel/net/fut_net_loopback.c \
     kernel/crypto/fut_hmac.c \
     kernel/vfs/fut_vfs.c \
     kernel/vfs/ramfs.c \
@@ -176,6 +187,7 @@ KERNEL_SOURCES := \
     tests/test_api.c \
     tests/test_blkcore.c \
     tests/test_futfs.c \
+    tests/test_net.c \
     platform/x86_64/drivers/ahci/ahci.c
 
 # Platform-specific sources
@@ -235,6 +247,7 @@ $(OBJ_DIR) $(BIN_DIR):
 	@mkdir -p $(OBJ_DIR)/kernel/crypto
 	@mkdir -p $(OBJ_DIR)/kernel/interrupts
 	@mkdir -p $(OBJ_DIR)/kernel/ipc
+	@mkdir -p $(OBJ_DIR)/kernel/net
 	@mkdir -p $(OBJ_DIR)/kernel/vfs
 	@mkdir -p $(OBJ_DIR)/kernel/exec
 	@mkdir -p $(OBJ_DIR)/kernel/trap
@@ -255,9 +268,9 @@ endif
 # Build kernel
 kernel: $(BIN_DIR)/futura_kernel.elf
 
-$(BIN_DIR)/futura_kernel.elf: $(OBJECTS) $(RUST_LIB) $(KERNEL_DEPS) | $(BIN_DIR)
+$(BIN_DIR)/futura_kernel.elf: $(OBJECTS) $(RUST_LIBS) $(KERNEL_DEPS) | $(BIN_DIR)
 	@echo "LD $@.tmp"
-	@$(LD) $(LDFLAGS) -o $@.tmp $(OBJECTS) $(RUST_LIB)
+	@$(LD) $(LDFLAGS) -o $@.tmp $(OBJECTS) $(RUST_LIBS)
 	@cp $@.tmp /tmp/kernel_before_fix.elf
 	@echo "FIX-ELF $@"
 	@python3 tools/fix_multiboot_offset.py $@.tmp $@
@@ -265,15 +278,24 @@ $(BIN_DIR)/futura_kernel.elf: $(OBJECTS) $(RUST_LIB) $(KERNEL_DEPS) | $(BIN_DIR)
 	@echo "Build complete: $@"
 
 ifeq ($(RUST_AVAILABLE),yes)
-rust-drivers: $(RUST_LIB)
+rust-drivers: $(RUST_LIBS)
 
-$(RUST_LIB): $(RUST_SOURCES)
+$(RUST_LIB_VIRTIO_BLK): $(RUST_SOURCES)
 	@$(RUSTC) --print target-list | grep -q $(RUST_TARGET) >/dev/null || { \
 		echo "error: rust target '$(RUST_TARGET)' not installed for $(RUSTC)." >&2; exit 1; }
 	@echo "CARGO virtio_blk ($(RUST_PROFILE))"
-	@cd $(RUST_VIRTIO_DIR) && RUSTFLAGS="-C panic=abort -C force-unwind-tables=no" $(CARGO) build --release --target $(RUST_TARGET)
+	@cd $(RUST_VIRTIO_BLK_DIR) && RUSTFLAGS="-C panic=abort -C force-unwind-tables=no $(RUSTFLAGS)" $(CARGO) build --release --target $(RUST_TARGET)
 	@tmpdir=$$(mktemp -d); \
-	cd $$tmpdir && ar x $(abspath $(RUST_LIB)) && for obj in *.o; do $(OBJCOPY) --remove-section='.gcc_except_table*' --remove-section='.eh_frame*' $$obj >/dev/null 2>&1 || true; done && ar rcs $(abspath $(RUST_LIB)) *.o; \
+	cd $$tmpdir && ar x $(abspath $(RUST_LIB_VIRTIO_BLK)) && for obj in *.o; do $(OBJCOPY) --remove-section='.gcc_except_table*' --remove-section='.eh_frame*' $$obj >/dev/null 2>&1 || true; done && ar rcs $(abspath $(RUST_LIB_VIRTIO_BLK)) *.o; \
+	rm -rf $$tmpdir
+
+$(RUST_LIB_VIRTIO_NET): $(RUST_SOURCES)
+	@$(RUSTC) --print target-list | grep -q $(RUST_TARGET) >/dev/null || { \
+		echo "error: rust target '$(RUST_TARGET)' not installed for $(RUSTC)." >&2; exit 1; }
+	@echo "CARGO virtio_net ($(RUST_PROFILE))"
+	@cd $(RUST_VIRTIO_NET_DIR) && RUSTFLAGS="-C panic=abort -C force-unwind-tables=no $(RUSTFLAGS)" $(CARGO) build --release --target $(RUST_TARGET)
+	@tmpdir=$$(mktemp -d); \
+	cd $$tmpdir && ar x $(abspath $(RUST_LIB_VIRTIO_NET)) && for obj in *.o; do $(OBJCOPY) --remove-section='.gcc_except_table*' --remove-section='.eh_frame*' $$obj >/dev/null 2>&1 || true; done && ar rcs $(abspath $(RUST_LIB_VIRTIO_NET)) *.o; \
 	rm -rf $$tmpdir
 else
 rust-drivers:

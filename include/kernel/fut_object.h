@@ -29,6 +29,7 @@ enum fut_object_type {
     FUT_OBJ_EVENT,          // Event/synchronization primitive
     FUT_OBJ_DEVICE,         // Device node
     FUT_OBJ_BLKDEV,         // Async block device handle
+    FUT_OBJ_NETDEV,         // Network device handle
 };
 
 /* ============================================================

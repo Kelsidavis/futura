@@ -8,6 +8,7 @@ use core::panic::PanicInfo;
 use core::sync::atomic::{AtomicBool, Ordering};
 
 pub mod mmio;
+pub mod net;
 
 pub type FutStatus = i32;
 

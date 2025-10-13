@@ -9,6 +9,8 @@
 
 #include <subsystems/futura_fs/futfs.h>
 
+#include "tests/test_api.h"
+
 extern void fut_printf(const char *fmt, ...);
 
 #define FUTFS_TEST_PATH "/hello.txt"
@@ -21,7 +23,13 @@ static void fut_futfs_selftest_thread(void *arg) {
                                       FUT_BLK_READ | FUT_BLK_WRITE | FUT_BLK_ADMIN,
                                       &blk_cap);
     if (rc != 0) {
-        fut_printf("[futfs] fut_blk_acquire failed: %d\n", rc);
+        if (rc == -ENODEV || rc == -ENOENT) {
+            fut_printf("[futfs] skipping selftest: block device unavailable (rc=%d)\n", rc);
+            fut_test_pass();
+        } else {
+            fut_printf("[futfs] fut_blk_acquire failed: %d\n", rc);
+            fut_test_fail(0xF1);
+        }
         return;
     }
 
@@ -29,6 +37,7 @@ static void fut_futfs_selftest_thread(void *arg) {
     if (rc != 0) {
         fut_printf("[futfs] mount failed: %d\n", rc);
         fut_blk_close(blk_cap);
+        fut_test_fail(0xF2);
         return;
     }
 
@@ -38,6 +47,7 @@ static void fut_futfs_selftest_thread(void *arg) {
         fut_printf("[futfs] create failed: %d\n", rc);
         futfs_unmount();
         fut_blk_close(blk_cap);
+        fut_test_fail(0xF3);
         return;
     }
 
@@ -48,6 +58,7 @@ static void fut_futfs_selftest_thread(void *arg) {
         futfs_close(file_cap);
         futfs_unmount();
         fut_blk_close(blk_cap);
+        fut_test_fail(0xF4);
         return;
     }
 
@@ -57,6 +68,7 @@ static void fut_futfs_selftest_thread(void *arg) {
         futfs_close(file_cap);
         futfs_unmount();
         fut_blk_close(blk_cap);
+        fut_test_fail(0xF5);
         return;
     }
 
@@ -69,6 +81,7 @@ static void fut_futfs_selftest_thread(void *arg) {
         futfs_close(file_cap);
         futfs_unmount();
         fut_blk_close(blk_cap);
+        fut_test_fail(0xF6);
         return;
     }
 
@@ -77,6 +90,7 @@ static void fut_futfs_selftest_thread(void *arg) {
         futfs_close(file_cap);
         futfs_unmount();
         fut_blk_close(blk_cap);
+        fut_test_fail(0xF7);
         return;
     }
 
@@ -84,6 +98,7 @@ static void fut_futfs_selftest_thread(void *arg) {
     fut_printf("FuturaFS test passed\n");
     futfs_unmount();
     fut_blk_close(blk_cap);
+    fut_test_pass();
 }
 
 void fut_futfs_selftest_schedule(fut_task_t *task) {

@@ -108,6 +108,10 @@ uint64_t fut_pmm_free_pages(void) {
     return pmm_free;
 }
 
+uintptr_t fut_pmm_base_phys(void) {
+    return pmm_base;
+}
+
 /* ============================================================
  *   Kernel Heap (Simple First-Fit Allocator)
  * ============================================================ */

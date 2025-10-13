@@ -73,6 +73,22 @@ uint64_t fut_pmm_total_pages(void);
  */
 uint64_t fut_pmm_free_pages(void);
 
+/**
+ * Get physical base address managed by the PMM.
+ */
+uintptr_t fut_pmm_base_phys(void);
+
+typedef struct fut_mmap_entry {
+    uint64_t base;
+    uint64_t length;
+    uint32_t type;
+} fut_mmap_entry_t;
+
+void fut_mmap_reset(void);
+void fut_mmap_add(uint64_t base, uint64_t length, uint32_t type);
+const fut_mmap_entry_t *fut_mmap_entries(size_t *count);
+void fut_mmap_dump(void);
+
 /* ============================================================
  *   Kernel Heap
  * ============================================================ */

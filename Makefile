@@ -18,6 +18,7 @@ BUILD_MODE ?= debug
 # QEMU test harness configuration
 QEMU_MEM       ?= 256
 QEMU_IMG_SIZE  ?= 64M
+QEMU_DISK_IMG  ?= futura_disk.img
 
 # ============================================================
 #   Platform-Specific Toolchain Configuration
@@ -338,7 +339,7 @@ iso: kernel
 # Automated QEMU run with deterministic isa-debug-exit completion
 test: iso
 	@echo "Testing kernel under QEMU (isa-debug-exit)..."
-	@img=futura_disk.img; \
+	@img=$(QEMU_DISK_IMG); \
 		echo "[HARNESS] Preparing test disk $$img"; \
 		rm -f $$img $$img.lck $$img.lock; \
 		truncate -s $(QEMU_IMG_SIZE) $$img; \
@@ -350,7 +351,8 @@ test: iso
 			-device isa-debug-exit,iobase=0xf4,iosize=0x4 \
 			-cdrom futura.iso \
 			-boot d \
-			-drive if=virtio,file=$$img,format=raw \
+			-drive id=vda,if=none,file=$$img,format=raw \
+			-device virtio-blk-pci,drive=vda,id=virtio-disk0,disable-legacy=on \
 		; \
 	code=$$?; \
 	if [ $$code -eq 1 ]; then \

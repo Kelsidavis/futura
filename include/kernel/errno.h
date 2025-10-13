@@ -110,3 +110,7 @@
 #ifndef ENOTEMPTY
 #define ENOTEMPTY   39
 #endif
+
+#ifndef ELOOP
+#define ELOOP       40
+#endif

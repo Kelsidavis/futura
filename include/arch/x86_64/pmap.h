@@ -27,7 +27,10 @@ static inline uintptr_t pmap_phys_to_virt(phys_addr_t phys) {
 }
 
 static inline phys_addr_t pmap_virt_to_phys(uintptr_t virt) {
-    return (phys_addr_t)(virt - PMAP_DIRECT_VIRT_BASE);
+    if (virt >= PMAP_DIRECT_VIRT_BASE) {
+        return (phys_addr_t)(virt - PMAP_DIRECT_VIRT_BASE);
+    }
+    return (phys_addr_t)virt;
 }
 
 void *pmap_kmap(phys_addr_t phys);

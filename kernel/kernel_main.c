@@ -27,6 +27,7 @@
 #include <platform/platform.h>
 #if defined(__x86_64__)
 #include <arch/x86_64/paging.h>
+#include <arch/x86_64/pmap.h>
 #endif
 
 extern void fut_echo_selftest(void);
@@ -35,6 +36,8 @@ extern void fut_blk_async_selftest_schedule(fut_task_t *task);
 extern void fut_futfs_selftest_schedule(fut_task_t *task);
 extern fut_status_t virtio_blk_init(uint64_t pci_addr);
 extern void ahci_init(void);
+extern char boot_ptables_start[];
+extern char boot_ptables_end[];
 
 /* ============================================================
  *   External Symbols from Linker Script
@@ -560,7 +563,7 @@ void fut_kernel_main(void) {
     int fb_exec = -1;
 
 #if defined(__x86_64__)
-    const uintptr_t min_phys = KERNEL_VIRTUAL_BASE + 0x100000ULL;
+    uintptr_t min_phys = KERNEL_VIRTUAL_BASE + 0x100000ULL;
 #endif
 
     /* ========================================
@@ -582,7 +585,21 @@ void fut_kernel_main(void) {
 #endif
 
     /* Initialize PMM with total available memory */
-    fut_pmm_init(TOTAL_MEMORY_SIZE, mem_base);
+#if defined(__x86_64__)
+    phys_addr_t mem_base_phys = pmap_virt_to_phys(mem_base);
+    phys_addr_t boot_ptables_start_phys = pmap_virt_to_phys((uintptr_t)boot_ptables_start);
+    phys_addr_t boot_ptables_end_phys = pmap_virt_to_phys((uintptr_t)boot_ptables_end);
+    boot_ptables_start_phys &= ~(FUT_PAGE_SIZE - 1ULL);
+    boot_ptables_end_phys = FUT_PAGE_ALIGN(boot_ptables_end_phys);
+    if (mem_base_phys < boot_ptables_end_phys) {
+        mem_base_phys = boot_ptables_end_phys;
+        mem_base = pmap_phys_to_virt(mem_base_phys);
+        min_phys = mem_base;
+    }
+#else
+    phys_addr_t mem_base_phys = mem_base;
+#endif
+    fut_pmm_init(TOTAL_MEMORY_SIZE, mem_base_phys);
 
     fut_printf("[INIT] PMM initialized: %llu pages total, %llu pages free\n",
                fut_pmm_total_pages(), fut_pmm_free_pages());

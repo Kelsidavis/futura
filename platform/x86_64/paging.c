@@ -10,8 +10,16 @@
 #include <arch/x86_64/paging.h>
 #include <arch/x86_64/pmap.h>
 #include <kernel/fut_memory.h>
+#include <platform/platform.h>
 #include <stddef.h>
 #include <stdbool.h>
+#include <string.h>
+
+extern void fut_printf(const char *fmt, ...);
+
+#ifndef PTE_ADDR_MASK
+#define PTE_ADDR_MASK 0x000FFFFFFFFFF000ULL
+#endif
 
 /* External boot page tables from boot.S */
 extern page_table_t boot_pml4;
@@ -20,6 +28,23 @@ extern page_table_t boot_pd;
 
 /* Kernel's PML4 (initialized to boot PML4) */
 static pte_t *kernel_pml4 = NULL;
+
+static inline void assert_kernel_table_ptr(const void *ptr) {
+    uintptr_t addr = (uintptr_t)ptr;
+    if (addr < PMAP_DIRECT_VIRT_BASE) {
+        fut_platform_panic("[VM] page table pointer outside kernel direct map");
+    }
+    if ((addr & (PAGE_SIZE - 1ULL)) != 0) {
+        fut_platform_panic("[VM] page table pointer is not page aligned");
+    }
+}
+
+static inline page_table_t *pt_virt_from_entry(uint64_t entry) {
+    phys_addr_t phys = (phys_addr_t)(entry & PTE_ADDR_MASK);
+    page_table_t *pt = (page_table_t *)(uintptr_t)pmap_phys_to_virt(phys);
+    assert_kernel_table_ptr(pt);
+    return pt;
+}
 
 /**
  * Initialize paging subsystem.
@@ -48,24 +73,13 @@ pte_t *fut_get_kernel_pml4(void) {
  * Returns physical address of new page table.
  */
 static page_table_t *alloc_page_table(void) {
-    /* Allocate a 4KB page for the page table */
     void *page = fut_pmm_alloc_page();
     if (!page) {
         return NULL;
     }
-
-    phys_addr_t phys = pmap_virt_to_phys((uintptr_t)page);
-    page_table_t *table = (page_table_t *)pmap_kmap(phys);
-    if (!table) {
-        return NULL;
-    }
-
-    /* Zero-initialize all entries */
-    for (int i = 0; i < 512; i++) {
-        table->entries[i] = 0;
-    }
-
-    return table;
+    assert_kernel_table_ptr(page);
+    memset(page, 0, PAGE_SIZE);
+    return (page_table_t *)page;
 }
 
 /**
@@ -114,12 +128,13 @@ int fut_map_page(fut_vmem_context_t *ctx, uint64_t vaddr, uint64_t paddr, uint64
 #endif
             return -1;
         }
+        assert_kernel_table_ptr(pdpt);
         phys_addr_t pdpt_phys = pmap_virt_to_phys((uintptr_t)pdpt);
         pml4[pml4_idx] = fut_make_pte(pdpt_phys, PTE_PRESENT | PTE_WRITABLE);
     } else {
-        phys_addr_t pdpt_phys = fut_pte_to_phys(pml4[pml4_idx]);
-        pdpt = (page_table_t *)pmap_kmap(pdpt_phys);
+        pdpt = pt_virt_from_entry(pml4[pml4_idx]);
     }
+    assert_kernel_table_ptr(pdpt);
 
     /* Get or create PD */
     page_table_t *pd;
@@ -133,12 +148,13 @@ int fut_map_page(fut_vmem_context_t *ctx, uint64_t vaddr, uint64_t paddr, uint64
 #endif
             return -1;
         }
+        assert_kernel_table_ptr(pd);
         phys_addr_t pd_phys = pmap_virt_to_phys((uintptr_t)pd);
         pdpt->entries[pdpt_idx] = fut_make_pte(pd_phys, PTE_PRESENT | PTE_WRITABLE);
     } else {
-        phys_addr_t pd_phys = fut_pte_to_phys(pdpt->entries[pdpt_idx]);
-        pd = (page_table_t *)pmap_kmap(pd_phys);
+        pd = pt_virt_from_entry(pdpt->entries[pdpt_idx]);
     }
+    assert_kernel_table_ptr(pd);
 
     /* Get or create PT */
     page_table_t *pt;
@@ -152,6 +168,7 @@ int fut_map_page(fut_vmem_context_t *ctx, uint64_t vaddr, uint64_t paddr, uint64
 #endif
             return -1;
         }
+        assert_kernel_table_ptr(pt);
         phys_addr_t pt_phys = pmap_virt_to_phys((uintptr_t)pt);
         pd->entries[pd_idx] = fut_make_pte(pt_phys, PTE_PRESENT | PTE_WRITABLE);
     } else if (pd->entries[pd_idx] & PTE_LARGE_PAGE) {
@@ -169,6 +186,12 @@ int fut_map_page(fut_vmem_context_t *ctx, uint64_t vaddr, uint64_t paddr, uint64
         pte_t large_entry = pd->entries[pd_idx];
         uint64_t phys_base = fut_pte_to_phys(large_entry);
         uint64_t large_flags = fut_pte_flags(large_entry) & ~PTE_LARGE_PAGE;
+#if defined(DEBUG)
+        fut_printf("[VM] splitting large page: vaddr=0x%llx phys_base=0x%llx entry=0x%llx\n",
+                   (unsigned long long)vaddr,
+                   (unsigned long long)phys_base,
+                   (unsigned long long)large_entry);
+#endif
 
         page_table_t *new_pt = alloc_page_table();
         if (!new_pt) {
@@ -183,6 +206,7 @@ int fut_map_page(fut_vmem_context_t *ctx, uint64_t vaddr, uint64_t paddr, uint64
             new_pt->entries[i] = fut_make_pte(page_phys, large_flags);
         }
 
+        assert_kernel_table_ptr(new_pt);
         phys_addr_t new_pt_phys = pmap_virt_to_phys((uintptr_t)new_pt);
         pd->entries[pd_idx] = fut_make_pte(new_pt_phys, large_flags);
         pt = new_pt;
@@ -190,11 +214,15 @@ int fut_map_page(fut_vmem_context_t *ctx, uint64_t vaddr, uint64_t paddr, uint64
         /* Ensure processors observe the replacement page table */
         fut_flush_tlb_all();
     } else {
-        phys_addr_t pt_phys = fut_pte_to_phys(pd->entries[pd_idx]);
-        pt = (page_table_t *)pmap_kmap(pt_phys);
+        pt = pt_virt_from_entry(pd->entries[pd_idx]);
     }
+    assert_kernel_table_ptr(pt);
 
     /* Map the page in PT */
+    uintptr_t pt_addr = (uintptr_t)pt;
+    if (pt_addr < PMAP_DIRECT_VIRT_BASE) {
+        fut_platform_panic("[VM] PT pointer escaped kernel direct map");
+    }
     pt->entries[pt_idx] = fut_make_pte(paddr, flags | PTE_PRESENT);
 
     /* Flush TLB for this address */
@@ -256,12 +284,14 @@ int fut_unmap_page(fut_vmem_context_t *ctx, uint64_t vaddr) {
         return -1;  /* Not mapped */
     }
 
-    page_table_t *pdpt = (page_table_t *)pmap_kmap(fut_pte_to_phys(pml4[pml4_idx]));
+    page_table_t *pdpt = pt_virt_from_entry(pml4[pml4_idx]);
+    assert_kernel_table_ptr(pdpt);
     if (!(pdpt->entries[pdpt_idx] & PTE_PRESENT)) {
         return -1;
     }
 
-    page_table_t *pd = (page_table_t *)pmap_kmap(fut_pte_to_phys(pdpt->entries[pdpt_idx]));
+    page_table_t *pd = pt_virt_from_entry(pdpt->entries[pdpt_idx]);
+    assert_kernel_table_ptr(pd);
     if (!(pd->entries[pd_idx] & PTE_PRESENT)) {
         return -1;
     }
@@ -274,9 +304,14 @@ int fut_unmap_page(fut_vmem_context_t *ctx, uint64_t vaddr) {
         return 0;
     }
 
-    page_table_t *pt = (page_table_t *)pmap_kmap(fut_pte_to_phys(pd->entries[pd_idx]));
+    page_table_t *pt = pt_virt_from_entry(pd->entries[pd_idx]);
+    assert_kernel_table_ptr(pt);
 
     /* Unmap the page */
+    uintptr_t pt_addr = (uintptr_t)pt;
+    if (pt_addr < PMAP_DIRECT_VIRT_BASE) {
+        fut_platform_panic("[VM] PT pointer escaped kernel direct map");
+    }
     pt->entries[pt_idx] = 0;
     fut_flush_tlb_single(vaddr);
 
@@ -318,12 +353,14 @@ int fut_virt_to_phys(fut_vmem_context_t *ctx, uint64_t vaddr, uint64_t *paddr) {
         return -1;
     }
 
-    page_table_t *pdpt = (page_table_t *)pmap_kmap(fut_pte_to_phys(pml4[pml4_idx]));
+    page_table_t *pdpt = pt_virt_from_entry(pml4[pml4_idx]);
+    assert_kernel_table_ptr(pdpt);
     if (!(pdpt->entries[pdpt_idx] & PTE_PRESENT)) {
         return -1;
     }
 
-    page_table_t *pd = (page_table_t *)pmap_kmap(fut_pte_to_phys(pdpt->entries[pdpt_idx]));
+    page_table_t *pd = pt_virt_from_entry(pdpt->entries[pdpt_idx]);
+    assert_kernel_table_ptr(pd);
     if (!(pd->entries[pd_idx] & PTE_PRESENT)) {
         return -1;
     }
@@ -335,7 +372,8 @@ int fut_virt_to_phys(fut_vmem_context_t *ctx, uint64_t vaddr, uint64_t *paddr) {
         return 0;
     }
 
-    page_table_t *pt = (page_table_t *)pmap_kmap(fut_pte_to_phys(pd->entries[pd_idx]));
+    page_table_t *pt = pt_virt_from_entry(pd->entries[pd_idx]);
+    assert_kernel_table_ptr(pt);
     if (!(pt->entries[pt_idx] & PTE_PRESENT)) {
         return -1;
     }

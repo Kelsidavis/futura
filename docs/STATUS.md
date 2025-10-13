@@ -5,7 +5,7 @@
 - ✅ Async block core with rights-enforced handles.
 - ✅ Virtio-blk and AHCI drivers bridged to the block core.
 - ✅ Log-structured FuturaFS skeleton (host-mode) with create/write/read/rename.
-- ✅ mkfutfs formatter and regression test (`tests/futfs_log_basic`).
+- ✅ mkfutfs formatter and kernel regression test (`tests/test_futfs.c`).
 - 🚧 FSD integration with the log skeleton (capability propagation).
 - 🚧 Memory-safe driver journey (tracking Rust conversions and exceptions).
 

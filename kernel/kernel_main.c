@@ -32,6 +32,7 @@
 extern void fut_echo_selftest(void);
 extern void fut_fb_userspace_smoke(void);
 extern void fut_blk_async_selftest_schedule(fut_task_t *task);
+extern void fut_futfs_selftest_schedule(fut_task_t *task);
 extern fut_status_t virtio_blk_init(uint64_t pci_addr);
 extern void ahci_init(void);
 
@@ -723,6 +724,7 @@ void fut_kernel_main(void) {
     fut_printf("[INIT] Test task created (PID %llu)\n", test_task->pid);
 
     fut_blk_async_selftest_schedule(test_task);
+    fut_futfs_selftest_schedule(test_task);
 
     /* Create FIPC channel for inter-thread communication */
     fut_printf("[INIT] Creating FIPC test channel...\n");

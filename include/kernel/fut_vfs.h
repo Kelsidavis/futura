@@ -353,6 +353,15 @@ int fut_vfs_mount(const char *device, const char *mountpoint,
 int fut_vfs_unmount(const char *mountpoint);
 
 /**
+ * Lookup a vnode by path and return it with an extra reference.
+ *
+ * @param path      Path to resolve
+ * @param out_vnode Receives referenced vnode on success
+ * @return 0 on success, negative error code on failure
+ */
+int fut_vfs_lookup(const char *path, struct fut_vnode **out_vnode);
+
+/**
  * Open a file.
  *
  * @param path  File path

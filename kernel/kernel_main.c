@@ -391,92 +391,87 @@ static void test_futurafs_operations(void) {
 
     /* Test 7: Directory CRUD via vnode + VFS wrappers */
     fut_printf("[FUTURAFS-TEST] Test 7: Directory and file operations\n");
-    struct fut_vnode *root = fut_vfs_get_root();
     struct fut_vnode *mnt_dir = NULL;
-    if (!root || !root->ops || !root->ops->lookup) {
-        fut_printf("[FUTURAFS-TEST] ✗ Root lookup unavailable\n");
+    ret = fut_vfs_lookup("/mnt", &mnt_dir);
+    if (ret < 0 || !mnt_dir) {
+        fut_printf("[FUTURAFS-TEST] ✗ Failed to locate /mnt vnode (error %d)\n", ret);
     } else {
-        ret = root->ops->lookup(root, "mnt", &mnt_dir);
-        if (ret < 0 || !mnt_dir) {
-            fut_printf("[FUTURAFS-TEST] ✗ Failed to locate /mnt vnode (error %d)\n", ret);
-        } else {
-            if (mnt_dir->ops && mnt_dir->ops->mkdir) {
-                ret = mnt_dir->ops->mkdir(mnt_dir, "dir_direct", 0755);
-                fut_printf("[FUTURAFS-TEST]   dir_direct via vnode->ops %s (ret=%d)\n",
-                           ret == 0 ? "✓" : "✗", ret);
-            }
-
-            ret = fut_vfs_mkdir("/mnt/dir_wrapper", 0755);
-            fut_printf("[FUTURAFS-TEST]   dir_wrapper via fut_vfs_mkdir %s (ret=%d)\n",
+        if (mnt_dir->ops && mnt_dir->ops->mkdir) {
+            ret = mnt_dir->ops->mkdir(mnt_dir, "dir_direct", 0755);
+            fut_printf("[FUTURAFS-TEST]   dir_direct via vnode->ops %s (ret=%d)\n",
                        ret == 0 ? "✓" : "✗", ret);
-
-            struct fut_vnode *file_vnode = NULL;
-            if (mnt_dir->ops && mnt_dir->ops->create) {
-                ret = mnt_dir->ops->create(mnt_dir, "test_file.txt", 0644, &file_vnode);
-                fut_printf("[FUTURAFS-TEST]   file creation %s (ret=%d)\n",
-                           ret == 0 ? "✓" : "✗", ret);
-                if (file_vnode) {
-                    fut_vnode_unref(file_vnode);
-                }
-            }
-
-            uint64_t cookie = 0;
-            struct fut_vdirent dirent;
-            int entry_count = 0;
-            while (true) {
-                int rd = fut_vfs_readdir("/mnt", &cookie, &dirent);
-                if (rd == -ENOENT) {
-                    break;
-                }
-                if (rd < 0) {
-                    fut_printf("[FUTURAFS-TEST]   readdir error %d\n", rd);
-                    break;
-                }
-
-                fut_printf("[FUTURAFS-TEST]   entry %d: %s (ino=%llu, type=%u)\n",
-                           entry_count + 1,
-                           dirent.d_name,
-                           (unsigned long long)dirent.d_ino,
-                           dirent.d_type);
-                entry_count++;
-            }
-            fut_printf("[FUTURAFS-TEST]   total entries enumerated: %d\n", entry_count);
-
-            ret = fut_vfs_unlink("/mnt/test_file.txt");
-            fut_printf("[FUTURAFS-TEST]   unlink(/mnt/test_file.txt) %s (ret=%d)\n",
-                       ret == 0 ? "✓" : "✗", ret);
-
-            ret = fut_vfs_rmdir("/mnt/dir_wrapper");
-            fut_printf("[FUTURAFS-TEST]   rmdir(/mnt/dir_wrapper) %s (ret=%d)\n",
-                       ret == 0 ? "✓" : "✗", ret);
-
-            /* Verify ENOTEMPTY path */
-            if (mnt_dir->ops && mnt_dir->ops->mkdir) {
-                ret = mnt_dir->ops->mkdir(mnt_dir, "dir_busy", 0755);
-                if (ret == 0) {
-                    struct fut_vnode *busy_dir = NULL;
-                    if (mnt_dir->ops->lookup &&
-                        mnt_dir->ops->lookup(mnt_dir, "dir_busy", &busy_dir) == 0 && busy_dir) {
-                        struct fut_vnode *tmp = NULL;
-                        if (busy_dir->ops && busy_dir->ops->create) {
-                            busy_dir->ops->create(busy_dir, "dangling", 0644, &tmp);
-                            if (tmp) {
-                                fut_vnode_unref(tmp);
-                            }
-                        }
-                        fut_vnode_unref(busy_dir);
-                    }
-
-                    ret = fut_vfs_rmdir("/mnt/dir_busy");
-                    fut_printf("[FUTURAFS-TEST]   rmdir(/mnt/dir_busy) expected ENOTEMPTY -> ret=%d\n", ret);
-
-                    fut_vfs_unlink("/mnt/dir_busy/dangling");
-                    fut_vfs_rmdir("/mnt/dir_busy");
-                }
-            }
-
-            fut_vnode_unref(mnt_dir);
         }
+
+        ret = fut_vfs_mkdir("/mnt/dir_wrapper", 0755);
+        fut_printf("[FUTURAFS-TEST]   dir_wrapper via fut_vfs_mkdir %s (ret=%d)\n",
+                   ret == 0 ? "✓" : "✗", ret);
+
+        struct fut_vnode *file_vnode = NULL;
+        if (mnt_dir->ops && mnt_dir->ops->create) {
+            ret = mnt_dir->ops->create(mnt_dir, "test_file.txt", 0644, &file_vnode);
+            fut_printf("[FUTURAFS-TEST]   file creation %s (ret=%d)\n",
+                       ret == 0 ? "✓" : "✗", ret);
+            if (file_vnode) {
+                fut_vnode_unref(file_vnode);
+            }
+        }
+
+        uint64_t cookie = 0;
+        struct fut_vdirent dirent;
+        int entry_count = 0;
+        while (true) {
+            int rd = fut_vfs_readdir("/mnt", &cookie, &dirent);
+            if (rd == -ENOENT) {
+                break;
+            }
+            if (rd < 0) {
+                fut_printf("[FUTURAFS-TEST]   readdir error %d\n", rd);
+                break;
+            }
+
+            fut_printf("[FUTURAFS-TEST]   entry %d: %s (ino=%llu, type=%u)\n",
+                       entry_count + 1,
+                       dirent.d_name,
+                       (unsigned long long)dirent.d_ino,
+                       dirent.d_type);
+            entry_count++;
+        }
+        fut_printf("[FUTURAFS-TEST]   total entries enumerated: %d\n", entry_count);
+
+        ret = fut_vfs_unlink("/mnt/test_file.txt");
+        fut_printf("[FUTURAFS-TEST]   unlink(/mnt/test_file.txt) %s (ret=%d)\n",
+                   ret == 0 ? "✓" : "✗", ret);
+
+        ret = fut_vfs_rmdir("/mnt/dir_wrapper");
+        fut_printf("[FUTURAFS-TEST]   rmdir(/mnt/dir_wrapper) %s (ret=%d)\n",
+                   ret == 0 ? "✓" : "✗", ret);
+
+        /* Verify ENOTEMPTY path */
+        if (mnt_dir->ops && mnt_dir->ops->mkdir) {
+            ret = mnt_dir->ops->mkdir(mnt_dir, "dir_busy", 0755);
+            if (ret == 0) {
+                struct fut_vnode *busy_dir = NULL;
+                if (mnt_dir->ops->lookup &&
+                    mnt_dir->ops->lookup(mnt_dir, "dir_busy", &busy_dir) == 0 && busy_dir) {
+                    struct fut_vnode *tmp = NULL;
+                    if (busy_dir->ops && busy_dir->ops->create) {
+                        busy_dir->ops->create(busy_dir, "dangling", 0644, &tmp);
+                        if (tmp) {
+                            fut_vnode_unref(tmp);
+                        }
+                    }
+                    fut_vnode_unref(busy_dir);
+                }
+
+                ret = fut_vfs_rmdir("/mnt/dir_busy");
+                fut_printf("[FUTURAFS-TEST]   rmdir(/mnt/dir_busy) expected ENOTEMPTY -> ret=%d\n", ret);
+
+                fut_vfs_unlink("/mnt/dir_busy/dangling");
+                fut_vfs_rmdir("/mnt/dir_busy");
+            }
+        }
+
+        fut_vnode_unref(mnt_dir);
     }
 
     fut_printf("[FUTURAFS-TEST] ===========================================\n");

@@ -93,8 +93,8 @@ mechanism, ensuring services such as fsd can multiplex work without busy loops.
   through capability handles.
 - **posixd** – POSIX compatibility over FIPC.
 - **futurawayd** – compositor + demo tests.
-- **Host tooling** – registry/netd utilities, mkfutfs, and the
-  `tests/futfs_log_basic` regression harness.
+- **Host tooling** – registry/netd utilities, mkfutfs, and a kernel self-test
+  (`tests/test_futfs.c`) that validates create/read/write flows end-to-end.
 
 ## Security & Performance Objectives
 

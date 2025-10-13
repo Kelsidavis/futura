@@ -69,9 +69,8 @@ platform or firmware environment.
    differs.
 2. Validate that `libfutura`’s allocator (`sys_brk`) and mmap wrappers work with
    the new MMU implementation.
-3. Run the host test suite (`make tests`), especially the new
-   `futfs_log_basic` test to ensure the log-structured FS behaves identically on
-   the new platform.
+3. Run the new blkcore/FuturaFS self-test (`tests/test_futfs.c`) under QEMU to
+   confirm virtio-blk backed storage works end-to-end on the platform.
 
 With these steps in place, the platform should boot to serial console, mount
 root, run `/bin/fbtest`, exercise the block self-tests, and be ready for higher

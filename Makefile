@@ -53,6 +53,7 @@ CFLAGS := -std=c23 -ffreestanding -nostdlib -fno-builtin -fno-stack-protector -f
 CFLAGS += -Wall -Wextra -Wpedantic -Werror
 CFLAGS += -fno-pic -fno-pie  # Disable PIC/PIE for kernel code
 CFLAGS += -fcf-protection=none  # Disable CET (Control-flow Enforcement Technology)
+CFLAGS += -I.
 CFLAGS += -I./include
 CFLAGS += $(ARCH_CFLAGS)
 
@@ -134,7 +135,9 @@ KERNEL_SOURCES := \
     drivers/tty/console.c \
     kernel/blk/blkcore.c \
     kernel/rust/rustffi.c \
+    subsystems/futura_fs/futfs.c \
     tests/test_blkcore.c \
+    tests/test_futfs.c \
     platform/x86_64/drivers/ahci/ahci.c
 
 # Platform-specific sources
@@ -208,6 +211,7 @@ ifeq ($(PLATFORM),x86_64)
 endif
 	@mkdir -p $(OBJ_DIR)/tests
 	@mkdir -p $(OBJ_DIR)/subsystems/posix_compat
+	@mkdir -p $(OBJ_DIR)/subsystems/futura_fs
 
 # Build kernel
 kernel: $(BIN_DIR)/futura_kernel.elf

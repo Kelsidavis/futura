@@ -345,6 +345,8 @@ static int lookup_vnode(const char *path, struct fut_vnode **vnode) {
         return -ENOENT;
     }
 
+    fut_printf("[vfs] lookup_vnode path=%s\n", path);
+
     struct fut_vnode *current = root_vnode;
     fut_vnode_ref(current);
 
@@ -352,6 +354,7 @@ static int lookup_vnode(const char *path, struct fut_vnode **vnode) {
     for (int i = 0; i < num_components; i++) {
         struct fut_mount *mount = find_mount_for_path(components, i + 1);
         if (mount && mount->root) {
+            fut_printf("[vfs]  component %d matched mount %s\n", i, mount->mountpoint);
             fut_vnode_unref(current);
             current = mount->root;
             fut_vnode_ref(current);
@@ -371,10 +374,12 @@ static int lookup_vnode(const char *path, struct fut_vnode **vnode) {
         }
 
         struct fut_vnode *next = NULL;
+        fut_printf("[vfs]  lookup component %s on vnode %p\n", components[i], (void *)current);
         int ret = current->ops->lookup(current, components[i], &next);
 
         if (ret < 0) {
             fut_vnode_unref(current);
+            fut_printf("[vfs]  component lookup failed ret=%d\n", ret);
             return ret;
         }
 
@@ -383,6 +388,9 @@ static int lookup_vnode(const char *path, struct fut_vnode **vnode) {
     }
 
     *vnode = current;
+    fut_printf("[vfs] lookup_vnode done vnode=%p ino=%llu\n",
+               (void *)current,
+               current ? (unsigned long long)current->ino : 0);
     return 0;
 }
 

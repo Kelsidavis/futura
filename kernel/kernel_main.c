@@ -392,11 +392,14 @@ static void test_futurafs_operations(void) {
     /* Test 7: Directory CRUD via vnode + VFS wrappers */
     fut_printf("[FUTURAFS-TEST] Test 7: Directory and file operations\n");
     struct fut_vnode *mnt_dir = NULL;
+    fut_printf("[FUTURAFS-TEST]   resolving /mnt...\n");
     ret = fut_vfs_lookup("/mnt", &mnt_dir);
+    fut_printf("[FUTURAFS-TEST]   fut_vfs_lookup ret=%d vnode=%p\n", ret, (void *)mnt_dir);
     if (ret < 0 || !mnt_dir) {
         fut_printf("[FUTURAFS-TEST] ✗ Failed to locate /mnt vnode (error %d)\n", ret);
     } else {
         if (mnt_dir->ops && mnt_dir->ops->mkdir) {
+            fut_printf("[FUTURAFS-TEST]   invoking vnode->mkdir\n");
             ret = mnt_dir->ops->mkdir(mnt_dir, "dir_direct", 0755);
             fut_printf("[FUTURAFS-TEST]   dir_direct via vnode->ops %s (ret=%d)\n",
                        ret == 0 ? "✓" : "✗", ret);

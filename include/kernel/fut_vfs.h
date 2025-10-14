@@ -215,6 +215,8 @@ struct fut_vnode_ops {
  *   Filesystem Type
  * ============================================================ */
 
+struct fut_statfs;
+
 struct fut_fs_type {
     const char *name;               /* Filesystem name (e.g., "futura_fs") */
 
@@ -236,6 +238,15 @@ struct fut_fs_type {
      * @return 0 on success, negative error code on failure
      */
     int (*unmount)(struct fut_mount *mount);
+
+    /**
+     * Query filesystem statistics.
+     *
+     * @param mount Mount instance
+     * @param out   Receives stats
+     * @return 0 on success, negative error code on failure
+     */
+    int (*statfs)(struct fut_mount *mount, struct fut_statfs *out);
 };
 
 /* ============================================================
@@ -284,6 +295,21 @@ struct fut_stat {
     uint64_t st_atime;              /* Access time */
     uint64_t st_mtime;              /* Modification time */
     uint64_t st_ctime;              /* Status change time */
+};
+
+/* Filesystem feature flags returned by statfs */
+#define FUT_STATFS_FEAT_LOG_STRUCTURED   (1ull << 0)
+#define FUT_STATFS_FEAT_TOMBSTONES       (1ull << 1)
+#define FUT_STATFS_FEAT_DIR_COMPACTION   (1ull << 2)
+
+struct fut_statfs {
+    uint64_t block_size;        /* Fundamental block size */
+    uint64_t blocks_total;      /* Total data blocks */
+    uint64_t blocks_free;       /* Free data blocks */
+    uint64_t inodes_total;      /* Total inodes */
+    uint64_t inodes_free;       /* Free inode count */
+    uint64_t dir_tombstones;    /* Directory tombstone entries */
+    uint64_t features;          /* FUT_STATFS_FEAT_* bitmask */
 };
 
 /* ============================================================
@@ -351,6 +377,15 @@ int fut_vfs_mount(const char *device, const char *mountpoint,
  * @return 0 on success, negative error code on failure
  */
 int fut_vfs_unmount(const char *mountpoint);
+
+/**
+ * Query filesystem statistics for a mounted filesystem.
+ *
+ * @param mountpoint Mount point path (e.g. "/mnt")
+ * @param out        Receives filesystem statistics
+ * @return 0 on success, negative error code otherwise
+ */
+int fut_vfs_statfs(const char *mountpoint, struct fut_statfs *out);
 
 /**
  * Lookup a vnode by path and return it with an extra reference.

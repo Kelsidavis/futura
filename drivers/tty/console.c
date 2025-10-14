@@ -12,8 +12,9 @@
 #define CONSOLE_MAJOR 4
 #define CONSOLE_MINOR 0
 
-static int console_open(void *inode, void **priv) {
+static int console_open(void *inode, int flags, void **priv) {
     (void)inode;
+    (void)flags;
     if (priv) {
         *priv = NULL;
     }

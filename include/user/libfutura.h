@@ -122,6 +122,7 @@ void exit(int status) __attribute__((noreturn));
 #define O_EXCL      0x0080
 #define O_TRUNC     0x0200
 #define O_APPEND    0x0400
+#define O_NONBLOCK  0x0800
 
 /* Wait options */
 #define WNOHANG     1

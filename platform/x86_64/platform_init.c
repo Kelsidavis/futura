@@ -581,9 +581,6 @@ void fut_platform_init(uint32_t multiboot_magic __attribute__((unused)),
     /* Enable timer IRQ */
     fut_irq_enable(0);
 
-    /* Enable keyboard IRQ */
-    fut_irq_enable(1);
-
     /* Enable interrupts */
     fut_serial_puts("[INIT] Enabling interrupts...\n");
     fut_enable_interrupts();

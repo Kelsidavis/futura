@@ -19,7 +19,7 @@ typedef long off_t;
 #endif
 
 struct fut_file_ops {
-    int     (*open)(void *inode, void **private_data);
+    int     (*open)(void *inode, int flags, void **private_data);
     int     (*release)(void *inode, void *private_data);
     ssize_t (*read)(void *inode, void *private_data, void *u_buf, size_t n, off_t *pos);
     ssize_t (*write)(void *inode, void *private_data, const void *u_buf, size_t n, off_t *pos);

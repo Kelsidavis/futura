@@ -201,9 +201,12 @@ KERNEL_SOURCES := \
     kernel/uaccess.c \
     kernel/vfs/devfs.c \
     kernel/tests/echo_smoke.c \
-    kernel/tests/fb_user_smoke.c \
+    kernel/tests/fb_smoke.c \
+    kernel/tests/input_smoke.c \
     kernel/video/fb_mmio.c \
     drivers/video/fb.c \
+    drivers/input/ps2_kbd.c \
+    drivers/input/ps2_mouse.c \
     drivers/tty/console.c \
     kernel/blk/blkcore.c \
     kernel/rust/rustffi.c \
@@ -233,6 +236,7 @@ ifeq ($(PLATFORM),x86_64)
         platform/x86_64/paging.c \
         platform/x86_64/cpu_features.c \
         platform/x86_64/platform_init.c \
+        platform/x86_64/ps2.c \
         arch/x86_64/perf_clock.c
 else ifeq ($(PLATFORM),arm64)
     PLATFORM_SOURCES := \

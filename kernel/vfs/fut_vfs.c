@@ -725,7 +725,7 @@ static int try_open_chrdev(const char *path, int flags) {
     file->chr_private = NULL;
 
     if (ops->open) {
-        int rc = ops->open(inode, &file->chr_private);
+        int rc = ops->open(inode, flags, &file->chr_private);
         if (rc < 0) {
             fut_free(file);
             return rc;

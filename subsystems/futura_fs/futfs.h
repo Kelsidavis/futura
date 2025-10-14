@@ -29,6 +29,10 @@ extern void fut_printf(const char *fmt, ...);
 #define FUTFS_SUPER_MAGIC 0x46554653u /* "FUFS" */
 #define FUTFS_NAME_MAX   64u
 
+#define FUTFS_FEATURE_LOG_STRUCTURED  (1ull << 0)
+#define FUTFS_FEATURE_TOMBSTONES      (1ull << 1)
+#define FUTFS_FEATURE_DIR_COMPACTION  (1ull << 2)
+
 enum futfs_inode_type {
     FUTFS_INODE_REG = 1,
     FUTFS_INODE_DIR = 2,

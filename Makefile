@@ -141,6 +141,7 @@ RUST_SOURCES := $(shell if [ -d $(RUST_ROOT) ]; then find $(RUST_ROOT) -type f \
 KERNEL_SOURCES := \
     kernel/kernel_main.c \
     kernel/boot/banner.c \
+    kernel/boot/boot_args.c \
     kernel/memory/fut_memory.c \
     kernel/memory/fut_mm.c \
     kernel/memory/mmap_dump.c \
@@ -183,6 +184,11 @@ KERNEL_SOURCES := \
     drivers/tty/console.c \
     kernel/blk/blkcore.c \
     kernel/rust/rustffi.c \
+    kernel/tests/perf.c \
+    kernel/tests/perf_ipc.c \
+    kernel/tests/perf_sched.c \
+    kernel/tests/perf_blk.c \
+    kernel/tests/perf_net.c \
     subsystems/futura_fs/futfs.c \
     subsystems/futura_fs/futfs_gc.c \
     tests/test_api.c \
@@ -203,7 +209,8 @@ ifeq ($(PLATFORM),x86_64)
         platform/x86_64/pmap.c \
         platform/x86_64/paging.c \
         platform/x86_64/cpu_features.c \
-        platform/x86_64/platform_init.c
+        platform/x86_64/platform_init.c \
+        arch/x86_64/perf_clock.c
 else ifeq ($(PLATFORM),arm64)
     PLATFORM_SOURCES := \
         platform/arm64/boot.S \
@@ -268,6 +275,10 @@ endif
 
 # Build kernel
 kernel: $(BIN_DIR)/futura_kernel.elf
+
+.PHONY: futfs-crash-test
+futfs-crash-test: kernel tools
+	@tests/scripts/futfs_crash_gc.sh
 
 $(BIN_DIR)/futura_kernel.elf: $(OBJECTS) $(RUST_LIBS) $(KERNEL_DEPS) | $(BIN_DIR)
 	@echo "LD $@.tmp"
@@ -395,6 +406,18 @@ test: iso disk
 		echo "[HARNESS] FAIL (qemu code $$code)"; \
 		exit $$code; \
 	fi
+
+.PHONY: perf perf-ci
+
+perf: iso disk
+	@echo "Running kernel performance harness..."
+	@bash -c 'set -eo pipefail; OUT="$(BUILD_DIR)/perf_latest.txt"; mkdir -p "$(BUILD_DIR)"; rm -f "$$OUT"; \
+	qemu-system-x86_64 -serial stdio -display none -m $(QEMU_MEM) $(QEMU_FLAGS) -cdrom futura.iso -boot d -append "perf=on" | tee "$$OUT"; \
+	code=$${PIPESTATUS[0]}; \
+	if [ $$code -eq 1 ]; then echo "[PERF] PASS"; exit 0; else echo "[PERF] FAIL (qemu code $$code)"; exit $$code; fi'
+
+perf-ci: perf
+	@python3 tools/perf_compare.py tests/baselines/perf_baseline.json $(BUILD_DIR)/perf_latest.txt
 
 # ============================================================
 #   Platform-Specific Targets

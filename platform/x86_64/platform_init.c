@@ -18,6 +18,7 @@
 #include <kernel/fut_mm.h>
 #include <kernel/fb.h>
 #include <kernel/trap.h>
+#include <kernel/boot_args.h>
 
 /* Serial port definitions for debugging */
 #define SERIAL_PORT_COM1 0x3F8
@@ -41,6 +42,13 @@
 #define PIC_EOI 0x20        /* End of Interrupt */
 
 #define INT_SYSCALL 128
+
+struct multiboot_tag {
+    uint32_t type;
+    uint32_t size;
+} __attribute__((packed));
+
+#define MULTIBOOT_TAG_TYPE_CMDLINE 1
 
 /* PIT (Programmable Interval Timer) definitions */
 #define PIT_CHANNEL0 0x40
@@ -579,6 +587,27 @@ void fut_platform_init(uint32_t multiboot_magic __attribute__((unused)),
     /* Enable interrupts */
     fut_serial_puts("[INIT] Enabling interrupts...\n");
     fut_enable_interrupts();
+
+    fut_boot_args_init(NULL);
+    if (multiboot_addr) {
+        const uint8_t *mb_base = (const uint8_t *)(uintptr_t)multiboot_addr;
+        uint32_t total_size = *(const uint32_t *)mb_base;
+        const uint8_t *tag_ptr = mb_base + 8;
+        const uint8_t *end = mb_base + total_size;
+        while (tag_ptr < end) {
+            const struct multiboot_tag *tag =
+                (const struct multiboot_tag *)tag_ptr;
+            if (tag->type == 0 || tag->size == 0) {
+                break;
+            }
+            if (tag->type == MULTIBOOT_TAG_TYPE_CMDLINE) {
+                const char *cmdline = (const char *)(tag + 1);
+                fut_boot_args_init(cmdline);
+                break;
+            }
+            tag_ptr += (tag->size + 7u) & ~7u;
+        }
+    }
 
     /* Probe Multiboot framebuffer if present */
     (void)fb_probe_from_multiboot((const void *)(uintptr_t)multiboot_addr);

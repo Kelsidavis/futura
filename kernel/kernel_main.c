@@ -25,10 +25,12 @@
 #include <kernel/fb.h>
 #include <kernel/console.h>
 #include <kernel/boot_banner.h>
+#include <kernel/boot_args.h>
 #include <futura/blkdev.h>
 #include <futura/net.h>
 #include <platform/platform.h>
 #include "tests/test_api.h"
+#include "tests/perf.h"
 #if defined(__x86_64__)
 #include <arch/x86_64/paging.h>
 #include <arch/x86_64/pmap.h>
@@ -39,6 +41,7 @@ extern void fut_fb_userspace_smoke(void);
 extern void fut_blk_async_selftest_schedule(fut_task_t *task);
 extern void fut_futfs_selftest_schedule(fut_task_t *task);
 extern void fut_net_selftest_schedule(fut_task_t *task);
+extern void fut_perf_selftest_schedule(fut_task_t *task);
 extern fut_status_t virtio_blk_init(uint64_t pci_addr);
 extern fut_status_t virtio_net_init(void);
 extern void ahci_init(void);
@@ -742,7 +745,9 @@ void fut_kernel_main(void) {
 
     fut_printf("[INIT] Root filesystem mounted (ramfs at /)\n");
 
-    fut_test_plan(3);
+    bool perf_enabled = fut_boot_arg_flag("perf");
+    uint16_t planned_tests = 3u + (perf_enabled ? 1u : 0u);
+    fut_test_plan(planned_tests);
 
     /* Test VFS operations */
     test_vfs_operations();
@@ -820,6 +825,9 @@ void fut_kernel_main(void) {
     fut_blk_async_selftest_schedule(test_task);
     fut_futfs_selftest_schedule(test_task);
     fut_net_selftest_schedule(test_task);
+    if (perf_enabled) {
+        fut_perf_selftest_schedule(test_task);
+    }
 
     fut_thread_t *watchdog_thread = fut_thread_create(
         test_task,

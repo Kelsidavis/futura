@@ -118,6 +118,33 @@ make CFLAGS+=-DDEBUG_NET   # FuturaNet + virtio-net driver traces
 
 ### Rust driver builds
 
+### Filesystem utilities
+
+Run `make tools` to build the host-side helpers under `build/tools/`:
+
+- `mkfutfs` — formats a FuturaFS image. Useful flags:
+  - `--segments <N>` control total log segments
+  - `--segment-sectors <N>` set sectors per segment
+  - `--block-size <bytes>` select on-disk block granularity (default 512)
+  - `--inodes <N>` seed the inode high-water mark
+  - `--label <text>` stamp the volume label
+  Example: `build/tools/mkfutfs futfs.img --segments 64 --segment-sectors 16 --block-size 4096 --label Demo`
+
+- `fsck.futfs` — offline integrity checker/repair tool:
+  - `fsck.futfs --device futfs.img --dry-run` reports structural issues without touching the image
+  - `fsck.futfs --device futfs.img --repair` rewrites malformed directory streams and refreshes superblock counters
+  - Add `--gc` to opportunistically compact directories with heavy tombstone churn
+
+### Crash-consistency harness
+
+`make futfs-crash-test` regenerates a scratch image, forces a compaction panic (`futurafs.test_crash_compact=1`) to simulate power loss, reboots without the flag, then runs `fsck.futfs` in dry-run and repair modes. A `futfs_crash_gc: PASS` banner indicates the loop survived and post-crash metadata is clean.
+
+### Performance harness
+
+- `make perf` boots the kernel with `perf=on`, runs the deterministic IPC/scheduler/block/net microbenchmarks, and saves the summary lines to `build/perf_latest.txt` while streaming console output to the terminal.
+- `make perf-ci` reruns the harness and compares the latest results against `tests/baselines/perf_baseline.json`, failing the build if any percentile drifts beyond ±5 %.
+- To refresh the baseline after intentional optimisations, inspect `build/perf_latest.txt`, update the JSON with the new steady-state values, and commit both files together.
+
 Rust drivers live under `drivers/rust/` and compile to `staticlib` artifacts that the kernel links directly. You can rebuild them without touching the C pieces via:
 
 ```bash

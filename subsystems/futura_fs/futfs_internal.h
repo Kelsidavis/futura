@@ -47,7 +47,7 @@ typedef struct futfs_segment_header_disk {
 typedef struct futfs_superblock_disk {
     char magic[8];
     uint32_t version;
-    uint32_t block_size;
+    uint32_t block_size_legacy;
     uint32_t segment_sectors;
     uint32_t inode_count;
     uint64_t latest_segment_lba;
@@ -55,8 +55,24 @@ typedef struct futfs_superblock_disk {
     uint64_t root_ino;
     uint64_t next_inode;
     char label[FUTFS_LABEL_MAX];
-    uint8_t reserved[512 - 8 - (6 * sizeof(uint32_t)) - (4 * sizeof(uint64_t)) - FUTFS_LABEL_MAX];
+    uint32_t version_minor;
+    uint32_t reserved0;
+    uint64_t features;
+    uint64_t block_size;
+    uint64_t blocks_total;
+    uint64_t blocks_used;
+    uint64_t inodes_total;
+    uint64_t inodes_used;
+    uint64_t dir_tombstones;
+    uint8_t reserved[512 - 8 - (8 * sizeof(uint32_t)) - (11 * sizeof(uint64_t)) - FUTFS_LABEL_MAX];
 } futfs_superblock_disk_t;
+
+#define FUTFS_SUPER_VERSION_MAJOR 1u
+#define FUTFS_SUPER_VERSION_MINOR 1u
+
+#define FUTFS_FEATURE_LOG_STRUCTURED  (1ull << 0)
+#define FUTFS_FEATURE_TOMBSTONES      (1ull << 1)
+#define FUTFS_FEATURE_DIR_COMPACTION  (1ull << 2)
 
 struct futfs_inode_mem {
     uint64_t ino;
@@ -84,6 +100,7 @@ struct futfs_fs {
     size_t inode_capacity;
 
     bool dirty;
+    bool super_dirty;
 };
 
 extern struct futfs_fs g_fs;

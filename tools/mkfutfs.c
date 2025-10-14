@@ -48,7 +48,7 @@ typedef struct futfs_segment_header_disk {
 typedef struct futfs_superblock_disk {
     char magic[8];
     uint32_t version;
-    uint32_t block_size;
+    uint32_t block_size_legacy;
     uint32_t segment_sectors;
     uint32_t inode_count;
     uint64_t latest_segment_lba;
@@ -56,8 +56,24 @@ typedef struct futfs_superblock_disk {
     uint64_t root_ino;
     uint64_t next_inode;
     char label[FUTFS_LABEL_MAX];
-    uint8_t reserved[512 - 8 - (6 * sizeof(uint32_t)) - (4 * sizeof(uint64_t)) - FUTFS_LABEL_MAX];
+    uint32_t version_minor;
+    uint32_t reserved0;
+    uint64_t features;
+    uint64_t block_size;
+    uint64_t blocks_total;
+    uint64_t blocks_used;
+    uint64_t inodes_total;
+    uint64_t inodes_used;
+    uint64_t dir_tombstones;
+    uint8_t reserved[512 - 8 - (8 * sizeof(uint32_t)) - (11 * sizeof(uint64_t)) - FUTFS_LABEL_MAX];
 } futfs_superblock_disk_t;
+
+#define FUTFS_SUPER_VERSION_MAJOR 1u
+#define FUTFS_SUPER_VERSION_MINOR 1u
+
+#define FUTFS_FEATURE_LOG_STRUCTURED  (1ull << 0)
+#define FUTFS_FEATURE_TOMBSTONES      (1ull << 1)
+#define FUTFS_FEATURE_DIR_COMPACTION  (1ull << 2)
 
 #define FUTFS_RIGHT_READ   (1u << 0)
 #define FUTFS_RIGHT_WRITE  (1u << 1)
@@ -75,7 +91,7 @@ static uint32_t checksum32(const uint8_t *data, size_t len) {
 
 static void usage(const char *prog) {
     fprintf(stderr,
-            "Usage: %s <image> [--segments N] [--label TEXT] [--segment-sectors N]\n",
+            "Usage: %s <image> [--segments N] [--segment-sectors N] [--block-size N] [--inodes N] [--label TEXT]\n",
             prog);
 }
 
@@ -83,6 +99,8 @@ int main(int argc, char **argv) {
     const char *path = NULL;
     uint32_t segments = 128;
     uint32_t segment_sectors = FUTFS_DEFAULT_SEG_SECT;
+    uint32_t block_size = FUTFS_DEFAULT_BLOCK;
+    uint64_t inode_hint = 0;
     char label[FUTFS_LABEL_MAX] = "FuturaFS";
 
     for (int i = 1; i < argc; ++i) {
@@ -93,6 +111,13 @@ int main(int argc, char **argv) {
             if (segment_sectors == 0) {
                 segment_sectors = FUTFS_DEFAULT_SEG_SECT;
             }
+        } else if (strcmp(argv[i], "--block-size") == 0 && i + 1 < argc) {
+            block_size = (uint32_t)strtoul(argv[++i], NULL, 10);
+            if (block_size == 0) {
+                block_size = FUTFS_DEFAULT_BLOCK;
+            }
+        } else if (strcmp(argv[i], "--inodes") == 0 && i + 1 < argc) {
+            inode_hint = strtoull(argv[++i], NULL, 10);
         } else if (strcmp(argv[i], "--label") == 0 && i + 1 < argc) {
             strncpy(label, argv[++i], sizeof(label) - 1);
             label[sizeof(label) - 1] = '\0';
@@ -121,7 +146,7 @@ int main(int argc, char **argv) {
     }
 
     uint64_t total_sectors = 1u + (uint64_t)segments * segment_sectors;
-    uint64_t total_bytes = total_sectors * FUTFS_DEFAULT_BLOCK;
+    uint64_t total_bytes = total_sectors * block_size;
     if (ftruncate(fd, (off_t)total_bytes) != 0) {
         perror("ftruncate");
         close(fd);
@@ -131,8 +156,8 @@ int main(int argc, char **argv) {
     futfs_superblock_disk_t super;
     memset(&super, 0, sizeof(super));
     memcpy(super.magic, "FUTFSv0", 7);
-    super.version = 1;
-    super.block_size = FUTFS_DEFAULT_BLOCK;
+    super.version = FUTFS_SUPER_VERSION_MAJOR;
+    super.block_size_legacy = block_size;
     super.segment_sectors = segment_sectors;
     super.inode_count = 1;
     super.latest_segment_lba = 1;
@@ -144,6 +169,19 @@ int main(int argc, char **argv) {
         label_len = sizeof(super.label) - 1;
     }
     memcpy(super.label, label, label_len);
+    super.version_minor = FUTFS_SUPER_VERSION_MINOR;
+    super.features = FUTFS_FEATURE_LOG_STRUCTURED |
+                     FUTFS_FEATURE_TOMBSTONES |
+                     FUTFS_FEATURE_DIR_COMPACTION;
+    super.block_size = block_size;
+    super.blocks_total = (uint64_t)segments * segment_sectors;
+    super.blocks_used = 0;
+    super.inodes_total = inode_hint ? inode_hint : 1;
+    if (super.inodes_total < 1) {
+        super.inodes_total = 1;
+    }
+    super.inodes_used = 1;
+    super.dir_tombstones = 0;
 
     if (pwrite(fd, &super, sizeof(super), 0) != (ssize_t)sizeof(super)) {
         perror("pwrite superblock");
@@ -151,7 +189,7 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    size_t seg_bytes = (size_t)segment_sectors * FUTFS_DEFAULT_BLOCK;
+    size_t seg_bytes = (size_t)segment_sectors * block_size;
     uint8_t *segment = calloc(1, seg_bytes);
     if (!segment) {
         perror("calloc segment");
@@ -179,7 +217,7 @@ int main(int argc, char **argv) {
 
     header->checksum = checksum32(segment + sizeof(*header), seg_bytes - sizeof(*header));
 
-    ssize_t written = pwrite(fd, segment, seg_bytes, (off_t)FUTFS_DEFAULT_BLOCK);
+    ssize_t written = pwrite(fd, segment, seg_bytes, (off_t)block_size);
     free(segment);
     if (written != (ssize_t)seg_bytes) {
         perror("pwrite segment");
@@ -188,10 +226,12 @@ int main(int argc, char **argv) {
     }
 
     close(fd);
-    printf("mkfutfs: formatted %s\n", path);
-    printf("  block size       : %u bytes\n", FUTFS_DEFAULT_BLOCK);
-    printf("  segment sectors  : %u\n", segment_sectors);
-    printf("  total segments   : %u\n", segments);
-    printf("  label            : %s\n", super.label);
+    printf("mkfutfs: %s block=%u sectors=%u segments=%u inodes_total=%llu label=%s\n",
+           path,
+           block_size,
+           segment_sectors,
+           segments,
+           (unsigned long long)super.inodes_total,
+           super.label);
     return 0;
 }

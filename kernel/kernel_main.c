@@ -10,6 +10,7 @@
 #include <stdint.h>
 #include <stddef.h>
 #include <stdbool.h>
+#include <generated/feature_flags.h>
 #include <kernel/fut_memory.h>
 #include <kernel/fut_sched.h>
 #include <kernel/fut_thread.h>
@@ -40,11 +41,13 @@
 extern void fut_echo_selftest(void);
 extern void fut_fb_smoke(void);
 extern void fut_input_smoke(void);
+extern void fut_exec_double_smoke(void);
 extern void fut_blk_async_selftest_schedule(fut_task_t *task);
 extern void fut_futfs_selftest_schedule(fut_task_t *task);
 extern void fut_net_selftest_schedule(fut_task_t *task);
 extern void fut_perf_selftest_schedule(fut_task_t *task);
 
+#if ENABLE_WINSRV_DEMO || ENABLE_WAYLAND_DEMO
 static void fut_boot_delay_ms(uint32_t delay_ms) {
     if (delay_ms == 0) {
         return;
@@ -63,6 +66,7 @@ static void fut_boot_delay_ms(uint32_t delay_ms) {
 #endif
     }
 }
+#endif
 extern fut_status_t virtio_blk_init(uint64_t pci_addr);
 extern fut_status_t virtio_net_init(void);
 extern void ahci_init(void);
@@ -659,10 +663,18 @@ static void fipc_receiver_thread(void *arg) {
 void fut_kernel_main(void) {
     int fb_stage = -1;
     int fb_exec = -1;
+#if ENABLE_WINSRV_DEMO
     int winsrv_stage = -1;
     int winstub_stage = -1;
     int winsrv_exec = -1;
     int winstub_exec = -1;
+#endif
+#if ENABLE_WAYLAND_DEMO
+    int wayland_stage = -1;
+    int wayland_client_stage = -1;
+    int wayland_exec = -1;
+    int wayland_client_exec = -1;
+#endif
 
 #if defined(__x86_64__)
     uintptr_t min_phys = KERNEL_VIRTUAL_BASE + 0x100000ULL;
@@ -815,6 +827,7 @@ void fut_kernel_main(void) {
     if (input_enabled) {
         planned_tests += 1u;
     }
+    planned_tests += 1u;
     fut_test_plan(planned_tests);
 
     /* Test VFS operations */
@@ -856,6 +869,7 @@ void fut_kernel_main(void) {
         fut_printf("[INIT] fbtest binary staged at /bin/fbtest\n");
     }
 
+#if ENABLE_WINSRV_DEMO
     fut_printf("[INIT] Staging winsrv user binary...\n");
     winsrv_stage = fut_stage_winsrv_binary();
     if (winsrv_stage != 0) {
@@ -871,6 +885,25 @@ void fut_kernel_main(void) {
     } else {
         fut_printf("[INIT] winstub binary staged at /bin/winstub\n");
     }
+#endif
+
+#if ENABLE_WAYLAND_DEMO
+    fut_printf("[INIT] Staging futura-wayland compositor...\n");
+    wayland_stage = fut_stage_wayland_compositor_binary();
+    if (wayland_stage != 0) {
+        fut_printf("[WARN] Failed to stage futura-wayland binary (error %d)\n", wayland_stage);
+    } else {
+        fut_printf("[INIT] futura-wayland staged at /sbin/futura-wayland\n");
+    }
+
+    fut_printf("[INIT] Staging wl-simple client...\n");
+    wayland_client_stage = fut_stage_wayland_client_binary();
+    if (wayland_client_stage != 0) {
+        fut_printf("[WARN] Failed to stage wl-simple binary (error %d)\n", wayland_client_stage);
+    } else {
+        fut_printf("[INIT] wl-simple staged at /bin/wl-simple\n");
+    }
+#endif
 
     /* ========================================
      *   Step 5: Initialize Scheduler
@@ -891,6 +924,7 @@ void fut_kernel_main(void) {
         }
     }
 
+#if ENABLE_WINSRV_DEMO
     if (winsrv_stage == 0) {
         char winsrv_name[] = "winsrv";
         char *winsrv_args[] = { winsrv_name, NULL };
@@ -913,6 +947,37 @@ void fut_kernel_main(void) {
             fut_printf("[INIT] Scheduled /bin/winstub demo client\n");
         }
     }
+#endif
+
+#if ENABLE_WAYLAND_DEMO
+    if (wayland_stage == 0) {
+        char name[] = "futura-wayland";
+        char *args[] = { name, NULL };
+        wayland_exec = fut_exec_elf("/sbin/futura-wayland", args);
+        if (wayland_exec != 0) {
+            fut_printf("[WARN] Failed to launch /sbin/futura-wayland (error %d)\n", wayland_exec);
+        } else {
+            fut_printf("[INIT] Scheduled /sbin/futura-wayland compositor\n");
+        }
+    }
+
+    if (wayland_exec == 0 && wayland_client_stage == 0) {
+        fut_boot_delay_ms(100);
+        char name[] = "wl-simple";
+        char *args[] = { name, NULL };
+        wayland_client_exec = fut_exec_elf("/bin/wl-simple", args);
+        if (wayland_client_exec != 0) {
+            fut_printf("[WARN] Failed to launch /bin/wl-simple (error %d)\n", wayland_client_exec);
+        } else {
+            fut_printf("[INIT] Scheduled /bin/wl-simple demo client\n");
+        }
+    }
+
+    if (wayland_exec == 0 && wayland_client_exec == 0) {
+        fut_boot_delay_ms(2500);
+        hal_outb(0xf4u, 0u);
+    }
+#endif
 
     /* ========================================
      *   Step 6: Create Test Task and FIPC Channel

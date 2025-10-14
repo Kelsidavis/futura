@@ -334,6 +334,8 @@ void fut_vfs_set_root(struct fut_vnode *vnode);
  * @return Root vnode or NULL if not mounted
  */
 struct fut_vnode *fut_vfs_get_root(void);
+void fut_vfs_register_root_canary(uint64_t *before, uint64_t *after);
+void fut_vfs_check_root_canary(const char *where);
 
 /**
  * Increment vnode reference count.

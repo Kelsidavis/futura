@@ -38,6 +38,15 @@ struct ramfs_node {
     };
 };
 
+#define RAMFS_ROOT_CANARY_BEFORE 0xFADC0DE0CAFEBABEULL
+#define RAMFS_ROOT_CANARY_AFTER  0xDEADBEEFCAFED00DULL
+
+struct ramfs_root_guard {
+    uint64_t before;
+    struct fut_vnode vnode;
+    uint64_t after;
+};
+
 /* ============================================================
  *   String Utilities
  * ============================================================ */
@@ -349,15 +358,19 @@ static int ramfs_mount(const char *device, int flags, void *data, struct fut_mou
     }
 
     /* Create root directory vnode */
-    struct fut_vnode *root = fut_malloc(sizeof(struct fut_vnode));
-    if (!root) {
+    struct ramfs_root_guard *guard = fut_malloc(sizeof(struct ramfs_root_guard));
+    if (!guard) {
         fut_free(mount);
         return -ENOMEM;
     }
+    guard->before = RAMFS_ROOT_CANARY_BEFORE;
+    guard->after = RAMFS_ROOT_CANARY_AFTER;
+
+    struct fut_vnode *root = &guard->vnode;
 
     struct ramfs_node *root_node = fut_malloc(sizeof(struct ramfs_node));
     if (!root_node) {
-        fut_free(root);
+        fut_free(guard);
         fut_free(mount);
         return -ENOMEM;
     }
@@ -372,6 +385,8 @@ static int ramfs_mount(const char *device, int flags, void *data, struct fut_mou
     root->fs_data = root_node;
     root->refcount = 1;
     root->ops = &ramfs_vnode_ops;
+
+    fut_vfs_register_root_canary(&guard->before, &guard->after);
 
     /* Initialize root directory */
     root_node->dir.entries = NULL;

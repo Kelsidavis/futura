@@ -4,6 +4,7 @@
  */
 
 #include <kernel/exec.h>
+#include <generated/feature_flags.h>
 
 #include <kernel/errno.h>
 #include <kernel/fut_task.h>
@@ -370,9 +371,11 @@ static int stage_stack_pages(fut_mm_t *mm, uint64_t *out_stack_top) {
             return -ENOMEM;
         }
 
-        pages[i] = page;
         memset(page, 0, PAGE_SIZE);
         phys_addr_t phys = pmap_virt_to_phys((uintptr_t)page);
+
+        pages[i] = page;
+        fut_printf("[EXEC] stage_stack page[%u]=%p\n", (unsigned)i, (void *)page);
         int rc = pmap_map_user(mm_context(mm),
                                base + (uint64_t)i * PAGE_SIZE,
                                phys,
@@ -400,6 +403,16 @@ extern const uint8_t _binary_build_bin_user_winsrv_start[];
 extern const uint8_t _binary_build_bin_user_winsrv_end[];
 extern const uint8_t _binary_build_bin_user_winstub_start[];
 extern const uint8_t _binary_build_bin_user_winstub_end[];
+extern const uint8_t _binary_build_bin_user_init_stub_start[];
+extern const uint8_t _binary_build_bin_user_init_stub_end[];
+extern const uint8_t _binary_build_bin_user_second_start[];
+extern const uint8_t _binary_build_bin_user_second_end[];
+#if ENABLE_WAYLAND_DEMO
+extern const uint8_t _binary_build_bin_user_futura_wayland_start[];
+extern const uint8_t _binary_build_bin_user_futura_wayland_end[];
+extern const uint8_t _binary_build_bin_user_wl_simple_start[];
+extern const uint8_t _binary_build_bin_user_wl_simple_end[];
+#endif
 
 int fut_stage_fbtest_binary(void) {
     size_t size = (size_t)(_binary_build_bin_user_fbtest_end - _binary_build_bin_user_fbtest_start);
@@ -480,6 +493,44 @@ int fut_stage_winstub_binary(void) {
                       "/bin/winstub");
 }
 
+int fut_stage_init_stub_binary(void) {
+    (void)fut_vfs_mkdir("/sbin", 0755);
+    return stage_blob(_binary_build_bin_user_init_stub_start,
+                      _binary_build_bin_user_init_stub_end,
+                      "/sbin/init_stub");
+}
+
+int fut_stage_second_stub_binary(void) {
+    (void)fut_vfs_mkdir("/sbin", 0755);
+    return stage_blob(_binary_build_bin_user_second_start,
+                      _binary_build_bin_user_second_end,
+                      "/sbin/second");
+}
+
+#if ENABLE_WAYLAND_DEMO
+int fut_stage_wayland_compositor_binary(void) {
+    (void)fut_vfs_mkdir("/sbin", 0755);
+    return stage_blob(_binary_build_bin_user_futura_wayland_start,
+                      _binary_build_bin_user_futura_wayland_end,
+                      "/sbin/futura-wayland");
+}
+
+int fut_stage_wayland_client_binary(void) {
+    (void)fut_vfs_mkdir("/bin", 0755);
+    return stage_blob(_binary_build_bin_user_wl_simple_start,
+                      _binary_build_bin_user_wl_simple_end,
+                      "/bin/wl-simple");
+}
+#else
+int fut_stage_wayland_compositor_binary(void) {
+    return -ENOSYS;
+}
+
+int fut_stage_wayland_client_binary(void) {
+    return -ENOSYS;
+}
+#endif
+
 int fut_exec_elf(const char *path, char *const argv[]) {
     if (!path) {
         return -EINVAL;
@@ -489,6 +540,8 @@ int fut_exec_elf(const char *path, char *const argv[]) {
     if (fd < 0) {
         return fd;
     }
+
+    fut_vfs_check_root_canary("fut_exec_elf:enter");
 
     elf64_ehdr_t ehdr;
     int rc = read_exact(fd, &ehdr, sizeof(ehdr));
@@ -580,6 +633,8 @@ int fut_exec_elf(const char *path, char *const argv[]) {
         return rc;
     }
 
+    fut_vfs_check_root_canary("fut_exec_elf:after_stage_stack");
+
     uint64_t user_rsp = 0;
     uint64_t user_argv = 0;
     uint64_t user_argc = 0;
@@ -625,6 +680,8 @@ int fut_exec_elf(const char *path, char *const argv[]) {
 
     fut_free(phdrs);
     fut_vfs_close(fd);
+
+    fut_vfs_check_root_canary("fut_exec_elf:exit");
 
     (void)thread;
     return 0;

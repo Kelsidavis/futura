@@ -90,6 +90,10 @@ CFLAGS += -I./include
 CFLAGS += $(ARCH_CFLAGS)
 CFLAGS += $(REPRO_CFLAGS)
 
+# Feature toggles
+ENABLE_WINSRV_DEMO ?= 0
+ENABLE_WAYLAND_DEMO ?= 0
+
 # Debug vs Release flags
 ifeq ($(BUILD_MODE),debug)
     CFLAGS += -g -O0 -DDEBUG
@@ -119,13 +123,42 @@ BIN_DIR := $(BUILD_DIR)/bin
 RELEASE_DIR := $(BUILD_DIR)/release
 REPRO_ROOT := build/repro
 
+# Optional third-party metadata (Wayland vendor build)
+WAYLAND_PATHS_FILE := $(BUILD_DIR)/third_party/wayland/paths.mk
+-include $(WAYLAND_PATHS_FILE)
+
+ifneq ($(WAYLAND_PREFIX),)
+PKG_CONFIG ?= $(shell command -v pkg-config 2>/dev/null)
+export PKG_CONFIG
+export PKG_CONFIG_PATH := $(WAYLAND_PKGCONFIG)$(if $(PKG_CONFIG_PATH),:$(PKG_CONFIG_PATH))
+export WAYLAND_SCANNER
+WAYLAND_CFLAGS := -I$(WAYLAND_INCLUDEDIR)
+WAYLAND_LDFLAGS := -L$(WAYLAND_LIBDIR)
+ifneq ($(PKG_CONFIG),)
+WAYLAND_PC_FLAGS := $(shell PKG_CONFIG_PATH=$(WAYLAND_PKGCONFIG) $(PKG_CONFIG) --cflags wayland-server wayland-client 2>/dev/null)
+WAYLAND_PC_LIBS := $(shell PKG_CONFIG_PATH=$(WAYLAND_PKGCONFIG) $(PKG_CONFIG) --static --libs wayland-server wayland-client 2>/dev/null)
+ifneq ($(strip $(WAYLAND_PC_FLAGS)),)
+WAYLAND_CFLAGS += $(WAYLAND_PC_FLAGS)
+endif
+ifneq ($(strip $(WAYLAND_PC_LIBS)),)
+WAYLAND_LIBS := $(WAYLAND_PC_LIBS)
+endif
+endif
+ifeq ($(strip $(WAYLAND_LIBS)),)
+WAYLAND_LIBS := -lwayland-server -lwayland-client -lm -pthread -lrt -lffi -lexpat
+endif
+export WAYLAND_CFLAGS WAYLAND_LDFLAGS WAYLAND_LIBS
+endif
+
 # --- Build metadata (auto-generated) ---
 GEN_DIR           := include/generated
 GEN_VERSION_HDR   := $(GEN_DIR)/version.h
+GEN_FEATURE_HDR   := $(GEN_DIR)/feature_flags.h
 BUILD_GIT_DESC    := $(shell git describe --tags --always --dirty 2>/dev/null || echo "nogit")
 
 KERNEL_DEPS       :=
 KERNEL_DEPS      += $(GEN_VERSION_HDR)
+KERNEL_DEPS      += $(GEN_FEATURE_HDR)
 
 $(GEN_VERSION_HDR):
 	@mkdir -p $(GEN_DIR)
@@ -136,6 +169,19 @@ $(GEN_VERSION_HDR):
 	@echo "#define FUT_BUILD_HOST    \"$(BUILD_HOST)\""           >> $(GEN_VERSION_HDR)
 	@echo "#define FUT_BUILD_USER    \"$(BUILD_USER)\""           >> $(GEN_VERSION_HDR)
 	@echo "#define FUT_VERSION_STR   \"Futura $(BUILD_GIT_DESC)\"" >> $(GEN_VERSION_HDR)
+
+.PHONY: FORCE
+
+$(GEN_FEATURE_HDR): FORCE
+	@mkdir -p $(GEN_DIR)
+	@tmp=$@.tmp; \
+	{ \
+		echo "/* Auto-generated. Do not edit. */"; \
+		echo "#pragma once"; \
+		echo "#define ENABLE_WINSRV_DEMO $(ENABLE_WINSRV_DEMO)"; \
+		echo "#define ENABLE_WAYLAND_DEMO $(ENABLE_WAYLAND_DEMO)"; \
+	} > $$tmp; \
+	if [ ! -f $@ ] || ! cmp -s $$tmp $@; then mv $$tmp $@; else rm $$tmp; fi
 
 # ============================================================
 #   Rust Toolchain Integration
@@ -203,6 +249,7 @@ KERNEL_SOURCES := \
     kernel/tests/echo_smoke.c \
     kernel/tests/fb_smoke.c \
     kernel/tests/input_smoke.c \
+    kernel/tests/exec_double.c \
     kernel/video/fb_mmio.c \
     drivers/video/fb.c \
     drivers/input/ps2_kbd.c \
@@ -263,8 +310,19 @@ WINSRV_BIN := $(BIN_DIR)/user/winsrv
 WINSRV_BLOB := $(OBJ_DIR)/kernel/blobs/winsrv_blob.o
 WINSTUB_BIN := $(BIN_DIR)/user/winstub
 WINSTUB_BLOB := $(OBJ_DIR)/kernel/blobs/winstub_blob.o
+INIT_STUB_BIN := $(BIN_DIR)/user/init_stub
+INIT_STUB_BLOB := $(OBJ_DIR)/kernel/blobs/init_stub_blob.o
+SECOND_STUB_BIN := $(BIN_DIR)/user/second
+SECOND_STUB_BLOB := $(OBJ_DIR)/kernel/blobs/second_stub_blob.o
+WAYLAND_COMPOSITOR_BIN := $(BIN_DIR)/user/futura-wayland
+WAYLAND_COMPOSITOR_BLOB := $(OBJ_DIR)/kernel/blobs/futura_wayland_blob.o
+WAYLAND_CLIENT_BIN := $(BIN_DIR)/user/wl-simple
+WAYLAND_CLIENT_BLOB := $(OBJ_DIR)/kernel/blobs/wl_simple_blob.o
 
-OBJECTS += $(FBTEST_BLOB) $(WINSRV_BLOB) $(WINSTUB_BLOB)
+OBJECTS += $(FBTEST_BLOB) $(WINSRV_BLOB) $(WINSTUB_BLOB) $(INIT_STUB_BLOB) $(SECOND_STUB_BLOB)
+ifeq ($(ENABLE_WAYLAND_DEMO),1)
+OBJECTS += $(WAYLAND_COMPOSITOR_BLOB) $(WAYLAND_CLIENT_BLOB)
+endif
 
 # ============================================================
 #   Build Targets
@@ -355,6 +413,15 @@ $(WINSRV_BIN):
 $(WINSTUB_BIN):
 	@$(MAKE) -C src/user apps/winstub
 
+$(INIT_STUB_BIN) $(SECOND_STUB_BIN):
+	@$(MAKE) -C src/user stubs
+
+$(WAYLAND_COMPOSITOR_BIN):
+	@$(MAKE) -C src/user/compositor/futura-wayland all
+
+$(WAYLAND_CLIENT_BIN):
+	@$(MAKE) -C src/user/clients/wl-simple all
+
 $(OBJ_DIR)/kernel/blobs:
 	@mkdir -p $@
 
@@ -367,6 +434,22 @@ $(WINSRV_BLOB): $(WINSRV_BIN) | $(OBJ_DIR)/kernel/blobs
 	@$(OBJCOPY) -I binary -O elf64-x86-64 -B i386:x86-64 $< $@
 
 $(WINSTUB_BLOB): $(WINSTUB_BIN) | $(OBJ_DIR)/kernel/blobs
+	@echo "OBJCOPY $@"
+	@$(OBJCOPY) -I binary -O elf64-x86-64 -B i386:x86-64 $< $@
+
+$(INIT_STUB_BLOB): $(INIT_STUB_BIN) | $(OBJ_DIR)/kernel/blobs
+	@echo "OBJCOPY $@"
+	@$(OBJCOPY) -I binary -O elf64-x86-64 -B i386:x86-64 $< $@
+
+$(SECOND_STUB_BLOB): $(SECOND_STUB_BIN) | $(OBJ_DIR)/kernel/blobs
+	@echo "OBJCOPY $@"
+	@$(OBJCOPY) -I binary -O elf64-x86-64 -B i386:x86-64 $< $@
+
+$(WAYLAND_COMPOSITOR_BLOB): $(WAYLAND_COMPOSITOR_BIN) | $(OBJ_DIR)/kernel/blobs
+	@echo "OBJCOPY $@"
+	@$(OBJCOPY) -I binary -O elf64-x86-64 -B i386:x86-64 $< $@
+
+$(WAYLAND_CLIENT_BLOB): $(WAYLAND_CLIENT_BIN) | $(OBJ_DIR)/kernel/blobs
 	@echo "OBJCOPY $@"
 	@$(OBJCOPY) -I binary -O elf64-x86-64 -B i386:x86-64 $< $@
 
@@ -384,7 +467,7 @@ tools:
 	@$(MAKE) -C tools
 
 # Compile C sources
-$(OBJ_DIR)/%.o: %.c $(GEN_VERSION_HDR) | $(OBJ_DIR)
+$(OBJ_DIR)/%.o: %.c $(GEN_VERSION_HDR) $(GEN_FEATURE_HDR) | $(OBJ_DIR)
 	@echo "CC $<"
 	@mkdir -p $(dir $@)
 	@$(CC) $(CFLAGS) -c $< -o $@
@@ -453,7 +536,8 @@ test: iso disk
 	fi
 
 .PHONY: desktop-step2
-desktop-step2: iso disk
+desktop-step2:
+	@$(MAKE) ENABLE_WINSRV_DEMO=1 iso disk
 	@echo "Running desktop-step2 scenario under QEMU..."
 	@img=$(QEMU_DISK_IMG); \
 		echo "[DESKTOP] Using disk $$img"; \
@@ -471,6 +555,30 @@ desktop-step2: iso disk
 		exit 0; \
 	else \
 		echo "[DESKTOP] FAIL (qemu code $$code)"; \
+		exit $$code; \
+	fi
+
+.PHONY: wayland-step2
+wayland-step2:
+	@$(MAKE) third_party-wayland
+	@$(MAKE) DEBUG_WAYLAND=1 ENABLE_WAYLAND_DEMO=1 iso disk
+	@echo "Running wayland-step2 scenario under QEMU..."
+	@img=$(QEMU_DISK_IMG); \
+		echo "[WAYLAND] Using disk $$img"; \
+		qemu-system-x86_64 \
+			-serial stdio \
+			-display none \
+			-m $(QEMU_MEM) \
+			$(QEMU_FLAGS) \
+			-cdrom futura.iso \
+			-boot d \
+	; \
+	code=$$?; \
+	if [ $$code -eq 1 ]; then \
+		echo "[WAYLAND] PASS"; \
+		exit 0; \
+	else \
+		echo "[WAYLAND] FAIL (qemu code $$code)"; \
 		exit $$code; \
 	fi
 
@@ -571,8 +679,11 @@ help:
 	@echo "  all               - Build kernel and userland (default)"
 	@echo "  kernel            - Build kernel only"
 	@echo "  userland          - Build userland services only"
+	@echo "  third_party-wayland - Build vendored Wayland libraries"
 	@echo "  iso               - Build bootable GRUB ISO (required for testing)"
 	@echo "  test              - Build and test kernel with GRUB (recommended)"
+	@echo "  desktop-step2      - Boot winsrv/winstub demo (feature flag)"
+	@echo "  wayland-step2      - Boot Wayland compositor/client skeleton"
 	@echo "  clean             - Remove build artifacts"
 	@echo "  help              - Show this help message"
 	@echo ""
@@ -603,7 +714,8 @@ help:
 	@echo "  make BUILD_MODE=release       - Build optimized release"
 	@echo "  make qemu-x86_64              - Test x86-64 kernel in QEMU"
 	@echo "  make qemu-arm64               - Test ARM64 kernel in QEMU"
-	@echo "  make desktop-step2           - Boot winsrv/winstub demo in QEMU"
+	@echo "  make desktop-step2            - Boot winsrv/winstub demo in QEMU"
+	@echo "  make third_party-wayland      - Build vendored Wayland libs and scanner"
 	@echo "  make clean                    - Clean build artifacts"
 
 # ============================================================
@@ -611,3 +723,6 @@ help:
 # ============================================================
 
 # Automatic dependency generation will be added in Phase 2
+.PHONY: third_party-wayland
+third_party-wayland:
+	@$(MAKE) -C third_party/wayland all

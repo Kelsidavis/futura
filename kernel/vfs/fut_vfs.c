@@ -11,6 +11,7 @@
 #include <kernel/chrdev.h>
 #include <kernel/devfs.h>
 #include <kernel/errno.h>
+#include <platform/platform.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdbool.h>
@@ -18,7 +19,7 @@
 extern void fut_printf(const char *fmt, ...);
 
 /* Uncomment for verbose VFS tracing */
-/* #define DEBUG_VFS 1 */
+#define DEBUG_VFS 1
 
 #ifdef DEBUG_VFS
 #define VFSDBG(...) fut_printf(__VA_ARGS__)
@@ -44,6 +45,32 @@ static struct fut_file *file_table[MAX_OPEN_FILES];
 /* Root vnode - set when root filesystem is mounted */
 static struct fut_vnode *root_vnode = NULL;
 static struct fut_vnode *root_vnode_base = NULL;
+static uint64_t *root_canary_before = NULL;
+static uint64_t *root_canary_after = NULL;
+
+#define ROOT_CANARY_BEFORE_VALUE 0xFADC0DE0CAFEBABEULL
+#define ROOT_CANARY_AFTER_VALUE  0xDEADBEEFCAFED00DULL
+
+void fut_vfs_register_root_canary(uint64_t *before, uint64_t *after) {
+    root_canary_before = before;
+    root_canary_after = after;
+    fut_vfs_check_root_canary("register");
+}
+
+void fut_vfs_check_root_canary(const char *where) {
+    if (root_canary_before && *root_canary_before != ROOT_CANARY_BEFORE_VALUE) {
+        fut_printf("[VFS] root canary (before) smashed at %s\n", where);
+        fut_platform_panic("root canary before corrupted");
+    }
+    if (root_canary_after && *root_canary_after != ROOT_CANARY_AFTER_VALUE) {
+        fut_printf("[VFS] root canary (after) smashed at %s\n", where);
+        fut_platform_panic("root canary after corrupted");
+    }
+    if (root_vnode && root_vnode->type == VN_INVALID) {
+        fut_printf("[VFS] root vnode type invalid at %s\n", where);
+        fut_platform_panic("root vnode corrupted");
+    }
+}
 
 /* ============================================================
  *   VFS Initialization
@@ -405,6 +432,8 @@ static int lookup_vnode(const char *path, struct fut_vnode **vnode) {
         return 0;
     }
 
+    const char *orig_path = path;
+
     /* Parse path into components */
     char components[MAX_PATH_COMPONENTS][FUT_VFS_NAME_MAX + 1];
     int num_components = parse_path(path, components, MAX_PATH_COMPONENTS);
@@ -427,6 +456,7 @@ static int lookup_vnode(const char *path, struct fut_vnode **vnode) {
     VFSDBG("[vfs] lookup_vnode start current=%p ref=%u\n",
            (void *)current,
            current ? current->refcount : 0);
+    VFSDBG("[vfs] root vnode type=%d\n", root_vnode ? (int)root_vnode->type : -1);
     VFSDBG("[vfs] lookup_vnode path=%s\n", path);
 
     /* Walk path components */
@@ -492,6 +522,11 @@ static int lookup_vnode(const char *path, struct fut_vnode **vnode) {
 
         /* Check if current is a directory */
         if (current->type != VN_DIR) {
+            VFSDBG("[vfs]  ENOTDIR while resolving %s: component '%s' current=%p type=%d\n",
+                   orig_path,
+                   component,
+                   (void *)current,
+                   current ? (int)current->type : -1);
             release_lookup_ref(current);
             return -ENOTDIR;
         }
@@ -751,6 +786,7 @@ static int try_open_chrdev(const char *path, int flags) {
 int fut_vfs_open(const char *path, int flags, int mode) {
     struct fut_vnode *vnode = NULL;
     int ret;
+    bool created = false;
 
     int chr_fd = try_open_chrdev(path, flags);
     if (chr_fd != -ENOENT) {
@@ -762,11 +798,36 @@ int fut_vfs_open(const char *path, int flags, int mode) {
     if (ret < 0) {
         /* If O_CREAT is set and parent exists, create new file */
         if ((flags & O_CREAT) && ret == -ENOENT) {
-            /* TODO: Parse parent directory and create file */
-            /* For now, return error */
-            return -ENOENT;
+            struct fut_vnode *parent = NULL;
+            char leaf[FUT_VFS_NAME_MAX + 1];
+
+            int lookup_ret = lookup_parent_and_name(path, &parent, leaf);
+            if (lookup_ret < 0) {
+                return lookup_ret;
+            }
+
+            if (!parent->ops || !parent->ops->create) {
+                release_lookup_ref(parent);
+                return -ENOSYS;
+            }
+
+            struct fut_vnode *new_node = NULL;
+            int create_ret = parent->ops->create(parent, leaf, (uint32_t)mode, &new_node);
+            release_lookup_ref(parent);
+            if (create_ret < 0) {
+                return create_ret;
+            }
+
+            vnode = new_node;
+            created = true;
+        } else {
+            return ret;
         }
-        return ret;
+    } else {
+        if ((flags & O_CREAT) && (flags & O_EXCL)) {
+            release_lookup_ref(vnode);
+            return -EEXIST;
+        }
     }
 
     /* Check if trying to open directory with write flags */
@@ -792,7 +853,11 @@ int fut_vfs_open(const char *path, int flags, int mode) {
     }
 
     file->vnode = vnode;
-    file->offset = 0;
+    if ((flags & O_APPEND) && !created) {
+        file->offset = vnode->size;
+    } else {
+        file->offset = 0;
+    }
     file->flags = flags;
     file->refcount = 1;
     file->chr_ops = NULL;

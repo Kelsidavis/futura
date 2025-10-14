@@ -3,7 +3,7 @@
 # Licensed under MPL v2.0
 
 # Subdirectories
-USERLAND_DIRS := libfutura init fsd posixd futurawayd fbtest services/winsrv apps/winstub
+USERLAND_DIRS := libfutura init fsd posixd futurawayd fbtest stubs services/winsrv apps/winstub
 
 # Build targets
 .PHONY: all clean $(USERLAND_DIRS)

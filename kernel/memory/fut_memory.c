@@ -8,6 +8,7 @@
  */
 
 #include "../../include/kernel/fut_memory.h"
+#include <platform/platform.h>
 
 #if defined(__x86_64__)
 #include <arch/x86_64/pmap.h>
@@ -27,6 +28,10 @@ static uint64_t  pmm_reserved_pages = 0;
 #define BITMAP_SET(b)   (pmm_bitmap[(b)/8u] |=  (1u << ((b)%8u)))
 #define BITMAP_CLR(b)   (pmm_bitmap[(b)/8u] &= ~(1u << ((b)%8u)))
 #define BITMAP_TST(b)   (pmm_bitmap[(b)/8u] &   (1u << ((b)%8u)))
+
+#ifndef FUT_ASSERT
+#define FUT_ASSERT(expr) do { if (!(expr)) fut_platform_panic("FUT_ASSERT failed: " #expr); } while (0)
+#endif
 
 void fut_pmm_init(uint64_t mem_size_bytes, uintptr_t phys_base) {
     // Calculate total number of pages
@@ -112,6 +117,50 @@ uintptr_t fut_pmm_base_phys(void) {
     return pmm_base;
 }
 
+uintptr_t fut_pmm_bitmap_end_virt(void) {
+    uintptr_t offset = pmm_reserved_pages * FUT_PAGE_SIZE;
+#if defined(__x86_64__)
+    return pmap_phys_to_virt(pmm_base + offset);
+#else
+    return pmm_base + offset;
+#endif
+}
+
+void fut_pmm_reserve_range(uintptr_t phys_addr, size_t size_bytes) {
+    if (size_bytes == 0) {
+        return;
+    }
+
+    uintptr_t start = phys_addr;
+    uintptr_t end = phys_addr + size_bytes;
+
+    if (end <= start) {
+        return;
+    }
+
+    if (start < pmm_base) {
+        start = pmm_base;
+    }
+    if (end <= pmm_base) {
+        return;
+    }
+
+    uint64_t first_page = (start - pmm_base) >> FUT_PAGE_SHIFT;
+    uint64_t last_page = (end - 1ULL - pmm_base) >> FUT_PAGE_SHIFT;
+    if (last_page >= pmm_total) {
+        last_page = pmm_total - 1ULL;
+    }
+
+    for (uint64_t idx = first_page; idx <= last_page; ++idx) {
+        if (!BITMAP_TST(idx)) {
+            BITMAP_SET(idx);
+            if (pmm_free > 0) {
+                --pmm_free;
+            }
+        }
+    }
+}
+
 /* ============================================================
  *   Kernel Heap (Simple First-Fit Allocator)
  * ============================================================ */
@@ -129,6 +178,23 @@ void fut_heap_init(uintptr_t heap_start, uintptr_t heap_end) {
     // Align heap boundaries to page boundaries
     heap_base  = FUT_PAGE_ALIGN(heap_start);
     heap_limit = FUT_PAGE_ALIGN(heap_end);
+
+    uintptr_t bitmap_guard = fut_pmm_bitmap_end_virt();
+    if (heap_base < bitmap_guard) {
+        heap_base = bitmap_guard;
+    }
+
+    if (heap_limit > heap_base) {
+#if defined(__x86_64__)
+        phys_addr_t phys_start = pmap_virt_to_phys(heap_base);
+        phys_addr_t phys_end = pmap_virt_to_phys(heap_limit - FUT_PAGE_SIZE) + FUT_PAGE_SIZE;
+        fut_pmm_reserve_range((uintptr_t)phys_start, (size_t)(phys_end - phys_start));
+#else
+        fut_pmm_reserve_range(heap_base, heap_limit - heap_base);
+#endif
+    }
+
+    FUT_ASSERT(heap_base >= bitmap_guard);
 
     // Create initial free block spanning entire heap
     free_list = (block_hdr_t *)heap_base;

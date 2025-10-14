@@ -20,6 +20,7 @@
 #define __vsnprintf_chk(buf, sz, fl, bsz, fmt, ap) vsnprintf((buf), (sz), (fmt), (ap))
 #define __vfprintf_chk(stream, fl, fmt, ap) vfprintf((stream), (fmt), (ap))
 #define __fprintf_chk(stream, fl, fmt, ...) fprintf((stream), (fmt), __VA_ARGS__)
+#define __fputs_chk(str, stream, bsz) fputs((str), (stream))
 
 #define mmap64(addr, length, prot, flags, fd, offset) mmap((addr), (length), (prot), (flags), (fd), (offset))
 

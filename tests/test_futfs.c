@@ -350,13 +350,24 @@ static void fut_futfs_selftest_thread(void *arg) {
         return;
     }
 
-    fut_printf("[FUTURAFS-TEST] statfs ok (blocks=%llu free=%llu tombstones=%llu)\n",
+    uint64_t blocks_used_after = (fs_stats_after.blocks_total > fs_stats_after.blocks_free)
+                                     ? fs_stats_after.blocks_total - fs_stats_after.blocks_free
+                                     : 0;
+    uint64_t inodes_used_after = (fs_stats_after.inodes_total > fs_stats_after.inodes_free)
+                                     ? fs_stats_after.inodes_total - fs_stats_after.inodes_free
+                                     : 0;
+
+    fut_printf("[FUTURAFS-TEST] statfs ok (blocks %llu/%llu inodes %llu/%llu tombstones %llu)\n",
+               (unsigned long long)blocks_used_after,
                (unsigned long long)fs_stats_after.blocks_total,
-               (unsigned long long)fs_stats_after.blocks_free,
+               (unsigned long long)inodes_used_after,
+               (unsigned long long)fs_stats_after.inodes_total,
                (unsigned long long)fs_stats_after.dir_tombstones);
-    fut_printf("[FUTURAFS-TEST] gc compact ok (before=%llu after=%llu)\n",
-               (unsigned long long)gc_stats.tombstones_before,
-               (unsigned long long)gc_stats.tombstones_after);
+    fut_printf("[FUTURAFS-TEST] gc compact ok (size from %llu -> %llu)\n",
+               (unsigned long long)gc_stats.bytes_before,
+               (unsigned long long)gc_stats.bytes_after);
+
+    futfs_set_crash_compaction(false);
 
     fut_printf("FuturaFS test passed\n");
     futfs_unmount();

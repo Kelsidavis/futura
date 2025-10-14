@@ -39,6 +39,10 @@
 #define E2BIG       7
 #endif
 
+#ifndef EBADF
+#define EBADF       9
+#endif
+
 #ifndef ENOMEM
 #define ENOMEM      12
 #endif
@@ -99,6 +103,18 @@
 #define ENOSPC      28
 #endif
 
+#ifndef EPIPE
+#define EPIPE       32
+#endif
+
+#ifndef ERANGE
+#define ERANGE      34
+#endif
+
+#ifndef ENAMETOOLONG
+#define ENAMETOOLONG 36
+#endif
+
 #ifndef ESPIPE
 #define ESPIPE      29
 #endif
@@ -117,6 +133,14 @@
 
 #ifndef ELOOP
 #define ELOOP       40
+#endif
+
+#ifndef EOVERFLOW
+#define EOVERFLOW   75
+#endif
+
+#ifndef EPROTO
+#define EPROTO      71
 #endif
 
 #ifndef EMSGSIZE

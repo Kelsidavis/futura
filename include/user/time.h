@@ -5,6 +5,10 @@
 #define CLOCK_MONOTONIC 1
 #endif
 
+#ifndef CLOCK_REALTIME
+#define CLOCK_REALTIME 0
+#endif
+
 #ifndef FUTURA_TIMESPEC_DEFINED
 #define FUTURA_TIMESPEC_DEFINED
 #if !defined(__timespec_defined) && !defined(_STRUCT_TIMESPEC) && !defined(__STRUCT_TIMESPEC__) && !defined(__have_timespec)

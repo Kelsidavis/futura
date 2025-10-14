@@ -13,6 +13,7 @@
 #include <stddef.h>
 #include <stdbool.h>
 #include <kernel/fut_fipc.h>
+#include <sys/stat.h>
 
 /* ============================================================
  *   POSIX Types (for freestanding environment)
@@ -24,16 +25,46 @@
 #else
 #define __POSIX_TYPES_DEFINED 1
 
+#ifndef FUT_SSIZE_T_DEFINED
+#define FUT_SSIZE_T_DEFINED 1
 typedef int64_t ssize_t;
+#endif
+#ifndef FUT_OFF_T_DEFINED
+#define FUT_OFF_T_DEFINED 1
 typedef int64_t off_t;
+#endif
+#ifndef FUT_DEV_T_DEFINED
+#define FUT_DEV_T_DEFINED 1
 typedef uint64_t dev_t;
+#endif
+#ifndef FUT_INO_T_DEFINED
+#define FUT_INO_T_DEFINED 1
 typedef uint64_t ino_t;
+#endif
+#ifndef FUT_MODE_T_DEFINED
+#define FUT_MODE_T_DEFINED 1
 typedef uint32_t mode_t;
+#endif
+#ifndef FUT_UID_T_DEFINED
+#define FUT_UID_T_DEFINED 1
 typedef uint32_t uid_t;
+#endif
+#ifndef FUT_GID_T_DEFINED
+#define FUT_GID_T_DEFINED 1
 typedef uint32_t gid_t;
+#endif
+#ifndef FUT_TIME_T_DEFINED
+#define FUT_TIME_T_DEFINED 1
 typedef int64_t time_t;
+#endif
+#ifndef FUT_PID_T_DEFINED
+#define FUT_PID_T_DEFINED 1
 typedef int32_t pid_t;
+#endif
+#ifndef FUT_SOCKLEN_T_DEFINED
+#define FUT_SOCKLEN_T_DEFINED 1
 typedef uint32_t socklen_t;
+#endif
 
 #endif /* defined(_SYS_TYPES_H) */
 #endif /* __POSIX_TYPES_DEFINED */
@@ -426,6 +457,26 @@ struct cmsghdr {
 #define SOL_SOCKET     1
 #define SCM_RIGHTS     1
 
+#ifndef FD_CLOEXEC
+#define FD_CLOEXEC     1
+#endif
+
+#ifndef O_CLOEXEC
+#define O_CLOEXEC      02000000
+#endif
+
+#ifndef O_NONBLOCK
+#define O_NONBLOCK     04000
+#endif
+
+#define F_DUPFD            0
+#define F_GETFD            1
+#define F_SETFD            2
+#define F_GETFL            3
+#define F_SETFL            4
+#define F_DUPFD_CLOEXEC    1030
+#define F_GET_SEALS        1034
+
 int    socket(int domain, int type, int protocol);
 int    bind(int fd, const struct sockaddr *addr, socklen_t len);
 int    listen(int fd, int backlog);
@@ -436,6 +487,30 @@ ssize_t recvmsg(int fd, struct msghdr *msg, int flags);
 int    getsockopt(int fd, int level, int optname, void *optval, socklen_t *optlen);
 int    setsockopt(int fd, int level, int optname, const void *optval, socklen_t optlen);
 int    shutdown(int fd, int how);
+int    fcntl(int fd, int cmd, ...);
+int    fcntl64(int fd, int cmd, ...);
+int    fstat(int fd, struct stat *st);
+
+#ifndef EFD_SEMAPHORE
+#define EFD_SEMAPHORE 0x1
+#endif
+#ifndef EFD_CLOEXEC
+#define EFD_CLOEXEC   0x80000
+#endif
+#ifndef EFD_NONBLOCK
+#define EFD_NONBLOCK  0x800
+#endif
+
+int    eventfd(unsigned int initval, int flags);
+
+#ifndef MREMAP_MAYMOVE
+#define MREMAP_MAYMOVE  1
+#endif
+#ifndef MREMAP_FIXED
+#define MREMAP_FIXED    2
+#endif
+
+void  *mremap(void *old_addr, size_t old_size, size_t new_size, int flags, ...);
 
 void  *mmap(void *addr, size_t length, int prot, int flags, int fd, off_t offset);
 int    munmap(void *addr, size_t length);

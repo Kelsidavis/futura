@@ -2,8 +2,13 @@
 
 #include "fd.h"
 
+#include <errno.h>
 #include <user/futura_posix.h>
 #include <user/libfutura.h>
+#include "eventfd_internal.h"
+
+extern int __fut_unix_socket_retain(int fd);
+extern int __fut_unix_socket_set_flags(int fd, int flags);
 
 #define FUT_FD_TABLE_SIZE 256
 #define FUT_FD_BASE       128
@@ -18,6 +23,34 @@ int fut_fd_alloc(enum fut_fd_kind kind, void *payload) {
             fd_table[idx].in_use = true;
             fd_table[idx].kind = kind;
             fd_table[idx].payload = payload;
+            fd_table[idx].flags = 0;
+            fd_table[idx].cloexec = 0;
+            next_fd_hint = (idx + 1) % FUT_FD_TABLE_SIZE;
+            return FUT_FD_BASE + idx;
+        }
+    }
+    return -1;
+}
+
+int fut_fd_alloc_at_or_above(enum fut_fd_kind kind, void *payload, int min_fd,
+                             int inherit_flags, int cloexec) {
+    if (min_fd < FUT_FD_BASE) {
+        min_fd = FUT_FD_BASE;
+    }
+    int start_idx = min_fd - FUT_FD_BASE;
+    if (start_idx < 0) {
+        start_idx = 0;
+    }
+    if (start_idx >= FUT_FD_TABLE_SIZE) {
+        return -1;
+    }
+    for (int idx = start_idx; idx < FUT_FD_TABLE_SIZE; ++idx) {
+        if (!fd_table[idx].in_use) {
+            fd_table[idx].in_use = true;
+            fd_table[idx].kind = kind;
+            fd_table[idx].payload = payload;
+            fd_table[idx].flags = inherit_flags;
+            fd_table[idx].cloexec = cloexec ? 1 : 0;
             next_fd_hint = (idx + 1) % FUT_FD_TABLE_SIZE;
             return FUT_FD_BASE + idx;
         }
@@ -52,6 +85,8 @@ void fut_fd_release(int fd) {
     fd_table[idx].in_use = false;
     fd_table[idx].payload = NULL;
     fd_table[idx].kind = FUT_FD_NONE;
+    fd_table[idx].flags = 0;
+    fd_table[idx].cloexec = 0;
     if (next_fd_hint == idx) {
         next_fd_hint = (idx + 1) % FUT_FD_TABLE_SIZE;
     }
@@ -124,4 +159,107 @@ void fut_fd_path_forget(int fd) {
             return;
         }
     }
+}
+
+static int retain_entry_kind(int fd, struct fut_fd_entry *entry) {
+    (void)entry;
+    switch (entry->kind) {
+    case FUT_FD_UNIX_STREAM:
+    case FUT_FD_UNIX_LISTENER:
+        return __fut_unix_socket_retain(fd);
+    case FUT_FD_EVENTFD:
+        return __fut_eventfd_retain(fd);
+    default:
+        return 0;
+    }
+}
+
+int fd_dup(int fd, int min_new_fd, int cloexec) {
+    struct fut_fd_entry *entry = fut_fd_lookup(fd);
+    if (!entry) {
+        errno = EBADF;
+        return -1;
+    }
+
+    switch (entry->kind) {
+    case FUT_FD_UNIX_STREAM:
+    case FUT_FD_UNIX_LISTENER:
+    case FUT_FD_EVENTFD:
+        break;
+    default:
+        errno = EINVAL;
+        return -1;
+    }
+
+    int desired_cloexec = cloexec ? 1 : entry->cloexec;
+    int new_fd = fut_fd_alloc_at_or_above(entry->kind,
+                                          entry->payload,
+                                          min_new_fd,
+                                          entry->flags,
+                                          desired_cloexec);
+    if (new_fd < 0) {
+        errno = EMFILE;
+        return -1;
+    }
+
+    if (retain_entry_kind(fd, entry) < 0) {
+        fut_fd_release(new_fd);
+        errno = EMFILE;
+        return -1;
+    }
+
+    char path_buf[128];
+    if (fut_fd_path_lookup(fd, path_buf, sizeof(path_buf)) == 0) {
+        fut_fd_path_register(new_fd, path_buf);
+    }
+
+    return new_fd;
+}
+
+int fd_get_flags(int fd, int *out_flags) {
+    struct fut_fd_entry *entry = fut_fd_lookup(fd);
+    if (!entry) {
+        return -1;
+    }
+    if (out_flags) {
+        *out_flags = entry->flags;
+    }
+    return 0;
+}
+
+int fd_set_flags(int fd, int new_flags) {
+    struct fut_fd_entry *entry = fut_fd_lookup(fd);
+    if (!entry) {
+        return -1;
+    }
+    entry->flags = new_flags;
+    switch (entry->kind) {
+    case FUT_FD_UNIX_STREAM:
+    case FUT_FD_UNIX_LISTENER:
+        __fut_unix_socket_set_flags(fd, new_flags);
+        break;
+    case FUT_FD_EVENTFD:
+        __fut_eventfd_set_flags(fd, new_flags);
+        break;
+    default:
+        break;
+    }
+    return 0;
+}
+
+int fd_get_cloexec(int fd) {
+    struct fut_fd_entry *entry = fut_fd_lookup(fd);
+    if (!entry) {
+        return -1;
+    }
+    return entry->cloexec ? FD_CLOEXEC : 0;
+}
+
+int fd_set_cloexec(int fd, int on) {
+    struct fut_fd_entry *entry = fut_fd_lookup(fd);
+    if (!entry) {
+        return -1;
+    }
+    entry->cloexec = on ? 1 : 0;
+    return 0;
 }

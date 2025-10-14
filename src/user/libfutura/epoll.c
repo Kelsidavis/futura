@@ -5,7 +5,9 @@
 #include <shared/fut_timespec.h>
 #include <user/sys.h>
 #include "timerfd_internal.h"
+#include "signalfd_internal.h"
 #include "socket_unix.h"
+#include "eventfd_internal.h"
 
 #ifndef EPOLLIN
 #define EPOLLIN 0x001u
@@ -173,6 +175,26 @@ int epoll_wait(int epfd, struct epoll_event *events, int maxevents, int timeout)
                 continue;
             }
 
+            if (__fut_eventfd_is(fd)) {
+                uint32_t mask = 0;
+                if (__fut_eventfd_poll(fd, evmask, &mask) && mask) {
+                    events[produced].events = mask;
+                    events[produced].data.fd = fd;
+                    produced++;
+                }
+                continue;
+            }
+
+            if (__fut_signalfd_is(fd)) {
+                uint32_t mask = 0;
+                if (__fut_signalfd_poll(fd, &mask) && mask) {
+                    events[produced].events = mask;
+                    events[produced].data.fd = fd;
+                    produced++;
+                }
+                continue;
+            }
+
             events[produced].events = evmask;
             events[produced].data.fd = fd;
             produced++;
@@ -215,6 +237,11 @@ int epoll_wait(int epfd, struct epoll_event *events, int maxevents, int timeout)
             }
         }
     }
+}
+
+int epoll_create(int size) {
+    (void)size;
+    return epoll_create1(0);
 }
 
 int __fut_epoll_close(int epfd) {

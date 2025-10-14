@@ -1,9 +1,22 @@
 // SPDX-License-Identifier: MPL-2.0
 #pragma once
 
+#ifdef __has_include
+#if __has_include(<signal.h>)
+#ifdef __GNUC__
+#include_next <signal.h>
+#define FUTURA_HAVE_NATIVE_SIGNAL 1
+#endif
+#endif
+#endif
+
+#ifndef FUTURA_HAVE_NATIVE_SIGNAL
 #include <stdint.h>
 
+#ifndef __sigset_t_defined
+#define __sigset_t_defined 1
 typedef unsigned long sigset_t;
+#endif
 
 typedef void (*sighandler_t)(int);
 
@@ -30,3 +43,4 @@ int sigismember(const sigset_t *set, int signum);
 int sigprocmask(int how, const sigset_t *set, sigset_t *oldset);
 int sigaction(int signum, const struct sigaction *act, struct sigaction *oldact);
 int raise(int sig);
+#endif

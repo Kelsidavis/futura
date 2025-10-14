@@ -1,0 +1,10 @@
+diff --git a/meson.build b/meson.build
+index 4adf55d3..0e3fd6d6 100644
+--- a/meson.build
++++ b/meson.build
+@@
+ if host_machine.system() not in ['freebsd', 'openbsd']
+ 	cc_args += ['-D_POSIX_C_SOURCE=200809L']
+ endif
++cc_args += ['-U_FORTIFY_SOURCE', '-D_FORTIFY_SOURCE=0', '-include', 'wayland_nofortify.h']
+ add_project_arguments(cc_args, language: 'c')

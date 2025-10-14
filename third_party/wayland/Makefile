@@ -15,6 +15,7 @@ BUILD_DIR := $(BUILD_ROOT)/build
 INSTALL_DIR := $(BUILD_ROOT)/install
 STATE_DIR := $(BUILD_ROOT)/state
 PATHS_FILE := $(BUILD_ROOT)/paths.mk
+HOST_SCANNER := $(shell command -v wayland-scanner 2>/dev/null)
 
 DOWNLOAD_DIR := vendor
 TARBALL := $(DOWNLOAD_DIR)/wayland-$(WAYLAND_VERSION).tar.gz
@@ -45,7 +46,7 @@ MESON_FLAGS := \
 	--default-library static \
 	--wrap-mode nofallback \
 	-Dlibraries=true \
-	-Dscanner=true \
+	-Dscanner=false \
 	-Dtests=false \
 	-Ddocumentation=false \
 	-Ddtd_validation=false
@@ -100,6 +101,10 @@ ifneq ($(PATCHES),)
 		patch -d $(SRC_DIR) -p1 < $$patch; \
 	done
 endif
+	@cp $(ROOT_DIR)/third_party/wayland/wayland_nofortify.h $(SRC_DIR)/
+	@sed -i "s|add_project_arguments(cc_args, language: 'c')|cc_args += ['-D_GNU_SOURCE','-U_FORTIFY_SOURCE','-D_FORTIFY_SOURCE=0','-include','$(SRC_DIR)/wayland_nofortify.h']\\nadd_project_arguments(cc_args, language: 'c')|" $(SRC_DIR)/meson.build
+	@sed -i "s|#error \"Don't know how to read ucred on this platform\"|/* Futura: no ucred support, continue */|" $(SRC_DIR)/src/wayland-os.c
+	@perl -0pi -e "s/if \(lstat\(socket->addr.sun_path, &socket_stat\) < 0 \)\s*\{\s*if \(errno != ENOENT\) \{\s*wl_log\(\"did not manage to stat file %s\\n\",\s*socket->addr.sun_path\);\s*goto err_fd;\s*\}\s*\}\s*else if \(socket_stat.st_mode & S_IWUSR \\|\\|\s*socket_stat.st_mode & S_IWGRP\) \{\s*unlink\(socket->addr.sun_path\);\s*\}/\tunlink(socket->addr.sun_path);\n/" $(SRC_DIR)/src/wayland-server.c
 	@touch $@
 
 $(NATIVE_FILE): | $(STATE_DIR)
@@ -142,7 +147,11 @@ $(PATHS_FILE): $(STAMP_BUILD) | $(INSTALL_DIR)
 		echo "WAYLAND_INCLUDEDIR := $(INSTALL_DIR)/include"; \
 		echo "WAYLAND_LIBDIR := $(INSTALL_DIR)/lib"; \
 		echo "WAYLAND_BINDIR := $(INSTALL_DIR)/bin"; \
-		echo "WAYLAND_SCANNER := $(INSTALL_DIR)/bin/wayland-scanner"; \
+		if [ -n "$(HOST_SCANNER)" ]; then \
+			echo "WAYLAND_SCANNER := $(HOST_SCANNER)"; \
+		else \
+			echo "WAYLAND_SCANNER := $(INSTALL_DIR)/bin/wayland-scanner"; \
+		fi; \
 		echo "WAYLAND_PKGCONFIG := $(INSTALL_DIR)/lib/pkgconfig"; \
 	} > $(PATHS_FILE)
 

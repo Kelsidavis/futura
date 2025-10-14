@@ -1,0 +1,16 @@
+diff --git a/src/wayland-os.c b/src/wayland-os.c
+index 2ac3c2d7..7ed41a2e 100644
+--- a/src/wayland-os.c
++++ b/src/wayland-os.c
+@@
+-	result = mmap(NULL, new_size, prot, flags, fd, 0);
++	result = wl_os_mmap(NULL, new_size, prot, flags, fd, 0);
+ 	if (result == MAP_FAILED)
+ 		return MAP_FAILED;
+ 
+-	if (munmap(old_data, *old_size) == 0)
++	if (wl_os_munmap(old_data, *old_size) == 0)
+ 		*old_size = 0;
+ 
+ 	return result;
+}

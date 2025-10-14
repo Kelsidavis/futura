@@ -100,6 +100,7 @@ struct unix_stream {
     struct unix_connection *connection;
     int endpoint_index;
     bool nonblocking;
+    int refcount;
 };
 
 struct unix_listener {
@@ -140,6 +141,7 @@ static struct unix_stream *alloc_stream(void) {
             streams[i].connection = NULL;
             streams[i].endpoint_index = 0;
             streams[i].nonblocking = false;
+            streams[i].refcount = 1;
             return &streams[i];
         }
     }
@@ -157,6 +159,7 @@ static void destroy_stream(struct unix_stream *stream) {
     stream->connection = NULL;
     stream->endpoint_index = 0;
     stream->nonblocking = false;
+    stream->refcount = 0;
 }
 
 static struct unix_listener *alloc_listener(void) {
@@ -775,6 +778,11 @@ int __fut_unix_socket_close(int fd) {
         return -1;
     }
 
+    if (stream->refcount > 1) {
+        stream->refcount -= 1;
+        return 0;
+    }
+
     if (stream->state == STREAM_LISTENER || stream->state == STREAM_BOUND) {
         if (stream->listener) {
             close_listener_pending(stream->listener);
@@ -796,6 +804,24 @@ int __fut_unix_socket_close(int fd) {
 
 void __fut_unix_socket_forget(int fd) {
     (void)fd;
+}
+
+int __fut_unix_socket_retain(int fd) {
+    struct unix_stream *stream = socket_from_fd(fd);
+    if (!stream) {
+        return -1;
+    }
+    stream->refcount += 1;
+    return 0;
+}
+
+int __fut_unix_socket_set_flags(int fd, int flags) {
+    struct unix_stream *stream = socket_from_fd(fd);
+    if (!stream) {
+        return -1;
+    }
+    stream->nonblocking = (flags & O_NONBLOCK) != 0;
+    return 0;
 }
 
 int getsockopt(int fd, int level, int optname, void *optval, socklen_t *optlen) {

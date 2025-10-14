@@ -125,6 +125,11 @@ int fut_map_page(fut_vmem_context_t *ctx, uint64_t vaddr, uint64_t paddr, uint64
     uint64_t pt_idx = PT_INDEX(vaddr);
 
     /* Get or create PDPT */
+    uint64_t level_flags = PTE_PRESENT | PTE_WRITABLE;
+    if (ctx) {
+        level_flags |= PTE_USER;
+    }
+
     page_table_t *pdpt;
     if (!(pml4[pml4_idx] & PTE_PRESENT)) {
         /* Need to allocate new PDPT */
@@ -138,7 +143,7 @@ int fut_map_page(fut_vmem_context_t *ctx, uint64_t vaddr, uint64_t paddr, uint64
         }
         assert_kernel_table_ptr(pdpt);
         phys_addr_t pdpt_phys = pmap_virt_to_phys((uintptr_t)pdpt);
-        pml4[pml4_idx] = fut_make_pte(pdpt_phys, PTE_PRESENT | PTE_WRITABLE);
+        pml4[pml4_idx] = fut_make_pte(pdpt_phys, level_flags);
     } else {
         pdpt = pt_virt_from_entry(pml4[pml4_idx]);
     }
@@ -158,7 +163,7 @@ int fut_map_page(fut_vmem_context_t *ctx, uint64_t vaddr, uint64_t paddr, uint64
         }
         assert_kernel_table_ptr(pd);
         phys_addr_t pd_phys = pmap_virt_to_phys((uintptr_t)pd);
-        pdpt->entries[pdpt_idx] = fut_make_pte(pd_phys, PTE_PRESENT | PTE_WRITABLE);
+        pdpt->entries[pdpt_idx] = fut_make_pte(pd_phys, level_flags);
     } else {
         pd = pt_virt_from_entry(pdpt->entries[pdpt_idx]);
     }
@@ -178,7 +183,7 @@ int fut_map_page(fut_vmem_context_t *ctx, uint64_t vaddr, uint64_t paddr, uint64
         }
         assert_kernel_table_ptr(pt);
         phys_addr_t pt_phys = pmap_virt_to_phys((uintptr_t)pt);
-        pd->entries[pd_idx] = fut_make_pte(pt_phys, PTE_PRESENT | PTE_WRITABLE);
+        pd->entries[pd_idx] = fut_make_pte(pt_phys, level_flags);
     } else if (pd->entries[pd_idx] & PTE_LARGE_PAGE) {
         VMDBG("[VM] Splitting large page: vaddr=0x%llx paddr=0x%llx\n",
               (unsigned long long)vaddr,

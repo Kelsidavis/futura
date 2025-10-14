@@ -819,19 +819,31 @@ void fut_kernel_main(void) {
 
     fut_printf("[INIT] Root filesystem mounted (ramfs at /)\n");
 
-    bool perf_enabled = fut_boot_arg_flag("perf");
-    uint16_t planned_tests = 3u + (perf_enabled ? 1u : 0u);
+    bool perf_flag = fut_boot_arg_flag("perf");
+    bool run_async_selftests = boot_flag_enabled("async-tests", false);
+
+    uint16_t planned_tests = 1u; /* VFS smoke */
     if (fb_enabled) {
         planned_tests += 1u;
     }
     if (input_enabled) {
         planned_tests += 1u;
     }
-    planned_tests += 1u;
+    planned_tests += 1u; /* exec double */
+    if (run_async_selftests) {
+        planned_tests += 1u; /* block */
+        planned_tests += 1u; /* futfs */
+        planned_tests += 1u; /* net */
+        if (perf_flag) {
+            planned_tests += 1u; /* perf */
+        }
+    }
     fut_test_plan(planned_tests);
 
     /* Test VFS operations */
     test_vfs_operations();
+
+    fut_exec_double_smoke();
 
     /* ========================================
      *   Step 4: Initialize Block Device Subsystem
@@ -994,11 +1006,15 @@ void fut_kernel_main(void) {
 
     fut_printf("[INIT] Test task created (PID %llu)\n", test_task->pid);
 
-    fut_blk_async_selftest_schedule(test_task);
-    fut_futfs_selftest_schedule(test_task);
-    fut_net_selftest_schedule(test_task);
-    if (perf_enabled) {
-        fut_perf_selftest_schedule(test_task);
+    bool perf_enabled = run_async_selftests && perf_flag;
+
+    if (run_async_selftests) {
+        fut_blk_async_selftest_schedule(test_task);
+        fut_futfs_selftest_schedule(test_task);
+        fut_net_selftest_schedule(test_task);
+        if (perf_enabled) {
+            fut_perf_selftest_schedule(test_task);
+        }
     }
 
     fut_thread_t *watchdog_thread = fut_thread_create(

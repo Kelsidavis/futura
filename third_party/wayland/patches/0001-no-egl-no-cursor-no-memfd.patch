@@ -1,0 +1,47 @@
+From 4f6a7b3b2e1a37937f67201f1f4f90ed3ad85313 Mon Sep 17 00:00:00 2001
+From: Futura OS Team <build@futura.os>
+Date: Fri, 10 Jan 2026 12:00:00 +0000
+Subject: [PATCH] build: disable egl/cursor components and memfd usage
+
+Futura OS runs Wayland in a strictly freestanding configuration:
+
+- we do not ship libpng or a runtime icon theme, so the cursor helper
+  library is unused;
+- we do not load EGL modules dynamically, so the egl helper library is
+  unnecessary and drags in dlopen();
+- wl_shm must be backed by POSIX shared memory instead of memfd_create().
+
+Drop the optional subdirectories so only the core client/server libraries
+are built, and make sure `HAVE_MEMFD_CREATE` resolves to 0 even if the host
+toolchain exposes the symbol.
+---
+--- a/meson.build
++++ b/meson.build
+@@ -50,6 +50,7 @@
+ foreach f: have_funcs
+ 	config_h.set('HAVE_' + f.underscorify().to_upper(), cc.has_function(f))
+ endforeach
++config_h.set('HAVE_MEMFD_CREATE', 0)
+ config_h.set10('HAVE_XUCRED_CR_PID', cc.has_member('struct xucred', 'cr_pid', prefix : '#include <sys/ucred.h>'))
+ have_broken_msg_cmsg_cloexec = false
+ if host_machine.system() == 'freebsd'
+@@ -116,9 +117,15 @@
+ subdir('src')
+ 
+ if get_option('libraries')
+-	subdir('cursor')
+-	subdir('egl')
++	message('Skipping cursor/ and egl/ helpers for Futura vendored build')
++else
++	message('Wayland libraries disabled; nothing to skip')
+ endif
++
++# Upstream normally installs cursor/ and egl/ helpers as part of the library
++# option, but Futura ships its own software cursor and never dlopens EGL
++# helpers inside the compositor.  The informative messages above keep Meson
++# aware of the conditional even though the subdir() calls have been removed.
+ if get_option('tests')
+ 	subdir('tests')
+ endif
+-- 
+2.43.0

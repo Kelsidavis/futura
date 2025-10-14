@@ -122,6 +122,29 @@ The QEMU console will show the window server announcing readiness and the stub c
 
 The stub throttles updates with short sleeps so the damage passes remain visible on hardware-backed framebuffers.
 
+### Wayland toolchain prep (early access)
+
+We are beginning the migration toward a Wayland-compatible compositor. To stage the required
+libraries and code generators, vendor the upstream stack once:
+
+```bash
+make third_party-wayland
+```
+
+This downloads Wayland 1.23.0 into `third_party/wayland/`, builds static client/server libraries,
+installs `wayland-scanner` under `build/third_party/wayland/install/bin/`, and exposes make
+variables (`WAYLAND_*`) so userland components can consume the headers and libs in later steps.
+
+To exercise the current compositor/client skeleton loop, run:
+
+```bash
+make wayland-step2
+```
+
+This target rebuilds the kernel with the Wayland demo enabled, stages the compositor (`futura-wayland`)
+and client (`wl-simple`) into `/sbin` and `/bin`, then boots QEMU to show the handshake logs on the
+serial console.
+
 ### Debugging
 
 Enable targeted tracing at build time by defining the relevant flag, for example:

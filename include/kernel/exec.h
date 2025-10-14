@@ -13,3 +13,7 @@ int fut_exec_elf(const char *path, char *const argv[]);
 int fut_stage_fbtest_binary(void);
 int fut_stage_winsrv_binary(void);
 int fut_stage_winstub_binary(void);
+int fut_stage_init_stub_binary(void);
+int fut_stage_second_stub_binary(void);
+int fut_stage_wayland_compositor_binary(void);
+int fut_stage_wayland_client_binary(void);

@@ -77,6 +77,9 @@ uint64_t fut_pmm_free_pages(void);
  * Get physical base address managed by the PMM.
  */
 uintptr_t fut_pmm_base_phys(void);
+uintptr_t fut_pmm_bitmap_end_virt(void);
+
+void fut_pmm_reserve_range(uintptr_t phys_addr, size_t size_bytes);
 
 typedef struct fut_mmap_entry {
     uint64_t base;

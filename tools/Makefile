@@ -1,9 +1,12 @@
 ROOT := ..
+BUILD_DIR ?= build
+ABS_BUILD_DIR := $(ROOT)/$(BUILD_DIR)
 INCLUDES := -I$(ROOT)/include -I$(ROOT) -I$(ROOT)/src/user/sys -I$(ROOT)/src/user/netd
 CFLAGS := -std=c2x -Wall -Wextra -Werror -g -O2 $(INCLUDES)
-LDFLAGS :=
-LIBFIPC_HOST := $(ROOT)/build/lib/libfipc_host.a
-BIN_DIR := $(ROOT)/build/tools
+CFLAGS += $(REPRO_CFLAGS)
+LDFLAGS += $(REPRO_LDFLAGS)
+LIBFIPC_HOST := $(ABS_BUILD_DIR)/lib/libfipc_host.a
+BIN_DIR := $(ABS_BUILD_DIR)/tools
 
 TOOLS := syswatch ctltool mkfutfs fsck.futfs
 

@@ -164,6 +164,14 @@ static int map_segment(fut_mm_t *mm, int fd, const elf64_phdr_t *phdr) {
         }
 
         pages[i] = page;
+
+        uint64_t pte = 0;
+        if (pmap_probe_pte(mm_context(mm), seg_start + (uint64_t)i * PAGE_SIZE, &pte) == 0) {
+            fut_printf("[EXEC][MAP] vaddr=0x%llx pte=0x%llx flags=0x%llx\n",
+                       (unsigned long long)(seg_start + (uint64_t)i * PAGE_SIZE),
+                       (unsigned long long)pte,
+                       (unsigned long long)fut_pte_flags(pte));
+        }
     }
 
     if (phdr->p_filesz > 0) {

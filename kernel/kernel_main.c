@@ -26,6 +26,7 @@
 #include <kernel/console.h>
 #include <kernel/boot_banner.h>
 #include <kernel/boot_args.h>
+#include <kernel/input.h>
 #include <futura/blkdev.h>
 #include <futura/net.h>
 #include <platform/platform.h>
@@ -37,7 +38,8 @@
 #endif
 
 extern void fut_echo_selftest(void);
-extern void fut_fb_userspace_smoke(void);
+extern void fut_fb_smoke(void);
+extern void fut_input_smoke(void);
 extern void fut_blk_async_selftest_schedule(fut_task_t *task);
 extern void fut_futfs_selftest_schedule(fut_task_t *task);
 extern void fut_net_selftest_schedule(fut_task_t *task);
@@ -47,6 +49,23 @@ extern fut_status_t virtio_net_init(void);
 extern void ahci_init(void);
 extern char boot_ptables_start[];
 extern char boot_ptables_end[];
+
+static bool boot_flag_enabled(const char *key, bool default_on) {
+    const char *value = fut_boot_arg_value(key);
+    if (!value) {
+        return default_on;
+    }
+    if (*value == '\0') {
+        return true;
+    }
+    if (value[0] == '0' || value[0] == 'f' || value[0] == 'F' || value[0] == 'n' || value[0] == 'N') {
+        return false;
+    }
+    if (value[0] == '1' || value[0] == 't' || value[0] == 'T' || value[0] == 'y' || value[0] == 'Y') {
+        return true;
+    }
+    return default_on;
+}
 
 /* ============================================================
  *   External Symbols from Linker Script
@@ -701,10 +720,30 @@ void fut_kernel_main(void) {
 
     fut_boot_banner();
 
-    fb_boot_splash();
-    fb_char_init();
+    bool fb_enabled = boot_flag_enabled("fb", true);
+    bool fb_available = fb_enabled && fb_is_available();
+    if (fb_available) {
+        fb_boot_splash();
+        fb_char_init();
+    } else {
+        fb_enabled = false;
+    }
+
     fut_echo_selftest();
-    fut_fb_userspace_smoke();
+    if (fb_enabled) {
+        fut_fb_smoke();
+    }
+
+    bool input_enabled = boot_flag_enabled("input", true);
+    if (input_enabled) {
+        int input_rc = fut_input_hw_init(true, true);
+        if (input_rc != 0) {
+            fut_printf("[INPUT] init failed: %d\n", input_rc);
+            input_enabled = false;
+        } else {
+            fut_input_smoke();
+        }
+    }
 
     /* ========================================
      *   Step 2: Initialize FIPC Subsystem
@@ -747,6 +786,12 @@ void fut_kernel_main(void) {
 
     bool perf_enabled = fut_boot_arg_flag("perf");
     uint16_t planned_tests = 3u + (perf_enabled ? 1u : 0u);
+    if (fb_enabled) {
+        planned_tests += 1u;
+    }
+    if (input_enabled) {
+        planned_tests += 1u;
+    }
     fut_test_plan(planned_tests);
 
     /* Test VFS operations */

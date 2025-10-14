@@ -2,7 +2,7 @@
 
 #include <stdint.h>
 #include <stddef.h>
-#include <kernel/fb_ioctl.h>
+#include <futura/fb_ioctl.h>
 #include <shared/fut_timespec.h>
 #include <user/stdio.h>
 #include <user/sys.h>
@@ -25,28 +25,22 @@ int main(void) {
         sys_exit(-1);
     }
 
-    struct fb_fix_screeninfo fix;
-    if (sys_ioctl(fd, FBIOGET_FSCREENINFO, (long)&fix) < 0) {
+    struct fut_fb_info info;
+    if (sys_ioctl(fd, FBIOGET_INFO, (long)&info) < 0) {
         sys_close(fd);
         sys_exit(-1);
     }
 
-    struct fb_var_screeninfo var;
-    if (sys_ioctl(fd, FBIOGET_VSCREENINFO, (long)&var) < 0) {
-        sys_close(fd);
-        sys_exit(-1);
-    }
-
-    size_t fb_size = fix.smem_len;
+    size_t fb_size = (size_t)info.pitch * info.height;
     uint32_t *fb = (uint32_t *)sys_mmap(NULL, (long)fb_size, PROT_WRITE, MAP_SHARED, fd, 0);
     if ((long)fb < 0) {
         sys_close(fd);
         sys_exit(-1);
     }
 
-    uint32_t stride = fix.line_length ? (fix.line_length / 4u) : var.xres;
-    uint32_t width = var.xres;
-    uint32_t height = var.yres;
+    uint32_t stride = info.pitch / 4u;
+    uint32_t width = info.width;
+    uint32_t height = info.height;
 
     if (stride == 0 || width == 0 || height == 0) {
         sys_close(fd);

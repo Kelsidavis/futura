@@ -8,16 +8,18 @@
  */
 
 #include <kernel/fb.h>
+#include <platform/platform.h>
+
 #include <stddef.h>
 #include <stdint.h>
 #include <stdbool.h>
+
 #ifdef __x86_64__
 #include <arch/x86_64/paging.h>
 #include <arch/x86_64/pmap.h>
 #endif
-#include <platform/platform.h>
 
-static struct fut_fb_info g_fb_info = {0};
+static struct fut_fb_hwinfo g_fb_hw = {0};
 static bool g_fb_available = false;
 #ifdef __x86_64__
 static volatile uint8_t *g_fb_virt = NULL;
@@ -46,18 +48,18 @@ struct multiboot_tag_framebuffer {
 
 static void fb_splash_fill(uint32_t color) {
 #if defined(__x86_64__)
-    if (!g_fb_available || g_fb_info.bpp != 32u || g_fb_splash_drawn) {
+    if (!g_fb_available || g_fb_hw.info.bpp != 32u || g_fb_splash_drawn) {
         return;
     }
 
-    size_t fb_size = (size_t)g_fb_info.pitch * (size_t)g_fb_info.height;
-    if (fb_size == 0) {
+    size_t fb_size = (size_t)g_fb_hw.info.pitch * (size_t)g_fb_hw.info.height;
+    if (fb_size == 0 || !g_fb_hw.phys) {
         return;
     }
 
     if (!g_fb_virt) {
-        uint64_t phys_base = PAGE_ALIGN_DOWN(g_fb_info.phys);
-        uint64_t offset = g_fb_info.phys - phys_base;
+        uint64_t phys_base = PAGE_ALIGN_DOWN(g_fb_hw.phys);
+        uint64_t offset = g_fb_hw.phys - phys_base;
         uint64_t map_size = fb_size + offset;
         uintptr_t virt_base = pmap_phys_to_virt(phys_base);
 
@@ -71,13 +73,14 @@ static void fb_splash_fill(uint32_t color) {
             return;
         }
         g_fb_virt = (volatile uint8_t *)(uintptr_t)(virt_base + offset);
+        g_fb_hw.length = map_size;
     }
 
     volatile uint8_t *fb = g_fb_virt;
-    uint32_t stride = g_fb_info.pitch;
-    for (uint32_t y = 0; y < g_fb_info.height; ++y) {
+    uint32_t stride = g_fb_hw.info.pitch;
+    for (uint32_t y = 0; y < g_fb_hw.info.height; ++y) {
         volatile uint32_t *row = (volatile uint32_t *)(fb + (size_t)y * stride);
-        for (uint32_t x = 0; x < g_fb_info.width; ++x) {
+        for (uint32_t x = 0; x < g_fb_hw.info.width; ++x) {
             row[x] = color;
         }
     }
@@ -107,11 +110,12 @@ int fb_probe_from_multiboot(const void *mb_info) {
             const struct multiboot_tag_framebuffer *fbtag =
                 (const struct multiboot_tag_framebuffer *)tag;
 
-            g_fb_info.phys = fbtag->framebuffer_addr;
-            g_fb_info.width = fbtag->framebuffer_width;
-            g_fb_info.height = fbtag->framebuffer_height;
-            g_fb_info.pitch = fbtag->framebuffer_pitch;
-            g_fb_info.bpp = fbtag->framebuffer_bpp;
+            g_fb_hw.phys = fbtag->framebuffer_addr;
+            g_fb_hw.info.width = fbtag->framebuffer_width;
+            g_fb_hw.info.height = fbtag->framebuffer_height;
+            g_fb_hw.info.pitch = fbtag->framebuffer_pitch;
+            g_fb_hw.info.bpp = fbtag->framebuffer_bpp;
+            g_fb_hw.info.flags = FB_FLAG_LINEAR;
             g_fb_available = true;
             return 0;
         }
@@ -122,12 +126,16 @@ int fb_probe_from_multiboot(const void *mb_info) {
     return -1;
 }
 
-int fb_get_info(struct fut_fb_info *out) {
+int fb_get_info(struct fut_fb_hwinfo *out) {
     if (!out || !g_fb_available) {
         return -1;
     }
-    *out = g_fb_info;
+    *out = g_fb_hw;
     return 0;
+}
+
+bool fb_is_available(void) {
+    return g_fb_available;
 }
 
 void fb_boot_splash(void) {

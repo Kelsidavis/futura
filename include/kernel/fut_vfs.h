@@ -504,6 +504,7 @@ int fut_vfs_mkdir(const char *path, uint32_t mode);
 #define O_EXCL      0x0080
 #define O_TRUNC     0x0200
 #define O_APPEND    0x0400
+#define O_NONBLOCK  0x0800
 
 /* Error codes */
 #define ENOENT      2       /* No such file or directory */

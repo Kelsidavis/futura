@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 #pragma once
 
-#include <user/futura_posix.h>
 #include <user/libfutura.h>
 #include <user/stdio.h>
 

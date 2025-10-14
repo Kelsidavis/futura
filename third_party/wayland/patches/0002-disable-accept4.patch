@@ -1,0 +1,28 @@
+From 1234567890abcdef1234567890abcdef12345678 Mon Sep 17 00:00:00 2001
+From: Futura OS Team <build@futura.os>
+Date: Mon, 13 Jan 2025 12:00:00 +0000
+Subject: [PATCH] build: assume accept4 is unavailable
+
+Meson's function detection picks up accept4() on the host toolchain, but
+Futura's user-mode shim only supports the classic accept() interface.
+Force the configuration header to disable accept4 so the fallback path in
+wayland-os.c is compiled instead.
+---
+ meson.build | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/meson.build b/meson.build
+index 775770a5..e0f11dbe 100644
+--- a/meson.build
++++ b/meson.build
+@@ -52,6 +52,7 @@ foreach f: have_funcs
+ endforeach
+ 
+ config_h.set('HAVE_MEMFD_CREATE', 0)
++config_h.set('HAVE_ACCEPT4', 0)
+ config_h.set10('HAVE_XUCRED_CR_PID', cc.has_member('struct xucred', 'cr_pid', prefix : '#include <sys/ucred.h>'))
+ have_broken_msg_cmsg_cloexec = false
+ if host_machine.system() == 'freebsd'
+-- 
+2.43.0
+

@@ -7,6 +7,9 @@
 #include <futura/fb_ioctl.h>
 #include <wayland-server-core.h>
 
+struct seat_state;
+struct cursor_state;
+
 struct comp_damage {
     int32_t x;
     int32_t y;
@@ -39,6 +42,21 @@ struct compositor_state {
     size_t fb_map_size;
     bool running;
     uint32_t frame_delay_ms;
+    struct comp_surface *active_surface;
+    struct comp_surface *focused_surface;
+    struct seat_state *seat;
+    struct cursor_state *cursor;
+    struct comp_damage pending_damage;
+    int32_t pointer_x;
+    int32_t pointer_y;
+    int32_t window_x;
+    int32_t window_y;
+    bool window_pos_initialised;
+    bool dragging;
+    int32_t drag_offset_x;
+    int32_t drag_offset_y;
+    bool needs_repaint;
+    uint32_t next_surface_id;
 };
 
 struct comp_surface {
@@ -48,12 +66,21 @@ struct comp_surface {
     struct comp_damage pending_damage;
     struct wl_list frame_callbacks;
     bool has_pending_buffer;
+    uint8_t *backing;
+    size_t backing_size;
+    int32_t width;
+    int32_t height;
+    int32_t stride;
+    bool has_backing;
+    uint32_t surface_id;
 };
 
 int comp_state_init(struct compositor_state *comp);
 void comp_state_finish(struct compositor_state *comp);
 
 void comp_present_buffer(struct compositor_state *comp,
+                         int32_t dst_x,
+                         int32_t dst_y,
                          struct comp_buffer *buffer,
                          const struct comp_damage *damage);
 
@@ -72,3 +99,16 @@ void comp_surface_frame(struct comp_surface *surface,
                         struct wl_resource *callback_resource);
 
 int comp_run(struct compositor_state *comp);
+
+void comp_request_repaint(struct compositor_state *comp, const struct comp_damage *damage);
+bool comp_pointer_inside_surface(const struct compositor_state *comp,
+                                 const struct comp_surface *surface,
+                                 int32_t px,
+                                 int32_t py,
+                                 int32_t *out_sx,
+                                 int32_t *out_sy);
+void comp_pointer_motion(struct compositor_state *comp, int32_t new_x, int32_t new_y);
+void comp_start_drag(struct compositor_state *comp);
+void comp_end_drag(struct compositor_state *comp);
+void comp_update_drag(struct compositor_state *comp);
+void comp_update_window_position(struct compositor_state *comp, int32_t new_x, int32_t new_y);

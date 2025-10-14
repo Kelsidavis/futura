@@ -1,7 +1,7 @@
 #include "shm_backend.h"
 #include "log.h"
 
-#include <stdio.h>
+#include <wayland-server-protocol.h>
 
 int shm_backend_init(struct compositor_state *comp) {
     (void)comp;

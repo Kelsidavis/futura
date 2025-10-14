@@ -11,7 +11,13 @@
 #include <kernel/fut_fipc.h>
 #include <user/futura_posix.h>
 #include <user/libfutura.h>
+#include <user/sys.h>
 #include <stdlib.h>
+#include "timerfd_internal.h"
+#include "socket_unix.h"
+#include "fd.h"
+
+extern int __fut_epoll_close(int fd);
 
 /* Connection to posixd daemon */
 static struct fut_fipc_channel *posixd_channel = NULL;
@@ -83,8 +89,29 @@ int open(const char *path, int flags, ...) {
  * Close a file descriptor.
  */
 int close(int fd) {
+    if (__fut_epoll_close(fd) == 0) {
+        fut_fd_release(fd);
+        return 0;
+    }
+
+    if (__fut_timerfd_close(fd) == 0) {
+        fut_fd_release(fd);
+        return 0;
+    }
+
+    if (__fut_unix_socket_close(fd) == 0) {
+        fut_fd_release(fd);
+        return 0;
+    }
+
     if (!posixd_channel && posix_init() < 0) {
-        return -1;
+        fut_fd_path_forget(fd);
+        return (int)sys_close(fd);
+    }
+
+    if (!posixd_channel) {
+        fut_fd_path_forget(fd);
+        return (int)sys_close(fd);
     }
 
     struct posixd_close_req req = { .fd = fd };
@@ -94,6 +121,7 @@ int close(int fd) {
                             &req, sizeof(req));
 
     /* Phase 3: Wait for response */
+    fut_fd_path_forget(fd);
     return ret;
 }
 
@@ -101,7 +129,22 @@ int close(int fd) {
  * Read from file descriptor.
  */
 ssize_t read(int fd, void *buf, size_t count) {
-    if ((!posixd_channel && posix_init() < 0) || !buf) {
+    if (!buf) {
+        return -1;
+    }
+
+    if (__fut_timerfd_is_timer(fd)) {
+        return __fut_timerfd_read(fd, buf, count);
+    }
+
+    if (__fut_unix_socket_is(fd)) {
+        ssize_t sock_ret = __fut_unix_socket_read(fd, buf, count);
+        if (sock_ret >= 0) {
+            return sock_ret;
+        }
+    }
+
+    if (!posixd_channel && posix_init() < 0) {
         return -1;
     }
 
@@ -153,6 +196,13 @@ ssize_t write(int fd, const void *buf, size_t count) {
         return -1;
     }
 
+    if (__fut_unix_socket_is(fd)) {
+        ssize_t sock_ret = __fut_unix_socket_write(fd, buf, count);
+        if (sock_ret >= 0) {
+            return sock_ret;
+        }
+    }
+
     /* Phase 3: Would use shared memory for zero-copy */
 
     struct {
@@ -187,6 +237,22 @@ ssize_t write(int fd, const void *buf, size_t count) {
     struct posixd_write_resp *resp = (struct posixd_write_resp *)resp_msg->payload;
 
     return resp->bytes_written;
+}
+
+void *mmap(void *addr, size_t length, int prot, int flags, int fd, off_t offset) {
+    long ret = sys_mmap(addr, length, prot, flags, fd, offset);
+    if (ret < 0) {
+        return (void *)-1;
+    }
+    return (void *)ret;
+}
+
+int munmap(void *addr, size_t length) {
+    return (int)sys_munmap_call(addr, length);
+}
+
+int flock(int fd, int operation) {
+    return (int)sys_call2(SYS_flock, fd, operation);
 }
 
 int unlink(const char *path) {

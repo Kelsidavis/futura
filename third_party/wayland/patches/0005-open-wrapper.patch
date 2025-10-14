@@ -1,0 +1,133 @@
+--- a/src/wayland-os.c
++++ b/src/wayland-os.c
+@@ -31,6 +31,8 @@
+ #include <sys/socket.h>
+ #include <unistd.h>
+ #include <fcntl.h>
++#include <sys/stat.h>
++#include <sys/syscall.h>
+ #include <errno.h>
+ #include <string.h>
+ #include <sys/epoll.h>
+@@ -130,6 +132,34 @@
+ #endif
+ 
+ int
++wl_os_open_cloexec(const char *path, int flags, mode_t mode)
++{
++	int fd;
++
++#ifdef O_CLOEXEC
++	fd = syscall(SYS_openat, AT_FDCWD, path, flags | O_CLOEXEC, mode);
++	if (fd >= 0)
++		return fd;
++	if (errno != EINVAL)
++		return -1;
++#endif
++	fd = syscall(SYS_openat, AT_FDCWD, path, flags, mode);
++	return set_cloexec_or_close(fd);
++}
++
++void *
++wl_os_mmap(void *addr, size_t length, int prot, int flags, int fd, off_t offset)
++{
++	return (void *)syscall(SYS_mmap, addr, length, prot, flags, fd, offset);
++}
++
++int
++wl_os_munmap(void *addr, size_t length)
++{
++	return (int)syscall(SYS_munmap, addr, length);
++}
++
++int
+ wl_os_dupfd_cloexec(int fd, int minfd)
+ {
+ 	int newfd;
+@@
+-result = wl_os_mmap(NULL, new_size, prot, flags, fd, 0);
+-if (wl_os_munmap(old_data, *old_size) == 0)
+-    *old_size = 0;
++result = wl_os_mmap(NULL, new_size, prot, flags, fd, 0);
++if (wl_os_munmap(old_data, *old_size) == 0)
++    *old_size = 0;
+@@
+-	result = mmap(NULL, new_size, prot, flags, fd, 0);
++	result = wl_os_mmap(NULL, new_size, prot, flags, fd, 0);
+ 	if (result == MAP_FAILED)
+ 		return MAP_FAILED;
+
+-	if (munmap(old_data, *old_size) == 0)
++	if (wl_os_munmap(old_data, *old_size) == 0)
+ 		*old_size = 0;
+--- a/src/wayland-os.h
++++ b/src/wayland-os.h
+@@ -38,6 +38,15 @@
+ int
+ wl_os_dupfd_cloexec(int fd, int minfd);
+ 
++int
++wl_os_open_cloexec(const char *path, int flags, mode_t mode);
++
++void *
++wl_os_mmap(void *addr, size_t length, int prot, int flags, int fd, off_t offset);
++
++int
++wl_os_munmap(void *addr, size_t length);
++
+ ssize_t
+ wl_os_recvmsg_cloexec(int sockfd, struct msghdr *msg, int flags);
+ 
+--- a/src/wayland-shm.c
++++ b/src/wayland-shm.c
+@@ -155,7 +155,7 @@
+ 	if (pool->internal_refcount + pool->external_refcount > 0)
+ 		return;
+ 
+-	munmap(pool->data, pool->size);
++	wl_os_munmap(pool->data, pool->size);
+ #ifndef MREMAP_MAYMOVE
+ 	close(pool->mmap_fd);
+ #endif
+@@ -344,7 +344,7 @@
+ 	pool->new_size = size;
+ 	prot = PROT_READ | PROT_WRITE;
+ 	flags = MAP_SHARED;
+-	pool->data = mmap(NULL, size, prot, flags, fd, 0);
++	pool->data = wl_os_mmap(NULL, size, prot, flags, fd, 0);
+ 	if (pool->data == MAP_FAILED) {
+ 		wl_resource_post_error(resource, WL_SHM_ERROR_INVALID_FD,
+ 				       "failed mmap fd %d: %s", fd,
+@@ -365,7 +365,7 @@
+ 		wl_resource_create(client, &wl_shm_pool_interface, version, id);
+ 	if (!pool->resource) {
+ 		wl_client_post_no_memory(client);
+-		munmap(pool->data, pool->size);
++		wl_os_munmap(pool->data, pool->size);
+ 		free(pool);
+ 		return;
+ 	}
+@@ -572,7 +572,7 @@
+ 	sigbus_data->fallback_mapping_used = 1;
+ 
+ 	/* This should replace the previous mapping */
+-	if (mmap(pool->data, pool->size, PROT_READ | PROT_WRITE,
++	if (wl_os_mmap(pool->data, pool->size, PROT_READ | PROT_WRITE,
+ 		 MAP_PRIVATE | MAP_FIXED | MAP_ANONYMOUS, 0, 0) == MAP_FAILED) {
+ 		reraise_sigbus();
+ 		return;
+--- a/src/wayland-server.c
++++ b/src/wayland-server.c
+@@ -1648,8 +1648,10 @@
+ 	snprintf(socket->lock_addr, sizeof socket->lock_addr,
+ 		 "%s%s", socket->addr.sun_path, LOCK_SUFFIX);
+ 
+-	socket->fd_lock = open(socket->lock_addr, O_CREAT | O_CLOEXEC | O_RDWR,
+-			       (S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP));
++	socket->fd_lock = wl_os_open_cloexec(socket->lock_addr,
++					     O_CREAT | O_RDWR,
++					     (S_IRUSR | S_IWUSR |
++					      S_IRGRP | S_IWGRP));
+ 
+ 	if (socket->fd_lock < 0) {
+ 		wl_log("unable to open lockfile %s check permissions\n",

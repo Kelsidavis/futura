@@ -6,3 +6,4 @@
 
 int printf(const char *fmt, ...);
 int vprintf(const char *fmt, va_list args);
+int __vfprintf_chk(void *stream, int flag, const char *fmt, va_list args);

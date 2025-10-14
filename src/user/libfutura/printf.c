@@ -190,6 +190,12 @@ int vprintf(const char *fmt, va_list args) {
     return total;
 }
 
+int __vfprintf_chk(void *stream, int flag, const char *fmt, va_list args) {
+    (void)stream;
+    (void)flag;
+    return vprintf(fmt, args);
+}
+
 int printf(const char *fmt, ...) {
     va_list args;
     va_start(args, fmt);

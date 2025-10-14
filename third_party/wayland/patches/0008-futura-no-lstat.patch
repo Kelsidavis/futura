@@ -1,0 +1,29 @@
+diff --git a/src/wayland-server.c b/src/wayland-server.c
+index 2696e4d5..cad359f9 100644
+--- a/src/wayland-server.c
++++ b/src/wayland-server.c
+@@
+-	if (lstat(socket->addr.sun_path, &socket_stat) < 0 ) {
+-		if (errno != ENOENT) {
+-			wl_log("did not manage to stat file %s\n",
+-					socket->addr.sun_path);
+-			goto err_fd;
+-		}
+-	} else if (socket_stat.st_mode & S_IWUSR ||
+-		   socket_stat.st_mode & S_IWGRP) {
+-		unlink(socket->addr.sun_path);
+-	}
++#ifdef FUTURA_NO_GLIBC
++	unlink(socket->addr.sun_path);
++#else
++	if (lstat(socket->addr.sun_path, &socket_stat) < 0 ) {
++		if (errno != ENOENT) {
++			wl_log("did not manage to stat file %s\n",
++					socket->addr.sun_path);
++			goto err_fd;
++		}
++	} else if (socket_stat.st_mode & S_IWUSR ||
++		   socket_stat.st_mode & S_IWGRP) {
++		unlink(socket->addr.sun_path);
++	}
++#endif

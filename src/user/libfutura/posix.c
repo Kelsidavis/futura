@@ -8,14 +8,18 @@
 
 #include <stdint.h>
 #include <stddef.h>
+#include <errno.h>
 #include <kernel/fut_fipc.h>
 #include <user/futura_posix.h>
 #include <user/libfutura.h>
 #include <user/sys.h>
 #include <stdlib.h>
 #include "timerfd_internal.h"
+#include "signalfd_internal.h"
+#include "eventfd_internal.h"
 #include "socket_unix.h"
 #include "fd.h"
+#include "memory_map.h"
 
 extern int __fut_epoll_close(int fd);
 
@@ -99,6 +103,16 @@ int close(int fd) {
         return 0;
     }
 
+    if (__fut_signalfd_close(fd) == 0) {
+        fut_fd_release(fd);
+        return 0;
+    }
+
+    if (__fut_eventfd_close(fd) == 0) {
+        fut_fd_release(fd);
+        return 0;
+    }
+
     if (__fut_unix_socket_close(fd) == 0) {
         fut_fd_release(fd);
         return 0;
@@ -135,6 +149,14 @@ ssize_t read(int fd, void *buf, size_t count) {
 
     if (__fut_timerfd_is_timer(fd)) {
         return __fut_timerfd_read(fd, buf, count);
+    }
+
+    if (__fut_signalfd_is(fd)) {
+        return __fut_signalfd_read(fd, buf, count);
+    }
+
+    if (__fut_eventfd_is(fd)) {
+        return __fut_eventfd_read(fd, buf, count);
     }
 
     if (__fut_unix_socket_is(fd)) {
@@ -196,6 +218,10 @@ ssize_t write(int fd, const void *buf, size_t count) {
         return -1;
     }
 
+    if (__fut_eventfd_is(fd)) {
+        return __fut_eventfd_write(fd, buf, count);
+    }
+
     if (__fut_unix_socket_is(fd)) {
         ssize_t sock_ret = __fut_unix_socket_write(fd, buf, count);
         if (sock_ret >= 0) {
@@ -240,15 +266,32 @@ ssize_t write(int fd, const void *buf, size_t count) {
 }
 
 void *mmap(void *addr, size_t length, int prot, int flags, int fd, off_t offset) {
-    long ret = sys_mmap(addr, length, prot, flags, fd, offset);
+    long ret = sys_mmap(addr, (long)length, prot, flags, fd, offset);
     if (ret < 0) {
+        errno = (int)-ret;
         return (void *)-1;
     }
-    return (void *)ret;
+    void *mapped = (void *)ret;
+    const char *path_ptr = NULL;
+    char path_buf[128];
+    if (fd >= 0 && fut_fd_path_lookup(fd, path_buf, sizeof(path_buf)) == 0) {
+        path_ptr = path_buf;
+    }
+    fut_maprec_insert(mapped, length, fd, offset, prot, flags, path_ptr);
+    return mapped;
 }
 
+void *mmap64(void *addr, size_t length, int prot, int flags, int fd, off_t offset)
+    __attribute__((weak, alias("mmap")));
+
 int munmap(void *addr, size_t length) {
-    return (int)sys_munmap_call(addr, length);
+    long ret = sys_munmap_call(addr, (long)length);
+    if (ret < 0) {
+        errno = (int)-ret;
+        return -1;
+    }
+    fut_maprec_remove(addr);
+    return 0;
 }
 
 int flock(int fd, int operation) {

@@ -1,3 +1,7 @@
+#ifndef _POSIX_C_SOURCE
+#define _POSIX_C_SOURCE 200809L
+#endif
+
 #include <user/signal.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -23,9 +27,6 @@ static inline int valid_signal(int signum) {
 }
 
 int sigemptyset(sigset_t *set) {
-    if (!set) {
-        return -1;
-    }
     unsigned long *words = sigset_words(set);
     for (size_t i = 0; i < sigset_word_count(); ++i) {
         words[i] = 0;
@@ -34,9 +35,6 @@ int sigemptyset(sigset_t *set) {
 }
 
 int sigfillset(sigset_t *set) {
-    if (!set) {
-        return -1;
-    }
     unsigned long *words = sigset_words(set);
     for (size_t i = 0; i < sigset_word_count(); ++i) {
         words[i] = ~0UL;
@@ -45,7 +43,7 @@ int sigfillset(sigset_t *set) {
 }
 
 int sigaddset(sigset_t *set, int signum) {
-    if (!set || !valid_signal(signum)) {
+    if (!valid_signal(signum)) {
         return -1;
     }
     unsigned long *words = sigset_words(set);
@@ -56,7 +54,7 @@ int sigaddset(sigset_t *set, int signum) {
 }
 
 int sigdelset(sigset_t *set, int signum) {
-    if (!set || !valid_signal(signum)) {
+    if (!valid_signal(signum)) {
         return -1;
     }
     unsigned long *words = sigset_words(set);
@@ -67,7 +65,7 @@ int sigdelset(sigset_t *set, int signum) {
 }
 
 int sigismember(const sigset_t *set, int signum) {
-    if (!set || !valid_signal(signum)) {
+    if (!valid_signal(signum)) {
         return 0;
     }
     const unsigned long *words = sigset_cwords(set);

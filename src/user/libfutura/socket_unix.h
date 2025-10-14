@@ -21,3 +21,5 @@ ssize_t __fut_unix_socket_recvmsg(int fd, struct msghdr *msg, int flags);
 int __fut_unix_socket_poll(int fd, uint32_t requested, uint32_t *ready_out);
 
 void __fut_unix_socket_forget(int fd);
+int __fut_unix_socket_retain(int fd);
+int __fut_unix_socket_set_flags(int fd, int flags);

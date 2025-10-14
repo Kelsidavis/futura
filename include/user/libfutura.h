@@ -13,6 +13,7 @@
 #include <stdbool.h>
 
 #include <user/string.h>
+#include <user/stdlib.h>
 
 /* ============================================================
  *   String Functions

@@ -3,6 +3,7 @@
 #include <kernel/fut_memory.h>
 #include <kernel/fut_thread.h>
 #include <kernel/fut_waitq.h>
+#include <kernel/errno.h>
 
 #include <stdbool.h>
 #include <stdint.h>

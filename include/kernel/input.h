@@ -19,6 +19,7 @@
 #include <kernel/uaccess.h>
 #include <kernel/fut_memory.h>
 #include <kernel/fut_timer.h>
+#include <kernel/fut_vfs.h>
 #include <futura/input_event.h>
 
 #define FUT_INPUT_QUEUE_SIZE 128u

@@ -18,6 +18,7 @@
 #include <kernel/errno.h>
 #include <kernel/fut_timer.h>
 #include <kernel/fut_vfs.h>
+#include <subsystems/posix_syscall.h>
 
 #include <arch/x86_64/paging.h>
 #include <arch/x86_64/pmap.h>

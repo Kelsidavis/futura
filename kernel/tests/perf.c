@@ -15,6 +15,9 @@ extern void fut_printf(const char *fmt, ...);
 #define PERFDBG(...) do { } while (0)
 #endif
 
+#define PERF_FAIL(code_) \
+    fut_test_fail((uint16_t)(((uint16_t)'P' << 8) | (uint16_t)(code_)))
+
 static void fut_perf_print_line(const char *tag, const struct fut_perf_stats *stats) {
     uint64_t p50_ns = fut_cycles_to_ns(stats->p50);
     uint64_t p90_ns = fut_cycles_to_ns(stats->p90);
@@ -38,21 +41,21 @@ static void fut_perf_thread(void *arg) {
 
     if (fut_perf_run_ipc(&ipc_stats) != 0) {
         fut_printf("[PERF] ipc benchmark failed\n");
-        fut_test_fail(0xP1);
+        PERF_FAIL(1);
         return;
     }
     fut_perf_print_line("ipc_rtt_ns", &ipc_stats);
 
     if (fut_perf_run_ctx_switch(&ctx_stats) != 0) {
         fut_printf("[PERF] ctx-switch benchmark failed\n");
-        fut_test_fail(0xP2);
+        PERF_FAIL(2);
         return;
     }
     fut_perf_print_line("ctx_switch_ns", &ctx_stats);
 
     if (fut_perf_run_blk(&blk_read, &blk_write) != 0) {
         fut_printf("[PERF] block benchmark failed\n");
-        fut_test_fail(0xP3);
+        PERF_FAIL(3);
         return;
     }
     fut_perf_print_line("blk_read_4k_ns", &blk_read);
@@ -60,7 +63,7 @@ static void fut_perf_thread(void *arg) {
 
     if (fut_perf_run_net(&net_small, &net_mtu) != 0) {
         fut_printf("[PERF] net benchmark failed\n");
-        fut_test_fail(0xP4);
+        PERF_FAIL(4);
         return;
     }
     fut_perf_print_line("net_loop_small_ns", &net_small);

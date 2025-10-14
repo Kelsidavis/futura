@@ -57,6 +57,29 @@ endif
 #   Common Compiler Flags
 # ============================================================
 
+# Reproducible build toggles
+REPRO ?= 0
+
+ifeq ($(REPRO),1)
+export LC_ALL := C
+export TZ := UTC
+SOURCE_DATE_EPOCH ?= 1700000000
+export SOURCE_DATE_EPOCH
+REPRO_CFLAGS := -g0 -fno-record-gcc-switches -ffile-prefix-map=$(CURDIR)=.
+REPRO_LDFLAGS := -Wl,--build-id=none
+BUILD_DATE_UTC := $(shell python3 -c 'import datetime,os;print(datetime.datetime.utcfromtimestamp(int(os.environ.get("SOURCE_DATE_EPOCH","1700000000"))).strftime("%Y-%m-%dT%H:%M:%SZ"))')
+BUILD_HOST := unknown
+BUILD_USER := unknown
+else
+REPRO_CFLAGS :=
+REPRO_LDFLAGS :=
+BUILD_DATE_UTC := $(shell date -u +"%Y-%m-%dT%H:%M:%SZ")
+BUILD_HOST := $(shell hostname)
+BUILD_USER := $(shell whoami)
+endif
+export REPRO_CFLAGS
+export REPRO_LDFLAGS
+
 # C standard and compiler flags
 CFLAGS := -std=c23 -ffreestanding -nostdlib -fno-builtin -fno-stack-protector -fno-asynchronous-unwind-tables
 CFLAGS += -Wall -Wextra -Wpedantic -Werror
@@ -65,6 +88,7 @@ CFLAGS += -fcf-protection=none  # Disable CET (Control-flow Enforcement Technolo
 CFLAGS += -I.
 CFLAGS += -I./include
 CFLAGS += $(ARCH_CFLAGS)
+CFLAGS += $(REPRO_CFLAGS)
 
 # Debug vs Release flags
 ifeq ($(BUILD_MODE),debug)
@@ -86,20 +110,19 @@ export RUSTFLAGS
 ASFLAGS := $(ARCH_ASFLAGS)
 
 # Linker flags
-LDFLAGS := -nostdlib $(ARCH_LDFLAGS)
+LDFLAGS := -nostdlib $(ARCH_LDFLAGS) $(REPRO_LDFLAGS)
 
 # Output directories
 BUILD_DIR := build
 OBJ_DIR := $(BUILD_DIR)/obj
 BIN_DIR := $(BUILD_DIR)/bin
+RELEASE_DIR := $(BUILD_DIR)/release
+REPRO_ROOT := build/repro
 
 # --- Build metadata (auto-generated) ---
 GEN_DIR           := include/generated
 GEN_VERSION_HDR   := $(GEN_DIR)/version.h
-BUILD_DATE_UTC    := $(shell date -u +"%Y-%m-%dT%H:%M:%SZ")
 BUILD_GIT_DESC    := $(shell git describe --tags --always --dirty 2>/dev/null || echo "nogit")
-BUILD_HOST        := $(shell hostname)
-BUILD_USER        := $(shell whoami)
 
 KERNEL_DEPS       :=
 KERNEL_DEPS      += $(GEN_VERSION_HDR)
@@ -418,6 +441,57 @@ perf: iso disk
 
 perf-ci: perf
 	@python3 tools/perf_compare.py tests/baselines/perf_baseline.json $(BUILD_DIR)/perf_latest.txt
+
+.PHONY: release sbom sign metadata verify repro repro-ci release-ci
+
+RELEASE_ARTIFACTS := $(RELEASE_DIR)/futura_kernel.elf \
+                     $(RELEASE_DIR)/mkfutfs.static \
+                     $(RELEASE_DIR)/fsck.futfs.static \
+                     $(RELEASE_DIR)/futura.iso \
+                     $(RELEASE_DIR)/futura_kernel.elf.cdx.json \
+                     $(RELEASE_DIR)/tools.cdx.json
+
+release: kernel tools iso
+	@rm -rf $(RELEASE_DIR)
+	@mkdir -p $(RELEASE_DIR)
+	@cp $(BIN_DIR)/futura_kernel.elf $(RELEASE_DIR)/
+	@if [ -f futura.iso ]; then cp futura.iso $(RELEASE_DIR)/futura.iso; fi
+	@if [ -f $(BUILD_DIR)/tools/mkfutfs ]; then cp $(BUILD_DIR)/tools/mkfutfs $(RELEASE_DIR)/mkfutfs.static; fi
+	@if [ -f $(BUILD_DIR)/tools/fsck.futfs ]; then cp $(BUILD_DIR)/tools/fsck.futfs $(RELEASE_DIR)/fsck.futfs.static; fi
+
+sbom: release
+	@tools/release/sbom.sh $(RELEASE_DIR)
+
+sign: sbom
+	@for f in $(RELEASE_ARTIFACTS); do \
+		if [ -f $$f ]; then tools/release/sign.sh sign $$f $$f.sig; fi; \
+	done
+
+metadata: sign
+	@python3 tools/release/metadata.py $(RELEASE_DIR) > $(RELEASE_DIR)/targets.json
+
+repro:
+	@rm -rf $(REPRO_ROOT)
+	@$(MAKE) REPRO=1 BUILD_DIR=$(REPRO_ROOT)/A kernel tools >/dev/null
+	@$(MAKE) REPRO=1 BUILD_DIR=$(REPRO_ROOT)/B kernel tools >/dev/null
+	@cmp $(REPRO_ROOT)/A/bin/futura_kernel.elf $(REPRO_ROOT)/B/bin/futura_kernel.elf
+	@cmp $(REPRO_ROOT)/A/tools/mkfutfs $(REPRO_ROOT)/B/tools/mkfutfs
+	@cmp $(REPRO_ROOT)/A/tools/fsck.futfs $(REPRO_ROOT)/B/tools/fsck.futfs
+	@echo "[REPRO] deterministic build confirmed"
+
+verify: metadata repro
+	@python3 tools/release/verify.py $(RELEASE_DIR)/targets.json $(RELEASE_DIR)
+	@echo "[RELEASE] all artifacts verified and reproducible"
+
+repro-ci: repro
+
+release-ci:
+	@$(MAKE) clean
+	@$(MAKE) release
+	@$(MAKE) sbom
+	@$(MAKE) sign
+	@$(MAKE) metadata
+	@$(MAKE) verify
 
 # ============================================================
 #   Platform-Specific Targets

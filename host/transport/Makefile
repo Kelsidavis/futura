@@ -9,13 +9,15 @@ CC := gcc
 AR := ar
 
 ROOT := ../..
-BUILD_DIR := $(ROOT)/build
-OBJ_DIR := $(BUILD_DIR)/obj/host/transport
-LIB_DIR := $(BUILD_DIR)/lib
+BUILD_DIR ?= build
+ABS_BUILD_DIR := $(ROOT)/$(BUILD_DIR)
+OBJ_DIR := $(ABS_BUILD_DIR)/obj/host/transport
+LIB_DIR := $(ABS_BUILD_DIR)/lib
 
 INCLUDES := -I$(ROOT)/include -I$(ROOT)
 
 CFLAGS := -std=c2x -Wall -Wextra -Werror -g -O2 -DFIPC_HOST_BUILD $(INCLUDES)
+CFLAGS += $(REPRO_CFLAGS)
 
 KERNEL_SOURCES := \
 	kernel/ipc/fut_fipc.c \

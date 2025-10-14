@@ -145,6 +145,10 @@ Run `make tools` to build the host-side helpers under `build/tools/`:
 - `make perf-ci` reruns the harness and compares the latest results against `tests/baselines/perf_baseline.json`, failing the build if any percentile drifts beyond ±5 %.
 - To refresh the baseline after intentional optimisations, inspect `build/perf_latest.txt`, update the JSON with the new steady-state values, and commit both files together.
 
+### Release pipeline
+
+See `docs/RELEASE.md` for the reproducible build + signing workflow (`make repro`, `make release`, `make sbom`, `make sign`, `make metadata`, `make verify`) and integration notes for Cosign/SBOM tooling.
+
 Rust drivers live under `drivers/rust/` and compile to `staticlib` artifacts that the kernel links directly. You can rebuild them without touching the C pieces via:
 
 ```bash

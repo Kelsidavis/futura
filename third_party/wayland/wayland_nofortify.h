@@ -11,6 +11,7 @@
 #include <string.h>
 #include <stdio.h>
 #include <sys/mman.h>
+#include <user/string.h>
 
 #define __memcpy_chk(dst, src, len, bsz) memcpy((dst), (src), (len))
 #define __memmove_chk(dst, src, len, bsz) memmove((dst), (src), (len))

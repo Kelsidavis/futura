@@ -19,6 +19,13 @@
 extern "C" {
 #endif
 
+#ifdef DEBUG_FUTFS
+extern void fut_printf(const char *fmt, ...);
+#define FSDBG(...) fut_printf(__VA_ARGS__)
+#else
+#define FSDBG(...) do { } while (0)
+#endif
+
 #define FUTFS_SUPER_MAGIC 0x46554653u /* "FUFS" */
 #define FUTFS_NAME_MAX   64u
 
@@ -40,6 +47,13 @@ typedef struct futfs_dirent {
     uint32_t type;
     char name[FUTFS_NAME_MAX + 1];
 } futfs_dirent_t;
+
+struct futfs_gc_stats {
+    uint64_t tombstones_before;
+    uint64_t tombstones_after;
+    size_t bytes_before;
+    size_t bytes_after;
+};
 
 /// Mount the filesystem on the provided block device capability.
 fut_status_t futfs_mount(fut_handle_t dev);
@@ -76,6 +90,15 @@ fut_status_t futfs_unlink(const char *path);
 
 /// Remove an empty directory.
 fut_status_t futfs_rmdir(const char *path);
+
+/// Query high-level filesystem statistics.
+fut_status_t futfs_statfs(struct fut_statfs *out);
+
+/// Compact a directory stream, removing tombstones (path-based helper).
+fut_status_t futfs_compact_dir(const char *path, struct futfs_gc_stats *stats);
+
+/// Enable or disable crash injection during compaction (testing aide).
+void futfs_set_crash_compaction(bool enable);
 
 #ifdef __cplusplus
 }

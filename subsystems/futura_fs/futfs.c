@@ -4,6 +4,7 @@
  */
 
 #include "futfs.h"
+#include "futfs_internal.h"
 
 #include <kernel/errno.h>
 #include <kernel/fut_memory.h>
@@ -26,92 +27,18 @@
 #define EISDIR 21
 #endif
 
-#define FUTFS_LABEL_MAX        64u
-#define FUTFS_DEFAULT_SEG_SECT 16u
-
-typedef struct futfs_extent_disk {
-    uint32_t offset; /* Offset from start of segment */
-    uint32_t length;
-} futfs_extent_disk_t;
-
-typedef struct futfs_inode_disk_fixed {
-    uint64_t ino;
-    uint32_t type;
-    uint32_t rights;
-    uint64_t size;
-    uint32_t dirent_count;
-    uint32_t extent_count;
-} futfs_inode_disk_fixed_t;
-
-typedef struct futfs_dirent_disk {
-    uint64_t ino;
-    uint16_t name_len;
-    uint16_t reserved;
-    char name[];
-} futfs_dirent_disk_t;
-
-typedef struct futfs_segment_header_disk {
-    uint64_t id;
-    uint32_t checksum;
-    uint32_t inode_count;
-    uint64_t next_lba;
-} futfs_segment_header_disk_t;
-
-typedef struct futfs_superblock_disk {
-    char magic[8];
-    uint32_t version;
-    uint32_t block_size;
-    uint32_t segment_sectors;
-    uint32_t inode_count;
-    uint64_t latest_segment_lba;
-    uint64_t next_free_lba;
-    uint64_t root_ino;
-    uint64_t next_inode;
-    char label[FUTFS_LABEL_MAX];
-    uint8_t reserved[512 - 8 - (6 * sizeof(uint32_t)) - (4 * sizeof(uint64_t)) - FUTFS_LABEL_MAX];
-} futfs_superblock_disk_t;
-
-struct futfs_inode_mem {
-    uint64_t ino;
-    uint32_t type;
-    uint32_t rights;
-    uint64_t size;
-    uint8_t *data;
-    size_t capacity;
-};
-
 struct futfs_handle {
     struct futfs_inode_mem *inode;
     uint32_t rights;
     size_t offset;
 };
-
-struct futfs_fs {
-    bool mounted;
-    fut_handle_t dev_handle;
-    fut_blkdev_t *dev;
-    uint32_t block_size;
-    uint32_t segment_sectors;
-    uint64_t next_free_lba;
-    uint64_t next_segment_id;
-    uint64_t next_inode;
-    uint32_t version;
-    char label[FUTFS_LABEL_MAX];
-
-    struct futfs_inode_mem *inodes;
-    size_t inode_count;
-    size_t inode_capacity;
-
-    bool dirty;
-};
-
-static struct futfs_fs g_fs = {0};
+struct futfs_fs g_fs = {0};
 
 /* -------------------------------------------------------------------------- */
 /* Utility helpers                                                            */
 /* -------------------------------------------------------------------------- */
 
-static size_t futfs_align8(size_t value) {
+size_t futfs_align8(size_t value) {
     return (value + 7u) & ~((size_t)7u);
 }
 
@@ -151,7 +78,7 @@ static void futfs_sleep_poll(void) {
     fut_thread_sleep(1);
 }
 
-static struct futfs_inode_mem *futfs_find_inode(uint64_t ino) {
+struct futfs_inode_mem *futfs_find_inode(uint64_t ino) {
     for (size_t i = 0; i < g_fs.inode_count; ++i) {
         if (g_fs.inodes[i].ino == ino) {
             return &g_fs.inodes[i];
@@ -245,7 +172,7 @@ static fut_status_t futfs_dir_append(struct futfs_inode_mem *dir,
     return 0;
 }
 
-static fut_status_t futfs_dir_resolve_latest(const struct futfs_inode_mem *dir,
+fut_status_t futfs_dir_resolve_latest(const struct futfs_inode_mem *dir,
                                              const char *name,
                                              size_t name_len,
                                              size_t *offset_out,
@@ -342,7 +269,7 @@ static size_t futfs_dir_count_entries(const struct futfs_inode_mem *dir) {
     return count;
 }
 
-static bool futfs_dir_is_empty(const struct futfs_inode_mem *dir) {
+bool futfs_dir_is_empty(const struct futfs_inode_mem *dir) {
     return futfs_dir_count_entries(dir) == 0;
 }
 
@@ -350,7 +277,7 @@ static struct futfs_inode_mem *futfs_root_dir(void) {
     return futfs_find_inode(1);
 }
 
-static fut_status_t futfs_resolve_dir(const char *path,
+fut_status_t futfs_resolve_dir(const char *path,
                                       struct futfs_inode_mem **dir_out) {
     if (!g_fs.mounted || !path || !dir_out) {
         return -EINVAL;
@@ -1174,6 +1101,78 @@ fut_status_t futfs_unlink(const char *path) {
     futfs_remove_inode(target);
     g_fs.dirty = true;
     return 0;
+}
+
+fut_status_t futfs_statfs(struct fut_statfs *out) {
+    if (!g_fs.mounted || !out) {
+        return -EINVAL;
+    }
+
+    memset(out, 0, sizeof(*out));
+
+    uint64_t block_size = g_fs.block_size;
+    if (block_size == 0 && g_fs.dev) {
+        block_size = fut_blk_block_size(g_fs.dev);
+    }
+    if (block_size == 0) {
+        block_size = 512;
+    }
+
+    uint64_t total_blocks = 0;
+    if (g_fs.dev) {
+        total_blocks = fut_blk_block_count(g_fs.dev);
+    }
+
+    uint64_t used = g_fs.next_free_lba;
+    uint64_t free_blocks = 0;
+    if (total_blocks > used) {
+        free_blocks = total_blocks - used;
+    }
+
+    uint64_t max_inode = (g_fs.next_inode > 0) ? (g_fs.next_inode - 1) : 0;
+    uint64_t active_inodes = g_fs.inode_count;
+    uint64_t reclaimed = (max_inode > active_inodes) ? (max_inode - active_inodes) : 0;
+
+    uint64_t tombstones = 0;
+    for (size_t i = 0; i < g_fs.inode_count; ++i) {
+        if (g_fs.inodes[i].type == FUTFS_INODE_DIR) {
+            tombstones += futfs_gc_count_tombstones(&g_fs.inodes[i]);
+        }
+    }
+
+    out->block_size = block_size;
+    out->blocks_total = total_blocks;
+    out->blocks_free = free_blocks;
+    out->inodes_total = max_inode;
+    out->inodes_free = reclaimed;
+    out->dir_tombstones = tombstones;
+    out->features = FUT_STATFS_FEAT_LOG_STRUCTURED |
+                    FUT_STATFS_FEAT_TOMBSTONES |
+                    FUT_STATFS_FEAT_DIR_COMPACTION;
+
+    return 0;
+}
+
+fut_status_t futfs_compact_dir(const char *path, struct futfs_gc_stats *stats) {
+    if (!path) {
+        return -EINVAL;
+    }
+    struct futfs_inode_mem *dir = NULL;
+    fut_status_t rc = futfs_resolve_dir(path, &dir);
+    if (rc != 0) {
+        return rc;
+    }
+
+    struct futfs_gc_stats local_stats;
+    struct futfs_gc_stats *out = stats ? stats : &local_stats;
+    memset(out, 0, sizeof(*out));
+
+    rc = futfs_gc_compact_dir(dir, out, futfs_gc_crash_enabled());
+    return rc;
+}
+
+void futfs_set_crash_compaction(bool enable) {
+    futfs_gc_set_crash_injection(enable);
 }
 
 fut_status_t futfs_rmdir(const char *path) {

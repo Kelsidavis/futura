@@ -10,6 +10,7 @@
 #include <kernel/fut_memory.h>
 #include <kernel/fut_vfs.h>
 #include <kernel/fut_blockdev.h>
+#include <kernel/errno.h>
 
 static const struct fut_vnode_ops futurafs_vnode_ops;
 
@@ -1444,10 +1445,32 @@ static int futurafs_unmount_impl(struct fut_mount *mount) {
     return 0;
 }
 
+static int futurafs_statfs_impl(struct fut_mount *mount, struct fut_statfs *out) {
+    if (!mount || !out) {
+        return -EINVAL;
+    }
+
+    struct futurafs_mount *fs_mount = (struct futurafs_mount *)mount->fs_data;
+    if (!fs_mount || !fs_mount->sb) {
+        return -EIO;
+    }
+
+    out->block_size = FUTURAFS_BLOCK_SIZE;
+    out->blocks_total = fs_mount->sb->total_blocks;
+    out->blocks_free = fs_mount->sb->free_blocks;
+    out->inodes_total = fs_mount->sb->total_inodes;
+    out->inodes_free = fs_mount->sb->free_inodes;
+    out->dir_tombstones = 0;
+    out->features = 0;
+
+    return 0;
+}
+
 static const struct fut_fs_type futurafs_type = {
     .name = "futurafs",
     .mount = futurafs_mount_impl,
     .unmount = futurafs_unmount_impl,
+    .statfs = futurafs_statfs_impl,
 };
 
 /* ============================================================

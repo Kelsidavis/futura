@@ -250,6 +250,34 @@ static bool str_equals(const char *a, const char *b) {
     return *a == *b;
 }
 
+int fut_vfs_statfs(const char *mountpoint, struct fut_statfs *out) {
+    if (!mountpoint || !out) {
+        return -EINVAL;
+    }
+
+#ifndef ENOTSUP
+#define ENOTSUP 95
+#endif
+
+    struct fut_mount *mount = mount_list;
+    while (mount) {
+        if (mount->mountpoint && str_equals(mount->mountpoint, mountpoint)) {
+            break;
+        }
+        mount = mount->next;
+    }
+
+    if (!mount) {
+        return -ENOENT;
+    }
+
+    if (!mount->fs || !mount->fs->statfs) {
+        return -ENOTSUP;
+    }
+
+    return mount->fs->statfs(mount, out);
+}
+
 /**
  * Parse path into components.
  *

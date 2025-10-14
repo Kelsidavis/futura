@@ -184,6 +184,7 @@ KERNEL_SOURCES := \
     kernel/blk/blkcore.c \
     kernel/rust/rustffi.c \
     subsystems/futura_fs/futfs.c \
+    subsystems/futura_fs/futfs_gc.c \
     tests/test_api.c \
     tests/test_blkcore.c \
     tests/test_futfs.c \

@@ -1,6 +1,8 @@
 #include "comp.h"
 #include "output.h"
 
+#include <wayland-server-protocol.h>
+
 static const struct wl_output_interface output_impl = {
     .release = NULL,
 };

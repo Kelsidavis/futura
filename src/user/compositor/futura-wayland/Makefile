@@ -9,7 +9,7 @@ GEN_DIR := $(OBJ_DIR)/generated
 include $(ROOT)/mk/wayland.mk
 
 TARGET := $(BIN_DIR)/futura-wayland
-SRCS := main.c comp.c shm_backend.c xdg_shell.c output.c
+SRCS := main.c comp.c shm_backend.c xdg_shell.c output.c seat.c cursor.c
 OBJS := $(SRCS:%.c=$(OBJ_DIR)/%.o)
 
 PROTOCOL_XML := $(ROOT)/protocols/xdg-shell.xml
@@ -37,8 +37,8 @@ ifeq ($(DEBUG_WAYLAND),1)
 CFLAGS += -DDEBUG_WAYLAND
 endif
 
-LDFLAGS := -nostdlib -T $(LDSCRIPT)
-LDLIBS := $(LIBFUTURA) $(WAYLAND_LIBS)
+LDFLAGS := -nostdlib -T $(LDSCRIPT) $(WAYLAND_LDFLAGS)
+LDLIBS := $(WAYLAND_LIBS) $(LIBFUTURA)
 
 .PHONY: all clean
 

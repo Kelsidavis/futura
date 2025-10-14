@@ -114,6 +114,84 @@ char *strchr(const char *s, int c) {
     return (*s == (char)c) ? (char *)s : NULL;
 }
 
+char *strstr(const char *haystack, const char *needle) {
+    if (!haystack || !needle) return NULL;
+    if (*needle == '\0') return (char *)haystack;
+
+    size_t needle_len = strlen(needle);
+    for (const char *p = haystack; *p; ++p) {
+        if (*p == *needle && strncmp(p, needle, needle_len) == 0) {
+            return (char *)p;
+        }
+    }
+    return NULL;
+}
+
+long strtol(const char *nptr, char **endptr, int base) {
+    if (!nptr) {
+        if (endptr) *endptr = (char *)nptr;
+        return 0;
+    }
+
+    while (*nptr == ' ' || *nptr == '\t' || *nptr == '\n' ||
+           *nptr == '\r' || *nptr == '\f' || *nptr == '\v') {
+        ++nptr;
+    }
+
+    int sign = 1;
+    if (*nptr == '+') {
+        ++nptr;
+    } else if (*nptr == '-') {
+        sign = -1;
+        ++nptr;
+    }
+
+    if (base == 0) {
+        if (*nptr == '0') {
+            if (nptr[1] == 'x' || nptr[1] == 'X') {
+                base = 16;
+                nptr += 2;
+            } else {
+                base = 8;
+                ++nptr;
+            }
+        } else {
+            base = 10;
+        }
+    } else if (base == 16 && *nptr == '0' && (nptr[1] == 'x' || nptr[1] == 'X')) {
+        nptr += 2;
+    }
+
+    long result = 0;
+    const char *start = nptr;
+    while (*nptr) {
+        int digit;
+        if (*nptr >= '0' && *nptr <= '9') {
+            digit = *nptr - '0';
+        } else if (*nptr >= 'a' && *nptr <= 'z') {
+            digit = *nptr - 'a' + 10;
+        } else if (*nptr >= 'A' && *nptr <= 'Z') {
+            digit = *nptr - 'A' + 10;
+        } else {
+            break;
+        }
+        if (digit >= base) {
+            break;
+        }
+        result = result * base + digit;
+        ++nptr;
+    }
+
+    if (endptr) {
+        *endptr = (char *)(nptr != start ? nptr : (const char *)start);
+    }
+    return sign * result;
+}
+
+long __isoc23_strtol(const char *nptr, char **endptr, int base) {
+    return strtol(nptr, endptr, base);
+}
+
 /**
  * Copy memory.
  */
@@ -128,6 +206,11 @@ void *memcpy(void *dest, const void *src, size_t n) {
     }
 
     return dest;
+}
+
+void *__memcpy_chk(void *dest, const void *src, size_t len, size_t destlen) {
+    (void)destlen;
+    return memcpy(dest, src, len);
 }
 
 /**

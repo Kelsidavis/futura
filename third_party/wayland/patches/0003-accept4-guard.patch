@@ -1,0 +1,21 @@
+From 9abcdef0123456789abcdef0123456789abcdef Mon Sep 17 00:00:00 2001
+From: Futura OS Team <build@futura.os>
+Date: Mon, 13 Jan 2025 12:15:00 +0000
+Subject: [PATCH] wayland-os: treat HAVE_ACCEPT4 as boolean
+
+---
+ src/wayland-os.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/src/wayland-os.c b/src/wayland-os.c
+index 7a7a4cba..03c9ecb2 100644
+--- a/src/wayland-os.c
++++ b/src/wayland-os.c
+@@ -214,7 +214,7 @@ wl_os_accept_cloexec(int sockfd, struct sockaddr *addr, socklen_t *addrlen)
+	int fd;
+
+-#ifdef HAVE_ACCEPT4
++#if defined(HAVE_ACCEPT4) && HAVE_ACCEPT4
+	fd = accept4(sockfd, addr, addrlen, SOCK_CLOEXEC);
+	if (fd >= 0)
+		return fd;

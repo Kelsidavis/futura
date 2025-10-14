@@ -1,11 +1,11 @@
 #include "comp.h"
 #include "log.h"
 #include "output.h"
+#include "seat.h"
 #include "shm_backend.h"
 #include "xdg_shell.h"
 
 #include <wayland-server-core.h>
-
 #include <user/stdio.h>
 
 int main(void) {
@@ -36,6 +36,15 @@ int main(void) {
         return -1;
     }
 
+    comp.seat = seat_init(&comp);
+    if (!comp.seat) {
+        printf("[WAYLAND] failed to initialise seat\n");
+        shm_backend_finish(&comp);
+        comp_state_finish(&comp);
+        wl_display_destroy(comp.display);
+        return -1;
+    }
+
     const char *socket = wl_display_add_socket_auto(comp.display);
     if (!socket) {
         printf("[WAYLAND] failed to add display socket\n");
@@ -45,21 +54,18 @@ int main(void) {
         return -1;
     }
 
-    char ready_buf[128];
-    int ready_len = snprintf(ready_buf, sizeof(ready_buf),
-                             "[WAYLAND] compositor ready %ux%u bpp=%u socket=%s\n",
-                             comp.fb_info.width,
-                             comp.fb_info.height,
-                             comp.fb_info.bpp,
-                             socket);
-    if (ready_len > 0) {
-        sys_write(1, ready_buf, (long)ready_len);
-        sys_write(2, ready_buf, (long)ready_len);
-    }
+    printf("[WAYLAND] compositor ready %ux%u bpp=%u socket=%s\n",
+           comp.fb_info.width,
+           comp.fb_info.height,
+           comp.fb_info.bpp,
+           socket);
 
+    comp_request_repaint(&comp, NULL);
     comp_run(&comp);
 
     shm_backend_finish(&comp);
+    seat_finish(comp.seat);
+    comp.seat = NULL;
     comp_state_finish(&comp);
     wl_display_destroy(comp.display);
     return 0;

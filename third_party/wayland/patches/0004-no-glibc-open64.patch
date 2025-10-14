@@ -1,0 +1,43 @@
+diff --git a/src/wayland-private.h b/src/wayland-private.h
+index 8db82f7..c6921f2 100644
+--- a/src/wayland-private.h
++++ b/src/wayland-private.h
+@@ -28,6 +28,38 @@
+ #ifndef WAYLAND_PRIVATE_H
+ #define WAYLAND_PRIVATE_H
+ 
++#if defined(FUTURA_NO_GLIBC)
++#ifndef _FILE_OFFSET_BITS
++#define _FILE_OFFSET_BITS 64
++#endif
++#ifndef _LARGEFILE_SOURCE
++#define _LARGEFILE_SOURCE 1
++#endif
++#ifndef _LARGEFILE64_SOURCE
++#define _LARGEFILE64_SOURCE 1
++#endif
++#define open64      open
++#define fstat64     fstat
++#define lseek64     lseek
++#define ftruncate64 ftruncate
++#ifdef open
++#undef open
++#endif
++#ifdef fstat
++#undef fstat
++#endif
++#ifdef lseek
++#undef lseek
++#endif
++#ifdef ftruncate
++#undef ftruncate
++#endif
++#define open open
++#define fstat fstat
++#define lseek lseek
++#define ftruncate ftruncate
++#endif
++
+ #include <stdarg.h>
+ #include <stdlib.h>
+ #include <stdint.h>

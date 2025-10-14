@@ -19,21 +19,23 @@
  * ============================================================ */
 
 #ifndef __POSIX_TYPES_DEFINED
-#define __POSIX_TYPES_DEFINED
+#if defined(_SYS_TYPES_H)
+#define __POSIX_TYPES_DEFINED 1
+#else
+#define __POSIX_TYPES_DEFINED 1
 
 typedef int64_t ssize_t;
 typedef int64_t off_t;
+typedef uint64_t dev_t;
+typedef uint64_t ino_t;
 typedef uint32_t mode_t;
 typedef uint32_t uid_t;
 typedef uint32_t gid_t;
-typedef uint64_t dev_t;
-typedef uint64_t ino_t;
-typedef uint32_t nlink_t;
-typedef uint32_t blksize_t;
-typedef uint64_t blkcnt_t;
 typedef int64_t time_t;
 typedef int32_t pid_t;
+typedef uint32_t socklen_t;
 
+#endif /* defined(_SYS_TYPES_H) */
 #endif /* __POSIX_TYPES_DEFINED */
 
 /* ============================================================
@@ -147,16 +149,16 @@ struct posixd_stat_req {
 struct posixd_stat_resp {
     int result;          /* 0 on success, -errno on error */
     struct {
-        dev_t st_dev;
-        ino_t st_ino;
+        uint64_t st_dev;
+        uint64_t st_ino;
         mode_t st_mode;
-        nlink_t st_nlink;
+        uint32_t st_nlink;
         uid_t st_uid;
         gid_t st_gid;
-        dev_t st_rdev;
+        uint64_t st_rdev;
         off_t st_size;
-        blksize_t st_blksize;
-        blkcnt_t st_blocks;
+        uint32_t st_blksize;
+        uint64_t st_blocks;
         time_t st_atime;
         time_t st_mtime;
         time_t st_ctime;
@@ -382,3 +384,59 @@ int futura_pipe2(int pipefd[2], int flags);
 void *futura_brk(void *addr);
 void *futura_mmap(void *addr, size_t length, int prot, int flags, int fd, off_t offset);
 int futura_munmap(void *addr, size_t length);
+
+/* ============================================================
+ *   Minimal Socket Types / APIs (AF_UNIX only)
+ * ============================================================ */
+
+#define AF_UNIX        1
+#define SOCK_STREAM    1
+
+struct sockaddr {
+    unsigned short sa_family;
+    char sa_data[14];
+};
+
+struct sockaddr_un {
+    unsigned short sun_family;
+    char sun_path[108];
+};
+
+struct iovec {
+    void *iov_base;
+    size_t iov_len;
+};
+
+struct msghdr {
+    void *msg_name;
+    socklen_t msg_namelen;
+    struct iovec *msg_iov;
+    size_t msg_iovlen;
+    void *msg_control;
+    size_t msg_controllen;
+    int msg_flags;
+};
+
+struct cmsghdr {
+    size_t cmsg_len;
+    int cmsg_level;
+    int cmsg_type;
+};
+
+#define SOL_SOCKET     1
+#define SCM_RIGHTS     1
+
+int    socket(int domain, int type, int protocol);
+int    bind(int fd, const struct sockaddr *addr, socklen_t len);
+int    listen(int fd, int backlog);
+int    accept(int fd, struct sockaddr *addr, socklen_t *len);
+int    connect(int fd, const struct sockaddr *addr, socklen_t len);
+ssize_t sendmsg(int fd, const struct msghdr *msg, int flags);
+ssize_t recvmsg(int fd, struct msghdr *msg, int flags);
+int    getsockopt(int fd, int level, int optname, void *optval, socklen_t *optlen);
+int    setsockopt(int fd, int level, int optname, const void *optval, socklen_t optlen);
+int    shutdown(int fd, int how);
+
+void  *mmap(void *addr, size_t length, int prot, int flags, int fd, off_t offset);
+int    munmap(void *addr, size_t length);
+int    flock(int fd, int operation);

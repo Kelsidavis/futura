@@ -26,7 +26,7 @@ CFLAGS += $(INCLUDES)
 ASFLAGS := --64
 
 # Source files
-C_SRCS := string.c malloc.c fipc.c posix.c printf.c posix_shm.c
+C_SRCS := string.c malloc.c fipc.c posix.c printf.c posix_shm.c epoll.c timerfd.c time.c stack_chk.c pthread_stub.c assert.c signals.c socket_unix.c fd.c
 ASM_SRCS := crt0.S
 
 # Object files

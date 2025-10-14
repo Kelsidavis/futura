@@ -12,7 +12,6 @@ static const struct wl_surface_interface surface_impl;
 static const struct xdg_wm_base_interface xdg_wm_base_impl;
 static const struct xdg_surface_interface xdg_surface_impl;
 static const struct xdg_toplevel_interface xdg_toplevel_impl;
-static const struct wl_callback_interface frame_callback_impl;
 
 static void compositor_bind(struct wl_client *client,
                             void *data,
@@ -101,7 +100,7 @@ static void surface_frame_req(struct wl_client *client,
         wl_client_post_no_memory(client);
         return;
     }
-    wl_resource_set_implementation(callback, &frame_callback_impl, NULL, NULL);
+    wl_resource_set_implementation(callback, NULL, NULL, NULL);
     comp_surface_frame(surface, callback);
 }
 
@@ -341,17 +340,6 @@ static const struct xdg_toplevel_interface xdg_toplevel_impl = {
     .set_fullscreen = NULL,
     .unset_fullscreen = NULL,
     .set_minimized = NULL,
-};
-
-static void frame_callback_destroy(struct wl_resource *resource) {
-    struct comp_frame_callback *cb = wl_resource_get_user_data(resource);
-    if (cb) {
-        free(cb);
-    }
-}
-
-static const struct wl_callback_interface frame_callback_impl = {
-    .done = NULL,
 };
 
 static void xdg_wm_base_destroy(struct wl_client *client,

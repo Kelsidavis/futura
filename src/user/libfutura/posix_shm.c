@@ -1,6 +1,7 @@
 #include <futura/compat/posix_shm.h>
 
 #include <user/sys.h>
+#include "fd.h"
 
 #define O_CREAT  0x0040
 #define O_RDWR   0x0002
@@ -77,7 +78,11 @@ int fut_shm_open(const char *name, int oflag, int mode) {
     if (fut_build_shm_path(name, path, sizeof(path)) != 0) {
         return -1;
     }
-    return (int)sys_open(path, oflag, 0);
+    int fd = (int)sys_open(path, oflag, 0);
+    if (fd >= 0) {
+        fut_fd_path_register(fd, path);
+    }
+    return fd;
 }
 
 int fut_shm_create(const char *name, size_t size, int oflag, int mode) {
@@ -90,8 +95,10 @@ int fut_shm_create(const char *name, size_t size, int oflag, int mode) {
     if (fd < 0) {
         return fd;
     }
+    fut_fd_path_register(fd, path);
     if (fut_write_zeros(fd, size) != 0) {
         sys_close(fd);
+        fut_fd_path_forget(fd);
         return -1;
     }
     return fd;
@@ -104,4 +111,11 @@ int fut_shm_unlink(const char *name) {
 
 int fut_shm_resize(int fd, size_t size) {
     return fut_write_zeros(fd, size);
+}
+
+int msync(void *addr, size_t length, int flags) {
+    (void)addr;
+    (void)length;
+    (void)flags;
+    return 0;
 }

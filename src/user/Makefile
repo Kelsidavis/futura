@@ -3,7 +3,7 @@
 # Licensed under MPL v2.0
 
 # Subdirectories
-USERLAND_DIRS := libfutura init fsd posixd futurawayd fbtest
+USERLAND_DIRS := libfutura init fsd posixd futurawayd fbtest services/winsrv apps/winstub
 
 # Build targets
 .PHONY: all clean $(USERLAND_DIRS)
@@ -12,7 +12,7 @@ USERLAND_DIRS := libfutura init fsd posixd futurawayd fbtest
 all: libfutura $(USERLAND_DIRS)
 
 # Ensure services depend on libfutura
-init fsd posixd futurawayd fbtest: libfutura
+init fsd posixd futurawayd fbtest services/winsrv apps/winstub: libfutura
 
 $(USERLAND_DIRS):
 	@echo "Building $@..."
@@ -34,5 +34,7 @@ help:
 	@echo "  fsd           - Build filesystem daemon"
 	@echo "  posixd        - Build POSIX daemon"
 	@echo "  futurawayd    - Build FuturaWay compositor"
+	@echo "  services/winsrv - Build window server"
+	@echo "  apps/winstub  - Build window protocol stub client"
 	@echo "  clean         - Clean all build artifacts"
 	@echo "  help          - Show this help message"

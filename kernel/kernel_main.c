@@ -44,6 +44,25 @@ extern void fut_blk_async_selftest_schedule(fut_task_t *task);
 extern void fut_futfs_selftest_schedule(fut_task_t *task);
 extern void fut_net_selftest_schedule(fut_task_t *task);
 extern void fut_perf_selftest_schedule(fut_task_t *task);
+
+static void fut_boot_delay_ms(uint32_t delay_ms) {
+    if (delay_ms == 0) {
+        return;
+    }
+
+    uint64_t start = fut_get_ticks();
+    const uint64_t ceiling = start + delay_ms;
+    const uint64_t guard_iterations = (uint64_t)delay_ms * 20000ULL;
+
+    for (uint64_t spin = 0; spin < guard_iterations; ++spin) {
+        if (fut_get_ticks() >= ceiling) {
+            return;
+        }
+#if defined(__x86_64__)
+        __asm__ volatile("pause" ::: "memory");
+#endif
+    }
+}
 extern fut_status_t virtio_blk_init(uint64_t pci_addr);
 extern fut_status_t virtio_net_init(void);
 extern void ahci_init(void);
@@ -640,6 +659,10 @@ static void fipc_receiver_thread(void *arg) {
 void fut_kernel_main(void) {
     int fb_stage = -1;
     int fb_exec = -1;
+    int winsrv_stage = -1;
+    int winstub_stage = -1;
+    int winsrv_exec = -1;
+    int winstub_exec = -1;
 
 #if defined(__x86_64__)
     uintptr_t min_phys = KERNEL_VIRTUAL_BASE + 0x100000ULL;
@@ -833,6 +856,22 @@ void fut_kernel_main(void) {
         fut_printf("[INIT] fbtest binary staged at /bin/fbtest\n");
     }
 
+    fut_printf("[INIT] Staging winsrv user binary...\n");
+    winsrv_stage = fut_stage_winsrv_binary();
+    if (winsrv_stage != 0) {
+        fut_printf("[WARN] Failed to stage winsrv binary (error %d)\n", winsrv_stage);
+    } else {
+        fut_printf("[INIT] winsrv binary staged at /sbin/winsrv\n");
+    }
+
+    fut_printf("[INIT] Staging winstub user binary...\n");
+    winstub_stage = fut_stage_winstub_binary();
+    if (winstub_stage != 0) {
+        fut_printf("[WARN] Failed to stage winstub binary (error %d)\n", winstub_stage);
+    } else {
+        fut_printf("[INIT] winstub binary staged at /bin/winstub\n");
+    }
+
     /* ========================================
      *   Step 5: Initialize Scheduler
      * ======================================== */
@@ -849,6 +888,29 @@ void fut_kernel_main(void) {
             fut_printf("[WARN] Failed to launch /bin/fbtest (error %d)\n", fb_exec);
         } else {
             fut_printf("[INIT] Scheduled /bin/fbtest user process\n");
+        }
+    }
+
+    if (winsrv_stage == 0) {
+        char winsrv_name[] = "winsrv";
+        char *winsrv_args[] = { winsrv_name, NULL };
+        winsrv_exec = fut_exec_elf("/sbin/winsrv", winsrv_args);
+        if (winsrv_exec != 0) {
+            fut_printf("[WARN] Failed to launch /sbin/winsrv (error %d)\n", winsrv_exec);
+        } else {
+            fut_printf("[INIT] Scheduled /sbin/winsrv service\n");
+        }
+    }
+
+    if (winsrv_exec == 0 && winstub_stage == 0) {
+        fut_boot_delay_ms(100);
+        char winstub_name[] = "winstub";
+        char *winstub_args[] = { winstub_name, NULL };
+        winstub_exec = fut_exec_elf("/bin/winstub", winstub_args);
+        if (winstub_exec != 0) {
+            fut_printf("[WARN] Failed to launch /bin/winstub (error %d)\n", winstub_exec);
+        } else {
+            fut_printf("[INIT] Scheduled /bin/winstub demo client\n");
         }
     }
 

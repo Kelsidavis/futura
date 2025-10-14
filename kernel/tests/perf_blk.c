@@ -3,9 +3,7 @@
 #include <futura/blkdev.h>
 
 #include <kernel/errno.h>
-#include <kernel/fut_blockdev.h>
 #include <kernel/fut_memory.h>
-#include <kernel/fut_ramdisk.h>
 #include <kernel/fut_thread.h>
 
 #include <stdbool.h>
@@ -20,9 +18,10 @@
 
 extern void fut_printf(const char *fmt, ...);
 
-#define BLK_WARMUP 32u
-#define BLK_ITERS  128u
-#define BLK_BLOCK_BYTES 4096u
+#define BLK_WARMUP       32u
+#define BLK_ITERS        128u
+#define BLK_BLOCK_BYTES  4096u
+#define BLK_STORAGE_SIZE (1024u * 1024u)
 
 typedef struct {
     fut_bio_t bio;
@@ -69,28 +68,96 @@ static int fut_perf_blk_submit_wait(fut_handle_t handle,
     return req->status;
 }
 
-static fut_blockdev_t *fut_perf_blk_device(void) {
-    static fut_blockdev_t *cached = NULL;
-    if (cached) {
-        return cached;
+typedef struct {
+    uint8_t *storage;
+    size_t bytes;
+} perf_blk_ctx_t;
+
+static perf_blk_ctx_t g_perf_ctx = {
+    .storage = NULL,
+    .bytes = 0
+};
+
+static fut_status_t perf_blk_read(void *ctx, uint64_t lba, size_t nsectors, void *buf) {
+    perf_blk_ctx_t *backend = (perf_blk_ctx_t *)ctx;
+    if (!backend || !backend->storage || !buf) {
+        return -EINVAL;
+    }
+    size_t offset = (size_t)lba * BLK_BLOCK_BYTES;
+    size_t bytes = nsectors * BLK_BLOCK_BYTES;
+    if (offset + bytes > backend->bytes) {
+        return -EINVAL;
+    }
+    memcpy(buf, backend->storage + offset, bytes);
+    return 0;
+}
+
+static fut_status_t perf_blk_write(void *ctx, uint64_t lba, size_t nsectors, const void *buf) {
+    perf_blk_ctx_t *backend = (perf_blk_ctx_t *)ctx;
+    if (!backend || !backend->storage || !buf) {
+        return -EINVAL;
+    }
+    size_t offset = (size_t)lba * BLK_BLOCK_BYTES;
+    size_t bytes = nsectors * BLK_BLOCK_BYTES;
+    if (offset + bytes > backend->bytes) {
+        return -EINVAL;
+    }
+    memcpy(backend->storage + offset, buf, bytes);
+    return 0;
+}
+
+static fut_status_t perf_blk_flush(void *ctx) {
+    (void)ctx;
+    return 0;
+}
+
+static const fut_blk_backend_t g_perf_backend = {
+    .read = perf_blk_read,
+    .write = perf_blk_write,
+    .flush = perf_blk_flush
+};
+
+static const char g_perf_name[] = "perf_ram0";
+static fut_blkdev_t g_perf_dev = {
+    .name = g_perf_name,
+    .block_size = BLK_BLOCK_BYTES,
+    .block_count = 0,
+    .allowed_rights = FUT_BLK_READ | FUT_BLK_WRITE | FUT_BLK_ADMIN,
+    .backend = &g_perf_backend,
+    .backend_ctx = &g_perf_ctx,
+    .core = NULL
+};
+
+static fut_blkdev_t *fut_perf_blk_device(void) {
+    static bool registered = false;
+    if (registered) {
+        return &g_perf_dev;
     }
 
-    fut_blockdev_t *existing = fut_blockdev_find("perf_ram0");
-    if (!existing) {
-        fut_blockdev_t *ram = fut_ramdisk_create_bytes("perf_ram0", 1 * 1024 * 1024u, BLK_BLOCK_BYTES);
-        if (!ram) {
+    if (!g_perf_ctx.storage) {
+        g_perf_ctx.storage = (uint8_t *)fut_malloc(BLK_STORAGE_SIZE);
+        if (!g_perf_ctx.storage) {
             return NULL;
         }
-        ram->allowed_rights = FUT_BLK_READ | FUT_BLK_WRITE | FUT_BLK_ADMIN;
-        if (fut_blk_register(ram) != 0) {
-            fut_ramdisk_destroy(ram);
-            return NULL;
-        }
-        existing = ram;
+        g_perf_ctx.bytes = BLK_STORAGE_SIZE;
+        memset(g_perf_ctx.storage, 0, g_perf_ctx.bytes);
     }
 
-    cached = existing;
-    return cached;
+    g_perf_dev.block_count = g_perf_ctx.bytes / BLK_BLOCK_BYTES;
+    if (g_perf_dev.block_count == 0) {
+        return NULL;
+    }
+
+    fut_status_t rc = fut_blk_register(&g_perf_dev);
+    if (rc != 0) {
+        fut_free(g_perf_ctx.storage);
+        g_perf_ctx.storage = NULL;
+        g_perf_ctx.bytes = 0;
+        return NULL;
+    }
+
+    registered = true;
+    return &g_perf_dev;
 }
 
 int fut_perf_run_blk(struct fut_perf_stats *read_stats,
@@ -99,7 +166,7 @@ int fut_perf_run_blk(struct fut_perf_stats *read_stats,
         return -EINVAL;
     }
 
-    fut_blockdev_t *dev = fut_perf_blk_device();
+    fut_blkdev_t *dev = fut_perf_blk_device();
     if (!dev) {
         return -ENODEV;
     }

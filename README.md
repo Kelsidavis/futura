@@ -103,6 +103,25 @@ qemu-system-x86_64 -cdrom futura.iso -serial stdio -display none -m 128M
 
 On boot you should see RAM/VMM init, device registration (including `/dev/console`), FIPC bring-up, and bootstrap threads that exercise VFS and the framebuffer user smoke test.
 
+### Desktop Step 2 demo
+
+```bash
+# Build + boot the winsrv/winstub loop (enable logs with DEBUG_WINSRV=1)
+make DEBUG_WINSRV=1 desktop-step2
+```
+
+The QEMU console will show the window server announcing readiness and the stub client drawing its three test rectangles:
+
+```
+[WINSRV] ready 800x600 bpp=32
+[WINSRV] create 320x200 -> id=1
+[WINSRV] damage id=1 rect x=0 y=0 w=320 h=200
+[WINSTUB] connected; created surface 1 (320x200)
+[WINSTUB] drew 3 rects; bye
+```
+
+The stub throttles updates with short sleeps so the damage passes remain visible on hardware-backed framebuffers.
+
 ### Debugging
 
 Enable targeted tracing at build time by defining the relevant flag, for example:

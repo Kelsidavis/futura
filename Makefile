@@ -259,8 +259,12 @@ OBJECTS += $(patsubst %.S,$(OBJ_DIR)/%.o,$(filter %.S,$(ALL_SOURCES)))
 
 FBTEST_BIN := $(BIN_DIR)/user/fbtest
 FBTEST_BLOB := $(OBJ_DIR)/kernel/blobs/fbtest_blob.o
+WINSRV_BIN := $(BIN_DIR)/user/winsrv
+WINSRV_BLOB := $(OBJ_DIR)/kernel/blobs/winsrv_blob.o
+WINSTUB_BIN := $(BIN_DIR)/user/winstub
+WINSTUB_BLOB := $(OBJ_DIR)/kernel/blobs/winstub_blob.o
 
-OBJECTS += $(FBTEST_BLOB)
+OBJECTS += $(FBTEST_BLOB) $(WINSRV_BLOB) $(WINSTUB_BLOB)
 
 # ============================================================
 #   Build Targets
@@ -345,10 +349,24 @@ endif
 $(FBTEST_BIN):
 	@$(MAKE) -C src/user fbtest
 
+$(WINSRV_BIN):
+	@$(MAKE) -C src/user services/winsrv
+
+$(WINSTUB_BIN):
+	@$(MAKE) -C src/user apps/winstub
+
 $(OBJ_DIR)/kernel/blobs:
 	@mkdir -p $@
 
 $(FBTEST_BLOB): $(FBTEST_BIN) | $(OBJ_DIR)/kernel/blobs
+	@echo "OBJCOPY $@"
+	@$(OBJCOPY) -I binary -O elf64-x86-64 -B i386:x86-64 $< $@
+
+$(WINSRV_BLOB): $(WINSRV_BIN) | $(OBJ_DIR)/kernel/blobs
+	@echo "OBJCOPY $@"
+	@$(OBJCOPY) -I binary -O elf64-x86-64 -B i386:x86-64 $< $@
+
+$(WINSTUB_BLOB): $(WINSTUB_BIN) | $(OBJ_DIR)/kernel/blobs
 	@echo "OBJCOPY $@"
 	@$(OBJCOPY) -I binary -O elf64-x86-64 -B i386:x86-64 $< $@
 
@@ -424,13 +442,35 @@ test: iso disk
 			$(QEMU_FLAGS) \
 			-cdrom futura.iso \
 			-boot d \
-		; \
+	; \
 	code=$$?; \
 	if [ $$code -eq 1 ]; then \
 		echo "[HARNESS] PASS"; \
 		exit 0; \
 	else \
 		echo "[HARNESS] FAIL (qemu code $$code)"; \
+		exit $$code; \
+	fi
+
+.PHONY: desktop-step2
+desktop-step2: iso disk
+	@echo "Running desktop-step2 scenario under QEMU..."
+	@img=$(QEMU_DISK_IMG); \
+		echo "[DESKTOP] Using disk $$img"; \
+		qemu-system-x86_64 \
+			-serial stdio \
+			-display none \
+			-m $(QEMU_MEM) \
+			$(QEMU_FLAGS) \
+			-cdrom futura.iso \
+			-boot d \
+	; \
+	code=$$?; \
+	if [ $$code -eq 1 ]; then \
+		echo "[DESKTOP] PASS"; \
+		exit 0; \
+	else \
+		echo "[DESKTOP] FAIL (qemu code $$code)"; \
 		exit $$code; \
 	fi
 
@@ -563,6 +603,7 @@ help:
 	@echo "  make BUILD_MODE=release       - Build optimized release"
 	@echo "  make qemu-x86_64              - Test x86-64 kernel in QEMU"
 	@echo "  make qemu-arm64               - Test ARM64 kernel in QEMU"
+	@echo "  make desktop-step2           - Boot winsrv/winstub demo in QEMU"
 	@echo "  make clean                    - Clean build artifacts"
 
 # ============================================================

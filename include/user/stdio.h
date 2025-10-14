@@ -23,6 +23,10 @@ typedef struct fut_FILE {
 extern FILE *stdout;
 extern FILE *stderr;
 
+#ifndef EOF
+#define EOF (-1)
+#endif
+
 int printf(const char *fmt, ...);
 int vprintf(const char *fmt, va_list args);
 int fprintf(FILE *stream, const char *fmt, ...);
@@ -33,3 +37,5 @@ int vsnprintf(char *buf, size_t size, const char *fmt, va_list args);
 FILE *open_memstream(char **buf, size_t *size);
 int fflush(FILE *stream);
 int fclose(FILE *stream);
+int fputs(const char *s, FILE *stream);
+int puts(const char *s);

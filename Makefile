@@ -594,6 +594,19 @@ perf: iso disk
 perf-ci: perf
 	@python3 tools/perf_compare.py tests/baselines/perf_baseline.json $(BUILD_DIR)/perf_latest.txt
 
+.PHONY: sym-audit
+sym-audit:
+	@files=$$(find third_party/wayland/build -name '*.a' -print); \
+	if [ -z "$$files" ]; then \
+		echo "[sym-audit] no archives found under third_party/wayland/build"; \
+		exit 0; \
+	fi; \
+	if nm -Ao $$files | grep -E '@@GLIBC_|__.*_chk'; then \
+		echo "[AUDIT] GLIBC/fortify symbols found in vendor libs"; \
+		exit 1; \
+	fi; \
+	echo "[sym-audit] vendor archives clean"
+
 .PHONY: release sbom sign metadata verify repro repro-ci release-ci
 
 RELEASE_ARTIFACTS := $(RELEASE_DIR)/futura_kernel.elf \

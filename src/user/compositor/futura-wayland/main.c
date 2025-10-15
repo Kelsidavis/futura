@@ -27,7 +27,36 @@ int main(void) {
         want_backbuffer = false;
     }
 
+    const char *deco_env = getenv("WAYLAND_DECO");
+    bool want_deco = true;
+    if (deco_env && deco_env[0] == '0' && deco_env[1] == '\0') {
+        want_deco = false;
+    }
+
+    const char *shadow_env = getenv("WAYLAND_SHADOW");
+    bool want_shadow = true;
+    if (shadow_env && shadow_env[0] == '0' && shadow_env[1] == '\0') {
+        want_shadow = false;
+    }
+
+    const char *resize_env = getenv("WAYLAND_RESIZE");
+    bool want_resize = true;
+    if (resize_env && resize_env[0] == '0' && resize_env[1] == '\0') {
+        want_resize = false;
+    }
+
+    const char *throttle_env = getenv("WAYLAND_THROTTLE");
+    bool want_throttle = true;
+    if (throttle_env && throttle_env[0] == '0' && throttle_env[1] == '\0') {
+        want_throttle = false;
+    }
+
     comp.backbuffer_enabled = want_backbuffer;
+    comp.deco_enabled = want_deco;
+    comp.shadow_enabled = want_shadow;
+    comp.shadow_radius = want_shadow ? WINDOW_SHADOW_DEFAULT : 0;
+    comp.resize_enabled = want_resize;
+    comp.throttle_enabled = want_throttle;
 
     if (comp_state_init(&comp) != 0) {
         wl_display_destroy(comp.display);
@@ -62,6 +91,15 @@ int main(void) {
     comp.seat = seat_init(&comp);
     if (!comp.seat) {
         printf("[WAYLAND] failed to initialise seat\n");
+        shm_backend_finish(&comp);
+        comp_state_finish(&comp);
+        wl_display_destroy(comp.display);
+        return -1;
+    }
+
+    if (comp_scheduler_start(&comp) != 0) {
+        printf("[WAYLAND] failed to start frame scheduler\n");
+        seat_finish(comp.seat);
         shm_backend_finish(&comp);
         comp_state_finish(&comp);
         wl_display_destroy(comp.display);

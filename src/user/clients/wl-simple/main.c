@@ -6,7 +6,6 @@
 #include <string.h>
 
 #include <futura/compat/posix_shm.h>
-#include <shared/fut_timespec.h>
 #include <user/stdio.h>
 #include <user/sys.h>
 
@@ -37,6 +36,8 @@ struct client_state {
     struct xdg_toplevel *toplevel;
     bool configured;
     uint32_t configure_serial;
+    struct wl_callback *frame_cb;
+    bool frame_done;
 };
 
 static void handle_ping(void *data, struct xdg_wm_base *wm_base, uint32_t serial) {
@@ -115,14 +116,6 @@ static const struct wl_registry_listener registry_listener = {
     .global_remove = registry_global_remove,
 };
 
-static void nanosleep_ms(uint32_t ms) {
-    struct fut_timespec req = {
-        .tv_sec = (long)(ms / 1000u),
-        .tv_nsec = (long)((ms % 1000u) * 1000000u),
-    };
-    sys_nanosleep_call(&req, NULL);
-}
-
 static void fill_gradient(uint32_t *pixels, int32_t width, int32_t height, int32_t stride_bytes) {
     int32_t stride = stride_bytes / 4;
     for (int32_t y = 0; y < height; ++y) {
@@ -156,6 +149,41 @@ static void draw_rect(uint32_t *pixels,
             row[dst_x] = color;
         }
     }
+}
+
+static void frame_done(void *data, struct wl_callback *callback, uint32_t time) {
+    (void)time;
+    struct client_state *state = data;
+    state->frame_done = true;
+    if (state->frame_cb == callback) {
+        state->frame_cb = NULL;
+    }
+    wl_callback_destroy(callback);
+}
+
+static const struct wl_callback_listener frame_listener = {
+    .done = frame_done,
+};
+
+static void request_frame(struct client_state *state) {
+    if (!state || !state->surface) {
+        return;
+    }
+    state->frame_done = false;
+    state->frame_cb = wl_surface_frame(state->surface);
+    wl_callback_add_listener(state->frame_cb, &frame_listener, state);
+}
+
+static bool wait_for_frame(struct client_state *state) {
+    if (!state || !state->display) {
+        return false;
+    }
+    while (!state->frame_done) {
+        if (wl_display_dispatch(state->display) < 0) {
+            return false;
+        }
+    }
+    return true;
 }
 
 int main(void) {
@@ -235,19 +263,24 @@ int main(void) {
                                                          WL_SHM_FORMAT_ARGB8888);
     wl_shm_pool_destroy(pool);
 
+    request_frame(&state);
     wl_surface_attach(state.surface, buffer, 0, 0);
     wl_surface_damage_buffer(state.surface, 0, 0, SURFACE_WIDTH, SURFACE_HEIGHT);
     wl_surface_commit(state.surface);
     wl_display_flush(state.display);
+    bool keep_running = true;
+    if (!wait_for_frame(&state)) {
+        printf("[WL-SIMPLE] failed to receive initial frame callback\n");
+        keep_running = false;
+    }
 
     int32_t rect_x = 0;
     int32_t rect_y = 0;
     int32_t rect_dx = 4;
     int32_t rect_dy = 3;
     uint32_t frames = 0;
-    uint32_t frame_delay_ms = 16u;
 
-    while (frames < TARGET_FRAMES) {
+    while (keep_running && frames < TARGET_FRAMES) {
         memcpy(pixels, base, buffer_size);
 
         rect_x += rect_dx;
@@ -263,15 +296,22 @@ int main(void) {
 
         draw_rect(pixels, SURFACE_WIDTH * 4, rect_x, rect_y, RECT_SIZE, 0xFFFF6600u);
 
+        request_frame(&state);
         wl_surface_attach(state.surface, buffer, 0, 0);
         wl_surface_damage_buffer(state.surface, 0, 0, SURFACE_WIDTH, SURFACE_HEIGHT);
         wl_surface_commit(state.surface);
-
         wl_display_flush(state.display);
-        wl_display_dispatch_pending(state.display);
-
-        nanosleep_ms(frame_delay_ms);
+        if (!wait_for_frame(&state)) {
+            printf("[WL-SIMPLE] dispatch error; stopping animation\n");
+            keep_running = false;
+            break;
+        }
         ++frames;
+    }
+
+    if (state.frame_cb) {
+        wl_callback_destroy(state.frame_cb);
+        state.frame_cb = NULL;
     }
 
     char done_buf[64];

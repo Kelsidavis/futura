@@ -2,7 +2,12 @@
 #include "cursor.h"
 #include "log.h"
 #include "seat.h"
+#include "shadow.h"
 #include "shm_backend.h"
+#include "ui_text.h"
+#include "xdg_shell.h"
+
+#include <sys/timerfd.h>
 
 #include <errno.h>
 #include <stddef.h>
@@ -18,10 +23,23 @@ void free(void *ptr);
 void *memcpy(void *dest, const void *src, size_t n);
 void *memset(void *dest, int c, size_t n);
 
+#define NS_PER_MS 1000000ULL
+
 #define O_RDWR      0x0002
 #define PROT_READ   0x0001
 #define PROT_WRITE  0x0002
 #define MAP_SHARED  0x0001
+
+#define COLOR_CLEAR          0xFF000000u
+#define COLOR_BAR_FOCUSED    0xFF2F6DB5u
+#define COLOR_BAR_UNFOCUSED  0xFF303030u
+#define COLOR_BTN_BASE       0xFF444444u
+#define COLOR_BTN_HOVER      0xFF666666u
+#define COLOR_BTN_PRESSED    0xFF202020u
+#define COLOR_BTN_CROSS      0xFFEEEEEEu
+#define COLOR_TEXT_FOCUSED   0xFFE7F0FFu
+#define COLOR_TEXT_UNFOCUSED 0xFFB3B8C0u
+#define RESIZE_MARGIN        6
 
 static inline uint32_t clamp_u32(uint32_t value, uint32_t max) {
     return value > max ? max : value;
@@ -151,6 +169,87 @@ static void damage_coalesce(struct damage_accum *dmg) {
     } while (merged);
 }
 
+static void apply_constraints(struct comp_surface *surface,
+                              int32_t *width,
+                              int32_t *content_height) {
+    if (!surface || !width || !content_height) {
+        return;
+    }
+    if (*width < 1) {
+        *width = 1;
+    }
+    if (*content_height < 0) {
+        *content_height = 0;
+    }
+    if (surface->min_w > 0 && *width < surface->min_w) {
+        *width = surface->min_w;
+    }
+    if (surface->min_h > 0 && *content_height < surface->min_h) {
+        *content_height = surface->min_h;
+    }
+    if (surface->max_w > 0 && *width > surface->max_w) {
+        *width = surface->max_w;
+    }
+    if (surface->max_h > 0 && *content_height > surface->max_h) {
+        *content_height = surface->max_h;
+    }
+}
+
+static void comp_apply_committed_size(struct compositor_state *comp,
+                                      struct comp_surface *surface,
+                                      int32_t new_width,
+                                      int32_t new_content_height,
+                                      bool was_backed) {
+    if (!comp || !surface) {
+        return;
+    }
+
+    fut_rect_t old_frame = was_backed ? comp_frame_rect(surface)
+                                      : (fut_rect_t){0, 0, 0, 0};
+
+    if (surface->have_pending_pos) {
+        surface->x = surface->pend_x;
+        surface->y = surface->pend_y;
+        surface->have_pending_pos = false;
+    }
+
+    int32_t width = new_width;
+    int32_t content_h = new_content_height;
+    apply_constraints(surface, &width, &content_h);
+
+    surface->width = width;
+    surface->content_height = content_h;
+    comp_surface_update_decorations(surface);
+    surface->height = surface->content_height + surface->bar_height;
+
+    int32_t max_x = (int32_t)comp->fb_info.width - surface->width;
+    int32_t max_y = (int32_t)comp->fb_info.height - surface->height;
+    if (max_x < 0) {
+        max_x = 0;
+    }
+    if (max_y < 0) {
+        max_y = 0;
+    }
+
+    surface->x = clamp_i32(surface->x, 0, max_x);
+    surface->y = clamp_i32(surface->y, 0, max_y);
+
+    fut_rect_t new_frame = comp_frame_rect(surface);
+    if (was_backed && old_frame.w > 0 && old_frame.h > 0) {
+        comp_damage_add_rect(comp, old_frame);
+    }
+    comp_damage_add_rect(comp, new_frame);
+    comp_surface_mark_damage(surface);
+
+    if (!surface->maximized) {
+        surface->saved_x = surface->x;
+        surface->saved_y = surface->y;
+        surface->saved_w = surface->width;
+        surface->saved_h = surface->content_height;
+        surface->have_saved_geom = true;
+    }
+}
+
 static int bb_create(struct backbuffer *bb, int width, int height, int pitch) {
     if (!bb || width <= 0 || height <= 0 || pitch <= 0) {
         return -1;
@@ -183,6 +282,39 @@ static void bb_destroy(struct backbuffer *bb) {
     bb->owns = false;
 }
 
+void comp_surface_update_decorations(struct comp_surface *surface) {
+    if (!surface) {
+        return;
+    }
+
+    struct compositor_state *comp = surface->comp;
+    bool deco_enabled = comp && comp->deco_enabled;
+    surface->shadow_px = (comp && comp->shadow_enabled) ? comp->shadow_radius : 0;
+
+    if (!deco_enabled) {
+        surface->bar_height = 0;
+        surface->btn_w = surface->btn_h = 0;
+        surface->btn_x = surface->btn_y = 0;
+        surface->btn_hover = false;
+        surface->btn_pressed = false;
+        surface->height = surface->content_height;
+        return;
+    }
+
+    surface->bar_height = WINDOW_BAR_HEIGHT;
+    surface->btn_w = WINDOW_BTN_WIDTH;
+    surface->btn_h = WINDOW_BTN_HEIGHT;
+    surface->btn_x = surface->x + surface->width - (WINDOW_BTN_WIDTH + WINDOW_BTN_PADDING);
+    surface->btn_y = surface->y + (surface->bar_height - WINDOW_BTN_HEIGHT) / 2;
+    if (surface->btn_x < surface->x + WINDOW_BTN_PADDING) {
+        surface->btn_x = surface->x + WINDOW_BTN_PADDING;
+    }
+    if (surface->btn_y < surface->y + 2) {
+        surface->btn_y = surface->y + 2;
+    }
+    surface->height = surface->content_height + surface->bar_height;
+}
+
 static void bb_fill_rect(struct backbuffer *bb, fut_rect_t rect, uint32_t argb) {
     if (!bb || !bb->px) {
         return;
@@ -213,6 +345,170 @@ static void blit_argb(const uint8_t *src_base,
     }
 }
 
+static void draw_bar_segment(struct backbuffer *dst, fut_rect_t rect, bool focused) {
+    uint32_t color = focused ? COLOR_BAR_FOCUSED : COLOR_BAR_UNFOCUSED;
+    bb_fill_rect(dst, rect, color);
+}
+
+static void draw_close_button(struct backbuffer *dst,
+                              const struct comp_surface *surface,
+                              fut_rect_t clip) {
+    if (!dst || !dst->px || clip.w <= 0 || clip.h <= 0) {
+        return;
+    }
+
+    fut_rect_t btn = comp_btn_rect(surface);
+    if (btn.w <= 0 || btn.h <= 0) {
+        return;
+    }
+
+    uint32_t base = COLOR_BTN_BASE;
+    if (surface->btn_pressed) {
+        base = COLOR_BTN_PRESSED;
+    } else if (surface->btn_hover) {
+        base = COLOR_BTN_HOVER;
+    }
+
+    uint8_t *base_ptr = (uint8_t *)dst->px;
+    for (int32_t y = 0; y < clip.h; ++y) {
+        int32_t gy = clip.y + y;
+        uint8_t *row = base_ptr + (size_t)gy * dst->pitch + (size_t)clip.x * 4u;
+        uint32_t *px = (uint32_t *)row;
+        for (int32_t x = 0; x < clip.w; ++x) {
+            int32_t gx = clip.x + x;
+            int32_t lx = gx - btn.x;
+            int32_t ly = gy - btn.y;
+            uint32_t color = base;
+            if (lx >= 0 && ly >= 0 && lx < btn.w && ly < btn.h) {
+                if (lx == ly || lx == (btn.w - 1 - ly)) {
+                    color = COLOR_BTN_CROSS;
+                }
+            }
+            px[x] = color;
+        }
+    }
+}
+
+static void draw_title_text(struct backbuffer *dst,
+                            struct comp_surface *surface,
+                            const fut_rect_t *damage_clip) {
+    if (!dst || !surface || !damage_clip) {
+        return;
+    }
+    if (!surface->comp || !surface->comp->deco_enabled || surface->bar_height <= 0) {
+        surface->title_dirty = false;
+        return;
+    }
+
+    fut_rect_t bar_rect = comp_bar_rect(surface);
+    if (bar_rect.h <= 0) {
+        surface->title_dirty = false;
+        return;
+    }
+
+    fut_rect_t clip;
+    if (!rect_intersection(*damage_clip, bar_rect, &clip)) {
+        return;
+    }
+
+    int available_px = surface->width - (8 + WINDOW_BTN_WIDTH + WINDOW_BTN_PADDING + 8);
+    if (available_px <= 0) {
+        surface->title_dirty = false;
+        return;
+    }
+
+    int max_chars = available_px / UI_FONT_WIDTH;
+    if (max_chars <= 0) {
+        surface->title_dirty = false;
+        return;
+    }
+
+    const char *title = surface->title;
+    if (!title || title[0] == '\0') {
+        surface->title_dirty = false;
+        return;
+    }
+
+    char draw_buf[WINDOW_TITLE_MAX];
+    int length = 0;
+    while (length < (WINDOW_TITLE_MAX - 1) && title[length] != '\0') {
+        draw_buf[length] = title[length];
+        ++length;
+    }
+    draw_buf[length] = '\0';
+
+    int draw_len = length;
+    if (draw_len > max_chars) {
+        if (max_chars >= 3) {
+            int copy_len = max_chars - 3;
+            if (copy_len < 0) {
+                copy_len = 0;
+            }
+            if (copy_len > length) {
+                copy_len = length;
+            }
+            for (int i = 0; i < copy_len; ++i) {
+                draw_buf[i] = title[i];
+            }
+            draw_buf[copy_len] = '.';
+            draw_buf[copy_len + 1] = '.';
+            draw_buf[copy_len + 2] = '.';
+            draw_buf[copy_len + 3] = '\0';
+            draw_len = copy_len + 3;
+        } else {
+            if (max_chars > length) {
+                max_chars = length;
+            }
+            for (int i = 0; i < max_chars; ++i) {
+                draw_buf[i] = title[i];
+            }
+            draw_buf[max_chars] = '\0';
+            draw_len = max_chars;
+        }
+    }
+
+    if (draw_len <= 0) {
+        surface->title_dirty = false;
+        return;
+    }
+
+    int text_x = surface->x + 8;
+    int text_y = surface->y + (surface->bar_height - UI_FONT_HEIGHT) / 2;
+    if (text_y < surface->y) {
+        text_y = surface->y;
+    }
+
+    fut_rect_t text_rect = {
+        .x = text_x,
+        .y = text_y,
+        .w = draw_len * UI_FONT_WIDTH,
+        .h = UI_FONT_HEIGHT,
+    };
+
+    fut_rect_t text_clip;
+    if (!rect_intersection(*damage_clip, text_rect, &text_clip)) {
+        surface->title_dirty = false;
+        return;
+    }
+
+    uint32_t color = (surface->comp->focused_surface == surface)
+                         ? COLOR_TEXT_FOCUSED
+                         : COLOR_TEXT_UNFOCUSED;
+
+    ui_draw_text(dst->px,
+                 dst->pitch,
+                 text_x,
+                 text_y,
+                 color,
+                 draw_buf,
+                 text_clip.x,
+                 text_clip.y,
+                 text_clip.w,
+                 text_clip.h);
+
+    surface->title_dirty = false;
+}
+
 static int comp_configure_backbuffers(struct compositor_state *comp);
 static uint64_t comp_now_ns(void);
 
@@ -230,6 +526,13 @@ static void comp_surface_unlink(struct comp_surface *surface) {
     }
     wl_list_remove(&surface->link);
     surface->in_zlist = false;
+}
+
+void comp_surface_mark_damage(struct comp_surface *surface) {
+    if (!surface) {
+        return;
+    }
+    surface->damage_since_present = true;
 }
 
 void comp_damage_add_rect(struct compositor_state *comp, fut_rect_t rect) {
@@ -284,10 +587,31 @@ int comp_state_init(struct compositor_state *comp) {
         return -1;
     }
 
+    bool deco_flag = comp->deco_enabled;
+    bool backbuffer_flag = comp->backbuffer_enabled;
+    bool shadow_flag = comp->shadow_enabled;
+    bool resize_flag = comp->resize_enabled;
+    bool throttle_flag = comp->throttle_enabled;
+    int32_t shadow_radius = comp->shadow_radius;
+
     memset(comp, 0, sizeof(*comp));
     comp->multi_enabled = (WAYLAND_MULTI_BUILD != 0);
+    comp->deco_enabled = (WAYLAND_DECO_BUILD != 0) ? deco_flag : false;
+    comp->backbuffer_enabled = (WAYLAND_BACKBUFFER_BUILD != 0) ? backbuffer_flag : false;
+    comp->shadow_enabled = (WAYLAND_SHADOW_BUILD != 0) ? shadow_flag : false;
+    comp->shadow_radius = comp->shadow_enabled
+                              ? (shadow_radius > 0 ? shadow_radius : WINDOW_SHADOW_DEFAULT)
+                              : 0;
+    comp->resize_enabled = (WAYLAND_RESIZE_BUILD != 0) ? resize_flag : true;
+    comp->throttle_enabled = throttle_flag;
+    comp->resize_surface = NULL;
     wl_list_init(&comp->surfaces);
     comp->fb_fd = -1;
+    comp->timerfd = -1;
+    comp->timer_source = NULL;
+    comp->next_tick_ms = 0;
+    comp->target_ms = 16u;
+    comp->vsync_hint_ms = comp->target_ms;
 
     int fd = (int)sys_open("/dev/fb0", O_RDWR, 0);
     if (fd < 0) {
@@ -326,11 +650,9 @@ int comp_state_init(struct compositor_state *comp) {
     comp->fb_map_size = map_size;
     comp->fb_info = info;
     comp->running = true;
-    comp->target_ms = 16u;
     comp->last_present_ns = 0;
     comp->frame_damage.count = 0;
     comp->bb_index = 0;
-    comp->backbuffer_enabled = (WAYLAND_BACKBUFFER_BUILD != 0);
     comp->pointer_x = (int32_t)info.width / 2;
     comp->pointer_y = (int32_t)info.height / 2;
     comp->cursor = cursor_create();
@@ -345,6 +667,9 @@ int comp_state_init(struct compositor_state *comp) {
         comp_state_finish(comp);
         return -1;
     }
+    uint32_t hint = comp->vsync_hint_ms;
+    (void)sys_ioctl(comp->fb_fd, FBIOSET_VSYNC_MS, (long)&hint);
+    comp->vsync_hint_ms = hint;
     comp->last_present_ns = comp_now_ns() - (uint64_t)comp->target_ms * 1000000ULL;
     return 0;
 }
@@ -355,6 +680,7 @@ void comp_state_finish(struct compositor_state *comp) {
     }
 
     comp->running = false;
+    comp_scheduler_stop(comp);
 
     for (int i = 0; i < 2; ++i) {
         bb_destroy(&comp->bb[i]);
@@ -430,7 +756,38 @@ struct comp_surface *comp_surface_create(struct compositor_state *comp,
     wl_list_init(&surface->frame_callbacks);
     surface->has_pending_damage = false;
     surface->has_pending_buffer = false;
+    surface->had_new_buffer = false;
+    surface->composed_this_tick = false;
+    surface->damage_since_present = false;
     surface->surface_id = ++comp->next_surface_id;
+    surface->cfg_serial_last = 0;
+    surface->cfg_serial_pending = 0;
+    surface->pend_w = 0;
+    surface->pend_h = 0;
+    surface->have_pending_size = false;
+    surface->pend_x = 0;
+    surface->pend_y = 0;
+    surface->have_pending_pos = false;
+    surface->min_w = 0;
+    surface->min_h = 0;
+    surface->max_w = 0;
+    surface->max_h = 0;
+    surface->maximized = false;
+    surface->resizing = RSZ_NONE;
+    surface->resize_dx = 0;
+    surface->resize_dy = 0;
+    surface->base_x = 0;
+    surface->base_y = 0;
+    surface->base_w = 0;
+    surface->base_h = 0;
+    surface->base_total_h = 0;
+    surface->saved_x = 0;
+    surface->saved_y = 0;
+    surface->saved_w = 0;
+    surface->saved_h = 0;
+    surface->have_saved_geom = false;
+    surface->bar_height = comp && comp->deco_enabled ? WINDOW_BAR_HEIGHT : 0;
+    comp_surface_update_decorations(surface);
     comp_surface_link_tail(comp, surface);
     if (!comp->active_surface) {
         comp->active_surface = surface;
@@ -446,7 +803,6 @@ void comp_surface_destroy(struct comp_surface *surface) {
     struct comp_frame_callback *cb, *tmp;
     wl_list_for_each_safe(cb, tmp, &surface->frame_callbacks, link) {
         wl_resource_destroy(cb->resource);
-        free(cb);
     }
 
     if (surface->backing) {
@@ -457,13 +813,8 @@ void comp_surface_destroy(struct comp_surface *surface) {
     if (comp) {
         comp_surface_unlink(surface);
         if (surface->has_backing) {
-            fut_rect_t rect = {
-                .x = surface->x,
-                .y = surface->y,
-                .w = surface->width,
-                .h = surface->height,
-            };
-            comp_damage_add_rect(comp, rect);
+            comp_damage_add_rect(comp, comp_frame_rect(surface));
+            comp_surface_mark_damage(surface);
         }
         if (comp->active_surface == surface) {
             if (!wl_list_empty(&comp->surfaces)) {
@@ -480,6 +831,9 @@ void comp_surface_destroy(struct comp_surface *surface) {
             comp->drag_surface = NULL;
             comp->dragging = false;
         }
+        if (comp->resize_surface == surface) {
+            comp->resize_surface = NULL;
+        }
         if (comp->seat) {
             seat_surface_destroyed(comp->seat, surface);
         }
@@ -495,6 +849,7 @@ void comp_surface_attach(struct comp_surface *surface,
     }
     surface->pending_buffer_resource = buffer_resource;
     surface->has_pending_buffer = (buffer_resource != NULL);
+    surface->had_new_buffer = (buffer_resource != NULL);
 }
 
 void comp_surface_damage(struct comp_surface *surface,
@@ -529,7 +884,19 @@ void comp_surface_commit(struct comp_surface *surface) {
         return;
     }
 
-    if (surface->has_pending_buffer && surface->pending_buffer_resource) {
+    struct compositor_state *comp = surface->comp;
+    bool throttle = comp && comp->throttle_enabled;
+    bool has_buffer = surface->has_pending_buffer && surface->pending_buffer_resource;
+    bool has_damage = surface->has_pending_damage;
+
+    if (throttle && !has_buffer && !has_damage) {
+#ifdef DEBUG_WAYLAND
+        WLOG("[WAYLAND] throttle skip win=%p\n", (void *)surface);
+#endif
+        return;
+    }
+
+    if (has_buffer) {
         struct comp_buffer buffer = {0};
         if (shm_buffer_import(surface->pending_buffer_resource, &buffer) == 0) {
             size_t required = (size_t)buffer.stride * (size_t)buffer.height;
@@ -547,41 +914,42 @@ void comp_surface_commit(struct comp_surface *surface) {
                 surface->backing = new_mem;
                 surface->backing_size = required;
             }
-            bool first_buffer = !surface->has_backing;
+            bool had_backing = surface->has_backing;
             for (int32_t row = 0; row < buffer.height; ++row) {
                 const uint8_t *src_row = (const uint8_t *)buffer.data + (size_t)row * buffer.stride;
                 uint8_t *dst_row = surface->backing + (size_t)row * buffer.stride;
                 memcpy(dst_row, src_row, (size_t)buffer.width * 4u);
             }
 
-            surface->width = buffer.width;
-            surface->height = buffer.height;
             surface->stride = buffer.stride;
             surface->has_backing = true;
-            comp_surface_raise(surface->comp, surface);
+            surface->had_new_buffer = true;
+            comp_surface_mark_damage(surface);
 
             if (!surface->pos_initialised) {
-                int32_t cx = ((int32_t)surface->comp->fb_info.width - surface->width) / 2;
-                int32_t cy = ((int32_t)surface->comp->fb_info.height - surface->height) / 2;
-                int32_t max_x = (int32_t)surface->comp->fb_info.width - surface->width;
-                int32_t max_y = (int32_t)surface->comp->fb_info.height - surface->height;
-                if (max_x < 0) max_x = 0;
-                if (max_y < 0) max_y = 0;
-                surface->x = clamp_i32(cx, 0, max_x);
-                surface->y = clamp_i32(cy, 0, max_y);
+                int32_t total_h = buffer.height + surface->bar_height;
+                int32_t cx = ((int32_t)surface->comp->fb_info.width - buffer.width) / 2;
+                int32_t cy = ((int32_t)surface->comp->fb_info.height - total_h) / 2;
+                surface->x = cx;
+                surface->y = cy;
                 surface->pos_initialised = true;
             }
 
-            fut_rect_t full = {
-                .x = surface->x,
-                .y = surface->y,
-                .w = surface->width,
-                .h = surface->height,
-            };
-            comp_damage_add_rect(surface->comp, full);
+            comp_surface_raise(surface->comp, surface);
+
+            comp_apply_committed_size(surface->comp,
+                                      surface,
+                                      buffer.width,
+                                      buffer.height,
+                                      had_backing);
+            if (surface->have_pending_size &&
+                surface->pend_w == buffer.width &&
+                surface->pend_h == buffer.height) {
+                surface->have_pending_size = false;
+            }
 
             shm_buffer_release(&buffer);
-            if (first_buffer) {
+            if (!had_backing) {
                 WLOG("[WAYLAND] window create win=%p size=%dx%d z=top\n",
                      (void *)surface,
                      surface->width,
@@ -589,6 +957,7 @@ void comp_surface_commit(struct comp_surface *surface) {
             }
         } else {
             wl_buffer_send_release(surface->pending_buffer_resource);
+            surface->had_new_buffer = false;
         }
         surface->pending_buffer_resource = NULL;
         surface->has_pending_buffer = false;
@@ -596,23 +965,33 @@ void comp_surface_commit(struct comp_surface *surface) {
 
     if (surface->has_pending_damage && surface->has_backing) {
         fut_rect_t local = surface->pending_damage;
-        fut_rect_t global = {
-            .x = surface->x + local.x,
-            .y = surface->y + local.y,
-            .w = local.w,
-            .h = local.h,
-        };
-        comp_damage_add_rect(surface->comp, global);
+        if (local.w > 0 && local.h > 0) {
+            if (local.x < 0) {
+                local.w += local.x;
+                local.x = 0;
+            }
+            if (local.y < 0) {
+                local.h += local.y;
+                local.y = 0;
+            }
+            if (local.x + local.w > surface->width) {
+                local.w = surface->width - local.x;
+            }
+            if (local.y + local.h > surface->content_height) {
+                local.h = surface->content_height - local.y;
+            }
+            if (local.w > 0 && local.h > 0) {
+                fut_rect_t global = {
+                    .x = surface->x + local.x,
+                    .y = surface->y + surface->bar_height + local.y,
+                    .w = local.w,
+                    .h = local.h,
+                };
+                comp_damage_add_rect(surface->comp, global);
+                comp_surface_mark_damage(surface);
+            }
+        }
         surface->has_pending_damage = false;
-    }
-
-    uint32_t now = comp_now_msec();
-    struct comp_frame_callback *cb, *tmp;
-    wl_list_for_each_safe(cb, tmp, &surface->frame_callbacks, link) {
-        wl_callback_send_done(cb->resource, now);
-        wl_resource_destroy(cb->resource);
-        wl_list_remove(&cb->link);
-        free(cb);
     }
 }
 
@@ -631,6 +1010,9 @@ void comp_surface_frame(struct comp_surface *surface,
     wl_list_insert(surface->frame_callbacks.prev, &cb->link);
     wl_resource_set_user_data(callback_resource, cb);
     wl_resource_set_destructor(callback_resource, frame_callback_resource_destroy);
+#ifdef DEBUG_WAYLAND
+    WLOG("[WAYLAND] frame request win=%p\n", (void *)surface);
+#endif
 }
 
 static uint64_t comp_now_ns(void) {
@@ -653,6 +1035,29 @@ static void present_damage(struct compositor_state *comp, const struct damage_ac
         uint8_t *dst_base = comp->fb_map + (size_t)rect.y * comp->fb_info.pitch + (size_t)rect.x * 4u;
         blit_argb(src_base, src->pitch, dst_base, comp->fb_info.pitch, rect.w, rect.h);
     }
+}
+
+static int comp_flush_frame_callbacks(struct compositor_state *comp, uint32_t now_msec) {
+    if (!comp) {
+        return 0;
+    }
+
+    int callbacks = 0;
+    struct comp_surface *surface;
+    wl_list_for_each(surface, &comp->surfaces, link) {
+        if (surface->composed_this_tick && surface->has_backing) {
+            struct comp_frame_callback *cb, *tmp;
+            wl_list_for_each_safe(cb, tmp, &surface->frame_callbacks, link) {
+                wl_callback_send_done(cb->resource, now_msec);
+                wl_resource_destroy(cb->resource);
+                ++callbacks;
+            }
+            surface->had_new_buffer = false;
+            surface->damage_since_present = false;
+        }
+        surface->composed_this_tick = false;
+    }
+    return callbacks;
 }
 
 static void render_one_frame(struct compositor_state *comp) {
@@ -684,34 +1089,81 @@ static void render_one_frame(struct compositor_state *comp) {
         }
     }
 
-    for (int i = 0; i < damage->count; ++i) {
-        bb_fill_rect(dst, damage->rects[i], 0x00000000u);
+    struct comp_surface *surface;
+    wl_list_for_each(surface, &comp->surfaces, link) {
+        if (surface->has_backing) {
+            comp_surface_update_decorations(surface);
+            surface->height = surface->content_height + surface->bar_height;
+        }
+        surface->composed_this_tick = false;
     }
 
-    struct comp_surface *surface;
+    for (int i = 0; i < damage->count; ++i) {
+        bb_fill_rect(dst, damage->rects[i], COLOR_CLEAR);
+    }
+
     wl_list_for_each(surface, &comp->surfaces, link) {
         if (!surface->has_backing) {
             continue;
         }
-        fut_rect_t surf_rect = {
-            .x = surface->x,
-            .y = surface->y,
-            .w = surface->width,
-            .h = surface->height,
-        };
+
+        fut_rect_t frame_rect = comp_frame_rect(surface);
+        fut_rect_t window_rect = comp_window_rect(surface);
+        bool touched = false;
 
         for (int i = 0; i < damage->count; ++i) {
-            fut_rect_t inter;
-            if (!rect_intersection(damage->rects[i], surf_rect, &inter)) {
+            if (surface->shadow_px > 0) {
+                fut_rect_t shadow_clip;
+                if (rect_intersection(damage->rects[i], frame_rect, &shadow_clip)) {
+                    shadow_draw(dst, surface, &shadow_clip);
+                    touched = true;
+                }
+            }
+
+            fut_rect_t clip;
+            if (!rect_intersection(damage->rects[i], window_rect, &clip)) {
+                continue;
+            }
+
+            if (comp->deco_enabled && surface->bar_height > 0) {
+                fut_rect_t bar_rect = comp_bar_rect(surface);
+                fut_rect_t bar_clip;
+                if (rect_intersection(damage->rects[i], bar_rect, &bar_clip)) {
+                    draw_bar_segment(dst, bar_clip, surface == comp->focused_surface);
+                    draw_title_text(dst, surface, &bar_clip);
+                    touched = true;
+                }
+
+                fut_rect_t btn_rect = comp_btn_rect(surface);
+                fut_rect_t btn_clip;
+                if (btn_rect.w > 0 && btn_rect.h > 0 &&
+                    rect_intersection(damage->rects[i], btn_rect, &btn_clip)) {
+                    draw_close_button(dst, surface, btn_clip);
+                    touched = true;
+                }
+            }
+
+            fut_rect_t content_rect = comp_content_rect(surface);
+            if (content_rect.h <= 0) {
+                continue;
+            }
+            fut_rect_t content_clip;
+            if (!rect_intersection(damage->rects[i], content_rect, &content_clip)) {
                 continue;
             }
             const uint8_t *src_ptr = surface->backing +
-                (size_t)(inter.y - surface->y) * surface->stride +
-                (size_t)(inter.x - surface->x) * 4u;
+                (size_t)(content_clip.y - content_rect.y) * surface->stride +
+                (size_t)(content_clip.x - content_rect.x) * 4u;
             uint8_t *dst_ptr = (uint8_t *)dst->px +
-                (size_t)inter.y * dst->pitch +
-                (size_t)inter.x * 4u;
-            blit_argb(src_ptr, surface->stride, dst_ptr, dst->pitch, inter.w, inter.h);
+                (size_t)content_clip.y * dst->pitch +
+                (size_t)content_clip.x * 4u;
+            blit_argb(src_ptr, surface->stride, dst_ptr, dst->pitch,
+                      content_clip.w, content_clip.h);
+            touched = true;
+        }
+
+        if (touched) {
+            surface->composed_this_tick = true;
         }
     }
 
@@ -726,13 +1178,81 @@ static void render_one_frame(struct compositor_state *comp) {
         present_damage(comp, damage);
     }
 
+    int frame_cb_count = comp_flush_frame_callbacks(comp, comp_now_msec());
+
 #ifdef DEBUG_WAYLAND
-    WLOG("[WAYLAND] present bb=%d regions=%d\n", comp->bb_index, region_count);
+    WLOG("[WAYLAND] present bb=%d regions=%d frame_cbs=%d\n",
+         comp->bb_index, region_count, frame_cb_count);
 #endif
 
     comp->frame_damage.count = 0;
     comp->needs_repaint = false;
     comp->last_present_ns = comp_now_ns();
+}
+
+static void ms_to_timespec(uint64_t ms, struct timespec *ts) {
+    if (!ts) {
+        return;
+    }
+    ts->tv_sec = (time_t)(ms / 1000ULL);
+    ts->tv_nsec = (long)((ms % 1000ULL) * 1000000ULL);
+}
+
+static int comp_timer_arm(struct compositor_state *comp) {
+    if (!comp || comp->timerfd < 0) {
+        return -1;
+    }
+    if (comp->next_tick_ms == 0) {
+        comp->next_tick_ms = (uint64_t)comp_now_msec() + comp->target_ms;
+    }
+    struct itimerspec its = {0};
+    ms_to_timespec(comp->next_tick_ms, &its.it_value);
+    return timerfd_settime(comp->timerfd, TFD_TIMER_ABSTIME, &its, NULL);
+}
+
+static void comp_handle_timer_tick(struct compositor_state *comp, uint64_t expirations) {
+    if (!comp) {
+        return;
+    }
+    if (expirations == 0) {
+        expirations = 1;
+    }
+
+    uint64_t now_ms = (uint64_t)comp_now_msec();
+    if (comp->next_tick_ms == 0) {
+        comp->next_tick_ms = now_ms + comp->target_ms;
+    } else {
+        uint64_t advance = (uint64_t)comp->target_ms * expirations;
+        comp->next_tick_ms += advance;
+        if (comp->next_tick_ms <= now_ms) {
+            comp->next_tick_ms = now_ms + comp->target_ms;
+        }
+    }
+
+    (void)comp_timer_arm(comp);
+
+    if (comp->frame_damage.count > 0) {
+        render_one_frame(comp);
+    }
+}
+
+static int comp_timerfd_cb(int fd, uint32_t mask, void *data) {
+    struct compositor_state *comp = data;
+    if (!comp) {
+        return 0;
+    }
+
+    if (!(mask & WL_EVENT_READABLE)) {
+        return 0;
+    }
+
+    uint64_t expirations = 0;
+    long rc = sys_read(fd, &expirations, (long)sizeof(expirations));
+    if (rc <= 0) {
+        return 0;
+    }
+    comp_handle_timer_tick(comp, expirations);
+    return 0;
 }
 
 int comp_run(struct compositor_state *comp) {
@@ -742,36 +1262,68 @@ int comp_run(struct compositor_state *comp) {
 
     while (comp->running) {
         wl_display_flush_clients(comp->display);
-
-        uint64_t target_ns = (uint64_t)comp->target_ms * 1000000ULL;
-        uint64_t now_ns = comp_now_ns();
-        uint64_t elapsed_ns = now_ns - comp->last_present_ns;
-        int timeout_ms = comp->target_ms;
-
-        if (comp->frame_damage.count > 0) {
-            if (elapsed_ns >= target_ns) {
-                timeout_ms = 0;
-            } else {
-                uint64_t remaining_ns = target_ns - elapsed_ns;
-                timeout_ms = (int)(remaining_ns / 1000000ULL);
-                if (timeout_ms < 0) {
-                    timeout_ms = 0;
-                }
-            }
-        }
-
-        int rc = wl_event_loop_dispatch(comp->loop, timeout_ms);
+        int rc = wl_event_loop_dispatch(comp->loop, -1);
         if (rc < 0 && errno != EINTR) {
             break;
-        }
-
-        now_ns = comp_now_ns();
-        if (comp->frame_damage.count > 0 && now_ns - comp->last_present_ns >= target_ns) {
-            render_one_frame(comp);
         }
     }
 
     return 0;
+}
+
+int comp_scheduler_start(struct compositor_state *comp) {
+    if (!comp || !comp->loop) {
+        return -1;
+    }
+    if (comp->timerfd >= 0) {
+        return 0;
+    }
+
+    int fd = timerfd_create(CLOCK_MONOTONIC, 0);
+    if (fd < 0) {
+        return -1;
+    }
+
+    comp->timerfd = fd;
+    comp->next_tick_ms = (uint64_t)comp_now_msec() + comp->target_ms;
+    if (comp_timer_arm(comp) < 0) {
+        struct itimerspec disarm = {0};
+        timerfd_settime(fd, 0, &disarm, NULL);
+        sys_close(fd);
+        comp->timerfd = -1;
+        comp->next_tick_ms = 0;
+        return -1;
+    }
+
+    comp->timer_source = wl_event_loop_add_fd(comp->loop,
+                                              comp->timerfd,
+                                              WL_EVENT_READABLE,
+                                              comp_timerfd_cb,
+                                              comp);
+    if (!comp->timer_source) {
+        comp_scheduler_stop(comp);
+        return -1;
+    }
+    return 0;
+}
+
+void comp_scheduler_stop(struct compositor_state *comp) {
+    if (!comp) {
+        return;
+    }
+
+    if (comp->timer_source) {
+        wl_event_source_remove(comp->timer_source);
+        comp->timer_source = NULL;
+    }
+
+    if (comp->timerfd >= 0) {
+        struct itimerspec disarm = {0};
+        timerfd_settime(comp->timerfd, 0, &disarm, NULL);
+        sys_close(comp->timerfd);
+        comp->timerfd = -1;
+    }
+    comp->next_tick_ms = 0;
 }
 
 bool comp_pointer_inside_surface(const struct compositor_state *comp,
@@ -785,9 +1337,16 @@ bool comp_pointer_inside_surface(const struct compositor_state *comp,
     }
 
     int32_t sx = px - surface->x;
-    int32_t sy = py - surface->y;
+    int32_t sy = py - surface->y - surface->bar_height;
+    if (surface->bar_height > 0) {
+        if (sy < 0) {
+            return false;
+        }
+    } else {
+        sy = py - surface->y;
+    }
     if (sx < 0 || sy < 0 ||
-        sx >= surface->width || sy >= surface->height) {
+        sx >= surface->width || sy >= surface->content_height) {
         return false;
     }
     if (out_sx) {
@@ -842,6 +1401,7 @@ void comp_surface_raise(struct compositor_state *comp, struct comp_surface *surf
     }
     surface->in_zlist = true;
     comp->active_surface = surface;
+    comp_surface_update_decorations(surface);
     if (surface->has_backing) {
         fut_rect_t rect = {
             .x = surface->x,
@@ -850,6 +1410,7 @@ void comp_surface_raise(struct compositor_state *comp, struct comp_surface *surf
             .h = surface->height,
         };
         comp_damage_add_rect(comp, rect);
+        comp_surface_mark_damage(surface);
     }
 }
 
@@ -890,6 +1451,9 @@ void comp_pointer_motion(struct compositor_state *comp, int32_t new_x, int32_t n
         if (comp->dragging) {
             comp_update_drag(comp);
         }
+        if (comp->resize_surface) {
+            comp_update_resize(comp);
+        }
         return;
     }
 
@@ -903,10 +1467,17 @@ void comp_pointer_motion(struct compositor_state *comp, int32_t new_x, int32_t n
     comp->needs_repaint = true;
 
     comp_update_drag(comp);
+    comp_update_resize(comp);
 }
 
 void comp_start_drag(struct compositor_state *comp, struct comp_surface *surface) {
     if (!comp || comp->dragging || !surface || !surface->has_backing) {
+        return;
+    }
+    if (surface->maximized || surface->resizing != RSZ_NONE) {
+        return;
+    }
+    if (comp->resize_surface) {
         return;
     }
     comp->dragging = true;
@@ -931,6 +1502,8 @@ void comp_update_surface_position(struct compositor_state *comp,
         return;
     }
 
+    fut_rect_t old_frame = comp_frame_rect(surface);
+
     int32_t width = surface->width;
     int32_t height = surface->height;
     int32_t max_x = (int32_t)comp->fb_info.width - width;
@@ -944,34 +1517,258 @@ void comp_update_surface_position(struct compositor_state *comp,
 
     int32_t clamped_x = clamp_i32(new_x, 0, max_x);
     int32_t clamped_y = clamp_i32(new_y, 0, max_y);
+    if (clamped_x != new_x || clamped_y != new_y) {
+#ifdef DEBUG_WAYLAND
+        WLOG("[WAYLAND] clamp win=%p -> x=%d y=%d\n",
+             (void *)surface, clamped_x, clamped_y);
+#endif
+    }
     if (clamped_x == surface->x && clamped_y == surface->y) {
         return;
     }
 
-    fut_rect_t old_rect = {
-        .x = surface->x,
-        .y = surface->y,
-        .w = width,
-        .h = height,
-    };
-    fut_rect_t new_rect = {
-        .x = clamped_x,
-        .y = clamped_y,
-        .w = width,
-        .h = height,
-    };
-    comp_damage_add_rect(comp, old_rect);
-    comp_damage_add_rect(comp, new_rect);
-
     surface->x = clamped_x;
-    surface->y = clamped_y;
-    comp->needs_repaint = true;
-    if (surface == comp->active_surface) {
-        WLOG("[WAYLAND] move win=%p -> x=%d y=%d\n",
-             (void *)surface,
-             clamped_x,
+   surface->y = clamped_y;
+   comp_surface_update_decorations(surface);
+   fut_rect_t new_frame = comp_frame_rect(surface);
+   comp_damage_add_rect(comp, old_frame);
+   comp_damage_add_rect(comp, new_frame);
+    comp_surface_mark_damage(surface);
+   comp->needs_repaint = true;
+   if (surface == comp->active_surface) {
+       WLOG("[WAYLAND] move win=%p -> x=%d y=%d\n",
+            (void *)surface,
+            clamped_x,
              clamped_y);
     }
+}
+
+void comp_start_resize(struct compositor_state *comp,
+                       struct comp_surface *surface,
+                       resize_edge_t edge) {
+    if (!comp || !surface || edge == RSZ_NONE) {
+        return;
+    }
+    if (!comp->resize_enabled || surface->maximized || !surface->has_backing) {
+        return;
+    }
+    if (comp->resize_surface && comp->resize_surface != surface) {
+        comp_end_resize(comp, comp->resize_surface);
+    }
+    comp_end_drag(comp);
+    comp->resize_surface = surface;
+    surface->resizing = edge;
+    surface->base_x = surface->x;
+    surface->base_y = surface->y;
+    surface->base_w = surface->width;
+    surface->base_h = surface->content_height;
+    surface->base_total_h = surface->height;
+}
+
+void comp_update_resize(struct compositor_state *comp) {
+    if (!comp || !comp->resize_surface) {
+        return;
+    }
+    struct comp_surface *surface = comp->resize_surface;
+    if (surface->resizing == RSZ_NONE) {
+        comp->resize_surface = NULL;
+        return;
+    }
+
+    int mx = comp->pointer_x;
+    int my = comp->pointer_y;
+
+    int32_t new_x = surface->base_x;
+    int32_t new_y = surface->base_y;
+    int32_t new_w = surface->base_w;
+    int32_t new_total = surface->base_total_h;
+
+    if (surface->resizing & RSZ_LEFT) {
+        int32_t delta = mx - surface->base_x;
+        new_w = surface->base_w - delta;
+        new_x = surface->base_x + delta;
+    }
+    if (surface->resizing & RSZ_RIGHT) {
+        int32_t delta = mx - (surface->base_x + surface->base_w);
+        new_w = surface->base_w + delta;
+    }
+    if (surface->resizing & RSZ_TOP) {
+        int32_t delta = my - surface->base_y;
+        new_total = surface->base_total_h - delta;
+        new_y = surface->base_y + delta;
+    }
+    if (surface->resizing & RSZ_BOTTOM) {
+        int32_t delta = my - (surface->base_y + surface->base_total_h);
+        new_total = surface->base_total_h + delta;
+    }
+
+    int32_t new_content_h = new_total - surface->bar_height;
+    apply_constraints(surface, &new_w, &new_content_h);
+    if (surface->resizing & RSZ_LEFT) {
+        new_x = surface->base_x + (surface->base_w - new_w);
+    }
+    if (surface->resizing & RSZ_TOP) {
+        int32_t total_after = new_content_h + surface->bar_height;
+        new_y = surface->base_y + (surface->base_total_h - total_after);
+        new_total = total_after;
+    } else {
+        new_total = new_content_h + surface->bar_height;
+    }
+
+    if (new_w < 1) {
+        new_w = 1;
+    }
+    if (new_content_h < 0) {
+        new_content_h = 0;
+        new_total = surface->bar_height;
+    }
+
+    int32_t fb_w = (int32_t)comp->fb_info.width;
+    int32_t fb_h = (int32_t)comp->fb_info.height;
+
+    if (new_x < 0) {
+        if (surface->resizing & RSZ_LEFT) {
+            new_w += new_x;
+            if (new_w < 1) {
+                new_w = 1;
+            }
+        }
+        new_x = 0;
+    }
+    if (new_y < 0) {
+        if (surface->resizing & RSZ_TOP) {
+            int32_t adjust = -new_y;
+            new_total += adjust;
+            new_content_h = new_total - surface->bar_height;
+        }
+        new_y = 0;
+    }
+    if (new_x + new_w > fb_w) {
+        if (surface->resizing & RSZ_RIGHT) {
+            new_w = fb_w - new_x;
+            if (new_w < 1) {
+                new_w = 1;
+            }
+        } else {
+            new_x = fb_w - new_w;
+            if (new_x < 0) {
+                new_x = 0;
+            }
+        }
+    }
+    if (new_y + new_total > fb_h) {
+        if (surface->resizing & RSZ_BOTTOM) {
+            new_total = fb_h - new_y;
+            if (new_total < surface->bar_height) {
+                new_total = surface->bar_height;
+            }
+            new_content_h = new_total - surface->bar_height;
+        } else {
+            new_y = fb_h - new_total;
+            if (new_y < 0) {
+                new_y = 0;
+            }
+        }
+    }
+
+    if (new_w < 1) {
+        new_w = 1;
+    }
+    if (new_content_h < 0) {
+        new_content_h = 0;
+    }
+
+    if (surface->pend_w == new_w &&
+        surface->pend_h == new_content_h &&
+        surface->have_pending_pos &&
+        surface->pend_x == new_x &&
+        surface->pend_y == new_y) {
+        return;
+    }
+
+    surface->pend_x = new_x;
+    surface->pend_y = new_y;
+    surface->have_pending_pos = true;
+
+    uint32_t flags = comp_surface_state_flags(surface) | XDG_CFG_STATE_RESIZING;
+    xdg_shell_surface_send_configure(surface, new_w, new_content_h, flags);
+
+#ifdef DEBUG_WAYLAND
+    WLOG("[WAYLAND] resize drag win=%p -> %dx%d\n",
+         (void *)surface,
+         new_w,
+         new_content_h + surface->bar_height);
+#endif
+}
+
+void comp_end_resize(struct compositor_state *comp, struct comp_surface *surface) {
+    if (!comp || !surface) {
+        return;
+    }
+    if (surface->resizing != RSZ_NONE) {
+        surface->resizing = RSZ_NONE;
+    }
+    if (comp->resize_surface == surface) {
+        comp->resize_surface = NULL;
+    }
+}
+
+void comp_surface_set_maximized(struct comp_surface *surface, bool maximized) {
+    if (!surface || !surface->comp || surface->maximized == maximized) {
+        return;
+    }
+
+    struct compositor_state *comp = surface->comp;
+
+    if (maximized) {
+        if (!surface->have_saved_geom) {
+            surface->saved_x = surface->x;
+            surface->saved_y = surface->y;
+            surface->saved_w = surface->width;
+            surface->saved_h = surface->content_height;
+            surface->have_saved_geom = true;
+        }
+        surface->maximized = true;
+        surface->resizing = RSZ_NONE;
+        if (comp->resize_surface == surface) {
+            comp->resize_surface = NULL;
+        }
+        comp_end_drag(comp);
+
+        int32_t target_w = (int32_t)comp->fb_info.width;
+        int32_t target_h = (int32_t)comp->fb_info.height - surface->bar_height;
+        if (target_h < 0) {
+            target_h = 0;
+        }
+
+        surface->pend_x = 0;
+        surface->pend_y = 0;
+        surface->have_pending_pos = true;
+
+        uint32_t flags = comp_surface_state_flags(surface) | XDG_CFG_STATE_MAXIMIZED;
+        xdg_shell_surface_send_configure(surface, target_w, target_h, flags);
+        comp_update_surface_position(comp, surface, 0, 0);
+    } else {
+        surface->maximized = false;
+        int32_t target_w = surface->have_saved_geom ? surface->saved_w : surface->width;
+        int32_t target_h = surface->have_saved_geom ? surface->saved_h : surface->content_height;
+        int32_t target_x = surface->have_saved_geom ? surface->saved_x : surface->x;
+        int32_t target_y = surface->have_saved_geom ? surface->saved_y : surface->y;
+
+        surface->pend_x = target_x;
+        surface->pend_y = target_y;
+        surface->have_pending_pos = true;
+
+        uint32_t flags = comp_surface_state_flags(surface);
+        xdg_shell_surface_send_configure(surface, target_w, target_h, flags);
+    }
+}
+
+void comp_surface_toggle_maximize(struct comp_surface *surface) {
+    if (!surface) {
+        return;
+    }
+    comp_surface_set_maximized(surface, !surface->maximized);
 }
 
 void comp_update_drag(struct compositor_state *comp) {
@@ -982,4 +1779,89 @@ void comp_update_drag(struct compositor_state *comp) {
     int32_t new_x = comp->pointer_x - comp->drag_offset_x;
     int32_t new_y = comp->pointer_y - comp->drag_offset_y;
     comp_update_surface_position(comp, surface, new_x, new_y);
+}
+
+hit_role_t comp_hit_test(struct compositor_state *comp,
+                         int32_t px,
+                         int32_t py,
+                         struct comp_surface **out_surface,
+                         resize_edge_t *out_edge) {
+    if (out_edge) {
+        *out_edge = RSZ_NONE;
+    }
+    struct comp_surface *surface = comp_surface_at(comp, px, py, NULL, NULL);
+    if (out_surface) {
+        *out_surface = surface;
+    }
+    if (!surface) {
+        return HIT_NONE;
+    }
+
+    comp_surface_update_decorations(surface);
+
+    if (comp->deco_enabled && surface->bar_height > 0) {
+        fut_rect_t btn = comp_btn_rect(surface);
+        if (btn.w > 0 && btn.h > 0 && rect_contains(&btn, px, py)) {
+            return HIT_CLOSE;
+        }
+
+        fut_rect_t bar = comp_bar_rect(surface);
+        if (bar.h > 0 && rect_contains(&bar, px, py)) {
+            return HIT_BAR;
+        }
+    }
+
+    if (comp->resize_enabled && !surface->maximized) {
+        fut_rect_t window_rect = comp_window_rect(surface);
+        if (window_rect.w > 0 && window_rect.h > 0 &&
+            rect_contains(&window_rect, px, py)) {
+            int32_t local_x = px - window_rect.x;
+            int32_t local_y = py - window_rect.y;
+            resize_edge_t edge = RSZ_NONE;
+
+            bool near_left = (local_x >= 0 && local_x < RESIZE_MARGIN);
+            bool near_right = (local_x >= window_rect.w - RESIZE_MARGIN && local_x < window_rect.w);
+            if (near_left && (!near_right || local_x <= window_rect.w - local_x)) {
+                edge |= RSZ_LEFT;
+            } else if (near_right) {
+                edge |= RSZ_RIGHT;
+            }
+
+            bool near_bottom = (local_y >= window_rect.h - RESIZE_MARGIN && local_y < window_rect.h);
+            bool near_top = false;
+            int32_t top_limit = surface->bar_height;
+            if (surface->bar_height > 0) {
+                near_top = (local_y >= top_limit && local_y < top_limit + RESIZE_MARGIN);
+            } else {
+                near_top = (local_y >= 0 && local_y < RESIZE_MARGIN);
+            }
+
+            if (near_top && (!near_bottom || local_y <= window_rect.h - local_y)) {
+                edge |= RSZ_TOP;
+            } else if (near_bottom) {
+                edge |= RSZ_BOTTOM;
+            }
+
+            if (edge != RSZ_NONE) {
+                if (out_edge) {
+                    *out_edge = edge;
+                }
+                return HIT_RESIZE;
+            }
+        }
+    }
+
+    fut_rect_t content = comp_content_rect(surface);
+    if (content.h > 0 && rect_contains(&content, px, py)) {
+        return HIT_CONTENT;
+    }
+
+    return HIT_NONE;
+}
+
+void comp_surface_request_close(struct comp_surface *surface) {
+    if (!surface || !surface->xdg_toplevel) {
+        return;
+    }
+    xdg_shell_toplevel_send_close(surface);
 }

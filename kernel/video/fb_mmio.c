@@ -8,6 +8,7 @@
  */
 
 #include <kernel/fb.h>
+#include <kernel/boot_args.h>
 #include <platform/platform.h>
 
 #include <stddef.h>
@@ -105,11 +106,20 @@ int fb_probe_from_multiboot(const void *mb_info) {
         (const struct multiboot_tag *)((const uint8_t *)mb_info + 8);
 
     while (tag && tag->type != 0) {
+        fut_printf("[FB] tag type=%u size=%u\n",
+                   (unsigned)tag->type, (unsigned)tag->size);
         if (tag->type == MB2_TAG_FRAMEBUFFER &&
             tag->size >= sizeof(struct multiboot_tag_framebuffer)) {
             const struct multiboot_tag_framebuffer *fbtag =
                 (const struct multiboot_tag_framebuffer *)tag;
 
+            fut_printf("[FB] fb tag addr=0x%llx %ux%u bpp=%u pitch=%u type=%u\n",
+                       (unsigned long long)fbtag->framebuffer_addr,
+                       fbtag->framebuffer_width,
+                       fbtag->framebuffer_height,
+                       fbtag->framebuffer_bpp,
+                       fbtag->framebuffer_pitch,
+                       (unsigned)fbtag->framebuffer_type);
             g_fb_hw.phys = fbtag->framebuffer_addr;
             g_fb_hw.info.width = fbtag->framebuffer_width;
             g_fb_hw.info.height = fbtag->framebuffer_height;
@@ -123,7 +133,23 @@ int fb_probe_from_multiboot(const void *mb_info) {
         tag = (const struct multiboot_tag *)mb2_next_tag(tag);
     }
 
-    return -1;
+    /* Fallback for boot loaders that did not supply a framebuffer tag. Only
+     * enabled via the optional boot flag `fb-fallback=1` so automated runs
+     * keep the default behaviour. */
+    if (!fut_boot_arg_flag("fb-fallback")) {
+        return -1;
+    }
+    fut_printf("[FB] enabling fallback geometry (fb-fallback=1)\n");
+    g_fb_hw.phys = 0xE0000000ULL;
+    g_fb_hw.info.width = 1024;
+    g_fb_hw.info.height = 768;
+    g_fb_hw.info.pitch = g_fb_hw.info.width * 4u;
+    g_fb_hw.info.bpp = 32;
+    g_fb_hw.info.flags = FB_FLAG_LINEAR;
+    g_fb_available = true;
+    fut_printf("[FB] using fallback geometry 1024x768x32 phys=0x%llx\n",
+               (unsigned long long)g_fb_hw.phys);
+    return 0;
 }
 
 int fb_get_info(struct fut_fb_hwinfo *out) {

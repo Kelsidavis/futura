@@ -42,6 +42,11 @@ gdt64_pointer:
     .word gdt64_end - gdt64 - 1         /* Limit */
     .long gdt64                         /* Base */
 
+boot_mb_magic:
+    .long 0
+boot_mb_addr:
+    .long 0
+
 /* Page tables live in their dedicated boot.ptables section to avoid overlap with
  * regular .bss data once the kernel relocates.
  */
@@ -92,6 +97,8 @@ _start:
     /* Save Multiboot2 info pointer */
     movl %eax, %edi                     /* Multiboot2 magic in eax */
     movl %ebx, %esi                     /* Multiboot2 info pointer in ebx */
+    movl %eax, boot_mb_magic
+    movl %ebx, boot_mb_addr
 
     /* Initialize page tables at runtime with correct physical addresses */
 
@@ -235,6 +242,8 @@ higher_half_entry:
     /* EDI/RDI = Multiboot2 magic (saved from boot in 32-bit mode) */
     /* ESI/RSI = Multiboot2 info pointer (saved from boot in 32-bit mode) */
     /* Zero-extend to 64-bit */
+    movl boot_mb_magic(%rip), %edi
+    movl boot_mb_addr(%rip), %esi
     movl %edi, %edi
     movl %esi, %esi
 

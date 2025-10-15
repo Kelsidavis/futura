@@ -3,8 +3,8 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
-
 #include <errno.h>
+#include <string.h>
 #include <sys/signalfd.h>
 #include "fd.h"
 #include "signalfd_internal.h"
@@ -84,7 +84,7 @@ int __fut_signalfd_close(int fd) {
     }
     entry->in_use = false;
     entry->fd = -1;
-    entry->mask = 0;
+    memset(&entry->mask, 0, sizeof(entry->mask));
     entry->flags = 0;
     return 0;
 }
@@ -118,4 +118,14 @@ int __fut_signalfd_update(int fd, const sigset_t *mask, int flags) {
     entry->mask = *mask;
     entry->flags = flags;
     return 0;
+}
+
+int signalfd4(int fd, const sigset_t *mask, size_t sizemask, int flags) __attribute__((weak));
+
+int signalfd4(int fd, const sigset_t *mask, size_t sizemask, int flags) {
+    if (sizemask != sizeof(sigset_t)) {
+        errno = EINVAL;
+        return -1;
+    }
+    return signalfd(fd, mask, flags);
 }

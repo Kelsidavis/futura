@@ -11,7 +11,6 @@
 #include <string.h>
 #include <stdio.h>
 #include <sys/mman.h>
-#include <user/string.h>
 
 #define __memcpy_chk(dst, src, len, bsz) memcpy((dst), (src), (len))
 #define __memmove_chk(dst, src, len, bsz) memmove((dst), (src), (len))
@@ -21,10 +20,18 @@
 #define __vfprintf_chk(stream, fl, fmt, ap) vfprintf((stream), (fmt), (ap))
 #define __fprintf_chk(stream, fl, fmt, ...) fprintf((stream), (fmt), __VA_ARGS__)
 #define __fputs_chk(str, stream, bsz) fputs((str), (stream))
+#define __fwrite_chk(ptr, sz, nmemb, stream, bsz) fwrite((ptr), (sz), (nmemb), (stream))
 
 #define mmap64(addr, length, prot, flags, fd, offset) mmap((addr), (length), (prot), (flags), (fd), (offset))
 
 #define __fstat64_time64(fd, st) fstat((fd), (st))
 #define __fxstat64(ver, fd, st)  fstat((fd), (st))
+
+#ifndef SFD_CLOEXEC
+#define SFD_CLOEXEC  0x080000
+#endif
+#ifndef SFD_NONBLOCK
+#define SFD_NONBLOCK 0x0800
+#endif
 
 #endif /* WAYLAND_NOFORTIFY_H */

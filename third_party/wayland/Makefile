@@ -51,7 +51,7 @@ MESON_FLAGS := \
 	-Ddocumentation=false \
 	-Ddtd_validation=false
 
-NATIVE_C_ARGS_LIST := '-O2', '-g0', '-fPIC', '-fvisibility=hidden', '-ffunction-sections', '-fdata-sections', '-fno-semantic-interposition', '-I$(ROOT_DIR)/include', '-DFUTURA_NO_GLIBC=1'
+NATIVE_C_ARGS_LIST := '-O2', '-g0', '-fPIC', '-fvisibility=hidden', '-ffunction-sections', '-fdata-sections', '-fno-semantic-interposition', '-fno-stack-protector', '-I$(ROOT_DIR)/include', '-DFUTURA_NO_GLIBC=1'
 NATIVE_LINK_ARGS_LIST := '-Wl,--build-id=none', '-Wl,--gc-sections'
 
 .PHONY: all clean distclean info

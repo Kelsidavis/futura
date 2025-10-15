@@ -14,6 +14,7 @@
 #include <stdbool.h>
 #include <kernel/fut_fipc.h>
 #include <sys/stat.h>
+#include <user/signal.h>
 
 /* ============================================================
  *   POSIX Types (for freestanding environment)
@@ -117,6 +118,14 @@ typedef uint32_t socklen_t;
 /* ============================================================
  *   Constants
  * ============================================================ */
+
+#ifndef SFD_CLOEXEC
+#define SFD_CLOEXEC  0x080000
+#endif
+
+#ifndef SFD_NONBLOCK
+#define SFD_NONBLOCK 0x0800
+#endif
 
 #define POSIX_PATH_MAX 4096
 #define POSIX_NAME_MAX 255
@@ -502,6 +511,7 @@ int    fstat(int fd, struct stat *st);
 #endif
 
 int    eventfd(unsigned int initval, int flags);
+int    signalfd(int fd, const sigset_t *mask, int flags);
 
 #ifndef MREMAP_MAYMOVE
 #define MREMAP_MAYMOVE  1

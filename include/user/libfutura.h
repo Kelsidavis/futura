@@ -12,6 +12,8 @@
 #include <stdint.h>
 #include <stdbool.h>
 
+#include <user/errno.h>
+#include <user/futura_posix.h>
 #include <user/string.h>
 #include <user/stdlib.h>
 
@@ -26,6 +28,7 @@ int strcmp(const char *s1, const char *s2);
 int strncmp(const char *s1, const char *s2, size_t n);
 char *strcat(char *dest, const char *src);
 char *strchr(const char *s, int c);
+char *strdup(const char *s);
 
 /* ============================================================
  *   Memory Functions

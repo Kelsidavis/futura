@@ -319,7 +319,11 @@ WAYLAND_COMPOSITOR_BLOB := $(OBJ_DIR)/kernel/blobs/futura_wayland_blob.o
 WAYLAND_CLIENT_BIN := $(BIN_DIR)/user/wl-simple
 WAYLAND_CLIENT_BLOB := $(OBJ_DIR)/kernel/blobs/wl_simple_blob.o
 
-OBJECTS += $(FBTEST_BLOB) $(WINSRV_BLOB) $(WINSTUB_BLOB) $(INIT_STUB_BLOB) $(SECOND_STUB_BLOB)
+OBJECTS += $(FBTEST_BLOB)
+ifeq ($(ENABLE_WINSRV_DEMO),1)
+OBJECTS += $(WINSRV_BLOB) $(WINSTUB_BLOB)
+endif
+OBJECTS += $(INIT_STUB_BLOB) $(SECOND_STUB_BLOB)
 ifeq ($(ENABLE_WAYLAND_DEMO),1)
 OBJECTS += $(WAYLAND_COMPOSITOR_BLOB) $(WAYLAND_CLIENT_BLOB)
 endif
@@ -596,7 +600,7 @@ perf-ci: perf
 
 .PHONY: sym-audit
 sym-audit:
-	@files=$$(find third_party/wayland/build -name '*.a' -print); \
+	@files=$$(find build/third_party/wayland/build -name '*.a' -print); \
 	if [ -z "$$files" ]; then \
 		echo "[sym-audit] no archives found under third_party/wayland/build"; \
 		exit 0; \

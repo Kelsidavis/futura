@@ -1,0 +1,63 @@
+// SPDX-License-Identifier: MPL-2.0
+
+#include <stdarg.h>
+#include <errno.h>
+
+#include <user/futura_posix.h>
+#include <user/sys/syscall.h>
+
+static long ret_enosys(void) {
+    errno = ENOSYS;
+    return -1;
+}
+
+long syscall(long number, ...) {
+    va_list ap;
+    va_start(ap, number);
+    long result = -1;
+
+    switch (number) {
+    case SYS_getpid:
+    case SYS_getppid:
+        result = 1; /* single-process stub */
+        break;
+    case SYS_getuid:
+    case SYS_geteuid:
+    case SYS_getgid:
+    case SYS_getegid:
+        result = 0;
+        break;
+    case SYS_gettid:
+        result = 1;
+        break;
+    case SYS_getrandom:
+        result = ret_enosys();
+        break;
+    case SYS_pipe2:
+        result = ret_enosys();
+        break;
+    case SYS_dup3: {
+        int oldfd = va_arg(ap, int);
+        int newfd = va_arg(ap, int);
+        int flags = va_arg(ap, int);
+        (void)newfd;
+        (void)flags;
+        (void)oldfd;
+        result = ret_enosys();
+        break;
+    }
+    case SYS_close_range:
+        result = ret_enosys();
+        break;
+    default:
+        result = ret_enosys();
+        break;
+    }
+
+    va_end(ap);
+    return result;
+}
+
+#if defined(__GNUC__) && !defined(__APPLE__)
+__asm__(".symver syscall,syscall@GLIBC_2.2.5");
+#endif

@@ -19,6 +19,8 @@ int putenv(char *string);
 int unsetenv(const char *name);
 int clearenv(void);
 
+__attribute__((noreturn)) void abort(void);
+
 #ifdef __cplusplus
 }
 #endif

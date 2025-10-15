@@ -3,15 +3,21 @@
 
 #include <stdint.h>
 
-#include <user/signal.h>
-
-#ifndef __sigset_t_defined
-#define __sigset_t_defined 1
-typedef unsigned long sigset_t;
+#if defined(__has_include)
+#if __has_include(<signal.h>) && !defined(FUTURA_FORCE_MINIMAL_SIGNAL)
+#include <signal.h>
+#define FUTURA_HAVE_NATIVE_SIGNAL 1
+#endif
 #endif
 
-#define SFD_CLOEXEC   0x0001
-#define SFD_NONBLOCK  0x0002
+#include <user/signal.h>
+
+#ifndef SFD_CLOEXEC
+#define SFD_CLOEXEC   0x080000
+#endif
+#ifndef SFD_NONBLOCK
+#define SFD_NONBLOCK  0x0800
+#endif
 
 struct signalfd_siginfo {
     uint32_t ssi_signo;

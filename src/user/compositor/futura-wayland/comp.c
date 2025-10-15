@@ -10,8 +10,6 @@
 
 #include <wayland-server-protocol.h>
 
-#include <user/libfutura.h>
-#include <user/stdio.h>
 #include <user/sys.h>
 
 #define O_RDWR      0x0002

@@ -9,12 +9,14 @@ include $(ROOT)/mk/wayland.mk
 
 TARGET := $(BIN_DIR)/wl-simple
 SRCS := main.c
+OUT ?= $(BUILD_ROOT)/generated/wayland
+$(eval $(call wayland_proto_client,$(ROOT)/protocols/xdg-shell.xml,client))
+
+WAYLAND_GEN_SRCS := $(OUT)/client/xdg-shell-protocol.c
+WAYLAND_GEN_HDRS := $(OUT)/client/xdg-shell-client-protocol.h
+
 OBJS := $(SRCS:%.c=$(OBJ_DIR)/%.o)
-
-PROTOCOL_XML := $(ROOT)/protocols/xdg-shell.xml
-$(call wayland_proto,$(PROTOCOL_XML),$(OBJ_DIR)/generated/xdg-shell,xdg-shell)
-
-PROTO_CLIENT_HDR := $(OBJ_DIR)/generated/xdg-shell/xdg-shell-client-protocol.h
+OBJS += $(OBJ_DIR)/xdg-shell-protocol.o
 
 WAYLAND_PREFIX ?= $(ROOT)/build/third_party/wayland/install
 WAYLAND_INCLUDEDIR ?= $(WAYLAND_PREFIX)/include
@@ -28,8 +30,8 @@ LIBFUTURA := $(BUILD_ROOT)/lib/libfutura.a
 
 CFLAGS := -std=c2x -ffreestanding -nostdlib -fno-builtin -fno-stack-protector
 CFLAGS += -Wall -Wextra -Werror -g -O2
-CFLAGS += -I$(ROOT)/include -I$(OBJ_DIR)/generated/xdg-shell
-CFLAGS += -I$(WAYLAND_INCLUDEDIR)
+CFLAGS += -I$(ROOT)/include -I$(OUT)/client
+CFLAGS += -I$(WAYLAND_INCLUDEDIR) $(WAYLAND_CFLAGS)
 
 ifeq ($(DEBUG_WAYLAND),1)
 CFLAGS += -DDEBUG_WAYLAND
@@ -47,7 +49,11 @@ $(TARGET): $(OBJS) | $(BIN_DIR) $(CRT0) $(LIBFUTURA)
 	@echo "LD $@"
 	@$(CC) $(LDFLAGS) $(CRT0) $(OBJS) $(LDLIBS) -o $@
 
-$(OBJ_DIR)/%.o: %.c $(PROTO_CLIENT_HDR) | $(OBJ_DIR)
+$(OBJ_DIR)/%.o: %.c $(WAYLAND_GEN_HDRS) | $(OBJ_DIR)
+	@echo "CC $<"
+	@$(CC) $(CFLAGS) -c $< -o $@
+
+$(OBJ_DIR)/xdg-shell-protocol.o: $(WAYLAND_GEN_SRCS) $(WAYLAND_GEN_HDRS) | $(OBJ_DIR)
 	@echo "CC $<"
 	@$(CC) $(CFLAGS) -c $< -o $@
 

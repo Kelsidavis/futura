@@ -4,19 +4,19 @@ ROOT := ../../../..
 BUILD_ROOT := $(ROOT)/build
 OBJ_DIR := $(BUILD_ROOT)/obj/user/compositor/futura-wayland
 BIN_DIR := $(BUILD_ROOT)/bin/user
-GEN_DIR := $(OBJ_DIR)/generated
 
 include $(ROOT)/mk/wayland.mk
 
 TARGET := $(BIN_DIR)/futura-wayland
 SRCS := main.c comp.c shm_backend.c xdg_shell.c output.c seat.c cursor.c
+
+OUT ?= $(BUILD_ROOT)/generated/wayland
+$(eval $(call wayland_proto_server,$(ROOT)/protocols/xdg-shell.xml,compositor))
+WAYLAND_GEN_SRCS := $(OUT)/compositor/xdg-shell-protocol.c
+WAYLAND_GEN_HDRS := $(OUT)/compositor/xdg-shell-server-protocol.h
+
 OBJS := $(SRCS:%.c=$(OBJ_DIR)/%.o)
-
-PROTOCOL_XML := $(ROOT)/protocols/xdg-shell.xml
-$(call wayland_proto,$(PROTOCOL_XML),$(GEN_DIR)/xdg-shell,xdg-shell)
-
-PROTO_SERVER_HDR := $(GEN_DIR)/xdg-shell/xdg-shell-server-protocol.h
-PROTO_CLIENT_HDR := $(GEN_DIR)/xdg-shell/xdg-shell-client-protocol.h
+OBJS += $(OBJ_DIR)/xdg-shell-protocol.o
 
 WAYLAND_PREFIX ?= $(ROOT)/build/third_party/wayland/install
 WAYLAND_INCLUDEDIR ?= $(WAYLAND_PREFIX)/include
@@ -30,8 +30,8 @@ LIBFUTURA := $(BUILD_ROOT)/lib/libfutura.a
 
 CFLAGS := -std=c2x -ffreestanding -nostdlib -fno-builtin -fno-stack-protector
 CFLAGS += -Wall -Wextra -Werror -g -O2
-CFLAGS += -I$(ROOT)/include -I$(GEN_DIR)/xdg-shell
-CFLAGS += -I$(WAYLAND_INCLUDEDIR)
+CFLAGS += -I$(ROOT)/include -I$(OUT)/compositor
+CFLAGS += -I$(WAYLAND_INCLUDEDIR) $(WAYLAND_CFLAGS)
 
 ifeq ($(DEBUG_WAYLAND),1)
 CFLAGS += -DDEBUG_WAYLAND
@@ -48,7 +48,11 @@ $(TARGET): $(OBJS) | $(BIN_DIR) $(CRT0) $(LIBFUTURA)
 	@echo "LD $@"
 	@$(CC) $(LDFLAGS) $(CRT0) $(OBJS) $(LDLIBS) -o $@
 
-$(OBJ_DIR)/%.o: %.c $(PROTO_SERVER_HDR) $(PROTO_CLIENT_HDR) | $(OBJ_DIR)
+$(OBJ_DIR)/%.o: %.c $(WAYLAND_GEN_HDRS) | $(OBJ_DIR)
+	@echo "CC $<"
+	@$(CC) $(CFLAGS) -c $< -o $@
+
+$(OBJ_DIR)/xdg-shell-protocol.o: $(WAYLAND_GEN_SRCS) $(WAYLAND_GEN_HDRS) | $(OBJ_DIR)
 	@echo "CC $<"
 	@$(CC) $(CFLAGS) -c $< -o $@
 

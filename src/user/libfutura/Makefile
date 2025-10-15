@@ -26,7 +26,7 @@ CFLAGS += $(INCLUDES)
 ASFLAGS := --64
 
 # Source files
-C_SRCS := string.c strerror.c env.c fputs.c malloc.c fipc.c posix.c fcntl.c mremap.c memory_map.c fstat.c eventfd.c printf.c printf_core.c vsnprintf.c posix_shm.c epoll.c timerfd.c signalfd.c time.c stack_chk.c pthread_stub.c assert.c signals.c socket_unix.c fd.c errno.c stat_stub.c
+C_SRCS := abort.c string.c strerror.c env.c fputs.c fwrite.c malloc.c fipc.c fipc_stub.c posix.c fcntl.c mremap.c memory_map.c fstat.c eventfd.c printf.c printf_core.c vsnprintf.c posix_shm.c epoll.c poll.c timerfd.c signalfd.c time.c stack_chk.c pthread_stub.c assert.c signals.c socket_unix.c fd.c errno.c syscall_shim.c stat_stub.c
 ASM_SRCS := crt0.S
 
 # Object files

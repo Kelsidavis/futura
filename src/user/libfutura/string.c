@@ -9,6 +9,9 @@
 #include <stddef.h>
 #include <stdint.h>
 
+
+extern void *malloc(size_t);
+
 /**
  * Calculate string length.
  */
@@ -112,6 +115,23 @@ char *strchr(const char *s, int c) {
     }
 
     return (*s == (char)c) ? (char *)s : NULL;
+}
+
+char *strdup(const char *s) {
+    if (!s) {
+        return NULL;
+    }
+
+    size_t len = strlen(s) + 1;
+    char *copy = malloc(len);
+    if (!copy) {
+        return NULL;
+    }
+
+    for (size_t i = 0; i < len; ++i) {
+        copy[i] = s[i];
+    }
+    return copy;
 }
 
 char *strstr(const char *haystack, const char *needle) {

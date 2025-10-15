@@ -45,19 +45,27 @@ endef
 # OUT should point at the root output dir (defaults come from including makefile).
 
 define wayland_proto_server
-$$(OUT)/$2:
-	mkdir -p $$@
-$$(OUT)/$2/xdg-shell-server-protocol.h: $1 | $$(OUT)/$2
-	$$(WAYLAND_SCANNER) server-header $$< $$@
-$$(OUT)/$2/xdg-shell-protocol.c: $1 | $$(OUT)/$2
-	$$(WAYLAND_SCANNER) private-code $$< $$@
+$(eval $(call __wayland_proto_server,$(1),$(2),$(basename $(notdir $(1)))))
 endef
 
 define wayland_proto_client
+$(eval $(call __wayland_proto_client,$(1),$(2),$(basename $(notdir $(1)))))
+endef
+
+define __wayland_proto_server
 $$(OUT)/$2:
 	mkdir -p $$@
-$$(OUT)/$2/xdg-shell-client-protocol.h: $1 | $$(OUT)/$2
+$$(OUT)/$2/$3-server-protocol.h: $1 | $$(OUT)/$2
+	$$(WAYLAND_SCANNER) server-header $$< $$@
+$$(OUT)/$2/$3-protocol.c: $1 | $$(OUT)/$2
+	$$(WAYLAND_SCANNER) private-code $$< $$@
+endef
+
+define __wayland_proto_client
+$$(OUT)/$2:
+	mkdir -p $$@
+$$(OUT)/$2/$3-client-protocol.h: $1 | $$(OUT)/$2
 	$$(WAYLAND_SCANNER) client-header $$< $$@
-$$(OUT)/$2/xdg-shell-protocol.c: $1 | $$(OUT)/$2
+$$(OUT)/$2/$3-protocol.c: $1 | $$(OUT)/$2
 	$$(WAYLAND_SCANNER) private-code $$< $$@
 endef

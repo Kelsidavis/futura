@@ -1,0 +1,86 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<protocol name="wayland_data_device">
+  <copyright>
+    SPDX-License-Identifier: (MPL-2.0 AND MIT)
+
+    This protocol XML is derived from the Wayland 1.23 data-device
+    protocol and trimmed to the functionality required by Futura OS.
+  </copyright>
+
+  <interface name="wl_data_source" version="1">
+    <request name="offer">
+      <arg name="mime_type" type="string" summary="mime type offered by the data source"/>
+    </request>
+    <request name="destroy" type="destructor" since="1"/>
+
+    <event name="target">
+      <arg name="mime_type" type="string" summary="selected mime type"/>
+    </event>
+    <event name="send">
+      <arg name="mime_type" type="string"/>
+      <arg name="fd" type="fd"/>
+    </event>
+    <event name="cancelled"/>
+  </interface>
+
+  <interface name="wl_data_offer" version="1">
+    <request name="accept">
+      <arg name="serial" type="uint"/>
+      <arg name="mime_type" type="string" allow-null="true"/>
+    </request>
+    <request name="receive">
+      <arg name="mime_type" type="string"/>
+      <arg name="fd" type="fd"/>
+    </request>
+    <request name="destroy" type="destructor"/>
+
+    <event name="offer">
+      <arg name="mime_type" type="string"/>
+    </event>
+  </interface>
+
+  <interface name="wl_data_device" version="1">
+    <request name="start_drag">
+      <arg name="source" type="object" interface="wl_data_source" allow-null="true"/>
+      <arg name="origin" type="object" interface="wl_surface"/>
+      <arg name="icon" type="object" interface="wl_surface" allow-null="true"/>
+      <arg name="serial" type="uint"/>
+    </request>
+    <request name="set_selection">
+      <arg name="source" type="object" interface="wl_data_source" allow-null="true"/>
+      <arg name="serial" type="uint"/>
+    </request>
+    <request name="release" type="destructor"/>
+
+    <event name="data_offer">
+      <arg name="id" type="new_id" interface="wl_data_offer"/>
+    </event>
+    <event name="selection">
+      <arg name="id" type="object" interface="wl_data_offer" allow-null="true"/>
+    </event>
+    <event name="enter">
+      <arg name="serial" type="uint"/>
+      <arg name="surface" type="object" interface="wl_surface"/>
+      <arg name="x" type="fixed"/>
+      <arg name="y" type="fixed"/>
+      <arg name="id" type="object" interface="wl_data_offer" allow-null="true"/>
+    </event>
+    <event name="leave"/>
+    <event name="motion">
+      <arg name="time" type="uint"/>
+      <arg name="x" type="fixed"/>
+      <arg name="y" type="fixed"/>
+    </event>
+    <event name="drop"/>
+  </interface>
+
+  <interface name="wl_data_device_manager" version="1">
+    <request name="create_data_source">
+      <arg name="id" type="new_id" interface="wl_data_source"/>
+    </request>
+    <request name="get_data_device">
+      <arg name="id" type="new_id" interface="wl_data_device"/>
+      <arg name="seat" type="object" interface="wl_seat"/>
+    </request>
+  </interface>
+</protocol>

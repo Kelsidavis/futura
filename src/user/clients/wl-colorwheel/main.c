@@ -19,6 +19,8 @@
 #define SURFACE_WIDTH   320
 #define SURFACE_HEIGHT  240
 #define TARGET_FRAMES   120u
+#define CLIPBOARD_MIME  "text/plain;charset=utf-8"
+#define KEY_V            47u
 
 #define O_RDWR      0x0002
 #define O_CREAT     0x0040
@@ -33,11 +35,279 @@ struct client_state {
     struct wl_compositor *compositor;
     struct wl_shm *shm;
     struct xdg_wm_base *xdg_wm_base;
+    struct wl_seat *seat;
+    struct wl_keyboard *keyboard;
+    struct wl_data_device_manager *data_device_manager;
+    struct wl_data_device *data_device;
+    struct wl_data_offer *selection_offer;
+    struct wl_data_offer *pending_offer;
+    bool pending_offer_has_mime;
+    bool selection_has_mime;
+    uint32_t paste_counter;
     struct wl_surface *surface;
     struct xdg_surface *xdg_surface;
     struct xdg_toplevel *toplevel;
     bool configured;
     uint32_t configure_serial;
+};
+
+static void ensure_data_interfaces(struct client_state *state);
+static void perform_paste(struct client_state *state);
+
+static void data_offer_offer(void *data,
+                             struct wl_data_offer *offer,
+                             const char *mime_type) {
+    struct client_state *state = data;
+    if (!state || !offer || !mime_type) {
+        return;
+    }
+    if (strcmp(mime_type, CLIPBOARD_MIME) == 0 && state->pending_offer == offer) {
+        state->pending_offer_has_mime = true;
+    }
+}
+
+static const struct wl_data_offer_listener data_offer_listener = {
+    .offer = data_offer_offer,
+};
+
+static void data_device_data_offer(void *data,
+                                   struct wl_data_device *device,
+                                   struct wl_data_offer *offer) {
+    (void)device;
+    struct client_state *state = data;
+    if (!state) {
+        wl_data_offer_destroy(offer);
+        return;
+    }
+    if (state->pending_offer && state->pending_offer != offer) {
+        wl_data_offer_destroy(state->pending_offer);
+    }
+    state->pending_offer = offer;
+    state->pending_offer_has_mime = false;
+    wl_data_offer_add_listener(offer, &data_offer_listener, state);
+}
+
+static void data_device_selection(void *data,
+                                  struct wl_data_device *device,
+                                  struct wl_data_offer *offer) {
+    (void)device;
+    struct client_state *state = data;
+    if (!state) {
+        if (offer) {
+            wl_data_offer_destroy(offer);
+        }
+        return;
+    }
+
+    if (state->selection_offer && state->selection_offer != offer) {
+        wl_data_offer_destroy(state->selection_offer);
+    }
+
+    if (!offer) {
+        state->selection_offer = NULL;
+        state->selection_has_mime = false;
+        return;
+    }
+
+    state->selection_offer = offer;
+    if (state->pending_offer == offer) {
+        state->selection_has_mime = state->pending_offer_has_mime;
+        state->pending_offer = NULL;
+        state->pending_offer_has_mime = false;
+    } else {
+        state->selection_has_mime = false;
+    }
+}
+
+static void data_device_enter(void *data,
+                              struct wl_data_device *device,
+                              uint32_t serial,
+                              struct wl_surface *surface,
+                              wl_fixed_t x,
+                              wl_fixed_t y,
+                              struct wl_data_offer *offer) {
+    (void)data; (void)device; (void)serial; (void)surface; (void)x; (void)y;
+    if (offer) {
+        wl_data_offer_destroy(offer);
+    }
+}
+
+static void data_device_leave(void *data, struct wl_data_device *device) {
+    (void)data; (void)device;
+}
+
+static void data_device_motion(void *data,
+                               struct wl_data_device *device,
+                               uint32_t time,
+                               wl_fixed_t x,
+                               wl_fixed_t y) {
+    (void)data; (void)device; (void)time; (void)x; (void)y;
+}
+
+static void data_device_drop(void *data, struct wl_data_device *device) {
+    (void)data; (void)device;
+}
+
+static const struct wl_data_device_listener data_device_listener = {
+    .data_offer = data_device_data_offer,
+    .enter = data_device_enter,
+    .leave = data_device_leave,
+    .motion = data_device_motion,
+    .drop = data_device_drop,
+    .selection = data_device_selection,
+};
+
+static void ensure_data_interfaces(struct client_state *state) {
+    if (!state || !state->data_device_manager || !state->seat) {
+        return;
+    }
+    if (!state->data_device) {
+        state->data_device = wl_data_device_manager_get_data_device(state->data_device_manager, state->seat);
+        if (state->data_device) {
+            wl_data_device_add_listener(state->data_device, &data_device_listener, state);
+        }
+    }
+}
+
+static void keyboard_keymap(void *data,
+                            struct wl_keyboard *keyboard,
+                            uint32_t format,
+                            int32_t fd,
+                            uint32_t size) {
+    (void)data; (void)keyboard; (void)format; (void)size;
+    if (fd >= 0) {
+        sys_close(fd);
+    }
+}
+
+static void keyboard_enter(void *data,
+                           struct wl_keyboard *keyboard,
+                           uint32_t serial,
+                           struct wl_surface *surface,
+                           struct wl_array *keys) {
+    (void)data; (void)keyboard; (void)serial; (void)surface; (void)keys;
+}
+
+static void keyboard_leave(void *data,
+                           struct wl_keyboard *keyboard,
+                           uint32_t serial,
+                           struct wl_surface *surface) {
+    (void)data; (void)keyboard; (void)serial; (void)surface;
+}
+
+static void keyboard_key(void *data,
+                         struct wl_keyboard *keyboard,
+                         uint32_t serial,
+                         uint32_t time,
+                         uint32_t key,
+                         uint32_t state_value) {
+    (void)keyboard; (void)serial; (void)time;
+    struct client_state *state = data;
+    if (!state) {
+        return;
+    }
+    if (state_value == WL_KEYBOARD_KEY_STATE_PRESSED && key == KEY_V) {
+        perform_paste(state);
+    }
+}
+
+static void keyboard_modifiers(void *data,
+                               struct wl_keyboard *keyboard,
+                               uint32_t serial,
+                               uint32_t mods_depressed,
+                               uint32_t mods_latched,
+                               uint32_t mods_locked,
+                               uint32_t group) {
+    (void)data; (void)keyboard; (void)serial;
+    (void)mods_depressed; (void)mods_latched; (void)mods_locked; (void)group;
+}
+
+static void keyboard_repeat(void *data,
+                            struct wl_keyboard *keyboard,
+                            int32_t rate,
+                            int32_t delay) {
+    (void)data; (void)keyboard; (void)rate; (void)delay;
+}
+
+static const struct wl_keyboard_listener keyboard_listener = {
+    .keymap = keyboard_keymap,
+    .enter = keyboard_enter,
+    .leave = keyboard_leave,
+    .key = keyboard_key,
+    .modifiers = keyboard_modifiers,
+    .repeat_info = keyboard_repeat,
+};
+
+static void perform_paste(struct client_state *state) {
+    if (!state || !state->selection_offer || !state->selection_has_mime) {
+        return;
+    }
+
+    ensure_data_interfaces(state);
+    if (!state->data_device) {
+        return;
+    }
+
+    char shm_name[64];
+    state->paste_counter++;
+    int name_len = snprintf(shm_name, sizeof(shm_name), "/wl-colorwheel-clip-%u", state->paste_counter);
+    if (name_len <= 0) {
+        return;
+    }
+
+    size_t clip_size = 256;
+    int fd = fut_shm_create(shm_name, clip_size, O_RDWR | O_CREAT | O_TRUNC, 0600);
+    if (fd < 0) {
+        printf("[WL-COLOR] paste: failed to allocate shm\n");
+        return;
+    }
+
+    wl_data_offer_receive(state->selection_offer, CLIPBOARD_MIME, fd);
+    wl_display_flush(state->display);
+    wl_display_roundtrip(state->display);
+
+    void *map = (void *)sys_mmap(NULL, (long)clip_size, PROT_READ, MAP_SHARED, fd, 0);
+    if ((long)map >= 0) {
+        const char *text = (const char *)map;
+        printf("[WL-COLOR] paste: \"%s\"\n", text);
+        sys_munmap_call(map, (long)clip_size);
+    } else {
+        printf("[WL-COLOR] paste: mmap failed\n");
+    }
+
+    sys_close(fd);
+    fut_shm_unlink(shm_name);
+}
+
+static void seat_capabilities(void *data,
+                              struct wl_seat *seat,
+                              uint32_t capabilities) {
+    struct client_state *state = data;
+    if (!state) {
+        return;
+    }
+
+    bool want_keyboard = (capabilities & WL_SEAT_CAPABILITY_KEYBOARD) != 0;
+    if (want_keyboard && !state->keyboard) {
+        state->keyboard = wl_seat_get_keyboard(seat);
+        if (state->keyboard) {
+            wl_keyboard_add_listener(state->keyboard, &keyboard_listener, state);
+        }
+    } else if (!want_keyboard && state->keyboard) {
+        wl_keyboard_destroy(state->keyboard);
+        state->keyboard = NULL;
+    }
+
+    ensure_data_interfaces(state);
+}
+
+static void seat_name(void *data, struct wl_seat *seat, const char *name) {
+    (void)data; (void)seat; (void)name;
+}
+
+static const struct wl_seat_listener seat_listener = {
+    .capabilities = seat_capabilities,
+    .name = seat_name,
 };
 
 static void nanosleep_ms(uint32_t ms) {
@@ -184,6 +454,17 @@ static void registry_global(void *data,
         uint32_t ver = version < 2 ? version : 2;
         state->xdg_wm_base = wl_registry_bind(registry, name, &xdg_wm_base_interface, ver);
         xdg_wm_base_add_listener(state->xdg_wm_base, &wm_base_listener, state);
+    } else if (strcmp(interface, wl_seat_interface.name) == 0) {
+        uint32_t ver = version < 7 ? version : 7;
+        state->seat = wl_registry_bind(registry, name, &wl_seat_interface, ver);
+        if (state->seat) {
+            wl_seat_add_listener(state->seat, &seat_listener, state);
+        }
+        ensure_data_interfaces(state);
+    } else if (strcmp(interface, wl_data_device_manager_interface.name) == 0) {
+        uint32_t ver = version < 1 ? version : 1;
+        state->data_device_manager = wl_registry_bind(registry, name, &wl_data_device_manager_interface, ver);
+        ensure_data_interfaces(state);
     }
 }
 
@@ -295,6 +576,26 @@ int main(void) {
     fut_shm_unlink(shm_name);
     sys_close(fd);
 
+    if (state.selection_offer) {
+        wl_data_offer_destroy(state.selection_offer);
+        state.selection_offer = NULL;
+    }
+    if (state.pending_offer) {
+        wl_data_offer_destroy(state.pending_offer);
+        state.pending_offer = NULL;
+    }
+    if (state.data_device) {
+        wl_data_device_destroy(state.data_device);
+    }
+    if (state.keyboard) {
+        wl_keyboard_destroy(state.keyboard);
+    }
+    if (state.seat) {
+        wl_seat_destroy(state.seat);
+    }
+    if (state.data_device_manager) {
+        wl_data_device_manager_destroy(state.data_device_manager);
+    }
     if (state.toplevel) {
         xdg_toplevel_destroy(state.toplevel);
     }

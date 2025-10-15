@@ -3,6 +3,7 @@
 #include "output.h"
 #include "seat.h"
 #include "shm_backend.h"
+#include "data_device.h"
 #include "xdg_shell.h"
 
 #include <wayland-server-core.h>
@@ -81,7 +82,8 @@ int main(void) {
     if (compositor_global_init(&comp) != 0 ||
         xdg_shell_global_init(&comp) != 0 ||
         output_global_init(&comp) != 0 ||
-        shm_backend_init(&comp) != 0) {
+        shm_backend_init(&comp) != 0 ||
+        data_device_manager_init(&comp) != 0) {
         printf("[WAYLAND] failed to initialise globals\n");
         comp_state_finish(&comp);
         wl_display_destroy(comp.display);
@@ -91,6 +93,7 @@ int main(void) {
     comp.seat = seat_init(&comp);
     if (!comp.seat) {
         printf("[WAYLAND] failed to initialise seat\n");
+        data_device_manager_finish(&comp);
         shm_backend_finish(&comp);
         comp_state_finish(&comp);
         wl_display_destroy(comp.display);
@@ -100,6 +103,7 @@ int main(void) {
     if (comp_scheduler_start(&comp) != 0) {
         printf("[WAYLAND] failed to start frame scheduler\n");
         seat_finish(comp.seat);
+        data_device_manager_finish(&comp);
         shm_backend_finish(&comp);
         comp_state_finish(&comp);
         wl_display_destroy(comp.display);
@@ -109,6 +113,7 @@ int main(void) {
     const char *socket = wl_display_add_socket_auto(comp.display);
     if (!socket) {
         printf("[WAYLAND] failed to add display socket\n");
+        data_device_manager_finish(&comp);
         shm_backend_finish(&comp);
         comp_state_finish(&comp);
         wl_display_destroy(comp.display);
@@ -125,6 +130,7 @@ int main(void) {
     comp_run(&comp);
 
     shm_backend_finish(&comp);
+    data_device_manager_finish(&comp);
     seat_finish(comp.seat);
     comp.seat = NULL;
     comp_state_finish(&comp);

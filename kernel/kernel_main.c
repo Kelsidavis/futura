@@ -979,7 +979,7 @@ void fut_kernel_main(void) {
         if (wayland_exec != 0) {
             fut_printf("[WARN] Failed to launch /sbin/futura-wayland (error %d)\n", wayland_exec);
         } else {
-            fut_printf("[INIT] Scheduled /sbin/futura-wayland compositor\n");
+            fut_printf("[INIT] exec /sbin/futura-wayland -> 0\n");
         }
     }
 
@@ -991,7 +991,7 @@ void fut_kernel_main(void) {
         if (wayland_client_exec != 0) {
             fut_printf("[WARN] Failed to launch /bin/wl-simple (error %d)\n", wayland_client_exec);
         } else {
-            fut_printf("[INIT] Scheduled /bin/wl-simple demo client\n");
+            fut_printf("[INIT] exec /bin/wl-simple -> 0\n");
         }
     }
 
@@ -1003,7 +1003,7 @@ void fut_kernel_main(void) {
         if (wayland_color_exec != 0) {
             fut_printf("[WARN] Failed to launch /bin/wl-colorwheel (error %d)\n", wayland_color_exec);
         } else {
-            fut_printf("[INIT] Scheduled /bin/wl-colorwheel demo client\n");
+            fut_printf("[INIT] exec /bin/wl-colorwheel -> 0\n");
         }
     }
 

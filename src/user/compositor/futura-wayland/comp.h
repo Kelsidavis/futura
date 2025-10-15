@@ -27,6 +27,9 @@
 #define WAYLAND_RESIZE_BUILD 1
 #endif
 
+#define XDG_CFG_STATE_RESIZING   (1u << 0)
+#define XDG_CFG_STATE_MAXIMIZED  (1u << 1)
+
 #define WINDOW_BAR_HEIGHT 24
 #define WINDOW_BTN_WIDTH 16
 #define WINDOW_BTN_HEIGHT 16
@@ -37,6 +40,12 @@
 struct seat_state;
 struct cursor_state;
 struct wl_event_source;
+
+typedef struct comp_selection {
+    struct wl_resource *source;
+    char mime[64];
+    uint32_t serial;
+} comp_selection_t;
 
 typedef struct fut_rect {
     int32_t x;

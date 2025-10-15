@@ -17,6 +17,8 @@
 #define SURFACE_HEIGHT  200
 #define RECT_SIZE       64
 #define TARGET_FRAMES   120
+#define CLIPBOARD_MIME  "text/plain;charset=utf-8"
+#define KEY_C            46u
 
 #define O_RDWR      0x0002
 #define O_CREAT     0x0040
@@ -31,6 +33,11 @@ struct client_state {
     struct wl_compositor *compositor;
     struct wl_shm *shm;
     struct xdg_wm_base *xdg_wm_base;
+    struct wl_seat *seat;
+    struct wl_keyboard *keyboard;
+    struct wl_data_device_manager *data_device_manager;
+    struct wl_data_device *data_device;
+    struct wl_data_source *data_source;
     struct wl_surface *surface;
     struct xdg_surface *xdg_surface;
     struct xdg_toplevel *toplevel;
@@ -38,6 +45,270 @@ struct client_state {
     uint32_t configure_serial;
     struct wl_callback *frame_cb;
     bool frame_done;
+    uint32_t last_serial;
+    bool have_copy;
+    char copy_text[64];
+};
+
+static void ensure_data_interfaces(struct client_state *state);
+
+static void data_source_target(void *data, struct wl_data_source *source, const char *mime_type) {
+    (void)data;
+    (void)source;
+    (void)mime_type;
+}
+
+static void data_source_send(void *data,
+                             struct wl_data_source *source,
+                             const char *mime_type,
+                             int32_t fd) {
+    (void)source;
+    struct client_state *state = data;
+    if (!state || fd < 0) {
+        if (fd >= 0) {
+            sys_close(fd);
+        }
+        return;
+    }
+
+    if (!state->have_copy || strcmp(mime_type, CLIPBOARD_MIME) != 0) {
+        sys_close(fd);
+        return;
+    }
+
+    size_t len = strlen(state->copy_text) + 1;
+    sys_write(fd, state->copy_text, (long)len);
+    sys_close(fd);
+
+#ifdef DEBUG_WAYLAND
+    printf("[WL-SIMPLE] copy send %s\n", state->copy_text);
+#endif
+}
+
+static void data_source_cancelled(void *data, struct wl_data_source *source) {
+    (void)source;
+    struct client_state *state = data;
+    if (state) {
+        state->have_copy = false;
+    }
+}
+
+static const struct wl_data_source_listener data_source_listener = {
+    .target = data_source_target,
+    .send = data_source_send,
+    .cancelled = data_source_cancelled,
+};
+
+static void data_device_data_offer(void *data,
+                                   struct wl_data_device *device,
+                                   struct wl_data_offer *offer) {
+    (void)data;
+    (void)device;
+    if (offer) {
+        wl_data_offer_destroy(offer);
+    }
+}
+
+static void data_device_enter(void *data,
+                              struct wl_data_device *device,
+                              uint32_t serial,
+                              struct wl_surface *surface,
+                              wl_fixed_t x,
+                              wl_fixed_t y,
+                              struct wl_data_offer *offer) {
+    (void)data; (void)device; (void)serial; (void)surface; (void)x; (void)y;
+    if (offer) {
+        wl_data_offer_destroy(offer);
+    }
+}
+
+static void data_device_leave(void *data, struct wl_data_device *device) {
+    (void)data;
+    (void)device;
+}
+
+static void data_device_motion(void *data,
+                               struct wl_data_device *device,
+                               uint32_t time,
+                               wl_fixed_t x,
+                               wl_fixed_t y) {
+    (void)data; (void)device; (void)time; (void)x; (void)y;
+}
+
+static void data_device_drop(void *data, struct wl_data_device *device) {
+    (void)data;
+    (void)device;
+}
+
+static void data_device_selection(void *data,
+                                  struct wl_data_device *device,
+                                  struct wl_data_offer *offer) {
+    (void)device;
+    struct client_state *state = data;
+    if (offer) {
+        wl_data_offer_destroy(offer);
+    } else if (state) {
+        state->have_copy = false;
+    }
+}
+
+static const struct wl_data_device_listener data_device_listener = {
+    .data_offer = data_device_data_offer,
+    .enter = data_device_enter,
+    .leave = data_device_leave,
+    .motion = data_device_motion,
+    .drop = data_device_drop,
+    .selection = data_device_selection,
+};
+
+static void ensure_data_interfaces(struct client_state *state) {
+    if (!state || !state->data_device_manager) {
+        return;
+    }
+
+    if (!state->data_source) {
+        state->data_source = wl_data_device_manager_create_data_source(state->data_device_manager);
+        if (state->data_source) {
+            wl_data_source_add_listener(state->data_source, &data_source_listener, state);
+        }
+    }
+
+    if (state->seat && !state->data_device) {
+        state->data_device = wl_data_device_manager_get_data_device(state->data_device_manager, state->seat);
+        if (state->data_device) {
+            wl_data_device_add_listener(state->data_device, &data_device_listener, state);
+        }
+    }
+}
+
+static void perform_copy(struct client_state *state) {
+    if (!state || !state->last_serial) {
+        return;
+    }
+
+    ensure_data_interfaces(state);
+    if (!state->data_device || !state->data_source) {
+        return;
+    }
+
+    const char *payload = "Hello from wl-simple";
+    strncpy(state->copy_text, payload, sizeof(state->copy_text) - 1);
+    state->copy_text[sizeof(state->copy_text) - 1] = '\0';
+
+    wl_data_source_offer(state->data_source, CLIPBOARD_MIME);
+    wl_data_device_set_selection(state->data_device, state->data_source, state->last_serial);
+    state->have_copy = true;
+
+#ifdef DEBUG_WAYLAND
+    printf("[WL-SIMPLE] copy set_selection \"%s\"\n", state->copy_text);
+#endif
+}
+
+static void keyboard_keymap(void *data,
+                            struct wl_keyboard *keyboard,
+                            uint32_t format,
+                            int32_t fd,
+                            uint32_t size) {
+    (void)data;
+    (void)keyboard;
+    (void)format;
+    (void)size;
+    if (fd >= 0) {
+        sys_close(fd);
+    }
+}
+
+static void keyboard_enter(void *data,
+                           struct wl_keyboard *keyboard,
+                           uint32_t serial,
+                           struct wl_surface *surface,
+                           struct wl_array *keys) {
+    (void)data; (void)keyboard; (void)serial; (void)surface; (void)keys;
+}
+
+static void keyboard_leave(void *data,
+                           struct wl_keyboard *keyboard,
+                           uint32_t serial,
+                           struct wl_surface *surface) {
+    (void)data; (void)keyboard; (void)serial; (void)surface;
+}
+
+static void keyboard_key(void *data,
+                         struct wl_keyboard *keyboard,
+                         uint32_t serial,
+                         uint32_t time,
+                         uint32_t key,
+                         uint32_t key_state) {
+    (void)keyboard;
+    (void)time;
+    struct client_state *state = data;
+    if (!state) {
+        return;
+    }
+    if (key_state == WL_KEYBOARD_KEY_STATE_PRESSED) {
+        state->last_serial = serial;
+        if (key == KEY_C) {
+            perform_copy(state);
+        }
+    }
+}
+
+static void keyboard_modifiers(void *data,
+                               struct wl_keyboard *keyboard,
+                               uint32_t serial,
+                               uint32_t mods_depressed,
+                               uint32_t mods_latched,
+                               uint32_t mods_locked,
+                               uint32_t group) {
+    (void)data; (void)keyboard; (void)serial;
+    (void)mods_depressed; (void)mods_latched; (void)mods_locked; (void)group;
+}
+
+static void keyboard_repeat(void *data,
+                            struct wl_keyboard *keyboard,
+                            int32_t rate,
+                            int32_t delay) {
+    (void)data; (void)keyboard; (void)rate; (void)delay;
+}
+
+static const struct wl_keyboard_listener keyboard_listener = {
+    .keymap = keyboard_keymap,
+    .enter = keyboard_enter,
+    .leave = keyboard_leave,
+    .key = keyboard_key,
+    .modifiers = keyboard_modifiers,
+    .repeat_info = keyboard_repeat,
+};
+
+static void seat_capabilities(void *data,
+                              struct wl_seat *seat,
+                              uint32_t capabilities) {
+    struct client_state *state = data;
+    if (!state) {
+        return;
+    }
+
+    bool want_keyboard = (capabilities & WL_SEAT_CAPABILITY_KEYBOARD) != 0;
+    if (want_keyboard && !state->keyboard) {
+        state->keyboard = wl_seat_get_keyboard(seat);
+        if (state->keyboard) {
+            wl_keyboard_add_listener(state->keyboard, &keyboard_listener, state);
+        }
+    } else if (!want_keyboard && state->keyboard) {
+        wl_keyboard_destroy(state->keyboard);
+        state->keyboard = NULL;
+    }
+
+    ensure_data_interfaces(state);
+}
+
+static void seat_name(void *data, struct wl_seat *seat, const char *name) {
+    (void)data; (void)seat; (void)name;
+}
+
+static const struct wl_seat_listener seat_listener = {
+    .capabilities = seat_capabilities,
+    .name = seat_name,
 };
 
 static void handle_ping(void *data, struct xdg_wm_base *wm_base, uint32_t serial) {
@@ -100,6 +371,17 @@ static void registry_global(void *data,
         uint32_t ver = version < 2 ? version : 2;
         state->xdg_wm_base = wl_registry_bind(registry, name, &xdg_wm_base_interface, ver);
         xdg_wm_base_add_listener(state->xdg_wm_base, &wm_base_listener, state);
+    } else if (strcmp(interface, wl_seat_interface.name) == 0) {
+        uint32_t ver = version < 7 ? version : 7;
+        state->seat = wl_registry_bind(registry, name, &wl_seat_interface, ver);
+        if (state->seat) {
+            wl_seat_add_listener(state->seat, &seat_listener, state);
+        }
+        ensure_data_interfaces(state);
+    } else if (strcmp(interface, wl_data_device_manager_interface.name) == 0) {
+        uint32_t ver = version < 1 ? version : 1;
+        state->data_device_manager = wl_registry_bind(registry, name, &wl_data_device_manager_interface, ver);
+        ensure_data_interfaces(state);
     }
 }
 
@@ -328,6 +610,21 @@ int main(void) {
     fut_shm_unlink(shm_name);
     sys_close(fd);
 
+    if (state.data_device) {
+        wl_data_device_destroy(state.data_device);
+    }
+    if (state.data_source) {
+        wl_data_source_destroy(state.data_source);
+    }
+    if (state.keyboard) {
+        wl_keyboard_destroy(state.keyboard);
+    }
+    if (state.seat) {
+        wl_seat_destroy(state.seat);
+    }
+    if (state.data_device_manager) {
+        wl_data_device_manager_destroy(state.data_device_manager);
+    }
     if (state.toplevel) {
         xdg_toplevel_destroy(state.toplevel);
     }

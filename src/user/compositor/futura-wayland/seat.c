@@ -3,6 +3,7 @@
 #include "comp.h"
 #include "log.h"
 #include "xdg_shell.h"
+#include "data_device.h"
 
 #include <stdlib.h>
 
@@ -14,37 +15,6 @@
 
 #define O_RDONLY 0x0000
 #define DOUBLE_CLICK_MS 300
-
-struct seat_client {
-    struct seat_state *seat;
-    struct wl_resource *seat_resource;
-    struct wl_resource *pointer_resource;
-    struct wl_resource *keyboard_resource;
-    bool pointer_entered;
-    bool keyboard_entered;
-    struct wl_list link;
-};
-
-struct seat_state {
-    struct compositor_state *comp;
-    struct wl_global *global;
-    struct wl_event_source *kbd_source;
-    struct wl_event_source *mouse_source;
-    int kbd_fd;
-    int mouse_fd;
-    struct wl_list clients;
-    struct comp_surface *pointer_focus;
-    struct comp_surface *keyboard_focus;
-    int32_t pointer_sx;
-    int32_t pointer_sy;
-    bool left_button_down;
-    struct comp_surface *hover_btn_surface;
-    struct comp_surface *pressed_surface;
-    hit_role_t pressed_role;
-    resize_edge_t pressed_edge;
-    uint32_t last_click_time;
-    struct comp_surface *last_click_surface;
-};
 
 static void seat_clear_button_hover(struct seat_state *seat) {
     if (!seat || !seat->hover_btn_surface) {
@@ -132,6 +102,7 @@ static void seat_client_destroy(struct seat_client *client) {
     if (!client) {
         return;
     }
+    data_device_client_cleanup(client);
     if (client->pointer_resource) {
         struct wl_resource *res = client->pointer_resource;
         client->pointer_resource = NULL;
@@ -263,6 +234,7 @@ static void seat_pointer_button(struct seat_state *seat,
         wl_pointer_send_button(client->pointer_resource, serial, time_msec, button, state);
         wl_pointer_send_frame(client->pointer_resource);
     }
+#ifdef DEBUG_WAYLAND
     const char *label = "M";
     if (button == FUT_BTN_LEFT) {
         label = "L";
@@ -270,6 +242,7 @@ static void seat_pointer_button(struct seat_state *seat,
         label = "R";
     }
     WLOG("[WAYLAND] seat: pointer btn=%s down=%u\n", label, pressed ? 1u : 0u);
+#endif
 }
 
 static void seat_keyboard_leave(struct seat_state *seat, struct comp_surface *surface) {
@@ -738,6 +711,7 @@ static void seat_bind(struct wl_client *client,
 
     seat_client->seat = seat;
     seat_client->seat_resource = resource;
+    data_device_client_init(seat_client);
     wl_list_insert(&seat->clients, &seat_client->link);
 
     wl_resource_set_implementation(resource, &seat_impl, seat_client, seat_resource_destroy);
@@ -761,6 +735,7 @@ struct seat_state *seat_init(struct compositor_state *comp) {
 
     seat->comp = comp;
     wl_list_init(&seat->clients);
+    data_device_seat_init(seat);
 
     seat->kbd_fd = (int)sys_open("/dev/input/kbd0", O_RDONLY, 0);
     seat->mouse_fd = (int)sys_open("/dev/input/mouse0", O_RDONLY, 0);
@@ -833,6 +808,8 @@ void seat_finish(struct seat_state *seat) {
         seat->global = NULL;
     }
 
+    data_device_seat_finish(seat);
+
     struct seat_client *client, *tmp;
     wl_list_for_each_safe(client, tmp, &seat->clients, link) {
         seat_client_destroy(client);
@@ -872,4 +849,18 @@ void seat_surface_destroyed(struct seat_state *seat, struct comp_surface *surfac
         seat->last_click_surface = NULL;
         seat->last_click_time = 0;
     }
+}
+
+struct seat_client *seat_client_lookup(struct seat_state *seat, struct wl_client *client) {
+    if (!seat || !client) {
+        return NULL;
+    }
+    struct seat_client *cursor;
+    wl_list_for_each(cursor, &seat->clients, link) {
+        if (cursor->seat_resource &&
+            wl_resource_get_client(cursor->seat_resource) == client) {
+            return cursor;
+        }
+    }
+    return NULL;
 }

@@ -12,6 +12,7 @@ static const struct wl_surface_interface surface_impl;
 static const struct xdg_wm_base_interface xdg_wm_base_impl;
 static const struct xdg_surface_interface xdg_surface_impl;
 static const struct xdg_toplevel_interface xdg_toplevel_impl;
+static void xdg_toplevel_resource_destroy(struct wl_resource *resource);
 static void xdg_toplevel_set_title(struct wl_client *client,
                                    struct wl_resource *resource,
                                    const char *title);

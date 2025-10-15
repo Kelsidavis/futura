@@ -46,7 +46,6 @@ MESON_FLAGS := \
 	--default-library static \
 	--wrap-mode nofallback \
 	-Dlibraries=true \
-	-Dscanner=false \
 	-Dtests=false \
 	-Ddocumentation=false \
 	-Ddtd_validation=false
@@ -114,7 +113,7 @@ $(NATIVE_FILE): | $(STATE_DIR)
 		echo "c = 'gcc'"; \
 		echo "cpp = 'gcc'"; \
 		echo "ar = 'ar'"; \
-		echo "pkgconfig = 'pkg-config'"; \
+		echo "pkg-config = 'pkg-config'"; \
 		echo "strip = 'strip'"; \
 		echo ""; \
 		echo "[built-in options]"; \

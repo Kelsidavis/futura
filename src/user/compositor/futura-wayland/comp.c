@@ -5,13 +5,18 @@
 #include "shm_backend.h"
 
 #include <errno.h>
-#include <stdlib.h>
-#include <string.h>
+#include <stddef.h>
 
 #include <wayland-server-protocol.h>
 #include <wayland-util.h>
 
 #include <user/sys.h>
+
+void *malloc(size_t size);
+void *realloc(void *ptr, size_t size);
+void free(void *ptr);
+void *memcpy(void *dest, const void *src, size_t n);
+void *memset(void *dest, int c, size_t n);
 
 #define O_RDWR      0x0002
 #define PROT_READ   0x0001
@@ -32,6 +37,185 @@ static inline int32_t clamp_i32(int32_t value, int32_t min, int32_t max) {
     return value;
 }
 
+static fut_rect_t rect_clip_to_fb(const struct fut_fb_info *info, fut_rect_t rect, bool *out_valid) {
+    fut_rect_t clipped = rect;
+    if (clipped.w <= 0 || clipped.h <= 0) {
+        if (out_valid) {
+            *out_valid = false;
+        }
+        return clipped;
+    }
+
+    int32_t fb_w = (int32_t)info->width;
+    int32_t fb_h = (int32_t)info->height;
+
+    if (clipped.x < 0) {
+        clipped.w += clipped.x;
+        clipped.x = 0;
+    }
+    if (clipped.y < 0) {
+        clipped.h += clipped.y;
+        clipped.y = 0;
+    }
+
+    if (clipped.x + clipped.w > fb_w) {
+        clipped.w = fb_w - clipped.x;
+    }
+    if (clipped.y + clipped.h > fb_h) {
+        clipped.h = fb_h - clipped.y;
+    }
+
+    if (clipped.w <= 0 || clipped.h <= 0) {
+        if (out_valid) {
+            *out_valid = false;
+        }
+        return clipped;
+    }
+
+    if (out_valid) {
+        *out_valid = true;
+    }
+    return clipped;
+}
+
+static fut_rect_t rect_union(fut_rect_t a, fut_rect_t b) {
+    int32_t ax2 = a.x + a.w;
+    int32_t ay2 = a.y + a.h;
+    int32_t bx2 = b.x + b.w;
+    int32_t by2 = b.y + b.h;
+
+    fut_rect_t out;
+    out.x = a.x < b.x ? a.x : b.x;
+    out.y = a.y < b.y ? a.y : b.y;
+    out.w = (ax2 > bx2 ? ax2 : bx2) - out.x;
+    out.h = (ay2 > by2 ? ay2 : by2) - out.y;
+    return out;
+}
+
+static bool rect_intersection(fut_rect_t a, fut_rect_t b, fut_rect_t *out) {
+    int32_t ax2 = a.x + a.w;
+    int32_t ay2 = a.y + a.h;
+    int32_t bx2 = b.x + b.w;
+    int32_t by2 = b.y + b.h;
+
+    int32_t rx1 = a.x > b.x ? a.x : b.x;
+    int32_t ry1 = a.y > b.y ? a.y : b.y;
+    int32_t rx2 = ax2 < bx2 ? ax2 : bx2;
+    int32_t ry2 = ay2 < by2 ? ay2 : by2;
+
+    if (rx2 <= rx1 || ry2 <= ry1) {
+        return false;
+    }
+    if (out) {
+        out->x = rx1;
+        out->y = ry1;
+        out->w = rx2 - rx1;
+        out->h = ry2 - ry1;
+    }
+    return true;
+}
+
+static bool rects_overlap_or_touch(fut_rect_t a, fut_rect_t b) {
+    int32_t ax2 = a.x + a.w;
+    int32_t ay2 = a.y + a.h;
+    int32_t bx2 = b.x + b.w;
+    int32_t by2 = b.y + b.h;
+
+    return (a.x <= bx2 + 1 && bx2 >= a.x - 1 &&
+            b.x <= ax2 + 1 && ax2 >= b.x - 1 &&
+            a.y <= by2 + 1 && by2 >= a.y - 1 &&
+            b.y <= ay2 + 1 && ay2 >= b.y - 1);
+}
+
+static void damage_coalesce(struct damage_accum *dmg) {
+    if (!dmg) {
+        return;
+    }
+
+    bool merged;
+    do {
+        merged = false;
+        for (int i = 0; i < dmg->count && !merged; ++i) {
+            for (int j = i + 1; j < dmg->count; ++j) {
+                if (rects_overlap_or_touch(dmg->rects[i], dmg->rects[j])) {
+                    dmg->rects[i] = rect_union(dmg->rects[i], dmg->rects[j]);
+                    for (int k = j; k < dmg->count - 1; ++k) {
+                        dmg->rects[k] = dmg->rects[k + 1];
+                    }
+                    --dmg->count;
+                    merged = true;
+                    break;
+                }
+            }
+        }
+    } while (merged);
+}
+
+static int bb_create(struct backbuffer *bb, int width, int height, int pitch) {
+    if (!bb || width <= 0 || height <= 0 || pitch <= 0) {
+        return -1;
+    }
+    size_t size = (size_t)pitch * (size_t)height;
+    uint32_t *mem = malloc(size);
+    if (!mem) {
+        return -1;
+    }
+    bb->px = mem;
+    bb->width = width;
+    bb->height = height;
+    bb->pitch = pitch;
+    bb->owns = true;
+    memset(mem, 0, size);
+    return 0;
+}
+
+static void bb_destroy(struct backbuffer *bb) {
+    if (!bb) {
+        return;
+    }
+    if (bb->owns && bb->px) {
+        free(bb->px);
+    }
+    bb->px = NULL;
+    bb->width = 0;
+    bb->height = 0;
+    bb->pitch = 0;
+    bb->owns = false;
+}
+
+static void bb_fill_rect(struct backbuffer *bb, fut_rect_t rect, uint32_t argb) {
+    if (!bb || !bb->px) {
+        return;
+    }
+    uint8_t *base = (uint8_t *)bb->px;
+    for (int32_t y = 0; y < rect.h; ++y) {
+        uint8_t *dst = base + (size_t)(rect.y + y) * bb->pitch + (size_t)rect.x * 4u;
+        uint32_t *dst_px = (uint32_t *)dst;
+        for (int32_t x = 0; x < rect.w; ++x) {
+            dst_px[x] = argb;
+        }
+    }
+}
+
+static void blit_argb(const uint8_t *src_base,
+                      int src_pitch,
+                      uint8_t *dst_base,
+                      int dst_pitch,
+                      int width,
+                      int height) {
+    size_t row_bytes = (size_t)width * 4u;
+    const uint8_t *src = src_base;
+    uint8_t *dst = dst_base;
+    for (int y = 0; y < height; ++y) {
+        memcpy(dst, src, row_bytes);
+        src += src_pitch;
+        dst += dst_pitch;
+    }
+}
+
+static int comp_configure_backbuffers(struct compositor_state *comp);
+static uint64_t comp_now_ns(void);
+
 static void comp_surface_link_tail(struct compositor_state *comp, struct comp_surface *surface) {
     if (!comp || !surface || surface->in_zlist) {
         return;
@@ -48,38 +232,47 @@ static void comp_surface_unlink(struct comp_surface *surface) {
     surface->in_zlist = false;
 }
 
-static void comp_damage_union(struct compositor_state *comp,
-                              const struct comp_damage *damage) {
-    if (!comp || !damage || !damage->valid ||
-        damage->width <= 0 || damage->height <= 0) {
+void comp_damage_add_rect(struct compositor_state *comp, fut_rect_t rect) {
+    if (!comp) {
         return;
     }
 
-    if (!comp->pending_damage.valid) {
-        comp->pending_damage = *damage;
-    } else {
-        int32_t x1 = comp->pending_damage.x;
-        int32_t y1 = comp->pending_damage.y;
-        int32_t x2 = x1 + comp->pending_damage.width;
-        int32_t y2 = y1 + comp->pending_damage.height;
-
-        int32_t nx1 = damage->x;
-        int32_t ny1 = damage->y;
-        int32_t nx2 = nx1 + damage->width;
-        int32_t ny2 = ny1 + damage->height;
-
-        if (nx1 < x1) x1 = nx1;
-        if (ny1 < y1) y1 = ny1;
-        if (nx2 > x2) x2 = nx2;
-        if (ny2 > y2) y2 = ny2;
-
-        comp->pending_damage.x = x1;
-        comp->pending_damage.y = y1;
-        comp->pending_damage.width = x2 - x1;
-        comp->pending_damage.height = y2 - y1;
+    bool valid = false;
+    fut_rect_t clipped = rect_clip_to_fb(&comp->fb_info, rect, &valid);
+    if (!valid) {
+        return;
     }
-    comp->pending_damage.valid = true;
+
+    struct damage_accum *dmg = &comp->frame_damage;
+    if (dmg->count >= MAX_DAMAGE) {
+        comp_damage_add_full(comp);
+        return;
+    }
+
+    dmg->rects[dmg->count++] = clipped;
+    damage_coalesce(dmg);
     comp->needs_repaint = true;
+}
+
+void comp_damage_add_full(struct compositor_state *comp) {
+    if (!comp) {
+        return;
+    }
+    struct damage_accum *dmg = &comp->frame_damage;
+    dmg->count = 1;
+    dmg->rects[0].x = 0;
+    dmg->rects[0].y = 0;
+    dmg->rects[0].w = (int32_t)comp->fb_info.width;
+    dmg->rects[0].h = (int32_t)comp->fb_info.height;
+    comp->needs_repaint = true;
+}
+
+int comp_set_backbuffer_enabled(struct compositor_state *comp, bool enabled) {
+    if (!comp) {
+        return -1;
+    }
+    comp->backbuffer_enabled = enabled;
+    return comp_configure_backbuffers(comp);
 }
 
 const struct fut_fb_info *comp_get_fb_info(const struct compositor_state *comp) {
@@ -133,7 +326,11 @@ int comp_state_init(struct compositor_state *comp) {
     comp->fb_map_size = map_size;
     comp->fb_info = info;
     comp->running = true;
-    comp->frame_delay_ms = 16u;
+    comp->target_ms = 16u;
+    comp->last_present_ns = 0;
+    comp->frame_damage.count = 0;
+    comp->bb_index = 0;
+    comp->backbuffer_enabled = (WAYLAND_BACKBUFFER_BUILD != 0);
     comp->pointer_x = (int32_t)info.width / 2;
     comp->pointer_y = (int32_t)info.height / 2;
     comp->cursor = cursor_create();
@@ -143,6 +340,12 @@ int comp_state_init(struct compositor_state *comp) {
         return -1;
     }
     cursor_set_position(comp->cursor, comp->pointer_x, comp->pointer_y);
+    if (comp_configure_backbuffers(comp) != 0) {
+        printf("[WAYLAND] failed to allocate backbuffer\n");
+        comp_state_finish(comp);
+        return -1;
+    }
+    comp->last_present_ns = comp_now_ns() - (uint64_t)comp->target_ms * 1000000ULL;
     return 0;
 }
 
@@ -152,6 +355,10 @@ void comp_state_finish(struct compositor_state *comp) {
     }
 
     comp->running = false;
+
+    for (int i = 0; i < 2; ++i) {
+        bb_destroy(&comp->bb[i]);
+    }
 
     if (comp->cursor) {
         cursor_destroy(comp->cursor);
@@ -169,118 +376,42 @@ void comp_state_finish(struct compositor_state *comp) {
     }
 }
 
-static void comp_clear_framebuffer(struct compositor_state *comp) {
-    if (!comp || !comp->fb_map) {
-        return;
-    }
-    for (uint32_t row = 0; row < comp->fb_info.height; ++row) {
-        uint8_t *dst_row = comp->fb_map + (size_t)row * comp->fb_info.pitch;
-        memset(dst_row, 0, comp->fb_info.pitch);
-    }
-}
-
-void comp_present_buffer(struct compositor_state *comp,
-                         int32_t dst_x,
-                         int32_t dst_y,
-                         struct comp_buffer *buffer,
-                         const struct comp_damage *damage) {
-    if (!comp || !buffer || !buffer->data || !comp->fb_map) {
-        return;
+static int comp_configure_backbuffers(struct compositor_state *comp) {
+    if (!comp) {
+        return -1;
     }
 
-    int32_t src_width = buffer->width;
-    int32_t src_height = buffer->height;
-    int32_t src_stride = buffer->stride;
-    if (src_width <= 0 || src_height <= 0 || src_stride <= 0) {
-        return;
+    for (int i = 0; i < 2; ++i) {
+        bb_destroy(&comp->bb[i]);
+    }
+    comp->bb_index = 0;
+
+    if (!comp->backbuffer_enabled) {
+        comp->bb[0].px = (uint32_t *)comp->fb_map;
+        comp->bb[0].width = (int)comp->fb_info.width;
+        comp->bb[0].height = (int)comp->fb_info.height;
+        comp->bb[0].pitch = (int)comp->fb_info.pitch;
+        comp->bb[0].owns = false;
+        comp->bb[1].px = NULL;
+        comp->bb[1].width = 0;
+        comp->bb[1].height = 0;
+        comp->bb[1].pitch = 0;
+        comp->bb[1].owns = false;
+        return 0;
     }
 
-    int32_t copy_x = 0;
-    int32_t copy_y = 0;
-    int32_t copy_w = src_width;
-    int32_t copy_h = src_height;
+    int width = (int)comp->fb_info.width;
+    int height = (int)comp->fb_info.height;
+    int pitch = (int)comp->fb_info.pitch;
 
-    if (damage && damage->valid) {
-        copy_x = damage->x;
-        copy_y = damage->y;
-        copy_w = damage->width;
-        copy_h = damage->height;
+    if (bb_create(&comp->bb[0], width, height, pitch) != 0) {
+        return -1;
     }
-
-    if (copy_x < 0) {
-        copy_w += copy_x;
-        copy_x = 0;
+    if (bb_create(&comp->bb[1], width, height, pitch) != 0) {
+        bb_destroy(&comp->bb[0]);
+        return -1;
     }
-    if (copy_y < 0) {
-        copy_h += copy_y;
-        copy_y = 0;
-    }
-
-    if (copy_w <= 0 || copy_h <= 0) {
-        return;
-    }
-
-    uint32_t dst_w = comp->fb_info.width;
-    uint32_t dst_h = comp->fb_info.height;
-
-    if (copy_x >= src_width || copy_y >= src_height) {
-        return;
-    }
-
-    int32_t max_w_src = src_width - copy_x;
-    int32_t max_h_src = src_height - copy_y;
-    if (copy_w > max_w_src) {
-        copy_w = max_w_src;
-    }
-    if (copy_h > max_h_src) {
-        copy_h = max_h_src;
-    }
-
-    int32_t dst_start_x = dst_x + copy_x;
-    int32_t dst_start_y = dst_y + copy_y;
-    int32_t dst_end_x = dst_start_x + copy_w;
-    int32_t dst_end_y = dst_start_y + copy_h;
-
-    if (dst_end_x <= 0 || dst_end_y <= 0 ||
-        dst_start_x >= (int32_t)dst_w || dst_start_y >= (int32_t)dst_h) {
-        return;
-    }
-
-    if (dst_start_x < 0) {
-        int32_t delta = -dst_start_x;
-        copy_w -= delta;
-        copy_x += delta;
-        dst_start_x = 0;
-    }
-    if (dst_start_y < 0) {
-        int32_t delta = -dst_start_y;
-        copy_h -= delta;
-        copy_y += delta;
-        dst_start_y = 0;
-    }
-
-    if (dst_end_x > (int32_t)dst_w) {
-        copy_w -= dst_end_x - (int32_t)dst_w;
-        dst_end_x = (int32_t)dst_w;
-    }
-    if (dst_end_y > (int32_t)dst_h) {
-        copy_h -= dst_end_y - (int32_t)dst_h;
-        dst_end_y = (int32_t)dst_h;
-    }
-
-    if (copy_w <= 0 || copy_h <= 0) {
-        return;
-    }
-
-    uint8_t *dst = comp->fb_map + (size_t)dst_start_y * comp->fb_info.pitch + (size_t)dst_start_x * 4;
-    const uint8_t *src = (const uint8_t *)buffer->data + (size_t)copy_y * src_stride + (size_t)copy_x * 4;
-    uint32_t row_bytes = (uint32_t)copy_w * 4u;
-
-    for (int32_t y = 0; y < copy_h; ++y) {
-        memcpy(dst + (size_t)y * comp->fb_info.pitch,
-               src + (size_t)y * src_stride,
-               row_bytes);
-    }
+    return 0;
 }
 
 struct comp_surface *comp_surface_create(struct compositor_state *comp,
@@ -297,7 +428,7 @@ struct comp_surface *comp_surface_create(struct compositor_state *comp,
     surface->in_zlist = false;
     surface->surface_resource = surface_resource;
     wl_list_init(&surface->frame_callbacks);
-    surface->pending_damage.valid = false;
+    surface->has_pending_damage = false;
     surface->has_pending_buffer = false;
     surface->surface_id = ++comp->next_surface_id;
     comp_surface_link_tail(comp, surface);
@@ -326,19 +457,18 @@ void comp_surface_destroy(struct comp_surface *surface) {
     if (comp) {
         comp_surface_unlink(surface);
         if (surface->has_backing) {
-            struct comp_damage dmg = {
+            fut_rect_t rect = {
                 .x = surface->x,
                 .y = surface->y,
-                .width = surface->width,
-                .height = surface->height,
-                .valid = true,
+                .w = surface->width,
+                .h = surface->height,
             };
-            comp_request_repaint(comp, &dmg);
+            comp_damage_add_rect(comp, rect);
         }
         if (comp->active_surface == surface) {
             if (!wl_list_empty(&comp->surfaces)) {
-                comp->active_surface =
-                    wl_list_last_entry(&comp->surfaces, struct comp_surface, link);
+                struct wl_list *tail_link = comp->surfaces.prev;
+                comp->active_surface = wl_container_of(tail_link, surface, link);
             } else {
                 comp->active_surface = NULL;
             }
@@ -376,9 +506,9 @@ void comp_surface_damage(struct comp_surface *surface,
 
     surface->pending_damage.x = x;
     surface->pending_damage.y = y;
-    surface->pending_damage.width = width;
-    surface->pending_damage.height = height;
-    surface->pending_damage.valid = true;
+    surface->pending_damage.w = width;
+    surface->pending_damage.h = height;
+    surface->has_pending_damage = true;
 }
 
 static uint32_t comp_now_msec(void) {
@@ -442,14 +572,13 @@ void comp_surface_commit(struct comp_surface *surface) {
                 surface->pos_initialised = true;
             }
 
-            struct comp_damage dmg = {
+            fut_rect_t full = {
                 .x = surface->x,
                 .y = surface->y,
-                .width = surface->width,
-                .height = surface->height,
-                .valid = true,
+                .w = surface->width,
+                .h = surface->height,
             };
-            comp_damage_union(surface->comp, &dmg);
+            comp_damage_add_rect(surface->comp, full);
 
             shm_buffer_release(&buffer);
             if (first_buffer) {
@@ -463,7 +592,18 @@ void comp_surface_commit(struct comp_surface *surface) {
         }
         surface->pending_buffer_resource = NULL;
         surface->has_pending_buffer = false;
-        surface->pending_damage.valid = false;
+    }
+
+    if (surface->has_pending_damage && surface->has_backing) {
+        fut_rect_t local = surface->pending_damage;
+        fut_rect_t global = {
+            .x = surface->x + local.x,
+            .y = surface->y + local.y,
+            .w = local.w,
+            .h = local.h,
+        };
+        comp_damage_add_rect(surface->comp, global);
+        surface->has_pending_damage = false;
     }
 
     uint32_t now = comp_now_msec();
@@ -493,39 +633,106 @@ void comp_surface_frame(struct comp_surface *surface,
     wl_resource_set_destructor(callback_resource, frame_callback_resource_destroy);
 }
 
-static void comp_draw_surface(struct compositor_state *comp,
-                              struct comp_surface *surface) {
-    if (!comp || !surface || !surface->has_backing) {
-        return;
-    }
-
-    struct comp_buffer buf = {
-        .data = surface->backing,
-        .width = surface->width,
-        .height = surface->height,
-        .stride = surface->stride,
-        .format = WL_SHM_FORMAT_ARGB8888,
-    };
-    comp_present_buffer(comp, surface->x, surface->y, &buf, NULL);
+static uint64_t comp_now_ns(void) {
+    return (uint64_t)sys_time_millis_call() * 1000000ULL;
 }
 
-static void comp_render(struct compositor_state *comp) {
-    if (!comp || !comp->fb_map) {
+static void present_damage(struct compositor_state *comp, const struct damage_accum *damage) {
+    if (!comp || !damage || !comp->fb_map) {
         return;
     }
 
-    comp_clear_framebuffer(comp);
+    const struct backbuffer *src = &comp->bb[comp->bb_index];
+    if (!src->px) {
+        return;
+    }
+
+    for (int i = 0; i < damage->count; ++i) {
+        fut_rect_t rect = damage->rects[i];
+        const uint8_t *src_base = (const uint8_t *)src->px + (size_t)rect.y * src->pitch + (size_t)rect.x * 4u;
+        uint8_t *dst_base = comp->fb_map + (size_t)rect.y * comp->fb_info.pitch + (size_t)rect.x * 4u;
+        blit_argb(src_base, src->pitch, dst_base, comp->fb_info.pitch, rect.w, rect.h);
+    }
+}
+
+static void render_one_frame(struct compositor_state *comp) {
+    if (!comp) {
+        return;
+    }
+
+    struct damage_accum *damage = &comp->frame_damage;
+    if (damage->count == 0) {
+        comp->needs_repaint = false;
+        return;
+    }
+
+    damage_coalesce(damage);
+    int region_count = damage->count;
+
+    int render_index = comp->backbuffer_enabled ? (comp->bb_index ^ 1) : 0;
+    struct backbuffer *dst = &comp->bb[render_index];
+    if (!dst->px) {
+        comp_damage_add_full(comp);
+        damage = &comp->frame_damage;
+        damage_coalesce(damage);
+        region_count = damage->count;
+        dst = &comp->bb[render_index];
+        if (!dst->px) {
+            comp->needs_repaint = false;
+            damage->count = 0;
+            return;
+        }
+    }
+
+    for (int i = 0; i < damage->count; ++i) {
+        bb_fill_rect(dst, damage->rects[i], 0x00000000u);
+    }
+
     struct comp_surface *surface;
     wl_list_for_each(surface, &comp->surfaces, link) {
-        comp_draw_surface(comp, surface);
+        if (!surface->has_backing) {
+            continue;
+        }
+        fut_rect_t surf_rect = {
+            .x = surface->x,
+            .y = surface->y,
+            .w = surface->width,
+            .h = surface->height,
+        };
+
+        for (int i = 0; i < damage->count; ++i) {
+            fut_rect_t inter;
+            if (!rect_intersection(damage->rects[i], surf_rect, &inter)) {
+                continue;
+            }
+            const uint8_t *src_ptr = surface->backing +
+                (size_t)(inter.y - surface->y) * surface->stride +
+                (size_t)(inter.x - surface->x) * 4u;
+            uint8_t *dst_ptr = (uint8_t *)dst->px +
+                (size_t)inter.y * dst->pitch +
+                (size_t)inter.x * 4u;
+            blit_argb(src_ptr, surface->stride, dst_ptr, dst->pitch, inter.w, inter.h);
+        }
     }
 
     if (comp->cursor) {
-        cursor_draw(comp->cursor, comp->fb_map, &comp->fb_info);
+        struct fut_fb_info info = comp->fb_info;
+        info.pitch = (uint32_t)dst->pitch;
+        cursor_draw(comp->cursor, (uint8_t *)dst->px, &info);
     }
 
+    if (comp->backbuffer_enabled) {
+        comp->bb_index = render_index;
+        present_damage(comp, damage);
+    }
+
+#ifdef DEBUG_WAYLAND
+    WLOG("[WAYLAND] present bb=%d regions=%d\n", comp->bb_index, region_count);
+#endif
+
+    comp->frame_damage.count = 0;
     comp->needs_repaint = false;
-    comp->pending_damage.valid = false;
+    comp->last_present_ns = comp_now_ns();
 }
 
 int comp_run(struct compositor_state *comp) {
@@ -536,38 +743,35 @@ int comp_run(struct compositor_state *comp) {
     while (comp->running) {
         wl_display_flush_clients(comp->display);
 
-        int timeout = comp->needs_repaint ? 0 : (int)comp->frame_delay_ms;
-        int rc = wl_event_loop_dispatch(comp->loop, timeout);
+        uint64_t target_ns = (uint64_t)comp->target_ms * 1000000ULL;
+        uint64_t now_ns = comp_now_ns();
+        uint64_t elapsed_ns = now_ns - comp->last_present_ns;
+        int timeout_ms = comp->target_ms;
+
+        if (comp->frame_damage.count > 0) {
+            if (elapsed_ns >= target_ns) {
+                timeout_ms = 0;
+            } else {
+                uint64_t remaining_ns = target_ns - elapsed_ns;
+                timeout_ms = (int)(remaining_ns / 1000000ULL);
+                if (timeout_ms < 0) {
+                    timeout_ms = 0;
+                }
+            }
+        }
+
+        int rc = wl_event_loop_dispatch(comp->loop, timeout_ms);
         if (rc < 0 && errno != EINTR) {
             break;
         }
 
-        if (comp->needs_repaint) {
-            comp_render(comp);
+        now_ns = comp_now_ns();
+        if (comp->frame_damage.count > 0 && now_ns - comp->last_present_ns >= target_ns) {
+            render_one_frame(comp);
         }
     }
 
     return 0;
-}
-
-void comp_request_repaint(struct compositor_state *comp, const struct comp_damage *damage) {
-    if (!comp) {
-        return;
-    }
-    if (damage) {
-        comp_damage_union(comp, damage);
-    } else if (!comp->pending_damage.valid) {
-        struct comp_damage full = {
-            .x = 0,
-            .y = 0,
-            .width = (int32_t)comp->fb_info.width,
-            .height = (int32_t)comp->fb_info.height,
-            .valid = true,
-        };
-        comp_damage_union(comp, &full);
-    } else {
-        comp->needs_repaint = true;
-    }
 }
 
 bool comp_pointer_inside_surface(const struct compositor_state *comp,
@@ -639,7 +843,13 @@ void comp_surface_raise(struct compositor_state *comp, struct comp_surface *surf
     surface->in_zlist = true;
     comp->active_surface = surface;
     if (surface->has_backing) {
-        comp_request_repaint(comp, NULL);
+        fut_rect_t rect = {
+            .x = surface->x,
+            .y = surface->y,
+            .w = surface->width,
+            .h = surface->height,
+        };
+        comp_damage_add_rect(comp, rect);
     }
 }
 
@@ -647,15 +857,14 @@ static void comp_cursor_damage(struct compositor_state *comp,
                                int32_t x,
                                int32_t y,
                                int32_t w,
-                               int32_t h) {
-    struct comp_damage dmg = {
+                                int32_t h) {
+    fut_rect_t rect = {
         .x = x,
         .y = y,
-        .width = w,
-        .height = h,
-        .valid = true,
+        .w = w,
+        .h = h,
     };
-    comp_damage_union(comp, &dmg);
+    comp_damage_add_rect(comp, rect);
 }
 
 void comp_pointer_motion(struct compositor_state *comp, int32_t new_x, int32_t new_y) {
@@ -739,22 +948,20 @@ void comp_update_surface_position(struct compositor_state *comp,
         return;
     }
 
-    struct comp_damage old_rect = {
+    fut_rect_t old_rect = {
         .x = surface->x,
         .y = surface->y,
-        .width = width,
-        .height = height,
-        .valid = true,
+        .w = width,
+        .h = height,
     };
-    struct comp_damage new_rect = {
+    fut_rect_t new_rect = {
         .x = clamped_x,
         .y = clamped_y,
-        .width = width,
-        .height = height,
-        .valid = true,
+        .w = width,
+        .h = height,
     };
-    comp_damage_union(comp, &old_rect);
-    comp_damage_union(comp, &new_rect);
+    comp_damage_add_rect(comp, old_rect);
+    comp_damage_add_rect(comp, new_rect);
 
     surface->x = clamped_x;
     surface->y = clamped_y;

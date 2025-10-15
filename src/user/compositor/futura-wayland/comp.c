@@ -9,6 +9,7 @@
 #include <string.h>
 
 #include <wayland-server-protocol.h>
+#include <wayland-util.h>
 
 #include <user/sys.h>
 
@@ -29,6 +30,22 @@ static inline int32_t clamp_i32(int32_t value, int32_t min, int32_t max) {
         return max;
     }
     return value;
+}
+
+static void comp_surface_link_tail(struct compositor_state *comp, struct comp_surface *surface) {
+    if (!comp || !surface || surface->in_zlist) {
+        return;
+    }
+    wl_list_insert(comp->surfaces.prev, &surface->link);
+    surface->in_zlist = true;
+}
+
+static void comp_surface_unlink(struct comp_surface *surface) {
+    if (!surface || !surface->in_zlist) {
+        return;
+    }
+    wl_list_remove(&surface->link);
+    surface->in_zlist = false;
 }
 
 static void comp_damage_union(struct compositor_state *comp,
@@ -75,6 +92,8 @@ int comp_state_init(struct compositor_state *comp) {
     }
 
     memset(comp, 0, sizeof(*comp));
+    comp->multi_enabled = (WAYLAND_MULTI_BUILD != 0);
+    wl_list_init(&comp->surfaces);
     comp->fb_fd = -1;
 
     int fd = (int)sys_open("/dev/fb0", O_RDWR, 0);
@@ -272,11 +291,16 @@ struct comp_surface *comp_surface_create(struct compositor_state *comp,
     }
     memset(surface, 0, sizeof(*surface));
     surface->comp = comp;
+    surface->x = 0;
+    surface->y = 0;
+    surface->pos_initialised = false;
+    surface->in_zlist = false;
     surface->surface_resource = surface_resource;
     wl_list_init(&surface->frame_callbacks);
     surface->pending_damage.valid = false;
     surface->has_pending_buffer = false;
     surface->surface_id = ++comp->next_surface_id;
+    comp_surface_link_tail(comp, surface);
     if (!comp->active_surface) {
         comp->active_surface = surface;
     }
@@ -300,10 +324,11 @@ void comp_surface_destroy(struct comp_surface *surface) {
 
     struct compositor_state *comp = surface->comp;
     if (comp) {
+        comp_surface_unlink(surface);
         if (surface->has_backing) {
             struct comp_damage dmg = {
-                .x = comp->window_x,
-                .y = comp->window_y,
+                .x = surface->x,
+                .y = surface->y,
                 .width = surface->width,
                 .height = surface->height,
                 .valid = true,
@@ -311,10 +336,19 @@ void comp_surface_destroy(struct comp_surface *surface) {
             comp_request_repaint(comp, &dmg);
         }
         if (comp->active_surface == surface) {
-            comp->active_surface = NULL;
+            if (!wl_list_empty(&comp->surfaces)) {
+                comp->active_surface =
+                    wl_list_last_entry(&comp->surfaces, struct comp_surface, link);
+            } else {
+                comp->active_surface = NULL;
+            }
         }
         if (comp->focused_surface == surface) {
             comp->focused_surface = NULL;
+        }
+        if (comp->drag_surface == surface) {
+            comp->drag_surface = NULL;
+            comp->dragging = false;
         }
         if (comp->seat) {
             seat_surface_destroyed(comp->seat, surface);
@@ -393,23 +427,23 @@ void comp_surface_commit(struct comp_surface *surface) {
             surface->height = buffer.height;
             surface->stride = buffer.stride;
             surface->has_backing = true;
-            surface->comp->active_surface = surface;
+            comp_surface_raise(surface->comp, surface);
 
-            if (!surface->comp->window_pos_initialised) {
+            if (!surface->pos_initialised) {
                 int32_t cx = ((int32_t)surface->comp->fb_info.width - surface->width) / 2;
                 int32_t cy = ((int32_t)surface->comp->fb_info.height - surface->height) / 2;
                 int32_t max_x = (int32_t)surface->comp->fb_info.width - surface->width;
                 int32_t max_y = (int32_t)surface->comp->fb_info.height - surface->height;
                 if (max_x < 0) max_x = 0;
                 if (max_y < 0) max_y = 0;
-                surface->comp->window_x = clamp_i32(cx, 0, max_x);
-                surface->comp->window_y = clamp_i32(cy, 0, max_y);
-                surface->comp->window_pos_initialised = true;
+                surface->x = clamp_i32(cx, 0, max_x);
+                surface->y = clamp_i32(cy, 0, max_y);
+                surface->pos_initialised = true;
             }
 
             struct comp_damage dmg = {
-                .x = surface->comp->window_x,
-                .y = surface->comp->window_y,
+                .x = surface->x,
+                .y = surface->y,
                 .width = surface->width,
                 .height = surface->height,
                 .valid = true,
@@ -465,7 +499,7 @@ static void comp_draw_surface(struct compositor_state *comp,
         .stride = surface->stride,
         .format = WL_SHM_FORMAT_ARGB8888,
     };
-    comp_present_buffer(comp, comp->window_x, comp->window_y, &buf, NULL);
+    comp_present_buffer(comp, surface->x, surface->y, &buf, NULL);
 }
 
 static void comp_render(struct compositor_state *comp) {
@@ -474,7 +508,10 @@ static void comp_render(struct compositor_state *comp) {
     }
 
     comp_clear_framebuffer(comp);
-    comp_draw_surface(comp, comp->active_surface);
+    struct comp_surface *surface;
+    wl_list_for_each(surface, &comp->surfaces, link) {
+        comp_draw_surface(comp, surface);
+    }
 
     if (comp->cursor) {
         cursor_draw(comp->cursor, comp->fb_map, &comp->fb_info);
@@ -536,8 +573,8 @@ bool comp_pointer_inside_surface(const struct compositor_state *comp,
         return false;
     }
 
-    int32_t sx = px - comp->window_x;
-    int32_t sy = py - comp->window_y;
+    int32_t sx = px - surface->x;
+    int32_t sy = py - surface->y;
     if (sx < 0 || sy < 0 ||
         sx >= surface->width || sy >= surface->height) {
         return false;
@@ -549,6 +586,54 @@ bool comp_pointer_inside_surface(const struct compositor_state *comp,
         *out_sy = sy;
     }
     return true;
+}
+
+struct comp_surface *comp_surface_at(struct compositor_state *comp,
+                                     int32_t px,
+                                     int32_t py,
+                                     int32_t *out_sx,
+                                     int32_t *out_sy) {
+    if (!comp) {
+        return NULL;
+    }
+    struct comp_surface *surface;
+    wl_list_for_each_reverse(surface, &comp->surfaces, link) {
+        if (!surface->has_backing) {
+            continue;
+        }
+        int32_t sx = px - surface->x;
+        int32_t sy = py - surface->y;
+        if (sx < 0 || sy < 0 ||
+            sx >= surface->width || sy >= surface->height) {
+            continue;
+        }
+        if (out_sx) {
+            *out_sx = sx;
+        }
+        if (out_sy) {
+            *out_sy = sy;
+        }
+        return surface;
+    }
+    return NULL;
+}
+
+void comp_surface_raise(struct compositor_state *comp, struct comp_surface *surface) {
+    if (!comp || !surface) {
+        return;
+    }
+
+    if (!surface->in_zlist) {
+        comp_surface_link_tail(comp, surface);
+    } else if (comp->multi_enabled) {
+        wl_list_remove(&surface->link);
+        wl_list_insert(comp->surfaces.prev, &surface->link);
+    }
+    surface->in_zlist = true;
+    comp->active_surface = surface;
+    if (surface->has_backing) {
+        comp_request_repaint(comp, NULL);
+    }
 }
 
 static void comp_cursor_damage(struct compositor_state *comp,
@@ -604,13 +689,14 @@ void comp_pointer_motion(struct compositor_state *comp, int32_t new_x, int32_t n
     comp_update_drag(comp);
 }
 
-void comp_start_drag(struct compositor_state *comp) {
-    if (!comp || comp->dragging || !comp->active_surface || !comp->active_surface->has_backing) {
+void comp_start_drag(struct compositor_state *comp, struct comp_surface *surface) {
+    if (!comp || comp->dragging || !surface || !surface->has_backing) {
         return;
     }
     comp->dragging = true;
-    comp->drag_offset_x = comp->pointer_x - comp->window_x;
-    comp->drag_offset_y = comp->pointer_y - comp->window_y;
+    comp->drag_surface = surface;
+    comp->drag_offset_x = comp->pointer_x - surface->x;
+    comp->drag_offset_y = comp->pointer_y - surface->y;
 }
 
 void comp_end_drag(struct compositor_state *comp) {
@@ -618,15 +704,19 @@ void comp_end_drag(struct compositor_state *comp) {
         return;
     }
     comp->dragging = false;
+    comp->drag_surface = NULL;
 }
 
-void comp_update_window_position(struct compositor_state *comp, int32_t new_x, int32_t new_y) {
-    if (!comp || !comp->active_surface || !comp->active_surface->has_backing) {
+void comp_update_surface_position(struct compositor_state *comp,
+                                  struct comp_surface *surface,
+                                  int32_t new_x,
+                                  int32_t new_y) {
+    if (!comp || !surface || !surface->has_backing) {
         return;
     }
 
-    int32_t width = comp->active_surface->width;
-    int32_t height = comp->active_surface->height;
+    int32_t width = surface->width;
+    int32_t height = surface->height;
     int32_t max_x = (int32_t)comp->fb_info.width - width;
     int32_t max_y = (int32_t)comp->fb_info.height - height;
     if (max_x < 0) {
@@ -638,13 +728,13 @@ void comp_update_window_position(struct compositor_state *comp, int32_t new_x, i
 
     int32_t clamped_x = clamp_i32(new_x, 0, max_x);
     int32_t clamped_y = clamp_i32(new_y, 0, max_y);
-    if (clamped_x == comp->window_x && clamped_y == comp->window_y) {
+    if (clamped_x == surface->x && clamped_y == surface->y) {
         return;
     }
 
     struct comp_damage old_rect = {
-        .x = comp->window_x,
-        .y = comp->window_y,
+        .x = surface->x,
+        .y = surface->y,
         .width = width,
         .height = height,
         .valid = true,
@@ -659,22 +749,23 @@ void comp_update_window_position(struct compositor_state *comp, int32_t new_x, i
     comp_damage_union(comp, &old_rect);
     comp_damage_union(comp, &new_rect);
 
-    comp->window_x = clamped_x;
-    comp->window_y = clamped_y;
+    surface->x = clamped_x;
+    surface->y = clamped_y;
     comp->needs_repaint = true;
-    if (comp->active_surface) {
+    if (surface == comp->active_surface) {
         WLOG("[WAYLAND] move id=%u -> x=%d y=%d\n",
-             comp->active_surface->surface_id,
+             surface->surface_id,
              clamped_x,
              clamped_y);
     }
 }
 
 void comp_update_drag(struct compositor_state *comp) {
-    if (!comp || !comp->dragging) {
+    if (!comp || !comp->dragging || !comp->drag_surface) {
         return;
     }
+    struct comp_surface *surface = comp->drag_surface;
     int32_t new_x = comp->pointer_x - comp->drag_offset_x;
     int32_t new_y = comp->pointer_y - comp->drag_offset_y;
-    comp_update_window_position(comp, new_x, new_y);
+    comp_update_surface_position(comp, surface, new_x, new_y);
 }

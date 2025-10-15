@@ -294,6 +294,7 @@ static void seat_focus_surface(struct seat_state *seat, struct comp_surface *sur
 
     seat->keyboard_focus = surface;
     seat->comp->focused_surface = surface;
+    seat->comp->active_surface = surface;
 
     if (surface) {
         seat_keyboard_enter(seat, surface);
@@ -306,33 +307,29 @@ static void seat_update_pointer_focus(struct seat_state *seat, uint32_t time_mse
         return;
     }
 
-    struct comp_surface *surface = seat->comp->active_surface;
     int32_t sx = 0;
     int32_t sy = 0;
-    bool inside = comp_pointer_inside_surface(seat->comp,
-                                              surface,
-                                              seat->comp->pointer_x,
-                                              seat->comp->pointer_y,
-                                              &sx,
-                                              &sy);
+    struct comp_surface *surface = comp_surface_at(seat->comp,
+                                                   seat->comp->pointer_x,
+                                                   seat->comp->pointer_y,
+                                                   &sx,
+                                                   &sy);
 
-    if (inside) {
+    if (!surface && seat->comp->dragging && seat->comp->drag_surface) {
+        surface = seat->comp->drag_surface;
+        sx = seat->comp->pointer_x - surface->x;
+        sy = seat->comp->pointer_y - surface->y;
+    }
+
+    if (surface) {
         wl_fixed_t fx = wl_fixed_from_int(sx);
         wl_fixed_t fy = wl_fixed_from_int(sy);
         if (seat->pointer_focus != surface) {
+            seat_pointer_leave(seat);
             seat_pointer_enter(seat, surface, fx, fy, time_msec);
         } else {
             seat_pointer_motion(seat, fx, fy, time_msec);
         }
-        return;
-    }
-
-    if (seat->comp->dragging && seat->pointer_focus) {
-        int32_t drag_sx = seat->comp->pointer_x - seat->comp->window_x;
-        int32_t drag_sy = seat->comp->pointer_y - seat->comp->window_y;
-        wl_fixed_t fx = wl_fixed_from_int(drag_sx);
-        wl_fixed_t fy = wl_fixed_from_int(drag_sy);
-        seat_pointer_motion(seat, fx, fy, time_msec);
         return;
     }
 
@@ -352,9 +349,13 @@ static void seat_handle_button(struct seat_state *seat,
     if (code == FUT_BTN_LEFT) {
         if (pressed) {
             seat->left_button_down = true;
-            if (seat->pointer_focus && seat->comp->active_surface) {
-                seat_focus_surface(seat, seat->comp->active_surface);
-                comp_start_drag(seat->comp);
+            struct comp_surface *target = seat->pointer_focus;
+            if (target) {
+                if (seat->comp->active_surface != target) {
+                    comp_surface_raise(seat->comp, target);
+                }
+                seat_focus_surface(seat, target);
+                comp_start_drag(seat->comp, target);
             }
         } else {
             seat->left_button_down = false;

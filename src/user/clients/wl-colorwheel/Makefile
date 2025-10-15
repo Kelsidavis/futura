@@ -2,18 +2,18 @@
 
 ROOT := ../../../..
 BUILD_ROOT := $(ROOT)/build
-OBJ_DIR := $(BUILD_ROOT)/obj/user/compositor/futura-wayland
+OBJ_DIR := $(BUILD_ROOT)/obj/user/clients/wl-colorwheel
 BIN_DIR := $(BUILD_ROOT)/bin/user
 
 include $(ROOT)/mk/wayland.mk
 
-TARGET := $(BIN_DIR)/futura-wayland
-SRCS := main.c comp.c shm_backend.c xdg_shell.c output.c seat.c cursor.c
-
+TARGET := $(BIN_DIR)/wl-colorwheel
+SRCS := main.c
 OUT ?= $(BUILD_ROOT)/generated/wayland
-$(eval $(call wayland_proto_server,$(ROOT)/protocols/xdg-shell.xml,compositor))
-WAYLAND_GEN_SRCS := $(OUT)/compositor/xdg-shell-protocol.c
-WAYLAND_GEN_HDRS := $(OUT)/compositor/xdg-shell-server-protocol.h
+$(eval $(call wayland_proto_client,$(ROOT)/protocols/xdg-shell.xml,client))
+
+WAYLAND_GEN_SRCS := $(OUT)/client/xdg-shell-protocol.c
+WAYLAND_GEN_HDRS := $(OUT)/client/xdg-shell-client-protocol.h
 
 OBJS := $(SRCS:%.c=$(OBJ_DIR)/%.o)
 OBJS += $(OBJ_DIR)/xdg-shell-protocol.o
@@ -30,10 +30,8 @@ LIBFUTURA := $(BUILD_ROOT)/lib/libfutura.a
 
 CFLAGS := -std=c2x -ffreestanding -nostdlib -fno-builtin -fno-stack-protector
 CFLAGS += -Wall -Wextra -Werror -g -O2
-CFLAGS += -I$(ROOT)/include -I$(OUT)/compositor
+CFLAGS += -I$(ROOT)/include -I$(OUT)/client
 CFLAGS += -I$(WAYLAND_INCLUDEDIR) $(WAYLAND_CFLAGS)
-
-CPPFLAGS += -DWAYLAND_MULTI_BUILD=1
 
 ifeq ($(DEBUG_WAYLAND),1)
 CFLAGS += -DDEBUG_WAYLAND
@@ -52,11 +50,11 @@ $(TARGET): $(OBJS) | $(BIN_DIR) $(CRT0) $(LIBFUTURA)
 
 $(OBJ_DIR)/%.o: %.c $(WAYLAND_GEN_HDRS) | $(OBJ_DIR)
 	@echo "CC $<"
-	@$(CC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
+	@$(CC) $(CFLAGS) -c $< -o $@
 
 $(OBJ_DIR)/xdg-shell-protocol.o: $(WAYLAND_GEN_SRCS) $(WAYLAND_GEN_HDRS) | $(OBJ_DIR)
 	@echo "CC $<"
-	@$(CC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
+	@$(CC) $(CFLAGS) -c $< -o $@
 
 $(OBJ_DIR):
 	@mkdir -p $@

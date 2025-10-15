@@ -8,6 +8,7 @@
 #include <wayland-server-core.h>
 #include <user/stdio.h>
 #include <user/stdlib.h>
+#include <user/string.h>
 
 int main(void) {
     struct compositor_state comp = {0};
@@ -26,12 +27,10 @@ int main(void) {
     }
 
     const char *multi_env = getenv("WAYLAND_MULTI");
-    if (multi_env) {
-        if (multi_env[0] == '\0' || (multi_env[0] == '0' && multi_env[1] == '\0')) {
-            comp.multi_enabled = false;
-        } else {
-            comp.multi_enabled = true;
-        }
+    if (!multi_env) {
+        comp.multi_enabled = true;
+    } else {
+        comp.multi_enabled = (strcmp(multi_env, "0") != 0);
     }
 
     wl_display_init_shm(comp.display);

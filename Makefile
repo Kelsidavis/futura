@@ -318,6 +318,8 @@ WAYLAND_COMPOSITOR_BIN := $(BIN_DIR)/user/futura-wayland
 WAYLAND_COMPOSITOR_BLOB := $(OBJ_DIR)/kernel/blobs/futura_wayland_blob.o
 WAYLAND_CLIENT_BIN := $(BIN_DIR)/user/wl-simple
 WAYLAND_CLIENT_BLOB := $(OBJ_DIR)/kernel/blobs/wl_simple_blob.o
+WAYLAND_COLOR_BIN := $(BIN_DIR)/user/wl-colorwheel
+WAYLAND_COLOR_BLOB := $(OBJ_DIR)/kernel/blobs/wl_colorwheel_blob.o
 
 OBJECTS += $(FBTEST_BLOB)
 ifeq ($(ENABLE_WINSRV_DEMO),1)
@@ -325,7 +327,7 @@ OBJECTS += $(WINSRV_BLOB) $(WINSTUB_BLOB)
 endif
 OBJECTS += $(INIT_STUB_BLOB) $(SECOND_STUB_BLOB)
 ifeq ($(ENABLE_WAYLAND_DEMO),1)
-OBJECTS += $(WAYLAND_COMPOSITOR_BLOB) $(WAYLAND_CLIENT_BLOB)
+OBJECTS += $(WAYLAND_COMPOSITOR_BLOB) $(WAYLAND_CLIENT_BLOB) $(WAYLAND_COLOR_BLOB)
 endif
 
 # ============================================================
@@ -426,6 +428,9 @@ $(WAYLAND_COMPOSITOR_BIN):
 $(WAYLAND_CLIENT_BIN):
 	@$(MAKE) -C src/user/clients/wl-simple all
 
+$(WAYLAND_COLOR_BIN):
+	@$(MAKE) -C src/user/clients/wl-colorwheel all
+
 $(OBJ_DIR)/kernel/blobs:
 	@mkdir -p $@
 
@@ -454,6 +459,10 @@ $(WAYLAND_COMPOSITOR_BLOB): $(WAYLAND_COMPOSITOR_BIN) | $(OBJ_DIR)/kernel/blobs
 	@$(OBJCOPY) -I binary -O elf64-x86-64 -B i386:x86-64 $< $@
 
 $(WAYLAND_CLIENT_BLOB): $(WAYLAND_CLIENT_BIN) | $(OBJ_DIR)/kernel/blobs
+	@echo "OBJCOPY $@"
+	@$(OBJCOPY) -I binary -O elf64-x86-64 -B i386:x86-64 $< $@
+
+$(WAYLAND_COLOR_BLOB): $(WAYLAND_COLOR_BIN) | $(OBJ_DIR)/kernel/blobs
 	@echo "OBJCOPY $@"
 	@$(OBJCOPY) -I binary -O elf64-x86-64 -B i386:x86-64 $< $@
 
@@ -567,6 +576,31 @@ wayland-step2:
 	@$(MAKE) third_party-wayland
 	@$(MAKE) DEBUG_WAYLAND=1 ENABLE_WAYLAND_DEMO=1 iso disk
 	@echo "Running wayland-step2 scenario under QEMU..."
+	@img=$(QEMU_DISK_IMG); \
+		echo "[WAYLAND] Using disk $$img"; \
+		qemu-system-x86_64 \
+			-serial stdio \
+			-display none \
+			-m $(QEMU_MEM) \
+			$(QEMU_FLAGS) \
+			-cdrom futura.iso \
+			-boot d \
+	; \
+	code=$$?; \
+	if [ $$code -eq 1 ]; then \
+		echo "[WAYLAND] PASS"; \
+		exit 0; \
+	else \
+		echo "[WAYLAND] FAIL (qemu code $$code)"; \
+		exit $$code; \
+	fi
+
+.PHONY: wayland-step3
+wayland-step3:
+	@$(MAKE) third_party-wayland
+	@$(MAKE) sym-audit
+	@$(MAKE) DEBUG_WAYLAND=1 ENABLE_WAYLAND_DEMO=1 iso disk
+	@echo "Running wayland-step3 scenario under QEMU..."
 	@img=$(QEMU_DISK_IMG); \
 		echo "[WAYLAND] Using disk $$img"; \
 		qemu-system-x86_64 \
@@ -701,6 +735,7 @@ help:
 	@echo "  test              - Build and test kernel with GRUB (recommended)"
 	@echo "  desktop-step2      - Boot winsrv/winstub demo (feature flag)"
 	@echo "  wayland-step2      - Boot Wayland compositor/client skeleton"
+	@echo "  wayland-step3      - Boot Wayland compositor with dual demo clients"
 	@echo "  clean             - Remove build artifacts"
 	@echo "  help              - Show this help message"
 	@echo ""

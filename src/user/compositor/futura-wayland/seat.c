@@ -298,7 +298,7 @@ static void seat_focus_surface(struct seat_state *seat, struct comp_surface *sur
 
     if (surface) {
         seat_keyboard_enter(seat, surface);
-        WLOG("[WAYLAND] raise+focus id=%u\n", surface->surface_id);
+        WLOG("[WAYLAND] raise+focus win=%p\n", (void *)surface);
     }
 }
 

@@ -2,6 +2,7 @@
 
 #include "comp.h"
 #include "log.h"
+#include "xdg_shell.h"
 
 #include <stdlib.h>
 
@@ -12,6 +13,7 @@
 #include <wayland-server-protocol.h>
 
 #define O_RDONLY 0x0000
+#define DOUBLE_CLICK_MS 300
 
 struct seat_client {
     struct seat_state *seat;
@@ -36,7 +38,66 @@ struct seat_state {
     int32_t pointer_sx;
     int32_t pointer_sy;
     bool left_button_down;
+    struct comp_surface *hover_btn_surface;
+    struct comp_surface *pressed_surface;
+    hit_role_t pressed_role;
+    resize_edge_t pressed_edge;
+    uint32_t last_click_time;
+    struct comp_surface *last_click_surface;
 };
+
+static void seat_clear_button_hover(struct seat_state *seat) {
+    if (!seat || !seat->hover_btn_surface) {
+        return;
+    }
+    struct comp_surface *surface = seat->hover_btn_surface;
+   if (surface->btn_hover) {
+       surface->btn_hover = false;
+       comp_damage_add_rect(seat->comp, comp_btn_rect(surface));
+        comp_surface_mark_damage(surface);
+   }
+   seat->hover_btn_surface = NULL;
+}
+
+static void seat_set_button_hover(struct seat_state *seat, struct comp_surface *surface) {
+    if (!seat) {
+        return;
+    }
+    if (seat->hover_btn_surface == surface) {
+        return;
+    }
+    seat_clear_button_hover(seat);
+    if (!surface) {
+        return;
+    }
+    surface->btn_hover = true;
+    comp_damage_add_rect(seat->comp, comp_btn_rect(surface));
+    comp_surface_mark_damage(surface);
+    seat->hover_btn_surface = surface;
+}
+
+static void seat_update_hover(struct seat_state *seat) {
+    if (!seat) {
+        return;
+    }
+    if (!seat->comp->deco_enabled) {
+        seat_clear_button_hover(seat);
+        return;
+    }
+
+    struct comp_surface *surface = NULL;
+    resize_edge_t edge = RSZ_NONE;
+    hit_role_t role = comp_hit_test(seat->comp,
+                                    seat->comp->pointer_x,
+                                    seat->comp->pointer_y,
+                                    &surface,
+                                    &edge);
+    if (role == HIT_CLOSE && surface) {
+        seat_set_button_hover(seat, surface);
+    } else {
+        seat_clear_button_hover(seat);
+    }
+}
 
 static void seat_update_pointer_focus(struct seat_state *seat, uint32_t time_msec);
 static void seat_focus_surface(struct seat_state *seat, struct comp_surface *surface);
@@ -86,7 +147,13 @@ static void seat_client_destroy(struct seat_client *client) {
 }
 
 static void seat_pointer_leave(struct seat_state *seat) {
-    if (!seat || !seat->pointer_focus) {
+    if (!seat) {
+        return;
+    }
+
+    seat_clear_button_hover(seat);
+
+    if (!seat->pointer_focus) {
         return;
     }
 
@@ -289,6 +356,11 @@ static void seat_focus_surface(struct seat_state *seat, struct comp_surface *sur
 
     struct comp_surface *previous = seat->keyboard_focus;
     if (previous) {
+        comp_surface_update_decorations(previous);
+        if (previous->bar_height > 0) {
+            comp_damage_add_rect(seat->comp, comp_bar_rect(previous));
+            comp_surface_mark_damage(previous);
+        }
         seat_keyboard_leave(seat, previous);
     }
 
@@ -298,7 +370,14 @@ static void seat_focus_surface(struct seat_state *seat, struct comp_surface *sur
 
     if (surface) {
         seat_keyboard_enter(seat, surface);
-        WLOG("[WAYLAND] raise+focus win=%p\n", (void *)surface);
+        comp_surface_update_decorations(surface);
+        if (surface->bar_height > 0) {
+            comp_damage_add_rect(seat->comp, comp_bar_rect(surface));
+            comp_surface_mark_damage(surface);
+        }
+#ifdef DEBUG_WAYLAND
+        WLOG("[WAYLAND] deco: focus win=%p\n", (void *)surface);
+#endif
     }
 }
 
@@ -309,16 +388,21 @@ static void seat_update_pointer_focus(struct seat_state *seat, uint32_t time_mse
 
     int32_t sx = 0;
     int32_t sy = 0;
-    struct comp_surface *surface = comp_surface_at(seat->comp,
-                                                   seat->comp->pointer_x,
-                                                   seat->comp->pointer_y,
-                                                   &sx,
-                                                   &sy);
+    struct comp_surface *surface = NULL;
 
-    if (!surface && seat->comp->dragging && seat->comp->drag_surface) {
-        surface = seat->comp->drag_surface;
-        sx = seat->comp->pointer_x - surface->x;
-        sy = seat->comp->pointer_y - surface->y;
+    struct comp_surface *iter;
+    wl_list_for_each_reverse(iter, &seat->comp->surfaces, link) {
+        if (!iter->has_backing) {
+            continue;
+        }
+        if (comp_pointer_inside_surface(seat->comp, iter,
+                                        seat->comp->pointer_x,
+                                        seat->comp->pointer_y,
+                                        &sx,
+                                        &sy)) {
+            surface = iter;
+            break;
+        }
     }
 
     if (surface) {
@@ -330,10 +414,11 @@ static void seat_update_pointer_focus(struct seat_state *seat, uint32_t time_mse
         } else {
             seat_pointer_motion(seat, fx, fy, time_msec);
         }
-        return;
+    } else {
+        seat_pointer_leave(seat);
     }
 
-    seat_pointer_leave(seat);
+    seat_update_hover(seat);
 }
 
 static void seat_handle_button(struct seat_state *seat,
@@ -345,25 +430,99 @@ static void seat_handle_button(struct seat_state *seat,
     }
 
     seat_update_pointer_focus(seat, time_msec);
+    seat_update_hover(seat);
 
     if (code == FUT_BTN_LEFT) {
+        struct comp_surface *hit_surface = NULL;
+        resize_edge_t edge = RSZ_NONE;
+        hit_role_t role = comp_hit_test(seat->comp,
+                                        seat->comp->pointer_x,
+                                        seat->comp->pointer_y,
+                                        &hit_surface,
+                                        &edge);
+
         if (pressed) {
             seat->left_button_down = true;
-            struct comp_surface *target = seat->pointer_focus;
-            if (target) {
-                if (seat->comp->active_surface != target) {
-                    comp_surface_raise(seat->comp, target);
+            seat->pressed_surface = hit_surface;
+            seat->pressed_role = role;
+            seat->pressed_edge = edge;
+
+            if (hit_surface) {
+                if (seat->comp->active_surface != hit_surface) {
+                    comp_surface_raise(seat->comp, hit_surface);
                 }
-                seat_focus_surface(seat, target);
-                comp_start_drag(seat->comp, target);
+                seat_focus_surface(seat, hit_surface);
+            }
+
+            if (role == HIT_BAR && hit_surface && !hit_surface->maximized) {
+                comp_start_drag(seat->comp, hit_surface);
+            } else if (role == HIT_CLOSE && hit_surface && seat->comp->deco_enabled) {
+                hit_surface->btn_pressed = true;
+                comp_damage_add_rect(seat->comp, comp_btn_rect(hit_surface));
+                comp_surface_mark_damage(hit_surface);
+#ifdef DEBUG_WAYLAND
+                WLOG("[WAYLAND] deco: press close win=%p\n", (void *)hit_surface);
+#endif
+            } else if (role == HIT_RESIZE && hit_surface && edge != RSZ_NONE) {
+                comp_start_resize(seat->comp, hit_surface, edge);
             }
         } else {
             seat->left_button_down = false;
             comp_end_drag(seat->comp);
-            seat_update_pointer_focus(seat, time_msec);
+            if (seat->pressed_surface) {
+                comp_end_resize(seat->comp, seat->pressed_surface);
+            }
+
+            struct comp_surface *pressed_surface = seat->pressed_surface;
+            hit_role_t pressed_role = seat->pressed_role;
+            resize_edge_t pressed_edge = seat->pressed_edge;
+            seat->pressed_surface = NULL;
+            seat->pressed_role = HIT_NONE;
+            seat->pressed_edge = RSZ_NONE;
+
+            if (pressed_surface && pressed_role == HIT_CLOSE && seat->comp->deco_enabled) {
+                if (pressed_surface->btn_pressed) {
+                    pressed_surface->btn_pressed = false;
+                    comp_damage_add_rect(seat->comp, comp_btn_rect(pressed_surface));
+                    comp_surface_mark_damage(pressed_surface);
+                }
+                if (pressed_surface == hit_surface && role == HIT_CLOSE) {
+#ifdef DEBUG_WAYLAND
+                    WLOG("[WAYLAND] deco: send close win=%p\n", (void *)pressed_surface);
+#endif
+                    comp_surface_request_close(pressed_surface);
+                }
+            }
+
+            if (pressed_surface && pressed_role == HIT_BAR &&
+                pressed_surface == hit_surface && role == HIT_BAR &&
+                !seat->comp->dragging && pressed_edge == RSZ_NONE) {
+                uint32_t delta = 0;
+                bool double_click = false;
+                if (seat->last_click_surface == pressed_surface) {
+                    delta = time_msec - seat->last_click_time;
+                    if (delta <= DOUBLE_CLICK_MS) {
+                        double_click = true;
+                    }
+                }
+                seat->last_click_surface = pressed_surface;
+                seat->last_click_time = time_msec;
+                if (double_click) {
+                    comp_surface_toggle_maximize(pressed_surface);
+                    seat->last_click_surface = NULL;
+                    seat->last_click_time = 0;
+                }
+            } else if (pressed_role == HIT_RESIZE && pressed_surface) {
+                seat->last_click_surface = NULL;
+                seat->last_click_time = 0;
+            } else {
+                seat->last_click_surface = NULL;
+                seat->last_click_time = 0;
+            }
         }
     }
 
+    seat_update_hover(seat);
     seat_pointer_button(seat, code, pressed, time_msec);
 }
 
@@ -699,5 +858,18 @@ void seat_surface_destroyed(struct seat_state *seat, struct comp_surface *surfac
         seat_keyboard_leave(seat, surface);
         seat->keyboard_focus = NULL;
         seat->comp->focused_surface = NULL;
+    }
+
+    if (seat->hover_btn_surface == surface) {
+        seat_clear_button_hover(seat);
+    }
+    if (seat->pressed_surface == surface) {
+        seat->pressed_surface = NULL;
+        seat->pressed_role = HIT_NONE;
+        seat->pressed_edge = RSZ_NONE;
+    }
+    if (seat->last_click_surface == surface) {
+        seat->last_click_surface = NULL;
+        seat->last_click_time = 0;
     }
 }

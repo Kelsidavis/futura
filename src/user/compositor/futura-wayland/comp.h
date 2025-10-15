@@ -11,15 +11,33 @@
 #define WAYLAND_MULTI_BUILD 1
 #endif
 
+#ifndef WAYLAND_BACKBUFFER_BUILD
+#define WAYLAND_BACKBUFFER_BUILD 1
+#endif
+
 struct seat_state;
 struct cursor_state;
 
-struct comp_damage {
+typedef struct fut_rect {
     int32_t x;
     int32_t y;
-    int32_t width;
-    int32_t height;
-    bool valid;
+    int32_t w;
+    int32_t h;
+} fut_rect_t;
+
+#define MAX_DAMAGE 64
+
+struct damage_accum {
+    fut_rect_t rects[MAX_DAMAGE];
+    int count;
+};
+
+struct backbuffer {
+    uint32_t *px;
+    int width;
+    int height;
+    int pitch;     /* bytes */
+    bool owns;
 };
 
 struct comp_buffer {
@@ -45,14 +63,12 @@ struct compositor_state {
     uint8_t *fb_map;
     size_t fb_map_size;
     bool running;
-    uint32_t frame_delay_ms;
     struct wl_list surfaces; /* back = topmost */
     struct comp_surface *active_surface;
     struct comp_surface *focused_surface;
     struct comp_surface *drag_surface;
     struct seat_state *seat;
     struct cursor_state *cursor;
-    struct comp_damage pending_damage;
     int32_t pointer_x;
     int32_t pointer_y;
     bool dragging;
@@ -61,6 +77,12 @@ struct compositor_state {
     bool needs_repaint;
     uint32_t next_surface_id;
     bool multi_enabled;
+    bool backbuffer_enabled;
+    struct backbuffer bb[2];
+    int bb_index;
+    struct damage_accum frame_damage;
+    uint64_t last_present_ns;
+    uint32_t target_ms;
 };
 
 struct comp_surface {
@@ -68,7 +90,8 @@ struct comp_surface {
     struct wl_list link;
     struct wl_resource *surface_resource;
     struct wl_resource *pending_buffer_resource;
-    struct comp_damage pending_damage;
+    fut_rect_t pending_damage;
+    bool has_pending_damage;
     struct wl_list frame_callbacks;
     bool has_pending_buffer;
     uint8_t *backing;
@@ -87,12 +110,6 @@ struct comp_surface {
 int comp_state_init(struct compositor_state *comp);
 void comp_state_finish(struct compositor_state *comp);
 
-void comp_present_buffer(struct compositor_state *comp,
-                         int32_t dst_x,
-                         int32_t dst_y,
-                         struct comp_buffer *buffer,
-                         const struct comp_damage *damage);
-
 const struct fut_fb_info *comp_get_fb_info(const struct compositor_state *comp);
 
 struct comp_surface *comp_surface_create(struct compositor_state *comp,
@@ -109,7 +126,6 @@ void comp_surface_frame(struct comp_surface *surface,
 
 int comp_run(struct compositor_state *comp);
 
-void comp_request_repaint(struct compositor_state *comp, const struct comp_damage *damage);
 bool comp_pointer_inside_surface(const struct compositor_state *comp,
                                  const struct comp_surface *surface,
                                  int32_t px,
@@ -134,3 +150,7 @@ void comp_surface_raise(struct compositor_state *comp, struct comp_surface *surf
 static inline bool comp_multi_enabled(const struct compositor_state *comp) {
     return comp && comp->multi_enabled;
 }
+
+void comp_damage_add_rect(struct compositor_state *comp, fut_rect_t rect);
+void comp_damage_add_full(struct compositor_state *comp);
+int comp_set_backbuffer_enabled(struct compositor_state *comp, bool enabled);

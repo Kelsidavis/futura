@@ -6,9 +6,9 @@
 #include "xdg_shell.h"
 
 #include <wayland-server-core.h>
+#include <stdbool.h>
 #include <user/stdio.h>
 #include <user/stdlib.h>
-#include <user/string.h>
 
 int main(void) {
     struct compositor_state comp = {0};
@@ -21,16 +21,30 @@ int main(void) {
 
     comp.loop = wl_display_get_event_loop(comp.display);
 
+    const char *bb_env = getenv("WAYLAND_BACKBUFFER");
+    bool want_backbuffer = true;
+    if (bb_env && bb_env[0] == '0' && bb_env[1] == '\0') {
+        want_backbuffer = false;
+    }
+
+    comp.backbuffer_enabled = want_backbuffer;
+
     if (comp_state_init(&comp) != 0) {
         wl_display_destroy(comp.display);
         return -1;
     }
 
+    if (comp_set_backbuffer_enabled(&comp, want_backbuffer) != 0) {
+        printf("[WAYLAND] warning: backbuffer setup failed, falling back to direct FB\n");
+        comp_set_backbuffer_enabled(&comp, false);
+    }
+    comp.last_present_ns = 0;
+
     const char *multi_env = getenv("WAYLAND_MULTI");
-    if (!multi_env) {
+    if (!multi_env || !(multi_env[0] == '0' && multi_env[1] == '\0')) {
         comp.multi_enabled = true;
     } else {
-        comp.multi_enabled = (strcmp(multi_env, "0") != 0);
+        comp.multi_enabled = false;
     }
 
     wl_display_init_shm(comp.display);
@@ -69,7 +83,7 @@ int main(void) {
            comp.fb_info.bpp,
            socket);
 
-    comp_request_repaint(&comp, NULL);
+    comp_damage_add_full(&comp);
     comp_run(&comp);
 
     shm_backend_finish(&comp);

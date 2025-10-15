@@ -7,7 +7,6 @@
 
 #include <futura/compat/posix_shm.h>
 #include <shared/fut_timespec.h>
-#include <user/libfutura.h>
 #include <user/stdio.h>
 #include <user/sys.h>
 

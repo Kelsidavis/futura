@@ -1,23 +1,23 @@
 // SPDX-License-Identifier: MPL-2.0
 #pragma once
 
-#ifdef __has_include
-#if __has_include(<signal.h>)
-#ifdef __GNUC__
-#include_next <signal.h>
-#define FUTURA_HAVE_NATIVE_SIGNAL 1
-#endif
-#endif
-#endif
-
-#ifndef FUTURA_HAVE_NATIVE_SIGNAL
 #include <stdint.h>
+
+#ifdef __has_include
+#if __has_include(<signal.h>) && !defined(FUTURA_FORCE_MINIMAL_SIGNAL)
+#define FUTURA_HAVE_NATIVE_SIGNAL 1
+#include <signal.h>
+#endif
+#endif
 
 #ifndef __sigset_t_defined
 #define __sigset_t_defined 1
-typedef unsigned long sigset_t;
+typedef struct {
+    unsigned long __bits[2];
+} sigset_t;
 #endif
 
+#ifndef FUTURA_HAVE_NATIVE_SIGNAL
 typedef void (*sighandler_t)(int);
 
 struct sigaction {

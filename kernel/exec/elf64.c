@@ -487,6 +487,7 @@ static int stage_blob(const uint8_t *start,
     return 0;
 }
 
+#if ENABLE_WINSRV_DEMO
 int fut_stage_winsrv_binary(void) {
     (void)fut_vfs_mkdir("/sbin", 0755);
     return stage_blob(_binary_build_bin_user_winsrv_start,
@@ -500,6 +501,15 @@ int fut_stage_winstub_binary(void) {
                       _binary_build_bin_user_winstub_end,
                       "/bin/winstub");
 }
+#else
+int fut_stage_winsrv_binary(void) {
+    return 0;
+}
+
+int fut_stage_winstub_binary(void) {
+    return 0;
+}
+#endif
 
 int fut_stage_init_stub_binary(void) {
     (void)fut_vfs_mkdir("/sbin", 0755);

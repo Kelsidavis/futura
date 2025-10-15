@@ -83,7 +83,7 @@ SECTIONS
      * CRITICAL: Both VirtAddr and PhysAddr must have the same offset
      * within the 2MB page mapping for the page tables to work!
      */
-    _kernel_phys_offset = ALIGN(SIZEOF(.boot) + SIZEOF(.boot_bss) + SIZEOF(.note.Xen), PAGE_SIZE);
+    _kernel_phys_offset = ALIGN(0x200000, PAGE_SIZE);
     . = KERNEL_VIRTUAL_BASE + _kernel_phys_offset;
 
     .text ALIGN(PAGE_SIZE) : AT(_kernel_phys_offset)

@@ -36,3 +36,28 @@ $(2)/$(3)-server-protocol.h: $(1) | $(2)
 $(2)/$(3)-protocol.c: $(1) | $(2)
 	$$(WAYLAND_SCANNER) public-code $$(abspath $(1)) $$@
 endef
+
+# Specialized helpers for separate server/client outputs.
+# Usage:
+#   $(eval $(call wayland_proto_server,$(ROOT)/protocols/foo.xml,compositor))
+#   $(eval $(call wayland_proto_client,$(ROOT)/protocols/foo.xml,client))
+#
+# OUT should point at the root output dir (defaults come from including makefile).
+
+define wayland_proto_server
+$$(OUT)/$2:
+	mkdir -p $$@
+$$(OUT)/$2/xdg-shell-server-protocol.h: $1 | $$(OUT)/$2
+	$$(WAYLAND_SCANNER) server-header $$< $$@
+$$(OUT)/$2/xdg-shell-protocol.c: $1 | $$(OUT)/$2
+	$$(WAYLAND_SCANNER) private-code $$< $$@
+endef
+
+define wayland_proto_client
+$$(OUT)/$2:
+	mkdir -p $$@
+$$(OUT)/$2/xdg-shell-client-protocol.h: $1 | $$(OUT)/$2
+	$$(WAYLAND_SCANNER) client-header $$< $$@
+$$(OUT)/$2/xdg-shell-protocol.c: $1 | $$(OUT)/$2
+	$$(WAYLAND_SCANNER) private-code $$< $$@
+endef

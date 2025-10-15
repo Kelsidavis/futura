@@ -2,8 +2,6 @@
 
 #include <stdint.h>
 
-#include <user/futura_posix.h>
-#include <user/libfutura.h>
 #include <futura/fb_ioctl.h>
 #include <user/sys.h>
 

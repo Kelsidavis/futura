@@ -39,3 +39,4 @@ int fflush(FILE *stream);
 int fclose(FILE *stream);
 int fputs(const char *s, FILE *stream);
 int puts(const char *s);
+size_t fwrite(const void *ptr, size_t size, size_t nmemb, FILE *stream);

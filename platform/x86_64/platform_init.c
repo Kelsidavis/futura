@@ -528,6 +528,16 @@ static void fut_idt_init(void) {
 }
 
 /* Main platform initialization entry point */
+static void serial_put_hex32(uint32_t value) {
+    char buf[9];
+    for (int i = 7; i >= 0; --i) {
+        uint32_t nibble = (value >> (i * 4)) & 0xF;
+        buf[7 - i] = (char)(nibble < 10 ? ('0' + nibble) : ('A' + nibble - 10));
+    }
+    buf[8] = '\0';
+    fut_serial_puts(buf);
+}
+
 void fut_platform_init(uint32_t multiboot_magic __attribute__((unused)),
                        uint32_t multiboot_addr __attribute__((unused))) {
     /* Early debug marker: Write 'I' to show we entered the function */
@@ -586,6 +596,19 @@ void fut_platform_init(uint32_t multiboot_magic __attribute__((unused)),
     fut_enable_interrupts();
 
     fut_boot_args_init(NULL);
+    fut_serial_puts("[INIT] multiboot_addr=0x");
+    serial_put_hex32(multiboot_addr);
+    fut_serial_puts("\n");
+    if (multiboot_addr) {
+        const uint32_t *addr32 = (const uint32_t *)(uintptr_t)multiboot_addr;
+        uint32_t total = addr32[0];
+        uint32_t reserved = addr32[1];
+        fut_serial_puts("[INIT] multiboot total=0x");
+        serial_put_hex32(total);
+        fut_serial_puts(" reserved=0x");
+        serial_put_hex32(reserved);
+        fut_serial_puts("\n");
+    }
     if (multiboot_addr) {
         const uint8_t *mb_base = (const uint8_t *)(uintptr_t)multiboot_addr;
         uint32_t total_size = *(const uint32_t *)mb_base;
@@ -597,6 +620,11 @@ void fut_platform_init(uint32_t multiboot_magic __attribute__((unused)),
             if (tag->type == 0 || tag->size == 0) {
                 break;
             }
+            fut_serial_puts("[INIT] mb tag type=0x");
+            serial_put_hex32(tag->type);
+            fut_serial_puts(" size=0x");
+            serial_put_hex32(tag->size);
+            fut_serial_puts("\n");
             if (tag->type == MULTIBOOT_TAG_TYPE_CMDLINE) {
                 const char *cmdline = (const char *)(tag + 1);
                 fut_boot_args_init(cmdline);

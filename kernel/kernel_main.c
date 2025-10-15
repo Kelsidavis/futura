@@ -47,6 +47,13 @@ extern void fut_futfs_selftest_schedule(fut_task_t *task);
 extern void fut_net_selftest_schedule(fut_task_t *task);
 extern void fut_perf_selftest_schedule(fut_task_t *task);
 
+#if ENABLE_WAYLAND_DEMO
+#define WAYLAND_TEST_SENTINEL_CODE 0xD0u
+#define WAYLAND_TEST_STAGE_FAIL    0xD1u
+#define WAYLAND_TEST_EXEC_FAIL     0xD2u
+#define WAYLAND_TEST_CLIENT_FAIL   0xD3u
+#endif
+
 #if ENABLE_WINSRV_DEMO || ENABLE_WAYLAND_DEMO
 static void fut_boot_delay_ms(uint32_t delay_ms) {
     if (delay_ms == 0) {
@@ -759,9 +766,20 @@ void fut_kernel_main(void) {
 
     bool fb_enabled = boot_flag_enabled("fb", true);
     bool fb_available = fb_enabled && fb_is_available();
+    fut_printf("[INIT] fb_enabled=%d fb_available=%d\n",
+               fb_enabled ? 1 : 0, fb_available ? 1 : 0);
     if (fb_available) {
         fb_boot_splash();
         fb_char_init();
+        struct fut_fb_hwinfo fbinfo = {0};
+        if (fb_get_info(&fbinfo) == 0) {
+            fut_printf("[INIT] fb geometry %ux%u pitch=%u bpp=%u phys=0x%llx\n",
+                       fbinfo.info.width,
+                       fbinfo.info.height,
+                       fbinfo.info.pitch,
+                       fbinfo.info.bpp,
+                       (unsigned long long)fbinfo.phys);
+        }
     } else {
         fb_enabled = false;
     }
@@ -832,6 +850,9 @@ void fut_kernel_main(void) {
         planned_tests += 1u;
     }
     planned_tests += 1u; /* exec double */
+#if ENABLE_WAYLAND_DEMO
+    planned_tests += 1u; /* Wayland demo sentinel */
+#endif
     if (run_async_selftests) {
         planned_tests += 1u; /* block */
         planned_tests += 1u; /* futfs */
@@ -906,6 +927,9 @@ void fut_kernel_main(void) {
     wayland_stage = fut_stage_wayland_compositor_binary();
     if (wayland_stage != 0) {
         fut_printf("[WARN] Failed to stage futura-wayland binary (error %d)\n", wayland_stage);
+#if ENABLE_WAYLAND_DEMO
+        fut_test_fail(WAYLAND_TEST_STAGE_FAIL);
+#endif
     } else {
         fut_printf("[INIT] futura-wayland staged at /sbin/futura-wayland\n");
     }
@@ -914,6 +938,9 @@ void fut_kernel_main(void) {
     wayland_client_stage = fut_stage_wayland_client_binary();
     if (wayland_client_stage != 0) {
         fut_printf("[WARN] Failed to stage wl-simple binary (error %d)\n", wayland_client_stage);
+#if ENABLE_WAYLAND_DEMO
+        fut_test_fail(WAYLAND_TEST_STAGE_FAIL);
+#endif
     } else {
         fut_printf("[INIT] wl-simple staged at /bin/wl-simple\n");
     }
@@ -978,6 +1005,9 @@ void fut_kernel_main(void) {
         wayland_exec = fut_exec_elf("/sbin/futura-wayland", args);
         if (wayland_exec != 0) {
             fut_printf("[WARN] Failed to launch /sbin/futura-wayland (error %d)\n", wayland_exec);
+#if ENABLE_WAYLAND_DEMO
+            fut_test_fail(WAYLAND_TEST_EXEC_FAIL);
+#endif
         } else {
             fut_printf("[INIT] exec /sbin/futura-wayland -> 0\n");
         }
@@ -990,6 +1020,9 @@ void fut_kernel_main(void) {
         wayland_client_exec = fut_exec_elf("/bin/wl-simple", args);
         if (wayland_client_exec != 0) {
             fut_printf("[WARN] Failed to launch /bin/wl-simple (error %d)\n", wayland_client_exec);
+#if ENABLE_WAYLAND_DEMO
+            fut_test_fail(WAYLAND_TEST_CLIENT_FAIL);
+#endif
         } else {
             fut_printf("[INIT] exec /bin/wl-simple -> 0\n");
         }
@@ -1014,6 +1047,9 @@ void fut_kernel_main(void) {
         }
         fut_boot_delay_ms(finalize_delay_ms);
         hal_outb(0xf4u, 0u);
+#if ENABLE_WAYLAND_DEMO
+        fut_test_pass();
+#endif
     }
 #endif
 

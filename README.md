@@ -145,6 +145,28 @@ This target rebuilds the kernel with the Wayland demo enabled, stages the compos
 and client (`wl-simple`) into `/sbin` and `/bin`, then boots QEMU to show the handshake logs on the
 serial console.
 
+> **Tip (headful runs)**  
+> The Wayland demo expects a linear framebuffer. When launching QEMU manually use either Bochs or
+> virtio GPU output, e.g.
+>
+> ```bash
+> qemu-system-x86_64 \
+>     -m 512 \
+>     -serial stdio \
+>     -drive if=virtio,file=futura_disk.img,format=raw \
+>     -display gtk \
+>     -vga none \
+>     -device bochs-display \
+>     -kernel build/bin/futura_kernel.elf \
+>     -initrd build/initramfs.cpio \
+>     -append "XDG_RUNTIME_DIR=/tmp WAYLAND_DISPLAY=wayland-0 WAYLAND_MULTI=1 \
+>              WAYLAND_BACKBUFFER=1 WAYLAND_DECO=1 WAYLAND_SHADOW=1 \
+>              WAYLAND_RESIZE=1 WAYLAND_THROTTLE=1 fb-fallback=1"
+> ```
+>
+> Avoid the harness-only `-device isa-debug-exit` flag when running interactively; otherwise QEMU will
+> terminate as soon as the kernel finishes the demo.
+
 ### Debugging
 
 Enable targeted tracing at build time by defining the relevant flag, for example:

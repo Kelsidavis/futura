@@ -8,7 +8,7 @@
 #include <wayland-server-core.h>
 
 #ifndef WAYLAND_MULTI_BUILD
-#define WAYLAND_MULTI_BUILD 0
+#define WAYLAND_MULTI_BUILD 1
 #endif
 
 struct seat_state;

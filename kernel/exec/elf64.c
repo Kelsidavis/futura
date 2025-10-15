@@ -420,6 +420,8 @@ extern const uint8_t _binary_build_bin_user_futura_wayland_start[];
 extern const uint8_t _binary_build_bin_user_futura_wayland_end[];
 extern const uint8_t _binary_build_bin_user_wl_simple_start[];
 extern const uint8_t _binary_build_bin_user_wl_simple_end[];
+extern const uint8_t _binary_build_bin_user_wl_colorwheel_start[];
+extern const uint8_t _binary_build_bin_user_wl_colorwheel_end[];
 #endif
 
 int fut_stage_fbtest_binary(void) {
@@ -539,12 +541,23 @@ int fut_stage_wayland_client_binary(void) {
                       _binary_build_bin_user_wl_simple_end,
                       "/bin/wl-simple");
 }
+
+int fut_stage_wayland_color_client_binary(void) {
+    (void)fut_vfs_mkdir("/bin", 0755);
+    return stage_blob(_binary_build_bin_user_wl_colorwheel_start,
+                      _binary_build_bin_user_wl_colorwheel_end,
+                      "/bin/wl-colorwheel");
+}
 #else
 int fut_stage_wayland_compositor_binary(void) {
     return -ENOSYS;
 }
 
 int fut_stage_wayland_client_binary(void) {
+    return -ENOSYS;
+}
+
+int fut_stage_wayland_color_client_binary(void) {
     return -ENOSYS;
 }
 #endif

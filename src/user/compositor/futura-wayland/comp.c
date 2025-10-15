@@ -417,6 +417,7 @@ void comp_surface_commit(struct comp_surface *surface) {
                 surface->backing = new_mem;
                 surface->backing_size = required;
             }
+            bool first_buffer = !surface->has_backing;
             for (int32_t row = 0; row < buffer.height; ++row) {
                 const uint8_t *src_row = (const uint8_t *)buffer.data + (size_t)row * buffer.stride;
                 uint8_t *dst_row = surface->backing + (size_t)row * buffer.stride;
@@ -451,6 +452,12 @@ void comp_surface_commit(struct comp_surface *surface) {
             comp_damage_union(surface->comp, &dmg);
 
             shm_buffer_release(&buffer);
+            if (first_buffer) {
+                WLOG("[WAYLAND] window create win=%p size=%dx%d z=top\n",
+                     (void *)surface,
+                     surface->width,
+                     surface->height);
+            }
         } else {
             wl_buffer_send_release(surface->pending_buffer_resource);
         }
@@ -753,8 +760,8 @@ void comp_update_surface_position(struct compositor_state *comp,
     surface->y = clamped_y;
     comp->needs_repaint = true;
     if (surface == comp->active_surface) {
-        WLOG("[WAYLAND] move id=%u -> x=%d y=%d\n",
-             surface->surface_id,
+        WLOG("[WAYLAND] move win=%p -> x=%d y=%d\n",
+             (void *)surface,
              clamped_x,
              clamped_y);
     }

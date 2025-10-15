@@ -672,8 +672,10 @@ void fut_kernel_main(void) {
 #if ENABLE_WAYLAND_DEMO
     int wayland_stage = -1;
     int wayland_client_stage = -1;
+    int wayland_color_stage = -1;
     int wayland_exec = -1;
     int wayland_client_exec = -1;
+    int wayland_color_exec = -1;
 #endif
 
 #if defined(__x86_64__)
@@ -915,6 +917,14 @@ void fut_kernel_main(void) {
     } else {
         fut_printf("[INIT] wl-simple staged at /bin/wl-simple\n");
     }
+
+    fut_printf("[INIT] Staging wl-colorwheel client...\n");
+    wayland_color_stage = fut_stage_wayland_color_client_binary();
+    if (wayland_color_stage != 0) {
+        fut_printf("[WARN] Failed to stage wl-colorwheel binary (error %d)\n", wayland_color_stage);
+    } else {
+        fut_printf("[INIT] wl-colorwheel staged at /bin/wl-colorwheel\n");
+    }
 #endif
 
     /* ========================================
@@ -985,8 +995,24 @@ void fut_kernel_main(void) {
         }
     }
 
+    if (wayland_exec == 0 && wayland_client_exec == 0 && wayland_color_stage == 0) {
+        fut_boot_delay_ms(100);
+        char name[] = "wl-colorwheel";
+        char *args[] = { name, NULL };
+        wayland_color_exec = fut_exec_elf("/bin/wl-colorwheel", args);
+        if (wayland_color_exec != 0) {
+            fut_printf("[WARN] Failed to launch /bin/wl-colorwheel (error %d)\n", wayland_color_exec);
+        } else {
+            fut_printf("[INIT] Scheduled /bin/wl-colorwheel demo client\n");
+        }
+    }
+
     if (wayland_exec == 0 && wayland_client_exec == 0) {
-        fut_boot_delay_ms(2500);
+        uint32_t finalize_delay_ms = 2500;
+        if (wayland_color_stage == 0 && wayland_color_exec == 0) {
+            finalize_delay_ms = 3200;
+        }
+        fut_boot_delay_ms(finalize_delay_ms);
         hal_outb(0xf4u, 0u);
     }
 #endif

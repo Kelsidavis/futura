@@ -139,7 +139,7 @@ CFLAGS += $(REPRO_CFLAGS)
 
 # Feature toggles
 ENABLE_WINSRV_DEMO ?= 0
-ENABLE_WAYLAND_DEMO ?= 0
+ENABLE_WAYLAND_DEMO ?= 1
 
 # Debug vs Release flags
 ifeq ($(BUILD_MODE),debug)
@@ -525,7 +525,7 @@ vendor: third_party-wayland
 libfutura:
 	@$(MAKE) -C src/user/libfutura all
 
-userspace: libfutura
+userspace: vendor libfutura
 	@echo "Building Wayland demo userland..."
 	@$(MAKE) -C src/user/compositor/futura-wayland all
 	@$(MAKE) -C src/user/clients/wl-simple all

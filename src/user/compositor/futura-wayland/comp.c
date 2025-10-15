@@ -1072,7 +1072,9 @@ static void render_one_frame(struct compositor_state *comp) {
     }
 
     damage_coalesce(damage);
+#ifdef DEBUG_WAYLAND
     int region_count = damage->count;
+#endif
 
     int render_index = comp->backbuffer_enabled ? (comp->bb_index ^ 1) : 0;
     struct backbuffer *dst = &comp->bb[render_index];
@@ -1080,7 +1082,9 @@ static void render_one_frame(struct compositor_state *comp) {
         comp_damage_add_full(comp);
         damage = &comp->frame_damage;
         damage_coalesce(damage);
+#ifdef DEBUG_WAYLAND
         region_count = damage->count;
+#endif
         dst = &comp->bb[render_index];
         if (!dst->px) {
             comp->needs_repaint = false;
@@ -1183,6 +1187,8 @@ static void render_one_frame(struct compositor_state *comp) {
 #ifdef DEBUG_WAYLAND
     WLOG("[WAYLAND] present bb=%d regions=%d frame_cbs=%d\n",
          comp->bb_index, region_count, frame_cb_count);
+#else
+    (void)frame_cb_count;
 #endif
 
     comp->frame_damage.count = 0;

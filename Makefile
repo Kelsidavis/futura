@@ -5,6 +5,8 @@
 #
 # Modular build system with platform abstraction.
 
+SHELL := /bin/bash
+
 # ============================================================
 #   Build Configuration
 # ============================================================
@@ -23,6 +25,51 @@ QEMU_DISK_IMG  ?= futura_disk.img
 QEMU_FLAGS += -device isa-debug-exit,iobase=0xf4,iosize=0x4 -no-reboot -no-shutdown
 QEMU_FLAGS += -drive if=virtio,file=$(QEMU_DISK_IMG),format=raw
 QEMU_FLAGS += -netdev user,id=net0 -device virtio-net,netdev=net0
+
+# ============================================================
+#   Run Configuration Defaults
+# ============================================================
+
+MEM              ?= 512
+HEADFUL          ?= 0
+DEBUG            ?= 0
+ASYNC            ?= 0
+EXTRA_QEMU_FLAGS ?=
+QEMU             ?= qemu-system-x86_64
+
+INITROOT  = $(BUILD_DIR)/initroot
+INITRAMFS = $(BUILD_DIR)/initramfs.cpio
+
+WAYLAND_ENV = XDG_RUNTIME_DIR=/tmp WAYLAND_DISPLAY=wayland-0 WAYLAND_MULTI=1 \
+              WAYLAND_BACKBUFFER=1 WAYLAND_DECO=1 WAYLAND_SHADOW=1 \
+              WAYLAND_RESIZE=1 WAYLAND_THROTTLE=1
+ifeq ($(DEBUG),1)
+WAYLAND_ENV += DEBUG_WAYLAND=1 DEBUG_NETUNIX=1
+endif
+
+KAPPEND :=
+ifeq ($(ASYNC),1)
+KAPPEND += async-tests=1
+endif
+ifneq ($(strip $(WAYLAND_ENV)),)
+KAPPEND += $(WAYLAND_ENV)
+endif
+KAPPEND := $(strip $(KAPPEND))
+
+RUN_QEMU_FLAGS := -m $(MEM) -serial stdio -no-reboot -no-shutdown
+ifeq ($(HEADFUL),1)
+else
+RUN_QEMU_FLAGS += -display none
+endif
+RUN_QEMU_FLAGS += -device isa-debug-exit,iobase=0xf4,iosize=0x4
+RUN_QEMU_FLAGS += -drive if=virtio,file=$(QEMU_DISK_IMG),format=raw
+RUN_QEMU_FLAGS += $(EXTRA_QEMU_FLAGS)
+
+ifeq ($(strip $(KAPPEND)),)
+RUN_QEMU_APPEND :=
+else
+RUN_QEMU_APPEND := -append "$(KAPPEND)"
+endif
 
 # ============================================================
 #   Platform-Specific Toolchain Configuration
@@ -471,6 +518,34 @@ userland:
 	@echo "Building userland services..."
 	@$(MAKE) -C src/user all
 
+.PHONY: vendor libfutura userspace stage
+
+vendor: third_party-wayland
+
+libfutura:
+	@$(MAKE) -C src/user/libfutura all
+
+userspace: libfutura
+	@echo "Building Wayland demo userland..."
+	@$(MAKE) -C src/user/compositor/futura-wayland all
+	@$(MAKE) -C src/user/clients/wl-simple all
+	@$(MAKE) -C src/user/clients/wl-colorwheel all
+	@$(MAKE) -C src/user/stubs all
+
+stage: userspace
+	@echo "==> Staging userland into initramfs"
+	@rm -rf $(INITROOT)
+	@mkdir -p $(INITROOT)/sbin $(INITROOT)/bin $(INITROOT)/tmp
+	@chmod 1777 $(INITROOT)/tmp
+	@install -m 0755 $(WAYLAND_COMPOSITOR_BIN) $(INITROOT)/sbin/futura-wayland
+	@install -m 0755 $(WAYLAND_CLIENT_BIN) $(INITROOT)/bin/wl-simple
+	@install -m 0755 $(WAYLAND_COLOR_BIN) $(INITROOT)/bin/wl-colorwheel
+	@if [ -f $(INIT_STUB_BIN) ]; then install -m 0755 $(INIT_STUB_BIN) $(INITROOT)/sbin/init; fi
+	@if [ -f $(SECOND_STUB_BIN) ]; then install -m 0755 $(SECOND_STUB_BIN) $(INITROOT)/sbin/second; fi
+	@mkdir -p $(dir $(INITRAMFS))
+	@cd $(INITROOT) && find . -print0 | cpio --null -ov --format=newc --quiet > $(abspath $(INITRAMFS))
+	@echo "==> Created initramfs $(INITRAMFS)"
+
 .PHONY: tests tools
 
 tests:
@@ -570,6 +645,54 @@ desktop-step2:
 		echo "[DESKTOP] FAIL (qemu code $$code)"; \
 		exit $$code; \
 	fi
+
+.PHONY: run run-debug run-headful run-clean help-run
+
+run:
+	@$(MAKE) ENABLE_WAYLAND_DEMO=1 vendor
+	@$(MAKE) ENABLE_WAYLAND_DEMO=1 sym-audit
+	@$(MAKE) ENABLE_WAYLAND_DEMO=1 libfutura
+	@$(MAKE) ENABLE_WAYLAND_DEMO=1 DEBUG_WAYLAND=$(DEBUG) DEBUG_NETUNIX=$(DEBUG) userspace
+	@$(MAKE) ENABLE_WAYLAND_DEMO=1 DEBUG_WAYLAND=$(DEBUG) DEBUG_NETUNIX=$(DEBUG) kernel
+	@$(MAKE) ENABLE_WAYLAND_DEMO=1 DEBUG_WAYLAND=$(DEBUG) DEBUG_NETUNIX=$(DEBUG) stage
+	@$(MAKE) disk >/dev/null
+	@echo "==> Running QEMU (headful=$(HEADFUL), mem=$(MEM) MiB, debug=$(DEBUG))"
+	@set -o pipefail; \
+	$(QEMU) $(RUN_QEMU_FLAGS) -kernel $(BIN_DIR)/futura_kernel.elf -initrd $(INITRAMFS) $(RUN_QEMU_APPEND) | tee qemu.log; \
+	code=$${PIPESTATUS[0]}; \
+	echo "[RUN] qemu exit $$code"; \
+	if [ $$code -eq 1 ]; then \
+	  echo "[RUN] PASS"; \
+	  exit 0; \
+	else \
+	  printf '[RUN] FAIL (qemu code %s)\n' "$$code"; \
+	  exit $$code; \
+	fi
+
+run-debug:
+	@$(MAKE) DEBUG=1 run
+
+run-headful:
+	@$(MAKE) HEADFUL=1 run
+
+run-clean:
+	@rm -f qemu.log $(INITRAMFS)
+	@rm -rf $(INITROOT)
+	@$(MAKE) clean
+	@$(MAKE) DEBUG=$(DEBUG) HEADFUL=$(HEADFUL) ASYNC=$(ASYNC) MEM=$(MEM) EXTRA_QEMU_FLAGS="$(EXTRA_QEMU_FLAGS)" run
+
+help-run:
+	@echo "make run              # build, stage, and boot headless Wayland demo"
+	@echo "make run-debug        # enable DEBUG_* toggles and run headless"
+	@echo "make run-headful      # run with QEMU window instead of -display none"
+	@echo "make run-clean        # clean artifacts and re-run demo"
+	@echo
+	@echo "Toggles (can be combined):"
+	@echo "  MEM=1024            # increase guest memory (MiB)"
+	@echo "  HEADFUL=1           # equivalent to make run-headful"
+	@echo "  DEBUG=1             # enable DEBUG_WAYLAND/DEBUG_NETUNIX"
+	@echo "  ASYNC=1             # enable async self-tests via kernel cmdline"
+	@echo "  EXTRA_QEMU_FLAGS='-s -S' # append custom QEMU flags"
 
 .PHONY: wayland-step2
 wayland-step2:
@@ -731,6 +854,11 @@ help:
 	@echo "  kernel            - Build kernel only"
 	@echo "  userland          - Build userland services only"
 	@echo "  third_party-wayland - Build vendored Wayland libraries"
+	@echo "  run               - Build and boot Wayland demo (headless)"
+	@echo "  run-headful       - Build and boot with QEMU window"
+	@echo "  run-debug         - Build, enable DEBUG toggles, and boot"
+	@echo "  run-clean         - Clean artifacts then run demo"
+	@echo "  help-run          - Usage information for run targets"
 	@echo "  iso               - Build bootable GRUB ISO (required for testing)"
 	@echo "  test              - Build and test kernel with GRUB (recommended)"
 	@echo "  desktop-step2      - Boot winsrv/winstub demo (feature flag)"

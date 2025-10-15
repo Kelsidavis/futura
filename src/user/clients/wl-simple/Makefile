@@ -53,7 +53,7 @@ $(OBJ_DIR)/%.o: %.c $(WAYLAND_GEN_HDRS) | $(OBJ_DIR)
 	@echo "CC $<"
 	@$(CC) $(CFLAGS) -c $< -o $@
 
-$(OBJ_DIR)/xdg-shell-protocol.o: $(WAYLAND_GEN_SRCS) $(WAYLAND_GEN_HDRS) | $(OBJ_DIR)
+$(OBJ_DIR)/xdg-shell-protocol.o: $(OUT)/client/xdg-shell-protocol.c $(WAYLAND_GEN_HDRS) | $(OBJ_DIR)
 	@echo "CC $<"
 	@$(CC) $(CFLAGS) -c $< -o $@
 

@@ -10,6 +10,3 @@ void xdg_shell_surface_send_configure(struct comp_surface *surface,
                                       int32_t width,
                                       int32_t height,
                                       uint32_t state_flags);
-
-#define XDG_CFG_STATE_RESIZING   (1u << 0)
-#define XDG_CFG_STATE_MAXIMIZED  (1u << 1)

@@ -55,7 +55,10 @@ struct multiboot_tag_framebuffer {
 
 static void fb_splash_fill(uint32_t color) {
 #if defined(__x86_64__)
+    fut_printf("[FB-SPLASH] Starting fill (available=%d, bpp=%u, drawn=%d)\n",
+               g_fb_available, g_fb_hw.info.bpp, g_fb_splash_drawn);
     if (!g_fb_available || g_fb_hw.info.bpp != 32u || g_fb_splash_drawn) {
+        fut_printf("[FB-SPLASH] Fill skipped (conditions not met)\n");
         return;
     }
 
@@ -70,17 +73,24 @@ static void fb_splash_fill(uint32_t color) {
         uint64_t map_size = fb_size + offset;
         uintptr_t virt_base = pmap_phys_to_virt(phys_base);
 
+        fut_printf("[FB-SPLASH] Mapping phys=0x%llx virt=0x%llx size=0x%llx\n",
+                   (unsigned long long)phys_base,
+                   (unsigned long long)virt_base,
+                   (unsigned long long)map_size);
+
         if (pmap_map((uint64_t)virt_base,
                      phys_base,
                      map_size,
                      PTE_KERNEL_RW | PTE_WRITE_THROUGH | PTE_CACHE_DISABLE) != 0) {
-            fut_printf("[FB] map_range failed (phys=0x%llx size=0x%llx)\n",
+            fut_printf("[FB-SPLASH] map_range failed (phys=0x%llx size=0x%llx)\n",
                        (unsigned long long)phys_base,
                        (unsigned long long)map_size);
             return;
         }
         g_fb_virt = (volatile uint8_t *)(uintptr_t)(virt_base + offset);
         g_fb_hw.length = map_size;
+        fut_printf("[FB-SPLASH] Mapping successful, filling %ux%u...\n",
+                   g_fb_hw.info.width, g_fb_hw.info.height);
     }
 
     volatile uint8_t *fb = g_fb_virt;
@@ -211,5 +221,7 @@ bool fb_is_available(void) {
 }
 
 void fb_boot_splash(void) {
+    fut_printf("[FB] Drawing boot splash...\n");
     fb_splash_fill(0xFF20252Eu);  /* Futura dark blue-gray splash */
+    fut_printf("[FB] Boot splash complete\n");
 }

@@ -62,10 +62,9 @@ KAPPEND := $(strip $(KAPPEND))
 
 RUN_QEMU_FLAGS := -m $(MEM) -serial stdio -no-reboot -no-shutdown
 ifeq ($(HEADFUL),1)
-# Headful mode: use VNC display with QXL VGA device
-# QXL provides better framebuffer support and can work with VNC
-# Connect with: vncviewer localhost:5900
-RUN_QEMU_FLAGS += -display vnc=:0
+# Headful mode: use SDL2 display with QXL VGA device
+# Opens a window to display the framebuffer output
+RUN_QEMU_FLAGS += -display sdl
 RUN_QEMU_FLAGS += -device qxl-vga
 else
 RUN_QEMU_FLAGS += -display none

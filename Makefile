@@ -62,10 +62,11 @@ KAPPEND := $(strip $(KAPPEND))
 
 RUN_QEMU_FLAGS := -m $(MEM) -serial stdio -no-reboot -no-shutdown
 ifeq ($(HEADFUL),1)
-# Headful mode: use SDL2 display with ramfb (QEMU ramfb device)
-# ramfb + fw_cfg provides proper framebuffer configuration via Multiboot-like mechanism
+# Headful mode: use SDL2 with Bochs VGA emulation
+# -vga bochs provides both VGA compatibility AND linear framebuffer
+# Framebuffer typically available at 0xE0000000 (VESA VBE LFB)
 RUN_QEMU_FLAGS += -display sdl
-RUN_QEMU_FLAGS += -device ramfb
+RUN_QEMU_FLAGS += -vga bochs
 else
 RUN_QEMU_FLAGS += -display none
 RUN_QEMU_FLAGS += -vga none

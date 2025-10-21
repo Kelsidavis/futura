@@ -191,5 +191,5 @@ bool fb_is_available(void) {
 }
 
 void fb_boot_splash(void) {
-    fb_splash_fill(0xFF20252Eu);
+    fb_splash_fill(0xFF20252Eu);  /* Futura dark blue-gray splash */
 }

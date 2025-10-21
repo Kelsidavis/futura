@@ -269,6 +269,8 @@ static int ramfs_create(struct fut_vnode *dir, const char *name, uint32_t mode, 
     new_entry->next = dir_node->dir.entries;
     dir_node->dir.entries = new_entry;
 
+    /* Take reference for caller - must match reference-taking in lookup */
+    fut_vnode_ref(vnode);
     *result = vnode;
     return 0;
 }

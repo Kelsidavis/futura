@@ -770,7 +770,9 @@ void fut_kernel_main(void) {
     fut_printf("[INIT] fb_enabled=%d fb_available=%d\n",
                fb_enabled ? 1 : 0, fb_available ? 1 : 0);
     if (fb_available) {
-        fb_boot_splash();
+        /* Disable framebuffer splash - it interferes with block device initialization
+         * TODO: Fix memory mapping sequencing to allow both framebuffer and block device */
+        // fb_boot_splash();
         fb_char_init();
         struct fut_fb_hwinfo fbinfo = {0};
         if (fb_get_info(&fbinfo) == 0) {
@@ -873,7 +875,9 @@ void fut_kernel_main(void) {
      *   Step 4: Initialize Block Device Subsystem
      * ======================================== */
 
-    fut_printf("[INIT] Initializing block device subsystem...\n");
+    /* Block device initialization disabled - causes memory corruption
+     * TODO: Debug virtio_blk_init stack corruption issue */
+    /* fut_printf("[INIT] Initializing block device subsystem...\n");
     fut_blockdev_init();
     fut_printf("[INIT] Block device subsystem initialized\n");
     fut_blk_core_init();
@@ -882,7 +886,8 @@ void fut_kernel_main(void) {
     if (vblk_rc != 0) {
         fut_printf("[virtio-blk] init failed: %d\n", vblk_rc);
     }
-    ahci_init();
+    ahci_init(); */
+    fut_printf("[INIT] Block device subsystem SKIPPED (under debugging)\n");
 
     fut_printf("[INIT] Initializing network subsystem...\n");
     fut_net_init();

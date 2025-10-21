@@ -1044,14 +1044,9 @@ void fut_kernel_main(void) {
     /* First try boot argument, then fall back to compile-time flag */
     bool wayland_interactive = boot_flag_enabled("WAYLAND_INTERACTIVE", false);
 #ifdef WAYLAND_INTERACTIVE_MODE
-    fut_printf("[DEBUG] WAYLAND_INTERACTIVE_MODE is defined at compile-time\n");
     if (!wayland_interactive) {
-        fut_printf("[DEBUG] Boot flag was false, using compile-time value\n");
         wayland_interactive = (WAYLAND_INTERACTIVE_MODE != 0);
-        fut_printf("[DEBUG] After compile-time check: wayland_interactive=%d\n", wayland_interactive);
     }
-#else
-    fut_printf("[DEBUG] WAYLAND_INTERACTIVE_MODE is NOT defined at compile-time\n");
 #endif
 
     if (wayland_exec == 0 && wayland_client_exec == 0) {
@@ -1061,18 +1056,18 @@ void fut_kernel_main(void) {
         }
         fut_boot_delay_ms(finalize_delay_ms);
 
-        fut_printf("[INIT] wayland_interactive=%d - deciding exit behavior\n", wayland_interactive);
         if (!wayland_interactive) {
             /* Auto-exit for automated testing (default behavior) */
-            fut_printf("[INIT] Auto-exit mode - exiting via debug device\n");
             hal_outb(0xf4u, 0u);
 #if ENABLE_WAYLAND_DEMO
             fut_test_pass();
 #endif
         } else {
             /* Interactive mode: keep system running for GUI interaction */
-            fut_printf("[INIT] Entering interactive mode - compositor and clients running\n");
-            fut_printf("[INIT] Type Ctrl+C to exit\n");
+            fut_printf("[INIT] ========================================\n");
+            fut_printf("[INIT] Wayland Compositor Ready for Interaction\n");
+            fut_printf("[INIT] Minimized windows feature: ACTIVE\n");
+            fut_printf("[INIT] ========================================\n");
             while (1) {
                 __asm__ volatile("hlt");
             }

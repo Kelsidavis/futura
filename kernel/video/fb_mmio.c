@@ -1,14 +1,20 @@
 // SPDX-License-Identifier: MPL-2.0
 /*
- * fb_mmio.c - Linear framebuffer discovery via Multiboot2
+ * fb_mmio.c - Linear framebuffer discovery via Multiboot2 or PCI
  *
  * NOTE: This is a skeleton implementation. We parse the multiboot tag
  * for the framebuffer and cache its geometry, but userland plumbing
  * (ioctl/mmap/device nodes) is still a TODO.
+ *
+ * Probe strategy:
+ * 1. Try Multiboot2 framebuffer tag
+ * 2. Fall back to PCI VGA device discovery
+ * 3. Use hardcoded fallback if both fail
  */
 
 #include <kernel/fb.h>
 #include <kernel/boot_args.h>
+#include <kernel/video/pci_vga.h>
 #include <platform/platform.h>
 
 #include <stddef.h>
@@ -162,17 +168,33 @@ int fb_probe_from_multiboot(const void *mb_info) {
         return -1;
     }
     fut_printf("[FB] enabling fallback geometry (fb-fallback=1)\n");
-    /* Use 0x4000000 (64MB) - safe position in physical RAM
-     * Well within 128MB boot mapping, doesn't conflict with kernel/heap/processes
-     * This is where we'll write framebuffer data that QEMU can read */
-    g_fb_hw.phys = 0x4000000ULL;
+
+    /* Try to discover VGA device via PCI */
+    fut_printf("[FB] Attempting PCI VGA device discovery...\n");
+    uint64_t pci_framebuffer = pci_find_vga_framebuffer();
+
+    if (pci_framebuffer != 0) {
+        /* Successfully discovered via PCI */
+        g_fb_hw.phys = pci_framebuffer;
+        fut_printf("[FB] Using PCI-discovered framebuffer at 0x%llx\n",
+                   (unsigned long long)g_fb_hw.phys);
+    } else {
+        /* Fall back to safe address in RAM */
+        fut_printf("[FB] PCI discovery failed, using hardcoded fallback address\n");
+        /* Use 0x4000000 (64MB) - safe position in physical RAM
+         * Well within 128MB boot mapping, doesn't conflict with kernel/heap/processes */
+        g_fb_hw.phys = 0x4000000ULL;
+        fut_printf("[FB] Using fallback address 0x%llx\n",
+                   (unsigned long long)g_fb_hw.phys);
+    }
+
     g_fb_hw.info.width = 1024;
     g_fb_hw.info.height = 768;
     g_fb_hw.info.pitch = g_fb_hw.info.width * 4u;
     g_fb_hw.info.bpp = 32;
     g_fb_hw.info.flags = FB_FLAG_LINEAR;
     g_fb_available = true;
-    fut_printf("[FB] using fallback geometry 1024x768x32 phys=0x%llx\n",
+    fut_printf("[FB] using geometry 1024x768x32 phys=0x%llx\n",
                (unsigned long long)g_fb_hw.phys);
     return 0;
 }

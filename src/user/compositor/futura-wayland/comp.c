@@ -293,6 +293,10 @@ void comp_surface_update_decorations(struct comp_surface *surface) {
 
     if (!deco_enabled) {
         surface->bar_height = 0;
+        surface->min_btn_w = surface->min_btn_h = 0;
+        surface->min_btn_x = surface->min_btn_y = 0;
+        surface->min_btn_hover = false;
+        surface->min_btn_pressed = false;
         surface->btn_w = surface->btn_h = 0;
         surface->btn_x = surface->btn_y = 0;
         surface->btn_hover = false;
@@ -302,15 +306,28 @@ void comp_surface_update_decorations(struct comp_surface *surface) {
     }
 
     surface->bar_height = WINDOW_BAR_HEIGHT;
+    surface->min_btn_w = WINDOW_BTN_WIDTH;
+    surface->min_btn_h = WINDOW_BTN_HEIGHT;
     surface->btn_w = WINDOW_BTN_WIDTH;
     surface->btn_h = WINDOW_BTN_HEIGHT;
+    /* Close button: right side */
     surface->btn_x = surface->x + surface->width - (WINDOW_BTN_WIDTH + WINDOW_BTN_PADDING);
     surface->btn_y = surface->y + (surface->bar_height - WINDOW_BTN_HEIGHT) / 2;
+    /* Minimize button: to the left of close button */
+    surface->min_btn_x = surface->btn_x - (WINDOW_BTN_WIDTH + WINDOW_BTN_PADDING);
+    surface->min_btn_y = surface->y + (surface->bar_height - WINDOW_BTN_HEIGHT) / 2;
+
     if (surface->btn_x < surface->x + WINDOW_BTN_PADDING) {
         surface->btn_x = surface->x + WINDOW_BTN_PADDING;
     }
     if (surface->btn_y < surface->y + 2) {
         surface->btn_y = surface->y + 2;
+    }
+    if (surface->min_btn_x < surface->x + WINDOW_BTN_PADDING) {
+        surface->min_btn_x = surface->x + WINDOW_BTN_PADDING;
+    }
+    if (surface->min_btn_y < surface->y + 2) {
+        surface->min_btn_y = surface->y + 2;
     }
     surface->height = surface->content_height + surface->bar_height;
 }
@@ -348,6 +365,47 @@ static void blit_argb(const uint8_t *src_base,
 static void draw_bar_segment(struct backbuffer *dst, fut_rect_t rect, bool focused) {
     uint32_t color = focused ? COLOR_BAR_FOCUSED : COLOR_BAR_UNFOCUSED;
     bb_fill_rect(dst, rect, color);
+}
+
+static void draw_minimize_button(struct backbuffer *dst,
+                                 const struct comp_surface *surface,
+                                 fut_rect_t clip) {
+    if (!dst || !dst->px || clip.w <= 0 || clip.h <= 0) {
+        return;
+    }
+
+    fut_rect_t btn = comp_min_btn_rect(surface);
+    if (btn.w <= 0 || btn.h <= 0) {
+        return;
+    }
+
+    uint32_t base = COLOR_BTN_BASE;
+    if (surface->min_btn_pressed) {
+        base = COLOR_BTN_PRESSED;
+    } else if (surface->min_btn_hover) {
+        base = COLOR_BTN_HOVER;
+    }
+
+    uint8_t *base_ptr = (uint8_t *)dst->px;
+    for (int32_t y = 0; y < clip.h; ++y) {
+        int32_t gy = clip.y + y;
+        uint8_t *row = base_ptr + (size_t)gy * dst->pitch + (size_t)clip.x * 4u;
+        uint32_t *px = (uint32_t *)row;
+        for (int32_t x = 0; x < clip.w; ++x) {
+            int32_t gx = clip.x + x;
+            int32_t lx = gx - btn.x;
+            int32_t ly = gy - btn.y;
+            uint32_t color = base;
+            if (lx >= 0 && ly >= 0 && lx < btn.w && ly < btn.h) {
+                /* Draw horizontal line (minus sign) in middle of button */
+                int32_t mid_y = btn.h / 2;
+                if (ly >= mid_y - 1 && ly <= mid_y + 1 && lx >= 2 && lx < btn.w - 2) {
+                    color = COLOR_BTN_CROSS;
+                }
+            }
+            px[x] = color;
+        }
+    }
 }
 
 static void draw_close_button(struct backbuffer *dst,
@@ -1107,7 +1165,7 @@ static void render_one_frame(struct compositor_state *comp) {
     }
 
     wl_list_for_each(surface, &comp->surfaces, link) {
-        if (!surface->has_backing) {
+        if (!surface->has_backing || surface->minimized) {
             continue;
         }
 
@@ -1135,6 +1193,14 @@ static void render_one_frame(struct compositor_state *comp) {
                 if (rect_intersection(damage->rects[i], bar_rect, &bar_clip)) {
                     draw_bar_segment(dst, bar_clip, surface == comp->focused_surface);
                     draw_title_text(dst, surface, &bar_clip);
+                    touched = true;
+                }
+
+                fut_rect_t min_btn_rect = comp_min_btn_rect(surface);
+                fut_rect_t min_btn_clip;
+                if (min_btn_rect.w > 0 && min_btn_rect.h > 0 &&
+                    rect_intersection(damage->rects[i], min_btn_rect, &min_btn_clip)) {
+                    draw_minimize_button(dst, surface, min_btn_clip);
                     touched = true;
                 }
 
@@ -1777,6 +1843,60 @@ void comp_surface_toggle_maximize(struct comp_surface *surface) {
     comp_surface_set_maximized(surface, !surface->maximized);
 }
 
+void comp_surface_set_minimized(struct comp_surface *surface, bool minimized) {
+    if (!surface || !surface->comp) {
+        return;
+    }
+
+    if (surface->minimized == minimized) {
+        return;
+    }
+
+    struct compositor_state *comp = surface->comp;
+
+    if (minimized) {
+        surface->minimized = true;
+        /* Mark for damage so it disappears from screen */
+        if (surface->has_backing) {
+            comp_damage_add_rect(comp, comp_frame_rect(surface));
+            comp_surface_mark_damage(surface);
+        }
+        /* Clear focus if this window had it */
+        if (comp->focused_surface == surface) {
+            comp->focused_surface = NULL;
+        }
+        if (comp->active_surface == surface) {
+            /* Switch to another window */
+            if (!wl_list_empty(&comp->surfaces)) {
+                struct comp_surface *other;
+                wl_list_for_each_reverse(other, &comp->surfaces, link) {
+                    if (other != surface && !other->minimized) {
+                        comp->active_surface = other;
+                        break;
+                    }
+                }
+            }
+        }
+    } else {
+        surface->minimized = false;
+        /* Mark for damage so it reappears on screen */
+        if (surface->has_backing) {
+            comp_damage_add_rect(comp, comp_frame_rect(surface));
+            comp_surface_mark_damage(surface);
+        }
+        /* Bring to front and focus */
+        comp_surface_raise(comp, surface);
+        comp->focused_surface = surface;
+    }
+}
+
+void comp_surface_toggle_minimize(struct comp_surface *surface) {
+    if (!surface) {
+        return;
+    }
+    comp_surface_set_minimized(surface, !surface->minimized);
+}
+
 void comp_update_drag(struct compositor_state *comp) {
     if (!comp || !comp->dragging || !comp->drag_surface) {
         return;
@@ -1806,11 +1926,19 @@ hit_role_t comp_hit_test(struct compositor_state *comp,
     comp_surface_update_decorations(surface);
 
     if (comp->deco_enabled && surface->bar_height > 0) {
+        /* Check minimize button */
+        fut_rect_t min_btn = comp_min_btn_rect(surface);
+        if (min_btn.w > 0 && min_btn.h > 0 && rect_contains(&min_btn, px, py)) {
+            return HIT_MINIMIZE;
+        }
+
+        /* Check close button */
         fut_rect_t btn = comp_btn_rect(surface);
         if (btn.w > 0 && btn.h > 0 && rect_contains(&btn, px, py)) {
             return HIT_CLOSE;
         }
 
+        /* Check title bar */
         fut_rect_t bar = comp_bar_rect(surface);
         if (bar.h > 0 && rect_contains(&bar, px, py)) {
             return HIT_BAR;

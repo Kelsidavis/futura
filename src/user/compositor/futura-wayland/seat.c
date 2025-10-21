@@ -46,12 +46,43 @@ static void seat_set_button_hover(struct seat_state *seat, struct comp_surface *
     seat->hover_btn_surface = surface;
 }
 
+static void seat_clear_min_button_hover(struct seat_state *seat) {
+    if (!seat || !seat->hover_min_btn_surface) {
+        return;
+    }
+    struct comp_surface *surface = seat->hover_min_btn_surface;
+    if (surface->min_btn_hover) {
+        surface->min_btn_hover = false;
+        comp_damage_add_rect(seat->comp, comp_min_btn_rect(surface));
+        comp_surface_mark_damage(surface);
+    }
+    seat->hover_min_btn_surface = NULL;
+}
+
+static void seat_set_min_button_hover(struct seat_state *seat, struct comp_surface *surface) {
+    if (!seat) {
+        return;
+    }
+    if (seat->hover_min_btn_surface == surface) {
+        return;
+    }
+    seat_clear_min_button_hover(seat);
+    if (!surface) {
+        return;
+    }
+    surface->min_btn_hover = true;
+    comp_damage_add_rect(seat->comp, comp_min_btn_rect(surface));
+    comp_surface_mark_damage(surface);
+    seat->hover_min_btn_surface = surface;
+}
+
 static void seat_update_hover(struct seat_state *seat) {
     if (!seat) {
         return;
     }
     if (!seat->comp->deco_enabled) {
         seat_clear_button_hover(seat);
+        seat_clear_min_button_hover(seat);
         return;
     }
 
@@ -62,10 +93,15 @@ static void seat_update_hover(struct seat_state *seat) {
                                     seat->comp->pointer_y,
                                     &surface,
                                     &edge);
-    if (role == HIT_CLOSE && surface) {
+    if (role == HIT_MINIMIZE && surface) {
+        seat_set_min_button_hover(seat, surface);
+        seat_clear_button_hover(seat);
+    } else if (role == HIT_CLOSE && surface) {
         seat_set_button_hover(seat, surface);
+        seat_clear_min_button_hover(seat);
     } else {
         seat_clear_button_hover(seat);
+        seat_clear_min_button_hover(seat);
     }
 }
 

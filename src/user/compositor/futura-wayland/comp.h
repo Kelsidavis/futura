@@ -84,6 +84,7 @@ typedef enum resize_edge {
 typedef enum hit_role {
     HIT_NONE = 0,
     HIT_BAR,
+    HIT_MINIMIZE,
     HIT_CLOSE,
     HIT_CONTENT,
     HIT_RESIZE,
@@ -169,12 +170,19 @@ struct comp_surface {
     bool pos_initialised;
     bool in_zlist;
     int32_t bar_height;
+    int32_t min_btn_x;
+    int32_t min_btn_y;
+    int32_t min_btn_w;
+    int32_t min_btn_h;
+    bool min_btn_hover;
+    bool min_btn_pressed;
     int32_t btn_x;
     int32_t btn_y;
     int32_t btn_w;
     int32_t btn_h;
     bool btn_hover;
     bool btn_pressed;
+    bool minimized;
     struct wl_resource *xdg_toplevel;
     uint32_t cfg_serial_last;
     uint32_t cfg_serial_pending;
@@ -249,6 +257,8 @@ void comp_update_resize(struct compositor_state *comp);
 void comp_end_resize(struct compositor_state *comp, struct comp_surface *surface);
 void comp_surface_set_maximized(struct comp_surface *surface, bool maximized);
 void comp_surface_toggle_maximize(struct comp_surface *surface);
+void comp_surface_set_minimized(struct comp_surface *surface, bool minimized);
+void comp_surface_toggle_minimize(struct comp_surface *surface);
 
 struct comp_surface *comp_surface_at(struct compositor_state *comp,
                                      int32_t px,
@@ -295,6 +305,16 @@ static inline fut_rect_t comp_bar_rect(const struct comp_surface *surface) {
         return r;
     }
     r.h = surface->bar_height;
+    return r;
+}
+
+static inline fut_rect_t comp_min_btn_rect(const struct comp_surface *surface) {
+    fut_rect_t r = {
+        .x = surface->min_btn_x,
+        .y = surface->min_btn_y,
+        .w = surface->min_btn_w,
+        .h = surface->min_btn_h,
+    };
     return r;
 }
 

@@ -30,7 +30,7 @@ QEMU_FLAGS += -netdev user,id=net0 -device virtio-net,netdev=net0
 #   Run Configuration Defaults
 # ============================================================
 
-MEM              ?= 512
+MEM              ?= 1024
 HEADFUL          ?= 0
 DEBUG            ?= 0
 ASYNC            ?= 0

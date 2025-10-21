@@ -118,7 +118,7 @@ _start:
     movl %eax, 4080(%ebx)               /* PDPT[510] low dword */
     movl $0, 4084(%ebx)                /* PDPT[510] high dword */
 
-    /* Setup PD: identity map first 128MB with 2MB huge pages */
+    /* Setup PD: identity map full 1GB with 2MB huge pages */
     movl $boot_pd_phys, %ebx
     movl $0x00000083, %eax              /* Base: Present | RW | Large */
     xorl %ecx, %ecx
@@ -127,7 +127,7 @@ _start:
     movl $0, 4(%ebx,%ecx,8)             /* High dword */
     addl $0x00200000, %eax              /* Next 2MB */
     incl %ecx
-    cmpl $64, %ecx                      /* Map 64 × 2MB = 128MB total */
+    cmpl $512, %ecx                     /* Map 512 × 2MB = 1GB total */
     jb 1b
 
     /* Load PML4 address into CR3 */

@@ -20,9 +20,16 @@ OBJS += $(OBJ_DIR)/xdg-shell-protocol.o
 
 WAYLAND_PREFIX ?= $(ROOT)/build/third_party/wayland/install
 WAYLAND_INCLUDEDIR ?= $(WAYLAND_PREFIX)/include
+WAYLAND_LIBDIR ?= $(WAYLAND_PREFIX)/lib
+WAYLAND_PKGCONFIG ?= $(WAYLAND_PREFIX)/lib/pkgconfig
 WAYLAND_SCANNER ?= $(WAYLAND_PREFIX)/bin/wayland-scanner
 
 CC := gcc
+
+# Extract Wayland flags
+WAYLAND_CFLAGS ?= -I$(WAYLAND_INCLUDEDIR)
+WAYLAND_LDFLAGS ?= -L$(WAYLAND_LIBDIR)
+WAYLAND_LIBS ?= -lwayland-server -lwayland-client -lffi -lpthread -lm -lrt
 
 LDSCRIPT := ../../libfutura/userland.ld
 CRT0 := $(BUILD_ROOT)/lib/crt0.o

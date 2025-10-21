@@ -112,7 +112,7 @@ extern char _bss_end[];
 
 /* Memory configuration - for now assume 128MB available in QEMU */
 #define TOTAL_MEMORY_SIZE       (128 * 1024 * 1024)  /* 128 MiB */
-#define KERNEL_HEAP_SIZE        (16 * 1024 * 1024)   /* 16 MiB heap for userland bootstrap */
+#define KERNEL_HEAP_SIZE        (24 * 1024 * 1024)   /* 24 MiB heap (within boot page table mapping of 32MB) */
 
 /* ============================================================
  *   Test Thread Functions

@@ -16,6 +16,7 @@
 #include <kernel/boot_args.h>
 #include <kernel/video/pci_vga.h>
 #include <kernel/video/cirrus_vga.h>
+#include <kernel/video/virtio_gpu.h>
 #include <platform/platform.h>
 
 #include <stddef.h>
@@ -190,7 +191,7 @@ bool fb_is_available(void) {
 
 void fb_boot_splash(void) {
     /* Attempt to initialize device-specific drivers if applicable */
-    /* For virtio-gpu (vendor 0x1af4), skip Cirrus init and use BAR directly */
+    /* For virtio-gpu (vendor 0x1af4), initialize VIRTIO GPU device */
     /* For Cirrus (vendor 0x1013), run full VGA init sequence */
 
     /* Check device at slot 2 and slot 3 for graphics devices */
@@ -201,8 +202,14 @@ void fb_boot_splash(void) {
     uint16_t vendor_slot3 = (uint16_t)(vdid_slot3 & 0xFFFF);
 
     if (vendor_slot3 == 0x1af4) {
-        /* virtio-gpu detected at slot 3 - use framebuffer directly, no device init needed */
-        fut_printf("[FB] virtio-gpu detected at slot 3, skipping VGA device init\n");
+        /* virtio-gpu detected at slot 3 - initialize VIRTIO GPU device */
+        fut_printf("[FB] virtio-gpu detected at slot 3, initializing VIRTIO GPU\n");
+        if (virtio_gpu_init(g_fb_hw.phys, g_fb_hw.info.width, g_fb_hw.info.height) == 0) {
+            fut_printf("[FB] VIRTIO GPU initialized successfully\n");
+            return;
+        } else {
+            fut_printf("[FB] VIRTIO GPU init failed, continuing with fallback\n");
+        }
     } else if (vendor_slot2 == 0x1013) {
         /* Cirrus VGA detected at slot 2 - initialize properly */
         if (cirrus_vga_init() != 0) {

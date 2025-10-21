@@ -98,22 +98,26 @@ static const void *mb2_next_tag(const struct multiboot_tag *tag) {
 }
 
 int fb_probe_from_multiboot(const void *mb_info) {
+    fut_printf("[FB] fb_probe_from_multiboot called, mb_info=%p\n", mb_info);
     if (!mb_info) {
-        return -1;
+        fut_printf("[FB] No multiboot info provided, checking if QEMU is providing it anyway\n");
+        /* Even with mb_info NULL, the bootloader might have set up memory-based structures */
     }
 
     const struct multiboot_tag *tag =
         (const struct multiboot_tag *)((const uint8_t *)mb_info + 8);
 
+    int tag_count = 0;
     while (tag && tag->type != 0) {
-        fut_printf("[FB] tag type=%u size=%u\n",
-                   (unsigned)tag->type, (unsigned)tag->size);
+        tag_count++;
+        fut_printf("[FB] tag #%d: type=%u size=%u\n",
+                   tag_count, (unsigned)tag->type, (unsigned)tag->size);
         if (tag->type == MB2_TAG_FRAMEBUFFER &&
             tag->size >= sizeof(struct multiboot_tag_framebuffer)) {
             const struct multiboot_tag_framebuffer *fbtag =
                 (const struct multiboot_tag_framebuffer *)tag;
 
-            fut_printf("[FB] fb tag addr=0x%llx %ux%u bpp=%u pitch=%u type=%u\n",
+            fut_printf("[FB] fb tag found: addr=0x%llx %ux%u bpp=%u pitch=%u type=%u\n",
                        (unsigned long long)fbtag->framebuffer_addr,
                        fbtag->framebuffer_width,
                        fbtag->framebuffer_height,
@@ -132,11 +136,29 @@ int fb_probe_from_multiboot(const void *mb_info) {
 
         tag = (const struct multiboot_tag *)mb2_next_tag(tag);
     }
+    fut_printf("[FB] parsed %d tags, no framebuffer tag found\n", tag_count);
 
-    /* Fallback for boot loaders that did not supply a framebuffer tag. Only
-     * enabled via the optional boot flag `fb-fallback=1` so automated runs
-     * keep the default behaviour. */
-    if (!fut_boot_arg_flag("fb-fallback")) {
+    /* Fallback for boot loaders that did not supply a framebuffer tag.
+     *
+     * Enabled in two scenarios:
+     * 1. Via the optional boot flag `fb-fallback=1` (automated runs)
+     * 2. Automatically when WAYLAND_INTERACTIVE_MODE is enabled at compile time
+     *    (indicates headful QEMU with GTK display, which needs framebuffer)
+     */
+    bool fb_fallback = fut_boot_arg_flag("fb-fallback");
+
+#ifdef WAYLAND_INTERACTIVE_MODE
+    /* When interactive mode (headful) is enabled at compile time, auto-enable
+     * framebuffer fallback since QEMU likely won't provide proper Multiboot info */
+    if (WAYLAND_INTERACTIVE_MODE != 0) {
+        fut_printf("[FB] Auto-enabling fallback (WAYLAND_INTERACTIVE_MODE=%d)\n", WAYLAND_INTERACTIVE_MODE);
+        fb_fallback = true;
+    }
+#endif
+
+    fut_printf("[FB] fb-fallback flag: %d\n", fb_fallback ? 1 : 0);
+    if (!fb_fallback) {
+        fut_printf("[FB] fallback disabled, returning\n");
         return -1;
     }
     fut_printf("[FB] enabling fallback geometry (fb-fallback=1)\n");

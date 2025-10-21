@@ -554,6 +554,7 @@ void fut_platform_init(uint32_t multiboot_magic __attribute__((unused)),
 
     /* Initialize serial port for early debugging */
     fut_serial_init();
+    fut_printf("[INIT] Multiboot magic: 0x%x\n", multiboot_magic);
     cpu_features_init();
 
     /* Debug marker after serial init: Write 'N' */
@@ -600,21 +601,29 @@ void fut_platform_init(uint32_t multiboot_magic __attribute__((unused)),
     if (multiboot_addr) {
         const uint8_t *mb_base = (const uint8_t *)(uintptr_t)multiboot_addr;
         uint32_t total_size = *(const uint32_t *)mb_base;
+        fut_printf("[INIT-MB2] multiboot_addr=0x%llx total_size=%u\n",
+                   (unsigned long long)multiboot_addr, total_size);
         const uint8_t *tag_ptr = mb_base + 8;
         const uint8_t *end = mb_base + total_size;
+        int tag_count = 0;
         while (tag_ptr < end) {
             const struct multiboot_tag *tag =
                 (const struct multiboot_tag *)tag_ptr;
+            tag_count++;
+            fut_printf("[INIT-MB2] tag #%d: type=%u size=%u\n",
+                       tag_count, tag->type, tag->size);
             if (tag->type == 0 || tag->size == 0) {
                 break;
             }
             if (tag->type == MULTIBOOT_TAG_TYPE_CMDLINE) {
                 const char *cmdline = (const char *)(tag + 1);
+                fut_printf("[INIT-MB2] CMDLINE tag found: %s\n", cmdline);
                 fut_boot_args_init(cmdline);
                 break;
             }
             tag_ptr += (tag->size + 7u) & ~7u;
         }
+        fut_printf("[INIT-MB2] Total tags parsed: %d\n", tag_count);
     }
 
     /* Probe Multiboot framebuffer if present */

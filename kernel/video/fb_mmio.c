@@ -211,5 +211,15 @@ bool fb_is_available(void) {
 }
 
 void fb_boot_splash(void) {
-    fb_splash_fill(0xFF20252Eu);  /* Futura dark blue-gray splash */
+    /* NOTE: Framebuffer rendering disabled pending driver implementation.
+     * Direct linear framebuffer writes don't work with QEMU's VGA devices
+     * (cirrus, bochs, vmware, std). Devices either:
+     * - Don't provide a real linear framebuffer (need protocol/MMIO registers)
+     * - Report wrong BAR addresses
+     * - Require driver initialization before framebuffer is accessible
+     *
+     * Solution: Implement proper VGA/Cirrus driver with device init,
+     * or switch to virtio-gpu which has better driver support.
+     */
+    /* fb_splash_fill(0xFF20252Eu); */
 }

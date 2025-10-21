@@ -112,7 +112,7 @@ extern char _bss_end[];
 
 /* Memory configuration - for now assume 128MB available in QEMU */
 #define TOTAL_MEMORY_SIZE       (128 * 1024 * 1024)  /* 128 MiB */
-#define KERNEL_HEAP_SIZE        (24 * 1024 * 1024)   /* 24 MiB heap (within boot page table mapping of 32MB) */
+#define KERNEL_HEAP_SIZE        (60 * 1024 * 1024)   /* 60 MiB heap - maximum safe within 64MB boot mapping */
 
 /* ============================================================
  *   Test Thread Functions
@@ -390,6 +390,7 @@ static void test_blockdev_operations(void) {
  * Test FuturaFS operations.
  * Creates a ramdisk, formats it with FuturaFS, mounts it, and tests file operations.
  */
+__attribute__((unused))
 static void test_futurafs_operations(void) {
     fut_printf("[FUTURAFS-TEST] Starting FuturaFS test...\n");
 
@@ -893,8 +894,11 @@ void fut_kernel_main(void) {
     /* Test block device operations - DISABLED (heap too small for 1MB ramdisk) */
     /* test_blockdev_operations(); */
 
-    /* Test FuturaFS operations with smaller ramdisk */
+    /* Test FuturaFS operations with smaller ramdisk
+     * DISABLED for interactive mode - need heap space for compositor staging */
+#ifndef WAYLAND_INTERACTIVE_MODE
     test_futurafs_operations();
+#endif
 
     fut_printf("[INIT] Staging fbtest user binary...\n");
     fb_stage = fut_stage_fbtest_binary();

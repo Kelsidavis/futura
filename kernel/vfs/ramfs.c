@@ -136,7 +136,18 @@ static ssize_t ramfs_write(struct fut_vnode *vnode, const void *buf, size_t size
 
     /* Expand buffer if needed */
     if (required > node->file.capacity) {
-        size_t new_capacity = required * 2;  /* Double capacity */
+        /* Use a smarter allocation strategy:
+         * - For small files (<64KB), double capacity to batch allocations
+         * - For larger files, allocate closer to required size to avoid fragmentation
+         */
+        size_t new_capacity;
+        if (required < 65536) {
+            new_capacity = required * 2;  /* Double for small files */
+        } else {
+            /* For larger files, add 20% overhead to minimize reallocations */
+            new_capacity = required + (required / 5);
+        }
+
         uint8_t *new_data = fut_malloc(new_capacity);
         if (!new_data) {
             return -ENOMEM;

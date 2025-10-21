@@ -62,10 +62,10 @@ KAPPEND := $(strip $(KAPPEND))
 
 RUN_QEMU_FLAGS := -m $(MEM) -serial stdio -no-reboot -no-shutdown
 ifeq ($(HEADFUL),1)
-# Headful mode: use SDL2 display with VMware SVGA
-# -vga vmware provides excellent linear framebuffer support in QEMU
+# Headful mode: use SDL2 display
+# Use device VGA directly for better linear framebuffer support
 RUN_QEMU_FLAGS += -display sdl
-RUN_QEMU_FLAGS += -vga vmware
+RUN_QEMU_FLAGS += -device VGA,vgamem_mb=64
 else
 RUN_QEMU_FLAGS += -display none
 RUN_QEMU_FLAGS += -vga none

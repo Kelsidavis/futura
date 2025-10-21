@@ -10,6 +10,7 @@
 #include <kernel/fut_vfs.h>
 #include <kernel/fut_memory.h>
 #include <stddef.h>
+#include <string.h>
 
 /* ============================================================
  *   RamFS Structures
@@ -108,11 +109,8 @@ static ssize_t ramfs_read(struct fut_vnode *vnode, void *buf, size_t size, uint6
     size_t remaining = vnode->size - offset;
     size_t to_read = (size < remaining) ? size : remaining;
 
-    /* Copy data */
-    uint8_t *dest = (uint8_t *)buf;
-    for (size_t i = 0; i < to_read; i++) {
-        dest[i] = node->file.data[offset + i];
-    }
+    /* Copy data using memcpy for efficiency */
+    memcpy(buf, node->file.data + offset, to_read);
 
     return (ssize_t)to_read;
 }
@@ -136,16 +134,22 @@ static ssize_t ramfs_write(struct fut_vnode *vnode, const void *buf, size_t size
 
     /* Expand buffer if needed */
     if (required > node->file.capacity) {
-        /* Use a smarter allocation strategy:
-         * - For small files (<64KB), double capacity to batch allocations
-         * - For larger files, allocate closer to required size to avoid fragmentation
+        /* Allocation strategy balancing performance and heap management:
+         * - Small files: aggressive growth to minimize realloc overhead
+         * - Large files (>64KB): conservative growth (25% overhead) to reduce fragmentation
          */
         size_t new_capacity;
         if (required < 65536) {
-            new_capacity = required * 2;  /* Double for small files */
+            /* For small files (<64KB), double capacity
+             * This batches allocations efficiently for smaller files
+             */
+            new_capacity = required * 2;
         } else {
-            /* For larger files, add 20% overhead to minimize reallocations */
-            new_capacity = required + (required / 5);
+            /* For larger files (>=64KB), add 25% overhead instead of doubling
+             * A 544KB file allocates 680KB instead of 1088KB,
+             * significantly reducing heap fragmentation
+             */
+            new_capacity = required + (required / 4);
         }
 
         uint8_t *new_data = fut_malloc(new_capacity);
@@ -153,11 +157,9 @@ static ssize_t ramfs_write(struct fut_vnode *vnode, const void *buf, size_t size
             return -ENOMEM;
         }
 
-        /* Copy old data */
-        if (node->file.data) {
-            for (size_t i = 0; i < vnode->size; i++) {
-                new_data[i] = node->file.data[i];
-            }
+        /* Copy old data using memcpy for efficiency */
+        if (node->file.data && vnode->size > 0) {
+            memcpy(new_data, node->file.data, vnode->size);
             fut_free(node->file.data);
         }
 
@@ -165,11 +167,8 @@ static ssize_t ramfs_write(struct fut_vnode *vnode, const void *buf, size_t size
         node->file.capacity = new_capacity;
     }
 
-    /* Write data */
-    const uint8_t *src = (const uint8_t *)buf;
-    for (size_t i = 0; i < size; i++) {
-        node->file.data[offset + i] = src[i];
-    }
+    /* Write data using memcpy for efficiency */
+    memcpy(node->file.data + offset, buf, size);
 
     /* Update size */
     if (offset + size > vnode->size) {

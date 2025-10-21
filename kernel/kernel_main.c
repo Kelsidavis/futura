@@ -1040,16 +1040,44 @@ void fut_kernel_main(void) {
         }
     }
 
+    /* Check if interactive mode is enabled (for GUI testing) */
+    /* First try boot argument, then fall back to compile-time flag */
+    bool wayland_interactive = boot_flag_enabled("WAYLAND_INTERACTIVE", false);
+#ifdef WAYLAND_INTERACTIVE_MODE
+    if (!wayland_interactive) {
+        wayland_interactive = (WAYLAND_INTERACTIVE_MODE != 0);
+    }
+#endif
+
     if (wayland_exec == 0 && wayland_client_exec == 0) {
         uint32_t finalize_delay_ms = 2500;
         if (wayland_color_stage == 0 && wayland_color_exec == 0) {
             finalize_delay_ms = 3200;
         }
         fut_boot_delay_ms(finalize_delay_ms);
-        hal_outb(0xf4u, 0u);
+
+        if (!wayland_interactive) {
+            /* Auto-exit for automated testing (default behavior) */
+            hal_outb(0xf4u, 0u);
 #if ENABLE_WAYLAND_DEMO
-        fut_test_pass();
+            fut_test_pass();
 #endif
+        } else {
+            /* Interactive mode: keep system running for GUI interaction */
+            fut_printf("[INIT] Entering interactive mode - compositor and clients running\n");
+            fut_printf("[INIT] Type Ctrl+C to exit\n");
+            while (1) {
+                __asm__ volatile("hlt");
+            }
+        }
+    } else if (wayland_interactive) {
+        /* Interactive mode requested but processes failed to launch */
+        fut_printf("[WARN] Interactive mode requested but compositor/clients failed to launch\n");
+        fut_printf("[WARN] Wayland exec: %d, client exec: %d\n", wayland_exec, wayland_client_exec);
+        fut_boot_delay_ms(100);
+        while (1) {
+            __asm__ volatile("hlt");
+        }
     }
 #endif
 

@@ -54,6 +54,10 @@ endif
 ifneq ($(strip $(WAYLAND_ENV)),)
 KAPPEND += $(WAYLAND_ENV)
 endif
+ifeq ($(HEADFUL),1)
+KAPPEND += WAYLAND_INTERACTIVE=1
+CFLAGS += -DWAYLAND_INTERACTIVE_MODE=1
+endif
 KAPPEND := $(strip $(KAPPEND))
 
 RUN_QEMU_FLAGS := -m $(MEM) -serial stdio -no-reboot -no-shutdown

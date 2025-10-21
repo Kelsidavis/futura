@@ -89,16 +89,14 @@ boot_stack_top:
 _start:
     cli                                 /* Disable interrupts */
 
+    /* CRITICAL: Save Multiboot2 info FIRST before using any registers! */
+    movl %eax, boot_mb_magic            /* Save Multiboot2 magic (from eax) */
+    movl %ebx, boot_mb_addr             /* Save Multiboot2 info pointer (from ebx) */
+
     /* Early debug: Write 'S' to serial COM1 in 32-bit mode */
     movw $0x3F8, %dx
     movb $'S', %al
     outb %al, %dx
-
-    /* Save Multiboot2 info pointer */
-    movl %eax, %edi                     /* Multiboot2 magic in eax */
-    movl %ebx, %esi                     /* Multiboot2 info pointer in ebx */
-    movl %eax, boot_mb_magic
-    movl %ebx, boot_mb_addr
 
     /* Initialize page tables at runtime with correct physical addresses */
 

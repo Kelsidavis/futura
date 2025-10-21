@@ -30,7 +30,7 @@ int fb_hw_open(struct fw_framebuffer *fb) {
     }
 
     struct fut_fb_info info;
-    if (ioctl(fd, FUT_FB_IOCTL_GET_INFO, &info) < 0) {
+    if (ioctl(fd, FBIOGET_INFO, &info) < 0) {
         int err = -errno;
         close(fd);
         return err;

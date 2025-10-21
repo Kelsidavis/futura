@@ -146,20 +146,19 @@ int fb_probe_from_multiboot(const void *mb_info) {
 
     /* Fallback for boot loaders that did not supply a framebuffer tag.
      *
-     * Enabled in two scenarios:
-     * 1. Via the optional boot flag `fb-fallback=1` (automated runs)
-     * 2. Automatically when WAYLAND_INTERACTIVE_MODE is enabled at compile time
-     *    (indicates headful QEMU with GTK display, which needs framebuffer)
+     * With direct kernel boot (-kernel flag), QEMU doesn't provide multiboot info.
+     * We fall back to PCI discovery + hardcoded address.
      */
-    bool fb_fallback = fut_boot_arg_flag("fb-fallback");
-
 #ifdef WAYLAND_INTERACTIVE_MODE
-    /* When interactive mode (headful) is enabled at compile time, auto-enable
-     * framebuffer fallback since QEMU likely won't provide proper Multiboot info */
-    if (WAYLAND_INTERACTIVE_MODE != 0) {
-        fut_printf("[FB] Auto-enabling fallback (WAYLAND_INTERACTIVE_MODE=%d)\n", WAYLAND_INTERACTIVE_MODE);
-        fb_fallback = true;
-    }
+    /* When interactive mode (headful) is enabled at compile time,
+     * always enable framebuffer fallback with PCI discovery since:
+     * 1. Direct kernel boot doesn't provide multiboot info
+     * 2. Command line args aren't available in multiboot structure */
+    bool fb_fallback = true;
+    fut_printf("[FB] Auto-enabling fallback for headful mode (WAYLAND_INTERACTIVE_MODE=%d)\n",
+               WAYLAND_INTERACTIVE_MODE);
+#else
+    bool fb_fallback = fut_boot_arg_flag("fb-fallback");
 #endif
 
     fut_printf("[FB] fb-fallback flag: %d\n", fb_fallback ? 1 : 0);

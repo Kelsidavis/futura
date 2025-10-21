@@ -13,6 +13,10 @@
 #include <stdint.h>
 #include <stdbool.h>
 
+#ifdef __x86_64__
+#include <arch/x86_64/pmap.h>
+#endif
+
 /* VGA I/O ports */
 #define VGA_MISC_WRITE          0x3C2
 #define VGA_MISC_READ           0x3CC
@@ -121,22 +125,71 @@ static void cirrus_crtc_write(uint8_t index, uint8_t value) {
 }
 
 /**
- * Read from PCI configuration space (device at bus 0, slot 2)
- * Uses indirect I/O port access: 0xCF8 (address) and 0xCFC (data)
+ * Read from PCI configuration space
+ * Proper PCI address format: (1<<31) | (bus<<16) | (slot<<11) | (func<<8) | (offset & 0xFC)
  */
-static uint32_t pci_config_read(uint8_t offset) {
-    uint32_t addr = (1u << 31) | (2 << 11) | offset;  /* bus 0, slot 2, offset */
+static uint32_t pci_config_read_bdf(uint8_t bus, uint8_t slot, uint8_t func, uint8_t offset) {
+    uint32_t addr = (1u << 31)
+                  | ((uint32_t)bus << 16)
+                  | ((uint32_t)slot << 11)
+                  | ((uint32_t)func << 8)
+                  | ((uint32_t)offset & 0xFC);
     outl(0xCF8, addr);
     return inl(0xCFC);
 }
 
 /**
- * Write to PCI configuration space (device at bus 0, slot 2)
+ * Write to PCI configuration space
  */
-static void pci_config_write(uint8_t offset, uint32_t value) {
-    uint32_t addr = (1u << 31) | (2 << 11) | offset;  /* bus 0, slot 2, offset */
+static void pci_config_write_bdf(uint8_t bus, uint8_t slot, uint8_t func, uint8_t offset, uint32_t value) {
+    uint32_t addr = (1u << 31)
+                  | ((uint32_t)bus << 16)
+                  | ((uint32_t)slot << 11)
+                  | ((uint32_t)func << 8)
+                  | ((uint32_t)offset & 0xFC);
     outl(0xCF8, addr);
     outl(0xCFC, value);
+}
+
+/**
+ * Diagnostic: dump all PCI BARs for this device
+ */
+static void cirrus_dump_pci_bars(uint8_t bus, uint8_t slot, uint8_t func) {
+    uint32_t vdid = pci_config_read_bdf(bus, slot, func, 0x00);
+    uint16_t vendor = (uint16_t)(vdid & 0xFFFF);
+    uint16_t device = (uint16_t)((vdid >> 16) & 0xFFFF);
+    fut_printf("[CIRRUS-DIAG] BDF %u:%u.%u vendor=0x%04x device=0x%04x\n",
+               bus, slot, func, vendor, device);
+
+    for (int i = 0; i < 6; ++i) {
+        uint32_t off = 0x10 + i*4;
+        uint32_t bar = pci_config_read_bdf(bus, slot, func, off);
+        fut_printf("[CIRRUS-DIAG] BAR%d raw=0x%08x\n", i, bar);
+    }
+}
+
+/**
+ * Diagnostic: dump relevant CRTC and Sequencer registers
+ */
+static void cirrus_dump_regs(void) {
+    uint8_t sr07 = cirrus_seq_read(0x07);
+    uint8_t sr0f = cirrus_seq_read(0x0F);
+    uint8_t cr13 = cirrus_crtc_read(0x13);
+    uint8_t cr1b = cirrus_crtc_read(0x1B);
+    uint8_t cr0c = cirrus_crtc_read(0x0C);
+    uint8_t cr0d = cirrus_crtc_read(0x0D);
+    fut_printf("[CIRRUS-DIAG] SR07=0x%02x SR0F=0x%02x CR13=0x%02x CR1B=0x%02x CR0C=0x%02x CR0D=0x%02x\n",
+               sr07, sr0f, cr13, cr1b, cr0c, cr0d);
+}
+
+/**
+ * Quick diagnostic: dump PCI BARs and CRTC registers
+ */
+static void cirrus_run_diagnostics(void) {
+    fut_printf("\n[CIRRUS-DRUN] QUICK DIAGNOSTIC\n");
+    cirrus_dump_pci_bars(0, 2, 0);
+    cirrus_dump_regs();
+    fut_printf("[CIRRUS-DRUN] DIAGNOSTIC COMPLETE\n\n");
 }
 
 /**
@@ -151,16 +204,25 @@ static void pci_config_write(uint8_t offset, uint32_t value) {
 int cirrus_vga_init(void) {
     fut_printf("[CIRRUS] Initializing Cirrus VGA for linear framebuffer\n");
 
-    /* Enable PCI memory space via PCI command register
-     * PCI_COMMAND at offset 0x04:
-     * - bit 0: I/O Enable
-     * - bit 1: Memory Enable
-     * - bit 2: Bus Master Enable
-     */
-    uint32_t cmd = pci_config_read(PCI_COMMAND_OFFSET);
-    cmd |= (PCI_CMD_IO_ENABLE | PCI_CMD_MEM_ENABLE);  /* Enable I/O and memory space */
-    pci_config_write(PCI_COMMAND_OFFSET, cmd);
-    fut_printf("[CIRRUS] PCI command register enabled (I/O and Memory access)\n");
+    /* Verify we're accessing the correct PCI device (Cirrus at bus 0, slot 2, func 0) */
+    uint32_t vdid = pci_config_read_bdf(0, 2, 0, 0x00);
+    uint16_t vendor = (uint16_t)(vdid & 0xFFFF);
+    uint16_t device = (uint16_t)((vdid >> 16) & 0xFFFF);
+    fut_printf("[CIRRUS] PCI vendor=0x%04x device=0x%04x\n", vendor, device);
+
+    if (vendor != 0x1013 || device != 0x00B8) {
+        fut_printf("[CIRRUS] ERROR: Cirrus device not found at 0:2.0\n");
+        return -1;
+    }
+
+    /* Enable PCI memory space via PCI command register */
+    uint32_t cmd = pci_config_read_bdf(0, 2, 0, PCI_COMMAND_OFFSET);
+    cmd |= (PCI_CMD_IO_ENABLE | PCI_CMD_MEM_ENABLE);
+    pci_config_write_bdf(0, 2, 0, PCI_COMMAND_OFFSET, cmd);
+
+    /* Verify the write */
+    uint32_t cmd_verify = pci_config_read_bdf(0, 2, 0, PCI_COMMAND_OFFSET);
+    fut_printf("[CIRRUS] PCI command: set=0x%08x verify=0x%08x\n", cmd, cmd_verify);
 
     /* Enable memory space in VGA misc register for legacy I/O */
     uint8_t misc = inb(VGA_MISC_READ);
@@ -195,6 +257,31 @@ int cirrus_vga_init(void) {
     cirrus_seq_write(0x0F, (sr0f & 0x9F) | 0x60);  /* 32-bit color */
     fut_printf("[CIRRUS] 32-bit color mode enabled (SR0F=0x%02x)\n", (sr0f & 0x9F) | 0x60);
 
+    /* Enable linear addressing in Sequencer Memory Mode (SR04)
+     * Bit 3 = enable chain 4 mode (required for linear 32-bit mode)
+     */
+    uint8_t sr04 = cirrus_seq_read(0x04);
+    cirrus_seq_write(0x04, sr04 | 0x08);  /* Set bit 3 for chain-4 linear mode */
+    fut_printf("[CIRRUS] Linear addressing enabled (SR04=0x%02x)\n", sr04 | 0x08);
+
+    /* CRITICAL: Disable text mode and enable graphics mode
+     * GR05 Mode Register controls text vs graphics
+     * Bit 0 = graphics mode enable (1 = graphics, 0 = text)
+     * Bit 1 = reserved
+     * Bit 4 = read mode (0 = read map select, 1 = color compare)
+     * Bit 5 = shift register interleave mode
+     */
+    cirrus_gfx_write(0x05, 0x41);  /* 0x41 = bit0 set for graphics mode + shift256 mode */
+    fut_printf("[CIRRUS] Graphics mode enabled (GR05=0x41, graphics mode fully active)\n");
+
+    /* Set GR04 read map select to plane 0 */
+    cirrus_gfx_write(0x04, 0x00);
+
+    /* Disable all graphics planes initially (GR01 = 0)
+     * GR01 = Set/Reset Enable - which planes get affected by set/reset
+     */
+    cirrus_gfx_write(0x01, 0x00);
+
     /* Disable DRAM refresh interference
      * GR0A bit 7 = enable VRAM access from display */
     uint8_t gr0a = cirrus_gfx_read(0x0A);
@@ -206,28 +293,71 @@ int cirrus_vga_init(void) {
      * For 1024 pixels @ 32bpp: pitch = 1024 * 4 = 4096 bytes = 2048 2-byte words
      */
 
+    /* Set CRTC timing for 1024x768@60Hz display mode
+     * These are standard VGA timing parameters needed for the device to actually
+     * display the correct resolution. Without these, the display controller won't
+     * show the framebuffer at the resolution we're writing to.
+     */
+    cirrus_crtc_write(0x00, 0xA3);  /* Horizontal Total */
+    cirrus_crtc_write(0x01, 0x7F);  /* Horizontal Display End (1024-1 = 1023 = 0x3FF, in chars) */
+    cirrus_crtc_write(0x02, 0x80);  /* Horizontal Blank Start */
+    cirrus_crtc_write(0x03, 0x1C);  /* Horizontal Blank End */
+    cirrus_crtc_write(0x04, 0x88);  /* Horizontal Sync Start */
+    cirrus_crtc_write(0x05, 0x02);  /* Horizontal Sync End + Blank End bits */
+    cirrus_crtc_write(0x06, 0x23);  /* Vertical Total Low (769-2 = 767 = 0x2FF) */
+    cirrus_crtc_write(0x07, 0xB9);  /* Overflow (contains extended vertical bits) */
+    cirrus_crtc_write(0x09, 0x00);  /* Maximum Scan Line (31 for single height) */
+    cirrus_crtc_write(0x10, 0x04);  /* Vertical Sync Start */
+    cirrus_crtc_write(0x11, 0x80);  /* Vertical Sync End (0x80 = disable int + 0 width) */
+    cirrus_crtc_write(0x12, 0xFF);  /* Vertical Display End Low (768-1 = 767, low byte = 0xFF) */
+    cirrus_crtc_write(0x15, 0xFF);  /* Vertical Blank Start (0xFF) */
+    cirrus_crtc_write(0x16, 0x28);  /* Vertical Blank End (0x28) */
+    cirrus_crtc_write(0x17, 0xC3);  /* CRTC Mode Control (enable refresh, no wrap) */
+
+    fut_printf("[CIRRUS] Display timing set for 1024x768@60Hz\n");
+
     /* Set start address to 0 */
     cirrus_crtc_write(0x0C, 0x00);  /* Start address high byte */
     cirrus_crtc_write(0x0D, 0x00);  /* Start address low byte */
 
     /* Set pitch for linear 32-bit mode
      * For 1024x768x32, pitch = 4096 bytes per scanline
-     * CR13 in linear mode appears to use: pitch_bytes / 8 = 512
-     * But since 512 > 255, we use extended bits in CR1B
-     *
-     * Actually, for Cirrus in linear mode, we may need to use:
-     * CR13 = (bytes_per_line / 8) & 0xFF = 512 & 0xFF = 0x00
-     * CR1B[5:4] = (bytes_per_line / 8) >> 8 = 512 >> 8 = 0x02
-     *
-     * But empirically, 0x80 was giving better results. Let's use that.
+     * The pitch register expects bytes_per_line / 8 (logical units)
+     * CR13 holds low 8 bits, CR1B[5:4] holds high 2 bits
+     * bytes_per_line / 8 = 4096 / 8 = 512 = 0x200
+     * So CR13 = 0x00, CR1B[5:4] = 0x02
      */
+    uint32_t bytes_per_line = 1024 * 4;  /* 4096 */
+    uint32_t lp = bytes_per_line / 8;    /* 512 */
 
-    /* Set CR13 to 0x80 (128) - this seems to work better in practice */
-    cirrus_crtc_write(0x13, 0x80);
+    uint8_t cr13 = lp & 0xFF;            /* low 8 bits = 0x00 */
+    uint8_t cr1b = cirrus_crtc_read(0x1B);
+    cr1b &= ~0x30;                       /* clear bits 5:4 */
+    cr1b |= ((lp >> 8) & 0x03) << 4;    /* place high 2 bits into bits 5:4 */
 
-    fut_printf("[CIRRUS] Pitch: CR13=0x80 (empirical value for 1024x768x32)\n");
+    cirrus_crtc_write(0x13, cr13);
+    cirrus_crtc_write(0x1B, cr1b);
+
+    fut_printf("[CIRRUS] Pitch: CR13=0x%02x CR1B=0x%02x (lp=%u bytes_per_line=%u)\n",
+               cr13, cr1b, lp, bytes_per_line);
 
     fut_printf("[CIRRUS] CRTC configured for 1024x768x32 linear framebuffer\n");
     fut_printf("[CIRRUS] VGA initialization complete\n");
+
+    /* Try to set the mode via Cirrus VBE (Bochs extension)
+     * VBE port 0x1CE = index, 0x1CF = data
+     * VBE register 0x04 = Enable (0xc0c3 enables VBE mode)
+     * VBE registers 0x01, 0x02, 0x03 = X, Y resolution
+     * VBE register 0x05 = Bits per pixel (0x20 = 32-bit)
+     */
+    outw(0x1CE, 0x04);  /* Select enable register */
+    uint16_t vbe_enable = inw(0x1CF);
+    outw(0x1CE, 0x04);
+    outw(0x1CF, (vbe_enable | 0xc0c0));  /* Enable VBE with LFB */
+    fut_printf("[CIRRUS] VBE enable attempted (VBE04=0x%04x)\n", vbe_enable | 0xc0c0);
+
+    /* Run comprehensive diagnostics to identify root cause of display issues */
+    cirrus_run_diagnostics();
+
     return 0;
 }

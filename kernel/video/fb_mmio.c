@@ -22,6 +22,27 @@
 #include <stdint.h>
 #include <stdbool.h>
 
+/* PCI I/O port helpers for vendor detection */
+static inline void outl(uint16_t port, uint32_t value) {
+    __asm__ volatile("outl %0, %1" : : "a"(value), "Nd"(port));
+}
+
+static inline uint32_t inl(uint16_t port) {
+    uint32_t result;
+    __asm__ volatile("inl %1, %0" : "=a"(result) : "Nd"(port));
+    return result;
+}
+
+static inline uint32_t pci_config_read_bdf(uint8_t bus, uint8_t slot, uint8_t func, uint8_t offset) {
+    uint32_t addr = (1u << 31)
+                  | ((uint32_t)bus << 16)
+                  | ((uint32_t)slot << 11)
+                  | ((uint32_t)func << 8)
+                  | ((uint32_t)offset & 0xFC);
+    outl(0xCF8, addr);
+    return inl(0xCFC);
+}
+
 #ifdef __x86_64__
 #include <arch/x86_64/paging.h>
 #include <arch/x86_64/pmap.h>
@@ -168,10 +189,29 @@ bool fb_is_available(void) {
 }
 
 void fb_boot_splash(void) {
-    /* Initialize Cirrus VGA device for proper linear framebuffer access */
-    if (cirrus_vga_init() != 0) {
-        fut_printf("[FB] Cirrus VGA init failed, skipping splash\n");
-        return;
+    /* Attempt to initialize device-specific drivers if applicable */
+    /* For virtio-gpu (vendor 0x1af4), skip Cirrus init and use BAR directly */
+    /* For Cirrus (vendor 0x1013), run full VGA init sequence */
+
+    /* Check device at slot 2 and slot 3 for graphics devices */
+    uint32_t vdid_slot2 = pci_config_read_bdf(0, 2, 0, 0x00);
+    uint16_t vendor_slot2 = (uint16_t)(vdid_slot2 & 0xFFFF);
+
+    uint32_t vdid_slot3 = pci_config_read_bdf(0, 3, 0, 0x00);
+    uint16_t vendor_slot3 = (uint16_t)(vdid_slot3 & 0xFFFF);
+
+    if (vendor_slot3 == 0x1af4) {
+        /* virtio-gpu detected at slot 3 - use framebuffer directly, no device init needed */
+        fut_printf("[FB] virtio-gpu detected at slot 3, skipping VGA device init\n");
+    } else if (vendor_slot2 == 0x1013) {
+        /* Cirrus VGA detected at slot 2 - initialize properly */
+        if (cirrus_vga_init() != 0) {
+            fut_printf("[FB] Cirrus VGA init failed, skipping splash\n");
+            return;
+        }
+    } else {
+        fut_printf("[FB] Slot 2 vendor 0x%04x, Slot 3 vendor 0x%04x, proceeding\n",
+                   vendor_slot2, vendor_slot3);
     }
 
     /* Try multiple addresses in order:

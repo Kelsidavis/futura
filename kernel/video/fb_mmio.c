@@ -175,11 +175,11 @@ void fb_boot_splash(void) {
     }
 
     /* Try multiple addresses in order:
-     * 1. Standard QEMU Cirrus address (most likely correct)
-     * 2. Discovered BAR address
+     * 1. Discovered BAR address (most reliable - what PCI config says)
+     * 2. Standard QEMU Cirrus address (fallback)
      * 3. Legacy/fallback addresses
      */
-    uint64_t addresses[] = { 0xF0000000ULL, g_fb_hw.phys, 0xE0000000ULL };
+    uint64_t addresses[] = { g_fb_hw.phys, 0xF0000000ULL, 0xE0000000ULL };
     uint64_t test_addr = 0;
 
     for (int attempt = 0; attempt < 3; attempt++) {

@@ -62,10 +62,10 @@ KAPPEND := $(strip $(KAPPEND))
 
 RUN_QEMU_FLAGS := -m $(MEM) -serial stdio -no-reboot -no-shutdown
 ifeq ($(HEADFUL),1)
-# Headful mode: use SDL2 display with QXL VGA device
-# Opens a window to display the framebuffer output
+# Headful mode: use SDL2 display with bochs-display device
+# Bochs display supports true linear framebuffer via BAR0
 RUN_QEMU_FLAGS += -display sdl
-RUN_QEMU_FLAGS += -device qxl-vga
+RUN_QEMU_FLAGS += -device bochs-display
 else
 RUN_QEMU_FLAGS += -display none
 RUN_QEMU_FLAGS += -vga none

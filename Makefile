@@ -62,8 +62,10 @@ KAPPEND := $(strip $(KAPPEND))
 
 RUN_QEMU_FLAGS := -m $(MEM) -serial stdio -no-reboot -no-shutdown
 ifeq ($(HEADFUL),1)
-RUN_QEMU_FLAGS += -display gtk
-RUN_QEMU_FLAGS += -vga std
+# Headful mode: use SDL2 display with ramfb (QEMU ramfb device)
+# ramfb + fw_cfg provides proper framebuffer configuration via Multiboot-like mechanism
+RUN_QEMU_FLAGS += -display sdl
+RUN_QEMU_FLAGS += -device ramfb
 else
 RUN_QEMU_FLAGS += -display none
 RUN_QEMU_FLAGS += -vga none

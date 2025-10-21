@@ -106,20 +106,37 @@ uint64_t pci_find_vga_framebuffer(void) {
 
             /* Read BAR0 (framebuffer base address) */
             uint32_t bar0 = pci_read_config(0, slot, 0, PCI_BAR0_OFFSET);
+            fut_printf("[PCI] BAR0 raw value: 0x%08x\n", bar0);
 
-            if (bar0 == 0) {
-                fut_printf("[PCI] BAR0 is zero, trying BAR1\n");
+            if (bar0 == 0xFFFFFFFFu || bar0 == 0) {
+                fut_printf("[PCI] BAR0 is invalid, trying BAR1\n");
                 bar0 = pci_read_config(0, slot, 0, PCI_BAR1_OFFSET);
+                fut_printf("[PCI] BAR1 raw value: 0x%08x\n", bar0);
             }
 
-            if (bar0 != 0) {
-                /* Mask out enable bits (last 4 bits for MMIO, last bit for I/O) */
-                uint64_t framebuffer_addr = bar0 & ~0xFuLL;
-                fut_printf("[PCI] VGA Framebuffer at 0x%llx (BAR0=0x%08x)\n",
-                           (unsigned long long)framebuffer_addr,
-                           bar0);
-                found_bar_addr = framebuffer_addr;
-                break;
+            if (bar0 != 0 && bar0 != 0xFFFFFFFFu) {
+                uint64_t framebuffer_addr;
+
+                /* Check if it's a 64-bit BAR (bit 2 set) */
+                if ((bar0 & 0x04) == 0x04) {
+                    /* 64-bit BAR: need to read BAR0 and BAR1 */
+                    uint32_t bar1 = pci_read_config(0, slot, 0, PCI_BAR1_OFFSET);
+                    framebuffer_addr = ((uint64_t)bar1 << 32) | (bar0 & ~0x0FuLL);
+                    fut_printf("[PCI] 64-bit BAR: BAR0=0x%08x BAR1=0x%08x -> 0x%llx\n",
+                               bar0, bar1, (unsigned long long)framebuffer_addr);
+                } else {
+                    /* 32-bit BAR */
+                    framebuffer_addr = bar0 & ~0x0FuLL;
+                    fut_printf("[PCI] 32-bit BAR: 0x%08x -> 0x%llx\n",
+                               bar0, (unsigned long long)framebuffer_addr);
+                }
+
+                if (framebuffer_addr != 0) {
+                    fut_printf("[PCI] VGA Framebuffer at 0x%llx\n",
+                               (unsigned long long)framebuffer_addr);
+                    found_bar_addr = framebuffer_addr;
+                    break;
+                }
             }
         }
     }

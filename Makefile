@@ -62,10 +62,10 @@ KAPPEND := $(strip $(KAPPEND))
 
 RUN_QEMU_FLAGS := -m $(MEM) -serial stdio -no-reboot -no-shutdown
 ifeq ($(HEADFUL),1)
-# Headful mode: use SDL2 display
-# Use device VGA directly for better linear framebuffer support
+# Headful mode: use SDL2 display with Cirrus VGA
+# -vga cirrus with kernel driver for linear framebuffer support
 RUN_QEMU_FLAGS += -display sdl
-RUN_QEMU_FLAGS += -device VGA,vgamem_mb=64
+RUN_QEMU_FLAGS += -vga cirrus
 else
 RUN_QEMU_FLAGS += -display none
 RUN_QEMU_FLAGS += -vga none
@@ -313,6 +313,7 @@ KERNEL_SOURCES := \
     kernel/tests/exec_double.c \
     kernel/video/fb_mmio.c \
     kernel/video/pci_vga.c \
+    kernel/video/cirrus_vga.c \
     drivers/video/fb.c \
     drivers/input/ps2_kbd.c \
     drivers/input/ps2_mouse.c \

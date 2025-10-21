@@ -15,6 +15,7 @@
 #include <kernel/fb.h>
 #include <kernel/boot_args.h>
 #include <kernel/video/pci_vga.h>
+#include <kernel/video/cirrus_vga.h>
 #include <platform/platform.h>
 
 #include <stddef.h>
@@ -30,7 +31,6 @@ static struct fut_fb_hwinfo g_fb_hw = {0};
 static bool g_fb_available = false;
 #ifdef __x86_64__
 static volatile uint8_t *g_fb_virt = NULL;
-static bool g_fb_splash_drawn = false;
 #endif
 
 /* Multiboot2 tag IDs */
@@ -53,49 +53,6 @@ struct multiboot_tag_framebuffer {
     uint16_t reserved;
 };
 
-static void fb_splash_fill(uint32_t color) {
-#if defined(__x86_64__)
-    if (!g_fb_available || g_fb_hw.info.bpp != 32u || g_fb_splash_drawn) {
-        return;
-    }
-
-    size_t fb_size = (size_t)g_fb_hw.info.pitch * (size_t)g_fb_hw.info.height;
-    if (fb_size == 0 || !g_fb_hw.phys) {
-        return;
-    }
-
-    if (!g_fb_virt) {
-        uint64_t phys_base = PAGE_ALIGN_DOWN(g_fb_hw.phys);
-        uint64_t offset = g_fb_hw.phys - phys_base;
-        uint64_t map_size = fb_size + offset;
-        uintptr_t virt_base = pmap_phys_to_virt(phys_base);
-
-        if (pmap_map((uint64_t)virt_base,
-                     phys_base,
-                     map_size,
-                     PTE_KERNEL_RW | PTE_WRITE_THROUGH | PTE_CACHE_DISABLE) != 0) {
-            fut_printf("[FB] map_range failed (phys=0x%llx size=0x%llx)\n",
-                       (unsigned long long)phys_base,
-                       (unsigned long long)map_size);
-            return;
-        }
-        g_fb_virt = (volatile uint8_t *)(uintptr_t)(virt_base + offset);
-        g_fb_hw.length = map_size;
-    }
-
-    volatile uint8_t *fb = g_fb_virt;
-    uint32_t stride = g_fb_hw.info.pitch;
-    for (uint32_t y = 0; y < g_fb_hw.info.height; ++y) {
-        volatile uint32_t *row = (volatile uint32_t *)(fb + (size_t)y * stride);
-        for (uint32_t x = 0; x < g_fb_hw.info.width; ++x) {
-            row[x] = color;
-        }
-    }
-    g_fb_splash_drawn = true;
-#else
-    (void)color;
-#endif
-}
 
 static const void *mb2_next_tag(const struct multiboot_tag *tag) {
     uintptr_t addr = (uintptr_t)tag;
@@ -211,15 +168,68 @@ bool fb_is_available(void) {
 }
 
 void fb_boot_splash(void) {
-    /* NOTE: Framebuffer rendering disabled pending driver implementation.
-     * Direct linear framebuffer writes don't work with QEMU's VGA devices
-     * (cirrus, bochs, vmware, std). Devices either:
-     * - Don't provide a real linear framebuffer (need protocol/MMIO registers)
-     * - Report wrong BAR addresses
-     * - Require driver initialization before framebuffer is accessible
-     *
-     * Solution: Implement proper VGA/Cirrus driver with device init,
-     * or switch to virtio-gpu which has better driver support.
+    /* Initialize Cirrus VGA device for proper linear framebuffer access */
+    if (cirrus_vga_init() != 0) {
+        fut_printf("[FB] Cirrus VGA init failed, skipping splash\n");
+        return;
+    }
+
+    /* Try multiple addresses in order:
+     * 1. Standard QEMU Cirrus address (most likely correct)
+     * 2. Discovered BAR address
+     * 3. Legacy/fallback addresses
      */
-    /* fb_splash_fill(0xFF20252Eu); */
+    uint64_t addresses[] = { 0xF0000000ULL, g_fb_hw.phys, 0xE0000000ULL };
+    uint64_t test_addr = 0;
+
+    for (int attempt = 0; attempt < 3; attempt++) {
+        test_addr = addresses[attempt];
+        if (attempt == 0) {
+            fut_printf("[FB] Primary attempt: standard QEMU address 0x%llx\n",
+                       (unsigned long long)test_addr);
+        } else {
+            fut_printf("[FB] Fallback attempt %d: 0x%llx\n",
+                       attempt,
+                       (unsigned long long)test_addr);
+        }
+
+        uint64_t phys_base = PAGE_ALIGN_DOWN(test_addr);
+        uint64_t offset = test_addr - phys_base;
+        uint64_t fb_size = (size_t)g_fb_hw.info.pitch * (size_t)g_fb_hw.info.height;
+        uint64_t map_size = fb_size + offset;
+        uintptr_t virt_base = pmap_phys_to_virt(phys_base);
+
+        fut_printf("[FB] Map attempt %d: phys=0x%llx size=0x%llx\n",
+                   attempt + 1,
+                   (unsigned long long)phys_base,
+                   (unsigned long long)map_size);
+
+        if (pmap_map((uint64_t)virt_base,
+                     phys_base,
+                     map_size,
+                     PTE_KERNEL_RW | PTE_WRITE_THROUGH | PTE_CACHE_DISABLE) != 0) {
+            fut_printf("[FB] Mapping failed\n");
+            continue;
+        }
+
+        g_fb_virt = (volatile uint8_t *)(uintptr_t)(virt_base + offset);
+        g_fb_hw.length = map_size;
+
+        /* Write solid GREEN across entire framebuffer for diagnostic */
+        volatile uint32_t *fb = (volatile uint32_t *)g_fb_virt;
+
+        fut_printf("[FB] Filling entire screen with solid GREEN\n");
+
+        /* Fill all pixels with pure green */
+        size_t total_pixels = (g_fb_hw.info.width * g_fb_hw.info.height);
+        for (size_t i = 0; i < total_pixels; ++i) {
+            fb[i] = 0xFF00FF00;  /* Should be GREEN */
+        }
+
+        fut_printf("[FB] Screen fill complete\n");
+        fut_printf("[FB] If entire screen is bright green, framebuffer is working!\n");
+        return;
+    }
+
+    fut_printf("[FB] All mapping attempts failed\n");
 }

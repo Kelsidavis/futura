@@ -58,6 +58,7 @@ KAPPEND := $(strip $(KAPPEND))
 
 RUN_QEMU_FLAGS := -m $(MEM) -serial stdio -no-reboot -no-shutdown
 ifeq ($(HEADFUL),1)
+RUN_QEMU_FLAGS += -display gtk
 else
 RUN_QEMU_FLAGS += -display none
 endif

@@ -56,14 +56,17 @@ KAPPEND += $(WAYLAND_ENV)
 endif
 ifeq ($(HEADFUL),1)
 KAPPEND += WAYLAND_INTERACTIVE=1
+KAPPEND += fb-fallback=1
 endif
 KAPPEND := $(strip $(KAPPEND))
 
 RUN_QEMU_FLAGS := -m $(MEM) -serial stdio -no-reboot -no-shutdown
 ifeq ($(HEADFUL),1)
 RUN_QEMU_FLAGS += -display gtk
+RUN_QEMU_FLAGS += -vga std
 else
 RUN_QEMU_FLAGS += -display none
+RUN_QEMU_FLAGS += -vga none
 endif
 RUN_QEMU_FLAGS += -device isa-debug-exit,iobase=0xf4,iosize=0x4
 RUN_QEMU_FLAGS += -drive if=virtio,file=$(QEMU_DISK_IMG),format=raw

@@ -313,6 +313,7 @@ KERNEL_SOURCES := \
     kernel/tests/input_smoke.c \
     kernel/tests/exec_double.c \
     kernel/video/fb_mmio.c \
+    kernel/video/pci_vga.c \
     drivers/video/fb.c \
     drivers/input/ps2_kbd.c \
     drivers/input/ps2_mouse.c \

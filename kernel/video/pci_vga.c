@@ -80,7 +80,6 @@ static uint32_t pci_read_config(uint8_t bus, uint8_t slot, uint8_t func, uint8_t
  */
 uint64_t pci_find_vga_framebuffer(void) {
     uint64_t found_bar_addr = 0;
-    uint16_t found_vendor = 0;
 
     /* Scan PCI bus 0 for VGA devices */
     for (uint8_t slot = 0; slot < 32; slot++) {
@@ -120,20 +119,15 @@ uint64_t pci_find_vga_framebuffer(void) {
                            (unsigned long long)framebuffer_addr,
                            bar0);
                 found_bar_addr = framebuffer_addr;
-                found_vendor = vendor_id;
                 break;
             }
         }
     }
 
-    /* For QEMU devices, BAR might not be reliable; use known addresses */
-    if (found_vendor == 0x1013) {  /* Cirrus Logic */
-        fut_printf("[PCI] Using standard Cirrus framebuffer address 0xe0000000 (BAR reported 0x%llx)\n",
-                   (unsigned long long)found_bar_addr);
-        return 0xe0000000ULL;
-    }
-
+    /* Use discovered BAR address */
     if (found_bar_addr != 0) {
+        fut_printf("[PCI] Using BAR-discovered address 0x%llx\n",
+                   (unsigned long long)found_bar_addr);
         return found_bar_addr;
     }
 

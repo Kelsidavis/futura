@@ -62,10 +62,10 @@ KAPPEND := $(strip $(KAPPEND))
 
 RUN_QEMU_FLAGS := -m $(MEM) -serial stdio -no-reboot -no-shutdown
 ifeq ($(HEADFUL),1)
-# Headful mode: use SDL2 display with standard VGA
-# -vga std provides a true linear framebuffer via standard VGA memory mapping
+# Headful mode: use SDL2 display with Cirrus VGA
+# -vga cirrus provides linear framebuffer support with better QEMU integration
 RUN_QEMU_FLAGS += -display sdl
-RUN_QEMU_FLAGS += -vga std
+RUN_QEMU_FLAGS += -vga cirrus
 else
 RUN_QEMU_FLAGS += -display none
 RUN_QEMU_FLAGS += -vga none

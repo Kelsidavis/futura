@@ -315,6 +315,7 @@ KERNEL_SOURCES := \
     kernel/video/fb_mmio.c \
     kernel/video/pci_vga.c \
     kernel/video/cirrus_vga.c \
+    kernel/video/virtio_gpu.c \
     drivers/video/fb.c \
     drivers/input/ps2_kbd.c \
     drivers/input/ps2_mouse.c \

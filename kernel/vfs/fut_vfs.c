@@ -34,7 +34,11 @@ extern void fut_printf(const char *fmt, ...);
 #define MAX_FS_TYPES 16
 #define MAX_MOUNTS 32
 #define MAX_OPEN_FILES 256
-#define MAX_PATH_COMPONENTS 32
+/* Reduced from 32 to 8 to minimize kernel stack usage.
+ * Most filesystem paths have 5-10 components maximum,
+ * 8 is more than sufficient for any realistic path while
+ * reducing the per-allocation size from 8KB to 2KB. */
+#define MAX_PATH_COMPONENTS 8
 
 static const struct fut_fs_type *registered_fs[MAX_FS_TYPES];
 static int num_fs_types = 0;
@@ -428,7 +432,7 @@ static int lookup_vnode(const char *path, struct fut_vnode **vnode) {
             return -ENOENT;  /* Root not mounted */
         }
         *vnode = root_vnode;
-        fut_vnode_ref(*vnode);
+        /* Note: Root vnode is never freed, so we don't take/release references to it */
         return 0;
     }
 
@@ -452,7 +456,7 @@ static int lookup_vnode(const char *path, struct fut_vnode **vnode) {
     }
 
     struct fut_vnode *current = root_vnode;
-    fut_vnode_ref(current);
+    /* Note: We do not take a reference to root_vnode; it's always valid */
     VFSDBG("[vfs] lookup_vnode start current=%p ref=%u\n",
            (void *)current,
            current ? current->refcount : 0);
@@ -547,6 +551,13 @@ static int lookup_vnode(const char *path, struct fut_vnode **vnode) {
             return ret;
         }
 
+        /* Handle case where lookup succeeded but vnode was not found */
+        if (next == NULL) {
+            release_lookup_ref(current);
+            VFSDBG("[vfs]  -> lookup('%s') = NULL (not found)\n", component);
+            return -2;  /* ENOENT */
+        }
+
         VFSDBG("[vfs]  -> lookup('%s') = %p (ino=%llu)\n",
                component,
                (void *)next,
@@ -609,11 +620,17 @@ static int lookup_parent_and_name(const char *path,
             return ret;
         }
 
+        /* Handle case where lookup succeeded but vnode was not found */
+        if (next == NULL) {
+            release_lookup_ref(current);
+            return -ENOENT;
+        }
+
         release_lookup_ref(current);
         current = next;
     }
 
-    if (current->type != VN_DIR) {
+    if (current == NULL || current->type != VN_DIR) {
         release_lookup_ref(current);
         return -ENOTDIR;
     }

@@ -38,6 +38,30 @@ void fut_pmm_init(uint64_t mem_size_bytes, uintptr_t phys_base) {
     pmm_total = mem_size_bytes / FUT_PAGE_SIZE;
     pmm_base  = phys_base;
 
+#if defined(__x86_64__)
+    /* Boot paging sets up 512 × 2MB huge pages in PD[0-511] mapping physical 0x0-0x40000000 (1GB).
+     * However, to avoid any issues with pmap_phys_to_virt address calculations at extreme ranges,
+     * we conservatively limit to 512MB (0x20000000) to ensure all allocations safely map to
+     * virtual addresses within 0xffffffff80000000 - 0xffffffffa0000000 range. */
+    uint64_t boot_map_limit = 0x20000000;  /* 512MB - conservative safe limit */
+    uint64_t pmm_max_phys = pmm_base + (pmm_total * FUT_PAGE_SIZE);
+    uint64_t safe_limit_pages = pmm_total;  /* Default: no limit needed */
+
+    if (pmm_max_phys > boot_map_limit && pmm_base < boot_map_limit) {
+        /* PMM extends beyond conservative safe range, restrict it */
+        uint64_t safe_mapped_bytes = boot_map_limit - pmm_base;
+        safe_limit_pages = safe_mapped_bytes / FUT_PAGE_SIZE;
+    }
+
+    if (pmm_total > safe_limit_pages) {
+        fut_printf("[PMM] Limiting to safe range: %llu pages (phys 0x%llx to 0x%llx)\n",
+                   (unsigned long long)safe_limit_pages,
+                   (unsigned long long)pmm_base,
+                   (unsigned long long)boot_map_limit);
+        pmm_total = safe_limit_pages;
+    }
+#endif
+
     // Bitmap size: 1 bit per page
     uint64_t bitmap_bytes = (pmm_total + 7u) / 8u;
     pmm_bitmap =
@@ -162,10 +186,11 @@ void fut_pmm_reserve_range(uintptr_t phys_addr, size_t size_bytes) {
 }
 
 /* ============================================================
- *   Kernel Heap (Buddy Allocator)
+ *   Kernel Heap (Buddy + Slab Allocators)
  * ============================================================ */
 
 #include "../../include/kernel/buddy_allocator.h"
+#include "../../include/kernel/slab_allocator.h"
 
 static uintptr_t heap_base  = 0;          // Heap start address
 static uintptr_t heap_limit = 0;          // Heap end address
@@ -194,24 +219,28 @@ void fut_heap_init(uintptr_t heap_start, uintptr_t heap_end) {
 
     // Initialize buddy allocator with the heap range
     buddy_heap_init(heap_base, heap_limit);
+
+    // Initialize slab allocator caches (uses buddy for slab allocation)
+    slab_init();
 }
 
 /**
- * Buddy allocator wrappers: delegate to buddy allocator implementation
+ * Integrated allocator: slab for small objects, buddy for large allocations
+ * This provides both efficiency (slab) and flexibility (buddy)
  */
 
 void *fut_malloc(size_t size) {
     if (!size) return nullptr;
 
-    /* Use buddy allocator */
-    return buddy_malloc(size);
+    /* Use slab allocator - it handles both small and large allocations */
+    return slab_malloc(size);
 }
 
 void fut_free(void *ptr) {
     if (!ptr) return;
 
-    /* Use buddy allocator */
-    buddy_free(ptr);
+    /* Use slab allocator */
+    slab_free(ptr);
 }
 
 void *fut_realloc(void *ptr, size_t new_size) {
@@ -221,8 +250,8 @@ void *fut_realloc(void *ptr, size_t new_size) {
         return nullptr;
     }
 
-    /* Use buddy allocator */
-    return buddy_realloc(ptr, new_size);
+    /* Use slab allocator */
+    return slab_realloc(ptr, new_size);
 }
 
 /* ============================================================

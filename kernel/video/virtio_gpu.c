@@ -173,6 +173,13 @@ static size_t g_fb_size = 0;
 static struct virtio_desc *g_desc_table = NULL;
 static struct virtio_avail *g_avail = NULL;
 static struct virtio_used *g_used = NULL;
+static uint16_t g_cmd_idx = 0;
+
+/* Command buffer pool in guest physical memory (after queues and FB) */
+static volatile uint8_t *g_cmd_buffer = NULL;
+static uint64_t g_cmd_buffer_phys = 0;
+#define CMD_BUFFER_SIZE 4096
+#define CMD_BUFFER_PHYS 0x2200000ULL
 
 static void pci_write_config_byte(uint8_t offset, uint8_t value) {
     uint32_t current = pci_config_read(g_bus, g_slot, g_func, offset & ~3);
@@ -262,19 +269,37 @@ static int virtio_gpu_alloc_framebuffer(uint32_t width, uint32_t height) {
 }
 
 static void virtio_gpu_submit_command(const void *cmd, size_t cmd_size) {
-    if (!g_desc_table || !g_avail) {
+    if (!g_desc_table || !g_avail || !g_cmd_buffer) {
         fut_printf("[VIRTIO-GPU] Command queue not initialized\n");
         return;
     }
 
-    /* Commands are in kernel virtual space; descriptors need physical addresses
-     * For now, we'll use the command address directly since VIRTIO will see
-     * guest physical addresses via DMA. In a real driver, we'd allocate from
-     * a known guest physical location. For this minimal implementation, we
-     * submit without descriptors (fire-and-forget style). */
+    if (cmd_size > CMD_BUFFER_SIZE) {
+        fut_printf("[VIRTIO-GPU] Command too large: %zu > %u\n", cmd_size, CMD_BUFFER_SIZE);
+        return;
+    }
 
-    fut_printf("[VIRTIO-GPU] Command submitted: type=%u size=%zu at 0x%p\n",
-               ((struct virtio_gpu_ctrl_hdr *)cmd)->type, cmd_size, cmd);
+    /* Copy command to guest physical buffer */
+    memcpy((void *)g_cmd_buffer, cmd, cmd_size);
+
+    /* Add descriptor for command buffer */
+    uint16_t desc_idx = g_cmd_idx % VIRTIO_RING_SIZE;
+    g_desc_table[desc_idx].addr = g_cmd_buffer_phys;
+    g_desc_table[desc_idx].len = cmd_size;
+    g_desc_table[desc_idx].flags = 0;  /* Command (read-only from device perspective) */
+    g_desc_table[desc_idx].next = 0;
+
+    /* Add to available ring */
+    uint16_t avail_idx = g_avail->idx % VIRTIO_RING_SIZE;
+    g_avail->ring[avail_idx] = desc_idx;
+    g_avail->idx++;
+
+    /* Notify device via queue notify */
+    pci_write_config_word(VIRTIO_PCI_QUEUE_NOTIFY, 0);
+
+    g_cmd_idx++;
+    fut_printf("[VIRTIO-GPU] Command submitted: type=%u size=%zu desc=%u avail=%u\n",
+               ((struct virtio_gpu_ctrl_hdr *)cmd)->type, cmd_size, desc_idx, g_avail->idx);
 }
 
 static int virtio_gpu_resource_create_2d(uint32_t resource_id, uint32_t width, uint32_t height) {
@@ -429,6 +454,18 @@ int virtio_gpu_init(uint64_t __attribute__((unused)) fb_phys_unused, uint32_t wi
     if (virtio_gpu_alloc_queues() != 0) {
         return -1;
     }
+
+    /* Map command buffer for VIRTIO command submission */
+    g_cmd_buffer_phys = CMD_BUFFER_PHYS;
+    uintptr_t cmd_virt = pmap_phys_to_virt(CMD_BUFFER_PHYS);
+    if (!cmd_virt) {
+        fut_printf("[VIRTIO-GPU] Failed to map command buffer\n");
+        return -1;
+    }
+    g_cmd_buffer = (volatile uint8_t *)cmd_virt;
+    memset((void *)g_cmd_buffer, 0, CMD_BUFFER_SIZE);
+    fut_printf("[VIRTIO-GPU] Command buffer: phys=0x%llx virt=0x%lx size=%u\n",
+               (unsigned long long)g_cmd_buffer_phys, (unsigned long)g_cmd_buffer, CMD_BUFFER_SIZE);
 
     /* VIRTIO device initialization sequence */
     /* 1. Set ACKNOWLEDGE bit */

@@ -110,9 +110,9 @@ extern char _bss_end[];
  *   Configuration Constants
  * ============================================================ */
 
-/* Memory configuration - for now assume 128MB available in QEMU */
-#define TOTAL_MEMORY_SIZE       (128 * 1024 * 1024)  /* 128 MiB */
-#define KERNEL_HEAP_SIZE        (120 * 1024 * 1024)  /* 120 MiB heap - nearly all available RAM to prevent heap exhaustion */
+/* Memory configuration - allocate 1GB in QEMU, but heap limited by boot paging */
+#define TOTAL_MEMORY_SIZE       (1024 * 1024 * 1024) /* 1 GiB */
+#define KERNEL_HEAP_SIZE        (100 * 1024 * 1024)  /* 100 MiB kernel heap - sized to stay within boot paging mappings */
 
 /* ============================================================
  *   Test Thread Functions

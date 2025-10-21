@@ -38,7 +38,10 @@ struct seat_state {
     int32_t pointer_sx;
     int32_t pointer_sy;
     bool left_button_down;
+    bool middle_button_down;
+    bool right_button_down;
     struct comp_surface *hover_btn_surface;
+    struct comp_surface *hover_min_btn_surface;
     struct comp_surface *pressed_surface;
     hit_role_t pressed_role;
     resize_edge_t pressed_edge;

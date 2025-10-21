@@ -276,6 +276,7 @@ KERNEL_SOURCES := \
     kernel/memory/fut_memory.c \
     kernel/memory/fut_mm.c \
     kernel/memory/mmap_dump.c \
+    kernel/memory/buddy_allocator.c \
     kernel/threading/fut_task.c \
     kernel/threading/fut_thread.c \
     kernel/scheduler/fut_sched.c \

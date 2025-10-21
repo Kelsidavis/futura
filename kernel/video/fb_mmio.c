@@ -162,11 +162,10 @@ int fb_probe_from_multiboot(const void *mb_info) {
         return -1;
     }
     fut_printf("[FB] enabling fallback geometry (fb-fallback=1)\n");
-    /* Use address within first 128MB of physical memory that's mapped by bootloader
-     * Place at 80MB mark (0x5000000) which maps to virt 0xffffffff85000000
-     * This avoids kernel (0MB-3.7MB), heap (3.7-63.7MB), and initramfs loading area
-     * Framebuffer needs 3MB, so 80-83MB is completely safe */
-    g_fb_hw.phys = 0x5000000ULL;
+    /* Use 0x4000000 (64MB) - safe position in physical RAM
+     * Well within 128MB boot mapping, doesn't conflict with kernel/heap/processes
+     * This is where we'll write framebuffer data that QEMU can read */
+    g_fb_hw.phys = 0x4000000ULL;
     g_fb_hw.info.width = 1024;
     g_fb_hw.info.height = 768;
     g_fb_hw.info.pitch = g_fb_hw.info.width * 4u;

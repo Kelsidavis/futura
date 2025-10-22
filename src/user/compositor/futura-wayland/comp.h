@@ -235,6 +235,7 @@ void comp_surface_frame(struct comp_surface *surface,
 int comp_run(struct compositor_state *comp);
 int comp_scheduler_start(struct compositor_state *comp);
 void comp_scheduler_stop(struct compositor_state *comp);
+void comp_render_frame(struct compositor_state *comp);
 
 bool comp_pointer_inside_surface(const struct compositor_state *comp,
                                  const struct comp_surface *surface,

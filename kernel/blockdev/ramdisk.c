@@ -134,9 +134,20 @@ static struct fut_blockdev *ramdisk_create_common(const char *name,
 
     /* Zero initialize storage using byte-by-byte writes
      * Must use byte writes to avoid alignment faults on potentially misaligned memory */
-    fut_printf("[RAMDISK] Zeroing storage buffer...\n");
-    for (size_t i = 0; i < size_bytes; i++) {
-        storage[i] = 0;
+    fut_printf("[RAMDISK] Zeroing storage buffer... storage=%p size=%llu\n", (void*)storage, (unsigned long long)size_bytes);
+
+    /* Use volatile to prevent optimization issues */
+    volatile uint8_t *volatile_storage = storage;
+
+    /* Zero in chunks - safer than all at once */
+    for (size_t chunk = 0; chunk < size_bytes; chunk += 4096) {
+        size_t chunk_size = (size_bytes - chunk < 4096) ? (size_bytes - chunk) : 4096;
+        for (size_t i = 0; i < chunk_size; i++) {
+            volatile_storage[chunk + i] = 0;
+        }
+        if (chunk % 32768 == 0) {
+            fut_printf("[RAMDISK] Zeroed %llu / %llu bytes...\n", (unsigned long long)chunk, (unsigned long long)size_bytes);
+        }
     }
     fut_printf("[RAMDISK] Storage buffer zeroed successfully\n");
 

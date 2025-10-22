@@ -205,10 +205,17 @@ void fut_heap_init(uintptr_t heap_start, uintptr_t heap_end) {
         heap_base = bitmap_guard;
     }
 
+    fut_printf("[HEAP-INIT] heap_base=%p heap_limit=%p (size=%llu KB)\n",
+               (void*)heap_base, (void*)heap_limit,
+               (unsigned long long)((heap_limit - heap_base) / 1024));
+
     if (heap_limit > heap_base) {
 #if defined(__x86_64__)
         phys_addr_t phys_start = pmap_virt_to_phys(heap_base);
         phys_addr_t phys_end = pmap_virt_to_phys(heap_limit - FUT_PAGE_SIZE) + FUT_PAGE_SIZE;
+        fut_printf("[HEAP-INIT] phys_start=%p phys_end=%p (size=%llu KB)\n",
+                   (void*)phys_start, (void*)phys_end,
+                   (unsigned long long)((phys_end - phys_start) / 1024));
         fut_pmm_reserve_range((uintptr_t)phys_start, (size_t)(phys_end - phys_start));
 #else
         fut_pmm_reserve_range(heap_base, heap_limit - heap_base);

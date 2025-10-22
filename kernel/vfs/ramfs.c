@@ -127,9 +127,18 @@ static int ramfs_open(struct fut_vnode *vnode, int flags) {
     return 0;
 }
 
-static int ramfs_close(struct fut_vnode *vnode) {
-    (void)vnode;
-    /* Nothing to do for close */
+static int ramfs_close(struct fut_vnode *vnode __attribute__((unused))) {
+    /* File close in RAMFS is a no-op.
+     * RAMFS files are in-memory and persist for the lifetime of the system.
+     * File data is NOT freed on close because:
+     * 1. Multiple processes can have the same file open
+     * 2. The VFS layer might still access the file after logical close
+     * 3. Close should only close the file descriptor, not delete the file
+     *
+     * Memory management: RAMFS files consume kernel heap memory,
+     * but this is acceptable for a boot-time filesystem staging binaries.
+     * Files are only freed when RAMFS is unmounted or system shuts down.
+     */
     return 0;
 }
 

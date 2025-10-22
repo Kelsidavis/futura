@@ -209,15 +209,17 @@ void *buddy_malloc(size_t size) {
                 /* Create buddy block */
                 uintptr_t addr = (uintptr_t)hdr;
                 uintptr_t buddy_addr = get_buddy_addr(addr, order_to_size(hdr->order));
-                block_hdr_t *buddy_hdr = (block_hdr_t *)buddy_addr;
-
-                buddy_hdr->order = hdr->order;
-                buddy_hdr->is_allocated = 0;
-                buddy_hdr->magic = BLOCK_MAGIC;
-
-                /* Only add buddy to free list if it's within heap bounds */
                 size_t buddy_size = order_to_size(hdr->order);
+
+                /* CRITICAL: Only write to buddy header if it's within heap bounds
+                 * Writing to an invalid address corrupts memory outside the heap */
                 if (buddy_addr >= heap_start && (buddy_addr + buddy_size) <= heap_end) {
+                    /* Safe to write - buddy is within heap */
+                    block_hdr_t *buddy_hdr = (block_hdr_t *)buddy_addr;
+                    buddy_hdr->order = hdr->order;
+                    buddy_hdr->is_allocated = 0;
+                    buddy_hdr->magic = BLOCK_MAGIC;
+
                     /* Add buddy to free list */
                     free_block_t *buddy_free = (free_block_t *)get_data_ptr(buddy_hdr);
                     buddy_free->next = free_lists[hdr->order - MIN_ORDER];
@@ -252,15 +254,31 @@ void *buddy_malloc(size_t size) {
             total_allocated += order_to_size(hdr->order);
 
             void *result = get_data_ptr(hdr);
+            size_t alloc_size = order_to_size(hdr->order);
 
-            /* NOTE: Memory clearing has been removed due to issues with RAMFS file buffers
-             * being cleared after successful writes. The VFS layer (ramfs) uses guard values
-             * (magic_guard_before/after) to detect corruption instead.
-             * CRITICAL: Callers MUST initialize their data appropriately.
-             */
+            /* CRITICAL: Clear allocated memory ONLY for small blocks to prevent data leakage
+             * For slab allocations (order 16-19, ~64KB-512KB), clear the entire block
+             * This prevents old file content from being interpreted as structure metadata
+             * For large allocations (order 20+, >1MB), DON'T clear to preserve file performance
+             * Callers of large allocations MUST initialize their data appropriately */
+            extern void fut_printf(const char *, ...);
+            fut_printf("[BUDDY-MALLOC-CLEAR] order=%d size=%llu data=%p\n",
+                       hdr->order, (unsigned long long)alloc_size, result);
+            if (hdr->order <= 19) {  /* Only clear small blocks (up to 512KB) */
+                size_t data_size = alloc_size - sizeof(block_hdr_t);
+                extern void *memset(void *, int, size_t);
+                fut_printf("[BUDDY-MALLOC-CLEAR] Clearing %llu bytes starting at %p\n",
+                           (unsigned long long)data_size, result);
+                memset(result, 0, data_size);
+                fut_printf("[BUDDY-MALLOC-CLEAR] Clear complete, first 8 bytes now: %02x %02x %02x %02x %02x %02x %02x %02x\n",
+                           ((uint8_t*)result)[0], ((uint8_t*)result)[1], ((uint8_t*)result)[2], ((uint8_t*)result)[3],
+                           ((uint8_t*)result)[4], ((uint8_t*)result)[5], ((uint8_t*)result)[6], ((uint8_t*)result)[7]);
+            } else {
+                fut_printf("[BUDDY-MALLOC-CLEAR] SKIPPING: order %d > 19\n", hdr->order);
+            }
 
             fut_printf("[BUDDY-MALLOC] Allocated at %p (hdr=%p size=%llu)\n",
-                       result, (void*)hdr, (unsigned long long)order_to_size(hdr->order));
+                       result, (void*)hdr, (unsigned long long)alloc_size);
             return result;
         }
 
@@ -323,6 +341,14 @@ void buddy_free(void *ptr) {
         return;
     }
 
+    /* CRITICAL: Ensure header address is properly aligned
+     * Buddy allocator assumes header is immediately before data pointer
+     * If not properly aligned, header calculations will be wrong */
+    if ((hdr_addr & 0x7) != 0) {
+        fut_printf("[BUDDY-FREE] ERROR: Header address %p is not 8-byte aligned (misaligned data pointer)\n", (void*)hdr_addr);
+        return;
+    }
+
     block_hdr_t *hdr = get_block_hdr(ptr);
     fut_printf("[BUDDY-FREE-START] Block header at %p, magic=0x%x, allocated=%d, order=%d\n",
                (void*)hdr, hdr->magic, hdr->is_allocated, hdr->order);
@@ -364,6 +390,13 @@ void buddy_free(void *ptr) {
         }
 
         block_hdr_t *buddy_hdr = (block_hdr_t *)buddy_addr;
+
+        /* CRITICAL: Ensure buddy header address itself is valid before reading
+         * Prevent reading from uninitialized or misaligned memory */
+        if ((buddy_addr & 0x7) != 0) {
+            fut_printf("[BUDDY-FREE] ERROR: Buddy address %p is not 8-byte aligned!\n", (void*)buddy_addr);
+            break;
+        }
 
         /* Validate buddy and check if free */
         if (buddy_hdr->magic != BLOCK_MAGIC) {

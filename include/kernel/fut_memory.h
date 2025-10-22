@@ -156,6 +156,20 @@ void *fut_malloc_pages(size_t num_pages);
  */
 void fut_free_pages(void *ptr, size_t num_pages);
 
+/**
+ * Get the kernel heap base address.
+ *
+ * @return Virtual address of heap start
+ */
+uintptr_t fut_heap_get_base(void);
+
+/**
+ * Get the kernel heap limit address.
+ *
+ * @return Virtual address of heap end
+ */
+uintptr_t fut_heap_get_limit(void);
+
 /* ============================================================
  *   Diagnostics
  * ============================================================ */

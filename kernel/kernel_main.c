@@ -1051,8 +1051,7 @@ void fut_kernel_main(void) {
         }
     }
 
-    /* TEMPORARILY DISABLED colorwheel to isolate display issues */
-    /*
+    /* Enable colorwheel client now that memory corruption bugs are fixed */
     if (wayland_exec == 0 && wayland_client_exec == 0 && wayland_color_stage == 0) {
         fut_boot_delay_ms(100);
         char name[] = "wl-colorwheel";
@@ -1064,8 +1063,6 @@ void fut_kernel_main(void) {
             fut_printf("[INIT] exec /bin/wl-colorwheel -> 0\n");
         }
     }
-    */
-    fut_printf("[INIT] Colorwheel client disabled for testing\n");
 
     /* Check if interactive mode is enabled (for GUI testing) */
     /* First try boot argument, then fall back to compile-time flag */

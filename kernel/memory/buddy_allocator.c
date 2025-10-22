@@ -114,25 +114,117 @@ void buddy_heap_init(uintptr_t start, uintptr_t end) {
         free_lists[i] = NULL;
     }
 
-    /* Create initial free block spanning entire heap */
+    /* CRITICAL FIX: Calculate the maximum order that heap start is actually aligned to.
+     * The buddy allocator's XOR-based buddy address calculation assumes power-of-2 alignment
+     * at the order size. If heap start is misaligned, buddy calculations produce wrong addresses,
+     * corrupting the free lists and causing heap chaos.
+     *
+     * Instead of using the full heap size for the initial block order, we use the largest
+     * power-of-2 that divides the heap start address. This ensures all blocks are properly aligned
+     * for correct buddy address calculations throughout the heap's lifetime. */
+
+    int max_alignment_order = MIN_ORDER;  /* At least page-sized (MIN_ORDER = 6, 64 bytes) */
+
+    /* Find the highest bit set in the heap start address
+     * This tells us the maximum power-of-2 alignment */
+    if (start != 0) {
+        /* Count trailing zeros in the address (= log2 of alignment) */
+        uintptr_t alignment = start & -start;  /* Isolate lowest set bit */
+        int alignment_shift = 0;
+        uintptr_t temp = alignment;
+        while (temp > 1) {
+            temp >>= 1;
+            alignment_shift++;
+        }
+
+        if (alignment_shift >= MIN_ORDER) {
+            max_alignment_order = alignment_shift;
+        }
+
+        fut_printf("[BUDDY-INIT] Heap start %p is aligned to 2^%d bytes\n",
+                   (void*)start, alignment_shift);
+    }
+
+    /* Create initial free block based on heap size, but don't exceed the alignment constraint */
     size_t heap_size = end - start;
     int initial_order = size_to_order(heap_size);
+
+    /* Limit initial order to what the heap start is actually aligned to */
+    if (initial_order > max_alignment_order) {
+        fut_printf("[BUDDY-INIT] LIMITING initial order from %d to %d due to address alignment\n",
+                   initial_order, max_alignment_order);
+        initial_order = max_alignment_order;
+    }
 
     if (initial_order > MAX_ORDER) {
         initial_order = MAX_ORDER;
     }
 
-    /* Add initial block to appropriate free list */
-    block_hdr_t *initial = (block_hdr_t *)start;
-    initial->order = initial_order;
-    initial->is_allocated = 0;
-    initial->magic = BLOCK_MAGIC;
+    fut_printf("[BUDDY-INIT] Creating initial free block with order %d (size=%llu bytes)\n",
+               initial_order, (unsigned long long)(1UL << initial_order));
 
-    free_block_t *freeblk = (free_block_t *)get_data_ptr(initial);
-    freeblk->next = NULL;
-    freeblk->prev = NULL;
+    /* Add blocks to fill the entire heap, starting with properly-aligned blocks.
+     * If the heap start is misaligned, we create smaller blocks until we reach
+     * an address where we can create larger aligned blocks. */
 
-    free_lists[initial_order - MIN_ORDER] = freeblk;
+    uintptr_t current_addr = start;
+    size_t remaining_size = heap_size;
+
+    while (remaining_size > 0 && current_addr < end) {
+        /* Find the largest order that fits in remaining space AND is properly aligned at current_addr */
+        int block_order = MIN_ORDER;
+
+        /* Determine the maximum order based on address alignment */
+        if (current_addr != 0) {
+            uintptr_t alignment = current_addr & -current_addr;
+            int alignment_shift = 0;
+            uintptr_t temp = alignment;
+            while (temp > 1) {
+                temp >>= 1;
+                alignment_shift++;
+            }
+            if (alignment_shift >= MIN_ORDER) {
+                block_order = alignment_shift;
+            }
+        }
+
+        /* Also constrain by remaining space */
+        while (block_order < MAX_ORDER && (size_t)(1UL << block_order) <= remaining_size) {
+            block_order++;
+        }
+        block_order--;  /* Step back to the last valid order */
+
+        /* Ensure block_order is at least MIN_ORDER */
+        if (block_order < MIN_ORDER) {
+            block_order = MIN_ORDER;
+        }
+
+        size_t block_size = 1UL << block_order;
+        if (block_size > remaining_size) {
+            break;  /* No more room for blocks */
+        }
+
+        /* Create block header at current address */
+        block_hdr_t *blk = (block_hdr_t *)current_addr;
+        blk->order = block_order;
+        blk->is_allocated = 0;
+        blk->magic = BLOCK_MAGIC;
+
+        /* Add to free list */
+        free_block_t *freeblk = (free_block_t *)get_data_ptr(blk);
+        freeblk->next = free_lists[block_order - MIN_ORDER];
+        freeblk->prev = NULL;
+        if (free_lists[block_order - MIN_ORDER]) {
+            free_lists[block_order - MIN_ORDER]->prev = freeblk;
+        }
+        free_lists[block_order - MIN_ORDER] = freeblk;
+
+        /* Move to next block position */
+        current_addr += block_size;
+        remaining_size -= block_size;
+    }
+
+    fut_printf("[BUDDY-INIT] Heap initialization complete\n");
 }
 
 void *buddy_malloc(size_t size) {

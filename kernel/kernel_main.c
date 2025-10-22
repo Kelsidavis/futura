@@ -110,9 +110,9 @@ extern char _bss_end[];
  *   Configuration Constants
  * ============================================================ */
 
-/* Memory configuration - allocate 1GB in QEMU with 512MB heap fully mapped */
+/* Memory configuration - allocate 1GB in QEMU with balanced kernel heap */
 #define TOTAL_MEMORY_SIZE       (1024 * 1024 * 1024) /* 1 GiB */
-#define KERNEL_HEAP_SIZE        (512 * 1024 * 1024)  /* 512 MiB kernel heap - must ensure full virtual mapping during boot */
+#define KERNEL_HEAP_SIZE        (256 * 1024 * 1024)  /* 256 MiB kernel heap - balanced size for RAMFS staging and process tasks */
 
 /* ============================================================
  *   Test Thread Functions

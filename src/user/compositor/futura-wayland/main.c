@@ -10,13 +10,14 @@
 #include <stdbool.h>
 #include <user/stdio.h>
 #include <user/stdlib.h>
+#include <platform/platform.h>
 
 int main(void) {
     struct compositor_state comp = {0};
 
     comp.display = wl_display_create();
     if (!comp.display) {
-        printf("[WAYLAND] failed to create wl_display\n");
+        fut_printf("[WAYLAND] failed to create wl_display\n");
         return -1;
     }
 
@@ -65,7 +66,7 @@ int main(void) {
     }
 
     if (comp_set_backbuffer_enabled(&comp, want_backbuffer) != 0) {
-        printf("[WAYLAND] warning: backbuffer setup failed, falling back to direct FB\n");
+        fut_printf("[WAYLAND] warning: backbuffer setup failed, falling back to direct FB\n");
         comp_set_backbuffer_enabled(&comp, false);
     }
     comp.last_present_ns = 0;
@@ -84,7 +85,7 @@ int main(void) {
         output_global_init(&comp) != 0 ||
         shm_backend_init(&comp) != 0 ||
         data_device_manager_init(&comp) != 0) {
-        printf("[WAYLAND] failed to initialise globals\n");
+        fut_printf("[WAYLAND] failed to initialise globals\n");
         comp_state_finish(&comp);
         wl_display_destroy(comp.display);
         return -1;
@@ -92,7 +93,7 @@ int main(void) {
 
     comp.seat = seat_init(&comp);
     if (!comp.seat) {
-        printf("[WAYLAND] failed to initialise seat\n");
+        fut_printf("[WAYLAND] failed to initialise seat\n");
         data_device_manager_finish(&comp);
         shm_backend_finish(&comp);
         comp_state_finish(&comp);
@@ -101,7 +102,7 @@ int main(void) {
     }
 
     if (comp_scheduler_start(&comp) != 0) {
-        printf("[WAYLAND] failed to start frame scheduler\n");
+        fut_printf("[WAYLAND] failed to start frame scheduler\n");
         seat_finish(comp.seat);
         data_device_manager_finish(&comp);
         shm_backend_finish(&comp);
@@ -112,7 +113,7 @@ int main(void) {
 
     const char *socket = wl_display_add_socket_auto(comp.display);
     if (!socket) {
-        printf("[WAYLAND] failed to add display socket\n");
+        fut_printf("[WAYLAND] failed to add display socket\n");
         data_device_manager_finish(&comp);
         shm_backend_finish(&comp);
         comp_state_finish(&comp);
@@ -120,7 +121,7 @@ int main(void) {
         return -1;
     }
 
-    printf("[WAYLAND] compositor ready %ux%u bpp=%u socket=%s\n",
+    fut_printf("[WAYLAND] compositor ready %ux%u bpp=%u socket=%s\n",
            comp.fb_info.width,
            comp.fb_info.height,
            comp.fb_info.bpp,

@@ -25,6 +25,7 @@ struct ramfs_dirent {
 
 /* Per-vnode filesystem data */
 struct ramfs_node {
+    uint64_t magic_guard_before;    /* Guard value to detect overflow into structure */
     union {
         /* For regular files: data buffer */
         struct {
@@ -37,7 +38,10 @@ struct ramfs_node {
             struct ramfs_dirent *entries;
         } dir;
     };
+    uint64_t magic_guard_after;     /* Guard value to detect overflow after structure */
 };
+
+#define RAMFS_NODE_MAGIC 0xDEADC0DEDEADBEEFULL
 
 #define RAMFS_ROOT_CANARY_BEFORE 0xFADC0DE0CAFEBABEULL
 #define RAMFS_ROOT_CANARY_AFTER  0xDEADBEEFCAFED00DULL
@@ -58,6 +62,29 @@ static int str_cmp(const char *a, const char *b) {
         b++;
     }
     return *a - *b;
+}
+
+/* Validate that ramfs_node guards haven't been corrupted */
+static int validate_ramfs_node(struct ramfs_node *node) {
+    extern void fut_printf(const char *, ...);
+
+    if (!node) {
+        return 0;  /* NULL is OK, caller checks this */
+    }
+
+    if (node->magic_guard_before != RAMFS_NODE_MAGIC) {
+        fut_printf("[RAMFS-GUARD] ERROR: guard_before corrupted! Expected 0x%llx, got 0x%llx\n",
+                   (unsigned long long)RAMFS_NODE_MAGIC, (unsigned long long)node->magic_guard_before);
+        return -1;
+    }
+
+    if (node->magic_guard_after != RAMFS_NODE_MAGIC) {
+        fut_printf("[RAMFS-GUARD] ERROR: guard_after corrupted! Expected 0x%llx, got 0x%llx\n",
+                   (unsigned long long)RAMFS_NODE_MAGIC, (unsigned long long)node->magic_guard_after);
+        return -1;
+    }
+
+    return 0;
 }
 
 static void str_copy_safe(char *dest, const char *src, size_t max_len) {
@@ -121,6 +148,8 @@ static ssize_t ramfs_read(struct fut_vnode *vnode, void *buf, size_t size, uint6
 }
 
 static ssize_t ramfs_write(struct fut_vnode *vnode, const void *buf, size_t size, uint64_t offset) {
+    extern void fut_printf(const char *, ...);
+
     if (!vnode || !buf) {
         return -EINVAL;
     }
@@ -131,6 +160,12 @@ static ssize_t ramfs_write(struct fut_vnode *vnode, const void *buf, size_t size
 
     struct ramfs_node *node = (struct ramfs_node *)vnode->fs_data;
     if (!node) {
+        return -EIO;
+    }
+
+    /* Validate guards before writing - corruption detection */
+    if (validate_ramfs_node(node) != 0) {
+        fut_printf("[RAMFS-WRITE] ABORTING: node guards corrupted before write!\n");
         return -EIO;
     }
 
@@ -218,6 +253,16 @@ static ssize_t ramfs_write(struct fut_vnode *vnode, const void *buf, size_t size
     /* Update size - we already checked for overflow above */
     if (offset + size > vnode->size) {
         vnode->size = offset + size;
+    }
+
+    /* Validate guards after writing - catch overflow corruption immediately */
+    if (validate_ramfs_node(node) != 0) {
+        fut_printf("[RAMFS-WRITE] CRITICAL: write operation corrupted node guards!\n");
+        fut_printf("[RAMFS-WRITE] This indicates a buffer overflow - wrote %llu bytes at offset %llu\n",
+                   (unsigned long long)size, (unsigned long long)offset);
+        fut_printf("[RAMFS-WRITE] File capacity: %llu, would write to end at: %llu\n",
+                   (unsigned long long)node->file.capacity, (unsigned long long)(offset + size));
+        return -EIO;
     }
 
     return (ssize_t)size;
@@ -318,6 +363,10 @@ static int ramfs_create(struct fut_vnode *dir, const char *name, uint32_t mode, 
     vnode->refcount = 1;
     vnode->ops = dir->ops;  /* Same ops as parent */
 
+    /* Initialize guard values to detect buffer overflows */
+    node->magic_guard_before = RAMFS_NODE_MAGIC;
+    node->magic_guard_after = RAMFS_NODE_MAGIC;
+
     /* Initialize file data */
     node->file.data = NULL;
     node->file.capacity = 0;
@@ -386,6 +435,10 @@ static int ramfs_mkdir(struct fut_vnode *dir, const char *name, uint32_t mode) {
     vnode->fs_data = node;
     vnode->refcount = 1;
     vnode->ops = dir->ops;
+
+    /* Initialize guard values to detect buffer overflows */
+    node->magic_guard_before = RAMFS_NODE_MAGIC;
+    node->magic_guard_after = RAMFS_NODE_MAGIC;
 
     /* Initialize directory */
     node->dir.entries = NULL;

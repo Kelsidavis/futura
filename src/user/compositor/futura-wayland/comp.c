@@ -1245,8 +1245,10 @@ void comp_render_frame(struct compositor_state *comp) {
 
     if (comp->backbuffer_enabled) {
         comp->bb_index = render_index;
-        present_damage(comp, damage);
     }
+
+    /* Always present rendered content to framebuffer, whether backbuffer is enabled or not */
+    present_damage(comp, damage);
 
     int frame_cb_count = comp_flush_frame_callbacks(comp, comp_now_msec());
 

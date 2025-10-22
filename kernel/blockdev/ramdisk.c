@@ -127,9 +127,16 @@ static struct fut_blockdev *ramdisk_create_common(const char *name,
         return NULL;
     }
 
-    /* Zero initialize storage */
-    for (size_t i = 0; i < size_bytes; i++) {
-        storage[i] = 0;
+    /* Zero initialize storage using 8-byte writes for efficiency */
+    uint64_t *p64 = (uint64_t *)storage;
+    size_t num_u64 = size_bytes / 8;
+    for (size_t i = 0; i < num_u64; i++) {
+        p64[i] = 0;
+    }
+    /* Zero any remaining bytes (in case size_bytes is not 8-byte aligned) */
+    uint8_t *p8 = storage + (num_u64 * 8);
+    for (size_t i = 0; i < (size_bytes % 8); i++) {
+        p8[i] = 0;
     }
 
     data->storage = storage;
@@ -143,9 +150,17 @@ static struct fut_blockdev *ramdisk_create_common(const char *name,
         return NULL;
     }
 
-    /* Clear structure to avoid stale data */
-    for (size_t i = 0; i < sizeof(struct fut_blockdev); ++i) {
-        ((uint8_t *)dev)[i] = 0;
+    /* Clear structure to avoid stale data using 8-byte writes for efficiency */
+    uint64_t *p64_dev = (uint64_t *)dev;
+    size_t dev_size = sizeof(struct fut_blockdev);
+    size_t num_u64_dev = dev_size / 8;
+    for (size_t i = 0; i < num_u64_dev; i++) {
+        p64_dev[i] = 0;
+    }
+    /* Zero any remaining bytes */
+    uint8_t *p8_dev = (uint8_t *)dev + (num_u64_dev * 8);
+    for (size_t i = 0; i < (dev_size % 8); i++) {
+        p8_dev[i] = 0;
     }
 
     /* Copy device name */

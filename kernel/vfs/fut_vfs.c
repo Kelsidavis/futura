@@ -19,7 +19,7 @@
 extern void fut_printf(const char *fmt, ...);
 
 /* Uncomment for verbose VFS tracing */
-#define DEBUG_VFS 0
+#define DEBUG_VFS 1
 
 #ifdef DEBUG_VFS
 #define VFSDBG(...) fut_printf(__VA_ARGS__)
@@ -34,11 +34,11 @@ extern void fut_printf(const char *fmt, ...);
 #define MAX_FS_TYPES 16
 #define MAX_MOUNTS 32
 #define MAX_OPEN_FILES 256
-/* Reduced from 32 to 8 to minimize kernel stack usage.
- * Most filesystem paths have 5-10 components maximum,
- * 8 is more than sufficient for any realistic path while
- * reducing the per-allocation size from 8KB to 2KB. */
-#define MAX_PATH_COMPONENTS 8
+/* Reduced to 4 to prevent stack overflow. Since fut_vfs_open() calls both
+ * lookup_vnode() AND lookup_parent_and_name(), and each allocates
+ * components[MAX_PATH_COMPONENTS][256], we need: 4 * 256 = 1KB per function.
+ * Total stack usage: 2KB instead of 4KB. Most paths have 2-3 components anyway. */
+#define MAX_PATH_COMPONENTS 4
 
 static const struct fut_fs_type *registered_fs[MAX_FS_TYPES];
 static int num_fs_types = 0;
@@ -364,6 +364,12 @@ static struct fut_mount *find_mount_for_path(
         return NULL;
     }
 
+    /* Allocate scratch buffer on heap to avoid stack overflow */
+    char (*mount_components)[FUT_VFS_NAME_MAX + 1] = fut_malloc(MAX_PATH_COMPONENTS * (FUT_VFS_NAME_MAX + 1));
+    if (!mount_components) {
+        return NULL;  /* OOM - no mount */
+    }
+
     struct fut_mount *mount = mount_list;
     while (mount) {
         if (!mount->mountpoint || mount->mountpoint[0] != '/') {
@@ -377,7 +383,6 @@ static struct fut_mount *find_mount_for_path(
             continue;
         }
 
-        char mount_components[MAX_PATH_COMPONENTS][FUT_VFS_NAME_MAX + 1];
         int mount_count = parse_path(mount->mountpoint,
                                      mount_components,
                                      MAX_PATH_COMPONENTS);
@@ -395,12 +400,14 @@ static struct fut_mount *find_mount_for_path(
         }
 
         if (match) {
+            fut_free(mount_components);
             return mount;
         }
 
         mount = mount->next;
     }
 
+    fut_free(mount_components);
     return NULL;
 }
 
@@ -438,20 +445,31 @@ static int lookup_vnode(const char *path, struct fut_vnode **vnode) {
 
     const char *orig_path = path;
 
-    /* Parse path into components */
-    char components[MAX_PATH_COMPONENTS][FUT_VFS_NAME_MAX + 1];
-    int num_components = parse_path(path, components, MAX_PATH_COMPONENTS);
+    /* Use heap allocation to avoid stack overflow - each component array is 1KB */
+    size_t alloc_size = MAX_PATH_COMPONENTS * (FUT_VFS_NAME_MAX + 1);
+    char (*components)[FUT_VFS_NAME_MAX + 1] = fut_malloc(alloc_size);
+    VFSDBG("[vfs-heap] lookup_vnode malloc(%zu) = %p\n", alloc_size, (void*)components);
+    if (!components) {
+        return -ENOMEM;
+    }
 
+    int num_components = parse_path(path, components, MAX_PATH_COMPONENTS);
     if (num_components < 0) {
+        VFSDBG("[vfs-heap] lookup_vnode freeing %p (parse_path failed)\n", (void*)components);
+        fut_free(components);
         return num_components;
     }
 
     if (num_components == 0) {
+        VFSDBG("[vfs-heap] lookup_vnode freeing %p (num==0)\n", (void*)components);
+        fut_free(components);
         return -EINVAL;
     }
 
     /* Start from root */
     if (!root_vnode) {
+        VFSDBG("[vfs-heap] lookup_vnode freeing %p (no root)\n", (void*)components);
+        fut_free(components);
         return -ENOENT;
     }
 
@@ -471,6 +489,7 @@ static int lookup_vnode(const char *path, struct fut_vnode **vnode) {
         if (++steps > max_steps) {
             VFSDBG("[vfs] ELOOP: exceeded step budget walking '%s'\n", path);
             release_lookup_ref(current);
+            fut_free(components);
             return -ELOOP;
         }
 
@@ -520,6 +539,7 @@ static int lookup_vnode(const char *path, struct fut_vnode **vnode) {
                 VFSDBG("[vfs] lookup_vnode done vnode=%p ino=%llu (mount root)\n",
                        (void *)current,
                        current ? (unsigned long long)current->ino : 0ULL);
+                fut_free(components);
                 return 0;
             }
 
@@ -535,12 +555,14 @@ static int lookup_vnode(const char *path, struct fut_vnode **vnode) {
                    (void *)current,
                    current ? (int)current->type : -1);
             release_lookup_ref(current);
+            fut_free(components);
             return -ENOTDIR;
         }
 
         /* Lookup next component */
         if (!current->ops || !current->ops->lookup) {
             release_lookup_ref(current);
+            fut_free(components);
             return -ENOENT;
         }
 
@@ -549,8 +571,12 @@ static int lookup_vnode(const char *path, struct fut_vnode **vnode) {
         int ret = current->ops->lookup(current, component, &next);
 
         if (ret < 0) {
-            release_lookup_ref(current);
             VFSDBG("[vfs]  component lookup failed ret=%d\n", ret);
+            VFSDBG("[vfs]  about to release_lookup_ref(%p)\n", (void*)current);
+            release_lookup_ref(current);
+            VFSDBG("[vfs]  released OK, about to free components=%p\n", (void*)components);
+            fut_free(components);
+            VFSDBG("[vfs]  freed OK, returning %d\n", ret);
             return ret;
         }
 
@@ -558,7 +584,8 @@ static int lookup_vnode(const char *path, struct fut_vnode **vnode) {
         if (next == NULL) {
             release_lookup_ref(current);
             VFSDBG("[vfs]  -> lookup('%s') = NULL (not found)\n", component);
-            return -2;  /* ENOENT */
+            fut_free(components);
+            return -ENOENT;
         }
 
         VFSDBG("[vfs]  -> lookup('%s') = %p (ino=%llu)\n",
@@ -575,6 +602,9 @@ static int lookup_vnode(const char *path, struct fut_vnode **vnode) {
     VFSDBG("[vfs] lookup_vnode done vnode=%p ino=%llu\n",
            (void *)current,
            current ? (unsigned long long)current->ino : 0ULL);
+    VFSDBG("[vfs-heap] lookup_vnode freeing %p\n", (void*)components);
+    fut_free(components);
+    VFSDBG("[vfs-heap] lookup_vnode freed %p OK\n", (void*)components);
     return 0;
 }
 
@@ -585,17 +615,25 @@ static int lookup_parent_and_name(const char *path,
         return -EINVAL;
     }
 
-    char components[MAX_PATH_COMPONENTS][FUT_VFS_NAME_MAX + 1];
+    /* Use heap allocation to avoid stack overflow */
+    char (*components)[FUT_VFS_NAME_MAX + 1] = fut_malloc(MAX_PATH_COMPONENTS * (FUT_VFS_NAME_MAX + 1));
+    if (!components) {
+        return -ENOMEM;
+    }
+
     int num_components = parse_path(path, components, MAX_PATH_COMPONENTS);
     if (num_components < 0) {
+        fut_free(components);
         return num_components;
     }
 
     if (num_components == 0) {
+        fut_free(components);
         return -EINVAL;
     }
 
     if (!root_vnode) {
+        fut_free(components);
         return -ENOENT;
     }
 
@@ -619,6 +657,7 @@ static int lookup_parent_and_name(const char *path,
 
         if (current->type != VN_DIR || !current->ops || !current->ops->lookup) {
             release_lookup_ref(current);
+            fut_free(components);
             return -ENOTDIR;
         }
 
@@ -628,6 +667,7 @@ static int lookup_parent_and_name(const char *path,
             if (current != root_vnode_base) {
                 release_lookup_ref(current);
             }
+            fut_free(components);
             return ret;
         }
 
@@ -636,6 +676,7 @@ static int lookup_parent_and_name(const char *path,
             if (current != root_vnode_base) {
                 release_lookup_ref(current);
             }
+            fut_free(components);
             return -ENOENT;
         }
 
@@ -649,12 +690,14 @@ static int lookup_parent_and_name(const char *path,
         if (current != root_vnode_base) {
             release_lookup_ref(current);
         }
+        fut_free(components);
         return -ENOTDIR;
     }
 
     str_copy(name_out, components[num_components - 1], FUT_VFS_NAME_MAX + 1);
     *parent_out = current;
     /* Return current with reference held - only release if not root */
+    fut_free(components);
     return 0;
 }
 
@@ -832,26 +875,37 @@ int fut_vfs_open(const char *path, int flags, int mode) {
     ret = lookup_vnode(path, &vnode);
     if (ret < 0) {
         /* If O_CREAT is set and parent exists, create new file */
-        if ((flags & O_CREAT) && ret == -ENOENT) {
+        if ((flags & O_CREAT) && (ret == -ENOENT || ret == -2)) {
+            VFSDBG("[vfs-open] O_CREAT path triggered for %s\n", path);
             struct fut_vnode *parent = NULL;
             char leaf[FUT_VFS_NAME_MAX + 1];
 
+            VFSDBG("[vfs-open] calling lookup_parent_and_name\n");
             int lookup_ret = lookup_parent_and_name(path, &parent, leaf);
+            VFSDBG("[vfs-open] lookup_parent_and_name returned %d\n", lookup_ret);
             if (lookup_ret < 0) {
                 return lookup_ret;
             }
 
+            VFSDBG("[vfs-open] parent=%p leaf='%s'\n", (void*)parent, leaf);
             if (!parent->ops || !parent->ops->create) {
+                VFSDBG("[vfs-open] parent has no create op\n");
                 release_lookup_ref(parent);
                 return -ENOSYS;
             }
 
+            VFSDBG("[vfs-open] calling parent->ops->create\n");
             struct fut_vnode *new_node = NULL;
             int create_ret = parent->ops->create(parent, leaf, (uint32_t)mode, &new_node);
+            VFSDBG("[vfs-open] create returned %d new_node=%p\n", create_ret, (void*)new_node);
+            VFSDBG("[vfs-open] about to release_lookup_ref(parent=%p)\n", (void*)parent);
             release_lookup_ref(parent);
+            VFSDBG("[vfs-open] released parent OK\n");
             if (create_ret < 0) {
+                VFSDBG("[vfs-open] create failed, returning %d\n", create_ret);
                 return create_ret;
             }
+            VFSDBG("[vfs-open] create succeeded, continuing\n");
 
             vnode = new_node;
             created = true;
@@ -866,19 +920,28 @@ int fut_vfs_open(const char *path, int flags, int mode) {
     }
 
     /* Check if trying to open directory with write flags */
-    if (vnode->type == VN_DIR && (flags & (O_WRONLY | O_RDWR))) {
+    VFSDBG("[vfs-open] checking vnode type, vnode=%p\n", (void*)vnode);
+    VFSDBG("[vfs-open] about to read vnode->type at %p\n", (void*)&vnode->type);
+    int vtype = vnode->type;
+    VFSDBG("[vfs-open] vnode->type=%d flags=%d\n", vtype, flags);
+    if (vtype == VN_DIR && (flags & (O_WRONLY | O_RDWR))) {
+        VFSDBG("[vfs-open] trying to open dir with write flags, returning EISDIR\n");
         release_lookup_ref(vnode);
         return -EISDIR;
     }
 
     /* Call vnode open operation */
+    VFSDBG("[vfs-open] checking if vnode has open op\n");
     if (vnode->ops && vnode->ops->open) {
+        VFSDBG("[vfs-open] calling vnode->ops->open\n");
         ret = vnode->ops->open(vnode, flags);
+        VFSDBG("[vfs-open] vnode->ops->open returned %d\n", ret);
         if (ret < 0) {
             release_lookup_ref(vnode);
             return ret;
         }
     }
+    VFSDBG("[vfs-open] past vnode open check\n");
 
     /* Allocate file structure */
     struct fut_file *file = fut_malloc(sizeof(struct fut_file));
@@ -974,12 +1037,15 @@ ssize_t fut_vfs_write(int fd, const void *buf, size_t size) {
 }
 
 int fut_vfs_close(int fd) {
+    VFSDBG("[vfs-close] close fd=%d\n", fd);
     struct fut_file *file = get_file(fd);
+    VFSDBG("[vfs-close] get_file returned file=%p\n", (void*)file);
     if (!file) {
         return -EBADF;
     }
 
     if (file->chr_ops) {
+        VFSDBG("[vfs-close] chr_ops path\n");
         if (file->chr_ops->release) {
             file->chr_ops->release(file->chr_inode, file->chr_private);
         }
@@ -988,14 +1054,20 @@ int fut_vfs_close(int fd) {
         return 0;
     }
 
+    VFSDBG("[vfs-close] vnode path, file->vnode=%p\n", (void*)file->vnode);
     /* Call vnode close operation */
     if (file->vnode && file->vnode->ops && file->vnode->ops->close) {
+        VFSDBG("[vfs-close] calling vnode->ops->close\n");
         file->vnode->ops->close(file->vnode);
+        VFSDBG("[vfs-close] vnode->ops->close returned\n");
     }
 
     /* Free file structure */
+    VFSDBG("[vfs-close] calling free_fd\n");
     free_fd(fd);
+    VFSDBG("[vfs-close] calling fut_free(file=%p)\n", (void*)file);
     fut_free(file);
+    VFSDBG("[vfs-close] fut_free returned\n");
 
     return 0;
 }
@@ -1105,23 +1177,33 @@ void fut_vnode_ref(struct fut_vnode *vnode) {
 }
 
 void fut_vnode_unref(struct fut_vnode *vnode) {
+    VFSDBG("[vnode-unref] vnode=%p\n", (void*)vnode);
     if (!vnode) {
+        VFSDBG("[vnode-unref] NULL vnode\n");
         return;
     }
 
+    VFSDBG("[vnode-unref] reading vnode->type at %p\n", (void*)&vnode->type);
+    int vtype = vnode->type;
+    VFSDBG("[vnode-unref] vnode->type=%d refcount=%d\n", vtype, vnode->refcount);
+
     /* Never decrement refcount below 1 for directory vnodes - they're permanent */
-    if (vnode->type == VN_DIR) {
+    if (vtype == VN_DIR) {
         if (vnode->refcount <= 1) {
+            VFSDBG("[vnode-unref] DIR vnode, keeping alive\n");
             return;  /* Keep directory vnodes alive permanently */
         }
         vnode->refcount--;
+        VFSDBG("[vnode-unref] DIR vnode, decremented refcount to %d\n", vnode->refcount);
         return;
     }
 
     /* For regular files and other types, free when refcount reaches 0 */
     if (vnode->refcount > 0) {
         vnode->refcount--;
+        VFSDBG("[vnode-unref] decremented refcount to %d\n", vnode->refcount);
         if (vnode->refcount == 0) {
+            VFSDBG("[vnode-unref] freeing vnode\n");
             fut_free(vnode);
         }
     }

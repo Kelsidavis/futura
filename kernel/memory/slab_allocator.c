@@ -153,6 +153,11 @@ static slab_t *slab_create(slab_cache_t *cache) {
 void *slab_malloc(size_t size) {
     if (size == 0) return NULL;
 
+    /* TEMPORARY: Bypass slab allocator for 1024-byte allocations to debug crash */
+    if (size == 1024) {
+        return buddy_malloc(size);
+    }
+
     int idx = find_slab_index(size);
     if (idx < 0) {
         /* Size too large for slab allocator, use buddy directly */
@@ -195,18 +200,10 @@ void *slab_malloc(size_t size) {
 void slab_free(void *ptr) {
     if (!ptr) return;
 
-    /* Get object header (one pointer before data) */
+    /* Find which slab and cache this object belongs to FIRST,
+     * before trying to access the header */
     slab_obj_t *obj = (slab_obj_t *)ptr - 1;
 
-    /* Validate object */
-    if (!obj->is_allocated) {
-        return;  /* Double free */
-    }
-
-    obj->is_allocated = 0;
-
-    /* Find which slab and cache this object belongs to */
-    /* For now, we search - in production could store cache info in header */
     for (size_t i = 0; i < NUM_SLAB_SIZES; i++) {
         slab_cache_t *cache = &slab_caches[i];
 
@@ -216,7 +213,15 @@ void slab_free(void *ptr) {
             uint8_t *slab_end = slab->data + (slab->obj_count * slab->obj_size);
 
             if ((uint8_t *)obj >= slab_start && (uint8_t *)obj < slab_end) {
-                /* Found the slab, add object back to free list */
+                /* Found the slab - NOW it's safe to access the header */
+                /* Validate object */
+                if (!obj->is_allocated) {
+                    return;  /* Double free */
+                }
+
+                obj->is_allocated = 0;
+
+                /* Add object back to free list */
                 obj->next = slab->free_list;
                 slab->free_list = obj;
                 slab->free_count++;

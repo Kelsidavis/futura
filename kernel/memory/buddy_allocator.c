@@ -295,17 +295,39 @@ void *buddy_malloc(size_t size) {
 void buddy_free(void *ptr) {
     if (ptr == NULL) return;
 
+    extern void fut_printf(const char *, ...);
+
+    fut_printf("[BUDDY-FREE-START] Freeing ptr=%p\n", ptr);
+
+    /* CRITICAL: Validate that ptr and header location are within heap bounds BEFORE reading header */
+    uintptr_t ptr_addr = (uintptr_t)ptr;
+    if (ptr_addr < heap_start || ptr_addr >= heap_end) {
+        fut_printf("[BUDDY-FREE] ERROR: Pointer %p is outside heap bounds [%p-%p]\n",
+                   ptr, (void*)heap_start, (void*)heap_end);
+        return;
+    }
+
+    /* Check that the header location would be within bounds */
+    uintptr_t hdr_addr = ptr_addr - sizeof(block_hdr_t);
+    if (hdr_addr < heap_start || hdr_addr >= heap_end) {
+        fut_printf("[BUDDY-FREE] ERROR: Header location %p would be outside heap bounds\n", (void*)hdr_addr);
+        return;
+    }
+
     block_hdr_t *hdr = get_block_hdr(ptr);
+    fut_printf("[BUDDY-FREE-START] Block header at %p, magic=0x%x, allocated=%d, order=%d\n",
+               (void*)hdr, hdr->magic, hdr->is_allocated, hdr->order);
 
     /* Validate block */
     if (hdr->magic != BLOCK_MAGIC || !hdr->is_allocated) {
+        fut_printf("[BUDDY-FREE-START] Invalid block or double-free, returning\n");
         return;  /* Invalid or double-free */
     }
 
-    extern void fut_printf(const char *, ...);
-
+    fut_printf("[BUDDY-FREE-START] About to update total_allocated and mark as free\n");
     total_allocated -= order_to_size(hdr->order);
     hdr->is_allocated = 0;
+    fut_printf("[BUDDY-FREE-START] Marked as free, starting coalesce\n");
 
     /* Add to free list and coalesce with buddy if possible */
     int order = hdr->order;
@@ -374,13 +396,23 @@ void buddy_free(void *ptr) {
     }
 
     /* Add coalesced block to free list */
+    fut_printf("[BUDDY-FREE] About to add to free list: hdr=%p order=%d order-MIN_ORDER=%d\n",
+               (void*)hdr, order, order - MIN_ORDER);
     free_block_t *free_hdr = (free_block_t *)get_data_ptr(hdr);
+    fut_printf("[BUDDY-FREE] free_hdr=%p current list head=%p\n",
+               (void*)free_hdr, (void*)free_lists[order - MIN_ORDER]);
+
     free_hdr->next = free_lists[order - MIN_ORDER];
+    fut_printf("[BUDDY-FREE] Set free_hdr->next=%p\n", (void*)free_hdr->next);
+
     free_hdr->prev = NULL;
     if (free_lists[order - MIN_ORDER]) {
+        fut_printf("[BUDDY-FREE] Setting prev pointer on old head\n");
         free_lists[order - MIN_ORDER]->prev = free_hdr;
     }
+    fut_printf("[BUDDY-FREE] Updating list head to %p\n", (void*)free_hdr);
     free_lists[order - MIN_ORDER] = free_hdr;
+    fut_printf("[BUDDY-FREE] Free complete\n");
 }
 
 void *buddy_realloc(void *ptr, size_t size) {

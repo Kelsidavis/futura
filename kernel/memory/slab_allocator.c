@@ -195,6 +195,8 @@ void *slab_malloc(size_t size) {
 void slab_free(void *ptr) {
     if (!ptr) return;
 
+    extern void fut_printf(const char *, ...);
+
     /* Find which slab and cache this object belongs to FIRST,
      * before trying to access the header */
     slab_obj_t *obj = (slab_obj_t *)ptr - 1;
@@ -202,7 +204,20 @@ void slab_free(void *ptr) {
     for (size_t i = 0; i < NUM_SLAB_SIZES; i++) {
         slab_cache_t *cache = &slab_caches[i];
 
+        /* Safely iterate through slabs with bounds checking */
         for (slab_t *slab = cache->slabs; slab; slab = slab->next) {
+            /* CRITICAL: Validate slab pointer before dereferencing */
+            if ((uintptr_t)slab < 0xffffffff80000000ULL || (uintptr_t)slab >= 0xffffffffa0389000ULL) {
+                fut_printf("[SLAB-FREE] WARNING: Corrupted slab pointer %p, skipping\n", slab);
+                goto check_buddy;
+            }
+
+            /* Validate slab->data pointer before dereferencing */
+            if (!slab->data || (uintptr_t)slab->data < 0xffffffff80000000ULL || (uintptr_t)slab->data >= 0xffffffffa0389000ULL) {
+                fut_printf("[SLAB-FREE] WARNING: Invalid slab->data pointer %p, skipping slab\n", slab->data);
+                continue;
+            }
+
             /* Check if obj is within this slab's data range */
             uint8_t *slab_start = slab->data;
             uint8_t *slab_end = slab->data + (slab->obj_count * slab->obj_size);
@@ -226,6 +241,7 @@ void slab_free(void *ptr) {
         }
     }
 
+check_buddy:
     /* If not found in any slab cache, it was allocated by buddy allocator directly */
     buddy_free(ptr);
 }

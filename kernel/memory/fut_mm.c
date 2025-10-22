@@ -99,17 +99,24 @@ static void copy_kernel_half(pte_t *dst) {
 }
 
 fut_mm_t *fut_mm_create(void) {
+    extern void fut_printf(const char *, ...);
+
+    fut_printf("[MM-CREATE] Allocating MM structure...\n");
     fut_mm_t *mm = (fut_mm_t *)fut_malloc(sizeof(*mm));
     if (!mm) {
+        fut_printf("[MM-CREATE] FAILED: malloc returned NULL\n");
         return NULL;
     }
     memset(mm, 0, sizeof(*mm));
 
+    fut_printf("[MM-CREATE] Allocating PML4 page...\n");
     void *pml4_page = fut_pmm_alloc_page();
     if (!pml4_page) {
+        fut_printf("[MM-CREATE] FAILED: pmm_alloc_page returned NULL (out of physical pages)\n");
         fut_free(mm);
         return NULL;
     }
+    fut_printf("[MM-CREATE] PML4 allocated successfully\n");
 
     memset(pml4_page, 0, PAGE_SIZE);
     pte_t *pml4 = (pte_t *)pml4_page;

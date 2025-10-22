@@ -121,6 +121,13 @@ static int map_segment(fut_mm_t *mm, int fd, const elf64_phdr_t *phdr) {
     uint64_t seg_end = (phdr->p_vaddr + phdr->p_memsz + PAGE_SIZE - 1ULL) & ~(PAGE_SIZE - 1ULL);
     size_t page_count = (size_t)((seg_end - seg_start) / PAGE_SIZE);
 
+    extern void fut_printf(const char *, ...);
+    fut_printf("[EXEC][MAP-SEGMENT] vaddr=0x%llx memsz=0x%llx filesz=0x%llx page_count=%llu\n",
+               (unsigned long long)phdr->p_vaddr,
+               (unsigned long long)phdr->p_memsz,
+               (unsigned long long)phdr->p_filesz,
+               (unsigned long long)page_count);
+
     uint64_t flags = PTE_PRESENT | PTE_USER;
     if (phdr->p_flags & PF_W) {
         flags |= PTE_WRITABLE;
@@ -129,14 +136,23 @@ static int map_segment(fut_mm_t *mm, int fd, const elf64_phdr_t *phdr) {
         flags |= PTE_NX;
     }
 
-    uint8_t **pages = fut_malloc(page_count * sizeof(uint8_t *));
+    size_t pages_array_size = page_count * sizeof(uint8_t *);
+    fut_printf("[EXEC][MAP-SEGMENT] Allocating pages array: %llu bytes\n",
+               (unsigned long long)pages_array_size);
+    uint8_t **pages = fut_malloc(pages_array_size);
     if (!pages) {
+        fut_printf("[EXEC][MAP-SEGMENT] FAILED: pages array malloc returned NULL\n");
         return -ENOMEM;
     }
+    fut_printf("[EXEC][MAP-SEGMENT] pages array allocated at %p\n", (void*)pages);
 
     for (size_t i = 0; i < page_count; ++i) {
+        fut_printf("[EXEC][MAP-SEGMENT] Allocating physical page %llu/%llu\n",
+                   (unsigned long long)i, (unsigned long long)page_count);
         uint8_t *page = fut_pmm_alloc_page();
         if (!page) {
+            fut_printf("[EXEC][MAP-SEGMENT] FAILED: PMM alloc_page returned NULL at iteration %llu/%llu\n",
+                       (unsigned long long)i, (unsigned long long)page_count);
             for (size_t j = 0; j < i; ++j) {
                 fut_unmap_range(mm_context(mm), seg_start + j * PAGE_SIZE, PAGE_SIZE);
                 fut_pmm_free_page(pages[j]);
@@ -175,11 +191,15 @@ static int map_segment(fut_mm_t *mm, int fd, const elf64_phdr_t *phdr) {
     }
 
     if (phdr->p_filesz > 0) {
+        fut_printf("[EXEC][MAP-SEGMENT] Allocating file buffer: %llu bytes\n",
+                   (unsigned long long)phdr->p_filesz);
         uint8_t *buffer = fut_malloc((size_t)phdr->p_filesz);
         if (!buffer) {
+            fut_printf("[EXEC][MAP-SEGMENT] FAILED: file buffer malloc returned NULL\n");
             fut_free(pages);
             return -ENOMEM;
         }
+        fut_printf("[EXEC][MAP-SEGMENT] file buffer allocated at %p\n", (void*)buffer);
 
         int64_t off = fut_vfs_lseek(fd, (int64_t)phdr->p_offset, SEEK_SET);
         if (off < 0) {
@@ -557,7 +577,15 @@ int fut_stage_second_stub_binary(void) {
 
 #if ENABLE_WAYLAND_DEMO
 int fut_stage_wayland_compositor_binary(void) {
+    extern void fut_printf(const char *, ...);
     (void)fut_vfs_mkdir("/sbin", 0755);
+
+    size_t wayland_size = (size_t)(_binary_build_bin_user_futura_wayland_end - _binary_build_bin_user_futura_wayland_start);
+    fut_printf("[STAGE] Wayland binary: start=%p end=%p size=%llu\n",
+               (void*)_binary_build_bin_user_futura_wayland_start,
+               (void*)_binary_build_bin_user_futura_wayland_end,
+               (unsigned long long)wayland_size);
+
     return stage_blob(_binary_build_bin_user_futura_wayland_start,
                       _binary_build_bin_user_futura_wayland_end,
                       "/sbin/futura-wayland");
@@ -609,14 +637,44 @@ int fut_exec_elf(const char *path, char *const argv[]) {
         return rc;
     }
 
-    if (*(uint32_t *)ehdr.e_ident != ELF_MAGIC ||
-        ehdr.e_ident[4] != ELF_CLASS_64 ||
-        ehdr.e_ident[5] != ELF_DATA_LE) {
+    fut_printf("[EXEC] Read ELF header: magic=0x%08x class=%d data=%d\n",
+               *(uint32_t *)ehdr.e_ident, ehdr.e_ident[4], ehdr.e_ident[5]);
+    fut_printf("[EXEC] ELF header: type=%d machine=%d version=%d entry=0x%llx\n",
+               ehdr.e_type, ehdr.e_machine, ehdr.e_version,
+               (unsigned long long)ehdr.e_entry);
+    fut_printf("[EXEC] Program headers: phoff=%llu phentsize=%d phnum=%d\n",
+               (unsigned long long)ehdr.e_phoff, ehdr.e_phentsize, ehdr.e_phnum);
+
+    if (*(uint32_t *)ehdr.e_ident != ELF_MAGIC) {
+        fut_printf("[EXEC] FAIL: Bad ELF magic 0x%08x (expected 0x%08x)\n",
+                   *(uint32_t *)ehdr.e_ident, ELF_MAGIC);
         fut_vfs_close(fd);
         return -EINVAL;
     }
 
-    if (ehdr.e_phentsize != sizeof(elf64_phdr_t) || ehdr.e_phnum == 0) {
+    if (ehdr.e_ident[4] != ELF_CLASS_64) {
+        fut_printf("[EXEC] FAIL: Bad ELF class %d (expected %d)\n",
+                   ehdr.e_ident[4], ELF_CLASS_64);
+        fut_vfs_close(fd);
+        return -EINVAL;
+    }
+
+    if (ehdr.e_ident[5] != ELF_DATA_LE) {
+        fut_printf("[EXEC] FAIL: Bad ELF data %d (expected %d)\n",
+                   ehdr.e_ident[5], ELF_DATA_LE);
+        fut_vfs_close(fd);
+        return -EINVAL;
+    }
+
+    if (ehdr.e_phentsize != sizeof(elf64_phdr_t)) {
+        fut_printf("[EXEC] FAIL: Bad phentsize %d (expected %zu)\n",
+                   ehdr.e_phentsize, sizeof(elf64_phdr_t));
+        fut_vfs_close(fd);
+        return -EINVAL;
+    }
+
+    if (ehdr.e_phnum == 0) {
+        fut_printf("[EXEC] FAIL: No program headers (phnum=0)\n");
         fut_vfs_close(fd);
         return -EINVAL;
     }
@@ -642,36 +700,48 @@ int fut_exec_elf(const char *path, char *const argv[]) {
         return rc;
     }
 
+    extern void fut_printf(const char *, ...);
+    fut_printf("[EXEC] Creating task...\n");
     fut_task_t *task = fut_task_create();
     if (!task) {
+        fut_printf("[EXEC] FAILED: fut_task_create returned NULL\n");
         fut_free(phdrs);
         fut_vfs_close(fd);
         return -ENOMEM;
     }
+    fut_printf("[EXEC] Task created at %p\n", (void*)task);
 
+    fut_printf("[EXEC] Creating memory manager...\n");
     fut_mm_t *mm = fut_mm_create();
     if (!mm) {
+        fut_printf("[EXEC] FAILED: fut_mm_create returned NULL\n");
         fut_task_destroy(task);
         fut_free(phdrs);
         fut_vfs_close(fd);
         return -ENOMEM;
     }
+    fut_printf("[EXEC] MM created at %p\n", (void*)mm);
 
     fut_task_set_mm(task, mm);
 
     uintptr_t heap_base_candidate = 0;
 
+    fut_printf("[EXEC] Mapping %u segments...\n", ehdr.e_phnum);
     for (uint16_t i = 0; i < ehdr.e_phnum; ++i) {
         if (phdrs[i].p_type != PT_LOAD) {
+            fut_printf("[EXEC] Segment %u: not PT_LOAD (type=%u), skipping\n", i, phdrs[i].p_type);
             continue;
         }
+        fut_printf("[EXEC] Segment %u: PT_LOAD, calling map_segment...\n", i);
         rc = map_segment(mm, fd, &phdrs[i]);
         if (rc != 0) {
+            fut_printf("[EXEC] FAILED: map_segment returned %d for segment %u\n", rc, i);
             fut_task_destroy(task);
             fut_free(phdrs);
             fut_vfs_close(fd);
             return rc;
         }
+        fut_printf("[EXEC] Segment %u: map_segment succeeded\n", i);
         uint64_t seg_end = phdrs[i].p_vaddr + phdrs[i].p_memsz;
         if (seg_end > heap_base_candidate) {
             heap_base_candidate = (uintptr_t)seg_end;

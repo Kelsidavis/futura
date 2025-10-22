@@ -878,12 +878,17 @@ int fut_vfs_open(const char *path, int flags, int mode) {
         if ((flags & O_CREAT) && (ret == -ENOENT || ret == -2)) {
             VFSDBG("[vfs-open] O_CREAT path triggered for %s\n", path);
             struct fut_vnode *parent = NULL;
-            char leaf[FUT_VFS_NAME_MAX + 1];
+            /* Allocate leaf buffer on heap to avoid stack overflow */
+            char *leaf = fut_malloc(FUT_VFS_NAME_MAX + 1);
+            if (!leaf) {
+                return -ENOMEM;
+            }
 
             VFSDBG("[vfs-open] calling lookup_parent_and_name\n");
             int lookup_ret = lookup_parent_and_name(path, &parent, leaf);
             VFSDBG("[vfs-open] lookup_parent_and_name returned %d\n", lookup_ret);
             if (lookup_ret < 0) {
+                fut_free(leaf);
                 return lookup_ret;
             }
 
@@ -891,6 +896,7 @@ int fut_vfs_open(const char *path, int flags, int mode) {
             if (!parent->ops || !parent->ops->create) {
                 VFSDBG("[vfs-open] parent has no create op\n");
                 release_lookup_ref(parent);
+                fut_free(leaf);
                 return -ENOSYS;
             }
 
@@ -900,6 +906,7 @@ int fut_vfs_open(const char *path, int flags, int mode) {
             VFSDBG("[vfs-open] create returned %d new_node=%p\n", create_ret, (void*)new_node);
             VFSDBG("[vfs-open] about to release_lookup_ref(parent=%p)\n", (void*)parent);
             release_lookup_ref(parent);
+            fut_free(leaf);  /* Done with leaf buffer */
             VFSDBG("[vfs-open] released parent OK\n");
             if (create_ret < 0) {
                 VFSDBG("[vfs-open] create failed, returning %d\n", create_ret);
@@ -1006,12 +1013,15 @@ ssize_t fut_vfs_read(int fd, void *buf, size_t size) {
 }
 
 ssize_t fut_vfs_write(int fd, const void *buf, size_t size) {
+    VFSDBG("[vfs-write] enter fd=%d size=%zu\n", fd, size);
     struct fut_file *file = get_file(fd);
+    VFSDBG("[vfs-write] get_file returned %p\n", (void*)file);
     if (!file) {
         return -EBADF;
     }
 
     if (file->chr_ops) {
+        VFSDBG("[vfs-write] chr_ops path\n");
         if (!file->chr_ops->write) {
             return -EINVAL;
         }
@@ -1024,15 +1034,20 @@ ssize_t fut_vfs_write(int fd, const void *buf, size_t size) {
     }
 
     /* Call vnode write operation */
+    VFSDBG("[vfs-write] vnode path, checking ops\n");
     if (!file->vnode || !file->vnode->ops || !file->vnode->ops->write) {
+        VFSDBG("[vfs-write] invalid vnode/ops/write\n");
         return -EINVAL;
     }
 
+    VFSDBG("[vfs-write] calling vnode->ops->write\n");
     ssize_t ret = file->vnode->ops->write(file->vnode, buf, size, file->offset);
+    VFSDBG("[vfs-write] vnode->ops->write returned %zd\n", ret);
     if (ret > 0) {
         file->offset += ret;
     }
 
+    VFSDBG("[vfs-write] returning %zd\n", ret);
     return ret;
 }
 
@@ -1060,6 +1075,13 @@ int fut_vfs_close(int fd) {
         VFSDBG("[vfs-close] calling vnode->ops->close\n");
         file->vnode->ops->close(file->vnode);
         VFSDBG("[vfs-close] vnode->ops->close returned\n");
+    }
+
+    /* Release vnode reference - CRITICAL! */
+    if (file->vnode) {
+        VFSDBG("[vfs-close] calling fut_vnode_unref(vnode=%p)\n", (void*)file->vnode);
+        fut_vnode_unref(file->vnode);
+        VFSDBG("[vfs-close] fut_vnode_unref returned\n");
     }
 
     /* Free file structure */

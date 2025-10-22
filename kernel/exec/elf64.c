@@ -425,28 +425,41 @@ extern const uint8_t _binary_build_bin_user_wl_colorwheel_end[];
 #endif
 
 int fut_stage_fbtest_binary(void) {
+    fut_printf("[STAGE] fut_stage_fbtest_binary start\n");
+
+    fut_printf("[STAGE] calculating binary size\n");
     size_t size = (size_t)(_binary_build_bin_user_fbtest_end - _binary_build_bin_user_fbtest_start);
+    fut_printf("[STAGE] binary size = %zu bytes\n", size);
     if (size == 0) {
         return -EINVAL;
     }
 
+    fut_printf("[STAGE] calling fut_vfs_mkdir\n");
     (void)fut_vfs_mkdir("/bin", 0755);
 
+    fut_printf("[STAGE] calling fut_vfs_open\n");
     int fd = fut_vfs_open("/bin/fbtest", O_WRONLY | O_CREAT | O_TRUNC, 0755);
+    fut_printf("[STAGE] fut_vfs_open returned fd=%d\n", fd);
     if (fd < 0) {
         return fd;
     }
 
+    fut_printf("[STAGE] entering write loop, size=%zu\n", size);
     size_t offset = 0;
     while (offset < size) {
+        fut_printf("[STAGE] loop iteration: offset=%zu size=%zu\n", offset, size);
         size_t chunk = size - offset;
+        fut_printf("[STAGE] calculated chunk=%zu\n", chunk);
         if (chunk > 4096) {
             chunk = 4096;
         }
+        fut_printf("[STAGE] limited chunk=%zu\n", chunk);
 
+        fut_printf("[STAGE] calling fut_vfs_write fd=%d chunk=%zu\n", fd, chunk);
         ssize_t wr = fut_vfs_write(fd,
                                    _binary_build_bin_user_fbtest_start + offset,
                                    chunk);
+        fut_printf("[STAGE] fut_vfs_write returned %zd\n", wr);
         if (wr < 0) {
             fut_vfs_close(fd);
             return (int)wr;
@@ -454,30 +467,41 @@ int fut_stage_fbtest_binary(void) {
         offset += (size_t)wr;
     }
 
+    fut_printf("[STAGE] calling fut_vfs_close\n");
     fut_vfs_close(fd);
+    fut_printf("[STAGE] fut_stage_fbtest_binary complete\n");
     return 0;
 }
 
 static int stage_blob(const uint8_t *start,
                       const uint8_t *end,
                       const char *path) {
+    fut_printf("[stage_blob] enter path=%s\n", path);
     size_t size = (size_t)(end - start);
+    fut_printf("[stage_blob] size calculated\n");
     if (!start || !end || size == 0) {
+        fut_printf("[stage_blob] invalid params\n");
         return -EINVAL;
     }
 
+    fut_printf("[stage_blob] calling fut_vfs_open\n");
     int fd = fut_vfs_open(path, O_WRONLY | O_CREAT | O_TRUNC, 0755);
+    fut_printf("[stage_blob] fut_vfs_open returned fd=%d\n", fd);
     if (fd < 0) {
+        fut_printf("[stage_blob] open failed\n");
         return fd;
     }
 
+    fut_printf("[stage_blob] entering write loop\n");
     size_t offset = 0;
     while (offset < size) {
         size_t chunk = size - offset;
         if (chunk > 4096) {
             chunk = 4096;
         }
+        fut_printf("[stage_blob] calling fut_vfs_write\n");
         ssize_t wr = fut_vfs_write(fd, start + offset, chunk);
+        fut_printf("[stage_blob] fut_vfs_write returned\n");
         if (wr < 0) {
             fut_vfs_close(fd);
             return (int)wr;
@@ -485,7 +509,9 @@ static int stage_blob(const uint8_t *start,
         offset += (size_t)wr;
     }
 
+    fut_printf("[stage_blob] calling fut_vfs_close\n");
     fut_vfs_close(fd);
+    fut_printf("[stage_blob] returning success\n");
     return 0;
 }
 

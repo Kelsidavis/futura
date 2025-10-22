@@ -202,10 +202,50 @@ void fb_boot_splash(void) {
     uint16_t vendor_slot3 = (uint16_t)(vdid_slot3 & 0xFFFF);
 
     if (vendor_slot3 == 0x1af4) {
-        /* virtio-gpu detected at slot 3 - initialize VIRTIO GPU device */
-        fut_printf("[FB] virtio-gpu detected at slot 3, initializing VIRTIO GPU\n");
-        if (virtio_gpu_init(g_fb_hw.phys, g_fb_hw.info.width, g_fb_hw.info.height) == 0) {
+        /* virtio-gpu detected at slot 3 - initialize with BAR4 */
+        fut_printf("[FB] virtio-gpu detected at slot 3, initializing with modern interface\n");
+        uint64_t virtio_fb_phys = 0;
+        if (virtio_gpu_init(&virtio_fb_phys, g_fb_hw.info.width, g_fb_hw.info.height) == 0) {
             fut_printf("[FB] VIRTIO GPU initialized successfully\n");
+            /* Update the framebuffer address to the virtio guest framebuffer */
+            g_fb_hw.phys = virtio_fb_phys;
+            fut_printf("[FB] Updated framebuffer address to virtio guest FB: 0x%llx\n",
+                       (unsigned long long)g_fb_hw.phys);
+
+            /* Map the virtio guest framebuffer and write test pattern */
+            uint64_t phys_base = PAGE_ALIGN_DOWN(virtio_fb_phys);
+            uint64_t offset = virtio_fb_phys - phys_base;
+            uint64_t fb_size = (size_t)g_fb_hw.info.pitch * (size_t)g_fb_hw.info.height;
+            uint64_t map_size = fb_size + offset;
+            uintptr_t virt_base = pmap_phys_to_virt(phys_base);
+
+            fut_printf("[FB] Mapping virtio guest FB: phys=0x%llx size=0x%llx\n",
+                       (unsigned long long)phys_base,
+                       (unsigned long long)map_size);
+
+            if (pmap_map((uint64_t)virt_base,
+                         phys_base,
+                         map_size,
+                         PTE_KERNEL_RW | PTE_WRITE_THROUGH | PTE_CACHE_DISABLE) != 0) {
+                fut_printf("[FB] Failed to map virtio guest framebuffer\n");
+                return;
+            }
+
+            g_fb_virt = (volatile uint8_t *)(uintptr_t)(virt_base + offset);
+            g_fb_hw.length = map_size;
+
+            /* Write solid WHITE test pattern */
+            volatile uint32_t *fb = (volatile uint32_t *)g_fb_virt;
+            fut_printf("[FB] Filling virtio framebuffer with solid WHITE\n");
+
+            size_t total_pixels = (g_fb_hw.info.width * g_fb_hw.info.height);
+            for (size_t i = 0; i < total_pixels; ++i) {
+                fb[i] = 0xFFFFFFFF;  /* White: all channels at max */
+            }
+
+            fut_printf("[FB] Test pattern written, flushing display...\n");
+            virtio_gpu_flush_display();
+            fut_printf("[FB] Display should now show green screen\n");
             return;
         } else {
             fut_printf("[FB] VIRTIO GPU init failed, continuing with fallback\n");

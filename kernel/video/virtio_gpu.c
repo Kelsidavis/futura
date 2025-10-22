@@ -41,13 +41,44 @@ static inline void pci_config_write(uint8_t bus, uint8_t slot, uint8_t func, uin
     __asm__ volatile("outl %0, %1" : : "a"(value), "Nd"(0xCFC));
 }
 
-/* VIRTIO device PCI configuration registers */
-#define VIRTIO_PCI_HOST_FEATURES 0x00
-#define VIRTIO_PCI_GUEST_FEATURES 0x04
+/* Virtio 1.0 PCI capability types */
+#define VIRTIO_PCI_CAP_COMMON_CFG 1
+#define VIRTIO_PCI_CAP_NOTIFY_CFG 2
+#define VIRTIO_PCI_CAP_ISR_CFG 3
+#define VIRTIO_PCI_CAP_DEVICE_CFG 4
+#define VIRTIO_PCI_CAP_PCI_CFG 5
+
+/* PCI capability ID for vendor-specific */
+#define PCI_CAP_ID_VNDR 0x09
+
+/* Legacy virtio register offsets (for fallback) */
 #define VIRTIO_PCI_QUEUE_ADDR 0x08
-#define VIRTIO_PCI_QUEUE_SIZE 0x0C
 #define VIRTIO_PCI_QUEUE_SELECT 0x0E
 #define VIRTIO_PCI_QUEUE_NOTIFY 0x10
+#define VIRTIO_PCI_QUEUE_SIZE 0x0C
+#define VIRTIO_PCI_HOST_FEATURES 0x00
+#define VIRTIO_PCI_GUEST_FEATURES 0x04
+
+/* Virtio 1.0 common configuration structure offsets */
+#define VIRTIO_PCI_COMMON_DFSELECT 0x00
+#define VIRTIO_PCI_COMMON_DF 0x04
+#define VIRTIO_PCI_COMMON_GFSELECT 0x08
+#define VIRTIO_PCI_COMMON_GF 0x0c
+#define VIRTIO_PCI_COMMON_MSIX 0x10
+#define VIRTIO_PCI_COMMON_NUMQ 0x12
+#define VIRTIO_PCI_COMMON_STATUS 0x14
+#define VIRTIO_PCI_COMMON_CFGGENERATION 0x15
+#define VIRTIO_PCI_COMMON_Q_SELECT 0x16
+#define VIRTIO_PCI_COMMON_Q_SIZE 0x18
+#define VIRTIO_PCI_COMMON_Q_MSIX 0x1a
+#define VIRTIO_PCI_COMMON_Q_ENABLE 0x1c
+#define VIRTIO_PCI_COMMON_Q_NOFF 0x1e
+#define VIRTIO_PCI_COMMON_Q_DESCLO 0x20
+#define VIRTIO_PCI_COMMON_Q_DESCHI 0x24
+#define VIRTIO_PCI_COMMON_Q_AVAILLO 0x28
+#define VIRTIO_PCI_COMMON_Q_AVAILHI 0x2c
+#define VIRTIO_PCI_COMMON_Q_USEDLO 0x30
+#define VIRTIO_PCI_COMMON_Q_USEDHI 0x34
 #define VIRTIO_PCI_STATUS 0x12
 #define VIRTIO_PCI_ISR 0x13
 
@@ -164,10 +195,28 @@ struct virtio_used {
     uint16_t avail_event;
 } __attribute__((packed));
 
+/* Virtio PCI capability structure */
+struct virtio_pci_cap {
+    uint8_t cap_vndr;    /* Generic PCI field: PCI_CAP_ID_VNDR */
+    uint8_t cap_next;    /* Generic PCI field: next ptr */
+    uint8_t cap_len;     /* Generic PCI field: capability length */
+    uint8_t cfg_type;    /* Identifies the structure (VIRTIO_PCI_CAP_*) */
+    uint8_t bar;         /* Where to find it */
+    uint8_t padding[3];
+    uint32_t offset;     /* Offset within bar */
+    uint32_t length;     /* Length of the structure, in bytes */
+} __attribute__((packed));
+
 /* Local device state */
 static uint8_t g_bus = 0, g_slot = 0, g_func = 0;
+static volatile uint8_t *g_mmio_base = NULL;  /* BAR1 MMIO base (legacy fallback) */
+static volatile uint8_t *g_common_cfg = NULL;  /* Common configuration region */
+static volatile uint8_t *g_notify_base = NULL; /* Notification region */
+static volatile uint8_t *g_isr_base = NULL;    /* ISR status region */
+static volatile uint8_t *g_device_cfg = NULL;  /* Device-specific configuration */
 static volatile uint8_t *g_framebuffer_guest = NULL;
 static size_t g_fb_size = 0;
+static uint32_t g_fb_width = 0, g_fb_height = 0;
 
 /* Virtqueue management */
 static struct virtio_desc *g_desc_table = NULL;
@@ -181,31 +230,208 @@ static uint64_t g_cmd_buffer_phys = 0;
 #define CMD_BUFFER_SIZE 4096
 #define CMD_BUFFER_PHYS 0x2200000ULL
 
-static void pci_write_config_byte(uint8_t offset, uint8_t value) {
-    uint32_t current = pci_config_read(g_bus, g_slot, g_func, offset & ~3);
-    uint32_t shift = (offset & 3) * 8;
-    current = (current & ~(0xFF << shift)) | ((uint32_t)value << shift);
-    pci_config_write(g_bus, g_slot, g_func, offset & ~3, current);
+/* Response buffer for command responses */
+static volatile uint8_t *g_resp_buffer = NULL;
+static uint64_t g_resp_buffer_phys = 0;
+#define RESP_BUFFER_SIZE 4096
+#define RESP_BUFFER_PHYS 0x2201000ULL
+
+/* MMIO access functions for virtio device registers (via BAR1) */
+static inline uint8_t virtio_read8(uint16_t offset) {
+    return *(volatile uint8_t *)(g_mmio_base + offset);
 }
 
-static void pci_write_config_word(uint8_t offset, uint16_t value) {
-    uint32_t current = pci_config_read(g_bus, g_slot, g_func, offset & ~3);
-    uint32_t shift = (offset & 2) * 8;
-    current = (current & ~(0xFFFF << shift)) | ((uint32_t)value << shift);
-    pci_config_write(g_bus, g_slot, g_func, offset & ~3, current);
+static inline void virtio_write8(uint16_t offset, uint8_t value) {
+    *(volatile uint8_t *)(g_mmio_base + offset) = value;
 }
 
-static void pci_write_config_dword(uint8_t offset, uint32_t value) {
-    pci_config_write(g_bus, g_slot, g_func, offset, value);
+static inline uint16_t virtio_read16(uint16_t offset) {
+    return *(volatile uint16_t *)(g_mmio_base + offset);
 }
 
-static uint8_t pci_read_config_byte(uint8_t offset) {
-    uint32_t val = pci_config_read(g_bus, g_slot, g_func, offset & ~3);
-    return (val >> ((offset & 3) * 8)) & 0xFF;
+static inline void virtio_write16(uint16_t offset, uint16_t value) {
+    *(volatile uint16_t *)(g_mmio_base + offset) = value;
 }
 
-static uint32_t pci_read_config_dword(uint8_t offset) {
-    return pci_config_read(g_bus, g_slot, g_func, offset);
+static inline uint32_t virtio_read32(uint16_t offset) {
+    return *(volatile uint32_t *)(g_mmio_base + offset);
+}
+
+static inline void virtio_write32(uint16_t offset, uint32_t value) {
+    *(volatile uint32_t *)(g_mmio_base + offset) = value;
+}
+
+/* Modern virtio 1.0 common config access helpers */
+static inline uint8_t virtio_common_read8(uint16_t offset) {
+    if (!g_common_cfg) return 0;
+    return *(volatile uint8_t *)(g_common_cfg + offset);
+}
+
+static inline void virtio_common_write8(uint16_t offset, uint8_t value) {
+    if (!g_common_cfg) return;
+    *(volatile uint8_t *)(g_common_cfg + offset) = value;
+}
+
+static inline uint16_t virtio_common_read16(uint16_t offset) {
+    if (!g_common_cfg) return 0;
+    return *(volatile uint16_t *)(g_common_cfg + offset);
+}
+
+static inline void virtio_common_write16(uint16_t offset, uint16_t value) {
+    if (!g_common_cfg) return;
+    *(volatile uint16_t *)(g_common_cfg + offset) = value;
+}
+
+static inline uint32_t virtio_common_read32(uint16_t offset) {
+    if (!g_common_cfg) return 0;
+    return *(volatile uint32_t *)(g_common_cfg + offset);
+}
+
+static inline void virtio_common_write32(uint16_t offset, uint32_t value) {
+    if (!g_common_cfg) return;
+    *(volatile uint32_t *)(g_common_cfg + offset) = value;
+}
+
+static inline uint64_t virtio_common_read64(uint16_t offset) {
+    if (!g_common_cfg) return 0;
+    return *(volatile uint64_t *)(g_common_cfg + offset);
+}
+
+static inline void virtio_common_write64(uint16_t offset, uint64_t value) {
+    if (!g_common_cfg) return;
+    *(volatile uint64_t *)(g_common_cfg + offset) = value;
+}
+
+/* Helper to read a single byte from PCI config space */
+static uint8_t pci_config_read_byte(uint8_t bus, uint8_t slot, uint8_t func, uint8_t offset) {
+    uint32_t dword = pci_config_read(bus, slot, func, offset & ~3);
+    return (dword >> ((offset & 3) * 8)) & 0xFF;
+}
+
+/* Scan PCI capabilities to find virtio 1.0 structures and map them */
+static int virtio_scan_capabilities(void) {
+    /* Read capabilities pointer from PCI config space offset 0x34 */
+    uint8_t cap_ptr = pci_config_read_byte(g_bus, g_slot, g_func, 0x34);
+
+    if (cap_ptr == 0) {
+        fut_printf("[VIRTIO-GPU] No PCI capabilities found\n");
+        return -1;
+    }
+
+    fut_printf("[VIRTIO-GPU] Scanning PCI capabilities starting at offset 0x%02x\n", cap_ptr);
+
+    /* Track which BARs we need to map */
+    uint32_t bar_addrs[6] = {0};
+    uint8_t bar_mapped[6] = {0};
+
+    /* Scan the capabilities linked list */
+    int cap_count = 0;
+    while (cap_ptr != 0 && cap_count < 32) {  /* Safety limit */
+        cap_count++;
+
+        /* Read capability header */
+        uint8_t cap_id = pci_config_read_byte(g_bus, g_slot, g_func, cap_ptr);
+        uint8_t cap_next = pci_config_read_byte(g_bus, g_slot, g_func, cap_ptr + 1);
+
+        fut_printf("[VIRTIO-GPU]   Cap %d at 0x%02x: ID=0x%02x\n", cap_count, cap_ptr, cap_id);
+
+        /* Check if this is a vendor-specific capability */
+        if (cap_id == PCI_CAP_ID_VNDR) {
+            /* Read virtio capability structure */
+            uint8_t cfg_type = pci_config_read_byte(g_bus, g_slot, g_func, cap_ptr + 3);
+            uint8_t bar = pci_config_read_byte(g_bus, g_slot, g_func, cap_ptr + 4);
+
+            /* Read offset and length (32-bit values at offsets +8 and +12) */
+            uint32_t cap_offset = pci_config_read(g_bus, g_slot, g_func, cap_ptr + 8);
+            uint32_t cap_length = pci_config_read(g_bus, g_slot, g_func, cap_ptr + 12);
+
+            fut_printf("[VIRTIO-GPU]     Virtio cap: type=%u bar=%u offset=0x%x len=0x%x\n",
+                       cfg_type, bar, cap_offset, cap_length);
+
+            /* Ensure BAR is valid */
+            if (bar >= 6) {
+                fut_printf("[VIRTIO-GPU]     Invalid BAR index %u, skipping\n", bar);
+                cap_ptr = cap_next;
+                continue;
+            }
+
+            /* Read the BAR address if we haven't already */
+            if (bar_addrs[bar] == 0) {
+                uint32_t bar_offset = 0x10 + (bar * 4);
+                uint32_t bar_val = pci_config_read(g_bus, g_slot, g_func, bar_offset);
+
+                if ((bar_val & 0x1) == 0) {  /* MMIO BAR */
+                    bar_addrs[bar] = bar_val & ~0xF;
+                    fut_printf("[VIRTIO-GPU]     BAR%u address: 0x%x\n", bar, bar_addrs[bar]);
+                }
+            }
+
+            /* Map the BAR if needed and set up the appropriate pointer */
+            if (bar_addrs[bar] != 0) {
+                /* Get the virtual base address (map if not already mapped) */
+                uintptr_t virt_base = 0xFFFFFFFFFEC00000ULL + (bar * 0x10000);
+
+                if (!bar_mapped[bar]) {
+                    uint64_t phys_base = PAGE_ALIGN_DOWN(bar_addrs[bar]);
+
+                    if (pmap_map(virt_base, phys_base, 0x10000,
+                                 PTE_KERNEL_RW | PTE_WRITE_THROUGH | PTE_CACHE_DISABLE) != 0) {
+                        fut_printf("[VIRTIO-GPU]     Failed to map BAR%u\n", bar);
+                        cap_ptr = cap_next;
+                        continue;
+                    }
+                    bar_mapped[bar] = 1;
+                    fut_printf("[VIRTIO-GPU]     Mapped BAR%u: phys=0x%llx virt=0x%lx\n",
+                               bar, (unsigned long long)phys_base, (unsigned long)virt_base);
+                }
+
+                /* Calculate the capability virtual address from the BAR virtual base */
+                uint64_t phys_base = PAGE_ALIGN_DOWN(bar_addrs[bar]);
+                uint64_t offset_in_bar = bar_addrs[bar] - phys_base;
+                volatile uint8_t *cap_virt = (volatile uint8_t *)(virt_base + offset_in_bar + cap_offset);
+
+                /* Store base pointer for this capability type */
+                switch (cfg_type) {
+                    case VIRTIO_PCI_CAP_COMMON_CFG:
+                        g_common_cfg = cap_virt;
+                        fut_printf("[VIRTIO-GPU]     Common config at virt=0x%lx\n",
+                                   (unsigned long)g_common_cfg);
+                        break;
+                    case VIRTIO_PCI_CAP_NOTIFY_CFG:
+                        g_notify_base = cap_virt;
+                        fut_printf("[VIRTIO-GPU]     Notify region at virt=0x%lx\n",
+                                   (unsigned long)g_notify_base);
+                        break;
+                    case VIRTIO_PCI_CAP_ISR_CFG:
+                        g_isr_base = cap_virt;
+                        fut_printf("[VIRTIO-GPU]     ISR status at virt=0x%lx\n",
+                                   (unsigned long)g_isr_base);
+                        break;
+                    case VIRTIO_PCI_CAP_DEVICE_CFG:
+                        g_device_cfg = cap_virt;
+                        fut_printf("[VIRTIO-GPU]     Device config at virt=0x%lx\n",
+                                   (unsigned long)g_device_cfg);
+                        break;
+                    default:
+                        fut_printf("[VIRTIO-GPU]     Unknown capability type %u\n", cfg_type);
+                        break;
+                }
+            }
+        }
+
+        cap_ptr = cap_next;
+    }
+
+    fut_printf("[VIRTIO-GPU] Scanned %d capabilities\n", cap_count);
+
+    /* Verify we found the essential structures */
+    if (!g_common_cfg) {
+        fut_printf("[VIRTIO-GPU] ERROR: Common configuration not found\n");
+        return -1;
+    }
+
+    fut_printf("[VIRTIO-GPU] Successfully mapped virtio 1.0 structures\n");
+    return 0;
 }
 
 static int virtio_gpu_alloc_queues(void) {
@@ -233,16 +459,42 @@ static int virtio_gpu_alloc_queues(void) {
     memset(g_avail, 0, avail_size);
     memset(g_used, 0, used_size);
 
-    fut_printf("[VIRTIO-GPU] Allocated queue: desc=0x%llx avail=0x%llx used=0x%llx\n",
-               (unsigned long long)queue_phys,
-               (unsigned long long)(queue_phys + desc_size),
-               (unsigned long long)(queue_phys + desc_size + avail_size));
+    uint64_t desc_phys = queue_phys;
+    uint64_t avail_phys = queue_phys + desc_size;
+    uint64_t used_phys = queue_phys + desc_size + avail_size;
 
-    /* Set queue address in PCI config space */
-    /* Queue address is in units of 4KB pages */
-    uint32_t queue_addr = (queue_phys >> 12) & 0xFFFFFFFFU;
-    pci_write_config_dword(VIRTIO_PCI_QUEUE_ADDR, queue_addr);
-    fut_printf("[VIRTIO-GPU] Queue address written: 0x%x\n", queue_addr);
+    fut_printf("[VIRTIO-GPU] Allocated queue: desc=0x%llx avail=0x%llx used=0x%llx\n",
+               (unsigned long long)desc_phys,
+               (unsigned long long)avail_phys,
+               (unsigned long long)used_phys);
+
+    /* Modern virtio 1.0: Set descriptor, available, and used addresses separately */
+    if (g_common_cfg) {
+        /* Select queue 0 (control queue) */
+        virtio_common_write16(VIRTIO_PCI_COMMON_Q_SELECT, 0);
+
+        /* Set queue size */
+        virtio_common_write16(VIRTIO_PCI_COMMON_Q_SIZE, VIRTIO_RING_SIZE);
+
+        /* Set descriptor table address (64-bit) */
+        virtio_common_write64(VIRTIO_PCI_COMMON_Q_DESCLO, desc_phys);
+
+        /* Set available ring address (64-bit) */
+        virtio_common_write64(VIRTIO_PCI_COMMON_Q_AVAILLO, avail_phys);
+
+        /* Set used ring address (64-bit) */
+        virtio_common_write64(VIRTIO_PCI_COMMON_Q_USEDLO, used_phys);
+
+        /* Enable the queue */
+        virtio_common_write16(VIRTIO_PCI_COMMON_Q_ENABLE, 1);
+
+        fut_printf("[VIRTIO-GPU] Modern queue setup complete\n");
+    } else {
+        /* Legacy mode fallback */
+        uint32_t queue_addr = (queue_phys >> 12) & 0xFFFFFFFFU;
+        virtio_write32(VIRTIO_PCI_QUEUE_ADDR, queue_addr);
+        fut_printf("[VIRTIO-GPU] Legacy queue address written: 0x%x\n", queue_addr);
+    }
 
     return 0;
 }
@@ -269,7 +521,7 @@ static int virtio_gpu_alloc_framebuffer(uint32_t width, uint32_t height) {
 }
 
 static void virtio_gpu_submit_command(const void *cmd, size_t cmd_size) {
-    if (!g_desc_table || !g_avail || !g_cmd_buffer) {
+    if (!g_desc_table || !g_avail || !g_cmd_buffer || !g_resp_buffer) {
         fut_printf("[VIRTIO-GPU] Command queue not initialized\n");
         return;
     }
@@ -282,24 +534,59 @@ static void virtio_gpu_submit_command(const void *cmd, size_t cmd_size) {
     /* Copy command to guest physical buffer */
     memcpy((void *)g_cmd_buffer, cmd, cmd_size);
 
-    /* Add descriptor for command buffer */
-    uint16_t desc_idx = g_cmd_idx % VIRTIO_RING_SIZE;
-    g_desc_table[desc_idx].addr = g_cmd_buffer_phys;
-    g_desc_table[desc_idx].len = cmd_size;
-    g_desc_table[desc_idx].flags = 0;  /* Command (read-only from device perspective) */
-    g_desc_table[desc_idx].next = 0;
+    /* Clear response buffer */
+    memset((void *)g_resp_buffer, 0, RESP_BUFFER_SIZE);
 
-    /* Add to available ring */
+    /* Create descriptor chain: command -> response */
+    uint16_t cmd_desc_idx = (g_cmd_idx * 2) % VIRTIO_RING_SIZE;
+    uint16_t resp_desc_idx = (g_cmd_idx * 2 + 1) % VIRTIO_RING_SIZE;
+
+    /* Command descriptor (device reads) */
+    g_desc_table[cmd_desc_idx].addr = g_cmd_buffer_phys;
+    g_desc_table[cmd_desc_idx].len = cmd_size;
+    g_desc_table[cmd_desc_idx].flags = VIRTQ_DESC_F_NEXT;  /* Chain to response */
+    g_desc_table[cmd_desc_idx].next = resp_desc_idx;
+
+    /* Response descriptor (device writes) */
+    g_desc_table[resp_desc_idx].addr = g_resp_buffer_phys;
+    g_desc_table[resp_desc_idx].len = RESP_BUFFER_SIZE;
+    g_desc_table[resp_desc_idx].flags = VIRTQ_DESC_F_WRITE;  /* Device writes response */
+    g_desc_table[resp_desc_idx].next = 0;
+
+    /* Add to available ring (head of chain) */
     uint16_t avail_idx = g_avail->idx % VIRTIO_RING_SIZE;
-    g_avail->ring[avail_idx] = desc_idx;
+    g_avail->ring[avail_idx] = cmd_desc_idx;
+    __sync_synchronize();  /* Memory barrier before incrementing idx */
     g_avail->idx++;
 
-    /* Notify device via queue notify */
-    pci_write_config_word(VIRTIO_PCI_QUEUE_NOTIFY, 0);
+    /* Notify device - modern virtio 1.0 uses notify region, legacy uses register */
+    if (g_notify_base) {
+        /* Modern: Write queue index (0) to the notify region */
+        *(volatile uint16_t *)g_notify_base = 0;
+    } else {
+        /* Legacy fallback */
+        virtio_write16(VIRTIO_PCI_QUEUE_NOTIFY, 0);
+    }
+
+    /* Wait for response with timeout */
+    uint16_t last_used_idx = g_used->idx;
+    int timeout = 1000000;
+    while (g_used->idx == last_used_idx && timeout > 0) {
+        __sync_synchronize();
+        timeout--;
+    }
+
+    if (timeout > 0) {
+        /* Check response */
+        struct virtio_gpu_ctrl_hdr *resp = (struct virtio_gpu_ctrl_hdr *)g_resp_buffer;
+        fut_printf("[VIRTIO-GPU] Cmd type=%u: response type=0x%x (waited %d)\n",
+                   ((struct virtio_gpu_ctrl_hdr *)cmd)->type, resp->type, 1000000-timeout);
+    } else {
+        fut_printf("[VIRTIO-GPU] Cmd type=%u: TIMEOUT waiting for response\n",
+                   ((struct virtio_gpu_ctrl_hdr *)cmd)->type);
+    }
 
     g_cmd_idx++;
-    fut_printf("[VIRTIO-GPU] Command submitted: type=%u size=%zu desc=%u avail=%u\n",
-               ((struct virtio_gpu_ctrl_hdr *)cmd)->type, cmd_size, desc_idx, g_avail->idx);
 }
 
 static int virtio_gpu_resource_create_2d(uint32_t resource_id, uint32_t width, uint32_t height) {
@@ -413,8 +700,12 @@ static int virtio_gpu_resource_flush(uint32_t resource_id, uint32_t width, uint3
     return 0;
 }
 
-int virtio_gpu_init(uint64_t __attribute__((unused)) fb_phys_unused, uint32_t width, uint32_t height) {
+int virtio_gpu_init(uint64_t *out_fb_phys, uint32_t width, uint32_t height) {
     fut_printf("[VIRTIO-GPU] Initializing VIRTIO GPU driver (width=%u height=%u)\n", width, height);
+
+    /* Store dimensions for later use */
+    g_fb_width = width;
+    g_fb_height = height;
 
     /* Find virtio-gpu device on PCI bus 0 */
     g_bus = 0;
@@ -436,15 +727,16 @@ int virtio_gpu_init(uint64_t __attribute__((unused)) fb_phys_unused, uint32_t wi
         return -1;
     }
 
-    /* Enable PCI device - set bus master and I/O space */
+    /* Enable PCI device - set bus master and memory space */
     uint32_t cmd_reg = pci_config_read(g_bus, g_slot, g_func, 0x04);
-    cmd_reg |= 0x0007;  /* Master + I/O + Memory */
+    cmd_reg |= 0x0006;  /* Master + Memory */
     pci_config_write(g_bus, g_slot, g_func, 0x04, cmd_reg);
 
-    /* Get BAR1 (device MMIO region) - we won't use it for framebuffer */
-    uint32_t bar1 = pci_config_read(g_bus, g_slot, g_func, 0x14);
-    uint32_t bar1_addr = bar1 & ~0xF;
-    fut_printf("[VIRTIO-GPU] BAR1 (MMIO): 0x%x\n", bar1_addr);
+    /* Scan PCI capabilities to locate virtio 1.0 structures */
+    if (virtio_scan_capabilities() != 0) {
+        fut_printf("[VIRTIO-GPU] Failed to scan capabilities\n");
+        return -1;
+    }
 
     /* Allocate our guest framebuffer and control structures */
     if (virtio_gpu_alloc_framebuffer(width, height) != 0) {
@@ -467,46 +759,67 @@ int virtio_gpu_init(uint64_t __attribute__((unused)) fb_phys_unused, uint32_t wi
     fut_printf("[VIRTIO-GPU] Command buffer: phys=0x%llx virt=0x%lx size=%u\n",
                (unsigned long long)g_cmd_buffer_phys, (unsigned long)g_cmd_buffer, CMD_BUFFER_SIZE);
 
-    /* VIRTIO device initialization sequence */
+    /* Map response buffer for VIRTIO command responses */
+    g_resp_buffer_phys = RESP_BUFFER_PHYS;
+    uintptr_t resp_virt = pmap_phys_to_virt(RESP_BUFFER_PHYS);
+    if (!resp_virt) {
+        fut_printf("[VIRTIO-GPU] Failed to map response buffer\n");
+        return -1;
+    }
+    g_resp_buffer = (volatile uint8_t *)resp_virt;
+    memset((void *)g_resp_buffer, 0, RESP_BUFFER_SIZE);
+    fut_printf("[VIRTIO-GPU] Response buffer: phys=0x%llx virt=0x%lx size=%u\n",
+               (unsigned long long)g_resp_buffer_phys, (unsigned long)g_resp_buffer, RESP_BUFFER_SIZE);
+
+    /* VIRTIO device initialization sequence (using modern virtio 1.0 common config) */
     /* 1. Set ACKNOWLEDGE bit */
-    pci_write_config_byte(VIRTIO_PCI_STATUS, VIRTIO_CONFIG_S_ACKNOWLEDGE);
-    fut_printf("[VIRTIO-GPU] Status: ACKNOWLEDGE\n");
+    virtio_common_write8(VIRTIO_PCI_COMMON_STATUS, VIRTIO_CONFIG_S_ACKNOWLEDGE);
+    uint8_t status_readback = virtio_common_read8(VIRTIO_PCI_COMMON_STATUS);
+    fut_printf("[VIRTIO-GPU] Status: ACKNOWLEDGE (wrote 0x%x, read 0x%x)\n",
+               VIRTIO_CONFIG_S_ACKNOWLEDGE, status_readback);
 
     /* 2. Set DRIVER bit */
-    uint8_t status = pci_read_config_byte(VIRTIO_PCI_STATUS);
+    uint8_t status = virtio_common_read8(VIRTIO_PCI_COMMON_STATUS);
     status |= VIRTIO_CONFIG_S_DRIVER;
-    pci_write_config_byte(VIRTIO_PCI_STATUS, status);
-    fut_printf("[VIRTIO-GPU] Status: DRIVER\n");
+    virtio_common_write8(VIRTIO_PCI_COMMON_STATUS, status);
+    status_readback = virtio_common_read8(VIRTIO_PCI_COMMON_STATUS);
+    fut_printf("[VIRTIO-GPU] Status: DRIVER (wrote 0x%x, read 0x%x)\n", status, status_readback);
 
-    /* 3. Negotiate features - for now accept what device offers */
-    uint32_t device_features = pci_read_config_dword(VIRTIO_PCI_HOST_FEATURES);
-    fut_printf("[VIRTIO-GPU] Device features: 0x%x\n", device_features);
+    /* 3. Negotiate features - read device features */
+    virtio_common_write32(VIRTIO_PCI_COMMON_DFSELECT, 0);  /* Select features bits 0-31 */
+    uint32_t device_features_lo = virtio_common_read32(VIRTIO_PCI_COMMON_DF);
+    virtio_common_write32(VIRTIO_PCI_COMMON_DFSELECT, 1);  /* Select features bits 32-63 */
+    uint32_t device_features_hi = virtio_common_read32(VIRTIO_PCI_COMMON_DF);
+    fut_printf("[VIRTIO-GPU] Device features: 0x%x%08x\n", device_features_hi, device_features_lo);
 
-    /* Write features we understand to guest features (for now, 0) */
-    pci_write_config_dword(VIRTIO_PCI_GUEST_FEATURES, 0);
+    /* Write features we understand to guest features (for now, accept all lower 32 bits) */
+    virtio_common_write32(VIRTIO_PCI_COMMON_GFSELECT, 0);  /* Select guest features bits 0-31 */
+    virtio_common_write32(VIRTIO_PCI_COMMON_GF, device_features_lo);
+    virtio_common_write32(VIRTIO_PCI_COMMON_GFSELECT, 1);  /* Select guest features bits 32-63 */
+    virtio_common_write32(VIRTIO_PCI_COMMON_GF, 0);  /* Don't enable 64-bit features for now */
 
     /* 4. Set FEATURES_OK */
-    status = pci_read_config_byte(VIRTIO_PCI_STATUS);
+    status = virtio_common_read8(VIRTIO_PCI_COMMON_STATUS);
     status |= VIRTIO_CONFIG_S_FEATURES_OK;
-    pci_write_config_byte(VIRTIO_PCI_STATUS, status);
-    fut_printf("[VIRTIO-GPU] Status: FEATURES_OK\n");
+    virtio_common_write8(VIRTIO_PCI_COMMON_STATUS, status);
 
-    /* 5. Select queue 0 (control queue) */
-    pci_write_config_word(VIRTIO_PCI_QUEUE_SELECT, 0);
+    /* Verify FEATURES_OK was accepted */
+    status = virtio_common_read8(VIRTIO_PCI_COMMON_STATUS);
+    if (!(status & VIRTIO_CONFIG_S_FEATURES_OK)) {
+        fut_printf("[VIRTIO-GPU] ERROR: Device rejected our feature set\n");
+        return -1;
+    }
+    fut_printf("[VIRTIO-GPU] Status: FEATURES_OK (status=0x%x)\n", status);
 
-    /* 6. Set queue size */
-    pci_write_config_word(VIRTIO_PCI_QUEUE_SIZE, VIRTIO_RING_SIZE);
-    fut_printf("[VIRTIO-GPU] Queue size set to %u\n", VIRTIO_RING_SIZE);
-
-    /* 7. Set DRIVER_OK - device ready */
-    status = pci_read_config_byte(VIRTIO_PCI_STATUS);
+    /* 5. Set DRIVER_OK - device ready */
+    status = virtio_common_read8(VIRTIO_PCI_COMMON_STATUS);
     status |= VIRTIO_CONFIG_S_DRIVER_OK;
-    pci_write_config_byte(VIRTIO_PCI_STATUS, status);
+    virtio_common_write8(VIRTIO_PCI_COMMON_STATUS, status);
     fut_printf("[VIRTIO-GPU] Status: DRIVER_OK - device ready\n");
 
-    /* Draw solid green as test pattern to guest framebuffer */
+    /* Draw solid white as test pattern to guest framebuffer */
     volatile uint32_t *fb = (volatile uint32_t *)g_framebuffer_guest;
-    uint32_t pixel = 0xFF00FF00;  /* BGRA green */
+    uint32_t pixel = 0xFFFFFFFF;  /* White - all channels max */
 
     for (size_t i = 0; i < width * height; i++) {
         fb[i] = pixel;
@@ -536,5 +849,22 @@ int virtio_gpu_init(uint64_t __attribute__((unused)) fb_phys_unused, uint32_t wi
 
     fut_printf("[VIRTIO-GPU] Display setup complete\n");
 
+    /* Return the actual guest framebuffer address that should be used */
+    if (out_fb_phys) {
+        *out_fb_phys = fb_phys;
+        fut_printf("[VIRTIO-GPU] Returning framebuffer address: phys=0x%llx\n",
+                   (unsigned long long)fb_phys);
+    }
+
     return 0;
+}
+
+void virtio_gpu_flush_display(void) {
+    if (!g_framebuffer_guest || g_fb_width == 0 || g_fb_height == 0) {
+        return;
+    }
+
+    /* Transfer framebuffer data to host and flush */
+    virtio_gpu_transfer_to_host_2d(RESOURCE_ID_FB, g_fb_width, g_fb_height);
+    virtio_gpu_resource_flush(RESOURCE_ID_FB, g_fb_width, g_fb_height);
 }

@@ -770,9 +770,8 @@ void fut_kernel_main(void) {
     fut_printf("[INIT] fb_enabled=%d fb_available=%d\n",
                fb_enabled ? 1 : 0, fb_available ? 1 : 0);
     if (fb_available) {
-        /* Disable framebuffer splash - it interferes with block device initialization
-         * TODO: Fix memory mapping sequencing to allow both framebuffer and block device */
-        // fb_boot_splash();
+        /* Enable framebuffer splash for virtio-gpu initialization */
+        fb_boot_splash();
         fb_char_init();
         struct fut_fb_hwinfo fbinfo = {0};
         if (fb_get_info(&fbinfo) == 0) {
@@ -1036,6 +1035,13 @@ void fut_kernel_main(void) {
         }
     }
 
+    /* Temporarily disabled to test virtio-gpu framebuffer directly */
+    (void)wayland_client_stage;
+    (void)wayland_color_stage;
+    fut_printf("[INIT] Wayland clients disabled for framebuffer testing\n");
+    wayland_client_exec = 0;  /* Mark as success so interactive mode doesn't exit */
+    wayland_color_exec = 0;
+#if 0
     if (wayland_exec == 0 && wayland_client_stage == 0) {
         fut_boot_delay_ms(100);
         char name[] = "wl-simple";
@@ -1063,6 +1069,7 @@ void fut_kernel_main(void) {
             fut_printf("[INIT] exec /bin/wl-colorwheel -> 0\n");
         }
     }
+#endif
 
     /* Check if interactive mode is enabled (for GUI testing) */
     /* First try boot argument, then fall back to compile-time flag */

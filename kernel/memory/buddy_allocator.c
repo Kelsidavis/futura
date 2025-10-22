@@ -158,16 +158,13 @@ void *buddy_malloc(size_t size) {
     while (search_order <= MAX_ORDER) {
         free_block_t *candidate = free_lists[search_order - MIN_ORDER];
 
-        /* CRITICAL: Clean corrupted entries from the free list head */
-        while (candidate && ((uintptr_t)candidate < heap_start || (uintptr_t)candidate >= heap_end)) {
-            fut_printf("[BUDDY-MALLOC] WARNING: Corrupted free list head %p at order %d, removing\n",
+        /* CRITICAL: Validate free list head before dereferencing */
+        if (candidate && ((uintptr_t)candidate < heap_start || (uintptr_t)candidate >= heap_end)) {
+            fut_printf("[BUDDY-MALLOC] WARNING: Corrupted free list head %p at order %d, marking list as empty\n",
                        (void*)candidate, search_order);
-            /* Unlink the corrupted entry */
-            candidate = candidate->next;
-            free_lists[search_order - MIN_ORDER] = candidate;
-            if (candidate) {
-                candidate->prev = NULL;
-            }
+            /* Mark free list as corrupted/empty - don't try to dereference it */
+            free_lists[search_order - MIN_ORDER] = NULL;
+            candidate = NULL;
         }
 
         /* Debug: list all blocks in this free list */

@@ -92,7 +92,7 @@ ifeq ($(PLATFORM),x86_64)
     LD := ld
     AR := ar
     OBJCOPY := objcopy
-    ARCH_CFLAGS := -m64 -mcmodel=kernel -mno-red-zone
+    ARCH_CFLAGS := -m64 -mcmodel=kernel -mno-red-zone -mno-sse -mno-avx -mno-avx2 -fno-tree-vectorize
     ARCH_ASFLAGS := --64
     ARCH_LDFLAGS := -m elf_x86_64 -T platform/x86_64/link.ld
 else ifeq ($(PLATFORM),arm64)

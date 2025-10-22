@@ -429,7 +429,7 @@ int fut_stage_fbtest_binary(void) {
 
     fut_printf("[STAGE] calculating binary size\n");
     size_t size = (size_t)(_binary_build_bin_user_fbtest_end - _binary_build_bin_user_fbtest_start);
-    fut_printf("[STAGE] binary size = %zu bytes\n", size);
+    fut_printf("[STAGE] binary size = %llu bytes\n", (unsigned long long)size);
     if (size == 0) {
         return -EINVAL;
     }
@@ -444,22 +444,24 @@ int fut_stage_fbtest_binary(void) {
         return fd;
     }
 
-    fut_printf("[STAGE] entering write loop, size=%zu\n", size);
+    fut_printf("[STAGE] entering write loop, size=%llu\n", (unsigned long long)size);
     size_t offset = 0;
     while (offset < size) {
-        fut_printf("[STAGE] loop iteration: offset=%zu size=%zu\n", offset, size);
+        fut_printf("[STAGE] loop iteration: offset=%llu size=%llu\n",
+                   (unsigned long long)offset, (unsigned long long)size);
         size_t chunk = size - offset;
-        fut_printf("[STAGE] calculated chunk=%zu\n", chunk);
+        fut_printf("[STAGE] calculated chunk=%llu\n", (unsigned long long)chunk);
         if (chunk > 4096) {
             chunk = 4096;
         }
-        fut_printf("[STAGE] limited chunk=%zu\n", chunk);
+        fut_printf("[STAGE] limited chunk=%llu\n", (unsigned long long)chunk);
 
-        fut_printf("[STAGE] calling fut_vfs_write fd=%d chunk=%zu\n", fd, chunk);
+        fut_printf("[STAGE] calling fut_vfs_write fd=%d chunk=%llu\n",
+                   fd, (unsigned long long)chunk);
         ssize_t wr = fut_vfs_write(fd,
                                    _binary_build_bin_user_fbtest_start + offset,
                                    chunk);
-        fut_printf("[STAGE] fut_vfs_write returned %zd\n", wr);
+        fut_printf("[STAGE] fut_vfs_write returned %lld\n", (long long)wr);
         if (wr < 0) {
             fut_vfs_close(fd);
             return (int)wr;

@@ -144,22 +144,34 @@ static ssize_t ramfs_write(struct fut_vnode *vnode, const void *buf, size_t size
 
     /* Expand buffer if needed */
     if (required > node->file.capacity) {
-        /* Allocation strategy balancing performance and heap management:
-         * - Small files: aggressive growth to minimize realloc overhead
-         * - Large files (>64KB): conservative growth (25% overhead) to reduce fragmentation
+        /* Allocation strategy optimized for buddy allocator efficiency:
+         * Allocate in power-of-2 aligned chunks to minimize fragmentation.
+         * The buddy allocator works best with sizes close to order boundaries.
          */
         size_t new_capacity;
-        if (required < 65536) {
-            /* For small files (<64KB), double capacity
-             * This batches allocations efficiently for smaller files
-             */
-            new_capacity = required * 2;
+
+        /* Round up to next power-of-2 to align with buddy allocator orders
+         * This prevents fragmenting buddy blocks and enables better coalescing
+         * CRITICAL: Check for overflow to prevent allocating buffer smaller than required
+         */
+        size_t power_of_2 = 1;
+        while (power_of_2 < required && power_of_2 <= (SIZE_MAX / 2)) {
+            power_of_2 <<= 1;
+        }
+
+        /* If power_of_2 overflowed or would overflow, use required directly with safety margin */
+        if (power_of_2 < required || power_of_2 > (SIZE_MAX / 2)) {
+            /* For very large files, allocate with 10% overhead to avoid repeated reallocations */
+            if (required > (SIZE_MAX / 11)) {
+                /* File too large - this should not happen in practice */
+                return -ENOSPC;
+            }
+            new_capacity = required + (required / 10);
+        } else if (power_of_2 > (1024 * 1024)) {
+            /* For files larger than 1MB, use conservative 10% overhead instead */
+            new_capacity = required + (required / 10);
         } else {
-            /* For larger files (>=64KB), add 25% overhead instead of doubling
-             * A 544KB file allocates 680KB instead of 1088KB,
-             * significantly reducing heap fragmentation
-             */
-            new_capacity = required + (required / 4);
+            new_capacity = power_of_2;
         }
 
         uint8_t *new_data = fut_malloc(new_capacity);
@@ -182,9 +194,25 @@ static ssize_t ramfs_write(struct fut_vnode *vnode, const void *buf, size_t size
     }
 
     /* Write data - use manual copy to avoid SIMD instructions */
+    extern void fut_printf(const char *, ...);
+
     const uint8_t *src = (const uint8_t *)buf;
+
+    /* Log write operation to detect buffer overflow */
+    if (size > 4096) {
+        fut_printf("[RAMFS-WRITE] Large write: offset=%llu size=%llu buf=%p data=%p capacity=%llu\n",
+                   (unsigned long long)offset, (unsigned long long)size, buf,
+                   (void*)node->file.data, (unsigned long long)node->file.capacity);
+    }
+
     for (size_t i = 0; i < size; i++) {
         node->file.data[(size_t)offset + i] = src[i];
+    }
+
+    if (size > 4096) {
+        fut_printf("[RAMFS-WRITE] Large write completed: wrote to %p-%p\n",
+                   (void*)(node->file.data + offset),
+                   (void*)(node->file.data + offset + size));
     }
 
     /* Update size - we already checked for overflow above */

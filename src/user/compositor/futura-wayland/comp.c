@@ -1118,7 +1118,7 @@ static int comp_flush_frame_callbacks(struct compositor_state *comp, uint32_t no
     return callbacks;
 }
 
-static void render_one_frame(struct compositor_state *comp) {
+void comp_render_frame(struct compositor_state *comp) {
     if (!comp) {
         return;
     }
@@ -1304,7 +1304,7 @@ static void comp_handle_timer_tick(struct compositor_state *comp, uint64_t expir
     (void)comp_timer_arm(comp);
 
     if (comp->frame_damage.count > 0) {
-        render_one_frame(comp);
+        comp_render_frame(comp);
     }
 }
 

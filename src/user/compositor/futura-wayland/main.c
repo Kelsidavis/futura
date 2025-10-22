@@ -127,6 +127,7 @@ int main(void) {
            socket);
 
     comp_damage_add_full(&comp);
+    comp_render_frame(&comp);
     comp_run(&comp);
 
     shm_backend_finish(&comp);

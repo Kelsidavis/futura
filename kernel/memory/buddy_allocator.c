@@ -158,15 +158,27 @@ void *buddy_malloc(size_t size) {
     while (search_order <= MAX_ORDER) {
         free_block_t *candidate = free_lists[search_order - MIN_ORDER];
 
+        /* CRITICAL: Clean corrupted entries from the free list head */
+        while (candidate && ((uintptr_t)candidate < heap_start || (uintptr_t)candidate >= heap_end)) {
+            fut_printf("[BUDDY-MALLOC] WARNING: Corrupted free list head %p at order %d, removing\n",
+                       (void*)candidate, search_order);
+            /* Unlink the corrupted entry */
+            candidate = candidate->next;
+            free_lists[search_order - MIN_ORDER] = candidate;
+            if (candidate) {
+                candidate->prev = NULL;
+            }
+        }
+
         /* Debug: list all blocks in this free list */
         int block_count = 0;
         free_block_t *tmp = candidate;
         while (tmp) {
             /* Safety: Validate pointer before dereferencing */
             if ((uintptr_t)tmp < heap_start || (uintptr_t)tmp >= heap_end) {
-                fut_printf("[BUDDY-MALLOC] ERROR: Corrupted free list pointer %p (outside heap bounds)\n", (void*)tmp);
-                fut_printf("[BUDDY-MALLOC]   Heap bounds: %p - %p\n", (void*)heap_start, (void*)heap_end);
-                return NULL;  /* Abort allocation due to heap corruption */
+                fut_printf("[BUDDY-MALLOC] WARNING: Corrupted pointer %p in free list at order %d, breaking traversal\n",
+                           (void*)tmp, search_order);
+                break;  /* Stop traversal but don't fail allocation */
             }
             block_count++;
             tmp = tmp->next;

@@ -53,6 +53,7 @@ typedef struct slab_obj {
 
 /* A slab contains multiple objects of the same size */
 typedef struct slab {
+    uint64_t magic;              /* Magic number for integrity checking */
     struct slab *next;           /* Next slab in list */
     struct slab *prev;           /* Previous slab in list */
     size_t obj_size;             /* Size of each object (including header) */
@@ -113,8 +114,13 @@ void slab_init(void) {
     }
 }
 
+/* SLAB MAGIC for integrity checking */
+#define SLAB_MAGIC 0xDEADC0DEDEADBEEFULL
+
 /* Allocate a new slab and add it to cache */
 static slab_t *slab_create(slab_cache_t *cache) {
+    extern void fut_printf(const char *, ...);
+
     /* Allocate slab metadata + data from buddy allocator */
     uint8_t *slab_mem = (uint8_t *)buddy_malloc(SLAB_SIZE);
     if (!slab_mem) {
@@ -123,6 +129,7 @@ static slab_t *slab_create(slab_cache_t *cache) {
 
     /* Slab structure at beginning of allocation */
     slab_t *slab = (slab_t *)slab_mem;
+    slab->magic = SLAB_MAGIC;
     slab->next = NULL;
     slab->prev = NULL;
     slab->obj_size = cache->obj_size + SLAB_OBJ_HDR_SIZE;
@@ -147,7 +154,41 @@ static slab_t *slab_create(slab_cache_t *cache) {
     cache->slabs = slab;
     cache->num_slabs++;
 
+    fut_printf("[SLAB-CREATE] Created slab at %p for size %llu (obj_size=%llu, count=%llu)\n",
+               (void*)slab, (unsigned long long)cache->obj_size,
+               (unsigned long long)slab->obj_size, (unsigned long long)slab->obj_count);
+
     return slab;
+}
+
+/* Validate slab integrity before using it */
+static int slab_is_valid(slab_t *slab) {
+    extern void fut_printf(const char *, ...);
+
+    if (!slab) return 0;
+
+    /* Check magic number */
+    if (slab->magic != SLAB_MAGIC) {
+        fut_printf("[SLAB-VALIDATE] ERROR: Slab %p has corrupted magic 0x%llx (expected 0x%llx)\n",
+                   (void*)slab, (unsigned long long)slab->magic, (unsigned long long)SLAB_MAGIC);
+        return 0;
+    }
+
+    /* Check object size is reasonable */
+    if (slab->obj_size == 0 || slab->obj_size > SLAB_SIZE) {
+        fut_printf("[SLAB-VALIDATE] ERROR: Slab %p has invalid obj_size %llu\n",
+                   (void*)slab, (unsigned long long)slab->obj_size);
+        return 0;
+    }
+
+    /* Check object count is reasonable */
+    if (slab->obj_count == 0 || slab->obj_count > (SLAB_SIZE / 16)) {
+        fut_printf("[SLAB-VALIDATE] ERROR: Slab %p has invalid obj_count %llu\n",
+                   (void*)slab, (unsigned long long)slab->obj_count);
+        return 0;
+    }
+
+    return 1;
 }
 
 void *slab_malloc(size_t size) {
@@ -165,6 +206,15 @@ void *slab_malloc(size_t size) {
 
     /* Try to find free object in existing slabs */
     for (slab_t *slab = cache->slabs; slab; slab = slab->next) {
+        /* CRITICAL: Validate slab integrity before accessing it */
+        if (!slab_is_valid(slab)) {
+            fut_printf("[SLAB-MALLOC] WARNING: Skipping corrupted slab %p\n", (void*)slab);
+            /* Mark as empty to prevent further use */
+            slab->free_list = NULL;
+            slab->free_count = 0;
+            continue;
+        }
+
         if (slab->free_list) {
             /* Found free object */
             slab_obj_t *obj = slab->free_list;
@@ -248,13 +298,19 @@ void slab_free(void *ptr) {
         for (slab_t *slab = cache->slabs; slab; slab = slab->next) {
             /* CRITICAL: Validate slab pointer before dereferencing */
             if ((uintptr_t)slab < 0xffffffff80000000ULL || (uintptr_t)slab >= 0xffffffffa0389000ULL) {
-                fut_printf("[SLAB-FREE] WARNING: Corrupted slab pointer %p, skipping\n", slab);
+                fut_printf("[SLAB-FREE] WARNING: Corrupted slab pointer %p, skipping\n", (void*)slab);
                 goto check_buddy;
+            }
+
+            /* CRITICAL: Validate slab integrity */
+            if (!slab_is_valid(slab)) {
+                fut_printf("[SLAB-FREE] WARNING: Slab %p failed integrity check, skipping\n", (void*)slab);
+                continue;
             }
 
             /* Validate slab->data pointer before dereferencing */
             if (!slab->data || (uintptr_t)slab->data < 0xffffffff80000000ULL || (uintptr_t)slab->data >= 0xffffffffa0389000ULL) {
-                fut_printf("[SLAB-FREE] WARNING: Invalid slab->data pointer %p, skipping slab\n", slab->data);
+                fut_printf("[SLAB-FREE] WARNING: Invalid slab->data pointer %p, skipping slab\n", (void*)slab->data);
                 continue;
             }
 

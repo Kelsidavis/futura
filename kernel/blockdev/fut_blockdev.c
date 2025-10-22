@@ -189,8 +189,14 @@ ssize_t fut_blockdev_read_bytes(struct fut_blockdev *dev, uint64_t offset, size_
         return BLOCKDEV_EINVAL;
     }
 
+    /* Check for integer overflow: offset + size */
+    if (offset > UINT64_MAX - (uint64_t)size) {
+        return BLOCKDEV_EINVAL;  /* Overflow would occur */
+    }
+
     /* Check bounds */
-    if (offset + size > dev->capacity) {
+    uint64_t end_offset = offset + (uint64_t)size;
+    if (end_offset > dev->capacity) {
         return BLOCKDEV_EINVAL;
     }
 
@@ -230,8 +236,14 @@ ssize_t fut_blockdev_write_bytes(struct fut_blockdev *dev, uint64_t offset, size
         return BLOCKDEV_EINVAL;
     }
 
+    /* Check for integer overflow: offset + size */
+    if (offset > UINT64_MAX - (uint64_t)size) {
+        return BLOCKDEV_EINVAL;  /* Overflow would occur */
+    }
+
     /* Check bounds */
-    if (offset + size > dev->capacity) {
+    uint64_t end_offset = offset + (uint64_t)size;
+    if (end_offset > dev->capacity) {
         return BLOCKDEV_EINVAL;
     }
 

@@ -110,7 +110,7 @@
 #define CONFIG_MAX_TASKS           64     /* Maximum tasks (processes) */
 
 /* Stack sizes */
-#define CONFIG_KERNEL_STACK_SIZE   (16 * 1024)   /* 16 KB kernel stack */
+#define CONFIG_KERNEL_STACK_SIZE   (32 * 1024)   /* 32 KB kernel stack (doubled to prevent VFS stack overflow) */
 #define CONFIG_USER_STACK_SIZE     (64 * 1024)   /* 64 KB user stack */
 #define CONFIG_IRQ_STACK_SIZE      (8 * 1024)    /* 8 KB IRQ stack */
 

@@ -905,13 +905,15 @@ void fut_kernel_main(void) {
     test_futurafs_operations();
 #endif
 
-    fut_printf("[INIT] Staging fbtest user binary...\n");
-    fb_stage = fut_stage_fbtest_binary();
-    if (fb_stage != 0) {
-        fut_printf("[WARN] Failed to stage fbtest binary (error %d)\n", fb_stage);
-    } else {
-        fut_printf("[INIT] fbtest binary staged at /bin/fbtest\n");
-    }
+    fut_printf("[INIT] Skipping fbtest staging (debugging)\n");
+    // TEMPORARILY DISABLED FOR DEBUGGING
+    // fb_stage = fut_stage_fbtest_binary();
+    // fut_printf("[INIT] fut_stage_fbtest_binary returned %d\n", fb_stage);
+    // if (fb_stage != 0) {
+    //     fut_printf("[WARN] Failed to stage fbtest binary (error %d)\n", fb_stage);
+    // } else {
+    //     fut_printf("[INIT] fbtest binary staged at /bin/fbtest\n");
+    // }
 
 #if ENABLE_WINSRV_DEMO
     fut_printf("[INIT] Staging winsrv user binary...\n");

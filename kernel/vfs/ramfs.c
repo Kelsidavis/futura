@@ -116,6 +116,7 @@ static ssize_t ramfs_read(struct fut_vnode *vnode, void *buf, size_t size, uint6
 }
 
 static ssize_t ramfs_write(struct fut_vnode *vnode, const void *buf, size_t size, uint64_t offset) {
+    fut_printf("[ramfs-write] enter\n");
     if (!vnode || !buf) {
         return -EINVAL;
     }
@@ -131,9 +132,11 @@ static ssize_t ramfs_write(struct fut_vnode *vnode, const void *buf, size_t size
 
     /* Calculate required capacity */
     size_t required = offset + size;
+    fut_printf("[ramfs-write] required capacity calc done\n");
 
     /* Expand buffer if needed */
     if (required > node->file.capacity) {
+        fut_printf("[ramfs-write] need to expand\n");
         /* Allocation strategy balancing performance and heap management:
          * - Small files: aggressive growth to minimize realloc overhead
          * - Large files (>64KB): conservative growth (25% overhead) to reduce fragmentation
@@ -152,29 +155,38 @@ static ssize_t ramfs_write(struct fut_vnode *vnode, const void *buf, size_t size
             new_capacity = required + (required / 4);
         }
 
+        fut_printf("[ramfs-write] calling fut_malloc\n");
         uint8_t *new_data = fut_malloc(new_capacity);
+        fut_printf("[ramfs-write] fut_malloc returned %p\n", (void*)new_data);
         if (!new_data) {
             return -ENOMEM;
         }
 
         /* Copy old data using memcpy for efficiency */
         if (node->file.data && vnode->size > 0) {
+            fut_printf("[ramfs-write] copying old data\n");
             memcpy(new_data, node->file.data, vnode->size);
+            fut_printf("[ramfs-write] calling fut_free\n");
             fut_free(node->file.data);
+            fut_printf("[ramfs-write] fut_free returned\n");
         }
 
+        fut_printf("[ramfs-write] updating node pointers\n");
         node->file.data = new_data;
         node->file.capacity = new_capacity;
     }
 
+    fut_printf("[ramfs-write] writing data via memcpy\n");
     /* Write data using memcpy for efficiency */
     memcpy(node->file.data + offset, buf, size);
 
+    fut_printf("[ramfs-write] updating size\n");
     /* Update size */
     if (offset + size > vnode->size) {
         vnode->size = offset + size;
     }
 
+    fut_printf("[ramfs-write] returning\n");
     return (ssize_t)size;
 }
 
@@ -192,9 +204,30 @@ static int ramfs_lookup(struct fut_vnode *dir, const char *name, struct fut_vnod
         return -EIO;
     }
 
-    /* Search directory entries */
+    /* Search directory entries with corruption detection */
     struct ramfs_dirent *entry = node->dir.entries;
+    int safety_counter = 0;
+
     while (entry) {
+        /* Detect circular or corrupted lists (max 100 entries per directory) */
+        if (++safety_counter > 100) {
+            fut_printf("[ramfs] ERROR: Directory entry list corruption detected (loop?)\n");
+            return -EIO;
+        }
+
+        /* Validate entry pointer is in valid kernel memory range */
+        if ((uintptr_t)entry < 0xFFFFFFFF80000000ULL) {
+            fut_printf("[ramfs] ERROR: Invalid entry pointer %p\n", (void*)entry);
+            return -EIO;
+        }
+
+        /* Validate vnode pointer before comparing name */
+        if (!entry->vnode || (uintptr_t)entry->vnode < 0xFFFFFFFF80000000ULL) {
+            fut_printf("[ramfs] ERROR: Invalid vnode pointer %p in entry '%s'\n",
+                      (void*)entry->vnode, entry->name);
+            return -EIO;
+        }
+
         if (str_cmp(entry->name, name) == 0) {
             *result = entry->vnode;
             fut_vnode_ref(*result);

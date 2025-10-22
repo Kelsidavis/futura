@@ -26,6 +26,7 @@ struct ramfs_dirent {
 /* Per-vnode filesystem data */
 struct ramfs_node {
     uint64_t magic_guard_before;    /* Guard value to detect overflow into structure */
+    uint32_t open_count;            /* Reference count: number of open file descriptors */
     union {
         /* For regular files: data buffer */
         struct {
@@ -121,23 +122,51 @@ static void str_copy_safe(char *dest, const char *src, size_t max_len) {
  * ============================================================ */
 
 static int ramfs_open(struct fut_vnode *vnode, int flags) {
-    (void)vnode;
     (void)flags;
-    /* Nothing to do for open */
+
+    if (!vnode) {
+        return -EINVAL;
+    }
+
+    struct ramfs_node *node = (struct ramfs_node *)vnode->fs_data;
+    if (!node) {
+        return -EIO;
+    }
+
+    /* Increment open reference count */
+    node->open_count++;
     return 0;
 }
 
-static int ramfs_close(struct fut_vnode *vnode __attribute__((unused))) {
-    /* File close in RAMFS is a no-op.
-     * RAMFS files are in-memory and persist for the lifetime of the system.
-     * File data is NOT freed on close because:
-     * 1. Multiple processes can have the same file open
-     * 2. The VFS layer might still access the file after logical close
-     * 3. Close should only close the file descriptor, not delete the file
+static int ramfs_close(struct fut_vnode *vnode) {
+    extern void fut_printf(const char *, ...);
+
+    if (!vnode) {
+        return 0;
+    }
+
+    struct ramfs_node *node = (struct ramfs_node *)vnode->fs_data;
+    if (!node) {
+        return 0;
+    }
+
+    /* Decrement open reference count for tracking */
+    if (node->open_count > 0) {
+        node->open_count--;
+        fut_printf("[RAMFS-CLOSE] Decremented open_count to %u for vnode=%p\n",
+                   node->open_count, (void*)vnode);
+    }
+
+    /* RAMFS file buffers are NEVER freed after open.
+     * This is intentional - RAMFS is a boot-time filesystem for staging binaries.
+     * File data persists for the lifetime of the system.
+     * Reasons:
+     * 1. Files can be opened and closed multiple times (write, then read for exec)
+     * 2. Each open/close pair is independent and shouldn't affect other accesses
+     * 3. RAMFS files are typically small (binaries, configs)
+     * 4. Keeping them persistent simplifies lifecycle management
      *
-     * Memory management: RAMFS files consume kernel heap memory,
-     * but this is acceptable for a boot-time filesystem staging binaries.
-     * Files are only freed when RAMFS is unmounted or system shuts down.
+     * The open_count tracking is maintained for diagnostics only.
      */
     return 0;
 }
@@ -534,6 +563,9 @@ static int ramfs_create(struct fut_vnode *dir, const char *name, uint32_t mode, 
     node->magic_guard_before = RAMFS_NODE_MAGIC;
     node->magic_guard_after = RAMFS_NODE_MAGIC;
 
+    /* Initialize open reference count */
+    node->open_count = 0;
+
     /* Initialize file data */
     node->file.data = NULL;
     node->file.capacity = 0;
@@ -606,6 +638,9 @@ static int ramfs_mkdir(struct fut_vnode *dir, const char *name, uint32_t mode) {
     /* Initialize guard values to detect buffer overflows */
     node->magic_guard_before = RAMFS_NODE_MAGIC;
     node->magic_guard_after = RAMFS_NODE_MAGIC;
+
+    /* Initialize open reference count */
+    node->open_count = 0;
 
     /* Initialize directory */
     node->dir.entries = NULL;

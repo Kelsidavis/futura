@@ -62,9 +62,19 @@ KAPPEND := $(strip $(KAPPEND))
 
 RUN_QEMU_FLAGS := -m $(MEM) -serial stdio -no-reboot -no-shutdown
 ifeq ($(HEADFUL),1)
-# Headful mode: use GTK display with virtio-gpu
-# virtio-gpu is modern and performant, GTK works in headless environments
-RUN_QEMU_FLAGS += -display gtk
+# Headful mode: use display backend with virtio-gpu
+# GTK is default for native graphics output, falls back to VNC if no display server
+ifeq ($(VNC),1)
+RUN_QEMU_FLAGS += -vnc :0
+else ifeq ($(SPICE),1)
+RUN_QEMU_FLAGS += -display spice-app
+else ifeq ($(SDL),1)
+RUN_QEMU_FLAGS += -display sdl
+else
+# GTK provides native graphics window via virtio-gpu
+# Requires X11 (DISPLAY) or Wayland (WAYLAND_DISPLAY) to be set
+RUN_QEMU_FLAGS += -display gtk,gl=on
+endif
 RUN_QEMU_FLAGS += -device virtio-gpu-pci
 RUN_QEMU_FLAGS += -vga none
 else
@@ -677,6 +687,20 @@ run:
 	@$(MAKE) ENABLE_WAYLAND_DEMO=1 DEBUG_WAYLAND=$(DEBUG) DEBUG_NETUNIX=$(DEBUG) stage
 	@$(MAKE) disk >/dev/null
 	@echo "==> Running QEMU (headful=$(HEADFUL), mem=$(MEM) MiB, debug=$(DEBUG))"
+ifeq ($(HEADFUL),1)
+ifeq ($(VNC),1)
+	@echo "==> VNC server will be available at localhost:5900"
+else
+	@echo "==> Display: GTK with virtio-gpu (OpenGL enabled)"
+	@if [ -z "$$DISPLAY" ] && [ -z "$$WAYLAND_DISPLAY" ]; then \
+		echo "==> WARNING: No DISPLAY or WAYLAND_DISPLAY set!"; \
+		echo "==>   GTK needs X11 or Wayland. Options:"; \
+		echo "==>   1. Export DISPLAY (e.g., export DISPLAY=:0)"; \
+		echo "==>   2. Use VNC: make VNC=1 run-headful"; \
+		echo "==>   3. Use SSH X11 forwarding: ssh -X user@host"; \
+	fi
+endif
+endif
 	@set -o pipefail; \
 	$(QEMU) $(RUN_QEMU_FLAGS) -kernel $(BIN_DIR)/futura_kernel.elf -initrd $(INITRAMFS) $(RUN_QEMU_APPEND) | tee qemu.log; \
 	code=$${PIPESTATUS[0]}; \
@@ -704,15 +728,31 @@ run-clean:
 help-run:
 	@echo "make run              # build, stage, and boot headless Wayland demo"
 	@echo "make run-debug        # enable DEBUG_* toggles and run headless"
-	@echo "make run-headful      # run with QEMU window instead of -display none"
+	@echo "make run-headful      # run with QEMU display (GTK with virtio-gpu)"
 	@echo "make run-clean        # clean artifacts and re-run demo"
 	@echo
 	@echo "Toggles (can be combined):"
 	@echo "  MEM=1024            # increase guest memory (MiB)"
 	@echo "  HEADFUL=1           # equivalent to make run-headful"
+	@echo "  VNC=1               # use VNC display (headless-compatible)"
+	@echo "  SDL=1               # use SDL display (requires X11)"
+	@echo "  SPICE=1             # use SPICE display (headless-compatible)"
 	@echo "  DEBUG=1             # enable DEBUG_WAYLAND/DEBUG_NETUNIX"
 	@echo "  ASYNC=1             # enable async self-tests via kernel cmdline"
 	@echo "  EXTRA_QEMU_FLAGS='-s -S' # append custom QEMU flags"
+	@echo
+	@echo "Display backend (HEADFUL mode):"
+	@echo "  GTK (default)       # Native graphics window via virtio-gpu with OpenGL"
+	@echo "                      # Requires X11 (DISPLAY) or Wayland (WAYLAND_DISPLAY)"
+	@echo "  VNC                 # Remote viewing, works in headless (use VNC=1)"
+	@echo "  SDL                 # Alternative native window (use SDL=1)"
+	@echo "  SPICE               # Remote graphics protocol (use SPICE=1)"
+	@echo
+	@echo "Examples:"
+	@echo "  make run-headful                    # GTK window with virtio-gpu"
+	@echo "  export DISPLAY=:0 && make run-headful  # Set display first"
+	@echo "  make VNC=1 run-headful              # VNC on localhost:5900"
+	@echo "  make SDL=1 run-headful              # SDL window"
 
 .PHONY: wayland-step2
 wayland-step2:

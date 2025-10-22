@@ -245,7 +245,31 @@ void *buddy_malloc(size_t size) {
         search_order++;
     }
 
-    fut_printf("[BUDDY-MALLOC] OUT OF MEMORY: size=%llu\n", (unsigned long long)size);
+    /* Out of memory - print detailed fragmentation info */
+    fut_printf("[BUDDY-MALLOC] OUT OF MEMORY: size=%llu (needed=%llu, requested order=%d)\n",
+               (unsigned long long)size, (unsigned long long)needed, order);
+
+    /* Print free block count at each order to understand fragmentation */
+    fut_printf("[BUDDY-MALLOC] Heap fragmentation status:\n");
+    size_t total_free_size = 0;
+    for (int i = 0; i < NUM_ORDERS; i++) {
+        int order_val = i + MIN_ORDER;
+        free_block_t *candidate = free_lists[i];
+        int count = 0;
+        while (candidate) {
+            count++;
+            total_free_size += order_to_size(order_val);
+            candidate = candidate->next;
+        }
+        if (count > 0) {
+            fut_printf("[BUDDY-MALLOC]   Order %2d (2^%2d = %8llu bytes): %d blocks (total %llu bytes)\n",
+                       order_val, order_val, (unsigned long long)order_to_size(order_val), count,
+                       (unsigned long long)(count * order_to_size(order_val)));
+        }
+    }
+    fut_printf("[BUDDY-MALLOC] Total free size: %llu bytes, Total allocated: %llu bytes\n",
+               (unsigned long long)total_free_size, (unsigned long long)total_allocated);
+
     return NULL;  /* Out of memory */
 }
 
@@ -259,27 +283,48 @@ void buddy_free(void *ptr) {
         return;  /* Invalid or double-free */
     }
 
+    extern void fut_printf(const char *, ...);
+
     total_allocated -= order_to_size(hdr->order);
     hdr->is_allocated = 0;
 
     /* Add to free list and coalesce with buddy if possible */
     int order = hdr->order;
     uintptr_t addr = (uintptr_t)hdr;
+    int coalesce_count = 0;
 
     while (order < MAX_ORDER) {
         uintptr_t buddy_addr = get_buddy_addr(addr, order_to_size(order));
 
         /* Check if buddy is free and in heap */
         if (!is_in_heap(buddy_addr)) {
-            break;  /* Buddy out of range, can't coalesce */
+            /* Cannot coalesce - buddy is outside heap bounds */
+            fut_printf("[BUDDY-FREE] Coalesce stop at order %d: buddy %p outside heap bounds [%p-%p]\n",
+                       order, (void*)buddy_addr, (void*)heap_start, (void*)heap_end);
+            break;
         }
 
         block_hdr_t *buddy_hdr = (block_hdr_t *)buddy_addr;
 
         /* Validate buddy and check if free */
-        if (buddy_hdr->magic != BLOCK_MAGIC || buddy_hdr->order != order ||
-            buddy_hdr->is_allocated) {
-            break;  /* Buddy not free or invalid */
+        if (buddy_hdr->magic != BLOCK_MAGIC) {
+            /* Buddy has invalid magic - corruption or never allocated */
+            fut_printf("[BUDDY-FREE] Coalesce stop at order %d: buddy %p has invalid magic 0x%x\n",
+                       order, (void*)buddy_addr, buddy_hdr->magic);
+            break;
+        }
+
+        if (buddy_hdr->order != order) {
+            /* Buddy has different order - can't merge */
+            fut_printf("[BUDDY-FREE] Coalesce stop at order %d: buddy order mismatch (buddy=%d, expected=%d)\n",
+                       order, buddy_hdr->order, order);
+            break;
+        }
+
+        if (buddy_hdr->is_allocated) {
+            /* Buddy is still allocated - can't merge */
+            fut_printf("[BUDDY-FREE] Coalesce stop at order %d: buddy is allocated\n", order);
+            break;
         }
 
         /* Coalesce: remove buddy from free list */
@@ -301,6 +346,12 @@ void buddy_free(void *ptr) {
 
         hdr->order++;
         order++;
+        coalesce_count++;
+    }
+
+    if (coalesce_count > 0) {
+        fut_printf("[BUDDY-FREE] Coalesced %d times (block %p, final order %d)\n",
+                   coalesce_count, (void*)addr, order);
     }
 
     /* Add coalesced block to free list */

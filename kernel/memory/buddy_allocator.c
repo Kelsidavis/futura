@@ -158,7 +158,25 @@ void *buddy_malloc(size_t size) {
     while (search_order <= MAX_ORDER) {
         free_block_t *candidate = free_lists[search_order - MIN_ORDER];
 
+        /* Debug: list all blocks in this free list */
+        int block_count = 0;
+        free_block_t *tmp = candidate;
+        while (tmp) {
+            block_count++;
+            tmp = tmp->next;
+        }
+        if (block_count > 0) {
+            fut_printf("[BUDDY-MALLOC] Order %d has %d free blocks\n", search_order, block_count);
+        }
+
         if (candidate != NULL) {
+            fut_printf("[BUDDY-MALLOC] Found free block at order %d (size %llu) candidate=%p\n",
+                       search_order, (unsigned long long)order_to_size(search_order), (void*)candidate);
+
+            /* Get the block header */
+            block_hdr_t *hdr = (block_hdr_t *)candidate - 1;
+            fut_printf("[BUDDY-MALLOC] Block header at %p\n", (void*)hdr);
+
             /* Found a free block - remove from free list */
             if (candidate->next) {
                 candidate->next->prev = candidate->prev;
@@ -170,7 +188,6 @@ void *buddy_malloc(size_t size) {
             }
 
             /* Split block recursively if it's larger than needed */
-            block_hdr_t *hdr = (block_hdr_t *)candidate - 1;
             while (hdr->order > order) {
                 hdr->order--;
 
@@ -183,14 +200,23 @@ void *buddy_malloc(size_t size) {
                 buddy_hdr->is_allocated = 0;
                 buddy_hdr->magic = BLOCK_MAGIC;
 
-                /* Add buddy to free list */
-                free_block_t *buddy_free = (free_block_t *)get_data_ptr(buddy_hdr);
-                buddy_free->next = free_lists[hdr->order - MIN_ORDER];
-                buddy_free->prev = NULL;
-                if (free_lists[hdr->order - MIN_ORDER]) {
-                    free_lists[hdr->order - MIN_ORDER]->prev = buddy_free;
+                /* Only add buddy to free list if it's within heap bounds */
+                size_t buddy_size = order_to_size(hdr->order);
+                if (buddy_addr >= heap_start && (buddy_addr + buddy_size) <= heap_end) {
+                    /* Add buddy to free list */
+                    free_block_t *buddy_free = (free_block_t *)get_data_ptr(buddy_hdr);
+                    buddy_free->next = free_lists[hdr->order - MIN_ORDER];
+                    buddy_free->prev = NULL;
+                    if (free_lists[hdr->order - MIN_ORDER]) {
+                        free_lists[hdr->order - MIN_ORDER]->prev = buddy_free;
+                    }
+                    free_lists[hdr->order - MIN_ORDER] = buddy_free;
+                } else {
+                    fut_printf("[BUDDY-MALLOC] WARNING: Buddy block outside heap bounds, skipping\n");
+                    fut_printf("[BUDDY-MALLOC]   Buddy: %p-%p (size=%llu)\n",
+                               (void*)buddy_addr, (void*)(buddy_addr + buddy_size),
+                               (unsigned long long)buddy_size);
                 }
-                free_lists[hdr->order - MIN_ORDER] = buddy_free;
             }
 
             /* Validate block is within heap bounds */

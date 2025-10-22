@@ -10,6 +10,7 @@
 #include <kernel/fut_blockdev.h>
 #include <kernel/fut_memory.h>
 #include <stddef.h>
+#include <string.h>
 
 /* ============================================================
  *   Ramdisk Private Data
@@ -43,13 +44,8 @@ static int ramdisk_read(struct fut_blockdev *dev, uint64_t block_num, uint64_t n
         return BLOCKDEV_EINVAL;
     }
 
-    /* Copy data from ramdisk to buffer */
-    uint8_t *src = data->storage + offset;
-    uint8_t *dst = (uint8_t *)buffer;
-
-    for (size_t i = 0; i < size; i++) {
-        dst[i] = src[i];
-    }
+    /* Copy data from ramdisk to buffer - use memcpy for efficiency */
+    memcpy(buffer, data->storage + offset, size);
 
     return 0;
 }
@@ -73,13 +69,8 @@ static int ramdisk_write(struct fut_blockdev *dev, uint64_t block_num, uint64_t 
         return BLOCKDEV_EINVAL;
     }
 
-    /* Copy data from buffer to ramdisk */
-    uint8_t *dst = data->storage + offset;
-    const uint8_t *src = (const uint8_t *)buffer;
-
-    for (size_t i = 0; i < size; i++) {
-        dst[i] = src[i];
-    }
+    /* Copy data from buffer to ramdisk - use memcpy for efficiency */
+    memcpy(data->storage + offset, buffer, size);
 
     return 0;
 }
@@ -127,10 +118,8 @@ static struct fut_blockdev *ramdisk_create_common(const char *name,
         return NULL;
     }
 
-    /* Zero initialize storage */
-    for (size_t i = 0; i < size_bytes; i++) {
-        storage[i] = 0;
-    }
+    /* Zero initialize storage - use memset for efficiency */
+    memset(storage, 0, size_bytes);
 
     data->storage = storage;
     data->size = size_bytes;
@@ -143,10 +132,8 @@ static struct fut_blockdev *ramdisk_create_common(const char *name,
         return NULL;
     }
 
-    /* Clear structure to avoid stale data */
-    for (size_t i = 0; i < sizeof(struct fut_blockdev); ++i) {
-        ((uint8_t *)dev)[i] = 0;
-    }
+    /* Clear structure to avoid stale data - use memset for efficiency */
+    memset(dev, 0, sizeof(struct fut_blockdev));
 
     /* Copy device name */
     size_t i = 0;

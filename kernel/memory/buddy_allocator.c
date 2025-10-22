@@ -237,6 +237,15 @@ void *buddy_malloc(size_t size) {
             total_allocated += order_to_size(hdr->order);
 
             void *result = get_data_ptr(hdr);
+
+            /* CRITICAL: Clear allocated memory to prevent information leakage
+             * from previous allocations. This prevents crashes caused by old
+             * data (like ELF file contents) being interpreted as code/structures */
+            size_t data_size = order_to_size(hdr->order) - sizeof(block_hdr_t);
+            for (size_t i = 0; i < data_size; i++) {
+                ((uint8_t *)result)[i] = 0;
+            }
+
             fut_printf("[BUDDY-MALLOC] Allocated at %p (hdr=%p size=%llu)\n",
                        result, (void*)hdr, (unsigned long long)order_to_size(hdr->order));
             return result;

@@ -268,15 +268,26 @@ static ssize_t ramfs_write(struct fut_vnode *vnode, const void *buf, size_t size
 
         fut_printf("[RAMFS-REALLOC] New buffer allocated: %p\n", (void*)new_data);
 
-        /* Copy old data - use manual copy to avoid SIMD instructions */
+        /* Copy old data - use 8-byte chunks to avoid SIMD instruction issues */
         if (node->file.data && vnode->size > 0) {
-            /* Manual copy to avoid SSE/AVX instructions in memcpy */
             size_t copy_size = vnode->size;
             fut_printf("[RAMFS-REALLOC] Copying %llu bytes from %p to %p\n",
                        (unsigned long long)copy_size, (void*)node->file.data, (void*)new_data);
 
-            for (size_t i = 0; i < copy_size; i++) {
-                new_data[i] = node->file.data[i];
+            /* Copy in 8-byte chunks for efficiency without SIMD issues */
+            uint64_t *src64 = (uint64_t *)node->file.data;
+            uint64_t *dst64 = (uint64_t *)new_data;
+            size_t qwords = copy_size / 8;
+            for (size_t i = 0; i < qwords; i++) {
+                dst64[i] = src64[i];
+            }
+
+            /* Copy remaining bytes (0-7) */
+            uint8_t *src8 = (uint8_t *)(node->file.data + (qwords * 8));
+            uint8_t *dst8 = (uint8_t *)(new_data + (qwords * 8));
+            size_t remainder = copy_size % 8;
+            for (size_t i = 0; i < remainder; i++) {
+                dst8[i] = src8[i];
             }
 
             /* Verify first few bytes were copied correctly */
@@ -286,12 +297,30 @@ static ssize_t ramfs_write(struct fut_vnode *vnode, const void *buf, size_t size
                 fut_printf("[RAMFS-REALLOC] Verify copy: old[0]=0x%08x new[0]=0x%08x\n", *old_magic, *new_magic);
             }
 
-            fut_free(node->file.data);
-            fut_printf("[RAMFS-REALLOC] Old buffer freed\n");
+            /* CRITICAL: Validate new_data before freeing old buffer
+             * because coalescing in buddy_free might corrupt adjacent memory */
+            uint8_t *old_data_ptr = node->file.data;
+
+            /* Verify new buffer is valid before freeing old */
+            if (!new_data || (uintptr_t)new_data < 0xFFFFFFFF80000000ULL) {
+                fut_printf("[RAMFS-REALLOC] CRITICAL: New buffer allocation is invalid! %p\n", (void*)new_data);
+                return -EIO;
+            }
+
+            fut_printf("[RAMFS-REALLOC] About to free old buffer: %p\n", (void*)old_data_ptr);
+            fut_free(old_data_ptr);
+            fut_printf("[RAMFS-REALLOC] Old buffer freed: %p\n", (void*)old_data_ptr);
         }
 
         node->file.data = new_data;
         node->file.capacity = new_capacity;
+
+        /* Validate node structure after assignment */
+        if (validate_ramfs_node(node) != 0) {
+            fut_printf("[RAMFS-REALLOC] CRITICAL: Node corrupted after reallocation!\n");
+            return -EIO;
+        }
+
         fut_printf("[RAMFS-REALLOC] Reallocation complete: node->file.data=%p capacity=%llu\n",
                    (void*)node->file.data, (unsigned long long)node->file.capacity);
     }
@@ -300,6 +329,18 @@ static ssize_t ramfs_write(struct fut_vnode *vnode, const void *buf, size_t size
     extern void fut_printf(const char *, ...);
 
     const uint8_t *src = (const uint8_t *)buf;
+
+    /* CRITICAL: Bounds check before writing
+     * Prevent buffer overflows that could corrupt kernel memory */
+    if ((size_t)offset + size > node->file.capacity) {
+        fut_printf("[RAMFS-WRITE] ERROR: Write would exceed buffer! offset=%llu size=%llu capacity=%llu\n",
+                   (unsigned long long)offset, (unsigned long long)size,
+                   (unsigned long long)node->file.capacity);
+        fut_printf("[RAMFS-WRITE] This should have been caught by reallocation logic!\n");
+        fut_printf("[RAMFS-WRITE] vnode->size=%llu node->file.data=%p node=%p\n",
+                   (unsigned long long)vnode->size, (void*)node->file.data, (void*)node);
+        return -ENOSPC;  /* Should never happen - reallocation should have caught this */
+    }
 
     /* Log write operation for offset 0 (first writes) or offsets > 500KB */
     if ((offset == 0 && size >= 4000) || offset > 500000) {

@@ -345,6 +345,15 @@ void buddy_free(void *ptr) {
             break;
         }
 
+        /* CRITICAL: Validate entire buddy block header is within bounds */
+        size_t buddy_block_size = order_to_size(order);
+        if (buddy_addr + buddy_block_size > heap_end) {
+            fut_printf("[BUDDY-FREE] Coalesce stop at order %d: buddy block extends beyond heap end\n", order);
+            fut_printf("[BUDDY-FREE]   Block: %p-%p, Heap end: %p\n",
+                       (void*)buddy_addr, (void*)(buddy_addr + buddy_block_size), (void*)heap_end);
+            break;
+        }
+
         block_hdr_t *buddy_hdr = (block_hdr_t *)buddy_addr;
 
         /* Validate buddy and check if free */
@@ -370,6 +379,21 @@ void buddy_free(void *ptr) {
 
         /* Coalesce: remove buddy from free list */
         free_block_t *buddy_free = (free_block_t *)get_data_ptr(buddy_hdr);
+
+        /* CRITICAL: Validate buddy_free pointer before dereferencing */
+        if ((uintptr_t)buddy_free < heap_start || (uintptr_t)buddy_free >= heap_end) {
+            fut_printf("[BUDDY-FREE] Coalesce stop at order %d: buddy_free data pointer %p outside heap bounds\n",
+                       order, (void*)buddy_free);
+            break;
+        }
+
+        /* Validate that buddy's next pointer won't corrupt free list */
+        if (buddy_free->next != NULL && ((uintptr_t)buddy_free->next < heap_start || (uintptr_t)buddy_free->next >= heap_end)) {
+            fut_printf("[BUDDY-FREE] Coalesce stop at order %d: buddy->next pointer %p is corrupted (outside heap)\n",
+                       order, (void*)buddy_free->next);
+            break;
+        }
+
         if (buddy_free->next) {
             buddy_free->next->prev = buddy_free->prev;
         }
@@ -383,6 +407,12 @@ void buddy_free(void *ptr) {
         if (addr > buddy_addr) {
             addr = buddy_addr;
             hdr = (block_hdr_t *)addr;
+
+            /* CRITICAL: Revalidate the new hdr after reassignment */
+            if ((uintptr_t)hdr < heap_start || (uintptr_t)hdr >= heap_end) {
+                fut_printf("[BUDDY-FREE] ERROR: Coalesced header %p is outside heap bounds after merging\n", (void*)hdr);
+                break;
+            }
         }
 
         hdr->order++;
@@ -395,6 +425,20 @@ void buddy_free(void *ptr) {
                    coalesce_count, (void*)addr, order);
     }
 
+    /* CRITICAL: Validate final coalesced block before adding to free list */
+    if ((uintptr_t)hdr < heap_start || (uintptr_t)hdr >= heap_end) {
+        fut_printf("[BUDDY-FREE] ERROR: Final coalesced header %p outside heap bounds!\n", (void*)hdr);
+        return;
+    }
+
+    size_t final_block_size = order_to_size(order);
+    if ((uintptr_t)hdr + final_block_size > heap_end) {
+        fut_printf("[BUDDY-FREE] ERROR: Final coalesced block extends beyond heap end!\n");
+        fut_printf("[BUDDY-FREE]   Block: %p-%p, Heap end: %p\n",
+                   (void*)hdr, (void*)((uintptr_t)hdr + final_block_size), (void*)heap_end);
+        return;
+    }
+
     /* Add coalesced block to free list */
     fut_printf("[BUDDY-FREE] About to add to free list: hdr=%p order=%d order-MIN_ORDER=%d\n",
                (void*)hdr, order, order - MIN_ORDER);
@@ -402,8 +446,24 @@ void buddy_free(void *ptr) {
     fut_printf("[BUDDY-FREE] free_hdr=%p current list head=%p\n",
                (void*)free_hdr, (void*)free_lists[order - MIN_ORDER]);
 
+    /* Validate free_hdr is within heap bounds before using it */
+    if ((uintptr_t)free_hdr < heap_start || (uintptr_t)free_hdr >= heap_end) {
+        fut_printf("[BUDDY-FREE] ERROR: free_hdr data pointer %p outside heap bounds!\n", (void*)free_hdr);
+        return;
+    }
+
     free_hdr->next = free_lists[order - MIN_ORDER];
     fut_printf("[BUDDY-FREE] Set free_hdr->next=%p\n", (void*)free_hdr->next);
+
+    /* Validate the current list head isn't corrupted before updating it */
+    if (free_lists[order - MIN_ORDER] != NULL) {
+        if ((uintptr_t)free_lists[order - MIN_ORDER] < heap_start ||
+            (uintptr_t)free_lists[order - MIN_ORDER] >= heap_end) {
+            fut_printf("[BUDDY-FREE] ERROR: Current list head %p is corrupted (outside heap)!\n",
+                       (void*)free_lists[order - MIN_ORDER]);
+            return;
+        }
+    }
 
     free_hdr->prev = NULL;
     if (free_lists[order - MIN_ORDER]) {

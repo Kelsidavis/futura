@@ -153,6 +153,8 @@ static slab_t *slab_create(slab_cache_t *cache) {
 void *slab_malloc(size_t size) {
     if (size == 0) return NULL;
 
+    extern void fut_printf(const char *, ...);
+
     int idx = find_slab_index(size);
     if (idx < 0) {
         /* Size too large for slab allocator, use buddy directly */
@@ -166,13 +168,32 @@ void *slab_malloc(size_t size) {
         if (slab->free_list) {
             /* Found free object */
             slab_obj_t *obj = slab->free_list;
+
+            /* CRITICAL: Validate object pointer before using it */
+            if ((uintptr_t)obj < 0xffffffff80000000ULL || (uintptr_t)obj >= 0xffffffffa0389000ULL) {
+                fut_printf("[SLAB-MALLOC] ERROR: Corrupted slab free list! Pointer %p is invalid\n", (void*)obj);
+                /* Mark this slab's free list as empty to skip it */
+                slab->free_list = NULL;
+                slab->free_count = 0;
+                /* Continue to next slab */
+                continue;
+            }
+
             slab->free_list = obj->next;
             obj->is_allocated = 1;
             slab->free_count--;
             cache->total_allocated++;
 
             /* Return data pointer (after header) */
-            return (void *)(obj + 1);
+            void *result = (void *)(obj + 1);
+
+            /* Validate result pointer before returning */
+            if ((uintptr_t)result < 0xffffffff80000000ULL || (uintptr_t)result >= 0xffffffffa0389000ULL) {
+                fut_printf("[SLAB-MALLOC] ERROR: Result pointer %p is invalid!\n", result);
+                return NULL;
+            }
+
+            return result;
         }
     }
 
@@ -184,12 +205,31 @@ void *slab_malloc(size_t size) {
 
     /* Allocate from new slab */
     slab_obj_t *obj = new_slab->free_list;
+    if (!obj) {
+        fut_printf("[SLAB-MALLOC] ERROR: New slab created but has no free objects!\n");
+        return NULL;
+    }
+
+    /* CRITICAL: Validate object pointer */
+    if ((uintptr_t)obj < 0xffffffff80000000ULL || (uintptr_t)obj >= 0xffffffffa0389000ULL) {
+        fut_printf("[SLAB-MALLOC] ERROR: New slab object pointer %p is invalid!\n", (void*)obj);
+        return NULL;
+    }
+
     new_slab->free_list = obj->next;
     obj->is_allocated = 1;
     new_slab->free_count--;
     cache->total_allocated++;
 
-    return (void *)(obj + 1);
+    void *result = (void *)(obj + 1);
+
+    /* Validate result pointer before returning */
+    if ((uintptr_t)result < 0xffffffff80000000ULL || (uintptr_t)result >= 0xffffffffa0389000ULL) {
+        fut_printf("[SLAB-MALLOC] ERROR: New slab result pointer %p is invalid!\n", result);
+        return NULL;
+    }
+
+    return result;
 }
 
 void slab_free(void *ptr) {

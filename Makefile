@@ -62,9 +62,9 @@ KAPPEND := $(strip $(KAPPEND))
 
 RUN_QEMU_FLAGS := -m $(MEM) -serial stdio -no-reboot -no-shutdown
 ifeq ($(HEADFUL),1)
-# Headful mode: use VNC display with virtio-gpu
-# VNC works in headless environments and can be connected via vnc://localhost:5900
-RUN_QEMU_FLAGS += -display vnc=:0
+# Headful mode: use GTK display with virtio-gpu
+# virtio-gpu is modern and performant, GTK works in headless environments
+RUN_QEMU_FLAGS += -display gtk
 RUN_QEMU_FLAGS += -device virtio-gpu-pci
 RUN_QEMU_FLAGS += -vga none
 else

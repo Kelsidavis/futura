@@ -501,7 +501,10 @@ static int lookup_vnode(const char *path, struct fut_vnode **vnode) {
                 struct fut_vnode *prev = current;
                 VFSDBG("[vfs]    switching from %p ref=%u to mount root\n", (void *)prev, prev ? prev->refcount : 0);
                 current = mount->root;
-                fut_vnode_ref(current);
+                /* Only take reference if mount->root is not the root vnode */
+                if (current != root_vnode_base) {
+                    fut_vnode_ref(current);
+                }
                 release_lookup_ref(prev);
                 VFSDBG("[vfs]    prev released, new root ref=%u\n", current ? current->refcount : 0);
             }
@@ -597,14 +600,20 @@ static int lookup_parent_and_name(const char *path,
     }
 
     struct fut_vnode *current = root_vnode;
-    fut_vnode_ref(current);
+    /* Note: Do NOT take reference to root_vnode; it is never freed */
 
     for (int i = 0; i < num_components - 1; i++) {
         struct fut_mount *mount = find_mount_for_path(components, i + 1);
         if (mount && mount->root) {
-            release_lookup_ref(current);
+            /* Release previous vnode only if it wasn't root */
+            if (current != root_vnode_base) {
+                release_lookup_ref(current);
+            }
             current = mount->root;
-            fut_vnode_ref(current);
+            /* Do NOT take reference to mount->root if it's root_vnode */
+            if (current != root_vnode_base) {
+                fut_vnode_ref(current);
+            }
             continue;
         }
 
@@ -616,27 +625,36 @@ static int lookup_parent_and_name(const char *path,
         struct fut_vnode *next = NULL;
         int ret = current->ops->lookup(current, components[i], &next);
         if (ret < 0) {
-            release_lookup_ref(current);
+            if (current != root_vnode_base) {
+                release_lookup_ref(current);
+            }
             return ret;
         }
 
         /* Handle case where lookup succeeded but vnode was not found */
         if (next == NULL) {
-            release_lookup_ref(current);
+            if (current != root_vnode_base) {
+                release_lookup_ref(current);
+            }
             return -ENOENT;
         }
 
-        release_lookup_ref(current);
+        if (current != root_vnode_base) {
+            release_lookup_ref(current);
+        }
         current = next;
     }
 
     if (current == NULL || current->type != VN_DIR) {
-        release_lookup_ref(current);
+        if (current != root_vnode_base) {
+            release_lookup_ref(current);
+        }
         return -ENOTDIR;
     }
 
     str_copy(name_out, components[num_components - 1], FUT_VFS_NAME_MAX + 1);
     *parent_out = current;
+    /* Return current with reference held - only release if not root */
     return 0;
 }
 
@@ -1090,8 +1108,11 @@ void fut_vnode_unref(struct fut_vnode *vnode) {
     if (vnode && vnode->refcount > 0) {
         vnode->refcount--;
         if (vnode->refcount == 0) {
-            /* Free vnode resources */
-            fut_free(vnode);
+            /* Never free directory vnodes - they're part of the filesystem structure
+             * Only free regular files and other non-directory inodes */
+            if (vnode->type != VN_DIR) {
+                fut_free(vnode);
+            }
         }
     }
 }

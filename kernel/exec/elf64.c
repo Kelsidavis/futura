@@ -521,18 +521,20 @@ static int stage_blob(const uint8_t *start,
         if (chunk > 4096) {
             chunk = 4096;
         }
-        fut_printf("[stage_blob] calling fut_vfs_write\n");
+        fut_printf("[stage_blob] calling fut_vfs_write offset=%llu chunk=%llu\n", (unsigned long long)offset, (unsigned long long)chunk);
         ssize_t wr = fut_vfs_write(fd, start + offset, chunk);
-        fut_printf("[stage_blob] fut_vfs_write returned\n");
+        fut_printf("[stage_blob] fut_vfs_write returned wr=%zd\n", wr);
         if (wr < 0) {
+            fut_printf("[stage_blob] write error, closing fd\n");
             fut_vfs_close(fd);
             return (int)wr;
         }
         offset += (size_t)wr;
     }
 
-    fut_printf("[stage_blob] calling fut_vfs_close\n");
-    fut_vfs_close(fd);
+    fut_printf("[stage_blob] all writes complete, closing fd=%d\n", fd);
+    int close_ret = fut_vfs_close(fd);
+    fut_printf("[stage_blob] fut_vfs_close returned %d\n", close_ret);
     fut_printf("[stage_blob] returning success\n");
     return 0;
 }

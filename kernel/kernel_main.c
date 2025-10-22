@@ -944,13 +944,16 @@ void fut_kernel_main(void) {
 
 #if ENABLE_WAYLAND_DEMO
     fut_printf("[INIT] Staging futura-wayland compositor...\n");
+    fut_printf("[INIT-DEBUG] About to call fut_stage_wayland_compositor_binary\n");
     wayland_stage = fut_stage_wayland_compositor_binary();
+    fut_printf("[INIT-DEBUG] Returned from fut_stage_wayland_compositor_binary, stage=%d\n", wayland_stage);
     if (wayland_stage != 0) {
         fut_printf("[WARN] Failed to stage futura-wayland binary (error %d, continuing)\n", wayland_stage);
         /* Continue even if staging fails for interactive testing */
     } else {
         fut_printf("[INIT] futura-wayland staged at /sbin/futura-wayland\n");
     }
+    fut_printf("[INIT-DEBUG] About to stage wl-simple\n");
 
     fut_printf("[INIT] Staging wl-simple client...\n");
     wayland_client_stage = fut_stage_wayland_client_binary();

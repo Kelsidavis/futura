@@ -19,7 +19,7 @@
 extern void fut_printf(const char *fmt, ...);
 
 /* Uncomment for verbose VFS tracing */
-#define DEBUG_VFS 1
+#define DEBUG_VFS 0
 
 #ifdef DEBUG_VFS
 #define VFSDBG(...) fut_printf(__VA_ARGS__)
@@ -1105,14 +1105,24 @@ void fut_vnode_ref(struct fut_vnode *vnode) {
 }
 
 void fut_vnode_unref(struct fut_vnode *vnode) {
-    if (vnode && vnode->refcount > 0) {
+    if (!vnode) {
+        return;
+    }
+
+    /* Never decrement refcount below 1 for directory vnodes - they're permanent */
+    if (vnode->type == VN_DIR) {
+        if (vnode->refcount <= 1) {
+            return;  /* Keep directory vnodes alive permanently */
+        }
+        vnode->refcount--;
+        return;
+    }
+
+    /* For regular files and other types, free when refcount reaches 0 */
+    if (vnode->refcount > 0) {
         vnode->refcount--;
         if (vnode->refcount == 0) {
-            /* Never free directory vnodes - they're part of the filesystem structure
-             * Only free regular files and other non-directory inodes */
-            if (vnode->type != VN_DIR) {
-                fut_free(vnode);
-            }
+            fut_free(vnode);
         }
     }
 }

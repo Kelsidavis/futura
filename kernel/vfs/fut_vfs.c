@@ -448,7 +448,8 @@ static int lookup_vnode(const char *path, struct fut_vnode **vnode) {
     /* Use heap allocation to avoid stack overflow - each component array is 1KB */
     size_t alloc_size = MAX_PATH_COMPONENTS * (FUT_VFS_NAME_MAX + 1);
     char (*components)[FUT_VFS_NAME_MAX + 1] = fut_malloc(alloc_size);
-    VFSDBG("[vfs-heap] lookup_vnode malloc(%zu) = %p\n", alloc_size, (void*)components);
+    VFSDBG("[vfs-heap] lookup_vnode malloc(%llu) = %p\n",
+           (unsigned long long)alloc_size, (void*)components);
     if (!components) {
         return -ENOMEM;
     }
@@ -1013,7 +1014,7 @@ ssize_t fut_vfs_read(int fd, void *buf, size_t size) {
 }
 
 ssize_t fut_vfs_write(int fd, const void *buf, size_t size) {
-    VFSDBG("[vfs-write] enter fd=%d size=%zu\n", fd, size);
+    VFSDBG("[vfs-write] enter fd=%d size=%llu\n", fd, (unsigned long long)size);
     struct fut_file *file = get_file(fd);
     VFSDBG("[vfs-write] get_file returned %p\n", (void*)file);
     if (!file) {
@@ -1042,12 +1043,12 @@ ssize_t fut_vfs_write(int fd, const void *buf, size_t size) {
 
     VFSDBG("[vfs-write] calling vnode->ops->write\n");
     ssize_t ret = file->vnode->ops->write(file->vnode, buf, size, file->offset);
-    VFSDBG("[vfs-write] vnode->ops->write returned %zd\n", ret);
+    VFSDBG("[vfs-write] vnode->ops->write returned %lld\n", (long long)ret);
     if (ret > 0) {
         file->offset += ret;
     }
 
-    VFSDBG("[vfs-write] returning %zd\n", ret);
+    VFSDBG("[vfs-write] returning %lld\n", (long long)ret);
     return ret;
 }
 

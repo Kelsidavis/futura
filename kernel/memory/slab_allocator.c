@@ -153,11 +153,6 @@ static slab_t *slab_create(slab_cache_t *cache) {
 void *slab_malloc(size_t size) {
     if (size == 0) return NULL;
 
-    /* TEMPORARY: Bypass slab allocator for 1024-byte allocations to debug crash */
-    if (size == 1024) {
-        return buddy_malloc(size);
-    }
-
     int idx = find_slab_index(size);
     if (idx < 0) {
         /* Size too large for slab allocator, use buddy directly */
@@ -242,43 +237,35 @@ void *slab_realloc(void *ptr, size_t new_size) {
         return NULL;
     }
 
-    /* For simplicity: allocate new block, copy, free old */
-    void *new_ptr = slab_malloc(new_size);
-    if (!new_ptr) {
-        return NULL;
-    }
-
-    /* Get object header to determine current size */
+    /* Check if pointer is in any slab cache */
     slab_obj_t *obj = (slab_obj_t *)ptr - 1;
 
-    /* Find current size by searching caches */
-    size_t current_size = 0;
     for (size_t i = 0; i < NUM_SLAB_SIZES; i++) {
         slab_cache_t *cache = &slab_caches[i];
         for (slab_t *slab = cache->slabs; slab; slab = slab->next) {
             uint8_t *slab_start = slab->data;
             uint8_t *slab_end = slab->data + (slab->obj_count * slab->obj_size);
             if ((uint8_t *)obj >= slab_start && (uint8_t *)obj < slab_end) {
-                current_size = slab->obj_size - SLAB_OBJ_HDR_SIZE;
-                break;
+                /* Found in slab cache - use normal realloc */
+                size_t current_size = slab->obj_size - SLAB_OBJ_HDR_SIZE;
+
+                void *new_ptr = slab_malloc(new_size);
+                if (!new_ptr) {
+                    return NULL;
+                }
+
+                size_t copy_size = (current_size < new_size) ? current_size : new_size;
+                memcpy(new_ptr, ptr, copy_size);
+
+                slab_free(ptr);
+                return new_ptr;
             }
         }
-        if (current_size) break;
     }
 
-    /* If not found in slabs, it was from buddy - can't easily get size */
-    if (!current_size) {
-        current_size = new_size;  /* Assume worst case */
-    }
-
-    /* Copy data */
-    size_t copy_size = (current_size < new_size) ? current_size : new_size;
-    memcpy(new_ptr, ptr, copy_size);
-
-    /* Free old block */
-    slab_free(ptr);
-
-    return new_ptr;
+    /* Not found in any slab - it must be from buddy allocator
+     * Use buddy_realloc directly instead of guessing size */
+    return buddy_realloc(ptr, new_size);
 }
 
 /* ============================================================

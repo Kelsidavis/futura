@@ -100,23 +100,27 @@ static ssize_t ramfs_read(struct fut_vnode *vnode, void *buf, size_t size, uint6
         return -EIO;
     }
 
-    /* Check offset */
+    /* Check offset - ensure it doesn't exceed file size */
     if (offset >= vnode->size) {
         return 0;  /* EOF */
     }
 
-    /* Calculate bytes to read */
-    size_t remaining = vnode->size - offset;
-    size_t to_read = (size < remaining) ? size : remaining;
+    /* Calculate bytes to read - safe since offset < vnode->size */
+    uint64_t remaining = vnode->size - offset;
+    /* Cap to SIZE_MAX to avoid overflow in pointer arithmetic */
+    size_t to_read = (size < remaining) ? size : (size_t)remaining;
 
-    /* Copy data using memcpy for efficiency */
-    memcpy(buf, node->file.data + offset, to_read);
+    /* Manual copy to avoid SSE/AVX instructions in memcpy */
+    uint8_t *dest = (uint8_t *)buf;
+    const uint8_t *src = node->file.data + (size_t)offset;
+    for (size_t i = 0; i < to_read; i++) {
+        dest[i] = src[i];
+    }
 
     return (ssize_t)to_read;
 }
 
 static ssize_t ramfs_write(struct fut_vnode *vnode, const void *buf, size_t size, uint64_t offset) {
-    fut_printf("[ramfs-write] enter\n");
     if (!vnode || !buf) {
         return -EINVAL;
     }
@@ -130,13 +134,16 @@ static ssize_t ramfs_write(struct fut_vnode *vnode, const void *buf, size_t size
         return -EIO;
     }
 
+    /* Check for integer overflow: offset + size */
+    if (offset > SIZE_MAX - size) {
+        return -ENOSPC;  /* File would be too large */
+    }
+
     /* Calculate required capacity */
     size_t required = offset + size;
-    fut_printf("[ramfs-write] required capacity calc done\n");
 
     /* Expand buffer if needed */
     if (required > node->file.capacity) {
-        fut_printf("[ramfs-write] need to expand\n");
         /* Allocation strategy balancing performance and heap management:
          * - Small files: aggressive growth to minimize realloc overhead
          * - Large files (>64KB): conservative growth (25% overhead) to reduce fragmentation
@@ -155,38 +162,36 @@ static ssize_t ramfs_write(struct fut_vnode *vnode, const void *buf, size_t size
             new_capacity = required + (required / 4);
         }
 
-        fut_printf("[ramfs-write] calling fut_malloc\n");
         uint8_t *new_data = fut_malloc(new_capacity);
-        fut_printf("[ramfs-write] fut_malloc returned %p\n", (void*)new_data);
         if (!new_data) {
             return -ENOMEM;
         }
 
-        /* Copy old data using memcpy for efficiency */
+        /* Copy old data - use manual copy to avoid SIMD instructions */
         if (node->file.data && vnode->size > 0) {
-            fut_printf("[ramfs-write] copying old data\n");
-            memcpy(new_data, node->file.data, vnode->size);
-            fut_printf("[ramfs-write] calling fut_free\n");
+            /* Manual copy to avoid SSE/AVX instructions in memcpy */
+            size_t copy_size = vnode->size;
+            for (size_t i = 0; i < copy_size; i++) {
+                new_data[i] = node->file.data[i];
+            }
             fut_free(node->file.data);
-            fut_printf("[ramfs-write] fut_free returned\n");
         }
 
-        fut_printf("[ramfs-write] updating node pointers\n");
         node->file.data = new_data;
         node->file.capacity = new_capacity;
     }
 
-    fut_printf("[ramfs-write] writing data via memcpy\n");
-    /* Write data using memcpy for efficiency */
-    memcpy(node->file.data + offset, buf, size);
+    /* Write data - use manual copy to avoid SIMD instructions */
+    const uint8_t *src = (const uint8_t *)buf;
+    for (size_t i = 0; i < size; i++) {
+        node->file.data[(size_t)offset + i] = src[i];
+    }
 
-    fut_printf("[ramfs-write] updating size\n");
-    /* Update size */
+    /* Update size - we already checked for overflow above */
     if (offset + size > vnode->size) {
         vnode->size = offset + size;
     }
 
-    fut_printf("[ramfs-write] returning\n");
     return (ssize_t)size;
 }
 

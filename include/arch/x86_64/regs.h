@@ -223,32 +223,32 @@ static inline void fut_cpuid(uint32_t leaf, uint32_t *eax, uint32_t *ebx,
 
 static inline uint8_t fut_inb(uint16_t port) {
     uint8_t value;
-    __asm__ volatile("inb %1, %0" : "=a"(value) : "Nd"(port));
+    __asm__ volatile("inb %1, %0" : "=a"(value) : "Nd"(port) : "memory");
     return value;
 }
 
 static inline void fut_outb(uint16_t port, uint8_t value) {
-    __asm__ volatile("outb %0, %1" :: "a"(value), "Nd"(port));
+    __asm__ volatile("outb %0, %1" :: "a"(value), "Nd"(port) : "memory");
 }
 
 static inline uint16_t fut_inw(uint16_t port) {
     uint16_t value;
-    __asm__ volatile("inw %1, %0" : "=a"(value) : "Nd"(port));
+    __asm__ volatile("inw %1, %0" : "=a"(value) : "Nd"(port) : "memory");
     return value;
 }
 
 static inline void fut_outw(uint16_t port, uint16_t value) {
-    __asm__ volatile("outw %0, %1" :: "a"(value), "Nd"(port));
+    __asm__ volatile("outw %0, %1" :: "a"(value), "Nd"(port) : "memory");
 }
 
 static inline uint32_t fut_inl(uint16_t port) {
     uint32_t value;
-    __asm__ volatile("inl %1, %0" : "=a"(value) : "Nd"(port));
+    __asm__ volatile("inl %1, %0" : "=a"(value) : "Nd"(port) : "memory");
     return value;
 }
 
 static inline void fut_outl(uint16_t port, uint32_t value) {
-    __asm__ volatile("outl %0, %1" :: "a"(value), "Nd"(port));
+    __asm__ volatile("outl %0, %1" :: "a"(value), "Nd"(port) : "memory");
 }
 
 /* ============================================================

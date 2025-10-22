@@ -309,6 +309,18 @@ void fut_free_pages(void *ptr, size_t num_pages) {
 }
 
 /* ============================================================
+ *   Heap Bounds Accessors
+ * ============================================================ */
+
+uintptr_t fut_heap_get_base(void) {
+    return heap_base;
+}
+
+uintptr_t fut_heap_get_limit(void) {
+    return heap_limit;
+}
+
+/* ============================================================
  *   Diagnostics
  * ============================================================ */
 

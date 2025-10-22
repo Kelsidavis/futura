@@ -137,10 +137,23 @@ static slab_t *slab_create(slab_cache_t *cache) {
     slab->free_count = slab->obj_count;
     slab->data = slab_mem + sizeof(slab_t);
 
-    /* Initialize free list */
+    /* Initialize free list - with explicit initialization to prevent corruption */
     slab->free_list = NULL;
+
+    /* First, explicitly clear the entire slab data area to prevent uninitialized memory */
+    size_t slab_data_size = slab->obj_count * slab->obj_size;
+    extern void *memset(void *, int, size_t);
+    memset(slab->data, 0, slab_data_size);
+
     for (size_t i = 0; i < slab->obj_count; i++) {
         slab_obj_t *obj = (slab_obj_t *)(slab->data + i * slab->obj_size);
+        /* Validate object pointer is within slab bounds */
+        uint8_t *obj_as_bytes = (uint8_t *)obj;
+        if (obj_as_bytes < slab->data || obj_as_bytes >= (slab->data + slab_data_size)) {
+            fut_printf("[SLAB-CREATE] WARNING: Object pointer %p is out of bounds for slab %p!\n",
+                       (void*)obj, (void*)slab);
+            continue;  /* Skip this object */
+        }
         obj->is_allocated = 0;
         obj->next = slab->free_list;
         slab->free_list = obj;
@@ -195,6 +208,11 @@ void *slab_malloc(size_t size) {
     if (size == 0) return NULL;
 
     extern void fut_printf(const char *, ...);
+    extern uintptr_t fut_heap_get_base(void);
+    extern uintptr_t fut_heap_get_limit(void);
+
+    uintptr_t heap_base = fut_heap_get_base();
+    uintptr_t heap_limit = fut_heap_get_limit();
 
     int idx = find_slab_index(size);
     if (idx < 0) {
@@ -220,12 +238,25 @@ void *slab_malloc(size_t size) {
             slab_obj_t *obj = slab->free_list;
 
             /* CRITICAL: Validate object pointer before using it */
-            if ((uintptr_t)obj < 0xffffffff80000000ULL || (uintptr_t)obj >= 0xffffffffa0389000ULL) {
-                fut_printf("[SLAB-MALLOC] ERROR: Corrupted slab free list! Pointer %p is invalid\n", (void*)obj);
+            if ((uintptr_t)obj < heap_base || (uintptr_t)obj >= heap_limit) {
+                fut_printf("[SLAB-MALLOC] ERROR: Corrupted slab free list! Pointer %p is outside heap [%p-%p]\n",
+                           (void*)obj, (void*)heap_base, (void*)heap_limit);
                 /* Mark this slab's free list as empty to skip it */
                 slab->free_list = NULL;
                 slab->free_count = 0;
                 /* Continue to next slab */
+                continue;
+            }
+
+            /* CRITICAL: Validate that object is within slab bounds */
+            uint8_t *obj_byte_ptr = (uint8_t *)obj;
+            uint8_t *slab_end = slab->data + (slab->obj_count * slab->obj_size);
+            if (obj_byte_ptr < slab->data || obj_byte_ptr >= slab_end) {
+                fut_printf("[SLAB-MALLOC] ERROR: Object %p not in slab range [%p-%p]\n",
+                           (void*)obj, (void*)slab->data, (void*)slab_end);
+                /* Mark this slab's free list as corrupted */
+                slab->free_list = NULL;
+                slab->free_count = 0;
                 continue;
             }
 
@@ -238,8 +269,9 @@ void *slab_malloc(size_t size) {
             void *result = (void *)(obj + 1);
 
             /* Validate result pointer before returning */
-            if ((uintptr_t)result < 0xffffffff80000000ULL || (uintptr_t)result >= 0xffffffffa0389000ULL) {
-                fut_printf("[SLAB-MALLOC] ERROR: Result pointer %p is invalid!\n", result);
+            if ((uintptr_t)result < heap_base || (uintptr_t)result >= heap_limit) {
+                fut_printf("[SLAB-MALLOC] ERROR: Result pointer %p is outside heap [%p-%p]!\n",
+                           result, (void*)heap_base, (void*)heap_limit);
                 return NULL;
             }
 
@@ -261,8 +293,18 @@ void *slab_malloc(size_t size) {
     }
 
     /* CRITICAL: Validate object pointer */
-    if ((uintptr_t)obj < 0xffffffff80000000ULL || (uintptr_t)obj >= 0xffffffffa0389000ULL) {
-        fut_printf("[SLAB-MALLOC] ERROR: New slab object pointer %p is invalid!\n", (void*)obj);
+    if ((uintptr_t)obj < heap_base || (uintptr_t)obj >= heap_limit) {
+        fut_printf("[SLAB-MALLOC] ERROR: New slab object pointer %p is outside heap [%p-%p]!\n",
+                   (void*)obj, (void*)heap_base, (void*)heap_limit);
+        return NULL;
+    }
+
+    /* CRITICAL: Validate that object is within slab bounds */
+    uint8_t *obj_byte_ptr = (uint8_t *)obj;
+    uint8_t *new_slab_end = new_slab->data + (new_slab->obj_count * new_slab->obj_size);
+    if (obj_byte_ptr < new_slab->data || obj_byte_ptr >= new_slab_end) {
+        fut_printf("[SLAB-MALLOC] ERROR: New slab object %p not in slab range [%p-%p]!\n",
+                   (void*)obj, (void*)new_slab->data, (void*)new_slab_end);
         return NULL;
     }
 
@@ -274,8 +316,9 @@ void *slab_malloc(size_t size) {
     void *result = (void *)(obj + 1);
 
     /* Validate result pointer before returning */
-    if ((uintptr_t)result < 0xffffffff80000000ULL || (uintptr_t)result >= 0xffffffffa0389000ULL) {
-        fut_printf("[SLAB-MALLOC] ERROR: New slab result pointer %p is invalid!\n", result);
+    if ((uintptr_t)result < heap_base || (uintptr_t)result >= heap_limit) {
+        fut_printf("[SLAB-MALLOC] ERROR: New slab result pointer %p is outside heap [%p-%p]!\n",
+                   result, (void*)heap_base, (void*)heap_limit);
         return NULL;
     }
 
@@ -286,6 +329,11 @@ void slab_free(void *ptr) {
     if (!ptr) return;
 
     extern void fut_printf(const char *, ...);
+    extern uintptr_t fut_heap_get_base(void);
+    extern uintptr_t fut_heap_get_limit(void);
+
+    uintptr_t heap_base = fut_heap_get_base();
+    uintptr_t heap_limit = fut_heap_get_limit();
 
     /* Find which slab and cache this object belongs to FIRST,
      * before trying to access the header */
@@ -296,9 +344,10 @@ void slab_free(void *ptr) {
 
         /* Safely iterate through slabs with bounds checking */
         for (slab_t *slab = cache->slabs; slab; slab = slab->next) {
-            /* CRITICAL: Validate slab pointer before dereferencing */
-            if ((uintptr_t)slab < 0xffffffff80000000ULL || (uintptr_t)slab >= 0xffffffffa0389000ULL) {
-                fut_printf("[SLAB-FREE] WARNING: Corrupted slab pointer %p, skipping\n", (void*)slab);
+            /* CRITICAL: Validate slab pointer before dereferencing using actual heap bounds */
+            if ((uintptr_t)slab < heap_base || (uintptr_t)slab >= heap_limit) {
+                fut_printf("[SLAB-FREE] WARNING: Corrupted slab pointer %p (outside heap [%p-%p]), skipping\n",
+                           (void*)slab, (void*)heap_base, (void*)heap_limit);
                 goto check_buddy;
             }
 

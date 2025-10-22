@@ -105,6 +105,10 @@ void buddy_heap_init(uintptr_t start, uintptr_t end) {
     heap_end = end;
     total_allocated = 0;
 
+    extern void fut_printf(const char *, ...);
+    fut_printf("[BUDDY-INIT] Initializing buddy allocator: start=%p end=%p (size=%llu KB)\n",
+               (void*)start, (void*)end, (unsigned long long)((end - start) / 1024));
+
     /* Initialize all free lists */
     for (int i = 0; i < NUM_ORDERS; i++) {
         free_lists[i] = NULL;
@@ -138,9 +142,16 @@ void *buddy_malloc(size_t size) {
     size_t needed = size + sizeof(block_hdr_t);
     int order = size_to_order(needed);
 
+    extern void fut_printf(const char *, ...);
+
     if (order > MAX_ORDER) {
+        fut_printf("[BUDDY-MALLOC] FAILED: size=%llu needed=%llu order=%d MAX=%d\n",
+                   (unsigned long long)size, (unsigned long long)needed, order, MAX_ORDER);
         return NULL;  /* Too large */
     }
+
+    fut_printf("[BUDDY-MALLOC] Requesting %llu bytes (order=%d, heap=%p-%p)\n",
+               (unsigned long long)size, order, (void*)heap_start, (void*)heap_end);
 
     /* Search free lists starting from requested order */
     int search_order = order;
@@ -182,16 +193,33 @@ void *buddy_malloc(size_t size) {
                 free_lists[hdr->order - MIN_ORDER] = buddy_free;
             }
 
+            /* Validate block is within heap bounds */
+            uintptr_t block_addr = (uintptr_t)hdr;
+            size_t block_size = order_to_size(hdr->order);
+            if (block_addr < heap_start || (block_addr + block_size) > heap_end) {
+                fut_printf("[BUDDY-MALLOC] ERROR: Block OUTSIDE heap bounds!\n");
+                fut_printf("[BUDDY-MALLOC]   Block: %p-%p (size=%llu)\n",
+                           (void*)block_addr, (void*)(block_addr + block_size),
+                           (unsigned long long)block_size);
+                fut_printf("[BUDDY-MALLOC]   Heap:  %p-%p\n",
+                           (void*)heap_start, (void*)heap_end);
+                return NULL;  /* Refuse to allocate outside heap */
+            }
+
             /* Mark as allocated */
             hdr->is_allocated = 1;
             total_allocated += order_to_size(hdr->order);
 
-            return get_data_ptr(hdr);
+            void *result = get_data_ptr(hdr);
+            fut_printf("[BUDDY-MALLOC] Allocated at %p (hdr=%p size=%llu)\n",
+                       result, (void*)hdr, (unsigned long long)order_to_size(hdr->order));
+            return result;
         }
 
         search_order++;
     }
 
+    fut_printf("[BUDDY-MALLOC] OUT OF MEMORY: size=%llu\n", (unsigned long long)size);
     return NULL;  /* Out of memory */
 }
 

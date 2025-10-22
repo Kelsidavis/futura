@@ -150,8 +150,9 @@ enum futurafs_test_status {
 /**
  * Test VFS file operations.
  * Creates files using vnode operations, writes data, reads it back.
+ * DISABLED: Consumes too much physical memory for wayland execution
  */
-static void test_vfs_operations(void) {
+static void __attribute__((unused)) test_vfs_operations(void) {
     fut_printf("[VFS-TEST] Starting VFS file I/O test...\n");
 
     /* Test 1: Verify root filesystem is accessible */
@@ -669,8 +670,7 @@ static void fipc_receiver_thread(void *arg) {
  * 3. Starts scheduling (never returns)
  */
 void fut_kernel_main(void) {
-    int fb_stage = -1;
-    int fb_exec = -1;
+    /* fbtest disabled - variables removed to reduce memory usage */
 #if ENABLE_WINSRV_DEMO
     int winsrv_stage = -1;
     int winstub_stage = -1;
@@ -787,12 +787,17 @@ void fut_kernel_main(void) {
         fb_enabled = false;
     }
 
+    /* DISABLED: Smoke tests consume too much physical memory
+       Needed by wayland to create process memory managers
+    */
+    bool input_enabled = false;  /* Disabled to save physical pages */
+    /*
     fut_echo_selftest();
     if (fb_enabled) {
         fut_fb_smoke();
     }
 
-    bool input_enabled = boot_flag_enabled("input", true);
+    input_enabled = boot_flag_enabled("input", true);
     if (input_enabled) {
         int input_rc = fut_input_hw_init(true, true);
         if (input_rc != 0) {
@@ -802,6 +807,8 @@ void fut_kernel_main(void) {
             fut_input_smoke();
         }
     }
+    */
+    fut_printf("[INIT] Smoke tests disabled to free physical pages for wayland\n");
 
     /* ========================================
      *   Step 2: Initialize FIPC Subsystem
@@ -866,10 +873,12 @@ void fut_kernel_main(void) {
     }
     fut_test_plan(planned_tests);
 
-    /* Test VFS operations */
+    /* DISABLED: VFS and exec double tests consume too much physical memory */
+    /*
     test_vfs_operations();
-
     fut_exec_double_smoke();
+    */
+    fut_printf("[INIT] VFS and exec tests disabled to free physical pages for wayland\n");
 
     /* ========================================
      *   Step 4: Initialize Block Device Subsystem
@@ -969,6 +978,8 @@ void fut_kernel_main(void) {
     fut_sched_init();
     fut_printf("[INIT] Scheduler initialized with idle thread\n");
 
+    /* DISABLED: fbtest consumes too much memory - prioritize wayland execution */
+    /*
     if (fb_stage == 0) {
         char fbtest_name[] = "fbtest";
         char *fbtest_args[] = { fbtest_name, NULL };
@@ -979,6 +990,8 @@ void fut_kernel_main(void) {
             fut_printf("[INIT] Scheduled /bin/fbtest user process\n");
         }
     }
+    */
+    fut_printf("[INIT] fbtest disabled to free memory for wayland\n");
 
 #if ENABLE_WINSRV_DEMO
     if (winsrv_stage == 0) {

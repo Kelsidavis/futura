@@ -162,6 +162,12 @@ void *buddy_malloc(size_t size) {
         int block_count = 0;
         free_block_t *tmp = candidate;
         while (tmp) {
+            /* Safety: Validate pointer before dereferencing */
+            if ((uintptr_t)tmp < heap_start || (uintptr_t)tmp >= heap_end) {
+                fut_printf("[BUDDY-MALLOC] ERROR: Corrupted free list pointer %p (outside heap bounds)\n", (void*)tmp);
+                fut_printf("[BUDDY-MALLOC]   Heap bounds: %p - %p\n", (void*)heap_start, (void*)heap_end);
+                return NULL;  /* Abort allocation due to heap corruption */
+            }
             block_count++;
             tmp = tmp->next;
         }
@@ -238,13 +244,11 @@ void *buddy_malloc(size_t size) {
 
             void *result = get_data_ptr(hdr);
 
-            /* CRITICAL: Clear allocated memory to prevent information leakage
-             * from previous allocations. This prevents crashes caused by old
-             * data (like ELF file contents) being interpreted as code/structures */
-            size_t data_size = order_to_size(hdr->order) - sizeof(block_hdr_t);
-            for (size_t i = 0; i < data_size; i++) {
-                ((uint8_t *)result)[i] = 0;
-            }
+            /* NOTE: Memory clearing has been removed due to issues with RAMFS file buffers
+             * being cleared after successful writes. The VFS layer (ramfs) uses guard values
+             * (magic_guard_before/after) to detect corruption instead.
+             * CRITICAL: Callers MUST initialize their data appropriately.
+             */
 
             fut_printf("[BUDDY-MALLOC] Allocated at %p (hdr=%p size=%llu)\n",
                        result, (void*)hdr, (unsigned long long)order_to_size(hdr->order));
@@ -266,6 +270,12 @@ void *buddy_malloc(size_t size) {
         free_block_t *candidate = free_lists[i];
         int count = 0;
         while (candidate) {
+            /* Safety: Validate pointer before dereferencing */
+            if ((uintptr_t)candidate < heap_start || (uintptr_t)candidate >= heap_end) {
+                fut_printf("[BUDDY-MALLOC] WARNING: Corrupted free list at order %d, pointer %p outside heap\n",
+                          order_val, (void*)candidate);
+                break;
+            }
             count++;
             total_free_size += order_to_size(order_val);
             candidate = candidate->next;

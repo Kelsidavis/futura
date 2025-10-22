@@ -64,6 +64,26 @@ static int str_cmp(const char *a, const char *b) {
     return *a - *b;
 }
 
+/* Log complete state of a ramfs_node for debugging */
+static void log_ramfs_node_state(const char *context, struct ramfs_node *node, struct fut_vnode *vnode) {
+    extern void fut_printf(const char *, ...);
+
+    if (!node) {
+        fut_printf("[RAMFS-STATE] %s: node is NULL\n", context);
+        return;
+    }
+
+    fut_printf("[RAMFS-STATE] %s:\n", context);
+    fut_printf("[RAMFS-STATE]   node=%p guard_before=0x%llx guard_after=0x%llx\n",
+               (void*)node, (unsigned long long)node->magic_guard_before,
+               (unsigned long long)node->magic_guard_after);
+
+    if (vnode && vnode->type == VN_REG) {
+        fut_printf("[RAMFS-STATE]   file.data=%p file.capacity=%llu\n",
+                   (void*)node->file.data, (unsigned long long)node->file.capacity);
+    }
+}
+
 /* Validate that ramfs_node guards haven't been corrupted */
 static int validate_ramfs_node(struct ramfs_node *node) {
     extern void fut_printf(const char *, ...);
@@ -114,6 +134,8 @@ static int ramfs_close(struct fut_vnode *vnode) {
 }
 
 static ssize_t ramfs_read(struct fut_vnode *vnode, void *buf, size_t size, uint64_t offset) {
+    extern void fut_printf(const char *, ...);
+
     if (!vnode || !buf) {
         return -EINVAL;
     }
@@ -127,8 +149,23 @@ static ssize_t ramfs_read(struct fut_vnode *vnode, void *buf, size_t size, uint6
         return -EIO;
     }
 
+    /* Log complete state at start of read */
+    if (offset == 0) {
+        log_ramfs_node_state("ramfs_read START (offset=0)", node, vnode);
+    }
+
+    /* Debug: log read operation for wayland binary */
+    if (offset == 0 && size >= 64) {
+        fut_printf("[RAMFS-READ] Reading from start: vnode=%p vnode->size=%llu\n",
+                   (void*)vnode, (unsigned long long)vnode->size);
+        fut_printf("[RAMFS-READ] vnode->fs_data=%p node->file.data=%p node->file.capacity=%llu\n",
+                   (void*)vnode->fs_data, (void*)node->file.data, (unsigned long long)node->file.capacity);
+    }
+
     /* Check offset - ensure it doesn't exceed file size */
     if (offset >= vnode->size) {
+        fut_printf("[RAMFS-READ] EOF: offset=%llu >= size=%llu\n",
+                   (unsigned long long)offset, (unsigned long long)vnode->size);
         return 0;  /* EOF */
     }
 
@@ -140,6 +177,13 @@ static ssize_t ramfs_read(struct fut_vnode *vnode, void *buf, size_t size, uint6
     /* Manual copy to avoid SSE/AVX instructions in memcpy */
     uint8_t *dest = (uint8_t *)buf;
     const uint8_t *src = node->file.data + (size_t)offset;
+
+    /* Debug: check first bytes for ELF magic */
+    if (offset == 0 && to_read >= 4) {
+        uint32_t *magic = (uint32_t *)src;
+        fut_printf("[RAMFS-READ] First 4 bytes at %p: 0x%08x\n", (void*)src, *magic);
+    }
+
     for (size_t i = 0; i < to_read; i++) {
         dest[i] = src[i];
     }
@@ -179,6 +223,8 @@ static ssize_t ramfs_write(struct fut_vnode *vnode, const void *buf, size_t size
 
     /* Expand buffer if needed */
     if (required > node->file.capacity) {
+        extern void fut_printf(const char *, ...);
+
         /* Allocation strategy optimized for buddy allocator efficiency:
          * Allocate in power-of-2 aligned chunks to minimize fragmentation.
          * The buddy allocator works best with sizes close to order boundaries.
@@ -209,23 +255,45 @@ static ssize_t ramfs_write(struct fut_vnode *vnode, const void *buf, size_t size
             new_capacity = power_of_2;
         }
 
+        fut_printf("[RAMFS-REALLOC] Reallocating: required=%llu power_of_2=%llu new_capacity=%llu\n",
+                   (unsigned long long)required, (unsigned long long)power_of_2, (unsigned long long)new_capacity);
+        fut_printf("[RAMFS-REALLOC] Old buffer: data=%p capacity=%llu vnode->size=%llu\n",
+                   (void*)node->file.data, (unsigned long long)node->file.capacity, (unsigned long long)vnode->size);
+
         uint8_t *new_data = fut_malloc(new_capacity);
         if (!new_data) {
+            fut_printf("[RAMFS-REALLOC] FAILED to allocate %llu bytes\n", (unsigned long long)new_capacity);
             return -ENOMEM;
         }
+
+        fut_printf("[RAMFS-REALLOC] New buffer allocated: %p\n", (void*)new_data);
 
         /* Copy old data - use manual copy to avoid SIMD instructions */
         if (node->file.data && vnode->size > 0) {
             /* Manual copy to avoid SSE/AVX instructions in memcpy */
             size_t copy_size = vnode->size;
+            fut_printf("[RAMFS-REALLOC] Copying %llu bytes from %p to %p\n",
+                       (unsigned long long)copy_size, (void*)node->file.data, (void*)new_data);
+
             for (size_t i = 0; i < copy_size; i++) {
                 new_data[i] = node->file.data[i];
             }
+
+            /* Verify first few bytes were copied correctly */
+            if (copy_size >= 4) {
+                uint32_t *old_magic = (uint32_t *)node->file.data;
+                uint32_t *new_magic = (uint32_t *)new_data;
+                fut_printf("[RAMFS-REALLOC] Verify copy: old[0]=0x%08x new[0]=0x%08x\n", *old_magic, *new_magic);
+            }
+
             fut_free(node->file.data);
+            fut_printf("[RAMFS-REALLOC] Old buffer freed\n");
         }
 
         node->file.data = new_data;
         node->file.capacity = new_capacity;
+        fut_printf("[RAMFS-REALLOC] Reallocation complete: node->file.data=%p capacity=%llu\n",
+                   (void*)node->file.data, (unsigned long long)node->file.capacity);
     }
 
     /* Write data - use manual copy to avoid SIMD instructions */
@@ -233,21 +301,45 @@ static ssize_t ramfs_write(struct fut_vnode *vnode, const void *buf, size_t size
 
     const uint8_t *src = (const uint8_t *)buf;
 
-    /* Log write operation to detect buffer overflow */
-    if (size > 4096) {
-        fut_printf("[RAMFS-WRITE] Large write: offset=%llu size=%llu buf=%p data=%p capacity=%llu\n",
+    /* Log write operation for offset 0 (first writes) or offsets > 500KB */
+    if ((offset == 0 && size >= 4000) || offset > 500000) {
+        fut_printf("[RAMFS-WRITE] Write: offset=%llu size=%llu buf=%p data=%p capacity=%llu\n",
                    (unsigned long long)offset, (unsigned long long)size, buf,
                    (void*)node->file.data, (unsigned long long)node->file.capacity);
+        /* Check first 4 bytes being written */
+        if (size >= 4) {
+            uint32_t *magic = (uint32_t *)src;
+            fut_printf("[RAMFS-WRITE] First 4 bytes from buf: 0x%08x\n", *magic);
+        }
+    }
+
+    /* Detailed logging for every write */
+    if (size == 4096 && offset == 0) {
+        fut_printf("[RAMFS-WRITE-DETAIL] First 4096-byte write to offset %llu\n", (unsigned long long)offset);
+        fut_printf("[RAMFS-WRITE-DETAIL] src=%p dst=%p node->file.data=%p\n",
+                   buf, (void*)(node->file.data + offset), (void*)node->file.data);
+        fut_printf("[RAMFS-WRITE-DETAIL] About to write first 4 bytes: %02x %02x %02x %02x\n",
+                   src[0], src[1], src[2], src[3]);
     }
 
     for (size_t i = 0; i < size; i++) {
         node->file.data[(size_t)offset + i] = src[i];
     }
 
-    if (size > 4096) {
-        fut_printf("[RAMFS-WRITE] Large write completed: wrote to %p-%p\n",
-                   (void*)(node->file.data + offset),
-                   (void*)(node->file.data + offset + size));
+    /* Verify the first write */
+    if (size == 4096 && offset == 0) {
+        fut_printf("[RAMFS-WRITE-DETAIL] After write, first 4 bytes at %p: %02x %02x %02x %02x\n",
+                   (void*)node->file.data,
+                   node->file.data[0], node->file.data[1], node->file.data[2], node->file.data[3]);
+    }
+
+    if ((offset == 0 && size >= 4000) || offset > 500000) {
+        /* Verify write succeeded by reading back first bytes */
+        if (size >= 4) {
+            uint32_t *written_magic = (uint32_t *)(node->file.data + offset);
+            fut_printf("[RAMFS-WRITE] Write completed: wrote to %p first bytes: 0x%08x\n",
+                       (void*)(node->file.data + offset), *written_magic);
+        }
     }
 
     /* Update size - we already checked for overflow above */
@@ -265,10 +357,17 @@ static ssize_t ramfs_write(struct fut_vnode *vnode, const void *buf, size_t size
         return -EIO;
     }
 
+    /* Log complete state at end of write for large writes */
+    if (size > 10000 || offset > 200000) {
+        log_ramfs_node_state("ramfs_write END (large write)", node, vnode);
+    }
+
     return (ssize_t)size;
 }
 
 static int ramfs_lookup(struct fut_vnode *dir, const char *name, struct fut_vnode **result) {
+    extern void fut_printf(const char *, ...);
+
     if (!dir || !name || !result) {
         return -EINVAL;
     }
@@ -307,6 +406,15 @@ static int ramfs_lookup(struct fut_vnode *dir, const char *name, struct fut_vnod
         }
 
         if (str_cmp(entry->name, name) == 0) {
+            fut_printf("[RAMFS-LOOKUP] Found '%s': vnode=%p fs_data=%p\n",
+                      name, (void*)entry->vnode, (void*)entry->vnode->fs_data);
+
+            /* Log full state of found node */
+            struct ramfs_node *found_node = (struct ramfs_node *)entry->vnode->fs_data;
+            if (found_node && entry->vnode->type == VN_REG) {
+                log_ramfs_node_state("ramfs_lookup FOUND file", found_node, entry->vnode);
+            }
+
             *result = entry->vnode;
             fut_vnode_ref(*result);
             return 0;
@@ -318,6 +426,8 @@ static int ramfs_lookup(struct fut_vnode *dir, const char *name, struct fut_vnod
 }
 
 static int ramfs_create(struct fut_vnode *dir, const char *name, uint32_t mode, struct fut_vnode **result) {
+    extern void fut_printf(const char *, ...);
+
     if (!dir || !name || !result) {
         return -EINVAL;
     }
@@ -335,6 +445,8 @@ static int ramfs_create(struct fut_vnode *dir, const char *name, uint32_t mode, 
     struct ramfs_dirent *entry = dir_node->dir.entries;
     while (entry) {
         if (str_cmp(entry->name, name) == 0) {
+            fut_printf("[RAMFS-CREATE] File '%s' already exists at vnode=%p fs_data=%p\n",
+                      name, (void*)entry->vnode, (void*)entry->vnode->fs_data);
             return -EEXIST;
         }
         entry = entry->next;
@@ -352,6 +464,9 @@ static int ramfs_create(struct fut_vnode *dir, const char *name, uint32_t mode, 
         return -ENOMEM;
     }
 
+    fut_printf("[RAMFS-CREATE] Creating file '%s': new vnode=%p new node=%p\n",
+              name, (void*)vnode, (void*)node);
+
     /* Initialize vnode */
     vnode->type = VN_REG;
     vnode->ino = (uint64_t)vnode;  /* Use pointer as inode number */
@@ -362,6 +477,8 @@ static int ramfs_create(struct fut_vnode *dir, const char *name, uint32_t mode, 
     vnode->fs_data = node;
     vnode->refcount = 1;
     vnode->ops = dir->ops;  /* Same ops as parent */
+
+    fut_printf("[RAMFS-CREATE] Set vnode->fs_data=%p for '%s'\n", (void*)node, name);
 
     /* Initialize guard values to detect buffer overflows */
     node->magic_guard_before = RAMFS_NODE_MAGIC;
@@ -518,6 +635,10 @@ static int ramfs_mount(const char *device, int flags, void *data, struct fut_mou
     root->ops = &ramfs_vnode_ops;
 
     fut_vfs_register_root_canary(&guard->before, &guard->after);
+
+    /* Initialize guard values to detect buffer overflows */
+    root_node->magic_guard_before = RAMFS_NODE_MAGIC;
+    root_node->magic_guard_after = RAMFS_NODE_MAGIC;
 
     /* Initialize root directory */
     root_node->dir.entries = NULL;

@@ -256,16 +256,66 @@ def fix_elf_offset(input_file, output_file):
 
     print(f"  Boot PT_LOAD: offset=0x{new_boot_offset:x}, vaddr=0x100000, paddr=0x100000, size=0x{boot_data_size:x}")
 
-    # Add minimal section header table at end of file (just null section)
-    # Some bootloaders expect e_shoff to point to valid location even if e_shnum=1
-    new_shoff = len(new_elf_data)
-    null_shdr = bytearray(64)  # 64-byte null section header
-    new_elf_data.extend(null_shdr)
+    # CRITICAL: Preserve ALL data from the original file
+    # We need to ensure no embedded binaries or metadata is lost
+
+    # Find the actual extent of all data in the original file
+    # This includes all PT_LOAD segment data plus section headers
+    max_original_offset = 0
+
+    # Check all PT_LOAD segments
+    for i in range(e_phnum):
+        phdr_offset = e_phoff + i * e_phentsize
+        p_type = struct.unpack('<I', elf_data[phdr_offset:phdr_offset+4])[0]
+        p_offset = struct.unpack('<Q', elf_data[phdr_offset+8:phdr_offset+16])[0]
+        p_filesz = struct.unpack('<Q', elf_data[phdr_offset+32:phdr_offset+40])[0]
+
+        if p_type == PT_LOAD and p_filesz > 0:
+            segment_end = p_offset + p_filesz
+            if segment_end > max_original_offset:
+                max_original_offset = segment_end
+                print(f"  Segment {i}: ends at 0x{segment_end:x}")
+
+    # Also consider section headers and any data beyond
+    if e_shoff > 0:
+        section_table_end = e_shoff + (e_shentsize * e_shnum)
+        if section_table_end > max_original_offset:
+            max_original_offset = section_table_end
+            print(f"  Section table ends at 0x{section_table_end:x}")
+
+    # Finally, use the actual file size if it's larger
+    if len(elf_data) > max_original_offset:
+        max_original_offset = len(elf_data)
+
+    print(f"\n[DATA PRESERVATION] Original file ends at: 0x{max_original_offset:x} ({max_original_offset} bytes)")
+    print(f"[DATA PRESERVATION] New ELF currently at:  0x{len(new_elf_data):x} ({len(new_elf_data)} bytes)")
+
+    # Ensure we preserve all data up to max_original_offset
+    # by padding and copying remaining data from original file
+    if max_original_offset > len(new_elf_data):
+        # Calculate padding alignment for sections
+        new_shoff = ((len(new_elf_data) + 0xfff) // 0x1000) * 0x1000
+
+        if new_shoff > len(new_elf_data):
+            new_elf_data.extend(b'\x00' * (new_shoff - len(new_elf_data)))
+
+        # Copy remaining original file data
+        if new_shoff < len(elf_data):
+            remaining = elf_data[new_shoff:max_original_offset]
+            new_elf_data.extend(remaining)
+            print(f"[DATA PRESERVATION] Preserved data from 0x{new_shoff:x} to 0x{max_original_offset:x}")
+
+        print(f"[DATA PRESERVATION] Final file size:     0x{len(new_elf_data):x} ({len(new_elf_data)} bytes)")
+    else:
+        # Already have all data, just add minimal section headers if needed
+        if e_shoff == 0:
+            null_shdr = bytearray(64)
+            new_elf_data.extend(null_shdr)
+            print(f"[DATA PRESERVATION] Added minimal section header table")
 
     struct.pack_into('<Q', new_elf_data, 40, new_shoff)  # Set e_shoff
-    struct.pack_into('<H', new_elf_data, 60, 1)  # Set e_shnum = 1 (just null section)
-    struct.pack_into('<H', new_elf_data, 62, 0)  # Set e_shstrndx = 0
-    print(f"  Section headers: minimal table at 0x{new_shoff:x}")
+    struct.pack_into('<H', new_elf_data, 60, e_shnum)  # Preserve original e_shnum
+    struct.pack_into('<H', new_elf_data, 62, e_shstrndx)  # Preserve original e_shstrndx
 
     # Write output file
     with open(output_file, 'wb') as f:

@@ -73,7 +73,8 @@ RUN_QEMU_FLAGS += -display sdl
 else
 # GTK provides native graphics window via virtio-gpu
 # Requires X11 (DISPLAY) or Wayland (WAYLAND_DISPLAY) to be set
-RUN_QEMU_FLAGS += -display gtk,gl=on
+# NOTE: gl=off for 2D framebuffer operations (gl=on requires virgl 3D)
+RUN_QEMU_FLAGS += -display gtk,gl=off
 endif
 RUN_QEMU_FLAGS += -device virtio-gpu-pci
 RUN_QEMU_FLAGS += -vga none

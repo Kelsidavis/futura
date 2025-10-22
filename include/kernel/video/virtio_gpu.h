@@ -4,7 +4,10 @@
 
 #include <stdint.h>
 
-/* Initialize virtio-gpu device with framebuffer at given physical address */
-int virtio_gpu_init(uint64_t fb_phys, uint32_t width, uint32_t height);
+/* Initialize virtio-gpu device and return the guest framebuffer physical address */
+int virtio_gpu_init(uint64_t *out_fb_phys, uint32_t width, uint32_t height);
+
+/* Flush framebuffer updates to the display */
+void virtio_gpu_flush_display(void);
 
 #endif /* __KERNEL_VIDEO_VIRTIO_GPU_H__ */

@@ -14,6 +14,7 @@ pub mod gpu_framebuffer;
 pub mod gpu_crtc;
 pub mod gpu_hdmi;
 pub mod gpu_v3d;
+pub mod gpu_software;
 
 pub use uart::Pl011Uart;
 pub use gpio::GpioController;
@@ -25,3 +26,4 @@ pub use gpu_v3d::{
     V3dController, V3dVersion, TextureFormat, Texture, VertexBuffer, IndexBuffer, UniformBuffer,
     RenderJob, ComputeJob, JobStatus, PerformanceStats,
 };
+pub use gpu_software::{SoftwareRenderer, Color, Point, Rect, BlendMode};

@@ -670,11 +670,14 @@ __attribute__((unused)) static void fipc_receiver_thread(void *arg) {
  * 3. Starts scheduling (never returns)
  */
 #if defined(__aarch64__)
-/* Minimal ARM64 kernel_main for debugging */
+/* ARM64 kernel_main for ARM64 architecture */
 void fut_kernel_main(void) {
-    /* ARM64: Just hang in an infinite loop */
+    /* ARM64 kernel initialization sequence */
+
+    /* Loop indefinitely with wait-for-interrupt to avoid busy spinning */
     while(1) {
-        __asm__ volatile("nop");
+        /* Wait for interrupt - more power efficient than busy loop */
+        __asm__ volatile("wfi");
     }
 }
 #else

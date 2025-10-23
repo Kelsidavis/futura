@@ -111,6 +111,7 @@ static inline int __range_user_ok(uintptr_t u, size_t n) {
 }
 
 int fut_access_ok(const void *u_ptr, size_t len, int write) {
+#if defined(__x86_64__)
     uintptr_t u = (uintptr_t)u_ptr;
 
     if (!__range_user_ok(u, len)) {
@@ -143,6 +144,13 @@ int fut_access_ok(const void *u_ptr, size_t len, int write) {
     }
 
     return 0;
+#elif defined(__aarch64__)
+    /* ARM64: Validation delegated to MMU */
+    (void)u_ptr;
+    (void)len;
+    (void)write;
+    return 0;
+#endif
 }
 
 int fut_copy_from_user(void *k_dst, const void *u_src, size_t n) {

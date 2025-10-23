@@ -56,15 +56,13 @@
 
 /**
  * Switch from one thread to another (cooperative).
- * Saves current context, restores new context, returns from new context's function.
- * @param old_ctx Pointer to old thread's context
- * @param new_ctx Pointer to new thread's context
+ * Implemented as assembly function in context_switch.S
+ * @param prev Pointer to old thread
+ * @param next Pointer to new thread
  */
-#define fut_context_switch(old_ctx, new_ctx) \
-    do { \
-        fut_save_context(old_ctx); \
-        fut_restore_context(new_ctx); \
-    } while(0)
+/* Note: Actual implementation is in context_switch.S as a function.
+   The macro version is commented out since the assembly implementation handles
+   all the necessary context switching operations. */
 
 /* ============================================================
  *   Thread Entry Point

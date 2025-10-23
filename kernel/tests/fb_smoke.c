@@ -20,8 +20,10 @@
 #include <kernel/fut_vfs.h>
 #include <subsystems/posix_syscall.h>
 
+#if defined(__x86_64__)
 #include <arch/x86_64/paging.h>
 #include <arch/x86_64/pmap.h>
+#endif
 
 #include <tests/test_api.h>
 

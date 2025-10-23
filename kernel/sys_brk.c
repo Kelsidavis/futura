@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: MPL-2.0
 
+#if defined(__x86_64__)
 #include <arch/x86_64/paging.h>
 #include <arch/x86_64/pmap.h>
+#endif
 
 #include <kernel/errno.h>
 #include <kernel/fut_mm.h>
@@ -10,6 +12,8 @@
 #include <kernel/fut_memory.h>
 
 #include <string.h>
+
+#if defined(__x86_64__)
 
 static uint64_t heap_page_flags(void) {
     return PTE_PRESENT | PTE_USER | PTE_WRITABLE | PTE_NX;
@@ -98,3 +102,10 @@ long sys_brk(uintptr_t new_break) {
     fut_mm_set_brk_current(mm, new_break);
     return (long)new_break;
 }
+
+#else
+/* ARM64: sys_brk is not yet implemented */
+long sys_brk(uintptr_t new_break __attribute__((unused))) {
+    return -ENOSYS;  /* ENOSYS defined in kernel/errno.h which is included above */
+}
+#endif

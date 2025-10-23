@@ -11,7 +11,9 @@
 #include "../../include/kernel/fut_task.h"
 #include "../../include/kernel/fut_sched.h"
 #include "../../include/kernel/fut_memory.h"
+#if defined(__x86_64__)
 #include <arch/x86_64/gdt.h>
+#endif
 #include <string.h>
 #include <stdatomic.h>
 
@@ -98,6 +100,7 @@ fut_thread_t *fut_thread_create(
     fut_cpu_context_t *ctx = &thread->context;
     memset(ctx, 0, sizeof(*ctx));
 
+#if defined(__x86_64__)
     uintptr_t aligned_top = ((uintptr_t)stack_top) & ~0xFULL;
     // Provide 16-byte alignment at the point of entry (post-ret => %rsp % 16 == 8)
     ctx->rsp = aligned_top - 8;
@@ -113,6 +116,19 @@ fut_thread_t *fut_thread_create(
 
     // Zeroed above but be explicit about SIMD state alignment
     memset(ctx->fx_area, 0, sizeof(ctx->fx_area));
+#elif defined(__aarch64__)
+    // ARM64 stack grows downward - point to the end of the stack
+    uintptr_t aligned_top = ((uintptr_t)stack_top) & ~0xFULL;
+    ctx->sp = aligned_top;
+    ctx->pc = (uint64_t)(uintptr_t)&fut_thread_trampoline;
+    ctx->pstate = 0x3C5; // EL1h mode with IRQ/FIQ enabled (bits 6,7 clear for enabled)
+
+    // ARM64 calling convention: x0 = entry, x1 = arg
+    ctx->x19 = (uint64_t)entry;
+    ctx->x20 = (uint64_t)arg;
+
+    // FPU state already zeroed by memset above
+#endif
 
     // Add to parent task
     fut_task_add_thread(task, thread);

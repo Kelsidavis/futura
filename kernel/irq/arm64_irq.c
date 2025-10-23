@@ -144,7 +144,7 @@ int fut_irq_acknowledge(void) {
     return irq;
 }
 
-void fut_irq_send_eoi(int irq) {
+void fut_irq_send_eoi(uint8_t irq) {
     gic_write(GIC_CPU_BASE, GIC_CPU_EOI, irq & 0x3FF);
 }
 
@@ -172,22 +172,14 @@ void fut_irq_set_priority(int irq, uint32_t priority) {
     gic_write(GIC_DIST_BASE, reg_offset, current);
 }
 
-void fut_irq_enable(int irq) {
-    if (irq < 0 || irq >= 256) {
-        return;
-    }
-
+void fut_irq_enable(uint8_t irq) {
     int reg_offset = GIC_DIST_ISENABLER_BASE + (irq / 32) * 4;
     int shift = irq % 32;
     uint32_t value = 1U << shift;
     gic_write(GIC_DIST_BASE, reg_offset, value);
 }
 
-void fut_irq_disable(int irq) {
-    if (irq < 0 || irq >= 256) {
-        return;
-    }
-
+void fut_irq_disable(uint8_t irq) {
     int reg_offset = GIC_DIST_ICENABLER_BASE + (irq / 32) * 4;
     int shift = irq % 32;
     uint32_t value = 1U << shift;
@@ -212,13 +204,10 @@ bool fut_irq_is_enabled(int irq) {
 /**
  * Initialize ARM Generic Timer.
  */
-void fut_timer_init(void) {
-    /* Get timer frequency */
-    uint32_t freq = fut_timer_get_frequency();
-
+void fut_timer_init(uint32_t frequency) {
     /* Set initial timeout to 1 second from now */
     uint64_t count = fut_timer_read_count();
-    uint64_t timeout = count + freq;  /* 1 second */
+    uint64_t timeout = count + frequency;  /* 1 second */
 
     /* Program the physical timer comparator */
     __asm__ volatile("msr cntp_cval_el0, %0" :: "r"(timeout));
@@ -281,16 +270,12 @@ void fut_handle_sync_exception(fut_interrupt_frame_t *frame, uint64_t esr, uint6
 }
 
 void fut_handle_data_abort(fut_interrupt_frame_t *frame, uint64_t esr, uint64_t far) {
-    /* Check if it's a page fault that needs to be handled */
-    uint32_t fsc = fut_esr_get_fsc(esr);
-
     /* Delegate to page fault handler */
     fut_page_fault_handler(frame, esr, far);
 }
 
 void fut_handle_instr_abort(fut_interrupt_frame_t *frame, uint64_t esr, uint64_t far) {
     /* Similar to data abort but for instruction fetches */
-    uint32_t fsc = fut_esr_get_fsc(esr);
     fut_page_fault_handler(frame, esr, far);
 }
 
@@ -324,9 +309,8 @@ void fut_handle_syscall(fut_interrupt_frame_t *frame) {
     switch (syscall_num) {
         case 93:  /* exit */
         {
-            int exit_code = (int)frame->x[0];
             /* Thread exit - implemented in process.h */
-            fut_thread_exit(exit_code);
+            fut_thread_exit();
             break;
         }
 
@@ -401,6 +385,9 @@ void fut_exception_dispatch(fut_interrupt_frame_t *frame, uint64_t esr) {
 
 __attribute__((weak))
 void fut_page_fault_handler(void *frame, uint64_t esr, uint64_t far) {
+    (void)frame;
+    (void)esr;
+    (void)far;
     /* Stub implementation - actual implementation in memory manager */
     /* In a full implementation, this would:
      * 1. Check if page should be mapped

@@ -56,6 +56,13 @@ SECTIONS
     /* Kernel end marker */
     _kernel_end = .;
 
+    /* Kernel stack (32 KB, grows downward) */
+    . = ALIGN(16);  /* Ensure 16-byte alignment for AArch64 ABI */
+    _stack_start = .;
+    . += 0x8000;    /* 32 KB stack */
+    . = ALIGN(16);
+    _stack_top = .;
+
     /* Discard sections */
     /DISCARD/ : {
         *(.comment)

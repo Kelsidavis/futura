@@ -326,15 +326,8 @@ no_reschedule:
     ret
 
 /*
- * BSS and stack section
+ * External symbols defined by linker script
  */
-.section .bss
-.align 16
-.global _stack_bottom
-_stack_bottom:
-    .space 16384                      /* 16 KB initial stack */
-.global _stack_top
-_stack_top:
-
-.global _bss_start
-.global _bss_end
+.extern _stack_top
+.extern _bss_start
+.extern _bss_end

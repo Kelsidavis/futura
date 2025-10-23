@@ -43,8 +43,17 @@
 .global fut_switch_context
 .type fut_switch_context, @function
 fut_switch_context:
+    /* DEBUG: Write marker to serial port */
+    movw $0x3F8, %dx
+    movb $'C', %al
+    outb %al, %dx
+
     /* Stash next context pointer in %r11 (scratch) */
     movq %rsi, %r11
+
+    /* DEBUG: Verify r11 is non-zero */
+    testq %r11, %r11
+    jz .ctx_null_error
 
     /* Save current context if present */
     testq %rdi, %rdi
@@ -110,9 +119,26 @@ fut_switch_context:
     movq CTX_RCX(%r11), %rcx
     movq CTX_RAX(%r11), %rax
 
-    movq CTX_RIP(%r11), %r10
-    pushq %r10
-    ret
+    /* DEBUG: About to jump */
+    movw $0x3F8, %dx
+    movb $'J', %al
+    outb %al, %dx
+
+    /* Jump directly to RIP without using ret to avoid stack issues */
+    movq CTX_RIP(%r11), %r11
+
+    /* DEBUG: RIP loaded, about to jump */
+    movw $0x3F8, %dx
+    movb $'X', %al
+    outb %al, %dx
+
+    jmp *%r11
+
+.ctx_null_error:
+    movw $0x3F8, %dx
+    movb $'N', %al
+    outb %al, %dx
+    hlt
 
 .size fut_switch_context, . - fut_switch_context
 

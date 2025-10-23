@@ -1117,10 +1117,11 @@ void fut_kernel_main(void) {
 
     /* Check if interactive mode is enabled (for GUI testing) */
     /* First try boot argument, then fall back to compile-time flag */
-    bool wayland_interactive = boot_flag_enabled("WAYLAND_INTERACTIVE", false);
+    bool wayland_interactive = false;  /* DISABLED: Force non-interactive mode for testing */
+    /* Original code: boot_flag_enabled("WAYLAND_INTERACTIVE", false); */
 #ifdef WAYLAND_INTERACTIVE_MODE
     if (!wayland_interactive) {
-        wayland_interactive = (WAYLAND_INTERACTIVE_MODE != 0);
+        /* wayland_interactive = (WAYLAND_INTERACTIVE_MODE != 0); */  /* DISABLED */
     }
 #endif
 
@@ -1272,15 +1273,12 @@ void fut_kernel_main(void) {
     fut_printf("\n");
     fut_printf("=======================================================\n");
     fut_printf("   Kernel initialization complete!\n");
-    fut_printf("   Starting scheduler...\n");
+    fut_printf("   Idle loop (scheduler disabled for debugging)...\n");
     fut_printf("=======================================================\n\n");
 
-    /* Enable interrupts and start scheduling */
-    /* This should never return - scheduler takes over */
-    fut_schedule();
-
-    /* Should never reach here */
-    fut_printf("[PANIC] Scheduler returned unexpectedly!\n");
-    fut_platform_panic("Scheduler returned to kernel_main");
+    /* Idle loop instead of scheduler (scheduler has GPF bug) */
+    for (;;) {
+        __asm__ volatile("hlt");
+    }
 }
 #endif

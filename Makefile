@@ -94,7 +94,12 @@ else
 RUN_QEMU_FLAGS += -display none
 RUN_QEMU_FLAGS += -vga none
 endif
+
+# Add platform-specific devices (isa-debug-exit is x86-64 only)
+ifeq ($(PLATFORM),x86_64)
 RUN_QEMU_FLAGS += -device isa-debug-exit,iobase=0xf4,iosize=0x4
+endif
+
 RUN_QEMU_FLAGS += -drive if=virtio,file=$(QEMU_DISK_IMG),format=raw
 RUN_QEMU_FLAGS += $(EXTRA_QEMU_FLAGS)
 

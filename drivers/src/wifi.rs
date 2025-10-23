@@ -11,8 +11,6 @@
 //! - Power management
 //! - Channel selection
 
-use core::fmt;
-
 /// WiFi frequency band
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum WifiBand {

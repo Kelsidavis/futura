@@ -92,9 +92,11 @@ pub struct EdidDisplayParams {
     pub max_v_size: u32,
     /// Gamma value (encode: (gamma + 100) / 100)
     pub gamma: u8,
-    /// Supported features
+    /// Supports DPMS power saving
     pub supports_dpms: bool,
+    /// Supports RGB color space
     pub supports_rgb: bool,
+    /// Supports YCbCr color space
     pub supports_ycbcr: bool,
 }
 
@@ -103,15 +105,19 @@ pub struct EdidDisplayParams {
 pub struct EdidColorChars {
     /// Red point X coordinate (0.0 - 1.0, fixed-point)
     pub red_x: u16,
+    /// Red point Y coordinate (0.0 - 1.0, fixed-point)
     pub red_y: u16,
-    /// Green point X, Y
+    /// Green point X coordinate (0.0 - 1.0, fixed-point)
     pub green_x: u16,
+    /// Green point Y coordinate (0.0 - 1.0, fixed-point)
     pub green_y: u16,
-    /// Blue point X, Y
+    /// Blue point X coordinate (0.0 - 1.0, fixed-point)
     pub blue_x: u16,
+    /// Blue point Y coordinate (0.0 - 1.0, fixed-point)
     pub blue_y: u16,
-    /// White point X, Y
+    /// White point X coordinate (0.0 - 1.0, fixed-point)
     pub white_x: u16,
+    /// White point Y coordinate (0.0 - 1.0, fixed-point)
     pub white_y: u16,
 }
 
@@ -124,6 +130,7 @@ pub struct EdidInfo {
     pub colors: EdidColorChars,
     /// Supported modes
     pub modes: [Option<DisplayMode>; 8],
+    /// Number of supported modes
     pub num_modes: usize,
     /// HDMI/DVI mode
     pub output_mode: OutputMode,
@@ -134,8 +141,9 @@ pub struct EdidInfo {
 /// Display mode configuration
 #[derive(Clone, Copy, Debug)]
 pub struct DisplayMode {
-    /// Mode name (e.g., "1920x1080")
+    /// Display width in pixels
     pub width: u32,
+    /// Display height in pixels
     pub height: u32,
     /// Refresh rate in Hz
     pub refresh_rate: u32,

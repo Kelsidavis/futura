@@ -98,11 +98,13 @@ pub struct Plane {
     pub plane_type: PlaneType,
     /// Framebuffer address
     pub fb_address: u32,
-    /// Plane position (x, y)
+    /// Plane x position
     pub x: u32,
+    /// Plane y position
     pub y: u32,
-    /// Plane dimensions
+    /// Plane width in pixels
     pub width: u32,
+    /// Plane height in pixels
     pub height: u32,
     /// Composition settings
     pub composition: PlaneComposition,

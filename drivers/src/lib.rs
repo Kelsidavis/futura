@@ -20,6 +20,7 @@ pub mod gpu_opengl_es;
 pub mod ethernet;
 pub mod wifi;
 pub mod bluetooth;
+pub mod usb;
 
 pub use uart::Pl011Uart;
 pub use gpio::GpioController;
@@ -52,4 +53,8 @@ pub use wifi::{
 pub use bluetooth::{
     BluetoothController, BluetoothAddress, BluetoothTech, DeviceClass,
     BluetoothDevice, BluetoothConnection, BluetoothStats, PairingMethod, SecurityLevel,
+};
+pub use usb::{
+    UsbHostController, UsbDevice, UsbDeviceClass, UsbSpeed, UsbAddress, EndpointDescriptor,
+    PortStatus, UsbControllerState,
 };

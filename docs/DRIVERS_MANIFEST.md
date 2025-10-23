@@ -17,9 +17,11 @@ drivers/
 │   ├── gpu_v3d.rs                 # GPU V3D 3D Graphics Acceleration
 │   ├── gpu_software.rs            # GPU Software Rendering Fallback
 │   ├── gpu_audio.rs               # GPU Audio Output (HDMI + Analog)
+│   ├── gpu_opengl_es.rs           # GPU OpenGL ES Graphics API
 │   ├── ethernet.rs                # Broadcom Ethernet Controller
 │   ├── wifi.rs                    # Broadcom WiFi/802.11 Controller
 │   ├── bluetooth.rs               # Broadcom Bluetooth Controller
+│   ├── usb.rs                     # Synopsys DWC USB Host Controller
 │   └── lib.rs                     # Driver Library Entry Point
 └── Cargo.toml
 ```
@@ -260,6 +262,31 @@ drivers/
 
 ---
 
+### Category: USB Bus
+
+#### USB Host Controller
+- **File**: `usb.rs`
+- **Hardware**: Synopsys DWC USB Host Controller
+- **Platforms**:
+  - RPi 3: DWC2 (USB 2.0 only)
+  - RPi 4: DWC3 (USB 2.0 ready)
+  - RPi 5: DWC3 (USB 2.0/3.0 capable)
+- **Capabilities**:
+  - Device enumeration and discovery
+  - Speed detection (Low 1.5 Mbps → High 480 Mbps)
+  - Device class classification (HID, Storage, Audio, Video, etc.)
+  - Multi-port support (4 downstream ports)
+  - Power management (Suspend/Resume)
+  - Port status monitoring
+  - Data transfer statistics
+  - Address assignment (1-127 per USB hub tree)
+  - Up to 128 device tracking
+- **Type**: USB Bus Host Interface
+- **Status**: ✅ Implemented & Tested
+- **Max Speed**: 480 Mbps (USB 2.0 High-Speed)
+
+---
+
 ### Category: Utilities
 
 #### Register Utilities
@@ -273,9 +300,9 @@ drivers/
 ## Driver Statistics
 
 ### Code Metrics
-- **Total Driver Code**: ~7,800 lines of Rust
-- **Total Unit Tests**: 145+ comprehensive tests
-- **Documentation**: ~4,000 lines across 6 guides
+- **Total Driver Code**: ~8,400 lines of Rust
+- **Total Unit Tests**: 160+ comprehensive tests
+- **Documentation**: ~5,200 lines across 7 guides
 - **Compilation Status**: 0 errors, 100% success rate
 - **Type Safety**: 100% (no unsafe code in public APIs)
 - **no_std Compatibility**: 100% (all drivers)
@@ -288,8 +315,9 @@ drivers/
 | GPU Display | 6 | 60+ | 3,500 |
 | GPU Graphics API | 1 | 30+ | 1,400 |
 | Networking | 3 | 70+ | 2,400 |
+| USB Bus | 1 | 15 | 630 |
 | Utilities | 1 | - | 150 |
-| **TOTAL** | **14** | **145+** | **7,800** |
+| **TOTAL** | **15** | **160+** | **8,400** |
 
 ---
 

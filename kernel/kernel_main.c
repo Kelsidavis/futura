@@ -669,12 +669,13 @@ static void fipc_receiver_thread(void *arg) {
  * 2. Creates initial test threads
  * 3. Starts scheduling (never returns)
  */
-#if defined(__arm64__)
+#if defined(__aarch64__)
 /* Minimal ARM64 kernel_main for debugging */
 void fut_kernel_main(void) {
-    /* ARM64: Just print a message and hang for now */
-    fut_serial_puts("[KERNEL] ARM64 kernel_main entered\n");
-    while(1) __asm__ volatile("wfi");
+    /* ARM64: Just hang in an infinite loop */
+    while(1) {
+        __asm__ volatile("nop");
+    }
 }
 #else
 void fut_kernel_main(void) {

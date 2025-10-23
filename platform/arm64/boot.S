@@ -79,7 +79,7 @@ setup_el1:
     bic     x0, x0, #(1 << 2)         /* Disable data cache */
     bic     x0, x0, #(1 << 12)        /* Disable instruction cache */
     bic     x0, x0, #(1 << 1)         /* Disable alignment checking */
-    orr     x0, x0, #(1 << 3)         /* Enable stack alignment check */
+    bic     x0, x0, #(1 << 3)         /* Disable stack alignment check for now */
     msr     sctlr_el1, x0
     isb
 

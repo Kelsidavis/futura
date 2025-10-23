@@ -5,7 +5,7 @@
  * Provides a minimal abstraction around fut_vmem_context_t so higher layers
  * can manage process address spaces without touching raw paging structures.
  * Phase 4 introduces dedicated mm objects, reference counting, and helpers
- * for switching CR3 as threads migrate between tasks.
+ * for switching TTBR0_EL1 (ARM64) or CR3 (x86_64) as threads migrate between tasks.
  */
 
 #pragma once
@@ -14,7 +14,14 @@
 #include <stdint.h>
 #include <stdatomic.h>
 
+/* Include architecture-specific paging header */
+#if defined(__aarch64__)
+#include <arch/arm64/paging.h>
+#elif defined(__x86_64__)
 #include <arch/x86_64/paging.h>
+#else
+#error "Unsupported architecture for memory management"
+#endif
 
 typedef struct fut_mm {
     fut_vmem_context_t ctx;

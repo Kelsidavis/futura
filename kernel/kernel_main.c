@@ -55,7 +55,7 @@ extern void fut_perf_selftest_schedule(fut_task_t *task);
 #endif
 
 #if ENABLE_WINSRV_DEMO || ENABLE_WAYLAND_DEMO
-static void fut_boot_delay_ms(uint32_t delay_ms) {
+__attribute__((unused)) static void fut_boot_delay_ms(uint32_t delay_ms) {
     if (delay_ms == 0) {
         return;
     }
@@ -80,7 +80,7 @@ extern void ahci_init(void);
 extern char boot_ptables_start[];
 extern char boot_ptables_end[];
 
-static bool boot_flag_enabled(const char *key, bool default_on) {
+__attribute__((unused)) static bool boot_flag_enabled(const char *key, bool default_on) {
     const char *value = fut_boot_arg_value(key);
     if (!value) {
         return default_on;
@@ -121,7 +121,7 @@ extern char _bss_end[];
 /* Global FIPC channel for testing */
 static struct fut_fipc_channel *g_test_channel = NULL;
 
-static void fut_test_watchdog_thread(void *arg) {
+__attribute__((unused)) static void fut_test_watchdog_thread(void *arg) {
     (void)arg;
     const uint32_t timeout_ms = 20000;
     uint32_t elapsed = 0;
@@ -584,7 +584,7 @@ static void test_futurafs_operations(void) {
 /**
  * FIPC sender thread - sends test messages.
  */
-static void fipc_sender_thread(void *arg) {
+__attribute__((unused)) static void fipc_sender_thread(void *arg) {
     (void)arg;
     fut_printf("[FIPC-SENDER] Starting sender thread\n");
 
@@ -619,7 +619,7 @@ static void fipc_sender_thread(void *arg) {
 /**
  * FIPC receiver thread - receives and processes messages.
  */
-static void fipc_receiver_thread(void *arg) {
+__attribute__((unused)) static void fipc_receiver_thread(void *arg) {
     (void)arg;
     fut_printf("[FIPC-RECEIVER] Starting receiver thread\n");
 

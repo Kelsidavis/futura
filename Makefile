@@ -352,6 +352,7 @@ KERNEL_SOURCES := \
     kernel/vfs/devfs.c \
     kernel/video/virtio_gpu.c \
     drivers/tty/console.c \
+    drivers/video/fb_console.c \
     kernel/rust/rustffi.c
 
 # Platform-specific and architecture-specific kernel sources

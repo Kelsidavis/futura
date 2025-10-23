@@ -105,7 +105,8 @@ fut_thread_t *fut_thread_create(
     // Provide 16-byte alignment at the point of entry (post-ret => %rsp % 16 == 8)
     ctx->rsp = aligned_top - 8;
     ctx->rip = (uint64_t)(uintptr_t)&fut_thread_trampoline;
-    ctx->rflags = RFLAGS_IF;
+    // RFLAGS bit 1 must be 1 (reserved), bit 9 is interrupt enable
+    ctx->rflags = 0x202;  // Bit 1 (reserved=1) | Bit 9 (IF=1)
     ctx->cs = 0x08; // Kernel code segment
     ctx->ss = 0x10; // Kernel data segment
     ctx->rdi = (uint64_t)entry;

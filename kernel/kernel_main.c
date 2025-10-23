@@ -676,69 +676,13 @@ __attribute__((unused)) static void fipc_receiver_thread(void *arg) {
 #if defined(__aarch64__)
 /* ARM64 kernel_main for ARM64 architecture */
 void fut_kernel_main(void) {
-    /* ARM64 kernel initialization sequence */
+    /* ARM64 kernel initialization - debug version to diagnose issues */
 
-    fut_printf("\n");
-    fut_printf("=======================================================\n");
-    fut_printf("   Futura OS ARM64 Kernel Initialization\n");
-    fut_printf("=======================================================\n\n");
+    /* Test 1: Try a simple printf to see if we can get here */
+    fut_serial_puts("DEBUG: kernel_main() started\n");
 
-    /* ========================================
-     *   Step 1: Initialize Paging (MMU)
-     * ======================================== */
-
-    fut_printf("[INIT] Initializing ARM64 memory paging (MMU)...\n");
-    fut_paging_init();
-    fut_printf("[INIT] ✓ Memory paging initialized with 48-bit virtual addressing\n");
-
-    /* ========================================
-     *   Step 2: Initialize Scheduler
-     * ======================================== */
-
-    fut_printf("[INIT] Initializing ARM64 scheduler...\n");
-    fut_scheduler_init();
-    fut_printf("[INIT] ✓ Scheduler initialized with idle thread\n");
-
-    /* ========================================
-     *   Step 3: Register Timer IRQ Handler
-     * ======================================== */
-
-    fut_printf("[INIT] Registering timer IRQ handler (IRQ 30)...\n");
-    int ret = fut_register_irq_handler(FUT_IRQ_TIMER, (fut_irq_handler_t)fut_timer_irq_handler);
-    if (ret != 0) {
-        fut_printf("[WARN] Timer IRQ registration returned %d\n", ret);
-    } else {
-        fut_printf("[INIT] ✓ Timer IRQ handler registered\n");
-    }
-
-    /* ========================================
-     *   Step 4: Initialize GIC and Timer
-     * ======================================== */
-
-    fut_printf("[INIT] Initializing GICv2 interrupt controller...\n");
-    fut_gic_init();
-    fut_printf("[INIT] ✓ GICv2 initialized\n");
-
-    fut_printf("[INIT] Initializing ARM Generic Timer...\n");
-    fut_timer_init(1000);
-    fut_printf("[INIT] ✓ Timer initialized with periodic interrupts\n");
-
-    fut_printf("\n");
-    fut_printf("=======================================================\n");
-    fut_printf("   ARM64 Kernel Initialization Complete!\n");
-    fut_printf("   Entering idle loop (waiting for interrupts)\n");
-    fut_printf("=======================================================\n\n");
-
-    /* ========================================
-     *   Step 5: Wait for Interrupts
-     * ======================================== */
-
-    /* Enable interrupts and wait for events */
-    fut_enable_interrupts();
-
-    /* Loop indefinitely with wait-for-interrupt to avoid busy spinning */
+    /* Test 2: Infinite loop */
     while(1) {
-        /* Wait for interrupt - more power efficient than busy loop */
         __asm__ volatile("wfi");
     }
 }

@@ -16,6 +16,7 @@ pub mod gpu_hdmi;
 pub mod gpu_v3d;
 pub mod gpu_software;
 pub mod gpu_audio;
+pub mod ethernet;
 
 pub use uart::Pl011Uart;
 pub use gpio::GpioController;
@@ -31,4 +32,8 @@ pub use gpu_software::{SoftwareRenderer, Color, Point, Rect, BlendMode};
 pub use gpu_audio::{
     GpuAudioController, AudioFormat, AudioBuffer, SampleRate, BitDepth, Channels,
     AudioOutput, Volume, PlaybackState, BufferStatus,
+};
+pub use ethernet::{
+    EthernetController, MacAddress, EtherType, LinkSpeed, LinkState, EthernetFrame,
+    EthernetStats, ControllerState, DmaDescriptor, PacketDirection,
 };

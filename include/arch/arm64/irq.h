@@ -58,21 +58,6 @@ static inline void fut_write_daif(uint64_t daif) {
 }
 
 /**
- * Disable all interrupts (set DAIF).
- */
-static inline void fut_disable_interrupts(void) {
-    uint64_t daif = (PSTATE_F_BIT | PSTATE_I_BIT | PSTATE_A_BIT | PSTATE_D_BIT);
-    __asm__ volatile("msr daif, %0" :: "r"(daif) : "memory");
-}
-
-/**
- * Enable interrupts (clear I and F bits in DAIF).
- */
-static inline void fut_enable_interrupts(void) {
-    __asm__ volatile("msr daifclr, #0x3" ::: "memory");  /* Clear I and F bits */
-}
-
-/**
  * Disable IRQs specifically (set DAIF.I bit).
  */
 static inline void fut_disable_irqs(void) {
@@ -84,25 +69,6 @@ static inline void fut_disable_irqs(void) {
  */
 static inline void fut_enable_irqs(void) {
     __asm__ volatile("msr daifclr, #0x2" ::: "memory");  /* Clear I bit */
-}
-
-/**
- * Save and disable interrupts.
- * Returns interrupt state that can be restored later.
- * @return Saved DAIF value
- */
-static inline uint64_t fut_save_and_disable_interrupts(void) {
-    uint64_t daif = fut_read_daif();
-    fut_disable_interrupts();
-    return daif;
-}
-
-/**
- * Restore interrupt state.
- * @param daif Previously saved DAIF value
- */
-static inline void fut_restore_interrupts(uint64_t daif) {
-    fut_write_daif(daif);
 }
 
 /**
@@ -181,7 +147,7 @@ int fut_irq_acknowledge(void);
  * Send end-of-interrupt signal to GIC.
  * @param irq IRQ number to acknowledge
  */
-void fut_irq_send_eoi(int irq);
+void fut_irq_send_eoi(uint8_t irq);
 
 /**
  * Get current GIC interrupt priority.
@@ -201,13 +167,13 @@ void fut_irq_set_priority(int irq, uint32_t priority);
  * Enable a specific IRQ.
  * @param irq IRQ number to enable
  */
-void fut_irq_enable(int irq);
+void fut_irq_enable(uint8_t irq);
 
 /**
  * Disable a specific IRQ.
  * @param irq IRQ number to disable
  */
-void fut_irq_disable(int irq);
+void fut_irq_disable(uint8_t irq);
 
 /**
  * Check if IRQ is enabled.
@@ -223,8 +189,9 @@ bool fut_irq_is_enabled(int irq);
 /**
  * Initialize ARM Generic Timer.
  * Sets up the system timer for periodic interrupts.
+ * @param frequency Timer frequency in Hz
  */
-void fut_timer_init(void);
+void fut_timer_init(uint32_t frequency);
 
 /**
  * Get current timer count.

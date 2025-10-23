@@ -150,3 +150,12 @@
 #ifndef ENOTCONN
 #define ENOTCONN    107
 #endif
+
+#ifndef ENOTSUP
+#define ENOTSUP     95
+#endif
+
+#ifndef phys_addr_t
+#include <stdint.h>
+typedef uint64_t phys_addr_t;
+#endif

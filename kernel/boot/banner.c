@@ -7,9 +7,14 @@
 #include <kernel/boot_banner.h>
 #include <kernel/fut_memory.h>
 #include <generated/version.h>
+
+#ifdef __x86_64__
 #include <arch/x86_64/cpu.h>
+#endif
 
 extern void fut_printf(const char *fmt, ...);
+
+#ifdef __x86_64__
 
 static inline void cpuid(uint32_t leaf, uint32_t subleaf,
                          uint32_t *a, uint32_t *b, uint32_t *c, uint32_t *d) {
@@ -53,8 +58,19 @@ static void get_cpu_brand(char brand[49]) {
     }
 }
 
+#else  /* !__x86_64__ */
+
+static void get_cpu_brand(char brand[49]) {
+    /* For non-x86_64 architectures, we don't query CPU brand via CPUID */
+    brand[0] = '\0';
+}
+
+#endif  /* __x86_64__ */
+
 void fut_boot_banner(void) {
+#ifdef __x86_64__
     const fut_cpu_features_t *feat = cpu_features_get();
+#endif
 
     char cpu_brand[49] = {0};
     get_cpu_brand(cpu_brand);
@@ -78,8 +94,10 @@ void fut_boot_banner(void) {
     fut_printf(" Build: %s  by %s@%s\n", FUT_BUILD_DATE, FUT_BUILD_USER, FUT_BUILD_HOST);
 
     fut_printf("\n[CPU] %s\n", (cpu_brand[0] != '\0') ? cpu_brand : "Unknown CPU");
+#ifdef __x86_64__
     fut_printf("[CPU] NX=%u OSXSAVE=%u SSE=%u AVX=%u FSGSBASE=%u PGE=%u\n",
                feat->nx, feat->osxsave, feat->sse, feat->avx, feat->fsgsbase, feat->pge);
+#endif
 
     fut_printf("\n[MEM] Physical: total=%llu MiB  free=%llu MiB  base=0x%llx\n",
                (unsigned long long)total_mib,

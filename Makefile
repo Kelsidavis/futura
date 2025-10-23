@@ -106,6 +106,9 @@ ifeq ($(PLATFORM),x86_64)
     ARCH_CFLAGS := -m64 -mcmodel=kernel -mno-red-zone -mno-sse -mno-avx -mno-avx2 -fno-tree-vectorize
     ARCH_ASFLAGS := --64
     ARCH_LDFLAGS := -m elf_x86_64 -T platform/x86_64/link.ld
+    # Binary format for embedding blobs
+    OBJCOPY_BIN_FMT := elf64-x86-64
+    OBJCOPY_BIN_ARCH := i386:x86-64
 else ifeq ($(PLATFORM),arm64)
     # ARM64 cross-compilation toolchain
     CROSS_COMPILE ?= aarch64-linux-gnu-
@@ -114,9 +117,12 @@ else ifeq ($(PLATFORM),arm64)
     LD := $(CROSS_COMPILE)ld
     AR := $(CROSS_COMPILE)ar
     OBJCOPY := $(CROSS_COMPILE)objcopy
-    ARCH_CFLAGS := -march=armv8-a -mtune=cortex-a53
+    ARCH_CFLAGS := -march=armv8-a -mtune=cortex-a53 -Wno-pedantic
     ARCH_ASFLAGS :=
-    ARCH_LDFLAGS := -T platform/arm64/link.ld
+    ARCH_LDFLAGS := -T platform/arm64/link.ld /usr/lib/gcc-cross/aarch64-linux-gnu/13/libgcc.a
+    # Binary format for embedding blobs
+    OBJCOPY_BIN_FMT := elf64-aarch64
+    OBJCOPY_BIN_ARCH := aarch64
 else
     $(error Unsupported platform: $(PLATFORM))
 endif
@@ -149,7 +155,7 @@ export REPRO_CFLAGS
 export REPRO_LDFLAGS
 
 # C standard and compiler flags
-CFLAGS := -std=c23 -ffreestanding -nostdlib -fno-builtin -fno-stack-protector -fno-asynchronous-unwind-tables
+CFLAGS := -std=c2x -ffreestanding -nostdlib -fno-builtin -fno-stack-protector -fno-asynchronous-unwind-tables
 CFLAGS += -Wall -Wextra -Wpedantic -Werror
 CFLAGS += -fno-pic -fno-pie  # Disable PIC/PIE for kernel code
 CFLAGS += -fcf-protection=none  # Disable CET (Control-flow Enforcement Technology)
@@ -272,7 +278,13 @@ RUST_BUILD_DIR_BLK := $(RUST_VIRTIO_BLK_DIR)/target/$(RUST_TARGET)/$(RUST_PROFIL
 RUST_BUILD_DIR_NET := $(RUST_VIRTIO_NET_DIR)/target/$(RUST_TARGET)/$(RUST_PROFILE)
 RUST_LIB_VIRTIO_BLK := $(RUST_BUILD_DIR_BLK)/libvirtio_blk.a
 RUST_LIB_VIRTIO_NET := $(RUST_BUILD_DIR_NET)/libvirtio_net.a
+
+# Rust drivers are x86-64 only for now
+ifeq ($(PLATFORM),x86_64)
 RUST_LIBS := $(RUST_LIB_VIRTIO_BLK) $(RUST_LIB_VIRTIO_NET)
+else
+RUST_LIBS :=
+endif
 RUST_SOURCES := $(shell if [ -d $(RUST_ROOT) ]; then find $(RUST_ROOT) -type f \( -name '*.rs' -o -name 'Cargo.toml' -o -name 'build.rs' -o -name '*.toml' \); fi)
 
 # ============================================================
@@ -321,34 +333,49 @@ KERNEL_SOURCES := \
     kernel/rt/stack_chk.c \
     kernel/uaccess.c \
     kernel/vfs/devfs.c \
+    kernel/video/virtio_gpu.c \
+    drivers/tty/console.c \
+    kernel/rust/rustffi.c
+
+# x86-64 specific smoke tests
+ifeq ($(PLATFORM),x86_64)
+SOURCES += \
     kernel/tests/echo_smoke.c \
-    kernel/tests/fb_smoke.c \
-    kernel/tests/input_smoke.c \
-    kernel/tests/exec_double.c \
+    kernel/tests/input_smoke.c
+endif
+
+# x86-64 specific drivers and tests
+ifeq ($(PLATFORM),x86_64)
+SOURCES += \
     kernel/video/fb_mmio.c \
     kernel/video/pci_vga.c \
     kernel/video/cirrus_vga.c \
-    kernel/video/virtio_gpu.c \
     drivers/video/fb.c \
     drivers/input/ps2_kbd.c \
     drivers/input/ps2_mouse.c \
-    drivers/tty/console.c \
     kernel/blk/blkcore.c \
-    kernel/rust/rustffi.c \
     kernel/tests/perf.c \
     kernel/tests/perf_ipc.c \
     kernel/tests/perf_sched.c \
     kernel/tests/perf_blk.c \
     kernel/tests/perf_net.c \
+    kernel/tests/fb_smoke.c \
+    kernel/tests/exec_double.c \
     subsystems/futura_fs/futfs.c \
-    subsystems/futura_fs/futfs_gc.c \
+    subsystems/futura_fs/futfs_gc.c
+endif
+
+# Tests and x86-64 specific drivers (only for x86_64 platform)
+ifeq ($(PLATFORM),x86_64)
+SOURCES += \
     tests/test_api.c \
     tests/test_blkcore.c \
     tests/test_futfs.c \
     tests/test_net.c \
     platform/x86_64/drivers/ahci/ahci.c
+endif
 
-# Platform-specific sources
+# Platform-specific and architecture-specific kernel sources
 ifeq ($(PLATFORM),x86_64)
     PLATFORM_SOURCES := \
         platform/x86_64/boot.S \
@@ -362,12 +389,17 @@ ifeq ($(PLATFORM),x86_64)
         platform/x86_64/cpu_features.c \
         platform/x86_64/platform_init.c \
         platform/x86_64/ps2.c \
-        arch/x86_64/perf_clock.c
+        arch/x86_64/perf_clock.c \
+        kernel/arch/x86_64/hal_halt.c \
+        kernel/arch/x86_64/hal_interrupts.c
 else ifeq ($(PLATFORM),arm64)
     PLATFORM_SOURCES := \
         platform/arm64/boot.S \
         platform/arm64/context_switch.S \
-        platform/arm64/platform_init.c
+        platform/arm64/platform_init.c \
+        platform/arm64/arm64_stubs.c \
+        kernel/arch/arm64/hal_halt.c \
+        kernel/arch/arm64/hal_interrupts.c
 endif
 
 # Subsystem sources (POSIX compat)
@@ -399,6 +431,7 @@ WAYLAND_CLIENT_BLOB := $(OBJ_DIR)/kernel/blobs/wl_simple_blob.o
 WAYLAND_COLOR_BIN := $(BIN_DIR)/user/wl-colorwheel
 WAYLAND_COLOR_BLOB := $(OBJ_DIR)/kernel/blobs/wl_colorwheel_blob.o
 
+ifeq ($(PLATFORM),x86_64)
 OBJECTS += $(FBTEST_BLOB)
 ifeq ($(ENABLE_WINSRV_DEMO),1)
 OBJECTS += $(WINSRV_BLOB) $(WINSTUB_BLOB)
@@ -406,6 +439,7 @@ endif
 OBJECTS += $(INIT_STUB_BLOB) $(SECOND_STUB_BLOB)
 ifeq ($(ENABLE_WAYLAND_DEMO),1)
 OBJECTS += $(WAYLAND_COMPOSITOR_BLOB) $(WAYLAND_CLIENT_BLOB) $(WAYLAND_COLOR_BLOB)
+endif
 endif
 
 # ============================================================
@@ -456,10 +490,15 @@ futfs-crash-test: kernel tools
 $(BIN_DIR)/futura_kernel.elf: $(OBJECTS) $(RUST_LIBS) $(KERNEL_DEPS) | $(BIN_DIR)
 	@echo "LD $@.tmp"
 	@$(LD) $(LDFLAGS) -o $@.tmp $(OBJECTS) $(RUST_LIBS)
+ifeq ($(PLATFORM),x86_64)
 	@cp $@.tmp /tmp/kernel_before_fix.elf
 	@echo "FIX-ELF $@"
 	@python3 tools/fix_multiboot_offset.py $@.tmp $@
 	@rm $@.tmp
+else
+	@cp $@.tmp $@
+	@rm $@.tmp
+endif
 	@echo "Build complete: $@"
 
 ifeq ($(RUST_AVAILABLE),yes)
@@ -514,35 +553,35 @@ $(OBJ_DIR)/kernel/blobs:
 
 $(FBTEST_BLOB): $(FBTEST_BIN) | $(OBJ_DIR)/kernel/blobs
 	@echo "OBJCOPY $@"
-	@$(OBJCOPY) -I binary -O elf64-x86-64 -B i386:x86-64 $< $@
+	@$(OBJCOPY) -I binary -O $(OBJCOPY_BIN_FMT) -B $(OBJCOPY_BIN_ARCH) $< $@
 
 $(WINSRV_BLOB): $(WINSRV_BIN) | $(OBJ_DIR)/kernel/blobs
 	@echo "OBJCOPY $@"
-	@$(OBJCOPY) -I binary -O elf64-x86-64 -B i386:x86-64 $< $@
+	@$(OBJCOPY) -I binary -O $(OBJCOPY_BIN_FMT) -B $(OBJCOPY_BIN_ARCH) $< $@
 
 $(WINSTUB_BLOB): $(WINSTUB_BIN) | $(OBJ_DIR)/kernel/blobs
 	@echo "OBJCOPY $@"
-	@$(OBJCOPY) -I binary -O elf64-x86-64 -B i386:x86-64 $< $@
+	@$(OBJCOPY) -I binary -O $(OBJCOPY_BIN_FMT) -B $(OBJCOPY_BIN_ARCH) $< $@
 
 $(INIT_STUB_BLOB): $(INIT_STUB_BIN) | $(OBJ_DIR)/kernel/blobs
 	@echo "OBJCOPY $@"
-	@$(OBJCOPY) -I binary -O elf64-x86-64 -B i386:x86-64 $< $@
+	@$(OBJCOPY) -I binary -O $(OBJCOPY_BIN_FMT) -B $(OBJCOPY_BIN_ARCH) $< $@
 
 $(SECOND_STUB_BLOB): $(SECOND_STUB_BIN) | $(OBJ_DIR)/kernel/blobs
 	@echo "OBJCOPY $@"
-	@$(OBJCOPY) -I binary -O elf64-x86-64 -B i386:x86-64 $< $@
+	@$(OBJCOPY) -I binary -O $(OBJCOPY_BIN_FMT) -B $(OBJCOPY_BIN_ARCH) $< $@
 
 $(WAYLAND_COMPOSITOR_BLOB): $(WAYLAND_COMPOSITOR_BIN) | $(OBJ_DIR)/kernel/blobs
 	@echo "OBJCOPY $@"
-	@$(OBJCOPY) -I binary -O elf64-x86-64 -B i386:x86-64 $< $@
+	@$(OBJCOPY) -I binary -O $(OBJCOPY_BIN_FMT) -B $(OBJCOPY_BIN_ARCH) $< $@
 
 $(WAYLAND_CLIENT_BLOB): $(WAYLAND_CLIENT_BIN) | $(OBJ_DIR)/kernel/blobs
 	@echo "OBJCOPY $@"
-	@$(OBJCOPY) -I binary -O elf64-x86-64 -B i386:x86-64 $< $@
+	@$(OBJCOPY) -I binary -O $(OBJCOPY_BIN_FMT) -B $(OBJCOPY_BIN_ARCH) $< $@
 
 $(WAYLAND_COLOR_BLOB): $(WAYLAND_COLOR_BIN) | $(OBJ_DIR)/kernel/blobs
 	@echo "OBJCOPY $@"
-	@$(OBJCOPY) -I binary -O elf64-x86-64 -B i386:x86-64 $< $@
+	@$(OBJCOPY) -I binary -O $(OBJCOPY_BIN_FMT) -B $(OBJCOPY_BIN_ARCH) $< $@
 
 # Build userland services
 userland:

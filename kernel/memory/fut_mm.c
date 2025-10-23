@@ -5,7 +5,11 @@
  * Establishes a minimal MM container around fut_vmem_context_t so the kernel
  * can track process address spaces, switch CR3 during scheduling, and expose
  * the active page tables to uaccess helpers.
+ *
+ * NOTE: This is currently an x86_64-specific implementation.
  */
+
+#ifdef __x86_64__
 
 #include "../../include/kernel/fut_mm.h"
 
@@ -365,3 +369,17 @@ int fut_mm_unmap(fut_mm_t *mm, uintptr_t addr, size_t len) {
 
     return -EINVAL;
 }
+
+#else  /* !__x86_64__ */
+
+/* ARM64 and other non-x86_64 architectures: memory management stubs */
+/* TODO: Implement ARM64-specific memory management */
+
+#include "../../include/kernel/fut_mm.h"
+#include <stddef.h>
+
+fut_mm_t *fut_mm_get_active(void) {
+    return NULL;
+}
+
+#endif  /* __x86_64__ */

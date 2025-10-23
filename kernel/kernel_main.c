@@ -1089,7 +1089,9 @@ void fut_kernel_main(void) {
 
         if (!wayland_interactive) {
             /* Auto-exit for automated testing (default behavior) */
-            hal_outb(0xf4u, 0u);
+#ifdef __x86_64__
+            hal_outb(0xf4u, 0u);  /* x86-64 debug port exit */
+#endif
 #if ENABLE_WAYLAND_DEMO
             fut_test_pass();
 #endif
@@ -1100,7 +1102,14 @@ void fut_kernel_main(void) {
             fut_printf("[INIT] Minimized windows feature: ACTIVE\n");
             fut_printf("[INIT] ========================================\n");
             while (1) {
+#ifdef __x86_64__
                 __asm__ volatile("hlt");
+#elif defined(__aarch64__)
+                __asm__ volatile("wfi");  /* Wait For Interrupt */
+#else
+                /* Generic idle: just loop */
+                __asm__ volatile("pause");
+#endif
             }
         }
     } else if (wayland_interactive) {
@@ -1109,7 +1118,13 @@ void fut_kernel_main(void) {
         fut_printf("[WARN] Wayland exec: %d, client exec: %d\n", wayland_exec, wayland_client_exec);
         fut_boot_delay_ms(100);
         while (1) {
+#ifdef __x86_64__
             __asm__ volatile("hlt");
+#elif defined(__aarch64__)
+            __asm__ volatile("wfi");  /* Wait For Interrupt */
+#else
+            __asm__ volatile("pause");
+#endif
         }
     }
 #endif

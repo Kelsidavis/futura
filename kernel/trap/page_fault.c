@@ -10,12 +10,16 @@
 #include "../../include/kernel/fut_task.h"
 #include "../../include/kernel/signal.h"
 
+#ifdef __x86_64__
 #include <arch/x86_64/regs.h>
+#endif
 
 #include <stdbool.h>
 #include <stdint.h>
 
 extern void fut_printf(const char *fmt, ...);
+
+#ifdef __x86_64__
 
 bool fut_trap_handle_page_fault(fut_interrupt_frame_t *frame) {
     const uint64_t fault_addr = fut_read_cr2();
@@ -42,3 +46,15 @@ bool fut_trap_handle_page_fault(fut_interrupt_frame_t *frame) {
 
     return false;
 }
+
+#elif defined(__aarch64__)
+
+/* ARM64 page fault handler stub - not yet implemented */
+bool fut_trap_handle_page_fault(fut_interrupt_frame_t *frame) {
+    (void)frame;
+    return false;
+}
+
+#else
+#error "Unsupported architecture for page fault handling"
+#endif

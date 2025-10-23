@@ -33,6 +33,7 @@
 #define PCI_BAR0_OFFSET          0x10
 #define PCI_BAR1_OFFSET          0x14
 
+#ifdef __x86_64__
 /* I/O Port access macros */
 static inline uint32_t inl(uint16_t port) {
     uint32_t result;
@@ -43,7 +44,9 @@ static inline uint32_t inl(uint16_t port) {
 static inline void outl(uint16_t port, uint32_t value) {
     __asm__ volatile("outl %0, %1" : : "a"(value), "Nd"(port));
 }
+#endif
 
+#ifdef __x86_64__
 /**
  * Read a 32-bit value from PCI configuration space
  *
@@ -151,7 +154,9 @@ uint64_t pci_find_vga_framebuffer(void) {
     fut_printf("[PCI] No VGA device found on bus 0\n");
     return 0;
 }
+#endif
 
+#ifdef __x86_64__
 /**
  * Probe for VGA device and use its framebuffer
  * Called early during boot to override hardcoded framebuffer address
@@ -168,3 +173,10 @@ int fb_probe_pci_vga(void) {
                (unsigned long long)framebuffer);
     return 0;
 }
+#else
+/* ARM64 stub - PCI VGA discovery not yet implemented */
+int fb_probe_pci_vga(void) {
+    fut_printf("[FB] ARM64: PCI VGA probe not yet implemented\n");
+    return -1;
+}
+#endif

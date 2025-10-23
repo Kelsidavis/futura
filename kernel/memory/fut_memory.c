@@ -9,6 +9,7 @@
 
 #include "../../include/kernel/fut_memory.h"
 #include <platform/platform.h>
+#include <kernel/errno.h>
 
 #if defined(__x86_64__)
 #include <arch/x86_64/pmap.h>

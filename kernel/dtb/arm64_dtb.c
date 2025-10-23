@@ -142,7 +142,7 @@ fut_platform_type_t fut_dtb_detect_platform(uint64_t dtb_ptr) {
  *   Property Extraction
  * ============================================================ */
 
-size_t fut_dtb_get_property(uint64_t dtb_ptr, const char *node_name,
+size_t fut_dtb_get_property(uint64_t dtb_ptr, const char *node_name __attribute__((unused)),
                             const char *prop_name, void *value_out, size_t max_len) {
     if (!fut_dtb_validate(dtb_ptr) || !prop_name || !value_out) {
         return 0;
@@ -233,26 +233,23 @@ bool fut_dtb_get_u64_property(uint64_t dtb_ptr, const char *node_name,
  *   Memory and Platform Info
  * ============================================================ */
 
-uint32_t fut_dtb_get_memory_size(uint64_t dtb_ptr) {
+uint64_t fut_dtb_get_memory_size(uint64_t dtb_ptr) {
     if (!fut_dtb_validate(dtb_ptr)) {
         return 0;
     }
-
-    /* Try to get memory size from /memory node */
-    uint32_t size = 0;
 
     /* For now, return a reasonable default based on platform */
     fut_platform_type_t platform = fut_dtb_detect_platform(dtb_ptr);
 
     switch (platform) {
         case PLATFORM_RPI3:
-            return 1024 * 1024 * 1024;  /* 1GB */
+            return 1024ULL * 1024 * 1024;  /* 1GB */
         case PLATFORM_RPI4:
-            return 2 * 1024 * 1024 * 1024;  /* 2GB (could be more) */
+            return 2ULL * 1024 * 1024 * 1024;  /* 2GB (could be more) */
         case PLATFORM_RPI5:
-            return 4 * 1024 * 1024 * 1024;  /* 4GB (could be more) */
+            return 4ULL * 1024 * 1024 * 1024;  /* 4GB (could be more) */
         default:
-            return 2 * 1024 * 1024 * 1024;  /* Default 2GB */
+            return 2ULL * 1024 * 1024 * 1024;  /* Default 2GB */
     }
 }
 
@@ -267,7 +264,7 @@ fut_platform_info_t fut_dtb_parse(uint64_t dtb_ptr) {
         .gic_cpu_base = 0,
         .has_gic = false,
         .has_generic_timer = false,
-        .total_memory = 2 * 1024 * 1024 * 1024
+        .total_memory = 2ULL * 1024 * 1024 * 1024
     };
 
     if (!fut_dtb_validate(dtb_ptr)) {

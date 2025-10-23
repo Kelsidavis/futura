@@ -8,6 +8,7 @@
 
 #include <arch/arm64/rpi_init.h>
 #include <arch/arm64/dtb.h>
+#include <arch/arm64/irq.h>
 #include <platform/platform.h>
 #include <string.h>
 
@@ -171,7 +172,7 @@ void fut_rpi_timer_init(const fut_platform_info_t *info) {
 
     if (info->has_generic_timer) {
         fut_printf("[INIT] ARM Generic Timer (CNTFRQ=%u Hz)\n", info->cpu_freq);
-        fut_timer_init();  /* Use existing ARM Generic Timer init */
+        fut_timer_init(info->cpu_freq);  /* Use existing ARM Generic Timer init */
     } else {
         fut_printf("[INIT] RPi3 System Timer (not fully implemented)\n");
         /* TODO: Implement RPi3 system timer if needed */
@@ -253,7 +254,7 @@ void fut_rpi_boot_init(uint64_t dtb_ptr) {
  * ============================================================ */
 
 /* We can override the default serial output if needed */
-void fut_rpi_serial_putc(char ch) {
+void fut_rpi_serial_putc(char ch __attribute__((unused))) {
     /* This would be called by fut_printf if the global platform is set */
     /* For now, we rely on the existing platform initialization */
 }

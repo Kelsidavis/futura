@@ -12,8 +12,12 @@
 #include <kernel/errno.h>
 #include <kernel/fut_mm.h>
 
+#if defined(__x86_64__)
 #include <arch/x86_64/paging.h>
 #include <arch/x86_64/pmap.h>
+#elif defined(__aarch64__)
+#include <arch/arm64/paging.h>
+#endif
 
 #include <stdbool.h>
 #include <string.h>

@@ -153,7 +153,6 @@ typedef struct fut_vmem_context {
  */
 static inline bool fut_is_canonical(uint64_t vaddr) {
     /* For 48-bit VA: bits 48-63 must all be same as bit 47 */
-    uint64_t bit47 = (vaddr >> 47) & 1;
     uint64_t upper = vaddr >> 48;
     return (upper == 0) || (upper == 0xFFFF);
 }

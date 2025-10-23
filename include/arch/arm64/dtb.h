@@ -137,7 +137,7 @@ bool fut_dtb_get_u64_property(uint64_t dtb_ptr, const char *node_name,
  * @param dtb_ptr: Physical address of DTB
  * @return: Total RAM size in bytes
  */
-uint32_t fut_dtb_get_memory_size(uint64_t dtb_ptr);
+uint64_t fut_dtb_get_memory_size(uint64_t dtb_ptr);
 
 /**
  * Validate DTB header.

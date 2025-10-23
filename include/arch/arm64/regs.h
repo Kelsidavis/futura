@@ -18,7 +18,7 @@
  * ARM64 CPU context saved during cooperative context switches.
  * Contains callee-saved registers according to ARM64 ABI.
  */
-typedef struct {
+typedef struct fut_cpu_context {
     /* Callee-saved registers (x19-x28) */
     uint64_t x19;
     uint64_t x20;
@@ -58,7 +58,7 @@ typedef struct {
  * ARM64 interrupt frame pushed by hardware and software during exceptions.
  * This structure matches the layout expected by exception handlers.
  */
-typedef struct {
+typedef struct fut_interrupt_frame {
     /* General purpose registers x0-x30 */
     uint64_t x[31];             /* x0-x30 (x30 is LR) */
 

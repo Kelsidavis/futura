@@ -10,8 +10,12 @@
 #include "../../include/kernel/fut_mm.h"
 #include "../../include/kernel/fut_memory.h"
 #include "../../include/kernel/fut_stats.h"
+#if defined(__x86_64__)
 #include <arch/x86_64/gdt.h>
 #include <arch/x86_64/paging.h>
+#elif defined(__aarch64__)
+#include <arch/arm64/paging.h>
+#endif
 #include <platform/platform.h>
 #include <stdint.h>
 #include <stdatomic.h>
@@ -220,10 +224,14 @@ void fut_schedule(void) {
     next->state = FUT_THREAD_RUNNING;
     fut_thread_set_current(next);
 
+#if defined(__x86_64__)
     if (next->stack_base && next->stack_size) {
         uintptr_t stack_top = (uintptr_t)next->stack_base + next->stack_size;
         fut_tss_set_kernel_stack(stack_top);
     }
+#elif defined(__aarch64__)
+    // ARM64: TSS not needed, stack is in SP register
+#endif
 
     // Record context switch for performance instrumentation
     fut_stats_record_switch(prev, next);
@@ -261,6 +269,7 @@ void fut_schedule(void) {
                 serial_puts("[SCHED] First context switch to thread\n");
             }
 
+#if defined(__x86_64__)
             fut_printf("[SCHED] switch to rip=0x%llx rsp=0x%llx entry=%p\n",
                        next->context.rip,
                        next->context.rsp,
@@ -274,6 +283,20 @@ void fut_schedule(void) {
             if (!aligned_16 && !aligned_call) {
                 fut_platform_panic("[SCHED] stack misaligned for next thread");
             }
+#elif defined(__aarch64__)
+            fut_printf("[SCHED] switch to pc=0x%llx sp=0x%llx entry=%p\n",
+                       next->context.pc,
+                       next->context.sp,
+                       (void *)next->context.x19);
+            if (next->context.pc < KERNEL_VIRTUAL_BASE) {
+                fut_platform_panic("[SCHED] bad PC for next thread");
+            }
+            uintptr_t sp = next->context.sp;
+            bool aligned_16 = ((sp & 0xFULL) == 0);
+            if (!aligned_16) {
+                fut_platform_panic("[SCHED] stack misaligned for next thread");
+            }
+#endif
 
             // Placeholder for page table switch
             // Perform regular context switch

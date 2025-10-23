@@ -18,6 +18,7 @@ pub mod gpu_software;
 pub mod gpu_audio;
 pub mod ethernet;
 pub mod wifi;
+pub mod bluetooth;
 
 pub use uart::Pl011Uart;
 pub use gpio::GpioController;
@@ -41,4 +42,8 @@ pub use ethernet::{
 pub use wifi::{
     WifiController, WifiBand, WifiChannel, WifiSecurity, AuthType, CipherSuite,
     WifiScanResult, ConnectionState, WifiStats, WifiNetwork, PowerState,
+};
+pub use bluetooth::{
+    BluetoothController, BluetoothAddress, BluetoothTech, DeviceClass,
+    BluetoothDevice, BluetoothConnection, BluetoothStats, PairingMethod, SecurityLevel,
 };

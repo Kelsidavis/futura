@@ -8,6 +8,8 @@
 
 #include <arch/arm64/irq.h>
 #include <arch/arm64/regs.h>
+#include <arch/arm64/process.h>
+#include <platform/platform.h>
 #include <stddef.h>
 #include <stdatomic.h>
 
@@ -293,8 +295,75 @@ void fut_handle_instr_abort(fut_interrupt_frame_t *frame, uint64_t esr, uint64_t
 }
 
 void fut_handle_syscall(fut_interrupt_frame_t *frame) {
-    /* Syscall handling would go here */
-    /* For now, just a stub */
+    /* ARM64 syscall convention:
+     * Syscall number in X8 (w8 for 32-bit)
+     * Arguments in X0-X5 (a0-a5 in frame)
+     * Return value goes in X0
+     *
+     * Common ARM64 syscall numbers:
+     * 0   - io_setup
+     * 1   - io_destroy
+     * 2   - io_submit
+     * 3   - io_cancel
+     * 4   - io_getevents
+     * 56  - openat
+     * 57  - close
+     * 63  - read
+     * 64  - write
+     * 93  - exit
+     * 94  - exit_group
+     * 214 - brk
+     */
+
+    if (!frame) {
+        return;
+    }
+
+    uint64_t syscall_num = frame->x[8];  /* Syscall number in X8 */
+
+    switch (syscall_num) {
+        case 93:  /* exit */
+        {
+            int exit_code = (int)frame->x[0];
+            /* Thread exit - implemented in process.h */
+            fut_thread_exit(exit_code);
+            break;
+        }
+
+        case 64:  /* write */
+        {
+            int fd = (int)frame->x[0];
+            const void *buf = (const void *)frame->x[1];
+            size_t count = frame->x[2];
+
+            /* For now, just handle stdout (fd 1) */
+            if (fd == 1 && buf && count > 0) {
+                const char *str = (const char *)buf;
+                for (size_t i = 0; i < count; i++) {
+                    fut_serial_putc(str[i]);
+                }
+                frame->x[0] = count;  /* Return number of bytes written */
+            } else {
+                frame->x[0] = -1;  /* Error */
+            }
+            break;
+        }
+
+        case 214:  /* brk */
+        {
+            /* Program break - dynamic heap adjustment */
+            uint64_t addr = frame->x[0];
+            /* For now, just return the address without modifying heap */
+            frame->x[0] = addr;
+            break;
+        }
+
+        default:
+            /* Unimplemented syscall */
+            fut_printf("[WARN] Unimplemented syscall %llu from user space\n", syscall_num);
+            frame->x[0] = -38;  /* ENOSYS - Function not implemented */
+            break;
+    }
 }
 
 /* ============================================================

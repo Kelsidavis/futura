@@ -16,6 +16,7 @@ pub mod gpu_hdmi;
 pub mod gpu_v3d;
 pub mod gpu_software;
 pub mod gpu_audio;
+pub mod gpu_opengl_es;
 pub mod ethernet;
 pub mod wifi;
 pub mod bluetooth;
@@ -34,6 +35,11 @@ pub use gpu_software::{SoftwareRenderer, Color, Point, Rect, BlendMode};
 pub use gpu_audio::{
     GpuAudioController, AudioFormat, AudioBuffer, SampleRate, BitDepth, Channels,
     AudioOutput, Volume, PlaybackState, BufferStatus,
+};
+pub use gpu_opengl_es::{
+    GlContext, Shader, Program, Attribute, Uniform, GlTexture, Framebuffer, Viewport, ScissorBox,
+    PrimitiveType, ShaderType, BlendEquation, BlendFunc, DepthFunc, CullFace, FrontFace,
+    GlCapabilities, RenderState,
 };
 pub use ethernet::{
     EthernetController, MacAddress, EtherType, LinkSpeed, LinkState, EthernetFrame,

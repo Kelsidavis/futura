@@ -97,15 +97,12 @@ fut_switch_context:
     movq CTX_RBX(%r11), %rbx
     movq CTX_RBP(%r11), %rbp
 
-    /* Restore data segment registers to kernel data segment
-     * For kernel-only threads, we don't need to restore - just ensure correct segments
-     * This avoids issues with saved garbage values in uninitialized context structures
+    /* In 64-bit long mode, data segment registers are mostly ignored for memory
+     * addressing and don't need to be explicitly restored. The descriptor cache
+     * is already loaded and segment bases/limits don't apply to 64-bit mode.
+     * Attempting to load them can cause issues if the selectors aren't properly
+     * initialized. The segments are already set to kernel values from boot.
      */
-    movw $0x10, %ax
-    mov %eax, %ds
-    mov %eax, %es
-    mov %eax, %fs
-    mov %eax, %gs
 
     movq CTX_RDI(%r11), %rdi
     movq CTX_RSI(%r11), %rsi

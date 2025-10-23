@@ -17,6 +17,7 @@ pub mod gpu_v3d;
 pub mod gpu_software;
 pub mod gpu_audio;
 pub mod ethernet;
+pub mod wifi;
 
 pub use uart::Pl011Uart;
 pub use gpio::GpioController;
@@ -36,4 +37,8 @@ pub use gpu_audio::{
 pub use ethernet::{
     EthernetController, MacAddress, EtherType, LinkSpeed, LinkState, EthernetFrame,
     EthernetStats, ControllerState, DmaDescriptor, PacketDirection,
+};
+pub use wifi::{
+    WifiController, WifiBand, WifiChannel, WifiSecurity, AuthType, CipherSuite,
+    WifiScanResult, ConnectionState, WifiStats, WifiNetwork, PowerState,
 };

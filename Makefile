@@ -417,6 +417,8 @@ ALL_SOURCES := $(KERNEL_SOURCES) $(PLATFORM_SOURCES) $(SUBSYSTEM_SOURCES)
 OBJECTS := $(patsubst %.c,$(OBJ_DIR)/%.o,$(filter %.c,$(ALL_SOURCES)))
 OBJECTS += $(patsubst %.S,$(OBJ_DIR)/%.o,$(filter %.S,$(ALL_SOURCES)))
 
+SHELL_BIN := $(BIN_DIR)/user/shell
+SHELL_BLOB := $(OBJ_DIR)/kernel/blobs/shell_blob.o
 FBTEST_BIN := $(BIN_DIR)/user/fbtest
 FBTEST_BLOB := $(OBJ_DIR)/kernel/blobs/fbtest_blob.o
 WINSRV_BIN := $(BIN_DIR)/user/winsrv
@@ -435,7 +437,7 @@ WAYLAND_COLOR_BIN := $(BIN_DIR)/user/wl-colorwheel
 WAYLAND_COLOR_BLOB := $(OBJ_DIR)/kernel/blobs/wl_colorwheel_blob.o
 
 ifeq ($(PLATFORM),x86_64)
-OBJECTS += $(FBTEST_BLOB)
+OBJECTS += $(SHELL_BLOB) $(FBTEST_BLOB)
 ifeq ($(ENABLE_WINSRV_DEMO),1)
 OBJECTS += $(WINSRV_BLOB) $(WINSTUB_BLOB)
 endif
@@ -553,6 +555,13 @@ $(WAYLAND_COLOR_BIN):
 
 $(OBJ_DIR)/kernel/blobs:
 	@mkdir -p $@
+
+$(SHELL_BIN):
+	@$(MAKE) -C src/user shell
+
+$(SHELL_BLOB): $(SHELL_BIN) | $(OBJ_DIR)/kernel/blobs
+	@echo "OBJCOPY $@"
+	@$(OBJCOPY) -I binary -O $(OBJCOPY_BIN_FMT) -B $(OBJCOPY_BIN_ARCH) $< $@
 
 $(FBTEST_BLOB): $(FBTEST_BIN) | $(OBJ_DIR)/kernel/blobs
 	@echo "OBJCOPY $@"

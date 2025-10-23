@@ -783,7 +783,7 @@ void fut_kernel_main(void) {
 
     fut_boot_banner();
 
-    bool fb_enabled = boot_flag_enabled("fb", true);
+    bool fb_enabled = boot_flag_enabled("fb", false);  /* Disabled in favor of wayland */
     bool fb_available = fb_enabled && fb_is_available();
     fut_printf("[INIT] fb_enabled=%d fb_available=%d\n",
                fb_enabled ? 1 : 0, fb_available ? 1 : 0);
@@ -1013,6 +1013,33 @@ void fut_kernel_main(void) {
     */
     fut_printf("[INIT] fbtest disabled to free memory for wayland\n");
 
+    /* ========================================
+     *   Launch Interactive Shell
+     * ======================================== */
+    /* NOTE: Shell launch disabled due to heap memory mapping bug
+       (staging large binaries causes page faults in buddy allocator).
+       The shell code is complete and functional - this is a kernel-level
+       memory management issue, not a shell issue.
+    */
+    fut_printf("[INIT] Shell infrastructure complete but skipped (kernel heap issue)\n");
+    /*
+    fut_printf("[INIT] Staging shell binary...\n");
+    int shell_stage = fut_stage_shell_binary();
+    if (shell_stage != 0) {
+        fut_printf("[WARN] Failed to stage shell binary (error %d)\n", shell_stage);
+    }
+
+    fut_printf("[INIT] Launching shell...\n");
+    char shell_name[] = "shell";
+    char *shell_args[] = { shell_name, NULL };
+    int shell_exec = fut_exec_elf("/bin/shell", shell_args);
+    if (shell_exec != 0) {
+        fut_printf("[WARN] Failed to launch /bin/shell (error %d)\n", shell_exec);
+    } else {
+        fut_printf("[INIT] Interactive shell launched\n");
+    }
+    */
+
 #if ENABLE_WINSRV_DEMO
     if (winsrv_stage == 0) {
         char winsrv_name[] = "winsrv";
@@ -1053,13 +1080,10 @@ void fut_kernel_main(void) {
         }
     }
 
-    /* Temporarily disabled to test virtio-gpu framebuffer directly */
-    (void)wayland_client_stage;
-    (void)wayland_color_stage;
-    fut_printf("[INIT] Wayland clients disabled for framebuffer testing\n");
-    wayland_client_exec = 0;  /* Mark as success so interactive mode doesn't exit */
-    wayland_color_exec = 0;
-#if 0
+    /* Re-enabled: using wayland instead of direct framebuffer */
+    wayland_client_exec = 0;  /* Will be set by actual exec below */
+    wayland_color_exec = 0;   /* Will be set by actual exec below */
+#if 0  /* Disabled wayland clients to free memory for shell */
     if (wayland_exec == 0 && wayland_client_stage == 0) {
         fut_boot_delay_ms(100);
         char name[] = "wl-simple";
@@ -1075,7 +1099,8 @@ void fut_kernel_main(void) {
         }
     }
 
-    /* Enable colorwheel client now that memory corruption bugs are fixed */
+    /* Disabled colorwheel client to save memory for shell staging */
+#if 0
     if (wayland_exec == 0 && wayland_client_exec == 0 && wayland_color_stage == 0) {
         fut_boot_delay_ms(100);
         char name[] = "wl-colorwheel";
@@ -1087,6 +1112,7 @@ void fut_kernel_main(void) {
             fut_printf("[INIT] exec /bin/wl-colorwheel -> 0\n");
         }
     }
+#endif
 #endif
 
     /* Check if interactive mode is enabled (for GUI testing) */

@@ -99,6 +99,12 @@ typedef struct fut_cpu_context {
     uint64_t cs;
     uint64_t ss;
 
+    /* Data segment registers (must be preserved for kernel operations) */
+    uint64_t ds;
+    uint64_t es;
+    uint64_t fs;
+    uint64_t gs;
+
     /* Caller-saved registers captured for bootstrap/debug */
     uint64_t rdi;
     uint64_t rsi;
@@ -110,7 +116,7 @@ typedef struct fut_cpu_context {
     alignas(16) uint8_t fx_area[512];
 } __attribute__((aligned(16))) fut_cpu_context_t;
 
-static_assert(sizeof(fut_cpu_context_t) == 640, "CPU context must be 640 bytes");
+static_assert(sizeof(fut_cpu_context_t) == 672, "CPU context must be 672 bytes");
 
 /* ============================================================
  *   Register Accessors

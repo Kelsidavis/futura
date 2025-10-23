@@ -115,6 +115,12 @@ fut_thread_t *fut_thread_create(
     ctx->rcx = 0;
     ctx->rdx = 0;
 
+    /* Initialize data segment registers to kernel data segment */
+    ctx->ds = 0x10;
+    ctx->es = 0x10;
+    ctx->fs = 0x10;
+    ctx->gs = 0x10;
+
     // Zeroed above but be explicit about SIMD state alignment
     memset(ctx->fx_area, 0, sizeof(ctx->fx_area));
 #elif defined(__aarch64__)

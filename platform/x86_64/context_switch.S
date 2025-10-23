@@ -9,6 +9,7 @@
  *
  *  uint64_t r15, r14, r13, r12, rbx, rbp;
  *  uint64_t rip, rsp, rflags, cs, ss;
+ *  uint64_t ds, es, fs, gs;
  *  uint64_t rdi, rsi, rdx, rcx, rax;
  *  uint8_t  fx_area[512];
  */
@@ -23,12 +24,16 @@
 .equ CTX_RFLAGS,  64
 .equ CTX_CS,      72
 .equ CTX_SS,      80
-.equ CTX_RDI,     88
-.equ CTX_RSI,     96
-.equ CTX_RDX,     104
-.equ CTX_RCX,     112
-.equ CTX_RAX,     120
-.equ CTX_FX,      128
+.equ CTX_DS,      88
+.equ CTX_ES,      96
+.equ CTX_FS,      104
+.equ CTX_GS,      112
+.equ CTX_RDI,     120
+.equ CTX_RSI,     128
+.equ CTX_RDX,     136
+.equ CTX_RCX,     144
+.equ CTX_RAX,     152
+.equ CTX_FX,      160
 
 /*
  * fut_switch_context
@@ -66,6 +71,11 @@ fut_switch_context:
     movq $0x10, %rax
     movq %rax, CTX_SS(%rdi)
 
+    /* Note: We don't save segment registers from kernel context
+     * They're always kernel segments (0x10) for kernel code, and we
+     * restore them explicitly below rather than from saved context
+     */
+
     leaq CTX_FX(%rdi), %rax
     fxsave64 (%rax)
 
@@ -86,6 +96,16 @@ fut_switch_context:
     movq CTX_R12(%r11), %r12
     movq CTX_RBX(%r11), %rbx
     movq CTX_RBP(%r11), %rbp
+
+    /* Restore data segment registers to kernel data segment
+     * For kernel-only threads, we don't need to restore - just ensure correct segments
+     * This avoids issues with saved garbage values in uninitialized context structures
+     */
+    movw $0x10, %ax
+    mov %eax, %ds
+    mov %eax, %es
+    mov %eax, %fs
+    mov %eax, %gs
 
     movq CTX_RDI(%r11), %rdi
     movq CTX_RSI(%r11), %rsi
@@ -230,7 +250,7 @@ fut_enter_usermode:
 .global fut_context_size
 .type fut_context_size, @function
 fut_context_size:
-    movq $640, %rax                     /* sizeof(fut_cpu_context_t) */
+    movq $672, %rax                     /* sizeof(fut_cpu_context_t) */
     ret
 
 .size fut_context_size, . - fut_context_size

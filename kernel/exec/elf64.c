@@ -429,6 +429,8 @@ static int stage_stack_pages(fut_mm_t *mm, uint64_t *out_stack_top) {
 
 extern const uint8_t _binary_build_bin_user_fbtest_start[];
 extern const uint8_t _binary_build_bin_user_fbtest_end[];
+extern const uint8_t _binary_build_bin_user_shell_start[];
+extern const uint8_t _binary_build_bin_user_shell_end[];
 extern const uint8_t _binary_build_bin_user_winsrv_start[];
 extern const uint8_t _binary_build_bin_user_winsrv_end[];
 extern const uint8_t _binary_build_bin_user_winstub_start[];
@@ -539,6 +541,13 @@ static int stage_blob(const uint8_t *start,
     fut_printf("[stage_blob] fut_vfs_close returned %d\n", close_ret);
     fut_printf("[stage_blob] returning success\n");
     return 0;
+}
+
+int fut_stage_shell_binary(void) {
+    (void)fut_vfs_mkdir("/bin", 0755);
+    return stage_blob(_binary_build_bin_user_shell_start,
+                      _binary_build_bin_user_shell_end,
+                      "/bin/shell");
 }
 
 #if ENABLE_WINSRV_DEMO

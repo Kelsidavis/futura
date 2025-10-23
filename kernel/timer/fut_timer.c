@@ -247,9 +247,10 @@ void fut_timer_irq(void) {
 }
 
 /* ============================================================
- *   PIT (Programmable Interval Timer) Hardware
+ *   PIT (Programmable Interval Timer) Hardware (x86-64 only)
  * ============================================================ */
 
+#if defined(__x86_64__)
 /**
  * Program the PIT to generate timer interrupts at specified frequency.
  *
@@ -277,6 +278,7 @@ static void pit_init(uint32_t frequency) {
 
     fut_printf("[fut_timer] PIT programmed for %u Hz\n", frequency);
 }
+#endif
 
 /**
  * Initialize timer subsystem.
@@ -289,8 +291,12 @@ void fut_timer_subsystem_init(void) {
     timer_events_head = nullptr;
     fut_spinlock_init(&timer_events_lock);
 
-    // Program PIT hardware
+    // Program PIT hardware (x86-64 only)
+#if defined(__x86_64__)
     pit_init(FUT_TIMER_HZ);
+#else
+    // ARM64: Timer is already initialized by platform layer (fut_timer_init)
+#endif
 
     fut_printf("[TIMER] Timer subsystem initialized (%u Hz)\n", FUT_TIMER_HZ);
 }

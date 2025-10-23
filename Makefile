@@ -418,6 +418,7 @@ else ifeq ($(PLATFORM),arm64)
         platform/arm64/arm64_stubs.c \
         kernel/arch/arm64/hal_halt.c \
         kernel/arch/arm64/hal_interrupts.c \
+        kernel/irq/arm64_irq.c \
         kernel/dtb/arm64_dtb.c \
         kernel/dtb/rpi_init.c
 endif

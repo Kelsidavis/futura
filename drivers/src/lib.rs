@@ -12,9 +12,11 @@ pub mod registers;
 pub mod mailbox;
 pub mod gpu_framebuffer;
 pub mod gpu_crtc;
+pub mod gpu_hdmi;
 
 pub use uart::Pl011Uart;
 pub use gpio::GpioController;
 pub use mailbox::MailboxDriver;
 pub use gpu_framebuffer::{FramebufferDriver, FramebufferConfig, PixelFormat};
 pub use gpu_crtc::{CrtcController, Plane, PlaneType, DisplayTiming, AlphaMode};
+pub use gpu_hdmi::{HdmiController, DisplayMode, ColorSpace, ColorDepth, OutputMode};

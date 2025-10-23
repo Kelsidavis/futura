@@ -120,7 +120,7 @@ impl FramebufferDriver {
     /// 2. Configures display parameters
     /// 3. Enables the display
     pub fn allocate(&mut self, config: FramebufferConfig) -> Result<(), &'static str> {
-        let size = config.size();
+        let _size = config.size();
 
         // Build mailbox request buffer for framebuffer allocation
         // This would normally call the mailbox driver here

@@ -169,6 +169,30 @@ drivers/
 - **Type**: GPU Audio Layer
 - **Status**: ✅ Implemented & Tested
 
+#### OpenGL ES 3.2 Graphics API
+- **File**: `gpu_opengl_es.rs`
+- **Hardware**: V3D 4.1 (RPi4), V3D 7.1 (RPi5), VideoCore IV (RPi3)
+- **Platforms**: RPi 3/4/5
+- **Capabilities**:
+  - Modern shader-based rendering pipeline
+  - Vertex and fragment shader compilation
+  - Program linking and management
+  - Shader uniforms and attributes
+  - 16 texture units with binding management
+  - 8 framebuffer objects (FBOs)
+  - Blend modes and equations
+  - Depth testing and face culling
+  - Scissor testing and viewport configuration
+  - Draw arrays and draw elements
+  - Performance statistics tracking
+  - Full type-safe Rust API
+- **Texture Formats**: RGBA8888, RGB888, RGB565, floating-point, BC1 compression
+- **Supported Primitives**: Points, Lines, LineStrip, LineLoop, Triangles, TriangleStrip, TriangleFan
+- **Type**: GPU Graphics API Layer
+- **Status**: ✅ Implemented & Tested
+- **Code Lines**: ~1,400 lines
+- **Unit Tests**: 30+ comprehensive tests
+
 ---
 
 ### Category: Networking
@@ -249,9 +273,9 @@ drivers/
 ## Driver Statistics
 
 ### Code Metrics
-- **Total Driver Code**: ~6,400 lines of Rust
-- **Total Unit Tests**: 115+ comprehensive tests
-- **Documentation**: ~2,500 lines across 4 guides
+- **Total Driver Code**: ~7,800 lines of Rust
+- **Total Unit Tests**: 145+ comprehensive tests
+- **Documentation**: ~4,000 lines across 6 guides
 - **Compilation Status**: 0 errors, 100% success rate
 - **Type Safety**: 100% (no unsafe code in public APIs)
 - **no_std Compatibility**: 100% (all drivers)
@@ -262,9 +286,10 @@ drivers/
 | Serial | 1 | 8 | 150 |
 | GPIO | 1 | 12 | 200 |
 | GPU Display | 6 | 60+ | 3,500 |
+| GPU Graphics API | 1 | 30+ | 1,400 |
 | Networking | 3 | 70+ | 2,400 |
 | Utilities | 1 | - | 150 |
-| **TOTAL** | **13** | **115+** | **6,400** |
+| **TOTAL** | **14** | **145+** | **7,800** |
 
 ---
 

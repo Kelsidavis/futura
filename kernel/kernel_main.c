@@ -669,6 +669,14 @@ static void fipc_receiver_thread(void *arg) {
  * 2. Creates initial test threads
  * 3. Starts scheduling (never returns)
  */
+#if defined(__arm64__)
+/* Minimal ARM64 kernel_main for debugging */
+void fut_kernel_main(void) {
+    /* ARM64: Just print a message and hang for now */
+    fut_serial_puts("[KERNEL] ARM64 kernel_main entered\n");
+    while(1) __asm__ volatile("wfi");
+}
+#else
 void fut_kernel_main(void) {
     /* fbtest disabled - variables removed to reduce memory usage */
 #if ENABLE_WINSRV_DEMO
@@ -1239,3 +1247,4 @@ void fut_kernel_main(void) {
     fut_printf("[PANIC] Scheduler returned unexpectedly!\n");
     fut_platform_panic("Scheduler returned to kernel_main");
 }
+#endif

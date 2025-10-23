@@ -41,10 +41,9 @@ void fut_pmm_init(uint64_t mem_size_bytes, uintptr_t phys_base) {
 
 #if defined(__x86_64__)
     /* Boot paging sets up 512 × 2MB huge pages in PD[0-511] mapping physical 0x0-0x40000000 (1GB).
-     * We limit to 2GB (0x80000000) to allow wayland staging and execution with room for both
-     * RAMFS buffers and process memory. This safely maps to virtual addresses within
-     * 0xffffffff80000000 - 0xffffffffa0000000 range. */
-    uint64_t boot_map_limit = 0x80000000;  /* 2GB - safe limit for QEMU guests */
+     * The limit must match the boot mapping, not exceed it. Attempting to allocate beyond
+     * this range would cause page faults due to missing page table entries. */
+    uint64_t boot_map_limit = 0x40000000;  /* 1GB - matches boot page table setup */
     uint64_t pmm_max_phys = pmm_base + (pmm_total * FUT_PAGE_SIZE);
     uint64_t safe_limit_pages = pmm_total;  /* Default: no limit needed */
 

@@ -35,7 +35,13 @@ HEADFUL          ?= 0
 DEBUG            ?= 0
 ASYNC            ?= 0
 EXTRA_QEMU_FLAGS ?=
+
+# Set QEMU binary based on platform
+ifeq ($(PLATFORM),arm64)
+QEMU             ?= qemu-system-aarch64
+else
 QEMU             ?= qemu-system-x86_64
+endif
 
 INITROOT  = $(BUILD_DIR)/initroot
 INITRAMFS = $(BUILD_DIR)/initramfs.cpio

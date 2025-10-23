@@ -21,12 +21,15 @@ const MBOX_READ: usize = 0x00;
 /// Write register offset for mailbox
 const MBOX_WRITE: usize = 0x04;
 /// Peek register offset for mailbox
+#[allow(dead_code)]
 const MBOX_PEEK: usize = 0x10;
 /// Sender register offset for mailbox
+#[allow(dead_code)]
 const MBOX_SENDER: usize = 0x14;
 /// Status register offset for mailbox
 const MBOX_STATUS: usize = 0x18;
 /// Config register offset for mailbox
+#[allow(dead_code)]
 const MBOX_CONFIG: usize = 0x1C;
 
 /// Status register bit: mailbox empty
@@ -371,12 +374,16 @@ pub fn mailbox_init(base_addr: u64) {
 }
 
 /// Get reference to global mailbox driver
+#[allow(unsafe_code)]
 pub fn mailbox() -> Option<&'static MailboxDriver> {
+    #[allow(static_mut_refs)]
     unsafe { MAILBOX.as_ref() }
 }
 
 /// Get mutable reference to global mailbox driver
+#[allow(unsafe_code)]
 pub fn mailbox_mut() -> Option<&'static mut MailboxDriver> {
+    #[allow(static_mut_refs)]
     unsafe { MAILBOX.as_mut() }
 }
 

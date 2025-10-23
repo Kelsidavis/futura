@@ -58,31 +58,35 @@ impl Color {
         }
     }
 
-    /// Standard color constants
+    /// Black color constant (0, 0, 0)
     pub const BLACK: Color = Color {
         alpha: 255,
         red: 0,
         green: 0,
         blue: 0,
     };
+    /// White color constant (255, 255, 255)
     pub const WHITE: Color = Color {
         alpha: 255,
         red: 255,
         green: 255,
         blue: 255,
     };
+    /// Red color constant (255, 0, 0)
     pub const RED: Color = Color {
         alpha: 255,
         red: 255,
         green: 0,
         blue: 0,
     };
+    /// Green color constant (0, 255, 0)
     pub const GREEN: Color = Color {
         alpha: 255,
         red: 0,
         green: 255,
         blue: 0,
     };
+    /// Blue color constant (0, 0, 255)
     pub const BLUE: Color = Color {
         alpha: 255,
         red: 0,
@@ -242,6 +246,7 @@ impl SoftwareRenderer {
     }
 
     /// Blend two colors based on blend mode
+    #[allow(dead_code)]
     fn blend_colors(&self, src: Color, dst: Color) -> Color {
         match self.blend_mode {
             BlendMode::Opaque => src,

@@ -1,0 +1,30 @@
+[package]
+name = "futura-drivers"
+version = "0.1.0"
+edition = "2021"
+authors = ["Kelsi Davis"]
+license = "MPL-2.0"
+description = "Rust drivers for Futura OS ARM64 platform"
+
+[dependencies]
+# Volatile memory access (for MMIO registers)
+volatile = "0.4"
+
+# Bit manipulation utilities
+bitflags = "2.4"
+
+# For fixed-size types
+typenum = "1.17"
+
+# Useful for kernel drivers
+derive_more = "0.99"
+
+[lib]
+name = "futura_drivers"
+crate-type = ["rlib"]
+
+[profile.release]
+lto = true
+codegen-units = 1
+opt-level = 3
+strip = false

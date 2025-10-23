@@ -720,7 +720,7 @@ void fut_kernel_main(void) {
     fut_printf("[INIT] ✓ GICv2 initialized\n");
 
     fut_printf("[INIT] Initializing ARM Generic Timer...\n");
-    fut_timer_init();
+    fut_timer_init(1000);
     fut_printf("[INIT] ✓ Timer initialized with periodic interrupts\n");
 
     fut_printf("\n");

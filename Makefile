@@ -352,11 +352,11 @@ KERNEL_SOURCES := \
     kernel/vfs/devfs.c \
     kernel/video/virtio_gpu.c \
     drivers/tty/console.c \
-    kernel/rust/rustffi.c \
-    kernel/stubs_missing.c
+    kernel/rust/rustffi.c
 
 # x86-64 specific smoke tests
 ifeq ($(PLATFORM),x86_64)
+SOURCES += kernel/stubs_missing.c
 SOURCES += \
     kernel/tests/echo_smoke.c \
     kernel/tests/input_smoke.c

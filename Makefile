@@ -354,48 +354,10 @@ KERNEL_SOURCES := \
     drivers/tty/console.c \
     kernel/rust/rustffi.c
 
-# x86-64 specific smoke tests
-ifeq ($(PLATFORM),x86_64)
-SOURCES += kernel/stubs_missing.c
-SOURCES += \
-    kernel/tests/echo_smoke.c \
-    kernel/tests/input_smoke.c
-endif
-
-# x86-64 specific drivers and tests
-ifeq ($(PLATFORM),x86_64)
-SOURCES += \
-    kernel/video/fb_mmio.c \
-    kernel/video/pci_vga.c \
-    kernel/video/cirrus_vga.c \
-    drivers/video/fb.c \
-    drivers/input/ps2_kbd.c \
-    drivers/input/ps2_mouse.c \
-    kernel/blk/blkcore.c \
-    kernel/tests/perf.c \
-    kernel/tests/perf_ipc.c \
-    kernel/tests/perf_sched.c \
-    kernel/tests/perf_blk.c \
-    kernel/tests/perf_net.c \
-    kernel/tests/fb_smoke.c \
-    kernel/tests/exec_double.c \
-    subsystems/futura_fs/futfs.c \
-    subsystems/futura_fs/futfs_gc.c
-endif
-
-# Tests and x86-64 specific drivers (only for x86_64 platform)
-ifeq ($(PLATFORM),x86_64)
-SOURCES += \
-    tests/test_api.c \
-    tests/test_blkcore.c \
-    tests/test_futfs.c \
-    tests/test_net.c \
-    platform/x86_64/drivers/ahci/ahci.c
-endif
-
 # Platform-specific and architecture-specific kernel sources
 ifeq ($(PLATFORM),x86_64)
     PLATFORM_SOURCES := \
+        kernel/stubs_missing.c \
         platform/x86_64/boot.S \
         platform/x86_64/gdt_idt.S \
         platform/x86_64/isr_stubs.S \
@@ -409,13 +371,33 @@ ifeq ($(PLATFORM),x86_64)
         platform/x86_64/ps2.c \
         arch/x86_64/perf_clock.c \
         kernel/arch/x86_64/hal_halt.c \
-        kernel/arch/x86_64/hal_interrupts.c
+        kernel/arch/x86_64/hal_interrupts.c \
+        kernel/video/fb_mmio.c \
+        kernel/video/pci_vga.c \
+        kernel/video/cirrus_vga.c \
+        drivers/video/fb.c \
+        drivers/input/ps2_kbd.c \
+        drivers/input/ps2_mouse.c \
+        kernel/blk/blkcore.c \
+        kernel/tests/echo_smoke.c \
+        kernel/tests/input_smoke.c \
+        kernel/tests/perf.c \
+        kernel/tests/perf_ipc.c \
+        kernel/tests/perf_sched.c \
+        kernel/tests/perf_blk.c \
+        kernel/tests/perf_net.c \
+        kernel/tests/fb_smoke.c \
+        kernel/tests/exec_double.c \
+        subsystems/futura_fs/futfs.c \
+        subsystems/futura_fs/futfs_gc.c \
+        platform/x86_64/drivers/ahci/ahci.c
 else ifeq ($(PLATFORM),arm64)
     PLATFORM_SOURCES := \
         platform/arm64/boot.S \
         platform/arm64/context_switch.S \
         platform/arm64/platform_init.c \
         platform/arm64/arm64_stubs.c \
+        platform/arm64/arm64_minimal_stubs.c \
         kernel/arch/arm64/hal_halt.c \
         kernel/arch/arm64/hal_interrupts.c \
         kernel/dtb/arm64_dtb.c \

@@ -67,6 +67,12 @@ endif
 KAPPEND := $(strip $(KAPPEND))
 
 RUN_QEMU_FLAGS := -m $(MEM) -serial stdio -no-reboot -no-shutdown
+
+# Add platform-specific QEMU flags
+ifeq ($(PLATFORM),arm64)
+RUN_QEMU_FLAGS += -machine virt -cpu cortex-a72
+endif
+
 ifeq ($(HEADFUL),1)
 # Headful mode: use display backend with virtio-gpu
 # GTK is default for native graphics output, falls back to VNC if no display server

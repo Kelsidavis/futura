@@ -6,6 +6,8 @@
  * The primary x86-64 path uses the 64-bit IDT helpers under arch/x86_64/.
  */
 
+#ifdef __x86_64__
+
 #include "../../include/kernel/fut_idt.h"
 #include <stddef.h>
 
@@ -108,3 +110,34 @@ int fut_idt_check_guards(void) {
 
     return corrupted;
 }
+
+#else  /* !__x86_64__ */
+
+/* ARM64 and other non-x86_64 architectures: IDT stubs */
+/* TODO: Implement ARM64-specific exception vector table setup */
+
+void fut_idt_set_gate(uint8_t num, void (*handler)(void), uint16_t selector, uint8_t flags) {
+    (void)num;
+    (void)handler;
+    (void)selector;
+    (void)flags;
+}
+
+void fut_idt_install(void) {
+}
+
+uint16_t fut_idt_get_count(void) {
+    return 0;
+}
+
+int fut_idt_verify_entry(uint8_t vec, void *expected_handler) {
+    (void)vec;
+    (void)expected_handler;
+    return 0;
+}
+
+int fut_idt_check_guards(void) {
+    return 0;
+}
+
+#endif  /* __x86_64__ */

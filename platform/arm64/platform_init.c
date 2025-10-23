@@ -9,7 +9,11 @@
 #include <stdint.h>
 #include <stddef.h>
 #include <stdbool.h>
+
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wpedantic"
 #include <arch/arm64/regs.h>
+#pragma GCC diagnostic pop
 #include <platform/platform.h>
 #include <config/futura_config.h>
 

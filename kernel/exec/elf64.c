@@ -3,6 +3,8 @@
  * elf64.c - Minimal ELF64 loader and user process bootstrap
  */
 
+#ifdef __x86_64__
+
 #include <kernel/exec.h>
 #include <generated/feature_flags.h>
 
@@ -563,6 +565,7 @@ int fut_stage_winstub_binary(void) {
 }
 #endif
 
+#ifdef __x86_64__
 int fut_stage_init_stub_binary(void) {
     (void)fut_vfs_mkdir("/sbin", 0755);
     return stage_blob(_binary_build_bin_user_init_stub_start,
@@ -576,6 +579,15 @@ int fut_stage_second_stub_binary(void) {
                       _binary_build_bin_user_second_end,
                       "/sbin/second");
 }
+#else /* !__x86_64__ */
+int fut_stage_init_stub_binary(void) {
+    return -1;
+}
+
+int fut_stage_second_stub_binary(void) {
+    return -1;
+}
+#endif /* __x86_64__ */
 
 #if ENABLE_WAYLAND_DEMO
 int fut_stage_wayland_compositor_binary(void) {
@@ -817,3 +829,18 @@ int fut_exec_elf(const char *path, char *const argv[]) {
     (void)thread;
     return 0;
 }
+
+#else  /* !__x86_64__ */
+
+/* ARM64 and other non-x86_64 architectures: ELF64 execution stubs */
+/* TODO: Implement ARM64-specific ELF64 loader and user process bootstrap */
+
+#include <kernel/errno.h>
+
+int fut_exec_elf(const char *path, char *const argv[]) {
+    (void)path;
+    (void)argv;
+    return -ENOSYS;  /* Not implemented on this architecture */
+}
+
+#endif  /* __x86_64__ */

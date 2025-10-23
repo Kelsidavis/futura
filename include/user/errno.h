@@ -41,6 +41,7 @@
 #define EOVERFLOW 75
 #define EPROTO  71
 #define EOPNOTSUPP 95
+#define ENOTSUP EOPNOTSUPP  /* Alias for EOPNOTSUPP */
 #endif
 
 #ifdef __cplusplus

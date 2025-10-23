@@ -57,7 +57,14 @@ static uint64_t ready_count = 0;
 static void idle_thread_entry(void *arg) {
     (void)arg;
     for (;;) {
-        __asm__ volatile("sti\n\thlt" ::: "memory");
+#ifdef __x86_64__
+        __asm__ volatile("sti\n\thlt" ::: "memory");  /* Enable interrupts and halt */
+#elif defined(__aarch64__)
+        __asm__ volatile("msr daifset, #2\nwfi" ::: "memory");  /* Enable IRQ and wait for interrupt */
+#else
+        /* Generic idle: just loop */
+        __asm__ volatile("" ::: "memory");
+#endif
     }
 }
 

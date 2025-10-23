@@ -18,6 +18,7 @@
 #include <arch/x86_64/pmap.h>
 #endif
 
+#ifdef __x86_64__
 /* PCI configuration space I/O port helpers */
 static inline uint32_t pci_config_read(uint8_t bus, uint8_t slot, uint8_t func, uint8_t offset) {
     uint32_t addr = (1u << 31)
@@ -40,6 +41,7 @@ static inline void pci_config_write(uint8_t bus, uint8_t slot, uint8_t func, uin
     __asm__ volatile("outl %0, %1" : : "a"(addr), "Nd"(0xCF8));
     __asm__ volatile("outl %0, %1" : : "a"(value), "Nd"(0xCFC));
 }
+#endif /* __x86_64__ */
 
 /* Virtio 1.0 PCI capability types */
 #define VIRTIO_PCI_CAP_COMMON_CFG 1
@@ -207,6 +209,7 @@ struct virtio_pci_cap {
     uint32_t length;     /* Length of the structure, in bytes */
 } __attribute__((packed));
 
+#ifdef __x86_64__
 /* Local device state */
 static uint8_t g_bus = 0, g_slot = 0, g_func = 0;
 static volatile uint8_t *g_mmio_base = NULL;  /* BAR1 MMIO base (legacy fallback) */
@@ -235,7 +238,9 @@ static volatile uint8_t *g_resp_buffer = NULL;
 static uint64_t g_resp_buffer_phys = 0;
 #define RESP_BUFFER_SIZE 4096
 #define RESP_BUFFER_PHYS 0x2201000ULL
+#endif /* __x86_64__ */
 
+#ifdef __x86_64__
 /* MMIO access functions for virtio device registers (via BAR1) */
 static inline uint8_t virtio_read8(uint16_t offset) {
     return *(volatile uint8_t *)(g_mmio_base + offset);
@@ -301,7 +306,6 @@ static inline void virtio_common_write64(uint16_t offset, uint64_t value) {
     if (!g_common_cfg) return;
     *(volatile uint64_t *)(g_common_cfg + offset) = value;
 }
-
 /* Helper to read a single byte from PCI config space */
 static uint8_t pci_config_read_byte(uint8_t bus, uint8_t slot, uint8_t func, uint8_t offset) {
     uint32_t dword = pci_config_read(bus, slot, func, offset & ~3);
@@ -868,3 +872,18 @@ void virtio_gpu_flush_display(void) {
     virtio_gpu_transfer_to_host_2d(RESOURCE_ID_FB, g_fb_width, g_fb_height);
     virtio_gpu_resource_flush(RESOURCE_ID_FB, g_fb_width, g_fb_height);
 }
+#else /* !__x86_64__ */
+/**
+ * ARM64 stub - VIRTIO GPU driver not supported
+ */
+int virtio_gpu_init(uint64_t *out_fb_phys, uint32_t width, uint32_t height) {
+    (void)out_fb_phys;
+    (void)width;
+    (void)height;
+    return -1;
+}
+
+void virtio_gpu_flush_display(void) {
+    return;
+}
+#endif /* __x86_64__ */

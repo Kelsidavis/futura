@@ -23,6 +23,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 
+#ifdef __x86_64__
 /* PCI I/O port helpers for vendor detection */
 static inline void outl(uint16_t port, uint32_t value) {
     __asm__ volatile("outl %0, %1" : : "a"(value), "Nd"(port));
@@ -43,6 +44,7 @@ static inline uint32_t pci_config_read_bdf(uint8_t bus, uint8_t slot, uint8_t fu
     outl(0xCF8, addr);
     return inl(0xCFC);
 }
+#endif
 
 #ifdef __x86_64__
 #include <arch/x86_64/paging.h>
@@ -147,6 +149,7 @@ int fb_probe_from_multiboot(const void *mb_info) {
     }
     fut_printf("[FB] enabling fallback geometry (fb-fallback=1)\n");
 
+#ifdef __x86_64__
     /* Try to discover VGA device via PCI */
     fut_printf("[FB] Attempting PCI VGA device discovery...\n");
     uint64_t pci_framebuffer = pci_find_vga_framebuffer();
@@ -165,6 +168,13 @@ int fb_probe_from_multiboot(const void *mb_info) {
         fut_printf("[FB] Using fallback address 0x%llx\n",
                    (unsigned long long)g_fb_hw.phys);
     }
+#else
+    /* ARM64: No PCI discovery yet, use fallback address */
+    fut_printf("[FB] ARM64: skipping PCI VGA discovery, using fallback address\n");
+    g_fb_hw.phys = 0x4000000ULL;
+    fut_printf("[FB] Using fallback address 0x%llx\n",
+               (unsigned long long)g_fb_hw.phys);
+#endif
 
     g_fb_hw.info.width = 1024;
     g_fb_hw.info.height = 768;
@@ -189,6 +199,7 @@ bool fb_is_available(void) {
     return g_fb_available;
 }
 
+#ifdef __x86_64__
 void fb_boot_splash(void) {
     /* Attempt to initialize device-specific drivers if applicable */
     /* For virtio-gpu (vendor 0x1af4), initialize VIRTIO GPU device */
@@ -320,3 +331,9 @@ void fb_boot_splash(void) {
 
     fut_printf("[FB] All mapping attempts failed\n");
 }
+#else
+/* ARM64 stub - graphics initialization not yet implemented */
+void fb_boot_splash(void) {
+    fut_printf("[FB] ARM64: fb_boot_splash not yet implemented\n");
+}
+#endif

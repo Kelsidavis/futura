@@ -144,7 +144,15 @@ void fut_thread_yield(void) {
 [[noreturn]] void fut_thread_exit(void) {
     fut_thread_t *self = fut_thread_current();
     if (!self) {
-        for (;;) __asm__ volatile("hlt");  // Should never happen
+        for (;;) {
+#ifdef __x86_64__
+            __asm__ volatile("hlt");
+#elif defined(__aarch64__)
+            __asm__ volatile("wfi");
+#else
+            __asm__ volatile("pause");
+#endif
+        }  // Should never happen
     }
 
     // Mark as terminated
@@ -171,7 +179,15 @@ void fut_thread_yield(void) {
     fut_schedule();
 
     // Should never reach here
-    for (;;) __asm__ volatile("hlt");
+    for (;;) {
+#ifdef __x86_64__
+        __asm__ volatile("hlt");
+#elif defined(__aarch64__)
+        __asm__ volatile("wfi");
+#else
+        __asm__ volatile("pause");
+#endif
+    }
 }
 
 /**

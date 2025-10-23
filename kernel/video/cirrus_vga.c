@@ -46,6 +46,7 @@
 #define PCI_CMD_MASTER_ENABLE   0x0004
 
 /* I/O port access macros */
+#ifdef __x86_64__
 static inline uint8_t inb(uint16_t port) {
     uint8_t result;
     __asm__ volatile("inb %1, %0" : "=a"(result) : "Nd"(port));
@@ -75,7 +76,9 @@ static inline uint32_t inl(uint16_t port) {
 static inline void outl(uint16_t port, uint32_t value) {
     __asm__ volatile("outl %0, %1" : : "a"(value), "Nd"(port));
 }
+#endif /* __x86_64__ */
 
+#ifdef __x86_64__
 /**
  * Read from Cirrus Sequencer register
  */
@@ -361,3 +364,11 @@ int cirrus_vga_init(void) {
 
     return 0;
 }
+#else /* !__x86_64__ */
+/**
+ * ARM64 stub - Cirrus VGA driver not supported
+ */
+int cirrus_vga_init(void) {
+    return -1;
+}
+#endif /* __x86_64__ */

@@ -223,6 +223,7 @@ serror_aarch32_handler:
 /*
  * Generic exception handler
  */
+.align 4
 generic_exception_handler:
     /* Save minimal context */
     stp     x0, x1, [sp, #-16]!
@@ -242,6 +243,7 @@ exception_msg:
 /*
  * IRQ handler entry point
  */
+.align 4
 irq_handler_entry:
     /* Save all registers */
     stp     x0, x1, [sp, #-16]!

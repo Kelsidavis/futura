@@ -221,11 +221,14 @@ typedef struct {
  * ============================================================ */
 
 /* Read system register */
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wpedantic"
 #define read_sysreg(reg) ({ \
     uint64_t __val; \
     __asm__ volatile("mrs %0, " #reg : "=r"(__val)); \
     __val; \
 })
+#pragma GCC diagnostic pop
 
 /* Write system register */
 #define write_sysreg(reg, val) do { \

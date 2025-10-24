@@ -590,8 +590,9 @@ static void test_futurafs_operations(void) {
  */
 /**
  * Demonstration thread - shows scheduler working with multiple threads
+ * (Currently unused - kept for testing purposes)
  */
-static void demo_thread_a(void *arg) {
+__attribute__((unused)) static void demo_thread_a(void *arg) {
     extern void fut_printf(const char *, ...);
     int thread_id = (int)(uintptr_t)arg;
 
@@ -604,7 +605,7 @@ static void demo_thread_a(void *arg) {
     fut_thread_exit();
 }
 
-static void demo_thread_b(void *arg) {
+__attribute__((unused)) static void demo_thread_b(void *arg) {
     extern void fut_printf(const char *, ...);
     int thread_id = (int)(uintptr_t)arg;
 
@@ -1066,13 +1067,6 @@ void fut_kernel_main(void) {
     /* ========================================
      *   Launch Interactive Shell
      * ======================================== */
-    /* NOTE: Shell launch disabled due to heap memory mapping bug
-       (staging large binaries causes page faults in buddy allocator).
-       The shell code is complete and functional - this is a kernel-level
-       memory management issue, not a shell issue.
-    */
-    fut_printf("[INIT] Shell infrastructure complete but skipped (kernel heap issue)\n");
-    /*
     fut_printf("[INIT] Staging shell binary...\n");
     int shell_stage = fut_stage_shell_binary();
     if (shell_stage != 0) {
@@ -1088,7 +1082,6 @@ void fut_kernel_main(void) {
     } else {
         fut_printf("[INIT] Interactive shell launched\n");
     }
-    */
 
 #if ENABLE_WINSRV_DEMO
     if (winsrv_stage == 0) {
@@ -1285,15 +1278,15 @@ void fut_kernel_main(void) {
      *   Step 7: Create FIPC Test Threads
      * ======================================== */
 
+    /* Demo threads disabled - scheduler working correctly
     fut_printf("[INIT] Creating demo threads to test scheduler...\n");
 
-    /* Create thread A */
     fut_thread_t *thread_a = fut_thread_create(
         test_task,
         demo_thread_a,
-        (void *)1,              /* Thread ID 1 */
-        16 * 1024,              /* 16 KB stack */
-        128                     /* Normal priority */
+        (void *)1,
+        16 * 1024,
+        128
     );
 
     if (!thread_a) {
@@ -1303,13 +1296,12 @@ void fut_kernel_main(void) {
 
     fut_printf("[INIT] Thread A created (TID %llu)\n", thread_a->tid);
 
-    /* Create thread B */
     fut_thread_t *thread_b = fut_thread_create(
         test_task,
         demo_thread_b,
-        (void *)2,              /* Thread ID 2 */
-        16 * 1024,              /* 16 KB stack */
-        128                     /* Normal priority */
+        (void *)2,
+        16 * 1024,
+        128
     );
 
     if (!thread_b) {
@@ -1318,6 +1310,7 @@ void fut_kernel_main(void) {
     }
 
     fut_printf("[INIT] Thread B created (TID %llu)\n", thread_b->tid);
+    */
 
     /* Skip receiver thread for now - test with just one thread */
     /* fut_thread_t *receiver_thread = fut_thread_create(

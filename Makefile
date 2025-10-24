@@ -188,7 +188,7 @@ endif
 
 # Feature toggles
 ENABLE_WINSRV_DEMO ?= 0
-ENABLE_WAYLAND_DEMO ?= 1
+ENABLE_WAYLAND_DEMO ?= 0
 
 # Debug vs Release flags
 ifeq ($(BUILD_MODE),debug)

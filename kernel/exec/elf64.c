@@ -24,6 +24,9 @@
 #include <stdint.h>
 #include <stdbool.h>
 
+/* External assembly function for IRETQ to userspace */
+extern void fut_do_user_iretq(uint64_t entry, uint64_t stack, uint64_t argc, uint64_t argv) __attribute__((noreturn));
+
 #define ELF_MAGIC       0x464C457FULL
 #define ELF_CLASS_64    0x02
 #define ELF_DATA_LE     0x01
@@ -374,60 +377,13 @@ static int build_user_stack(fut_mm_t *mm,
 
     /* Don't free the arg structure - we never return from IRETQ anyway
      * and freeing might corrupt something */
-    fut_printf("[USER-TRAMPOLINE] About to IRETQ: RIP=0x%llx RSP=0x%llx argc=%llu argv=0x%llx\n",
-               entry, stack, argc, argv_ptr);
-    fut_printf("[USER-TRAMPOLINE] Selectors: CS=0x1b DS=0x23 SS=0x23\n");
+    /* Remove ALL printfs to avoid any stack/register corruption */
+    /* Just call the assembly stub directly - declaration is at top of file */
+    fut_do_user_iretq(entry, stack, argc, argv_ptr);
 
-    /* Use a struct and load from memory - compiler only needs one register */
-    struct {
-        uint64_t entry;
-        uint64_t stack;
-        uint64_t argc;
-        uint64_t argv;
-    } iretq_vals = { entry, stack, argc, argv_ptr };
-
-    /* DON'T call fut_printf here - something about it causes issues */
-
-    __asm__ volatile(
-        /* Disable interrupts */
-        "cli\n"
-
-        /* Load values from struct into registers */
-        "movq 0(%0), %%r11\n"                 /* r11 = entry */
-        "movq 8(%0), %%r10\n"                 /* r10 = stack */
-        "movq 16(%0), %%rdi\n"                /* rdi = argc */
-        "movq 24(%0), %%rsi\n"                /* rsi = argv */
-
-        /* Build IRETQ frame */
-        "pushq $0x23\n"                       /* SS */
-        "pushq %%r10\n"                       /* RSP */
-        "pushq $0x202\n"                      /* RFLAGS */
-        "pushq $0x1b\n"                       /* CS */
-        "pushq %%r11\n"                       /* RIP */
-
-        /* Zero unused registers (not rbp - compiler needs it) */
-        "xorq %%rax, %%rax\n"
-        "xorq %%rbx, %%rbx\n"
-        "xorq %%rcx, %%rcx\n"
-        "xorq %%rdx, %%rdx\n"
-        "xorq %%r8, %%r8\n"
-        "xorq %%r9, %%r9\n"
-        "xorq %%r10, %%r10\n"
-        "xorq %%r11, %%r11\n"
-        "xorq %%r12, %%r12\n"
-        "xorq %%r13, %%r13\n"
-        "xorq %%r14, %%r14\n"
-        "xorq %%r15, %%r15\n"
-
-        /* Return to userspace - never returns */
-        "iretq\n"
-        :
-        : "r"(&iretq_vals)
-        : "memory");
-
-    /* Should NEVER reach here - IRETQ doesn't return */
+    /* Should NEVER reach here */
     extern void fut_platform_panic(const char *);
-    fut_platform_panic("[FATAL] IRETQ returned - this should never happen!");
+    fut_platform_panic("[FATAL] fut_do_user_iretq returned - this should never happen!");
     while (1) { __asm__ volatile("hlt"); }
 }
 

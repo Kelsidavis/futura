@@ -302,17 +302,7 @@ int main(int argc, char **argv) {
         /* Read command line */
         nread = read_bytes(0, cmdline, sizeof(cmdline) - 1);
         if (nread <= 0) {
-            write_str(1, "\n[DEBUG] read returned: ");
-            /* Simple number to string */
-            if (nread < 0) {
-                write_char(1, '-');
-                nread = -nread;
-            }
-            if (nread == 0) {
-                write_char(1, '0');
-            }
-            write_char(1, '\n');
-            break; /* EOF */
+            break; /* EOF or error - exit shell */
         }
 
         /* Null-terminate and remove trailing newline */

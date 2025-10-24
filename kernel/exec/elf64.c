@@ -27,6 +27,11 @@
 /* External assembly function for IRETQ to userspace */
 extern void fut_do_user_iretq(uint64_t entry, uint64_t stack, uint64_t argc, uint64_t argv) __attribute__((noreturn));
 
+/* Minimal wrapper to isolate the call */
+static __attribute__((noinline, optimize("O0"))) void do_iretq_wrapper(uint64_t e, uint64_t s, uint64_t a, uint64_t v) {
+    fut_do_user_iretq(e, s, a, v);
+}
+
 #define ELF_MAGIC       0x464C457FULL
 #define ELF_CLASS_64    0x02
 #define ELF_DATA_LE     0x01
@@ -377,9 +382,8 @@ static int build_user_stack(fut_mm_t *mm,
 
     /* Don't free the arg structure - we never return from IRETQ anyway
      * and freeing might corrupt something */
-    /* Remove ALL printfs to avoid any stack/register corruption */
-    /* Just call the assembly stub directly - declaration is at top of file */
-    fut_do_user_iretq(entry, stack, argc, argv_ptr);
+    /* Call via minimal wrapper with O0 optimization */
+    do_iretq_wrapper(entry, stack, argc, argv_ptr);
 
     /* Should NEVER reach here */
     extern void fut_platform_panic(const char *);

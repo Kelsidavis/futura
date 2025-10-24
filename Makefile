@@ -363,6 +363,7 @@ ifeq ($(PLATFORM),x86_64)
         platform/x86_64/gdt_idt.S \
         platform/x86_64/isr_stubs.S \
         platform/x86_64/context_switch.S \
+        platform/x86_64/user_iretq.S \
         platform/x86_64/gdt.c \
         arch/x86_64/pat.c \
         platform/x86_64/pmap.c \

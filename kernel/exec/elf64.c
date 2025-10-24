@@ -243,6 +243,12 @@ static int map_segment(fut_mm_t *mm, int fd, const elf64_phdr_t *phdr) {
             page_offset = 0;
         }
 
+        /* Ensure all writes are visible before we execute this code */
+        __asm__ volatile("mfence" ::: "memory");
+
+        fut_printf("[EXEC][MAP-SEGMENT] Copied %llu bytes to pages, memory barrier done\n",
+                   (unsigned long long)phdr->p_filesz);
+
         fut_free(buffer);
     }
 
@@ -345,7 +351,7 @@ static int build_user_stack(fut_mm_t *mm,
     return 0;
 }
 
-static void fut_user_trampoline(void *arg) {
+[[noreturn]] static void fut_user_trampoline(void *arg) {
     extern void fut_printf(const char *, ...);
     fut_printf("[USER-TRAMPOLINE] Called with arg=%p\n", arg);
 
@@ -368,37 +374,60 @@ static void fut_user_trampoline(void *arg) {
 
     /* Don't free the arg structure - we never return from IRETQ anyway
      * and freeing might corrupt something */
-    serial_puts("[USER-TRAMPOLINE] About to jump to userspace (not freeing arg)...\n");
+    fut_printf("[USER-TRAMPOLINE] About to IRETQ: RIP=0x%llx RSP=0x%llx argc=%llu argv=0x%llx\n",
+               entry, stack, argc, argv_ptr);
+    fut_printf("[USER-TRAMPOLINE] Selectors: CS=0x1b DS=0x23 SS=0x23\n");
 
-    /* Jump to userspace using IRETQ - use actual values from the structure */
+    /* Jump to userspace using IRETQ - use actual values from the structure
+     * Use a struct to pass values to avoid register constraint issues */
+    struct {
+        uint64_t entry;
+        uint64_t stack;
+        uint64_t argc;
+        uint64_t argv;
+    } iretq_args = {
+        .entry = entry,
+        .stack = stack,
+        .argc = argc,
+        .argv = argv_ptr
+    };
+
+    fut_printf("[USER-TRAMPOLINE] &iretq_args=%p\n", (void*)&iretq_args);
+
     __asm__ volatile(
         /* Disable interrupts during transition */
         "cli\n"
-        /* Set data segments to user mode FIRST before touching argument registers */
+
+        /* Load values from memory into registers BEFORE changing segments */
+        "movq 0(%0), %%r11\n"                 /* r11 = entry (RIP) */
+        "movq 8(%0), %%r10\n"                 /* r10 = stack (RSP) */
+        "movq 16(%0), %%rdi\n"                /* rdi = argc */
+        "movq 24(%0), %%rsi\n"                /* rsi = argv */
+
+        /* Build IRETQ frame on stack */
+        "pushq $0x23\n"                       /* SS = USER_DATA_SELECTOR */
+        "pushq %%r10\n"                       /* RSP */
+        "pushq $0x202\n"                      /* RFLAGS = IF set */
+        "pushq $0x1b\n"                       /* CS = USER_CODE_SELECTOR */
+        "pushq %%r11\n"                       /* RIP */
+
+        /* NOW set data segments to user mode (after all memory accesses) */
         "movw $0x23, %%ax\n"                  /* USER_DATA_SELECTOR */
         "movw %%ax, %%ds\n"
         "movw %%ax, %%es\n"
         "movw %%ax, %%fs\n"
         "movw %%ax, %%gs\n"
-        /* Build IRETQ frame using extracted values */
-        "pushq $0x23\n"                       /* SS = USER_DATA_SELECTOR */
-        "pushq %2\n"                          /* RSP = stack */
-        "pushq $0x202\n"                      /* RFLAGS = IF set */
-        "pushq $0x1b\n"                       /* CS = USER_CODE_SELECTOR */
-        "pushq %3\n"                          /* RIP = entry */
-        /* Set up argument registers for main(argc, argv) from extracted values */
-        "movq %0, %%rdi\n"                    /* argc */
-        "movq %1, %%rsi\n"                    /* argv */
+
         /* Return to userspace */
         "iretq\n"
         :
-        : "r"(argc), "r"(argv_ptr), "r"(stack), "r"(entry)
-        : "rax", "memory");
+        : "r"(&iretq_args)
+        : "rax", "rdi", "rsi", "r10", "r11", "memory");
 
     /* Should NEVER reach here - IRETQ doesn't return */
     extern void fut_platform_panic(const char *);
     fut_platform_panic("[FATAL] IRETQ returned - this should never happen!");
-    __builtin_unreachable();
+    while (1) { __asm__ volatile("hlt"); }
 }
 
 static int stage_stack_pages(fut_mm_t *mm, uint64_t *out_stack_top) {

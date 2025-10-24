@@ -19,14 +19,20 @@
 .global fut_do_user_iretq
 .type fut_do_user_iretq, @function
 fut_do_user_iretq:
+    /* Save arguments we'll need on the stack before any operations */
+    pushq %rcx                          /* argv */
+    pushq %rdx                          /* argc */
+    pushq %rsi                          /* stack */
+    pushq %rdi                          /* entry */
+
     /* Disable interrupts */
     cli
 
-    /* Move arguments to appropriate registers for userspace */
-    movq %rdi, %r11                     /* r11 = entry (RIP) */
-    movq %rsi, %r10                     /* r10 = stack (RSP) */
-    movq %rdx, %rdi                     /* rdi = argc */
-    movq %rcx, %rsi                     /* rsi = argv */
+    /* Pop arguments back in reverse order */
+    popq %r11                           /* r11 = entry (RIP) */
+    popq %r10                           /* r10 = stack (RSP) */
+    popq %rdi                           /* rdi = argc */
+    popq %rsi                           /* rsi = argv */
 
     /* Build IRETQ frame on stack */
     pushq $0x23                         /* SS = USER_DATA_SELECTOR */

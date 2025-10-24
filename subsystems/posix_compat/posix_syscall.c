@@ -359,8 +359,21 @@ void posix_syscall_init(void) {
 
 long syscall_entry_c(uint64_t nr,
                      uint64_t a1, uint64_t a2, uint64_t a3,
-                     uint64_t a4, uint64_t a5, uint64_t a6) {
+                     uint64_t a4, uint64_t a5, uint64_t a6,
+                     uint64_t *frame_ptr) {
     extern void fut_printf(const char *, ...);
+
+    /* Extract interrupt frame fields */
+    uint64_t user_rip = frame_ptr[0];
+    uint64_t user_cs = frame_ptr[1];
+    uint64_t user_rflags = frame_ptr[2];
+    uint64_t user_rsp = frame_ptr[3];
+    uint64_t user_ss = frame_ptr[4];
+
+    /* Log detailed syscall info with interrupt frame */
+    fut_printf("[SYSCALL] nr=%llu a1=%llx a2=%llx a3=%llx\n", nr, a1, a2, a3);
+    fut_printf("[SYSCALL] frame: rip=%llx cs=%llx rflags=%llx rsp=%llx ss=%llx\n",
+               user_rip, user_cs, user_rflags, user_rsp, user_ss);
 
     /* Check if arguments look like kernel addresses */
     bool kernel_args = (a1 >= 0xFFFFFFFF80000000ULL) ||
@@ -369,18 +382,11 @@ long syscall_entry_c(uint64_t nr,
 
     /* Log syscalls with kernel addresses - this is suspicious */
     if (kernel_args) {
-        /* Get CS from stack to see if we're in user or kernel mode */
-        uint64_t *stack_ptr;
-        __asm__ volatile("movq %%rbp, %0" : "=r"(stack_ptr));
         fut_printf("[SYSCALL-WARN] Kernel addresses in userspace syscall!\n");
-        fut_printf("[SYSCALL-WARN] nr=%llu a1=%llx a2=%llx a3=%llx\n", nr, a1, a2, a3);
+        fut_printf("[SYSCALL-WARN] This indicates register corruption before syscall entry\n");
         /* Return error instead of processing */
         return -14;  /* EFAULT */
     }
 
-    /* Log all syscalls for debugging */
-    if (nr <= 10 || nr == 60 || nr == 79 || nr == 80) {  /* Common syscalls */
-        fut_printf("[SYSCALL] nr=%llu a1=%llx a2=%llx a3=%llx\n", nr, a1, a2, a3);
-    }
     return (long)posix_syscall_dispatch(nr, a1, a2, a3, a4, a5, a6);
 }

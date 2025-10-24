@@ -145,7 +145,7 @@ void fut_task_destroy(fut_task_t *task) {
     while (thread) {
         fut_thread_t *next = thread->next;
         fut_free(thread->stack_base);
-        fut_free(thread);
+        fut_free(thread->alloc_base);  // Free original pointer, not aligned one
         thread = next;
     }
 

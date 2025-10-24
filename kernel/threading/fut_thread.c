@@ -68,11 +68,15 @@ fut_thread_t *fut_thread_create(
     uintptr_t aligned_addr = (thread_addr + 15) & ~15ULL;
     fut_thread_t *thread = (fut_thread_t *)aligned_addr;
 
+    // CRITICAL: Save original pointer for proper free later
+    // This must be set immediately after alignment, before any error paths
+    thread->alloc_base = raw_thread;
+
     // Allocate stack (page-aligned)
     size_t aligned_stack_size = FUT_PAGE_ALIGN(stack_size);
     void *stack = fut_malloc(aligned_stack_size);
     if (!stack) {
-        fut_free(thread);
+        fut_free(raw_thread);  // Free original pointer, not aligned one
         return NULL;
     }
 
@@ -86,6 +90,8 @@ fut_thread_t *fut_thread_create(
         .task = task,
         .stack_base = stack,
         .stack_size = aligned_stack_size,
+        .alloc_base = raw_thread,     // Save original pointer for proper free
+        ._padding = 0,                // Explicit padding for 16-byte alignment
         .context = {0},               // Will be initialized below
         .irq_frame = NULL,            // No saved interrupt frame initially
         .state = FUT_THREAD_READY,
@@ -310,14 +316,19 @@ int fut_thread_priority_restore(fut_thread_t *thread) {
     return 0;
 }
 [[noreturn]] static void fut_thread_trampoline(void (*entry)(void *), void *arg) {
+    extern void fut_printf(const char *, ...);
+    fut_printf("[TRAMPOLINE] Called with entry=%llx arg=%p\n", (uint64_t)(uintptr_t)entry, arg);
+
     if (!entry) {
         extern void serial_puts(const char *);
         serial_puts("[TRAMPOLINE-ERROR] NULL entry function!\n");
         fut_thread_exit();
     }
 
+    fut_printf("[TRAMPOLINE] Calling entry(arg)...\n");
     /* Call the entry function */
     entry(arg);
+    fut_printf("[TRAMPOLINE] entry() returned\n");
 
     /* If entry returns (doesn't call fut_thread_exit), we exit here */
     fut_thread_exit();

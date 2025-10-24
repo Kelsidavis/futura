@@ -362,5 +362,7 @@ long syscall_entry_c(uint64_t nr,
                      uint64_t *frame_ptr) {
     (void)frame_ptr;
 
-    return (long)posix_syscall_dispatch(nr, a1, a2, a3, a4, a5, a6);
+    long ret = (long)posix_syscall_dispatch(nr, a1, a2, a3, a4, a5, a6);
+
+    return ret;
 }

@@ -301,6 +301,7 @@ int main(int argc, char **argv) {
 
         /* Read command line */
         nread = read_bytes(0, cmdline, sizeof(cmdline) - 1);
+
         if (nread <= 0) {
             break; /* EOF or error - exit shell */
         }

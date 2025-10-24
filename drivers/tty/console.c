@@ -61,6 +61,7 @@ static ssize_t console_read(void *inode, void *priv, void *buf, size_t len, off_
     if (pos) {
         *pos += (off_t)bytes_read;
     }
+
     return (ssize_t)bytes_read;
 }
 

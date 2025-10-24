@@ -589,12 +589,32 @@ static void test_futurafs_operations(void) {
  * FIPC sender thread - sends test messages.
  */
 /**
- * Absolutely minimal test - just return immediately
+ * Demonstration thread - shows scheduler working with multiple threads
  */
-static void minimal_test_thread(void *arg) {
-    (void)arg;
-    /* Do absolutely nothing - just return */
-    return;
+static void demo_thread_a(void *arg) {
+    extern void fut_printf(const char *, ...);
+    int thread_id = (int)(uintptr_t)arg;
+
+    for (int i = 0; i < 3; i++) {
+        fut_printf("[THREAD-%d] Iteration %d\n", thread_id, i);
+        fut_thread_yield();  // Yield to other threads
+    }
+
+    fut_printf("[THREAD-%d] Exiting\n", thread_id);
+    fut_thread_exit();
+}
+
+static void demo_thread_b(void *arg) {
+    extern void fut_printf(const char *, ...);
+    int thread_id = (int)(uintptr_t)arg;
+
+    for (int i = 0; i < 3; i++) {
+        fut_printf("[THREAD-%d] Iteration %d\n", thread_id, i);
+        fut_thread_yield();
+    }
+
+    fut_printf("[THREAD-%d] Exiting\n", thread_id);
+    fut_thread_exit();
 }
 
 /**
@@ -1230,6 +1250,8 @@ void fut_kernel_main(void) {
         }
     }
 
+    /* Disable watchdog for now - it exits immediately due to fut_tests_completed() stub */
+    /*
     fut_thread_t *watchdog_thread = fut_thread_create(
         test_task,
         fut_test_watchdog_thread,
@@ -1240,6 +1262,7 @@ void fut_kernel_main(void) {
     if (!watchdog_thread) {
         fut_printf("[WARN] Failed to create test watchdog thread\n");
     }
+    */
 
     /* Create FIPC channel for inter-thread communication */
     fut_printf("[INIT] Creating FIPC test channel...\n");
@@ -1262,23 +1285,39 @@ void fut_kernel_main(void) {
      *   Step 7: Create FIPC Test Threads
      * ======================================== */
 
-    fut_printf("[INIT] Creating FIPC test threads...\n");
+    fut_printf("[INIT] Creating demo threads to test scheduler...\n");
 
-    /* Create minimal test thread (replacing sender for debugging) */
-    fut_thread_t *sender_thread = fut_thread_create(
+    /* Create thread A */
+    fut_thread_t *thread_a = fut_thread_create(
         test_task,
-        minimal_test_thread,    /* Use absolutely minimal test */
-        NULL,                   /* No argument needed */
+        demo_thread_a,
+        (void *)1,              /* Thread ID 1 */
         16 * 1024,              /* 16 KB stack */
         128                     /* Normal priority */
     );
 
-    if (!sender_thread) {
-        fut_printf("[ERROR] Failed to create test thread!\n");
-        fut_platform_panic("Failed to create test thread");
+    if (!thread_a) {
+        fut_printf("[ERROR] Failed to create thread A!\n");
+        fut_platform_panic("Failed to create thread A");
     }
 
-    fut_printf("[INIT] Minimal test thread created (TID %llu)\n", sender_thread->tid);
+    fut_printf("[INIT] Thread A created (TID %llu)\n", thread_a->tid);
+
+    /* Create thread B */
+    fut_thread_t *thread_b = fut_thread_create(
+        test_task,
+        demo_thread_b,
+        (void *)2,              /* Thread ID 2 */
+        16 * 1024,              /* 16 KB stack */
+        128                     /* Normal priority */
+    );
+
+    if (!thread_b) {
+        fut_printf("[ERROR] Failed to create thread B!\n");
+        fut_platform_panic("Failed to create thread B");
+    }
+
+    fut_printf("[INIT] Thread B created (TID %llu)\n", thread_b->tid);
 
     /* Skip receiver thread for now - test with just one thread */
     /* fut_thread_t *receiver_thread = fut_thread_create(

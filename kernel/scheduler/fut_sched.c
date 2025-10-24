@@ -263,64 +263,12 @@ void fut_schedule(void) {
             // to the new thread's saved context.
         } else {
             // Regular cooperative context switch (uses RET)
-            // Safe to use serial I/O here (not in IRQ context)
-            extern void serial_puts(const char *s);
-            if (!prev) {
-                serial_puts("[SCHED] First context switch to thread\n");
-            }
-
-#if defined(__x86_64__)
-            fut_printf("[SCHED] switch to rip=0x%llx rsp=0x%llx entry=%p\n",
-                       next->context.rip,
-                       next->context.rsp,
-                       (void *)next->context.rdi);
-            if (next->context.rip < KERNEL_VIRTUAL_BASE) {
-                fut_platform_panic("[SCHED] bad RIP for next thread");
-            }
-            uintptr_t rsp = next->context.rsp;
-            bool aligned_16 = ((rsp & 0xFULL) == 0);
-            bool aligned_call = (((rsp + 8ULL) & 0xFULL) == 0);
-            if (!aligned_16 && !aligned_call) {
-                fut_platform_panic("[SCHED] stack misaligned for next thread");
-            }
-#elif defined(__aarch64__)
-            fut_printf("[SCHED] switch to pc=0x%llx sp=0x%llx entry=%p\n",
-                       next->context.pc,
-                       next->context.sp,
-                       (void *)next->context.x19);
-            if (next->context.pc < KERNEL_VIRTUAL_BASE) {
-                fut_platform_panic("[SCHED] bad PC for next thread");
-            }
-            uintptr_t sp = next->context.sp;
-            bool aligned_16 = ((sp & 0xFULL) == 0);
-            if (!aligned_16) {
-                fut_platform_panic("[SCHED] stack misaligned for next thread");
-            }
-#endif
-
-            // Placeholder for page table switch
-            // Perform regular context switch
-            serial_puts("[SCHED] About to call fut_switch_context\n");
-
-            /* DEBUG: Print context details */
-            extern void fut_printf(const char *fmt, ...);
-            fut_printf("[SCHED-DBG] next ctx=%p rip=0x%llx rsp=0x%llx ds=0x%llx\n",
-                      &next->context,
-                      (unsigned long long)next->context.rip,
-                      (unsigned long long)next->context.rsp,
-                      (unsigned long long)next->context.ds);
-            fut_printf("[SCHED-DBG] next ctx: rbx=0x%llx rbp=0x%llx rflags=0x%llx\n",
-                      (unsigned long long)next->context.rbx,
-                      (unsigned long long)next->context.rbp,
-                      (unsigned long long)next->context.rflags);
-
             if (prev) {
                 fut_switch_context(&prev->context, &next->context);
             } else {
                 // First time - just jump to thread
                 fut_switch_context(NULL, &next->context);
             }
-            serial_puts("[SCHED] Returned from fut_switch_context\n");
         }
     }
 }

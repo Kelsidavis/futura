@@ -9,9 +9,9 @@ echo "The 'mon:' prefix multiplexes QEMU monitor with stdio and"
 echo "can introduce control sequences that corrupt serial input."
 echo ""
 
-# Test with programmatic input
-printf "\nhelp\nuname\nwhoami\necho Test Message\nexit\n" | \
-    timeout 10 qemu-system-x86_64 \
+# Test with programmatic input (with delay to let shell initialize)
+(sleep 2 && printf "help\nuname\nwhoami\necho Test Message\nexit\n") | \
+    timeout 15 qemu-system-x86_64 \
         -kernel build/bin/futura_kernel.elf \
         -serial stdio \
         -display none \
@@ -21,7 +21,16 @@ printf "\nhelp\nuname\nwhoami\necho Test Message\nexit\n" | \
     grep -A60 "futura>"
 
 echo ""
-echo "=== Test Complete ===" echo ""
-echo "To run interactively, use:"
-echo "  qemu-system-x86_64 -kernel build/bin/futura_kernel.elf -serial stdio -nographic -m 1024"
+echo "=== Test Complete ==="
+echo ""
+echo "To run interactively, use ONE of these commands:"
+echo ""
+echo "  Option 1 (recommended): Use -nographic alone"
+echo "    qemu-system-x86_64 -kernel build/bin/futura_kernel.elf -nographic -m 1024"
+echo ""
+echo "  Option 2: Use -serial stdio with -display none"
+echo "    qemu-system-x86_64 -kernel build/bin/futura_kernel.elf -serial stdio -display none -m 1024"
+echo ""
+echo "NOTE: Do NOT use both -nographic and -serial stdio together!"
+echo "      They conflict because -nographic already uses stdio for serial."
 echo ""

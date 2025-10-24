@@ -588,7 +588,37 @@ static void test_futurafs_operations(void) {
 /**
  * FIPC sender thread - sends test messages.
  */
+/**
+ * Absolutely minimal test - just return immediately
+ */
+static void minimal_test_thread(void *arg) {
+    (void)arg;
+    /* Do absolutely nothing - just return */
+    return;
+}
+
+/**
+ * Simple test thread - minimal code to isolate the issue
+ */
+__attribute__((unused)) static void simple_test_thread(void *arg) {
+    /* Add inline assembly at the very start to debug */
+    __asm__ volatile(
+        "movw $0x3F8, %%dx\n"
+        "movb $'E', %%al\n"      /* 'E' for Entry */
+        "outb %%al, %%dx\n"
+        ::: "dx", "ax"
+    );
+
+    extern void serial_puts(const char *);
+    serial_puts("[SIMPLE-TEST] Thread running!\n");
+    (void)arg;
+    serial_puts("[SIMPLE-TEST] About to exit\n");
+    fut_thread_exit();
+}
+
 __attribute__((unused)) static void fipc_sender_thread(void *arg) {
+    extern void serial_puts(const char *);
+    serial_puts("[FIPC-SENDER-ENTRY] Entered function\n");
     (void)arg;
     fut_printf("[FIPC-SENDER] Starting sender thread\n");
 
@@ -1234,29 +1264,29 @@ void fut_kernel_main(void) {
 
     fut_printf("[INIT] Creating FIPC test threads...\n");
 
-    /* Create sender thread */
+    /* Create minimal test thread (replacing sender for debugging) */
     fut_thread_t *sender_thread = fut_thread_create(
         test_task,
-        fipc_sender_thread,
+        minimal_test_thread,    /* Use absolutely minimal test */
         NULL,                   /* No argument needed */
         16 * 1024,              /* 16 KB stack */
         128                     /* Normal priority */
     );
 
     if (!sender_thread) {
-        fut_printf("[ERROR] Failed to create sender thread!\n");
-        fut_platform_panic("Failed to create sender thread");
+        fut_printf("[ERROR] Failed to create test thread!\n");
+        fut_platform_panic("Failed to create test thread");
     }
 
-    fut_printf("[INIT] FIPC sender thread created (TID %llu)\n", sender_thread->tid);
+    fut_printf("[INIT] Minimal test thread created (TID %llu)\n", sender_thread->tid);
 
-    /* Create receiver thread */
-    fut_thread_t *receiver_thread = fut_thread_create(
+    /* Skip receiver thread for now - test with just one thread */
+    /* fut_thread_t *receiver_thread = fut_thread_create(
         test_task,
         fipc_receiver_thread,
-        NULL,                   /* No argument needed */
-        16 * 1024,              /* 16 KB stack */
-        128                     /* Normal priority */
+        NULL,
+        16 * 1024,
+        128
     );
 
     if (!receiver_thread) {
@@ -1264,7 +1294,7 @@ void fut_kernel_main(void) {
         fut_platform_panic("Failed to create receiver thread");
     }
 
-    fut_printf("[INIT] FIPC receiver thread created (TID %llu)\n", receiver_thread->tid);
+    fut_printf("[INIT] FIPC receiver thread created (TID %llu)\n", receiver_thread->tid); */
 
     /* ========================================
      *   Step 8: Start Scheduling

@@ -378,40 +378,40 @@ static int build_user_stack(fut_mm_t *mm,
                entry, stack, argc, argv_ptr);
     fut_printf("[USER-TRAMPOLINE] Selectors: CS=0x1b DS=0x23 SS=0x23\n");
 
-    /* Try the absolute simplest approach - hardcode everything */
-    fut_printf("[USER-TRAMPOLINE] Final check: entry=0x%llx stack=0x%llx argc=%llu argv=0x%llx\n",
-               entry, stack, argc, argv_ptr);
+    /* Use a struct and load from memory - compiler only needs one register */
+    struct {
+        uint64_t entry;
+        uint64_t stack;
+        uint64_t argc;
+        uint64_t argv;
+    } iretq_vals = { entry, stack, argc, argv_ptr };
 
-    /* Use register variables to guarantee register allocation */
-    register uint64_t r_entry __asm__("r11") = entry;
-    register uint64_t r_stack __asm__("r10") = stack;
-    register uint64_t r_argc __asm__("rdi") = argc;
-    register uint64_t r_argv __asm__("rsi") = argv_ptr;
+    /* DON'T call fut_printf here - something about it causes issues */
 
     __asm__ volatile(
         /* Disable interrupts */
         "cli\n"
 
-        /* Build IRETQ frame using explicit registers */
+        /* Load values from struct into registers */
+        "movq 0(%0), %%r11\n"                 /* r11 = entry */
+        "movq 8(%0), %%r10\n"                 /* r10 = stack */
+        "movq 16(%0), %%rdi\n"                /* rdi = argc */
+        "movq 24(%0), %%rsi\n"                /* rsi = argv */
+
+        /* Build IRETQ frame */
         "pushq $0x23\n"                       /* SS */
         "pushq %%r10\n"                       /* RSP */
         "pushq $0x202\n"                      /* RFLAGS */
         "pushq $0x1b\n"                       /* CS */
         "pushq %%r11\n"                       /* RIP */
 
-        /* rdi and rsi already have argc/argv from register variables */
-        /* DON'T zero rdi/rsi - they contain user arguments */
-        /* DON'T zero r10/r11 until after we've pushed them */
-
-        /* Zero only the registers we're not using */
+        /* Zero unused registers (not rbp - compiler needs it) */
         "xorq %%rax, %%rax\n"
         "xorq %%rbx, %%rbx\n"
         "xorq %%rcx, %%rcx\n"
         "xorq %%rdx, %%rdx\n"
-        "xorq %%rbp, %%rbp\n"
         "xorq %%r8, %%r8\n"
         "xorq %%r9, %%r9\n"
-        /* r10 and r11 can be zeroed now - they've been pushed */
         "xorq %%r10, %%r10\n"
         "xorq %%r11, %%r11\n"
         "xorq %%r12, %%r12\n"
@@ -419,11 +419,11 @@ static int build_user_stack(fut_mm_t *mm,
         "xorq %%r14, %%r14\n"
         "xorq %%r15, %%r15\n"
 
-        /* Return to userspace */
+        /* Return to userspace - never returns */
         "iretq\n"
         :
-        : "r"(r_entry), "r"(r_stack), "r"(r_argc), "r"(r_argv)
-        : "memory", "cc");
+        : "r"(&iretq_vals)
+        : "memory");
 
     /* Should NEVER reach here - IRETQ doesn't return */
     extern void fut_platform_panic(const char *);

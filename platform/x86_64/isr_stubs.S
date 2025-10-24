@@ -163,14 +163,14 @@ isr_syscall_int80_stub:
     /* Stack now has: CR3, RAX, RIP, CS, RFLAGS, RSP, SS */
     /* R11 contains syscall return value - DON'T CLOBBER IT! */
 
-    /* Restore CR3 - always do it to avoid clobbering any user registers */
+    /* Restore CR3 - use RAX as scratch since we'll overwrite it anyway */
     /* Writing the same CR3 value is harmless (CPU optimizes it) */
-    popq %r10                 /* Load saved CR3 into R10 */
-    movq %r10, %cr3           /* Restore user CR3 (TLB flush if value changed) */
+    popq %rax                 /* Load saved CR3 into RAX (temp) */
+    movq %rax, %cr3           /* Restore user CR3 (TLB flush if value changed) */
 
-    /* Now stack has: RAX, RIP, CS, RFLAGS, RSP, SS */
-    /* Discard saved RAX and restore syscall return value from R11 */
-    popq %r10                 /* Discard saved RAX */
+    /* Now stack has: saved_RAX, RIP, CS, RFLAGS, RSP, SS */
+    /* Skip saved RAX and restore syscall return value from R11 */
+    addq $8, %rsp             /* Skip over saved RAX without clobbering any register */
     movq %r11, %rax           /* Put syscall return value in RAX */
 
     /* At this point, stack should have: RIP, CS, RFLAGS, RSP, SS */

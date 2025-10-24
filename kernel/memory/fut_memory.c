@@ -151,6 +151,8 @@ uintptr_t fut_pmm_bitmap_end_virt(void) {
 }
 
 void fut_pmm_reserve_range(uintptr_t phys_addr, size_t size_bytes) {
+    extern void fut_printf(const char *, ...);
+
     if (size_bytes == 0) {
         return;
     }
@@ -175,14 +177,20 @@ void fut_pmm_reserve_range(uintptr_t phys_addr, size_t size_bytes) {
         last_page = pmm_total - 1ULL;
     }
 
+    uint64_t reserved_count = 0;
     for (uint64_t idx = first_page; idx <= last_page; ++idx) {
         if (!BITMAP_TST(idx)) {
             BITMAP_SET(idx);
             if (pmm_free > 0) {
                 --pmm_free;
+                reserved_count++;
             }
         }
     }
+
+    fut_printf("[PMM-RESERVE] Reserved %llu pages (0x%llx-0x%llx), %llu pages now free\n",
+               reserved_count, (unsigned long long)phys_addr,
+               (unsigned long long)(phys_addr + size_bytes), pmm_free);
 }
 
 /* ============================================================
@@ -216,9 +224,11 @@ void fut_heap_init(uintptr_t heap_start, uintptr_t heap_end) {
         fut_printf("[HEAP-INIT] phys_start=%p phys_end=%p (size=%llu KB)\n",
                    (void*)phys_start, (void*)phys_end,
                    (unsigned long long)((phys_end - phys_start) / 1024));
-        fut_pmm_reserve_range((uintptr_t)phys_start, (size_t)(phys_end - phys_start));
+        /* Reserve heap range PLUS one guard page after to prevent heap overflow
+         * from corrupting immediately adjacent allocations (like page tables) */
+        fut_pmm_reserve_range((uintptr_t)phys_start, (size_t)(phys_end - phys_start + FUT_PAGE_SIZE));
 #else
-        fut_pmm_reserve_range(heap_base, heap_limit - heap_base);
+        fut_pmm_reserve_range(heap_base, heap_limit - heap_base + FUT_PAGE_SIZE);
 #endif
     }
 

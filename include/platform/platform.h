@@ -61,6 +61,21 @@ void fut_serial_putc(char c);
 void fut_serial_puts(const char *str);
 
 /**
+ * Read a character from the serial console (non-blocking).
+ *
+ * @return Character read (0-255), or -1 if no data available
+ */
+int fut_serial_getc(void);
+
+/**
+ * Read a character from the serial console (blocking).
+ * Waits until a character is available.
+ *
+ * @return Character read (0-255)
+ */
+int fut_serial_getc_blocking(void);
+
+/**
  * Formatted output to serial console.
  *
  * @param fmt Format string

@@ -35,10 +35,10 @@ void fut_exec_double_smoke(void) {
         fut_platform_panic("[EXEC-DOUBLE] invalid root vnode before exec");
     }
 
-    char init_name[] = "init_stub";
-    char *init_args[] = { init_name, NULL };
-    rc = fut_exec_elf("/sbin/init_stub", init_args);
-    fut_printf("[EXEC-DOUBLE] exec init_stub rc=%d\n", rc);
+    char shell_name[] = "shell";
+    char *shell_args[] = { shell_name, NULL };
+    rc = fut_exec_elf("/bin/shell", shell_args);
+    fut_printf("[EXEC-DOUBLE] exec shell rc=%d\n", rc);
     fut_vfs_check_root_canary("exec-double:after-first");
 
     root = fut_vfs_get_root();

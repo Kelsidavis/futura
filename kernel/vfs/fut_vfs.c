@@ -19,9 +19,10 @@
 extern void fut_printf(const char *fmt, ...);
 
 /* Uncomment for verbose VFS tracing */
-#define DEBUG_VFS 1
+#define DEBUG_VFS 0
+#define DEBUG_READ 0
 
-#ifdef DEBUG_VFS
+#if DEBUG_VFS
 #define VFSDBG(...) fut_printf(__VA_ARGS__)
 #else
 #define VFSDBG(...) do { } while (0)
@@ -443,7 +444,9 @@ static int lookup_vnode(const char *path, struct fut_vnode **vnode) {
         return 0;
     }
 
+#if DEBUG_VFS
     const char *orig_path = path;
+#endif
 
     /* Use heap allocation to avoid stack overflow - each component array is 1KB */
     size_t alloc_size = MAX_PATH_COMPONENTS * (FUT_VFS_NAME_MAX + 1);
@@ -983,17 +986,32 @@ int fut_vfs_open(const char *path, int flags, int mode) {
 }
 
 ssize_t fut_vfs_read(int fd, void *buf, size_t size) {
+#if DEBUG_READ
+    fut_printf("[vfs-read] fd=%d buf=%p size=%zu\n", fd, buf, size);
+#endif
     struct fut_file *file = get_file(fd);
     if (!file) {
+#if DEBUG_READ
+        fut_printf("[vfs-read] EBADF: no file for fd=%d\n", fd);
+#endif
         return -EBADF;
     }
 
     if (file->chr_ops) {
+#if DEBUG_READ
+        fut_printf("[vfs-read] chr_ops path, read=%p\n", (void*)(uintptr_t)file->chr_ops->read);
+#endif
         if (!file->chr_ops->read) {
+#if DEBUG_READ
+            fut_printf("[vfs-read] EINVAL: no chr_ops->read\n");
+#endif
             return -EINVAL;
         }
         off_t pos = (off_t)file->offset;
         ssize_t ret = file->chr_ops->read(file->chr_inode, file->chr_private, buf, size, &pos);
+#if DEBUG_READ
+        fut_printf("[vfs-read] chr_ops->read returned %zd\n", ret);
+#endif
         if (ret > 0) {
             file->offset = (uint64_t)pos;
         }

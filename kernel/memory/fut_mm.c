@@ -193,8 +193,8 @@ void fut_mm_switch(fut_mm_t *mm) {
     uint64_t old_cr3 = fut_read_cr3();
     uint64_t new_cr3 = mm->ctx.cr3_value;
 
-    fut_printf("[MM-SWITCH] CR3: 0x%016llx -> 0x%016llx (kernel=%s)\n",
-               old_cr3, new_cr3, (mm == &kernel_mm) ? "yes" : "no");
+    // fut_printf("[MM-SWITCH] CR3: 0x%016llx -> 0x%016llx (kernel=%s)\n",
+    //            old_cr3, new_cr3, (mm == &kernel_mm) ? "yes" : "no");
 
     active_mm = mm;
     fut_write_cr3(new_cr3);
@@ -205,6 +205,7 @@ void fut_mm_switch(fut_mm_t *mm) {
         fut_printf("[MM-SWITCH] ERROR: CR3 verification failed! Expected 0x%016llx, got 0x%016llx\n",
                    new_cr3, verify_cr3);
     }
+    (void)old_cr3;  // Suppress unused warning
 }
 
 static fut_mm_t *mm_from_current_thread(void) {

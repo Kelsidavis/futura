@@ -188,6 +188,23 @@ void fut_serial_putc(char c) {
     outb(SERIAL_DATA(SERIAL_PORT_COM1), c);
 }
 
+int fut_serial_getc(void) {
+    /* Check if data is available (bit 0 of line status register) */
+    if ((inb(SERIAL_LINE_STATUS(SERIAL_PORT_COM1)) & 0x01) == 0) {
+        return -1;  /* No data available */
+    }
+    /* Read and return the character */
+    return (int)inb(SERIAL_DATA(SERIAL_PORT_COM1));
+}
+
+int fut_serial_getc_blocking(void) {
+    /* Wait for data to be available */
+    while ((inb(SERIAL_LINE_STATUS(SERIAL_PORT_COM1)) & 0x01) == 0)
+        ;
+    /* Read and return the character */
+    return (int)inb(SERIAL_DATA(SERIAL_PORT_COM1));
+}
+
 void fut_serial_puts(const char *str) {
     while (*str) {
         if (*str == '\n')

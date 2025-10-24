@@ -77,6 +77,7 @@ struct fut_user_entry {
     uint64_t stack;
     uint64_t argc;
     uint64_t argv_ptr;
+    fut_task_t *task;  /* Task pointer to access mm */
 };
 
 static size_t kstrlen(const char *s) {
@@ -355,34 +356,66 @@ static int build_user_stack(fut_mm_t *mm,
     return 0;
 }
 
-[[noreturn]] static void fut_user_trampoline(void *arg) {
-    extern void fut_printf(const char *, ...);
-    fut_printf("[USER-TRAMPOLINE] Called with arg=%p\n", arg);
+[[noreturn]] __attribute__((optimize("O0"))) static void fut_user_trampoline(void *arg) {
+    // extern void fut_printf(const char *, ...);
+    // fut_printf("[USER-TRAMPOLINE] Called with arg=%p\n", arg);
 
     if (!arg) {
-        fut_printf("[USER-TRAMPOLINE] ERROR: NULL arg!\n");
+        // fut_printf("[USER-TRAMPOLINE] ERROR: NULL arg!\n");
         extern void fut_thread_exit(void);
         fut_thread_exit();
     }
 
     /* Extract values from the user entry structure BEFORE freeing it */
     struct fut_user_entry *info = (struct fut_user_entry *)arg;
-    uint64_t entry = info->entry;
-    uint64_t stack = info->stack;
-    uint64_t argc = info->argc;
-    uint64_t argv_ptr = info->argv_ptr;
 
-    extern void serial_puts(const char *);
-    fut_printf("[USER-TRAMPOLINE] entry=0x%llx stack=0x%llx argc=%llu argv=0x%llx\n",
-               entry, stack, argc, argv_ptr);
+    // fut_printf("[EXTRACT-1] info=%p\n", info);
+    uint64_t entry = info->entry;
+    // fut_printf("[EXTRACT-2] entry=0x%llx\n", entry);
+
+    uint64_t stack = info->stack;
+    // fut_printf("[EXTRACT-3] stack=0x%llx\n", stack);
+
+    uint64_t argc = info->argc;
+    // fut_printf("[EXTRACT-4] argc=%llu\n", argc);
+
+    uint64_t argv_ptr = info->argv_ptr;
+    // fut_printf("[EXTRACT-5] argv=0x%llx\n", argv_ptr);
 
     /* Don't free the arg structure - we never return from IRETQ anyway
      * and freeing might corrupt something */
 
-    /* Disable interrupts before the call to prevent any interference */
-    __asm__ volatile("cli");
+    /* Get the task and mm from the entry structure */
+    fut_task_t *task = info->task;
+    fut_mm_t *mm = task ? task->mm : NULL;
 
-    /* Direct call with NO printfs, NO wrapper, NOTHING */
+    if (!task || !mm) {
+        extern void fut_printf(const char *, ...);
+        fut_printf("[USER-TRAMPOLINE] FATAL: No task (%p) or mm (%p)\n", (void*)task, (void*)mm);
+        extern void fut_thread_exit(void);
+        fut_thread_exit();
+    }
+
+    /* Verify we're using the task's CR3, not the kernel CR3 */
+    extern uint64_t fut_read_cr3(void);
+    uint64_t current_cr3 = fut_read_cr3();
+    uint64_t expected_cr3 = mm_context(mm)->cr3_value;
+
+    if (current_cr3 != expected_cr3) {
+        extern void fut_write_cr3(uint64_t);
+        fut_write_cr3(expected_cr3);
+    }
+
+    /* NO DEBUG OUTPUT ALLOWED HERE - printf triggers CR3 switches that break IRETQ! */
+
+    /* Optionally verify mappings without printf (for debugging with debugger):
+     * uint64_t test_pte = 0;
+     * pmap_probe_pte(mm_context(mm), stack, &test_pte);  // Check stack mapping
+     * pmap_probe_pte(mm_context(mm), entry, &test_pte);  // Check entry mapping
+     */
+
+    /* Call the pure assembly function to perform IRETQ to userspace
+     * This function never returns */
     fut_do_user_iretq(entry, stack, argc, argv_ptr);
 
     /* Should NEVER reach here */
@@ -825,6 +858,7 @@ int fut_exec_elf(const char *path, char *const argv[]) {
     entry->stack = user_rsp;
     entry->argc = user_argc;
     entry->argv_ptr = user_argv;
+    entry->task = task;
 
     fut_thread_t *thread = fut_thread_create(task,
                                              fut_user_trampoline,

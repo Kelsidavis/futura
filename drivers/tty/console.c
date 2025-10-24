@@ -21,6 +21,49 @@ static int console_open(void *inode, int flags, void **priv) {
     return 0;
 }
 
+static ssize_t console_read(void *inode, void *priv, void *buf, size_t len, off_t *pos) {
+    (void)inode;
+    (void)priv;
+
+    if (len == 0) {
+        return 0;
+    }
+
+    uint8_t *bytes = (uint8_t *)buf;
+    size_t bytes_read = 0;
+
+    /* Read characters from serial port */
+    while (bytes_read < len) {
+        int c = fut_serial_getc_blocking();
+        if (c < 0) {
+            break;  /* Should not happen with blocking read, but be safe */
+        }
+
+        /* Handle special characters */
+        if (c == '\r') {
+            c = '\n';  /* Convert CR to LF */
+        }
+
+        bytes[bytes_read++] = (uint8_t)c;
+
+        /* Echo character back to console */
+        fut_serial_putc((char)c);
+        if (c == '\n') {
+            fut_serial_putc('\r');  /* Echo CR after LF */
+        }
+
+        /* Stop reading after newline */
+        if (c == '\n') {
+            break;
+        }
+    }
+
+    if (pos) {
+        *pos += (off_t)bytes_read;
+    }
+    return (ssize_t)bytes_read;
+}
+
 static ssize_t console_write(void *inode, void *priv, const void *buf, size_t len, off_t *pos) {
     (void)inode;
     (void)priv;
@@ -43,7 +86,7 @@ static ssize_t console_write(void *inode, void *priv, const void *buf, size_t le
 static const struct fut_file_ops console_fops = {
     .open = console_open,
     .release = NULL,
-    .read = NULL,
+    .read = console_read,
     .write = console_write,
     .ioctl = NULL,
     .mmap = NULL,

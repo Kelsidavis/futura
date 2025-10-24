@@ -23,65 +23,65 @@
 #define __NR_exit       60
 
 /* x86_64 syscall invocation via inline asm */
-static long sys_write(int fd, const char *buf, size_t count) {
+static inline long syscall3(long nr, long arg1, long arg2, long arg3) {
     long ret;
-    __asm__ volatile(
-        "mov $1, %%rax\n"
-        "mov %1, %%rdi\n"
-        "mov %2, %%rsi\n"
-        "mov %3, %%rdx\n"
+    __asm__ __volatile__(
+        "movq %1, %%rax\n"
+        "movq %2, %%rdi\n"
+        "movq %3, %%rsi\n"
+        "movq %4, %%rdx\n"
         "int $0x80\n"
-        "mov %%rax, %0\n"
+        "movq %%rax, %0\n"
         : "=r"(ret)
-        : "r"((long)fd), "r"((long)buf), "r"((long)count)
-        : "rax", "rdi", "rsi", "rdx"
+        : "r"(nr), "r"(arg1), "r"(arg2), "r"(arg3)
+        : "rax", "rdi", "rsi", "rdx", "rcx", "r11", "memory"
     );
     return ret;
 }
 
-static long sys_read(int fd, char *buf, size_t count) {
+static inline long sys_write(int fd, const char *buf, size_t count) {
+    return syscall3(1, fd, (long)buf, count);
+}
+
+static inline long sys_read(int fd, char *buf, size_t count) {
+    return syscall3(0, fd, (long)buf, count);
+}
+
+static inline long syscall1(long nr, long arg1) {
     long ret;
-    __asm__ volatile(
-        "mov $0, %%rax\n"
-        "mov %1, %%rdi\n"
-        "mov %2, %%rsi\n"
-        "mov %3, %%rdx\n"
+    __asm__ __volatile__(
+        "movq %1, %%rax\n"
+        "movq %2, %%rdi\n"
         "int $0x80\n"
-        "mov %%rax, %0\n"
+        "movq %%rax, %0\n"
         : "=r"(ret)
-        : "r"((long)fd), "r"((long)buf), "r"((long)count)
-        : "rax", "rdi", "rsi", "rdx"
+        : "r"(nr), "r"(arg1)
+        : "rax", "rdi", "rcx", "r11", "memory"
     );
     return ret;
 }
 
-static long sys_chdir(const char *path) {
-    long ret = 0;
-    __asm__ volatile(
-        "mov $80, %%rax\n"
-        "mov %1, %%rdi\n"
+static inline long syscall2(long nr, long arg1, long arg2) {
+    long ret;
+    __asm__ __volatile__(
+        "movq %1, %%rax\n"
+        "movq %2, %%rdi\n"
+        "movq %3, %%rsi\n"
         "int $0x80\n"
-        "mov %%rax, %0\n"
+        "movq %%rax, %0\n"
         : "=r"(ret)
-        : "r"((long)path)
-        : "rax", "rdi"
+        : "r"(nr), "r"(arg1), "r"(arg2)
+        : "rax", "rdi", "rsi", "rcx", "r11", "memory"
     );
     return ret;
 }
 
-static long sys_getcwd(char *buf, size_t size) {
-    long ret;
-    __asm__ volatile(
-        "mov $79, %%rax\n"
-        "mov %1, %%rdi\n"
-        "mov %2, %%rsi\n"
-        "int $0x80\n"
-        "mov %%rax, %0\n"
-        : "=r"(ret)
-        : "r"((long)buf), "r"((long)size)
-        : "rax", "rdi", "rsi"
-    );
-    return ret;
+static inline long sys_chdir(const char *path) {
+    return syscall1(80, (long)path);
+}
+
+static inline long sys_getcwd(char *buf, size_t size) {
+    return syscall2(79, (long)buf, size);
 }
 
 typedef long ssize_t;
@@ -280,14 +280,7 @@ static int execute_command(int argc, char *argv[]) {
             }
         }
         write_str(1, "Goodbye!\n");
-        __asm__ volatile(
-            "mov $60, %%rax\n"
-            "mov %0, %%rdi\n"
-            "int $0x80\n"
-            :
-            : "r"((long)status)
-            : "rax", "rdi"
-        );
+        syscall1(60, status);
         while (1);
     } else {
         write_str(1, "Command not found: ");
@@ -321,6 +314,16 @@ int main(int argc, char **argv) {
         /* Read command line */
         nread = read_bytes(0, cmdline, sizeof(cmdline) - 1);
         if (nread <= 0) {
+            write_str(1, "\n[DEBUG] read returned: ");
+            /* Simple number to string */
+            if (nread < 0) {
+                write_char(1, '-');
+                nread = -nread;
+            }
+            if (nread == 0) {
+                write_char(1, '0');
+            }
+            write_char(1, '\n');
             break; /* EOF */
         }
 

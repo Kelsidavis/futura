@@ -153,6 +153,11 @@ int fut_map_page(fut_vmem_context_t *ctx, uint64_t vaddr, uint64_t paddr, uint64
         pml4[pml4_idx] = fut_make_pte(pdpt_phys, level_flags);
     } else {
         pdpt = pt_virt_from_entry(pml4[pml4_idx]);
+        /* Update existing entry to clear NX if we're mapping an executable page */
+        if (!(flags & PTE_NX) && (pml4[pml4_idx] & PTE_NX)) {
+            pml4[pml4_idx] &= ~PTE_NX;
+            fut_flush_tlb_all();  /* TLB must be flushed when changing permissions */
+        }
     }
     assert_kernel_table_ptr(pdpt);
 
@@ -173,6 +178,11 @@ int fut_map_page(fut_vmem_context_t *ctx, uint64_t vaddr, uint64_t paddr, uint64
         pdpt->entries[pdpt_idx] = fut_make_pte(pd_phys, level_flags);
     } else {
         pd = pt_virt_from_entry(pdpt->entries[pdpt_idx]);
+        /* Update existing entry to clear NX if we're mapping an executable page */
+        if (!(flags & PTE_NX) && (pdpt->entries[pdpt_idx] & PTE_NX)) {
+            pdpt->entries[pdpt_idx] &= ~PTE_NX;
+            fut_flush_tlb_all();  /* TLB must be flushed when changing permissions */
+        }
     }
     assert_kernel_table_ptr(pd);
 
@@ -232,6 +242,11 @@ int fut_map_page(fut_vmem_context_t *ctx, uint64_t vaddr, uint64_t paddr, uint64
         fut_flush_tlb_all();
     } else {
         pt = pt_virt_from_entry(pd->entries[pd_idx]);
+        /* Update existing entry to clear NX if we're mapping an executable page */
+        if (!(flags & PTE_NX) && (pd->entries[pd_idx] & PTE_NX)) {
+            pd->entries[pd_idx] &= ~PTE_NX;
+            fut_flush_tlb_all();  /* TLB must be flushed when changing permissions */
+        }
     }
     assert_kernel_table_ptr(pt);
 

@@ -51,3 +51,7 @@ void fut_tss_init(void) {
 void fut_tss_set_kernel_stack(uint64_t rsp0) {
     g_kernel_tss.rsp0 = rsp0;
 }
+
+uint64_t fut_tss_get_kernel_stack(void) {
+    return g_kernel_tss.rsp0;
+}

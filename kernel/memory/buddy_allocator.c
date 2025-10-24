@@ -226,12 +226,20 @@ void buddy_heap_init(uintptr_t start, uintptr_t end) {
 
         /* Add to free list */
         free_block_t *freeblk = (free_block_t *)get_data_ptr(blk);
+        fut_printf("[BUDDY-INIT][%d] data_ptr=%p (header=%p + sizeof(header)=%llu)\n",
+                   iteration, (void*)freeblk, (void*)blk, (unsigned long long)sizeof(block_hdr_t));
+        fut_printf("[BUDDY-INIT][%d] Adding to free_lists[%d] (order %d)\n",
+                   iteration, block_order - MIN_ORDER, block_order);
+        fut_printf("[BUDDY-INIT][%d] Current free_lists[%d] head=%p\n",
+                   iteration, block_order - MIN_ORDER, (void*)free_lists[block_order - MIN_ORDER]);
         freeblk->next = free_lists[block_order - MIN_ORDER];
         freeblk->prev = NULL;
         if (free_lists[block_order - MIN_ORDER]) {
             free_lists[block_order - MIN_ORDER]->prev = freeblk;
         }
         free_lists[block_order - MIN_ORDER] = freeblk;
+        fut_printf("[BUDDY-INIT][%d] New free_lists[%d] head=%p\n",
+                   iteration, block_order - MIN_ORDER, (void*)free_lists[block_order - MIN_ORDER]);
 
         /* Move to next block position */
         current_addr += block_size;
@@ -377,17 +385,21 @@ void *buddy_malloc(size_t size) {
             size_t alloc_size = order_to_size(hdr->order);
 
             /* CRITICAL: Clear allocated memory ONLY for small blocks to prevent data leakage
-             * For slab allocations (order 16-19, ~64KB-512KB), clear the entire block
-             * This prevents old file content from being interpreted as structure metadata
+             * For slab allocations (order 16-19, ~64KB-512KB), clear ONLY the requested size
+             * NOT the full allocated size (which is rounded up to power of 2)
+             * This prevents overwriting adjacent allocations
              * For large allocations (order 20+, >1MB), DON'T clear to preserve file performance
              * Callers of large allocations MUST initialize their data appropriately */
             extern void fut_printf(const char *, ...);
-            fut_printf("[BUDDY-MALLOC-CLEAR] order=%d size=%llu data=%p\n",
-                       hdr->order, (unsigned long long)alloc_size, result);
+            fut_printf("[BUDDY-MALLOC-CLEAR] order=%d alloc_size=%llu requested_size=%llu data=%p\n",
+                       hdr->order, (unsigned long long)alloc_size, (unsigned long long)size, result);
             if (hdr->order <= 19) {  /* Only clear small blocks (up to 512KB) */
-                size_t data_size = alloc_size - sizeof(block_hdr_t);
+                /* FIX: Clear only the REQUESTED size, not the full allocated size
+                 * This prevents overwriting adjacent allocations when buddy allocator
+                 * rounds up (e.g., 64KB request gets 128KB allocation) */
+                size_t data_size = size;  /* Use requested size, not alloc_size */
                 extern void *memset(void *, int, size_t);
-                fut_printf("[BUDDY-MALLOC-CLEAR] Clearing %llu bytes starting at %p\n",
+                fut_printf("[BUDDY-MALLOC-CLEAR] Clearing %llu bytes (requested) starting at %p\n",
                            (unsigned long long)data_size, result);
                 memset(result, 0, data_size);
                 fut_printf("[BUDDY-MALLOC-CLEAR] Clear complete, first 8 bytes now: %02x %02x %02x %02x %02x %02x %02x %02x\n",

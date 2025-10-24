@@ -96,7 +96,14 @@ IRQ 15, 47                              /* Secondary ATA */
 .global isr_syscall_int80_stub
 .type isr_syscall_int80_stub, @function
 isr_syscall_int80_stub:
-    /* Save all registers that might contain syscall arguments */
+    /* Save RAX first (it contains the syscall number) */
+    pushq %rax
+
+    /* Now save CR3 to stack (using RAX as temp register is safe now) */
+    movq %cr3, %rax           /* Get current CR3 */
+    pushq %rax                /* Save CR3 on stack */
+
+    /* Save remaining registers */
     pushq %rbp
     pushq %rbx
     pushq %r12
@@ -110,29 +117,41 @@ isr_syscall_int80_stub:
     pushq %rdx
     pushq %rsi
     pushq %rdi
-    pushq %rax
 
     /* Calculate pointer to interrupt frame (for userspace thread state) */
-    /* Frame is at: RSP + (13 * 8) = RSP + 104 bytes */
-    /* That's where the CPU pushed: RIP, CS, RFLAGS, RSP, SS */
+    /* Stack layout from RSP: RDI, RSI, RDX, R10, R8, R9, R15, R14, R13, R12, RBX, RBP, CR3, RAX, RIP, CS, RFLAGS, RSP, SS */
+    /* We pushed: 6 arg regs + 6 callee-saved + CR3 + RAX = 14 values */
+    /* Frame (RIP) is at: RSP + (14 * 8) = RSP + 112 bytes */
     movq %rsp, %r15
-    addq $104, %r15           /* r15 = pointer to interrupt frame */
+    addq $112, %r15           /* r15 = pointer to interrupt frame (RIP) */
 
     /* Extract syscall arguments from saved registers */
-    movq 0(%rsp), %rdi        /* syscall number from RAX */
-    movq 8(%rsp), %rsi        /* arg1 from RDI */
-    movq 16(%rsp), %rdx       /* arg2 from RSI */
-    movq 24(%rsp), %rcx       /* arg3 from RDX */
-    movq 32(%rsp), %r8        /* arg4 from R10 */
-    movq 40(%rsp), %r9        /* arg5 from R8 */
-    movq 48(%rsp), %r11       /* arg6 from R9 */
-    pushq %r11
-    pushq %r15                /* arg7: interrupt frame pointer */
+    /* Stack: 0=RDI, 8=RSI, 16=RDX, 24=R10, 32=R8, 40=R9, 48=R15, 56=R14, 64=R13, 72=R12, 80=RBX, 88=RBP, 96=CR3, 104=RAX, 112=RIP... */
+    movq 104(%rsp), %rdi      /* syscall number from saved RAX */
+    movq 0(%rsp), %rsi        /* arg1 from RDI */
+    movq 8(%rsp), %rdx        /* arg2 from RSI */
+    movq 16(%rsp), %rcx       /* arg3 from RDX */
+    movq 24(%rsp), %r8        /* arg4 from R10 */
+    movq 32(%rsp), %r9        /* arg5 from R8 */
+    movq 40(%rsp), %r11       /* arg6 from R9 */
+    pushq %r15                /* arg7: interrupt frame pointer (push FIRST) */
+    pushq %r11                /* arg6 (push SECOND, closer to RSP) */
 
     call syscall_entry_c
 
-    addq $16, %rsp            /* remove arg7 and arg6 */
-    addq $56, %rsp            /* remove saved argument registers */
+    /* Save return value before cleaning up stack */
+    movq %rax, %r11           /* Save syscall return value in R11 (callee-saved) */
+
+    addq $16, %rsp            /* remove arg6 and arg7 */
+
+    /* Restore registers in reverse order of how we pushed them */
+    /* Stack: 0=RDI, 8=RSI, 16=RDX, 24=R10, 32=R8, 40=R9, 48=R15, 56=R14, 64=R13, 72=R12, 80=RBX, 88=RBP, 96=CR3, 104=RAX */
+    popq %rdi                 /* Restore user RDI */
+    popq %rsi                 /* Restore user RSI */
+    popq %rdx                 /* Restore user RDX */
+    popq %r10                 /* Restore user R10 */
+    popq %r8                  /* Restore user R8 */
+    popq %r9                  /* Restore user R9 */
 
     popq %r15
     popq %r14
@@ -141,16 +160,22 @@ isr_syscall_int80_stub:
     popq %rbx
     popq %rbp
 
-    /* At this point, stack should have: RIP, CS, RFLAGS, RSP, SS */
-    /* Verify CS selector is userspace (0x1B for user code in GDT) */
-    movq 8(%rsp), %rax        /* Load CS from stack */
-    cmpq $0x1B, %rax          /* Check if it's user CS */
-    je 1f                      /* If correct, continue */
+    /* Stack now has: CR3, RAX, RIP, CS, RFLAGS, RSP, SS */
+    /* R11 contains syscall return value - DON'T CLOBBER IT! */
 
-    /* CS is wrong - this is a bug, halt for debugging */
-    cli
-    hlt
-1:
+    /* Restore CR3 - always do it to avoid clobbering any user registers */
+    /* Writing the same CR3 value is harmless (CPU optimizes it) */
+    popq %r10                 /* Load saved CR3 into R10 */
+    movq %r10, %cr3           /* Restore user CR3 (TLB flush if value changed) */
+
+    /* Now stack has: RAX, RIP, CS, RFLAGS, RSP, SS */
+    /* Discard saved RAX and restore syscall return value from R11 */
+    popq %r10                 /* Discard saved RAX */
+    movq %r11, %rax           /* Put syscall return value in RAX */
+
+    /* At this point, stack should have: RIP, CS, RFLAGS, RSP, SS */
+    /* All user registers are restored except RAX which has the syscall return value */
+    /* CR3 is restored to user page tables */
     iretq
 .size isr_syscall_int80_stub, . - isr_syscall_int80_stub
 

@@ -246,45 +246,49 @@ void fut_schedule(void) {
         fut_mm_t *prev_mm = (prev && prev->task) ? fut_task_get_mm(prev->task) : NULL;
         fut_mm_t *next_mm = (next && next->task) ? fut_task_get_mm(next->task) : NULL;
 
+        if (in_irq && prev) {
+            // IRQ-safe context switch (uses IRET)
+            // NOTE: fut_switch_context_irq is NOT YET IMPLEMENTED (it's a stub)
+            // Switching CR3 here without proper IRET frame manipulation causes page faults
+            // when IRETQ tries to return to userspace with wrong page tables.
+            // WORKAROUND: Skip preemptive context switching from timer IRQs.
+            // TODO: Implement fut_switch_context_irq properly in platform/x86_64/context_switch.S
+
+            // For now, just return without switching - let the current thread continue
+            return;
+        }
+
+        // Only switch MM for cooperative (non-IRQ) context switches
         if (prev_mm != next_mm) {
             fut_mm_switch(next_mm);
         }
 
-        if (in_irq && prev) {
-            // IRQ-safe context switch (uses IRET)
-            // NOTE: Only valid when switching between threads, not from kernel to first thread
-            // Cannot use serial_puts/fut_printf from IRQ context (not reentrant)
-
-            // Placeholder for page table switch
-            // Perform IRQ-safe context switch
-            fut_switch_context_irq(prev, next, fut_current_frame);
-
-            // NOTE: We never return here! The context switch returns via IRET
-            // to the new thread's saved context.
+        if (0) {  // Disabled: in_irq && prev check moved above
+            // This code path is now unreachable - IRQ switches handled above
         } else {
             // Regular cooperative context switch (uses RET)
             if (prev) {
                 fut_switch_context(&prev->context, &next->context);
             } else {
                 // First time - just jump to thread
-                extern void fut_printf(const char *, ...);
-                fut_printf("[SCHED] First context switch: next=%p next->tid=%llu task=%p\n",
-                           (void*)next, next ? next->tid : 0, (void*)(next ? next->task : NULL));
-                fut_printf("[SCHED] &next->context=%p (should be 16-byte aligned)\n",
-                           (void*)&next->context);
-                fut_printf("[SCHED] Offset of context in struct: %zu\n",
-                           (size_t)((char*)&next->context - (char*)next));
-                fut_printf("[SCHED] next->context.rip=%llx rsp=%llx rflags=%llx\n",
-                           next->context.rip, next->context.rsp, next->context.rflags);
-                fut_printf("[SCHED] next->context.cs=%x ss=%x ds=%x\n",
-                           (unsigned)next->context.cs, (unsigned)next->context.ss,
-                           (unsigned)next->context.ds);
-                fut_printf("[SCHED] next->context.rdi=%llx rsi=%llx (entry point args)\n",
-                           next->context.rdi, next->context.rsi);
-                fut_printf("[SCHED] next->context.rax=%llx rbx=%llx rbp=%llx\n",
-                           next->context.rax, next->context.rbx, next->context.rbp);
-                fut_printf("[SCHED] Calling fut_switch_context(&next->context=%p)...\n",
-                           (void*)&next->context);
+                // extern void fut_printf(const char *, ...);
+                // fut_printf("[SCHED] First context switch: next=%p next->tid=%llu task=%p\n",
+                //            (void*)next, next ? next->tid : 0, (void*)(next ? next->task : NULL));
+                // fut_printf("[SCHED] &next->context=%p (should be 16-byte aligned)\n",
+                //            (void*)&next->context);
+                // fut_printf("[SCHED] Offset of context in struct: %zu\n",
+                //            (size_t)((char*)&next->context - (char*)next));
+                // fut_printf("[SCHED] next->context.rip=%llx rsp=%llx rflags=%llx\n",
+                //            next->context.rip, next->context.rsp, next->context.rflags);
+                // fut_printf("[SCHED] next->context.cs=%x ss=%x ds=%x\n",
+                //            (unsigned)next->context.cs, (unsigned)next->context.ss,
+                //            (unsigned)next->context.ds);
+                // fut_printf("[SCHED] next->context.rdi=%llx rsi=%llx (entry point args)\n",
+                //            next->context.rdi, next->context.rsi);
+                // fut_printf("[SCHED] next->context.rax=%llx rbx=%llx rbp=%llx\n",
+                //            next->context.rax, next->context.rbx, next->context.rbp);
+                // fut_printf("[SCHED] Calling fut_switch_context(&next->context=%p)...\n",
+                //            (void*)&next->context);
                 fut_switch_context(NULL, &next->context);
             }
         }

@@ -59,5 +59,5 @@ exit:
      * For now, just halt
      */
     mov $60, %rax           /* exit syscall (fallback) */
-    syscall
+    int $0x80               /* Use int 0x80, not syscall instruction */
     ud2                     /* unreachable */

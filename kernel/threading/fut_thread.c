@@ -328,6 +328,36 @@ int fut_thread_priority_restore(fut_thread_t *thread) {
     }
 
     serial_puts("[TRAMPOLINE] About to call entry function\n");
+
+    /* Explicitly ensure we're in kernel mode with correct segments */
+    __asm__ volatile(
+        "movw $0x10, %%ax\n"
+        "movw %%ax, %%ds\n"
+        "movw %%ax, %%es\n"
+        "movw %%ax, %%ss\n"
+        ::: "ax"
+    );
+
+    /* Verify segments after setting */
+    uint64_t ds_check;
+    __asm__ volatile("mov %%ds, %0" : "=r"(ds_check));
+    fut_printf("[TRAMPOLINE-SEG] ds after fix=0x%llx\n", (unsigned long long)ds_check);
+
+    /* Test stack operations before calling entry */
+    serial_puts("[TRAMPOLINE-TEST] Testing stack push/pop\n");
+    uint64_t test_val = 0xDEADBEEFCAFEBABE;
+    __asm__ volatile(
+        "pushq %0\n"
+        "popq %%rax\n"
+        : : "r"(test_val) : "rax", "memory"
+    );
+    serial_puts("[TRAMPOLINE-TEST] Stack test passed\n");
+
+    /* Call the entry function */
+    serial_puts("[TRAMPOLINE-TEST] Calling entry function\n");
     entry(arg);
+
+    /* If entry returns (doesn't call fut_thread_exit), we exit here */
+    serial_puts("[TRAMPOLINE-TEST] Entry returned, calling fut_thread_exit\n");
     fut_thread_exit();
 }

@@ -1273,12 +1273,15 @@ void fut_kernel_main(void) {
     fut_printf("\n");
     fut_printf("=======================================================\n");
     fut_printf("   Kernel initialization complete!\n");
-    fut_printf("   Idle loop (scheduler disabled for debugging)...\n");
+    fut_printf("   Starting scheduler...\n");
     fut_printf("=======================================================\n\n");
 
-    /* Idle loop instead of scheduler (scheduler has GPF bug) */
-    for (;;) {
-        __asm__ volatile("hlt");
-    }
+    /* Enable interrupts and start scheduling */
+    /* This should never return - scheduler takes over */
+    fut_schedule();
+
+    /* Should never reach here */
+    fut_printf("[PANIC] Scheduler returned unexpectedly!\n");
+    fut_platform_panic("Scheduler returned to kernel_main");
 }
 #endif

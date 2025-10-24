@@ -233,6 +233,10 @@ void fut_timer_set_timeout(uint64_t ticks) {
 }
 
 void fut_timer_irq_handler(void) {
+    /* Call common timer tick handler (updates system time, wakes threads, etc.) */
+    extern void fut_timer_tick(void);
+    fut_timer_tick();
+
     /* Re-enable timer for next interrupt */
     uint32_t freq = fut_timer_get_frequency();
     uint64_t count = fut_timer_read_count();

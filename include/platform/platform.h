@@ -76,6 +76,12 @@ int fut_serial_getc(void);
 int fut_serial_getc_blocking(void);
 
 /**
+ * Flush any pending characters from the serial input buffer.
+ * This clears garbage characters that may have accumulated.
+ */
+void fut_serial_flush_input(void);
+
+/**
  * Formatted output to serial console.
  *
  * @param fmt Format string

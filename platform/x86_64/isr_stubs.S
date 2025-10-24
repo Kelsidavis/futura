@@ -348,8 +348,14 @@ irq0_timer:
     movq %rsp, %rbp
     andq $-16, %rsp
 
+    /* Set interrupt context flag */
+    movb $1, fut_in_interrupt(%rip)
+
     /* Call timer IRQ handler */
     call fut_timer_irq
+
+    /* Clear interrupt context flag */
+    movb $0, fut_in_interrupt(%rip)
 
     /* Restore stack */
     movq %rbp, %rsp

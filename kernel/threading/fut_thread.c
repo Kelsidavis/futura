@@ -310,54 +310,15 @@ int fut_thread_priority_restore(fut_thread_t *thread) {
     return 0;
 }
 [[noreturn]] static void fut_thread_trampoline(void (*entry)(void *), void *arg) {
-    extern void serial_puts(const char *);
-    serial_puts("[TRAMPOLINE] Thread started\n");
-    fut_printf("[TRAMPOLINE] entry=%p arg=%p\n", entry, arg);
-
-    /* Check CPU state */
-    uint64_t cs, rsp, rflags;
-    __asm__ volatile("mov %%cs, %0" : "=r"(cs));
-    __asm__ volatile("mov %%rsp, %0" : "=r"(rsp));
-    __asm__ volatile("pushf; pop %0" : "=r"(rflags));
-    fut_printf("[TRAMPOLINE-CPU] cs=0x%llx rsp=0x%llx rflags=0x%llx\n",
-              (unsigned long long)cs, (unsigned long long)rsp, (unsigned long long)rflags);
-
     if (!entry) {
+        extern void serial_puts(const char *);
         serial_puts("[TRAMPOLINE-ERROR] NULL entry function!\n");
         fut_thread_exit();
     }
 
-    serial_puts("[TRAMPOLINE] About to call entry function\n");
-
-    /* Explicitly ensure we're in kernel mode with correct segments */
-    __asm__ volatile(
-        "movw $0x10, %%ax\n"
-        "movw %%ax, %%ds\n"
-        "movw %%ax, %%es\n"
-        "movw %%ax, %%ss\n"
-        ::: "ax"
-    );
-
-    /* Verify segments after setting */
-    uint64_t ds_check;
-    __asm__ volatile("mov %%ds, %0" : "=r"(ds_check));
-    fut_printf("[TRAMPOLINE-SEG] ds after fix=0x%llx\n", (unsigned long long)ds_check);
-
-    /* Test stack operations before calling entry */
-    serial_puts("[TRAMPOLINE-TEST] Testing stack push/pop\n");
-    uint64_t test_val = 0xDEADBEEFCAFEBABE;
-    __asm__ volatile(
-        "pushq %0\n"
-        "popq %%rax\n"
-        : : "r"(test_val) : "rax", "memory"
-    );
-    serial_puts("[TRAMPOLINE-TEST] Stack test passed\n");
-
     /* Call the entry function */
-    serial_puts("[TRAMPOLINE-TEST] Calling entry function\n");
     entry(arg);
 
     /* If entry returns (doesn't call fut_thread_exit), we exit here */
-    serial_puts("[TRAMPOLINE-TEST] Entry returned, calling fut_thread_exit\n");
     fut_thread_exit();
 }

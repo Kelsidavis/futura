@@ -301,6 +301,19 @@ void fut_schedule(void) {
             // Placeholder for page table switch
             // Perform regular context switch
             serial_puts("[SCHED] About to call fut_switch_context\n");
+
+            /* DEBUG: Print context details */
+            extern void fut_printf(const char *fmt, ...);
+            fut_printf("[SCHED-DBG] next ctx=%p rip=0x%llx rsp=0x%llx ds=0x%llx\n",
+                      &next->context,
+                      (unsigned long long)next->context.rip,
+                      (unsigned long long)next->context.rsp,
+                      (unsigned long long)next->context.ds);
+            fut_printf("[SCHED-DBG] next ctx: rbx=0x%llx rbp=0x%llx rflags=0x%llx\n",
+                      (unsigned long long)next->context.rbx,
+                      (unsigned long long)next->context.rbp,
+                      (unsigned long long)next->context.rflags);
+
             if (prev) {
                 fut_switch_context(&prev->context, &next->context);
             } else {

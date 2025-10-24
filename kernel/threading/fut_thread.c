@@ -54,11 +54,19 @@ fut_thread_t *fut_thread_create(
     if (priority < 0) priority = 0;
     if (priority >= FUT_MAX_PRIORITY) priority = FUT_MAX_PRIORITY - 1;
 
-    // Allocate thread structure
-    fut_thread_t *thread = (fut_thread_t *)fut_malloc(sizeof(fut_thread_t));
-    if (!thread) {
+    // Allocate thread structure with proper alignment (16-byte for FXSAVE/FXRSTOR)
+    // Round up size to multiple of 16 and allocate extra space for alignment
+    size_t thread_size = sizeof(fut_thread_t);
+    size_t alloc_size = thread_size + 16;  // Extra space for alignment
+    void *raw_thread = fut_malloc(alloc_size);
+    if (!raw_thread) {
         return NULL;
     }
+
+    // Align to 16-byte boundary
+    uintptr_t thread_addr = (uintptr_t)raw_thread;
+    uintptr_t aligned_addr = (thread_addr + 15) & ~15ULL;
+    fut_thread_t *thread = (fut_thread_t *)aligned_addr;
 
     // Allocate stack (page-aligned)
     size_t aligned_stack_size = FUT_PAGE_ALIGN(stack_size);
@@ -302,6 +310,24 @@ int fut_thread_priority_restore(fut_thread_t *thread) {
     return 0;
 }
 [[noreturn]] static void fut_thread_trampoline(void (*entry)(void *), void *arg) {
+    extern void serial_puts(const char *);
+    serial_puts("[TRAMPOLINE] Thread started\n");
+    fut_printf("[TRAMPOLINE] entry=%p arg=%p\n", entry, arg);
+
+    /* Check CPU state */
+    uint64_t cs, rsp, rflags;
+    __asm__ volatile("mov %%cs, %0" : "=r"(cs));
+    __asm__ volatile("mov %%rsp, %0" : "=r"(rsp));
+    __asm__ volatile("pushf; pop %0" : "=r"(rflags));
+    fut_printf("[TRAMPOLINE-CPU] cs=0x%llx rsp=0x%llx rflags=0x%llx\n",
+              (unsigned long long)cs, (unsigned long long)rsp, (unsigned long long)rflags);
+
+    if (!entry) {
+        serial_puts("[TRAMPOLINE-ERROR] NULL entry function!\n");
+        fut_thread_exit();
+    }
+
+    serial_puts("[TRAMPOLINE] About to call entry function\n");
     entry(arg);
     fut_thread_exit();
 }

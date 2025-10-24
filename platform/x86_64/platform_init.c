@@ -205,6 +205,13 @@ int fut_serial_getc_blocking(void) {
     return (int)inb(SERIAL_DATA(SERIAL_PORT_COM1));
 }
 
+void fut_serial_flush_input(void) {
+    /* Read and discard all pending characters from the serial input buffer */
+    while ((inb(SERIAL_LINE_STATUS(SERIAL_PORT_COM1)) & 0x01) != 0) {
+        (void)inb(SERIAL_DATA(SERIAL_PORT_COM1));  /* Discard the character */
+    }
+}
+
 void fut_serial_puts(const char *str) {
     while (*str) {
         if (*str == '\n')

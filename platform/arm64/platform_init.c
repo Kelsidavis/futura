@@ -355,6 +355,10 @@ uint32_t fut_timer_get_frequency(void) {
 }
 
 void fut_timer_irq_handler(void) {
+    /* Call common timer tick handler (updates system time, wakes threads, etc.) */
+    extern void fut_timer_tick(void);
+    fut_timer_tick();
+
     timer_ticks++;
 
     /* Reset timer for next interrupt */

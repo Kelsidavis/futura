@@ -305,6 +305,12 @@ fut_irq_handler:
     ret
 
 handle_timer_irq:
+    /* Set interrupt context flag */
+    adrp    x20, fut_in_interrupt
+    add     x20, x20, :lo12:fut_in_interrupt
+    mov     w21, #1
+    strb    w21, [x20]
+
     /* Call timer handler */
     bl      fut_timer_irq_handler
 
@@ -323,6 +329,10 @@ handle_timer_irq:
     bl      fut_thread_yield
 
 no_reschedule:
+    /* Clear interrupt context flag */
+    mov     w21, #0
+    strb    w21, [x20]
+
     ret
 
 /*
@@ -331,3 +341,4 @@ no_reschedule:
 .extern _stack_top
 .extern _bss_start
 .extern _bss_end
+.extern fut_in_interrupt

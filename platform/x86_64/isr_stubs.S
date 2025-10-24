@@ -96,6 +96,7 @@ IRQ 15, 47                              /* Secondary ATA */
 .global isr_syscall_int80_stub
 .type isr_syscall_int80_stub, @function
 isr_syscall_int80_stub:
+    /* Save all registers that might contain syscall arguments */
     pushq %rbp
     pushq %rbx
     pushq %r12
@@ -111,13 +112,14 @@ isr_syscall_int80_stub:
     pushq %rdi
     pushq %rax
 
-    movq 0(%rsp), %rdi        /* syscall number */
-    movq 8(%rsp), %rsi        /* arg1 */
-    movq 16(%rsp), %rdx       /* arg2 */
-    movq 24(%rsp), %rcx       /* arg3 */
-    movq 32(%rsp), %r8        /* arg4 */
-    movq 40(%rsp), %r9        /* arg5 */
-    movq 48(%rsp), %r11       /* arg6 */
+    /* Extract syscall arguments from saved registers */
+    movq 0(%rsp), %rdi        /* syscall number from RAX */
+    movq 8(%rsp), %rsi        /* arg1 from RDI */
+    movq 16(%rsp), %rdx       /* arg2 from RSI */
+    movq 24(%rsp), %rcx       /* arg3 from RDX */
+    movq 32(%rsp), %r8        /* arg4 from R10 */
+    movq 40(%rsp), %r9        /* arg5 from R8 */
+    movq 48(%rsp), %r11       /* arg6 from R9 */
     pushq %r11
 
     call syscall_entry_c
@@ -131,6 +133,17 @@ isr_syscall_int80_stub:
     popq %r12
     popq %rbx
     popq %rbp
+
+    /* At this point, stack should have: RIP, CS, RFLAGS, RSP, SS */
+    /* Verify CS selector is userspace (0x1B for user code in GDT) */
+    movq 8(%rsp), %rax        /* Load CS from stack */
+    cmpq $0x1B, %rax          /* Check if it's user CS */
+    je 1f                      /* If correct, continue */
+
+    /* CS is wrong - this is a bug, halt for debugging */
+    cli
+    hlt
+1:
     iretq
 .size isr_syscall_int80_stub, . - isr_syscall_int80_stub
 

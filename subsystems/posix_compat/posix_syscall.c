@@ -166,9 +166,18 @@ static int64_t sys_read_handler(uint64_t fd, uint64_t buf, uint64_t count,
     (void)arg5;
     (void)arg6;
 
+    extern void fut_printf(const char *, ...);
+    fut_printf("[SYSCALL-READ] fd=%llu buf=0x%llx count=%llu\n", fd, buf, count);
+
     size_t len = (size_t)count;
     if (len == 0) {
         return 0;
+    }
+
+    /* Sanity check: reject unreasonably large reads */
+    if (len > 1024 * 1024) {  /* 1 MB limit */
+        fut_printf("[SYSCALL-READ] ERROR: count too large (%zu bytes)\n", len);
+        return -EINVAL;
     }
 
     void *kbuf = fut_malloc(len);
@@ -351,5 +360,27 @@ void posix_syscall_init(void) {
 long syscall_entry_c(uint64_t nr,
                      uint64_t a1, uint64_t a2, uint64_t a3,
                      uint64_t a4, uint64_t a5, uint64_t a6) {
+    extern void fut_printf(const char *, ...);
+
+    /* Check if arguments look like kernel addresses */
+    bool kernel_args = (a1 >= 0xFFFFFFFF80000000ULL) ||
+                       (a2 >= 0xFFFFFFFF80000000ULL) ||
+                       (a3 >= 0xFFFFFFFF80000000ULL);
+
+    /* Log syscalls with kernel addresses - this is suspicious */
+    if (kernel_args) {
+        /* Get CS from stack to see if we're in user or kernel mode */
+        uint64_t *stack_ptr;
+        __asm__ volatile("movq %%rbp, %0" : "=r"(stack_ptr));
+        fut_printf("[SYSCALL-WARN] Kernel addresses in userspace syscall!\n");
+        fut_printf("[SYSCALL-WARN] nr=%llu a1=%llx a2=%llx a3=%llx\n", nr, a1, a2, a3);
+        /* Return error instead of processing */
+        return -14;  /* EFAULT */
+    }
+
+    /* Log all syscalls for debugging */
+    if (nr <= 10 || nr == 60 || nr == 79 || nr == 80) {  /* Common syscalls */
+        fut_printf("[SYSCALL] nr=%llu a1=%llx a2=%llx a3=%llx\n", nr, a1, a2, a3);
+    }
     return (long)posix_syscall_dispatch(nr, a1, a2, a3, a4, a5, a6);
 }

@@ -169,9 +169,6 @@ static int64_t sys_read_handler(uint64_t fd, uint64_t buf, uint64_t count,
     (void)arg5;
     (void)arg6;
 
-    extern void fut_printf(const char *, ...);
-    // fut_printf("[SYSCALL-READ] fd=%llu buf=0x%llx count=%llu\n", fd, buf, count);
-
     size_t len = (size_t)count;
     if (len == 0) {
         return 0;
@@ -179,7 +176,6 @@ static int64_t sys_read_handler(uint64_t fd, uint64_t buf, uint64_t count,
 
     /* Sanity check: reject unreasonably large reads */
     if (len > 1024 * 1024) {  /* 1 MB limit */
-        fut_printf("[SYSCALL-READ] ERROR: count too large (%zu bytes)\n", len);
         return -EINVAL;
     }
 
@@ -364,20 +360,7 @@ long syscall_entry_c(uint64_t nr,
                      uint64_t a1, uint64_t a2, uint64_t a3,
                      uint64_t a4, uint64_t a5, uint64_t a6,
                      uint64_t *frame_ptr) {
-    extern void fut_printf(const char *, ...);
-
-    /* Extract interrupt frame fields (for debugging) */
-    (void)frame_ptr;  /* Unused when debug is disabled */
-
-    /* Log detailed syscall info with interrupt frame */
-    // uint64_t user_rip = frame_ptr[0];
-    // uint64_t user_cs = frame_ptr[1];
-    // uint64_t user_rflags = frame_ptr[2];
-    // uint64_t user_rsp = frame_ptr[3];
-    // uint64_t user_ss = frame_ptr[4];
-    // if (nr == 0 || nr == 1) fut_printf("[SYSCALL] nr=%llu a1=%llx a2=%llx a3=%llx\n", nr, a1, a2, a3);
-    // fut_printf("[SYSCALL] frame: rip=%llx cs=%llx rflags=%llx rsp=%llx ss=%llx\n",
-    //            user_rip, user_cs, user_rflags, user_rsp, user_ss);
+    (void)frame_ptr;
 
     return (long)posix_syscall_dispatch(nr, a1, a2, a3, a4, a5, a6);
 }

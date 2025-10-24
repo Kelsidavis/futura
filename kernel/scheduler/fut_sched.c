@@ -267,6 +267,24 @@ void fut_schedule(void) {
                 fut_switch_context(&prev->context, &next->context);
             } else {
                 // First time - just jump to thread
+                extern void fut_printf(const char *, ...);
+                fut_printf("[SCHED] First context switch: next=%p next->tid=%llu task=%p\n",
+                           (void*)next, next ? next->tid : 0, (void*)(next ? next->task : NULL));
+                fut_printf("[SCHED] &next->context=%p (should be 16-byte aligned)\n",
+                           (void*)&next->context);
+                fut_printf("[SCHED] Offset of context in struct: %zu\n",
+                           (size_t)((char*)&next->context - (char*)next));
+                fut_printf("[SCHED] next->context.rip=%llx rsp=%llx rflags=%llx\n",
+                           next->context.rip, next->context.rsp, next->context.rflags);
+                fut_printf("[SCHED] next->context.cs=%x ss=%x ds=%x\n",
+                           (unsigned)next->context.cs, (unsigned)next->context.ss,
+                           (unsigned)next->context.ds);
+                fut_printf("[SCHED] next->context.rdi=%llx rsi=%llx (entry point args)\n",
+                           next->context.rdi, next->context.rsi);
+                fut_printf("[SCHED] next->context.rax=%llx rbx=%llx rbp=%llx\n",
+                           next->context.rax, next->context.rbx, next->context.rbp);
+                fut_printf("[SCHED] Calling fut_switch_context(&next->context=%p)...\n",
+                           (void*)&next->context);
                 fut_switch_context(NULL, &next->context);
             }
         }

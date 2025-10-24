@@ -170,6 +170,7 @@ void buddy_heap_init(uintptr_t start, uintptr_t end) {
     uintptr_t current_addr = start;
     size_t remaining_size = heap_size;
 
+    int iteration = 0;
     while (remaining_size > 0 && current_addr < end) {
         /* Find the largest order that fits in remaining space AND is properly aligned at current_addr */
         int block_order = MIN_ORDER;
@@ -186,13 +187,20 @@ void buddy_heap_init(uintptr_t start, uintptr_t end) {
             if (alignment_shift >= MIN_ORDER) {
                 block_order = alignment_shift;
             }
+            fut_printf("[BUDDY-INIT][%d] addr=%p alignment=0x%llx align_shift=%d initial_block_order=%d\n",
+                       iteration, (void*)current_addr, (unsigned long long)alignment,
+                       alignment_shift, block_order);
         }
 
+        int block_order_before_size_constraint = block_order;
         /* Also constrain by remaining space */
         while (block_order < MAX_ORDER && (size_t)(1UL << block_order) <= remaining_size) {
             block_order++;
         }
         block_order--;  /* Step back to the last valid order */
+        fut_printf("[BUDDY-INIT][%d] before_size_constraint=%d after_size_constraint=%d remaining=%llu\n",
+                   iteration, block_order_before_size_constraint, block_order,
+                   (unsigned long long)remaining_size);
 
         /* Ensure block_order is at least MIN_ORDER */
         if (block_order < MIN_ORDER) {
@@ -209,6 +217,12 @@ void buddy_heap_init(uintptr_t start, uintptr_t end) {
         blk->order = block_order;
         blk->is_allocated = 0;
         blk->magic = BLOCK_MAGIC;
+        fut_printf("[BUDDY-INIT][%d] Header set: blk=%p order=%d is_allocated=%d magic=0x%x\n",
+                   iteration, (void*)blk, blk->order, blk->is_allocated, blk->magic);
+        fut_printf("[BUDDY-INIT][%d] Header raw: %02x %02x %02x %02x %02x %02x %02x %02x\n",
+                   iteration,
+                   ((uint8_t*)blk)[0], ((uint8_t*)blk)[1], ((uint8_t*)blk)[2], ((uint8_t*)blk)[3],
+                   ((uint8_t*)blk)[4], ((uint8_t*)blk)[5], ((uint8_t*)blk)[6], ((uint8_t*)blk)[7]);
 
         /* Add to free list */
         free_block_t *freeblk = (free_block_t *)get_data_ptr(blk);
@@ -222,6 +236,15 @@ void buddy_heap_init(uintptr_t start, uintptr_t end) {
         /* Move to next block position */
         current_addr += block_size;
         remaining_size -= block_size;
+        fut_printf("[BUDDY-INIT][%d] Created block order=%d size=%llu, next_addr=%p remaining=%llu\n",
+                   iteration, block_order, (unsigned long long)block_size,
+                   (void*)current_addr, (unsigned long long)remaining_size);
+        iteration++;
+
+        if (iteration > 100) {
+            fut_printf("[BUDDY-INIT] ERROR: Too many iterations, breaking\n");
+            break;
+        }
     }
 
     fut_printf("[BUDDY-INIT] Heap initialization complete\n");
@@ -283,6 +306,11 @@ void *buddy_malloc(size_t size) {
             /* Get the block header */
             block_hdr_t *hdr = (block_hdr_t *)candidate - 1;
             fut_printf("[BUDDY-MALLOC] Block header at %p\n", (void*)hdr);
+            fut_printf("[BUDDY-MALLOC] Header contents: order=%d is_allocated=%d magic=0x%x\n",
+                       hdr->order, hdr->is_allocated, hdr->magic);
+            fut_printf("[BUDDY-MALLOC] Header raw bytes: %02x %02x %02x %02x %02x %02x %02x %02x\n",
+                       ((uint8_t*)hdr)[0], ((uint8_t*)hdr)[1], ((uint8_t*)hdr)[2], ((uint8_t*)hdr)[3],
+                       ((uint8_t*)hdr)[4], ((uint8_t*)hdr)[5], ((uint8_t*)hdr)[6], ((uint8_t*)hdr)[7]);
 
             /* Found a free block - remove from free list */
             if (candidate->next) {

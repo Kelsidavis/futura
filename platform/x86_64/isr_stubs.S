@@ -112,6 +112,12 @@ isr_syscall_int80_stub:
     pushq %rdi
     pushq %rax
 
+    /* Calculate pointer to interrupt frame (for userspace thread state) */
+    /* Frame is at: RSP + (13 * 8) = RSP + 104 bytes */
+    /* That's where the CPU pushed: RIP, CS, RFLAGS, RSP, SS */
+    movq %rsp, %r15
+    addq $104, %r15           /* r15 = pointer to interrupt frame */
+
     /* Extract syscall arguments from saved registers */
     movq 0(%rsp), %rdi        /* syscall number from RAX */
     movq 8(%rsp), %rsi        /* arg1 from RDI */
@@ -121,10 +127,11 @@ isr_syscall_int80_stub:
     movq 40(%rsp), %r9        /* arg5 from R8 */
     movq 48(%rsp), %r11       /* arg6 from R9 */
     pushq %r11
+    pushq %r15                /* arg7: interrupt frame pointer */
 
     call syscall_entry_c
 
-    addq $8, %rsp             /* remove arg6 */
+    addq $16, %rsp            /* remove arg7 and arg6 */
     addq $56, %rsp            /* remove saved argument registers */
 
     popq %r15

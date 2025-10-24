@@ -32,6 +32,7 @@
 
 #define PF_X            0x00000001u
 #define PF_W            0x00000002u
+#define PF_R            0x00000004u
 
 #define USER_CODE_SELECTOR  (0x18u | 0x3u)
 #define USER_DATA_SELECTOR  (0x20u | 0x3u)
@@ -137,6 +138,13 @@ static int map_segment(fut_mm_t *mm, int fd, const elf64_phdr_t *phdr) {
     if ((phdr->p_flags & PF_X) == 0) {
         flags |= PTE_NX;
     }
+    fut_printf("[EXEC][MAP-SEGMENT] phdr->p_flags=0x%x (R=%d W=%d X=%d) -> flags=0x%llx (NX=%d)\n",
+               (unsigned)phdr->p_flags,
+               (int)((phdr->p_flags & PF_R) != 0),
+               (int)((phdr->p_flags & PF_W) != 0),
+               (int)((phdr->p_flags & PF_X) != 0),
+               (unsigned long long)flags,
+               (int)((flags & PTE_NX) != 0));
 
     size_t pages_array_size = page_count * sizeof(uint8_t *);
     fut_printf("[EXEC][MAP-SEGMENT] Allocating pages array: %llu bytes\n",
@@ -185,10 +193,11 @@ static int map_segment(fut_mm_t *mm, int fd, const elf64_phdr_t *phdr) {
 
         uint64_t pte = 0;
         if (pmap_probe_pte(mm_context(mm), seg_start + (uint64_t)i * PAGE_SIZE, &pte) == 0) {
-            fut_printf("[EXEC][MAP] vaddr=0x%llx pte=0x%llx flags=0x%llx\n",
+            fut_printf("[EXEC][MAP] vaddr=0x%llx pte=0x%llx flags=0x%llx NX=%d\n",
                        (unsigned long long)(seg_start + (uint64_t)i * PAGE_SIZE),
                        (unsigned long long)pte,
-                       (unsigned long long)fut_pte_flags(pte));
+                       (unsigned long long)fut_pte_flags(pte),
+                       (int)((pte >> 63) & 1));
         }
     }
 
@@ -337,48 +346,58 @@ static int build_user_stack(fut_mm_t *mm,
 }
 
 static void fut_user_trampoline(void *arg) {
-    struct fut_user_entry info = *(struct fut_user_entry *)arg;
-    fut_free(arg);
+    extern void fut_printf(const char *, ...);
+    fut_printf("[USER-TRAMPOLINE] Called with arg=%p\n", arg);
 
-    uint16_t user_ds = USER_DATA_SELECTOR;
-    uint16_t user_ss = USER_DATA_SELECTOR;
-    uint16_t user_cs = USER_CODE_SELECTOR;
-    uint64_t rflags = 0x202u;
-    uint64_t argc = info.argc;
-    uint64_t argv_ptr = info.argv_ptr;
-    uint64_t user_rsp = info.stack;
-    uint64_t user_rip = info.entry;
+    if (!arg) {
+        fut_printf("[USER-TRAMPOLINE] ERROR: NULL arg!\n");
+        extern void fut_thread_exit(void);
+        fut_thread_exit();
+    }
 
+    /* Extract values from the user entry structure BEFORE freeing it */
+    struct fut_user_entry *info = (struct fut_user_entry *)arg;
+    uint64_t entry = info->entry;
+    uint64_t stack = info->stack;
+    uint64_t argc = info->argc;
+    uint64_t argv_ptr = info->argv_ptr;
+
+    extern void serial_puts(const char *);
+    fut_printf("[USER-TRAMPOLINE] entry=0x%llx stack=0x%llx argc=%llu argv=0x%llx\n",
+               entry, stack, argc, argv_ptr);
+
+    /* Don't free the arg structure - we never return from IRETQ anyway
+     * and freeing might corrupt something */
+    serial_puts("[USER-TRAMPOLINE] About to jump to userspace (not freeing arg)...\n");
+
+    /* Jump to userspace using IRETQ - use actual values from the structure */
     __asm__ volatile(
-        "mov %[ds], %%ax\n"
-        "mov %%ax, %%ds\n"
-        "mov %%ax, %%es\n"
-        "mov %%ax, %%fs\n"
-        "mov %%ax, %%gs\n"
-        "mov %[argc], %%rdi\n"
-        "mov %[argv], %%rsi\n"
-        "mov %[rsp], %%rax\n"
-        "mov %[ss], %%rbx\n"
-        "mov %[rflags], %%rcx\n"
-        "mov %[cs], %%rdx\n"
-        "mov %[rip], %%r8\n"
-        "pushq %%rbx\n"
-        "pushq %%rax\n"
-        "pushq %%rcx\n"
-        "pushq %%rdx\n"
-        "pushq %%r8\n"
+        /* Disable interrupts during transition */
+        "cli\n"
+        /* Set data segments to user mode FIRST before touching argument registers */
+        "movw $0x23, %%ax\n"                  /* USER_DATA_SELECTOR */
+        "movw %%ax, %%ds\n"
+        "movw %%ax, %%es\n"
+        "movw %%ax, %%fs\n"
+        "movw %%ax, %%gs\n"
+        /* Build IRETQ frame using extracted values */
+        "pushq $0x23\n"                       /* SS = USER_DATA_SELECTOR */
+        "pushq %2\n"                          /* RSP = stack */
+        "pushq $0x202\n"                      /* RFLAGS = IF set */
+        "pushq $0x1b\n"                       /* CS = USER_CODE_SELECTOR */
+        "pushq %3\n"                          /* RIP = entry */
+        /* Set up argument registers for main(argc, argv) from extracted values */
+        "movq %0, %%rdi\n"                    /* argc */
+        "movq %1, %%rsi\n"                    /* argv */
+        /* Return to userspace */
         "iretq\n"
         :
-        : [ds]"m"(user_ds),
-          [argc]"m"(argc),
-          [argv]"m"(argv_ptr),
-          [rsp]"m"(user_rsp),
-          [ss]"m"(user_ss),
-          [rflags]"m"(rflags),
-          [cs]"m"(user_cs),
-          [rip]"m"(user_rip)
-        : "rax", "rbx", "rcx", "rdx", "r8", "rdi", "rsi", "memory");
+        : "r"(argc), "r"(argv_ptr), "r"(stack), "r"(entry)
+        : "rax", "memory");
 
+    /* Should NEVER reach here - IRETQ doesn't return */
+    extern void fut_platform_panic(const char *);
+    fut_platform_panic("[FATAL] IRETQ returned - this should never happen!");
     __builtin_unreachable();
 }
 

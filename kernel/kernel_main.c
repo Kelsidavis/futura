@@ -116,7 +116,7 @@ extern char _bss_end[];
 
 /* Memory configuration - allocate 1GB in QEMU with balanced kernel heap */
 #define TOTAL_MEMORY_SIZE       (1024 * 1024 * 1024) /* 1 GiB */
-#define KERNEL_HEAP_SIZE        (256 * 1024 * 1024)  /* 256 MiB kernel heap - balanced size for RAMFS staging and process tasks */
+#define KERNEL_HEAP_SIZE        (128 * 1024 * 1024)  /* 128 MiB kernel heap - reduced to stay within initially mapped region */
 
 /* ============================================================
  *   Test Thread Functions

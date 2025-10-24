@@ -124,9 +124,17 @@ int fut_map_page(fut_vmem_context_t *ctx, uint64_t vaddr, uint64_t paddr, uint64
     uint64_t pt_idx = PT_INDEX(vaddr);
 
     /* Get or create PDPT */
+    /* CRITICAL: Intermediate page table entries must NOT have NX set
+     * if the final page should be executable. The NX bit is cumulative -
+     * if ANY level has NX=1, the final page is non-executable.
+     * So we only set NX on intermediate entries if the final page will have NX. */
     uint64_t level_flags = PTE_PRESENT | PTE_WRITABLE;
     if (ctx) {
         level_flags |= PTE_USER;
+    }
+    /* Preserve the NX bit from the requested flags for intermediate entries */
+    if (flags & PTE_NX) {
+        level_flags |= PTE_NX;
     }
 
     page_table_t *pdpt;

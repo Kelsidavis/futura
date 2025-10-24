@@ -378,51 +378,52 @@ static int build_user_stack(fut_mm_t *mm,
                entry, stack, argc, argv_ptr);
     fut_printf("[USER-TRAMPOLINE] Selectors: CS=0x1b DS=0x23 SS=0x23\n");
 
-    /* Jump to userspace using IRETQ - use actual values from the structure
-     * Use a struct to pass values to avoid register constraint issues */
-    struct {
-        uint64_t entry;
-        uint64_t stack;
-        uint64_t argc;
-        uint64_t argv;
-    } iretq_args = {
-        .entry = entry,
-        .stack = stack,
-        .argc = argc,
-        .argv = argv_ptr
-    };
+    /* Try the absolute simplest approach - hardcode everything */
+    fut_printf("[USER-TRAMPOLINE] Final check: entry=0x%llx stack=0x%llx argc=%llu argv=0x%llx\n",
+               entry, stack, argc, argv_ptr);
 
-    fut_printf("[USER-TRAMPOLINE] &iretq_args=%p\n", (void*)&iretq_args);
+    /* Use register variables to guarantee register allocation */
+    register uint64_t r_entry __asm__("r11") = entry;
+    register uint64_t r_stack __asm__("r10") = stack;
+    register uint64_t r_argc __asm__("rdi") = argc;
+    register uint64_t r_argv __asm__("rsi") = argv_ptr;
 
     __asm__ volatile(
-        /* Disable interrupts during transition */
+        /* Disable interrupts */
         "cli\n"
 
-        /* Load values from memory into registers BEFORE changing segments */
-        "movq 0(%0), %%r11\n"                 /* r11 = entry (RIP) */
-        "movq 8(%0), %%r10\n"                 /* r10 = stack (RSP) */
-        "movq 16(%0), %%rdi\n"                /* rdi = argc */
-        "movq 24(%0), %%rsi\n"                /* rsi = argv */
-
-        /* Build IRETQ frame on stack */
-        "pushq $0x23\n"                       /* SS = USER_DATA_SELECTOR */
+        /* Build IRETQ frame using explicit registers */
+        "pushq $0x23\n"                       /* SS */
         "pushq %%r10\n"                       /* RSP */
-        "pushq $0x202\n"                      /* RFLAGS = IF set */
-        "pushq $0x1b\n"                       /* CS = USER_CODE_SELECTOR */
+        "pushq $0x202\n"                      /* RFLAGS */
+        "pushq $0x1b\n"                       /* CS */
         "pushq %%r11\n"                       /* RIP */
 
-        /* NOW set data segments to user mode (after all memory accesses) */
-        "movw $0x23, %%ax\n"                  /* USER_DATA_SELECTOR */
-        "movw %%ax, %%ds\n"
-        "movw %%ax, %%es\n"
-        "movw %%ax, %%fs\n"
-        "movw %%ax, %%gs\n"
+        /* rdi and rsi already have argc/argv from register variables */
+        /* DON'T zero rdi/rsi - they contain user arguments */
+        /* DON'T zero r10/r11 until after we've pushed them */
+
+        /* Zero only the registers we're not using */
+        "xorq %%rax, %%rax\n"
+        "xorq %%rbx, %%rbx\n"
+        "xorq %%rcx, %%rcx\n"
+        "xorq %%rdx, %%rdx\n"
+        "xorq %%rbp, %%rbp\n"
+        "xorq %%r8, %%r8\n"
+        "xorq %%r9, %%r9\n"
+        /* r10 and r11 can be zeroed now - they've been pushed */
+        "xorq %%r10, %%r10\n"
+        "xorq %%r11, %%r11\n"
+        "xorq %%r12, %%r12\n"
+        "xorq %%r13, %%r13\n"
+        "xorq %%r14, %%r14\n"
+        "xorq %%r15, %%r15\n"
 
         /* Return to userspace */
         "iretq\n"
         :
-        : "r"(&iretq_args)
-        : "rax", "rdi", "rsi", "r10", "r11", "memory");
+        : "r"(r_entry), "r"(r_stack), "r"(r_argc), "r"(r_argv)
+        : "memory", "cc");
 
     /* Should NEVER reach here - IRETQ doesn't return */
     extern void fut_platform_panic(const char *);

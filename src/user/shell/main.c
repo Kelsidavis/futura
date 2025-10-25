@@ -56,6 +56,10 @@ struct shell_var {
 static struct shell_var shell_vars[MAX_VARS];
 static int last_exit_status = 0;
 
+/* Type definitions */
+typedef long ssize_t;
+typedef int pid_t;
+
 /* Environment array for passing to execve */
 static char *envp[MAX_VARS + 1];  /* +1 for NULL terminator */
 static char env_strings[MAX_VARS][MAX_VAR_NAME + MAX_VAR_VALUE + 2];  /* name=value\0 */
@@ -65,6 +69,26 @@ static char env_strings[MAX_VARS][MAX_VAR_NAME + MAX_VAR_VALUE + 2];  /* name=va
 #define MAX_CMD_LEN 512
 static char history[MAX_HISTORY][MAX_CMD_LEN];
 static int history_count = 0;
+
+/* Job control */
+#define MAX_JOBS 32
+
+enum job_status {
+    JOB_RUNNING = 0,
+    JOB_DONE,
+    JOB_STOPPED
+};
+
+struct job {
+    int job_id;
+    pid_t pid;
+    enum job_status status;
+    char command[MAX_CMD_LEN];
+    int used;
+};
+
+static struct job jobs[MAX_JOBS];
+static int next_job_id = 1;
 
 /* Forward declarations for utility functions */
 static int strcmp_simple(const char *a, const char *b);
@@ -162,9 +186,6 @@ static inline int sys_open(const char *pathname, int flags, int mode) {
     return (int)syscall3(__NR_open, (long)pathname, flags, mode);
 }
 
-typedef long ssize_t;
-typedef int pid_t;
-
 /* Redirection types */
 enum redir_type {
     REDIR_NONE = 0,
@@ -193,6 +214,32 @@ static void write_str(int fd, const char *str) {
 /* Write a single character */
 static void write_char(int fd, char c) {
     sys_write(fd, &c, 1);
+}
+
+/* Write number to stdout */
+static void write_num(int num) {
+    char buf[32];
+    int i = 0;
+
+    if (num == 0) {
+        write_char(1, '0');
+        return;
+    }
+
+    if (num < 0) {
+        write_char(1, '-');
+        num = -num;
+    }
+
+    while (num > 0) {
+        buf[i++] = '0' + (num % 10);
+        num /= 10;
+    }
+
+    /* Reverse the digits */
+    for (int j = i - 1; j >= 0; j--) {
+        write_char(1, buf[j]);
+    }
 }
 
 /* Simple read syscall wrapper */
@@ -398,8 +445,8 @@ static size_t common_prefix_len(const char *s1, const char *s2) {
 static void complete_command(char *buf, size_t *pos, size_t max_len) {
     /* List of builtin commands */
     const char *builtins[] = {
-        "cd", "clear", "echo", "exit", "export", "help",
-        "pwd", "test", "uname", "whoami", NULL
+        "bg", "cd", "clear", "echo", "exit", "export", "fg", "help",
+        "jobs", "pwd", "test", "uname", "whoami", NULL
     };
 
     /* External commands we might have */
@@ -496,6 +543,59 @@ static const char *get_history(int index) {
     if (index < 0 || index >= history_count) return NULL;
     if (history_count > MAX_HISTORY && index < history_count - MAX_HISTORY) return NULL;
     return history[index % MAX_HISTORY];
+}
+
+/* Job management functions */
+
+/* Add a new background job */
+static int add_job(pid_t pid, const char *command) {
+    for (int i = 0; i < MAX_JOBS; i++) {
+        if (!jobs[i].used) {
+            jobs[i].job_id = next_job_id++;
+            jobs[i].pid = pid;
+            jobs[i].status = JOB_RUNNING;
+            jobs[i].used = 1;
+            strncpy_simple(jobs[i].command, command, MAX_CMD_LEN);
+            return jobs[i].job_id;
+        }
+    }
+    return -1;  /* No free slots */
+}
+
+/* Find job by job ID */
+static struct job *find_job(int job_id) {
+    for (int i = 0; i < MAX_JOBS; i++) {
+        if (jobs[i].used && jobs[i].job_id == job_id) {
+            return &jobs[i];
+        }
+    }
+    return NULL;
+}
+
+/* Update job statuses by checking for finished processes */
+static void update_jobs(void) {
+    for (int i = 0; i < MAX_JOBS; i++) {
+        if (jobs[i].used && jobs[i].status == JOB_RUNNING) {
+            /* Check if process has finished (non-blocking wait) */
+            int status = 0;
+            pid_t result = sys_waitpid(jobs[i].pid, &status, 1);  /* WNOHANG = 1 */
+
+            if (result == jobs[i].pid) {
+                /* Process has finished */
+                jobs[i].status = JOB_DONE;
+            }
+        }
+    }
+}
+
+/* Remove a job from the job table */
+static void remove_job(int job_id) {
+    for (int i = 0; i < MAX_JOBS; i++) {
+        if (jobs[i].used && jobs[i].job_id == job_id) {
+            jobs[i].used = 0;
+            return;
+        }
+    }
 }
 
 /* Get variable value */
@@ -767,12 +867,16 @@ static void cmd_help(int argc, char *argv[]) {
     write_str(1, "  exit [code]     - Exit shell\n");
     write_str(1, "  export VAR=val  - Export environment variable\n");
     write_str(1, "  test / [        - Test conditions (see below)\n");
+    write_str(1, "  jobs            - List background jobs\n");
+    write_str(1, "  fg [job_id]     - Bring job to foreground\n");
+    write_str(1, "  bg [job_id]     - Resume job in background (not supported)\n");
     write_str(1, "\n");
     write_str(1, "Features:\n");
     write_str(1, "  Variables:      VAR=value, $VAR, ${VAR}, $?\n");
     write_str(1, "  Pipelines:      cmd1 | cmd2 | cmd3\n");
     write_str(1, "  Redirection:    cmd > file, cmd >> file, cmd < file\n");
     write_str(1, "  Conditionals:   cmd1 && cmd2, cmd1 || cmd2\n");
+    write_str(1, "  Background:     cmd &\n");
     write_str(1, "  History:        Up/down arrow keys\n");
     write_str(1, "  Completion:     Tab key for command completion\n");
     write_str(1, "\n");
@@ -1013,6 +1117,107 @@ static int cmd_test(int argc, char *argv[]) {
     return 1;
 }
 
+/* Built-in: jobs - list background jobs */
+static void cmd_jobs(int argc, char *argv[]) {
+    (void)argc;
+    (void)argv;
+
+    /* Update job statuses first */
+    update_jobs();
+
+    int has_jobs = 0;
+    for (int i = 0; i < MAX_JOBS; i++) {
+        if (jobs[i].used) {
+            has_jobs = 1;
+            write_str(1, "[");
+            write_num(jobs[i].job_id);
+            write_str(1, "]  ");
+
+            /* Show status */
+            if (jobs[i].status == JOB_RUNNING) {
+                write_str(1, "Running");
+            } else if (jobs[i].status == JOB_DONE) {
+                write_str(1, "Done   ");
+            } else if (jobs[i].status == JOB_STOPPED) {
+                write_str(1, "Stopped");
+            }
+
+            write_str(1, "  ");
+            write_str(1, jobs[i].command);
+            write_str(1, "\n");
+
+            /* Clean up done jobs */
+            if (jobs[i].status == JOB_DONE) {
+                remove_job(jobs[i].job_id);
+            }
+        }
+    }
+
+    if (!has_jobs) {
+        write_str(1, "No background jobs\n");
+    }
+}
+
+/* Built-in: fg - bring job to foreground */
+static void cmd_fg(int argc, char *argv[]) {
+    /* Update job statuses first */
+    update_jobs();
+
+    struct job *j = NULL;
+
+    if (argc < 2) {
+        /* Find most recent job */
+        int max_id = 0;
+        for (int i = 0; i < MAX_JOBS; i++) {
+            if (jobs[i].used && jobs[i].job_id > max_id) {
+                max_id = jobs[i].job_id;
+                j = &jobs[i];
+            }
+        }
+
+        if (!j) {
+            write_str(2, "fg: no current job\n");
+            return;
+        }
+    } else {
+        /* Get job ID from argument */
+        int job_id = simple_atoi(argv[1]);
+        j = find_job(job_id);
+
+        if (!j) {
+            write_str(2, "fg: job not found: ");
+            write_str(2, argv[1]);
+            write_str(2, "\n");
+            return;
+        }
+    }
+
+    if (j->status == JOB_DONE) {
+        write_str(1, "Job already done\n");
+        remove_job(j->job_id);
+        return;
+    }
+
+    /* Wait for the job to complete */
+    write_str(1, j->command);
+    write_str(1, "\n");
+
+    int status = 0;
+    sys_waitpid(j->pid, &status, 0);
+
+    /* Remove from job table */
+    remove_job(j->job_id);
+}
+
+/* Built-in: bg - resume job in background */
+static void cmd_bg(int argc, char *argv[]) {
+    (void)argc;
+    (void)argv;
+
+    /* Without proper signal support (SIGCONT), we can't resume stopped jobs */
+    write_str(2, "bg: not supported (no SIGCONT support)\n");
+}
+
 /* Execute a command */
 static int execute_command(int argc, char *argv[]) {
     if (argc == 0) return 0;
@@ -1043,6 +1248,15 @@ static int execute_command(int argc, char *argv[]) {
         return 0;
     } else if (strcmp_simple(argv[0], "test") == 0 || strcmp_simple(argv[0], "[") == 0) {
         return cmd_test(argc, argv);
+    } else if (strcmp_simple(argv[0], "jobs") == 0) {
+        cmd_jobs(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "fg") == 0) {
+        cmd_fg(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "bg") == 0) {
+        cmd_bg(argc, argv);
+        return 0;
     } else if (strcmp_simple(argv[0], "exit") == 0) {
         int status = 0;
         if (argc > 1) {
@@ -1071,7 +1285,10 @@ static int is_builtin(const char *cmd) {
             strcmp_simple(cmd, "whoami") == 0 ||
             strcmp_simple(cmd, "export") == 0 ||
             strcmp_simple(cmd, "test") == 0 ||
-            strcmp_simple(cmd, "[") == 0);
+            strcmp_simple(cmd, "[") == 0 ||
+            strcmp_simple(cmd, "jobs") == 0 ||
+            strcmp_simple(cmd, "fg") == 0 ||
+            strcmp_simple(cmd, "bg") == 0);
 }
 
 /* Parse command line into pipeline stages separated by '|' */
@@ -1239,7 +1456,7 @@ static void exec_external_command(int argc, char *argv[]) {
 }
 
 /* Execute a pipeline of commands */
-static int execute_pipeline(int num_stages, char *stages[]) {
+static int execute_pipeline(int num_stages, char *stages[], int background, const char *cmdtext) {
     if (num_stages == 0) {
         return 0;
     }
@@ -1264,6 +1481,10 @@ static int execute_pipeline(int num_stages, char *stages[]) {
                 if (redir.input_type != REDIR_NONE || redir.output_type != REDIR_NONE) {
                     write_str(2, "Warning: Redirections not supported for builtins yet\n");
                 }
+                /* Builtins cannot be backgrounded */
+                if (background) {
+                    write_str(2, "Warning: Cannot background builtin commands\n");
+                }
                 return execute_command(argc, argv);
             } else {
                 /* External command - fork and exec */
@@ -1282,10 +1503,20 @@ static int execute_pipeline(int num_stages, char *stages[]) {
                     syscall1(__NR_exit, 1);
                 }
 
-                /* Parent: wait for child */
-                int status = 0;
-                sys_waitpid(pid, &status, 0);
-                return 0;
+                /* Parent: wait for child or add to background jobs */
+                if (background) {
+                    int job_id = add_job(pid, cmdtext);
+                    write_str(1, "[");
+                    write_num(job_id);
+                    write_str(1, "] ");
+                    write_num(pid);
+                    write_str(1, "\n");
+                    return 0;
+                } else {
+                    int status = 0;
+                    sys_waitpid(pid, &status, 0);
+                    return 0;
+                }
             }
         }
         return 0;
@@ -1389,10 +1620,26 @@ static int execute_pipeline(int num_stages, char *stages[]) {
         sys_close(pipes[i][1]);
     }
 
-    /* Wait for all children */
-    for (int i = 0; i < num_stages; i++) {
-        int status = 0;
-        sys_waitpid(pids[i], &status, 0);
+    /* Wait for all children or add last one to background jobs */
+    if (background) {
+        /* For pipelines, add the last process to jobs (the whole pipeline) */
+        int job_id = add_job(pids[num_stages - 1], cmdtext);
+        write_str(1, "[");
+        write_num(job_id);
+        write_str(1, "] ");
+        write_num(pids[num_stages - 1]);
+        write_str(1, "\n");
+
+        /* Still need to wait for other processes in the pipeline to avoid zombies */
+        for (int i = 0; i < num_stages - 1; i++) {
+            int status = 0;
+            sys_waitpid(pids[i], &status, 1);  /* WNOHANG */
+        }
+    } else {
+        for (int i = 0; i < num_stages; i++) {
+            int status = 0;
+            sys_waitpid(pids[i], &status, 0);
+        }
     }
 
     return 0;
@@ -1455,11 +1702,35 @@ static int execute_command_chain(char *cmdline) {
             }
         }
 
+        /* Check for background execution (&) */
+        int background = 0;
+        char *seg = segments[i];
+        char *end = seg;
+        while (*end) end++;
+        end--;  /* Point to last character */
+
+        /* Trim trailing whitespace */
+        while (end >= seg && (*end == ' ' || *end == '\t')) {
+            end--;
+        }
+
+        /* Check for & */
+        if (end >= seg && *end == '&') {
+            background = 1;
+            *end = '\0';  /* Remove & from command */
+            end--;
+            /* Trim whitespace before & */
+            while (end >= seg && (*end == ' ' || *end == '\t')) {
+                *end = '\0';
+                end--;
+            }
+        }
+
         /* Execute this segment as a pipeline */
         char *pipeline_stages[10];
         int num_stages = parse_pipeline(segments[i], pipeline_stages, 10);
         if (num_stages > 0) {
-            last_status = execute_pipeline(num_stages, pipeline_stages);
+            last_status = execute_pipeline(num_stages, pipeline_stages, background, segments[i]);
         }
     }
 
@@ -1481,6 +1752,9 @@ int main(int argc, char **argv) {
     ssize_t nread;
 
     while (1) {
+        /* Update background job statuses */
+        update_jobs();
+
         /* Print prompt with current directory */
         write_str(1, "futura> ");
 

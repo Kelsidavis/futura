@@ -32,6 +32,62 @@ static fut_thread_t *current_thread = NULL;
 /* Global thread list (for stats/debugging) */
 fut_thread_t *fut_thread_list = NULL;
 
+#if defined(__x86_64__)
+/* Clean FPU state template for initializing new threads.
+ * This is captured once at boot with a valid FPU state (FCW=0x037F, MXCSR=0x1F80).
+ * All new threads get a copy of this state instead of zeroed memory. */
+static uint8_t clean_fpu_state[512] __attribute__((aligned(16))) = {0};
+static bool clean_fpu_state_initialized = false;
+
+/**
+ * Initialize the clean FPU state template.
+ * This should be called once during thread subsystem initialization.
+ */
+static void init_clean_fpu_state(void) {
+    if (clean_fpu_state_initialized) {
+        return;
+    }
+
+    /* Initialize both x87 FPU and SSE state to known good values.
+     * finit only initializes x87, so we must explicitly zero XMM registers
+     * and set MXCSR to the default value. */
+    __asm__ volatile(
+        "finit\n"                  /* Initialize x87 FPU to default state */
+        "pxor %%xmm0, %%xmm0\n"    /* Zero all XMM registers */
+        "pxor %%xmm1, %%xmm1\n"
+        "pxor %%xmm2, %%xmm2\n"
+        "pxor %%xmm3, %%xmm3\n"
+        "pxor %%xmm4, %%xmm4\n"
+        "pxor %%xmm5, %%xmm5\n"
+        "pxor %%xmm6, %%xmm6\n"
+        "pxor %%xmm7, %%xmm7\n"
+        "pxor %%xmm8, %%xmm8\n"
+        "pxor %%xmm9, %%xmm9\n"
+        "pxor %%xmm10, %%xmm10\n"
+        "pxor %%xmm11, %%xmm11\n"
+        "pxor %%xmm12, %%xmm12\n"
+        "pxor %%xmm13, %%xmm13\n"
+        "pxor %%xmm14, %%xmm14\n"
+        "pxor %%xmm15, %%xmm15\n"
+        "fxsave64 %0\n"            /* Save complete clean state to template */
+        : "=m"(clean_fpu_state)    /* Output: memory operand */
+        :                           /* No inputs */
+        : "memory"                  /* Clobbers memory */
+    );
+
+    /* Verify MXCSR was set to default 0x1F80 by fxsave64.
+     * MXCSR is at offset 24 in the FXSAVE area. */
+    uint32_t *mxcsr_ptr = (uint32_t *)(clean_fpu_state + 24);
+    if (*mxcsr_ptr == 0) {
+        /* If MXCSR is zero, set it to the default value.
+         * This can happen if the CPU's MXCSR was in an unusual state. */
+        *mxcsr_ptr = 0x1F80;
+    }
+
+    clean_fpu_state_initialized = true;
+}
+#endif
+
 /* ============================================================
  *   Thread Creation
  * ============================================================ */
@@ -49,6 +105,11 @@ fut_thread_t *fut_thread_create(
     if (!task || !entry || stack_size == 0) {
         return NULL;
     }
+
+#if defined(__x86_64__)
+    // Initialize clean FPU state template on first call
+    init_clean_fpu_state();
+#endif
 
     // Clamp priority
     if (priority < 0) priority = 0;
@@ -135,8 +196,12 @@ fut_thread_t *fut_thread_create(
     ctx->fs = 0x10;
     ctx->gs = 0x10;
 
-    // Zeroed above but be explicit about SIMD state alignment
-    memset(ctx->fx_area, 0, sizeof(ctx->fx_area));
+    /* Initialize FPU/XMM state with a valid clean state.
+     * This is critical: fxrstor64 requires a properly formatted FXSAVE area.
+     * Using memset(0) creates an invalid FPU state (FCW=0, MXCSR=0) which
+     * causes undefined behavior when restored. Instead, we copy a clean state
+     * captured from finit (FCW=0x037F, MXCSR=0x1F80). */
+    memcpy(ctx->fx_area, clean_fpu_state, sizeof(ctx->fx_area));
 #elif defined(__aarch64__)
     // ARM64 stack grows downward - point to the end of the stack
     uintptr_t aligned_top = ((uintptr_t)stack_top) & ~0xFULL;

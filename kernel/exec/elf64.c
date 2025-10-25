@@ -357,11 +357,11 @@ static int build_user_stack(fut_mm_t *mm,
 }
 
 [[noreturn]] __attribute__((optimize("O0"))) static void fut_user_trampoline(void *arg) {
-    // extern void fut_printf(const char *, ...);
-    // fut_printf("[USER-TRAMPOLINE] Called with arg=%p\n", arg);
+    extern void fut_printf(const char *, ...);
+    fut_printf("[USER-TRAMPOLINE] Called with arg=%p\n", arg);
 
     if (!arg) {
-        // fut_printf("[USER-TRAMPOLINE] ERROR: NULL arg!\n");
+        fut_printf("[USER-TRAMPOLINE] ERROR: NULL arg!\n");
         extern void fut_thread_exit(void);
         fut_thread_exit();
     }

@@ -257,11 +257,27 @@ ssize_t fut_blockdev_write_bytes(struct fut_blockdev *dev, uint64_t offset, size
     uint64_t end_block = (offset + size + block_size - 1) / block_size;
     uint64_t num_blocks = end_block - start_block;
 
-    /* Allocate temporary buffer for aligned I/O */
-    void *temp_buffer = fut_malloc(num_blocks * block_size);
-    if (!temp_buffer) {
+    /* Canary pattern for detecting buffer overflows */
+    #define CANARY_PATTERN 0xDEADBEEFDEADC0DEULL
+    #define CANARY_SIZE 16
+
+    /* Allocate temp buffer with canary guards (16 bytes before, 16 bytes after) */
+    size_t buffer_size = num_blocks * block_size;
+    size_t total_alloc = CANARY_SIZE + buffer_size + CANARY_SIZE;
+    uint8_t *alloc_buffer = (uint8_t *)fut_malloc(total_alloc);
+    if (!alloc_buffer) {
         return -12;  /* ENOMEM */
     }
+
+    /* Set up canaries */
+    uint64_t *pre_canary = (uint64_t *)alloc_buffer;
+    uint8_t *temp_buffer = alloc_buffer + CANARY_SIZE;
+    uint64_t *post_canary = (uint64_t *)(alloc_buffer + CANARY_SIZE + buffer_size);
+
+    pre_canary[0] = CANARY_PATTERN;
+    pre_canary[1] = CANARY_PATTERN;
+    post_canary[0] = CANARY_PATTERN;
+    post_canary[1] = CANARY_PATTERN;
 
     fut_printf("[BLOCKDEV-WRITE-BYTES] dev=%s offset=%llu size=%llu block_size=%u blocks=%llu\n",
                dev->name,
@@ -269,30 +285,83 @@ ssize_t fut_blockdev_write_bytes(struct fut_blockdev *dev, uint64_t offset, size
                (unsigned long long)size,
                block_size,
                (unsigned long long)num_blocks);
+    fut_printf("[BLOCKDEV-WRITE-BYTES] temp_buffer=%p buffer_size=%llu (with %d-byte canaries)\n",
+               (void*)temp_buffer, (unsigned long long)buffer_size, CANARY_SIZE);
+
     /* Read existing blocks first (for partial block writes) */
     int ret = fut_blockdev_read(dev, start_block, num_blocks, temp_buffer);
     if (ret < 0) {
-        fut_free(temp_buffer);
+        fut_free(alloc_buffer);
         return ret;
     }
 
-    /* Modify relevant portion */
+    /* Verify canaries after read */
+    if (pre_canary[0] != CANARY_PATTERN || pre_canary[1] != CANARY_PATTERN) {
+        fut_printf("[BLOCKDEV-WRITE-BYTES] ERROR: Pre-canary corrupted after read! %llx %llx\n",
+                   (unsigned long long)pre_canary[0], (unsigned long long)pre_canary[1]);
+        fut_free(alloc_buffer);
+        return BLOCKDEV_EIO;
+    }
+    if (post_canary[0] != CANARY_PATTERN || post_canary[1] != CANARY_PATTERN) {
+        fut_printf("[BLOCKDEV-WRITE-BYTES] ERROR: Post-canary corrupted after read! %llx %llx\n",
+                   (unsigned long long)post_canary[0], (unsigned long long)post_canary[1]);
+        fut_free(alloc_buffer);
+        return BLOCKDEV_EIO;
+    }
+
+    /* Modify relevant portion with bounds checking */
     uint64_t offset_in_block = offset % block_size;
     uint8_t *dst = (uint8_t *)temp_buffer + offset_in_block;
     const uint8_t *src = (const uint8_t *)buffer;
+
+    /* Verify write stays within bounds */
+    if (offset_in_block + size > buffer_size) {
+        fut_printf("[BLOCKDEV-WRITE-BYTES] ERROR: Write would overflow buffer! offset_in_block=%llu size=%llu buffer_size=%llu\n",
+                   (unsigned long long)offset_in_block, (unsigned long long)size, (unsigned long long)buffer_size);
+        fut_free(alloc_buffer);
+        return BLOCKDEV_EINVAL;
+    }
 
     for (size_t i = 0; i < size; i++) {
         dst[i] = src[i];
     }
 
+    /* Verify canaries after modification */
+    if (pre_canary[0] != CANARY_PATTERN || pre_canary[1] != CANARY_PATTERN) {
+        fut_printf("[BLOCKDEV-WRITE-BYTES] ERROR: Pre-canary corrupted after modify! %llx %llx\n",
+                   (unsigned long long)pre_canary[0], (unsigned long long)pre_canary[1]);
+        fut_free(alloc_buffer);
+        return BLOCKDEV_EIO;
+    }
+    if (post_canary[0] != CANARY_PATTERN || post_canary[1] != CANARY_PATTERN) {
+        fut_printf("[BLOCKDEV-WRITE-BYTES] ERROR: Post-canary corrupted after modify! %llx %llx\n",
+                   (unsigned long long)post_canary[0], (unsigned long long)post_canary[1]);
+        fut_free(alloc_buffer);
+        return BLOCKDEV_EIO;
+    }
+
     /* Write blocks back */
     ret = fut_blockdev_write(dev, start_block, num_blocks, temp_buffer);
     if (ret < 0) {
-        fut_free(temp_buffer);
+        fut_free(alloc_buffer);
         return ret;
     }
 
-    fut_printf("[BLOCKDEV-WRITE-BYTES] write complete dev=%s\n", dev->name);
-    fut_free(temp_buffer);
+    /* Final canary check */
+    if (pre_canary[0] != CANARY_PATTERN || pre_canary[1] != CANARY_PATTERN) {
+        fut_printf("[BLOCKDEV-WRITE-BYTES] ERROR: Pre-canary corrupted after write! %llx %llx\n",
+                   (unsigned long long)pre_canary[0], (unsigned long long)pre_canary[1]);
+        fut_free(alloc_buffer);
+        return BLOCKDEV_EIO;
+    }
+    if (post_canary[0] != CANARY_PATTERN || post_canary[1] != CANARY_PATTERN) {
+        fut_printf("[BLOCKDEV-WRITE-BYTES] ERROR: Post-canary corrupted after write! %llx %llx\n",
+                   (unsigned long long)post_canary[0], (unsigned long long)post_canary[1]);
+        fut_free(alloc_buffer);
+        return BLOCKDEV_EIO;
+    }
+
+    fut_printf("[BLOCKDEV-WRITE-BYTES] write complete dev=%s (canaries intact)\n", dev->name);
+    fut_free(alloc_buffer);
     return (ssize_t)size;
 }

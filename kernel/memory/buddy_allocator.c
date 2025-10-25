@@ -16,12 +16,12 @@
  *   Buddy Allocator Constants and Data Structures
  * ============================================================ */
 
-/* Debug verbosity control - disable on ARM64 due to printf hang issues */
-#ifdef __aarch64__
-#define BUDDY_DEBUG_PRINTF(...) do {} while(0)
-#else
+/* Debug verbosity control - disabled by default for performance */
+#ifdef BUDDY_VERBOSE_DEBUG
 extern void fut_printf(const char *, ...);
 #define BUDDY_DEBUG_PRINTF(...) fut_printf(__VA_ARGS__)
+#else
+#define BUDDY_DEBUG_PRINTF(...) do {} while(0)
 #endif
 
 /* Minimum allocation size: 64 bytes (covers typical structures + header) */

@@ -78,9 +78,9 @@ static void init_clean_fpu_state(void) {
     /* Verify MXCSR was set to default 0x1F80 by fxsave64.
      * MXCSR is at offset 24 in the FXSAVE area. */
     uint32_t *mxcsr_ptr = (uint32_t *)(clean_fpu_state + 24);
+
+    /* Ensure MXCSR is set to default value */
     if (*mxcsr_ptr == 0) {
-        /* If MXCSR is zero, set it to the default value.
-         * This can happen if the CPU's MXCSR was in an unusual state. */
         *mxcsr_ptr = 0x1F80;
     }
 

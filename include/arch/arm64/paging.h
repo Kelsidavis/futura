@@ -137,7 +137,7 @@ _Static_assert(sizeof(page_table_t) == PAGE_SIZE, "Page table must be 4KB");
  * Virtual memory address space (per-process).
  */
 typedef struct fut_vmem_context {
-    pte_t *pgd;                 /* Physical address of PGD (L0 table) */
+    page_table_t *pgd;          /* Physical address of PGD (L0 table) */
     uint64_t ttbr0_el1;         /* Value to load into TTBR0_EL1 */
     uint64_t ref_count;         /* Reference count for sharing */
 } fut_vmem_context_t;
@@ -372,7 +372,7 @@ static inline void fut_flush_tlb_all(void) {
  * Get kernel PGD table.
  * @return Physical address of kernel PGD
  */
-pte_t *fut_get_kernel_pgd(void);
+page_table_t *fut_get_kernel_pgd(void);
 
 /**
  * Map physical memory into kernel space.

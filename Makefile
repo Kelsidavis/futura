@@ -408,6 +408,7 @@ else ifeq ($(PLATFORM),arm64)
         platform/arm64/arm64_minimal_stubs.c \
         kernel/arch/arm64/hal_halt.c \
         kernel/arch/arm64/hal_interrupts.c \
+        kernel/mm/arm64_paging.c \
         kernel/dtb/arm64_dtb.c \
         kernel/dtb/rpi_init.c
 endif
@@ -468,6 +469,7 @@ $(OBJ_DIR) $(BIN_DIR):
 	@mkdir -p $@
 	@mkdir -p $(OBJ_DIR)/kernel
 	@mkdir -p $(OBJ_DIR)/kernel/memory
+	@mkdir -p $(OBJ_DIR)/kernel/mm
 	@mkdir -p $(OBJ_DIR)/kernel/threading
 	@mkdir -p $(OBJ_DIR)/kernel/scheduler
 	@mkdir -p $(OBJ_DIR)/kernel/timer
@@ -487,6 +489,9 @@ $(OBJ_DIR) $(BIN_DIR):
 	@mkdir -p $(OBJ_DIR)/platform/$(PLATFORM)
 ifeq ($(PLATFORM),x86_64)
 	@mkdir -p $(OBJ_DIR)/arch/x86_64
+else ifeq ($(PLATFORM),arm64)
+	@mkdir -p $(OBJ_DIR)/kernel/arch/arm64
+	@mkdir -p $(OBJ_DIR)/kernel/dtb
 endif
 	@mkdir -p $(OBJ_DIR)/tests
 	@mkdir -p $(OBJ_DIR)/subsystems/posix_compat

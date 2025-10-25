@@ -301,25 +301,33 @@ static void arp_handle_packet(const uint8_t *frame, size_t len) {
     uint32_t sender_ip = ntohl(arp->sender_ip);
     uint32_t target_ip = ntohl(arp->target_ip);
 
-    fut_printf("[ARP-DEBUG] About to call arp_add_static\n");
+    fut_printf("[ARP-DEBUG] sender_ip=0x%x target_ip=0x%x\n", sender_ip, target_ip);
+    fut_printf("[ARP-DEBUG] About to call arp_add_static for sender 0x%x\n", sender_ip);
     /* Update ARP cache with sender info */
     arp_add_static(sender_ip, arp->sender_mac);
-    fut_printf("[ARP-DEBUG] arp_add_static returned\n");
+    fut_printf("[ARP-DEBUG] arp_add_static returned, added sender 0x%x to cache\n", sender_ip);
+
+    fut_printf("[ARP-DEBUG] Checking if ARP request: op=%u, target_ip=0x%x, our_ip=0x%x\n",
+               op, target_ip, g_tcpip.ip_address);
 
     /* Handle ARP request */
     if (op == ARP_OP_REQUEST && target_ip == g_tcpip.ip_address) {
+        fut_printf("[ARP-DEBUG] This is a request for our IP\n");
         TCPIP_DEBUG("[ARP] Request for our IP, sending reply\n");
 
+        fut_printf("[ARP-DEBUG] Building ARP reply\n");
         /* Build ARP reply */
         uint8_t reply[ETH_HEADER_LEN + sizeof(arp_packet_t)];
         eth_header_t *eth_hdr = (eth_header_t *)reply;
         arp_packet_t *arp_reply = (arp_packet_t *)(reply + ETH_HEADER_LEN);
 
+        fut_printf("[ARP-DEBUG] Filling Ethernet header\n");
         /* Ethernet header */
         memcpy(eth_hdr->dest, arp->sender_mac, ETH_ADDR_LEN);
         memcpy(eth_hdr->src, g_tcpip.mac_address, ETH_ADDR_LEN);
         eth_hdr->type = htons(ETHERTYPE_ARP);
 
+        fut_printf("[ARP-DEBUG] Filling ARP reply fields\n");
         /* ARP reply */
         arp_reply->hardware_type = htons(ARP_HARDWARE_ETHERNET);
         arp_reply->protocol_type = htons(ARP_PROTOCOL_IP);
@@ -331,8 +339,12 @@ static void arp_handle_packet(const uint8_t *frame, size_t len) {
         memcpy(arp_reply->target_mac, arp->sender_mac, ETH_ADDR_LEN);
         arp_reply->target_ip = arp->sender_ip;
 
+        fut_printf("[ARP-DEBUG] About to send ARP reply\n");
         /* Send reply */
         fut_net_send(g_tcpip.raw_socket, reply, sizeof(reply));
+        fut_printf("[ARP-DEBUG] ARP reply sent\n");
+    } else {
+        fut_printf("[ARP-DEBUG] Not a request for us, skipping reply\n");
     }
 
     /* Handle ARP reply */
@@ -353,10 +365,11 @@ int arp_resolve(uint32_t ip, eth_addr_t *mac) {
 
     /* Check cache first */
     if (arp_lookup_cache(ip, mac) == 0) {
+        fut_printf("[ARP] IP 0x%x found in cache\n", ip);
         return 0;
     }
 
-    TCPIP_DEBUG("[ARP] Resolving IP address\n");
+    fut_printf("[ARP] Resolving IP address 0x%x\n", ip);
 
     /* Send ARP request */
     uint8_t request[ETH_HEADER_LEN + sizeof(arp_packet_t)];
@@ -379,8 +392,10 @@ int arp_resolve(uint32_t ip, eth_addr_t *mac) {
     memset(arp->target_mac, 0, ETH_ADDR_LEN);
     arp->target_ip = htonl(ip);
 
+    fut_printf("[ARP] Sending ARP request for 0x%x\n", ip);
     /* Send request */
     fut_net_send(g_tcpip.raw_socket, request, sizeof(request));
+    fut_printf("[ARP] ARP request sent, waiting for reply...\n");
 
     /* Wait for reply (simplified - should use proper async mechanism) */
     for (int retry = 0; retry < 100; retry++) {
@@ -388,9 +403,11 @@ int arp_resolve(uint32_t ip, eth_addr_t *mac) {
         fut_thread_yield();
 
         if (arp_lookup_cache(ip, mac) == 0) {
+            fut_printf("[ARP] Got reply for 0x%x after %d retries\n", ip, retry);
             return 0;
         }
     }
+    fut_printf("[ARP] Timeout waiting for reply for 0x%x\n", ip);
 
     /* Failed to resolve */
     return -EHOSTUNREACH;
@@ -407,19 +424,26 @@ static void ip_send_packet(uint32_t dest_ip, uint8_t protocol,
         return;
     }
 
+    fut_printf("[IP-SEND] Sending to dest_ip=0x%x\n", dest_ip);
+
     /* Resolve destination MAC */
     eth_addr_t dest_mac;
     uint32_t next_hop = dest_ip;
 
     /* If not on local network, use gateway */
     if ((dest_ip & g_tcpip.netmask) != (g_tcpip.ip_address & g_tcpip.netmask)) {
+        fut_printf("[IP-ROUTE] Dest not on local network, using gateway 0x%x\n", g_tcpip.gateway);
         next_hop = g_tcpip.gateway;
+    } else {
+        fut_printf("[IP-ROUTE] Dest on local network, direct send\n");
     }
 
+    fut_printf("[IP-SEND] Resolving ARP for next_hop=0x%x\n", next_hop);
     if (arp_resolve(next_hop, &dest_mac) != 0) {
         TCPIP_DEBUG("[IP] ARP resolution failed\n");
         return;
     }
+    fut_printf("[IP-SEND] ARP resolved successfully\n");
 
     /* Build packet */
     size_t total_len = ETH_HEADER_LEN + IP_HEADER_MIN_LEN + payload_len;
@@ -843,7 +867,9 @@ static void tcpip_rx_thread(void *arg) {
 
             switch (ethertype) {
                 case ETHERTYPE_ARP:
+                    fut_printf("[RX-THREAD] Calling arp_handle_packet\n");
                     arp_handle_packet(buffer, received);
+                    fut_printf("[RX-THREAD] arp_handle_packet returned\n");
                     break;
                 case ETHERTYPE_IP:
                     ip_handle_packet(buffer, received);
@@ -1205,6 +1231,21 @@ int tcpip_init(void) {
 
     /* Set default IP configuration */
     tcpip_set_ip_address(TCPIP_DEFAULT_IP, TCPIP_DEFAULT_MASK, TCPIP_DEFAULT_GW);
+
+    /* Pre-populate ARP cache with gateway and DNS (QEMU user networking workaround)
+     * QEMU user networking doesn't respond to ARP requests properly,
+     * so we hardcode the MAC addresses:
+     *   10.0.2.2 (gateway) -> 52:55:0a:00:02:02
+     *   10.0.2.3 (DNS)     -> 52:55:0a:00:02:03
+     */
+    eth_addr_t gateway_mac = {0x52, 0x55, 0x0a, 0x00, 0x02, 0x02};
+    arp_add_static(TCPIP_DEFAULT_GW, gateway_mac);
+    fut_printf("[TCP/IP] Added static ARP entry for gateway 10.0.2.2\n");
+
+    eth_addr_t dns_mac = {0x52, 0x55, 0x0a, 0x00, 0x02, 0x03};
+    uint32_t qemu_dns_ip = (10 << 24) | (0 << 16) | (2 << 8) | 3;  /* 10.0.2.3 */
+    arp_add_static(qemu_dns_ip, dns_mac);
+    fut_printf("[TCP/IP] Added static ARP entry for DNS 10.0.2.3\n");
 
     /* Initialize underlying network layer */
     fut_net_init();

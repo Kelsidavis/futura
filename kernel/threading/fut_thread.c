@@ -157,8 +157,8 @@ fut_thread_t *fut_thread_create(
     // Add to scheduler ready queue
     fut_sched_add_thread(thread);
 
-    // Add to global thread list
-    thread->next = fut_thread_list;
+    // Add to global thread list (uses separate global_next pointer)
+    thread->global_next = fut_thread_list;
     fut_thread_list = thread;
 
     return thread;
@@ -203,12 +203,12 @@ void fut_thread_yield(void) {
 
     // Remove from global thread list
     fut_thread_t **prev = &fut_thread_list;
-    for (fut_thread_t *t = fut_thread_list; t; t = t->next) {
+    for (fut_thread_t *t = fut_thread_list; t; t = t->global_next) {
         if (t == self) {
-            *prev = t->next;
+            *prev = t->global_next;
             break;
         }
-        prev = &t->next;
+        prev = &t->global_next;
     }
     self->wait_next = NULL;
 
@@ -267,7 +267,7 @@ void fut_thread_set_current(fut_thread_t *thread) {
 }
 
 fut_thread_t *fut_thread_find(uint64_t tid) {
-    for (fut_thread_t *t = fut_thread_list; t; t = t->next) {
+    for (fut_thread_t *t = fut_thread_list; t; t = t->global_next) {
         if (t->tid == tid) {
             return t;
         }

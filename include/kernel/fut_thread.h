@@ -75,9 +75,10 @@ struct fut_thread {
 
     fut_thread_stats_t stats;             // Performance instrumentation data
 
-    fut_thread_t *next;                   // Next in queue
-    fut_thread_t *prev;                   // Previous in queue
+    fut_thread_t *next;                   // Next in scheduler ready queue
+    fut_thread_t *prev;                   // Previous in scheduler ready queue
     fut_thread_t *wait_next;              // Next in wait queue
+    fut_thread_t *global_next;            // Next in global thread list
 };
 
 /* ============================================================

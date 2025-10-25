@@ -90,7 +90,8 @@ void fut_sched_init(void) {
         return;
     }
 
-    // Create idle thread
+    // Create idle thread (we'll add it to the ready queue manually later if needed)
+    // Note: We create with priority FUT_IDLE_PRIORITY but don't add to scheduler queue
     idle_thread = fut_thread_create(
         idle_task,
         idle_thread_entry,
@@ -105,7 +106,11 @@ void fut_sched_init(void) {
     }
 
     // Remove idle from ready queue - we'll schedule it manually
+    // This removes the idle thread that was automatically added by fut_thread_create()
+    // Disable interrupts to prevent deadlock (timer interrupt could fire and try to acquire sched_lock)
+    __asm__ volatile("cli");
     fut_sched_remove_thread(idle_thread);
+    __asm__ volatile("sti");
 
     fut_printf("[SCHED] Scheduler initialized\n");
 }

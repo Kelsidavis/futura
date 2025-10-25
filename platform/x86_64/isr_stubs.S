@@ -93,6 +93,8 @@ IRQ 15, 47                              /* Secondary ATA */
 
 /* System call interrupt (128) */
 .extern syscall_entry_c
+.extern fut_in_interrupt
+.extern fut_current_frame
 .global isr_syscall_int80_stub
 .type isr_syscall_int80_stub, @function
 isr_syscall_int80_stub:
@@ -389,6 +391,9 @@ irq0_timer:
     movw %ax, %fs
     movw %ax, %gs
 
+    /* Save interrupt frame pointer before stack alignment */
+    movq %rsp, fut_current_frame(%rip)
+
     /* Align stack to 16 bytes for System V ABI */
     movq %rsp, %rbp
     andq $-16, %rsp
@@ -401,6 +406,9 @@ irq0_timer:
 
     /* Clear interrupt context flag */
     movb $0, fut_in_interrupt(%rip)
+
+    /* Clear frame pointer */
+    movq $0, fut_current_frame(%rip)
 
     /* Restore stack */
     movq %rbp, %rsp

@@ -245,28 +245,18 @@ void fut_schedule(void) {
         fut_mm_t *prev_mm = (prev && prev->task) ? fut_task_get_mm(prev->task) : NULL;
         fut_mm_t *next_mm = (next && next->task) ? fut_task_get_mm(next->task) : NULL;
 
-        if (in_irq && prev) {
-            // IRQ-safe context switch (uses IRET)
-            // NOTE: fut_switch_context_irq is NOT YET IMPLEMENTED (it's a stub)
-            // Switching CR3 here without proper IRET frame manipulation causes page faults
-            // when IRETQ tries to return to userspace with wrong page tables.
-            // WORKAROUND: Skip preemptive context switching from timer IRQs.
-            // TODO: Implement fut_switch_context_irq properly in platform/x86_64/context_switch.S
-
-            // For now, just return without switching - let the current thread continue
-            return;
-        }
-
         // Only set current_thread if we're actually going to context switch
         fut_thread_set_current(next);
 
-        // Only switch MM for cooperative (non-IRQ) context switches
+        // Switch MM if needed
         if (prev_mm != next_mm) {
             fut_mm_switch(next_mm);
         }
 
-        if (0) {  // Disabled: in_irq && prev check moved above
-            // This code path is now unreachable - IRQ switches handled above
+        if (in_irq && prev && fut_current_frame) {
+            // IRQ-safe context switch (uses IRET)
+            // This modifies the interrupt frame on the stack so IRET returns to next thread
+            fut_switch_context_irq(prev, next, fut_current_frame);
         } else {
             // Regular cooperative context switch (uses RET)
             if (prev) {

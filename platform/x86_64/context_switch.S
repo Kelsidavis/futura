@@ -127,13 +127,163 @@ fut_switch_context:
  *
  * This function modifies the interrupt frame to return to the next thread
  * and never returns directly - execution continues via IRET in the ISR.
+ *
+ * Thread structure offsets (see include/kernel/fut_thread.h):
+ *   +0:   tid (8 bytes)
+ *   +8:   task (8 bytes)
+ *   +16:  stack_base (8 bytes)
+ *   +24:  stack_size (8 bytes)
+ *   +32:  alloc_base (8 bytes)
+ *   +40:  _padding (8 bytes)
+ *   +48:  context (672 bytes)
+ *   +720: irq_frame (8 bytes pointer)
  */
 .global fut_switch_context_irq
 .type fut_switch_context_irq, @function
 fut_switch_context_irq:
-    /* Phase 1: Stub implementation */
-    /* Future: Implement IRQ-safe context switching via IRET frame manipulation */
-    /* For now, just return and let the IRQ handler continue normally */
+    /* Save callee-saved registers */
+    pushq %rbx
+    pushq %r12
+    pushq %r13
+    pushq %r14
+    pushq %r15
+
+    /* Save arguments */
+    movq %rdi, %r12         /* r12 = prev */
+    movq %rsi, %r13         /* r13 = next */
+    movq %rdx, %r14         /* r14 = frame */
+
+    /* Step 1: Save/allocate interrupt frame for prev thread */
+    testq %r12, %r12
+    jz 1f                   /* Skip if prev is NULL */
+
+    /* Check if prev->irq_frame is NULL (needs allocation) */
+    movq 720(%r12), %r15
+    testq %r15, %r15
+    jnz .save_frame         /* Already allocated, just save */
+
+    /* Allocate frame storage (208 bytes) - call fut_malloc */
+    /* Save frame pointer first */
+    pushq %r14
+    movq $208, %rdi
+    call fut_malloc
+    popq %r14
+    movq %rax, %r15         /* r15 = allocated frame */
+
+    /* Check allocation success */
+    testq %r15, %r15
+    jz 1f                   /* Skip if allocation failed */
+
+    /* Save pointer */
+    movq %r15, 720(%r12)    /* prev->irq_frame = allocated_frame */
+
+.save_frame:
+    /* Copy current frame to prev->irq_frame */
+    movq %r15, %rdi         /* dest = prev->irq_frame */
+    movq %r14, %rsi         /* src = current frame on stack */
+    movq $26, %rcx          /* 208 bytes / 8 = 26 qwords */
+    cld
+    rep movsq
+
+1:
+    /* Step 2: Get next thread's saved frame pointer */
+    movq 720(%r13), %r11
+
+    /* If next->irq_frame is NULL, construct frame from context */
+    testq %r11, %r11
+    jnz .restore_saved_frame
+
+    /* Construct interrupt frame from thread context */
+    /* Thread structure: context starts at offset 48 */
+    /* Context layout: r15(0), r14(8), r13(16), r12(24), rbx(32), rbp(40),
+     *                 rip(48), rsp(56), rflags(64), cs(72), ss(80),
+     *                 ds(88), es(96), fs(104), gs(112),
+     *                 rdi(120), rsi(128), rdx(136), rcx(144), rax(152) */
+
+    leaq 48(%r13), %rsi     /* rsi = &next->context */
+    movq %r14, %rdi         /* rdi = interrupt frame on stack */
+
+    /* Copy segment registers (gs, fs, es, ds) */
+    movq 112(%rsi), %rax    /* context.gs */
+    movq %rax, 0(%rdi)      /* frame->gs */
+    movq 104(%rsi), %rax    /* context.fs */
+    movq %rax, 8(%rdi)      /* frame->fs */
+    movq 96(%rsi), %rax     /* context.es */
+    movq %rax, 16(%rdi)     /* frame->es */
+    movq 88(%rsi), %rax     /* context.ds */
+    movq %rax, 24(%rdi)     /* frame->ds */
+
+    /* Copy general purpose registers */
+    movq 152(%rsi), %rax    /* context.rax */
+    movq %rax, 32(%rdi)     /* frame->rax */
+    movq 32(%rsi), %rax     /* context.rbx */
+    movq %rax, 40(%rdi)     /* frame->rbx */
+    movq 144(%rsi), %rax    /* context.rcx */
+    movq %rax, 48(%rdi)     /* frame->rcx */
+    movq 136(%rsi), %rax    /* context.rdx */
+    movq %rax, 56(%rdi)     /* frame->rdx */
+    movq 128(%rsi), %rax    /* context.rsi */
+    movq %rax, 64(%rdi)     /* frame->rsi */
+    movq 120(%rsi), %rax    /* context.rdi */
+    movq %rax, 72(%rdi)     /* frame->rdi */
+    movq 40(%rsi), %rax     /* context.rbp */
+    movq %rax, 80(%rdi)     /* frame->rbp */
+
+    /* Copy r8-r15 (set to context values) */
+    movq $0, 88(%rdi)       /* frame->r8 = 0 */
+    movq $0, 96(%rdi)       /* frame->r9 = 0 */
+    movq $0, 104(%rdi)      /* frame->r10 = 0 */
+    movq $0, 112(%rdi)      /* frame->r11 = 0 */
+    movq 24(%rsi), %rax     /* context.r12 */
+    movq %rax, 120(%rdi)    /* frame->r12 */
+    movq 16(%rsi), %rax     /* context.r13 */
+    movq %rax, 128(%rdi)    /* frame->r13 */
+    movq 8(%rsi), %rax      /* context.r14 */
+    movq %rax, 136(%rdi)    /* frame->r14 */
+    movq 0(%rsi), %rax      /* context.r15 */
+    movq %rax, 144(%rdi)    /* frame->r15 */
+
+    /* Set vector and error_code */
+    movq $32, 152(%rdi)     /* frame->vector = 32 (IRQ0) */
+    movq $0, 160(%rdi)      /* frame->error_code = 0 */
+
+    /* Copy control registers (CPU-pushed values) */
+    movq 48(%rsi), %rax     /* context.rip */
+    movq %rax, 168(%rdi)    /* frame->rip */
+    movq 72(%rsi), %rax     /* context.cs */
+    movq %rax, 176(%rdi)    /* frame->cs */
+    movq 64(%rsi), %rax     /* context.rflags */
+    movq %rax, 184(%rdi)    /* frame->rflags */
+    movq 56(%rsi), %rax     /* context.rsp */
+    movq %rax, 192(%rdi)    /* frame->rsp */
+    movq 80(%rsi), %rax     /* context.ss */
+    movq %rax, 200(%rdi)    /* frame->ss */
+
+    jmp 2f
+
+.restore_saved_frame:
+    /* Step 3: Copy saved frame to current interrupt frame location */
+    movq %r14, %rdi         /* dest = current frame on stack */
+    movq %r11, %rsi         /* src = next->irq_frame */
+    movq $26, %rcx          /* 208 bytes / 8 = 26 qwords */
+    cld
+    rep movsq
+
+2:
+    /* Step 4: Restore FPU state from next thread's context */
+    /* context is at offset 48, fx_area is at offset 160 within context */
+    /* So fx_area is at 48 + 160 = 208 */
+    leaq 208(%r13), %rax    /* rax = &next->context.fx_area */
+    fxrstor64 (%rax)
+
+    /* Restore callee-saved registers */
+    popq %r15
+    popq %r14
+    popq %r13
+    popq %r12
+    popq %rbx
+
+    /* Step 5: Return - IRET will restore from modified frame */
     ret
 
 .size fut_switch_context_irq, . - fut_switch_context_irq

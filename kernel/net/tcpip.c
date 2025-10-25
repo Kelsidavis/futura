@@ -16,6 +16,8 @@
 #include <kernel/errno.h>
 #include <kernel/fut_memory.h>
 #include <kernel/fut_sched.h>
+#include <kernel/fut_task.h>
+#include <kernel/fut_thread.h>
 #include <kernel/fut_timer.h>
 #include <string.h>
 #include <stdbool.h>
@@ -23,7 +25,7 @@
 extern void fut_printf(const char *fmt, ...);
 
 /* Debug output - uncomment to enable */
-// #define DEBUG_TCPIP 1
+#define DEBUG_TCPIP 1
 
 #ifdef DEBUG_TCPIP
 #define TCPIP_DEBUG(...) fut_printf(__VA_ARGS__)
@@ -374,9 +376,9 @@ int arp_resolve(uint32_t ip, eth_addr_t *mac) {
     fut_net_send(g_tcpip.raw_socket, request, sizeof(request));
 
     /* Wait for reply (simplified - should use proper async mechanism) */
-    for (int retry = 0; retry < 3; retry++) {
-        /* Small delay */
-        for (volatile int i = 0; i < 1000000; i++);
+    for (int retry = 0; retry < 100; retry++) {
+        /* Yield to RX thread */
+        fut_thread_yield();
 
         if (arp_lookup_cache(ip, mac) == 0) {
             return 0;
@@ -510,6 +512,7 @@ static void udp_handle_packet(const uint8_t *ip_payload, size_t len,
     (void)dest_ip;  /* Unused for now */
 
     if (len < UDP_HEADER_LEN) {
+        fut_printf("[UDP-DEBUG] Packet too short: %zu bytes\n", len);
         return;
     }
 
@@ -519,20 +522,29 @@ static void udp_handle_packet(const uint8_t *ip_payload, size_t len,
     uint16_t udp_len = ntohs(udp->length);
 
     if (udp_len < UDP_HEADER_LEN || udp_len > len) {
+        fut_printf("[UDP-DEBUG] Invalid UDP length: %u (packet len %zu)\n", udp_len, len);
         return;
     }
 
     size_t data_len = udp_len - UDP_HEADER_LEN;
     const uint8_t *data = ip_payload + UDP_HEADER_LEN;
 
-    TCPIP_DEBUG("[UDP] Packet: port %u -> %u, len %zu\n", src_port, dest_port, data_len);
+    fut_printf("[UDP-DEBUG] Received packet: %d.%d.%d.%d:%u -> %u, len %zu\n",
+        (src_ip >> 24) & 0xFF, (src_ip >> 16) & 0xFF,
+        (src_ip >> 8) & 0xFF, src_ip & 0xFF,
+        src_port, dest_port, data_len);
 
     /* Find matching socket */
     fut_spinlock_acquire(&socket_lock);
+    tcpip_socket_t *matched_sock = NULL;
     for (int i = 0; i < TCPIP_MAX_SOCKETS; i++) {
         tcpip_socket_t *sock = sockets[i];
         if (sock && sock->type == SOCK_TYPE_UDP &&
             sock->bound && sock->local_port == dest_port) {
+
+            fut_printf("[UDP-DEBUG] Found matching socket (bound=%d, port=%u)\n",
+                sock->bound, sock->local_port);
+            matched_sock = sock;
 
             fut_spinlock_acquire(&sock->lock);
             if (data_len <= TCPIP_RX_BUFFER_SIZE) {
@@ -540,10 +552,17 @@ static void udp_handle_packet(const uint8_t *ip_payload, size_t len,
                 sock->udp.rx_len = data_len;
                 sock->udp.src_ip = src_ip;
                 sock->udp.src_port = src_port;
+                fut_printf("[UDP-DEBUG] Data copied to socket rx_buffer (%zu bytes)\n", data_len);
+            } else {
+                fut_printf("[UDP-DEBUG] Data too large for buffer: %zu > %d\n",
+                    data_len, TCPIP_RX_BUFFER_SIZE);
             }
             fut_spinlock_release(&sock->lock);
             break;
         }
+    }
+    if (!matched_sock) {
+        fut_printf("[UDP-DEBUG] No matching socket found for port %u\n", dest_port);
     }
     fut_spinlock_release(&socket_lock);
 }
@@ -765,6 +784,11 @@ static void ip_handle_packet(const uint8_t *frame, size_t len) {
     const uint8_t *payload = (const uint8_t *)ip + ihl;
 
     /* Dispatch to protocol handlers */
+    fut_printf("[IP-DEBUG] Received packet from %d.%d.%d.%d, protocol=%u, len=%zu\n",
+        (src_ip >> 24) & 0xFF, (src_ip >> 16) & 0xFF,
+        (src_ip >> 8) & 0xFF, src_ip & 0xFF,
+        protocol, payload_len);
+
     switch (protocol) {
         case IP_PROTO_ICMP:
             icmp_handle_packet(payload, payload_len, src_ip);
@@ -790,13 +814,25 @@ static void tcpip_rx_thread(void *arg) {
 
     uint8_t buffer[ETH_MAX_FRAME];
 
+    fut_printf("[RX-THREAD] Started, entering receive loop...\n");
+
+    int loop_count = 0;
     while (1) {
         size_t received = 0;
         int rc = fut_net_recv(g_tcpip.raw_socket, buffer, sizeof(buffer), &received);
 
+        if (loop_count < 5) {
+            fut_printf("[RX-THREAD] Loop %d: fut_net_recv returned rc=%d, received=%zu\n",
+                loop_count, rc, received);
+            loop_count++;
+        }
+
         if (rc == 0 && received >= ETH_HEADER_LEN) {
             const eth_header_t *eth = (const eth_header_t *)buffer;
             uint16_t ethertype = ntohs(eth->type);
+
+            fut_printf("[RX-THREAD] Received frame: ethertype=0x%04x, len=%zu\n",
+                ethertype, received);
 
             switch (ethertype) {
                 case ETHERTYPE_ARP:
@@ -871,9 +907,33 @@ int tcpip_listen(tcpip_socket_t *sock, int backlog) {
 }
 
 int tcpip_connect(tcpip_socket_t *sock, uint32_t ip, uint16_t port) {
-    if (!sock || sock->type != SOCK_TYPE_TCP) return -EINVAL;
+    if (!sock) return -EINVAL;
 
     fut_spinlock_acquire(&sock->lock);
+
+    /* For UDP, "connect" just sets default destination */
+    if (sock->type == SOCK_TYPE_UDP) {
+        /* Auto-bind to ephemeral port if not already bound */
+        if (!sock->bound) {
+            static uint16_t next_ephemeral_port = 50000;
+            sock->local_port = next_ephemeral_port++;
+            if (next_ephemeral_port > 60000) next_ephemeral_port = 50000;
+            sock->bound = true;
+        }
+
+        sock->remote_ip = ip;
+        sock->remote_port = port;
+        sock->connected = true;
+        fut_spinlock_release(&sock->lock);
+        return 0;
+    }
+
+    /* TCP connection logic */
+    if (sock->type != SOCK_TYPE_TCP) {
+        fut_spinlock_release(&sock->lock);
+        return -EINVAL;
+    }
+
     if (sock->connected) {
         fut_spinlock_release(&sock->lock);
         return -EISCONN;
@@ -922,6 +982,20 @@ int tcpip_send(tcpip_socket_t *sock, const void *data, size_t len) {
 
     fut_spinlock_acquire(&sock->lock);
 
+    if (sock->type == SOCK_TYPE_UDP) {
+        /* For connected UDP sockets, use stored remote address */
+        if (!sock->connected) {
+            fut_spinlock_release(&sock->lock);
+            return -ENOTCONN;
+        }
+
+        uint32_t dest_ip = sock->remote_ip;
+        uint16_t dest_port = sock->remote_port;
+        fut_spinlock_release(&sock->lock);
+
+        return tcpip_sendto(sock, data, len, dest_ip, dest_port);
+    }
+
     if (sock->type == SOCK_TYPE_TCP) {
         if (!sock->connected || !sock->tcp_conn) {
             fut_spinlock_release(&sock->lock);
@@ -956,6 +1030,12 @@ int tcpip_sendto(tcpip_socket_t *sock, const void *data, size_t len,
 
     memcpy(packet + UDP_HEADER_LEN, data, len);
 
+    fut_printf("[UDP-DEBUG] Sending from port %u to %d.%d.%d.%d:%u (%zu bytes)\n",
+        sock->local_port,
+        (dest_ip >> 24) & 0xFF, (dest_ip >> 16) & 0xFF,
+        (dest_ip >> 8) & 0xFF, dest_ip & 0xFF,
+        dest_port, len);
+
     ip_send_packet(dest_ip, IP_PROTO_UDP, packet, total_len);
     fut_free(packet);
 
@@ -966,6 +1046,12 @@ int tcpip_recv(tcpip_socket_t *sock, void *buf, size_t len) {
     if (!sock || !buf || len == 0) return -EINVAL;
 
     fut_spinlock_acquire(&sock->lock);
+
+    if (sock->type == SOCK_TYPE_UDP) {
+        /* For connected UDP sockets, receive from any source */
+        fut_spinlock_release(&sock->lock);
+        return tcpip_recvfrom(sock, buf, len, NULL, NULL);
+    }
 
     if (sock->type == SOCK_TYPE_TCP) {
         if (!sock->connected || !sock->tcp_conn) {
@@ -1015,7 +1101,7 @@ int tcpip_recvfrom(tcpip_socket_t *sock, void *buf, size_t len,
     for (int i = 0; i < 100; i++) {
         if (sock->udp.rx_len > 0) break;
         fut_spinlock_release(&sock->lock);
-        for (volatile int j = 0; j < 100000; j++);
+        fut_thread_yield();  // Give RX thread a chance to run
         fut_spinlock_acquire(&sock->lock);
     }
 
@@ -1130,10 +1216,21 @@ int tcpip_init(void) {
         g_tcpip.raw_socket = accepted;
     }
 
+    /* Create a kernel task for network threads */
+    fut_task_t *kernel_task = fut_task_create();
+    if (!kernel_task) {
+        fut_printf("[TCP/IP] ERROR: Failed to create kernel task!\n");
+        return -ENOMEM;
+    }
+
     /* Start receive thread */
-    fut_thread_t *rx_thread = fut_thread_create(NULL, tcpip_rx_thread, NULL, 8192, 100);
+    fut_thread_t *rx_thread = fut_thread_create(kernel_task, tcpip_rx_thread, NULL, 8192, 100);
     if (rx_thread) {
         fut_sched_add_thread(rx_thread);
+        fut_printf("[TCP/IP] RX thread created and scheduled\n");
+    } else {
+        fut_printf("[TCP/IP] ERROR: Failed to create RX thread!\n");
+        return -ENOMEM;
     }
 
     g_tcpip.initialized = true;

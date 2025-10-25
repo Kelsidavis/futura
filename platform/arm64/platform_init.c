@@ -76,13 +76,13 @@ void fut_serial_init(void) {
 void fut_serial_putc(char c) {
     volatile uint8_t *uart = (volatile uint8_t *)UART0_BASE;
 
-    /* Wait for TX FIFO to have space with timeout */
-    volatile int timeout = 100000;
+    /* Poll with reasonable timeout to avoid infinite hangs */
+    volatile int timeout = 10000;
     while ((mmio_read32((volatile void *)(uart + UART_FR)) & UART_FR_TXFF) && timeout > 0) {
         timeout--;
     }
 
-    /* Only write if we didn't timeout */
+    /* Write character if FIFO has space (or timeout expired) */
     if (timeout > 0) {
         mmio_write32((volatile void *)(uart + UART_DR), (uint32_t)c);
     }

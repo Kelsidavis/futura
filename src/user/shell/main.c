@@ -74,6 +74,9 @@ static void strncpy_simple(char *dest, const char *src, size_t n);
 static void add_to_history(const char *cmd);
 static const char *get_history(int index);
 
+/* Forward declaration for tab completion */
+static void complete_command(char *buf, size_t *pos, size_t max_len);
+
 /* x86_64 syscall invocation via inline asm */
 static inline long syscall3(long nr, long arg1, long arg2, long arg3) {
     long ret;
@@ -316,6 +319,10 @@ static ssize_t read_line(int fd, char *buf, size_t max_len) {
             write_str(1, "^C\n");
             buf[0] = '\0';
             return 0;
+        } else if (c == 0x09) {
+            /* Tab - command completion */
+            buf[pos] = '\0';  /* Null-terminate for completion */
+            complete_command(buf, &pos, max_len);
         } else if (c >= 0x20 && c < 0x7F) {
             /* Printable character - echo it and add to buffer */
             buf[pos++] = c;
@@ -359,6 +366,129 @@ static void add_to_history(const char *cmd) {
     int idx = history_count % MAX_HISTORY;
     strncpy_simple(history[idx], cmd, MAX_CMD_LEN);
     history_count++;
+}
+
+/* String starts with prefix */
+static int starts_with_prefix(const char *str, const char *prefix) {
+    while (*prefix) {
+        if (*str != *prefix) return 0;
+        str++;
+        prefix++;
+    }
+    return 1;
+}
+
+/* String length */
+static size_t strlen_simple(const char *s) {
+    size_t len = 0;
+    while (*s++) len++;
+    return len;
+}
+
+/* Find common prefix length of two strings */
+static size_t common_prefix_len(const char *s1, const char *s2) {
+    size_t len = 0;
+    while (s1[len] && s2[len] && s1[len] == s2[len]) {
+        len++;
+    }
+    return len;
+}
+
+/* Tab completion for commands */
+static void complete_command(char *buf, size_t *pos, size_t max_len) {
+    /* List of builtin commands */
+    const char *builtins[] = {
+        "cd", "clear", "echo", "exit", "export", "help",
+        "pwd", "test", "uname", "whoami", NULL
+    };
+
+    /* External commands we might have */
+    const char *externals[] = {
+        "cat", "echo", "fbtest", "fsd", "futurawayd",
+        "init", "posixd", "shell", "wc", "winsrv", "winstub", NULL
+    };
+
+    const char *prefix = buf;
+
+    /* Find matching commands */
+    char matches[64][64];
+    int match_count = 0;
+
+    /* Check builtins */
+    for (int i = 0; builtins[i] != NULL && match_count < 64; i++) {
+        if (starts_with_prefix(builtins[i], prefix)) {
+            strncpy_simple(matches[match_count], builtins[i], 64);
+            match_count++;
+        }
+    }
+
+    /* Check external commands */
+    for (int i = 0; externals[i] != NULL && match_count < 64; i++) {
+        if (starts_with_prefix(externals[i], prefix)) {
+            strncpy_simple(matches[match_count], externals[i], 64);
+            match_count++;
+        }
+    }
+
+    if (match_count == 0) {
+        /* No matches - do nothing */
+        return;
+    } else if (match_count == 1) {
+        /* Single match - complete it */
+        const char *completion = matches[0];
+        size_t comp_len = strlen_simple(completion);
+
+        /* Add the rest of the command */
+        while (*pos < max_len - 2 && *pos < comp_len) {
+            buf[*pos] = completion[*pos];
+            write_char(1, buf[*pos]);
+            (*pos)++;
+        }
+
+        /* Add space after command */
+        if (*pos < max_len - 1) {
+            buf[*pos] = ' ';
+            write_char(1, ' ');
+            (*pos)++;
+        }
+    } else {
+        /* Multiple matches - find common prefix */
+        size_t common_len = strlen_simple(matches[0]);
+        for (int i = 1; i < match_count; i++) {
+            size_t cp_len = common_prefix_len(matches[0], matches[i]);
+            if (cp_len < common_len) common_len = cp_len;
+        }
+
+        /* Complete up to common prefix */
+        while (*pos < common_len && *pos < max_len - 1) {
+            buf[*pos] = matches[0][*pos];
+            write_char(1, buf[*pos]);
+            (*pos)++;
+        }
+
+        /* If at common prefix, show all matches */
+        if (*pos == common_len) {
+            write_str(1, "\n");
+            for (int i = 0; i < match_count; i++) {
+                write_str(1, "  ");
+                write_str(1, matches[i]);
+                if ((i + 1) % 4 == 0) {
+                    write_str(1, "\n");
+                } else if (i < match_count - 1) {
+                    write_str(1, "  ");
+                }
+            }
+            if (match_count % 4 != 0) {
+                write_str(1, "\n");
+            }
+
+            /* Reprint prompt and current input */
+            write_str(1, "futura> ");
+            for (size_t i = 0; i < *pos; i++) {
+                write_char(1, buf[i]);
+            }
+        }
+    }
 }
 
 /* Get history entry by index (0 = oldest, history_count-1 = newest) */
@@ -644,6 +774,7 @@ static void cmd_help(int argc, char *argv[]) {
     write_str(1, "  Redirection:    cmd > file, cmd >> file, cmd < file\n");
     write_str(1, "  Conditionals:   cmd1 && cmd2, cmd1 || cmd2\n");
     write_str(1, "  History:        Up/down arrow keys\n");
+    write_str(1, "  Completion:     Tab key for command completion\n");
     write_str(1, "\n");
     write_str(1, "Test operators:\n");
     write_str(1, "  String:   = != -n -z\n");

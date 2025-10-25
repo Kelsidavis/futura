@@ -109,23 +109,38 @@ int posix_close(posix_fd_t fd) {
     return fut_object_destroy(handle);
 }
 
+/* External pipe implementation */
+extern long sys_pipe(int pipefd[2]);
+
+int posix_pipe(int pipefd[2]) {
+    long ret = sys_pipe(pipefd);
+    return (int)ret;
+}
+
+/* External dup2 implementation */
+extern long sys_dup2(int oldfd, int newfd);
+
+int posix_dup2(int oldfd, int newfd) {
+    long ret = sys_dup2(oldfd, newfd);
+    return (int)ret;
+}
+
 /* ============================================================
  *   Process Management (Stubs)
  * ============================================================ */
 
+/* External fork implementation */
+extern long sys_fork(void);
+
 posix_pid_t posix_fork(void) {
-    // Phase 1: Stub implementation
-    // Future: Clone current task, copy address space
-    return -1;  // Not implemented
+    return (posix_pid_t)sys_fork();
 }
 
+/* External execve implementation */
+extern long sys_execve(const char *pathname, char *const argv[], char *const envp[]);
+
 int posix_execve(const char *pathname, char *const argv[], char *const envp[]) {
-    // Phase 1: Stub implementation
-    // Future: Load executable, setup new address space
-    (void)pathname;
-    (void)argv;
-    (void)envp;
-    return -1;  // Not implemented
+    return (int)sys_execve(pathname, argv, envp);
 }
 
 posix_pid_t posix_wait(int *status) {

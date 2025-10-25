@@ -63,6 +63,23 @@ ssize_t posix_write(posix_fd_t fd, const void *buf, size_t count);
  */
 int posix_close(posix_fd_t fd);
 
+/**
+ * Create a pipe for inter-process communication.
+ *
+ * @param pipefd Array to receive two file descriptors (pipefd[0]=read, pipefd[1]=write)
+ * @return 0 on success, -1 on error
+ */
+int posix_pipe(int pipefd[2]);
+
+/**
+ * Duplicate file descriptor to a specific number.
+ *
+ * @param oldfd Source file descriptor
+ * @param newfd Target file descriptor number
+ * @return newfd on success, -1 on error
+ */
+int posix_dup2(int oldfd, int newfd);
+
 /* ============================================================
  *   Process Management Compatibility
  * ============================================================ */

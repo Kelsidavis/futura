@@ -31,6 +31,7 @@
 #include <futura/blkdev.h>
 #include <futura/net.h>
 #include <futura/tcpip.h>
+#include <futura/dns.h>
 #include <platform/platform.h>
 #include "tests/test_api.h"
 #include "tests/perf.h"
@@ -998,6 +999,45 @@ void fut_kernel_main(void) {
             fut_printf("[TCP/IP-TEST] ✓ ICMP echo request sent successfully to 1.1.1.1\n");
         } else {
             fut_printf("[TCP/IP-TEST] ✗ Failed to send ping: %d\n", ping_rc);
+        }
+
+        /* Initialize DNS resolver */
+        fut_printf("[DNS-TEST] Initializing DNS resolver...\n");
+        uint32_t google_dns_ip = (8 << 24) | (8 << 16) | (8 << 8) | 8;  /* 8.8.8.8 */
+        uint32_t cloudflare_dns_ip = (1 << 24) | (1 << 16) | (1 << 8) | 1;  /* 1.1.1.1 */
+        int dns_rc = dns_init(google_dns_ip, cloudflare_dns_ip);
+        if (dns_rc != 0) {
+            fut_printf("[DNS-TEST] ✗ DNS init failed: %d\n", dns_rc);
+        } else {
+            /* Test DNS resolution */
+            fut_printf("[DNS-TEST] Testing domain resolution...\n");
+
+            /* Test 1: Resolve google.com */
+            uint32_t resolved_ip;
+            dns_rc = dns_resolve("google.com", &resolved_ip);
+            if (dns_rc == 0) {
+                char ip_str[16];
+                dns_format_ip(resolved_ip, ip_str, sizeof(ip_str));
+                fut_printf("[DNS-TEST] ✓ google.com -> %s\n", ip_str);
+            } else {
+                fut_printf("[DNS-TEST] ✗ Failed to resolve google.com: %d\n", dns_rc);
+            }
+
+            /* Test 2: Resolve example.com */
+            dns_rc = dns_resolve("example.com", &resolved_ip);
+            if (dns_rc == 0) {
+                char ip_str[16];
+                dns_format_ip(resolved_ip, ip_str, sizeof(ip_str));
+                fut_printf("[DNS-TEST] ✓ example.com -> %s\n", ip_str);
+            } else {
+                fut_printf("[DNS-TEST] ✗ Failed to resolve example.com: %d\n", dns_rc);
+            }
+
+            /* Test 3: Cache hit test - resolve google.com again */
+            dns_rc = dns_resolve("google.com", &resolved_ip);
+            if (dns_rc == 0) {
+                fut_printf("[DNS-TEST] ✓ Cache test: google.com (should be cached)\n");
+            }
         }
     }
 

@@ -1175,6 +1175,9 @@ int tcpip_recvfrom(tcpip_socket_t *sock, void *buf, size_t len,
 int tcpip_close(tcpip_socket_t *sock) {
     if (!sock) return -EINVAL;
 
+    /* Acquire locks in same order as udp_handle_packet to prevent deadlock:
+     * socket_lock first, then sock->lock */
+    fut_spinlock_acquire(&socket_lock);
     fut_spinlock_acquire(&sock->lock);
 
     if (sock->type == SOCK_TYPE_TCP && sock->tcp_conn) {
@@ -1186,18 +1189,18 @@ int tcpip_close(tcpip_socket_t *sock) {
         conn->active = false;
     }
 
-    fut_spinlock_release(&sock->lock);
-
-    /* Remove from socket list */
-    fut_spinlock_acquire(&socket_lock);
+    /* Remove from socket list while still holding both locks */
     for (int i = 0; i < TCPIP_MAX_SOCKETS; i++) {
         if (sockets[i] == sock) {
             sockets[i] = NULL;
             break;
         }
     }
+
+    fut_spinlock_release(&sock->lock);
     fut_spinlock_release(&socket_lock);
 
+    /* Safe to free now that socket is removed from list and locks released */
     fut_free(sock);
     return 0;
 }

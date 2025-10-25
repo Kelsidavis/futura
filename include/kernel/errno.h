@@ -147,12 +147,24 @@
 #define EMSGSIZE    90
 #endif
 
+#ifndef ENOTSUP
+#define ENOTSUP     95
+#endif
+
+#ifndef EISCONN
+#define EISCONN     106
+#endif
+
 #ifndef ENOTCONN
 #define ENOTCONN    107
 #endif
 
-#ifndef ENOTSUP
-#define ENOTSUP     95
+#ifndef ETIMEDOUT
+#define ETIMEDOUT   110
+#endif
+
+#ifndef EHOSTUNREACH
+#define EHOSTUNREACH 113
 #endif
 
 #ifndef phys_addr_t

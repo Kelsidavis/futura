@@ -76,8 +76,8 @@ void fut_serial_init(void) {
 void fut_serial_putc(char c) {
     volatile uint8_t *uart = (volatile uint8_t *)UART0_BASE;
 
-    /* Poll with reasonable timeout to avoid infinite hangs */
-    volatile int timeout = 10000;
+    /* Poll with generous timeout to avoid infinite hangs */
+    volatile int timeout = 100000;
     while ((mmio_read32((volatile void *)(uart + UART_FR)) & UART_FR_TXFF) && timeout > 0) {
         timeout--;
     }
@@ -94,6 +94,10 @@ void fut_serial_puts(const char *str) {
             fut_serial_putc('\r');
         fut_serial_putc(*str++);
     }
+
+    /* Small delay to let UART buffer drain */
+    for (volatile int i = 0; i < 1000; i++)
+        ;
 }
 
 /* Alias for compatibility */

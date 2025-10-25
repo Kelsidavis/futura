@@ -26,6 +26,11 @@ __attribute__((noreturn)) void fut_platform_panic(const char *message);
 #endif
 #endif
 
+/* ARM64: Serial output for debug tracing */
+#ifdef __aarch64__
+extern void fut_serial_puts(const char *s);
+#endif
+
 /* ============================================================
  *   FIPC State
  * ============================================================ */
@@ -216,10 +221,16 @@ static int fut_fipc_enqueue_message(struct fut_fipc_channel *channel,
  * ============================================================ */
 
 void fut_fipc_init(void) {
+#ifdef __aarch64__
+    fut_serial_puts("[ARM64-DEBUG] fut_fipc_init: Start\n");
+#endif
     region_list = NULL;
     channel_list = NULL;
     next_region_id = 1;
     next_channel_id = 1;
+#ifdef __aarch64__
+    fut_serial_puts("[ARM64-DEBUG] fut_fipc_init: Lists initialized\n");
+#endif
 
     struct fut_fipc_channel *sys_channel = NULL;
     if (fut_fipc_channel_create(NULL,
@@ -363,13 +374,25 @@ int fut_fipc_channel_create(struct fut_task *sender, struct fut_task *receiver,
     }
 
     /* Allocate channel structure */
+#ifdef __aarch64__
+    fut_serial_puts("[ARM64] Before channel malloc\n");
+#endif
     struct fut_fipc_channel *channel = fut_malloc(sizeof(struct fut_fipc_channel));
+#ifdef __aarch64__
+    fut_serial_puts("[ARM64] After channel malloc\n");
+#endif
     if (!channel) {
         return FIPC_ENOMEM;
     }
 
     /* Allocate message queue */
+#ifdef __aarch64__
+    fut_serial_puts("[ARM64] Before queue malloc\n");
+#endif
     void *queue = fut_malloc(queue_size);
+#ifdef __aarch64__
+    fut_serial_puts("[ARM64] After queue malloc\n");
+#endif
     if (!queue) {
         fut_free(channel);
         return FIPC_ENOMEM;
@@ -392,7 +415,13 @@ int fut_fipc_channel_create(struct fut_task *sender, struct fut_task *receiver,
     channel->remote.channel_id = 0;
     channel->remote.mtu = 0;
     channel->remote.flags = 0;
+#ifdef __aarch64__
+    fut_serial_puts("[ARM64] Before memset cap_ledger\n");
+#endif
     memset(&channel->cap_ledger, 0, sizeof(channel->cap_ledger));
+#ifdef __aarch64__
+    fut_serial_puts("[ARM64] After memset cap_ledger\n");
+#endif
     channel->tx_credits = 0;
     channel->credit_refill = 0;
     channel->credits_enabled = false;

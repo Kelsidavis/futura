@@ -41,7 +41,30 @@ struct fut_fipc_transport_state {
 };
 
 static struct fut_fipc_transport_state transport_state = {0};
+
+/* ARM64: Disable atomics for single-core configuration */
+#ifdef __aarch64__
+static uint64_t next_cap_lease = 1;
+#define FIPC_ATOMIC_FETCH_ADD(var, val) ({ uint64_t _old = (var); (var) += (val); _old; })
+#define FIPC_ATOMIC_LOAD(var) (var)
+#define FIPC_ATOMIC_CAS(var, expected_ptr, new_val) \
+    ({ \
+        uint64_t old = (var); \
+        if (old == *(expected_ptr)) { \
+            (var) = (new_val); \
+        } else { \
+            *(expected_ptr) = old; \
+        } \
+        (old == *(expected_ptr)); \
+    })
+#else
 static _Atomic uint64_t next_cap_lease = 1;
+#define FIPC_ATOMIC_FETCH_ADD(var, val) atomic_fetch_add_explicit(&(var), (val), memory_order_relaxed)
+#define FIPC_ATOMIC_LOAD(var) atomic_load_explicit(&(var), memory_order_relaxed)
+#define FIPC_ATOMIC_CAS(var, expected_ptr, new_val) \
+    atomic_compare_exchange_weak_explicit(&(var), (expected_ptr), (new_val), \
+                                          memory_order_relaxed, memory_order_relaxed)
+#endif
 static void fut_fipc_refill_tokens(struct fut_fipc_channel *channel, uint64_t now);
 static int fut_fipc_admin_handle(struct fut_fipc_channel *channel,
                                  const uint8_t *payload,
@@ -193,63 +216,49 @@ static int fut_fipc_enqueue_message(struct fut_fipc_channel *channel,
  * ============================================================ */
 
 void fut_fipc_init(void) {
-#ifdef __FUTURA_KERNEL__
+#ifdef __aarch64__
     extern void fut_serial_puts(const char *);
-    fut_serial_puts("[DEBUG] fipc_init: Entry\n");
+    fut_serial_puts("[ARM64-DEBUG] fut_fipc_init: Start\n");
 #endif
 
     region_list = NULL;
     channel_list = NULL;
     next_region_id = 1;
     next_channel_id = 1;
-#ifdef __FUTURA_KERNEL__
-    fut_serial_puts("[DEBUG] fipc_init: Lists initialized\n");
+
+#ifdef __aarch64__
+    fut_serial_puts("[ARM64-DEBUG] fut_fipc_init: Lists initialized\n");
 #endif
 
     struct fut_fipc_channel *sys_channel = NULL;
-#ifdef __FUTURA_KERNEL__
-    fut_serial_puts("[DEBUG] fipc_init: Creating sys_channel\n");
+#ifdef __aarch64__
+    fut_serial_puts("[ARM64-DEBUG] fut_fipc_init: Before sys_channel create\n");
 #endif
     if (fut_fipc_channel_create(NULL,
                                 NULL,
                                 4096,
                                 FIPC_CHANNEL_NONBLOCKING,
                                 &sys_channel) == 0 && sys_channel) {
-#ifdef __FUTURA_KERNEL__
-        fut_serial_puts("[DEBUG] fipc_init: sys_channel created, configuring\n");
+#ifdef __aarch64__
+        fut_serial_puts("[ARM64-DEBUG] fut_fipc_init: sys_channel created\n");
 #endif
         sys_channel->id = FIPC_SYS_CHANNEL_ID;
         sys_channel->type = FIPC_CHANNEL_SYSTEM;
         sys_channel->cap_ledger.rights = FIPC_CAP_R_SEND | FIPC_CAP_R_RECV | FIPC_CAP_R_ADMIN;
-        sys_channel->cap_ledger.lease_id = atomic_fetch_add_explicit(&next_cap_lease, 1, memory_order_relaxed);
-#ifdef __FUTURA_KERNEL__
-        fut_serial_puts("[DEBUG] fipc_init: sys_channel configured\n");
-#endif
+        sys_channel->cap_ledger.lease_id = FIPC_ATOMIC_FETCH_ADD(next_cap_lease, 1);
     }
 
     struct fut_fipc_channel *ctl_channel = NULL;
-#ifdef __FUTURA_KERNEL__
-    fut_serial_puts("[DEBUG] fipc_init: Creating ctl_channel\n");
-#endif
     if (fut_fipc_channel_create(NULL,
                                 NULL,
                                 4096,
                                 FIPC_CHANNEL_NONBLOCKING,
                                 &ctl_channel) == 0 && ctl_channel) {
-#ifdef __FUTURA_KERNEL__
-        fut_serial_puts("[DEBUG] fipc_init: ctl_channel created, configuring\n");
-#endif
         ctl_channel->id = FIPC_CTL_CHANNEL_ID;
         ctl_channel->type = FIPC_CHANNEL_SYSTEM;
         ctl_channel->cap_ledger.rights = FIPC_CAP_R_SEND | FIPC_CAP_R_RECV | FIPC_CAP_R_ADMIN;
-        ctl_channel->cap_ledger.lease_id = atomic_fetch_add_explicit(&next_cap_lease, 1, memory_order_relaxed);
-#ifdef __FUTURA_KERNEL__
-        fut_serial_puts("[DEBUG] fipc_init: ctl_channel configured\n");
-#endif
+        ctl_channel->cap_ledger.lease_id = FIPC_ATOMIC_FETCH_ADD(next_cap_lease, 1);
     }
-#ifdef __FUTURA_KERNEL__
-    fut_serial_puts("[DEBUG] fipc_init: Done\n");
-#endif
 }
 
 /* ============================================================
@@ -364,38 +373,22 @@ void fut_fipc_region_unmap(struct fut_task *task, struct fut_fipc_region *region
 int fut_fipc_channel_create(struct fut_task *sender, struct fut_task *receiver,
                              size_t queue_size, uint32_t flags,
                              struct fut_fipc_channel **channel_out) {
-#ifdef __FUTURA_KERNEL__
-    extern void fut_serial_puts(const char *);
-    fut_serial_puts("[DEBUG] channel_create: Entry\n");
-#endif
     if (!channel_out) {
         return FIPC_EINVAL;
     }
 
     /* Allocate channel structure */
-#ifdef __FUTURA_KERNEL__
-    fut_serial_puts("[DEBUG] channel_create: Before malloc(channel)\n");
-#endif
     struct fut_fipc_channel *channel = fut_malloc(sizeof(struct fut_fipc_channel));
     if (!channel) {
         return FIPC_ENOMEM;
     }
-#ifdef __FUTURA_KERNEL__
-    fut_serial_puts("[DEBUG] channel_create: After malloc(channel)\n");
-#endif
 
     /* Allocate message queue */
-#ifdef __FUTURA_KERNEL__
-    fut_serial_puts("[DEBUG] channel_create: Before malloc(queue)\n");
-#endif
     void *queue = fut_malloc(queue_size);
     if (!queue) {
         fut_free(channel);
         return FIPC_ENOMEM;
     }
-#ifdef __FUTURA_KERNEL__
-    fut_serial_puts("[DEBUG] channel_create: After malloc(queue)\n");
-#endif
 
     /* Initialize channel */
     channel->id = next_channel_id++;
@@ -414,13 +407,7 @@ int fut_fipc_channel_create(struct fut_task *sender, struct fut_task *receiver,
     channel->remote.channel_id = 0;
     channel->remote.mtu = 0;
     channel->remote.flags = 0;
-#ifdef __FUTURA_KERNEL__
-    fut_serial_puts("[DEBUG] channel_create: Before memset\n");
-#endif
     memset(&channel->cap_ledger, 0, sizeof(channel->cap_ledger));
-#ifdef __FUTURA_KERNEL__
-    fut_serial_puts("[DEBUG] channel_create: After memset\n");
-#endif
     channel->tx_credits = 0;
     channel->credit_refill = 0;
     channel->credits_enabled = false;
@@ -446,13 +433,7 @@ int fut_fipc_channel_create(struct fut_task *sender, struct fut_task *receiver,
     channel->next = channel_list;
     channel_list = channel;
 
-#ifdef __FUTURA_KERNEL__
-    fut_serial_puts("[DEBUG] channel_create: Before fipc_ring_check\n");
-#endif
     fipc_ring_check(channel);
-#ifdef __FUTURA_KERNEL__
-    fut_serial_puts("[DEBUG] channel_create: After fipc_ring_check\n");
-#endif
 
     *channel_out = channel;
     return 0;
@@ -506,16 +487,12 @@ int fut_fipc_cap_bind(struct fut_fipc_channel *channel, const struct fut_fipc_ca
     struct fut_fipc_cap new_cap = *cap;
     new_cap.revoke_flags = 0;
     if (new_cap.lease_id == 0) {
-        new_cap.lease_id = atomic_fetch_add_explicit(&next_cap_lease, 1, memory_order_relaxed);
+        new_cap.lease_id = FIPC_ATOMIC_FETCH_ADD(next_cap_lease, 1);
     } else {
-        uint64_t current = atomic_load_explicit(&next_cap_lease, memory_order_relaxed);
+        uint64_t current = FIPC_ATOMIC_LOAD(next_cap_lease);
         while (current <= new_cap.lease_id) {
             uint64_t desired = new_cap.lease_id + 1;
-            if (atomic_compare_exchange_weak_explicit(&next_cap_lease,
-                                                      &current,
-                                                      desired,
-                                                      memory_order_relaxed,
-                                                      memory_order_relaxed)) {
+            if (FIPC_ATOMIC_CAS(next_cap_lease, &current, desired)) {
                 break;
             }
         }

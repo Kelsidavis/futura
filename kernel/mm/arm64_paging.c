@@ -9,7 +9,7 @@
 #include <arch/arm64/paging.h>
 #include <arch/arm64/regs.h>
 #include <kernel/fut_mm.h>
-#include <kernel/memory.h>
+#include <kernel/fut_memory.h>
 #include <string.h>
 #include <stdatomic.h>
 
@@ -121,7 +121,7 @@ static inline void write_sctlr_el1(uint64_t sctlr) {
 static page_table_t *alloc_page_table(void) {
     /* For now, use simple allocator from physical memory manager */
     /* TODO: Integrate with buddy allocator or slab allocator */
-    page_table_t *pt = (page_table_t *)fut_phys_alloc(PAGE_SIZE);
+    page_table_t *pt = (page_table_t *)fut_pmm_alloc_page();
     if (!pt) {
         return NULL;
     }
@@ -135,7 +135,7 @@ static page_table_t *alloc_page_table(void) {
  */
 static void free_page_table(page_table_t *pt) {
     /* TODO: Integrate with physical memory manager */
-    fut_phys_free(pt, PAGE_SIZE);
+    fut_pmm_free_page(pt);
 }
 
 /* ============================================================
@@ -507,8 +507,8 @@ fut_vmem_context_t *fut_vmem_current(void) {
  * Get kernel PGD table.
  * @return Physical address of kernel PGD
  */
-pte_t *fut_get_kernel_pgd(void) {
-    return (pte_t *)&kernel_pgd;
+page_table_t *fut_get_kernel_pgd(void) {
+    return &kernel_pgd;
 }
 
 /**
@@ -613,14 +613,18 @@ void fut_paging_init(void) {
  * ============================================================ */
 
 void fut_dump_page_tables(fut_vmem_context_t *ctx, uint64_t vaddr) {
+    (void)ctx;
+    (void)vaddr;
     /* TODO: Implement page table dumping for debugging */
 }
 
 void fut_vmem_print_stats(fut_vmem_context_t *ctx) {
+    (void)ctx;
     /* TODO: Implement statistics printing */
 }
 
 bool fut_vmem_verify(fut_vmem_context_t *ctx) {
+    (void)ctx;
     /* TODO: Implement consistency checking */
     return true;
 }

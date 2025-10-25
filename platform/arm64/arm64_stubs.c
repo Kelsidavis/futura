@@ -84,6 +84,42 @@ int virtio_net_init(void) {
 }
 
 /* ============================================================
+ *   Userland Binary Staging Stubs (x86-64 specific)
+ * ============================================================ */
+
+int fut_stage_shell_binary(void) {
+    return -ENODEV;  /* Userland not available for ARM64 */
+}
+
+int fut_stage_init_binary(void) {
+    return -ENODEV;  /* Userland not available for ARM64 */
+}
+
+int fut_stage_cat_binary(void) {
+    return -ENODEV;  /* Userland not available for ARM64 */
+}
+
+int fut_stage_echo_binary(void) {
+    return -ENODEV;  /* Userland not available for ARM64 */
+}
+
+int fut_stage_wc_binary(void) {
+    return -ENODEV;  /* Userland not available for ARM64 */
+}
+
+int fut_stage_fsd_binary(void) {
+    return -ENODEV;  /* Userland not available for ARM64 */
+}
+
+int fut_stage_posixd_binary(void) {
+    return -ENODEV;  /* Userland not available for ARM64 */
+}
+
+int fut_stage_fbtest_binary(void) {
+    return -ENODEV;  /* Userland not available for ARM64 */
+}
+
+/* ============================================================
  *   Wayland Staging Stubs (x86-64 specific)
  * ============================================================ */
 
@@ -97,79 +133,6 @@ int fut_stage_wayland_client_binary(void) {
 
 int fut_stage_wayland_color_client_binary(void) {
     return -ENODEV;  /* Wayland not available for ARM64 */
-}
-
-/* ============================================================
- *   Memory Management Stubs (Phase 2 - Minimal Implementation)
- * ============================================================ */
-
-typedef struct fut_mm_context {
-    void *pmap;
-} fut_mm_context_t;
-
-static fut_mm_context_t kernel_mm_context = {
-    .pmap = NULL
-};
-
-static fut_mm_context_t *current_mm = &kernel_mm_context;
-
-void fut_mm_release(fut_mm_context_t *mm) {
-    (void)mm;
-    /* Memory context release stub */
-}
-
-int fut_mm_retain(fut_mm_context_t *mm) {
-    (void)mm;
-    return 0;
-}
-
-fut_mm_context_t *fut_mm_kernel(void) {
-    return &kernel_mm_context;
-}
-
-void fut_mm_switch(fut_mm_context_t *mm) {
-    if (mm) {
-        current_mm = mm;
-    }
-}
-
-uint64_t fut_mm_brk_current(fut_mm_context_t *mm) {
-    (void)mm;
-    return 0;
-}
-
-uint64_t fut_mm_brk_limit(fut_mm_context_t *mm) {
-    (void)mm;
-    return 0x1000;  /* Return some small limit */
-}
-
-fut_mm_context_t *fut_mm_context(void) {
-    return current_mm;
-}
-
-int fut_mm_map_anonymous(fut_mm_context_t *mm, uint64_t vaddr, size_t size, int prot) {
-    (void)mm;
-    (void)vaddr;
-    (void)size;
-    (void)prot;
-    return 0;  /* Success stub */
-}
-
-int fut_mm_unmap(fut_mm_context_t *mm, uint64_t vaddr, size_t size) {
-    (void)mm;
-    (void)vaddr;
-    (void)size;
-    return 0;  /* Success stub */
-}
-
-fut_mm_context_t *fut_mm_current(void) {
-    return current_mm;
-}
-
-int fut_mm_set_brk_current(fut_mm_context_t *mm, uint64_t brk) {
-    (void)mm;
-    (void)brk;
-    return 0;  /* Success stub */
 }
 
 /* ============================================================
@@ -195,18 +158,6 @@ int pmap_probe_pte(pmap_t *pmap, uint64_t vaddr) {
     return 0;  /* Entry exists stub */
 }
 
-uint64_t fut_virt_to_phys(uint64_t vaddr) {
-    /* Identity mapping stub for now */
-    return vaddr;
-}
-
-int fut_unmap_range(fut_mm_context_t *mm, uint64_t vaddr, size_t size) {
-    (void)mm;
-    (void)vaddr;
-    (void)size;
-    return 0;  /* Success stub */
-}
-
 /* ============================================================
  *   Task State Segment Stubs (x86-64 specific)
  * ============================================================ */
@@ -218,18 +169,11 @@ void fut_tss_set_kernel_stack(uint32_t cpu_id, uint64_t stack_top) {
 }
 
 /* ============================================================
- *   Context Switching Stubs (Architecture-dependent)
+ *   Context Switching (Architecture-dependent)
  * ============================================================ */
 
+/* Context switch functions are now implemented in context_switch.S */
 extern void fut_context_switch_asm(void);
-
-void fut_switch_context_irq(void) {
-    /* Context switch from IRQ handler - stub for now */
-}
-
-void fut_switch_context(void) {
-    /* Cooperative context switch - stub for now */
-}
 
 /* ============================================================
  *   Hardware I/O Stubs (x86-64 specific)

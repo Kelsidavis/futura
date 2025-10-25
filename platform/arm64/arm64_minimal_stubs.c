@@ -10,15 +10,6 @@
 #include <string.h>
 
 /* ============================================================
- *   Memory Management Stubs
- * ============================================================ */
-
-void fut_paging_init(void) {
-    /* Stub: ARM64 uses hardware MMU directly */
-    return;
-}
-
-/* ============================================================
  *   Scheduling Stubs
  * ============================================================ */
 
@@ -103,15 +94,6 @@ char *strstr(const char *s1, const char *s2) {
         s1++;
     }
 
-    return NULL;
-}
-
-/* ============================================================
- *   Memory Management Stubs (Additional)
- * ============================================================ */
-
-fut_mm_t *fut_mm_create(void) {
-    /* Stub: Create memory management context */
     return NULL;
 }
 

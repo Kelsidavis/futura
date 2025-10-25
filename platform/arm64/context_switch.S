@@ -8,6 +8,91 @@
 .section .text
 
 /*
+ * fut_switch_context - Cooperative context switch (called by scheduler)
+ *
+ * Arguments:
+ *   x0 = old context (fut_cpu_context_t *) - may be NULL for first switch
+ *   x1 = new context (fut_cpu_context_t *)
+ *
+ * Saves current CPU state to old context and restores from new context.
+ */
+.global fut_switch_context
+.type fut_switch_context, @function
+fut_switch_context:
+    /* Check if old context is NULL (first thread switch) */
+    cbz     x0, .Lrestore_only
+
+    /* Save current context to old */
+    stp     x19, x20, [x0, #0]        /* Save x19, x20 */
+    stp     x21, x22, [x0, #16]       /* Save x21, x22 */
+    stp     x23, x24, [x0, #32]       /* Save x23, x24 */
+    stp     x25, x26, [x0, #48]       /* Save x25, x26 */
+    stp     x27, x28, [x0, #64]       /* Save x27, x28 */
+    stp     x29, x30, [x0, #80]       /* Save FP (x29), LR (x30) */
+
+    /* Save stack pointer */
+    mov     x2, sp
+    str     x2, [x0, #96]             /* Save SP */
+
+    /* Save return address as PC */
+    adr     x2, .Lresume_point        /* Get address of resume point */
+    str     x2, [x0, #104]            /* Save PC */
+
+.Lrestore_only:
+    /* Restore new context */
+    ldp     x19, x20, [x1, #0]        /* Restore x19, x20 */
+    ldp     x21, x22, [x1, #16]       /* Restore x21, x22 */
+    ldp     x23, x24, [x1, #32]       /* Restore x23, x24 */
+    ldp     x25, x26, [x1, #48]       /* Restore x25, x26 */
+    ldp     x27, x28, [x1, #64]       /* Restore x27, x28 */
+    ldp     x29, x30, [x1, #80]       /* Restore FP (x29), LR (x30) */
+
+    /* Restore stack pointer */
+    ldr     x2, [x1, #96]             /* Restore SP */
+    mov     sp, x2
+
+    /* Jump to saved PC */
+    ldr     x2, [x1, #104]            /* Load PC */
+    br      x2                        /* Jump to new thread */
+
+.Lresume_point:
+    /* Resume point when this thread is switched back to */
+    ret
+
+.size fut_switch_context, . - fut_switch_context
+
+/*
+ * fut_switch_context_irq - Context switch from interrupt handler
+ *
+ * Arguments:
+ *   x0 = prev thread (struct fut_thread *) - may be NULL
+ *   x1 = next thread (struct fut_thread *)
+ *   x2 = prev_frame (struct fut_interrupt_frame *) - currently unused
+ *
+ * Context is stored at offset 48 in fut_thread structure.
+ */
+.global fut_switch_context_irq
+.type fut_switch_context_irq, @function
+fut_switch_context_irq:
+    /* Save x2 (prev_frame) - not used in basic implementation */
+    /* We can use it later for saving interrupt context */
+
+    /* Check if prev thread is NULL */
+    cbz     x0, .Lirq_restore_only
+
+    /* Get pointer to prev thread's context (offset 48) */
+    add     x0, x0, #48
+
+.Lirq_restore_only:
+    /* Get pointer to next thread's context (offset 48) */
+    add     x1, x1, #48
+
+    /* Call the main context switch function */
+    b       fut_switch_context
+
+.size fut_switch_context_irq, . - fut_switch_context_irq
+
+/*
  * fut_context_switch - Switch from one thread context to another
  *
  * Arguments:
@@ -20,39 +105,38 @@
 .type fut_context_switch, @function
 fut_context_switch:
     /* Save prev thread context */
-    /* Offset to context field in fut_thread structure (adjust based on actual layout) */
-    /* For now, assume context is at offset 64 */
+    /* Offset to context field in fut_thread structure is 48 bytes */
 
     /* Save callee-saved registers */
-    stp     x19, x20, [x0, #64]       /* Save x19, x20 */
-    stp     x21, x22, [x0, #80]       /* Save x21, x22 */
-    stp     x23, x24, [x0, #96]       /* Save x23, x24 */
-    stp     x25, x26, [x0, #112]      /* Save x25, x26 */
-    stp     x27, x28, [x0, #128]      /* Save x27, x28 */
-    stp     x29, x30, [x0, #144]      /* Save FP (x29), LR (x30) */
+    stp     x19, x20, [x0, #48]       /* Save x19, x20 */
+    stp     x21, x22, [x0, #64]       /* Save x21, x22 */
+    stp     x23, x24, [x0, #80]       /* Save x23, x24 */
+    stp     x25, x26, [x0, #96]       /* Save x25, x26 */
+    stp     x27, x28, [x0, #112]      /* Save x27, x28 */
+    stp     x29, x30, [x0, #128]      /* Save FP (x29), LR (x30) */
 
     /* Save stack pointer */
     mov     x2, sp
-    str     x2, [x0, #160]            /* Save SP */
+    str     x2, [x0, #144]            /* Save SP */
 
     /* Save return address (PC) */
     adr     x2, 1f                    /* Get address of resume point */
-    str     x2, [x0, #168]            /* Save PC */
+    str     x2, [x0, #152]            /* Save PC */
 
     /* Restore next thread context */
-    ldp     x19, x20, [x1, #64]       /* Restore x19, x20 */
-    ldp     x21, x22, [x1, #80]       /* Restore x21, x22 */
-    ldp     x23, x24, [x1, #96]       /* Restore x23, x24 */
-    ldp     x25, x26, [x1, #112]      /* Restore x25, x26 */
-    ldp     x27, x28, [x1, #128]      /* Restore x27, x28 */
-    ldp     x29, x30, [x1, #144]      /* Restore FP (x29), LR (x30) */
+    ldp     x19, x20, [x1, #48]       /* Restore x19, x20 */
+    ldp     x21, x22, [x1, #64]       /* Restore x21, x22 */
+    ldp     x23, x24, [x1, #80]       /* Restore x23, x24 */
+    ldp     x25, x26, [x1, #96]       /* Restore x25, x26 */
+    ldp     x27, x28, [x1, #112]      /* Restore x27, x28 */
+    ldp     x29, x30, [x1, #128]      /* Restore FP (x29), LR (x30) */
 
     /* Restore stack pointer */
-    ldr     x2, [x1, #160]            /* Restore SP */
+    ldr     x2, [x1, #144]            /* Restore SP */
     mov     sp, x2
 
     /* Restore PC (return address) */
-    ldr     x2, [x1, #168]            /* Restore PC */
+    ldr     x2, [x1, #152]            /* Restore PC */
     br      x2                        /* Jump to next thread */
 
 1:  /* Resume point for prev thread */
@@ -82,32 +166,32 @@ fut_context_init:
     and     x5, x5, #~15
 
     /* Set up initial context */
-    /* x0 already contains thread pointer */
+    /* x0 already contains thread pointer, context starts at offset 48 */
 
     /* Clear callee-saved registers */
-    stp     xzr, xzr, [x0, #64]       /* x19, x20 = 0 */
-    stp     xzr, xzr, [x0, #80]       /* x21, x22 = 0 */
-    stp     xzr, xzr, [x0, #96]       /* x23, x24 = 0 */
-    stp     xzr, xzr, [x0, #112]      /* x25, x26 = 0 */
-    stp     xzr, xzr, [x0, #128]      /* x27, x28 = 0 */
+    stp     xzr, xzr, [x0, #48]       /* x19, x20 = 0 */
+    stp     xzr, xzr, [x0, #64]       /* x21, x22 = 0 */
+    stp     xzr, xzr, [x0, #80]       /* x23, x24 = 0 */
+    stp     xzr, xzr, [x0, #96]       /* x25, x26 = 0 */
+    stp     xzr, xzr, [x0, #112]      /* x27, x28 = 0 */
 
     /* x19 will hold the argument for the entry function */
-    str     x2, [x0, #64]             /* x19 = arg */
+    str     x2, [x0, #48]             /* x19 = arg */
 
     /* Set up FP and LR */
-    str     xzr, [x0, #144]           /* x29 (FP) = 0 */
+    str     xzr, [x0, #128]           /* x29 (FP) = 0 */
     adr     x6, fut_thread_entry_stub
-    str     x6, [x0, #152]            /* x30 (LR) = thread entry stub */
+    str     x6, [x0, #136]            /* x30 (LR) = thread entry stub */
 
     /* Set initial stack pointer */
-    str     x5, [x0, #160]            /* SP = stack top */
+    str     x5, [x0, #144]            /* SP = stack top */
 
     /* Set initial PC to entry function */
-    str     x1, [x0, #168]            /* PC = entry function */
+    str     x1, [x0, #152]            /* PC = entry function */
 
     /* Set initial PSTATE (EL1h, interrupts enabled) */
     mov     x6, #(PSTATE_MODE_EL1h | PSTATE_F_BIT)
-    str     x6, [x0, #176]            /* PSTATE */
+    str     x6, [x0, #160]            /* PSTATE */
 
     ret
 

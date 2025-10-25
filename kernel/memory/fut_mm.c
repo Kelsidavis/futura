@@ -393,16 +393,365 @@ int fut_mm_unmap(fut_mm_t *mm, uintptr_t addr, size_t len) {
     return -EINVAL;
 }
 
-#else  /* !__x86_64__ */
+#elif defined(__aarch64__)
 
-/* ARM64 and other non-x86_64 architectures: memory management stubs */
-/* TODO: Implement ARM64-specific memory management */
+/* ============================================================
+ *   ARM64 Memory Management Implementation
+ * ============================================================ */
 
 #include "../../include/kernel/fut_mm.h"
-#include <stddef.h>
+#include "../../include/kernel/fut_memory.h"
+#include "../../include/kernel/fut_task.h"
+#include "../../include/kernel/fut_thread.h"
 
-fut_mm_t *fut_mm_get_active(void) {
-    return NULL;
+#include <arch/arm64/paging.h>
+#include <kernel/errno.h>
+
+#include <string.h>
+#include <stdbool.h>
+#include <stdint.h>
+
+static fut_mm_t kernel_mm;
+static fut_mm_t *active_mm = NULL;
+
+#define USER_STACK_TOP      0x0000007FFFFF0000ULL
+#define USER_VMA_MAX        (USER_STACK_TOP - (16ULL << 20))
+#define USER_MMAP_BASE      0x0000400000000000ULL
+
+typedef struct fut_vma {
+    uintptr_t start;
+    uintptr_t end;
+    int prot;
+    int flags;
+    struct fut_vma *next;
+} fut_vma_t;
+
+static inline fut_mm_t *mm_fallback(fut_mm_t *mm) {
+    return mm ? mm : &kernel_mm;
 }
 
-#endif  /* __x86_64__ */
+static uint64_t mm_pte_flags(int prot) {
+    uint64_t flags = PTE_VALID | PTE_AF_BIT | PTE_ATTR_NORMAL | PTE_SH_INNER;
+    if (prot & 0x2) {
+        flags |= PTE_AP_RW_ALL;  /* Writable for user and kernel */
+    } else {
+        flags |= PTE_AP_RO_ALL;  /* Read-only for user and kernel */
+    }
+    if ((prot & 0x4) == 0) {
+        flags |= PTE_PXN_BIT;  /* Privileged Execute Never */
+        flags |= PTE_UXN_BIT;  /* User Execute Never */
+    }
+    return flags;
+}
+
+static void mm_unmap_and_free(fut_mm_t *mm, uintptr_t start, uintptr_t end) {
+    if (!mm || start >= end) {
+        return;
+    }
+
+    fut_vmem_context_t *ctx = fut_mm_context(mm);
+    for (uintptr_t va = start; va < end; va += PAGE_SIZE) {
+        uint64_t phys = 0;
+        if (fut_virt_to_phys(ctx, va, &phys) == 0) {
+            fut_unmap_range(ctx, va, PAGE_SIZE);
+            fut_pmm_free_page((void *)phys);
+        }
+    }
+}
+
+void fut_mm_system_init(void) {
+    extern void fut_printf(const char *, ...);
+    fut_printf("[MM] ARM64 memory management initialization\n");
+
+    memset(&kernel_mm, 0, sizeof(kernel_mm));
+
+    kernel_mm.ctx.pgd = fut_get_kernel_pgd();
+    kernel_mm.ctx.ttbr0_el1 = (uint64_t)kernel_mm.ctx.pgd;
+    kernel_mm.ctx.ref_count = 1;
+    atomic_store_explicit(&kernel_mm.refcnt, 1, memory_order_relaxed);
+    kernel_mm.flags = FUT_MM_KERNEL;
+    kernel_mm.brk_start = 0;
+    kernel_mm.brk_current = 0;
+    kernel_mm.heap_limit = USER_VMA_MAX;
+    kernel_mm.heap_mapped_end = 0;
+    kernel_mm.mmap_base = USER_MMAP_BASE;
+    kernel_mm.vma_list = NULL;
+
+    active_mm = &kernel_mm;
+
+    fut_printf("[MM] ARM64 memory management initialized\n");
+}
+
+fut_mm_t *fut_mm_kernel(void) {
+    return &kernel_mm;
+}
+
+static void copy_kernel_half(page_table_t *dst) {
+    page_table_t *src = (page_table_t *)fut_get_kernel_pgd();
+    /* Kernel occupies upper half entries (256-511) */
+    for (size_t idx = 256; idx < 512; ++idx) {
+        dst->entries[idx] = src->entries[idx];
+    }
+}
+
+fut_mm_t *fut_mm_create(void) {
+    extern void fut_printf(const char *, ...);
+
+    fut_printf("[MM-CREATE] ARM64: Allocating MM structure...\n");
+    fut_mm_t *mm = (fut_mm_t *)fut_malloc(sizeof(*mm));
+    if (!mm) {
+        fut_printf("[MM-CREATE] FAILED: malloc returned NULL\n");
+        return NULL;
+    }
+    memset(mm, 0, sizeof(*mm));
+
+    fut_printf("[MM-CREATE] ARM64: Allocating PGD page...\n");
+    void *pgd_page = fut_pmm_alloc_page();
+    if (!pgd_page) {
+        fut_printf("[MM-CREATE] FAILED: pmm_alloc_page returned NULL (out of physical pages)\n");
+        fut_free(mm);
+        return NULL;
+    }
+    fut_printf("[MM-CREATE] ARM64: PGD allocated successfully at %p\n", pgd_page);
+
+    memset(pgd_page, 0, PAGE_SIZE);
+    page_table_t *pgd = (page_table_t *)pgd_page;
+    copy_kernel_half(pgd);
+
+    mm->ctx.pgd = pgd;
+    mm->ctx.ttbr0_el1 = (uint64_t)pgd;
+    mm->ctx.ref_count = 1;
+    atomic_store_explicit(&mm->refcnt, 1, memory_order_relaxed);
+    mm->flags = FUT_MM_USER;
+    mm->brk_start = 0;
+    mm->brk_current = 0;
+    mm->heap_limit = USER_VMA_MAX;
+    mm->heap_mapped_end = 0;
+    mm->mmap_base = USER_MMAP_BASE;
+    mm->vma_list = NULL;
+
+    fut_printf("[MM-CREATE] ARM64: MM created successfully\n");
+    return mm;
+}
+
+void fut_mm_retain(fut_mm_t *mm) {
+    if (!mm) {
+        return;
+    }
+    atomic_fetch_add_explicit(&mm->refcnt, 1, memory_order_acq_rel);
+}
+
+void fut_mm_release(fut_mm_t *mm) {
+    if (!mm || mm == &kernel_mm) {
+        return;
+    }
+    if (atomic_fetch_sub_explicit(&mm->refcnt, 1, memory_order_acq_rel) != 1) {
+        return;
+    }
+
+    if (mm->heap_mapped_end > mm->brk_start) {
+        uintptr_t start = PAGE_ALIGN_DOWN(mm->brk_start);
+        uintptr_t end = PAGE_ALIGN_UP(mm->heap_mapped_end);
+        if (end > start) {
+            mm_unmap_and_free(mm, start, end);
+        }
+    }
+
+    fut_vma_t *vma = mm->vma_list;
+    while (vma) {
+        fut_vma_t *next = vma->next;
+        mm_unmap_and_free(mm, vma->start, vma->end);
+        fut_free(vma);
+        vma = next;
+    }
+    mm->vma_list = NULL;
+
+    if (mm->ctx.pgd) {
+        fut_pmm_free_page(mm->ctx.pgd);
+        mm->ctx.pgd = NULL;
+    }
+
+    fut_free(mm);
+}
+
+void fut_mm_switch(fut_mm_t *mm) {
+    extern void fut_printf(const char *, ...);
+
+    mm = mm_fallback(mm);
+    if (active_mm == mm) {
+        return;
+    }
+
+    active_mm = mm;
+    fut_vmem_switch(&mm->ctx);
+}
+
+static fut_mm_t *mm_from_current_thread(void) {
+    fut_thread_t *thread = fut_thread_current();
+
+    if (!thread) {
+        return active_mm ? active_mm : &kernel_mm;
+    }
+
+    if (!thread->task) {
+        return active_mm ? active_mm : &kernel_mm;
+    }
+
+    fut_mm_t *task_mm = fut_task_get_mm(thread->task);
+    if (task_mm) {
+        return task_mm;
+    }
+
+    return &kernel_mm;
+}
+
+fut_mm_t *fut_mm_current(void) {
+    return mm_from_current_thread();
+}
+
+fut_vmem_context_t *fut_mm_context(fut_mm_t *mm) {
+    mm = mm_fallback(mm);
+    return &mm->ctx;
+}
+
+void fut_mm_set_heap_base(fut_mm_t *mm, uintptr_t base, uintptr_t limit) {
+    if (!mm) {
+        return;
+    }
+
+    uintptr_t capped_limit = limit;
+    if (capped_limit == 0 || capped_limit > USER_VMA_MAX) {
+        capped_limit = USER_VMA_MAX;
+    }
+    if (capped_limit <= base) {
+        capped_limit = base + (16ULL << 20);
+    }
+
+    mm->brk_start = base;
+    mm->brk_current = base;
+    mm->heap_limit = capped_limit;
+    mm->heap_mapped_end = base;
+}
+
+uintptr_t fut_mm_brk_current(const fut_mm_t *mm) {
+    if (!mm) {
+        return 0;
+    }
+    return mm->brk_current;
+}
+
+uintptr_t fut_mm_brk_limit(const fut_mm_t *mm) {
+    if (!mm) {
+        return 0;
+    }
+    return mm->heap_limit;
+}
+
+void fut_mm_set_brk_current(fut_mm_t *mm, uintptr_t current) {
+    if (!mm) {
+        return;
+    }
+    mm->brk_current = current;
+}
+
+void *fut_mm_map_anonymous(fut_mm_t *mm, uintptr_t hint, size_t len, int prot, int flags) {
+    if (!mm || len == 0) {
+        return NULL;
+    }
+
+    (void)hint;  /* Ignore hint for now */
+    (void)flags;  /* Ignore flags for now */
+
+    /* Basic implementation - always allocate from mmap_base */
+    uintptr_t addr = mm->mmap_base;
+    uintptr_t aligned_len = PAGE_ALIGN_UP(len);
+
+    /* Check if we have space */
+    if (addr + aligned_len > USER_VMA_MAX) {
+        return NULL;
+    }
+
+    /* Allocate physical pages and map them */
+    uint64_t pte_flags = mm_pte_flags(prot);
+    fut_vmem_context_t *ctx = &mm->ctx;
+
+    for (uintptr_t offset = 0; offset < aligned_len; offset += PAGE_SIZE) {
+        void *phys_page = fut_pmm_alloc_page();
+        if (!phys_page) {
+            /* Cleanup: unmap what we've mapped so far */
+            for (uintptr_t cleanup = 0; cleanup < offset; cleanup += PAGE_SIZE) {
+                uint64_t phys;
+                if (fut_virt_to_phys(ctx, addr + cleanup, &phys) == 0) {
+                    fut_unmap_page(ctx, addr + cleanup);
+                    fut_pmm_free_page((void *)phys);
+                }
+            }
+            return NULL;
+        }
+
+        memset(phys_page, 0, PAGE_SIZE);
+        int ret = fut_map_page(ctx, addr + offset, (uint64_t)phys_page, pte_flags);
+        if (ret < 0) {
+            fut_pmm_free_page(phys_page);
+            /* Cleanup */
+            for (uintptr_t cleanup = 0; cleanup < offset; cleanup += PAGE_SIZE) {
+                uint64_t phys;
+                if (fut_virt_to_phys(ctx, addr + cleanup, &phys) == 0) {
+                    fut_unmap_page(ctx, addr + cleanup);
+                    fut_pmm_free_page((void *)phys);
+                }
+            }
+            return NULL;
+        }
+    }
+
+    /* Track VMA */
+    fut_vma_t *vma = (fut_vma_t *)fut_malloc(sizeof(fut_vma_t));
+    if (vma) {
+        vma->start = addr;
+        vma->end = addr + aligned_len;
+        vma->prot = prot;
+        vma->flags = flags;
+        vma->next = mm->vma_list;
+        mm->vma_list = vma;
+    }
+
+    /* Update mmap_base for next allocation */
+    mm->mmap_base = addr + aligned_len;
+
+    return (void *)addr;
+}
+
+int fut_mm_unmap(fut_mm_t *mm, uintptr_t addr, size_t len) {
+    if (!mm || len == 0) {
+        return -EINVAL;
+    }
+
+    uintptr_t start = PAGE_ALIGN_DOWN(addr);
+    uintptr_t aligned = PAGE_ALIGN_UP(len);
+    uintptr_t end = start + aligned;
+    if (end < start) {
+        return -EINVAL;
+    }
+
+    fut_vma_t **link = &mm->vma_list;
+    fut_vma_t *vma = mm->vma_list;
+    while (vma) {
+        if (vma->start == start && vma->end == end) {
+            *link = vma->next;
+            mm_unmap_and_free(mm, vma->start, vma->end);
+            fut_free(vma);
+            return 0;
+        }
+        link = &vma->next;
+        vma = vma->next;
+    }
+
+    return -EINVAL;
+}
+
+#else
+
+#error "Unsupported architecture for memory management"
+
+#endif  /* __x86_64__ / __aarch64__ */

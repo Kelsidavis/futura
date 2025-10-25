@@ -27,6 +27,20 @@
 #define __NR_chdir      80
 #define __NR_getcwd     79
 
+/* File flags (from VFS) */
+#define O_RDONLY    0x0000
+#define O_WRONLY    0x0001
+#define O_RDWR      0x0002
+#define O_CREAT     0x0040
+#define O_TRUNC     0x0200
+#define O_APPEND    0x0400
+
+/* File mode bits */
+#define S_IRWXU     0000700  /* User RWX */
+#define S_IRUSR     0000400  /* User read */
+#define S_IWUSR     0000200  /* User write */
+#define S_IXUSR     0000100  /* User execute */
+
 /* x86_64 syscall invocation via inline asm */
 static inline long syscall3(long nr, long arg1, long arg2, long arg3) {
     long ret;
@@ -108,8 +122,28 @@ static inline long sys_execve(const char *pathname, char *const argv[], char *co
     return syscall3(__NR_execve, (long)pathname, (long)argv, (long)envp);
 }
 
+static inline int sys_open(const char *pathname, int flags, int mode) {
+    return (int)syscall3(__NR_open, (long)pathname, flags, mode);
+}
+
 typedef long ssize_t;
 typedef int pid_t;
+
+/* Redirection types */
+enum redir_type {
+    REDIR_NONE = 0,
+    REDIR_INPUT,      /* < file */
+    REDIR_OUTPUT,     /* > file */
+    REDIR_APPEND      /* >> file */
+};
+
+/* Redirection information for a command */
+struct redir_info {
+    enum redir_type input_type;
+    char *input_file;
+    enum redir_type output_type;
+    char *output_file;
+};
 
 /* Simple write syscall wrapper */
 static void write_str(int fd, const char *str) {
@@ -426,6 +460,92 @@ static int starts_with(const char *str, char c) {
     return str[0] == c;
 }
 
+/* Parse redirections from a command and remove them from argv
+ * Returns the new argc after removing redirection tokens */
+static int parse_redirections(int argc, char *argv[], struct redir_info *redir) {
+    int new_argc = 0;
+
+    /* Initialize redirection info */
+    redir->input_type = REDIR_NONE;
+    redir->input_file = (char *)0;
+    redir->output_type = REDIR_NONE;
+    redir->output_file = (char *)0;
+
+    for (int i = 0; i < argc; i++) {
+        if (strcmp_simple(argv[i], "<") == 0) {
+            /* Input redirection */
+            if (i + 1 < argc) {
+                redir->input_type = REDIR_INPUT;
+                redir->input_file = argv[i + 1];
+                i++;  /* Skip the filename */
+            }
+        } else if (strcmp_simple(argv[i], ">") == 0) {
+            /* Output redirection (truncate) */
+            if (i + 1 < argc) {
+                redir->output_type = REDIR_OUTPUT;
+                redir->output_file = argv[i + 1];
+                i++;  /* Skip the filename */
+            }
+        } else if (strcmp_simple(argv[i], ">>") == 0) {
+            /* Output redirection (append) */
+            if (i + 1 < argc) {
+                redir->output_type = REDIR_APPEND;
+                redir->output_file = argv[i + 1];
+                i++;  /* Skip the filename */
+            }
+        } else {
+            /* Regular argument - keep it */
+            argv[new_argc++] = argv[i];
+        }
+    }
+
+    /* Null-terminate the new argv */
+    argv[new_argc] = (char *)0;
+
+    return new_argc;
+}
+
+/* Apply redirections by opening files and using dup2 */
+static int apply_redirections(const struct redir_info *redir) {
+    /* Handle input redirection */
+    if (redir->input_type == REDIR_INPUT && redir->input_file) {
+        int fd = sys_open(redir->input_file, O_RDONLY, 0);
+        if (fd < 0) {
+            write_str(2, "Error: cannot open input file '");
+            write_str(2, redir->input_file);
+            write_str(2, "'\n");
+            return -1;
+        }
+        sys_dup2(fd, 0);  /* Redirect stdin */
+        sys_close(fd);
+    }
+
+    /* Handle output redirection */
+    if (redir->output_type != REDIR_NONE && redir->output_file) {
+        int flags, fd;
+
+        if (redir->output_type == REDIR_OUTPUT) {
+            /* Truncate mode: create or truncate file */
+            flags = O_WRONLY | O_CREAT | O_TRUNC;
+        } else {
+            /* Append mode: create or append to file */
+            flags = O_WRONLY | O_CREAT | O_APPEND;
+        }
+
+        fd = sys_open(redir->output_file, flags, S_IRUSR | S_IWUSR);
+        if (fd < 0) {
+            write_str(2, "Error: cannot open output file '");
+            write_str(2, redir->output_file);
+            write_str(2, "'\n");
+            return -1;
+        }
+        sys_dup2(fd, 1);  /* Redirect stdout */
+        sys_close(fd);
+    }
+
+    return 0;
+}
+
 /* Execute a single command in a pipeline (with fork/exec) */
 static void exec_external_command(int argc, char *argv[]) {
     if (argc == 0 || !argv[0]) {
@@ -465,12 +585,43 @@ static int execute_pipeline(int num_stages, char *stages[]) {
         char *argv[32];
         int argc = parse_command(stages[0], argv, 32);
         if (argc > 0) {
-            /* Execute directly if builtin, otherwise would need fork/exec */
+            /* Parse redirections */
+            struct redir_info redir;
+            argc = parse_redirections(argc, argv, &redir);
+
+            if (argc == 0) {
+                write_str(2, "Error: No command specified\n");
+                return -1;
+            }
+
+            /* Execute directly if builtin */
             if (is_builtin(argv[0])) {
+                /* Builtins with redirections need special handling */
+                if (redir.input_type != REDIR_NONE || redir.output_type != REDIR_NONE) {
+                    write_str(2, "Warning: Redirections not supported for builtins yet\n");
+                }
                 return execute_command(argc, argv);
             } else {
-                write_str(2, "Error: External commands not yet supported\n");
-                return -1;
+                /* External command - fork and exec */
+                pid_t pid = sys_fork();
+                if (pid < 0) {
+                    write_str(2, "Error: fork() failed\n");
+                    return -1;
+                }
+
+                if (pid == 0) {
+                    /* Child: apply redirections and exec */
+                    if (apply_redirections(&redir) < 0) {
+                        syscall1(__NR_exit, 1);
+                    }
+                    exec_external_command(argc, argv);
+                    syscall1(__NR_exit, 1);
+                }
+
+                /* Parent: wait for child */
+                int status = 0;
+                sys_waitpid(pid, &status, 0);
+                return 0;
             }
         }
         return 0;
@@ -499,6 +650,20 @@ static int execute_pipeline(int num_stages, char *stages[]) {
         int argc = parse_command(stages[i], argv, 32);
 
         if (argc == 0) continue;
+
+        /* Parse redirections */
+        struct redir_info redir;
+        argc = parse_redirections(argc, argv, &redir);
+
+        if (argc == 0) {
+            write_str(2, "Error: No command in pipeline stage\n");
+            /* Close all pipes and return */
+            for (int j = 0; j < num_stages - 1; j++) {
+                sys_close(pipes[j][0]);
+                sys_close(pipes[j][1]);
+            }
+            return -1;
+        }
 
         /* Builtins can't be in pipelines (for now) */
         if (is_builtin(argv[0])) {
@@ -537,6 +702,11 @@ static int execute_pipeline(int num_stages, char *stages[]) {
             for (int j = 0; j < num_stages - 1; j++) {
                 sys_close(pipes[j][0]);
                 sys_close(pipes[j][1]);
+            }
+
+            /* Apply file redirections (for first/last stages) */
+            if (apply_redirections(&redir) < 0) {
+                syscall1(__NR_exit, 1);
             }
 
             /* Execute the command */

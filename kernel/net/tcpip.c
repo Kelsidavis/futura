@@ -775,7 +775,10 @@ static void tcp_handle_packet(const uint8_t *ip_payload, size_t len,
  * ========================================================================= */
 
 static void ip_handle_packet(const uint8_t *frame, size_t len) {
+    fut_printf("[IP-HANDLE] Called with len=%u\n", (unsigned)len);
+
     if (len < ETH_HEADER_LEN + IP_HEADER_MIN_LEN) {
+        fut_printf("[IP-HANDLE] Packet too short: %u < %u\n", (unsigned)len, ETH_HEADER_LEN + IP_HEADER_MIN_LEN);
         return;
     }
 
@@ -785,7 +788,10 @@ static void ip_handle_packet(const uint8_t *frame, size_t len) {
     uint8_t version = (ip->version_ihl >> 4) & 0xF;
     uint8_t ihl = (ip->version_ihl & 0xF) * 4;
 
+    fut_printf("[IP-HANDLE] version=%u ihl=%u\n", version, ihl);
+
     if (version != IP_VERSION_4 || ihl < IP_HEADER_MIN_LEN) {
+        fut_printf("[IP-HANDLE] Invalid version or IHL\n");
         return;
     }
 
@@ -797,7 +803,8 @@ static void ip_handle_packet(const uint8_t *frame, size_t len) {
     ip_mut->checksum = received_checksum;
 
     if (received_checksum != calculated_checksum) {
-        TCPIP_DEBUG("[IP] Checksum mismatch\n");
+        fut_printf("[IP-HANDLE] Checksum mismatch: got 0x%x expected 0x%x\n",
+                   received_checksum, calculated_checksum);
         return;
     }
 
@@ -806,8 +813,11 @@ static void ip_handle_packet(const uint8_t *frame, size_t len) {
     uint16_t total_len = ntohs(ip->total_length);
     uint8_t protocol = ip->protocol;
 
+    fut_printf("[IP-HANDLE] dest_ip=0x%x our_ip=0x%x\n", dest_ip, g_tcpip.ip_address);
+
     /* Check if packet is for us */
     if (dest_ip != g_tcpip.ip_address && dest_ip != 0xFFFFFFFF) {
+        fut_printf("[IP-HANDLE] Packet not for us, ignoring\n");
         return;
     }
 
@@ -860,6 +870,20 @@ static void tcpip_rx_thread(void *arg) {
 
         if (rc == 0 && received >= ETH_HEADER_LEN) {
             const eth_header_t *eth = (const eth_header_t *)buffer;
+
+            fut_printf("[RX-THREAD] Packet: src=%02x:%02x:%02x:%02x:%02x:%02x dest=%02x:%02x:%02x:%02x:%02x:%02x\n",
+                eth->src[0], eth->src[1], eth->src[2], eth->src[3], eth->src[4], eth->src[5],
+                eth->dest[0], eth->dest[1], eth->dest[2], eth->dest[3], eth->dest[4], eth->dest[5]);
+            fut_printf("[RX-THREAD] Our MAC=%02x:%02x:%02x:%02x:%02x:%02x\n",
+                g_tcpip.mac_address[0], g_tcpip.mac_address[1], g_tcpip.mac_address[2],
+                g_tcpip.mac_address[3], g_tcpip.mac_address[4], g_tcpip.mac_address[5]);
+
+            /* Filter out our own transmitted packets (virtio-net loopback) */
+            if (memcmp(eth->src, g_tcpip.mac_address, ETH_ADDR_LEN) == 0) {
+                fut_printf("[RX-THREAD] Ignoring loopback packet from our own MAC\n");
+                continue;
+            }
+
             uint16_t ethertype = ntohs(eth->type);
 
             fut_printf("[RX-THREAD] Received frame: ethertype=0x%04x, len=%u\n",

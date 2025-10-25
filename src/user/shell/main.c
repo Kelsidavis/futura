@@ -407,14 +407,50 @@ static int parse_pipeline(char *line, char *stages[], int max_stages) {
     return stage_count;
 }
 
+/* Simple string copy */
+static void strcpy_simple(char *dest, const char *src) {
+    while (*src) {
+        *dest++ = *src++;
+    }
+    *dest = '\0';
+}
+
+/* Simple string concatenation */
+static void strcat_simple(char *dest, const char *src) {
+    while (*dest) dest++;
+    strcpy_simple(dest, src);
+}
+
+/* Check if string starts with a character */
+static int starts_with(const char *str, char c) {
+    return str[0] == c;
+}
+
 /* Execute a single command in a pipeline (with fork/exec) */
 static void exec_external_command(int argc, char *argv[]) {
-    (void)argc;  /* Unused for now */
+    if (argc == 0 || !argv[0]) {
+        write_str(2, "Error: No command to execute\n");
+        syscall1(__NR_exit, 1);
+    }
 
-    /* For now, just indicate external commands are not yet supported */
-    write_str(2, "Error: External commands not yet supported (tried: ");
-    write_str(2, argv[0]);
-    write_str(2, ")\n");
+    const char *cmd = argv[0];
+    char path_buf[256];
+
+    /* If command contains '/', use as-is (absolute or relative path) */
+    if (starts_with(cmd, '/')) {
+        /* Absolute path */
+        sys_execve(cmd, argv, (char *const *)0);
+    } else {
+        /* Try to find in /bin/user/ */
+        strcpy_simple(path_buf, "/bin/user/");
+        strcat_simple(path_buf, cmd);
+        sys_execve(path_buf, argv, (char *const *)0);
+    }
+
+    /* If execve returns, it failed */
+    write_str(2, "Error: Failed to execute '");
+    write_str(2, cmd);
+    write_str(2, "'\n");
     syscall1(__NR_exit, 1);
 }
 

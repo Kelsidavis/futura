@@ -77,7 +77,9 @@ void fut_boot_banner(void) {
 
     uint64_t total_pages = fut_pmm_total_pages();
     uint64_t free_pages = fut_pmm_free_pages();
+#ifndef __aarch64__
     uintptr_t base_phys = fut_pmm_base_phys();
+#endif
 
     const uint64_t page_bytes = FUT_PAGE_SIZE;
     uint64_t total_mib = (total_pages * page_bytes) >> 20;
@@ -99,6 +101,15 @@ void fut_boot_banner(void) {
                feat->nx, feat->osxsave, feat->sse, feat->avx, feat->fsgsbase, feat->pge);
 #endif
 
+#ifdef __aarch64__
+    /* ARM64: Use simple printf calls to avoid format string bugs */
+    fut_printf("\n[MEM] Physical: total=%llu MiB  free=%llu MiB\n",
+               (unsigned long long)total_mib,
+               (unsigned long long)free_mib);
+    fut_printf("[MEM] Map:\n");
+    fut_mmap_dump();
+    fut_printf("=======================================================\n\n");
+#else
     fut_printf("\n[MEM] Physical: total=%llu MiB  free=%llu MiB  base=0x%llx\n",
                (unsigned long long)total_mib,
                (unsigned long long)free_mib,
@@ -106,4 +117,5 @@ void fut_boot_banner(void) {
     fut_printf("[MEM] Map:\n");
     fut_mmap_dump();
     fut_printf("=======================================================\n\n");
+#endif
 }

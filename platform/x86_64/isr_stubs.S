@@ -179,26 +179,10 @@ isr_syscall_int80_stub:
     /* All user registers are restored except RAX which has the syscall return value */
     /* CR3 is restored to user page tables */
 
-    /* Zero XMM registers before returning to userspace.
-     * The kernel (compiled with -O2) may have used XMM registers during the syscall,
-     * leaving garbage values that userspace code might interpret as pointers.
-     * Per System V ABI, XMM registers are caller-saved, so we must clean them. */
-    pxor %xmm0, %xmm0
-    pxor %xmm1, %xmm1
-    pxor %xmm2, %xmm2
-    pxor %xmm3, %xmm3
-    pxor %xmm4, %xmm4
-    pxor %xmm5, %xmm5
-    pxor %xmm6, %xmm6
-    pxor %xmm7, %xmm7
-    pxor %xmm8, %xmm8
-    pxor %xmm9, %xmm9
-    pxor %xmm10, %xmm10
-    pxor %xmm11, %xmm11
-    pxor %xmm12, %xmm12
-    pxor %xmm13, %xmm13
-    pxor %xmm14, %xmm14
-    pxor %xmm15, %xmm15
+    /* NOTE: We do NOT zero XMM registers on syscall return because the userspace
+     * syscall wrapper doesn't declare XMM as clobbered. If we zero them here,
+     * GCC-generated code that stores pointers in XMM will crash when it finds NULL.
+     * XMM registers must be preserved across syscalls per the calling convention. */
 
     iretq
 .size isr_syscall_int80_stub, . - isr_syscall_int80_stub

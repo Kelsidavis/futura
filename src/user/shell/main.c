@@ -60,6 +60,20 @@ static int last_exit_status = 0;
 static char *envp[MAX_VARS + 1];  /* +1 for NULL terminator */
 static char env_strings[MAX_VARS][MAX_VAR_NAME + MAX_VAR_VALUE + 2];  /* name=value\0 */
 
+/* Command history */
+#define MAX_HISTORY 100
+#define MAX_CMD_LEN 512
+static char history[MAX_HISTORY][MAX_CMD_LEN];
+static int history_count = 0;
+
+/* Forward declarations for utility functions */
+static int strcmp_simple(const char *a, const char *b);
+static void strncpy_simple(char *dest, const char *src, size_t n);
+
+/* Forward declarations for history functions */
+static void add_to_history(const char *cmd);
+static const char *get_history(int index);
+
 /* x86_64 syscall invocation via inline asm */
 static inline long syscall3(long nr, long arg1, long arg2, long arg3) {
     long ret;
@@ -183,11 +197,17 @@ static ssize_t read_bytes(int fd, char *buf, size_t count) {
     return sys_read(fd, buf, count);
 }
 
-/* Read a line with interactive editing support (backspace, etc.) */
+/* Read a line with interactive editing support (backspace, arrow keys, history) */
 static ssize_t read_line(int fd, char *buf, size_t max_len) {
     size_t pos = 0;
     char c;
     ssize_t nread;
+    static int current_history_index = -1;  /* -1 means not browsing history */
+    static char saved_input[MAX_CMD_LEN];   /* Save current input when browsing history */
+
+    /* Reset history position at start of new line */
+    current_history_index = -1;
+    saved_input[0] = '\0';
 
     while (pos < max_len - 1) {
         nread = read_bytes(fd, &c, 1);
@@ -199,6 +219,81 @@ static ssize_t read_line(int fd, char *buf, size_t max_len) {
                 return pos;
             }
             return nread;
+        }
+
+        /* Handle escape sequences (arrow keys) */
+        if (c == 0x1B) {  /* ESC */
+            char seq[2];
+            if (read_bytes(fd, &seq[0], 1) <= 0) continue;
+            if (seq[0] != '[') continue;
+            if (read_bytes(fd, &seq[1], 1) <= 0) continue;
+
+            if (seq[1] == 'A') {  /* Up arrow */
+                /* Save current input if this is first history navigation */
+                if (current_history_index == -1) {
+                    buf[pos] = '\0';
+                    strncpy_simple(saved_input, buf, MAX_CMD_LEN);
+                    current_history_index = history_count;
+                }
+
+                /* Go to previous command */
+                if (current_history_index > 0) {
+                    current_history_index--;
+                    const char *hist = get_history(current_history_index);
+                    if (hist) {
+                        /* Clear current line */
+                        while (pos > 0) {
+                            write_char(1, '\b');
+                            write_char(1, ' ');
+                            write_char(1, '\b');
+                            pos--;
+                        }
+                        /* Copy history entry and display it */
+                        pos = 0;
+                        while (hist[pos] && pos < max_len - 1) {
+                            buf[pos] = hist[pos];
+                            write_char(1, buf[pos]);
+                            pos++;
+                        }
+                    }
+                }
+            } else if (seq[1] == 'B') {  /* Down arrow */
+                if (current_history_index != -1) {
+                    /* Go to next command */
+                    current_history_index++;
+
+                    /* Clear current line */
+                    while (pos > 0) {
+                        write_char(1, '\b');
+                        write_char(1, ' ');
+                        write_char(1, '\b');
+                        pos--;
+                    }
+
+                    if (current_history_index >= history_count) {
+                        /* Reached end, restore saved input */
+                        current_history_index = -1;
+                        pos = 0;
+                        while (saved_input[pos] && pos < max_len - 1) {
+                            buf[pos] = saved_input[pos];
+                            write_char(1, buf[pos]);
+                            pos++;
+                        }
+                    } else {
+                        /* Show next history entry */
+                        const char *hist = get_history(current_history_index);
+                        if (hist) {
+                            pos = 0;
+                            while (hist[pos] && pos < max_len - 1) {
+                                buf[pos] = hist[pos];
+                                write_char(1, buf[pos]);
+                                pos++;
+                            }
+                        }
+                    }
+                }
+            }
+            continue;
         }
 
         /* Handle different control characters */
@@ -250,6 +345,27 @@ static void strncpy_simple(char *dest, const char *src, size_t n) {
         dest[i] = src[i];
     }
     dest[i] = '\0';
+}
+
+/* Add command to history */
+static void add_to_history(const char *cmd) {
+    /* Don't add empty commands or duplicates of the last command */
+    if (!cmd || !cmd[0]) return;
+    if (history_count > 0 && strcmp_simple(history[(history_count - 1) % MAX_HISTORY], cmd) == 0) {
+        return;
+    }
+
+    /* Add to circular buffer */
+    int idx = history_count % MAX_HISTORY;
+    strncpy_simple(history[idx], cmd, MAX_CMD_LEN);
+    history_count++;
+}
+
+/* Get history entry by index (0 = oldest, history_count-1 = newest) */
+static const char *get_history(int index) {
+    if (index < 0 || index >= history_count) return NULL;
+    if (history_count > MAX_HISTORY && index < history_count - MAX_HISTORY) return NULL;
+    return history[index % MAX_HISTORY];
 }
 
 /* Get variable value */
@@ -1051,6 +1167,9 @@ int main(int argc, char **argv) {
         if (cmdline[0] == '\0') {
             continue;
         }
+
+        /* Add command to history */
+        add_to_history(cmdline);
 
         /* Check for variable assignment */
         char var_name[MAX_VAR_NAME];

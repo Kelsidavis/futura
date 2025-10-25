@@ -16,9 +16,6 @@ extern fut_thread_t *fut_thread_current(void);
 /* Global statistics */
 static fut_global_stats_t global_stats = {0};
 
-/* Current running thread (for tick attribution) */
-static fut_thread_t *current_thread = NULL;
-
 /**
  * Initialize the statistics subsystem.
  */
@@ -26,7 +23,6 @@ void fut_stats_init(void) {
     global_stats.total_context_switches = 0;
     global_stats.total_cpu_ticks = 0;
     global_stats.start_tick = 0;
-    current_thread = NULL;
 }
 
 /**
@@ -37,7 +33,7 @@ void fut_stats_record_switch(fut_thread_t *prev, fut_thread_t *next) {
     uint64_t now = global_stats.total_cpu_ticks;
 
     /* Update previous thread's CPU time */
-    if (prev && current_thread == prev) {
+    if (prev && fut_thread_current() == prev) {
         uint64_t delta = now - prev->stats.last_scheduled_tick;
         prev->stats.cpu_ticks += delta;
     }
@@ -50,7 +46,6 @@ void fut_stats_record_switch(fut_thread_t *prev, fut_thread_t *next) {
 
     /* Update global counter */
     global_stats.total_context_switches++;
-    current_thread = next;
 }
 
 /**
@@ -60,7 +55,7 @@ void fut_stats_tick(void) {
     global_stats.total_cpu_ticks++;
 
     /* Attribute this tick to the currently running thread */
-    if (current_thread) {
+    if (fut_thread_current()) {
         /* Tick attribution happens at context switch, not here */
         /* This avoids double-counting ticks */
     }
@@ -80,7 +75,6 @@ void fut_stats_reset(void) {
     global_stats.total_context_switches = 0;
     global_stats.total_cpu_ticks = 0;
     global_stats.start_tick = 0;
-    current_thread = NULL;
 }
 
 /**

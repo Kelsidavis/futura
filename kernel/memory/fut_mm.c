@@ -210,7 +210,12 @@ void fut_mm_switch(fut_mm_t *mm) {
 
 static fut_mm_t *mm_from_current_thread(void) {
     fut_thread_t *thread = fut_thread_current();
-    if (!thread || !thread->task) {
+
+    if (!thread) {
+        return active_mm ? active_mm : &kernel_mm;
+    }
+
+    if (!thread->task) {
         return active_mm ? active_mm : &kernel_mm;
     }
 
@@ -218,6 +223,7 @@ static fut_mm_t *mm_from_current_thread(void) {
     if (task_mm) {
         return task_mm;
     }
+
     return &kernel_mm;
 }
 

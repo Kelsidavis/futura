@@ -236,3 +236,30 @@ unsigned __aarch64_cas8_relax_unsigned(unsigned *ptr, unsigned expected, unsigne
     return result;
 }
 
+/* 64-bit atomic operations */
+long long __aarch64_ldadd8_relax_longlong(long long *ptr, long long val) {
+    long long result = *ptr;
+    *ptr += val;
+    return result;
+}
+
+long long __aarch64_ldadd8_acq_rel_longlong(long long *ptr, long long val) {
+    long long result = *ptr;
+    *ptr += val;
+    __asm__ volatile("dmb ish" ::: "memory");
+    return result;
+}
+
+unsigned long long __aarch64_ldadd8_relax_ulonglong(unsigned long long *ptr, unsigned long long val) {
+    unsigned long long result = *ptr;
+    *ptr += val;
+    return result;
+}
+
+unsigned long long __aarch64_ldadd8_acq_rel_ulonglong(unsigned long long *ptr, unsigned long long val) {
+    unsigned long long result = *ptr;
+    *ptr += val;
+    __asm__ volatile("dmb ish" ::: "memory");
+    return result;
+}
+

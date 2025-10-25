@@ -193,34 +193,63 @@ static int fut_fipc_enqueue_message(struct fut_fipc_channel *channel,
  * ============================================================ */
 
 void fut_fipc_init(void) {
+#ifdef __FUTURA_KERNEL__
+    extern void fut_serial_puts(const char *);
+    fut_serial_puts("[DEBUG] fipc_init: Entry\n");
+#endif
+
     region_list = NULL;
     channel_list = NULL;
     next_region_id = 1;
     next_channel_id = 1;
+#ifdef __FUTURA_KERNEL__
+    fut_serial_puts("[DEBUG] fipc_init: Lists initialized\n");
+#endif
 
     struct fut_fipc_channel *sys_channel = NULL;
+#ifdef __FUTURA_KERNEL__
+    fut_serial_puts("[DEBUG] fipc_init: Creating sys_channel\n");
+#endif
     if (fut_fipc_channel_create(NULL,
                                 NULL,
                                 4096,
                                 FIPC_CHANNEL_NONBLOCKING,
                                 &sys_channel) == 0 && sys_channel) {
+#ifdef __FUTURA_KERNEL__
+        fut_serial_puts("[DEBUG] fipc_init: sys_channel created, configuring\n");
+#endif
         sys_channel->id = FIPC_SYS_CHANNEL_ID;
         sys_channel->type = FIPC_CHANNEL_SYSTEM;
         sys_channel->cap_ledger.rights = FIPC_CAP_R_SEND | FIPC_CAP_R_RECV | FIPC_CAP_R_ADMIN;
         sys_channel->cap_ledger.lease_id = atomic_fetch_add_explicit(&next_cap_lease, 1, memory_order_relaxed);
+#ifdef __FUTURA_KERNEL__
+        fut_serial_puts("[DEBUG] fipc_init: sys_channel configured\n");
+#endif
     }
 
     struct fut_fipc_channel *ctl_channel = NULL;
+#ifdef __FUTURA_KERNEL__
+    fut_serial_puts("[DEBUG] fipc_init: Creating ctl_channel\n");
+#endif
     if (fut_fipc_channel_create(NULL,
                                 NULL,
                                 4096,
                                 FIPC_CHANNEL_NONBLOCKING,
                                 &ctl_channel) == 0 && ctl_channel) {
+#ifdef __FUTURA_KERNEL__
+        fut_serial_puts("[DEBUG] fipc_init: ctl_channel created, configuring\n");
+#endif
         ctl_channel->id = FIPC_CTL_CHANNEL_ID;
         ctl_channel->type = FIPC_CHANNEL_SYSTEM;
         ctl_channel->cap_ledger.rights = FIPC_CAP_R_SEND | FIPC_CAP_R_RECV | FIPC_CAP_R_ADMIN;
         ctl_channel->cap_ledger.lease_id = atomic_fetch_add_explicit(&next_cap_lease, 1, memory_order_relaxed);
+#ifdef __FUTURA_KERNEL__
+        fut_serial_puts("[DEBUG] fipc_init: ctl_channel configured\n");
+#endif
     }
+#ifdef __FUTURA_KERNEL__
+    fut_serial_puts("[DEBUG] fipc_init: Done\n");
+#endif
 }
 
 /* ============================================================
@@ -335,22 +364,38 @@ void fut_fipc_region_unmap(struct fut_task *task, struct fut_fipc_region *region
 int fut_fipc_channel_create(struct fut_task *sender, struct fut_task *receiver,
                              size_t queue_size, uint32_t flags,
                              struct fut_fipc_channel **channel_out) {
+#ifdef __FUTURA_KERNEL__
+    extern void fut_serial_puts(const char *);
+    fut_serial_puts("[DEBUG] channel_create: Entry\n");
+#endif
     if (!channel_out) {
         return FIPC_EINVAL;
     }
 
     /* Allocate channel structure */
+#ifdef __FUTURA_KERNEL__
+    fut_serial_puts("[DEBUG] channel_create: Before malloc(channel)\n");
+#endif
     struct fut_fipc_channel *channel = fut_malloc(sizeof(struct fut_fipc_channel));
     if (!channel) {
         return FIPC_ENOMEM;
     }
+#ifdef __FUTURA_KERNEL__
+    fut_serial_puts("[DEBUG] channel_create: After malloc(channel)\n");
+#endif
 
     /* Allocate message queue */
+#ifdef __FUTURA_KERNEL__
+    fut_serial_puts("[DEBUG] channel_create: Before malloc(queue)\n");
+#endif
     void *queue = fut_malloc(queue_size);
     if (!queue) {
         fut_free(channel);
         return FIPC_ENOMEM;
     }
+#ifdef __FUTURA_KERNEL__
+    fut_serial_puts("[DEBUG] channel_create: After malloc(queue)\n");
+#endif
 
     /* Initialize channel */
     channel->id = next_channel_id++;
@@ -369,7 +414,13 @@ int fut_fipc_channel_create(struct fut_task *sender, struct fut_task *receiver,
     channel->remote.channel_id = 0;
     channel->remote.mtu = 0;
     channel->remote.flags = 0;
+#ifdef __FUTURA_KERNEL__
+    fut_serial_puts("[DEBUG] channel_create: Before memset\n");
+#endif
     memset(&channel->cap_ledger, 0, sizeof(channel->cap_ledger));
+#ifdef __FUTURA_KERNEL__
+    fut_serial_puts("[DEBUG] channel_create: After memset\n");
+#endif
     channel->tx_credits = 0;
     channel->credit_refill = 0;
     channel->credits_enabled = false;
@@ -395,7 +446,13 @@ int fut_fipc_channel_create(struct fut_task *sender, struct fut_task *receiver,
     channel->next = channel_list;
     channel_list = channel;
 
+#ifdef __FUTURA_KERNEL__
+    fut_serial_puts("[DEBUG] channel_create: Before fipc_ring_check\n");
+#endif
     fipc_ring_check(channel);
+#ifdef __FUTURA_KERNEL__
+    fut_serial_puts("[DEBUG] channel_create: After fipc_ring_check\n");
+#endif
 
     *channel_out = channel;
     return 0;

@@ -87,6 +87,8 @@ extern long sys_exit(int status);
 extern long sys_waitpid(int pid, int *u_status, int flags);
 extern long sys_nanosleep(const fut_timespec_t *u_req, fut_timespec_t *u_rem);
 extern long sys_time_millis(void);
+extern long sys_pipe(int pipefd[2]);
+extern long sys_dup2(int oldfd, int newfd);
 
 static int64_t sys_echo_handler(uint64_t arg1, uint64_t arg2, uint64_t arg3,
                                 uint64_t arg4, uint64_t arg5, uint64_t arg6) {
@@ -94,6 +96,25 @@ static int64_t sys_echo_handler(uint64_t arg1, uint64_t arg2, uint64_t arg3,
     (void)arg5;
     (void)arg6;
     return (int64_t)sys_echo((const char *)arg1, (char *)arg2, (size_t)arg3);
+}
+
+static int64_t sys_pipe_handler(uint64_t arg1, uint64_t arg2, uint64_t arg3,
+                                uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg2;
+    (void)arg3;
+    (void)arg4;
+    (void)arg5;
+    (void)arg6;
+    return (int64_t)sys_pipe((int *)arg1);
+}
+
+static int64_t sys_dup2_handler(uint64_t arg1, uint64_t arg2, uint64_t arg3,
+                                uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg3;
+    (void)arg4;
+    (void)arg5;
+    (void)arg6;
+    return (int64_t)sys_dup2((int)arg1, (int)arg2);
 }
 
 static int copy_user_string(const char *u_path, char *kbuf, size_t max_len) {
@@ -307,6 +328,8 @@ static syscall_handler_t syscall_table[MAX_SYSCALL] = {
     [SYS_echo]       = sys_echo_handler,
     [SYS_ioctl]      = sys_ioctl_handler,
     [SYS_mmap]       = sys_mmap_handler,
+    [SYS_pipe]       = sys_pipe_handler,
+    [SYS_dup2]       = sys_dup2_handler,
     [SYS_time_millis] = sys_time_millis_handler,
 };
 

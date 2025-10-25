@@ -815,6 +815,36 @@ static void free_fd(int fd) {
     }
 }
 
+/* Exported versions for dup2() syscall */
+struct fut_file *vfs_get_file(int fd) {
+    return get_file(fd);
+}
+
+void vfs_free_fd(int fd) {
+    free_fd(fd);
+}
+
+void vfs_file_ref(struct fut_file *file) {
+    if (file) {
+        file->refcount++;
+    }
+}
+
+int vfs_alloc_specific_fd(int target_fd, struct fut_file *file) {
+    if (target_fd < 0 || target_fd >= MAX_OPEN_FILES) {
+        return -EBADF;
+    }
+
+    /* Close existing file if any */
+    if (file_table[target_fd] != NULL) {
+        /* Should have been closed by caller, but be safe */
+        return -EBUSY;
+    }
+
+    file_table[target_fd] = file;
+    return target_fd;
+}
+
 static int try_open_chrdev(const char *path, int flags) {
     unsigned major = 0;
     unsigned minor = 0;
@@ -854,6 +884,42 @@ static int try_open_chrdev(const char *path, int flags) {
         if (ops->release) {
             ops->release(inode, file->chr_private);
         }
+        fut_free(file);
+        return fd;
+    }
+
+    return fd;
+}
+
+/**
+ * Allocate a file descriptor for a character device or pipe.
+ * Used by sys_pipe() to create pipe file descriptors.
+ *
+ * @param ops   File operations for this device
+ * @param inode Device inode (can be NULL for pipes)
+ * @param priv  Private data pointer (e.g., pipe buffer)
+ * @return File descriptor on success, negative error code on failure
+ */
+int chrdev_alloc_fd(const struct fut_file_ops *ops, void *inode, void *priv) {
+    if (!ops) {
+        return -EINVAL;
+    }
+
+    struct fut_file *file = fut_malloc(sizeof(struct fut_file));
+    if (!file) {
+        return -ENOMEM;
+    }
+
+    file->vnode = NULL;
+    file->offset = 0;
+    file->flags = O_RDWR;
+    file->refcount = 1;
+    file->chr_ops = ops;
+    file->chr_inode = inode;
+    file->chr_private = priv;
+
+    int fd = alloc_fd(file);
+    if (fd < 0) {
         fut_free(file);
         return fd;
     }

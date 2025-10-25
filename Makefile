@@ -340,6 +340,10 @@ KERNEL_SOURCES := \
     kernel/chrdev.c \
     kernel/sys_echo.c \
     kernel/sys_exit.c \
+    kernel/sys_fork.c \
+    kernel/sys_execve.c \
+    kernel/sys_pipe.c \
+    kernel/sys_dup2.c \
     kernel/sys_waitpid.c \
     kernel/sys_brk.c \
     kernel/sys_mmap.c \

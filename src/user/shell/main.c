@@ -93,6 +93,57 @@ static ssize_t read_bytes(int fd, char *buf, size_t count) {
     return sys_read(fd, buf, count);
 }
 
+/* Read a line with interactive editing support (backspace, etc.) */
+static ssize_t read_line(int fd, char *buf, size_t max_len) {
+    size_t pos = 0;
+    char c;
+    ssize_t nread;
+
+    while (pos < max_len - 1) {
+        nread = read_bytes(fd, &c, 1);
+
+        if (nread <= 0) {
+            /* EOF or error */
+            if (pos > 0) {
+                buf[pos] = '\0';
+                return pos;
+            }
+            return nread;
+        }
+
+        /* Handle different control characters */
+        if (c == '\n' || c == '\r') {
+            /* End of line */
+            write_char(1, '\n');
+            buf[pos] = '\0';
+            return pos;
+        } else if (c == 0x7F || c == 0x08) {
+            /* Backspace (DEL=0x7F or BS=0x08) */
+            if (pos > 0) {
+                pos--;
+                /* Erase character on screen: backspace, space, backspace */
+                write_char(1, '\b');
+                write_char(1, ' ');
+                write_char(1, '\b');
+            }
+        } else if (c == 0x03) {
+            /* Ctrl+C - interrupt */
+            write_str(1, "^C\n");
+            buf[0] = '\0';
+            return 0;
+        } else if (c >= 0x20 && c < 0x7F) {
+            /* Printable character - echo it and add to buffer */
+            buf[pos++] = c;
+            write_char(1, c);
+        }
+        /* Ignore other control characters */
+    }
+
+    /* Buffer full */
+    buf[max_len - 1] = '\0';
+    return max_len - 1;
+}
+
 /* Parse command line into arguments */
 static int parse_command(char *line, char *argv[], int max_args) {
     int argc = 0;
@@ -299,18 +350,11 @@ int main(int argc, char **argv) {
         /* Print prompt with current directory */
         write_str(1, "futura> ");
 
-        /* Read command line */
-        nread = read_bytes(0, cmdline, sizeof(cmdline) - 1);
+        /* Read command line with interactive editing */
+        nread = read_line(0, cmdline, sizeof(cmdline));
 
-        if (nread <= 0) {
+        if (nread < 0) {
             break; /* EOF or error - exit shell */
-        }
-
-        /* Null-terminate and remove trailing newline */
-        if (nread > 0 && cmdline[nread - 1] == '\n') {
-            cmdline[nread - 1] = '\0';
-        } else {
-            cmdline[nread] = '\0';
         }
 
         /* Skip empty lines */

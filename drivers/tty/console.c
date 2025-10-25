@@ -32,7 +32,7 @@ static ssize_t console_read(void *inode, void *priv, void *buf, size_t len, off_
     uint8_t *bytes = (uint8_t *)buf;
     size_t bytes_read = 0;
 
-    /* Read characters from serial port */
+    /* Read characters from serial port in raw mode (no echo, no line buffering) */
     while (bytes_read < len) {
         int c = fut_serial_getc_blocking();
         if (c < 0) {
@@ -46,13 +46,15 @@ static ssize_t console_read(void *inode, void *priv, void *buf, size_t len, off_
 
         bytes[bytes_read++] = (uint8_t)c;
 
-        /* Echo character back to console */
-        fut_serial_putc((char)c);
-        if (c == '\n') {
-            fut_serial_putc('\r');  /* Echo CR after LF */
+        /* In raw mode, don't echo - let userspace handle it */
+        /* This allows shells to implement backspace and line editing */
+
+        /* For single-character reads, return immediately */
+        if (len == 1) {
+            break;
         }
 
-        /* Stop reading after newline */
+        /* For multi-character reads, stop at newline */
         if (c == '\n') {
             break;
         }

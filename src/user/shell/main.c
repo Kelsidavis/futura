@@ -619,7 +619,7 @@ static void cmd_help(int argc, char *argv[]) {
     (void)argc;
     (void)argv;
 
-    write_str(1, "Futura OS Shell v0.2 - Available Commands:\n");
+    write_str(1, "Futura OS Shell v0.3 - Available Commands:\n");
     write_str(1, "\n");
     write_str(1, "Navigation:\n");
     write_str(1, "  cd [dir]        - Change directory\n");
@@ -635,6 +635,20 @@ static void cmd_help(int argc, char *argv[]) {
     write_str(1, "Shell:\n");
     write_str(1, "  help            - Show this help message\n");
     write_str(1, "  exit [code]     - Exit shell\n");
+    write_str(1, "  export VAR=val  - Export environment variable\n");
+    write_str(1, "  test / [        - Test conditions (see below)\n");
+    write_str(1, "\n");
+    write_str(1, "Features:\n");
+    write_str(1, "  Variables:      VAR=value, $VAR, ${VAR}, $?\n");
+    write_str(1, "  Pipelines:      cmd1 | cmd2 | cmd3\n");
+    write_str(1, "  Redirection:    cmd > file, cmd >> file, cmd < file\n");
+    write_str(1, "  Conditionals:   cmd1 && cmd2, cmd1 || cmd2\n");
+    write_str(1, "  History:        Up/down arrow keys\n");
+    write_str(1, "\n");
+    write_str(1, "Test operators:\n");
+    write_str(1, "  String:   = != -n -z\n");
+    write_str(1, "  Numeric:  -eq -ne -lt -le -gt -ge\n");
+    write_str(1, "  File:     -e -f -d\n");
 }
 
 /* Built-in: clear screen */
@@ -759,35 +773,149 @@ static void cmd_export(int argc, char *argv[]) {
     }
 }
 
+/* Helper: Simple atoi */
+static int simple_atoi(const char *str) {
+    int result = 0;
+    int sign = 1;
+
+    if (*str == '-') {
+        sign = -1;
+        str++;
+    }
+
+    while (*str >= '0' && *str <= '9') {
+        result = result * 10 + (*str - '0');
+        str++;
+    }
+
+    return result * sign;
+}
+
+/* Built-in: test - evaluate conditional expressions */
+static int cmd_test(int argc, char *argv[]) {
+    /* Handle [ command - last arg should be ] */
+    int is_bracket = (strcmp_simple(argv[0], "[") == 0);
+    if (is_bracket) {
+        if (argc < 2 || strcmp_simple(argv[argc - 1], "]") != 0) {
+            write_str(2, "test: missing ']'\n");
+            return 1;
+        }
+        argc--;  /* Remove the ']' from consideration */
+    }
+
+    /* No arguments: false */
+    if (argc == 1) {
+        return 1;
+    }
+
+    /* Single argument: true if non-empty string */
+    if (argc == 2) {
+        return (argv[1][0] == '\0') ? 1 : 0;
+    }
+
+    /* Two arguments: unary operators */
+    if (argc == 3) {
+        const char *op = argv[1];
+        const char *arg = argv[2];
+
+        if (strcmp_simple(op, "-n") == 0) {
+            /* String is not empty */
+            return (arg[0] == '\0') ? 1 : 0;
+        } else if (strcmp_simple(op, "-z") == 0) {
+            /* String is empty */
+            return (arg[0] == '\0') ? 0 : 1;
+        } else if (strcmp_simple(op, "-e") == 0 || strcmp_simple(op, "-f") == 0) {
+            /* File exists (we don't have stat yet, so just try to open) */
+            int fd = sys_open(arg, 0, 0);
+            if (fd >= 0) {
+                sys_close(fd);
+                return 0;
+            }
+            return 1;
+        } else if (strcmp_simple(op, "-d") == 0) {
+            /* Directory exists (simplified - just check if we can open) */
+            int fd = sys_open(arg, 0, 0);
+            if (fd >= 0) {
+                sys_close(fd);
+                return 0;
+            }
+            return 1;
+        } else if (strcmp_simple(op, "!") == 0) {
+            /* Logical NOT */
+            return (arg[0] == '\0') ? 0 : 1;
+        }
+    }
+
+    /* Three arguments: binary operators */
+    if (argc == 4) {
+        const char *left = argv[1];
+        const char *op = argv[2];
+        const char *right = argv[3];
+
+        /* String comparisons */
+        if (strcmp_simple(op, "=") == 0 || strcmp_simple(op, "==") == 0) {
+            return strcmp_simple(left, right) == 0 ? 0 : 1;
+        } else if (strcmp_simple(op, "!=") == 0) {
+            return strcmp_simple(left, right) != 0 ? 0 : 1;
+        }
+
+        /* Numeric comparisons */
+        int left_num = simple_atoi(left);
+        int right_num = simple_atoi(right);
+
+        if (strcmp_simple(op, "-eq") == 0) {
+            return (left_num == right_num) ? 0 : 1;
+        } else if (strcmp_simple(op, "-ne") == 0) {
+            return (left_num != right_num) ? 0 : 1;
+        } else if (strcmp_simple(op, "-lt") == 0) {
+            return (left_num < right_num) ? 0 : 1;
+        } else if (strcmp_simple(op, "-le") == 0) {
+            return (left_num <= right_num) ? 0 : 1;
+        } else if (strcmp_simple(op, "-gt") == 0) {
+            return (left_num > right_num) ? 0 : 1;
+        } else if (strcmp_simple(op, "-ge") == 0) {
+            return (left_num >= right_num) ? 0 : 1;
+        }
+    }
+
+    write_str(2, "test: invalid expression\n");
+    return 1;
+}
+
 /* Execute a command */
 static int execute_command(int argc, char *argv[]) {
     if (argc == 0) return 0;
 
     if (strcmp_simple(argv[0], "help") == 0) {
         cmd_help(argc, argv);
+        return 0;
     } else if (strcmp_simple(argv[0], "pwd") == 0) {
         cmd_pwd(argc, argv);
+        return 0;
     } else if (strcmp_simple(argv[0], "cd") == 0) {
         cmd_cd(argc, argv);
+        return 0;
     } else if (strcmp_simple(argv[0], "echo") == 0) {
         cmd_echo(argc, argv);
+        return 0;
     } else if (strcmp_simple(argv[0], "clear") == 0) {
         cmd_clear(argc, argv);
+        return 0;
     } else if (strcmp_simple(argv[0], "uname") == 0) {
         cmd_uname(argc, argv);
+        return 0;
     } else if (strcmp_simple(argv[0], "whoami") == 0) {
         cmd_whoami(argc, argv);
+        return 0;
     } else if (strcmp_simple(argv[0], "export") == 0) {
         cmd_export(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "test") == 0 || strcmp_simple(argv[0], "[") == 0) {
+        return cmd_test(argc, argv);
     } else if (strcmp_simple(argv[0], "exit") == 0) {
         int status = 0;
         if (argc > 1) {
-            /* Simple atoi */
-            char *p = argv[1];
-            while (*p >= '0' && *p <= '9') {
-                status = status * 10 + (*p - '0');
-                p++;
-            }
+            status = simple_atoi(argv[1]);
         }
         write_str(1, "Goodbye!\n");
         syscall1(60, status);
@@ -796,9 +924,8 @@ static int execute_command(int argc, char *argv[]) {
         write_str(1, "Command not found: ");
         write_str(1, argv[0]);
         write_str(1, " (type 'help' for available commands)\n");
+        return 1;
     }
-
-    return 0;
 }
 
 /* Check if a command is a shell builtin */
@@ -811,7 +938,9 @@ static int is_builtin(const char *cmd) {
             strcmp_simple(cmd, "clear") == 0 ||
             strcmp_simple(cmd, "uname") == 0 ||
             strcmp_simple(cmd, "whoami") == 0 ||
-            strcmp_simple(cmd, "export") == 0);
+            strcmp_simple(cmd, "export") == 0 ||
+            strcmp_simple(cmd, "test") == 0 ||
+            strcmp_simple(cmd, "[") == 0);
 }
 
 /* Parse command line into pipeline stages separated by '|' */
@@ -1138,13 +1267,81 @@ static int execute_pipeline(int num_stages, char *stages[]) {
     return 0;
 }
 
+/* Parse and execute command chain with && and || operators */
+static int execute_command_chain(char *cmdline) {
+    /* Parse command chain into segments separated by && or || */
+    char *segments[32];
+    int operators[32];  /* 0 = &&, 1 = || */
+    int num_segments = 0;
+    char *p = cmdline;
+    char *segment_start = cmdline;
+
+    while (*p && num_segments < 31) {
+        if (p[0] == '&' && p[1] == '&') {
+            /* Found && operator */
+            *p = '\0';  /* Null-terminate current segment */
+            segments[num_segments] = segment_start;
+            operators[num_segments] = 0;  /* && */
+            num_segments++;
+            p += 2;
+            /* Skip whitespace */
+            while (*p == ' ' || *p == '\t') p++;
+            segment_start = p;
+        } else if (p[0] == '|' && p[1] == '|') {
+            /* Found || operator */
+            *p = '\0';  /* Null-terminate current segment */
+            segments[num_segments] = segment_start;
+            operators[num_segments] = 1;  /* || */
+            num_segments++;
+            p += 2;
+            /* Skip whitespace */
+            while (*p == ' ' || *p == '\t') p++;
+            segment_start = p;
+        } else {
+            p++;
+        }
+    }
+
+    /* Add the last segment */
+    segments[num_segments] = segment_start;
+    num_segments++;
+
+    /* Execute each segment based on operators */
+    int last_status = 0;
+    for (int i = 0; i < num_segments; i++) {
+        /* Check if we should execute this segment */
+        if (i > 0) {
+            if (operators[i - 1] == 0) {  /* && */
+                if (last_status != 0) {
+                    /* Previous command failed, skip rest of && chain */
+                    continue;
+                }
+            } else {  /* || */
+                if (last_status == 0) {
+                    /* Previous command succeeded, skip || alternative */
+                    continue;
+                }
+            }
+        }
+
+        /* Execute this segment as a pipeline */
+        char *pipeline_stages[10];
+        int num_stages = parse_pipeline(segments[i], pipeline_stages, 10);
+        if (num_stages > 0) {
+            last_status = execute_pipeline(num_stages, pipeline_stages);
+        }
+    }
+
+    return last_status;
+}
+
 int main(int argc, char **argv) {
     (void)argc;
     (void)argv;
 
     write_str(1, "\n");
     write_str(1, "╔════════════════════════════════════════╗\n");
-    write_str(1, "║   Futura OS Shell v0.2                 ║\n");
+    write_str(1, "║   Futura OS Shell v0.3                 ║\n");
     write_str(1, "║   Type 'help' for available commands   ║\n");
     write_str(1, "╚════════════════════════════════════════╝\n");
     write_str(1, "\n");
@@ -1187,13 +1384,9 @@ int main(int argc, char **argv) {
         char expanded_cmdline[512];
         expand_variables(expanded_cmdline, cmdline, sizeof(expanded_cmdline));
 
-        /* Parse pipeline and execute */
-        char *pipeline_stages[10];
-        int num_stages = parse_pipeline(expanded_cmdline, pipeline_stages, 10);
-        if (num_stages > 0) {
-            int status = execute_pipeline(num_stages, pipeline_stages);
-            last_exit_status = (status < 0) ? 1 : 0;
-        }
+        /* Execute command chain (handles &&, ||, and pipelines) */
+        int status = execute_command_chain(expanded_cmdline);
+        last_exit_status = (status < 0) ? 1 : 0;
     }
 
     write_str(1, "\nShell terminated\n");

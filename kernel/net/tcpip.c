@@ -279,7 +279,9 @@ static int arp_lookup_cache(uint32_t ip, eth_addr_t *mac) {
 }
 
 static void arp_handle_packet(const uint8_t *frame, size_t len) {
+    fut_printf("[ARP-DEBUG] arp_handle_packet called, len=%u\n", (unsigned)len);
     if (len < ETH_HEADER_LEN + sizeof(arp_packet_t)) {
+        fut_printf("[ARP-DEBUG] Packet too short\n");
         return;
     }
 
@@ -289,15 +291,20 @@ static void arp_handle_packet(const uint8_t *frame, size_t len) {
     uint16_t proto_type = ntohs(arp->protocol_type);
     uint16_t op = ntohs(arp->operation);
 
+    fut_printf("[ARP-DEBUG] hw_type=%u proto_type=%u op=%u\n", hw_type, proto_type, op);
+
     if (hw_type != ARP_HARDWARE_ETHERNET || proto_type != ARP_PROTOCOL_IP) {
+        fut_printf("[ARP-DEBUG] Wrong hardware or protocol type\n");
         return;
     }
 
     uint32_t sender_ip = ntohl(arp->sender_ip);
     uint32_t target_ip = ntohl(arp->target_ip);
 
+    fut_printf("[ARP-DEBUG] About to call arp_add_static\n");
     /* Update ARP cache with sender info */
     arp_add_static(sender_ip, arp->sender_mac);
+    fut_printf("[ARP-DEBUG] arp_add_static returned\n");
 
     /* Handle ARP request */
     if (op == ARP_OP_REQUEST && target_ip == g_tcpip.ip_address) {
@@ -512,7 +519,7 @@ static void udp_handle_packet(const uint8_t *ip_payload, size_t len,
     (void)dest_ip;  /* Unused for now */
 
     if (len < UDP_HEADER_LEN) {
-        fut_printf("[UDP-DEBUG] Packet too short: %zu bytes\n", len);
+        fut_printf("[UDP-DEBUG] Packet too short: %u bytes\n", len);
         return;
     }
 
@@ -522,14 +529,14 @@ static void udp_handle_packet(const uint8_t *ip_payload, size_t len,
     uint16_t udp_len = ntohs(udp->length);
 
     if (udp_len < UDP_HEADER_LEN || udp_len > len) {
-        fut_printf("[UDP-DEBUG] Invalid UDP length: %u (packet len %zu)\n", udp_len, len);
+        fut_printf("[UDP-DEBUG] Invalid UDP length: %u (packet len %u)\n", udp_len, len);
         return;
     }
 
     size_t data_len = udp_len - UDP_HEADER_LEN;
     const uint8_t *data = ip_payload + UDP_HEADER_LEN;
 
-    fut_printf("[UDP-DEBUG] Received packet: %d.%d.%d.%d:%u -> %u, len %zu\n",
+    fut_printf("[UDP-DEBUG] Received packet: %d.%d.%d.%d:%u -> %u, len %u\n",
         (src_ip >> 24) & 0xFF, (src_ip >> 16) & 0xFF,
         (src_ip >> 8) & 0xFF, src_ip & 0xFF,
         src_port, dest_port, data_len);
@@ -552,9 +559,9 @@ static void udp_handle_packet(const uint8_t *ip_payload, size_t len,
                 sock->udp.rx_len = data_len;
                 sock->udp.src_ip = src_ip;
                 sock->udp.src_port = src_port;
-                fut_printf("[UDP-DEBUG] Data copied to socket rx_buffer (%zu bytes)\n", data_len);
+                fut_printf("[UDP-DEBUG] Data copied to socket rx_buffer (%u bytes)\n", data_len);
             } else {
-                fut_printf("[UDP-DEBUG] Data too large for buffer: %zu > %d\n",
+                fut_printf("[UDP-DEBUG] Data too large for buffer: %u > %d\n",
                     data_len, TCPIP_RX_BUFFER_SIZE);
             }
             fut_spinlock_release(&sock->lock);
@@ -784,7 +791,7 @@ static void ip_handle_packet(const uint8_t *frame, size_t len) {
     const uint8_t *payload = (const uint8_t *)ip + ihl;
 
     /* Dispatch to protocol handlers */
-    fut_printf("[IP-DEBUG] Received packet from %d.%d.%d.%d, protocol=%u, len=%zu\n",
+    fut_printf("[IP-DEBUG] Received packet from %d.%d.%d.%d, protocol=%u, len=%u\n",
         (src_ip >> 24) & 0xFF, (src_ip >> 16) & 0xFF,
         (src_ip >> 8) & 0xFF, src_ip & 0xFF,
         protocol, payload_len);
@@ -822,7 +829,7 @@ static void tcpip_rx_thread(void *arg) {
         int rc = fut_net_recv(g_tcpip.raw_socket, buffer, sizeof(buffer), &received);
 
         if (loop_count < 5) {
-            fut_printf("[RX-THREAD] Loop %d: fut_net_recv returned rc=%d, received=%zu\n",
+            fut_printf("[RX-THREAD] Loop %d: fut_net_recv returned rc=%d, received=%u\n",
                 loop_count, rc, received);
             loop_count++;
         }
@@ -831,7 +838,7 @@ static void tcpip_rx_thread(void *arg) {
             const eth_header_t *eth = (const eth_header_t *)buffer;
             uint16_t ethertype = ntohs(eth->type);
 
-            fut_printf("[RX-THREAD] Received frame: ethertype=0x%04x, len=%zu\n",
+            fut_printf("[RX-THREAD] Received frame: ethertype=0x%04x, len=%u\n",
                 ethertype, received);
 
             switch (ethertype) {
@@ -1030,7 +1037,7 @@ int tcpip_sendto(tcpip_socket_t *sock, const void *data, size_t len,
 
     memcpy(packet + UDP_HEADER_LEN, data, len);
 
-    fut_printf("[UDP-DEBUG] Sending from port %u to %d.%d.%d.%d:%u (%zu bytes)\n",
+    fut_printf("[UDP-DEBUG] Sending from port %u to %d.%d.%d.%d:%u (%u bytes)\n",
         sock->local_port,
         (dest_ip >> 24) & 0xFF, (dest_ip >> 16) & 0xFF,
         (dest_ip >> 8) & 0xFF, dest_ip & 0xFF,

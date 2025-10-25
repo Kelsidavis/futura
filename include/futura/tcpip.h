@@ -175,7 +175,7 @@ typedef enum {
  * Network Stack Configuration
  * ========================================================================= */
 
-#define TCPIP_DEFAULT_IP    0x0A000202  /* 10.0.2.2 (QEMU default guest) */
+#define TCPIP_DEFAULT_IP    0x0A00020F  /* 10.0.2.15 (QEMU default guest) */
 #define TCPIP_DEFAULT_MASK  0xFFFFFF00  /* 255.255.255.0 */
 #define TCPIP_DEFAULT_GW    0x0A000202  /* 10.0.2.2 */
 

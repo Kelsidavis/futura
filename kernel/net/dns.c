@@ -404,25 +404,42 @@ int dns_resolve(const char *domain, uint32_t *ip) {
 
         for (int retry = 0; retry < DNS_MAX_RETRIES; retry++) {
             /* Connect to DNS server */
+            fut_printf("[DNS-DEBUG] Connecting to server %d.%d.%d.%d...\n",
+                (dns_servers[server] >> 24) & 0xFF,
+                (dns_servers[server] >> 16) & 0xFF,
+                (dns_servers[server] >> 8) & 0xFF,
+                dns_servers[server] & 0xFF);
+
             int rc = tcpip_connect(g_dns.udp_socket, dns_servers[server], DNS_PORT);
             if (rc != 0) {
+                fut_printf("[DNS-DEBUG] Connect failed: %d\n", rc);
                 continue;
             }
+            fut_printf("[DNS-DEBUG] Connected successfully\n");
 
             /* Send query */
+            fut_printf("[DNS-DEBUG] Sending %zu byte query...\n", query_len);
             rc = tcpip_send(g_dns.udp_socket, query_buffer, query_len);
             if (rc < 0) {
+                fut_printf("[DNS-DEBUG] Send failed: %d\n", rc);
                 continue;
             }
+            fut_printf("[DNS-DEBUG] Query sent successfully (%d bytes)\n", rc);
 
             /* Wait for response with timeout */
             uint8_t response_buffer[512];
             uint64_t start_time = fut_get_ticks();
             uint64_t timeout_ticks = (DNS_TIMEOUT_MS * 100) / 1000;  /* ms to ticks */
 
+            fut_printf("[DNS-DEBUG] Waiting for response (timeout: %llu ticks)...\n", timeout_ticks);
+
+            int recv_attempts = 0;
             while (fut_get_ticks() - start_time < timeout_ticks) {
                 rc = tcpip_recv(g_dns.udp_socket, response_buffer, sizeof(response_buffer));
+                recv_attempts++;
+
                 if (rc > 0) {
+                    fut_printf("[DNS-DEBUG] Received %d byte response\n", rc);
                     /* Parse response */
                     rc = dns_parse_response(response_buffer, rc, query_id, ip);
                     if (rc == 0) {
@@ -433,12 +450,18 @@ int dns_resolve(const char *domain, uint32_t *ip) {
                         dns_format_ip(*ip, ip_str, sizeof(ip_str));
                         fut_printf("[DNS] Resolved: %s -> %s\n", domain, ip_str);
                         return 0;
+                    } else {
+                        fut_printf("[DNS-DEBUG] Parse failed: %d\n", rc);
                     }
+                } else if (rc < 0 && rc != -EAGAIN) {
+                    fut_printf("[DNS-DEBUG] Recv error: %d\n", rc);
                 }
 
                 /* Small delay before checking again */
                 for (volatile int i = 0; i < 100000; i++);
             }
+
+            fut_printf("[DNS-DEBUG] Timeout after %d recv attempts\n", recv_attempts);
         }
     }
 

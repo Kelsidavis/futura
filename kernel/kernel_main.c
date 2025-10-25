@@ -1003,9 +1003,10 @@ void fut_kernel_main(void) {
 
         /* Initialize DNS resolver */
         fut_printf("[DNS-TEST] Initializing DNS resolver...\n");
-        uint32_t google_dns_ip = (8 << 24) | (8 << 16) | (8 << 8) | 8;  /* 8.8.8.8 */
-        uint32_t cloudflare_dns_ip = (1 << 24) | (1 << 16) | (1 << 8) | 1;  /* 1.1.1.1 */
-        int dns_rc = dns_init(google_dns_ip, cloudflare_dns_ip);
+        /* Use QEMU's built-in DNS server at 10.0.2.3 for user networking */
+        uint32_t qemu_dns_ip = (10 << 24) | (0 << 16) | (2 << 8) | 3;  /* 10.0.2.3 */
+        uint32_t google_dns_ip = (8 << 24) | (8 << 16) | (8 << 8) | 8;  /* 8.8.8.8 (fallback) */
+        int dns_rc = dns_init(qemu_dns_ip, google_dns_ip);
         if (dns_rc != 0) {
             fut_printf("[DNS-TEST] ✗ DNS init failed: %d\n", dns_rc);
         } else {

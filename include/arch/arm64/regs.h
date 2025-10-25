@@ -185,11 +185,23 @@ typedef struct fut_interrupt_frame {
 #define UART_LCR                0x02C       /* Line control register */
 #define UART_CR                 0x030       /* Control register */
 #define UART_IMSC               0x038       /* Interrupt mask set/clear */
+#define UART_RIS                0x03C       /* Raw interrupt status */
+#define UART_MIS                0x040       /* Masked interrupt status */
 #define UART_ICR                0x044       /* Interrupt clear register */
 
 /* UART flag register bits */
 #define UART_FR_TXFF            (1 << 5)    /* Transmit FIFO full */
 #define UART_FR_RXFE            (1 << 4)    /* Receive FIFO empty */
+
+/* UART interrupt bits (for IMSC, RIS, MIS, ICR registers) */
+#define UART_INT_OE             (1 << 10)   /* Overrun error interrupt */
+#define UART_INT_BE             (1 << 9)    /* Break error interrupt */
+#define UART_INT_PE             (1 << 8)    /* Parity error interrupt */
+#define UART_INT_FE             (1 << 7)    /* Framing error interrupt */
+#define UART_INT_RT             (1 << 6)    /* Receive timeout interrupt */
+#define UART_INT_TX             (1 << 5)    /* Transmit interrupt */
+#define UART_INT_RX             (1 << 4)    /* Receive interrupt */
+#define UART_INT_MODEM          (1 << 3)    /* Modem interrupt (DSR) */
 
 /* ============================================================
  *   Generic Timer Definitions

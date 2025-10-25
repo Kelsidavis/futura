@@ -2,7 +2,7 @@
 
 **Last Updated:** October 25, 2025
 **Platform:** QEMU virt machine (cortex-a72)
-**Status:** Core functionality working, UART driver needs improvement
+**Status:** Core functionality working, polling-based UART functional, interrupt-driven work in progress
 
 ## Summary
 
@@ -175,12 +175,40 @@ qemu-system-aarch64 \
 ### Current Behavior (timing-dependent)
 May hang during FIPC initialization due to UART timing. Kernel is functionally correct; serial driver needs improvement for consistent boots.
 
+## Ongoing Work
+
+###  Interrupt-Driven UART (In Progress)
+
+**Goal:** Replace polling-based UART with interrupt-driven implementation to eliminate timing sensitivity.
+
+**Work Completed (October 25, 2025):**
+1. ✅ Added PL011 UART interrupt register definitions to `include/arch/arm64/regs.h`
+   - UART_RIS (Raw Interrupt Status) at offset 0x03C
+   - UART_MIS (Masked Interrupt Status) at offset 0x040
+   - Interrupt bit definitions (UART_INT_TX, UART_INT_RX, etc.)
+
+2. ✅ Designed interrupt-driven architecture
+   - 4KB TX ring buffer for queuing outgoing characters
+   - UART TX interrupt handler to drain buffer into hardware FIFO
+   - Hybrid approach: polling mode before IRQ registration, interrupt mode after
+
+3. ⏳ Implementation attempted but encountered boot hang
+   - Root cause not yet determined
+   - Need further debugging of IRQ handler registration and timing
+   - Polling-based code continues to work correctly
+
+**Next Steps:**
+1. Debug interrupt-driven implementation boot hang
+2. Verify IRQ handler signature and registration timing
+3. Test incremental changes to isolate issue
+4. Consider testing on real Raspberry Pi 5 hardware
+
 ## Future Work
 
 ### Short Term
-1. Implement interrupt-driven UART
-2. Add TX ring buffer
-3. Test on real Raspberry Pi 5 hardware
+1. Complete interrupt-driven UART debugging
+2. Test on real Raspberry Pi 5 hardware
+3. Implement RX interrupts for serial input
 
 ### Medium Term
 1. Device tree parsing

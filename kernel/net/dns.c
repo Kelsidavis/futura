@@ -418,7 +418,7 @@ int dns_resolve(const char *domain, uint32_t *ip) {
             fut_printf("[DNS-DEBUG] Connected successfully\n");
 
             /* Send query */
-            fut_printf("[DNS-DEBUG] Sending %zu byte query...\n", query_len);
+            fut_printf("[DNS-DEBUG] Sending %u byte query...\n", query_len);
             rc = tcpip_send(g_dns.udp_socket, query_buffer, query_len);
             if (rc < 0) {
                 fut_printf("[DNS-DEBUG] Send failed: %d\n", rc);

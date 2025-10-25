@@ -261,7 +261,7 @@ fut_status_t fut_net_send(fut_socket_t *socket, const void *buf, size_t len) {
         return -EMSGSIZE;
     }
 
-    NETDBG("[net] send socket=%p len=%zu\n", (void *)socket, len);
+    NETDBG("[net] send socket=%p len=%u\n", (void *)socket, len);
     fut_status_t rc = fut_net_dev_tx_all(buf, len);
     if (rc < 0) {
         return rc;
@@ -330,7 +330,7 @@ fut_status_t fut_net_recv_timed(fut_socket_t *socket,
     *out = copy_len;
     fut_free(pkt.data);
 
-    NETDBG("[net] recv socket=%p len=%zu\n", (void *)socket, copy_len);
+    NETDBG("[net] recv socket=%p len=%u\n", (void *)socket, copy_len);
     return 0;
 }
 

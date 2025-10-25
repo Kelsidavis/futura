@@ -50,10 +50,15 @@ struct shell_var {
     char name[MAX_VAR_NAME];
     char value[MAX_VAR_VALUE];
     int used;
+    int exported;  /* 1 if exported to child processes */
 };
 
 static struct shell_var shell_vars[MAX_VARS];
 static int last_exit_status = 0;
+
+/* Environment array for passing to execve */
+static char *envp[MAX_VARS + 1];  /* +1 for NULL terminator */
+static char env_strings[MAX_VARS][MAX_VAR_NAME + MAX_VAR_VALUE + 2];  /* name=value\0 */
 
 /* x86_64 syscall invocation via inline asm */
 static inline long syscall3(long nr, long arg1, long arg2, long arg3) {
@@ -301,7 +306,56 @@ static void set_var(const char *name, const char *value) {
         strncpy_simple(shell_vars[empty_slot].name, name, MAX_VAR_NAME);
         strncpy_simple(shell_vars[empty_slot].value, value, MAX_VAR_VALUE);
         shell_vars[empty_slot].used = 1;
+        shell_vars[empty_slot].exported = 0;
     }
+}
+
+/* Export a variable (mark it to be passed to child processes) */
+static void export_var(const char *name) {
+    for (int i = 0; i < MAX_VARS; i++) {
+        if (shell_vars[i].used && strcmp_simple(shell_vars[i].name, name) == 0) {
+            shell_vars[i].exported = 1;
+            return;
+        }
+    }
+    /* If variable doesn't exist, create it with empty value and export it */
+    for (int i = 0; i < MAX_VARS; i++) {
+        if (!shell_vars[i].used) {
+            strncpy_simple(shell_vars[i].name, name, MAX_VAR_NAME);
+            shell_vars[i].value[0] = '\0';
+            shell_vars[i].used = 1;
+            shell_vars[i].exported = 1;
+            return;
+        }
+    }
+}
+
+/* Build environment array for execve */
+static void build_envp(void) {
+    int env_count = 0;
+
+    for (int i = 0; i < MAX_VARS && env_count < MAX_VARS; i++) {
+        if (shell_vars[i].used && shell_vars[i].exported) {
+            /* Format as "NAME=value" */
+            int pos = 0;
+            const char *name = shell_vars[i].name;
+            while (*name && pos < MAX_VAR_NAME + MAX_VAR_VALUE) {
+                env_strings[env_count][pos++] = *name++;
+            }
+            if (pos < MAX_VAR_NAME + MAX_VAR_VALUE) {
+                env_strings[env_count][pos++] = '=';
+            }
+            const char *value = shell_vars[i].value;
+            while (*value && pos < MAX_VAR_NAME + MAX_VAR_VALUE) {
+                env_strings[env_count][pos++] = *value++;
+            }
+            env_strings[env_count][pos] = '\0';
+
+            envp[env_count] = env_strings[env_count];
+            env_count++;
+        }
+    }
+    envp[env_count] = NULL;  /* NULL-terminate the array */
 }
 
 /* Check if line is a variable assignment (VAR=value) */
@@ -529,6 +583,66 @@ static void cmd_whoami(int argc, char *argv[]) {
     write_str(1, "root\n");
 }
 
+/* Built-in: export */
+static void cmd_export(int argc, char *argv[]) {
+    if (argc < 2) {
+        /* No arguments - list all exported variables */
+        write_str(1, "Exported variables:\n");
+        for (int i = 0; i < MAX_VARS; i++) {
+            if (shell_vars[i].used && shell_vars[i].exported) {
+                write_str(1, "  ");
+                write_str(1, shell_vars[i].name);
+                write_str(1, "=");
+                write_str(1, shell_vars[i].value);
+                write_str(1, "\n");
+            }
+        }
+        return;
+    }
+
+    /* Export each variable listed */
+    for (int i = 1; i < argc; i++) {
+        const char *arg = argv[i];
+
+        /* Check if it's NAME=value format */
+        const char *eq = arg;
+        while (*eq && *eq != '=') eq++;
+
+        if (*eq == '=') {
+            /* Assignment: export NAME=value */
+            char name[MAX_VAR_NAME];
+            char value[MAX_VAR_VALUE];
+            int name_len = 0;
+
+            /* Extract name */
+            const char *p = arg;
+            while (*p != '=' && name_len < MAX_VAR_NAME - 1) {
+                name[name_len++] = *p++;
+            }
+            name[name_len] = '\0';
+            p++;  /* Skip '=' */
+
+            /* Extract value */
+            int value_len = 0;
+            while (*p && value_len < MAX_VAR_VALUE - 1) {
+                value[value_len++] = *p++;
+            }
+            value[value_len] = '\0';
+
+            /* Expand variables in value */
+            char expanded_value[MAX_VAR_VALUE];
+            expand_variables(expanded_value, value, MAX_VAR_VALUE);
+
+            /* Set and export */
+            set_var(name, expanded_value);
+            export_var(name);
+        } else {
+            /* Just export existing variable */
+            export_var(arg);
+        }
+    }
+}
+
 /* Execute a command */
 static int execute_command(int argc, char *argv[]) {
     if (argc == 0) return 0;
@@ -547,6 +661,8 @@ static int execute_command(int argc, char *argv[]) {
         cmd_uname(argc, argv);
     } else if (strcmp_simple(argv[0], "whoami") == 0) {
         cmd_whoami(argc, argv);
+    } else if (strcmp_simple(argv[0], "export") == 0) {
+        cmd_export(argc, argv);
     } else if (strcmp_simple(argv[0], "exit") == 0) {
         int status = 0;
         if (argc > 1) {
@@ -578,7 +694,8 @@ static int is_builtin(const char *cmd) {
             strcmp_simple(cmd, "echo") == 0 ||
             strcmp_simple(cmd, "clear") == 0 ||
             strcmp_simple(cmd, "uname") == 0 ||
-            strcmp_simple(cmd, "whoami") == 0);
+            strcmp_simple(cmd, "whoami") == 0 ||
+            strcmp_simple(cmd, "export") == 0);
 }
 
 /* Parse command line into pipeline stages separated by '|' */
@@ -724,15 +841,18 @@ static void exec_external_command(int argc, char *argv[]) {
     const char *cmd = argv[0];
     char path_buf[256];
 
+    /* Build environment array */
+    build_envp();
+
     /* If command contains '/', use as-is (absolute or relative path) */
     if (starts_with(cmd, '/')) {
         /* Absolute path */
-        sys_execve(cmd, argv, (char *const *)0);
+        sys_execve(cmd, argv, envp);
     } else {
         /* Try to find in /bin/user/ */
         strcpy_simple(path_buf, "/bin/user/");
         strcat_simple(path_buf, cmd);
-        sys_execve(path_buf, argv, (char *const *)0);
+        sys_execve(path_buf, argv, envp);
     }
 
     /* If execve returns, it failed */

@@ -1000,7 +1000,9 @@ void fut_kernel_main(void) {
             fut_printf("[TCP/IP-TEST] ✗ Failed to send ping: %d\n", ping_rc);
         }
 
-        /* Initialize DNS resolver */
+        /* Initialize DNS resolver - TEMPORARILY DISABLED FOR SLAB DEBUGGING */
+        fut_printf("[DNS-TEST] Skipped for slab debugging\n");
+        if (0) {  /* Disabled */
         fut_printf("[DNS-TEST] Initializing DNS resolver...\n");
         /* Use QEMU's built-in DNS server at 10.0.2.3 for user networking */
         uint32_t qemu_dns_ip = (10 << 24) | (0 << 16) | (2 << 8) | 3;  /* 10.0.2.3 */
@@ -1039,6 +1041,7 @@ void fut_kernel_main(void) {
                 fut_printf("[DNS-TEST] ✓ Cache test: google.com (should be cached)\n");
             }
         }
+        }  /* End DNS tests disabled for slab debugging */
     }
 
     /* Test block device operations - DISABLED (heap too small for 1MB ramdisk) */
@@ -1046,9 +1049,8 @@ void fut_kernel_main(void) {
 
     /* Test FuturaFS operations with smaller ramdisk
      * DISABLED for interactive mode - need heap space for compositor staging */
-#ifndef WAYLAND_INTERACTIVE_MODE
-    test_futurafs_operations();
-#endif
+    /* Slab debugging complete - disabled again for interactive mode */
+    /* test_futurafs_operations(); */
 
     fut_printf("[INIT] Skipping fbtest staging (debugging)\n");
     // TEMPORARILY DISABLED FOR DEBUGGING

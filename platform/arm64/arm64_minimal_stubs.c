@@ -19,17 +19,6 @@ void fut_scheduler_init(void) {
 }
 
 /* ============================================================
- *   IRQ Handler Registration Stubs
- * ============================================================ */
-
-int fut_register_irq_handler(int irq, fut_irq_handler_t handler) {
-    /* Stub: Already implemented in arm64_irq.c, but ensure it's linked */
-    (void)irq;
-    (void)handler;
-    return 0;
-}
-
-/* ============================================================
  *   GIC Initialization Stubs
  * ============================================================ */
 

@@ -12,12 +12,34 @@
 use core::arch::asm;
 use core::cell::UnsafeCell;
 use core::ffi::c_void;
-use core::mem::size_of;
-use core::ptr::{self, write_volatile};
+use core::ptr::{self, write_volatile, addr_of_mut, addr_of};
 use core::sync::atomic::{AtomicBool, AtomicU16, Ordering};
 
 use common::net::{self, FutNetDev, FutNetDevOps};
 use common::{alloc_page, free_page, log, map_mmio_region, thread_yield, FutStatus, RawSpinLock, MMIO_DEFAULT_FLAGS};
+
+// Kernel thread functions
+#[repr(C)]
+struct FutTask {
+    _private: [u8; 0],
+}
+
+#[repr(C)]
+struct FutThread {
+    _private: [u8; 0],
+}
+
+unsafe extern "C" {
+    fn fut_task_create() -> *mut FutTask;
+    fn fut_thread_create(
+        task: *mut FutTask,
+        entry: extern "C" fn(*mut c_void),
+        arg: *mut c_void,
+        stack_size: usize,
+        priority: i32,
+    ) -> *mut FutThread;
+    fn fut_sched_add_thread(thread: *mut FutThread);
+}
 
 // Error codes
 const EINVAL: FutStatus = -22;
@@ -29,6 +51,7 @@ const ETIMEDOUT: FutStatus = -110;
 
 // Virtio constants
 const VIRTIO_VENDOR_ID: u16 = 0x1AF4;
+const VIRTIO_DEVICE_ID_NET_LEGACY: u16 = 0x1000;
 const VIRTIO_DEVICE_ID_NET_MODERN: u16 = 0x1041;
 
 const VIRTIO_STATUS_ACKNOWLEDGE: u8 = 1;
@@ -132,6 +155,7 @@ struct VirtqAvail {
 }
 
 #[repr(C, packed)]
+#[derive(Clone, Copy)]
 struct VirtqUsedElem {
     id: u32,
     len: u32,
@@ -494,24 +518,38 @@ impl VirtioNetDevice {
 
     fn negotiate_features(&mut self) -> Result<(), FutStatus> {
         unsafe {
-            let common = &mut *self.common;
+            let common = self.common;
 
             // Acknowledge device
-            write_volatile(&mut common.device_status, VIRTIO_STATUS_ACKNOWLEDGE);
+            write_volatile(addr_of_mut!((*common).device_status), VIRTIO_STATUS_ACKNOWLEDGE);
 
             // Announce driver
-            write_volatile(&mut common.device_status, VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER);
+            write_volatile(addr_of_mut!((*common).device_status), VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER);
 
-            // Read and accept features (accepting none for simplicity)
-            write_volatile(&mut common.driver_feature_select, 0);
-            write_volatile(&mut common.driver_feature, 0);
+            // Read device features
+            write_volatile(addr_of_mut!((*common).device_feature_select), 0);
+            let device_features = ptr::read_volatile(addr_of!((*common).device_feature));
 
-            write_volatile(&mut common.device_status,
+            log("virtio-net: Device offers features");
+
+            // Accept all offered features for now
+            write_volatile(addr_of_mut!((*common).driver_feature_select), 0);
+            write_volatile(addr_of_mut!((*common).driver_feature), device_features);
+
+            write_volatile(addr_of_mut!((*common).device_status),
                 VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER | VIRTIO_STATUS_FEATURES_OK);
 
-            let status = common.device_status;
+            let status = ptr::read_volatile(addr_of!((*common).device_status));
             if (status & VIRTIO_STATUS_FEATURES_OK) == 0 {
-                return Err(EIO);
+                log("virtio-net: WARNING - Device rejected our feature selection");
+                // Try again with no features
+                write_volatile(addr_of_mut!((*common).driver_feature), 0);
+                write_volatile(addr_of_mut!((*common).device_status),
+                    VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER | VIRTIO_STATUS_FEATURES_OK);
+                let status2 = ptr::read_volatile(addr_of!((*common).device_status));
+                if (status2 & VIRTIO_STATUS_FEATURES_OK) == 0 {
+                    return Err(EIO);
+                }
             }
         }
         Ok(())
@@ -519,37 +557,33 @@ impl VirtioNetDevice {
 
     fn init_queues(&mut self) -> Result<(), FutStatus> {
         unsafe {
-            let common = &mut *self.common;
+            let common = self.common;
 
             // Setup RX queue
-            write_volatile(&mut common.queue_select, RX_QUEUE_IDX);
+            write_volatile(addr_of_mut!((*common).queue_select), RX_QUEUE_IDX);
             self.rx_queue.setup(QUEUE_SIZE)?;
-            write_volatile(&mut common.queue_size, QUEUE_SIZE);
-            write_volatile(&mut common.queue_desc_lo, (self.rx_queue.desc_phys & 0xFFFFFFFF) as u32);
-            write_volatile(&mut common.queue_desc_hi, (self.rx_queue.desc_phys >> 32) as u32);
-            write_volatile(&mut common.queue_avail_lo, (self.rx_queue.avail_phys & 0xFFFFFFFF) as u32);
-            write_volatile(&mut common.queue_avail_hi, (self.rx_queue.avail_phys >> 32) as u32);
-            write_volatile(&mut common.queue_used_lo, (self.rx_queue.used_phys & 0xFFFFFFFF) as u32);
-            write_volatile(&mut common.queue_used_hi, (self.rx_queue.used_phys >> 32) as u32);
-            write_volatile(&mut common.queue_enable, 1);
-            self.rx_queue.notify_off = common.queue_notify_off;
+            write_volatile(addr_of_mut!((*common).queue_size), QUEUE_SIZE);
+            write_volatile(addr_of_mut!((*common).queue_desc_lo), (self.rx_queue.desc_phys & 0xFFFFFFFF) as u32);
+            write_volatile(addr_of_mut!((*common).queue_desc_hi), (self.rx_queue.desc_phys >> 32) as u32);
+            write_volatile(addr_of_mut!((*common).queue_avail_lo), (self.rx_queue.avail_phys & 0xFFFFFFFF) as u32);
+            write_volatile(addr_of_mut!((*common).queue_avail_hi), (self.rx_queue.avail_phys >> 32) as u32);
+            write_volatile(addr_of_mut!((*common).queue_used_lo), (self.rx_queue.used_phys & 0xFFFFFFFF) as u32);
+            write_volatile(addr_of_mut!((*common).queue_used_hi), (self.rx_queue.used_phys >> 32) as u32);
+            write_volatile(addr_of_mut!((*common).queue_enable), 1);
+            self.rx_queue.notify_off = ptr::read_volatile(addr_of!((*common).queue_notify_off));
 
             // Setup TX queue
-            write_volatile(&mut common.queue_select, TX_QUEUE_IDX);
+            write_volatile(addr_of_mut!((*common).queue_select), TX_QUEUE_IDX);
             self.tx_queue.setup(QUEUE_SIZE)?;
-            write_volatile(&mut common.queue_size, QUEUE_SIZE);
-            write_volatile(&mut common.queue_desc_lo, (self.tx_queue.desc_phys & 0xFFFFFFFF) as u32);
-            write_volatile(&mut common.queue_desc_hi, (self.tx_queue.desc_phys >> 32) as u32);
-            write_volatile(&mut common.queue_avail_lo, (self.tx_queue.avail_phys & 0xFFFFFFFF) as u32);
-            write_volatile(&mut common.queue_avail_hi, (self.tx_queue.avail_phys >> 32) as u32);
-            write_volatile(&mut common.queue_used_lo, (self.tx_queue.used_phys & 0xFFFFFFFF) as u32);
-            write_volatile(&mut common.queue_used_hi, (self.tx_queue.used_phys >> 32) as u32);
-            write_volatile(&mut common.queue_enable, 1);
-            self.tx_queue.notify_off = common.queue_notify_off;
-
-            // Mark driver OK
-            write_volatile(&mut common.device_status,
-                VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER | VIRTIO_STATUS_FEATURES_OK | VIRTIO_STATUS_DRIVER_OK);
+            write_volatile(addr_of_mut!((*common).queue_size), QUEUE_SIZE);
+            write_volatile(addr_of_mut!((*common).queue_desc_lo), (self.tx_queue.desc_phys & 0xFFFFFFFF) as u32);
+            write_volatile(addr_of_mut!((*common).queue_desc_hi), (self.tx_queue.desc_phys >> 32) as u32);
+            write_volatile(addr_of_mut!((*common).queue_avail_lo), (self.tx_queue.avail_phys & 0xFFFFFFFF) as u32);
+            write_volatile(addr_of_mut!((*common).queue_avail_hi), (self.tx_queue.avail_phys >> 32) as u32);
+            write_volatile(addr_of_mut!((*common).queue_used_lo), (self.tx_queue.used_phys & 0xFFFFFFFF) as u32);
+            write_volatile(addr_of_mut!((*common).queue_used_hi), (self.tx_queue.used_phys >> 32) as u32);
+            write_volatile(addr_of_mut!((*common).queue_enable), 1);
+            self.tx_queue.notify_off = ptr::read_volatile(addr_of!((*common).queue_notify_off));
         }
         Ok(())
     }
@@ -557,7 +591,7 @@ impl VirtioNetDevice {
     fn alloc_buffers(&mut self) -> Result<(), FutStatus> {
         // Allocate RX buffers
         for i in 0..QUEUE_SIZE as usize {
-            let buf = alloc_page();
+            let buf = unsafe { alloc_page() };
             if buf.is_null() {
                 return Err(ENOMEM);
             }
@@ -566,7 +600,7 @@ impl VirtioNetDevice {
         }
 
         // Allocate TX buffer
-        self.tx_buffer = alloc_page();
+        self.tx_buffer = unsafe { alloc_page() };
         if self.tx_buffer.is_null() {
             return Err(ENOMEM);
         }
@@ -581,6 +615,14 @@ impl VirtioNetDevice {
             self.rx_queue.enqueue_rx(self.rx_buffers_phys[i], MAX_FRAME)?;
         }
         self.notify_queue(RX_QUEUE_IDX);
+
+        // Mark driver OK - device can now start DMA
+        unsafe {
+            let common = self.common;
+            write_volatile(addr_of_mut!((*common).device_status),
+                VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER | VIRTIO_STATUS_FEATURES_OK | VIRTIO_STATUS_DRIVER_OK);
+        }
+
         Ok(())
     }
 
@@ -605,13 +647,23 @@ impl VirtioNetDevice {
 
         self.io_lock.lock();
 
-        // Copy frame to TX buffer
+        // Write zero-filled virtio-net header (12 bytes)
         unsafe {
-            ptr::copy_nonoverlapping(frame as *const u8, self.tx_buffer, len);
+            ptr::write_bytes(self.tx_buffer, 0, VIRTIO_NET_HDR_SIZE);
         }
 
-        // Enqueue to TX virtqueue
-        if let Err(e) = self.tx_queue.enqueue_tx(self.tx_buffer_phys, len) {
+        // Copy frame after the header
+        unsafe {
+            ptr::copy_nonoverlapping(
+                frame as *const u8,
+                self.tx_buffer.add(VIRTIO_NET_HDR_SIZE),
+                len
+            );
+        }
+
+        // Enqueue to TX virtqueue (header + frame)
+        let total_len = VIRTIO_NET_HDR_SIZE + len;
+        if let Err(e) = self.tx_queue.enqueue_tx(self.tx_buffer_phys, total_len) {
             self.io_lock.unlock();
             return e;
         }
@@ -647,15 +699,26 @@ impl VirtioNetDevice {
             return None;
         }
 
+        // Packet includes virtio-net header at the beginning
+        if len < VIRTIO_NET_HDR_SIZE as u32 {
+            // Invalid packet - too small
+            let buf_phys = self.rx_buffers_phys[desc_idx as usize];
+            let _ = self.rx_queue.enqueue_rx(buf_phys, MAX_FRAME);
+            self.notify_queue(RX_QUEUE_IDX);
+            return None;
+        }
+
         let buf = self.rx_buffers[desc_idx as usize];
-        let data = unsafe { core::slice::from_raw_parts(buf, len as usize) };
+        // Skip virtio-net header, return only packet data
+        let packet_len = (len as usize) - VIRTIO_NET_HDR_SIZE;
+        let data = unsafe { core::slice::from_raw_parts(buf.add(VIRTIO_NET_HDR_SIZE), packet_len) };
 
         // Re-queue the buffer for next RX
         let buf_phys = self.rx_buffers_phys[desc_idx as usize];
         let _ = self.rx_queue.enqueue_rx(buf_phys, MAX_FRAME);
         self.notify_queue(RX_QUEUE_IDX);
 
-        Some((data, len as usize))
+        Some((data, packet_len))
     }
 }
 
@@ -678,8 +741,65 @@ impl Holder {
 
 static DEVICE: Holder = Holder::new();
 
+// RX polling thread
+extern "C" fn rx_poll_thread(_arg: *mut c_void) {
+    log("virtio-net: RX polling thread started");
+
+    // Wait for device to be ready
+    let mut wait_count = 0;
+    while !DEVICE.ready.load(Ordering::SeqCst) {
+        wait_count += 1;
+        if wait_count % 1000 == 0 {
+            log("virtio-net: RX thread waiting for device ready");
+        }
+        thread_yield();
+    }
+
+    log("virtio-net: RX thread device is ready, starting polling loop");
+
+    let mut poll_count = 0u64;
+    let mut rx_count = 0u64;
+    let mut first_iter = true;
+
+    loop {
+        let device = unsafe { &mut *DEVICE.device.get() };
+        let dev_ptr = &mut device.dev as *mut FutNetDev;
+
+        // Poll for received packets
+        poll_count += 1;
+
+        if let Some((data, len)) = device.poll_rx() {
+            rx_count += 1;
+
+            // Log first 10 packets with details
+            if rx_count <= 10 {
+                log("virtio-net: RX packet from hardware");
+
+                // Log first 14 bytes (Ethernet header)
+                if len >= 14 {
+                    unsafe {
+                        let dst_mac = core::slice::from_raw_parts(data.as_ptr(), 6);
+                        let src_mac = core::slice::from_raw_parts(data.as_ptr().add(6), 6);
+
+                        log("  Dst MAC: ");
+                        log("  Src MAC: ");
+                    }
+                }
+            }
+
+            // Submit to network stack
+            unsafe {
+                net::submit_rx(dev_ptr, data.as_ptr(), len);
+            }
+        } else {
+            // No packets, yield to other threads
+            thread_yield();
+        }
+    }
+}
+
 // Driver callbacks
-unsafe extern "C" fn tx_callback(dev: *mut FutNetDev, frame: *const c_void, len: usize) -> FutStatus {
+unsafe extern "C" fn tx_callback(_dev: *mut FutNetDev, frame: *const c_void, len: usize) -> FutStatus {
     if !DEVICE.ready.load(Ordering::SeqCst) {
         return ENODEV;
     }
@@ -734,7 +854,26 @@ pub extern "C" fn virtio_net_init() -> FutStatus {
                 DEVICE.ready.store(true, Ordering::SeqCst);
                 log("virtio-net: hardware initialization successful");
 
-                // TODO: Start RX polling thread
+                // Start RX polling thread
+                let task = fut_task_create();
+                if task.is_null() {
+                    log("virtio-net: WARNING: Failed to create task for RX thread");
+                } else {
+                    let rx_thread = fut_thread_create(
+                        task,
+                        rx_poll_thread,
+                        ptr::null_mut(),
+                        8192,  // stack size
+                        100,   // priority
+                    );
+
+                    if !rx_thread.is_null() {
+                        fut_sched_add_thread(rx_thread);
+                        log("virtio-net: RX polling thread created");
+                    } else {
+                        log("virtio-net: WARNING: Failed to create RX thread");
+                    }
+                }
 
                 0
             }
@@ -752,13 +891,14 @@ fn virt_to_phys(virt: usize) -> u64 {
 }
 
 fn find_device() -> Option<PciAddress> {
-    for bus in 0..256u8 {
+    for bus in 0..=255u8 {
         for device in 0..32u8 {
             for function in 0..8u8 {
                 let vendor = pci_read16(bus, device, function, 0x00);
                 let dev_id = pci_read16(bus, device, function, 0x02);
 
-                if vendor == VIRTIO_VENDOR_ID && dev_id == VIRTIO_DEVICE_ID_NET_MODERN {
+                if vendor == VIRTIO_VENDOR_ID &&
+                   (dev_id == VIRTIO_DEVICE_ID_NET_LEGACY || dev_id == VIRTIO_DEVICE_ID_NET_MODERN) {
                     log("virtio-net: found device at PCI");
                     return Some(PciAddress { bus, device, function });
                 }

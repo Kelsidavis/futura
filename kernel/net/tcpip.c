@@ -874,15 +874,8 @@ static void tcpip_rx_thread(void *arg) {
             fut_printf("[RX-THREAD] Packet: src=%02x:%02x:%02x:%02x:%02x:%02x dest=%02x:%02x:%02x:%02x:%02x:%02x\n",
                 eth->src[0], eth->src[1], eth->src[2], eth->src[3], eth->src[4], eth->src[5],
                 eth->dest[0], eth->dest[1], eth->dest[2], eth->dest[3], eth->dest[4], eth->dest[5]);
-            fut_printf("[RX-THREAD] Our MAC=%02x:%02x:%02x:%02x:%02x:%02x\n",
-                g_tcpip.mac_address[0], g_tcpip.mac_address[1], g_tcpip.mac_address[2],
-                g_tcpip.mac_address[3], g_tcpip.mac_address[4], g_tcpip.mac_address[5]);
 
-            /* Filter out our own transmitted packets (virtio-net loopback) */
-            if (memcmp(eth->src, g_tcpip.mac_address, ETH_ADDR_LEN) == 0) {
-                fut_printf("[RX-THREAD] Ignoring loopback packet from our own MAC\n");
-                continue;
-            }
+            /* Pass all packets to protocol handlers - let them decide what to process */
 
             uint16_t ethertype = ntohs(eth->type);
 
@@ -1256,11 +1249,9 @@ int tcpip_init(void) {
     /* Set default IP configuration */
     tcpip_set_ip_address(TCPIP_DEFAULT_IP, TCPIP_DEFAULT_MASK, TCPIP_DEFAULT_GW);
 
-    /* Pre-populate ARP cache with gateway and DNS (QEMU user networking workaround)
-     * QEMU user networking doesn't respond to ARP requests properly,
-     * so we hardcode the MAC addresses:
-     *   10.0.2.2 (gateway) -> 52:55:0a:00:02:02
-     *   10.0.2.3 (DNS)     -> 52:55:0a:00:02:03
+    /* QEMU user networking (slirp) doesn't respond to ARP requests.
+     * It operates at IP layer and ignores Ethernet MAC addresses.
+     * Use static ARP entries so IP routing can proceed.
      */
     eth_addr_t gateway_mac = {0x52, 0x55, 0x0a, 0x00, 0x02, 0x02};
     arp_add_static(TCPIP_DEFAULT_GW, gateway_mac);

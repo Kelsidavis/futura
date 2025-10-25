@@ -108,7 +108,9 @@ static inline long syscall3(long nr, long arg1, long arg2, long arg3) {
         "int $0x80\n"
         : "=a"(ret)
         : "a"(nr), "D"(arg1), "S"(arg2), "d"(arg3)
-        : "rcx", "r11", "memory"
+        : "rcx", "r11", "memory",
+          "xmm0", "xmm1", "xmm2", "xmm3", "xmm4", "xmm5", "xmm6", "xmm7",
+          "xmm8", "xmm9", "xmm10", "xmm11", "xmm12", "xmm13", "xmm14", "xmm15"
     );
     return ret;
 }
@@ -127,7 +129,9 @@ static inline long syscall1(long nr, long arg1) {
         "int $0x80\n"
         : "=a"(ret)
         : "a"(nr), "D"(arg1)
-        : "rcx", "r11", "memory"
+        : "rcx", "r11", "memory",
+          "xmm0", "xmm1", "xmm2", "xmm3", "xmm4", "xmm5", "xmm6", "xmm7",
+          "xmm8", "xmm9", "xmm10", "xmm11", "xmm12", "xmm13", "xmm14", "xmm15"
     );
     return ret;
 }
@@ -138,7 +142,9 @@ static inline long syscall2(long nr, long arg1, long arg2) {
         "int $0x80\n"
         : "=a"(ret)
         : "a"(nr), "D"(arg1), "S"(arg2)
-        : "rcx", "r11", "memory"
+        : "rcx", "r11", "memory",
+          "xmm0", "xmm1", "xmm2", "xmm3", "xmm4", "xmm5", "xmm6", "xmm7",
+          "xmm8", "xmm9", "xmm10", "xmm11", "xmm12", "xmm13", "xmm14", "xmm15"
     );
     return ret;
 }
@@ -157,7 +163,9 @@ static inline long sys_fork(void) {
         "int $0x80\n"
         : "=a"(ret)
         : "a"(__NR_fork)
-        : "rcx", "r11", "memory"
+        : "rcx", "r11", "memory",
+          "xmm0", "xmm1", "xmm2", "xmm3", "xmm4", "xmm5", "xmm6", "xmm7",
+          "xmm8", "xmm9", "xmm10", "xmm11", "xmm12", "xmm13", "xmm14", "xmm15"
     );
     return ret;
 }

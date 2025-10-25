@@ -1292,7 +1292,7 @@ int tcpip_init(void) {
     /* Start receive thread */
     fut_thread_t *rx_thread = fut_thread_create(kernel_task, tcpip_rx_thread, NULL, 8192, 100);
     if (rx_thread) {
-        fut_sched_add_thread(rx_thread);
+        /* Note: fut_thread_create() already added the thread to the scheduler */
         fut_printf("[TCP/IP] RX thread created and scheduled\n");
     } else {
         fut_printf("[TCP/IP] ERROR: Failed to create RX thread!\n");

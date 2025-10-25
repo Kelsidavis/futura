@@ -268,6 +268,13 @@ void *slab_malloc(size_t size) {
             /* Return data pointer (after header) */
             void *result = (void *)(obj + 1);
 
+            /* Debug: Trace allocations from the problematic slab */
+            static int alloc_count = 0;
+            if ((uintptr_t)slab == 0xffffffff88149008ULL && alloc_count < 20) {
+                fut_printf("[SLAB-ALLOC-DEBUG] #%d: Allocated %p from slab %p (size=%zu)\n",
+                           alloc_count++, result, (void*)slab, size);
+            }
+
             /* Validate result pointer before returning */
             if ((uintptr_t)result < heap_base || (uintptr_t)result >= heap_limit) {
                 fut_printf("[SLAB-MALLOC] ERROR: Result pointer %p is outside heap [%p-%p]!\n",
@@ -353,7 +360,8 @@ void slab_free(void *ptr) {
 
             /* CRITICAL: Validate slab integrity */
             if (!slab_is_valid(slab)) {
-                fut_printf("[SLAB-FREE] WARNING: Slab %p failed integrity check, skipping\n", (void*)slab);
+                fut_printf("[SLAB-FREE] WARNING: Slab %p (cache_size=%zu) failed integrity check (ptr=%p obj=%p), skipping\n",
+                           (void*)slab, SLAB_SIZES[i], ptr, (void*)obj);
                 continue;
             }
 

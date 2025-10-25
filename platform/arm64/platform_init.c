@@ -76,11 +76,16 @@ void fut_serial_init(void) {
 void fut_serial_putc(char c) {
     volatile uint8_t *uart = (volatile uint8_t *)UART0_BASE;
 
-    /* Wait for TX FIFO to have space */
-    while (mmio_read32((volatile void *)(uart + UART_FR)) & UART_FR_TXFF)
-        ;
+    /* Wait for TX FIFO to have space with timeout */
+    volatile int timeout = 100000;
+    while ((mmio_read32((volatile void *)(uart + UART_FR)) & UART_FR_TXFF) && timeout > 0) {
+        timeout--;
+    }
 
-    mmio_write32((volatile void *)(uart + UART_DR), (uint32_t)c);
+    /* Only write if we didn't timeout */
+    if (timeout > 0) {
+        mmio_write32((volatile void *)(uart + UART_DR), (uint32_t)c);
+    }
 }
 
 void fut_serial_puts(const char *str) {

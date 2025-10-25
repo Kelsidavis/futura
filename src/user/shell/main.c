@@ -41,6 +41,20 @@
 #define S_IWUSR     0000200  /* User write */
 #define S_IXUSR     0000100  /* User execute */
 
+/* Variable storage */
+#define MAX_VARS 64
+#define MAX_VAR_NAME 64
+#define MAX_VAR_VALUE 256
+
+struct shell_var {
+    char name[MAX_VAR_NAME];
+    char value[MAX_VAR_VALUE];
+    int used;
+};
+
+static struct shell_var shell_vars[MAX_VARS];
+static int last_exit_status = 0;
+
 /* x86_64 syscall invocation via inline asm */
 static inline long syscall3(long nr, long arg1, long arg2, long arg3) {
     long ret;
@@ -215,6 +229,169 @@ static ssize_t read_line(int fd, char *buf, size_t max_len) {
     return max_len - 1;
 }
 
+/* String comparison */
+static int strcmp_simple(const char *a, const char *b) {
+    while (*a && *b && *a == *b) {
+        a++;
+        b++;
+    }
+    return (unsigned char)*a - (unsigned char)*b;
+}
+
+/* String copy with length limit */
+static void strncpy_simple(char *dest, const char *src, size_t n) {
+    size_t i;
+    for (i = 0; i < n - 1 && src[i]; i++) {
+        dest[i] = src[i];
+    }
+    dest[i] = '\0';
+}
+
+/* Get variable value */
+static const char *get_var(const char *name) {
+    /* Check special variables */
+    static char exit_status_buf[16];
+    if (strcmp_simple(name, "?") == 0) {
+        /* Convert last_exit_status to string */
+        int val = last_exit_status;
+        int i = 0;
+        if (val == 0) {
+            exit_status_buf[i++] = '0';
+        } else {
+            char tmp[16];
+            int j = 0;
+            while (val > 0) {
+                tmp[j++] = '0' + (val % 10);
+                val /= 10;
+            }
+            for (int k = j - 1; k >= 0; k--) {
+                exit_status_buf[i++] = tmp[k];
+            }
+        }
+        exit_status_buf[i] = '\0';
+        return exit_status_buf;
+    }
+
+    /* Look up user variable */
+    for (int i = 0; i < MAX_VARS; i++) {
+        if (shell_vars[i].used && strcmp_simple(shell_vars[i].name, name) == 0) {
+            return shell_vars[i].value;
+        }
+    }
+    return "";
+}
+
+/* Set variable value */
+static void set_var(const char *name, const char *value) {
+    /* Find existing variable or empty slot */
+    int empty_slot = -1;
+    for (int i = 0; i < MAX_VARS; i++) {
+        if (shell_vars[i].used && strcmp_simple(shell_vars[i].name, name) == 0) {
+            /* Update existing variable */
+            strncpy_simple(shell_vars[i].value, value, MAX_VAR_VALUE);
+            return;
+        }
+        if (!shell_vars[i].used && empty_slot == -1) {
+            empty_slot = i;
+        }
+    }
+
+    /* Add new variable */
+    if (empty_slot != -1) {
+        strncpy_simple(shell_vars[empty_slot].name, name, MAX_VAR_NAME);
+        strncpy_simple(shell_vars[empty_slot].value, value, MAX_VAR_VALUE);
+        shell_vars[empty_slot].used = 1;
+    }
+}
+
+/* Check if line is a variable assignment (VAR=value) */
+static int is_var_assignment(const char *line, char *name, char *value) {
+    const char *p = line;
+    int name_len = 0;
+
+    /* Skip leading whitespace */
+    while (*p == ' ' || *p == '\t') p++;
+
+    /* Variable name must start with letter or underscore */
+    if (!(*p >= 'A' && *p <= 'Z') && !(*p >= 'a' && *p <= 'z') && *p != '_') {
+        return 0;
+    }
+
+    /* Collect variable name */
+    while ((*p >= 'A' && *p <= 'Z') || (*p >= 'a' && *p <= 'z') ||
+           (*p >= '0' && *p <= '9') || *p == '_') {
+        if (name_len < MAX_VAR_NAME - 1) {
+            name[name_len++] = *p;
+        }
+        p++;
+    }
+    name[name_len] = '\0';
+
+    /* Must have '=' */
+    if (*p != '=') {
+        return 0;
+    }
+    p++;  /* Skip '=' */
+
+    /* Rest is the value */
+    int value_len = 0;
+    while (*p && value_len < MAX_VAR_VALUE - 1) {
+        value[value_len++] = *p++;
+    }
+    value[value_len] = '\0';
+
+    return 1;
+}
+
+/* Expand variables in a string (e.g., $VAR or ${VAR}) */
+static void expand_variables(char *dest, const char *src, size_t dest_size) {
+    size_t dest_pos = 0;
+    const char *p = src;
+
+    while (*p && dest_pos < dest_size - 1) {
+        if (*p == '$') {
+            p++;
+            if (*p == '{') {
+                /* ${VAR} syntax */
+                p++;
+                char var_name[MAX_VAR_NAME];
+                int name_len = 0;
+                while (*p && *p != '}' && name_len < MAX_VAR_NAME - 1) {
+                    var_name[name_len++] = *p++;
+                }
+                var_name[name_len] = '\0';
+                if (*p == '}') p++;  /* Skip closing brace */
+
+                /* Get variable value */
+                const char *value = get_var(var_name);
+                while (*value && dest_pos < dest_size - 1) {
+                    dest[dest_pos++] = *value++;
+                }
+            } else {
+                /* $VAR syntax */
+                char var_name[MAX_VAR_NAME];
+                int name_len = 0;
+                while ((*p >= 'A' && *p <= 'Z') || (*p >= 'a' && *p <= 'z') ||
+                       (*p >= '0' && *p <= '9') || *p == '_' || *p == '?') {
+                    if (name_len < MAX_VAR_NAME - 1) {
+                        var_name[name_len++] = *p++;
+                    }
+                }
+                var_name[name_len] = '\0';
+
+                /* Get variable value */
+                const char *value = get_var(var_name);
+                while (*value && dest_pos < dest_size - 1) {
+                    dest[dest_pos++] = *value++;
+                }
+            }
+        } else {
+            dest[dest_pos++] = *p++;
+        }
+    }
+    dest[dest_pos] = '\0';
+}
+
 /* Parse command line into arguments */
 static int parse_command(char *line, char *argv[], int max_args) {
     int argc = 0;
@@ -265,15 +442,6 @@ static int parse_command(char *line, char *argv[], int max_args) {
 
     argv[argc] = NULL;
     return argc;
-}
-
-/* String comparison */
-static int strcmp_simple(const char *a, const char *b) {
-    while (*a && *b && *a == *b) {
-        a++;
-        b++;
-    }
-    return (unsigned char)*a - (unsigned char)*b;
 }
 
 /* Built-in: help */
@@ -764,11 +932,28 @@ int main(int argc, char **argv) {
             continue;
         }
 
+        /* Check for variable assignment */
+        char var_name[MAX_VAR_NAME];
+        char var_value[MAX_VAR_VALUE];
+        if (is_var_assignment(cmdline, var_name, var_value)) {
+            /* Expand variables in the value */
+            char expanded_value[MAX_VAR_VALUE];
+            expand_variables(expanded_value, var_value, MAX_VAR_VALUE);
+            set_var(var_name, expanded_value);
+            last_exit_status = 0;
+            continue;
+        }
+
+        /* Expand variables in command line */
+        char expanded_cmdline[512];
+        expand_variables(expanded_cmdline, cmdline, sizeof(expanded_cmdline));
+
         /* Parse pipeline and execute */
         char *pipeline_stages[10];
-        int num_stages = parse_pipeline(cmdline, pipeline_stages, 10);
+        int num_stages = parse_pipeline(expanded_cmdline, pipeline_stages, 10);
         if (num_stages > 0) {
-            execute_pipeline(num_stages, pipeline_stages);
+            int status = execute_pipeline(num_stages, pipeline_stages);
+            last_exit_status = (status < 0) ? 1 : 0;
         }
     }
 

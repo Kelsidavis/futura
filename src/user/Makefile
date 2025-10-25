@@ -3,7 +3,7 @@
 # Licensed under MPL v2.0
 
 # Subdirectories
-USERLAND_DIRS := libfutura init shell cat fsd posixd futurawayd fbtest stubs services/winsrv apps/winstub
+USERLAND_DIRS := libfutura init shell cat echo wc fsd posixd futurawayd fbtest stubs services/winsrv apps/winstub
 
 # Build targets
 .PHONY: all clean $(USERLAND_DIRS)
@@ -12,7 +12,7 @@ USERLAND_DIRS := libfutura init shell cat fsd posixd futurawayd fbtest stubs ser
 all: libfutura $(USERLAND_DIRS)
 
 # Ensure services depend on libfutura
-init shell cat fsd posixd futurawayd fbtest services/winsrv apps/winstub: libfutura
+init shell cat echo wc fsd posixd futurawayd fbtest services/winsrv apps/winstub: libfutura
 
 $(USERLAND_DIRS):
 	@echo "Building $@..."

@@ -729,6 +729,8 @@ __attribute__((unused)) static void fipc_receiver_thread(void *arg) {
  * 3. Starts scheduling (never returns)
  */
 void fut_kernel_main(void) {
+    fut_serial_puts("[DEBUG] kernel_main: Entry\n");
+
     /* fbtest disabled - variables removed to reduce memory usage */
 #if ENABLE_WINSRV_DEMO
     int winsrv_stage = -1;
@@ -753,6 +755,7 @@ void fut_kernel_main(void) {
      *   Step 1: Initialize Memory Subsystem
      * ======================================== */
 
+    fut_serial_puts("[DEBUG] kernel_main: Before PMM init\n");
     fut_printf("[INIT] Initializing physical memory manager...\n");
 
     /* Calculate memory base (starts after kernel) - use VIRTUAL address */
@@ -782,18 +785,22 @@ void fut_kernel_main(void) {
 #else
     phys_addr_t mem_base_phys = mem_base;
 #endif
+    fut_serial_puts("[DEBUG] kernel_main: Before mmap setup\n");
     fut_mmap_reset();
     if (mem_base_phys > 0) {
         fut_mmap_add(0, mem_base_phys, 2);
     }
     fut_mmap_add(mem_base_phys, TOTAL_MEMORY_SIZE, 1);
 
+    fut_serial_puts("[DEBUG] kernel_main: Before PMM init call\n");
     fut_pmm_init(TOTAL_MEMORY_SIZE, mem_base_phys);
 
+    fut_serial_puts("[DEBUG] kernel_main: After PMM init\n");
     fut_printf("[INIT] PMM initialized: %llu pages total, %llu pages free\n",
                fut_pmm_total_pages(), fut_pmm_free_pages());
 
     /* Initialize kernel heap */
+    fut_serial_puts("[DEBUG] kernel_main: Before heap init\n");
     fut_printf("[INIT] Initializing kernel heap...\n");
 
     /* Heap region in virtual memory (after kernel end) */
@@ -814,14 +821,18 @@ void fut_kernel_main(void) {
     fut_printf("[DEBUG] heap_size: %llu bytes\n",
                (unsigned long long)KERNEL_HEAP_SIZE);
 
+    fut_serial_puts("[DEBUG] kernel_main: Calling fut_heap_init\n");
     fut_heap_init(heap_start, heap_end);
 
+    fut_serial_puts("[DEBUG] kernel_main: After heap init\n");
     fut_printf("[INIT] Heap initialized: 0x%llx - 0x%llx (%llu MiB)\n",
                heap_start, heap_end, KERNEL_HEAP_SIZE / (1024 * 1024));
 
+    fut_serial_puts("[DEBUG] kernel_main: Before timer init\n");
     fut_printf("[INIT] Initializing timer subsystem...\n");
     fut_timer_subsystem_init();
 
+    fut_serial_puts("[DEBUG] kernel_main: Before boot banner\n");
     fut_boot_banner();
 
     bool fb_enabled = boot_flag_enabled("fb", false);  /* Disabled in favor of wayland */

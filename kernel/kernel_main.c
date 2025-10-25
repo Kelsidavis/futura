@@ -624,13 +624,15 @@ __attribute__((unused)) static void demo_thread_b(void *arg) {
  * Simple test thread - minimal code to isolate the issue
  */
 __attribute__((unused)) static void simple_test_thread(void *arg) {
-    /* Add inline assembly at the very start to debug */
+#ifdef __x86_64__
+    /* Add inline assembly at the very start to debug (x86_64 only) */
     __asm__ volatile(
         "movw $0x3F8, %%dx\n"
         "movb $'E', %%al\n"      /* 'E' for Entry */
         "outb %%al, %%dx\n"
         ::: "dx", "ax"
     );
+#endif
 
     extern void serial_puts(const char *);
     serial_puts("[SIMPLE-TEST] Thread running!\n");

@@ -84,12 +84,15 @@ setup_el1:
     isb
 
     /* Set up stack pointer */
-    adr     x0, _stack_top
+    adrp    x0, _stack_top
+    add     x0, x0, :lo12:_stack_top
     mov     sp, x0
 
     /* Clear BSS */
-    adr     x0, _bss_start
-    adr     x1, _bss_end
+    adrp    x0, _bss_start
+    add     x0, x0, :lo12:_bss_start
+    adrp    x1, _bss_end
+    add     x1, x1, :lo12:_bss_end
 clear_bss:
     cmp     x0, x1
     bge     bss_cleared

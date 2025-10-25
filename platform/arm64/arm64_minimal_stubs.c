@@ -105,3 +105,21 @@ char *strstr(const char *s1, const char *s2) {
 
     return NULL;
 }
+
+/* ============================================================
+ *   Memory Management Stubs (Additional)
+ * ============================================================ */
+
+fut_mm_t *fut_mm_create(void) {
+    /* Stub: Create memory management context */
+    return NULL;
+}
+
+/* ============================================================
+ *   Serial/Console I/O Stubs
+ * ============================================================ */
+
+int fut_serial_getc_blocking(void) {
+    /* Stub: Blocking serial input (not implemented for ARM64 yet) */
+    return -1;
+}

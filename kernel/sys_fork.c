@@ -78,9 +78,16 @@ long sys_fork(void) {
 
     /*
      * Set return value for child to 0
-     * The child will see RAX=0 when it starts running
+     * On x86_64: child will see RAX=0 when it starts running
+     * On ARM64: return value in x0 is handled by thread entry point
      */
+#ifdef __x86_64__
     child_thread->context.rax = 0;
+#elif defined(__aarch64__)
+    /* On ARM64, x0 is caller-saved and not in context struct.
+     * The thread entry point will need to set this appropriately. */
+    (void)child_thread;  /* Silence unused warning for now */
+#endif
 
     fut_printf("[FORK] Created child: parent_pid=%llu parent_tid=%llu child_pid=%llu child_tid=%llu\n",
                parent_task->pid, parent_thread->tid,

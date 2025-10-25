@@ -56,6 +56,11 @@ el2_to_el1:
     mov     x0, #(1 << 31)            /* RW=1: EL1 is AArch64 */
     msr     hcr_el2, x0
 
+    /* Disable FP/SIMD trapping from EL1 to EL2 */
+    mrs     x0, cptr_el2
+    bic     x0, x0, #(1 << 10)        /* Clear TFP bit: don't trap FP/SIMD */
+    msr     cptr_el2, x0
+
     /* Configure SPSR_EL2 for EL1h mode */
     mov     x0, #0x3c5                /* EL1h with interrupts masked */
     msr     spsr_el2, x0
@@ -72,6 +77,11 @@ setup_el1:
     /* Set up exception vector table */
     adr     x0, exception_vectors
     msr     vbar_el1, x0
+
+    /* Enable FP/SIMD - required for varargs functions */
+    mov     x0, #(3 << 20)            /* FPEN = 11b: No trap to EL1 */
+    msr     cpacr_el1, x0
+    isb
 
     /* Configure SCTLR_EL1 */
     mrs     x0, sctlr_el1
@@ -228,20 +238,100 @@ serror_aarch32_handler:
  */
 .align 4
 generic_exception_handler:
-    /* Save minimal context */
+    /* Save all registers for debugging */
     stp     x0, x1, [sp, #-16]!
     stp     x2, x3, [sp, #-16]!
+    stp     x4, x5, [sp, #-16]!
+    stp     x6, x7, [sp, #-16]!
+    stp     x8, x9, [sp, #-16]!
+    stp     x10, x11, [sp, #-16]!
+    stp     x12, x13, [sp, #-16]!
+    stp     x14, x15, [sp, #-16]!
+    stp     x16, x17, [sp, #-16]!
+    stp     x18, x19, [sp, #-16]!
+    stp     x20, x21, [sp, #-16]!
+    stp     x22, x23, [sp, #-16]!
+    stp     x24, x25, [sp, #-16]!
+    stp     x26, x27, [sp, #-16]!
+    stp     x28, x29, [sp, #-16]!
+    stp     x30, xzr, [sp, #-16]!
 
     /* Print exception message */
     adr     x0, exception_msg
     bl      fut_serial_puts
+
+    /* Print ESR_EL1 (Exception Syndrome Register) */
+    adr     x0, esr_msg
+    bl      fut_serial_puts
+    mrs     x0, esr_el1
+    bl      print_hex64
+
+    /* Print FAR_EL1 (Fault Address Register) */
+    adr     x0, far_msg
+    bl      fut_serial_puts
+    mrs     x0, far_el1
+    bl      print_hex64
+
+    /* Print ELR_EL1 (Exception Link Register - return address) */
+    adr     x0, elr_msg
+    bl      fut_serial_puts
+    mrs     x0, elr_el1
+    bl      print_hex64
+
+    /* Print SP */
+    adr     x0, sp_msg
+    bl      fut_serial_puts
+    mov     x0, sp
+    bl      print_hex64
 
     /* Halt */
 1:  wfi
     b       1b
 
 exception_msg:
-    .asciz  "[EXCEPTION] ARM64 exception occurred!\n"
+    .asciz  "\n[EXCEPTION] ARM64 exception occurred!\n"
+esr_msg:
+    .asciz  "ESR_EL1: 0x"
+far_msg:
+    .asciz  "\nFAR_EL1: 0x"
+elr_msg:
+    .asciz  "\nELR_EL1: 0x"
+sp_msg:
+    .asciz  "\nSP:      0x"
+
+/* Helper function to print 64-bit hex value */
+.align 4
+print_hex64:
+    stp     x29, x30, [sp, #-16]!
+    stp     x19, x20, [sp, #-16]!
+
+    mov     x19, x0               /* Save value */
+    mov     x20, #60              /* Start with highest nibble (15 * 4 = 60) */
+
+1:  /* Print each nibble */
+    lsr     x0, x19, x20          /* Shift right by bit position */
+    and     x0, x0, #0xf          /* Mask to get 4 bits */
+
+    /* Convert to hex character */
+    cmp     x0, #10
+    blt     2f
+    add     x0, x0, #('a' - 10)
+    b       3f
+2:  add     x0, x0, #'0'
+3:
+    bl      fut_serial_putc
+
+    /* Next nibble */
+    subs    x20, x20, #4
+    bge     1b
+
+    /* Print newline */
+    mov     x0, #'\n'
+    bl      fut_serial_putc
+
+    ldp     x19, x20, [sp], #16
+    ldp     x29, x30, [sp], #16
+    ret
 
 /*
  * IRQ handler entry point

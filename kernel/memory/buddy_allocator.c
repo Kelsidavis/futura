@@ -16,6 +16,14 @@
  *   Buddy Allocator Constants and Data Structures
  * ============================================================ */
 
+/* Debug verbosity control - disable on ARM64 due to printf hang issues */
+#ifdef __aarch64__
+#define BUDDY_DEBUG_PRINTF(...) do {} while(0)
+#else
+extern void fut_printf(const char *, ...);
+#define BUDDY_DEBUG_PRINTF(...) fut_printf(__VA_ARGS__)
+#endif
+
 /* Minimum allocation size: 64 bytes (covers typical structures + header) */
 #define MIN_ORDER 6                                    /* 2^6 = 64 bytes */
 #define MIN_BLOCK_SIZE (1UL << MIN_ORDER)
@@ -106,7 +114,7 @@ void buddy_heap_init(uintptr_t start, uintptr_t end) {
     total_allocated = 0;
 
     extern void fut_printf(const char *, ...);
-    fut_printf("[BUDDY-INIT] Initializing buddy allocator: start=%p end=%p (size=%llu KB)\n",
+    BUDDY_DEBUG_PRINTF("[BUDDY-INIT] Initializing buddy allocator: start=%p end=%p (size=%llu KB)\n",
                (void*)start, (void*)end, (unsigned long long)((end - start) / 1024));
 
     /* Initialize all free lists */
@@ -141,7 +149,7 @@ void buddy_heap_init(uintptr_t start, uintptr_t end) {
             max_alignment_order = alignment_shift;
         }
 
-        fut_printf("[BUDDY-INIT] Heap start %p is aligned to 2^%d bytes\n",
+        BUDDY_DEBUG_PRINTF("[BUDDY-INIT] Heap start %p is aligned to 2^%d bytes\n",
                    (void*)start, alignment_shift);
     }
 
@@ -151,7 +159,7 @@ void buddy_heap_init(uintptr_t start, uintptr_t end) {
 
     /* Limit initial order to what the heap start is actually aligned to */
     if (initial_order > max_alignment_order) {
-        fut_printf("[BUDDY-INIT] LIMITING initial order from %d to %d due to address alignment\n",
+        BUDDY_DEBUG_PRINTF("[BUDDY-INIT] LIMITING initial order from %d to %d due to address alignment\n",
                    initial_order, max_alignment_order);
         initial_order = max_alignment_order;
     }
@@ -160,7 +168,7 @@ void buddy_heap_init(uintptr_t start, uintptr_t end) {
         initial_order = MAX_ORDER;
     }
 
-    fut_printf("[BUDDY-INIT] Creating initial free block with order %d (size=%llu bytes)\n",
+    BUDDY_DEBUG_PRINTF("[BUDDY-INIT] Creating initial free block with order %d (size=%llu bytes)\n",
                initial_order, (unsigned long long)(1UL << initial_order));
 
     /* Add blocks to fill the entire heap, starting with properly-aligned blocks.
@@ -187,18 +195,18 @@ void buddy_heap_init(uintptr_t start, uintptr_t end) {
             if (alignment_shift >= MIN_ORDER) {
                 block_order = alignment_shift;
             }
-            fut_printf("[BUDDY-INIT][%d] addr=%p alignment=0x%llx align_shift=%d initial_block_order=%d\n",
+            BUDDY_DEBUG_PRINTF("[BUDDY-INIT][%d] addr=%p alignment=0x%llx align_shift=%d initial_block_order=%d\n",
                        iteration, (void*)current_addr, (unsigned long long)alignment,
                        alignment_shift, block_order);
         }
 
-        int block_order_before_size_constraint = block_order;
+        int block_order_before_size_constraint __attribute__((unused)) = block_order;
         /* Also constrain by remaining space */
         while (block_order < MAX_ORDER && (size_t)(1UL << block_order) <= remaining_size) {
             block_order++;
         }
         block_order--;  /* Step back to the last valid order */
-        fut_printf("[BUDDY-INIT][%d] before_size_constraint=%d after_size_constraint=%d remaining=%llu\n",
+        BUDDY_DEBUG_PRINTF("[BUDDY-INIT][%d] before_size_constraint=%d after_size_constraint=%d remaining=%llu\n",
                    iteration, block_order_before_size_constraint, block_order,
                    (unsigned long long)remaining_size);
 
@@ -217,20 +225,20 @@ void buddy_heap_init(uintptr_t start, uintptr_t end) {
         blk->order = block_order;
         blk->is_allocated = 0;
         blk->magic = BLOCK_MAGIC;
-        fut_printf("[BUDDY-INIT][%d] Header set: blk=%p order=%d is_allocated=%d magic=0x%x\n",
+        BUDDY_DEBUG_PRINTF("[BUDDY-INIT][%d] Header set: blk=%p order=%d is_allocated=%d magic=0x%x\n",
                    iteration, (void*)blk, blk->order, blk->is_allocated, blk->magic);
-        fut_printf("[BUDDY-INIT][%d] Header raw: %02x %02x %02x %02x %02x %02x %02x %02x\n",
+        BUDDY_DEBUG_PRINTF("[BUDDY-INIT][%d] Header raw: %02x %02x %02x %02x %02x %02x %02x %02x\n",
                    iteration,
                    ((uint8_t*)blk)[0], ((uint8_t*)blk)[1], ((uint8_t*)blk)[2], ((uint8_t*)blk)[3],
                    ((uint8_t*)blk)[4], ((uint8_t*)blk)[5], ((uint8_t*)blk)[6], ((uint8_t*)blk)[7]);
 
         /* Add to free list */
         free_block_t *freeblk = (free_block_t *)get_data_ptr(blk);
-        fut_printf("[BUDDY-INIT][%d] data_ptr=%p (header=%p + sizeof(header)=%llu)\n",
+        BUDDY_DEBUG_PRINTF("[BUDDY-INIT][%d] data_ptr=%p (header=%p + sizeof(header)=%llu)\n",
                    iteration, (void*)freeblk, (void*)blk, (unsigned long long)sizeof(block_hdr_t));
-        fut_printf("[BUDDY-INIT][%d] Adding to free_lists[%d] (order %d)\n",
+        BUDDY_DEBUG_PRINTF("[BUDDY-INIT][%d] Adding to free_lists[%d] (order %d)\n",
                    iteration, block_order - MIN_ORDER, block_order);
-        fut_printf("[BUDDY-INIT][%d] Current free_lists[%d] head=%p\n",
+        BUDDY_DEBUG_PRINTF("[BUDDY-INIT][%d] Current free_lists[%d] head=%p\n",
                    iteration, block_order - MIN_ORDER, (void*)free_lists[block_order - MIN_ORDER]);
         freeblk->next = free_lists[block_order - MIN_ORDER];
         freeblk->prev = NULL;
@@ -238,24 +246,24 @@ void buddy_heap_init(uintptr_t start, uintptr_t end) {
             free_lists[block_order - MIN_ORDER]->prev = freeblk;
         }
         free_lists[block_order - MIN_ORDER] = freeblk;
-        fut_printf("[BUDDY-INIT][%d] New free_lists[%d] head=%p\n",
+        BUDDY_DEBUG_PRINTF("[BUDDY-INIT][%d] New free_lists[%d] head=%p\n",
                    iteration, block_order - MIN_ORDER, (void*)free_lists[block_order - MIN_ORDER]);
 
         /* Move to next block position */
         current_addr += block_size;
         remaining_size -= block_size;
-        fut_printf("[BUDDY-INIT][%d] Created block order=%d size=%llu, next_addr=%p remaining=%llu\n",
+        BUDDY_DEBUG_PRINTF("[BUDDY-INIT][%d] Created block order=%d size=%llu, next_addr=%p remaining=%llu\n",
                    iteration, block_order, (unsigned long long)block_size,
                    (void*)current_addr, (unsigned long long)remaining_size);
         iteration++;
 
         if (iteration > 100) {
-            fut_printf("[BUDDY-INIT] ERROR: Too many iterations, breaking\n");
+            BUDDY_DEBUG_PRINTF("[BUDDY-INIT] ERROR: Too many iterations, breaking\n");
             break;
         }
     }
 
-    fut_printf("[BUDDY-INIT] Heap initialization complete\n");
+    BUDDY_DEBUG_PRINTF("[BUDDY-INIT] Heap initialization complete\n");
 }
 
 void *buddy_malloc(size_t size) {
@@ -268,12 +276,12 @@ void *buddy_malloc(size_t size) {
     extern void fut_printf(const char *, ...);
 
     if (order > MAX_ORDER) {
-        fut_printf("[BUDDY-MALLOC] FAILED: size=%llu needed=%llu order=%d MAX=%d\n",
+        BUDDY_DEBUG_PRINTF("[BUDDY-MALLOC] FAILED: size=%llu needed=%llu order=%d MAX=%d\n",
                    (unsigned long long)size, (unsigned long long)needed, order, MAX_ORDER);
         return NULL;  /* Too large */
     }
 
-    fut_printf("[BUDDY-MALLOC] Requesting %llu bytes (order=%d, heap=%p-%p)\n",
+    BUDDY_DEBUG_PRINTF("[BUDDY-MALLOC] Requesting %llu bytes (order=%d, heap=%p-%p)\n",
                (unsigned long long)size, order, (void*)heap_start, (void*)heap_end);
 
     /* Search free lists starting from requested order */
@@ -283,7 +291,7 @@ void *buddy_malloc(size_t size) {
 
         /* CRITICAL: Validate free list head before dereferencing */
         if (candidate && ((uintptr_t)candidate < heap_start || (uintptr_t)candidate >= heap_end)) {
-            fut_printf("[BUDDY-MALLOC] WARNING: Corrupted free list head %p at order %d, marking list as empty\n",
+            BUDDY_DEBUG_PRINTF("[BUDDY-MALLOC] WARNING: Corrupted free list head %p at order %d, marking list as empty\n",
                        (void*)candidate, search_order);
             /* Mark free list as corrupted/empty - don't try to dereference it */
             free_lists[search_order - MIN_ORDER] = NULL;
@@ -296,7 +304,7 @@ void *buddy_malloc(size_t size) {
         while (tmp) {
             /* Safety: Validate pointer before dereferencing */
             if ((uintptr_t)tmp < heap_start || (uintptr_t)tmp >= heap_end) {
-                fut_printf("[BUDDY-MALLOC] WARNING: Corrupted pointer %p in free list at order %d, breaking traversal\n",
+                BUDDY_DEBUG_PRINTF("[BUDDY-MALLOC] WARNING: Corrupted pointer %p in free list at order %d, breaking traversal\n",
                            (void*)tmp, search_order);
                 break;  /* Stop traversal but don't fail allocation */
             }
@@ -304,19 +312,19 @@ void *buddy_malloc(size_t size) {
             tmp = tmp->next;
         }
         if (block_count > 0) {
-            fut_printf("[BUDDY-MALLOC] Order %d has %d free blocks\n", search_order, block_count);
+            BUDDY_DEBUG_PRINTF("[BUDDY-MALLOC] Order %d has %d free blocks\n", search_order, block_count);
         }
 
         if (candidate != NULL) {
-            fut_printf("[BUDDY-MALLOC] Found free block at order %d (size %llu) candidate=%p\n",
+            BUDDY_DEBUG_PRINTF("[BUDDY-MALLOC] Found free block at order %d (size %llu) candidate=%p\n",
                        search_order, (unsigned long long)order_to_size(search_order), (void*)candidate);
 
             /* Get the block header */
             block_hdr_t *hdr = (block_hdr_t *)candidate - 1;
-            fut_printf("[BUDDY-MALLOC] Block header at %p\n", (void*)hdr);
-            fut_printf("[BUDDY-MALLOC] Header contents: order=%d is_allocated=%d magic=0x%x\n",
+            BUDDY_DEBUG_PRINTF("[BUDDY-MALLOC] Block header at %p\n", (void*)hdr);
+            BUDDY_DEBUG_PRINTF("[BUDDY-MALLOC] Header contents: order=%d is_allocated=%d magic=0x%x\n",
                        hdr->order, hdr->is_allocated, hdr->magic);
-            fut_printf("[BUDDY-MALLOC] Header raw bytes: %02x %02x %02x %02x %02x %02x %02x %02x\n",
+            BUDDY_DEBUG_PRINTF("[BUDDY-MALLOC] Header raw bytes: %02x %02x %02x %02x %02x %02x %02x %02x\n",
                        ((uint8_t*)hdr)[0], ((uint8_t*)hdr)[1], ((uint8_t*)hdr)[2], ((uint8_t*)hdr)[3],
                        ((uint8_t*)hdr)[4], ((uint8_t*)hdr)[5], ((uint8_t*)hdr)[6], ((uint8_t*)hdr)[7]);
 
@@ -357,8 +365,8 @@ void *buddy_malloc(size_t size) {
                     }
                     free_lists[hdr->order - MIN_ORDER] = buddy_free;
                 } else {
-                    fut_printf("[BUDDY-MALLOC] WARNING: Buddy block outside heap bounds, skipping\n");
-                    fut_printf("[BUDDY-MALLOC]   Buddy: %p-%p (size=%llu)\n",
+                    BUDDY_DEBUG_PRINTF("[BUDDY-MALLOC] WARNING: Buddy block outside heap bounds, skipping\n");
+                    BUDDY_DEBUG_PRINTF("[BUDDY-MALLOC]   Buddy: %p-%p (size=%llu)\n",
                                (void*)buddy_addr, (void*)(buddy_addr + buddy_size),
                                (unsigned long long)buddy_size);
                 }
@@ -368,11 +376,11 @@ void *buddy_malloc(size_t size) {
             uintptr_t block_addr = (uintptr_t)hdr;
             size_t block_size = order_to_size(hdr->order);
             if (block_addr < heap_start || (block_addr + block_size) > heap_end) {
-                fut_printf("[BUDDY-MALLOC] ERROR: Block OUTSIDE heap bounds!\n");
-                fut_printf("[BUDDY-MALLOC]   Block: %p-%p (size=%llu)\n",
+                BUDDY_DEBUG_PRINTF("[BUDDY-MALLOC] ERROR: Block OUTSIDE heap bounds!\n");
+                BUDDY_DEBUG_PRINTF("[BUDDY-MALLOC]   Block: %p-%p (size=%llu)\n",
                            (void*)block_addr, (void*)(block_addr + block_size),
                            (unsigned long long)block_size);
-                fut_printf("[BUDDY-MALLOC]   Heap:  %p-%p\n",
+                BUDDY_DEBUG_PRINTF("[BUDDY-MALLOC]   Heap:  %p-%p\n",
                            (void*)heap_start, (void*)heap_end);
                 return NULL;  /* Refuse to allocate outside heap */
             }
@@ -382,7 +390,7 @@ void *buddy_malloc(size_t size) {
             total_allocated += order_to_size(hdr->order);
 
             void *result = get_data_ptr(hdr);
-            size_t alloc_size = order_to_size(hdr->order);
+            size_t alloc_size __attribute__((unused)) = order_to_size(hdr->order);
 
             /* CRITICAL: Clear allocated memory ONLY for small blocks to prevent data leakage
              * For slab allocations (order 16-19, ~64KB-512KB), clear ONLY the requested size
@@ -391,7 +399,7 @@ void *buddy_malloc(size_t size) {
              * For large allocations (order 20+, >1MB), DON'T clear to preserve file performance
              * Callers of large allocations MUST initialize their data appropriately */
             extern void fut_printf(const char *, ...);
-            fut_printf("[BUDDY-MALLOC-CLEAR] order=%d alloc_size=%llu requested_size=%llu data=%p\n",
+            BUDDY_DEBUG_PRINTF("[BUDDY-MALLOC-CLEAR] order=%d alloc_size=%llu requested_size=%llu data=%p\n",
                        hdr->order, (unsigned long long)alloc_size, (unsigned long long)size, result);
             if (hdr->order <= 19) {  /* Only clear small blocks (up to 512KB) */
                 /* FIX: Clear only the REQUESTED size, not the full allocated size
@@ -399,17 +407,17 @@ void *buddy_malloc(size_t size) {
                  * rounds up (e.g., 64KB request gets 128KB allocation) */
                 size_t data_size = size;  /* Use requested size, not alloc_size */
                 extern void *memset(void *, int, size_t);
-                fut_printf("[BUDDY-MALLOC-CLEAR] Clearing %llu bytes (requested) starting at %p\n",
+                BUDDY_DEBUG_PRINTF("[BUDDY-MALLOC-CLEAR] Clearing %llu bytes (requested) starting at %p\n",
                            (unsigned long long)data_size, result);
                 memset(result, 0, data_size);
-                fut_printf("[BUDDY-MALLOC-CLEAR] Clear complete, first 8 bytes now: %02x %02x %02x %02x %02x %02x %02x %02x\n",
+                BUDDY_DEBUG_PRINTF("[BUDDY-MALLOC-CLEAR] Clear complete, first 8 bytes now: %02x %02x %02x %02x %02x %02x %02x %02x\n",
                            ((uint8_t*)result)[0], ((uint8_t*)result)[1], ((uint8_t*)result)[2], ((uint8_t*)result)[3],
                            ((uint8_t*)result)[4], ((uint8_t*)result)[5], ((uint8_t*)result)[6], ((uint8_t*)result)[7]);
             } else {
-                fut_printf("[BUDDY-MALLOC-CLEAR] SKIPPING: order %d > 19\n", hdr->order);
+                BUDDY_DEBUG_PRINTF("[BUDDY-MALLOC-CLEAR] SKIPPING: order %d > 19\n", hdr->order);
             }
 
-            fut_printf("[BUDDY-MALLOC] Allocated at %p (hdr=%p size=%llu)\n",
+            BUDDY_DEBUG_PRINTF("[BUDDY-MALLOC] Allocated at %p (hdr=%p size=%llu)\n",
                        result, (void*)hdr, (unsigned long long)alloc_size);
             return result;
         }
@@ -418,11 +426,11 @@ void *buddy_malloc(size_t size) {
     }
 
     /* Out of memory - print detailed fragmentation info */
-    fut_printf("[BUDDY-MALLOC] OUT OF MEMORY: size=%llu (needed=%llu, requested order=%d)\n",
+    BUDDY_DEBUG_PRINTF("[BUDDY-MALLOC] OUT OF MEMORY: size=%llu (needed=%llu, requested order=%d)\n",
                (unsigned long long)size, (unsigned long long)needed, order);
 
     /* Print free block count at each order to understand fragmentation */
-    fut_printf("[BUDDY-MALLOC] Heap fragmentation status:\n");
+    BUDDY_DEBUG_PRINTF("[BUDDY-MALLOC] Heap fragmentation status:\n");
     size_t total_free_size = 0;
     for (int i = 0; i < NUM_ORDERS; i++) {
         int order_val = i + MIN_ORDER;
@@ -431,7 +439,7 @@ void *buddy_malloc(size_t size) {
         while (candidate) {
             /* Safety: Validate pointer before dereferencing */
             if ((uintptr_t)candidate < heap_start || (uintptr_t)candidate >= heap_end) {
-                fut_printf("[BUDDY-MALLOC] WARNING: Corrupted free list at order %d, pointer %p outside heap\n",
+                BUDDY_DEBUG_PRINTF("[BUDDY-MALLOC] WARNING: Corrupted free list at order %d, pointer %p outside heap\n",
                           order_val, (void*)candidate);
                 break;
             }
@@ -440,12 +448,12 @@ void *buddy_malloc(size_t size) {
             candidate = candidate->next;
         }
         if (count > 0) {
-            fut_printf("[BUDDY-MALLOC]   Order %2d (2^%2d = %8llu bytes): %d blocks (total %llu bytes)\n",
+            BUDDY_DEBUG_PRINTF("[BUDDY-MALLOC]   Order %2d (2^%2d = %8llu bytes): %d blocks (total %llu bytes)\n",
                        order_val, order_val, (unsigned long long)order_to_size(order_val), count,
                        (unsigned long long)(count * order_to_size(order_val)));
         }
     }
-    fut_printf("[BUDDY-MALLOC] Total free size: %llu bytes, Total allocated: %llu bytes\n",
+    BUDDY_DEBUG_PRINTF("[BUDDY-MALLOC] Total free size: %llu bytes, Total allocated: %llu bytes\n",
                (unsigned long long)total_free_size, (unsigned long long)total_allocated);
 
     return NULL;  /* Out of memory */
@@ -456,12 +464,12 @@ void buddy_free(void *ptr) {
 
     extern void fut_printf(const char *, ...);
 
-    fut_printf("[BUDDY-FREE-START] Freeing ptr=%p\n", ptr);
+    BUDDY_DEBUG_PRINTF("[BUDDY-FREE-START] Freeing ptr=%p\n", ptr);
 
     /* CRITICAL: Validate that ptr and header location are within heap bounds BEFORE reading header */
     uintptr_t ptr_addr = (uintptr_t)ptr;
     if (ptr_addr < heap_start || ptr_addr >= heap_end) {
-        fut_printf("[BUDDY-FREE] ERROR: Pointer %p is outside heap bounds [%p-%p]\n",
+        BUDDY_DEBUG_PRINTF("[BUDDY-FREE] ERROR: Pointer %p is outside heap bounds [%p-%p]\n",
                    ptr, (void*)heap_start, (void*)heap_end);
         return;
     }
@@ -469,7 +477,7 @@ void buddy_free(void *ptr) {
     /* Check that the header location would be within bounds */
     uintptr_t hdr_addr = ptr_addr - sizeof(block_hdr_t);
     if (hdr_addr < heap_start || hdr_addr >= heap_end) {
-        fut_printf("[BUDDY-FREE] ERROR: Header location %p would be outside heap bounds\n", (void*)hdr_addr);
+        BUDDY_DEBUG_PRINTF("[BUDDY-FREE] ERROR: Header location %p would be outside heap bounds\n", (void*)hdr_addr);
         return;
     }
 
@@ -477,24 +485,24 @@ void buddy_free(void *ptr) {
      * Buddy allocator assumes header is immediately before data pointer
      * If not properly aligned, header calculations will be wrong */
     if ((hdr_addr & 0x7) != 0) {
-        fut_printf("[BUDDY-FREE] ERROR: Header address %p is not 8-byte aligned (misaligned data pointer)\n", (void*)hdr_addr);
+        BUDDY_DEBUG_PRINTF("[BUDDY-FREE] ERROR: Header address %p is not 8-byte aligned (misaligned data pointer)\n", (void*)hdr_addr);
         return;
     }
 
     block_hdr_t *hdr = get_block_hdr(ptr);
-    fut_printf("[BUDDY-FREE-START] Block header at %p, magic=0x%x, allocated=%d, order=%d\n",
+    BUDDY_DEBUG_PRINTF("[BUDDY-FREE-START] Block header at %p, magic=0x%x, allocated=%d, order=%d\n",
                (void*)hdr, hdr->magic, hdr->is_allocated, hdr->order);
 
     /* Validate block */
     if (hdr->magic != BLOCK_MAGIC || !hdr->is_allocated) {
-        fut_printf("[BUDDY-FREE-START] Invalid block or double-free, returning\n");
+        BUDDY_DEBUG_PRINTF("[BUDDY-FREE-START] Invalid block or double-free, returning\n");
         return;  /* Invalid or double-free */
     }
 
-    fut_printf("[BUDDY-FREE-START] About to update total_allocated and mark as free\n");
+    BUDDY_DEBUG_PRINTF("[BUDDY-FREE-START] About to update total_allocated and mark as free\n");
     total_allocated -= order_to_size(hdr->order);
     hdr->is_allocated = 0;
-    fut_printf("[BUDDY-FREE-START] Marked as free, starting coalesce\n");
+    BUDDY_DEBUG_PRINTF("[BUDDY-FREE-START] Marked as free, starting coalesce\n");
 
     /* Add to free list and coalesce with buddy if possible */
     int order = hdr->order;
@@ -507,7 +515,7 @@ void buddy_free(void *ptr) {
         /* Check if buddy is free and in heap */
         if (!is_in_heap(buddy_addr)) {
             /* Cannot coalesce - buddy is outside heap bounds */
-            fut_printf("[BUDDY-FREE] Coalesce stop at order %d: buddy %p outside heap bounds [%p-%p]\n",
+            BUDDY_DEBUG_PRINTF("[BUDDY-FREE] Coalesce stop at order %d: buddy %p outside heap bounds [%p-%p]\n",
                        order, (void*)buddy_addr, (void*)heap_start, (void*)heap_end);
             break;
         }
@@ -515,8 +523,8 @@ void buddy_free(void *ptr) {
         /* CRITICAL: Validate entire buddy block header is within bounds */
         size_t buddy_block_size = order_to_size(order);
         if (buddy_addr + buddy_block_size > heap_end) {
-            fut_printf("[BUDDY-FREE] Coalesce stop at order %d: buddy block extends beyond heap end\n", order);
-            fut_printf("[BUDDY-FREE]   Block: %p-%p, Heap end: %p\n",
+            BUDDY_DEBUG_PRINTF("[BUDDY-FREE] Coalesce stop at order %d: buddy block extends beyond heap end\n", order);
+            BUDDY_DEBUG_PRINTF("[BUDDY-FREE]   Block: %p-%p, Heap end: %p\n",
                        (void*)buddy_addr, (void*)(buddy_addr + buddy_block_size), (void*)heap_end);
             break;
         }
@@ -526,28 +534,28 @@ void buddy_free(void *ptr) {
         /* CRITICAL: Ensure buddy header address itself is valid before reading
          * Prevent reading from uninitialized or misaligned memory */
         if ((buddy_addr & 0x7) != 0) {
-            fut_printf("[BUDDY-FREE] ERROR: Buddy address %p is not 8-byte aligned!\n", (void*)buddy_addr);
+            BUDDY_DEBUG_PRINTF("[BUDDY-FREE] ERROR: Buddy address %p is not 8-byte aligned!\n", (void*)buddy_addr);
             break;
         }
 
         /* Validate buddy and check if free */
         if (buddy_hdr->magic != BLOCK_MAGIC) {
             /* Buddy has invalid magic - corruption or never allocated */
-            fut_printf("[BUDDY-FREE] Coalesce stop at order %d: buddy %p has invalid magic 0x%x\n",
+            BUDDY_DEBUG_PRINTF("[BUDDY-FREE] Coalesce stop at order %d: buddy %p has invalid magic 0x%x\n",
                        order, (void*)buddy_addr, buddy_hdr->magic);
             break;
         }
 
         if (buddy_hdr->order != order) {
             /* Buddy has different order - can't merge */
-            fut_printf("[BUDDY-FREE] Coalesce stop at order %d: buddy order mismatch (buddy=%d, expected=%d)\n",
+            BUDDY_DEBUG_PRINTF("[BUDDY-FREE] Coalesce stop at order %d: buddy order mismatch (buddy=%d, expected=%d)\n",
                        order, buddy_hdr->order, order);
             break;
         }
 
         if (buddy_hdr->is_allocated) {
             /* Buddy is still allocated - can't merge */
-            fut_printf("[BUDDY-FREE] Coalesce stop at order %d: buddy is allocated\n", order);
+            BUDDY_DEBUG_PRINTF("[BUDDY-FREE] Coalesce stop at order %d: buddy is allocated\n", order);
             break;
         }
 
@@ -556,14 +564,14 @@ void buddy_free(void *ptr) {
 
         /* CRITICAL: Validate buddy_free pointer before dereferencing */
         if ((uintptr_t)buddy_free < heap_start || (uintptr_t)buddy_free >= heap_end) {
-            fut_printf("[BUDDY-FREE] Coalesce stop at order %d: buddy_free data pointer %p outside heap bounds\n",
+            BUDDY_DEBUG_PRINTF("[BUDDY-FREE] Coalesce stop at order %d: buddy_free data pointer %p outside heap bounds\n",
                        order, (void*)buddy_free);
             break;
         }
 
         /* Validate that buddy's next pointer won't corrupt free list */
         if (buddy_free->next != NULL && ((uintptr_t)buddy_free->next < heap_start || (uintptr_t)buddy_free->next >= heap_end)) {
-            fut_printf("[BUDDY-FREE] Coalesce stop at order %d: buddy->next pointer %p is corrupted (outside heap)\n",
+            BUDDY_DEBUG_PRINTF("[BUDDY-FREE] Coalesce stop at order %d: buddy->next pointer %p is corrupted (outside heap)\n",
                        order, (void*)buddy_free->next);
             break;
         }
@@ -584,7 +592,7 @@ void buddy_free(void *ptr) {
 
             /* CRITICAL: Revalidate the new hdr after reassignment */
             if ((uintptr_t)hdr < heap_start || (uintptr_t)hdr >= heap_end) {
-                fut_printf("[BUDDY-FREE] ERROR: Coalesced header %p is outside heap bounds after merging\n", (void*)hdr);
+                BUDDY_DEBUG_PRINTF("[BUDDY-FREE] ERROR: Coalesced header %p is outside heap bounds after merging\n", (void*)hdr);
                 break;
             }
         }
@@ -595,45 +603,45 @@ void buddy_free(void *ptr) {
     }
 
     if (coalesce_count > 0) {
-        fut_printf("[BUDDY-FREE] Coalesced %d times (block %p, final order %d)\n",
+        BUDDY_DEBUG_PRINTF("[BUDDY-FREE] Coalesced %d times (block %p, final order %d)\n",
                    coalesce_count, (void*)addr, order);
     }
 
     /* CRITICAL: Validate final coalesced block before adding to free list */
     if ((uintptr_t)hdr < heap_start || (uintptr_t)hdr >= heap_end) {
-        fut_printf("[BUDDY-FREE] ERROR: Final coalesced header %p outside heap bounds!\n", (void*)hdr);
+        BUDDY_DEBUG_PRINTF("[BUDDY-FREE] ERROR: Final coalesced header %p outside heap bounds!\n", (void*)hdr);
         return;
     }
 
     size_t final_block_size = order_to_size(order);
     if ((uintptr_t)hdr + final_block_size > heap_end) {
-        fut_printf("[BUDDY-FREE] ERROR: Final coalesced block extends beyond heap end!\n");
-        fut_printf("[BUDDY-FREE]   Block: %p-%p, Heap end: %p\n",
+        BUDDY_DEBUG_PRINTF("[BUDDY-FREE] ERROR: Final coalesced block extends beyond heap end!\n");
+        BUDDY_DEBUG_PRINTF("[BUDDY-FREE]   Block: %p-%p, Heap end: %p\n",
                    (void*)hdr, (void*)((uintptr_t)hdr + final_block_size), (void*)heap_end);
         return;
     }
 
     /* Add coalesced block to free list */
-    fut_printf("[BUDDY-FREE] About to add to free list: hdr=%p order=%d order-MIN_ORDER=%d\n",
+    BUDDY_DEBUG_PRINTF("[BUDDY-FREE] About to add to free list: hdr=%p order=%d order-MIN_ORDER=%d\n",
                (void*)hdr, order, order - MIN_ORDER);
     free_block_t *free_hdr = (free_block_t *)get_data_ptr(hdr);
-    fut_printf("[BUDDY-FREE] free_hdr=%p current list head=%p\n",
+    BUDDY_DEBUG_PRINTF("[BUDDY-FREE] free_hdr=%p current list head=%p\n",
                (void*)free_hdr, (void*)free_lists[order - MIN_ORDER]);
 
     /* Validate free_hdr is within heap bounds before using it */
     if ((uintptr_t)free_hdr < heap_start || (uintptr_t)free_hdr >= heap_end) {
-        fut_printf("[BUDDY-FREE] ERROR: free_hdr data pointer %p outside heap bounds!\n", (void*)free_hdr);
+        BUDDY_DEBUG_PRINTF("[BUDDY-FREE] ERROR: free_hdr data pointer %p outside heap bounds!\n", (void*)free_hdr);
         return;
     }
 
     free_hdr->next = free_lists[order - MIN_ORDER];
-    fut_printf("[BUDDY-FREE] Set free_hdr->next=%p\n", (void*)free_hdr->next);
+    BUDDY_DEBUG_PRINTF("[BUDDY-FREE] Set free_hdr->next=%p\n", (void*)free_hdr->next);
 
     /* Validate the current list head isn't corrupted before updating it */
     if (free_lists[order - MIN_ORDER] != NULL) {
         if ((uintptr_t)free_lists[order - MIN_ORDER] < heap_start ||
             (uintptr_t)free_lists[order - MIN_ORDER] >= heap_end) {
-            fut_printf("[BUDDY-FREE] ERROR: Current list head %p is corrupted (outside heap)!\n",
+            BUDDY_DEBUG_PRINTF("[BUDDY-FREE] ERROR: Current list head %p is corrupted (outside heap)!\n",
                        (void*)free_lists[order - MIN_ORDER]);
             return;
         }
@@ -641,12 +649,12 @@ void buddy_free(void *ptr) {
 
     free_hdr->prev = NULL;
     if (free_lists[order - MIN_ORDER]) {
-        fut_printf("[BUDDY-FREE] Setting prev pointer on old head\n");
+        BUDDY_DEBUG_PRINTF("[BUDDY-FREE] Setting prev pointer on old head\n");
         free_lists[order - MIN_ORDER]->prev = free_hdr;
     }
-    fut_printf("[BUDDY-FREE] Updating list head to %p\n", (void*)free_hdr);
+    BUDDY_DEBUG_PRINTF("[BUDDY-FREE] Updating list head to %p\n", (void*)free_hdr);
     free_lists[order - MIN_ORDER] = free_hdr;
-    fut_printf("[BUDDY-FREE] Free complete\n");
+    BUDDY_DEBUG_PRINTF("[BUDDY-FREE] Free complete\n");
 }
 
 void *buddy_realloc(void *ptr, size_t size) {

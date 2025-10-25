@@ -222,7 +222,6 @@ void fut_schedule(void) {
 
     // Mark next thread as running
     next->state = FUT_THREAD_RUNNING;
-    fut_thread_set_current(next);
 
 #if defined(__x86_64__)
     if (next->stack_base && next->stack_size) {
@@ -257,6 +256,9 @@ void fut_schedule(void) {
             // For now, just return without switching - let the current thread continue
             return;
         }
+
+        // Only set current_thread if we're actually going to context switch
+        fut_thread_set_current(next);
 
         // Only switch MM for cooperative (non-IRQ) context switches
         if (prev_mm != next_mm) {

@@ -30,6 +30,7 @@
 #include <kernel/input.h>
 #include <futura/blkdev.h>
 #include <futura/net.h>
+#include <futura/tcpip.h>
 #include <platform/platform.h>
 #include "tests/test_api.h"
 #include "tests/perf.h"
@@ -971,6 +972,33 @@ void fut_kernel_main(void) {
     fut_status_t vnet_rc = virtio_net_init();
     if (vnet_rc != 0) {
         fut_printf("[virtio-net] init failed: %d\n", vnet_rc);
+    }
+
+    /* Initialize TCP/IP stack */
+    int tcpip_rc = tcpip_init();
+    if (tcpip_rc != 0) {
+        fut_printf("[TCP/IP] init failed: %d\n", tcpip_rc);
+    } else {
+        /* Test ping to external site (Google DNS 8.8.8.8) */
+        fut_printf("[TCP/IP-TEST] Sending ICMP ping to 8.8.8.8 (Google DNS)...\n");
+        uint32_t google_dns = (8 << 24) | (8 << 16) | (8 << 8) | 8;  /* 8.8.8.8 */
+        const char *ping_data = "Futura OS ping test";
+        int ping_rc = icmp_ping(google_dns, 1, 1, (void *)ping_data, 19);  /* strlen("Futura OS ping test") = 19 */
+        if (ping_rc == 0) {
+            fut_printf("[TCP/IP-TEST] ✓ ICMP echo request sent successfully to 8.8.8.8\n");
+        } else {
+            fut_printf("[TCP/IP-TEST] ✗ Failed to send ping: %d\n", ping_rc);
+        }
+
+        /* Test ping to another well-known DNS (1.1.1.1 - Cloudflare) */
+        fut_printf("[TCP/IP-TEST] Sending ICMP ping to 1.1.1.1 (Cloudflare DNS)...\n");
+        uint32_t cloudflare_dns = (1 << 24) | (1 << 16) | (1 << 8) | 1;  /* 1.1.1.1 */
+        ping_rc = icmp_ping(cloudflare_dns, 1, 2, (void *)ping_data, 19);  /* strlen("Futura OS ping test") = 19 */
+        if (ping_rc == 0) {
+            fut_printf("[TCP/IP-TEST] ✓ ICMP echo request sent successfully to 1.1.1.1\n");
+        } else {
+            fut_printf("[TCP/IP-TEST] ✗ Failed to send ping: %d\n", ping_rc);
+        }
     }
 
     /* Test block device operations - DISABLED (heap too small for 1MB ramdisk) */

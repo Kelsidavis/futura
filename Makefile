@@ -329,6 +329,7 @@ KERNEL_SOURCES := \
     kernel/net/fut_net.c \
     kernel/net/fut_net_dev.c \
     kernel/net/fut_net_loopback.c \
+    kernel/net/tcpip.c \
     kernel/crypto/fut_hmac.c \
     kernel/vfs/fut_vfs.c \
     kernel/vfs/ramfs.c \

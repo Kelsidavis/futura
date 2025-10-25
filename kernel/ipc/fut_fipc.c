@@ -216,32 +216,17 @@ static int fut_fipc_enqueue_message(struct fut_fipc_channel *channel,
  * ============================================================ */
 
 void fut_fipc_init(void) {
-#ifdef __aarch64__
-    extern void fut_serial_puts(const char *);
-    fut_serial_puts("[ARM64-DEBUG] fut_fipc_init: Start\n");
-#endif
-
     region_list = NULL;
     channel_list = NULL;
     next_region_id = 1;
     next_channel_id = 1;
 
-#ifdef __aarch64__
-    fut_serial_puts("[ARM64-DEBUG] fut_fipc_init: Lists initialized\n");
-#endif
-
     struct fut_fipc_channel *sys_channel = NULL;
-#ifdef __aarch64__
-    fut_serial_puts("[ARM64-DEBUG] fut_fipc_init: Before sys_channel create\n");
-#endif
     if (fut_fipc_channel_create(NULL,
                                 NULL,
                                 4096,
                                 FIPC_CHANNEL_NONBLOCKING,
                                 &sys_channel) == 0 && sys_channel) {
-#ifdef __aarch64__
-        fut_serial_puts("[ARM64-DEBUG] fut_fipc_init: sys_channel created\n");
-#endif
         sys_channel->id = FIPC_SYS_CHANNEL_ID;
         sys_channel->type = FIPC_CHANNEL_SYSTEM;
         sys_channel->cap_ledger.rights = FIPC_CAP_R_SEND | FIPC_CAP_R_RECV | FIPC_CAP_R_ADMIN;

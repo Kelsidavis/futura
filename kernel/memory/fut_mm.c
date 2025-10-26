@@ -63,7 +63,19 @@ static void mm_unmap_and_free(fut_mm_t *mm, uintptr_t start, uintptr_t end) {
         uint64_t phys = 0;
         if (fut_virt_to_phys(ctx, va, &phys) == 0) {
             fut_unmap_range(ctx, va, PAGE_SIZE);
-            fut_pmm_free_page((void *)pmap_phys_to_virt((phys_addr_t)phys));
+
+            /* Check if this is a COW page with references */
+            int refcount = fut_page_ref_get((phys_addr_t)phys);
+            if (refcount > 1) {
+                /* Decrement reference count, don't free yet */
+                fut_page_ref_dec((phys_addr_t)phys);
+            } else {
+                /* Last reference or not COW - free the page */
+                if (refcount == 1) {
+                    fut_page_ref_dec((phys_addr_t)phys);  /* Remove from tracking */
+                }
+                fut_pmm_free_page((void *)pmap_phys_to_virt((phys_addr_t)phys));
+            }
         }
     }
 }
@@ -1114,4 +1126,98 @@ int fut_mm_clone_vmas(fut_mm_t *dest_mm, fut_mm_t *src_mm) {
     }
 
     return 0;
+}
+
+/* ============================================================
+ *   Page Reference Counting for Copy-On-Write
+ * ============================================================ */
+
+/*
+ * Simple hash table for tracking page reference counts.
+ * This allows multiple processes to share physical pages after fork().
+ */
+
+#define PAGE_REFCOUNT_BUCKETS 1024
+#define PAGE_REFCOUNT_HASH(phys) (((phys) >> 12) % PAGE_REFCOUNT_BUCKETS)
+
+struct page_refcount_entry {
+    phys_addr_t phys;
+    int refcount;
+    struct page_refcount_entry *next;
+};
+
+static struct page_refcount_entry *page_refcount_table[PAGE_REFCOUNT_BUCKETS];
+
+void fut_page_ref_init(void) {
+    for (int i = 0; i < PAGE_REFCOUNT_BUCKETS; i++) {
+        page_refcount_table[i] = NULL;
+    }
+}
+
+static struct page_refcount_entry *page_ref_find(phys_addr_t phys) {
+    int bucket = PAGE_REFCOUNT_HASH(phys);
+    struct page_refcount_entry *entry = page_refcount_table[bucket];
+
+    while (entry) {
+        if (entry->phys == phys) {
+            return entry;
+        }
+        entry = entry->next;
+    }
+
+    return NULL;
+}
+
+void fut_page_ref_inc(phys_addr_t phys) {
+    int bucket = PAGE_REFCOUNT_HASH(phys);
+    struct page_refcount_entry *entry = page_ref_find(phys);
+
+    if (entry) {
+        entry->refcount++;
+    } else {
+        /* Allocate new entry */
+        entry = fut_malloc(sizeof(*entry));
+        if (!entry) {
+            /* Out of memory - this is bad, but we can't do much */
+            return;
+        }
+
+        entry->phys = phys;
+        entry->refcount = 2;  /* Parent + child */
+        entry->next = page_refcount_table[bucket];
+        page_refcount_table[bucket] = entry;
+    }
+}
+
+int fut_page_ref_dec(phys_addr_t phys) {
+    int bucket = PAGE_REFCOUNT_HASH(phys);
+    struct page_refcount_entry **link = &page_refcount_table[bucket];
+    struct page_refcount_entry *entry = page_refcount_table[bucket];
+
+    while (entry) {
+        if (entry->phys == phys) {
+            entry->refcount--;
+
+            if (entry->refcount <= 1) {
+                /* Remove from hash table */
+                *link = entry->next;
+                int final_count = entry->refcount;
+                fut_free(entry);
+                return final_count;
+            }
+
+            return entry->refcount;
+        }
+
+        link = &entry->next;
+        entry = entry->next;
+    }
+
+    /* Not found - assume refcount is 1 */
+    return 1;
+}
+
+int fut_page_ref_get(phys_addr_t phys) {
+    struct page_refcount_entry *entry = page_ref_find(phys);
+    return entry ? entry->refcount : 1;
 }

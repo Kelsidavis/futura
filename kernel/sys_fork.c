@@ -102,12 +102,14 @@ long sys_fork(void) {
 }
 
 /**
- * Clone memory management context.
- * Copies all user page mappings from parent to child using VMA tracking.
- * TODO: Implement copy-on-write (COW) for efficiency.
+ * Clone memory management context using copy-on-write (COW).
+ * Instead of copying pages, we share physical pages and mark them read-only.
+ * On first write, a page fault triggers the actual copy.
  */
 static fut_mm_t *clone_mm(fut_mm_t *parent_mm) {
     extern void fut_thread_yield(void);  /* For yielding during long operations */
+    extern void fut_page_ref_inc(phys_addr_t phys);
+    extern int pmap_set_page_ro(fut_vmem_context_t *, uintptr_t);
 
     if (!parent_mm) {
         return NULL;
@@ -133,6 +135,20 @@ static fut_mm_t *clone_mm(fut_mm_t *parent_mm) {
 
     fut_vmem_context_t *parent_ctx = fut_mm_context(parent_mm);
     fut_vmem_context_t *child_ctx = fut_mm_context(child_mm);
+
+    /* Mark VMAs as COW and update child VMA list */
+    struct fut_vma *child_vma = child_mm->vma_list;
+    struct fut_vma *parent_vma = parent_mm->vma_list;
+    while (child_vma && parent_vma) {
+        /* Mark both parent and child VMAs as COW if writable */
+        if ((parent_vma->prot & 0x2) && !(parent_vma->flags & VMA_SHARED)) {
+            parent_vma->flags |= VMA_COW;
+            child_vma->flags |= VMA_COW;
+        }
+
+        child_vma = child_vma->next;
+        parent_vma = parent_vma->next;
+    }
 
     /* If no VMAs are tracked, fall back to scanning fixed ranges */
     if (parent_mm->vma_list == NULL) {
@@ -211,10 +227,12 @@ static fut_mm_t *clone_mm(fut_mm_t *parent_mm) {
         return child_mm;
     }
 
-    /* Iterate over VMAs and copy only mapped pages */
+    /* Iterate over VMAs and share pages with COW */
     struct fut_vma *vma;
     for (vma = parent_mm->vma_list; vma != NULL; vma = vma->next) {
-        fut_printf("[FORK] Cloning VMA: 0x%llx-0x%llx\n", vma->start, vma->end);
+        bool is_cow = (vma->flags & VMA_COW) != 0;
+        fut_printf("[FORK] Cloning VMA: 0x%llx-0x%llx %s\n",
+                   vma->start, vma->end, is_cow ? "(COW)" : "(COPY)");
 
         uint64_t page_count = 0;
         for (uint64_t page = vma->start; page < vma->end; page += FUT_PAGE_SIZE) {
@@ -229,29 +247,51 @@ static fut_mm_t *clone_mm(fut_mm_t *parent_mm) {
                 continue;  /* Page not present */
             }
 
-            /* Allocate new physical page for child */
-            void *child_page = fut_pmm_alloc_page();
-            if (!child_page) {
-                fut_mm_release(child_mm);
-                return NULL;
-            }
-
-            /* Copy page contents */
             phys_addr_t parent_phys = pte & PTE_PHYS_ADDR_MASK;
-            void *parent_page = (void *)pmap_phys_to_virt(parent_phys);
-            memcpy(child_page, parent_page, FUT_PAGE_SIZE);
 
-            /* Map in child with same permissions */
-            phys_addr_t child_phys = pmap_virt_to_phys((uintptr_t)child_page);
-            uint64_t flags = pte & (PTE_PRESENT | PTE_WRITABLE | PTE_USER | PTE_NX);
+            if (is_cow) {
+                /* COW: Share the page and mark read-only */
+                uint64_t flags = pte & (PTE_PRESENT | PTE_USER | PTE_NX);
+                /* Remove writable flag to trigger COW on write */
+                flags &= ~PTE_WRITABLE;
 
-            if (pmap_map_user(child_ctx, page, child_phys, FUT_PAGE_SIZE, flags) != 0) {
-                fut_pmm_free_page(child_page);
-                fut_mm_release(child_mm);
-                return NULL;
+                /* Map same physical page in child (read-only) */
+                if (pmap_map_user(child_ctx, page, parent_phys, FUT_PAGE_SIZE, flags) != 0) {
+                    fut_mm_release(child_mm);
+                    return NULL;
+                }
+
+                /* Mark parent page as read-only too */
+                pmap_set_page_ro(parent_ctx, page);
+
+                /* Increment page reference count */
+                fut_page_ref_inc(parent_phys);
+
+                page_count++;
+            } else {
+                /* Non-COW (e.g., shared mappings): Full copy */
+                void *child_page = fut_pmm_alloc_page();
+                if (!child_page) {
+                    fut_mm_release(child_mm);
+                    return NULL;
+                }
+
+                /* Copy page contents */
+                void *parent_page = (void *)pmap_phys_to_virt(parent_phys);
+                memcpy(child_page, parent_page, FUT_PAGE_SIZE);
+
+                /* Map in child with same permissions */
+                phys_addr_t child_phys = pmap_virt_to_phys((uintptr_t)child_page);
+                uint64_t flags = pte & (PTE_PRESENT | PTE_WRITABLE | PTE_USER | PTE_NX);
+
+                if (pmap_map_user(child_ctx, page, child_phys, FUT_PAGE_SIZE, flags) != 0) {
+                    fut_pmm_free_page(child_page);
+                    fut_mm_release(child_mm);
+                    return NULL;
+                }
+
+                page_count++;
             }
-
-            page_count++;
 
             /* Yield every 64 pages to avoid monopolizing CPU */
             if ((page_count & 0x3F) == 0) {
@@ -259,7 +299,7 @@ static fut_mm_t *clone_mm(fut_mm_t *parent_mm) {
             }
         }
 
-        fut_printf("[FORK] Copied %llu pages from VMA\n", page_count);
+        fut_printf("[FORK] %s %llu pages from VMA\n", is_cow ? "Shared" : "Copied", page_count);
     }
 
     return child_mm;

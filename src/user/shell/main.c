@@ -1926,33 +1926,22 @@ static void cmd_tr(int argc, char *argv[]) {
             write_str(2, "tr: unknown option: ");
             write_str(2, argv[arg_start]);
             write_str(2, "\n");
-            write_str(2, "Usage: tr [-d] [-s] <set1> [set2] <file>...\n");
+            write_str(2, "Usage: tr [-d] [-s] <set1> [set2] [file...]\n");
             return;
         }
     }
 
     /* Check arguments */
-    if (delete_mode && squeeze_mode) {
-        if (arg_start + 2 > argc) {
-            write_str(2, "tr: missing operands\n");
-            return;
-        }
-    } else if (delete_mode) {
-        if (arg_start + 2 > argc) {
-            write_str(2, "tr: missing operands\n");
-            return;
-        }
-    } else {
-        if (arg_start + 3 > argc) {
-            write_str(2, "tr: missing operands\n");
-            write_str(2, "Usage: tr <set1> <set2> <file>...\n");
-            return;
-        }
+    int required_args = delete_mode ? 1 : 2;
+    if (arg_start + required_args > argc) {
+        write_str(2, "tr: missing operands\n");
+        write_str(2, "Usage: tr [-d] [-s] <set1> [set2] [file...]\n");
+        return;
     }
 
     const char *set1 = argv[arg_start];
     const char *set2 = delete_mode ? 0 : argv[arg_start + 1];
-    int file_start = delete_mode ? arg_start + 1 : arg_start + 2;
+    int file_start = arg_start + required_args;
 
     /* Build translation map */
     static char trans_map[256];
@@ -1984,18 +1973,8 @@ static void cmd_tr(int argc, char *argv[]) {
         }
     }
 
-    /* Process files */
-    for (int file_idx = file_start; file_idx < argc; file_idx++) {
-        const char *path = argv[file_idx];
-
-        int fd = sys_open(path, O_RDONLY, 0);
-        if (fd < 0) {
-            write_str(2, "tr: ");
-            write_str(2, path);
-            write_str(2, ": cannot open file\n");
-            continue;
-        }
-
+    /* Helper function to process a file descriptor */
+    auto void process_fd(int fd) {
         char read_buf[256];
         char last_char = '\0';
         long bytes_read;
@@ -2027,13 +2006,27 @@ static void cmd_tr(int argc, char *argv[]) {
                 }
             }
         }
+    }
 
-        sys_close(fd);
+    /* Process files or stdin */
+    if (file_start >= argc) {
+        /* Read from stdin */
+        process_fd(0);
+    } else {
+        /* Process each file */
+        for (int file_idx = file_start; file_idx < argc; file_idx++) {
+            const char *path = argv[file_idx];
 
-        if (bytes_read < 0) {
-            write_str(2, "tr: ");
-            write_str(2, path);
-            write_str(2, ": read error\n");
+            int fd = sys_open(path, O_RDONLY, 0);
+            if (fd < 0) {
+                write_str(2, "tr: ");
+                write_str(2, path);
+                write_str(2, ": cannot open file\n");
+                continue;
+            }
+
+            process_fd(fd);
+            sys_close(fd);
         }
     }
 }

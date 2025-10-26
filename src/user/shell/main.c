@@ -1520,6 +1520,9 @@ static int execute_command(int argc, char *argv[]) {
     } else if (strcmp_simple(argv[0], "cp") == 0) {
         cmd_cp(argc, argv);
         return 0;
+    } else if (strcmp_simple(argv[0], "echo") == 0) {
+        cmd_echo(argc, argv);
+        return 0;
     } else if (strcmp_simple(argv[0], "export") == 0) {
         cmd_export(argc, argv);
         return 0;

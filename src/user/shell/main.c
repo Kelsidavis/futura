@@ -2958,23 +2958,26 @@ static void cmd_rm(int argc, char *argv[]) {
 static void cmd_touch(int argc, char *argv[]) {
     if (argc < 2) {
         write_str(2, "touch: missing file operand\n");
-        write_str(2, "Usage: touch <file>\n");
+        write_str(2, "Usage: touch <file>...\n");
         return;
     }
 
-    const char *path = argv[1];
+    /* Process each file argument */
+    for (int i = 1; i < argc; i++) {
+        const char *path = argv[i];
 
-    /* Create file by opening with O_CREAT and then closing */
-    int fd = sys_open(path, O_CREAT | O_WRONLY, 0644);
-    if (fd < 0) {
-        write_str(2, "touch: cannot touch '");
-        write_str(2, path);
-        write_str(2, "'\n");
-        return;
+        /* Create file by opening with O_CREAT and then closing */
+        int fd = sys_open(path, O_CREAT | O_WRONLY, 0644);
+        if (fd < 0) {
+            write_str(2, "touch: cannot touch '");
+            write_str(2, path);
+            write_str(2, "'\n");
+            continue;
+        }
+
+        /* Close the file immediately */
+        sys_close(fd);
     }
-
-    /* Close the file immediately */
-    sys_close(fd);
 }
 
 /* Built-in: cp */

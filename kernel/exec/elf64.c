@@ -41,8 +41,8 @@ extern void fut_do_user_iretq(uint64_t entry, uint64_t stack, uint64_t argc, uin
 #define USER_CODE_SELECTOR  (0x18u | 0x3u)
 #define USER_DATA_SELECTOR  (0x20u | 0x3u)
 
-#define USER_STACK_TOP      0x00007FFF00000000ULL
-#define USER_STACK_PAGES    4u
+#define USER_STACK_TOP      0x00007FFFFFFFE000ULL  /* Standard Linux user stack location */
+#define USER_STACK_PAGES    16u  /* Increase stack pages from 4 to 16 (64KB) */
 
 typedef struct __attribute__((packed)) {
     uint8_t  e_ident[16];

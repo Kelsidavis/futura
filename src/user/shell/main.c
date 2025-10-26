@@ -2107,29 +2107,53 @@ static void cmd_paste(int argc, char *argv[]) {
         arg_start = 3;
     }
 
-    if (arg_start >= argc) {
-        write_str(2, "paste: no input files\n");
-        return;
+    /* Helper function to read one line from a file descriptor */
+    auto int read_line(int fd, char *buffer, int max_len) {
+        int pos = 0;
+        char c;
+        long nread;
+
+        while (pos < max_len - 1) {
+            nread = sys_read(fd, &c, 1);
+            if (nread <= 0) {
+                return (pos > 0) ? pos : -1;  /* Return -1 on EOF with no data */
+            }
+            if (c == '\n') {
+                break;
+            }
+            buffer[pos++] = c;
+        }
+        buffer[pos] = '\0';
+        return pos;
     }
 
-    /* Open all files */
+    /* Open all files or use stdin */
     #define PASTE_MAX_FILES 16
     int fds[PASTE_MAX_FILES];
     int num_files = 0;
 
-    for (int i = arg_start; i < argc && num_files < PASTE_MAX_FILES; i++) {
-        fds[num_files] = sys_open(argv[i], O_RDONLY, 0);
-        if (fds[num_files] < 0) {
-            write_str(2, "paste: ");
-            write_str(2, argv[i]);
-            write_str(2, ": cannot open file\n");
-            /* Close already opened files */
-            for (int j = 0; j < num_files; j++) {
-                sys_close(fds[j]);
+    if (arg_start >= argc) {
+        /* Read from stdin */
+        fds[0] = 0;
+        num_files = 1;
+    } else {
+        /* Open each file */
+        for (int i = arg_start; i < argc && num_files < PASTE_MAX_FILES; i++) {
+            fds[num_files] = sys_open(argv[i], O_RDONLY, 0);
+            if (fds[num_files] < 0) {
+                write_str(2, "paste: ");
+                write_str(2, argv[i]);
+                write_str(2, ": cannot open file\n");
+                /* Close already opened files */
+                for (int j = 0; j < num_files; j++) {
+                    if (fds[j] > 0) {  /* Don't close stdin */
+                        sys_close(fds[j]);
+                    }
+                }
+                return;
             }
-            return;
+            num_files++;
         }
-        num_files++;
     }
 
     /* Read and merge lines from all files */
@@ -2147,25 +2171,15 @@ static void cmd_paste(int argc, char *argv[]) {
                 continue;
             }
 
-            int pos = 0;
-            char c;
-            long nread;
-
-            while (pos < PASTE_LINE_MAX - 1) {
-                nread = sys_read(fds[i], &c, 1);
-                if (nread <= 0) {
+            int result = read_line(fds[i], lines[i], PASTE_LINE_MAX);
+            if (result < 0) {
+                /* EOF reached */
+                if (fds[i] > 0) {  /* Don't close stdin */
                     sys_close(fds[i]);
-                    fds[i] = -1;  /* Mark file as closed */
-                    break;
                 }
-                if (c == '\n') {
-                    break;
-                }
-                lines[i][pos++] = c;
-            }
-            lines[i][pos] = '\0';
-
-            if (fds[i] >= 0 || pos > 0) {
+                fds[i] = -1;  /* Mark file as closed */
+                lines[i][0] = '\0';
+            } else {
                 files_active++;
             }
         }
@@ -2184,7 +2198,7 @@ static void cmd_paste(int argc, char *argv[]) {
 
     /* Close any remaining open files */
     for (int i = 0; i < num_files; i++) {
-        if (fds[i] >= 0) {
+        if (fds[i] > 0) {  /* Don't close stdin */
             sys_close(fds[i]);
         }
     }

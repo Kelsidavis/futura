@@ -39,7 +39,9 @@ static void console_signal(int sig) {
 
 /**
  * Input thread - continuously reads from serial and feeds line discipline.
+ * TEMPORARILY DISABLED for DMA race condition debugging.
  */
+#if 0
 static void console_input_thread(void *arg) {
     (void)arg;
 
@@ -54,6 +56,7 @@ static void console_input_thread(void *arg) {
         }
     }
 }
+#endif
 
 static int console_open(void *inode, int flags, void **priv) {
     (void)inode;
@@ -110,6 +113,10 @@ void fut_console_init(void) {
     /* Initialize line discipline with echo and signal callbacks */
     tty_ldisc_init(&console_ldisc, console_echo, console_signal);
 
+    /* TEMPORARY: Disable console input thread to debug DMA corruption */
+    fut_printf("[CONSOLE] Input thread temporarily disabled for debugging\n");
+
+#if 0
     /* Create a task for the input thread */
     fut_task_t *console_task = fut_task_create();
     if (!console_task) {
@@ -122,14 +129,15 @@ void fut_console_init(void) {
         console_task,
         console_input_thread,
         NULL,
-        8192,  /* 8KB stack */
-        100    /* Medium priority */
+        8192,  // 8KB stack
+        100    // Medium priority
     );
 
     if (!input_thread) {
         fut_printf("[CONSOLE] ERROR: Failed to create input thread\n");
         return;
     }
+#endif
 
     /* Register character device */
     (void)chrdev_register(CONSOLE_MAJOR, CONSOLE_MINOR, &console_fops, "console", NULL);

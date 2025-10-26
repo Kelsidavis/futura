@@ -909,6 +909,12 @@ void fut_kernel_main(void) {
     fut_console_init();
     fut_printf("[INIT] Console device registered at /dev/console\n");
 
+    /* Give console input thread a chance to start before doing I/O */
+    extern void fut_thread_yield(void);
+    for (int i = 0; i < 100; i++) {
+        fut_thread_yield();
+    }
+
     int fd0 = fut_vfs_open("/dev/console", O_RDWR, 0);
     int fd1 = fut_vfs_open("/dev/console", O_RDWR, 0);
     int fd2 = fut_vfs_open("/dev/console", O_RDWR, 0);

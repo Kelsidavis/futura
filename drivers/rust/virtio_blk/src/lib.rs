@@ -26,6 +26,8 @@ use common::{
     FUT_BLK_WRITE, MMIO_DEFAULT_FLAGS,
 };
 
+unsafe extern "C" { fn fut_printf(fmt: *const u8, ...); }
+
 const PCI_CONFIG_ADDRESS: u16 = 0xCF8;
 const PCI_CONFIG_DATA: u16 = 0xCFC;
 
@@ -286,6 +288,11 @@ impl VirtQueue {
                 flags: VIRTQ_DESC_F_NEXT,
                 next: if req_type == VIRTIO_BLK_T_FLUSH { 2 } else { 1 },
             });
+            unsafe {
+                fut_printf(b"[virtio-blk] desc[0]: addr=0x%lx len=%d flags=0x%x next=%d\n\0".as_ptr(),
+                    header_phys, size_of::<VirtioBlkReqHeader>() as u32, VIRTQ_DESC_F_NEXT as u32,
+                    if req_type == VIRTIO_BLK_T_FLUSH { 2 } else { 1 });
+            }
 
             if req_type != VIRTIO_BLK_T_FLUSH {
                 let mut flags = VIRTQ_DESC_F_NEXT;
@@ -298,6 +305,8 @@ impl VirtQueue {
                     flags,
                     next: 2,
                 });
+                fut_printf(b"[virtio-blk] desc[1]: addr=0x%lx len=%d flags=0x%x next=2\n\0".as_ptr(),
+                    data_phys, data_len as u32, flags as u32);
             }
 
             write_volatile(self.desc.add(2), VirtqDesc {
@@ -306,11 +315,16 @@ impl VirtQueue {
                 flags: VIRTQ_DESC_F_WRITE,
                 next: 0,
             });
+            fut_printf(b"[virtio-blk] desc[2]: addr=0x%lx len=1 flags=0x%x next=0\n\0".as_ptr(),
+                status_phys, VIRTQ_DESC_F_WRITE as u32);
 
             let avail = &mut *self.avail;
             avail.ring[slot as usize] = 0;
             core::sync::atomic::fence(Ordering::SeqCst);
+            let old_idx = avail.idx;
             avail.idx = avail.idx.wrapping_add(1);
+            fut_printf(b"[virtio-blk] enqueue: slot=%d avail.idx %d -> %d\n\0".as_ptr(),
+                slot as u32, old_idx as u32, avail.idx as u32);
         }
         self.next_avail.fetch_add(1, Ordering::Release);
         Ok(())
@@ -318,17 +332,35 @@ impl VirtQueue {
 
     fn poll_completion(&self) -> FutStatus {
         let mut waited = 0u32;
+        const TIMEOUT_ITERATIONS: u32 = 100_000;  // Moderate timeout for debugging
         loop {
             let last = self.last_used.load(Ordering::Acquire);
             let used_idx = unsafe { (*self.used).idx };
             if used_idx != last {
+                log("virtio-blk: completion detected!");
                 self.last_used.store(last.wrapping_add(1), Ordering::Release);
                 return 0;
             }
-            if waited > 10_000 {
+            if waited == 0 {
+                unsafe {
+                    fut_printf(b"[virtio-blk] polling: last_used=%d used_idx=%d used_ptr=%p\n\0".as_ptr(),
+                        last as u32, used_idx as u32, self.used);
+                }
+            }
+            if waited == 5000 {
+                unsafe {
+                    fut_printf(b"[virtio-blk] still polling at 5k: used_idx=%d flags=%d\n\0".as_ptr(),
+                        (*self.used).idx as u32, (*self.used).flags as u32);
+                }
+            }
+            if waited > TIMEOUT_ITERATIONS {
+                unsafe {
+                    fut_printf(b"[virtio-blk] TIMEOUT: last_used=%d used_idx=%d\n\0".as_ptr(), last as u32, used_idx as u32);
+                }
                 return ETIMEDOUT;
             }
-            thread_yield();
+            /* Pure busy-wait - DO NOT use thread_yield() or hlt as they cause DMA corruption */
+            core::hint::spin_loop();
             waited += 1;
         }
     }
@@ -725,12 +757,24 @@ impl VirtioBlkDevice {
             (*self.common).device_feature_select = 1;
             let feat_high = (*self.common).device_feature;
             let features = ((feat_high as u64) << 32) | feat_low as u64;
+
+            fut_printf(b"[virtio-blk] device features: 0x%lx\n\0".as_ptr(), features);
+
+            /* Accept all offered features including VERSION_1 (bit 32) which is mandatory */
+            let driver_features = features;
+
             (*self.common).driver_feature_select = 0;
-            (*self.common).driver_feature = features as u32;
+            (*self.common).driver_feature = driver_features as u32;
             (*self.common).driver_feature_select = 1;
-            (*self.common).driver_feature = (features >> 32) as u32;
+            (*self.common).driver_feature = (driver_features >> 32) as u32;
+
+            fut_printf(b"[virtio-blk] driver features: 0x%lx\n\0".as_ptr(), driver_features);
+
             (*self.common).device_status |= VIRTIO_STATUS_FEATURES_OK;
-            if ((*self.common).device_status & VIRTIO_STATUS_FEATURES_OK) == 0 {
+            let status_check = (*self.common).device_status;
+            fut_printf(b"[virtio-blk] device_status after FEATURES_OK: 0x%x\n\0".as_ptr(), status_check as u32);
+
+            if (status_check & VIRTIO_STATUS_FEATURES_OK) == 0 {
                 log("virtio-blk: feature negotiation failed");
                 return Err(ENODEV);
             }
@@ -759,6 +803,9 @@ impl VirtioBlkDevice {
             (*self.common).queue_used_hi = (self.queue.used_phys >> 32) as u32;
             (*self.common).queue_enable = 1;
             self.queue.notify_off = (*self.common).queue_notify_off;
+
+            fut_printf(b"[virtio-blk] queue setup: desc_phys=0x%lx avail_phys=0x%lx used_phys=0x%lx\n\0".as_ptr(),
+                self.queue.desc_phys, self.queue.avail_phys, self.queue.used_phys);
         }
         Ok(())
     }
@@ -792,6 +839,8 @@ impl VirtioBlkDevice {
         unsafe {
             let off = (self.queue.notify_off as u32 * self.notify_off_multiplier) as usize;
             let ptr = self.notify_base.add(off) as *mut u16;
+            fut_printf(b"[virtio-blk] notifying queue: notify_off=%d multiplier=%d offset=%d ptr=%p\n\0".as_ptr(),
+                self.queue.notify_off as u32, self.notify_off_multiplier, off as u32, ptr);
             write_volatile(ptr, 0);
         }
     }
@@ -804,7 +853,9 @@ impl VirtioBlkDevice {
         buf: *mut u8,
         write: bool,
     ) -> FutStatus {
+        log("virtio-blk: perform_io called");
         if self.dma.is_null() {
+            log("virtio-blk: DMA is null!");
             return ENODEV;
         }
         let data_bytes = nsectors * self.block_size as usize;
@@ -845,6 +896,8 @@ impl VirtioBlkDevice {
             }
             return err;
         }
+        /* Ensure all descriptor/avail ring writes are visible before notifying device */
+        core::sync::atomic::fence(Ordering::SeqCst);
         self.notify_queue();
 
         let rc = self.queue.poll_completion();

@@ -22,18 +22,23 @@ static const struct fut_vnode_ops futurafs_vnode_ops;
  * Read superblock from device.
  */
 static int futurafs_read_superblock(struct fut_blockdev *dev, struct futurafs_superblock *sb) {
+    extern void fut_printf(const char *, ...);
+
     int ret = fut_blockdev_read(dev, 0, 1, sb);
     if (ret < 0) {
+        fut_printf("[FUTURAFS] blockdev_read failed: %d\n", ret);
         return FUTURAFS_EIO;
     }
 
     /* Validate magic number */
+    fut_printf("[FUTURAFS] magic=0x%x (expected 0x%x)\n", sb->magic, FUTURAFS_MAGIC);
     if (sb->magic != FUTURAFS_MAGIC) {
         return FUTURAFS_EINVAL;
     }
 
     /* Validate version */
     if (sb->version != FUTURAFS_VERSION) {
+        fut_printf("[FUTURAFS] version=%u (expected %u)\n", sb->version, FUTURAFS_VERSION);
         return FUTURAFS_EINVAL;
     }
 

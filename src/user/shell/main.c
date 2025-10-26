@@ -894,6 +894,7 @@ static void cmd_help(int argc, char *argv[]) {
     write_str(1, "  cut -f <field> [-d <delim>] <file>... - Extract fields from lines\n");
     write_str(1, "  cut -c <N[-M]> <file>... - Extract characters from lines\n");
     write_str(1, "  tr [-d] [-s] <set1> [set2] <file>... - Translate or delete characters\n");
+    write_str(1, "  tee [-a] <file>... - Read from stdin and write to stdout and files\n");
     write_str(1, "\n");
     write_str(1, "File Operations:\n");
     write_str(1, "  mkdir <dir>     - Create directory\n");
@@ -2344,6 +2345,71 @@ static void cmd_tr(int argc, char *argv[]) {
     }
 }
 
+/* Built-in: tee - Read from stdin and write to stdout and files */
+static void cmd_tee(int argc, char *argv[]) {
+    int append_mode = 0;
+    int arg_start = 1;
+
+    /* Parse options */
+    if (argc > 1 && strcmp_simple(argv[1], "-a") == 0) {
+        append_mode = 1;
+        arg_start = 2;
+    }
+
+    /* Open all output files */
+    #define TEE_MAX_FILES 16
+    int fds[TEE_MAX_FILES];
+    int num_files = 0;
+
+    for (int i = arg_start; i < argc && num_files < TEE_MAX_FILES; i++) {
+        int flags = O_WRONLY | O_CREAT;
+        if (append_mode) {
+            flags |= O_APPEND;
+        } else {
+            flags |= O_TRUNC;
+        }
+
+        fds[num_files] = sys_open(argv[i], flags, 0644);
+        if (fds[num_files] < 0) {
+            write_str(2, "tee: ");
+            write_str(2, argv[i]);
+            write_str(2, ": cannot open file\n");
+            /* Continue with other files */
+        } else {
+            num_files++;
+        }
+    }
+
+    /* Read from stdin and write to stdout and all files */
+    char buf[4096];
+    long nread;
+
+    while ((nread = sys_read(0, buf, sizeof(buf))) > 0) {
+        /* Write to stdout */
+        long written = 0;
+        while (written < nread) {
+            long w = sys_write(1, buf + written, nread - written);
+            if (w <= 0) break;
+            written += w;
+        }
+
+        /* Write to all output files */
+        for (int i = 0; i < num_files; i++) {
+            written = 0;
+            while (written < nread) {
+                long w = sys_write(fds[i], buf + written, nread - written);
+                if (w <= 0) break;
+                written += w;
+            }
+        }
+    }
+
+    /* Close all files */
+    for (int i = 0; i < num_files; i++) {
+        sys_close(fds[i]);
+    }
+}
+
 /* Built-in: ls - List directory contents */
 static void cmd_ls(int argc, char *argv[]) {
     const char *path = argc > 1 ? argv[1] : ".";
@@ -2955,6 +3021,9 @@ static int execute_command(int argc, char *argv[]) {
         return 0;
     } else if (strcmp_simple(argv[0], "tr") == 0) {
         cmd_tr(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "tee") == 0) {
+        cmd_tee(argc, argv);
         return 0;
     } else if (strcmp_simple(argv[0], "find") == 0) {
         cmd_find(argc, argv);

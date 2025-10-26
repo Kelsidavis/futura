@@ -36,6 +36,69 @@ void fut_blockdev_init(void) {
     device_list = NULL;
 }
 
+/* Forward declarations for block core I/O */
+extern int fut_blk_read(void *backend_ctx, uint64_t sector, uint32_t count, void *buffer);
+extern int fut_blk_write(void *backend_ctx, uint64_t sector, uint32_t count, const void *buffer);
+
+/* Adapter operations for block core devices */
+static int blockdev_compat_read(struct fut_blockdev *dev, uint64_t block_num,
+                                  uint64_t num_blocks, void *buffer) {
+    if (!dev || !dev->private_data) {
+        return BLOCKDEV_EIO;
+    }
+    return fut_blk_read(dev->private_data, block_num, (uint32_t)num_blocks, buffer);
+}
+
+static int blockdev_compat_write(struct fut_blockdev *dev, uint64_t block_num,
+                                   uint64_t num_blocks, const void *buffer) {
+    if (!dev || !dev->private_data) {
+        return BLOCKDEV_EIO;
+    }
+    return fut_blk_write(dev->private_data, block_num, (uint32_t)num_blocks, buffer);
+}
+
+static const struct fut_blockdev_ops compat_ops = {
+    .read = blockdev_compat_read,
+    .write = blockdev_compat_write,
+    .flush = NULL,
+};
+
+/**
+ * Register a block core device with the legacy blockdev API for VFS compatibility.
+ */
+int fut_blockdev_register_compat(const char *name, uint32_t block_size,
+                                   uint64_t block_count, void *backend_ctx) {
+    struct fut_blockdev *dev = fut_malloc(sizeof(struct fut_blockdev));
+    if (!dev) {
+        return BLOCKDEV_ENODEV;
+    }
+
+    /* Copy name */
+    const char *src = name;
+    char *dst = dev->name;
+    int i = 0;
+    while (*src && i < 31) {
+        *dst++ = *src++;
+        i++;
+    }
+    *dst = '\0';
+
+    dev->type = BLOCKDEV_ATA;  /* Generic disk type */
+    dev->num_blocks = block_count;
+    dev->block_size = block_size;
+    dev->capacity = block_count * block_size;
+    dev->read_only = false;
+    dev->flags = 0;
+    dev->ops = &compat_ops;
+    dev->private_data = backend_ctx;
+    dev->reads = 0;
+    dev->writes = 0;
+    dev->errors = 0;
+    dev->next = NULL;
+
+    return fut_blockdev_register(dev);
+}
+
 int fut_blockdev_register(struct fut_blockdev *dev) {
     if (!dev) {
         return BLOCKDEV_EINVAL;

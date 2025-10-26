@@ -456,6 +456,14 @@ int fut_vfs_readdir_fd(int fd, uint64_t *cookie, struct fut_vdirent *dirent);
 int fut_vfs_close(int fd);
 
 /**
+ * Get file structure from file descriptor (for testing).
+ *
+ * @param fd File descriptor
+ * @return File structure pointer, or NULL if invalid
+ */
+struct fut_file *fut_vfs_get_file(int fd);
+
+/**
  * Seek within a file.
  *
  * @param fd     File descriptor

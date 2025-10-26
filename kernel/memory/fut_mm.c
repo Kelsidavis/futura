@@ -80,6 +80,43 @@ static void mm_unmap_and_free(fut_mm_t *mm, uintptr_t start, uintptr_t end) {
     }
 }
 
+/**
+ * Insert a VMA into the mm's VMA list in sorted order by start address.
+ * This maintains the invariant that VMAs are sorted and non-overlapping.
+ */
+static void vma_insert_sorted(fut_mm_t *mm, fut_vma_t *vma) {
+    if (!mm || !vma) {
+        return;
+    }
+
+    /* Empty list - vma becomes the head */
+    if (!mm->vma_list) {
+        vma->next = NULL;
+        mm->vma_list = vma;
+        return;
+    }
+
+    /* Insert at head if vma starts before current head */
+    if (vma->start < mm->vma_list->start) {
+        vma->next = mm->vma_list;
+        mm->vma_list = vma;
+        return;
+    }
+
+    /* Find insertion point in sorted list */
+    fut_vma_t *prev = mm->vma_list;
+    fut_vma_t *curr = prev->next;
+
+    while (curr && curr->start < vma->start) {
+        prev = curr;
+        curr = curr->next;
+    }
+
+    /* Insert between prev and curr */
+    vma->next = curr;
+    prev->next = vma;
+}
+
 void fut_mm_system_init(void) {
     memset(&kernel_mm, 0, sizeof(kernel_mm));
 
@@ -364,8 +401,7 @@ void *fut_mm_map_anonymous(fut_mm_t *mm, uintptr_t hint, size_t len, int prot, i
     vma->flags = flags;
     vma->vnode = NULL;  /* Anonymous mapping */
     vma->file_offset = 0;
-    vma->next = mm->vma_list;
-    mm->vma_list = vma;
+    vma_insert_sorted(mm, vma);
 
     mm->mmap_base = end;
 
@@ -499,6 +535,7 @@ void *fut_mm_map_file(fut_mm_t *mm, struct fut_vnode *vnode, uintptr_t hint,
     extern void fut_printf(const char *, ...);
     extern void fut_vnode_ref(struct fut_vnode *);
 
+
     if (!mm || !vnode || len == 0) {
         return (void *)(intptr_t)(-EINVAL);
     }
@@ -594,8 +631,7 @@ void *fut_mm_map_file(fut_mm_t *mm, struct fut_vnode *vnode, uintptr_t hint,
     vma->flags = flags;
     vma->vnode = vnode;
     vma->file_offset = file_offset;
-    vma->next = mm->vma_list;
-    mm->vma_list = vma;
+    vma_insert_sorted(mm, vma);
 
     /* Add reference to vnode */
     fut_vnode_ref(vnode);

@@ -825,6 +825,11 @@ void vfs_free_fd(int fd) {
     free_fd(fd);
 }
 
+/* Public API for getting file from FD (for testing) */
+struct fut_file *fut_vfs_get_file(int fd) {
+    return get_file(fd);
+}
+
 int fut_vfs_readdir_fd(int fd, uint64_t *cookie, struct fut_vdirent *dirent) {
     if (!cookie || !dirent) {
         return -EINVAL;

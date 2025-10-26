@@ -1570,25 +1570,9 @@ static void cmd_uniq(int argc, char *argv[]) {
         write_char(1, '\n');
     }
 
-    /* Process files or stdin */
-    if (arg_start >= argc) {
-        write_str(2, "uniq: reading from stdin not yet supported\n");
-        return;
-    }
-
-    /* Process each file */
-    for (int file_idx = arg_start; file_idx < argc; file_idx++) {
-        const char *path = argv[file_idx];
-
-        int fd = sys_open(path, O_RDONLY, 0);
-        if (fd < 0) {
-            write_str(2, "uniq: ");
-            write_str(2, path);
-            write_str(2, ": cannot open file\n");
-            continue;
-        }
-
-        /* Read file line by line */
+    /* Helper function to process a file descriptor */
+    auto void process_fd(int fd) {
+        /* Read line by line */
         char read_buf[256];
         int line_pos = 0;
         long bytes_read;
@@ -1629,7 +1613,7 @@ static void cmd_uniq(int argc, char *argv[]) {
             }
         }
 
-        /* Handle last line if file doesn't end with newline */
+        /* Handle last line if input doesn't end with newline */
         if (line_pos > 0) {
             curr_line[line_pos] = '\0';
 
@@ -1650,13 +1634,27 @@ static void cmd_uniq(int argc, char *argv[]) {
                 curr_count = 1;
             }
         }
+    }
 
-        sys_close(fd);
+    /* Process files or stdin */
+    if (arg_start >= argc) {
+        /* Read from stdin */
+        process_fd(0);
+    } else {
+        /* Process each file */
+        for (int file_idx = arg_start; file_idx < argc; file_idx++) {
+            const char *path = argv[file_idx];
 
-        if (bytes_read < 0) {
-            write_str(2, "uniq: ");
-            write_str(2, path);
-            write_str(2, ": read error\n");
+            int fd = sys_open(path, O_RDONLY, 0);
+            if (fd < 0) {
+                write_str(2, "uniq: ");
+                write_str(2, path);
+                write_str(2, ": cannot open file\n");
+                continue;
+            }
+
+            process_fd(fd);
+            sys_close(fd);
         }
     }
 

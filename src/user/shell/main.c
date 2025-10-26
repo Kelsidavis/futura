@@ -893,6 +893,7 @@ static void cmd_help(int argc, char *argv[]) {
     write_str(1, "System:\n");
     write_str(1, "  uname           - Print system information\n");
     write_str(1, "  whoami          - Print current user\n");
+    write_str(1, "  env             - Show environment variables\n");
     write_str(1, "  echo [args]     - Print text\n");
     write_str(1, "  clear           - Clear screen\n");
     write_str(1, "\n");
@@ -980,6 +981,22 @@ static void cmd_whoami(int argc, char *argv[]) {
     (void)argv;
 
     write_str(1, "root\n");
+}
+
+/* Built-in: env - Show environment variables */
+static void cmd_env(int argc, char *argv[]) {
+    (void)argc;
+    (void)argv;
+
+    /* Iterate through all shell variables and print exported ones */
+    for (int i = 0; i < MAX_VARS; i++) {
+        if (shell_vars[i].used && shell_vars[i].exported) {
+            write_str(1, shell_vars[i].name);
+            write_char(1, '=');
+            write_str(1, shell_vars[i].value);
+            write_char(1, '\n');
+        }
+    }
 }
 
 /* Built-in: ls - List directory contents */
@@ -1566,6 +1583,9 @@ static int execute_command(int argc, char *argv[]) {
         return 0;
     } else if (strcmp_simple(argv[0], "whoami") == 0) {
         cmd_whoami(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "env") == 0) {
+        cmd_env(argc, argv);
         return 0;
     } else if (strcmp_simple(argv[0], "ls") == 0) {
         cmd_ls(argc, argv);

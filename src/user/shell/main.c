@@ -983,11 +983,25 @@ static void cmd_cd(int argc, char *argv[]) {
 
 /* Built-in: echo */
 static void cmd_echo(int argc, char *argv[]) {
-    for (int i = 1; i < argc; i++) {
+    int newline = 1;
+    int arg_start = 1;
+
+    /* Parse -n option (suppress trailing newline) */
+    if (argc > 1 && strcmp_simple(argv[1], "-n") == 0) {
+        newline = 0;
+        arg_start = 2;
+    }
+
+    /* Output arguments */
+    for (int i = arg_start; i < argc; i++) {
         write_str(1, argv[i]);
         if (i < argc - 1) write_char(1, ' ');
     }
-    write_char(1, '\n');
+
+    /* Output newline unless -n was specified */
+    if (newline) {
+        write_char(1, '\n');
+    }
 }
 
 /* Built-in: uname */

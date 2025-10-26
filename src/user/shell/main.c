@@ -886,6 +886,7 @@ static void cmd_help(int argc, char *argv[]) {
     write_str(1, "  cat <file>      - Display file contents\n");
     write_str(1, "  wc <file>...    - Count lines, words, and bytes\n");
     write_str(1, "  head [-n N] <file>... - Display first N lines (default 10)\n");
+    write_str(1, "  tail [-n N] <file>... - Display last N lines (default 10)\n");
     write_str(1, "\n");
     write_str(1, "File Operations:\n");
     write_str(1, "  mkdir <dir>     - Create directory\n");
@@ -1187,6 +1188,125 @@ static void cmd_head(int argc, char *argv[]) {
             write_str(2, path);
             write_str(2, ": read error\n");
         }
+    }
+}
+
+/* Built-in: tail - Display last N lines of files */
+static void cmd_tail(int argc, char *argv[]) {
+    int num_lines = 10;  /* Default: 10 lines */
+    int file_start = 1;
+
+    if (argc < 2) {
+        write_str(2, "tail: missing file operand\n");
+        write_str(2, "Usage: tail [-n lines] <file>...\n");
+        return;
+    }
+
+    /* Parse -n option */
+    if (argc >= 3 && strcmp_simple(argv[1], "-n") == 0) {
+        num_lines = simple_atoi(argv[2]);
+        if (num_lines <= 0) {
+            num_lines = 10;
+        }
+        file_start = 3;
+    }
+
+    /* Process each file */
+    for (int file_idx = file_start; file_idx < argc; file_idx++) {
+        const char *path = argv[file_idx];
+
+        /* Print header if multiple files */
+        if (argc - file_start > 1) {
+            if (file_idx > file_start) {
+                write_char(1, '\n');
+            }
+            write_str(1, "==> ");
+            write_str(1, path);
+            write_str(1, " <==\n");
+        }
+
+        /* Open the file */
+        int fd = sys_open(path, O_RDONLY, 0);
+        if (fd < 0) {
+            write_str(2, "tail: ");
+            write_str(2, path);
+            write_str(2, ": cannot open file\n");
+            continue;
+        }
+
+        /* First pass: read entire file into buffer and count total lines */
+        #define MAX_FILE_SIZE 65536  /* 64KB limit for simplicity */
+        char *file_buffer = (char *)0x50000000;  /* Use high memory region */
+        long total_bytes = 0;
+        long bytes_read;
+        char chunk[256];
+
+        while ((bytes_read = sys_read(fd, chunk, sizeof(chunk))) > 0) {
+            if (total_bytes + bytes_read > MAX_FILE_SIZE) {
+                write_str(2, "tail: ");
+                write_str(2, path);
+                write_str(2, ": file too large\n");
+                sys_close(fd);
+                goto next_file;
+            }
+            for (long i = 0; i < bytes_read; i++) {
+                file_buffer[total_bytes++] = chunk[i];
+            }
+        }
+
+        sys_close(fd);
+
+        if (bytes_read < 0) {
+            write_str(2, "tail: ");
+            write_str(2, path);
+            write_str(2, ": read error\n");
+            continue;
+        }
+
+        /* Count total lines and find line start positions */
+        long total_lines = 0;
+        for (long i = 0; i < total_bytes; i++) {
+            if (file_buffer[i] == '\n') {
+                total_lines++;
+            }
+        }
+
+        /* If file doesn't end with newline, count the last line */
+        if (total_bytes > 0 && file_buffer[total_bytes - 1] != '\n') {
+            total_lines++;
+        }
+
+        /* Calculate how many lines to skip */
+        long skip_lines = total_lines > num_lines ? total_lines - num_lines : 0;
+
+        /* Output the last N lines */
+        long current_line = 0;
+        int started_output = 0;
+
+        for (long i = 0; i < total_bytes; i++) {
+            /* Check if we've reached the lines to output */
+            if (current_line >= skip_lines) {
+                if (!started_output && file_buffer[i] == '\n' && current_line == skip_lines) {
+                    /* Skip the newline that ends the skip_lines-th line */
+                    current_line++;
+                    continue;
+                }
+                started_output = 1;
+                write_char(1, file_buffer[i]);
+            }
+
+            if (file_buffer[i] == '\n') {
+                current_line++;
+            }
+        }
+
+        /* Ensure output ends with newline if file didn't */
+        if (total_bytes > 0 && file_buffer[total_bytes - 1] != '\n') {
+            write_char(1, '\n');
+        }
+
+next_file:
+        ;  /* Empty statement for label */
     }
 }
 
@@ -1783,6 +1903,9 @@ static int execute_command(int argc, char *argv[]) {
         return 0;
     } else if (strcmp_simple(argv[0], "head") == 0) {
         cmd_head(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "tail") == 0) {
+        cmd_tail(argc, argv);
         return 0;
     } else if (strcmp_simple(argv[0], "ls") == 0) {
         cmd_ls(argc, argv);

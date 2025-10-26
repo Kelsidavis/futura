@@ -94,9 +94,11 @@ void *fut_pmm_alloc_page(void) {
             --pmm_free;
             uintptr_t phys = pmm_base + i * FUT_PAGE_SIZE;
 #if defined(__x86_64__)
-            uintptr_t virt = pmap_phys_to_virt((phys_addr_t)phys);
-            // Compiler barrier to prevent optimization issues
-            __asm__ volatile("" : "+r"(virt) :: "memory");
+            /* Manually inline the address conversion to avoid compiler optimization issues.
+             * GCC with -O2 was not inlining pmap_phys_to_virt() and was optimizing away
+             * the addition in some cases, causing the function to return physical addresses
+             * instead of virtual addresses. */
+            uintptr_t virt = phys + KERNEL_VIRTUAL_BASE;
             return (void *)virt;
 #else
             return (void *)(uintptr_t)phys;

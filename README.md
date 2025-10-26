@@ -11,15 +11,18 @@ Licensed under Mozilla Public License 2.0 — see [LICENSE](LICENSE)
 
 Futura OS is a capability-first nanokernel that keeps the core minimal—time, scheduling, IPC, and hardware mediation live in the kernel while everything else runs as message-passing services over FIPC. The current development focus is on building out a practical userland surface so real applications can execute against the kernel primitives.
 
-### Status Snapshot — Updated Oct 12 2025
+### Status Snapshot — Updated Oct 26 2025
 
-- **Kernel**: Per-task MM and wait queues landed; syscall surface now covers `mmap`, `munmap`, `brk`, `nanosleep`.
-- **VFS**: Path resolution + RamFS remain production-ready; ongoing work tracks integrating FuturaFS and file-backed `mmap`.
+- **Kernel**: Advanced memory management with COW fork, file-backed mmap, and partial munmap; syscall surface covers `mmap`, `munmap`, `brk`, `nanosleep`.
+- **VFS**: Path resolution + RamFS production-ready; file-backed mmap integrated with eager loading.
 - **Userland**: `libfutura` provides crt0, syscall veneers, heap allocator, and formatted I/O; framebuffer demo exercises the stack.
 - **Distributed FIPC**: Host transport and registry daemons stable; kernel transport hardening continues in Phase 4.
 
-### What's new — Updated Oct 12 2025
+### What's new — Updated Oct 26 2025
 
+- **Copy-on-write (COW) fork**: Process creation now shares pages between parent and child, copying only on write via page fault handler. Hash table-based reference counting tracks shared pages, with optimizations for sole-owner cases. Dramatically reduces fork() memory overhead and enables efficient fork-exec patterns.
+- **File-backed mmap**: VFS-backed memory mappings now supported through `fut_vfs_mmap()`. Files are eagerly loaded into memory with vnode reference counting. VMAs track file backing (vnode pointer + offset) for future demand paging optimization.
+- **Partial munmap with VMA splitting**: `munmap()` now handles unmapping parts of VMAs (shrink from left/right), splitting VMAs when unmapping middle sections, and unmapping across multiple VMAs in one call. Properly preserves file backing information during splits.
 - **Per-task MMU contexts**: `fut_mm` objects now own page tables, track VMAs, drive `CR3` switches, and manage heap growth via `brk(2)` plus anonymous `mmap(2)`.
 - **Rust virtio-blk driver**: async blkcore now links against a Rust staticlib that probes PCI, negotiates queues, and registers `/dev/vda` through the new FFI layer.
 - **Syscall surface**: kernel exports `mmap`, `munmap`, `brk`, and `nanosleep`; userland gains inline wrappers in `include/user/sys.h` and a shared ABI header for `timespec`.
@@ -225,12 +228,12 @@ make rust-drivers
 
 ## 🧠 Architecture Highlights
 
-- **Nanokernel core**: deterministic scheduler, per-task MM contexts, and a unified FIPC transport for syscalls, IPC, and GUI traffic.
-- **FIPC everywhere**: same capability-backed message path serves syscalls, GUI surfaces, and remote transports; host tooling reuses the kernel’s framing logic.
+- **Nanokernel core**: deterministic scheduler, per-task MM contexts with COW support, and a unified FIPC transport for syscalls, IPC, and GUI traffic.
+- **FIPC everywhere**: same capability-backed message path serves syscalls, GUI surfaces, and remote transports; host tooling reuses the kernel's framing logic.
 - **Capability security**: tokens accompany every hop; remote transports bind the capability into header authentication to reject mismatches early.
-- **Per-task heap management**: executables inherit clean address spaces with kernel half mapped, ELF loaders seed a post-binary heap base, and `sys_brk` + `sys_mmap` drive growth.
+- **Advanced memory management**: Copy-on-write fork() with page reference counting, file-backed mmap with vnode tracking, partial munmap with VMA splitting. Executables inherit clean address spaces with kernel half mapped, ELF loaders seed a post-binary heap base, and `sys_brk` + `sys_mmap` drive growth.
 - **Wait queues**: scheduler-level queues unblock `waitpid` callers, timers, and future I/O without busy-waiting.
-- **Console + VFS**: `/dev/console` routes to serial; VFS scaffolding powering the RAM-backed root and ELF loader remains stable, while FuturaFS integration is the next milestone.
+- **Console + VFS**: `/dev/console` routes to serial; VFS scaffolding powering the RAM-backed root and ELF loader remains stable, with file-backed mmap enabling memory-mapped I/O.
 - **Userland runtime**: crt0, syscall veneers, `malloc` backed by the kernel heap, and `printf`/`string` utilities make it possible to write small demos with predictable behaviour.
 
 ---
@@ -246,11 +249,14 @@ make rust-drivers
 
 ## 🗺️ Roadmap (Next Steps)
 
-1. Wire the anonymous `mmap` path into VFS-backed file mappings and flesh out `munmap` test coverage.
-2. Plumb wait queues into additional subsystems (pipes, futex-style sync, compositor events).
-3. Extend `/dev/console` into a full TTY stack (line discipline, input buffering) and surface it to userland shells.
-4. Enrich `libfutura` with formatted scanning, errno handling, and lightweight threading helpers.
-5. Integrate distributed FIPC transport into the boot sequence (automatic `netd` + registry registration).
+1. ✅ ~~Wire the anonymous `mmap` path into VFS-backed file mappings~~ (Completed: file-backed mmap with eager loading)
+2. ✅ ~~Flesh out `munmap` test coverage~~ (Completed: partial munmap with VMA splitting)
+3. Extend `/dev/console` into a full TTY stack (line discipline, input buffering, canonical mode) and surface it to userland shells for interactive REPL.
+4. Plumb wait queues into additional subsystems (pipes, futex-style sync, compositor events).
+5. Enrich `libfutura` with formatted scanning, errno handling, and lightweight threading helpers.
+6. Add comprehensive test coverage for memory management (COW fork behavior, file-backed mmap, munmap edge cases).
+7. Optimize file-backed mmap with demand paging (page fault handler for unmapped file pages).
+8. Integrate distributed FIPC transport into the boot sequence (automatic `netd` + registry registration).
 
 ---
 
@@ -258,9 +264,11 @@ make rust-drivers
 
 We favour focused, well-tested patches. Good entry points:
 
-- Add targeted tests for the new memory manager (`sys_brk`, anonymous `mmap`, wait queue wakeups).
-- Expand `/dev/console` capabilities or build simple userland tools using the new syscall layer.
-- Polish `libfutura` primitives (strtol, snprintf, errno) to support richer demos.
+- Add targeted tests for memory management (COW fork behavior, file-backed mmap, partial munmap edge cases).
+- Implement demand paging for file-backed mmap (optimize from eager loading to lazy fault-in).
+- Expand `/dev/console` with line discipline and input buffering for interactive shells.
+- Polish `libfutura` primitives (strtol, snprintf, errno, scanf) to support richer demos.
+- Build simple userland tools using the new syscall layer.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for coding style and workflow details.
 

@@ -17,8 +17,10 @@
 /* Include architecture-specific paging header */
 #if defined(__aarch64__)
 #include <arch/arm64/paging.h>
+typedef uint64_t phys_addr_t;
 #elif defined(__x86_64__)
 #include <arch/x86_64/paging.h>
+#include <arch/x86_64/pmap.h>  /* For phys_addr_t */
 #else
 #error "Unsupported architecture for memory management"
 #endif
@@ -26,12 +28,16 @@
 /* Forward declaration for file backing */
 struct fut_vnode;
 
+/* VMA flags */
+#define VMA_COW       0x1000  /* Copy-on-write pages */
+#define VMA_SHARED    0x2000  /* Shared mapping (not private) */
+
 /* Virtual Memory Area - represents a contiguous mapped region */
 struct fut_vma {
     uintptr_t start;    /* Start address (page-aligned) */
     uintptr_t end;      /* End address (page-aligned, exclusive) */
     int prot;           /* Protection flags (PROT_READ, PROT_WRITE, PROT_EXEC) */
-    int flags;          /* Mapping flags */
+    int flags;          /* Mapping flags (includes VMA_COW, VMA_SHARED) */
 
     /* File backing (NULL for anonymous mappings) */
     struct fut_vnode *vnode;  /* Backing file vnode (holds reference) */
@@ -80,3 +86,9 @@ int fut_mm_unmap(fut_mm_t *mm, uintptr_t addr, size_t len);
 /* VMA management for fork() */
 int fut_mm_add_vma(fut_mm_t *mm, uintptr_t start, uintptr_t end, int prot, int flags);
 int fut_mm_clone_vmas(fut_mm_t *dest_mm, fut_mm_t *src_mm);
+
+/* Page reference counting for COW */
+void fut_page_ref_init(void);
+void fut_page_ref_inc(phys_addr_t phys);
+int fut_page_ref_dec(phys_addr_t phys);  /* Returns new refcount */
+int fut_page_ref_get(phys_addr_t phys);  /* Returns current refcount */

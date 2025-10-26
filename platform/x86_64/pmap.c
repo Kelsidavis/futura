@@ -140,3 +140,60 @@ int pmap_map_user(fut_vmem_context_t *ctx, uint64_t uaddr, phys_addr_t paddr,
     }
     return fut_map_range(ctx, uaddr, paddr, len, prot);
 }
+
+/**
+ * Mark a page as read-only (for copy-on-write).
+ * Clears the PTE_WRITABLE flag from the page table entry.
+ */
+int pmap_set_page_ro(fut_vmem_context_t *ctx, uint64_t vaddr) {
+    if (!ctx) {
+        return -EINVAL;
+    }
+
+    pte_t *pml4 = pmap_context_pml4(ctx);
+    if (!pml4) {
+        return -EINVAL;
+    }
+
+    uint64_t pml4_idx = PML4_INDEX(vaddr);
+    uint64_t pdpt_idx = PDPT_INDEX(vaddr);
+    uint64_t pd_idx = PD_INDEX(vaddr);
+    uint64_t pt_idx = PT_INDEX(vaddr);
+
+    pte_t pml4e = pml4[pml4_idx];
+    if (!fut_pte_is_present(pml4e)) {
+        return -EFAULT;
+    }
+
+    page_table_t *pdpt = pmap_table_from_phys(fut_pte_to_phys(pml4e));
+    pte_t pdpte = pdpt->entries[pdpt_idx];
+    if (!fut_pte_is_present(pdpte)) {
+        return -EFAULT;
+    }
+
+    page_table_t *pd = pmap_table_from_phys(fut_pte_to_phys(pdpte));
+    pte_t pde = pd->entries[pd_idx];
+    if (!fut_pte_is_present(pde)) {
+        return -EFAULT;
+    }
+
+    if (fut_pte_is_large(pde)) {
+        /* Large page - clear writable bit */
+        pd->entries[pd_idx] &= ~PTE_WRITABLE;
+        return 0;
+    }
+
+    page_table_t *pt = pmap_table_from_phys(fut_pte_to_phys(pde));
+    pte_t pte = pt->entries[pt_idx];
+    if (!fut_pte_is_present(pte)) {
+        return -EFAULT;
+    }
+
+    /* Clear writable bit */
+    pt->entries[pt_idx] &= ~PTE_WRITABLE;
+
+    /* Flush TLB for this page */
+    __asm__ volatile("invlpg (%0)" :: "r"(vaddr) : "memory");
+
+    return 0;
+}

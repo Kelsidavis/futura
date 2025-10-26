@@ -122,59 +122,57 @@ static fut_mm_t *clone_mm(fut_mm_t *parent_mm) {
     child_mm->mmap_base = parent_mm->mmap_base;
 
     /* Copy all user page mappings from parent to child */
-    /* Scan the first 8MB of user space (0 to 0x800000) where small programs typically reside.
-     * This covers code and data for small binaries.
+    /* Scan a minimal region around typical program load address (0x400000).
+     * Programs are typically loaded at 0x400000, so scan 0x400000 to 0x500000 (1MB).
      * TODO: Implement proper VMA (Virtual Memory Area) tracking to only copy actually-mapped regions. */
     fut_vmem_context_t *parent_ctx = fut_mm_context(parent_mm);
     fut_vmem_context_t *child_ctx = fut_mm_context(child_mm);
 
-    #define CLONE_SCAN_LIMIT 0x800000ULL  /* 8MB */
+    #define CLONE_SCAN_START 0x400000ULL   /* Typical userspace load address */
+    #define CLONE_SCAN_END   0x500000ULL   /* +1MB from start */
 
-    /* Walk through user space in 2MB chunks (huge page aligned) for efficiency */
-    for (uint64_t vaddr = 0; vaddr < CLONE_SCAN_LIMIT; vaddr += (2 * 1024 * 1024)) {
-        /* Check each 4KB page within this 2MB region */
-        for (uint64_t page = vaddr; page < vaddr + (2 * 1024 * 1024) && page < CLONE_SCAN_LIMIT; page += FUT_PAGE_SIZE) {
-            uint64_t pte = 0;
+    /* Scan the program region (typically 0x400000-0x500000) */
+    for (uint64_t page = CLONE_SCAN_START; page < CLONE_SCAN_END; page += FUT_PAGE_SIZE) {
+        uint64_t pte = 0;
 
-            /* Check if this page is mapped in parent */
-            if (pmap_probe_pte(parent_ctx, page, &pte) != 0) {
-                continue;  /* Not mapped or error */
-            }
+        /* Check if this page is mapped in parent */
+        if (pmap_probe_pte(parent_ctx, page, &pte) != 0) {
+            continue;  /* Not mapped or error */
+        }
 
-            if ((pte & PTE_PRESENT) == 0) {
-                continue;  /* Page not present */
-            }
+        if ((pte & PTE_PRESENT) == 0) {
+            continue;  /* Page not present */
+        }
 
-            /* Allocate new physical page for child */
-            void *child_page = fut_pmm_alloc_page();
-            if (!child_page) {
-                /* Out of memory - clean up and fail */
-                fut_mm_release(child_mm);
-                return NULL;
-            }
+        /* Allocate new physical page for child */
+        void *child_page = fut_pmm_alloc_page();
+        if (!child_page) {
+            /* Out of memory - clean up and fail */
+            fut_mm_release(child_mm);
+            return NULL;
+        }
 
-            /* Get parent's physical page and copy contents */
-            phys_addr_t parent_phys = pte & PTE_PHYS_ADDR_MASK;
-            void *parent_page = (void *)pmap_phys_to_virt(parent_phys);
-            memcpy(child_page, parent_page, FUT_PAGE_SIZE);
+        /* Get parent's physical page and copy contents */
+        phys_addr_t parent_phys = pte & PTE_PHYS_ADDR_MASK;
+        void *parent_page = (void *)pmap_phys_to_virt(parent_phys);
+        memcpy(child_page, parent_page, FUT_PAGE_SIZE);
 
-            /* Map the new page in child's address space with same permissions */
-            phys_addr_t child_phys = pmap_virt_to_phys((uintptr_t)child_page);
-            uint64_t flags = pte & (PTE_PRESENT | PTE_WRITABLE | PTE_USER | PTE_NX);
+        /* Map the new page in child's address space with same permissions */
+        phys_addr_t child_phys = pmap_virt_to_phys((uintptr_t)child_page);
+        uint64_t flags = pte & (PTE_PRESENT | PTE_WRITABLE | PTE_USER | PTE_NX);
 
-            if (pmap_map_user(child_ctx, page, child_phys, FUT_PAGE_SIZE, flags) != 0) {
-                /* Mapping failed - clean up */
-                fut_pmm_free_page(child_page);
-                fut_mm_release(child_mm);
-                return NULL;
-            }
+        if (pmap_map_user(child_ctx, page, child_phys, FUT_PAGE_SIZE, flags) != 0) {
+            /* Mapping failed - clean up */
+            fut_pmm_free_page(child_page);
+            fut_mm_release(child_mm);
+            return NULL;
         }
     }
 
     /* Also scan the stack region at the top of user space */
     /* Stack is typically at 0x7FFFFFFFE000 down to 0x7FFFFFF00000 (around 1 MB) */
     #define STACK_SCAN_START 0x7FFFFFF00000ULL
-    #define STACK_SCAN_END   0x8000000000000ULL  /* Top of user space */
+    #define STACK_SCAN_END   (STACK_SCAN_START + (1 * 1024 * 1024))  /* +1MB from start */
 
     for (uint64_t vaddr = STACK_SCAN_START; vaddr < STACK_SCAN_END; vaddr += (2 * 1024 * 1024)) {
         for (uint64_t page = vaddr; page < vaddr + (2 * 1024 * 1024) && page < STACK_SCAN_END; page += FUT_PAGE_SIZE) {

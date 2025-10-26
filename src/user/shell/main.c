@@ -891,6 +891,8 @@ static void cmd_help(int argc, char *argv[]) {
     write_str(1, "  grep [-n] [-i] <pattern> <file>... - Search for pattern in files\n");
     write_str(1, "  sort [-r] [-n] <file>... - Sort lines of text\n");
     write_str(1, "  uniq [-c] [-d] [-u] <file>... - Report or omit repeated lines\n");
+    write_str(1, "  cut -f <field> [-d <delim>] <file>... - Extract fields from lines\n");
+    write_str(1, "  cut -c <N[-M]> <file>... - Extract characters from lines\n");
     write_str(1, "\n");
     write_str(1, "File Operations:\n");
     write_str(1, "  mkdir <dir>     - Create directory\n");
@@ -1989,6 +1991,225 @@ static void cmd_uniq(int argc, char *argv[]) {
     }
 }
 
+/* Built-in: cut - Extract fields from lines */
+static void cmd_cut(int argc, char *argv[]) {
+    char delimiter = '\t';  /* Default delimiter is tab */
+    int field_num = -1;
+    int char_mode = 0;
+    int char_start = -1;
+    int char_end = -1;
+    int arg_start = 1;
+
+    /* Parse options */
+    while (arg_start < argc && argv[arg_start][0] == '-') {
+        if (argv[arg_start][1] == 'd' && argv[arg_start][2] == '\0') {
+            /* -d <delim> */
+            if (arg_start + 1 >= argc) {
+                write_str(2, "cut: -d requires an argument\n");
+                return;
+            }
+            delimiter = argv[arg_start + 1][0];
+            arg_start += 2;
+        } else if (argv[arg_start][1] == 'f' && argv[arg_start][2] == '\0') {
+            /* -f <field> */
+            if (arg_start + 1 >= argc) {
+                write_str(2, "cut: -f requires an argument\n");
+                return;
+            }
+            /* Parse field number */
+            const char *p = argv[arg_start + 1];
+            field_num = 0;
+            while (*p >= '0' && *p <= '9') {
+                field_num = field_num * 10 + (*p - '0');
+                p++;
+            }
+            if (field_num == 0) {
+                write_str(2, "cut: field numbers start at 1\n");
+                return;
+            }
+            arg_start += 2;
+        } else if (argv[arg_start][1] == 'c' && argv[arg_start][2] == '\0') {
+            /* -c <range> */
+            if (arg_start + 1 >= argc) {
+                write_str(2, "cut: -c requires an argument\n");
+                return;
+            }
+            char_mode = 1;
+            /* Parse character range: N or N-M */
+            const char *p = argv[arg_start + 1];
+            char_start = 0;
+            while (*p >= '0' && *p <= '9') {
+                char_start = char_start * 10 + (*p - '0');
+                p++;
+            }
+            if (*p == '-') {
+                p++;
+                char_end = 0;
+                while (*p >= '0' && *p <= '9') {
+                    char_end = char_end * 10 + (*p - '0');
+                    p++;
+                }
+            } else {
+                char_end = char_start;
+            }
+            if (char_start == 0) {
+                write_str(2, "cut: character positions start at 1\n");
+                return;
+            }
+            arg_start += 2;
+        } else if (strcmp_simple(argv[arg_start], "--") == 0) {
+            arg_start++;
+            break;
+        } else {
+            write_str(2, "cut: unknown option: ");
+            write_str(2, argv[arg_start]);
+            write_str(2, "\n");
+            write_str(2, "Usage: cut -f <field> [-d <delim>] [file]...\n");
+            write_str(2, "   or: cut -c <N[-M]> [file]...\n");
+            return;
+        }
+    }
+
+    /* Check that either -f or -c was specified */
+    if (field_num == -1 && !char_mode) {
+        write_str(2, "cut: you must specify either -f or -c\n");
+        return;
+    }
+
+    /* Process files or stdin */
+    if (arg_start >= argc) {
+        write_str(2, "cut: reading from stdin not yet supported\n");
+        return;
+    }
+
+    /* Process each file */
+    for (int file_idx = arg_start; file_idx < argc; file_idx++) {
+        const char *path = argv[file_idx];
+
+        int fd = sys_open(path, O_RDONLY, 0);
+        if (fd < 0) {
+            write_str(2, "cut: ");
+            write_str(2, path);
+            write_str(2, ": cannot open file\n");
+            continue;
+        }
+
+        /* Read file line by line */
+        #define CUT_MAX_LINE 2048
+        static char line_buf[CUT_MAX_LINE];
+        char read_buf[256];
+        int line_pos = 0;
+        long bytes_read;
+
+        while ((bytes_read = sys_read(fd, read_buf, sizeof(read_buf))) > 0) {
+            for (long i = 0; i < bytes_read; i++) {
+                char c = read_buf[i];
+
+                if (c == '\n' || line_pos >= CUT_MAX_LINE - 1) {
+                    line_buf[line_pos] = '\0';
+
+                    /* Process line based on mode */
+                    if (char_mode) {
+                        /* Character mode: extract characters char_start to char_end */
+                        int len = 0;
+                        while (line_buf[len]) len++;
+
+                        for (int pos = char_start; pos <= char_end && pos <= len; pos++) {
+                            write_char(1, line_buf[pos - 1]);
+                        }
+                        write_char(1, '\n');
+                    } else {
+                        /* Field mode: split by delimiter and extract field */
+                        int current_field = 1;
+                        int idx = 0;
+
+                        while (1) {
+                            /* Find end of current field */
+                            int field_end = idx;
+                            while (line_buf[field_end] && line_buf[field_end] != delimiter) {
+                                field_end++;
+                            }
+
+                            /* Check if this is the field we want */
+                            if (current_field == field_num) {
+                                /* Output this field */
+                                for (int j = idx; j < field_end; j++) {
+                                    write_char(1, line_buf[j]);
+                                }
+                                write_char(1, '\n');
+                                break;
+                            }
+
+                            /* Move to next field */
+                            if (line_buf[field_end] == '\0') {
+                                /* No more fields, output empty line */
+                                write_char(1, '\n');
+                                break;
+                            }
+
+                            idx = field_end + 1;
+                            current_field++;
+                        }
+                    }
+
+                    line_pos = 0;
+                } else {
+                    line_buf[line_pos++] = c;
+                }
+            }
+        }
+
+        /* Handle last line if file doesn't end with newline */
+        if (line_pos > 0) {
+            line_buf[line_pos] = '\0';
+
+            if (char_mode) {
+                int len = 0;
+                while (line_buf[len]) len++;
+
+                for (int pos = char_start; pos <= char_end && pos <= len; pos++) {
+                    write_char(1, line_buf[pos - 1]);
+                }
+                write_char(1, '\n');
+            } else {
+                int current_field = 1;
+                int idx = 0;
+
+                while (1) {
+                    int field_end = idx;
+                    while (line_buf[field_end] && line_buf[field_end] != delimiter) {
+                        field_end++;
+                    }
+
+                    if (current_field == field_num) {
+                        for (int j = idx; j < field_end; j++) {
+                            write_char(1, line_buf[j]);
+                        }
+                        write_char(1, '\n');
+                        break;
+                    }
+
+                    if (line_buf[field_end] == '\0') {
+                        write_char(1, '\n');
+                        break;
+                    }
+
+                    idx = field_end + 1;
+                    current_field++;
+                }
+            }
+        }
+
+        sys_close(fd);
+
+        if (bytes_read < 0) {
+            write_str(2, "cut: ");
+            write_str(2, path);
+            write_str(2, ": read error\n");
+        }
+    }
+}
+
 /* Built-in: ls - List directory contents */
 static void cmd_ls(int argc, char *argv[]) {
     const char *path = argc > 1 ? argv[1] : ".";
@@ -2594,6 +2815,9 @@ static int execute_command(int argc, char *argv[]) {
         return 0;
     } else if (strcmp_simple(argv[0], "uniq") == 0) {
         cmd_uniq(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "cut") == 0) {
+        cmd_cut(argc, argv);
         return 0;
     } else if (strcmp_simple(argv[0], "find") == 0) {
         cmd_find(argc, argv);

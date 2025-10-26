@@ -84,18 +84,23 @@ static page_table_t *alloc_page_table(void) {
     extern void *fut_malloc(size_t);
     extern void fut_printf(const char *, ...);
 
-    /* Use fut_malloc instead of fut_pmm_alloc_page to ensure page tables
-     * are allocated from the properly-mapped heap region. This avoids issues
-     * with PMM returning pages outside the heap's virtual address range. */
-    void *page = fut_malloc(PAGE_SIZE);
-    if (!page) {
+    /* CRITICAL: Page tables MUST be 4KB-aligned for hardware page table walker.
+     * Allocate extra space to ensure alignment, since fut_malloc doesn't
+     * guarantee page alignment. */
+    void *raw = fut_malloc(PAGE_SIZE * 2);
+    if (!raw) {
         fut_printf("[PAGING] Failed to allocate page table from heap\n");
         return NULL;
     }
 
+    /* Align to 4KB boundary */
+    uintptr_t addr = (uintptr_t)raw;
+    uintptr_t aligned = (addr + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1);
+    page_table_t *page = (page_table_t *)aligned;
+
     /* fut_malloc returns zeroed memory, but clear it anyway to be explicit */
     memset(page, 0, PAGE_SIZE);
-    return (page_table_t *)page;
+    return page;
 }
 
 /**
@@ -108,6 +113,8 @@ static page_table_t *alloc_page_table(void) {
  * @return 0 on success, negative on error
  */
 int fut_map_page(fut_vmem_context_t *ctx, uint64_t vaddr, uint64_t paddr, uint64_t flags) {
+    extern void fut_printf(const char *, ...);
+
     /* Use kernel PML4 if no context provided */
     pte_t *pml4 = ctx ? ctx->pml4 : kernel_pml4;
     if (!pml4) {
@@ -131,6 +138,7 @@ int fut_map_page(fut_vmem_context_t *ctx, uint64_t vaddr, uint64_t paddr, uint64
     uint64_t pdpt_idx = PDPT_INDEX(vaddr);
     uint64_t pd_idx = PD_INDEX(vaddr);
     uint64_t pt_idx = PT_INDEX(vaddr);
+
 
     /* Get or create PDPT */
     /* CRITICAL: Intermediate page table entries must NOT have NX set
@@ -416,7 +424,13 @@ void *fut_kernel_map_physical(uint64_t paddr, uint64_t size, uint64_t flags) {
         map_flags |= PTE_WRITABLE;
     }
 
-    if (pmap_map(vaddr, aligned_phys, map_len, map_flags) != 0) {
+    fut_printf("[MMIO] Mapping phys 0x%llx to virt 0x%llx (size=0x%llx flags=0x%llx)\n",
+               (unsigned long long)aligned_phys, (unsigned long long)vaddr,
+               (unsigned long long)map_len, (unsigned long long)map_flags);
+
+    int map_result = pmap_map(vaddr, aligned_phys, map_len, map_flags);
+
+    if (map_result != 0) {
         fut_printf("[MMIO] Failed to map physical 0x%llx to virtual 0x%llx\n",
                    (unsigned long long)aligned_phys, (unsigned long long)vaddr);
         return NULL;

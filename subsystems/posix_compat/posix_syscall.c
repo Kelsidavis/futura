@@ -294,6 +294,18 @@ static int64_t sys_mkdir_handler(uint64_t pathname, uint64_t mode, uint64_t arg3
     return (int64_t)fut_vfs_mkdir((const char *)pathname, (uint32_t)mode);
 }
 
+static int64_t sys_rmdir_handler(uint64_t pathname, uint64_t arg2, uint64_t arg3,
+                                  uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg2; (void)arg3; (void)arg4; (void)arg5; (void)arg6;
+    return (int64_t)fut_vfs_rmdir((const char *)pathname);
+}
+
+static int64_t sys_unlink_handler(uint64_t pathname, uint64_t arg2, uint64_t arg3,
+                                   uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg2; (void)arg3; (void)arg4; (void)arg5; (void)arg6;
+    return (int64_t)fut_vfs_unlink((const char *)pathname);
+}
+
 /* Memory management */
 static int64_t sys_brk_handler(uint64_t addr, uint64_t arg2, uint64_t arg3,
                                 uint64_t arg4, uint64_t arg5, uint64_t arg6) {
@@ -425,6 +437,8 @@ static syscall_handler_t syscall_table[MAX_SYSCALL] = {
     [SYS_pipe]       = sys_pipe_handler,
     [SYS_dup2]       = sys_dup2_handler,
     [SYS_mkdir]      = sys_mkdir_handler,
+    [SYS_rmdir]      = sys_rmdir_handler,
+    [SYS_unlink]     = sys_unlink_handler,
     [SYS_getdents64] = sys_getdents64_handler,
     [SYS_time_millis] = sys_time_millis_handler,
 };

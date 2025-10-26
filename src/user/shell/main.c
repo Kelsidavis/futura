@@ -2908,17 +2908,20 @@ static void cmd_mkdir(int argc, char *argv[]) {
 static void cmd_rmdir(int argc, char *argv[]) {
     if (argc < 2) {
         write_str(2, "rmdir: missing operand\n");
-        write_str(2, "Usage: rmdir <directory>\n");
+        write_str(2, "Usage: rmdir <directory>...\n");
         return;
     }
 
-    const char *path = argv[1];
+    /* Process each directory argument */
+    for (int i = 1; i < argc; i++) {
+        const char *path = argv[i];
+        long ret = sys_rmdir(path);
 
-    long ret = sys_rmdir(path);
-    if (ret < 0) {
-        write_str(2, "rmdir: failed to remove '");
-        write_str(2, path);
-        write_str(2, "'\n");
+        if (ret < 0) {
+            write_str(2, "rmdir: failed to remove '");
+            write_str(2, path);
+            write_str(2, "'\n");
+        }
     }
 }
 

@@ -398,7 +398,14 @@ int fut_unmap_range(fut_vmem_context_t *ctx, uint64_t vaddr, uint64_t size) {
     return 0;
 }
 
+/* Simple MMIO virtual address allocator */
+#define MMIO_VIRT_BASE   0xFFFFFFFFA0000000ULL  /* -1.5GB */
+#define MMIO_VIRT_SIZE   0x20000000ULL          /* 512MB */
+static uint64_t mmio_next_vaddr = MMIO_VIRT_BASE;
+
 void *fut_kernel_map_physical(uint64_t paddr, uint64_t size, uint64_t flags) {
+    extern void fut_printf(const char *, ...);
+
     if (size == 0) {
         return NULL;
     }
@@ -407,13 +414,26 @@ void *fut_kernel_map_physical(uint64_t paddr, uint64_t size, uint64_t flags) {
     uint64_t offset = paddr - aligned_phys;
     uint64_t map_len = PAGE_ALIGN_UP(size + offset);
 
-    uint64_t vaddr = pmap_phys_to_virt(aligned_phys);
+    fut_printf("[MMIO] Mapping phys 0x%llx size 0x%llx flags=0x%llx\n",
+               (unsigned long long)paddr, (unsigned long long)size, (unsigned long long)flags);
+
+    /* Allocate virtual address from MMIO region */
+    if (mmio_next_vaddr + map_len > MMIO_VIRT_BASE + MMIO_VIRT_SIZE) {
+        fut_printf("[MMIO] Virtual address space exhausted\n");
+        return NULL;
+    }
+
+    uint64_t vaddr = mmio_next_vaddr;
+    mmio_next_vaddr += map_len;
+
     uint64_t map_flags = flags | PTE_PRESENT;
     if ((map_flags & PTE_WRITABLE) == 0) {
         map_flags |= PTE_WRITABLE;
     }
 
     if (pmap_map(vaddr, aligned_phys, map_len, map_flags) != 0) {
+        fut_printf("[MMIO] Failed to map physical 0x%llx to virtual 0x%llx\n",
+                   (unsigned long long)aligned_phys, (unsigned long long)vaddr);
         return NULL;
     }
 

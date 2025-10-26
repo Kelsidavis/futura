@@ -960,19 +960,15 @@ void fut_kernel_main(void) {
      *   Step 4: Initialize Block Device Subsystem
      * ======================================== */
 
-    /* Block device initialization disabled - causes memory corruption
-     * TODO: Debug virtio_blk_init stack corruption issue */
-    /* fut_printf("[INIT] Initializing block device subsystem...\n");
+    fut_printf("[INIT] Initializing block device subsystem...\n");
     fut_blockdev_init();
-    fut_printf("[INIT] Block device subsystem initialized\n");
     fut_blk_core_init();
-    fut_printf("[INIT] Async block core initialized\n");
     fut_status_t vblk_rc = virtio_blk_init(0);
-    if (vblk_rc != 0) {
+    if (vblk_rc != 0 && vblk_rc != -19) {  /* -19 = ENODEV (no device found) */
         fut_printf("[virtio-blk] init failed: %d\n", vblk_rc);
     }
-    ahci_init(); */
-    fut_printf("[INIT] Block device subsystem SKIPPED (under debugging)\n");
+    /* ahci_init(); */  /* AHCI not yet implemented */
+    fut_printf("[INIT] Block device subsystem initialized\n");
 
     fut_printf("[INIT] Initializing network subsystem...\n");
     fut_net_init();

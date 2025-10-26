@@ -897,6 +897,7 @@ static void cmd_help(int argc, char *argv[]) {
     write_str(1, "  tee [-a] <file>... - Read from stdin and write to stdout and files\n");
     write_str(1, "  paste [-d <delim>] <file>... - Merge lines of files\n");
     write_str(1, "  diff [-q] <file1> <file2> - Compare files line by line\n");
+    write_str(1, "  grep [-i] [-n] [-v] <pattern> [file...] - Search for patterns in files\n");
     write_str(1, "\n");
     write_str(1, "File Operations:\n");
     write_str(1, "  mkdir <dir>     - Create directory\n");
@@ -1317,168 +1318,6 @@ static void cmd_tail(int argc, char *argv[]) {
 
 next_file:
         ;  /* Empty statement for label */
-    }
-}
-
-/* Helper: Simple case-insensitive character comparison */
-static int char_tolower(int c) {
-    if (c >= 'A' && c <= 'Z') {
-        return c + ('a' - 'A');
-    }
-    return c;
-}
-
-/* Helper: Case-insensitive string search */
-static const char *strstr_case(const char *haystack, const char *needle, int case_insensitive) {
-    if (!*needle) return haystack;
-
-    for (; *haystack; haystack++) {
-        const char *h = haystack;
-        const char *n = needle;
-
-        while (*h && *n) {
-            char hc = case_insensitive ? char_tolower(*h) : *h;
-            char nc = case_insensitive ? char_tolower(*n) : *n;
-            if (hc != nc) break;
-            h++;
-            n++;
-        }
-
-        if (!*n) return haystack;
-    }
-
-    return 0;
-}
-
-/* Built-in: grep - Search for pattern in files */
-static void cmd_grep(int argc, char *argv[]) {
-    int show_line_numbers = 0;
-    int case_insensitive = 0;
-    int arg_start = 1;
-
-    /* Parse options */
-    while (arg_start < argc && argv[arg_start][0] == '-') {
-        if (strcmp_simple(argv[arg_start], "-n") == 0) {
-            show_line_numbers = 1;
-            arg_start++;
-        } else if (strcmp_simple(argv[arg_start], "-i") == 0) {
-            case_insensitive = 1;
-            arg_start++;
-        } else if (strcmp_simple(argv[arg_start], "--") == 0) {
-            arg_start++;
-            break;
-        } else {
-            write_str(2, "grep: unknown option: ");
-            write_str(2, argv[arg_start]);
-            write_str(2, "\n");
-            return;
-        }
-    }
-
-    if (argc - arg_start < 1) {
-        write_str(2, "grep: missing pattern\n");
-        write_str(2, "Usage: grep [-n] [-i] <pattern> [file]...\n");
-        return;
-    }
-
-    const char *pattern = argv[arg_start];
-    int file_start = arg_start + 1;
-    int multiple_files = (argc - file_start) > 1;
-
-    /* If no files specified, read from stdin - not implemented yet */
-    if (argc - file_start == 0) {
-        write_str(2, "grep: reading from stdin not yet supported\n");
-        return;
-    }
-
-    /* Process each file */
-    for (int file_idx = file_start; file_idx < argc; file_idx++) {
-        const char *path = argv[file_idx];
-
-        /* Open the file */
-        int fd = sys_open(path, O_RDONLY, 0);
-        if (fd < 0) {
-            write_str(2, "grep: ");
-            write_str(2, path);
-            write_str(2, ": cannot open file\n");
-            continue;
-        }
-
-        /* Read file and search for pattern */
-        char line_buffer[1024];
-        int line_pos = 0;
-        long line_number = 0;
-        char read_buffer[256];
-        long bytes_read;
-
-        while ((bytes_read = sys_read(fd, read_buffer, sizeof(read_buffer))) > 0) {
-            for (long i = 0; i < bytes_read; i++) {
-                char c = read_buffer[i];
-
-                if (c == '\n' || line_pos >= (int)sizeof(line_buffer) - 1) {
-                    line_buffer[line_pos] = '\0';
-                    line_number++;
-
-                    /* Search for pattern in line */
-                    if (strstr_case(line_buffer, pattern, case_insensitive)) {
-                        /* Print filename if multiple files */
-                        if (multiple_files) {
-                            write_str(1, path);
-                            write_char(1, ':');
-                        }
-
-                        /* Print line number if requested */
-                        if (show_line_numbers) {
-                            char num_buf[32];
-                            int_to_str(line_number, num_buf, sizeof(num_buf));
-                            write_str(1, num_buf);
-                            write_char(1, ':');
-                        }
-
-                        /* Print the matching line */
-                        write_str(1, line_buffer);
-                        write_char(1, '\n');
-                    }
-
-                    line_pos = 0;
-                } else {
-                    if (line_pos < (int)sizeof(line_buffer) - 1) {
-                        line_buffer[line_pos++] = c;
-                    }
-                }
-            }
-        }
-
-        /* Handle last line if file doesn't end with newline */
-        if (line_pos > 0) {
-            line_buffer[line_pos] = '\0';
-            line_number++;
-
-            if (strstr_case(line_buffer, pattern, case_insensitive)) {
-                if (multiple_files) {
-                    write_str(1, path);
-                    write_char(1, ':');
-                }
-
-                if (show_line_numbers) {
-                    char num_buf[32];
-                    int_to_str(line_number, num_buf, sizeof(num_buf));
-                    write_str(1, num_buf);
-                    write_char(1, ':');
-                }
-
-                write_str(1, line_buffer);
-                write_char(1, '\n');
-            }
-        }
-
-        sys_close(fd);
-
-        if (bytes_read < 0) {
-            write_str(2, "grep: ");
-            write_str(2, path);
-            write_str(2, ": read error\n");
-        }
     }
 }
 
@@ -2671,6 +2510,176 @@ static void cmd_diff(int argc, char *argv[]) {
     }
 }
 
+/* Built-in: grep - Search for patterns in files */
+static void cmd_grep(int argc, char *argv[]) {
+    int case_insensitive = 0;
+    int show_line_numbers = 0;
+    int invert_match = 0;
+    int arg_start = 1;
+
+    /* Parse options */
+    while (arg_start < argc && argv[arg_start][0] == '-' && argv[arg_start][1] != '\0') {
+        const char *opt = argv[arg_start];
+        if (strcmp_simple(opt, "-i") == 0) {
+            case_insensitive = 1;
+            arg_start++;
+        } else if (strcmp_simple(opt, "-n") == 0) {
+            show_line_numbers = 1;
+            arg_start++;
+        } else if (strcmp_simple(opt, "-v") == 0) {
+            invert_match = 1;
+            arg_start++;
+        } else if (strcmp_simple(opt, "--") == 0) {
+            arg_start++;
+            break;
+        } else {
+            write_str(2, "grep: invalid option: ");
+            write_str(2, opt);
+            write_char(2, '\n');
+            return;
+        }
+    }
+
+    if (argc - arg_start < 1) {
+        write_str(2, "grep: missing pattern\n");
+        write_str(2, "Usage: grep [-i] [-n] [-v] <pattern> [file...]\n");
+        return;
+    }
+
+    const char *pattern = argv[arg_start];
+    int pattern_len = 0;
+    while (pattern[pattern_len]) pattern_len++;
+
+    /* Helper function to convert char to lowercase */
+    auto char to_lower(char c) {
+        if (c >= 'A' && c <= 'Z') return c + 32;
+        return c;
+    }
+
+    /* Helper function to check if pattern matches in line */
+    auto int pattern_matches(const char *line, int line_len) {
+        for (int i = 0; i <= line_len - pattern_len; i++) {
+            int match = 1;
+            for (int j = 0; j < pattern_len; j++) {
+                char c1 = line[i + j];
+                char c2 = pattern[j];
+                if (case_insensitive) {
+                    c1 = to_lower(c1);
+                    c2 = to_lower(c2);
+                }
+                if (c1 != c2) {
+                    match = 0;
+                    break;
+                }
+            }
+            if (match) return 1;
+        }
+        return 0;
+    }
+
+    /* Helper function to process one file */
+    auto void grep_file(int fd, const char *filename, int show_filename) {
+        #define GREP_LINE_MAX 2048
+        static char line[GREP_LINE_MAX];
+        int line_num = 0;
+
+        while (1) {
+            /* Read one line */
+            int pos = 0;
+            char c;
+            long nread;
+            int eof = 0;
+
+            while (pos < GREP_LINE_MAX - 1) {
+                nread = sys_read(fd, &c, 1);
+                if (nread <= 0) {
+                    eof = 1;
+                    break;
+                }
+                if (c == '\n') {
+                    break;
+                }
+                line[pos++] = c;
+            }
+
+            if (eof && pos == 0) break;
+
+            line[pos] = '\0';
+            line_num++;
+
+            int matches = pattern_matches(line, pos);
+
+            /* Apply invert match logic */
+            if (invert_match) {
+                matches = !matches;
+            }
+
+            if (matches) {
+                /* Print filename if searching multiple files */
+                if (show_filename) {
+                    write_str(1, filename);
+                    write_char(1, ':');
+                }
+
+                /* Print line number if requested */
+                if (show_line_numbers) {
+                    char num_buf[16];
+                    int num_pos = 0;
+                    int n = line_num;
+
+                    if (n == 0) {
+                        num_buf[num_pos++] = '0';
+                    } else {
+                        char temp[16];
+                        int temp_pos = 0;
+                        while (n > 0) {
+                            temp[temp_pos++] = '0' + (n % 10);
+                            n /= 10;
+                        }
+                        for (int i = temp_pos - 1; i >= 0; i--) {
+                            num_buf[num_pos++] = temp[i];
+                        }
+                    }
+                    num_buf[num_pos] = '\0';
+
+                    write_str(1, num_buf);
+                    write_char(1, ':');
+                }
+
+                /* Print the line */
+                write_str(1, line);
+                write_char(1, '\n');
+            }
+
+            if (eof) break;
+        }
+    }
+
+    /* Process files */
+    int num_files = argc - arg_start - 1;
+
+    if (num_files == 0) {
+        /* Read from stdin */
+        grep_file(0, "(standard input)", 0);
+    } else {
+        /* Process each file */
+        for (int i = 0; i < num_files; i++) {
+            const char *filename = argv[arg_start + 1 + i];
+            int fd = sys_open(filename, O_RDONLY, 0);
+
+            if (fd < 0) {
+                write_str(2, "grep: ");
+                write_str(2, filename);
+                write_str(2, ": cannot open file\n");
+                continue;
+            }
+
+            grep_file(fd, filename, num_files > 1);
+            sys_close(fd);
+        }
+    }
+}
+
 /* Built-in: ls - List directory contents */
 static void cmd_ls(int argc, char *argv[]) {
     const char *path = argc > 1 ? argv[1] : ".";
@@ -3291,6 +3300,9 @@ static int execute_command(int argc, char *argv[]) {
         return 0;
     } else if (strcmp_simple(argv[0], "diff") == 0) {
         cmd_diff(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "grep") == 0) {
+        cmd_grep(argc, argv);
         return 0;
     } else if (strcmp_simple(argv[0], "find") == 0) {
         cmd_find(argc, argv);

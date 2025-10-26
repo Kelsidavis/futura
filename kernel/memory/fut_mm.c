@@ -120,11 +120,16 @@ fut_mm_t *fut_mm_create(void) {
         fut_free(mm);
         return NULL;
     }
-    fut_printf("[MM-CREATE] PML4 allocated successfully\n");
+    fut_printf("[MM-CREATE] PML4 allocated successfully at %p\n", pml4_page);
 
+    fut_printf("[MM-CREATE] About to memset PML4 page at %p\n", pml4_page);
     memset(pml4_page, 0, PAGE_SIZE);
+    fut_printf("[MM-CREATE] Memset completed\n");
+
     pte_t *pml4 = (pte_t *)pml4_page;
+    fut_printf("[MM-CREATE] About to copy kernel half, pml4=%p\n", pml4);
     copy_kernel_half(pml4);
+    fut_printf("[MM-CREATE] Kernel half copied\n");
 
     mm->ctx.pml4 = pml4;
     mm->ctx.cr3_value = pmap_virt_to_phys((uintptr_t)pml4);

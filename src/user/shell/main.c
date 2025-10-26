@@ -2991,55 +2991,113 @@ static void cmd_touch(int argc, char *argv[]) {
 static void cmd_cp(int argc, char *argv[]) {
     if (argc < 3) {
         write_str(2, "cp: missing operand\n");
-        write_str(2, "Usage: cp <source> <dest>\n");
+        write_str(2, "Usage: cp <source>... <dest>\n");
         return;
     }
 
-    const char *src_path = argv[1];
-    const char *dst_path = argv[2];
-
-    /* Open source file for reading */
-    int src_fd = sys_open(src_path, O_RDONLY, 0);
-    if (src_fd < 0) {
-        write_str(2, "cp: cannot open '");
-        write_str(2, src_path);
-        write_str(2, "'\n");
-        return;
-    }
-
-    /* Open destination file for writing (create if needed) */
-    int dst_fd = sys_open(dst_path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
-    if (dst_fd < 0) {
-        write_str(2, "cp: cannot create '");
-        write_str(2, dst_path);
-        write_str(2, "'\n");
-        sys_close(src_fd);
-        return;
-    }
-
-    /* Copy data from source to destination */
-    char buffer[4096];
-    long bytes_read;
-    while ((bytes_read = sys_read(src_fd, buffer, sizeof(buffer))) > 0) {
-        long total_written = 0;
-        while (total_written < bytes_read) {
-            long written = sys_write(dst_fd, buffer + total_written, bytes_read - total_written);
-            if (written <= 0) {
-                write_str(2, "cp: write error\n");
-                sys_close(src_fd);
-                sys_close(dst_fd);
-                return;
-            }
-            total_written += written;
+    /* Helper function to copy one file */
+    auto int copy_file(const char *src_path, const char *dst_path) {
+        /* Open source file for reading */
+        int src_fd = sys_open(src_path, O_RDONLY, 0);
+        if (src_fd < 0) {
+            write_str(2, "cp: cannot open '");
+            write_str(2, src_path);
+            write_str(2, "'\n");
+            return -1;
         }
+
+        /* Open destination file for writing (create if needed) */
+        int dst_fd = sys_open(dst_path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+        if (dst_fd < 0) {
+            write_str(2, "cp: cannot create '");
+            write_str(2, dst_path);
+            write_str(2, "'\n");
+            sys_close(src_fd);
+            return -1;
+        }
+
+        /* Copy data from source to destination */
+        char buffer[4096];
+        long bytes_read;
+        while ((bytes_read = sys_read(src_fd, buffer, sizeof(buffer))) > 0) {
+            long total_written = 0;
+            while (total_written < bytes_read) {
+                long written = sys_write(dst_fd, buffer + total_written, bytes_read - total_written);
+                if (written <= 0) {
+                    write_str(2, "cp: write error\n");
+                    sys_close(src_fd);
+                    sys_close(dst_fd);
+                    return -1;
+                }
+                total_written += written;
+            }
+        }
+
+        if (bytes_read < 0) {
+            write_str(2, "cp: read error\n");
+            sys_close(src_fd);
+            sys_close(dst_fd);
+            return -1;
+        }
+
+        sys_close(src_fd);
+        sys_close(dst_fd);
+        return 0;
     }
 
-    if (bytes_read < 0) {
-        write_str(2, "cp: read error\n");
+    /* Helper function to get basename from path */
+    auto const char *get_basename(const char *path) {
+        const char *last_slash = path;
+        for (const char *p = path; *p != '\0'; p++) {
+            if (*p == '/') {
+                last_slash = p + 1;
+            }
+        }
+        return last_slash;
     }
 
-    sys_close(src_fd);
-    sys_close(dst_fd);
+    /* Helper function to build destination path */
+    auto void build_dest_path(char *dest_buf, size_t dest_size, const char *dest_dir, const char *basename) {
+        size_t dir_len = 0;
+        while (dest_dir[dir_len] != '\0' && dir_len < dest_size - 2) {
+            dest_buf[dir_len] = dest_dir[dir_len];
+            dir_len++;
+        }
+
+        /* Add slash if needed */
+        if (dir_len > 0 && dest_buf[dir_len - 1] != '/') {
+            dest_buf[dir_len++] = '/';
+        }
+
+        /* Append basename */
+        size_t i = 0;
+        while (basename[i] != '\0' && dir_len + i < dest_size - 1) {
+            dest_buf[dir_len + i] = basename[i];
+            i++;
+        }
+        dest_buf[dir_len + i] = '\0';
+    }
+
+    /* Multiple source files: cp file1 file2 file3 destdir/ */
+    if (argc > 3) {
+        const char *dest_dir = argv[argc - 1];
+
+        /* Copy each source file to destination directory */
+        for (int i = 1; i < argc - 1; i++) {
+            const char *src_path = argv[i];
+            const char *basename = get_basename(src_path);
+
+            static char dest_path[512];
+            build_dest_path(dest_path, sizeof(dest_path), dest_dir, basename);
+
+            copy_file(src_path, dest_path);
+        }
+    } else {
+        /* Single source file: cp source dest */
+        const char *src_path = argv[1];
+        const char *dst_path = argv[2];
+        copy_file(src_path, dst_path);
+    }
 }
 
 /* Built-in: mv - Move/rename a file */

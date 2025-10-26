@@ -868,6 +868,7 @@ static void cmd_help(int argc, char *argv[]) {
     write_str(1, "  cd [dir]        - Change directory\n");
     write_str(1, "  pwd             - Print working directory\n");
     write_str(1, "  ls [dir]        - List directory contents\n");
+    write_str(1, "  cat <file>      - Display file contents\n");
     write_str(1, "\n");
     write_str(1, "System:\n");
     write_str(1, "  uname           - Print system information\n");
@@ -1002,6 +1003,50 @@ static void cmd_ls(int argc, char *argv[]) {
 
     if (nread < 0) {
         write_str(2, "ls: error reading directory\n");
+    }
+
+    sys_close(fd);
+}
+
+/* Built-in: cat - Display file contents */
+static void cmd_cat(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(2, "cat: missing file operand\n");
+        write_str(2, "Usage: cat <file>\n");
+        return;
+    }
+
+    const char *path = argv[1];
+
+    /* Open the file */
+    int fd = sys_open(path, O_RDONLY, 0);
+    if (fd < 0) {
+        write_str(2, "cat: ");
+        write_str(2, path);
+        write_str(2, ": cannot open file\n");
+        return;
+    }
+
+    /* Read and print file contents in chunks */
+    char buffer[256];
+    long bytes_read;
+
+    while ((bytes_read = sys_read(fd, buffer, sizeof(buffer))) > 0) {
+        /* Write chunk to stdout */
+        long written = 0;
+        while (written < bytes_read) {
+            long n = sys_write(1, buffer + written, bytes_read - written);
+            if (n <= 0) {
+                write_str(2, "cat: write error\n");
+                sys_close(fd);
+                return;
+            }
+            written += n;
+        }
+    }
+
+    if (bytes_read < 0) {
+        write_str(2, "cat: read error\n");
     }
 
     sys_close(fd);
@@ -1304,6 +1349,9 @@ static int execute_command(int argc, char *argv[]) {
         return 0;
     } else if (strcmp_simple(argv[0], "ls") == 0) {
         cmd_ls(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "cat") == 0) {
+        cmd_cat(argc, argv);
         return 0;
     } else if (strcmp_simple(argv[0], "export") == 0) {
         cmd_export(argc, argv);

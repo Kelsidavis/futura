@@ -1251,12 +1251,6 @@ static void cmd_tail(int argc, char *argv[]) {
     int num_lines = 10;  /* Default: 10 lines */
     int file_start = 1;
 
-    if (argc < 2) {
-        write_str(2, "tail: missing file operand\n");
-        write_str(2, "Usage: tail [-n lines] <file>...\n");
-        return;
-    }
-
     /* Parse -n option */
     if (argc >= 3 && strcmp_simple(argv[1], "-n") == 0) {
         num_lines = simple_atoi(argv[2]);
@@ -1266,59 +1260,30 @@ static void cmd_tail(int argc, char *argv[]) {
         file_start = 3;
     }
 
-    /* Process each file */
-    for (int file_idx = file_start; file_idx < argc; file_idx++) {
-        const char *path = argv[file_idx];
+    #define MAX_FILE_SIZE 65536  /* 64KB limit for simplicity */
 
-        /* Print header if multiple files */
-        if (argc - file_start > 1) {
-            if (file_idx > file_start) {
-                write_char(1, '\n');
-            }
-            write_str(1, "==> ");
-            write_str(1, path);
-            write_str(1, " <==\n");
-        }
-
-        /* Open the file */
-        int fd = sys_open(path, O_RDONLY, 0);
-        if (fd < 0) {
-            write_str(2, "tail: ");
-            write_str(2, path);
-            write_str(2, ": cannot open file\n");
-            continue;
-        }
-
-        /* First pass: read entire file into buffer and count total lines */
-        #define MAX_FILE_SIZE 65536  /* 64KB limit for simplicity */
+    /* Helper function to process a file descriptor */
+    auto int process_fd(int fd, int max_lines) {
         char *file_buffer = (char *)0x50000000;  /* Use high memory region */
         long total_bytes = 0;
         long bytes_read;
         char chunk[256];
 
+        /* Read entire input into buffer */
         while ((bytes_read = sys_read(fd, chunk, sizeof(chunk))) > 0) {
             if (total_bytes + bytes_read > MAX_FILE_SIZE) {
-                write_str(2, "tail: ");
-                write_str(2, path);
-                write_str(2, ": file too large\n");
-                sys_close(fd);
-                goto next_file;
+                return -1;  /* File too large */
             }
             for (long i = 0; i < bytes_read; i++) {
                 file_buffer[total_bytes++] = chunk[i];
             }
         }
 
-        sys_close(fd);
-
         if (bytes_read < 0) {
-            write_str(2, "tail: ");
-            write_str(2, path);
-            write_str(2, ": read error\n");
-            continue;
+            return -2;  /* Read error */
         }
 
-        /* Count total lines and find line start positions */
+        /* Count total lines */
         long total_lines = 0;
         for (long i = 0; i < total_bytes; i++) {
             if (file_buffer[i] == '\n') {
@@ -1332,7 +1297,7 @@ static void cmd_tail(int argc, char *argv[]) {
         }
 
         /* Calculate how many lines to skip */
-        long skip_lines = total_lines > num_lines ? total_lines - num_lines : 0;
+        long skip_lines = total_lines > max_lines ? total_lines - max_lines : 0;
 
         /* Output the last N lines */
         long current_line = 0;
@@ -1360,9 +1325,58 @@ static void cmd_tail(int argc, char *argv[]) {
             write_char(1, '\n');
         }
 
-next_file:
-        ;  /* Empty statement for label */
+        return 0;  /* Success */
     }
+
+    /* Process files or stdin */
+    if (file_start >= argc) {
+        /* Read from stdin */
+        int result = process_fd(0, num_lines);
+        if (result == -1) {
+            write_str(2, "tail: input too large\n");
+        } else if (result == -2) {
+            write_str(2, "tail: read error\n");
+        }
+    } else {
+        /* Process each file */
+        for (int file_idx = file_start; file_idx < argc; file_idx++) {
+            const char *path = argv[file_idx];
+
+            /* Print header if multiple files */
+            if (argc - file_start > 1) {
+                if (file_idx > file_start) {
+                    write_char(1, '\n');
+                }
+                write_str(1, "==> ");
+                write_str(1, path);
+                write_str(1, " <==\n");
+            }
+
+            /* Open the file */
+            int fd = sys_open(path, O_RDONLY, 0);
+            if (fd < 0) {
+                write_str(2, "tail: ");
+                write_str(2, path);
+                write_str(2, ": cannot open file\n");
+                continue;
+            }
+
+            int result = process_fd(fd, num_lines);
+            sys_close(fd);
+
+            if (result == -1) {
+                write_str(2, "tail: ");
+                write_str(2, path);
+                write_str(2, ": file too large\n");
+            } else if (result == -2) {
+                write_str(2, "tail: ");
+                write_str(2, path);
+                write_str(2, ": read error\n");
+            }
+        }
+    }
+
+    #undef MAX_FILE_SIZE
 }
 
 /* Helper: Simple wildcard pattern matching for find -name */

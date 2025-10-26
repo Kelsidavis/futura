@@ -893,6 +893,7 @@ static void cmd_help(int argc, char *argv[]) {
     write_str(1, "  uniq [-c] [-d] [-u] <file>... - Report or omit repeated lines\n");
     write_str(1, "  cut -f <field> [-d <delim>] <file>... - Extract fields from lines\n");
     write_str(1, "  cut -c <N[-M]> <file>... - Extract characters from lines\n");
+    write_str(1, "  tr [-d] [-s] <set1> [set2] <file>... - Translate or delete characters\n");
     write_str(1, "\n");
     write_str(1, "File Operations:\n");
     write_str(1, "  mkdir <dir>     - Create directory\n");
@@ -2210,6 +2211,139 @@ static void cmd_cut(int argc, char *argv[]) {
     }
 }
 
+/* Built-in: tr - Translate or delete characters */
+static void cmd_tr(int argc, char *argv[]) {
+    int delete_mode = 0;
+    int squeeze_mode = 0;
+    int arg_start = 1;
+
+    /* Parse options */
+    while (arg_start < argc && argv[arg_start][0] == '-') {
+        if (strcmp_simple(argv[arg_start], "-d") == 0) {
+            delete_mode = 1;
+            arg_start++;
+        } else if (strcmp_simple(argv[arg_start], "-s") == 0) {
+            squeeze_mode = 1;
+            arg_start++;
+        } else if (strcmp_simple(argv[arg_start], "--") == 0) {
+            arg_start++;
+            break;
+        } else {
+            write_str(2, "tr: unknown option: ");
+            write_str(2, argv[arg_start]);
+            write_str(2, "\n");
+            write_str(2, "Usage: tr [-d] [-s] <set1> [set2] <file>...\n");
+            return;
+        }
+    }
+
+    /* Check arguments */
+    if (delete_mode && squeeze_mode) {
+        if (arg_start + 2 > argc) {
+            write_str(2, "tr: missing operands\n");
+            return;
+        }
+    } else if (delete_mode) {
+        if (arg_start + 2 > argc) {
+            write_str(2, "tr: missing operands\n");
+            return;
+        }
+    } else {
+        if (arg_start + 3 > argc) {
+            write_str(2, "tr: missing operands\n");
+            write_str(2, "Usage: tr <set1> <set2> <file>...\n");
+            return;
+        }
+    }
+
+    const char *set1 = argv[arg_start];
+    const char *set2 = delete_mode ? 0 : argv[arg_start + 1];
+    int file_start = delete_mode ? arg_start + 1 : arg_start + 2;
+
+    /* Build translation map */
+    static char trans_map[256];
+    for (int i = 0; i < 256; i++) {
+        trans_map[i] = i;  /* Identity by default */
+    }
+
+    if (delete_mode) {
+        /* Mark characters to delete */
+        for (const char *p = set1; *p; p++) {
+            trans_map[(unsigned char)*p] = '\0';  /* Mark for deletion */
+        }
+    } else {
+        /* Build translation map */
+        const char *p1 = set1;
+        const char *p2 = set2;
+        while (*p1 && *p2) {
+            trans_map[(unsigned char)*p1] = *p2;
+            p1++;
+            p2++;
+        }
+        /* If set1 is longer, map remaining to last char of set2 */
+        if (*p1 && p2 > set2) {
+            char last_char = *(p2 - 1);
+            while (*p1) {
+                trans_map[(unsigned char)*p1] = last_char;
+                p1++;
+            }
+        }
+    }
+
+    /* Process files */
+    for (int file_idx = file_start; file_idx < argc; file_idx++) {
+        const char *path = argv[file_idx];
+
+        int fd = sys_open(path, O_RDONLY, 0);
+        if (fd < 0) {
+            write_str(2, "tr: ");
+            write_str(2, path);
+            write_str(2, ": cannot open file\n");
+            continue;
+        }
+
+        char read_buf[256];
+        char last_char = '\0';
+        long bytes_read;
+
+        while ((bytes_read = sys_read(fd, read_buf, sizeof(read_buf))) > 0) {
+            for (long i = 0; i < bytes_read; i++) {
+                char c = read_buf[i];
+                unsigned char uc = (unsigned char)c;
+
+                if (delete_mode) {
+                    /* Skip deleted characters */
+                    if (trans_map[uc] == '\0') {
+                        continue;
+                    }
+                    /* Output character */
+                    if (squeeze_mode && c == last_char) {
+                        continue;  /* Skip repeated character */
+                    }
+                    write_char(1, c);
+                    last_char = c;
+                } else {
+                    /* Translate character */
+                    char out_char = trans_map[uc];
+                    if (squeeze_mode && out_char == last_char) {
+                        continue;  /* Skip repeated character */
+                    }
+                    write_char(1, out_char);
+                    last_char = out_char;
+                }
+            }
+        }
+
+        sys_close(fd);
+
+        if (bytes_read < 0) {
+            write_str(2, "tr: ");
+            write_str(2, path);
+            write_str(2, ": read error\n");
+        }
+    }
+}
+
 /* Built-in: ls - List directory contents */
 static void cmd_ls(int argc, char *argv[]) {
     const char *path = argc > 1 ? argv[1] : ".";
@@ -2818,6 +2952,9 @@ static int execute_command(int argc, char *argv[]) {
         return 0;
     } else if (strcmp_simple(argv[0], "cut") == 0) {
         cmd_cut(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "tr") == 0) {
+        cmd_tr(argc, argv);
         return 0;
     } else if (strcmp_simple(argv[0], "find") == 0) {
         cmd_find(argc, argv);

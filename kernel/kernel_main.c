@@ -48,6 +48,7 @@ extern void fut_echo_selftest(void);
 extern void fut_fb_smoke(void);
 extern void fut_input_smoke(void);
 extern void fut_exec_double_smoke(void);
+extern void fut_mm_tests_run(void);
 extern void fut_blk_async_selftest_schedule(fut_task_t *task);
 extern void fut_futfs_selftest_schedule(fut_task_t *task);
 extern void fut_net_selftest_schedule(fut_task_t *task);
@@ -1118,6 +1119,15 @@ void fut_kernel_main(void) {
     fut_printf("[INIT] Initializing scheduler...\n");
     fut_sched_init();
     fut_printf("[INIT] Scheduler initialized with idle thread\n");
+
+    /* ========================================
+     *   Memory Management Tests
+     * ======================================== */
+
+    bool mm_tests_enabled = boot_flag_enabled("mm-tests", true);  /* Default ON for testing */
+    if (mm_tests_enabled) {
+        fut_mm_tests_run();
+    }
 
     /* DISABLED: fbtest consumes too much memory - prioritize wayland execution */
     /*

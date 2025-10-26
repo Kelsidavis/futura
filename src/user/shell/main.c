@@ -896,6 +896,7 @@ static void cmd_help(int argc, char *argv[]) {
     write_str(1, "  tr [-d] [-s] <set1> [set2] <file>... - Translate or delete characters\n");
     write_str(1, "  tee [-a] <file>... - Read from stdin and write to stdout and files\n");
     write_str(1, "  paste [-d <delim>] <file>... - Merge lines of files\n");
+    write_str(1, "  diff [-q] <file1> <file2> - Compare files line by line\n");
     write_str(1, "\n");
     write_str(1, "File Operations:\n");
     write_str(1, "  mkdir <dir>     - Create directory\n");
@@ -2505,6 +2506,171 @@ static void cmd_paste(int argc, char *argv[]) {
     }
 }
 
+/* Built-in: diff - Compare files line by line */
+static void cmd_diff(int argc, char *argv[]) {
+    int quiet = 0;
+    int arg_start = 1;
+
+    /* Parse -q option for quiet mode */
+    if (argc > 1 && strcmp_simple(argv[1], "-q") == 0) {
+        quiet = 1;
+        arg_start = 2;
+    }
+
+    if (argc - arg_start < 2) {
+        write_str(2, "diff: missing operand\n");
+        write_str(2, "Usage: diff [-q] <file1> <file2>\n");
+        return;
+    }
+
+    const char *file1 = argv[arg_start];
+    const char *file2 = argv[arg_start + 1];
+
+    /* Open both files */
+    int fd1 = sys_open(file1, O_RDONLY, 0);
+    if (fd1 < 0) {
+        write_str(2, "diff: ");
+        write_str(2, file1);
+        write_str(2, ": cannot open file\n");
+        return;
+    }
+
+    int fd2 = sys_open(file2, O_RDONLY, 0);
+    if (fd2 < 0) {
+        write_str(2, "diff: ");
+        write_str(2, file2);
+        write_str(2, ": cannot open file\n");
+        sys_close(fd1);
+        return;
+    }
+
+    /* Read and compare files line by line */
+    #define DIFF_LINE_MAX 1024
+    static char line1[DIFF_LINE_MAX];
+    static char line2[DIFF_LINE_MAX];
+    int line_num = 0;
+    int differences = 0;
+
+    while (1) {
+        /* Read line from file 1 */
+        int pos1 = 0;
+        char c;
+        long nread;
+        int eof1 = 0;
+
+        while (pos1 < DIFF_LINE_MAX - 1) {
+            nread = sys_read(fd1, &c, 1);
+            if (nread <= 0) {
+                eof1 = 1;
+                break;
+            }
+            if (c == '\n') {
+                break;
+            }
+            line1[pos1++] = c;
+        }
+        line1[pos1] = '\0';
+
+        /* Read line from file 2 */
+        int pos2 = 0;
+        int eof2 = 0;
+
+        while (pos2 < DIFF_LINE_MAX - 1) {
+            nread = sys_read(fd2, &c, 1);
+            if (nread <= 0) {
+                eof2 = 1;
+                break;
+            }
+            if (c == '\n') {
+                break;
+            }
+            line2[pos2++] = c;
+        }
+        line2[pos2] = '\0';
+
+        line_num++;
+
+        /* Check if both files ended */
+        if (eof1 && eof2 && pos1 == 0 && pos2 == 0) {
+            break;
+        }
+
+        /* Compare lines */
+        int lines_differ = 0;
+
+        if (eof1 && !eof2) {
+            lines_differ = 1;
+            if (!quiet) {
+                write_str(1, "> ");
+                write_str(1, line2);
+                write_char(1, '\n');
+            }
+        } else if (!eof1 && eof2) {
+            lines_differ = 1;
+            if (!quiet) {
+                write_str(1, "< ");
+                write_str(1, line1);
+                write_char(1, '\n');
+            }
+        } else if (pos1 != pos2) {
+            lines_differ = 1;
+            if (!quiet) {
+                write_str(1, "< ");
+                write_str(1, line1);
+                write_char(1, '\n');
+                write_str(1, "---\n");
+                write_str(1, "> ");
+                write_str(1, line2);
+                write_char(1, '\n');
+            }
+        } else {
+            /* Compare character by character */
+            for (int i = 0; i < pos1; i++) {
+                if (line1[i] != line2[i]) {
+                    lines_differ = 1;
+                    break;
+                }
+            }
+
+            if (lines_differ && !quiet) {
+                write_str(1, "< ");
+                write_str(1, line1);
+                write_char(1, '\n');
+                write_str(1, "---\n");
+                write_str(1, "> ");
+                write_str(1, line2);
+                write_char(1, '\n');
+            }
+        }
+
+        if (lines_differ) {
+            differences++;
+            if (quiet) {
+                /* In quiet mode, just report differences and exit */
+                write_str(1, "Files ");
+                write_str(1, file1);
+                write_str(1, " and ");
+                write_str(1, file2);
+                write_str(1, " differ\n");
+                break;
+            }
+        }
+
+        /* Stop if both files ended */
+        if (eof1 || eof2) {
+            break;
+        }
+    }
+
+    sys_close(fd1);
+    sys_close(fd2);
+
+    /* Exit with status indicating if files differ */
+    if (differences == 0 && !quiet) {
+        write_str(1, "Files are identical\n");
+    }
+}
+
 /* Built-in: ls - List directory contents */
 static void cmd_ls(int argc, char *argv[]) {
     const char *path = argc > 1 ? argv[1] : ".";
@@ -3122,6 +3288,9 @@ static int execute_command(int argc, char *argv[]) {
         return 0;
     } else if (strcmp_simple(argv[0], "paste") == 0) {
         cmd_paste(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "diff") == 0) {
+        cmd_diff(argc, argv);
         return 0;
     } else if (strcmp_simple(argv[0], "find") == 0) {
         cmd_find(argc, argv);

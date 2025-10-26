@@ -26,6 +26,7 @@
 #define __NR_wait4      61
 #define __NR_chdir      80
 #define __NR_getcwd     79
+#define __NR_getdents64 217
 
 /* File flags (from VFS) */
 #define O_RDONLY    0x0000
@@ -192,6 +193,10 @@ static inline long sys_execve(const char *pathname, char *const argv[], char *co
 
 static inline int sys_open(const char *pathname, int flags, int mode) {
     return (int)syscall3(__NR_open, (long)pathname, flags, mode);
+}
+
+static inline long sys_getdents64(int fd, void *dirp, unsigned long count) {
+    return syscall3(__NR_getdents64, fd, (long)dirp, count);
 }
 
 /* Redirection types */
@@ -960,10 +965,46 @@ static void cmd_whoami(int argc, char *argv[]) {
 static void cmd_ls(int argc, char *argv[]) {
     const char *path = argc > 1 ? argv[1] : ".";
 
-    write_str(1, "Directory listing for: ");
-    write_str(1, path);
-    write_str(1, "\n");
-    write_str(1, "(ls command not fully implemented - directory listing requires getdents syscall)\n");
+    /* Open the directory */
+    int fd = sys_open(path, O_RDONLY, 0);
+    if (fd < 0) {
+        write_str(2, "ls: cannot open directory ");
+        write_str(2, path);
+        write_str(2, "\n");
+        return;
+    }
+
+    /* Define Linux dirent64 structure matching kernel implementation */
+    struct linux_dirent64 {
+        unsigned long long d_ino;
+        long long d_off;
+        unsigned short d_reclen;
+        unsigned char d_type;
+        char d_name[256];
+    };
+
+    char buf[4096];
+    long nread;
+
+    while ((nread = sys_getdents64(fd, buf, sizeof(buf))) > 0) {
+        char *ptr = buf;
+        while (ptr < buf + nread) {
+            struct linux_dirent64 *d = (struct linux_dirent64 *)ptr;
+
+            /* Print entry name */
+            write_str(1, d->d_name);
+            write_str(1, "\n");
+
+            /* Move to next entry */
+            ptr += d->d_reclen;
+        }
+    }
+
+    if (nread < 0) {
+        write_str(2, "ls: error reading directory\n");
+    }
+
+    sys_close(fd);
 }
 
 /* Built-in: export */

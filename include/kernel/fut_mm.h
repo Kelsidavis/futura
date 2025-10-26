@@ -23,6 +23,15 @@
 #error "Unsupported architecture for memory management"
 #endif
 
+/* Virtual Memory Area - represents a contiguous mapped region */
+struct fut_vma {
+    uintptr_t start;    /* Start address (page-aligned) */
+    uintptr_t end;      /* End address (page-aligned, exclusive) */
+    int prot;           /* Protection flags (PROT_READ, PROT_WRITE, PROT_EXEC) */
+    int flags;          /* Mapping flags */
+    struct fut_vma *next;  /* Next VMA in list */
+};
+
 typedef struct fut_mm {
     fut_vmem_context_t ctx;
     atomic_uint_fast64_t refcnt;
@@ -57,3 +66,7 @@ uintptr_t fut_mm_brk_limit(const fut_mm_t *mm);
 void fut_mm_set_brk_current(fut_mm_t *mm, uintptr_t current);
 void *fut_mm_map_anonymous(fut_mm_t *mm, uintptr_t hint, size_t len, int prot, int flags);
 int fut_mm_unmap(fut_mm_t *mm, uintptr_t addr, size_t len);
+
+/* VMA management for fork() */
+int fut_mm_add_vma(fut_mm_t *mm, uintptr_t start, uintptr_t end, int prot, int flags);
+int fut_mm_clone_vmas(fut_mm_t *dest_mm, fut_mm_t *src_mm);

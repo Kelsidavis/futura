@@ -824,6 +824,46 @@ void vfs_free_fd(int fd) {
     free_fd(fd);
 }
 
+int fut_vfs_readdir_fd(int fd, uint64_t *cookie, struct fut_vdirent *dirent) {
+    if (!cookie || !dirent) {
+        return -EINVAL;
+    }
+
+    struct fut_file *file = vfs_get_file(fd);
+    if (!file) {
+        return -EBADF;
+    }
+
+    struct fut_vnode *dir = file->vnode;
+    if (!dir) {
+        return -EBADF;
+    }
+
+    if (dir->type != VN_DIR) {
+        return -ENOTDIR;
+    }
+
+    if (!dir->ops || !dir->ops->readdir) {
+        return -ENOSYS;
+    }
+
+    /* Use the file descriptor's offset as the starting cookie */
+    uint64_t pos = file->offset;
+
+    /* Call the vnode's readdir operation */
+    int ret = dir->ops->readdir(dir, &pos, dirent);
+
+    /* Update the file descriptor's offset for next read */
+    if (ret > 0) {
+        file->offset = pos;
+    }
+
+    /* Return the updated cookie to caller */
+    *cookie = pos;
+
+    return ret;
+}
+
 void vfs_file_ref(struct fut_file *file) {
     if (file) {
         file->refcount++;

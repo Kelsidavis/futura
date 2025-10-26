@@ -34,13 +34,8 @@ static fut_mm_t *active_mm = NULL;
 #define USER_VMA_MAX        (USER_STACK_TOP - (16ULL << 20))
 #define USER_MMAP_BASE      0x00006000000000ULL
 
-typedef struct fut_vma {
-    uintptr_t start;
-    uintptr_t end;
-    int prot;
-    int flags;
-    struct fut_vma *next;
-} fut_vma_t;
+/* Note: struct fut_vma is now defined in fut_mm.h */
+typedef struct fut_vma fut_vma_t;
 
 static inline fut_mm_t *mm_fallback(fut_mm_t *mm) {
     return mm ? mm : &kernel_mm;
@@ -423,14 +418,6 @@ static fut_mm_t *active_mm = NULL;
 #define USER_VMA_MAX        (USER_STACK_TOP - (16ULL << 20))
 #define USER_MMAP_BASE      0x0000400000000000ULL
 
-typedef struct fut_vma {
-    uintptr_t start;
-    uintptr_t end;
-    int prot;
-    int flags;
-    struct fut_vma *next;
-} fut_vma_t;
-
 static inline fut_mm_t *mm_fallback(fut_mm_t *mm) {
     return mm ? mm : &kernel_mm;
 }
@@ -760,3 +747,72 @@ int fut_mm_unmap(fut_mm_t *mm, uintptr_t addr, size_t len) {
 #error "Unsupported architecture for memory management"
 
 #endif  /* __x86_64__ / __aarch64__ */
+
+/* ============================================================
+ *   Platform-independent VMA management
+ * ============================================================ */
+
+/**
+ * fut_mm_add_vma - Add a VMA to the mm's VMA list
+ * @mm: Memory context
+ * @start: Start address (page-aligned)
+ * @end: End address (page-aligned, exclusive)
+ * @prot: Protection flags (PROT_READ, PROT_WRITE, PROT_EXEC)
+ * @flags: Mapping flags
+ *
+ * Returns 0 on success, -ENOMEM on failure.
+ */
+int fut_mm_add_vma(fut_mm_t *mm, uintptr_t start, uintptr_t end, int prot, int flags) {
+    if (!mm || start >= end) {
+        return -EINVAL;
+    }
+
+    /* Allocate new VMA */
+    struct fut_vma *vma = (struct fut_vma *)fut_malloc(sizeof(struct fut_vma));
+    if (!vma) {
+        return -ENOMEM;
+    }
+
+    vma->start = start;
+    vma->end = end;
+    vma->prot = prot;
+    vma->flags = flags;
+    vma->next = NULL;
+
+    /* Add to end of list (insertion order) */
+    struct fut_vma **link = &mm->vma_list;
+    while (*link) {
+        link = &(*link)->next;
+    }
+    *link = vma;
+
+    return 0;
+}
+
+/**
+ * fut_mm_clone_vmas - Clone all VMAs from src_mm to dest_mm
+ * @dest_mm: Destination memory context
+ * @src_mm: Source memory context
+ *
+ * Copies the VMA list from src_mm to dest_mm. Does not copy actual page
+ * contents - that's done separately by clone_mm() in sys_fork.c.
+ *
+ * Returns 0 on success, -ENOMEM on failure.
+ */
+int fut_mm_clone_vmas(fut_mm_t *dest_mm, fut_mm_t *src_mm) {
+    if (!dest_mm || !src_mm) {
+        return -EINVAL;
+    }
+
+    struct fut_vma *src_vma = src_mm->vma_list;
+    while (src_vma) {
+        int rc = fut_mm_add_vma(dest_mm, src_vma->start, src_vma->end,
+                                src_vma->prot, src_vma->flags);
+        if (rc < 0) {
+            return rc;
+        }
+        src_vma = src_vma->next;
+    }
+
+    return 0;
+}

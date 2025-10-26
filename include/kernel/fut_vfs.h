@@ -439,6 +439,15 @@ ssize_t fut_vfs_write(int fd, const void *buf, size_t size);
 int fut_vfs_readdir(const char *path, uint64_t *cookie, struct fut_vdirent *dirent);
 
 /**
+ * Read next directory entry from an open directory file descriptor
+ * @param fd File descriptor of open directory
+ * @param cookie Iterator cookie (offset)
+ * @param dirent Directory entry to populate
+ * @return 0 on success, -ENOENT when no more entries, negative error code otherwise
+ */
+int fut_vfs_readdir_fd(int fd, uint64_t *cookie, struct fut_vdirent *dirent);
+
+/**
  * Close a file.
  *
  * @param fd File descriptor

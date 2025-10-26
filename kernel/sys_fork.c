@@ -103,10 +103,12 @@ long sys_fork(void) {
 
 /**
  * Clone memory management context.
- * Copies all user page mappings from parent to child.
+ * Copies all user page mappings from parent to child using VMA tracking.
  * TODO: Implement copy-on-write (COW) for efficiency.
  */
 static fut_mm_t *clone_mm(fut_mm_t *parent_mm) {
+    extern void fut_thread_yield(void);  /* For yielding during long operations */
+
     if (!parent_mm) {
         return NULL;
     }
@@ -123,61 +125,24 @@ static fut_mm_t *clone_mm(fut_mm_t *parent_mm) {
     child_mm->heap_limit = parent_mm->heap_limit;
     child_mm->mmap_base = parent_mm->mmap_base;
 
-    /* Copy all user page mappings from parent to child */
-    /* Scan a minimal region around typical program load address (0x400000).
-     * Programs are typically loaded at 0x400000, so scan 0x400000 to 0x500000 (1MB).
-     * TODO: Implement proper VMA (Virtual Memory Area) tracking to only copy actually-mapped regions. */
+    /* Clone VMA list from parent to child */
+    if (fut_mm_clone_vmas(child_mm, parent_mm) != 0) {
+        fut_mm_release(child_mm);
+        return NULL;
+    }
+
     fut_vmem_context_t *parent_ctx = fut_mm_context(parent_mm);
     fut_vmem_context_t *child_ctx = fut_mm_context(child_mm);
 
-    #define CLONE_SCAN_START 0x400000ULL   /* Typical userspace load address */
-    #define CLONE_SCAN_END   0x500000ULL   /* +1MB from start */
+    /* If no VMAs are tracked, fall back to scanning fixed ranges */
+    if (parent_mm->vma_list == NULL) {
+        fut_printf("[FORK] No VMAs tracked, falling back to fixed-range scan\n");
 
-    /* Scan the program region (typically 0x400000-0x500000) */
-    for (uint64_t page = CLONE_SCAN_START; page < CLONE_SCAN_END; page += FUT_PAGE_SIZE) {
-        uint64_t pte = 0;
+        /* Scan the program region (typically 0x400000-0x500000) */
+        #define CLONE_SCAN_START 0x400000ULL
+        #define CLONE_SCAN_END   0x500000ULL
 
-        /* Check if this page is mapped in parent */
-        if (pmap_probe_pte(parent_ctx, page, &pte) != 0) {
-            continue;  /* Not mapped or error */
-        }
-
-        if ((pte & PTE_PRESENT) == 0) {
-            continue;  /* Page not present */
-        }
-
-        /* Allocate new physical page for child */
-        void *child_page = fut_pmm_alloc_page();
-        if (!child_page) {
-            /* Out of memory - clean up and fail */
-            fut_mm_release(child_mm);
-            return NULL;
-        }
-
-        /* Get parent's physical page and copy contents */
-        phys_addr_t parent_phys = pte & PTE_PHYS_ADDR_MASK;
-        void *parent_page = (void *)pmap_phys_to_virt(parent_phys);
-        memcpy(child_page, parent_page, FUT_PAGE_SIZE);
-
-        /* Map the new page in child's address space with same permissions */
-        phys_addr_t child_phys = pmap_virt_to_phys((uintptr_t)child_page);
-        uint64_t flags = pte & (PTE_PRESENT | PTE_WRITABLE | PTE_USER | PTE_NX);
-
-        if (pmap_map_user(child_ctx, page, child_phys, FUT_PAGE_SIZE, flags) != 0) {
-            /* Mapping failed - clean up */
-            fut_pmm_free_page(child_page);
-            fut_mm_release(child_mm);
-            return NULL;
-        }
-    }
-
-    /* Also scan the stack region at the top of user space */
-    /* Stack is typically at 0x7FFFFFFFE000 down to 0x7FFFFFF00000 (around 1 MB) */
-    #define STACK_SCAN_START 0x7FFFFFF00000ULL
-    #define STACK_SCAN_END   (STACK_SCAN_START + (1 * 1024 * 1024))  /* +1MB from start */
-
-    for (uint64_t vaddr = STACK_SCAN_START; vaddr < STACK_SCAN_END; vaddr += (2 * 1024 * 1024)) {
-        for (uint64_t page = vaddr; page < vaddr + (2 * 1024 * 1024) && page < STACK_SCAN_END; page += FUT_PAGE_SIZE) {
+        for (uint64_t page = CLONE_SCAN_START; page < CLONE_SCAN_END; page += FUT_PAGE_SIZE) {
             uint64_t pte = 0;
 
             if (pmap_probe_pte(parent_ctx, page, &pte) != 0) {
@@ -207,6 +172,94 @@ static fut_mm_t *clone_mm(fut_mm_t *parent_mm) {
                 return NULL;
             }
         }
+
+        /* Scan the stack region */
+        #define STACK_SCAN_START 0x7FFFFFF00000ULL
+        #define STACK_SCAN_END   (STACK_SCAN_START + (1 * 1024 * 1024))
+
+        for (uint64_t page = STACK_SCAN_START; page < STACK_SCAN_END; page += FUT_PAGE_SIZE) {
+            uint64_t pte = 0;
+
+            if (pmap_probe_pte(parent_ctx, page, &pte) != 0) {
+                continue;
+            }
+
+            if ((pte & PTE_PRESENT) == 0) {
+                continue;
+            }
+
+            void *child_page = fut_pmm_alloc_page();
+            if (!child_page) {
+                fut_mm_release(child_mm);
+                return NULL;
+            }
+
+            phys_addr_t parent_phys = pte & PTE_PHYS_ADDR_MASK;
+            void *parent_page = (void *)pmap_phys_to_virt(parent_phys);
+            memcpy(child_page, parent_page, FUT_PAGE_SIZE);
+
+            phys_addr_t child_phys = pmap_virt_to_phys((uintptr_t)child_page);
+            uint64_t flags = pte & (PTE_PRESENT | PTE_WRITABLE | PTE_USER | PTE_NX);
+
+            if (pmap_map_user(child_ctx, page, child_phys, FUT_PAGE_SIZE, flags) != 0) {
+                fut_pmm_free_page(child_page);
+                fut_mm_release(child_mm);
+                return NULL;
+            }
+        }
+
+        return child_mm;
+    }
+
+    /* Iterate over VMAs and copy only mapped pages */
+    struct fut_vma *vma;
+    for (vma = parent_mm->vma_list; vma != NULL; vma = vma->next) {
+        fut_printf("[FORK] Cloning VMA: 0x%llx-0x%llx\n", vma->start, vma->end);
+
+        uint64_t page_count = 0;
+        for (uint64_t page = vma->start; page < vma->end; page += FUT_PAGE_SIZE) {
+            uint64_t pte = 0;
+
+            /* Check if this page is mapped in parent */
+            if (pmap_probe_pte(parent_ctx, page, &pte) != 0) {
+                continue;  /* Not mapped */
+            }
+
+            if ((pte & PTE_PRESENT) == 0) {
+                continue;  /* Page not present */
+            }
+
+            /* Allocate new physical page for child */
+            void *child_page = fut_pmm_alloc_page();
+            if (!child_page) {
+                fut_mm_release(child_mm);
+                return NULL;
+            }
+
+            /* Copy page contents */
+            phys_addr_t parent_phys = pte & PTE_PHYS_ADDR_MASK;
+            void *parent_page = (void *)pmap_phys_to_virt(parent_phys);
+            memcpy(child_page, parent_page, FUT_PAGE_SIZE);
+
+            /* Map in child with same permissions */
+            phys_addr_t child_phys = pmap_virt_to_phys((uintptr_t)child_page);
+            uint64_t flags = pte & (PTE_PRESENT | PTE_WRITABLE | PTE_USER | PTE_NX);
+
+            if (pmap_map_user(child_ctx, page, child_phys, FUT_PAGE_SIZE, flags) != 0) {
+                fut_pmm_free_page(child_page);
+                fut_mm_release(child_mm);
+                return NULL;
+            }
+
+            page_count++;
+
+            /* Yield every 64 pages to avoid monopolizing CPU */
+            if ((page_count & 0x3F) == 0) {
+                fut_thread_yield();
+            }
+        }
+
+        fut_printf("[FORK] Copied %llu pages from VMA\n", page_count);
     }
 
     return child_mm;

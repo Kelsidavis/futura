@@ -17,7 +17,10 @@ drivers/rust/**/Cargo.lock
 .vscode/
 .idea/
 *.sublime-*
+
+# Claude Code artifacts (local only, not committed)
 .claude/
+CLAUDE.md
 
 # OS files
 .DS_Store

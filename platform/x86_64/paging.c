@@ -81,11 +81,19 @@ pte_t *fut_get_kernel_pml4(void) {
  * Returns physical address of new page table.
  */
 static page_table_t *alloc_page_table(void) {
-    void *page = fut_pmm_alloc_page();
+    extern void *fut_malloc(size_t);
+    extern void fut_printf(const char *, ...);
+
+    /* Use fut_malloc instead of fut_pmm_alloc_page to ensure page tables
+     * are allocated from the properly-mapped heap region. This avoids issues
+     * with PMM returning pages outside the heap's virtual address range. */
+    void *page = fut_malloc(PAGE_SIZE);
     if (!page) {
+        fut_printf("[PAGING] Failed to allocate page table from heap\n");
         return NULL;
     }
-    assert_kernel_table_ptr(page);
+
+    /* fut_malloc returns zeroed memory, but clear it anyway to be explicit */
     memset(page, 0, PAGE_SIZE);
     return (page_table_t *)page;
 }

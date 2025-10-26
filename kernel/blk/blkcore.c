@@ -299,7 +299,48 @@ fut_status_t fut_blk_register(fut_blkdev_t *dev) {
         return -ENOMEM;
     }
 
+    /* Register with legacy blockdev API for compatibility with VFS */
+    extern int fut_blockdev_register_compat(const char *name, uint32_t block_size,
+                                             uint64_t block_count, void *backend_ctx);
+    fut_blockdev_register_compat(dev->name, dev->block_size, dev->block_count, dev);
+
     return 0;
+}
+
+/**
+ * Synchronous read wrapper for legacy blockdev API compatibility.
+ * Performs a synchronous read using the block core's async infrastructure.
+ */
+int fut_blk_read(void *backend_ctx, uint64_t sector, uint32_t count, void *buffer) {
+    if (!backend_ctx || !buffer || count == 0) {
+        return -EINVAL;
+    }
+
+    fut_blkdev_t *dev = (fut_blkdev_t *)backend_ctx;
+    if (!dev->backend || !dev->backend->read) {
+        return -ENOTSUP;
+    }
+
+    /* Call backend directly for synchronous I/O */
+    return dev->backend->read(dev->backend_ctx, sector, count, buffer);
+}
+
+/**
+ * Synchronous write wrapper for legacy blockdev API compatibility.
+ * Performs a synchronous write using the block core's async infrastructure.
+ */
+int fut_blk_write(void *backend_ctx, uint64_t sector, uint32_t count, const void *buffer) {
+    if (!backend_ctx || !buffer || count == 0) {
+        return -EINVAL;
+    }
+
+    fut_blkdev_t *dev = (fut_blkdev_t *)backend_ctx;
+    if (!dev->backend || !dev->backend->write) {
+        return -ENOTSUP;
+    }
+
+    /* Call backend directly for synchronous I/O */
+    return dev->backend->write(dev->backend_ctx, sector, count, buffer);
 }
 
 fut_status_t fut_blk_acquire(const char *name, uint32_t rights, fut_handle_t *out_handle) {

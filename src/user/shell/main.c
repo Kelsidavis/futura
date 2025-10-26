@@ -895,6 +895,7 @@ static void cmd_help(int argc, char *argv[]) {
     write_str(1, "  cut -c <N[-M]> <file>... - Extract characters from lines\n");
     write_str(1, "  tr [-d] [-s] <set1> [set2] <file>... - Translate or delete characters\n");
     write_str(1, "  tee [-a] <file>... - Read from stdin and write to stdout and files\n");
+    write_str(1, "  paste [-d <delim>] <file>... - Merge lines of files\n");
     write_str(1, "\n");
     write_str(1, "File Operations:\n");
     write_str(1, "  mkdir <dir>     - Create directory\n");
@@ -2410,6 +2411,100 @@ static void cmd_tee(int argc, char *argv[]) {
     }
 }
 
+/* Built-in: paste - Merge lines of files */
+static void cmd_paste(int argc, char *argv[]) {
+    char delimiter = '\t';
+    int arg_start = 1;
+
+    /* Parse -d option for delimiter */
+    if (argc > 2 && strcmp_simple(argv[1], "-d") == 0) {
+        delimiter = argv[2][0];
+        arg_start = 3;
+    }
+
+    if (arg_start >= argc) {
+        write_str(2, "paste: no input files\n");
+        return;
+    }
+
+    /* Open all files */
+    #define PASTE_MAX_FILES 16
+    int fds[PASTE_MAX_FILES];
+    int num_files = 0;
+
+    for (int i = arg_start; i < argc && num_files < PASTE_MAX_FILES; i++) {
+        fds[num_files] = sys_open(argv[i], O_RDONLY, 0);
+        if (fds[num_files] < 0) {
+            write_str(2, "paste: ");
+            write_str(2, argv[i]);
+            write_str(2, ": cannot open file\n");
+            /* Close already opened files */
+            for (int j = 0; j < num_files; j++) {
+                sys_close(fds[j]);
+            }
+            return;
+        }
+        num_files++;
+    }
+
+    /* Read and merge lines from all files */
+    #define PASTE_LINE_MAX 1024
+    static char lines[PASTE_MAX_FILES][PASTE_LINE_MAX];
+    int files_active = num_files;
+
+    while (files_active > 0) {
+        files_active = 0;
+
+        /* Read one line from each file */
+        for (int i = 0; i < num_files; i++) {
+            if (fds[i] < 0) {
+                lines[i][0] = '\0';  /* File exhausted */
+                continue;
+            }
+
+            int pos = 0;
+            char c;
+            long nread;
+
+            while (pos < PASTE_LINE_MAX - 1) {
+                nread = sys_read(fds[i], &c, 1);
+                if (nread <= 0) {
+                    sys_close(fds[i]);
+                    fds[i] = -1;  /* Mark file as closed */
+                    break;
+                }
+                if (c == '\n') {
+                    break;
+                }
+                lines[i][pos++] = c;
+            }
+            lines[i][pos] = '\0';
+
+            if (fds[i] >= 0 || pos > 0) {
+                files_active++;
+            }
+        }
+
+        if (files_active == 0) break;
+
+        /* Output merged line */
+        for (int i = 0; i < num_files; i++) {
+            write_str(1, lines[i]);
+            if (i < num_files - 1) {
+                write_char(1, delimiter);
+            }
+        }
+        write_char(1, '\n');
+    }
+
+    /* Close any remaining open files */
+    for (int i = 0; i < num_files; i++) {
+        if (fds[i] >= 0) {
+            sys_close(fds[i]);
+        }
+    }
+}
+
 /* Built-in: ls - List directory contents */
 static void cmd_ls(int argc, char *argv[]) {
     const char *path = argc > 1 ? argv[1] : ".";
@@ -3024,6 +3119,9 @@ static int execute_command(int argc, char *argv[]) {
         return 0;
     } else if (strcmp_simple(argv[0], "tee") == 0) {
         cmd_tee(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "paste") == 0) {
+        cmd_paste(argc, argv);
         return 0;
     } else if (strcmp_simple(argv[0], "find") == 0) {
         cmd_find(argc, argv);

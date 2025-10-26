@@ -158,6 +158,10 @@ static inline long sys_getcwd(char *buf, size_t size) {
     return syscall2(79, (long)buf, size);
 }
 
+static inline long sys_mkdir(const char *path, unsigned int mode) {
+    return syscall2(83, (long)path, mode);
+}
+
 static inline long sys_fork(void) {
     long ret;
     __asm__ __volatile__(
@@ -1052,6 +1056,25 @@ static void cmd_cat(int argc, char *argv[]) {
     sys_close(fd);
 }
 
+/* Built-in: mkdir - Create a directory */
+static void cmd_mkdir(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(2, "mkdir: missing operand\n");
+        write_str(2, "Usage: mkdir <directory>\n");
+        return;
+    }
+
+    const char *path = argv[1];
+
+    /* Create the directory with default permissions (0755) */
+    long ret = sys_mkdir(path, 0755);
+    if (ret < 0) {
+        write_str(2, "mkdir: cannot create directory '");
+        write_str(2, path);
+        write_str(2, "'\n");
+    }
+}
+
 /* Built-in: export */
 static void cmd_export(int argc, char *argv[]) {
     if (argc < 2) {
@@ -1352,6 +1375,9 @@ static int execute_command(int argc, char *argv[]) {
         return 0;
     } else if (strcmp_simple(argv[0], "cat") == 0) {
         cmd_cat(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "mkdir") == 0) {
+        cmd_mkdir(argc, argv);
         return 0;
     } else if (strcmp_simple(argv[0], "export") == 0) {
         cmd_export(argc, argv);

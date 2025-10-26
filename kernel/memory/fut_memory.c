@@ -94,7 +94,10 @@ void *fut_pmm_alloc_page(void) {
             --pmm_free;
             uintptr_t phys = pmm_base + i * FUT_PAGE_SIZE;
 #if defined(__x86_64__)
-            return (void *)(uintptr_t)pmap_phys_to_virt((phys_addr_t)phys);
+            uintptr_t virt = pmap_phys_to_virt((phys_addr_t)phys);
+            // Compiler barrier to prevent optimization issues
+            __asm__ volatile("" : "+r"(virt) :: "memory");
+            return (void *)virt;
 #else
             return (void *)(uintptr_t)phys;
 #endif

@@ -410,6 +410,11 @@ static ssize_t read_line(int fd, char *buf, size_t max_len) {
 
 /* String comparison */
 static int strcmp_simple(const char *a, const char *b) {
+    /* NULL safety: if either pointer is NULL, treat as not equal */
+    if (!a || !b) {
+        return (a == b) ? 0 : (a ? 1 : -1);
+    }
+
     while (*a && *b && *a == *b) {
         a++;
         b++;
@@ -3257,7 +3262,10 @@ static void cmd_bg(int argc, char *argv[]) {
 
 /* Execute a command */
 static int execute_command(int argc, char *argv[]) {
-    if (argc == 0) return 0;
+    /* Safety checks to prevent crashes */
+    if (argc == 0 || !argv || !argv[0]) {
+        return 0;
+    }
 
     if (strcmp_simple(argv[0], "help") == 0) {
         cmd_help(argc, argv);
@@ -3316,12 +3324,6 @@ static int execute_command(int argc, char *argv[]) {
     } else if (strcmp_simple(argv[0], "diff") == 0) {
         cmd_diff(argc, argv);
         return 0;
-    } else if (strcmp_simple(argv[0], "grep") == 0) {
-        cmd_grep(argc, argv);
-        return 0;
-    } else if (strcmp_simple(argv[0], "sort") == 0) {
-        cmd_sort(argc, argv);
-        return 0;
     } else if (strcmp_simple(argv[0], "find") == 0) {
         cmd_find(argc, argv);
         return 0;
@@ -3348,9 +3350,6 @@ static int execute_command(int argc, char *argv[]) {
         return 0;
     } else if (strcmp_simple(argv[0], "mv") == 0) {
         cmd_mv(argc, argv);
-        return 0;
-    } else if (strcmp_simple(argv[0], "echo") == 0) {
-        cmd_echo(argc, argv);
         return 0;
     } else if (strcmp_simple(argv[0], "export") == 0) {
         cmd_export(argc, argv);

@@ -23,12 +23,20 @@
 #error "Unsupported architecture for memory management"
 #endif
 
+/* Forward declaration for file backing */
+struct fut_vnode;
+
 /* Virtual Memory Area - represents a contiguous mapped region */
 struct fut_vma {
     uintptr_t start;    /* Start address (page-aligned) */
     uintptr_t end;      /* End address (page-aligned, exclusive) */
     int prot;           /* Protection flags (PROT_READ, PROT_WRITE, PROT_EXEC) */
     int flags;          /* Mapping flags */
+
+    /* File backing (NULL for anonymous mappings) */
+    struct fut_vnode *vnode;  /* Backing file vnode (holds reference) */
+    uint64_t file_offset;      /* Offset into backing file */
+
     struct fut_vma *next;  /* Next VMA in list */
 };
 
@@ -65,6 +73,8 @@ uintptr_t fut_mm_brk_current(const fut_mm_t *mm);
 uintptr_t fut_mm_brk_limit(const fut_mm_t *mm);
 void fut_mm_set_brk_current(fut_mm_t *mm, uintptr_t current);
 void *fut_mm_map_anonymous(fut_mm_t *mm, uintptr_t hint, size_t len, int prot, int flags);
+void *fut_mm_map_file(fut_mm_t *mm, struct fut_vnode *vnode, uintptr_t hint,
+                       size_t len, int prot, int flags, uint64_t file_offset);
 int fut_mm_unmap(fut_mm_t *mm, uintptr_t addr, size_t len);
 
 /* VMA management for fork() */

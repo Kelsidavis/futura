@@ -16,6 +16,7 @@
 #include "../../include/kernel/fut_memory.h"
 #include "../../include/kernel/fut_task.h"
 #include "../../include/kernel/fut_thread.h"
+#include "../../include/kernel/fut_vfs.h"
 
 #include <arch/x86_64/paging.h>
 #include <arch/x86_64/pmap.h>
@@ -345,6 +346,8 @@ void *fut_mm_map_anonymous(fut_mm_t *mm, uintptr_t hint, size_t len, int prot, i
     vma->end = end;
     vma->prot = prot;
     vma->flags = flags;
+    vma->vnode = NULL;  /* Anonymous mapping */
+    vma->file_offset = 0;
     vma->next = mm->vma_list;
     mm->vma_list = vma;
 
@@ -370,27 +373,230 @@ int fut_mm_unmap(fut_mm_t *mm, uintptr_t addr, size_t len) {
         return -EINVAL;
     }
 
-    uintptr_t start = PAGE_ALIGN_DOWN(addr);
+    uintptr_t unmap_start = PAGE_ALIGN_DOWN(addr);
     uintptr_t aligned = PAGE_ALIGN_UP(len);
-    uintptr_t end = start + aligned;
-    if (end < start) {
+    uintptr_t unmap_end = unmap_start + aligned;
+    if (unmap_end < unmap_start) {
         return -EINVAL;
     }
 
     fut_vma_t **link = &mm->vma_list;
     fut_vma_t *vma = mm->vma_list;
+
     while (vma) {
-        if (vma->start == start && vma->end == end) {
+        fut_vma_t *next = vma->next;
+
+        /* Check if this VMA overlaps with the unmap region */
+        if (vma->end <= unmap_start || vma->start >= unmap_end) {
+            /* No overlap, move to next */
+            link = &vma->next;
+            vma = next;
+            continue;
+        }
+
+        /* VMA overlaps with unmap region */
+        uintptr_t overlap_start = (vma->start > unmap_start) ? vma->start : unmap_start;
+        uintptr_t overlap_end = (vma->end < unmap_end) ? vma->end : unmap_end;
+
+        if (overlap_start <= vma->start && overlap_end >= vma->end) {
+            /* Case 1: Entire VMA is unmapped - remove it */
             *link = vma->next;
             mm_unmap_and_free(mm, vma->start, vma->end);
+            /* Release file backing if present */
+            if (vma->vnode) {
+                extern void fut_vnode_unref(struct fut_vnode *);
+                fut_vnode_unref(vma->vnode);
+            }
             fut_free(vma);
-            return 0;
+            vma = next;
+            continue;
         }
+
+        if (overlap_start == vma->start && overlap_end < vma->end) {
+            /* Case 2: Unmap left part - shrink VMA from the left */
+            mm_unmap_and_free(mm, vma->start, overlap_end);
+            vma->start = overlap_end;
+            link = &vma->next;
+            vma = next;
+            continue;
+        }
+
+        if (overlap_start > vma->start && overlap_end == vma->end) {
+            /* Case 3: Unmap right part - shrink VMA from the right */
+            mm_unmap_and_free(mm, overlap_start, vma->end);
+            vma->end = overlap_start;
+            link = &vma->next;
+            vma = next;
+            continue;
+        }
+
+        if (overlap_start > vma->start && overlap_end < vma->end) {
+            /* Case 4: Unmap middle - split VMA into two */
+            fut_vma_t *right_vma = fut_malloc(sizeof(*right_vma));
+            if (!right_vma) {
+                return -ENOMEM;
+            }
+
+            /* Create right portion */
+            right_vma->start = overlap_end;
+            right_vma->end = vma->end;
+            right_vma->prot = vma->prot;
+            right_vma->flags = vma->flags;
+            right_vma->vnode = vma->vnode;  /* Share file backing */
+            if (vma->vnode) {
+                /* Adjust file offset for the right portion */
+                uint64_t offset_delta = overlap_end - vma->start;
+                right_vma->file_offset = vma->file_offset + offset_delta;
+                /* TODO: Add vnode reference counting when implemented */
+            } else {
+                right_vma->file_offset = 0;
+            }
+            right_vma->next = vma->next;
+
+            /* Shrink left portion */
+            vma->end = overlap_start;
+            vma->next = right_vma;
+
+            /* Unmap the middle */
+            mm_unmap_and_free(mm, overlap_start, overlap_end);
+
+            link = &right_vma->next;
+            vma = next;
+            continue;
+        }
+
+        /* Move to next */
         link = &vma->next;
-        vma = vma->next;
+        vma = next;
     }
 
-    return -EINVAL;
+    return 0;
+}
+
+/**
+ * Map a file into memory.
+ * For now, this eagerly loads file contents into memory (not demand-paged).
+ * TODO: Implement demand paging with page fault handler.
+ */
+void *fut_mm_map_file(fut_mm_t *mm, struct fut_vnode *vnode, uintptr_t hint,
+                       size_t len, int prot, int flags, uint64_t file_offset) {
+    extern void fut_printf(const char *, ...);
+    extern void fut_vnode_ref(struct fut_vnode *);
+
+    if (!mm || !vnode || len == 0) {
+        return (void *)(intptr_t)(-EINVAL);
+    }
+
+    /* Align length to page boundary */
+    size_t aligned = PAGE_ALIGN_UP(len);
+    if (aligned == 0) {
+        return (void *)(intptr_t)(-EINVAL);
+    }
+
+    /* Determine mapping address */
+    uintptr_t base;
+    if ((flags & 0x10) && hint) { /* MAP_FIXED */
+        base = PAGE_ALIGN_DOWN(hint);
+    } else {
+        uintptr_t candidate = mm->mmap_base ? mm->mmap_base : USER_MMAP_BASE;
+        if (candidate < USER_MMAP_BASE) {
+            candidate = USER_MMAP_BASE;
+        }
+        candidate = PAGE_ALIGN_UP(candidate);
+        if (candidate < mm->heap_mapped_end) {
+            candidate = PAGE_ALIGN_UP(mm->heap_mapped_end);
+        }
+        base = candidate;
+    }
+
+    uintptr_t end = base + aligned;
+    if (end < base || end > USER_VMA_MAX) {
+        return (void *)(intptr_t)(-ENOMEM);
+    }
+
+    /* Allocate physical pages and map them */
+    size_t pages = aligned / PAGE_SIZE;
+    void **page_cache = fut_malloc(pages * sizeof(void *));
+    if (!page_cache) {
+        return (void *)(intptr_t)(-ENOMEM);
+    }
+
+    uint64_t pte_flags = mm_pte_flags(prot);
+    size_t mapped = 0;
+    fut_vmem_context_t *ctx = fut_mm_context(mm);
+    int err = -ENOMEM;
+
+    /* Read file contents and map pages */
+    for (uintptr_t addr = base; addr < end; addr += PAGE_SIZE) {
+        void *page = fut_pmm_alloc_page();
+        if (!page) {
+            mapped = (addr - base) / PAGE_SIZE;
+            err = -ENOMEM;
+            goto fail;
+        }
+
+        /* Read file contents into page */
+        uint64_t page_offset = (addr - base) + file_offset;
+        memset(page, 0, PAGE_SIZE);  /* Zero page first */
+
+        if (vnode->ops && vnode->ops->read) {
+            /* Read up to one page from file */
+            ssize_t bytes_read = vnode->ops->read(vnode, page, PAGE_SIZE, page_offset);
+            if (bytes_read < 0) {
+                fut_printf("[MM-MAP-FILE] Warning: read failed at offset %llu: %ld\n",
+                           page_offset, bytes_read);
+                /* Continue with zero-filled page */
+            }
+            /* Partial reads are OK - rest of page remains zero */
+        }
+
+        phys_addr_t phys = pmap_virt_to_phys((uintptr_t)page);
+        if (pmap_map_user(ctx, addr, phys, PAGE_SIZE, pte_flags) != 0) {
+            fut_pmm_free_page(page);
+            mapped = (addr - base) / PAGE_SIZE;
+            err = -ENOMEM;
+            goto fail;
+        }
+        page_cache[(addr - base) / PAGE_SIZE] = page;
+    }
+
+    /* Create VMA to track this mapping */
+    fut_vma_t *vma = fut_malloc(sizeof(*vma));
+    if (!vma) {
+        mapped = pages;
+        err = -ENOMEM;
+        goto fail;
+    }
+
+    vma->start = base;
+    vma->end = end;
+    vma->prot = prot;
+    vma->flags = flags;
+    vma->vnode = vnode;
+    vma->file_offset = file_offset;
+    vma->next = mm->vma_list;
+    mm->vma_list = vma;
+
+    /* Add reference to vnode */
+    fut_vnode_ref(vnode);
+
+    mm->mmap_base = end;
+
+    fut_free(page_cache);
+    fut_printf("[MM-MAP-FILE] Mapped file: vaddr=0x%llx size=%zu offset=%llu\n",
+               base, len, file_offset);
+    return (void *)(uintptr_t)base;
+
+fail:
+    for (size_t i = 0; i < mapped; ++i) {
+        uintptr_t addr = base + (uintptr_t)i * PAGE_SIZE;
+        fut_unmap_range(ctx, addr, PAGE_SIZE);
+        if (page_cache[i]) {
+            fut_pmm_free_page(page_cache[i]);
+        }
+    }
+    fut_free(page_cache);
+    return (void *)(intptr_t)err;
 }
 
 #elif defined(__aarch64__)
@@ -704,6 +910,8 @@ void *fut_mm_map_anonymous(fut_mm_t *mm, uintptr_t hint, size_t len, int prot, i
         vma->end = addr + aligned_len;
         vma->prot = prot;
         vma->flags = flags;
+        vma->vnode = NULL;  /* Anonymous mapping */
+        vma->file_offset = 0;
         vma->next = mm->vma_list;
         mm->vma_list = vma;
     }
@@ -719,27 +927,116 @@ int fut_mm_unmap(fut_mm_t *mm, uintptr_t addr, size_t len) {
         return -EINVAL;
     }
 
-    uintptr_t start = PAGE_ALIGN_DOWN(addr);
+    uintptr_t unmap_start = PAGE_ALIGN_DOWN(addr);
     uintptr_t aligned = PAGE_ALIGN_UP(len);
-    uintptr_t end = start + aligned;
-    if (end < start) {
+    uintptr_t unmap_end = unmap_start + aligned;
+    if (unmap_end < unmap_start) {
         return -EINVAL;
     }
 
     fut_vma_t **link = &mm->vma_list;
     fut_vma_t *vma = mm->vma_list;
+
     while (vma) {
-        if (vma->start == start && vma->end == end) {
+        fut_vma_t *next = vma->next;
+
+        /* Check if this VMA overlaps with the unmap region */
+        if (vma->end <= unmap_start || vma->start >= unmap_end) {
+            /* No overlap, move to next */
+            link = &vma->next;
+            vma = next;
+            continue;
+        }
+
+        /* VMA overlaps with unmap region */
+        uintptr_t overlap_start = (vma->start > unmap_start) ? vma->start : unmap_start;
+        uintptr_t overlap_end = (vma->end < unmap_end) ? vma->end : unmap_end;
+
+        if (overlap_start <= vma->start && overlap_end >= vma->end) {
+            /* Case 1: Entire VMA is unmapped - remove it */
             *link = vma->next;
             mm_unmap_and_free(mm, vma->start, vma->end);
+            /* Release file backing if present */
+            if (vma->vnode) {
+                extern void fut_vnode_unref(struct fut_vnode *);
+                fut_vnode_unref(vma->vnode);
+            }
             fut_free(vma);
-            return 0;
+            vma = next;
+            continue;
         }
+
+        if (overlap_start == vma->start && overlap_end < vma->end) {
+            /* Case 2: Unmap left part - shrink VMA from the left */
+            mm_unmap_and_free(mm, vma->start, overlap_end);
+            vma->start = overlap_end;
+            link = &vma->next;
+            vma = next;
+            continue;
+        }
+
+        if (overlap_start > vma->start && overlap_end == vma->end) {
+            /* Case 3: Unmap right part - shrink VMA from the right */
+            mm_unmap_and_free(mm, overlap_start, vma->end);
+            vma->end = overlap_start;
+            link = &vma->next;
+            vma = next;
+            continue;
+        }
+
+        if (overlap_start > vma->start && overlap_end < vma->end) {
+            /* Case 4: Unmap middle - split VMA into two */
+            fut_vma_t *right_vma = fut_malloc(sizeof(*right_vma));
+            if (!right_vma) {
+                return -ENOMEM;
+            }
+
+            /* Create right portion */
+            right_vma->start = overlap_end;
+            right_vma->end = vma->end;
+            right_vma->prot = vma->prot;
+            right_vma->flags = vma->flags;
+            right_vma->vnode = vma->vnode;  /* Share file backing */
+            if (vma->vnode) {
+                /* Adjust file offset for the right portion */
+                uint64_t offset_delta = overlap_end - vma->start;
+                right_vma->file_offset = vma->file_offset + offset_delta;
+                /* TODO: Add vnode reference counting when implemented */
+            } else {
+                right_vma->file_offset = 0;
+            }
+            right_vma->next = vma->next;
+
+            /* Shrink left portion */
+            vma->end = overlap_start;
+            vma->next = right_vma;
+
+            /* Unmap the middle */
+            mm_unmap_and_free(mm, overlap_start, overlap_end);
+
+            link = &right_vma->next;
+            vma = next;
+            continue;
+        }
+
+        /* Move to next */
         link = &vma->next;
-        vma = vma->next;
+        vma = next;
     }
 
-    return -EINVAL;
+    return 0;
+}
+
+/**
+ * Map a file into memory (ARM64 stub).
+ * TODO: Implement proper ARM64 file-backed mmap.
+ */
+void *fut_mm_map_file(fut_mm_t *mm, struct fut_vnode *vnode, uintptr_t hint,
+                       size_t len, int prot, int flags, uint64_t file_offset) {
+    (void)mm; (void)vnode; (void)hint; (void)len;
+    (void)prot; (void)flags; (void)file_offset;
+    /* TODO: Implement ARM64 file-backed mmap */
+    return (void *)(intptr_t)(-ENOSYS);
 }
 
 #else
@@ -777,6 +1074,8 @@ int fut_mm_add_vma(fut_mm_t *mm, uintptr_t start, uintptr_t end, int prot, int f
     vma->end = end;
     vma->prot = prot;
     vma->flags = flags;
+    vma->vnode = NULL;  /* Set by caller if file-backed */
+    vma->file_offset = 0;
     vma->next = NULL;
 
     /* Add to end of list (insertion order) */

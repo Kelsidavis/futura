@@ -1749,27 +1749,57 @@ static void cmd_cut(int argc, char *argv[]) {
         return;
     }
 
-    /* Process files or stdin */
-    if (arg_start >= argc) {
-        write_str(2, "cut: reading from stdin not yet supported\n");
-        return;
+    /* Helper function to process a single line */
+    #define CUT_MAX_LINE 2048
+    static char line_buf[CUT_MAX_LINE];
+
+    auto void process_line(const char *line) {
+        if (char_mode) {
+            /* Character mode: extract characters char_start to char_end */
+            int len = 0;
+            while (line[len]) len++;
+
+            for (int pos = char_start; pos <= char_end && pos <= len; pos++) {
+                write_char(1, line[pos - 1]);
+            }
+            write_char(1, '\n');
+        } else {
+            /* Field mode: split by delimiter and extract field */
+            int current_field = 1;
+            int idx = 0;
+
+            while (1) {
+                /* Find end of current field */
+                int field_end = idx;
+                while (line[field_end] && line[field_end] != delimiter) {
+                    field_end++;
+                }
+
+                /* Check if this is the field we want */
+                if (current_field == field_num) {
+                    /* Output this field */
+                    for (int j = idx; j < field_end; j++) {
+                        write_char(1, line[j]);
+                    }
+                    write_char(1, '\n');
+                    break;
+                }
+
+                /* Move to next field */
+                if (line[field_end] == '\0') {
+                    /* No more fields, output empty line */
+                    write_char(1, '\n');
+                    break;
+                }
+
+                idx = field_end + 1;
+                current_field++;
+            }
+        }
     }
 
-    /* Process each file */
-    for (int file_idx = arg_start; file_idx < argc; file_idx++) {
-        const char *path = argv[file_idx];
-
-        int fd = sys_open(path, O_RDONLY, 0);
-        if (fd < 0) {
-            write_str(2, "cut: ");
-            write_str(2, path);
-            write_str(2, ": cannot open file\n");
-            continue;
-        }
-
-        /* Read file line by line */
-        #define CUT_MAX_LINE 2048
-        static char line_buf[CUT_MAX_LINE];
+    /* Helper function to process a file descriptor */
+    auto void process_fd(int fd) {
         char read_buf[256];
         int line_pos = 0;
         long bytes_read;
@@ -1780,51 +1810,7 @@ static void cmd_cut(int argc, char *argv[]) {
 
                 if (c == '\n' || line_pos >= CUT_MAX_LINE - 1) {
                     line_buf[line_pos] = '\0';
-
-                    /* Process line based on mode */
-                    if (char_mode) {
-                        /* Character mode: extract characters char_start to char_end */
-                        int len = 0;
-                        while (line_buf[len]) len++;
-
-                        for (int pos = char_start; pos <= char_end && pos <= len; pos++) {
-                            write_char(1, line_buf[pos - 1]);
-                        }
-                        write_char(1, '\n');
-                    } else {
-                        /* Field mode: split by delimiter and extract field */
-                        int current_field = 1;
-                        int idx = 0;
-
-                        while (1) {
-                            /* Find end of current field */
-                            int field_end = idx;
-                            while (line_buf[field_end] && line_buf[field_end] != delimiter) {
-                                field_end++;
-                            }
-
-                            /* Check if this is the field we want */
-                            if (current_field == field_num) {
-                                /* Output this field */
-                                for (int j = idx; j < field_end; j++) {
-                                    write_char(1, line_buf[j]);
-                                }
-                                write_char(1, '\n');
-                                break;
-                            }
-
-                            /* Move to next field */
-                            if (line_buf[field_end] == '\0') {
-                                /* No more fields, output empty line */
-                                write_char(1, '\n');
-                                break;
-                            }
-
-                            idx = field_end + 1;
-                            current_field++;
-                        }
-                    }
-
+                    process_line(line_buf);
                     line_pos = 0;
                 } else {
                     line_buf[line_pos++] = c;
@@ -1832,53 +1818,32 @@ static void cmd_cut(int argc, char *argv[]) {
             }
         }
 
-        /* Handle last line if file doesn't end with newline */
+        /* Handle last line if input doesn't end with newline */
         if (line_pos > 0) {
             line_buf[line_pos] = '\0';
-
-            if (char_mode) {
-                int len = 0;
-                while (line_buf[len]) len++;
-
-                for (int pos = char_start; pos <= char_end && pos <= len; pos++) {
-                    write_char(1, line_buf[pos - 1]);
-                }
-                write_char(1, '\n');
-            } else {
-                int current_field = 1;
-                int idx = 0;
-
-                while (1) {
-                    int field_end = idx;
-                    while (line_buf[field_end] && line_buf[field_end] != delimiter) {
-                        field_end++;
-                    }
-
-                    if (current_field == field_num) {
-                        for (int j = idx; j < field_end; j++) {
-                            write_char(1, line_buf[j]);
-                        }
-                        write_char(1, '\n');
-                        break;
-                    }
-
-                    if (line_buf[field_end] == '\0') {
-                        write_char(1, '\n');
-                        break;
-                    }
-
-                    idx = field_end + 1;
-                    current_field++;
-                }
-            }
+            process_line(line_buf);
         }
+    }
 
-        sys_close(fd);
+    /* Process files or stdin */
+    if (arg_start >= argc) {
+        /* Read from stdin */
+        process_fd(0);
+    } else {
+        /* Process each file */
+        for (int file_idx = arg_start; file_idx < argc; file_idx++) {
+            const char *path = argv[file_idx];
 
-        if (bytes_read < 0) {
-            write_str(2, "cut: ");
-            write_str(2, path);
-            write_str(2, ": read error\n");
+            int fd = sys_open(path, O_RDONLY, 0);
+            if (fd < 0) {
+                write_str(2, "cut: ");
+                write_str(2, path);
+                write_str(2, ": cannot open file\n");
+                continue;
+            }
+
+            process_fd(fd);
+            sys_close(fd);
         }
     }
 }

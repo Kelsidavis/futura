@@ -882,6 +882,12 @@ static void cmd_help(int argc, char *argv[]) {
     write_str(1, "  ls [dir]        - List directory contents\n");
     write_str(1, "  cat <file>      - Display file contents\n");
     write_str(1, "\n");
+    write_str(1, "File Operations:\n");
+    write_str(1, "  mkdir <dir>     - Create directory\n");
+    write_str(1, "  rmdir <dir>     - Remove empty directory\n");
+    write_str(1, "  touch <file>    - Create empty file\n");
+    write_str(1, "  rm <file>       - Remove file\n");
+    write_str(1, "\n");
     write_str(1, "System:\n");
     write_str(1, "  uname           - Print system information\n");
     write_str(1, "  whoami          - Print current user\n");
@@ -1117,6 +1123,29 @@ static void cmd_rm(int argc, char *argv[]) {
         write_str(2, path);
         write_str(2, "'\n");
     }
+}
+
+/* Built-in: touch */
+static void cmd_touch(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(2, "touch: missing file operand\n");
+        write_str(2, "Usage: touch <file>\n");
+        return;
+    }
+
+    const char *path = argv[1];
+
+    /* Create file by opening with O_CREAT and then closing */
+    int fd = sys_open(path, O_CREAT | O_WRONLY, 0644);
+    if (fd < 0) {
+        write_str(2, "touch: cannot touch '");
+        write_str(2, path);
+        write_str(2, "'\n");
+        return;
+    }
+
+    /* Close the file immediately */
+    sys_close(fd);
 }
 
 /* Built-in: export */
@@ -1428,6 +1457,9 @@ static int execute_command(int argc, char *argv[]) {
         return 0;
     } else if (strcmp_simple(argv[0], "rm") == 0) {
         cmd_rm(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "touch") == 0) {
+        cmd_touch(argc, argv);
         return 0;
     } else if (strcmp_simple(argv[0], "export") == 0) {
         cmd_export(argc, argv);

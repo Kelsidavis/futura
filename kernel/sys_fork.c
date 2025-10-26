@@ -15,9 +15,11 @@
 #include <kernel/uaccess.h>
 #include <arch/x86_64/paging.h>
 #include <arch/x86_64/pmap.h>
+#include <arch/x86_64/regs.h>
 #include <string.h>
 
 extern void fut_printf(const char *fmt, ...);
+extern fut_interrupt_frame_t *fut_current_frame;
 
 /* Forward declarations */
 static fut_mm_t *clone_mm(fut_mm_t *parent_mm);
@@ -211,13 +213,50 @@ static fut_mm_t *clone_mm(fut_mm_t *parent_mm) {
 }
 
 /**
- * Clone thread structure.
- * Creates a new thread in the child task with copied register state.
+ * Clone thread structure using syscall stack frame.
+ * Creates a new thread in the child task that will return from the syscall.
  */
 static fut_thread_t *clone_thread(fut_thread_t *parent_thread, fut_task_t *child_task) {
     if (!parent_thread || !child_task) {
         return NULL;
     }
+
+    /* Get the syscall frame pointer (points to CPU-pushed part: RIP, CS, RFLAGS, RSP, SS) */
+    uint64_t *frame_ptr = (uint64_t *)fut_current_frame;
+    if (!frame_ptr) {
+        fut_printf("[FORK] ERROR: No interrupt frame available!\n");
+        return NULL;
+    }
+
+    /*
+     * Syscall stack layout (from isr_stubs.S):
+     * frame[0]  = RIP
+     * frame[1]  = CS
+     * frame[2]  = RFLAGS
+     * frame[3]  = RSP (user stack)
+     * frame[4]  = SS
+     * frame[-1] = RAX (saved syscall number)
+     * frame[-2] = CR3
+     * frame[-3] = RBP
+     * frame[-4] = RBX
+     * frame[-5] = R12
+     * frame[-6] = R13
+     * frame[-7] = R14
+     * frame[-8] = R15
+     */
+    uint64_t user_rip = frame_ptr[0];
+    uint64_t user_cs = frame_ptr[1];
+    uint64_t user_rflags = frame_ptr[2];
+    uint64_t user_rsp = frame_ptr[3];
+    uint64_t user_ss = frame_ptr[4];
+    uint64_t user_rbp = frame_ptr[-3];
+    uint64_t user_rbx = frame_ptr[-4];
+    uint64_t user_r12 = frame_ptr[-5];
+    uint64_t user_r13 = frame_ptr[-6];
+    uint64_t user_r14 = frame_ptr[-7];
+    uint64_t user_r15 = frame_ptr[-8];
+
+    fut_printf("[FORK] Parent frame: RIP=0x%llx RSP=0x%llx\n", user_rip, user_rsp);
 
     /*
      * Create a new thread in the child task.
@@ -235,23 +274,31 @@ static fut_thread_t *clone_thread(fut_thread_t *parent_thread, fut_task_t *child
         return NULL;
     }
 
-    /* Copy the entire CPU context from parent to child */
-    /* This makes the child resume execution at the same point as parent */
-    fut_printf("[FORK] Parent context: RIP=0x%llx RSP=0x%llx\n",
-               parent_thread->context.rip, parent_thread->context.rsp);
-    memcpy(&child_thread->context, &parent_thread->context, sizeof(fut_cpu_context_t));
-    fut_printf("[FORK] Child context after copy: RIP=0x%llx RSP=0x%llx\n",
-               child_thread->context.rip, child_thread->context.rsp);
+    /* Build child context from syscall frame */
+    /* The child will be scheduled and return to userspace with the saved state */
+    child_thread->context.rip = user_rip;
+    child_thread->context.rsp = user_rsp;
+    child_thread->context.rbp = user_rbp;
+    child_thread->context.rbx = user_rbx;
+    child_thread->context.r12 = user_r12;
+    child_thread->context.r13 = user_r13;
+    child_thread->context.r14 = user_r14;
+    child_thread->context.r15 = user_r15;
+    child_thread->context.rflags = user_rflags;
+    child_thread->context.cs = user_cs;
+    child_thread->context.ss = user_ss;
 
-    /*
-     * Note: We don't copy the stack contents.
-     * In a proper fork(), we would:
-     * 1. Copy all stack pages
-     * 2. Adjust stack pointer
-     * 3. Set up COW for stack
-     *
-     * For now, this works for fork+exec pattern where exec replaces everything.
-     */
+    /* Set segment registers to user data segment */
+    child_thread->context.ds = 0x10;  // User data segment
+    child_thread->context.es = 0x10;
+    child_thread->context.fs = 0x10;
+    child_thread->context.gs = 0x10;
+
+    /* Set child's fork() return value to 0 */
+    child_thread->context.rax = 0;
+
+    fut_printf("[FORK] Child context: RIP=0x%llx RSP=0x%llx RAX=0\n",
+               child_thread->context.rip, child_thread->context.rsp);
 
     return child_thread;
 }

@@ -2718,46 +2718,57 @@ static void cmd_ls(int argc, char *argv[]) {
 
 /* Built-in: cat - Display file contents */
 static void cmd_cat(int argc, char *argv[]) {
-    if (argc < 2) {
-        write_str(2, "cat: missing file operand\n");
-        write_str(2, "Usage: cat <file>\n");
-        return;
-    }
+    /* Helper function to process a file descriptor */
+    auto int process_fd(int fd) {
+        char buffer[256];
+        long bytes_read;
 
-    const char *path = argv[1];
-
-    /* Open the file */
-    int fd = sys_open(path, O_RDONLY, 0);
-    if (fd < 0) {
-        write_str(2, "cat: ");
-        write_str(2, path);
-        write_str(2, ": cannot open file\n");
-        return;
-    }
-
-    /* Read and print file contents in chunks */
-    char buffer[256];
-    long bytes_read;
-
-    while ((bytes_read = sys_read(fd, buffer, sizeof(buffer))) > 0) {
-        /* Write chunk to stdout */
-        long written = 0;
-        while (written < bytes_read) {
-            long n = sys_write(1, buffer + written, bytes_read - written);
-            if (n <= 0) {
-                write_str(2, "cat: write error\n");
-                sys_close(fd);
-                return;
+        while ((bytes_read = sys_read(fd, buffer, sizeof(buffer))) > 0) {
+            /* Write chunk to stdout */
+            long written = 0;
+            while (written < bytes_read) {
+                long n = sys_write(1, buffer + written, bytes_read - written);
+                if (n <= 0) {
+                    write_str(2, "cat: write error\n");
+                    return -1;
+                }
+                written += n;
             }
-            written += n;
+        }
+
+        if (bytes_read < 0) {
+            write_str(2, "cat: read error\n");
+            return -1;
+        }
+
+        return 0;
+    }
+
+    /* Process files or stdin */
+    if (argc < 2) {
+        /* Read from stdin */
+        process_fd(0);
+    } else {
+        /* Process each file */
+        for (int i = 1; i < argc; i++) {
+            const char *path = argv[i];
+
+            /* Open the file */
+            int fd = sys_open(path, O_RDONLY, 0);
+            if (fd < 0) {
+                write_str(2, "cat: ");
+                write_str(2, path);
+                write_str(2, ": cannot open file\n");
+                continue;
+            }
+
+            /* Process file */
+            process_fd(fd);
+
+            /* Close file */
+            sys_close(fd);
         }
     }
-
-    if (bytes_read < 0) {
-        write_str(2, "cat: read error\n");
-    }
-
-    sys_close(fd);
 }
 
 /* Built-in: mkdir - Create a directory */

@@ -883,6 +883,7 @@ static void cmd_help(int argc, char *argv[]) {
     write_str(1, "  cd [dir]        - Change directory\n");
     write_str(1, "  pwd             - Print working directory\n");
     write_str(1, "  ls [dir]        - List directory contents\n");
+    write_str(1, "  find [path] [-name pattern] [-type f|d] - Search for files recursively\n");
     write_str(1, "  cat <file>      - Display file contents\n");
     write_str(1, "  wc <file>...    - Count lines, words, and bytes\n");
     write_str(1, "  head [-n N] <file>... - Display first N lines (default 10)\n");
@@ -1471,6 +1472,175 @@ static void cmd_grep(int argc, char *argv[]) {
             write_str(2, ": read error\n");
         }
     }
+}
+
+/* Helper: Simple wildcard pattern matching for find -name */
+static int match_pattern(const char *str, const char *pattern) {
+    while (*pattern) {
+        if (*pattern == '*') {
+            pattern++;
+            if (!*pattern) return 1;  /* Pattern ends with *, match rest */
+
+            /* Try to match the rest of pattern with remaining string */
+            while (*str) {
+                if (match_pattern(str, pattern)) return 1;
+                str++;
+            }
+            return 0;
+        } else if (*pattern == '?') {
+            if (!*str) return 0;  /* ? must match exactly one char */
+            str++;
+            pattern++;
+        } else {
+            if (*str != *pattern) return 0;
+            str++;
+            pattern++;
+        }
+    }
+    return !*str;  /* Both must be exhausted */
+}
+
+/* Helper: Recursive directory traversal for find */
+static void find_recurse(const char *path, const char *name_pattern, int type_filter, int depth) {
+    /* Prevent infinite recursion */
+    if (depth > 32) {
+        return;
+    }
+
+    /* Open directory */
+    int fd = sys_open(path, O_RDONLY, 0);
+    if (fd < 0) {
+        return;  /* Silently skip directories we can't open */
+    }
+
+    /* Define Linux dirent64 structure */
+    struct linux_dirent64 {
+        unsigned long long d_ino;
+        long long d_off;
+        unsigned short d_reclen;
+        unsigned char d_type;
+        char d_name[256];
+    };
+
+    char buf[4096];
+    long nread;
+
+    while ((nread = sys_getdents64(fd, buf, sizeof(buf))) > 0) {
+        char *ptr = buf;
+        while (ptr < buf + nread) {
+            struct linux_dirent64 *d = (struct linux_dirent64 *)ptr;
+
+            /* Skip . and .. */
+            if (strcmp_simple(d->d_name, ".") != 0 && strcmp_simple(d->d_name, "..") != 0) {
+                /* Build full path */
+                char full_path[1024];
+                int path_len = 0;
+
+                /* Copy directory path */
+                const char *p = path;
+                while (*p && path_len < 1023) {
+                    full_path[path_len++] = *p++;
+                }
+
+                /* Add separator if needed */
+                if (path_len > 0 && full_path[path_len - 1] != '/') {
+                    full_path[path_len++] = '/';
+                }
+
+                /* Copy entry name */
+                p = d->d_name;
+                while (*p && path_len < 1023) {
+                    full_path[path_len++] = *p++;
+                }
+                full_path[path_len] = '\0';
+
+                /* Check if this entry matches our filters */
+                int type_match = 1;
+                if (type_filter == 'f') {
+                    type_match = (d->d_type != 4);  /* DT_DIR = 4 */
+                } else if (type_filter == 'd') {
+                    type_match = (d->d_type == 4);  /* DT_DIR = 4 */
+                }
+
+                int name_match = 1;
+                if (name_pattern) {
+                    name_match = match_pattern(d->d_name, name_pattern);
+                }
+
+                /* Print if matches all filters */
+                if (type_match && name_match) {
+                    write_str(1, full_path);
+                    write_str(1, "\n");
+                }
+
+                /* Recurse into subdirectories */
+                if (d->d_type == 4) {  /* DT_DIR = 4 */
+                    find_recurse(full_path, name_pattern, type_filter, depth + 1);
+                }
+            }
+
+            ptr += d->d_reclen;
+        }
+    }
+
+    sys_close(fd);
+}
+
+/* Built-in: find - Search for files in directory hierarchy */
+static void cmd_find(int argc, char *argv[]) {
+    const char *start_path = ".";
+    const char *name_pattern = 0;
+    int type_filter = 0;  /* 0 = all, 'f' = files, 'd' = directories */
+    int arg_idx = 1;
+
+    /* If first arg doesn't start with -, it's the path */
+    if (arg_idx < argc && argv[arg_idx][0] != '-') {
+        start_path = argv[arg_idx];
+        arg_idx++;
+    }
+
+    /* Parse options */
+    while (arg_idx < argc) {
+        if (strcmp_simple(argv[arg_idx], "-name") == 0) {
+            if (arg_idx + 1 >= argc) {
+                write_str(2, "find: -name requires an argument\n");
+                return;
+            }
+            name_pattern = argv[arg_idx + 1];
+            arg_idx += 2;
+        } else if (strcmp_simple(argv[arg_idx], "-type") == 0) {
+            if (arg_idx + 1 >= argc) {
+                write_str(2, "find: -type requires an argument\n");
+                return;
+            }
+            if (strcmp_simple(argv[arg_idx + 1], "f") == 0) {
+                type_filter = 'f';
+            } else if (strcmp_simple(argv[arg_idx + 1], "d") == 0) {
+                type_filter = 'd';
+            } else {
+                write_str(2, "find: -type must be 'f' or 'd'\n");
+                return;
+            }
+            arg_idx += 2;
+        } else {
+            write_str(2, "find: unknown option: ");
+            write_str(2, argv[arg_idx]);
+            write_str(2, "\n");
+            write_str(2, "Usage: find [path] [-name pattern] [-type f|d]\n");
+            return;
+        }
+    }
+
+    /* Print the starting directory if it matches filters */
+    if (type_filter == 0 || type_filter == 'd') {
+        if (!name_pattern || match_pattern(start_path, name_pattern)) {
+            write_str(1, start_path);
+            write_str(1, "\n");
+        }
+    }
+
+    /* Start recursive search */
+    find_recurse(start_path, name_pattern, type_filter, 0);
 }
 
 /* Built-in: ls - List directory contents */
@@ -2072,6 +2242,9 @@ static int execute_command(int argc, char *argv[]) {
         return 0;
     } else if (strcmp_simple(argv[0], "grep") == 0) {
         cmd_grep(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "find") == 0) {
+        cmd_find(argc, argv);
         return 0;
     } else if (strcmp_simple(argv[0], "ls") == 0) {
         cmd_ls(argc, argv);

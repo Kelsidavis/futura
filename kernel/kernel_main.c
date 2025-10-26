@@ -970,6 +970,32 @@ void fut_kernel_main(void) {
     /* ahci_init(); */  /* AHCI not yet implemented */
     fut_printf("[INIT] Block device subsystem initialized\n");
 
+    /* ========================================
+     *   Step 5: Initialize FuturaFS and Mount Block Device
+     * ======================================== */
+
+    extern void fut_futurafs_init(void);
+    fut_futurafs_init();
+    fut_printf("[INIT] FuturaFS filesystem registered\n");
+
+    /* Try to mount FuturaFS from blk:vda if it exists */
+    if (vblk_rc == 0) {
+        extern struct fut_blockdev *fut_blockdev_find(const char *name);
+        struct fut_blockdev *test_dev = fut_blockdev_find("blk:vda");
+        if (test_dev) {
+            fut_printf("[INIT] Block device 'blk:vda' found\n");
+        } else {
+            fut_printf("[INIT] Block device 'blk:vda' NOT found\n");
+        }
+
+        int mount_rc = fut_vfs_mount("blk:vda", "/mnt", "futurafs", 0, NULL);
+        if (mount_rc == 0) {
+            fut_printf("[INIT] Mounted FuturaFS from blk:vda at /mnt\n");
+        } else {
+            fut_printf("[INIT] Failed to mount FuturaFS: error %d\n", mount_rc);
+        }
+    }
+
     fut_printf("[INIT] Initializing network subsystem...\n");
     fut_net_init();
     fut_status_t vnet_rc = virtio_net_init();

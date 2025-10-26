@@ -275,7 +275,10 @@ static fut_thread_t *clone_thread(fut_thread_t *parent_thread, fut_task_t *child
     }
 
     /* Get the syscall frame pointer (points to CPU-pushed part: RIP, CS, RFLAGS, RSP, SS) */
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Waddress-of-packed-member"
     uint64_t *frame_ptr = (uint64_t *)fut_current_frame;
+#pragma GCC diagnostic pop
     if (!frame_ptr) {
         fut_printf("[FORK] ERROR: No interrupt frame available!\n");
         return NULL;

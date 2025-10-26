@@ -8,6 +8,7 @@
 
 #include <kernel/fut_vfs.h>
 #include <kernel/fut_memory.h>
+#include <kernel/fut_mm.h>
 #include <kernel/chrdev.h>
 #include <kernel/devfs.h>
 #include <kernel/errno.h>
@@ -1301,16 +1302,30 @@ int fut_vfs_ioctl(int fd, unsigned long req, unsigned long arg) {
 }
 
 void *fut_vfs_mmap(int fd, void *addr, size_t len, int prot, int flags, off_t off) {
+    extern void *fut_mm_map_file(fut_mm_t *, struct fut_vnode *, uintptr_t, size_t, int, int, uint64_t);
+    extern fut_mm_t *fut_mm_current(void);
+
     struct fut_file *file = get_file(fd);
     if (!file) {
         return (void *)(intptr_t)(-EBADF);
     }
 
+    /* Character devices may have custom mmap implementations */
     if (file->chr_ops && file->chr_ops->mmap) {
         return file->chr_ops->mmap(file->chr_inode, file->chr_private, addr, len, off, prot, flags);
     }
 
-    return (void *)(intptr_t)(-ENOTTY);
+    /* Regular files: use generic file-backed mmap */
+    if (file->vnode) {
+        fut_mm_t *mm = fut_mm_current();
+        if (!mm) {
+            return (void *)(intptr_t)(-ENOMEM);
+        }
+
+        return fut_mm_map_file(mm, file->vnode, (uintptr_t)addr, len, prot, flags, (uint64_t)off);
+    }
+
+    return (void *)(intptr_t)(-ENODEV);
 }
 
 /* ============================================================

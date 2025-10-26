@@ -1056,43 +1056,59 @@ static void int_to_str(long n, char *buf, int size) {
 
 /* Built-in: wc - Count lines, words, and bytes */
 static void cmd_wc(int argc, char *argv[]) {
-    if (argc < 2) {
-        write_str(2, "wc: missing file operand\n");
-        write_str(2, "Usage: wc <file>...\n");
-        return;
+    int show_lines = 0;
+    int show_words = 0;
+    int show_bytes = 0;
+    int arg_start = 1;
+
+    /* Parse options */
+    while (arg_start < argc && argv[arg_start][0] == '-' && argv[arg_start][1] != '\0') {
+        const char *opt = argv[arg_start];
+        if (strcmp_simple(opt, "-l") == 0) {
+            show_lines = 1;
+            arg_start++;
+        } else if (strcmp_simple(opt, "-w") == 0) {
+            show_words = 1;
+            arg_start++;
+        } else if (strcmp_simple(opt, "-c") == 0) {
+            show_bytes = 1;
+            arg_start++;
+        } else if (strcmp_simple(opt, "--") == 0) {
+            arg_start++;
+            break;
+        } else {
+            write_str(2, "wc: unknown option: ");
+            write_str(2, opt);
+            write_str(2, "\n");
+            write_str(2, "Usage: wc [-l] [-w] [-c] [file...]\n");
+            return;
+        }
     }
 
-    /* Process each file */
-    for (int file_idx = 1; file_idx < argc; file_idx++) {
-        const char *path = argv[file_idx];
+    /* If no flags specified, show all */
+    if (!show_lines && !show_words && !show_bytes) {
+        show_lines = show_words = show_bytes = 1;
+    }
 
-        /* Open the file */
-        int fd = sys_open(path, O_RDONLY, 0);
-        if (fd < 0) {
-            write_str(2, "wc: ");
-            write_str(2, path);
-            write_str(2, ": cannot open file\n");
-            continue;
-        }
-
-        /* Count lines, words, and bytes */
-        long lines = 0;
-        long words = 0;
-        long bytes = 0;
+    /* Helper function to count lines, words, and bytes in a file descriptor */
+    auto void count_fd(int fd, long *lines, long *words, long *bytes) {
+        *lines = 0;
+        *words = 0;
+        *bytes = 0;
         int in_word = 0;
 
         char buffer[256];
         long bytes_read;
 
         while ((bytes_read = sys_read(fd, buffer, sizeof(buffer))) > 0) {
-            bytes += bytes_read;
+            *bytes += bytes_read;
 
             for (long i = 0; i < bytes_read; i++) {
                 char c = buffer[i];
 
                 /* Count newlines */
                 if (c == '\n') {
-                    lines++;
+                    (*lines)++;
                 }
 
                 /* Count words (whitespace-delimited) */
@@ -1100,37 +1116,65 @@ static void cmd_wc(int argc, char *argv[]) {
                     in_word = 0;
                 } else if (!in_word) {
                     in_word = 1;
-                    words++;
+                    (*words)++;
                 }
             }
         }
+    }
 
-        sys_close(fd);
-
-        if (bytes_read < 0) {
-            write_str(2, "wc: ");
-            write_str(2, path);
-            write_str(2, ": read error\n");
-            continue;
-        }
-
-        /* Print results: lines words bytes filename */
+    /* Helper function to print counts */
+    auto void print_counts(long lines, long words, long bytes, const char *name) {
         char num_buf[32];
 
-        int_to_str(lines, num_buf, sizeof(num_buf));
-        write_str(1, num_buf);
-        write_char(1, ' ');
+        if (show_lines) {
+            int_to_str(lines, num_buf, sizeof(num_buf));
+            write_str(1, num_buf);
+            write_char(1, ' ');
+        }
 
-        int_to_str(words, num_buf, sizeof(num_buf));
-        write_str(1, num_buf);
-        write_char(1, ' ');
+        if (show_words) {
+            int_to_str(words, num_buf, sizeof(num_buf));
+            write_str(1, num_buf);
+            write_char(1, ' ');
+        }
 
-        int_to_str(bytes, num_buf, sizeof(num_buf));
-        write_str(1, num_buf);
-        write_char(1, ' ');
+        if (show_bytes) {
+            int_to_str(bytes, num_buf, sizeof(num_buf));
+            write_str(1, num_buf);
+            write_char(1, ' ');
+        }
 
-        write_str(1, path);
+        if (name) {
+            write_str(1, name);
+        }
         write_char(1, '\n');
+    }
+
+    /* Process files or stdin */
+    if (arg_start >= argc) {
+        /* Read from stdin */
+        long lines, words, bytes;
+        count_fd(0, &lines, &words, &bytes);
+        print_counts(lines, words, bytes, NULL);
+    } else {
+        /* Process each file */
+        for (int file_idx = arg_start; file_idx < argc; file_idx++) {
+            const char *path = argv[file_idx];
+
+            int fd = sys_open(path, O_RDONLY, 0);
+            if (fd < 0) {
+                write_str(2, "wc: ");
+                write_str(2, path);
+                write_str(2, ": cannot open file\n");
+                continue;
+            }
+
+            long lines, words, bytes;
+            count_fd(fd, &lines, &words, &bytes);
+            sys_close(fd);
+
+            print_counts(lines, words, bytes, path);
+        }
     }
 }
 

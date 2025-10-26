@@ -127,6 +127,9 @@ isr_syscall_int80_stub:
     movq %rsp, %r15
     addq $112, %r15           /* r15 = pointer to interrupt frame (RIP) */
 
+    /* Set global fut_current_frame so sys_fork() can access it */
+    movq %r15, fut_current_frame(%rip)
+
     /* Extract syscall arguments from saved registers */
     /* Stack: 0=RDI, 8=RSI, 16=RDX, 24=R10, 32=R8, 40=R9, 48=R15, 56=R14, 64=R13, 72=R12, 80=RBX, 88=RBP, 96=CR3, 104=RAX, 112=RIP... */
     movq 104(%rsp), %rdi      /* syscall number from saved RAX */

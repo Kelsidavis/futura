@@ -660,6 +660,156 @@ static int ramfs_mkdir(struct fut_vnode *dir, const char *name, uint32_t mode) {
 }
 
 /**
+ * ramfs_unlink - Remove a file from a directory
+ * @dir: Parent directory vnode
+ * @name: Name of file to remove
+ *
+ * Returns: 0 on success, negative error code on failure
+ */
+static int ramfs_unlink(struct fut_vnode *dir, const char *name) {
+    extern void fut_printf(const char *, ...);
+
+    if (!dir || !name) {
+        return -EINVAL;
+    }
+
+    if (dir->type != VN_DIR) {
+        return -ENOTDIR;
+    }
+
+    struct ramfs_node *dir_node = (struct ramfs_node *)dir->fs_data;
+    if (!dir_node) {
+        return -EIO;
+    }
+
+    /* Find the entry in the directory */
+    struct ramfs_dirent *entry = dir_node->dir.entries;
+    struct ramfs_dirent *prev = NULL;
+
+    while (entry) {
+        if (str_cmp(entry->name, name) == 0) {
+            /* Found the entry */
+            struct fut_vnode *vnode = entry->vnode;
+
+            /* Can only unlink regular files */
+            if (vnode->type != VN_REG) {
+                return -EISDIR;
+            }
+
+            /* Check if file is still open */
+            struct ramfs_node *node = (struct ramfs_node *)vnode->fs_data;
+            if (node && node->open_count > 0) {
+                fut_printf("[RAMFS-UNLINK] Warning: unlinking open file (open_count=%u)\n",
+                          node->open_count);
+            }
+
+            /* Remove entry from linked list */
+            if (prev) {
+                prev->next = entry->next;
+            } else {
+                dir_node->dir.entries = entry->next;
+            }
+
+            /* Free file data if it exists */
+            if (node && node->file.data) {
+                fut_free(node->file.data);
+            }
+
+            /* Free the ramfs_node */
+            if (node) {
+                fut_free(node);
+            }
+
+            /* Free the vnode */
+            fut_free(vnode);
+
+            /* Free the directory entry */
+            fut_free(entry);
+
+            return 0;
+        }
+
+        prev = entry;
+        entry = entry->next;
+    }
+
+    /* File not found */
+    return -ENOENT;
+}
+
+/**
+ * ramfs_rmdir - Remove an empty directory
+ * @dir: Parent directory vnode
+ * @name: Name of directory to remove
+ *
+ * Returns: 0 on success, negative error code on failure
+ */
+static int ramfs_rmdir(struct fut_vnode *dir, const char *name) {
+    if (!dir || !name) {
+        return -EINVAL;
+    }
+
+    if (dir->type != VN_DIR) {
+        return -ENOTDIR;
+    }
+
+    struct ramfs_node *dir_node = (struct ramfs_node *)dir->fs_data;
+    if (!dir_node) {
+        return -EIO;
+    }
+
+    /* Find the entry in the directory */
+    struct ramfs_dirent *entry = dir_node->dir.entries;
+    struct ramfs_dirent *prev = NULL;
+
+    while (entry) {
+        if (str_cmp(entry->name, name) == 0) {
+            /* Found the entry */
+            struct fut_vnode *vnode = entry->vnode;
+
+            /* Can only remove directories */
+            if (vnode->type != VN_DIR) {
+                return -ENOTDIR;
+            }
+
+            /* Check if directory is empty */
+            struct ramfs_node *node = (struct ramfs_node *)vnode->fs_data;
+            if (!node) {
+                return -EIO;
+            }
+
+            if (node->dir.entries != NULL) {
+                return -ENOTEMPTY;
+            }
+
+            /* Remove entry from linked list */
+            if (prev) {
+                prev->next = entry->next;
+            } else {
+                dir_node->dir.entries = entry->next;
+            }
+
+            /* Free the ramfs_node */
+            fut_free(node);
+
+            /* Free the vnode */
+            fut_free(vnode);
+
+            /* Free the directory entry */
+            fut_free(entry);
+
+            return 0;
+        }
+
+        prev = entry;
+        entry = entry->next;
+    }
+
+    /* Directory not found */
+    return -ENOENT;
+}
+
+/**
  * ramfs_readdir - Read directory entries
  * @dir: Directory vnode
  * @cookie: Position in directory (entry index)
@@ -752,9 +902,9 @@ static const struct fut_vnode_ops ramfs_vnode_ops = {
     .readdir = ramfs_readdir,
     .lookup = ramfs_lookup,
     .create = ramfs_create,
-    .unlink = NULL,      /* TODO: Implement unlink */
+    .unlink = ramfs_unlink,
     .mkdir = ramfs_mkdir,
-    .rmdir = NULL,       /* TODO: Implement rmdir */
+    .rmdir = ramfs_rmdir,
     .getattr = NULL,     /* Use default from VFS */
     .setattr = NULL
 };

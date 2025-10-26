@@ -162,6 +162,14 @@ static inline long sys_mkdir(const char *path, unsigned int mode) {
     return syscall2(83, (long)path, mode);
 }
 
+static inline long sys_rmdir(const char *path) {
+    return syscall1(84, (long)path);
+}
+
+static inline long sys_unlink(const char *path) {
+    return syscall1(87, (long)path);
+}
+
 static inline long sys_fork(void) {
     long ret;
     __asm__ __volatile__(
@@ -1075,6 +1083,42 @@ static void cmd_mkdir(int argc, char *argv[]) {
     }
 }
 
+/* Built-in: rmdir - Remove an empty directory */
+static void cmd_rmdir(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(2, "rmdir: missing operand\n");
+        write_str(2, "Usage: rmdir <directory>\n");
+        return;
+    }
+
+    const char *path = argv[1];
+
+    long ret = sys_rmdir(path);
+    if (ret < 0) {
+        write_str(2, "rmdir: failed to remove '");
+        write_str(2, path);
+        write_str(2, "'\n");
+    }
+}
+
+/* Built-in: rm - Remove a file */
+static void cmd_rm(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(2, "rm: missing operand\n");
+        write_str(2, "Usage: rm <file>\n");
+        return;
+    }
+
+    const char *path = argv[1];
+
+    long ret = sys_unlink(path);
+    if (ret < 0) {
+        write_str(2, "rm: cannot remove '");
+        write_str(2, path);
+        write_str(2, "'\n");
+    }
+}
+
 /* Built-in: export */
 static void cmd_export(int argc, char *argv[]) {
     if (argc < 2) {
@@ -1378,6 +1422,12 @@ static int execute_command(int argc, char *argv[]) {
         return 0;
     } else if (strcmp_simple(argv[0], "mkdir") == 0) {
         cmd_mkdir(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "rmdir") == 0) {
+        cmd_rmdir(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "rm") == 0) {
+        cmd_rm(argc, argv);
         return 0;
     } else if (strcmp_simple(argv[0], "export") == 0) {
         cmd_export(argc, argv);

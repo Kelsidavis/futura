@@ -890,6 +890,7 @@ static void cmd_help(int argc, char *argv[]) {
     write_str(1, "  tail [-n N] <file>... - Display last N lines (default 10)\n");
     write_str(1, "  grep [-n] [-i] <pattern> <file>... - Search for pattern in files\n");
     write_str(1, "  sort [-r] [-n] <file>... - Sort lines of text\n");
+    write_str(1, "  uniq [-c] [-d] [-u] <file>... - Report or omit repeated lines\n");
     write_str(1, "\n");
     write_str(1, "File Operations:\n");
     write_str(1, "  mkdir <dir>     - Create directory\n");
@@ -1813,6 +1814,181 @@ static void cmd_sort(int argc, char *argv[]) {
     }
 }
 
+/* Built-in: uniq - Report or omit repeated lines */
+static void cmd_uniq(int argc, char *argv[]) {
+    int count_mode = 0;
+    int duplicates_only = 0;
+    int unique_only = 0;
+    int arg_start = 1;
+
+    /* Parse options */
+    while (arg_start < argc && argv[arg_start][0] == '-') {
+        if (strcmp_simple(argv[arg_start], "-c") == 0) {
+            count_mode = 1;
+            arg_start++;
+        } else if (strcmp_simple(argv[arg_start], "-d") == 0) {
+            duplicates_only = 1;
+            arg_start++;
+        } else if (strcmp_simple(argv[arg_start], "-u") == 0) {
+            unique_only = 1;
+            arg_start++;
+        } else if (strcmp_simple(argv[arg_start], "--") == 0) {
+            arg_start++;
+            break;
+        } else {
+            write_str(2, "uniq: unknown option: ");
+            write_str(2, argv[arg_start]);
+            write_str(2, "\n");
+            write_str(2, "Usage: uniq [-c] [-d] [-u] [file]...\n");
+            return;
+        }
+    }
+
+    /* Conflicting options check */
+    if (duplicates_only && unique_only) {
+        write_str(2, "uniq: -d and -u are mutually exclusive\n");
+        return;
+    }
+
+    /* Allocate buffers for lines */
+    #define UNIQ_MAX_LINE 1024
+    static char prev_line[UNIQ_MAX_LINE];
+    static char curr_line[UNIQ_MAX_LINE];
+    int prev_line_valid = 0;
+    int curr_count = 0;
+
+    /* Helper function to output a line with its count */
+    auto void output_line(const char *line, int count) {
+        /* Apply filters */
+        if (duplicates_only && count <= 1) return;
+        if (unique_only && count > 1) return;
+
+        /* Output with optional count */
+        if (count_mode) {
+            /* Convert count to string and output */
+            char count_str[32];
+            int count_len = 0;
+            int temp_count = count;
+
+            /* Build count string in reverse */
+            do {
+                count_str[count_len++] = '0' + (temp_count % 10);
+                temp_count /= 10;
+            } while (temp_count > 0);
+
+            /* Output count with leading spaces (7 chars wide) */
+            for (int i = count_len; i < 7; i++) {
+                write_char(1, ' ');
+            }
+
+            /* Output count digits in correct order */
+            for (int i = count_len - 1; i >= 0; i--) {
+                write_char(1, count_str[i]);
+            }
+
+            write_char(1, ' ');
+        }
+
+        write_str(1, line);
+        write_char(1, '\n');
+    }
+
+    /* Process files or stdin */
+    if (arg_start >= argc) {
+        write_str(2, "uniq: reading from stdin not yet supported\n");
+        return;
+    }
+
+    /* Process each file */
+    for (int file_idx = arg_start; file_idx < argc; file_idx++) {
+        const char *path = argv[file_idx];
+
+        int fd = sys_open(path, O_RDONLY, 0);
+        if (fd < 0) {
+            write_str(2, "uniq: ");
+            write_str(2, path);
+            write_str(2, ": cannot open file\n");
+            continue;
+        }
+
+        /* Read file line by line */
+        char read_buf[256];
+        int line_pos = 0;
+        long bytes_read;
+
+        while ((bytes_read = sys_read(fd, read_buf, sizeof(read_buf))) > 0) {
+            for (long i = 0; i < bytes_read; i++) {
+                char c = read_buf[i];
+
+                if (c == '\n' || line_pos >= UNIQ_MAX_LINE - 1) {
+                    curr_line[line_pos] = '\0';
+
+                    /* Compare with previous line */
+                    if (prev_line_valid && strcmp_simple(curr_line, prev_line) == 0) {
+                        /* Same as previous, increment count */
+                        curr_count++;
+                    } else {
+                        /* Different from previous */
+                        if (prev_line_valid) {
+                            /* Output the previous line with its count */
+                            output_line(prev_line, curr_count);
+                        }
+
+                        /* Copy current to previous */
+                        int copy_idx = 0;
+                        while (curr_line[copy_idx] && copy_idx < UNIQ_MAX_LINE - 1) {
+                            prev_line[copy_idx] = curr_line[copy_idx];
+                            copy_idx++;
+                        }
+                        prev_line[copy_idx] = '\0';
+                        prev_line_valid = 1;
+                        curr_count = 1;
+                    }
+
+                    line_pos = 0;
+                } else {
+                    curr_line[line_pos++] = c;
+                }
+            }
+        }
+
+        /* Handle last line if file doesn't end with newline */
+        if (line_pos > 0) {
+            curr_line[line_pos] = '\0';
+
+            if (prev_line_valid && strcmp_simple(curr_line, prev_line) == 0) {
+                curr_count++;
+            } else {
+                if (prev_line_valid) {
+                    output_line(prev_line, curr_count);
+                }
+
+                int copy_idx = 0;
+                while (curr_line[copy_idx] && copy_idx < UNIQ_MAX_LINE - 1) {
+                    prev_line[copy_idx] = curr_line[copy_idx];
+                    copy_idx++;
+                }
+                prev_line[copy_idx] = '\0';
+                prev_line_valid = 1;
+                curr_count = 1;
+            }
+        }
+
+        sys_close(fd);
+
+        if (bytes_read < 0) {
+            write_str(2, "uniq: ");
+            write_str(2, path);
+            write_str(2, ": read error\n");
+        }
+    }
+
+    /* Output the last line */
+    if (prev_line_valid) {
+        output_line(prev_line, curr_count);
+    }
+}
+
 /* Built-in: ls - List directory contents */
 static void cmd_ls(int argc, char *argv[]) {
     const char *path = argc > 1 ? argv[1] : ".";
@@ -2415,6 +2591,9 @@ static int execute_command(int argc, char *argv[]) {
         return 0;
     } else if (strcmp_simple(argv[0], "sort") == 0) {
         cmd_sort(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "uniq") == 0) {
+        cmd_uniq(argc, argv);
         return 0;
     } else if (strcmp_simple(argv[0], "find") == 0) {
         cmd_find(argc, argv);

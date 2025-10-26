@@ -888,6 +888,7 @@ static void cmd_help(int argc, char *argv[]) {
     write_str(1, "  touch <file>    - Create empty file\n");
     write_str(1, "  rm <file>       - Remove file\n");
     write_str(1, "  cp <src> <dst>  - Copy file\n");
+    write_str(1, "  mv <src> <dst>  - Move/rename file\n");
     write_str(1, "\n");
     write_str(1, "System:\n");
     write_str(1, "  uname           - Print system information\n");
@@ -1202,6 +1203,73 @@ static void cmd_cp(int argc, char *argv[]) {
 
     sys_close(src_fd);
     sys_close(dst_fd);
+}
+
+/* Built-in: mv - Move/rename a file */
+static void cmd_mv(int argc, char *argv[]) {
+    if (argc < 3) {
+        write_str(2, "mv: missing operand\n");
+        write_str(2, "Usage: mv <source> <dest>\n");
+        return;
+    }
+
+    const char *src_path = argv[1];
+    const char *dst_path = argv[2];
+
+    /* Open source file for reading */
+    int src_fd = sys_open(src_path, O_RDONLY, 0);
+    if (src_fd < 0) {
+        write_str(2, "mv: cannot open '");
+        write_str(2, src_path);
+        write_str(2, "'\n");
+        return;
+    }
+
+    /* Open destination file for writing (create if needed) */
+    int dst_fd = sys_open(dst_path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (dst_fd < 0) {
+        write_str(2, "mv: cannot create '");
+        write_str(2, dst_path);
+        write_str(2, "'\n");
+        sys_close(src_fd);
+        return;
+    }
+
+    /* Copy data from source to destination */
+    char buffer[4096];
+    long bytes_read;
+    int copy_failed = 0;
+    while ((bytes_read = sys_read(src_fd, buffer, sizeof(buffer))) > 0) {
+        long total_written = 0;
+        while (total_written < bytes_read) {
+            long written = sys_write(dst_fd, buffer + total_written, bytes_read - total_written);
+            if (written <= 0) {
+                write_str(2, "mv: write error\n");
+                copy_failed = 1;
+                break;
+            }
+            total_written += written;
+        }
+        if (copy_failed) break;
+    }
+
+    if (bytes_read < 0) {
+        write_str(2, "mv: read error\n");
+        copy_failed = 1;
+    }
+
+    sys_close(src_fd);
+    sys_close(dst_fd);
+
+    /* Only delete source if copy was successful */
+    if (!copy_failed) {
+        long ret = sys_unlink(src_path);
+        if (ret < 0) {
+            write_str(2, "mv: cannot remove '");
+            write_str(2, src_path);
+            write_str(2, "'\n");
+        }
+    }
 }
 
 /* Built-in: export */
@@ -1519,6 +1587,9 @@ static int execute_command(int argc, char *argv[]) {
         return 0;
     } else if (strcmp_simple(argv[0], "cp") == 0) {
         cmd_cp(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "mv") == 0) {
+        cmd_mv(argc, argv);
         return 0;
     } else if (strcmp_simple(argv[0], "echo") == 0) {
         cmd_echo(argc, argv);

@@ -2924,19 +2924,33 @@ static void cmd_rmdir(int argc, char *argv[]) {
 
 /* Built-in: rm - Remove a file */
 static void cmd_rm(int argc, char *argv[]) {
-    if (argc < 2) {
-        write_str(2, "rm: missing operand\n");
-        write_str(2, "Usage: rm <file>\n");
+    int force = 0;
+    int arg_start = 1;
+
+    /* Parse -f option (force, suppress error messages) */
+    if (argc > 1 && strcmp_simple(argv[1], "-f") == 0) {
+        force = 1;
+        arg_start = 2;
+    }
+
+    if (arg_start >= argc) {
+        if (!force) {
+            write_str(2, "rm: missing operand\n");
+            write_str(2, "Usage: rm [-f] <file>...\n");
+        }
         return;
     }
 
-    const char *path = argv[1];
+    /* Process each file argument */
+    for (int i = arg_start; i < argc; i++) {
+        const char *path = argv[i];
+        long ret = sys_unlink(path);
 
-    long ret = sys_unlink(path);
-    if (ret < 0) {
-        write_str(2, "rm: cannot remove '");
-        write_str(2, path);
-        write_str(2, "'\n");
+        if (ret < 0 && !force) {
+            write_str(2, "rm: cannot remove '");
+            write_str(2, path);
+            write_str(2, "'\n");
+        }
     }
 }
 

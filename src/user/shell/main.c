@@ -170,6 +170,10 @@ static inline long sys_unlink(const char *path) {
     return syscall1(87, (long)path);
 }
 
+static inline long sys_rename(const char *oldpath, const char *newpath) {
+    return syscall2(82, (long)oldpath, (long)newpath);
+}
+
 static inline long sys_fork(void) {
     long ret;
     __asm__ __volatile__(
@@ -3049,6 +3053,15 @@ static void cmd_mv(int argc, char *argv[]) {
     const char *src_path = argv[1];
     const char *dst_path = argv[2];
 
+    /* Try atomic rename first (works on same filesystem) */
+    long ret = sys_rename(src_path, dst_path);
+    if (ret == 0) {
+        /* Success! Rename worked */
+        return;
+    }
+
+    /* Rename failed (likely cross-filesystem), fall back to copy+delete */
+
     /* Open source file for reading */
     int src_fd = sys_open(src_path, O_RDONLY, 0);
     if (src_fd < 0) {
@@ -3096,7 +3109,7 @@ static void cmd_mv(int argc, char *argv[]) {
 
     /* Only delete source if copy was successful */
     if (!copy_failed) {
-        long ret = sys_unlink(src_path);
+        ret = sys_unlink(src_path);
         if (ret < 0) {
             write_str(2, "mv: cannot remove '");
             write_str(2, src_path);

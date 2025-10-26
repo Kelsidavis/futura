@@ -2705,7 +2705,16 @@ static void cmd_sort(int argc, char *argv[]) {
 
 /* Built-in: ls - List directory contents */
 static void cmd_ls(int argc, char *argv[]) {
-    const char *path = argc > 1 ? argv[1] : ".";
+    int show_all = 0;
+    int arg_start = 1;
+
+    /* Parse -a option (show all files including hidden) */
+    if (argc > 1 && strcmp_simple(argv[1], "-a") == 0) {
+        show_all = 1;
+        arg_start = 2;
+    }
+
+    const char *path = arg_start < argc ? argv[arg_start] : ".";
 
     /* Open the directory */
     int fd = sys_open(path, O_RDONLY, 0);
@@ -2732,6 +2741,14 @@ static void cmd_ls(int argc, char *argv[]) {
         char *ptr = buf;
         while (ptr < buf + nread) {
             struct linux_dirent64 *d = (struct linux_dirent64 *)ptr;
+
+            /* Skip hidden files (starting with '.') unless -a flag is set */
+            int is_hidden = d->d_name[0] == '.';
+            if (!show_all && is_hidden) {
+                /* Skip this entry */
+                ptr += d->d_reclen;
+                continue;
+            }
 
             /* Print entry name */
             write_str(1, d->d_name);

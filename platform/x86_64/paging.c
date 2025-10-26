@@ -59,7 +59,8 @@ static inline page_table_t *pt_virt_from_entry(uint64_t entry) {
  */
 void fut_paging_init(void) {
     /* Use boot page tables as kernel page tables */
-    kernel_pml4 = (pte_t *)&boot_pml4;
+    /* boot_pml4 is at a physical address, convert to virtual */
+    kernel_pml4 = (pte_t *)pmap_phys_to_virt((phys_addr_t)&boot_pml4);
 
     /* Note: Boot already set up:
      * - PML4[0] and PML4[511] point to same PDPT (identity + higher-half)

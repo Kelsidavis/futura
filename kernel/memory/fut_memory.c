@@ -98,18 +98,9 @@ void *fut_pmm_alloc_page(void) {
              * GCC with -O2 was optimizing away the address conversion,
              * causing the function to return physical addresses instead of virtual addresses.
              * This assembly ensures the addition happens and can't be optimized away. */
-            uintptr_t virt;
-            __asm__ volatile(
-                "movq %1, %0\n\t"
-                "movabs $0xFFFFFFFF80000000, %%rax\n\t"
-                "addq %%rax, %0"
-                : "=r" (virt)
-                : "r" (phys)
-                : "rax", "memory"
-            );
-            extern void fut_printf(const char *, ...);
-            fut_printf("[PMM-ALLOC-DEBUG] phys=0x%llx virt=0x%llx\n",
-                       (unsigned long long)phys, (unsigned long long)virt);
+            /* Convert physical to virtual address.
+             * Use direct computation to ensure compiler doesn't optimize it away. */
+            uintptr_t virt = phys + KERNEL_VIRTUAL_BASE;
             return (void *)virt;
 #else
             return (void *)(uintptr_t)phys;

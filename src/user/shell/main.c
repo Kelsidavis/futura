@@ -881,6 +881,7 @@ static void cmd_help(int argc, char *argv[]) {
     write_str(1, "  pwd             - Print working directory\n");
     write_str(1, "  ls [dir]        - List directory contents\n");
     write_str(1, "  cat <file>      - Display file contents\n");
+    write_str(1, "  wc <file>...    - Count lines, words, and bytes\n");
     write_str(1, "\n");
     write_str(1, "File Operations:\n");
     write_str(1, "  mkdir <dir>     - Create directory\n");
@@ -996,6 +997,123 @@ static void cmd_env(int argc, char *argv[]) {
             write_str(1, shell_vars[i].value);
             write_char(1, '\n');
         }
+    }
+}
+
+/* Helper: Convert integer to string */
+static void int_to_str(long n, char *buf, int size) {
+    int i = 0;
+    int is_negative = 0;
+
+    if (n < 0) {
+        is_negative = 1;
+        n = -n;
+    }
+
+    /* Handle zero case */
+    if (n == 0) {
+        buf[i++] = '0';
+        buf[i] = '\0';
+        return;
+    }
+
+    /* Convert digits in reverse */
+    while (n > 0 && i < size - 1) {
+        buf[i++] = '0' + (n % 10);
+        n /= 10;
+    }
+
+    if (is_negative && i < size - 1) {
+        buf[i++] = '-';
+    }
+
+    buf[i] = '\0';
+
+    /* Reverse the string */
+    for (int j = 0; j < i / 2; j++) {
+        char tmp = buf[j];
+        buf[j] = buf[i - 1 - j];
+        buf[i - 1 - j] = tmp;
+    }
+}
+
+/* Built-in: wc - Count lines, words, and bytes */
+static void cmd_wc(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(2, "wc: missing file operand\n");
+        write_str(2, "Usage: wc <file>...\n");
+        return;
+    }
+
+    /* Process each file */
+    for (int file_idx = 1; file_idx < argc; file_idx++) {
+        const char *path = argv[file_idx];
+
+        /* Open the file */
+        int fd = sys_open(path, O_RDONLY, 0);
+        if (fd < 0) {
+            write_str(2, "wc: ");
+            write_str(2, path);
+            write_str(2, ": cannot open file\n");
+            continue;
+        }
+
+        /* Count lines, words, and bytes */
+        long lines = 0;
+        long words = 0;
+        long bytes = 0;
+        int in_word = 0;
+
+        char buffer[256];
+        long bytes_read;
+
+        while ((bytes_read = sys_read(fd, buffer, sizeof(buffer))) > 0) {
+            bytes += bytes_read;
+
+            for (long i = 0; i < bytes_read; i++) {
+                char c = buffer[i];
+
+                /* Count newlines */
+                if (c == '\n') {
+                    lines++;
+                }
+
+                /* Count words (whitespace-delimited) */
+                if (c == ' ' || c == '\t' || c == '\n' || c == '\r') {
+                    in_word = 0;
+                } else if (!in_word) {
+                    in_word = 1;
+                    words++;
+                }
+            }
+        }
+
+        sys_close(fd);
+
+        if (bytes_read < 0) {
+            write_str(2, "wc: ");
+            write_str(2, path);
+            write_str(2, ": read error\n");
+            continue;
+        }
+
+        /* Print results: lines words bytes filename */
+        char num_buf[32];
+
+        int_to_str(lines, num_buf, sizeof(num_buf));
+        write_str(1, num_buf);
+        write_char(1, ' ');
+
+        int_to_str(words, num_buf, sizeof(num_buf));
+        write_str(1, num_buf);
+        write_char(1, ' ');
+
+        int_to_str(bytes, num_buf, sizeof(num_buf));
+        write_str(1, num_buf);
+        write_char(1, ' ');
+
+        write_str(1, path);
+        write_char(1, '\n');
     }
 }
 
@@ -1586,6 +1704,9 @@ static int execute_command(int argc, char *argv[]) {
         return 0;
     } else if (strcmp_simple(argv[0], "env") == 0) {
         cmd_env(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "wc") == 0) {
+        cmd_wc(argc, argv);
         return 0;
     } else if (strcmp_simple(argv[0], "ls") == 0) {
         cmd_ls(argc, argv);

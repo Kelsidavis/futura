@@ -2806,20 +2806,84 @@ static void cmd_cat(int argc, char *argv[]) {
 
 /* Built-in: mkdir - Create a directory */
 static void cmd_mkdir(int argc, char *argv[]) {
-    if (argc < 2) {
+    int create_parents = 0;
+    int arg_start = 1;
+
+    /* Parse -p option (create parent directories) */
+    if (argc > 1 && strcmp_simple(argv[1], "-p") == 0) {
+        create_parents = 1;
+        arg_start = 2;
+    }
+
+    if (arg_start >= argc) {
         write_str(2, "mkdir: missing operand\n");
-        write_str(2, "Usage: mkdir <directory>\n");
+        write_str(2, "Usage: mkdir [-p] <directory>\n");
         return;
     }
 
-    const char *path = argv[1];
+    /* Helper function to create directory with parents */
+    auto int mkdir_recursive(const char *path) {
+        if (!path || path[0] == '\0') {
+            return 0;
+        }
 
-    /* Create the directory with default permissions (0755) */
-    long ret = sys_mkdir(path, 0755);
-    if (ret < 0) {
-        write_str(2, "mkdir: cannot create directory '");
-        write_str(2, path);
-        write_str(2, "'\n");
+        /* Try to create the directory first */
+        long ret = sys_mkdir(path, 0755);
+        if (ret == 0 || !create_parents) {
+            /* Success or not using -p flag */
+            return ret;
+        }
+
+        /* If -p flag is set, try to create parent directories */
+        /* Build path component by component */
+        static char temp_path[512];
+        int path_len = 0;
+        while (path[path_len]) path_len++;
+
+        if (path_len >= 512) {
+            write_str(2, "mkdir: path too long\n");
+            return -1;
+        }
+
+        /* Copy path to temp buffer */
+        for (int i = 0; i <= path_len; i++) {
+            temp_path[i] = path[i];
+        }
+
+        /* Create each parent directory */
+        int i = (temp_path[0] == '/') ? 1 : 0;  /* Skip leading slash */
+
+        while (temp_path[i]) {
+            /* Find next slash */
+            if (temp_path[i] == '/') {
+                /* Temporarily null-terminate at this position */
+                temp_path[i] = '\0';
+
+                /* Try to create this intermediate directory */
+                sys_mkdir(temp_path, 0755);
+                /* Ignore errors - directory might already exist */
+
+                /* Restore the slash */
+                temp_path[i] = '/';
+            }
+            i++;
+        }
+
+        /* Finally, create the target directory */
+        ret = sys_mkdir(temp_path, 0755);
+        return ret;
+    }
+
+    /* Process each directory argument */
+    for (int i = arg_start; i < argc; i++) {
+        const char *path = argv[i];
+        long ret = mkdir_recursive(path);
+
+        if (ret < 0 && !create_parents) {
+            write_str(2, "mkdir: cannot create directory '");
+            write_str(2, path);
+            write_str(2, "'\n");
+        }
     }
 }
 

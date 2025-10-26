@@ -299,9 +299,13 @@ void *fut_mm_map_anonymous(fut_mm_t *mm, uintptr_t hint, size_t len, int prot, i
     }
 
     uintptr_t base;
-    if ((flags & 0x10) && hint) { /* MAP_FIXED */
+    if ((flags & 0x10) && hint) { /* MAP_FIXED - must use exact address */
+        base = PAGE_ALIGN_DOWN(hint);
+    } else if (hint) {
+        /* Honor hint as a suggestion when provided */
         base = PAGE_ALIGN_DOWN(hint);
     } else {
+        /* No hint provided - allocate from mmap_base */
         uintptr_t candidate = mm->mmap_base ? mm->mmap_base : USER_MMAP_BASE;
         if (candidate < USER_MMAP_BASE) {
             candidate = USER_MMAP_BASE;
@@ -507,9 +511,13 @@ void *fut_mm_map_file(fut_mm_t *mm, struct fut_vnode *vnode, uintptr_t hint,
 
     /* Determine mapping address */
     uintptr_t base;
-    if ((flags & 0x10) && hint) { /* MAP_FIXED */
+    if ((flags & 0x10) && hint) { /* MAP_FIXED - must use exact address */
+        base = PAGE_ALIGN_DOWN(hint);
+    } else if (hint) {
+        /* Honor hint as a suggestion when provided */
         base = PAGE_ALIGN_DOWN(hint);
     } else {
+        /* No hint provided - allocate from mmap_base */
         uintptr_t candidate = mm->mmap_base ? mm->mmap_base : USER_MMAP_BASE;
         if (candidate < USER_MMAP_BASE) {
             candidate = USER_MMAP_BASE;
@@ -864,75 +872,6 @@ void fut_mm_set_brk_current(fut_mm_t *mm, uintptr_t current) {
     mm->brk_current = current;
 }
 
-void *fut_mm_map_anonymous(fut_mm_t *mm, uintptr_t hint, size_t len, int prot, int flags) {
-    if (!mm || len == 0) {
-        return NULL;
-    }
-
-    (void)hint;  /* Ignore hint for now */
-    (void)flags;  /* Ignore flags for now */
-
-    /* Basic implementation - always allocate from mmap_base */
-    uintptr_t addr = mm->mmap_base;
-    uintptr_t aligned_len = PAGE_ALIGN_UP(len);
-
-    /* Check if we have space */
-    if (addr + aligned_len > USER_VMA_MAX) {
-        return NULL;
-    }
-
-    /* Allocate physical pages and map them */
-    uint64_t pte_flags = mm_pte_flags(prot);
-    fut_vmem_context_t *ctx = &mm->ctx;
-
-    for (uintptr_t offset = 0; offset < aligned_len; offset += PAGE_SIZE) {
-        void *phys_page = fut_pmm_alloc_page();
-        if (!phys_page) {
-            /* Cleanup: unmap what we've mapped so far */
-            for (uintptr_t cleanup = 0; cleanup < offset; cleanup += PAGE_SIZE) {
-                uint64_t phys;
-                if (fut_virt_to_phys(ctx, addr + cleanup, &phys) == 0) {
-                    fut_unmap_page(ctx, addr + cleanup);
-                    fut_pmm_free_page((void *)phys);
-                }
-            }
-            return NULL;
-        }
-
-        memset(phys_page, 0, PAGE_SIZE);
-        int ret = fut_map_page(ctx, addr + offset, (uint64_t)phys_page, pte_flags);
-        if (ret < 0) {
-            fut_pmm_free_page(phys_page);
-            /* Cleanup */
-            for (uintptr_t cleanup = 0; cleanup < offset; cleanup += PAGE_SIZE) {
-                uint64_t phys;
-                if (fut_virt_to_phys(ctx, addr + cleanup, &phys) == 0) {
-                    fut_unmap_page(ctx, addr + cleanup);
-                    fut_pmm_free_page((void *)phys);
-                }
-            }
-            return NULL;
-        }
-    }
-
-    /* Track VMA */
-    fut_vma_t *vma = (fut_vma_t *)fut_malloc(sizeof(fut_vma_t));
-    if (vma) {
-        vma->start = addr;
-        vma->end = addr + aligned_len;
-        vma->prot = prot;
-        vma->flags = flags;
-        vma->vnode = NULL;  /* Anonymous mapping */
-        vma->file_offset = 0;
-        vma->next = mm->vma_list;
-        mm->vma_list = vma;
-    }
-
-    /* Update mmap_base for next allocation */
-    mm->mmap_base = addr + aligned_len;
-
-    return (void *)addr;
-}
 
 int fut_mm_unmap(fut_mm_t *mm, uintptr_t addr, size_t len) {
     if (!mm || len == 0) {

@@ -919,6 +919,12 @@ void fut_kernel_main(void) {
 
     fut_printf("[INIT] Root filesystem mounted (ramfs at /)\n");
 
+    /* Create /tmp directory for temporary files */
+    int tmp_ret = fut_vfs_mkdir("/tmp", 0777);
+    if (tmp_ret < 0 && tmp_ret != -EEXIST) {
+        fut_printf("[WARN] Failed to create /tmp directory (error %d)\n", tmp_ret);
+    }
+
     bool perf_flag = fut_boot_arg_flag("perf");
     bool run_async_selftests = boot_flag_enabled("async-tests", false);
 

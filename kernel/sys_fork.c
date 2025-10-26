@@ -237,7 +237,11 @@ static fut_thread_t *clone_thread(fut_thread_t *parent_thread, fut_task_t *child
 
     /* Copy the entire CPU context from parent to child */
     /* This makes the child resume execution at the same point as parent */
+    fut_printf("[FORK] Parent context: RIP=0x%llx RSP=0x%llx\n",
+               parent_thread->context.rip, parent_thread->context.rsp);
     memcpy(&child_thread->context, &parent_thread->context, sizeof(fut_cpu_context_t));
+    fut_printf("[FORK] Child context after copy: RIP=0x%llx RSP=0x%llx\n",
+               child_thread->context.rip, child_thread->context.rsp);
 
     /*
      * Note: We don't copy the stack contents.

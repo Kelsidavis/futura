@@ -889,6 +889,7 @@ static void cmd_help(int argc, char *argv[]) {
     write_str(1, "  head [-n N] <file>... - Display first N lines (default 10)\n");
     write_str(1, "  tail [-n N] <file>... - Display last N lines (default 10)\n");
     write_str(1, "  grep [-n] [-i] <pattern> <file>... - Search for pattern in files\n");
+    write_str(1, "  sort [-r] [-n] <file>... - Sort lines of text\n");
     write_str(1, "\n");
     write_str(1, "File Operations:\n");
     write_str(1, "  mkdir <dir>     - Create directory\n");
@@ -1643,6 +1644,175 @@ static void cmd_find(int argc, char *argv[]) {
     find_recurse(start_path, name_pattern, type_filter, 0);
 }
 
+/* Helper: Simple string comparison for sorting */
+static int str_compare(const char *s1, const char *s2) {
+    while (*s1 && *s2) {
+        if (*s1 != *s2) {
+            return (*s1 < *s2) ? -1 : 1;
+        }
+        s1++;
+        s2++;
+    }
+    if (*s1) return 1;
+    if (*s2) return -1;
+    return 0;
+}
+
+/* Helper: Numerical string comparison for sorting */
+static int str_compare_numeric(const char *s1, const char *s2) {
+    long n1 = 0, n2 = 0;
+    int neg1 = 0, neg2 = 0;
+
+    /* Parse first number */
+    if (*s1 == '-') {
+        neg1 = 1;
+        s1++;
+    }
+    while (*s1 >= '0' && *s1 <= '9') {
+        n1 = n1 * 10 + (*s1 - '0');
+        s1++;
+    }
+    if (neg1) n1 = -n1;
+
+    /* Parse second number */
+    if (*s2 == '-') {
+        neg2 = 1;
+        s2++;
+    }
+    while (*s2 >= '0' && *s2 <= '9') {
+        n2 = n2 * 10 + (*s2 - '0');
+        s2++;
+    }
+    if (neg2) n2 = -n2;
+
+    if (n1 < n2) return -1;
+    if (n1 > n2) return 1;
+    return 0;
+}
+
+/* Built-in: sort - Sort lines of text */
+static void cmd_sort(int argc, char *argv[]) {
+    int reverse = 0;
+    int numeric = 0;
+    int arg_start = 1;
+
+    /* Parse options */
+    while (arg_start < argc && argv[arg_start][0] == '-') {
+        if (strcmp_simple(argv[arg_start], "-r") == 0) {
+            reverse = 1;
+            arg_start++;
+        } else if (strcmp_simple(argv[arg_start], "-n") == 0) {
+            numeric = 1;
+            arg_start++;
+        } else if (strcmp_simple(argv[arg_start], "--") == 0) {
+            arg_start++;
+            break;
+        } else {
+            write_str(2, "sort: unknown option: ");
+            write_str(2, argv[arg_start]);
+            write_str(2, "\n");
+            write_str(2, "Usage: sort [-r] [-n] [file]...\n");
+            return;
+        }
+    }
+
+    /* Allocate buffer for all lines */
+    #define MAX_LINES 1000
+    #define MAX_LINE_LENGTH 1024
+    static char line_buffer[MAX_LINES][MAX_LINE_LENGTH];
+    char *lines[MAX_LINES];
+    int line_count = 0;
+
+    /* Read from files or stdin */
+    if (arg_start >= argc) {
+        /* Read from stdin - not yet supported */
+        write_str(2, "sort: reading from stdin not yet supported\n");
+        return;
+    }
+
+    /* Process each file */
+    for (int file_idx = arg_start; file_idx < argc; file_idx++) {
+        const char *path = argv[file_idx];
+
+        int fd = sys_open(path, O_RDONLY, 0);
+        if (fd < 0) {
+            write_str(2, "sort: ");
+            write_str(2, path);
+            write_str(2, ": cannot open file\n");
+            continue;
+        }
+
+        /* Read file line by line */
+        char read_buf[256];
+        int line_pos = 0;
+        long bytes_read;
+
+        while ((bytes_read = sys_read(fd, read_buf, sizeof(read_buf))) > 0) {
+            for (long i = 0; i < bytes_read; i++) {
+                char c = read_buf[i];
+
+                if (c == '\n' || line_pos >= MAX_LINE_LENGTH - 1) {
+                    if (line_count < MAX_LINES) {
+                        line_buffer[line_count][line_pos] = '\0';
+                        lines[line_count] = line_buffer[line_count];
+                        line_count++;
+                    }
+                    line_pos = 0;
+                } else {
+                    if (line_count < MAX_LINES) {
+                        line_buffer[line_count][line_pos++] = c;
+                    }
+                }
+            }
+        }
+
+        /* Handle last line if file doesn't end with newline */
+        if (line_pos > 0 && line_count < MAX_LINES) {
+            line_buffer[line_count][line_pos] = '\0';
+            lines[line_count] = line_buffer[line_count];
+            line_count++;
+        }
+
+        sys_close(fd);
+
+        if (bytes_read < 0) {
+            write_str(2, "sort: ");
+            write_str(2, path);
+            write_str(2, ": read error\n");
+        }
+    }
+
+    /* Sort lines using bubble sort */
+    for (int i = 0; i < line_count - 1; i++) {
+        for (int j = 0; j < line_count - i - 1; j++) {
+            int cmp;
+            if (numeric) {
+                cmp = str_compare_numeric(lines[j], lines[j + 1]);
+            } else {
+                cmp = str_compare(lines[j], lines[j + 1]);
+            }
+
+            /* Reverse comparison if -r flag is set */
+            if (reverse) {
+                cmp = -cmp;
+            }
+
+            if (cmp > 0) {
+                /* Swap */
+                char *temp = lines[j];
+                lines[j] = lines[j + 1];
+                lines[j + 1] = temp;
+            }
+        }
+    }
+
+    /* Output sorted lines */
+    for (int i = 0; i < line_count; i++) {
+        write_str(1, lines[i]);
+        write_char(1, '\n');
+    }
+}
+
 /* Built-in: ls - List directory contents */
 static void cmd_ls(int argc, char *argv[]) {
     const char *path = argc > 1 ? argv[1] : ".";
@@ -2242,6 +2412,9 @@ static int execute_command(int argc, char *argv[]) {
         return 0;
     } else if (strcmp_simple(argv[0], "grep") == 0) {
         cmd_grep(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "sort") == 0) {
+        cmd_sort(argc, argv);
         return 0;
     } else if (strcmp_simple(argv[0], "find") == 0) {
         cmd_find(argc, argv);

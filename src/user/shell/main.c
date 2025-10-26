@@ -454,7 +454,7 @@ static void complete_command(char *buf, size_t *pos, size_t max_len) {
     /* List of builtin commands */
     const char *builtins[] = {
         "bg", "cd", "clear", "echo", "exit", "export", "fg", "help",
-        "jobs", "pwd", "test", "uname", "whoami", NULL
+        "jobs", "ls", "pwd", "test", "uname", "whoami", NULL
     };
 
     /* External commands we might have */
@@ -956,6 +956,16 @@ static void cmd_whoami(int argc, char *argv[]) {
     write_str(1, "root\n");
 }
 
+/* Built-in: ls - List directory contents */
+static void cmd_ls(int argc, char *argv[]) {
+    const char *path = argc > 1 ? argv[1] : ".";
+
+    write_str(1, "Directory listing for: ");
+    write_str(1, path);
+    write_str(1, "\n");
+    write_str(1, "(ls command not fully implemented - directory listing requires getdents syscall)\n");
+}
+
 /* Built-in: export */
 static void cmd_export(int argc, char *argv[]) {
     if (argc < 2) {
@@ -1251,6 +1261,9 @@ static int execute_command(int argc, char *argv[]) {
     } else if (strcmp_simple(argv[0], "whoami") == 0) {
         cmd_whoami(argc, argv);
         return 0;
+    } else if (strcmp_simple(argv[0], "ls") == 0) {
+        cmd_ls(argc, argv);
+        return 0;
     } else if (strcmp_simple(argv[0], "export") == 0) {
         cmd_export(argc, argv);
         return 0;
@@ -1287,6 +1300,7 @@ static int is_builtin(const char *cmd) {
             strcmp_simple(cmd, "exit") == 0 ||
             strcmp_simple(cmd, "help") == 0 ||
             strcmp_simple(cmd, "pwd") == 0 ||
+            strcmp_simple(cmd, "ls") == 0 ||
             strcmp_simple(cmd, "echo") == 0 ||
             strcmp_simple(cmd, "clear") == 0 ||
             strcmp_simple(cmd, "uname") == 0 ||

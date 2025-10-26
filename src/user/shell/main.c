@@ -869,6 +869,9 @@ static int parse_command(char *line, char *argv[], int max_args) {
     return argc;
 }
 
+/* Forward declarations */
+static int simple_atoi(const char *str);
+
 /* Built-in: help */
 static void cmd_help(int argc, char *argv[]) {
     (void)argc;
@@ -882,6 +885,7 @@ static void cmd_help(int argc, char *argv[]) {
     write_str(1, "  ls [dir]        - List directory contents\n");
     write_str(1, "  cat <file>      - Display file contents\n");
     write_str(1, "  wc <file>...    - Count lines, words, and bytes\n");
+    write_str(1, "  head [-n N] <file>... - Display first N lines (default 10)\n");
     write_str(1, "\n");
     write_str(1, "File Operations:\n");
     write_str(1, "  mkdir <dir>     - Create directory\n");
@@ -1114,6 +1118,75 @@ static void cmd_wc(int argc, char *argv[]) {
 
         write_str(1, path);
         write_char(1, '\n');
+    }
+}
+
+/* Built-in: head - Display first N lines of files */
+static void cmd_head(int argc, char *argv[]) {
+    int num_lines = 10;  /* Default: 10 lines */
+    int file_start = 1;
+
+    if (argc < 2) {
+        write_str(2, "head: missing file operand\n");
+        write_str(2, "Usage: head [-n lines] <file>...\n");
+        return;
+    }
+
+    /* Parse -n option */
+    if (argc >= 3 && strcmp_simple(argv[1], "-n") == 0) {
+        num_lines = simple_atoi(argv[2]);
+        if (num_lines <= 0) {
+            num_lines = 10;
+        }
+        file_start = 3;
+    }
+
+    /* Process each file */
+    for (int file_idx = file_start; file_idx < argc; file_idx++) {
+        const char *path = argv[file_idx];
+
+        /* Print header if multiple files */
+        if (argc - file_start > 1) {
+            if (file_idx > file_start) {
+                write_char(1, '\n');
+            }
+            write_str(1, "==> ");
+            write_str(1, path);
+            write_str(1, " <==\n");
+        }
+
+        /* Open the file */
+        int fd = sys_open(path, O_RDONLY, 0);
+        if (fd < 0) {
+            write_str(2, "head: ");
+            write_str(2, path);
+            write_str(2, ": cannot open file\n");
+            continue;
+        }
+
+        /* Read and print first N lines */
+        int lines_printed = 0;
+        char buffer[256];
+        long bytes_read;
+
+        while (lines_printed < num_lines &&
+               (bytes_read = sys_read(fd, buffer, sizeof(buffer))) > 0) {
+            for (long i = 0; i < bytes_read && lines_printed < num_lines; i++) {
+                char c = buffer[i];
+                write_char(1, c);
+                if (c == '\n') {
+                    lines_printed++;
+                }
+            }
+        }
+
+        sys_close(fd);
+
+        if (bytes_read < 0) {
+            write_str(2, "head: ");
+            write_str(2, path);
+            write_str(2, ": read error\n");
+        }
     }
 }
 
@@ -1707,6 +1780,9 @@ static int execute_command(int argc, char *argv[]) {
         return 0;
     } else if (strcmp_simple(argv[0], "wc") == 0) {
         cmd_wc(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "head") == 0) {
+        cmd_head(argc, argv);
         return 0;
     } else if (strcmp_simple(argv[0], "ls") == 0) {
         cmd_ls(argc, argv);

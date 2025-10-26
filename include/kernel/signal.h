@@ -2,4 +2,6 @@
 
 #pragma once
 
-#define SIGSEGV 11
+#define SIGINT  2   /* Interrupt (Ctrl+C) */
+#define SIGTSTP 20  /* Terminal stop (Ctrl+Z) */
+#define SIGSEGV 11  /* Segmentation fault */

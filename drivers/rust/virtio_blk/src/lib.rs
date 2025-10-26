@@ -236,12 +236,20 @@ impl VirtQueue {
 
     fn setup(&mut self, requested: u16) -> Result<(), FutStatus> {
         unsafe {
-            let desc = alloc_page() as *mut VirtqDesc;
+            /* QEMU requires 64KB alignment for descriptor tables.
+             * Allocate 16 pages and manually align to 64KB boundary. */
+            const ALIGN_64KB: usize = 0x10000;
+            let desc_raw = alloc_page() as usize;
             let avail = alloc_page() as *mut VirtqAvail;
             let used = alloc_page() as *mut VirtqUsed;
-            if desc.is_null() || avail.is_null() || used.is_null() {
-                if !desc.is_null() {
-                    free_page(desc.cast());
+
+            /* Align desc to 64KB */
+            let desc_aligned = (desc_raw + ALIGN_64KB - 1) & !(ALIGN_64KB - 1);
+            let desc = desc_aligned as *mut VirtqDesc;
+
+            if desc_raw == 0 || avail.is_null() || used.is_null() {
+                if desc_raw != 0 {
+                    free_page(desc_raw as *mut u8);
                 }
                 if !avail.is_null() {
                     free_page(avail.cast());
@@ -323,8 +331,10 @@ impl VirtQueue {
             core::sync::atomic::fence(Ordering::SeqCst);
             let old_idx = avail.idx;
             avail.idx = avail.idx.wrapping_add(1);
-            fut_printf(b"[virtio-blk] enqueue: slot=%d avail.idx %d -> %d\n\0".as_ptr(),
-                slot as u32, old_idx as u32, avail.idx as u32);
+            unsafe {
+                fut_printf(b"[virtio-blk] enqueue: slot=%d avail.idx %d -> %d avail.flags=%d\n\0".as_ptr(),
+                    slot as u32, old_idx as u32, avail.idx as u32, avail.flags as u32);
+            }
         }
         self.next_avail.fetch_add(1, Ordering::Release);
         Ok(())
@@ -332,7 +342,7 @@ impl VirtQueue {
 
     fn poll_completion(&self) -> FutStatus {
         let mut waited = 0u32;
-        const TIMEOUT_ITERATIONS: u32 = 100_000;  // Moderate timeout for debugging
+        const TIMEOUT_ITERATIONS: u32 = 100_000;
         loop {
             let last = self.last_used.load(Ordering::Acquire);
             let used_idx = unsafe { (*self.used).idx };
@@ -343,14 +353,8 @@ impl VirtQueue {
             }
             if waited == 0 {
                 unsafe {
-                    fut_printf(b"[virtio-blk] polling: last_used=%d used_idx=%d used_ptr=%p\n\0".as_ptr(),
-                        last as u32, used_idx as u32, self.used);
-                }
-            }
-            if waited == 5000 {
-                unsafe {
-                    fut_printf(b"[virtio-blk] still polling at 5k: used_idx=%d flags=%d\n\0".as_ptr(),
-                        (*self.used).idx as u32, (*self.used).flags as u32);
+                    fut_printf(b"[virtio-blk] polling: last_used=%d used_idx=%d\n\0".as_ptr(),
+                        last as u32, used_idx as u32);
                 }
             }
             if waited > TIMEOUT_ITERATIONS {
@@ -359,7 +363,7 @@ impl VirtQueue {
                 }
                 return ETIMEDOUT;
             }
-            /* Pure busy-wait - DO NOT use thread_yield() or hlt as they cause DMA corruption */
+            /* Pure busy-wait to avoid hangs during debugging */
             core::hint::spin_loop();
             waited += 1;
         }
@@ -437,6 +441,16 @@ impl VirtioBlkDevice {
         dev.init_queue()?;
         dev.init_dma()?;
         dev.read_geometry();
+
+        /* Set DRIVER_OK after all setup is complete (required by virtio spec) */
+        unsafe {
+            (*dev.common).device_status |= VIRTIO_STATUS_DRIVER_OK;
+            let final_status = (*dev.common).device_status;
+            let queue_enabled = (*dev.common).queue_enable;
+            fut_printf(b"[virtio-blk] DRIVER_OK set: status=0x%x queue_enable=%d\n\0".as_ptr(),
+                final_status as u32, queue_enabled as u32);
+        }
+
         Ok(dev)
     }
 
@@ -778,7 +792,7 @@ impl VirtioBlkDevice {
                 log("virtio-blk: feature negotiation failed");
                 return Err(ENODEV);
             }
-            (*self.common).device_status |= VIRTIO_STATUS_DRIVER_OK;
+            /* DO NOT set DRIVER_OK here - must wait until after queue setup */
         }
         Ok(())
     }
@@ -795,8 +809,13 @@ impl VirtioBlkDevice {
             (*self.common).queue_size = qsize;
             (*self.common).queue_msix_vector = 0xFFFF;
             (*self.common).msix_config = 0xFFFF;
-            (*self.common).queue_desc_lo = (self.queue.desc_phys & 0xFFFF_FFFF) as u32;
-            (*self.common).queue_desc_hi = (self.queue.desc_phys >> 32) as u32;
+
+            let desc_lo = (self.queue.desc_phys & 0xFFFF_FFFF) as u32;
+            let desc_hi = (self.queue.desc_phys >> 32) as u32;
+            fut_printf(b"[virtio-blk] writing queue_desc: lo=0x%x hi=0x%x\n\0".as_ptr(), desc_lo, desc_hi);
+
+            (*self.common).queue_desc_lo = desc_lo;
+            (*self.common).queue_desc_hi = desc_hi;
             (*self.common).queue_avail_lo = (self.queue.avail_phys & 0xFFFF_FFFF) as u32;
             (*self.common).queue_avail_hi = (self.queue.avail_phys >> 32) as u32;
             (*self.common).queue_used_lo = (self.queue.used_phys & 0xFFFF_FFFF) as u32;
@@ -806,6 +825,20 @@ impl VirtioBlkDevice {
 
             fut_printf(b"[virtio-blk] queue setup: desc_phys=0x%lx avail_phys=0x%lx used_phys=0x%lx\n\0".as_ptr(),
                 self.queue.desc_phys, self.queue.avail_phys, self.queue.used_phys);
+
+            /* Verify queue addresses were written correctly */
+            let readback_select = (*self.common).queue_select;
+            let readback_desc_lo = (*self.common).queue_desc_lo;
+            let readback_desc_hi = (*self.common).queue_desc_hi;
+            let readback_desc = ((readback_desc_hi as u64) << 32) | (readback_desc_lo as u64);
+            let readback_enabled = (*self.common).queue_enable;
+            fut_printf(b"[virtio-blk] readback: queue_select=%d desc=0x%lx enabled=%d\n\0".as_ptr(),
+                readback_select as u32, readback_desc, readback_enabled as u32);
+
+            if readback_desc != self.queue.desc_phys {
+                fut_printf(b"[virtio-blk] ERROR: desc address mismatch! wrote=0x%lx read=0x%lx\n\0".as_ptr(),
+                    self.queue.desc_phys, readback_desc);
+            }
         }
         Ok(())
     }
@@ -868,6 +901,9 @@ impl VirtioBlkDevice {
             (*self.dma).header.sector = lba;
             (*self.dma).status = 0xFF;
 
+            fut_printf(b"[virtio-blk] request: type=%d lba=%ld nsectors=%d\n\0".as_ptr(),
+                req_type, lba, nsectors as u32);
+
             if req_type != VIRTIO_BLK_T_FLUSH {
                 if buf.is_null() {
                     return EINVAL;
@@ -889,6 +925,11 @@ impl VirtioBlkDevice {
 
         let header_phys = self.dma_phys;
         let status_phys = self.dma_phys + DMA_STATUS_OFFSET;
+
+        unsafe {
+            fut_printf(b"[virtio-blk] I/O: header_phys=0x%lx data_phys=0x%lx status_phys=0x%lx\n\0".as_ptr(),
+                header_phys, data_phys, status_phys);
+        }
 
         if let Err(err) = self.queue.enqueue(header_phys, data_phys, status_phys, req_type, data_bytes, write) {
             if !bounce.is_null() {

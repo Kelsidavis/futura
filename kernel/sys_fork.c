@@ -13,6 +13,8 @@
 #include <kernel/fut_vfs.h>
 #include <kernel/errno.h>
 #include <kernel/uaccess.h>
+#include <arch/x86_64/paging.h>
+#include <arch/x86_64/pmap.h>
 #include <string.h>
 
 extern void fut_printf(const char *fmt, ...);
@@ -99,7 +101,7 @@ long sys_fork(void) {
 
 /**
  * Clone memory management context.
- * For now, creates a new empty address space.
+ * Copies all user page mappings from parent to child.
  * TODO: Implement copy-on-write (COW) for efficiency.
  */
 static fut_mm_t *clone_mm(fut_mm_t *parent_mm) {
@@ -107,7 +109,7 @@ static fut_mm_t *clone_mm(fut_mm_t *parent_mm) {
         return NULL;
     }
 
-    /* For now, just create a new empty userspace MM */
+    /* Create a new userspace MM */
     fut_mm_t *child_mm = fut_mm_create();
     if (!child_mm) {
         return NULL;
@@ -119,9 +121,93 @@ static fut_mm_t *clone_mm(fut_mm_t *parent_mm) {
     child_mm->heap_limit = parent_mm->heap_limit;
     child_mm->mmap_base = parent_mm->mmap_base;
 
-    /* TODO: Clone page tables and set up COW mappings */
-    /* For now, the child starts with an empty address space */
-    /* This works for fork+exec pattern since exec replaces the address space anyway */
+    /* Copy all user page mappings from parent to child */
+    /* Scan the first 8MB of user space (0 to 0x800000) where small programs typically reside.
+     * This covers code and data for small binaries.
+     * TODO: Implement proper VMA (Virtual Memory Area) tracking to only copy actually-mapped regions. */
+    fut_vmem_context_t *parent_ctx = fut_mm_context(parent_mm);
+    fut_vmem_context_t *child_ctx = fut_mm_context(child_mm);
+
+    #define CLONE_SCAN_LIMIT 0x800000ULL  /* 8MB */
+
+    /* Walk through user space in 2MB chunks (huge page aligned) for efficiency */
+    for (uint64_t vaddr = 0; vaddr < CLONE_SCAN_LIMIT; vaddr += (2 * 1024 * 1024)) {
+        /* Check each 4KB page within this 2MB region */
+        for (uint64_t page = vaddr; page < vaddr + (2 * 1024 * 1024) && page < CLONE_SCAN_LIMIT; page += FUT_PAGE_SIZE) {
+            uint64_t pte = 0;
+
+            /* Check if this page is mapped in parent */
+            if (pmap_probe_pte(parent_ctx, page, &pte) != 0) {
+                continue;  /* Not mapped or error */
+            }
+
+            if ((pte & PTE_PRESENT) == 0) {
+                continue;  /* Page not present */
+            }
+
+            /* Allocate new physical page for child */
+            void *child_page = fut_pmm_alloc_page();
+            if (!child_page) {
+                /* Out of memory - clean up and fail */
+                fut_mm_release(child_mm);
+                return NULL;
+            }
+
+            /* Get parent's physical page and copy contents */
+            phys_addr_t parent_phys = pte & PTE_PHYS_ADDR_MASK;
+            void *parent_page = (void *)pmap_phys_to_virt(parent_phys);
+            memcpy(child_page, parent_page, FUT_PAGE_SIZE);
+
+            /* Map the new page in child's address space with same permissions */
+            phys_addr_t child_phys = pmap_virt_to_phys((uintptr_t)child_page);
+            uint64_t flags = pte & (PTE_PRESENT | PTE_WRITABLE | PTE_USER | PTE_NX);
+
+            if (pmap_map_user(child_ctx, page, child_phys, FUT_PAGE_SIZE, flags) != 0) {
+                /* Mapping failed - clean up */
+                fut_pmm_free_page(child_page);
+                fut_mm_release(child_mm);
+                return NULL;
+            }
+        }
+    }
+
+    /* Also scan the stack region at the top of user space */
+    /* Stack is typically at 0x7FFFFFFFE000 down to 0x7FFFFFF00000 (around 1 MB) */
+    #define STACK_SCAN_START 0x7FFFFFF00000ULL
+    #define STACK_SCAN_END   0x8000000000000ULL  /* Top of user space */
+
+    for (uint64_t vaddr = STACK_SCAN_START; vaddr < STACK_SCAN_END; vaddr += (2 * 1024 * 1024)) {
+        for (uint64_t page = vaddr; page < vaddr + (2 * 1024 * 1024) && page < STACK_SCAN_END; page += FUT_PAGE_SIZE) {
+            uint64_t pte = 0;
+
+            if (pmap_probe_pte(parent_ctx, page, &pte) != 0) {
+                continue;
+            }
+
+            if ((pte & PTE_PRESENT) == 0) {
+                continue;
+            }
+
+            void *child_page = fut_pmm_alloc_page();
+            if (!child_page) {
+                fut_mm_release(child_mm);
+                return NULL;
+            }
+
+            phys_addr_t parent_phys = pte & PTE_PHYS_ADDR_MASK;
+            void *parent_page = (void *)pmap_phys_to_virt(parent_phys);
+            memcpy(child_page, parent_page, FUT_PAGE_SIZE);
+
+            phys_addr_t child_phys = pmap_virt_to_phys((uintptr_t)child_page);
+            uint64_t flags = pte & (PTE_PRESENT | PTE_WRITABLE | PTE_USER | PTE_NX);
+
+            if (pmap_map_user(child_ctx, page, child_phys, FUT_PAGE_SIZE, flags) != 0) {
+                fut_pmm_free_page(child_page);
+                fut_mm_release(child_mm);
+                return NULL;
+            }
+        }
+    }
 
     return child_mm;
 }

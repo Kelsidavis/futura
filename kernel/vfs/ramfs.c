@@ -153,8 +153,6 @@ static int ramfs_close(struct fut_vnode *vnode) {
     /* Decrement open reference count for tracking */
     if (node->open_count > 0) {
         node->open_count--;
-        fut_printf("[RAMFS-CLOSE] Decremented open_count to %u for vnode=%p\n",
-                   node->open_count, (void*)vnode);
     }
 
     /* RAMFS file buffers are NEVER freed after open.
@@ -661,12 +659,97 @@ static int ramfs_mkdir(struct fut_vnode *dir, const char *name, uint32_t mode) {
     return 0;
 }
 
+/**
+ * ramfs_readdir - Read directory entries
+ * @dir: Directory vnode
+ * @cookie: Position in directory (entry index)
+ * @dirent: Output directory entry
+ *
+ * Returns: 1 if entry found, 0 if end of directory, negative error code on failure
+ */
+static int ramfs_readdir(struct fut_vnode *dir, uint64_t *cookie, struct fut_vdirent *dirent) {
+    extern void fut_printf(const char *, ...);
+
+    if (!dir || !cookie || !dirent) {
+        return -EINVAL;
+    }
+
+    if (dir->type != VN_DIR) {
+        return -ENOTDIR;
+    }
+
+    struct ramfs_node *node = (struct ramfs_node *)dir->fs_data;
+    if (!node) {
+        return -EIO;
+    }
+
+    /* Iterate to the entry at position *cookie */
+    struct ramfs_dirent *entry = node->dir.entries;
+    uint64_t index = 0;
+
+    while (entry && index < *cookie) {
+        entry = entry->next;
+        index++;
+    }
+
+    /* No more entries */
+    if (!entry) {
+        return 0;
+    }
+
+    /* Fill in the dirent structure */
+    dirent->d_ino = entry->vnode->ino;
+    dirent->d_off = *cookie + 1;
+    dirent->d_reclen = sizeof(struct fut_vdirent);
+
+    /* Set d_type based on vnode type */
+    switch (entry->vnode->type) {
+        case VN_REG:
+            dirent->d_type = FUT_VDIR_TYPE_REG;
+            break;
+        case VN_DIR:
+            dirent->d_type = FUT_VDIR_TYPE_DIR;
+            break;
+        case VN_CHR:
+            dirent->d_type = FUT_VDIR_TYPE_CHAR;
+            break;
+        case VN_BLK:
+            dirent->d_type = FUT_VDIR_TYPE_BLOCK;
+            break;
+        case VN_FIFO:
+            dirent->d_type = FUT_VDIR_TYPE_FIFO;
+            break;
+        case VN_SOCK:
+            dirent->d_type = FUT_VDIR_TYPE_SOCKET;
+            break;
+        case VN_LNK:
+            dirent->d_type = FUT_VDIR_TYPE_SYMLINK;
+            break;
+        default:
+            dirent->d_type = FUT_VDIR_TYPE_UNKNOWN;
+            break;
+    }
+
+    /* Copy the name */
+    size_t name_len = 0;
+    while (entry->name[name_len] && name_len < FUT_VFS_NAME_MAX) {
+        dirent->d_name[name_len] = entry->name[name_len];
+        name_len++;
+    }
+    dirent->d_name[name_len] = '\0';
+
+    /* Update cookie to next entry */
+    *cookie = *cookie + 1;
+
+    return 1;  /* Entry found */
+}
+
 static const struct fut_vnode_ops ramfs_vnode_ops = {
     .open = ramfs_open,
     .close = ramfs_close,
     .read = ramfs_read,
     .write = ramfs_write,
-    .readdir = NULL,    /* TODO: Implement readdir */
+    .readdir = ramfs_readdir,
     .lookup = ramfs_lookup,
     .create = ramfs_create,
     .unlink = NULL,      /* TODO: Implement unlink */

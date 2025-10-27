@@ -990,6 +990,15 @@ void fut_kernel_main(void) {
         struct fut_blockdev *test_dev = fut_blockdev_find("blk:vda");
         if (test_dev) {
             fut_printf("[INIT] Block device 'blk:vda' found\n");
+
+            /* Format the device with FuturaFS */
+            fut_printf("[INIT] Formatting blk:vda with FuturaFS...\n");
+            int format_rc = fut_futurafs_format(test_dev, "FuturaOS", 4096);
+            if (format_rc == 0) {
+                fut_printf("[INIT] Successfully formatted blk:vda with FuturaFS\n");
+            } else {
+                fut_printf("[INIT] Failed to format blk:vda: error %d\n", format_rc);
+            }
         } else {
             fut_printf("[INIT] Block device 'blk:vda' NOT found\n");
         }

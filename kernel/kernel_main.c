@@ -27,6 +27,7 @@
 #include <kernel/console.h>
 #include <kernel/boot_banner.h>
 #include <kernel/boot_args.h>
+#include <kernel/fut_percpu.h>
 #include <kernel/input.h>
 #include <futura/blkdev.h>
 #include <futura/net.h>
@@ -38,6 +39,7 @@
 #if defined(__x86_64__)
 #include <arch/x86_64/paging.h>
 #include <arch/x86_64/pmap.h>
+#include <arch/x86_64/lapic.h>
 #elif defined(__aarch64__)
 #include <arch/arm64/paging.h>
 #include <arch/arm64/irq.h>
@@ -1165,7 +1167,23 @@ void fut_kernel_main(void) {
 #endif
 
     /* ========================================
-     *   Step 5: Initialize Scheduler
+     *   Step 5: Initialize Per-CPU Data
+     * ======================================== */
+
+#if defined(__x86_64__)
+    fut_printf("[INIT] Initializing per-CPU data for BSP...\n");
+    uint32_t bsp_apic_id = lapic_get_id();
+    fut_percpu_init(bsp_apic_id, 0);
+    fut_percpu_set(&fut_percpu_data[0]);
+    fut_printf("[INIT] Per-CPU data initialized for BSP (APIC ID %u)\n", bsp_apic_id);
+#else
+    fut_printf("[INIT] Initializing per-CPU data for CPU 0...\n");
+    fut_percpu_init(0, 0);
+    fut_printf("[INIT] Per-CPU data initialized for CPU 0\n");
+#endif
+
+    /* ========================================
+     *   Step 6: Initialize Scheduler
      * ======================================== */
 
     fut_printf("[INIT] Initializing scheduler...\n");

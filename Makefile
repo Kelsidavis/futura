@@ -325,6 +325,7 @@ KERNEL_SOURCES := \
     kernel/scheduler/fut_sched.c \
     kernel/scheduler/fut_stats.c \
     kernel/scheduler/fut_waitq.c \
+    kernel/percpu/fut_percpu.c \
     kernel/timer/fut_timer.c \
     kernel/acpi/acpi.c \
     kernel/ipc/fut_object.c \
@@ -481,6 +482,7 @@ $(OBJ_DIR) $(BIN_DIR):
 	@mkdir -p $(OBJ_DIR)/kernel/mm
 	@mkdir -p $(OBJ_DIR)/kernel/threading
 	@mkdir -p $(OBJ_DIR)/kernel/scheduler
+	@mkdir -p $(OBJ_DIR)/kernel/percpu
 	@mkdir -p $(OBJ_DIR)/kernel/timer
 	@mkdir -p $(OBJ_DIR)/kernel/crypto
 	@mkdir -p $(OBJ_DIR)/kernel/interrupts

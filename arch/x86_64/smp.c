@@ -5,8 +5,10 @@
  */
 
 #include <arch/x86_64/lapic.h>
+#include <kernel/fut_percpu.h>
 #include <stdint.h>
 #include <stdbool.h>
+#include <stdatomic.h>
 #include <string.h>
 
 extern void fut_printf(const char *fmt, ...);
@@ -27,7 +29,7 @@ extern uint64_t ap_trampoline_cpu_id;
 /* Track CPU states */
 #define MAX_CPUS 256
 static volatile bool cpu_online[MAX_CPUS];
-static uint32_t cpu_count = 0;
+static _Atomic uint32_t cpu_count = 1;  /* Start at 1 (BSP is CPU 0) */
 static uint32_t bsp_apic_id = 0;
 
 /**
@@ -66,19 +68,28 @@ void ap_main(uint32_t apic_id) {
     extern void lapic_init(uint64_t lapic_base);
     lapic_init(0xFEE00000);  /* Standard LAPIC address */
 
+    /* Get unique CPU index atomically */
+    uint32_t cpu_index = atomic_fetch_add_explicit(&cpu_count, 1, memory_order_seq_cst);
+
+    /* Initialize per-CPU data for this AP */
+    fut_percpu_init(apic_id, cpu_index);
+    fut_percpu_set(&fut_percpu_data[cpu_index]);
+
     /* Mark CPU as online */
     cpu_online[apic_id] = true;
-    __atomic_add_fetch(&cpu_count, 1, __ATOMIC_SEQ_CST);
 
-    fut_printf("[SMP] AP CPU %u initialized (total CPUs: %u)\n",
-               apic_id, cpu_count);
+    fut_printf("[SMP] AP CPU %u initialized as CPU #%u (total CPUs: %u)\n",
+               apic_id, cpu_index, atomic_load_explicit(&cpu_count, memory_order_seq_cst));
 
-    /* TODO: Enter scheduler and start running threads */
-    /* For now, just halt */
-    fut_printf("[SMP] AP CPU %u entering idle loop\n", apic_id);
+    /* Initialize scheduler for this CPU (creates per-CPU idle thread) */
+    extern void fut_sched_init_cpu(void);
+    fut_sched_init_cpu();
 
+    fut_printf("[SMP] AP CPU %u entering scheduler loop\n", apic_id);
+
+    /* Enter scheduler loop - each CPU independently schedules threads */
     while (1) {
-        __asm__ volatile("hlt");
+        __asm__ volatile("sti\n\thlt" ::: "memory");
     }
 }
 

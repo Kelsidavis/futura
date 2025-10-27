@@ -213,13 +213,17 @@ isr_common_stub:
     pushq %rbx
     pushq %rax
 
-    /* Push segment registers */
+    /* Push segment registers (zero RAX first to avoid garbage in upper bits) */
+    xorq %rax, %rax
     movw %ds, %ax
     pushq %rax
+    xorq %rax, %rax
     movw %es, %ax
     pushq %rax
+    xorq %rax, %rax
     movw %fs, %ax
     pushq %rax
+    xorq %rax, %rax
     movw %gs, %ax
     pushq %rax
 
@@ -316,13 +320,17 @@ irq_common_stub:
     pushq %rbx
     pushq %rax
 
-    /* Push segment registers */
+    /* Push segment registers (zero RAX first to avoid garbage in upper bits) */
+    xorq %rax, %rax
     movw %ds, %ax
     pushq %rax
+    xorq %rax, %rax
     movw %es, %ax
     pushq %rax
+    xorq %rax, %rax
     movw %fs, %ax
     pushq %rax
+    xorq %rax, %rax
     movw %gs, %ax
     pushq %rax
 
@@ -423,13 +431,17 @@ irq0_timer:
     pushq %rbx
     pushq %rax
 
-    /* Push segment registers */
+    /* Push segment registers (zero RAX first to avoid garbage in upper bits) */
+    xorq %rax, %rax
     movw %ds, %ax
     pushq %rax
+    xorq %rax, %rax
     movw %es, %ax
     pushq %rax
+    xorq %rax, %rax
     movw %fs, %ax
     pushq %rax
+    xorq %rax, %rax
     movw %gs, %ax
     pushq %rax
 

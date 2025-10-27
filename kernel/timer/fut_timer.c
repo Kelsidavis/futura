@@ -241,6 +241,29 @@ uint64_t fut_get_ticks(void) {
     return atomic_load_explicit(&system_ticks, memory_order_relaxed);
 }
 
+/**
+ * Get high-resolution time in nanoseconds since boot (TSC-based).
+ * Uses the TSC (Time Stamp Counter) for sub-millisecond precision.
+ */
+uint64_t fut_get_time_ns(void) {
+#if defined(__x86_64__)
+    extern uint64_t fut_rdtsc(void);
+    extern uint64_t fut_cycles_to_ns(uint64_t cycles);
+    return fut_cycles_to_ns(fut_rdtsc());
+#else
+    /* Fallback to millisecond precision on non-x86_64 platforms */
+    return fut_get_ticks() * 1000000ULL;
+#endif
+}
+
+/**
+ * Get high-resolution time in microseconds since boot (TSC-based).
+ * Uses the TSC (Time Stamp Counter) for sub-millisecond precision.
+ */
+uint64_t fut_get_time_us(void) {
+    return fut_get_time_ns() / 1000ULL;
+}
+
 void fut_timer_irq(void) {
     fut_timer_tick();
     fut_irq_send_eoi(0);

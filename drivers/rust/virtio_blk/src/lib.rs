@@ -18,7 +18,7 @@ use core::cmp::min;
 use core::ffi::{c_char, c_void};
 use core::mem::{size_of, MaybeUninit};
 use core::ptr::{self, write_volatile, read_volatile};
-use core::sync::atomic::{AtomicU16, AtomicU8, Ordering};
+use core::sync::atomic::{AtomicU16, AtomicU64, AtomicU8, Ordering};
 
 use common::{
     alloc, alloc_page, free, free_page, log, map_mmio_region, register, thread_yield, unmap_mmio_region,
@@ -40,6 +40,9 @@ static VIRTIO_BLK_IRQ_VECTOR: AtomicU8 = AtomicU8::new(0);
 
 // Global completion flag for interrupt handler
 static IO_COMPLETED: AtomicU8 = AtomicU8::new(0);
+
+// Global ISR register pointer for interrupt acknowledgment
+static VIRTIO_ISR_PTR: AtomicU64 = AtomicU64::new(0);
 
 // MSI-X table entry structure
 #[repr(C, packed)]
@@ -96,6 +99,16 @@ unsafe extern "C" fn virtio_blk_irq_handler() {
 
 // Inner interrupt handler logic
 extern "C" fn virtio_blk_irq_handler_inner() {
+    // CRITICAL: Read ISR status register to acknowledge interrupt to VirtIO device
+    // According to VirtIO spec, this read is REQUIRED for the device to send more interrupts
+    unsafe {
+        let isr_ptr = VIRTIO_ISR_PTR.load(Ordering::Relaxed) as *mut u8;
+        if !isr_ptr.is_null() {
+            let _isr_status = core::ptr::read_volatile(isr_ptr);
+            // Reading the ISR register acknowledges the interrupt to the device
+        }
+    }
+
     // Signal I/O completion
     IO_COMPLETED.store(1, Ordering::Release);
 
@@ -812,6 +825,8 @@ impl VirtioBlkDevice {
                     return false;
                 }
                 self.isr = mapped as *mut u8;
+                // Store ISR pointer globally for interrupt handler to access
+                VIRTIO_ISR_PTR.store(self.isr as u64, Ordering::Release);
                 true
             }
             VIRTIO_PCI_CAP_NOTIFY_CFG => {

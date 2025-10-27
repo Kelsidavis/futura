@@ -215,6 +215,11 @@ void acpi_parse_madt(void) {
     uint64_t io_apic_address = 0;
     uint32_t io_apic_gsi_base = 0;
 
+    /* Store APIC IDs for SMP initialization */
+    #define MAX_CPUS 256
+    static uint32_t apic_ids[MAX_CPUS];
+    uint32_t num_apic_ids = 0;
+
     uint8_t *entry_ptr = (uint8_t *)(madt + 1);  /* Start after header */
     uint8_t *end = (uint8_t *)madt + madt->header.length;
 
@@ -239,7 +244,8 @@ void acpi_parse_madt(void) {
                            enabled ? "enabled" : "disabled",
                            online_capable ? ", online-capable" : "");
 
-                if (enabled) {
+                if (enabled && num_apic_ids < MAX_CPUS) {
+                    apic_ids[num_apic_ids++] = lapic->apic_id;
                     cpu_count++;
                 }
                 break;
@@ -315,6 +321,15 @@ void acpi_parse_madt(void) {
 
         /* TODO: Apply interrupt overrides from MADT */
         /* TODO: Enable IRQs when drivers register handlers */
+    }
+
+    /* Start Application Processors if we have multiple CPUs */
+    if (num_apic_ids > 1) {
+        fut_printf("[ACPI] Starting %u Application Processors...\n", num_apic_ids - 1);
+        extern void smp_init(uint32_t *apic_ids, uint32_t num_cpus);
+        smp_init(apic_ids, num_apic_ids);
+    } else {
+        fut_printf("[ACPI] Single-processor system, SMP disabled\n");
     }
 }
 

@@ -46,6 +46,20 @@ boot_mb_magic:
     .long 0
 boot_mb_addr:
     .long 0
+boot_mb_magic_tmp:
+    .long 0
+boot_mb_addr_tmp:
+    .long 0
+
+/* AP synchronization variables */
+.global ap_ready_flag
+.global ap_entry_addr_64
+ap_ready_flag:
+    .long 0
+ap_entry_addr:
+    .long 0
+ap_entry_addr_64:
+    .quad 0
 
 /* Page tables live in their dedicated boot.ptables section to avoid overlap with
  * regular .bss data once the kernel relocates.
@@ -90,13 +104,130 @@ _start:
     cli                                 /* Disable interrupts */
 
     /* CRITICAL: Save Multiboot2 info FIRST before using any registers! */
-    movl %eax, boot_mb_magic            /* Save Multiboot2 magic (from eax) */
-    movl %ebx, boot_mb_addr             /* Save Multiboot2 info pointer (from ebx) */
+    movl %eax, boot_mb_magic_tmp        /* Save Multiboot2 magic temporarily */
+    movl %ebx, boot_mb_addr_tmp         /* Save Multiboot2 info pointer temporarily */
+
+    /* Detect BSP using CPUID - Get initial APIC ID */
+    movl $1, %eax                       /* CPUID function 1 */
+    cpuid
+    shrl $24, %ebx                      /* APIC ID is in EBX[31:24] */
+
+    /* Debug: Write APIC ID to serial */
+    movw $0x3F8, %dx
+    movb $'[', %al
+    outb %al, %dx
+    movb %bl, %al
+    addb $'0', %al                      /* Convert to ASCII digit (works for 0-9) */
+    outb %al, %dx
+    movb $']', %al
+    outb %al, %dx
+
+    /* Check if this is the BSP (APIC ID 0) */
+    testb %bl, %bl
+    jnz ap_spin_loop                    /* If not zero, this is an AP */
+
+    /* This is the BSP - restore multiboot info and continue */
+    movl boot_mb_magic_tmp, %eax
+    movl %eax, boot_mb_magic
+    movl boot_mb_addr_tmp, %ebx
+    movl %ebx, boot_mb_addr
 
     /* Early debug: Write 'S' to serial COM1 in 32-bit mode */
     movw $0x3F8, %dx
     movb $'S', %al
     outb %al, %dx
+    jmp bsp_init_continue
+
+/* AP spin loop - wait for BSP to initialize and wake us */
+.global ap_spin_loop
+ap_spin_loop:
+    /* Write 'A' to indicate AP is spinning */
+    movw $0x3F8, %dx
+    movb $'A', %al
+    outb %al, %dx
+
+    /* Check if we should start (ap_ready flag) */
+1:
+    pause
+    cmpl $0, ap_ready_flag
+    je 1b
+
+    /* AP has been signaled to start - continue with initialization */
+    /* Fall through to ap_init_32 */
+
+/* AP initialization in 32-bit mode */
+ap_init_32:
+    /* Write '+' to indicate AP is initializing */
+    movw $0x3F8, %dx
+    movb $'+', %al
+    outb %al, %dx
+
+    /* Page tables are already set up by BSP, just load CR3 */
+    movl $boot_pml4_phys, %eax
+    movl %eax, %cr3
+
+    /* Enable PAE and PSE */
+    movl %cr4, %eax
+    orl $0x30, %eax
+    movl %eax, %cr4
+
+    /* Enable long mode in EFER */
+    movl $0xC0000080, %ecx
+    rdmsr
+    orl $(1 << 8), %eax
+    wrmsr
+
+    /* Enable paging */
+    movl %cr0, %eax
+    orl $(1 << 31), %eax
+    movl %eax, %cr0
+
+    /* Load GDT */
+    lgdt gdt64_pointer
+
+    /* Jump to 64-bit mode */
+    ljmp $0x08, $ap_long_mode_entry
+
+/* AP entry in 64-bit mode */
+.code64
+ap_long_mode_entry:
+    /* Set up segments */
+    mov $0x10, %ax
+    mov %ax, %ds
+    mov %ax, %es
+    mov %ax, %ss
+    xor %ax, %ax
+    mov %ax, %fs
+    mov %ax, %gs
+
+    /* Write 'L' to indicate AP is in long mode */
+    movw $0x3F8, %dx
+    movb $'L', %al
+    outb %al, %dx
+
+    /* Get APIC ID to pass to ap_main */
+    movl $1, %eax
+    cpuid
+    shrl $24, %ebx
+    movl %ebx, %edi              /* First argument: APIC ID */
+
+    /* Set up a temporary stack (each AP gets offset by its ID) */
+    movq $boot_stack_top, %rsp
+    shlq $14, %rbx               /* Each AP gets 16KB offset (2^14) */
+    subq %rbx, %rsp
+
+    /* Jump to C code */
+    movq ap_entry_addr_64, %rax
+    call *%rax
+
+    /* Should never return */
+1:
+    hlt
+    jmp 1b
+
+.code32
+
+bsp_init_continue:
 
     /* Initialize page tables at runtime with correct physical addresses */
 

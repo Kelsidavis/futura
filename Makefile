@@ -374,10 +374,12 @@ ifeq ($(PLATFORM),x86_64)
         platform/x86_64/isr_stubs.S \
         platform/x86_64/context_switch.S \
         platform/x86_64/user_iretq.S \
+        platform/x86_64/ap_trampoline.S \
         platform/x86_64/gdt.c \
         arch/x86_64/pat.c \
         arch/x86_64/lapic.c \
         arch/x86_64/ioapic.c \
+        arch/x86_64/smp.c \
         platform/x86_64/pmap.c \
         platform/x86_64/paging.c \
         platform/x86_64/cpu_features.c \

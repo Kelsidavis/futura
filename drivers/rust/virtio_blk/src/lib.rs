@@ -260,7 +260,6 @@ struct VirtioPciCommonCfg {
     queue_msix_vector: u16,
     queue_enable: u16,
     queue_notify_off: u16,
-    queue_reserved: u16,
     queue_desc_lo: u32,
     queue_desc_hi: u32,
     queue_avail_lo: u32,
@@ -343,6 +342,7 @@ struct VirtQueue {
     notify_off: u16,
     next_avail: AtomicU16,
     last_used: AtomicU16,
+    queue_mem_base: *mut u8,  // Base pointer for cleanup of 64KB-aligned allocation
 }
 
 impl VirtQueue {
@@ -358,32 +358,46 @@ impl VirtQueue {
             notify_off: 0,
             next_avail: AtomicU16::new(0),
             last_used: AtomicU16::new(0),
+            queue_mem_base: ptr::null_mut(),
         }
     }
 
     fn setup(&mut self, requested: u16) -> Result<(), FutStatus> {
         unsafe {
-            /* QEMU requires 64KB alignment for descriptor tables.
-             * Allocate 16 pages and manually align to 64KB boundary. */
+            /* QEMU modern VirtIO requires 64KB alignment for ALL queue structures.
+             * Allocate one large contiguous block and subdivide it to avoid overlap.
+             * Need: 3×64KB = 192KB for structures + 64KB for alignment slack = 256KB */
             const ALIGN_64KB: usize = 0x10000;
-            let desc_raw = alloc_page() as usize;
-            let avail = alloc_page() as *mut VirtqAvail;
-            let used = alloc_page() as *mut VirtqUsed;
+            const BLOCK_SIZE: usize = 0x40000; // 256KB
 
-            /* Align desc to 64KB */
-            let desc_aligned = (desc_raw + ALIGN_64KB - 1) & !(ALIGN_64KB - 1);
-            let desc = desc_aligned as *mut VirtqDesc;
+            let base_ptr = alloc(BLOCK_SIZE);
+            if base_ptr.is_null() {
+                return Err(ENOMEM);
+            }
 
-            if desc_raw == 0 || avail.is_null() || used.is_null() {
-                if desc_raw != 0 {
-                    free_page(desc_raw as *mut u8);
-                }
-                if !avail.is_null() {
-                    free_page(avail.cast());
-                }
-                if !used.is_null() {
-                    free_page(used.cast());
-                }
+            let base_addr = base_ptr as usize;
+
+            // Find first 64KB-aligned address in the allocated block
+            let aligned_base = (base_addr + ALIGN_64KB - 1) & !(ALIGN_64KB - 1);
+
+            // Place three structures at 64KB intervals within the aligned region
+            let desc_base = aligned_base;
+            let avail_base = aligned_base + ALIGN_64KB;
+            let used_base = aligned_base + 2 * ALIGN_64KB;
+
+            let desc = desc_base as *mut VirtqDesc;
+            let avail = avail_base as *mut VirtqAvail;
+            let used = used_base as *mut VirtqUsed;
+
+            // Store base pointer for cleanup
+            self.queue_mem_base = base_ptr;
+
+            // Verify no overlap (should be impossible with our fixed spacing)
+            if desc_base == avail_base || desc_base == used_base || avail_base == used_base {
+                fut_printf(b"[virtio-blk] ERROR: Queue structures overlap after alignment!\n\0".as_ptr());
+                fut_printf(b"[virtio-blk]   desc=0x%lx avail=0x%lx used=0x%lx\n\0".as_ptr(),
+                    desc_base, avail_base, used_base);
+                free(base_ptr);
                 return Err(ENOMEM);
             }
             ptr::write_bytes(desc.cast::<u8>(), 0, PAGE_SIZE);
@@ -397,6 +411,21 @@ impl VirtQueue {
             self.desc_phys = virt_to_phys_addr(desc as usize);
             self.avail_phys = virt_to_phys_addr(avail as usize);
             self.used_phys = virt_to_phys_addr(used as usize);
+
+            /* CRITICAL: Verify all queue regions are page-aligned for QEMU */
+            fut_printf(b"[virtio-blk] queue addrs: desc=0x%lx avail=0x%lx used=0x%lx\n\0".as_ptr(),
+                self.desc_phys, self.avail_phys, self.used_phys);
+
+            if (self.desc_phys % 4096) != 0 {
+                fut_printf(b"[virtio-blk] ERROR: desc_phys not page-aligned! (0x%lx)\n\0".as_ptr(), self.desc_phys);
+            }
+            if (self.avail_phys % 4096) != 0 {
+                fut_printf(b"[virtio-blk] ERROR: avail_phys not page-aligned! (0x%lx)\n\0".as_ptr(), self.avail_phys);
+            }
+            if (self.used_phys % 4096) != 0 {
+                fut_printf(b"[virtio-blk] ERROR: used_phys not page-aligned! (0x%lx)\n\0".as_ptr(), self.used_phys);
+            }
+
             self.next_avail.store(0, Ordering::Relaxed);
             self.last_used.store(0, Ordering::Relaxed);
         }
@@ -424,48 +453,60 @@ impl VirtQueue {
         let desc_status = (desc_head + 2) % self.size;
 
         unsafe {
-            // Header descriptor
-            write_volatile(self.desc.add(desc_head as usize), VirtqDesc {
-                addr: header_phys,
-                len: size_of::<VirtioBlkReqHeader>() as u32,
-                flags: VIRTQ_DESC_F_NEXT,
-                next: if req_type == VIRTIO_BLK_T_FLUSH { desc_status } else { desc_data },
-            });
+            // Header descriptor - write each field separately for packed struct visibility
+            let desc_ptr = self.desc.add(desc_head as usize);
+            let addr_ptr = core::ptr::addr_of_mut!((*desc_ptr).addr);
+            write_volatile(addr_ptr, header_phys);
+            let len_ptr = core::ptr::addr_of_mut!((*desc_ptr).len);
+            write_volatile(len_ptr, size_of::<VirtioBlkReqHeader>() as u32);
+            let flags_ptr = core::ptr::addr_of_mut!((*desc_ptr).flags);
+            write_volatile(flags_ptr, VIRTQ_DESC_F_NEXT);
+            let next_ptr = core::ptr::addr_of_mut!((*desc_ptr).next);
+            let next_val = if req_type == VIRTIO_BLK_T_FLUSH { desc_status } else { desc_data };
+            write_volatile(next_ptr, next_val);
             fut_printf(b"[virtio-blk] desc[%d]: addr=0x%lx len=%d flags=0x%x next=%d\n\0".as_ptr(),
                 desc_head as u32, header_phys, size_of::<VirtioBlkReqHeader>() as u32,
-                VIRTQ_DESC_F_NEXT as u32,
-                if req_type == VIRTIO_BLK_T_FLUSH { desc_status } else { desc_data } as u32);
+                VIRTQ_DESC_F_NEXT as u32, next_val as u32);
 
             if req_type != VIRTIO_BLK_T_FLUSH {
                 let mut flags = VIRTQ_DESC_F_NEXT;
                 if !write {
                     flags |= VIRTQ_DESC_F_WRITE;
                 }
-                write_volatile(self.desc.add(desc_data as usize), VirtqDesc {
-                    addr: data_phys,
-                    len: data_len as u32,
-                    flags,
-                    next: desc_status,
-                });
+                // Data descriptor - write each field separately
+                let desc_ptr = self.desc.add(desc_data as usize);
+                let addr_ptr = core::ptr::addr_of_mut!((*desc_ptr).addr);
+                write_volatile(addr_ptr, data_phys);
+                let len_ptr = core::ptr::addr_of_mut!((*desc_ptr).len);
+                write_volatile(len_ptr, data_len as u32);
+                let flags_ptr = core::ptr::addr_of_mut!((*desc_ptr).flags);
+                write_volatile(flags_ptr, flags);
+                let next_ptr = core::ptr::addr_of_mut!((*desc_ptr).next);
+                write_volatile(next_ptr, desc_status);
                 fut_printf(b"[virtio-blk] desc[%d]: addr=0x%lx len=%d flags=0x%x next=%d\n\0".as_ptr(),
                     desc_data as u32, data_phys, data_len as u32, flags as u32, desc_status as u32);
             }
 
-            // Status descriptor
-            write_volatile(self.desc.add(desc_status as usize), VirtqDesc {
-                addr: status_phys,
-                len: 1,
-                flags: VIRTQ_DESC_F_WRITE,
-                next: 0,
-            });
+            // Status descriptor - write each field separately
+            let desc_ptr = self.desc.add(desc_status as usize);
+            let addr_ptr = core::ptr::addr_of_mut!((*desc_ptr).addr);
+            write_volatile(addr_ptr, status_phys);
+            let len_ptr = core::ptr::addr_of_mut!((*desc_ptr).len);
+            write_volatile(len_ptr, 1);
+            let flags_ptr = core::ptr::addr_of_mut!((*desc_ptr).flags);
+            write_volatile(flags_ptr, VIRTQ_DESC_F_WRITE);
+            let next_ptr = core::ptr::addr_of_mut!((*desc_ptr).next);
+            write_volatile(next_ptr, 0);
             fut_printf(b"[virtio-blk] desc[%d]: addr=0x%lx len=1 flags=0x%x next=0\n\0".as_ptr(),
                 desc_status as u32, status_phys, VIRTQ_DESC_F_WRITE as u32);
+
+            // CRITICAL: Memory fence to ensure ALL descriptor writes are visible before updating available ring
+            core::sync::atomic::fence(Ordering::SeqCst);
 
             let avail = &mut *self.avail;
             // CRITICAL: Use volatile write for ring array (shared memory with device)
             let ring_ptr = core::ptr::addr_of_mut!(avail.ring[slot as usize]);
             write_volatile(ring_ptr, desc_head);
-            core::sync::atomic::fence(Ordering::SeqCst);
             // CRITICAL: Use addr_of_mut! for packed struct field to avoid alignment issues
             let idx_ptr = core::ptr::addr_of_mut!(avail.idx);
             let old_idx = read_volatile(idx_ptr);
@@ -626,9 +667,16 @@ impl VirtioBlkDevice {
 
         /* Set DRIVER_OK after all setup is complete (required by virtio spec) */
         unsafe {
-            (*dev.common).device_status |= VIRTIO_STATUS_DRIVER_OK;
-            let final_status = (*dev.common).device_status;
-            let queue_enabled = (*dev.common).queue_enable;
+            use core::ptr::{addr_of_mut, read_volatile, write_volatile};
+
+            /* CRITICAL: Use volatile write for device_status (hardware register!) */
+            let status_ptr = addr_of_mut!((*dev.common).device_status);
+            let current_status = read_volatile(status_ptr);
+            write_volatile(status_ptr, current_status | VIRTIO_STATUS_DRIVER_OK);
+
+            let final_status = read_volatile(status_ptr);
+            let queue_enable_ptr = addr_of_mut!((*dev.common).queue_enable);
+            let queue_enabled = read_volatile(queue_enable_ptr);
             fut_printf(b"[virtio-blk] DRIVER_OK set: status=0x%x queue_enable=%d\n\0".as_ptr(),
                 final_status as u32, queue_enabled as u32);
         }
@@ -1032,35 +1080,64 @@ impl VirtioBlkDevice {
 
     fn negotiate_features(&mut self) -> Result<(), FutStatus> {
         unsafe {
-            (*self.common).device_status = VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER;
-            (*self.common).device_feature_select = 0;
-            let feat_low = (*self.common).device_feature;
-            (*self.common).device_feature_select = 1;
-            let feat_high = (*self.common).device_feature;
-            let features = ((feat_high as u64) << 32) | feat_low as u64;
+            use core::ptr::{addr_of_mut, read_volatile, write_volatile};
 
+            /* CRITICAL: ALL writes to packed common_cfg struct MUST use write_volatile! */
+
+            // Set ACKNOWLEDGE | DRIVER status (volatile!)
+            let status_ptr = addr_of_mut!((*self.common).device_status);
+            write_volatile(status_ptr, VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER);
+
+            // Read device features (volatile!) - word 0 (bits 0-31)
+            let feat_sel_ptr = addr_of_mut!((*self.common).device_feature_select);
+            write_volatile(feat_sel_ptr, 0u32);
+            let feat_ptr = addr_of_mut!((*self.common).device_feature);
+            let feat_low = read_volatile(feat_ptr);
+
+            // Read device features - word 1 (bits 32-63)
+            write_volatile(feat_sel_ptr, 1u32);
+            let feat_high = read_volatile(feat_ptr);
+
+            let features = ((feat_high as u64) << 32) | feat_low as u64;
             fut_printf(b"[virtio-blk] device features: 0x%lx\n\0".as_ptr(), features);
 
-            /* Accept only minimum required features for basic operation.
-             * VIRTIO_F_VERSION_1 (bit 32) is required for modern virtio devices.
-             * VIRTIO_F_RING_INDIRECT_DESC (bit 28) and VIRTIO_F_RING_EVENT_IDX (bit 29)
-             * can cause issues if not properly supported. Accept only VERSION_1. */
+            /* CRITICAL: We use modern VirtIO transport (PCI capabilities) so we MUST
+             * negotiate VIRTIO_F_VERSION_1 (bit 32). Without this, QEMU won't process
+             * requests from modern drivers! */
             const VIRTIO_F_VERSION_1: u64 = 1u64 << 32;
             const VIRTIO_F_ANY_LAYOUT: u64 = 1u64 << 27;
 
-            // Accept VERSION_1 and ANY_LAYOUT (helps with buffer handling)
-            let driver_features = VIRTIO_F_VERSION_1 | (features & VIRTIO_F_ANY_LAYOUT);
+            // For modern mode: MUST negotiate VERSION_1, optionally accept ANY_LAYOUT
+            let mut driver_features = 0u64;
+            if (features & VIRTIO_F_VERSION_1) != 0 {
+                driver_features |= VIRTIO_F_VERSION_1;
+            }
+            if (features & VIRTIO_F_ANY_LAYOUT) != 0 {
+                driver_features |= VIRTIO_F_ANY_LAYOUT;
+            }
 
-            (*self.common).driver_feature_select = 0;
-            (*self.common).driver_feature = driver_features as u32;
-            (*self.common).driver_feature_select = 1;
-            (*self.common).driver_feature = (driver_features >> 32) as u32;
+            // Write driver features (volatile!) - word 0 (bits 0-31)
+            let drv_feat_sel_ptr = addr_of_mut!((*self.common).driver_feature_select);
+            write_volatile(drv_feat_sel_ptr, 0u32);
+            let drv_feat_ptr = addr_of_mut!((*self.common).driver_feature);
+            write_volatile(drv_feat_ptr, driver_features as u32);
+
+            // Write driver features - word 1 (bits 32-63)
+            write_volatile(drv_feat_sel_ptr, 1u32);
+            write_volatile(drv_feat_ptr, (driver_features >> 32) as u32);
 
             fut_printf(b"[virtio-blk] driver features: 0x%lx (minimal set)\n\0".as_ptr(),
                 driver_features);
 
-            (*self.common).device_status |= VIRTIO_STATUS_FEATURES_OK;
-            let status_check = (*self.common).device_status;
+            // Memory fence before setting FEATURES_OK
+            core::sync::atomic::fence(core::sync::atomic::Ordering::SeqCst);
+
+            // Set FEATURES_OK status bit (volatile!)
+            let current_status = read_volatile(status_ptr);
+            write_volatile(status_ptr, current_status | VIRTIO_STATUS_FEATURES_OK);
+
+            // Read back status to verify FEATURES_OK was accepted (volatile!)
+            let status_check = read_volatile(status_ptr);
             fut_printf(b"[virtio-blk] device_status after FEATURES_OK: 0x%x\n\0".as_ptr(), status_check as u32);
 
             if (status_check & VIRTIO_STATUS_FEATURES_OK) == 0 {
@@ -1074,43 +1151,107 @@ impl VirtioBlkDevice {
 
     fn init_queue(&mut self) -> Result<(), FutStatus> {
         unsafe {
-            (*self.common).queue_select = 0;
-            let device_qsize = (*self.common).queue_size;
+            use core::ptr::{addr_of_mut, read_volatile, write_volatile};
+
+            /* CRITICAL: ALL writes to packed common_cfg struct MUST use write_volatile! */
+
+            // Select queue 0
+            let queue_select_ptr = addr_of_mut!((*self.common).queue_select);
+            write_volatile(queue_select_ptr, 0u16);
+
+            // Read max queue size from device
+            let queue_size_ptr = addr_of_mut!((*self.common).queue_size);
+            let device_qsize = read_volatile(queue_size_ptr);
             if device_qsize == 0 {
                 return Err(ENODEV);
             }
             let qsize = min(device_qsize, QUEUE_SIZE);
             self.queue.setup(qsize)?;
-            (*self.common).queue_size = qsize;
+
+            // Write queue size
+            write_volatile(queue_size_ptr, qsize);
 
             /* Disable MSI-X to use legacy INTx interrupts */
-            (*self.common).queue_msix_vector = 0xFFFF;  // NO_VECTOR - use legacy INTx
-            (*self.common).msix_config = 0xFFFF;        // NO_VECTOR for config
+            let msix_vec_ptr = addr_of_mut!((*self.common).queue_msix_vector);
+            write_volatile(msix_vec_ptr, 0xFFFFu16);  // NO_VECTOR - use legacy INTx
+            let msix_cfg_ptr = addr_of_mut!((*self.common).msix_config);
+            write_volatile(msix_cfg_ptr, 0xFFFFu16);  // NO_VECTOR for config
 
             fut_printf(b"[virtio-blk] MSI-X disabled, using legacy INTx\n\0".as_ptr());
 
+            // Modern VirtIO 1.0+ uses byte addresses in queue address registers
+            // NOTE: Queue starts disabled by default, no need to explicitly disable it
             let desc_lo = (self.queue.desc_phys & 0xFFFF_FFFF) as u32;
             let desc_hi = (self.queue.desc_phys >> 32) as u32;
-            fut_printf(b"[virtio-blk] writing queue_desc: lo=0x%x hi=0x%x\n\0".as_ptr(), desc_lo, desc_hi);
+            let avail_lo = (self.queue.avail_phys & 0xFFFF_FFFF) as u32;
+            let avail_hi = (self.queue.avail_phys >> 32) as u32;
+            let used_lo = (self.queue.used_phys & 0xFFFF_FFFF) as u32;
+            let used_hi = (self.queue.used_phys >> 32) as u32;
 
-            (*self.common).queue_desc_lo = desc_lo;
-            (*self.common).queue_desc_hi = desc_hi;
-            (*self.common).queue_avail_lo = (self.queue.avail_phys & 0xFFFF_FFFF) as u32;
-            (*self.common).queue_avail_hi = (self.queue.avail_phys >> 32) as u32;
-            (*self.common).queue_used_lo = (self.queue.used_phys & 0xFFFF_FFFF) as u32;
-            (*self.common).queue_used_hi = (self.queue.used_phys >> 32) as u32;
-            (*self.common).queue_enable = 1;
-            self.queue.notify_off = (*self.common).queue_notify_off;
+            fut_printf(b"[virtio-blk] ADDRESS SPLIT DEBUG:\n\0".as_ptr());
+            fut_printf(b"[virtio-blk]   desc: 0x%lx -> lo=0x%08x hi=0x%08x\n\0".as_ptr(),
+                self.queue.desc_phys, desc_lo, desc_hi);
+            fut_printf(b"[virtio-blk]   avail: 0x%lx -> lo=0x%08x hi=0x%08x\n\0".as_ptr(),
+                self.queue.avail_phys, avail_lo, avail_hi);
+            fut_printf(b"[virtio-blk]   used: 0x%lx -> lo=0x%08x hi=0x%08x\n\0".as_ptr(),
+                self.queue.used_phys, used_lo, used_hi);
+
+            // Write descriptor table address (volatile!)
+            let desc_lo_ptr = addr_of_mut!((*self.common).queue_desc_lo);
+            write_volatile(desc_lo_ptr, desc_lo);
+            let desc_hi_ptr = addr_of_mut!((*self.common).queue_desc_hi);
+            write_volatile(desc_hi_ptr, desc_hi);
+
+            // Readback to verify
+            let readback_desc_lo = read_volatile(desc_lo_ptr);
+            let readback_desc_hi = read_volatile(desc_hi_ptr);
+            fut_printf(b"[virtio-blk]   desc readback: lo=0x%08x hi=0x%08x\n\0".as_ptr(),
+                readback_desc_lo, readback_desc_hi);
+
+            // Write available ring address (volatile!)
+            let avail_lo_ptr = addr_of_mut!((*self.common).queue_avail_lo);
+            write_volatile(avail_lo_ptr, avail_lo);
+            let avail_hi_ptr = addr_of_mut!((*self.common).queue_avail_hi);
+            write_volatile(avail_hi_ptr, avail_hi);
+
+            // Readback to verify
+            let readback_avail_lo = read_volatile(avail_lo_ptr);
+            let readback_avail_hi = read_volatile(avail_hi_ptr);
+            fut_printf(b"[virtio-blk]   avail readback: lo=0x%08x hi=0x%08x\n\0".as_ptr(),
+                readback_avail_lo, readback_avail_hi);
+
+            // Write used ring address (volatile!)
+            let used_lo_ptr = addr_of_mut!((*self.common).queue_used_lo);
+            write_volatile(used_lo_ptr, used_lo);
+            let used_hi_ptr = addr_of_mut!((*self.common).queue_used_hi);
+            write_volatile(used_hi_ptr, used_hi);
+
+            // Readback to verify
+            let readback_used_lo = read_volatile(used_lo_ptr);
+            let readback_used_hi = read_volatile(used_hi_ptr);
+            fut_printf(b"[virtio-blk]   used readback: lo=0x%08x hi=0x%08x\n\0".as_ptr(),
+                readback_used_lo, readback_used_hi);
+
+            // Memory fence: ensure all queue address writes are visible before enable
+            core::sync::atomic::fence(core::sync::atomic::Ordering::SeqCst);
+
+            // Enable the queue (volatile!)
+            let queue_enable_ptr = addr_of_mut!((*self.common).queue_enable);
+            write_volatile(queue_enable_ptr, 1u16);
+
+            // Read notify offset (volatile!)
+            let notify_off_ptr = addr_of_mut!((*self.common).queue_notify_off);
+            self.queue.notify_off = read_volatile(notify_off_ptr);
 
             fut_printf(b"[virtio-blk] queue setup: desc_phys=0x%lx avail_phys=0x%lx used_phys=0x%lx\n\0".as_ptr(),
                 self.queue.desc_phys, self.queue.avail_phys, self.queue.used_phys);
 
-            /* Verify queue addresses were written correctly */
-            let readback_select = (*self.common).queue_select;
-            let readback_desc_lo = (*self.common).queue_desc_lo;
-            let readback_desc_hi = (*self.common).queue_desc_hi;
+            /* Verify queue addresses were written correctly (use volatile reads!) */
+            let readback_select = read_volatile(queue_select_ptr);
+            let readback_desc_lo = read_volatile(desc_lo_ptr);
+            let readback_desc_hi = read_volatile(desc_hi_ptr);
             let readback_desc = ((readback_desc_hi as u64) << 32) | (readback_desc_lo as u64);
-            let readback_enabled = (*self.common).queue_enable;
+            let readback_enabled = read_volatile(queue_enable_ptr);
             fut_printf(b"[virtio-blk] readback: queue_select=%d desc=0x%lx enabled=%d\n\0".as_ptr(),
                 readback_select as u32, readback_desc, readback_enabled as u32);
 
@@ -1152,13 +1293,20 @@ impl VirtioBlkDevice {
             let off = (self.queue.notify_off as u32 * self.notify_off_multiplier) as usize;
             let ptr = self.notify_base.add(off) as *mut u16;
 
+            fut_printf(b"[virtio-blk] notify: queue_notify_off=%u multiplier=%u offset=%u base=%p final_ptr=%p\n\0".as_ptr(),
+                self.queue.notify_off as u32,
+                self.notify_off_multiplier,
+                off as u32,
+                self.notify_base,
+                ptr);
+
             /* Write the queue index to notify QEMU */
             write_volatile(ptr, 0);  // Queue 0
 
             /* Verify write succeeded by reading back (may help trigger QEMU too) */
             let _readback = read_volatile(ptr as *const u16);
 
-            fut_printf(b"[virtio-blk] notified queue 0 at ptr=%p\n\0".as_ptr(), ptr);
+            fut_printf(b"[virtio-blk] notified queue 0 (wrote to ptr=%p)\n\0".as_ptr(), ptr);
         }
     }
 
@@ -1184,10 +1332,16 @@ impl VirtioBlkDevice {
         let mut data_phys = 0u64;
 
         unsafe {
-            (*self.dma).header.req_type = req_type;
-            (*self.dma).header.reserved = 0;
-            (*self.dma).header.sector = lba;
-            (*self.dma).status = 0xFF;
+            // CRITICAL: Use volatile writes for DMA buffer (shared with device)
+            // Write each field separately to ensure visibility to device
+            let req_type_ptr = core::ptr::addr_of_mut!((*self.dma).header.req_type);
+            write_volatile(req_type_ptr, req_type);
+            let reserved_ptr = core::ptr::addr_of_mut!((*self.dma).header.reserved);
+            write_volatile(reserved_ptr, 0);
+            let sector_ptr = core::ptr::addr_of_mut!((*self.dma).header.sector);
+            write_volatile(sector_ptr, lba);
+            let status_ptr = core::ptr::addr_of_mut!((*self.dma).status);
+            write_volatile(status_ptr, 0xFF);
 
             fut_printf(b"[virtio-blk] request: type=%d lba=%ld nsectors=%d\n\0".as_ptr(),
                 req_type, lba, nsectors as u32);

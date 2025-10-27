@@ -179,6 +179,98 @@ acpi_fadt_t *acpi_get_fadt(void) {
     return (acpi_fadt_t *)acpi_find_table(ACPI_SIG_FADT);
 }
 
+/**
+ * Get the MADT (Multiple APIC Description Table).
+ */
+acpi_madt_t *acpi_get_madt(void) {
+    return (acpi_madt_t *)acpi_find_table(ACPI_SIG_MADT);
+}
+
+/**
+ * Parse MADT to discover CPU topology.
+ */
+void acpi_parse_madt(void) {
+    acpi_madt_t *madt = acpi_get_madt();
+    if (!madt) {
+        fut_printf("[ACPI] MADT not found\n");
+        return;
+    }
+
+    fut_printf("[ACPI] MADT found at 0x%p\n", (void *)madt);
+    fut_printf("[ACPI] Local APIC address: 0x%x\n", madt->local_apic_address);
+    fut_printf("[ACPI] Flags: 0x%x (PC-AT compatible: %s)\n",
+               madt->flags,
+               (madt->flags & 1) ? "yes" : "no");
+
+    /* Parse MADT entries */
+    uint32_t cpu_count = 0;
+    uint32_t io_apic_count = 0;
+    uint32_t interrupt_override_count = 0;
+
+    uint8_t *entry_ptr = (uint8_t *)(madt + 1);  /* Start after header */
+    uint8_t *end = (uint8_t *)madt + madt->header.length;
+
+    while (entry_ptr < end) {
+        acpi_madt_entry_header_t *header = (acpi_madt_entry_header_t *)entry_ptr;
+
+        if (header->length == 0) {
+            fut_printf("[ACPI] Invalid MADT entry with length 0\n");
+            break;
+        }
+
+        switch (header->type) {
+            case ACPI_MADT_TYPE_LOCAL_APIC: {
+                acpi_madt_local_apic_t *lapic = (acpi_madt_local_apic_t *)entry_ptr;
+                bool enabled = (lapic->flags & 1);
+                bool online_capable = (lapic->flags & 2);
+
+                fut_printf("[ACPI]   CPU #%u: APIC ID %u, Processor ID %u, %s%s\n",
+                           cpu_count,
+                           lapic->apic_id,
+                           lapic->acpi_processor_id,
+                           enabled ? "enabled" : "disabled",
+                           online_capable ? ", online-capable" : "");
+
+                if (enabled) {
+                    cpu_count++;
+                }
+                break;
+            }
+
+            case ACPI_MADT_TYPE_IO_APIC: {
+                acpi_madt_io_apic_t *ioapic = (acpi_madt_io_apic_t *)entry_ptr;
+                fut_printf("[ACPI]   IO-APIC #%u: ID %u, address 0x%x, GSI base %u\n",
+                           io_apic_count,
+                           ioapic->io_apic_id,
+                           ioapic->io_apic_address,
+                           ioapic->global_system_interrupt_base);
+                io_apic_count++;
+                break;
+            }
+
+            case ACPI_MADT_TYPE_INTERRUPT_OVERRIDE: {
+                acpi_madt_interrupt_override_t *override = (acpi_madt_interrupt_override_t *)entry_ptr;
+                fut_printf("[ACPI]   IRQ Override: bus %u, source %u -> GSI %u, flags 0x%x\n",
+                           override->bus,
+                           override->source,
+                           override->global_system_interrupt,
+                           override->flags);
+                interrupt_override_count++;
+                break;
+            }
+
+            default:
+                fut_printf("[ACPI]   Unknown MADT entry type: %u\n", header->type);
+                break;
+        }
+
+        entry_ptr += header->length;
+    }
+
+    fut_printf("[ACPI] CPU topology: %u CPUs, %u IO-APICs, %u interrupt overrides\n",
+               cpu_count, io_apic_count, interrupt_override_count);
+}
+
 /* I/O port operations */
 extern void hal_outb(uint16_t port, uint8_t value);
 extern uint8_t hal_inb(uint16_t port);

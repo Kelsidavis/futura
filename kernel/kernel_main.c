@@ -836,7 +836,11 @@ void fut_kernel_main(void) {
     fut_serial_puts("[DEBUG] kernel_main: Before ACPI init\n");
     fut_printf("[INIT] Initializing ACPI...\n");
     extern bool acpi_init(void);
-    acpi_init();
+    extern void acpi_parse_madt(void);
+    if (acpi_init()) {
+        fut_printf("[INIT] Parsing MADT for CPU topology...\n");
+        acpi_parse_madt();
+    }
 
     fut_serial_puts("[DEBUG] kernel_main: Before boot banner\n");
     fut_boot_banner();

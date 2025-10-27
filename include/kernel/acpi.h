@@ -107,6 +107,53 @@ typedef struct {
     /* ... more fields for ACPI 2.0+ ... */
 } __attribute__((packed)) acpi_fadt_t;
 
+/* MADT (Multiple APIC Description Table) Entry Types */
+#define ACPI_MADT_TYPE_LOCAL_APIC       0
+#define ACPI_MADT_TYPE_IO_APIC          1
+#define ACPI_MADT_TYPE_INTERRUPT_OVERRIDE 2
+#define ACPI_MADT_TYPE_NMI              4
+#define ACPI_MADT_TYPE_LOCAL_APIC_OVERRIDE 5
+
+/* MADT (Multiple APIC Description Table) */
+typedef struct {
+    acpi_sdt_header_t header;
+    uint32_t local_apic_address;  /* Physical address of local APIC */
+    uint32_t flags;                /* PC-AT compatible dual 8259 setup if bit 0 set */
+    /* Variable length entries follow */
+} __attribute__((packed)) acpi_madt_t;
+
+/* MADT Entry Header */
+typedef struct {
+    uint8_t type;
+    uint8_t length;
+} __attribute__((packed)) acpi_madt_entry_header_t;
+
+/* MADT Local APIC Entry (Processor) */
+typedef struct {
+    acpi_madt_entry_header_t header;
+    uint8_t acpi_processor_id;
+    uint8_t apic_id;
+    uint32_t flags;  /* Bit 0: Processor enabled, Bit 1: Online capable */
+} __attribute__((packed)) acpi_madt_local_apic_t;
+
+/* MADT IO APIC Entry */
+typedef struct {
+    acpi_madt_entry_header_t header;
+    uint8_t io_apic_id;
+    uint8_t reserved;
+    uint32_t io_apic_address;
+    uint32_t global_system_interrupt_base;
+} __attribute__((packed)) acpi_madt_io_apic_t;
+
+/* MADT Interrupt Source Override */
+typedef struct {
+    acpi_madt_entry_header_t header;
+    uint8_t bus;       /* 0 = ISA */
+    uint8_t source;    /* Bus-relative interrupt source (IRQ) */
+    uint32_t global_system_interrupt;
+    uint16_t flags;    /* MPS INTI flags */
+} __attribute__((packed)) acpi_madt_interrupt_override_t;
+
 /**
  * Initialize ACPI subsystem.
  * Locates RSDP, parses RSDT/XSDT, and validates tables.
@@ -129,6 +176,19 @@ acpi_sdt_header_t *acpi_find_table(const char *signature);
  * @return Pointer to FADT, or NULL if not found
  */
 acpi_fadt_t *acpi_get_fadt(void);
+
+/**
+ * Get the MADT (Multiple APIC Description Table).
+ *
+ * @return Pointer to MADT, or NULL if not found
+ */
+acpi_madt_t *acpi_get_madt(void);
+
+/**
+ * Parse MADT to discover CPU topology.
+ * Prints CPU count, APIC IDs, and IO-APIC information.
+ */
+void acpi_parse_madt(void);
 
 /**
  * Shutdown the system via ACPI (if supported).

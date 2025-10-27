@@ -376,6 +376,7 @@ ifeq ($(PLATFORM),x86_64)
         platform/x86_64/user_iretq.S \
         platform/x86_64/gdt.c \
         arch/x86_64/pat.c \
+        arch/x86_64/lapic.c \
         platform/x86_64/pmap.c \
         platform/x86_64/paging.c \
         platform/x86_64/cpu_features.c \

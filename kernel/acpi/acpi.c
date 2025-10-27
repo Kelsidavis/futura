@@ -202,6 +202,10 @@ void acpi_parse_madt(void) {
                madt->flags,
                (madt->flags & 1) ? "yes" : "no");
 
+    /* Initialize LAPIC for BSP (Bootstrap Processor) */
+    extern void lapic_init(uint64_t lapic_base);
+    lapic_init(madt->local_apic_address);
+
     /* Parse MADT entries */
     uint32_t cpu_count = 0;
     uint32_t io_apic_count = 0;

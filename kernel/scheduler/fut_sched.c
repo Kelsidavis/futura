@@ -27,6 +27,9 @@ extern void fut_switch_context_irq(fut_thread_t *prev, fut_thread_t *next, fut_i
 /* External printf for debugging */
 extern void fut_printf(const char *fmt, ...);
 
+/* Per-CPU data access */
+#include "../../include/kernel/fut_percpu.h"
+
 /* ============================================================
  *   Interrupt Context Detection
  * ============================================================ */
@@ -45,8 +48,7 @@ fut_interrupt_frame_t *fut_current_frame = NULL;
 static fut_thread_t *ready_queue_head = NULL;
 static fut_thread_t *ready_queue_tail = NULL;
 
-/* Idle thread */
-static fut_thread_t *idle_thread = NULL;
+/* Idle thread is now per-CPU (stored in fut_percpu_t->idle_thread) */
 
 /* Scheduler lock */
 static fut_spinlock_t sched_lock = { .locked = 0 };
@@ -77,13 +79,21 @@ static void idle_thread_entry(void *arg) {
  * ============================================================ */
 
 /**
- * Initialize scheduler subsystem.
+ * Initialize scheduler subsystem (for BSP).
+ * Creates idle thread for the boot processor.
  */
 void fut_sched_init(void) {
     // Initialize performance instrumentation
     fut_stats_init();
 
-    // Create idle task and thread
+    // Get per-CPU data for BSP
+    fut_percpu_t *percpu = fut_percpu_get();
+    if (!percpu) {
+        fut_printf("[SCHED] ERROR: No per-CPU data available\n");
+        return;
+    }
+
+    // Create idle task and thread for BSP
     fut_task_t *idle_task = fut_task_create();
     if (!idle_task) {
         fut_printf("[SCHED] Failed to create idle task\n");
@@ -92,7 +102,7 @@ void fut_sched_init(void) {
 
     // Create idle thread (we'll add it to the ready queue manually later if needed)
     // Note: We create with priority FUT_IDLE_PRIORITY but don't add to scheduler queue
-    idle_thread = fut_thread_create(
+    fut_thread_t *idle_thread = fut_thread_create(
         idle_task,
         idle_thread_entry,
         NULL,
@@ -112,7 +122,58 @@ void fut_sched_init(void) {
     fut_sched_remove_thread(idle_thread);
     __asm__ volatile("sti");
 
-    fut_printf("[SCHED] Scheduler initialized\n");
+    // Store idle thread in per-CPU data
+    percpu->idle_thread = idle_thread;
+
+    fut_printf("[SCHED] Scheduler initialized for CPU %u\n", percpu->cpu_id);
+}
+
+/**
+ * Initialize scheduler for a specific CPU (for APs).
+ * Creates idle thread for the application processor.
+ */
+void fut_sched_init_cpu(void) {
+    // Get per-CPU data for this CPU
+    fut_percpu_t *percpu = fut_percpu_get();
+    if (!percpu) {
+        fut_printf("[SCHED] ERROR: No per-CPU data available for AP\n");
+        return;
+    }
+
+    // Create idle task and thread for this AP
+    fut_task_t *idle_task = fut_task_create();
+    if (!idle_task) {
+        fut_printf("[SCHED] Failed to create idle task for CPU %u\n", percpu->cpu_id);
+        return;
+    }
+
+    // Create idle thread
+    fut_thread_t *idle_thread = fut_thread_create(
+        idle_task,
+        idle_thread_entry,
+        NULL,
+        4096,  // Small stack for idle
+        FUT_IDLE_PRIORITY
+    );
+
+    if (!idle_thread) {
+        fut_printf("[SCHED] Failed to create idle thread for CPU %u\n", percpu->cpu_id);
+        return;
+    }
+
+    // Remove idle from ready queue - we'll schedule it manually
+    __asm__ volatile("cli");
+    fut_sched_remove_thread(idle_thread);
+    __asm__ volatile("sti");
+
+    // Store idle thread in per-CPU data
+    percpu->idle_thread = idle_thread;
+
+    // Set as current thread for this CPU
+    fut_thread_set_current(idle_thread);
+    idle_thread->state = FUT_THREAD_RUNNING;
+
+    fut_printf("[SCHED] Scheduler initialized for CPU %u\n", percpu->cpu_id);
 }
 
 /**
@@ -182,10 +243,11 @@ static fut_thread_t *select_next_thread(void) {
 
     fut_thread_t *next = ready_queue_head;
 
-    // If no ready threads, use idle
+    // If no ready threads, use per-CPU idle thread
     if (!next) {
         fut_spinlock_release(&sched_lock);
-        return idle_thread;
+        fut_percpu_t *percpu = fut_percpu_get();
+        return percpu ? percpu->idle_thread : NULL;
     }
 
     // Remove from head of ready queue
@@ -215,12 +277,16 @@ void fut_schedule(void) {
     fut_thread_t *prev = fut_thread_current();
     fut_thread_t *next = select_next_thread();
 
+    // Get per-CPU data for idle thread check
+    fut_percpu_t *percpu = fut_percpu_get();
+    fut_thread_t *idle = percpu ? percpu->idle_thread : NULL;
+
     if (!next) {
-        next = idle_thread;
+        next = idle;
     }
 
     // If current thread is still runnable, put it back in ready queue
-    if (prev && prev != idle_thread && prev->state == FUT_THREAD_RUNNING) {
+    if (prev && prev != idle && prev->state == FUT_THREAD_RUNNING) {
         prev->state = FUT_THREAD_READY;
         fut_sched_add_thread(prev);
     }
@@ -268,24 +334,6 @@ void fut_schedule(void) {
                 fut_switch_context(&prev->context, &next->context);
             } else {
                 // First time - just jump to thread
-                // extern void fut_printf(const char *, ...);
-                // fut_printf("[SCHED] First context switch: next=%p next->tid=%llu task=%p\n",
-                //            (void*)next, next ? next->tid : 0, (void*)(next ? next->task : NULL));
-                // fut_printf("[SCHED] &next->context=%p (should be 16-byte aligned)\n",
-                //            (void*)&next->context);
-                // fut_printf("[SCHED] Offset of context in struct: %zu\n",
-                //            (size_t)((char*)&next->context - (char*)next));
-                // fut_printf("[SCHED] next->context.rip=%llx rsp=%llx rflags=%llx\n",
-                //            next->context.rip, next->context.rsp, next->context.rflags);
-                // fut_printf("[SCHED] next->context.cs=%x ss=%x ds=%x\n",
-                //            (unsigned)next->context.cs, (unsigned)next->context.ss,
-                //            (unsigned)next->context.ds);
-                // fut_printf("[SCHED] next->context.rdi=%llx rsi=%llx (entry point args)\n",
-                //            next->context.rdi, next->context.rsi);
-                // fut_printf("[SCHED] next->context.rax=%llx rbx=%llx rbp=%llx\n",
-                //            next->context.rax, next->context.rbx, next->context.rbp);
-                // fut_printf("[SCHED] Calling fut_switch_context(&next->context=%p)...\n",
-                //            (void*)&next->context);
                 fut_switch_context(NULL, &next->context);
             }
         }

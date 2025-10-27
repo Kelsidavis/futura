@@ -47,8 +47,19 @@ static inline void fut_spinlock_init(fut_spinlock_t *lock) {
  * @param lock  Spinlock to acquire
  */
 static inline void fut_spinlock_acquire(fut_spinlock_t *lock) {
-    // Stub for single CPU - no actual locking needed
-    (void)lock;
+    // Spin until we successfully acquire the lock
+    uint64_t expected = 0;
+    while (!atomic_compare_exchange_weak_explicit(&lock->locked, &expected, 1,
+                                                    memory_order_acquire,
+                                                    memory_order_relaxed)) {
+        expected = 0;
+        // Hint to CPU that we're spinning
+        #if defined(__x86_64__)
+        __asm__ volatile("pause" ::: "memory");
+        #elif defined(__aarch64__)
+        __asm__ volatile("yield" ::: "memory");
+        #endif
+    }
 }
 
 /**
@@ -57,8 +68,7 @@ static inline void fut_spinlock_acquire(fut_spinlock_t *lock) {
  * @param lock  Spinlock to release
  */
 static inline void fut_spinlock_release(fut_spinlock_t *lock) {
-    // Stub for single CPU
-    (void)lock;
+    atomic_store_explicit(&lock->locked, 0, memory_order_release);
 }
 
 /* ============================================================
@@ -66,11 +76,18 @@ static inline void fut_spinlock_release(fut_spinlock_t *lock) {
  * ============================================================ */
 
 /**
- * Initialize the scheduler subsystem.
+ * Initialize the scheduler subsystem (for BSP).
  *
- * Sets up ready queues and creates idle thread.
+ * Sets up ready queues and creates idle thread for boot processor.
  */
 void fut_sched_init(void);
+
+/**
+ * Initialize scheduler for a specific CPU (for APs).
+ *
+ * Creates idle thread for this application processor.
+ */
+void fut_sched_init_cpu(void);
 
 /**
  * Schedule next thread to run.

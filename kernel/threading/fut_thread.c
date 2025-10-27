@@ -11,6 +11,7 @@
 #include "../../include/kernel/fut_task.h"
 #include "../../include/kernel/fut_sched.h"
 #include "../../include/kernel/fut_memory.h"
+#include "../../include/kernel/fut_percpu.h"
 #if defined(__x86_64__)
 #include <arch/x86_64/gdt.h>
 #endif
@@ -26,8 +27,7 @@ extern void fut_sleep_until(fut_thread_t *thread, uint64_t wake_time);
 /* Thread ID counter (64-bit) */
 static _Atomic uint64_t next_tid = 1;
 
-/* Current thread pointer (per-CPU, single CPU for now) */
-static fut_thread_t *current_thread = NULL;
+/* Current thread pointer is now per-CPU (see fut_percpu_t in fut_percpu.h) */
 
 /* Global thread list (for stats/debugging) */
 fut_thread_t *fut_thread_list = NULL;
@@ -319,16 +319,22 @@ void fut_thread_sleep(uint64_t millis) {
 
 /**
  * Get current running thread.
+ * Uses per-CPU data accessed via GS segment on x86_64.
  */
 fut_thread_t *fut_thread_current(void) {
-    return current_thread;
+    fut_percpu_t *percpu = fut_percpu_get();
+    return percpu ? percpu->current_thread : NULL;
 }
 
 /**
  * Set current thread (internal scheduler use only).
+ * Uses per-CPU data accessed via GS segment on x86_64.
  */
 void fut_thread_set_current(fut_thread_t *thread) {
-    current_thread = thread;
+    fut_percpu_t *percpu = fut_percpu_get();
+    if (percpu) {
+        percpu->current_thread = thread;
+    }
 }
 
 fut_thread_t *fut_thread_find(uint64_t tid) {

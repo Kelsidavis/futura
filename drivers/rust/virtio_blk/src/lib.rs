@@ -17,7 +17,7 @@ use core::arch::asm;
 use core::cmp::min;
 use core::ffi::{c_char, c_void};
 use core::mem::{size_of, MaybeUninit};
-use core::ptr::{self, write_volatile};
+use core::ptr::{self, write_volatile, read_volatile};
 use core::sync::atomic::{AtomicU16, Ordering};
 
 use common::{
@@ -340,30 +340,43 @@ impl VirtQueue {
         Ok(())
     }
 
-    fn poll_completion(&self) -> FutStatus {
+    fn poll_completion(&self, isr_ptr: *const u8) -> FutStatus {
         let mut waited = 0u32;
         const TIMEOUT_ITERATIONS: u32 = 100_000;
         loop {
+            /* Check ISR register - QEMU may signal completion here even without interrupts */
+            let isr_status = unsafe { if !isr_ptr.is_null() { *isr_ptr } else { 0 } };
+
             let last = self.last_used.load(Ordering::Acquire);
             let used_idx = unsafe { (*self.used).idx };
             if used_idx != last {
-                log("virtio-blk: completion detected!");
+                unsafe {
+                    fut_printf(b"[virtio-blk] completion detected! isr=0x%x\n\0".as_ptr(), isr_status as u32);
+                }
                 self.last_used.store(last.wrapping_add(1), Ordering::Release);
                 return 0;
             }
             if waited == 0 {
                 unsafe {
-                    fut_printf(b"[virtio-blk] polling: last_used=%d used_idx=%d\n\0".as_ptr(),
-                        last as u32, used_idx as u32);
+                    fut_printf(b"[virtio-blk] polling: last_used=%d used_idx=%d isr=0x%x\n\0".as_ptr(),
+                        last as u32, used_idx as u32, isr_status as u32);
+                }
+            }
+            if waited == 1000 {
+                unsafe {
+                    fut_printf(b"[virtio-blk] still waiting at 1k: used_idx=%d isr=0x%x\n\0".as_ptr(),
+                        used_idx as u32, isr_status as u32);
                 }
             }
             if waited > TIMEOUT_ITERATIONS {
                 unsafe {
-                    fut_printf(b"[virtio-blk] TIMEOUT: last_used=%d used_idx=%d\n\0".as_ptr(), last as u32, used_idx as u32);
+                    fut_printf(b"[virtio-blk] TIMEOUT: last_used=%d used_idx=%d isr=0x%x\n\0".as_ptr(),
+                        last as u32, used_idx as u32, isr_status as u32);
                 }
                 return ETIMEDOUT;
             }
-            /* Pure busy-wait to avoid hangs during debugging */
+            /* Pure polling - repeatedly check ISR and used ring.
+             * Reading ISR may trigger QEMU to process the virtqueue. */
             core::hint::spin_loop();
             waited += 1;
         }
@@ -759,8 +772,20 @@ impl VirtioBlkDevice {
 
     fn enable_bus_master(&self) {
         let mut command = pci_config_read16(self.pci.bus, self.pci.device, self.pci.function, PCI_COMMAND);
+        unsafe {
+            fut_printf(b"[virtio-blk] PCI command before: 0x%x\n\0".as_ptr(), command as u32);
+        }
         command |= PCI_COMMAND_MEMORY | PCI_COMMAND_BUS_MASTER | PCI_COMMAND_IO;
         pci_config_write16(self.pci.bus, self.pci.device, self.pci.function, PCI_COMMAND, command);
+
+        let readback = pci_config_read16(self.pci.bus, self.pci.device, self.pci.function, PCI_COMMAND);
+        unsafe {
+            fut_printf(b"[virtio-blk] PCI command after: 0x%x (BM=%d MEM=%d IO=%d)\n\0".as_ptr(),
+                readback as u32,
+                (readback & PCI_COMMAND_BUS_MASTER) as u32,
+                (readback & PCI_COMMAND_MEMORY) as u32,
+                (readback & PCI_COMMAND_IO) as u32);
+        }
     }
 
     fn negotiate_features(&mut self) -> Result<(), FutStatus> {
@@ -774,15 +799,18 @@ impl VirtioBlkDevice {
 
             fut_printf(b"[virtio-blk] device features: 0x%lx\n\0".as_ptr(), features);
 
-            /* Accept all offered features including VERSION_1 (bit 32) which is mandatory */
-            let driver_features = features;
+            /* Try accepting all features BUT disable any fancy ones that might need interrupts.
+             * Keep low 32 bits but mask out high bits except required ones. */
+            const VIRTIO_F_VERSION_1: u64 = 1u64 << 32;
+            let driver_features = (features & 0xFFFFFFFF) | VIRTIO_F_VERSION_1;
 
             (*self.common).driver_feature_select = 0;
             (*self.common).driver_feature = driver_features as u32;
             (*self.common).driver_feature_select = 1;
             (*self.common).driver_feature = (driver_features >> 32) as u32;
 
-            fut_printf(b"[virtio-blk] driver features: 0x%lx\n\0".as_ptr(), driver_features);
+            fut_printf(b"[virtio-blk] driver features: 0x%lx (masked from 0x%lx)\n\0".as_ptr(),
+                driver_features, features);
 
             (*self.common).device_status |= VIRTIO_STATUS_FEATURES_OK;
             let status_check = (*self.common).device_status;
@@ -807,8 +835,12 @@ impl VirtioBlkDevice {
             let qsize = min(device_qsize, QUEUE_SIZE);
             self.queue.setup(qsize)?;
             (*self.common).queue_size = qsize;
-            (*self.common).queue_msix_vector = 0xFFFF;
-            (*self.common).msix_config = 0xFFFF;
+
+            /* Try NOT disabling MSI-X - QEMU might require interrupt capability even for polling */
+            (*self.common).queue_msix_vector = 0;  // Use vector 0 instead of NO_VECTOR
+            (*self.common).msix_config = 0;        // Use vector 0 for config
+
+            fut_printf(b"[virtio-blk] MSI-X vectors set to 0 (polling mode with interrupt capability)\n\0".as_ptr());
 
             let desc_lo = (self.queue.desc_phys & 0xFFFF_FFFF) as u32;
             let desc_hi = (self.queue.desc_phys >> 32) as u32;
@@ -872,9 +904,14 @@ impl VirtioBlkDevice {
         unsafe {
             let off = (self.queue.notify_off as u32 * self.notify_off_multiplier) as usize;
             let ptr = self.notify_base.add(off) as *mut u16;
-            fut_printf(b"[virtio-blk] notifying queue: notify_off=%d multiplier=%d offset=%d ptr=%p\n\0".as_ptr(),
-                self.queue.notify_off as u32, self.notify_off_multiplier, off as u32, ptr);
-            write_volatile(ptr, 0);
+
+            /* Write the queue index to notify QEMU */
+            write_volatile(ptr, 0);  // Queue 0
+
+            /* Verify write succeeded by reading back (may help trigger QEMU too) */
+            let _readback = read_volatile(ptr as *const u16);
+
+            fut_printf(b"[virtio-blk] notified queue 0 at ptr=%p\n\0".as_ptr(), ptr);
         }
     }
 
@@ -941,7 +978,11 @@ impl VirtioBlkDevice {
         core::sync::atomic::fence(Ordering::SeqCst);
         self.notify_queue();
 
-        let rc = self.queue.poll_completion();
+        let rc = self.queue.poll_completion(self.isr as *const u8);
+        unsafe {
+            let status_byte = (*self.dma).status;
+            fut_printf(b"[virtio-blk] after poll: rc=%d status_byte=%d\n\0".as_ptr(), rc, status_byte as u32);
+        }
         if rc != 0 {
             if !bounce.is_null() {
                 unsafe { free(bounce); }

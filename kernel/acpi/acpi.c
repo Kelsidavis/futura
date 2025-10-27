@@ -211,6 +211,10 @@ void acpi_parse_madt(void) {
     uint32_t io_apic_count = 0;
     uint32_t interrupt_override_count = 0;
 
+    /* Store IO-APIC info for initialization */
+    uint64_t io_apic_address = 0;
+    uint32_t io_apic_gsi_base = 0;
+
     uint8_t *entry_ptr = (uint8_t *)(madt + 1);  /* Start after header */
     uint8_t *end = (uint8_t *)madt + madt->header.length;
 
@@ -248,6 +252,13 @@ void acpi_parse_madt(void) {
                            ioapic->io_apic_id,
                            ioapic->io_apic_address,
                            ioapic->global_system_interrupt_base);
+
+                /* Store first IO-APIC for initialization */
+                if (io_apic_count == 0) {
+                    io_apic_address = ioapic->io_apic_address;
+                    io_apic_gsi_base = ioapic->global_system_interrupt_base;
+                }
+
                 io_apic_count++;
                 break;
             }
@@ -273,6 +284,38 @@ void acpi_parse_madt(void) {
 
     fut_printf("[ACPI] CPU topology: %u CPUs, %u IO-APICs, %u interrupt overrides\n",
                cpu_count, io_apic_count, interrupt_override_count);
+
+    /* Initialize IO-APIC if found */
+    if (io_apic_address != 0) {
+        extern int ioapic_init(uint64_t ioapic_base, uint32_t gsi_base);
+        extern void ioapic_set_irq(uint8_t irq, uint8_t vector, uint8_t dest_apic_id,
+                                   bool mask, bool trigger_level);
+
+        ioapic_init(io_apic_address, io_apic_gsi_base);
+
+        /* Configure basic IRQs to route to BSP (APIC ID 0) */
+        /* IRQ0 = Timer (vector 32), IRQ1 = Keyboard (vector 33) */
+        /* Keep them masked for now - will be enabled when drivers request them */
+
+        fut_printf("[ACPI] Configuring IRQ routing to BSP (APIC ID 0)\n");
+
+        /* Timer IRQ0 -> Vector 32 (INT_IRQ0_TIMER) */
+        ioapic_set_irq(0, 32, 0, true, false);  /* edge-triggered, masked */
+
+        /* Keyboard IRQ1 -> Vector 33 (INT_IRQ1_KEYBOARD) */
+        ioapic_set_irq(1, 33, 0, true, false);  /* edge-triggered, masked */
+
+        /* IRQ2 cascade is not used in APIC mode */
+
+        /* COM2 IRQ3 -> Vector 35 */
+        ioapic_set_irq(3, 35, 0, true, false);
+
+        /* COM1 IRQ4 -> Vector 36 */
+        ioapic_set_irq(4, 36, 0, true, false);
+
+        /* TODO: Apply interrupt overrides from MADT */
+        /* TODO: Enable IRQs when drivers register handlers */
+    }
 }
 
 /* I/O port operations */

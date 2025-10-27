@@ -462,12 +462,17 @@ impl VirtQueue {
                 desc_status as u32, status_phys, VIRTQ_DESC_F_WRITE as u32);
 
             let avail = &mut *self.avail;
-            avail.ring[slot as usize] = desc_head;  // Point to the head descriptor for this chain
+            // CRITICAL: Use volatile write for ring array (shared memory with device)
+            let ring_ptr = core::ptr::addr_of_mut!(avail.ring[slot as usize]);
+            write_volatile(ring_ptr, desc_head);
             core::sync::atomic::fence(Ordering::SeqCst);
-            let old_idx = avail.idx;
-            avail.idx = avail.idx.wrapping_add(1);
+            // CRITICAL: Use addr_of_mut! for packed struct field to avoid alignment issues
+            let idx_ptr = core::ptr::addr_of_mut!(avail.idx);
+            let old_idx = read_volatile(idx_ptr);
+            let new_idx = old_idx.wrapping_add(1);
+            write_volatile(idx_ptr, new_idx);  // CRITICAL: Volatile write for device visibility
             fut_printf(b"[virtio-blk] enqueue: slot=%d desc_head=%d avail.idx %d -> %d avail.flags=%d\n\0".as_ptr(),
-                slot as u32, desc_head as u32, old_idx as u32, avail.idx as u32, avail.flags as u32);
+                slot as u32, desc_head as u32, old_idx as u32, new_idx as u32, avail.flags as u32);
         }
         self.next_avail.fetch_add(1, Ordering::Release);
         Ok(())

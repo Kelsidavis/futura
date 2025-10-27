@@ -80,6 +80,24 @@ uint8_t hal_inb(uint16_t port) {
     return inb(port);
 }
 
+static inline void outw(uint16_t port, uint16_t value) {
+    __asm__ volatile("outw %0, %1" : : "a"(value), "Nd"(port));
+}
+
+static inline uint16_t inw(uint16_t port) {
+    uint16_t value;
+    __asm__ volatile("inw %1, %0" : "=a"(value) : "Nd"(port));
+    return value;
+}
+
+void hal_outw(uint16_t port, uint16_t value) {
+    outw(port, value);
+}
+
+uint16_t hal_inw(uint16_t port) {
+    return inw(port);
+}
+
 static _Atomic bool serial_ready = false;
 
 bool fut_serial_ready(void) {

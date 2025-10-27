@@ -47,4 +47,20 @@ void fut_sleep_until(fut_thread_t *thread, uint64_t millis);
 int fut_timer_start(uint64_t ticks_from_now, void (*cb)(void *), void *arg);
 int fut_timer_cancel(void (*cb)(void *), void *arg);
 
+/**
+ * Get high-resolution time in nanoseconds since boot (TSC-based).
+ * Uses calibrated TSC for sub-millisecond precision.
+ *
+ * @return Time in nanoseconds since boot
+ */
+uint64_t fut_get_time_ns(void);
+
+/**
+ * Get high-resolution time in microseconds since boot (TSC-based).
+ * Uses calibrated TSC for sub-millisecond precision.
+ *
+ * @return Time in microseconds since boot
+ */
+uint64_t fut_get_time_us(void);
+
 #endif /* FUT_TIMER_H */

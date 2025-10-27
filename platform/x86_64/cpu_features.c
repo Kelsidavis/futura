@@ -53,6 +53,8 @@ static inline void cpu_relax(void) {
 #define CR4_OSFXSR        (1ULL << 9)
 #define CR4_OSXMMEXCPT    (1ULL << 10)
 #define CR4_OSXSAVE       (1ULL << 18)
+#define CR4_SMEP          (1ULL << 20)
+#define CR4_SMAP          (1ULL << 21)
 
 #define MSR_EFER          0xC0000080
 #define EFER_NXE          (1ULL << 11)
@@ -73,13 +75,15 @@ static void maybe_print_summary(void) {
         return;
     }
 
-    fut_printf("[CPU] NX=%u OSXSAVE=%u SSE=%u AVX=%u FSGSBASE=%u PGE=%u\n",
+    fut_printf("[CPU] NX=%u OSXSAVE=%u SSE=%u AVX=%u FSGSBASE=%u PGE=%u SMEP=%u SMAP=%u\n",
                g_features.nx,
                g_features.osxsave,
                g_features.sse,
                g_features.avx,
                g_features.fsgsbase,
-               g_features.pge);
+               g_features.pge,
+               g_features.smep,
+               g_features.smap);
 
     atomic_store_explicit(&g_summary_printed, true, memory_order_release);
 }
@@ -145,6 +149,16 @@ void cpu_features_init(void) {
     if (leaf1_ecx & (1u << 27)) {
         cr4 |= CR4_OSXSAVE;
         detected.osxsave = 1;
+    }
+
+    if (leaf7_ebx & (1u << 7)) {
+        cr4 |= CR4_SMEP;
+        detected.smep = 1;
+    }
+
+    if (leaf7_ebx & (1u << 20)) {
+        cr4 |= CR4_SMAP;
+        detected.smap = 1;
     }
 
     write_cr4(cr4);

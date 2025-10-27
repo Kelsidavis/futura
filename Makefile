@@ -71,6 +71,8 @@ RUN_QEMU_FLAGS := -m $(MEM) -serial stdio -no-reboot -no-shutdown
 # Add platform-specific QEMU flags
 ifeq ($(PLATFORM),arm64)
 RUN_QEMU_FLAGS += -machine virt -cpu cortex-a72
+else
+RUN_QEMU_FLAGS += -cpu IvyBridge,+smep,+smap
 endif
 
 ifeq ($(HEADFUL),1)

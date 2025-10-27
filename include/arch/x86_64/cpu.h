@@ -15,6 +15,8 @@ typedef struct {
     uint8_t avx;
     uint8_t fsgsbase;
     uint8_t pge;
+    uint8_t smep;
+    uint8_t smap;
 } fut_cpu_features_t;
 
 void cpu_features_init(void);

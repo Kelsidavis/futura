@@ -179,8 +179,15 @@ acpi_fadt_t *acpi_get_fadt(void) {
     return (acpi_fadt_t *)acpi_find_table(ACPI_SIG_FADT);
 }
 
+/* I/O port operations */
+extern void hal_outb(uint16_t port, uint8_t value);
+extern uint8_t hal_inb(uint16_t port);
+extern void hal_outw(uint16_t port, uint16_t value);
+extern uint16_t hal_inw(uint16_t port);
+
 /**
  * Shutdown system via ACPI.
+ * Writes SLP_TYPa/SLP_TYPb and SLP_EN to PM1a/PM1b control registers.
  */
 void acpi_shutdown(void) {
     acpi_fadt_t *fadt = acpi_get_fadt();
@@ -189,20 +196,44 @@ void acpi_shutdown(void) {
         return;
     }
 
-    /* TODO: Implement ACPI shutdown via PM1a/PM1b control blocks */
-    fut_printf("[ACPI] Shutdown not yet implemented\n");
+    fut_printf("[ACPI] PM1a_control_block: 0x%x, PM1b_control_block: 0x%x\n",
+               fadt->pm1a_control_block, fadt->pm1b_control_block);
+
+    /* For QEMU/BOCHS, S5 sleep state is typically SLP_TYP=5, SLP_EN=1<<13 */
+    uint16_t pm1a_val = (5 << 10) | (1 << 13);  /* SLP_TYP=5, SLP_EN=1 */
+
+    if (fadt->pm1a_control_block != 0) {
+        fut_printf("[ACPI] Writing shutdown command to PM1a (0x%x)\n", fadt->pm1a_control_block);
+        hal_outw(fadt->pm1a_control_block, pm1a_val);
+    }
+
+    if (fadt->pm1b_control_block != 0) {
+        fut_printf("[ACPI] Writing shutdown command to PM1b (0x%x)\n", fadt->pm1b_control_block);
+        hal_outw(fadt->pm1b_control_block, pm1a_val);
+    }
+
+    /* If we reach here, shutdown failed */
+    fut_printf("[ACPI] Shutdown failed\n");
 }
 
 /**
  * Reboot system via ACPI.
+ * For now, falls back to keyboard controller reset.
  */
 void acpi_reboot(void) {
-    acpi_fadt_t *fadt = acpi_get_fadt();
-    if (!fadt) {
-        fut_printf("[ACPI] Reboot: FADT not found\n");
-        return;
-    }
+    fut_printf("[ACPI] Reboot via keyboard controller (port 0x64)\n");
 
-    /* TODO: Implement ACPI reboot */
-    fut_printf("[ACPI] Reboot not yet implemented\n");
+    /* Try keyboard controller reset (8042) */
+    hal_outb(0x64, 0xFE);
+
+    /* If that didn't work, try triple fault */
+    fut_printf("[ACPI] Keyboard reset failed, attempting triple fault\n");
+
+    /* Disable interrupts and load invalid IDT to cause triple fault */
+    __asm__ volatile("cli");
+    __asm__ volatile("lidt %0" :: "m"((struct { uint16_t limit; uint64_t base; }){0, 0}));
+    __asm__ volatile("int $0x03");  /* Trigger breakpoint, should triple fault */
+
+    /* Should never reach here */
+    fut_printf("[ACPI] Reboot failed\n");
 }

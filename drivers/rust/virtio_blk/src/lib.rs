@@ -18,7 +18,7 @@ use core::cmp::min;
 use core::ffi::{c_char, c_void};
 use core::mem::{size_of, MaybeUninit};
 use core::ptr::{self, write_volatile, read_volatile};
-use core::sync::atomic::{AtomicU16, Ordering};
+use core::sync::atomic::{AtomicU16, AtomicU8, Ordering};
 
 use common::{
     alloc, alloc_page, free, free_page, log, map_mmio_region, register, thread_yield, unmap_mmio_region,
@@ -26,7 +26,121 @@ use common::{
     FUT_BLK_WRITE, MMIO_DEFAULT_FLAGS,
 };
 
-unsafe extern "C" { fn fut_printf(fmt: *const u8, ...); }
+unsafe extern "C" {
+    fn fut_printf(fmt: *const u8, ...);
+    fn fut_idt_set_entry(vector: u8, handler: u64, selector: u16, type_attr: u8, ist: u8);
+}
+
+const GDT_KERNEL_CODE: u16 = 0x08;     // Kernel code segment
+const IDT_TYPE_INTERRUPT: u8 = 0x8E;   // Interrupt gate
+const INT_IRQ_BASE: u8 = 32;           // IRQ vectors start at 32
+
+// IRQ vector is determined dynamically from PCI interrupt line
+static VIRTIO_BLK_IRQ_VECTOR: AtomicU8 = AtomicU8::new(0);
+
+// Global completion flag for interrupt handler
+static IO_COMPLETED: AtomicU8 = AtomicU8::new(0);
+
+// MSI-X table entry structure
+#[repr(C, packed)]
+struct MsixTableEntry {
+    msg_addr_lo: u32,
+    msg_addr_hi: u32,
+    msg_data: u32,
+    vector_control: u32,
+}
+
+// MSI-X constants
+const MSIX_VECTOR_MASKED: u32 = 0x1;
+const APIC_BASE_ADDR: u32 = 0xFEE00000;  // Local APIC base address for MSI-X
+
+// Interrupt handler for virtio-blk I/O completion
+#[unsafe(naked)]
+unsafe extern "C" fn virtio_blk_irq_handler() {
+    core::arch::naked_asm!(
+        "push rax",
+        "push rbx",
+        "push rcx",
+        "push rdx",
+        "push rsi",
+        "push rdi",
+        "push rbp",
+        "push r8",
+        "push r9",
+        "push r10",
+        "push r11",
+        "push r12",
+        "push r13",
+        "push r14",
+        "push r15",
+        "call {handler}",
+        "pop r15",
+        "pop r14",
+        "pop r13",
+        "pop r12",
+        "pop r11",
+        "pop r10",
+        "pop r9",
+        "pop r8",
+        "pop rbp",
+        "pop rdi",
+        "pop rsi",
+        "pop rdx",
+        "pop rcx",
+        "pop rbx",
+        "pop rax",
+        "iretq",
+        handler = sym virtio_blk_irq_handler_inner,
+    );
+}
+
+// Inner interrupt handler logic
+extern "C" fn virtio_blk_irq_handler_inner() {
+    // Signal I/O completion
+    IO_COMPLETED.store(1, Ordering::Release);
+
+    // Send EOI to PIC (End of Interrupt)
+    unsafe {
+        let irq = VIRTIO_BLK_IRQ_VECTOR.load(Ordering::Relaxed).saturating_sub(INT_IRQ_BASE);
+
+        // If IRQ >= 8, send EOI to slave PIC first
+        if irq >= 8 {
+            outb(0xA0, 0x20);  // EOI to slave PIC
+        }
+
+        // Always send EOI to master PIC
+        outb(0x20, 0x20);  // EOI to master PIC
+    }
+}
+
+unsafe fn outb(port: u16, value: u8) {
+    unsafe {
+        asm!("out dx, al", in("dx") port, in("al") value, options(nostack, preserves_flags));
+    }
+}
+
+unsafe fn inb(port: u16) -> u8 {
+    let value: u8;
+    unsafe {
+        asm!("in al, dx", in("dx") port, out("al") value, options(nostack, preserves_flags));
+    }
+    value
+}
+
+// Unmask an IRQ in the PIC
+unsafe fn pic_unmask_irq(irq: u8) {
+    unsafe {
+        let port = if irq < 8 { 0x21 } else { 0xA1 };  // PIC1 or PIC2 data port
+        let irq_bit = irq % 8;
+
+        let mask = inb(port);
+        let new_mask = mask & !(1 << irq_bit);  // Clear the bit to unmask
+        outb(port, new_mask);
+
+        fut_printf(b"[virtio-blk] Unmasked IRQ %d: old_mask=0x%x new_mask=0x%x port=0x%x\n\0".as_ptr(),
+            irq as u32, mask as u32, new_mask as u32, port as u32);
+    }
+}
 
 const PCI_CONFIG_ADDRESS: u16 = 0xCF8;
 const PCI_CONFIG_DATA: u16 = 0xCFC;
@@ -342,41 +456,69 @@ impl VirtQueue {
 
     fn poll_completion(&self, isr_ptr: *const u8) -> FutStatus {
         let mut waited = 0u32;
-        const TIMEOUT_ITERATIONS: u32 = 100_000;
-        loop {
-            /* Check ISR register - QEMU may signal completion here even without interrupts */
-            let isr_status = unsafe { if !isr_ptr.is_null() { *isr_ptr } else { 0 } };
+        const TIMEOUT_ITERATIONS: u32 = 1_000_000;  // Increased timeout for interrupt-driven I/O
 
+        let irq_vector = VIRTIO_BLK_IRQ_VECTOR.load(Ordering::Relaxed);
+        unsafe {
+            fut_printf(b"[virtio-blk] waiting for interrupt (vector=%d)...\n\0".as_ptr(),
+                irq_vector as u32);
+        }
+
+        loop {
+            // Read ISR register - this is critical in Virtio 1.0!
+            // Reading it acknowledges the interrupt and may trigger device processing
+            let mut isr_status = 0u8;
+            if !isr_ptr.is_null() {
+                unsafe {
+                    isr_status = *isr_ptr;
+                }
+            }
+
+            // Check used ring directly (device might update it without interrupt)
             let last = self.last_used.load(Ordering::Acquire);
             let used_idx = unsafe { (*self.used).idx };
-            if used_idx != last {
+
+            // Check if interrupt handler signaled completion
+            let int_flag = IO_COMPLETED.load(Ordering::Acquire);
+            if int_flag != 0 || used_idx != last {
+                // Clear the flag for next I/O
+                IO_COMPLETED.store(0, Ordering::Release);
+
                 unsafe {
-                    fut_printf(b"[virtio-blk] completion detected! isr=0x%x\n\0".as_ptr(), isr_status as u32);
+                    if int_flag != 0 {
+                        fut_printf(b"[virtio-blk] interrupt received! last_used=%d used_idx=%d isr=0x%x\n\0".as_ptr(),
+                            last as u32, used_idx as u32, isr_status as u32);
+                    } else {
+                        fut_printf(b"[virtio-blk] completion without interrupt! last_used=%d used_idx=%d isr=0x%x\n\0".as_ptr(),
+                            last as u32, used_idx as u32, isr_status as u32);
+                    }
                 }
-                self.last_used.store(last.wrapping_add(1), Ordering::Release);
-                return 0;
+
+                if used_idx != last {
+                    self.last_used.store(last.wrapping_add(1), Ordering::Release);
+                    return 0;
+                } else {
+                    unsafe {
+                        fut_printf(b"[virtio-blk] WARNING: interrupt but no used ring update\n\0".as_ptr());
+                    }
+                }
             }
-            if waited == 0 {
+
+            if waited == 10000 {
                 unsafe {
-                    fut_printf(b"[virtio-blk] polling: last_used=%d used_idx=%d isr=0x%x\n\0".as_ptr(),
-                        last as u32, used_idx as u32, isr_status as u32);
+                    fut_printf(b"[virtio-blk] still waiting after 10k iterations... (used=%d last=%d isr=0x%x)\n\0".as_ptr(),
+                        used_idx as u32, last as u32, isr_status as u32);
                 }
             }
-            if waited == 1000 {
-                unsafe {
-                    fut_printf(b"[virtio-blk] still waiting at 1k: used_idx=%d isr=0x%x\n\0".as_ptr(),
-                        used_idx as u32, isr_status as u32);
-                }
-            }
+
             if waited > TIMEOUT_ITERATIONS {
                 unsafe {
-                    fut_printf(b"[virtio-blk] TIMEOUT: last_used=%d used_idx=%d isr=0x%x\n\0".as_ptr(),
+                    fut_printf(b"[virtio-blk] TIMEOUT: no interrupt received (last=%d used=%d isr=0x%x)\n\0".as_ptr(),
                         last as u32, used_idx as u32, isr_status as u32);
                 }
                 return ETIMEDOUT;
             }
-            /* Pure polling - repeatedly check ISR and used ring.
-             * Reading ISR may trigger QEMU to process the virtqueue. */
+
             core::hint::spin_loop();
             waited += 1;
         }
@@ -397,6 +539,7 @@ struct VirtioBlkDevice {
     msix_pba_offset: u32,
     msix_table_size: u16,
     msix_enabled: bool,
+    msix_table: *mut u8,
     queue: VirtQueue,
     dma: *mut VirtioBlkDma,
     dma_phys: u64,
@@ -434,6 +577,7 @@ impl VirtioBlkDevice {
             msix_pba_offset: 0,
             msix_table_size: 0,
             msix_enabled: false,
+            msix_table: ptr::null_mut(),
             queue: VirtQueue::new(),
             dma: ptr::null_mut(),
             dma_phys: 0,
@@ -453,6 +597,7 @@ impl VirtioBlkDevice {
         dev.negotiate_features()?;
         dev.init_queue()?;
         dev.init_dma()?;
+        dev.setup_interrupt()?;
         dev.read_geometry();
 
         /* Set DRIVER_OK after all setup is complete (required by virtio spec) */
@@ -705,8 +850,25 @@ impl VirtioBlkDevice {
         self.msix_pba_bar = (pba & 0x7) as u8;
         self.msix_pba_offset = pba & !0x7;
 
-        let enable_mask = (1u16 << 15) | (1u16 << 14);
-        let new_control = control | enable_mask;
+        // Map the MSI-X table for configuration
+        if self.msix_table_bar < 6 {
+            let bar_base = self.bars[self.msix_table_bar as usize];
+            if bar_base != 0 {
+                let table_phys = bar_base + self.msix_table_offset as u64;
+                let table_size = (self.msix_table_size as usize) * size_of::<MsixTableEntry>();
+                unsafe {
+                    self.msix_table = map_mmio_region(table_phys, table_size, MMIO_PTE_FLAGS);
+                    if !self.msix_table.is_null() {
+                        fut_printf(b"[virtio-blk] MSI-X table mapped: phys=0x%lx virt=%p size=%d entries\n\0".as_ptr(),
+                            table_phys, self.msix_table, self.msix_table_size as u32);
+                    }
+                }
+            }
+        }
+
+        // Explicitly disable MSI-X to use legacy INTx
+        let disable_mask = (1u16 << 15) | (1u16 << 14);  // MSI-X enable and mask bits
+        let new_control = control & !disable_mask;        // Clear both bits to disable
         pci_config_write16(
             self.pci.bus,
             self.pci.device,
@@ -714,7 +876,13 @@ impl VirtioBlkDevice {
             offset.wrapping_add(2),
             new_control,
         );
-        self.msix_enabled = true;
+
+        let readback = pci_config_read16(self.pci.bus, self.pci.device, self.pci.function, offset.wrapping_add(2));
+        self.msix_enabled = false;
+        unsafe {
+            fut_printf(b"[virtio-blk] MSI-X explicitly disabled: control=0x%x->0x%x (enable=%d mask=%d)\n\0".as_ptr(),
+                control as u32, readback as u32, ((readback >> 15) & 1) as u32, ((readback >> 14) & 1) as u32);
+        }
     }
 
     fn process_vsec_capability(&mut self, offset: u32) -> Option<bool> {
@@ -775,17 +943,65 @@ impl VirtioBlkDevice {
         unsafe {
             fut_printf(b"[virtio-blk] PCI command before: 0x%x\n\0".as_ptr(), command as u32);
         }
+        // Enable bus mastering, memory, and I/O
         command |= PCI_COMMAND_MEMORY | PCI_COMMAND_BUS_MASTER | PCI_COMMAND_IO;
+
+        // Ensure INTx is NOT disabled (bit 10 = 0 enables legacy INTx)
+        const PCI_COMMAND_INTX_DISABLE: u16 = 0x400;
+        command &= !PCI_COMMAND_INTX_DISABLE;
+
         pci_config_write16(self.pci.bus, self.pci.device, self.pci.function, PCI_COMMAND, command);
 
         let readback = pci_config_read16(self.pci.bus, self.pci.device, self.pci.function, PCI_COMMAND);
         unsafe {
-            fut_printf(b"[virtio-blk] PCI command after: 0x%x (BM=%d MEM=%d IO=%d)\n\0".as_ptr(),
+            fut_printf(b"[virtio-blk] PCI command after: 0x%x (BM=%d MEM=%d IO=%d INTx_dis=%d)\n\0".as_ptr(),
                 readback as u32,
                 (readback & PCI_COMMAND_BUS_MASTER) as u32,
                 (readback & PCI_COMMAND_MEMORY) as u32,
-                (readback & PCI_COMMAND_IO) as u32);
+                (readback & PCI_COMMAND_IO) as u32,
+                ((readback & PCI_COMMAND_INTX_DISABLE) >> 10) as u32);
         }
+    }
+
+    fn setup_interrupt(&mut self) -> Result<(), FutStatus> {
+        // Read PCI interrupt line register (offset 0x3C)
+        let interrupt_line = pci_config_read8(self.pci.bus, self.pci.device, self.pci.function, 0x3C);
+
+        if interrupt_line == 0xFF || interrupt_line == 0 {
+            unsafe {
+                fut_printf(b"[virtio-blk] No valid interrupt line (read 0x%x)\n\0".as_ptr(),
+                    interrupt_line as u32);
+            }
+            return Err(ENODEV);
+        }
+
+        // Calculate IRQ vector (IRQ lines start at vector 32)
+        let irq_vector = INT_IRQ_BASE + interrupt_line;
+        VIRTIO_BLK_IRQ_VECTOR.store(irq_vector, Ordering::Relaxed);
+
+        unsafe {
+            fut_printf(b"[virtio-blk] Using legacy INTx: IRQ line=%d vector=%d\n\0".as_ptr(),
+                interrupt_line as u32, irq_vector as u32);
+        }
+
+        // Register interrupt handler with IDT
+        unsafe {
+            let handler_addr = virtio_blk_irq_handler as u64;
+            fut_idt_set_entry(
+                irq_vector,
+                handler_addr,
+                GDT_KERNEL_CODE,
+                IDT_TYPE_INTERRUPT,
+                0  // IST = 0 (use default stack)
+            );
+            fut_printf(b"[virtio-blk] IDT entry registered: vector=%d handler=0x%lx\n\0".as_ptr(),
+                irq_vector as u32, handler_addr);
+
+            // Unmask the IRQ in the PIC
+            pic_unmask_irq(interrupt_line);
+        }
+
+        Ok(())
     }
 
     fn negotiate_features(&mut self) -> Result<(), FutStatus> {
@@ -799,18 +1015,23 @@ impl VirtioBlkDevice {
 
             fut_printf(b"[virtio-blk] device features: 0x%lx\n\0".as_ptr(), features);
 
-            /* Try accepting all features BUT disable any fancy ones that might need interrupts.
-             * Keep low 32 bits but mask out high bits except required ones. */
+            /* Accept only minimum required features for basic operation.
+             * VIRTIO_F_VERSION_1 (bit 32) is required for modern virtio devices.
+             * VIRTIO_F_RING_INDIRECT_DESC (bit 28) and VIRTIO_F_RING_EVENT_IDX (bit 29)
+             * can cause issues if not properly supported. Accept only VERSION_1. */
             const VIRTIO_F_VERSION_1: u64 = 1u64 << 32;
-            let driver_features = (features & 0xFFFFFFFF) | VIRTIO_F_VERSION_1;
+            const VIRTIO_F_ANY_LAYOUT: u64 = 1u64 << 27;
+
+            // Accept VERSION_1 and ANY_LAYOUT (helps with buffer handling)
+            let driver_features = VIRTIO_F_VERSION_1 | (features & VIRTIO_F_ANY_LAYOUT);
 
             (*self.common).driver_feature_select = 0;
             (*self.common).driver_feature = driver_features as u32;
             (*self.common).driver_feature_select = 1;
             (*self.common).driver_feature = (driver_features >> 32) as u32;
 
-            fut_printf(b"[virtio-blk] driver features: 0x%lx (masked from 0x%lx)\n\0".as_ptr(),
-                driver_features, features);
+            fut_printf(b"[virtio-blk] driver features: 0x%lx (minimal set)\n\0".as_ptr(),
+                driver_features);
 
             (*self.common).device_status |= VIRTIO_STATUS_FEATURES_OK;
             let status_check = (*self.common).device_status;
@@ -836,11 +1057,11 @@ impl VirtioBlkDevice {
             self.queue.setup(qsize)?;
             (*self.common).queue_size = qsize;
 
-            /* Try NOT disabling MSI-X - QEMU might require interrupt capability even for polling */
-            (*self.common).queue_msix_vector = 0;  // Use vector 0 instead of NO_VECTOR
-            (*self.common).msix_config = 0;        // Use vector 0 for config
+            /* Disable MSI-X to use legacy INTx interrupts */
+            (*self.common).queue_msix_vector = 0xFFFF;  // NO_VECTOR - use legacy INTx
+            (*self.common).msix_config = 0xFFFF;        // NO_VECTOR for config
 
-            fut_printf(b"[virtio-blk] MSI-X vectors set to 0 (polling mode with interrupt capability)\n\0".as_ptr());
+            fut_printf(b"[virtio-blk] MSI-X disabled, using legacy INTx\n\0".as_ptr());
 
             let desc_lo = (self.queue.desc_phys & 0xFFFF_FFFF) as u32;
             let desc_hi = (self.queue.desc_phys >> 32) as u32;
@@ -928,6 +1149,10 @@ impl VirtioBlkDevice {
             log("virtio-blk: DMA is null!");
             return ENODEV;
         }
+
+        // Clear interrupt flag before starting I/O
+        IO_COMPLETED.store(0, Ordering::Release);
+
         let data_bytes = nsectors * self.block_size as usize;
         let mut bounce = ptr::null_mut();
         let mut data_phys = 0u64;

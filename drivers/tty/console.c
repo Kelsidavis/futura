@@ -37,11 +37,10 @@ static void console_signal(int sig) {
     fut_task_signal_exit(sig);
 }
 
+#if 0
 /**
  * Input thread - continuously reads from serial and feeds line discipline.
- * TEMPORARILY DISABLED for DMA race condition debugging.
  */
-#if 0
 static void console_input_thread(void *arg) {
     (void)arg;
 

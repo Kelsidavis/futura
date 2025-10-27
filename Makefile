@@ -326,6 +326,7 @@ KERNEL_SOURCES := \
     kernel/scheduler/fut_stats.c \
     kernel/scheduler/fut_waitq.c \
     kernel/timer/fut_timer.c \
+    kernel/acpi/acpi.c \
     kernel/ipc/fut_object.c \
     kernel/ipc/fut_fipc.c \
     kernel/net/fut_net.c \

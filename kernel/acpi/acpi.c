@@ -1,0 +1,208 @@
+/* acpi.c - ACPI (Advanced Configuration and Power Interface) implementation
+ *
+ * Copyright (c) 2025 Futura OS
+ * Licensed under the MPL v2.0 — see LICENSE for details.
+ */
+
+#include <kernel/acpi.h>
+#include <kernel/fut_mm.h>
+#include <stddef.h>
+#include <string.h>
+
+extern void fut_printf(const char *fmt, ...);
+
+/* ACPI state */
+static acpi_rsdp_v2_t *rsdp = NULL;
+static acpi_rsdt_t *rsdt = NULL;
+static acpi_xsdt_t *xsdt = NULL;
+static bool acpi_available = false;
+
+/**
+ * Calculate checksum for ACPI table.
+ * Sum of all bytes should be 0.
+ */
+static uint8_t acpi_checksum(const void *data, uint32_t length) {
+    const uint8_t *bytes = (const uint8_t *)data;
+    uint8_t sum = 0;
+    for (uint32_t i = 0; i < length; i++) {
+        sum += bytes[i];
+    }
+    return sum;
+}
+
+/**
+ * Validate ACPI table checksum.
+ */
+static bool acpi_validate_checksum(const acpi_sdt_header_t *header) {
+    return acpi_checksum(header, header->length) == 0;
+}
+
+/**
+ * Find RSDP in BIOS memory area.
+ * Searches 0xE0000-0xFFFFF for "RSD PTR " signature on 16-byte boundaries.
+ */
+static acpi_rsdp_v2_t *acpi_find_rsdp(void) {
+    /* Map BIOS area to higher-half kernel space */
+    const uintptr_t bios_start = 0xE0000;
+    const uintptr_t bios_end = 0x100000;
+    const uintptr_t kernel_offset = 0xFFFFFFFF80000000ULL;
+
+    for (uintptr_t addr = bios_start; addr < bios_end; addr += 16) {
+        acpi_rsdp_t *candidate = (acpi_rsdp_t *)(addr + kernel_offset);
+
+        /* Check signature */
+        if (memcmp(candidate->signature, ACPI_SIG_RSDP, 8) != 0) {
+            continue;
+        }
+
+        /* Validate ACPI 1.0 checksum (first 20 bytes) */
+        if (acpi_checksum(candidate, 20) != 0) {
+            continue;
+        }
+
+        /* Check if this is ACPI 2.0+ */
+        if (candidate->revision >= 2) {
+            acpi_rsdp_v2_t *v2 = (acpi_rsdp_v2_t *)candidate;
+
+            /* Validate extended checksum */
+            if (acpi_checksum(v2, sizeof(acpi_rsdp_v2_t)) != 0) {
+                continue;
+            }
+
+            fut_printf("[ACPI] Found RSDP v2 at 0x%lx\n", addr);
+            return v2;
+        } else {
+            fut_printf("[ACPI] Found RSDP v1 at 0x%lx\n", addr);
+            return (acpi_rsdp_v2_t *)candidate;
+        }
+    }
+
+    return NULL;
+}
+
+/**
+ * Map physical address to kernel virtual address.
+ * For now, assumes identity mapping in higher half.
+ */
+static void *acpi_map_table(uint64_t phys_addr) {
+    const uintptr_t kernel_offset = 0xFFFFFFFF80000000ULL;
+    return (void *)(phys_addr + kernel_offset);
+}
+
+/**
+ * Initialize ACPI subsystem.
+ */
+bool acpi_init(void) {
+    /* Find RSDP */
+    rsdp = acpi_find_rsdp();
+    if (!rsdp) {
+        fut_printf("[ACPI] RSDP not found\n");
+        return false;
+    }
+
+    fut_printf("[ACPI] RSDP revision: %u\n", rsdp->v1.revision);
+    fut_printf("[ACPI] OEM ID: %c%c%c%c%c%c\n",
+               rsdp->v1.oem_id[0], rsdp->v1.oem_id[1], rsdp->v1.oem_id[2],
+               rsdp->v1.oem_id[3], rsdp->v1.oem_id[4], rsdp->v1.oem_id[5]);
+
+    /* Parse RSDT or XSDT */
+    if (rsdp->v1.revision >= 2 && rsdp->xsdt_address != 0) {
+        /* Use XSDT (64-bit) */
+        xsdt = (acpi_xsdt_t *)acpi_map_table(rsdp->xsdt_address);
+        if (!acpi_validate_checksum(&xsdt->header)) {
+            fut_printf("[ACPI] XSDT checksum failed\n");
+            return false;
+        }
+
+        uint32_t num_entries = (xsdt->header.length - sizeof(acpi_sdt_header_t)) / 8;
+        fut_printf("[ACPI] XSDT at 0x%llx, %u tables\n", rsdp->xsdt_address, num_entries);
+
+    } else {
+        /* Use RSDT (32-bit) */
+        rsdt = (acpi_rsdt_t *)acpi_map_table(rsdp->v1.rsdt_address);
+        if (!acpi_validate_checksum(&rsdt->header)) {
+            fut_printf("[ACPI] RSDT checksum failed\n");
+            return false;
+        }
+
+        uint32_t num_entries = (rsdt->header.length - sizeof(acpi_sdt_header_t)) / 4;
+        fut_printf("[ACPI] RSDT at 0x%x, %u tables\n", rsdp->v1.rsdt_address, num_entries);
+    }
+
+    acpi_available = true;
+    return true;
+}
+
+/**
+ * Find ACPI table by signature.
+ */
+acpi_sdt_header_t *acpi_find_table(const char *signature) {
+    if (!acpi_available) {
+        return NULL;
+    }
+
+    if (xsdt) {
+        /* Search XSDT (64-bit pointers) */
+        uint32_t num_entries = (xsdt->header.length - sizeof(acpi_sdt_header_t)) / 8;
+
+        for (uint32_t i = 0; i < num_entries; i++) {
+            acpi_sdt_header_t *header = (acpi_sdt_header_t *)acpi_map_table(xsdt->entries[i]);
+
+            if (memcmp(header->signature, signature, 4) == 0) {
+                if (acpi_validate_checksum(header)) {
+                    return header;
+                }
+            }
+        }
+    } else if (rsdt) {
+        /* Search RSDT (32-bit pointers) */
+        uint32_t num_entries = (rsdt->header.length - sizeof(acpi_sdt_header_t)) / 4;
+
+        for (uint32_t i = 0; i < num_entries; i++) {
+            acpi_sdt_header_t *header = (acpi_sdt_header_t *)acpi_map_table(rsdt->entries[i]);
+
+            if (memcmp(header->signature, signature, 4) == 0) {
+                if (acpi_validate_checksum(header)) {
+                    return header;
+                }
+            }
+        }
+    }
+
+    return NULL;
+}
+
+/**
+ * Get the FADT (Fixed ACPI Description Table).
+ */
+acpi_fadt_t *acpi_get_fadt(void) {
+    return (acpi_fadt_t *)acpi_find_table(ACPI_SIG_FADT);
+}
+
+/**
+ * Shutdown system via ACPI.
+ */
+void acpi_shutdown(void) {
+    acpi_fadt_t *fadt = acpi_get_fadt();
+    if (!fadt) {
+        fut_printf("[ACPI] Shutdown: FADT not found\n");
+        return;
+    }
+
+    /* TODO: Implement ACPI shutdown via PM1a/PM1b control blocks */
+    fut_printf("[ACPI] Shutdown not yet implemented\n");
+}
+
+/**
+ * Reboot system via ACPI.
+ */
+void acpi_reboot(void) {
+    acpi_fadt_t *fadt = acpi_get_fadt();
+    if (!fadt) {
+        fut_printf("[ACPI] Reboot: FADT not found\n");
+        return;
+    }
+
+    /* TODO: Implement ACPI reboot */
+    fut_printf("[ACPI] Reboot not yet implemented\n");
+}

@@ -173,14 +173,27 @@ void lapic_send_ipi(uint32_t apic_id, uint32_t vector) {
 }
 
 /**
- * Send INIT IPI to target CPU.
+ * Send INIT IPI to target CPU (assert then deassert).
+ * Per Intel MP spec, INIT must be deasserted before SIPI.
  */
 void lapic_send_init_ipi(uint32_t apic_id) {
-    /* Write high part (destination) */
+    /* Write destination */
     lapic_write(LAPIC_REG_ICR_HIGH, (uint32_t)apic_id << 24);
 
-    /* Write low part (INIT IPI) */
+    /* Assert INIT (level-triggered, assert) */
     uint32_t icr_low = LAPIC_DM_INIT | LAPIC_DEST_PHYSICAL | LAPIC_LEVEL_ASSERT | LAPIC_TM_LEVEL;
+    lapic_write(LAPIC_REG_ICR_LOW, icr_low);
+
+    /* Wait for delivery */
+    while (lapic_read(LAPIC_REG_ICR_LOW) & LAPIC_DS_PENDING) {
+        __asm__ volatile("pause");
+    }
+
+    /* Small delay */
+    for (volatile int i = 0; i < 1000; i++);
+
+    /* Deassert INIT (level-triggered, deassert) */
+    icr_low = LAPIC_DM_INIT | LAPIC_DEST_PHYSICAL | LAPIC_TM_LEVEL;  /* No LEVEL_ASSERT = deassert */
     lapic_write(LAPIC_REG_ICR_LOW, icr_low);
 
     /* Wait for delivery */
@@ -191,13 +204,14 @@ void lapic_send_init_ipi(uint32_t apic_id) {
 
 /**
  * Send SIPI (Startup IPI) to target CPU.
+ * SIPI is edge-triggered and includes the startup vector.
  */
 void lapic_send_sipi(uint32_t apic_id, uint8_t vector) {
-    /* Write high part (destination) */
+    /* Write destination */
     lapic_write(LAPIC_REG_ICR_HIGH, (uint32_t)apic_id << 24);
 
-    /* Write low part (SIPI) */
-    uint32_t icr_low = vector | LAPIC_DM_STARTUP | LAPIC_DEST_PHYSICAL | LAPIC_LEVEL_ASSERT;
+    /* Write SIPI (edge-triggered, vector in low byte) */
+    uint32_t icr_low = vector | LAPIC_DM_STARTUP | LAPIC_DEST_PHYSICAL;
     lapic_write(LAPIC_REG_ICR_LOW, icr_low);
 
     /* Wait for delivery */

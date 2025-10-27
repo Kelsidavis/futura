@@ -85,12 +85,7 @@ void ap_main(uint32_t apic_id) {
 /**
  * Start an Application Processor via SIPI.
  * This is the proper way to start APs on x86_64 systems.
- * Returns false if SIPI is not supported (e.g., QEMU TCG mode).
- *
- * NOTE: Currently disabled because SIPI causes system resets in QEMU TCG.
- * Will be re-enabled when we have proper hardware detection.
  */
-#if 0  /* Disabled until SIPI works reliably */
 static bool smp_start_ap(uint32_t apic_id) {
     fut_printf("[SMP] Starting AP CPU %u via SIPI...\n", apic_id);
 
@@ -188,7 +183,6 @@ static bool smp_start_ap(uint32_t apic_id) {
     fut_printf("[SMP] ERROR: Timeout waiting for CPU %u\n", apic_id);
     return false;
 }
-#endif  /* Disabled SIPI code */
 
 /* External symbols from boot.S for flag-based AP waking */
 extern uint32_t ap_ready_flag;
@@ -248,17 +242,29 @@ void smp_init(uint32_t *apic_ids, uint32_t num_cpus) {
             return;
         }
 
-        /* SIPI-based startup causes system resets in QEMU TCG mode.
-         * For now, we only support flag-based wake (for real hardware or KVM
-         * that starts APs via multiboot). If that fails, continue with single-CPU.
-         *
-         * TODO: Implement proper SIPI that works on real hardware and KVM.
-         */
-        fut_printf("[SMP] SIPI not yet supported, continuing in single-CPU mode\n");
+        /* Flag wake failed, try SIPI method */
+        fut_printf("[SMP] Flag wake failed, using SIPI to start APs...\n");
+
+        /* Start each AP using SIPI */
+        for (uint32_t i = 0; i < num_cpus; i++) {
+            uint32_t apic_id = apic_ids[i];
+
+            /* Skip BSP */
+            if (apic_id == bsp_apic_id) {
+                continue;
+            }
+
+            fut_printf("[SMP] Starting AP %u (APIC ID %u)...\n", i, apic_id);
+
+            if (!smp_start_ap(apic_id)) {
+                fut_printf("[SMP] WARNING: Failed to start AP %u\n", apic_id);
+            }
+        }
+
         fut_printf("[SMP] Total online CPUs: %u (expected %u)\n", cpu_count, num_cpus);
 
-        if (cpu_count == 1) {
-            fut_printf("[SMP] WARNING: SMP initialization failed, running with 1 CPU\n");
+        if (cpu_count != num_cpus) {
+            fut_printf("[SMP] WARNING: Only %u of %u CPUs started\n", cpu_count, num_cpus);
         }
     }
 }

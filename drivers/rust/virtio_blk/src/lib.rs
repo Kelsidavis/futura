@@ -403,52 +403,58 @@ impl VirtQueue {
             return Err(ENODEV);
         }
         let slot = self.next_avail.load(Ordering::Relaxed) % self.size;
+
+        // Each slot uses 3 descriptors (header, data, status)
+        const DESCS_PER_REQ: u16 = 3;
+        let desc_head = (slot * DESCS_PER_REQ) % self.size;
+        let desc_data = (desc_head + 1) % self.size;
+        let desc_status = (desc_head + 2) % self.size;
+
         unsafe {
-            write_volatile(self.desc.add(0), VirtqDesc {
+            // Header descriptor
+            write_volatile(self.desc.add(desc_head as usize), VirtqDesc {
                 addr: header_phys,
                 len: size_of::<VirtioBlkReqHeader>() as u32,
                 flags: VIRTQ_DESC_F_NEXT,
-                next: if req_type == VIRTIO_BLK_T_FLUSH { 2 } else { 1 },
+                next: if req_type == VIRTIO_BLK_T_FLUSH { desc_status } else { desc_data },
             });
-            unsafe {
-                fut_printf(b"[virtio-blk] desc[0]: addr=0x%lx len=%d flags=0x%x next=%d\n\0".as_ptr(),
-                    header_phys, size_of::<VirtioBlkReqHeader>() as u32, VIRTQ_DESC_F_NEXT as u32,
-                    if req_type == VIRTIO_BLK_T_FLUSH { 2 } else { 1 });
-            }
+            fut_printf(b"[virtio-blk] desc[%d]: addr=0x%lx len=%d flags=0x%x next=%d\n\0".as_ptr(),
+                desc_head as u32, header_phys, size_of::<VirtioBlkReqHeader>() as u32,
+                VIRTQ_DESC_F_NEXT as u32,
+                if req_type == VIRTIO_BLK_T_FLUSH { desc_status } else { desc_data } as u32);
 
             if req_type != VIRTIO_BLK_T_FLUSH {
                 let mut flags = VIRTQ_DESC_F_NEXT;
                 if !write {
                     flags |= VIRTQ_DESC_F_WRITE;
                 }
-                write_volatile(self.desc.add(1), VirtqDesc {
+                write_volatile(self.desc.add(desc_data as usize), VirtqDesc {
                     addr: data_phys,
                     len: data_len as u32,
                     flags,
-                    next: 2,
+                    next: desc_status,
                 });
-                fut_printf(b"[virtio-blk] desc[1]: addr=0x%lx len=%d flags=0x%x next=2\n\0".as_ptr(),
-                    data_phys, data_len as u32, flags as u32);
+                fut_printf(b"[virtio-blk] desc[%d]: addr=0x%lx len=%d flags=0x%x next=%d\n\0".as_ptr(),
+                    desc_data as u32, data_phys, data_len as u32, flags as u32, desc_status as u32);
             }
 
-            write_volatile(self.desc.add(2), VirtqDesc {
+            // Status descriptor
+            write_volatile(self.desc.add(desc_status as usize), VirtqDesc {
                 addr: status_phys,
                 len: 1,
                 flags: VIRTQ_DESC_F_WRITE,
                 next: 0,
             });
-            fut_printf(b"[virtio-blk] desc[2]: addr=0x%lx len=1 flags=0x%x next=0\n\0".as_ptr(),
-                status_phys, VIRTQ_DESC_F_WRITE as u32);
+            fut_printf(b"[virtio-blk] desc[%d]: addr=0x%lx len=1 flags=0x%x next=0\n\0".as_ptr(),
+                desc_status as u32, status_phys, VIRTQ_DESC_F_WRITE as u32);
 
             let avail = &mut *self.avail;
-            avail.ring[slot as usize] = 0;
+            avail.ring[slot as usize] = desc_head;  // Point to the head descriptor for this chain
             core::sync::atomic::fence(Ordering::SeqCst);
             let old_idx = avail.idx;
             avail.idx = avail.idx.wrapping_add(1);
-            unsafe {
-                fut_printf(b"[virtio-blk] enqueue: slot=%d avail.idx %d -> %d avail.flags=%d\n\0".as_ptr(),
-                    slot as u32, old_idx as u32, avail.idx as u32, avail.flags as u32);
-            }
+            fut_printf(b"[virtio-blk] enqueue: slot=%d desc_head=%d avail.idx %d -> %d avail.flags=%d\n\0".as_ptr(),
+                slot as u32, desc_head as u32, old_idx as u32, avail.idx as u32, avail.flags as u32);
         }
         self.next_avail.fetch_add(1, Ordering::Release);
         Ok(())

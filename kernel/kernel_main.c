@@ -833,6 +833,11 @@ void fut_kernel_main(void) {
     fut_printf("[INIT] Initializing timer subsystem...\n");
     fut_timer_subsystem_init();
 
+    fut_serial_puts("[DEBUG] kernel_main: Before ACPI init\n");
+    fut_printf("[INIT] Initializing ACPI...\n");
+    extern bool acpi_init(void);
+    acpi_init();
+
     fut_serial_puts("[DEBUG] kernel_main: Before boot banner\n");
     fut_boot_banner();
 

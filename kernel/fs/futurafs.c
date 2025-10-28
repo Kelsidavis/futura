@@ -500,6 +500,120 @@ int futurafs_write_inode_async(struct futurafs_mount *mount,
 }
 
 /**
+ * Data block read completion callback.
+ * Called when async data block read completes.
+ */
+static void futurafs_block_read_callback(int result, void *ctx) {
+    struct futurafs_block_read_ctx *block_ctx = (struct futurafs_block_read_ctx *)ctx;
+
+    /* Convert block I/O error to filesystem error */
+    if (result < 0) {
+        result = FUTURAFS_EIO;
+    }
+
+    /* Call user callback */
+    block_ctx->base.callback(result, block_ctx->base.callback_ctx);
+
+    /* Free context */
+    fut_free(block_ctx);
+}
+
+/**
+ * Read data block asynchronously.
+ * Reads a single data block from the filesystem.
+ */
+int futurafs_read_block_async(struct futurafs_mount *mount,
+                              uint64_t block_num,
+                              void *buffer,
+                              futurafs_completion_t callback,
+                              void *ctx) {
+    /* Validate block number */
+    if (block_num >= mount->sb->total_blocks) {
+        return FUTURAFS_EINVAL;
+    }
+
+    /* Allocate async context */
+    struct futurafs_block_read_ctx *block_ctx = fut_malloc(sizeof(*block_ctx));
+    if (!block_ctx) {
+        return -12;  /* ENOMEM */
+    }
+
+    /* Initialize context */
+    block_ctx->base.callback = callback;
+    block_ctx->base.callback_ctx = ctx;
+    block_ctx->base.mount = mount;
+    block_ctx->block_num = block_num;
+    block_ctx->buffer = buffer;
+
+    /* Submit async block read */
+    int ret = fut_blk_read_async(mount->block_device_handle, block_num, 1,
+                                 buffer, futurafs_block_read_callback, block_ctx);
+    if (ret < 0) {
+        fut_free(block_ctx);
+        return ret;
+    }
+
+    return 0;
+}
+
+/**
+ * Data block write completion callback.
+ * Called when async data block write completes.
+ */
+static void futurafs_block_write_callback(int result, void *ctx) {
+    struct futurafs_block_write_ctx *block_ctx = (struct futurafs_block_write_ctx *)ctx;
+
+    /* Convert block I/O error to filesystem error */
+    if (result < 0) {
+        result = FUTURAFS_EIO;
+    }
+
+    /* Call user callback */
+    block_ctx->base.callback(result, block_ctx->base.callback_ctx);
+
+    /* Free context */
+    fut_free(block_ctx);
+}
+
+/**
+ * Write data block asynchronously.
+ * Writes a single data block to the filesystem.
+ */
+int futurafs_write_block_async(struct futurafs_mount *mount,
+                               uint64_t block_num,
+                               const void *buffer,
+                               futurafs_completion_t callback,
+                               void *ctx) {
+    /* Validate block number */
+    if (block_num >= mount->sb->total_blocks) {
+        return FUTURAFS_EINVAL;
+    }
+
+    /* Allocate async context */
+    struct futurafs_block_write_ctx *block_ctx = fut_malloc(sizeof(*block_ctx));
+    if (!block_ctx) {
+        return -12;  /* ENOMEM */
+    }
+
+    /* Initialize context */
+    block_ctx->base.callback = callback;
+    block_ctx->base.callback_ctx = ctx;
+    block_ctx->base.mount = mount;
+    block_ctx->block_num = block_num;
+    block_ctx->buffer = buffer;
+
+    /* Submit async block write */
+    int ret = fut_blk_write_async(mount->block_device_handle, block_num, 1,
+                                  buffer, futurafs_block_write_callback, block_ctx);
+    if (ret < 0) {
+        fut_free(block_ctx);
+        return ret;
+    }
+
+    return 0;
+}
+
+/**
  * Read inode from disk.
  */
 static int futurafs_read_inode(struct futurafs_mount *mount, uint64_t ino,

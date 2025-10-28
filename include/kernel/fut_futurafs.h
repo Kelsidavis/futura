@@ -259,6 +259,24 @@ struct futurafs_inode_write_ctx {
 };
 
 /**
+ * Data block read async context.
+ */
+struct futurafs_block_read_ctx {
+    struct futurafs_async_ctx base;
+    uint64_t block_num;
+    void *buffer;
+};
+
+/**
+ * Data block write async context.
+ */
+struct futurafs_block_write_ctx {
+    struct futurafs_async_ctx base;
+    uint64_t block_num;
+    const void *buffer;
+};
+
+/**
  * Read superblock asynchronously.
  *
  * @param mount      Mount information
@@ -315,6 +333,38 @@ int futurafs_read_inode_async(struct futurafs_mount *mount,
 int futurafs_write_inode_async(struct futurafs_mount *mount,
                                uint64_t ino,
                                const struct futurafs_inode *inode,
+                               futurafs_completion_t callback,
+                               void *ctx);
+
+/**
+ * Read data block asynchronously.
+ *
+ * @param mount      Mount information
+ * @param block_num  Block number to read
+ * @param buffer     Buffer to read into (must be FUTURAFS_BLOCK_SIZE bytes)
+ * @param callback   Completion callback
+ * @param ctx        User context pointer
+ * @return 0 on successful submission, negative error code on failure
+ */
+int futurafs_read_block_async(struct futurafs_mount *mount,
+                              uint64_t block_num,
+                              void *buffer,
+                              futurafs_completion_t callback,
+                              void *ctx);
+
+/**
+ * Write data block asynchronously.
+ *
+ * @param mount      Mount information
+ * @param block_num  Block number to write
+ * @param buffer     Buffer to write from (must be FUTURAFS_BLOCK_SIZE bytes)
+ * @param callback   Completion callback
+ * @param ctx        User context pointer
+ * @return 0 on successful submission, negative error code on failure
+ */
+int futurafs_write_block_async(struct futurafs_mount *mount,
+                               uint64_t block_num,
+                               const void *buffer,
                                futurafs_completion_t callback,
                                void *ctx);
 

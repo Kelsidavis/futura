@@ -8,6 +8,7 @@
 
 #include <kernel/fut_blockdev.h>
 #include <kernel/fut_memory.h>
+#include <kernel/fut_thread.h>
 #include <stddef.h>
 
 /* ============================================================
@@ -553,10 +554,21 @@ int fut_blk_read_sync(fut_handle_t blk_handle, uint64_t block_num,
         return ret;  /* Submission failed */
     }
 
-    /* Wait for completion (busy-wait in this transitional implementation) */
+    /* Wait for completion
+     * NOTE: In the current "fake async" implementation, the callback is invoked
+     * immediately, so this loop typically executes zero times. However, for
+     * future true-async implementations, we yield to the scheduler instead of
+     * busy-waiting to allow other threads to run.
+     */
+    int wait_iterations = 0;
+    const int MAX_WAIT_ITERATIONS = 10000;  /* Safety limit */
     while (!sync_ctx.completed) {
-        /* Busy-wait - in a real async implementation, this would be a
-         * proper wait mechanism (futex, condvar, or scheduler yield) */
+        if (++wait_iterations > MAX_WAIT_ITERATIONS) {
+            /* Safety: prevent infinite loop if callback never fires */
+            return BLOCKDEV_EIO;
+        }
+        /* Yield CPU to other threads instead of busy-waiting */
+        fut_thread_yield();
     }
 
     return sync_ctx.result;
@@ -581,10 +593,21 @@ int fut_blk_write_sync(fut_handle_t blk_handle, uint64_t block_num,
         return ret;  /* Submission failed */
     }
 
-    /* Wait for completion (busy-wait in this transitional implementation) */
+    /* Wait for completion
+     * NOTE: In the current "fake async" implementation, the callback is invoked
+     * immediately, so this loop typically executes zero times. However, for
+     * future true-async implementations, we yield to the scheduler instead of
+     * busy-waiting to allow other threads to run.
+     */
+    int wait_iterations = 0;
+    const int MAX_WAIT_ITERATIONS = 10000;  /* Safety limit */
     while (!sync_ctx.completed) {
-        /* Busy-wait - in a real async implementation, this would be a
-         * proper wait mechanism (futex, condvar, or scheduler yield) */
+        if (++wait_iterations > MAX_WAIT_ITERATIONS) {
+            /* Safety: prevent infinite loop if callback never fires */
+            return BLOCKDEV_EIO;
+        }
+        /* Yield CPU to other threads instead of busy-waiting */
+        fut_thread_yield();
     }
 
     return sync_ctx.result;

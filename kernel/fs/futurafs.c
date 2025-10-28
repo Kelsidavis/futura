@@ -207,6 +207,126 @@ static int futurafs_write_superblock(struct futurafs_mount *mount, struct futura
     return futurafs_blk_write(mount, 0, 1, sb) < 0 ? FUTURAFS_EIO : 0;
 }
 
+/* ============================================================
+ *   Async Operations (Phase 3)
+ * ============================================================ */
+
+/**
+ * Superblock read completion callback.
+ * Called when async superblock read completes.
+ */
+static void futurafs_sb_read_callback(int result, void *ctx) {
+    extern void fut_printf(const char *, ...);
+    struct futurafs_sb_read_ctx *sb_ctx = (struct futurafs_sb_read_ctx *)ctx;
+
+    if (result >= 0) {
+        /* Copy superblock from block buffer to output */
+        for (size_t i = 0; i < sizeof(struct futurafs_superblock); i++) {
+            ((uint8_t *)sb_ctx->sb)[i] = sb_ctx->block_buffer[i];
+        }
+
+        /* Validate magic number */
+        fut_printf("[FUTURAFS] Async: magic=0x%x (expected 0x%x)\n",
+                   sb_ctx->sb->magic, FUTURAFS_MAGIC);
+        if (sb_ctx->sb->magic != FUTURAFS_MAGIC) {
+            result = FUTURAFS_EINVAL;
+        }
+        /* Validate version */
+        else if (sb_ctx->sb->version != FUTURAFS_VERSION) {
+            fut_printf("[FUTURAFS] Async: version=%u (expected %u)\n",
+                       sb_ctx->sb->version, FUTURAFS_VERSION);
+            result = FUTURAFS_EINVAL;
+        }
+    }
+
+    /* Call user callback */
+    sb_ctx->base.callback(result, sb_ctx->base.callback_ctx);
+
+    /* Free context */
+    fut_free(sb_ctx);
+}
+
+/**
+ * Read superblock asynchronously.
+ */
+int futurafs_read_superblock_async(struct futurafs_mount *mount,
+                                   struct futurafs_superblock *sb,
+                                   futurafs_completion_t callback,
+                                   void *ctx) {
+    /* Allocate async context */
+    struct futurafs_sb_read_ctx *sb_ctx = fut_malloc(sizeof(*sb_ctx));
+    if (!sb_ctx) {
+        return -12;  /* ENOMEM */
+    }
+
+    /* Initialize context */
+    sb_ctx->base.callback = callback;
+    sb_ctx->base.callback_ctx = ctx;
+    sb_ctx->base.mount = mount;
+    sb_ctx->sb = sb;
+
+    /* Submit async block read */
+    int ret = fut_blk_read_async(mount->block_device_handle, 0, 1,
+                                 sb_ctx->block_buffer,
+                                 futurafs_sb_read_callback, sb_ctx);
+    if (ret < 0) {
+        fut_free(sb_ctx);
+        return ret;
+    }
+
+    return 0;
+}
+
+/**
+ * Superblock write completion callback.
+ * Called when async superblock write completes.
+ */
+static void futurafs_sb_write_callback(int result, void *ctx) {
+    struct futurafs_sb_write_ctx *sb_ctx = (struct futurafs_sb_write_ctx *)ctx;
+
+    /* Convert block I/O error to filesystem error */
+    if (result < 0) {
+        result = FUTURAFS_EIO;
+    }
+
+    /* Call user callback */
+    sb_ctx->base.callback(result, sb_ctx->base.callback_ctx);
+
+    /* Free context */
+    fut_free(sb_ctx);
+}
+
+/**
+ * Write superblock asynchronously.
+ */
+int futurafs_write_superblock_async(struct futurafs_mount *mount,
+                                    const struct futurafs_superblock *sb,
+                                    futurafs_completion_t callback,
+                                    void *ctx) {
+    /* Allocate async context */
+    struct futurafs_sb_write_ctx *sb_ctx = fut_malloc(sizeof(*sb_ctx));
+    if (!sb_ctx) {
+        return -12;  /* ENOMEM */
+    }
+
+    /* Initialize context */
+    sb_ctx->base.callback = callback;
+    sb_ctx->base.callback_ctx = ctx;
+    sb_ctx->base.mount = mount;
+    sb_ctx->sb = sb;
+
+    /* Submit async block write */
+    int ret = fut_blk_write_async(mount->block_device_handle, 0, 1,
+                                  (const void *)sb,
+                                  futurafs_sb_write_callback, sb_ctx);
+    if (ret < 0) {
+        fut_free(sb_ctx);
+        return ret;
+    }
+
+    return 0;
+}
+
 /**
  * Read inode from disk.
  */

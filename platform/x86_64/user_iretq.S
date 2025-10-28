@@ -94,6 +94,16 @@ fut_do_user_iretq:
     movb $'!', %al
     outb %al, %dx
 
+    /* Set user data segments for ring transition
+     * IRETQ will validate that all segment registers have DPL >= CPL
+     * User code has CPL=3, so we need user data selectors with DPL=3 (0x23)
+     * Without this, IRETQ will cause a General Protection Fault #13 */
+    movw $0x23, %ax             /* User data selector (0x20|3) */
+    movw %ax, %ds
+    movw %ax, %es
+    movw %ax, %fs
+    movw %ax, %gs
+
     /* Return to userspace - this never returns */
     iretq
 

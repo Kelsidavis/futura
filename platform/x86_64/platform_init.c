@@ -217,9 +217,13 @@ int fut_serial_getc(void) {
 }
 
 int fut_serial_getc_blocking(void) {
-    /* Wait for data to be available */
-    while ((inb(SERIAL_LINE_STATUS(SERIAL_PORT_COM1)) & 0x01) == 0)
-        ;
+    /* Wait for data to be available, using pause hint for better CPU efficiency */
+    while ((inb(SERIAL_LINE_STATUS(SERIAL_PORT_COM1)) & 0x01) == 0) {
+        /* Pause instruction hints to CPU that we're in a spin loop,
+         * allowing better power management and hyper-threading performance.
+         * This doesn't context switch, but timer interrupts will still preempt us. */
+        __asm__ volatile("pause" ::: "memory");
+    }
     /* Read and return the character */
     return (int)inb(SERIAL_DATA(SERIAL_PORT_COM1));
 }

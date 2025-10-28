@@ -328,6 +328,178 @@ int futurafs_write_superblock_async(struct futurafs_mount *mount,
 }
 
 /**
+ * Inode read completion callback.
+ * Called when async inode read completes.
+ */
+static void futurafs_inode_read_callback(int result, void *ctx) {
+    struct futurafs_inode_read_ctx *inode_ctx = (struct futurafs_inode_read_ctx *)ctx;
+
+    if (result >= 0) {
+        /* Extract inode from block buffer */
+        uint64_t inode_index = inode_ctx->ino - 1;
+        uint64_t block_offset = (inode_index % inode_ctx->base.mount->inodes_per_block)
+                                * FUTURAFS_INODE_SIZE;
+        uint8_t *inode_ptr = inode_ctx->block_buffer + block_offset;
+
+        /* Copy inode data */
+        for (size_t i = 0; i < sizeof(struct futurafs_inode); i++) {
+            ((uint8_t *)inode_ctx->inode)[i] = inode_ptr[i];
+        }
+    }
+
+    /* Call user callback */
+    inode_ctx->base.callback(result >= 0 ? 0 : FUTURAFS_EIO, inode_ctx->base.callback_ctx);
+
+    /* Free context */
+    fut_free(inode_ctx);
+}
+
+/**
+ * Read inode asynchronously.
+ */
+int futurafs_read_inode_async(struct futurafs_mount *mount,
+                              uint64_t ino,
+                              struct futurafs_inode *inode,
+                              futurafs_completion_t callback,
+                              void *ctx) {
+    /* Validate inode number */
+    if (ino == 0 || ino > mount->sb->total_inodes) {
+        return FUTURAFS_EINVAL;
+    }
+
+    /* Allocate async context */
+    struct futurafs_inode_read_ctx *inode_ctx = fut_malloc(sizeof(*inode_ctx));
+    if (!inode_ctx) {
+        return -12;  /* ENOMEM */
+    }
+
+    /* Initialize context */
+    inode_ctx->base.callback = callback;
+    inode_ctx->base.callback_ctx = ctx;
+    inode_ctx->base.mount = mount;
+    inode_ctx->ino = ino;
+    inode_ctx->inode = inode;
+
+    /* Calculate block number */
+    uint64_t inode_index = ino - 1;
+    uint64_t block_num = mount->sb->inode_table_block + (inode_index / mount->inodes_per_block);
+
+    /* Submit async block read */
+    int ret = fut_blk_read_async(mount->block_device_handle, block_num, 1,
+                                 inode_ctx->block_buffer,
+                                 futurafs_inode_read_callback, inode_ctx);
+    if (ret < 0) {
+        fut_free(inode_ctx);
+        return ret;
+    }
+
+    return 0;
+}
+
+/**
+ * Inode write second stage callback (after write completes).
+ * Called when the modified block has been written back to disk.
+ */
+static void futurafs_inode_write_stage2_callback(int result, void *ctx) {
+    struct futurafs_inode_write_ctx *inode_ctx = (struct futurafs_inode_write_ctx *)ctx;
+
+    /* Convert block I/O error to filesystem error */
+    if (result < 0) {
+        result = FUTURAFS_EIO;
+    }
+
+    /* Call user callback */
+    inode_ctx->base.callback(result, inode_ctx->base.callback_ctx);
+
+    /* Free context */
+    fut_free(inode_ctx);
+}
+
+/**
+ * Inode write first stage callback (after read completes).
+ * Called when the block containing the inode has been read.
+ * Now we modify it and write it back.
+ */
+static void futurafs_inode_write_stage1_callback(int result, void *ctx) {
+    struct futurafs_inode_write_ctx *inode_ctx = (struct futurafs_inode_write_ctx *)ctx;
+
+    if (result < 0) {
+        /* Read failed, propagate error */
+        inode_ctx->base.callback(FUTURAFS_EIO, inode_ctx->base.callback_ctx);
+        fut_free(inode_ctx);
+        return;
+    }
+
+    /* Modify inode in block buffer */
+    uint64_t inode_index = inode_ctx->ino - 1;
+    uint64_t block_offset = (inode_index % inode_ctx->base.mount->inodes_per_block)
+                            * FUTURAFS_INODE_SIZE;
+    uint8_t *inode_ptr = inode_ctx->block_buffer + block_offset;
+
+    /* Copy inode data into block */
+    for (size_t i = 0; i < sizeof(struct futurafs_inode); i++) {
+        inode_ptr[i] = ((const uint8_t *)inode_ctx->inode)[i];
+    }
+
+    /* Calculate block number again for write */
+    uint64_t block_num = inode_ctx->base.mount->sb->inode_table_block +
+                         (inode_index / inode_ctx->base.mount->inodes_per_block);
+
+    /* Submit async block write (stage 2) */
+    int ret = fut_blk_write_async(inode_ctx->base.mount->block_device_handle,
+                                  block_num, 1, inode_ctx->block_buffer,
+                                  futurafs_inode_write_stage2_callback, inode_ctx);
+    if (ret < 0) {
+        /* Write submission failed */
+        inode_ctx->base.callback(ret, inode_ctx->base.callback_ctx);
+        fut_free(inode_ctx);
+    }
+}
+
+/**
+ * Write inode asynchronously.
+ * This uses a read-modify-write pattern with callback chaining.
+ */
+int futurafs_write_inode_async(struct futurafs_mount *mount,
+                               uint64_t ino,
+                               const struct futurafs_inode *inode,
+                               futurafs_completion_t callback,
+                               void *ctx) {
+    /* Validate inode number */
+    if (ino == 0 || ino > mount->sb->total_inodes) {
+        return FUTURAFS_EINVAL;
+    }
+
+    /* Allocate async context */
+    struct futurafs_inode_write_ctx *inode_ctx = fut_malloc(sizeof(*inode_ctx));
+    if (!inode_ctx) {
+        return -12;  /* ENOMEM */
+    }
+
+    /* Initialize context */
+    inode_ctx->base.callback = callback;
+    inode_ctx->base.callback_ctx = ctx;
+    inode_ctx->base.mount = mount;
+    inode_ctx->ino = ino;
+    inode_ctx->inode = inode;
+
+    /* Calculate block number */
+    uint64_t inode_index = ino - 1;
+    uint64_t block_num = mount->sb->inode_table_block + (inode_index / mount->inodes_per_block);
+
+    /* Submit async block read (stage 1) - will chain to write in callback */
+    int ret = fut_blk_read_async(mount->block_device_handle, block_num, 1,
+                                 inode_ctx->block_buffer,
+                                 futurafs_inode_write_stage1_callback, inode_ctx);
+    if (ret < 0) {
+        fut_free(inode_ctx);
+        return ret;
+    }
+
+    return 0;
+}
+
+/**
  * Read inode from disk.
  */
 static int futurafs_read_inode(struct futurafs_mount *mount, uint64_t ino,

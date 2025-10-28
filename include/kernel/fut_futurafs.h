@@ -483,6 +483,97 @@ int futurafs_dir_add_entry_async(struct fut_vnode *dir_vnode,
                                  futurafs_completion_t callback,
                                  void *ctx);
 
+/**
+ * File read async context.
+ * State machine for multi-block file reads with offset handling.
+ */
+struct futurafs_file_read_ctx {
+    struct futurafs_async_ctx base;
+
+    /* Read parameters */
+    struct futurafs_inode_info *inode_info;
+    void *user_buffer;          /* User buffer to read into */
+    size_t total_size;          /* Total bytes to read */
+    uint64_t file_offset;       /* Starting offset in file */
+
+    /* Progress tracking */
+    size_t bytes_read;          /* Bytes read so far */
+    uint8_t block_buffer[FUTURAFS_BLOCK_SIZE];
+};
+
+/**
+ * File write async context.
+ * State machine for multi-block file writes with read-modify-write pattern.
+ */
+enum futurafs_file_write_state {
+    FILE_WRITE_READING,     /* Reading block for read-modify-write */
+    FILE_WRITE_WRITING,     /* Writing modified block */
+    FILE_WRITE_SYNCING,     /* Syncing inode to disk */
+    FILE_WRITE_COMPLETE     /* Operation complete */
+};
+
+struct futurafs_file_write_ctx {
+    struct futurafs_async_ctx base;
+
+    /* Write parameters */
+    struct futurafs_inode_info *inode_info;
+    const void *user_buffer;    /* User buffer to write from */
+    size_t total_size;          /* Total bytes to write */
+    uint64_t file_offset;       /* Starting offset in file */
+
+    /* Progress tracking */
+    size_t bytes_written;       /* Bytes written so far */
+    enum futurafs_file_write_state state;
+    uint8_t block_buffer[FUTURAFS_BLOCK_SIZE];
+
+    /* Block allocation tracking */
+    uint64_t current_block_num;
+    bool allocated_block;
+    bool need_read;             /* Need to read block first for partial write */
+};
+
+/**
+ * Read from file asynchronously.
+ *
+ * Reads data from file at specified offset into buffer.
+ * Demonstrates multi-block sequential reads with sparse block handling.
+ *
+ * @param inode_info Inode information for file
+ * @param buffer     Buffer to read into
+ * @param size       Number of bytes to read
+ * @param offset     File offset to read from
+ * @param callback   Completion callback (result = bytes read, or negative error)
+ * @param ctx        User context pointer
+ * @return 0 on successful submission, negative error code on failure
+ */
+int futurafs_file_read_async(struct futurafs_inode_info *inode_info,
+                              void *buffer,
+                              size_t size,
+                              uint64_t offset,
+                              futurafs_completion_t callback,
+                              void *ctx);
+
+/**
+ * Write to file asynchronously.
+ *
+ * Writes data to file at specified offset from buffer.
+ * Demonstrates read-modify-write pattern with conditional block allocation.
+ *
+ * @param inode_info Inode information for file
+ * @param buffer     Buffer to write from
+ * @param size       Number of bytes to write
+ * @param offset     File offset to write to
+ * @param callback   Completion callback (result = bytes written, or negative error)
+ * @param ctx        User context pointer
+ * @return 0 on successful submission, negative error code on failure
+ */
+int futurafs_file_write_async(struct futurafs_inode_info *inode_info,
+                               const void *buffer,
+                               size_t size,
+                               uint64_t offset,
+                               futurafs_completion_t callback,
+                               void *ctx);
+
 /* Error codes */
 #define FUTURAFS_EINVAL   -22    /* Invalid argument */
 #define FUTURAFS_EIO      -5     /* I/O error */

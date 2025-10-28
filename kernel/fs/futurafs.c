@@ -1073,6 +1073,173 @@ int futurafs_dir_add_entry_async(struct fut_vnode *dir_vnode,
     return 0;
 }
 
+/* ============================================================
+ *   Phase 3b: File I/O Async Operations
+ * ============================================================ */
+
+/**
+ * File read callback - implements callback loop for sequential block reads.
+ */
+static void futurafs_file_read_callback(int result, void *ctx) {
+    struct futurafs_file_read_ctx *read_ctx = (struct futurafs_file_read_ctx *)ctx;
+
+    /* Check for I/O error */
+    if (result < 0) {
+        read_ctx->base.callback(read_ctx->bytes_read > 0 ? (int)read_ctx->bytes_read : FUTURAFS_EIO,
+                               read_ctx->base.callback_ctx);
+        fut_free(read_ctx);
+        return;
+    }
+
+    /* Calculate current position and how much to copy */
+    uint64_t current_offset = read_ctx->file_offset + read_ctx->bytes_read;
+    uint64_t block_offset = current_offset % FUTURAFS_BLOCK_SIZE;
+    size_t remaining = read_ctx->total_size - read_ctx->bytes_read;
+    size_t to_copy = FUTURAFS_BLOCK_SIZE - block_offset;
+    if (to_copy > remaining) {
+        to_copy = remaining;
+    }
+
+    /* Copy data from block buffer to user buffer */
+    uint8_t *dest = (uint8_t *)read_ctx->user_buffer + read_ctx->bytes_read;
+    for (size_t i = 0; i < to_copy; i++) {
+        dest[i] = read_ctx->block_buffer[block_offset + i];
+    }
+
+    read_ctx->bytes_read += to_copy;
+
+    /* Check if done */
+    if (read_ctx->bytes_read >= read_ctx->total_size) {
+        /* Success - all bytes read */
+        read_ctx->base.callback((int)read_ctx->bytes_read, read_ctx->base.callback_ctx);
+        fut_free(read_ctx);
+        return;
+    }
+
+    /* More blocks to read - continue callback loop */
+    uint64_t next_offset = read_ctx->file_offset + read_ctx->bytes_read;
+    uint64_t file_block = next_offset / FUTURAFS_BLOCK_SIZE;
+
+    /* Get next block number */
+    uint64_t block_num;
+    if (file_block < FUTURAFS_DIRECT_BLOCKS) {
+        block_num = read_ctx->inode_info->disk_inode.direct[file_block];
+    } else {
+        /* Indirect blocks not yet implemented */
+        read_ctx->base.callback((int)read_ctx->bytes_read, read_ctx->base.callback_ctx);
+        fut_free(read_ctx);
+        return;
+    }
+
+    /* Handle sparse block (block_num == 0) */
+    if (block_num == 0) {
+        /* Fill with zeros without I/O */
+        size_t next_block_offset = next_offset % FUTURAFS_BLOCK_SIZE;
+        size_t next_remaining = read_ctx->total_size - read_ctx->bytes_read;
+        size_t next_to_copy = FUTURAFS_BLOCK_SIZE - next_block_offset;
+        if (next_to_copy > next_remaining) {
+            next_to_copy = next_remaining;
+        }
+
+        uint8_t *next_dest = (uint8_t *)read_ctx->user_buffer + read_ctx->bytes_read;
+        for (size_t i = 0; i < next_to_copy; i++) {
+            next_dest[i] = 0;
+        }
+
+        read_ctx->bytes_read += next_to_copy;
+
+        /* Check if done after filling sparse block */
+        if (read_ctx->bytes_read >= read_ctx->total_size) {
+            read_ctx->base.callback((int)read_ctx->bytes_read, read_ctx->base.callback_ctx);
+            fut_free(read_ctx);
+            return;
+        }
+
+        /* Continue to next block recursively */
+        futurafs_file_read_callback(0, read_ctx);
+        return;
+    }
+
+    /* Read next block asynchronously */
+    int ret = futurafs_read_block_async(read_ctx->base.mount, block_num,
+                                       read_ctx->block_buffer,
+                                       futurafs_file_read_callback, read_ctx);
+    if (ret < 0) {
+        read_ctx->base.callback(read_ctx->bytes_read > 0 ? (int)read_ctx->bytes_read : ret,
+                               read_ctx->base.callback_ctx);
+        fut_free(read_ctx);
+    }
+}
+
+/**
+ * Read from file asynchronously.
+ */
+int futurafs_file_read_async(struct futurafs_inode_info *inode_info,
+                              void *buffer,
+                              size_t size,
+                              uint64_t offset,
+                              futurafs_completion_t callback,
+                              void *ctx) {
+    /* EOF check */
+    if (offset >= inode_info->disk_inode.size) {
+        callback(0, ctx);  /* Return 0 bytes read */
+        return 0;
+    }
+
+    /* Limit read to file size */
+    if (offset + size > inode_info->disk_inode.size) {
+        size = inode_info->disk_inode.size - offset;
+    }
+
+    /* Allocate context */
+    struct futurafs_file_read_ctx *read_ctx = fut_malloc(sizeof(*read_ctx));
+    if (!read_ctx) {
+        return FUTURAFS_EIO;
+    }
+
+    /* Initialize context */
+    read_ctx->base.callback = callback;
+    read_ctx->base.callback_ctx = ctx;
+    read_ctx->base.mount = inode_info->mount;
+    read_ctx->inode_info = inode_info;
+    read_ctx->user_buffer = buffer;
+    read_ctx->total_size = size;
+    read_ctx->file_offset = offset;
+    read_ctx->bytes_read = 0;
+
+    /* Calculate first block to read */
+    uint64_t file_block = offset / FUTURAFS_BLOCK_SIZE;
+
+    /* Get first block number */
+    uint64_t block_num;
+    if (file_block < FUTURAFS_DIRECT_BLOCKS) {
+        block_num = inode_info->disk_inode.direct[file_block];
+    } else {
+        /* Indirect blocks not yet implemented */
+        fut_free(read_ctx);
+        callback(0, ctx);
+        return 0;
+    }
+
+    /* Handle sparse block at start */
+    if (block_num == 0) {
+        /* Fill with zeros and continue */
+        futurafs_file_read_callback(0, read_ctx);
+        return 0;
+    }
+
+    /* Submit first block read to begin operation */
+    int ret = futurafs_read_block_async(inode_info->mount, block_num,
+                                       read_ctx->block_buffer,
+                                       futurafs_file_read_callback, read_ctx);
+    if (ret < 0) {
+        fut_free(read_ctx);
+        return ret;
+    }
+
+    return 0;
+}
+
 /**
  * Read inode from disk.
  */

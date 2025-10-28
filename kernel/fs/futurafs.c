@@ -1597,69 +1597,55 @@ static ssize_t futurafs_file_write_sync(struct futurafs_inode_info *inode_info,
  * ============================================================ */
 
 /**
- * Read inode from disk.
+ * Read inode from disk (synchronous wrapper over async operation).
+ * Routes all inode reads through the async I/O path.
  */
 static int futurafs_read_inode(struct futurafs_mount *mount, uint64_t ino,
                                struct futurafs_inode *inode) {
-    if (ino == 0 || ino > mount->sb->total_inodes) {
-        return FUTURAFS_EINVAL;
-    }
+    struct futurafs_sync_ctx sync_ctx = {
+        .completed = false,
+        .result = 0
+    };
 
-    /* Calculate block and offset */
-    uint64_t inode_index = ino - 1;
-    uint64_t block_num = mount->sb->inode_table_block + (inode_index / mount->inodes_per_block);
-    uint64_t block_offset = (inode_index % mount->inodes_per_block) * FUTURAFS_INODE_SIZE;
-
-    /* Read block containing inode (using dual-mode wrapper) */
-    uint8_t block_buf[FUTURAFS_BLOCK_SIZE];
-    int ret = futurafs_blk_read(mount, block_num, 1, block_buf);
+    /* Submit async read operation */
+    int ret = futurafs_read_inode_async(mount, ino, inode,
+                                       futurafs_sync_completion, &sync_ctx);
     if (ret < 0) {
-        return FUTURAFS_EIO;
+        return ret;
     }
 
-    /* Copy inode data */
-    uint8_t *inode_ptr = block_buf + block_offset;
-    for (size_t i = 0; i < sizeof(struct futurafs_inode); i++) {
-        ((uint8_t *)inode)[i] = inode_ptr[i];
+    /* Busy-wait until async operation completes */
+    while (!sync_ctx.completed) {
+        __asm__ volatile("pause" ::: "memory");
     }
 
-    return 0;
+    return sync_ctx.result;
 }
 
 /**
- * Write inode to disk.
+ * Write inode to disk (synchronous wrapper over async operation).
+ * Routes all inode writes through the async I/O path.
  */
 static int futurafs_write_inode(struct futurafs_mount *mount, uint64_t ino,
                                 struct futurafs_inode *inode) {
-    if (ino == 0 || ino > mount->sb->total_inodes) {
-        return FUTURAFS_EINVAL;
-    }
+    struct futurafs_sync_ctx sync_ctx = {
+        .completed = false,
+        .result = 0
+    };
 
-    /* Calculate block and offset */
-    uint64_t inode_index = ino - 1;
-    uint64_t block_num = mount->sb->inode_table_block + (inode_index / mount->inodes_per_block);
-    uint64_t block_offset = (inode_index % mount->inodes_per_block) * FUTURAFS_INODE_SIZE;
-
-    /* Read block (using dual-mode wrapper) */
-    uint8_t block_buf[FUTURAFS_BLOCK_SIZE];
-    int ret = futurafs_blk_read(mount, block_num, 1, block_buf);
+    /* Submit async write operation */
+    int ret = futurafs_write_inode_async(mount, ino, inode,
+                                        futurafs_sync_completion, &sync_ctx);
     if (ret < 0) {
-        return FUTURAFS_EIO;
+        return ret;
     }
 
-    /* Update inode data */
-    uint8_t *inode_ptr = block_buf + block_offset;
-    for (size_t i = 0; i < sizeof(struct futurafs_inode); i++) {
-        inode_ptr[i] = ((uint8_t *)inode)[i];
+    /* Busy-wait until async operation completes */
+    while (!sync_ctx.completed) {
+        __asm__ volatile("pause" ::: "memory");
     }
 
-    /* Write block back (using dual-mode wrapper) */
-    ret = futurafs_blk_write(mount, block_num, 1, block_buf);
-    if (ret < 0) {
-        return FUTURAFS_EIO;
-    }
-
-    return 0;
+    return sync_ctx.result;
 }
 
 /**

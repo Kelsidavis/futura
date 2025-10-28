@@ -2,7 +2,12 @@
 
 **A Modern Capability-Based Nanokernel Operating System**
 
-Copyright © 2025 Kelsi Davis  
+<div align="center">
+  <img src="Rory the Ouroboros.png" alt="Rory the Ouroboros - Futura OS Mascot" width="280" />
+  <p><em>Rory the Ouroboros — Futura's self-contained, eternally evolving mascot</em></p>
+</div>
+
+Copyright © 2025 Kelsi Davis
 Licensed under Mozilla Public License 2.0 — see [LICENSE](LICENSE)
 
 ---
@@ -401,10 +406,16 @@ Mozilla Public License 2.0 (MPL-2.0). See [LICENSE](LICENSE).
 
 ---
 
+## 🐉 About Rory the Ouroboros
+
+Rory is Futura's beloved mascot — a self-contained serpent embodying the eternal cycle of system evolution. With pastel coloring and circuit-board patterns woven throughout, Rory represents the kernel's capability-based design philosophy: a system that feeds back into itself, continuously improving and adapting. Like the mythical ouroboros, Futura OS is designed to be complete yet ever-evolving.
+
+---
+
 ## 📞 Contact & Community
 
-- **Author**: Kelsi Davis  
-- **Email**: [dumbandroid@gmail.com](mailto:dumbandroid@gmail.com)  
+- **Author**: Kelsi Davis
+- **Email**: [dumbandroid@gmail.com](mailto:dumbandroid@gmail.com)
 - **Issues/Discussions**: GitHub
 
-Built with ❤️ for the future of operating systems.
+Built with ❤️ and Rory's wisdom for the future of operating systems.

@@ -11,6 +11,7 @@
 #include <stdint.h>
 #include <stddef.h>
 #include <stdbool.h>
+#include "fut_object.h"
 
 #define FUT_VFS_NAME_MAX 255
 
@@ -226,10 +227,11 @@ struct fut_fs_type {
      * @param device  Device path (or NULL for pseudo-filesystems)
      * @param flags   Mount flags
      * @param data    Filesystem-specific mount data
+     * @param block_device_handle Capability handle for block device (FUT_INVALID_HANDLE if none)
      * @param mount   Pointer to store mount structure
      * @return 0 on success, negative error code on failure
      */
-    int (*mount)(const char *device, int flags, void *data, struct fut_mount **mount);
+    int (*mount)(const char *device, int flags, void *data, fut_handle_t block_device_handle, struct fut_mount **mount);
 
     /**
      * Unmount a filesystem.
@@ -260,6 +262,9 @@ struct fut_mount {
     struct fut_vnode *root;         /* Root vnode of mounted filesystem */
     int flags;                      /* Mount flags */
     void *fs_data;                  /* Filesystem-specific data */
+
+    /* Capability-based block device access */
+    fut_handle_t block_device_handle; /* Block device capability handle (FUT_INVALID_HANDLE if none) */
 
     struct fut_mount *next;         /* Next in mount list */
 };
@@ -367,10 +372,11 @@ int fut_vfs_register_fs(const struct fut_fs_type *fs);
  * @param fstype     Filesystem type name
  * @param flags      Mount flags
  * @param data       Filesystem-specific data
+ * @param block_device_handle  Capability handle for block device (FUT_INVALID_HANDLE if none)
  * @return 0 on success, negative error code on failure
  */
 int fut_vfs_mount(const char *device, const char *mountpoint,
-                  const char *fstype, int flags, void *data);
+                  const char *fstype, int flags, void *data, fut_handle_t block_device_handle);
 
 /**
  * Unmount a filesystem.

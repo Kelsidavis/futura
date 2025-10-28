@@ -124,7 +124,12 @@ struct futurafs_dirent {
  * FuturaFS mount information
  */
 struct futurafs_mount {
-    struct fut_blockdev *dev;           /* Block device */
+    /* Capability-based block device access */
+    fut_handle_t block_device_handle;   /* Block device capability handle */
+
+    /* Legacy block device pointer (for sync I/O during transition) */
+    struct fut_blockdev *dev;           /* Block device (deprecated) */
+
     struct futurafs_superblock *sb;     /* Superblock */
 
     uint8_t *inode_bitmap;              /* Inode allocation bitmap */

@@ -15,16 +15,82 @@
 static const struct fut_vnode_ops futurafs_vnode_ops;
 
 /* ============================================================
+ *   I/O Transition Wrappers (Dual-Mode Support)
+ * ============================================================ */
+
+/**
+ * Dual-mode block read wrapper.
+ * Uses capability-based I/O if handle is available, otherwise falls back to legacy.
+ */
+static inline int futurafs_blk_read(struct futurafs_mount *mnt,
+                                    uint64_t block_num, uint64_t num_blocks, void *buffer) {
+    if (mnt->block_device_handle != FUT_INVALID_HANDLE) {
+        /* Use capability-based async I/O with blocking wait */
+        return fut_blk_read_sync(mnt->block_device_handle, block_num, num_blocks, buffer);
+    } else {
+        /* Fall back to legacy sync I/O */
+        return fut_blockdev_read(mnt->dev, block_num, num_blocks, buffer);
+    }
+}
+
+/**
+ * Dual-mode block write wrapper.
+ * Uses capability-based I/O if handle is available, otherwise falls back to legacy.
+ */
+static inline int futurafs_blk_write(struct futurafs_mount *mnt,
+                                     uint64_t block_num, uint64_t num_blocks, const void *buffer) {
+    if (mnt->block_device_handle != FUT_INVALID_HANDLE) {
+        /* Use capability-based async I/O with blocking wait */
+        return fut_blk_write_sync(mnt->block_device_handle, block_num, num_blocks, buffer);
+    } else {
+        /* Fall back to legacy sync I/O */
+        return fut_blockdev_write(mnt->dev, block_num, num_blocks, buffer);
+    }
+}
+
+/**
+ * Dual-mode byte-level read wrapper.
+ * Uses capability-based I/O if handle is available, otherwise falls back to legacy.
+ */
+static inline ssize_t futurafs_blk_read_bytes(struct futurafs_mount *mnt,
+                                               uint64_t offset, size_t size, void *buffer) {
+    if (mnt->block_device_handle != FUT_INVALID_HANDLE) {
+        /* TODO: Implement capability-based byte-level I/O */
+        /* For now, fall back to legacy */
+        return fut_blockdev_read_bytes(mnt->dev, offset, size, buffer);
+    } else {
+        /* Fall back to legacy sync I/O */
+        return fut_blockdev_read_bytes(mnt->dev, offset, size, buffer);
+    }
+}
+
+/**
+ * Dual-mode byte-level write wrapper.
+ * Uses capability-based I/O if handle is available, otherwise falls back to legacy.
+ */
+static inline ssize_t futurafs_blk_write_bytes(struct futurafs_mount *mnt,
+                                                uint64_t offset, size_t size, const void *buffer) {
+    if (mnt->block_device_handle != FUT_INVALID_HANDLE) {
+        /* TODO: Implement capability-based byte-level I/O */
+        /* For now, fall back to legacy */
+        return fut_blockdev_write_bytes(mnt->dev, offset, size, buffer);
+    } else {
+        /* Fall back to legacy sync I/O */
+        return fut_blockdev_write_bytes(mnt->dev, offset, size, buffer);
+    }
+}
+
+/* ============================================================
  *   Helper Functions
  * ============================================================ */
 
 /**
  * Read superblock from device.
  */
-static int futurafs_read_superblock(struct fut_blockdev *dev, struct futurafs_superblock *sb) {
+static int futurafs_read_superblock(struct futurafs_mount *mount, struct futurafs_superblock *sb) {
     extern void fut_printf(const char *, ...);
 
-    int ret = fut_blockdev_read(dev, 0, 1, sb);
+    int ret = futurafs_blk_read(mount, 0, 1, sb);
     if (ret < 0) {
         fut_printf("[FUTURAFS] blockdev_read failed: %d\n", ret);
         return FUTURAFS_EIO;
@@ -48,8 +114,8 @@ static int futurafs_read_superblock(struct fut_blockdev *dev, struct futurafs_su
 /**
  * Write superblock to device.
  */
-static int futurafs_write_superblock(struct fut_blockdev *dev, struct futurafs_superblock *sb) {
-    return fut_blockdev_write(dev, 0, 1, sb) < 0 ? FUTURAFS_EIO : 0;
+static int futurafs_write_superblock(struct futurafs_mount *mount, struct futurafs_superblock *sb) {
+    return futurafs_blk_write(mount, 0, 1, sb) < 0 ? FUTURAFS_EIO : 0;
 }
 
 /**
@@ -66,9 +132,9 @@ static int futurafs_read_inode(struct futurafs_mount *mount, uint64_t ino,
     uint64_t block_num = mount->sb->inode_table_block + (inode_index / mount->inodes_per_block);
     uint64_t block_offset = (inode_index % mount->inodes_per_block) * FUTURAFS_INODE_SIZE;
 
-    /* Read block containing inode */
+    /* Read block containing inode (using dual-mode wrapper) */
     uint8_t block_buf[FUTURAFS_BLOCK_SIZE];
-    int ret = fut_blockdev_read(mount->dev, block_num, 1, block_buf);
+    int ret = futurafs_blk_read(mount, block_num, 1, block_buf);
     if (ret < 0) {
         return FUTURAFS_EIO;
     }
@@ -96,9 +162,9 @@ static int futurafs_write_inode(struct futurafs_mount *mount, uint64_t ino,
     uint64_t block_num = mount->sb->inode_table_block + (inode_index / mount->inodes_per_block);
     uint64_t block_offset = (inode_index % mount->inodes_per_block) * FUTURAFS_INODE_SIZE;
 
-    /* Read block */
+    /* Read block (using dual-mode wrapper) */
     uint8_t block_buf[FUTURAFS_BLOCK_SIZE];
-    int ret = fut_blockdev_read(mount->dev, block_num, 1, block_buf);
+    int ret = futurafs_blk_read(mount, block_num, 1, block_buf);
     if (ret < 0) {
         return FUTURAFS_EIO;
     }
@@ -109,8 +175,8 @@ static int futurafs_write_inode(struct futurafs_mount *mount, uint64_t ino,
         inode_ptr[i] = ((uint8_t *)inode)[i];
     }
 
-    /* Write block back */
-    ret = fut_blockdev_write(mount->dev, block_num, 1, block_buf);
+    /* Write block back (using dual-mode wrapper) */
+    ret = futurafs_blk_write(mount, block_num, 1, block_buf);
     if (ret < 0) {
         return FUTURAFS_EIO;
     }
@@ -271,7 +337,7 @@ static int futurafs_sync_metadata(struct futurafs_mount *mount) {
     }
 
     size_t inode_bitmap_size = (mount->sb->total_inodes + 7) / 8;
-    ssize_t written = fut_blockdev_write_bytes(mount->dev,
+    ssize_t written = futurafs_blk_write_bytes(mount,
                                                mount->sb->inode_bitmap_block * FUTURAFS_BLOCK_SIZE,
                                                inode_bitmap_size,
                                                mount->inode_bitmap);
@@ -280,7 +346,7 @@ static int futurafs_sync_metadata(struct futurafs_mount *mount) {
     }
 
     size_t data_bitmap_size = ((mount->sb->total_blocks - mount->sb->data_blocks_start) + 7) / 8;
-    written = fut_blockdev_write_bytes(mount->dev,
+    written = futurafs_blk_write_bytes(mount,
                                        mount->sb->data_bitmap_block * FUTURAFS_BLOCK_SIZE,
                                        data_bitmap_size,
                                        mount->data_bitmap);
@@ -288,7 +354,7 @@ static int futurafs_sync_metadata(struct futurafs_mount *mount) {
         return FUTURAFS_EIO;
     }
 
-    int ret = futurafs_write_superblock(mount->dev, mount->sb);
+    int ret = futurafs_write_superblock(mount, mount->sb);
     if (ret < 0) {
         return ret;
     }
@@ -361,7 +427,7 @@ static int futurafs_dir_add_entry(struct fut_vnode *dir,
             continue;
         }
 
-        if (fut_blockdev_read(mount->dev, block_num, 1, block_buf) < 0) {
+        if (futurafs_blk_read(mount, block_num, 1, block_buf) < 0) {
             return FUTURAFS_EIO;
         }
 
@@ -418,7 +484,7 @@ static int futurafs_dir_add_entry(struct fut_vnode *dir,
     }
     dent->name[name_len] = '\0';
 
-    if (fut_blockdev_write(mount->dev, slot_block, 1, slot_buf) < 0) {
+    if (futurafs_blk_write(mount, slot_block, 1, slot_buf) < 0) {
         dent->ino = 0;
         if (allocated_block) {
             dir_info->disk_inode.direct[slot_index] = 0;
@@ -451,7 +517,7 @@ static int futurafs_dir_lookup_entry(struct futurafs_inode_info *dir_info,
             continue;
         }
 
-        if (fut_blockdev_read(mount->dev, block_num, 1, block_buf) < 0) {
+        if (futurafs_blk_read(mount, block_num, 1, block_buf) < 0) {
             return FUTURAFS_EIO;
         }
 
@@ -500,7 +566,7 @@ static int futurafs_dir_remove_entry(struct futurafs_inode_info *dir_info,
         ((uint8_t *)dent)[i] = 0;
     }
 
-    if (fut_blockdev_write(mount->dev, block_num, 1, block_buf) < 0) {
+    if (futurafs_blk_write(mount, block_num, 1, block_buf) < 0) {
         return FUTURAFS_EIO;
     }
 
@@ -595,7 +661,7 @@ static int futurafs_dir_is_empty(struct futurafs_mount *mount,
             continue;
         }
 
-        if (fut_blockdev_read(mount->dev, block_num, 1, block_buf) < 0) {
+        if (futurafs_blk_read(mount, block_num, 1, block_buf) < 0) {
             return FUTURAFS_EIO;
         }
 
@@ -669,7 +735,7 @@ static ssize_t futurafs_vnode_read(struct fut_vnode *vnode, void *buf, size_t si
             }
         } else {
             /* Read block */
-            int ret = fut_blockdev_read(inode_info->mount->dev, block_num, 1, block_buf);
+            int ret = futurafs_blk_read(inode_info->mount, block_num, 1, block_buf);
             if (ret < 0) {
                 return bytes_read > 0 ? (int)bytes_read : FUTURAFS_EIO;
             }
@@ -723,7 +789,7 @@ static ssize_t futurafs_vnode_write(struct fut_vnode *vnode, const void *buf, si
 
         /* Read block if partial write */
         if (block_offset != 0 || to_write != FUTURAFS_BLOCK_SIZE) {
-            int ret = fut_blockdev_read(inode_info->mount->dev, block_num, 1, block_buf);
+            int ret = futurafs_blk_read(inode_info->mount, block_num, 1, block_buf);
             if (ret < 0) {
                 return bytes_written > 0 ? (int)bytes_written : FUTURAFS_EIO;
             }
@@ -736,7 +802,7 @@ static ssize_t futurafs_vnode_write(struct fut_vnode *vnode, const void *buf, si
         }
 
         /* Write block */
-        int ret = fut_blockdev_write(inode_info->mount->dev, block_num, 1, block_buf);
+        int ret = futurafs_blk_write(inode_info->mount, block_num, 1, block_buf);
         if (ret < 0) {
             return bytes_written > 0 ? (int)bytes_written : FUTURAFS_EIO;
         }
@@ -804,7 +870,7 @@ static int futurafs_vnode_readdir(struct fut_vnode *dir,
         }
 
         uint8_t block_buf[FUTURAFS_BLOCK_SIZE];
-        if (fut_blockdev_read(mount->dev, block_num, 1, block_buf) < 0) {
+        if (futurafs_blk_read(mount, block_num, 1, block_buf) < 0) {
             return FUTURAFS_EIO;
         }
 
@@ -871,7 +937,7 @@ static int futurafs_vnode_lookup(struct fut_vnode *dir, const char *name, struct
             continue;
         }
 
-        if (fut_blockdev_read(mount->dev, block_num, 1, block_buf) < 0) {
+        if (futurafs_blk_read(mount, block_num, 1, block_buf) < 0) {
             return FUTURAFS_EIO;
         }
 
@@ -1011,7 +1077,7 @@ static int futurafs_vnode_mkdir(struct fut_vnode *dir, const char *name, uint32_
     dotdot->name[1] = '.';
     dotdot->name[2] = '\0';
 
-    if (fut_blockdev_write(mount->dev, new_block, 1, block_buf) < 0) {
+    if (futurafs_blk_write(mount, new_block, 1, block_buf) < 0) {
         futurafs_free_block(mount, new_block);
         futurafs_free_inode(mount, new_ino);
         futurafs_sync_metadata(mount);
@@ -1282,7 +1348,7 @@ static const struct fut_vnode_ops futurafs_vnode_ops = {
  *   Filesystem Operations
  * ============================================================ */
 
-static int futurafs_mount_impl(const char *device, int flags, void *data, struct fut_mount **mount_out) {
+static int futurafs_mount_impl(const char *device, int flags, void *data, fut_handle_t block_device_handle, struct fut_mount **mount_out) {
     (void)flags;
     (void)data;
 
@@ -1305,15 +1371,17 @@ static int futurafs_mount_impl(const char *device, int flags, void *data, struct
         return FUTURAFS_EIO;
     }
 
+    /* Store capability handle and legacy block device pointer */
+    fs_mount->block_device_handle = block_device_handle;
+    fs_mount->dev = dev;
+
     /* Read superblock */
-    int ret = futurafs_read_superblock(dev, fs_mount->sb);
+    int ret = futurafs_read_superblock(fs_mount, fs_mount->sb);
     if (ret < 0) {
         fut_free(fs_mount->sb);
         fut_free(fs_mount);
         return ret;
     }
-
-    fs_mount->dev = dev;
     fs_mount->inodes_per_block = FUTURAFS_BLOCK_SIZE / FUTURAFS_INODE_SIZE;
     fs_mount->dirty = false;
 
@@ -1326,7 +1394,7 @@ static int futurafs_mount_impl(const char *device, int flags, void *data, struct
         return FUTURAFS_EIO;
     }
 
-    ret = fut_blockdev_read_bytes(dev, fs_mount->sb->inode_bitmap_block * FUTURAFS_BLOCK_SIZE,
+    ret = futurafs_blk_read_bytes(fs_mount, fs_mount->sb->inode_bitmap_block * FUTURAFS_BLOCK_SIZE,
                                    inode_bitmap_size, fs_mount->inode_bitmap);
     if (ret < 0) {
         fut_free(fs_mount->inode_bitmap);
@@ -1345,7 +1413,7 @@ static int futurafs_mount_impl(const char *device, int flags, void *data, struct
         return FUTURAFS_EIO;
     }
 
-    ret = fut_blockdev_read_bytes(dev, fs_mount->sb->data_bitmap_block * FUTURAFS_BLOCK_SIZE,
+    ret = futurafs_blk_read_bytes(fs_mount, fs_mount->sb->data_bitmap_block * FUTURAFS_BLOCK_SIZE,
                                    data_bitmap_size, fs_mount->data_bitmap);
     if (ret < 0) {
         fut_free(fs_mount->data_bitmap);
@@ -1432,7 +1500,7 @@ static int futurafs_unmount_impl(struct fut_mount *mount) {
 
     /* Sync if dirty */
     if (fs_mount->dirty) {
-        futurafs_write_superblock(fs_mount->dev, fs_mount->sb);
+        futurafs_write_superblock(fs_mount, fs_mount->sb);
     }
 
     /* Free resources */
@@ -1539,9 +1607,9 @@ int fut_futurafs_format(struct fut_blockdev *dev, const char *label, uint32_t in
     }
 
     /* Write superblock */
-    int ret = futurafs_write_superblock(dev, &sb);
+    int ret = fut_blockdev_write(dev, 0, 1, &sb);
     if (ret < 0) {
-        return ret;
+        return FUTURAFS_EIO;
     }
     fut_printf("[FUTURAFS-FMT] Superblock written\n");
 

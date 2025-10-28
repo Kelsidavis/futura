@@ -428,3 +428,164 @@ ssize_t fut_blockdev_write_bytes(struct fut_blockdev *dev, uint64_t offset, size
     fut_free(alloc_buffer);
     return (ssize_t)size;
 }
+
+/* ============================================================
+ *   Asynchronous I/O (Capability-Based)
+ * ============================================================ */
+
+/* Helper: Get block device from capability handle */
+static struct fut_blockdev *get_device_from_handle(fut_handle_t blk_handle) {
+    /* For now, we need a way to map handles to devices
+     * In a full implementation, this would use the capability system
+     * to resolve the handle to the underlying block device object.
+     *
+     * Temporary implementation: iterate through registered devices
+     * and return the first one (this assumes single device for testing)
+     */
+    if (blk_handle == FUT_INVALID_HANDLE) {
+        return NULL;
+    }
+
+    /* TODO: Implement proper capability resolution */
+    /* For now, return first registered device as a stub */
+    return device_list;
+}
+
+/* Synchronization primitive for blocking on async operations */
+struct blk_sync_ctx {
+    volatile int completed;     /* 1 when operation completes */
+    volatile int result;        /* Operation result */
+};
+
+/* Callback for synchronous wrappers */
+static void blk_sync_callback(int result, void *ctx) {
+    struct blk_sync_ctx *sync_ctx = (struct blk_sync_ctx *)ctx;
+    sync_ctx->result = result;
+    sync_ctx->completed = 1;  /* Signal completion */
+}
+
+/**
+ * Submit async block read operation using capability handle.
+ *
+ * IMPLEMENTATION NOTE: This is a transitional "fake async" implementation.
+ * It performs the I/O synchronously and immediately invokes the callback.
+ * A future implementation will use true async I/O with device queues.
+ */
+int fut_blk_read_async(fut_handle_t blk_handle, uint64_t block_num,
+                       uint64_t num_blocks, void *buffer,
+                       fut_blk_callback_t callback, void *ctx) {
+    /* Validate parameters */
+    if (blk_handle == FUT_INVALID_HANDLE || !buffer || !callback || num_blocks == 0) {
+        return BLOCKDEV_EINVAL;
+    }
+
+    /* Validate capability rights */
+    if (!fut_object_has_rights(blk_handle, FUT_RIGHT_READ)) {
+        return BLOCKDEV_EACCES;  /* Insufficient capability rights */
+    }
+
+    /* Resolve handle to device */
+    struct fut_blockdev *dev = get_device_from_handle(blk_handle);
+    if (!dev) {
+        return BLOCKDEV_ENODEV;
+    }
+
+    /* Perform synchronous read (will be async in future implementation) */
+    int result = fut_blockdev_read(dev, block_num, num_blocks, buffer);
+
+    /* Invoke callback immediately */
+    callback(result, ctx);
+
+    return 0;  /* Submission successful */
+}
+
+/**
+ * Submit async block write operation using capability handle.
+ *
+ * IMPLEMENTATION NOTE: This is a transitional "fake async" implementation.
+ * It performs the I/O synchronously and immediately invokes the callback.
+ * A future implementation will use true async I/O with device queues.
+ */
+int fut_blk_write_async(fut_handle_t blk_handle, uint64_t block_num,
+                        uint64_t num_blocks, const void *buffer,
+                        fut_blk_callback_t callback, void *ctx) {
+    /* Validate parameters */
+    if (blk_handle == FUT_INVALID_HANDLE || !buffer || !callback || num_blocks == 0) {
+        return BLOCKDEV_EINVAL;
+    }
+
+    /* Validate capability rights */
+    if (!fut_object_has_rights(blk_handle, FUT_RIGHT_WRITE)) {
+        return BLOCKDEV_EACCES;  /* Insufficient capability rights */
+    }
+
+    /* Resolve handle to device */
+    struct fut_blockdev *dev = get_device_from_handle(blk_handle);
+    if (!dev) {
+        return BLOCKDEV_ENODEV;
+    }
+
+    /* Perform synchronous write (will be async in future implementation) */
+    int result = fut_blockdev_write(dev, block_num, num_blocks, buffer);
+
+    /* Invoke callback immediately */
+    callback(result, ctx);
+
+    return 0;  /* Submission successful */
+}
+
+/**
+ * Synchronous read wrapper (blocks until async operation completes).
+ * Transition helper for converting from legacy sync API to capability-based async API.
+ */
+int fut_blk_read_sync(fut_handle_t blk_handle, uint64_t block_num,
+                      uint64_t num_blocks, void *buffer) {
+    /* Set up synchronization context */
+    struct blk_sync_ctx sync_ctx = {
+        .completed = 0,
+        .result = 0
+    };
+
+    /* Submit async read */
+    int ret = fut_blk_read_async(blk_handle, block_num, num_blocks, buffer,
+                                  blk_sync_callback, &sync_ctx);
+    if (ret < 0) {
+        return ret;  /* Submission failed */
+    }
+
+    /* Wait for completion (busy-wait in this transitional implementation) */
+    while (!sync_ctx.completed) {
+        /* Busy-wait - in a real async implementation, this would be a
+         * proper wait mechanism (futex, condvar, or scheduler yield) */
+    }
+
+    return sync_ctx.result;
+}
+
+/**
+ * Synchronous write wrapper (blocks until async operation completes).
+ * Transition helper for converting from legacy sync API to capability-based async API.
+ */
+int fut_blk_write_sync(fut_handle_t blk_handle, uint64_t block_num,
+                       uint64_t num_blocks, const void *buffer) {
+    /* Set up synchronization context */
+    struct blk_sync_ctx sync_ctx = {
+        .completed = 0,
+        .result = 0
+    };
+
+    /* Submit async write */
+    int ret = fut_blk_write_async(blk_handle, block_num, num_blocks, buffer,
+                                   blk_sync_callback, &sync_ctx);
+    if (ret < 0) {
+        return ret;  /* Submission failed */
+    }
+
+    /* Wait for completion (busy-wait in this transitional implementation) */
+    while (!sync_ctx.completed) {
+        /* Busy-wait - in a real async implementation, this would be a
+         * proper wait mechanism (futex, condvar, or scheduler yield) */
+    }
+
+    return sync_ctx.result;
+}

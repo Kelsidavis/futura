@@ -154,7 +154,7 @@ static const struct fut_fs_type *find_fs_type(const char *name) {
  * ============================================================ */
 
 int fut_vfs_mount(const char *device, const char *mountpoint,
-                  const char *fstype, int flags, void *data) {
+                  const char *fstype, int flags, void *data, fut_handle_t block_device_handle) {
     /* Find filesystem type */
     const struct fut_fs_type *fs = find_fs_type(fstype);
     if (!fs) {
@@ -163,7 +163,7 @@ int fut_vfs_mount(const char *device, const char *mountpoint,
 
     /* Create mount structure */
     struct fut_mount *mount = NULL;
-    int ret = fs->mount(device, flags, data, &mount);
+    int ret = fs->mount(device, flags, data, block_device_handle, &mount);
     if (ret < 0) {
         return ret;
     }
@@ -173,6 +173,7 @@ int fut_vfs_mount(const char *device, const char *mountpoint,
     mount->mountpoint = mountpoint;
     mount->fs = fs;
     mount->flags = flags;
+    mount->block_device_handle = block_device_handle;  /* Store capability handle */
 
     bool is_root_mount = (mountpoint && mountpoint[0] == '/' && mountpoint[1] == '\0');
 

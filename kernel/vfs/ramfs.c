@@ -913,9 +913,10 @@ static const struct fut_vnode_ops ramfs_vnode_ops = {
  *   Filesystem Operations
  * ============================================================ */
 
-static int ramfs_mount(const char *device, int flags, void *data, struct fut_mount **mount_out) {
+static int ramfs_mount(const char *device, int flags, void *data, fut_handle_t block_device_handle, struct fut_mount **mount_out) {
     (void)device;
     (void)data;
+    (void)block_device_handle;  /* ramfs doesn't use block devices */
 
     /* Create mount structure */
     struct fut_mount *mount = fut_malloc(sizeof(struct fut_mount));

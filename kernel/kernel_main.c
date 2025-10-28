@@ -451,7 +451,7 @@ static void test_futurafs_operations(void) {
         root_vnode->ops->mkdir(root_vnode, "mnt", 0755);
     }
 
-    ret = fut_vfs_mount("futurafs0", "/mnt", "futurafs", 0, NULL);
+    ret = fut_vfs_mount("futurafs0", "/mnt", "futurafs", 0, NULL, FUT_INVALID_HANDLE);
     if (ret < 0) {
         fut_printf("[FUTURAFS-TEST] ✗ Mount failed: error %d\n", ret);
         fut_test_fail(FUTURAFS_TEST_ERR_MOUNT);
@@ -911,7 +911,7 @@ void fut_kernel_main(void) {
     fut_printf("[INIT] Registered ramfs filesystem\n");
 
     /* Mount ramfs as root filesystem */
-    int vfs_ret = fut_vfs_mount(NULL, "/", "ramfs", 0, NULL);
+    int vfs_ret = fut_vfs_mount(NULL, "/", "ramfs", 0, NULL, FUT_INVALID_HANDLE);
     if (vfs_ret < 0) {
         fut_printf("[ERROR] Failed to mount root filesystem (error %d)\n", vfs_ret);
         fut_platform_panic("Failed to mount root filesystem");
@@ -1014,7 +1014,7 @@ void fut_kernel_main(void) {
             fut_printf("[INIT] Block device 'blk:vda' NOT found\n");
         }
 
-        int mount_rc = fut_vfs_mount("blk:vda", "/mnt", "futurafs", 0, NULL);
+        int mount_rc = fut_vfs_mount("blk:vda", "/mnt", "futurafs", 0, NULL, FUT_INVALID_HANDLE);
         if (mount_rc == 0) {
             fut_printf("[INIT] Mounted FuturaFS from blk:vda at /mnt\n");
         } else {

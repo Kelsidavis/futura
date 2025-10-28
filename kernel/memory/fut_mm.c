@@ -526,9 +526,8 @@ int fut_mm_unmap(fut_mm_t *mm, uintptr_t addr, size_t len) {
 }
 
 /**
- * Map a file into memory.
- * For now, this eagerly loads file contents into memory (not demand-paged).
- * TODO: Implement demand paging with page fault handler.
+ * Map a file into memory with demand paging.
+ * Creates a lazy mapping - pages are loaded on demand via page faults.
  */
 void *fut_mm_map_file(fut_mm_t *mm, struct fut_vnode *vnode, uintptr_t hint,
                        size_t len, int prot, int flags, uint64_t file_offset) {
@@ -571,58 +570,10 @@ void *fut_mm_map_file(fut_mm_t *mm, struct fut_vnode *vnode, uintptr_t hint,
         return (void *)(intptr_t)(-ENOMEM);
     }
 
-    /* Allocate physical pages and map them */
-    size_t pages = aligned / PAGE_SIZE;
-    void **page_cache = fut_malloc(pages * sizeof(void *));
-    if (!page_cache) {
-        return (void *)(intptr_t)(-ENOMEM);
-    }
-
-    uint64_t pte_flags = mm_pte_flags(prot);
-    size_t mapped = 0;
-    fut_vmem_context_t *ctx = fut_mm_context(mm);
-    int err = -ENOMEM;
-
-    /* Read file contents and map pages */
-    for (uintptr_t addr = base; addr < end; addr += PAGE_SIZE) {
-        void *page = fut_pmm_alloc_page();
-        if (!page) {
-            mapped = (addr - base) / PAGE_SIZE;
-            err = -ENOMEM;
-            goto fail;
-        }
-
-        /* Read file contents into page */
-        uint64_t page_offset = (addr - base) + file_offset;
-        memset(page, 0, PAGE_SIZE);  /* Zero page first */
-
-        if (vnode->ops && vnode->ops->read) {
-            /* Read up to one page from file */
-            ssize_t bytes_read = vnode->ops->read(vnode, page, PAGE_SIZE, page_offset);
-            if (bytes_read < 0) {
-                fut_printf("[MM-MAP-FILE] Warning: read failed at offset %llu: %ld\n",
-                           page_offset, bytes_read);
-                /* Continue with zero-filled page */
-            }
-            /* Partial reads are OK - rest of page remains zero */
-        }
-
-        phys_addr_t phys = pmap_virt_to_phys((uintptr_t)page);
-        if (pmap_map_user(ctx, addr, phys, PAGE_SIZE, pte_flags) != 0) {
-            fut_pmm_free_page(page);
-            mapped = (addr - base) / PAGE_SIZE;
-            err = -ENOMEM;
-            goto fail;
-        }
-        page_cache[(addr - base) / PAGE_SIZE] = page;
-    }
-
-    /* Create VMA to track this mapping */
+    /* Create VMA to track this mapping without allocating physical pages yet */
     fut_vma_t *vma = fut_malloc(sizeof(*vma));
     if (!vma) {
-        mapped = pages;
-        err = -ENOMEM;
-        goto fail;
+        return (void *)(intptr_t)(-ENOMEM);
     }
 
     vma->start = base;
@@ -638,21 +589,9 @@ void *fut_mm_map_file(fut_mm_t *mm, struct fut_vnode *vnode, uintptr_t hint,
 
     mm->mmap_base = end;
 
-    fut_free(page_cache);
-    fut_printf("[MM-MAP-FILE] Mapped file: vaddr=0x%llx size=%zu offset=%llu\n",
-               base, len, file_offset);
+    fut_printf("[MM-MAP-FILE] Created lazy mapping: vaddr=0x%llx-0x%llx size=%zu offset=%llu (demand paging enabled)\n",
+               base, end, len, file_offset);
     return (void *)(uintptr_t)base;
-
-fail:
-    for (size_t i = 0; i < mapped; ++i) {
-        uintptr_t addr = base + (uintptr_t)i * PAGE_SIZE;
-        fut_unmap_range(ctx, addr, PAGE_SIZE);
-        if (page_cache[i]) {
-            fut_pmm_free_page(page_cache[i]);
-        }
-    }
-    fut_free(page_cache);
-    return (void *)(intptr_t)err;
 }
 
 #elif defined(__aarch64__)

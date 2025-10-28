@@ -170,6 +170,13 @@ static inline ssize_t futurafs_blk_write_bytes(struct futurafs_mount *mnt,
 }
 
 /* ============================================================
+ *   Forward Declarations
+ * ============================================================ */
+
+static int futurafs_alloc_block(struct futurafs_mount *mount, uint64_t *block_out);
+static int futurafs_free_block(struct futurafs_mount *mount, uint64_t block_num);
+
+/* ============================================================
  *   Helper Functions
  * ============================================================ */
 
@@ -761,6 +768,305 @@ int futurafs_dir_lookup_entry_async(struct futurafs_inode_info *dir_info,
                                        futurafs_dir_lookup_callback, lookup_ctx);
     if (ret < 0) {
         fut_free(lookup_ctx);
+        return ret;
+    }
+
+    return 0;
+}
+
+/**
+ * Callback for async directory add entry - implements state machine.
+ * States: SEARCHING -> ALLOCATING (if needed) -> WRITING -> COMPLETE
+ */
+static void futurafs_dir_add_callback(int result, void *ctx) {
+    struct futurafs_dir_add_ctx *add_ctx = ctx;
+
+    /* Handle I/O errors */
+    if (result < 0 && add_ctx->state != DIR_ADD_ALLOCATING) {
+        /* Rollback any allocated blocks */
+        if (add_ctx->allocated_block) {
+            futurafs_free_block(add_ctx->base.mount, add_ctx->allocated_block_num);
+        }
+        add_ctx->base.callback(FUTURAFS_EIO, add_ctx->base.callback_ctx);
+        fut_free(add_ctx);
+        return;
+    }
+
+    switch (add_ctx->state) {
+    case DIR_ADD_SEARCHING: {
+        /* Search current block for free slot */
+        for (size_t offset = 0; offset < FUTURAFS_BLOCK_SIZE;
+             offset += sizeof(struct futurafs_dirent)) {
+            struct futurafs_dirent *dent =
+                (struct futurafs_dirent *)(add_ctx->block_buffer + offset);
+
+            /* Check for duplicate name */
+            if (dent->ino != 0 && dent->name_len == add_ctx->name_len) {
+                bool match = true;
+                for (size_t i = 0; i < add_ctx->name_len; i++) {
+                    if (dent->name[i] != add_ctx->name[i]) {
+                        match = false;
+                        break;
+                    }
+                }
+                if (match) {
+                    /* Entry already exists */
+                    add_ctx->base.callback(FUTURAFS_EEXIST, add_ctx->base.callback_ctx);
+                    fut_free(add_ctx);
+                    return;
+                }
+            }
+
+            /* Found free slot */
+            if (dent->ino == 0 && !add_ctx->found_slot) {
+                add_ctx->found_slot = true;
+                add_ctx->slot_block = add_ctx->dir_info->disk_inode.direct[add_ctx->current_block_index];
+                add_ctx->slot_offset = offset;
+                add_ctx->slot_index = add_ctx->current_block_index;
+                /* Continue searching for duplicates */
+            }
+        }
+
+        /* Move to next block */
+        add_ctx->current_block_index++;
+
+        /* Check if we've exhausted all direct blocks */
+        if (add_ctx->current_block_index >= FUTURAFS_DIRECT_BLOCKS) {
+            /* Done searching - check if we found a slot */
+            if (add_ctx->found_slot) {
+                /* Read the block containing the free slot */
+                add_ctx->state = DIR_ADD_WRITING;
+                int ret = futurafs_read_block_async(add_ctx->base.mount, add_ctx->slot_block,
+                                                    add_ctx->block_buffer,
+                                                    futurafs_dir_add_callback, add_ctx);
+                if (ret < 0) {
+                    add_ctx->base.callback(ret, add_ctx->base.callback_ctx);
+                    fut_free(add_ctx);
+                }
+                return;
+            } else if (add_ctx->new_block_index != -1) {
+                /* Need to allocate new block */
+                add_ctx->state = DIR_ADD_ALLOCATING;
+                uint64_t new_block;
+                int ret = futurafs_alloc_block(add_ctx->base.mount, &new_block);
+                if (ret < 0) {
+                    add_ctx->base.callback(FUTURAFS_ENOSPC, add_ctx->base.callback_ctx);
+                    fut_free(add_ctx);
+                    return;
+                }
+                add_ctx->allocated_block = true;
+                add_ctx->allocated_block_num = new_block;
+
+                /* Update directory inode with new block */
+                add_ctx->dir_info->disk_inode.direct[add_ctx->new_block_index] = new_block;
+                add_ctx->dir_info->dirty = true;
+
+                /* Clear new block and prepare for write */
+                for (size_t i = 0; i < FUTURAFS_BLOCK_SIZE; i++) {
+                    add_ctx->block_buffer[i] = 0;
+                }
+                add_ctx->slot_block = new_block;
+                add_ctx->slot_offset = 0;
+                add_ctx->slot_index = add_ctx->new_block_index;
+                add_ctx->state = DIR_ADD_WRITING;
+
+                /* Fall through to writing */
+                futurafs_dir_add_callback(0, add_ctx);
+                return;
+            } else {
+                /* No free slots and no room for new blocks */
+                add_ctx->base.callback(FUTURAFS_ENOSPC, add_ctx->base.callback_ctx);
+                fut_free(add_ctx);
+                return;
+            }
+        }
+
+        /* Get next block number */
+        uint64_t next_block = add_ctx->dir_info->disk_inode.direct[add_ctx->current_block_index];
+
+        /* Track first empty slot for potential allocation */
+        if (next_block == 0 && add_ctx->new_block_index == -1) {
+            add_ctx->new_block_index = add_ctx->current_block_index;
+        }
+
+        /* Skip unallocated blocks */
+        if (next_block == 0) {
+            futurafs_dir_add_callback(0, add_ctx);
+            return;
+        }
+
+        /* Submit async read for next block */
+        int ret = futurafs_read_block_async(add_ctx->base.mount, next_block,
+                                           add_ctx->block_buffer,
+                                           futurafs_dir_add_callback, add_ctx);
+        if (ret < 0) {
+            add_ctx->base.callback(ret, add_ctx->base.callback_ctx);
+            fut_free(add_ctx);
+        }
+        break;
+    }
+
+    case DIR_ADD_ALLOCATING:
+        /* Allocation happens synchronously in SEARCHING state */
+        /* This state is mainly for tracking purposes */
+        add_ctx->state = DIR_ADD_WRITING;
+        futurafs_dir_add_callback(0, add_ctx);
+        break;
+
+    case DIR_ADD_WRITING: {
+        /* Fill in directory entry */
+        struct futurafs_dirent *dent =
+            (struct futurafs_dirent *)(add_ctx->block_buffer + add_ctx->slot_offset);
+
+        dent->ino = add_ctx->ino;
+        dent->rec_len = sizeof(struct futurafs_dirent);
+        dent->name_len = add_ctx->name_len;
+        dent->file_type = add_ctx->file_type;
+        for (size_t i = 0; i < add_ctx->name_len; i++) {
+            dent->name[i] = add_ctx->name[i];
+        }
+        dent->name[add_ctx->name_len] = '\0';
+
+        /* Write block back - completion callback will handle success */
+        add_ctx->state = DIR_ADD_COMPLETE;
+        int ret = futurafs_write_block_async(add_ctx->base.mount, add_ctx->slot_block,
+                                             add_ctx->block_buffer,
+                                             futurafs_dir_add_callback, add_ctx);
+        if (ret < 0) {
+            /* Rollback */
+            if (add_ctx->allocated_block) {
+                futurafs_free_block(add_ctx->base.mount, add_ctx->allocated_block_num);
+                add_ctx->dir_info->disk_inode.direct[add_ctx->slot_index] = 0;
+            }
+            add_ctx->base.callback(ret, add_ctx->base.callback_ctx);
+            fut_free(add_ctx);
+        }
+        break;
+    }
+
+    case DIR_ADD_COMPLETE:
+        /* Write completed successfully - update directory metadata */
+        add_ctx->dir_info->disk_inode.nlinks++;
+        add_ctx->dir_info->disk_inode.mtime = 0; /* TODO: Add timestamp support */
+        add_ctx->dir_info->disk_inode.ctime = 0; /* TODO: Add timestamp support */
+        add_ctx->dir_info->dirty = true;
+
+        /* Mark directory vnode as modified */
+        if (add_ctx->dir_vnode) {
+            add_ctx->dir_vnode->size = add_ctx->dir_info->disk_inode.size;
+        }
+
+        /* Complete successfully */
+        add_ctx->base.callback(0, add_ctx->base.callback_ctx);
+        fut_free(add_ctx);
+        break;
+    }
+}
+
+/**
+ * Add directory entry asynchronously.
+ * Demonstrates read-modify-write pattern with conditional block allocation.
+ */
+int futurafs_dir_add_entry_async(struct fut_vnode *dir_vnode,
+                                 struct futurafs_inode_info *dir_info,
+                                 const char *name,
+                                 size_t name_len,
+                                 uint64_t ino,
+                                 uint8_t file_type,
+                                 futurafs_completion_t callback,
+                                 void *ctx) {
+    /* Validate parameters */
+    if (!dir_info || !name || name_len == 0 || name_len > FUTURAFS_NAME_MAX || ino == 0) {
+        return FUTURAFS_EINVAL;
+    }
+
+    /* Allocate context for state machine */
+    struct futurafs_dir_add_ctx *add_ctx =
+        fut_malloc(sizeof(struct futurafs_dir_add_ctx));
+    if (!add_ctx) {
+        return FUTURAFS_EINVAL;
+    }
+
+    /* Initialize context */
+    add_ctx->base.callback = callback;
+    add_ctx->base.callback_ctx = ctx;
+    add_ctx->base.mount = dir_info->mount;
+    add_ctx->dir_info = dir_info;
+    add_ctx->dir_vnode = dir_vnode;
+    add_ctx->name = name;
+    add_ctx->name_len = name_len;
+    add_ctx->ino = ino;
+    add_ctx->file_type = file_type;
+    add_ctx->state = DIR_ADD_SEARCHING;
+    add_ctx->current_block_index = 0;
+    add_ctx->found_slot = false;
+    add_ctx->slot_block = 0;
+    add_ctx->slot_offset = 0;
+    add_ctx->slot_index = -1;
+    add_ctx->new_block_index = -1;
+    add_ctx->allocated_block = false;
+    add_ctx->allocated_block_num = 0;
+
+    /* Find first allocated block */
+    uint64_t first_block = 0;
+    int first_block_index = -1;
+    for (int i = 0; i < FUTURAFS_DIRECT_BLOCKS; i++) {
+        if (dir_info->disk_inode.direct[i] != 0) {
+            first_block = dir_info->disk_inode.direct[i];
+            first_block_index = i;
+            break;
+        } else if (add_ctx->new_block_index == -1) {
+            /* Track first empty slot for potential allocation */
+            add_ctx->new_block_index = i;
+        }
+    }
+
+    /* If no blocks allocated, allocate first block */
+    if (first_block_index == -1) {
+        if (add_ctx->new_block_index == -1) {
+            /* No room for new blocks */
+            fut_free(add_ctx);
+            callback(FUTURAFS_ENOSPC, ctx);
+            return 0;
+        }
+
+        uint64_t new_block;
+        int ret = futurafs_alloc_block(dir_info->mount, &new_block);
+        if (ret < 0) {
+            fut_free(add_ctx);
+            callback(FUTURAFS_ENOSPC, ctx);
+            return 0;
+        }
+
+        /* Update directory inode */
+        dir_info->disk_inode.direct[add_ctx->new_block_index] = new_block;
+        dir_info->dirty = true;
+
+        add_ctx->allocated_block = true;
+        add_ctx->allocated_block_num = new_block;
+        add_ctx->slot_block = new_block;
+        add_ctx->slot_offset = 0;
+        add_ctx->slot_index = add_ctx->new_block_index;
+
+        /* Clear block buffer */
+        for (size_t i = 0; i < FUTURAFS_BLOCK_SIZE; i++) {
+            add_ctx->block_buffer[i] = 0;
+        }
+
+        /* Skip to writing state */
+        add_ctx->state = DIR_ADD_WRITING;
+        futurafs_dir_add_callback(0, add_ctx);
+        return 0;
+    }
+
+    add_ctx->current_block_index = first_block_index;
+
+    /* Submit async read for first block to begin search */
+    int ret = futurafs_read_block_async(dir_info->mount, first_block,
+                                       add_ctx->block_buffer,
+                                       futurafs_dir_add_callback, add_ctx);
+    if (ret < 0) {
+        fut_free(add_ctx);
         return ret;
     }
 

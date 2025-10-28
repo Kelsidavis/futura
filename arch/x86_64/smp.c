@@ -182,8 +182,8 @@ static bool smp_start_ap(uint32_t apic_id) {
     lapic_send_sipi(apic_id, AP_TRAMPOLINE_PAGE);
     udelay(200);
 
-    /* Wait for AP to come online (timeout after 1 second) */
-    for (int i = 0; i < 1000; i++) {
+    /* Wait for AP to come online (timeout after 100ms instead of 1s for faster boot) */
+    for (int i = 0; i < 100; i++) {
         if (cpu_online[apic_id]) {
             fut_printf("[SMP] AP CPU %u is online\n", apic_id);
             return true;
@@ -191,7 +191,7 @@ static bool smp_start_ap(uint32_t apic_id) {
         udelay(1000);  /* Wait 1ms */
     }
 
-    fut_printf("[SMP] ERROR: Timeout waiting for CPU %u\n", apic_id);
+    fut_printf("[SMP] TIMEOUT: AP CPU %u did not respond (skipping)\n", apic_id);
     return false;
 }
 
@@ -251,14 +251,15 @@ void smp_init(uint32_t *apic_ids, uint32_t num_cpus) {
             fut_printf("[SMP] Starting AP %u (APIC ID %u)...\n", i, apic_id);
 
             if (!smp_start_ap(apic_id)) {
-                fut_printf("[SMP] WARNING: Failed to start AP %u\n", apic_id);
+                fut_printf("[SMP] WARNING: Failed to start AP %u (continuing boot)\n", apic_id);
+                /* Continue boot even if AP fails to start */
             }
         }
 
         fut_printf("[SMP] Total online CPUs: %u (expected %u)\n", cpu_count, num_cpus);
 
-        if (cpu_count != num_cpus) {
-            fut_printf("[SMP] WARNING: Only %u of %u CPUs started\n", cpu_count, num_cpus);
+        if (cpu_count < num_cpus) {
+            fut_printf("[SMP] WARNING: Only %u of %u CPUs started (continuing)\n", cpu_count, num_cpus);
         }
     }
 }

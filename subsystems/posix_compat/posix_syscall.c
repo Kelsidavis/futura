@@ -14,6 +14,7 @@
 #include <kernel/uaccess.h>
 #include <kernel/fut_vfs.h>
 #include <kernel/fut_memory.h>
+#include <kernel/fut_task.h>
 #include <kernel/errno.h>
 
 /* ============================================================
@@ -90,6 +91,13 @@ extern long sys_nanosleep(const fut_timespec_t *u_req, fut_timespec_t *u_rem);
 extern long sys_time_millis(void);
 extern long sys_pipe(int pipefd[2]);
 extern long sys_dup2(int oldfd, int newfd);
+
+/* Helpers for missing syscalls */
+extern int chrdev_alloc_fd(const struct fut_file_ops *ops, void *inode, void *priv);
+extern struct fut_file *vfs_get_file(int fd);
+extern int vfs_alloc_specific_fd(int target_fd, struct fut_file *file);
+extern void vfs_file_ref(struct fut_file *file);
+extern int fut_vfs_close(int fd);
 
 static int64_t sys_echo_handler(uint64_t arg1, uint64_t arg2, uint64_t arg3,
                                 uint64_t arg4, uint64_t arg5, uint64_t arg6) {
@@ -406,6 +414,58 @@ static int64_t sys_getdents64_handler(uint64_t fd, uint64_t dirp, uint64_t count
     return (int64_t)total_bytes;
 }
 
+/* getpid() handler */
+static int64_t sys_getpid_handler(uint64_t arg1, uint64_t arg2, uint64_t arg3,
+                                  uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg1; (void)arg2; (void)arg3; (void)arg4; (void)arg5; (void)arg6;
+    extern fut_task_t *fut_task_current(void);
+    fut_task_t *current = fut_task_current();
+    if (!current) {
+        return -1;
+    }
+    return (int64_t)current->pid;
+}
+
+/* dup() handler - duplicate file descriptor with auto selection */
+static int64_t sys_dup_handler(uint64_t oldfd, uint64_t arg2, uint64_t arg3,
+                               uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg2; (void)arg3; (void)arg4; (void)arg5; (void)arg6;
+
+    if ((int64_t)oldfd < 0) {
+        return -EBADF;
+    }
+
+    struct fut_file *file = vfs_get_file((int)oldfd);
+    if (!file) {
+        return -EBADF;
+    }
+
+    /* Increment reference count */
+    vfs_file_ref(file);
+
+    /* Find first available fd (start from 3 to skip stdin/stdout/stderr) */
+    int newfd = 3;
+    while (vfs_get_file(newfd) != NULL) {
+        newfd++;
+        if (newfd > 1024) {
+            file->refcount--;
+            return -EMFILE;  /* Too many open files */
+        }
+    }
+
+    /* Allocate the new fd */
+    int ret = vfs_alloc_specific_fd(newfd, file);
+    if (ret < 0) {
+        file->refcount--;
+        return ret;
+    }
+
+    extern void fut_printf(const char *, ...);
+    fut_printf("[DUP] Duplicated fd %d to %d\n", (int)oldfd, newfd);
+
+    return (int64_t)newfd;
+}
+
 /* Unimplemented syscall handler */
 static int64_t sys_unimplemented(uint64_t arg1, uint64_t arg2, uint64_t arg3,
                                   uint64_t arg4, uint64_t arg5, uint64_t arg6) {
@@ -435,11 +495,13 @@ static syscall_handler_t syscall_table[MAX_SYSCALL] = {
     [SYS_ioctl]      = sys_ioctl_handler,
     [SYS_mmap]       = sys_mmap_handler,
     [SYS_pipe]       = sys_pipe_handler,
+    [SYS_dup]        = sys_dup_handler,
     [SYS_dup2]       = sys_dup2_handler,
     [SYS_mkdir]      = sys_mkdir_handler,
     [SYS_rmdir]      = sys_rmdir_handler,
     [SYS_unlink]     = sys_unlink_handler,
     [SYS_getdents64] = sys_getdents64_handler,
+    [SYS_getpid]     = sys_getpid_handler,
     [SYS_time_millis] = sys_time_millis_handler,
 };
 

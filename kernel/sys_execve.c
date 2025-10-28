@@ -13,7 +13,7 @@
 #include <stddef.h>
 
 extern void fut_printf(const char *fmt, ...);
-extern int fut_exec_elf(const char *path, char *const argv[]);
+extern int fut_exec_elf(const char *path, char *const argv[], char *const envp[]);
 
 /**
  * execve() syscall - Execute a program.
@@ -47,14 +47,10 @@ long sys_execve(const char *pathname, char *const argv[], char *const envp[]) {
         return -EFAULT;
     }
 
-    /* TODO: Copy argv and envp from userspace to kernel space */
-    /* TODO: Implement environment variable support (envp currently ignored) */
-    (void)envp;  /* Not yet implemented */
-
-    fut_printf("[EXECVE] path=%s\n", pathname);
+    fut_printf("[EXECVE] path=%s envp=%p\n", pathname, (void*)envp);
 
     /* Call the ELF loader which replaces the current process */
-    int ret = fut_exec_elf(pathname, argv);
+    int ret = fut_exec_elf(pathname, argv, envp);
 
     /*
      * If fut_exec_elf returns, it failed.

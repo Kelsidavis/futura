@@ -264,6 +264,8 @@ static int map_segment(fut_mm_t *mm, int fd, const elf64_phdr_t *phdr) {
 static int build_user_stack(fut_mm_t *mm,
                             const char *const argv_in[],
                             size_t argc_in,
+                            const char *const envp_in[],
+                            size_t envc_in,
                             uint64_t *out_rsp,
                             uint64_t *out_argv,
                             uint64_t *out_argc) {
@@ -289,13 +291,37 @@ static int build_user_stack(fut_mm_t *mm,
         }
     }
 
-    uint8_t **string_ptrs = fut_malloc(sizeof(uint8_t *) * argc);
+    /* Count environment variables if not provided */
+    size_t envc = envc_in;
+    const char *const *envp = envp_in;
+    if (envp) {
+        if (envc == 0) {
+            while (envp[envc]) {
+                envc++;
+            }
+        }
+    }
+
+    /* Allocate string pointers for both argv and envp */
+    uint8_t **string_ptrs = fut_malloc(sizeof(uint8_t *) * (argc + envc));
     if (!string_ptrs) {
         return -ENOMEM;
     }
 
     uint64_t sp = USER_STACK_TOP;
 
+    /* Copy environment variable strings first (highest addresses) */
+    for (size_t i = envc; i-- > 0;) {
+        size_t len = kstrlen(envp[i]) + 1;
+        sp -= len;
+        if (exec_copy_to_user(mm, sp, envp[i], len) != 0) {
+            fut_free(string_ptrs);
+            return -EFAULT;
+        }
+        string_ptrs[argc + i] = (uint8_t *)(uintptr_t)sp;
+    }
+
+    /* Copy argument strings */
     for (size_t i = argc; i-- > 0;) {
         size_t len = kstrlen(argv[i]) + 1;
         sp -= len;
@@ -310,18 +336,33 @@ static int build_user_stack(fut_mm_t *mm,
 
     uint64_t zero = 0;
 
-    sp -= sizeof(uint64_t); /* envp terminator */
+    /* Push envp terminator (NULL pointer) */
+    sp -= sizeof(uint64_t);
     if (exec_copy_to_user(mm, sp, &zero, sizeof(zero)) != 0) {
         fut_free(string_ptrs);
         return -EFAULT;
     }
 
-    sp -= sizeof(uint64_t); /* argv terminator */
+    /* Push environment variable pointers in reverse order */
+    for (size_t i = envc; i-- > 0;) {
+        uint64_t ptr = (uint64_t)(uintptr_t)string_ptrs[argc + i];
+        sp -= sizeof(uint64_t);
+        if (exec_copy_to_user(mm, sp, &ptr, sizeof(ptr)) != 0) {
+            fut_free(string_ptrs);
+            return -EFAULT;
+        }
+    }
+
+    /* Note: envp_ptr would be sp here - pointer to environment variables array */
+
+    /* Push argv terminator (NULL pointer) */
+    sp -= sizeof(uint64_t);
     if (exec_copy_to_user(mm, sp, &zero, sizeof(zero)) != 0) {
         fut_free(string_ptrs);
         return -EFAULT;
     }
 
+    /* Push argument pointers in reverse order */
     for (size_t i = argc; i-- > 0;) {
         uint64_t ptr = (uint64_t)(uintptr_t)string_ptrs[i];
         sp -= sizeof(uint64_t);
@@ -684,7 +725,7 @@ int fut_stage_wayland_color_client_binary(void) {
 }
 #endif
 
-int fut_exec_elf(const char *path, char *const argv[]) {
+int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
     if (!path) {
         return -EINVAL;
     }
@@ -839,7 +880,7 @@ int fut_exec_elf(const char *path, char *const argv[]) {
             argc++;
         }
     }
-    rc = build_user_stack(mm, (const char *const *)argv, argc, &user_rsp, &user_argv, &user_argc);
+    rc = build_user_stack(mm, (const char *const *)argv, argc, (const char *const *)envp, 0, &user_rsp, &user_argv, &user_argc);
     if (rc != 0) {
         fut_task_destroy(task);
         fut_free(phdrs);
@@ -890,7 +931,7 @@ int fut_exec_elf(const char *path, char *const argv[]) {
 
 #include <kernel/errno.h>
 
-int fut_exec_elf(const char *path, char *const argv[]) {
+int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
     (void)path;
     (void)argv;
     return -ENOSYS;  /* Not implemented on this architecture */

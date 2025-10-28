@@ -37,7 +37,7 @@ void fut_exec_double_smoke(void) {
 
     char shell_name[] = "shell";
     char *shell_args[] = { shell_name, NULL };
-    rc = fut_exec_elf("/bin/shell", shell_args);
+    rc = fut_exec_elf("/bin/shell", shell_args, NULL);
     fut_printf("[EXEC-DOUBLE] exec shell rc=%d\n", rc);
     fut_vfs_check_root_canary("exec-double:after-first");
 
@@ -48,7 +48,7 @@ void fut_exec_double_smoke(void) {
 
     char second_name[] = "second";
     char *second_args[] = { second_name, NULL };
-    rc = fut_exec_elf("/sbin/second", second_args);
+    rc = fut_exec_elf("/sbin/second", second_args, NULL);
     fut_printf("[EXEC-DOUBLE] exec second_stub rc=%d\n", rc);
     fut_vfs_check_root_canary("exec-double:after-second");
 

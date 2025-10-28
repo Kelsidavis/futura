@@ -1229,7 +1229,7 @@ void fut_kernel_main(void) {
     fut_printf("[INIT] Launching shell...\n");
     char shell_name[] = "shell";
     char *shell_args[] = { shell_name, NULL };
-    int shell_exec = fut_exec_elf("/bin/shell", shell_args);
+    int shell_exec = fut_exec_elf("/bin/shell", shell_args, NULL);
     if (shell_exec != 0) {
         fut_printf("[WARN] Failed to launch /bin/shell (error %d)\n", shell_exec);
     } else {
@@ -1240,7 +1240,7 @@ void fut_kernel_main(void) {
     if (winsrv_stage == 0) {
         char winsrv_name[] = "winsrv";
         char *winsrv_args[] = { winsrv_name, NULL };
-        winsrv_exec = fut_exec_elf("/sbin/winsrv", winsrv_args);
+        winsrv_exec = fut_exec_elf("/sbin/winsrv", winsrv_args, NULL);
         if (winsrv_exec != 0) {
             fut_printf("[WARN] Failed to launch /sbin/winsrv (error %d)\n", winsrv_exec);
         } else {
@@ -1252,7 +1252,7 @@ void fut_kernel_main(void) {
         fut_boot_delay_ms(100);
         char winstub_name[] = "winstub";
         char *winstub_args[] = { winstub_name, NULL };
-        winstub_exec = fut_exec_elf("/bin/winstub", winstub_args);
+        winstub_exec = fut_exec_elf("/bin/winstub", winstub_args, NULL);
         if (winstub_exec != 0) {
             fut_printf("[WARN] Failed to launch /bin/winstub (error %d)\n", winstub_exec);
         } else {
@@ -1265,7 +1265,7 @@ void fut_kernel_main(void) {
     if (wayland_stage == 0) {
         char name[] = "futura-wayland";
         char *args[] = { name, NULL };
-        wayland_exec = fut_exec_elf("/sbin/futura-wayland", args);
+        wayland_exec = fut_exec_elf("/sbin/futura-wayland", args, NULL);
         if (wayland_exec != 0) {
             fut_printf("[WARN] Failed to launch /sbin/futura-wayland (error %d)\n", wayland_exec);
 #if ENABLE_WAYLAND_DEMO

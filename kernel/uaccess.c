@@ -173,6 +173,11 @@ int fut_copy_from_user(void *k_dst, const void *u_src, size_t n) {
     uint8_t *dst = (uint8_t *)k_dst;
     const volatile uint8_t *src = (const volatile uint8_t *)u_src;
 
+    /* Set AC flag for SMAP */
+#if defined(__x86_64__)
+    __asm__ volatile("stac");
+#endif
+
     size_t remaining = n;
     while (remaining > 0) {
         size_t chunk = remaining > COPY_CHUNK ? COPY_CHUNK : remaining;
@@ -187,11 +192,20 @@ int fut_copy_from_user(void *k_dst, const void *u_src, size_t n) {
         remaining -= chunk;
     }
 
+    /* Clear AC flag */
+#if defined(__x86_64__)
+    __asm__ volatile("clac");
+#endif
+
     uaccess_clear();
     return 0;
 
 copy_fault:
     {
+        /* Clear AC flag on fault path */
+#if defined(__x86_64__)
+        __asm__ volatile("clac");
+#endif
         int err = fut_uaccess_window_error();
         uaccess_clear();
         return err;
@@ -218,6 +232,11 @@ int fut_copy_to_user(void *u_dst, const void *k_src, size_t n) {
     volatile uint8_t *dst = (volatile uint8_t *)u_dst;
     const uint8_t *src = (const uint8_t *)k_src;
 
+    /* Set AC flag for SMAP */
+#if defined(__x86_64__)
+    __asm__ volatile("stac");
+#endif
+
     size_t remaining = n;
     while (remaining > 0) {
         size_t chunk = remaining > COPY_CHUNK ? COPY_CHUNK : remaining;
@@ -232,11 +251,20 @@ int fut_copy_to_user(void *u_dst, const void *k_src, size_t n) {
         remaining -= chunk;
     }
 
+    /* Clear AC flag */
+#if defined(__x86_64__)
+    __asm__ volatile("clac");
+#endif
+
     uaccess_clear();
     return 0;
 
 copy_fault:
     {
+        /* Clear AC flag on fault path */
+#if defined(__x86_64__)
+        __asm__ volatile("clac");
+#endif
         int err = fut_uaccess_window_error();
         uaccess_clear();
         return err;

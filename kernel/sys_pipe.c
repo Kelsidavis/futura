@@ -291,7 +291,10 @@ long sys_pipe(int pipefd[2]) {
         return -EINVAL;
     }
 
-    /* TODO: Validate that pipefd is a valid userspace pointer */
+    /* Validate that pipefd is a valid userspace pointer (writable) */
+    if (fut_access_ok(pipefd, sizeof(int) * 2, 1) != 0) {
+        return -EFAULT;
+    }
 
     /* Create pipe buffer */
     struct pipe_buffer *pipe = pipe_buffer_create();

@@ -419,6 +419,70 @@ int futurafs_dir_lookup_entry_async(struct futurafs_inode_info *dir_info,
                                     futurafs_completion_t callback,
                                     void *ctx);
 
+/**
+ * Directory add entry async context.
+ * State machine for adding directory entry with conditional block allocation.
+ */
+enum futurafs_dir_add_state {
+    DIR_ADD_SEARCHING,      /* Searching for free slot */
+    DIR_ADD_ALLOCATING,     /* Allocating new block */
+    DIR_ADD_WRITING,        /* Writing entry to block */
+    DIR_ADD_COMPLETE        /* Operation complete */
+};
+
+struct futurafs_dir_add_ctx {
+    struct futurafs_async_ctx base;
+
+    /* Entry parameters */
+    struct futurafs_inode_info *dir_info;
+    struct fut_vnode *dir_vnode;
+    const char *name;
+    size_t name_len;
+    uint64_t ino;
+    uint8_t file_type;
+
+    /* State machine */
+    enum futurafs_dir_add_state state;
+    int current_block_index;
+    uint8_t block_buffer[FUTURAFS_BLOCK_SIZE];
+
+    /* Slot tracking */
+    bool found_slot;
+    uint64_t slot_block;
+    size_t slot_offset;
+    int slot_index;
+
+    /* Block allocation tracking */
+    int new_block_index;
+    bool allocated_block;
+    uint64_t allocated_block_num;
+};
+
+/**
+ * Add directory entry asynchronously.
+ *
+ * Demonstrates read-modify-write pattern with conditional block allocation.
+ * Searches for free slot, allocates block if needed, writes entry.
+ *
+ * @param dir_vnode  Directory vnode
+ * @param dir_info   Directory inode information
+ * @param name       Entry name
+ * @param name_len   Length of name
+ * @param ino        Inode number for entry
+ * @param file_type  File type
+ * @param callback   Completion callback (result 0 on success, error code on failure)
+ * @param ctx        User context pointer
+ * @return 0 on successful submission, negative error code on failure
+ */
+int futurafs_dir_add_entry_async(struct fut_vnode *dir_vnode,
+                                 struct futurafs_inode_info *dir_info,
+                                 const char *name,
+                                 size_t name_len,
+                                 uint64_t ino,
+                                 uint8_t file_type,
+                                 futurafs_completion_t callback,
+                                 void *ctx);
+
 /* Error codes */
 #define FUTURAFS_EINVAL   -22    /* Invalid argument */
 #define FUTURAFS_EIO      -5     /* I/O error */

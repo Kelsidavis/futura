@@ -317,6 +317,12 @@ void fut_timer_subsystem_init(void) {
     // Program PIT hardware (x86-64 only)
 #if defined(__x86_64__)
     pit_init(FUT_TIMER_HZ);
+
+    // Unmask timer IRQ. On most x86 systems, ISA IRQ 0 (PIT timer) is remapped to GSI 2
+    // due to the legacy 8259 PIC interrupt line conflict. We unmask GSI 2, not IRQ 0.
+    extern void ioapic_unmask_irq(uint8_t irq);
+    ioapic_unmask_irq(2);  // GSI 2, not IRQ 0
+    fut_printf("[TIMER] Timer IRQ unmasked (GSI 2)\n");
 #else
     // ARM64: Timer is already initialized by platform layer (fut_timer_init)
 #endif

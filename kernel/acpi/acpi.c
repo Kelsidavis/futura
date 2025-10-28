@@ -305,13 +305,12 @@ void acpi_parse_madt(void) {
 
         fut_printf("[ACPI] Configuring IRQ routing to BSP (APIC ID 0)\n");
 
-        /* Timer IRQ0 -> Vector 32 (INT_IRQ0_TIMER) */
-        ioapic_set_irq(0, 32, 0, true, false);  /* edge-triggered, masked */
+        /* Timer: ISA IRQ0 is typically remapped to GSI 2 on x86 systems
+         * due to the IRQ override in MADT. Configure GSI 2, not IRQ 0. */
+        ioapic_set_irq(2, 32, 0, true, false);  /* Timer -> Vector 32, edge-triggered, masked */
 
         /* Keyboard IRQ1 -> Vector 33 (INT_IRQ1_KEYBOARD) */
         ioapic_set_irq(1, 33, 0, true, false);  /* edge-triggered, masked */
-
-        /* IRQ2 cascade is not used in APIC mode */
 
         /* COM2 IRQ3 -> Vector 35 */
         ioapic_set_irq(3, 35, 0, true, false);
@@ -319,7 +318,7 @@ void acpi_parse_madt(void) {
         /* COM1 IRQ4 -> Vector 36 */
         ioapic_set_irq(4, 36, 0, true, false);
 
-        /* TODO: Apply interrupt overrides from MADT */
+        /* TODO: Properly parse and apply all interrupt overrides from MADT */
         /* TODO: Enable IRQs when drivers register handlers */
     }
 

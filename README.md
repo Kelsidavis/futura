@@ -44,6 +44,8 @@ Futura OS is a capability-first nanokernel that keeps the core minimal—time, s
 
 See `docs/CURRENT_STATUS.md` for a deeper dive into the latest changes and near-term plans.
 
+**Website**: [https://futuraos.com/](https://futuraos.com/)
+
 ---
 
 ## 📁 Project Structure

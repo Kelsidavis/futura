@@ -129,6 +129,11 @@ void fut_thread_sleep(uint64_t millis);
 fut_thread_t *fut_thread_current(void);
 
 /**
+ * Mark per-CPU data as safe to access (called after initialization).
+ */
+void fut_thread_mark_percpu_safe(void);
+
+/**
  * Set current thread (internal scheduler use only).
  *
  * @param thread  Thread to set as current

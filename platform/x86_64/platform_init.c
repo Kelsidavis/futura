@@ -19,6 +19,7 @@
 #include <kernel/fb.h>
 #include <kernel/trap.h>
 #include <kernel/boot_args.h>
+#include <kernel/fut_percpu.h>
 
 /* Serial port definitions for debugging */
 #define SERIAL_PORT_COM1 0x3F8
@@ -635,7 +636,9 @@ void fut_platform_init(uint32_t multiboot_magic __attribute__((unused)),
     /* Enable timer IRQ */
     fut_irq_enable(0);
 
-    /* Enable interrupts */
+    /* Enable interrupts
+     * Note: Per-CPU data will be initialized later in kernel_main after ACPI/LAPIC init.
+     * The guard flag in fut_thread_current() prevents access until initialization is complete. */
     fut_serial_puts("[INIT] Enabling interrupts...\n");
     fut_enable_interrupts();
 

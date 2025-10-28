@@ -72,6 +72,7 @@ struct fut_thread {
     uint64_t deadline_tick;               // Absolute deadline tick (0 = none)
 
     uint64_t wake_time;                   // Wake tick for sleeping threads
+    uint32_t cpu_affinity;                // Preferred CPU (for cache locality)
 
     fut_thread_stats_t stats;             // Performance instrumentation data
 

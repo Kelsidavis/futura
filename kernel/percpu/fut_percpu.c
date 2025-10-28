@@ -32,6 +32,15 @@ void fut_percpu_init(uint32_t cpu_id, uint32_t cpu_index) {
     percpu->idle_thread = NULL;
     percpu->self = percpu;
 
+    /* Initialize per-CPU ready queue */
+    percpu->ready_queue_head = NULL;
+    percpu->ready_queue_tail = NULL;
+    percpu->ready_count = 0;
+
+    /* Initialize per-CPU lock */
+    extern void fut_spinlock_init(fut_spinlock_t *lock);
+    fut_spinlock_init(&percpu->queue_lock);
+
     fut_printf("[PERCPU] Initialized per-CPU data for CPU %u (index %u) at %p\n",
                cpu_id, cpu_index, (void*)percpu);
 }

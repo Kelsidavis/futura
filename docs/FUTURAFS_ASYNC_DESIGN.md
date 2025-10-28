@@ -226,23 +226,35 @@ static int futurafs_read_inode_async(struct futurafs_mount *mount, uint64_t ino,
 }
 ```
 
-### Phase 3b: Async Composite Operations (2-3 weeks)
+### Phase 3b: Async Composite Operations (2-3 weeks) 🔄 IN PROGRESS
 
-Convert higher-level operations that combine multiple I/O operations:
+Convert higher-level operations that combine multiple I/O operations. These are more complex than Phase 3a primitive operations because they require **callback chaining** and **state machines** to handle multiple dependent async operations.
 
-1. **File read/write**
-   - `futurafs_read_impl_async()`
-   - `futurafs_write_impl_async()`
+#### Planned Operations:
 
-2. **Directory operations**
-   - `futurafs_readdir_impl_async()`
-   - `futurafs_lookup_impl_async()`
+1. **Directory entry operations** (simpler, good starting point)
+   - `futurafs_read_dirent_async()` - Read directory entry from block
+   - `futurafs_write_dirent_async()` - Write directory entry to block
+   - Pattern: Single I/O + extraction/insertion logic
 
-3. **File creation/deletion**
+2. **Directory lookup**
+   - `futurafs_lookup_async()` - Find file by name in directory
+   - Pattern: Multiple block reads until name found
+
+3. **File read/write** (most complex)
+   - `futurafs_read_impl_async()` - Read file data
+   - `futurafs_write_impl_async()` - Write file data
+   - Pattern: Loop over multiple blocks with callback chaining
+
+4. **File creation/deletion**
    - `futurafs_create_impl_async()`
    - `futurafs_unlink_impl_async()`
+   - Pattern: Multiple dependent operations (alloc inode, add dirent, etc.)
 
-**Challenge:** These operations involve multiple sequential I/O operations that depend on each other. This requires callback chaining:
+#### Key Challenges:
+
+**1. Callback Chaining**
+These operations involve multiple sequential I/O operations that depend on each other. This requires callback chaining:
 
 ```c
 /* Example: File read with indirect block */
@@ -285,6 +297,147 @@ static int futurafs_read_impl_async(/* ... */) {
     /* Chained in callback above */
 }
 ```
+
+**2. State Machines for Multi-Block Operations**
+
+File read/write operations in `futurafs_vnode_read()` use a loop to read multiple blocks:
+
+```c
+/* Current sync version (futurafs.c:1192-1249) */
+while (bytes_read < size) {
+    uint64_t file_block = (offset + bytes_read) / FUTURAFS_BLOCK_SIZE;
+    /* ... calculate block_num ... */
+
+    /* Read block */
+    int ret = futurafs_blk_read(mount, block_num, 1, block_buf);
+    if (ret < 0) return bytes_read > 0 ? bytes_read : FUTURAFS_EIO;
+
+    /* Copy data */
+    /* ... */
+    bytes_read += to_read;
+}
+```
+
+Converting this to async requires a **state machine** approach:
+
+```c
+/* Async version - state machine pattern */
+enum file_read_state {
+    FILE_READ_NEXT_BLOCK,    /* Read next block */
+    FILE_READ_COMPLETE       /* All blocks read */
+};
+
+struct file_read_ctx {
+    struct futurafs_async_ctx base;
+
+    /* Request parameters */
+    void *user_buffer;
+    size_t total_size;
+    uint64_t file_offset;
+
+    /* State machine */
+    enum file_read_state state;
+    size_t bytes_read;
+
+    /* Current block being read */
+    uint64_t current_file_block;
+    uint8_t block_buffer[FUTURAFS_BLOCK_SIZE];
+
+    /* Inode info */
+    struct futurafs_inode_info *inode_info;
+};
+
+/* Callback that processes each block and chains to next */
+static void file_read_block_callback(int result, void *ctx) {
+    struct file_read_ctx *read_ctx = ctx;
+
+    if (result < 0) {
+        /* Error - complete with partial read or error */
+        int final_result = read_ctx->bytes_read > 0 ?
+                          (int)read_ctx->bytes_read : FUTURAFS_EIO;
+        read_ctx->base.callback(final_result, read_ctx->base.callback_ctx);
+        fut_free(read_ctx);
+        return;
+    }
+
+    /* Copy data from block buffer to user buffer */
+    uint64_t block_offset = (read_ctx->file_offset + read_ctx->bytes_read)
+                            % FUTURAFS_BLOCK_SIZE;
+    size_t to_read = FUTURAFS_BLOCK_SIZE - block_offset;
+    if (to_read > read_ctx->total_size - read_ctx->bytes_read) {
+        to_read = read_ctx->total_size - read_ctx->bytes_read;
+    }
+
+    uint8_t *dest = (uint8_t *)read_ctx->user_buffer + read_ctx->bytes_read;
+    fut_memcpy(dest, read_ctx->block_buffer + block_offset, to_read);
+    read_ctx->bytes_read += to_read;
+
+    /* Check if more blocks needed */
+    if (read_ctx->bytes_read < read_ctx->total_size) {
+        /* Read next block - state machine continues */
+        read_ctx->current_file_block++;
+
+        /* Calculate next block number */
+        uint64_t block_num;
+        if (read_ctx->current_file_block < FUTURAFS_DIRECT_BLOCKS) {
+            block_num = read_ctx->inode_info->disk_inode.direct[
+                read_ctx->current_file_block];
+        } else {
+            /* TODO: Handle indirect blocks */
+            block_num = 0;
+        }
+
+        if (block_num == 0) {
+            /* Sparse block or end of file */
+            read_ctx->base.callback((int)read_ctx->bytes_read,
+                                   read_ctx->base.callback_ctx);
+            fut_free(read_ctx);
+            return;
+        }
+
+        /* Submit next async read - callback chains back to this function */
+        int ret = futurafs_read_block_async(read_ctx->base.mount, block_num,
+                                           read_ctx->block_buffer,
+                                           file_read_block_callback, read_ctx);
+        if (ret < 0) {
+            read_ctx->base.callback((int)read_ctx->bytes_read,
+                                   read_ctx->base.callback_ctx);
+            fut_free(read_ctx);
+        }
+    } else {
+        /* All blocks read - complete */
+        read_ctx->base.callback((int)read_ctx->bytes_read,
+                               read_ctx->base.callback_ctx);
+        fut_free(read_ctx);
+    }
+}
+```
+
+**Key Pattern:** The callback re-invokes itself for the next block, creating a "callback loop" that replaces the synchronous while loop.
+
+**3. Memory Management Complexity**
+
+Unlike Phase 3a primitives where context lifetime is simple (allocate → one I/O → free), composite operations have more complex lifetimes:
+
+- Context must persist across multiple I/O operations
+- Context freed only when final operation completes
+- Error paths must free context correctly
+- Must handle partial completions (e.g., file read returns bytes read even on error)
+
+#### Implementation Strategy:
+
+1. **Start with simplest composite operation:** Directory entry read/write
+   - Single async I/O (read block)
+   - Extract/insert directory entry from/to block
+   - Simpler than file I/O but demonstrates the pattern
+
+2. **Then directory lookup:**
+   - Multiple blocks (loop until name found)
+   - Demonstrates state machine pattern without the complexity of partial reads
+
+3. **Finally file read/write:**
+   - Most complex: multi-block, partial reads, offset handling
+   - Build on patterns learned from simpler operations
 
 ### Phase 3c: VFS Integration (1 week)
 

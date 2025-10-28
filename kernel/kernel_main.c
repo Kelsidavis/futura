@@ -941,10 +941,13 @@ void fut_kernel_main(void) {
     fut_printf("[INIT] Console device registered at /dev/console\n");
 
     /* Give console input thread a chance to start before doing I/O */
+    /* DISABLED: Scheduler not ready at this boot stage, causes hang */
+    /*
     extern void fut_thread_yield(void);
     for (int i = 0; i < 100; i++) {
         fut_thread_yield();
     }
+    */
 
     /* TODO: Fix VFS open deadlock with /dev/console
      * The following code causes the kernel to hang. Commenting out for now

@@ -37,7 +37,7 @@ static void console_signal(int sig) {
     fut_task_signal_exit(sig);
 }
 
-#if 0
+#if 1
 /**
  * Input thread - continuously reads from serial and feeds line discipline.
  */
@@ -112,10 +112,7 @@ void fut_console_init(void) {
     /* Initialize line discipline with echo and signal callbacks */
     tty_ldisc_init(&console_ldisc, console_echo, console_signal);
 
-    /* TEMPORARY: Disable console input thread to debug DMA corruption */
-    fut_printf("[CONSOLE] Input thread temporarily disabled for debugging\n");
-
-#if 0
+#if 1
     /* Create a task for the input thread */
     fut_task_t *console_task = fut_task_create();
     if (!console_task) {
@@ -136,6 +133,8 @@ void fut_console_init(void) {
         fut_printf("[CONSOLE] ERROR: Failed to create input thread\n");
         return;
     }
+
+    fut_printf("[CONSOLE] Input thread created and ready\n");
 #endif
 
     /* Register character device */

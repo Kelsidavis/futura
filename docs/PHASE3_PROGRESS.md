@@ -1,4 +1,4 @@
-# Phase 3 Progress — April 2025
+# Phase 3 Progress — October 2025
 
 ## Kernel Base
 - Expanded x86_64 heap/PMM bring-up to skip the legacy VGA/BIOS hole, so higher-half allocations start at 1 MiB and no longer collide with unmapped low memory.

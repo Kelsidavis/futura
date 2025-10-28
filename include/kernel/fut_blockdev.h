@@ -12,6 +12,7 @@
 #include <stdint.h>
 #include <stddef.h>
 #include <stdbool.h>
+#include "fut_object.h"  /* For fut_handle_t capability handles */
 
 /* Freestanding environment: define ssize_t */
 #ifndef _SSIZE_T_DEFINED
@@ -212,9 +213,117 @@ ssize_t fut_blockdev_read_bytes(struct fut_blockdev *dev, uint64_t offset, size_
  */
 ssize_t fut_blockdev_write_bytes(struct fut_blockdev *dev, uint64_t offset, size_t size, const void *buffer);
 
+/* ============================================================
+ *   Asynchronous I/O API (Capability-Based)
+ * ============================================================ */
+
+/**
+ * Async block I/O completion callback.
+ * Called when an async block I/O operation completes.
+ *
+ * @param result  Operation result (0 on success, negative error code on failure)
+ * @param ctx     User context pointer passed to async function
+ */
+typedef void (*fut_blk_callback_t)(int result, void *ctx);
+
+/**
+ * Async block I/O request state.
+ * Tracks the state of an in-flight async I/O operation.
+ */
+enum fut_blk_req_state {
+    FUT_BLK_REQ_PENDING = 0,     /* Request submitted, waiting for device */
+    FUT_BLK_REQ_IN_PROGRESS,     /* Request being processed by device */
+    FUT_BLK_REQ_COMPLETED,       /* Request completed successfully */
+    FUT_BLK_REQ_FAILED           /* Request failed with error */
+};
+
+/**
+ * Async block I/O request context.
+ * Internal structure for tracking async I/O operations.
+ */
+struct fut_blk_request {
+    /* Request identification */
+    uint64_t req_id;                    /* Unique request ID */
+    enum fut_blk_req_state state;       /* Current request state */
+
+    /* I/O parameters */
+    fut_handle_t blk_handle;            /* Block device capability handle */
+    uint64_t block_num;                 /* Starting block number */
+    uint64_t num_blocks;                /* Number of blocks */
+    void *buffer;                       /* Data buffer */
+    bool is_write;                      /* true = write, false = read */
+
+    /* Completion callback */
+    fut_blk_callback_t callback;        /* Completion callback function */
+    void *callback_ctx;                 /* User context for callback */
+
+    /* Result */
+    int result;                         /* Operation result (0 or error code) */
+
+    /* List linkage */
+    struct fut_blk_request *next;       /* Next request in queue */
+};
+
+/**
+ * Submit async block read operation using capability handle.
+ *
+ * @param blk_handle  Block device capability handle (must have FUT_RIGHT_READ)
+ * @param block_num   Starting block number
+ * @param num_blocks  Number of blocks to read
+ * @param buffer      Buffer to read into (must be num_blocks * block_size)
+ * @param callback    Completion callback (called when I/O completes)
+ * @param ctx         User context pointer passed to callback
+ * @return 0 on successful submission, negative error code on failure
+ */
+int fut_blk_read_async(fut_handle_t blk_handle, uint64_t block_num,
+                       uint64_t num_blocks, void *buffer,
+                       fut_blk_callback_t callback, void *ctx);
+
+/**
+ * Submit async block write operation using capability handle.
+ *
+ * @param blk_handle  Block device capability handle (must have FUT_RIGHT_WRITE)
+ * @param block_num   Starting block number
+ * @param num_blocks  Number of blocks to write
+ * @param buffer      Buffer to write from
+ * @param callback    Completion callback (called when I/O completes)
+ * @param ctx         User context pointer passed to callback
+ * @return 0 on successful submission, negative error code on failure
+ */
+int fut_blk_write_async(fut_handle_t blk_handle, uint64_t block_num,
+                        uint64_t num_blocks, const void *buffer,
+                        fut_blk_callback_t callback, void *ctx);
+
+/**
+ * Synchronous read wrapper (blocks until async operation completes).
+ * Transition helper for converting from legacy sync API to capability-based async API.
+ *
+ * @param blk_handle  Block device capability handle
+ * @param block_num   Starting block number
+ * @param num_blocks  Number of blocks to read
+ * @param buffer      Buffer to read into
+ * @return 0 on success, negative error code on failure
+ */
+int fut_blk_read_sync(fut_handle_t blk_handle, uint64_t block_num,
+                      uint64_t num_blocks, void *buffer);
+
+/**
+ * Synchronous write wrapper (blocks until async operation completes).
+ * Transition helper for converting from legacy sync API to capability-based async API.
+ *
+ * @param blk_handle  Block device capability handle
+ * @param block_num   Starting block number
+ * @param num_blocks  Number of blocks to write
+ * @param buffer      Buffer to write from
+ * @return 0 on success, negative error code on failure
+ */
+int fut_blk_write_sync(fut_handle_t blk_handle, uint64_t block_num,
+                       uint64_t num_blocks, const void *buffer);
+
 /* Error codes */
 #define BLOCKDEV_EIO     -5     /* I/O error */
 #define BLOCKDEV_EINVAL  -22    /* Invalid argument */
 #define BLOCKDEV_EROFS   -30    /* Read-only filesystem */
 #define BLOCKDEV_ENOSPC  -28    /* No space left on device */
 #define BLOCKDEV_ENODEV  -19    /* No such device */
+#define BLOCKDEV_EACCES  -13    /* Permission denied (capability check failed) */

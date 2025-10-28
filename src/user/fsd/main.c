@@ -12,6 +12,7 @@
 #include <stdbool.h>
 #include <kernel/fut_fipc.h>
 #include <kernel/fut_vfs.h>
+#include <kernel/fut_object.h>
 #include <user/futura_posix.h>
 
 /* Message types for fsd (internal - not in public header yet) */
@@ -64,6 +65,18 @@ struct fsd_path_req {
 };
 
 struct fsd_result_resp {
+    int result;
+};
+
+struct fsd_mount_req {
+    char device[256];
+    char mountpoint[256];
+    char fstype[64];
+    uint32_t flags;
+    fut_handle_t block_device_handle;
+};
+
+struct fsd_mount_resp {
     int result;
 };
 
@@ -129,21 +142,36 @@ static int fsd_is_directory(const char *path) {
  * Handle mount request.
  */
 static void handle_mount(struct fut_fipc_msg *msg) {
-    (void)msg;
+    const struct fsd_mount_req *req = (const struct fsd_mount_req *)msg->payload;
+    struct fsd_mount_resp resp = { .result = 0 };
 
-    /* Phase 3: Parse mount request:
-     * struct {
-     *     char device[256];
-     *     char mountpoint[256];
-     *     char fstype[64];
-     *     uint32_t flags;
-     * } *req = (void *)msg->payload;
-     *
-     * 1. Validate mount point
-     * 2. Load filesystem driver
-     * 3. Call kernel fut_vfs_mount()
-     * 4. Send response
-     */
+    /* Validate request */
+    if (!req || req->mountpoint[0] == '\0' || req->fstype[0] == '\0') {
+        resp.result = -EINVAL;
+        fsd_send_response(FSD_MSG_MOUNT, &resp, sizeof(resp));
+        return;
+    }
+
+    /* Validate capability handle if present */
+    if (req->block_device_handle != FUT_INVALID_HANDLE) {
+        /* Block devices require READ and WRITE rights */
+        fut_rights_t required_rights = FUT_RIGHT_READ | FUT_RIGHT_WRITE;
+
+        if (!fut_object_has_rights(req->block_device_handle, required_rights)) {
+            /* Capability validation failed - insufficient rights */
+            resp.result = -EACCES;
+            fsd_send_response(FSD_MSG_MOUNT, &resp, sizeof(resp));
+            return;
+        }
+    }
+
+    /* Call VFS mount with capability handle */
+    const char *device = (req->device[0] != '\0') ? req->device : NULL;
+    int ret = fut_vfs_mount(device, req->mountpoint, req->fstype,
+                           req->flags, NULL, req->block_device_handle);
+
+    resp.result = ret;
+    fsd_send_response(FSD_MSG_MOUNT, &resp, sizeof(resp));
 }
 
 /**

@@ -199,36 +199,26 @@ static bool smp_start_ap(uint32_t apic_id) {
 extern uint32_t ap_ready_flag;
 extern uint64_t ap_entry_addr_64;
 
-/**
- * Try flag-based AP wake (for APs spinning in boot.S).
- * Returns true if at least one AP came online.
- */
+/* Flag-based AP wake disabled - not needed for QEMU which requires SIPI */
+#if 0
 static bool smp_try_flag_wake(void) {
     extern void ap_main(uint32_t apic_id);
-
     fut_printf("[SMP] Trying flag-based AP wake (for boot.S APs)...\n");
-
     uint32_t initial_count = cpu_count;
-
-    /* Set AP entry point */
     ap_entry_addr_64 = (uint64_t)ap_main;
-
-    /* Signal APs to start */
     __atomic_store_n(&ap_ready_flag, 1, __ATOMIC_RELEASE);
-
-    /* Wait up to 100ms for APs */
     for (int i = 0; i < 100; i++) {
-        udelay(1000);  /* 1ms */
+        udelay(1000);
         if (cpu_count > initial_count) {
             fut_printf("[SMP] Flag wake successful, %u APs started\n",
                       cpu_count - initial_count);
             return true;
         }
     }
-
     fut_printf("[SMP] Flag wake: no APs responded\n");
     return false;
 }
+#endif
 
 /**
  * Initialize SMP and start all Application Processors.
@@ -246,15 +236,8 @@ void smp_init(uint32_t *apic_ids, uint32_t num_cpus) {
     fut_printf("[SMP] BSP is CPU %u\n", bsp_apic_id);
 
     if (num_cpus > 1) {
-        /* Try flag-based wake first (for APs already spinning in boot.S) */
-        if (smp_try_flag_wake()) {
-            /* Success! APs were already running */
-            fut_printf("[SMP] Total online CPUs: %u (expected %u)\n", cpu_count, num_cpus);
-            return;
-        }
-
-        /* Flag wake failed, try SIPI method */
-        fut_printf("[SMP] Flag wake failed, using SIPI to start APs...\n");
+        /* Skip flag-based wake - APs are not running in QEMU, need SIPI */
+        fut_printf("[SMP] Using SIPI to start %u Application Processors...\n", num_cpus - 1);
 
         /* Start each AP using SIPI */
         for (uint32_t i = 0; i < num_cpus; i++) {

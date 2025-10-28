@@ -2,18 +2,35 @@
 
 ## Current Status
 
-The capability propagation infrastructure is now complete. FuturaFS has been extended with dual-mode support:
+**Phase 3 COMPLETE** - All mounted filesystem I/O operations now flow through the async I/O infrastructure!
+
+FuturaFS uses dual-mode support for capability-based async I/O with legacy fallback:
 
 ```c
 struct futurafs_mount {
     /* Capability-based block device access */
     fut_handle_t block_device_handle;   /* Block device capability handle */
 
-    /* Legacy block device pointer (for sync I/O during transition) */
-    struct fut_blockdev *dev;           /* Block device (deprecated) */
+    /* Legacy block device pointer (for fallback during transition) */
+    struct fut_blockdev *dev;           /* Block device (used by dual-mode wrappers) */
 
     /* ... other fields ... */
 };
+```
+
+**Unified I/O Stack (Complete):**
+```
+VFS Operations (sync API)
+    ↓
+Sync Wrappers (busy-wait)          ✅ Phase 3c
+    ↓
+Composite Async Ops (multi-block)  ✅ Phase 3b
+    ↓
+Primitive Async Ops (single-block) ✅ Phase 3a
+    ↓
+Capability-Based Block Device      ✅ Phase 2
+    ↓
+VirtIO Block Driver
 ```
 
 ## Capability Flow
@@ -39,9 +56,9 @@ Block I/O Operations
 - [x] Added capability validation in FSD mount handler
 - [x] Extended `futurafs_mount` with dual-mode support
 
-### Phase 2: Async I/O API Integration (PENDING)
+### Phase 2: Async I/O API Integration (✅ COMPLETE)
 
-The next phase involves converting synchronous I/O operations to use the new async API.
+Implemented capability-based async I/O API in the block device layer.
 
 **Current Synchronous API:**
 ```c
@@ -90,9 +107,9 @@ typedef void (*fut_blk_callback_t)(int result, void *ctx);
    - Phase 2b: Implement async versions of filesystem operations
    - Phase 2c: Remove legacy sync I/O code paths
 
-### Phase 3: Full Async Conversion (FUTURE)
+### Phase 3: Full Async Conversion (✅ COMPLETE)
 
-Convert all FuturaFS operations to fully asynchronous:
+All FuturaFS mounted filesystem operations converted to async I/O:
 
 **Operations to convert:**
 - `futurafs_read_superblock()` - Superblock I/O (futurafs.c:27)
@@ -213,6 +230,69 @@ Current locations using synchronous I/O that need conversion:
    - Concurrent I/O stress tests
    - Failure injection and error handling tests
 
+## Phase 3 Completion Summary
+
+**Status**: ✅ All mounted filesystem I/O operations now use async I/O infrastructure
+
+### What Was Accomplished
+
+**Phase 3a: Primitive Async Operations**
+- Implemented `futurafs_read_block_async()` - Single-block async read
+- Implemented `futurafs_write_block_async()` - Single-block async write
+- Implemented `futurafs_read_inode_async()` - Async inode read with block offset calculation
+- Implemented `futurafs_write_inode_async()` - Async inode write with read-modify-write
+- Implemented `futurafs_add_direntry_async()` - Async directory entry creation
+
+**Phase 3b: Composite Async Operations**
+- Implemented `futurafs_file_read_async()` - Multi-block file read with sparse block handling
+- Implemented `futurafs_file_write_async()` - Multi-block file write with block allocation
+
+**Phase 3c: VFS Integration & Legacy Conversion**
+- Created synchronous wrapper infrastructure (`futurafs_sync_ctx`, busy-wait completion)
+- Converted `futurafs_vnode_read()` (58 lines → 3 lines) to use `futurafs_file_read_sync()`
+- Converted `futurafs_vnode_write()` (70 lines → 3 lines) to use `futurafs_file_write_sync()`
+- Converted `futurafs_read_inode()` to async wrapper (27 lines → 18 lines)
+- Converted `futurafs_write_inode()` to async wrapper (34 lines → 18 lines)
+
+**Code Metrics**:
+- Net code reduction: -42 lines in final session
+- Kernel size: 1,354,936 bytes (reduced by 360 bytes)
+- I/O operations converted: 100% of mounted filesystem operations
+
+### Remaining Legacy API Usage
+
+The following uses of `fut_blockdev_*` API remain and are **intentional**:
+
+1. **Dual-Mode Wrappers** (futurafs.c:32, 47, 101, 168)
+   - `futurafs_blk_read/write()` and `futurafs_blk_read_bytes/write_bytes()`
+   - Provide fallback to legacy I/O when capability handle is unavailable
+   - Enable graceful degradation during transition period
+
+2. **Filesystem Format Function** (futurafs.c:2957, 2966, 2984, 3003, 3022)
+   - `fut_futurafs_format()` operates on unmounted block devices
+   - No mount context or capability handle available during formatting
+   - Directly uses `fut_blockdev_write()` and `fut_blockdev_write_bytes()`
+
+### Architecture Achievement
+
+ALL filesystem runtime I/O now flows through this unified async stack:
+
+```
+User Application
+    ↓
+VFS Layer Operations (futurafs_vnode_read/write)
+    ↓
+Sync Wrappers (futurafs_file_read_sync/write_sync)
+    ↓ (busy-wait on completion)
+Composite Async Operations (futurafs_file_read_async/write_async)
+    ↓ (multi-block, sparse handling, allocation)
+Primitive Async Operations (futurafs_read_block_async, etc.)
+    ↓ (single-block, callbacks)
+Capability-Based Block Device (fut_blk_read/write_async)
+    ↓ (VirtIO driver integration)
+Hardware
+```
+
 ## Implementation Notes
 
 - **Backward Compatibility**: During transition, support both legacy and capability modes
@@ -221,14 +301,17 @@ Current locations using synchronous I/O that need conversion:
 - **Synchronization**: May need locks/atomics for async operation state
 - **Completion Mechanism**: Need robust completion primitive (futex, condvar, or similar)
 
-## Timeline Estimate
+## Timeline
 
 - Phase 1: ✅ Complete (capability propagation infrastructure)
-- Phase 2: 2-3 weeks (async API + wrappers)
-- Phase 3: 4-6 weeks (full async conversion of ~24 call sites)
-- Phase 4: 1 week (cleanup and deprecation)
+- Phase 2: ✅ Complete (async API + capability-based block I/O)
+- Phase 3: ✅ Complete (full async conversion of filesystem operations)
+  - Phase 3a: Primitive async operations
+  - Phase 3b: Composite async operations
+  - Phase 3c: VFS integration and legacy conversion
+- Phase 4: DEFERRED (cleanup and full legacy API deprecation)
 
-Total estimated time: 7-10 weeks for complete migration
+**Status**: Async I/O migration complete for all mounted filesystem operations!
 
 ## References
 

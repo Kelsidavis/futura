@@ -540,8 +540,7 @@ void fut_mm_tests_run(void) {
     /* test_cow_sole_owner(); */
 
     /* File-Backed mmap Tests */
-    /* DISABLED: pmap_map_user hangs when mapping user-space addresses - needs investigation */
-    /* test_file_backed_mmap_read(); */
+    test_file_backed_mmap_read();
     /* test_file_backed_mmap_write(); */
 
     /* Partial munmap Tests */

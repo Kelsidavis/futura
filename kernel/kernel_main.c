@@ -844,6 +844,26 @@ void fut_kernel_main(void) {
         acpi_parse_madt();
     }
 
+#if defined(__x86_64__)
+    /* Initialize per-CPU data for BSP with real APIC ID from LAPIC */
+    fut_printf("[INIT] Initializing BSP per-CPU data...\n");
+    uint32_t bsp_apic_id = lapic_get_id();
+    fut_percpu_init(bsp_apic_id, 0);
+    fut_printf("[INIT] Per-CPU data initialized for BSP (APIC ID %u, index 0)\n", bsp_apic_id);
+
+    /* Set GS_BASE to point to per-CPU data */
+    fut_percpu_set(&fut_percpu_data[0]);
+
+    /* Mark per-CPU data as safe to access (enables fut_thread_current()) */
+    fut_thread_mark_percpu_safe();
+    fut_printf("[INIT] Per-CPU data marked as safe for access\n");
+#else
+    fut_printf("[INIT] Initializing per-CPU data for CPU 0...\n");
+    fut_percpu_init(0, 0);
+    fut_thread_mark_percpu_safe();
+    fut_printf("[INIT] Per-CPU data initialized for CPU 0\n");
+#endif
+
     fut_serial_puts("[DEBUG] kernel_main: Before boot banner\n");
     fut_boot_banner();
 
@@ -1165,25 +1185,8 @@ void fut_kernel_main(void) {
         fut_printf("[INIT] wl-colorwheel staged at /bin/wl-colorwheel\n");
     }
 #endif
-
     /* ========================================
-     *   Step 5: Initialize Per-CPU Data
-     * ======================================== */
-
-#if defined(__x86_64__)
-    fut_printf("[INIT] Initializing per-CPU data for BSP...\n");
-    uint32_t bsp_apic_id = lapic_get_id();
-    fut_percpu_init(bsp_apic_id, 0);
-    fut_percpu_set(&fut_percpu_data[0]);
-    fut_printf("[INIT] Per-CPU data initialized for BSP (APIC ID %u)\n", bsp_apic_id);
-#else
-    fut_printf("[INIT] Initializing per-CPU data for CPU 0...\n");
-    fut_percpu_init(0, 0);
-    fut_printf("[INIT] Per-CPU data initialized for CPU 0\n");
-#endif
-
-    /* ========================================
-     *   Step 6: Initialize Scheduler
+     *   Step 5: Initialize Scheduler
      * ======================================== */
 
     fut_printf("[INIT] Initializing scheduler...\n");

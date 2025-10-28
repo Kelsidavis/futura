@@ -317,11 +317,22 @@ void fut_thread_sleep(uint64_t millis) {
  *   Thread Queries
  * ============================================================ */
 
+/* Global flag to track if per-CPU data is safe to access */
+static volatile bool percpu_safe = false;
+
+void fut_thread_mark_percpu_safe(void) {
+    percpu_safe = true;
+}
+
 /**
  * Get current running thread.
  * Uses per-CPU data accessed via GS segment on x86_64.
  */
 fut_thread_t *fut_thread_current(void) {
+    /* Don't access per-CPU until it's properly initialized */
+    if (!percpu_safe) {
+        return NULL;
+    }
     fut_percpu_t *percpu = fut_percpu_get();
     return percpu ? percpu->current_thread : NULL;
 }

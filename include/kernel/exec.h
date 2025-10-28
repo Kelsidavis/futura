@@ -9,7 +9,7 @@
 
 struct fut_task;
 
-int fut_exec_elf(const char *path, char *const argv[]);
+int fut_exec_elf(const char *path, char *const argv[], char *const envp[]);
 int fut_stage_fbtest_binary(void);
 int fut_stage_shell_binary(void);
 int fut_stage_winsrv_binary(void);

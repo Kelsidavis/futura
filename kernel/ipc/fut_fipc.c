@@ -11,6 +11,8 @@
 #include <kernel/fut_memory.h>
 #include <kernel/fut_timer.h>
 #include <kernel/fut_hmac.h>
+#include <kernel/fut_waitq.h>
+#include <kernel/fut_thread.h>
 #include <stddef.h>
 #include <string.h>
 #include <stdatomic.h>
@@ -177,14 +179,28 @@ static int fut_fipc_enqueue_message(struct fut_fipc_channel *channel,
     size_t total_size = sizeof(struct fut_fipc_msg) + size;
     FIPC_ASSERT(channel->queue_size > 0);
 
-    size_t queue_used = (channel->queue_head - channel->queue_tail + channel->queue_size) % channel->queue_size;
-    size_t queue_free = channel->queue_size - queue_used - 1;
+    fut_spinlock_acquire(&channel->lock);
 
-    if (total_size > queue_free) {
+    /* Block until space is available */
+    while (1) {
+        size_t queue_used = (channel->queue_head - channel->queue_tail + channel->queue_size) % channel->queue_size;
+        size_t queue_free = channel->queue_size - queue_used - 1;
+
+        if (total_size <= queue_free) {
+            /* Space available, proceed with enqueue */
+            break;
+        }
+
+        /* Queue is full */
         if (channel->flags & FIPC_CHANNEL_NONBLOCKING) {
+            fut_spinlock_release(&channel->lock);
             return FIPC_EAGAIN;
         }
-        return FIPC_EBUSY;
+
+        /* Block waiting for space */
+        fut_waitq_sleep_locked(&channel->send_waitq, &channel->lock, FUT_THREAD_BLOCKED);
+        /* When we wake up, reacquire the lock */
+        fut_spinlock_acquire(&channel->lock);
     }
 
     struct fut_fipc_msg msg_hdr;
@@ -213,6 +229,12 @@ static int fut_fipc_enqueue_message(struct fut_fipc_channel *channel,
     channel->pending = true;
     channel->event_mask |= FIPC_EVENT_MESSAGE;
     fipc_ring_check(channel);
+
+    fut_spinlock_release(&channel->lock);
+
+    /* Wake up any receivers waiting for data */
+    fut_waitq_wake_one(&channel->recv_waitq);
+
     return 0;
 }
 
@@ -388,6 +410,12 @@ int fut_fipc_channel_create(struct fut_task *sender, struct fut_task *receiver,
     channel->queue_size = queue_size;
     channel->queue_head = 0;
     channel->queue_tail = 0;
+
+    /* Initialize wait queues and lock */
+    fut_waitq_init(&channel->send_waitq);
+    fut_waitq_init(&channel->recv_waitq);
+    fut_spinlock_init(&channel->lock);
+
     channel->pending = false;
     channel->event_mask = 0;
     channel->flags = flags;
@@ -1439,13 +1467,19 @@ ssize_t fut_fipc_recv(struct fut_fipc_channel *channel, void *buf, size_t buf_si
 
     fipc_ring_check(channel);
 
-    /* Check if queue is empty */
-    if (channel->queue_head == channel->queue_tail) {
+    fut_spinlock_acquire(&channel->lock);
+
+    /* Block until data is available */
+    while (channel->queue_head == channel->queue_tail) {
+        /* Queue is empty */
         if (channel->flags & FIPC_CHANNEL_NONBLOCKING) {
+            fut_spinlock_release(&channel->lock);
             return FIPC_EAGAIN;
         }
-        /* For blocking channels, would wait here */
-        return 0;
+        /* Block waiting for messages */
+        fut_waitq_sleep_locked(&channel->recv_waitq, &channel->lock, FUT_THREAD_BLOCKED);
+        /* When we wake up, reacquire the lock */
+        fut_spinlock_acquire(&channel->lock);
     }
 
     /* Read message header */
@@ -1493,6 +1527,11 @@ ssize_t fut_fipc_recv(struct fut_fipc_channel *channel, void *buf, size_t buf_si
         channel->owner_pi_active = false;
         channel->pi_client_tid = 0;
     }
+
+    fut_spinlock_release(&channel->lock);
+
+    /* Wake up any senders waiting for space */
+    fut_waitq_wake_one(&channel->send_waitq);
 
     return (ssize_t)total_size;
 }

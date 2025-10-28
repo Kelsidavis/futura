@@ -11,6 +11,7 @@
 #include <stdint.h>
 #include <stddef.h>
 #include <stdbool.h>
+#include <kernel/fut_waitq.h>
 
 /* Enable runtime invariants in debug/test builds */
 #ifndef FIPC_DEBUG
@@ -154,6 +155,11 @@ struct fut_fipc_channel {
     size_t queue_size;              /* Queue size in bytes */
     size_t queue_head;              /* Queue head (write index) */
     size_t queue_tail;              /* Queue tail (read index) */
+
+    /* Wait queues for blocking I/O */
+    fut_waitq_t send_waitq;    /* Senders waiting for space */
+    fut_waitq_t recv_waitq;    /* Receivers waiting for data */
+    fut_spinlock_t lock;       /* Protects queue state */
 
     /* Event notification */
     bool pending;                   /* Events pending */

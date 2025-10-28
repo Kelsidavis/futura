@@ -10,6 +10,7 @@
 #include <kernel/fut_memory.h>
 #include <kernel/fut_vfs.h>
 #include <kernel/uaccess.h>
+#include <kernel/fut_waitq.h>
 #include <string.h>
 
 extern void fut_printf(const char *fmt, ...);
@@ -27,6 +28,9 @@ struct pipe_buffer {
     uint32_t refcount;      /* Reference count (read_end + write_end) */
     bool write_closed;      /* Write end closed */
     bool read_closed;       /* Read end closed */
+    fut_waitq_t read_waitq;  /* Readers waiting for data */
+    fut_waitq_t write_waitq; /* Writers waiting for space */
+    fut_spinlock_t lock;     /* Protects pipe state */
 };
 
 /* File operations for pipe read/write ends */
@@ -87,6 +91,11 @@ static struct pipe_buffer *pipe_buffer_create(void) {
     pipe->write_closed = false;
     pipe->read_closed = false;
 
+    /* Initialize wait queues and lock */
+    fut_waitq_init(&pipe->read_waitq);
+    fut_waitq_init(&pipe->write_waitq);
+    fut_spinlock_init(&pipe->lock);
+
     return pipe;
 }
 
@@ -114,14 +123,20 @@ static ssize_t pipe_read(void *inode, void *priv, void *buf, size_t len, off_t *
         return -EINVAL;
     }
 
-    /* If pipe is empty and write end is closed, return EOF */
-    if (pipe->count == 0 && pipe->write_closed) {
-        return 0;  /* EOF */
+    fut_spinlock_acquire(&pipe->lock);
+
+    /* Block until data is available */
+    while (pipe->count == 0 && !pipe->write_closed) {
+        /* Pipe is empty and write end is still open - block */
+        fut_waitq_sleep_locked(&pipe->read_waitq, &pipe->lock, FUT_THREAD_BLOCKED);
+        /* When we wake up, reacquire the lock */
+        fut_spinlock_acquire(&pipe->lock);
     }
 
-    /* If pipe is empty, for now just return EAGAIN (would block in real implementation) */
-    if (pipe->count == 0) {
-        return -EAGAIN;
+    /* If pipe is empty and write end is closed, return EOF */
+    if (pipe->count == 0 && pipe->write_closed) {
+        fut_spinlock_release(&pipe->lock);
+        return 0;  /* EOF */
     }
 
     /* Read up to len bytes from pipe */
@@ -136,6 +151,11 @@ static ssize_t pipe_read(void *inode, void *priv, void *buf, size_t len, off_t *
     }
 
     pipe->count -= bytes_read;
+
+    fut_spinlock_release(&pipe->lock);
+
+    /* Wake up any writers waiting for space */
+    fut_waitq_wake_one(&pipe->write_waitq);
 
     return (ssize_t)bytes_read;
 }
@@ -152,14 +172,26 @@ static ssize_t pipe_write(void *inode, void *priv, const void *buf, size_t len, 
         return -EINVAL;
     }
 
+    fut_spinlock_acquire(&pipe->lock);
+
     /* If read end is closed, return EPIPE */
     if (pipe->read_closed) {
+        fut_spinlock_release(&pipe->lock);
         return -EPIPE;
     }
 
-    /* If pipe is full, for now return EAGAIN (would block in real implementation) */
-    if (pipe->count >= pipe->size) {
-        return -EAGAIN;
+    /* Block until space is available */
+    while (pipe->count >= pipe->size && !pipe->read_closed) {
+        /* Pipe is full and read end is still open - block */
+        fut_waitq_sleep_locked(&pipe->write_waitq, &pipe->lock, FUT_THREAD_BLOCKED);
+        /* When we wake up, reacquire the lock */
+        fut_spinlock_acquire(&pipe->lock);
+    }
+
+    /* Check again after waking up */
+    if (pipe->read_closed) {
+        fut_spinlock_release(&pipe->lock);
+        return -EPIPE;
     }
 
     /* Write up to len bytes to pipe */
@@ -176,6 +208,11 @@ static ssize_t pipe_write(void *inode, void *priv, const void *buf, size_t len, 
 
     pipe->count += bytes_written;
 
+    fut_spinlock_release(&pipe->lock);
+
+    /* Wake up any readers waiting for data */
+    fut_waitq_wake_one(&pipe->read_waitq);
+
     return (ssize_t)bytes_written;
 }
 
@@ -190,8 +227,13 @@ static int pipe_release_read(void *inode, void *priv) {
         return 0;
     }
 
+    fut_spinlock_acquire(&pipe->lock);
     pipe->read_closed = true;
     pipe->refcount--;
+    fut_spinlock_release(&pipe->lock);
+
+    /* Wake any writers - they'll see read_closed and return EPIPE */
+    fut_waitq_wake_all(&pipe->write_waitq);
 
     if (pipe->refcount == 0) {
         pipe_buffer_destroy(pipe);
@@ -211,8 +253,13 @@ static int pipe_release_write(void *inode, void *priv) {
         return 0;
     }
 
+    fut_spinlock_acquire(&pipe->lock);
     pipe->write_closed = true;
     pipe->refcount--;
+    fut_spinlock_release(&pipe->lock);
+
+    /* Wake any readers - they'll see write_closed and return EOF */
+    fut_waitq_wake_all(&pipe->read_waitq);
 
     if (pipe->refcount == 0) {
         pipe_buffer_destroy(pipe);

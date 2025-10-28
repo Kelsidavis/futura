@@ -9,6 +9,7 @@
 #include <kernel/fut_blockdev.h>
 #include <kernel/fut_memory.h>
 #include <kernel/fut_thread.h>
+#include <kernel/fut_waitq.h>
 #include <stddef.h>
 
 /* ============================================================
@@ -454,6 +455,8 @@ static struct fut_blockdev *get_device_from_handle(fut_handle_t blk_handle) {
 
 /* Synchronization primitive for blocking on async operations */
 struct blk_sync_ctx {
+    fut_waitq_t waitq;          /* Wait queue for blocking */
+    fut_spinlock_t lock;        /* Protects completed flag */
     volatile int completed;     /* 1 when operation completes */
     volatile int result;        /* Operation result */
 };
@@ -461,8 +464,15 @@ struct blk_sync_ctx {
 /* Callback for synchronous wrappers */
 static void blk_sync_callback(int result, void *ctx) {
     struct blk_sync_ctx *sync_ctx = (struct blk_sync_ctx *)ctx;
+
+    /* Atomically set result and signal completion */
+    fut_spinlock_acquire(&sync_ctx->lock);
     sync_ctx->result = result;
-    sync_ctx->completed = 1;  /* Signal completion */
+    sync_ctx->completed = 1;
+    fut_spinlock_release(&sync_ctx->lock);
+
+    /* Wake any thread waiting for completion */
+    fut_waitq_wake_one(&sync_ctx->waitq);
 }
 
 /**
@@ -541,11 +551,13 @@ int fut_blk_write_async(fut_handle_t blk_handle, uint64_t block_num,
  */
 int fut_blk_read_sync(fut_handle_t blk_handle, uint64_t block_num,
                       uint64_t num_blocks, void *buffer) {
-    /* Set up synchronization context */
+    /* Set up synchronization context with wait queue */
     struct blk_sync_ctx sync_ctx = {
         .completed = 0,
         .result = 0
     };
+    fut_waitq_init(&sync_ctx.waitq);
+    fut_spinlock_init(&sync_ctx.lock);
 
     /* Submit async read */
     int ret = fut_blk_read_async(blk_handle, block_num, num_blocks, buffer,
@@ -554,22 +566,20 @@ int fut_blk_read_sync(fut_handle_t blk_handle, uint64_t block_num,
         return ret;  /* Submission failed */
     }
 
-    /* Wait for completion
+    /* Wait for completion using wait queue
      * NOTE: In the current "fake async" implementation, the callback is invoked
-     * immediately, so this loop typically executes zero times. However, for
-     * future true-async implementations, we yield to the scheduler instead of
-     * busy-waiting to allow other threads to run.
+     * immediately (before we reach here), so the sleep typically doesn't happen.
+     * For future true-async implementations, this will properly block the thread
+     * until the I/O completes.
      */
-    int wait_iterations = 0;
-    const int MAX_WAIT_ITERATIONS = 10000;  /* Safety limit */
+    fut_spinlock_acquire(&sync_ctx.lock);
     while (!sync_ctx.completed) {
-        if (++wait_iterations > MAX_WAIT_ITERATIONS) {
-            /* Safety: prevent infinite loop if callback never fires */
-            return BLOCKDEV_EIO;
-        }
-        /* Yield CPU to other threads instead of busy-waiting */
-        fut_thread_yield();
+        /* Atomically release lock and sleep on wait queue */
+        fut_waitq_sleep_locked(&sync_ctx.waitq, &sync_ctx.lock, FUT_THREAD_BLOCKED);
+        /* Re-acquire lock after waking */
+        fut_spinlock_acquire(&sync_ctx.lock);
     }
+    fut_spinlock_release(&sync_ctx.lock);
 
     return sync_ctx.result;
 }
@@ -580,11 +590,13 @@ int fut_blk_read_sync(fut_handle_t blk_handle, uint64_t block_num,
  */
 int fut_blk_write_sync(fut_handle_t blk_handle, uint64_t block_num,
                        uint64_t num_blocks, const void *buffer) {
-    /* Set up synchronization context */
+    /* Set up synchronization context with wait queue */
     struct blk_sync_ctx sync_ctx = {
         .completed = 0,
         .result = 0
     };
+    fut_waitq_init(&sync_ctx.waitq);
+    fut_spinlock_init(&sync_ctx.lock);
 
     /* Submit async write */
     int ret = fut_blk_write_async(blk_handle, block_num, num_blocks, buffer,
@@ -593,22 +605,20 @@ int fut_blk_write_sync(fut_handle_t blk_handle, uint64_t block_num,
         return ret;  /* Submission failed */
     }
 
-    /* Wait for completion
+    /* Wait for completion using wait queue
      * NOTE: In the current "fake async" implementation, the callback is invoked
-     * immediately, so this loop typically executes zero times. However, for
-     * future true-async implementations, we yield to the scheduler instead of
-     * busy-waiting to allow other threads to run.
+     * immediately (before we reach here), so the sleep typically doesn't happen.
+     * For future true-async implementations, this will properly block the thread
+     * until the I/O completes.
      */
-    int wait_iterations = 0;
-    const int MAX_WAIT_ITERATIONS = 10000;  /* Safety limit */
+    fut_spinlock_acquire(&sync_ctx.lock);
     while (!sync_ctx.completed) {
-        if (++wait_iterations > MAX_WAIT_ITERATIONS) {
-            /* Safety: prevent infinite loop if callback never fires */
-            return BLOCKDEV_EIO;
-        }
-        /* Yield CPU to other threads instead of busy-waiting */
-        fut_thread_yield();
+        /* Atomically release lock and sleep on wait queue */
+        fut_waitq_sleep_locked(&sync_ctx.waitq, &sync_ctx.lock, FUT_THREAD_BLOCKED);
+        /* Re-acquire lock after waking */
+        fut_spinlock_acquire(&sync_ctx.lock);
     }
+    fut_spinlock_release(&sync_ctx.lock);
 
     return sync_ctx.result;
 }

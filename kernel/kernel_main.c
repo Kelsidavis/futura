@@ -946,6 +946,12 @@ void fut_kernel_main(void) {
         fut_thread_yield();
     }
 
+    /* TODO: Fix VFS open deadlock with /dev/console
+     * The following code causes the kernel to hang. Commenting out for now
+     * to allow boot to proceed. Need to investigate why try_open_chrdev()
+     * is not returning when the device is properly registered.
+     */
+    /*
     int fd0 = fut_vfs_open("/dev/console", O_RDWR, 0);
     int fd1 = fut_vfs_open("/dev/console", O_RDWR, 0);
     int fd2 = fut_vfs_open("/dev/console", O_RDWR, 0);
@@ -953,6 +959,7 @@ void fut_kernel_main(void) {
         fut_printf("[WARN] Failed to seed /dev/console descriptors (fd0=%d fd1=%d fd2=%d)\n",
                    fd0, fd1, fd2);
     }
+    */
 
     fut_printf("[INIT] Root filesystem mounted (ramfs at /)\n");
 

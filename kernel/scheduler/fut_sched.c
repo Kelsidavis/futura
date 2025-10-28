@@ -44,17 +44,12 @@ fut_interrupt_frame_t *fut_current_frame = NULL;
  *   Scheduler State
  * ============================================================ */
 
-/* Ready queue (simple linked list for now) */
-static fut_thread_t *ready_queue_head = NULL;
-static fut_thread_t *ready_queue_tail = NULL;
-
-/* Idle thread is now per-CPU (stored in fut_percpu_t->idle_thread) */
-
-/* Scheduler lock */
-static fut_spinlock_t sched_lock = { .locked = 0 };
-
-/* Statistics */
-static uint64_t ready_count = 0;
+/* All scheduler state is now per-CPU (in fut_percpu_t):
+ * - ready_queue_head/tail: Per-CPU ready queue
+ * - queue_lock: Per-CPU scheduler lock
+ * - ready_count: Per-CPU thread count
+ * - idle_thread: Per-CPU idle thread
+ */
 
 /* ============================================================
  *   Idle Thread
@@ -177,95 +172,117 @@ void fut_sched_init_cpu(void) {
 }
 
 /**
- * Add thread to ready queue (priority-sorted).
+ * Add thread to ready queue (per-CPU).
+ * Adds the thread to the current CPU's ready queue.
  */
 void fut_sched_add_thread(fut_thread_t *thread) {
     if (!thread || thread->state != FUT_THREAD_READY) {
         return;
     }
 
-    fut_spinlock_acquire(&sched_lock);
+    // Get current CPU's per-CPU data
+    fut_percpu_t *percpu = fut_percpu_get();
+    if (!percpu) {
+        return; // No per-CPU data available
+    }
+
+    fut_spinlock_acquire(&percpu->queue_lock);
 
     // Simple FIFO for now - insert at tail
     thread->next = NULL;
-    thread->prev = ready_queue_tail;
+    thread->prev = percpu->ready_queue_tail;
 
-    if (ready_queue_tail) {
-        ready_queue_tail->next = thread;
+    if (percpu->ready_queue_tail) {
+        percpu->ready_queue_tail->next = thread;
     } else {
-        ready_queue_head = thread;
+        percpu->ready_queue_head = thread;
     }
 
-    ready_queue_tail = thread;
-    ready_count++;
+    percpu->ready_queue_tail = thread;
+    percpu->ready_count++;
 
-    fut_spinlock_release(&sched_lock);
+    // Set CPU affinity to current CPU for cache locality
+    thread->cpu_affinity = percpu->cpu_index;
+
+    fut_spinlock_release(&percpu->queue_lock);
 }
 
 /**
  * Remove thread from ready queue.
+ * Searches the thread's affinity CPU queue.
  */
 void fut_sched_remove_thread(fut_thread_t *thread) {
     if (!thread) {
         return;
     }
 
-    fut_spinlock_acquire(&sched_lock);
+    // Use thread's CPU affinity to find the right queue
+    uint32_t cpu_index = thread->cpu_affinity;
+    if (cpu_index >= FUT_MAX_CPUS) {
+        cpu_index = 0; // Fallback to CPU 0
+    }
+
+    fut_percpu_t *percpu = &fut_percpu_data[cpu_index];
+    fut_spinlock_acquire(&percpu->queue_lock);
 
     // Unlink from ready queue
     if (thread->prev) {
         thread->prev->next = thread->next;
     } else {
-        ready_queue_head = thread->next;
+        percpu->ready_queue_head = thread->next;
     }
 
     if (thread->next) {
         thread->next->prev = thread->prev;
     } else {
-        ready_queue_tail = thread->prev;
+        percpu->ready_queue_tail = thread->prev;
     }
 
     thread->next = NULL;
     thread->prev = NULL;
 
-    if (ready_count > 0) {
-        ready_count--;
+    if (percpu->ready_count > 0) {
+        percpu->ready_count--;
     }
 
-    fut_spinlock_release(&sched_lock);
+    fut_spinlock_release(&percpu->queue_lock);
 }
 
 /**
- * Select next thread to run (round-robin).
+ * Select next thread to run (round-robin from per-CPU queue).
  */
 static fut_thread_t *select_next_thread(void) {
-    fut_spinlock_acquire(&sched_lock);
+    fut_percpu_t *percpu = fut_percpu_get();
+    if (!percpu) {
+        return NULL;
+    }
 
-    fut_thread_t *next = ready_queue_head;
+    fut_spinlock_acquire(&percpu->queue_lock);
+
+    fut_thread_t *next = percpu->ready_queue_head;
 
     // If no ready threads, use per-CPU idle thread
     if (!next) {
-        fut_spinlock_release(&sched_lock);
-        fut_percpu_t *percpu = fut_percpu_get();
-        return percpu ? percpu->idle_thread : NULL;
+        fut_spinlock_release(&percpu->queue_lock);
+        return percpu->idle_thread;
     }
 
     // Remove from head of ready queue
-    ready_queue_head = next->next;
-    if (ready_queue_head) {
-        ready_queue_head->prev = NULL;
+    percpu->ready_queue_head = next->next;
+    if (percpu->ready_queue_head) {
+        percpu->ready_queue_head->prev = NULL;
     } else {
-        ready_queue_tail = NULL;
+        percpu->ready_queue_tail = NULL;
     }
 
     next->next = NULL;
     next->prev = NULL;
 
-    if (ready_count > 0) {
-        ready_count--;
+    if (percpu->ready_count > 0) {
+        percpu->ready_count--;
     }
 
-    fut_spinlock_release(&sched_lock);
+    fut_spinlock_release(&percpu->queue_lock);
 
     return next;
 }
@@ -341,14 +358,28 @@ void fut_schedule(void) {
 }
 
 /**
- * Get scheduler statistics.
+ * Get scheduler statistics (aggregated across all CPUs).
  */
 void fut_sched_stats(uint64_t *ready_cnt, uint64_t *running_cnt) {
+    uint64_t total_ready = 0;
+    uint64_t total_running = 0;
+
+    // Aggregate counts across all CPUs
+    for (uint32_t i = 0; i < FUT_MAX_CPUS; i++) {
+        fut_percpu_t *percpu = &fut_percpu_data[i];
+        if (percpu->self) {  // Check if this CPU is initialized
+            total_ready += percpu->ready_count;
+            if (percpu->current_thread && percpu->current_thread != percpu->idle_thread) {
+                total_running++;
+            }
+        }
+    }
+
     if (ready_cnt) {
-        *ready_cnt = ready_count;
+        *ready_cnt = total_ready;
     }
     if (running_cnt) {
-        *running_cnt = fut_thread_current() ? 1 : 0;
+        *running_cnt = total_running;
     }
 }
 

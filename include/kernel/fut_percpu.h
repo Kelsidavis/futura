@@ -15,6 +15,9 @@
 struct fut_thread;
 struct fut_task;
 
+/* Spinlock for synchronization */
+#include "fut_sched.h"
+
 /* Maximum supported CPUs */
 #define FUT_MAX_CPUS 256
 
@@ -23,6 +26,9 @@ struct fut_task;
  * Accessed via GS-relative addressing on x86_64.
  */
 typedef struct fut_percpu {
+    /* Self-pointer for validation (MUST be at offset 0 for GS:0 access) */
+    struct fut_percpu *self;      /* Points to this structure */
+
     /* CPU identification */
     uint32_t cpu_id;              /* APIC ID or CPU number */
     uint32_t cpu_index;           /* Linear CPU index (0, 1, 2, ...) */
@@ -31,11 +37,13 @@ typedef struct fut_percpu {
     struct fut_thread *current_thread;   /* Currently running thread */
     struct fut_thread *idle_thread;      /* This CPU's idle thread */
 
-    /* Self-pointer for validation */
-    struct fut_percpu *self;      /* Points to this structure */
+    /* Per-CPU run queue */
+    struct fut_thread *ready_queue_head; /* Head of ready queue */
+    struct fut_thread *ready_queue_tail; /* Tail of ready queue */
+    uint64_t ready_count;                /* Number of ready threads */
+    fut_spinlock_t queue_lock;           /* Lock for this CPU's queue */
 
-    /* Padding to cache line */
-    uint8_t padding[64 - sizeof(uint32_t)*2 - sizeof(void*)*3];
+    /* Padding to cache line (64 bytes total: 8+4+4+40+8 = 64, so no padding needed) */
 } __attribute__((aligned(64))) fut_percpu_t;
 
 /* Array of per-CPU data structures (one per CPU) */

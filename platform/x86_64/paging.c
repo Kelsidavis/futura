@@ -78,27 +78,27 @@ pte_t *fut_get_kernel_pml4(void) {
 
 /**
  * Allocate a page table (512 entries, 4KB).
- * Returns physical address of new page table.
+ * Returns virtual address of new page table.
+ *
+ * CRITICAL: Page tables MUST be 4KB-aligned for hardware page table walker.
+ * We use PMM allocation to ensure proper alignment and avoid corrupting
+ * kernel global data that the heap allocator might overlap with.
  */
 static page_table_t *alloc_page_table(void) {
-    extern void *fut_malloc(size_t);
+    extern void *fut_pmm_alloc_page(void);
     extern void fut_printf(const char *, ...);
 
-    /* CRITICAL: Page tables MUST be 4KB-aligned for hardware page table walker.
-     * Allocate extra space to ensure alignment, since fut_malloc doesn't
-     * guarantee page alignment. */
-    void *raw = fut_malloc(PAGE_SIZE * 2);
-    if (!raw) {
-        fut_printf("[PAGING] Failed to allocate page table from heap\n");
+    /* Allocate a properly aligned 4KB page from PMM */
+    phys_addr_t phys = (phys_addr_t)fut_pmm_alloc_page();
+    if (!phys) {
+        fut_printf("[PAGING] Failed to allocate page table from PMM\n");
         return NULL;
     }
 
-    /* Align to 4KB boundary */
-    uintptr_t addr = (uintptr_t)raw;
-    uintptr_t aligned = (addr + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1);
-    page_table_t *page = (page_table_t *)aligned;
+    /* Convert physical address to virtual address */
+    page_table_t *page = (page_table_t *)(uintptr_t)pmap_phys_to_virt(phys);
 
-    /* fut_malloc returns zeroed memory, but clear it anyway to be explicit */
+    /* Zero the page table */
     memset(page, 0, PAGE_SIZE);
     return page;
 }

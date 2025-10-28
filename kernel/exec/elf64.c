@@ -448,6 +448,7 @@ static int stage_stack_pages(fut_mm_t *mm, uint64_t *out_stack_top) {
 
         pages[i] = page;
         fut_printf("[EXEC] stage_stack page[%u]=%p\n", (unsigned)i, (void *)page);
+
         int rc = pmap_map_user(mm_context(mm),
                                base + (uint64_t)i * PAGE_SIZE,
                                phys,

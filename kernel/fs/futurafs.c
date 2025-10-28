@@ -613,6 +613,160 @@ int futurafs_write_block_async(struct futurafs_mount *mount,
     return 0;
 }
 
+/* ============================================================
+ *   Phase 3b: Composite Async Operations
+ * ============================================================ */
+
+/**
+ * Callback for async directory lookup - processes one directory block.
+ * Implements callback loop pattern: searches current block, then chains to next block if needed.
+ */
+static void futurafs_dir_lookup_callback(int result, void *ctx) {
+    struct futurafs_dir_lookup_ctx *lookup_ctx = ctx;
+
+    /* Check for I/O error */
+    if (result < 0) {
+        lookup_ctx->base.callback(FUTURAFS_EIO, lookup_ctx->base.callback_ctx);
+        fut_free(lookup_ctx);
+        return;
+    }
+
+    /* Search current block for matching entry */
+    for (size_t offset = 0; offset < FUTURAFS_BLOCK_SIZE;
+         offset += sizeof(struct futurafs_dirent)) {
+        struct futurafs_dirent *dent =
+            (struct futurafs_dirent *)(lookup_ctx->block_buffer + offset);
+
+        /* Skip unused entries */
+        if (dent->ino == 0) {
+            continue;
+        }
+
+        /* Check if name matches */
+        if (dent->name_len == lookup_ctx->name_len) {
+            bool match = true;
+            for (size_t i = 0; i < lookup_ctx->name_len; i++) {
+                if (dent->name[i] != lookup_ctx->name[i]) {
+                    match = false;
+                    break;
+                }
+            }
+
+            if (match) {
+                /* Found matching entry - fill output parameters */
+                if (lookup_ctx->entry_out) {
+                    *lookup_ctx->entry_out = *dent;
+                }
+                if (lookup_ctx->block_out) {
+                    *lookup_ctx->block_out =
+                        lookup_ctx->dir_info->disk_inode.direct[lookup_ctx->current_block_index];
+                }
+                if (lookup_ctx->offset_out) {
+                    *lookup_ctx->offset_out = offset;
+                }
+
+                /* Complete successfully */
+                lookup_ctx->base.callback(0, lookup_ctx->base.callback_ctx);
+                fut_free(lookup_ctx);
+                return;
+            }
+        }
+    }
+
+    /* Entry not found in this block - try next block (callback loop) */
+    lookup_ctx->current_block_index++;
+
+    /* Check if we've exhausted all direct blocks */
+    if (lookup_ctx->current_block_index >= FUTURAFS_DIRECT_BLOCKS) {
+        /* Not found in any block */
+        lookup_ctx->base.callback(FUTURAFS_ENOENT, lookup_ctx->base.callback_ctx);
+        fut_free(lookup_ctx);
+        return;
+    }
+
+    /* Get next block number */
+    uint64_t next_block = lookup_ctx->dir_info->disk_inode.direct[lookup_ctx->current_block_index];
+
+    /* Skip empty blocks */
+    if (next_block == 0) {
+        /* Re-invoke callback to try next block */
+        futurafs_dir_lookup_callback(0, lookup_ctx);
+        return;
+    }
+
+    /* Submit async read for next block - callback chains back to this function */
+    int ret = futurafs_read_block_async(lookup_ctx->base.mount, next_block,
+                                       lookup_ctx->block_buffer,
+                                       futurafs_dir_lookup_callback, lookup_ctx);
+    if (ret < 0) {
+        lookup_ctx->base.callback(ret, lookup_ctx->base.callback_ctx);
+        fut_free(lookup_ctx);
+    }
+}
+
+/**
+ * Look up directory entry by name asynchronously.
+ * Demonstrates callback loop pattern for multi-block searches.
+ */
+int futurafs_dir_lookup_entry_async(struct futurafs_inode_info *dir_info,
+                                    const char *name,
+                                    size_t name_len,
+                                    uint64_t *block_out,
+                                    size_t *offset_out,
+                                    struct futurafs_dirent *entry_out,
+                                    futurafs_completion_t callback,
+                                    void *ctx) {
+    /* Allocate context for state machine */
+    struct futurafs_dir_lookup_ctx *lookup_ctx =
+        fut_malloc(sizeof(struct futurafs_dir_lookup_ctx));
+    if (!lookup_ctx) {
+        return FUTURAFS_EINVAL;
+    }
+
+    /* Initialize context */
+    lookup_ctx->base.callback = callback;
+    lookup_ctx->base.callback_ctx = ctx;
+    lookup_ctx->base.mount = dir_info->mount;
+    lookup_ctx->dir_info = dir_info;
+    lookup_ctx->name = name;
+    lookup_ctx->name_len = name_len;
+    lookup_ctx->block_out = block_out;
+    lookup_ctx->offset_out = offset_out;
+    lookup_ctx->entry_out = entry_out;
+    lookup_ctx->current_block_index = 0;
+
+    /* Find first non-empty block */
+    uint64_t first_block = 0;
+    int first_block_index = -1;
+    for (int i = 0; i < FUTURAFS_DIRECT_BLOCKS; i++) {
+        if (dir_info->disk_inode.direct[i] != 0) {
+            first_block = dir_info->disk_inode.direct[i];
+            first_block_index = i;
+            break;
+        }
+    }
+
+    /* If no blocks allocated, directory is empty */
+    if (first_block_index == -1) {
+        fut_free(lookup_ctx);
+        callback(FUTURAFS_ENOENT, ctx);
+        return 0;
+    }
+
+    lookup_ctx->current_block_index = first_block_index;
+
+    /* Submit async read for first block */
+    int ret = futurafs_read_block_async(dir_info->mount, first_block,
+                                       lookup_ctx->block_buffer,
+                                       futurafs_dir_lookup_callback, lookup_ctx);
+    if (ret < 0) {
+        fut_free(lookup_ctx);
+        return ret;
+    }
+
+    return 0;
+}
+
 /**
  * Read inode from disk.
  */

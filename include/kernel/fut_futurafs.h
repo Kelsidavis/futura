@@ -368,6 +368,57 @@ int futurafs_write_block_async(struct futurafs_mount *mount,
                                futurafs_completion_t callback,
                                void *ctx);
 
+/* ============================================================
+ *   Phase 3b: Composite Async Operations
+ * ============================================================ */
+
+/**
+ * Directory lookup async context.
+ * State machine for searching directory blocks until entry found.
+ */
+struct futurafs_dir_lookup_ctx {
+    struct futurafs_async_ctx base;
+
+    /* Search parameters */
+    struct futurafs_inode_info *dir_info;
+    const char *name;
+    size_t name_len;
+
+    /* Output parameters */
+    uint64_t *block_out;
+    size_t *offset_out;
+    struct futurafs_dirent *entry_out;
+
+    /* State machine */
+    int current_block_index;  /* Which direct block we're searching */
+    uint8_t block_buffer[FUTURAFS_BLOCK_SIZE];
+};
+
+/**
+ * Look up directory entry by name asynchronously.
+ *
+ * Searches directory blocks sequentially until finding entry with matching name.
+ * Demonstrates callback loop pattern for multi-block operations.
+ *
+ * @param dir_info   Directory inode information
+ * @param name       Name to search for
+ * @param name_len   Length of name
+ * @param block_out  Output: block number containing entry (optional)
+ * @param offset_out Output: offset within block (optional)
+ * @param entry_out  Output: directory entry (optional)
+ * @param callback   Completion callback (result 0 on success, FUTURAFS_ENOENT if not found)
+ * @param ctx        User context pointer
+ * @return 0 on successful submission, negative error code on failure
+ */
+int futurafs_dir_lookup_entry_async(struct futurafs_inode_info *dir_info,
+                                    const char *name,
+                                    size_t name_len,
+                                    uint64_t *block_out,
+                                    size_t *offset_out,
+                                    struct futurafs_dirent *entry_out,
+                                    futurafs_completion_t callback,
+                                    void *ctx);
+
 /* Error codes */
 #define FUTURAFS_EINVAL   -22    /* Invalid argument */
 #define FUTURAFS_EIO      -5     /* I/O error */

@@ -1499,6 +1499,103 @@ int futurafs_file_write_async(struct futurafs_inode_info *inode_info,
     return 0;
 }
 
+/* ============================================================
+ *   Phase 3c: Synchronous Wrappers for VFS Integration
+ * ============================================================ */
+
+/**
+ * Synchronous completion context.
+ * Used for blocking wrappers that poll until async operation completes.
+ */
+struct futurafs_sync_ctx {
+    volatile bool completed;
+    int result;
+};
+
+/**
+ * Synchronous completion callback.
+ * Sets completion flag and stores result for blocking wrapper.
+ */
+static void futurafs_sync_completion(int result, void *ctx) {
+    struct futurafs_sync_ctx *sync_ctx = (struct futurafs_sync_ctx *)ctx;
+    sync_ctx->result = result;
+    sync_ctx->completed = true;
+}
+
+/**
+ * Synchronous file read wrapper (blocks until async operation completes).
+ * Transition helper for converting VFS operations to use async I/O.
+ *
+ * @param inode_info Inode information structure
+ * @param buffer     Buffer to read into
+ * @param size       Number of bytes to read
+ * @param offset     File offset to read from
+ * @return Number of bytes read on success, negative error code on failure
+ */
+static ssize_t futurafs_file_read_sync(struct futurafs_inode_info *inode_info,
+                                        void *buffer,
+                                        size_t size,
+                                        uint64_t offset) {
+    struct futurafs_sync_ctx sync_ctx = {
+        .completed = false,
+        .result = 0
+    };
+
+    /* Submit async read operation */
+    int ret = futurafs_file_read_async(inode_info, buffer, size, offset,
+                                       futurafs_sync_completion, &sync_ctx);
+    if (ret < 0) {
+        return ret;
+    }
+
+    /* Busy-wait until async operation completes */
+    while (!sync_ctx.completed) {
+        /* In a real implementation, this would yield to scheduler */
+        __asm__ volatile("pause" ::: "memory");
+    }
+
+    return sync_ctx.result;
+}
+
+/**
+ * Synchronous file write wrapper (blocks until async operation completes).
+ * Transition helper for converting VFS operations to use async I/O.
+ *
+ * @param inode_info Inode information structure
+ * @param buffer     Buffer to write from
+ * @param size       Number of bytes to write
+ * @param offset     File offset to write to
+ * @return Number of bytes written on success, negative error code on failure
+ */
+static ssize_t futurafs_file_write_sync(struct futurafs_inode_info *inode_info,
+                                         const void *buffer,
+                                         size_t size,
+                                         uint64_t offset) {
+    struct futurafs_sync_ctx sync_ctx = {
+        .completed = false,
+        .result = 0
+    };
+
+    /* Submit async write operation */
+    int ret = futurafs_file_write_async(inode_info, buffer, size, offset,
+                                        futurafs_sync_completion, &sync_ctx);
+    if (ret < 0) {
+        return ret;
+    }
+
+    /* Busy-wait until async operation completes */
+    while (!sync_ctx.completed) {
+        /* In a real implementation, this would yield to scheduler */
+        __asm__ volatile("pause" ::: "memory");
+    }
+
+    return sync_ctx.result;
+}
+
+/* ============================================================
+ *   Legacy Synchronous I/O Functions
+ * ============================================================ */
+
 /**
  * Read inode from disk.
  */
@@ -2077,133 +2174,16 @@ static int futurafs_dir_is_empty(struct futurafs_mount *mount,
 
 static ssize_t futurafs_vnode_read(struct fut_vnode *vnode, void *buf, size_t size, uint64_t offset) {
     struct futurafs_inode_info *inode_info = (struct futurafs_inode_info *)vnode->fs_data;
-    struct futurafs_inode *disk_inode = &inode_info->disk_inode;
 
-    if (offset >= disk_inode->size) {
-        return 0;  /* EOF */
-    }
-
-    /* Limit read to file size */
-    if (offset + size > disk_inode->size) {
-        size = disk_inode->size - offset;
-    }
-
-    size_t bytes_read = 0;
-    uint8_t block_buf[FUTURAFS_BLOCK_SIZE];
-
-    while (bytes_read < size) {
-        uint64_t file_block = (offset + bytes_read) / FUTURAFS_BLOCK_SIZE;
-        uint64_t block_offset = (offset + bytes_read) % FUTURAFS_BLOCK_SIZE;
-        size_t to_read = FUTURAFS_BLOCK_SIZE - block_offset;
-        if (to_read > size - bytes_read) {
-            to_read = size - bytes_read;
-        }
-
-        /* Get block number */
-        uint64_t block_num;
-        if (file_block < FUTURAFS_DIRECT_BLOCKS) {
-            block_num = disk_inode->direct[file_block];
-        } else {
-            /* TODO: Implement indirect blocks */
-            return bytes_read;
-        }
-
-        if (block_num == 0) {
-            /* Sparse block - return zeros */
-            uint8_t *dest = (uint8_t *)buf + bytes_read;
-            for (size_t i = 0; i < to_read; i++) {
-                dest[i] = 0;
-            }
-        } else {
-            /* Read block */
-            int ret = futurafs_blk_read(inode_info->mount, block_num, 1, block_buf);
-            if (ret < 0) {
-                return bytes_read > 0 ? (int)bytes_read : FUTURAFS_EIO;
-            }
-
-            /* Copy data */
-            uint8_t *dest = (uint8_t *)buf + bytes_read;
-            for (size_t i = 0; i < to_read; i++) {
-                dest[i] = block_buf[block_offset + i];
-            }
-        }
-
-        bytes_read += to_read;
-    }
-
-    return (int)bytes_read;
+    /* Use async I/O path via synchronous wrapper */
+    return futurafs_file_read_sync(inode_info, buf, size, offset);
 }
 
 static ssize_t futurafs_vnode_write(struct fut_vnode *vnode, const void *buf, size_t size, uint64_t offset) {
     struct futurafs_inode_info *inode_info = (struct futurafs_inode_info *)vnode->fs_data;
-    struct futurafs_inode *disk_inode = &inode_info->disk_inode;
 
-    size_t bytes_written = 0;
-    uint8_t block_buf[FUTURAFS_BLOCK_SIZE];
-
-    while (bytes_written < size) {
-        uint64_t file_block = (offset + bytes_written) / FUTURAFS_BLOCK_SIZE;
-        uint64_t block_offset = (offset + bytes_written) % FUTURAFS_BLOCK_SIZE;
-        size_t to_write = FUTURAFS_BLOCK_SIZE - block_offset;
-        if (to_write > size - bytes_written) {
-            to_write = size - bytes_written;
-        }
-
-        /* Get or allocate block */
-        uint64_t block_num;
-        if (file_block < FUTURAFS_DIRECT_BLOCKS) {
-            block_num = disk_inode->direct[file_block];
-            if (block_num == 0) {
-                /* Allocate new block */
-                int ret = futurafs_alloc_block(inode_info->mount, &block_num);
-                if (ret < 0) {
-                    return bytes_written > 0 ? (int)bytes_written : ret;
-                }
-                disk_inode->direct[file_block] = block_num;
-                disk_inode->blocks++;
-                inode_info->dirty = true;
-            }
-        } else {
-            /* TODO: Implement indirect blocks */
-            return bytes_written > 0 ? (int)bytes_written : FUTURAFS_ENOSPC;
-        }
-
-        /* Read block if partial write */
-        if (block_offset != 0 || to_write != FUTURAFS_BLOCK_SIZE) {
-            int ret = futurafs_blk_read(inode_info->mount, block_num, 1, block_buf);
-            if (ret < 0) {
-                return bytes_written > 0 ? (int)bytes_written : FUTURAFS_EIO;
-            }
-        }
-
-        /* Update block data */
-        const uint8_t *src = (const uint8_t *)buf + bytes_written;
-        for (size_t i = 0; i < to_write; i++) {
-            block_buf[block_offset + i] = src[i];
-        }
-
-        /* Write block */
-        int ret = futurafs_blk_write(inode_info->mount, block_num, 1, block_buf);
-        if (ret < 0) {
-            return bytes_written > 0 ? (int)bytes_written : FUTURAFS_EIO;
-        }
-
-        bytes_written += to_write;
-    }
-
-    /* Update file size if needed */
-    if (offset + bytes_written > disk_inode->size) {
-        disk_inode->size = offset + bytes_written;
-        inode_info->dirty = true;
-    }
-
-    /* Sync inode to disk */
-    if (inode_info->dirty) {
-        futurafs_write_inode(inode_info->mount, inode_info->ino, disk_inode);
-        inode_info->dirty = false;
-    }
-
-    return (int)bytes_written;
+    /* Use async I/O path via synchronous wrapper */
+    return futurafs_file_write_sync(inode_info, buf, size, offset);
 }
 
 static int futurafs_vnode_readdir(struct fut_vnode *dir,

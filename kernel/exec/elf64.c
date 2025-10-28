@@ -96,11 +96,27 @@ static inline fut_vmem_context_t *mm_context(fut_mm_t *mm) {
 }
 
 static int exec_copy_to_user(fut_mm_t *mm, uint64_t dest, const void *src, size_t len) {
-    fut_mm_t *prev = fut_mm_current();
-    fut_mm_switch(mm);
-    int rc = fut_copy_to_user((void *)dest, src, len);
-    fut_mm_switch(prev);
-    return rc;
+    /* For ELF loading during exec, we map user pages into kernel address space,
+     * so we can write directly without switching memory contexts.
+     * Since pages are already kernel-accessible (allocated via fut_pmm_alloc_page()),
+     * we perform a direct kernel-space copy instead of switching MM and risking
+     * instruction encoding issues with inline assembly in privileged instructions. */
+
+    /* Get the PTE to extract physical address */
+    uint64_t pte = 0;
+    if (pmap_probe_pte(mm_context(mm), dest, &pte) != 0) {
+        return -EFAULT;
+    }
+
+    /* Extract physical address from PTE (bits 12-51) */
+    phys_addr_t phys = pte & 0xFFFFFFFFF000ULL;
+
+    /* Convert physical to kernel virtual address */
+    uint8_t *kern_addr = (uint8_t *)pmap_phys_to_virt(phys);
+
+    /* Simple kernel-space memcpy (no privilege escalation or memory context switches) */
+    memcpy(kern_addr, src, len);
+    return 0;
 }
 
 static int read_exact(int fd, void *buf, size_t len) {

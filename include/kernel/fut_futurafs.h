@@ -195,6 +195,129 @@ int fut_futurafs_unmount(struct fut_mount *mount);
  */
 int fut_futurafs_sync(struct fut_mount *mount);
 
+/* ============================================================
+ *   FuturaFS Async API (Phase 3)
+ * ============================================================ */
+
+/**
+ * Filesystem operation completion callback.
+ *
+ * @param result  Operation result (0 on success, negative error code on failure)
+ * @param ctx     User context pointer passed to async function
+ */
+typedef void (*futurafs_completion_t)(int result, void *ctx);
+
+/**
+ * Generic async operation context.
+ * Specific operations extend this with operation-specific fields.
+ */
+struct futurafs_async_ctx {
+    /* Completion callback */
+    futurafs_completion_t callback;
+    void *callback_ctx;
+
+    /* Operation state */
+    struct futurafs_mount *mount;
+    int result;
+};
+
+/**
+ * Superblock read async context.
+ */
+struct futurafs_sb_read_ctx {
+    struct futurafs_async_ctx base;
+    struct futurafs_superblock *sb;
+    uint8_t block_buffer[FUTURAFS_BLOCK_SIZE];
+};
+
+/**
+ * Superblock write async context.
+ */
+struct futurafs_sb_write_ctx {
+    struct futurafs_async_ctx base;
+    const struct futurafs_superblock *sb;
+};
+
+/**
+ * Inode read async context.
+ */
+struct futurafs_inode_read_ctx {
+    struct futurafs_async_ctx base;
+    uint64_t ino;
+    struct futurafs_inode *inode;
+    uint8_t block_buffer[FUTURAFS_BLOCK_SIZE];
+};
+
+/**
+ * Inode write async context.
+ */
+struct futurafs_inode_write_ctx {
+    struct futurafs_async_ctx base;
+    uint64_t ino;
+    const struct futurafs_inode *inode;
+    uint8_t block_buffer[FUTURAFS_BLOCK_SIZE];
+};
+
+/**
+ * Read superblock asynchronously.
+ *
+ * @param mount      Mount information
+ * @param sb         Superblock buffer to read into
+ * @param callback   Completion callback
+ * @param ctx        User context pointer
+ * @return 0 on successful submission, negative error code on failure
+ */
+int futurafs_read_superblock_async(struct futurafs_mount *mount,
+                                   struct futurafs_superblock *sb,
+                                   futurafs_completion_t callback,
+                                   void *ctx);
+
+/**
+ * Write superblock asynchronously.
+ *
+ * @param mount      Mount information
+ * @param sb         Superblock to write
+ * @param callback   Completion callback
+ * @param ctx        User context pointer
+ * @return 0 on successful submission, negative error code on failure
+ */
+int futurafs_write_superblock_async(struct futurafs_mount *mount,
+                                    const struct futurafs_superblock *sb,
+                                    futurafs_completion_t callback,
+                                    void *ctx);
+
+/**
+ * Read inode asynchronously.
+ *
+ * @param mount      Mount information
+ * @param ino        Inode number
+ * @param inode      Inode buffer to read into
+ * @param callback   Completion callback
+ * @param ctx        User context pointer
+ * @return 0 on successful submission, negative error code on failure
+ */
+int futurafs_read_inode_async(struct futurafs_mount *mount,
+                              uint64_t ino,
+                              struct futurafs_inode *inode,
+                              futurafs_completion_t callback,
+                              void *ctx);
+
+/**
+ * Write inode asynchronously.
+ *
+ * @param mount      Mount information
+ * @param ino        Inode number
+ * @param inode      Inode to write
+ * @param callback   Completion callback
+ * @param ctx        User context pointer
+ * @return 0 on successful submission, negative error code on failure
+ */
+int futurafs_write_inode_async(struct futurafs_mount *mount,
+                               uint64_t ino,
+                               const struct futurafs_inode *inode,
+                               futurafs_completion_t callback,
+                               void *ctx);
+
 /* Error codes */
 #define FUTURAFS_EINVAL   -22    /* Invalid argument */
 #define FUTURAFS_EIO      -5     /* I/O error */

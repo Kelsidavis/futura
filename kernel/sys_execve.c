@@ -32,7 +32,21 @@ long sys_execve(const char *pathname, char *const argv[], char *const envp[]) {
         return -EINVAL;
     }
 
-    /* TODO: Validate that pathname, argv, and envp are valid userspace pointers */
+    /* Validate that pathname is a valid userspace pointer (readable) */
+    if (fut_access_ok(pathname, 1, 0) != 0) {
+        return -EFAULT;
+    }
+
+    /* Validate that argv is a valid userspace pointer (readable) */
+    if (argv && fut_access_ok(argv, sizeof(char *), 0) != 0) {
+        return -EFAULT;
+    }
+
+    /* Validate that envp is a valid userspace pointer (readable) if provided */
+    if (envp && fut_access_ok(envp, sizeof(char *), 0) != 0) {
+        return -EFAULT;
+    }
+
     /* TODO: Copy argv and envp from userspace to kernel space */
     /* TODO: Implement environment variable support (envp currently ignored) */
     (void)envp;  /* Not yet implemented */

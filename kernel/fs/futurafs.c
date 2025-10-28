@@ -55,9 +55,47 @@ static inline int futurafs_blk_write(struct futurafs_mount *mnt,
 static inline ssize_t futurafs_blk_read_bytes(struct futurafs_mount *mnt,
                                                uint64_t offset, size_t size, void *buffer) {
     if (mnt->block_device_handle != FUT_INVALID_HANDLE) {
-        /* TODO: Implement capability-based byte-level I/O */
-        /* For now, fall back to legacy */
-        return fut_blockdev_read_bytes(mnt->dev, offset, size, buffer);
+        /* Use capability-based byte-level I/O */
+        if (!buffer || size == 0) {
+            return FUTURAFS_EINVAL;
+        }
+
+        /* Get device properties from mount */
+        uint32_t block_size = mnt->dev->block_size;
+        uint64_t capacity = mnt->dev->capacity;
+
+        /* Check bounds */
+        if (offset > UINT64_MAX - (uint64_t)size || offset + size > capacity) {
+            return FUTURAFS_EINVAL;
+        }
+
+        uint64_t start_block = offset / block_size;
+        uint64_t end_block = (offset + size + block_size - 1) / block_size;
+        uint64_t num_blocks = end_block - start_block;
+
+        /* Allocate temporary buffer for aligned I/O */
+        void *temp_buffer = fut_malloc(num_blocks * block_size);
+        if (!temp_buffer) {
+            return -12;  /* ENOMEM */
+        }
+
+        /* Read blocks using capability-based API */
+        int ret = fut_blk_read_sync(mnt->block_device_handle, start_block, num_blocks, temp_buffer);
+        if (ret < 0) {
+            fut_free(temp_buffer);
+            return ret;
+        }
+
+        /* Copy relevant portion to output buffer */
+        uint64_t offset_in_block = offset % block_size;
+        uint8_t *src = (uint8_t *)temp_buffer + offset_in_block;
+        uint8_t *dst = (uint8_t *)buffer;
+        for (size_t i = 0; i < size; i++) {
+            dst[i] = src[i];
+        }
+
+        fut_free(temp_buffer);
+        return (ssize_t)size;
     } else {
         /* Fall back to legacy sync I/O */
         return fut_blockdev_read_bytes(mnt->dev, offset, size, buffer);
@@ -71,9 +109,60 @@ static inline ssize_t futurafs_blk_read_bytes(struct futurafs_mount *mnt,
 static inline ssize_t futurafs_blk_write_bytes(struct futurafs_mount *mnt,
                                                 uint64_t offset, size_t size, const void *buffer) {
     if (mnt->block_device_handle != FUT_INVALID_HANDLE) {
-        /* TODO: Implement capability-based byte-level I/O */
-        /* For now, fall back to legacy */
-        return fut_blockdev_write_bytes(mnt->dev, offset, size, buffer);
+        /* Use capability-based byte-level I/O */
+        if (!buffer || size == 0) {
+            return FUTURAFS_EINVAL;
+        }
+
+        /* Get device properties from mount */
+        uint32_t block_size = mnt->dev->block_size;
+        uint64_t capacity = mnt->dev->capacity;
+        bool read_only = mnt->dev->read_only;
+
+        /* Check read-only */
+        if (read_only) {
+            return BLOCKDEV_EROFS;
+        }
+
+        /* Check bounds */
+        if (offset > UINT64_MAX - (uint64_t)size || offset + size > capacity) {
+            return FUTURAFS_EINVAL;
+        }
+
+        uint64_t start_block = offset / block_size;
+        uint64_t end_block = (offset + size + block_size - 1) / block_size;
+        uint64_t num_blocks = end_block - start_block;
+
+        /* Allocate temporary buffer for aligned I/O */
+        void *temp_buffer = fut_malloc(num_blocks * block_size);
+        if (!temp_buffer) {
+            return -12;  /* ENOMEM */
+        }
+
+        /* Read-modify-write: read existing blocks first */
+        int ret = fut_blk_read_sync(mnt->block_device_handle, start_block, num_blocks, temp_buffer);
+        if (ret < 0) {
+            fut_free(temp_buffer);
+            return ret;
+        }
+
+        /* Modify relevant portion */
+        uint64_t offset_in_block = offset % block_size;
+        uint8_t *dst = (uint8_t *)temp_buffer + offset_in_block;
+        const uint8_t *src = (const uint8_t *)buffer;
+        for (size_t i = 0; i < size; i++) {
+            dst[i] = src[i];
+        }
+
+        /* Write blocks back using capability-based API */
+        ret = fut_blk_write_sync(mnt->block_device_handle, start_block, num_blocks, temp_buffer);
+        if (ret < 0) {
+            fut_free(temp_buffer);
+            return ret;
+        }
+
+        fut_free(temp_buffer);
+        return (ssize_t)size;
     } else {
         /* Fall back to legacy sync I/O */
         return fut_blockdev_write_bytes(mnt->dev, offset, size, buffer);

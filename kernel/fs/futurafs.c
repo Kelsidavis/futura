@@ -1241,6 +1241,265 @@ int futurafs_file_read_async(struct futurafs_inode_info *inode_info,
 }
 
 /**
+ * File write callback - implements state machine for read-modify-write pattern.
+ */
+static void futurafs_file_write_callback(int result, void *ctx) {
+    struct futurafs_file_write_ctx *write_ctx = (struct futurafs_file_write_ctx *)ctx;
+
+    /* Check for I/O error */
+    if (result < 0) {
+        write_ctx->base.callback(write_ctx->bytes_written > 0 ? (int)write_ctx->bytes_written : FUTURAFS_EIO,
+                                write_ctx->base.callback_ctx);
+        fut_free(write_ctx);
+        return;
+    }
+
+    switch (write_ctx->state) {
+        case FILE_WRITE_READING: {
+            /* Read completed for read-modify-write - now modify and write */
+            uint64_t current_offset = write_ctx->file_offset + write_ctx->bytes_written;
+            uint64_t block_offset = current_offset % FUTURAFS_BLOCK_SIZE;
+            size_t remaining = write_ctx->total_size - write_ctx->bytes_written;
+            size_t to_write = FUTURAFS_BLOCK_SIZE - block_offset;
+            if (to_write > remaining) {
+                to_write = remaining;
+            }
+
+            /* Modify block data */
+            const uint8_t *src = (const uint8_t *)write_ctx->user_buffer + write_ctx->bytes_written;
+            for (size_t i = 0; i < to_write; i++) {
+                write_ctx->block_buffer[block_offset + i] = src[i];
+            }
+
+            /* Write modified block */
+            write_ctx->state = FILE_WRITE_WRITING;
+            int ret = futurafs_write_block_async(write_ctx->base.mount, write_ctx->current_block_num,
+                                                 write_ctx->block_buffer,
+                                                 futurafs_file_write_callback, write_ctx);
+            if (ret < 0) {
+                write_ctx->base.callback(write_ctx->bytes_written > 0 ? (int)write_ctx->bytes_written : ret,
+                                        write_ctx->base.callback_ctx);
+                fut_free(write_ctx);
+            }
+            break;
+        }
+
+        case FILE_WRITE_WRITING: {
+            /* Write completed - update progress */
+            uint64_t current_offset = write_ctx->file_offset + write_ctx->bytes_written;
+            uint64_t block_offset = current_offset % FUTURAFS_BLOCK_SIZE;
+            size_t remaining = write_ctx->total_size - write_ctx->bytes_written;
+            size_t to_write = FUTURAFS_BLOCK_SIZE - block_offset;
+            if (to_write > remaining) {
+                to_write = remaining;
+            }
+
+            write_ctx->bytes_written += to_write;
+
+            /* Check if done writing all blocks */
+            if (write_ctx->bytes_written >= write_ctx->total_size) {
+                /* Update file size if needed */
+                uint64_t new_size = write_ctx->file_offset + write_ctx->bytes_written;
+                if (new_size > write_ctx->inode_info->disk_inode.size) {
+                    write_ctx->inode_info->disk_inode.size = new_size;
+                    write_ctx->inode_info->dirty = true;
+                }
+
+                /* Sync inode if dirty */
+                if (write_ctx->inode_info->dirty) {
+                    write_ctx->state = FILE_WRITE_SYNCING;
+                    int ret = futurafs_write_inode_async(write_ctx->base.mount,
+                                                         write_ctx->inode_info->ino,
+                                                         &write_ctx->inode_info->disk_inode,
+                                                         futurafs_file_write_callback, write_ctx);
+                    if (ret < 0) {
+                        write_ctx->base.callback((int)write_ctx->bytes_written, write_ctx->base.callback_ctx);
+                        fut_free(write_ctx);
+                    }
+                } else {
+                    /* Done */
+                    write_ctx->base.callback((int)write_ctx->bytes_written, write_ctx->base.callback_ctx);
+                    fut_free(write_ctx);
+                }
+                return;
+            }
+
+            /* More blocks to write - prepare next block */
+            uint64_t next_offset = write_ctx->file_offset + write_ctx->bytes_written;
+            uint64_t file_block = next_offset / FUTURAFS_BLOCK_SIZE;
+            uint64_t next_block_offset = next_offset % FUTURAFS_BLOCK_SIZE;
+            size_t next_remaining = write_ctx->total_size - write_ctx->bytes_written;
+            size_t next_to_write = FUTURAFS_BLOCK_SIZE - next_block_offset;
+            if (next_to_write > next_remaining) {
+                next_to_write = next_remaining;
+            }
+
+            /* Get or allocate next block */
+            uint64_t block_num;
+            if (file_block < FUTURAFS_DIRECT_BLOCKS) {
+                block_num = write_ctx->inode_info->disk_inode.direct[file_block];
+                if (block_num == 0) {
+                    /* Allocate new block */
+                    int ret = futurafs_alloc_block(write_ctx->base.mount, &block_num);
+                    if (ret < 0) {
+                        write_ctx->base.callback((int)write_ctx->bytes_written, write_ctx->base.callback_ctx);
+                        fut_free(write_ctx);
+                        return;
+                    }
+                    write_ctx->inode_info->disk_inode.direct[file_block] = block_num;
+                    write_ctx->inode_info->disk_inode.blocks++;
+                    write_ctx->inode_info->dirty = true;
+                    write_ctx->allocated_block = true;
+                }
+            } else {
+                /* Indirect blocks not yet implemented */
+                write_ctx->base.callback((int)write_ctx->bytes_written, write_ctx->base.callback_ctx);
+                fut_free(write_ctx);
+                return;
+            }
+
+            write_ctx->current_block_num = block_num;
+
+            /* Check if we need read-modify-write (partial block) */
+            bool need_read = (next_block_offset != 0 || next_to_write != FUTURAFS_BLOCK_SIZE);
+            if (need_read) {
+                /* Read block first */
+                write_ctx->state = FILE_WRITE_READING;
+                int ret = futurafs_read_block_async(write_ctx->base.mount, block_num,
+                                                    write_ctx->block_buffer,
+                                                    futurafs_file_write_callback, write_ctx);
+                if (ret < 0) {
+                    write_ctx->base.callback(write_ctx->bytes_written > 0 ? (int)write_ctx->bytes_written : ret,
+                                            write_ctx->base.callback_ctx);
+                    fut_free(write_ctx);
+                }
+            } else {
+                /* Full block write - no need to read first */
+                const uint8_t *src = (const uint8_t *)write_ctx->user_buffer + write_ctx->bytes_written;
+                for (size_t i = 0; i < FUTURAFS_BLOCK_SIZE; i++) {
+                    write_ctx->block_buffer[i] = src[i];
+                }
+
+                write_ctx->state = FILE_WRITE_WRITING;
+                int ret = futurafs_write_block_async(write_ctx->base.mount, block_num,
+                                                     write_ctx->block_buffer,
+                                                     futurafs_file_write_callback, write_ctx);
+                if (ret < 0) {
+                    write_ctx->base.callback(write_ctx->bytes_written > 0 ? (int)write_ctx->bytes_written : ret,
+                                            write_ctx->base.callback_ctx);
+                    fut_free(write_ctx);
+                }
+            }
+            break;
+        }
+
+        case FILE_WRITE_SYNCING: {
+            /* Inode sync completed */
+            write_ctx->inode_info->dirty = false;
+            write_ctx->state = FILE_WRITE_COMPLETE;
+            write_ctx->base.callback((int)write_ctx->bytes_written, write_ctx->base.callback_ctx);
+            fut_free(write_ctx);
+            break;
+        }
+
+        case FILE_WRITE_COMPLETE:
+            /* Should not reach here */
+            break;
+    }
+}
+
+/**
+ * Write to file asynchronously.
+ */
+int futurafs_file_write_async(struct futurafs_inode_info *inode_info,
+                               const void *buffer,
+                               size_t size,
+                               uint64_t offset,
+                               futurafs_completion_t callback,
+                               void *ctx) {
+    /* Allocate context */
+    struct futurafs_file_write_ctx *write_ctx = fut_malloc(sizeof(*write_ctx));
+    if (!write_ctx) {
+        return FUTURAFS_EIO;
+    }
+
+    /* Initialize context */
+    write_ctx->base.callback = callback;
+    write_ctx->base.callback_ctx = ctx;
+    write_ctx->base.mount = inode_info->mount;
+    write_ctx->inode_info = inode_info;
+    write_ctx->user_buffer = buffer;
+    write_ctx->total_size = size;
+    write_ctx->file_offset = offset;
+    write_ctx->bytes_written = 0;
+    write_ctx->state = FILE_WRITE_WRITING;
+    write_ctx->allocated_block = false;
+
+    /* Calculate first block to write */
+    uint64_t file_block = offset / FUTURAFS_BLOCK_SIZE;
+    uint64_t block_offset = offset % FUTURAFS_BLOCK_SIZE;
+    size_t to_write = FUTURAFS_BLOCK_SIZE - block_offset;
+    if (to_write > size) {
+        to_write = size;
+    }
+
+    /* Get or allocate first block */
+    uint64_t block_num;
+    if (file_block < FUTURAFS_DIRECT_BLOCKS) {
+        block_num = inode_info->disk_inode.direct[file_block];
+        if (block_num == 0) {
+            /* Allocate new block */
+            int ret = futurafs_alloc_block(inode_info->mount, &block_num);
+            if (ret < 0) {
+                fut_free(write_ctx);
+                return ret;
+            }
+            inode_info->disk_inode.direct[file_block] = block_num;
+            inode_info->disk_inode.blocks++;
+            inode_info->dirty = true;
+            write_ctx->allocated_block = true;
+        }
+    } else {
+        /* Indirect blocks not yet implemented */
+        fut_free(write_ctx);
+        return FUTURAFS_ENOSPC;
+    }
+
+    write_ctx->current_block_num = block_num;
+
+    /* Check if we need read-modify-write (partial block) */
+    bool need_read = (block_offset != 0 || to_write != FUTURAFS_BLOCK_SIZE);
+    if (need_read) {
+        /* Read block first for read-modify-write */
+        write_ctx->state = FILE_WRITE_READING;
+        int ret = futurafs_read_block_async(inode_info->mount, block_num,
+                                           write_ctx->block_buffer,
+                                           futurafs_file_write_callback, write_ctx);
+        if (ret < 0) {
+            fut_free(write_ctx);
+            return ret;
+        }
+    } else {
+        /* Full block write - prepare data and write directly */
+        const uint8_t *src = (const uint8_t *)buffer;
+        for (size_t i = 0; i < FUTURAFS_BLOCK_SIZE; i++) {
+            write_ctx->block_buffer[i] = src[i];
+        }
+
+        write_ctx->state = FILE_WRITE_WRITING;
+        int ret = futurafs_write_block_async(inode_info->mount, block_num,
+                                             write_ctx->block_buffer,
+                                             futurafs_file_write_callback, write_ctx);
+        if (ret < 0) {
+            fut_free(write_ctx);
+            return ret;
+        }
+    }
+
+    return 0;
+}
+
+/**
  * Read inode from disk.
  */
 static int futurafs_read_inode(struct futurafs_mount *mount, uint64_t ino,

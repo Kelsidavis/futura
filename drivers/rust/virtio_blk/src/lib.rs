@@ -535,7 +535,7 @@ impl VirtQueue {
             let mut isr_status = 0u8;
             if !isr_ptr.is_null() {
                 unsafe {
-                    isr_status = *isr_ptr;
+                    isr_status = core::ptr::read_volatile(isr_ptr);
                 }
             }
 

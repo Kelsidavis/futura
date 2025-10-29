@@ -1336,9 +1336,25 @@ int comp_run(struct compositor_state *comp) {
 
     while (comp->running) {
         wl_display_flush_clients(comp->display);
-        int rc = wl_event_loop_dispatch(comp->loop, -1);
+
+        /* Calculate timeout to next timer event.
+         * Since timerfd is not in event loop, we need to manually poll it.
+         * Use a short timeout (16ms ~ 60Hz) to ensure timely timer handling.
+         */
+        int timeout_ms = 16;
+
+        int rc = wl_event_loop_dispatch(comp->loop, timeout_ms);
         if (rc < 0 && errno != EINTR) {
             break;
+        }
+
+        /* Manually handle timer events since timerfd is not in event loop */
+        if (comp->timerfd >= 0 && comp->timer_source) {
+            uint64_t expirations = 0;
+            long read_rc = sys_read(comp->timerfd, &expirations, (long)sizeof(expirations));
+            if (read_rc > 0 && expirations > 0) {
+                comp_handle_timer_tick(comp, expirations);
+            }
         }
     }
 
@@ -1347,20 +1363,24 @@ int comp_run(struct compositor_state *comp) {
 
 int comp_scheduler_start(struct compositor_state *comp) {
     if (!comp || !comp->loop) {
+        printf("[SCHEDULER-DEBUG] comp or loop is NULL\n");
         return -1;
     }
     if (comp->timerfd >= 0) {
         return 0;
     }
 
-    int fd = timerfd_create(CLOCK_MONOTONIC, 0);
+    int fd = timerfd_create(CLOCK_MONOTONIC, TFD_NONBLOCK);
     if (fd < 0) {
+        printf("[SCHEDULER-DEBUG] timerfd_create failed: %d\n", errno);
         return -1;
     }
+    printf("[SCHEDULER-DEBUG] timerfd_create succeeded: fd=%d (nonblocking)\n", fd);
 
     comp->timerfd = fd;
     comp->next_tick_ms = (uint64_t)comp_now_msec() + comp->target_ms;
     if (comp_timer_arm(comp) < 0) {
+        printf("[SCHEDULER-DEBUG] comp_timer_arm failed\n");
         struct itimerspec disarm = {0};
         timerfd_settime(fd, 0, &disarm, NULL);
         sys_close(fd);
@@ -1368,16 +1388,25 @@ int comp_scheduler_start(struct compositor_state *comp) {
         comp->next_tick_ms = 0;
         return -1;
     }
+    printf("[SCHEDULER-DEBUG] comp_timer_arm succeeded\n");
 
+    printf("[SCHEDULER-DEBUG] About to call wl_event_loop_add_fd\n");
     comp->timer_source = wl_event_loop_add_fd(comp->loop,
                                               comp->timerfd,
                                               WL_EVENT_READABLE,
                                               comp_timerfd_cb,
                                               comp);
+    printf("[SCHEDULER-DEBUG] wl_event_loop_add_fd returned: %p (errno=%d)\n", (void *)comp->timer_source, errno);
     if (!comp->timer_source) {
-        comp_scheduler_stop(comp);
-        return -1;
+        printf("[SCHEDULER-DEBUG] Event loop add_fd returned NULL (errno=%d), bypassing event loop\n", errno);
+        /* Similar to input devices: timerfd doesn't support epoll in this environment.
+         * Mark timer_source as available with a sentinel value to indicate success,
+         * but we'll handle timer events manually in comp_run().
+         */
+        comp->timer_source = (void *)1;
+        printf("[SCHEDULER-DEBUG] Marked timer_source as available (sentinel)\n");
     }
+    printf("[SCHEDULER-DEBUG] Scheduler started successfully\n");
     return 0;
 }
 

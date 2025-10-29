@@ -38,16 +38,29 @@ static void compositor_bind(struct wl_client *client,
 }
 
 int compositor_global_init(struct compositor_state *comp) {
-    if (!comp || !comp->display) {
+    printf("[WAYLAND-DEBUG] compositor_global_init: entry\n");
+    if (!comp) {
+        printf("[WAYLAND-DEBUG] compositor_global_init: comp is NULL!\n");
         return -1;
     }
-    if (!wl_global_create(comp->display,
+    printf("[WAYLAND-DEBUG] compositor_global_init: comp=%p\n", (void *)comp);
+    if (!comp->display) {
+        printf("[WAYLAND-DEBUG] compositor_global_init: comp->display is NULL!\n");
+        return -1;
+    }
+    printf("[WAYLAND-DEBUG] compositor_global_init: comp=%p display=%p\n", (void *)comp, (void *)comp->display);
+    printf("[WAYLAND-DEBUG] compositor_global_init: calling wl_global_create...\n");
+    struct wl_global *global = wl_global_create(comp->display,
                           &wl_compositor_interface,
                           4,
                           comp,
-                          compositor_bind)) {
+                          compositor_bind);
+    printf("[WAYLAND-DEBUG] compositor_global_init: wl_global_create returned %p\n", (void *)global);
+    if (!global) {
+        printf("[WAYLAND-DEBUG] compositor_global_init: wl_global_create FAILED\n");
         return -1;
     }
+    printf("[WAYLAND-DEBUG] compositor_global_init: SUCCESS\n");
     return 0;
 }
 

@@ -202,9 +202,11 @@ void acpi_parse_madt(void) {
                madt->flags,
                (madt->flags & 1) ? "yes" : "no");
 
-    /* Initialize LAPIC for BSP (Bootstrap Processor) */
-    extern void lapic_init(uint64_t lapic_base);
-    lapic_init(madt->local_apic_address);
+    /* TODO: Initialize LAPIC for BSP (Bootstrap Processor) */
+    /* Temporarily disabled to test PIC-only mode */
+    /* extern void lapic_init(uint64_t lapic_base); */
+    /* lapic_init(madt->local_apic_address); */
+    fut_printf("[ACPI] LAPIC initialization skipped (using PIC mode)\n");
 
     /* Parse MADT entries */
     uint32_t cpu_count = 0;
@@ -299,6 +301,11 @@ void acpi_parse_madt(void) {
 
         ioapic_init(io_apic_address, io_apic_gsi_base);
 
+        /* TODO: Disable legacy PIC and switch to APIC mode (currently keeping PIC active) */
+        /* extern void fut_pic_disable(void); */
+        /* fut_pic_disable(); */
+        /* fut_printf("[ACPI] Legacy PIC disabled (APIC mode active)\n"); */
+
         /* Configure basic IRQs to route to BSP (APIC ID 0) */
         /* IRQ0 = Timer (vector 32), IRQ1 = Keyboard (vector 33) */
         /* Keep them masked for now - will be enabled when drivers request them */
@@ -319,7 +326,7 @@ void acpi_parse_madt(void) {
         ioapic_set_irq(4, 36, 0, true, false);
 
         /* TODO: Properly parse and apply all interrupt overrides from MADT */
-        /* TODO: Enable IRQs when drivers register handlers */
+        /* TODO: Enable timer IRQ on IOAPIC when switching to APIC mode */
     }
 
     /* Start Application Processors if we have multiple CPUs */

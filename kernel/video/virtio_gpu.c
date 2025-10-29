@@ -133,14 +133,18 @@ struct virtio_gpu_resource_attach_backing {
     } entries[1];
 } __attribute__((packed));
 
-struct virtio_gpu_set_scanout {
-    struct virtio_gpu_ctrl_hdr hdr;
-    uint32_t scanout_id;
-    uint32_t resource_id;
+struct virtio_gpu_rect {
     uint32_t x;
     uint32_t y;
     uint32_t width;
     uint32_t height;
+} __attribute__((packed));
+
+struct virtio_gpu_set_scanout {
+    struct virtio_gpu_ctrl_hdr hdr;
+    struct virtio_gpu_rect r;
+    uint32_t scanout_id;
+    uint32_t resource_id;
 } __attribute__((packed));
 
 struct virtio_gpu_transfer_to_host_2d {
@@ -646,12 +650,14 @@ static int virtio_gpu_set_scanout(uint32_t scanout_id, uint32_t resource_id, uin
             .ctx_id = 0,
             .ring_idx = 0,
         },
+        .r = {
+            .x = 0,
+            .y = 0,
+            .width = width,
+            .height = height,
+        },
         .scanout_id = scanout_id,
         .resource_id = resource_id,
-        .x = 0,
-        .y = 0,
-        .width = width,
-        .height = height,
     };
 
     fut_printf("[VIRTIO-GPU] Setting scanout: id=%u resource=%u %ux%u\n",

@@ -22,6 +22,7 @@ QEMU_MEM       ?= 256
 QEMU_IMG_SIZE  ?= 64M
 QEMU_DISK_IMG  ?= futura_disk.img
 
+QEMU_FLAGS += -cpu Broadwell,+smap  # Enable SMAP support for STAC/CLAC instructions
 QEMU_FLAGS += -device isa-debug-exit,iobase=0xf4,iosize=0x4 -no-reboot -no-shutdown
 QEMU_FLAGS += -drive if=virtio,file=$(QEMU_DISK_IMG),format=raw
 QEMU_FLAGS += -netdev user,id=net0 -device virtio-net,netdev=net0

@@ -27,6 +27,9 @@ void tty_ldisc_init(tty_ldisc_t *ldisc, void (*echo)(char), void (*signal)(int))
     /* Enable canonical mode and echo by default */
     ldisc->flags = TTY_CANONICAL | TTY_ECHO | TTY_SIGNAL;
 
+    /* Initialize spinlock for synchronizing buffer access */
+    fut_spinlock_init(&ldisc->lock);
+
     /* Allocate wait queue */
     ldisc->read_waitq = (fut_waitq_t *)fut_pmm_alloc_page();
     if (ldisc->read_waitq) {
@@ -139,11 +142,19 @@ static void erase_line(tty_ldisc_t *ldisc) {
  * Process an input character through the line discipline.
  */
 void tty_ldisc_input(tty_ldisc_t *ldisc, char c) {
+    if (!ldisc) {
+        return;  /* Safety check */
+    }
+
+    /* Acquire lock for buffer modification */
+    fut_spinlock_acquire(&ldisc->lock);
+
     /* Handle special characters first */
 
     /* Backspace / Delete - erase last character */
     if (c == BS || c == DEL) {
         erase_last_char(ldisc);
+        fut_spinlock_release(&ldisc->lock);
         return;
     }
 
@@ -153,6 +164,7 @@ void tty_ldisc_input(tty_ldisc_t *ldisc, char c) {
         if (ldisc->flags & TTY_ECHO && ldisc->echo) {
             ldisc_echo_string(ldisc, "^U\r\n");
         }
+        fut_spinlock_release(&ldisc->lock);
         return;
     }
 
@@ -167,6 +179,7 @@ void tty_ldisc_input(tty_ldisc_t *ldisc, char c) {
         /* Clear current line */
         erase_line(ldisc);
         ldisc->line_start = ldisc->write_pos;
+        fut_spinlock_release(&ldisc->lock);
         return;
     }
 
@@ -190,6 +203,7 @@ void tty_ldisc_input(tty_ldisc_t *ldisc, char c) {
         /* Clear current line */
         erase_line(ldisc);
         ldisc->line_start = ldisc->write_pos;
+        fut_spinlock_release(&ldisc->lock);
         return;
     }
 
@@ -205,6 +219,7 @@ void tty_ldisc_input(tty_ldisc_t *ldisc, char c) {
         if (ldisc->flags & TTY_ECHO && ldisc->echo) {
             ldisc->echo('\a');  /* Bell */
         }
+        fut_spinlock_release(&ldisc->lock);
         return;
     }
 
@@ -241,6 +256,9 @@ void tty_ldisc_input(tty_ldisc_t *ldisc, char c) {
             fut_waitq_wake_all(ldisc->read_waitq);
         }
     }
+
+    /* Release lock before returning */
+    fut_spinlock_release(&ldisc->lock);
 }
 
 /**
@@ -292,17 +310,20 @@ ssize_t tty_ldisc_read(tty_ldisc_t *ldisc, void *buf, size_t len) {
     char *output = (char *)buf;
     size_t bytes_read = 0;
 
+    /* Acquire lock before accessing buffer */
+    fut_spinlock_acquire(&ldisc->lock);
+
     /* In canonical mode, block until a complete line is available */
     if (ldisc->flags & TTY_CANONICAL) {
         while (!tty_ldisc_data_available(ldisc)) {
             if (ldisc->read_waitq) {
-                /* Sleep on wait queue */
-                fut_spinlock_t dummy_lock;
-                fut_spinlock_init(&dummy_lock);
-                fut_waitq_sleep_locked(ldisc->read_waitq, &dummy_lock, FUT_THREAD_BLOCKED);
+                /* Sleep on wait queue - lock will be released during sleep */
+                fut_waitq_sleep_locked(ldisc->read_waitq, &ldisc->lock, FUT_THREAD_BLOCKED);
+                /* Lock is automatically re-acquired after waking up */
             } else {
-                /* No wait queue - busy wait (not ideal) */
-                /* This shouldn't happen in normal operation */
+                /* No wait queue - error condition */
+                fut_spinlock_release(&ldisc->lock);
+                fut_printf("[LDISC] ERROR: No wait queue available in tty_ldisc_read\n");
                 return -EAGAIN;
             }
         }
@@ -320,6 +341,9 @@ ssize_t tty_ldisc_read(tty_ldisc_t *ldisc, void *buf, size_t len) {
             break;
         }
     }
+
+    /* Release lock */
+    fut_spinlock_release(&ldisc->lock);
 
     return (ssize_t)bytes_read;
 }

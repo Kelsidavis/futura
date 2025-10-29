@@ -11,6 +11,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <stdbool.h>
+#include <kernel/fut_sched.h>
 
 #ifndef _SSIZE_T_DEFINED
 #define _SSIZE_T_DEFINED
@@ -45,6 +46,9 @@ typedef struct tty_ldisc {
 
     /* Wait queue for blocking reads */
     struct fut_waitq *read_waitq;
+
+    /* Spinlock for synchronizing access between input thread and readers */
+    fut_spinlock_t lock;
 
     /* Echo function pointer */
     void (*echo)(char c);

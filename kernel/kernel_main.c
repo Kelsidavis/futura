@@ -871,7 +871,12 @@ void fut_kernel_main(void) {
     fut_serial_puts("[DEBUG] kernel_main: Before boot banner\n");
     fut_boot_banner();
 
+#ifdef WAYLAND_INTERACTIVE_MODE
+    /* In interactive/headful mode, always enable framebuffer for virtio-gpu */
+    bool fb_enabled = true;
+#else
     bool fb_enabled = boot_flag_enabled("fb", false);  /* Disabled in favor of wayland */
+#endif
     bool fb_available = fb_enabled && fb_is_available();
     fut_printf("[INIT] fb_enabled=%d fb_available=%d\n",
                fb_enabled ? 1 : 0, fb_available ? 1 : 0);
@@ -895,25 +900,30 @@ void fut_kernel_main(void) {
     /* DISABLED: Smoke tests consume too much physical memory
        Needed by wayland to create process memory managers
     */
-    bool input_enabled = false;  /* Disabled to save physical pages */
-    /*
-    fut_echo_selftest();
-    if (fb_enabled) {
-        fut_fb_smoke();
-    }
+    fut_printf("[INIT] Smoke tests disabled to free physical pages for wayland\n");
 
-    input_enabled = boot_flag_enabled("input", true);
+    /* Initialize input drivers - REQUIRED for Wayland compositor */
+#ifdef ENABLE_WAYLAND_DEMO
+    fut_printf("[INIT] Initializing input drivers for Wayland...\n");
+    bool input_enabled = true;  /* Required for interactive mode */
+    int input_rc = fut_input_hw_init(true, true);
+    if (input_rc != 0) {
+        fut_printf("[INPUT] init failed: %d - Wayland may not work!\n", input_rc);
+        input_enabled = false;
+    } else {
+        fut_printf("[INPUT] Keyboard and mouse drivers initialized\n");
+    }
+#else
+    /* For non-interactive builds, allow boot flag to control input */
+    bool input_enabled = boot_flag_enabled("input", false);
     if (input_enabled) {
         int input_rc = fut_input_hw_init(true, true);
         if (input_rc != 0) {
             fut_printf("[INPUT] init failed: %d\n", input_rc);
             input_enabled = false;
-        } else {
-            fut_input_smoke();
         }
     }
-    */
-    fut_printf("[INIT] Smoke tests disabled to free physical pages for wayland\n");
+#endif
 
     /* ========================================
      *   Step 2: Initialize FIPC Subsystem
@@ -1349,36 +1359,17 @@ void fut_kernel_main(void) {
             fut_test_pass();
 #endif
         } else {
-            /* Interactive mode: keep system running for GUI interaction */
+            /* Interactive mode: Scheduler will start and switch to processes */
             fut_printf("[INIT] ========================================\n");
-            fut_printf("[INIT] Wayland Compositor Ready for Interaction\n");
-            fut_printf("[INIT] Minimized windows feature: ACTIVE\n");
+            fut_printf("[INIT] Wayland Interactive Mode - Scheduler Starting\n");
             fut_printf("[INIT] ========================================\n");
-            while (1) {
-#ifdef __x86_64__
-                __asm__ volatile("hlt");
-#elif defined(__aarch64__)
-                __asm__ volatile("wfi");  /* Wait For Interrupt */
-#else
-                /* Generic idle: just loop */
-                __asm__ volatile("pause");
-#endif
-            }
+            /* Removed HLT loop - scheduler must start to run processes */
         }
     } else if (wayland_interactive) {
-        /* Interactive mode requested but processes failed to launch */
+        /* Interactive mode requested but processes failed to launch - still start scheduler */
         fut_printf("[WARN] Interactive mode requested but compositor/clients failed to launch\n");
         fut_printf("[WARN] Wayland exec: %d, client exec: %d\n", wayland_exec, wayland_client_exec);
-        fut_boot_delay_ms(100);
-        while (1) {
-#ifdef __x86_64__
-            __asm__ volatile("hlt");
-#elif defined(__aarch64__)
-            __asm__ volatile("wfi");  /* Wait For Interrupt */
-#else
-            __asm__ volatile("pause");
-#endif
-        }
+        fut_printf("[WARN] Continuing to scheduler anyway\n");
     }
 #endif
 

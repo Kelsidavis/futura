@@ -845,11 +845,15 @@ void fut_kernel_main(void) {
     }
 
 #if defined(__x86_64__)
-    /* Initialize per-CPU data for BSP with real APIC ID from LAPIC */
+    /* Initialize per-CPU data for BSP */
     fut_printf("[INIT] Initializing BSP per-CPU data...\n");
-    uint32_t bsp_apic_id = lapic_get_id();
+
+    /* For now, use CPU ID 0 for BSP (LAPIC disabled for PIC mode testing) */
+    /* TODO: Restore lapic_get_id() when LAPIC is re-enabled */
+    uint32_t bsp_apic_id = 0;  /* lapic_get_id() requires LAPIC init */
+
     fut_percpu_init(bsp_apic_id, 0);
-    fut_printf("[INIT] Per-CPU data initialized for BSP (APIC ID %u, index 0)\n", bsp_apic_id);
+    fut_printf("[INIT] Per-CPU data initialized for BSP (CPU ID %u, index 0)\n", bsp_apic_id);
 
     /* Set GS_BASE to point to per-CPU data */
     fut_percpu_set(&fut_percpu_data[0]);
@@ -1500,6 +1504,11 @@ void fut_kernel_main(void) {
     fut_printf("   Kernel initialization complete!\n");
     fut_printf("   Starting scheduler...\n");
     fut_printf("=======================================================\n\n");
+
+    /* Enable timer interrupts now that all subsystems are ready */
+    extern void fut_irq_enable(uint8_t irq);
+    fut_printf("[INIT] Enabling timer IRQ for preemptive scheduling...\n");
+    fut_irq_enable(0);  /* Unmask PIC IRQ 0 (timer) */
 
     /* Enable interrupts and start scheduling */
     /* This should never return - scheduler takes over */

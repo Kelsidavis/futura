@@ -15,20 +15,19 @@
  *   rsi = user stack (RSP)
  *   rdx = argc
  *   rcx = argv
+ *
+ * CRITICAL: This function must execute atomically without interruption.
+ * We disable interrupts IMMEDIATELY and keep them disabled until IRETQ.
+ * If a timer interrupt fires while we're loading user segments, it could
+ * corrupt the segment register state and cause crashes.
  */
 .global fut_do_user_iretq
 .type fut_do_user_iretq, @function
 fut_do_user_iretq:
-    /* Disable interrupts before building IRETQ frame */
+    /* CRITICAL: Disable interrupts FIRST, before touching anything!
+     * This must be the very first instruction to prevent timer interrupts
+     * from firing while we're in a transitional state. */
     cli
-
-    /* Build IRETQ frame on stack
-     * Arguments (System V ABI):
-     *   rdi = entry point (RIP)
-     *   rsi = user stack (RSP)
-     *   rdx = argc
-     *   rcx = argv
-     */
 
     /* Move arguments to temporary registers */
     movq %rdi, %r11                     /* r11 = entry (RIP) */
@@ -36,7 +35,14 @@ fut_do_user_iretq:
     movq %rdx, %rdi                     /* rdi = argc (first user arg) */
     movq %rcx, %rsi                     /* rsi = argv (second user arg) */
 
-    /* Build IRETQ frame */
+    /* Build IRETQ frame on stack
+     * Stack layout (growing down):
+     *   [SS]     = 0x23 (user data selector)
+     *   [RSP]    = user stack pointer
+     *   [RFLAGS] = 0x202 (IF | reserved bit 1)
+     *   [CS]     = 0x1b (user code selector)
+     *   [RIP]    = entry point
+     */
     pushq $0x23                         /* SS = USER_DATA_SELECTOR (0x20|3) */
     pushq %r10                          /* RSP = user stack */
     pushq $0x202                        /* RFLAGS = IF set, reserved bit 1 */
@@ -94,6 +100,16 @@ fut_do_user_iretq:
     movb $'!', %al
     outb %al, %dx
 
+    /* Debug: Check SS before loading segments */
+    movb $'S', %al
+    outb %al, %dx
+    movw %ss, %ax
+    movb %ah, %al
+    outb %al, %dx
+    movw %ss, %ax
+    /* AL already has low byte */
+    outb %al, %dx
+
     /* Set user data segments for ring transition
      * IRETQ will validate that all segment registers have DPL >= CPL
      * User code has CPL=3, so we need user data selectors with DPL=3 (0x23)
@@ -102,7 +118,18 @@ fut_do_user_iretq:
     movw %ax, %ds
     movw %ax, %es
     movw %ax, %fs
-    movw %ax, %gs
+    /* DON'T load GS - it uses MSR for per-CPU data! */
+
+    /* Debug: Check SS after loading segments */
+    movw $0x3F8, %dx
+    movb $'T', %al
+    outb %al, %dx
+    movw %ss, %ax
+    movb %ah, %al
+    outb %al, %dx
+    movw %ss, %ax
+    /* AL already has low byte */
+    outb %al, %dx
 
     /* Return to userspace - this never returns */
     iretq

@@ -425,10 +425,6 @@ void fut_request_reschedule(void) {
 
 /* PIC initialization */
 static void fut_pic_init(void) {
-    /* Save masks */
-    uint8_t mask1 = inb(PIC1_DATA);
-    uint8_t mask2 = inb(PIC2_DATA);
-
     /* Start initialization sequence */
     outb(PIC1_COMMAND, ICW1_INIT | ICW1_ICW4);
     io_wait();
@@ -453,9 +449,20 @@ static void fut_pic_init(void) {
     outb(PIC2_DATA, ICW4_8086);
     io_wait();
 
-    /* Restore masks */
-    outb(PIC1_DATA, mask1);
-    outb(PIC2_DATA, mask2);
+    /* Mask all IRQs initially - they will be unmasked individually when ready */
+    /* Don't restore firmware masks as they may have interrupts enabled too early */
+    outb(PIC1_DATA, 0xFF);  /* Mask all IRQs on master PIC */
+    outb(PIC2_DATA, 0xFF);  /* Mask all IRQs on slave PIC */
+}
+
+/**
+ * Disable the legacy 8259 PIC.
+ * Must be called when switching to APIC mode to prevent conflicts.
+ */
+void fut_pic_disable(void) {
+    /* Mask all interrupts on both PICs */
+    outb(PIC1_DATA, 0xFF);
+    outb(PIC2_DATA, 0xFF);
 }
 
 void fut_pic_send_eoi(uint8_t irq) {
@@ -638,7 +645,8 @@ void fut_platform_init(uint32_t multiboot_magic __attribute__((unused)),
     fut_pit_init();
 
     /* Enable timer IRQ */
-    fut_irq_enable(0);
+    /* DISABLED: Timer IRQ will be unmasked later after scheduler initialization */
+    /* fut_irq_enable(0); */
 
     /* Enable interrupts
      * Note: Per-CPU data will be initialized later in kernel_main after ACPI/LAPIC init.
@@ -830,7 +838,18 @@ void __attribute__((weak)) fut_isr_handler(void *regs_ptr) {
     fut_serial_puts("\nSegments:\n");
     fut_serial_puts("  CS: 0x"); print_hex64(regs->cs); fut_serial_puts("\n");
     fut_serial_puts("  DS: 0x"); print_hex64(regs->ds); fut_serial_puts("\n");
-    fut_serial_puts("  SS: 0x"); print_hex64(regs->ss); fut_serial_puts("\n");
+
+    /* SS/RSP are only in the frame if there was a privilege level change (CS & 3).
+     * For ring 0 exceptions, read SS directly from the register instead. */
+    if ((regs->cs & 3) == 0) {
+        /* Ring 0 exception - SS not in frame, read from register */
+        uint16_t current_ss;
+        __asm__ volatile("mov %%ss, %0" : "=r"(current_ss));
+        fut_serial_puts("  SS: 0x"); print_hex64(current_ss); fut_serial_puts(" (from register)\n");
+    } else {
+        /* Ring 3 exception - SS is in frame */
+        fut_serial_puts("  SS: 0x"); print_hex64(regs->ss); fut_serial_puts(" (from frame)\n");
+    }
 
     fut_serial_puts("\nSystem halted.\n");
     fut_serial_puts("========================================\n");

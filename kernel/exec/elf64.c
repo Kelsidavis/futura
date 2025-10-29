@@ -424,26 +424,22 @@ static int build_user_stack(fut_mm_t *mm,
     }
 
     /* Extract values from the user entry structure BEFORE freeing it */
+    /* CRITICAL: Extract ALL values BEFORE any printf! Printf can trigger CR3 switches! */
     struct fut_user_entry *info = (struct fut_user_entry *)arg;
-
-    // fut_printf("[EXTRACT-1] info=%p\n", info);
     uint64_t entry = info->entry;
-    // fut_printf("[EXTRACT-2] entry=0x%llx\n", entry);
-
     uint64_t stack = info->stack;
-    // fut_printf("[EXTRACT-3] stack=0x%llx\n", stack);
-
     uint64_t argc = info->argc;
-    // fut_printf("[EXTRACT-4] argc=%llu\n", argc);
-
     uint64_t argv_ptr = info->argv_ptr;
-    // fut_printf("[EXTRACT-5] argv=0x%llx\n", argv_ptr);
+    fut_task_t *task = info->task;
+
+    /* Now safe to printf - values are in local variables */
+    fut_printf("[EXTRACT] entry=0x%llx stack=0x%llx argc=%llu argv=0x%llx\n",
+               entry, stack, argc, argv_ptr);
 
     /* Don't free the arg structure - we never return from IRETQ anyway
      * and freeing might corrupt something */
 
-    /* Get the task and mm from the entry structure */
-    fut_task_t *task = info->task;
+    /* Get the mm from the task (task already extracted above) */
     fut_mm_t *mm = task ? task->mm : NULL;
 
     if (!task || !mm) {

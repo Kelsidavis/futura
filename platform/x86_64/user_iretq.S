@@ -49,15 +49,6 @@ fut_do_user_iretq:
     pushq $0x1b                         /* CS = USER_CODE_SELECTOR (0x18|3) */
     pushq %r11                          /* RIP = entry point */
 
-    /* Debug: Write 'Z' just before IRETQ */
-    pushq %rax
-    pushq %rdx
-    movw $0x3F8, %dx
-    movb $'Z', %al
-    outb %al, %dx
-    popq %rdx
-    popq %rax
-
     /* Zero unused registers for clean userspace entry */
     xorq %rax, %rax
     xorq %rbx, %rbx
@@ -94,22 +85,6 @@ fut_do_user_iretq:
     pxor %xmm14, %xmm14
     pxor %xmm15, %xmm15
 
-    /* Debug: Write '!' just before IRETQ - but rax/rdx are now zero!
-     * Load them again after zeroing */
-    movw $0x3F8, %dx
-    movb $'!', %al
-    outb %al, %dx
-
-    /* Debug: Check SS before loading segments */
-    movb $'S', %al
-    outb %al, %dx
-    movw %ss, %ax
-    movb %ah, %al
-    outb %al, %dx
-    movw %ss, %ax
-    /* AL already has low byte */
-    outb %al, %dx
-
     /* Set user data segments for ring transition
      * IRETQ will validate that all segment registers have DPL >= CPL
      * User code has CPL=3, so we need user data selectors with DPL=3 (0x23)
@@ -119,17 +94,6 @@ fut_do_user_iretq:
     movw %ax, %es
     movw %ax, %fs
     /* DON'T load GS - it uses MSR for per-CPU data! */
-
-    /* Debug: Check SS after loading segments */
-    movw $0x3F8, %dx
-    movb $'T', %al
-    outb %al, %dx
-    movw %ss, %ax
-    movb %ah, %al
-    outb %al, %dx
-    movw %ss, %ax
-    /* AL already has low byte */
-    outb %al, %dx
 
     /* Return to userspace - this never returns */
     iretq

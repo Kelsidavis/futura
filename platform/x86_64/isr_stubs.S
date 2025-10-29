@@ -227,12 +227,12 @@ isr_common_stub:
     movw %gs, %ax
     pushq %rax
 
-    /* Load kernel data segment */
+    /* Load kernel data segment (but DON'T touch GS - it uses MSR base for per-CPU data!) */
     movw $0x10, %ax
     movw %ax, %ds
     movw %ax, %es
     movw %ax, %fs
-    movw %ax, %gs
+    /* GS intentionally NOT reloaded - must preserve GS_BASE MSR setup */
 
     /* Align stack to 16 bytes for System V ABI */
     movq %rsp, %rbp
@@ -245,9 +245,9 @@ isr_common_stub:
     /* Restore stack */
     movq %rbp, %rsp
 
-    /* Pop segment registers */
-    popq %rax
-    movw %ax, %gs
+    /* Pop segment registers (but DON'T restore GS - must preserve per-CPU setup!) */
+    popq %rax            /* Discard saved GS value */
+    /* GS intentionally NOT restored - must preserve GS_BASE MSR */
     popq %rax
     movw %ax, %fs
     popq %rax
@@ -334,12 +334,12 @@ irq_common_stub:
     movw %gs, %ax
     pushq %rax
 
-    /* Load kernel data segment */
+    /* Load kernel data segment (but DON'T touch GS - it uses MSR base for per-CPU data!) */
     movw $0x10, %ax
     movw %ax, %ds
     movw %ax, %es
     movw %ax, %fs
-    movw %ax, %gs
+    /* GS intentionally NOT reloaded - must preserve GS_BASE MSR setup */
 
     /* Align stack to 16 bytes for System V ABI */
     movq %rsp, %rbp
@@ -352,9 +352,9 @@ irq_common_stub:
     /* Restore stack */
     movq %rbp, %rsp
 
-    /* Pop segment registers */
-    popq %rax
-    movw %ax, %gs
+    /* Pop segment registers (but DON'T restore GS - must preserve per-CPU setup!) */
+    popq %rax            /* Discard saved GS value */
+    /* GS intentionally NOT restored - must preserve GS_BASE MSR */
     popq %rax
     movw %ax, %fs
     popq %rax
@@ -445,12 +445,12 @@ irq0_timer:
     movw %gs, %ax
     pushq %rax
 
-    /* Load kernel data segment */
+    /* Load kernel data segment (but DON'T touch GS - it uses MSR base for per-CPU data!) */
     movw $0x10, %ax
     movw %ax, %ds
     movw %ax, %es
     movw %ax, %fs
-    movw %ax, %gs
+    /* GS intentionally NOT reloaded - must preserve GS_BASE MSR setup */
 
     /* Save interrupt frame pointer before stack alignment */
     movq %rsp, fut_current_frame(%rip)
@@ -474,9 +474,9 @@ irq0_timer:
     /* Restore stack */
     movq %rbp, %rsp
 
-    /* Pop segment registers */
-    popq %rax
-    movw %ax, %gs
+    /* Pop segment registers (but DON'T restore GS - must preserve per-CPU setup!) */
+    popq %rax            /* Discard saved GS value */
+    /* GS intentionally NOT restored - must preserve GS_BASE MSR */
     popq %rax
     movw %ax, %fs
     popq %rax

@@ -74,14 +74,9 @@ static inline void fut_percpu_set(fut_percpu_t *percpu) {
 #if defined(__x86_64__)
     uint64_t addr = (uint64_t)percpu;
 
-    /* Load kernel data segment selector (0x10) into GS  */
-    __asm__ volatile(
-        "mov $0x10, %%ax\n\t"
-        "mov %%ax, %%gs"
-        :
-        :
-        : "ax", "memory"
-    );
+    /* In x86_64 long mode, GS base comes from GS_BASE MSR.
+     * IMPORTANT: Don't change the GS selector - just write the MSR.
+     * Interrupt handlers must NOT reload GS to preserve this setup. */
 
     /* Write to IA32_GS_BASE MSR (0xC0000101) */
     __asm__ volatile(

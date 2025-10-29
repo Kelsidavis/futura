@@ -1326,13 +1326,11 @@ void fut_kernel_main(void) {
 #endif
 
     /* Check if interactive mode is enabled (for GUI testing) */
-    /* First try boot argument, then fall back to compile-time flag */
-    bool wayland_interactive = false;  /* DISABLED: Force non-interactive mode for testing */
-    /* Original code: boot_flag_enabled("WAYLAND_INTERACTIVE", false); */
-#ifdef WAYLAND_INTERACTIVE_MODE
-    if (!wayland_interactive) {
-        /* wayland_interactive = (WAYLAND_INTERACTIVE_MODE != 0); */  /* DISABLED */
-    }
+    /* When ENABLE_WAYLAND_DEMO is set, enable interactive mode so user can interact with shell */
+    bool wayland_interactive = false;
+#ifdef ENABLE_WAYLAND_DEMO
+    /* For wayland demo, keep system interactive for user interaction */
+    wayland_interactive = true;
 #endif
 
     if (wayland_exec == 0 && wayland_client_exec == 0) {

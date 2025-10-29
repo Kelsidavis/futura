@@ -1416,7 +1416,10 @@ void comp_scheduler_stop(struct compositor_state *comp) {
     }
 
     if (comp->timer_source) {
-        wl_event_source_remove(comp->timer_source);
+        /* Only call wl_event_source_remove if it's a valid pointer, not the sentinel */
+        if (comp->timer_source != (void *)1) {
+            wl_event_source_remove(comp->timer_source);
+        }
         comp->timer_source = NULL;
     }
 

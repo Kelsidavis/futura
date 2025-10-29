@@ -72,6 +72,8 @@ static int fb_open(void *inode, int flags, void **private_data) {
         return -ENODEV;
     }
     fb->open_count++;
+    FB_DBG("fb_open: count=%u\n", fb->open_count);
+    fut_printf("[FB-CHAR] fb_open called, count=%u\n", fb->open_count);
     if (private_data) {
         *private_data = fb;
     }
@@ -88,6 +90,7 @@ static int fb_ioctl(void *inode, void *private_data,
 
     switch (req) {
     case FBIOGET_INFO: {
+        fut_printf("[FB-CHAR] fb_ioctl FBIOGET_INFO called\n");
         struct fut_fb_info info = fb->hw.info;
         return fut_copy_to_user((void *)arg, &info, sizeof(info));
     }
@@ -99,9 +102,11 @@ static int fb_ioctl(void *inode, void *private_data,
         }
         fb->vsync_ms = value;
         FB_DBG("set vsync hint=%u ms\n", value);
+        fut_printf("[FB-CHAR] fb_ioctl FBIOSET_VSYNC_MS: %u ms\n", value);
         return 0;
     }
     default:
+        fut_printf("[FB-CHAR] fb_ioctl unknown req=0x%lx\n", req);
         break;
     }
 
@@ -152,6 +157,9 @@ static void *fb_mmap(void *inode, void *private_data, void *u_addr, size_t len,
         return (void *)(intptr_t)(-ENODEV);
     }
 
+    fut_printf("[FB-CHAR] fb_mmap called: u_addr=%p len=%zu off=%ld prot=0x%x\n",
+               u_addr, len, (long)off, prot);
+
     size_t fb_size = (size_t)fb->hw.info.pitch * fb->hw.info.height;
     if ((off & (PAGE_SIZE - 1)) != 0) {
         return (void *)(intptr_t)(-EINVAL);
@@ -192,11 +200,13 @@ static const struct fut_file_ops fb_fops = {
 };
 
 void fb_char_init(void) {
+    fut_printf("[FB-CHAR] fb_char_init called\n");
     if (fb_get_info(&g_fb_dev.hw) != 0) {
+        fut_printf("[FB-CHAR] fb_get_info failed, aborting\n");
         return;
     }
 
-    FB_DBG("probe %ux%u pitch=%u bpp=%u phys=0x%llx\n",
+    fut_printf("[FB-CHAR] probe %ux%u pitch=%u bpp=%u phys=0x%llx\n",
            g_fb_dev.hw.info.width,
            g_fb_dev.hw.info.height,
            g_fb_dev.hw.info.pitch,
@@ -208,6 +218,10 @@ void fb_char_init(void) {
     g_fb_dev.vsync_ms = 0;
     g_fb_dev.open_count = 0;
 
-    (void)chrdev_register(FB_MAJOR, FB_MINOR, &fb_fops, "fb0", &g_fb_dev);
-    (void)devfs_create_chr("/dev/fb0", FB_MAJOR, FB_MINOR);
+    int rc1 = chrdev_register(FB_MAJOR, FB_MINOR, &fb_fops, "fb0", &g_fb_dev);
+    fut_printf("[FB-CHAR] chrdev_register returned %d\n", rc1);
+
+    int rc2 = devfs_create_chr("/dev/fb0", FB_MAJOR, FB_MINOR);
+    fut_printf("[FB-CHAR] devfs_create_chr returned %d\n", rc2);
+    fut_printf("[FB-CHAR] /dev/fb0 device registered\n");
 }

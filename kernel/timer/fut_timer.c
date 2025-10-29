@@ -161,13 +161,15 @@ void fut_timer_tick(void) {
     // Wake any threads whose sleep time has expired
     wake_sleeping_threads();
 
+    // Process timer events
     process_timer_events();
 
     // Only trigger preemptive scheduling if the scheduler has been started
     // (i.e., current_thread != NULL). This prevents premature scheduling
     // before the test harness has created any threads.
     extern fut_thread_t *fut_thread_current(void);
-    if (fut_thread_current() != nullptr) {
+    fut_thread_t *current = fut_thread_current();
+    if (current != nullptr) {
         // Trigger preemptive scheduling
         // This will call fut_switch_context_irq() if a thread switch is needed
         fut_schedule();
@@ -266,6 +268,8 @@ uint64_t fut_get_time_us(void) {
 
 void fut_timer_irq(void) {
     fut_timer_tick();
+
+    /* Send EOI to PIC (TODO: switch to LAPIC EOI when APIC mode is fully working) */
     fut_irq_send_eoi(0);
 }
 
@@ -317,12 +321,7 @@ void fut_timer_subsystem_init(void) {
     // Program PIT hardware (x86-64 only)
 #if defined(__x86_64__)
     pit_init(FUT_TIMER_HZ);
-
-    // Unmask timer IRQ. On most x86 systems, ISA IRQ 0 (PIT timer) is remapped to GSI 2
-    // due to the legacy 8259 PIC interrupt line conflict. We unmask GSI 2, not IRQ 0.
-    extern void ioapic_unmask_irq(uint8_t irq);
-    ioapic_unmask_irq(2);  // GSI 2, not IRQ 0
-    fut_printf("[TIMER] Timer IRQ unmasked (GSI 2)\n");
+    // Note: Timer IRQ will be unmasked later after ACPI initialization
 #else
     // ARM64: Timer is already initialized by platform layer (fut_timer_init)
 #endif

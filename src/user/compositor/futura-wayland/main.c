@@ -8,6 +8,7 @@
 
 #include <wayland-server-core.h>
 #include <stdbool.h>
+#include <errno.h>
 #include <user/stdio.h>
 #include <user/stdlib.h>
 
@@ -47,14 +48,6 @@ int main(void) {
 
     struct compositor_state comp = {0};
 
-    comp.display = wl_display_create();
-    if (!comp.display) {
-        printf("[WAYLAND] failed to create wl_display\n");
-        return -1;
-    }
-
-    comp.loop = wl_display_get_event_loop(comp.display);
-
     const char *bb_env = getenv("WAYLAND_BACKBUFFER");
     bool want_backbuffer = true;
     if (bb_env && bb_env[0] == '0' && bb_env[1] == '\0') {
@@ -92,10 +85,24 @@ int main(void) {
     comp.resize_enabled = want_resize;
     comp.throttle_enabled = want_throttle;
 
+    printf("[WAYLAND-DEBUG] About to call comp_state_init()...\n");
     if (comp_state_init(&comp) != 0) {
-        wl_display_destroy(comp.display);
+        printf("[WAYLAND] ERROR: comp_state_init() failed\n");
         return -1;
     }
+    printf("[WAYLAND-DEBUG] comp_state_init() succeeded\n");
+
+    printf("[WAYLAND-DEBUG] About to call wl_display_create()...\n");
+    comp.display = wl_display_create();
+    printf("[WAYLAND-DEBUG] wl_display_create() returned: %p\n", (void *)comp.display);
+    if (!comp.display) {
+        printf("[WAYLAND] failed to create wl_display\n");
+        comp_state_finish(&comp);
+        return -1;
+    }
+    printf("[WAYLAND-DEBUG] wl_display successfully created\n");
+
+    comp.loop = wl_display_get_event_loop(comp.display);
 
     if (comp_set_backbuffer_enabled(&comp, want_backbuffer) != 0) {
         printf("[WAYLAND] warning: backbuffer setup failed, falling back to direct FB\n");
@@ -112,16 +119,50 @@ int main(void) {
 
     wl_display_init_shm(comp.display);
 
-    if (compositor_global_init(&comp) != 0 ||
-        xdg_shell_global_init(&comp) != 0 ||
-        output_global_init(&comp) != 0 ||
-        shm_backend_init(&comp) != 0 ||
-        data_device_manager_init(&comp) != 0) {
-        printf("[WAYLAND] failed to initialise globals\n");
+    printf("[WAYLAND-DEBUG] Initializing compositor global...\n");
+    if (compositor_global_init(&comp) != 0) {
+        printf("[WAYLAND] compositor_global_init FAILED\n");
         comp_state_finish(&comp);
         wl_display_destroy(comp.display);
         return -1;
     }
+    printf("[WAYLAND-DEBUG] compositor_global_init OK\n");
+
+    printf("[WAYLAND-DEBUG] Initializing xdg_shell global...\n");
+    if (xdg_shell_global_init(&comp) != 0) {
+        printf("[WAYLAND] xdg_shell_global_init FAILED\n");
+        comp_state_finish(&comp);
+        wl_display_destroy(comp.display);
+        return -1;
+    }
+    printf("[WAYLAND-DEBUG] xdg_shell_global_init OK\n");
+
+    printf("[WAYLAND-DEBUG] Initializing output global...\n");
+    if (output_global_init(&comp) != 0) {
+        printf("[WAYLAND] output_global_init FAILED\n");
+        comp_state_finish(&comp);
+        wl_display_destroy(comp.display);
+        return -1;
+    }
+    printf("[WAYLAND-DEBUG] output_global_init OK\n");
+
+    printf("[WAYLAND-DEBUG] Initializing shm backend...\n");
+    if (shm_backend_init(&comp) != 0) {
+        printf("[WAYLAND] shm_backend_init FAILED\n");
+        comp_state_finish(&comp);
+        wl_display_destroy(comp.display);
+        return -1;
+    }
+    printf("[WAYLAND-DEBUG] shm_backend_init OK\n");
+
+    printf("[WAYLAND-DEBUG] Initializing data_device_manager...\n");
+    if (data_device_manager_init(&comp) != 0) {
+        printf("[WAYLAND] data_device_manager_init FAILED\n");
+        comp_state_finish(&comp);
+        wl_display_destroy(comp.display);
+        return -1;
+    }
+    printf("[WAYLAND-DEBUG] data_device_manager_init OK\n");
 
     comp.seat = seat_init(&comp);
     if (!comp.seat) {
@@ -143,14 +184,27 @@ int main(void) {
         return -1;
     }
 
+    /* Ensure XDG_RUNTIME_DIR is set for Wayland socket creation */
+    if (!getenv("XDG_RUNTIME_DIR")) {
+        printf("[WAYLAND-DEBUG] Setting XDG_RUNTIME_DIR=/tmp\n");
+        setenv("XDG_RUNTIME_DIR", "/tmp", 1);
+    }
+
     const char *socket = wl_display_add_socket_auto(comp.display);
     if (!socket) {
-        printf("[WAYLAND] failed to add display socket\n");
-        data_device_manager_finish(&comp);
-        shm_backend_finish(&comp);
-        comp_state_finish(&comp);
-        wl_display_destroy(comp.display);
-        return -1;
+        printf("[WAYLAND] failed to add_socket_auto (errno=%d)\n", errno);
+        /* Try manual socket name as fallback */
+        int rc = wl_display_add_socket(comp.display, "wayland-0");
+        if (rc < 0) {
+            printf("[WAYLAND] failed to add manual socket (rc=%d, errno=%d)\n", rc, errno);
+            data_device_manager_finish(&comp);
+            shm_backend_finish(&comp);
+            comp_state_finish(&comp);
+            wl_display_destroy(comp.display);
+            return -1;
+        }
+        socket = "wayland-0";
+        printf("[WAYLAND-DEBUG] Using manual socket: %s\n", socket);
     }
 
     printf("[WAYLAND] compositor ready %ux%u bpp=%u socket=%s\n",

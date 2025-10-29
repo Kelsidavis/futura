@@ -18,6 +18,9 @@ extern void fut_printf(const char *fmt, ...);
 /* LAPIC MMIO base address (virtual) */
 static volatile uint32_t *lapic_base = NULL;
 
+/* Flag indicating LAPIC is fully initialized and safe to use */
+static bool lapic_initialized = false;
+
 /**
  * Read LAPIC register.
  */
@@ -114,10 +117,11 @@ void lapic_init(uint64_t lapic_phys_base) {
     /* Set Task Priority Register to 0 (accept all interrupts) */
     lapic_write(LAPIC_REG_TPR, 0);
 
-    /* Mask all LVT entries initially */
+    /* Mask all LVT entries - rely on PIC mode for external interrupts */
     lapic_write(LAPIC_REG_LVT_TIMER, LAPIC_LVT_MASKED);
-    lapic_write(LAPIC_REG_LVT_LINT0, LAPIC_LVT_MASKED);
-    lapic_write(LAPIC_REG_LVT_LINT1, LAPIC_LVT_MASKED);
+    /* Note: LINT0/LINT1 left at default/reset state - don't configure them */
+    /* lapic_write(LAPIC_REG_LVT_LINT0, LAPIC_LVT_MASKED); */
+    /* lapic_write(LAPIC_REG_LVT_LINT1, LAPIC_LVT_MASKED); */
     lapic_write(LAPIC_REG_LVT_ERROR, LAPIC_LVT_MASKED);
 
     if (max_lvt >= 4) {
@@ -129,6 +133,9 @@ void lapic_init(uint64_t lapic_phys_base) {
     if (max_lvt >= 6) {
         lapic_write(LAPIC_REG_LVT_CMCI, LAPIC_LVT_MASKED);
     }
+
+    /* Mark LAPIC as initialized and safe to use */
+    lapic_initialized = true;
 
     fut_printf("[LAPIC] Initialization complete\n");
 }
@@ -149,7 +156,15 @@ uint32_t lapic_get_version(void) {
 }
 
 /**
+ * Check if LAPIC is initialized and safe to use.
+ */
+bool lapic_is_initialized(void) {
+    return lapic_initialized;
+}
+
+/**
  * Send End-Of-Interrupt to LAPIC.
+ * Caller must check lapic_is_initialized() before calling.
  */
 void lapic_send_eoi(void) {
     lapic_write(LAPIC_REG_EOI, 0);

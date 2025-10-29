@@ -143,14 +143,15 @@ int ps2_kbd_init(void) {
 
     int rc = chrdev_register(KBD_MAJOR, KBD_MINOR, &kbd_fops, "kbd0", NULL);
     if (rc != 0) {
+        fut_printf("[KBD] chrdev_register failed: %d\n", rc);
         return rc;
     }
     rc = devfs_create_chr("/dev/input/kbd0", KBD_MAJOR, KBD_MINOR);
     if (rc != 0) {
-        INPUT_KDBG("devfs registration failed: %d\n", rc);
+        fut_printf("[KBD] devfs_create_chr failed: %d\n", rc);
         return rc;
     }
 
-    INPUT_KDBG("ready (/dev/input/kbd0)\n");
+    fut_printf("[KBD] ready (/dev/input/kbd0)\n");
     return 0;
 }

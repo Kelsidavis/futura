@@ -167,14 +167,15 @@ int ps2_mouse_init(void) {
 
     int rc = chrdev_register(MOUSE_MAJOR, MOUSE_MINOR, &mouse_fops, "mouse0", NULL);
     if (rc != 0) {
+        fut_printf("[MOUSE] chrdev_register failed: %d\n", rc);
         return rc;
     }
     rc = devfs_create_chr("/dev/input/mouse0", MOUSE_MAJOR, MOUSE_MINOR);
     if (rc != 0) {
-        INPUT_MDBG("devfs registration failed: %d\n", rc);
+        fut_printf("[MOUSE] devfs_create_chr failed: %d\n", rc);
         return rc;
     }
 
-    INPUT_MDBG("ready (/dev/input/mouse0)\n");
+    fut_printf("[MOUSE] ready (/dev/input/mouse0)\n");
     return 0;
 }

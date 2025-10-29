@@ -11,7 +11,40 @@
 #include <user/stdio.h>
 #include <user/stdlib.h>
 
+/* Direct syscall wrappers to avoid header conflicts */
+#define __NR_open  2
+#define __NR_write 1
+#define O_RDWR     0x0002
+
+static inline long syscall3(long nr, long arg1, long arg2, long arg3) {
+    long ret;
+    __asm__ __volatile__(
+        "int $0x80\n"
+        : "=a"(ret)
+        : "a"(nr), "D"(arg1), "S"(arg2), "d"(arg3)
+        : "rcx", "r11", "memory"
+    );
+    return ret;
+}
+
+static inline int sys_open(const char *pathname, int flags, int mode) {
+    return (int)syscall3(__NR_open, (long)pathname, flags, mode);
+}
+
+static inline long sys_write(int fd, const void *buf, size_t count) {
+    return syscall3(__NR_write, fd, (long)buf, count);
+}
+
 int main(void) {
+    /* Initialize stdio by opening /dev/console for fds 0,1,2 */
+    sys_open("/dev/console", O_RDWR, 0);  /* FD 0 - stdin */
+    sys_open("/dev/console", O_RDWR, 0);  /* FD 1 - stdout */
+    sys_open("/dev/console", O_RDWR, 0);  /* FD 2 - stderr */
+
+    /* Direct write to verify execution */
+    const char msg[] = "[COMPOSITOR] Reached main, stdio initialized\n";
+    sys_write(1, msg, sizeof(msg) - 1);
+
     struct compositor_state comp = {0};
 
     comp.display = wl_display_create();

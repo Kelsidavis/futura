@@ -223,7 +223,20 @@ void fut_sched_remove_thread(fut_thread_t *thread) {
     }
 
     fut_percpu_t *percpu = &fut_percpu_data[cpu_index];
+
     fut_spinlock_acquire(&percpu->queue_lock);
+
+    // Check if thread is actually in the list
+    // If both prev and next are NULL, thread might not be in list
+    // We need to verify it's not an isolated node
+    bool in_list = (thread->prev != NULL || thread->next != NULL ||
+                    percpu->ready_queue_head == thread);
+
+    if (!in_list) {
+        // Thread not in list, nothing to remove
+        fut_spinlock_release(&percpu->queue_lock);
+        return;
+    }
 
     // Unlink from ready queue
     if (thread->prev) {

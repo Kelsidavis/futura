@@ -391,7 +391,21 @@ int futurafs_read_inode_async(struct futurafs_mount *mount,
     uint64_t inode_index = ino - 1;
     uint64_t block_num = mount->sb->inode_table_block + (inode_index / mount->inodes_per_block);
 
-    /* Submit async block read */
+    /* Check if we have a valid handle; if not, use synchronous blockdev read as fallback */
+    if (mount->block_device_handle == FUT_INVALID_HANDLE) {
+        /* Fallback: use synchronous blockdev API and call callback directly */
+        int ret = fut_blockdev_read(mount->dev, block_num, 1, inode_ctx->block_buffer);
+        if (ret < 0) {
+            fut_free(inode_ctx);
+            return ret;
+        }
+
+        /* Call the completion callback directly since we're using synchronous I/O */
+        futurafs_inode_read_callback(0, inode_ctx);
+        return 0;
+    }
+
+    /* Submit async block read with valid handle */
     int ret = fut_blk_read_async(mount->block_device_handle, block_num, 1,
                                  inode_ctx->block_buffer,
                                  futurafs_inode_read_callback, inode_ctx);
@@ -493,6 +507,20 @@ int futurafs_write_inode_async(struct futurafs_mount *mount,
     /* Calculate block number */
     uint64_t inode_index = ino - 1;
     uint64_t block_num = mount->sb->inode_table_block + (inode_index / mount->inodes_per_block);
+
+    /* Check if we have a valid handle; if not, use synchronous blockdev API as fallback */
+    if (mount->block_device_handle == FUT_INVALID_HANDLE) {
+        /* Fallback: use synchronous blockdev API and call callbacks directly */
+        int ret = fut_blockdev_read(mount->dev, block_num, 1, inode_ctx->block_buffer);
+        if (ret < 0) {
+            fut_free(inode_ctx);
+            return ret;
+        }
+
+        /* Call the stage 1 callback directly since we're using synchronous I/O */
+        futurafs_inode_write_stage1_callback(0, inode_ctx);
+        return 0;
+    }
 
     /* Submit async block read (stage 1) - will chain to write in callback */
     int ret = fut_blk_read_async(mount->block_device_handle, block_num, 1,

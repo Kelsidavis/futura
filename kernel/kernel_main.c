@@ -1317,12 +1317,12 @@ void fut_kernel_main(void) {
     /* Re-enabled: using wayland instead of direct framebuffer */
     wayland_client_exec = 0;  /* Will be set by actual exec below */
     wayland_color_exec = 0;   /* Will be set by actual exec below */
-#if 0  /* Disabled wayland clients to free memory for shell */
+#if 1  /* Enabled wayland clients */
     if (wayland_exec == 0 && wayland_client_stage == 0) {
         fut_boot_delay_ms(100);
         char name[] = "wl-simple";
         char *args[] = { name, NULL };
-        wayland_client_exec = fut_exec_elf("/bin/wl-simple", args);
+        wayland_client_exec = fut_exec_elf("/bin/wl-simple", args, NULL);
         if (wayland_client_exec != 0) {
             fut_printf("[WARN] Failed to launch /bin/wl-simple (error %d)\n", wayland_client_exec);
 #if ENABLE_WAYLAND_DEMO
@@ -1339,7 +1339,7 @@ void fut_kernel_main(void) {
         fut_boot_delay_ms(100);
         char name[] = "wl-colorwheel";
         char *args[] = { name, NULL };
-        wayland_color_exec = fut_exec_elf("/bin/wl-colorwheel", args);
+        wayland_color_exec = fut_exec_elf("/bin/wl-colorwheel", args, NULL);
         if (wayland_color_exec != 0) {
             fut_printf("[WARN] Failed to launch /bin/wl-colorwheel (error %d)\n", wayland_color_exec);
         } else {

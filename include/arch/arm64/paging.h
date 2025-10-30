@@ -485,3 +485,16 @@ void fut_vmem_print_stats(fut_vmem_context_t *ctx);
  * @return true if valid, false if corrupted
  */
 bool fut_vmem_verify(fut_vmem_context_t *ctx);
+
+/* ============================================================
+ *   x86_64 Compatibility Constants (for architecture-generic code)
+ * ============================================================
+ * Maps x86_64 PTE flag names to ARM64 equivalents for code
+ * that needs to work across both architectures.
+ */
+
+#define PTE_PRESENT             PTE_VALID       /* Page is present/valid */
+#define PTE_WRITABLE            0               /* ARM64 uses AP bits; 0 means writable (handled separately) */
+#define PTE_USER                PTE_AF_BIT      /* User accessible (ARM64 uses AF_BIT as marker) */
+#define PTE_NX                  PTE_UXN_BIT     /* No-execute */
+#define PTE_PHYS_ADDR_MASK      0x0000FFFFFFFFF000ULL  /* Physical address bits [47:12] */

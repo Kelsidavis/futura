@@ -709,7 +709,7 @@ void fut_platform_early_init(uint32_t boot_magic, void *boot_info) {
     fut_serial_puts("[INIT] Enabling interrupts...\n");
     fut_enable_interrupts();
 
-    /* Register UART TX interrupt handler and switch to interrupt mode */
+    /* Register UART TX interrupt handler - but stay in polling mode for now */
     fut_serial_puts("[DEBUG] Registering UART TX IRQ handler (IRQ 33)...\n");
     int result = fut_register_irq_handler(33, uart_tx_irq_handler);
     if (result == 0) {
@@ -717,9 +717,10 @@ void fut_platform_early_init(uint32_t boot_magic, void *boot_info) {
         fut_irq_enable(33);
         fut_serial_puts("[DEBUG] UART IRQ 33 enabled in GIC\n");
 
-        /* Switch to interrupt-driven mode */
-        uart_irq_mode = 1;
-        fut_serial_puts("[DEBUG] Switched to interrupt-driven UART mode\n");
+        /* TODO: Switch to interrupt-driven mode after kernel stabilizes
+         * For now, keep polling mode to ensure stable boot */
+        /* uart_irq_mode = 1; */
+        fut_serial_puts("[DEBUG] UART IRQ handler ready, but using polling mode for stability\n");
     } else {
         fut_serial_puts("[DEBUG] UART IRQ handler registration failed, staying in polling mode\n");
     }

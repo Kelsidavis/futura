@@ -17,6 +17,54 @@ static size_t g_env_capacity;
 
 char **environ = NULL;
 
+/**
+ * Initialize environ from the envp passed to the program during execve.
+ * This should be called once during program startup (from crt0).
+ * Called with the envp array from the user stack.
+ */
+void __libc_init_environ(char **envp) {
+    if (!envp || envp[0] == NULL) {
+        /* No environment passed, or empty environment */
+        g_environ = NULL;
+        environ = NULL;
+        g_env_count = 0;
+        g_env_capacity = 0;
+        return;
+    }
+
+    /* Count environment variables */
+    size_t count = 0;
+    while (envp[count] != NULL) {
+        count++;
+    }
+
+    /* Allocate environment array (+1 for NULL terminator) */
+    g_environ = (char **)malloc((count + 1) * sizeof(char *));
+    if (!g_environ) {
+        environ = NULL;
+        g_env_count = 0;
+        g_env_capacity = 0;
+        return;
+    }
+
+    /* Copy environment variable strings */
+    for (size_t i = 0; i < count; i++) {
+        size_t len = strlen(envp[i]) + 1;
+        char *copy = (char *)malloc(len);
+        if (copy) {
+            memcpy(copy, envp[i], len);
+            g_environ[i] = copy;
+        } else {
+            g_environ[i] = NULL;
+        }
+    }
+    g_environ[count] = NULL;
+
+    environ = g_environ;
+    g_env_count = count;
+    g_env_capacity = count + 1;
+}
+
 static void env_lock(void) {
     while (__atomic_test_and_set(&g_env_lock, __ATOMIC_ACQUIRE)) {
         /* spin */

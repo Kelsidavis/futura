@@ -140,3 +140,19 @@ void exit(int status) __attribute__((noreturn));
 #define STDIN_FILENO    0
 #define STDOUT_FILENO   1
 #define STDERR_FILENO   2
+
+/* ============================================================
+ *   Environment Variables
+ * ============================================================ */
+
+extern char **environ;
+
+/* Initialize environ from the envp array (called by crt0) */
+void __libc_init_environ(char **envp);
+
+/* Standard environment functions */
+char *getenv(const char *name);
+int setenv(const char *name, const char *value, int overwrite);
+int putenv(char *string);
+int unsetenv(const char *name);
+int clearenv(void);

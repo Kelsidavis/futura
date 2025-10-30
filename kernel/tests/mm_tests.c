@@ -252,6 +252,65 @@ static void test_file_backed_mmap_write(void) {
     TEST_PASS(current_test);
 }
 
+/**
+ * Test vnode refcounting on file-backed mmap and munmap
+ * Verifies that vnodes are properly ref'd when mapped and unref'd when unmapped.
+ */
+static void test_vnode_refcount_on_mmap(void) __attribute__((unused));
+static void test_vnode_refcount_on_mmap(void) {
+    const char *current_test = "Vnode refcount on mmap/munmap";
+    TEST_BEGIN(current_test);
+
+    /* Create a test MM context */
+    fut_mm_t *test_mm = fut_mm_create();
+    ASSERT(test_mm != NULL, "Failed to create test MM");
+
+    /* Create a test file */
+    int fd = fut_vfs_open("/tmp/refcount_test", O_CREAT | O_RDWR, 0644);
+    ASSERT(fd >= 0, "Failed to create test file");
+
+    /* Write test data */
+    uint32_t test_data = 0xDEADBEEF;
+    ssize_t written = fut_vfs_write(fd, &test_data, sizeof(test_data));
+    ASSERT(written == (ssize_t)sizeof(test_data), "Failed to write test data");
+
+    /* Close and reopen for mmap */
+    fut_vfs_close(fd);
+    fd = fut_vfs_open("/tmp/refcount_test", O_RDONLY, 0);
+    ASSERT(fd >= 0, "Failed to reopen test file");
+
+    /* Get vnode and check initial refcount */
+    extern struct fut_file *fut_vfs_get_file(int);
+    struct fut_file *file = fut_vfs_get_file(fd);
+    ASSERT(file != NULL && file->vnode != NULL, "Failed to get file vnode");
+
+    uint32_t initial_refcount = file->vnode->refcount;
+
+    /* Map the file */
+    extern void *fut_mm_map_file(fut_mm_t *, struct fut_vnode *, uintptr_t, size_t, int, int, uint64_t);
+    void *mapped = fut_mm_map_file(test_mm, file->vnode, 0, PAGE_SIZE, PROT_READ, MAP_PRIVATE, 0);
+    ASSERT(mapped != NULL && (uintptr_t)mapped != (uintptr_t)-ENOMEM, "Failed to mmap file");
+
+    /* After mapping, refcount should be incremented */
+    uint32_t mapped_refcount = file->vnode->refcount;
+    ASSERT(mapped_refcount > initial_refcount,
+           "Vnode refcount not incremented on mmap");
+
+    /* Unmap the file */
+    fut_mm_unmap(test_mm, (uintptr_t)mapped, PAGE_SIZE);
+
+    /* After unmapping, refcount should be decremented back */
+    uint32_t final_refcount = file->vnode->refcount;
+    ASSERT(final_refcount == initial_refcount,
+           "Vnode refcount not properly managed on munmap");
+
+    /* Cleanup */
+    fut_vfs_close(fd);
+    fut_mm_release(test_mm);
+
+    TEST_PASS(current_test);
+}
+
 /* ============================================================
  *   Partial munmap Tests
  * ============================================================ */
@@ -541,7 +600,8 @@ void fut_mm_tests_run(void) {
 
     /* File-Backed mmap Tests */
     test_file_backed_mmap_read();
-    /* test_file_backed_mmap_write(); */
+    test_file_backed_mmap_write();
+    test_vnode_refcount_on_mmap();
 
     /* Partial munmap Tests */
     test_munmap_shrink_left();

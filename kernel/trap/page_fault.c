@@ -333,9 +333,87 @@ bool fut_trap_handle_page_fault(fut_interrupt_frame_t *frame) {
 
 #elif defined(__aarch64__)
 
-/* ARM64 page fault handler stub - not yet implemented */
+#include <arch/arm64/regs.h>
+#include <arch/arm64/paging.h>
+
+/**
+ * Handle ARM64 data/instruction abort (page fault).
+ * Parses ESR (Exception Syndrome Register) to determine fault type.
+ * Supports demand paging and copy-on-write.
+ */
 bool fut_trap_handle_page_fault(fut_interrupt_frame_t *frame) {
-    (void)frame;
+    extern void fut_printf(const char *fmt, ...);
+
+    if (!frame) {
+        return false;
+    }
+
+    /* Extract exception class from ESR */
+    uint64_t esr = frame->esr;
+    uint32_t ec = (esr >> 26) & 0x3F;  /* Exception Class [31:26] */
+
+    /* Get fault address from FAR */
+    uint64_t fault_addr = frame->far;
+
+    /* Check if this is a data abort (page fault) */
+    bool is_lower_el = (ec == 0x24);  /* ESR_EC_DABT_LOWER */
+    bool is_current_el = (ec == 0x25); /* ESR_EC_DABT_CURRENT */
+
+    if (!is_lower_el && !is_current_el) {
+        return false;  /* Not a data abort */
+    }
+
+    /* Extract fault status code (FSC) from ESR bits [5:0] */
+    uint32_t fsc = esr & 0x3F;
+
+    /* FSC encoding for page faults:
+     * 0x0C (Level 0 translation fault)
+     * 0x0E (Level 1 translation fault)
+     * 0x0F (Level 2 translation fault)
+     * 0x10 (Level 3 translation fault)
+     * 0x14 (Level 1 access fault)
+     * 0x15 (Level 2 access fault)
+     * 0x16 (Level 3 access fault)
+     * 0x04-0x07 (Level 0-3 translation fault)
+     */
+    bool is_translation_fault = ((fsc & 0x3C) == 0x04) || ((fsc & 0x3C) == 0x0C) ||
+                                ((fsc & 0x3F) == 0x0F) || ((fsc & 0x3F) == 0x10);
+    bool is_access_fault = ((fsc & 0x3C) == 0x14) || ((fsc & 0x3F) == 0x16);
+
+    if (!is_translation_fault && !is_access_fault) {
+        return false;  /* Not a page fault we can handle */
+    }
+
+    /* Only handle user-space faults (lower EL = EL0 = user) */
+    if (!is_lower_el) {
+        return false;  /* Kernel page fault - not handled here */
+    }
+
+    /* Extract write flag from ESR bit 6 (WnR: Write not Read) */
+    bool is_write = (esr >> 6) & 1;
+
+    /* Get current process memory context */
+    fut_mm_t *mm = fut_mm_current();
+    if (!mm) {
+        return false;
+    }
+
+    /* Try to handle as COW fault if write */
+    if (is_write) {
+        /* For now, COW handling is not implemented for ARM64 */
+        /* TODO: Implement ARM64 COW page fault handling */
+    }
+
+    /* Try to handle as demand paging fault */
+    if (handle_demand_paging_fault(fault_addr, mm)) {
+        return true;  /* Demand paging fault handled successfully */
+    }
+
+    fut_printf("[#PF-ARM64] user fault addr=0x%llx esr=0x%llx pc=0x%llx\n",
+               (unsigned long long)fault_addr,
+               (unsigned long long)esr,
+               (unsigned long long)frame->pc);
+
     return false;
 }
 

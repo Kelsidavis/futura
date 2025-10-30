@@ -417,6 +417,7 @@ else ifeq ($(PLATFORM),arm64)
         platform/arm64/boot.S \
         platform/arm64/context_switch.S \
         platform/arm64/platform_init.c \
+        platform/arm64/pmap.c \
         platform/arm64/arm64_stubs.c \
         platform/arm64/arm64_minimal_stubs.c \
         kernel/arch/arm64/hal_halt.c \

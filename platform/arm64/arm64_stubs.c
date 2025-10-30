@@ -136,27 +136,10 @@ int fut_stage_wayland_color_client_binary(void) {
 }
 
 /* ============================================================
- *   Page Table Management Stubs
+ *   Page Table Management
+ * ============================================================
+ * Implemented in platform/arm64/pmap.c
  * ============================================================ */
-
-typedef struct pmap {
-    void *root;
-} pmap_t;
-
-int pmap_map_user(pmap_t *pmap, uint64_t vaddr, uint64_t paddr, size_t size, int prot) {
-    (void)pmap;
-    (void)vaddr;
-    (void)paddr;
-    (void)size;
-    (void)prot;
-    return 0;  /* Success stub */
-}
-
-int pmap_probe_pte(pmap_t *pmap, uint64_t vaddr) {
-    (void)pmap;
-    (void)vaddr;
-    return 0;  /* Entry exists stub */
-}
 
 /* ============================================================
  *   Task State Segment Stubs (x86-64 specific)

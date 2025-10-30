@@ -445,9 +445,12 @@ static inline void fut_vmem_set_reload_value(fut_vmem_context_t *ctx, uint64_t v
  * Assumes the PGD pointer is a virtual kernel address.
  */
 static inline uint64_t fut_vmem_root_to_phys(void *root) {
-    /* For now, assume kernel virtual addresses, convert to physical */
-    extern uint64_t fut_virt_to_phys(uint64_t vaddr);
-    return fut_virt_to_phys((uint64_t)root);
+    /* ARM64: strip the high bits to get physical address */
+    uintptr_t virt = (uintptr_t)root;
+    if (virt >= KERNEL_VIRTUAL_BASE) {
+        return (uint64_t)(virt & ~KERNEL_VIRTUAL_BASE);
+    }
+    return (uint64_t)virt;
 }
 
 /**
@@ -455,8 +458,8 @@ static inline uint64_t fut_vmem_root_to_phys(void *root) {
  * Returns a kernel virtual address from a physical address.
  */
 static inline void *fut_vmem_phys_to_root(uint64_t phys) {
-    /* For now, assume simple 1-to-1 mapping in kernel */
-    return (void *)(KERNEL_VIRTUAL_BASE + phys);
+    /* ARM64 kernel space mapping: physical + KERNEL_VIRTUAL_BASE */
+    return (void *)(KERNEL_VIRTUAL_BASE | phys);
 }
 
 /* ============================================================

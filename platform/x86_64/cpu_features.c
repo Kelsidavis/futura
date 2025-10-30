@@ -75,7 +75,7 @@ static void maybe_print_summary(void) {
         return;
     }
 
-    fut_printf("[CPU] NX=%u OSXSAVE=%u SSE=%u AVX=%u FSGSBASE=%u PGE=%u SMEP=%u SMAP=%u\n",
+    fut_printf("[CPU] NX=%u OSXSAVE=%u SSE=%u AVX=%u FSGSBASE=%u PGE=%u SMEP=%u SMAP=%u PSE=%u PDPE1GB=%u\n",
                g_features.nx,
                g_features.osxsave,
                g_features.sse,
@@ -83,7 +83,9 @@ static void maybe_print_summary(void) {
                g_features.fsgsbase,
                g_features.pge,
                g_features.smep,
-               g_features.smap);
+               g_features.smap,
+               g_features.pse,
+               g_features.pdpe1gb);
 
     atomic_store_explicit(&g_summary_printed, true, memory_order_release);
 }
@@ -141,6 +143,11 @@ void cpu_features_init(void) {
         detected.pge = 1;
     }
 
+    /* Detect PSE (Page Size Extension) for 2MB large pages - bit 3 of EDX */
+    if (leaf1_edx & (1u << 3)) {
+        detected.pse = 1;
+    }
+
     if (leaf7_ebx & (1u << 0)) {
         cr4 |= CR4_FSGSBASE;
         detected.fsgsbase = 1;
@@ -177,6 +184,11 @@ void cpu_features_init(void) {
         efer |= EFER_NXE;
         wrmsr(MSR_EFER, efer);
         detected.nx = 1;
+    }
+
+    /* Detect PDPE1GB (1GB pages support) - bit 26 of extended EDX */
+    if (ext_edx & (1u << 26)) {
+        detected.pdpe1gb = 1;
     }
 
     g_features = detected;

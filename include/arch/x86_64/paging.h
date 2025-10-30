@@ -44,6 +44,18 @@
 #define PAGE_ALIGN_UP(addr)     (((addr) + PAGE_SIZE - 1) & PAGE_MASK)
 #define IS_PAGE_ALIGNED(addr)   (((addr) & ~PAGE_MASK) == 0)
 
+/* Large page (2MB) alignment macros */
+#define LARGE_PAGE_MASK         (~(LARGE_PAGE_SIZE - 1))
+#define LARGE_PAGE_ALIGN_DOWN(addr)  ((addr) & LARGE_PAGE_MASK)
+#define LARGE_PAGE_ALIGN_UP(addr)    (((addr) + LARGE_PAGE_SIZE - 1) & LARGE_PAGE_MASK)
+#define IS_LARGE_PAGE_ALIGNED(addr)  (((addr) & ~LARGE_PAGE_MASK) == 0)
+
+/* Huge page (1GB) alignment macros */
+#define HUGE_PAGE_MASK          (~(HUGE_PAGE_SIZE - 1))
+#define HUGE_PAGE_ALIGN_DOWN(addr)   ((addr) & HUGE_PAGE_MASK)
+#define HUGE_PAGE_ALIGN_UP(addr)     (((addr) + HUGE_PAGE_SIZE - 1) & HUGE_PAGE_MASK)
+#define IS_HUGE_PAGE_ALIGNED(addr)   (((addr) & ~HUGE_PAGE_MASK) == 0)
+
 /* ============================================================
  *   Page Table Entry Flags (Common to all levels)
  * ============================================================ */

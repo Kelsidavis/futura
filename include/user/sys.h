@@ -82,6 +82,10 @@ static inline long sys_unlink(const char *path) {
     return sys_call1(SYS_unlink, (long)path);
 }
 
+static inline long sys_ftruncate(int fd, long length) {
+    return sys_call2(SYS_ftruncate, (long)fd, length);
+}
+
 static inline long sys_ioctl(long fd, long req, long arg) {
     return sys_call3(SYS_ioctl, fd, req, arg);
 }

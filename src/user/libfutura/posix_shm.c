@@ -96,10 +96,13 @@ int fut_shm_create(const char *name, size_t size, int oflag, int mode) {
         return fd;
     }
     fut_fd_path_register(fd, path);
-    if (fut_write_zeros(fd, size) != 0) {
+
+    /* Use ftruncate for efficient allocation instead of write-zeros loop */
+    long ret = sys_ftruncate(fd, (long)size);
+    if (ret < 0) {
         sys_close(fd);
         fut_fd_path_forget(fd);
-        return -1;
+        return (int)ret;
     }
     return fd;
 }
@@ -117,7 +120,12 @@ int fut_shm_unlink(const char *name) {
 }
 
 int fut_shm_resize(int fd, size_t size) {
-    return fut_write_zeros(fd, size);
+    /* Use ftruncate syscall for efficient allocation */
+    long ret = sys_ftruncate(fd, (long)size);
+    if (ret < 0) {
+        return (int)ret;
+    }
+    return 0;
 }
 
 int msync(void *addr, size_t length, int flags) {

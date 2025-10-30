@@ -10,6 +10,8 @@
 #include "posix_shim.h"
 #include "../../include/kernel/fut_object.h"
 #include "../../include/kernel/fut_memory.h"
+#include "../../include/kernel/fut_vfs.h"
+#include <stdint.h>
 
 /* ============================================================
  *   File Descriptor Table (Internal)
@@ -162,19 +164,83 @@ void posix_exit(int status) {
  * ============================================================ */
 
 int posix_stat(const char *pathname, struct posix_stat *statbuf) {
-    // Phase 1: Stub implementation
-    // Future: Query file metadata from VFS
-    (void)pathname;
-    (void)statbuf;
-    return -1;  // Not implemented
+    if (!pathname || !statbuf) {
+        return -1;
+    }
+
+    /* Get stat info from VFS */
+    struct fut_stat vfs_stat = {0};
+    int ret = fut_vfs_stat(pathname, &vfs_stat);
+    if (ret < 0) {
+        return -1;  /* VFS error */
+    }
+
+    /* Convert fut_stat to posix_stat */
+    statbuf->st_dev = vfs_stat.st_dev;
+    statbuf->st_ino = vfs_stat.st_ino;
+    statbuf->st_mode = vfs_stat.st_mode;
+    statbuf->st_nlink = vfs_stat.st_nlink;
+    statbuf->st_uid = vfs_stat.st_uid;
+    statbuf->st_gid = vfs_stat.st_gid;
+    statbuf->st_size = vfs_stat.st_size;
+    statbuf->st_atime = vfs_stat.st_atime;
+    statbuf->st_mtime = vfs_stat.st_mtime;
+    statbuf->st_ctime = vfs_stat.st_ctime;
+
+    return 0;
 }
 
 int posix_fstat(posix_fd_t fd, struct posix_stat *statbuf) {
-    // Phase 1: Stub implementation
-    // Future: Query file metadata from object
-    (void)fd;
-    (void)statbuf;
-    return -1;  // Not implemented
+    if (!statbuf) {
+        return -1;
+    }
+
+    /* Get the file from fd */
+    struct fut_file *file = fut_vfs_get_file((int)fd);
+    if (!file) {
+        return -1;  /* Invalid fd */
+    }
+
+    /* If it's a regular file with a vnode, get stat via vnode */
+    if (file->vnode && file->vnode->ops && file->vnode->ops->getattr) {
+        struct fut_stat vfs_stat = {0};
+        int ret = file->vnode->ops->getattr(file->vnode, &vfs_stat);
+        if (ret < 0) {
+            return -1;
+        }
+
+        /* Convert fut_stat to posix_stat */
+        statbuf->st_dev = vfs_stat.st_dev;
+        statbuf->st_ino = vfs_stat.st_ino;
+        statbuf->st_mode = vfs_stat.st_mode;
+        statbuf->st_nlink = vfs_stat.st_nlink;
+        statbuf->st_uid = vfs_stat.st_uid;
+        statbuf->st_gid = vfs_stat.st_gid;
+        statbuf->st_size = vfs_stat.st_size;
+        statbuf->st_atime = vfs_stat.st_atime;
+        statbuf->st_mtime = vfs_stat.st_mtime;
+        statbuf->st_ctime = vfs_stat.st_ctime;
+
+        return 0;
+    }
+
+    /* For character devices and other file types without standard stat */
+    if (file->chr_inode) {
+        /* Character device - provide minimal stat info */
+        statbuf->st_dev = 6;      /* Device file device */
+        statbuf->st_ino = (uint64_t)(uintptr_t)file->chr_inode;
+        statbuf->st_mode = 020666;  /* Character device, rw for all (octal: 0o20666) */
+        statbuf->st_nlink = 1;
+        statbuf->st_uid = 0;
+        statbuf->st_gid = 0;
+        statbuf->st_size = 0;
+        statbuf->st_atime = 0;
+        statbuf->st_mtime = 0;
+        statbuf->st_ctime = 0;
+        return 0;
+    }
+
+    return -1;  /* Unknown file type */
 }
 
 /* ============================================================

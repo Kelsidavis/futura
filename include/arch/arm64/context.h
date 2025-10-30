@@ -83,20 +83,14 @@ static inline void fut_init_thread_context(fut_cpu_context_t *ctx,
     /* Clear context */
     __builtin_memset(ctx, 0, sizeof(fut_cpu_context_t));
 
+    /* Set x0 with argument (return value for new thread) */
+    ctx->x0 = (uint64_t)arg;
+
     /* Set stack pointer */
     ctx->sp = (uint64_t)stack_ptr;
 
     /* Set program counter to entry point */
     ctx->pc = (uint64_t)entry;
-
-    /* Set up x0 with argument */
-    __asm__ volatile(
-        "mov x0, %0\n\t"
-        "str x0, [%1]\n\t"
-        :
-        : "r"(arg), "r"(&ctx->x19)
-        : "x0"
-    );
 
     /* Set processor state: EL1h, interrupts enabled */
     ctx->pstate = PSTATE_MODE_EL1h;

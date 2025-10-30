@@ -13,10 +13,15 @@
 #include <kernel/fut_vfs.h>
 #include <kernel/errno.h>
 #include <kernel/uaccess.h>
+#include <string.h>
+
+#ifdef __x86_64__
 #include <arch/x86_64/paging.h>
 #include <arch/x86_64/pmap.h>
 #include <arch/x86_64/regs.h>
-#include <string.h>
+#elif defined(__aarch64__)
+#include <arch/arm64/regs.h>
+#endif
 
 extern void fut_printf(const char *fmt, ...);
 extern fut_interrupt_frame_t *fut_current_frame;
@@ -83,14 +88,12 @@ long sys_fork(void) {
     /*
      * Set return value for child to 0
      * On x86_64: child will see RAX=0 when it starts running
-     * On ARM64: return value in x0 is handled by thread entry point
+     * On ARM64: child will see x0=0 when it starts running
      */
 #ifdef __x86_64__
     child_thread->context.rax = 0;
 #elif defined(__aarch64__)
-    /* On ARM64, x0 is caller-saved and not in context struct.
-     * The thread entry point will need to set this appropriately. */
-    (void)child_thread;  /* Silence unused warning for now */
+    child_thread->context.x0 = 0;
 #endif
 
     fut_printf("[FORK] Created child: parent_pid=%llu parent_tid=%llu child_pid=%llu child_tid=%llu\n",
@@ -308,51 +311,22 @@ static fut_mm_t *clone_mm(fut_mm_t *parent_mm) {
 /**
  * Clone thread structure using syscall stack frame.
  * Creates a new thread in the child task that will return from the syscall.
+ * Architecture-specific implementation.
  */
 static fut_thread_t *clone_thread(fut_thread_t *parent_thread, fut_task_t *child_task) {
     if (!parent_thread || !child_task) {
         return NULL;
     }
 
-    /* Get the syscall frame pointer (points to CPU-pushed part: RIP, CS, RFLAGS, RSP, SS) */
+    /* Get the syscall frame pointer */
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Waddress-of-packed-member"
-    uint64_t *frame_ptr = (uint64_t *)fut_current_frame;
+    fut_interrupt_frame_t *frame = fut_current_frame;
 #pragma GCC diagnostic pop
-    if (!frame_ptr) {
+    if (!frame) {
         fut_printf("[FORK] ERROR: No interrupt frame available!\n");
         return NULL;
     }
-
-    /*
-     * Syscall stack layout (from isr_stubs.S):
-     * frame[0]  = RIP
-     * frame[1]  = CS
-     * frame[2]  = RFLAGS
-     * frame[3]  = RSP (user stack)
-     * frame[4]  = SS
-     * frame[-1] = RAX (saved syscall number)
-     * frame[-2] = CR3
-     * frame[-3] = RBP
-     * frame[-4] = RBX
-     * frame[-5] = R12
-     * frame[-6] = R13
-     * frame[-7] = R14
-     * frame[-8] = R15
-     */
-    uint64_t user_rip = frame_ptr[0];
-    uint64_t user_cs = frame_ptr[1];
-    uint64_t user_rflags = frame_ptr[2];
-    uint64_t user_rsp = frame_ptr[3];
-    uint64_t user_ss = frame_ptr[4];
-    uint64_t user_rbp = frame_ptr[-3];
-    uint64_t user_rbx = frame_ptr[-4];
-    uint64_t user_r12 = frame_ptr[-5];
-    uint64_t user_r13 = frame_ptr[-6];
-    uint64_t user_r14 = frame_ptr[-7];
-    uint64_t user_r15 = frame_ptr[-8];
-
-    fut_printf("[FORK] Parent frame: RIP=0x%llx RSP=0x%llx\n", user_rip, user_rsp);
 
     /*
      * Create a new thread in the child task.
@@ -370,8 +344,29 @@ static fut_thread_t *clone_thread(fut_thread_t *parent_thread, fut_task_t *child
         return NULL;
     }
 
+#ifdef __x86_64__
+    /*
+     * x86_64: Extract registers from interrupt frame
+     * Syscall stack layout (from isr_stubs.S):
+     * frame points to CPU-pushed part: RIP, CS, RFLAGS, RSP, SS
+     * Before that: RAX, CR3, RBP, RBX, R12, R13, R14, R15
+     */
+    uint64_t *frame_ptr = (uint64_t *)frame;
+    uint64_t user_rip = frame_ptr[0];
+    uint64_t user_cs = frame_ptr[1];
+    uint64_t user_rflags = frame_ptr[2];
+    uint64_t user_rsp = frame_ptr[3];
+    uint64_t user_ss = frame_ptr[4];
+    uint64_t user_rbp = frame_ptr[-3];
+    uint64_t user_rbx = frame_ptr[-4];
+    uint64_t user_r12 = frame_ptr[-5];
+    uint64_t user_r13 = frame_ptr[-6];
+    uint64_t user_r14 = frame_ptr[-7];
+    uint64_t user_r15 = frame_ptr[-8];
+
+    fut_printf("[FORK] Parent frame: RIP=0x%llx RSP=0x%llx\n", user_rip, user_rsp);
+
     /* Build child context from syscall frame */
-    /* The child will be scheduled and return to userspace with the saved state */
     child_thread->context.rip = user_rip;
     child_thread->context.rsp = user_rsp;
     child_thread->context.rbp = user_rbp;
@@ -395,6 +390,44 @@ static fut_thread_t *clone_thread(fut_thread_t *parent_thread, fut_task_t *child
 
     fut_printf("[FORK] Child context: RIP=0x%llx RSP=0x%llx RAX=0\n",
                child_thread->context.rip, child_thread->context.rsp);
+
+#elif defined(__aarch64__)
+    /*
+     * ARM64: Extract registers from interrupt frame (fut_interrupt_frame_t)
+     * The interrupt frame has all x0-x30, sp, pc, pstate, esr, far
+     * We need to build the context structure for the child to return
+     * with the same state as the parent.
+     */
+
+    /* Copy general purpose registers and special registers */
+    child_thread->context.x0 = 0;           /* Return value: 0 for child */
+    child_thread->context.x29_fp = frame->x[29];  /* Frame pointer */
+    child_thread->context.x30_lr = frame->x[30];  /* Link register */
+    child_thread->context.sp = frame->sp;         /* Stack pointer */
+    child_thread->context.pc = frame->pc;         /* Program counter */
+    child_thread->context.pstate = frame->pstate; /* Processor state */
+
+    /* Copy callee-saved registers (x19-x28) from frame */
+    for (int i = 19; i < 29; i++) {
+        switch(i) {
+            case 19: child_thread->context.x19 = frame->x[i]; break;
+            case 20: child_thread->context.x20 = frame->x[i]; break;
+            case 21: child_thread->context.x21 = frame->x[i]; break;
+            case 22: child_thread->context.x22 = frame->x[i]; break;
+            case 23: child_thread->context.x23 = frame->x[i]; break;
+            case 24: child_thread->context.x24 = frame->x[i]; break;
+            case 25: child_thread->context.x25 = frame->x[i]; break;
+            case 26: child_thread->context.x26 = frame->x[i]; break;
+            case 27: child_thread->context.x27 = frame->x[i]; break;
+            case 28: child_thread->context.x28 = frame->x[i]; break;
+        }
+    }
+
+    fut_printf("[FORK] Parent frame: PC=0x%llx SP=0x%llx\n", frame->pc, frame->sp);
+    fut_printf("[FORK] Child context: PC=0x%llx SP=0x%llx X0=0\n",
+               child_thread->context.pc, child_thread->context.sp);
+
+#endif
 
     return child_thread;
 }

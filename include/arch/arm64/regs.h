@@ -16,9 +16,12 @@
 
 /**
  * ARM64 CPU context saved during cooperative context switches.
- * Contains callee-saved registers according to ARM64 ABI.
+ * Contains callee-saved registers according to ARM64 ABI, plus x0 for syscall returns.
  */
 typedef struct fut_cpu_context {
+    /* Return value register (needed for syscalls and fork) */
+    uint64_t x0;                /* x0: return value (caller-saved, but set at entry) */
+
     /* Callee-saved registers (x19-x28) */
     uint64_t x19;
     uint64_t x20;

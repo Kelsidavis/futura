@@ -9,8 +9,10 @@
 #include "../../include/kernel/fut_thread.h"
 #include "../../include/kernel/fut_sched.h"
 #include "../../include/kernel/fut_memory.h"
-#include <arch/x86_64/lapic.h>
 #include <stdatomic.h>
+
+/* Forward declaration: LAPIC EOI is only used in interrupt handler */
+extern void lapic_send_eoi(void);
 
 /* I/O port access from platform layer */
 extern void hal_outb(uint16_t port, uint8_t value);

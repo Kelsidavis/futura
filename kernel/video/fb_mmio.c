@@ -245,13 +245,13 @@ void fb_boot_splash(void) {
             g_fb_virt = (volatile uint8_t *)(uintptr_t)(virt_base + offset);
             g_fb_hw.length = map_size;
 
-            /* Write solid WHITE test pattern */
+            /* Write solid GREEN test pattern */
             volatile uint32_t *fb = (volatile uint32_t *)g_fb_virt;
-            fut_printf("[FB] Filling virtio framebuffer with solid WHITE\n");
+            fut_printf("[FB] Filling virtio framebuffer with solid GREEN\n");
 
             size_t total_pixels = (g_fb_hw.info.width * g_fb_hw.info.height);
             for (size_t i = 0; i < total_pixels; ++i) {
-                fb[i] = 0xFFFFFFFF;  /* White: all channels at max */
+                fb[i] = 0xFF00FF00;  /* Green: ARGB format, full green channel */
             }
 
             fut_printf("[FB] Test pattern written, flushing display...\n");

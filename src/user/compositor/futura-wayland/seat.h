@@ -29,7 +29,9 @@ struct seat_state {
     struct compositor_state *comp;
     struct wl_global *global;
     struct wl_event_source *kbd_source;
+    bool kbd_source_registered;  /* Track if kbd_source is registered with event loop */
     struct wl_event_source *mouse_source;
+    bool mouse_source_registered;  /* Track if mouse_source is registered with event loop */
     int kbd_fd;
     int mouse_fd;
     struct wl_list clients;

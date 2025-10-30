@@ -9,6 +9,7 @@
 #include <kernel/fut_vfs.h>
 #include <kernel/fut_memory.h>
 #include <kernel/fut_mm.h>
+#include <kernel/fut_task.h>
 #include <kernel/chrdev.h>
 #include <kernel/devfs.h>
 #include <kernel/errno.h>
@@ -993,30 +994,61 @@ int chrdev_alloc_fd(const struct fut_file_ops *ops, void *inode, void *priv) {
 #define S_ISDIR(m) (((m) & S_IFMT) == 0040000)  /* Directory */
 
 /**
- * Check if a file operation is allowed based on file mode.
- * Since this kernel has no UID/GID tracking, we check owner permissions.
+ * Check if a file operation is allowed based on file mode (POSIX permissions).
+ * Implements standard Unix permission checking: owner, group, other.
+ * Currently assumes all files are owned by root (uid 0, gid 0).
  *
  * @param vnode VNode to check
+ * @param task Task (process) requesting access (NULL = current task)
  * @param check_write True to check write permission, false for read
  * @return 0 if allowed, -EACCES if denied
  */
-static int check_file_permission(struct fut_vnode *vnode, bool check_write) {
+static int check_file_permission(struct fut_vnode *vnode, fut_task_t *task, bool check_write) {
     if (!vnode) {
         return -EINVAL;
     }
 
     uint32_t mode = vnode->mode;
 
+    /* Get task credentials if not provided */
+    if (!task) {
+        extern fut_task_t *fut_task_current(void);
+        task = fut_task_current();
+    }
+
+    uint32_t task_uid = task ? task->uid : 0;
+    uint32_t task_gid = task ? task->gid : 0;
+
+    /* For now, assume all files are owned by root (uid 0, gid 0) */
+    uint32_t file_uid = 0;
+    uint32_t file_gid = 0;
+    uint32_t perm_bits = 0;
+
+    /* Determine which permission bits to check: owner, group, or other */
+    if (task_uid == file_uid) {
+        /* Process is the file owner - check owner permissions */
+        perm_bits = (mode >> 6) & 7;  /* Owner: bits 6-8 */
+    } else if (task_gid == file_gid) {
+        /* Process is in the file's group - check group permissions */
+        perm_bits = (mode >> 3) & 7;  /* Group: bits 3-5 */
+    } else {
+        /* Process is neither owner nor in group - check other permissions */
+        perm_bits = mode & 7;          /* Other: bits 0-2 */
+    }
+
+    /* Check for the required permission bit */
     if (check_write) {
-        /* Check if write is allowed - need S_IWUSR for owner */
-        if (!(mode & S_IWUSR)) {
-            VFSDBG("[VFS-PERM] Write denied: file mode=0%o lacks write permission\n", mode);
+        /* Check write permission (bit 1 = 0o002 for other, etc.) */
+        if (!(perm_bits & 2)) {
+            fut_printf("[VFS-PERM] Write denied: pid=%llu uid=%u mode=0%o\n",
+                      task ? task->pid : 0, task_uid, mode);
             return -EACCES;
         }
     } else {
-        /* Check if read is allowed - need S_IRUSR for owner */
-        if (!(mode & S_IRUSR)) {
-            VFSDBG("[VFS-PERM] Read denied: file mode=0%o lacks read permission\n", mode);
+        /* Check read permission (bit 2 = 0o004 for other, etc.) */
+        if (!(perm_bits & 4)) {
+            fut_printf("[VFS-PERM] Read denied: pid=%llu uid=%u mode=0%o\n",
+                      task ? task->pid : 0, task_uid, mode);
             return -EACCES;
         }
     }
@@ -1143,7 +1175,7 @@ int fut_vfs_open(const char *path, int flags, int mode) {
     /* Check permissions for write access */
     if ((flags & (O_WRONLY | O_RDWR)) && !created) {
         /* For existing files, check if write is allowed */
-        int perm_ret = check_file_permission(vnode, true);
+        int perm_ret = check_file_permission(vnode, NULL, true);
         if (perm_ret < 0) {
             fut_printf("[VFS-OPEN] Write permission denied for '%s' (mode=0%o)\n", path, vnode->mode);
             fut_free(file);
@@ -1209,7 +1241,7 @@ ssize_t fut_vfs_read(int fd, void *buf, size_t size) {
     }
 
     /* Check read permission */
-    int perm_ret = check_file_permission(file->vnode, false);
+    int perm_ret = check_file_permission(file->vnode, NULL, false);
     if (perm_ret < 0) {
         VFSDBG("[vfs-read] Read permission denied (mode=0%o)\n", file->vnode->mode);
         return perm_ret;
@@ -1252,7 +1284,7 @@ ssize_t fut_vfs_write(int fd, const void *buf, size_t size) {
     }
 
     /* Check write permission */
-    int perm_ret = check_file_permission(file->vnode, true);
+    int perm_ret = check_file_permission(file->vnode, NULL, true);
     if (perm_ret < 0) {
         VFSDBG("[vfs-write] Write permission denied (mode=0%o)\n", file->vnode->mode);
         return perm_ret;

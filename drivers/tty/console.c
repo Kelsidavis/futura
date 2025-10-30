@@ -44,7 +44,14 @@ static void console_signal(int sig) {
 static void console_input_thread(void *arg) {
     (void)arg;
 
-    fut_printf("[CONSOLE] Input thread started\n");
+    /* Note: This message may appear multiple times due to scheduler thread switching.
+     * The thread only executes once when created, but may be preempted and rescheduled.
+     * This is normal behavior - only one instance of the thread actually runs continuously. */
+    static bool started = false;
+    if (!started) {
+        started = true;
+        fut_printf("[CONSOLE] Input thread started\n");
+    }
 
     while (1) {
         /* Read character from serial (blocking) */

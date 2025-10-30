@@ -269,6 +269,16 @@ int fut_map_page(fut_vmem_context_t *ctx, uint64_t vaddr, uint64_t paddr, uint64
 int fut_map_large_page(fut_vmem_context_t *ctx, uint64_t vaddr, uint64_t paddr, uint64_t flags);
 
 /**
+ * Map huge page (1GB) to virtual address.
+ * @param ctx VM context (NULL for current)
+ * @param vaddr Virtual address (must be 1GB-aligned)
+ * @param paddr Physical address (must be 1GB-aligned)
+ * @param flags Page flags
+ * @return 0 on success, negative on error
+ */
+int fut_map_huge_page(fut_vmem_context_t *ctx, uint64_t vaddr, uint64_t paddr, uint64_t flags);
+
+/**
  * Unmap page from virtual address.
  * @param ctx VM context (NULL for current)
  * @param vaddr Virtual address to unmap

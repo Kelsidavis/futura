@@ -393,6 +393,72 @@ int fut_map_large_page(fut_vmem_context_t *ctx, uint64_t vaddr, uint64_t paddr, 
 }
 
 /**
+ * Map a single huge page (1GB).
+ * Uses PTE_LARGE_PAGE flag to create 1GB page table entry in page directory pointer table.
+ *
+ * @param ctx MM context (NULL for kernel)
+ * @param vaddr Virtual address (must be 1GB-aligned)
+ * @param paddr Physical address (must be 1GB-aligned)
+ * @param flags Page flags
+ * @return 0 on success, negative on error
+ */
+int fut_map_huge_page(fut_vmem_context_t *ctx, uint64_t vaddr, uint64_t paddr, uint64_t flags) {
+    extern void fut_printf(const char *, ...);
+
+    /* Use kernel PML4 if no context provided */
+    pte_t *pml4 = ctx ? ctx->pml4 : kernel_pml4;
+    if (!pml4) {
+        return -1;
+    }
+
+    /* Validate 1GB alignment */
+    if (!IS_HUGE_PAGE_ALIGNED(vaddr) || !IS_HUGE_PAGE_ALIGNED(paddr)) {
+        return -1;
+    }
+
+    /* Extract page table indices */
+    uint64_t pml4_idx = PML4_INDEX(vaddr);
+    uint64_t pdpt_idx = PDPT_INDEX(vaddr);
+
+    /* Compute flags for PML4 entry */
+    uint64_t level_flags = PTE_PRESENT | PTE_WRITABLE;
+    if (ctx) {
+        level_flags |= PTE_USER;
+    }
+    if (flags & PTE_NX) {
+        level_flags |= PTE_NX;
+    }
+
+    /* Get or create PDPT */
+    page_table_t *pdpt;
+    if (!(pml4[pml4_idx] & PTE_PRESENT)) {
+        pdpt = alloc_page_table();
+        if (!pdpt) {
+            return -1;
+        }
+        assert_kernel_table_ptr(pdpt);
+        phys_addr_t pdpt_phys = pmap_virt_to_phys((uintptr_t)pdpt);
+        pml4[pml4_idx] = fut_make_pte(pdpt_phys, level_flags);
+    } else {
+        pdpt = pt_virt_from_entry(pml4[pml4_idx]);
+        if (!(flags & PTE_NX) && (pml4[pml4_idx] & PTE_NX)) {
+            pml4[pml4_idx] &= ~PTE_NX;
+            fut_flush_tlb_all();
+        }
+    }
+    assert_kernel_table_ptr(pdpt);
+
+    /* Create huge page entry in PDPT with PTE_LARGE_PAGE flag set */
+    uint64_t huge_page_flags = flags | PTE_LARGE_PAGE;
+    pdpt->entries[pdpt_idx] = fut_make_pte(paddr, huge_page_flags);
+
+    /* Flush TLB entry for the huge page */
+    fut_flush_tlb_single(vaddr);
+
+    return 0;
+}
+
+/**
  * Map contiguous range of physical memory.
  * Maps each 4KB page individually.
  *
@@ -409,28 +475,53 @@ int fut_map_range(fut_vmem_context_t *ctx, uint64_t vaddr, uint64_t paddr,
     uint64_t start_paddr = PAGE_ALIGN_DOWN(paddr);
     uint64_t end_vaddr = PAGE_ALIGN_UP(vaddr + size);
 
-    /* Check if PSE (2MB large pages) is supported */
+    /* Check CPU support for large pages */
     const fut_cpu_features_t *features = cpu_features_get();
-    bool can_use_large_pages = features && features->pse;
+    bool can_use_large_pages = features && features->pse;      /* 2MB pages */
+    bool can_use_huge_pages = features && features->pdpe1gb;   /* 1GB pages */
 
-    VMDBG("[VM] fut_map_range: vaddr=0x%llx paddr=0x%llx size=0x%llx PSE=%u\n",
+    VMDBG("[VM] fut_map_range: vaddr=0x%llx paddr=0x%llx size=0x%llx PSE=%u PDPE1GB=%u\n",
           (unsigned long long)start_vaddr, (unsigned long long)start_paddr,
-          (unsigned long long)(end_vaddr - start_vaddr), can_use_large_pages);
+          (unsigned long long)(end_vaddr - start_vaddr), can_use_large_pages, can_use_huge_pages);
 
-    /* Map the range, intelligently choosing page size */
+    /* Map the range, intelligently choosing page size (largest first) */
     for (uint64_t va = start_vaddr, pa = start_paddr;
          va < end_vaddr; ) {
 
+        uint64_t remaining = end_vaddr - va;
+
+        /* Check if we can use a 1GB huge page:
+         * 1. PDPE1GB is supported
+         * 2. Both addresses are 1GB-aligned
+         * 3. Remaining size is at least 1GB
+         */
+        if (can_use_huge_pages &&
+            IS_HUGE_PAGE_ALIGNED(va) &&
+            IS_HUGE_PAGE_ALIGNED(pa) &&
+            remaining >= HUGE_PAGE_SIZE) {
+
+            VMDBG("[VM] Mapping 1GB huge page at vaddr=0x%llx paddr=0x%llx\n",
+                  (unsigned long long)va, (unsigned long long)pa);
+
+            int ret = fut_map_huge_page(ctx, va, pa, flags);
+            if (ret < 0) {
+                VMDBG("[VM] Failed to map huge page at vaddr=0x%llx (error=%d)\n",
+                      (unsigned long long)va, ret);
+                return ret;
+            }
+
+            va += HUGE_PAGE_SIZE;
+            pa += HUGE_PAGE_SIZE;
+        }
         /* Check if we can use a 2MB large page:
          * 1. PSE is supported
          * 2. Both addresses are 2MB-aligned
          * 3. Remaining size is at least 2MB
          */
-        uint64_t remaining = end_vaddr - va;
-        if (can_use_large_pages &&
-            IS_LARGE_PAGE_ALIGNED(va) &&
-            IS_LARGE_PAGE_ALIGNED(pa) &&
-            remaining >= LARGE_PAGE_SIZE) {
+        else if (can_use_large_pages &&
+                 IS_LARGE_PAGE_ALIGNED(va) &&
+                 IS_LARGE_PAGE_ALIGNED(pa) &&
+                 remaining >= LARGE_PAGE_SIZE) {
 
             VMDBG("[VM] Mapping 2MB large page at vaddr=0x%llx paddr=0x%llx\n",
                   (unsigned long long)va, (unsigned long long)pa);
@@ -444,8 +535,9 @@ int fut_map_range(fut_vmem_context_t *ctx, uint64_t vaddr, uint64_t paddr,
 
             va += LARGE_PAGE_SIZE;
             pa += LARGE_PAGE_SIZE;
-        } else {
-            /* Fall back to 4KB page mapping */
+        }
+        /* Fall back to 4KB page mapping */
+        else {
             int ret = fut_map_page(ctx, va, pa, flags);
             if (ret < 0) {
                 /* Failed to map a page - should we unmap what we've done so far? */

@@ -61,8 +61,12 @@
 #define SYS_recvfrom    45
 #define SYS_bind        49
 #define SYS_listen      50
+#ifndef SYS_getcwd
 #define SYS_getcwd      79
+#endif
+#ifndef SYS_chdir
 #define SYS_chdir       80
+#endif
 #define SYS_mkdir       83
 #define SYS_rmdir       84
 #define SYS_unlink      87
@@ -94,6 +98,8 @@ extern long sys_nanosleep(const fut_timespec_t *u_req, fut_timespec_t *u_rem);
 extern long sys_time_millis(void);
 extern long sys_pipe(int pipefd[2]);
 extern long sys_dup2(int oldfd, int newfd);
+extern long sys_chdir(const char *path);
+extern long sys_getcwd(char *buf, size_t size);
 
 /* Helpers for missing syscalls */
 extern int chrdev_alloc_fd(const struct fut_file_ops *ops, void *inode, void *priv);
@@ -673,6 +679,18 @@ static int64_t sys_unimplemented(uint64_t arg1, uint64_t arg2, uint64_t arg3,
     return -1;  /* ENOSYS */
 }
 
+static int64_t sys_getcwd_handler(uint64_t buf, uint64_t size, uint64_t arg3,
+                                   uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg3; (void)arg4; (void)arg5; (void)arg6;
+    return sys_getcwd((char *)(uintptr_t)buf, (size_t)size);
+}
+
+static int64_t sys_chdir_handler(uint64_t path, uint64_t arg2, uint64_t arg3,
+                                 uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg2; (void)arg3; (void)arg4; (void)arg5; (void)arg6;
+    return sys_chdir((const char *)(uintptr_t)path);
+}
+
 /* ============================================================
  *   Syscall Table
  * ============================================================ */
@@ -699,6 +717,8 @@ static syscall_handler_t syscall_table[MAX_SYSCALL] = {
     [SYS_dup]        = sys_dup_handler,
     [SYS_dup2]       = sys_dup2_handler,
     [SYS_ftruncate]  = sys_ftruncate_handler,
+    [SYS_getcwd]     = sys_getcwd_handler,
+    [SYS_chdir]      = sys_chdir_handler,
     [SYS_mkdir]      = sys_mkdir_handler,
     [SYS_rmdir]      = sys_rmdir_handler,
     [SYS_unlink]     = sys_unlink_handler,

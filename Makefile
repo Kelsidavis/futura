@@ -356,6 +356,8 @@ KERNEL_SOURCES := \
     kernel/sys_mmap.c \
     kernel/sys_nanosleep.c \
     kernel/sys_time.c \
+    kernel/sys_chdir.c \
+    kernel/sys_getcwd.c \
     kernel/signal/signal.c \
     kernel/rt/memory.c \
     kernel/rt/stack_chk.c \

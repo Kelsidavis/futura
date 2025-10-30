@@ -133,3 +133,11 @@ static inline long sys_execve_call(const char *pathname, char *const *argv, char
 static inline long sys_wait4_call(long pid, int *wstatus, long options, void *rusage) {
     return sys_call6(SYS_wait4, pid, (long)wstatus, options, (long)rusage, 0, 0);
 }
+
+static inline long sys_getcwd_call(char *buf, long size) {
+    return sys_call2(SYS_getcwd, (long)buf, size);
+}
+
+static inline long sys_chdir_call(const char *path) {
+    return sys_call1(SYS_chdir, (long)path);
+}

@@ -56,6 +56,9 @@ struct fut_task {
     uint64_t signal_mask;              // Mask of currently blocked signals
     uint64_t pending_signals;          // Bitmask of pending signals awaiting delivery
 
+    /* File system context */
+    uint64_t current_dir_ino;          // Current working directory inode (root=1)
+
     fut_task_t *next;                  // Next task in system list
 };
 

@@ -202,11 +202,9 @@ void acpi_parse_madt(void) {
                madt->flags,
                (madt->flags & 1) ? "yes" : "no");
 
-    /* TODO: Initialize LAPIC for BSP (Bootstrap Processor) */
-    /* Temporarily disabled to test PIC-only mode */
-    /* extern void lapic_init(uint64_t lapic_base); */
-    /* lapic_init(madt->local_apic_address); */
-    fut_printf("[ACPI] LAPIC initialization skipped (using PIC mode)\n");
+    /* Initialize LAPIC for BSP (Bootstrap Processor) */
+    extern void lapic_init(uint64_t lapic_base);
+    lapic_init(madt->local_apic_address);
 
     /* Parse MADT entries */
     uint32_t cpu_count = 0;
@@ -301,10 +299,10 @@ void acpi_parse_madt(void) {
 
         ioapic_init(io_apic_address, io_apic_gsi_base);
 
-        /* TODO: Disable legacy PIC and switch to APIC mode (currently keeping PIC active) */
-        /* extern void fut_pic_disable(void); */
-        /* fut_pic_disable(); */
-        /* fut_printf("[ACPI] Legacy PIC disabled (APIC mode active)\n"); */
+        /* Disable legacy PIC and switch to APIC mode */
+        extern void fut_pic_disable(void);
+        fut_pic_disable();
+        fut_printf("[ACPI] Legacy PIC disabled (APIC mode active)\n");
 
         /* Configure basic IRQs to route to BSP (APIC ID 0) */
         /* IRQ0 = Timer (vector 32), IRQ1 = Keyboard (vector 33) */
@@ -314,7 +312,7 @@ void acpi_parse_madt(void) {
 
         /* Timer: ISA IRQ0 is typically remapped to GSI 2 on x86 systems
          * due to the IRQ override in MADT. Configure GSI 2, not IRQ 0. */
-        ioapic_set_irq(2, 32, 0, true, false);  /* Timer -> Vector 32, edge-triggered, masked */
+        ioapic_set_irq(2, 32, 0, false, false);  /* Timer -> Vector 32, edge-triggered, UNMASKED */
 
         /* Keyboard IRQ1 -> Vector 33 (INT_IRQ1_KEYBOARD) */
         ioapic_set_irq(1, 33, 0, true, false);  /* edge-triggered, masked */

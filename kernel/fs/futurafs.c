@@ -10,6 +10,7 @@
 #include <kernel/fut_memory.h>
 #include <kernel/fut_vfs.h>
 #include <kernel/fut_blockdev.h>
+#include <kernel/fut_timer.h>
 #include <kernel/errno.h>
 
 static const struct fut_vnode_ops futurafs_vnode_ops;
@@ -975,8 +976,8 @@ static void futurafs_dir_add_callback(int result, void *ctx) {
     case DIR_ADD_COMPLETE:
         /* Write completed successfully - update directory metadata */
         add_ctx->dir_info->disk_inode.nlinks++;
-        add_ctx->dir_info->disk_inode.mtime = 0; /* TODO: Add timestamp support */
-        add_ctx->dir_info->disk_inode.ctime = 0; /* TODO: Add timestamp support */
+        add_ctx->dir_info->disk_inode.mtime = fut_get_time_ns();
+        add_ctx->dir_info->disk_inode.ctime = fut_get_time_ns();
         add_ctx->dir_info->dirty = true;
 
         /* Mark directory vnode as modified */

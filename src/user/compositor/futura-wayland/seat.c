@@ -818,7 +818,9 @@ struct seat_state *seat_init(struct compositor_state *comp) {
        loop. For now, we mark this as unsupported and continue without input handling.
        A proper implementation would use libinput or a separate input thread. */
 
+#ifdef DEBUG_WAYLAND
     printf("[SEAT-DEBUG] Skipping event loop registration - input devices don't support epoll\n");
+#endif
 
     /* Mark that we have input devices available, even though they're not in the event loop */
     seat->kbd_source = (void *)1;   /* Mark as non-NULL to indicate success */

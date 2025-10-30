@@ -764,7 +764,19 @@ static void mm_unmap_and_free(fut_mm_t *mm, uintptr_t start, uintptr_t end) {
         uint64_t phys = 0;
         if (fut_virt_to_phys(ctx, va, &phys) == 0) {
             fut_unmap_range(ctx, va, PAGE_SIZE);
-            fut_pmm_free_page((void *)phys);
+
+            /* Check if this is a COW page with references */
+            int refcount = fut_page_ref_get((phys_addr_t)phys);
+            if (refcount > 1) {
+                /* Decrement reference count, don't free yet */
+                fut_page_ref_dec((phys_addr_t)phys);
+            } else {
+                /* Last reference or not COW - free the page */
+                if (refcount == 1) {
+                    fut_page_ref_dec((phys_addr_t)phys);  /* Remove from tracking */
+                }
+                fut_pmm_free_page((void *)pmap_phys_to_virt((phys_addr_t)phys));
+            }
         }
     }
 }

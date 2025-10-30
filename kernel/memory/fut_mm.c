@@ -84,6 +84,89 @@ static void mm_unmap_and_free(fut_mm_t *mm, uintptr_t start, uintptr_t end) {
  * Insert a VMA into the mm's VMA list in sorted order by start address.
  * This maintains the invariant that VMAs are sorted and non-overlapping.
  */
+/**
+ * Check if two VMAs can be merged (adjacent and compatible).
+ */
+static bool vma_can_merge(const fut_vma_t *vma1, const fut_vma_t *vma2) {
+    if (!vma1 || !vma2) {
+        return false;
+    }
+
+    /* Must be adjacent */
+    if (vma1->end != vma2->start) {
+        return false;
+    }
+
+    /* Must have same protection and flags */
+    if (vma1->prot != vma2->prot || vma1->flags != vma2->flags) {
+        return false;
+    }
+
+    /* Must have same file backing (or both anonymous) */
+    if (vma1->vnode != vma2->vnode) {
+        return false;
+    }
+
+    /* If file-backed, file offsets must be contiguous */
+    if (vma1->vnode) {
+        uint64_t expected_offset = vma1->file_offset + (vma1->end - vma1->start);
+        if (expected_offset != vma2->file_offset) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+/**
+ * Merge adjacent compatible VMAs. Combines vma1 and vma2 into vma1,
+ * freeing vma2. Returns merged VMA pointer.
+ */
+static fut_vma_t *vma_merge(fut_vma_t *vma1, fut_vma_t *vma2) {
+    if (!vma1 || !vma2) {
+        return vma1;
+    }
+
+    /* Extend vma1 to include vma2 */
+    vma1->end = vma2->end;
+    vma1->next = vma2->next;
+
+    /* Release vnode reference from vma2 if present */
+    if (vma2->vnode) {
+        extern void fut_vnode_unref(struct fut_vnode *);
+        fut_vnode_unref(vma2->vnode);
+    }
+
+    fut_free(vma2);
+    return vma1;
+}
+
+/**
+ * Try to merge VMA with neighbors (left/right) after modifications.
+ */
+static void vma_try_merge_neighbors(fut_mm_t *mm, fut_vma_t *vma) {
+    if (!mm || !vma) {
+        return;
+    }
+
+    /* Try merging with right neighbor */
+    if (vma->next && vma_can_merge(vma, vma->next)) {
+        vma_merge(vma, vma->next);
+    }
+
+    /* Try merging with left neighbor - search backwards */
+    if (mm->vma_list != vma) {
+        fut_vma_t *prev = mm->vma_list;
+        while (prev && prev->next != vma) {
+            prev = prev->next;
+        }
+
+        if (prev && vma_can_merge(prev, vma)) {
+            vma_merge(prev, vma);
+        }
+    }
+}
+
 static void vma_insert_sorted(fut_mm_t *mm, fut_vma_t *vma) {
     if (!mm || !vma) {
         return;
@@ -100,6 +183,7 @@ static void vma_insert_sorted(fut_mm_t *mm, fut_vma_t *vma) {
     if (vma->start < mm->vma_list->start) {
         vma->next = mm->vma_list;
         mm->vma_list = vma;
+        vma_try_merge_neighbors(mm, vma);
         return;
     }
 
@@ -115,6 +199,9 @@ static void vma_insert_sorted(fut_mm_t *mm, fut_vma_t *vma) {
     /* Insert between prev and curr */
     vma->next = curr;
     prev->next = vma;
+
+    /* Try to merge with neighbors */
+    vma_try_merge_neighbors(mm, vma);
 }
 
 void fut_mm_system_init(void) {
@@ -520,6 +607,19 @@ int fut_mm_unmap(fut_mm_t *mm, uintptr_t addr, size_t len) {
         /* Move to next */
         link = &vma->next;
         vma = next;
+    }
+
+    /* Merge adjacent compatible VMAs after unmapping to reduce memory overhead */
+    if (mm && mm->vma_list) {
+        fut_vma_t *curr = mm->vma_list;
+        while (curr && curr->next) {
+            if (vma_can_merge(curr, curr->next)) {
+                vma_merge(curr, curr->next);
+                /* Don't advance curr - check if it can merge with new next */
+            } else {
+                curr = curr->next;
+            }
+        }
     }
 
     return 0;
@@ -959,10 +1059,66 @@ int fut_mm_unmap(fut_mm_t *mm, uintptr_t addr, size_t len) {
  */
 void *fut_mm_map_file(fut_mm_t *mm, struct fut_vnode *vnode, uintptr_t hint,
                        size_t len, int prot, int flags, uint64_t file_offset) {
-    (void)mm; (void)vnode; (void)hint; (void)len;
-    (void)prot; (void)flags; (void)file_offset;
-    /* TODO: Implement ARM64 file-backed mmap */
-    return (void *)(intptr_t)(-ENOSYS);
+    extern void fut_printf(const char *, ...);
+    extern void fut_vnode_ref(struct fut_vnode *);
+
+    if (!mm || !vnode || len == 0) {
+        return (void *)(intptr_t)(-EINVAL);
+    }
+
+    /* Align length to page boundary */
+    size_t aligned = PAGE_ALIGN_UP(len);
+    if (aligned == 0) {
+        return (void *)(intptr_t)(-EINVAL);
+    }
+
+    /* Determine mapping address */
+    uintptr_t base;
+    if ((flags & 0x10) && hint) { /* MAP_FIXED - must use exact address */
+        base = PAGE_ALIGN_DOWN(hint);
+    } else if (hint) {
+        /* Honor hint as a suggestion when provided */
+        base = PAGE_ALIGN_DOWN(hint);
+    } else {
+        /* No hint provided - allocate from mmap_base */
+        uintptr_t candidate = mm->mmap_base ? mm->mmap_base : USER_MMAP_BASE;
+        if (candidate < USER_MMAP_BASE) {
+            candidate = USER_MMAP_BASE;
+        }
+        candidate = PAGE_ALIGN_UP(candidate);
+        if (candidate < mm->heap_mapped_end) {
+            candidate = PAGE_ALIGN_UP(mm->heap_mapped_end);
+        }
+        base = candidate;
+    }
+
+    uintptr_t end = base + aligned;
+    if (end < base || end > USER_VMA_MAX) {
+        return (void *)(intptr_t)(-ENOMEM);
+    }
+
+    /* Create VMA to track this mapping without allocating physical pages yet */
+    fut_vma_t *vma = fut_malloc(sizeof(*vma));
+    if (!vma) {
+        return (void *)(intptr_t)(-ENOMEM);
+    }
+
+    vma->start = base;
+    vma->end = end;
+    vma->prot = prot;
+    vma->flags = flags;
+    vma->vnode = vnode;
+    vma->file_offset = file_offset;
+    vma_insert_sorted(mm, vma);
+
+    /* Add reference to vnode */
+    fut_vnode_ref(vnode);
+
+    mm->mmap_base = end;
+
+    fut_printf("[MM-MAP-FILE] Created lazy mapping: vaddr=0x%llx-0x%llx size=%zu offset=%llu (demand paging enabled)\n",
+               base, end, len, file_offset);
+    return (void *)(uintptr_t)base;
 }
 
 #else

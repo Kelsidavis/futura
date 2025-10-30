@@ -207,8 +207,10 @@ static void vma_insert_sorted(fut_mm_t *mm, fut_vma_t *vma) {
 void fut_mm_system_init(void) {
     memset(&kernel_mm, 0, sizeof(kernel_mm));
 
-    kernel_mm.ctx.pml4 = fut_get_kernel_pml4();
-    kernel_mm.ctx.cr3_value = pmap_virt_to_phys((uintptr_t)kernel_mm.ctx.pml4);
+    /* Initialize kernel page table root (architecture-neutral) */
+    fut_vmem_set_root(&kernel_mm.ctx, fut_get_kernel_pml4());
+    fut_vmem_set_reload_value(&kernel_mm.ctx,
+                              pmap_virt_to_phys((uintptr_t)fut_vmem_get_root(&kernel_mm.ctx)));
     kernel_mm.ctx.ref_count = 1;
     atomic_store_explicit(&kernel_mm.refcnt, 1, memory_order_relaxed);
     kernel_mm.flags = FUT_MM_KERNEL;
@@ -263,8 +265,9 @@ fut_mm_t *fut_mm_create(void) {
     copy_kernel_half(pml4);
     fut_printf("[MM-CREATE] Kernel half copied\n");
 
-    mm->ctx.pml4 = pml4;
-    mm->ctx.cr3_value = pmap_virt_to_phys((uintptr_t)pml4);
+    /* Initialize page table root (architecture-neutral) */
+    fut_vmem_set_root(&mm->ctx, pml4);
+    fut_vmem_set_reload_value(&mm->ctx, pmap_virt_to_phys((uintptr_t)pml4));
     mm->ctx.ref_count = 1;
     atomic_store_explicit(&mm->refcnt, 1, memory_order_relaxed);
     mm->flags = FUT_MM_USER;
@@ -310,9 +313,11 @@ void fut_mm_release(fut_mm_t *mm) {
     }
     mm->vma_list = NULL;
 
-    if (mm->ctx.pml4) {
-        fut_pmm_free_page(mm->ctx.pml4);
-        mm->ctx.pml4 = NULL;
+    /* Free page table root (architecture-neutral) */
+    void *root = fut_vmem_get_root(&mm->ctx);
+    if (root) {
+        fut_pmm_free_page(root);
+        fut_vmem_set_root(&mm->ctx, NULL);
     }
 
     fut_free(mm);
@@ -321,6 +326,7 @@ void fut_mm_release(fut_mm_t *mm) {
 void fut_mm_switch(fut_mm_t *mm) {
     extern void fut_printf(const char *, ...);
     extern uint64_t fut_read_cr3(void);
+    extern void fut_write_cr3(uint64_t);
 
     mm = mm_fallback(mm);
     if (active_mm == mm) {
@@ -328,7 +334,7 @@ void fut_mm_switch(fut_mm_t *mm) {
     }
 
     uint64_t old_cr3 = fut_read_cr3();
-    uint64_t new_cr3 = mm->ctx.cr3_value;
+    uint64_t new_cr3 = fut_vmem_get_reload_value(&mm->ctx);
 
     // fut_printf("[MM-SWITCH] CR3: 0x%016llx -> 0x%016llx (kernel=%s)\n",
     //            old_cr3, new_cr3, (mm == &kernel_mm) ? "yes" : "no");
@@ -769,8 +775,9 @@ void fut_mm_system_init(void) {
 
     memset(&kernel_mm, 0, sizeof(kernel_mm));
 
-    kernel_mm.ctx.pgd = fut_get_kernel_pgd();
-    kernel_mm.ctx.ttbr0_el1 = (uint64_t)kernel_mm.ctx.pgd;
+    /* Initialize kernel page table root (architecture-neutral) */
+    fut_vmem_set_root(&kernel_mm.ctx, fut_get_kernel_pgd());
+    fut_vmem_set_reload_value(&kernel_mm.ctx, (uint64_t)fut_vmem_get_root(&kernel_mm.ctx));
     kernel_mm.ctx.ref_count = 1;
     atomic_store_explicit(&kernel_mm.refcnt, 1, memory_order_relaxed);
     kernel_mm.flags = FUT_MM_KERNEL;

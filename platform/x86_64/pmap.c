@@ -141,6 +141,76 @@ int pmap_map_user(fut_vmem_context_t *ctx, uint64_t uaddr, phys_addr_t paddr,
     return fut_map_range(ctx, uaddr, paddr, len, prot);
 }
 
+/* ============================================================
+ *   Page Table Destruction (Recursive)
+ * ============================================================
+ *
+ * Recursively walks page table hierarchy and frees all allocated tables.
+ * Stops at user space boundary and doesn't free kernel page tables.
+ */
+
+/**
+ * Recursively free page tables starting from a given level.
+ * @param table Current level page table
+ * @param level Current level (0=PML4, 1=PDPT, 2=PD, 3=PT)
+ */
+static void pmap_free_table_recursive(page_table_t *table, int level) {
+    if (!table || level >= 3) {
+        return;  /* Can't recurse beyond level 3 (leaf page tables) */
+    }
+
+    /* Walk all entries in this table */
+    for (int i = 0; i < 512; i++) {
+        pte_t entry = table->entries[i];
+
+        /* Skip invalid entries */
+        if (!fut_pte_is_present(entry)) {
+            continue;
+        }
+
+        /* At level 2 (PD), check if it's a large page descriptor (2MB page) */
+        if (level == 2 && fut_pte_is_large(entry)) {
+            /* Large pages don't have sub-tables, just mark for unmapping */
+            continue;
+        }
+
+        /* For non-large entries, get the next-level table and recurse */
+        if (!fut_pte_is_large(entry) || level < 2) {
+            phys_addr_t phys = fut_pte_to_phys(entry);
+            page_table_t *next_table = pmap_table_from_phys(phys);
+            pmap_free_table_recursive(next_table, level + 1);
+        }
+    }
+
+    /* Free this table itself (but not kernel tables) */
+    if ((uintptr_t)table >= PMAP_DIRECT_VIRT_BASE) {
+        fut_pmm_free_page((void *)table);
+    }
+}
+
+/**
+ * Recursively free all page tables in a user address space.
+ * Called when destroying a process's virtual memory context.
+ * Does not free kernel page tables.
+ */
+void pmap_free_tables(fut_vmem_context_t *ctx) {
+    if (!ctx) {
+        return;
+    }
+
+    pte_t *pml4 = pmap_context_pml4(ctx);
+    if (!pml4) {
+        return;
+    }
+
+    /* Start recursive freeing from PML4 (level 0) */
+    pmap_free_table_recursive((page_table_t *)pml4, 0);
+
+    /* Clear the context */
+    fut_vmem_set_root(ctx, NULL);
+    fut_vmem_set_reload_value(ctx, 0);
+}
+
 /**
  * Mark a page as read-only (for copy-on-write).
  * Clears the PTE_WRITABLE flag from the page table entry.

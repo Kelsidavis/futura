@@ -74,6 +74,10 @@ fut_task_t *fut_task_create(void) {
         .term_signal = 0,
         .threads = NULL,
         .thread_count = 0,
+        .uid = 0,          /* Default to root UID */
+        .gid = 0,          /* Default to root GID */
+        .ruid = 0,         /* Real UID (for future use) */
+        .rgid = 0,         /* Real GID (for future use) */
         .next = NULL
     };
     fut_waitq_init(&task->child_waiters);
@@ -304,4 +308,47 @@ int fut_task_waitpid(int pid, int *status_out) {
 
         fut_waitq_sleep_locked(&parent->child_waiters, &task_list_lock, FUT_THREAD_BLOCKED);
     }
+}
+
+/**
+ * Get the effective UID of a task.
+ * If task is NULL, returns the UID of the current task.
+ */
+uint32_t fut_task_get_uid(fut_task_t *task) {
+    if (!task) {
+        task = fut_task_current();
+    }
+    if (!task) {
+        return 0;  /* Default to root UID if no current task */
+    }
+    return task->uid;
+}
+
+/**
+ * Get the effective GID of a task.
+ * If task is NULL, returns the GID of the current task.
+ */
+uint32_t fut_task_get_gid(fut_task_t *task) {
+    if (!task) {
+        task = fut_task_current();
+    }
+    if (!task) {
+        return 0;  /* Default to root GID if no current task */
+    }
+    return task->gid;
+}
+
+/**
+ * Set the effective UID and GID of a task.
+ * If task is NULL, sets the credentials of the current task.
+ */
+void fut_task_set_credentials(fut_task_t *task, uint32_t uid, uint32_t gid) {
+    if (!task) {
+        task = fut_task_current();
+    }
+    if (!task) {
+        return;
+    }
+    task->uid = uid;
+    task->gid = gid;
 }

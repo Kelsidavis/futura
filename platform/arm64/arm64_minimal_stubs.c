@@ -87,10 +87,27 @@ char *strstr(const char *s1, const char *s2) {
 }
 
 /* ============================================================
- *   Serial/Console I/O Stubs
+ *   Serial/Console I/O
  * ============================================================ */
 
+/* Forward declarations for RX buffer access */
+extern volatile char uart_rx_buffer[4096];
+extern volatile uint32_t uart_rx_head;
+extern volatile uint32_t uart_rx_tail;
+
 int fut_serial_getc_blocking(void) {
-    /* Stub: Blocking serial input (not implemented for ARM64 yet) */
-    return -1;
+    /* Blocking read from UART RX ring buffer */
+    /* Spins waiting for character to be available in buffer */
+
+    while (uart_rx_head == uart_rx_tail) {
+        /* Buffer empty - spin and wait for interrupt to fill it */
+        /* In a real implementation, this would sleep/yield the thread */
+        __asm__ volatile("yield");  /* AArch64 YIELD instruction */
+    }
+
+    /* Character available - read from buffer */
+    char c = uart_rx_buffer[uart_rx_tail];
+    uart_rx_tail = (uart_rx_tail + 1) % 4096;
+
+    return (int)(unsigned char)c;
 }

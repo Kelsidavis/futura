@@ -56,6 +56,14 @@ struct MsixTableEntry {
 // MSI-X constants
 const MSIX_VECTOR_MASKED: u32 = 0x1;
 const APIC_BASE_ADDR: u32 = 0xFEE00000;  // Local APIC base address for MSI-X
+const MSIX_CONTROL_ENABLE: u16 = 1u16 << 15;  // MSI-X enable bit
+const MSIX_CONTROL_MASK: u16 = 1u16 << 14;    // MSI-X function mask bit
+
+// APIC Interrupt Command Register (ICR) format for MSI-X message address
+// ICR = 0xFEE0 | (D7:D4 = delivery mode) | (D9:D8 = destination mode) | ...
+// For MSI-X: msg_addr_lo = 0xFEE00000 | (vector destination info)
+const APIC_MSG_ADDR_BASE: u32 = 0xFEE00000;
+const APIC_DESTINATION_MODE_LOGICAL: u32 = 1 << 11;  // Logical destination
 
 // Interrupt handler for virtio-blk I/O completion
 #[unsafe(naked)]
@@ -619,6 +627,49 @@ unsafe impl Send for VirtioBlkDevice {}
 unsafe impl Sync for VirtioBlkDevice {}
 
 impl VirtioBlkDevice {
+    /// Configure a single MSI-X table entry for device interrupt delivery.
+    ///
+    /// For MSI-X, the message address encodes the APIC destination and delivery mode,
+    /// while the message data contains the interrupt vector number.
+    ///
+    /// # Parameters:
+    /// - table_index: Index into the MSI-X table (0 for I/O queue, 1 for config changes)
+    /// - vector: Interrupt vector number (typically 32-255)
+    fn configure_msix_vector(&mut self, table_index: u16, vector: u8) {
+        if self.msix_table.is_null() || table_index >= self.msix_table_size {
+            return;
+        }
+
+        unsafe {
+            // Use byte offset arithmetic to avoid alignment issues with packed struct
+            // MsixTableEntry is 16 bytes (4 u32 fields): msg_addr_lo, msg_addr_hi, msg_data, vector_control
+            let entry_offset = (table_index as usize) * size_of::<MsixTableEntry>();
+            let base_ptr = self.msix_table.add(entry_offset) as *mut u32;
+
+            // Message address: APIC physical address with destination encoding
+            let msg_addr = APIC_MSG_ADDR_BASE;  // 0xFEE00000 (physical mode, APIC 0)
+
+            // Message data: contains the interrupt vector
+            let msg_data = vector as u32;
+
+            // Vector control: bit 0 is mask bit (1=masked, 0=enabled)
+            let vector_control = 0u32;
+
+            // Write to MSI-X table using byte-offset pointers
+            // Field offsets within MsixTableEntry: 0=msg_addr_lo, 4=msg_addr_hi, 8=msg_data, 12=vector_control
+            write_volatile(base_ptr.add(0), msg_addr);                // msg_addr_lo
+            write_volatile(base_ptr.add(1), 0);                       // msg_addr_hi
+            write_volatile(base_ptr.add(2), msg_data);                // msg_data
+            write_volatile(base_ptr.add(3), vector_control);          // vector_control
+
+            // Memory fence to ensure writes are visible to device
+            core::sync::atomic::fence(core::sync::atomic::Ordering::SeqCst);
+
+            fut_printf(b"[virtio-blk] MSI-X table[%d]: configured with vector=%d (addr=0x%x data=0x%x)\n\0".as_ptr(),
+                table_index as u32, vector as u32, msg_addr, msg_data);
+        }
+    }
+
     fn probe(pci_hint: u64) -> Result<Self, FutStatus> {
         let pci = match find_device(pci_hint) {
             Some(addr) => addr,
@@ -940,9 +991,13 @@ impl VirtioBlkDevice {
             }
         }
 
-        // Explicitly disable MSI-X to use legacy INTx
-        let disable_mask = (1u16 << 15) | (1u16 << 14);  // MSI-X enable and mask bits
-        let new_control = control & !disable_mask;        // Clear both bits to disable
+        // Enable MSI-X for modern virtio device operation
+        // Set MSI-X enable bit (bit 15) and clear function mask bit (bit 14)
+        // This allows the device to deliver interrupts via MSI-X
+        let enable_mask = MSIX_CONTROL_ENABLE;           // Set bit 15 (enable)
+        let function_mask = MSIX_CONTROL_MASK;           // Bit 14 (mask all vectors)
+        let new_control = (control | enable_mask) & !function_mask;  // Enable, unmask
+
         pci_config_write16(
             self.pci.bus,
             self.pci.device,
@@ -952,9 +1007,10 @@ impl VirtioBlkDevice {
         );
 
         let readback = pci_config_read16(self.pci.bus, self.pci.device, self.pci.function, offset.wrapping_add(2));
-        self.msix_enabled = false;
+        self.msix_enabled = (readback & MSIX_CONTROL_ENABLE) != 0;
+
         unsafe {
-            fut_printf(b"[virtio-blk] MSI-X explicitly disabled: control=0x%x->0x%x (enable=%d mask=%d)\n\0".as_ptr(),
+            fut_printf(b"[virtio-blk] MSI-X enabled: control=0x%x->0x%x (enable=%d mask=%d)\n\0".as_ptr(),
                 control as u32, readback as u32, ((readback >> 15) & 1) as u32, ((readback >> 14) & 1) as u32);
         }
     }
@@ -1171,13 +1227,43 @@ impl VirtioBlkDevice {
             // Write queue size
             write_volatile(queue_size_ptr, qsize);
 
-            /* Disable MSI-X to use legacy INTx interrupts */
+            /* Configure MSI-X vectors if enabled, otherwise use legacy INTx */
             let msix_vec_ptr = addr_of_mut!((*self.common).queue_msix_vector);
-            write_volatile(msix_vec_ptr, 0xFFFFu16);  // NO_VECTOR - use legacy INTx
             let msix_cfg_ptr = addr_of_mut!((*self.common).msix_config);
-            write_volatile(msix_cfg_ptr, 0xFFFFu16);  // NO_VECTOR for config
 
-            fut_printf(b"[virtio-blk] MSI-X disabled, using legacy INTx\n\0".as_ptr());
+            if self.msix_enabled && !self.msix_table.is_null() && self.msix_table_size > 0 {
+                // Configure MSI-X table entries for I/O completion and config changes
+                // Vector 0 for I/O queue, Vector 1 for config changes
+                let io_vector: u8 = 0x2A;   // Arbitrary vector (42), assigned to queue I/O
+                let cfg_vector: u8 = 0x2B;  // Arbitrary vector (43), assigned to config changes
+
+                // Configure MSI-X table entries with the chosen vectors
+                self.configure_msix_vector(0, io_vector);
+                if self.msix_table_size > 1 {
+                    self.configure_msix_vector(1, cfg_vector);
+                }
+
+                // Tell device to use MSI-X vectors (instead of NO_VECTOR)
+                write_volatile(msix_vec_ptr, 0u16);      // Vector 0 for queue I/O
+                write_volatile(msix_cfg_ptr, 1u16);      // Vector 1 for config
+
+                fut_printf(b"[virtio-blk] MSI-X enabled with vectors I/O=%d config=%d\n\0".as_ptr(),
+                    io_vector as u32, cfg_vector as u32);
+
+                // Register the MSI-X interrupt vectors with the IDT
+                let handler_addr = virtio_blk_irq_handler as u64;
+                fut_idt_set_entry(io_vector, handler_addr, GDT_KERNEL_CODE, IDT_TYPE_INTERRUPT, 0);
+                fut_printf(b"[virtio-blk] Registered MSI-X I/O vector %d with IDT\n\0".as_ptr(),
+                    io_vector as u32);
+
+                // Store the MSI-X vector for handler reference
+                VIRTIO_BLK_IRQ_VECTOR.store(io_vector, Ordering::Relaxed);
+            } else {
+                // Fall back to legacy INTx interrupts
+                write_volatile(msix_vec_ptr, 0xFFFFu16);  // NO_VECTOR - use legacy INTx
+                write_volatile(msix_cfg_ptr, 0xFFFFu16);  // NO_VECTOR for config
+                fut_printf(b"[virtio-blk] MSI-X not available, using legacy INTx\n\0".as_ptr());
+            }
 
             // Modern VirtIO 1.0+ uses byte addresses in queue address registers
             // NOTE: Queue starts disabled by default, no need to explicitly disable it

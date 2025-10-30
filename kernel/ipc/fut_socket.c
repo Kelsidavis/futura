@@ -12,6 +12,7 @@
 #include "../../include/kernel/fut_vfs.h"
 #include "../../include/kernel/scheduler/fut_waitq.h"
 #include "../../include/kernel/fut_sched.h"
+#include "../../include/kernel/fut_timer.h"
 #include <string.h>
 
 extern void fut_printf(const char *fmt, ...);
@@ -381,7 +382,7 @@ int fut_socket_connect(fut_socket_t *socket, const char *target_path) {
     uint32_t tail = (queue->queue_head + queue->queue_count) % FUT_SOCKET_QUEUE_MAX;
     queue->queue[tail].peer_socket = socket;
     queue->queue[tail].flags = 0;
-    queue->queue[tail].timestamp_ns = 0;  /* TODO: Get current time */
+    queue->queue[tail].timestamp_ns = fut_get_time_ns();
     queue->queue_count++;
 
     socket->state = FUT_SOCK_CONNECTING;

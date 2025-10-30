@@ -67,6 +67,12 @@ static volatile uint32_t uart_tx_head = 0;  /* Write position */
 static volatile uint32_t uart_tx_tail = 0;  /* Read position */
 static volatile _Bool uart_irq_mode = 0;    /* false = polling, true = interrupt */
 
+/* UART RX ring buffer */
+#define UART_RX_BUFFER_SIZE 4096
+static volatile char uart_rx_buffer[UART_RX_BUFFER_SIZE];
+static volatile uint32_t uart_rx_head = 0;  /* Write position (filled by ISR) */
+static volatile uint32_t uart_rx_tail = 0;  /* Read position (consumed by getc) */
+
 /* IRQ handler table */
 static fut_irq_handler_t irq_handlers[256] = {NULL};
 
@@ -131,6 +137,42 @@ static void uart_tx_irq_handler(int irq_num, fut_interrupt_frame_t *frame) {
     mmio_write32((volatile void *)(uart + UART_ICR), UART_INT_TX);
 }
 
+/* UART RX interrupt handler - fills ring buffer from hardware FIFO */
+static void uart_rx_irq_handler(int irq_num, fut_interrupt_frame_t *frame) {
+    (void)irq_num;
+    (void)frame;
+    volatile uint8_t *uart = (volatile uint8_t *)UART0_BASE;
+
+    /* Drain hardware FIFO into ring buffer */
+    while (!(mmio_read32((volatile void *)(uart + UART_FR)) & UART_FR_RXFE)) {
+        /* Read character from UART data register */
+        uint32_t data = mmio_read32((volatile void *)(uart + UART_DR));
+
+        /* Check for error flags in upper byte */
+        if (data & (UART_INT_FE | UART_INT_PE | UART_INT_BE | UART_INT_OE)) {
+            /* Skip characters with errors for now */
+            continue;
+        }
+
+        /* Extract character from lower byte */
+        char c = (char)(data & 0xFF);
+
+        /* Check if buffer has space */
+        uint32_t next_head = (uart_rx_head + 1) % UART_RX_BUFFER_SIZE;
+        if (next_head == uart_rx_tail) {
+            /* Buffer full - drop character (could add overflow counter here) */
+            break;
+        }
+
+        /* Add character to ring buffer */
+        uart_rx_buffer[uart_rx_head] = c;
+        uart_rx_head = next_head;
+    }
+
+    /* Clear RX interrupt */
+    mmio_write32((volatile void *)(uart + UART_ICR), UART_INT_RX);
+}
+
 void fut_serial_init(void) {
     volatile uint8_t *uart = (volatile uint8_t *)UART0_BASE;
 
@@ -150,11 +192,15 @@ void fut_serial_init(void) {
     /* Set line control: 8 bits, no parity, 1 stop bit, FIFOs enabled */
     mmio_write32((volatile void *)(uart + UART_LCR), (1 << 4) | (1 << 5) | (1 << 6));
 
-    /* Disable all UART interrupts for now (keep using polling) */
-    mmio_write32((volatile void *)(uart + UART_IMSC), 0);
+    /* Enable RX interrupt (UART_INT_RX) for serial input */
+    mmio_write32((volatile void *)(uart + UART_IMSC), UART_INT_RX);
 
     /* Enable UART: TXE, RXE, UARTEN */
     mmio_write32((volatile void *)(uart + UART_CR), (1 << 0) | (1 << 8) | (1 << 9));
+
+    /* Register RX interrupt handler and enable IRQ 33 (PL011 UART) */
+    fut_register_irq_handler(33, uart_rx_irq_handler);
+    fut_irq_enable(33);
 }
 
 void fut_serial_putc(char c) {

@@ -941,17 +941,435 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
     return 0;
 }
 
-#else  /* !__x86_64__ */
+#elif defined(__aarch64__)
 
-/* ARM64 and other non-x86_64 architectures: ELF64 execution stubs */
-/* TODO: Implement ARM64-specific ELF64 loader and user process bootstrap */
+/* ARM64 ELF64 loader implementation */
+
+#include <kernel/exec.h>
+#include <kernel/errno.h>
+#include <kernel/fut_task.h>
+#include <kernel/fut_thread.h>
+#include <kernel/fut_memory.h>
+#include <kernel/fut_mm.h>
+#include <kernel/fut_sched.h>
+#include <kernel/fut_vfs.h>
+#include <kernel/uaccess.h>
+#include <arch/arm64/regs.h>
+#include <arch/arm64/context.h>
+
+#include <string.h>
+#include <stdint.h>
+#include <stdbool.h>
+
+#define ELF_MAGIC       0x464C457FULL
+#define ELF_CLASS_64    0x02
+#define ELF_DATA_LE     0x01
+#define PT_LOAD         0x00000001u
+#define PF_X            0x00000001u
+#define PF_W            0x00000002u
+#define PF_R            0x00000004u
+
+/* ARM64 user mode stack location (high address, 128KB stack) */
+#define USER_STACK_TOP      0x00007FFFFFFFE000ULL
+#define USER_STACK_PAGES    32u
+
+typedef struct __attribute__((packed)) {
+    uint8_t  e_ident[16];
+    uint16_t e_type;
+    uint16_t e_machine;
+    uint32_t e_version;
+    uint64_t e_entry;
+    uint64_t e_phoff;
+    uint64_t e_shoff;
+    uint32_t e_flags;
+    uint16_t e_ehsize;
+    uint16_t e_phentsize;
+    uint16_t e_phnum;
+    uint16_t e_shentsize;
+    uint16_t e_shnum;
+    uint16_t e_shstrndx;
+} elf64_ehdr_t;
+
+typedef struct __attribute__((packed)) {
+    uint32_t p_type;
+    uint32_t p_flags;
+    uint64_t p_offset;
+    uint64_t p_vaddr;
+    uint64_t p_paddr;
+    uint64_t p_filesz;
+    uint64_t p_memsz;
+    uint64_t p_align;
+} elf64_phdr_t;
+
+struct fut_user_entry_arm64 {
+    uint64_t entry;
+    uint64_t stack;
+    uint64_t argc;
+    uint64_t argv_ptr;
+    fut_task_t *task;
+};
+
+static size_t kstrlen(const char *s) {
+    if (!s) return 0;
+    const char *p = s;
+    while (*p) p++;
+    return (size_t)(p - s);
+}
+
+static int read_exact(int fd, void *buf, size_t len) {
+    size_t total = 0;
+    while (total < len) {
+        ssize_t n = fut_vfs_read(fd, (uint8_t *)buf + total, len - total);
+        if (n <= 0) {
+            return -EIO;
+        }
+        total += (size_t)n;
+    }
+    return 0;
+}
+
+static int exec_copy_to_user(fut_mm_t *mm, uint64_t dest, const void *src, size_t len) {
+    /* For ELF loading, map user pages and write directly */
+    fut_vmem_context_t *vmem = fut_mm_context(mm);
+    uintptr_t phys = 0;
+    if (!pmap_lookup_page(vmem, dest, &phys)) {
+        return -EFAULT;
+    }
+    memcpy((void *)(phys + KERNEL_PHYS_OFFSET), src, len);
+    return 0;
+}
+
+/* Map a single LOAD segment from file */
+static int map_segment(fut_mm_t *mm, int fd, const elf64_phdr_t *phdr) {
+    if (phdr->p_memsz == 0) return 0;
+    if (phdr->p_vaddr == 0) return -EINVAL;
+
+    int prot = 0;
+    if (phdr->p_flags & PF_R) prot |= PROT_READ;
+    if (phdr->p_flags & PF_W) prot |= PROT_WRITE;
+    if (phdr->p_flags & PF_X) prot |= PROT_EXEC;
+
+    fut_vmem_context_t *vmem = fut_mm_context(mm);
+    uintptr_t addr = PAGE_ALIGN_DOWN(phdr->p_vaddr);
+    size_t pages_needed = (phdr->p_vaddr + phdr->p_memsz - addr + PAGE_SIZE - 1) / PAGE_SIZE;
+
+    for (size_t i = 0; i < pages_needed; i++) {
+        uint64_t page_addr = addr + (i * PAGE_SIZE);
+        phys_addr_t phys = fut_alloc_page();
+        if (phys == 0) return -ENOMEM;
+
+        if (pmap_map_page(vmem, page_addr, phys, prot) != 0) {
+            fut_free_page(phys);
+            return -EFAULT;
+        }
+    }
+
+    /* Read file data into mapped pages */
+    int64_t seek_pos = fut_vfs_lseek(fd, (int64_t)phdr->p_offset, SEEK_SET);
+    if (seek_pos < 0) return (int)seek_pos;
+
+    uint8_t *buf = fut_malloc(phdr->p_filesz);
+    if (!buf) return -ENOMEM;
+
+    int rc = read_exact(fd, buf, phdr->p_filesz);
+    if (rc != 0) {
+        fut_free(buf);
+        return rc;
+    }
+
+    if (exec_copy_to_user(mm, phdr->p_vaddr, buf, phdr->p_filesz) != 0) {
+        fut_free(buf);
+        return -EFAULT;
+    }
+
+    __asm__ volatile("dmb sy" ::: "memory");
+    fut_free(buf);
+    return 0;
+}
+
+/* Stage stack pages for user mode */
+static int stage_stack_pages(fut_mm_t *mm, uint64_t *out_stack_top) {
+    if (!out_stack_top) return -EINVAL;
+
+    fut_vmem_context_t *vmem = fut_mm_context(mm);
+    uint64_t stack_addr = USER_STACK_TOP - (USER_STACK_PAGES * PAGE_SIZE);
+
+    for (size_t i = 0; i < USER_STACK_PAGES; i++) {
+        uint64_t page_addr = stack_addr + (i * PAGE_SIZE);
+        phys_addr_t phys = fut_alloc_page();
+        if (phys == 0) return -ENOMEM;
+
+        if (pmap_map_page(vmem, page_addr, phys, PROT_READ | PROT_WRITE) != 0) {
+            fut_free_page(phys);
+            return -EFAULT;
+        }
+    }
+
+    *out_stack_top = USER_STACK_TOP;
+    return 0;
+}
+
+/* Build user stack with argc, argv, envp */
+static int build_user_stack(fut_mm_t *mm,
+                            const char *const argv_in[],
+                            size_t argc_in,
+                            const char *const envp_in[],
+                            size_t envc_in,
+                            uint64_t *out_sp) {
+    if (!out_sp) return -EINVAL;
+
+    size_t argc = argc_in;
+    const char *const *argv = argv_in;
+
+    if (!argv || argc == 0) {
+        static const char *default_argv[2] = { "app", NULL };
+        argv = default_argv;
+        argc = 1;
+    }
+
+    uint64_t sp = USER_STACK_TOP;
+
+    /* Copy argument strings (working backwards) */
+    uint8_t **argv_ptrs = fut_malloc(sizeof(uint8_t *) * argc);
+    if (!argv_ptrs) return -ENOMEM;
+
+    for (size_t i = argc; i-- > 0;) {
+        size_t len = kstrlen(argv[i]) + 1;
+        sp -= len;
+        if (exec_copy_to_user(mm, sp, argv[i], len) != 0) {
+            fut_free(argv_ptrs);
+            return -EFAULT;
+        }
+        argv_ptrs[i] = (uint8_t *)(uintptr_t)sp;
+    }
+
+    /* Align stack to 16-byte boundary for ARM64 ABI */
+    sp &= ~0xFULL;
+
+    /* Push argv terminator */
+    uint64_t zero = 0;
+    sp -= sizeof(uint64_t);
+    if (exec_copy_to_user(mm, sp, &zero, sizeof(zero)) != 0) {
+        fut_free(argv_ptrs);
+        return -EFAULT;
+    }
+
+    /* Push argv pointers */
+    for (size_t i = argc; i-- > 0;) {
+        uint64_t ptr = (uint64_t)(uintptr_t)argv_ptrs[i];
+        sp -= sizeof(uint64_t);
+        if (exec_copy_to_user(mm, sp, &ptr, sizeof(ptr)) != 0) {
+            fut_free(argv_ptrs);
+            return -EFAULT;
+        }
+    }
+
+    uint64_t argv_ptr = sp;
+
+    /* ARM64 ABI: argc and argv_ptr will be passed in x0 and x1 */
+    *out_sp = sp;
+
+    fut_free(argv_ptrs);
+    return 0;
+}
+
+/* ARM64 user mode entry trampoline */
+[[noreturn]] __attribute__((optimize("O0"))) static void fut_user_trampoline_arm64(void *arg) {
+    extern void fut_printf(const char *, ...);
+    struct fut_user_entry_arm64 *info = (struct fut_user_entry_arm64 *)arg;
+    uint64_t entry = info->entry;
+    uint64_t sp = info->stack;
+    uint64_t argc = info->argc;
+    fut_task_t *task = info->task;
+
+    fut_printf("[ARM64-TRAMPOLINE] entry=0x%llx sp=0x%llx argc=%llu\n", entry, sp, argc);
+
+    /* Prepare to transition to EL0 (user mode)
+     * We need to:
+     * 1. Set ELR_EL1 to entry point
+     * 2. Set SPSR_EL1 for EL0t mode
+     * 3. Set SP_EL0 to user stack
+     * 4. Set x0 to argc for ARM64 ABI
+     * 5. Execute ERET to drop to EL0
+     */
+
+    __asm__ volatile(
+        /* Set SP_EL0 (user mode stack pointer) */
+        "msr sp_el0, %0\n\t"
+        /* Set ELR_EL1 (return address for ERET) */
+        "msr elr_el1, %1\n\t"
+        /* Set SPSR_EL1 for EL0t mode (user mode) */
+        "mov x2, #0x00\n\t"  /* EL0t mode */
+        "msr spsr_el1, x2\n\t"
+        /* Set x0 to argc for function call convention */
+        "mov x0, %2\n\t"
+        /* Instruction synchronization barrier before ERET */
+        "isb\n\t"
+        /* Return to user mode */
+        "eret\n\t"
+        :
+        : "r"(sp), "r"(entry), "r"(argc)
+        : "x0", "x2", "memory"
+    );
+
+    /* Never reached */
+    for (;;) __asm__ volatile("wfi");
+}
+
+int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
+    if (!path) return -EINVAL;
+
+    int fd = fut_vfs_open(path, O_RDONLY, 0);
+    if (fd < 0) return fd;
+
+    elf64_ehdr_t ehdr;
+    int rc = read_exact(fd, &ehdr, sizeof(ehdr));
+    if (rc != 0) {
+        fut_vfs_close(fd);
+        return rc;
+    }
+
+    /* Verify ELF header */
+    if (*(uint32_t *)ehdr.e_ident != ELF_MAGIC ||
+        ehdr.e_ident[4] != ELF_CLASS_64 ||
+        ehdr.e_ident[5] != ELF_DATA_LE ||
+        ehdr.e_machine != 0xB7) {  /* EM_AARCH64 = 0xB7 */
+        fut_vfs_close(fd);
+        return -EINVAL;
+    }
+
+    size_t ph_size = (size_t)ehdr.e_phnum * sizeof(elf64_phdr_t);
+    elf64_phdr_t *phdrs = fut_malloc(ph_size);
+    if (!phdrs) {
+        fut_vfs_close(fd);
+        return -ENOMEM;
+    }
+
+    int64_t seek_rc = fut_vfs_lseek(fd, (int64_t)ehdr.e_phoff, SEEK_SET);
+    if (seek_rc < 0) {
+        fut_free(phdrs);
+        fut_vfs_close(fd);
+        return (int)seek_rc;
+    }
+
+    rc = read_exact(fd, phdrs, ph_size);
+    if (rc != 0) {
+        fut_free(phdrs);
+        fut_vfs_close(fd);
+        return rc;
+    }
+
+    /* Create task and memory manager */
+    fut_task_t *task = fut_task_create();
+    if (!task) {
+        fut_free(phdrs);
+        fut_vfs_close(fd);
+        return -ENOMEM;
+    }
+
+    fut_mm_t *mm = fut_mm_create();
+    if (!mm) {
+        fut_task_destroy(task);
+        fut_free(phdrs);
+        fut_vfs_close(fd);
+        return -ENOMEM;
+    }
+
+    fut_task_set_mm(task, mm);
+
+    /* Map LOAD segments */
+    uintptr_t heap_base_candidate = 0;
+    for (uint16_t i = 0; i < ehdr.e_phnum; ++i) {
+        if (phdrs[i].p_type != PT_LOAD) continue;
+
+        rc = map_segment(mm, fd, &phdrs[i]);
+        if (rc != 0) {
+            fut_task_destroy(task);
+            fut_free(phdrs);
+            fut_vfs_close(fd);
+            return rc;
+        }
+
+        uint64_t seg_end = phdrs[i].p_vaddr + phdrs[i].p_memsz;
+        if (seg_end > heap_base_candidate) {
+            heap_base_candidate = (uintptr_t)seg_end;
+        }
+    }
+
+    /* Set heap base */
+    uintptr_t heap_base = heap_base_candidate ? PAGE_ALIGN_UP(heap_base_candidate) : 0x400000ULL;
+    heap_base += PAGE_SIZE;
+    fut_mm_set_heap_base(mm, heap_base, 0);
+
+    /* Stage stack pages */
+    uint64_t stack_top = 0;
+    rc = stage_stack_pages(mm, &stack_top);
+    if (rc != 0) {
+        fut_task_destroy(task);
+        fut_free(phdrs);
+        fut_vfs_close(fd);
+        return rc;
+    }
+
+    /* Build user stack */
+    uint64_t user_sp = 0;
+    size_t argc = 0;
+    if (argv) {
+        while (argv[argc]) argc++;
+    }
+    rc = build_user_stack(mm, (const char *const *)argv, argc, (const char *const *)envp, 0, &user_sp);
+    if (rc != 0) {
+        fut_task_destroy(task);
+        fut_free(phdrs);
+        fut_vfs_close(fd);
+        return rc;
+    }
+
+    /* Create user entry structure */
+    struct fut_user_entry_arm64 *entry = fut_malloc(sizeof(*entry));
+    if (!entry) {
+        fut_task_destroy(task);
+        fut_free(phdrs);
+        fut_vfs_close(fd);
+        return -ENOMEM;
+    }
+
+    entry->entry = ehdr.e_entry;
+    entry->stack = user_sp;
+    entry->argc = argc;
+    entry->argv_ptr = user_sp;
+    entry->task = task;
+
+    /* Create thread with trampoline */
+    fut_thread_t *thread = fut_thread_create(task,
+                                             fut_user_trampoline_arm64,
+                                             entry,
+                                             16 * 1024,
+                                             FUT_DEFAULT_PRIORITY);
+    if (!thread) {
+        fut_free(entry);
+        fut_task_destroy(task);
+        fut_free(phdrs);
+        fut_vfs_close(fd);
+        return -ENOMEM;
+    }
+
+    fut_free(phdrs);
+    fut_vfs_close(fd);
+
+    (void)thread;
+    return 0;
+}
+
+#else  /* Other architectures */
 
 #include <kernel/errno.h>
 
 int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
     (void)path;
     (void)argv;
-    return -ENOSYS;  /* Not implemented on this architecture */
+    (void)envp;
+    return -ENOSYS;
 }
 
-#endif  /* __x86_64__ */
+#endif  /* Architecture-specific ELF loader */

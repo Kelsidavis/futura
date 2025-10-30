@@ -171,7 +171,7 @@ exception_vectors:
 
 /* Synchronous exception from current EL with SP0 */
 sync_sp0_handler:
-    b       generic_exception_handler
+    b       sync_exception_entry
 
 /* IRQ from current EL with SP0 */
 irq_sp0_handler:
@@ -187,7 +187,7 @@ serror_sp0_handler:
 
 /* Synchronous exception from current EL with SPx */
 sync_spx_handler:
-    b       generic_exception_handler
+    b       sync_exception_entry
 
 /* IRQ from current EL with SPx */
 irq_spx_handler:
@@ -203,7 +203,7 @@ serror_spx_handler:
 
 /* Synchronous exception from lower EL (AArch64) */
 sync_aarch64_handler:
-    b       generic_exception_handler
+    b       sync_exception_entry
 
 /* IRQ from lower EL (AArch64) */
 irq_aarch64_handler:
@@ -219,7 +219,7 @@ serror_aarch64_handler:
 
 /* Synchronous exception from lower EL (AArch32) */
 sync_aarch32_handler:
-    b       generic_exception_handler
+    b       sync_exception_entry
 
 /* IRQ from lower EL (AArch32) */
 irq_aarch32_handler:

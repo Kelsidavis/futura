@@ -24,6 +24,10 @@ CFLAGS += $(INCLUDES)
 # Linker flags
 LDFLAGS := -nostdlib -static
 
+# Libfutura paths
+CRT0 := $(BUILD_DIR)/lib/crt0.o
+LIBFUTURA := $(BUILD_DIR)/lib/libfutura.a
+
 # Source files
 SRCS := main.c
 OBJS := $(SRCS:%.c=$(OBJ_DIR)/%.o)
@@ -36,8 +40,8 @@ TARGET := $(BIN_DIR)/fsd
 
 all: $(TARGET)
 
-$(TARGET): $(OBJS) | $(BIN_DIR)
-	$(LD) $(LDFLAGS) -o $@ $(OBJS)
+$(TARGET): $(OBJS) $(CRT0) $(LIBFUTURA) | $(BIN_DIR)
+	$(LD) $(LDFLAGS) -o $@ $(CRT0) $(OBJS) $(LIBFUTURA)
 	@echo "Built fsd: $@"
 
 $(OBJ_DIR)/%.o: %.c | $(OBJ_DIR)

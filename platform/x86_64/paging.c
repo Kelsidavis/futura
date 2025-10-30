@@ -306,6 +306,92 @@ int fut_map_page(fut_vmem_context_t *ctx, uint64_t vaddr, uint64_t paddr, uint64
 }
 
 /**
+ * Map a single large page (2MB).
+ * Uses PTE_LARGE_PAGE flag to create 2MB page table entry in page directory.
+ *
+ * @param ctx MM context (NULL for kernel)
+ * @param vaddr Virtual address (must be 2MB-aligned)
+ * @param paddr Physical address (must be 2MB-aligned)
+ * @param flags Page flags
+ * @return 0 on success, negative on error
+ */
+int fut_map_large_page(fut_vmem_context_t *ctx, uint64_t vaddr, uint64_t paddr, uint64_t flags) {
+    extern void fut_printf(const char *, ...);
+
+    /* Use kernel PML4 if no context provided */
+    pte_t *pml4 = ctx ? ctx->pml4 : kernel_pml4;
+    if (!pml4) {
+        return -1;
+    }
+
+    /* Validate 2MB alignment */
+    if (!IS_LARGE_PAGE_ALIGNED(vaddr) || !IS_LARGE_PAGE_ALIGNED(paddr)) {
+        return -1;
+    }
+
+    /* Extract page table indices */
+    uint64_t pml4_idx = PML4_INDEX(vaddr);
+    uint64_t pdpt_idx = PDPT_INDEX(vaddr);
+    uint64_t pd_idx = PD_INDEX(vaddr);
+
+    /* Compute flags for intermediate page tables */
+    uint64_t level_flags = PTE_PRESENT | PTE_WRITABLE;
+    if (ctx) {
+        level_flags |= PTE_USER;
+    }
+    if (flags & PTE_NX) {
+        level_flags |= PTE_NX;
+    }
+
+    /* Get or create PDPT */
+    page_table_t *pdpt;
+    if (!(pml4[pml4_idx] & PTE_PRESENT)) {
+        pdpt = alloc_page_table();
+        if (!pdpt) {
+            return -1;
+        }
+        assert_kernel_table_ptr(pdpt);
+        phys_addr_t pdpt_phys = pmap_virt_to_phys((uintptr_t)pdpt);
+        pml4[pml4_idx] = fut_make_pte(pdpt_phys, level_flags);
+    } else {
+        pdpt = pt_virt_from_entry(pml4[pml4_idx]);
+        if (!(flags & PTE_NX) && (pml4[pml4_idx] & PTE_NX)) {
+            pml4[pml4_idx] &= ~PTE_NX;
+            fut_flush_tlb_all();
+        }
+    }
+    assert_kernel_table_ptr(pdpt);
+
+    /* Get or create PD */
+    page_table_t *pd;
+    if (!(pdpt->entries[pdpt_idx] & PTE_PRESENT)) {
+        pd = alloc_page_table();
+        if (!pd) {
+            return -1;
+        }
+        assert_kernel_table_ptr(pd);
+        phys_addr_t pd_phys = pmap_virt_to_phys((uintptr_t)pd);
+        pdpt->entries[pdpt_idx] = fut_make_pte(pd_phys, level_flags);
+    } else {
+        pd = pt_virt_from_entry(pdpt->entries[pdpt_idx]);
+        if (!(flags & PTE_NX) && (pdpt->entries[pdpt_idx] & PTE_NX)) {
+            pdpt->entries[pdpt_idx] &= ~PTE_NX;
+            fut_flush_tlb_all();
+        }
+    }
+    assert_kernel_table_ptr(pd);
+
+    /* Create large page entry in PD with PTE_LARGE_PAGE flag set */
+    uint64_t large_page_flags = flags | PTE_LARGE_PAGE;
+    pd->entries[pd_idx] = fut_make_pte(paddr, large_page_flags);
+
+    /* Flush TLB entry for the large page */
+    fut_flush_tlb_single(vaddr);
+
+    return 0;
+}
+
+/**
  * Map contiguous range of physical memory.
  * Maps each 4KB page individually.
  *

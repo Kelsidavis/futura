@@ -11,6 +11,7 @@
 #define FUT_DEFAULT_MODE (S_IRUSR | S_IWUSR)
 #define FUT_DEFAULT_BLKSIZE 4096ULL
 
+__attribute__((unused))
 static void fut_stat_reset(struct stat *st) {
     memset(st, 0, sizeof(*st));
     st->st_blksize = FUT_DEFAULT_BLKSIZE;
@@ -18,17 +19,14 @@ static void fut_stat_reset(struct stat *st) {
     st->st_mode = S_IFREG | FUT_DEFAULT_MODE;
 }
 
+__attribute__((unused))
 static void fut_stat_set_size(struct stat *st, size_t len) {
     st->st_size = (off_t)len;
     st->st_blocks = (blkcnt_t)((len + 511ULL) / 512ULL);
 }
 
+__attribute__((nonnull(2), leaf, nothrow))
 int fstat(int fd, struct stat *st) {
-    if (!st) {
-        errno = EFAULT;
-        return -1;
-    }
-
     fut_stat_reset(st);
     st->st_ino = (ino_t)(unsigned int)fd;
 
@@ -59,7 +57,8 @@ int fstat(int fd, struct stat *st) {
     return 0;
 }
 
-int fstat64(int fd, struct stat *st) __attribute__((weak, alias("fstat")));
+__attribute__((weak, alias("fstat"), nonnull(2), leaf, nothrow))
+int fstat64(int fd, struct stat *st);
 
 int __fxstat64(int ver, int fd, struct stat *st) {
     (void)ver;

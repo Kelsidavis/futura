@@ -56,6 +56,9 @@ struct stat {
     struct timespec st_ctim;
 };
 
+#endif /* !has_include_next */
+
+/* File type macros - always define these */
 #ifndef S_IFSOCK
 #define S_IFSOCK 0140000
 #endif
@@ -66,6 +69,7 @@ struct stat {
 #define S_IFCHR  0020000
 #endif
 
+/* File permission macros - always define these */
 #ifndef S_IRUSR
 #define S_IRUSR 0400
 #endif
@@ -78,5 +82,3 @@ struct stat {
 #ifndef S_IROTH
 #define S_IROTH 0004
 #endif
-
-#endif /* !has_include_next */

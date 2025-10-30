@@ -715,6 +715,22 @@ void __attribute__((weak)) fut_timer_irq(void) {
     fut_pic_send_eoi(0);
 }
 
+/* IPI handlers - can be overridden by kernel SMP code */
+void __attribute__((weak)) ipi_reschedule_handler(void) {
+    /* Reschedule request - send EOI and continue */
+}
+
+void __attribute__((weak)) ipi_tlb_flush_handler(void) {
+    /* TLB flush request - send EOI and continue */
+}
+
+void __attribute__((weak)) ipi_halt_handler(void) {
+    /* CPU halt request - halt without sending EOI */
+    while (1) {
+        __asm__ volatile("cli; hlt");
+    }
+}
+
 /* Helper function to print hex value */
 static void print_hex64(uint64_t val) {
     const char *hex = "0123456789ABCDEF";

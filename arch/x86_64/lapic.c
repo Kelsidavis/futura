@@ -236,6 +236,42 @@ void lapic_send_sipi(uint32_t apic_id, uint8_t vector) {
 }
 
 /**
+ * Send IPI to all CPUs except self using destination shorthand.
+ * Uses physical addressing mode with "Others" shorthand.
+ */
+void lapic_send_ipi_all_except_self(uint32_t vector) {
+    /* Set ICR_HIGH to 0 (not used with shorthand addressing) */
+    lapic_write(LAPIC_REG_ICR_HIGH, 0);
+
+    /* Send IPI with "Others" destination shorthand */
+    uint32_t icr_low = vector | LAPIC_DM_FIXED | LAPIC_DEST_PHYSICAL | LAPIC_DSH_OTHERS;
+    lapic_write(LAPIC_REG_ICR_LOW, icr_low);
+
+    /* Wait for delivery to complete */
+    while (lapic_read(LAPIC_REG_ICR_LOW) & LAPIC_DS_PENDING) {
+        __asm__ volatile("pause");
+    }
+}
+
+/**
+ * Send IPI to all CPUs including self using destination shorthand.
+ * Uses physical addressing mode with "All" shorthand.
+ */
+void lapic_send_ipi_all_including_self(uint32_t vector) {
+    /* Set ICR_HIGH to 0 (not used with shorthand addressing) */
+    lapic_write(LAPIC_REG_ICR_HIGH, 0);
+
+    /* Send IPI with "All" destination shorthand */
+    uint32_t icr_low = vector | LAPIC_DM_FIXED | LAPIC_DEST_PHYSICAL | LAPIC_DSH_ALL;
+    lapic_write(LAPIC_REG_ICR_LOW, icr_low);
+
+    /* Wait for delivery to complete */
+    while (lapic_read(LAPIC_REG_ICR_LOW) & LAPIC_DS_PENDING) {
+        __asm__ volatile("pause");
+    }
+}
+
+/**
  * Enable LAPIC timer in one-shot mode.
  */
 void lapic_timer_oneshot(uint32_t initial_count, uint8_t vector) {

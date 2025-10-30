@@ -975,14 +975,129 @@ static int ramfs_mount(const char *device, int flags, void *data, fut_handle_t b
     return 0;
 }
 
+/**
+ * Recursively free all vnodes in a directory.
+ * Traverses the directory tree and unreferences all vnodes,
+ * which triggers their cleanup via vnode refcounting.
+ */
+static void ramfs_free_directory_recursive(struct fut_vnode *dir_vnode) {
+    if (!dir_vnode || dir_vnode->type != VN_DIR) {
+        return;
+    }
+
+    struct ramfs_node *dir_node = (struct ramfs_node *)dir_vnode->fs_data;
+    if (!dir_node) {
+        return;
+    }
+
+    /* Iterate through directory entries */
+    struct ramfs_dirent *entry = dir_node->dir.entries;
+    while (entry) {
+        struct ramfs_dirent *next_entry = entry->next;
+
+        if (entry->vnode) {
+            /* Recursively free subdirectories */
+            if (entry->vnode->type == VN_DIR) {
+                ramfs_free_directory_recursive(entry->vnode);
+            }
+
+            /* Clean up vnode filesystem data */
+            ramfs_cleanup_vnode(entry->vnode);
+
+            /* Unref the vnode */
+            fut_vnode_unref(entry->vnode);
+        }
+
+        /* Free the directory entry */
+        fut_free(entry);
+        entry = next_entry;
+    }
+
+    /* Clear the directory entries list */
+    dir_node->dir.entries = NULL;
+}
+
+/**
+ * Clean up ramfs_node fs_data when vnode is freed.
+ * Called when a vnode is destroyed (refcount reaches 0).
+ */
+static void ramfs_cleanup_vnode(struct fut_vnode *vnode) {
+    if (!vnode || !vnode->fs_data) {
+        return;
+    }
+
+    struct ramfs_node *node = (struct ramfs_node *)vnode->fs_data;
+
+    /* Validate magic guards */
+    if (node->magic_guard_before != RAMFS_NODE_MAGIC ||
+        node->magic_guard_after != RAMFS_NODE_MAGIC) {
+        return;  /* Invalid node, skip cleanup */
+    }
+
+    /* Free file data if present */
+    if (vnode->type == VN_FILE && node->file.data) {
+        fut_free(node->file.data);
+        node->file.data = NULL;
+        node->file.capacity = 0;
+    }
+
+    /* Free the ramfs_node structure itself */
+    fut_free(node);
+    vnode->fs_data = NULL;
+}
+
+static void ramfs_free_vnode(struct fut_vnode *vnode) {
+    if (!vnode) {
+        return;
+    }
+
+    /* Clean up filesystem-specific data */
+    ramfs_cleanup_vnode(vnode);
+
+    /* Free the vnode structure itself */
+    fut_free(vnode);
+}
+
 static int ramfs_unmount(struct fut_mount *mount) {
     if (!mount || !mount->root) {
         return -EINVAL;
     }
 
-    /* TODO: Free all vnodes and data */
-    /* For now, just free the mount structure */
-    (void)mount;
+    struct fut_vnode *root = mount->root;
+
+    /* Recursively free all vnodes and data in the directory tree
+     * Note: We manually free vnodes here rather than using fut_vnode_unref()
+     * because the normal unref path keeps directory vnodes alive permanently.
+     * During unmount, we explicitly want to free everything.
+     */
+    struct ramfs_node *root_node = (struct ramfs_node *)root->fs_data;
+    if (root_node) {
+        /* Iterate through root directory entries */
+        struct ramfs_dirent *entry = root_node->dir.entries;
+        while (entry) {
+            struct ramfs_dirent *next_entry = entry->next;
+
+            if (entry->vnode) {
+                /* Recursively free subdirectories */
+                if (entry->vnode->type == VN_DIR) {
+                    ramfs_free_directory_recursive(entry->vnode);
+                }
+
+                /* Free the vnode */
+                ramfs_free_vnode(entry->vnode);
+            }
+
+            /* Free the directory entry */
+            fut_free(entry);
+            entry = next_entry;
+        }
+
+        /* Clear the directory entries list */
+        root_node->dir.entries = NULL;
+    }
+
+    /* Free the root vnode itself */
+    ramfs_free_vnode(root);
 
     return 0;
 }

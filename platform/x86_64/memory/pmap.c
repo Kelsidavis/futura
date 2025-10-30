@@ -8,7 +8,7 @@
  * later phases will grow this module once user copy and devfs plumbing land.
  */
 
-#include <arch/x86_64/pmap.h>
+#include <platform/x86_64/memory/pmap.h>
 
 #include <kernel/errno.h>
 #include <kernel/fut_memory.h>

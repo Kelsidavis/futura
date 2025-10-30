@@ -3,8 +3,8 @@
  * gdt.c - Helper routines for x86_64 GDT/TSS management
  */
 
-#include <arch/x86_64/gdt.h>
-#include <arch/x86_64/regs.h>
+#include <platform/x86_64/gdt.h>
+#include <platform/x86_64/regs.h>
 
 #include <string.h>
 

@@ -6,8 +6,8 @@
  * ARM64 (AArch64) page table setup, memory mapping, and TLB management.
  */
 
-#include <arch/arm64/paging.h>
-#include <arch/arm64/regs.h>
+#include <platform/arm64/memory/paging.h>
+#include <platform/arm64/regs.h>
 #include <kernel/fut_mm.h>
 #include <kernel/fut_memory.h>
 #include <string.h>

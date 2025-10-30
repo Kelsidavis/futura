@@ -9,7 +9,7 @@
 #include <kernel/errno.h>
 
 #if defined(__x86_64__)
-#include <arch/x86_64/pmap.h>
+#include <platform/x86_64/memory/pmap.h>
 #endif
 
 #include <string.h>

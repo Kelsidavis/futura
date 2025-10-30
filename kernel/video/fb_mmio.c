@@ -47,8 +47,8 @@ static inline uint32_t pci_config_read_bdf(uint8_t bus, uint8_t slot, uint8_t fu
 #endif
 
 #ifdef __x86_64__
-#include <arch/x86_64/paging.h>
-#include <arch/x86_64/pmap.h>
+#include <platform/x86_64/memory/paging.h>
+#include <platform/x86_64/memory/pmap.h>
 #endif
 
 static struct fut_fb_hwinfo g_fb_hw = {0};

@@ -7,9 +7,9 @@
  * Provides on-demand mapping of physical memory into virtual address space.
  */
 
-#include <arch/x86_64/paging.h>
-#include <arch/x86_64/pmap.h>
-#include <arch/x86_64/cpu.h>
+#include <platform/x86_64/memory/paging.h>
+#include <platform/x86_64/memory/pmap.h>
+#include <platform/x86_64/cpu.h>
 #include <kernel/fut_memory.h>
 #include <platform/platform.h>
 #include <stddef.h>

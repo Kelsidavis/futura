@@ -10,11 +10,11 @@
 #include <stdarg.h>
 #include <stdbool.h>
 #include <stdatomic.h>
-#include <arch/x86_64/paging.h>
-#include <arch/x86_64/regs.h>
-#include <arch/x86_64/gdt.h>
-#include <arch/x86_64/pat.h>
-#include <arch/x86_64/cpu.h>
+#include <platform/x86_64/memory/paging.h>
+#include <platform/x86_64/regs.h>
+#include <platform/x86_64/gdt.h>
+#include <platform/x86_64/memory/pat.h>
+#include <platform/x86_64/cpu.h>
 #include <kernel/fut_mm.h>
 #include <kernel/fb.h>
 #include <kernel/trap.h>

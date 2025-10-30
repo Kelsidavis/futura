@@ -4,7 +4,7 @@
  * Licensed under the MPL v2.0 — see LICENSE for details.
  */
 
-#include <arch/x86_64/lapic.h>
+#include <platform/x86_64/interrupt/lapic.h>
 #include <kernel/fut_percpu.h>
 #include <stdint.h>
 #include <stdbool.h>

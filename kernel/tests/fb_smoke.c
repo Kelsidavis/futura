@@ -21,8 +21,8 @@
 #include <subsystems/posix_syscall.h>
 
 #if defined(__x86_64__)
-#include <arch/x86_64/paging.h>
-#include <arch/x86_64/pmap.h>
+#include <platform/x86_64/memory/paging.h>
+#include <platform/x86_64/memory/pmap.h>
 #endif
 
 #include <tests/test_api.h>

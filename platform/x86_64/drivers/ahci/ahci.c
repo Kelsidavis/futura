@@ -33,7 +33,7 @@
 #include <kernel/fut_sched.h>
 #include <kernel/fut_thread.h>
 
-#include <arch/x86_64/pmap.h>
+#include <platform/x86_64/memory/pmap.h>
 
 #include <stddef.h>
 #include <stdint.h>

@@ -4,8 +4,8 @@
  * Licensed under the MPL v2.0 — see LICENSE for details.
  */
 
-#include <arch/x86_64/lapic.h>
-#include <arch/x86_64/msr.h>
+#include <platform/x86_64/interrupt/lapic.h>
+#include <platform/x86_64/msr.h>
 #include <stddef.h>
 
 extern void fut_printf(const char *fmt, ...);

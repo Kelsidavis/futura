@@ -12,8 +12,8 @@
 #include <platform/platform.h>
 #include <futura/fb_ioctl.h>
 
-#include <arch/x86_64/pmap.h>
-#include <arch/x86_64/pat.h>
+#include <platform/x86_64/memory/pmap.h>
+#include <platform/x86_64/memory/pat.h>
 
 #include <stddef.h>
 #include <stdint.h>

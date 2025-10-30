@@ -17,8 +17,8 @@
 #include <kernel/fut_vfs.h>
 #include <kernel/uaccess.h>
 
-#include <arch/x86_64/paging.h>
-#include <arch/x86_64/pmap.h>
+#include <platform/x86_64/memory/paging.h>
+#include <platform/x86_64/memory/pmap.h>
 
 #include <string.h>
 #include <stdint.h>
@@ -954,8 +954,8 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
 #include <kernel/fut_sched.h>
 #include <kernel/fut_vfs.h>
 #include <kernel/uaccess.h>
-#include <arch/arm64/regs.h>
-#include <arch/arm64/context.h>
+#include <platform/arm64/regs.h>
+#include <platform/arm64/context.h>
 
 #include <string.h>
 #include <stdint.h>

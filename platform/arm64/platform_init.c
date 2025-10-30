@@ -13,9 +13,9 @@
 
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wpedantic"
-#include <arch/arm64/regs.h>
+#include <platform/arm64/regs.h>
 #pragma GCC diagnostic pop
-#include <arch/arm64/irq.h>
+#include <platform/arm64/interrupt/irq.h>
 #include <platform/platform.h>
 #include <config/futura_config.h>
 

@@ -14,8 +14,8 @@
 #include <string.h>
 
 #ifdef __x86_64__
-#include <arch/x86_64/paging.h>
-#include <arch/x86_64/pmap.h>
+#include <platform/x86_64/memory/paging.h>
+#include <platform/x86_64/memory/pmap.h>
 #endif
 
 #ifdef __x86_64__

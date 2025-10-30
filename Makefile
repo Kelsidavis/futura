@@ -380,16 +380,16 @@ ifeq ($(PLATFORM),x86_64)
         platform/x86_64/user_iretq.S \
         platform/x86_64/ap_trampoline.S \
         platform/x86_64/gdt.c \
-        arch/x86_64/pat.c \
-        arch/x86_64/lapic.c \
-        arch/x86_64/ioapic.c \
-        arch/x86_64/smp.c \
-        platform/x86_64/pmap.c \
-        platform/x86_64/paging.c \
+        platform/x86_64/memory/pat.c \
+        platform/x86_64/interrupt/lapic.c \
+        platform/x86_64/interrupt/ioapic.c \
+        platform/x86_64/interrupt/smp.c \
+        platform/x86_64/memory/pmap.c \
+        platform/x86_64/memory/paging.c \
         platform/x86_64/cpu_features.c \
         platform/x86_64/platform_init.c \
         platform/x86_64/ps2.c \
-        arch/x86_64/perf_clock.c \
+        platform/x86_64/timing/perf_clock.c \
         kernel/arch/x86_64/hal_halt.c \
         kernel/arch/x86_64/hal_interrupts.c \
         kernel/video/fb_mmio.c \
@@ -503,11 +503,10 @@ $(OBJ_DIR) $(BIN_DIR):
 	@mkdir -p $(OBJ_DIR)/kernel/video
 	@mkdir -p $(OBJ_DIR)/kernel/rust
 	@mkdir -p $(OBJ_DIR)/kernel/blobs
-	@mkdir -p $(OBJ_DIR)/platform/$(PLATFORM)
-ifeq ($(PLATFORM),x86_64)
-	@mkdir -p $(OBJ_DIR)/arch/x86_64
-else ifeq ($(PLATFORM),arm64)
-	@mkdir -p $(OBJ_DIR)/kernel/arch/arm64
+	@mkdir -p $(OBJ_DIR)/platform/$(PLATFORM)/interrupt
+	@mkdir -p $(OBJ_DIR)/platform/$(PLATFORM)/memory
+	@mkdir -p $(OBJ_DIR)/platform/$(PLATFORM)/timing
+ifeq ($(PLATFORM),arm64)
 	@mkdir -p $(OBJ_DIR)/kernel/dtb
 endif
 	@mkdir -p $(OBJ_DIR)/tests

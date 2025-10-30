@@ -11,10 +11,10 @@
 #include "../../include/kernel/fut_memory.h"
 #include "../../include/kernel/fut_stats.h"
 #if defined(__x86_64__)
-#include <arch/x86_64/gdt.h>
-#include <arch/x86_64/paging.h>
+#include <platform/x86_64/gdt.h>
+#include <platform/x86_64/memory/paging.h>
 #elif defined(__aarch64__)
-#include <arch/arm64/paging.h>
+#include <platform/arm64/memory/paging.h>
 #endif
 #include <platform/platform.h>
 #include <stdint.h>

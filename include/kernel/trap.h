@@ -10,9 +10,9 @@
 #include <stdbool.h>
 
 #if defined(__x86_64__)
-#include <arch/x86_64/regs.h>
+#include <platform/x86_64/regs.h>
 #elif defined(__aarch64__)
-#include <arch/arm64/regs.h>
+#include <platform/arm64/regs.h>
 #endif
 
 bool fut_trap_handle_page_fault(fut_interrupt_frame_t *frame);

@@ -6,7 +6,7 @@
  * Parses device tree blobs passed by bootloader for RPi3/4/5.
  */
 
-#include <arch/arm64/dtb.h>
+#include <platform/arm64/dtb.h>
 #include <string.h>
 #include <platform/platform.h>
 

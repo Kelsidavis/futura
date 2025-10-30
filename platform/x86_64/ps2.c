@@ -4,7 +4,7 @@
  */
 
 #include <platform/platform.h>
-#include <arch/x86_64/regs.h>
+#include <platform/x86_64/regs.h>
 #include <kernel/errno.h>
 
 #include <stdbool.h>

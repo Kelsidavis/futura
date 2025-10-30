@@ -6,7 +6,7 @@
  * ARM64 process/thread creation, scheduling, and execution.
  */
 
-#include <arch/arm64/process.h>
+#include <platform/arm64/process.h>
 #include <kernel/fut_mm.h>
 #include <string.h>
 #include <stdatomic.h>

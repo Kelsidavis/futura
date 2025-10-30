@@ -7,8 +7,8 @@
  * Handles data aborts, instruction aborts, and system calls.
  */
 
-#include "../../include/arch/arm64/regs.h"
-#include "../../include/arch/arm64/paging.h"
+#include "../../include/platform/arm64/regs.h"
+#include "../../include/platform/arm64/memory/paging.h"
 #include "../../include/kernel/trap.h"
 
 extern void fut_printf(const char *fmt, ...);

@@ -10,6 +10,7 @@
 #define SYS_mmap        9
 #define SYS_munmap      11
 #define SYS_brk         12
+#define SYS_unlink      87
 #define SYS_flock       73
 #define SYS_fork        57
 #define SYS_execve      59

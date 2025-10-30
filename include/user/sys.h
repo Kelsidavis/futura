@@ -78,6 +78,10 @@ static inline long sys_close(long fd) {
     return sys_call1(SYS_close, fd);
 }
 
+static inline long sys_unlink(const char *path) {
+    return sys_call1(SYS_unlink, (long)path);
+}
+
 static inline long sys_ioctl(long fd, long req, long arg) {
     return sys_call3(SYS_ioctl, fd, req, arg);
 }

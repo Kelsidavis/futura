@@ -105,7 +105,14 @@ int fut_shm_create(const char *name, size_t size, int oflag, int mode) {
 }
 
 int fut_shm_unlink(const char *name) {
-    (void)name;
+    char path[128];
+    if (fut_build_shm_path(name, path, sizeof(path)) != 0) {
+        return -1;
+    }
+    long ret = sys_unlink(path);
+    if (ret < 0) {
+        return (int)ret;
+    }
     return 0;
 }
 

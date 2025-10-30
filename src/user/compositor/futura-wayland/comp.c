@@ -1513,13 +1513,15 @@ int comp_scheduler_start(struct compositor_state *comp) {
         printf("[SCHEDULER-DEBUG] Event loop add_fd returned NULL (errno=%d), bypassing event loop\n", errno);
 #endif
         /* Similar to input devices: timerfd doesn't support epoll in this environment.
-         * Mark timer_source as available with a sentinel value to indicate success,
-         * but we'll handle timer events manually in comp_run().
+         * Mark as not registered but timer is still valid.
+         * We'll handle timer events manually in comp_run().
          */
-        comp->timer_source = (void *)1;
+        comp->timer_source_registered = false;
 #ifdef DEBUG_WAYLAND
-        printf("[SCHEDULER-DEBUG] Marked timer_source as available (sentinel)\n");
+        printf("[SCHEDULER-DEBUG] Marked timer_source as not registered with event loop\n");
 #endif
+    } else {
+        comp->timer_source_registered = true;
     }
 #ifdef DEBUG_WAYLAND
     printf("[SCHEDULER-DEBUG] Scheduler started successfully\n");
@@ -1532,12 +1534,11 @@ void comp_scheduler_stop(struct compositor_state *comp) {
         return;
     }
 
-    if (comp->timer_source) {
-        /* Only call wl_event_source_remove if it's a valid pointer, not the sentinel */
-        if (comp->timer_source != (void *)1) {
-            wl_event_source_remove(comp->timer_source);
-        }
+    if (comp->timer_source_registered && comp->timer_source) {
+        /* Only call wl_event_source_remove if registered with event loop */
+        wl_event_source_remove(comp->timer_source);
         comp->timer_source = NULL;
+        comp->timer_source_registered = false;
     }
 
     if (comp->timerfd >= 0) {

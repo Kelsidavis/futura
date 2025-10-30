@@ -141,6 +141,7 @@ struct compositor_state {
     uint32_t vsync_hint_ms;
     int timerfd;
     struct wl_event_source *timer_source;
+    bool timer_source_registered;  /* Track if timer_source is registered with event loop */
     uint64_t next_tick_ms;
     struct comp_surface *resize_surface;
 };

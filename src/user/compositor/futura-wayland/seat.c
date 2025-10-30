@@ -823,8 +823,8 @@ struct seat_state *seat_init(struct compositor_state *comp) {
 #endif
 
     /* Mark that we have input devices available, even though they're not in the event loop */
-    seat->kbd_source = (void *)1;   /* Mark as non-NULL to indicate success */
-    seat->mouse_source = (void *)1;  /* Mark as non-NULL to indicate success */
+    seat->kbd_source_registered = false;   /* Not registered with event loop */
+    seat->mouse_source_registered = false;  /* Not registered with event loop */
 
     seat->global = wl_global_create(comp->display,
                                     &wl_seat_interface,
@@ -845,13 +845,15 @@ void seat_finish(struct seat_state *seat) {
         return;
     }
 
-    if (seat->kbd_source && seat->kbd_source != (void *)1) {
+    if (seat->kbd_source_registered && seat->kbd_source) {
         wl_event_source_remove(seat->kbd_source);
         seat->kbd_source = NULL;
+        seat->kbd_source_registered = false;
     }
-    if (seat->mouse_source && seat->mouse_source != (void *)1) {
+    if (seat->mouse_source_registered && seat->mouse_source) {
         wl_event_source_remove(seat->mouse_source);
         seat->mouse_source = NULL;
+        seat->mouse_source_registered = false;
     }
 
     if (seat->kbd_fd >= 0) {

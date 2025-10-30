@@ -78,9 +78,16 @@ fut_task_t *fut_task_create(void) {
         .gid = 0,          /* Default to root GID */
         .ruid = 0,         /* Real UID (for future use) */
         .rgid = 0,         /* Real GID (for future use) */
+        .signal_mask = 0,  /* No signals blocked initially */
+        .pending_signals = 0,  /* No pending signals */
         .next = NULL
     };
     fut_waitq_init(&task->child_waiters);
+
+    /* Initialize signal handlers array - all default actions */
+    for (int i = 0; i < 31; i++) {
+        task->signal_handlers[i] = NULL;  /* NULL = use default action */
+    }
 
     fut_spinlock_acquire(&task_list_lock);
     if (parent) {

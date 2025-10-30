@@ -101,7 +101,8 @@
 
 /* Physical address mask (bits 12-47 for 48-bit VA, bits 12-51 with 52-bit PA support) */
 #define PTE_PHYS_ADDR_MASK      0x0000FFFFFFFFF000ULL
-#define PTE_FLAGS_MASK          (~PTE_PHYS_ADDR_MASK)
+/* Flags mask: all bits except physical address and bit 62 (ARM64 internal signal bit) */
+#define PTE_FLAGS_MASK          ((~PTE_PHYS_ADDR_MASK) & ~(1ULL << 62))
 
 /* ============================================================
  *   Page Table Structure (4-Level Hierarchy)
@@ -491,10 +492,15 @@ bool fut_vmem_verify(fut_vmem_context_t *ctx);
  * ============================================================
  * Maps x86_64 PTE flag names to ARM64 equivalents for code
  * that needs to work across both architectures.
+ *
+ * Note: On ARM64, writability is determined by AP bits set during
+ * mapping, not by a single PTE_WRITABLE flag. To preserve
+ * architecture-generic code logic, we use bit 62 (unused by ARM64 user PTEs)
+ * as a signal bit that's interpreted during flag translation.
  */
 
 #define PTE_PRESENT             PTE_VALID       /* Page is present/valid */
-#define PTE_WRITABLE            0               /* ARM64 uses AP bits; 0 means writable (handled separately) */
-#define PTE_USER                PTE_AF_BIT      /* User accessible (ARM64 uses AF_BIT as marker) */
+#define PTE_WRITABLE            (1ULL << 62)    /* Internal flag: bit 62 indicates "writable request" for ARM64 translation */
+#define PTE_USER                PTE_AF_BIT      /* User accessible (use AF_BIT as marker, set during translation) */
 #define PTE_NX                  PTE_UXN_BIT     /* No-execute */
 #define PTE_PHYS_ADDR_MASK      0x0000FFFFFFFFF000ULL  /* Physical address bits [47:12] */

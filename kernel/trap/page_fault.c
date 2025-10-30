@@ -21,6 +21,12 @@
 #include <arch/x86_64/pmap.h>
 #endif
 
+#ifdef __aarch64__
+#include <arch/arm64/regs.h>
+#include <arch/arm64/paging.h>
+#include <arch/arm64/pmap.h>
+#endif
+
 #include <stdbool.h>
 #include <stdint.h>
 #include <string.h>
@@ -221,8 +227,9 @@ static bool handle_cow_fault_generic(uint64_t fault_addr, bool is_write, bool is
         return false;
     }
 
-    /* Per-page COW tracking: Check if page is actually read-only (still needs COW) */
-    if ((pte & PTE_WRITABLE) != 0) {
+    /* Per-page COW tracking: Check if page is actually read-only (still needs COW)
+     * Use architecture-specific helper to check writability */
+    if (fut_pte_is_writable(pte)) {
         /* Page is already writable - COW already processed */
         fut_printf("[COW] Page already writable: va=0x%llx (COW already processed)\n",
                    page_addr);

@@ -180,6 +180,77 @@ static page_table_t *get_or_create_table(page_table_t *parent_table, int index, 
 }
 
 /* ============================================================
+ *   Flag Translation for Architecture-Generic Code
+ * ============================================================
+ *
+ * Translates generic x86_64-style PTE flags (used by architecture-generic
+ * demand paging code) to ARM64-specific AP bit flags.
+ */
+
+/**
+ * Translate generic PTE flags (x86_64-style) to ARM64 PTE flags.
+ * Used by architecture-generic code (demand paging, COW) that
+ * uses x86_64 flag constants.
+ * @param generic_flags Flags using x86_64-style constants (PTE_PRESENT, PTE_USER, PTE_WRITABLE, PTE_NX)
+ * @return ARM64 PTE flags with proper AP bits and attributes
+ */
+static uint64_t arm64_translate_flags(uint64_t generic_flags) {
+    uint64_t arm64_flags = 0;
+
+    /* Always set VALID if PTE_PRESENT is set */
+    if (generic_flags & PTE_PRESENT) {
+        arm64_flags |= PTE_VALID;
+    }
+
+    /* Determine if this is a user-accessible page by checking for PTE_USER (mapped to PTE_AF_BIT) */
+    bool is_user = (generic_flags & PTE_USER) != 0;
+
+    /* Check bit 62 which is set to indicate "writable request" on ARM64.
+     * Note: On x86_64, PTE_WRITABLE is a real bit that gets into PTEs.
+     * On ARM64, we use bit 62 as a signal during translation (it won't end up in final PTE).
+     */
+    bool is_writable = (generic_flags & PTE_WRITABLE) != 0;
+
+    /* Determine AP bits based on user/writable flags */
+    if (is_user) {
+        /* User-accessible page */
+        if (is_writable) {
+            arm64_flags |= PTE_AP_RW_ALL;      /* User read/write */
+        } else {
+            arm64_flags |= PTE_AP_RO_ALL;      /* User read-only */
+        }
+    } else {
+        /* Kernel-only page */
+        if (is_writable) {
+            arm64_flags |= PTE_AP_RW_EL1;      /* Kernel read/write only */
+        } else {
+            arm64_flags |= PTE_AP_RO_EL1;      /* Kernel read-only */
+        }
+    }
+
+    /* Set memory attributes (normal, cacheable) */
+    arm64_flags |= PTE_ATTR_NORMAL;
+
+    /* Set sharability */
+    arm64_flags |= PTE_SH_INNER;
+
+    /* Set access flag (required for page to be mappable) */
+    arm64_flags |= PTE_AF_BIT;
+
+    /* Handle NX (no-execute) bit - set UXN if PTE_NX is set */
+    if (generic_flags & PTE_NX) {
+        arm64_flags |= PTE_UXN_BIT;
+    }
+
+    /* For user pages, always set PXN (prevent kernel execution in user pages) */
+    if (is_user) {
+        arm64_flags |= PTE_PXN_BIT;
+    }
+
+    return arm64_flags;
+}
+
+/* ============================================================
  *   Page Table Operations
  * ============================================================ */
 
@@ -209,6 +280,9 @@ int fut_map_page(fut_vmem_context_t *ctx, uint64_t vaddr, uint64_t paddr, uint64
         return -3;  /* No page table */
     }
 
+    /* Translate generic flags to ARM64 flags if needed */
+    uint64_t arm64_flags = arm64_translate_flags(flags);
+
     /* Walk page table hierarchy and create intermediate tables as needed */
     int pgd_idx = PGD_INDEX(vaddr);
     page_table_t *pmd = get_or_create_table(pgd, pgd_idx, true);
@@ -229,7 +303,7 @@ int fut_map_page(fut_vmem_context_t *ctx, uint64_t vaddr, uint64_t paddr, uint64
     }
 
     int page_idx = PAGE_INDEX(vaddr);
-    pte_t pte = fut_make_pte(paddr, flags);
+    pte_t pte = fut_make_pte(paddr, arm64_flags);
     page_table->entries[page_idx] = pte;
 
     /* Invalidate TLB entry for this address */

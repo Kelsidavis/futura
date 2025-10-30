@@ -6,9 +6,9 @@
  * Platform-specific initialization routines for RPi3, RPi4, and RPi5.
  */
 
-#include <arch/arm64/rpi_init.h>
-#include <arch/arm64/dtb.h>
-#include <arch/arm64/irq.h>
+#include <platform/arm64/rpi_init.h>
+#include <platform/arm64/dtb.h>
+#include <platform/arm64/interrupt/irq.h>
 #include <platform/platform.h>
 #include <string.h>
 

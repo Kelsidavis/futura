@@ -18,9 +18,9 @@
 #include "../../include/kernel/fut_thread.h"
 #include "../../include/kernel/fut_vfs.h"
 
-#include <arch/x86_64/paging.h>
-#include <arch/x86_64/pmap.h>
-#include <arch/x86_64/regs.h>
+#include <platform/x86_64/memory/paging.h>
+#include <platform/x86_64/memory/pmap.h>
+#include <platform/x86_64/regs.h>
 
 #include <kernel/errno.h>
 
@@ -722,7 +722,7 @@ void *fut_mm_map_file(fut_mm_t *mm, struct fut_vnode *vnode, uintptr_t hint,
 #include "../../include/kernel/fut_task.h"
 #include "../../include/kernel/fut_thread.h"
 
-#include <arch/arm64/paging.h>
+#include <platform/arm64/memory/paging.h>
 #include <kernel/errno.h>
 
 #include <string.h>

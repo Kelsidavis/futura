@@ -4,7 +4,7 @@
  * Licensed under the MPL v2.0 — see LICENSE for details.
  */
 
-#include <arch/x86_64/ioapic.h>
+#include <platform/x86_64/interrupt/ioapic.h>
 #include <stddef.h>
 
 extern void fut_printf(const char *fmt, ...);

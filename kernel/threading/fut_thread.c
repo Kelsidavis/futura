@@ -13,7 +13,7 @@
 #include "../../include/kernel/fut_memory.h"
 #include "../../include/kernel/fut_percpu.h"
 #if defined(__x86_64__)
-#include <arch/x86_64/gdt.h>
+#include <platform/x86_64/gdt.h>
 #endif
 #include <string.h>
 #include <stdatomic.h>

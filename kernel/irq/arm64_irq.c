@@ -6,9 +6,9 @@
  * ARM64 interrupt controller setup, exception dispatch, and IRQ routing.
  */
 
-#include <arch/arm64/irq.h>
-#include <arch/arm64/regs.h>
-#include <arch/arm64/process.h>
+#include <platform/arm64/interrupt/irq.h>
+#include <platform/arm64/regs.h>
+#include <platform/arm64/process.h>
 #include <platform/platform.h>
 #include <stddef.h>
 #include <stdatomic.h>

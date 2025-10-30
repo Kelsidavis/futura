@@ -168,9 +168,9 @@
 
 /* Architecture-specific header inclusion */
 #ifdef ARCH_X86_64
-    #define ARCH_HEADER(file) <arch/x86_64/file>
+    #define ARCH_HEADER(file) <platform/x86_64/file>
 #elif defined(ARCH_ARM64)
-    #define ARCH_HEADER(file) <arch/arm64/file>
+    #define ARCH_HEADER(file) <platform/arm64/file>
 #endif
 
 /* Static assertions for configuration validation */

@@ -3,10 +3,10 @@
  * pat.c - Page Attribute Table setup for x86_64
  */
 
-#include <arch/x86_64/pat.h>
+#include <platform/x86_64/memory/pat.h>
 
-#include <arch/x86_64/regs.h>
-#include <arch/x86_64/paging.h>
+#include <platform/x86_64/regs.h>
+#include <platform/x86_64/memory/paging.h>
 
 #define MSR_IA32_PAT 0x277u
 

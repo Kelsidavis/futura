@@ -6,7 +6,7 @@
  * ARM64 physical memory mapping and page table walking implementation.
  */
 
-#include <arch/arm64/pmap.h>
+#include <platform/arm64/memory/pmap.h>
 #include <kernel/errno.h>
 #include <kernel/fut_memory.h>
 

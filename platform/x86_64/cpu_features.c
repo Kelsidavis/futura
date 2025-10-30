@@ -4,8 +4,8 @@
  * Licensed under the MPL v2.0 — see LICENSE for details.
  */
 
-#include <arch/x86_64/cpu.h>
-#include <arch/x86_64/msr.h>
+#include <platform/x86_64/cpu.h>
+#include <platform/x86_64/msr.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdatomic.h>

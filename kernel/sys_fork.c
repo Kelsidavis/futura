@@ -16,11 +16,11 @@
 #include <string.h>
 
 #ifdef __x86_64__
-#include <arch/x86_64/paging.h>
-#include <arch/x86_64/pmap.h>
-#include <arch/x86_64/regs.h>
+#include <platform/x86_64/memory/paging.h>
+#include <platform/x86_64/memory/pmap.h>
+#include <platform/x86_64/regs.h>
 #elif defined(__aarch64__)
-#include <arch/arm64/regs.h>
+#include <platform/arm64/regs.h>
 #endif
 
 extern void fut_printf(const char *fmt, ...);

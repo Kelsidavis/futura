@@ -9,7 +9,7 @@
 #include <generated/version.h>
 
 #ifdef __x86_64__
-#include <arch/x86_64/cpu.h>
+#include <platform/x86_64/cpu.h>
 #endif
 
 extern void fut_printf(const char *fmt, ...);

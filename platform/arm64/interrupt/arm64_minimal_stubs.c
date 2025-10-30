@@ -4,7 +4,7 @@
  */
 
 #include <kernel/fut_mm.h>
-#include <arch/arm64/irq.h>
+#include <platform/arm64/interrupt/irq.h>
 #include <stdint.h>
 #include <stddef.h>
 #include <string.h>

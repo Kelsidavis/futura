@@ -16,15 +16,15 @@
 #include <sys/types.h>
 
 #ifdef __x86_64__
-#include <arch/x86_64/regs.h>
-#include <arch/x86_64/paging.h>
-#include <arch/x86_64/pmap.h>
+#include <platform/x86_64/regs.h>
+#include <platform/x86_64/memory/paging.h>
+#include <platform/x86_64/memory/pmap.h>
 #endif
 
 #ifdef __aarch64__
-#include <arch/arm64/regs.h>
-#include <arch/arm64/paging.h>
-#include <arch/arm64/pmap.h>
+#include <platform/arm64/regs.h>
+#include <platform/arm64/memory/paging.h>
+#include <platform/arm64/memory/pmap.h>
 #endif
 
 #include <stdbool.h>
@@ -349,9 +349,9 @@ bool fut_trap_handle_page_fault(fut_interrupt_frame_t *frame) {
 
 #elif defined(__aarch64__)
 
-#include <arch/arm64/regs.h>
-#include <arch/arm64/paging.h>
-#include <arch/arm64/pmap.h>
+#include <platform/arm64/regs.h>
+#include <platform/arm64/memory/paging.h>
+#include <platform/arm64/memory/pmap.h>
 
 /**
  * Handle ARM64 data/instruction abort (page fault).

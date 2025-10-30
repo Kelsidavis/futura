@@ -276,6 +276,10 @@ void acpi_parse_madt(void) {
                            override->source,
                            override->global_system_interrupt,
                            override->flags);
+                /* Store override for IO-APIC routing */
+                extern void ioapic_store_override(uint8_t bus, uint8_t source, uint32_t gsi, uint16_t flags);
+                ioapic_store_override(override->bus, override->source,
+                                     override->global_system_interrupt, override->flags);
                 interrupt_override_count++;
                 break;
             }
@@ -296,8 +300,12 @@ void acpi_parse_madt(void) {
         extern int ioapic_init(uint64_t ioapic_base, uint32_t gsi_base);
         extern void ioapic_set_irq(uint8_t irq, uint8_t vector, uint8_t dest_apic_id,
                                    bool mask, bool trigger_level);
+        extern void ioapic_vector_allocator_init(void);
 
         ioapic_init(io_apic_address, io_apic_gsi_base);
+
+        /* Initialize vector allocator for dynamic device interrupt assignment */
+        ioapic_vector_allocator_init();
 
         /* Disable legacy PIC and switch to APIC mode */
         extern void fut_pic_disable(void);
@@ -305,26 +313,41 @@ void acpi_parse_madt(void) {
         fut_printf("[ACPI] Legacy PIC disabled (APIC mode active)\n");
 
         /* Configure basic IRQs to route to BSP (APIC ID 0) */
-        /* IRQ0 = Timer (vector 32), IRQ1 = Keyboard (vector 33) */
-        /* Keep them masked for now - will be enabled when drivers request them */
+        /* Use MADT interrupt overrides to get correct GSI and polarity/trigger settings */
 
-        fut_printf("[ACPI] Configuring IRQ routing to BSP (APIC ID 0)\n");
+        fut_printf("[ACPI] Configuring IRQ routing to BSP (APIC ID 0) with MADT overrides\n");
 
-        /* Timer: ISA IRQ0 is typically remapped to GSI 2 on x86 systems
-         * due to the IRQ override in MADT. Configure GSI 2, not IRQ 0. */
-        ioapic_set_irq(2, 32, 0, false, false);  /* Timer -> Vector 32, edge-triggered, UNMASKED */
+        /* Import necessary functions for override lookup */
+        extern uint32_t ioapic_get_gsi_for_isa_irq(uint8_t isa_irq);
+        extern uint8_t ioapic_get_polarity(uint32_t gsi);
+        extern uint8_t ioapic_get_trigger_mode(uint32_t gsi);
 
-        /* Keyboard IRQ1 -> Vector 33 (INT_IRQ1_KEYBOARD) */
-        ioapic_set_irq(1, 33, 0, true, false);  /* edge-triggered, masked */
+        /* Configure IRQs 0, 1, 3, 4 with dynamic GSI lookup and MADT settings */
+        uint8_t isa_irqs[] = { 0, 1, 3, 4 };
+        uint8_t vectors[] = { 32, 33, 35, 36 };  /* Interrupt vectors for each IRQ */
 
-        /* COM2 IRQ3 -> Vector 35 */
-        ioapic_set_irq(3, 35, 0, true, false);
+        for (int i = 0; i < 4; i++) {
+            uint8_t isa_irq = isa_irqs[i];
+            uint8_t vector = vectors[i];
 
-        /* COM1 IRQ4 -> Vector 36 */
-        ioapic_set_irq(4, 36, 0, true, false);
+            /* Dynamically look up GSI for this ISA IRQ based on MADT overrides */
+            uint32_t gsi = ioapic_get_gsi_for_isa_irq(isa_irq);
 
-        /* TODO: Properly parse and apply all interrupt overrides from MADT */
-        /* TODO: Enable timer IRQ on IOAPIC when switching to APIC mode */
+            /* Get polarity and trigger mode from MADT override (or defaults) */
+            uint8_t polarity = ioapic_get_polarity(gsi);
+            uint8_t trigger_mode = ioapic_get_trigger_mode(gsi);
+
+            /* Timer (IRQ0) is enabled, others are masked initially */
+            bool mask = (isa_irq == 0) ? false : true;
+
+            fut_printf("[ACPI]   IRQ%u -> GSI %u, Vector %u, %s, %s, %s\n",
+                       isa_irq, gsi, vector,
+                       polarity ? "active-low" : "active-high",
+                       trigger_mode ? "level" : "edge",
+                       mask ? "masked" : "enabled");
+
+            ioapic_set_irq(gsi, vector, 0, mask, trigger_mode);
+        }
     }
 
     /* Start Application Processors if we have multiple CPUs */

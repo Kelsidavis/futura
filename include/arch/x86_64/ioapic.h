@@ -53,6 +53,28 @@ typedef struct {
     uint64_t destination    : 8;    /* Destination APIC ID */
 } __attribute__((packed)) ioapic_redir_entry_t;
 
+/* MADT Interrupt Override Structure */
+typedef struct {
+    uint8_t bus;                    /* Bus type (0 = ISA) */
+    uint8_t source;                 /* Source IRQ */
+    uint32_t gsi;                   /* Global System Interrupt */
+    uint16_t flags;                 /* MPS INTI flags (polarity, trigger) */
+    bool valid;                     /* Whether this entry is populated */
+} ioapic_override_t;
+
+/* GSI to Vector Mapping Structure */
+typedef struct {
+    uint32_t gsi;                   /* Global System Interrupt (0-23+) */
+    uint8_t vector;                 /* Assigned interrupt vector */
+    uint8_t polarity;               /* 0=high, 1=low (from MADT flags) */
+    uint8_t trigger_mode;           /* 0=edge, 1=level (from MADT flags) */
+    bool allocated;                 /* Whether this GSI has been configured */
+} gsi_mapping_t;
+
+/* Maximum number of overrides (ISA IRQs + device IRQs) */
+#define IOAPIC_MAX_OVERRIDES 256
+#define IOAPIC_MAX_GSI_MAPPINGS 256
+
 /**
  * Initialize IO-APIC.
  *
@@ -118,3 +140,67 @@ uint64_t ioapic_read_redir(uint8_t irq);
  * @param value 64-bit redirection entry
  */
 void ioapic_write_redir(uint8_t irq, uint64_t value);
+
+/**
+ * Store a MADT interrupt override for later processing.
+ *
+ * @param bus Bus number (typically 0 for ISA)
+ * @param source Source IRQ on the bus
+ * @param gsi Global System Interrupt number
+ * @param flags MADT INTI flags (polarity, trigger mode)
+ */
+void ioapic_store_override(uint8_t bus, uint8_t source, uint32_t gsi, uint16_t flags);
+
+/**
+ * Look up the GSI for an ISA IRQ based on stored overrides.
+ * Falls back to default mapping if no override found.
+ *
+ * @param isa_irq ISA IRQ number (0-15)
+ * @return GSI number
+ */
+uint32_t ioapic_get_gsi_for_isa_irq(uint8_t isa_irq);
+
+/**
+ * Get interrupt override information.
+ *
+ * @param gsi Global System Interrupt
+ * @return Pointer to override structure, or NULL if not found
+ */
+const ioapic_override_t *ioapic_get_override(uint32_t gsi);
+
+/**
+ * Get polarity setting for a GSI from MADT overrides.
+ *
+ * @param gsi Global System Interrupt
+ * @return 0 for active high, 1 for active low
+ */
+uint8_t ioapic_get_polarity(uint32_t gsi);
+
+/**
+ * Get trigger mode for a GSI from MADT overrides.
+ *
+ * @param gsi Global System Interrupt
+ * @return 0 for edge-triggered, 1 for level-triggered
+ */
+uint8_t ioapic_get_trigger_mode(uint32_t gsi);
+
+/**
+ * Initialize the vector allocator (call once at boot).
+ * Marks vectors 0-31 as reserved (exceptions), 32-255 available for devices.
+ */
+void ioapic_vector_allocator_init(void);
+
+/**
+ * Allocate the next available interrupt vector.
+ * Returns a vector from the available pool (32-255).
+ *
+ * @return Allocated vector (32-255), or 0xFF if no vectors available
+ */
+uint8_t ioapic_allocate_vector(void);
+
+/**
+ * Free a previously allocated vector back to the pool.
+ *
+ * @param vector Vector to free (must be previously allocated)
+ */
+void ioapic_free_vector(uint8_t vector);

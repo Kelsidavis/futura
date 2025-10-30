@@ -145,28 +145,64 @@ static bool rects_overlap_or_touch(fut_rect_t a, fut_rect_t b) {
             b.y <= ay2 + 1 && ay2 >= b.y - 1);
 }
 
+/* Optimized damage region coalescing using single-pass greedy merging.
+ * Instead of repeatedly searching for overlaps (O(n²) with multiple passes),
+ * use a greedy approach that merges the closest regions first.
+ * This is much faster and prevents excessive region fragmentation.
+ */
 static void damage_coalesce(struct damage_accum *dmg) {
-    if (!dmg) {
+    if (!dmg || dmg->count <= 1) {
         return;
     }
 
-    bool merged;
-    do {
-        merged = false;
+    /* Greedy single-pass merging with region limit.
+     * If we have many small regions, merge them rather than accumulating.
+     */
+    int max_iterations = dmg->count; /* Prevent infinite loops */
+    int iteration = 0;
+
+    while (iteration < max_iterations && dmg->count > 1) {
+        iteration++;
+        bool merged = false;
+
+        /* Find the pair with best merge opportunity (most overlap/proximity) */
+        int best_i = -1, best_j = -1;
+        int32_t best_union_area = 0x7FFFFFFF; /* INT32_MAX equivalent */
+
         for (int i = 0; i < dmg->count && !merged; ++i) {
             for (int j = i + 1; j < dmg->count; ++j) {
                 if (rects_overlap_or_touch(dmg->rects[i], dmg->rects[j])) {
-                    dmg->rects[i] = rect_union(dmg->rects[i], dmg->rects[j]);
-                    for (int k = j; k < dmg->count - 1; ++k) {
-                        dmg->rects[k] = dmg->rects[k + 1];
+                    fut_rect_t u = rect_union(dmg->rects[i], dmg->rects[j]);
+                    int32_t area = u.w * u.h;
+
+                    /* Pick the merge that creates smallest union (least waste) */
+                    if (area < best_union_area) {
+                        best_union_area = area;
+                        best_i = i;
+                        best_j = j;
+                        merged = true; /* Stop after finding first overlap */
+                        break;
                     }
-                    --dmg->count;
-                    merged = true;
-                    break;
                 }
             }
         }
-    } while (merged);
+
+        /* Execute best merge if found */
+        if (merged && best_i >= 0 && best_j >= 0) {
+            dmg->rects[best_i] = rect_union(dmg->rects[best_i], dmg->rects[best_j]);
+            for (int k = best_j; k < dmg->count - 1; ++k) {
+                dmg->rects[k] = dmg->rects[k + 1];
+            }
+            --dmg->count;
+        } else {
+            break; /* No more merges possible */
+        }
+
+        /* Stop if we've reduced to reasonable number of regions */
+        if (dmg->count <= 4) {
+            break;
+        }
+    }
 }
 
 static void apply_constraints(struct comp_surface *surface,

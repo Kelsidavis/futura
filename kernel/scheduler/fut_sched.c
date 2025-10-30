@@ -174,50 +174,100 @@ void fut_sched_init_cpu(void) {
 /**
  * Add thread to ready queue (per-CPU).
  * Adds the thread to the current CPU's ready queue.
+ * Uses load-aware placement if affinity mask is not yet set.
  */
 void fut_sched_add_thread(fut_thread_t *thread) {
     if (!thread || thread->state != FUT_THREAD_READY) {
         return;
     }
 
-    // Get current CPU's per-CPU data
-    fut_percpu_t *percpu = fut_percpu_get();
-    if (!percpu) {
-        return; // No per-CPU data available
-    }
+    fut_percpu_t *target_percpu = NULL;
 
-    fut_spinlock_acquire(&percpu->queue_lock);
+    // If thread has no affinity mask set, find least-loaded CPU within default mask
+    if (thread->cpu_affinity_mask == 0) {
+        // Default: unrestricted affinity - all CPUs allowed
+        thread->cpu_affinity_mask = ~0ULL;  // All bits set (up to FUT_MAX_CPUS)
 
-    // Simple FIFO for now - insert at tail
-    thread->next = NULL;
-    thread->prev = percpu->ready_queue_tail;
+        // Find least-loaded CPU for initial placement
+        // Note: Affinity mask only supports 64 CPUs (bits 0-63)
+        uint64_t min_queue_depth = UINT64_MAX;
+        uint32_t best_cpu = 0;
 
-    if (percpu->ready_queue_tail) {
-        percpu->ready_queue_tail->next = thread;
+        for (uint32_t i = 0; i < FUT_MAX_CPUS && i < 64; i++) {
+            fut_percpu_t *percpu = &fut_percpu_data[i];
+            if (percpu->self == NULL) {
+                continue;  // CPU not initialized
+            }
+
+            fut_spinlock_acquire(&percpu->queue_lock);
+            uint64_t queue_depth = percpu->ready_count;
+            fut_spinlock_release(&percpu->queue_lock);
+
+            if (queue_depth < min_queue_depth) {
+                min_queue_depth = queue_depth;
+                best_cpu = i;
+            }
+        }
+
+        target_percpu = &fut_percpu_data[best_cpu];
+        thread->preferred_cpu = best_cpu;
     } else {
-        percpu->ready_queue_head = thread;
+        // Thread has affinity constraint - add to preferred CPU within mask
+        uint32_t preferred = thread->preferred_cpu;
+
+        // Verify preferred CPU is within affinity mask (and < 64 for bitmask)
+        if (preferred < 64 && (thread->cpu_affinity_mask & (1ULL << preferred))) {
+            target_percpu = &fut_percpu_data[preferred];
+        } else {
+            // Find first CPU in affinity mask (limited to 64 CPUs)
+            for (uint32_t i = 0; i < 64; i++) {
+                if (thread->cpu_affinity_mask & (1ULL << i)) {
+                    target_percpu = &fut_percpu_data[i];
+                    thread->preferred_cpu = i;
+                    break;
+                }
+            }
+        }
     }
 
-    percpu->ready_queue_tail = thread;
-    percpu->ready_count++;
+    // Fallback to current CPU if no suitable target found
+    if (!target_percpu) {
+        target_percpu = fut_percpu_get();
+    }
+    if (!target_percpu) {
+        return;  // No per-CPU data available
+    }
 
-    // Set CPU affinity to current CPU for cache locality
-    thread->cpu_affinity = percpu->cpu_index;
+    fut_spinlock_acquire(&target_percpu->queue_lock);
 
-    fut_spinlock_release(&percpu->queue_lock);
+    // Simple FIFO - insert at tail
+    thread->next = NULL;
+    thread->prev = target_percpu->ready_queue_tail;
+
+    if (target_percpu->ready_queue_tail) {
+        target_percpu->ready_queue_tail->next = thread;
+    } else {
+        target_percpu->ready_queue_head = thread;
+    }
+
+    target_percpu->ready_queue_tail = thread;
+    target_percpu->ready_count++;
+    target_percpu->queue_depth = target_percpu->ready_count;
+
+    fut_spinlock_release(&target_percpu->queue_lock);
 }
 
 /**
  * Remove thread from ready queue.
- * Searches the thread's affinity CPU queue.
+ * Uses thread's preferred_cpu (current affinity location).
  */
 void fut_sched_remove_thread(fut_thread_t *thread) {
     if (!thread) {
         return;
     }
 
-    // Use thread's CPU affinity to find the right queue
-    uint32_t cpu_index = thread->cpu_affinity;
+    // Use thread's preferred CPU (where it was likely added)
+    uint32_t cpu_index = thread->preferred_cpu;
     if (cpu_index >= FUT_MAX_CPUS) {
         cpu_index = 0; // Fallback to CPU 0
     }
@@ -257,12 +307,137 @@ void fut_sched_remove_thread(fut_thread_t *thread) {
     if (percpu->ready_count > 0) {
         percpu->ready_count--;
     }
+    percpu->queue_depth = percpu->ready_count;
 
     fut_spinlock_release(&percpu->queue_lock);
 }
 
+/* ============================================================
+ *   Work-Stealing Load Balancing
+ * ============================================================ */
+
 /**
- * Select next thread to run (round-robin from per-CPU queue).
+ * Find the most loaded CPU within the affinity mask.
+ * Used to identify which CPU to steal from.
+ *
+ * @param affinity_mask  Bitmask of CPUs to consider (limited to 64 CPUs)
+ * @param exclude_cpu    Don't steal from this CPU (avoid stealing from self)
+ * @return CPU index with highest queue depth, or UINT32_MAX if no overloaded CPU
+ */
+static uint32_t find_most_loaded_cpu(uint64_t affinity_mask, uint32_t exclude_cpu) {
+    uint64_t max_queue_depth = 0;
+    uint32_t victim_cpu = UINT32_MAX;
+
+    // Find CPU with most threads within affinity mask
+    // Note: affinity_mask only supports 64 CPUs (bits 0-63)
+    for (uint32_t i = 0; i < FUT_MAX_CPUS && i < 64; i++) {
+        // Skip excluded CPU and check affinity mask
+        if (i == exclude_cpu || !(affinity_mask & (1ULL << i))) {
+            continue;
+        }
+
+        fut_percpu_t *percpu = &fut_percpu_data[i];
+        if (percpu->self == NULL) {
+            continue;  // CPU not initialized
+        }
+
+        fut_spinlock_acquire(&percpu->queue_lock);
+        uint64_t queue_depth = percpu->ready_count;
+        fut_spinlock_release(&percpu->queue_lock);
+
+        if (queue_depth > max_queue_depth) {
+            max_queue_depth = queue_depth;
+            victim_cpu = i;
+        }
+    }
+
+    // Only return if victim has threads to steal
+    return (max_queue_depth > 0) ? victim_cpu : UINT32_MAX;
+}
+
+/**
+ * Steal a thread from the specified victim CPU.
+ * Respects hard affinity - won't steal threads hard-pinned to other CPUs.
+ *
+ * @param victim_cpu  CPU to steal from
+ * @return Stolen thread, or NULL if no stealable thread
+ */
+static fut_thread_t *steal_work_from_cpu(uint32_t victim_cpu) {
+    if (victim_cpu >= FUT_MAX_CPUS) {
+        return NULL;
+    }
+
+    fut_percpu_t *victim_percpu = &fut_percpu_data[victim_cpu];
+    fut_percpu_t *thief_percpu = fut_percpu_get();
+
+    if (!thief_percpu) {
+        return NULL;
+    }
+
+    fut_spinlock_acquire(&victim_percpu->queue_lock);
+
+    // Find a stealable thread (skip hard-affinity threads pinned to victim)
+    fut_thread_t *current = victim_percpu->ready_queue_head;
+    fut_thread_t *stealable = NULL;
+
+    // Prefer stealing from middle/tail to reduce contention
+    // but also check if we can steal at least something
+    while (current) {
+        // Can steal if:
+        // 1. Thread is not hard-affinity pinned, OR
+        // 2. Thread has soft affinity and can run elsewhere
+        if (!current->hard_affinity) {
+            // Soft affinity - can steal if unrestricted or if includes current CPU
+            uint64_t affinity_mask = current->cpu_affinity_mask;
+            // Check bounds: thief_percpu->cpu_index must be < 64 for bitmask operations
+            if (affinity_mask == 0 ||
+                (thief_percpu->cpu_index < 64 && (affinity_mask & (1ULL << thief_percpu->cpu_index)))) {
+                stealable = current;
+                break;  // Take first stealable thread we find
+            }
+        }
+        current = current->next;
+    }
+
+    if (!stealable) {
+        fut_spinlock_release(&victim_percpu->queue_lock);
+        return NULL;
+    }
+
+    // Remove the thread from victim's queue
+    if (stealable->prev) {
+        stealable->prev->next = stealable->next;
+    } else {
+        victim_percpu->ready_queue_head = stealable->next;
+    }
+
+    if (stealable->next) {
+        stealable->next->prev = stealable->prev;
+    } else {
+        victim_percpu->ready_queue_tail = stealable->prev;
+    }
+
+    stealable->next = NULL;
+    stealable->prev = NULL;
+
+    if (victim_percpu->ready_count > 0) {
+        victim_percpu->ready_count--;
+    }
+    victim_percpu->queue_depth = victim_percpu->ready_count;
+    victim_percpu->work_stolen_count++;
+
+    fut_spinlock_release(&victim_percpu->queue_lock);
+
+    // Update thief's statistics and preferred CPU
+    thief_percpu->work_steal_count++;
+    stealable->preferred_cpu = thief_percpu->cpu_index;
+
+    return stealable;
+}
+
+/**
+ * Select next thread to run with work-stealing load balancing.
+ * First tries local queue, then attempts to steal from overloaded CPUs.
  */
 static fut_thread_t *select_next_thread(void) {
     fut_percpu_t *percpu = fut_percpu_get();
@@ -274,13 +449,23 @@ static fut_thread_t *select_next_thread(void) {
 
     fut_thread_t *next = percpu->ready_queue_head;
 
-    // If no ready threads, use per-CPU idle thread
+    // If no ready threads locally, try work-stealing
     if (!next) {
         fut_spinlock_release(&percpu->queue_lock);
-        return percpu->idle_thread;
+
+        // Try to steal work from another CPU
+        // Start by looking for the most loaded CPU within unrestricted affinity
+        uint32_t victim_cpu = find_most_loaded_cpu(~0ULL, percpu->cpu_index);
+
+        if (victim_cpu != UINT32_MAX) {
+            next = steal_work_from_cpu(victim_cpu);
+        }
+
+        // If we couldn't steal, return idle thread
+        return next ? next : percpu->idle_thread;
     }
 
-    // Remove from head of ready queue
+    // Remove from head of ready queue (local thread available)
     percpu->ready_queue_head = next->next;
     if (percpu->ready_queue_head) {
         percpu->ready_queue_head->prev = NULL;
@@ -294,6 +479,7 @@ static fut_thread_t *select_next_thread(void) {
     if (percpu->ready_count > 0) {
         percpu->ready_count--;
     }
+    percpu->queue_depth = percpu->ready_count;
 
     fut_spinlock_release(&percpu->queue_lock);
 

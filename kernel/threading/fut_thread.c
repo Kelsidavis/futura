@@ -415,3 +415,84 @@ int fut_thread_priority_restore(fut_thread_t *thread) {
     /* If entry returns (doesn't call fut_thread_exit), we exit here */
     fut_thread_exit();
 }
+
+/* ============================================================
+ *   CPU Affinity API Implementation
+ * ============================================================ */
+
+/**
+ * Set CPU affinity to a single CPU (hard pin).
+ */
+int fut_thread_set_affinity(fut_thread_t *thread, uint32_t cpu_id) {
+    if (!thread || cpu_id >= FUT_MAX_CPUS) {
+        return -1;
+    }
+
+    /* Set single-CPU mask and hard affinity */
+    thread->cpu_affinity_mask = (1ULL << cpu_id);
+    thread->preferred_cpu = cpu_id;
+    thread->hard_affinity = true;
+
+    return 0;
+}
+
+/**
+ * Set CPU affinity mask (soft preference).
+ */
+int fut_thread_set_affinity_mask(fut_thread_t *thread, uint64_t mask) {
+    if (!thread || mask == 0) {
+        return -1;  /* Must have at least one CPU allowed */
+    }
+
+    thread->cpu_affinity_mask = mask;
+    thread->hard_affinity = false;
+
+    /* Set preferred CPU to the lowest numbered CPU in mask */
+    for (uint32_t i = 0; i < FUT_MAX_CPUS; i++) {
+        if (mask & (1ULL << i)) {
+            thread->preferred_cpu = i;
+            break;
+        }
+    }
+
+    return 0;
+}
+
+/**
+ * Get current CPU affinity mask for a thread.
+ */
+uint64_t fut_thread_get_affinity_mask(fut_thread_t *thread) {
+    if (!thread) {
+        return 0;
+    }
+    return thread->cpu_affinity_mask;
+}
+
+/**
+ * Get preferred CPU for a thread.
+ */
+uint32_t fut_thread_get_preferred_cpu(fut_thread_t *thread) {
+    if (!thread) {
+        return 0;
+    }
+    return thread->preferred_cpu;
+}
+
+/**
+ * Set hard affinity mode (pin vs soft preference).
+ */
+void fut_thread_set_hard_affinity(fut_thread_t *thread, bool hard_pin) {
+    if (thread) {
+        thread->hard_affinity = hard_pin;
+    }
+}
+
+/**
+ * Check if thread has hard affinity enforced.
+ */
+bool fut_thread_is_hard_affinity(fut_thread_t *thread) {
+    if (!thread) {
+        return false;
+    }
+    return thread->hard_affinity;
+}

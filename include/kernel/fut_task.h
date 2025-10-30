@@ -13,6 +13,7 @@
 #include <stddef.h>
 #include "fut_thread.h"
 #include "fut_waitq.h"
+#include "signal.h"
 
 struct fut_mm;
 
@@ -43,6 +44,17 @@ struct fut_task {
 
     fut_thread_t *threads;             // Linked list of threads
     uint64_t thread_count;             // Number of threads in task
+
+    /* Process credentials */
+    uint32_t uid;                      // User ID (effective UID)
+    uint32_t gid;                      // Group ID (effective GID)
+    uint32_t ruid;                     // Real UID (for future use)
+    uint32_t rgid;                     // Real GID (for future use)
+
+    /* Signal handling */
+    sighandler_t signal_handlers[31];  // Array of signal handlers (index 1-30)
+    uint64_t signal_mask;              // Mask of currently blocked signals
+    uint64_t pending_signals;          // Bitmask of pending signals awaiting delivery
 
     fut_task_t *next;                  // Next task in system list
 };
@@ -95,3 +107,28 @@ fut_task_t *fut_task_current(void);
 void fut_task_exit_current(int status);
 int fut_task_waitpid(int pid, int *status_out);
 void fut_task_signal_exit(int signal);
+
+/**
+ * Get the effective UID of a task.
+ *
+ * @param task Task (NULL for current task)
+ * @return Effective UID
+ */
+uint32_t fut_task_get_uid(fut_task_t *task);
+
+/**
+ * Get the effective GID of a task.
+ *
+ * @param task Task (NULL for current task)
+ * @return Effective GID
+ */
+uint32_t fut_task_get_gid(fut_task_t *task);
+
+/**
+ * Set the effective UID and GID of a task.
+ *
+ * @param task Task to modify (NULL for current task)
+ * @param uid  New effective UID
+ * @param gid  New effective GID
+ */
+void fut_task_set_credentials(fut_task_t *task, uint32_t uid, uint32_t gid);

@@ -22,6 +22,7 @@
 #include <kernel/fut_blockdev.h>
 #include <kernel/fut_ramdisk.h>
 #include <kernel/fut_timer.h>
+#include <kernel/signal.h>
 #include <kernel/fut_futurafs.h>
 #include <kernel/fb.h>
 #include <kernel/console.h>
@@ -834,6 +835,10 @@ void fut_kernel_main(void) {
     fut_serial_puts("[DEBUG] kernel_main: Before timer init\n");
     fut_printf("[INIT] Initializing timer subsystem...\n");
     fut_timer_subsystem_init();
+
+    fut_serial_puts("[DEBUG] kernel_main: Before signal init\n");
+    fut_printf("[INIT] Initializing signal subsystem...\n");
+    fut_signal_init();
 
     fut_serial_puts("[DEBUG] kernel_main: Before ACPI init\n");
     fut_printf("[INIT] Initializing ACPI...\n");

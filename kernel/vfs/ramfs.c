@@ -894,6 +894,47 @@ static int ramfs_readdir(struct fut_vnode *dir, uint64_t *cookie, struct fut_vdi
     return 1;  /* Entry found */
 }
 
+/**
+ * Get file attributes (stat information).
+ */
+static int ramfs_getattr(struct fut_vnode *vnode, struct fut_stat *stat) {
+    if (!vnode || !stat) {
+        return -EINVAL;
+    }
+
+    struct ramfs_node *node = (struct ramfs_node *)vnode->fs_data;
+    if (!node) {
+        return -EIO;
+    }
+
+    /* Fill in stat structure */
+    stat->st_dev = 1;               /* Device ID for ramfs */
+    stat->st_ino = vnode->ino;      /* Inode number */
+    stat->st_mode = vnode->mode;    /* File mode and permissions */
+    stat->st_nlink = vnode->nlinks; /* Number of hard links */
+    stat->st_uid = 0;               /* User ID (root) */
+    stat->st_gid = 0;               /* Group ID (root) */
+
+    /* Calculate file size based on type */
+    if (vnode->type == VN_REG) {
+        stat->st_size = node->file.capacity;  /* File size */
+    } else if (vnode->type == VN_DIR) {
+        stat->st_size = 0;  /* Directories don't have size */
+    } else {
+        stat->st_size = 0;
+    }
+
+    stat->st_blksize = 4096;        /* Filesystem block size */
+    stat->st_blocks = (stat->st_size + 511) / 512;  /* Number of 512-byte blocks */
+
+    /* Timestamps (not tracked in ramfs) */
+    stat->st_atime = 0;             /* Access time */
+    stat->st_mtime = 0;             /* Modification time */
+    stat->st_ctime = 0;             /* Change time */
+
+    return 0;
+}
+
 static const struct fut_vnode_ops ramfs_vnode_ops = {
     .open = ramfs_open,
     .close = ramfs_close,
@@ -905,7 +946,7 @@ static const struct fut_vnode_ops ramfs_vnode_ops = {
     .unlink = ramfs_unlink,
     .mkdir = ramfs_mkdir,
     .rmdir = ramfs_rmdir,
-    .getattr = NULL,     /* Use default from VFS */
+    .getattr = ramfs_getattr,
     .setattr = NULL
 };
 

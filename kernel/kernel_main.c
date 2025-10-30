@@ -958,30 +958,6 @@ void fut_kernel_main(void) {
     fut_console_init();
     fut_printf("[INIT] Console device registered at /dev/console\n");
 
-    /* Give console input thread a chance to start before doing I/O */
-    /* DISABLED: Scheduler not ready at this boot stage, causes hang */
-    /*
-    extern void fut_thread_yield(void);
-    for (int i = 0; i < 100; i++) {
-        fut_thread_yield();
-    }
-    */
-
-    /* TODO: Fix VFS open deadlock with /dev/console
-     * The following code causes the kernel to hang. Commenting out for now
-     * to allow boot to proceed. Need to investigate why try_open_chrdev()
-     * is not returning when the device is properly registered.
-     */
-    /*
-    int fd0 = fut_vfs_open("/dev/console", O_RDWR, 0);
-    int fd1 = fut_vfs_open("/dev/console", O_RDWR, 0);
-    int fd2 = fut_vfs_open("/dev/console", O_RDWR, 0);
-    if (fd0 < 0 || fd1 < 0 || fd2 < 0) {
-        fut_printf("[WARN] Failed to seed /dev/console descriptors (fd0=%d fd1=%d fd2=%d)\n",
-                   fd0, fd1, fd2);
-    }
-    */
-
     fut_printf("[INIT] Root filesystem mounted (ramfs at /)\n");
 
     /* Create /tmp directory for temporary files */
@@ -1239,6 +1215,17 @@ void fut_kernel_main(void) {
      * ======================================== */
     /* Now that scheduler is initialized, start the console input thread */
     fut_console_start_input_thread();
+
+    /* Now that input thread is running, seed standard file descriptors */
+    int fd0 = fut_vfs_open("/dev/console", O_RDWR, 0);
+    int fd1 = fut_vfs_open("/dev/console", O_RDWR, 0);
+    int fd2 = fut_vfs_open("/dev/console", O_RDWR, 0);
+    if (fd0 < 0 || fd1 < 0 || fd2 < 0) {
+        fut_printf("[WARN] Failed to seed /dev/console descriptors (fd0=%d fd1=%d fd2=%d)\n",
+                   fd0, fd1, fd2);
+    } else {
+        fut_printf("[INIT] Standard streams initialized (fd0=%d fd1=%d fd2=%d)\n", fd0, fd1, fd2);
+    }
 
     /* ========================================
      *   Memory Management Tests

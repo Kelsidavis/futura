@@ -975,6 +975,9 @@ static int ramfs_mount(const char *device, int flags, void *data, fut_handle_t b
     return 0;
 }
 
+/* Forward declaration for cleanup function */
+static void ramfs_cleanup_vnode(struct fut_vnode *vnode);
+
 /**
  * Recursively free all vnodes in a directory.
  * Traverses the directory tree and unreferences all vnodes,
@@ -1035,7 +1038,7 @@ static void ramfs_cleanup_vnode(struct fut_vnode *vnode) {
     }
 
     /* Free file data if present */
-    if (vnode->type == VN_FILE && node->file.data) {
+    if (vnode->type == VN_REG && node->file.data) {
         fut_free(node->file.data);
         node->file.data = NULL;
         node->file.capacity = 0;

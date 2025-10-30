@@ -9,6 +9,7 @@
 #include "../../include/kernel/fut_thread.h"
 #include "../../include/kernel/fut_sched.h"
 #include "../../include/kernel/fut_memory.h"
+#include <arch/x86_64/lapic.h>
 #include <stdatomic.h>
 
 /* I/O port access from platform layer */
@@ -269,8 +270,8 @@ uint64_t fut_get_time_us(void) {
 void fut_timer_irq(void) {
     fut_timer_tick();
 
-    /* Send EOI to PIC (TODO: switch to LAPIC EOI when APIC mode is fully working) */
-    fut_irq_send_eoi(0);
+    /* Send EOI to LAPIC (PIC EOI no longer needed in APIC mode) */
+    lapic_send_eoi();
 }
 
 /* ============================================================

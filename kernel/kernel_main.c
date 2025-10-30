@@ -853,9 +853,8 @@ void fut_kernel_main(void) {
     /* Initialize per-CPU data for BSP */
     fut_printf("[INIT] Initializing BSP per-CPU data...\n");
 
-    /* For now, use CPU ID 0 for BSP (LAPIC disabled for PIC mode testing) */
-    /* TODO: Restore lapic_get_id() when LAPIC is re-enabled */
-    uint32_t bsp_apic_id = 0;  /* lapic_get_id() requires LAPIC init */
+    /* Get BSP APIC ID from hardware (LAPIC initialized in ACPI init) */
+    uint32_t bsp_apic_id = lapic_get_id();
 
     fut_percpu_init(bsp_apic_id, 0);
     fut_printf("[INIT] Per-CPU data initialized for BSP (CPU ID %u, index 0)\n", bsp_apic_id);

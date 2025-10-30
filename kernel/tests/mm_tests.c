@@ -116,9 +116,7 @@ static void test_cow_fork_basic(void) {
 
 /**
  * Test COW sole owner optimization: single reference should become writable
- * DISABLED: Causes kernel crash - needs investigation
  */
-__attribute__((unused))
 static void test_cow_sole_owner(void) {
     const char *current_test = "COW sole owner optimization";
     TEST_BEGIN(current_test);
@@ -595,8 +593,8 @@ void fut_mm_tests_run(void) {
 
     /* COW Fork Tests */
     test_cow_fork_basic();
-    /* DISABLED: Causes kernel crash - needs investigation */
-    /* test_cow_sole_owner(); */
+    /* COW sole owner test re-enabled for debugging - was: Causes kernel crash */
+    test_cow_sole_owner();
 
     /* File-Backed mmap Tests */
     test_file_backed_mmap_read();

@@ -434,9 +434,20 @@ void *fut_mm_map_anonymous(fut_mm_t *mm, uintptr_t hint, size_t len, int prot, i
         if (candidate < USER_MMAP_BASE) {
             candidate = USER_MMAP_BASE;
         }
-        candidate = PAGE_ALIGN_UP(candidate);
+
+        /* For large allocations (>= 2MB), prefer 2MB alignment to enable large page usage */
+        if (aligned >= LARGE_PAGE_SIZE) {
+            candidate = LARGE_PAGE_ALIGN_UP(candidate);
+        } else {
+            candidate = PAGE_ALIGN_UP(candidate);
+        }
+
         if (candidate < mm->heap_mapped_end) {
-            candidate = PAGE_ALIGN_UP(mm->heap_mapped_end);
+            if (aligned >= LARGE_PAGE_SIZE) {
+                candidate = LARGE_PAGE_ALIGN_UP(mm->heap_mapped_end);
+            } else {
+                candidate = PAGE_ALIGN_UP(mm->heap_mapped_end);
+            }
         }
         base = candidate;
     }

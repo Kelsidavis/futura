@@ -178,42 +178,104 @@ static void handle_mount(struct fut_fipc_msg *msg) {
  * Handle file open request.
  */
 static void handle_open(struct fut_fipc_msg *msg) {
-    (void)msg;
+    const struct posixd_open_req *req = (const struct posixd_open_req *)msg->payload;
+    struct posixd_open_resp resp = { .fd = -EINVAL };
 
-    /* Phase 3: Parse open request:
-     * 1. Resolve path to vnode
-     * 2. Check permissions
-     * 3. Call kernel fut_vfs_open()
-     * 4. Return file descriptor
-     */
+    if (!req || req->path[0] == '\0') {
+        fsd_send_response(FSD_MSG_OPEN, &resp, sizeof(resp));
+        return;
+    }
+
+    /* Call kernel VFS to open file */
+    int fd = fut_vfs_open(req->path, req->flags, req->mode);
+    resp.fd = fd;
+
+    fsd_send_response(FSD_MSG_OPEN, &resp, sizeof(resp));
 }
 
 /**
  * Handle file read request.
  */
 static void handle_read(struct fut_fipc_msg *msg) {
-    (void)msg;
+    const struct posixd_read_req *req = (const struct posixd_read_req *)msg->payload;
 
-    /* Phase 3: Parse read request:
-     * 1. Validate file descriptor
-     * 2. Get shared buffer region from request
-     * 3. Call kernel fut_vfs_read() into shared buffer
-     * 4. Send response with bytes read
-     */
+    /* Response header + data buffer (limited to FIPC message size) */
+    struct {
+        struct posixd_read_resp header;
+        uint8_t data[4000];  /* Max data in FIPC message (msg hdr + payload limit) */
+    } resp = { .header = { .bytes_read = -EINVAL } };
+
+    if (!req) {
+        fsd_send_response(FSD_MSG_READ, &resp.header, sizeof(resp.header));
+        return;
+    }
+
+    /* Limit read size to response buffer capacity */
+    size_t read_size = req->count;
+    if (read_size > sizeof(resp.data)) {
+        read_size = sizeof(resp.data);
+    }
+
+    /* Call kernel VFS to read file */
+    ssize_t bytes_read = fut_vfs_read(req->fd, resp.data, read_size);
+    resp.header.bytes_read = bytes_read;
+
+    /* Send response with data if read succeeded */
+    size_t response_size = sizeof(resp.header);
+    if (bytes_read > 0) {
+        response_size += bytes_read;
+    }
+    fsd_send_response(FSD_MSG_READ, &resp, response_size);
 }
 
 /**
  * Handle file write request.
  */
 static void handle_write(struct fut_fipc_msg *msg) {
-    (void)msg;
+    const struct posixd_write_req *req = (const struct posixd_write_req *)msg->payload;
+    struct posixd_write_resp resp = { .bytes_written = -EINVAL };
 
-    /* Phase 3: Parse write request:
-     * 1. Validate file descriptor
-     * 2. Get data from shared buffer region
-     * 3. Call kernel fut_vfs_write()
-     * 4. Send response with bytes written
-     */
+    if (!req) {
+        fsd_send_response(FSD_MSG_WRITE, &resp, sizeof(resp));
+        return;
+    }
+
+    /* Extract write data from message payload (after request header) */
+    /* FIPC message layout: [header] [payload = request struct] [data bytes] */
+    const uint8_t *write_data = (const uint8_t *)(req + 1);
+
+    /* Calculate available data size in message */
+    size_t available_data = msg->length - sizeof(*req);
+    size_t write_size = (req->count < available_data) ? req->count : available_data;
+
+    if (write_size == 0) {
+        resp.bytes_written = 0;
+    } else {
+        /* Call kernel VFS to write file */
+        ssize_t bytes_written = fut_vfs_write(req->fd, write_data, write_size);
+        resp.bytes_written = bytes_written;
+    }
+
+    fsd_send_response(FSD_MSG_WRITE, &resp, sizeof(resp));
+}
+
+/**
+ * Handle file close request.
+ */
+static void handle_close(struct fut_fipc_msg *msg) {
+    const struct posixd_close_req *req = (const struct posixd_close_req *)msg->payload;
+    struct posixd_close_resp resp = { .result = -EINVAL };
+
+    if (!req) {
+        fsd_send_response(FSD_MSG_CLOSE, &resp, sizeof(resp));
+        return;
+    }
+
+    /* Call kernel VFS to close file descriptor */
+    int result = fut_vfs_close(req->fd);
+    resp.result = result;
+
+    fsd_send_response(FSD_MSG_CLOSE, &resp, sizeof(resp));
 }
 
 static void handle_opendir_msg(struct fut_fipc_msg *msg) {
@@ -377,7 +439,7 @@ static void fsd_main_loop(void) {
                     handle_open(msg);
                     break;
                 case FSD_MSG_CLOSE:
-                    /* Phase 3: Handle close */
+                    handle_close(msg);
                     break;
                 case FSD_MSG_READ:
                     handle_read(msg);

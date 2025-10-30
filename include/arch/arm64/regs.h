@@ -250,3 +250,52 @@ typedef struct fut_interrupt_frame {
     uint64_t __val = (val); \
     __asm__ volatile("msr " #reg ", %0" :: "r"(__val)); \
 } while (0)
+
+/* ============================================================
+ *   Translation Control Register (TTBR) Access
+ * ============================================================ */
+
+/**
+ * Read TTBR0_EL1 (User space page table base register).
+ * @return Current TTBR0_EL1 value
+ */
+static inline uint64_t fut_read_ttbr0_el1(void) {
+    uint64_t ttbr0;
+    __asm__ volatile("mrs %0, ttbr0_el1" : "=r"(ttbr0));
+    return ttbr0;
+}
+
+/**
+ * Write TTBR0_EL1 (User space page table base register).
+ * Switches the page table for user space.
+ * @param ttbr0 Value to write to TTBR0_EL1
+ */
+static inline void fut_write_ttbr0_el1(uint64_t ttbr0) {
+    __asm__ volatile("msr ttbr0_el1, %0" :: "r"(ttbr0));
+    __asm__ volatile("isb" ::: "memory");
+}
+
+/* ============================================================
+ *   x86_64 Register Compatibility (for generic kernel code)
+ * ============================================================
+ * ARM64 implementations of x86_64 register functions for
+ * compatibility with architecture-generic kernel code.
+ */
+
+/**
+ * Read "CR3" (maps to TTBR0_EL1 on ARM64).
+ * Compatibility function for generic kernel memory management code.
+ * @return Current TTBR0_EL1 value
+ */
+static inline uint64_t fut_read_cr3(void) {
+    return fut_read_ttbr0_el1();
+}
+
+/**
+ * Write "CR3" (maps to TTBR0_EL1 on ARM64).
+ * Compatibility function for generic kernel memory management code.
+ * @param value Value to write to TTBR0_EL1
+ */
+static inline void fut_write_cr3(uint64_t value) {
+    fut_write_ttbr0_el1(value);
+}

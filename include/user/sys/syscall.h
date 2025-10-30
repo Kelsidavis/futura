@@ -36,3 +36,6 @@
 #ifndef SYS_close_range
 #define SYS_close_range 436
 #endif
+#ifndef SYS_openat
+#define SYS_openat      257
+#endif

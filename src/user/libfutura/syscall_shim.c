@@ -2,9 +2,15 @@
 
 #include <stdarg.h>
 #include <errno.h>
+#include <fcntl.h>
 
 #include <user/futura_posix.h>
 #include <user/sys/syscall.h>
+
+/* AT_FDCWD: Use current working directory for path */
+#ifndef AT_FDCWD
+#define AT_FDCWD -100
+#endif
 
 static long ret_enosys(void) {
     errno = ENOSYS;
@@ -49,6 +55,21 @@ long syscall(long number, ...) {
     case SYS_close_range:
         result = ret_enosys();
         break;
+    case SYS_openat: {
+        int dirfd = va_arg(ap, int);
+        const char *pathname = va_arg(ap, const char *);
+        int flags = va_arg(ap, int);
+        int mode = va_arg(ap, int);
+        /* For now, only support AT_FDCWD (current directory) */
+        if (dirfd != AT_FDCWD) {
+            errno = EBADF;
+            result = -1;
+        } else {
+            /* Forward to the POSIX wrapper */
+            result = open(pathname, flags, mode);
+        }
+        break;
+    }
     default:
         result = ret_enosys();
         break;

@@ -975,6 +975,56 @@ int chrdev_alloc_fd(const struct fut_file_ops *ops, void *inode, void *priv) {
 }
 
 /* ============================================================
+ *   Permission Checking
+ * ============================================================ */
+
+/* POSIX file mode permission bits (owner permissions) */
+#define S_IRUSR  0400  /* Owner read */
+#define S_IWUSR  0200  /* Owner write */
+#define S_IXUSR  0100  /* Owner execute */
+#define S_IRGRP  0040  /* Group read */
+#define S_IWGRP  0020  /* Group write */
+#define S_IXGRP  0010  /* Group execute */
+#define S_IROTH  0004  /* Others read */
+#define S_IWOTH  0002  /* Others write */
+#define S_IXOTH  0001  /* Others execute */
+#define S_IFMT   0170000  /* File type mask */
+#define S_ISREG(m) (((m) & S_IFMT) == 0100000)  /* Regular file */
+#define S_ISDIR(m) (((m) & S_IFMT) == 0040000)  /* Directory */
+
+/**
+ * Check if a file operation is allowed based on file mode.
+ * Since this kernel has no UID/GID tracking, we check owner permissions.
+ *
+ * @param vnode VNode to check
+ * @param check_write True to check write permission, false for read
+ * @return 0 if allowed, -EACCES if denied
+ */
+static int check_file_permission(struct fut_vnode *vnode, bool check_write) {
+    if (!vnode) {
+        return -EINVAL;
+    }
+
+    uint32_t mode = vnode->mode;
+
+    if (check_write) {
+        /* Check if write is allowed - need S_IWUSR for owner */
+        if (!(mode & S_IWUSR)) {
+            VFSDBG("[VFS-PERM] Write denied: file mode=0%o lacks write permission\n", mode);
+            return -EACCES;
+        }
+    } else {
+        /* Check if read is allowed - need S_IRUSR for owner */
+        if (!(mode & S_IRUSR)) {
+            VFSDBG("[VFS-PERM] Read denied: file mode=0%o lacks read permission\n", mode);
+            return -EACCES;
+        }
+    }
+
+    return 0;
+}
+
+/* ============================================================
  *   File Operations
  * ============================================================ */
 
@@ -1090,6 +1140,18 @@ int fut_vfs_open(const char *path, int flags, int mode) {
     file->chr_inode = NULL;
     file->chr_private = NULL;
 
+    /* Check permissions for write access */
+    if ((flags & (O_WRONLY | O_RDWR)) && !created) {
+        /* For existing files, check if write is allowed */
+        int perm_ret = check_file_permission(vnode, true);
+        if (perm_ret < 0) {
+            fut_printf("[VFS-OPEN] Write permission denied for '%s' (mode=0%o)\n", path, vnode->mode);
+            fut_free(file);
+            release_lookup_ref(vnode);
+            return perm_ret;
+        }
+    }
+
     /* Allocate file descriptor */
     int fd = alloc_fd(file);
     if (fd < 0) {
@@ -1099,8 +1161,12 @@ int fut_vfs_open(const char *path, int flags, int mode) {
         return fd;
     }
 
-    (void)mode;  /* TODO: Use mode for permission checks */
-    fut_printf("[VFS-OPEN] SUCCESS: opened '%s' as fd=%d\n", path, fd);
+    /* Store mode for newly created files */
+    if (created) {
+        vnode->mode = mode & 0777;  /* Use provided mode, mask to permission bits only */
+    }
+
+    fut_printf("[VFS-OPEN] SUCCESS: opened '%s' as fd=%d (mode=0%o)\n", path, fd, vnode->mode);
     return fd;
 }
 
@@ -1142,6 +1208,13 @@ ssize_t fut_vfs_read(int fd, void *buf, size_t size) {
         return -EINVAL;
     }
 
+    /* Check read permission */
+    int perm_ret = check_file_permission(file->vnode, false);
+    if (perm_ret < 0) {
+        VFSDBG("[vfs-read] Read permission denied (mode=0%o)\n", file->vnode->mode);
+        return perm_ret;
+    }
+
     ssize_t ret = file->vnode->ops->read(file->vnode, buf, size, file->offset);
     if (ret > 0) {
         file->offset += ret;
@@ -1176,6 +1249,13 @@ ssize_t fut_vfs_write(int fd, const void *buf, size_t size) {
     if (!file->vnode || !file->vnode->ops || !file->vnode->ops->write) {
         VFSDBG("[vfs-write] invalid vnode/ops/write\n");
         return -EINVAL;
+    }
+
+    /* Check write permission */
+    int perm_ret = check_file_permission(file->vnode, true);
+    if (perm_ret < 0) {
+        VFSDBG("[vfs-write] Write permission denied (mode=0%o)\n", file->vnode->mode);
+        return perm_ret;
     }
 
     VFSDBG("[vfs-write] calling vnode->ops->write\n");

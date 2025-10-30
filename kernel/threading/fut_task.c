@@ -80,6 +80,7 @@ fut_task_t *fut_task_create(void) {
         .rgid = 0,         /* Real GID (for future use) */
         .signal_mask = 0,  /* No signals blocked initially */
         .pending_signals = 0,  /* No pending signals */
+        .current_dir_ino = (parent ? parent->current_dir_ino : 1),  /* Inherit parent's cwd, default to root (inode 1) */
         .next = NULL
     };
     fut_waitq_init(&task->child_waiters);

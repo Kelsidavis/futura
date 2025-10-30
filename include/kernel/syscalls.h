@@ -25,6 +25,8 @@ typedef long ssize_t;
 #define SYS_exit 60u
 #define SYS_waitpid 61u
 #define SYS_nanosleep 35u
+#define SYS_getcwd 79u
+#define SYS_chdir 80u
 #define SYS_time_millis 400u
 
 ssize_t sys_echo(const char *u_in, char *u_out, size_t n);
@@ -34,4 +36,6 @@ long sys_munmap(void *addr, size_t len);
 long sys_exit(int status);
 long sys_waitpid(int pid, int *u_status, int flags);
 long sys_nanosleep(const fut_timespec_t *u_req, fut_timespec_t *u_rem);
+long sys_getcwd(char *buf, size_t size);
+long sys_chdir(const char *path);
 long sys_time_millis(void);

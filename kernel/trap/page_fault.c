@@ -27,13 +27,10 @@
 
 extern void fut_printf(const char *fmt, ...);
 
-#ifdef __x86_64__
+/* ============================================================
+ *   Architecture-Generic Demand Paging & COW Handling
+ * ============================================================ */
 
-/**
- * Handle demand paging page fault.
- * Loads a page from file on demand for file-backed mmap.
- * Returns true if handled, false if not a demand paging fault.
- */
 /**
  * Load a single demand-paged page and map it.
  * Helper used by demand paging handler and read-ahead.
@@ -170,21 +167,25 @@ static bool handle_demand_paging_fault(uint64_t fault_addr, fut_mm_t *mm) {
 }
 
 /**
- * Handle copy-on-write page fault.
+ * Handle copy-on-write page fault (architecture-generic).
  * Returns true if handled, false if not a COW fault.
  *
  * Per-page COW tracking: Only process pages that are still mapped read-only.
  * Once a page is made writable (through copy or sole ownership), subsequent
  * faults won't trigger COW handling because the page is already writable.
+ *
+ * @param fault_addr Virtual address that faulted
+ * @param is_write Whether the fault was a write (vs read)
+ * @param is_present Whether the page is present (vs not mapped)
  */
-static bool handle_cow_fault(uint64_t fault_addr, uint64_t error_code) {
+static bool handle_cow_fault_generic(uint64_t fault_addr, bool is_write, bool is_present) {
     /* Check if this is a write fault */
-    if (!(error_code & 0x2)) {
+    if (!is_write) {
         return false;  /* Not a write fault */
     }
 
     /* Check if page is present (COW pages are present but read-only) */
-    if (!(error_code & 0x1)) {
+    if (!is_present) {
         return false;  /* Page not present - not COW */
     }
 
@@ -290,6 +291,12 @@ static bool handle_cow_fault(uint64_t fault_addr, uint64_t error_code) {
     return true;
 }
 
+/* ============================================================
+ *   Architecture-Specific Page Fault Handlers
+ * ============================================================ */
+
+#ifdef __x86_64__
+
 bool fut_trap_handle_page_fault(fut_interrupt_frame_t *frame) {
     const uint64_t fault_addr = fut_read_cr2();
     const struct fut_uaccess_window *window = fut_uaccess_window_current();
@@ -307,7 +314,9 @@ bool fut_trap_handle_page_fault(fut_interrupt_frame_t *frame) {
 
     /* Try to handle as COW fault */
     if ((frame->cs & 0x3u) != 0) {  /* User mode fault */
-        if (handle_cow_fault(fault_addr, frame->error_code)) {
+        bool is_write = (frame->error_code & 0x2) != 0;
+        bool is_present = (frame->error_code & 0x1) != 0;
+        if (handle_cow_fault_generic(fault_addr, is_write, is_present)) {
             return true;  /* COW fault handled successfully */
         }
     }
@@ -335,6 +344,7 @@ bool fut_trap_handle_page_fault(fut_interrupt_frame_t *frame) {
 
 #include <arch/arm64/regs.h>
 #include <arch/arm64/paging.h>
+#include <arch/arm64/pmap.h>
 
 /**
  * Handle ARM64 data/instruction abort (page fault).
@@ -398,10 +408,12 @@ bool fut_trap_handle_page_fault(fut_interrupt_frame_t *frame) {
         return false;
     }
 
+    /* Determine if page is present (for access faults) */
+    bool is_present = is_access_fault;
+
     /* Try to handle as COW fault if write */
-    if (is_write) {
-        /* For now, COW handling is not implemented for ARM64 */
-        /* TODO: Implement ARM64 COW page fault handling */
+    if (is_write && handle_cow_fault_generic(fault_addr, is_write, is_present)) {
+        return true;  /* COW fault handled successfully */
     }
 
     /* Try to handle as demand paging fault */

@@ -115,38 +115,47 @@ static const struct fut_file_ops console_fops = {
     .mmap = NULL,
 };
 
+/* Global console task for input thread - created after scheduler init */
+static fut_task_t *g_console_task = NULL;
+static fut_thread_t *g_console_input_thread = NULL;
+
 void fut_console_init(void) {
     /* Initialize line discipline with echo and signal callbacks */
     tty_ldisc_init(&console_ldisc, console_echo, console_signal);
 
-#if 1
+    /* Register character device - do this early, before scheduler */
+    (void)chrdev_register(CONSOLE_MAJOR, CONSOLE_MINOR, &console_fops, "console", NULL);
+    (void)devfs_create_chr("/dev/console", CONSOLE_MAJOR, CONSOLE_MINOR);
+
+    fut_printf("[CONSOLE] Initialized with line discipline (canonical mode, echo enabled)\n");
+    fut_printf("[CONSOLE] Input thread will be started after scheduler initialization\n");
+}
+
+/**
+ * Start the console input thread. Must be called AFTER scheduler initialization.
+ * This is called from kernel_main after fut_sched_init().
+ */
+void fut_console_start_input_thread(void) {
     /* Create a task for the input thread */
-    fut_task_t *console_task = fut_task_create();
-    if (!console_task) {
+    g_console_task = fut_task_create();
+    if (!g_console_task) {
         fut_printf("[CONSOLE] ERROR: Failed to create console task\n");
         return;
     }
 
     /* Create input thread that feeds characters from serial to line discipline */
-    fut_thread_t *input_thread = fut_thread_create(
-        console_task,
+    g_console_input_thread = fut_thread_create(
+        g_console_task,
         console_input_thread,
         NULL,
         8192,  // 8KB stack
         100    // Medium priority
     );
 
-    if (!input_thread) {
+    if (!g_console_input_thread) {
         fut_printf("[CONSOLE] ERROR: Failed to create input thread\n");
         return;
     }
 
     fut_printf("[CONSOLE] Input thread created and ready\n");
-#endif
-
-    /* Register character device */
-    (void)chrdev_register(CONSOLE_MAJOR, CONSOLE_MINOR, &console_fops, "console", NULL);
-    (void)devfs_create_chr("/dev/console", CONSOLE_MAJOR, CONSOLE_MINOR);
-
-    fut_printf("[CONSOLE] Initialized with line discipline (canonical mode, echo enabled)\n");
 }

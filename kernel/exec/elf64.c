@@ -641,14 +641,15 @@ static int stage_blob(const uint8_t *start,
     return 0;
 }
 
-/* Shell binary is staged as a file in initramfs, not embedded as a blob
+/* Shell binary is staged as a file in initramfs, not embedded as a blob.
+ * For now, provide a stub that returns success without actually staging.
+ * The shell binary (futura-shell) requires Wayland dependencies that may not
+ * be built. This allows the kernel to boot without shell support.
+ */
 int fut_stage_shell_binary(void) {
-    (void)fut_vfs_mkdir("/sbin", 0755);
-    return stage_blob(_binary_build_bin_user_shell_start,
-                      _binary_build_bin_user_shell_end,
-                      "/sbin/futura-shell");
+    /* Shell binary not available - return success to allow kernel to boot */
+    return 0;
 }
-*/
 
 #if ENABLE_WINSRV_DEMO
 int fut_stage_winsrv_binary(void) {

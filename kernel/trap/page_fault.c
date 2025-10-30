@@ -34,6 +34,101 @@ extern void fut_printf(const char *fmt, ...);
  * Loads a page from file on demand for file-backed mmap.
  * Returns true if handled, false if not a demand paging fault.
  */
+/**
+ * Load a single demand-paged page and map it.
+ * Helper used by demand paging handler and read-ahead.
+ */
+static bool load_demand_page(uint64_t page_addr, struct fut_vma *vma, fut_vmem_context_t *ctx) {
+    extern void fut_printf(const char *, ...);
+
+    if (!vma || !ctx) {
+        return false;
+    }
+
+    /* Check if page is already present */
+    uint64_t pte = 0;
+    if (pmap_probe_pte(ctx, page_addr, &pte) == 0 && (pte & PTE_PRESENT)) {
+        return false;  /* Already loaded */
+    }
+
+    /* Allocate a physical page */
+    void *page = fut_pmm_alloc_page();
+    if (!page) {
+        return false;
+    }
+
+    /* Calculate file offset for this page */
+    uint64_t page_offset = (page_addr - vma->start) + vma->file_offset;
+
+    /* Zero-fill the page first */
+    memset(page, 0, PAGE_SIZE);
+
+    /* Read file contents into page */
+    ssize_t bytes_read = 0;
+    if (vma->vnode->ops && vma->vnode->ops->read) {
+        bytes_read = vma->vnode->ops->read(vma->vnode, page, PAGE_SIZE, page_offset);
+        if (bytes_read < 0) {
+            fut_pmm_free_page(page);
+            return false;
+        }
+        /* Partial reads are OK - rest of page remains zero */
+    }
+
+    /* Calculate PTE flags from VMA protection */
+    uint64_t pte_flags = PTE_PRESENT | PTE_USER;
+    if (vma->prot & 0x2) {
+        pte_flags |= PTE_WRITABLE;
+    }
+    if ((vma->prot & 0x4) == 0) {
+        pte_flags |= PTE_NX;
+    }
+
+    /* Map the page */
+    phys_addr_t phys = pmap_virt_to_phys((uintptr_t)page);
+    if (pmap_map_user(ctx, page_addr, phys, PAGE_SIZE, pte_flags) != 0) {
+        fut_pmm_free_page(page);
+        return false;
+    }
+
+    fut_printf("[DEMAND-PAGING] Loaded page: va=0x%llx phys=0x%llx file_offset=%llu bytes_read=%ld\n",
+               page_addr, phys, page_offset, bytes_read);
+
+    return true;
+}
+
+/**
+ * Read-ahead prefetching: Load adjacent pages on demand page fault.
+ * Detects sequential access patterns and preloads nearby pages.
+ */
+static void readahead_prefetch(uint64_t fault_addr, struct fut_vma *vma, fut_vmem_context_t *ctx) {
+    extern void fut_printf(const char *, ...);
+
+    if (!vma || !ctx) {
+        return;
+    }
+
+    /* Prefetch up to 4 adjacent pages (16KB on 4K pages) */
+    #define READAHEAD_COUNT 4
+
+    uint64_t page_addr = PAGE_ALIGN_DOWN(fault_addr);
+
+    /* Try to prefetch next pages (forward direction) */
+    for (int i = 1; i <= READAHEAD_COUNT; i++) {
+        uint64_t prefetch_addr = page_addr + (i * PAGE_SIZE);
+
+        /* Stop if outside VMA */
+        if (prefetch_addr >= vma->end) {
+            break;
+        }
+
+        /* Try to load, but don't fail if it can't be loaded */
+        if (!load_demand_page(prefetch_addr, vma, ctx)) {
+            /* If we can't load a prefetch page, stop - might be at EOF */
+            break;
+        }
+    }
+}
+
 static bool handle_demand_paging_fault(uint64_t fault_addr, fut_mm_t *mm) {
     extern void fut_printf(const char *, ...);
     extern void fut_vnode_ref(struct fut_vnode *);
@@ -57,60 +152,19 @@ static bool handle_demand_paging_fault(uint64_t fault_addr, fut_mm_t *mm) {
         return false;
     }
 
-    /* Check if page is already present - if so, not a demand paging fault */
+    /* Get memory context for paging operations */
     fut_vmem_context_t *ctx = fut_mm_context(mm);
-    uint64_t pte = 0;
-    if (pmap_probe_pte(ctx, page_addr, &pte) == 0 && (pte & PTE_PRESENT)) {
-        return false;  /* Page already present */
-    }
-
-    /* Allocate a physical page */
-    void *page = fut_pmm_alloc_page();
-    if (!page) {
-        fut_printf("[DEMAND-PAGING] Failed to allocate page for demand paging at va=0x%llx\n",
-                   page_addr);
+    if (!ctx) {
         return false;
     }
 
-    /* Calculate file offset for this page */
-    uint64_t page_offset = (page_addr - vma->start) + vma->file_offset;
-
-    /* Zero-fill the page first */
-    memset(page, 0, PAGE_SIZE);
-
-    /* Read file contents into page */
-    ssize_t bytes_read = 0;
-    if (vma->vnode->ops && vma->vnode->ops->read) {
-        bytes_read = vma->vnode->ops->read(vma->vnode, page, PAGE_SIZE, page_offset);
-        if (bytes_read < 0) {
-            fut_printf("[DEMAND-PAGING] Read failed at offset %llu: %ld\n",
-                       page_offset, bytes_read);
-            fut_pmm_free_page(page);
-            return false;
-        }
-        /* Partial reads are OK - rest of page remains zero */
-    }
-
-    /* Calculate PTE flags from VMA protection */
-    uint64_t pte_flags = PTE_PRESENT | PTE_USER;
-    if (vma->prot & 0x2) {
-        pte_flags |= PTE_WRITABLE;
-    }
-    if ((vma->prot & 0x4) == 0) {
-        pte_flags |= PTE_NX;
-    }
-
-    /* Map the page */
-    phys_addr_t phys = pmap_virt_to_phys((uintptr_t)page);
-    if (pmap_map_user(ctx, page_addr, phys, PAGE_SIZE, pte_flags) != 0) {
-        fut_printf("[DEMAND-PAGING] Failed to map page at va=0x%llx phys=0x%llx\n",
-                   page_addr, phys);
-        fut_pmm_free_page(page);
+    /* Load the faulting page */
+    if (!load_demand_page(page_addr, vma, ctx)) {
         return false;
     }
 
-    fut_printf("[DEMAND-PAGING] Loaded page: va=0x%llx phys=0x%llx file_offset=%llu bytes_read=%ld\n",
-               page_addr, phys, page_offset, bytes_read);
+    /* Prefetch adjacent pages for sequential access optimization */
+    readahead_prefetch(fault_addr, vma, ctx);
 
     return true;
 }

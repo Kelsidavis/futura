@@ -90,22 +90,32 @@ int main(void) {
     comp.resize_enabled = want_resize;
     comp.throttle_enabled = want_throttle;
 
+#ifdef DEBUG_WAYLAND
     printf("[WAYLAND-DEBUG] About to call comp_state_init()...\n");
+#endif
     if (comp_state_init(&comp) != 0) {
         printf("[WAYLAND] ERROR: comp_state_init() failed\n");
         return -1;
     }
+#ifdef DEBUG_WAYLAND
     printf("[WAYLAND-DEBUG] comp_state_init() succeeded\n");
+#endif
 
+#ifdef DEBUG_WAYLAND
     printf("[WAYLAND-DEBUG] About to call wl_display_create()...\n");
+#endif
     comp.display = wl_display_create();
+#ifdef DEBUG_WAYLAND
     printf("[WAYLAND-DEBUG] wl_display_create() returned: %p\n", (void *)comp.display);
+#endif
     if (!comp.display) {
         printf("[WAYLAND] failed to create wl_display\n");
         comp_state_finish(&comp);
         return -1;
     }
+#ifdef DEBUG_WAYLAND
     printf("[WAYLAND-DEBUG] wl_display successfully created\n");
+#endif
 
     comp.loop = wl_display_get_event_loop(comp.display);
 
@@ -124,50 +134,70 @@ int main(void) {
 
     wl_display_init_shm(comp.display);
 
+#ifdef DEBUG_WAYLAND
     printf("[WAYLAND-DEBUG] Initializing compositor global...\n");
+#endif
     if (compositor_global_init(&comp) != 0) {
         printf("[WAYLAND] compositor_global_init FAILED\n");
         comp_state_finish(&comp);
         wl_display_destroy(comp.display);
         return -1;
     }
+#ifdef DEBUG_WAYLAND
     printf("[WAYLAND-DEBUG] compositor_global_init OK\n");
+#endif
 
+#ifdef DEBUG_WAYLAND
     printf("[WAYLAND-DEBUG] Initializing xdg_shell global...\n");
+#endif
     if (xdg_shell_global_init(&comp) != 0) {
         printf("[WAYLAND] xdg_shell_global_init FAILED\n");
         comp_state_finish(&comp);
         wl_display_destroy(comp.display);
         return -1;
     }
+#ifdef DEBUG_WAYLAND
     printf("[WAYLAND-DEBUG] xdg_shell_global_init OK\n");
+#endif
 
+#ifdef DEBUG_WAYLAND
     printf("[WAYLAND-DEBUG] Initializing output global...\n");
+#endif
     if (output_global_init(&comp) != 0) {
         printf("[WAYLAND] output_global_init FAILED\n");
         comp_state_finish(&comp);
         wl_display_destroy(comp.display);
         return -1;
     }
+#ifdef DEBUG_WAYLAND
     printf("[WAYLAND-DEBUG] output_global_init OK\n");
+#endif
 
+#ifdef DEBUG_WAYLAND
     printf("[WAYLAND-DEBUG] Initializing shm backend...\n");
+#endif
     if (shm_backend_init(&comp) != 0) {
         printf("[WAYLAND] shm_backend_init FAILED\n");
         comp_state_finish(&comp);
         wl_display_destroy(comp.display);
         return -1;
     }
+#ifdef DEBUG_WAYLAND
     printf("[WAYLAND-DEBUG] shm_backend_init OK\n");
+#endif
 
+#ifdef DEBUG_WAYLAND
     printf("[WAYLAND-DEBUG] Initializing data_device_manager...\n");
+#endif
     if (data_device_manager_init(&comp) != 0) {
         printf("[WAYLAND] data_device_manager_init FAILED\n");
         comp_state_finish(&comp);
         wl_display_destroy(comp.display);
         return -1;
     }
+#ifdef DEBUG_WAYLAND
     printf("[WAYLAND-DEBUG] data_device_manager_init OK\n");
+#endif
 
     comp.seat = seat_init(&comp);
     if (!comp.seat) {
@@ -192,7 +222,9 @@ int main(void) {
     /* Ensure XDG_RUNTIME_DIR is set for Wayland socket creation */
     if (!getenv("XDG_RUNTIME_DIR")) {
         /* Use /tmp as runtime directory for Wayland sockets */
+#ifdef DEBUG_WAYLAND
         printf("[WAYLAND-DEBUG] Setting XDG_RUNTIME_DIR=/tmp\n");
+#endif
         setenv("XDG_RUNTIME_DIR", "/tmp", 1);
     }
 
@@ -206,7 +238,9 @@ int main(void) {
             socket = "none";
         } else {
             socket = "wayland-0";
+#ifdef DEBUG_WAYLAND
             printf("[WAYLAND-DEBUG] Using manual socket: %s\n", socket);
+#endif
         }
     }
 

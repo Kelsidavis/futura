@@ -1460,7 +1460,9 @@ int comp_run(struct compositor_state *comp) {
 
 int comp_scheduler_start(struct compositor_state *comp) {
     if (!comp || !comp->loop) {
+#ifdef DEBUG_WAYLAND
         printf("[SCHEDULER-DEBUG] comp or loop is NULL\n");
+#endif
         return -1;
     }
     if (comp->timerfd >= 0) {
@@ -1469,15 +1471,21 @@ int comp_scheduler_start(struct compositor_state *comp) {
 
     int fd = timerfd_create(CLOCK_MONOTONIC, TFD_NONBLOCK);
     if (fd < 0) {
+#ifdef DEBUG_WAYLAND
         printf("[SCHEDULER-DEBUG] timerfd_create failed: %d\n", errno);
+#endif
         return -1;
     }
+#ifdef DEBUG_WAYLAND
     printf("[SCHEDULER-DEBUG] timerfd_create succeeded: fd=%d (nonblocking)\n", fd);
+#endif
 
     comp->timerfd = fd;
     comp->next_tick_ms = (uint64_t)comp_now_msec() + comp->target_ms;
     if (comp_timer_arm(comp) < 0) {
+#ifdef DEBUG_WAYLAND
         printf("[SCHEDULER-DEBUG] comp_timer_arm failed\n");
+#endif
         struct itimerspec disarm = {0};
         timerfd_settime(fd, 0, &disarm, NULL);
         sys_close(fd);
@@ -1485,25 +1493,37 @@ int comp_scheduler_start(struct compositor_state *comp) {
         comp->next_tick_ms = 0;
         return -1;
     }
+#ifdef DEBUG_WAYLAND
     printf("[SCHEDULER-DEBUG] comp_timer_arm succeeded\n");
+#endif
 
+#ifdef DEBUG_WAYLAND
     printf("[SCHEDULER-DEBUG] About to call wl_event_loop_add_fd\n");
+#endif
     comp->timer_source = wl_event_loop_add_fd(comp->loop,
                                               comp->timerfd,
                                               WL_EVENT_READABLE,
                                               comp_timerfd_cb,
                                               comp);
+#ifdef DEBUG_WAYLAND
     printf("[SCHEDULER-DEBUG] wl_event_loop_add_fd returned: %p (errno=%d)\n", (void *)comp->timer_source, errno);
+#endif
     if (!comp->timer_source) {
+#ifdef DEBUG_WAYLAND
         printf("[SCHEDULER-DEBUG] Event loop add_fd returned NULL (errno=%d), bypassing event loop\n", errno);
+#endif
         /* Similar to input devices: timerfd doesn't support epoll in this environment.
          * Mark timer_source as available with a sentinel value to indicate success,
          * but we'll handle timer events manually in comp_run().
          */
         comp->timer_source = (void *)1;
+#ifdef DEBUG_WAYLAND
         printf("[SCHEDULER-DEBUG] Marked timer_source as available (sentinel)\n");
+#endif
     }
+#ifdef DEBUG_WAYLAND
     printf("[SCHEDULER-DEBUG] Scheduler started successfully\n");
+#endif
     return 0;
 }
 

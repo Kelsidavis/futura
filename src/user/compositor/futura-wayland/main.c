@@ -191,9 +191,9 @@ int main(void) {
 
     /* Ensure XDG_RUNTIME_DIR is set for Wayland socket creation */
     if (!getenv("XDG_RUNTIME_DIR")) {
-        /* Use /dev as runtime directory since /tmp creation via direct syscall is problematic */
-        printf("[WAYLAND-DEBUG] Setting XDG_RUNTIME_DIR=/dev\n");
-        setenv("XDG_RUNTIME_DIR", "/dev", 1);
+        /* Use /tmp as runtime directory for Wayland sockets */
+        printf("[WAYLAND-DEBUG] Setting XDG_RUNTIME_DIR=/tmp\n");
+        setenv("XDG_RUNTIME_DIR", "/tmp", 1);
     }
 
     const char *socket = wl_display_add_socket_auto(comp.display);

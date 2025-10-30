@@ -542,6 +542,8 @@ extern const uint8_t _binary_build_bin_user_wl_simple_start[];
 extern const uint8_t _binary_build_bin_user_wl_simple_end[];
 extern const uint8_t _binary_build_bin_user_wl_colorwheel_start[];
 extern const uint8_t _binary_build_bin_user_wl_colorwheel_end[];
+extern const uint8_t _binary_build_bin_user_futura_shell_start[];
+extern const uint8_t _binary_build_bin_user_futura_shell_end[];
 #endif
 
 int fut_stage_fbtest_binary(void) {
@@ -639,12 +641,14 @@ static int stage_blob(const uint8_t *start,
     return 0;
 }
 
+/* Shell binary is staged as a file in initramfs, not embedded as a blob
 int fut_stage_shell_binary(void) {
-    (void)fut_vfs_mkdir("/bin", 0755);
+    (void)fut_vfs_mkdir("/sbin", 0755);
     return stage_blob(_binary_build_bin_user_shell_start,
                       _binary_build_bin_user_shell_end,
-                      "/bin/shell");
+                      "/sbin/futura-shell");
 }
+*/
 
 #if ENABLE_WINSRV_DEMO
 int fut_stage_winsrv_binary(void) {

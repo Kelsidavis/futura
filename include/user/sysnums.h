@@ -11,7 +11,10 @@
 #define SYS_munmap      11
 #define SYS_brk         12
 #define SYS_flock       73
+#define SYS_fork        57
+#define SYS_execve      59
 #define SYS_exit        60
+#define SYS_wait4       61
 #define SYS_waitpid     61
 #define SYS_echo        42
 #define SYS_nanosleep   35

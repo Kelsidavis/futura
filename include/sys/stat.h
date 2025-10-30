@@ -4,37 +4,39 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#if defined(__STDC_HOSTED__) && __STDC_HOSTED__ == 1
+/* Try to use system headers if they're available (in hosted or when glibc is used) */
+#if __has_include(<time.h>)
+#include <time.h>
+#endif
+
+#if __has_include_next(<sys/stat.h>)
+/* System headers are available - use them */
 #include_next <sys/stat.h>
+#include_next <sys/types.h>
 #else
+/* Freestanding environment: define our own stat structure and types */
 #include <user/time.h>
 
-#ifndef FUT_DEV_T_DEFINED
-#define FUT_DEV_T_DEFINED 1
+/* Define types if not already defined */
+#ifndef dev_t
 typedef uint64_t dev_t;
 #endif
-#ifndef FUT_INO_T_DEFINED
-#define FUT_INO_T_DEFINED 1
+#ifndef ino_t
 typedef uint64_t ino_t;
 #endif
-#ifndef FUT_MODE_T_DEFINED
-#define FUT_MODE_T_DEFINED 1
+#ifndef mode_t
 typedef uint32_t mode_t;
 #endif
-#ifndef FUT_NLINK_T_DEFINED
-#define FUT_NLINK_T_DEFINED 1
+#ifndef nlink_t
 typedef uint64_t nlink_t;
 #endif
-#ifndef FUT_BLKSIZE_T_DEFINED
-#define FUT_BLKSIZE_T_DEFINED 1
+#ifndef blksize_t
 typedef uint64_t blksize_t;
 #endif
-#ifndef FUT_BLKCNT_T_DEFINED
-#define FUT_BLKCNT_T_DEFINED 1
+#ifndef blkcnt_t
 typedef uint64_t blkcnt_t;
 #endif
-#ifndef FUT_OFF_T_DEFINED
-#define FUT_OFF_T_DEFINED 1
+#ifndef off_t
 typedef int64_t off_t;
 #endif
 
@@ -77,4 +79,4 @@ struct stat {
 #define S_IROTH 0004
 #endif
 
-#endif /* __STDC_HOSTED__ */
+#endif /* !has_include_next */

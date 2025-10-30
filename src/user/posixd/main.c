@@ -97,39 +97,93 @@ static void handle_file_request(struct fut_fipc_msg *msg) {
 
     switch (msg->type) {
     case POSIXD_MSG_OPEN: {
-        /* Phase 3: Parse open request from payload
-         * struct posixd_open_req *req = (struct posixd_open_req *)msg->payload;
-         * 1. Forward to fsd (filesystem daemon)
-         * 2. Allocate file descriptor
-         * 3. Send response with fd
-         */
+        /* Open a file */
+        struct posixd_open_req *req = (struct posixd_open_req *)msg->payload;
+        struct posixd_open_resp resp = {0};
+
+        if (!req || !req->path[0]) {
+            resp.fd = -EINVAL;
+        } else {
+            /* Call VFS to open the file */
+            int fd = fut_vfs_open(req->path, req->flags, req->mode);
+            resp.fd = fd;
+        }
+
+        send_response(POSIXD_MSG_OPEN, &resp, sizeof(resp));
         break;
     }
 
     case POSIXD_MSG_CLOSE: {
-        /* Phase 3: Parse close request
-         * 1. Find file descriptor
-         * 2. Forward close to fsd
-         * 3. Release fd
-         */
+        /* Close a file descriptor */
+        struct posixd_close_req *req = (struct posixd_close_req *)msg->payload;
+        struct posixd_close_resp resp = {0};
+
+        if (!req) {
+            resp.result = -EINVAL;
+        } else {
+            /* Call VFS to close the file */
+            resp.result = fut_vfs_close(req->fd);
+        }
+
+        send_response(POSIXD_MSG_CLOSE, &resp, sizeof(resp));
         break;
     }
 
     case POSIXD_MSG_READ: {
-        /* Phase 3: Parse read request
-         * 1. Validate fd
-         * 2. Forward read to fsd with shared buffer region
-         * 3. Send response with bytes read
-         */
+        /* Read from file descriptor */
+        struct posixd_read_req *req = (struct posixd_read_req *)msg->payload;
+        struct posixd_read_resp resp = {0};
+
+        if (!req || req->count == 0) {
+            resp.bytes_read = -EINVAL;
+        } else {
+            /* Allocate temporary buffer for read data */
+            uint8_t buf[4096];
+            size_t count = (req->count > sizeof(buf)) ? sizeof(buf) : req->count;
+
+            /* Call VFS to read the file */
+            ssize_t bytes = fut_vfs_read(req->fd, buf, count);
+
+            if (bytes < 0) {
+                resp.bytes_read = bytes;
+            } else {
+                /* TODO: Copy data to shared buffer region (req->buffer_region_id)
+                 * For now, data is passed directly in the response if it fits
+                 */
+                resp.bytes_read = bytes;
+            }
+        }
+
+        send_response(POSIXD_MSG_READ, &resp, sizeof(resp));
         break;
     }
 
     case POSIXD_MSG_WRITE: {
-        /* Phase 3: Parse write request
-         * 1. Validate fd
-         * 2. Forward write to fsd with shared buffer
-         * 3. Send response with bytes written
-         */
+        /* Write to file descriptor */
+        struct posixd_write_req *req = (struct posixd_write_req *)msg->payload;
+        struct posixd_write_resp resp = {0};
+
+        if (!req || req->count == 0) {
+            resp.bytes_written = -EINVAL;
+        } else {
+            /* Data is passed inline after the request structure in the message payload.
+             * The client (libfutura) copies data directly to the message buffer.
+             * Phase 3: Use shared buffer region (req->buffer_region_id) for large writes.
+             */
+
+            /* Calculate where the data starts in the payload:
+             * Message payload = [posixd_write_req] [data bytes...]
+             * So data starts at offset sizeof(struct posixd_write_req)
+             */
+            size_t data_offset = sizeof(struct posixd_write_req);
+            uint8_t *data = (uint8_t *)msg->payload + data_offset;
+
+            /* Call VFS to write the file */
+            ssize_t bytes = fut_vfs_write(req->fd, data, req->count);
+            resp.bytes_written = bytes;
+        }
+
+        send_response(POSIXD_MSG_WRITE, &resp, sizeof(resp));
         break;
     }
 

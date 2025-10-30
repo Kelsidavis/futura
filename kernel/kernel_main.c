@@ -986,6 +986,16 @@ void fut_kernel_main(void) {
         fut_printf("[WARN] Failed to create /tmp directory (error %d)\n", tmp_ret);
     }
 
+    /* Mount ramfs at /tmp to make it writable for Wayland sockets and other temporary files */
+    fut_printf("[INIT] About to mount ramfs at /tmp\n");
+    int tmp_mount_ret = fut_vfs_mount(NULL, "/tmp", "ramfs", 0, NULL, FUT_INVALID_HANDLE);
+    fut_printf("[INIT] Mount ramfs /tmp result: %d\n", tmp_mount_ret);
+    if (tmp_mount_ret == 0) {
+        fut_printf("[INIT] ✓ Mounted writable ramfs at /tmp\n");
+    } else {
+        fut_printf("[WARN] ✗ Failed to mount ramfs at /tmp (error %d)\n", tmp_mount_ret);
+    }
+
     bool perf_flag = fut_boot_arg_flag("perf");
     bool run_async_selftests = boot_flag_enabled("async-tests", false);
 
@@ -1039,14 +1049,16 @@ void fut_kernel_main(void) {
     fut_futurafs_init();
     fut_printf("[INIT] FuturaFS filesystem registered\n");
 
-    /* Try to mount FuturaFS from blk:vda if it exists */
+    /* Disabled automatic FuturaFS formatting to allow scheduler to start
+     * Block device I/O during init blocks kernel startup before scheduler
+     * This should be done after scheduler initialization instead */
+    /*
     if (vblk_rc == 0) {
         extern struct fut_blockdev *fut_blockdev_find(const char *name);
         struct fut_blockdev *test_dev = fut_blockdev_find("blk:vda");
         if (test_dev) {
             fut_printf("[INIT] Block device 'blk:vda' found\n");
 
-            /* Format the device with FuturaFS */
             fut_printf("[INIT] Formatting blk:vda with FuturaFS...\n");
             int format_rc = fut_futurafs_format(test_dev, "FuturaOS", 4096);
             if (format_rc == 0) {
@@ -1065,6 +1077,7 @@ void fut_kernel_main(void) {
             fut_printf("[INIT] Failed to mount FuturaFS: error %d\n", mount_rc);
         }
     }
+    */
 
     fut_printf("[INIT] Initializing network subsystem...\n");
     fut_net_init();
@@ -1244,11 +1257,12 @@ void fut_kernel_main(void) {
     /* ========================================
      *   Launch Interactive Shell
      * ======================================== */
-    fut_printf("[INIT] Staging shell binary...\n");
+    /* Shell binary is staged as a file in initramfs, not embedded */
+    /* fut_printf("[INIT] Staging shell binary...\n");
     int shell_stage = fut_stage_shell_binary();
     if (shell_stage != 0) {
         fut_printf("[WARN] Failed to stage shell binary (error %d)\n", shell_stage);
-    }
+    } */
 
     fut_printf("[INIT] Launching shell...\n");
     char shell_name[] = "shell";

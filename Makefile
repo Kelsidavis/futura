@@ -454,15 +454,17 @@ WAYLAND_CLIENT_BIN := $(BIN_DIR)/user/wl-simple
 WAYLAND_CLIENT_BLOB := $(OBJ_DIR)/kernel/blobs/wl_simple_blob.o
 WAYLAND_COLOR_BIN := $(BIN_DIR)/user/wl-colorwheel
 WAYLAND_COLOR_BLOB := $(OBJ_DIR)/kernel/blobs/wl_colorwheel_blob.o
+WAYLAND_SHELL_BIN := $(BIN_DIR)/user/futura-shell
+WAYLAND_SHELL_BLOB := $(OBJ_DIR)/kernel/blobs/futura_shell_blob.o
 
 ifeq ($(PLATFORM),x86_64)
-OBJECTS += $(SHELL_BLOB) $(FBTEST_BLOB)
+OBJECTS += $(FBTEST_BLOB)
 ifeq ($(ENABLE_WINSRV_DEMO),1)
 OBJECTS += $(WINSRV_BLOB) $(WINSTUB_BLOB)
 endif
 OBJECTS += $(INIT_STUB_BLOB) $(SECOND_STUB_BLOB)
 ifeq ($(ENABLE_WAYLAND_DEMO),1)
-OBJECTS += $(WAYLAND_COMPOSITOR_BLOB) $(WAYLAND_CLIENT_BLOB) $(WAYLAND_COLOR_BLOB)
+OBJECTS += $(WAYLAND_COMPOSITOR_BLOB) $(WAYLAND_CLIENT_BLOB) $(WAYLAND_COLOR_BLOB) $(WAYLAND_SHELL_BLOB)
 endif
 endif
 
@@ -577,6 +579,9 @@ $(WAYLAND_CLIENT_BIN):
 $(WAYLAND_COLOR_BIN):
 	@$(MAKE) -C src/user/clients/wl-colorwheel all
 
+$(WAYLAND_SHELL_BIN):
+	@$(MAKE) -C src/user/shell/futura-shell all
+
 $(OBJ_DIR)/kernel/blobs:
 	@mkdir -p $@
 
@@ -619,6 +624,10 @@ $(WAYLAND_COLOR_BLOB): $(WAYLAND_COLOR_BIN) | $(OBJ_DIR)/kernel/blobs
 	@echo "OBJCOPY $@"
 	@$(OBJCOPY) -I binary -O $(OBJCOPY_BIN_FMT) -B $(OBJCOPY_BIN_ARCH) $< $@
 
+$(WAYLAND_SHELL_BLOB): $(WAYLAND_SHELL_BIN) | $(OBJ_DIR)/kernel/blobs
+	@echo "OBJCOPY $@"
+	@$(OBJCOPY) -I binary -O $(OBJCOPY_BIN_FMT) -B $(OBJCOPY_BIN_ARCH) $< $@
+
 # Build userland services
 userland:
 	@echo "Building userland services..."
@@ -636,6 +645,7 @@ userspace: vendor libfutura
 	@$(MAKE) -C src/user/compositor/futura-wayland all
 	@$(MAKE) -C src/user/clients/wl-simple all
 	@$(MAKE) -C src/user/clients/wl-colorwheel all
+	@$(MAKE) -C src/user/shell/futura-shell all
 	@$(MAKE) -C src/user/stubs all
 
 stage: userspace
@@ -646,6 +656,8 @@ stage: userspace
 	@install -m 0755 $(WAYLAND_COMPOSITOR_BIN) $(INITROOT)/sbin/futura-wayland
 	@install -m 0755 $(WAYLAND_CLIENT_BIN) $(INITROOT)/bin/wl-simple
 	@install -m 0755 $(WAYLAND_COLOR_BIN) $(INITROOT)/bin/wl-colorwheel
+	@install -m 0755 $(WAYLAND_SHELL_BIN) $(INITROOT)/sbin/futura-shell
+	@install -m 0755 src/user/shell/futura-shell/launch_shell.sh $(INITROOT)/sbin/launch-shell
 	@if [ -f $(INIT_STUB_BIN) ]; then install -m 0755 $(INIT_STUB_BIN) $(INITROOT)/sbin/init; fi
 	@if [ -f $(SECOND_STUB_BIN) ]; then install -m 0755 $(SECOND_STUB_BIN) $(INITROOT)/sbin/second; fi
 	@mkdir -p $(dir $(INITRAMFS))

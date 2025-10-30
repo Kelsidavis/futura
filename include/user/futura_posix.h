@@ -12,6 +12,13 @@
 #include <stdint.h>
 #include <stddef.h>
 #include <stdbool.h>
+
+/* Include system types/headers FIRST when available so they take precedence */
+#if defined(__STDC_HOSTED__) && __STDC_HOSTED__ == 1
+#include <sys/types.h>
+#include <sys/socket.h>
+#endif
+
 #include <kernel/fut_fipc.h>
 #include <sys/stat.h>
 #include <user/signal.h>
@@ -20,55 +27,53 @@
  *   POSIX Types (for freestanding environment)
  * ============================================================ */
 
-#ifndef __POSIX_TYPES_DEFINED
-#if defined(_SYS_TYPES_H)
-#define __POSIX_TYPES_DEFINED 1
-#else
-#define __POSIX_TYPES_DEFINED 1
+/* When compiling in hosted environment (with system headers like Wayland),
+ * prefer system type definitions. These guards ensure we only define types
+ * when they're not already available from system headers. */
 
-#ifndef FUT_SSIZE_T_DEFINED
-#define FUT_SSIZE_T_DEFINED 1
+/* Only define types that aren't provided by sys/types.h or other system headers */
+#ifndef ssize_t
 typedef int64_t ssize_t;
 #endif
-#ifndef FUT_OFF_T_DEFINED
-#define FUT_OFF_T_DEFINED 1
+
+#ifndef off_t
 typedef int64_t off_t;
 #endif
-#ifndef FUT_DEV_T_DEFINED
-#define FUT_DEV_T_DEFINED 1
+
+#ifndef dev_t
 typedef uint64_t dev_t;
 #endif
-#ifndef FUT_INO_T_DEFINED
-#define FUT_INO_T_DEFINED 1
+
+#ifndef ino_t
 typedef uint64_t ino_t;
 #endif
-#ifndef FUT_MODE_T_DEFINED
-#define FUT_MODE_T_DEFINED 1
+
+#ifndef mode_t
 typedef uint32_t mode_t;
 #endif
-#ifndef FUT_UID_T_DEFINED
-#define FUT_UID_T_DEFINED 1
+
+#ifndef uid_t
 typedef uint32_t uid_t;
 #endif
-#ifndef FUT_GID_T_DEFINED
-#define FUT_GID_T_DEFINED 1
+
+#ifndef gid_t
 typedef uint32_t gid_t;
 #endif
-#ifndef FUT_TIME_T_DEFINED
-#define FUT_TIME_T_DEFINED 1
+
+#ifndef time_t
 typedef int64_t time_t;
 #endif
-#ifndef FUT_PID_T_DEFINED
-#define FUT_PID_T_DEFINED 1
+
+#ifndef pid_t
 typedef int32_t pid_t;
 #endif
-#ifndef FUT_SOCKLEN_T_DEFINED
-#define FUT_SOCKLEN_T_DEFINED 1
+
+#include <sys/socket.h>
+
+/* socklen_t definition - prefer system version if available */
+#if !defined(socklen_t) && !(defined(__STDC_HOSTED__) && __STDC_HOSTED__ == 1)
 typedef uint32_t socklen_t;
 #endif
-
-#endif /* defined(_SYS_TYPES_H) */
-#endif /* __POSIX_TYPES_DEFINED */
 
 /* ============================================================
  *   POSIX Daemon Message Types
@@ -429,6 +434,10 @@ int futura_munmap(void *addr, size_t length);
  *   Minimal Socket Types / APIs (AF_UNIX only)
  * ============================================================ */
 
+/* Only include socket definitions in freestanding mode.
+ * Hosted environments (like Wayland) get these from system headers. */
+#ifndef __GLIBC__
+
 #define AF_UNIX        1
 #define SOCK_STREAM    1
 
@@ -466,6 +475,26 @@ struct cmsghdr {
 #define SOL_SOCKET     1
 #define SCM_RIGHTS     1
 
+int    socket(int domain, int type, int protocol);
+int    bind(int fd, const struct sockaddr *addr, socklen_t len);
+int    listen(int fd, int backlog);
+int    accept(int fd, struct sockaddr *addr, socklen_t *len);
+int    connect(int fd, const struct sockaddr *addr, socklen_t len);
+ssize_t sendmsg(int fd, const struct msghdr *msg, int flags);
+ssize_t recvmsg(int fd, struct msghdr *msg, int flags);
+int    getsockopt(int fd, int level, int optname, void *optval, socklen_t *optlen);
+int    setsockopt(int fd, int level, int optname, const void *optval, socklen_t optlen);
+int    shutdown(int fd, int how);
+
+#else /* __GLIBC__ - when glibc is available */
+
+/* Get socket types from system headers */
+#include <sys/un.h>
+#include <sys/socket.h>
+
+#endif /* Socket definitions */
+
+/* These defines should always be available */
 #ifndef FD_CLOEXEC
 #define FD_CLOEXEC     1
 #endif
@@ -478,24 +507,28 @@ struct cmsghdr {
 #define O_NONBLOCK     04000
 #endif
 
+#ifndef F_DUPFD
 #define F_DUPFD            0
+#endif
+#ifndef F_GETFD
 #define F_GETFD            1
+#endif
+#ifndef F_SETFD
 #define F_SETFD            2
+#endif
+#ifndef F_GETFL
 #define F_GETFL            3
+#endif
+#ifndef F_SETFL
 #define F_SETFL            4
+#endif
+#ifndef F_DUPFD_CLOEXEC
 #define F_DUPFD_CLOEXEC    1030
+#endif
+#ifndef F_GET_SEALS
 #define F_GET_SEALS        1034
+#endif
 
-int    socket(int domain, int type, int protocol);
-int    bind(int fd, const struct sockaddr *addr, socklen_t len);
-int    listen(int fd, int backlog);
-int    accept(int fd, struct sockaddr *addr, socklen_t *len);
-int    connect(int fd, const struct sockaddr *addr, socklen_t len);
-ssize_t sendmsg(int fd, const struct msghdr *msg, int flags);
-ssize_t recvmsg(int fd, struct msghdr *msg, int flags);
-int    getsockopt(int fd, int level, int optname, void *optval, socklen_t *optlen);
-int    setsockopt(int fd, int level, int optname, const void *optval, socklen_t optlen);
-int    shutdown(int fd, int how);
 int    fcntl(int fd, int cmd, ...);
 int    fcntl64(int fd, int cmd, ...);
 int    fstat(int fd, struct stat *st);

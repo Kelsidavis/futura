@@ -39,3 +39,6 @@
 #ifndef SYS_openat
 #define SYS_openat      257
 #endif
+#ifndef AT_FDCWD
+#define AT_FDCWD        -100
+#endif

@@ -43,8 +43,14 @@ typedef struct fut_percpu {
     uint64_t ready_count;                /* Number of ready threads */
     fut_spinlock_t queue_lock;           /* Lock for this CPU's queue */
 
-    /* Padding to cache line (64 bytes total: 8+4+4+40+8 = 64, so no padding needed) */
-} __attribute__((aligned(64))) fut_percpu_t;
+    /* Load balancing and statistics */
+    uint64_t queue_depth;                /* Current queue depth for load tracking */
+    uint64_t work_steal_count;           /* Number of times work stolen from this CPU */
+    uint64_t work_stolen_count;          /* Number of times this CPU stole work */
+    uint64_t last_balance_tick;          /* Tick when last load balance occurred */
+
+    /* Padding to 128-byte cache line for alignment */
+} __attribute__((aligned(128))) fut_percpu_t;
 
 /* Array of per-CPU data structures (one per CPU) */
 extern fut_percpu_t fut_percpu_data[FUT_MAX_CPUS];

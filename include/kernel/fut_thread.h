@@ -72,7 +72,11 @@ struct fut_thread {
     uint64_t deadline_tick;               // Absolute deadline tick (0 = none)
 
     uint64_t wake_time;                   // Wake tick for sleeping threads
-    uint32_t cpu_affinity;                // Preferred CPU (for cache locality)
+
+    /* CPU Affinity Configuration */
+    uint64_t cpu_affinity_mask;           // Bitmask of allowed CPUs (bit 0 = CPU 0, etc)
+    uint32_t preferred_cpu;               // Primary CPU preference (within allowed mask)
+    bool hard_affinity;                   // Hard pin (true) vs soft preference (false)
 
     fut_thread_stats_t stats;             // Performance instrumentation data
 
@@ -145,6 +149,63 @@ void fut_thread_set_deadline(uint64_t abs_tick);
 uint64_t fut_thread_get_deadline(void);
 int fut_thread_priority_raise(fut_thread_t *thread, int new_priority);
 int fut_thread_priority_restore(fut_thread_t *thread);
+
+/* ============================================================
+ *   CPU Affinity API
+ * ============================================================ */
+
+/**
+ * Set CPU affinity to a single CPU (hard pin).
+ * Thread will only run on the specified CPU.
+ *
+ * @param thread   Thread to configure
+ * @param cpu_id   CPU ID to pin to (0-63)
+ * @return 0 on success, -1 if invalid CPU
+ */
+int fut_thread_set_affinity(fut_thread_t *thread, uint32_t cpu_id);
+
+/**
+ * Set CPU affinity mask (soft preference).
+ * Thread can run on any CPU in the mask, will prefer one.
+ *
+ * @param thread   Thread to configure
+ * @param mask     Bitmask of allowed CPUs (bit N = CPU N)
+ * @return 0 on success, -1 if mask is invalid
+ */
+int fut_thread_set_affinity_mask(fut_thread_t *thread, uint64_t mask);
+
+/**
+ * Get current CPU affinity mask for a thread.
+ *
+ * @param thread   Thread to query
+ * @return Bitmask of allowed CPUs (or 0 if unrestricted)
+ */
+uint64_t fut_thread_get_affinity_mask(fut_thread_t *thread);
+
+/**
+ * Get preferred CPU for a thread.
+ *
+ * @param thread   Thread to query
+ * @return Preferred CPU ID
+ */
+uint32_t fut_thread_get_preferred_cpu(fut_thread_t *thread);
+
+/**
+ * Set hard affinity mode (pin vs soft preference).
+ *
+ * @param thread    Thread to configure
+ * @param hard_pin  true = hard pin (must run on affinity CPU),
+ *                  false = soft preference (prefer but allow others)
+ */
+void fut_thread_set_hard_affinity(fut_thread_t *thread, bool hard_pin);
+
+/**
+ * Check if thread has hard affinity enforced.
+ *
+ * @param thread   Thread to query
+ * @return true if hard-pinned, false if soft preference
+ */
+bool fut_thread_is_hard_affinity(fut_thread_t *thread);
 
 /* ============================================================
  *   Field Offset Verification (for assembly code)

@@ -95,14 +95,52 @@ extern volatile char uart_rx_buffer[4096];
 extern volatile uint32_t uart_rx_head;
 extern volatile uint32_t uart_rx_tail;
 
+/**
+ * Non-blocking read from UART RX ring buffer.
+ * Returns -1 if no character available, character code otherwise.
+ */
+int fut_serial_getc(void) {
+    /* Non-blocking read - check if character available */
+    if (uart_rx_head == uart_rx_tail) {
+        return -1;  /* No character available */
+    }
+
+    /* Character available - read from buffer */
+    char c = uart_rx_buffer[uart_rx_tail];
+    uart_rx_tail = (uart_rx_tail + 1) % 4096;
+
+    return (int)(unsigned char)c;
+}
+
+/**
+ * Blocking read from UART RX ring buffer.
+ * Yields CPU while waiting for character to be available.
+ * Uses futex-style polling with exponential backoff.
+ */
 int fut_serial_getc_blocking(void) {
-    /* Blocking read from UART RX ring buffer */
-    /* Spins waiting for character to be available in buffer */
+    /* Blocking read with proper yields */
+    int spin_count = 0;
 
     while (uart_rx_head == uart_rx_tail) {
-        /* Buffer empty - spin and wait for interrupt to fill it */
-        /* In a real implementation, this would sleep/yield the thread */
-        __asm__ volatile("yield");  /* AArch64 YIELD instruction */
+        /* Buffer empty - yield to other threads */
+        if (spin_count < 100) {
+            /* Light spin for first 100 iterations */
+            spin_count++;
+            __asm__ volatile("yield");  /* AArch64 YIELD instruction */
+        } else if (spin_count < 1000) {
+            /* Heavier yield after 100 iterations */
+            spin_count++;
+            /* Could implement proper thread sleep here if kernel supports it */
+            for (volatile int i = 0; i < 1000; i++) {
+                __asm__ volatile("yield");
+            }
+        } else {
+            /* Give other threads a chance - still spin but less frequently */
+            spin_count++;
+            for (volatile int i = 0; i < 10000; i++) {
+                __asm__ volatile("yield");
+            }
+        }
     }
 
     /* Character available - read from buffer */

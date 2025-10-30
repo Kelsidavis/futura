@@ -169,8 +169,8 @@ static void uart_rx_irq_handler(int irq_num, fut_interrupt_frame_t *frame) {
         uart_rx_head = next_head;
     }
 
-    /* Clear RX interrupt */
-    mmio_write32((volatile void *)(uart + UART_ICR), UART_INT_RX);
+    /* Clear RX and RX timeout interrupts */
+    mmio_write32((volatile void *)(uart + UART_ICR), UART_INT_RX | UART_INT_RT);
 }
 
 void fut_serial_init(void) {
@@ -192,8 +192,9 @@ void fut_serial_init(void) {
     /* Set line control: 8 bits, no parity, 1 stop bit, FIFOs enabled */
     mmio_write32((volatile void *)(uart + UART_LCR), (1 << 4) | (1 << 5) | (1 << 6));
 
-    /* Enable RX interrupt (UART_INT_RX) for serial input */
-    mmio_write32((volatile void *)(uart + UART_IMSC), UART_INT_RX);
+    /* Enable RX interrupt and RX timeout interrupt for serial input */
+    /* UART_INT_RX fires on FIFO threshold, UART_INT_RT fires after timeout of no chars */
+    mmio_write32((volatile void *)(uart + UART_IMSC), UART_INT_RX | UART_INT_RT);
 
     /* Enable UART: TXE, RXE, UARTEN */
     mmio_write32((volatile void *)(uart + UART_CR), (1 << 0) | (1 << 8) | (1 << 9));

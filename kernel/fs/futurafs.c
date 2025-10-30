@@ -1153,10 +1153,36 @@ static void futurafs_file_read_callback(int result, void *ctx) {
     if (file_block < FUTURAFS_DIRECT_BLOCKS) {
         block_num = read_ctx->inode_info->disk_inode.direct[file_block];
     } else {
-        /* Indirect blocks not yet implemented */
-        read_ctx->base.callback((int)read_ctx->bytes_read, read_ctx->base.callback_ctx);
-        fut_free(read_ctx);
-        return;
+        /* Indirect blocks: read indirect block and extract pointer */
+        if (read_ctx->inode_info->disk_inode.indirect == 0) {
+            /* No indirect block - sparse file */
+            read_ctx->base.callback((int)read_ctx->bytes_read, read_ctx->base.callback_ctx);
+            fut_free(read_ctx);
+            return;
+        }
+
+        /* Read the indirect block synchronously */
+        int sync_result = fut_blockdev_read(read_ctx->base.mount->dev,
+                                           read_ctx->inode_info->disk_inode.indirect,
+                                           1, read_ctx->block_buffer);
+        if (sync_result < 0) {
+            read_ctx->base.callback(read_ctx->bytes_read > 0 ? (int)read_ctx->bytes_read : sync_result,
+                                   read_ctx->base.callback_ctx);
+            fut_free(read_ctx);
+            return;
+        }
+
+        /* Extract block pointer from indirect block */
+        uint64_t indirect_index = file_block - FUTURAFS_DIRECT_BLOCKS;
+        if (indirect_index >= (FUTURAFS_BLOCK_SIZE / sizeof(uint64_t))) {
+            /* Out of range - sparse file */
+            read_ctx->base.callback((int)read_ctx->bytes_read, read_ctx->base.callback_ctx);
+            fut_free(read_ctx);
+            return;
+        }
+
+        uint64_t *indirect_table = (uint64_t *)read_ctx->block_buffer;
+        block_num = indirect_table[indirect_index];
     }
 
     /* Handle sparse block (block_num == 0) */
@@ -1243,10 +1269,35 @@ int futurafs_file_read_async(struct futurafs_inode_info *inode_info,
     if (file_block < FUTURAFS_DIRECT_BLOCKS) {
         block_num = inode_info->disk_inode.direct[file_block];
     } else {
-        /* Indirect blocks not yet implemented */
-        fut_free(read_ctx);
-        callback(0, ctx);
-        return 0;
+        /* Indirect blocks: read indirect block and extract pointer */
+        if (inode_info->disk_inode.indirect == 0) {
+            /* No indirect block - sparse file */
+            fut_free(read_ctx);
+            callback(0, ctx);
+            return 0;
+        }
+
+        /* Read the indirect block synchronously */
+        int sync_result = fut_blockdev_read(inode_info->mount->dev,
+                                           inode_info->disk_inode.indirect,
+                                           1, read_ctx->block_buffer);
+        if (sync_result < 0) {
+            fut_free(read_ctx);
+            callback(sync_result, ctx);
+            return sync_result;
+        }
+
+        /* Extract block pointer from indirect block */
+        uint64_t indirect_index = file_block - FUTURAFS_DIRECT_BLOCKS;
+        if (indirect_index >= (FUTURAFS_BLOCK_SIZE / sizeof(uint64_t))) {
+            /* Out of range - sparse file */
+            fut_free(read_ctx);
+            callback(0, ctx);
+            return 0;
+        }
+
+        uint64_t *indirect_table = (uint64_t *)read_ctx->block_buffer;
+        block_num = indirect_table[indirect_index];
     }
 
     /* Handle sparse block at start */

@@ -437,20 +437,46 @@ ssize_t fut_blockdev_write_bytes(struct fut_blockdev *dev, uint64_t offset, size
 
 /* Helper: Get block device from capability handle */
 static struct fut_blockdev *get_device_from_handle(fut_handle_t blk_handle) {
-    /* For now, we need a way to map handles to devices
-     * In a full implementation, this would use the capability system
-     * to resolve the handle to the underlying block device object.
-     *
-     * Temporary implementation: iterate through registered devices
-     * and return the first one (this assumes single device for testing)
-     */
+    extern void fut_printf(const char *fmt, ...);
+    extern fut_object_t *fut_object_get(fut_handle_t handle, fut_rights_t required_rights);
+    extern void fut_object_put(fut_object_t *obj);
+
     if (blk_handle == FUT_INVALID_HANDLE) {
         return NULL;
     }
 
-    /* TODO: Implement proper capability resolution */
-    /* For now, return first registered device as a stub */
-    return device_list;
+    /* Resolve handle to object with read/write capabilities
+     * Block devices are typically accessed with read and/or write rights.
+     * We check for at least read access as a baseline; specific operations
+     * will validate their own rights requirements.
+     */
+    fut_object_t *obj = fut_object_get(blk_handle, FUT_RIGHT_READ);
+    if (!obj) {
+        fut_printf("[BLK] Capability check failed for handle 0x%llx (missing read rights)\n",
+                   (unsigned long long)blk_handle);
+        return NULL;
+    }
+
+    /* Verify object is a block device */
+    if (obj->type != FUT_OBJ_BLKDEV) {
+        fut_printf("[BLK] Handle 0x%llx is not a block device (type=%d)\n",
+                   (unsigned long long)blk_handle, (int)obj->type);
+        fut_object_put(obj);
+        return NULL;
+    }
+
+    /* Extract device pointer from object's data field */
+    struct fut_blockdev *dev = (struct fut_blockdev *)obj->data;
+    if (!dev) {
+        fut_printf("[BLK] Block device object has null data pointer\n");
+        fut_object_put(obj);
+        return NULL;
+    }
+
+    /* Release object reference - device pointer is valid for kernel lifetime */
+    fut_object_put(obj);
+
+    return dev;
 }
 
 /* Synchronization primitive for blocking on async operations */

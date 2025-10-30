@@ -58,6 +58,7 @@ static int fut_build_shm_path(const char *name, char *out, size_t out_len) {
     return 0;
 }
 
+__attribute__((unused))
 static int fut_write_zeros(int fd, size_t size) {
     static char zeros[4096];
     size_t remaining = size;

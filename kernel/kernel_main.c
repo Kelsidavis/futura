@@ -1235,6 +1235,12 @@ void fut_kernel_main(void) {
     fut_printf("[INIT] Scheduler initialized with idle thread\n");
 
     /* ========================================
+     *   Start Console Input Thread
+     * ======================================== */
+    /* Now that scheduler is initialized, start the console input thread */
+    fut_console_start_input_thread();
+
+    /* ========================================
      *   Memory Management Tests
      * ======================================== */
 

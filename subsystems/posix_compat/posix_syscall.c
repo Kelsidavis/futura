@@ -380,7 +380,7 @@ static int64_t sys_ftruncate_handler(uint64_t fd, uint64_t length, uint64_t arg3
 
     while (to_write > 0) {
         size_t chunk = (to_write > sizeof(zeros)) ? sizeof(zeros) : (size_t)to_write;
-        ssize_t written = fut_vfs_write(file->vnode, zeros, chunk, current_size);
+        ssize_t written = file->vnode->ops->write(file->vnode, zeros, chunk, current_size);
         if (written < 0) {
             return written;
         }

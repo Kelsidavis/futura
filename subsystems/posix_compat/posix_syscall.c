@@ -26,6 +26,8 @@
 #define SYS_write       1
 #define SYS_open        2
 #define SYS_close       3
+#define SYS_openat      257
+#define AT_FDCWD        -100
 #define SYS_stat        4
 #define SYS_fstat       5
 #define SYS_lseek       8
@@ -146,12 +148,41 @@ static int64_t sys_open_handler(uint64_t pathname, uint64_t flags, uint64_t mode
     (void)arg5;
     (void)arg6;
 
+    extern void fut_printf(const char *, ...);
+    fut_printf("[SYS-OPEN] called: pathname=0x%lx flags=0x%lx mode=0%lo\n", pathname, flags, mode);
+
     char kpath[256];
     int rc = copy_user_string((const char *)pathname, kpath, sizeof(kpath));
+    fut_printf("[SYS-OPEN] copy_user_string returned %d, kpath='%s'\n", rc, kpath);
     if (rc != 0) {
+        fut_printf("[SYS-OPEN] returning error %d\n", rc);
         return rc;
     }
-    return (int64_t)fut_vfs_open(kpath, (int)flags, (int)mode);
+    int result = fut_vfs_open(kpath, (int)flags, (int)mode);
+    fut_printf("[SYS-OPEN] fut_vfs_open returned %d\n", result);
+    return (int64_t)result;
+}
+
+static int64_t sys_openat_handler(uint64_t dirfd, uint64_t pathname, uint64_t flags,
+                                  uint64_t mode, uint64_t arg5, uint64_t arg6) {
+    (void)arg5;
+    (void)arg6;
+    (void)dirfd;  /* For now, we only support AT_FDCWD (current directory) */
+
+    extern void fut_printf(const char *, ...);
+    fut_printf("[SYS-OPENAT] INVOKED: dirfd=%ld pathname=0x%lx flags=0x%lx (O_CREAT=%d O_RDWR=%d O_CLOEXEC=%d) mode=0%lo\n",
+               (long)dirfd, pathname, flags, !!(flags & 0x200), !!(flags & 0x2), !!(flags & 0x80000), mode);
+
+    char kpath[256];
+    int rc = copy_user_string((const char *)pathname, kpath, sizeof(kpath));
+    fut_printf("[SYS-OPENAT] copy_user_string returned %d, kpath='%s'\n", rc, kpath);
+    if (rc != 0) {
+        fut_printf("[SYS-OPENAT] returning error %d\n", rc);
+        return rc;
+    }
+    int result = fut_vfs_open(kpath, (int)flags, (int)mode);
+    fut_printf("[SYS-OPENAT] fut_vfs_open returned %d for path '%s'\n", result, kpath);
+    return (int64_t)result;
 }
 
 static int64_t sys_close_handler(uint64_t fd, uint64_t arg2, uint64_t arg3,
@@ -466,6 +497,111 @@ static int64_t sys_dup_handler(uint64_t oldfd, uint64_t arg2, uint64_t arg3,
     return (int64_t)newfd;
 }
 
+/* Socket operations handlers */
+static int64_t sys_socket_handler(uint64_t domain, uint64_t type, uint64_t protocol,
+                                  uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg4; (void)arg5; (void)arg6;
+    extern void fut_printf(const char *, ...);
+
+    fut_printf("[SOCKET] domain=%lu type=%lu protocol=%lu\n", domain, type, protocol);
+
+    /* Create a socket file descriptor
+     * For now, we return a generic socket fd that can be used with bind/listen
+     * AF_UNIX (1), SOCK_STREAM (1), SOCK_SEQPACKET (5) are typical for Wayland
+     */
+
+    /* Allocate a socket file descriptor - reuse pipe fd logic */
+    int pipefd[2];
+    int rc = sys_pipe(pipefd);
+    if (rc < 0) {
+        return rc;
+    }
+
+    /* Close the read end, keep write end as the socket fd */
+    fut_vfs_close(pipefd[0]);
+    return (int64_t)pipefd[1];
+}
+
+static int64_t sys_bind_handler(uint64_t sockfd, uint64_t addr, uint64_t addrlen,
+                                uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg4; (void)arg5; (void)arg6;
+    extern void fut_printf(const char *, ...);
+
+    fut_printf("[BIND] sockfd=%lu addr=0x%lx addrlen=%lu\n", sockfd, addr, addrlen);
+
+    /* Extract socket path from sockaddr_un structure
+     * struct sockaddr_un {
+     *     sa_family_t sun_family;  // 2 bytes
+     *     char sun_path[108];      // path
+     * }
+     */
+
+    if (addrlen < 3) {  /* At least family (2 bytes) + 1 char for path */
+        return -EINVAL;
+    }
+
+    /* Copy the socket path from user space */
+    char sock_path[256];
+    uint16_t sun_family;
+    if (fut_copy_from_user(&sun_family, (const void *)addr, 2) != 0) {
+        return -EFAULT;
+    }
+
+    /* Copy path component (skip the 2-byte family field) */
+    size_t path_len = addrlen - 2;
+    if (path_len > sizeof(sock_path) - 1) {
+        path_len = sizeof(sock_path) - 1;
+    }
+
+    if (path_len > 0) {
+        if (fut_copy_from_user(sock_path, (const void *)(addr + 2), path_len) != 0) {
+            return -EFAULT;
+        }
+    }
+    sock_path[path_len] = '\0';
+
+    fut_printf("[BIND] sun_family=%u path='%s'\n", sun_family, sock_path);
+
+    /* Create the socket file if it doesn't exist */
+    int ret = fut_vfs_open(sock_path, 0x201, 0644);  /* O_CREAT | O_WRONLY */
+    if (ret >= 0) {
+        fut_vfs_close(ret);
+        return 0;  /* Success */
+    }
+
+    /* If file creation fails, still return success for now */
+    return 0;
+}
+
+static int64_t sys_listen_handler(uint64_t sockfd, uint64_t backlog, uint64_t arg3,
+                                  uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg3; (void)arg4; (void)arg5; (void)arg6;
+    extern void fut_printf(const char *, ...);
+
+    fut_printf("[LISTEN] sockfd=%lu backlog=%lu\n", sockfd, backlog);
+
+    /* For now, just validate the fd exists and return success */
+    struct fut_file *file = vfs_get_file((int)sockfd);
+    if (!file) {
+        return -EBADF;
+    }
+
+    return 0;  /* Success */
+}
+
+static int64_t sys_accept_handler(uint64_t sockfd, uint64_t addr, uint64_t addrlen,
+                                  uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg4; (void)arg5; (void)arg6;
+    extern void fut_printf(const char *, ...);
+
+    fut_printf("[ACCEPT] sockfd=%lu addr=0x%lx addrlen=0x%lx\n", sockfd, addr, addrlen);
+
+    /* For now, return an error to indicate no connections available */
+    return -EAGAIN;
+}
+
+/* Note: connect, sendto, recvfrom handlers not implemented yet */
+
 /* Unimplemented syscall handler */
 static int64_t sys_unimplemented(uint64_t arg1, uint64_t arg2, uint64_t arg3,
                                   uint64_t arg4, uint64_t arg5, uint64_t arg6) {
@@ -481,6 +617,7 @@ static syscall_handler_t syscall_table[MAX_SYSCALL] = {
     [SYS_read]       = sys_read_handler,
     [SYS_write]      = sys_write_handler,
     [SYS_open]       = sys_open_handler,
+    [SYS_openat]     = sys_openat_handler,
     [SYS_close]      = sys_close_handler,
     [SYS_stat]       = sys_stat_handler,
     [SYS_fstat]      = sys_fstat_handler,
@@ -503,6 +640,14 @@ static syscall_handler_t syscall_table[MAX_SYSCALL] = {
     [SYS_getdents64] = sys_getdents64_handler,
     [SYS_getpid]     = sys_getpid_handler,
     [SYS_time_millis] = sys_time_millis_handler,
+    /* Socket operations */
+    [SYS_socket]     = sys_socket_handler,
+    [SYS_bind]       = sys_bind_handler,
+    [SYS_listen]     = sys_listen_handler,
+    [SYS_accept]     = sys_accept_handler,
+    /* [SYS_connect]    = sys_connect_handler, */  /* Commented out due to init conflict */
+    /* [SYS_sendto]     = sys_sendto_handler, */
+    /* [SYS_recvfrom]   = sys_recvfrom_handler, */
 };
 
 /* ============================================================
@@ -520,19 +665,34 @@ static syscall_handler_t syscall_table[MAX_SYSCALL] = {
 int64_t posix_syscall_dispatch(uint64_t syscall_num,
                                 uint64_t arg1, uint64_t arg2, uint64_t arg3,
                                 uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    /* Debug: always log syscall 257 (openat) and syscall 2 (open) */
+    extern void fut_printf(const char *, ...);
+    if (syscall_num == 257 || syscall_num == 2) {
+        fut_printf("[DISPATCHER-DETAIL] syscall %lu (0x%lx) arg1=0x%lx arg2=0x%lx arg3=0x%lx arg4=0x%lx\n",
+                   syscall_num, syscall_num, arg1, arg2, arg3, arg4);
+    }
+
     /* Validate syscall number */
     if (syscall_num >= MAX_SYSCALL) {
+        fut_printf("[DISPATCHER] ERROR: syscall %lu >= MAX_SYSCALL %d\n", syscall_num, MAX_SYSCALL);
         return -1;  /* ENOSYS */
     }
 
     /* Get handler from table */
     syscall_handler_t handler = syscall_table[syscall_num];
     if (handler == NULL) {
+        fut_printf("[DISPATCHER] WARNING: no handler for syscall %lu\n", syscall_num);
         handler = sys_unimplemented;
     }
 
     /* Call handler */
-    return handler(arg1, arg2, arg3, arg4, arg5, arg6);
+    int64_t result = handler(arg1, arg2, arg3, arg4, arg5, arg6);
+
+    if (syscall_num == 257 || syscall_num == 2) {
+        fut_printf("[DISPATCHER-RESULT] syscall %lu returned 0x%lx (%ld)\n", syscall_num, (unsigned long)result, result);
+    }
+
+    return result;
 }
 
 /* ============================================================

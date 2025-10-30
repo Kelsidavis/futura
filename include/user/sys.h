@@ -113,3 +113,15 @@ static inline long sys_time_millis_call(void) {
 static inline long sys_nanosleep_call(const fut_timespec_t *req, fut_timespec_t *rem) {
     return sys_call2(SYS_nanosleep, (long)req, (long)rem);
 }
+
+static inline long sys_fork_call(void) {
+    return sys_call0(SYS_fork);
+}
+
+static inline long sys_execve_call(const char *pathname, char *const *argv, char *const *envp) {
+    return sys_call3(SYS_execve, (long)pathname, (long)argv, (long)envp);
+}
+
+static inline long sys_wait4_call(long pid, int *wstatus, long options, void *rusage) {
+    return sys_call6(SYS_wait4, pid, (long)wstatus, options, (long)rusage, 0, 0);
+}

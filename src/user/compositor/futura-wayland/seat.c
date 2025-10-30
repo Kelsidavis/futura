@@ -822,11 +822,11 @@ void seat_finish(struct seat_state *seat) {
         return;
     }
 
-    if (seat->kbd_source) {
+    if (seat->kbd_source && seat->kbd_source != (void *)1) {
         wl_event_source_remove(seat->kbd_source);
         seat->kbd_source = NULL;
     }
-    if (seat->mouse_source) {
+    if (seat->mouse_source && seat->mouse_source != (void *)1) {
         wl_event_source_remove(seat->mouse_source);
         seat->mouse_source = NULL;
     }

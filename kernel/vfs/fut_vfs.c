@@ -20,7 +20,7 @@
 extern void fut_printf(const char *fmt, ...);
 
 /* Uncomment for verbose VFS tracing */
-#define DEBUG_VFS 0
+#define DEBUG_VFS 1
 #define DEBUG_READ 0
 
 #if DEBUG_VFS
@@ -983,6 +983,9 @@ int fut_vfs_open(const char *path, int flags, int mode) {
     int ret;
     bool created = false;
 
+    extern void fut_printf(const char *, ...);
+    fut_printf("[VFS-OPEN] path='%s' flags=0x%x mode=0%o\n", path, flags, mode);
+
     int chr_fd = try_open_chrdev(path, flags);
     if (chr_fd != -ENOENT) {
         return chr_fd;
@@ -990,6 +993,7 @@ int fut_vfs_open(const char *path, int flags, int mode) {
 
     /* Lookup vnode */
     ret = lookup_vnode(path, &vnode);
+    fut_printf("[VFS-OPEN] lookup_vnode returned %d\n", ret);
     if (ret < 0) {
         /* If O_CREAT is set and parent exists, create new file */
         if ((flags & O_CREAT) && (ret == -ENOENT || ret == -2)) {
@@ -1091,10 +1095,12 @@ int fut_vfs_open(const char *path, int flags, int mode) {
     if (fd < 0) {
         fut_free(file);
         release_lookup_ref(vnode);
+        fut_printf("[VFS-OPEN] alloc_fd failed, returning %d\n", fd);
         return fd;
     }
 
     (void)mode;  /* TODO: Use mode for permission checks */
+    fut_printf("[VFS-OPEN] SUCCESS: opened '%s' as fd=%d\n", path, fd);
     return fd;
 }
 

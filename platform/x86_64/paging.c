@@ -9,6 +9,7 @@
 
 #include <arch/x86_64/paging.h>
 #include <arch/x86_64/pmap.h>
+#include <arch/x86_64/cpu.h>
 #include <kernel/fut_memory.h>
 #include <platform/platform.h>
 #include <stddef.h>
@@ -408,16 +409,54 @@ int fut_map_range(fut_vmem_context_t *ctx, uint64_t vaddr, uint64_t paddr,
     uint64_t start_paddr = PAGE_ALIGN_DOWN(paddr);
     uint64_t end_vaddr = PAGE_ALIGN_UP(vaddr + size);
 
-    /* Map each page in the range */
-    for (uint64_t va = start_vaddr, pa = start_paddr;
-         va < end_vaddr;
-         va += PAGE_SIZE, pa += PAGE_SIZE) {
+    /* Check if PSE (2MB large pages) is supported */
+    const fut_cpu_features_t *features = cpu_features_get();
+    bool can_use_large_pages = features && features->pse;
 
-        int ret = fut_map_page(ctx, va, pa, flags);
-        if (ret < 0) {
-            /* Failed to map a page - should we unmap what we've done so far? */
-            /* For now, just return error */
-            return ret;
+    VMDBG("[VM] fut_map_range: vaddr=0x%llx paddr=0x%llx size=0x%llx PSE=%u\n",
+          (unsigned long long)start_vaddr, (unsigned long long)start_paddr,
+          (unsigned long long)(end_vaddr - start_vaddr), can_use_large_pages);
+
+    /* Map the range, intelligently choosing page size */
+    for (uint64_t va = start_vaddr, pa = start_paddr;
+         va < end_vaddr; ) {
+
+        /* Check if we can use a 2MB large page:
+         * 1. PSE is supported
+         * 2. Both addresses are 2MB-aligned
+         * 3. Remaining size is at least 2MB
+         */
+        uint64_t remaining = end_vaddr - va;
+        if (can_use_large_pages &&
+            IS_LARGE_PAGE_ALIGNED(va) &&
+            IS_LARGE_PAGE_ALIGNED(pa) &&
+            remaining >= LARGE_PAGE_SIZE) {
+
+            VMDBG("[VM] Mapping 2MB large page at vaddr=0x%llx paddr=0x%llx\n",
+                  (unsigned long long)va, (unsigned long long)pa);
+
+            int ret = fut_map_large_page(ctx, va, pa, flags);
+            if (ret < 0) {
+                VMDBG("[VM] Failed to map large page at vaddr=0x%llx (error=%d)\n",
+                      (unsigned long long)va, ret);
+                return ret;
+            }
+
+            va += LARGE_PAGE_SIZE;
+            pa += LARGE_PAGE_SIZE;
+        } else {
+            /* Fall back to 4KB page mapping */
+            int ret = fut_map_page(ctx, va, pa, flags);
+            if (ret < 0) {
+                /* Failed to map a page - should we unmap what we've done so far? */
+                /* For now, just return error */
+                VMDBG("[VM] Failed to map 4KB page at vaddr=0x%llx (error=%d)\n",
+                      (unsigned long long)va, ret);
+                return ret;
+            }
+
+            va += PAGE_SIZE;
+            pa += PAGE_SIZE;
         }
     }
 

@@ -15,18 +15,13 @@
 #pragma GCC diagnostic ignored "-Wpedantic"
 #include <arch/arm64/regs.h>
 #pragma GCC diagnostic pop
+#include <arch/arm64/irq.h>
 #include <platform/platform.h>
 #include <config/futura_config.h>
 
-/* Forward declarations for IRQ types (avoid including irq.h to prevent conflicts) */
-typedef void (*fut_irq_handler_t)(int irq_num, fut_interrupt_frame_t *frame);
-
-/* Forward declarations for platform functions */
-int fut_irq_acknowledge(void);
-void fut_irq_send_eoi(uint8_t irq);
-
-/* Forward declaration for fut_irq_enable (defined later in this file) */
-void fut_irq_enable(uint8_t irq);
+/* Note: IRQ handler types and functions (fut_register_irq_handler, fut_irq_enable, etc.)
+ * are now properly declared in <arch/arm64/irq.h> and implemented in kernel/irq/arm64_irq.c.
+ * Removed duplicate implementations from this file to avoid handler table conflicts. */
 
 /* ============================================================
  *   MMIO Helper Functions
@@ -72,41 +67,6 @@ static volatile _Bool uart_irq_mode = 0;    /* false = polling, true = interrupt
 static volatile char uart_rx_buffer[UART_RX_BUFFER_SIZE];
 static volatile uint32_t uart_rx_head = 0;  /* Write position (filled by ISR) */
 static volatile uint32_t uart_rx_tail = 0;  /* Read position (consumed by getc) */
-
-/* IRQ handler table */
-static fut_irq_handler_t irq_handlers[256] = {NULL};
-
-/* Register an IRQ handler */
-int fut_register_irq_handler(int irq, fut_irq_handler_t handler) {
-    if (irq < 0 || irq >= 256) {
-        return -1;  /* Invalid IRQ */
-    }
-
-    if (irq_handlers[irq] != NULL) {
-        return -2;  /* Already registered */
-    }
-
-    irq_handlers[irq] = handler;
-    return 0;
-}
-
-/* IRQ dispatch - called from exception handler */
-void fut_irq_dispatch(fut_interrupt_frame_t *frame) {
-    int irq = fut_irq_acknowledge();
-
-    if (irq < 0) {
-        /* Spurious interrupt */
-        return;
-    }
-
-    /* Call registered handler if exists */
-    if (irq < 256 && irq_handlers[irq] != NULL) {
-        irq_handlers[irq](irq, frame);
-    }
-
-    /* Send EOI to acknowledge interrupt */
-    fut_irq_send_eoi(irq);
-}
 
 /* UART TX interrupt handler - drains ring buffer into hardware FIFO */
 static void uart_tx_irq_handler(int irq_num, fut_interrupt_frame_t *frame) {
@@ -717,10 +677,9 @@ void fut_platform_early_init(uint32_t boot_magic, void *boot_info) {
         fut_irq_enable(33);
         fut_serial_puts("[DEBUG] UART IRQ 33 enabled in GIC\n");
 
-        /* TODO: Switch to interrupt-driven mode after kernel stabilizes
-         * For now, keep polling mode to ensure stable boot */
-        /* uart_irq_mode = 1; */
-        fut_serial_puts("[DEBUG] UART IRQ handler ready, but using polling mode for stability\n");
+        /* Switch to interrupt-driven mode now that IRQ handler registration is fixed */
+        uart_irq_mode = 1;
+        fut_serial_puts("[DEBUG] UART switched to interrupt-driven mode\n");
     } else {
         fut_serial_puts("[DEBUG] UART IRQ handler registration failed, staying in polling mode\n");
     }

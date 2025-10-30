@@ -405,6 +405,61 @@ void fut_kernel_unmap(void *vaddr, uint64_t size);
 void fut_page_fault_handler(void *frame, uint64_t esr, uint64_t far);
 
 /* ============================================================
+ *   Architecture-Neutral Accessors for VMM Context
+ * ============================================================ */
+
+/**
+ * Get page table root from virtual memory context.
+ * On ARM64, this returns the PGD (Level 0 page table).
+ */
+static inline void *fut_vmem_get_root(fut_vmem_context_t *ctx) {
+    return (void *)ctx->pgd;
+}
+
+/**
+ * Set page table root in virtual memory context.
+ * On ARM64, sets the PGD (Level 0 page table).
+ */
+static inline void fut_vmem_set_root(fut_vmem_context_t *ctx, void *root) {
+    ctx->pgd = (page_table_t *)root;
+}
+
+/**
+ * Get page table reload value from virtual memory context.
+ * On ARM64, this returns the value to load into TTBR0_EL1.
+ */
+static inline uint64_t fut_vmem_get_reload_value(fut_vmem_context_t *ctx) {
+    return ctx->ttbr0_el1;
+}
+
+/**
+ * Set page table reload value in virtual memory context.
+ * On ARM64, sets the value to load into TTBR0_EL1.
+ */
+static inline void fut_vmem_set_reload_value(fut_vmem_context_t *ctx, uint64_t value) {
+    ctx->ttbr0_el1 = value;
+}
+
+/**
+ * Convert root page table pointer to physical address.
+ * Assumes the PGD pointer is a virtual kernel address.
+ */
+static inline uint64_t fut_vmem_root_to_phys(void *root) {
+    /* For now, assume kernel virtual addresses, convert to physical */
+    extern uint64_t fut_virt_to_phys(uint64_t vaddr);
+    return fut_virt_to_phys((uint64_t)root);
+}
+
+/**
+ * Convert physical address to root page table pointer.
+ * Returns a kernel virtual address from a physical address.
+ */
+static inline void *fut_vmem_phys_to_root(uint64_t phys) {
+    /* For now, assume simple 1-to-1 mapping in kernel */
+    return (void *)(KERNEL_VIRTUAL_BASE + phys);
+}
+
+/* ============================================================
  *   Debug and Statistics
  * ============================================================ */
 

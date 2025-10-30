@@ -380,6 +380,61 @@ void *fut_kernel_map_physical(uint64_t paddr, uint64_t size, uint64_t flags);
 void fut_kernel_unmap(void *vaddr, uint64_t size);
 
 /* ============================================================
+ *   Architecture-Neutral Accessors for VMM Context
+ * ============================================================ */
+
+/**
+ * Get page table root from virtual memory context.
+ * On x86_64, this returns the PML4 (Level 4 page table).
+ */
+static inline void *fut_vmem_get_root(fut_vmem_context_t *ctx) {
+    return (void *)ctx->pml4;
+}
+
+/**
+ * Set page table root in virtual memory context.
+ * On x86_64, sets the PML4 (Level 4 page table).
+ */
+static inline void fut_vmem_set_root(fut_vmem_context_t *ctx, void *root) {
+    ctx->pml4 = (pte_t *)root;
+}
+
+/**
+ * Get page table reload value from virtual memory context.
+ * On x86_64, this returns the value to load into CR3.
+ */
+static inline uint64_t fut_vmem_get_reload_value(fut_vmem_context_t *ctx) {
+    return ctx->cr3_value;
+}
+
+/**
+ * Set page table reload value in virtual memory context.
+ * On x86_64, sets the value to load into CR3.
+ */
+static inline void fut_vmem_set_reload_value(fut_vmem_context_t *ctx, uint64_t value) {
+    ctx->cr3_value = value;
+}
+
+/**
+ * Convert root page table pointer to physical address.
+ * Assumes the PML4 pointer is a virtual kernel address.
+ */
+static inline uint64_t fut_vmem_root_to_phys(void *root) {
+    /* For x86_64, convert virtual kernel address to physical */
+    extern uint64_t fut_virt_to_phys(uint64_t vaddr);
+    return fut_virt_to_phys((uint64_t)root);
+}
+
+/**
+ * Convert physical address to root page table pointer.
+ * Returns a kernel virtual address from a physical address.
+ */
+static inline void *fut_vmem_phys_to_root(uint64_t phys) {
+    /* x86_64 kernel space mapping: physical + KERNEL_VIRTUAL_BASE */
+    return (void *)(KERNEL_VIRTUAL_BASE + phys);
+}
+
+/* ============================================================
  *   Page Fault Handler
  * ============================================================ */
 

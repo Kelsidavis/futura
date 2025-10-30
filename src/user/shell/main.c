@@ -4032,9 +4032,48 @@ static int execute_command_chain(char *cmdline) {
     return last_status;
 }
 
-int main(int argc, char **argv) {
+int main(int argc, char **argv, char **envp) {
     (void)argc;
     (void)argv;
+    (void)envp;
+
+    /* Initialize shell environment from parent's environment variables */
+    if (envp && envp[0] != NULL) {
+        for (int i = 0; envp[i] != NULL; i++) {
+            /* Parse "NAME=value" format and add to shell's variables */
+            const char *env_str = envp[i];
+            const char *eq = env_str;
+
+            /* Find the '=' separator */
+            while (*eq && *eq != '=') {
+                eq++;
+            }
+
+            if (*eq == '=' && eq != env_str) {
+                /* Extract name */
+                int name_len = (int)(eq - env_str);
+                if (name_len < MAX_VAR_NAME) {
+                    char name[MAX_VAR_NAME];
+                    int j;
+                    for (j = 0; j < name_len; j++) {
+                        name[j] = env_str[j];
+                    }
+                    name[name_len] = '\0';
+
+                    /* Extract value */
+                    const char *val = eq + 1;
+                    int val_len = strlen_simple(val);
+                    if (val_len < MAX_VAR_VALUE) {
+                        char value[MAX_VAR_VALUE];
+                        strcpy_simple(value, val);
+
+                        /* Add variable to shell (mark as exported since it came from parent) */
+                        set_var(name, value, 1);  /* 1 = exported */
+                    }
+                }
+            }
+        }
+    }
 
     /* Initialize standard file descriptors if not already open */
     /* Try to open /dev/console for stdin (fd 0), stdout (fd 1), stderr (fd 2) */

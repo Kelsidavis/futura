@@ -115,6 +115,11 @@ static_assert(sizeof(idt_ptr_t) == 10, "IDT pointer must be 10 bytes");
 #define INT_IRQ14_PRIMARY_ATA   46
 #define INT_IRQ15_SECONDARY_ATA 47
 
+/* IPI vectors (48-50) - Inter-Processor Interrupts */
+#define INT_IPI_RESCHEDULE      48      /* Trigger CPU reschedule */
+#define INT_IPI_TLB_FLUSH       49      /* TLB shootdown request */
+#define INT_IPI_HALT            50      /* CPU halt request */
+
 /* System calls and software interrupts */
 #define INT_SYSCALL             128     /* System call vector */
 

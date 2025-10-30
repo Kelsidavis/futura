@@ -154,6 +154,22 @@ void lapic_send_init_ipi(uint32_t apic_id);
 void lapic_send_sipi(uint32_t apic_id, uint8_t vector);
 
 /**
+ * Send IPI to all CPUs except self using destination shorthand.
+ * Broadcasts efficiently without specifying individual APIC IDs.
+ *
+ * @param vector Interrupt vector
+ */
+void lapic_send_ipi_all_except_self(uint32_t vector);
+
+/**
+ * Send IPI to all CPUs including self using destination shorthand.
+ * Broadcasts to all processors including the sender.
+ *
+ * @param vector Interrupt vector
+ */
+void lapic_send_ipi_all_including_self(uint32_t vector);
+
+/**
  * Enable LAPIC timer in one-shot mode.
  *
  * @param initial_count Initial timer count

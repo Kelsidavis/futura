@@ -85,6 +85,18 @@ void ap_main(uint32_t apic_id) {
     extern void fut_sched_init_cpu(void);
     fut_sched_init_cpu();
 
+    /* Set up per-CPU LAPIC timer for preemptive scheduling */
+    extern void lapic_timer_periodic(uint32_t initial_count, uint8_t vector);
+    /* LAPIC timer frequency calibration:
+     * Assuming ~1 GHz TSC and divisor of 1:
+     * initial_count = 1,000,000,000 / 100 Hz = 10,000,000
+     * This is a conservative estimate that should work on most systems
+     */
+    #define LAPIC_TIMER_INIT_COUNT 10000000
+    #define LAPIC_TIMER_INT_VECTOR 32  /* INT_APIC_TIMER */
+    lapic_timer_periodic(LAPIC_TIMER_INIT_COUNT, LAPIC_TIMER_INT_VECTOR);
+    fut_printf("[SMP] AP CPU %u LAPIC timer initialized\n", apic_id);
+
     fut_printf("[SMP] AP CPU %u entering scheduler loop\n", apic_id);
 
     /* Enter scheduler loop - each CPU independently schedules threads */

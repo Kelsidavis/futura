@@ -1264,15 +1264,11 @@ void fut_kernel_main(void) {
         fut_printf("[WARN] Failed to stage shell binary (error %d)\n", shell_stage);
     } */
 
-    fut_printf("[INIT] Launching shell...\n");
-    char shell_name[] = "shell";
-    char *shell_args[] = { shell_name, NULL };
-    int shell_exec = fut_exec_elf("/bin/shell", shell_args, NULL);
-    if (shell_exec != 0) {
-        fut_printf("[WARN] Failed to launch /bin/shell (error %d)\n", shell_exec);
-    } else {
-        fut_printf("[INIT] Interactive shell launched\n");
-    }
+    /* Shell binary (futura-shell) is not currently built due to Wayland dependency.
+     * Shell support can be re-enabled once the Wayland client libraries are available.
+     * For now, skip shell launching and proceed with other services.
+     */
+    fut_printf("[INIT] Shell binary not available (Wayland dependency required)\n");
 
 #if ENABLE_WINSRV_DEMO
     if (winsrv_stage == 0) {

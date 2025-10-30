@@ -89,19 +89,6 @@ static size_t futfs_strlen(const char *str) {
     return len;
 }
 
-static bool futfs_contains_slash(const char *str) {
-    if (!str) {
-        return false;
-    }
-    while (*str) {
-        if (*str == '/') {
-            return true;
-        }
-        ++str;
-    }
-    return false;
-}
-
 static void *futfs_zalloc(size_t bytes) {
     void *ptr = fut_malloc(bytes);
     if (ptr) {
@@ -313,9 +300,80 @@ static struct futfs_inode_mem *futfs_root_dir(void) {
     return futfs_find_inode(1);
 }
 
-fut_status_t futfs_resolve_dir(const char *path,
-                                      struct futfs_inode_mem **dir_out) {
-    if (!g_fs.mounted || !path || !dir_out) {
+/* -------------------------------------------------------------------------- */
+/* Path parsing utilities for nested directory support                       */
+/* -------------------------------------------------------------------------- */
+
+#define FUTFS_MAX_PATH_COMPONENTS 64
+
+/**
+ * Parse a path like "/a/b/c" into individual components.
+ * @param path Input path (must start with '/')
+ * @param components Output array of component strings
+ * @param max_components Maximum number of components to extract
+ * @return Number of components extracted, or negative error code
+ */
+static int futfs_parse_path(const char *path,
+                             char components[][FUTFS_NAME_MAX + 1],
+                             int max_components) {
+    if (!path || path[0] != '/') {
+        return -EINVAL;
+    }
+
+    int count = 0;
+    const char *start = path;
+
+    /* Skip leading slashes */
+    while (*start == '/') {
+        start++;
+    }
+
+    while (*start && count < max_components) {
+        const char *end = start;
+
+        /* Find next slash or end of string */
+        while (*end && *end != '/') {
+            end++;
+        }
+
+        /* Copy component */
+        size_t len = end - start;
+        if (len > 0) {
+            if (len > FUTFS_NAME_MAX) {
+                return -ENAMETOOLONG;
+            }
+            memcpy(components[count], start, len);
+            components[count][len] = '\0';
+            count++;
+        }
+
+        /* Skip trailing slashes */
+        while (*end == '/') {
+            end++;
+        }
+
+        start = end;
+    }
+
+    if (*start) {
+        /* Path has more components than we can handle */
+        return -ENAMETOOLONG;
+    }
+
+    return count;
+}
+
+/**
+ * Walk a path to find the parent directory.
+ * For path "/a/b/c", returns directory for "/a/b".
+ * For path "/a", returns the root directory.
+ * @param path Input path
+ * @param dir_out Output parent directory inode
+ * @return Status code (0 on success)
+ */
+static fut_status_t futfs_walk_path_to_parent(const char *path,
+                                              struct futfs_inode_mem **dir_out) {
+    if (!path || path[0] != '/' || !dir_out) {
         return -EINVAL;
     }
 
@@ -324,30 +382,126 @@ fut_status_t futfs_resolve_dir(const char *path,
         return -EIO;
     }
 
+    /* Parse path into components */
+    char (*components)[FUTFS_NAME_MAX + 1] = fut_malloc(FUTFS_MAX_PATH_COMPONENTS * (FUTFS_NAME_MAX + 1));
+    if (!components) {
+        return -ENOMEM;
+    }
+
+    int comp_count = futfs_parse_path(path, components, FUTFS_MAX_PATH_COMPONENTS);
+    if (comp_count < 0) {
+        fut_free(components);
+        return comp_count;
+    }
+
+    if (comp_count <= 1) {
+        /* Path is "/" or has single component - parent is root */
+        *dir_out = root;
+        fut_free(components);
+        return 0;
+    }
+
+    /* Walk to parent directory (all components except last) */
+    struct futfs_inode_mem *current = root;
+    for (int i = 0; i < comp_count - 1; i++) {
+        uint64_t ino = futfs_dir_lookup(current, components[i]);
+        if (ino == 0) {
+            fut_free(components);
+            return -ENOENT;
+        }
+        struct futfs_inode_mem *next = futfs_find_inode(ino);
+        if (!next || next->type != FUTFS_INODE_DIR) {
+            fut_free(components);
+            return -ENOTDIR;
+        }
+        current = next;
+    }
+
+    *dir_out = current;
+    fut_free(components);
+    return 0;
+}
+
+/**
+ * Walk a path to find a directory, handling nested paths like "/a/b/c".
+ * @param path Input path
+ * @param dir_out Output directory inode for the final component
+ * @return Status code (0 on success, -ENOENT if not found, -ENOTDIR if intermediate component isn't a dir)
+ */
+static fut_status_t futfs_walk_path_to_dir(const char *path,
+                                           struct futfs_inode_mem **dir_out) {
+    if (!path || path[0] != '/' || !dir_out) {
+        return -EINVAL;
+    }
+
+    struct futfs_inode_mem *root = futfs_root_dir();
+    if (!root || root->type != FUTFS_INODE_DIR) {
+        return -EIO;
+    }
+
+    /* Parse path into components */
+    char (*components)[FUTFS_NAME_MAX + 1] = fut_malloc(FUTFS_MAX_PATH_COMPONENTS * (FUTFS_NAME_MAX + 1));
+    if (!components) {
+        return -ENOMEM;
+    }
+
+    int comp_count = futfs_parse_path(path, components, FUTFS_MAX_PATH_COMPONENTS);
+    if (comp_count < 0) {
+        fut_free(components);
+        return comp_count;
+    }
+
+    if (comp_count == 0) {
+        /* Path is "/" - return root */
+        *dir_out = root;
+        fut_free(components);
+        return 0;
+    }
+
+    /* Walk all components */
+    struct futfs_inode_mem *current = root;
+    for (int i = 0; i < comp_count; i++) {
+        uint64_t ino = futfs_dir_lookup(current, components[i]);
+        if (ino == 0) {
+            fut_free(components);
+            return -ENOENT;
+        }
+        struct futfs_inode_mem *next = futfs_find_inode(ino);
+        if (!next || next->type != FUTFS_INODE_DIR) {
+            fut_free(components);
+            return -ENOTDIR;
+        }
+        current = next;
+    }
+
+    *dir_out = current;
+    fut_free(components);
+    return 0;
+}
+
+fut_status_t futfs_resolve_dir(const char *path,
+                                      struct futfs_inode_mem **dir_out) {
+    if (!g_fs.mounted || !path || !dir_out) {
+        return -EINVAL;
+    }
+
     if (path[0] != '/') {
         return -EINVAL;
     }
 
+    /* Handle root directory */
     const char *name = path + 1;
     if (*name == '\0') {
+        struct futfs_inode_mem *root = futfs_root_dir();
+        if (!root || root->type != FUTFS_INODE_DIR) {
+            return -EIO;
+        }
         *dir_out = root;
         return 0;
     }
 
-    if (futfs_contains_slash(name)) {
-        return -ENOTSUP;
-    }
-
-    uint64_t ino = futfs_dir_lookup(root, name);
-    if (ino == 0) {
-        return -ENOENT;
-    }
-    struct futfs_inode_mem *dir = futfs_find_inode(ino);
-    if (!dir || dir->type != FUTFS_INODE_DIR) {
-        return -ENOTDIR;
-    }
-    *dir_out = dir;
-    return 0;
+    /* For any other path, use the path walker which handles nested paths */
+    return futfs_walk_path_to_dir(path, dir_out);
 }
 
 static fut_status_t futfs_resolve_parent(const char *path,
@@ -360,22 +514,41 @@ static fut_status_t futfs_resolve_parent(const char *path,
         return -EINVAL;
     }
 
-    struct futfs_inode_mem *root = futfs_root_dir();
-    if (!root || root->type != FUTFS_INODE_DIR) {
-        return -EIO;
+    /* Find the last '/' to separate parent path from basename */
+    const char *last_slash = NULL;
+    const char *p = path;
+    while (*p) {
+        if (*p == '/') {
+            last_slash = p;
+        }
+        p++;
     }
 
-    const char *name = path + 1;
-    if (*name == '\0') {
+    /* If no '/' found (shouldn't happen since path starts with '/'), it's invalid */
+    if (!last_slash || last_slash == path) {
+        /* This means path is "/" or has no intermediate slashes - extract basename simply */
+        last_slash = path;
+    }
+
+    const char *basename = last_slash + 1;
+    if (*basename == '\0') {
+        /* Path ends with '/' - invalid for operations like mkdir/create */
         return -EINVAL;
     }
 
-    if (futfs_contains_slash(name)) {
-        return -ENOTSUP;
+    /* Check basename length */
+    size_t name_len = futfs_strlen(basename);
+    if (name_len == 0 || name_len > FUTFS_NAME_MAX) {
+        return -ENAMETOOLONG;
     }
 
-    *parent_out = root;
-    *name_out = name;
+    /* Find parent directory by walking the path up to (but not including) the basename */
+    fut_status_t rc = futfs_walk_path_to_parent(path, parent_out);
+    if (rc != 0) {
+        return rc;
+    }
+
+    *name_out = basename;
     return 0;
 }
 

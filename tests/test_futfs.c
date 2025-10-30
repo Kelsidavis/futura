@@ -367,6 +367,272 @@ static void fut_futfs_selftest_thread(void *arg) {
                (unsigned long long)gc_stats.bytes_before,
                (unsigned long long)gc_stats.bytes_after);
 
+    /* ===== NESTED PATH TESTS ===== */
+    fut_printf("[FUTURAFS-TEST] Testing nested path support...\n");
+
+    /* Test 1: Create nested directory structure */
+    rc = futfs_mkdir("/a");
+    if (rc != 0) {
+        fut_printf("[futfs] nested mkdir /a failed: %d\n", rc);
+        futfs_unmount();
+        fut_blk_close(blk_cap);
+        fut_test_fail(0xE10);
+        return;
+    }
+
+    rc = futfs_mkdir("/a/b");
+    if (rc != 0) {
+        fut_printf("[futfs] nested mkdir /a/b failed: %d\n", rc);
+        futfs_unmount();
+        fut_blk_close(blk_cap);
+        fut_test_fail(0xE11);
+        return;
+    }
+
+    rc = futfs_mkdir("/a/b/c");
+    if (rc != 0) {
+        fut_printf("[futfs] nested mkdir /a/b/c failed: %d\n", rc);
+        futfs_unmount();
+        fut_blk_close(blk_cap);
+        fut_test_fail(0xE12);
+        return;
+    }
+
+    fut_printf("[FUTURAFS-TEST] Created nested directories /a/b/c\n");
+
+    /* Test 2: Create file in nested directory */
+    fut_handle_t nested_file = FUT_INVALID_HANDLE;
+    rc = futfs_create("/a/b/c/nested.txt", &nested_file);
+    if (rc != 0) {
+        fut_printf("[futfs] create in nested dir failed: %d\n", rc);
+        futfs_unmount();
+        fut_blk_close(blk_cap);
+        fut_test_fail(0xE13);
+        return;
+    }
+
+    const char nested_payload[] = "Nested content";
+    rc = futfs_write(nested_file, nested_payload, sizeof(nested_payload));
+    if (rc != 0) {
+        fut_printf("[futfs] write to nested file failed: %d\n", rc);
+        futfs_close(nested_file);
+        futfs_unmount();
+        fut_blk_close(blk_cap);
+        fut_test_fail(0xE14);
+        return;
+    }
+
+    rc = futfs_sync(nested_file);
+    if (rc != 0) {
+        fut_printf("[futfs] sync nested file failed: %d\n", rc);
+        futfs_close(nested_file);
+        futfs_unmount();
+        fut_blk_close(blk_cap);
+        fut_test_fail(0xE15);
+        return;
+    }
+
+    char nested_buffer[64];
+    size_t nested_bytes = 0;
+    memset(nested_buffer, 0, sizeof(nested_buffer));
+    rc = futfs_read(nested_file, nested_buffer, sizeof(nested_payload), &nested_bytes);
+    if (rc != 0 || nested_bytes != sizeof(nested_payload)) {
+        fut_printf("[futfs] read from nested file failed: rc=%d bytes=%zu\n", rc, nested_bytes);
+        futfs_close(nested_file);
+        futfs_unmount();
+        fut_blk_close(blk_cap);
+        fut_test_fail(0xE16);
+        return;
+    }
+
+    if (memcmp(nested_buffer, nested_payload, sizeof(nested_payload)) != 0) {
+        fut_printf("[futfs] nested file data mismatch\n");
+        futfs_close(nested_file);
+        futfs_unmount();
+        fut_blk_close(blk_cap);
+        fut_test_fail(0xE17);
+        return;
+    }
+
+    fut_printf("[FUTURAFS-TEST] Nested file create/write/read ok\n");
+
+    /* Test 3: Create another file at different nesting level */
+    fut_handle_t mid_file = FUT_INVALID_HANDLE;
+    rc = futfs_create("/a/b/midlevel.txt", &mid_file);
+    if (rc != 0) {
+        fut_printf("[futfs] create at mid-level failed: %d\n", rc);
+        futfs_close(nested_file);
+        futfs_unmount();
+        fut_blk_close(blk_cap);
+        fut_test_fail(0xE18);
+        return;
+    }
+
+    const char mid_payload[] = "Mid-level";
+    rc = futfs_write(mid_file, mid_payload, sizeof(mid_payload));
+    if (rc != 0) {
+        fut_printf("[futfs] write to mid-level file failed: %d\n", rc);
+        futfs_close(mid_file);
+        futfs_close(nested_file);
+        futfs_unmount();
+        fut_blk_close(blk_cap);
+        fut_test_fail(0xE19);
+        return;
+    }
+
+    futfs_close(mid_file);
+    fut_printf("[FUTURAFS-TEST] Mid-level file create/write ok\n");
+
+    /* Test 4: Directory listing at different levels */
+    cookie = 0;
+    bool found_nested_txt = false;
+    bool found_midlevel_txt = false;
+    while (true) {
+        fut_status_t rd = futfs_readdir("/a/b", &cookie, &dent);
+        if (rd <= 0) {
+            break;
+        }
+        if (futfs_name_equals(dent.name, "nested.txt")) {
+            found_nested_txt = true;
+        }
+        if (futfs_name_equals(dent.name, "midlevel.txt")) {
+            found_midlevel_txt = true;
+        }
+    }
+    if (!found_nested_txt || !found_midlevel_txt) {
+        fut_printf("[futfs] readdir /a/b missing expected files\n");
+        futfs_close(nested_file);
+        futfs_unmount();
+        fut_blk_close(blk_cap);
+        fut_test_fail(0xE1A);
+        return;
+    }
+
+    fut_printf("[FUTURAFS-TEST] Nested readdir ok\n");
+
+    /* Test 5: Error case - ENOENT on missing nested path */
+    fut_handle_t bad_file = FUT_INVALID_HANDLE;
+    rc = futfs_create("/nonexistent/path/file.txt", &bad_file);
+    if (rc != -ENOENT) {
+        fut_printf("[futfs] expected ENOENT for missing nested path, got %d\n", rc);
+        if (bad_file != FUT_INVALID_HANDLE) {
+            futfs_close(bad_file);
+        }
+        futfs_close(nested_file);
+        futfs_unmount();
+        fut_blk_close(blk_cap);
+        fut_test_fail(0xE1B);
+        return;
+    }
+
+    fut_printf("[FUTURAFS-TEST] Error handling (ENOENT) ok\n");
+
+    /* Test 6: Error case - ENOTDIR when intermediate is a file */
+    fut_handle_t root_file = FUT_INVALID_HANDLE;
+    rc = futfs_create("/rootfile.txt", &root_file);
+    if (rc != 0) {
+        fut_printf("[futfs] create root file for ENOTDIR test failed: %d\n", rc);
+        futfs_close(nested_file);
+        futfs_unmount();
+        fut_blk_close(blk_cap);
+        fut_test_fail(0xE1C);
+        return;
+    }
+    futfs_close(root_file);
+
+    fut_handle_t bad_nested = FUT_INVALID_HANDLE;
+    rc = futfs_create("/rootfile.txt/cannot/nest.txt", &bad_nested);
+    if (rc != -ENOTDIR) {
+        fut_printf("[futfs] expected ENOTDIR for file as directory, got %d\n", rc);
+        if (bad_nested != FUT_INVALID_HANDLE) {
+            futfs_close(bad_nested);
+        }
+        futfs_close(nested_file);
+        futfs_unmount();
+        fut_blk_close(blk_cap);
+        fut_test_fail(0xE1D);
+        return;
+    }
+
+    fut_printf("[FUTURAFS-TEST] Error handling (ENOTDIR) ok\n");
+
+    /* Test 7: Unlink nested file */
+    rc = futfs_unlink("/a/b/c/nested.txt");
+    if (rc != 0) {
+        fut_printf("[futfs] unlink nested file failed: %d\n", rc);
+        futfs_close(nested_file);
+        futfs_unmount();
+        fut_blk_close(blk_cap);
+        fut_test_fail(0xE1E);
+        return;
+    }
+
+    /* Verify it's gone */
+    cookie = 0;
+    found_nested_txt = false;
+    while (true) {
+        fut_status_t rd = futfs_readdir("/a/b/c", &cookie, &dent);
+        if (rd <= 0) {
+            break;
+        }
+        if (futfs_name_equals(dent.name, "nested.txt")) {
+            found_nested_txt = true;
+            break;
+        }
+    }
+    if (found_nested_txt) {
+        fut_printf("[futfs] unlink nested file left stale entry\n");
+        futfs_close(nested_file);
+        futfs_unmount();
+        fut_blk_close(blk_cap);
+        fut_test_fail(0xE1F);
+        return;
+    }
+
+    fut_printf("[FUTURAFS-TEST] Nested file unlink ok\n");
+
+    /* Test 8: Remove nested directories */
+    rc = futfs_rmdir("/a/b/c");
+    if (rc != 0) {
+        fut_printf("[futfs] rmdir /a/b/c failed: %d\n", rc);
+        futfs_close(nested_file);
+        futfs_unmount();
+        fut_blk_close(blk_cap);
+        fut_test_fail(0xE20);
+        return;
+    }
+
+    rc = futfs_rmdir("/a/b");
+    if (rc != 0) {
+        fut_printf("[futfs] rmdir /a/b failed: %d\n", rc);
+        futfs_close(nested_file);
+        futfs_unmount();
+        fut_blk_close(blk_cap);
+        fut_test_fail(0xE21);
+        return;
+    }
+
+    rc = futfs_rmdir("/a");
+    if (rc != 0) {
+        fut_printf("[futfs] rmdir /a failed: %d\n", rc);
+        futfs_close(nested_file);
+        futfs_unmount();
+        fut_blk_close(blk_cap);
+        fut_test_fail(0xE22);
+        return;
+    }
+
+    fut_printf("[FUTURAFS-TEST] Nested directory removal ok\n");
+
+    rc = futfs_unlink("/rootfile.txt");
+    if (rc != 0) {
+        fut_printf("[futfs] cleanup unlink /rootfile.txt failed: %d\n", rc);
+        futfs_unmount();
+        fut_blk_close(blk_cap);
+        fut_test_fail(0xE23);
+        return;
+    }
+
     futfs_set_crash_compaction(false);
 
     fut_printf("FuturaFS test passed\n");

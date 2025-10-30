@@ -45,6 +45,7 @@
 #define SYS_select      23
 #define SYS_dup         32
 #define SYS_dup2        33
+#define SYS_ftruncate   77
 #define SYS_fork        57
 #define SYS_execve      59
 #ifndef SYS_exit
@@ -343,6 +344,55 @@ static int64_t sys_unlink_handler(uint64_t pathname, uint64_t arg2, uint64_t arg
                                    uint64_t arg4, uint64_t arg5, uint64_t arg6) {
     (void)arg2; (void)arg3; (void)arg4; (void)arg5; (void)arg6;
     return (int64_t)fut_vfs_unlink((const char *)pathname);
+}
+
+/* File truncation */
+static int64_t sys_ftruncate_handler(uint64_t fd, uint64_t length, uint64_t arg3,
+                                     uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg3; (void)arg4; (void)arg5; (void)arg6;
+
+    struct fut_file *file = vfs_get_file((int)fd);
+    if (!file) {
+        return -EBADF;
+    }
+
+    if (!file->vnode) {
+        return -EBADF;
+    }
+
+    /* Simple ftruncate: write zeros to extend file to desired length.
+     * In a real filesystem, this would modify the file size metadata directly.
+     * For now, we extend by writing zeros in 4KB chunks, similar to the
+     * userspace implementation but done in the kernel to reduce syscall overhead.
+     */
+
+    uint64_t current_size = file->vnode->size;
+    if (length <= current_size) {
+        /* Truncating to smaller size - for now just succeed without actually shrinking */
+        /* Real implementation would deallocate blocks */
+        file->vnode->size = (uint64_t)length;
+        return 0;
+    }
+
+    /* Extend file with zeros */
+    uint64_t to_write = (uint64_t)length - current_size;
+    static char zeros[4096];
+
+    while (to_write > 0) {
+        size_t chunk = (to_write > sizeof(zeros)) ? sizeof(zeros) : (size_t)to_write;
+        ssize_t written = fut_vfs_write(file->vnode, zeros, chunk, current_size);
+        if (written < 0) {
+            return written;
+        }
+        if ((size_t)written != chunk) {
+            return -EIO;
+        }
+        current_size += (uint64_t)chunk;
+        to_write -= (uint64_t)chunk;
+    }
+
+    file->vnode->size = (uint64_t)length;
+    return 0;
 }
 
 /* Memory management */
@@ -648,6 +698,7 @@ static syscall_handler_t syscall_table[MAX_SYSCALL] = {
     [SYS_pipe]       = sys_pipe_handler,
     [SYS_dup]        = sys_dup_handler,
     [SYS_dup2]       = sys_dup2_handler,
+    [SYS_ftruncate]  = sys_ftruncate_handler,
     [SYS_mkdir]      = sys_mkdir_handler,
     [SYS_rmdir]      = sys_rmdir_handler,
     [SYS_unlink]     = sys_unlink_handler,

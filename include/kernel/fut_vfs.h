@@ -64,6 +64,8 @@ struct fut_vnode {
     void *fs_data;                  /* Filesystem-specific data */
 
     uint32_t refcount;              /* Reference count */
+    struct fut_vnode *parent;       /* Parent directory vnode (for path reconstruction) */
+    char *name;                     /* Filename/basename in parent directory (for getcwd) */
 
     /* Operations for this vnode */
     const struct fut_vnode_ops *ops;

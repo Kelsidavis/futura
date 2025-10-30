@@ -1457,40 +1457,60 @@ void *fut_vfs_mmap(int fd, void *addr, size_t len, int prot, int flags, off_t of
  * ============================================================ */
 
 void fut_vnode_ref(struct fut_vnode *vnode) {
-    if (vnode) {
-        vnode->refcount++;
+    if (!vnode) {
+        return;
     }
+
+    /* Safety check: prevent overflow (refcount should never exceed a reasonable limit) */
+    if (vnode->refcount >= 10000) {
+        fut_printf("[VNODE-ERROR] refcount overflow: vnode=%p ino=%llu refcount=%u\n",
+                   (void*)vnode, vnode->ino, vnode->refcount);
+        return;
+    }
+
+    vnode->refcount++;
+    VFSDBG("[vnode-ref] vnode=%p ino=%llu refcount now %u\n",
+           (void*)vnode, vnode->ino, vnode->refcount);
 }
 
 void fut_vnode_unref(struct fut_vnode *vnode) {
-    VFSDBG("[vnode-unref] vnode=%p\n", (void*)vnode);
     if (!vnode) {
-        VFSDBG("[vnode-unref] NULL vnode\n");
         return;
     }
 
-    VFSDBG("[vnode-unref] reading vnode->type at %p\n", (void*)&vnode->type);
-    int vtype = vnode->type;
-    VFSDBG("[vnode-unref] vnode->type=%d refcount=%d\n", vtype, vnode->refcount);
-
-    /* Never decrement refcount below 1 for directory vnodes - they're permanent */
-    if (vtype == VN_DIR) {
-        if (vnode->refcount <= 1) {
-            VFSDBG("[vnode-unref] DIR vnode, keeping alive\n");
-            return;  /* Keep directory vnodes alive permanently */
-        }
-        vnode->refcount--;
-        VFSDBG("[vnode-unref] DIR vnode, decremented refcount to %d\n", vnode->refcount);
+    /* Safety check: prevent underflow */
+    if (vnode->refcount == 0) {
+        fut_printf("[VNODE-ERROR] refcount underflow: vnode=%p ino=%llu type=%d\n",
+                   (void*)vnode, vnode->ino, vnode->type);
         return;
     }
 
-    /* For regular files and other types, free when refcount reaches 0 */
-    if (vnode->refcount > 0) {
-        vnode->refcount--;
-        VFSDBG("[vnode-unref] decremented refcount to %d\n", vnode->refcount);
-        if (vnode->refcount == 0) {
-            VFSDBG("[vnode-unref] freeing vnode\n");
-            fut_free(vnode);
+    vnode->refcount--;
+    VFSDBG("[vnode-unref] vnode=%p ino=%llu refcount now %u\n",
+           (void*)vnode, vnode->ino, vnode->refcount);
+
+    /* Free vnode when refcount reaches 0 */
+    if (vnode->refcount == 0) {
+        VFSDBG("[vnode-unref] freeing vnode ino=%llu type=%d\n", vnode->ino, vnode->type);
+
+        /* Clean up parent reference and basename */
+        if (vnode->parent) {
+            fut_vnode_unref(vnode->parent);
+            vnode->parent = NULL;
         }
+        if (vnode->name) {
+            fut_free(vnode->name);
+            vnode->name = NULL;
+        }
+
+        /* Free filesystem-specific data if any */
+        if (vnode->fs_data) {
+            /* Filesystems should clean up their own fs_data */
+            /* For now, just warn if there's orphaned data */
+            VFSDBG("[vnode-unref] warning: vnode has fs_data=%p, filesystem must clean up\n",
+                   vnode->fs_data);
+        }
+
+        fut_free(vnode);
     }
 }

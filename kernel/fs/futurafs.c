@@ -1149,41 +1149,170 @@ static void futurafs_file_read_callback(int result, void *ctx) {
     uint64_t next_offset = read_ctx->file_offset + read_ctx->bytes_read;
     uint64_t file_block = next_offset / FUTURAFS_BLOCK_SIZE;
 
-    /* Get next block number */
+    /* Get next block number with support for direct, single, double, and triple indirect */
     uint64_t block_num;
     if (file_block < FUTURAFS_DIRECT_BLOCKS) {
         block_num = read_ctx->inode_info->disk_inode.direct[file_block];
     } else {
-        /* Indirect blocks: read indirect block and extract pointer */
-        if (read_ctx->inode_info->disk_inode.indirect == 0) {
-            /* No indirect block - sparse file */
-            read_ctx->base.callback((int)read_ctx->bytes_read, read_ctx->base.callback_ctx);
-            fut_free(read_ctx);
-            return;
-        }
-
-        /* Read the indirect block synchronously */
-        int sync_result = fut_blockdev_read(read_ctx->base.mount->dev,
-                                           read_ctx->inode_info->disk_inode.indirect,
-                                           1, read_ctx->block_buffer);
-        if (sync_result < 0) {
-            read_ctx->base.callback(read_ctx->bytes_read > 0 ? (int)read_ctx->bytes_read : sync_result,
-                                   read_ctx->base.callback_ctx);
-            fut_free(read_ctx);
-            return;
-        }
-
-        /* Extract block pointer from indirect block */
+        /* Indirect blocks required */
         uint64_t indirect_index = file_block - FUTURAFS_DIRECT_BLOCKS;
-        if (indirect_index >= (FUTURAFS_BLOCK_SIZE / sizeof(uint64_t))) {
-            /* Out of range - sparse file */
-            read_ctx->base.callback((int)read_ctx->bytes_read, read_ctx->base.callback_ctx);
-            fut_free(read_ctx);
-            return;
-        }
+        uint64_t max_indirect_entries = FUTURAFS_BLOCK_SIZE / sizeof(uint64_t);
 
-        uint64_t *indirect_table = (uint64_t *)read_ctx->block_buffer;
-        block_num = indirect_table[indirect_index];
+        bool use_double_indirect = (indirect_index >= max_indirect_entries);
+        uint64_t indirect_block_num = 0;
+
+        if (use_double_indirect) {
+            /* Double or triple indirect blocks: beyond single indirect capacity */
+            uint64_t double_indirect_index = indirect_index - max_indirect_entries;
+            uint64_t indirect_within_double = double_indirect_index / max_indirect_entries;
+            uint64_t entry_in_indirect = double_indirect_index % max_indirect_entries;
+
+            if (indirect_within_double >= max_indirect_entries) {
+                /* Triple indirect blocks: beyond double indirect capacity */
+                uint64_t triple_indirect_index = indirect_within_double - max_indirect_entries;
+                uint64_t triple_level_1 = triple_indirect_index / (max_indirect_entries * max_indirect_entries);
+                uint64_t triple_level_2 = (triple_indirect_index / max_indirect_entries) % max_indirect_entries;
+                uint64_t triple_level_3 = triple_indirect_index % max_indirect_entries;
+
+                if (triple_level_1 >= max_indirect_entries) {
+                    /* File too large or sparse */
+                    read_ctx->base.callback((int)read_ctx->bytes_read, read_ctx->base.callback_ctx);
+                    fut_free(read_ctx);
+                    return;
+                }
+
+                /* Read triple-indirect block to find double-indirect block pointer */
+                if (read_ctx->inode_info->disk_inode.triple_indirect == 0) {
+                    /* Sparse file */
+                    read_ctx->base.callback((int)read_ctx->bytes_read, read_ctx->base.callback_ctx);
+                    fut_free(read_ctx);
+                    return;
+                }
+
+                int read_ret = fut_blockdev_read(read_ctx->base.mount->dev,
+                                                read_ctx->inode_info->disk_inode.triple_indirect,
+                                                1, read_ctx->block_buffer);
+                if (read_ret < 0) {
+                    read_ctx->base.callback(read_ctx->bytes_read > 0 ? (int)read_ctx->bytes_read : read_ret,
+                                          read_ctx->base.callback_ctx);
+                    fut_free(read_ctx);
+                    return;
+                }
+
+                /* Get double-indirect block pointer from triple-indirect table */
+                uint64_t *triple_indirect_table = (uint64_t *)read_ctx->block_buffer;
+                uint64_t double_indirect_block_num = triple_indirect_table[triple_level_1];
+                if (double_indirect_block_num == 0) {
+                    /* Sparse file */
+                    read_ctx->base.callback((int)read_ctx->bytes_read, read_ctx->base.callback_ctx);
+                    fut_free(read_ctx);
+                    return;
+                }
+
+                /* Read double-indirect block to find indirect block pointer */
+                read_ret = fut_blockdev_read(read_ctx->base.mount->dev,
+                                            double_indirect_block_num,
+                                            1, read_ctx->block_buffer);
+                if (read_ret < 0) {
+                    read_ctx->base.callback(read_ctx->bytes_read > 0 ? (int)read_ctx->bytes_read : read_ret,
+                                          read_ctx->base.callback_ctx);
+                    fut_free(read_ctx);
+                    return;
+                }
+
+                /* Get indirect block pointer from double-indirect table */
+                uint64_t *double_indirect_table = (uint64_t *)read_ctx->block_buffer;
+                indirect_block_num = double_indirect_table[triple_level_2];
+                if (indirect_block_num == 0) {
+                    /* Sparse file */
+                    read_ctx->base.callback((int)read_ctx->bytes_read, read_ctx->base.callback_ctx);
+                    fut_free(read_ctx);
+                    return;
+                }
+
+                /* Read indirect block to get the data block pointer */
+                read_ret = fut_blockdev_read(read_ctx->base.mount->dev,
+                                            indirect_block_num, 1,
+                                            read_ctx->block_buffer);
+                if (read_ret < 0) {
+                    read_ctx->base.callback(read_ctx->bytes_read > 0 ? (int)read_ctx->bytes_read : read_ret,
+                                          read_ctx->base.callback_ctx);
+                    fut_free(read_ctx);
+                    return;
+                }
+
+                /* Get data block pointer from indirect table */
+                uint64_t *indirect_table = (uint64_t *)read_ctx->block_buffer;
+                block_num = indirect_table[triple_level_3];
+            } else {
+                /* Double indirect blocks (but not triple) */
+                if (read_ctx->inode_info->disk_inode.double_indirect == 0) {
+                    /* Sparse file */
+                    read_ctx->base.callback((int)read_ctx->bytes_read, read_ctx->base.callback_ctx);
+                    fut_free(read_ctx);
+                    return;
+                }
+
+                /* Read double-indirect block to find indirect block pointer */
+                int read_ret = fut_blockdev_read(read_ctx->base.mount->dev,
+                                                read_ctx->inode_info->disk_inode.double_indirect,
+                                                1, read_ctx->block_buffer);
+                if (read_ret < 0) {
+                    read_ctx->base.callback(read_ctx->bytes_read > 0 ? (int)read_ctx->bytes_read : read_ret,
+                                          read_ctx->base.callback_ctx);
+                    fut_free(read_ctx);
+                    return;
+                }
+
+                /* Get indirect block pointer from double-indirect table */
+                uint64_t *double_indirect_table = (uint64_t *)read_ctx->block_buffer;
+                indirect_block_num = double_indirect_table[indirect_within_double];
+                if (indirect_block_num == 0) {
+                    /* Sparse file */
+                    read_ctx->base.callback((int)read_ctx->bytes_read, read_ctx->base.callback_ctx);
+                    fut_free(read_ctx);
+                    return;
+                }
+
+                /* Read indirect block to get the data block pointer */
+                read_ret = fut_blockdev_read(read_ctx->base.mount->dev,
+                                            indirect_block_num, 1,
+                                            read_ctx->block_buffer);
+                if (read_ret < 0) {
+                    read_ctx->base.callback(read_ctx->bytes_read > 0 ? (int)read_ctx->bytes_read : read_ret,
+                                          read_ctx->base.callback_ctx);
+                    fut_free(read_ctx);
+                    return;
+                }
+
+                /* Get data block pointer from indirect table */
+                uint64_t *indirect_table = (uint64_t *)read_ctx->block_buffer;
+                block_num = indirect_table[entry_in_indirect];
+            }
+        } else {
+            /* Single indirect block handling */
+            if (read_ctx->inode_info->disk_inode.indirect == 0) {
+                /* No indirect block - sparse file */
+                read_ctx->base.callback((int)read_ctx->bytes_read, read_ctx->base.callback_ctx);
+                fut_free(read_ctx);
+                return;
+            }
+
+            /* Read the indirect block synchronously */
+            int read_ret = fut_blockdev_read(read_ctx->base.mount->dev,
+                                            read_ctx->inode_info->disk_inode.indirect,
+                                            1, read_ctx->block_buffer);
+            if (read_ret < 0) {
+                read_ctx->base.callback(read_ctx->bytes_read > 0 ? (int)read_ctx->bytes_read : read_ret,
+                                       read_ctx->base.callback_ctx);
+                fut_free(read_ctx);
+                return;
+            }
+
+            /* Extract block pointer from indirect block */
+            uint64_t *indirect_table = (uint64_t *)read_ctx->block_buffer;
+            block_num = indirect_table[indirect_index];
+        }
     }
 
     /* Handle sparse block (block_num == 0) */

@@ -1086,8 +1086,8 @@ int fut_mm_unmap(fut_mm_t *mm, uintptr_t addr, size_t len) {
 }
 
 /**
- * Map a file into memory (ARM64 stub).
- * TODO: Implement proper ARM64 file-backed mmap.
+ * Map a file into memory.
+ * Supports demand paging via page fault handler for lazy loading.
  */
 void *fut_mm_map_file(fut_mm_t *mm, struct fut_vnode *vnode, uintptr_t hint,
                        size_t len, int prot, int flags, uint64_t file_offset) {

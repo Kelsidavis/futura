@@ -57,7 +57,7 @@ extern fut_percpu_t fut_percpu_data[FUT_MAX_CPUS];
 
 /**
  * Get pointer to current CPU's per-CPU data.
- * Uses GS segment base on x86_64.
+ * Uses GS segment base on x86_64, TPIDR_EL1 on ARM64.
  */
 static inline fut_percpu_t *fut_percpu_get(void) {
 #if defined(__x86_64__)
@@ -65,8 +65,12 @@ static inline fut_percpu_t *fut_percpu_get(void) {
     __asm__ volatile("mov %%gs:0, %0" : "=r"(percpu));
     return percpu;
 #elif defined(__aarch64__)
-    /* ARM64: Use TPIDR_EL1 or similar */
-    #error "ARM64 per-CPU not yet implemented"
+    /* ARM64: Read TPIDR_EL1 (Thread Pointer ID Register for EL1)
+     * The kernel stores the per-CPU structure pointer in TPIDR_EL1
+     */
+    fut_percpu_t *percpu;
+    __asm__ volatile("mrs %0, tpidr_el1" : "=r"(percpu));
+    return percpu;
 #else
     /* Fallback to single CPU */
     return &fut_percpu_data[0];
@@ -74,7 +78,8 @@ static inline fut_percpu_t *fut_percpu_get(void) {
 }
 
 /**
- * Set GS base to point to per-CPU data for the current CPU.
+ * Set per-CPU pointer for the current CPU.
+ * On x86_64, updates GS base. On ARM64, updates TPIDR_EL1.
  */
 static inline void fut_percpu_set(fut_percpu_t *percpu) {
 #if defined(__x86_64__)
@@ -92,7 +97,17 @@ static inline void fut_percpu_set(fut_percpu_t *percpu) {
         : "memory"
     );
 #elif defined(__aarch64__)
-    #error "ARM64 per-CPU not yet implemented"
+    /* ARM64: Write to TPIDR_EL1 (Thread Pointer ID Register for EL1)
+     * This register is used to store the per-CPU data structure pointer.
+     * It's accessible from EL1 (kernel mode) and EL0 (user mode) can have its own
+     * TPIDR_EL0, but kernel uses EL1 for per-CPU access.
+     */
+    __asm__ volatile(
+        "msr tpidr_el1, %0"
+        :
+        : "r"((uint64_t)percpu)
+        : "memory"
+    );
 #else
     (void)percpu;
 #endif

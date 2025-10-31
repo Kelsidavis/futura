@@ -9,6 +9,7 @@
 #include <wayland-server-core.h>
 #include <stdbool.h>
 #include <errno.h>
+#include <string.h>
 #include <user/stdio.h>
 #include <user/stdlib.h>
 
@@ -252,6 +253,29 @@ int main(void) {
            comp.fb_info.height,
            comp.fb_info.bpp,
            socket);
+
+    /* Demo mode: render fallback UI while waiting for clients */
+    if (!socket || strcmp(socket, "none") == 0) {
+        printf("[WAYLAND] Demo mode: rendering fallback UI to framebuffer\n");
+        /* Render initial demo frame with solid color and horizontal stripe */
+        if (comp.backbuffer_enabled && comp.bb[0].px) {
+            struct backbuffer *bb = &comp.bb[0];
+            uint32_t *px = (uint32_t *)bb->px;
+            /* Fill with green background */
+            for (size_t i = 0; i < (size_t)comp.fb_info.width * comp.fb_info.height; ++i) {
+                px[i] = 0xFF00AA00;
+            }
+            /* Draw white/dark stripe at top for UI panel */
+            uint32_t bar_color = 0xFF333333;
+            for (int y = 0; y < 40; ++y) {
+                for (int x = 0; x < (int)comp.fb_info.width; ++x) {
+                    px[y * comp.fb_info.width + x] = bar_color;
+                }
+            }
+            /* Swap backbuffer */
+            comp.bb_index = 1;
+        }
+    }
 
     comp_damage_add_full(&comp);
     comp_render_frame(&comp);

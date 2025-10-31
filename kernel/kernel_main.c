@@ -884,10 +884,18 @@ void fut_kernel_main(void) {
     bool fb_available = fb_enabled && fb_is_available();
     fut_printf("[INIT] fb_enabled=%d fb_available=%d\n",
                fb_enabled ? 1 : 0, fb_available ? 1 : 0);
+
+#ifdef WAYLAND_INTERACTIVE_MODE
+    /* In headful mode, always initialize fb_char for virtio-gpu even if not detected yet */
+    if (fb_enabled) {
+        fb_boot_splash();
+        fb_char_init();
+#else
     if (fb_available) {
         /* Enable framebuffer splash for virtio-gpu initialization */
         fb_boot_splash();
         fb_char_init();
+#endif
         struct fut_fb_hwinfo fbinfo = {0};
         if (fb_get_info(&fbinfo) == 0) {
             fut_printf("[INIT] fb geometry %ux%u pitch=%u bpp=%u phys=0x%llx\n",
@@ -953,6 +961,12 @@ void fut_kernel_main(void) {
     if (vfs_ret < 0) {
         fut_printf("[ERROR] Failed to mount root filesystem (error %d)\n", vfs_ret);
         fut_platform_panic("Failed to mount root filesystem");
+    }
+
+    /* Create /dev directory for device files BEFORE registering devices */
+    int dev_ret = fut_vfs_mkdir("/dev", 0755);
+    if (dev_ret < 0 && dev_ret != -EEXIST) {
+        fut_printf("[WARN] Failed to create /dev directory (error %d)\n", dev_ret);
     }
 
     fut_console_init();

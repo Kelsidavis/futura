@@ -90,8 +90,9 @@ struct futurafs_inode {
     uint64_t direct[FUTURAFS_DIRECT_BLOCKS];   /* Direct block pointers */
     uint64_t indirect;           /* Single indirect block pointer */
     uint64_t double_indirect;    /* Double indirect block pointer */
+    uint64_t triple_indirect;    /* Triple indirect block pointer */
 
-    uint8_t  reserved[16];       /* Pad to 128 bytes */
+    uint8_t  reserved[8];        /* Pad to 128 bytes */
 } __attribute__((packed));
 
 /**

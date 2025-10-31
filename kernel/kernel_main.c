@@ -1296,7 +1296,10 @@ void fut_kernel_main(void) {
     if (wayland_stage == 0) {
         char name[] = "futura-wayland";
         char *args[] = { name, NULL };
-        wayland_exec = fut_exec_elf("/sbin/futura-wayland", args, NULL);
+        /* Environment with LD_PRELOAD for syscall routing via int 0x80 */
+        char ld_preload[] = "LD_PRELOAD=/lib/libopen_wrapper.so";
+        char *envp[] = { ld_preload, NULL };
+        wayland_exec = fut_exec_elf("/sbin/futura-wayland", args, envp);
         if (wayland_exec != 0) {
             fut_printf("[WARN] Failed to launch /sbin/futura-wayland (error %d)\n", wayland_exec);
 #if ENABLE_WAYLAND_DEMO
@@ -1315,7 +1318,10 @@ void fut_kernel_main(void) {
         fut_boot_delay_ms(100);
         char name[] = "wl-simple";
         char *args[] = { name, NULL };
-        wayland_client_exec = fut_exec_elf("/bin/wl-simple", args, NULL);
+        /* Environment with LD_PRELOAD for syscall routing */
+        char ld_preload[] = "LD_PRELOAD=/lib/libopen_wrapper.so";
+        char *envp[] = { ld_preload, NULL };
+        wayland_client_exec = fut_exec_elf("/bin/wl-simple", args, envp);
         if (wayland_client_exec != 0) {
             fut_printf("[WARN] Failed to launch /bin/wl-simple (error %d)\n", wayland_client_exec);
 #if ENABLE_WAYLAND_DEMO

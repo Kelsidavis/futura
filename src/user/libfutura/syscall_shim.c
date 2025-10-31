@@ -12,6 +12,19 @@
 #define AT_FDCWD -100
 #endif
 
+/* x86-64 syscall numbers */
+#define SYS_open 2
+
+/* File flags */
+#ifndef O_DIRECTORY
+#define O_DIRECTORY 0200000
+#endif
+
+/* O_TMPFILE: Create unnamed temporary file */
+#ifndef O_TMPFILE
+#define O_TMPFILE (020000000 | O_DIRECTORY)
+#endif
+
 static long ret_enosys(void) {
     errno = ENOSYS;
     return -1;
@@ -55,9 +68,39 @@ long syscall(long number, ...) {
     case SYS_close_range:
         result = ret_enosys();
         break;
-    case SYS_openat:
-        result = ret_enosys();
+    case SYS_open: {
+        const char *pathname = va_arg(ap, const char *);
+        int flags = va_arg(ap, int);
+        int mode = va_arg(ap, int);
+        /* Make the actual int 0x80 syscall to reach the kernel handler */
+        __asm__ volatile("int $0x80" : "=a"(result) : "a"(SYS_open), "b"(pathname), "c"(flags), "d"(mode) : "cc", "memory");
         break;
+    }
+    case SYS_openat: {
+        int dirfd = va_arg(ap, int);
+        const char *pathname = va_arg(ap, const char *);
+        int flags = va_arg(ap, int);
+        int mode = va_arg(ap, int);
+
+        /* Workaround for SYSCALL instruction not being invoked on x86_64
+         * When dirfd is AT_FDCWD (current directory), we can convert to open()
+         * which uses int 0x80 and works properly.
+         *
+         * For now, we only support AT_FDCWD. Other file descriptors would
+         * require full openat() kernel support.
+         */
+        if (dirfd != AT_FDCWD) {
+            errno = EBADF;
+            result = -1;
+        } else {
+            /* Make the actual int 0x80 syscall with SYS_open
+             * open(pathname, flags, mode) is equivalent to
+             * openat(AT_FDCWD, pathname, flags, mode)
+             */
+            __asm__ volatile("int $0x80" : "=a"(result) : "a"(SYS_open), "b"(pathname), "c"(flags), "d"(mode) : "cc", "memory");
+        }
+        break;
+    }
     default:
         result = ret_enosys();
         break;
@@ -65,6 +108,48 @@ long syscall(long number, ...) {
 
     va_end(ap);
     return result;
+}
+
+/* Wrapper for open() to handle unsupported flags */
+int open(const char *pathname, int flags, ...) {
+    va_list ap;
+    mode_t mode = 0;
+
+    if (flags & (O_CREAT | O_TMPFILE)) {
+        va_start(ap, flags);
+        mode = va_arg(ap, mode_t);
+        va_end(ap);
+    }
+
+    extern void fut_printf(const char *, ...);
+    fut_printf("[OPEN-WRAPPER] pathname=%s flags=0x%x mode=0%o\n", pathname, flags, mode);
+
+    long result = syscall(SYS_open, pathname, flags, mode);
+
+    fut_printf("[OPEN-WRAPPER] syscall returned %ld\n", result);
+
+    return (int)result;
+}
+
+/* Wrapper for open64() - same as open() for our purposes */
+int open64(const char *pathname, int flags, ...) {
+    va_list ap;
+    mode_t mode = 0;
+
+    if (flags & (O_CREAT | O_TMPFILE)) {
+        va_start(ap, flags);
+        mode = va_arg(ap, mode_t);
+        va_end(ap);
+    }
+
+    extern void fut_printf(const char *, ...);
+    fut_printf("[OPEN64-WRAPPER] pathname=%s flags=0x%x mode=0%o\n", pathname, flags, mode);
+
+    long result = syscall(SYS_open, pathname, flags, mode);
+
+    fut_printf("[OPEN64-WRAPPER] syscall returned %ld\n", result);
+
+    return (int)result;
 }
 
 #if defined(__GNUC__) && !defined(__APPLE__)

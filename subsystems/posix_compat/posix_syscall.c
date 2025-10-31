@@ -1202,6 +1202,73 @@ void posix_syscall_init(void) {
     }
 }
 
+/**
+ * Check for pending signals and deliver them.
+ * Called from syscall return path to give pending signals a chance to execute.
+ *
+ * For MVP, this does synchronous delivery by directly invoking handlers.
+ * A proper implementation would set up signal frames and modify the return context.
+ *
+ * @param current Current task
+ * @return Signal number if one was delivered, 0 if no signals pending
+ */
+static int check_and_deliver_pending_signals(fut_task_t *current) {
+    if (!current) {
+        return 0;
+    }
+
+    /* Iterate through all possible signals and deliver the first one found */
+    for (int signum = 1; signum < _NSIG; signum++) {
+        if (fut_signal_is_pending(current, signum)) {
+            /* Get the handler for this signal */
+            sighandler_t handler = fut_signal_get_handler(current, signum);
+
+            /* Clear this signal from pending */
+            uint64_t signal_bit = (1ULL << (signum - 1));
+            current->pending_signals &= ~signal_bit;
+
+            extern void fut_printf(const char *, ...);
+            fut_printf("[SIGNAL] Delivering signal %d to task %llu with handler %p\n",
+                      signum, current->pid, (void *)(uintptr_t)handler);
+
+            /* Invoke the handler if one is registered (not SIG_DFL) */
+            if (handler && handler != SIG_DFL && handler != SIG_IGN) {
+                /* For MVP: Direct synchronous invocation from kernel
+                 * Proper implementation would:
+                 * 1. Set up signal frame on user stack
+                 * 2. Push return address to signal restorer
+                 * 3. Modify RIP to point to handler
+                 * 4. Let handler execute in userspace
+                 * 5. Handler returns via sigreturn()
+                 *
+                 * This simplified approach just calls the handler directly:
+                 */
+                fut_printf("[SIGNAL] Invoking handler at %p\n", (void *)(uintptr_t)handler);
+                (*handler)(signum);
+                fut_printf("[SIGNAL] Handler returned\n");
+            } else if (handler == SIG_IGN) {
+                fut_printf("[SIGNAL] Signal %d ignored\n", signum);
+            } else {
+                /* SIG_DFL: Apply default action */
+                int action = fut_signal_get_default_action(signum);
+                fut_printf("[SIGNAL] Applying default action %d for signal %d\n",
+                          action, signum);
+                /* For MVP, just log default actions */
+                /* Real implementation would:
+                 * - SIG_ACTION_TERM: Terminate process
+                 * - SIG_ACTION_STOP: Stop process
+                 * - SIG_ACTION_CONT: Continue process
+                 * - SIG_ACTION_CORE: Generate core dump + terminate
+                 */
+            }
+
+            return signum;
+        }
+    }
+
+    return 0;
+}
+
 long syscall_entry_c(uint64_t nr,
                      uint64_t a1, uint64_t a2, uint64_t a3,
                      uint64_t a4, uint64_t a5, uint64_t a6,
@@ -1209,6 +1276,13 @@ long syscall_entry_c(uint64_t nr,
     (void)frame_ptr;
 
     long ret = (long)posix_syscall_dispatch(nr, a1, a2, a3, a4, a5, a6);
+
+    /* Check for pending signals and deliver them before returning to user */
+    extern fut_task_t *fut_task_current(void);
+    fut_task_t *current = fut_task_current();
+    if (current) {
+        check_and_deliver_pending_signals(current);
+    }
 
     return ret;
 }

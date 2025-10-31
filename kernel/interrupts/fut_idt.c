@@ -113,17 +113,24 @@ int fut_idt_check_guards(void) {
 
 #else  /* !__x86_64__ */
 
-/* ARM64 and other non-x86_64 architectures: IDT stubs */
-/* TODO: Implement ARM64-specific exception vector table setup */
+/* ARM64 and other non-x86_64 architectures: Exception vector stubs
+ *
+ * ARM64 does not use an IDT (Interrupt Descriptor Table) like x86_64.
+ * Instead, exception vectors are set up in assembly (arm64_exception_entry.S)
+ * and dispatched through arm64_exception_dispatch(). These IDT functions
+ * are architecture-agnostic stubs for compatibility.
+ */
 
 void fut_idt_set_gate(uint8_t num, void (*handler)(void), uint16_t selector, uint8_t flags) {
     (void)num;
     (void)handler;
     (void)selector;
     (void)flags;
+    /* ARM64 exception vectors are set up in assembly, not through this interface */
 }
 
 void fut_idt_install(void) {
+    /* ARM64 exception vectors are already installed at boot time in assembly */
 }
 
 uint16_t fut_idt_get_count(void) {

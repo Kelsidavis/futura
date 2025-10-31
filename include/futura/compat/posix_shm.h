@@ -19,6 +19,5 @@
 
 int fut_shm_open(const char *name, int oflag, int mode);
 int fut_shm_create(const char *name, size_t size, int oflag, int mode);
-/* TODO: implement unlink once SYS_unlink becomes available */
 int fut_shm_unlink(const char *name);
 int fut_shm_resize(int fd, size_t size);

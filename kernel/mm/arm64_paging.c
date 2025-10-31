@@ -530,6 +530,44 @@ fut_vmem_context_t *fut_vmem_create(void) {
 }
 
 /**
+ * Recursively free page tables starting from a given level.
+ * Walks the table hierarchy and frees intermediate tables,
+ * but does not free individual memory pages (they're tracked separately).
+ *
+ * @param table Page table to recursively free
+ * @param level Current table level (0=PGD, 1=PMD, 2=PTE, 3=pages)
+ */
+static void free_page_tables_recursive(page_table_t *table, int level) {
+    if (!table) {
+        return;
+    }
+
+    /* At level 3, entries point to actual pages (not tables), so just free the table */
+    if (level >= 2) {
+        free_page_table(table);
+        return;
+    }
+
+    /* For levels 0-2, recursively free child tables */
+    for (int i = 0; i < 512; i++) {
+        pte_t pte = table->entries[i];
+
+        /* Check if entry is valid and points to a table (not a block descriptor) */
+        if ((pte & PTE_VALID) && (pte & PTE_TABLE)) {
+            /* Extract physical address of next level table */
+            phys_addr_t phys = pte & PTE_PHYS_ADDR_MASK;
+            page_table_t *child = (page_table_t *)phys;
+
+            /* Recursively free child table */
+            free_page_tables_recursive(child, level + 1);
+        }
+    }
+
+    /* Free the current level table */
+    free_page_table(table);
+}
+
+/**
  * Destroy virtual memory context and free page tables.
  * @param ctx VM context to destroy
  */
@@ -538,9 +576,9 @@ void fut_vmem_destroy(fut_vmem_context_t *ctx) {
         return;
     }
 
-    /* TODO: Recursively free all page tables in user space portion */
+    /* Recursively free all page tables in user space portion */
     if (ctx->pgd) {
-        free_page_table(ctx->pgd);
+        free_page_tables_recursive(ctx->pgd, 0);
     }
 
     fut_free(ctx);

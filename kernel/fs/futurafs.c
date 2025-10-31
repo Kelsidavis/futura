@@ -1432,10 +1432,83 @@ static void futurafs_file_write_callback(int result, void *ctx) {
                     write_ctx->allocated_block = true;
                 }
             } else {
-                /* Indirect blocks not yet implemented */
-                write_ctx->base.callback((int)write_ctx->bytes_written, write_ctx->base.callback_ctx);
-                fut_free(write_ctx);
-                return;
+                /* Indirect blocks: file_block >= FUTURAFS_DIRECT_BLOCKS */
+                uint64_t indirect_index = file_block - FUTURAFS_DIRECT_BLOCKS;
+                uint64_t max_indirect_entries = FUTURAFS_BLOCK_SIZE / sizeof(uint64_t);
+
+                if (indirect_index >= max_indirect_entries) {
+                    /* Would need double indirect - not yet supported */
+                    write_ctx->base.callback((int)write_ctx->bytes_written, write_ctx->base.callback_ctx);
+                    fut_free(write_ctx);
+                    return;
+                }
+
+                /* Allocate indirect block if needed */
+                if (write_ctx->inode_info->disk_inode.indirect == 0) {
+                    uint64_t indirect_block = 0;
+                    int ret = futurafs_alloc_block(write_ctx->base.mount, &indirect_block);
+                    if (ret < 0) {
+                        write_ctx->base.callback((int)write_ctx->bytes_written, write_ctx->base.callback_ctx);
+                        fut_free(write_ctx);
+                        return;
+                    }
+                    write_ctx->inode_info->disk_inode.indirect = indirect_block;
+                    write_ctx->inode_info->dirty = true;
+
+                    /* Zero out the indirect block */
+                    for (size_t i = 0; i < FUTURAFS_BLOCK_SIZE; i++) {
+                        write_ctx->block_buffer[i] = 0;
+                    }
+
+                    /* Write zeroed indirect block */
+                    int write_ret = futurafs_blk_write(write_ctx->base.mount,
+                                                      write_ctx->inode_info->disk_inode.indirect, 1,
+                                                      write_ctx->block_buffer);
+                    if (write_ret < 0) {
+                        write_ctx->base.callback((int)write_ctx->bytes_written, write_ctx->base.callback_ctx);
+                        fut_free(write_ctx);
+                        return;
+                    }
+                }
+
+                /* Read indirect block to check/update pointers */
+                int read_ret = futurafs_blk_read(write_ctx->base.mount,
+                                                 write_ctx->inode_info->disk_inode.indirect, 1,
+                                                 write_ctx->block_buffer);
+                if (read_ret < 0) {
+                    write_ctx->base.callback((int)write_ctx->bytes_written, write_ctx->base.callback_ctx);
+                    fut_free(write_ctx);
+                    return;
+                }
+
+                /* Get block pointer from indirect table */
+                uint64_t *indirect_table = (uint64_t *)write_ctx->block_buffer;
+                block_num = indirect_table[indirect_index];
+
+                /* Allocate data block if needed */
+                if (block_num == 0) {
+                    int ret = futurafs_alloc_block(write_ctx->base.mount, &block_num);
+                    if (ret < 0) {
+                        write_ctx->base.callback((int)write_ctx->bytes_written, write_ctx->base.callback_ctx);
+                        fut_free(write_ctx);
+                        return;
+                    }
+
+                    /* Update indirect table and write it back */
+                    indirect_table[indirect_index] = block_num;
+                    int write_ret = futurafs_blk_write(write_ctx->base.mount,
+                                                      write_ctx->inode_info->disk_inode.indirect, 1,
+                                                      write_ctx->block_buffer);
+                    if (write_ret < 0) {
+                        write_ctx->base.callback((int)write_ctx->bytes_written, write_ctx->base.callback_ctx);
+                        fut_free(write_ctx);
+                        return;
+                    }
+
+                    write_ctx->inode_info->disk_inode.blocks++;
+                    write_ctx->inode_info->dirty = true;
+                    write_ctx->allocated_block = true;
+                }
             }
 
             write_ctx->current_block_num = block_num;
@@ -1540,9 +1613,78 @@ int futurafs_file_write_async(struct futurafs_inode_info *inode_info,
             write_ctx->allocated_block = true;
         }
     } else {
-        /* Indirect blocks not yet implemented */
-        fut_free(write_ctx);
-        return FUTURAFS_ENOSPC;
+        /* Indirect blocks: file_block >= FUTURAFS_DIRECT_BLOCKS */
+        uint64_t indirect_index = file_block - FUTURAFS_DIRECT_BLOCKS;
+        uint64_t max_indirect_entries = FUTURAFS_BLOCK_SIZE / sizeof(uint64_t);
+
+        if (indirect_index >= max_indirect_entries) {
+            /* Would need double indirect - not yet supported */
+            fut_free(write_ctx);
+            return FUTURAFS_ENOSPC;
+        }
+
+        /* Check if indirect block exists */
+        if (inode_info->disk_inode.indirect == 0) {
+            /* Need to allocate indirect block */
+            uint64_t indirect_block = 0;
+            int ret = futurafs_alloc_block(inode_info->mount, &indirect_block);
+            if (ret < 0) {
+                fut_free(write_ctx);
+                return ret;
+            }
+            inode_info->disk_inode.indirect = indirect_block;
+            inode_info->dirty = true;
+
+            /* Zero out the indirect block */
+            for (size_t i = 0; i < FUTURAFS_BLOCK_SIZE; i++) {
+                write_ctx->block_buffer[i] = 0;
+            }
+
+            /* Write zeroed indirect block */
+            int write_ret = futurafs_blk_write(inode_info->mount,
+                                              inode_info->disk_inode.indirect, 1,
+                                              write_ctx->block_buffer);
+            if (write_ret < 0) {
+                fut_free(write_ctx);
+                return write_ret;
+            }
+        }
+
+        /* Read indirect block to check/update pointers */
+        int read_ret = futurafs_blk_read(inode_info->mount,
+                                         inode_info->disk_inode.indirect, 1,
+                                         write_ctx->block_buffer);
+        if (read_ret < 0) {
+            fut_free(write_ctx);
+            return read_ret;
+        }
+
+        /* Get block pointer from indirect table */
+        uint64_t *indirect_table = (uint64_t *)write_ctx->block_buffer;
+        block_num = indirect_table[indirect_index];
+
+        /* Allocate data block if needed */
+        if (block_num == 0) {
+            int ret = futurafs_alloc_block(inode_info->mount, &block_num);
+            if (ret < 0) {
+                fut_free(write_ctx);
+                return ret;
+            }
+
+            /* Update indirect table and write it back */
+            indirect_table[indirect_index] = block_num;
+            int write_ret = futurafs_blk_write(inode_info->mount,
+                                              inode_info->disk_inode.indirect, 1,
+                                              write_ctx->block_buffer);
+            if (write_ret < 0) {
+                fut_free(write_ctx);
+                return write_ret;
+            }
+
+            inode_info->disk_inode.blocks++;
+            inode_info->dirty = true;
+            write_ctx->allocated_block = true;
+        }
     }
 
     write_ctx->current_block_num = block_num;

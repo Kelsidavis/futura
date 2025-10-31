@@ -654,13 +654,14 @@ userspace: vendor libfutura
 stage: userspace
 	@echo "==> Staging userland into initramfs"
 	@rm -rf $(INITROOT)
-	@mkdir -p $(INITROOT)/sbin $(INITROOT)/bin $(INITROOT)/tmp
+	@mkdir -p $(INITROOT)/sbin $(INITROOT)/bin $(INITROOT)/lib $(INITROOT)/tmp
 	@chmod 1777 $(INITROOT)/tmp
 	@install -m 0755 $(WAYLAND_COMPOSITOR_BIN) $(INITROOT)/sbin/futura-wayland
 	@install -m 0755 $(WAYLAND_CLIENT_BIN) $(INITROOT)/bin/wl-simple
 	@install -m 0755 $(WAYLAND_COLOR_BIN) $(INITROOT)/bin/wl-colorwheel
 	@install -m 0755 $(WAYLAND_SHELL_BIN) $(INITROOT)/sbin/futura-shell
 	@install -m 0755 src/user/shell/futura-shell/launch_shell.sh $(INITROOT)/sbin/launch-shell
+	@if [ -f $(BUILD_DIR)/lib/libopen_wrapper.so ]; then install -m 0755 $(BUILD_DIR)/lib/libopen_wrapper.so $(INITROOT)/lib/libopen_wrapper.so; fi
 	@if [ -f $(INIT_STUB_BIN) ]; then install -m 0755 $(INIT_STUB_BIN) $(INITROOT)/sbin/init; fi
 	@if [ -f $(SECOND_STUB_BIN) ]; then install -m 0755 $(SECOND_STUB_BIN) $(INITROOT)/sbin/second; fi
 	@mkdir -p $(dir $(INITRAMFS))

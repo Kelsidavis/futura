@@ -198,34 +198,41 @@ isr_syscall_int80_stub:
  *   RAX = syscall number
  *   RDI = arg1, RSI = arg2, RDX = arg3, R10 = arg4, R8 = arg5, R9 = arg6
  *   RIP in RCX, RFLAGS in R11 (saved by hardware)
+ *   RSP = user stack pointer
  *
- * We need to transition to kernel mode and save state, similar to int 0x80
+ * We need to:
+ * 1. Save user context (RIP, RFLAGS, RSP)
+ * 2. Switch to kernel stack
+ * 3. Call syscall handler
+ * 4. Return to user mode via SYSRET
+ *
+ * Key difference from int 0x80:
+ * - CPU does NOT push anything for SYSCALL
+ * - We must manually construct the frame and manage stacks
+ * - SYSRET requires RIP in RCX and RFLAGS in R11
  */
 .global isr_syscall_fastpath
 .type isr_syscall_fastpath, @function
 isr_syscall_fastpath:
-    /* Save user RSP before we clobber RSP */
-    movq %rsp, %r12
+    /* At entry: RCX=user RIP, R11=user RFLAGS, RSP=user stack, RAX=syscall number */
 
-    /* Get kernel stack (from TSS or current task) */
-    /* TODO: Implement proper kernel stack switching */
-    /* For now, we'll just push the saved user values and continue */
+    /* Save user RSP and create frame on user stack first */
+    /* We'll construct the interrupt frame manually */
+    pushq $0                      /* SS placeholder */
+    pushq %rsp                    /* User RSP (will be adjusted by +8) */
+    movq %r11, -8(%rsp)           /* RFLAGS at RSP-8 */
+    subq $8, %rsp
+    pushq %rcx                    /* RIP */
 
-    /* Create interrupt frame similar to int 0x80 */
-    pushq $0                      /* SS (user ss will be replaced later) */
-    pushq %r12                    /* RSP (user rsp) */
-    pushq %r11                    /* RFLAGS (saved by SYSCALL hardware) */
-    pushq $0                      /* CS (user cs will be replaced later) */
-    pushq %rcx                    /* RIP (saved by SYSCALL hardware) */
-
-    /* Now we're in a frame similar to int 0x80, call the same handler */
-    pushq %rax                    /* Save syscall number (same as int 0x80) */
-    movq %cr3, %rax               /* Save CR3 */
-    pushq %rax
+    /* Now we have a basic frame. Save syscall number and all regs */
+    pushq %rax                    /* Save syscall number */
+    movq %cr3, %rax
+    pushq %rax                    /* Save CR3 */
 
     pushq %rbp
     pushq %rbx
-    pushq %r12
+    movq %rsp, %r12               /* Save current RSP (user stack pointer) */
+    pushq %r12                    /* Save r12 (will be popped as r12 value) */
     pushq %r13
     pushq %r14
     pushq %r15
@@ -236,27 +243,37 @@ isr_syscall_fastpath:
     pushq %rsi
     pushq %rdi
 
-    /* Set up arguments for syscall_entry_c (same as int 0x80) */
+    /* Now RBP is probably garbage, but we need to set up for C calling convention */
+    movq %rsp, %rbp
+
+    /* Set up arguments for syscall_entry_c */
     movq %rsp, %r15
     addq $112, %r15               /* r15 = pointer to interrupt frame */
     movq %r15, fut_current_frame(%rip)
 
-    movq 104(%rsp), %rdi          /* syscall number from saved RAX */
-    movq 0(%rsp), %rsi            /* arg1 from RDI */
-    movq 8(%rsp), %rdx            /* arg2 from RSI */
-    movq 16(%rsp), %rcx           /* arg3 from RDX */
-    movq 24(%rsp), %r8            /* arg4 from R10 */
-    movq 32(%rsp), %r9            /* arg5 from R8 */
-    movq 40(%rsp), %r11           /* arg6 from R9 */
-    pushq %r15                    /* arg7: interrupt frame pointer */
-    pushq %r11                    /* arg6 */
+    /* Extract arguments from saved registers */
+    movq 104(%rsp), %rdi          /* RDI: syscall number */
+    movq 0(%rsp), %rsi            /* RSI: arg1 (original RDI) */
+    movq 8(%rsp), %rdx            /* RDX: arg2 (original RSI) */
+    movq 16(%rsp), %rcx           /* RCX: arg3 (original RDX) */
+    movq 24(%rsp), %r8            /* R8:  arg4 (original R10) */
+    movq 32(%rsp), %r9            /* R9:  arg5 (original R8) */
+    movq 40(%rsp), %rax           /* RAX: arg6 (original R9) */
 
+    /* Push arguments for syscall_entry_c in reverse order */
+    pushq %r15                    /* arg7: interrupt frame pointer */
+    pushq %rax                    /* arg6 */
+
+    /* Call the syscall handler */
     call syscall_entry_c
 
-    /* Save return value and restore like int 0x80 */
-    movq %rax, %r11
-    addq $16, %rsp
+    /* Save return value */
+    movq %rax, %r11               /* Save result in R11 for SYSRET */
 
+    /* Restore stack and context */
+    addq $16, %rsp                /* Pop arg6 and arg7 */
+
+    /* Restore all registers except RAX (which has return value) */
     popq %rdi
     popq %rsi
     popq %rdx
@@ -270,19 +287,38 @@ isr_syscall_fastpath:
     popq %rbx
     popq %rbp
 
+    /* Pop CR3 and restore it */
     popq %rax
     movq %rax, %cr3
 
+    /* Pop saved syscall number (we don't need it anymore) */
     addq $8, %rsp
+
+    /* Now stack has: RIP, RFLAGS, user_rsp+8, SS
+     * We need to extract RIP and RFLAGS and original RSP for SYSRET
+     */
+
+    /* Restore the syscall return value to RAX */
     movq %r11, %rax
 
-    /* Use SYSRET to return to user mode */
-    /* We need to pop RIP and RFLAGS first */
-    popq %rcx                     /* RCX = user RIP */
-    popq %r11                     /* R11 = user RFLAGS */
-    addq $8, %rsp                 /* Skip CS */
-    popq %rsp                     /* RSP = user RSP */
+    /* Pop RIP into RCX for SYSRET */
+    popq %rcx
 
+    /* Pop RFLAGS into R11 for SYSRET */
+    popq %r11
+
+    /* Skip CS placeholder */
+    addq $8, %rsp
+
+    /* Pop user RSP (but don't restore it yet - SYSRET will use RSP)*/
+    popq %rsp
+
+    /* Skip SS placeholder */
+    addq $8, %rsp
+
+    /* Use SYSRET to return to user mode
+     * RCX = return address, R11 = RFLAGS, RSP = user stack
+     */
     sysretq
 .size isr_syscall_fastpath, . - isr_syscall_fastpath
 

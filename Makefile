@@ -331,6 +331,7 @@ KERNEL_SOURCES := \
     kernel/acpi/acpi.c \
     kernel/ipc/fut_object.c \
     kernel/ipc/fut_fipc.c \
+    kernel/ipc/fut_socket.c \
     kernel/net/fut_net.c \
     kernel/net/fut_net_dev.c \
     kernel/net/fut_net_loopback.c \

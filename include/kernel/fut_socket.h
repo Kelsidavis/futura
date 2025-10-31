@@ -13,6 +13,9 @@
 #include <stddef.h>
 #include <stdbool.h>
 
+/* Define ssize_t for freestanding environment */
+typedef int64_t ssize_t;
+
 /* ============================================================
  *   Socket States
  * ============================================================ */
@@ -33,7 +36,7 @@ enum fut_socket_state {
 struct fut_socket;
 struct fut_socket_listener;
 struct fut_socket_connection;
-struct fut_inode;
+struct fut_vnode;
 
 /* ============================================================
  *   Connection Queue Entry
@@ -116,7 +119,7 @@ typedef struct fut_socket {
 
     /* Path binding (for all sockets) */
     char *bound_path;                       /* Path if bound (max 108 bytes) */
-    struct fut_inode *path_inode;           /* VFS inode for bound path */
+    struct fut_vnode *path_vnode;           /* VFS vnode for bound path */
 
     /* Listener state (if state == LISTENING) */
     fut_socket_listener_t *listener;        /* Listener queue, NULL if not listening */

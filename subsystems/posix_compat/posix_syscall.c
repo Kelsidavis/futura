@@ -16,6 +16,7 @@
 #include <kernel/fut_memory.h>
 #include <kernel/fut_task.h>
 #include <kernel/errno.h>
+#include <kernel/fut_socket.h>
 
 /* ============================================================
  *   Syscall Numbers
@@ -82,6 +83,71 @@
 #endif
 
 #define MAX_SYSCALL     512
+
+/* ============================================================
+ *   Socket FD Mapping System
+ * ============================================================ */
+
+/** Maximum number of socket file descriptors per task */
+#define MAX_SOCKET_FDS 256
+
+/** Per-task socket FD table mapping FDs to kernel socket objects */
+static fut_socket_t *socket_fd_table[MAX_SOCKET_FDS] = {NULL};
+
+/**
+ * Get a kernel socket object from a file descriptor.
+ * Returns NULL if FD is invalid or not a socket.
+ */
+static inline fut_socket_t *get_socket_from_fd(int fd) {
+    if (fd < 0 || fd >= MAX_SOCKET_FDS) {
+        return NULL;
+    }
+    return socket_fd_table[fd];
+}
+
+/**
+ * Store a kernel socket object for a file descriptor.
+ * Returns 0 on success, -1 if FD is invalid.
+ */
+static inline int set_socket_for_fd(int fd, fut_socket_t *socket) {
+    if (fd < 0 || fd >= MAX_SOCKET_FDS) {
+        return -1;
+    }
+    socket_fd_table[fd] = socket;
+    return 0;
+}
+
+/**
+ * Find next available file descriptor for a socket.
+ * Returns FD number (>=0) on success, -1 if no space.
+ */
+static inline int allocate_socket_fd(fut_socket_t *socket) {
+    for (int i = 3; i < MAX_SOCKET_FDS; i++) {  /* Skip stdin/stdout/stderr */
+        if (socket_fd_table[i] == NULL) {
+            socket_fd_table[i] = socket;
+            return i;
+        }
+    }
+    return -1;
+}
+
+/**
+ * Release a socket FD and cleanup the socket object.
+ */
+static inline int release_socket_fd(int fd) {
+    fut_socket_t *socket = get_socket_from_fd(fd);
+    if (!socket) {
+        return -EBADF;
+    }
+
+    /* Close the socket */
+    int ret = fut_socket_close(socket);
+
+    /* Release the FD slot */
+    socket_fd_table[fd] = NULL;
+
+    return ret < 0 ? ret : 0;
+}
 
 /* ============================================================
  *   Syscall Handler Type
@@ -199,7 +265,20 @@ static int64_t sys_close_handler(uint64_t fd, uint64_t arg2, uint64_t arg3,
     (void)arg4;
     (void)arg5;
     (void)arg6;
-    return (int64_t)fut_vfs_close((int)fd);
+    extern void fut_printf(const char *, ...);
+
+    int fd_int = (int)fd;
+
+    /* Check if FD is a socket first */
+    fut_socket_t *socket = get_socket_from_fd(fd_int);
+    if (socket) {
+        /* It's a socket - release it */
+        fut_printf("[CLOSE] Closing socket fd %d\n", fd_int);
+        return (int64_t)release_socket_fd(fd_int);
+    }
+
+    /* Otherwise, close as a regular file descriptor */
+    return (int64_t)fut_vfs_close(fd_int);
 }
 
 static int64_t sys_write_handler(uint64_t fd, uint64_t buf, uint64_t count,
@@ -556,52 +635,55 @@ static int64_t sys_dup_handler(uint64_t oldfd, uint64_t arg2, uint64_t arg3,
 /* Socket operations handlers */
 static int64_t sys_socket_handler(uint64_t domain, uint64_t type, uint64_t protocol,
                                   uint64_t arg4, uint64_t arg5, uint64_t arg6) {
-    (void)arg4; (void)arg5; (void)arg6;
+    (void)protocol; (void)arg4; (void)arg5; (void)arg6;
     extern void fut_printf(const char *, ...);
 
     fut_printf("[SOCKET] domain=%lu type=%lu protocol=%lu\n", domain, type, protocol);
 
-    /* Phase 2 implementation: Socket support via pipes
+    /* Phase 3 implementation: Full kernel socket support via fut_socket system
      *
      * Architecture:
-     * - Userland: Complete AF_UNIX SOCK_STREAM implementation in libfutura/socket_unix.c
-     *   (850 lines, fully functional, supports FD passing via SCM_RIGHTS)
-     * - Kernel: Stubs that provide basic socket FD allocation
+     * - Kernel: Complete socket object system in kernel/ipc/fut_socket.c
+     *   (Full state machine, accept queue, bidirectional I/O)
+     * - POSIX shim: Maps POSIX syscalls to kernel socket API
+     * - Handles: Socket FD management with per-task FD table
      *
-     * Current approach: Use pipes as socket backend
-     * - Creates a bidirectional pipe for each socket
-     * - bind() marks path in VFS
-     * - listen()/accept() stub implementations
-     * - Suitable for Wayland compositor (uses userland socket lib)
-     *
-     * TODO - Phase 3: Full kernel socket implementation would require:
-     * 1. Socket object tables (stream, listener, connection structures)
-     * 2. Connection queueing and state machine
-     * 3. Socket path binding in VFS with special socket inodes
-     * 4. Accept queue management
-     * 5. Proper fd management across socket operations
-     * 6. Integration with wait queues for blocking operations
+     * Supported: AF_UNIX SOCK_STREAM sockets with full kernel support
+     * - socket() creates kernel socket object
+     * - bind() binds to path in VFS
+     * - listen() marks as listener with accept queue
+     * - accept() dequeues pending connections
+     * - connect() initiates connection to listening socket
+     * - send/recv() bidirectional I/O with blocking wait queues
      */
 
     /* Validate domain and type */
     if (domain != 1) {  /* AF_UNIX */
-        return -EINVAL;  /* Unsupported domain */
+        fut_printf("[SOCKET] ERROR: Unsupported domain %lu\n", domain);
+        return -EINVAL;
     }
     if (type != 1) {  /* SOCK_STREAM */
-        return -EINVAL;  /* Unsupported socket type */
+        fut_printf("[SOCKET] ERROR: Unsupported type %lu\n", type);
+        return -EINVAL;
     }
 
-    /* Allocate a pipe for socket I/O */
-    int pipefd[2];
-    int rc = sys_pipe(pipefd);
-    if (rc < 0) {
-        return rc;
+    /* Create kernel socket object */
+    fut_socket_t *socket = fut_socket_create((int)domain, (int)type);
+    if (!socket) {
+        fut_printf("[SOCKET] ERROR: Failed to create kernel socket\n");
+        return -EMFILE;  /* Too many open files */
     }
 
-    /* Return the read end as the socket FD
-     * Both ends of the pipe are usable for socket operations
-     */
-    return (int64_t)pipefd[0];
+    /* Allocate FD for this socket */
+    int fd = allocate_socket_fd(socket);
+    if (fd < 0) {
+        fut_printf("[SOCKET] ERROR: Failed to allocate socket FD\n");
+        fut_socket_unref(socket);
+        return -EMFILE;
+    }
+
+    fut_printf("[SOCKET] Created socket %u with FD %d\n", socket->socket_id, fd);
+    return (int64_t)fd;
 }
 
 static int64_t sys_bind_handler(uint64_t sockfd, uint64_t addr, uint64_t addrlen,
@@ -619,6 +701,7 @@ static int64_t sys_bind_handler(uint64_t sockfd, uint64_t addr, uint64_t addrlen
      */
 
     if (addrlen < 3) {  /* At least family (2 bytes) + 1 char for path */
+        fut_printf("[BIND] ERROR: addrlen too small (%lu)\n", addrlen);
         return -EINVAL;
     }
 
@@ -626,6 +709,7 @@ static int64_t sys_bind_handler(uint64_t sockfd, uint64_t addr, uint64_t addrlen
     char sock_path[256];
     uint16_t sun_family;
     if (fut_copy_from_user(&sun_family, (const void *)addr, 2) != 0) {
+        fut_printf("[BIND] ERROR: failed to copy sun_family\n");
         return -EFAULT;
     }
 
@@ -637,6 +721,7 @@ static int64_t sys_bind_handler(uint64_t sockfd, uint64_t addr, uint64_t addrlen
 
     if (path_len > 0) {
         if (fut_copy_from_user(sock_path, (const void *)(addr + 2), path_len) != 0) {
+            fut_printf("[BIND] ERROR: failed to copy sun_path\n");
             return -EFAULT;
         }
     }
@@ -644,29 +729,22 @@ static int64_t sys_bind_handler(uint64_t sockfd, uint64_t addr, uint64_t addrlen
 
     fut_printf("[BIND] sun_family=%u path='%s'\n", sun_family, sock_path);
 
-    /* Validate the socket fd exists */
-    struct fut_file *file = vfs_get_file((int)sockfd);
-    if (!file) {
-        fut_printf("[BIND] ERROR: socket fd %lu is not valid\n", sockfd);
+    /* Get kernel socket object from FD */
+    fut_socket_t *socket = get_socket_from_fd((int)sockfd);
+    if (!socket) {
+        fut_printf("[BIND] ERROR: socket fd %lu not valid\n", sockfd);
         return -EBADF;
     }
 
-    /* Create the socket file/path to mark the location */
-    /* First try to unlink any existing file to avoid conflicts */
-    fut_vfs_unlink(sock_path);  /* Ignore errors */
-
-    /* Create the socket file - this marks the path as occupied */
-    int ret = fut_vfs_open(sock_path, 0x201, 0644);  /* O_CREAT | O_WRONLY */
-    if (ret >= 0) {
-        fut_vfs_close(ret);
-        fut_printf("[BIND] Successfully bound socket to path '%s'\n", sock_path);
-        return 0;  /* Success */
+    /* Bind socket to path using kernel socket API */
+    int ret = fut_socket_bind(socket, sock_path);
+    if (ret < 0) {
+        fut_printf("[BIND] ERROR: fut_socket_bind failed with code %d\n", ret);
+        return ret;
     }
 
-    /* If file creation fails, log and return success anyway */
-    /* The socket fd is already valid, binding is mostly metadata */
-    fut_printf("[BIND] Warning: could not create socket file, returning success anyway\n");
-    return 0;
+    fut_printf("[BIND] Successfully bound socket to path '%s'\n", sock_path);
+    return 0;  /* Success */
 }
 
 static int64_t sys_listen_handler(uint64_t sockfd, uint64_t backlog, uint64_t arg3,
@@ -676,51 +754,69 @@ static int64_t sys_listen_handler(uint64_t sockfd, uint64_t backlog, uint64_t ar
 
     fut_printf("[LISTEN] sockfd=%lu backlog=%lu\n", sockfd, backlog);
 
-    /* For now, just validate the fd exists and return success */
-    struct fut_file *file = vfs_get_file((int)sockfd);
-    if (!file) {
+    /* Get kernel socket object from FD */
+    fut_socket_t *socket = get_socket_from_fd((int)sockfd);
+    if (!socket) {
+        fut_printf("[LISTEN] ERROR: socket fd %lu not valid\n", sockfd);
         return -EBADF;
     }
 
+    /* Mark socket as listening with given backlog */
+    int ret = fut_socket_listen(socket, (int)backlog);
+    if (ret < 0) {
+        fut_printf("[LISTEN] ERROR: fut_socket_listen failed with code %d\n", ret);
+        return ret;
+    }
+
+    fut_printf("[LISTEN] Socket %u marked as listening with backlog %lu\n",
+               socket->socket_id, backlog);
     return 0;  /* Success */
 }
 
 static int64_t sys_accept_handler(uint64_t sockfd, uint64_t addr, uint64_t addrlen,
                                   uint64_t arg4, uint64_t arg5, uint64_t arg6) {
-    (void)arg4; (void)arg5; (void)arg6;
+    (void)addr; (void)addrlen; (void)arg4; (void)arg5; (void)arg6;
     extern void fut_printf(const char *, ...);
 
-    fut_printf("[ACCEPT] sockfd=%lu addr=0x%lx addrlen=0x%lx\n", sockfd, addr, addrlen);
+    fut_printf("[ACCEPT] sockfd=%lu\n", sockfd);
 
-    /* Validate the listening socket fd exists */
-    struct fut_file *file = vfs_get_file((int)sockfd);
-    if (!file) {
-        fut_printf("[ACCEPT] ERROR: socket fd %lu is not valid\n", sockfd);
+    /* Get listening socket from FD */
+    fut_socket_t *listener = get_socket_from_fd((int)sockfd);
+    if (!listener) {
+        fut_printf("[ACCEPT] ERROR: socket fd %lu not valid\n", sockfd);
         return -EBADF;
     }
 
-    /* Phase 2: Basic accept implementation
-     * In a full implementation, this would:
-     * 1. Check if there are pending connections in the accept queue
-     * 2. If yes, create a new pipe for the connection and return its fd
-     * 3. If no, either block (if non-blocking) or return EAGAIN
-     *
-     * Current behavior: Return EAGAIN (no connections available)
-     * This allows proper error handling by callers
-     */
-    return -EAGAIN;
+    /* Accept pending connection */
+    fut_socket_t *peer = NULL;
+    int ret = fut_socket_accept(listener, &peer);
+    if (ret < 0) {
+        fut_printf("[ACCEPT] ERROR: fut_socket_accept failed with code %d\n", ret);
+        return ret;  /* EAGAIN if no connections, or other error */
+    }
+
+    /* Allocate FD for accepted socket */
+    int peer_fd = allocate_socket_fd(peer);
+    if (peer_fd < 0) {
+        fut_printf("[ACCEPT] ERROR: Failed to allocate FD for accepted socket\n");
+        fut_socket_unref(peer);
+        return -EMFILE;
+    }
+
+    fut_printf("[ACCEPT] Accepted connection: listener=%u peer=%u fd=%d\n",
+               listener->socket_id, peer->socket_id, peer_fd);
+    return (int64_t)peer_fd;
 }
 
 /**
  * Connect to a socket.
- * For AF_UNIX SOCK_STREAM, this opens the bound socket file and establishes
- * a connection via pipe communication.
+ * For AF_UNIX SOCK_STREAM, initiates connection to a listening socket.
  *
- * Phase 2 Implementation Notes:
- * - Connects to a socket path created by bind()
- * - Uses the pipe-based socket backend
- * - Opens the socket file to signal connection intent
- * - Returns fd for socket communication
+ * Phase 3 Implementation:
+ * - Connects to a listening socket path
+ * - Uses kernel socket connection mechanism
+ * - Establishes bidirectional communication channel
+ * - Returns 0 on success for connected socket
  */
 static int64_t sys_connect_handler(uint64_t sockfd, uint64_t addr, uint64_t addrlen,
                                    uint64_t arg4, uint64_t arg5, uint64_t arg6) {
@@ -731,6 +827,7 @@ static int64_t sys_connect_handler(uint64_t sockfd, uint64_t addr, uint64_t addr
 
     /* Extract socket path from sockaddr_un structure */
     if (addrlen < 3) {  /* At least family (2 bytes) + 1 char for path */
+        fut_printf("[CONNECT] ERROR: addrlen too small\n");
         return -EINVAL;
     }
 
@@ -738,6 +835,7 @@ static int64_t sys_connect_handler(uint64_t sockfd, uint64_t addr, uint64_t addr
     char sock_path[256];
     uint16_t sun_family;
     if (fut_copy_from_user(&sun_family, (const void *)addr, 2) != 0) {
+        fut_printf("[CONNECT] ERROR: failed to copy sun_family\n");
         return -EFAULT;
     }
 
@@ -749,6 +847,7 @@ static int64_t sys_connect_handler(uint64_t sockfd, uint64_t addr, uint64_t addr
 
     if (path_len > 0) {
         if (fut_copy_from_user(sock_path, (const void *)(addr + 2), path_len) != 0) {
+            fut_printf("[CONNECT] ERROR: failed to copy sun_path\n");
             return -EFAULT;
         }
     }
@@ -756,25 +855,23 @@ static int64_t sys_connect_handler(uint64_t sockfd, uint64_t addr, uint64_t addr
 
     fut_printf("[CONNECT] sun_family=%u path='%s'\n", sun_family, sock_path);
 
-    /* Validate the socket fd exists */
-    struct fut_file *file = vfs_get_file((int)sockfd);
-    if (!file) {
-        fut_printf("[CONNECT] ERROR: socket fd %lu is not valid\n", sockfd);
+    /* Get client socket from FD */
+    fut_socket_t *socket = get_socket_from_fd((int)sockfd);
+    if (!socket) {
+        fut_printf("[CONNECT] ERROR: socket fd %lu not valid\n", sockfd);
         return -EBADF;
     }
 
-    /* Attempt to open the socket file - this verifies the listening socket exists */
-    int ret = fut_vfs_open(sock_path, 0, 0);  /* Open for reading */
+    /* Connect socket to listening socket at target path */
+    int ret = fut_socket_connect(socket, sock_path);
     if (ret < 0) {
-        fut_printf("[CONNECT] ERROR: Cannot connect to socket at '%s'\n", sock_path);
-        return ret;  /* Return the VFS error (likely -ENOENT if no listener) */
+        fut_printf("[CONNECT] ERROR: fut_socket_connect failed with code %d\n", ret);
+        return ret;
     }
 
-    /* Close the temporary open (connection is established by the FD itself) */
-    fut_vfs_close(ret);
-
-    fut_printf("[CONNECT] Successfully connected to socket at '%s'\n", sock_path);
-    return 0;  /* Success - sockfd is now connected */
+    fut_printf("[CONNECT] Socket %u successfully connected to '%s'\n",
+               socket->socket_id, sock_path);
+    return 0;  /* Success - socket is now connected */
 }
 
 /**

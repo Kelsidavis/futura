@@ -9,6 +9,7 @@
 
 #include <kernel/fut_vfs.h>
 #include <kernel/fut_memory.h>
+#include <kernel/fut_timer.h>
 #include <stddef.h>
 #include <string.h>
 
@@ -927,10 +928,11 @@ static int ramfs_getattr(struct fut_vnode *vnode, struct fut_stat *stat) {
     stat->st_blksize = 4096;        /* Filesystem block size */
     stat->st_blocks = (stat->st_size + 511) / 512;  /* Number of 512-byte blocks */
 
-    /* Timestamps (not tracked in ramfs) */
-    stat->st_atime = 0;             /* Access time */
-    stat->st_mtime = 0;             /* Modification time */
-    stat->st_ctime = 0;             /* Change time */
+    /* Timestamps - using current time as default since ramfs is in-memory */
+    uint64_t now_ns = fut_get_time_ns();
+    stat->st_atime = now_ns;        /* Access time (current) */
+    stat->st_mtime = now_ns;        /* Modification time (current) */
+    stat->st_ctime = now_ns;        /* Change time (current) */
 
     return 0;
 }

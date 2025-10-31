@@ -55,6 +55,9 @@ long syscall(long number, ...) {
     case SYS_close_range:
         result = ret_enosys();
         break;
+    case SYS_openat:
+        result = ret_enosys();
+        break;
     default:
         result = ret_enosys();
         break;

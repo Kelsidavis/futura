@@ -51,6 +51,9 @@ int main(void) {
     const char msg[] = "[COMPOSITOR] Reached main, stdio initialized\n";
     sys_write(1, msg, sizeof(msg) - 1);
 
+    /* Create /tmp directory for Wayland sockets and lock files */
+    sys_mkdir("/tmp", 0777);
+
     struct compositor_state comp = {0};
 
     const char *bb_env = getenv("WAYLAND_BACKBUFFER");

@@ -11,6 +11,7 @@
 
 #include <errno.h>
 #include <stddef.h>
+#include <fcntl.h>
 
 #include <wayland-server-protocol.h>
 #include <wayland-util.h>
@@ -25,10 +26,19 @@ void *memset(void *dest, int c, size_t n);
 
 #define NS_PER_MS 1000000ULL
 
+/* Use system fcntl.h definitions when available */
+#ifndef O_RDWR
 #define O_RDWR      0x0002
+#endif
+#ifndef PROT_READ
 #define PROT_READ   0x0001
+#endif
+#ifndef PROT_WRITE
 #define PROT_WRITE  0x0002
+#endif
+#ifndef MAP_SHARED
 #define MAP_SHARED  0x0001
+#endif
 
 #define COLOR_CLEAR          0xFF000000u
 #define COLOR_BAR_FOCUSED    0xFF2F6DB5u
@@ -378,7 +388,6 @@ static void bb_fill_rect(struct backbuffer *bb, fut_rect_t rect, uint32_t argb) 
     }
 
     uint8_t *base = (uint8_t *)bb->px;
-    size_t row_bytes = (size_t)rect.w * 4u;
 
     /* For large rects, use faster 64-bit fill */
     if (rect.w >= 4) {

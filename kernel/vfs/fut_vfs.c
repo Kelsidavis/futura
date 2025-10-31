@@ -47,6 +47,7 @@ static const struct fut_fs_type *registered_fs[MAX_FS_TYPES];
 static int num_fs_types = 0;
 
 static struct fut_mount *mount_list = NULL;
+static uint64_t next_device_id = 1;  /* Counter for generating unique device IDs */
 static struct fut_file *file_table[MAX_OPEN_FILES];
 
 /* Root vnode - set when root filesystem is mounted */
@@ -174,6 +175,7 @@ int fut_vfs_mount(const char *device, const char *mountpoint,
     mount->mountpoint = mountpoint;
     mount->fs = fs;
     mount->flags = flags;
+    mount->st_dev = next_device_id++;  /* Assign unique device ID */
     mount->block_device_handle = block_device_handle;  /* Store capability handle */
 
     bool is_root_mount = (mountpoint && mountpoint[0] == '/' && mountpoint[1] == '\0');
@@ -1397,7 +1399,7 @@ int fut_vfs_stat(const char *path, struct fut_stat *stat) {
         stat->st_mode = vnode->mode;
         stat->st_nlink = vnode->nlinks;
         stat->st_size = vnode->size;
-        stat->st_dev = 0;    /* TODO: Device ID */
+        stat->st_dev = vnode->mount ? vnode->mount->st_dev : 0;
         stat->st_uid = 0;
         stat->st_gid = 0;
         stat->st_blksize = 4096;

@@ -82,10 +82,36 @@ sync_exception_entry:
     mrs     x1, far_el1
     str     x1, [x0, #280]      /* frame->far */
 
-    /* Clear FPU state for now (TODO: save actual FPU registers if needed) */
-    /* frame->fpu_state[0-63] = 0 (skip for now) */
-    /* frame->fpsr = 0 */
-    /* frame->fpcr = 0 */
+    /* Save FPU state (v0-v31 registers and control registers)
+     * FPU state is stored in frame->fpu_state[64] at offset 288
+     * Each 128-bit register v[i] is saved as 2 x 64-bit words
+     */
+
+    /* Save v0-v1 (128-bit each = 256 bits = 32 bytes) */
+    stp     d0, d1, [x0, #288]
+    stp     d2, d3, [x0, #304]
+    stp     d4, d5, [x0, #320]
+    stp     d6, d7, [x0, #336]
+    stp     d8, d9, [x0, #352]
+    stp     d10, d11, [x0, #368]
+    stp     d12, d13, [x0, #384]
+    stp     d14, d15, [x0, #400]
+    stp     d16, d17, [x0, #416]
+    stp     d18, d19, [x0, #432]
+    stp     d20, d21, [x0, #448]
+    stp     d22, d23, [x0, #464]
+    stp     d24, d25, [x0, #480]
+    stp     d26, d27, [x0, #496]
+    stp     d28, d29, [x0, #512]
+    stp     d30, d31, [x0, #528]
+
+    /* Save FPSR (Floating-point Status Register) at frame->fpsr offset 800 */
+    mrs     x1, fpsr
+    str     w1, [x0, #800]
+
+    /* Save FPCR (Floating-point Control Register) at frame->fpcr offset 804 */
+    mrs     x1, fpcr
+    str     w1, [x0, #804]
 
     /* Call C-level exception dispatcher */
     bl      arm64_exception_dispatch
@@ -116,6 +142,36 @@ sync_exception_entry:
     /* Restore x0, x1 from frame */
     ldp     x1, x1, [x0, #0]   /* Load x0 from frame->x[0] */
     mov     x1, x1             /* x0 is already restored by ldp */
+
+    /* Restore FPU state before returning from exception
+     * FPU registers and control state must be restored
+     */
+
+    /* Restore FPSR (Floating-point Status Register) from offset 800 */
+    ldr     w1, [x0, #800]
+    msr     fpsr, x1
+
+    /* Restore FPCR (Floating-point Control Register) from offset 804 */
+    ldr     w1, [x0, #804]
+    msr     fpcr, x1
+
+    /* Restore v0-v31 registers from frame->fpu_state[64] at offset 288 */
+    ldp     d0, d1, [x0, #288]
+    ldp     d2, d3, [x0, #304]
+    ldp     d4, d5, [x0, #320]
+    ldp     d6, d7, [x0, #336]
+    ldp     d8, d9, [x0, #352]
+    ldp     d10, d11, [x0, #368]
+    ldp     d12, d13, [x0, #384]
+    ldp     d14, d15, [x0, #400]
+    ldp     d16, d17, [x0, #416]
+    ldp     d18, d19, [x0, #432]
+    ldp     d20, d21, [x0, #448]
+    ldp     d22, d23, [x0, #464]
+    ldp     d24, d25, [x0, #480]
+    ldp     d26, d27, [x0, #496]
+    ldp     d28, d29, [x0, #512]
+    ldp     d30, d31, [x0, #528]
 
     /* Restore SP (update to next frame) */
     ldr     x1, [x0, #248]

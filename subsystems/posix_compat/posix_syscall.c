@@ -17,6 +17,7 @@
 #include <kernel/fut_task.h>
 #include <kernel/errno.h>
 #include <kernel/fut_socket.h>
+#include <kernel/signal.h>
 
 /* ============================================================
  *   Syscall Numbers
@@ -54,6 +55,8 @@
 #endif
 #define SYS_wait4       61
 #define SYS_kill        62
+#define SYS_sigaction   13
+#define SYS_sigprocmask 14
 #define SYS_getpid      39
 #define SYS_socket      41
 #define SYS_connect     46
@@ -592,6 +595,134 @@ static int64_t sys_getpid_handler(uint64_t arg1, uint64_t arg2, uint64_t arg3,
     return (int64_t)current->pid;
 }
 
+/* ============================================================
+ *   Signal Handling Syscalls
+ * ============================================================ */
+
+/**
+ * kill() - Send signal to a task
+ * @arg1: pid (target process ID)
+ * @arg2: signum (signal number, 1-30)
+ */
+static int64_t sys_kill_handler(uint64_t pid, uint64_t signum, uint64_t arg3,
+                                uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg3; (void)arg4; (void)arg5; (void)arg6;
+
+    extern fut_task_t *fut_task_current(void);
+    fut_task_t *current = fut_task_current();
+    if (!current) {
+        return -EINVAL;
+    }
+
+    /* Find target task by PID */
+    fut_task_t *target = NULL;
+
+    /* For now, simple approach: if pid == 0, send to current process group
+     * if pid > 0, send to specific process
+     * For MVP, we'll just handle pid > 0 case targeting current process for testing
+     */
+    if (pid == 0) {
+        /* Send to current process group - not yet implemented */
+        return -EINVAL;
+    } else {
+        /* Send to specific process - for now just support sending to self or children */
+        /* TODO: Implement full process lookup by PID */
+        if (pid == current->pid) {
+            target = current;
+        } else {
+            /* Look through children */
+            target = current->first_child;
+            while (target && target->pid != pid) {
+                target = target->sibling;
+            }
+        }
+    }
+
+    if (!target) {
+        return -ESRCH;  /* No such process */
+    }
+
+    /* Validate signal number */
+    if ((int)signum < 1 || (int)signum >= _NSIG) {
+        return -EINVAL;
+    }
+
+    /* Queue the signal */
+    return fut_signal_send(target, (int)signum);
+}
+
+/**
+ * sigaction() - Install signal handler
+ * @arg1: signum (signal number)
+ * @arg2: act (new sigaction, may be NULL)
+ * @arg3: oldact (old sigaction, may be NULL)
+ */
+static int64_t sys_sigaction_handler(uint64_t signum, uint64_t act, uint64_t oldact,
+                                     uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg4; (void)arg5; (void)arg6;
+
+    extern fut_task_t *fut_task_current(void);
+    fut_task_t *current = fut_task_current();
+    if (!current) {
+        return -EINVAL;
+    }
+
+    /* Validate signal number */
+    if ((int)signum < 1 || (int)signum >= _NSIG) {
+        return -EINVAL;
+    }
+
+    /* SIGKILL and SIGSTOP cannot be caught */
+    if ((int)signum == SIGKILL || (int)signum == SIGSTOP) {
+        return -EINVAL;
+    }
+
+    /* Copy old action if requested */
+    if (oldact) {
+        struct sigaction *old = (struct sigaction *)oldact;
+        old->sa_handler = fut_signal_get_handler(current, (int)signum);
+        old->sa_mask = current->signal_mask;
+        old->sa_flags = 0;  /* TODO: Track SA_* flags */
+    }
+
+    /* Install new handler if provided */
+    if (act) {
+        struct sigaction *new = (struct sigaction *)act;
+        sighandler_t handler = new->sa_handler;
+        int ret = fut_signal_set_handler(current, (int)signum, handler);
+        if (ret < 0) {
+            return ret;
+        }
+
+        /* TODO: Handle sa_mask and sa_flags */
+        /* For now, sa_mask is ignored - could be used to auto-block signals during handler */
+    }
+
+    return 0;
+}
+
+/**
+ * sigprocmask() - Modify signal mask
+ * @arg1: how (SIGPROCMASK_BLOCK, SETMASK, UNBLOCK)
+ * @arg2: set (signals to modify)
+ * @arg3: oldset (old mask output)
+ */
+static int64_t sys_sigprocmask_handler(uint64_t how, uint64_t set, uint64_t oldset,
+                                       uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg4; (void)arg5; (void)arg6;
+
+    extern fut_task_t *fut_task_current(void);
+    fut_task_t *current = fut_task_current();
+    if (!current) {
+        return -EINVAL;
+    }
+
+    sigset_t *set_ptr = (set == 0) ? NULL : (sigset_t *)set;
+    sigset_t *oldset_ptr = (oldset == 0) ? NULL : (sigset_t *)oldset;
+
+    return fut_signal_procmask(current, (int)how, set_ptr, oldset_ptr);
+}
+
 /* dup() handler - duplicate file descriptor with auto selection */
 static int64_t sys_dup_handler(uint64_t oldfd, uint64_t arg2, uint64_t arg3,
                                uint64_t arg4, uint64_t arg5, uint64_t arg6) {
@@ -996,6 +1127,9 @@ static syscall_handler_t syscall_table[MAX_SYSCALL] = {
     [SYS_unlink]     = sys_unlink_handler,
     [SYS_getdents64] = sys_getdents64_handler,
     [SYS_getpid]     = sys_getpid_handler,
+    [SYS_sigaction]  = sys_sigaction_handler,
+    [SYS_sigprocmask] = sys_sigprocmask_handler,
+    [SYS_kill]       = sys_kill_handler,
     [SYS_time_millis] = sys_time_millis_handler,
     /* Socket operations */
     [SYS_socket]     = sys_socket_handler,

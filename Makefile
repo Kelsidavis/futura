@@ -636,14 +636,18 @@ userland:
 	@echo "Building userland services..."
 	@$(MAKE) -C src/user all
 
-.PHONY: vendor libfutura userspace stage
+.PHONY: vendor libfutura open_wrapper userspace stage
 
 vendor: third_party-wayland
 
 libfutura:
 	@$(MAKE) -C src/user/libfutura all
 
-userspace: vendor libfutura
+open_wrapper:
+	@mkdir -p $(BUILD_DIR)/lib
+	@gcc-14 -m64 -fPIC -shared -o $(BUILD_DIR)/lib/libopen_wrapper.so src/user/libfutura/open_wrapper.c
+
+userspace: vendor libfutura open_wrapper
 	@echo "Building Wayland demo userland..."
 	@$(MAKE) -C src/user/compositor/futura-wayland all
 	@$(MAKE) -C src/user/clients/wl-simple all

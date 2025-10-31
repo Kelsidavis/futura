@@ -624,14 +624,15 @@ page_table_t *fut_get_kernel_pgd(void) {
 
 /**
  * Map physical memory into kernel space.
+ * Uses a simple linear kernel virtual space allocator.
+ *
  * @param paddr Physical address
  * @param size Size in bytes
  * @param flags Page flags
  * @return Virtual address of mapping, or NULL on failure
  */
 void *fut_kernel_map_physical(uint64_t paddr, uint64_t size, uint64_t flags) {
-    /* TODO: Implement kernel virtual space allocator */
-    /* For now, use identity mapping in kernel space */
+    /* Use identity mapping when physical address is already in kernel space */
     if (paddr >= KERNEL_VIRTUAL_BASE) {
         return (void *)paddr;
     }

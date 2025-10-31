@@ -264,6 +264,7 @@ struct fut_mount {
     struct fut_vnode *root;         /* Root vnode of mounted filesystem */
     int flags;                      /* Mount flags */
     void *fs_data;                  /* Filesystem-specific data */
+    uint64_t st_dev;                /* Device ID for stat() */
 
     /* Capability-based block device access */
     fut_handle_t block_device_handle; /* Block device capability handle (FUT_INVALID_HANDLE if none) */

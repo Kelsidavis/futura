@@ -723,19 +723,120 @@ void fut_paging_init(void) {
  *   Debug Functions
  * ============================================================ */
 
+/**
+ * Dump page table entries for a virtual address.
+ * Walks the 4-level page table hierarchy and prints entries.
+ */
 void fut_dump_page_tables(fut_vmem_context_t *ctx, uint64_t vaddr) {
-    (void)ctx;
-    (void)vaddr;
-    /* TODO: Implement page table dumping for debugging */
+    extern void fut_printf(const char *fmt, ...);
+
+    if (!ctx || !ctx->pgd) {
+        fut_printf("[PT-DUMP] Invalid context\n");
+        return;
+    }
+
+    fut_printf("[PT-DUMP] Walking page tables for vaddr=0x%llx\n", vaddr);
+
+    /* Level 0: PGD */
+    int pgd_idx = PGD_INDEX(vaddr);
+    pte_t pgd_entry = ctx->pgd->entries[pgd_idx];
+    fut_printf("[PT-DUMP] PGD[%d] = 0x%llx %s\n", pgd_idx, pgd_entry,
+               (pgd_entry & PTE_VALID) ? "(valid)" : "(invalid)");
+
+    if (!(pgd_entry & PTE_VALID)) {
+        return;
+    }
+
+    /* Level 1: PMD */
+    phys_addr_t pmd_phys = pgd_entry & PTE_PHYS_ADDR_MASK;
+    page_table_t *pmd = (page_table_t *)pmd_phys;
+    int pmd_idx = PMD_INDEX(vaddr);
+    pte_t pmd_entry = pmd->entries[pmd_idx];
+    fut_printf("[PT-DUMP]  PMD[%d] = 0x%llx %s\n", pmd_idx, pmd_entry,
+               (pmd_entry & PTE_VALID) ? "(valid)" : "(invalid)");
+
+    if (!(pmd_entry & PTE_VALID)) {
+        return;
+    }
+
+    /* Level 2: PTE */
+    phys_addr_t pte_phys = pmd_entry & PTE_PHYS_ADDR_MASK;
+    page_table_t *pte_table = (page_table_t *)pte_phys;
+    int pte_idx = PTE_INDEX(vaddr);
+    pte_t pte_entry = pte_table->entries[pte_idx];
+    fut_printf("[PT-DUMP]   PTE[%d] = 0x%llx %s\n", pte_idx, pte_entry,
+               (pte_entry & PTE_VALID) ? "(valid)" : "(invalid)");
+
+    if (!(pte_entry & PTE_VALID)) {
+        return;
+    }
+
+    /* Level 3: Page */
+    phys_addr_t page_phys = pte_entry & PTE_PHYS_ADDR_MASK;
+    page_table_t *page_table = (page_table_t *)page_phys;
+    int page_idx = PAGE_INDEX(vaddr);
+    pte_t page_entry = page_table->entries[page_idx];
+    fut_printf("[PT-DUMP]    Page[%d] = 0x%llx %s\n", page_idx, page_entry,
+               (page_entry & PTE_VALID) ? "(valid)" : "(invalid)");
+
+    if (page_entry & PTE_VALID) {
+        phys_addr_t final_phys = page_entry & PTE_PHYS_ADDR_MASK;
+        uint64_t page_offset = vaddr & 0xFFF;
+        phys_addr_t final_addr = final_phys + page_offset;
+        fut_printf("[PT-DUMP]    Physical address: 0x%llx\n", final_addr);
+    }
 }
 
+/**
+ * Print virtual memory context statistics.
+ * Shows PGD address and reference count.
+ */
 void fut_vmem_print_stats(fut_vmem_context_t *ctx) {
-    (void)ctx;
-    /* TODO: Implement statistics printing */
+    extern void fut_printf(const char *fmt, ...);
+
+    if (!ctx) {
+        fut_printf("[VMEM-STATS] Invalid context\n");
+        return;
+    }
+
+    fut_printf("[VMEM-STATS] Context: %p\n", (void *)ctx);
+    fut_printf("[VMEM-STATS]   PGD: 0x%llx\n", (uint64_t)ctx->pgd);
+    fut_printf("[VMEM-STATS]   TTBR0_EL1: 0x%llx\n", ctx->ttbr0_el1);
+    fut_printf("[VMEM-STATS]   Reference count: %llu\n", ctx->ref_count);
 }
 
+/**
+ * Verify virtual memory context consistency.
+ * Checks that PGD is valid and aligned.
+ */
 bool fut_vmem_verify(fut_vmem_context_t *ctx) {
-    (void)ctx;
-    /* TODO: Implement consistency checking */
+    extern void fut_printf(const char *fmt, ...);
+
+    if (!ctx) {
+        fut_printf("[VMEM-VERIFY] NULL context\n");
+        return false;
+    }
+
+    if (!ctx->pgd) {
+        fut_printf("[VMEM-VERIFY] NULL PGD\n");
+        return false;
+    }
+
+    /* Check PGD alignment */
+    if (!IS_PAGE_ALIGNED((uintptr_t)ctx->pgd)) {
+        fut_printf("[VMEM-VERIFY] PGD not page-aligned: 0x%llx\n",
+                   (uint64_t)ctx->pgd);
+        return false;
+    }
+
+    /* Check TTBR0_EL1 alignment */
+    if (!IS_PAGE_ALIGNED(ctx->ttbr0_el1)) {
+        fut_printf("[VMEM-VERIFY] TTBR0_EL1 not page-aligned: 0x%llx\n",
+                   ctx->ttbr0_el1);
+        return false;
+    }
+
+    fut_printf("[VMEM-VERIFY] Context OK: PGD=0x%llx TTBR0_EL1=0x%llx\n",
+               (uint64_t)ctx->pgd, ctx->ttbr0_el1);
     return true;
 }

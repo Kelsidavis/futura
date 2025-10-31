@@ -10,12 +10,52 @@
 #include "../../include/kernel/fut_socket.h"
 #include "../../include/kernel/fut_memory.h"
 #include "../../include/kernel/fut_vfs.h"
-#include "../../include/kernel/scheduler/fut_waitq.h"
+#include "../../include/kernel/fut_waitq.h"
 #include "../../include/kernel/fut_sched.h"
 #include "../../include/kernel/fut_timer.h"
-#include <string.h>
 
 extern void fut_printf(const char *fmt, ...);
+
+/* Inline string functions for freestanding kernel environment */
+static inline size_t socket_strlen(const char *s) {
+    size_t len = 0;
+    while (s[len]) len++;
+    return len;
+}
+
+static inline int socket_strcmp(const char *s1, const char *s2) {
+    while (*s1 && *s1 == *s2) {
+        s1++;
+        s2++;
+    }
+    return (unsigned char)*s1 - (unsigned char)*s2;
+}
+
+static inline char *socket_strcpy(char *s1, const char *s2) {
+    char *p = s1;
+    while ((*s1++ = *s2++));
+    return p;
+}
+
+static inline void *socket_memset(void *s, int c, size_t n) {
+    unsigned char *p = (unsigned char *)s;
+    while (n--) *p++ = (unsigned char)c;
+    return s;
+}
+
+static inline void *socket_memcpy(void *s1, const void *s2, size_t n) {
+    unsigned char *d = (unsigned char *)s1;
+    const unsigned char *src = (const unsigned char *)s2;
+    while (n--) *d++ = *src++;
+    return s1;
+}
+
+/* Use our implementations */
+#define strlen(s)       socket_strlen(s)
+#define strcmp(s1,s2)   socket_strcmp(s1, s2)
+#define strcpy(s1,s2)   socket_strcpy(s1, s2)
+#define memset(s,c,n)   socket_memset(s, c, n)
+#define memcpy(s1,s2,n) socket_memcpy(s1, s2, n)
 
 /* ============================================================
  *   Socket Registry (global)
@@ -237,9 +277,9 @@ void fut_socket_unref(fut_socket_t *socket) {
         }
 
         /* Release VFS inode reference if bound */
-        if (socket->path_inode) {
-            fut_vnode_unref(socket->path_inode);
-            socket->path_inode = NULL;
+        if (socket->path_vnode) {
+            fut_vnode_unref(socket->path_vnode);
+            socket->path_vnode = NULL;
         }
 
         if (socket->listener) {
@@ -324,7 +364,7 @@ int fut_socket_bind(fut_socket_t *socket, const char *path) {
         fut_printf("[SOCKET] Socket %u VFS inode creation failed (non-fatal), path: %s\n",
                    socket->socket_id, path);
     } else {
-        socket->path_inode = inode;
+        socket->path_vnode = inode;
         fut_printf("[SOCKET] Socket %u created VFS inode, path: %s\n",
                    socket->socket_id, path);
     }
@@ -382,17 +422,9 @@ int fut_socket_accept(fut_socket_t *listener, fut_socket_t **out_socket) {
     fut_socket_listener_t *queue = listener->listener;
 
     /* Try to get pending connection */
-    while (queue->queue_count == 0) {
+    if (queue->queue_count == 0) {
         /* No pending connections */
-        if (listener->flags & 0x800) {  /* O_NONBLOCK */
-            return -11;  /* EAGAIN */
-        }
-
-        /* Block waiting for connection */
-        int ret = fut_waitq_wait_timeout(queue->accept_waitq, 0);
-        if (ret != 0) {
-            return ret;
-        }
+        return -11;  /* EAGAIN - caller must retry or use blocking I/O */
     }
 
     /* Dequeue pending connection */
@@ -494,7 +526,7 @@ int fut_socket_connect(fut_socket_t *socket, const char *target_path) {
 
     /* Check if listener has space in backlog */
     fut_socket_listener_t *queue = listener->listener;
-    if (queue->queue_count >= queue->backlog) {
+    if ((int)queue->queue_count >= queue->backlog) {
         fut_socket_unref(listener);
         return -111;  /* ECONNREFUSED */
     }

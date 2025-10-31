@@ -110,48 +110,6 @@ long syscall(long number, ...) {
     return result;
 }
 
-/* Wrapper for open() to handle unsupported flags */
-int open(const char *pathname, int flags, ...) {
-    va_list ap;
-    mode_t mode = 0;
-
-    if (flags & (O_CREAT | O_TMPFILE)) {
-        va_start(ap, flags);
-        mode = va_arg(ap, mode_t);
-        va_end(ap);
-    }
-
-    extern void fut_printf(const char *, ...);
-    fut_printf("[OPEN-WRAPPER] pathname=%s flags=0x%x mode=0%o\n", pathname, flags, mode);
-
-    long result = syscall(SYS_open, pathname, flags, mode);
-
-    fut_printf("[OPEN-WRAPPER] syscall returned %ld\n", result);
-
-    return (int)result;
-}
-
-/* Wrapper for open64() - same as open() for our purposes */
-int open64(const char *pathname, int flags, ...) {
-    va_list ap;
-    mode_t mode = 0;
-
-    if (flags & (O_CREAT | O_TMPFILE)) {
-        va_start(ap, flags);
-        mode = va_arg(ap, mode_t);
-        va_end(ap);
-    }
-
-    extern void fut_printf(const char *, ...);
-    fut_printf("[OPEN64-WRAPPER] pathname=%s flags=0x%x mode=0%o\n", pathname, flags, mode);
-
-    long result = syscall(SYS_open, pathname, flags, mode);
-
-    fut_printf("[OPEN64-WRAPPER] syscall returned %ld\n", result);
-
-    return (int)result;
-}
-
 #if defined(__GNUC__) && !defined(__APPLE__)
 __asm__(".symver syscall,syscall@GLIBC_2.2.5");
 #endif

@@ -12,6 +12,7 @@
 #include <stdint.h>
 #include <stddef.h>
 #include <stdbool.h>
+#include <kernel/fut_sched.h>
 
 /* Define ssize_t for freestanding environment */
 typedef int64_t ssize_t;
@@ -93,6 +94,7 @@ typedef struct fut_socket_pair {
     struct fut_waitq *recv_waitq;           /* Wait queue for data availability */
     struct fut_socket *peer;                /* Connected peer socket */
     uint64_t refcount;                      /* Shared refcount */
+    fut_spinlock_t lock;                    /* Spinlock for buffer synchronization */
 } fut_socket_pair_t;
 
 #define FUT_SOCKET_BUFSIZE 4096  /* Per-direction buffer size */

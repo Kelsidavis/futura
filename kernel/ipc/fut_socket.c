@@ -470,6 +470,7 @@ int fut_socket_accept(fut_socket_t *listener, fut_socket_t **out_socket) {
         }
         fut_waitq_init(pair->send_waitq);
         fut_waitq_init(pair->recv_waitq);
+        /* pair->lock is already zeroed by memset */
         pair->peer = NULL;  /* Will be set when accepted socket is used */
         pair->refcount = 2;  /* Shared between listener and peer */
 
@@ -565,16 +566,30 @@ ssize_t fut_socket_send(fut_socket_t *socket, const void *buf, size_t len) {
         return 0;  /* Peer closed */
     }
 
-    /* Write to peer's receive buffer */
+    fut_spinlock_acquire(&pair->lock);
+
+    /* Block until send buffer has space (or socket is non-blocking) */
     uint32_t available = pair->recv_size -
         ((pair->recv_head + pair->recv_size - pair->recv_tail) % pair->recv_size);
 
-    if (available == 0) {
+    while (available == 0) {
         if (socket->flags & 0x800) {  /* O_NONBLOCK */
+            fut_spinlock_release(&pair->lock);
             return -11;  /* EAGAIN */
         }
-        /* Would block - not yet implemented */
-        return -11;  /* EAGAIN */
+        /* Blocking socket: wait for receiver to read data */
+        fut_waitq_sleep_locked(pair->send_waitq, &pair->lock, FUT_THREAD_BLOCKED);
+        /* When we wake up, reacquire the lock */
+        fut_spinlock_acquire(&pair->lock);
+
+        /* Check again - peer might have closed while we were sleeping */
+        if (!pair->peer) {
+            fut_spinlock_release(&pair->lock);
+            return 0;  /* Peer closed */
+        }
+
+        available = pair->recv_size -
+            ((pair->recv_head + pair->recv_size - pair->recv_tail) % pair->recv_size);
     }
 
     size_t to_write = (len > available) ? available : len;
@@ -587,6 +602,8 @@ ssize_t fut_socket_send(fut_socket_t *socket, const void *buf, size_t len) {
 
     /* Wake receiver */
     fut_waitq_wake_one(pair->recv_waitq);
+
+    fut_spinlock_release(&pair->lock);
 
     fut_printf("[SOCKET] Socket %u sent %zu bytes\n", socket->socket_id, to_write);
     return (ssize_t)to_write;
@@ -602,16 +619,30 @@ ssize_t fut_socket_recv(fut_socket_t *socket, void *buf, size_t len) {
 
     fut_socket_pair_t *pair = socket->pair;
 
-    /* Read from own receive buffer */
+    fut_spinlock_acquire(&pair->lock);
+
+    /* Block until data is available (or socket is non-blocking) */
     uint32_t available = (pair->recv_head + pair->recv_size - pair->recv_tail) %
                          pair->recv_size;
 
-    if (available == 0) {
+    while (available == 0) {
         if (socket->flags & 0x800) {  /* O_NONBLOCK */
+            fut_spinlock_release(&pair->lock);
             return -11;  /* EAGAIN */
         }
-        /* Would block - not yet implemented */
-        return 0;  /* EOF */
+        /* Blocking socket: wait for sender to write data */
+        fut_waitq_sleep_locked(pair->recv_waitq, &pair->lock, FUT_THREAD_BLOCKED);
+        /* When we wake up, reacquire the lock */
+        fut_spinlock_acquire(&pair->lock);
+
+        /* Check again - peer might have closed while we were sleeping */
+        if (!pair->peer) {
+            fut_spinlock_release(&pair->lock);
+            return 0;  /* EOF - peer closed */
+        }
+
+        available = (pair->recv_head + pair->recv_size - pair->recv_tail) %
+                    pair->recv_size;
     }
 
     size_t to_read = (len > available) ? available : len;
@@ -624,6 +655,8 @@ ssize_t fut_socket_recv(fut_socket_t *socket, void *buf, size_t len) {
 
     /* Wake sender */
     fut_waitq_wake_one(pair->send_waitq);
+
+    fut_spinlock_release(&pair->lock);
 
     fut_printf("[SOCKET] Socket %u received %zu bytes\n", socket->socket_id, to_read);
     return (ssize_t)to_read;

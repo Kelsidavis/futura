@@ -27,6 +27,112 @@ static uint32_t socket_next_id = 1;
 static fut_spinlock_t socket_lock;
 
 /* ============================================================
+ *   VFS Helper Functions
+ * ============================================================ */
+
+/**
+ * Helper: Parse path into parent directory and filename.
+ * Returns allocated component array on success, NULL on failure.
+ * Caller must free the returned pointer.
+ */
+static char *parse_socket_path(const char *path, const char **out_filename) {
+    if (!path || !out_filename) {
+        return NULL;
+    }
+
+    size_t path_len = strlen(path);
+    if (path_len == 0 || path_len > 108) {
+        return NULL;
+    }
+
+    /* Find last slash to split path */
+    const char *last_slash = NULL;
+    for (size_t i = path_len; i > 0; i--) {
+        if (path[i - 1] == '/') {
+            last_slash = &path[i - 1];
+            break;
+        }
+    }
+
+    if (!last_slash) {
+        /* No parent directory, use current directory (not supported) */
+        return NULL;
+    }
+
+    size_t parent_len = last_slash - path;
+    if (parent_len == 0) {
+        parent_len = 1;  /* Root directory "/" */
+    }
+
+    char *parent_path = fut_malloc(parent_len + 1);
+    if (!parent_path) {
+        return NULL;
+    }
+
+    if (parent_len == 1) {
+        parent_path[0] = '/';
+    } else {
+        memcpy(parent_path, path, parent_len);
+    }
+    parent_path[parent_len] = '\0';
+
+    *out_filename = last_slash + 1;
+    return parent_path;
+}
+
+/**
+ * Create a socket inode in the VFS at the given path.
+ * Returns the created vnode on success, NULL on failure.
+ */
+static struct fut_vnode *fut_vfs_create_socket(const char *path) {
+    if (!path) {
+        return NULL;
+    }
+
+    const char *filename = NULL;
+    char *parent_path = parse_socket_path(path, &filename);
+    if (!parent_path || !filename || filename[0] == '\0') {
+        if (parent_path) {
+            fut_free(parent_path);
+        }
+        return NULL;
+    }
+
+    /* Lookup parent directory */
+    struct fut_vnode *parent = NULL;
+    int lookup_ret = fut_vfs_lookup(parent_path, &parent);
+    fut_free(parent_path);
+
+    if (lookup_ret != 0 || !parent) {
+        return NULL;
+    }
+
+    /* Check if parent is a directory */
+    if (parent->type != VN_DIR) {
+        fut_vnode_unref(parent);
+        return NULL;
+    }
+
+    /* Call filesystem's create operation with socket inode type mode */
+    struct fut_vnode *socket_inode = NULL;
+    if (!parent->ops || !parent->ops->create) {
+        fut_vnode_unref(parent);
+        return NULL;
+    }
+
+    /* Mode: S_IFSOCK (0140000) | 0666 permissions = 0140666 */
+    uint32_t socket_mode = 0140666;
+    int create_ret = parent->ops->create(parent, filename, socket_mode, &socket_inode);
+    fut_vnode_unref(parent);
+
+    if (create_ret != 0 || !socket_inode) {
+        return NULL;
+    }
+
+    return socket_inode;
+}
+
+/* ============================================================
  *   Initialization
  * ============================================================ */
 
@@ -129,6 +235,13 @@ void fut_socket_unref(fut_socket_t *socket) {
         if (socket->bound_path) {
             fut_free(socket->bound_path);
         }
+
+        /* Release VFS inode reference if bound */
+        if (socket->path_inode) {
+            fut_vnode_unref(socket->path_inode);
+            socket->path_inode = NULL;
+        }
+
         if (socket->listener) {
             if (socket->listener->accept_waitq) {
                 fut_free(socket->listener->accept_waitq);
@@ -204,9 +317,17 @@ int fut_socket_bind(fut_socket_t *socket, const char *path) {
     }
     strcpy(socket->bound_path, path);
 
-    /* Create VFS file to mark binding location */
-    /* TODO: Create actual socket inode in VFS */
-    /* For now, just mark as bound */
+    /* Create VFS inode for socket binding location */
+    struct fut_vnode *inode = fut_vfs_create_socket(path);
+    if (!inode) {
+        /* Binding path creation failed, but socket is still bound for lookup */
+        fut_printf("[SOCKET] Socket %u VFS inode creation failed (non-fatal), path: %s\n",
+                   socket->socket_id, path);
+    } else {
+        socket->path_inode = inode;
+        fut_printf("[SOCKET] Socket %u created VFS inode, path: %s\n",
+                   socket->socket_id, path);
+    }
 
     socket->state = FUT_SOCK_BOUND;
     fut_printf("[SOCKET] Socket %u bound to path: %s\n", socket->socket_id, path);

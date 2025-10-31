@@ -119,8 +119,7 @@ static inline void write_sctlr_el1(uint64_t sctlr) {
  * @return Physical address of allocated page table, or NULL on failure
  */
 static page_table_t *alloc_page_table(void) {
-    /* For now, use simple allocator from physical memory manager */
-    /* TODO: Integrate with buddy allocator or slab allocator */
+    /* Allocate page table from physical memory manager */
     page_table_t *pt = (page_table_t *)fut_pmm_alloc_page();
     if (!pt) {
         return NULL;
@@ -134,7 +133,7 @@ static page_table_t *alloc_page_table(void) {
  * @param pt Page table to free
  */
 static void free_page_table(page_table_t *pt) {
-    /* TODO: Integrate with physical memory manager */
+    /* Return page table to physical memory manager */
     fut_pmm_free_page(pt);
 }
 

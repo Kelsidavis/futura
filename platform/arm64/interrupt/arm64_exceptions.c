@@ -10,6 +10,8 @@
 #include "../../include/platform/arm64/regs.h"
 #include "../../include/platform/arm64/memory/paging.h"
 #include "../../include/kernel/trap.h"
+#include "../../include/kernel/signal.h"
+#include "../../include/kernel/fut_task.h"
 
 extern void fut_printf(const char *fmt, ...);
 
@@ -130,7 +132,7 @@ void arm64_data_abort_handler(fut_interrupt_frame_t *frame) {
         return;  /* Handled successfully */
     }
 
-    /* Unhandled data abort - fatal */
+    /* Unhandled data abort - signal task */
     uint64_t esr = frame->esr;
     uint64_t far = frame->far;  /* Fault address */
     uint32_t fsc = esr & 0x3F;  /* Fault status code */
@@ -138,11 +140,9 @@ void arm64_data_abort_handler(fut_interrupt_frame_t *frame) {
     fut_printf("[DATA-ABORT-ARM64] Unhandled abort at VA=0x%llx PC=0x%llx FSC=0x%02x\n",
                far, frame->pc, fsc);
 
-    /* TODO: Signal task with appropriate fault signal
-     * For now, halt the system */
-    while (1) {
-        __asm__ volatile("wfi");
-    }
+    /* Signal task with segmentation fault
+     * Data aborts typically indicate memory access violations */
+    fut_task_signal_exit(SIGSEGV);
 }
 
 /* ============================================================
@@ -169,13 +169,12 @@ void arm64_instruction_abort_handler(fut_interrupt_frame_t *frame) {
      * - Permission fault (execute never)
      * - Translation fault (page not mapped)
      * - Access fault (not marked accessible)
+     *
+     * Signal task with illegal instruction signal. This covers permission
+     * violations (execute-never) and covers invalid instruction fetches
+     * with the same signal used for actual illegal instructions.
      */
-
-    /* TODO: Handle instruction abort faults
-     * For now, halt the system */
-    while (1) {
-        __asm__ volatile("wfi");
-    }
+    fut_task_signal_exit(SIGILL);
 }
 
 /* ============================================================

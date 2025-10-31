@@ -193,6 +193,99 @@ isr_syscall_int80_stub:
 .global isr128
 .set isr128, isr_syscall_int80_stub
 
+/* SYSCALL instruction entry point (x86_64 fast path)
+ * On entry:
+ *   RAX = syscall number
+ *   RDI = arg1, RSI = arg2, RDX = arg3, R10 = arg4, R8 = arg5, R9 = arg6
+ *   RIP in RCX, RFLAGS in R11 (saved by hardware)
+ *
+ * We need to transition to kernel mode and save state, similar to int 0x80
+ */
+.global isr_syscall_fastpath
+.type isr_syscall_fastpath, @function
+isr_syscall_fastpath:
+    /* Save user RSP before we clobber RSP */
+    movq %rsp, %r12
+
+    /* Get kernel stack (from TSS or current task) */
+    /* TODO: Implement proper kernel stack switching */
+    /* For now, we'll just push the saved user values and continue */
+
+    /* Create interrupt frame similar to int 0x80 */
+    pushq $0                      /* SS (user ss will be replaced later) */
+    pushq %r12                    /* RSP (user rsp) */
+    pushq %r11                    /* RFLAGS (saved by SYSCALL hardware) */
+    pushq $0                      /* CS (user cs will be replaced later) */
+    pushq %rcx                    /* RIP (saved by SYSCALL hardware) */
+
+    /* Now we're in a frame similar to int 0x80, call the same handler */
+    pushq %rax                    /* Save syscall number (same as int 0x80) */
+    movq %cr3, %rax               /* Save CR3 */
+    pushq %rax
+
+    pushq %rbp
+    pushq %rbx
+    pushq %r12
+    pushq %r13
+    pushq %r14
+    pushq %r15
+    pushq %r9
+    pushq %r8
+    pushq %r10
+    pushq %rdx
+    pushq %rsi
+    pushq %rdi
+
+    /* Set up arguments for syscall_entry_c (same as int 0x80) */
+    movq %rsp, %r15
+    addq $112, %r15               /* r15 = pointer to interrupt frame */
+    movq %r15, fut_current_frame(%rip)
+
+    movq 104(%rsp), %rdi          /* syscall number from saved RAX */
+    movq 0(%rsp), %rsi            /* arg1 from RDI */
+    movq 8(%rsp), %rdx            /* arg2 from RSI */
+    movq 16(%rsp), %rcx           /* arg3 from RDX */
+    movq 24(%rsp), %r8            /* arg4 from R10 */
+    movq 32(%rsp), %r9            /* arg5 from R8 */
+    movq 40(%rsp), %r11           /* arg6 from R9 */
+    pushq %r15                    /* arg7: interrupt frame pointer */
+    pushq %r11                    /* arg6 */
+
+    call syscall_entry_c
+
+    /* Save return value and restore like int 0x80 */
+    movq %rax, %r11
+    addq $16, %rsp
+
+    popq %rdi
+    popq %rsi
+    popq %rdx
+    popq %r10
+    popq %r8
+    popq %r9
+    popq %r15
+    popq %r14
+    popq %r13
+    popq %r12
+    popq %rbx
+    popq %rbp
+
+    popq %rax
+    movq %rax, %cr3
+
+    addq $8, %rsp
+    movq %r11, %rax
+
+    /* Use SYSRET to return to user mode */
+    /* We need to pop RIP and RFLAGS first */
+    popq %rcx                     /* RCX = user RIP */
+    popq %r11                     /* R11 = user RFLAGS */
+    addq $8, %rsp                 /* Skip CS */
+    popq %rsp                     /* RSP = user RSP */
+
+    sysretq
+.size isr_syscall_fastpath, . - isr_syscall_fastpath
+
 /* Common ISR stub - saves all registers */
 .type isr_common_stub, @function
 isr_common_stub:

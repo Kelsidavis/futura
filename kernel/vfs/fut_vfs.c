@@ -10,6 +10,7 @@
 #include <kernel/fut_memory.h>
 #include <kernel/fut_mm.h>
 #include <kernel/fut_task.h>
+#include <kernel/fut_timer.h>
 #include <kernel/chrdev.h>
 #include <kernel/devfs.h>
 #include <kernel/errno.h>
@@ -1404,9 +1405,14 @@ int fut_vfs_stat(const char *path, struct fut_stat *stat) {
         stat->st_gid = 0;
         stat->st_blksize = 4096;
         stat->st_blocks = (vnode->size + 4095) / 4096;
-        stat->st_atime = 0;
-        stat->st_mtime = 0;
-        stat->st_ctime = 0;
+
+        /* Set timestamps - atime is current time (file access time),
+         * mtime and ctime would ideally come from filesystem metadata.
+         * Using current time as default for basic compliance. */
+        uint64_t now_ns = fut_get_time_ns();
+        stat->st_atime = now_ns;  /* Access time (now) */
+        stat->st_mtime = now_ns;  /* Modification time (default) */
+        stat->st_ctime = now_ns;  /* Change time (default) */
         ret = 0;
     }
 

@@ -14,6 +14,7 @@
 #include <platform/x86_64/regs.h>
 #include <platform/x86_64/gdt.h>
 #include <platform/x86_64/memory/pat.h>
+#include <platform/x86_64/msr.h>
 #include <platform/x86_64/cpu.h>
 #include <kernel/fut_mm.h>
 #include <kernel/fb.h>
@@ -579,6 +580,37 @@ static void fut_idt_init(void) {
 
     /* Load IDT */
     fut_idt_load();
+
+    /* Set up SYSCALL instruction support (x86_64 fast path) */
+    extern void isr_syscall_fastpath(void);
+
+    #define MSR_EFER          0xC0000080
+    #define MSR_STAR          0xC0000081
+    #define MSR_LSTAR         0xC0000082
+    #define MSR_FMASK         0xC0000084
+    /* EFER_SCE is defined in regs.h */
+
+    /* IA32_LSTAR: Entry point for SYSCALL instruction */
+    uint64_t lstar_address = (uint64_t)isr_syscall_fastpath;
+    wrmsr(MSR_LSTAR, lstar_address);
+
+    /* IA32_STAR: Segment selectors for SYSCALL/SYSRET
+     * [31:16] = kernel CS (we use 0x08 for kernel code segment)
+     * [47:32] = user CS for SYSRET (CS-16 is DS for 64-bit, so if CS=0x23, then 0x23-16=0x1b is unused but still works)
+     */
+    uint64_t star = ((0x08ULL) << 32) | ((0x23ULL) << 48);
+    wrmsr(MSR_STAR, star);
+
+    /* IA32_FMASK: Flags to clear on SYSCALL entry
+     * Clear IF (0x200) to disable interrupts during syscall handling
+     */
+    uint64_t fmask = 0x200;  /* IF flag - interrupts disabled on entry */
+    wrmsr(MSR_FMASK, fmask);
+
+    /* Enable SYSCALL instruction in EFER MSR */
+    uint64_t efer = rdmsr(MSR_EFER);
+    efer |= EFER_SCE;  /* Enable SYSCALL/SYSRET */
+    wrmsr(MSR_EFER, efer);
 }
 
 /* Main platform initialization entry point */

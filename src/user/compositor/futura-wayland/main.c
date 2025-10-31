@@ -257,23 +257,21 @@ int main(void) {
     /* Demo mode: render fallback UI while waiting for clients */
     if (!socket || strcmp(socket, "none") == 0) {
         printf("[WAYLAND] Demo mode: rendering fallback UI to framebuffer\n");
-        /* Render initial demo frame with solid color and horizontal stripe */
-        if (comp.backbuffer_enabled && comp.bb[0].px) {
-            struct backbuffer *bb = &comp.bb[0];
-            uint32_t *px = (uint32_t *)bb->px;
+        /* Render directly to framebuffer */
+        if (comp.fb_map) {
+            uint32_t *fb = (uint32_t *)comp.fb_map;
+            uint32_t pitch_pixels = comp.fb_info.pitch / 4;
             /* Fill with green background */
             for (size_t i = 0; i < (size_t)comp.fb_info.width * comp.fb_info.height; ++i) {
-                px[i] = 0xFF00AA00;
+                fb[i] = 0xFF00AA00;
             }
-            /* Draw white/dark stripe at top for UI panel */
+            /* Draw dark grey stripe at top for UI panel */
             uint32_t bar_color = 0xFF333333;
             for (int y = 0; y < 40; ++y) {
                 for (int x = 0; x < (int)comp.fb_info.width; ++x) {
-                    px[y * comp.fb_info.width + x] = bar_color;
+                    fb[y * pitch_pixels + x] = bar_color;
                 }
             }
-            /* Swap backbuffer */
-            comp.bb_index = 1;
         }
     }
 

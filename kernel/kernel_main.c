@@ -735,7 +735,6 @@ __attribute__((unused)) static void fipc_receiver_thread(void *arg) {
 void fut_kernel_main(void) {
     fut_serial_puts("[DEBUG] kernel_main: Entry\n");
 
-    /* fbtest disabled - variables removed to reduce memory usage */
 #if ENABLE_WINSRV_DEMO
     int winsrv_stage = -1;
     int winstub_stage = -1;
@@ -745,10 +744,8 @@ void fut_kernel_main(void) {
 #if ENABLE_WAYLAND_DEMO
     int wayland_stage = -1;
     int wayland_client_stage = -1;
-    int wayland_color_stage = -1;
     int wayland_exec = -1;
     int wayland_client_exec = -1;
-    int wayland_color_exec = -1;
 #endif
 
 #if defined(__x86_64__)
@@ -1158,16 +1155,6 @@ void fut_kernel_main(void) {
     /* Slab debugging complete - disabled again for interactive mode */
     /* test_futurafs_operations(); */
 
-    fut_printf("[INIT] Skipping fbtest staging (debugging)\n");
-    // TEMPORARILY DISABLED FOR DEBUGGING
-    // fb_stage = fut_stage_fbtest_binary();
-    // fut_printf("[INIT] fut_stage_fbtest_binary returned %d\n", fb_stage);
-    // if (fb_stage != 0) {
-    //     fut_printf("[WARN] Failed to stage fbtest binary (error %d)\n", fb_stage);
-    // } else {
-    //     fut_printf("[INIT] fbtest binary staged at /bin/fbtest\n");
-    // }
-
 #if ENABLE_WINSRV_DEMO
     fut_printf("[INIT] Staging winsrv user binary...\n");
     winsrv_stage = fut_stage_winsrv_binary();
@@ -1208,13 +1195,6 @@ void fut_kernel_main(void) {
         fut_printf("[INIT] wl-simple staged at /bin/wl-simple\n");
     }
 
-    fut_printf("[INIT] Staging wl-colorwheel client...\n");
-    wayland_color_stage = fut_stage_wayland_color_client_binary();
-    if (wayland_color_stage != 0) {
-        fut_printf("[WARN] Failed to stage wl-colorwheel binary (error %d)\n", wayland_color_stage);
-    } else {
-        fut_printf("[INIT] wl-colorwheel staged at /bin/wl-colorwheel\n");
-    }
 #endif
     /* ========================================
      *   Step 5: Initialize Scheduler
@@ -1249,21 +1229,6 @@ void fut_kernel_main(void) {
     if (mm_tests_enabled) {
         fut_mm_tests_run();
     }
-
-    /* DISABLED: fbtest consumes too much memory - prioritize wayland execution */
-    /*
-    if (fb_stage == 0) {
-        char fbtest_name[] = "fbtest";
-        char *fbtest_args[] = { fbtest_name, NULL };
-        fb_exec = fut_exec_elf("/bin/fbtest", fbtest_args);
-        if (fb_exec != 0) {
-            fut_printf("[WARN] Failed to launch /bin/fbtest (error %d)\n", fb_exec);
-        } else {
-            fut_printf("[INIT] Scheduled /bin/fbtest user process\n");
-        }
-    }
-    */
-    fut_printf("[INIT] fbtest disabled to free memory for wayland\n");
 
     /* ========================================
      *   Launch Interactive Shell
@@ -1326,7 +1291,6 @@ void fut_kernel_main(void) {
 
     /* Re-enabled: using wayland instead of direct framebuffer */
     wayland_client_exec = 0;  /* Will be set by actual exec below */
-    wayland_color_exec = 0;   /* Will be set by actual exec below */
 #if 1  /* Enabled wayland clients */
     if (wayland_exec == 0 && wayland_client_stage == 0) {
         fut_boot_delay_ms(100);
@@ -1345,21 +1309,6 @@ void fut_kernel_main(void) {
             fut_printf("[INIT] exec /bin/wl-simple -> 0\n");
         }
     }
-
-    /* Disabled colorwheel client to save memory for shell staging */
-#if 0
-    if (wayland_exec == 0 && wayland_client_exec == 0 && wayland_color_stage == 0) {
-        fut_boot_delay_ms(100);
-        char name[] = "wl-colorwheel";
-        char *args[] = { name, NULL };
-        wayland_color_exec = fut_exec_elf("/bin/wl-colorwheel", args, NULL);
-        if (wayland_color_exec != 0) {
-            fut_printf("[WARN] Failed to launch /bin/wl-colorwheel (error %d)\n", wayland_color_exec);
-        } else {
-            fut_printf("[INIT] exec /bin/wl-colorwheel -> 0\n");
-        }
-    }
-#endif
 #endif
 
     /* Check if interactive mode is enabled (for GUI testing) */
@@ -1372,9 +1321,6 @@ void fut_kernel_main(void) {
 
     if (wayland_exec == 0 && wayland_client_exec == 0) {
         uint32_t finalize_delay_ms = 2500;
-        if (wayland_color_stage == 0 && wayland_color_exec == 0) {
-            finalize_delay_ms = 3200;
-        }
         fut_boot_delay_ms(finalize_delay_ms);
 
         if (!wayland_interactive) {

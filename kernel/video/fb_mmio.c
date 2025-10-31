@@ -2,9 +2,9 @@
 /*
  * fb_mmio.c - Linear framebuffer discovery via Multiboot2 or PCI
  *
- * NOTE: This is a skeleton implementation. We parse the multiboot tag
- * for the framebuffer and cache its geometry, but userland plumbing
- * (ioctl/mmap/device nodes) is still a TODO.
+ * Discovers and caches framebuffer geometry from Multiboot2 or via PCI VGA
+ * device probing. Userland access is provided through /dev/fb0 character
+ * device implemented in drivers/video/fb.c with full ioctl/mmap support.
  *
  * Probe strategy:
  * 1. Try Multiboot2 framebuffer tag

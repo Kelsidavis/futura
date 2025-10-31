@@ -723,6 +723,98 @@ static int64_t sys_sigprocmask_handler(uint64_t how, uint64_t set, uint64_t olds
     return fut_signal_procmask(current, (int)how, set_ptr, oldset_ptr);
 }
 
+/* ============================================================
+ *   I/O Multiplexing Syscall
+ * ============================================================ */
+
+/**
+ * select() - Wait for file descriptor sets to become ready
+ * @arg1: nfds (highest fd number + 1)
+ * @arg2: readfds (file descriptors ready for reading)
+ * @arg3: writefds (file descriptors ready for writing)
+ * @arg4: exceptfds (file descriptors with exceptional conditions)
+ * @arg5: timeout (timeval pointer for timeout, NULL for blocking)
+ *
+ * MVP implementation: Poll each FD, return immediately with ready set
+ * Proper implementation would use event notification or async I/O
+ */
+static int64_t sys_select_handler(uint64_t nfds, uint64_t readfds, uint64_t writefds,
+                                  uint64_t exceptfds, uint64_t timeout, uint64_t arg6) {
+    (void)timeout;  /* MVP: ignore timeout for now */
+    (void)arg6;     /* Unused parameter */
+
+    if (nfds > 1024) {
+        return -EINVAL;
+    }
+
+    extern void fut_printf(const char *, ...);
+
+    /* For MVP: Simple poll without blocking
+     * Each FD is checked for readiness:
+     * - Read: Data available or EOF
+     * - Write: Buffer space available
+     * - Except: Error or exceptional condition
+     */
+
+    int ready_count = 0;
+    uint8_t *read_set = (uint8_t *)readfds;
+    uint8_t *write_set = (uint8_t *)writefds;
+    uint8_t *except_set = (uint8_t *)exceptfds;
+
+    if (!read_set && !write_set && !except_set) {
+        /* No FD sets provided - just return 0 */
+        return 0;
+    }
+
+    /* Poll each file descriptor */
+    for (int fd = 0; fd < (int)nfds; fd++) {
+        int byte_offset = fd / 8;
+        int bit_offset = fd % 8;
+        uint8_t mask = (1 << bit_offset);
+
+        /* Check if this FD is in the read set */
+        if (read_set && (read_set[byte_offset] & mask)) {
+            struct fut_file *file = vfs_get_file(fd);
+            if (file) {
+                /* For MVP: assume readable if file exists
+                 * Proper implementation would check actual readiness
+                 */
+                ready_count++;
+                fut_printf("[SELECT] FD %d ready for reading\n", fd);
+            } else {
+                /* FD not found - mark as exception */
+                if (except_set) {
+                    except_set[byte_offset] |= mask;
+                    ready_count++;
+                }
+                /* Remove from read set */
+                read_set[byte_offset] &= ~mask;
+            }
+        }
+
+        /* Check if this FD is in the write set */
+        if (write_set && (write_set[byte_offset] & mask)) {
+            struct fut_file *file = vfs_get_file(fd);
+            if (file) {
+                /* For MVP: assume writable if file exists */
+                ready_count++;
+                fut_printf("[SELECT] FD %d ready for writing\n", fd);
+            } else {
+                /* FD not found - mark as exception */
+                if (except_set) {
+                    except_set[byte_offset] |= mask;
+                    ready_count++;
+                }
+                /* Remove from write set */
+                write_set[byte_offset] &= ~mask;
+            }
+        }
+    }
+
+    fut_printf("[SELECT] Returning %d ready file descriptors\n", ready_count);
+    return ready_count;
+}
+
 /* dup() handler - duplicate file descriptor with auto selection */
 static int64_t sys_dup_handler(uint64_t oldfd, uint64_t arg2, uint64_t arg3,
                                uint64_t arg4, uint64_t arg5, uint64_t arg6) {
@@ -1117,6 +1209,7 @@ static syscall_handler_t syscall_table[MAX_SYSCALL] = {
     [SYS_ioctl]      = sys_ioctl_handler,
     [SYS_mmap]       = sys_mmap_handler,
     [SYS_pipe]       = sys_pipe_handler,
+    [SYS_select]     = sys_select_handler,
     [SYS_dup]        = sys_dup_handler,
     [SYS_dup2]       = sys_dup2_handler,
     [SYS_ftruncate]  = sys_ftruncate_handler,

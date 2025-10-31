@@ -1296,8 +1296,10 @@ void fut_kernel_main(void) {
         fut_boot_delay_ms(100);
         char name[] = "wl-simple";
         char *args[] = { name, NULL };
-        /* Don't use LD_PRELOAD wrapper - it corrupts syscall arguments */
-        wayland_client_exec = fut_exec_elf("/bin/wl-simple", args, NULL);
+        /* Environment with LD_PRELOAD for syscall routing (fixed register constraints) */
+        char ld_preload[] = "LD_PRELOAD=/lib/libopen_wrapper.so";
+        char *envp[] = { ld_preload, NULL };
+        wayland_client_exec = fut_exec_elf("/bin/wl-simple", args, envp);
         if (wayland_client_exec != 0) {
             fut_printf("[WARN] Failed to launch /bin/wl-simple (error %d)\n", wayland_client_exec);
 #if ENABLE_WAYLAND_DEMO

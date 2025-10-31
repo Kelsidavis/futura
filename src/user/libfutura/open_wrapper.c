@@ -34,18 +34,27 @@ int open64(const char *pathname, int flags, ...)
         va_end(ap);
     }
 
-    /* Make direct int 0x80 syscall to bypass QEMU SYSCALL limitation
-     * Register setup for x86_64 int 0x80:
-     *   RAX = syscall number (2 for open)
-     *   RBX = first argument (pathname)
-     *   RCX = second argument (flags)
-     *   RDX = third argument (mode)
+    /* Make direct int 0x80 syscall using i386 ABI convention
+     * On x86_64, int 0x80 uses 32-bit registers:
+     *   EAX = syscall number
+     *   EBX = arg1
+     *   ECX = arg2
+     *   EDX = arg3
+     *   ESI = arg4
+     *   EDI = arg5
+     *   EBP = arg6
      */
     long result;
-    __asm__ volatile("int $0x80"
-        : "=a"(result)
-        : "a"(SYS_OPEN), "b"(pathname), "c"(flags), "d"(mode)
-        : "cc", "memory");
+    __asm__ volatile(
+        "movl %1, %%eax\n\t"      /* EAX = SYS_OPEN */
+        "movq %2, %%rbx\n\t"      /* RBX = pathname */
+        "movl %3, %%ecx\n\t"      /* ECX = flags */
+        "movl %4, %%edx\n\t"      /* EDX = mode */
+        "int $0x80\n\t"
+        "movl %%eax, %0\n\t"      /* result = EAX */
+        : "=r"(result)
+        : "i"(SYS_OPEN), "r"(pathname), "r"(flags), "r"(mode)
+        : "%eax", "%ebx", "%ecx", "%edx", "cc", "memory");
 
     if (result < 0) {
         errno = -result;
@@ -68,12 +77,18 @@ int open(const char *pathname, int flags, ...)
         va_end(ap);
     }
 
-    /* Make direct int 0x80 syscall */
+    /* Make direct int 0x80 syscall - same as open64() */
     long result;
-    __asm__ volatile("int $0x80"
-        : "=a"(result)
-        : "a"(SYS_OPEN), "b"(pathname), "c"(flags), "d"(mode)
-        : "cc", "memory");
+    __asm__ volatile(
+        "movl %1, %%eax\n\t"      /* EAX = SYS_OPEN */
+        "movq %2, %%rbx\n\t"      /* RBX = pathname */
+        "movl %3, %%ecx\n\t"      /* ECX = flags */
+        "movl %4, %%edx\n\t"      /* EDX = mode */
+        "int $0x80\n\t"
+        "movl %%eax, %0\n\t"      /* result = EAX */
+        : "=r"(result)
+        : "i"(SYS_OPEN), "r"(pathname), "r"(flags), "r"(mode)
+        : "%eax", "%ebx", "%ecx", "%edx", "cc", "memory");
 
     if (result < 0) {
         errno = -result;

@@ -899,7 +899,11 @@ int vfs_alloc_specific_fd(int target_fd, struct fut_file *file) {
 static int try_open_chrdev(const char *path, int flags) {
     unsigned major = 0;
     unsigned minor = 0;
-    if (devfs_lookup_chr(path, &major, &minor) != 0) {
+    extern void fut_printf(const char *, ...);
+    fut_printf("[TRY-CHRDEV] Attempting to open path='%s' as chrdev\n", path);
+    int devfs_ret = devfs_lookup_chr(path, &major, &minor);
+    fut_printf("[TRY-CHRDEV] devfs_lookup_chr returned %d (major=%u minor=%u)\n", devfs_ret, major, minor);
+    if (devfs_ret != 0) {
         return -ENOENT;
     }
 

@@ -603,7 +603,8 @@ int fut_mm_unmap(fut_mm_t *mm, uintptr_t addr, size_t len) {
                 /* Adjust file offset for the right portion */
                 uint64_t offset_delta = overlap_end - vma->start;
                 right_vma->file_offset = vma->file_offset + offset_delta;
-                /* TODO: Add vnode reference counting when implemented */
+                /* Increment vnode refcount when creating new mapping */
+                fut_vnode_ref(vma->vnode);
             } else {
                 right_vma->file_offset = 0;
             }
@@ -1057,7 +1058,8 @@ int fut_mm_unmap(fut_mm_t *mm, uintptr_t addr, size_t len) {
                 /* Adjust file offset for the right portion */
                 uint64_t offset_delta = overlap_end - vma->start;
                 right_vma->file_offset = vma->file_offset + offset_delta;
-                /* TODO: Add vnode reference counting when implemented */
+                /* Increment vnode refcount when creating new mapping */
+                fut_vnode_ref(vma->vnode);
             } else {
                 right_vma->file_offset = 0;
             }

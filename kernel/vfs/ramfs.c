@@ -506,16 +506,21 @@ static int ramfs_lookup(struct fut_vnode *dir, const char *name, struct fut_vnod
 static int ramfs_create(struct fut_vnode *dir, const char *name, uint32_t mode, struct fut_vnode **result) {
     extern void fut_printf(const char *, ...);
 
+    fut_printf("[RAMFS-CREATE-ENTRY] dir=%p name=%s mode=0%o result=%p\n", (void*)dir, name ? name : "(null)", mode, (void*)result);
+
     if (!dir || !name || !result) {
+        fut_printf("[RAMFS-CREATE] FAILED: Invalid params - dir=%p name=%p result=%p\n", (void*)dir, (void*)name, (void*)result);
         return -EINVAL;
     }
 
     if (dir->type != VN_DIR) {
+        fut_printf("[RAMFS-CREATE] FAILED: dir->type=%d is not VN_DIR\n", dir->type);
         return -ENOTDIR;
     }
 
     struct ramfs_node *dir_node = (struct ramfs_node *)dir->fs_data;
     if (!dir_node) {
+        fut_printf("[RAMFS-CREATE] FAILED: dir->fs_data is NULL\n");
         return -EIO;
     }
 

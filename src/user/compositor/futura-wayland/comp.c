@@ -777,42 +777,70 @@ int comp_state_init(struct compositor_state *comp) {
     comp->target_ms = 16u;
     comp->vsync_hint_ms = comp->target_ms;
 
+    /* Try to open /dev/fb0, but fall back to virtual framebuffer if not available */
     int fd = (int)sys_open("/dev/fb0", O_RDWR, 0);
-    if (fd < 0) {
-        printf("[WAYLAND] failed to open /dev/fb0 (err=%d)\n", fd);
-        return -1;
-    }
-
     struct fut_fb_info info = {0};
-    if (sys_ioctl(fd, FBIOGET_INFO, (long)&info) < 0) {
-        printf("[WAYLAND] FBIOGET_INFO failed\n");
-        sys_close(fd);
-        return -1;
-    }
+    void *map = NULL;
 
-    if (info.bpp != 32) {
-        printf("[WAYLAND] unsupported framebuffer format (bpp=%u)\n", info.bpp);
-        sys_close(fd);
-        return -1;
-    }
+    if (fd < 0) {
+        /* Framebuffer device not available - create a virtual framebuffer */
+        printf("[WAYLAND] /dev/fb0 not available (err=%d), using virtual framebuffer\n", fd);
 
-    size_t map_size = (size_t)info.pitch * info.height;
-    void *map = (void *)sys_mmap(NULL,
-                                 (long)map_size,
-                                 PROT_READ | PROT_WRITE,
-                                 MAP_SHARED,
-                                 fd,
-                                 0);
-    if ((long)map < 0) {
-        printf("[WAYLAND] mmap framebuffer failed\n");
-        sys_close(fd);
-        return -1;
-    }
+        /* Use a default 1024x768 32-bpp framebuffer */
+        info.width = 1024;
+        info.height = 768;
+        info.pitch = 1024 * 4;  /* 4 bytes per pixel */
+        info.bpp = 32;
 
-    comp->fb_fd = fd;
-    comp->fb_map = (uint8_t *)map;
-    comp->fb_map_size = map_size;
-    comp->fb_info = info;
+        /* Allocate virtual framebuffer in memory */
+        size_t map_size = (size_t)info.pitch * info.height;
+        map = (void *)malloc(map_size);
+        if (!map) {
+            printf("[WAYLAND] failed to allocate virtual framebuffer (%zu bytes)\n", map_size);
+            return -1;
+        }
+
+        /* Clear to black */
+        memset(map, 0, map_size);
+        printf("[WAYLAND] virtual framebuffer allocated: %ux%u pitch=%u bpp=%u\n",
+               info.width, info.height, info.pitch, info.bpp);
+
+        comp->fb_fd = -1;  /* No real fd */
+        comp->fb_map = (uint8_t *)map;
+        comp->fb_map_size = map_size;
+        comp->fb_info = info;
+    } else {
+        /* Got real framebuffer device */
+        if (sys_ioctl(fd, FBIOGET_INFO, (long)&info) < 0) {
+            printf("[WAYLAND] FBIOGET_INFO failed\n");
+            sys_close(fd);
+            return -1;
+        }
+
+        if (info.bpp != 32) {
+            printf("[WAYLAND] unsupported framebuffer format (bpp=%u)\n", info.bpp);
+            sys_close(fd);
+            return -1;
+        }
+
+        size_t map_size = (size_t)info.pitch * info.height;
+        map = (void *)sys_mmap(NULL,
+                               (long)map_size,
+                               PROT_READ | PROT_WRITE,
+                               MAP_SHARED,
+                               fd,
+                               0);
+        if ((long)map < 0) {
+            printf("[WAYLAND] mmap framebuffer failed\n");
+            sys_close(fd);
+            return -1;
+        }
+
+        comp->fb_fd = fd;
+        comp->fb_map = (uint8_t *)map;
+        comp->fb_map_size = map_size;
+        comp->fb_info = info;
+    }
     comp->running = true;
     comp->last_present_ns = 0;
     comp->frame_damage.count = 0;
@@ -856,7 +884,13 @@ void comp_state_finish(struct compositor_state *comp) {
     }
 
     if (comp->fb_map && comp->fb_map_size) {
-        sys_munmap_call(comp->fb_map, (long)comp->fb_map_size);
+        if (comp->fb_fd >= 0) {
+            /* Real framebuffer - unmap from kernel */
+            sys_munmap_call(comp->fb_map, (long)comp->fb_map_size);
+        } else {
+            /* Virtual framebuffer - free allocated memory */
+            free(comp->fb_map);
+        }
         comp->fb_map = NULL;
         comp->fb_map_size = 0;
     }

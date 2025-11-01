@@ -1381,59 +1381,65 @@ void comp_render_demo_frame(struct compositor_state *comp) {
     int h = comp->fb_info.height;
 
     printf("[DEMO] Rendering demo frame: %dx%d pitch=%u\n", w, h, comp->fb_info.pitch);
+    printf("[DEMO] Framebuffer: %p (bpp=%u)\n", (void*)comp->fb_map, comp->fb_info.bpp);
+
+    if (w <= 0 || h <= 0) {
+        printf("[DEMO] ERROR: Invalid framebuffer dimensions: %dx%d\n", w, h);
+        return;
+    }
 
     /* Always render directly to framebuffer for demo mode (simpler, more reliable) */
     uint8_t *fb = comp->fb_map;
     uint32_t pitch = comp->fb_info.pitch;
 
-    /* Fill entire screen with solid green first to verify rendering works */
-    for (int y = 0; y < h; ++y) {
+    if (pitch == 0) {
+        printf("[DEMO] ERROR: Invalid pitch: %u\n", pitch);
+        return;
+    }
+
+    /* Test pattern: 4 quadrants with different colors */
+    printf("[DEMO] Drawing 4-quadrant test pattern\n");
+
+    int qw = w / 2;
+    int qh = h / 2;
+
+    /* Top-left: Red */
+    printf("[DEMO] Top-left quadrant: Red\n");
+    for (int y = 0; y < qh; ++y) {
         uint32_t *row = (uint32_t *)(fb + y * pitch);
-        for (int x = 0; x < w; ++x) {
-            row[x] = 0xFF00FF00;  /* Bright green - ARGB format */
+        for (int x = 0; x < qw; ++x) {
+            row[x] = 0xFFFF0000;  /* Red */
         }
     }
 
-    /* Draw blue vertical stripes */
-    for (int x = 0; x < w; x += 100) {
-        for (int y = 0; y < h; ++y) {
-            uint32_t *px = (uint32_t *)(fb + y * pitch + x * 4);
-            *px = 0xFF0000FF;  /* Blue - ARGB */
-        }
-    }
-
-    /* Draw red horizontal stripes */
-    for (int y = 0; y < h; y += 100) {
+    /* Top-right: Green */
+    printf("[DEMO] Top-right quadrant: Green\n");
+    for (int y = 0; y < qh; ++y) {
         uint32_t *row = (uint32_t *)(fb + y * pitch);
-        for (int x = 0; x < w; ++x) {
-            row[x] = 0xFFFF0000;  /* Red - ARGB */
+        for (int x = qw; x < w; ++x) {
+            row[x] = 0xFF00FF00;  /* Green */
         }
     }
 
-    /* Draw white center square */
-    int cw = 200, ch = 200;
-    int cx = (w - cw) / 2;
-    int cy = (h - ch) / 2;
-    for (int y = cy; y < cy + ch; ++y) {
+    /* Bottom-left: Blue */
+    printf("[DEMO] Bottom-left quadrant: Blue\n");
+    for (int y = qh; y < h; ++y) {
         uint32_t *row = (uint32_t *)(fb + y * pitch);
-        for (int x = cx; x < cx + cw; ++x) {
-            row[x] = 0xFFFFFFFF;  /* White */
+        for (int x = 0; x < qw; ++x) {
+            row[x] = 0xFF0000FF;  /* Blue */
         }
     }
 
-    /* Draw black border around center square */
-    for (int x = cx; x < cx + cw; ++x) {
-        uint32_t *px_top = (uint32_t *)(fb + cy * pitch + x * 4);
-        uint32_t *px_bot = (uint32_t *)(fb + (cy + ch - 1) * pitch + x * 4);
-        *px_top = 0xFF000000;  /* Black */
-        *px_bot = 0xFF000000;  /* Black */
+    /* Bottom-right: Yellow */
+    printf("[DEMO] Bottom-right quadrant: Yellow\n");
+    for (int y = qh; y < h; ++y) {
+        uint32_t *row = (uint32_t *)(fb + y * pitch);
+        for (int x = qw; x < w; ++x) {
+            row[x] = 0xFFFFFF00;  /* Yellow (Red + Green) */
+        }
     }
-    for (int y = cy; y < cy + ch; ++y) {
-        uint32_t *px_left = (uint32_t *)(fb + y * pitch + cx * 4);
-        uint32_t *px_right = (uint32_t *)(fb + y * pitch + (cx + cw - 1) * 4);
-        *px_left = 0xFF000000;   /* Black */
-        *px_right = 0xFF000000;  /* Black */
-    }
+
+    printf("[DEMO] Test pattern rendering complete\n");
 }
 
 static void ms_to_timespec(uint64_t ms, struct timespec *ts) {

@@ -59,11 +59,61 @@ static inline int sys_mkdir(const char *pathname, int mode) {
     return (int)syscall3(__NR_mkdir, (long)pathname, mode, 0);
 }
 
+/* Helper: Test if directory is writable for sockets */
+static int test_socket_directory(const char *path) {
+    /* Test 1: Can we access the directory? */
+    printf("[WAYLAND-DEBUG] Testing directory: %s\n", path);
+
+    int fd = sys_open(path, 0, 0);
+    if (fd < 0) {
+        printf("[WAYLAND-DEBUG]   Not accessible\n");
+        return 0;
+    }
+    sys_close(fd);
+    printf("[WAYLAND-DEBUG]   Accessible\n");
+
+    /* Test 2: Can we create a file there? */
+    char test_path[512];
+    snprintf(test_path, sizeof(test_path), "%s/.wayland-test", path);
+
+    int test_fd = sys_open(test_path, O_RDWR | O_CREAT, 0666);
+    if (test_fd < 0) {
+        printf("[WAYLAND-DEBUG]   Not writable\n");
+        return 0;
+    }
+    sys_close(test_fd);
+    printf("[WAYLAND-DEBUG]   Writable - GOOD!\n");
+
+    return 1;
+}
+
+/* Helper: Find first writable directory for Wayland sockets */
+static const char *find_working_runtime_dir(void) {
+    const char *candidates[] = {
+        "/tmp",
+        "/run",
+        "/var/run",
+        "/dev/shm",
+        NULL
+    };
+
+    printf("[WAYLAND-DEBUG] Finding writable directory for sockets\n");
+
+    for (int i = 0; candidates[i]; i++) {
+        if (test_socket_directory(candidates[i])) {
+            printf("[WAYLAND-DEBUG] ✓ Using runtime dir: %s\n", candidates[i]);
+            return candidates[i];
+        }
+    }
+
+    /* Last resort */
+    printf("[WAYLAND-DEBUG] WARNING: No ideal dir found, using /tmp\n");
+    return "/tmp";
+}
+
 int main(void) {
-    /* Initialize stdio by opening /dev/console for fds 0,1,2 */
-    sys_open("/dev/console", O_RDWR, 0);  /* FD 0 - stdin */
-    sys_open("/dev/console", O_RDWR, 0);  /* FD 1 - stdout */
-    sys_open("/dev/console", O_RDWR, 0);  /* FD 2 - stderr */
+    /* Initialize stdio - FDs 0,1,2 should already be open from parent shell
+     * Skip opening /dev/console as it may not be accessible in user environment */
 
     /* Direct write to verify execution */
     const char msg[] = "[COMPOSITOR] Reached main, stdio initialized\n";
@@ -242,11 +292,9 @@ int main(void) {
 
     /* Ensure XDG_RUNTIME_DIR is set for Wayland socket creation */
     if (!getenv("XDG_RUNTIME_DIR")) {
-        /* Use /tmp as runtime directory for Wayland sockets */
-#ifdef DEBUG_WAYLAND
-        printf("[WAYLAND-DEBUG] Setting XDG_RUNTIME_DIR=/tmp\n");
-#endif
-        setenv("XDG_RUNTIME_DIR", "/tmp", 1);
+        /* Find a working directory for Wayland sockets */
+        const char *runtime_dir = find_working_runtime_dir();
+        setenv("XDG_RUNTIME_DIR", runtime_dir, 1);
     }
 
     /* Clear errno before socket creation to avoid stale values */

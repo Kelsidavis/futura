@@ -1370,6 +1370,95 @@ void comp_render_frame(struct compositor_state *comp) {
     comp->last_present_ns = comp_now_ns();
 }
 
+/* Demo rendering: shows a test pattern when socket creation fails */
+void comp_render_demo_frame(struct compositor_state *comp) {
+    if (!comp || !comp->fb_map) {
+        return;
+    }
+
+    /* Use backbuffer if available, otherwise direct framebuffer */
+    struct backbuffer *dst = NULL;
+    if (comp->backbuffer_enabled && comp->bb[0].px) {
+        dst = &comp->bb[0];
+    }
+
+    int w = comp->fb_info.width;
+    int h = comp->fb_info.height;
+
+    /* Fill screen with dark blue background */
+    uint32_t bg_color = 0xFF003366;  /* Dark blue */
+    fut_rect_t full_screen = {.x = 0, .y = 0, .w = w, .h = h};
+
+    if (dst) {
+        bb_fill_rect(dst, full_screen, bg_color);
+
+        /* Draw test grid: vertical lines */
+        for (int x = 0; x < w; x += 100) {
+            fut_rect_t line = {.x = x, .y = 0, .w = 2, .h = h};
+            bb_fill_rect(dst, line, 0xFF00FF00);  /* Green */
+        }
+
+        /* Draw test grid: horizontal lines */
+        for (int y = 0; y < h; y += 100) {
+            fut_rect_t line = {.x = 0, .y = y, .w = w, .h = 2};
+            bb_fill_rect(dst, line, 0xFF00FF00);  /* Green */
+        }
+
+        /* Draw center square */
+        int cw = 200, ch = 200;
+        fut_rect_t center = {
+            .x = (w - cw) / 2,
+            .y = (h - ch) / 2,
+            .w = cw,
+            .h = ch
+        };
+        bb_fill_rect(dst, center, 0xFFFF6600);  /* Orange */
+
+        /* Copy backbuffer to framebuffer */
+        struct damage_accum damage = {0};
+        damage.rects[0] = full_screen;
+        damage.count = 1;
+        present_damage(comp, &damage);
+    } else {
+        /* Direct framebuffer rendering (fallback) */
+        uint8_t *fb = comp->fb_map;
+        uint32_t pitch = comp->fb_info.pitch;
+
+        /* Fill with background */
+        for (int y = 0; y < h; ++y) {
+            uint32_t *row = (uint32_t *)(fb + y * pitch);
+            for (int x = 0; x < w; ++x) {
+                row[x] = bg_color;
+            }
+        }
+
+        /* Draw grid */
+        for (int x = 0; x < w; x += 100) {
+            for (int y = 0; y < h; ++y) {
+                uint32_t *px = (uint32_t *)(fb + y * pitch + x * 4);
+                *px = 0xFF00FF00;  /* Green */
+            }
+        }
+        for (int y = 0; y < h; y += 100) {
+            uint32_t *row = (uint32_t *)(fb + y * pitch);
+            for (int x = 0; x < w; ++x) {
+                row[x] = 0xFF00FF00;  /* Green */
+            }
+        }
+
+        /* Draw center square */
+        int cw = 200, ch = 200;
+        int cx = (w - cw) / 2;
+        int cy = (h - ch) / 2;
+        for (int y = cy; y < cy + ch; ++y) {
+            uint32_t *row = (uint32_t *)(fb + y * pitch);
+            for (int x = cx; x < cx + cw; ++x) {
+                row[x] = 0xFFFF6600;  /* Orange */
+            }
+        }
+    }
+}
+
 static void ms_to_timespec(uint64_t ms, struct timespec *ts) {
     if (!ts) {
         return;
@@ -1455,7 +1544,7 @@ int comp_run(struct compositor_state *comp) {
         }
 
         /* Manually handle timer events since timerfd is not in event loop */
-        if (comp->timerfd >= 0 && comp->timer_source) {
+        if (comp->timerfd >= 0 && !comp->timer_source_registered) {
             uint64_t expirations = 0;
             long read_rc = sys_read(comp->timerfd, &expirations, (long)sizeof(expirations));
             if (read_rc > 0 && expirations > 0) {

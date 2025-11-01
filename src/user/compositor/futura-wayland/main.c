@@ -16,6 +16,7 @@
 /* Direct syscall wrappers to avoid header conflicts */
 #define __NR_open  2
 #define __NR_write 1
+#define __NR_close 3
 #define __NR_mkdir 39
 #define O_RDWR     0x0002
 
@@ -30,12 +31,27 @@ static inline long syscall3(long nr, long arg1, long arg2, long arg3) {
     return ret;
 }
 
+static inline long syscall1(long nr, long arg1) {
+    long ret;
+    __asm__ __volatile__(
+        "int $0x80\n"
+        : "=a"(ret)
+        : "a"(nr), "D"(arg1)
+        : "rcx", "r11", "memory"
+    );
+    return ret;
+}
+
 static inline int sys_open(const char *pathname, int flags, int mode) {
     return (int)syscall3(__NR_open, (long)pathname, flags, mode);
 }
 
 static inline long sys_write(int fd, const void *buf, size_t count) {
     return syscall3(__NR_write, fd, (long)buf, count);
+}
+
+static inline int sys_close(int fd) {
+    return (int)syscall1(__NR_close, fd);
 }
 
 static inline int sys_mkdir(const char *pathname, int mode) {
@@ -232,19 +248,73 @@ int main(void) {
         setenv("XDG_RUNTIME_DIR", "/tmp", 1);
     }
 
+    /* Clear errno before socket creation to avoid stale values */
+    printf("[WAYLAND-DEBUG] About to clear errno and create socket\n");
+    printf("[WAYLAND-DEBUG] XDG_RUNTIME_DIR=%s\n", getenv("XDG_RUNTIME_DIR"));
+
+    /* Verify XDG_RUNTIME_DIR is accessible */
+    const char *runtime_dir = getenv("XDG_RUNTIME_DIR");
+    /* Try to access the directory by opening it - simpler than stat() */
+    int runtime_dir_fd = sys_open(runtime_dir, 0, 0);
+    if (runtime_dir_fd < 0) {
+        printf("[WAYLAND-DEBUG] WARNING: XDG_RUNTIME_DIR not accessible: %s\n",
+               runtime_dir);
+    } else {
+        printf("[WAYLAND-DEBUG] XDG_RUNTIME_DIR accessible\n");
+        sys_close(runtime_dir_fd);
+    }
+
+    errno = 0;
+    // Do NOT call printf here - it may set errno!
+
     const char *socket = wl_display_add_socket_auto(comp.display);
-    if (!socket) {
-        printf("[WAYLAND] warning: add_socket_auto failed (errno=%d), trying manual socket\n", errno);
+    // Save errno immediately before printf can corrupt it
+    int saved_errno = errno;
+    printf("[WAYLAND-DEBUG] After add_socket_auto, socket=%p errno=%d (%s)\n",
+           (void*)socket, saved_errno, strerror(saved_errno));
+
+    if (socket) {
+        printf("[WAYLAND] SUCCESS: auto socket created: %s\n", socket);
+
+        /* Verify socket file was created by trying to open it */
+        char socket_path[256];
+        snprintf(socket_path, sizeof(socket_path), "%s/%s", runtime_dir, socket);
+        int socket_fd = sys_open(socket_path, 0, 0);
+        if (socket_fd >= 0) {
+            printf("[WAYLAND-DEBUG] Socket file verified at: %s\n", socket_path);
+            sys_close(socket_fd);
+        } else {
+            printf("[WAYLAND-DEBUG] WARNING: Socket file not found at: %s\n", socket_path);
+        }
+    } else {
+        printf("[WAYLAND-DEBUG] add_socket_auto failed with errno=%d, trying manual socket\n", saved_errno);
+
         /* Try manual socket name as fallback */
+        printf("[WAYLAND-DEBUG] Attempting wl_display_add_socket(display, 'wayland-0')\n");
+        errno = 0;
         int rc = wl_display_add_socket(comp.display, "wayland-0");
+        int manual_errno = errno;
+        printf("[WAYLAND-DEBUG] wl_display_add_socket returned rc=%d, errno=%d (%s)\n",
+               rc, manual_errno, strerror(manual_errno));
+
         if (rc < 0) {
-            printf("[WAYLAND] warning: add manual socket also failed (rc=%d, errno=%d), continuing without socket\n", rc, errno);
+            printf("[WAYLAND] warning: add manual socket also failed (rc=%d, errno=%d), continuing without socket\n",
+                   rc, manual_errno);
             socket = "none";
         } else {
             socket = "wayland-0";
-#ifdef DEBUG_WAYLAND
             printf("[WAYLAND-DEBUG] Using manual socket: %s\n", socket);
-#endif
+
+            /* Verify socket file was created by trying to open it */
+            char socket_path[256];
+            snprintf(socket_path, sizeof(socket_path), "%s/%s", runtime_dir, socket);
+            int socket_fd = sys_open(socket_path, 0, 0);
+            if (socket_fd >= 0) {
+                printf("[WAYLAND-DEBUG] Socket file verified at: %s\n", socket_path);
+                sys_close(socket_fd);
+            } else {
+                printf("[WAYLAND-DEBUG] WARNING: Socket file not found at: %s\n", socket_path);
+            }
         }
     }
 
@@ -254,29 +324,16 @@ int main(void) {
            comp.fb_info.bpp,
            socket);
 
-    /* Demo mode: render fallback UI while waiting for clients */
+    /* Demo mode: render test pattern when socket creation fails */
     if (!socket || strcmp(socket, "none") == 0) {
-        printf("[WAYLAND] Demo mode: rendering fallback UI to framebuffer\n");
-        /* Render directly to framebuffer */
-        if (comp.fb_map) {
-            uint32_t *fb = (uint32_t *)comp.fb_map;
-            uint32_t pitch_pixels = comp.fb_info.pitch / 4;
-            /* Fill with green background */
-            for (size_t i = 0; i < (size_t)comp.fb_info.width * comp.fb_info.height; ++i) {
-                fb[i] = 0xFF00AA00;
-            }
-            /* Draw dark grey stripe at top for UI panel */
-            uint32_t bar_color = 0xFF333333;
-            for (int y = 0; y < 40; ++y) {
-                for (int x = 0; x < (int)comp.fb_info.width; ++x) {
-                    fb[y * pitch_pixels + x] = bar_color;
-                }
-            }
-        }
+        printf("[WAYLAND] Demo mode: socket creation failed, rendering test pattern\n");
+        printf("[WAYLAND] fb_map address: %p\n", (void*)comp.fb_map);
+        comp_render_demo_frame(&comp);
+    } else {
+        /* Normal mode: render initial frame with damage */
+        comp_damage_add_full(&comp);
+        comp_render_frame(&comp);
     }
-
-    comp_damage_add_full(&comp);
-    comp_render_frame(&comp);
     comp_run(&comp);
 
     shm_backend_finish(&comp);

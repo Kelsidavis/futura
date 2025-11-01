@@ -8,7 +8,7 @@ BIN_DIR := $(BUILD_ROOT)/bin/user
 include $(ROOT)/mk/wayland.mk
 
 TARGET := $(BIN_DIR)/futura-wayland
-SRCS := main.c comp.c shm_backend.c xdg_shell.c output.c seat.c cursor.c ui_text.c shadow.c data_device.c
+SRCS := main.c comp.c shm_backend.c xdg_shell.c output.c seat.c cursor.c ui_text.c shadow.c data_device.c syscall_wrappers.c
 
 OUT ?= $(BUILD_ROOT)/generated/wayland
 $(eval $(call wayland_proto_server,$(ROOT)/protocols/xdg-shell.xml,compositor))
@@ -46,7 +46,7 @@ ifeq ($(DEBUG_WAYLAND),1)
 CFLAGS += -DDEBUG_WAYLAND
 endif
 
-LDFLAGS := -nostdlib -static -no-pie -T $(LDSCRIPT) $(WAYLAND_LDFLAGS)
+LDFLAGS := -nostdlib -static -no-pie -T $(LDSCRIPT) $(WAYLAND_LDFLAGS) -Wl,--wrap=openat -Wl,--wrap=syscall -Wl,--wrap=open -Wl,--wrap=open64 -Wl,--wrap=socket -Wl,--wrap=bind -Wl,--wrap=listen -Wl,--wrap=connect -Wl,--wrap=flock -Wl,--wrap=close -Wl,--wrap=fcntl -Wl,--wrap=unlink -Wl,--wrap=chmod -Wl,--wrap=fchmod
 LDLIBS := $(WAYLAND_LIBS) $(LIBFUTURA)
 
 .PHONY: all clean

@@ -1474,7 +1474,7 @@ void fut_kernel_main(void) {
 
     /* Enable interrupts and start scheduling */
     /* This should never return - scheduler takes over */
-    __asm__ volatile("sti" ::: "memory");  /* Enable interrupts for timer-based preemption */
+    fut_enable_interrupts();  /* Platform-neutral interrupt enable */
     fut_schedule();
 
     /* Should never reach here */

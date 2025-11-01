@@ -6,37 +6,49 @@
  * can track process address spaces, switch CR3 during scheduling, and expose
  * the active page tables to uaccess helpers.
  *
- * NOTE: This is currently an x86_64-specific implementation.
+ * NOTE: This supports both x86_64 and ARM64 architectures.
  */
 
-#ifdef __x86_64__
-
+/* Common includes for all architectures */
 #include "../../include/kernel/fut_mm.h"
-
 #include "../../include/kernel/fut_memory.h"
 #include "../../include/kernel/fut_task.h"
 #include "../../include/kernel/fut_thread.h"
 #include "../../include/kernel/fut_vfs.h"
-
-#include <platform/x86_64/memory/paging.h>
-#include <platform/x86_64/memory/pmap.h>
-#include <platform/x86_64/regs.h>
-
 #include <kernel/errno.h>
-
 #include <string.h>
 #include <stdbool.h>
 #include <stdint.h>
 
+/* Architecture-specific pmap header */
+#ifdef __x86_64__
+#include <platform/x86_64/memory/pmap.h>
+#elif defined(__aarch64__)
+#include <platform/arm64/memory/pmap.h>
+#else
+#error "Unsupported architecture"
+#endif
+
+/* Note: struct fut_vma is now defined in fut_mm.h */
+typedef struct fut_vma fut_vma_t;
+
 static fut_mm_t kernel_mm;
 static fut_mm_t *active_mm = NULL;
+
+/* Forward declarations for VMA management - defined in platform-independent section */
+static bool vma_can_merge(const fut_vma_t *vma1, const fut_vma_t *vma2);
+static fut_vma_t *vma_merge(fut_vma_t *vma1, fut_vma_t *vma2);
+static void vma_try_merge_neighbors(fut_mm_t *mm, fut_vma_t *vma);
+static void vma_insert_sorted(fut_mm_t *mm, fut_vma_t *vma);
 
 #define USER_STACK_TOP      0x00007FFF00000000ULL
 #define USER_VMA_MAX        (USER_STACK_TOP - (16ULL << 20))
 #define USER_MMAP_BASE      0x00006000000000ULL
 
-/* Note: struct fut_vma is now defined in fut_mm.h */
-typedef struct fut_vma fut_vma_t;
+#ifdef __x86_64__
+
+#include <platform/x86_64/memory/paging.h>
+#include <platform/x86_64/regs.h>
 
 static inline fut_mm_t *mm_fallback(fut_mm_t *mm) {
     return mm ? mm : &kernel_mm;
@@ -78,130 +90,6 @@ static void mm_unmap_and_free(fut_mm_t *mm, uintptr_t start, uintptr_t end) {
             }
         }
     }
-}
-
-/**
- * Insert a VMA into the mm's VMA list in sorted order by start address.
- * This maintains the invariant that VMAs are sorted and non-overlapping.
- */
-/**
- * Check if two VMAs can be merged (adjacent and compatible).
- */
-static bool vma_can_merge(const fut_vma_t *vma1, const fut_vma_t *vma2) {
-    if (!vma1 || !vma2) {
-        return false;
-    }
-
-    /* Must be adjacent */
-    if (vma1->end != vma2->start) {
-        return false;
-    }
-
-    /* Must have same protection and flags */
-    if (vma1->prot != vma2->prot || vma1->flags != vma2->flags) {
-        return false;
-    }
-
-    /* Must have same file backing (or both anonymous) */
-    if (vma1->vnode != vma2->vnode) {
-        return false;
-    }
-
-    /* If file-backed, file offsets must be contiguous */
-    if (vma1->vnode) {
-        uint64_t expected_offset = vma1->file_offset + (vma1->end - vma1->start);
-        if (expected_offset != vma2->file_offset) {
-            return false;
-        }
-    }
-
-    return true;
-}
-
-/**
- * Merge adjacent compatible VMAs. Combines vma1 and vma2 into vma1,
- * freeing vma2. Returns merged VMA pointer.
- */
-static fut_vma_t *vma_merge(fut_vma_t *vma1, fut_vma_t *vma2) {
-    if (!vma1 || !vma2) {
-        return vma1;
-    }
-
-    /* Extend vma1 to include vma2 */
-    vma1->end = vma2->end;
-    vma1->next = vma2->next;
-
-    /* Release vnode reference from vma2 if present */
-    if (vma2->vnode) {
-        extern void fut_vnode_unref(struct fut_vnode *);
-        fut_vnode_unref(vma2->vnode);
-    }
-
-    fut_free(vma2);
-    return vma1;
-}
-
-/**
- * Try to merge VMA with neighbors (left/right) after modifications.
- */
-static void vma_try_merge_neighbors(fut_mm_t *mm, fut_vma_t *vma) {
-    if (!mm || !vma) {
-        return;
-    }
-
-    /* Try merging with right neighbor */
-    if (vma->next && vma_can_merge(vma, vma->next)) {
-        vma_merge(vma, vma->next);
-    }
-
-    /* Try merging with left neighbor - search backwards */
-    if (mm->vma_list != vma) {
-        fut_vma_t *prev = mm->vma_list;
-        while (prev && prev->next != vma) {
-            prev = prev->next;
-        }
-
-        if (prev && vma_can_merge(prev, vma)) {
-            vma_merge(prev, vma);
-        }
-    }
-}
-
-static void vma_insert_sorted(fut_mm_t *mm, fut_vma_t *vma) {
-    if (!mm || !vma) {
-        return;
-    }
-
-    /* Empty list - vma becomes the head */
-    if (!mm->vma_list) {
-        vma->next = NULL;
-        mm->vma_list = vma;
-        return;
-    }
-
-    /* Insert at head if vma starts before current head */
-    if (vma->start < mm->vma_list->start) {
-        vma->next = mm->vma_list;
-        mm->vma_list = vma;
-        vma_try_merge_neighbors(mm, vma);
-        return;
-    }
-
-    /* Find insertion point in sorted list */
-    fut_vma_t *prev = mm->vma_list;
-    fut_vma_t *curr = prev->next;
-
-    while (curr && curr->start < vma->start) {
-        prev = curr;
-        curr = curr->next;
-    }
-
-    /* Insert between prev and curr */
-    vma->next = curr;
-    prev->next = vma;
-
-    /* Try to merge with neighbors */
-    vma_try_merge_neighbors(mm, vma);
 }
 
 void fut_mm_system_init(void) {
@@ -718,41 +606,10 @@ void *fut_mm_map_file(fut_mm_t *mm, struct fut_vnode *vnode, uintptr_t hint,
  *   ARM64 Memory Management Implementation
  * ============================================================ */
 
-#include "../../include/kernel/fut_mm.h"
-#include "../../include/kernel/fut_memory.h"
-#include "../../include/kernel/fut_task.h"
-#include "../../include/kernel/fut_thread.h"
-
 #include <platform/arm64/memory/paging.h>
-#include <kernel/errno.h>
-
-#include <string.h>
-#include <stdbool.h>
-#include <stdint.h>
-
-static fut_mm_t kernel_mm;
-static fut_mm_t *active_mm = NULL;
-
-#define USER_STACK_TOP      0x0000007FFFFF0000ULL
-#define USER_VMA_MAX        (USER_STACK_TOP - (16ULL << 20))
-#define USER_MMAP_BASE      0x0000400000000000ULL
 
 static inline fut_mm_t *mm_fallback(fut_mm_t *mm) {
     return mm ? mm : &kernel_mm;
-}
-
-static uint64_t mm_pte_flags(int prot) {
-    uint64_t flags = PTE_VALID | PTE_AF_BIT | PTE_ATTR_NORMAL | PTE_SH_INNER;
-    if (prot & 0x2) {
-        flags |= PTE_AP_RW_ALL;  /* Writable for user and kernel */
-    } else {
-        flags |= PTE_AP_RO_ALL;  /* Read-only for user and kernel */
-    }
-    if ((prot & 0x4) == 0) {
-        flags |= PTE_PXN_BIT;  /* Privileged Execute Never */
-        flags |= PTE_UXN_BIT;  /* User Execute Never */
-    }
-    return flags;
 }
 
 static void mm_unmap_and_free(fut_mm_t *mm, uintptr_t start, uintptr_t end) {
@@ -1162,6 +1019,130 @@ void *fut_mm_map_file(fut_mm_t *mm, struct fut_vnode *vnode, uintptr_t hint,
 /* ============================================================
  *   Platform-independent VMA management
  * ============================================================ */
+
+/**
+ * Check if two VMAs can be merged (adjacent and compatible).
+ */
+static bool vma_can_merge(const fut_vma_t *vma1, const fut_vma_t *vma2) {
+    if (!vma1 || !vma2) {
+        return false;
+    }
+
+    /* Must be adjacent */
+    if (vma1->end != vma2->start) {
+        return false;
+    }
+
+    /* Must have same protection and flags */
+    if (vma1->prot != vma2->prot || vma1->flags != vma2->flags) {
+        return false;
+    }
+
+    /* Must have same file backing (or both anonymous) */
+    if (vma1->vnode != vma2->vnode) {
+        return false;
+    }
+
+    /* If file-backed, file offsets must be contiguous */
+    if (vma1->vnode) {
+        uint64_t expected_offset = vma1->file_offset + (vma1->end - vma1->start);
+        if (expected_offset != vma2->file_offset) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+/**
+ * Merge adjacent compatible VMAs. Combines vma1 and vma2 into vma1,
+ * freeing vma2. Returns merged VMA pointer.
+ */
+static fut_vma_t *vma_merge(fut_vma_t *vma1, fut_vma_t *vma2) {
+    if (!vma1 || !vma2) {
+        return vma1;
+    }
+
+    /* Extend vma1 to include vma2 */
+    vma1->end = vma2->end;
+    vma1->next = vma2->next;
+
+    /* Release vnode reference from vma2 if present */
+    if (vma2->vnode) {
+        extern void fut_vnode_unref(struct fut_vnode *);
+        fut_vnode_unref(vma2->vnode);
+    }
+
+    fut_free(vma2);
+    return vma1;
+}
+
+/**
+ * Try to merge VMA with neighbors (left/right) after modifications.
+ */
+static void vma_try_merge_neighbors(fut_mm_t *mm, fut_vma_t *vma) {
+    if (!mm || !vma) {
+        return;
+    }
+
+    /* Try merging with right neighbor */
+    if (vma->next && vma_can_merge(vma, vma->next)) {
+        vma_merge(vma, vma->next);
+    }
+
+    /* Try merging with left neighbor - search backwards */
+    if (mm->vma_list != vma) {
+        fut_vma_t *prev = mm->vma_list;
+        while (prev && prev->next != vma) {
+            prev = prev->next;
+        }
+
+        if (prev && vma_can_merge(prev, vma)) {
+            vma_merge(prev, vma);
+        }
+    }
+}
+
+/**
+ * Insert a VMA into the mm's VMA list in sorted order by start address.
+ * This maintains the invariant that VMAs are sorted and non-overlapping.
+ */
+static void vma_insert_sorted(fut_mm_t *mm, fut_vma_t *vma) {
+    if (!mm || !vma) {
+        return;
+    }
+
+    /* Empty list - vma becomes the head */
+    if (!mm->vma_list) {
+        vma->next = NULL;
+        mm->vma_list = vma;
+        return;
+    }
+
+    /* Insert at head if vma starts before current head */
+    if (vma->start < mm->vma_list->start) {
+        vma->next = mm->vma_list;
+        mm->vma_list = vma;
+        vma_try_merge_neighbors(mm, vma);
+        return;
+    }
+
+    /* Find insertion point in sorted list */
+    fut_vma_t *prev = mm->vma_list;
+    fut_vma_t *curr = prev->next;
+
+    while (curr && curr->start < vma->start) {
+        prev = curr;
+        curr = curr->next;
+    }
+
+    /* Insert between prev and curr */
+    vma->next = curr;
+    prev->next = vma;
+
+    /* Try to merge with neighbors */
+    vma_try_merge_neighbors(mm, vma);
+}
 
 /**
  * fut_mm_add_vma - Add a VMA to the mm's VMA list

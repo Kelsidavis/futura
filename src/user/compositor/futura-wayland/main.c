@@ -328,6 +328,12 @@ int main(void) {
     if (!socket || strcmp(socket, "none") == 0) {
         printf("[WAYLAND] Demo mode: socket creation failed, rendering test pattern\n");
         printf("[WAYLAND] fb_map address: %p\n", (void*)comp.fb_map);
+
+        /* Stop the scheduler to prevent it from clearing our demo frame */
+        comp_scheduler_stop(&comp);
+        printf("[WAYLAND] Frame scheduler stopped for demo mode\n");
+
+        /* Render the demo pattern */
         comp_render_demo_frame(&comp);
 
         /* In demo mode, just render once and then idle - no client connections possible */

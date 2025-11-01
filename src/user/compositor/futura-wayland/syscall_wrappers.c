@@ -10,6 +10,7 @@
 #include <fcntl.h>
 #include <sys/socket.h>
 #include <sys/types.h>
+#include <sys/epoll.h>
 #include <stdarg.h>
 #include <errno.h>
 
@@ -23,6 +24,7 @@ static const char *strerror_simple(int err);
 #define SYS_BIND 49
 #define SYS_LISTEN 50
 #define SYS_CONNECT 42
+#define SYS_EPOLL_CTL 233
 
 /* Direct int 0x80 syscall helpers - QEMU bug workaround
  * QEMU's int 0x80 in 64-bit mode reads from x86_64 ABI registers (RDI/RSI/RDX)
@@ -78,6 +80,17 @@ static inline long int80_connect(int sockfd, const struct sockaddr *addr, sockle
         : "=a" (result)
         : "a" (SYS_CONNECT), "D" (sockfd), "S" ((long)addr), "d" (addrlen)
         : "memory", "rcx", "r11"
+    );
+    return result;
+}
+
+static inline long int80_epoll_ctl(int epfd, int op, int fd, void *event) {
+    long result;
+    __asm__ __volatile__ (
+        "int $0x80"
+        : "=a" (result)
+        : "a" (SYS_EPOLL_CTL), "D" (epfd), "S" (op), "d" (fd), "c" ((long)event)
+        : "memory", "r11"
     );
     return result;
 }
@@ -368,6 +381,31 @@ int __wrap_listen(int sockfd, int backlog) {
     /* Clear errno on success - workaround for stale errno issues */
     errno = 0;
     debug_write("[WRAP_LISTEN] SUCCESS\n");
+    return 0;
+}
+
+/* Linker-wrapped epoll_ctl() - used by Wayland event loop */
+int __wrap_epoll_ctl(int epfd, int op, int fd, struct epoll_event *event) {
+    debug_write("[WRAP_EPOLL_CTL] epoll_ctl(epfd=");
+    debug_write_int(epfd);
+    debug_write(", op=");
+    debug_write_int(op);
+    debug_write(", fd=");
+    debug_write_int(fd);
+    debug_write(")\n");
+
+    long result = int80_epoll_ctl(epfd, op, fd, (void *)event);
+
+    if (result < 0) {
+        int err = -(int)result;
+        errno = err;
+        debug_write("[WRAP_EPOLL_CTL] FAILED: errno=");
+        debug_write_int(err);
+        debug_write("\n");
+        return -1;
+    }
+    errno = 0;  /* Clear errno on success */
+    debug_write("[WRAP_EPOLL_CTL] SUCCESS\n");
     return 0;
 }
 

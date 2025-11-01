@@ -46,7 +46,7 @@ ifeq ($(DEBUG_WAYLAND),1)
 CFLAGS += -DDEBUG_WAYLAND
 endif
 
-LDFLAGS := -nostdlib -static -no-pie -T $(LDSCRIPT) $(WAYLAND_LDFLAGS) -Wl,--wrap=openat -Wl,--wrap=syscall -Wl,--wrap=open -Wl,--wrap=open64 -Wl,--wrap=socket -Wl,--wrap=bind -Wl,--wrap=listen -Wl,--wrap=connect -Wl,--wrap=flock -Wl,--wrap=close -Wl,--wrap=fcntl -Wl,--wrap=unlink -Wl,--wrap=chmod -Wl,--wrap=fchmod
+LDFLAGS := -nostdlib -static -no-pie -T $(LDSCRIPT) $(WAYLAND_LDFLAGS) -Wl,--wrap=openat -Wl,--wrap=syscall -Wl,--wrap=open -Wl,--wrap=open64 -Wl,--wrap=socket -Wl,--wrap=bind -Wl,--wrap=listen -Wl,--wrap=connect -Wl,--wrap=epoll_ctl -Wl,--wrap=flock -Wl,--wrap=close -Wl,--wrap=fcntl -Wl,--wrap=unlink -Wl,--wrap=chmod -Wl,--wrap=fchmod
 LDLIBS := $(WAYLAND_LIBS) $(LIBFUTURA)
 
 .PHONY: all clean

@@ -1397,49 +1397,121 @@ void comp_render_demo_frame(struct compositor_state *comp) {
         return;
     }
 
+    /* First, render a simple horizontal stripe pattern to verify rendering works */
+    printf("[DEMO] Rendering horizontal stripe test pattern (alternating red/blue every 50 pixels)\n");
+    for (int y = 0; y < h; ++y) {
+        uint32_t *row = (uint32_t *)(fb + y * pitch);
+        uint32_t color = (y / 50) % 2 ? 0xFFFF0000 : 0xFF0000FF;  /* Alternate red/blue */
+        for (int x = 0; x < w; ++x) {
+            row[x] = color;
+        }
+    }
+
+    /* Sample a few pixels to verify they were written */
+    printf("[DEMO] Stripe pattern pixel verification:\n");
+    uint32_t *p0 = (uint32_t *)(fb + 25 * pitch + 0);
+    uint32_t *p50 = (uint32_t *)(fb + 75 * pitch + 0);
+    uint32_t *p100 = (uint32_t *)(fb + 125 * pitch + 0);
+    printf("[DEMO] Pixel at y=25: %08x (expect FF0000 red)\n", *p0);
+    printf("[DEMO] Pixel at y=75: %08x (expect 0000FF blue)\n", *p50);
+    printf("[DEMO] Pixel at y=125: %08x (expect FF0000 red)\n", *p100);
+
+    /* Test pattern: vertical stripes (alternating every 100 pixels wide) */
+    printf("[DEMO] Rendering vertical stripe test pattern (alternating red/green every 100 pixels)\n");
+    for (int y = 0; y < h; ++y) {
+        uint32_t *row = (uint32_t *)(fb + y * pitch);
+        for (int x = 0; x < w; ++x) {
+            uint32_t color = (x / 100) % 2 ? 0xFFFF0000 : 0xFF00FF00;  /* Alternate red/green */
+            row[x] = color;
+        }
+    }
+
+    /* Sample vertical stripe pixels */
+    printf("[DEMO] Vertical stripe pattern pixel verification:\n");
+    uint32_t *pv_left = (uint32_t *)(fb + 0 * pitch + 50 * 4);
+    uint32_t *pv_mid = (uint32_t *)(fb + 0 * pitch + 150 * 4);
+    uint32_t *pv_right = (uint32_t *)(fb + 0 * pitch + 250 * 4);
+    printf("[DEMO] Pixel at x=50: %08x (expect 00FF00 green)\n", *pv_left);
+    printf("[DEMO] Pixel at x=150: %08x (expect FF0000 red)\n", *pv_mid);
+    printf("[DEMO] Pixel at x=250: %08x (expect 00FF00 green)\n", *pv_right);
+
     /* Test pattern: 4 quadrants with different colors */
     printf("[DEMO] Drawing 4-quadrant test pattern\n");
 
     int qw = w / 2;
     int qh = h / 2;
 
+    printf("[DEMO] Quadrant dimensions: qw=%d, qh=%d\n", qw, qh);
+
     /* Top-left: Red */
-    printf("[DEMO] Top-left quadrant: Red\n");
+    printf("[DEMO] Top-left quadrant: Red (0xFFFF0000)\n");
+    uint32_t red_samples = 0;
     for (int y = 0; y < qh; ++y) {
         uint32_t *row = (uint32_t *)(fb + y * pitch);
         for (int x = 0; x < qw; ++x) {
             row[x] = 0xFFFF0000;  /* Red */
+            if ((y == qh/4 && x == qw/4) || (y == 0 && x == 0)) {
+                red_samples++;
+                printf("[DEMO] RED pixel at (%d,%d) = 0x%08x (addr=%p)\n", x, y, row[x], (void*)&row[x]);
+            }
         }
     }
 
     /* Top-right: Green */
-    printf("[DEMO] Top-right quadrant: Green\n");
+    printf("[DEMO] Top-right quadrant: Green (0xFF00FF00)\n");
+    uint32_t green_samples = 0;
     for (int y = 0; y < qh; ++y) {
         uint32_t *row = (uint32_t *)(fb + y * pitch);
         for (int x = qw; x < w; ++x) {
             row[x] = 0xFF00FF00;  /* Green */
+            if ((y == qh/4 && x == qw + qw/4) || (y == 0 && x == qw)) {
+                green_samples++;
+                printf("[DEMO] GREEN pixel at (%d,%d) = 0x%08x (addr=%p)\n", x, y, row[x], (void*)&row[x]);
+            }
         }
     }
 
     /* Bottom-left: Blue */
-    printf("[DEMO] Bottom-left quadrant: Blue\n");
+    printf("[DEMO] Bottom-left quadrant: Blue (0xFF0000FF)\n");
+    uint32_t blue_samples = 0;
     for (int y = qh; y < h; ++y) {
         uint32_t *row = (uint32_t *)(fb + y * pitch);
         for (int x = 0; x < qw; ++x) {
             row[x] = 0xFF0000FF;  /* Blue */
+            if ((y == qh + qh/4 && x == qw/4) || (y == qh && x == 0)) {
+                blue_samples++;
+                printf("[DEMO] BLUE pixel at (%d,%d) = 0x%08x (addr=%p)\n", x, y, row[x], (void*)&row[x]);
+            }
         }
     }
 
     /* Bottom-right: Yellow */
-    printf("[DEMO] Bottom-right quadrant: Yellow\n");
+    printf("[DEMO] Bottom-right quadrant: Yellow (0xFFFFFF00)\n");
+    uint32_t yellow_samples = 0;
     for (int y = qh; y < h; ++y) {
         uint32_t *row = (uint32_t *)(fb + y * pitch);
         for (int x = qw; x < w; ++x) {
             row[x] = 0xFFFFFF00;  /* Yellow (Red + Green) */
+            if ((y == qh + qh/4 && x == qw + qw/4) || (y == qh && x == qw)) {
+                yellow_samples++;
+                printf("[DEMO] YELLOW pixel at (%d,%d) = 0x%08x (addr=%p)\n", x, y, row[x], (void*)&row[x]);
+            }
         }
     }
 
     printf("[DEMO] Test pattern rendering complete\n");
+    printf("[DEMO] Samples: RED=%u GREEN=%u BLUE=%u YELLOW=%u\n", red_samples, green_samples, blue_samples, yellow_samples);
+
+    /* Read back and verify a few pixels from each quadrant */
+    printf("[DEMO] Readback verification:\n");
+    uint32_t *p_red = (uint32_t *)(fb + 10 * pitch + 10 * 4);
+    uint32_t *p_green = (uint32_t *)(fb + 10 * pitch + (qw + 10) * 4);
+    uint32_t *p_blue = (uint32_t *)(fb + (qh + 10) * pitch + 10 * 4);
+    uint32_t *p_yellow = (uint32_t *)(fb + (qh + 10) * pitch + (qw + 10) * 4);
+    printf("[DEMO] Readback RED: %08x (expect FF0000)\n", *p_red);
+    printf("[DEMO] Readback GREEN: %08x (expect 00FF00)\n", *p_green);
+    printf("[DEMO] Readback BLUE: %08x (expect 0000FF)\n", *p_blue);
+    printf("[DEMO] Readback YELLOW: %08x (expect FFFF00)\n", *p_yellow);
 }
 
 static void ms_to_timespec(uint64_t ms, struct timespec *ts) {

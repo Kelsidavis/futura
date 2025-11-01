@@ -162,19 +162,29 @@ isr_syscall_int80_stub:
     movq %rsp, %r11           /* r11 = stack pointer */
 
     /* Extract syscall arguments from saved registers
-     * Stack layout after pushes at lines 116-121:
-     * RSP+0=R9 (arg6), RSP+8=R8 (arg5), RSP+16=R10 (arg4),
-     * RSP+24=RDX (arg3), RSP+32=RSI (arg2), RSP+40=RDI (arg1),
-     * ... other saved registers ...
-     * RSP+136=RAX (syscall number), then interrupt frame
+     * Stack layout after all pushes (including segment register pushes):
+     * RSP+0=GS, RSP+8=FS, RSP+16=ES, RSP+24=DS,
+     * RSP+32=RDI (arg1), RSP+40=RSI (arg2), RSP+48=RDX (arg3),
+     * RSP+56=R10 (arg4), RSP+64=R8 (arg5), RSP+72=R9 (arg6),
+     * RSP+80=R15, RSP+88=R14, RSP+96=R13, RSP+104=R12, RSP+112=RBX, RSP+120=RBP,
+     * RSP+128=CR3, RSP+136=RAX (syscall number), then interrupt frame
+     *
+     * For x86-64 syscall calling convention, syscall_entry_c expects:
+     * RDI = syscall number (param 1)
+     * RSI = arg1 from RDI (param 2)
+     * RDX = arg2 from RSI (param 3)
+     * RCX = arg3 from RDX (param 4)
+     * R8 = arg4 from R10 (param 5)
+     * R9 = arg5 from R8 (param 6)
+     * stack = arg6 from R9, frame_ptr (params 7-8)
      */
     movq 136(%rsp), %rdi      /* rdi = syscall number (param 1) */
-    movq 40(%rsp), %rsi       /* rsi = arg1 from saved RDI (param 2) */
-    movq 32(%rsp), %rdx       /* rdx = arg2 from saved RSI (param 3) */
-    movq 24(%rsp), %rcx       /* rcx = arg3 from saved RDX (param 4) */
-    movq 16(%rsp), %r8        /* r8 = arg4 from saved R10 (param 5) */
-    movq 8(%rsp), %r9         /* r9 = arg5 from saved R8 (param 6) */
-    movq 0(%rsp), %r10        /* r10 = arg6 from saved R9 (param 7 on stack) */
+    movq 32(%rsp), %rsi       /* rsi = arg1 from saved RDI (param 2) */
+    movq 40(%rsp), %rdx       /* rdx = arg2 from saved RSI (param 3) */
+    movq 48(%rsp), %rcx       /* rcx = arg3 from saved RDX (param 4) */
+    movq 56(%rsp), %r8        /* r8 = arg4 from saved R10 (param 5) */
+    movq 64(%rsp), %r9        /* r9 = arg5 from saved R8 (param 6) */
+    movq 72(%rsp), %r10       /* r10 = arg6 from saved R9 (will be pushed) */
 
     /* Note: frame_ptr will be passed as 8th parameter on stack */
     pushq %r15                /* push frame pointer (param 8) */

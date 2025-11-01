@@ -22,29 +22,29 @@
 #define O_CREAT    0x0040
 
 static inline long syscall3(long nr, long arg1, long arg2, long arg3) {
-    /* Use i386 int 0x80 calling convention (EBX, ECX, EDX)
-     * matching libfutura's syscall_shim.c for consistency */
-    register long _num __asm__("eax") = nr;
-    register long _arg1 __asm__("ebx") = arg1;
-    register long _arg2 __asm__("ecx") = arg2;
-    register long _arg3 __asm__("edx") = arg3;
-    __asm__ volatile("int $0x80"
-        : "+r"(_num)
-        : "r"(_arg1), "r"(_arg2), "r"(_arg3)
-        : "memory");
-    return _num;
+    /* Use x86-64 calling convention for int 0x80 (RAX=syscall, RDI=arg1, RSI=arg2, RDX=arg3)
+     * This matches what the kernel's isr_stubs.S expects when extracting arguments */
+    long result;
+    __asm__ volatile(
+        "int $0x80"
+        : "=a"(result)
+        : "a"(nr), "D"(arg1), "S"(arg2), "d"(arg3)
+        : "memory", "rcx", "r11"
+    );
+    return result;
 }
 
 static inline long syscall1(long nr, long arg1) {
-    /* Use i386 int 0x80 calling convention (EBX)
-     * matching libfutura's syscall_shim.c for consistency */
-    register long _num __asm__("eax") = nr;
-    register long _arg1 __asm__("ebx") = arg1;
-    __asm__ volatile("int $0x80"
-        : "+r"(_num)
-        : "r"(_arg1)
-        : "memory");
-    return _num;
+    /* Use x86-64 calling convention for int 0x80 (RAX=syscall, RDI=arg1)
+     * This matches what the kernel's isr_stubs.S expects when extracting arguments */
+    long result;
+    __asm__ volatile(
+        "int $0x80"
+        : "=a"(result)
+        : "a"(nr), "D"(arg1)
+        : "memory", "rcx", "r11"
+    );
+    return result;
 }
 
 static inline int sys_open(const char *pathname, int flags, int mode) {

@@ -357,10 +357,14 @@ static const char *strerror_simple(int err) {
 
 /* Direct write for debugging without errno corruption */
 static void debug_write(const char *msg) {
+    /* Try to write to console via stdout */
     extern long syscall(long, ...);
     size_t len = 0;
     while (msg[len]) len++;
-    syscall(1, 2, msg, len);  /* SYS_write = 1, stderr = 2 */
+
+    /* Write to fd 1 (stdout) instead of stderr */
+    long result = syscall(1, 1, msg, len);  /* SYS_write = 1, stdout = 1 */
+    (void)result;  /* Suppress unused warning */
 }
 
 /* Linker-wrapped listen() */

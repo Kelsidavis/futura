@@ -342,6 +342,7 @@ int fut_socket_bind(fut_socket_t *socket, const char *path) {
     /* Check if path already bound (allow SO_REUSEADDR-like behavior for unix sockets)
      * Unix domain sockets can be rebound to the same path for server applications.
      * This is similar to SO_REUSEADDR for TCP sockets. */
+    fut_socket_t *old_socket = NULL;
     fut_spinlock_acquire(&socket_lock);
     for (int i = 0; i < FUT_SOCKET_MAX; i++) {
         if (socket_registry[i] && socket_registry[i]->bound_path &&
@@ -363,9 +364,17 @@ int fut_socket_bind(fut_socket_t *socket, const char *path) {
             /* Socket has no active peers - allow rebinding (SO_REUSEADDR semantics) */
             fut_printf("[SOCKET-BIND-CHECK] Socket %u has no active peers, allowing rebinding\n",
                        socket_registry[i]->socket_id);
+            old_socket = socket_registry[i];
         }
     }
     fut_spinlock_release(&socket_lock);
+
+    /* Clean up the old socket's VFS inode so we can create a new one */
+    if (old_socket && old_socket->path_vnode) {
+        fut_vnode_unref(old_socket->path_vnode);
+        old_socket->path_vnode = NULL;
+        fut_printf("[SOCKET-BIND-CHECK] Cleaned up old socket %u VFS inode\n", old_socket->socket_id);
+    }
 
     /* Allocate and store bound path */
     socket->bound_path = fut_malloc(path_len + 1);

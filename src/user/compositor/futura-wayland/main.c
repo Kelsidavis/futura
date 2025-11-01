@@ -22,25 +22,29 @@
 #define O_CREAT    0x0040
 
 static inline long syscall3(long nr, long arg1, long arg2, long arg3) {
-    long ret;
-    __asm__ __volatile__(
-        "int $0x80\n"
-        : "=a"(ret)
-        : "a"(nr), "D"(arg1), "S"(arg2), "d"(arg3)
-        : "rcx", "r11", "memory"
-    );
-    return ret;
+    /* Use i386 int 0x80 calling convention (EBX, ECX, EDX)
+     * matching libfutura's syscall_shim.c for consistency */
+    register long _num __asm__("eax") = nr;
+    register long _arg1 __asm__("ebx") = arg1;
+    register long _arg2 __asm__("ecx") = arg2;
+    register long _arg3 __asm__("edx") = arg3;
+    __asm__ volatile("int $0x80"
+        : "+r"(_num)
+        : "r"(_arg1), "r"(_arg2), "r"(_arg3)
+        : "memory");
+    return _num;
 }
 
 static inline long syscall1(long nr, long arg1) {
-    long ret;
-    __asm__ __volatile__(
-        "int $0x80\n"
-        : "=a"(ret)
-        : "a"(nr), "D"(arg1)
-        : "rcx", "r11", "memory"
-    );
-    return ret;
+    /* Use i386 int 0x80 calling convention (EBX)
+     * matching libfutura's syscall_shim.c for consistency */
+    register long _num __asm__("eax") = nr;
+    register long _arg1 __asm__("ebx") = arg1;
+    __asm__ volatile("int $0x80"
+        : "+r"(_num)
+        : "r"(_arg1)
+        : "memory");
+    return _num;
 }
 
 static inline int sys_open(const char *pathname, int flags, int mode) {

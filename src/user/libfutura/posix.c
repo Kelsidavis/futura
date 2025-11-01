@@ -120,12 +120,20 @@ int close(int fd) {
 
     if (!posixd_channel && posix_init() < 0) {
         fut_fd_path_forget(fd);
-        return (int)sys_close(fd);
+        int ret = (int)sys_close(fd);
+        if (ret >= 0) {
+            errno = 0;  /* Clear errno on success */
+        }
+        return ret;
     }
 
     if (!posixd_channel) {
         fut_fd_path_forget(fd);
-        return (int)sys_close(fd);
+        int ret = (int)sys_close(fd);
+        if (ret >= 0) {
+            errno = 0;  /* Clear errno on success */
+        }
+        return ret;
     }
 
     struct posixd_close_req req = { .fd = fd };

@@ -1447,7 +1447,9 @@ void *fut_vfs_mmap(int fd, void *addr, size_t len, int prot, int flags, off_t of
     }
 
     /* Character devices may have custom mmap implementations */
+    fut_printf("[VFS-MMAP] fd=%d file=%p chr_ops=%p\n", fd, (void*)file, (void*)file->chr_ops);
     if (file->chr_ops && file->chr_ops->mmap) {
+        fut_printf("[VFS-MMAP] Calling chr device mmap\n");
         return file->chr_ops->mmap(file->chr_inode, file->chr_private, addr, len, off, prot, flags);
     }
 

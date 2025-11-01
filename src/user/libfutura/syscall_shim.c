@@ -30,6 +30,7 @@ static long ret_enosys(void) {
     return -1;
 }
 
+__attribute__((weak))
 long syscall(long number, ...) {
     va_list ap;
     va_start(ap, number);
@@ -72,8 +73,18 @@ long syscall(long number, ...) {
         const char *pathname = va_arg(ap, const char *);
         int flags = va_arg(ap, int);
         int mode = va_arg(ap, int);
-        /* Make the actual int 0x80 syscall to reach the kernel handler */
-        __asm__ volatile("int $0x80" : "=a"(result) : "a"(SYS_open), "b"(pathname), "c"(flags), "d"(mode) : "cc", "memory");
+        /* Make the actual int 0x80 syscall to reach the kernel handler
+         * Use explicit register variables to force GCC to use the correct registers
+         * for the i386 calling convention (EBX, ECX, EDX) */
+        register long _arg1 __asm__("ebx") = (long)pathname;
+        register long _arg2 __asm__("ecx") = (long)flags;
+        register long _arg3 __asm__("edx") = (long)mode;
+        register long _num __asm__("eax") = SYS_open;
+        __asm__ volatile("int $0x80"
+            : "+r"(_num)
+            : "r"(_arg1), "r"(_arg2), "r"(_arg3)
+            : "memory");
+        result = _num;
         break;
     }
     case SYS_openat: {
@@ -96,9 +107,26 @@ long syscall(long number, ...) {
             /* Make the actual int 0x80 syscall with SYS_open
              * open(pathname, flags, mode) is equivalent to
              * openat(AT_FDCWD, pathname, flags, mode)
-             */
-            __asm__ volatile("int $0x80" : "=a"(result) : "a"(SYS_open), "b"(pathname), "c"(flags), "d"(mode) : "cc", "memory");
+             * Use explicit register variables for i386 calling convention */
+            register long _arg1 __asm__("ebx") = (long)pathname;
+            register long _arg2 __asm__("ecx") = (long)flags;
+            register long _arg3 __asm__("edx") = (long)mode;
+            register long _num __asm__("eax") = SYS_open;
+            __asm__ volatile("int $0x80"
+                : "+r"(_num)
+                : "r"(_arg1), "r"(_arg2), "r"(_arg3)
+                : "memory");
+            result = _num;
         }
+        break;
+    }
+    case 73: { /* SYS_flock - file locking stub */
+        int fd = va_arg(ap, int);
+        int operation = va_arg(ap, int);
+        (void)fd;
+        (void)operation;
+        /* Single-process OS: file locking always succeeds */
+        result = 0;
         break;
     }
     default:

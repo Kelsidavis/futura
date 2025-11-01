@@ -647,7 +647,7 @@ open_wrapper:
 	@mkdir -p $(BUILD_DIR)/lib
 	@gcc-14 -m64 -fPIC -shared -o $(BUILD_DIR)/lib/libopen_wrapper.so src/user/libfutura/open_wrapper.c
 
-userspace: vendor libfutura open_wrapper
+userspace: vendor libfutura
 	@echo "Building Wayland demo userland..."
 	@$(MAKE) -C src/user/compositor/futura-wayland all
 	@$(MAKE) -C src/user/clients/wl-simple all

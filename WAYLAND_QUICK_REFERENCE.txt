@@ -1,0 +1,241 @@
+================================================================================
+WAYLAND COMPOSITOR - QUICK REFERENCE SUMMARY
+================================================================================
+
+CRITICAL FINDINGS:
+==================
+
+1. SOCKET CREATION FAILS
+   - Location: /home/k/futura/src/user/compositor/futura-wayland/main.c:240-269
+   - Result: No clients can connect (no IPC path available)
+   - Impact: No windows appear on display despite working rendering engine
+
+2. RENDERING ENGINE WORKS
+   - Framebuffer I/O: ✓ Functional
+   - Backbuffer system: ✓ Functional (dual-buffer)
+   - Rendering pipeline: ✓ Functional (comp_render_frame)
+   - Window decorations: ✓ Working
+   - Text rendering: ✓ Working (8x16 bitmap font)
+   - Cursor rendering: ✓ Working
+   - But: No surfaces to render (no client connections)
+
+3. DEMO MODE INCOMPLETE
+   - Code location: main.c:265-269
+   - Status: Reverted/incomplete implementation
+   - Intent: Fallback rendering when socket fails
+   - Current: Says "skipping framebuffer UI" but doesn't actually skip
+
+================================================================================
+RENDERING ARCHITECTURE OVERVIEW
+================================================================================
+
+Input:  Wayland clients attach buffers
+   |
+   v
+comp_surface_commit()  -> Copy pixel data to backing store, mark damage
+   |
+   v
+Damage accumulator     -> Collect changed regions
+   |
+   v
+Frame scheduler        -> Every 16ms (60Hz), trigger render if damaged
+   |
+   v
+comp_render_frame()    -> Main rendering engine:
+   |                     - Coalesce damage regions
+   |                     - Clear damaged areas
+   |                     - Render each surface in Z-order
+   |                     - Draw decorations
+   |                     - Draw text
+   |                     - Draw cursor
+   |
+   v
+present_damage()       -> Copy backbuffer to hardware framebuffer
+   |
+   v
+Output: Display shows rendered frame
+
+KEY FUNCTIONS (absolute file paths):
+====================================
+
+Core Rendering:
+- /home/k/futura/src/user/compositor/futura-wayland/comp.c:1227-1371
+  → comp_render_frame() - Main rendering engine
+
+- /home/k/futura/src/user/compositor/futura-wayland/comp.c:385-423
+  → bb_fill_rect() - Optimized rectangle fill (64-bit writes)
+
+- /home/k/futura/src/user/compositor/futura-wayland/comp.c:429-469
+  → blit_argb() - Optimized pixel copy (64-bit bulk writes)
+
+Surface Management:
+- /home/k/futura/src/user/compositor/futura-wayland/comp.c:907-960
+  → comp_surface_create() - Create new surface
+
+- /home/k/futura/src/user/compositor/futura-wayland/comp.c:1046-1160
+  → comp_surface_commit() - Receive client buffer and mark damage
+
+Window Decorations:
+- /home/k/futura/src/user/compositor/futura-wayland/comp.c:331-379
+  → comp_surface_update_decorations() - Calculate decoration geometry
+
+- /home/k/futura/src/user/compositor/futura-wayland/comp.c:471-554
+  → draw_minimize_button(), draw_close_button()
+
+Frame Scheduling:
+- /home/k/futura/src/user/compositor/futura-wayland/comp.c:1470-1560
+  → comp_scheduler_start/stop() - Timer management
+
+- /home/k/futura/src/user/compositor/futura-wayland/comp.c:1438-1468
+  → comp_run() - Main event loop
+
+Socket/IPC:
+- /home/k/futura/src/user/compositor/futura-wayland/main.c:240-257
+  → wl_display_add_socket_auto/manual() - SOCKET CREATION (FAILS)
+
+- /home/k/futura/src/user/compositor/futura-wayland/syscall_wrappers.c
+  → All socket syscall wraps for int 0x80 compatibility
+
+RENDERING FEATURES
+==================
+
+Enabled by Build (comp.h):
+  WAYLAND_MULTI_BUILD=1        - Multiple windows
+  WAYLAND_BACKBUFFER_BUILD=1   - Dual-buffer rendering
+  WAYLAND_DECO_BUILD=1         - Window decorations
+  WAYLAND_SHADOW_BUILD=1       - Window shadows
+  WAYLAND_RESIZE_BUILD=1       - Window resize handling
+
+Runtime Controls (env vars):
+  WAYLAND_BACKBUFFER=0/1       - Use backbuffer (default: 1)
+  WAYLAND_DECO=0/1             - Show decorations (default: 1)
+  WAYLAND_SHADOW=0/1           - Draw shadows (default: 1)
+  WAYLAND_RESIZE=0/1           - Allow resize (default: 1)
+  WAYLAND_THROTTLE=0/1         - Skip empty commits (default: 1)
+  WAYLAND_MULTI=0/1            - Multi-window (default: 1)
+  XDG_RUNTIME_DIR=/path        - Socket directory (default: /tmp)
+
+DAMAGE TRACKING SYSTEM
+======================
+
+Pattern: Efficient dirty-rectangle tracking
+
+1. Surface damage marked via comp_surface_damage()
+2. Damage accumulated in frame_damage[] array (up to 64 regions)
+3. Before render, regions are coalesced (merged if overlapping)
+4. Only damaged regions are cleared and redrawn
+5. Reduces rendering work from full screen to ~4 regions typical
+
+Coalescing Algorithm (comp.c:158-216):
+- Greedy single-pass merging
+- Finds overlapping region pairs
+- Merges smallest-union pair first (least waste)
+- Stops when reaching 4 regions (good trade-off)
+
+OPTIMIZATIONS
+==============
+
+64-bit Bulk Operations:
+- bb_fill_rect: Fills 2 pixels per 64-bit write
+- blit_argb: Copies 2 pixels per 64-bit write
+- 2-3x faster than pixel-by-pixel 32-bit writes
+
+Damage-based Rendering:
+- Only renders changed regions
+- Saves CPU time for static content
+- Backbuffer swap prevents flicker
+
+Clip-based Drawing:
+- Window decorations clip to damage regions
+- Text rendering clips to visible area
+- Cursor draws only in damage rect
+
+KNOWN ISSUES & LIMITATIONS
+===========================
+
+CRITICAL:
+1. Socket creation fails → No client connections → No UI
+   Fix needed: Debug wl_display_add_socket_auto()
+
+2. Demo mode incomplete → Says "skipping" but doesn't actually render
+   Fix needed: Complete demo UI rendering or actually skip rendering
+
+HIGH:
+3. Timer event loop registration may fail (epoll limitation)
+   Workaround: Manual polling fallback (working)
+
+4. Syscall interception limitations (int 0x80 vs SYSCALL)
+   Status: Mostly working, edge cases possible
+
+MEDIUM:
+5. Error handling in socket creation is minimal
+   Improvement: Add more verbose error logging
+
+SYSCALL WRAPPING DETAILS
+=========================
+
+File: /home/k/futura/src/user/compositor/futura-wayland/syscall_wrappers.c
+
+Wrapped for int 0x80:
+- socket() - Create Unix domain socket
+- bind() - Bind socket to path
+- listen() - Listen for connections
+- connect() - Connect to socket
+- fcntl() - Set non-blocking mode
+- flock() - File locking (stubbed, always succeeds)
+- close() - Close file descriptors
+- open/openat/open64 - File operations
+- chmod/fchmod - Set permissions
+- unlink() - Remove files
+
+Why wrapped: QEMU int 0x80 in 64-bit mode reads x86_64 ABI registers
+(RDI/RSI/RDX) instead of i386 ABI (EBX/ECX/EDX). Wrappers map correctly.
+
+BUILD FILES
+===========
+
+Makefile: /home/k/futura/src/user/compositor/futura-wayland/Makefile
+- Uses linker wrapping (--wrap=symbol flags)
+- Compiles all .c files to libwayland-server integration
+- Generates XDG shell protocol code
+
+Protocol files:
+- /home/k/futura/protocols/xdg-shell.xml
+
+Headers:
+- /home/k/futura/src/user/compositor/futura-wayland/comp.h (core structures)
+- All other .h files in same directory
+
+RECENT COMMITS
+==============
+
+Latest work on socket/syscall issues:
+- 73a954f: Fix int 0x80 syscall parameter extraction offsets
+- a230959: Add socket syscall wrappers and visibility attributes
+- 32f962c: Simplify int 0x80 wrapper with standard constraints
+- cea3850: Improve LD_PRELOAD wrapper assembly
+- 92e25b5: Add demo UI rendering fallback (incomplete)
+
+NEXT STEPS TO DEBUG
+===================
+
+1. Enable DEBUG_WAYLAND flag in Makefile:
+   CFLAGS += -DDEBUG_WAYLAND
+   This enables verbose logging throughout
+
+2. Check what errno is returned from socket creation:
+   Add: printf("[DEBUG] socket_auto errno = %d\n", errno);
+
+3. Verify XDG_RUNTIME_DIR is writable:
+   Check if /tmp exists and is writable
+   Check if socket path is created
+
+4. Test with WAYLAND_BACKBUFFER=0:
+   Forces direct framebuffer writes (no backbuffer)
+   May reveal if buffering is the issue
+
+5. Add simple test pattern:
+   If rendering works, compositor should draw something
+   Add test pattern in comp_render_frame() unconditionally
+
+================================================================================

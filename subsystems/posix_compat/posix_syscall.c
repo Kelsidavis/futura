@@ -59,7 +59,7 @@
 #define SYS_sigprocmask 14
 #define SYS_getpid      39
 #define SYS_socket      41
-#define SYS_connect     46
+#define SYS_connect     46  /* Note: non-standard, should be 42 per Linux ABI */
 #define SYS_accept      43
 #define SYS_sendto      44
 #define SYS_recvfrom    45
@@ -373,6 +373,22 @@ static int64_t sys_stat_handler(uint64_t pathname, uint64_t statbuf, uint64_t ar
 static int64_t sys_fstat_handler(uint64_t fd, uint64_t statbuf, uint64_t arg3,
                                    uint64_t arg4, uint64_t arg5, uint64_t arg6) {
     (void)arg3; (void)arg4; (void)arg5; (void)arg6;
+
+    /* Check if this FD is a socket */
+    fut_socket_t *socket = get_socket_from_fd((int)fd);
+    if (socket) {
+        /* Return fake stat info for socket - just mark it as a valid file */
+        struct posix_stat *st = (struct posix_stat *)statbuf;
+        if (fut_copy_to_user(st, &(struct posix_stat){
+            .st_mode = 0140000,  /* S_IFSOCK */
+            .st_size = 0,
+            .st_ino = socket->socket_id,
+        }, sizeof(struct posix_stat)) != 0) {
+            return -EFAULT;
+        }
+        return 0;
+    }
+
     return (int64_t)posix_fstat((int)fd, (struct posix_stat *)statbuf);
 }
 
@@ -431,7 +447,15 @@ static int64_t sys_rmdir_handler(uint64_t pathname, uint64_t arg2, uint64_t arg3
 static int64_t sys_unlink_handler(uint64_t pathname, uint64_t arg2, uint64_t arg3,
                                    uint64_t arg4, uint64_t arg5, uint64_t arg6) {
     (void)arg2; (void)arg3; (void)arg4; (void)arg5; (void)arg6;
-    return (int64_t)fut_vfs_unlink((const char *)pathname);
+
+    /* Copy pathname from userspace to kernel space */
+    char path_buf[256];
+    if (fut_copy_from_user(path_buf, (const void *)pathname, sizeof(path_buf) - 1) != 0) {
+        return -EFAULT;
+    }
+    path_buf[sizeof(path_buf) - 1] = '\0';  /* Ensure null termination */
+
+    return (int64_t)fut_vfs_unlink(path_buf);
 }
 
 /* File truncation */
@@ -1249,15 +1273,9 @@ static syscall_handler_t syscall_table[MAX_SYSCALL] = {
 int64_t posix_syscall_dispatch(uint64_t syscall_num,
                                 uint64_t arg1, uint64_t arg2, uint64_t arg3,
                                 uint64_t arg4, uint64_t arg5, uint64_t arg6) {
-    /* Debug: always log syscall 257 (openat) and syscall 2 (open) */
-    extern void fut_printf(const char *, ...);
-    if (syscall_num == 257 || syscall_num == 2) {
-        fut_printf("[DISPATCHER-DETAIL] syscall %lu (0x%lx) arg1=0x%lx arg2=0x%lx arg3=0x%lx arg4=0x%lx\n",
-                   syscall_num, syscall_num, arg1, arg2, arg3, arg4);
-    }
-
     /* Validate syscall number */
     if (syscall_num >= MAX_SYSCALL) {
+        extern void fut_printf(const char *, ...);
         fut_printf("[DISPATCHER] ERROR: syscall %lu >= MAX_SYSCALL %d\n", syscall_num, MAX_SYSCALL);
         return -1;  /* ENOSYS */
     }
@@ -1265,16 +1283,11 @@ int64_t posix_syscall_dispatch(uint64_t syscall_num,
     /* Get handler from table */
     syscall_handler_t handler = syscall_table[syscall_num];
     if (handler == NULL) {
-        fut_printf("[DISPATCHER] WARNING: no handler for syscall %lu\n", syscall_num);
         handler = sys_unimplemented;
     }
 
     /* Call handler */
     int64_t result = handler(arg1, arg2, arg3, arg4, arg5, arg6);
-
-    if (syscall_num == 257 || syscall_num == 2) {
-        fut_printf("[DISPATCHER-RESULT] syscall %lu returned 0x%lx (%ld)\n", syscall_num, (unsigned long)result, result);
-    }
 
     return result;
 }
@@ -1295,6 +1308,10 @@ void posix_syscall_init(void) {
     }
 }
 
+/* TODO: Signal delivery is temporarily disabled due to page faults
+ * The signal delivery code tries to access userspace memory (calling handler
+ * function pointers), causing crashes. This needs proper signal frame setup. */
+#if 0
 /**
  * Check for pending signals and deliver them.
  * Called from syscall return path to give pending signals a chance to execute.
@@ -1361,6 +1378,7 @@ static int check_and_deliver_pending_signals(fut_task_t *current) {
 
     return 0;
 }
+#endif
 
 long syscall_entry_c(uint64_t nr,
                      uint64_t a1, uint64_t a2, uint64_t a3,
@@ -1370,12 +1388,18 @@ long syscall_entry_c(uint64_t nr,
 
     long ret = (long)posix_syscall_dispatch(nr, a1, a2, a3, a4, a5, a6);
 
+    /* TODO: Signal delivery is temporarily disabled due to page faults
+     * The signal delivery code at RIP 0xFFFFFFFF80216972 tries to access
+     * userspace memory, causing crashes. This needs to be fixed separately. */
+    #if 0
     /* Check for pending signals and deliver them before returning to user */
     extern fut_task_t *fut_task_current(void);
     fut_task_t *current = fut_task_current();
-    if (current) {
+
+    if (current && current->pending_signals != 0) {
         check_and_deliver_pending_signals(current);
     }
+    #endif
 
     return ret;
 }

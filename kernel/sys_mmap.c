@@ -15,6 +15,10 @@
 #define MAP_ANONYMOUS   0x20
 
 long sys_mmap(void *addr, size_t len, int prot, int flags, int fd, long offset) {
+    extern void fut_printf(const char *, ...);
+    fut_printf("[SYS-MMAP] received: addr=%p len=%zu prot=0x%x flags=0x%x fd=%d offset=%ld\n",
+               addr, len, prot, flags, fd, offset);
+
     if (len == 0) {
         return -EINVAL;
     }
@@ -38,6 +42,9 @@ long sys_mmap(void *addr, size_t len, int prot, int flags, int fd, long offset) 
     }
 
     void *mapped = fut_vfs_mmap(fd, addr, len, prot, flags, (off_t)offset);
+    if (!mapped) {
+        return -ENOMEM;
+    }
     return (long)(intptr_t)mapped;
 }
 

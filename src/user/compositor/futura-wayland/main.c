@@ -329,12 +329,20 @@ int main(void) {
         printf("[WAYLAND] Demo mode: socket creation failed, rendering test pattern\n");
         printf("[WAYLAND] fb_map address: %p\n", (void*)comp.fb_map);
         comp_render_demo_frame(&comp);
+
+        /* In demo mode, just render once and then idle - no client connections possible */
+        printf("[WAYLAND] Demo mode complete - compositor idle (waiting for system reset)\n");
+        while (1) {
+            /* Infinite loop: compositor is alive but has no clients */
+            volatile int x = 0;
+            x++;  /* Prevent optimizer from removing the loop */
+        }
     } else {
-        /* Normal mode: render initial frame with damage */
+        /* Normal mode: render initial frame with damage and run compositor */
         comp_damage_add_full(&comp);
         comp_render_frame(&comp);
+        comp_run(&comp);
     }
-    comp_run(&comp);
 
     shm_backend_finish(&comp);
     data_device_manager_finish(&comp);

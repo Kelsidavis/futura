@@ -162,22 +162,23 @@ isr_syscall_int80_stub:
     movq %rsp, %r11           /* r11 = stack pointer */
 
     /* Extract syscall arguments from saved registers
-     * Stack layout: RSP+32=RDI (arg1), RSP+40=RSI (arg2), RSP+48=RDX (arg3),
-     *              RSP+56=R10 (arg4), RSP+64=R8 (arg5), RSP+72=R9 (arg6)
-     * But we need to match the actual push order in lines 116-121!
-     * The actual offsets are: RDI at 72, RSI at 64, RDX at 56, R10 at 48, R8 at 40, R9 at 32
+     * Stack layout after pushes at lines 116-121:
+     * RSP+0=R9 (arg6), RSP+8=R8 (arg5), RSP+16=R10 (arg4),
+     * RSP+24=RDX (arg3), RSP+32=RSI (arg2), RSP+40=RDI (arg1),
+     * ... other saved registers ...
+     * RSP+136=RAX (syscall number), then interrupt frame
      */
     movq 136(%rsp), %rdi      /* rdi = syscall number (param 1) */
-    movq 72(%rsp), %rsi       /* rsi = arg1 from saved RDI (param 2) */
-    movq 64(%rsp), %rdx       /* rdx = arg2 from saved RSI (param 3) */
-    movq 56(%rsp), %rcx       /* rcx = arg3 from saved RDX (param 4) */
-    movq 48(%rsp), %r8        /* r8 = arg4 from saved R10 (param 5) */
-    movq 40(%rsp), %r9        /* r9 = arg5 from saved R8 (param 6) */
-    movq 32(%rsp), %r11       /* r11 = arg6 from saved R9 (param 7 on stack) */
+    movq 40(%rsp), %rsi       /* rsi = arg1 from saved RDI (param 2) */
+    movq 32(%rsp), %rdx       /* rdx = arg2 from saved RSI (param 3) */
+    movq 24(%rsp), %rcx       /* rcx = arg3 from saved RDX (param 4) */
+    movq 16(%rsp), %r8        /* r8 = arg4 from saved R10 (param 5) */
+    movq 8(%rsp), %r9         /* r9 = arg5 from saved R8 (param 6) */
+    movq 0(%rsp), %r10        /* r10 = arg6 from saved R9 (param 7 on stack) */
 
     /* Note: frame_ptr will be passed as 8th parameter on stack */
     pushq %r15                /* push frame pointer (param 8) */
-    pushq %r11                /* push arg6 (param 7 on stack) */
+    pushq %r10                /* push arg6 (param 7 on stack) */
 
     call syscall_entry_c
 

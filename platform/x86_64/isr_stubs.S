@@ -120,27 +120,64 @@ isr_syscall_int80_stub:
     pushq %rsi
     pushq %rdi
 
+    /* Save segment registers (zero RAX first to avoid garbage in upper bits) */
+    xorq %rax, %rax
+    movw %ds, %ax
+    pushq %rax
+    xorq %rax, %rax
+    movw %es, %ax
+    pushq %rax
+    xorq %rax, %rax
+    movw %fs, %ax
+    pushq %rax
+    xorq %rax, %rax
+    movw %gs, %ax
+    pushq %rax
+
+    /* Load kernel data segment (but DON'T touch GS - it uses MSR base for per-CPU data!) */
+    movw $0x10, %ax
+    movw %ax, %ds
+    movw %ax, %es
+    movw %ax, %fs
+    /* GS intentionally NOT reloaded - must preserve GS_BASE MSR setup */
+
     /* Calculate pointer to interrupt frame (for userspace thread state) */
-    /* Stack layout from RSP: RDI, RSI, RDX, R10, R8, R9, R15, R14, R13, R12, RBX, RBP, CR3, RAX, RIP, CS, RFLAGS, RSP, SS */
-    /* We pushed: 6 arg regs + 6 callee-saved + CR3 + RAX = 14 values */
-    /* Frame (RIP) is at: RSP + (14 * 8) = RSP + 112 bytes */
+    /* Stack layout from RSP: GS, FS, ES, DS, RDI, RSI, RDX, R10, R8, R9, R15, R14, R13, R12, RBX, RBP, CR3, RAX, RIP, CS, RFLAGS, RSP, SS */
+    /* We pushed: 4 segment regs + 6 arg regs + 6 callee-saved + CR3 + RAX = 18 values */
+    /* Frame (RIP) is at: RSP + (18 * 8) = RSP + 144 bytes */
     movq %rsp, %r15
-    addq $112, %r15           /* r15 = pointer to interrupt frame (RIP) */
+    addq $144, %r15           /* r15 = pointer to interrupt frame (RIP) */
 
     /* Set global fut_current_frame so sys_fork() can access it */
     movq %r15, fut_current_frame(%rip)
 
     /* Extract syscall arguments from saved registers */
-    /* Stack: 0=RDI, 8=RSI, 16=RDX, 24=R10, 32=R8, 40=R9, 48=R15, 56=R14, 64=R13, 72=R12, 80=RBX, 88=RBP, 96=CR3, 104=RAX, 112=RIP... */
-    movq 104(%rsp), %rdi      /* syscall number from saved RAX */
-    movq 0(%rsp), %rsi        /* arg1 from RDI */
-    movq 8(%rsp), %rdx        /* arg2 from RSI */
-    movq 16(%rsp), %rcx       /* arg3 from RDX */
-    movq 24(%rsp), %r8        /* arg4 from R10 */
-    movq 32(%rsp), %r9        /* arg5 from R8 */
-    movq 40(%rsp), %r11       /* arg6 from R9 */
-    pushq %r15                /* arg7: interrupt frame pointer (push FIRST) */
-    pushq %r11                /* arg6 (push SECOND, closer to RSP) */
+    /* Stack layout (after all pushes): RSP+0=GS, RSP+8=FS, RSP+16=ES, RSP+24=DS,
+     * RSP+32=RDI, RSP+40=RSI, RSP+48=RDX, RSP+56=R10, RSP+64=R8, RSP+72=R9,
+     * RSP+80=R15, RSP+88=R14, RSP+96=R13, RSP+104=R12, RSP+112=RBX, RSP+120=RBP,
+     * RSP+128=CR3, RSP+136=RAX (syscall number), then RIP/CS/RFLAGS/RSP/SS from CPU */
+
+    /* DEBUG: Print register values before extraction to diagnose syscall parameter corruption */
+    movq 136(%rsp), %rax      /* Get syscall number for diagnostics */
+    movq %rsp, %r11           /* r11 = stack pointer */
+
+    /* Extract syscall arguments from saved registers
+     * Stack layout: RSP+32=RDI (arg1), RSP+40=RSI (arg2), RSP+48=RDX (arg3),
+     *              RSP+56=R10 (arg4), RSP+64=R8 (arg5), RSP+72=R9 (arg6)
+     * But we need to match the actual push order in lines 116-121!
+     * The actual offsets are: RDI at 72, RSI at 64, RDX at 56, R10 at 48, R8 at 40, R9 at 32
+     */
+    movq 136(%rsp), %rdi      /* rdi = syscall number (param 1) */
+    movq 72(%rsp), %rsi       /* rsi = arg1 from saved RDI (param 2) */
+    movq 64(%rsp), %rdx       /* rdx = arg2 from saved RSI (param 3) */
+    movq 56(%rsp), %rcx       /* rcx = arg3 from saved RDX (param 4) */
+    movq 48(%rsp), %r8        /* r8 = arg4 from saved R10 (param 5) */
+    movq 40(%rsp), %r9        /* r9 = arg5 from saved R8 (param 6) */
+    movq 32(%rsp), %r11       /* r11 = arg6 from saved R9 (param 7 on stack) */
+
+    /* Note: frame_ptr will be passed as 8th parameter on stack */
+    pushq %r15                /* push frame pointer (param 8) */
+    pushq %r11                /* push arg6 (param 7 on stack) */
 
     call syscall_entry_c
 
@@ -150,7 +187,16 @@ isr_syscall_int80_stub:
     addq $16, %rsp            /* remove arg6 and arg7 */
 
     /* Restore registers in reverse order of how we pushed them */
-    /* Stack: 0=RDI, 8=RSI, 16=RDX, 24=R10, 32=R8, 40=R9, 48=R15, 56=R14, 64=R13, 72=R12, 80=RBX, 88=RBP, 96=CR3, 104=RAX */
+    /* Stack: 0=GS, 8=FS, 16=ES, 24=DS, 32=RDI, 40=RSI, 48=RDX, 56=R10, 64=R8, 72=R9, 80=R15, 88=R14, 96=R13, 104=R12, 112=RBX, 120=RBP, 128=CR3, 136=RAX */
+    popq %rax                 /* Discard saved GS value */
+    /* GS intentionally NOT restored - must preserve GS_BASE MSR */
+    popq %rax
+    movw %ax, %fs             /* Restore user FS */
+    popq %rax
+    movw %ax, %es             /* Restore user ES */
+    popq %rax
+    movw %ax, %ds             /* Restore user DS */
+
     popq %rdi                 /* Restore user RDI */
     popq %rsi                 /* Restore user RSI */
     popq %rdx                 /* Restore user RDX */
@@ -168,10 +214,11 @@ isr_syscall_int80_stub:
     /* Stack now has: CR3, RAX, RIP, CS, RFLAGS, RSP, SS */
     /* R11 contains syscall return value - DON'T CLOBBER IT! */
 
-    /* Restore CR3 - use RAX as scratch since we'll overwrite it anyway */
-    /* Writing the same CR3 value is harmless (CPU optimizes it) */
-    popq %rax                 /* Load saved CR3 into RAX (temp) */
-    movq %rax, %cr3           /* Restore user CR3 (TLB flush if value changed) */
+    /* Do NOT restore CR3 here! Switching to user page tables while still in kernel
+     * mode would unmap the kernel stack, causing a page fault on the next instruction.
+     * The kernel page tables map everything (kernel + user), so we keep them active.
+     * The CPU automatically uses user page tables when iretq returns to CPL=3. */
+    addq $8, %rsp             /* Skip saved CR3 value */
 
     /* Now stack has: saved_RAX, RIP, CS, RFLAGS, RSP, SS */
     /* Skip saved RAX and restore syscall return value from R11 */
@@ -180,7 +227,7 @@ isr_syscall_int80_stub:
 
     /* At this point, stack should have: RIP, CS, RFLAGS, RSP, SS */
     /* All user registers are restored except RAX which has the syscall return value */
-    /* CR3 is restored to user page tables */
+    /* CR3 remains set to kernel page tables (which map everything) */
 
     /* NOTE: We do NOT zero XMM registers on syscall return because the userspace
      * syscall wrapper doesn't declare XMM as clobbered. If we zero them here,

@@ -28,124 +28,102 @@ static const char *strerror_simple(int err);
  * QEMU's int 0x80 in 64-bit mode reads from x86_64 ABI registers (RDI/RSI/RDX)
  * instead of i386 ABI registers (EBX/ECX/EDX), so we use RDI/RSI/RDX */
 static inline long int80_open(const char *pathname, int flags, mode_t mode) {
-    register long _arg1 __asm__("rdi") = (long)pathname;
-    register long _arg2 __asm__("rsi") = (long)flags;
-    register long _arg3 __asm__("rdx") = (long)mode;
-    register long _num __asm__("rax") = SYS_OPEN;
+    long result;
     __asm__ __volatile__ (
         "int $0x80"
-        : "+r" (_num)
-        : "r" (_arg1), "r" (_arg2), "r" (_arg3)
-        : "memory"
+        : "=a" (result)
+        : "a" (SYS_OPEN), "D" ((long)pathname), "S" (flags), "d" (mode)
+        : "memory", "rcx", "r11"
     );
-    return _num;
+    return result;
 }
 
 static inline long int80_socket(int domain, int type, int protocol) {
-    register long _arg1 __asm__("rdi") = (long)domain;
-    register long _arg2 __asm__("rsi") = (long)type;
-    register long _arg3 __asm__("rdx") = (long)protocol;
-    register long _num __asm__("rax") = SYS_SOCKET;
+    long result;
     __asm__ __volatile__ (
         "int $0x80"
-        : "+r" (_num)
-        : "r" (_arg1), "r" (_arg2), "r" (_arg3)
-        : "memory"
+        : "=a" (result)
+        : "a" (SYS_SOCKET), "D" (domain), "S" (type), "d" (protocol)
+        : "memory", "rcx", "r11"
     );
-    return _num;
+    return result;
 }
 
 static inline long int80_bind(int sockfd, const struct sockaddr *addr, socklen_t addrlen) {
-    register long _arg1 __asm__("rdi") = (long)sockfd;
-    register long _arg2 __asm__("rsi") = (long)addr;
-    register long _arg3 __asm__("rdx") = (long)addrlen;
-    register long _num __asm__("rax") = SYS_BIND;
+    long result;
     __asm__ __volatile__ (
         "int $0x80"
-        : "+r" (_num)
-        : "r" (_arg1), "r" (_arg2), "r" (_arg3)
-        : "memory"
+        : "=a" (result)
+        : "a" (SYS_BIND), "D" (sockfd), "S" ((long)addr), "d" (addrlen)
+        : "memory", "rcx", "r11"
     );
-    return _num;
+    return result;
 }
 
 static inline long int80_listen(int sockfd, int backlog) {
-    register long _arg1 __asm__("rdi") = (long)sockfd;
-    register long _arg2 __asm__("rsi") = (long)backlog;
-    register long _num __asm__("rax") = SYS_LISTEN;
+    long result;
     __asm__ __volatile__ (
         "int $0x80"
-        : "+r" (_num)
-        : "r" (_arg1), "r" (_arg2)
-        : "memory"
+        : "=a" (result)
+        : "a" (SYS_LISTEN), "D" (sockfd), "S" (backlog)
+        : "memory", "rcx", "r11"
     );
-    return _num;
+    return result;
 }
 
 static inline long int80_connect(int sockfd, const struct sockaddr *addr, socklen_t addrlen) {
-    register long _arg1 __asm__("rdi") = (long)sockfd;
-    register long _arg2 __asm__("rsi") = (long)addr;
-    register long _arg3 __asm__("rdx") = (long)addrlen;
-    register long _num __asm__("rax") = SYS_CONNECT;
+    long result;
     __asm__ __volatile__ (
         "int $0x80"
-        : "+r" (_num)
-        : "r" (_arg1), "r" (_arg2), "r" (_arg3)
-        : "memory"
+        : "=a" (result)
+        : "a" (SYS_CONNECT), "D" (sockfd), "S" ((long)addr), "d" (addrlen)
+        : "memory", "rcx", "r11"
     );
-    return _num;
+    return result;
 }
 
 static inline long int80_fcntl(int fd, int cmd, long arg) {
-    register long _arg1 __asm__("rdi") = (long)fd;
-    register long _arg2 __asm__("rsi") = (long)cmd;
-    register long _arg3 __asm__("rdx") = arg;
-    register long _num __asm__("rax") = 72; /* SYS_fcntl */
+    long result;
     __asm__ __volatile__ (
         "int $0x80"
-        : "+r" (_num)
-        : "r" (_arg1), "r" (_arg2), "r" (_arg3)
-        : "memory"
+        : "=a" (result)
+        : "a" (72), "D" (fd), "S" (cmd), "d" (arg)
+        : "memory", "rcx", "r11"
     );
-    return _num;
+    return result;
 }
 
 static inline long int80_unlink(const char *pathname) {
-    register long _arg1 __asm__("rdi") = (long)pathname;
-    register long _num __asm__("rax") = 87; /* SYS_unlink */
+    long result;
     __asm__ __volatile__ (
         "int $0x80"
-        : "+r" (_num)
-        : "r" (_arg1)
-        : "memory"
+        : "=a" (result)
+        : "a" (87), "D" ((long)pathname)
+        : "memory", "rcx", "r11"
     );
-    return _num;
+    return result;
 }
 
 static inline long int80_chmod(const char *pathname, mode_t mode) {
-    register long _arg1 __asm__("rdi") = (long)pathname;
-    register long _arg2 __asm__("rsi") = (long)mode;
-    register long _num __asm__("rax") = 90; /* SYS_chmod */
+    long result;
     __asm__ __volatile__ (
         "int $0x80"
-        : "+r" (_num)
-        : "r" (_arg1), "r" (_arg2)
-        : "memory"
+        : "=a" (result)
+        : "a" (90), "D" ((long)pathname), "S" (mode)
+        : "memory", "rcx", "r11"
     );
-    return _num;
+    return result;
 }
 
 static inline long int80_fchmod(int fd, mode_t mode) {
-    register long _arg1 __asm__("rdi") = (long)fd;
-    register long _arg2 __asm__("rsi") = (long)mode;
-    register long _num __asm__("rax") = 91; /* SYS_fchmod */
+    long result;
     __asm__ __volatile__ (
         "int $0x80"
-        : "+r" (_num)
-        : "r" (_arg1), "r" (_arg2)
-        : "memory"
+        : "=a" (result)
+        : "a" (91), "D" (fd), "S" (mode)
+        : "memory", "rcx", "r11"
     );
-    return _num;
+    return result;
 }
 
 /* Linker-wrapped flock() - always succeeds (single-process OS) */

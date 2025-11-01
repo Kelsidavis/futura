@@ -13,8 +13,10 @@
 #include <stdarg.h>
 #include <errno.h>
 
-/* Forward declaration for debug_write */
+/* Forward declarations for debug helpers */
 static void debug_write(const char *msg);
+static void debug_write_int(long num);
+static const char *strerror_simple(int err);
 
 #define SYS_OPEN 2
 #define SYS_SOCKET 41
@@ -240,52 +242,117 @@ int __wrap_openat(int dirfd, const char *pathname, int flags, ...) {
 
 /* Linker-wrapped socket() */
 int __wrap_socket(int domain, int type, int protocol) {
-    debug_write("[WRAP_SOCKET] Called with domain=");
-    if (domain == 1) debug_write("AF_UNIX");
-    else if (domain == 2) debug_write("AF_INET");
-    else debug_write("UNKNOWN");
-    debug_write(" type=");
-    if (type == 1) debug_write("SOCK_STREAM");
-    else if (type == 2) debug_write("SOCK_DGRAM");
-    else debug_write("MASKED");
-    debug_write("\n");
+    debug_write("[WRAP_SOCKET] socket(");
+    debug_write_int(domain);
+    debug_write(", ");
+    debug_write_int(type & 0xF);
+    debug_write(", ");
+    debug_write_int(protocol);
+    debug_write(")\n");
 
     /* Strip SOCK_CLOEXEC and SOCK_NONBLOCK flags - kernel doesn't support them */
     int type_masked = type & 0xF;  /* Keep only the socket type bits */
     long result = int80_socket(domain, type_masked, protocol);
     if (result < 0) {
-        errno = -result;
-        debug_write("[WRAP_SOCKET] FAILED with errno=");
-        debug_write((const char *)(long)(errno ? errno : -result));
-        debug_write("\n");
+        int err = -(int)result;
+        errno = err;
+        debug_write("[WRAP_SOCKET] FAILED: ");
+        debug_write(strerror_simple(err));
+        debug_write(" (errno=");
+        debug_write_int(err);
+        debug_write(")\n");
         return -1;
     }
     errno = 0;  /* Clear errno on success */
-    debug_write("[WRAP_SOCKET] SUCCESS, fd=");
-    debug_write((const char *)(long)result);
+    debug_write("[WRAP_SOCKET] SUCCESS: fd=");
+    debug_write_int(result);
     debug_write("\n");
     return (int)result;
 }
 
 /* Linker-wrapped bind() */
 int __wrap_bind(int sockfd, const struct sockaddr *addr, socklen_t addrlen) {
-    debug_write("[WRAP_BIND] Called with fd=");
-    debug_write((const char *)(long)sockfd);
-    debug_write(" addrlen=");
-    debug_write((const char *)(long)addrlen);
-    debug_write("\n");
+    /* Note: debug helpers are defined later in file */
+    debug_write("[WRAP_BIND] bind(fd=");
+    debug_write_int(sockfd);
+    debug_write(", addr=");
+    debug_write_int((long)addr);
+    debug_write(", addrlen=");
+    debug_write_int(addrlen);
+    debug_write(")\n");
 
     long result = int80_bind(sockfd, addr, addrlen);
     if (result < 0) {
-        errno = -result;
-        debug_write("[WRAP_BIND] FAILED with errno=");
-        debug_write((const char *)(long)errno);
-        debug_write("\n");
+        int err = -(int)result;
+        errno = err;
+        debug_write("[WRAP_BIND] FAILED: ");
+        debug_write(strerror_simple(err));
+        debug_write(" (errno=");
+        debug_write_int(err);
+        debug_write(")\n");
         return -1;
     }
     errno = 0;  /* Clear errno on success */
     debug_write("[WRAP_BIND] SUCCESS\n");
     return 0;
+}
+
+/* Helper: convert number to string for debug output */
+static void debug_write_int(long num) {
+    char buf[32];
+    int len = 0;
+
+    if (num < 0) {
+        buf[len++] = '-';
+        num = -num;
+    }
+
+    /* Convert to string */
+    char temp[32];
+    int tlen = 0;
+    long val = num;
+    do {
+        temp[tlen++] = '0' + (val % 10);
+        val /= 10;
+    } while (val > 0);
+
+    /* Reverse */
+    while (tlen > 0) {
+        buf[len++] = temp[--tlen];
+    }
+    buf[len] = 0;
+
+    debug_write(buf);
+}
+
+/* Helper: convert errno to string name */
+static const char *strerror_simple(int err) {
+    switch (err) {
+        case 1: return "EPERM";
+        case 2: return "ENOENT";
+        case 3: return "ESRCH";
+        case 4: return "EINTR";
+        case 5: return "EIO";
+        case 6: return "ENXIO";
+        case 12: return "ENOMEM";
+        case 13: return "EACCES";
+        case 14: return "EFAULT";
+        case 16: return "EBUSY";
+        case 17: return "EEXIST";
+        case 19: return "ENODEV";
+        case 20: return "ENOTDIR";
+        case 21: return "EISDIR";
+        case 22: return "EINVAL";
+        case 28: return "ENOSPC";
+        case 39: return "ENOTSOCK";
+        case 48: return "EADDRINUSE";
+        case 49: return "EADDRNOTAVAIL";
+        case 98: return "EADDRINUSE";
+        case 111: return "ECONNREFUSED";
+        case 113: return "EHOSTUNREACH";
+        case 115: return "EINPROGRESS";
+        default: return "UNKNOWN";
+    }
 }
 
 /* Direct write for debugging without errno corruption */
@@ -298,17 +365,27 @@ static void debug_write(const char *msg) {
 
 /* Linker-wrapped listen() */
 int __wrap_listen(int sockfd, int backlog) {
-    debug_write("[WRAP_LISTEN] Called\n");
+    debug_write("[WRAP_LISTEN] listen(fd=");
+    debug_write_int(sockfd);
+    debug_write(", backlog=");
+    debug_write_int(backlog);
+    debug_write(")\n");
+
     long result = int80_listen(sockfd, backlog);
 
     if (result < 0) {
-        errno = -result;
-        debug_write("[WRAP_LISTEN] Failed\n");
+        int err = -(int)result;
+        errno = err;
+        debug_write("[WRAP_LISTEN] FAILED: ");
+        debug_write(strerror_simple(err));
+        debug_write(" (errno=");
+        debug_write_int(err);
+        debug_write(")\n");
         return -1;
     }
     /* Clear errno on success - workaround for stale errno issues */
     errno = 0;
-    debug_write("[WRAP_LISTEN] Success, errno cleared\n");
+    debug_write("[WRAP_LISTEN] SUCCESS\n");
     return 0;
 }
 

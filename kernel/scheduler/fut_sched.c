@@ -113,9 +113,9 @@ void fut_sched_init(void) {
     // Remove idle from ready queue - we'll schedule it manually
     // This removes the idle thread that was automatically added by fut_thread_create()
     // Disable interrupts to prevent deadlock (timer interrupt could fire and try to acquire sched_lock)
-    __asm__ volatile("cli");
+    fut_disable_interrupts();
     fut_sched_remove_thread(idle_thread);
-    __asm__ volatile("sti");
+    fut_enable_interrupts();
 
     // Store idle thread in per-CPU data
     percpu->idle_thread = idle_thread;
@@ -157,9 +157,9 @@ void fut_sched_init_cpu(void) {
     }
 
     // Remove idle from ready queue - we'll schedule it manually
-    __asm__ volatile("cli");
+    fut_disable_interrupts();
     fut_sched_remove_thread(idle_thread);
-    __asm__ volatile("sti");
+    fut_enable_interrupts();
 
     // Store idle thread in per-CPU data
     percpu->idle_thread = idle_thread;

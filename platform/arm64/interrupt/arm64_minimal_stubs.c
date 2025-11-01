@@ -92,6 +92,22 @@ unsigned long __getauxval(unsigned long type) {
 }
 
 /* ============================================================
+ *   IRQ Handler Registration Stub
+ * ============================================================ */
+
+/**
+ * Stub for registering IRQ handlers on ARM64.
+ * ARM64 interrupt handling is basic during early platform initialization.
+ */
+typedef void (*fut_irq_handler_t)(int, struct fut_interrupt_frame *);
+
+int fut_register_irq_handler(int irq, fut_irq_handler_t handler) {
+    (void)irq;
+    (void)handler;
+    return 0;  /* Success - stub implementation */
+}
+
+/* ============================================================
  *   Serial/Console I/O
  * ============================================================ */
 

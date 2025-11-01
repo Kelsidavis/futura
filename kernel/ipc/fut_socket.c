@@ -369,12 +369,10 @@ int fut_socket_bind(fut_socket_t *socket, const char *path) {
     }
     fut_spinlock_release(&socket_lock);
 
-    /* Clean up the old socket's VFS inode so we can create a new one */
-    if (old_socket && old_socket->path_vnode) {
-        fut_vnode_unref(old_socket->path_vnode);
-        old_socket->path_vnode = NULL;
-        fut_printf("[SOCKET-BIND-CHECK] Cleaned up old socket %u VFS inode\n", old_socket->socket_id);
-    }
+    /* Note: We do NOT unref old socket's path_vnode here because that would unlink
+     * it from the VFS directory. The inode stays in the directory and the old socket
+     * keeps its reference until it's actually closed. This allows multiple sockets
+     * to share the same path (SO_REUSEADDR semantics). */
 
     /* Allocate and store bound path */
     socket->bound_path = fut_malloc(path_len + 1);
@@ -383,15 +381,25 @@ int fut_socket_bind(fut_socket_t *socket, const char *path) {
     }
     strcpy(socket->bound_path, path);
 
-    /* Create VFS inode for socket binding location */
-    struct fut_vnode *inode = fut_vfs_create_socket(path);
-    if (!inode) {
-        /* Binding path creation failed, but socket is still bound for lookup */
-        fut_printf("[SOCKET] Socket %u VFS inode creation failed (non-fatal), path: %s\n",
-                   socket->socket_id, path);
+    /* Create VFS inode for socket binding location, but skip if rebinding to existing path.
+     * When rebinding (SO_REUSEADDR), the old socket's inode stays in the VFS directory,
+     * and this socket can function without its own inode (non-fatal if creation fails). */
+    struct fut_vnode *inode = NULL;
+    if (!old_socket) {
+        /* First socket binding to this path - create VFS inode */
+        inode = fut_vfs_create_socket(path);
+        if (!inode) {
+            /* Binding path creation failed, but socket is still bound for lookup */
+            fut_printf("[SOCKET] Socket %u VFS inode creation failed (non-fatal), path: %s\n",
+                       socket->socket_id, path);
+        } else {
+            socket->path_vnode = inode;
+            fut_printf("[SOCKET] Socket %u created VFS inode, path: %s\n",
+                       socket->socket_id, path);
+        }
     } else {
-        socket->path_vnode = inode;
-        fut_printf("[SOCKET] Socket %u created VFS inode, path: %s\n",
+        /* Rebinding to existing path - skip VFS inode creation, use old socket's inode */
+        fut_printf("[SOCKET] Socket %u rebinding to existing path (using old socket's inode), path: %s\n",
                    socket->socket_id, path);
     }
 

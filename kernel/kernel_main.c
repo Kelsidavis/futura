@@ -1291,7 +1291,7 @@ void fut_kernel_main(void) {
 
     /* Re-enabled: using wayland instead of direct framebuffer */
     wayland_client_exec = 0;  /* Will be set by actual exec below */
-#if 1  /* Enabled wayland clients */
+#if 0  /* Disabled wayland clients for compositor debugging */
     if (wayland_exec == 0 && wayland_client_stage == 0) {
         fut_boot_delay_ms(100);
         char name[] = "wl-simple";

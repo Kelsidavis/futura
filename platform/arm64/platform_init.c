@@ -64,9 +64,9 @@ static volatile _Bool uart_irq_mode = 0;    /* false = polling, true = interrupt
 
 /* UART RX ring buffer */
 #define UART_RX_BUFFER_SIZE 4096
-static volatile char uart_rx_buffer[UART_RX_BUFFER_SIZE];
-static volatile uint32_t uart_rx_head = 0;  /* Write position (filled by ISR) */
-static volatile uint32_t uart_rx_tail = 0;  /* Read position (consumed by getc) */
+volatile char uart_rx_buffer[UART_RX_BUFFER_SIZE];
+volatile uint32_t uart_rx_head = 0;  /* Write position (filled by ISR) */
+volatile uint32_t uart_rx_tail = 0;  /* Read position (consumed by getc) */
 
 /* UART TX interrupt handler - drains ring buffer into hardware FIFO */
 static void uart_tx_irq_handler(int irq_num, fut_interrupt_frame_t *frame) {
@@ -382,7 +382,7 @@ void fut_printf(const char *fmt, ...) {
 static volatile uint32_t *gicd = (volatile uint32_t *)GICD_BASE;
 static volatile uint32_t *gicc = (volatile uint32_t *)GICC_BASE;
 
-static void fut_gic_init(void) {
+void fut_gic_init(void) {
     /* Disable distributor */
     mmio_write32(&gicd[GICD_CTLR / 4], 0);
 

@@ -102,8 +102,10 @@ sync_exception_entry:
     stp     d22, d23, [x0, #464]
     stp     d24, d25, [x0, #480]
     stp     d26, d27, [x0, #496]
-    stp     d28, d29, [x0, #512]
-    stp     d30, d31, [x0, #528]
+    /* Adjust base pointer for remaining fp registers (offset too large) */
+    add     x1, x0, #512
+    stp     d28, d29, [x1, #0]
+    stp     d30, d31, [x1, #16]
 
     /* Save FPSR (Floating-point Status Register) at frame->fpsr offset 800 */
     mrs     x1, fpsr
@@ -140,8 +142,7 @@ sync_exception_entry:
     ldr     x30, [x0, #240]
 
     /* Restore x0, x1 from frame */
-    ldp     x1, x1, [x0, #0]   /* Load x0 from frame->x[0] */
-    mov     x1, x1             /* x0 is already restored by ldp */
+    ldp     x0, x1, [x0, #0]   /* Load x0, x1 from frame->x[0] and frame->x[1] */
 
     /* Restore FPU state before returning from exception
      * FPU registers and control state must be restored
@@ -170,8 +171,10 @@ sync_exception_entry:
     ldp     d22, d23, [x0, #464]
     ldp     d24, d25, [x0, #480]
     ldp     d26, d27, [x0, #496]
-    ldp     d28, d29, [x0, #512]
-    ldp     d30, d31, [x0, #528]
+    /* Adjust base pointer for remaining fp registers (offset too large) */
+    add     x1, x0, #512
+    ldp     d28, d29, [x1, #0]
+    ldp     d30, d31, [x1, #16]
 
     /* Restore SP (update to next frame) */
     ldr     x1, [x0, #248]

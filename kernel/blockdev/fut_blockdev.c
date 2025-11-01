@@ -43,6 +43,7 @@ extern int fut_blk_read(void *backend_ctx, uint64_t sector, uint32_t count, void
 extern int fut_blk_write(void *backend_ctx, uint64_t sector, uint32_t count, const void *buffer);
 
 /* Adapter operations for block core devices */
+#ifdef __x86_64__
 static int blockdev_compat_read(struct fut_blockdev *dev, uint64_t block_num,
                                   uint64_t num_blocks, void *buffer) {
     if (!dev || !dev->private_data) {
@@ -58,6 +59,26 @@ static int blockdev_compat_write(struct fut_blockdev *dev, uint64_t block_num,
     }
     return fut_blk_write(dev->private_data, block_num, (uint32_t)num_blocks, buffer);
 }
+#else
+/* ARM64 stubs for block operations (not yet implemented) */
+static int blockdev_compat_read(struct fut_blockdev *dev, uint64_t block_num,
+                                  uint64_t num_blocks, void *buffer) {
+    (void)dev;
+    (void)block_num;
+    (void)num_blocks;
+    (void)buffer;
+    return BLOCKDEV_EIO;  /* Not implemented for ARM64 */
+}
+
+static int blockdev_compat_write(struct fut_blockdev *dev, uint64_t block_num,
+                                   uint64_t num_blocks, const void *buffer) {
+    (void)dev;
+    (void)block_num;
+    (void)num_blocks;
+    (void)buffer;
+    return BLOCKDEV_EIO;  /* Not implemented for ARM64 */
+}
+#endif
 
 static const struct fut_blockdev_ops compat_ops = {
     .read = blockdev_compat_read,

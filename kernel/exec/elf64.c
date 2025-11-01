@@ -956,10 +956,17 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
 #include <kernel/uaccess.h>
 #include <platform/arm64/regs.h>
 #include <platform/arm64/context.h>
+#include <platform/arm64/memory/pmap.h>
+#include <platform/arm64/memory/paging.h>
 
 #include <string.h>
 #include <stdint.h>
 #include <stdbool.h>
+
+/* PROT flags for ARM64 */
+#define PROT_READ   0x1
+#define PROT_WRITE  0x2
+#define PROT_EXEC   0x4
 
 #define ELF_MAGIC       0x464C457FULL
 #define ELF_CLASS_64    0x02
@@ -1031,11 +1038,15 @@ static int read_exact(int fd, void *buf, size_t len) {
 static int exec_copy_to_user(fut_mm_t *mm, uint64_t dest, const void *src, size_t len) {
     /* For ELF loading, map user pages and write directly */
     fut_vmem_context_t *vmem = fut_mm_context(mm);
-    uintptr_t phys = 0;
-    if (!pmap_lookup_page(vmem, dest, &phys)) {
+    uint64_t pte = 0;
+    /* Check if page is mapped */
+    if (pmap_probe_pte(vmem, dest, &pte) != 0) {
         return -EFAULT;
     }
-    memcpy((void *)(phys + KERNEL_PHYS_OFFSET), src, len);
+    /* Convert physical address (from PTE) to kernel virtual address */
+    phys_addr_t phys = pte & ~0xFFFULL;  /* Mask off PTE flags to get physical address */
+    void *virt = (void *)pmap_phys_to_virt(phys);
+    memcpy(virt, src, len);
     return 0;
 }
 
@@ -1055,11 +1066,12 @@ static int map_segment(fut_mm_t *mm, int fd, const elf64_phdr_t *phdr) {
 
     for (size_t i = 0; i < pages_needed; i++) {
         uint64_t page_addr = addr + (i * PAGE_SIZE);
-        phys_addr_t phys = fut_alloc_page();
-        if (phys == 0) return -ENOMEM;
+        void *page = fut_pmm_alloc_page();
+        if (!page) return -ENOMEM;
 
-        if (pmap_map_page(vmem, page_addr, phys, prot) != 0) {
-            fut_free_page(phys);
+        phys_addr_t phys = pmap_virt_to_phys((uintptr_t)page);
+        if (pmap_map_user(vmem, page_addr, phys, PAGE_SIZE, prot) != 0) {
+            fut_pmm_free_page(page);
             return -EFAULT;
         }
     }
@@ -1096,11 +1108,12 @@ static int stage_stack_pages(fut_mm_t *mm, uint64_t *out_stack_top) {
 
     for (size_t i = 0; i < USER_STACK_PAGES; i++) {
         uint64_t page_addr = stack_addr + (i * PAGE_SIZE);
-        phys_addr_t phys = fut_alloc_page();
-        if (phys == 0) return -ENOMEM;
+        void *page = fut_pmm_alloc_page();
+        if (!page) return -ENOMEM;
 
-        if (pmap_map_page(vmem, page_addr, phys, PROT_READ | PROT_WRITE) != 0) {
-            fut_free_page(phys);
+        phys_addr_t phys = pmap_virt_to_phys((uintptr_t)page);
+        if (pmap_map_user(vmem, page_addr, phys, PAGE_SIZE, PROT_READ | PROT_WRITE) != 0) {
+            fut_pmm_free_page(page);
             return -EFAULT;
         }
     }
@@ -1113,8 +1126,8 @@ static int stage_stack_pages(fut_mm_t *mm, uint64_t *out_stack_top) {
 static int build_user_stack(fut_mm_t *mm,
                             const char *const argv_in[],
                             size_t argc_in,
-                            const char *const envp_in[],
-                            size_t envc_in,
+                            const char *const envp_in[] __attribute__((unused)),
+                            size_t envc_in __attribute__((unused)),
                             uint64_t *out_sp) {
     if (!out_sp) return -EINVAL;
 
@@ -1164,7 +1177,7 @@ static int build_user_stack(fut_mm_t *mm,
         }
     }
 
-    uint64_t argv_ptr = sp;
+    uint64_t argv_ptr __attribute__((unused)) = sp;
 
     /* ARM64 ABI: argc and argv_ptr will be passed in x0 and x1 */
     *out_sp = sp;
@@ -1180,7 +1193,7 @@ static int build_user_stack(fut_mm_t *mm,
     uint64_t entry = info->entry;
     uint64_t sp = info->stack;
     uint64_t argc = info->argc;
-    fut_task_t *task = info->task;
+    fut_task_t *task __attribute__((unused)) = info->task;
 
     fut_printf("[ARM64-TRAMPOLINE] entry=0x%llx sp=0x%llx argc=%llu\n", entry, sp, argc);
 

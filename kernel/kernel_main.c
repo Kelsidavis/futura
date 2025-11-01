@@ -840,11 +840,16 @@ void fut_kernel_main(void) {
     fut_serial_puts("[DEBUG] kernel_main: Before ACPI init\n");
     fut_printf("[INIT] Initializing ACPI...\n");
     extern bool acpi_init(void);
+#ifdef __x86_64__
     extern void acpi_parse_madt(void);
     if (acpi_init()) {
         fut_printf("[INIT] Parsing MADT for CPU topology...\n");
         acpi_parse_madt();
     }
+#else
+    /* ARM64: ACPI parsing not yet implemented */
+    acpi_init();
+#endif
 
 #if defined(__x86_64__)
     /* Initialize per-CPU data for BSP */
@@ -1024,12 +1029,17 @@ void fut_kernel_main(void) {
 
     fut_printf("[INIT] Initializing block device subsystem...\n");
     fut_blockdev_init();
+#ifdef __x86_64__
     fut_blk_core_init();
     fut_status_t vblk_rc = virtio_blk_init(0);
     if (vblk_rc != 0 && vblk_rc != -19) {  /* -19 = ENODEV (no device found) */
         fut_printf("[virtio-blk] init failed: %d\n", vblk_rc);
     }
     /* ahci_init(); */  /* AHCI not yet implemented */
+#else
+    /* ARM64: block device drivers not yet implemented */
+    fut_status_t __attribute__((unused)) vblk_rc = -19;  /* ENODEV */
+#endif
     fut_printf("[INIT] Block device subsystem initialized\n");
 
     /* ========================================
@@ -1225,10 +1235,12 @@ void fut_kernel_main(void) {
      *   Memory Management Tests
      * ======================================== */
 
+#ifdef __x86_64__
     bool mm_tests_enabled = boot_flag_enabled("mm-tests", true);  /* Default ON for testing */
     if (mm_tests_enabled) {
         fut_mm_tests_run();
     }
+#endif
 
     /* ========================================
      *   Launch Interactive Shell

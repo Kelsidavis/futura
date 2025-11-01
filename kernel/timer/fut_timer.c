@@ -273,7 +273,9 @@ void fut_timer_irq(void) {
     fut_timer_tick();
 
     /* Send EOI to LAPIC (PIC EOI no longer needed in APIC mode) */
+#ifdef __x86_64__
     lapic_send_eoi();
+#endif
 }
 
 /* ============================================================

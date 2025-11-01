@@ -19,15 +19,6 @@ void fut_scheduler_init(void) {
 }
 
 /* ============================================================
- *   GIC Initialization Stubs
- * ============================================================ */
-
-void fut_gic_init(void) {
-    /* Stub: Already partially implemented in arm64_irq.c */
-    return;
-}
-
-/* ============================================================
  *   Timer Management Stubs
  * ============================================================ */
 
@@ -84,6 +75,20 @@ char *strstr(const char *s1, const char *s2) {
     }
 
     return NULL;
+}
+
+/* ============================================================
+ *   LibGCC Stubs
+ * ============================================================ */
+
+/**
+ * Stub for __getauxval from libgcc.
+ * libgcc uses this to detect LSE atomics support.
+ * Returns 0 to indicate no auxiliary vector available (bare-metal).
+ */
+unsigned long __getauxval(unsigned long type) {
+    (void)type;
+    return 0;  /* No aux vector in bare-metal */
 }
 
 /* ============================================================

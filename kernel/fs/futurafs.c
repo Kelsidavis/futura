@@ -2502,7 +2502,11 @@ static ssize_t futurafs_file_read_sync(struct futurafs_inode_info *inode_info,
     /* Busy-wait until async operation completes */
     while (!sync_ctx.completed) {
         /* In a real implementation, this would yield to scheduler */
+        #ifdef __x86_64__
         __asm__ volatile("pause" ::: "memory");
+#elif defined(__aarch64__)
+        __asm__ volatile("yield" ::: "memory");
+#endif
     }
 
     return sync_ctx.result;
@@ -2537,7 +2541,11 @@ static ssize_t futurafs_file_write_sync(struct futurafs_inode_info *inode_info,
     /* Busy-wait until async operation completes */
     while (!sync_ctx.completed) {
         /* In a real implementation, this would yield to scheduler */
+        #ifdef __x86_64__
         __asm__ volatile("pause" ::: "memory");
+#elif defined(__aarch64__)
+        __asm__ volatile("yield" ::: "memory");
+#endif
     }
 
     return sync_ctx.result;
@@ -2567,7 +2575,11 @@ static int futurafs_read_inode(struct futurafs_mount *mount, uint64_t ino,
 
     /* Busy-wait until async operation completes */
     while (!sync_ctx.completed) {
+        #ifdef __x86_64__
         __asm__ volatile("pause" ::: "memory");
+#elif defined(__aarch64__)
+        __asm__ volatile("yield" ::: "memory");
+#endif
     }
 
     return sync_ctx.result;
@@ -2593,7 +2605,11 @@ static int futurafs_write_inode(struct futurafs_mount *mount, uint64_t ino,
 
     /* Busy-wait until async operation completes */
     while (!sync_ctx.completed) {
+        #ifdef __x86_64__
         __asm__ volatile("pause" ::: "memory");
+#elif defined(__aarch64__)
+        __asm__ volatile("yield" ::: "memory");
+#endif
     }
 
     return sync_ctx.result;

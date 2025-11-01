@@ -20,6 +20,8 @@
 #include <platform/x86_64/memory/pmap.h>
 #include <platform/x86_64/regs.h>
 #elif defined(__aarch64__)
+#include <platform/arm64/memory/paging.h>
+#include <platform/arm64/memory/pmap.h>
 #include <platform/arm64/regs.h>
 #endif
 

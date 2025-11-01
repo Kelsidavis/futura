@@ -126,6 +126,7 @@ ifeq ($(PLATFORM),x86_64)
     ARCH_CFLAGS := -m64 -mcmodel=kernel -mno-red-zone -mno-sse -mno-avx -mno-avx2 -fno-tree-vectorize
     ARCH_ASFLAGS := --64
     ARCH_LDFLAGS := -m elf_x86_64 -T platform/x86_64/link.ld
+    EXTRA_LDLIBS :=
     # Binary format for embedding blobs
     OBJCOPY_BIN_FMT := elf64-x86-64
     OBJCOPY_BIN_ARCH := i386:x86-64
@@ -139,7 +140,8 @@ else ifeq ($(PLATFORM),arm64)
     OBJCOPY := $(CROSS_COMPILE)objcopy
     ARCH_CFLAGS := -march=armv8-a -mtune=cortex-a53 -Wno-pedantic
     ARCH_ASFLAGS :=
-    ARCH_LDFLAGS := -T platform/arm64/link.ld /usr/lib/gcc-cross/aarch64-linux-gnu/13/libgcc.a
+    ARCH_LDFLAGS := -T platform/arm64/link.ld
+    EXTRA_LDLIBS := /usr/lib/gcc-cross/aarch64-linux-gnu/13/libgcc.a
     # Binary format for embedding blobs
     OBJCOPY_BIN_FMT := elf64-aarch64
     OBJCOPY_BIN_ARCH := aarch64
@@ -416,11 +418,12 @@ ifeq ($(PLATFORM),x86_64)
 else ifeq ($(PLATFORM),arm64)
     PLATFORM_SOURCES := \
         platform/arm64/boot.S \
+        platform/arm64/arm64_exception_entry.S \
         platform/arm64/context_switch.S \
         platform/arm64/platform_init.c \
-        platform/arm64/pmap.c \
-        platform/arm64/arm64_stubs.c \
-        platform/arm64/arm64_minimal_stubs.c \
+        platform/arm64/memory/pmap.c \
+        platform/arm64/interrupt/arm64_stubs.c \
+        platform/arm64/interrupt/arm64_minimal_stubs.c \
         kernel/arch/arm64/hal_halt.c \
         kernel/arch/arm64/hal_interrupts.c \
         kernel/mm/arm64_paging.c \
@@ -523,7 +526,7 @@ futfs-crash-test: kernel tools
 
 $(BIN_DIR)/futura_kernel.elf: $(OBJECTS) $(RUST_LIBS) $(KERNEL_DEPS) | $(BIN_DIR)
 	@echo "LD $@.tmp"
-	@$(LD) $(LDFLAGS) -o $@.tmp $(OBJECTS) $(RUST_LIBS)
+	@$(LD) $(LDFLAGS) -o $@.tmp $(OBJECTS) $(RUST_LIBS) $(EXTRA_LDLIBS)
 ifeq ($(PLATFORM),x86_64)
 	@cp $@.tmp /tmp/kernel_before_fix.elf
 	@echo "FIX-ELF $@"

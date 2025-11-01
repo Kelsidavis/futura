@@ -1010,6 +1010,137 @@ void *fut_mm_map_file(fut_mm_t *mm, struct fut_vnode *vnode, uintptr_t hint,
     return (void *)(uintptr_t)base;
 }
 
+#elif defined(__aarch64__)
+
+#include <platform/arm64/memory/paging.h>
+#include <platform/arm64/regs.h>
+
+static inline fut_mm_t *mm_fallback(fut_mm_t *mm) {
+    return mm ? mm : &kernel_mm;
+}
+
+static uint64_t mm_pte_flags(int prot) {
+    uint64_t flags = PTE_PRESENT | PTE_USER;
+    if (prot & 0x2) {
+        flags |= PTE_WRITABLE;
+    }
+    if ((prot & 0x4) == 0) {
+        flags |= PTE_NX;
+    }
+    return flags;
+}
+
+static void mm_unmap_and_free(fut_mm_t *mm, uintptr_t start, uintptr_t end) {
+    if (!mm || start >= end) {
+        return;
+    }
+
+    fut_vmem_context_t *ctx = fut_mm_context(mm);
+    for (uintptr_t va = start; va < end; va += PAGE_SIZE) {
+        uint64_t phys = 0;
+        if (fut_virt_to_phys(ctx, va, &phys) == 0) {
+            fut_unmap_range(ctx, va, PAGE_SIZE);
+
+            /* Check if this is a COW page with references */
+            int refcount = fut_page_ref_get((phys_addr_t)phys);
+            if (refcount > 1) {
+                /* Decrement reference count, don't free yet */
+                fut_page_ref_dec((phys_addr_t)phys);
+            } else {
+                /* Last reference or not COW - free the page */
+                if (refcount == 1) {
+                    fut_page_ref_dec((phys_addr_t)phys);  /* Remove from tracking */
+                }
+                fut_pmm_free_page((void *)pmap_phys_to_virt((phys_addr_t)phys));
+            }
+        }
+    }
+}
+
+/* ARM64 versions of map/mmap functions (same implementation as x86_64) */
+void *fut_mm_map_anonymous(fut_mm_t *mm, uintptr_t hint, size_t len, int prot, int flags) {
+    if (!mm || len == 0) {
+        return (void *)(intptr_t)(-EINVAL);
+    }
+
+    size_t aligned = PAGE_ALIGN_UP(len);
+    if (aligned == 0) {
+        return (void *)(intptr_t)(-EINVAL);
+    }
+
+    uintptr_t base;
+    if ((flags & 0x10) && hint) { /* MAP_FIXED - must use exact address */
+        base = PAGE_ALIGN_DOWN(hint);
+    } else if (hint) {
+        /* Honor hint as a suggestion when provided */
+        base = PAGE_ALIGN_DOWN(hint);
+    } else {
+        /* No hint provided - allocate from mmap_base */
+        uintptr_t candidate = mm->mmap_base ? mm->mmap_base : USER_MMAP_BASE;
+        if (candidate < USER_MMAP_BASE) {
+            candidate = USER_MMAP_BASE;
+        }
+
+        /* For large allocations (>= 2MB), prefer 2MB alignment to enable large page usage */
+        if (aligned >= LARGE_PAGE_SIZE) {
+            candidate = LARGE_PAGE_ALIGN_UP(candidate);
+        } else {
+            candidate = PAGE_ALIGN_UP(candidate);
+        }
+
+        if (candidate < mm->heap_mapped_end) {
+            if (aligned >= LARGE_PAGE_SIZE) {
+                candidate = LARGE_PAGE_ALIGN_UP(mm->heap_mapped_end);
+            } else {
+                candidate = PAGE_ALIGN_UP(mm->heap_mapped_end);
+            }
+        }
+        base = candidate;
+    }
+
+    uintptr_t end = base + aligned;
+    if (end < base || end > USER_VMA_MAX) {
+        return (void *)(intptr_t)(-ENOMEM);
+    }
+
+    size_t pages = aligned / PAGE_SIZE;
+    fut_vma_t *vma = (fut_vma_t *)fut_pmm_alloc_page();
+    if (!vma) {
+        return (void *)(intptr_t)(-ENOMEM);
+    }
+
+    memset(vma, 0, sizeof(*vma));
+    vma->start = base;
+    vma->end = end;
+    vma->prot = prot;
+    vma->flags = flags;
+    vma->pages = pages;
+
+    /* Initialize page table entries */
+    fut_vmem_context_t *ctx = fut_mm_context(mm);
+    for (size_t i = 0; i < pages; i++) {
+        void *page = fut_pmm_alloc_page();
+        if (!page) {
+            mm_unmap_and_free(mm, base, base + (i * PAGE_SIZE));
+            fut_pmm_free_page((void *)vma);
+            return (void *)(intptr_t)(-ENOMEM);
+        }
+
+        uintptr_t va = base + (i * PAGE_SIZE);
+        phys_addr_t pa = pmap_virt_to_phys((uintptr_t)page);
+        uint64_t flags_val = mm_pte_flags(prot);
+        if (fut_map_page(ctx, va, pa, PAGE_SIZE, flags_val) != 0) {
+            fut_pmm_free_page(page);
+            mm_unmap_and_free(mm, base, base + (i * PAGE_SIZE));
+            fut_pmm_free_page((void *)vma);
+            return (void *)(intptr_t)(-EFAULT);
+        }
+    }
+
+    vma_insert_sorted(mm, vma);
+    return (void *)(uintptr_t)base;
+}
+
 #else
 
 #error "Unsupported architecture for memory management"

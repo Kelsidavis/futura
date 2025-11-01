@@ -190,6 +190,7 @@ acpi_madt_t *acpi_get_madt(void) {
 /**
  * Parse MADT to discover CPU topology.
  */
+#ifdef __x86_64__
 void acpi_parse_madt(void) {
     acpi_madt_t *madt = acpi_get_madt();
     if (!madt) {
@@ -360,6 +361,7 @@ void acpi_parse_madt(void) {
         fut_printf("[ACPI] Single-processor system, SMP disabled\n");
     }
 }
+#endif  /* __x86_64__ */
 
 /* I/O port operations */
 extern void hal_outb(uint16_t port, uint8_t value);
@@ -384,6 +386,7 @@ void acpi_shutdown(void) {
     /* For QEMU/BOCHS, S5 sleep state is typically SLP_TYP=5, SLP_EN=1<<13 */
     uint16_t pm1a_val = (5 << 10) | (1 << 13);  /* SLP_TYP=5, SLP_EN=1 */
 
+#ifdef __x86_64__
     if (fadt->pm1a_control_block != 0) {
         fut_printf("[ACPI] Writing shutdown command to PM1a (0x%x)\n", fadt->pm1a_control_block);
         hal_outw(fadt->pm1a_control_block, pm1a_val);
@@ -393,6 +396,10 @@ void acpi_shutdown(void) {
         fut_printf("[ACPI] Writing shutdown command to PM1b (0x%x)\n", fadt->pm1b_control_block);
         hal_outw(fadt->pm1b_control_block, pm1a_val);
     }
+#else
+    /* ARM64: ACPI shutdown not yet implemented */
+    (void)pm1a_val;
+#endif
 
     /* If we reach here, shutdown failed */
     fut_printf("[ACPI] Shutdown failed\n");

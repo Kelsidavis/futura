@@ -6,6 +6,7 @@
 
 #include <kernel/acpi.h>
 #include <kernel/fut_mm.h>
+#include <platform/platform.h>
 #include <stddef.h>
 #include <string.h>
 
@@ -407,13 +408,29 @@ void acpi_reboot(void) {
     /* Try keyboard controller reset (8042) */
     hal_outb(0x64, 0xFE);
 
-    /* If that didn't work, try triple fault */
+    /* If that didn't work, try architecture-specific methods */
+#ifdef __x86_64__
     fut_printf("[ACPI] Keyboard reset failed, attempting triple fault\n");
 
     /* Disable interrupts and load invalid IDT to cause triple fault */
     __asm__ volatile("cli");
     __asm__ volatile("lidt %0" :: "m"((struct { uint16_t limit; uint64_t base; }){0, 0}));
     __asm__ volatile("int $0x03");  /* Trigger breakpoint, should triple fault */
+#elif defined(__aarch64__)
+    fut_printf("[ACPI] Keyboard reset failed, halting system\n");
+
+    /* ARM64: Disable interrupts and halt */
+    fut_disable_interrupts();
+    while (1) {
+        __asm__ volatile("wfi");  /* Wait for interrupt */
+    }
+#else
+    /* Generic fallback: just loop */
+    fut_printf("[ACPI] Reboot method unavailable, halting\n");
+    while (1) {
+        ;
+    }
+#endif
 
     /* Should never reach here */
     fut_printf("[ACPI] Reboot failed\n");

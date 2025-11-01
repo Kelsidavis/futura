@@ -339,7 +339,9 @@ int fut_socket_bind(fut_socket_t *socket, const char *path) {
         return -1;  /* EINVAL */
     }
 
-    /* Check if path already bound (skip closed sockets) */
+    /* Check if path already bound (allow SO_REUSEADDR-like behavior for unix sockets)
+     * Unix domain sockets can be rebound to the same path for server applications.
+     * This is similar to SO_REUSEADDR for TCP sockets. */
     fut_spinlock_acquire(&socket_lock);
     for (int i = 0; i < FUT_SOCKET_MAX; i++) {
         if (socket_registry[i] && socket_registry[i]->bound_path &&
@@ -348,12 +350,19 @@ int fut_socket_bind(fut_socket_t *socket, const char *path) {
                        socket_registry[i]->socket_id,
                        socket_registry[i]->state,
                        socket_registry[i]->refcount);
-            if (socket_registry[i]->state != FUT_SOCK_CLOSED) {
+
+            /* For Unix domain sockets, allow rebinding even if path is in use.
+             * This is standard behavior for server sockets (like Wayland).
+             * Refcount > 1 means there are active peer connections - only block those. */
+            if (socket_registry[i]->refcount > 1) {
+                fut_printf("[SOCKET-BIND-CHECK] Socket %u has active peers (refcount=%d), blocking bind\n",
+                           socket_registry[i]->socket_id, socket_registry[i]->refcount);
                 fut_spinlock_release(&socket_lock);
                 return -48;  /* EADDRINUSE */
             }
-            /* Socket is closed but not yet freed, skip it */
-            fut_printf("[SOCKET-BIND-CHECK] Skipping closed socket %u\n", socket_registry[i]->socket_id);
+            /* Socket has no active peers - allow rebinding (SO_REUSEADDR semantics) */
+            fut_printf("[SOCKET-BIND-CHECK] Socket %u has no active peers, allowing rebinding\n",
+                       socket_registry[i]->socket_id);
         }
     }
     fut_spinlock_release(&socket_lock);

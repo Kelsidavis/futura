@@ -19,6 +19,7 @@
 #define __NR_close 3
 #define __NR_mkdir 39
 #define O_RDWR     0x0002
+#define O_CREAT    0x0040
 
 static inline long syscall3(long nr, long arg1, long arg2, long arg3) {
     long ret;
@@ -266,6 +267,21 @@ int main(void) {
 
     errno = 0;
     // Do NOT call printf here - it may set errno!
+
+    printf("[WAYLAND-DEBUG] Calling wl_display_add_socket_auto()\n");
+    printf("[WAYLAND-DEBUG] Environment: WAYLAND_DISPLAY=%s\n", getenv("WAYLAND_DISPLAY"));
+    printf("[WAYLAND-DEBUG] Temp file check: touching test file in %s\n", runtime_dir);
+
+    /* Quick sanity check - try to create a test file in runtime_dir */
+    char test_file[256];
+    snprintf(test_file, sizeof(test_file), "%s/.wayland-test", runtime_dir);
+    int test_fd = sys_open(test_file, O_RDWR | O_CREAT, 0666);
+    if (test_fd >= 0) {
+        printf("[WAYLAND-DEBUG] Test file created successfully\n");
+        sys_close(test_fd);
+    } else {
+        printf("[WAYLAND-DEBUG] WARNING: Could not create test file (may indicate permission issues)\n");
+    }
 
     const char *socket = wl_display_add_socket_auto(comp.display);
     // Save errno immediately before printf can corrupt it

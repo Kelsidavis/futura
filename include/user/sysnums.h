@@ -15,6 +15,7 @@
 #define SYS_brk         12
 #define SYS_ioctl       16
 #define SYS_pread64     17
+#define SYS_pwrite64    18
 #define SYS_pipe        22
 #define SYS_select      23
 #define SYS_dup         32

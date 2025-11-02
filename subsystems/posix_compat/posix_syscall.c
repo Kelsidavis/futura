@@ -46,6 +46,7 @@
 #endif
 #define SYS_ioctl       16
 #define SYS_pread64     17
+#define SYS_pwrite64    18
 #define SYS_pipe        22
 #define SYS_select      23
 #define SYS_dup         32
@@ -375,6 +376,14 @@ static int64_t sys_pread64_handler(uint64_t fd, uint64_t buf, uint64_t count,
     (void)arg6;
     /* Use kernel sys_pread64 for position-based reading */
     return sys_pread64((unsigned int)fd, (void *)buf, (size_t)count, (int64_t)offset);
+}
+
+static int64_t sys_pwrite64_handler(uint64_t fd, uint64_t buf, uint64_t count,
+                                    uint64_t offset, uint64_t arg5, uint64_t arg6) {
+    (void)arg5;
+    (void)arg6;
+    /* Use kernel sys_pwrite64 for position-based writing */
+    return sys_pwrite64((unsigned int)fd, (const void *)buf, (size_t)count, (int64_t)offset);
 }
 
 static int64_t sys_ioctl_handler(uint64_t fd, uint64_t req, uint64_t argp,
@@ -1506,6 +1515,7 @@ static int64_t sys_recvfrom_handler(uint64_t sockfd, uint64_t buf, uint64_t len,
 static syscall_handler_t syscall_table[MAX_SYSCALL] = {
     [SYS_read]       = sys_read_handler,
     [SYS_pread64]    = sys_pread64_handler,
+    [SYS_pwrite64]   = sys_pwrite64_handler,
     [SYS_write]      = sys_write_handler,
     [SYS_open]       = sys_open_handler,
     [SYS_openat]     = sys_openat_handler,

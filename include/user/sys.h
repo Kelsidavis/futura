@@ -228,4 +228,8 @@ static inline long sys_setsid_call(void) {
     return sys_call0(SYS_setsid);
 }
 
+static inline long sys_rename_call(const char *oldpath, const char *newpath) {
+    return sys_call2(SYS_rename, (long)oldpath, (long)newpath);
+}
+
 /* Note: setpgrp and setpgid syscall veneers not provided (syscall numbers conflict) */

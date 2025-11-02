@@ -1480,6 +1480,14 @@ static int64_t sys_setsid_handler(uint64_t arg1, uint64_t arg2, uint64_t arg3,
     return sys_setsid();
 }
 
+/* File manipulation syscall handlers */
+static int64_t sys_rename_handler(uint64_t oldpath, uint64_t newpath, uint64_t arg3,
+                                  uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg3; (void)arg4; (void)arg5; (void)arg6;
+    extern long sys_rename(const char *oldpath, const char *newpath);
+    return sys_rename((const char *)(uintptr_t)oldpath, (const char *)(uintptr_t)newpath);
+}
+
 /* ============================================================
  *   Syscall Table
  * ============================================================ */
@@ -1520,6 +1528,7 @@ static syscall_handler_t syscall_table[MAX_SYSCALL] = {
     [SYS_mkdir]      = sys_mkdir_handler,
     [SYS_rmdir]      = sys_rmdir_handler,
     [SYS_unlink]     = sys_unlink_handler,
+    [SYS_rename]     = sys_rename_handler,
     [SYS_getdents64] = sys_getdents64_handler,
     [SYS_getpid]     = sys_getpid_handler,
     [SYS_sigaction]  = sys_sigaction_handler,

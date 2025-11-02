@@ -359,6 +359,7 @@ KERNEL_SOURCES := \
     kernel/sys_madvise.c \
     kernel/sys_cred.c \
     kernel/sys_proc.c \
+    kernel/sys_rename.c \
     kernel/sys_pipe.c \
     kernel/sys_dup2.c \
     kernel/sys_waitpid.c \

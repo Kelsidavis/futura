@@ -123,7 +123,16 @@ static bool load_demand_page(uint64_t page_addr, struct fut_vma *vma, fut_vmem_c
         return false;
     }
 
-    fut_printf("[DEMAND-PAGING] Loaded page: va=0x%llx phys=0x%llx file_offset=%llu bytes_read=%ld flags=0x%llx\n",
+    /* Initialize page reference count for COW tracking.
+     * When a page is first allocated and mapped, it has exactly one reference.
+     * If the mapping is MAP_PRIVATE, COW handling will use this refcount to
+     * determine if the page can be made writable in-place (refcount=1) or
+     * requires copying (refcount>1 from shared mappings).
+     */
+    extern void fut_page_ref_inc(phys_addr_t phys);
+    fut_page_ref_inc(phys);
+
+    fut_printf("[DEMAND-PAGING] Loaded page: va=0x%llx phys=0x%llx file_offset=%llu bytes_read=%ld flags=0x%llx refcount=1\n",
                page_addr, phys, page_offset, bytes_read, pte_flags);
 
     return true;
@@ -292,6 +301,10 @@ static bool handle_cow_fault_generic(uint64_t fault_addr, bool is_write, bool is
             fut_pmm_free_page(new_page);
             return false;
         }
+
+        /* Initialize refcount for the new page (now owned by this process) */
+        extern void fut_page_ref_inc(phys_addr_t phys);
+        fut_page_ref_inc(new_phys);
 
         /* Decrement old page refcount */
         int new_refcount = fut_page_ref_dec(old_phys);

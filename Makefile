@@ -373,6 +373,7 @@ KERNEL_SOURCES := \
     kernel/sys_access.c \
     kernel/sys_mkdir.c \
     kernel/sys_rmdir.c \
+    kernel/sys_unlink.c \
     kernel/sys_lseek.c \
     kernel/sys_pipe.c \
     kernel/sys_dup2.c \

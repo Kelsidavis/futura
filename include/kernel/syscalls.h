@@ -94,6 +94,7 @@ long sys_flock(int fd, int operation);
 long sys_access(const char *path, int mode);
 long sys_mkdir(const char *path, uint32_t mode);
 long sys_rmdir(const char *path);
+long sys_unlink(const char *path);
 int64_t sys_lseek(int fd, int64_t offset, int whence);
 long sys_gettimeofday(fut_timeval_t *tv, void *tz);
 /* Note: sys_setpgrp and sys_setpgid are implemented but not exposed via syscall

@@ -173,3 +173,36 @@ static inline long sys_epoll_wait_call(int epfd, void *events, int maxevents, in
 static inline long sys_madvise_call(void *addr, size_t length, int advice) {
     return sys_call3(SYS_madvise, (long)addr, (long)length, (long)advice);
 }
+
+/* Process credential syscall veneers */
+static inline long sys_getuid_call(void) {
+    return sys_call0(SYS_getuid);
+}
+
+static inline long sys_geteuid_call(void) {
+    return sys_call0(SYS_geteuid);
+}
+
+static inline long sys_getgid_call(void) {
+    return sys_call0(SYS_getgid);
+}
+
+static inline long sys_getegid_call(void) {
+    return sys_call0(SYS_getegid);
+}
+
+static inline long sys_setuid_call(long uid) {
+    return sys_call1(SYS_setuid, uid);
+}
+
+static inline long sys_seteuid_call(long euid) {
+    return sys_call1(SYS_seteuid, euid);
+}
+
+static inline long sys_setgid_call(long gid) {
+    return sys_call1(SYS_setgid, gid);
+}
+
+static inline long sys_setegid_call(long egid) {
+    return sys_call1(SYS_setegid, egid);
+}

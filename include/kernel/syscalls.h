@@ -31,6 +31,14 @@ typedef long ssize_t;
 #define SYS_epoll_ctl 229u
 #define SYS_epoll_wait 230u
 #define SYS_madvise 231u
+#define SYS_getuid 102u
+#define SYS_geteuid 107u
+#define SYS_getgid 104u
+#define SYS_getegid 108u
+#define SYS_setuid 105u
+#define SYS_seteuid 109u
+#define SYS_setgid 106u
+#define SYS_setegid 110u
 #define SYS_time_millis 400u
 
 ssize_t sys_echo(const char *u_in, char *u_out, size_t n);
@@ -47,4 +55,12 @@ long sys_epoll_create(int size);
 long sys_epoll_ctl(int epfd, int op, int fd, void *event);
 long sys_epoll_wait(int epfd, void *events, int maxevents, int timeout);
 long sys_madvise(void *addr, size_t length, int advice);
+long sys_getuid(void);
+long sys_geteuid(void);
+long sys_getgid(void);
+long sys_getegid(void);
+long sys_setuid(uint32_t uid);
+long sys_seteuid(uint32_t euid);
+long sys_setgid(uint32_t gid);
+long sys_setegid(uint32_t egid);
 long sys_time_millis(void);

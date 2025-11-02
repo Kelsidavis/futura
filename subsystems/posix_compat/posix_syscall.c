@@ -79,8 +79,12 @@
 #define SYS_unlink      87
 #define SYS_readlink    89
 #define SYS_chmod       90
+#ifndef SYS_getuid
 #define SYS_getuid      102
+#endif
+#ifndef SYS_getgid
 #define SYS_getgid      104
+#endif
 #define SYS_gettimeofday 96
 #define SYS_getdents64   217
 
@@ -1390,6 +1394,63 @@ static int64_t sys_madvise_handler(uint64_t addr, uint64_t length, uint64_t advi
     return sys_madvise((void *)(uintptr_t)addr, (size_t)length, (int)advice);
 }
 
+/* Process credential syscall handlers */
+static int64_t sys_getuid_handler(uint64_t arg1, uint64_t arg2, uint64_t arg3,
+                                  uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg1; (void)arg2; (void)arg3; (void)arg4; (void)arg5; (void)arg6;
+    extern long sys_getuid(void);
+    return sys_getuid();
+}
+
+static int64_t sys_geteuid_handler(uint64_t arg1, uint64_t arg2, uint64_t arg3,
+                                   uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg1; (void)arg2; (void)arg3; (void)arg4; (void)arg5; (void)arg6;
+    extern long sys_geteuid(void);
+    return sys_geteuid();
+}
+
+static int64_t sys_getgid_handler(uint64_t arg1, uint64_t arg2, uint64_t arg3,
+                                  uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg1; (void)arg2; (void)arg3; (void)arg4; (void)arg5; (void)arg6;
+    extern long sys_getgid(void);
+    return sys_getgid();
+}
+
+static int64_t sys_getegid_handler(uint64_t arg1, uint64_t arg2, uint64_t arg3,
+                                   uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg1; (void)arg2; (void)arg3; (void)arg4; (void)arg5; (void)arg6;
+    extern long sys_getegid(void);
+    return sys_getegid();
+}
+
+static int64_t sys_setuid_handler(uint64_t uid, uint64_t arg2, uint64_t arg3,
+                                  uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg2; (void)arg3; (void)arg4; (void)arg5; (void)arg6;
+    extern long sys_setuid(uint32_t uid);
+    return sys_setuid((uint32_t)uid);
+}
+
+static int64_t sys_seteuid_handler(uint64_t euid, uint64_t arg2, uint64_t arg3,
+                                   uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg2; (void)arg3; (void)arg4; (void)arg5; (void)arg6;
+    extern long sys_seteuid(uint32_t euid);
+    return sys_seteuid((uint32_t)euid);
+}
+
+static int64_t sys_setgid_handler(uint64_t gid, uint64_t arg2, uint64_t arg3,
+                                  uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg2; (void)arg3; (void)arg4; (void)arg5; (void)arg6;
+    extern long sys_setgid(uint32_t gid);
+    return sys_setgid((uint32_t)gid);
+}
+
+static int64_t sys_setegid_handler(uint64_t egid, uint64_t arg2, uint64_t arg3,
+                                   uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg2; (void)arg3; (void)arg4; (void)arg5; (void)arg6;
+    extern long sys_setegid(uint32_t egid);
+    return sys_setegid((uint32_t)egid);
+}
+
 /* ============================================================
  *   Syscall Table
  * ============================================================ */
@@ -1451,6 +1512,15 @@ static syscall_handler_t syscall_table[MAX_SYSCALL] = {
     [SYS_epoll_wait]   = sys_epoll_wait_handler,
     /* madvise operation */
     [SYS_madvise]      = sys_madvise_handler,
+    /* process credential operations */
+    [SYS_getuid]       = sys_getuid_handler,
+    [SYS_geteuid]      = sys_geteuid_handler,
+    [SYS_getgid]       = sys_getgid_handler,
+    [SYS_getegid]      = sys_getegid_handler,
+    [SYS_setuid]       = sys_setuid_handler,
+    [SYS_seteuid]      = sys_seteuid_handler,
+    [SYS_setgid]       = sys_setgid_handler,
+    [SYS_setegid]      = sys_setegid_handler,
 };
 
 /* ============================================================

@@ -1213,6 +1213,16 @@ void fut_kernel_main(void) {
         fut_printf("[INIT] wl-simple staged at /bin/wl-simple\n");
     }
 
+    fut_printf("[INIT-DEBUG] About to stage wl-colorwheel\n");
+    fut_printf("[INIT] Staging wl-colorwheel client...\n");
+    int wayland_color_stage = fut_stage_wayland_color_client_binary();
+    if (wayland_color_stage != 0) {
+        fut_printf("[WARN] Failed to stage wl-colorwheel binary (error %d, continuing)\n", wayland_color_stage);
+        /* Continue even if staging fails - wl-simple is sufficient for testing */
+    } else {
+        fut_printf("[INIT] wl-colorwheel staged at /bin/wl-colorwheel\n");
+    }
+
 #endif
     /* ========================================
      *   Step 5: Initialize Scheduler
@@ -1309,17 +1319,18 @@ void fut_kernel_main(void) {
         }
     }
 
-    /* Re-enabled: using wayland instead of direct framebuffer */
+    /* Multi-client Wayland: Launch wl-simple and optionally wl-colorwheel */
     wayland_client_exec = 0;  /* Will be set by actual exec below */
-#if 0  /* Disabled wayland clients for compositor debugging */
+#if 1  /* Enabled: multi-client Wayland support */
     if (wayland_exec == 0 && wayland_client_stage == 0) {
         fut_boot_delay_ms(100);
-        char name[] = "wl-simple";
-        char *args[] = { name, NULL };
-        /* Environment with LD_PRELOAD for syscall routing (fixed register constraints) */
+
+        /* Launch first client: wl-simple */
+        char name1[] = "wl-simple";
+        char *args1[] = { name1, NULL };
         char ld_preload[] = "LD_PRELOAD=/lib/libopen_wrapper.so";
         char *envp[] = { ld_preload, NULL };
-        wayland_client_exec = fut_exec_elf("/bin/wl-simple", args, envp);
+        wayland_client_exec = fut_exec_elf("/bin/wl-simple", args1, envp);
         if (wayland_client_exec != 0) {
             fut_printf("[WARN] Failed to launch /bin/wl-simple (error %d)\n", wayland_client_exec);
 #if ENABLE_WAYLAND_DEMO
@@ -1327,6 +1338,19 @@ void fut_kernel_main(void) {
 #endif
         } else {
             fut_printf("[INIT] exec /bin/wl-simple -> 0\n");
+        }
+
+        /* Launch second client: wl-colorwheel (if available) */
+        if (wayland_color_stage == 0) {
+            fut_boot_delay_ms(50);
+            char name2[] = "wl-colorwheel";
+            char *args2[] = { name2, NULL };
+            int colorwheel_exec = fut_exec_elf("/bin/wl-colorwheel", args2, envp);
+            if (colorwheel_exec != 0) {
+                fut_printf("[WARN] Failed to launch /bin/wl-colorwheel (error %d), continuing with single client\n", colorwheel_exec);
+            } else {
+                fut_printf("[INIT] exec /bin/wl-colorwheel -> 0 (multi-client Wayland enabled!)\n");
+            }
         }
     }
 #endif

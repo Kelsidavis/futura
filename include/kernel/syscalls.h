@@ -62,6 +62,7 @@ long sys_waitpid(int pid, int *u_status, int flags);
 long sys_nanosleep(const fut_timespec_t *u_req, fut_timespec_t *u_rem);
 long sys_getcwd(char *buf, size_t size);
 long sys_chdir(const char *path);
+long sys_dup(int oldfd);
 long sys_dup2(int oldfd, int newfd);
 long sys_epoll_create(int size);
 long sys_epoll_ctl(int epfd, int op, int fd, void *event);

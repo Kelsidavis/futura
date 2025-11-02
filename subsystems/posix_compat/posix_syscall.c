@@ -947,40 +947,8 @@ static int64_t sys_select_handler(uint64_t nfds, uint64_t readfds, uint64_t writ
 static int64_t sys_dup_handler(uint64_t oldfd, uint64_t arg2, uint64_t arg3,
                                uint64_t arg4, uint64_t arg5, uint64_t arg6) {
     (void)arg2; (void)arg3; (void)arg4; (void)arg5; (void)arg6;
-
-    if ((int64_t)oldfd < 0) {
-        return -EBADF;
-    }
-
-    struct fut_file *file = vfs_get_file((int)oldfd);
-    if (!file) {
-        return -EBADF;
-    }
-
-    /* Increment reference count */
-    vfs_file_ref(file);
-
-    /* Find first available fd (start from 3 to skip stdin/stdout/stderr) */
-    int newfd = 3;
-    while (vfs_get_file(newfd) != NULL) {
-        newfd++;
-        if (newfd > 1024) {
-            file->refcount--;
-            return -EMFILE;  /* Too many open files */
-        }
-    }
-
-    /* Allocate the new fd */
-    int ret = vfs_alloc_specific_fd(newfd, file);
-    if (ret < 0) {
-        file->refcount--;
-        return ret;
-    }
-
-    extern void fut_printf(const char *, ...);
-    fut_printf("[DUP] Duplicated fd %d to %d\n", (int)oldfd, newfd);
-
-    return (int64_t)newfd;
+    /* Use kernel sys_dup for per-task FD duplication */
+    return sys_dup((int)oldfd);
 }
 
 /* Socket operations handlers */

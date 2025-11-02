@@ -382,6 +382,7 @@ KERNEL_SOURCES := \
     kernel/sys_pwrite64.c \
     kernel/sys_lseek.c \
     kernel/sys_pipe.c \
+    kernel/sys_dup.c \
     kernel/sys_dup2.c \
     kernel/sys_waitpid.c \
     kernel/sys_brk.c \

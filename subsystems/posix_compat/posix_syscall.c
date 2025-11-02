@@ -765,44 +765,87 @@ static int64_t sys_sigprocmask_handler(uint64_t how, uint64_t set, uint64_t olds
  * It restores the full user context (registers, flags, stack pointer) that was
  * saved in the rt_sigframe when the signal was delivered.
  *
- * The return value is unused - the context restoration happens directly via
- * modification of the interrupt frame before returning to user-space.
+ * Context restoration:
+ * 1. The trampoline code calls sigreturn with RSI = frame pointer to rt_sigframe
+ * 2. This handler reads the rt_sigframe from user space
+ * 3. Extracts the saved register and signal mask from the ucontext
+ * 4. Modifies the kernel interrupt frame to restore all registers
+ * 5. On return, the interrupt handler restores registers and switches to user mode
  *
  * Arch-specific: x86_64 version
  */
 static int64_t sys_sigreturn_handler(uint64_t frame_ptr, uint64_t arg2, uint64_t arg3,
                                      uint64_t arg4, uint64_t arg5, uint64_t arg6) {
-    (void)frame_ptr; (void)arg2; (void)arg3; (void)arg4; (void)arg5; (void)arg6;
+    (void)frame_ptr; (void)arg3; (void)arg4; (void)arg5; (void)arg6;
 
-    /* Get the signal frame from user stack
-     * Note: On syscall entry, RSI points to the rt_sigframe that was pushed
-     * The syscall handler macro may have filled frame_ptr from the user context */
+    /* arg2 (RSI) contains pointer to rt_sigframe on user stack */
+    void *user_frame = (void *)(uintptr_t)arg2;
 
     extern fut_task_t *fut_task_current(void);
-    extern void *fut_memcpy(void *dst, const void *src, size_t len);
+    extern int fut_copy_from_user(void *k_dst, const void *u_src, size_t n);
+    extern fut_interrupt_frame_t *fut_current_frame;
     extern void fut_printf(const char *fmt, ...);
 
     fut_task_t *current = fut_task_current();
-    if (!current) {
+    if (!current || !user_frame) {
         return -EINVAL;
     }
 
-    /* For sigreturn, we need to restore from the rt_sigframe
-     * The frame_ptr should point to the rt_sigframe on user stack
-     * However, since we're in the kernel and can't directly access user memory,
-     * the context is expected to be passed via the syscall mechanism
-     *
-     * In x86_64, this is typically done by having the trampoline code
-     * load RSI with the frame pointer before calling sigreturn
-     *
-     * For now, log that sigreturn was called - the actual context restoration
-     * happens in the syscall return path (syscall_entry_c function)
-     */
+    /* Read the signal frame from user space */
+    struct rt_sigframe sigframe;
+    if (fut_copy_from_user(&sigframe, user_frame, sizeof(sigframe)) != 0) {
+        fut_printf("[SIGNAL] sigreturn: failed to read sigframe from user space\n");
+        return -EFAULT;
+    }
 
-    fut_printf("[SIGNAL] sigreturn syscall called\n");
+    /* Restore the signal mask from the ucontext
+     * The signal mask was saved when the signal handler was entered */
+    if (sigframe.uc.uc_sigmask.__mask != 0) {
+        current->signal_mask = sigframe.uc.uc_sigmask.__mask;
+    }
 
-    /* Return 0 to indicate success - the context restoration happens
-     * via the interrupt frame modification in syscall_entry_c() */
+    /* Restore all general purpose registers from the saved context
+     * The registers in uc_mcontext.gregs are in the same order as the interrupt frame */
+    fut_interrupt_frame_t *frame = fut_current_frame;
+    if (frame) {
+        struct sigcontext *ctx = &sigframe.uc.uc_mcontext.gregs;
+
+        /* Restore GPRs */
+        frame->rax = ctx->rax;
+        frame->rbx = ctx->rbx;
+        frame->rcx = ctx->rcx;
+        frame->rdx = ctx->rdx;
+        frame->rsi = ctx->rsi;
+        frame->rdi = ctx->rdi;
+        frame->rbp = ctx->rbp;
+        frame->rsp = ctx->rsp;
+        frame->r8  = ctx->r8;
+        frame->r9  = ctx->r9;
+        frame->r10 = ctx->r10;
+        frame->r11 = ctx->r11;
+        frame->r12 = ctx->r12;
+        frame->r13 = ctx->r13;
+        frame->r14 = ctx->r14;
+        frame->r15 = ctx->r15;
+
+        /* Restore control registers */
+        frame->rip    = ctx->rip;
+        frame->rflags = ctx->eflags;
+
+        /* Restore segment registers (careful with CS/SS) */
+        frame->cs = ctx->cs;
+        if (ctx->gs != 0) {
+            frame->gs = ctx->gs;
+        }
+        if (ctx->fs != 0) {
+            frame->fs = ctx->fs;
+        }
+
+        fut_printf("[SIGNAL] Restored context from sigreturn: rip=0x%llx rsp=0x%llx\n",
+                   frame->rip, frame->rsp);
+    }
+
+    /* Return value is overwritten by the restored register state */
     return 0;
 }
 

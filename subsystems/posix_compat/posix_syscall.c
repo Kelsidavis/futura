@@ -483,6 +483,14 @@ static int64_t sys_unlink_handler(uint64_t pathname, uint64_t arg2, uint64_t arg
     return (int64_t)fut_vfs_unlink(path_buf);
 }
 
+/* Symbolic link reading (stub) */
+static int64_t sys_readlink_handler(uint64_t pathname, uint64_t buf, uint64_t bufsiz,
+                                     uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg4; (void)arg5; (void)arg6;
+    /* Use kernel sys_readlink (currently a stub returning -ENOSYS) */
+    return sys_readlink((const char *)pathname, (char *)buf, (size_t)bufsiz);
+}
+
 /* File truncation */
 static int64_t sys_ftruncate_handler(uint64_t fd, uint64_t length, uint64_t arg3,
                                      uint64_t arg4, uint64_t arg5, uint64_t arg6) {
@@ -1580,6 +1588,7 @@ static syscall_handler_t syscall_table[MAX_SYSCALL] = {
     [SYS_mkdir]      = sys_mkdir_handler,
     [SYS_rmdir]      = sys_rmdir_handler,
     [SYS_unlink]     = sys_unlink_handler,
+    [SYS_readlink]   = sys_readlink_handler,
     [SYS_rename]     = sys_rename_handler,
     [SYS_chmod]      = sys_chmod_handler,
     [SYS_fchmod]     = sys_fchmod_handler,

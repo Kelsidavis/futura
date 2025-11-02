@@ -289,4 +289,8 @@ static inline long sys_rmdir_call(const char *path) {
     return sys_call1(SYS_rmdir, (long)path);
 }
 
+static inline long sys_readlink_call(const char *path, char *buf, long bufsiz) {
+    return sys_call3(SYS_readlink, (long)path, (long)buf, bufsiz);
+}
+
 /* Note: setpgrp and setpgid syscall veneers not provided (syscall numbers conflict) */

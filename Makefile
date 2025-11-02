@@ -377,6 +377,7 @@ KERNEL_SOURCES := \
     kernel/sys_link.c \
     kernel/sys_symlink.c \
     kernel/sys_readlink.c \
+    kernel/sys_getdents64.c \
     kernel/sys_lseek.c \
     kernel/sys_pipe.c \
     kernel/sys_dup2.c \

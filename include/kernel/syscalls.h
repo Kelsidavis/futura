@@ -98,6 +98,7 @@ long sys_unlink(const char *path);
 long sys_link(const char *oldpath, const char *newpath);
 long sys_symlink(const char *target, const char *linkpath);
 long sys_readlink(const char *path, char *buf, size_t bufsiz);
+long sys_getdents64(unsigned int fd, void *dirp, unsigned int count);
 int64_t sys_lseek(int fd, int64_t offset, int whence);
 long sys_gettimeofday(fut_timeval_t *tv, void *tz);
 /* Note: sys_setpgrp and sys_setpgid are implemented but not exposed via syscall

@@ -534,87 +534,8 @@ static int64_t sys_munmap_handler(uint64_t addr, uint64_t len, uint64_t arg3,
 static int64_t sys_getdents64_handler(uint64_t fd, uint64_t dirp, uint64_t count,
                                       uint64_t arg4, uint64_t arg5, uint64_t arg6) {
     (void)arg4; (void)arg5; (void)arg6;
-
-    /* Linux getdents64 dirent structure */
-    struct linux_dirent64 {
-        uint64_t d_ino;
-        int64_t  d_off;
-        uint16_t d_reclen;
-        uint8_t  d_type;
-        char     d_name[];
-    } __attribute__((packed));
-
-    if (count < sizeof(struct linux_dirent64) + 1) {
-        return -EINVAL;
-    }
-
-    /* Allocate kernel buffer for directory entries */
-    void *kbuf = fut_malloc(count);
-    if (!kbuf) {
-        return -ENOMEM;
-    }
-
-    uint64_t cookie = 0;
-    size_t total_bytes = 0;
-    char *buf_ptr = (char *)kbuf;
-
-    /* Read directory entries using VFS */
-    while (total_bytes < count) {
-        struct fut_vdirent vdirent;
-        int rc = fut_vfs_readdir_fd((int)fd, &cookie, &vdirent);
-
-        if (rc < 0) {
-            if (total_bytes == 0) {
-                fut_free(kbuf);
-                return rc;  /* Error on first entry */
-            }
-            break;  /* No more entries */
-        }
-
-        if (rc == 0) {
-            break;  /* End of directory */
-        }
-
-        /* Calculate required size for this entry */
-        size_t name_len = 0;
-        while (vdirent.d_name[name_len] != '\0' && name_len < 256) {
-            name_len++;
-        }
-
-        /* Align to 8-byte boundary for next entry */
-        size_t reclen = sizeof(struct linux_dirent64) + name_len + 1;
-        reclen = (reclen + 7) & ~7;
-
-        if (total_bytes + reclen > count) {
-            break;  /* Not enough space for this entry */
-        }
-
-        /* Build linux_dirent64 entry */
-        struct linux_dirent64 *dent = (struct linux_dirent64 *)buf_ptr;
-        dent->d_ino = vdirent.d_ino;
-        dent->d_off = (int64_t)cookie;
-        dent->d_reclen = (uint16_t)reclen;
-        dent->d_type = vdirent.d_type;
-
-        /* Copy name */
-        for (size_t i = 0; i <= name_len; i++) {
-            dent->d_name[i] = vdirent.d_name[i];
-        }
-
-        buf_ptr += reclen;
-        total_bytes += reclen;
-    }
-
-    /* Copy to userspace */
-    if (total_bytes > 0) {
-        if (fut_copy_to_user((void *)dirp, kbuf, total_bytes) != 0) {
-            fut_free(kbuf);
-            return -EFAULT;
-        }
-    }
-
-    fut_free(kbuf);
-    return (int64_t)total_bytes;
+    /* Use kernel sys_getdents64 for directory reading */
+    return sys_getdents64((unsigned int)fd, (void *)dirp, (unsigned int)count);
 }
 
 /* getpid() handler */

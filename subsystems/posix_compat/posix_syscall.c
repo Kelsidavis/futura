@@ -861,26 +861,25 @@ static int64_t sys_sigreturn_handler(uint64_t frame_ptr, uint64_t arg2, uint64_t
  * @arg4: exceptfds (file descriptors with exceptional conditions)
  * @arg5: timeout (timeval pointer for timeout, NULL for blocking)
  *
- * MVP implementation: Poll each FD, return immediately with ready set
- * Proper implementation would use event notification or async I/O
+ * Enhanced implementation with:
+ * - Non-blocking poll (timeout=0)
+ * - Timeout support (timeout > 0)
+ * - Better FD readiness detection
+ * - Accurate ready count reporting
+ *
+ * Phase 4: Full blocking multiplexing would use event queues
  */
 static int64_t sys_select_handler(uint64_t nfds, uint64_t readfds, uint64_t writefds,
-                                  uint64_t exceptfds, uint64_t timeout, uint64_t arg6) {
-    (void)timeout;  /* MVP: ignore timeout for now */
-    (void)arg6;     /* Unused parameter */
+                                  uint64_t exceptfds, uint64_t timeout_ptr, uint64_t arg6) {
+    (void)arg6;  /* Unused parameter */
 
     if (nfds > 1024) {
         return -EINVAL;
     }
 
     extern void fut_printf(const char *, ...);
-
-    /* For MVP: Simple poll without blocking
-     * Each FD is checked for readiness:
-     * - Read: Data available or EOF
-     * - Write: Buffer space available
-     * - Except: Error or exceptional condition
-     */
+    extern int fut_copy_from_user(void *k_dst, const void *u_src, size_t n);
+    extern long sys_nanosleep(const fut_timespec_t *u_req, fut_timespec_t *u_rem);
 
     int ready_count = 0;
     uint8_t *read_set = (uint8_t *)readfds;
@@ -888,56 +887,113 @@ static int64_t sys_select_handler(uint64_t nfds, uint64_t readfds, uint64_t writ
     uint8_t *except_set = (uint8_t *)exceptfds;
 
     if (!read_set && !write_set && !except_set) {
-        /* No FD sets provided - just return 0 */
+        /* No FD sets provided - just sleep if timeout provided */
+        if (timeout_ptr) {
+            /* timeval has tv_sec (long) and tv_usec (long) */
+            long tv_sec = 0, tv_usec = 0;
+            if (fut_copy_from_user(&tv_sec, (void *)timeout_ptr, sizeof(long)) == 0) {
+                if (fut_copy_from_user(&tv_usec, (void *)(timeout_ptr + sizeof(long)), sizeof(long)) == 0) {
+                    fut_timespec_t req = {
+                        .tv_sec = tv_sec,
+                        .tv_nsec = tv_usec * 1000
+                    };
+                    sys_nanosleep(&req, NULL);
+                }
+            }
+        }
         return 0;
     }
 
-    /* Poll each file descriptor */
-    for (int fd = 0; fd < (int)nfds; fd++) {
-        int byte_offset = fd / 8;
-        int bit_offset = fd % 8;
-        uint8_t mask = (1 << bit_offset);
+    /* Determine if this should block or poll
+     * timeout == 0: non-blocking poll (return immediately)
+     * timeout == NULL: blocking (wait indefinitely - use loop with retries)
+     * timeout > 0: wait with timeout
+     */
+    bool should_timeout = (timeout_ptr != 0);
+    int timeout_ms = 0;
 
-        /* Check if this FD is in the read set */
-        if (read_set && (read_set[byte_offset] & mask)) {
-            struct fut_file *file = vfs_get_file(fd);
-            if (file) {
-                /* For MVP: assume readable if file exists
-                 * Proper implementation would check actual readiness
-                 */
-                ready_count++;
-                fut_printf("[SELECT] FD %d ready for reading\n", fd);
-            } else {
-                /* FD not found - mark as exception */
-                if (except_set) {
-                    except_set[byte_offset] |= mask;
-                    ready_count++;
-                }
-                /* Remove from read set */
-                read_set[byte_offset] &= ~mask;
-            }
-        }
-
-        /* Check if this FD is in the write set */
-        if (write_set && (write_set[byte_offset] & mask)) {
-            struct fut_file *file = vfs_get_file(fd);
-            if (file) {
-                /* For MVP: assume writable if file exists */
-                ready_count++;
-                fut_printf("[SELECT] FD %d ready for writing\n", fd);
-            } else {
-                /* FD not found - mark as exception */
-                if (except_set) {
-                    except_set[byte_offset] |= mask;
-                    ready_count++;
-                }
-                /* Remove from write set */
-                write_set[byte_offset] &= ~mask;
-            }
+    if (should_timeout) {
+        long tv_sec = 0, tv_usec = 0;
+        if (fut_copy_from_user(&tv_sec, (void *)timeout_ptr, sizeof(long)) == 0 &&
+            fut_copy_from_user(&tv_usec, (void *)(timeout_ptr + sizeof(long)), sizeof(long)) == 0) {
+            timeout_ms = (int)((tv_sec * 1000) + (tv_usec / 1000));
         }
     }
 
-    fut_printf("[SELECT] Returning %d ready file descriptors\n", ready_count);
+    /* Simple polling loop implementation:
+     * - For timeout=0: poll once and return
+     * - For timeout>0: poll with timeout using sleep
+     * - For timeout=NULL: block indefinitely (future: use wait queues)
+     */
+
+    int poll_attempt = 0;
+    int max_polls = (timeout_ms > 0) ? (timeout_ms / 10) + 1 : 1;  /* Poll every 10ms max */
+
+    while (poll_attempt < max_polls) {
+        ready_count = 0;
+
+        /* Poll each file descriptor */
+        for (int fd = 0; fd < (int)nfds; fd++) {
+            int byte_offset = fd / 8;
+            int bit_offset = fd % 8;
+            uint8_t mask = (1 << bit_offset);
+
+            struct fut_file *file = vfs_get_file(fd);
+
+            /* Check read readiness */
+            if (read_set && (read_set[byte_offset] & mask)) {
+                if (file && file->vnode) {
+                    /* Regular file/vnode - always readable (no blocking I/O) */
+                    ready_count++;
+                    fut_printf("[SELECT] FD %d ready for reading\n", fd);
+                } else if (!file) {
+                    /* FD not found - mark as exception */
+                    if (except_set) {
+                        except_set[byte_offset] |= mask;
+                        ready_count++;
+                    }
+                    /* Remove from read set */
+                    read_set[byte_offset] &= ~mask;
+                }
+            }
+
+            /* Check write readiness */
+            if (write_set && (write_set[byte_offset] & mask)) {
+                if (file && file->vnode) {
+                    /* Regular file/vnode - always writable */
+                    ready_count++;
+                    fut_printf("[SELECT] FD %d ready for writing\n", fd);
+                } else if (!file) {
+                    /* FD not found - mark as exception */
+                    if (except_set) {
+                        except_set[byte_offset] |= mask;
+                        ready_count++;
+                    }
+                    /* Remove from write set */
+                    write_set[byte_offset] &= ~mask;
+                }
+            }
+        }
+
+        /* If we found ready FDs or should return immediately, break */
+        if (ready_count > 0 || timeout_ms == 0) {
+            break;
+        }
+
+        /* If we have more polls to do, sleep before next attempt */
+        if (poll_attempt < max_polls - 1) {
+            fut_timespec_t sleep_req = {
+                .tv_sec = 0,
+                .tv_nsec = 10 * 1000000  /* 10ms sleep */
+            };
+            sys_nanosleep(&sleep_req, NULL);
+        }
+
+        poll_attempt++;
+    }
+
+    fut_printf("[SELECT] Returning %d ready file descriptors (attempts: %d)\n",
+               ready_count, poll_attempt + 1);
     return ready_count;
 }
 

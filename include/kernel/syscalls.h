@@ -108,6 +108,7 @@ long sys_pread64(unsigned int fd, void *buf, size_t count, int64_t offset);
 long sys_pwrite64(unsigned int fd, const void *buf, size_t count, int64_t offset);
 int64_t sys_lseek(int fd, int64_t offset, int whence);
 long sys_gettimeofday(fut_timeval_t *tv, void *tz);
+long sys_time(uint64_t *tloc);
 /* Note: sys_setpgrp and sys_setpgid are implemented but not exposed via syscall
    (syscall numbers conflict with seteuid from Priority #14) */
 long sys_time_millis(void);

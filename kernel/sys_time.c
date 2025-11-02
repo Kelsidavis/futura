@@ -26,6 +26,39 @@ long sys_time_millis(void) {
  *   - -EFAULT if tv is an invalid pointer
  *   - -EINVAL if tz is non-NULL (timezones not supported)
  */
+/**
+ * time() - Get time in seconds
+ *
+ * Returns the time as the number of seconds since the Epoch, 1970-01-01 00:00:00 +0000 (UTC).
+ * If tloc is non-NULL, the return value is also stored in the location to which tloc points.
+ *
+ * @param tloc  Optional pointer to store the return value (may be NULL)
+ *
+ * Returns:
+ *   - Time in seconds since the Unix epoch (always succeeds)
+ *   - If tloc is non-NULL, also stores the result at *tloc
+ *
+ * Note: This is simpler than gettimeofday(), returning only seconds without microseconds.
+ */
+long sys_time(uint64_t *tloc) {
+    /* Get current time in milliseconds */
+    uint64_t ms = fut_get_ticks();
+
+    /* Convert to seconds */
+    uint64_t seconds = ms / 1000;
+
+    /* If tloc is provided, store the result there */
+    if (tloc != NULL) {
+        if (fut_copy_to_user(tloc, &seconds, sizeof(uint64_t)) != 0) {
+            return -EFAULT;
+        }
+    }
+
+    fut_printf("[TIME] time() -> %llu seconds\n", seconds);
+
+    return (long)seconds;
+}
+
 long sys_gettimeofday(fut_timeval_t *tv, void *tz) {
     if (!tv) {
         return -EFAULT;

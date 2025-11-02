@@ -108,6 +108,10 @@ static inline long sys_fcntl_call(long fd, long cmd, long arg) {
     return sys_call3(SYS_fcntl, fd, cmd, arg);
 }
 
+static inline long sys_flock_call(long fd, long operation) {
+    return sys_call2(SYS_flock, fd, operation);
+}
+
 static inline long sys_ioctl(long fd, long req, long arg) {
     return sys_call3(SYS_ioctl, fd, req, arg);
 }

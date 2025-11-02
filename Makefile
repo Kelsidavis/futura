@@ -374,6 +374,7 @@ KERNEL_SOURCES := \
     kernel/sys_mkdir.c \
     kernel/sys_rmdir.c \
     kernel/sys_unlink.c \
+    kernel/sys_link.c \
     kernel/sys_symlink.c \
     kernel/sys_readlink.c \
     kernel/sys_lseek.c \

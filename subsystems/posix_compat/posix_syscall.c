@@ -79,6 +79,7 @@
 #endif
 #define SYS_mkdir       83
 #define SYS_rmdir       84
+#define SYS_link        86
 #define SYS_unlink      87
 #define SYS_symlink     88
 #define SYS_readlink    89
@@ -482,6 +483,14 @@ static int64_t sys_unlink_handler(uint64_t pathname, uint64_t arg2, uint64_t arg
     path_buf[sizeof(path_buf) - 1] = '\0';  /* Ensure null termination */
 
     return (int64_t)fut_vfs_unlink(path_buf);
+}
+
+/* Hard link creation (stub) */
+static int64_t sys_link_handler(uint64_t oldpath, uint64_t newpath, uint64_t arg3,
+                                 uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg3; (void)arg4; (void)arg5; (void)arg6;
+    /* Use kernel sys_link (currently a stub returning -ENOSYS) */
+    return sys_link((const char *)oldpath, (const char *)newpath);
 }
 
 /* Symbolic link creation (stub) */
@@ -1597,6 +1606,7 @@ static syscall_handler_t syscall_table[MAX_SYSCALL] = {
     [SYS_mkdir]      = sys_mkdir_handler,
     [SYS_rmdir]      = sys_rmdir_handler,
     [SYS_unlink]     = sys_unlink_handler,
+    [SYS_link]       = sys_link_handler,
     [SYS_symlink]    = sys_symlink_handler,
     [SYS_readlink]   = sys_readlink_handler,
     [SYS_rename]     = sys_rename_handler,

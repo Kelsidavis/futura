@@ -42,6 +42,7 @@
 #define SYS_chown       92
 #define SYS_fchown      93
 #define SYS_flock       73
+#define SYS_link        86
 #define SYS_unlink      87
 #define SYS_symlink     88
 #define SYS_readlink    89

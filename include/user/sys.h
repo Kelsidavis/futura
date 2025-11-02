@@ -289,6 +289,10 @@ static inline long sys_rmdir_call(const char *path) {
     return sys_call1(SYS_rmdir, (long)path);
 }
 
+static inline long sys_link_call(const char *oldpath, const char *newpath) {
+    return sys_call2(SYS_link, (long)oldpath, (long)newpath);
+}
+
 static inline long sys_symlink_call(const char *target, const char *linkpath) {
     return sys_call2(SYS_symlink, (long)target, (long)linkpath);
 }

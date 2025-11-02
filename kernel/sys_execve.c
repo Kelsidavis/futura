@@ -8,9 +8,13 @@
 
 #include <kernel/fut_task.h>
 #include <kernel/fut_thread.h>
+#include <kernel/fut_vfs.h>
 #include <kernel/errno.h>
 #include <kernel/uaccess.h>
 #include <stddef.h>
+
+/* FD_CLOEXEC flag value */
+#define FD_CLOEXEC 1
 
 extern void fut_printf(const char *fmt, ...);
 extern int fut_exec_elf(const char *path, char *const argv[], char *const envp[]);
@@ -48,6 +52,24 @@ long sys_execve(const char *pathname, char *const argv[], char *const envp[]) {
     }
 
     fut_printf("[EXECVE] path=%s envp=%p\n", pathname, (void*)envp);
+
+    /* Get current task to handle close-on-exec FDs */
+    fut_task_t *task = fut_task_current();
+    if (!task) {
+        return -ESRCH;
+    }
+
+    /* Close all FDs marked with FD_CLOEXEC before executing new binary */
+    if (task->fd_table) {
+        for (int i = 0; i < task->max_fds; i++) {
+            struct fut_file *file = task->fd_table[i];
+            if (file != NULL && (file->fd_flags & FD_CLOEXEC)) {
+                /* Close this FD (CLOEXEC means "close on exec") */
+                fut_vfs_close(i);
+                /* Note: fut_vfs_close will remove from task's FD table */
+            }
+        }
+    }
 
     /* Call the ELF loader which replaces the current process */
     int ret = fut_exec_elf(pathname, argv, envp);

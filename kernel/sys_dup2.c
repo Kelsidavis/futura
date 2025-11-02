@@ -4,18 +4,14 @@
  * Licensed under the MPL v2.0 — see LICENSE for details.
  *
  * Implements file descriptor duplication for I/O redirection.
+ * Maintains per-task FD isolation for multi-process support.
  */
 
 #include <kernel/errno.h>
 #include <kernel/fut_vfs.h>
+#include <kernel/fut_task.h>
 
 extern void fut_printf(const char *fmt, ...);
-
-/* Internal VFS functions for fd manipulation */
-extern struct fut_file *vfs_get_file(int fd);
-extern int vfs_alloc_specific_fd(int target_fd, struct fut_file *file);
-extern void vfs_free_fd(int fd);
-extern void vfs_file_ref(struct fut_file *file);
 
 /**
  * dup2() syscall - Duplicate a file descriptor to a specific number.
@@ -31,45 +27,48 @@ extern void vfs_file_ref(struct fut_file *file);
  *   - If oldfd is not valid, return -EBADF
  *   - If oldfd == newfd, return newfd without closing it
  *   - If newfd is open, close it first
- *   - Duplicate oldfd to newfd
+ *   - Duplicate oldfd to newfd with per-task FD isolation
  */
 long sys_dup2(int oldfd, int newfd) {
-    /* Validate oldfd */
+    /* Validate FD numbers */
     if (oldfd < 0 || newfd < 0) {
         return -EBADF;
     }
 
-    /* Get the file structure for oldfd */
-    struct fut_file *old_file = vfs_get_file(oldfd);
+    /* Get current task for FD table access */
+    fut_task_t *task = fut_task_current();
+    if (!task) {
+        return -ESRCH;  /* No task context */
+    }
+
+    /* Get the file structure for oldfd from current task's FD table */
+    struct fut_file *old_file = vfs_get_file_from_task(task, oldfd);
     if (!old_file) {
         return -EBADF;
     }
 
-    /* If oldfd == newfd, just return newfd */
+    /* If oldfd == newfd, just return newfd without modification */
     if (oldfd == newfd) {
         return newfd;
     }
 
-    /* Close newfd if it's already open */
-    struct fut_file *new_file = vfs_get_file(newfd);
-    if (new_file) {
-        /* Close the existing file at newfd */
-        extern int fut_vfs_close(int fd);
-        fut_vfs_close(newfd);
+    /* Increment reference count on the file since we're creating another reference */
+    if (old_file) {
+        old_file->refcount++;
     }
 
-    /* Increment reference count on the file since we're creating another reference */
-    vfs_file_ref(old_file);
-
-    /* Allocate newfd pointing to the same file */
-    int ret = vfs_alloc_specific_fd(newfd, old_file);
+    /* Allocate newfd pointing to the same file in task's FD table */
+    /* alloc_specific_fd_for_task handles closing existing FD if needed */
+    int ret = vfs_alloc_specific_fd_for_task(task, newfd, old_file);
     if (ret < 0) {
         /* Failed to allocate, decrement ref count */
-        old_file->refcount--;
+        if (old_file && old_file->refcount > 0) {
+            old_file->refcount--;
+        }
         return ret;
     }
 
-    fut_printf("[DUP2] Duplicated fd %d to %d\n", oldfd, newfd);
+    fut_printf("[DUP2] Duplicated fd %d to %d (task=%p)\n", oldfd, newfd, (void*)task);
 
     return newfd;
 }

@@ -1001,6 +1001,34 @@ int vfs_alloc_specific_fd(int target_fd, struct fut_file *file) {
     return target_fd;
 }
 
+/* ============================================================
+ *   Per-Task FD Management (Public API)
+ * ============================================================ */
+
+/**
+ * Get file from a task's FD table.
+ * Public wrapper for per-task FD access.
+ */
+struct fut_file *vfs_get_file_from_task(struct fut_task *task, int fd) {
+    return get_file_from_task((fut_task_t *)task, fd);
+}
+
+/**
+ * Allocate a specific FD in a task's FD table (for dup2).
+ * Public wrapper for per-task FD allocation.
+ */
+int vfs_alloc_specific_fd_for_task(struct fut_task *task, int target_fd, struct fut_file *file) {
+    return alloc_specific_fd_for_task((fut_task_t *)task, target_fd, file);
+}
+
+/**
+ * Close an FD in a task's FD table.
+ * Public wrapper for per-task FD closing.
+ */
+void vfs_close_fd_in_task(struct fut_task *task, int fd) {
+    close_fd_in_task((fut_task_t *)task, fd);
+}
+
 static int try_open_chrdev(const char *path, int flags) {
     unsigned major = 0;
     unsigned minor = 0;

@@ -33,6 +33,7 @@ struct fut_file;
 struct fut_vfs_ops;
 struct fut_stat;
 struct fut_file_ops;
+struct fut_task;
 
 /* ============================================================
  *   File Types
@@ -519,6 +520,11 @@ int fut_vfs_rmdir(const char *path);
  * @return 0 on success or negative error code on failure
  */
 int fut_vfs_mkdir(const char *path, uint32_t mode);
+
+/* Per-task FD management (for multi-process isolation) */
+struct fut_file *vfs_get_file_from_task(struct fut_task *task, int fd);
+int vfs_alloc_specific_fd_for_task(struct fut_task *task, int target_fd, struct fut_file *file);
+void vfs_close_fd_in_task(struct fut_task *task, int fd);
 
 /* Seek modes */
 #define SEEK_SET    0

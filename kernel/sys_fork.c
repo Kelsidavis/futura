@@ -64,6 +64,21 @@ long sys_fork(void) {
         return -ENOMEM;
     }
 
+    /* Copy parent's file descriptor table to child */
+    if (parent_task->fd_table) {
+        for (int i = 0; i < parent_task->max_fds; i++) {
+            if (parent_task->fd_table[i] != NULL) {
+                struct fut_file *parent_file = parent_task->fd_table[i];
+
+                /* Increment refcount (file is now referenced by parent and child) */
+                parent_file->refcount++;
+
+                /* Child inherits the same file object at the same FD */
+                child_task->fd_table[i] = parent_file;
+            }
+        }
+    }
+
     /* Clone address space (for now, create new empty one - COW can be added later) */
     fut_mm_t *parent_mm = fut_task_get_mm(parent_task);
     fut_mm_t *child_mm = NULL;

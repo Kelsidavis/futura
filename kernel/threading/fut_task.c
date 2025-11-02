@@ -92,6 +92,8 @@ fut_task_t *fut_task_create(void) {
     /* Initialize signal handlers array - all default actions */
     for (int i = 0; i < 31; i++) {
         task->signal_handlers[i] = NULL;  /* NULL = use default action */
+        task->signal_handler_masks[i] = 0;  /* No additional signals blocked during handler */
+        task->signal_handler_flags[i] = 0;  /* No SA_* flags set initially */
     }
 
     /* Initialize per-task file descriptor table (initially 64 FDs) */

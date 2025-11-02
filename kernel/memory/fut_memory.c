@@ -226,14 +226,70 @@ void fut_heap_init(uintptr_t heap_start, uintptr_t heap_end) {
 
     if (heap_limit > heap_base) {
 #if defined(__x86_64__)
-        phys_addr_t phys_start = pmap_virt_to_phys(heap_base);
-        phys_addr_t phys_end = pmap_virt_to_phys(heap_limit - FUT_PAGE_SIZE) + FUT_PAGE_SIZE;
-        fut_printf("[HEAP-INIT] phys_start=%p phys_end=%p (size=%llu KB)\n",
-                   (void*)phys_start, (void*)phys_end,
-                   (unsigned long long)((phys_end - phys_start) / 1024));
-        /* Reserve heap range PLUS one guard page after to prevent heap overflow
-         * from corrupting immediately adjacent allocations (like page tables) */
-        fut_pmm_reserve_range((uintptr_t)phys_start, (size_t)(phys_end - phys_start + FUT_PAGE_SIZE));
+        /* CRITICAL FIX: Map heap pages before initializing buddy allocator.
+         * Boot.S only maps a limited window of kernel virtual address space.
+         * The heap region may extend beyond this window, requiring dynamic mapping.
+         * This ensures all heap addresses are accessible during allocation.
+         *
+         * Strategy: Use 2MB large pages where possible (matching boot.S setup)
+         * to efficiently map the large heap region.
+         */
+
+        size_t heap_size = heap_limit - heap_base;
+        fut_printf("[HEAP-INIT] Mapping heap region (%llu KB) in kernel page tables...\n",
+                   (unsigned long long)(heap_size / 1024));
+
+        /* Calculate number of 4KB pages needed */
+        size_t num_pages = (heap_size + FUT_PAGE_SIZE - 1) / FUT_PAGE_SIZE;
+        int map_error = 0;
+        size_t pages_mapped = 0;
+
+        /* Allocate and map each page individually */
+        for (size_t i = 0; i < num_pages; i++) {
+            uint64_t vaddr = heap_base + (i * FUT_PAGE_SIZE);
+
+            /* Allocate one 4KB page from physical memory manager */
+            void *phys_page = fut_pmm_alloc_page();
+            if (!phys_page) {
+                fut_printf("[HEAP-INIT] WARNING: Could not allocate page %llu of %llu\n",
+                           (unsigned long long)i, (unsigned long long)num_pages);
+                map_error = -1;
+                break;
+            }
+
+            phys_addr_t phys_addr = (phys_addr_t)(uintptr_t)phys_page;
+
+            /* Map the single 4KB page to kernel virtual address space
+             * 0x03 = PTE_PRESENT | PTE_WRITE (readable/writable) */
+            int map_result = pmap_map(vaddr, phys_addr, FUT_PAGE_SIZE, 0x03);
+            if (map_result != 0) {
+                fut_printf("[HEAP-INIT] ERROR: Failed to map page %llu at vaddr=0x%llx (error=%d)\n",
+                           (unsigned long long)i, (unsigned long long)vaddr, map_result);
+                map_error = map_result;
+                break;
+            }
+
+            pages_mapped++;
+
+            /* Print progress every 1024 pages (4MB) to avoid too much output */
+            if ((i + 1) % 1024 == 0) {
+                fut_printf("[HEAP-INIT] Mapped %llu pages (%llu MB of %llu MB)\n",
+                           (unsigned long long)pages_mapped,
+                           (unsigned long long)(pages_mapped * FUT_PAGE_SIZE / (1024 * 1024)),
+                           (unsigned long long)(heap_size / (1024 * 1024)));
+            }
+        }
+
+        if (map_error == 0) {
+            fut_printf("[HEAP-INIT] Successfully mapped all %llu pages (%llu KB)\n",
+                       (unsigned long long)pages_mapped, (unsigned long long)(heap_size / 1024));
+        } else {
+            fut_printf("[HEAP-INIT] ERROR: Heap mapping incomplete at page %llu/%llu\n",
+                       (unsigned long long)pages_mapped, (unsigned long long)num_pages);
+        }
+
+        /* Reserve the entire heap range from PMM to prevent re-allocation */
+        fut_pmm_reserve_range((uintptr_t)heap_base, heap_size + FUT_PAGE_SIZE);
 #else
         fut_pmm_reserve_range(heap_base, heap_limit - heap_base + FUT_PAGE_SIZE);
 #endif

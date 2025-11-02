@@ -130,27 +130,65 @@ static void handle_file_request(struct fut_fipc_msg *msg) {
     }
 
     case POSIXD_MSG_READ: {
-        /* Read from file descriptor */
+        /* Read from file descriptor with optional shared buffer support */
         struct posixd_read_req *req = (struct posixd_read_req *)msg->payload;
         struct posixd_read_resp resp = {0};
 
         if (!req || req->count == 0) {
             resp.bytes_read = -EINVAL;
         } else {
-            /* Allocate temporary buffer for read data */
-            uint8_t buf[4096];
-            size_t count = (req->count > sizeof(buf)) ? sizeof(buf) : req->count;
+            /* Allocate temporary buffer for read data (support up to 64KB) */
+            const size_t MAX_READ_BUF = 65536;
+            uint8_t *buf = NULL;
+            size_t buf_size = (req->count > MAX_READ_BUF) ? MAX_READ_BUF : req->count;
+            buf = (uint8_t *)fut_malloc(buf_size);
 
-            /* Call VFS to read the file */
-            ssize_t bytes = fut_vfs_read(req->fd, buf, count);
-
-            if (bytes < 0) {
-                resp.bytes_read = bytes;
+            if (!buf) {
+                resp.bytes_read = -ENOMEM;
             } else {
-                /* TODO: Copy data to shared buffer region (req->buffer_region_id)
-                 * For now, data is passed directly in the response if it fits
-                 */
-                resp.bytes_read = bytes;
+                /* Call VFS to read the file */
+                ssize_t bytes = fut_vfs_read(req->fd, buf, buf_size);
+
+                if (bytes < 0) {
+                    resp.bytes_read = bytes;
+                } else {
+                    /* Check if client requested shared buffer region */
+                    if (req->buffer_region_id != 0) {
+                        /* FIPC shared buffer support (Phase 3):
+                         * The client has allocated a shared memory region.
+                         * In a full implementation, we would:
+                         * 1. Look up the region by buffer_region_id
+                         * 2. Map it into our address space
+                         * 3. Copy the data into it
+                         * 4. Return the region ID and byte count
+                         *
+                         * For now, we fall back to inline transmission
+                         * if the data is small enough to fit in the response.
+                         */
+                        if (bytes <= sizeof(resp.data)) {
+                            /* Small read - copy inline */
+                            for (ssize_t i = 0; i < bytes; i++) {
+                                resp.data[i] = buf[i];
+                            }
+                        } else {
+                            /* Large read - would need shared buffer */
+                            resp.bytes_read = -ENOTSUP;  /* Not yet implemented */
+                            bytes = 0;
+                        }
+                    } else {
+                        /* No shared buffer - copy data inline if it fits */
+                        if (bytes <= (ssize_t)sizeof(resp.data)) {
+                            /* Copy the read data into response */
+                            for (ssize_t i = 0; i < bytes; i++) {
+                                resp.data[i] = buf[i];
+                            }
+                        }
+                    }
+
+                    resp.bytes_read = bytes;
+                }
+
+                fut_free(buf);
             }
         }
 
@@ -159,28 +197,42 @@ static void handle_file_request(struct fut_fipc_msg *msg) {
     }
 
     case POSIXD_MSG_WRITE: {
-        /* Write to file descriptor */
+        /* Write to file descriptor with optional shared buffer support */
         struct posixd_write_req *req = (struct posixd_write_req *)msg->payload;
         struct posixd_write_resp resp = {0};
 
         if (!req || req->count == 0) {
             resp.bytes_written = -EINVAL;
         } else {
-            /* Data is passed inline after the request structure in the message payload.
-             * The client (libfutura) copies data directly to the message buffer.
-             * Phase 3: Use shared buffer region (req->buffer_region_id) for large writes.
-             */
+            uint8_t *data = NULL;
+            bool data_from_region = false;
 
-            /* Calculate where the data starts in the payload:
-             * Message payload = [posixd_write_req] [data bytes...]
-             * So data starts at offset sizeof(struct posixd_write_req)
-             */
-            size_t data_offset = sizeof(struct posixd_write_req);
-            uint8_t *data = (uint8_t *)msg->payload + data_offset;
+            /* Check if client is using shared buffer region */
+            if (req->buffer_region_id != 0) {
+                /* FIPC shared buffer support (Phase 3):
+                 * The client has allocated a shared memory region containing write data.
+                 * In a full implementation, we would:
+                 * 1. Look up the region by buffer_region_id
+                 * 2. Map it into our address space if not already mapped
+                 * 3. Read the data from the region
+                 * 4. Write to file
+                 *
+                 * For now, we don't support large shared buffer writes.
+                 */
+                resp.bytes_written = -ENOTSUP;  /* Not yet implemented */
+                data_from_region = true;
+            } else {
+                /* Data is passed inline after the request structure in the message payload.
+                 * Calculate where the data starts in the payload:
+                 * Message payload = [posixd_write_req] [data bytes...]
+                 */
+                size_t data_offset = sizeof(struct posixd_write_req);
+                data = (uint8_t *)msg->payload + data_offset;
 
-            /* Call VFS to write the file */
-            ssize_t bytes = fut_vfs_write(req->fd, data, req->count);
-            resp.bytes_written = bytes;
+                /* Call VFS to write the file */
+                ssize_t bytes = fut_vfs_write(req->fd, data, req->count);
+                resp.bytes_written = bytes;
+            }
         }
 
         send_response(POSIXD_MSG_WRITE, &resp, sizeof(resp));
@@ -354,40 +406,98 @@ static void handle_process_request(struct fut_fipc_msg *msg) {
 
     switch (msg->type) {
     case POSIXD_MSG_FORK: {
-        /* Phase 3: Handle fork request
-         * 1. Duplicate current process context
-         * 2. Create new task in kernel
-         * 3. Set up new FIPC channels
-         * 4. Return child PID to parent, 0 to child
-         */
+        /* Handle fork request: Duplicate current process context */
+        struct posixd_fork_resp resp = {0};
+
+        /* Call kernel fork syscall */
+        extern long sys_fork_call(void);
+        long fork_result = sys_fork_call();
+
+        if (fork_result < 0) {
+            /* Error in fork */
+            resp.pid = (pid_t)fork_result;
+        } else {
+            /* Success: fork_result is child PID in parent, 0 in child */
+            resp.pid = (pid_t)fork_result;
+        }
+
+        send_response(POSIXD_MSG_FORK, &resp, sizeof(resp));
         break;
     }
 
     case POSIXD_MSG_EXEC: {
-        /* Phase 3: Handle exec request
-         * 1. Load executable from filesystem
-         * 2. Set up new address space
-         * 3. Initialize stack with args/env
-         * 4. Jump to entry point
+        /* Handle exec request: Load executable from filesystem */
+        struct posixd_exec_req *req = (struct posixd_exec_req *)msg->payload;
+        struct posixd_exec_resp resp = {0};
+
+        if (!req || !req->path[0]) {
+            resp.result = -EINVAL;
+            send_response(POSIXD_MSG_EXEC, &resp, sizeof(resp));
+            break;
+        }
+
+        /* Parse argv and envp from payload
+         * Message layout: [posixd_exec_req] [argv strings...] [envp strings...]
+         * argv and envp are null-terminated arrays of pointers
          */
+
+        /* For now, implement basic exec without argv/envp support
+         * Full implementation would parse the string arrays from the message payload
+         * This is a Phase 3 limitation noted in the architecture
+         */
+        extern long sys_execve_call(const char *pathname, char *const *argv, char *const *envp);
+        long exec_result = sys_execve_call(req->path, NULL, NULL);
+
+        /* execve doesn't return on success; only on error */
+        resp.result = (int)exec_result;
+        send_response(POSIXD_MSG_EXEC, &resp, sizeof(resp));
         break;
     }
 
     case POSIXD_MSG_WAIT: {
-        /* Phase 3: Handle wait request
-         * 1. Block until child exits
-         * 2. Collect exit status
-         * 3. Return child PID and status
+        /* Handle wait request: Block until child exits */
+        struct posixd_wait_req *req = (struct posixd_wait_req *)msg->payload;
+        struct posixd_wait_resp resp = {0};
+
+        if (!req) {
+            resp.pid = -EINVAL;
+            send_response(POSIXD_MSG_WAIT, &resp, sizeof(resp));
+            break;
+        }
+
+        /* Call kernel wait4 syscall via syscall wrapper
+         * wait4(pid, &status, options, NULL)
          */
+        extern long sys_wait4_call(long pid, int *wstatus, long options, void *rusage);
+        int status = 0;
+        long wait_result = sys_wait4_call((long)req->pid, &status, (long)req->options, NULL);
+
+        if (wait_result < 0) {
+            resp.pid = (pid_t)wait_result;
+            resp.status = 0;
+        } else {
+            resp.pid = (pid_t)wait_result;
+            resp.status = status;
+        }
+
+        send_response(POSIXD_MSG_WAIT, &resp, sizeof(resp));
         break;
     }
 
     case POSIXD_MSG_EXIT: {
-        /* Phase 3: Handle exit request
-         * 1. Close all file descriptors
-         * 2. Notify parent (SIGCHLD)
-         * 3. Terminate task
-         */
+        /* Handle exit request: Terminate current process */
+        struct posixd_exit_req *req = (struct posixd_exit_req *)msg->payload;
+
+        if (!req) {
+            extern long sys_exit(long code);
+            sys_exit(-EINVAL);
+            return;  /* Never reached */
+        }
+
+        /* Call kernel exit syscall - this terminates the process */
+        extern long sys_exit(long code);
+        sys_exit((long)req->status);
+        /* Never returns */
         break;
     }
 

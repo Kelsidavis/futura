@@ -54,6 +54,8 @@ struct fut_task {
     /* Signal handling */
     sighandler_t signal_handlers[31];  // Array of signal handlers (index 1-30)
     uint64_t signal_mask;              // Mask of currently blocked signals
+    uint64_t signal_handler_masks[31]; // Per-handler masks (signals to block during handler)
+    int signal_handler_flags[31];      // Per-handler flags (SA_RESTART, SA_RESETHAND, etc.)
     uint64_t pending_signals;          // Bitmask of pending signals awaiting delivery
 
     /* File system context */

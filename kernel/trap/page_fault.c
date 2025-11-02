@@ -41,6 +41,26 @@ extern void fut_printf(const char *fmt, ...);
  * Load a single demand-paged page and map it.
  * Helper used by demand paging handler and read-ahead.
  */
+/**
+ * Load a page from file on demand (demand paging).
+ *
+ * Implements lazy page loading for file-backed memory mappings.
+ * Called on page fault for unmapped file pages.
+ *
+ * Semantics:
+ * - MAP_PRIVATE: Each process gets its own copy of the page after write.
+ *   Modifications don't affect the file or other mappings.
+ *   Implemented via COW (copy-on-write) in the page fault handler.
+ *
+ * - MAP_SHARED: All processes sharing the mapping see the same physical page.
+ *   Writes to the page are visible to all mappers and persist to file.
+ *   Dirty page tracking needed for write-back (Phase 4 enhancement).
+ *
+ * @param page_addr Virtual address to load (must be page-aligned)
+ * @param vma Virtual memory area with file mapping info
+ * @param ctx Page table context for mapping
+ * @return true on success, false on error
+ */
 static bool load_demand_page(uint64_t page_addr, struct fut_vma *vma, fut_vmem_context_t *ctx) {
     extern void fut_printf(const char *, ...);
 
@@ -74,16 +94,26 @@ static bool load_demand_page(uint64_t page_addr, struct fut_vma *vma, fut_vmem_c
             fut_pmm_free_page(page);
             return false;
         }
-        /* Partial reads are OK - rest of page remains zero */
+        /* Partial reads are OK - rest of page remains zero (EOF handling) */
     }
 
     /* Calculate PTE flags from VMA protection */
     uint64_t pte_flags = PTE_PRESENT | PTE_USER;
     if (vma->prot & 0x2) {
-        pte_flags |= PTE_WRITABLE;
+        pte_flags |= PTE_WRITABLE;  /* PROT_WRITE requested */
     }
     if ((vma->prot & 0x4) == 0) {
-        pte_flags |= PTE_NX;
+        pte_flags |= PTE_NX;  /* Execute not allowed */
+    }
+
+    /* For MAP_PRIVATE with write permission, map as read-only initially.
+     * Copy-on-write will handle the page when written to.
+     * For MAP_SHARED, map with requested permissions.
+     */
+    if ((vma->prot & 0x2) && !(vma->flags & 0x01)) {  /* PROT_WRITE && !MAP_SHARED */
+        /* MAP_PRIVATE + writable: Mark VMA as COW and map read-only */
+        vma->flags |= VMA_COW;
+        pte_flags &= ~PTE_WRITABLE;  /* Map read-only for COW */
     }
 
     /* Map the page */
@@ -93,8 +123,8 @@ static bool load_demand_page(uint64_t page_addr, struct fut_vma *vma, fut_vmem_c
         return false;
     }
 
-    fut_printf("[DEMAND-PAGING] Loaded page: va=0x%llx phys=0x%llx file_offset=%llu bytes_read=%ld\n",
-               page_addr, phys, page_offset, bytes_read);
+    fut_printf("[DEMAND-PAGING] Loaded page: va=0x%llx phys=0x%llx file_offset=%llu bytes_read=%ld flags=0x%llx\n",
+               page_addr, phys, page_offset, bytes_read, pte_flags);
 
     return true;
 }

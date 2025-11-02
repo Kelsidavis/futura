@@ -19,6 +19,7 @@
 #include <kernel/fut_socket.h>
 #include <kernel/signal.h>
 #include <kernel/signal_frame.h>
+#include <arch/x86_64/regs.h>
 
 /* ============================================================
  *   Syscall Numbers
@@ -703,25 +704,33 @@ static int64_t sys_sigaction_handler(uint64_t signum, uint64_t act, uint64_t old
         return -EINVAL;
     }
 
+    /* Validate signal number for array access */
+    if ((int)signum < 1 || (int)signum >= _NSIG) {
+        return -EINVAL;
+    }
+
+    int sig_idx = (int)signum;  // Index into handler arrays (1-30)
+
     /* Copy old action if requested */
     if (oldact) {
         struct sigaction *old = (struct sigaction *)oldact;
-        old->sa_handler = fut_signal_get_handler(current, (int)signum);
-        old->sa_mask = current->signal_mask;
-        old->sa_flags = 0;  /* TODO: Track SA_* flags */
+        old->sa_handler = fut_signal_get_handler(current, sig_idx);
+        old->sa_mask = current->signal_handler_masks[sig_idx];
+        old->sa_flags = current->signal_handler_flags[sig_idx];
     }
 
     /* Install new handler if provided */
     if (act) {
         struct sigaction *new = (struct sigaction *)act;
         sighandler_t handler = new->sa_handler;
-        int ret = fut_signal_set_handler(current, (int)signum, handler);
+        int ret = fut_signal_set_handler(current, sig_idx, handler);
         if (ret < 0) {
             return ret;
         }
 
-        /* TODO: Handle sa_mask and sa_flags */
-        /* For now, sa_mask is ignored - could be used to auto-block signals during handler */
+        /* Store sa_mask and sa_flags for this signal handler */
+        current->signal_handler_masks[sig_idx] = new->sa_mask;
+        current->signal_handler_flags[sig_idx] = new->sa_flags;
     }
 
     return 0;
@@ -1359,98 +1368,204 @@ void posix_syscall_init(void) {
     }
 }
 
-/* TODO: Signal delivery is temporarily disabled due to page faults
- * The signal delivery code tries to access userspace memory (calling handler
- * function pointers), causing crashes. This needs proper signal frame setup. */
-#if 0
+/**
+ * Deliver a signal to a task by setting up a signal frame on the user stack
+ * and modifying the interrupt frame to call the handler.
+ *
+ * This implements proper signal frame setup as per System V AMD64 ABI.
+ * The handler receives:
+ *   rdi = signal number
+ *   rsi = siginfo_t *
+ *   rdx = ucontext_t *
+ *
+ * @param current Current task
+ * @param signum Signal number to deliver
+ * @param frame Interrupt frame to modify
+ * @return true if signal was delivered, false if handler not available
+ */
+static bool posix_deliver_signal(fut_task_t *current, int signum,
+                                 fut_interrupt_frame_t *frame) {
+    extern void fut_printf(const char *, ...);
+
+    if (!current || !frame) {
+        return false;
+    }
+
+    /* Get the handler for this signal */
+    sighandler_t handler = fut_signal_get_handler(current, signum);
+
+    /* Clear this signal from pending */
+    uint64_t signal_bit = (1ULL << (signum - 1));
+    current->pending_signals &= ~signal_bit;
+
+    /* If no handler or SIG_IGN, skip delivery */
+    if (!handler || handler == SIG_IGN || handler == SIG_DFL) {
+        return false;
+    }
+
+    /* Get user stack pointer from frame */
+    uint64_t user_rsp = frame->rsp;
+
+    /* Allocate rt_sigframe on user stack (must be 16-byte aligned)
+     * Decrement RSP to make room for frame, ensuring 16-byte alignment
+     * before the RIP pushed by CALL instruction is accounted for */
+    user_rsp -= sizeof(struct rt_sigframe);
+    user_rsp &= ~15ULL;  /* Align to 16 bytes */
+
+    /* Verify user stack is accessible (basic check) */
+    if (user_rsp < 0x400000) {  /* Below reasonable user stack threshold */
+        fut_printf("[SIGNAL] Stack underflow attempting to deliver signal %d\n", signum);
+        return false;
+    }
+
+    /* Build signal frame in kernel memory */
+    struct rt_sigframe sigframe = {};
+
+    /* Fill in signal info with proper UID tracking */
+    sigframe.info.si_signum = signum;
+    sigframe.info.si_errno = 0;
+    sigframe.info.si_code = 0;  /* SI_USER */
+    sigframe.info.si_pid = current->pid;
+    sigframe.info.si_uid = current->uid;  /* ✓ Now tracking actual UID */
+    sigframe.info.si_status = 0;
+    sigframe.info.si_addr = NULL;
+    sigframe.info.si_value = 0;
+    sigframe.info.si_overrun = 0;
+    sigframe.info.si_timerid = 0;
+
+    /* Fill in machine context (CPU registers at time of interruption) */
+    mcontext_t *mctx = &sigframe.uc.uc_mcontext;
+    mctx->gregs.r8 = frame->r8;
+    mctx->gregs.r9 = frame->r9;
+    mctx->gregs.r10 = frame->r10;
+    mctx->gregs.r11 = frame->r11;
+    mctx->gregs.r12 = frame->r12;
+    mctx->gregs.r13 = frame->r13;
+    mctx->gregs.r14 = frame->r14;
+    mctx->gregs.r15 = frame->r15;
+    mctx->gregs.rdi = frame->rdi;
+    mctx->gregs.rsi = frame->rsi;
+    mctx->gregs.rbp = frame->rbp;
+    mctx->gregs.rbx = frame->rbx;
+    mctx->gregs.rdx = frame->rdx;
+    mctx->gregs.rax = frame->rax;
+    mctx->gregs.rcx = frame->rcx;
+    mctx->gregs.rsp = frame->rsp;  /* Original RSP before sigframe */
+    mctx->gregs.rip = frame->rip;  /* Original RIP to return to */
+    mctx->gregs.eflags = frame->rflags;
+    mctx->gregs.cs = frame->cs;
+    mctx->gregs.gs = frame->gs;
+    mctx->gregs.fs = frame->fs;
+    mctx->gregs.__pad0 = 0;
+    mctx->gregs.err = frame->error_code;
+    mctx->gregs.trapno = frame->vector;
+
+    /* Fill in user context with signal mask tracking */
+    sigframe.uc.uc_flags = 0;
+    sigframe.uc.uc_link = NULL;
+    sigframe.uc.uc_stack.ss_sp = NULL;
+    sigframe.uc.uc_stack.ss_flags = 0;
+    sigframe.uc.uc_stack.ss_size = 0;
+    /* Save the CURRENT signal mask so sigreturn can restore it */
+    sigframe.uc.uc_sigmask.__mask = current->signal_mask;
+
+    /* Apply the handler's sa_mask during delivery:
+     * Block additional signals specified in the handler's sa_mask */
+    if (signum < _NSIG) {
+        uint64_t handler_mask = current->signal_handler_masks[signum];
+        uint64_t saved_mask = current->signal_mask;
+        current->signal_mask |= handler_mask;  /* Block these signals during handler */
+
+        /* Save the original mask in the frame so sigreturn can restore it */
+        sigframe.uc.uc_sigmask.__mask = saved_mask;
+    }
+
+    /* Set return address (for when handler calls sigreturn) */
+    sigframe.return_address = NULL;  /* Could point to user-space trampoline */
+    sigframe.pad = 0;
+
+    /* Copy frame to user stack */
+    if (fut_copy_to_user((void *)user_rsp, &sigframe, sizeof(sigframe)) != 0) {
+        fut_printf("[SIGNAL] Failed to copy sigframe to user stack for signal %d\n", signum);
+        return false;
+    }
+
+    /* Modify interrupt frame to call handler
+     * The handler will be called with:
+     *   rdi = signal number
+     *   rsi = siginfo_t *
+     *   rdx = ucontext_t *
+     *
+     * Calculate offsets into the frame for siginfo_t and ucontext_t
+     */
+    uint64_t siginfo_addr = user_rsp + offsetof(struct rt_sigframe, info);
+    uint64_t ucontext_addr = user_rsp + offsetof(struct rt_sigframe, uc);
+
+    frame->rdi = (uint64_t)signum;
+    frame->rsi = siginfo_addr;
+    frame->rdx = ucontext_addr;
+    frame->rip = (uint64_t)handler;
+    frame->rsp = user_rsp;
+
+    /* Apply SA_RESETHAND flag if set:
+     * Reset handler to SIG_DFL after delivery */
+    if (signum < _NSIG && (current->signal_handler_flags[signum] & SA_RESETHAND)) {
+        fut_signal_set_handler(current, signum, SIG_DFL);
+        fut_printf("[SIGNAL] Applied SA_RESETHAND for signal %d\n", signum);
+    }
+
+    fut_printf("[SIGNAL] Delivered signal %d to task %llu, handler=%p, frame=%p\n",
+              signum, current->pid, (void *)(uintptr_t)handler, (void *)user_rsp);
+
+    return true;
+}
+
 /**
  * Check for pending signals and deliver them.
  * Called from syscall return path to give pending signals a chance to execute.
  *
- * For MVP, this does synchronous delivery by directly invoking handlers.
- * A proper implementation would set up signal frames and modify the return context.
- *
  * @param current Current task
+ * @param frame Interrupt frame to modify for signal delivery
  * @return Signal number if one was delivered, 0 if no signals pending
  */
-static int check_and_deliver_pending_signals(fut_task_t *current) {
-    if (!current) {
+static int check_and_deliver_pending_signals(fut_task_t *current,
+                                             fut_interrupt_frame_t *frame) {
+    if (!current || !frame) {
         return 0;
     }
 
     /* Iterate through all possible signals and deliver the first one found */
     for (int signum = 1; signum < _NSIG; signum++) {
         if (fut_signal_is_pending(current, signum)) {
-            /* Get the handler for this signal */
-            sighandler_t handler = fut_signal_get_handler(current, signum);
-
-            /* Clear this signal from pending */
-            uint64_t signal_bit = (1ULL << (signum - 1));
-            current->pending_signals &= ~signal_bit;
-
-            extern void fut_printf(const char *, ...);
-            fut_printf("[SIGNAL] Delivering signal %d to task %llu with handler %p\n",
-                      signum, current->pid, (void *)(uintptr_t)handler);
-
-            /* Invoke the handler if one is registered (not SIG_DFL) */
-            if (handler && handler != SIG_DFL && handler != SIG_IGN) {
-                /* For MVP: Direct synchronous invocation from kernel
-                 * Proper implementation would:
-                 * 1. Set up signal frame on user stack
-                 * 2. Push return address to signal restorer
-                 * 3. Modify RIP to point to handler
-                 * 4. Let handler execute in userspace
-                 * 5. Handler returns via sigreturn()
-                 *
-                 * This simplified approach just calls the handler directly:
-                 */
-                fut_printf("[SIGNAL] Invoking handler at %p\n", (void *)(uintptr_t)handler);
-                (*handler)(signum);
-                fut_printf("[SIGNAL] Handler returned\n");
-            } else if (handler == SIG_IGN) {
-                fut_printf("[SIGNAL] Signal %d ignored\n", signum);
-            } else {
-                /* SIG_DFL: Apply default action */
-                int action = fut_signal_get_default_action(signum);
-                fut_printf("[SIGNAL] Applying default action %d for signal %d\n",
-                          action, signum);
-                /* For MVP, just log default actions */
-                /* Real implementation would:
-                 * - SIG_ACTION_TERM: Terminate process
-                 * - SIG_ACTION_STOP: Stop process
-                 * - SIG_ACTION_CONT: Continue process
-                 * - SIG_ACTION_CORE: Generate core dump + terminate
-                 */
+            if (posix_deliver_signal(current, signum, frame)) {
+                return signum;
             }
-
-            return signum;
         }
     }
 
     return 0;
 }
-#endif
 
 long syscall_entry_c(uint64_t nr,
                      uint64_t a1, uint64_t a2, uint64_t a3,
                      uint64_t a4, uint64_t a5, uint64_t a6,
                      uint64_t *frame_ptr) {
-    (void)frame_ptr;
-
     long ret = (long)posix_syscall_dispatch(nr, a1, a2, a3, a4, a5, a6);
 
-    /* TODO: Signal delivery is temporarily disabled due to page faults
-     * The signal delivery code at RIP 0xFFFFFFFF80216972 tries to access
-     * userspace memory, causing crashes. This needs to be fixed separately. */
-    #if 0
     /* Check for pending signals and deliver them before returning to user */
     extern fut_task_t *fut_task_current(void);
-    fut_task_t *current = fut_task_current();
+    extern void fut_printf(const char *, ...);
 
-    if (current && current->pending_signals != 0) {
-        check_and_deliver_pending_signals(current);
+    fut_task_t *current = fut_task_current();
+    if (current && current->pending_signals != 0 && frame_ptr) {
+        fut_interrupt_frame_t *frame = (fut_interrupt_frame_t *)frame_ptr;
+        int sig_delivered = check_and_deliver_pending_signals(current, frame);
+        if (sig_delivered != 0) {
+            fut_printf("[SIGNAL] Signal %d will be delivered upon return to user\n",
+                      sig_delivered);
+            /* Return value is overwritten by signal handler, or returned if handler exits */
+        }
     }
-    #endif
 
     return ret;
 }

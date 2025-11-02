@@ -156,7 +156,7 @@ static void test_cow_sole_owner(void) {
 /**
  * Test file-backed mmap: create file, map it, read data
  */
-static void test_file_backed_mmap_read(void) __attribute__((unused));
+static void test_file_backed_mmap_read(void);
 static void test_file_backed_mmap_read(void) {
     const char *current_test = "File-backed mmap read";
     TEST_BEGIN(current_test);
@@ -207,7 +207,7 @@ static void test_file_backed_mmap_read(void) {
 /**
  * Test file-backed mmap write-back behavior
  */
-static void test_file_backed_mmap_write(void) __attribute__((unused));
+static void test_file_backed_mmap_write(void);
 static void test_file_backed_mmap_write(void) {
     const char *current_test = "File-backed mmap write";
     TEST_BEGIN(current_test);
@@ -256,7 +256,7 @@ static void test_file_backed_mmap_write(void) {
  * Test vnode refcounting on file-backed mmap and munmap
  * Verifies that vnodes are properly ref'd when mapped and unref'd when unmapped.
  */
-static void test_vnode_refcount_on_mmap(void) __attribute__((unused));
+static void test_vnode_refcount_on_mmap(void);
 static void test_vnode_refcount_on_mmap(void) {
     const char *current_test = "Vnode refcount on mmap/munmap";
     TEST_BEGIN(current_test);

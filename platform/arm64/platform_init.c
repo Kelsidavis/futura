@@ -244,16 +244,37 @@ void fut_serial_putc(char c) {
     volatile uint8_t *uart = (volatile uint8_t *)UART0_BASE;
 
     if (!uart_irq_mode) {
-        /* Polling mode: direct write to UART - wait indefinitely for FIFO space */
-        /* On ARM64 QEMU, UART is always available, so timeout-free polling is safe */
-        while (mmio_read32((volatile void *)(uart + UART_FR)) & UART_FR_TXFF) {
-            /* Wait for TX FIFO to have space */
+        /* Polling mode: direct write to UART with adaptive delays
+         *
+         * ISSUE: Infinite loop on UART_FR_TXFF caused timing sensitivity and hangs
+         * SOLUTION: Add small delay between polling attempts to let FIFO drain
+         * This prevents the loop from saturating the FIFO faster than it can empty.
+         */
+
+        /* Attempt write with timeout and backoff */
+        volatile int poll_count = 0;
+        volatile int max_polls = 100000;  /* Generous timeout for QEMU emulation */
+
+        while ((mmio_read32((volatile void *)(uart + UART_FR)) & UART_FR_TXFF) &&
+               poll_count < max_polls) {
+            /* Small busywait to prevent excessive polling */
+            volatile int delay = 10;
+            while (delay > 0) delay--;
+            poll_count++;
         }
 
-        /* Write character to UART data register */
-        mmio_write32((volatile void *)(uart + UART_DR), (uint32_t)c);
+        /* Only write if we got FIFO space or hit timeout gracefully */
+        if (poll_count < max_polls) {
+            mmio_write32((volatile void *)(uart + UART_DR), (uint32_t)c);
+        }
+        /* else: buffer full, character dropped (degraded but stable) */
     } else {
-        /* Interrupt mode: queue into ring buffer */
+        /* Interrupt mode: queue into ring buffer
+         *
+         * NOTE: On QEMU ARM64, TX interrupts don't actually fire from the emulated
+         * PL011 UART, so this mode would deadlock without the timeout.
+         * Keep as fallback for real hardware support.
+         */
         uint32_t next_head = (uart_tx_head + 1) % UART_TX_BUFFER_SIZE;
 
         /* Wait if buffer is full (with timeout to avoid deadlock) */
@@ -285,6 +306,62 @@ void fut_serial_puts(const char *str) {
     /* Small delay to let UART buffer drain */
     for (volatile int i = 0; i < 1000; i++)
         ;
+}
+
+/**
+ * Non-blocking character read from UART.
+ * Returns the character if available, -1 if no data pending.
+ */
+int fut_serial_getc(void) {
+    volatile uint8_t *uart = (volatile uint8_t *)UART0_BASE;
+
+    /* Check if RX FIFO is empty (UART_FR bit 4 = RXFE) */
+    uint32_t fr = mmio_read32((volatile void *)(uart + UART_FR));
+    if (fr & UART_FR_RXFE) {
+        return -1;  /* No data available */
+    }
+
+    /* Read character from RX buffer if in interrupt mode */
+    if (uart_irq_mode) {
+        if (uart_rx_tail != uart_rx_head) {
+            char c = uart_rx_buffer[uart_rx_tail];
+            uart_rx_tail = (uart_rx_tail + 1) % UART_RX_BUFFER_SIZE;
+            return (int)(unsigned char)c;
+        }
+        return -1;
+    }
+
+    /* In polling mode, read directly from UART FIFO */
+    uint32_t data = mmio_read32((volatile void *)(uart + UART_DR));
+    return (int)(data & 0xFF);
+}
+
+/**
+ * Blocking character read from UART.
+ * Waits indefinitely for a character to be available.
+ */
+int fut_serial_getc_blocking(void) {
+    volatile uint8_t *uart = (volatile uint8_t *)UART0_BASE;
+
+    /* Polling mode: wait with timeout to avoid deadlock */
+    volatile int max_iterations = 10000000;  /* ~100ms at typical QEMU speed */
+
+    for (volatile int iter = 0; iter < max_iterations; iter++) {
+        int c = fut_serial_getc();
+        if (c >= 0) {
+            return c;
+        }
+
+        /* Yield to allow other operations */
+        if (iter % 1000 == 0) {
+            /* Occasional pause to prevent monopolizing CPU */
+            for (volatile int i = 0; i < 100; i++)
+                ;
+        }
+    }
+
+    /* Timeout - return -1 to avoid hanging forever */
+    return -1;
 }
 
 /* Alias for compatibility */

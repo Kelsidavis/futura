@@ -121,6 +121,42 @@ void fut_rpi_uart_putc(const fut_platform_info_t *info, char ch);
 char fut_rpi_uart_getc(const fut_platform_info_t *info);
 
 /**
+ * Enable receive interrupt on PL011 UART.
+ * Called after UART is initialized to enable interrupt-driven RX.
+ * @param info: Platform information
+ */
+void fut_rpi_uart_enable_rx_interrupt(const fut_platform_info_t *info);
+
+/**
+ * Enable transmit interrupt on PL011 UART.
+ * Called when data is ready to send to trigger TX via interrupt.
+ * @param info: Platform information
+ */
+void fut_rpi_uart_enable_tx_interrupt(const fut_platform_info_t *info);
+
+/**
+ * Disable transmit interrupt on PL011 UART.
+ * Called when TX FIFO is full to prevent interrupt flooding.
+ * @param info: Platform information
+ */
+void fut_rpi_uart_disable_tx_interrupt(const fut_platform_info_t *info);
+
+/**
+ * Get masked interrupt status from UART.
+ * Returns which interrupts are pending and enabled.
+ * @param info: Platform information
+ * @return: Masked interrupt status register value
+ */
+uint32_t fut_rpi_uart_get_mis(const fut_platform_info_t *info);
+
+/**
+ * Clear UART interrupt flags.
+ * @param info: Platform information
+ * @param mask: Bitmask of interrupt flags to clear
+ */
+void fut_rpi_uart_clear_interrupts(const fut_platform_info_t *info, uint32_t mask);
+
+/**
  * Initialize interrupt controller for the platform.
  * RPi3 uses legacy interrupts, RPi4/5 use GICv2.
  * @param info: Platform information

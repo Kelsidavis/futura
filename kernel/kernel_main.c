@@ -915,11 +915,11 @@ void fut_kernel_main(void) {
      *   Post-Subsystem Initialization
      * ======================================== */
 
-    fut_printf("[INIT] Smoke tests disabled to free physical pages for wayland\n");
+    fut_serial_puts("[INIT] Smoke tests disabled\n");
 
     /* Initialize input drivers - REQUIRED for Wayland compositor */
 #ifdef ENABLE_WAYLAND_DEMO
-    fut_printf("[INIT] Initializing input drivers for Wayland...\n");
+    fut_serial_puts("[INIT] Initializing input drivers for Wayland...\n");
     bool input_enabled = true;  /* Required for interactive mode */
     int input_rc = fut_input_hw_init(true, true);
     if (input_rc != 0) {

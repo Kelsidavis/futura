@@ -134,6 +134,16 @@ static void uart_irq_handler(int irq_num, void *frame) {
     volatile uint8_t *uart = (volatile uint8_t *)UART0_BASE;
     uint32_t mis = mmio_read32((volatile void *)(uart + UART_MIS));
 
+    /* Debug: Log that handler was invoked */
+    if (mis) {
+        static int handler_call_count = 0;
+        handler_call_count++;
+        if (handler_call_count % 100 == 0) {
+            /* Only log every 100 calls to avoid spam */
+            fut_printf("[UART-IRQ] Handler called (count=%d, MIS=0x%x)\n", handler_call_count, mis);
+        }
+    }
+
     /* Handle RX interrupt (if TX interrupt also fires, handle both) */
     if (mis & (UART_INT_RX | UART_INT_RT)) {
         uart_handle_rx();
@@ -191,8 +201,28 @@ void fut_serial_init(void) {
  * This should be called after all subsystems are initialized
  */
 void fut_serial_enable_irq_mode(void) {
+    /* Switch to interrupt mode */
     uart_irq_mode = 1;
-    fut_printf("[UART] Switched to interrupt-driven mode\n");
+
+    /* Print message using character-by-character polling to avoid deadlock
+     * This ensures the switch confirmation is always visible */
+    volatile uint8_t *uart = (volatile uint8_t *)UART0_BASE;
+    const char *msg = "[UART] Switched to interrupt-driven mode\n";
+
+    for (const char *p = msg; *p; p++) {
+        /* Temporarily stay in polling mode just for this message */
+        int saved_mode = uart_irq_mode;
+        uart_irq_mode = 0;
+
+        /* Direct polling write */
+        while (mmio_read32((volatile void *)(uart + UART_FR)) & UART_FR_TXFF) {
+            /* Wait for space */
+        }
+        mmio_write32((volatile void *)(uart + UART_DR), (uint32_t)*p);
+
+        /* Restore interrupt mode */
+        uart_irq_mode = saved_mode;
+    }
 }
 
 void fut_serial_putc(char c) {

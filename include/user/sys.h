@@ -253,6 +253,10 @@ static inline long sys_rename_call(const char *oldpath, const char *newpath) {
     return sys_call2(SYS_rename, (long)oldpath, (long)newpath);
 }
 
+static inline long sys_stat_call(const char *path, void *statbuf) {
+    return sys_call2(SYS_stat, (long)path, (long)statbuf);
+}
+
 static inline long sys_chmod_call(const char *path, long mode) {
     return sys_call2(SYS_chmod, (long)path, mode);
 }

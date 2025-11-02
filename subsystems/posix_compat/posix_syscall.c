@@ -388,7 +388,9 @@ static int64_t sys_mmap_handler(uint64_t addr, uint64_t len, uint64_t prot,
 static int64_t sys_stat_handler(uint64_t pathname, uint64_t statbuf, uint64_t arg3,
                                  uint64_t arg4, uint64_t arg5, uint64_t arg6) {
     (void)arg3; (void)arg4; (void)arg5; (void)arg6;
-    return (int64_t)posix_stat((const char *)pathname, (struct posix_stat *)statbuf);
+    /* Use kernel sys_stat which works with fut_stat structures */
+    struct fut_stat *stat_ptr = (struct fut_stat *)statbuf;
+    return sys_stat((const char *)pathname, stat_ptr);
 }
 
 static int64_t sys_fstat_handler(uint64_t fd, uint64_t statbuf, uint64_t arg3,

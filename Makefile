@@ -360,6 +360,7 @@ KERNEL_SOURCES := \
     kernel/sys_cred.c \
     kernel/sys_proc.c \
     kernel/sys_rename.c \
+    kernel/sys_stat.c \
     kernel/sys_chmod.c \
     kernel/sys_fchmod.c \
     kernel/sys_chown.c \

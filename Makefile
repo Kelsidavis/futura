@@ -409,6 +409,7 @@ ifeq ($(PLATFORM),x86_64)
         kernel/tests/input_smoke.c \
         kernel/tests/mm_tests.c \
         kernel/tests/multiprocess.c \
+        kernel/tests/sys_dup2.c \
         kernel/tests/perf.c \
         kernel/tests/perf_ipc.c \
         kernel/tests/perf_sched.c \

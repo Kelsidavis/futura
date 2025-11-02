@@ -18,6 +18,7 @@
 typedef long ssize_t;
 #endif
 
+#define SYS_access 21u
 #define SYS_echo 42u
 #define SYS_mmap 9u
 #define SYS_munmap 11u
@@ -77,6 +78,7 @@ long sys_getsid(uint64_t pid);
 long sys_setsid(void);
 long sys_rename(const char *oldpath, const char *newpath);
 long sys_chmod(const char *path, uint32_t mode);
+long sys_access(const char *path, int mode);
 /* Note: sys_setpgrp and sys_setpgid are implemented but not exposed via syscall
    (syscall numbers conflict with seteuid from Priority #14) */
 long sys_time_millis(void);

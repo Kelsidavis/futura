@@ -426,7 +426,7 @@ static void handle_process_request(struct fut_fipc_msg *msg) {
     }
 
     case POSIXD_MSG_EXEC: {
-        /* Handle exec request: Load executable from filesystem */
+        /* Handle exec request: Load executable from filesystem with arguments */
         struct posixd_exec_req *req = (struct posixd_exec_req *)msg->payload;
         struct posixd_exec_resp resp = {0};
 
@@ -436,17 +436,66 @@ static void handle_process_request(struct fut_fipc_msg *msg) {
             break;
         }
 
-        /* Parse argv and envp from payload
-         * Message layout: [posixd_exec_req] [argv strings...] [envp strings...]
-         * argv and envp are null-terminated arrays of pointers
+        /* Parse argv and envp from message payload
+         * Message layout:
+         *   [posixd_exec_req] (contains argc, envc)
+         *   [argv string 0, argv string 1, ..., argv string argc-1]
+         *   [envp string 0, envp string 1, ..., envp string envc-1]
+         *
+         * Each string is null-terminated, and we build arrays of pointers to them.
          */
 
-        /* For now, implement basic exec without argv/envp support
-         * Full implementation would parse the string arrays from the message payload
-         * This is a Phase 3 limitation noted in the architecture
+        /* Allocate arrays on stack (safe for modest argc/envc)
+         * Add 1 for NULL terminator in each array */
+        #define MAX_ARGS 256
+        char *argv_ptrs[MAX_ARGS] = {0};
+        char *envp_ptrs[MAX_ARGS] = {0};
+
+        /* Bounds check argc and envc */
+        if (req->argc >= MAX_ARGS || req->envc >= MAX_ARGS || req->argc < 0 || req->envc < 0) {
+            resp.result = -EINVAL;
+            send_response(POSIXD_MSG_EXEC, &resp, sizeof(resp));
+            break;
+        }
+
+        /* Calculate where strings start in the message payload.
+         * Strings start right after the posixd_exec_req structure.
+         * Note: We can't use sizeof(posixd_exec_req) directly due to padding,
+         * so we calculate based on known offsets.
          */
+        size_t req_header_size = sizeof(char) * POSIX_PATH_MAX + sizeof(int) * 2;
+        char *strings_start = (char *)msg->payload + req_header_size;
+        char *current_str = strings_start;
+
+        /* Parse argv strings */
+        for (int i = 0; i < req->argc; i++) {
+            argv_ptrs[i] = current_str;
+            /* Find next null terminator */
+            while (*current_str != '\0') {
+                current_str++;
+            }
+            current_str++;  /* Skip the null terminator */
+        }
+        argv_ptrs[req->argc] = NULL;  /* NULL terminate argv array */
+
+        /* Parse envp strings */
+        for (int i = 0; i < req->envc; i++) {
+            envp_ptrs[i] = current_str;
+            /* Find next null terminator */
+            while (*current_str != '\0') {
+                current_str++;
+            }
+            current_str++;  /* Skip the null terminator */
+        }
+        envp_ptrs[req->envc] = NULL;  /* NULL terminate envp array */
+
+        /* Call kernel execve with parsed arguments and environment */
         extern long sys_execve_call(const char *pathname, char *const *argv, char *const *envp);
-        long exec_result = sys_execve_call(req->path, NULL, NULL);
+        long exec_result = sys_execve_call(
+            req->path,
+            (char *const *)argv_ptrs,
+            (char *const *)envp_ptrs
+        );
 
         /* execve doesn't return on success; only on error */
         resp.result = (int)exec_result;

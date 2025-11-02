@@ -41,6 +41,6 @@ void fut_percpu_init(uint32_t cpu_id, uint32_t cpu_index) {
     extern void fut_spinlock_init(fut_spinlock_t *lock);
     fut_spinlock_init(&percpu->queue_lock);
 
-    fut_printf("[PERCPU] Initialized per-CPU data for CPU %u (index %u) at %p\n",
-               cpu_id, cpu_index, (void*)percpu);
+    /* Minimal output - just confirm initialization */
+    fut_printf("[PERCPU] CPU %u ready\n", cpu_id);
 }

@@ -39,10 +39,15 @@ static bool acpi_validate_checksum(const acpi_sdt_header_t *header) {
 }
 
 /**
- * Find RSDP in BIOS memory area.
+ * Find RSDP in BIOS memory area (x86-64 only).
  * Searches 0xE0000-0xFFFFF for "RSD PTR " signature on 16-byte boundaries.
+ *
+ * ARM64: ACPI discovery on ARM64 is not yet implemented. QEMU's ARM64 virt
+ * machine provides device tree instead. ACPI can be found via EFI on some
+ * ARM64 platforms, but that requires EFI support.
  */
 static acpi_rsdp_v2_t *acpi_find_rsdp(void) {
+#if defined(__x86_64__)
     /* Map BIOS area to higher-half kernel space */
     const uintptr_t bios_start = 0xE0000;
     const uintptr_t bios_end = 0x100000;
@@ -79,6 +84,11 @@ static acpi_rsdp_v2_t *acpi_find_rsdp(void) {
     }
 
     return NULL;
+#else
+    /* ARM64: ACPI discovery not implemented - use device tree instead */
+    fut_printf("[ACPI] ARM64: RSDP discovery not implemented (device tree used instead)\n");
+    return NULL;
+#endif
 }
 
 /**

@@ -381,6 +381,10 @@ irq_handler_entry:
 
 /*
  * IRQ handler (C function)
+ *
+ * Simplified handler that only dispatches timer IRQs properly.
+ * Other IRQs (like UART) are handled via registered handlers in arm64_irq.c,
+ * but require proper interrupt frame setup which is currently simplified.
  */
 .type fut_irq_handler, @function
 fut_irq_handler:
@@ -392,18 +396,13 @@ fut_irq_handler:
     cmp     x19, #30
     beq     handle_timer_irq
 
-    /* Generic IRQ handling */
+    /* For non-timer IRQs, just acknowledge and return */
+    /* TODO: Implement proper frame setup for registered handler dispatch */
     mov     x0, x19
     bl      fut_irq_send_eoi
     ret
 
 handle_timer_irq:
-    /* Set interrupt context flag */
-    adrp    x20, fut_in_interrupt
-    add     x20, x20, :lo12:fut_in_interrupt
-    mov     w21, #1
-    strb    w21, [x20]
-
     /* Call timer handler */
     bl      fut_timer_irq_handler
 
@@ -422,10 +421,6 @@ handle_timer_irq:
     bl      fut_thread_yield
 
 no_reschedule:
-    /* Clear interrupt context flag */
-    mov     w21, #0
-    strb    w21, [x20]
-
     ret
 
 /*

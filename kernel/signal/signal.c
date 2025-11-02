@@ -64,7 +64,7 @@ static const int signal_default_action[] = {
  * Called during kernel startup.
  */
 void fut_signal_init(void) {
-    fut_printf("[SIGNAL] Signal subsystem initialized\n");
+    fut_printf("[SIGNAL] OK\n");
 }
 
 /**

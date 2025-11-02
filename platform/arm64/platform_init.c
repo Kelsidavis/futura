@@ -68,70 +68,9 @@ volatile char uart_rx_buffer[UART_RX_BUFFER_SIZE];
 volatile uint32_t uart_rx_head = 0;  /* Write position (filled by ISR) */
 volatile uint32_t uart_rx_tail = 0;  /* Read position (consumed by getc) */
 
-/* UART TX interrupt handler - drains ring buffer into hardware FIFO */
-static void uart_tx_irq_handler(int irq_num, fut_interrupt_frame_t *frame) {
-    (void)irq_num;
-    (void)frame;
-    volatile uint8_t *uart = (volatile uint8_t *)UART0_BASE;
-
-    /* Drain ring buffer into UART FIFO */
-    while (uart_tx_head != uart_tx_tail) {
-        /* Check if TX FIFO is full */
-        if (mmio_read32((volatile void *)(uart + UART_FR)) & UART_FR_TXFF) {
-            break;  /* FIFO full, wait for next interrupt */
-        }
-
-        /* Send next character from ring buffer */
-        mmio_write32((volatile void *)(uart + UART_DR), (uint32_t)uart_tx_buffer[uart_tx_tail]);
-        uart_tx_tail = (uart_tx_tail + 1) % UART_TX_BUFFER_SIZE;
-    }
-
-    /* If buffer is empty, disable TX interrupt to avoid spurious interrupts */
-    if (uart_tx_head == uart_tx_tail) {
-        uint32_t imsc = mmio_read32((volatile void *)(uart + UART_IMSC));
-        imsc &= ~UART_INT_TX;
-        mmio_write32((volatile void *)(uart + UART_IMSC), imsc);
-    }
-
-    /* Clear TX interrupt */
-    mmio_write32((volatile void *)(uart + UART_ICR), UART_INT_TX);
-}
-
-/* UART RX interrupt handler - fills ring buffer from hardware FIFO */
-static void uart_rx_irq_handler(int irq_num, fut_interrupt_frame_t *frame) {
-    (void)irq_num;
-    (void)frame;
-    volatile uint8_t *uart = (volatile uint8_t *)UART0_BASE;
-
-    /* Drain hardware FIFO into ring buffer */
-    while (!(mmio_read32((volatile void *)(uart + UART_FR)) & UART_FR_RXFE)) {
-        /* Read character from UART data register */
-        uint32_t data = mmio_read32((volatile void *)(uart + UART_DR));
-
-        /* Check for error flags in upper byte */
-        if (data & (UART_INT_FE | UART_INT_PE | UART_INT_BE | UART_INT_OE)) {
-            /* Skip characters with errors for now */
-            continue;
-        }
-
-        /* Extract character from lower byte */
-        char c = (char)(data & 0xFF);
-
-        /* Check if buffer has space */
-        uint32_t next_head = (uart_rx_head + 1) % UART_RX_BUFFER_SIZE;
-        if (next_head == uart_rx_tail) {
-            /* Buffer full - drop character (could add overflow counter here) */
-            break;
-        }
-
-        /* Add character to ring buffer */
-        uart_rx_buffer[uart_rx_head] = c;
-        uart_rx_head = next_head;
-    }
-
-    /* Clear RX and RX timeout interrupts */
-    mmio_write32((volatile void *)(uart + UART_ICR), UART_INT_RX | UART_INT_RT);
-}
+/* UART interrupt handlers - currently not used (staying in polling mode)
+ * TODO: Implement proper interrupt-driven mode with correct frame setup
+ */
 
 void fut_serial_init(void) {
     volatile uint8_t *uart = (volatile uint8_t *)UART0_BASE;
@@ -159,31 +98,30 @@ void fut_serial_init(void) {
     /* Enable UART: TXE, RXE, UARTEN */
     mmio_write32((volatile void *)(uart + UART_CR), (1 << 0) | (1 << 8) | (1 << 9));
 
-    /* Register RX interrupt handler and enable IRQ 33 (PL011 UART) */
-    fut_register_irq_handler(33, uart_rx_irq_handler);
-    fut_irq_enable(33);
+    /* TODO: Register RX interrupt handler when interrupt mode is properly supported
+     * fut_register_irq_handler(33, uart_rx_irq_handler);
+     * fut_irq_enable(33);
+     */
 }
 
 void fut_serial_putc(char c) {
     volatile uint8_t *uart = (volatile uint8_t *)UART0_BASE;
 
     if (!uart_irq_mode) {
-        /* Polling mode: direct write to UART with timeout */
-        volatile int timeout = 100000;
-        while ((mmio_read32((volatile void *)(uart + UART_FR)) & UART_FR_TXFF) && timeout > 0) {
-            timeout--;
+        /* Polling mode: direct write to UART - wait indefinitely for FIFO space */
+        /* On ARM64 QEMU, UART is always available, so timeout-free polling is safe */
+        while (mmio_read32((volatile void *)(uart + UART_FR)) & UART_FR_TXFF) {
+            /* Wait for TX FIFO to have space */
         }
 
-        /* Write character if FIFO has space (or timeout expired) */
-        if (timeout > 0) {
-            mmio_write32((volatile void *)(uart + UART_DR), (uint32_t)c);
-        }
+        /* Write character to UART data register */
+        mmio_write32((volatile void *)(uart + UART_DR), (uint32_t)c);
     } else {
         /* Interrupt mode: queue into ring buffer */
         uint32_t next_head = (uart_tx_head + 1) % UART_TX_BUFFER_SIZE;
 
         /* Wait if buffer is full (with timeout to avoid deadlock) */
-        volatile int timeout = 100000;
+        volatile long timeout = 2000000;  /* Much larger timeout for QEMU ARM64 emulation */
         while (next_head == uart_tx_tail && timeout > 0) {
             timeout--;
         }
@@ -669,20 +607,10 @@ void fut_platform_early_init(uint32_t boot_magic, void *boot_info) {
     fut_serial_puts("[INIT] Enabling interrupts...\n");
     fut_enable_interrupts();
 
-    /* Register UART TX interrupt handler - but stay in polling mode for now */
-    fut_serial_puts("[DEBUG] Registering UART TX IRQ handler (IRQ 33)...\n");
-    int result = fut_register_irq_handler(33, uart_tx_irq_handler);
-    if (result == 0) {
-        fut_serial_puts("[DEBUG] UART IRQ handler registered successfully\n");
-        fut_irq_enable(33);
-        fut_serial_puts("[DEBUG] UART IRQ 33 enabled in GIC\n");
-
-        /* Switch to interrupt-driven mode now that IRQ handler registration is fixed */
-        uart_irq_mode = 1;
-        fut_serial_puts("[DEBUG] UART switched to interrupt-driven mode\n");
-    } else {
-        fut_serial_puts("[DEBUG] UART IRQ handler registration failed, staying in polling mode\n");
-    }
+    /* Disable UART interrupt for now - keep in polling mode during early boot
+     * TODO: Implement proper interrupt mode support with frame setup
+     */
+    fut_serial_puts("[DEBUG] UART staying in polling mode\n");
 }
 
 void fut_platform_late_init(void) {

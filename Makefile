@@ -424,6 +424,7 @@ else ifeq ($(PLATFORM),arm64)
         platform/arm64/memory/pmap.c \
         platform/arm64/interrupt/arm64_stubs.c \
         platform/arm64/interrupt/arm64_minimal_stubs.c \
+        platform/arm64/timing/perf_clock.c \
         kernel/arch/arm64/hal_halt.c \
         kernel/arch/arm64/hal_interrupts.c \
         kernel/mm/arm64_paging.c \

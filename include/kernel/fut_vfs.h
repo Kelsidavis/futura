@@ -284,6 +284,7 @@ struct fut_file {
     const struct fut_file_ops *chr_ops; /* Character device operations */
     void *chr_inode;                /* Driver-provided inode pointer */
     void *chr_private;              /* Driver private state */
+    int fd_flags;                   /* FD-specific flags (e.g., FD_CLOEXEC) */
 };
 
 /* ============================================================

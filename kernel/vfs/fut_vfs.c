@@ -82,6 +82,111 @@ void fut_vfs_check_root_canary(const char *where) {
 }
 
 /* ============================================================
+ *   Per-Task File Descriptor Management
+ * ============================================================ */
+
+/**
+ * Allocate an FD in a task's FD table.
+ *
+ * @param task  Task whose FD table to allocate from
+ * @param file  File structure to allocate
+ * @return FD number on success, negative error code on failure
+ */
+static __attribute__((unused)) int alloc_fd_for_task(fut_task_t *task, struct fut_file *file) {
+    if (!task || !task->fd_table || !file) {
+        return -EINVAL;
+    }
+
+    /* Find first available FD */
+    for (int i = 0; i < task->max_fds; i++) {
+        if (task->fd_table[i] == NULL) {
+            task->fd_table[i] = file;
+            return i;
+        }
+    }
+
+    /* FD table is full - could expand here in future */
+    return -EMFILE;  /* Too many open files */
+}
+
+/**
+ * Get file from task's FD table.
+ *
+ * @param task  Task whose FD table to query
+ * @param fd    File descriptor number
+ * @return File structure, or NULL if invalid/not open
+ */
+static __attribute__((unused)) struct fut_file *get_file_from_task(fut_task_t *task, int fd) {
+    if (!task || !task->fd_table || fd < 0 || fd >= task->max_fds) {
+        return NULL;
+    }
+    return task->fd_table[fd];
+}
+
+/**
+ * Close an FD in task's FD table (release file).
+ *
+ * @param task  Task whose FD to close
+ * @param fd    File descriptor to close
+ */
+static __attribute__((unused)) void close_fd_in_task(fut_task_t *task, int fd) {
+    if (!task || !task->fd_table || fd < 0 || fd >= task->max_fds) {
+        return;
+    }
+
+    struct fut_file *file = task->fd_table[fd];
+    if (file == NULL) {
+        return;
+    }
+
+    /* Decrement refcount - VFS layer manages actual cleanup */
+    if (file->refcount > 0) {
+        file->refcount--;
+    }
+
+    task->fd_table[fd] = NULL;
+}
+
+/**
+ * Free an FD entry without closing (used internally).
+ *
+ * @param task  Task whose FD to free
+ * @param fd    File descriptor to free
+ */
+static __attribute__((unused)) void free_fd_in_task(fut_task_t *task, int fd) {
+    if (!task || !task->fd_table || fd < 0 || fd >= task->max_fds) {
+        return;
+    }
+    task->fd_table[fd] = NULL;
+}
+
+/**
+ * Allocate a specific FD in task's table (for dup2).
+ *
+ * @param task      Task whose FD table to use
+ * @param target_fd Target FD number
+ * @param file      File to allocate
+ * @return target_fd on success, negative error code on failure
+ */
+static __attribute__((unused)) int alloc_specific_fd_for_task(fut_task_t *task, int target_fd, struct fut_file *file) {
+    if (!task || !task->fd_table || !file) {
+        return -EINVAL;
+    }
+
+    if (target_fd < 0 || target_fd >= task->max_fds) {
+        return -EBADF;
+    }
+
+    /* Close existing file if any */
+    if (task->fd_table[target_fd] != NULL) {
+        close_fd_in_task(task, target_fd);
+    }
+
+    task->fd_table[target_fd] = file;
+    return target_fd;
+}
+
+/* ============================================================
  *   VFS Initialization
  * ============================================================ */
 

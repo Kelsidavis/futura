@@ -11,6 +11,7 @@
 #include "../../include/kernel/fut_sched.h"
 #include "../../include/kernel/fut_mm.h"
 #include "../../include/kernel/fut_memory.h"
+#include "../../include/kernel/fut_vfs.h"
 #include "../../include/kernel/errno.h"
 #include <stdatomic.h>
 
@@ -81,6 +82,9 @@ fut_task_t *fut_task_create(void) {
         .signal_mask = 0,  /* No signals blocked initially */
         .pending_signals = 0,  /* No pending signals */
         .current_dir_ino = (parent ? parent->current_dir_ino : 1),  /* Inherit parent's cwd, default to root (inode 1) */
+        .fd_table = NULL,   /* FD table initialized below */
+        .max_fds = 0,
+        .next_fd = 0,
         .next = NULL
     };
     fut_waitq_init(&task->child_waiters);
@@ -89,6 +93,19 @@ fut_task_t *fut_task_create(void) {
     for (int i = 0; i < 31; i++) {
         task->signal_handlers[i] = NULL;  /* NULL = use default action */
     }
+
+    /* Initialize per-task file descriptor table (initially 64 FDs) */
+    task->max_fds = 64;
+    task->fd_table = (struct fut_file **)fut_malloc(64 * sizeof(struct fut_file *));
+    if (!task->fd_table) {
+        fut_free(task);
+        return NULL;
+    }
+    /* Zero out the FD table */
+    for (int i = 0; i < 64; i++) {
+        task->fd_table[i] = NULL;
+    }
+    task->next_fd = 0;
 
     fut_spinlock_acquire(&task_list_lock);
     if (parent) {
@@ -159,6 +176,22 @@ void fut_task_destroy(fut_task_t *task) {
         fut_free(thread->stack_base);
         fut_free(thread->alloc_base);  // Free original pointer, not aligned one
         thread = next;
+    }
+
+    /* Close all open file descriptors */
+    if (task->fd_table) {
+        for (int i = 0; i < task->max_fds; i++) {
+            if (task->fd_table[i] != NULL) {
+                struct fut_file *file = task->fd_table[i];
+                /* Decrement refcount - VFS layer manages actual cleanup */
+                if (file->refcount > 0) {
+                    file->refcount--;
+                }
+                task->fd_table[i] = NULL;
+            }
+        }
+        fut_free(task->fd_table);
+        task->fd_table = NULL;
     }
 
     fut_spinlock_acquire(&task_list_lock);

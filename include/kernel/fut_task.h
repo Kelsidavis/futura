@@ -59,6 +59,11 @@ struct fut_task {
     /* File system context */
     uint64_t current_dir_ino;          // Current working directory inode (root=1)
 
+    /* File descriptor table (per-task, for process isolation) */
+    struct fut_file **fd_table;        // Array of file pointers
+    int max_fds;                       // Allocated size of fd_table
+    int next_fd;                       // Next FD index to allocate
+
     fut_task_t *next;                  // Next task in system list
 };
 

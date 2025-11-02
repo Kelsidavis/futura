@@ -12,6 +12,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <shared/fut_timespec.h>
+#include <shared/fut_timeval.h>
 
 #ifndef _SSIZE_T_DEFINED
 #define _SSIZE_T_DEFINED
@@ -80,6 +81,7 @@ long sys_rename(const char *oldpath, const char *newpath);
 long sys_chmod(const char *path, uint32_t mode);
 long sys_access(const char *path, int mode);
 int64_t sys_lseek(int fd, int64_t offset, int whence);
+long sys_gettimeofday(fut_timeval_t *tv, void *tz);
 /* Note: sys_setpgrp and sys_setpgid are implemented but not exposed via syscall
    (syscall numbers conflict with seteuid from Priority #14) */
 long sys_time_millis(void);

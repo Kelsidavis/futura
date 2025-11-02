@@ -136,6 +136,10 @@ static inline long sys_time_millis_call(void) {
     return sys_call0(SYS_time_millis);
 }
 
+static inline long sys_gettimeofday_call(void *tv, void *tz) {
+    return sys_call2(SYS_gettimeofday, (long)tv, (long)tz);
+}
+
 static inline long sys_nanosleep_call(const fut_timespec_t *req, fut_timespec_t *rem) {
     return sys_call2(SYS_nanosleep, (long)req, (long)rem);
 }

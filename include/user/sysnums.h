@@ -71,8 +71,9 @@
 #define SYS_setuid       105
 #define SYS_setgid       106
 #define SYS_geteuid      107
-#define SYS_gettimeofday 96
 #define SYS_umask        95
+#define SYS_gettimeofday 96
+#define SYS_getrlimit    97
 #define SYS_getegid      108
 #define SYS_seteuid      109
 #define SYS_setegid      110

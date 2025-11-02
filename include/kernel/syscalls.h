@@ -17,6 +17,7 @@
 /* Forward declarations */
 struct fut_stat;
 struct pollfd;
+struct rlimit;
 
 #ifndef _SSIZE_T_DEFINED
 #define _SSIZE_T_DEFINED
@@ -84,6 +85,7 @@ long sys_getppid(void);
 long sys_getpgrp(void);
 long sys_getsid(uint64_t pid);
 long sys_setsid(void);
+long sys_getrlimit(int resource, struct rlimit *rlim);
 long sys_umask(uint32_t mask);
 long sys_uname(void *buf);
 long sys_rename(const char *oldpath, const char *newpath);

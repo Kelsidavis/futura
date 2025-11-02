@@ -110,6 +110,7 @@
 #endif
 #define SYS_umask        95
 #define SYS_gettimeofday 96
+#define SYS_getrlimit    97
 #define SYS_time         201
 #define SYS_getdents64   217
 
@@ -1427,6 +1428,13 @@ static int64_t sys_setsid_handler(uint64_t arg1, uint64_t arg2, uint64_t arg3,
     return sys_setsid();
 }
 
+static int64_t sys_getrlimit_handler(uint64_t resource, uint64_t rlim, uint64_t arg3,
+                                     uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg3; (void)arg4; (void)arg5; (void)arg6;
+    extern long sys_getrlimit(int resource, struct rlimit *rlim);
+    return sys_getrlimit((int)resource, (struct rlimit *)(uintptr_t)rlim);
+}
+
 /* File manipulation syscall handlers */
 static int64_t sys_rename_handler(uint64_t oldpath, uint64_t newpath, uint64_t arg3,
                                   uint64_t arg4, uint64_t arg5, uint64_t arg6) {
@@ -1625,6 +1633,7 @@ static syscall_handler_t syscall_table[MAX_SYSCALL] = {
     /* Note: SYS_setpgrp skipped (same as SYS_setpgid=109, which conflicts with SYS_seteuid) */
     [SYS_getsid]       = sys_getsid_handler,
     [SYS_setsid]       = sys_setsid_handler,
+    [SYS_getrlimit]    = sys_getrlimit_handler,
 };
 
 /* ============================================================

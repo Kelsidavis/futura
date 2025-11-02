@@ -13,6 +13,27 @@
 
 extern void fut_printf(const char *fmt, ...);
 extern fut_task_t *fut_task_current(void);
+extern int fut_copy_to_user(void *to, const void *from, size_t size);
+
+/* Resource limit structure */
+struct rlimit {
+    uint64_t rlim_cur;  /* Soft limit (current) */
+    uint64_t rlim_max;  /* Hard limit (maximum) */
+};
+
+/* Resource limit constants */
+#define RLIMIT_CPU        0   /* CPU time in seconds */
+#define RLIMIT_FSIZE      1   /* Maximum file size */
+#define RLIMIT_DATA       2   /* Maximum data segment size */
+#define RLIMIT_STACK      3   /* Maximum stack size */
+#define RLIMIT_CORE       4   /* Maximum core file size */
+#define RLIMIT_RSS        5   /* Maximum resident set size */
+#define RLIMIT_NPROC      6   /* Maximum number of processes */
+#define RLIMIT_NOFILE     7   /* Maximum number of open files */
+#define RLIMIT_MEMLOCK    8   /* Maximum locked memory */
+#define RLIMIT_AS         9   /* Address space limit */
+
+#define RLIM_INFINITY     (~0ULL)  /* Unlimited */
 
 /**
  * getpid() - Get process ID
@@ -214,4 +235,108 @@ long sys_setsid(void) {
     /* Stub: process is already its own session leader */
     fut_printf("[PROC] setsid() -> sid=%llu (stub)\n", task->pid);
     return task->pid;
+}
+
+/**
+ * getrlimit() - Get resource limits
+ *
+ * Returns the current resource limits for the specified resource.
+ * Resource limits control the maximum amount of system resources
+ * a process can consume.
+ *
+ * @param resource  Resource type (RLIMIT_NOFILE, RLIMIT_NPROC, etc.)
+ * @param rlim      Pointer to rlimit structure to receive limits
+ *
+ * Returns:
+ *   - 0 on success
+ *   - -EINVAL if resource is invalid
+ *   - -EFAULT if rlim points to invalid memory
+ *
+ * Phase 1 (Current): Returns reasonable default limits
+ * Phase 2: Track per-process resource usage and enforce limits
+ * Phase 3: Support setrlimit() for modifying limits
+ */
+long sys_getrlimit(int resource, struct rlimit *rlim) {
+    if (!rlim) {
+        return -EFAULT;
+    }
+
+    struct rlimit limit;
+
+    /* Return reasonable default limits based on resource type */
+    switch (resource) {
+        case RLIMIT_NOFILE:
+            /* Maximum number of open file descriptors */
+            limit.rlim_cur = 1024;      /* Soft limit */
+            limit.rlim_max = 65536;     /* Hard limit */
+            break;
+
+        case RLIMIT_NPROC:
+            /* Maximum number of processes */
+            limit.rlim_cur = 256;       /* Soft limit */
+            limit.rlim_max = 512;       /* Hard limit */
+            break;
+
+        case RLIMIT_STACK:
+            /* Maximum stack size (8MB default, unlimited max) */
+            limit.rlim_cur = 8 * 1024 * 1024;
+            limit.rlim_max = RLIM_INFINITY;
+            break;
+
+        case RLIMIT_DATA:
+            /* Maximum data segment size */
+            limit.rlim_cur = RLIM_INFINITY;
+            limit.rlim_max = RLIM_INFINITY;
+            break;
+
+        case RLIMIT_AS:
+            /* Maximum address space */
+            limit.rlim_cur = RLIM_INFINITY;
+            limit.rlim_max = RLIM_INFINITY;
+            break;
+
+        case RLIMIT_CORE:
+            /* Maximum core file size (disabled by default) */
+            limit.rlim_cur = 0;
+            limit.rlim_max = RLIM_INFINITY;
+            break;
+
+        case RLIMIT_CPU:
+            /* CPU time limit in seconds */
+            limit.rlim_cur = RLIM_INFINITY;
+            limit.rlim_max = RLIM_INFINITY;
+            break;
+
+        case RLIMIT_FSIZE:
+            /* Maximum file size */
+            limit.rlim_cur = RLIM_INFINITY;
+            limit.rlim_max = RLIM_INFINITY;
+            break;
+
+        case RLIMIT_RSS:
+            /* Maximum resident set size */
+            limit.rlim_cur = RLIM_INFINITY;
+            limit.rlim_max = RLIM_INFINITY;
+            break;
+
+        case RLIMIT_MEMLOCK:
+            /* Maximum locked memory */
+            limit.rlim_cur = 64 * 1024;  /* 64KB */
+            limit.rlim_max = 64 * 1024;
+            break;
+
+        default:
+            fut_printf("[PROC] getrlimit: unknown resource %d\n", resource);
+            return -EINVAL;
+    }
+
+    /* Copy limits to userspace */
+    if (fut_copy_to_user(rlim, &limit, sizeof(struct rlimit)) != 0) {
+        return -EFAULT;
+    }
+
+    fut_printf("[PROC] getrlimit(resource=%d) -> cur=%llu, max=%llu\n",
+               resource, limit.rlim_cur, limit.rlim_max);
+
+    return 0;
 }

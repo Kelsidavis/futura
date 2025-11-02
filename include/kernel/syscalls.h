@@ -81,6 +81,7 @@ long sys_rename(const char *oldpath, const char *newpath);
 long sys_chmod(const char *path, uint32_t mode);
 long sys_fchmod(int fd, uint32_t mode);
 long sys_truncate(const char *path, uint64_t length);
+long sys_fcntl(int fd, int cmd, uint64_t arg);
 long sys_access(const char *path, int mode);
 int64_t sys_lseek(int fd, int64_t offset, int whence);
 long sys_gettimeofday(fut_timeval_t *tv, void *tz);

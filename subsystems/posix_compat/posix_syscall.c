@@ -49,6 +49,7 @@
 #define SYS_select      23
 #define SYS_dup         32
 #define SYS_dup2        33
+#define SYS_fcntl       72
 #define SYS_truncate    76
 #define SYS_ftruncate   77
 #define SYS_fork        57
@@ -1515,6 +1516,13 @@ static int64_t sys_truncate_handler(uint64_t path, uint64_t length, uint64_t arg
     return sys_truncate((const char *)(uintptr_t)path, (uint64_t)length);
 }
 
+static int64_t sys_fcntl_handler(uint64_t fd, uint64_t cmd, uint64_t arg,
+                                 uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg4; (void)arg5; (void)arg6;
+    extern long sys_fcntl(int fd, int cmd, uint64_t arg);
+    return sys_fcntl((int)fd, (int)cmd, (uint64_t)arg);
+}
+
 static int64_t sys_access_handler(uint64_t path, uint64_t mode, uint64_t arg3,
                                   uint64_t arg4, uint64_t arg5, uint64_t arg6) {
     (void)arg3; (void)arg4; (void)arg5; (void)arg6;
@@ -1572,6 +1580,7 @@ static syscall_handler_t syscall_table[MAX_SYSCALL] = {
     [SYS_select]     = sys_select_handler,
     [SYS_dup]        = sys_dup_handler,
     [SYS_dup2]       = sys_dup2_handler,
+    [SYS_fcntl]      = sys_fcntl_handler,
     [SYS_truncate]   = sys_truncate_handler,
     [SYS_ftruncate]  = sys_ftruncate_handler,
     [SYS_getcwd]     = sys_getcwd_handler,

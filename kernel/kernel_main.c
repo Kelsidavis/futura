@@ -917,6 +917,11 @@ void fut_kernel_main(void) {
 
     fut_serial_puts("[INIT] Smoke tests disabled\n");
 
+    /* Diagnostic check for interrupt-driven UART on ARM64 */
+#ifdef __aarch64__
+    fut_serial_enable_irq_mode();
+#endif
+
     /* Initialize input drivers - REQUIRED for Wayland compositor */
 #ifdef ENABLE_WAYLAND_DEMO
     fut_serial_puts("[INIT] Initializing input drivers for Wayland...\n");

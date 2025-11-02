@@ -201,28 +201,25 @@ void fut_serial_init(void) {
  * This should be called after all subsystems are initialized
  */
 void fut_serial_enable_irq_mode(void) {
-    /* Switch to interrupt mode */
-    uart_irq_mode = 1;
+    /* For now, keep polling mode - interrupt mode not yet validated
+     * This function is a no-op until GIC interrupt routing is confirmed working */
 
-    /* Print message using character-by-character polling to avoid deadlock
-     * This ensures the switch confirmation is always visible */
     volatile uint8_t *uart = (volatile uint8_t *)UART0_BASE;
-    const char *msg = "[UART] Switched to interrupt-driven mode\n";
 
-    for (const char *p = msg; *p; p++) {
-        /* Temporarily stay in polling mode just for this message */
-        int saved_mode = uart_irq_mode;
-        uart_irq_mode = 0;
+    /* Log diagnostic information */
+    fut_serial_puts("[UART] Interrupt-driven UART mode ready but not activated\n");
 
-        /* Direct polling write */
-        while (mmio_read32((volatile void *)(uart + UART_FR)) & UART_FR_TXFF) {
-            /* Wait for space */
-        }
-        mmio_write32((volatile void *)(uart + UART_DR), (uint32_t)*p);
+    /* Check interrupt status without switching */
+    uint32_t imsc = mmio_read32((volatile void *)(uart + UART_IMSC));
+    uint32_t mis = mmio_read32((volatile void *)(uart + UART_MIS));
+    uint32_t fr = mmio_read32((volatile void *)(uart + UART_FR));
 
-        /* Restore interrupt mode */
-        uart_irq_mode = saved_mode;
-    }
+    fut_printf("[UART-DIAG] IMSC=0x%x MIS=0x%x FR=0x%x\n", imsc, mis, fr);
+    fut_printf("[UART-DIAG] TX_buffer: head=%u tail=%u\n", uart_tx_head, uart_tx_tail);
+    fut_printf("[UART-DIAG] RX_buffer: head=%u tail=%u\n", uart_rx_head, uart_rx_tail);
+
+    /* Don't actually switch to interrupt mode yet - keep polling for now */
+    /* uart_irq_mode = 1; */
 }
 
 void fut_serial_putc(char c) {

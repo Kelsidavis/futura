@@ -43,5 +43,8 @@
 #define SYS_rmdir       84
 #define SYS_getdents64  217
 #define SYS_getpid      39
-#define SYS_openat      257
-#define SYS_time_millis 400
+#define SYS_openat       257
+#define SYS_epoll_create 228
+#define SYS_epoll_ctl    229
+#define SYS_epoll_wait   230
+#define SYS_time_millis  400

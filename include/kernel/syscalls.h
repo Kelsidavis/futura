@@ -27,6 +27,9 @@ typedef long ssize_t;
 #define SYS_nanosleep 35u
 #define SYS_getcwd 79u
 #define SYS_chdir 80u
+#define SYS_epoll_create 228u
+#define SYS_epoll_ctl 229u
+#define SYS_epoll_wait 230u
 #define SYS_time_millis 400u
 
 ssize_t sys_echo(const char *u_in, char *u_out, size_t n);
@@ -39,4 +42,7 @@ long sys_nanosleep(const fut_timespec_t *u_req, fut_timespec_t *u_rem);
 long sys_getcwd(char *buf, size_t size);
 long sys_chdir(const char *path);
 long sys_dup2(int oldfd, int newfd);
+long sys_epoll_create(int size);
+long sys_epoll_ctl(int epfd, int op, int fd, void *event);
+long sys_epoll_wait(int epfd, void *events, int maxevents, int timeout);
 long sys_time_millis(void);

@@ -355,6 +355,7 @@ KERNEL_SOURCES := \
     kernel/sys_exit.c \
     kernel/sys_fork.c \
     kernel/sys_execve.c \
+    kernel/sys_epoll.c \
     kernel/sys_pipe.c \
     kernel/sys_dup2.c \
     kernel/sys_waitpid.c \

@@ -1360,6 +1360,28 @@ static int64_t sys_chdir_handler(uint64_t path, uint64_t arg2, uint64_t arg3,
     return sys_chdir((const char *)(uintptr_t)path);
 }
 
+/* Epoll syscall handlers */
+static int64_t sys_epoll_create_handler(uint64_t size, uint64_t arg2, uint64_t arg3,
+                                        uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg2; (void)arg3; (void)arg4; (void)arg5; (void)arg6;
+    extern long sys_epoll_create(int size);
+    return sys_epoll_create((int)size);
+}
+
+static int64_t sys_epoll_ctl_handler(uint64_t epfd, uint64_t op, uint64_t fd,
+                                     uint64_t event, uint64_t arg5, uint64_t arg6) {
+    (void)arg5; (void)arg6;
+    extern long sys_epoll_ctl(int epfd, int op, int fd, void *event);
+    return sys_epoll_ctl((int)epfd, (int)op, (int)fd, (void *)(uintptr_t)event);
+}
+
+static int64_t sys_epoll_wait_handler(uint64_t epfd, uint64_t events, uint64_t maxevents,
+                                      uint64_t timeout, uint64_t arg5, uint64_t arg6) {
+    (void)arg5; (void)arg6;
+    extern long sys_epoll_wait(int epfd, void *events, int maxevents, int timeout);
+    return sys_epoll_wait((int)epfd, (void *)(uintptr_t)events, (int)maxevents, (int)timeout);
+}
+
 /* ============================================================
  *   Syscall Table
  * ============================================================ */
@@ -1415,6 +1437,10 @@ static syscall_handler_t syscall_table[MAX_SYSCALL] = {
     [SYS_connect]    = sys_connect_handler,
     [SYS_sendto]     = sys_sendto_handler,
     [SYS_recvfrom]   = sys_recvfrom_handler,
+    /* epoll operations */
+    [SYS_epoll_create] = sys_epoll_create_handler,
+    [SYS_epoll_ctl]    = sys_epoll_ctl_handler,
+    [SYS_epoll_wait]   = sys_epoll_wait_handler,
 };
 
 /* ============================================================

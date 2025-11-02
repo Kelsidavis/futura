@@ -48,6 +48,20 @@ static inline long sys_call3(long nr, long a1, long a2, long a3) {
     return rax;
 }
 
+static inline long sys_call4(long nr, long a1, long a2, long a3, long a4) {
+    register long rax __asm__("rax") = nr;
+    register long rdi __asm__("rdi") = a1;
+    register long rsi __asm__("rsi") = a2;
+    register long rdx __asm__("rdx") = a3;
+    __asm__ volatile(
+        "mov %[a4], %%r10\n"
+        "int $0x80"
+        : "+a"(rax)
+        : "D"(rdi), "S"(rsi), "d"(rdx), [a4]"r"(a4)
+        : "rcx", "r10", "r11", "memory");
+    return rax;
+}
+
 static inline long sys_call6(long nr, long a1, long a2, long a3,
                              long a4, long a5, long a6) {
     register long rax __asm__("rax") = nr;
@@ -140,4 +154,17 @@ static inline long sys_getcwd_call(char *buf, long size) {
 
 static inline long sys_chdir_call(const char *path) {
     return sys_call1(SYS_chdir, (long)path);
+}
+
+/* epoll() syscall veneers */
+static inline long sys_epoll_create_call(int size) {
+    return sys_call1(SYS_epoll_create, (long)size);
+}
+
+static inline long sys_epoll_ctl_call(int epfd, int op, int fd, void *event) {
+    return sys_call4(SYS_epoll_ctl, (long)epfd, (long)op, (long)fd, (long)event);
+}
+
+static inline long sys_epoll_wait_call(int epfd, void *events, int maxevents, int timeout) {
+    return sys_call4(SYS_epoll_wait, (long)epfd, (long)events, (long)maxevents, (long)timeout);
 }

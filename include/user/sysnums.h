@@ -32,6 +32,7 @@
 #define SYS_kill        62
 #define SYS_sigaction   13
 #define SYS_sigprocmask 14
+#define SYS_truncate    76
 #define SYS_ftruncate   77
 #define SYS_getcwd      79
 #define SYS_chdir       80

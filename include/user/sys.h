@@ -285,4 +285,8 @@ static inline long sys_mkdir_call(const char *path, long mode) {
     return sys_call2(SYS_mkdir, (long)path, mode);
 }
 
+static inline long sys_rmdir_call(const char *path) {
+    return sys_call1(SYS_rmdir, (long)path);
+}
+
 /* Note: setpgrp and setpgid syscall veneers not provided (syscall numbers conflict) */

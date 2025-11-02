@@ -868,10 +868,10 @@ void fut_kernel_main(void) {
     fut_thread_mark_percpu_safe();
     fut_printf("[INIT] Per-CPU data marked as safe for access\n");
 #else
-    fut_printf("[INIT] Initializing per-CPU data for CPU 0...\n");
+    fut_serial_puts("[INIT] Initializing per-CPU data for CPU 0...\n");
     fut_percpu_init(0, 0);
     fut_thread_mark_percpu_safe();
-    fut_printf("[INIT] Per-CPU data initialized for CPU 0\n");
+    fut_serial_puts("[INIT] Per-CPU data initialized for CPU 0\n");
 #endif
 
     fut_serial_puts("[DEBUG] kernel_main: Before boot banner\n");
@@ -911,9 +911,10 @@ void fut_kernel_main(void) {
         fb_enabled = false;
     }
 
-    /* DISABLED: Smoke tests consume too much physical memory
-       Needed by wayland to create process memory managers
-    */
+    /* ========================================
+     *   Post-Subsystem Initialization
+     * ======================================== */
+
     fut_printf("[INIT] Smoke tests disabled to free physical pages for wayland\n");
 
     /* Initialize input drivers - REQUIRED for Wayland compositor */

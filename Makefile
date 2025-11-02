@@ -371,6 +371,7 @@ KERNEL_SOURCES := \
     kernel/sys_fcntl.c \
     kernel/sys_flock.c \
     kernel/sys_access.c \
+    kernel/sys_mkdir.c \
     kernel/sys_lseek.c \
     kernel/sys_pipe.c \
     kernel/sys_dup2.c \

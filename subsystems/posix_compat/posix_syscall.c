@@ -53,6 +53,7 @@
 #define SYS_dup2        33
 #define SYS_fcntl       72
 #define SYS_flock       73
+#define SYS_fsync       74
 #define SYS_truncate    76
 #define SYS_ftruncate   77
 #define SYS_fork        57
@@ -1447,6 +1448,13 @@ static int64_t sys_flock_handler(uint64_t fd, uint64_t operation, uint64_t arg3,
     return sys_flock((int)fd, (int)operation);
 }
 
+static int64_t sys_fsync_handler(uint64_t fd, uint64_t arg2, uint64_t arg3,
+                                 uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg2; (void)arg3; (void)arg4; (void)arg5; (void)arg6;
+    /* Use kernel sys_fsync for file synchronization */
+    return sys_fsync((int)fd);
+}
+
 static int64_t sys_access_handler(uint64_t path, uint64_t mode, uint64_t arg3,
                                   uint64_t arg4, uint64_t arg5, uint64_t arg6) {
     (void)arg3; (void)arg4; (void)arg5; (void)arg6;
@@ -1508,6 +1516,7 @@ static syscall_handler_t syscall_table[MAX_SYSCALL] = {
     [SYS_dup2]       = sys_dup2_handler,
     [SYS_fcntl]      = sys_fcntl_handler,
     [SYS_flock]      = sys_flock_handler,
+    [SYS_fsync]      = sys_fsync_handler,
     [SYS_truncate]   = sys_truncate_handler,
     [SYS_ftruncate]  = sys_ftruncate_handler,
     [SYS_getcwd]     = sys_getcwd_handler,

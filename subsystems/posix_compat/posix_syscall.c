@@ -1382,6 +1382,14 @@ static int64_t sys_epoll_wait_handler(uint64_t epfd, uint64_t events, uint64_t m
     return sys_epoll_wait((int)epfd, (void *)(uintptr_t)events, (int)maxevents, (int)timeout);
 }
 
+/* madvise() syscall handler */
+static int64_t sys_madvise_handler(uint64_t addr, uint64_t length, uint64_t advice,
+                                   uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg4; (void)arg5; (void)arg6;
+    extern long sys_madvise(void *addr, size_t length, int advice);
+    return sys_madvise((void *)(uintptr_t)addr, (size_t)length, (int)advice);
+}
+
 /* ============================================================
  *   Syscall Table
  * ============================================================ */
@@ -1441,6 +1449,8 @@ static syscall_handler_t syscall_table[MAX_SYSCALL] = {
     [SYS_epoll_create] = sys_epoll_create_handler,
     [SYS_epoll_ctl]    = sys_epoll_ctl_handler,
     [SYS_epoll_wait]   = sys_epoll_wait_handler,
+    /* madvise operation */
+    [SYS_madvise]      = sys_madvise_handler,
 };
 
 /* ============================================================

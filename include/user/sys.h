@@ -168,3 +168,8 @@ static inline long sys_epoll_ctl_call(int epfd, int op, int fd, void *event) {
 static inline long sys_epoll_wait_call(int epfd, void *events, int maxevents, int timeout) {
     return sys_call4(SYS_epoll_wait, (long)epfd, (long)events, (long)maxevents, (long)timeout);
 }
+
+/* madvise() syscall veneer */
+static inline long sys_madvise_call(void *addr, size_t length, int advice) {
+    return sys_call3(SYS_madvise, (long)addr, (long)length, (long)advice);
+}

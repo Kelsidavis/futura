@@ -47,4 +47,5 @@
 #define SYS_epoll_create 228
 #define SYS_epoll_ctl    229
 #define SYS_epoll_wait   230
+#define SYS_madvise      231
 #define SYS_time_millis  400

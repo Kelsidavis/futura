@@ -56,6 +56,7 @@ extern void fut_blk_async_selftest_schedule(fut_task_t *task);
 extern void fut_futfs_selftest_schedule(fut_task_t *task);
 extern void fut_net_selftest_schedule(fut_task_t *task);
 extern void fut_perf_selftest_schedule(fut_task_t *task);
+extern void fut_multiprocess_selftest_schedule(fut_task_t *task);
 
 #if ENABLE_WAYLAND_DEMO
 #define WAYLAND_TEST_SENTINEL_CODE 0xD0u
@@ -1013,6 +1014,7 @@ void fut_kernel_main(void) {
     planned_tests += 1u; /* Wayland demo sentinel */
 #endif
     if (run_async_selftests) {
+        planned_tests += 5u; /* multiprocess: fork isolation, FD inheritance, per-task isolation, cloexec, shared offset */
         planned_tests += 1u; /* block */
         planned_tests += 1u; /* futfs */
         planned_tests += 1u; /* net */
@@ -1382,6 +1384,7 @@ void fut_kernel_main(void) {
     bool perf_enabled = run_async_selftests && perf_flag;
 
     if (run_async_selftests) {
+        fut_multiprocess_selftest_schedule(test_task);
         fut_blk_async_selftest_schedule(test_task);
         fut_futfs_selftest_schedule(test_task);
         fut_net_selftest_schedule(test_task);

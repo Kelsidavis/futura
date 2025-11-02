@@ -77,6 +77,7 @@ long sys_seteuid(uint32_t euid);
 long sys_setgid(uint32_t gid);
 long sys_setegid(uint32_t egid);
 long sys_getpid(void);
+long sys_gettid(void);
 long sys_getppid(void);
 long sys_getpgrp(void);
 long sys_getsid(uint64_t pid);

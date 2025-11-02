@@ -59,6 +59,7 @@
 #define SYS_rename      82
 #define SYS_getdents64  217
 #define SYS_getpid      39
+#define SYS_gettid      186
 #define SYS_openat       257
 #define SYS_epoll_create 228
 #define SYS_epoll_ctl    229

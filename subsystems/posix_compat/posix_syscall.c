@@ -69,6 +69,7 @@
 #define SYS_sigprocmask 14
 #define SYS_sigreturn   15
 #define SYS_getpid      39
+#define SYS_gettid      186
 #define SYS_socket      41
 #define SYS_connect     46  /* Note: non-standard, should be 42 per Linux ABI */
 #define SYS_accept      43
@@ -1381,6 +1382,13 @@ static int64_t sys_uname_handler(uint64_t buf, uint64_t arg2, uint64_t arg3,
 }
 
 /* Process info syscall handlers */
+static int64_t sys_gettid_handler(uint64_t arg1, uint64_t arg2, uint64_t arg3,
+                                   uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg1; (void)arg2; (void)arg3; (void)arg4; (void)arg5; (void)arg6;
+    extern long sys_gettid(void);
+    return sys_gettid();
+}
+
 static int64_t sys_getppid_handler(uint64_t arg1, uint64_t arg2, uint64_t arg3,
                                    uint64_t arg4, uint64_t arg5, uint64_t arg6) {
     (void)arg1; (void)arg2; (void)arg3; (void)arg4; (void)arg5; (void)arg6;
@@ -1600,6 +1608,7 @@ static syscall_handler_t syscall_table[MAX_SYSCALL] = {
     [SYS_umask]        = sys_umask_handler,
     [SYS_uname]        = sys_uname_handler,
     /* Process info operations */
+    [SYS_gettid]       = sys_gettid_handler,
     [SYS_getppid]      = sys_getppid_handler,
     [SYS_getpgrp]      = sys_getpgrp_handler,
     /* Note: SYS_setpgrp skipped (same as SYS_setpgid=109, which conflicts with SYS_seteuid) */

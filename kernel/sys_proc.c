@@ -34,6 +34,27 @@ long sys_getpid(void) {
 }
 
 /**
+ * gettid() - Get thread ID
+ *
+ * Returns the thread ID (TID) of the calling thread.
+ * In Futura OS, threads are represented by tasks, and each task has a unique ID.
+ * For single-threaded processes, TID equals PID.
+ *
+ * Returns:
+ *   - Thread ID of the calling thread (always succeeds)
+ */
+long sys_gettid(void) {
+    fut_task_t *task = fut_task_current();
+    if (!task) {
+        return 1;  /* Default to init TID */
+    }
+
+    /* In Futura OS, task ID serves as thread ID */
+    fut_printf("[PROC] gettid() -> tid=%llu\n", task->pid);
+    return task->pid;
+}
+
+/**
  * getppid() - Get parent process ID
  *
  * Returns the process ID of the parent of the calling process.

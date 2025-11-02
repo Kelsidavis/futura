@@ -81,6 +81,7 @@ long sys_rename(const char *oldpath, const char *newpath);
 long sys_chmod(const char *path, uint32_t mode);
 long sys_fchmod(int fd, uint32_t mode);
 long sys_chown(const char *path, uint32_t uid, uint32_t gid);
+long sys_fchown(int fd, uint32_t uid, uint32_t gid);
 long sys_truncate(const char *path, uint64_t length);
 long sys_fcntl(int fd, int cmd, uint64_t arg);
 long sys_flock(int fd, int operation);

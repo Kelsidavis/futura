@@ -265,6 +265,10 @@ static inline long sys_chown_call(const char *path, long uid, long gid) {
     return sys_call3(SYS_chown, (long)path, uid, gid);
 }
 
+static inline long sys_fchown_call(long fd, long uid, long gid) {
+    return sys_call3(SYS_fchown, fd, uid, gid);
+}
+
 static inline long sys_access_call(const char *path, long mode) {
     return sys_call2(SYS_access, (long)path, mode);
 }

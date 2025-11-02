@@ -1180,6 +1180,12 @@ int fut_vfs_open(const char *path, int flags, int mode) {
     extern void fut_printf(const char *, ...);
     fut_printf("[VFS-OPEN] path='%s' flags=0x%x mode=0%o\n", path, flags, mode);
 
+    /* Get current task for per-task FD table */
+    fut_task_t *task = fut_task_current();
+    if (!task) {
+        return -ESRCH;
+    }
+
     int chr_fd = try_open_chrdev(path, flags);
     if (chr_fd != -ENOENT) {
         return chr_fd;
@@ -1296,12 +1302,12 @@ int fut_vfs_open(const char *path, int flags, int mode) {
         }
     }
 
-    /* Allocate file descriptor */
-    int fd = alloc_fd(file);
+    /* Allocate file descriptor in task's FD table */
+    int fd = alloc_fd_for_task(task, file);
     if (fd < 0) {
         fut_free(file);
         release_lookup_ref(vnode);
-        fut_printf("[VFS-OPEN] alloc_fd failed, returning %d\n", fd);
+        fut_printf("[VFS-OPEN] alloc_fd_for_task failed, returning %d\n", fd);
         return fd;
     }
 
@@ -1318,7 +1324,12 @@ ssize_t fut_vfs_read(int fd, void *buf, size_t size) {
 #if DEBUG_READ
     fut_printf("[vfs-read] fd=%d buf=%p size=%zu\n", fd, buf, size);
 #endif
-    struct fut_file *file = get_file(fd);
+    fut_task_t *task = fut_task_current();
+    if (!task) {
+        return -ESRCH;
+    }
+
+    struct fut_file *file = get_file_from_task(task, fd);
     if (!file) {
 #if DEBUG_READ
         fut_printf("[vfs-read] EBADF: no file for fd=%d\n", fd);
@@ -1369,8 +1380,13 @@ ssize_t fut_vfs_read(int fd, void *buf, size_t size) {
 
 ssize_t fut_vfs_write(int fd, const void *buf, size_t size) {
     VFSDBG("[vfs-write] enter fd=%d size=%llu\n", fd, (unsigned long long)size);
-    struct fut_file *file = get_file(fd);
-    VFSDBG("[vfs-write] get_file returned %p\n", (void*)file);
+    fut_task_t *task = fut_task_current();
+    if (!task) {
+        return -ESRCH;
+    }
+
+    struct fut_file *file = get_file_from_task(task, fd);
+    VFSDBG("[vfs-write] get_file_from_task returned %p\n", (void*)file);
     if (!file) {
         return -EBADF;
     }
@@ -1415,8 +1431,13 @@ ssize_t fut_vfs_write(int fd, const void *buf, size_t size) {
 
 int fut_vfs_close(int fd) {
     VFSDBG("[vfs-close] close fd=%d\n", fd);
-    struct fut_file *file = get_file(fd);
-    VFSDBG("[vfs-close] get_file returned file=%p\n", (void*)file);
+    fut_task_t *task = fut_task_current();
+    if (!task) {
+        return -ESRCH;
+    }
+
+    struct fut_file *file = get_file_from_task(task, fd);
+    VFSDBG("[vfs-close] get_file_from_task returned file=%p\n", (void*)file);
     if (!file) {
         return -EBADF;
     }
@@ -1426,8 +1447,7 @@ int fut_vfs_close(int fd) {
         if (file->chr_ops->release) {
             file->chr_ops->release(file->chr_inode, file->chr_private);
         }
-        free_fd(fd);
-        fut_free(file);
+        close_fd_in_task(task, fd);
         return 0;
     }
 
@@ -1447,17 +1467,21 @@ int fut_vfs_close(int fd) {
     }
 
     /* Free file structure */
-    VFSDBG("[vfs-close] calling free_fd\n");
-    free_fd(fd);
-    VFSDBG("[vfs-close] calling fut_free(file=%p)\n", (void*)file);
-    fut_free(file);
+    VFSDBG("[vfs-close] calling close_fd_in_task\n");
+    close_fd_in_task(task, fd);
+    /* File is now removed from task's FD table, refcount handled by close_fd_in_task */
     VFSDBG("[vfs-close] fut_free returned\n");
 
     return 0;
 }
 
 int64_t fut_vfs_lseek(int fd, int64_t offset, int whence) {
-    struct fut_file *file = get_file(fd);
+    fut_task_t *task = fut_task_current();
+    if (!task) {
+        return -ESRCH;
+    }
+
+    struct fut_file *file = get_file_from_task(task, fd);
     if (!file) {
         return -EBADF;
     }

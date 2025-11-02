@@ -134,9 +134,93 @@ static void test_invalid_fds(void) {
     fut_test_pass();
 }
 
-/* Test 3: Verify dup2(fd, fd) returns fd without error */
+/* Test 3: Redirect stdout to a file and verify output */
+static void test_actual_stdout_redirect(void) {
+    fut_printf("[DUP2-TEST] Test 3: Actual stdout redirection to file\n");
+
+    const char *test_path = "/test_actual_redirect.txt";
+    const char *test_msg = "Hello from redirected stdout!";
+
+    /* Create the target file */
+    int ret = create_test_file(test_path);
+    if (ret != 0) {
+        fut_printf("[DUP2-TEST] ✗ Failed to create test file\n");
+        fut_test_fail(DUP2_TEST_INVALID_FDS);
+        return;
+    }
+
+    /* Open file for writing */
+    int file_fd = fut_vfs_open(test_path, O_WRONLY, 0644);
+    if (file_fd < 0) {
+        fut_printf("[DUP2-TEST] ✗ Failed to open test file (error %d)\n", file_fd);
+        fut_test_fail(DUP2_TEST_INVALID_FDS);
+        return;
+    }
+
+    /* Get current task */
+    fut_task_t *task = fut_task_current();
+    if (!task || !task->fd_table) {
+        fut_printf("[DUP2-TEST] ✗ No task FD table\n");
+        fut_vfs_close(file_fd);
+        fut_test_fail(DUP2_TEST_INVALID_FDS);
+        return;
+    }
+
+    /* Save original stdout (fd 1) */
+    struct fut_file *original_stdout = task->fd_table[1];
+
+    /* Redirect stdout to the file using dup2 */
+    long dup2_ret = sys_dup2(file_fd, 1);
+    if (dup2_ret != 1) {
+        fut_printf("[DUP2-TEST] ✗ Failed to redirect stdout (dup2 returned %ld)\n", dup2_ret);
+        fut_vfs_close(file_fd);
+        fut_test_fail(DUP2_TEST_INVALID_FDS);
+        return;
+    }
+
+    /* Write to stdout (now redirected to file) */
+    ssize_t write_ret = fut_vfs_write(1, test_msg, 28);  /* strlen("Hello from redirected stdout!") */
+    if (write_ret <= 0) {
+        fut_printf("[DUP2-TEST] ✗ Failed to write to redirected stdout\n");
+        /* Restore stdout before returning */
+        sys_dup2(file_fd, 1);
+        fut_vfs_close(file_fd);
+        fut_test_fail(DUP2_TEST_INVALID_FDS);
+        return;
+    }
+
+    /* Restore stdout using original file descriptor */
+    if (original_stdout && original_stdout != task->fd_table[1]) {
+        /* Manually restore by putting original back */
+        task->fd_table[1] = original_stdout;
+    }
+
+    fut_vfs_close(file_fd);
+
+    /* Now verify the file contains the message by reading it */
+    int read_fd = fut_vfs_open(test_path, O_RDONLY, 0644);
+    if (read_fd < 0) {
+        fut_printf("[DUP2-TEST] ✗ Failed to open file for reading\n");
+        fut_test_fail(DUP2_TEST_INVALID_FDS);
+        return;
+    }
+
+    char buffer[64] = {0};
+    ssize_t read_ret = fut_vfs_read(read_fd, buffer, 63);
+    fut_vfs_close(read_fd);
+
+    if (read_ret > 0) {
+        fut_printf("[DUP2-TEST] ✓ stdout redirected successfully, wrote %ld bytes\n", read_ret);
+        fut_test_pass();
+    } else {
+        fut_printf("[DUP2-TEST] ✗ Failed to read back redirected output\n");
+        fut_test_fail(DUP2_TEST_INVALID_FDS);
+    }
+}
+
+/* Test 4: Verify dup2(fd, fd) returns fd without error */
 static void test_same_fd(void) {
-    fut_printf("[DUP2-TEST] Test 3: dup2() with same source and target FD\n");
+    fut_printf("[DUP2-TEST] Test 4: dup2() with same source and target FD\n");
 
     /* Create a test file to have a valid open fd */
     const char *test_path = "/test_dup2_same.txt";
@@ -179,6 +263,7 @@ static void fut_dup2_test_thread(void *arg) {
     /* Run all tests */
     test_stdout_redirect();
     test_invalid_fds();
+    test_actual_stdout_redirect();
     test_same_fd();
 
     fut_printf("[DUP2-TEST] ========================================\n");

@@ -58,6 +58,9 @@ KAPPEND :=
 ifeq ($(ASYNC),1)
 KAPPEND += async-tests=1
 endif
+ifeq ($(PERF),1)
+KAPPEND += perf
+endif
 ifneq ($(strip $(WAYLAND_ENV)),)
 KAPPEND += $(WAYLAND_ENV)
 endif

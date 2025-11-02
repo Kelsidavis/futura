@@ -111,6 +111,7 @@
 #define SYS_umask        95
 #define SYS_gettimeofday 96
 #define SYS_getrlimit    97
+#define SYS_clock_gettime 98
 #define SYS_time         201
 #define SYS_getdents64   217
 
@@ -1534,6 +1535,13 @@ static int64_t sys_time_handler(uint64_t tloc, uint64_t arg2, uint64_t arg3,
     return sys_time((uint64_t *)(uintptr_t)tloc);
 }
 
+static int64_t sys_clock_gettime_handler(uint64_t clock_id, uint64_t tp, uint64_t arg3,
+                                         uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg3; (void)arg4; (void)arg5; (void)arg6;
+    extern long sys_clock_gettime(int clock_id, fut_timespec_t *tp);
+    return sys_clock_gettime((int)clock_id, (fut_timespec_t *)(uintptr_t)tp);
+}
+
 /* ============================================================
  *   Syscall Table
  * ============================================================ */
@@ -1601,6 +1609,7 @@ static syscall_handler_t syscall_table[MAX_SYSCALL] = {
     [SYS_time_millis] = sys_time_millis_handler,
     [SYS_gettimeofday] = sys_gettimeofday_handler,
     [SYS_time]       = sys_time_handler,
+    [SYS_clock_gettime] = sys_clock_gettime_handler,
     /* Socket operations */
     [SYS_socket]     = sys_socket_handler,
     [SYS_bind]       = sys_bind_handler,

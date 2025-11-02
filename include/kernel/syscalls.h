@@ -38,6 +38,7 @@ typedef long ssize_t;
 #define SYS_setuid 105u
 #define SYS_seteuid 109u
 #define SYS_rename 82u
+#define SYS_chmod 90u
 #define SYS_setgid 106u
 #define SYS_setegid 110u
 #define SYS_getpgrp 111u
@@ -75,6 +76,7 @@ long sys_getpgrp(void);
 long sys_getsid(uint64_t pid);
 long sys_setsid(void);
 long sys_rename(const char *oldpath, const char *newpath);
+long sys_chmod(const char *path, uint32_t mode);
 /* Note: sys_setpgrp and sys_setpgid are implemented but not exposed via syscall
    (syscall numbers conflict with seteuid from Priority #14) */
 long sys_time_millis(void);

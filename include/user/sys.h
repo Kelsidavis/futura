@@ -232,4 +232,8 @@ static inline long sys_rename_call(const char *oldpath, const char *newpath) {
     return sys_call2(SYS_rename, (long)oldpath, (long)newpath);
 }
 
+static inline long sys_chmod_call(const char *path, long mode) {
+    return sys_call2(SYS_chmod, (long)path, mode);
+}
+
 /* Note: setpgrp and setpgid syscall veneers not provided (syscall numbers conflict) */

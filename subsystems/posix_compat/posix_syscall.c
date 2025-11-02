@@ -78,7 +78,9 @@
 #define SYS_rmdir       84
 #define SYS_unlink      87
 #define SYS_readlink    89
+#ifndef SYS_chmod
 #define SYS_chmod       90
+#endif
 #ifndef SYS_getuid
 #define SYS_getuid      102
 #endif
@@ -1488,6 +1490,13 @@ static int64_t sys_rename_handler(uint64_t oldpath, uint64_t newpath, uint64_t a
     return sys_rename((const char *)(uintptr_t)oldpath, (const char *)(uintptr_t)newpath);
 }
 
+static int64_t sys_chmod_handler(uint64_t path, uint64_t mode, uint64_t arg3,
+                                 uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg3; (void)arg4; (void)arg5; (void)arg6;
+    extern long sys_chmod(const char *path, uint32_t mode);
+    return sys_chmod((const char *)(uintptr_t)path, (uint32_t)mode);
+}
+
 /* ============================================================
  *   Syscall Table
  * ============================================================ */
@@ -1529,6 +1538,7 @@ static syscall_handler_t syscall_table[MAX_SYSCALL] = {
     [SYS_rmdir]      = sys_rmdir_handler,
     [SYS_unlink]     = sys_unlink_handler,
     [SYS_rename]     = sys_rename_handler,
+    [SYS_chmod]      = sys_chmod_handler,
     [SYS_getdents64] = sys_getdents64_handler,
     [SYS_getpid]     = sys_getpid_handler,
     [SYS_sigaction]  = sys_sigaction_handler,

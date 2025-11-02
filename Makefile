@@ -361,6 +361,7 @@ KERNEL_SOURCES := \
     kernel/sys_proc.c \
     kernel/sys_rename.c \
     kernel/sys_chmod.c \
+    kernel/sys_fchmod.c \
     kernel/sys_access.c \
     kernel/sys_lseek.c \
     kernel/sys_pipe.c \

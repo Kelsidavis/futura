@@ -244,6 +244,10 @@ static inline long sys_chmod_call(const char *path, long mode) {
     return sys_call2(SYS_chmod, (long)path, mode);
 }
 
+static inline long sys_fchmod_call(long fd, long mode) {
+    return sys_call2(SYS_fchmod, fd, mode);
+}
+
 static inline long sys_access_call(const char *path, long mode) {
     return sys_call2(SYS_access, (long)path, mode);
 }

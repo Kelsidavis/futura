@@ -81,6 +81,9 @@
 #ifndef SYS_chmod
 #define SYS_chmod       90
 #endif
+#ifndef SYS_fchmod
+#define SYS_fchmod      91
+#endif
 #ifndef SYS_getuid
 #define SYS_getuid      102
 #endif
@@ -1497,6 +1500,13 @@ static int64_t sys_chmod_handler(uint64_t path, uint64_t mode, uint64_t arg3,
     return sys_chmod((const char *)(uintptr_t)path, (uint32_t)mode);
 }
 
+static int64_t sys_fchmod_handler(uint64_t fd, uint64_t mode, uint64_t arg3,
+                                  uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg3; (void)arg4; (void)arg5; (void)arg6;
+    extern long sys_fchmod(int fd, uint32_t mode);
+    return sys_fchmod((int)fd, (uint32_t)mode);
+}
+
 static int64_t sys_access_handler(uint64_t path, uint64_t mode, uint64_t arg3,
                                   uint64_t arg4, uint64_t arg5, uint64_t arg6) {
     (void)arg3; (void)arg4; (void)arg5; (void)arg6;
@@ -1562,6 +1572,7 @@ static syscall_handler_t syscall_table[MAX_SYSCALL] = {
     [SYS_unlink]     = sys_unlink_handler,
     [SYS_rename]     = sys_rename_handler,
     [SYS_chmod]      = sys_chmod_handler,
+    [SYS_fchmod]     = sys_fchmod_handler,
     [SYS_getdents64] = sys_getdents64_handler,
     [SYS_getpid]     = sys_getpid_handler,
     [SYS_sigaction]  = sys_sigaction_handler,

@@ -124,6 +124,10 @@ static inline long sys_read(long fd, void *buf, long len) {
     return sys_call3(SYS_read, fd, (long)buf, len);
 }
 
+static inline long sys_lseek_call(long fd, long offset, long whence) {
+    return sys_call3(SYS_lseek, fd, offset, whence);
+}
+
 static inline long sys_echo_call(const char *in, char *out, long len) {
     return sys_call3(SYS_echo, (long)in, (long)out, len);
 }

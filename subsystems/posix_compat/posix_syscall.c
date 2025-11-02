@@ -1504,6 +1504,13 @@ static int64_t sys_access_handler(uint64_t path, uint64_t mode, uint64_t arg3,
     return sys_access((const char *)(uintptr_t)path, (int)mode);
 }
 
+static int64_t sys_lseek_handler(uint64_t fd, uint64_t offset, uint64_t whence,
+                                 uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg4; (void)arg5; (void)arg6;
+    extern int64_t sys_lseek(int fd, int64_t offset, int whence);
+    return sys_lseek((int)fd, (int64_t)offset, (int)whence);
+}
+
 /* ============================================================
  *   Syscall Table
  * ============================================================ */
@@ -1525,6 +1532,7 @@ static syscall_handler_t syscall_table[MAX_SYSCALL] = {
     [SYS_stat]       = sys_stat_handler,
     [SYS_fstat]      = sys_fstat_handler,
     [SYS_access]     = sys_access_handler,
+    [SYS_lseek]      = sys_lseek_handler,
     [SYS_fork]       = sys_fork_handler,
     [SYS_execve]     = sys_execve_handler,
     [SYS_exit]       = sys_exit_handler,

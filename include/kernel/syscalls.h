@@ -79,6 +79,7 @@ long sys_setsid(void);
 long sys_rename(const char *oldpath, const char *newpath);
 long sys_chmod(const char *path, uint32_t mode);
 long sys_access(const char *path, int mode);
+int64_t sys_lseek(int fd, int64_t offset, int whence);
 /* Note: sys_setpgrp and sys_setpgid are implemented but not exposed via syscall
    (syscall numbers conflict with seteuid from Priority #14) */
 long sys_time_millis(void);

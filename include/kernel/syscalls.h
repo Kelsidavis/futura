@@ -82,6 +82,7 @@ long sys_getsid(uint64_t pid);
 long sys_setsid(void);
 long sys_rename(const char *oldpath, const char *newpath);
 long sys_stat(const char *path, struct fut_stat *statbuf);
+long sys_fstat(int fd, struct fut_stat *statbuf);
 long sys_chmod(const char *path, uint32_t mode);
 long sys_fchmod(int fd, uint32_t mode);
 long sys_chown(const char *path, uint32_t uid, uint32_t gid);

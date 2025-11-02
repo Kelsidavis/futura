@@ -401,18 +401,20 @@ static int64_t sys_fstat_handler(uint64_t fd, uint64_t statbuf, uint64_t arg3,
     fut_socket_t *socket = get_socket_from_fd((int)fd);
     if (socket) {
         /* Return fake stat info for socket - just mark it as a valid file */
-        struct posix_stat *st = (struct posix_stat *)statbuf;
-        if (fut_copy_to_user(st, &(struct posix_stat){
-            .st_mode = 0140000,  /* S_IFSOCK */
-            .st_size = 0,
-            .st_ino = socket->socket_id,
-        }, sizeof(struct posix_stat)) != 0) {
+        struct fut_stat kernel_stat = {0};
+        kernel_stat.st_mode = 0140000;  /* S_IFSOCK */
+        kernel_stat.st_size = 0;
+        kernel_stat.st_ino = socket->socket_id;
+
+        if (fut_copy_to_user((struct fut_stat *)statbuf, &kernel_stat,
+                             sizeof(struct fut_stat)) != 0) {
             return -EFAULT;
         }
         return 0;
     }
 
-    return (int64_t)posix_fstat((int)fd, (struct posix_stat *)statbuf);
+    /* Use kernel sys_fstat for regular files */
+    return sys_fstat((int)fd, (struct fut_stat *)statbuf);
 }
 
 /* Process management */

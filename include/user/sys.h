@@ -257,6 +257,10 @@ static inline long sys_stat_call(const char *path, void *statbuf) {
     return sys_call2(SYS_stat, (long)path, (long)statbuf);
 }
 
+static inline long sys_fstat_call(long fd, void *statbuf) {
+    return sys_call2(SYS_fstat, fd, (long)statbuf);
+}
+
 static inline long sys_chmod_call(const char *path, long mode) {
     return sys_call2(SYS_chmod, (long)path, mode);
 }

@@ -367,6 +367,7 @@ KERNEL_SOURCES := \
     kernel/sys_chown.c \
     kernel/sys_fchown.c \
     kernel/sys_truncate.c \
+    kernel/sys_ftruncate.c \
     kernel/sys_fcntl.c \
     kernel/sys_flock.c \
     kernel/sys_access.c \

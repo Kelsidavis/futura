@@ -206,3 +206,26 @@ static inline long sys_setgid_call(long gid) {
 static inline long sys_setegid_call(long egid) {
     return sys_call1(SYS_setegid, egid);
 }
+
+/* Process info syscall veneers */
+static inline long sys_getpid_call(void) {
+    return sys_call0(SYS_getpid);
+}
+
+static inline long sys_getppid_call(void) {
+    return sys_call0(SYS_getppid);
+}
+
+static inline long sys_getpgrp_call(void) {
+    return sys_call0(SYS_getpgrp);
+}
+
+static inline long sys_getsid_call(long pid) {
+    return sys_call1(SYS_getsid, pid);
+}
+
+static inline long sys_setsid_call(void) {
+    return sys_call0(SYS_setsid);
+}
+
+/* Note: setpgrp and setpgid syscall veneers not provided (syscall numbers conflict) */

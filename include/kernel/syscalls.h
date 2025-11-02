@@ -39,6 +39,11 @@ typedef long ssize_t;
 #define SYS_seteuid 109u
 #define SYS_setgid 106u
 #define SYS_setegid 110u
+#define SYS_getpgrp 111u
+#define SYS_setsid 112u
+#define SYS_getppid 113u
+#define SYS_getsid 124u
+/* Note: SYS_setpgid/SYS_setpgrp would be 109 but conflicts with SYS_seteuid */
 #define SYS_time_millis 400u
 
 ssize_t sys_echo(const char *u_in, char *u_out, size_t n);
@@ -63,4 +68,11 @@ long sys_setuid(uint32_t uid);
 long sys_seteuid(uint32_t euid);
 long sys_setgid(uint32_t gid);
 long sys_setegid(uint32_t egid);
+long sys_getpid(void);
+long sys_getppid(void);
+long sys_getpgrp(void);
+long sys_getsid(uint64_t pid);
+long sys_setsid(void);
+/* Note: sys_setpgrp and sys_setpgid are implemented but not exposed via syscall
+   (syscall numbers conflict with seteuid from Priority #14) */
 long sys_time_millis(void);

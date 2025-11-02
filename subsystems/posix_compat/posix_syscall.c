@@ -1451,6 +1451,35 @@ static int64_t sys_setegid_handler(uint64_t egid, uint64_t arg2, uint64_t arg3,
     return sys_setegid((uint32_t)egid);
 }
 
+/* Process info syscall handlers */
+static int64_t sys_getppid_handler(uint64_t arg1, uint64_t arg2, uint64_t arg3,
+                                   uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg1; (void)arg2; (void)arg3; (void)arg4; (void)arg5; (void)arg6;
+    extern long sys_getppid(void);
+    return sys_getppid();
+}
+
+static int64_t sys_getpgrp_handler(uint64_t arg1, uint64_t arg2, uint64_t arg3,
+                                   uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg1; (void)arg2; (void)arg3; (void)arg4; (void)arg5; (void)arg6;
+    extern long sys_getpgrp(void);
+    return sys_getpgrp();
+}
+
+static int64_t sys_getsid_handler(uint64_t pid, uint64_t arg2, uint64_t arg3,
+                                  uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg2; (void)arg3; (void)arg4; (void)arg5; (void)arg6;
+    extern long sys_getsid(uint64_t pid);
+    return sys_getsid((uint64_t)pid);
+}
+
+static int64_t sys_setsid_handler(uint64_t arg1, uint64_t arg2, uint64_t arg3,
+                                  uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg1; (void)arg2; (void)arg3; (void)arg4; (void)arg5; (void)arg6;
+    extern long sys_setsid(void);
+    return sys_setsid();
+}
+
 /* ============================================================
  *   Syscall Table
  * ============================================================ */
@@ -1521,6 +1550,12 @@ static syscall_handler_t syscall_table[MAX_SYSCALL] = {
     [SYS_seteuid]      = sys_seteuid_handler,
     [SYS_setgid]       = sys_setgid_handler,
     [SYS_setegid]      = sys_setegid_handler,
+    /* Process info operations */
+    [SYS_getppid]      = sys_getppid_handler,
+    [SYS_getpgrp]      = sys_getpgrp_handler,
+    /* Note: SYS_setpgrp skipped (same as SYS_setpgid=109, which conflicts with SYS_seteuid) */
+    [SYS_getsid]       = sys_getsid_handler,
+    [SYS_setsid]       = sys_setsid_handler,
 };
 
 /* ============================================================

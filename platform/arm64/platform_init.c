@@ -68,9 +68,85 @@ volatile char uart_rx_buffer[UART_RX_BUFFER_SIZE];
 volatile uint32_t uart_rx_head = 0;  /* Write position (filled by ISR) */
 volatile uint32_t uart_rx_tail = 0;  /* Read position (consumed by getc) */
 
-/* UART interrupt handlers - currently not used (staying in polling mode)
- * TODO: Implement proper interrupt-driven mode with correct frame setup
+/* ============================================================
+ *   UART Interrupt Handlers
+ * ============================================================ */
+
+/**
+ * TX Interrupt Handler
+ * Drains the TX buffer and sends characters to UART FIFO
  */
+static void uart_handle_tx(void) {
+    volatile uint8_t *uart = (volatile uint8_t *)UART0_BASE;
+
+    /* Drain the TX buffer while FIFO has space */
+    while (uart_tx_tail != uart_tx_head) {
+        uint32_t fr = mmio_read32((volatile void *)(uart + UART_FR));
+        if (fr & UART_FR_TXFF) {
+            /* FIFO is full, re-enable interrupt and wait */
+            break;
+        }
+
+        /* Write next character from buffer */
+        char c = uart_tx_buffer[uart_tx_tail];
+        uart_tx_tail = (uart_tx_tail + 1) % UART_TX_BUFFER_SIZE;
+        mmio_write32((volatile void *)(uart + UART_DR), (uint32_t)c);
+    }
+
+    /* If buffer is empty, disable TX interrupt */
+    if (uart_tx_tail == uart_tx_head) {
+        uint32_t imsc = mmio_read32((volatile void *)(uart + UART_IMSC));
+        imsc &= ~UART_INT_TX;
+        mmio_write32((volatile void *)(uart + UART_IMSC), imsc);
+    }
+}
+
+/**
+ * RX Interrupt Handler
+ * Reads characters from UART FIFO into RX buffer
+ */
+static void uart_handle_rx(void) {
+    volatile uint8_t *uart = (volatile uint8_t *)UART0_BASE;
+
+    /* Read all available characters from FIFO */
+    while (!(mmio_read32((volatile void *)(uart + UART_FR)) & UART_FR_RXFE)) {
+        uint32_t data = mmio_read32((volatile void *)(uart + UART_DR));
+        uint8_t c = (uint8_t)(data & 0xFF);
+
+        /* Add to RX buffer */
+        uint32_t next_head = (uart_rx_head + 1) % UART_RX_BUFFER_SIZE;
+        if (next_head != uart_rx_tail) {
+            uart_rx_buffer[uart_rx_head] = c;
+            uart_rx_head = next_head;
+        }
+        /* else buffer full - drop character */
+    }
+}
+
+/**
+ * Unified UART Interrupt Handler
+ * Handles both RX and TX interrupts
+ */
+static void uart_irq_handler(int irq_num, void *frame) {
+    (void)irq_num;
+    (void)frame;
+
+    volatile uint8_t *uart = (volatile uint8_t *)UART0_BASE;
+    uint32_t mis = mmio_read32((volatile void *)(uart + UART_MIS));
+
+    /* Handle RX interrupt (if TX interrupt also fires, handle both) */
+    if (mis & (UART_INT_RX | UART_INT_RT)) {
+        uart_handle_rx();
+    }
+
+    /* Handle TX interrupt */
+    if (mis & UART_INT_TX) {
+        uart_handle_tx();
+    }
+
+    /* Clear all handled interrupt flags */
+    mmio_write32((volatile void *)(uart + UART_ICR), mis);
+}
 
 void fut_serial_init(void) {
     volatile uint8_t *uart = (volatile uint8_t *)UART0_BASE;
@@ -93,15 +169,30 @@ void fut_serial_init(void) {
 
     /* Enable RX interrupt and RX timeout interrupt for serial input */
     /* UART_INT_RX fires on FIFO threshold, UART_INT_RT fires after timeout of no chars */
+    /* Note: TX interrupt is enabled only when there's data to send */
     mmio_write32((volatile void *)(uart + UART_IMSC), UART_INT_RX | UART_INT_RT);
 
     /* Enable UART: TXE, RXE, UARTEN */
     mmio_write32((volatile void *)(uart + UART_CR), (1 << 0) | (1 << 8) | (1 << 9));
 
-    /* TODO: Register RX interrupt handler when interrupt mode is properly supported
-     * fut_register_irq_handler(33, uart_rx_irq_handler);
-     * fut_irq_enable(33);
-     */
+    /* Register unified UART interrupt handler (type cast for C compatibility) */
+    fut_register_irq_handler(FUT_IRQ_UART, (fut_irq_handler_t)uart_irq_handler);
+
+    /* Enable UART IRQ in GIC */
+    fut_irq_enable(FUT_IRQ_UART);
+
+    /* Note: Interrupt-driven mode is enabled later after all subsystems are initialized
+     * For now, stay in polling mode to ensure boot messages are always visible */
+    /* uart_irq_mode = 1; */
+}
+
+/**
+ * Enable interrupt-driven UART mode after system initialization
+ * This should be called after all subsystems are initialized
+ */
+void fut_serial_enable_irq_mode(void) {
+    uart_irq_mode = 1;
+    fut_printf("[UART] Switched to interrupt-driven mode\n");
 }
 
 void fut_serial_putc(char c) {

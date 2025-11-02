@@ -47,6 +47,12 @@ void fut_platform_late_init(void);
 void fut_serial_init(void);
 
 /**
+ * Enable interrupt-driven UART mode after system initialization.
+ * Should be called after all subsystems are initialized.
+ */
+void fut_serial_enable_irq_mode(void);
+
+/**
  * Write a single character to serial console.
  *
  * @param c Character to write

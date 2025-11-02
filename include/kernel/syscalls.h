@@ -16,6 +16,7 @@
 
 /* Forward declarations */
 struct fut_stat;
+struct pollfd;
 
 #ifndef _SSIZE_T_DEFINED
 #define _SSIZE_T_DEFINED
@@ -64,6 +65,7 @@ long sys_getcwd(char *buf, size_t size);
 long sys_chdir(const char *path);
 long sys_dup(int oldfd);
 long sys_dup2(int oldfd, int newfd);
+long sys_poll(struct pollfd *fds, unsigned long nfds, int timeout);
 long sys_epoll_create(int size);
 long sys_epoll_ctl(int epfd, int op, int fd, void *event);
 long sys_epoll_wait(int epfd, void *events, int maxevents, int timeout);

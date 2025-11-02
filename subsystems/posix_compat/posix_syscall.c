@@ -34,6 +34,7 @@
 #define AT_FDCWD        -100
 #define SYS_stat        4
 #define SYS_fstat       5
+#define SYS_poll        7
 #define SYS_lseek       8
 #ifndef SYS_mmap
 #define SYS_mmap        9
@@ -233,6 +234,15 @@ static int64_t sys_dup2_handler(uint64_t arg1, uint64_t arg2, uint64_t arg3,
     (void)arg5;
     (void)arg6;
     return (int64_t)sys_dup2((int)arg1, (int)arg2);
+}
+
+static int64_t sys_poll_handler(uint64_t fds, uint64_t nfds, uint64_t timeout,
+                                uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg4;
+    (void)arg5;
+    (void)arg6;
+    extern long sys_poll(struct pollfd *fds, unsigned long nfds, int timeout);
+    return sys_poll((struct pollfd *)(uintptr_t)fds, (unsigned long)nfds, (int)timeout);
 }
 
 static int copy_user_string(const char *u_path, char *kbuf, size_t max_len) {
@@ -1538,6 +1548,7 @@ static syscall_handler_t syscall_table[MAX_SYSCALL] = {
     [SYS_close]      = sys_close_handler,
     [SYS_stat]       = sys_stat_handler,
     [SYS_fstat]      = sys_fstat_handler,
+    [SYS_poll]       = sys_poll_handler,
     [SYS_access]     = sys_access_handler,
     [SYS_lseek]      = sys_lseek_handler,
     [SYS_fork]       = sys_fork_handler,

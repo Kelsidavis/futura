@@ -105,6 +105,7 @@
 #ifndef SYS_getgid
 #define SYS_getgid      104
 #endif
+#define SYS_umask        95
 #define SYS_gettimeofday 96
 #define SYS_getdents64   217
 
@@ -1363,6 +1364,13 @@ static int64_t sys_setegid_handler(uint64_t egid, uint64_t arg2, uint64_t arg3,
     return sys_setegid((uint32_t)egid);
 }
 
+static int64_t sys_umask_handler(uint64_t mask, uint64_t arg2, uint64_t arg3,
+                                 uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg2; (void)arg3; (void)arg4; (void)arg5; (void)arg6;
+    /* Use kernel sys_umask for file creation mask */
+    return sys_umask((uint32_t)mask);
+}
+
 /* Process info syscall handlers */
 static int64_t sys_getppid_handler(uint64_t arg1, uint64_t arg2, uint64_t arg3,
                                    uint64_t arg4, uint64_t arg5, uint64_t arg6) {
@@ -1572,6 +1580,7 @@ static syscall_handler_t syscall_table[MAX_SYSCALL] = {
     [SYS_seteuid]      = sys_seteuid_handler,
     [SYS_setgid]       = sys_setgid_handler,
     [SYS_setegid]      = sys_setegid_handler,
+    [SYS_umask]        = sys_umask_handler,
     /* Process info operations */
     [SYS_getppid]      = sys_getppid_handler,
     [SYS_getpgrp]      = sys_getpgrp_handler,

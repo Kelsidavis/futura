@@ -68,6 +68,8 @@
 #define SYS_setuid       105
 #define SYS_setgid       106
 #define SYS_geteuid      107
+#define SYS_gettimeofday 96
+#define SYS_umask        95
 #define SYS_getegid      108
 #define SYS_seteuid      109
 #define SYS_setegid      110
@@ -75,6 +77,5 @@
 #define SYS_setsid       112
 #define SYS_getppid      113
 #define SYS_getsid       124
-#define SYS_gettimeofday 96
 /* Note: SYS_setpgid/SYS_setpgrp would be 109 but that conflicts with SYS_seteuid from Priority #14 */
 #define SYS_time_millis  400

@@ -93,6 +93,7 @@ long sys_ftruncate(int fd, uint64_t length);
 long sys_fcntl(int fd, int cmd, uint64_t arg);
 long sys_flock(int fd, int operation);
 long sys_fsync(int fd);
+long sys_fdatasync(int fd);
 long sys_access(const char *path, int mode);
 long sys_mkdir(const char *path, uint32_t mode);
 long sys_rmdir(const char *path);

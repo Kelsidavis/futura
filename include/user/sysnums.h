@@ -42,6 +42,7 @@
 #define SYS_fcntl       72
 #define SYS_flock       73
 #define SYS_fsync       74
+#define SYS_fdatasync   75
 #define SYS_fchmod      91
 #define SYS_chown       92
 #define SYS_fchown      93

@@ -82,6 +82,7 @@ long sys_getpgrp(void);
 long sys_getsid(uint64_t pid);
 long sys_setsid(void);
 long sys_umask(uint32_t mask);
+long sys_uname(void *buf);
 long sys_rename(const char *oldpath, const char *newpath);
 long sys_stat(const char *path, struct fut_stat *statbuf);
 long sys_fstat(int fd, struct fut_stat *statbuf);

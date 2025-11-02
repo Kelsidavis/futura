@@ -64,6 +64,7 @@
 #endif
 #define SYS_wait4       61
 #define SYS_kill        62
+#define SYS_uname       63
 #define SYS_sigaction   13
 #define SYS_sigprocmask 14
 #define SYS_sigreturn   15
@@ -1371,6 +1372,13 @@ static int64_t sys_umask_handler(uint64_t mask, uint64_t arg2, uint64_t arg3,
     return sys_umask((uint32_t)mask);
 }
 
+static int64_t sys_uname_handler(uint64_t buf, uint64_t arg2, uint64_t arg3,
+                                 uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg2; (void)arg3; (void)arg4; (void)arg5; (void)arg6;
+    /* Use kernel sys_uname for system information */
+    return sys_uname((void *)(uintptr_t)buf);
+}
+
 /* Process info syscall handlers */
 static int64_t sys_getppid_handler(uint64_t arg1, uint64_t arg2, uint64_t arg3,
                                    uint64_t arg4, uint64_t arg5, uint64_t arg6) {
@@ -1581,6 +1589,7 @@ static syscall_handler_t syscall_table[MAX_SYSCALL] = {
     [SYS_setgid]       = sys_setgid_handler,
     [SYS_setegid]      = sys_setegid_handler,
     [SYS_umask]        = sys_umask_handler,
+    [SYS_uname]        = sys_uname_handler,
     /* Process info operations */
     [SYS_getppid]      = sys_getppid_handler,
     [SYS_getpgrp]      = sys_getpgrp_handler,

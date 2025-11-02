@@ -32,6 +32,7 @@
 #define SYS_wait4       61
 #define SYS_waitpid     61
 #define SYS_kill        62
+#define SYS_uname       63
 #define SYS_sigaction   13
 #define SYS_sigprocmask 14
 #define SYS_truncate    76

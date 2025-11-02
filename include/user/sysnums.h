@@ -43,6 +43,7 @@
 #define SYS_fchown      93
 #define SYS_flock       73
 #define SYS_unlink      87
+#define SYS_symlink     88
 #define SYS_readlink    89
 #define SYS_connect     53
 #define SYS_sendto      44

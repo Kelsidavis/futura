@@ -1105,8 +1105,21 @@ int chrdev_alloc_fd(const struct fut_file_ops *ops, void *inode, void *priv) {
     file->chr_ops = ops;
     file->chr_inode = inode;
     file->chr_private = priv;
+    file->fd_flags = 0;  /* No close-on-exec for device files by default */
 
-    int fd = alloc_fd(file);
+    /* Get current task for per-task FD allocation */
+    extern fut_task_t *fut_task_current(void);
+    fut_task_t *task = fut_task_current();
+
+    int fd;
+    if (task && task->fd_table) {
+        /* Allocate FD in current task's FD table */
+        fd = alloc_fd_for_task(task, file);
+    } else {
+        /* Fallback to global allocation (shouldn't happen in normal operation) */
+        fd = alloc_fd(file);
+    }
+
     if (fd < 0) {
         fut_free(file);
         return fd;

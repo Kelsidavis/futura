@@ -2,6 +2,7 @@
 
 #pragma once
 
+#include <stddef.h>
 #include <stdint.h>
 #include <shared/fut_timespec.h>
 #include <user/sysnums.h>
@@ -258,6 +259,10 @@ static inline long sys_chmod_call(const char *path, long mode) {
 
 static inline long sys_fchmod_call(long fd, long mode) {
     return sys_call2(SYS_fchmod, fd, mode);
+}
+
+static inline long sys_chown_call(const char *path, long uid, long gid) {
+    return sys_call3(SYS_chown, (long)path, uid, gid);
 }
 
 static inline long sys_access_call(const char *path, long mode) {

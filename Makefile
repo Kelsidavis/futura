@@ -362,6 +362,7 @@ KERNEL_SOURCES := \
     kernel/sys_rename.c \
     kernel/sys_chmod.c \
     kernel/sys_fchmod.c \
+    kernel/sys_chown.c \
     kernel/sys_truncate.c \
     kernel/sys_fcntl.c \
     kernel/sys_flock.c \

@@ -53,6 +53,7 @@
 #define SYS_pipe        22
 #define SYS_select      23
 #define SYS_sched_yield 24
+#define SYS_mremap      25
 #define SYS_dup         32
 #define SYS_dup2        33
 #define SYS_pause       34
@@ -637,6 +638,15 @@ static int64_t sys_mprotect_handler(uint64_t addr, uint64_t len, uint64_t prot,
     (void)arg4; (void)arg5; (void)arg6;
     extern long sys_mprotect(void *addr, size_t len, int prot);
     return sys_mprotect((void *)addr, (size_t)len, (int)prot);
+}
+
+static int64_t sys_mremap_handler(uint64_t old_addr, uint64_t old_size, uint64_t new_size,
+                                  uint64_t flags, uint64_t new_addr, uint64_t arg6) {
+    (void)arg6;
+    extern long sys_mremap(void *old_address, size_t old_size, size_t new_size,
+                           int flags, void *new_address);
+    return sys_mremap((void *)old_addr, (size_t)old_size, (size_t)new_size,
+                      (int)flags, (void *)new_addr);
 }
 
 /* Directory operations */
@@ -1662,6 +1672,7 @@ static syscall_handler_t syscall_table[MAX_SYSCALL] = {
     [SYS_pipe]       = sys_pipe_handler,
     [SYS_select]     = sys_select_handler,
     [SYS_sched_yield] = sys_sched_yield_handler,
+    [SYS_mremap]     = sys_mremap_handler,
     [SYS_dup]        = sys_dup_handler,
     [SYS_dup2]       = sys_dup2_handler,
     [SYS_pause]      = sys_pause_handler,

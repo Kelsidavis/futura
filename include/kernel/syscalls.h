@@ -62,6 +62,7 @@ long sys_brk(uintptr_t new_break);
 long sys_mmap(void *addr, size_t len, int prot, int flags, int fd, long offset);
 long sys_munmap(void *addr, size_t len);
 long sys_mprotect(void *addr, size_t len, int prot);
+long sys_mremap(void *old_address, size_t old_size, size_t new_size, int flags, void *new_address);
 long sys_exit(int status);
 long sys_waitpid(int pid, int *u_status, int flags);
 long sys_nanosleep(const fut_timespec_t *u_req, fut_timespec_t *u_rem);

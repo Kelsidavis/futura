@@ -399,6 +399,7 @@ KERNEL_SOURCES := \
     kernel/sys_brk.c \
     kernel/sys_mmap.c \
     kernel/sys_mprotect.c \
+    kernel/sys_mremap.c \
     kernel/sys_nanosleep.c \
     kernel/sys_time.c \
     kernel/sys_chdir.c \

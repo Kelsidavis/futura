@@ -26,6 +26,7 @@
 #define MAP_PRIVATE     0x02
 #define MAP_FIXED       0x10
 #define MAP_ANONYMOUS   0x20
+#define MAP_POPULATE    0x8000  /* Populate (prefault) page tables */
 
 /* Helper: Convert hex nibble to character (manual hex formatting) */
 static char hex_to_char(int nibble) {
@@ -188,6 +189,10 @@ long sys_mmap(void *addr, size_t len, int prot, int flags, int fd, long offset) 
         fixed_hint = "kernel places mapping";
     }
 
+    /* Phase 3: Check for MAP_POPULATE */
+    int populate = (flags & MAP_POPULATE) != 0;
+    const char *populate_hint = populate ? "MAP_POPULATE (prefault pages)" : "lazy allocation";
+
     /* Phase 2: Categorize FD */
     const char *fd_category = NULL;
     if (!(flags & MAP_ANONYMOUS)) {
@@ -213,18 +218,18 @@ long sys_mmap(void *addr, size_t len, int prot, int flags, int fd, long offset) 
         fut_task_t *task = fut_task_current();
         if (!task) {
             fut_printf("[MMAP] mmap(addr=%s [%s], len=%zu [%s], prot=%s, "
-                       "flags=0x%x [%s, %s, %s]) -> EPERM (no task)\n",
+                       "flags=0x%x [%s, %s, %s, %s]) -> EPERM (no task)\n",
                        addr_hex, addr_category, len, length_category, prot_str,
-                       flags, sharing_type, backing_type, fixed_hint);
+                       flags, sharing_type, backing_type, fixed_hint, populate_hint);
             return -EPERM;
         }
 
         fut_mm_t *mm = fut_task_get_mm(task);
         if (!mm) {
             fut_printf("[MMAP] mmap(addr=%s [%s], len=%zu [%s], prot=%s, "
-                       "flags=0x%x [%s, %s, %s], pid=%u) -> ENOMEM (no MM)\n",
+                       "flags=0x%x [%s, %s, %s, %s], pid=%u) -> ENOMEM (no MM)\n",
                        addr_hex, addr_category, len, length_category, prot_str,
-                       flags, sharing_type, backing_type, fixed_hint,
+                       flags, sharing_type, backing_type, fixed_hint, populate_hint,
                        task->pid);
             return -ENOMEM;
         }
@@ -246,23 +251,29 @@ long sys_mmap(void *addr, size_t len, int prot, int flags, int fd, long offset) 
             }
 
             fut_printf("[MMAP] mmap(addr=%s [%s], len=%zu [%s], prot=%s, "
-                       "flags=0x%x [%s, %s, %s], pid=%u) -> %d (%s)\n",
+                       "flags=0x%x [%s, %s, %s, %s], pid=%u) -> %d (%s)\n",
                        addr_hex, addr_category, len, length_category, prot_str,
-                       flags, sharing_type, backing_type, fixed_hint,
+                       flags, sharing_type, backing_type, fixed_hint, populate_hint,
                        task->pid, err, error_desc);
             return (long)(intptr_t)res;
         }
 
-        /* Phase 2: Detailed success logging */
+        /* Phase 3: Detailed success logging with MAP_POPULATE awareness */
         char result_hex[32];
         format_address_hex((uintptr_t)res, result_hex, sizeof(result_hex));
 
+        const char *phase_note;
+        if (populate) {
+            phase_note = "anonymous mapping created, MAP_POPULATE noted (pages lazy-loaded in Phase 3), Phase 3";
+        } else {
+            phase_note = "anonymous mapping created, Phase 3";
+        }
+
         fut_printf("[MMAP] mmap(addr=%s [%s], len=%zu [%s], prot=%s, "
-                   "flags=0x%x [%s, %s, %s], pid=%u) -> %s "
-                   "(anonymous mapping created, Phase 2)\n",
+                   "flags=0x%x [%s, %s, %s, %s], pid=%u) -> %s (%s)\n",
                    addr_hex, addr_category, len, length_category, prot_str,
-                   flags, sharing_type, backing_type, fixed_hint,
-                   task->pid, result_hex);
+                   flags, sharing_type, backing_type, fixed_hint, populate_hint,
+                   task->pid, result_hex, phase_note);
 
         return (long)(intptr_t)res;
     }
@@ -271,10 +282,10 @@ long sys_mmap(void *addr, size_t len, int prot, int flags, int fd, long offset) 
     fut_task_t *task = fut_task_current();
     if (!task) {
         fut_printf("[MMAP] mmap(addr=%s [%s], len=%zu [%s], prot=%s, "
-                   "flags=0x%x [%s, %s, %s], fd=%d [%s], offset=%ld) -> EPERM "
+                   "flags=0x%x [%s, %s, %s, %s], fd=%d [%s], offset=%ld) -> EPERM "
                    "(no task)\n",
                    addr_hex, addr_category, len, length_category, prot_str,
-                   flags, sharing_type, backing_type, fixed_hint,
+                   flags, sharing_type, backing_type, fixed_hint, populate_hint,
                    fd, fd_category, offset);
         return -EPERM;
     }
@@ -282,24 +293,30 @@ long sys_mmap(void *addr, size_t len, int prot, int flags, int fd, long offset) 
     void *mapped = fut_vfs_mmap(fd, addr, len, prot, flags, (off_t)offset);
     if (!mapped) {
         fut_printf("[MMAP] mmap(addr=%s [%s], len=%zu [%s], prot=%s, "
-                   "flags=0x%x [%s, %s, %s], fd=%d [%s], offset=%ld, pid=%u) -> ENOMEM "
+                   "flags=0x%x [%s, %s, %s, %s], fd=%d [%s], offset=%ld, pid=%u) -> ENOMEM "
                    "(file mapping failed)\n",
                    addr_hex, addr_category, len, length_category, prot_str,
-                   flags, sharing_type, backing_type, fixed_hint,
+                   flags, sharing_type, backing_type, fixed_hint, populate_hint,
                    fd, fd_category, offset, task->pid);
         return -ENOMEM;
     }
 
-    /* Phase 2: Detailed success logging for file-backed mapping */
+    /* Phase 3: Detailed success logging for file-backed mapping with MAP_POPULATE awareness */
     char result_hex[32];
     format_address_hex((uintptr_t)mapped, result_hex, sizeof(result_hex));
 
+    const char *phase_note_file;
+    if (populate) {
+        phase_note_file = "file mapping created, MAP_POPULATE noted (pages lazy-loaded in Phase 3), Phase 3";
+    } else {
+        phase_note_file = "file mapping created, Phase 3";
+    }
+
     fut_printf("[MMAP] mmap(addr=%s [%s], len=%zu [%s], prot=%s, "
-               "flags=0x%x [%s, %s, %s], fd=%d [%s], offset=%ld, pid=%u) -> %s "
-               "(file mapping created, Phase 2)\n",
+               "flags=0x%x [%s, %s, %s, %s], fd=%d [%s], offset=%ld, pid=%u) -> %s (%s)\n",
                addr_hex, addr_category, len, length_category, prot_str,
-               flags, sharing_type, backing_type, fixed_hint,
-               fd, fd_category, offset, task->pid, result_hex);
+               flags, sharing_type, backing_type, fixed_hint, populate_hint,
+               fd, fd_category, offset, task->pid, result_hex, phase_note_file);
 
     return (long)(intptr_t)mapped;
 }

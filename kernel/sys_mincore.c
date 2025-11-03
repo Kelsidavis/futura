@@ -65,10 +65,11 @@ extern int fut_copy_to_user(void *to, const void *from, size_t size);
  *   if (vec[1] & 1) { printf("Page 1 is resident\n"); }
  *   // etc.
  *
- * Phase 1 (Current): Validates parameters, returns all pages resident
- * Phase 2: Check page table entries for present bit
- * Phase 3: Distinguish file-backed vs anonymous pages
- * Phase 4: Support swap tracking (pages swapped out)
+ * Phase 1 (Completed): Validates parameters, returns all pages resident
+ * Phase 2 (Current): Validate VMA coverage and return residency
+ * Phase 3: Check page table entries for present bit
+ * Phase 4: Distinguish file-backed vs anonymous pages
+ * Phase 5: Support swap tracking (pages swapped out)
  *
  * Common use cases:
  *
@@ -197,15 +198,66 @@ long sys_mincore(void *addr, size_t length, unsigned char *vec) {
     size_t num_pages = (length + PAGE_SIZE - 1) / PAGE_SIZE;
     size_t aligned_len = num_pages * PAGE_SIZE;
 
-    /* Phase 1: Return all pages as resident (stub)
-     * Allocate temporary buffer to hold residency info */
+    /* Phase 2: Validate VMA coverage */
+    fut_mm_t *mm = fut_task_get_mm(task);
+    if (!mm) {
+        fut_printf("[MINCORE] mincore(%p, %zu, %p) -> ENOMEM (no MM context)\n",
+                   addr, length, vec);
+        return -ENOMEM;
+    }
+
+    /* Check if address range is covered by VMAs */
+    uintptr_t start = (uintptr_t)addr;
+    uintptr_t end = start + aligned_len;
+    size_t mapped_pages = 0;
+
+    /* Iterate through VMA list to find coverage */
+    struct fut_vma *vma = mm->vma_list;
+    while (vma) {
+        /* Check if this VMA overlaps with our range */
+        if (vma->start < end && vma->end > start) {
+            /* Calculate overlap */
+            uintptr_t overlap_start = (vma->start > start) ? vma->start : start;
+            uintptr_t overlap_end = (vma->end < end) ? vma->end : end;
+            size_t overlap_pages = (overlap_end - overlap_start) / PAGE_SIZE;
+            mapped_pages += overlap_pages;
+        }
+        vma = vma->next;
+    }
+
+    /* Check if entire range is mapped */
+    if (mapped_pages < num_pages) {
+        fut_printf("[MINCORE] mincore(%p, %zu, %p) -> ENOMEM (range not fully mapped: %zu/%zu pages)\n",
+                   addr, aligned_len, vec, mapped_pages, num_pages);
+        return -ENOMEM;
+    }
+
+    /* Allocate temporary buffer to hold residency info */
     unsigned char *kernel_vec = (unsigned char *)__builtin_alloca(num_pages);
     if (!kernel_vec) {
         return -ENOMEM;
     }
 
-    /* Phase 1: Mark all pages as resident (bit 0 = 1) */
-    memset(kernel_vec, 0x01, num_pages);
+    /* Phase 2: Mark pages as resident if in mapped VMA
+     * For now, all pages in valid VMAs are considered resident.
+     * Phase 3 will check actual PTE present bits. */
+    uintptr_t page_addr = start;
+    for (size_t i = 0; i < num_pages; i++, page_addr += PAGE_SIZE) {
+        int page_resident = 0;
+
+        /* Find VMA covering this page */
+        vma = mm->vma_list;
+        while (vma) {
+            if (page_addr >= vma->start && page_addr < vma->end) {
+                /* Page is in a VMA, consider it resident */
+                page_resident = 1;
+                break;
+            }
+            vma = vma->next;
+        }
+
+        kernel_vec[i] = page_resident ? 0x01 : 0x00;
+    }
 
     /* Copy result to userspace */
     if (fut_copy_to_user(vec, kernel_vec, num_pages) != 0) {
@@ -214,24 +266,12 @@ long sys_mincore(void *addr, size_t length, unsigned char *vec) {
         return -EFAULT;
     }
 
-    fut_printf("[MINCORE] mincore(%p, %zu, %p) -> 0 (%zu pages, stub - all resident)\n",
+    fut_printf("[MINCORE] mincore(%p, %zu, %p) -> 0 (%zu pages, Phase 2: VMA validated)\n",
                addr, aligned_len, vec, num_pages);
 
-    /* Phase 2-4 implementation:
+    /* Phase 3-5 future implementation (check actual page table entries):
      *
-     * fut_mm_t *mm = fut_task_get_mm(task);
-     * if (!mm) {
-     *     return -ENOMEM;
-     * }
-     *
-     * // Validate address range is mapped
-     * struct fut_vma *vma = fut_mm_find_vma(mm, (uintptr_t)addr);
-     * if (!vma || vma->start > (uintptr_t)addr ||
-     *     vma->end < (uintptr_t)addr + aligned_len) {
-     *     return -ENOMEM;  // Not fully mapped
-     * }
-     *
-     * // Check each page
+     * // Check each page's PTE present bit
      * uintptr_t current_addr = (uintptr_t)addr;
      * for (size_t i = 0; i < num_pages; i++, current_addr += PAGE_SIZE) {
      *     // Look up page table entry

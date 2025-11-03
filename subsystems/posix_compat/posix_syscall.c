@@ -54,6 +54,7 @@
 #define SYS_select      23
 #define SYS_sched_yield 24
 #define SYS_mremap      25
+#define SYS_msync       26
 #define SYS_dup         32
 #define SYS_dup2        33
 #define SYS_pause       34
@@ -647,6 +648,13 @@ static int64_t sys_mremap_handler(uint64_t old_addr, uint64_t old_size, uint64_t
                            int flags, void *new_address);
     return sys_mremap((void *)old_addr, (size_t)old_size, (size_t)new_size,
                       (int)flags, (void *)new_addr);
+}
+
+static int64_t sys_msync_handler(uint64_t addr, uint64_t length, uint64_t flags,
+                                 uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg4; (void)arg5; (void)arg6;
+    extern long sys_msync(void *addr, size_t length, int flags);
+    return sys_msync((void *)addr, (size_t)length, (int)flags);
 }
 
 /* Directory operations */
@@ -1673,6 +1681,7 @@ static syscall_handler_t syscall_table[MAX_SYSCALL] = {
     [SYS_select]     = sys_select_handler,
     [SYS_sched_yield] = sys_sched_yield_handler,
     [SYS_mremap]     = sys_mremap_handler,
+    [SYS_msync]      = sys_msync_handler,
     [SYS_dup]        = sys_dup_handler,
     [SYS_dup2]       = sys_dup2_handler,
     [SYS_pause]      = sys_pause_handler,

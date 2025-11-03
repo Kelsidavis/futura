@@ -8,6 +8,7 @@
 #define SYS_close       3
 #define SYS_stat        4
 #define SYS_fstat       5
+#define SYS_lstat       6
 #define SYS_poll        7
 #define SYS_access      21
 #define SYS_lseek       8

@@ -34,6 +34,7 @@
 #define AT_FDCWD        -100
 #define SYS_stat        4
 #define SYS_fstat       5
+#define SYS_lstat       6
 #define SYS_poll        7
 #define SYS_lseek       8
 #ifndef SYS_mmap
@@ -461,6 +462,13 @@ static int64_t sys_fstat_handler(uint64_t fd, uint64_t statbuf, uint64_t arg3,
 
     /* Use kernel sys_fstat for regular files */
     return sys_fstat((int)fd, (struct fut_stat *)statbuf);
+}
+
+static int64_t sys_lstat_handler(uint64_t pathname, uint64_t statbuf, uint64_t arg3,
+                                  uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg3; (void)arg4; (void)arg5; (void)arg6;
+    extern long sys_lstat(const char *path, struct fut_stat *statbuf);
+    return sys_lstat((const char *)pathname, (struct fut_stat *)statbuf);
 }
 
 /* Process management */
@@ -1628,6 +1636,7 @@ static syscall_handler_t syscall_table[MAX_SYSCALL] = {
     [SYS_close]      = sys_close_handler,
     [SYS_stat]       = sys_stat_handler,
     [SYS_fstat]      = sys_fstat_handler,
+    [SYS_lstat]      = sys_lstat_handler,
     [SYS_poll]       = sys_poll_handler,
     [SYS_access]     = sys_access_handler,
     [SYS_lseek]      = sys_lseek_handler,

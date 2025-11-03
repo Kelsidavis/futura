@@ -57,18 +57,29 @@ struct pollfd {
  *   - Sets revents field for each FD based on actual events
  *   - For now, implements basic stub returning immediate readiness
  *
- * Phase 1 (Current): Stub implementation - returns all FDs as ready
- * Phase 2: Check actual FD readiness via VFS layer
- * Phase 3: Add blocking support with wait queues
- * Phase 4: Integrate with epoll for efficient event notification
+ * Phase 1 (Completed): Stub implementation - returns all FDs as ready
+ * Phase 2 (Current): Enhanced validation and detailed event reporting
+ * Phase 3: Check actual FD readiness via VFS layer
+ * Phase 4: Add blocking support with wait queues
+ * Phase 5: Integrate with epoll for efficient event notification
  */
 long sys_poll(struct pollfd *fds, unsigned long nfds, int timeout) {
-    if (!fds) {
+    /* Phase 2: Enhanced validation */
+    if (!fds && nfds > 0) {
+        fut_printf("[POLL] poll(NULL, %lu, %d) -> EFAULT (fds is NULL)\n", nfds, timeout);
         return -EFAULT;
+    }
+
+    /* nfds == 0 is valid (wait for timeout only) */
+    if (nfds == 0) {
+        fut_printf("[POLL] poll(fds, 0, %d) -> 0 (no FDs to monitor, Phase 2: timeout only)\n", timeout);
+        /* Phase 3+ would sleep for timeout milliseconds */
+        return 0;
     }
 
     /* Reasonable limit on number of file descriptors */
     if (nfds > 1024) {
+        fut_printf("[POLL] poll(fds, %lu, %d) -> EINVAL (nfds exceeds limit of 1024)\n", nfds, timeout);
         return -EINVAL;
     }
 
@@ -76,31 +87,45 @@ long sys_poll(struct pollfd *fds, unsigned long nfds, int timeout) {
     size_t size = nfds * sizeof(struct pollfd);
     struct pollfd *kfds = fut_malloc(size);
     if (!kfds) {
+        fut_printf("[POLL] poll(fds, %lu, %d) -> ENOMEM (allocation failed)\n", nfds, timeout);
         return -ENOMEM;
     }
 
     /* Copy pollfd array from userspace */
     if (fut_copy_from_user(kfds, fds, size) != 0) {
         fut_free(kfds);
+        fut_printf("[POLL] poll(fds, %lu, %d) -> EFAULT (copy_from_user failed)\n", nfds, timeout);
         return -EFAULT;
     }
 
     fut_task_t *task = fut_task_current();
     if (!task || !task->fd_table) {
         fut_free(kfds);
+        fut_printf("[POLL] poll(fds, %lu, %d) -> ESRCH (no task or fd_table)\n", nfds, timeout);
         return -ESRCH;
     }
 
+    /* Phase 2: Track event statistics */
     int ready_count = 0;
+    int invalid_count = 0;
+    int pollin_requested = 0;
+    int pollout_requested = 0;
+    int pollpri_requested = 0;
 
     /* Check each file descriptor */
     for (unsigned long i = 0; i < nfds; i++) {
         kfds[i].revents = 0;  /* Clear returned events */
 
+        /* Track requested events */
+        if (kfds[i].events & POLLIN) pollin_requested++;
+        if (kfds[i].events & POLLOUT) pollout_requested++;
+        if (kfds[i].events & POLLPRI) pollpri_requested++;
+
         /* Check if FD is valid */
         if (kfds[i].fd < 0 || kfds[i].fd >= task->max_fds) {
             kfds[i].revents = POLLNVAL;
             ready_count++;
+            invalid_count++;
             continue;
         }
 
@@ -108,11 +133,12 @@ long sys_poll(struct pollfd *fds, unsigned long nfds, int timeout) {
         if (!file) {
             kfds[i].revents = POLLNVAL;
             ready_count++;
+            invalid_count++;
             continue;
         }
 
-        /* Stub implementation: assume all valid FDs are ready for requested events
-         * Phase 2 would check actual readiness via VFS/driver layer
+        /* Phase 2: Still assumes all valid FDs are ready for requested events
+         * Phase 3 would check actual readiness via VFS/driver layer
          */
         if (kfds[i].events & POLLIN) {
             kfds[i].revents |= POLLIN;
@@ -132,13 +158,27 @@ long sys_poll(struct pollfd *fds, unsigned long nfds, int timeout) {
     /* Copy results back to userspace */
     if (fut_copy_to_user(fds, kfds, size) != 0) {
         fut_free(kfds);
+        fut_printf("[POLL] poll(fds, %lu, %d) -> EFAULT (copy_to_user failed)\n", nfds, timeout);
         return -EFAULT;
     }
 
     fut_free(kfds);
 
-    fut_printf("[POLL] poll(nfds=%lu, timeout=%d) -> %d ready (stub)\n",
-               nfds, timeout, ready_count);
+    /* Phase 2: Detailed logging with event breakdown */
+    const char *timeout_desc = (timeout < 0) ? "infinite" :
+                               (timeout == 0) ? "immediate" : "timed";
+
+    if (invalid_count > 0) {
+        fut_printf("[POLL] poll(nfds=%lu, timeout=%d ms [%s]) -> %d ready (%d invalid, "
+                   "requested: %dxIN %dxOUT %dxPRI, Phase 2: enhanced)\n",
+                   nfds, timeout, timeout_desc, ready_count, invalid_count,
+                   pollin_requested, pollout_requested, pollpri_requested);
+    } else {
+        fut_printf("[POLL] poll(nfds=%lu, timeout=%d ms [%s]) -> %d ready "
+                   "(requested: %dxIN %dxOUT %dxPRI, Phase 2: enhanced)\n",
+                   nfds, timeout, timeout_desc, ready_count,
+                   pollin_requested, pollout_requested, pollpri_requested);
+    }
 
     return ready_count;
 }

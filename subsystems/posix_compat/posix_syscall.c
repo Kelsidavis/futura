@@ -53,6 +53,7 @@
 #define SYS_sched_yield 24
 #define SYS_dup         32
 #define SYS_dup2        33
+#define SYS_alarm       37
 #define SYS_fcntl       72
 #define SYS_flock       73
 #define SYS_fsync       74
@@ -491,6 +492,13 @@ static int64_t sys_nanosleep_handler(uint64_t req, uint64_t rem, uint64_t arg3,
     (void)arg3; (void)arg4; (void)arg5; (void)arg6;
     return (int64_t)sys_nanosleep((const fut_timespec_t *)(uintptr_t)req,
                                   (fut_timespec_t *)(uintptr_t)rem);
+}
+
+static int64_t sys_alarm_handler(uint64_t seconds, uint64_t arg2, uint64_t arg3,
+                                  uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg2; (void)arg3; (void)arg4; (void)arg5; (void)arg6;
+    extern long sys_alarm(unsigned int seconds);
+    return sys_alarm((unsigned int)seconds);
 }
 
 static int64_t sys_sched_yield_handler(uint64_t arg1, uint64_t arg2, uint64_t arg3,
@@ -1614,6 +1622,7 @@ static syscall_handler_t syscall_table[MAX_SYSCALL] = {
     [SYS_sched_yield] = sys_sched_yield_handler,
     [SYS_dup]        = sys_dup_handler,
     [SYS_dup2]       = sys_dup2_handler,
+    [SYS_alarm]      = sys_alarm_handler,
     [SYS_fcntl]      = sys_fcntl_handler,
     [SYS_flock]      = sys_flock_handler,
     [SYS_fsync]      = sys_fsync_handler,

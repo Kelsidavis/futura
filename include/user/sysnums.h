@@ -23,6 +23,7 @@
 #define SYS_dup         32
 #define SYS_dup2        33
 #define SYS_nanosleep   35
+#define SYS_alarm       37
 #define SYS_echo        42
 #define SYS_socket      41
 #define SYS_bind        49

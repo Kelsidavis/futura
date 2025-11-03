@@ -40,6 +40,7 @@
 #ifndef SYS_mmap
 #define SYS_mmap        9
 #endif
+#define SYS_mprotect    10
 #ifndef SYS_munmap
 #define SYS_munmap      11
 #endif
@@ -629,6 +630,13 @@ static int64_t sys_munmap_handler(uint64_t addr, uint64_t len, uint64_t arg3,
                                   uint64_t arg4, uint64_t arg5, uint64_t arg6) {
     (void)arg3; (void)arg4; (void)arg5; (void)arg6;
     return sys_munmap((void *)addr, (size_t)len);
+}
+
+static int64_t sys_mprotect_handler(uint64_t addr, uint64_t len, uint64_t prot,
+                                    uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg4; (void)arg5; (void)arg6;
+    extern long sys_mprotect(void *addr, size_t len, int prot);
+    return sys_mprotect((void *)addr, (size_t)len, (int)prot);
 }
 
 /* Directory operations */
@@ -1647,6 +1655,7 @@ static syscall_handler_t syscall_table[MAX_SYSCALL] = {
     [SYS_nanosleep]  = sys_nanosleep_handler,
     [SYS_brk]        = sys_brk_handler,
     [SYS_munmap]     = sys_munmap_handler,
+    [SYS_mprotect]   = sys_mprotect_handler,
     [SYS_echo]       = sys_echo_handler,
     [SYS_ioctl]      = sys_ioctl_handler,
     [SYS_mmap]       = sys_mmap_handler,

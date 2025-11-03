@@ -13,6 +13,7 @@
 #define SYS_access      21
 #define SYS_lseek       8
 #define SYS_mmap        9
+#define SYS_mprotect    10
 #define SYS_munmap      11
 #define SYS_brk         12
 #define SYS_ioctl       16

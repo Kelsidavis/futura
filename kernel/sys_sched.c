@@ -80,43 +80,70 @@ long sys_sched_yield(void) {
  * Note: The return value is 20 - nice_value to avoid confusion with errors,
  *       since nice values can be negative. Use errno to distinguish errors.
  *
- * Phase 1 (Current): Returns default priority (0) for calling process
- * Phase 2: Store per-task nice value and return actual priority
- * Phase 3: Support PRIO_PGRP and PRIO_USER with process/user lookups
+ * Phase 1 (Completed): Returns default priority (0) for calling process
+ * Phase 2 (Current): Enhanced validation and priority type reporting
+ * Phase 3: Store per-task nice value and return actual priority
+ * Phase 4: Support PRIO_PGRP and PRIO_USER with process/user lookups
  */
 long sys_getpriority(int which, int who) {
     fut_task_t *task = fut_task_current();
     if (!task) {
+        fut_printf("[SCHED] getpriority(which=%d, who=%d) -> ESRCH (no current task)\n", which, who);
         return -ESRCH;
     }
 
-    /* Validate 'which' parameter */
-    if (which < PRIO_PROCESS || which > PRIO_USER) {
-        fut_printf("[SCHED] getpriority: invalid which=%d\n", which);
-        return -EINVAL;
+    /* Phase 2: Identify priority type for logging */
+    const char *which_desc;
+    const char *target_desc;
+
+    switch (which) {
+        case PRIO_PROCESS:
+            which_desc = "PRIO_PROCESS";
+            target_desc = "process";
+            break;
+        case PRIO_PGRP:
+            which_desc = "PRIO_PGRP";
+            target_desc = "process group";
+            break;
+        case PRIO_USER:
+            which_desc = "PRIO_USER";
+            target_desc = "user";
+            break;
+        default:
+            fut_printf("[SCHED] getpriority(which=%d, who=%d) -> EINVAL (invalid which parameter)\n",
+                       which, who);
+            return -EINVAL;
     }
 
-    /* Phase 1: Only support PRIO_PROCESS for calling process */
+    /* Phase 2: Only support PRIO_PROCESS for calling process */
     if (which == PRIO_PROCESS) {
+        /* Determine effective PID */
+        int effective_pid = (who == 0) ? (int)task->pid : who;
+
         if (who != 0 && who != (int)task->pid) {
             /* Querying other process - not yet supported */
-            fut_printf("[SCHED] getpriority: querying pid=%d not supported (Phase 2)\n", who);
+            fut_printf("[SCHED] getpriority(which=%s [%s], who=%d) -> ESRCH (querying other process not supported, Phase 2)\n",
+                       which_desc, target_desc, who);
             return -ESRCH;
         }
 
         /* Return default priority (0 = normal)
-         * Phase 2 will return task->nice from task structure */
+         * Phase 3 will return task->nice from task structure */
         int nice_value = PRIO_DEFAULT;
-
-        fut_printf("[SCHED] getpriority(PRIO_PROCESS, %d) -> nice=%d\n", who, nice_value);
 
         /* Return 20 - nice_value to avoid confusion with negative nice values
          * This means: return value of 20 = nice -20 (highest priority)
          *            return value of 0  = nice 20  (lowest priority) */
-        return 20 - nice_value;
+        int return_value = 20 - nice_value;
+
+        fut_printf("[SCHED] getpriority(which=%s [%s], who=%d [pid=%d]) -> %d (nice=%d, Phase 2: default)\n",
+                   which_desc, target_desc, who, effective_pid, return_value, nice_value);
+
+        return return_value;
     } else {
         /* PRIO_PGRP and PRIO_USER not yet implemented */
-        fut_printf("[SCHED] getpriority: which=%d not yet supported (Phase 3)\n", which);
+        fut_printf("[SCHED] getpriority(which=%s [%s], who=%d) -> EINVAL (not yet supported, Phase 4)\n",
+                   which_desc, target_desc, who);
         return -EINVAL;
     }
 }
@@ -138,47 +165,86 @@ long sys_getpriority(int which, int who) {
  *   - -EACCES if trying to decrease nice without privilege
  *   - -EPERM if trying to modify other user's processes
  *
- * Phase 1 (Current): Validates parameters but doesn't store value
- * Phase 2: Store nice value in task structure and apply to scheduler
- * Phase 3: Implement privilege checking and PRIO_PGRP/PRIO_USER support
+ * Phase 1 (Completed): Validates parameters but doesn't store value
+ * Phase 2 (Current): Enhanced validation and priority range reporting
+ * Phase 3: Store nice value in task structure and apply to scheduler
+ * Phase 4: Implement privilege checking and PRIO_PGRP/PRIO_USER support
  */
 long sys_setpriority(int which, int who, int prio) {
     fut_task_t *task = fut_task_current();
     if (!task) {
+        fut_printf("[SCHED] setpriority(which=%d, who=%d, prio=%d) -> ESRCH (no current task)\n",
+                   which, who, prio);
         return -ESRCH;
     }
 
-    /* Validate 'which' parameter */
-    if (which < PRIO_PROCESS || which > PRIO_USER) {
-        fut_printf("[SCHED] setpriority: invalid which=%d\n", which);
-        return -EINVAL;
+    /* Phase 2: Identify priority type for logging */
+    const char *which_desc;
+    const char *target_desc;
+
+    switch (which) {
+        case PRIO_PROCESS:
+            which_desc = "PRIO_PROCESS";
+            target_desc = "process";
+            break;
+        case PRIO_PGRP:
+            which_desc = "PRIO_PGRP";
+            target_desc = "process group";
+            break;
+        case PRIO_USER:
+            which_desc = "PRIO_USER";
+            target_desc = "user";
+            break;
+        default:
+            fut_printf("[SCHED] setpriority(which=%d, who=%d, prio=%d) -> EINVAL (invalid which parameter)\n",
+                       which, who, prio);
+            return -EINVAL;
     }
 
     /* Validate priority range */
     if (prio < PRIO_MIN || prio > PRIO_MAX) {
-        fut_printf("[SCHED] setpriority: priority %d out of range [%d, %d]\n",
-                   prio, PRIO_MIN, PRIO_MAX);
+        fut_printf("[SCHED] setpriority(which=%s [%s], who=%d, prio=%d) -> EINVAL (prio out of range [%d, %d])\n",
+                   which_desc, target_desc, who, prio, PRIO_MIN, PRIO_MAX);
         return -EINVAL;
     }
 
-    /* Phase 1: Only support PRIO_PROCESS for calling process */
+    /* Determine priority description */
+    const char *prio_desc;
+    if (prio < -10) {
+        prio_desc = "very high priority";
+    } else if (prio < 0) {
+        prio_desc = "high priority";
+    } else if (prio == 0) {
+        prio_desc = "normal priority";
+    } else if (prio < 10) {
+        prio_desc = "low priority";
+    } else {
+        prio_desc = "very low priority";
+    }
+
+    /* Phase 2: Only support PRIO_PROCESS for calling process */
     if (which == PRIO_PROCESS) {
+        /* Determine effective PID */
+        int effective_pid = (who == 0) ? (int)task->pid : who;
+
         if (who != 0 && who != (int)task->pid) {
             /* Modifying other process - not yet supported */
-            fut_printf("[SCHED] setpriority: modifying pid=%d not supported (Phase 2)\n", who);
+            fut_printf("[SCHED] setpriority(which=%s [%s], who=%d, prio=%d) -> ESRCH (modifying other process not supported, Phase 3)\n",
+                       which_desc, target_desc, who, prio);
             return -ESRCH;
         }
 
-        /* Phase 1: Just validate and log, don't actually store
-         * Phase 2 will store: task->nice = prio and update scheduler */
+        /* Phase 2: Just validate and log, don't actually store
+         * Phase 3 will store: task->nice = prio and update scheduler */
 
-        fut_printf("[SCHED] setpriority(PRIO_PROCESS, %d, nice=%d) -> success (stub)\n",
-                   who, prio);
+        fut_printf("[SCHED] setpriority(which=%s [%s], who=%d [pid=%d], prio=%d [%s]) -> 0 (Phase 2: validated, not applied)\n",
+                   which_desc, target_desc, who, effective_pid, prio, prio_desc);
 
         return 0;
     } else {
         /* PRIO_PGRP and PRIO_USER not yet implemented */
-        fut_printf("[SCHED] setpriority: which=%d not yet supported (Phase 3)\n", which);
+        fut_printf("[SCHED] setpriority(which=%s [%s], who=%d, prio=%d) -> EINVAL (not yet supported, Phase 4)\n",
+                   which_desc, target_desc, who, prio);
         return -EINVAL;
     }
 }

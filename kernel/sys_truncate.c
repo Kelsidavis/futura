@@ -168,13 +168,63 @@ long sys_truncate(const char *path, uint64_t length) {
         operation = "no-change";
     }
 
-    /* Simple truncation: directly modify vnode size */
+    /*
+     * Phase 3: Call VFS truncate operation if available
+     *
+     * The truncate operation handles:
+     * - Shrinking: Deallocates blocks beyond new size
+     * - Extending: Allocates new blocks and zero-fills them
+     * - Size update: Updates vnode->size in both cases
+     */
+    if (vnode->ops && vnode->ops->truncate) {
+        int ret = vnode->ops->truncate(vnode, length);
+        if (ret < 0) {
+            const char *error_desc;
+            switch (ret) {
+                case -ENOMEM:
+                    error_desc = "out of memory";
+                    break;
+                case -ENOSPC:
+                    error_desc = "no space left on device";
+                    break;
+                case -EROFS:
+                    error_desc = "read-only filesystem";
+                    break;
+                case -EIO:
+                    error_desc = "I/O error";
+                    break;
+                default:
+                    error_desc = "truncate operation failed";
+                    break;
+            }
+            fut_printf("[TRUNCATE] truncate(path='%s' [%s, len=%lu], vnode_ino=%lu, "
+                       "length=%llu [%s], operation=%s) -> %d (%s, Phase 3)\n",
+                       path_buf, path_type, (unsigned long)path_len, vnode->ino,
+                       (unsigned long long)length, length_category, operation,
+                       ret, error_desc);
+            return ret;
+        }
+
+        /* Phase 3: Success - blocks allocated/deallocated and size updated */
+        fut_printf("[TRUNCATE] truncate(path='%s' [%s, len=%lu], vnode_ino=%lu, "
+                   "length=%llu [%s], operation=%s [%llu -> %llu]) "
+                   "-> 0 (blocks allocated/deallocated, Phase 3)\n",
+                   path_buf, path_type, (unsigned long)path_len, vnode->ino,
+                   (unsigned long long)length, length_category, operation,
+                   (unsigned long long)current_size, (unsigned long long)length);
+        return 0;
+    }
+
+    /*
+     * Fallback for filesystems without truncate operation:
+     * Just update the size directly (Phase 2 behavior).
+     * This provides backwards compatibility but doesn't deallocate/allocate blocks.
+     */
     vnode->size = length;
 
-    /* Phase 2: Detailed success logging */
     fut_printf("[TRUNCATE] truncate(path='%s' [%s, len=%lu], vnode_ino=%lu, "
                "length=%llu [%s], operation=%s [%llu -> %llu]) "
-               "-> 0 (size changed, Phase 2)\n",
+               "-> 0 (no truncate operation, size updated only, Phase 3)\n",
                path_buf, path_type, (unsigned long)path_len, vnode->ino,
                (unsigned long long)length, length_category, operation,
                (unsigned long long)current_size, (unsigned long long)length);

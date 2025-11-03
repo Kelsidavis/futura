@@ -198,17 +198,61 @@ long sys_ftruncate(int fd, uint64_t length) {
         delta_category = "very large change (>= 100MB)";
     }
 
-    /* Simple truncation: directly modify vnode size.
-     * For truncating smaller, just update size (Phase 3 will deallocate blocks).
-     * For extending, update size (Phase 3 will allocate and zero blocks).
+    /*
+     * Phase 3: Call VFS truncate operation if available
+     *
+     * The truncate operation handles:
+     * - Shrinking: Deallocates blocks beyond new size
+     * - Extending: Allocates new blocks and zero-fills them
+     * - Size update: Updates vnode->size in both cases
+     */
+    if (vnode->ops && vnode->ops->truncate) {
+        int ret = vnode->ops->truncate(vnode, length);
+        if (ret < 0) {
+            const char *error_desc;
+            switch (ret) {
+                case -ENOMEM:
+                    error_desc = "out of memory";
+                    break;
+                case -ENOSPC:
+                    error_desc = "no space left on device";
+                    break;
+                case -EROFS:
+                    error_desc = "read-only filesystem";
+                    break;
+                case -EIO:
+                    error_desc = "I/O error";
+                    break;
+                default:
+                    error_desc = "truncate operation failed";
+                    break;
+            }
+            fut_printf("[FTRUNCATE] ftruncate(fd=%d [%s], length=%llu [%s], old_size=%llu, "
+                       "delta=%lld [%s], op=%s) -> %d (%s, Phase 3)\n",
+                       fd, fd_category, length, length_category, old_size, size_delta,
+                       delta_category, operation_type, ret, error_desc);
+            return ret;
+        }
+
+        /* Phase 3: Success - blocks allocated/deallocated and size updated */
+        fut_printf("[FTRUNCATE] ftruncate(fd=%d [%s], length=%llu [%s], old_size=%llu, "
+                   "delta=%lld [%s], op=%s) -> 0 (%s, Phase 3)\n",
+                   fd, fd_category, length, length_category, old_size, size_delta,
+                   delta_category, operation_type, operation_desc);
+        return 0;
+    }
+
+    /*
+     * Fallback for filesystems without truncate operation:
+     * Just update the size directly (Phase 2 behavior).
+     * This provides backwards compatibility but doesn't deallocate/allocate blocks.
      */
     vnode->size = length;
 
-    /* Phase 2: Detailed success logging with size change */
     fut_printf("[FTRUNCATE] ftruncate(fd=%d [%s], length=%llu [%s], old_size=%llu, "
-               "delta=%lld [%s], op=%s) -> 0 (%s, Phase 2)\n",
+               "delta=%lld [%s], op=%s) -> 0 (no truncate operation, size updated only, Phase 3)\n",
                fd, fd_category, length, length_category, old_size, size_delta,
-               delta_category, operation_type, operation_desc);
+               delta_category, operation_type);
 
     return 0;
 }

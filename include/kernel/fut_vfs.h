@@ -228,6 +228,24 @@ struct fut_vnode_ops {
      *         -EINVAL: vnode doesn't support syncing (e.g., pipes, sockets)
      */
     int (*sync)(struct fut_vnode *vnode);
+
+    /**
+     * Truncate file to specified size (Phase 3).
+     *
+     * Changes the size of the file. If the new size is smaller than the current
+     * size, the extra data is discarded and backing storage is deallocated.
+     * If the new size is larger, the file is extended and new area is zero-filled.
+     *
+     * @param vnode  VNode to truncate
+     * @param length New file size in bytes
+     * @return 0 on success, negative error code on failure
+     *         -EINVAL: invalid length (e.g., negative) or not a regular file
+     *         -EFBIG: length exceeds maximum file size
+     *         -ENOSPC: insufficient space for extension
+     *         -EROFS: read-only filesystem
+     *         -EIO: I/O error during operation
+     */
+    int (*truncate)(struct fut_vnode *vnode, uint64_t length);
 };
 
 /* ============================================================

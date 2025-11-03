@@ -960,6 +960,86 @@ static int ramfs_sync(struct fut_vnode *vnode) {
     return 0;
 }
 
+/**
+ * ramfs_truncate() - Truncate file to specified size (Phase 3)
+ *
+ * Shrinking: Updates vnode size, data beyond new size becomes inaccessible
+ * Extending: Reallocates buffer if needed, zeros new area, updates size
+ *
+ * @param vnode  VNode to truncate (must be regular file)
+ * @param length New file size in bytes
+ * @return 0 on success, negative error code on failure
+ */
+static int ramfs_truncate(struct fut_vnode *vnode, uint64_t length) {
+    if (!vnode) {
+        return -EINVAL;
+    }
+
+    /* Only regular files can be truncated */
+    if (vnode->type != VN_REG) {
+        return -EINVAL;
+    }
+
+    struct ramfs_node *node = (struct ramfs_node *)vnode->fs_data;
+    if (!node) {
+        return -EINVAL;
+    }
+
+    uint64_t old_size = vnode->size;
+
+    /* Case 1: Shrinking file or no change */
+    if (length <= old_size) {
+        /* Just update the size - keep allocated memory for future growth */
+        vnode->size = length;
+        return 0;
+    }
+
+    /* Case 2: Extending file - need to ensure capacity and zero-fill */
+    size_t new_capacity = (size_t)length;
+
+    /* Reallocate buffer if current capacity is insufficient */
+    if (new_capacity > node->file.capacity) {
+        /* Round up to nearest 4KB for efficiency */
+        size_t rounded_capacity = (new_capacity + 4095) & ~4095;
+
+        uint8_t *new_data = fut_malloc(rounded_capacity);
+        if (!new_data) {
+            return -ENOMEM;
+        }
+
+        /* Copy existing data */
+        if (node->file.data && old_size > 0) {
+            for (uint64_t i = 0; i < old_size; i++) {
+                new_data[i] = node->file.data[i];
+            }
+        }
+
+        /* Zero-fill the extended region */
+        for (uint64_t i = old_size; i < length; i++) {
+            new_data[i] = 0;
+        }
+
+        /* Free old buffer and install new one */
+        if (node->file.data) {
+            fut_free(node->file.data);
+        }
+        node->file.data = new_data;
+        node->file.capacity = rounded_capacity;
+    } else {
+        /* Sufficient capacity exists - just zero-fill extended region */
+        if (node->file.data) {
+            for (uint64_t i = old_size; i < length; i++) {
+                node->file.data[i] = 0;
+            }
+        }
+    }
+
+    /* Update file size */
+    vnode->size = length;
+
+    return 0;
+}
+
 static const struct fut_vnode_ops ramfs_vnode_ops = {
     .open = ramfs_open,
     .close = ramfs_close,
@@ -973,7 +1053,8 @@ static const struct fut_vnode_ops ramfs_vnode_ops = {
     .rmdir = ramfs_rmdir,
     .getattr = ramfs_getattr,
     .setattr = NULL,
-    .sync = ramfs_sync
+    .sync = ramfs_sync,
+    .truncate = ramfs_truncate
 };
 
 /* ============================================================

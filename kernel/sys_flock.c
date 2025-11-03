@@ -14,6 +14,7 @@
 #include <kernel/fut_task.h>
 #include <kernel/errno.h>
 #include <kernel/fut_vfs.h>
+#include <kernel/fut_lock.h>
 #include <stdint.h>
 
 extern void fut_printf(const char *fmt, ...);
@@ -205,20 +206,15 @@ long sys_flock(int fd, int operation) {
     int is_nonblock = (operation & LOCK_NB) != 0;
 
     const char *op_name;
-    const char *lock_type;
 
     if (op == LOCK_SH) {
         op_name = "LOCK_SH";
-        lock_type = "shared (read) lock";
     } else if (op == LOCK_EX) {
         op_name = "LOCK_EX";
-        lock_type = "exclusive (write) lock";
     } else if (op == LOCK_UN) {
         op_name = "LOCK_UN";
-        lock_type = "unlock";
     } else {
         op_name = "INVALID";
-        lock_type = "invalid operation";
     }
 
     /* Validate operation */
@@ -263,50 +259,65 @@ long sys_flock(int fd, int operation) {
         return -EINVAL;
     }
 
-    /* Phase 2: Detailed success logging (no-op in single-process OS) */
-    char msg[256];
-    int pos = 0;
-    const char *text = "[FLOCK] flock(fd=";
-    while (*text) { msg[pos++] = *text++; }
-
-    char num[16]; int num_pos = 0; int val = fd;
-    if (val == 0) { num[num_pos++] = '0'; }
-    else { char temp[16]; int temp_pos = 0;
-        while (val > 0) { temp[temp_pos++] = '0' + (val % 10); val /= 10; }
-        while (temp_pos > 0) { num[num_pos++] = temp[--temp_pos]; } }
-    num[num_pos] = '\0';
-    for (int i = 0; num[i]; i++) { msg[pos++] = num[i]; }
-
-    text = " [";
-    while (*text) { msg[pos++] = *text++; }
-    while (*fd_category) { msg[pos++] = *fd_category++; }
-    text = "], operation=";
-    while (*text) { msg[pos++] = *text++; }
-    while (*op_name) { msg[pos++] = *op_name++; }
-
-    if (is_nonblock) {
-        text = "|LOCK_NB";
-        while (*text) { msg[pos++] = *text++; }
+    /* Phase 3: Get vnode for lock operations */
+    struct fut_vnode *vnode = file->vnode;
+    if (!vnode) {
+        fut_printf("[FLOCK] flock(fd=%d, operation=%s%s) -> EBADF (no vnode)\n",
+                   fd, op_name, is_nonblock ? "|LOCK_NB" : "");
+        return -EBADF;
     }
 
-    text = ", type=";
-    while (*text) { msg[pos++] = *text++; }
-    while (*lock_type) { msg[pos++] = *lock_type++; }
-    text = ", pid=";
-    while (*text) { msg[pos++] = *text++; }
+    /* Phase 3: Perform actual lock operation */
+    int ret = 0;
+    uint32_t pid = task->pid;
 
-    num_pos = 0; unsigned int uval = task->pid;
-    if (uval == 0) { num[num_pos++] = '0'; }
-    else { char temp[16]; int temp_pos = 0;
-        while (uval > 0) { temp[temp_pos++] = '0' + (uval % 10); uval /= 10; }
-        while (temp_pos > 0) { num[num_pos++] = temp[--temp_pos]; } }
-    num[num_pos] = '\0';
-    for (int i = 0; num[i]; i++) { msg[pos++] = num[i]; }
+    if (op == LOCK_SH) {
+        /* Acquire shared lock */
+        ret = fut_vnode_lock_shared(vnode, pid, is_nonblock);
+        if (ret < 0) {
+            const char *error_desc = (ret == -EAGAIN) ? "would block" : "lock failed";
+            fut_printf("[FLOCK] flock(fd=%d [%s], operation=%s%s, pid=%u) -> %d (%s, Phase 3)\n",
+                       fd, fd_category, op_name, is_nonblock ? "|LOCK_NB" : "",
+                       pid, ret, error_desc);
+            return ret;
+        }
+    } else if (op == LOCK_EX) {
+        /* Acquire exclusive lock */
+        ret = fut_vnode_lock_exclusive(vnode, pid, is_nonblock);
+        if (ret < 0) {
+            const char *error_desc = (ret == -EAGAIN) ? "would block" : "lock failed";
+            fut_printf("[FLOCK] flock(fd=%d [%s], operation=%s%s, pid=%u) -> %d (%s, Phase 3)\n",
+                       fd, fd_category, op_name, is_nonblock ? "|LOCK_NB" : "",
+                       pid, ret, error_desc);
+            return ret;
+        }
+    } else if (op == LOCK_UN) {
+        /* Release lock */
+        ret = fut_vnode_unlock(vnode, pid);
+        if (ret < 0) {
+            fut_printf("[FLOCK] flock(fd=%d [%s], operation=%s, pid=%u) -> %d (unlock failed, Phase 3)\n",
+                       fd, fd_category, op_name, pid, ret);
+            return ret;
+        }
+    }
 
-    text = ") -> 0 (no-op in single-process OS, Phase 2)\n";
-    while (*text) { msg[pos++] = *text++; }
-    msg[pos] = '\0';
-    fut_printf("%s", msg);
+    /* Success - get lock info for detailed logging */
+    uint32_t lock_type_num, lock_count, lock_owner;
+    fut_vnode_lock_get_info(vnode, &lock_type_num, &lock_count, &lock_owner);
+
+    const char *lock_state;
+    if (lock_type_num == 0) {
+        lock_state = "unlocked";
+    } else if (lock_type_num == 1) {
+        lock_state = "shared";
+    } else {
+        lock_state = "exclusive";
+    }
+
+    fut_printf("[FLOCK] flock(fd=%d [%s], operation=%s%s, pid=%u) -> 0 "
+               "(lock_state=%s, count=%u, owner=%u, Phase 3)\n",
+               fd, fd_category, op_name, is_nonblock ? "|LOCK_NB" : "",
+               pid, lock_state, lock_count, lock_owner);
 
     return 0;
 }

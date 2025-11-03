@@ -345,6 +345,7 @@ KERNEL_SOURCES := \
     kernel/crypto/fut_hmac.c \
     kernel/vfs/fut_vfs.c \
     kernel/vfs/ramfs.c \
+    kernel/vfs/fut_lock.c \
     kernel/exec/elf64.c \
     kernel/trap/page_fault.c \
     kernel/blockdev/fut_blockdev.c \

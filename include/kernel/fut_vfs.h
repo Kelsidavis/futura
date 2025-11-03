@@ -68,6 +68,11 @@ struct fut_vnode {
     struct fut_vnode *parent;       /* Parent directory vnode (for path reconstruction) */
     char *name;                     /* Filename/basename in parent directory (for getcwd) */
 
+    /* Phase 3: Advisory file locking state */
+    uint32_t lock_type;             /* 0=none, 1=shared, 2=exclusive */
+    uint32_t lock_count;            /* Number of shared locks, or 1 for exclusive */
+    uint32_t lock_owner_pid;        /* PID of exclusive lock owner (0 if shared/none) */
+
     /* Operations for this vnode */
     const struct fut_vnode_ops *ops;
 };

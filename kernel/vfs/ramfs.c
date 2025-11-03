@@ -10,6 +10,7 @@
 #include <kernel/fut_vfs.h>
 #include <kernel/fut_memory.h>
 #include <kernel/fut_timer.h>
+#include <kernel/fut_lock.h>
 #include <stddef.h>
 #include <string.h>
 
@@ -561,6 +562,9 @@ static int ramfs_create(struct fut_vnode *dir, const char *name, uint32_t mode, 
     vnode->refcount = 1;
     vnode->ops = dir->ops;  /* Same ops as parent */
 
+    /* Phase 3: Initialize advisory file locking state */
+    fut_vnode_lock_init(vnode);
+
     fut_printf("[RAMFS-CREATE] Set vnode->fs_data=%p for '%s'\n", (void*)node, name);
 
     /* Initialize guard values to detect buffer overflows */
@@ -638,6 +642,9 @@ static int ramfs_mkdir(struct fut_vnode *dir, const char *name, uint32_t mode) {
     vnode->fs_data = node;
     vnode->refcount = 1;
     vnode->ops = dir->ops;
+
+    /* Phase 3: Initialize advisory file locking state */
+    fut_vnode_lock_init(vnode);
 
     /* Initialize guard values to detect buffer overflows */
     node->magic_guard_before = RAMFS_NODE_MAGIC;

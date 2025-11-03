@@ -4,6 +4,11 @@
  * Licensed under the MPL v2.0 — see LICENSE for details.
  *
  * Implements the alarm() syscall for scheduling SIGALRM delivery.
+ *
+ * Phase 1 (Completed): Basic stub
+ * Phase 2 (Current): Track alarm expiration time
+ * Phase 3: Integrate with timer interrupt to deliver SIGALRM
+ * Phase 4: Support sub-second precision with setitimer()
  */
 
 #include <kernel/fut_task.h>
@@ -13,6 +18,14 @@
 extern void fut_printf(const char *fmt, ...);
 extern fut_task_t *fut_task_current(void);
 extern uint64_t fut_get_ticks(void);
+
+/* Alarm tracking (simplified single-alarm model)
+ * TODO: When per-task alarm fields are added to fut_task_t, move this to
+ * per-task storage for proper multi-process alarm isolation.
+ * For now, we track a single global alarm similar to umask approach.
+ */
+static uint64_t global_alarm_expires_ms = 0;  /* Alarm expiration time in milliseconds (0 = no alarm) */
+static uint64_t global_alarm_pid = 0;         /* PID that owns the alarm */
 
 /**
  * alarm() - Set an alarm clock for delivery of a signal
@@ -32,9 +45,9 @@ extern uint64_t fut_get_ticks(void);
  *   - Periodic tasks: Use alarm with signal handler to schedule recurring work
  *   - Watchdog timers: Detect hung processes or infinite loops
  *
- * Phase 1 (Current): Records alarm time but doesn't deliver signal yet
- * Phase 2: Integrate with timer interrupt to deliver SIGALRM at expiration
- * Phase 3: Support sub-second precision with setitimer()
+ * Phase 2 (Current): Tracks alarm expiration time (single global alarm)
+ * Phase 3: Integrate with timer interrupt to deliver SIGALRM at expiration
+ * Phase 4: Support sub-second precision with setitimer()
  */
 long sys_alarm(unsigned int seconds) {
     fut_task_t *task = fut_task_current();
@@ -42,22 +55,47 @@ long sys_alarm(unsigned int seconds) {
         return -ESRCH;
     }
 
-    /* Phase 1: No alarm tracking in task structure yet
-     * Phase 2 will add: uint64_t alarm_expires to fut_task_t */
+    /* Get current time in milliseconds */
+    uint64_t current_ms = fut_get_ticks();
+
+    /* Calculate remaining time from previous alarm (if any) */
+    unsigned int remaining_seconds = 0;
+    if (global_alarm_expires_ms > 0) {
+        /* Check if alarm belongs to current task */
+        if (global_alarm_pid == task->pid) {
+            /* Alarm is for this task, calculate remaining time */
+            if (global_alarm_expires_ms > current_ms) {
+                uint64_t remaining_ms = global_alarm_expires_ms - current_ms;
+                /* Round up to nearest second (POSIX requirement) */
+                remaining_seconds = (unsigned int)((remaining_ms + 999) / 1000);
+            }
+            /* If alarm already expired, remaining_seconds stays 0 */
+        }
+        /* If alarm belongs to different task, we don't return its remaining time */
+    }
 
     if (seconds > 0) {
         /* Schedule new alarm */
-        fut_printf("[ALARM] alarm(%u) requested by task %llu (stub - Phase 2 will deliver SIGALRM)\n",
-                   seconds, task->pid);
+        global_alarm_expires_ms = current_ms + ((uint64_t)seconds * 1000);
+        global_alarm_pid = task->pid;
 
-        /* Phase 2: Will calculate expiration time and store in task->alarm_expires
-         * Phase 2: Timer interrupt will check alarm_expires and deliver SIGALRM */
+        fut_printf("[ALARM] alarm(%u) set by task %llu, expires at %llu ms (previous remaining: %u s)\n",
+                   seconds, task->pid, global_alarm_expires_ms, remaining_seconds);
+
+        /* Phase 3: Timer interrupt will check global_alarm_expires_ms and deliver SIGALRM
+         * For now, alarm is tracked but SIGALRM delivery not implemented */
     } else {
-        /* Cancel pending alarm */
-        fut_printf("[ALARM] alarm(0) - cancel alarm for task %llu (stub)\n", task->pid);
+        /* Cancel pending alarm for this task */
+        if (global_alarm_pid == task->pid) {
+            global_alarm_expires_ms = 0;
+            global_alarm_pid = 0;
+            fut_printf("[ALARM] alarm(0) - canceled alarm for task %llu (previous remaining: %u s)\n",
+                       task->pid, remaining_seconds);
+        } else {
+            fut_printf("[ALARM] alarm(0) - no alarm to cancel for task %llu\n", task->pid);
+        }
     }
 
-    /* Return 0 since we don't track previous alarms yet
-     * Phase 2: Will return remaining seconds from previous alarm */
-    return 0;
+    /* Return remaining seconds from previous alarm */
+    return (long)remaining_seconds;
 }

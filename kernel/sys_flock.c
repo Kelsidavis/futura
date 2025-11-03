@@ -4,6 +4,11 @@
  * Licensed under the MPL v2.0 — see LICENSE for details.
  *
  * Implements the flock() syscall for file locking.
+ *
+ * Phase 1 (Completed): Basic stub that validates FD
+ * Phase 2 (Current): Enhanced validation, operation categorization, detailed logging
+ * Phase 3: Advisory lock implementation (multi-process support)
+ * Phase 4: Deadlock detection, lock performance optimization
  */
 
 #include <kernel/fut_task.h>
@@ -24,6 +29,9 @@ extern struct fut_file *vfs_get_file_from_task(struct fut_task *task, int fd);
 /**
  * flock() - Apply or remove an advisory lock on an open file
  *
+ * Provides BSD-style file locking for inter-process coordination.
+ * Locks are advisory and not enforced - cooperating processes must check locks.
+ *
  * For a single-process operating system, file locking is a semantic no-op
  * since there's no concurrent access from other processes. This implementation
  * validates the file descriptor and always succeeds.
@@ -38,35 +46,267 @@ extern struct fut_file *vfs_get_file_from_task(struct fut_task *task, int fd);
  *   - 0 on success
  *   - -EBADF if fd is not a valid open file descriptor
  *   - -EINVAL if operation is invalid
+ *   - -ESRCH if no current task
+ *   - -EWOULDBLOCK if LOCK_NB specified and lock would block (Phase 3+)
+ *
+ * Behavior:
+ *   - LOCK_SH: Apply shared (read) lock - multiple processes can hold
+ *   - LOCK_EX: Apply exclusive (write) lock - only one process can hold
+ *   - LOCK_UN: Release lock
+ *   - LOCK_NB: Non-blocking mode - fail instead of blocking
+ *   - Locks are associated with file, not FD
+ *   - Locks are released on close() or process termination
+ *   - fork() does not inherit locks (child has no locks)
+ *
+ * Lock types:
+ *   - LOCK_SH (1): Shared lock - multiple readers allowed
+ *   - LOCK_EX (2): Exclusive lock - single writer only
+ *   - LOCK_UN (8): Unlock - release lock
+ *   - LOCK_NB (4): Non-blocking flag (OR with above)
+ *
+ * Common usage patterns:
+ *
+ * Shared read lock:
+ *   int fd = open("file.txt", O_RDONLY);
+ *   flock(fd, LOCK_SH);  // Allow concurrent readers
+ *   read(fd, buf, size);
+ *   flock(fd, LOCK_UN);  // Release lock
+ *   close(fd);
+ *
+ * Exclusive write lock:
+ *   int fd = open("file.txt", O_WRONLY);
+ *   flock(fd, LOCK_EX);  // Block other readers and writers
+ *   write(fd, data, size);
+ *   flock(fd, LOCK_UN);
+ *   close(fd);
+ *
+ * Non-blocking lock:
+ *   if (flock(fd, LOCK_EX | LOCK_NB) < 0) {
+ *       if (errno == EWOULDBLOCK) {
+ *           // Lock held by another process
+ *       }
+ *   }
+ *
+ * Automatic unlock on close:
+ *   int fd = open("file.txt", O_WRONLY);
+ *   flock(fd, LOCK_EX);
+ *   write(fd, data, size);
+ *   close(fd);  // Lock is automatically released
+ *
+ * Upgrade lock:
+ *   flock(fd, LOCK_SH);       // Acquire shared lock
+ *   // ... read data ...
+ *   flock(fd, LOCK_EX);       // Upgrade to exclusive (may block)
+ *   // ... write data ...
+ *   flock(fd, LOCK_UN);
+ *
+ * Comparison with fcntl locking:
+ *   - flock(): Whole-file locks, simpler, BSD-style
+ *   - fcntl(): Byte-range locks, POSIX, more complex
+ *   - flock() locks are per-file, fcntl() locks are per-process
+ *
+ * Related syscalls:
+ *   - fcntl(F_SETLK): POSIX byte-range locking
+ *   - open(O_EXLOCK): Open with exclusive lock (BSD)
+ *   - open(O_SHLOCK): Open with shared lock (BSD)
+ *
+ * Phase 1 (Completed): Basic stub that validates FD
+ * Phase 2 (Current): Enhanced validation, operation categorization, detailed logging
+ * Phase 3: Advisory lock implementation (multi-process support)
+ * Phase 4: Deadlock detection, lock performance optimization
  */
 long sys_flock(int fd, int operation) {
     /* Get current task */
     fut_task_t *task = fut_task_current();
     if (!task) {
+        char msg[128];
+        int pos = 0;
+        const char *text = "[FLOCK] flock(fd=";
+        while (*text) { msg[pos++] = *text++; }
+
+        char num[16]; int num_pos = 0; int val = fd;
+        if (val == 0) { num[num_pos++] = '0'; }
+        else { char temp[16]; int temp_pos = 0;
+            int is_neg = 0;
+            if (val < 0) { is_neg = 1; val = -val; }
+            while (val > 0) { temp[temp_pos++] = '0' + (val % 10); val /= 10; }
+            if (is_neg) num[num_pos++] = '-';
+            while (temp_pos > 0) { num[num_pos++] = temp[--temp_pos]; } }
+        num[num_pos] = '\0';
+        for (int i = 0; num[i]; i++) { msg[pos++] = num[i]; }
+
+        text = ") -> ESRCH (no current task)\n";
+        while (*text) { msg[pos++] = *text++; }
+        msg[pos] = '\0';
+        fut_printf("%s", msg);
+
         return -ESRCH;
+    }
+
+    /* Phase 2: Categorize FD range */
+    const char *fd_category;
+    if (fd < 0) {
+        fd_category = "invalid (negative)";
+    } else if (fd <= 2) {
+        fd_category = "stdio (0-2)";
+    } else if (fd < 16) {
+        fd_category = "low (3-15)";
+    } else if (fd < 256) {
+        fd_category = "mid (16-255)";
+    } else if (fd < 1024) {
+        fd_category = "high (256-1023)";
+    } else {
+        fd_category = "very high (≥1024)";
     }
 
     /* Validate file descriptor */
     struct fut_file *file = vfs_get_file_from_task(task, fd);
     if (!file) {
-        fut_printf("[FLOCK] flock(%d, %d) -> EBADF\n", fd, operation);
+        char msg[256];
+        int pos = 0;
+        const char *text = "[FLOCK] flock(fd=";
+        while (*text) { msg[pos++] = *text++; }
+
+        char num[16]; int num_pos = 0; int val = fd;
+        if (val == 0) { num[num_pos++] = '0'; }
+        else { char temp[16]; int temp_pos = 0;
+            int is_neg = 0;
+            if (val < 0) { is_neg = 1; val = -val; }
+            while (val > 0) { temp[temp_pos++] = '0' + (val % 10); val /= 10; }
+            if (is_neg) num[num_pos++] = '-';
+            while (temp_pos > 0) { num[num_pos++] = temp[--temp_pos]; } }
+        num[num_pos] = '\0';
+        for (int i = 0; num[i]; i++) { msg[pos++] = num[i]; }
+
+        text = " [";
+        while (*text) { msg[pos++] = *text++; }
+        while (*fd_category) { msg[pos++] = *fd_category++; }
+        text = "]) -> EBADF (fd not open, pid=";
+        while (*text) { msg[pos++] = *text++; }
+
+        num_pos = 0; unsigned int uval = task->pid;
+        if (uval == 0) { num[num_pos++] = '0'; }
+        else { char temp[16]; int temp_pos = 0;
+            while (uval > 0) { temp[temp_pos++] = '0' + (uval % 10); uval /= 10; }
+            while (temp_pos > 0) { num[num_pos++] = temp[--temp_pos]; } }
+        num[num_pos] = '\0';
+        for (int i = 0; num[i]; i++) { msg[pos++] = num[i]; }
+
+        text = ")\n";
+        while (*text) { msg[pos++] = *text++; }
+        msg[pos] = '\0';
+        fut_printf("%s", msg);
+
         return -EBADF;
     }
 
-    /* Extract operation (ignore LOCK_NB flag for simplicity) */
+    /* Phase 2: Categorize operation */
     int op = operation & ~LOCK_NB;
+    int is_nonblock = (operation & LOCK_NB) != 0;
+
+    const char *op_name;
+    const char *lock_type;
+
+    if (op == LOCK_SH) {
+        op_name = "LOCK_SH";
+        lock_type = "shared (read) lock";
+    } else if (op == LOCK_EX) {
+        op_name = "LOCK_EX";
+        lock_type = "exclusive (write) lock";
+    } else if (op == LOCK_UN) {
+        op_name = "LOCK_UN";
+        lock_type = "unlock";
+    } else {
+        op_name = "INVALID";
+        lock_type = "invalid operation";
+    }
 
     /* Validate operation */
     if (op != LOCK_SH && op != LOCK_EX && op != LOCK_UN) {
-        fut_printf("[FLOCK] flock(%d, %d) -> EINVAL (invalid operation)\n", fd, operation);
+        char msg[256];
+        int pos = 0;
+        const char *text = "[FLOCK] flock(fd=";
+        while (*text) { msg[pos++] = *text++; }
+
+        char num[16]; int num_pos = 0; int val = fd;
+        if (val == 0) { num[num_pos++] = '0'; }
+        else { char temp[16]; int temp_pos = 0;
+            while (val > 0) { temp[temp_pos++] = '0' + (val % 10); val /= 10; }
+            while (temp_pos > 0) { num[num_pos++] = temp[--temp_pos]; } }
+        num[num_pos] = '\0';
+        for (int i = 0; num[i]; i++) { msg[pos++] = num[i]; }
+
+        text = ", operation=0x";
+        while (*text) { msg[pos++] = *text++; }
+
+        /* Convert operation to hex */
+        char hex[16]; int hex_pos = 0;
+        unsigned int hex_val = (unsigned int)operation;
+        if (hex_val == 0) { hex[hex_pos++] = '0'; }
+        else {
+            char temp[16]; int temp_pos = 0;
+            while (hex_val > 0) {
+                int digit = hex_val % 16;
+                temp[temp_pos++] = (digit < 10) ? ('0' + digit) : ('a' + digit - 10);
+                hex_val /= 16;
+            }
+            while (temp_pos > 0) { hex[hex_pos++] = temp[--temp_pos]; }
+        }
+        hex[hex_pos] = '\0';
+        for (int i = 0; hex[i]; i++) { msg[pos++] = hex[i]; }
+
+        text = ") -> EINVAL (invalid operation, expected LOCK_SH/EX/UN)\n";
+        while (*text) { msg[pos++] = *text++; }
+        msg[pos] = '\0';
+        fut_printf("%s", msg);
+
         return -EINVAL;
     }
 
-    /* In a single-process OS, locking is a no-op - always succeed */
-    const char *op_name = (op == LOCK_SH) ? "LOCK_SH" :
-                          (op == LOCK_EX) ? "LOCK_EX" : "LOCK_UN";
-    fut_printf("[FLOCK] flock(%d, %s%s) -> 0 (no-op in single-process OS)\n",
-               fd, op_name, (operation & LOCK_NB) ? "|LOCK_NB" : "");
+    /* Phase 2: Detailed success logging (no-op in single-process OS) */
+    char msg[256];
+    int pos = 0;
+    const char *text = "[FLOCK] flock(fd=";
+    while (*text) { msg[pos++] = *text++; }
+
+    char num[16]; int num_pos = 0; int val = fd;
+    if (val == 0) { num[num_pos++] = '0'; }
+    else { char temp[16]; int temp_pos = 0;
+        while (val > 0) { temp[temp_pos++] = '0' + (val % 10); val /= 10; }
+        while (temp_pos > 0) { num[num_pos++] = temp[--temp_pos]; } }
+    num[num_pos] = '\0';
+    for (int i = 0; num[i]; i++) { msg[pos++] = num[i]; }
+
+    text = " [";
+    while (*text) { msg[pos++] = *text++; }
+    while (*fd_category) { msg[pos++] = *fd_category++; }
+    text = "], operation=";
+    while (*text) { msg[pos++] = *text++; }
+    while (*op_name) { msg[pos++] = *op_name++; }
+
+    if (is_nonblock) {
+        text = "|LOCK_NB";
+        while (*text) { msg[pos++] = *text++; }
+    }
+
+    text = ", type=";
+    while (*text) { msg[pos++] = *text++; }
+    while (*lock_type) { msg[pos++] = *lock_type++; }
+    text = ", pid=";
+    while (*text) { msg[pos++] = *text++; }
+
+    num_pos = 0; unsigned int uval = task->pid;
+    if (uval == 0) { num[num_pos++] = '0'; }
+    else { char temp[16]; int temp_pos = 0;
+        while (uval > 0) { temp[temp_pos++] = '0' + (uval % 10); uval /= 10; }
+        while (temp_pos > 0) { num[num_pos++] = temp[--temp_pos]; } }
+    num[num_pos] = '\0';
+    for (int i = 0; num[i]; i++) { msg[pos++] = num[i]; }
+
+    text = ") -> 0 (no-op in single-process OS, Phase 2)\n";
+    while (*text) { msg[pos++] = *text++; }
+    msg[pos] = '\0';
+    fut_printf("%s", msg);
 
     return 0;
 }

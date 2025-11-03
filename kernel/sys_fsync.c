@@ -212,45 +212,54 @@ long sys_fsync(int fd) {
     }
 
     /*
-     * Phase 2: Stub implementation - validates file type but doesn't perform sync
+     * Phase 3: Call VFS backend sync operation if available
      *
-     * TODO Phase 3: Implement VFS backend sync operations:
-     *
-     * if (file->vnode && file->vnode->ops && file->vnode->ops->sync) {
-     *     int ret = file->vnode->ops->sync(file->vnode);
-     *     if (ret < 0) {
-     *         const char *error_desc;
-     *         switch (ret) {
-     *             case -EIO:
-     *                 error_desc = "I/O error during sync";
-     *                 break;
-     *             case -EROFS:
-     *                 error_desc = "read-only filesystem";
-     *                 break;
-     *             default:
-     *                 error_desc = "sync operation failed";
-     *                 break;
-     *         }
-     *         fut_printf("[FSYNC] fsync(fd=%d [%s], type=%s, scope=%s) -> %d "
-     *                    "(%s, pid=%d)\n",
-     *                    fd, fd_category, file_type, sync_scope, ret, error_desc,
-     *                    task->pid);
-     *         return ret;
-     *     }
-     * }
+     * Each filesystem implements its own sync strategy:
+     * - RamFS: No-op (already in memory)
+     * - FuturaFS: Flush journal, ensure log-structured commits (Phase 4)
+     * - Block devices: Flush device cache (Phase 4)
+     */
+    if (file->vnode && file->vnode->ops && file->vnode->ops->sync) {
+        int ret = file->vnode->ops->sync(file->vnode);
+        if (ret < 0) {
+            const char *error_desc;
+            switch (ret) {
+                case -EIO:
+                    error_desc = "I/O error during sync";
+                    break;
+                case -EROFS:
+                    error_desc = "read-only filesystem";
+                    break;
+                default:
+                    error_desc = "sync operation failed";
+                    break;
+            }
+            fut_printf("[FSYNC] fsync(fd=%d [%s], type=%s, scope=%s, pid=%d) -> %d "
+                       "(%s, Phase 3)\n",
+                       fd, fd_category, file_type, sync_scope, task->pid, ret, error_desc);
+            return ret;
+        }
+
+        /* Phase 3: Success - sync completed */
+        fut_printf("[FSYNC] fsync(fd=%d [%s], type=%s, scope=%s, pid=%d) -> 0 "
+                   "(sync completed, Phase 3)\n",
+                   fd, fd_category, file_type, sync_scope, task->pid);
+        return 0;
+    }
+
+    /*
+     * No sync operation available - return success for backwards compatibility.
+     * This can happen for:
+     * - Filesystems that don't implement sync (devfs, procfs)
+     * - Special files that don't need syncing
      *
      * Phase 4 additions:
-     *   - Per-filesystem sync strategies:
-     *     - FuturaFS: Flush journal, ensure log-structured commits
-     *     - RamFS: No-op (already in memory)
      *   - Writeback cache flushing (block layer integration)
      *   - Directory sync (ensure entries are durable)
      *   - Barrier operations for device caches (SCSI SYNCHRONIZE CACHE)
      */
-
-    /* Phase 2: Detailed success logging (stub - no actual sync performed) */
     fut_printf("[FSYNC] fsync(fd=%d [%s], type=%s, scope=%s, pid=%d) -> 0 "
-               "(stub: no actual sync performed, Phase 2)\n",
+               "(no sync operation, Phase 3)\n",
                fd, fd_category, file_type, sync_scope, task->pid);
 
     return 0;

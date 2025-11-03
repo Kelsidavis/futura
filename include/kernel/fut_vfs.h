@@ -213,6 +213,21 @@ struct fut_vnode_ops {
      * @return 0 on success, negative error code on failure
      */
     int (*setattr)(struct fut_vnode *vnode, const struct fut_stat *stat);
+
+    /**
+     * Synchronize file data and metadata to storage (Phase 3).
+     *
+     * Flushes all modified in-core data and metadata for the vnode to the
+     * underlying storage device. Does not return until the storage device
+     * reports that the transfer has completed.
+     *
+     * @param vnode VNode to synchronize
+     * @return 0 on success, negative error code on failure
+     *         -EIO: I/O error during sync
+     *         -EROFS: read-only filesystem
+     *         -EINVAL: vnode doesn't support syncing (e.g., pipes, sockets)
+     */
+    int (*sync)(struct fut_vnode *vnode);
 };
 
 /* ============================================================

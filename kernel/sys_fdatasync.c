@@ -211,49 +211,56 @@ long sys_fdatasync(int fd) {
     }
 
     /*
-     * Phase 2: Stub implementation - validates file type but doesn't perform sync
+     * Phase 3: Use regular sync() operation as fallback for fdatasync()
      *
-     * TODO Phase 3: When VFS gains sync operations, call them here:
+     * Ideally, fdatasync() would only sync data and critical metadata (size),
+     * skipping atime/mtime updates for better performance. However, for Phase 3,
+     * we use the regular sync() operation which syncs all metadata.
      *
-     * if (file->vnode && file->vnode->ops && file->vnode->ops->datasync) {
-     *     int ret = file->vnode->ops->datasync(file->vnode);
-     *     if (ret < 0) {
-     *         const char *error_desc;
-     *         switch (ret) {
-     *             case -EIO:
-     *                 error_desc = "I/O error during sync";
-     *                 break;
-     *             case -EROFS:
-     *                 error_desc = "read-only filesystem";
-     *                 break;
-     *             default:
-     *                 error_desc = "datasync operation failed";
-     *                 break;
-     *         }
-     *         fut_printf("[FDATASYNC] fdatasync(fd=%d [%s], type=%s, scope=%s, ino=%lu) -> %d "
-     *                    "(%s, pid=%d)\n",
-     *                    fd, fd_category, file_type, sync_scope, file->vnode->ino,
-     *                    ret, error_desc, task->pid);
-     *         return ret;
-     *     }
-     * } else if (file->vnode && file->vnode->ops && file->vnode->ops->sync) {
-     *     // Fall back to full sync if datasync not available
-     *     int ret = file->vnode->ops->sync(file->vnode);
-     *     if (ret < 0) {
-     *         return ret;
-     *     }
-     * }
+     * Phase 4 will add a dedicated datasync() operation to vnode_ops for
+     * selective metadata synchronization.
+     */
+    uint64_t ino = file->vnode ? file->vnode->ino : 0;
+
+    if (file->vnode && file->vnode->ops && file->vnode->ops->sync) {
+        int ret = file->vnode->ops->sync(file->vnode);
+        if (ret < 0) {
+            const char *error_desc;
+            switch (ret) {
+                case -EIO:
+                    error_desc = "I/O error during sync";
+                    break;
+                case -EROFS:
+                    error_desc = "read-only filesystem";
+                    break;
+                default:
+                    error_desc = "sync operation failed";
+                    break;
+            }
+            fut_printf("[FDATASYNC] fdatasync(fd=%d [%s], type=%s, scope=%s, ino=%lu, pid=%d) -> %d "
+                       "(%s, Phase 3)\n",
+                       fd, fd_category, file_type, sync_scope, ino, task->pid, ret, error_desc);
+            return ret;
+        }
+
+        /* Phase 3: Success - sync completed (using full sync as fallback) */
+        fut_printf("[FDATASYNC] fdatasync(fd=%d [%s], type=%s, scope=%s, ino=%lu, pid=%d) -> 0 "
+                   "(sync completed via fsync fallback, Phase 3)\n",
+                   fd, fd_category, file_type, sync_scope, ino, task->pid);
+        return 0;
+    }
+
+    /*
+     * No sync operation available - return success for backwards compatibility.
      *
      * Phase 4 additions:
+     *   - Add dedicated datasync() operation to vnode_ops
      *   - Selective metadata sync (size, but not atime/mtime)
      *   - Async fdatasync for better performance
      *   - Per-filesystem datasync strategies
      */
-
-    /* Phase 2: Detailed success logging (stub - no actual sync performed) */
-    uint64_t ino = file->vnode ? file->vnode->ino : 0;
     fut_printf("[FDATASYNC] fdatasync(fd=%d [%s], type=%s, scope=%s, ino=%lu, pid=%d) -> 0 "
-               "(stub: no actual sync performed, Phase 2)\n",
+               "(no sync operation, Phase 3)\n",
                fd, fd_category, file_type, sync_scope, ino, task->pid);
 
     return 0;

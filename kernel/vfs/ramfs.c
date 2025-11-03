@@ -942,6 +942,24 @@ static int ramfs_getattr(struct fut_vnode *vnode, struct fut_stat *stat) {
     return 0;
 }
 
+/**
+ * ramfs_sync() - Sync file to storage (no-op for RamFS)
+ *
+ * Phase 3: RamFS is entirely in-memory, so there's no storage to sync to.
+ * This is a no-op that always succeeds. However, we implement it for API
+ * completeness and to allow fsync() to work on RamFS files.
+ *
+ * @param vnode VNode to sync
+ * @return 0 (success - no actual sync needed)
+ */
+static int ramfs_sync(struct fut_vnode *vnode) {
+    (void)vnode;  /* Unused - no actual sync needed for in-memory filesystem */
+
+    /* Phase 3: RamFS is already in memory, so sync is a no-op.
+     * All data is immediately visible to all processes. */
+    return 0;
+}
+
 static const struct fut_vnode_ops ramfs_vnode_ops = {
     .open = ramfs_open,
     .close = ramfs_close,
@@ -954,7 +972,8 @@ static const struct fut_vnode_ops ramfs_vnode_ops = {
     .mkdir = ramfs_mkdir,
     .rmdir = ramfs_rmdir,
     .getattr = ramfs_getattr,
-    .setattr = NULL
+    .setattr = NULL,
+    .sync = ramfs_sync
 };
 
 /* ============================================================

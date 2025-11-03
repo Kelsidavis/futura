@@ -55,48 +55,88 @@ struct rusage {
  *   - -EINVAL if who is invalid
  *   - -EFAULT if usage points to invalid memory
  *
- * Phase 1 (Current): Returns zeroed statistics
- * Phase 2: Track CPU time (user/system) per task
- * Phase 3: Track memory usage (maxrss, page faults)
- * Phase 4: Track I/O statistics (inblock, oublock)
- * Phase 5: Track context switches (nvcsw, nivcsw)
+ * Phase 1 (Completed): Returns zeroed statistics
+ * Phase 2 (Current): Enhanced validation and detailed reporting
+ * Phase 3: Track CPU time (user/system) per task
+ * Phase 4: Track memory usage (maxrss, page faults)
+ * Phase 5: Track I/O statistics (inblock, oublock)
+ * Phase 6: Track context switches (nvcsw, nivcsw)
  */
 long sys_getrusage(int who, struct rusage *usage) {
     fut_task_t *task = fut_task_current();
     if (!task) {
+        fut_printf("[RUSAGE] getrusage(who=%d, usage=%p) -> ESRCH (no current task)\n", who, usage);
         return -ESRCH;
     }
 
     if (!usage) {
+        fut_printf("[RUSAGE] getrusage(who=%d, usage=%p) -> EFAULT (usage is NULL)\n", who, usage);
         return -EFAULT;
     }
 
-    /* Validate 'who' parameter */
-    if (who != RUSAGE_SELF && who != RUSAGE_CHILDREN && who != RUSAGE_THREAD) {
-        fut_printf("[RUSAGE] getrusage: invalid who=%d\n", who);
-        return -EINVAL;
+    /* Phase 2: Validate and identify 'who' parameter */
+    const char *who_desc;
+    const char *target_desc;
+
+    switch (who) {
+        case RUSAGE_SELF:
+            who_desc = "RUSAGE_SELF";
+            target_desc = "calling process";
+            break;
+        case RUSAGE_CHILDREN:
+            who_desc = "RUSAGE_CHILDREN";
+            target_desc = "terminated children";
+            break;
+        case RUSAGE_THREAD:
+            who_desc = "RUSAGE_THREAD";
+            target_desc = "calling thread";
+            break;
+        default:
+            fut_printf("[RUSAGE] getrusage(who=%d, usage=%p) -> EINVAL (invalid who parameter)\n",
+                       who, usage);
+            return -EINVAL;
     }
 
-    /* Phase 1: Return zeroed statistics
-     * Phase 2+: Will populate from task structure and scheduler stats */
+    /* Phase 2: Return zeroed statistics with detailed reporting
+     * Phase 3+: Will populate from task structure and scheduler stats */
     struct rusage ru;
     memset(&ru, 0, sizeof(ru));
 
-    /* Future phases will populate:
+    /* Future phases will populate from task statistics:
+     *
+     * Phase 3: CPU time tracking
      * - ru_utime: task->cpu_time_user (from scheduler)
      * - ru_stime: task->cpu_time_system (from scheduler)
+     *
+     * Phase 4: Memory usage tracking
      * - ru_maxrss: task->mm->max_rss (from memory manager)
-     * - ru_minflt/majflt: task->mm->page_faults (from VMM)
-     * - ru_inblock/oublock: task->io_stats (from VFS/block layer)
-     * - ru_nvcsw/nivcsw: task->ctx_switches (from scheduler)
+     * - ru_minflt: task->mm->page_faults_minor (soft page faults)
+     * - ru_majflt: task->mm->page_faults_major (hard page faults)
+     *
+     * Phase 5: I/O statistics tracking
+     * - ru_inblock: task->io_stats->blocks_read (from VFS/block layer)
+     * - ru_oublock: task->io_stats->blocks_written (from VFS/block layer)
+     *
+     * Phase 6: Context switch tracking
+     * - ru_nvcsw: task->sched_stats->voluntary_switches (from scheduler)
+     * - ru_nivcsw: task->sched_stats->involuntary_switches (from scheduler)
+     *
+     * For RUSAGE_CHILDREN: Aggregate stats from all waited-for children
+     * For RUSAGE_THREAD: Use thread-specific counters instead of process-wide
      */
 
     /* Copy to userspace */
     if (fut_copy_to_user(usage, &ru, sizeof(struct rusage)) != 0) {
+        fut_printf("[RUSAGE] getrusage(who=%s, usage=%p) -> EFAULT (copy_to_user failed)\n",
+                   who_desc, usage);
         return -EFAULT;
     }
 
-    fut_printf("[RUSAGE] getrusage(who=%d) -> success (zeroed statistics - Phase 1)\n", who);
+    /* Phase 2: Detailed logging with zeroed statistics report */
+    fut_printf("[RUSAGE] getrusage(who=%s [%s], usage=%p) -> 0 "
+               "(utime=0.000s, stime=0.000s, maxrss=0KB, minflt=0, majflt=0, "
+               "inblock=0, oublock=0, nvcsw=0, nivcsw=0, Phase 2: zeroed)\n",
+               who_desc, target_desc, usage);
 
     return 0;
 }

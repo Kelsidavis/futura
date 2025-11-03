@@ -147,6 +147,10 @@
 #define EMSGSIZE    90
 #endif
 
+#ifndef ENOPROTOOPT
+#define ENOPROTOOPT 92
+#endif
+
 #ifndef ENOTSUP
 #define ENOTSUP     95
 #endif

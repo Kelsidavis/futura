@@ -377,6 +377,8 @@ KERNEL_SOURCES := \
     kernel/sys_connect.c \
     kernel/sys_sendto.c \
     kernel/sys_recvfrom.c \
+    kernel/sys_sendmsg.c \
+    kernel/sys_recvmsg.c \
     kernel/sys_kill.c \
     kernel/sys_sigaction.c \
     kernel/sys_sigprocmask.c \

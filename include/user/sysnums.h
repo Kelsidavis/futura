@@ -70,6 +70,8 @@
 #define SYS_connect     53
 #define SYS_sendto      44
 #define SYS_recvfrom    45
+#define SYS_sendmsg     46
+#define SYS_recvmsg     47
 #define SYS_mkdir       83
 #define SYS_rmdir       84
 #define SYS_rename      82

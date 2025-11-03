@@ -84,10 +84,12 @@
 #define SYS_getpid      39
 #define SYS_gettid      186
 #define SYS_socket      41
-#define SYS_connect     46  /* Note: non-standard, should be 42 per Linux ABI */
+#define SYS_connect     53  /* Note: non-standard location (42 is echo) */
 #define SYS_accept      43
 #define SYS_sendto      44
 #define SYS_recvfrom    45
+#define SYS_sendmsg     46
+#define SYS_recvmsg     47
 #define SYS_shutdown    48
 #define SYS_bind        49
 #define SYS_listen      50
@@ -910,6 +912,20 @@ static int64_t sys_recvfrom_handler(uint64_t sockfd, uint64_t buf, uint64_t len,
     return sys_recvfrom((int)sockfd, (void *)buf, (size_t)len, (int)flags, (void *)addr, (uint32_t *)addrlen);
 }
 
+static int64_t sys_sendmsg_handler(uint64_t sockfd, uint64_t msg, uint64_t flags,
+                                   uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg4; (void)arg5; (void)arg6;
+    extern ssize_t sys_sendmsg(int sockfd, const void *msg, int flags);
+    return sys_sendmsg((int)sockfd, (const void *)msg, (int)flags);
+}
+
+static int64_t sys_recvmsg_handler(uint64_t sockfd, uint64_t msg, uint64_t flags,
+                                   uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg4; (void)arg5; (void)arg6;
+    extern ssize_t sys_recvmsg(int sockfd, void *msg, int flags);
+    return sys_recvmsg((int)sockfd, (void *)msg, (int)flags);
+}
+
 /* Unimplemented syscall handler */
 static int64_t sys_unimplemented(uint64_t arg1, uint64_t arg2, uint64_t arg3,
                                   uint64_t arg4, uint64_t arg5, uint64_t arg6) {
@@ -1277,6 +1293,8 @@ static syscall_handler_t syscall_table[MAX_SYSCALL] = {
     [SYS_connect]    = sys_connect_handler,
     [SYS_sendto]     = sys_sendto_handler,
     [SYS_recvfrom]   = sys_recvfrom_handler,
+    [SYS_sendmsg]    = sys_sendmsg_handler,
+    [SYS_recvmsg]    = sys_recvmsg_handler,
     /* epoll operations */
     [SYS_epoll_create] = sys_epoll_create_handler,
     [SYS_epoll_ctl]    = sys_epoll_ctl_handler,

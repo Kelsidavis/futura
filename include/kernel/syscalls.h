@@ -159,6 +159,8 @@ long sys_listen(int sockfd, int backlog);
 long sys_connect(int sockfd, const void *addr, uint32_t addrlen);
 ssize_t sys_sendto(int sockfd, const void *buf, size_t len, int flags, const void *dest_addr, uint32_t addrlen);
 ssize_t sys_recvfrom(int sockfd, void *buf, size_t len, int flags, void *src_addr, uint32_t *addrlen);
+ssize_t sys_sendmsg(int sockfd, const void *msg, int flags);
+ssize_t sys_recvmsg(int sockfd, void *msg, int flags);
 /* Signals */
 long sys_kill(int pid, int sig);
 long sys_sigaction(int signum, const struct sigaction *act, struct sigaction *oldact);

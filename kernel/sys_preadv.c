@@ -72,10 +72,11 @@ struct iovec {
  * - Stops at EOF or when all buffers filled
  * - Partial reads possible (less than sum of iov_len)
  *
- * Phase 1 (Current): Validates parameters, iterates over iovecs calling pread64
- * Phase 2: Optimize with direct VFS scatter-gather support
- * Phase 3: Support non-blocking I/O and partial reads
- * Phase 4: Zero-copy optimization for page-aligned buffers
+ * Phase 1 (Completed): Validates parameters, iterates over iovecs calling pread64
+ * Phase 2 (Current): Enhanced validation and detailed I/O statistics
+ * Phase 3: Optimize with direct VFS scatter-gather support
+ * Phase 4: Support non-blocking I/O and partial reads
+ * Phase 5: Zero-copy optimization for page-aligned buffers
  *
  * Example: Thread-safe database record read
  *
@@ -166,6 +167,8 @@ struct iovec {
 ssize_t sys_preadv(int fd, const struct iovec *iov, int iovcnt, int64_t offset) {
     fut_task_t *task = fut_task_current();
     if (!task) {
+        fut_printf("[PREADV] preadv(fd=%d, iov=%p, iovcnt=%d, offset=%ld) -> ESRCH (no current task)\n",
+                   fd, iov, iovcnt, offset);
         return -ESRCH;
     }
 
@@ -178,12 +181,19 @@ ssize_t sys_preadv(int fd, const struct iovec *iov, int iovcnt, int64_t offset) 
 
     /* Validate iovcnt */
     if (iovcnt < 0 || iovcnt > UIO_MAXIOV) {
-        fut_printf("[PREADV] preadv(fd=%d, iov=%p, iovcnt=%d, offset=%ld) -> EINVAL (invalid iovcnt)\n",
-                   fd, iov, iovcnt, offset);
+        if (iovcnt < 0) {
+            fut_printf("[PREADV] preadv(fd=%d, iov=%p, iovcnt=%d, offset=%ld) -> EINVAL (iovcnt negative)\n",
+                       fd, iov, iovcnt, offset);
+        } else {
+            fut_printf("[PREADV] preadv(fd=%d, iov=%p, iovcnt=%d, offset=%ld) -> EINVAL (iovcnt exceeds UIO_MAXIOV=%d)\n",
+                       fd, iov, iovcnt, offset, UIO_MAXIOV);
+        }
         return -EINVAL;
     }
 
     if (iovcnt == 0) {
+        fut_printf("[PREADV] preadv(fd=%d, iov=%p, iovcnt=0, offset=%ld) -> 0 (nothing to read)\n",
+                   fd, iov, offset);
         return 0;  /* Nothing to read */
     }
 
@@ -197,6 +207,8 @@ ssize_t sys_preadv(int fd, const struct iovec *iov, int iovcnt, int64_t offset) 
     /* Copy iovec array from userspace */
     struct iovec *kernel_iov = (struct iovec *)__builtin_alloca(iovcnt * sizeof(struct iovec));
     if (!kernel_iov) {
+        fut_printf("[PREADV] preadv(fd=%d, iov=%p, iovcnt=%d, offset=%ld) -> ENOMEM (alloca failed)\n",
+                   fd, iov, iovcnt, offset);
         return -ENOMEM;
     }
 
@@ -206,16 +218,46 @@ ssize_t sys_preadv(int fd, const struct iovec *iov, int iovcnt, int64_t offset) 
         return -EFAULT;
     }
 
-    /* Calculate total size and validate iovecs */
+    /* Phase 2: Calculate total size, validate iovecs, and gather statistics */
     size_t total_size = 0;
+    int zero_len_count = 0;
+    size_t min_iov_len = (size_t)-1;
+    size_t max_iov_len = 0;
+
     for (int i = 0; i < iovcnt; i++) {
         /* Check for overflow */
         if (total_size + kernel_iov[i].iov_len < total_size) {
-            fut_printf("[PREADV] preadv(fd=%d, iov=%p, iovcnt=%d, offset=%ld) -> EINVAL (size overflow)\n",
-                       fd, iov, iovcnt, offset);
+            fut_printf("[PREADV] preadv(fd=%d, iov=%p, iovcnt=%d, offset=%ld) -> EINVAL (size overflow at iovec %d)\n",
+                       fd, iov, iovcnt, offset, i);
             return -EINVAL;
         }
         total_size += kernel_iov[i].iov_len;
+
+        /* Gather statistics */
+        if (kernel_iov[i].iov_len == 0) {
+            zero_len_count++;
+        } else {
+            if (kernel_iov[i].iov_len < min_iov_len) {
+                min_iov_len = kernel_iov[i].iov_len;
+            }
+            if (kernel_iov[i].iov_len > max_iov_len) {
+                max_iov_len = kernel_iov[i].iov_len;
+            }
+        }
+    }
+
+    /* Categorize I/O pattern for diagnostics */
+    const char *io_pattern;
+    if (iovcnt == 1) {
+        io_pattern = "single buffer (equivalent to pread64)";
+    } else if (iovcnt == 2) {
+        io_pattern = "dual buffer (e.g., header+data)";
+    } else if (iovcnt <= 10) {
+        io_pattern = "small scatter-gather";
+    } else if (iovcnt <= 100) {
+        io_pattern = "medium scatter-gather";
+    } else {
+        io_pattern = "large scatter-gather";
     }
 
     /* Get file structure from task */
@@ -247,10 +289,11 @@ ssize_t sys_preadv(int fd, const struct iovec *iov, int iovcnt, int64_t offset) 
         return -EINVAL;
     }
 
-    /* Phase 1: Iterate over iovecs and read each into kernel buffer, then copy to user
-     * Phase 2 will optimize this with direct VFS scatter-gather support */
+    /* Phase 2: Iterate over iovecs and read each into kernel buffer, then copy to user
+     * Phase 3 will optimize this with direct VFS scatter-gather support */
     ssize_t total_read = 0;
     int64_t current_offset = offset;
+    int iovecs_read = 0;
 
     for (int i = 0; i < iovcnt; i++) {
         if (kernel_iov[i].iov_len == 0) {
@@ -263,6 +306,8 @@ ssize_t sys_preadv(int fd, const struct iovec *iov, int iovcnt, int64_t offset) 
             if (total_read > 0) {
                 break;  /* Return bytes read so far */
             }
+            fut_printf("[PREADV] preadv(fd=%d, iov=%p, iovcnt=%d, offset=%ld) -> ENOMEM (malloc failed at iovec %d)\n",
+                       fd, iov, iovcnt, offset, i);
             return -ENOMEM;
         }
 
@@ -277,8 +322,8 @@ ssize_t sys_preadv(int fd, const struct iovec *iov, int iovcnt, int64_t offset) 
                 break;
             } else {
                 /* No bytes read yet, return error */
-                fut_printf("[PREADV] preadv(fd=%d, iov=%p, iovcnt=%d, offset=%ld) -> %ld (read error)\n",
-                           fd, iov, iovcnt, offset, n);
+                fut_printf("[PREADV] preadv(fd=%d, iov=%p, iovcnt=%d, offset=%ld) -> %ld (read error on iovec %d)\n",
+                           fd, iov, iovcnt, offset, n, i);
                 return n;
             }
         }
@@ -290,8 +335,8 @@ ssize_t sys_preadv(int fd, const struct iovec *iov, int iovcnt, int64_t offset) 
                 if (total_read > 0) {
                     break;  /* Return bytes read so far */
                 }
-                fut_printf("[PREADV] preadv(fd=%d, iov=%p, iovcnt=%d, offset=%ld) -> EFAULT (copy_to_user failed)\n",
-                           fd, iov, iovcnt, offset);
+                fut_printf("[PREADV] preadv(fd=%d, iov=%p, iovcnt=%d, offset=%ld) -> EFAULT (copy_to_user failed at iovec %d)\n",
+                           fd, iov, iovcnt, offset, i);
                 return -EFAULT;
             }
         }
@@ -299,6 +344,7 @@ ssize_t sys_preadv(int fd, const struct iovec *iov, int iovcnt, int64_t offset) 
         fut_free(kbuf);
         total_read += n;
         current_offset += n;
+        iovecs_read++;
 
         /* Check for EOF or partial read */
         if (n < (ssize_t)kernel_iov[i].iov_len) {
@@ -307,10 +353,30 @@ ssize_t sys_preadv(int fd, const struct iovec *iov, int iovcnt, int64_t offset) 
         }
     }
 
-    fut_printf("[PREADV] preadv(fd=%d, iov=%p, iovcnt=%d, offset=%ld) -> %ld bytes\n",
-               fd, iov, iovcnt, offset, total_read);
+    /* Phase 2: Detailed logging with I/O statistics */
+    const char *completion_status;
+    if (total_read == 0) {
+        completion_status = "EOF";
+    } else if ((size_t)total_read < total_size) {
+        completion_status = "partial";
+    } else {
+        completion_status = "complete";
+    }
 
-    /* Phase 2 implementation with VFS optimization:
+    if (zero_len_count > 0) {
+        fut_printf("[PREADV] preadv(fd=%d, iovcnt=%d [%s], offset=%ld, total_requested=%zu bytes) -> %ld bytes "
+                   "(%s, %d/%d iovecs filled, %d zero-len skipped, min=%zu max=%zu, Phase 2: iterative)\n",
+                   fd, iovcnt, io_pattern, offset, total_size, total_read,
+                   completion_status, iovecs_read, iovcnt - zero_len_count, zero_len_count,
+                   min_iov_len, max_iov_len);
+    } else {
+        fut_printf("[PREADV] preadv(fd=%d, iovcnt=%d [%s], offset=%ld, total_requested=%zu bytes) -> %ld bytes "
+                   "(%s, %d/%d iovecs filled, min=%zu max=%zu, Phase 2: iterative)\n",
+                   fd, iovcnt, io_pattern, offset, total_size, total_read,
+                   completion_status, iovecs_read, iovcnt, min_iov_len, max_iov_len);
+    }
+
+    /* Phase 3 implementation with VFS optimization:
      *
      * ssize_t total = fut_vfs_preadv(fd, kernel_iov, iovcnt, offset);
      * return total;
@@ -328,6 +394,9 @@ ssize_t sys_preadv(int fd, const struct iovec *iov, int iovcnt, int64_t offset) 
      * - Opportunity for zero-copy optimization
      * - Better performance for small buffers
      * - Thread-safe (no file position modification)
+     *
+     * Phase 4: Add non-blocking I/O support and proper partial read handling
+     * Phase 5: Zero-copy optimization for page-aligned buffers
      */
 
     return total_read;

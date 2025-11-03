@@ -6,16 +6,23 @@
  * Implements accept() to accept incoming connections on listening sockets.
  * Essential for server applications implementing TCP servers, Unix domain
  * socket servers, and other connection-oriented protocols.
+ *
+ * Phase 1 (Completed): Basic validation stub
+ * Phase 2 (Current): Full accept() with socket infrastructure integration
+ * Phase 3: Non-blocking accept and EAGAIN handling
+ * Phase 4: Address family specific peer address return
  */
 
 #include <kernel/fut_task.h>
+#include <kernel/fut_socket.h>
 #include <kernel/errno.h>
+#include <kernel/uaccess.h>
 #include <stdint.h>
 
 extern void fut_printf(const char *fmt, ...);
 extern fut_task_t *fut_task_current(void);
-extern int fut_copy_from_user(void *to, const void *from, size_t size);
-extern int fut_copy_to_user(void *to, const void *from, size_t size);
+extern fut_socket_t *get_socket_from_fd(int fd);
+extern int allocate_socket_fd(fut_socket_t *socket);
 
 /* socklen_t for address length */
 typedef uint32_t socklen_t;
@@ -341,33 +348,49 @@ long sys_accept(int sockfd, void *addr, socklen_t *addrlen) {
         }
     }
 
-    /* Phase 1: Validation only
-     * Phase 2: Implement basic accept:
-     *   - Check socket is in listening state
-     *   - Check socket type supports accept (SOCK_STREAM, SOCK_SEQPACKET)
-     *   - Allocate new file descriptor
-     *   - Dequeue connection from pending queue
-     *   - Create new socket structure for connection
-     *   - Copy peer address to user buffer if addr non-NULL
-     *   - Return new file descriptor
-     *
-     * Phase 3: Advanced features:
-     *   - Non-blocking support (EWOULDBLOCK when no connections)
-     *   - Signal interruption handling (EINTR)
-     *   - Connection abort handling (ECONNABORTED)
-     *   - Proper resource limits (EMFILE, ENFILE)
-     *
-     * Phase 4: Protocol support:
-     *   - TCP socket accept
-     *   - Unix domain socket accept
-     *   - SCTP association accept
-     *   - Peer credentials for Unix sockets
-     */
+    /* Get listening socket from FD */
+    fut_socket_t *listen_socket = get_socket_from_fd(sockfd);
+    if (!listen_socket) {
+        fut_printf("[ACCEPT] accept(sockfd=%d) -> EBADF (not a socket)\n", sockfd);
+        return -EBADF;
+    }
 
-    const char *addr_status = (addr == NULL) ? "NULL" : "provided";
-    fut_printf("[ACCEPT] accept(sockfd=%d, addr=%s, addrlen=%u) -> ENOTSUP (Phase 1 stub)\n",
-               sockfd, addr_status, len);
+    /* Accept connection using kernel socket layer */
+    fut_socket_t *accepted_socket = NULL;
+    int ret = fut_socket_accept(listen_socket, &accepted_socket);
+    if (ret < 0) {
+        /* fut_socket_accept returns negative errno */
+        fut_printf("[ACCEPT] accept(sockfd=%d) -> %d (fut_socket_accept failed)\n",
+                   sockfd, ret);
+        return ret;
+    }
 
-    /* Phase 1: Return not supported (would normally return new fd) */
-    return -ENOTSUP;  /* Not yet implemented */
+    /* Allocate new file descriptor for accepted socket */
+    int newfd = allocate_socket_fd(accepted_socket);
+    if (newfd < 0) {
+        fut_printf("[ACCEPT] accept(sockfd=%d) -> EMFILE (failed to allocate FD)\n", sockfd);
+        /* TODO: Clean up accepted socket */
+        return -EMFILE;
+    }
+
+    /* Phase 2: For now, we don't populate peer address (AF_UNIX doesn't need it much)
+     * Phase 3: Copy peer address if requested */
+    if (addr != NULL && addrlen != NULL) {
+        /* For Unix domain sockets, peer address is the bound path
+         * For now, we'll just set addrlen to 0 to indicate no address returned */
+        socklen_t actual_len = 0;
+        if (fut_copy_to_user(addrlen, &actual_len, sizeof(socklen_t)) != 0) {
+            fut_printf("[ACCEPT] accept(sockfd=%d, newfd=%d) -> warning: failed to update addrlen\n",
+                       sockfd, newfd);
+            /* Not fatal - connection is established, just couldn't return address */
+        }
+
+        fut_printf("[ACCEPT] accept(sockfd=%d) -> %d (peer address not yet implemented)\n",
+                   sockfd, newfd);
+    } else {
+        fut_printf("[ACCEPT] accept(sockfd=%d) -> %d (success, no address requested)\n",
+                   sockfd, newfd);
+    }
+
+    return newfd;
 }

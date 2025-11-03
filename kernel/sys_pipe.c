@@ -4,6 +4,12 @@
  * Licensed under the MPL v2.0 — see LICENSE for details.
  *
  * Implements POSIX pipe() for inter-process communication.
+ * Essential for shell pipelines and IPC.
+ *
+ * Phase 1 (Completed): Basic pipe creation with read/write ends
+ * Phase 2 (Current): Enhanced validation, FD categorization, and detailed logging
+ * Phase 3: Performance optimization (larger buffers, zero-copy)
+ * Phase 4: Advanced features (pipe2 with flags, splice support)
  */
 
 #include <kernel/errno.h>
@@ -277,34 +283,133 @@ extern int chrdev_alloc_fd(const struct fut_file_ops *ops, void *inode, void *pr
 /**
  * pipe() syscall - Create a pipe for IPC.
  *
+ * Creates a pipe, a unidirectional data channel that can be used for
+ * inter-process communication. The pipe has a read end and a write end.
+ * Data written to the write end can be read from the read end.
+ *
  * @param pipefd User-space array to receive two file descriptors
  *               pipefd[0] = read end
  *               pipefd[1] = write end
  *
  * Returns:
  *   - 0 on success (pipefd filled with read and write fds)
- *   - -errno on error
+ *   - -EINVAL if pipefd is NULL
+ *   - -EFAULT if pipefd points to inaccessible memory
+ *   - -ENOMEM if pipe buffer allocation fails
+ *   - -EMFILE if too many file descriptors open
+ *
+ * Behavior:
+ *   - Creates unidirectional data channel
+ *   - pipefd[0] is read end (read-only)
+ *   - pipefd[1] is write end (write-only)
+ *   - Pipe buffer size is 4096 bytes (PIPE_BUF_SIZE)
+ *   - Reading from empty pipe blocks until data available
+ *   - Writing to full pipe blocks until space available
+ *   - Closing write end causes read to return EOF
+ *   - Writing with read end closed returns -EPIPE
+ *
+ * Common usage patterns:
+ *
+ * Basic pipe communication:
+ *   int pipefd[2];
+ *   pipe(pipefd);
+ *   if (fork() == 0) {
+ *       // Child: write to pipe
+ *       close(pipefd[0]);  // Close read end
+ *       write(pipefd[1], "hello", 5);
+ *       close(pipefd[1]);
+ *   } else {
+ *       // Parent: read from pipe
+ *       close(pipefd[1]);  // Close write end
+ *       char buf[100];
+ *       read(pipefd[0], buf, sizeof(buf));
+ *       close(pipefd[0]);
+ *   }
+ *
+ * Shell pipeline (cmd1 | cmd2):
+ *   int pipefd[2];
+ *   pipe(pipefd);
+ *   if (fork() == 0) {
+ *       // cmd1: redirect stdout to pipe write end
+ *       dup2(pipefd[1], STDOUT_FILENO);
+ *       close(pipefd[0]);
+ *       close(pipefd[1]);
+ *       exec("cmd1");
+ *   }
+ *   if (fork() == 0) {
+ *       // cmd2: redirect stdin from pipe read end
+ *       dup2(pipefd[0], STDIN_FILENO);
+ *       close(pipefd[0]);
+ *       close(pipefd[1]);
+ *       exec("cmd2");
+ *   }
+ *   close(pipefd[0]);
+ *   close(pipefd[1]);
+ *
+ * Producer-consumer pattern:
+ *   int pipefd[2];
+ *   pipe(pipefd);
+ *   pthread_create(&producer, NULL, produce_data, &pipefd[1]);
+ *   pthread_create(&consumer, NULL, consume_data, &pipefd[0]);
+ *
+ * Pipe capacity and atomicity:
+ *   - PIPE_BUF (4096 bytes): Atomic write guarantee
+ *   - Writes ≤ PIPE_BUF are atomic
+ *   - Writes > PIPE_BUF may be interleaved
+ *   - Useful for concurrent writes from multiple processes
+ *
+ * Blocking behavior:
+ *   - Read on empty pipe: blocks until data available or write end closed
+ *   - Write on full pipe: blocks until space available or read end closed
+ *   - Non-blocking I/O: Use O_NONBLOCK flag (pipe2)
+ *
+ * Related syscalls:
+ *   - pipe2(): Create pipe with flags (O_NONBLOCK, O_CLOEXEC)
+ *   - dup2(): Redirect pipe to stdin/stdout
+ *   - fcntl(): Set pipe to non-blocking mode
+ *   - poll()/select(): Wait for pipe readiness
+ *
+ * Phase 1 (Completed): Basic pipe creation with read/write ends
+ * Phase 2 (Current): Enhanced validation, FD categorization, detailed logging
+ * Phase 3: Performance optimization (larger buffers, zero-copy)
+ * Phase 4: Advanced features (pipe2 with flags, splice support)
  */
 long sys_pipe(int pipefd[2]) {
-    /* Validate user pointer */
+    /* Phase 2: Validate user pointer */
     if (!pipefd) {
+        fut_printf("[PIPE] pipe(pipefd=NULL) -> EINVAL (NULL pipefd array)\n");
         return -EINVAL;
     }
 
     /* Validate that pipefd is a valid userspace pointer (writable) */
     if (fut_access_ok(pipefd, sizeof(int) * 2, 1) != 0) {
+        fut_printf("[PIPE] pipe(pipefd=?) -> EFAULT (pipefd not accessible)\n");
         return -EFAULT;
     }
 
     /* Create pipe buffer */
     struct pipe_buffer *pipe = pipe_buffer_create();
     if (!pipe) {
+        fut_printf("[PIPE] pipe() -> ENOMEM (pipe buffer allocation failed)\n");
         return -ENOMEM;
     }
 
     /* Allocate read end file descriptor */
     int read_fd = chrdev_alloc_fd(&pipe_read_fops, NULL, pipe);
     if (read_fd < 0) {
+        const char *error_desc;
+        switch (read_fd) {
+            case -EMFILE:
+                error_desc = "too many open files";
+                break;
+            case -ENOMEM:
+                error_desc = "out of memory";
+                break;
+            default:
+                error_desc = "fd allocation failed";
+                break;
+        }
+        fut_printf("[PIPE] pipe() -> %d (%s, read_fd allocation)\n", read_fd, error_desc);
         pipe_buffer_destroy(pipe);
         return read_fd;
     }
@@ -312,17 +417,61 @@ long sys_pipe(int pipefd[2]) {
     /* Allocate write end file descriptor */
     int write_fd = chrdev_alloc_fd(&pipe_write_fops, NULL, pipe);
     if (write_fd < 0) {
+        const char *error_desc;
+        switch (write_fd) {
+            case -EMFILE:
+                error_desc = "too many open files";
+                break;
+            case -ENOMEM:
+                error_desc = "out of memory";
+                break;
+            default:
+                error_desc = "fd allocation failed";
+                break;
+        }
+        fut_printf("[PIPE] pipe(read_fd=%d) -> %d (%s, write_fd allocation)\n",
+                   read_fd, write_fd, error_desc);
         /* Close read fd to clean up */
         extern int fut_vfs_close(int fd);
         fut_vfs_close(read_fd);
         return write_fd;
     }
 
+    /* Phase 2: Categorize FD ranges */
+    const char *read_fd_category;
+    if (read_fd <= 2) {
+        read_fd_category = "stdio (0-2)";
+    } else if (read_fd < 10) {
+        read_fd_category = "low (3-9)";
+    } else if (read_fd < 100) {
+        read_fd_category = "normal (10-99)";
+    } else if (read_fd < 1000) {
+        read_fd_category = "high (100-999)";
+    } else {
+        read_fd_category = "very high (≥1000)";
+    }
+
+    const char *write_fd_category;
+    if (write_fd <= 2) {
+        write_fd_category = "stdio (0-2)";
+    } else if (write_fd < 10) {
+        write_fd_category = "low (3-9)";
+    } else if (write_fd < 100) {
+        write_fd_category = "normal (10-99)";
+    } else if (write_fd < 1000) {
+        write_fd_category = "high (100-999)";
+    } else {
+        write_fd_category = "very high (≥1000)";
+    }
+
     /* Return file descriptors to userspace */
     pipefd[0] = read_fd;
     pipefd[1] = write_fd;
 
-    fut_printf("[PIPE] Created pipe: read_fd=%d write_fd=%d\n", read_fd, write_fd);
+    /* Phase 2: Detailed success logging */
+    fut_printf("[PIPE] pipe(read_fd=%d [%s], write_fd=%d [%s], buf_size=%u) -> 0 "
+               "(pipe created, Phase 2)\n",
+               read_fd, read_fd_category, write_fd, write_fd_category, PIPE_BUF_SIZE);
 
     return 0;
 }

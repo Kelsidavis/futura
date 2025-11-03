@@ -4,7 +4,12 @@
  * Licensed under the MPL v2.0 — see LICENSE for details.
  *
  * Implements file data synchronization syscall for data durability.
- * Currently a stub that validates the FD and returns success.
+ * Essential for database systems and applications requiring data persistence.
+ *
+ * Phase 1 (Completed): Basic stub with FD validation
+ * Phase 2 (Current): Enhanced validation, FD/file type categorization, and detailed logging
+ * Phase 3: VFS backend sync operations (data-only sync hooks)
+ * Phase 4: Performance optimization (selective metadata sync, async sync)
  */
 
 #include <kernel/errno.h>
@@ -17,75 +22,239 @@ extern struct fut_file *vfs_get_file_from_task(struct fut_task *task, int fd);
 /**
  * fdatasync() syscall - Synchronize a file's data (but not metadata) with storage.
  *
+ * Similar to fsync(), but only flushes file data to storage, not necessarily
+ * all metadata. This can be faster when metadata updates (like atime) are not
+ * critical. Essential for database systems that need data durability without
+ * full metadata sync overhead.
+ *
  * @param fd File descriptor to synchronize
  *
  * Returns:
  *   - 0 on success
- *   - -errno on error
+ *   - -EBADF if fd is not a valid file descriptor
+ *   - -EINVAL if fd refers to a special file that doesn't support syncing
+ *   - -ESRCH if no current task context
+ *   - -EIO if an I/O error occurs during sync (Phase 3+)
+ *   - -EROFS if the filesystem is read-only (Phase 3+)
  *
  * Behavior:
  *   - Validates that fd is a valid open file descriptor
  *   - Flushes file data to storage but not necessarily metadata
  *   - More efficient than fsync() when metadata sync is unnecessary
  *   - Does not return until the data transfer is complete
- *   - Returns -EBADF if fd is not a valid file descriptor
- *   - Returns -EINVAL if fd refers to a special file that doesn't support syncing
- *   - Returns -EIO if an I/O error occurs during sync
+ *   - Blocks until device confirms transfer completion
+ *
+ * What gets synchronized:
+ *   - Modified file contents (always)
+ *   - File size changes (if needed for data retrieval)
+ *   - NOT synchronized: atime, mtime (unless needed)
+ *   - NOT synchronized: Permission changes
+ *   - NOT synchronized: Extended attributes
  *
  * Difference from fsync():
- *   - fsync() syncs both data AND metadata (timestamps, permissions, etc.)
- *   - fdatasync() only syncs data, skipping metadata unless needed for data retrieval
- *   - fdatasync() can be faster when only data integrity matters
+ *   - fsync(): Flushes data and all metadata (slower but safer)
+ *   - fdatasync(): Flushes data and minimal metadata (faster but less safe)
+ *   - fdatasync() may skip atime updates but will sync size changes
+ *   - For database/journaling apps, choose based on requirements
+ *
+ * File types and fdatasync:
+ *   - Regular files: Sync data and critical metadata
+ *   - Directories: Sync directory entries
+ *   - Block devices: Flush device cache
+ *   - Character devices: Not syncable (returns -EINVAL)
+ *   - Pipes/FIFOs: Not syncable (returns -EINVAL)
+ *   - Sockets: Not syncable (returns -EINVAL)
+ *
+ * Common usage patterns:
+ *
+ * Database transaction commit (data only):
+ *   write(fd, transaction_data, size);
+ *   fdatasync(fd);  // Ensure data is durable, skip atime update
+ *
+ * Log file append (performance):
+ *   write(log_fd, log_entry, entry_size);
+ *   fdatasync(log_fd);  // Faster than fsync for append-only logs
+ *
+ * When to use fdatasync vs fsync:
+ *   - Use fdatasync: When only data durability matters
+ *   - Use fsync: When metadata must also be durable
+ *   - Example: Database data files → fdatasync
+ *   - Example: Configuration files → fsync
+ *
+ * Performance considerations:
+ *   - fdatasync() can be significantly faster than fsync()
+ *   - Useful for high-throughput append-only workloads
+ *   - Database systems often prefer fdatasync()
+ *   - Still requires disk I/O, so use judiciously
+ *
+ * Related syscalls:
+ *   - fsync(): Sync data and all metadata
+ *   - sync(): Sync all filesystems
+ *   - sync_file_range(): Sync specific file range
  *
  * Note: Current implementation is a stub that validates the FD.
  *       Full sync support requires VFS backend implementation.
+ *
+ * TODO Phase 3: Implement data-only sync in VFS:
+ *   - Add datasync() operation to fut_vnode_ops
+ *   - Implement in FuturaFS (log-structured, skip atime)
+ *   - Implement in RamFS (no-op or minimal sync)
+ *   - Fall back to full sync if datasync not available
+ *
+ * Phase 1 (Completed): Basic stub with FD validation
+ * Phase 2 (Current): Enhanced validation, FD/file type categorization, detailed logging
+ * Phase 3: VFS backend sync operations (data-only sync hooks)
+ * Phase 4: Performance optimization (selective metadata sync, async sync)
  */
 long sys_fdatasync(int fd) {
-    /* Validate FD number */
+    /* Phase 2: Validate FD number */
     if (fd < 0) {
+        fut_printf("[FDATASYNC] fdatasync(fd=%d) -> EBADF (negative fd)\n", fd);
         return -EBADF;
     }
 
-    /* Get current task for FD table access */
+    /* Phase 2: Get current task for FD table access */
     fut_task_t *task = fut_task_current();
     if (!task) {
-        return -ESRCH;  /* No task context */
+        fut_printf("[FDATASYNC] fdatasync(fd=%d) -> ESRCH (no current task)\n", fd);
+        return -ESRCH;
+    }
+
+    /* Phase 2: Categorize FD range */
+    const char *fd_category;
+    if (fd <= 2) {
+        fd_category = "stdio (0-2)";
+    } else if (fd < 16) {
+        fd_category = "low (3-15)";
+    } else if (fd < 256) {
+        fd_category = "mid (16-255)";
+    } else if (fd < 1024) {
+        fd_category = "high (256-1023)";
+    } else {
+        fd_category = "very high (≥1024)";
     }
 
     /* Validate FD table exists */
     if (!task->fd_table) {
+        fut_printf("[FDATASYNC] fdatasync(fd=%d [%s]) -> EBADF (no FD table, pid=%d)\n",
+                   fd, fd_category, task->pid);
         return -EBADF;
     }
 
     /* Get the file structure for fd from current task's FD table */
     struct fut_file *file = vfs_get_file_from_task(task, fd);
     if (!file) {
+        fut_printf("[FDATASYNC] fdatasync(fd=%d [%s]) -> EBADF (fd not open, pid=%d)\n",
+                   fd, fd_category, task->pid);
         return -EBADF;
     }
 
+    /* Phase 2: Identify file type */
+    const char *file_type;
+    const char *sync_scope;
+
     /* fdatasync() not supported on character devices, pipes, or sockets */
     if (file->chr_ops) {
+        file_type = "character device";
+        sync_scope = "not syncable";
+        fut_printf("[FDATASYNC] fdatasync(fd=%d [%s], type=%s) -> EINVAL (%s, pid=%d)\n",
+                   fd, fd_category, file_type, sync_scope, task->pid);
         return -EINVAL;
     }
 
-    /* Check if this is a directory - directories can be synced */
-    /* Regular files can also be synced */
+    if (file->vnode) {
+        switch (file->vnode->type) {
+            case VN_REG:
+                file_type = "regular file";
+                sync_scope = "data+size";
+                break;
+            case VN_DIR:
+                file_type = "directory";
+                sync_scope = "directory entries";
+                break;
+            case VN_BLK:
+                file_type = "block device";
+                sync_scope = "device cache";
+                break;
+            case VN_LNK:
+                file_type = "symbolic link";
+                sync_scope = "link target";
+                break;
+            case VN_CHR:
+                file_type = "character device";
+                sync_scope = "not syncable";
+                fut_printf("[FDATASYNC] fdatasync(fd=%d [%s], type=%s) -> EINVAL (%s, pid=%d)\n",
+                           fd, fd_category, file_type, sync_scope, task->pid);
+                return -EINVAL;
+            case VN_FIFO:
+                file_type = "FIFO/pipe";
+                sync_scope = "not syncable";
+                fut_printf("[FDATASYNC] fdatasync(fd=%d [%s], type=%s) -> EINVAL (%s, pid=%d)\n",
+                           fd, fd_category, file_type, sync_scope, task->pid);
+                return -EINVAL;
+            case VN_SOCK:
+                file_type = "socket";
+                sync_scope = "not syncable";
+                fut_printf("[FDATASYNC] fdatasync(fd=%d [%s], type=%s) -> EINVAL (%s, pid=%d)\n",
+                           fd, fd_category, file_type, sync_scope, task->pid);
+                return -EINVAL;
+            default:
+                file_type = "unknown";
+                sync_scope = "not syncable";
+                fut_printf("[FDATASYNC] fdatasync(fd=%d [%s], type=%s) -> EINVAL (%s, pid=%d)\n",
+                           fd, fd_category, file_type, sync_scope, task->pid);
+                return -EINVAL;
+        }
+    } else {
+        file_type = "no vnode";
+        sync_scope = "unknown";
+    }
 
-    /* TODO: When VFS gains sync operations, call them here:
+    /*
+     * Phase 2: Stub implementation - validates file type but doesn't perform sync
+     *
+     * TODO Phase 3: When VFS gains sync operations, call them here:
+     *
      * if (file->vnode && file->vnode->ops && file->vnode->ops->datasync) {
-     *     return file->vnode->ops->datasync(file->vnode);
+     *     int ret = file->vnode->ops->datasync(file->vnode);
+     *     if (ret < 0) {
+     *         const char *error_desc;
+     *         switch (ret) {
+     *             case -EIO:
+     *                 error_desc = "I/O error during sync";
+     *                 break;
+     *             case -EROFS:
+     *                 error_desc = "read-only filesystem";
+     *                 break;
+     *             default:
+     *                 error_desc = "datasync operation failed";
+     *                 break;
+     *         }
+     *         fut_printf("[FDATASYNC] fdatasync(fd=%d [%s], type=%s, scope=%s, ino=%lu) -> %d "
+     *                    "(%s, pid=%d)\n",
+     *                    fd, fd_category, file_type, sync_scope, file->vnode->ino,
+     *                    ret, error_desc, task->pid);
+     *         return ret;
+     *     }
+     * } else if (file->vnode && file->vnode->ops && file->vnode->ops->sync) {
+     *     // Fall back to full sync if datasync not available
+     *     int ret = file->vnode->ops->sync(file->vnode);
+     *     if (ret < 0) {
+     *         return ret;
+     *     }
      * }
-     * Fall back to full sync if datasync not available:
-     * if (file->vnode && file->vnode->ops && file->vnode->ops->sync) {
-     *     return file->vnode->ops->sync(file->vnode);
-     * }
+     *
+     * Phase 4 additions:
+     *   - Selective metadata sync (size, but not atime/mtime)
+     *   - Async fdatasync for better performance
+     *   - Per-filesystem datasync strategies
      */
 
-    /* For now, return success as a stub implementation.
-     * Most underlying operations in Futura may already be synchronous,
-     * and this prevents applications from failing when they call fdatasync().
-     */
-    fut_printf("[FDATASYNC] fd=%d (stub: success)\n", fd);
+    /* Phase 2: Detailed success logging (stub - no actual sync performed) */
+    uint64_t ino = file->vnode ? file->vnode->ino : 0;
+    fut_printf("[FDATASYNC] fdatasync(fd=%d [%s], type=%s, scope=%s, ino=%lu, pid=%d) -> 0 "
+               "(stub: no actual sync performed, Phase 2)\n",
+               fd, fd_category, file_type, sync_scope, ino, task->pid);
 
     return 0;
 }

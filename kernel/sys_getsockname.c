@@ -5,19 +5,35 @@
  *
  * Implements getsockname() to retrieve the local address to which a socket is bound.
  * Complement to getpeername() which retrieves the remote peer address.
+ *
+ * Phase 1 (Completed): Basic validation stub
+ * Phase 2 (Current): Full implementation with Unix domain socket support
+ * Phase 3: IPv4/IPv6 address family support
+ * Phase 4: Ephemeral port and multi-interface handling
  */
 
 #include <kernel/fut_task.h>
+#include <kernel/fut_socket.h>
 #include <kernel/errno.h>
+#include <kernel/uaccess.h>
 #include <stdint.h>
+#include <string.h>
 
 extern void fut_printf(const char *fmt, ...);
 extern fut_task_t *fut_task_current(void);
-extern int fut_copy_from_user(void *to, const void *from, size_t size);
-extern int fut_copy_to_user(void *to, const void *from, size_t size);
+extern fut_socket_t *get_socket_from_fd(int fd);
 
 /* socklen_t for address length */
 typedef uint32_t socklen_t;
+
+/* Socket address family constants */
+#define AF_UNIX 1
+
+/* Unix domain socket address structure */
+struct sockaddr_un {
+    uint16_t sun_family;    /* AF_UNIX */
+    char sun_path[108];     /* Pathname */
+};
 
 /**
  * getsockname() - Get local socket address
@@ -298,33 +314,61 @@ long sys_getsockname(int sockfd, void *addr, socklen_t *addrlen) {
         return -EINVAL;
     }
 
-    /* Phase 1: Validation only
-     * Phase 2: Integrate with socket layer to:
-     *   - Verify sockfd is actually a socket (not regular file)
-     *   - Retrieve local address from socket structure
-     *   - Handle different address families (AF_INET, AF_INET6, AF_UNIX)
-     *   - For unbound sockets: Return wildcard address (0.0.0.0:0)
-     *   - For bound sockets: Return address from bind()
-     *   - For connected sockets: Return local endpoint
-     *   - Copy address to userspace buffer
-     *   - Update addrlen with actual address size
-     *   - Handle buffer truncation if len < actual size
-     *
-     * Phase 3: Address family specific handling:
-     *   - AF_INET: Return IPv4 address and port (may be 0.0.0.0:0)
-     *   - AF_INET6: Return IPv6 address, port, flow info, scope
-     *   - AF_UNIX: Return Unix domain socket path (may be empty)
-     *
-     * Phase 4: Advanced features:
-     *   - Ephemeral port handling: Reveal kernel-assigned port
-     *   - Multi-homed handling: Return actual interface address
-     *   - Abstract Unix sockets: Return empty path with non-zero length
-     *   - Buffer size handling: Truncate and set addrlen correctly
-     */
+    /* Get socket from FD */
+    fut_socket_t *socket = get_socket_from_fd(sockfd);
+    if (!socket) {
+        fut_printf("[GETSOCKNAME] getsockname(sockfd=%d) -> EBADF (not a socket)\n", sockfd);
+        return -EBADF;
+    }
 
-    fut_printf("[GETSOCKNAME] getsockname(sockfd=%d, addrlen=%u) -> 0 (Phase 1 stub)\n",
-               sockfd, len);
+    /* Phase 2: Unix domain socket support
+     * Build sockaddr_un structure with socket's bound path */
+    struct sockaddr_un sock_addr;
+    memset(&sock_addr, 0, sizeof(sock_addr));
+    sock_addr.sun_family = AF_UNIX;
 
-    /* Phase 1: Just return success for now */
+    /* Copy bound path if socket is bound */
+    if (socket->bound_path) {
+        /* Calculate string length manually */
+        size_t path_len = 0;
+        while (socket->bound_path[path_len] != '\0' && path_len < sizeof(sock_addr.sun_path) - 1) {
+            path_len++;
+        }
+
+        memcpy(sock_addr.sun_path, socket->bound_path, path_len);
+        sock_addr.sun_path[path_len] = '\0';
+
+        fut_printf("[GETSOCKNAME] getsockname(sockfd=%d) -> path='%s'\n",
+                   sockfd, socket->bound_path);
+    } else {
+        /* Unbound socket - return empty path */
+        sock_addr.sun_path[0] = '\0';
+        fut_printf("[GETSOCKNAME] getsockname(sockfd=%d) -> unbound (empty path)\n",
+                   sockfd);
+    }
+
+    /* Calculate actual address size */
+    socklen_t actual_len = sizeof(struct sockaddr_un);
+
+    /* Copy as much as fits in user buffer */
+    socklen_t copy_len = (len < actual_len) ? len : actual_len;
+    if (fut_copy_to_user(addr, &sock_addr, copy_len) != 0) {
+        fut_printf("[GETSOCKNAME] getsockname(sockfd=%d) -> EFAULT (copy_to_user failed)\n",
+                   sockfd);
+        return -EFAULT;
+    }
+
+    /* Update addrlen with actual size (may be larger than buffer) */
+    if (fut_copy_to_user(addrlen, &actual_len, sizeof(socklen_t)) != 0) {
+        fut_printf("[GETSOCKNAME] getsockname(sockfd=%d) -> EFAULT (copy addrlen failed)\n",
+                   sockfd);
+        return -EFAULT;
+    }
+
+    if (len < actual_len) {
+        fut_printf("[GETSOCKNAME] getsockname(sockfd=%d) -> 0 (truncated: %u < %u)\n",
+                   sockfd, len, actual_len);
+    }
+
     return 0;
 }

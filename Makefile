@@ -366,6 +366,7 @@ KERNEL_SOURCES := \
     kernel/sys_pause.c \
     kernel/sys_shutdown.c \
     kernel/sys_getpeername.c \
+    kernel/sys_getsockname.c \
     kernel/sys_uname.c \
     kernel/sys_rename.c \
     kernel/sys_stat.c \

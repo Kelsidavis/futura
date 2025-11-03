@@ -57,7 +57,9 @@ typedef long ssize_t;
 #define SYS_setsid 112u
 #define SYS_getppid 113u
 #define SYS_getsid 124u
-/* Note: SYS_setpgid/SYS_setpgrp would be 109 but conflicts with SYS_seteuid */
+#define SYS_setpgid 125u
+#define SYS_getpgid 126u
+/* Note: SYS_setpgrp would be 109 but conflicts with SYS_seteuid */
 #define SYS_time_millis 400u
 
 ssize_t sys_echo(const char *u_in, char *u_out, size_t n);
@@ -92,6 +94,8 @@ long sys_getpid(void);
 long sys_gettid(void);
 long sys_getppid(void);
 long sys_getpgrp(void);
+long sys_getpgid(uint64_t pid);
+long sys_setpgid(uint64_t pid, uint64_t pgid);
 long sys_getsid(uint64_t pid);
 long sys_setsid(void);
 long sys_getrlimit(int resource, struct rlimit *rlim);
@@ -130,8 +134,8 @@ int64_t sys_lseek(int fd, int64_t offset, int whence);
 long sys_gettimeofday(fut_timeval_t *tv, void *tz);
 long sys_time(uint64_t *tloc);
 long sys_clock_gettime(int clock_id, fut_timespec_t *tp);
-/* Note: sys_setpgrp and sys_setpgid are implemented but not exposed via syscall
-   (syscall numbers conflict with seteuid from Priority #14) */
+/* Note: sys_setpgrp is implemented but not exposed via syscall
+   (syscall number 109 conflicts with seteuid from Priority #14) */
 long sys_time_millis(void);
 long sys_sched_yield(void);
 long sys_getpriority(int which, int who);

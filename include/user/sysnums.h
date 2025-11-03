@@ -102,10 +102,12 @@
 #define SYS_setsid       112
 #define SYS_getppid      113
 #define SYS_getsid       124
+#define SYS_setpgid      125
+#define SYS_getpgid      126
 #define SYS_getpriority  140
 #define SYS_setpriority  141
 #define SYS_time         201
 #define SYS_preadv       295
 #define SYS_pwritev      296
-/* Note: SYS_setpgid/SYS_setpgrp would be 109 but that conflicts with SYS_seteuid from Priority #14 */
+/* Note: SYS_setpgrp would be 109 but that conflicts with SYS_seteuid from Priority #14 */
 #define SYS_time_millis  400

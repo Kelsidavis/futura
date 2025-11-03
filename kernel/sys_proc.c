@@ -120,6 +120,42 @@ long sys_getpgrp(void) {
 }
 
 /**
+ * getpgid(pid_t pid) - Get process group ID
+ *
+ * Returns the process group ID (PGID) of the process specified by pid.
+ * Process groups are used for job control in shells and signal handling.
+ *
+ * For now, each process is its own process group (no pgrp tracking yet).
+ *
+ * @param pid  Process ID (0 = calling process)
+ *
+ * Returns:
+ *   - Process group ID of the specified process (equal to PID)
+ *   - -ESRCH if pid not found
+ */
+long sys_getpgid(uint64_t pid) {
+    fut_task_t *task = fut_task_current();
+    if (!task) {
+        return -ESRCH;
+    }
+
+    /* If pid is 0, use calling process */
+    if (pid == 0) {
+        pid = task->pid;
+    }
+
+    /* For simplicity, only support getpgid on self (stub implementation) */
+    if (pid != task->pid) {
+        /* Would need task_by_pid to support other processes */
+        return -ESRCH;
+    }
+
+    /* Each process is its own process group by default */
+    fut_printf("[PROC] getpgid(pid=%llu) -> pgrp=%llu\n", pid, task->pid);
+    return task->pid;
+}
+
+/**
  * setpgrp() - Create new process group or join existing one
  *
  * Changes the calling process's process group ID. For now, this is a no-op

@@ -1082,6 +1082,20 @@ static int64_t sys_setsid_handler(uint64_t arg1, uint64_t arg2, uint64_t arg3,
     return sys_setsid();
 }
 
+static int64_t sys_getpgid_handler(uint64_t pid, uint64_t arg2, uint64_t arg3,
+                                   uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg2; (void)arg3; (void)arg4; (void)arg5; (void)arg6;
+    extern long sys_getpgid(uint64_t pid);
+    return sys_getpgid(pid);
+}
+
+static int64_t sys_setpgid_handler(uint64_t pid, uint64_t pgid, uint64_t arg3,
+                                   uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg3; (void)arg4; (void)arg5; (void)arg6;
+    extern long sys_setpgid(uint64_t pid, uint64_t pgid);
+    return sys_setpgid(pid, pgid);
+}
+
 static int64_t sys_getrlimit_handler(uint64_t resource, uint64_t rlim, uint64_t arg3,
                                      uint64_t arg4, uint64_t arg5, uint64_t arg6) {
     (void)arg3; (void)arg4; (void)arg5; (void)arg6;
@@ -1316,8 +1330,10 @@ static syscall_handler_t syscall_table[MAX_SYSCALL] = {
     [SYS_gettid]       = sys_gettid_handler,
     [SYS_getppid]      = sys_getppid_handler,
     [SYS_getpgrp]      = sys_getpgrp_handler,
-    /* Note: SYS_setpgrp skipped (same as SYS_setpgid=109, which conflicts with SYS_seteuid) */
+    /* Note: SYS_setpgrp skipped (109 conflicts with SYS_seteuid) */
     [SYS_getsid]       = sys_getsid_handler,
+    [SYS_setpgid]      = sys_setpgid_handler,
+    [SYS_getpgid]      = sys_getpgid_handler,
     [SYS_setsid]       = sys_setsid_handler,
     [SYS_getrlimit]    = sys_getrlimit_handler,
     [SYS_getrusage]    = sys_getrusage_handler,

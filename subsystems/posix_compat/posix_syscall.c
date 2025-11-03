@@ -55,6 +55,7 @@
 #define SYS_sched_yield 24
 #define SYS_mremap      25
 #define SYS_msync       26
+#define SYS_mincore     27
 #define SYS_dup         32
 #define SYS_dup2        33
 #define SYS_pause       34
@@ -655,6 +656,13 @@ static int64_t sys_msync_handler(uint64_t addr, uint64_t length, uint64_t flags,
     (void)arg4; (void)arg5; (void)arg6;
     extern long sys_msync(void *addr, size_t length, int flags);
     return sys_msync((void *)addr, (size_t)length, (int)flags);
+}
+
+static int64_t sys_mincore_handler(uint64_t addr, uint64_t length, uint64_t vec,
+                                   uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg4; (void)arg5; (void)arg6;
+    extern long sys_mincore(void *addr, size_t length, unsigned char *vec);
+    return sys_mincore((void *)addr, (size_t)length, (unsigned char *)(uintptr_t)vec);
 }
 
 /* Directory operations */
@@ -1682,6 +1690,7 @@ static syscall_handler_t syscall_table[MAX_SYSCALL] = {
     [SYS_sched_yield] = sys_sched_yield_handler,
     [SYS_mremap]     = sys_mremap_handler,
     [SYS_msync]      = sys_msync_handler,
+    [SYS_mincore]    = sys_mincore_handler,
     [SYS_dup]        = sys_dup_handler,
     [SYS_dup2]       = sys_dup2_handler,
     [SYS_pause]      = sys_pause_handler,

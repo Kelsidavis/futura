@@ -401,6 +401,7 @@ KERNEL_SOURCES := \
     kernel/sys_mprotect.c \
     kernel/sys_mremap.c \
     kernel/sys_msync.c \
+    kernel/sys_mincore.c \
     kernel/sys_nanosleep.c \
     kernel/sys_time.c \
     kernel/sys_chdir.c \

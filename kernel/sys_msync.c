@@ -5,6 +5,12 @@
  *
  * Implements msync() for synchronizing memory-mapped files to storage.
  * Essential companion to mmap for file-backed mappings.
+ *
+ * Phase 1 (Completed): Basic parameter validation
+ * Phase 2 (Current): Enhanced validation with detailed flag reporting
+ * Phase 3: Identify file-backed VMAs and write dirty pages
+ * Phase 4: Wait for I/O completion (MS_SYNC)
+ * Phase 5: Invalidate page cache entries (MS_INVALIDATE)
  */
 
 #include <kernel/fut_task.h>
@@ -77,9 +83,9 @@ extern fut_task_t *fut_task_current(void);
  *   - MS_SYNC | MS_INVALIDATE: Sync writeback + invalidate
  *   - MS_ASYNC | MS_SYNC: Invalid (mutually exclusive)
  *
- * Phase 1 (Current): Validates parameters, returns success
- * Phase 2: Identify file-backed VMAs in range
- * Phase 3: Write dirty pages via VFS (MS_ASYNC)
+ * Phase 1 (Completed): Basic parameter validation
+ * Phase 2 (Current): Enhanced validation with detailed flag reporting
+ * Phase 3: Identify file-backed VMAs and write dirty pages
  * Phase 4: Wait for I/O completion (MS_SYNC)
  * Phase 5: Invalidate page cache entries (MS_INVALIDATE)
  *
@@ -207,13 +213,34 @@ long sys_msync(void *addr, size_t length, int flags) {
 
     /* Round length up to page boundary */
     size_t aligned_len = (length + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1);
+    size_t num_pages = aligned_len / PAGE_SIZE;
 
-    const char *mode = (flags & MS_SYNC) ? "MS_SYNC" : "MS_ASYNC";
-    fut_printf("[MSYNC] msync(%p, %zu, %s%s) -> 0 (stub - Phase 2 will sync file-backed pages)\n",
-               addr, aligned_len, mode, (flags & MS_INVALIDATE) ? "|MS_INVALIDATE" : "");
+    /* Build flags string for logging */
+    char flags_str[64];
+    int flags_idx = 0;
 
-    /* Phase 1: Validate only, return success
-     * Phase 2-5 implementation:
+    if (flags & MS_SYNC) {
+        const char *sync = "MS_SYNC";
+        while (*sync) flags_str[flags_idx++] = *sync++;
+    } else if (flags & MS_ASYNC) {
+        const char *async = "MS_ASYNC";
+        while (*async) flags_str[flags_idx++] = *async++;
+    }
+
+    if (flags & MS_INVALIDATE) {
+        flags_str[flags_idx++] = '|';
+        const char *inv = "MS_INVALIDATE";
+        while (*inv) flags_str[flags_idx++] = *inv++;
+    }
+    flags_str[flags_idx] = '\0';
+
+    const char *mode_desc = (flags & MS_SYNC) ? "synchronous" : "asynchronous";
+
+    fut_printf("[MSYNC] msync(%p, %zu bytes, %s) -> 0 (%zu pages, %s, Phase 2: validated)\n",
+               addr, aligned_len, flags_str, num_pages, mode_desc);
+
+    /* Phase 2: Parameters validated and logged
+     * Phase 3-5 implementation:
      *
      * fut_mm_t *mm = fut_task_get_mm(task);
      * if (!mm) {

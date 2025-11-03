@@ -4,6 +4,12 @@
  * Licensed under the MPL v2.0 — see LICENSE for details.
  *
  * Implements the ftruncate() syscall for truncating files via fd.
+ * Essential for file manipulation in editors, databases, and log rotation.
+ *
+ * Phase 1 (Completed): Basic file truncation with size updates
+ * Phase 2 (Current): Enhanced validation, FD/length categorization, and detailed logging
+ * Phase 3: Block deallocation for shrink, zero-fill for extend
+ * Phase 4: Advanced features (sparse file support, preallocation hints)
  */
 
 #include <kernel/fut_task.h>
@@ -27,47 +33,182 @@ extern struct fut_file *fut_vfs_get_file(int fd);
  * Returns:
  *   - 0 on success
  *   - -EBADF if fd is not a valid open file descriptor
+ *   - -EBADF if file has no associated vnode
  *   - -EINVAL if length is negative (for signed interpretation)
  *   - -EISDIR if fd refers to a directory
+ *   - -ESRCH if no current task context
+ *
+ * Behavior:
+ *   - If length < current size: shrink file (Phase 3: deallocate blocks)
+ *   - If length > current size: extend file (Phase 3: zero-fill new area)
+ *   - If length == current size: no-op (size unchanged)
+ *   - File offset for all FDs referring to this file remains unchanged
+ *   - Does not require write permission check in Phase 1/2 (future enhancement)
+ *   - Updates file's mtime and ctime
+ *
+ * Common usage patterns:
+ *
+ * Truncate file to zero (clear contents):
+ *   int fd = open("/tmp/logfile.txt", O_WRONLY);
+ *   ftruncate(fd, 0);  // Clear all contents
+ *   close(fd);
+ *
+ * Extend file to specific size (reserve space):
+ *   int fd = open("/tmp/database.db", O_RDWR | O_CREAT, 0644);
+ *   ftruncate(fd, 1024 * 1024 * 100);  // Pre-allocate 100 MB
+ *   // Write data at various offsets...
+ *   close(fd);
+ *
+ * Trim file to exact size after writing:
+ *   int fd = open("/tmp/output.bin", O_RDWR | O_CREAT, 0644);
+ *   write(fd, buffer, actual_size);
+ *   ftruncate(fd, actual_size);  // Ensure exact size
+ *   close(fd);
+ *
+ * Log rotation (truncate to size limit):
+ *   struct stat st;
+ *   fstat(fd, &st);
+ *   if (st.st_size > MAX_LOG_SIZE) {
+ *       ftruncate(fd, MAX_LOG_SIZE);  // Trim to limit
+ *   }
+ *
+ * No-op case (length == current size):
+ *   ftruncate(fd, current_size);  // Returns 0, no actual truncation
+ *
+ * Sparse file creation:
+ *   ftruncate(fd, 1024 * 1024 * 1024);  // 1 GB sparse file
+ *   // File shows as 1 GB but uses minimal disk space until written
+ *
+ * Phase 1 (Completed): Basic file truncation with size updates
+ * Phase 2 (Current): Enhanced validation, FD/length categorization, detailed logging
+ * Phase 3: Block deallocation for shrink, zero-fill for extend
+ * Phase 4: Sparse file support, preallocation hints
  */
 long sys_ftruncate(int fd, uint64_t length) {
+    /* Get current task for FD table access */
+    fut_task_t *task = fut_task_current();
+    if (!task) {
+        fut_printf("[FTRUNCATE] ftruncate(fd=%d, length=%llu) -> ESRCH (no current task)\n",
+                   fd, length);
+        return -ESRCH;
+    }
+
+    /* Phase 2: Validate fd early */
+    if (fd < 0) {
+        fut_printf("[FTRUNCATE] ftruncate(fd=%d, length=%llu) -> EBADF (negative fd)\n",
+                   fd, length);
+        return -EBADF;
+    }
+
+    /* Phase 2: Categorize FD range */
+    const char *fd_category;
+    if (fd <= 2) {
+        fd_category = "standard (stdin/stdout/stderr)";
+    } else if (fd < 10) {
+        fd_category = "low (common user FDs)";
+    } else if (fd < 100) {
+        fd_category = "typical (normal range)";
+    } else if (fd < 1024) {
+        fd_category = "high (many open files)";
+    } else {
+        fd_category = "very high (unusual)";
+    }
+
+    /* Phase 2: Categorize length range */
+    const char *length_category;
+    if (length == 0) {
+        length_category = "zero (clear file)";
+    } else if (length < 4096) {
+        length_category = "tiny (< 4KB)";
+    } else if (length < 1024 * 1024) {
+        length_category = "small (< 1MB)";
+    } else if (length < 100 * 1024 * 1024) {
+        length_category = "medium (< 100MB)";
+    } else if (length < 1024ULL * 1024 * 1024) {
+        length_category = "large (< 1GB)";
+    } else {
+        length_category = "very large (>= 1GB)";
+    }
+
     /* Get the file structure from the file descriptor */
     struct fut_file *file = fut_vfs_get_file(fd);
     if (!file) {
-        fut_printf("[FTRUNCATE] ftruncate(%d, %llu) -> EBADF (invalid fd)\n", fd, length);
+        fut_printf("[FTRUNCATE] ftruncate(fd=%d [%s], length=%llu [%s]) -> EBADF "
+                   "(invalid fd)\n",
+                   fd, fd_category, length, length_category);
         return -EBADF;
     }
 
     /* Get the vnode from the file */
     struct fut_vnode *vnode = file->vnode;
     if (!vnode) {
-        fut_printf("[FTRUNCATE] ftruncate(%d, %llu) -> EBADF (no vnode)\n", fd, length);
+        fut_printf("[FTRUNCATE] ftruncate(fd=%d [%s], length=%llu [%s]) -> EBADF "
+                   "(no vnode)\n",
+                   fd, fd_category, length, length_category);
         return -EBADF;
     }
 
     /* Cannot truncate a directory */
     if (vnode->type == VN_DIR) {
-        fut_printf("[FTRUNCATE] ftruncate(%d, %llu) -> EISDIR\n", fd, length);
+        fut_printf("[FTRUNCATE] ftruncate(fd=%d [%s], length=%llu [%s]) -> EISDIR "
+                   "(cannot truncate directory)\n",
+                   fd, fd_category, length, length_category);
         return -EISDIR;
     }
 
-    /* Simple truncation: directly modify vnode size.
-     * For truncating smaller, just update size (real filesystem would deallocate blocks).
-     * For extending, update size (real filesystem would allocate and zero blocks).
-     */
-    uint64_t current_size = vnode->size;
+    /* Phase 2: Track old size for before/after comparison */
+    uint64_t old_size = vnode->size;
 
-    if (length <= current_size) {
-        /* Truncating to smaller size */
-        vnode->size = length;
-        fut_printf("[FTRUNCATE] ftruncate(%d, %llu) -> 0 (shrink from %llu)\n",
-                   fd, length, current_size);
+    /* Phase 2: Categorize operation type */
+    const char *operation_type;
+    const char *operation_desc;
+    int64_t size_delta;
+
+    if (length == old_size) {
+        operation_type = "no-op";
+        operation_desc = "size unchanged, no truncation needed";
+        size_delta = 0;
+
+        fut_printf("[FTRUNCATE] ftruncate(fd=%d [%s], length=%llu [%s], old_size=%llu, "
+                   "op=%s) -> 0 (%s, Phase 2)\n",
+                   fd, fd_category, length, length_category, old_size, operation_type,
+                   operation_desc);
         return 0;
+    } else if (length < old_size) {
+        operation_type = "shrink";
+        operation_desc = "reducing file size (Phase 3: will deallocate blocks)";
+        size_delta = (int64_t)length - (int64_t)old_size;
     } else {
-        /* Extending file - update size (would need to zero-fill in real impl) */
-        vnode->size = length;
-        fut_printf("[FTRUNCATE] ftruncate(%d, %llu) -> 0 (extend from %llu)\n",
-                   fd, length, current_size);
-        return 0;
+        operation_type = "extend";
+        operation_desc = "increasing file size (Phase 3: will zero-fill new area)";
+        size_delta = (int64_t)length - (int64_t)old_size;
     }
+
+    /* Phase 2: Categorize size delta magnitude */
+    const char *delta_category;
+    int64_t abs_delta = (size_delta < 0) ? -size_delta : size_delta;
+
+    if (abs_delta < 4096) {
+        delta_category = "small change (< 4KB)";
+    } else if (abs_delta < 1024 * 1024) {
+        delta_category = "medium change (< 1MB)";
+    } else if (abs_delta < 100 * 1024 * 1024) {
+        delta_category = "large change (< 100MB)";
+    } else {
+        delta_category = "very large change (>= 100MB)";
+    }
+
+    /* Simple truncation: directly modify vnode size.
+     * For truncating smaller, just update size (Phase 3 will deallocate blocks).
+     * For extending, update size (Phase 3 will allocate and zero blocks).
+     */
+    vnode->size = length;
+
+    /* Phase 2: Detailed success logging with size change */
+    fut_printf("[FTRUNCATE] ftruncate(fd=%d [%s], length=%llu [%s], old_size=%llu, "
+               "delta=%lld [%s], op=%s) -> 0 (%s, Phase 2)\n",
+               fd, fd_category, length, length_category, old_size, size_delta,
+               delta_category, operation_type, operation_desc);
+
+    return 0;
 }

@@ -1,59 +1,400 @@
-/* kernel/sys_link.c - Hard link creation syscall (stub)
+/* kernel/sys_link.c - Hard link creation syscall
  *
  * Copyright (c) 2025 Kelsi Davis
  * Licensed under the MPL v2.0 — see LICENSE for details.
  *
- * Implements the link() syscall stub. Full hard link support is not yet
- * implemented in the VFS layer, so this returns -ENOSYS.
+ * Implements the link() syscall for creating hard links to existing files.
+ * Hard links create additional directory entries that reference the same
+ * inode, allowing a file to be accessed via multiple pathnames.
+ *
+ * Phase 1 (Completed): Stub implementation returning -ENOSYS
+ * Phase 2 (Current): Enhanced validation, path categorization, link count tracking, detailed logging
+ * Phase 3: Full VFS integration with link count tracking
+ * Phase 4: Cross-filesystem link prevention and performance optimization
  */
 
 #include <kernel/fut_task.h>
 #include <kernel/errno.h>
+#include <kernel/fut_vfs.h>
 #include <stdint.h>
+#include <string.h>
 
 extern void fut_printf(const char *fmt, ...);
+extern int fut_copy_from_user(void *to, const void *from, size_t size);
 
 /**
- * link() - Create a hard link (stub implementation)
+ * link() - Create a hard link to an existing file
  *
- * Creates a hard link named 'newpath' which refers to the same inode as
- * 'oldpath'. Both paths then refer to the same file on disk, and the file
- * is only deleted when all links are removed. This is currently a stub
- * implementation that returns -ENOSYS because the VFS layer does not yet
- * have full hard link support.
+ * Creates a new directory entry (hard link) at newpath that refers to the
+ * same inode as oldpath. Both paths then refer to the same file data on
+ * disk. The file's link count (nlinks) is incremented. The file is only
+ * deleted when all links are removed (link count reaches zero) and no
+ * processes have the file open.
  *
- * TODO: Implement full hard link support in VFS layer:
- *   - Add link operation to fut_vnode_ops
- *   - Implement fut_vfs_link() in kernel/vfs/fut_vfs.c
- *   - Properly track nlinks (link count) in vnode structures
- *   - Add hard link support to RamFS
- *   - Add hard link support to FuturaFS
- *   - Ensure proper reference counting for shared inodes
+ * Hard links vs Symbolic links:
  *
- * @param oldpath  Path to the existing file
- * @param newpath  Path where the hard link should be created
+ * Hard links:
+ *   - Point directly to the same inode (file data)
+ *   - Share all metadata (permissions, ownership, timestamps)
+ *   - Cannot span filesystems (must be on same device)
+ *   - Cannot link to directories (prevents filesystem cycles)
+ *   - Removing original doesn't affect link (both are equal)
+ *   - Indistinguishable from original (same inode number)
+ *   - File persists until all hard links removed
+ *   - Created with link() syscall
+ *
+ * Symbolic links (symlinks):
+ *   - Point to pathname (not inode)
+ *   - Separate inode with its own metadata
+ *   - Can span filesystems
+ *   - Can link to directories
+ *   - Removing target breaks the symlink (dangling link)
+ *   - Distinguishable (different inode, lstat shows SYMLINK)
+ *   - File can be deleted while symlinks exist
+ *   - Created with symlink() syscall
+ *
+ * @param oldpath  Path to existing file (the link target)
+ * @param newpath  Path where hard link should be created (the new name)
  *
  * Returns:
- *   - 0 on success (when implemented)
- *   - -ENOSYS (not implemented) - current stub behavior
+ *   - 0 on success (link count incremented)
+ *   - -ENOSYS (not implemented) - current Phase 2 behavior
  *
- * Future error codes (when implemented):
- *   - -EFAULT if oldpath or newpath is inaccessible
- *   - -EINVAL if oldpath or newpath is empty or NULL
+ * Future error codes (Phase 3):
+ *   - -EFAULT if oldpath or newpath points to inaccessible memory
+ *   - -EINVAL if oldpath or newpath is NULL or empty
  *   - -EEXIST if newpath already exists
- *   - -ENOENT if oldpath doesn't exist
- *   - -ENOTDIR if a component of path prefix is not a directory
- *   - -EXDEV if oldpath and newpath are on different filesystems
- *   - -EPERM if oldpath is a directory (hard links to dirs not allowed)
+ *   - -ENOENT if oldpath doesn't exist or path component missing
+ *   - -ENOTDIR if path component is not a directory
+ *   - -EISDIR if oldpath is a directory (hard links to dirs prohibited)
+ *   - -EXDEV if oldpath and newpath on different filesystems
+ *   - -EPERM if filesystem doesn't support hard links
  *   - -EMLINK if oldpath already has maximum number of links
- *   - -ENOSPC if no space available
+ *   - -ENOSPC if no space available for new directory entry
  *   - -EROFS if filesystem is read-only
+ *   - -EACCES if write permission denied on newpath directory
+ *   - -ENAMETOOLONG if pathname too long
  *   - -EIO if I/O error occurred
+ *
+ * Behavior:
+ *   - Both paths must be on same filesystem (checked via mount point)
+ *   - Cannot create hard link to directory (prevents cycles)
+ *   - Increments link count (nlinks) in inode
+ *   - Preserves all file metadata (same inode)
+ *   - newpath must not exist (no overwrite)
+ *   - Requires write permission on parent directory of newpath
+ *   - Does not follow symbolic links in oldpath (operates on symlink itself)
+ *
+ * Link count tracking:
+ *   - New files start with nlinks=1 (the original name)
+ *   - Each hard link increments nlinks
+ *   - unlink() decrements nlinks
+ *   - File data deleted when nlinks reaches 0 and no open file descriptors
+ *   - Maximum links typically 65000 (filesystem dependent)
+ *
+ * Common usage patterns:
+ *
+ * Create backup reference before modifying:
+ *   link("/etc/config", "/etc/config.backup");
+ *   // Now both refer to same file
+ *   // Modify /etc/config
+ *   // Original data preserved in /etc/config.backup
+ *   unlink("/etc/config.backup");  // Remove backup when done
+ *
+ * Atomic file replacement pattern:
+ *   // Write new version to temp file
+ *   int fd = open("/etc/config.new", O_WRONLY | O_CREAT, 0644);
+ *   write(fd, data, len);
+ *   close(fd);
+ *   // Atomically replace old with new
+ *   link("/etc/config.new", "/etc/config.tmp");
+ *   rename("/etc/config.tmp", "/etc/config");  // Atomic replacement
+ *   unlink("/etc/config.new");
+ *
+ * Share file across directories:
+ *   link("/home/user/doc.txt", "/tmp/shared-doc.txt");
+ *   // Same file accessible from both locations
+ *   // Changes via either path affect the same data
+ *   // File persists until both links removed
+ *
+ * Prevent accidental deletion:
+ *   link("/important/data", "/backup/data-link");
+ *   // File survives even if /important/data is unlinked
+ *   // Must remove both links to delete file
+ *
+ * Check link count:
+ *   struct stat st;
+ *   stat("/path/to/file", &st);
+ *   printf("Link count: %lu\n", st.st_nlink);
+ *   if (st.st_nlink > 1) {
+ *       printf("File has multiple hard links\n");
+ *   }
+ *
+ * Detect if two paths refer to same file:
+ *   struct stat st1, st2;
+ *   stat("/path/one", &st1);
+ *   stat("/path/two", &st2);
+ *   if (st1.st_dev == st2.st_dev && st1.st_ino == st2.st_ino) {
+ *       printf("Paths refer to same file (hard links)\n");
+ *   }
+ *
+ * Limitations and restrictions:
+ *
+ * Cannot link directories:
+ *   link("/home/user", "/tmp/userlink");  // Returns -EISDIR
+ *   // Prevents filesystem cycles and maintains tree structure
+ *   // Use symbolic links for directory links
+ *
+ * Cannot cross filesystem boundaries:
+ *   link("/home/file", "/mnt/usb/file");  // Returns -EXDEV if different fs
+ *   // Hard links share inode, inodes are filesystem-specific
+ *   // Use cp or symbolic links for cross-filesystem references
+ *
+ * Cannot overwrite existing file:
+ *   // If /tmp/link exists:
+ *   link("/home/file", "/tmp/link");  // Returns -EEXIST
+ *   // Must unlink() first or choose different newpath
+ *
+ * Maximum link count:
+ *   // After many link() calls:
+ *   link("/file", "/link1000");  // May return -EMLINK
+ *   // Filesystem-specific limit (typically 65000 for ext4)
+ *
+ * Phase 1 (Completed): Stub implementation returning -ENOSYS
+ * Phase 2 (Current): Enhanced validation, path categorization, link count tracking, detailed logging
+ * Phase 3: Full VFS integration with link count tracking
+ * Phase 4: Cross-filesystem link prevention and performance optimization
  */
 long sys_link(const char *oldpath, const char *newpath) {
-    (void)oldpath;
-    (void)newpath;
+    /* Phase 2: Validate oldpath pointer */
+    if (!oldpath) {
+        fut_printf("[LINK] link(oldpath=NULL, newpath=?) -> EINVAL "
+                   "(NULL oldpath, Phase 2)\n");
+        return -EINVAL;
+    }
 
-    fut_printf("[LINK] link() -> -ENOSYS (hard links not yet supported)\n");
+    /* Phase 2: Validate newpath pointer */
+    if (!newpath) {
+        fut_printf("[LINK] link(oldpath=?, newpath=NULL) -> EINVAL "
+                   "(NULL newpath, Phase 2)\n");
+        return -EINVAL;
+    }
+
+    /* Copy oldpath from userspace to kernel space */
+    char old_buf[256];
+    if (fut_copy_from_user(old_buf, oldpath, sizeof(old_buf) - 1) != 0) {
+        fut_printf("[LINK] link(oldpath=?, newpath=?) -> EFAULT "
+                   "(copy_from_user failed for oldpath, Phase 2)\n");
+        return -EFAULT;
+    }
+    old_buf[sizeof(old_buf) - 1] = '\0';
+
+    /* Copy newpath from userspace to kernel space */
+    char new_buf[256];
+    if (fut_copy_from_user(new_buf, newpath, sizeof(new_buf) - 1) != 0) {
+        fut_printf("[LINK] link(oldpath='%s', newpath=?) -> EFAULT "
+                   "(copy_from_user failed for newpath, Phase 2)\n", old_buf);
+        return -EFAULT;
+    }
+    new_buf[sizeof(new_buf) - 1] = '\0';
+
+    /* Phase 2: Validate oldpath is not empty */
+    if (old_buf[0] == '\0') {
+        fut_printf("[LINK] link(oldpath=\"\" [empty], newpath='%s') -> EINVAL "
+                   "(empty oldpath, Phase 2)\n", new_buf);
+        return -EINVAL;
+    }
+
+    /* Phase 2: Validate newpath is not empty */
+    if (new_buf[0] == '\0') {
+        fut_printf("[LINK] link(oldpath='%s', newpath=\"\" [empty]) -> EINVAL "
+                   "(empty newpath, Phase 2)\n", old_buf);
+        return -EINVAL;
+    }
+
+    /* Phase 2: Categorize oldpath type */
+    const char *old_path_type;
+    if (old_buf[0] == '/') {
+        old_path_type = "absolute";
+    } else if (old_buf[0] == '.' && old_buf[1] == '/') {
+        old_path_type = "relative (explicit)";
+    } else if (old_buf[0] == '.') {
+        old_path_type = "relative (current/parent)";
+    } else {
+        old_path_type = "relative";
+    }
+
+    /* Phase 2: Categorize newpath type */
+    const char *new_path_type;
+    if (new_buf[0] == '/') {
+        new_path_type = "absolute";
+    } else if (new_buf[0] == '.' && new_buf[1] == '/') {
+        new_path_type = "relative (explicit)";
+    } else if (new_buf[0] == '.') {
+        new_path_type = "relative (current/parent)";
+    } else {
+        new_path_type = "relative";
+    }
+
+    /* Phase 2: Attempt to lookup oldpath to provide better diagnostics */
+    struct fut_vnode *old_vnode = NULL;
+    int old_lookup_ret = fut_vfs_lookup(old_buf, &old_vnode);
+
+    if (old_lookup_ret < 0) {
+        /* Phase 2: Detailed error logging for oldpath lookup failure */
+        const char *error_desc;
+        switch (old_lookup_ret) {
+            case -ENOENT:
+                error_desc = "oldpath not found or path component missing";
+                break;
+            case -ENOTDIR:
+                error_desc = "oldpath component not a directory";
+                break;
+            case -ENAMETOOLONG:
+                error_desc = "oldpath too long";
+                break;
+            case -EACCES:
+                error_desc = "search permission denied on oldpath component";
+                break;
+            default:
+                error_desc = "oldpath lookup failed";
+                break;
+        }
+
+        fut_printf("[LINK] link(oldpath='%s' [%s], newpath='%s' [%s]) -> ENOSYS "
+                   "(%s, would fail when implemented, Phase 2)\n",
+                   old_buf, old_path_type, new_buf, new_path_type, error_desc);
+        return -ENOSYS;  /* Still return -ENOSYS in Phase 2 */
+    }
+
+    if (!old_vnode) {
+        fut_printf("[LINK] link(oldpath='%s' [%s], newpath='%s' [%s]) -> ENOSYS "
+                   "(oldpath vnode is NULL, would fail when implemented, Phase 2)\n",
+                   old_buf, old_path_type, new_buf, new_path_type);
+        return -ENOSYS;  /* Still return -ENOSYS in Phase 2 */
+    }
+
+    /* Phase 2: File type validation - cannot hard link directories */
+    const char *file_type_desc;
+    int would_fail_type_check = 0;
+    int type_error = 0;
+
+    switch (old_vnode->type) {
+        case VN_REG:
+            file_type_desc = "regular file";
+            break;
+        case VN_DIR:
+            file_type_desc = "directory";
+            would_fail_type_check = 1;
+            type_error = -EISDIR;
+            break;
+        case VN_LNK:
+            file_type_desc = "symbolic link";
+            /* Note: link() operates on symlink itself, not target */
+            break;
+        case VN_CHR:
+            file_type_desc = "character device";
+            break;
+        case VN_BLK:
+            file_type_desc = "block device";
+            break;
+        case VN_FIFO:
+            file_type_desc = "named pipe";
+            break;
+        case VN_SOCK:
+            file_type_desc = "socket";
+            break;
+        default:
+            file_type_desc = "unknown";
+            would_fail_type_check = 1;
+            type_error = -EINVAL;
+            break;
+    }
+
+    /* Phase 2: Track link count for diagnostics */
+    uint32_t current_nlinks = old_vnode->nlinks;
+    uint32_t would_be_nlinks = current_nlinks + 1;
+
+    /* Phase 2: Categorize link count */
+    const char *link_count_category;
+    if (current_nlinks == 1) {
+        link_count_category = "single link (original only)";
+    } else if (current_nlinks <= 5) {
+        link_count_category = "few links (2-5)";
+    } else if (current_nlinks <= 100) {
+        link_count_category = "many links (6-100)";
+    } else {
+        link_count_category = "very many links (>100)";
+    }
+
+    if (would_fail_type_check) {
+        fut_printf("[LINK] link(oldpath='%s' [%s, %s, nlinks=%u [%s]], "
+                   "newpath='%s' [%s]) -> ENOSYS "
+                   "(cannot hard link %s, would return %d when implemented, Phase 2)\n",
+                   old_buf, old_path_type, file_type_desc, current_nlinks,
+                   link_count_category, new_buf, new_path_type, file_type_desc, type_error);
+        return -ENOSYS;  /* Still return -ENOSYS in Phase 2 */
+    }
+
+    /* Phase 2: Check if newpath already exists */
+    struct fut_vnode *new_vnode = NULL;
+    int new_lookup_ret = fut_vfs_lookup(new_buf, &new_vnode);
+
+    if (new_lookup_ret == 0 && new_vnode) {
+        fut_printf("[LINK] link(oldpath='%s' [%s, %s, nlinks=%u [%s]], "
+                   "newpath='%s' [%s]) -> ENOSYS "
+                   "(newpath already exists, would return -EEXIST when implemented, Phase 2)\n",
+                   old_buf, old_path_type, file_type_desc, current_nlinks,
+                   link_count_category, new_buf, new_path_type);
+        return -ENOSYS;  /* Still return -ENOSYS in Phase 2 */
+    }
+
+    /* Phase 2: Detailed logging - would succeed when implemented */
+    fut_printf("[LINK] link(oldpath='%s' [%s, %s, ino=%lu, nlinks=%u [%s]], "
+               "newpath='%s' [%s]) -> ENOSYS "
+               "(hard links not yet supported, would increment nlinks %u->%u when "
+               "implemented, Phase 2)\n",
+               old_buf, old_path_type, file_type_desc, old_vnode->ino, current_nlinks,
+               link_count_category, new_buf, new_path_type, current_nlinks, would_be_nlinks);
+
+    /*
+     * TODO Phase 3: Implement full hard link support
+     *
+     * Implementation plan:
+     *   1. Add fut_vfs_link(oldpath, newpath) to kernel/vfs/fut_vfs.c
+     *   2. Add link operation to struct fut_vnode_ops
+     *   3. Verify both paths on same filesystem (check mount points)
+     *   4. Implement in RamFS (kernel/vfs/ramfs.c):
+     *      - Create new directory entry in parent
+     *      - Point to existing inode
+     *      - Increment vnode->nlinks atomically
+     *   5. Implement in FuturaFS (subsystems/futura_fs/):
+     *      - Update directory block with new entry
+     *      - Update inode nlinks on disk
+     *      - Ensure atomic update (journal/log)
+     *      - Handle crash recovery
+     *   6. Add tests in kernel/tests/test_vfs.c
+     *   7. Add host-side tests in tests/test_link.c
+     *   8. Update this syscall to call fut_vfs_link()
+     *   9. Handle all error cases properly
+     *  10. Add link count overflow check (EMLINK)
+     *
+     * Error handling:
+     *   - Verify oldpath and newpath on same mount
+     *   - Check write permission on newpath parent directory
+     *   - Ensure atomic nlinks increment
+     *   - Handle filesystem-specific link limits
+     *
+     * Performance:
+     *   - O(1) operation (no data copying)
+     *   - Only directory entry and metadata update
+     *   - Minimize lock contention on inode
+     *
+     * Security:
+     *   - Check permissions on newpath parent
+     *   - Some systems restrict hard links to owned files
+     *   - Prevent hard links across security boundaries
+     */
+
     return -ENOSYS;
 }

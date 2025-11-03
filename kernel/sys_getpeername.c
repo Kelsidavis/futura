@@ -5,19 +5,35 @@
  *
  * Implements getpeername() to retrieve the address of the peer connected to a socket.
  * Essential for identifying connected clients and network diagnostics.
+ *
+ * Phase 1 (Completed): Basic validation stub
+ * Phase 2 (Current): Full implementation with Unix domain socket support
+ * Phase 3: IPv4/IPv6 address family support
+ * Phase 4: UDP and edge case handling
  */
 
 #include <kernel/fut_task.h>
+#include <kernel/fut_socket.h>
 #include <kernel/errno.h>
+#include <kernel/uaccess.h>
 #include <stdint.h>
+#include <string.h>
 
 extern void fut_printf(const char *fmt, ...);
 extern fut_task_t *fut_task_current(void);
-extern int fut_copy_from_user(void *to, const void *from, size_t size);
-extern int fut_copy_to_user(void *to, const void *from, size_t size);
+extern fut_socket_t *get_socket_from_fd(int fd);
 
 /* socklen_t for address length */
 typedef uint32_t socklen_t;
+
+/* Socket address family constants */
+#define AF_UNIX 1
+
+/* Unix domain socket address structure */
+struct sockaddr_un {
+    uint16_t sun_family;    /* AF_UNIX */
+    char sun_path[108];     /* Pathname */
+};
 
 /**
  * getpeername() - Get address of connected peer
@@ -239,30 +255,79 @@ long sys_getpeername(int sockfd, void *addr, socklen_t *addrlen) {
         return -EINVAL;
     }
 
-    /* Phase 1: Validation only
-     * Phase 2: Integrate with socket layer to:
-     *   - Verify sockfd is actually a socket (not regular file)
-     *   - Check socket is connected (return -ENOTCONN if not)
-     *   - Retrieve peer address from socket structure
-     *   - Handle different address families (AF_INET, AF_INET6, AF_UNIX)
-     *   - Copy address to userspace buffer
-     *   - Update addrlen with actual address size
-     *   - Handle buffer truncation if len < actual size
-     *
-     * Phase 3: Address family specific handling:
-     *   - AF_INET: Return IPv4 address and port
-     *   - AF_INET6: Return IPv6 address, port, flow info, scope
-     *   - AF_UNIX: Return Unix domain socket path
-     *
-     * Phase 4: Edge cases:
-     *   - UDP sockets: Return address from last sendto/recvfrom or connect
-     *   - Listening sockets: Return -ENOTCONN
-     *   - Buffer size handling: Truncate and set addrlen correctly
-     */
+    /* Get socket from FD */
+    fut_socket_t *socket = get_socket_from_fd(sockfd);
+    if (!socket) {
+        fut_printf("[GETPEERNAME] getpeername(sockfd=%d) -> EBADF (not a socket)\n", sockfd);
+        return -EBADF;
+    }
 
-    fut_printf("[GETPEERNAME] getpeername(sockfd=%d, addrlen=%u) -> 0 (Phase 1 stub)\n",
-               sockfd, len);
+    /* Check socket is connected */
+    if (socket->state != FUT_SOCK_CONNECTED) {
+        fut_printf("[GETPEERNAME] getpeername(sockfd=%d) -> ENOTCONN (socket not connected, state=%d)\n",
+                   sockfd, socket->state);
+        return -ENOTCONN;
+    }
 
-    /* Phase 1: Just return success for now */
+    /* Get peer socket from connection pair */
+    fut_socket_t *peer = NULL;
+    if (socket->pair) {
+        peer = socket->pair->peer;
+    }
+
+    if (!peer) {
+        fut_printf("[GETPEERNAME] getpeername(sockfd=%d) -> ENOTCONN (no peer socket)\n", sockfd);
+        return -ENOTCONN;
+    }
+
+    /* Phase 2: Unix domain socket support
+     * Build sockaddr_un structure with peer's bound path */
+    struct sockaddr_un peer_addr;
+    memset(&peer_addr, 0, sizeof(peer_addr));
+    peer_addr.sun_family = AF_UNIX;
+
+    /* Copy peer's bound path if available */
+    if (peer->bound_path) {
+        /* Calculate string length manually */
+        size_t path_len = 0;
+        while (peer->bound_path[path_len] != '\0' && path_len < sizeof(peer_addr.sun_path) - 1) {
+            path_len++;
+        }
+
+        memcpy(peer_addr.sun_path, peer->bound_path, path_len);
+        peer_addr.sun_path[path_len] = '\0';
+
+        fut_printf("[GETPEERNAME] getpeername(sockfd=%d) -> peer path='%s'\n",
+                   sockfd, peer->bound_path);
+    } else {
+        /* Peer not bound to a path (anonymous connection) - return empty path */
+        peer_addr.sun_path[0] = '\0';
+        fut_printf("[GETPEERNAME] getpeername(sockfd=%d) -> peer unbound (empty path)\n",
+                   sockfd);
+    }
+
+    /* Calculate actual address size */
+    socklen_t actual_len = sizeof(struct sockaddr_un);
+
+    /* Copy as much as fits in user buffer */
+    socklen_t copy_len = (len < actual_len) ? len : actual_len;
+    if (fut_copy_to_user(addr, &peer_addr, copy_len) != 0) {
+        fut_printf("[GETPEERNAME] getpeername(sockfd=%d) -> EFAULT (copy_to_user failed)\n",
+                   sockfd);
+        return -EFAULT;
+    }
+
+    /* Update addrlen with actual size (may be larger than buffer) */
+    if (fut_copy_to_user(addrlen, &actual_len, sizeof(socklen_t)) != 0) {
+        fut_printf("[GETPEERNAME] getpeername(sockfd=%d) -> EFAULT (copy addrlen failed)\n",
+                   sockfd);
+        return -EFAULT;
+    }
+
+    if (len < actual_len) {
+        fut_printf("[GETPEERNAME] getpeername(sockfd=%d) -> 0 (truncated: %u < %u)\n",
+                   sockfd, len, actual_len);
+    }
+
     return 0;
 }

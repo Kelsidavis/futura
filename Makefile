@@ -393,6 +393,7 @@ KERNEL_SOURCES := \
     kernel/sys_readv.c \
     kernel/sys_writev.c \
     kernel/sys_preadv.c \
+    kernel/sys_pwritev.c \
     kernel/sys_lseek.c \
     kernel/sys_pipe.c \
     kernel/sys_poll.c \

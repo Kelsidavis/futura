@@ -289,91 +289,129 @@ long sys_setsid(void) {
  *   - -EINVAL if resource is invalid
  *   - -EFAULT if rlim points to invalid memory
  *
- * Phase 1 (Current): Returns reasonable default limits
- * Phase 2: Track per-process resource usage and enforce limits
- * Phase 3: Support setrlimit() for modifying limits
+ * Phase 1 (Completed): Returns reasonable default limits
+ * Phase 2 (Current): Enhanced validation and resource type reporting
+ * Phase 3: Track per-process resource usage and enforce limits
+ * Phase 4: Support setrlimit() for modifying limits
  */
 long sys_getrlimit(int resource, struct rlimit *rlim) {
     if (!rlim) {
+        fut_printf("[PROC] getrlimit(resource=%d, rlim=%p) -> EFAULT (rlim is NULL)\n", resource, rlim);
         return -EFAULT;
     }
+
+    /* Phase 2: Identify resource type for logging */
+    const char *resource_name = "UNKNOWN";
+    const char *resource_desc = "unknown resource";
 
     struct rlimit limit;
 
     /* Return reasonable default limits based on resource type */
     switch (resource) {
         case RLIMIT_NOFILE:
-            /* Maximum number of open file descriptors */
+            resource_name = "RLIMIT_NOFILE";
+            resource_desc = "max open file descriptors";
             limit.rlim_cur = 1024;      /* Soft limit */
             limit.rlim_max = 65536;     /* Hard limit */
             break;
 
         case RLIMIT_NPROC:
-            /* Maximum number of processes */
+            resource_name = "RLIMIT_NPROC";
+            resource_desc = "max number of processes";
             limit.rlim_cur = 256;       /* Soft limit */
             limit.rlim_max = 512;       /* Hard limit */
             break;
 
         case RLIMIT_STACK:
-            /* Maximum stack size (8MB default, unlimited max) */
-            limit.rlim_cur = 8 * 1024 * 1024;
+            resource_name = "RLIMIT_STACK";
+            resource_desc = "max stack size";
+            limit.rlim_cur = 8 * 1024 * 1024;  /* 8MB */
             limit.rlim_max = RLIM_INFINITY;
             break;
 
         case RLIMIT_DATA:
-            /* Maximum data segment size */
+            resource_name = "RLIMIT_DATA";
+            resource_desc = "max data segment size";
             limit.rlim_cur = RLIM_INFINITY;
             limit.rlim_max = RLIM_INFINITY;
             break;
 
         case RLIMIT_AS:
-            /* Maximum address space */
+            resource_name = "RLIMIT_AS";
+            resource_desc = "max address space";
             limit.rlim_cur = RLIM_INFINITY;
             limit.rlim_max = RLIM_INFINITY;
             break;
 
         case RLIMIT_CORE:
-            /* Maximum core file size (disabled by default) */
-            limit.rlim_cur = 0;
+            resource_name = "RLIMIT_CORE";
+            resource_desc = "max core file size";
+            limit.rlim_cur = 0;         /* Disabled by default */
             limit.rlim_max = RLIM_INFINITY;
             break;
 
         case RLIMIT_CPU:
-            /* CPU time limit in seconds */
+            resource_name = "RLIMIT_CPU";
+            resource_desc = "max CPU time (seconds)";
             limit.rlim_cur = RLIM_INFINITY;
             limit.rlim_max = RLIM_INFINITY;
             break;
 
         case RLIMIT_FSIZE:
-            /* Maximum file size */
+            resource_name = "RLIMIT_FSIZE";
+            resource_desc = "max file size";
             limit.rlim_cur = RLIM_INFINITY;
             limit.rlim_max = RLIM_INFINITY;
             break;
 
         case RLIMIT_RSS:
-            /* Maximum resident set size */
+            resource_name = "RLIMIT_RSS";
+            resource_desc = "max resident set size";
             limit.rlim_cur = RLIM_INFINITY;
             limit.rlim_max = RLIM_INFINITY;
             break;
 
         case RLIMIT_MEMLOCK:
-            /* Maximum locked memory */
+            resource_name = "RLIMIT_MEMLOCK";
+            resource_desc = "max locked memory";
             limit.rlim_cur = 64 * 1024;  /* 64KB */
             limit.rlim_max = 64 * 1024;
             break;
 
         default:
-            fut_printf("[PROC] getrlimit: unknown resource %d\n", resource);
+            fut_printf("[PROC] getrlimit(resource=%d, rlim=%p) -> EINVAL (unknown resource)\n",
+                       resource, rlim);
             return -EINVAL;
     }
 
     /* Copy limits to userspace */
     if (fut_copy_to_user(rlim, &limit, sizeof(struct rlimit)) != 0) {
+        fut_printf("[PROC] getrlimit(resource=%s, rlim=%p) -> EFAULT (copy_to_user failed)\n",
+                   resource_name, rlim);
         return -EFAULT;
     }
 
-    fut_printf("[PROC] getrlimit(resource=%d) -> cur=%llu, max=%llu\n",
-               resource, limit.rlim_cur, limit.rlim_max);
+    /* Phase 2: Detailed logging with resource identification */
+    const char *cur_str = (limit.rlim_cur == RLIM_INFINITY) ? "unlimited" : NULL;
+    const char *max_str = (limit.rlim_max == RLIM_INFINITY) ? "unlimited" : NULL;
+
+    if (cur_str && max_str) {
+        fut_printf("[PROC] getrlimit(resource=%s [%s], rlim=%p) -> 0 "
+                   "(cur=unlimited, max=unlimited, Phase 2: enhanced)\n",
+                   resource_name, resource_desc, rlim);
+    } else if (cur_str) {
+        fut_printf("[PROC] getrlimit(resource=%s [%s], rlim=%p) -> 0 "
+                   "(cur=unlimited, max=%llu, Phase 2: enhanced)\n",
+                   resource_name, resource_desc, rlim, limit.rlim_max);
+    } else if (max_str) {
+        fut_printf("[PROC] getrlimit(resource=%s [%s], rlim=%p) -> 0 "
+                   "(cur=%llu, max=unlimited, Phase 2: enhanced)\n",
+                   resource_name, resource_desc, rlim, limit.rlim_cur);
+    } else {
+        fut_printf("[PROC] getrlimit(resource=%s [%s], rlim=%p) -> 0 "
+                   "(cur=%llu, max=%llu, Phase 2: enhanced)\n",
+                   resource_name, resource_desc, rlim, limit.rlim_cur, limit.rlim_max);
+    }
 
     return 0;
 }

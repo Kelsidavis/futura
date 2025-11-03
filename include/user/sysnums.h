@@ -34,6 +34,7 @@
 #define SYS_alarm       37
 #define SYS_echo        42
 #define SYS_socket      41
+#define SYS_accept      43
 #define SYS_shutdown    48
 #define SYS_bind        49
 #define SYS_listen      50

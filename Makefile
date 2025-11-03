@@ -365,6 +365,7 @@ KERNEL_SOURCES := \
     kernel/sys_alarm.c \
     kernel/sys_pause.c \
     kernel/sys_shutdown.c \
+    kernel/sys_accept.c \
     kernel/sys_getpeername.c \
     kernel/sys_getsockname.c \
     kernel/sys_setsockopt.c \

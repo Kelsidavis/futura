@@ -1283,37 +1283,9 @@ static int64_t sys_getsockopt_handler(uint64_t sockfd, uint64_t level, uint64_t 
 
 static int64_t sys_accept_handler(uint64_t sockfd, uint64_t addr, uint64_t addrlen,
                                   uint64_t arg4, uint64_t arg5, uint64_t arg6) {
-    (void)addr; (void)addrlen; (void)arg4; (void)arg5; (void)arg6;
-    extern void fut_printf(const char *, ...);
-
-    fut_printf("[ACCEPT] sockfd=%lu\n", sockfd);
-
-    /* Get listening socket from FD */
-    fut_socket_t *listener = get_socket_from_fd((int)sockfd);
-    if (!listener) {
-        fut_printf("[ACCEPT] ERROR: socket fd %lu not valid\n", sockfd);
-        return -EBADF;
-    }
-
-    /* Accept pending connection */
-    fut_socket_t *peer = NULL;
-    int ret = fut_socket_accept(listener, &peer);
-    if (ret < 0) {
-        fut_printf("[ACCEPT] ERROR: fut_socket_accept failed with code %d\n", ret);
-        return ret;  /* EAGAIN if no connections, or other error */
-    }
-
-    /* Allocate FD for accepted socket */
-    int peer_fd = allocate_socket_fd(peer);
-    if (peer_fd < 0) {
-        fut_printf("[ACCEPT] ERROR: Failed to allocate FD for accepted socket\n");
-        fut_socket_unref(peer);
-        return -EMFILE;
-    }
-
-    fut_printf("[ACCEPT] Accepted connection: listener=%u peer=%u fd=%d\n",
-               listener->socket_id, peer->socket_id, peer_fd);
-    return (int64_t)peer_fd;
+    (void)arg4; (void)arg5; (void)arg6;
+    extern long sys_accept(int sockfd, void *addr, uint32_t *addrlen);
+    return sys_accept((int)sockfd, (void *)(uintptr_t)addr, (uint32_t *)(uintptr_t)addrlen);
 }
 
 /**

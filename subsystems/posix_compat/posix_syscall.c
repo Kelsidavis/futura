@@ -51,6 +51,7 @@
 #define SYS_pread64     17
 #define SYS_pwrite64    18
 #define SYS_readv       19
+#define SYS_writev      20
 #define SYS_pipe        22
 #define SYS_select      23
 #define SYS_sched_yield 24
@@ -423,6 +424,13 @@ static int64_t sys_readv_handler(uint64_t fd, uint64_t iov, uint64_t iovcnt,
     (void)arg4; (void)arg5; (void)arg6;
     extern ssize_t sys_readv(int fd, const struct iovec *iov, int iovcnt);
     return (int64_t)sys_readv((int)fd, (const struct iovec *)(uintptr_t)iov, (int)iovcnt);
+}
+
+static int64_t sys_writev_handler(uint64_t fd, uint64_t iov, uint64_t iovcnt,
+                                  uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg4; (void)arg5; (void)arg6;
+    extern ssize_t sys_writev(int fd, const struct iovec *iov, int iovcnt);
+    return (int64_t)sys_writev((int)fd, (const struct iovec *)(uintptr_t)iov, (int)iovcnt);
 }
 
 static int64_t sys_ioctl_handler(uint64_t fd, uint64_t req, uint64_t argp,
@@ -1673,6 +1681,7 @@ static syscall_handler_t syscall_table[MAX_SYSCALL] = {
     [SYS_pread64]    = sys_pread64_handler,
     [SYS_pwrite64]   = sys_pwrite64_handler,
     [SYS_readv]      = sys_readv_handler,
+    [SYS_writev]     = sys_writev_handler,
     [SYS_write]      = sys_write_handler,
     [SYS_open]       = sys_open_handler,
     [SYS_openat]     = sys_openat_handler,

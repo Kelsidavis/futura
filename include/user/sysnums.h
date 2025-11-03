@@ -20,6 +20,7 @@
 #define SYS_pread64     17
 #define SYS_pwrite64    18
 #define SYS_readv       19
+#define SYS_writev      20
 #define SYS_pipe        22
 #define SYS_select      23
 #define SYS_sched_yield 24

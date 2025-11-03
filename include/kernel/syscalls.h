@@ -19,6 +19,7 @@ struct fut_stat;
 struct pollfd;
 struct rlimit;
 struct rusage;
+struct tms;
 
 #ifndef _SSIZE_T_DEFINED
 #define _SSIZE_T_DEFINED
@@ -126,3 +127,4 @@ long sys_setpriority(int which, int who, int prio);
 long sys_alarm(unsigned int seconds);
 long sys_pause(void);
 long sys_getrusage(int who, struct rusage *usage);
+long sys_times(struct tms *buf);

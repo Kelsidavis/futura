@@ -360,6 +360,7 @@ KERNEL_SOURCES := \
     kernel/sys_cred.c \
     kernel/sys_proc.c \
     kernel/sys_rusage.c \
+    kernel/sys_times.c \
     kernel/sys_sched.c \
     kernel/sys_alarm.c \
     kernel/sys_pause.c \

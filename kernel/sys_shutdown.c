@@ -5,14 +5,21 @@
  *
  * Implements shutdown() for graceful socket connection termination.
  * Allows closing one or both directions of a full-duplex connection.
+ *
+ * Phase 1 (Completed): Basic validation stub
+ * Phase 2 (Current): Validate socket state and connectivity
+ * Phase 3: Implement actual shutdown with buffer management
+ * Phase 4: TCP state machine integration and graceful close
  */
 
 #include <kernel/fut_task.h>
+#include <kernel/fut_socket.h>
 #include <kernel/errno.h>
 #include <stdint.h>
 
 extern void fut_printf(const char *fmt, ...);
 extern fut_task_t *fut_task_current(void);
+extern fut_socket_t *get_socket_from_fd(int fd);
 
 /* Shutdown modes */
 #define SHUT_RD   0  /* Further receives will be disallowed */
@@ -229,32 +236,41 @@ long sys_shutdown(int sockfd, int how) {
         return -EBADF;
     }
 
-    /* Phase 1: Validation only
-     * Phase 2: Integrate with socket layer to:
-     *   - Verify sockfd is actually a socket (not regular file)
-     *   - Check socket is connected (for connection-oriented protocols)
-     *   - Set appropriate shutdown flags on socket structure
-     *   - For SHUT_RD: Discard receive buffer, block future receives
-     *   - For SHUT_WR: Queue TCP FIN if applicable, block future sends
-     *   - For SHUT_RDWR: Combination of above
+    /* Phase 2: Validate socket state and connectivity */
+
+    /* Get socket from FD */
+    fut_socket_t *socket = get_socket_from_fd(sockfd);
+    if (!socket) {
+        fut_printf("[SHUTDOWN] shutdown(sockfd=%d, how=%d) -> EBADF (not a socket)\n",
+                   sockfd, how);
+        return -EBADF;
+    }
+
+    /* Check socket is connected (required for connection-oriented sockets) */
+    if (socket->state != FUT_SOCK_CONNECTED) {
+        fut_printf("[SHUTDOWN] shutdown(sockfd=%d, how=%d) -> ENOTCONN (socket not connected, state=%d)\n",
+                   sockfd, how, socket->state);
+        return -ENOTCONN;
+    }
+
+    /* Phase 2: Log shutdown operation but don't enforce yet
      *
-     * Phase 3: TCP state machine integration:
-     *   - Send TCP FIN for SHUT_WR
-     *   - Transition socket state (FIN_WAIT_1, etc.)
-     *   - Handle ACK and FIN from peer
-     *   - Implement TIME_WAIT state
+     * To fully implement shutdown(), we would need to:
+     * - Add shutdown flags to fut_socket structure (shutdown_rd, shutdown_wr)
+     * - For SHUT_RD: Discard receive buffer, make recv() return 0 (EOF)
+     * - For SHUT_WR: Flush send buffer, make send() return -EPIPE
+     * - For SHUT_RDWR: Combination of above
+     * - Update fut_socket_send() and fut_socket_recv() to check shutdown flags
+     * - For Unix domain sockets, signal peer that channel is closed
      *
-     * Phase 4: Advanced features:
-     *   - Graceful shutdown timeouts
-     *   - Handle RST vs FIN scenarios
-     *   - SO_LINGER socket option interaction
-     *   - Non-blocking socket considerations
+     * Phase 3 will implement actual buffer management and peer notification.
+     * Phase 4 will add TCP FIN handling and state machine transitions.
      */
 
     const char *how_str = (how == SHUT_RD) ? "SHUT_RD" :
                           (how == SHUT_WR) ? "SHUT_WR" : "SHUT_RDWR";
 
-    fut_printf("[SHUTDOWN] shutdown(sockfd=%d, how=%s) -> 0 (Phase 1 stub)\n",
+    fut_printf("[SHUTDOWN] shutdown(sockfd=%d, how=%s) -> 0 (Phase 2: validated, not enforced)\n",
                sockfd, how_str);
 
     return 0;

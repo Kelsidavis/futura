@@ -93,6 +93,7 @@
 #define SYS_listen      50
 #define SYS_getsockname 51
 #define SYS_getpeername 52
+#define SYS_setsockopt  54
 #ifndef SYS_getcwd
 #define SYS_getcwd      79
 #endif
@@ -1265,6 +1266,13 @@ static int64_t sys_getsockname_handler(uint64_t sockfd, uint64_t addr, uint64_t 
     return sys_getsockname((int)sockfd, (void *)(uintptr_t)addr, (uint32_t *)(uintptr_t)addrlen);
 }
 
+static int64_t sys_setsockopt_handler(uint64_t sockfd, uint64_t level, uint64_t optname,
+                                      uint64_t optval, uint64_t optlen, uint64_t arg6) {
+    (void)arg6;
+    extern long sys_setsockopt(int sockfd, int level, int optname, const void *optval, uint32_t optlen);
+    return sys_setsockopt((int)sockfd, (int)level, (int)optname, (const void *)(uintptr_t)optval, (uint32_t)optlen);
+}
+
 static int64_t sys_accept_handler(uint64_t sockfd, uint64_t addr, uint64_t addrlen,
                                   uint64_t arg4, uint64_t arg5, uint64_t arg6) {
     (void)addr; (void)addrlen; (void)arg4; (void)arg5; (void)arg6;
@@ -1790,6 +1798,7 @@ static syscall_handler_t syscall_table[MAX_SYSCALL] = {
     [SYS_accept]     = sys_accept_handler,
     [SYS_getsockname] = sys_getsockname_handler,
     [SYS_getpeername] = sys_getpeername_handler,
+    [SYS_setsockopt] = sys_setsockopt_handler,
     [SYS_connect]    = sys_connect_handler,
     [SYS_sendto]     = sys_sendto_handler,
     [SYS_recvfrom]   = sys_recvfrom_handler,

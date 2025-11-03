@@ -141,3 +141,4 @@ long sys_times(struct tms *buf);
 long sys_shutdown(int sockfd, int how);
 long sys_getpeername(int sockfd, void *addr, uint32_t *addrlen);
 long sys_getsockname(int sockfd, void *addr, uint32_t *addrlen);
+long sys_setsockopt(int sockfd, int level, int optname, const void *optval, uint32_t optlen);

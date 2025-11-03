@@ -1,0 +1,314 @@
+/* kernel/sys_setsockopt.c - Set socket options syscall
+ *
+ * Copyright (c) 2025 Kelsi Davis
+ * Licensed under the MPL v2.0 — see LICENSE for details.
+ *
+ * Implements setsockopt() to configure socket behavior and protocol options.
+ * Essential for tuning performance, timeouts, buffer sizes, and protocol features.
+ */
+
+#include <kernel/fut_task.h>
+#include <kernel/errno.h>
+#include <stdint.h>
+
+extern void fut_printf(const char *fmt, ...);
+extern fut_task_t *fut_task_current(void);
+extern int fut_copy_from_user(void *to, const void *from, size_t size);
+
+/* socklen_t for option length */
+typedef uint32_t socklen_t;
+
+/* Socket level options */
+#define SOL_SOCKET    1
+#define IPPROTO_TCP   6
+#define IPPROTO_IP    0
+#define IPPROTO_IPV6  41
+
+/* Common socket options (SOL_SOCKET level) */
+#define SO_DEBUG      1    /* Enable debugging */
+#define SO_REUSEADDR  2    /* Allow reuse of local addresses */
+#define SO_TYPE       3    /* Get socket type (read-only) */
+#define SO_ERROR      4    /* Get and clear error status (read-only) */
+#define SO_DONTROUTE  5    /* Don't use routing */
+#define SO_BROADCAST  6    /* Allow broadcast */
+#define SO_SNDBUF     7    /* Send buffer size */
+#define SO_RCVBUF     8    /* Receive buffer size */
+#define SO_KEEPALIVE  9    /* Keep connections alive */
+#define SO_OOBINLINE  10   /* Leave received OOB data inline */
+#define SO_LINGER     13   /* Linger on close */
+#define SO_REUSEPORT  15   /* Allow reuse of local port */
+#define SO_RCVLOWAT   18   /* Receive low-water mark */
+#define SO_SNDLOWAT   19   /* Send low-water mark */
+#define SO_RCVTIMEO   20   /* Receive timeout */
+#define SO_SNDTIMEO   21   /* Send timeout */
+#define SO_TIMESTAMP  29   /* Timestamp received messages */
+
+/**
+ * setsockopt() - Set socket options
+ *
+ * Sets options on sockets to control various aspects of socket behavior.
+ * Options can be set at different protocol levels (socket, TCP, IP, etc.).
+ *
+ * @param sockfd  Socket file descriptor
+ * @param level   Protocol level (SOL_SOCKET, IPPROTO_TCP, IPPROTO_IP, etc.)
+ * @param optname Option name (SO_REUSEADDR, SO_KEEPALIVE, etc.)
+ * @param optval  Pointer to option value
+ * @param optlen  Size of option value
+ *
+ * Returns:
+ *   - 0 on success
+ *   - -EBADF if sockfd is not a valid file descriptor
+ *   - -EFAULT if optval points to invalid memory
+ *   - -EINVAL if optlen is invalid
+ *   - -ENOPROTOOPT if option is unknown at the level indicated
+ *   - -ENOTSOCK if sockfd is not a socket
+ *
+ * Behavior:
+ * - Sets specified option on socket
+ * - Some options take effect immediately, others on next operation
+ * - Options persist until socket is closed (not inherited by dup/fork)
+ * - Invalid values may be rejected or clamped to valid range
+ *
+ * Phase 1 (Current): Validates parameters and returns stub
+ * Phase 2: Implement common SOL_SOCKET options
+ * Phase 3: Implement TCP and IP protocol options
+ * Phase 4: Advanced options and error handling
+ *
+ * Common SOL_SOCKET options:
+ *
+ * SO_REUSEADDR:
+ *   Allows reusing local addresses immediately after close
+ *   Essential for server restart without "address already in use" error
+ *   Example:
+ *     int enable = 1;
+ *     setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, &enable, sizeof(enable));
+ *
+ * SO_REUSEPORT:
+ *   Allows multiple sockets to bind to same port
+ *   Enables load balancing across multiple processes
+ *   Example:
+ *     int enable = 1;
+ *     setsockopt(sockfd, SOL_SOCKET, SO_REUSEPORT, &enable, sizeof(enable));
+ *
+ * SO_KEEPALIVE:
+ *   Enable TCP keepalive probes
+ *   Detects dead connections
+ *   Example:
+ *     int enable = 1;
+ *     setsockopt(sockfd, SOL_SOCKET, SO_KEEPALIVE, &enable, sizeof(enable));
+ *
+ * SO_SNDBUF / SO_RCVBUF:
+ *   Set send/receive buffer sizes
+ *   Affects throughput and memory usage
+ *   Example:
+ *     int bufsize = 65536;
+ *     setsockopt(sockfd, SOL_SOCKET, SO_SNDBUF, &bufsize, sizeof(bufsize));
+ *
+ * SO_RCVTIMEO / SO_SNDTIMEO:
+ *   Set receive/send timeouts
+ *   Prevents indefinite blocking
+ *   Example:
+ *     struct timeval tv = {.tv_sec = 5, .tv_usec = 0};
+ *     setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+ *
+ * SO_LINGER:
+ *   Control close behavior
+ *   Can force RST instead of graceful FIN
+ *   Example:
+ *     struct linger ling = {.l_onoff = 1, .l_linger = 0};
+ *     setsockopt(sockfd, SOL_SOCKET, SO_LINGER, &ling, sizeof(ling));
+ *
+ * SO_BROADCAST:
+ *   Allow sending broadcast messages
+ *   Required for UDP broadcast
+ *   Example:
+ *     int enable = 1;
+ *     setsockopt(sockfd, SOL_SOCKET, SO_BROADCAST, &enable, sizeof(enable));
+ *
+ * Common IPPROTO_TCP options:
+ *
+ * TCP_NODELAY:
+ *   Disable Nagle's algorithm
+ *   Reduces latency for small messages
+ *   Example:
+ *     int enable = 1;
+ *     setsockopt(sockfd, IPPROTO_TCP, TCP_NODELAY, &enable, sizeof(enable));
+ *
+ * TCP_CORK:
+ *   Cork TCP output until explicitly uncorked
+ *   Reduces packet fragmentation
+ *
+ * TCP_KEEPIDLE / TCP_KEEPINTVL / TCP_KEEPCNT:
+ *   Configure keepalive timing
+ *   Fine-tune connection detection
+ *
+ * Common IPPROTO_IP options:
+ *
+ * IP_TTL:
+ *   Set IP Time To Live
+ *   Controls hop limit
+ *
+ * IP_MULTICAST_IF:
+ *   Set outgoing multicast interface
+ *
+ * IP_ADD_MEMBERSHIP / IP_DROP_MEMBERSHIP:
+ *   Join/leave multicast group
+ *
+ * Common use cases:
+ *
+ * Server socket configuration:
+ *   int sockfd = socket(AF_INET, SOCK_STREAM, 0);
+ *   int enable = 1;
+ *   setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, &enable, sizeof(enable));
+ *   bind(sockfd, ...);
+ *   listen(sockfd, ...);
+ *
+ * Low-latency client:
+ *   int sockfd = socket(AF_INET, SOCK_STREAM, 0);
+ *   int enable = 1;
+ *   setsockopt(sockfd, IPPROTO_TCP, TCP_NODELAY, &enable, sizeof(enable));
+ *   connect(sockfd, ...);
+ *
+ * Robust connection with timeout:
+ *   int sockfd = socket(AF_INET, SOCK_STREAM, 0);
+ *   int enable = 1;
+ *   struct timeval tv = {.tv_sec = 30, .tv_usec = 0};
+ *   setsockopt(sockfd, SOL_SOCKET, SO_KEEPALIVE, &enable, sizeof(enable));
+ *   setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+ *
+ * High-throughput transfer:
+ *   int sockfd = socket(AF_INET, SOCK_STREAM, 0);
+ *   int bufsize = 262144;  // 256KB
+ *   setsockopt(sockfd, SOL_SOCKET, SO_SNDBUF, &bufsize, sizeof(bufsize));
+ *   setsockopt(sockfd, SOL_SOCKET, SO_RCVBUF, &bufsize, sizeof(bufsize));
+ *
+ * Edge cases:
+ * - Setting read-only option: Returns -ENOPROTOOPT
+ * - Invalid option value: May clamp to valid range or return -EINVAL
+ * - Option not supported: Returns -ENOPROTOOPT
+ * - After connect(): Some options can't be changed
+ * - NULL optval: Returns -EFAULT
+ * - optlen mismatch: Returns -EINVAL
+ *
+ * Performance considerations:
+ * - Buffer sizes affect memory usage and throughput
+ * - TCP_NODELAY trades latency for efficiency
+ * - Keepalive adds network overhead
+ * - Timeouts prevent resource exhaustion
+ *
+ * Security considerations:
+ * - SO_REUSEADDR can be security risk if misused
+ * - Buffer sizes must be validated (prevent DoS)
+ * - Some options require privileges
+ * - Option values copied from userspace safely
+ *
+ * Interaction with other syscalls:
+ * - getsockopt: Read current option values
+ * - bind: Some options must be set before bind
+ * - listen: Some options must be set before listen
+ * - connect: Some options must be set before connect
+ * - fcntl: Some overlapping functionality (non-blocking, etc.)
+ *
+ * Error handling:
+ * - EBADF: sockfd is invalid
+ * - EFAULT: optval pointer invalid
+ * - EINVAL: optlen is invalid
+ * - ENOPROTOOPT: Unknown option at this level
+ * - ENOTSOCK: sockfd is not a socket
+ * - EPERM: No permission to set option
+ *
+ * Portability notes:
+ * - POSIX standard but option values vary
+ * - Some options are Linux-specific
+ * - Option availability depends on protocol
+ * - Always check return value
+ * - Use feature test macros for portability
+ *
+ * Protocol-specific considerations:
+ *
+ * TCP sockets:
+ *   - TCP_NODELAY for latency-sensitive apps
+ *   - SO_KEEPALIVE for connection liveness
+ *   - SO_LINGER for connection termination
+ *
+ * UDP sockets:
+ *   - SO_BROADCAST for broadcast messages
+ *   - IP_MULTICAST_IF for multicast
+ *   - SO_RCVBUF for datagram buffering
+ *
+ * Unix domain sockets:
+ *   - SO_PASSCRED for credential passing
+ *   - SO_RCVBUF / SO_SNDBUF for buffer sizes
+ *
+ * Real-world examples:
+ *
+ * HTTP server:
+ *   setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, &enable, sizeof(enable));
+ *   setsockopt(sockfd, IPPROTO_TCP, TCP_NODELAY, &enable, sizeof(enable));
+ *
+ * Database server:
+ *   setsockopt(sockfd, SOL_SOCKET, SO_KEEPALIVE, &enable, sizeof(enable));
+ *   setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+ *
+ * Game server (UDP):
+ *   setsockopt(sockfd, SOL_SOCKET, SO_RCVBUF, &bufsize, sizeof(bufsize));
+ *   setsockopt(sockfd, SOL_SOCKET, SO_BROADCAST, &enable, sizeof(enable));
+ */
+long sys_setsockopt(int sockfd, int level, int optname, const void *optval, socklen_t optlen) {
+    fut_task_t *task = fut_task_current();
+    if (!task) {
+        return -ESRCH;
+    }
+
+    /* Validate sockfd */
+    if (sockfd < 0) {
+        fut_printf("[SETSOCKOPT] setsockopt(sockfd=%d) -> EBADF\n", sockfd);
+        return -EBADF;
+    }
+
+    /* Validate optval pointer */
+    if (!optval) {
+        fut_printf("[SETSOCKOPT] setsockopt(sockfd=%d, level=%d, optname=%d) -> EFAULT (optval is NULL)\n",
+                   sockfd, level, optname);
+        return -EFAULT;
+    }
+
+    /* Validate optlen */
+    if (optlen == 0 || optlen > 1024) {  /* Sanity check */
+        fut_printf("[SETSOCKOPT] setsockopt(sockfd=%d, level=%d, optname=%d, optlen=%u) -> EINVAL\n",
+                   sockfd, level, optname, optlen);
+        return -EINVAL;
+    }
+
+    /* Phase 1: Validation only
+     * Phase 2: Implement common SOL_SOCKET options:
+     *   - SO_REUSEADDR: Allow address reuse
+     *   - SO_REUSEPORT: Allow port reuse
+     *   - SO_KEEPALIVE: Enable keepalive
+     *   - SO_SNDBUF / SO_RCVBUF: Buffer sizes
+     *   - SO_RCVTIMEO / SO_SNDTIMEO: Timeouts
+     *   - SO_LINGER: Close behavior
+     *   - SO_BROADCAST: Allow broadcast
+     *
+     * Phase 3: Implement protocol options:
+     *   - IPPROTO_TCP: TCP_NODELAY, TCP_KEEPIDLE, etc.
+     *   - IPPROTO_IP: IP_TTL, IP_MULTICAST_*, etc.
+     *   - IPPROTO_IPV6: IPV6_V6ONLY, etc.
+     *
+     * Phase 4: Advanced features:
+     *   - Privilege checks for certain options
+     *   - Buffer size clamping and validation
+     *   - Socket state checks (can option be set now?)
+     *   - Protocol-specific validation
+     */
+
+    const char *level_str = (level == SOL_SOCKET) ? "SOL_SOCKET" :
+                            (level == IPPROTO_TCP) ? "IPPROTO_TCP" :
+                            (level == IPPROTO_IP) ? "IPPROTO_IP" : "UNKNOWN";
+
+    fut_printf("[SETSOCKOPT] setsockopt(sockfd=%d, level=%s, optname=%d, optlen=%u) -> 0 (Phase 1 stub)\n",
+               sockfd, level_str, optname, optlen);
+
+    /* Phase 1: Just return success for now */
+    return 0;
+}

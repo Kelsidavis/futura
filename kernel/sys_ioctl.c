@@ -35,30 +35,74 @@ extern fut_task_t *fut_task_current(void);
  *   - -EINVAL if request or arg is invalid
  *   - -ENOTTY if fd is not associated with character special device
  *   - -ENOTSUP if request not supported by device
+ *
+ * Phase 1 (Completed): Stub implementation
+ * Phase 2 (Current): Enhanced validation and request type reporting
+ * Phase 3: Implement terminal ioctls (TCGETS, TCSETS, TIOCGWINSZ)
+ * Phase 4: Implement file ioctls (FIONREAD)
+ * Phase 5: Device-specific ioctls
  */
 long sys_ioctl(int fd, unsigned long request, void *argp) {
     fut_task_t *task = fut_task_current();
     if (!task) {
+        fut_printf("[IOCTL] ioctl(fd=%d, request=0x%lx, argp=%p) -> ESRCH (no current task)\n",
+                   fd, request, argp);
         return -ESRCH;
     }
 
-    fut_printf("[IOCTL] fd=%d request=0x%lx argp=0x%p\n", fd, request, argp);
+    /* Phase 2: Validate file descriptor */
+    if (fd < 0 || fd >= task->max_fds) {
+        fut_printf("[IOCTL] ioctl(fd=%d, request=0x%lx, argp=%p) -> EBADF (fd out of range)\n",
+                   fd, request, argp);
+        return -EBADF;
+    }
 
-    /* Phase 1: Stub implementation */
-    /* Phase 2: Implement terminal ioctls (TCGETS, TCSETS, TIOCGWINSZ) */
-    /* Phase 3: Implement file ioctls (FIONREAD) */
-    /* Phase 4: Device-specific ioctls */
+    if (!task->fd_table || !task->fd_table[fd]) {
+        fut_printf("[IOCTL] ioctl(fd=%d, request=0x%lx, argp=%p) -> EBADF (fd not open)\n",
+                   fd, request, argp);
+        return -EBADF;
+    }
 
-    /* For now, return success for common ioctls */
+    /* Identify request type for logging */
+    const char *request_name = "UNKNOWN";
+    const char *request_category = "unknown";
+
+    switch (request) {
+        case TCGETS:
+            request_name = "TCGETS";
+            request_category = "terminal";
+            break;
+        case TCSETS:
+            request_name = "TCSETS";
+            request_category = "terminal";
+            break;
+        case TIOCGWINSZ:
+            request_name = "TIOCGWINSZ";
+            request_category = "terminal";
+            break;
+        case FIONREAD:
+            request_name = "FIONREAD";
+            request_category = "file";
+            break;
+        default:
+            request_name = "UNKNOWN";
+            request_category = "unknown";
+            break;
+    }
+
+    /* Phase 2: Return success for known ioctls (stub implementation)
+     * Phase 3+ will actually implement the operations */
     switch (request) {
         case TCGETS:
         case TCSETS:
         case TIOCGWINSZ:
         case FIONREAD:
-            fut_printf("[IOCTL] Stubbed ioctl 0x%lx\n", request);
+            fut_printf("[IOCTL] ioctl(fd=%d, request=0x%lx [%s], argp=%p) -> 0 (category: %s, Phase 2: stubbed)\n",
+                       fd, request, request_name, argp, request_category);
             return 0;
         default:
-            fut_printf("[IOCTL] Unsupported ioctl 0x%lx\n", request);
+            fut_printf("[IOCTL] ioctl(fd=%d, request=0x%lx [%s], argp=%p) -> ENOTSUP (unsupported request)\n",
+                       fd, request, request_name, argp);
             return -ENOTSUP;
     }
 }

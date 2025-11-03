@@ -118,13 +118,87 @@ long sys_gettimeofday(fut_timeval_t *tv, void *tz) {
  *   - CLOCK_MONOTONIC: Monotonic time (doesn't go backwards, not affected by time adjustments)
  *   - CLOCK_BOOTTIME: Like MONOTONIC but includes time spent in suspend
  *
- * Phase 1 (Current): Both REALTIME and MONOTONIC use same clock source
- * Phase 2: Implement separate monotonic clock that survives time adjustments
- * Phase 3: Add PROCESS_CPUTIME_ID and THREAD_CPUTIME_ID for CPU time tracking
+ * Phase 1 (Completed): Both REALTIME and MONOTONIC use same clock source
+ * Phase 2 (Current): Enhanced validation and clock type identification
+ * Phase 3: Implement separate monotonic clock that survives time adjustments
+ * Phase 4: Add PROCESS_CPUTIME_ID and THREAD_CPUTIME_ID for CPU time tracking
  */
 long sys_clock_gettime(int clock_id, fut_timespec_t *tp) {
     if (!tp) {
+        fut_printf("[TIME] clock_gettime(clock_id=%d, tp=%p) -> EFAULT (tp is NULL)\n",
+                   clock_id, tp);
         return -EFAULT;
+    }
+
+    /* Phase 2: Identify clock type for logging */
+    const char *clock_name = "UNKNOWN";
+    const char *clock_desc = "unknown clock";
+    const char *clock_characteristics = "";
+    int is_supported = 1;
+
+    switch (clock_id) {
+        case CLOCK_REALTIME:
+            clock_name = "CLOCK_REALTIME";
+            clock_desc = "system-wide real-time clock";
+            clock_characteristics = "wall clock time, affected by time adjustments";
+            break;
+
+        case CLOCK_MONOTONIC:
+            clock_name = "CLOCK_MONOTONIC";
+            clock_desc = "monotonic time";
+            clock_characteristics = "never goes backwards, unaffected by time adjustments";
+            break;
+
+        case CLOCK_BOOTTIME:
+            clock_name = "CLOCK_BOOTTIME";
+            clock_desc = "monotonic time including suspend";
+            clock_characteristics = "like MONOTONIC but includes time spent suspended";
+            break;
+
+        case CLOCK_REALTIME_COARSE:
+            clock_name = "CLOCK_REALTIME_COARSE";
+            clock_desc = "fast low-resolution real-time clock";
+            clock_characteristics = "faster but less precise than CLOCK_REALTIME";
+            break;
+
+        case CLOCK_MONOTONIC_COARSE:
+            clock_name = "CLOCK_MONOTONIC_COARSE";
+            clock_desc = "fast low-resolution monotonic clock";
+            clock_characteristics = "faster but less precise than CLOCK_MONOTONIC";
+            break;
+
+        case CLOCK_MONOTONIC_RAW:
+            clock_name = "CLOCK_MONOTONIC_RAW";
+            clock_desc = "hardware-based monotonic clock";
+            clock_characteristics = "raw hardware time, not subject to NTP adjustments";
+            break;
+
+        case CLOCK_PROCESS_CPUTIME_ID:
+            clock_name = "CLOCK_PROCESS_CPUTIME_ID";
+            clock_desc = "per-process CPU time clock";
+            clock_characteristics = "measures CPU time consumed by process";
+            is_supported = 0;
+            break;
+
+        case CLOCK_THREAD_CPUTIME_ID:
+            clock_name = "CLOCK_THREAD_CPUTIME_ID";
+            clock_desc = "per-thread CPU time clock";
+            clock_characteristics = "measures CPU time consumed by thread";
+            is_supported = 0;
+            break;
+
+        default:
+            fut_printf("[TIME] clock_gettime(clock_id=%d, tp=%p) -> EINVAL (unknown clock_id)\n",
+                       clock_id, tp);
+            return -EINVAL;
+    }
+
+    /* Check if clock is supported */
+    if (!is_supported) {
+        fut_printf("[TIME] clock_gettime(clock_id=%s [%s], tp=%p) -> EINVAL "
+                   "(%s not yet supported, Phase 4)\n",
+                   clock_name, clock_desc, tp, clock_characteristics);
+        return -EINVAL;
     }
 
     /* Get current time in milliseconds from timer */
@@ -135,36 +209,18 @@ long sys_clock_gettime(int clock_id, fut_timespec_t *tp) {
     kernel_tp.tv_sec = ms / 1000;
     kernel_tp.tv_nsec = (ms % 1000) * 1000000;  /* Convert ms to ns */
 
-    /* Validate clock_id */
-    switch (clock_id) {
-        case CLOCK_REALTIME:
-        case CLOCK_MONOTONIC:
-        case CLOCK_BOOTTIME:
-        case CLOCK_REALTIME_COARSE:
-        case CLOCK_MONOTONIC_COARSE:
-        case CLOCK_MONOTONIC_RAW:
-            /* All supported clocks currently use the same source
-             * Phase 2 will differentiate them */
-            break;
-
-        case CLOCK_PROCESS_CPUTIME_ID:
-        case CLOCK_THREAD_CPUTIME_ID:
-            /* CPU time clocks not yet implemented */
-            fut_printf("[TIME] clock_gettime: CPU time clocks not yet supported (clock_id=%d)\n", clock_id);
-            return -EINVAL;
-
-        default:
-            fut_printf("[TIME] clock_gettime: unknown clock_id=%d\n", clock_id);
-            return -EINVAL;
-    }
-
     /* Copy to userspace */
     if (fut_copy_to_user(tp, &kernel_tp, sizeof(fut_timespec_t)) != 0) {
+        fut_printf("[TIME] clock_gettime(clock_id=%s [%s], tp=%p) -> EFAULT (copy_to_user failed)\n",
+                   clock_name, clock_desc, tp);
         return -EFAULT;
     }
 
-    fut_printf("[TIME] clock_gettime(clock_id=%d) -> %lld.%09lld\n",
-               clock_id, kernel_tp.tv_sec, kernel_tp.tv_nsec);
+    /* Phase 2: Detailed logging with clock identification and characteristics */
+    fut_printf("[TIME] clock_gettime(clock_id=%s [%s], tp=%p) -> 0 "
+               "(%lld.%09lld s, %s, Phase 2: all use same source)\n",
+               clock_name, clock_desc, tp, kernel_tp.tv_sec, kernel_tp.tv_nsec,
+               clock_characteristics);
 
     return 0;
 }

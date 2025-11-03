@@ -5,15 +5,22 @@
  *
  * Implements setsockopt() to configure socket behavior and protocol options.
  * Essential for tuning performance, timeouts, buffer sizes, and protocol features.
+ *
+ * Phase 1 (Completed): Basic validation stub
+ * Phase 2 (Current): Accept common SOL_SOCKET options (validation only, not enforced)
+ * Phase 3: TCP and IP protocol options
+ * Phase 4: Full option enforcement with socket state tracking
  */
 
 #include <kernel/fut_task.h>
+#include <kernel/fut_socket.h>
 #include <kernel/errno.h>
+#include <kernel/uaccess.h>
 #include <stdint.h>
 
 extern void fut_printf(const char *fmt, ...);
 extern fut_task_t *fut_task_current(void);
-extern int fut_copy_from_user(void *to, const void *from, size_t size);
+extern fut_socket_t *get_socket_from_fd(int fd);
 
 /* socklen_t for option length */
 typedef uint32_t socklen_t;
@@ -280,35 +287,104 @@ long sys_setsockopt(int sockfd, int level, int optname, const void *optval, sock
         return -EINVAL;
     }
 
-    /* Phase 1: Validation only
-     * Phase 2: Implement common SOL_SOCKET options:
-     *   - SO_REUSEADDR: Allow address reuse
-     *   - SO_REUSEPORT: Allow port reuse
-     *   - SO_KEEPALIVE: Enable keepalive
-     *   - SO_SNDBUF / SO_RCVBUF: Buffer sizes
-     *   - SO_RCVTIMEO / SO_SNDTIMEO: Timeouts
-     *   - SO_LINGER: Close behavior
-     *   - SO_BROADCAST: Allow broadcast
-     *
-     * Phase 3: Implement protocol options:
-     *   - IPPROTO_TCP: TCP_NODELAY, TCP_KEEPIDLE, etc.
-     *   - IPPROTO_IP: IP_TTL, IP_MULTICAST_*, etc.
-     *   - IPPROTO_IPV6: IPV6_V6ONLY, etc.
-     *
-     * Phase 4: Advanced features:
-     *   - Privilege checks for certain options
-     *   - Buffer size clamping and validation
-     *   - Socket state checks (can option be set now?)
-     *   - Protocol-specific validation
-     */
+    /* Get socket from FD */
+    fut_socket_t *socket = get_socket_from_fd(sockfd);
+    if (!socket) {
+        fut_printf("[SETSOCKOPT] setsockopt(sockfd=%d) -> EBADF (not a socket)\n", sockfd);
+        return -EBADF;
+    }
 
-    const char *level_str = (level == SOL_SOCKET) ? "SOL_SOCKET" :
-                            (level == IPPROTO_TCP) ? "IPPROTO_TCP" :
-                            (level == IPPROTO_IP) ? "IPPROTO_IP" : "UNKNOWN";
+    /* Phase 2: Implement common SOL_SOCKET options */
+    if (level == SOL_SOCKET) {
+        switch (optname) {
+            case SO_TYPE:
+            case SO_ERROR:
+                /* Read-only options cannot be set */
+                fut_printf("[SETSOCKOPT] setsockopt(sockfd=%d, SOL_SOCKET, optname=%d) -> ENOPROTOOPT (read-only)\n",
+                           sockfd, optname);
+                return -ENOPROTOOPT;
 
-    fut_printf("[SETSOCKOPT] setsockopt(sockfd=%d, level=%s, optname=%d, optlen=%u) -> 0 (Phase 1 stub)\n",
-               sockfd, level_str, optname, optlen);
+            case SO_REUSEADDR:
+            case SO_REUSEPORT:
+                /* Address/port reuse options
+                 * Phase 2: Validate and accept, but not enforced (Unix sockets don't have port conflicts) */
+                {
+                    int value;
+                    if (optlen < sizeof(int)) {
+                        return -EINVAL;
+                    }
+                    if (fut_copy_from_user(&value, optval, sizeof(int)) != 0) {
+                        return -EFAULT;
+                    }
+                    fut_printf("[SETSOCKOPT] setsockopt(sockfd=%d, SOL_SOCKET, optname=%d, value=%d) -> 0 (accepted, not enforced)\n",
+                               sockfd, optname, value);
+                    return 0;
+                }
 
-    /* Phase 1: Just return success for now */
-    return 0;
+            case SO_KEEPALIVE:
+            case SO_BROADCAST:
+            case SO_OOBINLINE:
+            case SO_DONTROUTE:
+            case SO_DEBUG:
+                /* Boolean options - accept but not enforced */
+                {
+                    int value;
+                    if (optlen < sizeof(int)) {
+                        return -EINVAL;
+                    }
+                    if (fut_copy_from_user(&value, optval, sizeof(int)) != 0) {
+                        return -EFAULT;
+                    }
+                    fut_printf("[SETSOCKOPT] setsockopt(sockfd=%d, SOL_SOCKET, optname=%d, value=%d) -> 0 (accepted, not enforced)\n",
+                               sockfd, optname, value);
+                    return 0;
+                }
+
+            case SO_SNDBUF:
+            case SO_RCVBUF:
+                /* Buffer size options
+                 * Phase 2: Validate value, but buffer sizes are fixed at FUT_SOCKET_BUFSIZE */
+                {
+                    int value;
+                    if (optlen < sizeof(int)) {
+                        return -EINVAL;
+                    }
+                    if (fut_copy_from_user(&value, optval, sizeof(int)) != 0) {
+                        return -EFAULT;
+                    }
+                    if (value < 0) {
+                        return -EINVAL;
+                    }
+                    fut_printf("[SETSOCKOPT] setsockopt(sockfd=%d, SOL_SOCKET, optname=%d, value=%d) -> 0 (accepted, buffer fixed at %d)\n",
+                               sockfd, optname, value, FUT_SOCKET_BUFSIZE);
+                    return 0;
+                }
+
+            case SO_RCVLOWAT:
+            case SO_SNDLOWAT:
+            case SO_RCVTIMEO:
+            case SO_SNDTIMEO:
+            case SO_LINGER:
+            case SO_TIMESTAMP:
+                /* Advanced options not yet implemented */
+                fut_printf("[SETSOCKOPT] setsockopt(sockfd=%d, SOL_SOCKET, optname=%d) -> ENOPROTOOPT (not yet implemented)\n",
+                           sockfd, optname);
+                return -ENOPROTOOPT;
+
+            default:
+                /* Unknown option */
+                fut_printf("[SETSOCKOPT] setsockopt(sockfd=%d, SOL_SOCKET, optname=%d) -> ENOPROTOOPT (unknown)\n",
+                           sockfd, optname);
+                return -ENOPROTOOPT;
+        }
+    } else {
+        /* Phase 3: Protocol-specific options (IPPROTO_TCP, IPPROTO_IP, etc.) */
+        const char *level_str = (level == IPPROTO_TCP) ? "IPPROTO_TCP" :
+                                (level == IPPROTO_IP) ? "IPPROTO_IP" :
+                                (level == IPPROTO_IPV6) ? "IPPROTO_IPV6" : "UNKNOWN";
+
+        fut_printf("[SETSOCKOPT] setsockopt(sockfd=%d, level=%s, optname=%d) -> ENOPROTOOPT (level not supported)\n",
+                   sockfd, level_str, optname);
+        return -ENOPROTOOPT;
+    }
 }

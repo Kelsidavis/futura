@@ -88,6 +88,7 @@
 #define SYS_accept      43
 #define SYS_sendto      44
 #define SYS_recvfrom    45
+#define SYS_shutdown    48
 #define SYS_bind        49
 #define SYS_listen      50
 #ifndef SYS_getcwd
@@ -1241,6 +1242,13 @@ static int64_t sys_listen_handler(uint64_t sockfd, uint64_t backlog, uint64_t ar
     return 0;  /* Success */
 }
 
+static int64_t sys_shutdown_handler(uint64_t sockfd, uint64_t how, uint64_t arg3,
+                                    uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg3; (void)arg4; (void)arg5; (void)arg6;
+    extern long sys_shutdown(int sockfd, int how);
+    return sys_shutdown((int)sockfd, (int)how);
+}
+
 static int64_t sys_accept_handler(uint64_t sockfd, uint64_t addr, uint64_t addrlen,
                                   uint64_t arg4, uint64_t arg5, uint64_t arg6) {
     (void)addr; (void)addrlen; (void)arg4; (void)arg5; (void)arg6;
@@ -1762,6 +1770,7 @@ static syscall_handler_t syscall_table[MAX_SYSCALL] = {
     [SYS_socket]     = sys_socket_handler,
     [SYS_bind]       = sys_bind_handler,
     [SYS_listen]     = sys_listen_handler,
+    [SYS_shutdown]   = sys_shutdown_handler,
     [SYS_accept]     = sys_accept_handler,
     [SYS_connect]    = sys_connect_handler,
     [SYS_sendto]     = sys_sendto_handler,

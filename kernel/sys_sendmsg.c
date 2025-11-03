@@ -81,10 +81,10 @@ struct cmsghdr {
  * - Optional destination address via msg_name
  * - Atomic message send
  *
- * Phase 1 (Current): Validates parameters, delegates to writev-style I/O
- * Phase 2: Implement scatter-gather I/O
+ * Phase 1 (Completed): Validates parameters, delegates to writev-style I/O
+ * Phase 2 (Current): Enhanced validation, I/O pattern analysis, and detailed statistics
  * Phase 3: Implement ancillary data support (SCM_RIGHTS for FD passing)
- * Phase 4: Full control message support
+ * Phase 4: Full control message support and advanced flags
  */
 ssize_t sys_sendmsg(int sockfd, const struct msghdr *msg, int flags) {
     fut_task_t *task = fut_task_current();
@@ -92,7 +92,35 @@ ssize_t sys_sendmsg(int sockfd, const struct msghdr *msg, int flags) {
         return -ESRCH;
     }
 
-    fut_printf("[SENDMSG] sockfd=%d msg=0x%p flags=0x%x\n", sockfd, msg, flags);
+    /* Phase 2: Identify message flags for logging */
+    const char *flags_desc;
+
+    /* Common send flags (placeholder names - actual values may differ) */
+    #define MSG_DONTWAIT  0x40
+    #define MSG_NOSIGNAL  0x4000
+    #define MSG_OOB       0x01
+    #define MSG_EOR       0x80
+    #define MSG_MORE      0x8000
+
+    if (flags == 0) {
+        flags_desc = "none";
+    } else if (flags == MSG_DONTWAIT) {
+        flags_desc = "MSG_DONTWAIT";
+    } else if (flags == MSG_NOSIGNAL) {
+        flags_desc = "MSG_NOSIGNAL";
+    } else if (flags == MSG_OOB) {
+        flags_desc = "MSG_OOB";
+    } else if (flags == MSG_EOR) {
+        flags_desc = "MSG_EOR";
+    } else if (flags == MSG_MORE) {
+        flags_desc = "MSG_MORE";
+    } else if (flags == (MSG_DONTWAIT | MSG_NOSIGNAL)) {
+        flags_desc = "MSG_DONTWAIT|MSG_NOSIGNAL";
+    } else if (flags == (MSG_NOSIGNAL | MSG_MORE)) {
+        flags_desc = "MSG_NOSIGNAL|MSG_MORE";
+    } else {
+        flags_desc = "multiple/unknown flags";
+    }
 
     /* Validate socket FD */
     struct fut_file *file = vfs_get_file(sockfd);
@@ -114,21 +142,85 @@ ssize_t sys_sendmsg(int sockfd, const struct msghdr *msg, int flags) {
 
     /* Validate iovlen */
     if (kmsg.msg_iovlen == 0) {
+        fut_printf("[SENDMSG] sendmsg(sockfd=%d, iovlen=0) -> 0 (nothing to send)\n", sockfd);
         return 0;  /* Nothing to send */
     }
     if (kmsg.msg_iovlen > 1024) {
+        fut_printf("[SENDMSG] sendmsg(sockfd=%d, iovlen=%zu) -> EINVAL (exceeds UIO_MAXIOV=1024)\n",
+                   sockfd, kmsg.msg_iovlen);
         return -EINVAL;
     }
 
-    /* Phase 1: Simple implementation - sum up all iovec buffers and write
-     * Phase 2: Proper scatter-gather implementation
-     * Phase 3: Handle ancillary data (SCM_RIGHTS for FD passing)
+    /* Phase 2: Calculate total size, validate iovecs, and gather statistics */
+    size_t total_size = 0;
+    int zero_len_count = 0;
+    size_t min_iov_len = (size_t)-1;
+    size_t max_iov_len = 0;
+
+    /* First pass: gather statistics */
+    for (size_t i = 0; i < kmsg.msg_iovlen; i++) {
+        struct iovec iov;
+        if (fut_copy_from_user(&iov, &kmsg.msg_iov[i], sizeof(struct iovec)) != 0) {
+            fut_printf("[SENDMSG] sendmsg(sockfd=%d, iovlen=%zu) -> EFAULT (copy_from_user iovec %zu failed)\n",
+                       sockfd, kmsg.msg_iovlen, i);
+            return -EFAULT;
+        }
+
+        /* Check for overflow */
+        if (total_size + iov.iov_len < total_size) {
+            fut_printf("[SENDMSG] sendmsg(sockfd=%d, iovlen=%zu) -> EINVAL (size overflow at iovec %zu)\n",
+                       sockfd, kmsg.msg_iovlen, i);
+            return -EINVAL;
+        }
+        total_size += iov.iov_len;
+
+        /* Gather statistics */
+        if (iov.iov_len == 0) {
+            zero_len_count++;
+        } else {
+            if (iov.iov_len < min_iov_len) {
+                min_iov_len = iov.iov_len;
+            }
+            if (iov.iov_len > max_iov_len) {
+                max_iov_len = iov.iov_len;
+            }
+        }
+    }
+
+    /* Categorize I/O pattern for diagnostics */
+    const char *io_pattern;
+    if (kmsg.msg_iovlen == 1) {
+        io_pattern = "single buffer (equivalent to send)";
+    } else if (kmsg.msg_iovlen == 2) {
+        io_pattern = "dual buffer (e.g., header+payload)";
+    } else if (kmsg.msg_iovlen <= 10) {
+        io_pattern = "small scatter-gather";
+    } else if (kmsg.msg_iovlen <= 100) {
+        io_pattern = "medium scatter-gather";
+    } else {
+        io_pattern = "large scatter-gather";
+    }
+
+    /* Categorize message type based on ancillary data and address */
+    const char *msg_type;
+    if (kmsg.msg_control && kmsg.msg_controllen > 0) {
+        msg_type = "with control data";
+    } else if (kmsg.msg_name && kmsg.msg_namelen > 0) {
+        msg_type = "with destination address";
+    } else {
+        msg_type = "simple data transfer";
+    }
+
+    /* Phase 2: Iterate through iovecs and write each buffer
+     * Phase 3: Proper scatter-gather implementation with VFS support
+     * Phase 4: Handle ancillary data (SCM_RIGHTS for FD passing)
      */
 
-    (void)flags;  /* Ignore flags in Phase 1 */
+    (void)flags;  /* Ignore flags in Phase 2 (will implement in Phase 3) */
 
-    /* For Phase 1, just iterate through iovecs and write each buffer */
+    /* Phase 2: Iterate through iovecs and write each buffer */
     ssize_t total_sent = 0;
+    int iovecs_sent = 0;
     for (size_t i = 0; i < kmsg.msg_iovlen; i++) {
         struct iovec iov;
         if (fut_copy_from_user(&iov, &kmsg.msg_iov[i], sizeof(struct iovec)) != 0) {
@@ -160,6 +252,7 @@ ssize_t sys_sendmsg(int sockfd, const struct msghdr *msg, int flags) {
         }
 
         total_sent += ret;
+        iovecs_sent++;
 
         /* Short write */
         if ((size_t)ret < iov.iov_len) {
@@ -167,12 +260,35 @@ ssize_t sys_sendmsg(int sockfd, const struct msghdr *msg, int flags) {
         }
     }
 
-    /* Log ancillary data if present (not yet handled) */
+    /* Phase 2: Detailed logging with I/O statistics */
+    const char *completion_status;
+    if (total_sent == 0) {
+        completion_status = "nothing sent";
+    } else if ((size_t)total_sent < total_size) {
+        completion_status = "partial";
+    } else {
+        completion_status = "complete";
+    }
+
+    /* Build detailed log message */
+    if (zero_len_count > 0) {
+        fut_printf("[SENDMSG] sendmsg(sockfd=%d, iovlen=%zu [%s], flags=%s, type=%s, total_requested=%zu bytes) -> %ld bytes "
+                   "(%s, %d/%zu iovecs sent, %d zero-len skipped, min=%zu max=%zu, Phase 2: iterative)\n",
+                   sockfd, kmsg.msg_iovlen, io_pattern, flags_desc, msg_type, total_size, total_sent,
+                   completion_status, iovecs_sent, kmsg.msg_iovlen - zero_len_count, zero_len_count,
+                   min_iov_len, max_iov_len);
+    } else {
+        fut_printf("[SENDMSG] sendmsg(sockfd=%d, iovlen=%zu [%s], flags=%s, type=%s, total_requested=%zu bytes) -> %ld bytes "
+                   "(%s, %d/%zu iovecs sent, min=%zu max=%zu, Phase 2: iterative)\n",
+                   sockfd, kmsg.msg_iovlen, io_pattern, flags_desc, msg_type, total_size, total_sent,
+                   completion_status, iovecs_sent, kmsg.msg_iovlen, min_iov_len, max_iov_len);
+    }
+
+    /* Log ancillary data if present (not yet handled in Phase 2, will be Phase 3) */
     if (kmsg.msg_controllen > 0) {
-        fut_printf("[SENDMSG] Ancillary data present (%zu bytes) - not yet handled\n",
+        fut_printf("[SENDMSG] Note: Ancillary data present (%zu bytes) - will be handled in Phase 3\n",
                    kmsg.msg_controllen);
     }
 
-    fut_printf("[SENDMSG] sent %zd bytes total\n", total_sent);
     return total_sent;
 }

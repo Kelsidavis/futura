@@ -6,10 +6,10 @@
  * Implements shutdown() for graceful socket connection termination.
  * Allows closing one or both directions of a full-duplex connection.
  *
- * Phase 1 (Completed): Basic validation stub
- * Phase 2 (Current): Validate socket state and connectivity
- * Phase 3: Implement actual shutdown with buffer management
- * Phase 4: TCP state machine integration and graceful close
+ * Phase 1 (Completed): Basic validation and socket state checking
+ * Phase 2 (Current): Enhanced validation, state identification, and detailed logging
+ * Phase 3: Implement actual shutdown with buffer management and enforcement
+ * Phase 4: TCP state machine integration, FIN handling, and graceful close
  */
 
 #include <kernel/fut_task.h>
@@ -35,12 +35,7 @@ extern fut_socket_t *get_socket_from_fd(int fd);
  *
  * Unlike close(), which terminates the socket entirely and releases its
  * resources, shutdown() allows selective closing of the read and/or write
- * channels while keeping the socket descriptor valid. This is particularly
- * important for:
- * - TCP half-close scenarios (sending FIN while still receiving)
- * - Signaling end-of-data to peer
- * - Graceful connection termination
- * - Shared socket descriptors (dup/fork)
+ * channels while keeping the socket descriptor valid.
  *
  * @param sockfd  Socket file descriptor
  * @param how     Shutdown mode (SHUT_RD, SHUT_WR, or SHUT_RDWR)
@@ -75,13 +70,9 @@ extern fut_socket_t *get_socket_from_fd(int fd);
  *   - Future I/O operations will fail
  *   - Socket descriptor remains valid until close()
  *
- * Phase 1 (Current): Validates parameters and returns success
- * Phase 2: Integrate with socket layer to actually shut down channels
- * Phase 3: Implement proper TCP FIN handling for SHUT_WR
- * Phase 4: Handle socket buffer flushing and state transitions
+ * Common usage patterns:
  *
- * Example: TCP graceful close (half-close)
- *
+ * TCP graceful close (half-close):
  *   // Client finished sending request
  *   shutdown(sockfd, SHUT_WR);  // Send FIN, signal no more data
  *
@@ -92,165 +83,116 @@ extern fut_socket_t *get_socket_from_fd(int fd);
  *
  *   close(sockfd);  // Now close the socket
  *
- * Example: Server graceful shutdown
- *
- *   // Server finished sending response
- *   shutdown(sockfd, SHUT_WR);
- *
- *   // Drain any remaining client data
- *   char dummy[1024];
- *   while (recv(sockfd, dummy, sizeof(dummy), 0) > 0);
- *
- *   close(sockfd);
- *
- * Example: Shared socket descriptor (fork)
- *
+ * Shared socket descriptor (fork):
  *   int sockfd = socket(...);
  *   if (fork() == 0) {
  *       // Child: only reads
  *       shutdown(sockfd, SHUT_WR);  // Don't write
- *       // ...
  *   } else {
  *       // Parent: only writes
  *       shutdown(sockfd, SHUT_RD);  // Don't read
- *       // ...
  *   }
  *
- * TCP State Transitions (Phase 3+):
- *
- * SHUT_WR on ESTABLISHED socket:
- *   - Sends TCP FIN packet
- *   - Transitions to FIN_WAIT_1 state
- *   - Waits for peer's ACK
- *   - Eventually reaches TIME_WAIT or CLOSED
- *
- * SHUT_RD on ESTABLISHED socket:
- *   - No TCP packet sent (local operation only)
- *   - Remains in ESTABLISHED state
- *   - Incoming data segments are discarded
- *
- * Interaction with other syscalls:
- * - close: Implicitly does SHUT_RDWR + releases descriptor
- * - send: Returns -EPIPE after SHUT_WR or SHUT_RDWR
- * - recv: Returns 0 (EOF) after SHUT_RD or SHUT_RDWR
- * - dup/fork: Shared descriptors each need their own shutdown
- *
  * Differences from close():
- * - shutdown: Affects the connection, not the descriptor
- * - close: Releases the descriptor and decrements refcount
- * - After shutdown, socket descriptor still valid for close()
- * - After dup/fork, shutdown affects all shared descriptors
- * - close only affects current descriptor (refcount)
+ *   - shutdown: Affects the connection, not the descriptor
+ *   - close: Releases the descriptor and decrements refcount
+ *   - After shutdown, socket descriptor still valid for close()
+ *   - After dup/fork, shutdown affects all shared descriptors
  *
- * Common use cases:
- * - HTTP/1.1: Shutdown write after sending request, read response
- * - TCP proxy: Shutdown one direction while keeping other open
- * - Database client: Signal end of query, wait for results
- * - File transfer: Shutdown write after sending, wait for ACK
- * - Protocol state machines: Signal transition to closing state
- *
- * Error handling:
- * - EBADF: sockfd is not valid (not open)
- * - EINVAL: how is not SHUT_RD, SHUT_WR, or SHUT_RDWR
- * - ENOTCONN: Socket not connected (connection-oriented socket)
- * - ENOTSOCK: sockfd is a file, not a socket
- *
- * Edge cases:
- * - Shutdown already shut-down direction: No-op, returns 0
- * - Shutdown on listening socket: -ENOTCONN (not connected)
- * - Shutdown on UDP socket: Allowed but mostly meaningless
- * - Multiple shutdowns: Idempotent (safe to call multiple times)
- * - Shutdown after close: -EBADF (descriptor invalid)
- *
- * Performance characteristics:
- * - SHUT_RD: O(1) - just set flag, discard buffer
- * - SHUT_WR: O(1) - queue FIN packet
- * - SHUT_RDWR: O(1) - combination of above
- * - No blocking (shutdown is non-blocking)
- * - FIN transmission is asynchronous
- *
- * Security considerations:
- * - Cannot shutdown other process's sockets
- * - Proper descriptor validation required
- * - Buffer contents discarded (no data leak)
- * - TCP RST vs FIN affects security (Phase 3)
- *
- * Portability notes:
- * - POSIX standard (widely supported)
- * - Constant values (SHUT_*) are standard across systems
- * - Behavior on UDP sockets varies
- * - Some systems allow shutdown on non-connected sockets
- * - Always check return value
- *
- * Protocol-specific behavior:
- *
- * TCP:
- * - SHUT_WR sends FIN (graceful close)
- * - Proper TCP state machine transitions
- * - TIME_WAIT state handling
- *
- * UDP:
- * - Shutdown allowed but limited effect
- * - No connection state to tear down
- * - Mostly affects local socket state
- *
- * Unix domain sockets:
- * - Similar to TCP for SOCK_STREAM
- * - SHUT_WR causes peer recv() to return 0
- * - No network packets involved
- *
- * Comparison with alternatives:
- *
- * Using close() (not graceful):
- *   close(sockfd);  // Abrupt termination, may lose data
- *
- * Using shutdown() then close() (graceful):
- *   shutdown(sockfd, SHUT_WR);  // Signal end of data
- *   // Wait for peer acknowledgment...
- *   close(sockfd);  // Clean shutdown
- *
- * Benefits of shutdown():
- * - Graceful connection termination
- * - Half-duplex communication (one-way shutdown)
- * - Works with shared descriptors (dup/fork)
- * - Protocol-level shutdown (TCP FIN)
- * - Peer notification of end-of-data
+ * Phase 1 (Completed): Basic validation and socket state checking
+ * Phase 2 (Current): Enhanced validation, state identification, detailed logging
+ * Phase 3: Actual shutdown with buffer management and enforcement
+ * Phase 4: TCP FIN handling and state machine transitions
  */
 long sys_shutdown(int sockfd, int how) {
     fut_task_t *task = fut_task_current();
     if (!task) {
+        fut_printf("[SHUTDOWN] shutdown(sockfd=%d, how=%d) -> ESRCH (no current task)\n",
+                   sockfd, how);
         return -ESRCH;
     }
 
-    /* Validate how parameter */
-    if (how != SHUT_RD && how != SHUT_WR && how != SHUT_RDWR) {
-        fut_printf("[SHUTDOWN] shutdown(sockfd=%d, how=%d) -> EINVAL (invalid how)\n",
-                   sockfd, how);
-        return -EINVAL;
-    }
-
-    /* Validate sockfd */
+    /* Phase 2: Validate sockfd early */
     if (sockfd < 0) {
-        fut_printf("[SHUTDOWN] shutdown(sockfd=%d, how=%d) -> EBADF\n",
+        fut_printf("[SHUTDOWN] shutdown(sockfd=%d, how=%d) -> EBADF (negative fd)\n",
                    sockfd, how);
         return -EBADF;
     }
 
-    /* Phase 2: Validate socket state and connectivity */
+    /* Phase 2: Categorize and validate how parameter */
+    const char *how_desc;
+    switch (how) {
+        case SHUT_RD:
+            how_desc = "SHUT_RD (disallow receives, send still allowed)";
+            break;
+        case SHUT_WR:
+            how_desc = "SHUT_WR (disallow sends, graceful close)";
+            break;
+        case SHUT_RDWR:
+            how_desc = "SHUT_RDWR (disallow both, full shutdown)";
+            break;
+        default:
+            fut_printf("[SHUTDOWN] shutdown(sockfd=%d, how=%d) -> EINVAL (invalid how, must be 0/1/2)\n",
+                       sockfd, how);
+            return -EINVAL;
+    }
 
     /* Get socket from FD */
     fut_socket_t *socket = get_socket_from_fd(sockfd);
     if (!socket) {
-        fut_printf("[SHUTDOWN] shutdown(sockfd=%d, how=%d) -> EBADF (not a socket)\n",
-                   sockfd, how);
+        fut_printf("[SHUTDOWN] shutdown(sockfd=%d, how=%s) -> EBADF (not a socket)\n",
+                   sockfd, how_desc);
         return -EBADF;
     }
 
-    /* Check socket is connected (required for connection-oriented sockets) */
+    /* Phase 2: Identify socket state */
+    const char *socket_state_desc;
+    switch (socket->state) {
+        case FUT_SOCK_CREATED:
+            socket_state_desc = "created (not connected)";
+            break;
+        case FUT_SOCK_BOUND:
+            socket_state_desc = "bound (not connected)";
+            break;
+        case FUT_SOCK_LISTENING:
+            socket_state_desc = "listening (not connected)";
+            break;
+        case FUT_SOCK_CONNECTING:
+            socket_state_desc = "connecting (not yet connected)";
+            break;
+        case FUT_SOCK_CONNECTED:
+            socket_state_desc = "connected";
+            break;
+        case FUT_SOCK_CLOSED:
+            socket_state_desc = "closed";
+            break;
+        default:
+            socket_state_desc = "unknown state";
+            break;
+    }
+
+    /* Phase 2: Validate socket is connected */
     if (socket->state != FUT_SOCK_CONNECTED) {
-        fut_printf("[SHUTDOWN] shutdown(sockfd=%d, how=%d) -> ENOTCONN (socket not connected, state=%d)\n",
-                   sockfd, how, socket->state);
+        fut_printf("[SHUTDOWN] shutdown(sockfd=%d, socket_id=%u, state=%s, how=%s) -> ENOTCONN (socket not connected)\n",
+                   sockfd, socket->socket_id, socket_state_desc, how_desc);
         return -ENOTCONN;
+    }
+
+    /* Phase 2: Identify socket type */
+    const char *socket_type_desc;
+    switch (socket->socket_type) {
+        case 1:  // SOCK_STREAM
+            socket_type_desc = "SOCK_STREAM";
+            break;
+        case 2:  // SOCK_DGRAM
+            socket_type_desc = "SOCK_DGRAM";
+            break;
+        case 5:  // SOCK_SEQPACKET
+            socket_type_desc = "SOCK_SEQPACKET";
+            break;
+        default:
+            socket_type_desc = "unknown type";
+            break;
     }
 
     /* Phase 2: Log shutdown operation but don't enforce yet
@@ -267,11 +209,20 @@ long sys_shutdown(int sockfd, int how) {
      * Phase 4 will add TCP FIN handling and state machine transitions.
      */
 
-    const char *how_str = (how == SHUT_RD) ? "SHUT_RD" :
-                          (how == SHUT_WR) ? "SHUT_WR" : "SHUT_RDWR";
+    /* Phase 2: Detailed success logging */
+    const char *operation_impact;
+    if (how == SHUT_RD) {
+        operation_impact = "recv() will return 0 (EOF), send() still works";
+    } else if (how == SHUT_WR) {
+        operation_impact = "send() will return -EPIPE, recv() still works";
+    } else {
+        operation_impact = "both recv() and send() will fail";
+    }
 
-    fut_printf("[SHUTDOWN] shutdown(sockfd=%d, how=%s) -> 0 (Phase 2: validated, not enforced)\n",
-               sockfd, how_str);
+    fut_printf("[SHUTDOWN] shutdown(sockfd=%d, socket_id=%u, type=%s, state=%s, how=%s) "
+               "-> 0 (validated, impact: %s, Phase 2)\n",
+               sockfd, socket->socket_id, socket_type_desc, socket_state_desc,
+               how_desc, operation_impact);
 
     return 0;
 }

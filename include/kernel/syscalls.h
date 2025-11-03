@@ -120,3 +120,5 @@ long sys_clock_gettime(int clock_id, fut_timespec_t *tp);
    (syscall numbers conflict with seteuid from Priority #14) */
 long sys_time_millis(void);
 long sys_sched_yield(void);
+long sys_getpriority(int which, int who);
+long sys_setpriority(int which, int who, int prio);

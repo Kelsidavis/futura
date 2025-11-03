@@ -116,6 +116,8 @@
 #define SYS_setrlimit    160
 #define SYS_time         201
 #define SYS_getdents64   217
+#define SYS_getpriority  140
+#define SYS_setpriority  141
 
 #ifndef SYS_time_millis
 #define SYS_time_millis  400
@@ -496,6 +498,20 @@ static int64_t sys_sched_yield_handler(uint64_t arg1, uint64_t arg2, uint64_t ar
     (void)arg1; (void)arg2; (void)arg3; (void)arg4; (void)arg5; (void)arg6;
     extern long sys_sched_yield(void);
     return sys_sched_yield();
+}
+
+static int64_t sys_getpriority_handler(uint64_t which, uint64_t who, uint64_t arg3,
+                                       uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg3; (void)arg4; (void)arg5; (void)arg6;
+    extern long sys_getpriority(int which, int who);
+    return sys_getpriority((int)which, (int)who);
+}
+
+static int64_t sys_setpriority_handler(uint64_t which, uint64_t who, uint64_t prio,
+                                       uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg4; (void)arg5; (void)arg6;
+    extern long sys_setpriority(int which, int who, int prio);
+    return sys_setpriority((int)which, (int)who, (int)prio);
 }
 
 static int64_t sys_time_millis_handler(uint64_t arg1, uint64_t arg2, uint64_t arg3,
@@ -1661,6 +1677,8 @@ static syscall_handler_t syscall_table[MAX_SYSCALL] = {
     [SYS_setsid]       = sys_setsid_handler,
     [SYS_getrlimit]    = sys_getrlimit_handler,
     [SYS_setrlimit]    = sys_setrlimit_handler,
+    [SYS_getpriority]  = sys_getpriority_handler,
+    [SYS_setpriority]  = sys_setpriority_handler,
 };
 
 /* ============================================================

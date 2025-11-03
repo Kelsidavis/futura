@@ -65,10 +65,11 @@ struct iovec {
  * - Partial reads possible (less than sum of iov_len)
  * - File offset advanced by number of bytes read
  *
- * Phase 1 (Current): Validates parameters, iterates over iovecs calling read
- * Phase 2: Optimize with direct VFS scatter-gather support
- * Phase 3: Support non-blocking I/O and partial reads
- * Phase 4: Zero-copy optimization for page-aligned buffers
+ * Phase 1 (Completed): Validates parameters, iterates over iovecs calling read
+ * Phase 2 (Current): Enhanced validation and detailed I/O statistics
+ * Phase 3: Optimize with direct VFS scatter-gather support
+ * Phase 4: Support non-blocking I/O and partial reads
+ * Phase 5: Zero-copy optimization for page-aligned buffers
  *
  * Example: Reading network packet (header + payload)
  *
@@ -161,17 +162,26 @@ struct iovec {
 ssize_t sys_readv(int fd, const struct iovec *iov, int iovcnt) {
     fut_task_t *task = fut_task_current();
     if (!task) {
+        fut_printf("[READV] readv(fd=%d, iov=%p, iovcnt=%d) -> ESRCH (no current task)\n",
+                   fd, iov, iovcnt);
         return -ESRCH;
     }
 
     /* Validate iovcnt */
     if (iovcnt < 0 || iovcnt > UIO_MAXIOV) {
-        fut_printf("[READV] readv(fd=%d, iov=%p, iovcnt=%d) -> EINVAL (invalid iovcnt)\n",
-                   fd, iov, iovcnt);
+        if (iovcnt < 0) {
+            fut_printf("[READV] readv(fd=%d, iov=%p, iovcnt=%d) -> EINVAL (iovcnt negative)\n",
+                       fd, iov, iovcnt);
+        } else {
+            fut_printf("[READV] readv(fd=%d, iov=%p, iovcnt=%d) -> EINVAL (iovcnt exceeds UIO_MAXIOV=%d)\n",
+                       fd, iov, iovcnt, UIO_MAXIOV);
+        }
         return -EINVAL;
     }
 
     if (iovcnt == 0) {
+        fut_printf("[READV] readv(fd=%d, iov=%p, iovcnt=0) -> 0 (nothing to read)\n",
+                   fd, iov);
         return 0;  /* Nothing to read */
     }
 
@@ -185,6 +195,8 @@ ssize_t sys_readv(int fd, const struct iovec *iov, int iovcnt) {
     /* Copy iovec array from userspace */
     struct iovec *kernel_iov = (struct iovec *)__builtin_alloca(iovcnt * sizeof(struct iovec));
     if (!kernel_iov) {
+        fut_printf("[READV] readv(fd=%d, iov=%p, iovcnt=%d) -> ENOMEM (alloca failed)\n",
+                   fd, iov, iovcnt);
         return -ENOMEM;
     }
 
@@ -194,21 +206,52 @@ ssize_t sys_readv(int fd, const struct iovec *iov, int iovcnt) {
         return -EFAULT;
     }
 
-    /* Calculate total size and validate iovecs */
+    /* Phase 2: Calculate total size, validate iovecs, and gather statistics */
     size_t total_size = 0;
+    int zero_len_count = 0;
+    size_t min_iov_len = (size_t)-1;
+    size_t max_iov_len = 0;
+
     for (int i = 0; i < iovcnt; i++) {
         /* Check for overflow */
         if (total_size + kernel_iov[i].iov_len < total_size) {
-            fut_printf("[READV] readv(fd=%d, iov=%p, iovcnt=%d) -> EINVAL (size overflow)\n",
-                       fd, iov, iovcnt);
+            fut_printf("[READV] readv(fd=%d, iov=%p, iovcnt=%d) -> EINVAL (size overflow at iovec %d)\n",
+                       fd, iov, iovcnt, i);
             return -EINVAL;
         }
         total_size += kernel_iov[i].iov_len;
+
+        /* Gather statistics */
+        if (kernel_iov[i].iov_len == 0) {
+            zero_len_count++;
+        } else {
+            if (kernel_iov[i].iov_len < min_iov_len) {
+                min_iov_len = kernel_iov[i].iov_len;
+            }
+            if (kernel_iov[i].iov_len > max_iov_len) {
+                max_iov_len = kernel_iov[i].iov_len;
+            }
+        }
     }
 
-    /* Phase 1: Iterate over iovecs and call read for each
-     * Phase 2 will optimize this with direct VFS scatter-gather support */
+    /* Categorize I/O pattern for diagnostics */
+    const char *io_pattern;
+    if (iovcnt == 1) {
+        io_pattern = "single buffer (equivalent to read)";
+    } else if (iovcnt == 2) {
+        io_pattern = "dual buffer (e.g., header+payload)";
+    } else if (iovcnt <= 10) {
+        io_pattern = "small scatter-gather";
+    } else if (iovcnt <= 100) {
+        io_pattern = "medium scatter-gather";
+    } else {
+        io_pattern = "large scatter-gather";
+    }
+
+    /* Phase 2: Iterate over iovecs and call read for each
+     * Phase 3 will optimize this with direct VFS scatter-gather support */
     ssize_t total_read = 0;
+    int iovecs_read = 0;
     for (int i = 0; i < iovcnt; i++) {
         if (kernel_iov[i].iov_len == 0) {
             continue;  /* Skip zero-length buffers */
@@ -223,13 +266,14 @@ ssize_t sys_readv(int fd, const struct iovec *iov, int iovcnt) {
                 break;
             } else {
                 /* No bytes read yet, return error */
-                fut_printf("[READV] readv(fd=%d, iov=%p, iovcnt=%d) -> %ld (read error)\n",
-                           fd, iov, iovcnt, n);
+                fut_printf("[READV] readv(fd=%d, iov=%p, iovcnt=%d) -> %ld (read error on iovec %d)\n",
+                           fd, iov, iovcnt, n, i);
                 return n;
             }
         }
 
         total_read += n;
+        iovecs_read++;
 
         /* Check for EOF or partial read */
         if (n < (ssize_t)kernel_iov[i].iov_len) {
@@ -238,10 +282,30 @@ ssize_t sys_readv(int fd, const struct iovec *iov, int iovcnt) {
         }
     }
 
-    fut_printf("[READV] readv(fd=%d, iov=%p, iovcnt=%d) -> %ld bytes\n",
-               fd, iov, iovcnt, total_read);
+    /* Phase 2: Detailed logging with I/O statistics */
+    const char *completion_status;
+    if (total_read == 0) {
+        completion_status = "EOF";
+    } else if ((size_t)total_read < total_size) {
+        completion_status = "partial";
+    } else {
+        completion_status = "complete";
+    }
 
-    /* Phase 2 implementation with VFS optimization:
+    if (zero_len_count > 0) {
+        fut_printf("[READV] readv(fd=%d, iovcnt=%d [%s], total_requested=%zu bytes) -> %ld bytes "
+                   "(%s, %d/%d iovecs filled, %d zero-len skipped, min=%zu max=%zu, Phase 2: iterative)\n",
+                   fd, iovcnt, io_pattern, total_size, total_read,
+                   completion_status, iovecs_read, iovcnt - zero_len_count, zero_len_count,
+                   min_iov_len, max_iov_len);
+    } else {
+        fut_printf("[READV] readv(fd=%d, iovcnt=%d [%s], total_requested=%zu bytes) -> %ld bytes "
+                   "(%s, %d/%d iovecs filled, min=%zu max=%zu, Phase 2: iterative)\n",
+                   fd, iovcnt, io_pattern, total_size, total_read,
+                   completion_status, iovecs_read, iovcnt, min_iov_len, max_iov_len);
+    }
+
+    /* Phase 3 implementation with VFS optimization:
      *
      * ssize_t total = fut_vfs_readv(fd, kernel_iov, iovcnt);
      * return total;
@@ -258,6 +322,9 @@ ssize_t sys_readv(int fd, const struct iovec *iov, int iovcnt) {
      * - Better atomicity (less chance of interleaving)
      * - Opportunity for zero-copy optimization
      * - Better performance for small buffers
+     *
+     * Phase 4: Add non-blocking I/O support and proper partial read handling
+     * Phase 5: Zero-copy optimization for page-aligned buffers
      */
 
     return total_read;

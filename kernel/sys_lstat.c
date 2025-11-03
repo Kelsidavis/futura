@@ -38,9 +38,10 @@ extern int fut_copy_to_user(void *to, const void *from, size_t size);
  *   - -ENOENT if file does not exist
  *   - -EINVAL if path is empty or statbuf is NULL
  *
- * Phase 1 (Current): Calls fut_vfs_stat() (same as stat)
- * Phase 2: Call fut_vfs_lstat() to distinguish symlinks
- * Phase 3: Support AT_SYMLINK_NOFOLLOW flag in fstatat()
+ * Phase 1 (Completed): Calls fut_vfs_stat() (same as stat)
+ * Phase 2 (Current): Enhanced validation and detailed file status reporting
+ * Phase 3: Call fut_vfs_lstat() to distinguish symlinks
+ * Phase 4: Support AT_SYMLINK_NOFOLLOW flag in fstatat()
  *
  * Uses:
  * - File managers displaying symlink properties
@@ -63,23 +64,39 @@ extern int fut_copy_to_user(void *to, const void *from, size_t size);
  */
 long sys_lstat(const char *path, struct fut_stat *statbuf) {
     if (!path || !statbuf) {
+        fut_printf("[LSTAT] lstat(%p, %p) -> EINVAL (NULL pointer)\n", path, statbuf);
         return -EINVAL;
     }
 
     /* Copy path from userspace to kernel space */
     char path_buf[256];
     if (fut_copy_from_user(path_buf, path, sizeof(path_buf) - 1) != 0) {
+        fut_printf("[LSTAT] lstat(%p, %p) -> EFAULT (path copy failed)\n", path, statbuf);
         return -EFAULT;
     }
     path_buf[sizeof(path_buf) - 1] = '\0';
 
     /* Validate path is not empty */
     if (path_buf[0] == '\0') {
+        fut_printf("[LSTAT] lstat(\"\", %p) -> EINVAL (empty path)\n", statbuf);
         return -EINVAL;
     }
 
-    /* Phase 1: Use fut_vfs_stat() (same as stat - follows symlinks)
-     * Phase 2: Will call fut_vfs_lstat() which doesn't follow symlinks
+    /* Calculate path length for logging */
+    size_t path_len = 0;
+    while (path_buf[path_len] != '\0' && path_len < sizeof(path_buf)) {
+        path_len++;
+    }
+
+    /* Check for path length limit */
+    if (path_len >= sizeof(path_buf) - 1) {
+        fut_printf("[LSTAT] lstat(path_len=%zu, %p) -> ENAMETOOLONG (path truncated)\n",
+                   path_len, statbuf);
+        return -ENAMETOOLONG;
+    }
+
+    /* Phase 2: Use fut_vfs_stat() (same as stat - follows symlinks)
+     * Phase 3: Will call fut_vfs_lstat() which doesn't follow symlinks
      *
      * Future implementation:
      * int ret = fut_vfs_lstat(path_buf, &kernel_stat);
@@ -95,17 +112,41 @@ long sys_lstat(const char *path, struct fut_stat *statbuf) {
     struct fut_stat kernel_stat;
     int ret = fut_vfs_stat(path_buf, &kernel_stat);
     if (ret < 0) {
-        fut_printf("[LSTAT] lstat(%s) -> %d (VFS error)\n", path_buf, ret);
+        const char *err_desc = (ret == -ENOENT) ? "not found" :
+                               (ret == -EACCES) ? "access denied" :
+                               (ret == -ENOTDIR) ? "not a directory" : "VFS error";
+        fut_printf("[LSTAT] lstat(\"%s\") -> %d (%s)\n", path_buf, ret, err_desc);
         return ret;
+    }
+
+    /* Detect file type from st_mode */
+    const char *file_type;
+    uint32_t mode = kernel_stat.st_mode;
+    if ((mode & 0170000) == 0040000) {       /* S_IFDIR */
+        file_type = "directory";
+    } else if ((mode & 0170000) == 0100000) { /* S_IFREG */
+        file_type = "regular file";
+    } else if ((mode & 0170000) == 0120000) { /* S_IFLNK */
+        file_type = "symlink";
+    } else if ((mode & 0170000) == 0060000) { /* S_IFBLK */
+        file_type = "block device";
+    } else if ((mode & 0170000) == 0020000) { /* S_IFCHR */
+        file_type = "character device";
+    } else if ((mode & 0170000) == 0010000) { /* S_IFIFO */
+        file_type = "FIFO";
+    } else if ((mode & 0170000) == 0140000) { /* S_IFSOCK */
+        file_type = "socket";
+    } else {
+        file_type = "unknown";
     }
 
     /* Copy stat buffer to userspace */
     if (fut_copy_to_user(statbuf, &kernel_stat, sizeof(struct fut_stat)) != 0) {
-        fut_printf("[LSTAT] lstat(%s) -> EFAULT (copy_to_user failed)\n", path_buf);
+        fut_printf("[LSTAT] lstat(\"%s\") -> EFAULT (copy_to_user failed)\n", path_buf);
         return -EFAULT;
     }
 
-    fut_printf("[LSTAT] lstat(%s) -> 0 (size=%llu, mode=%o, ino=%llu)\n",
-               path_buf, kernel_stat.st_size, kernel_stat.st_mode, kernel_stat.st_ino);
+    fut_printf("[LSTAT] lstat(\"%s\") -> 0 (type=%s, size=%llu, mode=%o, ino=%llu, Phase 2: enhanced)\n",
+               path_buf, file_type, kernel_stat.st_size, kernel_stat.st_mode, kernel_stat.st_ino);
     return 0;
 }

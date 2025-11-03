@@ -50,6 +50,7 @@
 #define SYS_pwrite64    18
 #define SYS_pipe        22
 #define SYS_select      23
+#define SYS_sched_yield 24
 #define SYS_dup         32
 #define SYS_dup2        33
 #define SYS_fcntl       72
@@ -488,6 +489,13 @@ static int64_t sys_nanosleep_handler(uint64_t req, uint64_t rem, uint64_t arg3,
     (void)arg3; (void)arg4; (void)arg5; (void)arg6;
     return (int64_t)sys_nanosleep((const fut_timespec_t *)(uintptr_t)req,
                                   (fut_timespec_t *)(uintptr_t)rem);
+}
+
+static int64_t sys_sched_yield_handler(uint64_t arg1, uint64_t arg2, uint64_t arg3,
+                                       uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg1; (void)arg2; (void)arg3; (void)arg4; (void)arg5; (void)arg6;
+    extern long sys_sched_yield(void);
+    return sys_sched_yield();
 }
 
 static int64_t sys_time_millis_handler(uint64_t arg1, uint64_t arg2, uint64_t arg3,
@@ -1587,6 +1595,7 @@ static syscall_handler_t syscall_table[MAX_SYSCALL] = {
     [SYS_mmap]       = sys_mmap_handler,
     [SYS_pipe]       = sys_pipe_handler,
     [SYS_select]     = sys_select_handler,
+    [SYS_sched_yield] = sys_sched_yield_handler,
     [SYS_dup]        = sys_dup_handler,
     [SYS_dup2]       = sys_dup2_handler,
     [SYS_fcntl]      = sys_fcntl_handler,

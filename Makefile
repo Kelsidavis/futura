@@ -359,6 +359,7 @@ KERNEL_SOURCES := \
     kernel/sys_madvise.c \
     kernel/sys_cred.c \
     kernel/sys_proc.c \
+    kernel/sys_sched.c \
     kernel/sys_uname.c \
     kernel/sys_rename.c \
     kernel/sys_stat.c \

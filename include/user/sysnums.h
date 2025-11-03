@@ -19,6 +19,7 @@
 #define SYS_pwrite64    18
 #define SYS_pipe        22
 #define SYS_select      23
+#define SYS_sched_yield 24
 #define SYS_dup         32
 #define SYS_dup2        33
 #define SYS_nanosleep   35

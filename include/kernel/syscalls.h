@@ -119,3 +119,4 @@ long sys_clock_gettime(int clock_id, fut_timespec_t *tp);
 /* Note: sys_setpgrp and sys_setpgid are implemented but not exposed via syscall
    (syscall numbers conflict with seteuid from Priority #14) */
 long sys_time_millis(void);
+long sys_sched_yield(void);

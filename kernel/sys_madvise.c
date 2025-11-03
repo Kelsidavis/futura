@@ -5,6 +5,11 @@
  *
  * Implements memory advice syscall to provide hints about memory access patterns.
  * Allows applications to optimize memory usage and performance.
+ *
+ * Phase 1 (Completed): Basic madvise with stub implementation
+ * Phase 2 (Current): Enhanced validation, address/length/advice categorization, detailed logging
+ * Phase 3: Actual memory management hints (prefetch, DONTNEED implementation)
+ * Phase 4: Advanced features (MADV_FREE, MADV_MERGEABLE/KSM support)
  */
 
 #include <kernel/fut_vfs.h>
@@ -33,6 +38,39 @@ extern void fut_printf(const char *fmt, ...);
 /* Note: PAGE_SIZE, PAGE_ALIGN_DOWN, PAGE_ALIGN_UP are defined in platform paging.h
    and already included via fut_mm.h */
 
+/* Helper: Convert hex nibble to character (manual hex formatting) */
+static char hex_to_char(int nibble) {
+    if (nibble < 10) {
+        return '0' + nibble;
+    } else {
+        return 'a' + (nibble - 10);
+    }
+}
+
+/* Helper: Format address as hex string manually (no snprintf) */
+static void format_address_hex(uintptr_t addr, char *buf, int buf_size) {
+    /* Format as "0x" + hex digits */
+    int pos = 0;
+    if (buf_size < 3) return;  /* Need at least "0x" + null */
+
+    buf[pos++] = '0';
+    buf[pos++] = 'x';
+
+    /* Convert address to hex, skip leading zeros */
+    int started = 0;
+    for (int i = 15; i >= 0; i--) {
+        int nibble = (addr >> (i * 4)) & 0xF;
+        if (nibble != 0 || started || i == 0) {
+            if (pos < buf_size - 1) {
+                buf[pos++] = hex_to_char(nibble);
+                started = 1;
+            }
+        }
+    }
+
+    buf[pos] = '\0';
+}
+
 /**
  * madvise(void *addr, size_t length, int advice) - Provide memory advice
  *
@@ -48,21 +86,188 @@ extern void fut_printf(const char *fmt, ...);
  *   - -EINVAL if addr/length invalid or advice unknown
  *   - -ENOMEM if address range not in valid memory region
  *   - -EFAULT if address range is invalid
+ *
+ * Behavior:
+ *   - MADV_NORMAL: Default behavior, no special optimization
+ *   - MADV_RANDOM: Disable read-ahead (expect random access)
+ *   - MADV_SEQUENTIAL: Enable aggressive read-ahead
+ *   - MADV_WILLNEED: Prefetch pages now (anticipate access)
+ *   - MADV_DONTNEED: Free pages immediately (won't access soon)
+ *   - MADV_MERGEABLE: Mark for kernel same-page merging (KSM)
+ *   - MADV_UNMERGEABLE: Unmark from KSM
+ *   - MADV_DONTDUMP: Exclude from core dumps
+ *   - MADV_DODUMP: Include in core dumps
+ *   - MADV_DONTFORK: Don't copy on fork()
+ *   - MADV_DOFORK: Copy on fork() (default)
+ *
+ * Address alignment:
+ *   - addr is page-aligned down
+ *   - length is page-aligned up
+ *   - Operates on full pages only
+ *
+ * Common usage patterns:
+ *
+ * Large sequential read (file processing):
+ *   void *data = mmap(..., fd, 0);
+ *   madvise(data, file_size, MADV_SEQUENTIAL);
+ *   process_file(data, file_size);
+ *
+ * Random database access:
+ *   void *db = mmap(..., db_fd, 0);
+ *   madvise(db, db_size, MADV_RANDOM);
+ *
+ * Prefetch hot data:
+ *   madvise(hot_region, hot_size, MADV_WILLNEED);
+ *   // Pages will be in RAM when accessed
+ *
+ * Free cold cache:
+ *   madvise(cache, cache_size, MADV_DONTNEED);
+ *   // Kernel can reclaim these pages
+ *
+ * Exclude sensitive data from coredumps:
+ *   void *password_buf = malloc(1024);
+ *   madvise(password_buf, 1024, MADV_DONTDUMP);
+ *
+ * Large buffer that won't be forked:
+ *   void *huge_buf = malloc(1GB);
+ *   madvise(huge_buf, 1GB, MADV_DONTFORK);
+ *   // Child processes won't inherit this
+ *
+ * Performance optimization:
+ *   - Proper madvise can reduce page faults significantly
+ *   - MADV_SEQUENTIAL can speed up file processing by 2-3x
+ *   - MADV_DONTNEED helps memory-constrained systems
+ *   - MADV_WILLNEED reduces latency for predictable access
+ *
+ * Advice is just a hint:
+ *   - Kernel may ignore advice if not beneficial
+ *   - Incorrect advice may hurt performance but won't break correctness
+ *   - Some advice codes are no-ops on certain systems
+ *
+ * Related syscalls:
+ *   - mmap(): Create memory mapping
+ *   - mlock(): Lock pages in RAM (guarantee residency)
+ *   - mincore(): Check which pages are in RAM
+ *   - fadvise(): Similar advice for file I/O
+ *
+ * Phase 1 (Completed): Basic madvise with stub implementation
+ * Phase 2 (Current): Enhanced validation, parameter categorization, detailed logging
+ * Phase 3: Actual prefetch, DONTNEED, read-ahead hints
+ * Phase 4: KSM support, MADV_FREE implementation
  */
 long sys_madvise(void *addr, size_t length, int advice) {
-    /* Validate advice code */
+    /* Phase 2: Validate advice code early */
     if (advice < MADV_NORMAL || advice > MADV_DOFORK) {
+        fut_printf("[MADVISE] madvise(addr=%p, length=%zu, advice=%d) -> EINVAL "
+                   "(invalid advice code)\n",
+                   addr, length, advice);
         return -EINVAL;
     }
 
     /* Validate length */
     if (length == 0) {
-        return 0;  /* Zero-length madvise is a no-op but valid */
+        /* Zero-length madvise is a no-op but valid */
+        fut_printf("[MADVISE] madvise(addr=%p, length=0 [zero-length], "
+                   "advice=%d) -> 0 (no-op)\n",
+                   addr, advice);
+        return 0;
     }
 
-    /* Validate address range is readable */
+    /* Phase 2: Validate address */
     if (addr == NULL) {
+        fut_printf("[MADVISE] madvise(addr=NULL, length=%zu, advice=%d) -> EINVAL "
+                   "(NULL address)\n",
+                   length, advice);
         return -EINVAL;
+    }
+
+    /* Phase 2: Categorize address range */
+    uintptr_t addr_val = (uintptr_t)addr;
+    const char *addr_category;
+
+    if (addr_val == 0) {
+        addr_category = "NULL (0x0)";
+    } else if (addr_val < 0x10000) {
+        addr_category = "very low user (< 0x10000)";
+    } else if (addr_val < 0x400000) {
+        addr_category = "low user (0x10000-0x400000)";
+    } else if (addr_val < 0x10000000) {
+        addr_category = "mid user (0x400000-0x10000000)";
+    } else if (addr_val < 0x7F00000000) {
+        addr_category = "high user (0x10000000-0x7F00000000)";
+    } else if (addr_val < 0x8000000000) {
+        addr_category = "stack region (0x7F00000000-0x8000000000)";
+    } else {
+        addr_category = "kernel space (≥ 0x8000000000)";
+    }
+
+    /* Phase 2: Categorize length */
+    const char *length_category;
+    if (length <= 4096) {
+        length_category = "single page (≤ 4KB)";
+    } else if (length <= 65536) {
+        length_category = "small (4KB-64KB)";
+    } else if (length <= 1048576) {
+        length_category = "medium (64KB-1MB)";
+    } else if (length <= 104857600) {
+        length_category = "large (1MB-100MB)";
+    } else {
+        length_category = "very large (> 100MB)";
+    }
+
+    /* Phase 2: Categorize advice */
+    const char *advice_category;
+    const char *advice_description;
+
+    switch (advice) {
+        case MADV_NORMAL:
+            advice_category = "MADV_NORMAL (0)";
+            advice_description = "default behavior, no hints";
+            break;
+        case MADV_RANDOM:
+            advice_category = "MADV_RANDOM (1)";
+            advice_description = "expect random access, disable read-ahead";
+            break;
+        case MADV_SEQUENTIAL:
+            advice_category = "MADV_SEQUENTIAL (2)";
+            advice_description = "expect sequential access, enable read-ahead";
+            break;
+        case MADV_WILLNEED:
+            advice_category = "MADV_WILLNEED (3)";
+            advice_description = "will access soon, prefetch now";
+            break;
+        case MADV_DONTNEED:
+            advice_category = "MADV_DONTNEED (4)";
+            advice_description = "won't access soon, can reclaim";
+            break;
+        case MADV_MERGEABLE:
+            advice_category = "MADV_MERGEABLE (5)";
+            advice_description = "mark for kernel same-page merging";
+            break;
+        case MADV_UNMERGEABLE:
+            advice_category = "MADV_UNMERGEABLE (6)";
+            advice_description = "unmark from KSM";
+            break;
+        case MADV_DONTDUMP:
+            advice_category = "MADV_DONTDUMP (7)";
+            advice_description = "exclude from core dumps";
+            break;
+        case MADV_DODUMP:
+            advice_category = "MADV_DODUMP (8)";
+            advice_description = "include in core dumps";
+            break;
+        case MADV_DONTFORK:
+            advice_category = "MADV_DONTFORK (9)";
+            advice_description = "don't inherit on fork";
+            break;
+        case MADV_DOFORK:
+            advice_category = "MADV_DOFORK (10)";
+            advice_description = "inherit on fork (default)";
+            break;
+        default:
+            advice_category = "unknown";
+            advice_description = "invalid advice code";
+            break;
     }
 
     /* Ensure address is properly aligned */
@@ -71,96 +276,58 @@ long sys_madvise(void *addr, size_t length, int advice) {
 
     /* Check for overflow */
     if (addr_aligned + length_aligned < addr_aligned) {
+        fut_printf("[MADVISE] madvise(addr=%p [%s], length=%zu [%s], "
+                   "advice=%d [%s: %s]) -> EINVAL (address overflow)\n",
+                   addr, addr_category, length, length_category,
+                   advice, advice_category, advice_description);
         return -EINVAL;
     }
 
     /* Get current task's memory context */
     fut_task_t *task = fut_task_current();
     if (!task || !task->mm) {
-        return -EINVAL;  /* No memory context */
+        fut_printf("[MADVISE] madvise(addr=%p [%s], length=%zu [%s], "
+                   "advice=%d [%s: %s]) -> EINVAL (no memory context)\n",
+                   addr, addr_category, length, length_category,
+                   advice, advice_category, advice_description);
+        return -EINVAL;
     }
 
-    /* Log the madvise request */
-    fut_printf("[MADVISE] addr=0x%lx length=%zu advice=%d\n",
-               (uintptr_t)addr, length, advice);
+    /* Phase 2: Format addresses for logging (manual hex formatting) */
+    char addr_hex[32];
+    char addr_aligned_hex[32];
+    char end_aligned_hex[32];
+    format_address_hex(addr_val, addr_hex, sizeof(addr_hex));
+    format_address_hex(addr_aligned, addr_aligned_hex, sizeof(addr_aligned_hex));
+    format_address_hex(addr_aligned + length_aligned, end_aligned_hex, sizeof(end_aligned_hex));
 
-    /* Handle specific advice codes */
-    switch (advice) {
-    case MADV_NORMAL:
-        /* Default behavior - no special optimization */
-        fut_printf("[MADVISE] MADV_NORMAL: no special handling\n");
-        return 0;
+    /*
+     * Phase 2: Stub implementation - validates parameters but doesn't perform actual advice
+     *
+     * TODO Phase 3: Implement actual memory management hints:
+     *   - MADV_WILLNEED: Trigger page prefetch
+     *   - MADV_DONTNEED: Mark pages for reclamation
+     *   - MADV_SEQUENTIAL: Enable read-ahead in VMA
+     *   - MADV_RANDOM: Disable read-ahead in VMA
+     *
+     * TODO Phase 4: Advanced features:
+     *   - MADV_MERGEABLE: Mark VMAs for KSM scanning
+     *   - MADV_FREE: Mark pages as free but keep contents
+     *   - MADV_DONTFORK: Set VMA flag to skip on fork
+     *   - MADV_DONTDUMP: Set VMA flag to exclude from core dumps
+     */
 
-    case MADV_RANDOM:
-        /* Random access pattern - disable read-ahead prefetching */
-        fut_printf("[MADVISE] MADV_RANDOM: disable prefetch for range 0x%lx-0x%lx\n",
-                   addr_aligned, addr_aligned + length_aligned);
-        /* Prefetching hint would be stored in VMA or per-page metadata */
-        return 0;
+    /* Phase 2: Detailed success logging (stub - no actual advice applied) */
+    fut_printf("[MADVISE] madvise(addr=%s [%s], length=%zu [%s], "
+               "advice=%d [%s: %s], aligned_range=%s-%s, "
+               "aligned_bytes=%zu, pid=%u) -> 0 "
+               "(stub: advice noted but not applied, Phase 2)\n",
+               addr_hex, addr_category,
+               length, length_category,
+               advice, advice_category, advice_description,
+               addr_aligned_hex, end_aligned_hex,
+               length_aligned,
+               task->pid);
 
-    case MADV_SEQUENTIAL:
-        /* Sequential access pattern - enable read-ahead prefetching */
-        fut_printf("[MADVISE] MADV_SEQUENTIAL: enable prefetch for range 0x%lx-0x%lx\n",
-                   addr_aligned, addr_aligned + length_aligned);
-        /* Prefetching hint would be stored in VMA or per-page metadata */
-        return 0;
-
-    case MADV_WILLNEED:
-        /* Application will soon access this memory - prefetch pages now */
-        fut_printf("[MADVISE] MADV_WILLNEED: prefetch pages in range 0x%lx-0x%lx\n",
-                   addr_aligned, addr_aligned + length_aligned);
-        /* In a full implementation, this would trigger actual prefetching.
-         * For now, this is a hint that the kernel can use for scheduling. */
-        return 0;
-
-    case MADV_DONTNEED:
-        /* Application won't need this memory for a while - can be freed */
-        fut_printf("[MADVISE] MADV_DONTNEED: can reclaim pages in range 0x%lx-0x%lx\n",
-                   addr_aligned, addr_aligned + length_aligned);
-        /* In a full implementation, this would mark pages for reclamation
-         * or immediately page out to swap. For now, just log the intent. */
-        return 0;
-
-    case MADV_MERGEABLE:
-        /* Mark pages as eligible for kernel same-page merging (KSM) */
-        fut_printf("[MADVISE] MADV_MERGEABLE: mark range 0x%lx-0x%lx for KSM\n",
-                   addr_aligned, addr_aligned + length_aligned);
-        /* KSM support would require page scanning and hash-based merging */
-        return 0;
-
-    case MADV_UNMERGEABLE:
-        /* Unmark pages from kernel same-page merging */
-        fut_printf("[MADVISE] MADV_UNMERGEABLE: unmark range 0x%lx-0x%lx from KSM\n",
-                   addr_aligned, addr_aligned + length_aligned);
-        return 0;
-
-    case MADV_DONTDUMP:
-        /* Exclude this memory from core dumps */
-        fut_printf("[MADVISE] MADV_DONTDUMP: exclude range 0x%lx-0x%lx from core dumps\n",
-                   addr_aligned, addr_aligned + length_aligned);
-        /* This would set a flag on VMAs to skip them during core dump */
-        return 0;
-
-    case MADV_DODUMP:
-        /* Include this memory in core dumps */
-        fut_printf("[MADVISE] MADV_DODUMP: include range 0x%lx-0x%lx in core dumps\n",
-                   addr_aligned, addr_aligned + length_aligned);
-        return 0;
-
-    case MADV_DONTFORK:
-        /* Don't copy this memory on fork() - child will not inherit */
-        fut_printf("[MADVISE] MADV_DONTFORK: don't inherit range 0x%lx-0x%lx on fork\n",
-                   addr_aligned, addr_aligned + length_aligned);
-        /* This would set a flag on VMAs for fork() to skip them */
-        return 0;
-
-    case MADV_DOFORK:
-        /* Copy this memory on fork() - child will inherit (default) */
-        fut_printf("[MADVISE] MADV_DOFORK: inherit range 0x%lx-0x%lx on fork\n",
-                   addr_aligned, addr_aligned + length_aligned);
-        return 0;
-
-    default:
-        return -EINVAL;  /* Unknown advice code */
-    }
+    return 0;
 }

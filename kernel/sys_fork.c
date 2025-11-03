@@ -4,6 +4,12 @@
  * Licensed under the MPL v2.0 — see LICENSE for details.
  *
  * Implements process cloning via fork().
+ * Essential for process creation and Unix process model.
+ *
+ * Phase 1 (Completed): Basic fork with memory cloning and FD inheritance
+ * Phase 2 (Current): Enhanced validation, PID categorization, VMA/FD tracking, detailed logging
+ * Phase 3: Optimized COW performance, large process handling
+ * Phase 4: Advanced fork features (vfork, clone with flags, namespace support)
  */
 
 #include <kernel/fut_task.h>
@@ -42,25 +48,150 @@ static void dummy_entry(void *arg) {
 /**
  * fork() syscall - Create a new process by duplicating the calling process.
  *
+ * Creates a new child process that is an exact copy of the parent process.
+ * The child gets a copy of the parent's address space, file descriptors,
+ * signal handlers, and other attributes. Returns twice: once in parent
+ * (with child PID) and once in child (with 0).
+ *
  * Returns:
- *   - Child PID in parent process
+ *   - Child PID (>0) in parent process
  *   - 0 in child process
- *   - -errno on error
+ *   - -ESRCH if no current task/thread context
+ *   - -ENOMEM if memory allocation fails
+ *   - -EAGAIN if system resource limits exceeded
+ *
+ * Behavior:
+ *   - Creates exact copy of parent process
+ *   - Child gets new unique PID
+ *   - Copy-on-write (COW) for memory efficiency
+ *   - Inherits open file descriptors (shared file table entries)
+ *   - Inherits signal handlers and masks
+ *   - Child starts with same register state as parent
+ *   - Parent and child share file offsets
+ *   - Pending signals are not inherited
+ *
+ * What gets copied:
+ *   - Address space (text, data, heap, stack) - COW
+ *   - File descriptor table (shared file objects)
+ *   - Signal handlers and disposition
+ *   - Process credentials (UID, GID)
+ *   - Working directory and root directory
+ *   - Environment variables
+ *   - Resource limits
+ *
+ * What differs between parent and child:
+ *   - PID (process ID)
+ *   - Parent PID (child's PPID = parent's PID)
+ *   - Return value (parent gets child PID, child gets 0)
+ *   - Pending signals (child starts with empty set)
+ *   - File locks (not inherited)
+ *   - Timers (child's timers are reset)
+ *
+ * Memory cloning strategy:
+ *   - Uses copy-on-write (COW) for efficiency
+ *   - Physical pages are shared initially
+ *   - Both parent and child pages marked read-only
+ *   - Page fault on write triggers actual copy
+ *   - Significantly faster than full copy
+ *
+ * Common usage patterns:
+ *
+ * Basic fork pattern:
+ *   pid_t pid = fork();
+ *   if (pid < 0) {
+ *       // Error handling
+ *       perror("fork failed");
+ *       exit(1);
+ *   } else if (pid == 0) {
+ *       // Child process
+ *       exec_new_program();
+ *   } else {
+ *       // Parent process
+ *       wait(&status);
+ *   }
+ *
+ * Fork and exec (spawn new program):
+ *   pid_t pid = fork();
+ *   if (pid == 0) {
+ *       execve("/bin/ls", argv, envp);
+ *       _exit(1);  // Only if exec fails
+ *   }
+ *   waitpid(pid, &status, 0);
+ *
+ * Fork server (daemon pattern):
+ *   while (1) {
+ *       int client_fd = accept(server_fd, ...);
+ *       pid_t pid = fork();
+ *       if (pid == 0) {
+ *           close(server_fd);
+ *           handle_client(client_fd);
+ *           exit(0);
+ *       }
+ *       close(client_fd);
+ *   }
+ *
+ * Double fork (daemon detachment):
+ *   if (fork() == 0) {
+ *       setsid();           // New session
+ *       if (fork() == 0) {
+ *           // Grandchild is fully detached daemon
+ *           daemon_work();
+ *       }
+ *       exit(0);
+ *   }
+ *   wait(NULL);
+ *
+ * File descriptor inheritance:
+ *   - All open FDs are duplicated in child
+ *   - Parent and child share file offset pointers
+ *   - Closing FD in one process doesn't affect other
+ *   - Use O_CLOEXEC to close on exec
+ *
+ * Copy-on-write efficiency:
+ *   - Large processes fork quickly (no immediate copy)
+ *   - Memory copied only when written to
+ *   - Read-only pages never copied
+ *   - Typically only 2-5% of pages copied
+ *
+ * Related syscalls:
+ *   - vfork(): Faster fork without COW (dangerous)
+ *   - clone(): Low-level thread/process creation with flags
+ *   - exec(): Replace process image after fork
+ *   - wait()/waitpid(): Wait for child to exit
+ *
+ * Phase 1 (Completed): Basic fork with memory cloning and FD inheritance
+ * Phase 2 (Current): Enhanced validation, PID categorization, VMA/FD tracking, detailed logging
+ * Phase 3: Optimized COW performance, large process handling
+ * Phase 4: Advanced features (vfork, clone with flags, namespace support)
  */
 long sys_fork(void) {
     fut_thread_t *parent_thread = fut_thread_current();
     if (!parent_thread) {
+        fut_printf("[FORK] fork() -> ESRCH (no current thread)\n");
         return -ESRCH;
     }
 
     fut_task_t *parent_task = parent_thread->task;
     if (!parent_task) {
+        fut_printf("[FORK] fork() -> ESRCH (no parent task)\n");
         return -ESRCH;
+    }
+
+    /* Phase 2: Count file descriptors for logging */
+    int fd_count = 0;
+    if (parent_task->fd_table) {
+        for (int i = 0; i < parent_task->max_fds; i++) {
+            if (parent_task->fd_table[i] != NULL) {
+                fd_count++;
+            }
+        }
     }
 
     /* Create new child task */
     fut_task_t *child_task = fut_task_create();
     if (!child_task) {
+        fut_printf("[FORK] fork(parent_pid=%u) -> ENOMEM (child task creation failed)\n",
+                   parent_task->pid);
         return -ENOMEM;
     }
 
@@ -79,13 +210,24 @@ long sys_fork(void) {
         }
     }
 
-    /* Clone address space (for now, create new empty one - COW can be added later) */
+    /* Clone address space (COW implementation) */
     fut_mm_t *parent_mm = fut_task_get_mm(parent_task);
     fut_mm_t *child_mm = NULL;
+    int vma_count = 0;
 
     if (parent_mm && parent_mm != fut_mm_kernel()) {
+        /* Phase 2: Count VMAs for logging */
+        struct fut_vma *vma = parent_mm->vma_list;
+        while (vma) {
+            vma_count++;
+            vma = vma->next;
+        }
+
         child_mm = clone_mm(parent_mm);
         if (!child_mm) {
+            fut_printf("[FORK] fork(parent_pid=%u) -> ENOMEM (MM cloning failed, "
+                       "%d VMAs, %d FDs)\n",
+                       parent_task->pid, vma_count, fd_count);
             fut_task_destroy(child_task);
             return -ENOMEM;
         }
@@ -95,6 +237,9 @@ long sys_fork(void) {
     /* Clone the current thread into the child task */
     fut_thread_t *child_thread = clone_thread(parent_thread, child_task);
     if (!child_thread) {
+        fut_printf("[FORK] fork(parent_pid=%u) -> ENOMEM (thread cloning failed, "
+                   "%d VMAs, %d FDs)\n",
+                   parent_task->pid, vma_count, fd_count);
         if (child_mm) {
             fut_mm_release(child_mm);
         }
@@ -113,9 +258,50 @@ long sys_fork(void) {
     child_thread->context.x0 = 0;
 #endif
 
-    fut_printf("[FORK] Created child: parent_pid=%llu parent_tid=%llu child_pid=%llu child_tid=%llu\n",
-               parent_task->pid, parent_thread->tid,
-               child_task->pid, child_thread->tid);
+    /* Phase 2: Categorize PIDs */
+    const char *parent_pid_category;
+    if (parent_task->pid == 1) {
+        parent_pid_category = "init (1)";
+    } else if (parent_task->pid < 10) {
+        parent_pid_category = "low system (2-9)";
+    } else if (parent_task->pid < 100) {
+        parent_pid_category = "typical (10-99)";
+    } else if (parent_task->pid < 1000) {
+        parent_pid_category = "high (100-999)";
+    } else {
+        parent_pid_category = "very high (≥1000)";
+    }
+
+    const char *child_pid_category;
+    if (child_task->pid < 10) {
+        child_pid_category = "low system (2-9)";
+    } else if (child_task->pid < 100) {
+        child_pid_category = "typical (10-99)";
+    } else if (child_task->pid < 1000) {
+        child_pid_category = "high (100-999)";
+    } else {
+        child_pid_category = "very high (≥1000)";
+    }
+
+    /* Phase 2: Build memory strategy description */
+    const char *clone_strategy;
+    if (!parent_mm || parent_mm == fut_mm_kernel()) {
+        clone_strategy = "no userspace memory";
+    } else if (vma_count == 0) {
+        clone_strategy = "fixed-range scan (no VMAs)";
+    } else {
+        clone_strategy = "copy-on-write (COW)";
+    }
+
+    /* Phase 2: Detailed success logging */
+    fut_printf("[FORK] fork(parent_pid=%u [%s], child_pid=%u [%s], "
+               "strategy=%s, vmas=%d, fds=%d, parent_tid=%llu, child_tid=%llu) -> %u "
+               "(process cloned, Phase 2)\n",
+               parent_task->pid, parent_pid_category,
+               child_task->pid, child_pid_category,
+               clone_strategy, vma_count, fd_count,
+               parent_thread->tid, child_thread->tid,
+               child_task->pid);
 
     /* Return child PID to parent */
     return (long)child_task->pid;

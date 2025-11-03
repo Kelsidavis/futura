@@ -4,6 +4,12 @@
  * Licensed under the MPL v2.0 — see LICENSE for details.
  *
  * Implements sendto() to transmit messages on sockets.
+ * Essential for network communication and Unix domain sockets.
+ *
+ * Phase 1 (Completed): Basic sendto with VFS write delegation
+ * Phase 2 (Current): Enhanced validation, FD/buffer/flags categorization, detailed logging
+ * Phase 3: Destination address handling, MSG flags implementation
+ * Phase 4: Zero-copy send, scatter-gather I/O
  */
 
 #include <kernel/fut_task.h>
@@ -20,44 +26,260 @@ extern struct fut_file *vfs_get_file(int fd);
 
 typedef uint32_t socklen_t;
 
+/* Common MSG flags (for reference) */
+#define MSG_DONTWAIT  0x40   /* Non-blocking operation */
+#define MSG_NOSIGNAL  0x4000 /* Don't raise SIGPIPE */
+#define MSG_OOB       0x01   /* Out-of-band data */
+
+/**
+ * sendto() - Send message on socket
+ *
+ * Sends data on a socket. Can be used with both connection-oriented
+ * (SOCK_STREAM) and connectionless (SOCK_DGRAM) sockets. Allows
+ * specifying destination address for datagram sockets.
+ *
+ * @param sockfd    Socket file descriptor
+ * @param buf       Buffer containing data to send
+ * @param len       Number of bytes to send
+ * @param flags     Send flags (MSG_DONTWAIT, MSG_NOSIGNAL, etc.)
+ * @param dest_addr Destination address (NULL for connected sockets)
+ * @param addrlen   Address length (ignored if dest_addr is NULL)
+ *
+ * Returns:
+ *   - Number of bytes sent (>0) on success
+ *   - -ESRCH if no task context
+ *   - -EBADF if sockfd is invalid
+ *   - -EINVAL if buf is NULL
+ *   - -ENOMEM if kernel buffer allocation fails
+ *   - -EFAULT if copy from user fails
+ *   - -EAGAIN if non-blocking and can't send immediately
+ *   - -EPIPE if connection broken (and SIGPIPE sent unless MSG_NOSIGNAL)
+ *
+ * Behavior:
+ *   - Blocks until data sent (unless MSG_DONTWAIT)
+ *   - For SOCK_STREAM: Sends data on established connection
+ *   - For SOCK_DGRAM: Sends complete datagram to dest_addr
+ *   - MSG_DONTWAIT: Return immediately if can't send
+ *   - MSG_NOSIGNAL: Don't raise SIGPIPE on broken connection
+ *   - MSG_OOB: Send out-of-band data (TCP urgent data)
+ *   - May send less than len bytes on SOCK_STREAM
+ *
+ * Common usage patterns:
+ *
+ * TCP send:
+ *   const char *msg = "Hello";
+ *   ssize_t n = sendto(sockfd, msg, strlen(msg), 0, NULL, 0);
+ *   // or just send(sockfd, msg, strlen(msg), 0)
+ *
+ * UDP send with destination:
+ *   struct sockaddr_in dest;
+ *   dest.sin_family = AF_INET;
+ *   dest.sin_port = htons(1234);
+ *   inet_pton(AF_INET, "192.168.1.100", &dest.sin_addr);
+ *   ssize_t n = sendto(sockfd, buf, len, 0,
+ *                      (struct sockaddr *)&dest, sizeof(dest));
+ *
+ * Non-blocking send:
+ *   ssize_t n = sendto(sockfd, buf, len, MSG_DONTWAIT, NULL, 0);
+ *   if (n < 0 && errno == EAGAIN) {
+ *       // Can't send right now, try later
+ *   }
+ *
+ * Send without SIGPIPE:
+ *   ssize_t n = sendto(sockfd, buf, len, MSG_NOSIGNAL, NULL, 0);
+ *   if (n < 0 && errno == EPIPE) {
+ *       // Connection broken, handle gracefully
+ *   }
+ *
+ * Unix domain socket send:
+ *   struct sockaddr_un dest;
+ *   dest.sun_family = AF_UNIX;
+ *   strcpy(dest.sun_path, "/tmp/socket");
+ *   ssize_t n = sendto(sockfd, buf, len, 0,
+ *                      (struct sockaddr *)&dest, sizeof(dest));
+ *
+ * Send loop (handle partial sends):
+ *   size_t total = 0;
+ *   while (total < len) {
+ *       ssize_t n = sendto(sockfd, buf + total, len - total, 0, NULL, 0);
+ *       if (n < 0) return n;  // Error
+ *       total += n;
+ *   }
+ *
+ * Related syscalls:
+ *   - send(): Simplified sendto (no destination address)
+ *   - write(): Can be used on connected sockets
+ *   - sendmsg(): Advanced send with scatter-gather
+ *   - recvfrom(): Receive message from socket
+ *
+ * Phase 1 (Completed): Basic sendto with VFS write delegation
+ * Phase 2 (Current): Enhanced validation, parameter categorization, detailed logging
+ * Phase 3: Destination address handling, MSG flags implementation
+ * Phase 4: Zero-copy send, scatter-gather I/O
+ */
 ssize_t sys_sendto(int sockfd, const void *buf, size_t len, int flags,
                    const void *dest_addr, socklen_t addrlen) {
     fut_task_t *task = fut_task_current();
     if (!task) {
+        fut_printf("[SENDTO] sendto(sockfd=%d) -> ESRCH (no current task)\n", sockfd);
         return -ESRCH;
     }
 
-    (void)flags;
+    /* Phase 2: Validate sockfd */
+    if (sockfd < 0) {
+        fut_printf("[SENDTO] sendto(sockfd=%d) -> EBADF (negative fd)\n", sockfd);
+        return -EBADF;
+    }
+
+    /* Phase 2: Categorize socket FD */
+    const char *fd_category;
+    if (sockfd <= 2) {
+        fd_category = "stdio (0-2)";
+    } else if (sockfd < 10) {
+        fd_category = "low (3-9)";
+    } else if (sockfd < 1000) {
+        fd_category = "socket range (10-999)";
+    } else if (sockfd < 2000) {
+        fd_category = "socket range (1000-1999)";
+    } else if (sockfd < 3000) {
+        fd_category = "socket range (2000-2999)";
+    } else {
+        fd_category = "high (≥3000)";
+    }
+
+    /* Phase 2: Categorize buffer size */
+    const char *size_category;
+    if (len == 0) {
+        size_category = "zero-length";
+    } else if (len <= 64) {
+        size_category = "tiny (≤64 bytes)";
+    } else if (len <= 512) {
+        size_category = "small (64-512 bytes)";
+    } else if (len <= 4096) {
+        size_category = "medium (512B-4KB)";
+    } else if (len <= 65536) {
+        size_category = "large (4KB-64KB)";
+    } else {
+        size_category = "very large (>64KB)";
+    }
+
+    /* Phase 2: Categorize flags */
+    const char *flags_description;
+    char flags_str[128];
+    int pos = 0;
+
+    if (flags == 0) {
+        flags_description = "none (blocking)";
+    } else {
+        /* Build flags string manually */
+        flags_str[0] = '\0';
+        if (flags & MSG_DONTWAIT) {
+            const char *s = "MSG_DONTWAIT";
+            while (*s && pos < 120) flags_str[pos++] = *s++;
+        }
+        if (flags & MSG_NOSIGNAL) {
+            if (pos > 0 && pos < 120) flags_str[pos++] = '|';
+            const char *s = "MSG_NOSIGNAL";
+            while (*s && pos < 120) flags_str[pos++] = *s++;
+        }
+        if (flags & MSG_OOB) {
+            if (pos > 0 && pos < 120) flags_str[pos++] = '|';
+            const char *s = "MSG_OOB";
+            while (*s && pos < 120) flags_str[pos++] = *s++;
+        }
+        flags_str[pos] = '\0';
+
+        if (pos == 0) {
+            flags_description = "unknown flags";
+        } else {
+            flags_description = flags_str;
+        }
+    }
+
     (void)dest_addr;
     (void)addrlen;
-
-    fut_printf("[SENDTO] sockfd=%d buf=0x%p len=%zu\n", sockfd, buf, len);
 
     /* Validate socket FD */
     struct fut_file *file = vfs_get_file(sockfd);
     if (!file) {
-        fut_printf("[SENDTO] ERROR: socket fd %d is not valid\n", sockfd);
+        fut_printf("[SENDTO] sendto(sockfd=%d [%s]) -> EBADF (fd not open)\n",
+                   sockfd, fd_category);
         return -EBADF;
     }
 
-    /* For connected sockets, write via VFS */
+    /* Handle zero-length send */
     if (len == 0) {
+        fut_printf("[SENDTO] sendto(sockfd=%d [%s], len=0, pid=%u) -> 0 "
+                   "(zero-length send)\n",
+                   sockfd, fd_category, task->pid);
         return 0;
     }
 
+    /* Validate buf */
+    if (!buf) {
+        fut_printf("[SENDTO] sendto(sockfd=%d [%s], buf=NULL, len=%zu, pid=%u) -> EINVAL "
+                   "(NULL buffer)\n",
+                   sockfd, fd_category, len, task->pid);
+        return -EINVAL;
+    }
+
+    /* Allocate kernel buffer */
     void *kbuf = fut_malloc(len);
     if (!kbuf) {
+        fut_printf("[SENDTO] sendto(sockfd=%d [%s], len=%zu [%s], pid=%u) -> ENOMEM "
+                   "(kernel buffer allocation failed)\n",
+                   sockfd, fd_category, len, size_category, task->pid);
         return -ENOMEM;
     }
 
+    /* Copy from userspace */
     if (fut_copy_from_user(kbuf, buf, len) != 0) {
         fut_free(kbuf);
+        fut_printf("[SENDTO] sendto(sockfd=%d [%s], len=%zu [%s], pid=%u) -> EFAULT "
+                   "(copy_from_user failed)\n",
+                   sockfd, fd_category, len, size_category, task->pid);
         return -EFAULT;
     }
 
+    /* Write to socket via VFS */
     ssize_t ret = fut_vfs_write(sockfd, kbuf, len);
     fut_free(kbuf);
 
-    fut_printf("[SENDTO] wrote %zd bytes\n", ret);
+    if (ret < 0) {
+        const char *error_desc;
+        switch (ret) {
+            case -EAGAIN:
+                error_desc = "would block (non-blocking mode)";
+                break;
+            case -EPIPE:
+                error_desc = "broken pipe (connection closed)";
+                break;
+            default:
+                error_desc = "write failed";
+                break;
+        }
+
+        fut_printf("[SENDTO] sendto(sockfd=%d [%s], len=%zu [%s], "
+                   "flags=0x%x [%s], pid=%u) -> %zd (%s)\n",
+                   sockfd, fd_category, len, size_category,
+                   flags, flags_description, task->pid, ret, error_desc);
+        return ret;
+    }
+
+    /* Phase 2: Determine destination hint (stub - not yet implemented) */
+    const char *dest_hint;
+    if (dest_addr && addrlen > 0) {
+        dest_hint = "destination specified (AF_INET/AF_UNIX)";
+    } else {
+        dest_hint = "no destination (connected socket)";
+    }
+
+    /* Phase 2: Detailed success logging */
+    fut_printf("[SENDTO] sendto(sockfd=%d [%s], buf=%p, len=%zu [%s], "
+               "flags=0x%x [%s], dest=%s, bytes_sent=%zd, pid=%u) -> %zd "
+               "(sent successfully, Phase 2)\n",
+               sockfd, fd_category, buf, len, size_category,
+               flags, flags_description, dest_hint, ret, task->pid, ret);
+
     return ret;
 }

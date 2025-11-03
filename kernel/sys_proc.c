@@ -436,47 +436,139 @@ long sys_getrlimit(int resource, struct rlimit *rlim) {
  *   - Soft limit must be <= hard limit
  *   - Hard limit cannot be raised above current value (requires privilege)
  *
- * Phase 1 (Current): Validates limits but doesn't enforce them
- * Phase 2: Store per-process limits and enforce them
- * Phase 3: Implement privilege checking for raising hard limits
+ * Phase 1 (Completed): Validates limits but doesn't enforce them
+ * Phase 2 (Current): Enhanced validation and resource type reporting
+ * Phase 3: Store per-process limits and enforce them
+ * Phase 4: Implement privilege checking for raising hard limits
  */
 long sys_setrlimit(int resource, const struct rlimit *rlim) {
     if (!rlim) {
+        fut_printf("[PROC] setrlimit(resource=%d, rlim=%p) -> EFAULT (rlim is NULL)\n",
+                   resource, rlim);
         return -EFAULT;
     }
 
-    /* Validate resource type */
-    if (resource < 0 || resource > RLIMIT_AS) {
-        fut_printf("[PROC] setrlimit: invalid resource %d\n", resource);
-        return -EINVAL;
+    /* Phase 2: Identify resource type for logging */
+    const char *resource_name = "UNKNOWN";
+    const char *resource_desc = "unknown resource";
+
+    switch (resource) {
+        case RLIMIT_NOFILE:
+            resource_name = "RLIMIT_NOFILE";
+            resource_desc = "max open file descriptors";
+            break;
+        case RLIMIT_NPROC:
+            resource_name = "RLIMIT_NPROC";
+            resource_desc = "max number of processes";
+            break;
+        case RLIMIT_STACK:
+            resource_name = "RLIMIT_STACK";
+            resource_desc = "max stack size";
+            break;
+        case RLIMIT_DATA:
+            resource_name = "RLIMIT_DATA";
+            resource_desc = "max data segment size";
+            break;
+        case RLIMIT_AS:
+            resource_name = "RLIMIT_AS";
+            resource_desc = "max address space";
+            break;
+        case RLIMIT_CORE:
+            resource_name = "RLIMIT_CORE";
+            resource_desc = "max core file size";
+            break;
+        case RLIMIT_CPU:
+            resource_name = "RLIMIT_CPU";
+            resource_desc = "max CPU time (seconds)";
+            break;
+        case RLIMIT_FSIZE:
+            resource_name = "RLIMIT_FSIZE";
+            resource_desc = "max file size";
+            break;
+        case RLIMIT_RSS:
+            resource_name = "RLIMIT_RSS";
+            resource_desc = "max resident set size";
+            break;
+        case RLIMIT_MEMLOCK:
+            resource_name = "RLIMIT_MEMLOCK";
+            resource_desc = "max locked memory";
+            break;
+        default:
+            fut_printf("[PROC] setrlimit(resource=%d, rlim=%p) -> EINVAL (unknown resource)\n",
+                       resource, rlim);
+            return -EINVAL;
     }
 
     /* Copy limits from userspace */
     struct rlimit new_limit;
     if (fut_copy_from_user(&new_limit, rlim, sizeof(struct rlimit)) != 0) {
+        fut_printf("[PROC] setrlimit(resource=%s [%s], rlim=%p) -> EFAULT (copy_from_user failed)\n",
+                   resource_name, resource_desc, rlim);
         return -EFAULT;
     }
 
     /* Validate that soft limit <= hard limit */
-    if (new_limit.rlim_cur > new_limit.rlim_max) {
-        fut_printf("[PROC] setrlimit: soft limit (%llu) > hard limit (%llu)\n",
-                   new_limit.rlim_cur, new_limit.rlim_max);
+    if (new_limit.rlim_cur != RLIM_INFINITY &&
+        new_limit.rlim_max != RLIM_INFINITY &&
+        new_limit.rlim_cur > new_limit.rlim_max) {
+        const char *cur_str = (new_limit.rlim_cur == RLIM_INFINITY) ? "unlimited" : NULL;
+        const char *max_str = (new_limit.rlim_max == RLIM_INFINITY) ? "unlimited" : NULL;
+
+        if (cur_str) {
+            fut_printf("[PROC] setrlimit(resource=%s [%s]) -> EINVAL (soft=unlimited > hard=%llu)\n",
+                       resource_name, resource_desc, new_limit.rlim_max);
+        } else if (max_str) {
+            fut_printf("[PROC] setrlimit(resource=%s [%s]) -> EINVAL (soft=%llu > hard=unlimited)\n",
+                       resource_name, resource_desc, new_limit.rlim_cur);
+        } else {
+            fut_printf("[PROC] setrlimit(resource=%s [%s]) -> EINVAL (soft=%llu > hard=%llu)\n",
+                       resource_name, resource_desc, new_limit.rlim_cur, new_limit.rlim_max);
+        }
         return -EINVAL;
     }
 
-    /* Validate limits are not obviously wrong */
-    if (new_limit.rlim_cur == 0 && resource == RLIMIT_NOFILE) {
+    /* Phase 2: Resource-specific validation */
+    if (resource == RLIMIT_NOFILE && new_limit.rlim_cur == 0) {
         /* Cannot set NOFILE to 0 - process needs at least stdin/stdout/stderr */
-        fut_printf("[PROC] setrlimit: cannot set RLIMIT_NOFILE to 0\n");
+        fut_printf("[PROC] setrlimit(resource=%s [%s]) -> EINVAL (cannot set to 0, need stdin/stdout/stderr)\n",
+                   resource_name, resource_desc);
         return -EINVAL;
     }
 
-    /* Phase 1: Just validate and log, don't actually store/enforce
-     * Phase 2 would store these in task structure and enforce them
-     * Phase 3 would check privileges for raising hard limits */
+    if (resource == RLIMIT_STACK &&
+        new_limit.rlim_cur != RLIM_INFINITY &&
+        new_limit.rlim_cur < 4096) {
+        /* Stack too small to be useful */
+        fut_printf("[PROC] setrlimit(resource=%s [%s]) -> EINVAL (soft=%llu too small, minimum 4096 bytes)\n",
+                   resource_name, resource_desc, new_limit.rlim_cur);
+        return -EINVAL;
+    }
 
-    fut_printf("[PROC] setrlimit(resource=%d, cur=%llu, max=%llu) -> success (stub)\n",
-               resource, new_limit.rlim_cur, new_limit.rlim_max);
+    /* Phase 2: Just validate and log, don't actually store/enforce
+     * Phase 3 would store these in task structure and enforce them
+     * Phase 4 would check privileges for raising hard limits */
+
+    /* Build detailed log message with intelligent limit display */
+    const char *cur_str = (new_limit.rlim_cur == RLIM_INFINITY) ? "unlimited" : NULL;
+    const char *max_str = (new_limit.rlim_max == RLIM_INFINITY) ? "unlimited" : NULL;
+
+    if (cur_str && max_str) {
+        fut_printf("[PROC] setrlimit(resource=%s [%s], rlim=%p) -> 0 "
+                   "(cur=unlimited, max=unlimited, Phase 2: validated, not applied)\n",
+                   resource_name, resource_desc, rlim);
+    } else if (cur_str) {
+        fut_printf("[PROC] setrlimit(resource=%s [%s], rlim=%p) -> 0 "
+                   "(cur=unlimited, max=%llu, Phase 2: validated, not applied)\n",
+                   resource_name, resource_desc, rlim, new_limit.rlim_max);
+    } else if (max_str) {
+        fut_printf("[PROC] setrlimit(resource=%s [%s], rlim=%p) -> 0 "
+                   "(cur=%llu, max=unlimited, Phase 2: validated, not applied)\n",
+                   resource_name, resource_desc, rlim, new_limit.rlim_cur);
+    } else {
+        fut_printf("[PROC] setrlimit(resource=%s [%s], rlim=%p) -> 0 "
+                   "(cur=%llu, max=%llu, Phase 2: validated, not applied)\n",
+                   resource_name, resource_desc, rlim, new_limit.rlim_cur, new_limit.rlim_max);
+    }
 
     return 0;
 }

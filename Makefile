@@ -366,6 +366,22 @@ KERNEL_SOURCES := \
     kernel/sys_pause.c \
     kernel/sys_shutdown.c \
     kernel/sys_accept.c \
+    kernel/sys_read.c \
+    kernel/sys_write.c \
+    kernel/sys_open.c \
+    kernel/sys_close.c \
+    kernel/sys_openat.c \
+    kernel/sys_socket.c \
+    kernel/sys_bind.c \
+    kernel/sys_listen.c \
+    kernel/sys_connect.c \
+    kernel/sys_sendto.c \
+    kernel/sys_recvfrom.c \
+    kernel/sys_kill.c \
+    kernel/sys_sigaction.c \
+    kernel/sys_sigprocmask.c \
+    kernel/sys_ioctl.c \
+    kernel/sys_select.c \
     kernel/sys_getpeername.c \
     kernel/sys_getsockname.c \
     kernel/sys_setsockopt.c \

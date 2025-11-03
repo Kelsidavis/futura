@@ -157,7 +157,7 @@ static fut_socket_t *socket_fd_table[MAX_SOCKET_FDS] = {NULL};
  * Get a kernel socket object from a file descriptor.
  * Returns NULL if FD is invalid or not a socket.
  */
-static inline fut_socket_t *get_socket_from_fd(int fd) {
+fut_socket_t *get_socket_from_fd(int fd) {
     if (fd < 0 || fd >= MAX_SOCKET_FDS) {
         return NULL;
     }
@@ -180,7 +180,7 @@ static inline int set_socket_for_fd(int fd, fut_socket_t *socket) {
  * Find next available file descriptor for a socket.
  * Returns FD number (>=0) on success, -1 if no space.
  */
-static inline int allocate_socket_fd(fut_socket_t *socket) {
+int allocate_socket_fd(fut_socket_t *socket) {
     for (int i = 3; i < MAX_SOCKET_FDS; i++) {  /* Skip stdin/stdout/stderr */
         if (socket_fd_table[i] == NULL) {
             socket_fd_table[i] = socket;
@@ -193,7 +193,7 @@ static inline int allocate_socket_fd(fut_socket_t *socket) {
 /**
  * Release a socket FD and cleanup the socket object.
  */
-static inline int release_socket_fd(int fd) {
+int release_socket_fd(int fd) {
     fut_socket_t *socket = get_socket_from_fd(fd);
     if (!socket) {
         return -EBADF;
@@ -269,7 +269,7 @@ static int64_t sys_poll_handler(uint64_t fds, uint64_t nfds, uint64_t timeout,
     return sys_poll((struct pollfd *)(uintptr_t)fds, (unsigned long)nfds, (int)timeout);
 }
 
-static int copy_user_string(const char *u_path, char *kbuf, size_t max_len) {
+int copy_user_string(const char *u_path, char *kbuf, size_t max_len) {
     for (size_t i = 0; i < max_len; ++i) {
         char ch = 0;
         if (fut_copy_from_user(&ch, u_path + i, 1) != 0) {
@@ -285,129 +285,37 @@ static int copy_user_string(const char *u_path, char *kbuf, size_t max_len) {
 
 static int64_t sys_open_handler(uint64_t pathname, uint64_t flags, uint64_t mode,
                                 uint64_t arg4, uint64_t arg5, uint64_t arg6) {
-    (void)arg4;
-    (void)arg5;
-    (void)arg6;
-
-    extern void fut_printf(const char *, ...);
-    fut_printf("[SYS-OPEN] called: pathname=0x%lx flags=0x%lx mode=0%lo\n", pathname, flags, mode);
-
-    char kpath[256];
-    int rc = copy_user_string((const char *)pathname, kpath, sizeof(kpath));
-    fut_printf("[SYS-OPEN] copy_user_string returned %d, kpath='%s'\n", rc, kpath);
-    if (rc != 0) {
-        fut_printf("[SYS-OPEN] returning error %d\n", rc);
-        return rc;
-    }
-    int result = fut_vfs_open(kpath, (int)flags, (int)mode);
-    fut_printf("[SYS-OPEN] fut_vfs_open returned %d\n", result);
-    return (int64_t)result;
+    (void)arg4; (void)arg5; (void)arg6;
+    extern long sys_open(const char *pathname, int flags, int mode);
+    return sys_open((const char *)(uintptr_t)pathname, (int)flags, (int)mode);
 }
 
 static int64_t sys_openat_handler(uint64_t dirfd, uint64_t pathname, uint64_t flags,
                                   uint64_t mode, uint64_t arg5, uint64_t arg6) {
-    (void)arg5;
-    (void)arg6;
-    (void)dirfd;  /* For now, we only support AT_FDCWD (current directory) */
-
-    extern void fut_printf(const char *, ...);
-    fut_printf("[SYS-OPENAT] INVOKED: dirfd=%ld pathname=0x%lx flags=0x%lx (O_CREAT=%d O_RDWR=%d O_CLOEXEC=%d) mode=0%lo\n",
-               (long)dirfd, pathname, flags, !!(flags & 0x200), !!(flags & 0x2), !!(flags & 0x80000), mode);
-
-    char kpath[256];
-    int rc = copy_user_string((const char *)pathname, kpath, sizeof(kpath));
-    fut_printf("[SYS-OPENAT] copy_user_string returned %d, kpath='%s'\n", rc, kpath);
-    if (rc != 0) {
-        fut_printf("[SYS-OPENAT] returning error %d\n", rc);
-        return rc;
-    }
-    int result = fut_vfs_open(kpath, (int)flags, (int)mode);
-    fut_printf("[SYS-OPENAT] fut_vfs_open returned %d for path '%s'\n", result, kpath);
-    return (int64_t)result;
+    (void)arg5; (void)arg6;
+    extern long sys_openat(int dirfd, const char *pathname, int flags, int mode);
+    return sys_openat((int)dirfd, (const char *)(uintptr_t)pathname, (int)flags, (int)mode);
 }
 
 static int64_t sys_close_handler(uint64_t fd, uint64_t arg2, uint64_t arg3,
                                  uint64_t arg4, uint64_t arg5, uint64_t arg6) {
-    (void)arg2;
-    (void)arg3;
-    (void)arg4;
-    (void)arg5;
-    (void)arg6;
-    extern void fut_printf(const char *, ...);
-
-    int fd_int = (int)fd;
-
-    /* Check if FD is a socket first */
-    fut_socket_t *socket = get_socket_from_fd(fd_int);
-    if (socket) {
-        /* It's a socket - release it */
-        fut_printf("[CLOSE] Closing socket fd %d\n", fd_int);
-        return (int64_t)release_socket_fd(fd_int);
-    }
-
-    /* Otherwise, close as a regular file descriptor */
-    return (int64_t)fut_vfs_close(fd_int);
+    (void)arg2; (void)arg3; (void)arg4; (void)arg5; (void)arg6;
+    extern long sys_close(int fd);
+    return sys_close((int)fd);
 }
 
 static int64_t sys_write_handler(uint64_t fd, uint64_t buf, uint64_t count,
                                  uint64_t arg4, uint64_t arg5, uint64_t arg6) {
-    (void)arg4;
-    (void)arg5;
-    (void)arg6;
-
-    extern void fut_printf(const char *, ...);
-    // fut_printf("[WRITE] fd=%llu buf=0x%llx count=%llu\n", fd, buf, count);
-
-    size_t len = (size_t)count;
-    if (len == 0) {
-        return 0;
-    }
-
-    void *kbuf = fut_malloc(len);
-    if (!kbuf) {
-        return -ENOMEM;
-    }
-
-    if (fut_copy_from_user(kbuf, (const void *)buf, len) != 0) {
-        fut_free(kbuf);
-        return -EFAULT;
-    }
-
-    ssize_t ret = fut_vfs_write((int)fd, kbuf, len);
-    fut_free(kbuf);
-    return (int64_t)ret;
+    (void)arg4; (void)arg5; (void)arg6;
+    extern ssize_t sys_write(int fd, const void *buf, size_t count);
+    return sys_write((int)fd, (const void *)buf, (size_t)count);
 }
 
 static int64_t sys_read_handler(uint64_t fd, uint64_t buf, uint64_t count,
                                 uint64_t arg4, uint64_t arg5, uint64_t arg6) {
-    (void)arg4;
-    (void)arg5;
-    (void)arg6;
-
-    size_t len = (size_t)count;
-    if (len == 0) {
-        return 0;
-    }
-
-    /* Sanity check: reject unreasonably large reads */
-    if (len > 1024 * 1024) {  /* 1 MB limit */
-        return -EINVAL;
-    }
-
-    void *kbuf = fut_malloc(len);
-    if (!kbuf) {
-        return -ENOMEM;
-    }
-
-    ssize_t ret = fut_vfs_read((int)fd, kbuf, len);
-    if (ret > 0) {
-        if (fut_copy_to_user((void *)buf, kbuf, (size_t)ret) != 0) {
-            ret = -EFAULT;
-        }
-    }
-
-    fut_free(kbuf);
-    return (int64_t)ret;
+    (void)arg4; (void)arg5; (void)arg6;
+    extern ssize_t sys_read(int fd, void *buf, size_t count);
+    return sys_read((int)fd, (void *)buf, (size_t)count);
 }
 
 static int64_t sys_pread64_handler(uint64_t fd, uint64_t buf, uint64_t count,
@@ -456,10 +364,9 @@ static int64_t sys_pwritev_handler(uint64_t fd, uint64_t iov, uint64_t iovcnt,
 
 static int64_t sys_ioctl_handler(uint64_t fd, uint64_t req, uint64_t argp,
                                  uint64_t arg4, uint64_t arg5, uint64_t arg6) {
-    (void)arg4;
-    (void)arg5;
-    (void)arg6;
-    return (int64_t)fut_vfs_ioctl((int)fd, req, argp);
+    (void)arg4; (void)arg5; (void)arg6;
+    extern long sys_ioctl(int fd, unsigned long request, void *argp);
+    return sys_ioctl((int)fd, (unsigned long)req, (void *)argp);
 }
 
 static int64_t sys_mmap_handler(uint64_t addr, uint64_t len, uint64_t prot,
@@ -734,48 +641,8 @@ static int64_t sys_getpid_handler(uint64_t arg1, uint64_t arg2, uint64_t arg3,
 static int64_t sys_kill_handler(uint64_t pid, uint64_t signum, uint64_t arg3,
                                 uint64_t arg4, uint64_t arg5, uint64_t arg6) {
     (void)arg3; (void)arg4; (void)arg5; (void)arg6;
-
-    extern fut_task_t *fut_task_current(void);
-    fut_task_t *current = fut_task_current();
-    if (!current) {
-        return -EINVAL;
-    }
-
-    /* Find target task by PID */
-    fut_task_t *target = NULL;
-
-    /* For now, simple approach: if pid == 0, send to current process group
-     * if pid > 0, send to specific process
-     * For MVP, we'll just handle pid > 0 case targeting current process for testing
-     */
-    if (pid == 0) {
-        /* Send to current process group - not yet implemented */
-        return -EINVAL;
-    } else {
-        /* Send to specific process - for now just support sending to self or children */
-        /* TODO: Implement full process lookup by PID */
-        if (pid == current->pid) {
-            target = current;
-        } else {
-            /* Look through children */
-            target = current->first_child;
-            while (target && target->pid != pid) {
-                target = target->sibling;
-            }
-        }
-    }
-
-    if (!target) {
-        return -ESRCH;  /* No such process */
-    }
-
-    /* Validate signal number */
-    if ((int)signum < 1 || (int)signum >= _NSIG) {
-        return -EINVAL;
-    }
-
-    /* Queue the signal */
-    return fut_signal_send(target, (int)signum);
+    extern long sys_kill(int pid, int sig);
+    return sys_kill((int)pid, (int)signum);
 }
 
 /**
@@ -787,53 +654,8 @@ static int64_t sys_kill_handler(uint64_t pid, uint64_t signum, uint64_t arg3,
 static int64_t sys_sigaction_handler(uint64_t signum, uint64_t act, uint64_t oldact,
                                      uint64_t arg4, uint64_t arg5, uint64_t arg6) {
     (void)arg4; (void)arg5; (void)arg6;
-
-    extern fut_task_t *fut_task_current(void);
-    fut_task_t *current = fut_task_current();
-    if (!current) {
-        return -EINVAL;
-    }
-
-    /* Validate signal number */
-    if ((int)signum < 1 || (int)signum >= _NSIG) {
-        return -EINVAL;
-    }
-
-    /* SIGKILL and SIGSTOP cannot be caught */
-    if ((int)signum == SIGKILL || (int)signum == SIGSTOP) {
-        return -EINVAL;
-    }
-
-    /* Validate signal number for array access */
-    if ((int)signum < 1 || (int)signum >= _NSIG) {
-        return -EINVAL;
-    }
-
-    int sig_idx = (int)signum;  // Index into handler arrays (1-30)
-
-    /* Copy old action if requested */
-    if (oldact) {
-        struct sigaction *old = (struct sigaction *)oldact;
-        old->sa_handler = fut_signal_get_handler(current, sig_idx);
-        old->sa_mask = current->signal_handler_masks[sig_idx];
-        old->sa_flags = current->signal_handler_flags[sig_idx];
-    }
-
-    /* Install new handler if provided */
-    if (act) {
-        struct sigaction *new = (struct sigaction *)act;
-        sighandler_t handler = new->sa_handler;
-        int ret = fut_signal_set_handler(current, sig_idx, handler);
-        if (ret < 0) {
-            return ret;
-        }
-
-        /* Store sa_mask and sa_flags for this signal handler */
-        current->signal_handler_masks[sig_idx] = new->sa_mask;
-        current->signal_handler_flags[sig_idx] = new->sa_flags;
-    }
-
-    return 0;
+    extern long sys_sigaction(int signum, const struct sigaction *act, struct sigaction *oldact);
+    return sys_sigaction((int)signum, (const struct sigaction *)act, (struct sigaction *)oldact);
 }
 
 /**
@@ -845,17 +667,8 @@ static int64_t sys_sigaction_handler(uint64_t signum, uint64_t act, uint64_t old
 static int64_t sys_sigprocmask_handler(uint64_t how, uint64_t set, uint64_t oldset,
                                        uint64_t arg4, uint64_t arg5, uint64_t arg6) {
     (void)arg4; (void)arg5; (void)arg6;
-
-    extern fut_task_t *fut_task_current(void);
-    fut_task_t *current = fut_task_current();
-    if (!current) {
-        return -EINVAL;
-    }
-
-    const sigset_t *set_ptr = (set == 0) ? NULL : (const sigset_t *)set;
-    sigset_t *oldset_ptr = (oldset == 0) ? NULL : (sigset_t *)oldset;
-
-    return fut_signal_procmask(current, (int)how, set_ptr, oldset_ptr);
+    extern long sys_sigprocmask(int how, const sigset_t *set, sigset_t *oldset);
+    return sys_sigprocmask((int)how, (const sigset_t *)set, (sigset_t *)oldset);
 }
 
 /**
@@ -971,130 +784,9 @@ static int64_t sys_sigreturn_handler(uint64_t frame_ptr, uint64_t arg2, uint64_t
  */
 static int64_t sys_select_handler(uint64_t nfds, uint64_t readfds, uint64_t writefds,
                                   uint64_t exceptfds, uint64_t timeout_ptr, uint64_t arg6) {
-    (void)arg6;  /* Unused parameter */
-
-    if (nfds > 1024) {
-        return -EINVAL;
-    }
-
-    extern void fut_printf(const char *, ...);
-    extern int fut_copy_from_user(void *k_dst, const void *u_src, size_t n);
-    extern long sys_nanosleep(const fut_timespec_t *u_req, fut_timespec_t *u_rem);
-
-    int ready_count = 0;
-    uint8_t *read_set = (uint8_t *)readfds;
-    uint8_t *write_set = (uint8_t *)writefds;
-    uint8_t *except_set = (uint8_t *)exceptfds;
-
-    if (!read_set && !write_set && !except_set) {
-        /* No FD sets provided - just sleep if timeout provided */
-        if (timeout_ptr) {
-            /* timeval has tv_sec (long) and tv_usec (long) */
-            long tv_sec = 0, tv_usec = 0;
-            if (fut_copy_from_user(&tv_sec, (void *)timeout_ptr, sizeof(long)) == 0) {
-                if (fut_copy_from_user(&tv_usec, (void *)(timeout_ptr + sizeof(long)), sizeof(long)) == 0) {
-                    fut_timespec_t req = {
-                        .tv_sec = tv_sec,
-                        .tv_nsec = tv_usec * 1000
-                    };
-                    sys_nanosleep(&req, NULL);
-                }
-            }
-        }
-        return 0;
-    }
-
-    /* Determine if this should block or poll
-     * timeout == 0: non-blocking poll (return immediately)
-     * timeout == NULL: blocking (wait indefinitely - use loop with retries)
-     * timeout > 0: wait with timeout
-     */
-    bool should_timeout = (timeout_ptr != 0);
-    int timeout_ms = 0;
-
-    if (should_timeout) {
-        long tv_sec = 0, tv_usec = 0;
-        if (fut_copy_from_user(&tv_sec, (void *)timeout_ptr, sizeof(long)) == 0 &&
-            fut_copy_from_user(&tv_usec, (void *)(timeout_ptr + sizeof(long)), sizeof(long)) == 0) {
-            timeout_ms = (int)((tv_sec * 1000) + (tv_usec / 1000));
-        }
-    }
-
-    /* Simple polling loop implementation:
-     * - For timeout=0: poll once and return
-     * - For timeout>0: poll with timeout using sleep
-     * - For timeout=NULL: block indefinitely (future: use wait queues)
-     */
-
-    int poll_attempt = 0;
-    int max_polls = (timeout_ms > 0) ? (timeout_ms / 10) + 1 : 1;  /* Poll every 10ms max */
-
-    while (poll_attempt < max_polls) {
-        ready_count = 0;
-
-        /* Poll each file descriptor */
-        for (int fd = 0; fd < (int)nfds; fd++) {
-            int byte_offset = fd / 8;
-            int bit_offset = fd % 8;
-            uint8_t mask = (1 << bit_offset);
-
-            struct fut_file *file = vfs_get_file(fd);
-
-            /* Check read readiness */
-            if (read_set && (read_set[byte_offset] & mask)) {
-                if (file && file->vnode) {
-                    /* Regular file/vnode - always readable (no blocking I/O) */
-                    ready_count++;
-                    fut_printf("[SELECT] FD %d ready for reading\n", fd);
-                } else if (!file) {
-                    /* FD not found - mark as exception */
-                    if (except_set) {
-                        except_set[byte_offset] |= mask;
-                        ready_count++;
-                    }
-                    /* Remove from read set */
-                    read_set[byte_offset] &= ~mask;
-                }
-            }
-
-            /* Check write readiness */
-            if (write_set && (write_set[byte_offset] & mask)) {
-                if (file && file->vnode) {
-                    /* Regular file/vnode - always writable */
-                    ready_count++;
-                    fut_printf("[SELECT] FD %d ready for writing\n", fd);
-                } else if (!file) {
-                    /* FD not found - mark as exception */
-                    if (except_set) {
-                        except_set[byte_offset] |= mask;
-                        ready_count++;
-                    }
-                    /* Remove from write set */
-                    write_set[byte_offset] &= ~mask;
-                }
-            }
-        }
-
-        /* If we found ready FDs or should return immediately, break */
-        if (ready_count > 0 || timeout_ms == 0) {
-            break;
-        }
-
-        /* If we have more polls to do, sleep before next attempt */
-        if (poll_attempt < max_polls - 1) {
-            fut_timespec_t sleep_req = {
-                .tv_sec = 0,
-                .tv_nsec = 10 * 1000000  /* 10ms sleep */
-            };
-            sys_nanosleep(&sleep_req, NULL);
-        }
-
-        poll_attempt++;
-    }
-
-    fut_printf("[SELECT] Returning %d ready file descriptors (attempts: %d)\n",
-               ready_count, poll_attempt + 1);
-    return ready_count;
+    (void)arg6;
+    extern long sys_select(int nfds, void *readfds, void *writefds, void *exceptfds, fut_timeval_t *timeout);
+    return sys_select((int)nfds, (void *)readfds, (void *)writefds, (void *)exceptfds, (fut_timeval_t *)timeout_ptr);
 }
 
 /* dup() handler - duplicate file descriptor with auto selection */
@@ -1108,142 +800,23 @@ static int64_t sys_dup_handler(uint64_t oldfd, uint64_t arg2, uint64_t arg3,
 /* Socket operations handlers */
 static int64_t sys_socket_handler(uint64_t domain, uint64_t type, uint64_t protocol,
                                   uint64_t arg4, uint64_t arg5, uint64_t arg6) {
-    (void)protocol; (void)arg4; (void)arg5; (void)arg6;
-    extern void fut_printf(const char *, ...);
-
-    fut_printf("[SOCKET] domain=%lu type=%lu protocol=%lu\n", domain, type, protocol);
-
-    /* Phase 3 implementation: Full kernel socket support via fut_socket system
-     *
-     * Architecture:
-     * - Kernel: Complete socket object system in kernel/ipc/fut_socket.c
-     *   (Full state machine, accept queue, bidirectional I/O)
-     * - POSIX shim: Maps POSIX syscalls to kernel socket API
-     * - Handles: Socket FD management with per-task FD table
-     *
-     * Supported: AF_UNIX SOCK_STREAM sockets with full kernel support
-     * - socket() creates kernel socket object
-     * - bind() binds to path in VFS
-     * - listen() marks as listener with accept queue
-     * - accept() dequeues pending connections
-     * - connect() initiates connection to listening socket
-     * - send/recv() bidirectional I/O with blocking wait queues
-     */
-
-    /* Validate domain and type */
-    if (domain != 1) {  /* AF_UNIX */
-        fut_printf("[SOCKET] ERROR: Unsupported domain %lu\n", domain);
-        return -EINVAL;
-    }
-    if (type != 1) {  /* SOCK_STREAM */
-        fut_printf("[SOCKET] ERROR: Unsupported type %lu\n", type);
-        return -EINVAL;
-    }
-
-    /* Create kernel socket object */
-    fut_socket_t *socket = fut_socket_create((int)domain, (int)type);
-    if (!socket) {
-        fut_printf("[SOCKET] ERROR: Failed to create kernel socket\n");
-        return -EMFILE;  /* Too many open files */
-    }
-
-    /* Allocate FD for this socket */
-    int fd = allocate_socket_fd(socket);
-    if (fd < 0) {
-        fut_printf("[SOCKET] ERROR: Failed to allocate socket FD\n");
-        fut_socket_unref(socket);
-        return -EMFILE;
-    }
-
-    fut_printf("[SOCKET] Created socket %u with FD %d\n", socket->socket_id, fd);
-    return (int64_t)fd;
+    (void)arg4; (void)arg5; (void)arg6;
+    extern long sys_socket(int domain, int type, int protocol);
+    return sys_socket((int)domain, (int)type, (int)protocol);
 }
 
 static int64_t sys_bind_handler(uint64_t sockfd, uint64_t addr, uint64_t addrlen,
                                 uint64_t arg4, uint64_t arg5, uint64_t arg6) {
     (void)arg4; (void)arg5; (void)arg6;
-    extern void fut_printf(const char *, ...);
-
-    fut_printf("[BIND] sockfd=%lu addr=0x%lx addrlen=%lu\n", sockfd, addr, addrlen);
-
-    /* Extract socket path from sockaddr_un structure
-     * struct sockaddr_un {
-     *     sa_family_t sun_family;  // 2 bytes
-     *     char sun_path[108];      // path
-     * }
-     */
-
-    if (addrlen < 3) {  /* At least family (2 bytes) + 1 char for path */
-        fut_printf("[BIND] ERROR: addrlen too small (%lu)\n", addrlen);
-        return -EINVAL;
-    }
-
-    /* Copy the socket path from user space */
-    char sock_path[256];
-    uint16_t sun_family;
-    if (fut_copy_from_user(&sun_family, (const void *)addr, 2) != 0) {
-        fut_printf("[BIND] ERROR: failed to copy sun_family\n");
-        return -EFAULT;
-    }
-
-    /* Copy path component (skip the 2-byte family field) */
-    size_t path_len = addrlen - 2;
-    if (path_len > sizeof(sock_path) - 1) {
-        path_len = sizeof(sock_path) - 1;
-    }
-
-    if (path_len > 0) {
-        if (fut_copy_from_user(sock_path, (const void *)(addr + 2), path_len) != 0) {
-            fut_printf("[BIND] ERROR: failed to copy sun_path\n");
-            return -EFAULT;
-        }
-    }
-    sock_path[path_len] = '\0';
-
-    fut_printf("[BIND] sun_family=%u path='%s'\n", sun_family, sock_path);
-
-    /* Get kernel socket object from FD */
-    fut_socket_t *socket = get_socket_from_fd((int)sockfd);
-    if (!socket) {
-        fut_printf("[BIND] ERROR: socket fd %lu not valid\n", sockfd);
-        return -EBADF;
-    }
-
-    /* Bind socket to path using kernel socket API */
-    int ret = fut_socket_bind(socket, sock_path);
-    if (ret < 0) {
-        fut_printf("[BIND] ERROR: fut_socket_bind failed with code %d\n", ret);
-        return ret;
-    }
-
-    fut_printf("[BIND] Successfully bound socket to path '%s'\n", sock_path);
-    return 0;  /* Success */
+    extern long sys_bind(int sockfd, const void *addr, uint32_t addrlen);
+    return sys_bind((int)sockfd, (const void *)addr, (uint32_t)addrlen);
 }
 
 static int64_t sys_listen_handler(uint64_t sockfd, uint64_t backlog, uint64_t arg3,
                                   uint64_t arg4, uint64_t arg5, uint64_t arg6) {
     (void)arg3; (void)arg4; (void)arg5; (void)arg6;
-    extern void fut_printf(const char *, ...);
-
-    fut_printf("[LISTEN] sockfd=%lu backlog=%lu\n", sockfd, backlog);
-
-    /* Get kernel socket object from FD */
-    fut_socket_t *socket = get_socket_from_fd((int)sockfd);
-    if (!socket) {
-        fut_printf("[LISTEN] ERROR: socket fd %lu not valid\n", sockfd);
-        return -EBADF;
-    }
-
-    /* Mark socket as listening with given backlog */
-    int ret = fut_socket_listen(socket, (int)backlog);
-    if (ret < 0) {
-        fut_printf("[LISTEN] ERROR: fut_socket_listen failed with code %d\n", ret);
-        return ret;
-    }
-
-    fut_printf("[LISTEN] Socket %u marked as listening with backlog %lu\n",
-               socket->socket_id, backlog);
-    return 0;  /* Success */
+    extern long sys_listen(int sockfd, int backlog);
+    return sys_listen((int)sockfd, (int)backlog);
 }
 
 static int64_t sys_shutdown_handler(uint64_t sockfd, uint64_t how, uint64_t arg3,
@@ -1301,57 +874,8 @@ static int64_t sys_accept_handler(uint64_t sockfd, uint64_t addr, uint64_t addrl
 static int64_t sys_connect_handler(uint64_t sockfd, uint64_t addr, uint64_t addrlen,
                                    uint64_t arg4, uint64_t arg5, uint64_t arg6) {
     (void)arg4; (void)arg5; (void)arg6;
-    extern void fut_printf(const char *, ...);
-
-    fut_printf("[CONNECT] sockfd=%lu addr=0x%lx addrlen=%lu\n", sockfd, addr, addrlen);
-
-    /* Extract socket path from sockaddr_un structure */
-    if (addrlen < 3) {  /* At least family (2 bytes) + 1 char for path */
-        fut_printf("[CONNECT] ERROR: addrlen too small\n");
-        return -EINVAL;
-    }
-
-    /* Copy the socket path from user space */
-    char sock_path[256];
-    uint16_t sun_family;
-    if (fut_copy_from_user(&sun_family, (const void *)addr, 2) != 0) {
-        fut_printf("[CONNECT] ERROR: failed to copy sun_family\n");
-        return -EFAULT;
-    }
-
-    /* Copy path component (skip the 2-byte family field) */
-    size_t path_len = addrlen - 2;
-    if (path_len > sizeof(sock_path) - 1) {
-        path_len = sizeof(sock_path) - 1;
-    }
-
-    if (path_len > 0) {
-        if (fut_copy_from_user(sock_path, (const void *)(addr + 2), path_len) != 0) {
-            fut_printf("[CONNECT] ERROR: failed to copy sun_path\n");
-            return -EFAULT;
-        }
-    }
-    sock_path[path_len] = '\0';
-
-    fut_printf("[CONNECT] sun_family=%u path='%s'\n", sun_family, sock_path);
-
-    /* Get client socket from FD */
-    fut_socket_t *socket = get_socket_from_fd((int)sockfd);
-    if (!socket) {
-        fut_printf("[CONNECT] ERROR: socket fd %lu not valid\n", sockfd);
-        return -EBADF;
-    }
-
-    /* Connect socket to listening socket at target path */
-    int ret = fut_socket_connect(socket, sock_path);
-    if (ret < 0) {
-        fut_printf("[CONNECT] ERROR: fut_socket_connect failed with code %d\n", ret);
-        return ret;
-    }
-
-    fut_printf("[CONNECT] Socket %u successfully connected to '%s'\n",
-               socket->socket_id, sock_path);
-    return 0;  /* Success - socket is now connected */
+    extern long sys_connect(int sockfd, const void *addr, uint32_t addrlen);
+    return sys_connect((int)sockfd, (const void *)addr, (uint32_t)addrlen);
 }
 
 /**
@@ -1365,24 +889,9 @@ static int64_t sys_connect_handler(uint64_t sockfd, uint64_t addr, uint64_t addr
  */
 static int64_t sys_sendto_handler(uint64_t sockfd, uint64_t buf, uint64_t len,
                                   uint64_t flags, uint64_t addr, uint64_t addrlen) {
-    extern void fut_printf(const char *, ...);
-
     (void)flags; (void)addr; (void)addrlen;
-
-    fut_printf("[SENDTO] sockfd=%lu buf=0x%lx len=%lu\n", sockfd, buf, len);
-
-    /* Validate the socket fd exists */
-    struct fut_file *file = vfs_get_file((int)sockfd);
-    if (!file) {
-        fut_printf("[SENDTO] ERROR: socket fd %lu is not valid\n", sockfd);
-        return -EBADF;
-    }
-
-    /* For pipe-based sockets, write to the pipe */
-    long ret = sys_write_handler((uint64_t)sockfd, buf, len, 0, 0, 0);
-
-    fut_printf("[SENDTO] wrote %ld bytes\n", ret);
-    return ret;
+    extern ssize_t sys_sendto(int sockfd, const void *buf, size_t len, int flags, const void *dest_addr, uint32_t addrlen);
+    return sys_sendto((int)sockfd, (const void *)buf, (size_t)len, (int)flags, (const void *)addr, (uint32_t)addrlen);
 }
 
 /**
@@ -1396,24 +905,9 @@ static int64_t sys_sendto_handler(uint64_t sockfd, uint64_t buf, uint64_t len,
  */
 static int64_t sys_recvfrom_handler(uint64_t sockfd, uint64_t buf, uint64_t len,
                                     uint64_t flags, uint64_t addr, uint64_t addrlen) {
-    extern void fut_printf(const char *, ...);
-
     (void)flags; (void)addr; (void)addrlen;
-
-    fut_printf("[RECVFROM] sockfd=%lu buf=0x%lx len=%lu\n", sockfd, buf, len);
-
-    /* Validate the socket fd exists */
-    struct fut_file *file = vfs_get_file((int)sockfd);
-    if (!file) {
-        fut_printf("[RECVFROM] ERROR: socket fd %lu is not valid\n", sockfd);
-        return -EBADF;
-    }
-
-    /* For pipe-based sockets, read from the pipe */
-    long ret = sys_read_handler((uint64_t)sockfd, buf, len, 0, 0, 0);
-
-    fut_printf("[RECVFROM] read %ld bytes\n", ret);
-    return ret;
+    extern ssize_t sys_recvfrom(int sockfd, void *buf, size_t len, int flags, void *src_addr, uint32_t *addrlen);
+    return sys_recvfrom((int)sockfd, (void *)buf, (size_t)len, (int)flags, (void *)addr, (uint32_t *)addrlen);
 }
 
 /* Unimplemented syscall handler */

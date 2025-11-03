@@ -13,6 +13,7 @@
 #include <stdint.h>
 #include <shared/fut_timespec.h>
 #include <shared/fut_timeval.h>
+#include <kernel/signal.h>  /* For sigset_t */
 
 /* Forward declarations */
 struct fut_stat;
@@ -21,6 +22,7 @@ struct rlimit;
 struct rusage;
 struct tms;
 struct iovec;
+struct sigaction;
 
 #ifndef _SSIZE_T_DEFINED
 #define _SSIZE_T_DEFINED
@@ -144,3 +146,23 @@ long sys_getpeername(int sockfd, void *addr, uint32_t *addrlen);
 long sys_getsockname(int sockfd, void *addr, uint32_t *addrlen);
 long sys_setsockopt(int sockfd, int level, int optname, const void *optval, uint32_t optlen);
 long sys_getsockopt(int sockfd, int level, int optname, void *optval, uint32_t *optlen);
+/* Core I/O */
+ssize_t sys_read(int fd, void *buf, size_t count);
+ssize_t sys_write(int fd, const void *buf, size_t count);
+long sys_open(const char *pathname, int flags, int mode);
+long sys_close(int fd);
+long sys_openat(int dirfd, const char *pathname, int flags, int mode);
+/* Network */
+long sys_socket(int domain, int type, int protocol);
+long sys_bind(int sockfd, const void *addr, uint32_t addrlen);
+long sys_listen(int sockfd, int backlog);
+long sys_connect(int sockfd, const void *addr, uint32_t addrlen);
+ssize_t sys_sendto(int sockfd, const void *buf, size_t len, int flags, const void *dest_addr, uint32_t addrlen);
+ssize_t sys_recvfrom(int sockfd, void *buf, size_t len, int flags, void *src_addr, uint32_t *addrlen);
+/* Signals */
+long sys_kill(int pid, int sig);
+long sys_sigaction(int signum, const struct sigaction *act, struct sigaction *oldact);
+long sys_sigprocmask(int how, const sigset_t *set, sigset_t *oldset);
+/* Other */
+long sys_ioctl(int fd, unsigned long request, void *argp);
+long sys_select(int nfds, void *readfds, void *writefds, void *exceptfds, fut_timeval_t *timeout);

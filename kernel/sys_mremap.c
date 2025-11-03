@@ -5,6 +5,12 @@
  *
  * Implements mremap() for resizing or relocating memory mappings.
  * Completes the mmap family: mmap, munmap, mprotect, mremap.
+ *
+ * Phase 1 (Completed): Basic parameter validation
+ * Phase 2 (Current): Enhanced validation with detailed operation reporting
+ * Phase 3: Implement shrinking (unmap tail)
+ * Phase 4: Implement in-place expansion
+ * Phase 5: Implement MREMAP_MAYMOVE (relocate and copy)
  */
 
 #include <kernel/fut_task.h>
@@ -83,11 +89,12 @@ extern fut_task_t *fut_task_current(void);
  *    - Old mapping becomes anonymous (file backing removed)
  *    - Useful for copy-on-write scenarios
  *
- * Phase 1 (Current): Validates parameters, returns old_address
- * Phase 2: Implement shrinking (unmap tail)
- * Phase 3: Implement in-place expansion
- * Phase 4: Implement MREMAP_MAYMOVE (relocate and copy)
- * Phase 5: Implement MREMAP_FIXED and MREMAP_DONTUNMAP
+ * Phase 1 (Completed): Basic parameter validation
+ * Phase 2 (Current): Enhanced validation with detailed operation reporting
+ * Phase 3: Implement shrinking (unmap tail)
+ * Phase 4: Implement in-place expansion
+ * Phase 5: Implement MREMAP_MAYMOVE (relocate and copy)
+ * Phase 6: Implement MREMAP_FIXED and MREMAP_DONTUNMAP
  *
  * Performance notes:
  * - In-place expansion is much faster (no page copying)
@@ -170,11 +177,54 @@ long sys_mremap(void *old_address, size_t old_size, size_t new_size,
     size_t old_aligned = (old_size + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1);
     size_t new_aligned = (new_size + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1);
 
-    fut_printf("[MREMAP] mremap(%p, %zu, %zu, 0x%x, %p) -> %p (stub - Phase 2 will resize/move)\n",
-               old_address, old_aligned, new_aligned, flags, new_address, old_address);
+    size_t old_pages = old_aligned / PAGE_SIZE;
+    size_t new_pages = new_aligned / PAGE_SIZE;
 
-    /* Phase 1: Validate only, return old_address
-     * Phase 2-5 implementation:
+    /* Determine operation type */
+    const char *operation;
+    if (new_aligned < old_aligned) {
+        operation = "shrinking";
+    } else if (new_aligned > old_aligned) {
+        if (flags & MREMAP_MAYMOVE) {
+            if (flags & MREMAP_FIXED) {
+                operation = "expanding (relocate to fixed address)";
+            } else {
+                operation = "expanding (may relocate)";
+            }
+        } else {
+            operation = "expanding (in-place only)";
+        }
+    } else {
+        operation = "same size (no-op)";
+    }
+
+    /* Build flags string */
+    char flags_str[64];
+    int flags_idx = 0;
+    if (flags & MREMAP_MAYMOVE) {
+        const char *mm = "MREMAP_MAYMOVE";
+        while (*mm) flags_str[flags_idx++] = *mm++;
+    }
+    if (flags & MREMAP_FIXED) {
+        if (flags_idx > 0) flags_str[flags_idx++] = '|';
+        const char *fx = "MREMAP_FIXED";
+        while (*fx) flags_str[flags_idx++] = *fx++;
+    }
+    if (flags & MREMAP_DONTUNMAP) {
+        if (flags_idx > 0) flags_str[flags_idx++] = '|';
+        const char *du = "MREMAP_DONTUNMAP";
+        while (*du) flags_str[flags_idx++] = *du++;
+    }
+    if (flags_idx == 0) {
+        flags_str[flags_idx++] = '0';
+    }
+    flags_str[flags_idx] = '\0';
+
+    fut_printf("[MREMAP] mremap(%p, %zu->%zu pages, %s) -> %p (%s, Phase 2: validated)\n",
+               old_address, old_pages, new_pages, flags_str, old_address, operation);
+
+    /* Phase 2: Parameters validated and logged
+     * Phase 3-6 implementation:
      *
      * fut_mm_t *mm = fut_task_get_mm(task);
      * if (!mm) {

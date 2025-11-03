@@ -368,6 +368,7 @@ KERNEL_SOURCES := \
     kernel/sys_getpeername.c \
     kernel/sys_getsockname.c \
     kernel/sys_setsockopt.c \
+    kernel/sys_getsockopt.c \
     kernel/sys_uname.c \
     kernel/sys_rename.c \
     kernel/sys_stat.c \

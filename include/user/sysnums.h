@@ -40,6 +40,7 @@
 #define SYS_getsockname 51
 #define SYS_getpeername 52
 #define SYS_setsockopt  54
+#define SYS_getsockopt  55
 #define SYS_fork        57
 #define SYS_execve      59
 #define SYS_exit        60

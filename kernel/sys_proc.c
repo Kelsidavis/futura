@@ -14,6 +14,7 @@
 extern void fut_printf(const char *fmt, ...);
 extern fut_task_t *fut_task_current(void);
 extern int fut_copy_to_user(void *to, const void *from, size_t size);
+extern int fut_copy_from_user(void *to, const void *from, size_t size);
 
 /* Resource limit structure */
 struct rlimit {
@@ -337,6 +338,71 @@ long sys_getrlimit(int resource, struct rlimit *rlim) {
 
     fut_printf("[PROC] getrlimit(resource=%d) -> cur=%llu, max=%llu\n",
                resource, limit.rlim_cur, limit.rlim_max);
+
+    return 0;
+}
+
+/**
+ * setrlimit() - Set resource limits
+ *
+ * Sets resource limits for the calling process.
+ * Resource limits control the maximum amount of system resources
+ * a process can consume.
+ *
+ * @param resource  Resource type (RLIMIT_NOFILE, RLIMIT_NPROC, etc.)
+ * @param rlim      Pointer to rlimit structure with new limits
+ *
+ * Returns:
+ *   - 0 on success
+ *   - -EINVAL if resource is invalid or limits are invalid
+ *   - -EFAULT if rlim points to invalid memory
+ *   - -EPERM if trying to raise hard limit without privilege
+ *
+ * Validation:
+ *   - Soft limit must be <= hard limit
+ *   - Hard limit cannot be raised above current value (requires privilege)
+ *
+ * Phase 1 (Current): Validates limits but doesn't enforce them
+ * Phase 2: Store per-process limits and enforce them
+ * Phase 3: Implement privilege checking for raising hard limits
+ */
+long sys_setrlimit(int resource, const struct rlimit *rlim) {
+    if (!rlim) {
+        return -EFAULT;
+    }
+
+    /* Validate resource type */
+    if (resource < 0 || resource > RLIMIT_AS) {
+        fut_printf("[PROC] setrlimit: invalid resource %d\n", resource);
+        return -EINVAL;
+    }
+
+    /* Copy limits from userspace */
+    struct rlimit new_limit;
+    if (fut_copy_from_user(&new_limit, rlim, sizeof(struct rlimit)) != 0) {
+        return -EFAULT;
+    }
+
+    /* Validate that soft limit <= hard limit */
+    if (new_limit.rlim_cur > new_limit.rlim_max) {
+        fut_printf("[PROC] setrlimit: soft limit (%llu) > hard limit (%llu)\n",
+                   new_limit.rlim_cur, new_limit.rlim_max);
+        return -EINVAL;
+    }
+
+    /* Validate limits are not obviously wrong */
+    if (new_limit.rlim_cur == 0 && resource == RLIMIT_NOFILE) {
+        /* Cannot set NOFILE to 0 - process needs at least stdin/stdout/stderr */
+        fut_printf("[PROC] setrlimit: cannot set RLIMIT_NOFILE to 0\n");
+        return -EINVAL;
+    }
+
+    /* Phase 1: Just validate and log, don't actually store/enforce
+     * Phase 2 would store these in task structure and enforce them
+     * Phase 3 would check privileges for raising hard limits */
+
+    fut_printf("[PROC] setrlimit(resource=%d, cur=%llu, max=%llu) -> success (stub)\n",
+               resource, new_limit.rlim_cur, new_limit.rlim_max);
 
     return 0;
 }

@@ -22,6 +22,7 @@
 #define SYS_sched_yield 24
 #define SYS_dup         32
 #define SYS_dup2        33
+#define SYS_pause       34
 #define SYS_nanosleep   35
 #define SYS_alarm       37
 #define SYS_echo        42

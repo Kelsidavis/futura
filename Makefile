@@ -361,6 +361,7 @@ KERNEL_SOURCES := \
     kernel/sys_proc.c \
     kernel/sys_sched.c \
     kernel/sys_alarm.c \
+    kernel/sys_pause.c \
     kernel/sys_uname.c \
     kernel/sys_rename.c \
     kernel/sys_stat.c \

@@ -123,3 +123,4 @@ long sys_sched_yield(void);
 long sys_getpriority(int which, int who);
 long sys_setpriority(int which, int who, int prio);
 long sys_alarm(unsigned int seconds);
+long sys_pause(void);

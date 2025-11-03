@@ -91,6 +91,7 @@
 #define SYS_shutdown    48
 #define SYS_bind        49
 #define SYS_listen      50
+#define SYS_getpeername 52
 #ifndef SYS_getcwd
 #define SYS_getcwd      79
 #endif
@@ -1249,6 +1250,13 @@ static int64_t sys_shutdown_handler(uint64_t sockfd, uint64_t how, uint64_t arg3
     return sys_shutdown((int)sockfd, (int)how);
 }
 
+static int64_t sys_getpeername_handler(uint64_t sockfd, uint64_t addr, uint64_t addrlen,
+                                       uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg4; (void)arg5; (void)arg6;
+    extern long sys_getpeername(int sockfd, void *addr, uint32_t *addrlen);
+    return sys_getpeername((int)sockfd, (void *)(uintptr_t)addr, (uint32_t *)(uintptr_t)addrlen);
+}
+
 static int64_t sys_accept_handler(uint64_t sockfd, uint64_t addr, uint64_t addrlen,
                                   uint64_t arg4, uint64_t arg5, uint64_t arg6) {
     (void)addr; (void)addrlen; (void)arg4; (void)arg5; (void)arg6;
@@ -1772,6 +1780,7 @@ static syscall_handler_t syscall_table[MAX_SYSCALL] = {
     [SYS_listen]     = sys_listen_handler,
     [SYS_shutdown]   = sys_shutdown_handler,
     [SYS_accept]     = sys_accept_handler,
+    [SYS_getpeername] = sys_getpeername_handler,
     [SYS_connect]    = sys_connect_handler,
     [SYS_sendto]     = sys_sendto_handler,
     [SYS_recvfrom]   = sys_recvfrom_handler,

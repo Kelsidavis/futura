@@ -38,6 +38,7 @@
 #define SYS_bind        49
 #define SYS_listen      50
 #define SYS_accept      51
+#define SYS_getpeername 52
 #define SYS_fork        57
 #define SYS_execve      59
 #define SYS_exit        60

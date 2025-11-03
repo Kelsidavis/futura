@@ -139,3 +139,4 @@ long sys_pause(void);
 long sys_getrusage(int who, struct rusage *usage);
 long sys_times(struct tms *buf);
 long sys_shutdown(int sockfd, int how);
+long sys_getpeername(int sockfd, void *addr, uint32_t *addrlen);

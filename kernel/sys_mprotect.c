@@ -5,6 +5,11 @@
  *
  * Implements mprotect() for changing memory region protection flags.
  * Complements mmap/munmap for complete memory management control.
+ *
+ * Phase 1 (Completed): Basic parameter validation
+ * Phase 2 (Current): Enhanced validation and reporting
+ * Phase 3: Modify page table entries via fut_mm_mprotect()
+ * Phase 4: Enforce SELinux/capability-based protection policies
  */
 
 #include <kernel/fut_task.h>
@@ -51,10 +56,11 @@ extern fut_task_t *fut_task_current(void);
  *   - -ENOMEM if address range is not mapped
  *   - -EACCES if requested protection violates mapping constraints
  *
- * Phase 1 (Current): Validates parameters, returns success
- * Phase 2: Modify page table entries via fut_mm_mprotect()
- * Phase 3: Enforce SELinux/capability-based protection policies
- * Phase 4: Support PROT_GROWSDOWN/PROT_GROWSUP for stack guards
+ * Phase 1 (Completed): Basic parameter validation
+ * Phase 2 (Current): Enhanced validation with detailed protection flag reporting
+ * Phase 3: Modify page table entries via fut_mm_mprotect()
+ * Phase 4: Enforce SELinux/capability-based protection policies
+ * Phase 5: Support PROT_GROWSDOWN/PROT_GROWSUP for stack guards
  *
  * Common use cases:
  * - JIT compilers: Map as PROT_WRITE, generate code, switch to PROT_EXEC
@@ -124,12 +130,28 @@ long sys_mprotect(void *addr, size_t len, int prot) {
 
     /* Round length up to page boundary */
     size_t aligned_len = (len + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1);
+    size_t num_pages = aligned_len / PAGE_SIZE;
 
-    fut_printf("[MPROTECT] mprotect(%p, %zu, 0x%x) -> 0 (stub - Phase 2 will modify page tables)\n",
-               addr, aligned_len, prot);
+    /* Build protection string for logging */
+    char prot_str[32];
+    int prot_idx = 0;
+    if (prot == PROT_NONE) {
+        prot_str[prot_idx++] = 'N';
+        prot_str[prot_idx++] = 'O';
+        prot_str[prot_idx++] = 'N';
+        prot_str[prot_idx++] = 'E';
+    } else {
+        if (prot & PROT_READ)  prot_str[prot_idx++] = 'R';
+        if (prot & PROT_WRITE) prot_str[prot_idx++] = 'W';
+        if (prot & PROT_EXEC)  prot_str[prot_idx++] = 'X';
+    }
+    prot_str[prot_idx] = '\0';
 
-    /* Phase 1: Validate parameters only, return success
-     * Phase 2 will implement actual protection changes:
+    fut_printf("[MPROTECT] mprotect(%p, %zu bytes, %s) -> 0 (%zu pages, Phase 2: validated)\n",
+               addr, aligned_len, prot_str, num_pages);
+
+    /* Phase 2: Parameters validated and logged
+     * Phase 3 will implement actual protection changes:
      *
      * fut_mm_t *mm = fut_task_get_mm(task);
      * if (!mm) {

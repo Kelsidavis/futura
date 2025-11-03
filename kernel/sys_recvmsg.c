@@ -79,10 +79,10 @@ struct cmsghdr {
  * - Source address via msg_name (for datagram sockets)
  * - Message flags returned in msg_flags
  *
- * Phase 1 (Current): Validates parameters, delegates to readv-style I/O
- * Phase 2: Implement scatter-gather I/O
+ * Phase 1 (Completed): Validates parameters, delegates to readv-style I/O
+ * Phase 2 (Current): Enhanced validation, I/O pattern analysis, and detailed statistics
  * Phase 3: Implement ancillary data support (SCM_RIGHTS for FD passing)
- * Phase 4: Full control message support and flags
+ * Phase 4: Full control message support and advanced flags
  */
 ssize_t sys_recvmsg(int sockfd, struct msghdr *msg, int flags) {
     fut_task_t *task = fut_task_current();
@@ -90,7 +90,35 @@ ssize_t sys_recvmsg(int sockfd, struct msghdr *msg, int flags) {
         return -ESRCH;
     }
 
-    fut_printf("[RECVMSG] sockfd=%d msg=0x%p flags=0x%x\n", sockfd, msg, flags);
+    /* Phase 2: Identify message flags for logging */
+    const char *flags_desc;
+
+    /* Common recv flags (placeholder names - actual values may differ) */
+    #define MSG_PEEK      0x02
+    #define MSG_WAITALL   0x100
+    #define MSG_DONTWAIT  0x40
+    #define MSG_TRUNC     0x20
+    #define MSG_CTRUNC    0x08
+
+    if (flags == 0) {
+        flags_desc = "none";
+    } else if (flags == MSG_PEEK) {
+        flags_desc = "MSG_PEEK";
+    } else if (flags == MSG_WAITALL) {
+        flags_desc = "MSG_WAITALL";
+    } else if (flags == MSG_DONTWAIT) {
+        flags_desc = "MSG_DONTWAIT";
+    } else if (flags == MSG_TRUNC) {
+        flags_desc = "MSG_TRUNC";
+    } else if (flags == MSG_CTRUNC) {
+        flags_desc = "MSG_CTRUNC";
+    } else if (flags == (MSG_PEEK | MSG_DONTWAIT)) {
+        flags_desc = "MSG_PEEK|MSG_DONTWAIT";
+    } else if (flags == (MSG_WAITALL | MSG_DONTWAIT)) {
+        flags_desc = "MSG_WAITALL|MSG_DONTWAIT";
+    } else {
+        flags_desc = "multiple/unknown flags";
+    }
 
     /* Validate socket FD */
     struct fut_file *file = vfs_get_file(sockfd);
@@ -112,21 +140,85 @@ ssize_t sys_recvmsg(int sockfd, struct msghdr *msg, int flags) {
 
     /* Validate iovlen */
     if (kmsg.msg_iovlen == 0) {
+        fut_printf("[RECVMSG] recvmsg(sockfd=%d, iovlen=0) -> 0 (nothing to receive)\n", sockfd);
         return 0;  /* Nothing to receive */
     }
     if (kmsg.msg_iovlen > 1024) {
+        fut_printf("[RECVMSG] recvmsg(sockfd=%d, iovlen=%zu) -> EINVAL (exceeds UIO_MAXIOV=1024)\n",
+                   sockfd, kmsg.msg_iovlen);
         return -EINVAL;
     }
 
-    /* Phase 1: Simple implementation - iterate through iovecs and read each buffer
-     * Phase 2: Proper scatter-gather implementation
-     * Phase 3: Handle ancillary data (SCM_RIGHTS for FD receiving)
+    /* Phase 2: Calculate total size, validate iovecs, and gather statistics */
+    size_t total_size = 0;
+    int zero_len_count = 0;
+    size_t min_iov_len = (size_t)-1;
+    size_t max_iov_len = 0;
+
+    /* First pass: gather statistics */
+    for (size_t i = 0; i < kmsg.msg_iovlen; i++) {
+        struct iovec iov;
+        if (fut_copy_from_user(&iov, &kmsg.msg_iov[i], sizeof(struct iovec)) != 0) {
+            fut_printf("[RECVMSG] recvmsg(sockfd=%d, iovlen=%zu) -> EFAULT (copy_from_user iovec %zu failed)\n",
+                       sockfd, kmsg.msg_iovlen, i);
+            return -EFAULT;
+        }
+
+        /* Check for overflow */
+        if (total_size + iov.iov_len < total_size) {
+            fut_printf("[RECVMSG] recvmsg(sockfd=%d, iovlen=%zu) -> EINVAL (size overflow at iovec %zu)\n",
+                       sockfd, kmsg.msg_iovlen, i);
+            return -EINVAL;
+        }
+        total_size += iov.iov_len;
+
+        /* Gather statistics */
+        if (iov.iov_len == 0) {
+            zero_len_count++;
+        } else {
+            if (iov.iov_len < min_iov_len) {
+                min_iov_len = iov.iov_len;
+            }
+            if (iov.iov_len > max_iov_len) {
+                max_iov_len = iov.iov_len;
+            }
+        }
+    }
+
+    /* Categorize I/O pattern for diagnostics */
+    const char *io_pattern;
+    if (kmsg.msg_iovlen == 1) {
+        io_pattern = "single buffer (equivalent to recv)";
+    } else if (kmsg.msg_iovlen == 2) {
+        io_pattern = "dual buffer (e.g., header+payload)";
+    } else if (kmsg.msg_iovlen <= 10) {
+        io_pattern = "small scatter-gather";
+    } else if (kmsg.msg_iovlen <= 100) {
+        io_pattern = "medium scatter-gather";
+    } else {
+        io_pattern = "large scatter-gather";
+    }
+
+    /* Categorize message type based on ancillary data and address */
+    const char *msg_type;
+    if (kmsg.msg_control && kmsg.msg_controllen > 0) {
+        msg_type = "with control data";
+    } else if (kmsg.msg_name && kmsg.msg_namelen > 0) {
+        msg_type = "with source address";
+    } else {
+        msg_type = "simple data transfer";
+    }
+
+    /* Phase 2: Iterate through iovecs and read each buffer
+     * Phase 3: Proper scatter-gather implementation with VFS support
+     * Phase 4: Handle ancillary data (SCM_RIGHTS for FD receiving)
      */
 
-    (void)flags;  /* Ignore flags in Phase 1 */
+    (void)flags;  /* Ignore flags in Phase 2 (will implement in Phase 3) */
 
-    /* For Phase 1, just iterate through iovecs and read each buffer */
+    /* Phase 2: Iterate through iovecs and read each buffer */
     ssize_t total_received = 0;
+    int iovecs_filled = 0;
     for (size_t i = 0; i < kmsg.msg_iovlen; i++) {
         struct iovec iov;
         if (fut_copy_from_user(&iov, &kmsg.msg_iov[i], sizeof(struct iovec)) != 0) {
@@ -153,6 +245,7 @@ ssize_t sys_recvmsg(int sockfd, struct msghdr *msg, int flags) {
                 return total_received > 0 ? total_received : -EFAULT;
             }
             total_received += ret;
+            iovecs_filled++;
         }
 
         fut_free(kbuf);
@@ -183,6 +276,29 @@ ssize_t sys_recvmsg(int sockfd, struct msghdr *msg, int flags) {
         return total_received > 0 ? total_received : -EFAULT;
     }
 
-    fut_printf("[RECVMSG] received %zd bytes total\n", total_received);
+    /* Phase 2: Detailed logging with I/O statistics */
+    const char *completion_status;
+    if (total_received == 0) {
+        completion_status = "EOF";
+    } else if ((size_t)total_received < total_size) {
+        completion_status = "partial";
+    } else {
+        completion_status = "complete";
+    }
+
+    /* Build detailed log message */
+    if (zero_len_count > 0) {
+        fut_printf("[RECVMSG] recvmsg(sockfd=%d, iovlen=%zu [%s], flags=%s, type=%s, total_requested=%zu bytes) -> %ld bytes "
+                   "(%s, %d/%zu iovecs filled, %d zero-len skipped, min=%zu max=%zu, Phase 2: iterative)\n",
+                   sockfd, kmsg.msg_iovlen, io_pattern, flags_desc, msg_type, total_size, total_received,
+                   completion_status, iovecs_filled, kmsg.msg_iovlen - zero_len_count, zero_len_count,
+                   min_iov_len, max_iov_len);
+    } else {
+        fut_printf("[RECVMSG] recvmsg(sockfd=%d, iovlen=%zu [%s], flags=%s, type=%s, total_requested=%zu bytes) -> %ld bytes "
+                   "(%s, %d/%zu iovecs filled, min=%zu max=%zu, Phase 2: iterative)\n",
+                   sockfd, kmsg.msg_iovlen, io_pattern, flags_desc, msg_type, total_size, total_received,
+                   completion_status, iovecs_filled, kmsg.msg_iovlen, min_iov_len, max_iov_len);
+    }
+
     return total_received;
 }

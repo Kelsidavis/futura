@@ -130,7 +130,7 @@ bss_cleared:
 
     /* Zero out all page tables first */
     mov     x1, #0
-    mov     x2, #(4096 * 4 / 8)       /* 4 tables, 512 entries each (added peripheral L2) */
+    mov     x2, #(4096 * 5 / 8)       /* 5 tables: L0, L1_periph, L1_dram, L2_dram, L2_periph */
 1:  str     xzr, [x0, x1, lsl #3]
     add     x1, x1, #1
     cmp     x1, x2
@@ -141,29 +141,44 @@ bss_cleared:
     mov     x11, #0x31                /* '1' */
     strb    w11, [x10]
 
-    /* Setup L0 table (single entry pointing to L1) */
+    /* Setup L0 table (two entries for 0-1GB and 1-2GB) */
     adrp    x0, boot_l0_table
     add     x0, x0, :lo12:boot_l0_table
-    adrp    x1, boot_l1_table
-    add     x1, x1, :lo12:boot_l1_table
+
+    /* Debug: print L0 table address (should be page-aligned) */
+    mov     x19, x0                   /* Save L0 address */
+
+    /* L0[0] -> L1_peripherals (covers VA 0x00000000-0x3FFFFFFF) */
+    adrp    x1, boot_l1_peripherals
+    add     x1, x1, :lo12:boot_l1_peripherals
     orr     x1, x1, #3                /* Valid table descriptor */
-    str     x1, [x0]                  /* L0[0] -> L1 table */
+    str     x1, [x0, #0]              /* L0[0] -> L1_peripherals */
 
-    /* Setup L1 table (two entries: peripherals and DRAM) */
-    adrp    x0, boot_l1_table
-    add     x0, x0, :lo12:boot_l1_table
+    /* L0[1] -> L1_dram (covers VA 0x40000000-0x7FFFFFFF) */
+    adrp    x1, boot_l1_dram
+    add     x1, x1, :lo12:boot_l1_dram
+    orr     x1, x1, #3                /* Valid table descriptor */
+    str     x1, [x0, #8]              /* L0[1] -> L1_dram */
 
-    /* L1[0] -> Peripheral L2 table (covers 0x00000000-0x40000000) */
+    /* Setup L1_peripherals table (for VA 0x00000000-0x3FFFFFFF) */
+    adrp    x0, boot_l1_peripherals
+    add     x0, x0, :lo12:boot_l1_peripherals
+
+    /* L1_peripherals[0] -> Peripheral L2 table */
     adrp    x1, boot_l2_peripherals
     add     x1, x1, :lo12:boot_l2_peripherals
     orr     x1, x1, #3                /* Valid table descriptor */
-    str     x1, [x0, #0]              /* L1[0] -> Peripheral L2 table */
+    str     x1, [x0, #0]              /* L1[0] -> Peripheral L2 */
 
-    /* L1[1] -> DRAM L2 table (covers 0x40000000-0x80000000) */
+    /* Setup L1_dram table (for VA 0x40000000-0x7FFFFFFF) */
+    adrp    x0, boot_l1_dram
+    add     x0, x0, :lo12:boot_l1_dram
+
+    /* L1_dram[0] -> DRAM L2 table */
     adrp    x1, boot_l2_table
     add     x1, x1, :lo12:boot_l2_table
     orr     x1, x1, #3                /* Valid table descriptor */
-    str     x1, [x0, #8]              /* L1[1] -> L2 table (covers 1GB at 0x40000000) */
+    str     x1, [x0, #0]              /* L1[0] -> DRAM L2 */
 
     /* Setup Peripheral L2 table (map 256MB using 128 x 2MB blocks)
      * Covers 0x00000000-0x10000000 for UART, GIC, and other peripherals
@@ -172,7 +187,7 @@ bss_cleared:
      * [0]    = 1 (valid)
      * [1]    = 0 (block entry, not table)
      * [4:2]  = 001 (AttrIndx = 1 for device memory)
-     * [5]    = 1 (AF - access flag)
+     * [10]   = 1 (AF - access flag, MUST be set!)
      * [7:6]  = 00 (AP[2:1] = read/write for all)
      * [9:8]  = 00 (SH[1:0] = non-shareable for device memory)
      */
@@ -180,7 +195,7 @@ bss_cleared:
     add     x0, x0, :lo12:boot_l2_peripherals
     mov     x1, #0x00000000           /* Start at 0x00000000 physical */
     mov     x2, #0                    /* Counter */
-    mov     x3, #0x25                 /* Block flags: Valid (0x01) | AttrIndx=1 (0x04) | AF (0x20) */
+    movz    x3, #0x405                /* Block flags: Valid (0x01) | AttrIndx=1 (0x04) | AF (0x400) */
     movz    x5, #0x0020, lsl #16      /* x5 = 0x200000 (2MB increment) */
 3:  orr     x4, x1, x3
     str     x4, [x0, x2, lsl #3]
@@ -271,21 +286,25 @@ bss_cleared:
     mov     x11, #0x37                /* '7' */
     strb    w11, [x10]
 
-    /* Ensure all previous instructions complete */
-    isb
+    /* Invalidate TLBs before enabling MMU */
+    tlbi    vmalle1                   /* Invalidate all TLB entries for EL1 */
+    dsb     sy                        /* Ensure TLB invalidation completes */
+    isb                               /* Synchronize instruction stream */
 
     /* Debug: About to enable MMU */
     movz    x10, #0x0900, lsl #16
     mov     x11, #0x38                /* '8' */
     strb    w11, [x10]
 
-    /* TEMPORARY: Skip MMU enable to test platform_init */
-    /* Enable MMU only (without caches initially) */
-    /* mrs     x0, sctlr_el1 */
-    /* orr     x0, x0, #(1 << 0) */       /* M: Enable MMU */
+    /* Enable MMU with proper memory barriers */
+    dsb     sy                        /* Ensure all previous writes complete */
+    isb                               /* Synchronize instruction stream */
+
+    mrs     x0, sctlr_el1
+    orr     x0, x0, #(1 << 0)         /* M: Enable MMU */
     /* Note: Not enabling caches yet to isolate MMU issues */
-    /* msr     sctlr_el1, x0 */
-    /* isb */
+    msr     sctlr_el1, x0
+    isb                               /* Synchronize after MMU enable */
 
     /* Debug: Write 'B' to UART after MMU enable (proves MMU worked) */
     movz    x10, #0x0900, lsl #16     /* UART0 base = 0x09000000 */
@@ -627,10 +646,13 @@ no_reschedule:
 .align 12                         /* 4KB alignment required for page tables */
 
 boot_l0_table:
-    .space 4096                   /* Level 0 (512GB per entry) */
+    .space 4096                   /* Level 0 (1GB per entry with T0SZ=25) */
 
-boot_l1_table:
-    .space 4096                   /* Level 1 (1GB per entry) */
+boot_l1_peripherals:
+    .space 4096                   /* Level 1 for L0[0] (VA 0x00000000-0x3FFFFFFF) */
+
+boot_l1_dram:
+    .space 4096                   /* Level 1 for L0[1] (VA 0x40000000-0x7FFFFFFF) */
 
 boot_l2_table:
     .space 4096                   /* Level 2 (2MB per entry) - DRAM region */

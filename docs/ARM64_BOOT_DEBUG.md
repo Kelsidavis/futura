@@ -31,12 +31,45 @@
    - Peripheral: 0x25 (Valid | AttrIndx=1 | AF)
    - DRAM: 0x601 (Valid | AttrIndx=0 | AF | Inner Shareable)
 
-### Next Debug Steps
+### Latest MMU Debugging (2025-11-03 continued)
 
-1. Add debug marker after DRAM L2 loop completes ('4')
-2. Check if loop counter reaches 512 or hangs mid-loop
-3. Verify block descriptor construction (phys | flags)
-4. Check for page table write errors
+**Progress Made**:
+1. ✅ Fixed L0 table structure - added L0[1] for kernel at 0x40000000
+   - Created separate L1 tables: boot_l1_peripherals and boot_l1_dram
+   - L0[0] → L1_peripherals (VA 0x00000000-0x3FFFFFFF)
+   - L0[1] → L1_dram (VA 0x40000000-0x7FFFFFFF)
+
+2. ✅ Fixed Access Flag (AF) bit position in block descriptors
+   - Was incorrectly using bit [5], should be bit [10]
+   - Peripheral blocks: changed from 0x25 to 0x405
+   - DRAM blocks: already correct at 0x701
+
+3. ✅ Added TLB invalidation before MMU enable
+   - Added `tlbi vmalle1` instruction
+   - Added proper DSB/ISB barriers
+
+4. ✅ Added memory barriers around MMU configuration
+   - DSB SY before/after critical operations
+   - ISB after MMU enable
+
+**Current Issue**:
+- ESR 0x86000007 = Level 3 translation fault
+- Fault address: 0x4000025c (instruction after MMU enable)
+- MMU appears to treat L2 block descriptors as table descriptors
+- Attempts L3 table lookup which fails
+
+**Block Descriptor Format Verified**:
+- DRAM: 0x40000000 | 0x701
+  - Bits [1:0] = 01 (block descriptor) ✓
+  - Bit [10] = 1 (AF) ✓
+  - Bits [9:8] = 11 (inner shareable) ✓
+  - Bits [4:2] = 000 (AttrIndx=0 for normal memory) ✓
+
+**Next Debug Steps**:
+1. Try using 4KB pages at L3 instead of 2MB blocks at L2
+2. Inspect actual page table contents via QEMU gdb
+3. Check if QEMU virt machine has specific MMU requirements
+4. Test with different TCR_EL1 settings
 
 ## Current State
 

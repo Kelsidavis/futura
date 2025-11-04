@@ -135,7 +135,7 @@ ifeq ($(PLATFORM),x86_64)
     OBJCOPY_BIN_ARCH := i386:x86-64
 else ifeq ($(PLATFORM),arm64)
     # ARM64 cross-compilation toolchain
-    CROSS_COMPILE ?= aarch64-linux-gnu-
+    CROSS_COMPILE ?= /opt/homebrew/bin/aarch64-elf-
     CC := $(CROSS_COMPILE)gcc
     AS := $(CROSS_COMPILE)as
     LD := $(CROSS_COMPILE)ld
@@ -144,7 +144,7 @@ else ifeq ($(PLATFORM),arm64)
     ARCH_CFLAGS := -march=armv8-a -mtune=cortex-a53 -Wno-pedantic
     ARCH_ASFLAGS :=
     ARCH_LDFLAGS := -T platform/arm64/link.ld
-    EXTRA_LDLIBS := /usr/lib/gcc-cross/aarch64-linux-gnu/13/libgcc.a
+    EXTRA_LDLIBS := /opt/homebrew/Cellar/aarch64-elf-gcc/15.2.0/lib/gcc/aarch64-elf/15.2.0/libgcc.a
     # Binary format for embedding blobs
     OBJCOPY_BIN_FMT := elf64-aarch64
     OBJCOPY_BIN_ARCH := aarch64
@@ -507,7 +507,11 @@ else ifeq ($(PLATFORM),arm64)
         kernel/arch/arm64/hal_interrupts.c \
         kernel/mm/arm64_paging.c \
         kernel/dtb/arm64_dtb.c \
-        kernel/dtb/rpi_init.c
+        kernel/dtb/rpi_init.c \
+        kernel/tests/multiprocess.c \
+        kernel/tests/sys_dup2.c \
+        kernel/tests/sys_pipe.c \
+        kernel/tests/sys_signal.c
 endif
 
 # Subsystem sources (POSIX compat)

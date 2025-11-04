@@ -207,20 +207,26 @@ static int64_t sys_nanosleep(uint64_t req_ptr, uint64_t rem_ptr,
     (void)arg2; (void)arg3; (void)arg4; (void)arg5;
 
     if (req_ptr == 0) {
+        fut_serial_puts("[SYSCALL] nanosleep() null req_ptr\n");
         return -EINVAL;
     }
 
+    fut_serial_puts("[SYSCALL] nanosleep() reading timespec\n");
     struct timespec *req = (struct timespec *)req_ptr;
 
     /* Convert requested time to nanoseconds */
+    fut_serial_puts("[SYSCALL] nanosleep() converting to ns\n");
     uint64_t sleep_ns = req->tv_sec * 1000000000ULL + req->tv_nsec;
 
+    fut_serial_puts("[SYSCALL] nanosleep() getting start time\n");
     /* Get start time */
     uint64_t start_cycles = fut_rdtsc();
 
+    fut_serial_puts("[SYSCALL] nanosleep() entering busy wait\n");
     /* Busy wait (simple implementation)
      * TODO: Use timer interrupts for real sleep
      */
+    uint64_t iterations = 0;
     while (1) {
         uint64_t current_cycles = fut_rdtsc();
         uint64_t elapsed_cycles = current_cycles - start_cycles;
@@ -229,7 +235,16 @@ static int64_t sys_nanosleep(uint64_t req_ptr, uint64_t rem_ptr,
         if (elapsed_ns >= sleep_ns) {
             break;
         }
+
+        /* Limit iterations to prevent infinite loop during debugging */
+        iterations++;
+        if (iterations > 100000000) {
+            fut_serial_puts("[SYSCALL] nanosleep() iteration limit reached\n");
+            break;
+        }
     }
+
+    fut_serial_puts("[SYSCALL] nanosleep() sleep complete\n");
 
     /* No remaining time */
     if (rem_ptr != 0) {
@@ -239,6 +254,104 @@ static int64_t sys_nanosleep(uint64_t req_ptr, uint64_t rem_ptr,
     }
 
     return 0;
+}
+
+/* utsname structure (for uname syscall) */
+struct utsname {
+    char sysname[65];    /* Operating system name */
+    char nodename[65];   /* Network node hostname */
+    char release[65];    /* Operating system release */
+    char version[65];    /* Operating system version */
+    char machine[65];    /* Hardware identifier */
+    char domainname[65]; /* Domain name */
+};
+
+/* sys_uname - get system information
+ * x0 = utsname*
+ */
+static int64_t sys_uname(uint64_t buf_ptr, uint64_t arg1, uint64_t arg2,
+                         uint64_t arg3, uint64_t arg4, uint64_t arg5) {
+    (void)arg1; (void)arg2; (void)arg3; (void)arg4; (void)arg5;
+
+    if (buf_ptr == 0) {
+        return -EINVAL;
+    }
+
+    struct utsname *buf = (struct utsname *)buf_ptr;
+
+    /* Clear the structure */
+    for (int i = 0; i < (int)sizeof(struct utsname); i++) {
+        ((char *)buf)[i] = 0;
+    }
+
+    /* Fill in system information */
+    const char *sysname = "Futura";
+    const char *nodename = "futura-arm64";
+    const char *release = "0.1.0";
+    const char *version = "2025-11-03";
+    const char *machine = "aarch64";
+    const char *domainname = "(none)";
+
+    /* Copy strings with bounds checking */
+    int i;
+    for (i = 0; sysname[i] && i < 64; i++) buf->sysname[i] = sysname[i];
+    for (i = 0; nodename[i] && i < 64; i++) buf->nodename[i] = nodename[i];
+    for (i = 0; release[i] && i < 64; i++) buf->release[i] = release[i];
+    for (i = 0; version[i] && i < 64; i++) buf->version[i] = version[i];
+    for (i = 0; machine[i] && i < 64; i++) buf->machine[i] = machine[i];
+    for (i = 0; domainname[i] && i < 64; i++) buf->domainname[i] = domainname[i];
+
+    return 0;
+}
+
+/* sys_getcwd - get current working directory
+ * x0 = buf, x1 = size
+ */
+static int64_t sys_getcwd(uint64_t buf_ptr, uint64_t size, uint64_t arg2,
+                          uint64_t arg3, uint64_t arg4, uint64_t arg5) {
+    (void)arg2; (void)arg3; (void)arg4; (void)arg5;
+
+    if (buf_ptr == 0 || size == 0) {
+        return -EINVAL;
+    }
+
+    /* For now, always return "/" (root directory)
+     * TODO: Implement per-task current directory tracking
+     */
+    char *buf = (char *)buf_ptr;
+    if (size < 2) {
+        return -EINVAL;  /* Buffer too small */
+    }
+
+    buf[0] = '/';
+    buf[1] = '\0';
+
+    return (int64_t)buf_ptr;  /* Success: return buffer pointer */
+}
+
+/* sys_chdir - change current working directory
+ * x0 = path
+ */
+static int64_t sys_chdir(uint64_t path_ptr, uint64_t arg1, uint64_t arg2,
+                         uint64_t arg3, uint64_t arg4, uint64_t arg5) {
+    (void)arg1; (void)arg2; (void)arg3; (void)arg4; (void)arg5;
+
+    if (path_ptr == 0) {
+        return -EINVAL;
+    }
+
+    const char *path = (const char *)path_ptr;
+
+    /* Basic validation: path must start with '/' */
+    if (path[0] != '/') {
+        return -EINVAL;
+    }
+
+    /* For now, accept any valid path and pretend to change
+     * TODO: Implement per-task current directory tracking
+     */
+    (void)path;
+    return 0;  /* Success */
 }
 
 /* ============================================================
@@ -255,14 +368,17 @@ struct syscall_entry {
 };
 
 /* ARM64 syscall numbers (Linux-compatible subset) */
+#define __NR_getcwd         17
+#define __NR_chdir          49
 #define __NR_read           63
 #define __NR_write          64
 #define __NR_exit           93
 #define __NR_exit_group     94
 #define __NR_nanosleep      101
+#define __NR_clock_gettime  113
+#define __NR_uname          160
 #define __NR_getpid         172
 #define __NR_getppid        173
-#define __NR_clock_gettime  113
 #define __NR_brk            214
 
 /* Maximum syscall number */
@@ -270,12 +386,15 @@ struct syscall_entry {
 
 /* Syscall table - sparse array indexed by syscall number */
 static struct syscall_entry syscall_table[MAX_SYSCALL] = {
+    [__NR_getcwd]       = { (syscall_fn_t)sys_getcwd,     "getcwd" },
+    [__NR_chdir]        = { (syscall_fn_t)sys_chdir,      "chdir" },
     [__NR_read]         = { (syscall_fn_t)sys_read,       "read" },
     [__NR_write]        = { (syscall_fn_t)sys_write,      "write" },
     [__NR_exit]         = { (syscall_fn_t)sys_exit,       "exit" },
     [__NR_exit_group]   = { (syscall_fn_t)sys_exit,       "exit_group" },
     [__NR_nanosleep]    = { (syscall_fn_t)sys_nanosleep,  "nanosleep" },
     [__NR_clock_gettime]= { (syscall_fn_t)sys_clock_gettime, "clock_gettime" },
+    [__NR_uname]        = { (syscall_fn_t)sys_uname,      "uname" },
     [__NR_getpid]       = { (syscall_fn_t)sys_getpid,     "getpid" },
     [__NR_getppid]      = { (syscall_fn_t)sys_getppid,    "getppid" },
     [__NR_brk]          = { (syscall_fn_t)sys_brk,        "brk" },

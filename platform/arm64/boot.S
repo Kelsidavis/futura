@@ -223,6 +223,11 @@ bss_cleared:
     cmp     x2, #512                  /* 512 entries = 1GB */
     blt     2b
 
+    /* Debug: DRAM L2 done */
+    movz    x10, #0x0900, lsl #16
+    mov     x11, #0x34                /* '4' */
+    strb    w11, [x10]
+
     /* Configure MAIR_EL1 (Memory Attribute Indirection Register)
      * Attr0 = 0xFF (Normal memory, Inner/Outer Write-Back Cacheable)
      * Attr1 = 0x00 (Device-nGnRnE - for UART, GIC, etc.)
@@ -230,6 +235,11 @@ bss_cleared:
      */
     movz    x0, #0x00FF               /* Attr0=0xFF (normal), Attr1=0x00 (device) */
     msr     mair_el1, x0
+
+    /* Debug: MAIR configured */
+    movz    x10, #0x0900, lsl #16
+    mov     x11, #0x35                /* '5' */
+    strb    w11, [x10]
 
     /* Configure TCR_EL1 (Translation Control Register)
      * TG1 = 00 (4KB granule for TTBR1)
@@ -243,6 +253,11 @@ bss_cleared:
     movk    x0, #1, lsl #32           /* IPS = 001 (bits 34:32) */
     msr     tcr_el1, x0
 
+    /* Debug: TCR configured */
+    movz    x10, #0x0900, lsl #16
+    mov     x11, #0x36                /* '6' */
+    strb    w11, [x10]
+
     /* Set TTBR1_EL1 to kernel page table */
     adrp    x0, boot_l0_table
     add     x0, x0, :lo12:boot_l0_table
@@ -251,16 +266,26 @@ bss_cleared:
     /* Set TTBR0_EL1 to same table for now (no user space yet) */
     msr     ttbr0_el1, x0
 
+    /* Debug: TTBR configured */
+    movz    x10, #0x0900, lsl #16
+    mov     x11, #0x37                /* '7' */
+    strb    w11, [x10]
+
     /* Ensure all previous instructions complete */
     isb
 
-    /* Enable MMU, caches, and alignment checking */
-    mrs     x0, sctlr_el1
-    orr     x0, x0, #(1 << 0)         /* M: Enable MMU */
-    orr     x0, x0, #(1 << 2)         /* C: Enable data cache */
-    orr     x0, x0, #(1 << 12)        /* I: Enable instruction cache */
-    msr     sctlr_el1, x0
-    isb
+    /* Debug: About to enable MMU */
+    movz    x10, #0x0900, lsl #16
+    mov     x11, #0x38                /* '8' */
+    strb    w11, [x10]
+
+    /* TEMPORARY: Skip MMU enable to test platform_init */
+    /* Enable MMU only (without caches initially) */
+    /* mrs     x0, sctlr_el1 */
+    /* orr     x0, x0, #(1 << 0) */       /* M: Enable MMU */
+    /* Note: Not enabling caches yet to isolate MMU issues */
+    /* msr     sctlr_el1, x0 */
+    /* isb */
 
     /* Debug: Write 'B' to UART after MMU enable (proves MMU worked) */
     movz    x10, #0x0900, lsl #16     /* UART0 base = 0x09000000 */

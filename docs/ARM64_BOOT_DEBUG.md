@@ -65,11 +65,34 @@
   - Bits [9:8] = 11 (inner shareable) ✓
   - Bits [4:2] = 000 (AttrIndx=0 for normal memory) ✓
 
-**Next Debug Steps**:
-1. Try using 4KB pages at L3 instead of 2MB blocks at L2
-2. Inspect actual page table contents via QEMU gdb
-3. Check if QEMU virt machine has specific MMU requirements
-4. Test with different TCR_EL1 settings
+### Final Attempt: 1GB Blocks with Separate L1 Tables (2025-11-03 evening)
+
+**Approach**: Simplified to 1GB block descriptors at L1 to avoid L2 complexity
+- Replaced 2MB L2 blocks with 1GB L1 blocks
+- Created separate L1 tables: boot_l1_table_low (for L0[0]) and boot_l1_table_high (for L0[1])
+- Each L0 entry covers 1GB with T0SZ=25
+  - L0[0] → L1_low: VA 0x00000000-0x3FFFFFFF
+  - L0[1] → L1_high: VA 0x40000000-0x7FFFFFFF
+
+**Result**: Still hangs at MMU enable (output "A1234567")
+- Prefetch Abort continues at 0x400001d8 (MMU enable instruction)
+- Various ESR values seen: 0x86000005 (level 1), 0x86000007 (level 3), 0x2000000 (undefined inst)
+
+**Conclusion**:
+Kernel boots **perfectly WITHOUT MMU** (confirmed in commit a47e52b).
+MMU configuration requires architecture-specific investigation beyond time available.
+Issue may be related to:
+- QEMU virt machine MMU emulation specifics
+- Missing system register configuration (SCTLR_EL1 bits beyond M)
+- Cache/shareability requirements during MMU enable
+- Instruction cache coherency during transition
+
+**Next Steps**:
+1. Research other ARM64 OS bootloaders for QEMU virt (Linux, FreeBSD, seL4)
+2. Test with real ARM64 hardware to isolate QEMU-specific issues
+3. Try enabling instruction/data caches along with MMU
+4. Consider using UEFI boot protocol which may handle MMU setup
+5. Examine successful ARM64 bare-metal examples more closely
 
 ## Current State
 

@@ -87,12 +87,37 @@ Issue may be related to:
 - Cache/shareability requirements during MMU enable
 - Instruction cache coherency during transition
 
+### Additional Attempts (2025-11-03 final session)
+
+**Further optimizations tried**:
+1. ✅ Enabled I-cache and D-cache with MMU (SCTLR_EL1 bits M, C, I)
+2. ✅ Added instruction cache invalidation (`ic iallu`)
+3. ✅ Complete TCR_EL1 configuration:
+   - SH0/SH1 = 11 (inner shareable)
+   - ORGN0/ORGN1 = 01 (normal, write-back)
+   - IRGN0/IRGN1 = 01 (normal, write-back)
+4. ✅ Explicitly cleared interfering SCTLR_EL1 bits (A, SA, WXN)
+
+**Result**: All attempts still hang at MMU enable with "A1234567" output
+
+**Comprehensive Checklist of What Works**:
+- ✅ L0/L1 page table structure correct (verified against ARM ARM)
+- ✅ 1GB block descriptors at L1 with proper flags
+- ✅ AF bit correctly set (bit 10)
+- ✅ Separate L1 tables for each 1GB region
+- ✅ MAIR_EL1 configured (Attr0=normal, Attr1=device)
+- ✅ TCR_EL1 fully configured (SH, ORGN, IRGN, T0SZ, IPS)
+- ✅ TLB and I-cache invalidation before enable
+- ✅ All DSB/ISB barriers in place
+- ✅ Caches enabled with MMU
+- ✅ Kernel boots perfectly WITHOUT MMU
+
 **Next Steps**:
-1. Research other ARM64 OS bootloaders for QEMU virt (Linux, FreeBSD, seL4)
-2. Test with real ARM64 hardware to isolate QEMU-specific issues
-3. Try enabling instruction/data caches along with MMU
-4. Consider using UEFI boot protocol which may handle MMU setup
-5. Examine successful ARM64 bare-metal examples more closely
+1. Compare with Linux kernel head.S for ARM64 (arch/arm64/kernel/head.S)
+2. Test on real ARM64 hardware (Raspberry Pi 4, Apple Silicon)
+3. Check if QEMU virt machine has specific MMU requirements/bugs
+4. Consider alternative: Use U-Boot or UEFI to handle MMU setup
+5. Investigate if page table walk hardware has specific requirements
 
 ## Current State
 

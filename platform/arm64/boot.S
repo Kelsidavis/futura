@@ -204,15 +204,24 @@ bss_cleared:
     strb    w11, [x10]
 
     /* Configure TCR_EL1 (Translation Control Register)
-     * TG1 = 00 (4KB granule for TTBR1)
-     * TG0 = 00 (4KB granule for TTBR0)
-     * T1SZ = 25 (VA size = 64 - 25 = 39 bits for kernel)
-     * T0SZ = 25 (VA size = 39 bits for user)
-     * IPS = 001 (36-bit PA space)
+     * T0SZ = 25 (bits 5:0): VA size = 64 - 25 = 39 bits
+     * T1SZ = 25 (bits 21:16): VA size = 39 bits
+     * TG0/TG1 = 00: 4KB granule
+     * SH0 = 11 (bits 13:12): Inner shareable for TTBR0
+     * SH1 = 11 (bits 29:28): Inner shareable for TTBR1
+     * ORGN0/IRGN0 = 01 (bits 11:10, 9:8): Normal, WB RA WA
+     * ORGN1/IRGN1 = 01 (bits 27:26, 25:24): Normal, WB RA WA
+     * IPS = 001 (bits 34:32): 36-bit PA space
      */
-    movz    x0, #25                   /* T0SZ = 25 (bits 5:0) */
-    movk    x0, #25, lsl #16          /* T1SZ = 25 (bits 21:16) */
-    movk    x0, #1, lsl #32           /* IPS = 001 (bits 34:32) */
+    movz    x0, #25                   /* T0SZ = 25 */
+    orr     x0, x0, #(0x3 << 12)      /* SH0 = 11 (inner shareable) */
+    orr     x0, x0, #(0x1 << 10)      /* ORGN0 = 01 */
+    orr     x0, x0, #(0x1 << 8)       /* IRGN0 = 01 */
+    movk    x0, #25, lsl #16          /* T1SZ = 25 */
+    orr     x0, x0, #(0x3 << 28)      /* SH1 = 11 (inner shareable) */
+    orr     x0, x0, #(0x1 << 26)      /* ORGN1 = 01 */
+    orr     x0, x0, #(0x1 << 24)      /* IRGN1 = 01 */
+    movk    x0, #1, lsl #32           /* IPS = 001 (36-bit PA) */
     msr     tcr_el1, x0
 
     /* Debug: TCR configured */
@@ -233,9 +242,10 @@ bss_cleared:
     mov     x11, #0x36                /* '6' */
     strb    w11, [x10]
 
-    /* Invalidate TLBs before enabling MMU */
+    /* Invalidate TLBs and caches before enabling MMU */
     tlbi    vmalle1                   /* Invalidate all TLB entries for EL1 */
-    dsb     sy                        /* Ensure TLB invalidation completes */
+    ic      iallu                     /* Invalidate all instruction caches to PoU */
+    dsb     sy                        /* Ensure all invalidations complete */
     isb                               /* Synchronize instruction stream */
 
     /* Debug: About to enable MMU */
@@ -243,13 +253,19 @@ bss_cleared:
     mov     x11, #0x37                /* '7' */
     strb    w11, [x10]
 
-    /* Enable MMU with proper memory barriers */
+    /* Enable MMU, I-cache, and D-cache together */
     dsb     sy                        /* Ensure all previous writes complete */
     isb                               /* Synchronize instruction stream */
 
     mrs     x0, sctlr_el1
+    /* Clear bits that might interfere */
+    bic     x0, x0, #(1 << 1)         /* Clear A bit (alignment check) */
+    bic     x0, x0, #(1 << 3)         /* Clear SA bit */
+    bic     x0, x0, #(1 << 19)        /* Clear WXN bit */
+    /* Set required bits */
     orr     x0, x0, #(1 << 0)         /* M: Enable MMU */
-    /* Note: Not enabling caches yet to isolate MMU issues */
+    orr     x0, x0, #(1 << 2)         /* C: Enable data cache */
+    orr     x0, x0, #(1 << 12)        /* I: Enable instruction cache */
     msr     sctlr_el1, x0
     isb                               /* Synchronize after MMU enable */
 

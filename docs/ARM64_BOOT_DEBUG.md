@@ -1,7 +1,42 @@
 # ARM64 Boot Debugging Notes
 
 **Date**: 2025-11-03
-**Status**: Build complete, boot debugging in progress
+**Status**: Build complete, systematic boot debugging in progress
+**Latest**: Kernel reaches DRAM L2 setup (output: "A123")
+
+## Latest Debug Session Progress
+
+### Systematic Boot Debugging (2025-11-03 evening)
+
+**Serial Output: "A123"** indicates:
+- ✅ **A** = Kernel started, BSS cleared
+- ✅ **1** = Page tables zeroed (4 tables, 2048 entries)
+- ✅ **2** = Peripheral L2 setup complete (128 x 2MB blocks)
+- ✅ **3** = About to setup DRAM L2 (entering loop)
+- ❌ Hangs during DRAM L2 loop (should map 512 x 2MB blocks)
+
+### Issues Fixed This Session
+
+1. **Peripheral Region Mapping Added**
+   - Added boot_l2_peripherals table
+   - Maps 0x00000000-0x10000000 (includes UART and GIC)
+   - Uses device memory attributes (Attr1)
+
+2. **ARM64 Immediate Encoding Fixes**
+   - `mov x10, #0x09000000` → `movz x10, #0x0900, lsl #16`
+   - `mov x1, #0x40000000` → `movz x1, #0x4000, lsl #16`
+   - `add x1, x1, #0x200000` → `add x1, x1, x5` (with x5 = 0x200000)
+
+3. **Block Descriptor Flags Corrected**
+   - Peripheral: 0x25 (Valid | AttrIndx=1 | AF)
+   - DRAM: 0x601 (Valid | AttrIndx=0 | AF | Inner Shareable)
+
+### Next Debug Steps
+
+1. Add debug marker after DRAM L2 loop completes ('4')
+2. Check if loop counter reaches 512 or hangs mid-loop
+3. Verify block descriptor construction (phys | flags)
+4. Check for page table write errors
 
 ## Current State
 

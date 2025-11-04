@@ -124,6 +124,26 @@ static int itoa_local(uint64_t val, char *buf) {
     return i;
 }
 
+/* Simple malloc implementation using brk() */
+static void *simple_malloc(uint64_t size) {
+    /* Get current break */
+    int64_t current_brk = syscall1(__NR_brk, 0);
+    if (current_brk < 0) {
+        return NULL;
+    }
+
+    /* Calculate new break (aligned to 16 bytes) */
+    uint64_t new_brk = (current_brk + size + 15) & ~15ULL;
+
+    /* Set new break */
+    int64_t result = syscall1(__NR_brk, new_brk);
+    if (result < 0 || (uint64_t)result < new_brk) {
+        return NULL;
+    }
+
+    return (void *)current_brk;
+}
+
 /* EL0 test function - this will run in userspace */
 void el0_test_function(void) {
     /* We're now at EL0!
@@ -147,7 +167,7 @@ void el0_test_function(void) {
 
     /* Test 3: Get heap break */
     int64_t brk_addr = syscall1(__NR_brk, 0);
-    len = strcpy_local(p, "[EL0] Current heap break: 0x");
+    len = strcpy_local(p, "[EL0] Initial heap break: 0x");
     for (int i = 60; i >= 0; i -= 4) {
         uint8_t nibble = (brk_addr >> i) & 0xF;
         p[len++] = nibble < 10 ? '0' + nibble : 'a' + (nibble - 10);
@@ -155,8 +175,49 @@ void el0_test_function(void) {
     p[len++] = '\n';
     syscall3(__NR_write, 1, (uint64_t)global_msg_buffer, len);
 
-    /* Test 4: Success message */
-    len = strcpy_local(p, "[EL0] All syscalls completed successfully!\n");
+    /* Test 4: Allocate memory with malloc */
+    len = strcpy_local(p, "[EL0] Testing malloc()...\n");
+    syscall3(__NR_write, 1, (uint64_t)p, len);
+
+    char *allocated = (char *)simple_malloc(64);
+    if (allocated == NULL) {
+        len = strcpy_local(p, "[EL0] ERROR: malloc() failed!\n");
+        syscall3(__NR_write, 1, (uint64_t)p, len);
+    } else {
+        len = strcpy_local(p, "[EL0] malloc(64) returned: 0x");
+        for (int i = 60; i >= 0; i -= 4) {
+            uint64_t addr = (uint64_t)allocated;
+            uint8_t nibble = (addr >> i) & 0xF;
+            p[len++] = nibble < 10 ? '0' + nibble : 'a' + (nibble - 10);
+        }
+        p[len++] = '\n';
+        syscall3(__NR_write, 1, (uint64_t)global_msg_buffer, len);
+
+        /* Write to allocated memory */
+        strcpy_local(allocated, "Hello from malloc'd memory!");
+        len = strcpy_local(p, "[EL0] Wrote to malloc'd memory: ");
+        strcpy_local(p + len, allocated);
+        len = strcpy_local(p, p);  /* Recalculate length */
+        p[len++] = '\n';
+        syscall3(__NR_write, 1, (uint64_t)global_msg_buffer, len);
+    }
+
+    /* Test 5: Check heap grew */
+    int64_t new_brk = syscall1(__NR_brk, 0);
+    len = strcpy_local(p, "[EL0] New heap break: 0x");
+    for (int i = 60; i >= 0; i -= 4) {
+        uint8_t nibble = (new_brk >> i) & 0xF;
+        p[len++] = nibble < 10 ? '0' + nibble : 'a' + (nibble - 10);
+    }
+    len = strcpy_local(p + len, " (grew ");
+    len += itoa_local(new_brk - brk_addr, p + len);
+    len = strcpy_local(p + len, " bytes)");
+    len = strcpy_local(p, p);  /* Recalculate total length */
+    p[len++] = '\n';
+    syscall3(__NR_write, 1, (uint64_t)global_msg_buffer, len);
+
+    /* Test 6: Success message */
+    len = strcpy_local(p, "[EL0] All tests completed successfully!\n");
     syscall3(__NR_write, 1, (uint64_t)p, len);
 
     /* Exit with success code */

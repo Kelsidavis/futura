@@ -13,6 +13,9 @@
 /* Forward declarations */
 extern void fut_serial_puts(const char *str);
 extern void fut_serial_putc(char c);
+extern uint64_t fut_rdtsc(void);
+extern uint64_t fut_cycles_to_ns(uint64_t cycles);
+extern uint64_t fut_cycles_per_ms(void);
 
 /* Syscall return values */
 #define SYSCALL_SUCCESS     0
@@ -164,6 +167,80 @@ static int64_t sys_read(uint64_t fd, uint64_t buf, uint64_t count,
     return 0;  /* EOF */
 }
 
+/* Timespec structure (for clock_gettime and nanosleep) */
+struct timespec {
+    int64_t tv_sec;      /* Seconds */
+    int64_t tv_nsec;     /* Nanoseconds */
+};
+
+/* sys_clock_gettime - get time
+ * x0 = clockid, x1 = timespec*
+ */
+static int64_t sys_clock_gettime(uint64_t clockid, uint64_t ts_ptr,
+                                  uint64_t arg2, uint64_t arg3,
+                                  uint64_t arg4, uint64_t arg5) {
+    (void)arg2; (void)arg3; (void)arg4; (void)arg5;
+
+    if (ts_ptr == 0) {
+        return -EINVAL;
+    }
+
+    /* Get current cycle count */
+    uint64_t cycles = fut_rdtsc();
+    uint64_t ns = fut_cycles_to_ns(cycles);
+
+    /* Convert to seconds and nanoseconds */
+    struct timespec *ts = (struct timespec *)ts_ptr;
+    ts->tv_sec = ns / 1000000000ULL;
+    ts->tv_nsec = ns % 1000000000ULL;
+
+    (void)clockid;  /* Ignore clockid for now */
+    return 0;
+}
+
+/* sys_nanosleep - sleep for specified time
+ * x0 = req (timespec*), x1 = rem (timespec*)
+ */
+static int64_t sys_nanosleep(uint64_t req_ptr, uint64_t rem_ptr,
+                             uint64_t arg2, uint64_t arg3,
+                             uint64_t arg4, uint64_t arg5) {
+    (void)arg2; (void)arg3; (void)arg4; (void)arg5;
+
+    if (req_ptr == 0) {
+        return -EINVAL;
+    }
+
+    struct timespec *req = (struct timespec *)req_ptr;
+
+    /* Convert requested time to nanoseconds */
+    uint64_t sleep_ns = req->tv_sec * 1000000000ULL + req->tv_nsec;
+
+    /* Get start time */
+    uint64_t start_cycles = fut_rdtsc();
+
+    /* Busy wait (simple implementation)
+     * TODO: Use timer interrupts for real sleep
+     */
+    while (1) {
+        uint64_t current_cycles = fut_rdtsc();
+        uint64_t elapsed_cycles = current_cycles - start_cycles;
+        uint64_t elapsed_ns = fut_cycles_to_ns(elapsed_cycles);
+
+        if (elapsed_ns >= sleep_ns) {
+            break;
+        }
+    }
+
+    /* No remaining time */
+    if (rem_ptr != 0) {
+        struct timespec *rem = (struct timespec *)rem_ptr;
+        rem->tv_sec = 0;
+        rem->tv_nsec = 0;
+    }
+
+    return 0;
+}
+
 /* ============================================================
  *   System Call Table
  * ============================================================ */
@@ -182,8 +259,10 @@ struct syscall_entry {
 #define __NR_write          64
 #define __NR_exit           93
 #define __NR_exit_group     94
+#define __NR_nanosleep      101
 #define __NR_getpid         172
 #define __NR_getppid        173
+#define __NR_clock_gettime  113
 #define __NR_brk            214
 
 /* Maximum syscall number */
@@ -195,6 +274,8 @@ static struct syscall_entry syscall_table[MAX_SYSCALL] = {
     [__NR_write]        = { (syscall_fn_t)sys_write,      "write" },
     [__NR_exit]         = { (syscall_fn_t)sys_exit,       "exit" },
     [__NR_exit_group]   = { (syscall_fn_t)sys_exit,       "exit_group" },
+    [__NR_nanosleep]    = { (syscall_fn_t)sys_nanosleep,  "nanosleep" },
+    [__NR_clock_gettime]= { (syscall_fn_t)sys_clock_gettime, "clock_gettime" },
     [__NR_getpid]       = { (syscall_fn_t)sys_getpid,     "getpid" },
     [__NR_getppid]      = { (syscall_fn_t)sys_getppid,    "getppid" },
     [__NR_brk]          = { (syscall_fn_t)sys_brk,        "brk" },

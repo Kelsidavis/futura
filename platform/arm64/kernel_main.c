@@ -48,8 +48,11 @@ static uint8_t el0_test_stack[4096] __attribute__((aligned(16)));
 /* Syscall numbers (Linux-compatible) */
 #define __NR_getcwd         17
 #define __NR_chdir          49
+#define __NR_openat         56
+#define __NR_close          57
 #define __NR_read           63
 #define __NR_write          64
+#define __NR_fstat          80
 #define __NR_exit           93
 #define __NR_nanosleep      101
 #define __NR_clock_gettime  113
@@ -72,6 +75,23 @@ struct utsname {
     char version[65];
     char machine[65];
     char domainname[65];
+};
+
+/* stat structure (for fstat syscall) */
+struct stat {
+    uint64_t st_dev;
+    uint64_t st_ino;
+    uint32_t st_mode;
+    uint32_t st_nlink;
+    uint32_t st_uid;
+    uint32_t st_gid;
+    uint64_t st_rdev;
+    uint64_t st_size;
+    uint32_t st_blksize;
+    uint64_t st_blocks;
+    int64_t  st_atime;
+    int64_t  st_mtime;
+    int64_t  st_ctime;
 };
 
 /* Helper function to do a syscall with 3 arguments */
@@ -116,6 +136,24 @@ static inline int64_t syscall2(uint64_t num, uint64_t arg0, uint64_t arg1) {
         "svc #0\n"
         : "+r"(x0)
         : "r"(x8), "r"(x1)
+        : "memory"
+    );
+
+    return (int64_t)x0;
+}
+
+/* Helper function to do a syscall with 4 arguments */
+static inline int64_t syscall4(uint64_t num, uint64_t arg0, uint64_t arg1, uint64_t arg2, uint64_t arg3) {
+    register uint64_t x8 __asm__("x8") = num;
+    register uint64_t x0 __asm__("x0") = arg0;
+    register uint64_t x1 __asm__("x1") = arg1;
+    register uint64_t x2 __asm__("x2") = arg2;
+    register uint64_t x3 __asm__("x3") = arg3;
+
+    __asm__ volatile(
+        "svc #0\n"
+        : "+r"(x0)
+        : "r"(x8), "r"(x1), "r"(x2), "r"(x3)
         : "memory"
     );
 
@@ -329,7 +367,46 @@ void el0_test_function(void) {
         syscall3(__NR_write, 1, (uint64_t)p, len);
     }
 
-    /* Test 10: Success message */
+    /* Test 10: File I/O operations (open/close/fstat) */
+    len = strcpy_local(p, "[EL0] Testing file I/O...\n");
+    syscall3(__NR_write, 1, (uint64_t)p, len);
+
+    /* Open a test file */
+    int64_t fd = syscall4(__NR_openat, -100, (uint64_t)"/test.txt", 0, 0);
+    if (fd >= 0) {
+        len = strcpy_local(p, "[EL0] openat(\"/test.txt\") returned fd ");
+        len += itoa_local(fd, p + len);
+        len += strcpy_local(p + len, "\n");
+        syscall3(__NR_write, 1, (uint64_t)global_msg_buffer, len);
+
+        /* Get file status */
+        struct stat st;
+        result = syscall2(__NR_fstat, fd, (uint64_t)&st);
+        if (result == 0) {
+            len = strcpy_local(p, "[EL0] fstat() size: ");
+            len += itoa_local(st.st_size, p + len);
+            len += strcpy_local(p + len, " bytes, mode: 0");
+            /* Print mode in octal */
+            uint32_t mode = st.st_mode & 0777;
+            char mode_str[4];
+            mode_str[0] = '0' + ((mode >> 6) & 7);
+            mode_str[1] = '0' + ((mode >> 3) & 7);
+            mode_str[2] = '0' + (mode & 7);
+            mode_str[3] = '\0';
+            len += strcpy_local(p + len, mode_str);
+            len += strcpy_local(p + len, "\n");
+            syscall3(__NR_write, 1, (uint64_t)global_msg_buffer, len);
+        }
+
+        /* Close the file */
+        result = syscall1(__NR_close, fd);
+        if (result == 0) {
+            len = strcpy_local(p, "[EL0] close() succeeded\n");
+            syscall3(__NR_write, 1, (uint64_t)p, len);
+        }
+    }
+
+    /* Test 11: Success message */
     len = strcpy_local(p, "[EL0] All tests completed successfully!\n");
     syscall3(__NR_write, 1, (uint64_t)p, len);
 

@@ -354,6 +354,111 @@ static int64_t sys_chdir(uint64_t path_ptr, uint64_t arg1, uint64_t arg2,
     return 0;  /* Success */
 }
 
+/* stat structure (simplified) */
+struct stat {
+    uint64_t st_dev;        /* Device ID */
+    uint64_t st_ino;        /* Inode number */
+    uint32_t st_mode;       /* File mode */
+    uint32_t st_nlink;      /* Number of hard links */
+    uint32_t st_uid;        /* User ID */
+    uint32_t st_gid;        /* Group ID */
+    uint64_t st_rdev;       /* Device ID (if special file) */
+    uint64_t st_size;       /* Total size in bytes */
+    uint32_t st_blksize;    /* Block size for I/O */
+    uint64_t st_blocks;     /* Number of 512B blocks */
+    int64_t  st_atime;      /* Access time */
+    int64_t  st_mtime;      /* Modification time */
+    int64_t  st_ctime;      /* Status change time */
+};
+
+/* File modes */
+#define S_IFREG  0100000    /* Regular file */
+#define S_IFDIR  0040000    /* Directory */
+
+/* sys_openat - open file (stub)
+ * x0 = dirfd, x1 = pathname, x2 = flags, x3 = mode
+ * For simplicity, we ignore dirfd and just treat as open()
+ */
+static int64_t sys_openat(uint64_t dirfd, uint64_t path_ptr, uint64_t flags,
+                          uint64_t mode, uint64_t arg4, uint64_t arg5) {
+    (void)dirfd; (void)flags; (void)mode; (void)arg4; (void)arg5;
+
+    if (path_ptr == 0) {
+        return -EINVAL;
+    }
+
+    const char *path = (const char *)path_ptr;
+
+    /* For now, just validate path and return a dummy fd
+     * TODO: Implement real file descriptor table and VFS integration
+     */
+    if (path[0] != '/') {
+        return -EINVAL;  /* Path must be absolute */
+    }
+
+    /* Return a dummy fd (3 = first user fd after stdin/stdout/stderr) */
+    return 3;
+}
+
+/* sys_close - close file descriptor (stub)
+ * x0 = fd
+ */
+static int64_t sys_close(uint64_t fd, uint64_t arg1, uint64_t arg2,
+                         uint64_t arg3, uint64_t arg4, uint64_t arg5) {
+    (void)arg1; (void)arg2; (void)arg3; (void)arg4; (void)arg5;
+
+    /* Validate fd range */
+    if (fd < 3 || fd > 1024) {
+        return -EINVAL;
+    }
+
+    /* For now, just accept any valid fd
+     * TODO: Track open fds and validate
+     */
+    return 0;  /* Success */
+}
+
+/* sys_fstat - get file status (stub)
+ * x0 = fd, x1 = statbuf
+ */
+static int64_t sys_fstat(uint64_t fd, uint64_t buf_ptr, uint64_t arg2,
+                         uint64_t arg3, uint64_t arg4, uint64_t arg5) {
+    (void)arg2; (void)arg3; (void)arg4; (void)arg5;
+
+    if (buf_ptr == 0) {
+        return -EINVAL;
+    }
+
+    /* Validate fd */
+    if (fd > 1024) {
+        return -EINVAL;
+    }
+
+    struct stat *buf = (struct stat *)buf_ptr;
+
+    /* Clear the structure */
+    for (int i = 0; i < (int)sizeof(struct stat); i++) {
+        ((char *)buf)[i] = 0;
+    }
+
+    /* Fill with stub data */
+    buf->st_dev = 1;
+    buf->st_ino = 1000 + fd;
+    buf->st_mode = S_IFREG | 0644;  /* Regular file, rw-r--r-- */
+    buf->st_nlink = 1;
+    buf->st_uid = 0;
+    buf->st_gid = 0;
+    buf->st_rdev = 0;
+    buf->st_size = 1024;  /* Dummy size */
+    buf->st_blksize = 4096;
+    buf->st_blocks = 2;
+    buf->st_atime = 0;
+    buf->st_mtime = 0;
+    buf->st_ctime = 0;
+
+    return 0;
+}
+
 /* ============================================================
  *   System Call Table
  * ============================================================ */
@@ -370,8 +475,11 @@ struct syscall_entry {
 /* ARM64 syscall numbers (Linux-compatible subset) */
 #define __NR_getcwd         17
 #define __NR_chdir          49
+#define __NR_openat         56
+#define __NR_close          57
 #define __NR_read           63
 #define __NR_write          64
+#define __NR_fstat          80
 #define __NR_exit           93
 #define __NR_exit_group     94
 #define __NR_nanosleep      101
@@ -388,8 +496,11 @@ struct syscall_entry {
 static struct syscall_entry syscall_table[MAX_SYSCALL] = {
     [__NR_getcwd]       = { (syscall_fn_t)sys_getcwd,     "getcwd" },
     [__NR_chdir]        = { (syscall_fn_t)sys_chdir,      "chdir" },
+    [__NR_openat]       = { (syscall_fn_t)sys_openat,     "openat" },
+    [__NR_close]        = { (syscall_fn_t)sys_close,      "close" },
     [__NR_read]         = { (syscall_fn_t)sys_read,       "read" },
     [__NR_write]        = { (syscall_fn_t)sys_write,      "write" },
+    [__NR_fstat]        = { (syscall_fn_t)sys_fstat,      "fstat" },
     [__NR_exit]         = { (syscall_fn_t)sys_exit,       "exit" },
     [__NR_exit_group]   = { (syscall_fn_t)sys_exit,       "exit_group" },
     [__NR_nanosleep]    = { (syscall_fn_t)sys_nanosleep,  "nanosleep" },

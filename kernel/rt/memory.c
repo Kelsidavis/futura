@@ -63,3 +63,44 @@ int memcmp(const void *lhs, const void *rhs, size_t n)
     }
     return 0;
 }
+
+size_t strlen(const char *s)
+{
+    size_t len = 0;
+    while (s[len] != '\0') {
+        ++len;
+    }
+    return len;
+}
+
+int strcmp(const char *s1, const char *s2)
+{
+    while (*s1 != '\0' && *s1 == *s2) {
+        s1++;
+        s2++;
+    }
+    return (int)(unsigned char)*s1 - (int)(unsigned char)*s2;
+}
+
+char *strstr(const char *haystack, const char *needle)
+{
+    if (*needle == '\0') {
+        return (char *)haystack;
+    }
+
+    for (const char *h = haystack; *h != '\0'; h++) {
+        const char *h1 = h;
+        const char *n1 = needle;
+
+        while (*h1 != '\0' && *n1 != '\0' && *h1 == *n1) {
+            h1++;
+            n1++;
+        }
+
+        if (*n1 == '\0') {
+            return (char *)h;
+        }
+    }
+
+    return NULL;
+}

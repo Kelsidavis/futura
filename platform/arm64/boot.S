@@ -110,6 +110,104 @@ clear_bss:
     b       clear_bss
 
 bss_cleared:
+    /* ========================================
+     *   MMU Initialization
+     * ======================================== */
+
+    /* Setup identity mapping for first 1GB of RAM
+     * QEMU virt machine has DRAM at 0x40000000-0x80000000
+     * We'll use 2MB block mappings at level 2 for simplicity
+     */
+
+    /* Get base address of boot page tables */
+    adrp    x0, boot_l0_table
+    add     x0, x0, :lo12:boot_l0_table
+
+    /* Zero out all page tables first */
+    mov     x1, #0
+    mov     x2, #(4096 * 3 / 8)       /* 3 tables, 512 entries each */
+1:  str     xzr, [x0, x1, lsl #3]
+    add     x1, x1, #1
+    cmp     x1, x2
+    blt     1b
+
+    /* Setup L0 table (single entry pointing to L1) */
+    adrp    x0, boot_l0_table
+    add     x0, x0, :lo12:boot_l0_table
+    adrp    x1, boot_l1_table
+    add     x1, x1, :lo12:boot_l1_table
+    orr     x1, x1, #3                /* Valid table descriptor */
+    str     x1, [x0]                  /* L0[0] -> L1 table */
+
+    /* Setup L1 table (single entry pointing to L2) */
+    adrp    x0, boot_l1_table
+    add     x0, x0, :lo12:boot_l1_table
+    adrp    x1, boot_l2_table
+    add     x1, x1, :lo12:boot_l2_table
+    orr     x1, x1, #3                /* Valid table descriptor */
+    str     x1, [x0, #8]              /* L1[1] -> L2 table (covers 1GB at 0x40000000) */
+
+    /* Setup L2 table (map 1GB using 512 x 2MB blocks)
+     * Physical address: 0x40000000 + (i * 0x200000)
+     * Block descriptor bits:
+     * [0]    = 1 (valid)
+     * [1]    = 0 (block entry, not table)
+     * [5]    = 1 (AF - access flag)
+     * [7:6]  = 00 (AP[2:1] = read/write for all)
+     * [9:8]  = 11 (SH[1:0] = inner shareable)
+     * [11:2] = AttrIndx (0 for normal memory)
+     */
+    adrp    x0, boot_l2_table
+    add     x0, x0, :lo12:boot_l2_table
+    mov     x1, #0x40000000           /* Start at 1GB physical */
+    mov     x2, #0                    /* Counter */
+    movz    x3, #0x401                /* Block flags: Valid, AF, Block */
+    orr     x3, x3, #(3 << 8)         /* SH = Inner Shareable */
+2:  orr     x4, x1, x3
+    str     x4, [x0, x2, lsl #3]
+    add     x1, x1, #0x200000         /* Next 2MB block */
+    add     x2, x2, #1
+    cmp     x2, #512                  /* 512 entries = 1GB */
+    blt     2b
+
+    /* Configure MAIR_EL1 (Memory Attribute Indirection Register)
+     * Attr0 = 0xFF (Normal memory, Inner/Outer Write-Back Cacheable)
+     * Attr1 = 0x00 (Device-nGnRnE)
+     */
+    movz    x0, #0xFF                 /* Attr0: Normal memory */
+    msr     mair_el1, x0
+
+    /* Configure TCR_EL1 (Translation Control Register)
+     * TG1 = 00 (4KB granule for TTBR1)
+     * TG0 = 00 (4KB granule for TTBR0)
+     * T1SZ = 25 (VA size = 64 - 25 = 39 bits for kernel)
+     * T0SZ = 25 (VA size = 39 bits for user)
+     * IPS = 001 (36-bit PA space)
+     */
+    movz    x0, #25                   /* T0SZ = 25 (bits 5:0) */
+    movk    x0, #25, lsl #16          /* T1SZ = 25 (bits 21:16) */
+    movk    x0, #1, lsl #32           /* IPS = 001 (bits 34:32) */
+    msr     tcr_el1, x0
+
+    /* Set TTBR1_EL1 to kernel page table */
+    adrp    x0, boot_l0_table
+    add     x0, x0, :lo12:boot_l0_table
+    msr     ttbr1_el1, x0
+
+    /* Set TTBR0_EL1 to same table for now (no user space yet) */
+    msr     ttbr0_el1, x0
+
+    /* Ensure all previous instructions complete */
+    isb
+
+    /* Enable MMU, caches, and alignment checking */
+    mrs     x0, sctlr_el1
+    orr     x0, x0, #(1 << 0)         /* M: Enable MMU */
+    orr     x0, x0, #(1 << 2)         /* C: Enable data cache */
+    orr     x0, x0, #(1 << 12)        /* I: Enable instruction cache */
+    msr     sctlr_el1, x0
+    isb
+
     /* Restore device tree address and call platform init */
     mov     x0, #0                    /* boot_magic = 0 */
     mov     x1, x20                   /* boot_info = device tree address */
@@ -430,3 +528,19 @@ no_reschedule:
 .extern _bss_start
 .extern _bss_end
 .extern fut_in_interrupt
+
+/* ============================================================
+ *   Boot Page Tables (in BSS)
+ * ============================================================ */
+
+.section .bss
+.align 12                         /* 4KB alignment required for page tables */
+
+boot_l0_table:
+    .space 4096                   /* Level 0 (512GB per entry) */
+
+boot_l1_table:
+    .space 4096                   /* Level 1 (1GB per entry) */
+
+boot_l2_table:
+    .space 4096                   /* Level 2 (2MB per entry) */

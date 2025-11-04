@@ -13,8 +13,6 @@
 #include "../../include/kernel/fut_vfs.h"
 #include "../../include/kernel/signal.h"
 
-#include <sys/types.h>
-
 #ifdef __x86_64__
 #include <platform/x86_64/regs.h>
 #include <platform/x86_64/memory/paging.h>

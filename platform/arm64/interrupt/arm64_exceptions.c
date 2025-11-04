@@ -74,25 +74,23 @@ void arm64_exception_dispatch(fut_interrupt_frame_t *frame) {
 
 /**
  * Handle SVC (Supervisor Call) instruction - ARM64 system call.
- * The SVC immediate value (syscall number) is in bits [15:0] of ESR.
  *
- * ARM64 calling convention for syscalls:
- *   x0-x7: syscall arguments
+ * ARM64 Linux syscall calling convention:
+ *   x8: syscall number
+ *   x0-x6: syscall arguments
  *   x0: return value
+ *
+ * Note: SVC instruction immediate is always 0 (SVC #0)
  */
 void arm64_svc_handler(fut_interrupt_frame_t *frame) {
     if (!frame) {
         return;
     }
 
-    /* Extract syscall number from ESR bits [15:0] */
-    uint32_t syscall_num = frame->esr & 0xFFFF;
+    /* Extract syscall number from X8 (standard Linux ARM64 convention) */
+    uint64_t syscall_num = frame->x[8];
 
-    /* Arguments are in x0-x7 (frame->x[0-7])
-     * Note: In ABI, x0 is also the syscall number in some conventions,
-     * but here syscall number comes from SVC immediate in ESR
-     * Arguments follow x0-x7 in standard order
-     */
+    /* Arguments are in x0-x6 (frame->x[0-6]) */
     uint64_t arg1 = frame->x[0];
     uint64_t arg2 = frame->x[1];
     uint64_t arg3 = frame->x[2];

@@ -7,6 +7,15 @@
 #include <user/futura_posix.h>
 #include <user/sys/syscall.h>
 
+/* Architecture-specific syscall ABI */
+#if defined(__x86_64__)
+#include <platform/x86_64/syscall_abi.h>
+#elif defined(__aarch64__) || defined(__arm64__)
+#include <platform/arm64/syscall_abi.h>
+#else
+#error "Unsupported architecture"
+#endif
+
 /* AT_FDCWD: Use current working directory for path */
 #ifndef AT_FDCWD
 #define AT_FDCWD -100
@@ -73,18 +82,8 @@ long syscall(long number, ...) {
         const char *pathname = va_arg(ap, const char *);
         int flags = va_arg(ap, int);
         int mode = va_arg(ap, int);
-        /* Make the actual int 0x80 syscall to reach the kernel handler
-         * Use explicit register variables to force GCC to use the correct registers
-         * for the i386 calling convention (EBX, ECX, EDX) */
-        register long _arg1 __asm__("ebx") = (long)pathname;
-        register long _arg2 __asm__("ecx") = (long)flags;
-        register long _arg3 __asm__("edx") = (long)mode;
-        register long _num __asm__("eax") = SYS_open;
-        __asm__ volatile("int $0x80"
-            : "+r"(_num)
-            : "r"(_arg1), "r"(_arg2), "r"(_arg3)
-            : "memory");
-        result = _num;
+        /* Architecture-agnostic syscall invocation */
+        result = __SYSCALL_3(SYS_open, pathname, flags, mode);
         break;
     }
     case SYS_openat: {
@@ -93,30 +92,13 @@ long syscall(long number, ...) {
         int flags = va_arg(ap, int);
         int mode = va_arg(ap, int);
 
-        /* Workaround for SYSCALL instruction not being invoked on x86_64
-         * When dirfd is AT_FDCWD (current directory), we can convert to open()
-         * which uses int 0x80 and works properly.
-         *
-         * For now, we only support AT_FDCWD. Other file descriptors would
-         * require full openat() kernel support.
-         */
+        /* When dirfd is AT_FDCWD (current directory), convert to open() */
         if (dirfd != AT_FDCWD) {
             errno = EBADF;
             result = -1;
         } else {
-            /* Make the actual int 0x80 syscall with SYS_open
-             * open(pathname, flags, mode) is equivalent to
-             * openat(AT_FDCWD, pathname, flags, mode)
-             * Use explicit register variables for i386 calling convention */
-            register long _arg1 __asm__("ebx") = (long)pathname;
-            register long _arg2 __asm__("ecx") = (long)flags;
-            register long _arg3 __asm__("edx") = (long)mode;
-            register long _num __asm__("eax") = SYS_open;
-            __asm__ volatile("int $0x80"
-                : "+r"(_num)
-                : "r"(_arg1), "r"(_arg2), "r"(_arg3)
-                : "memory");
-            result = _num;
+            /* Architecture-agnostic syscall: open(pathname, flags, mode) */
+            result = __SYSCALL_3(SYS_open, pathname, flags, mode);
         }
         break;
     }

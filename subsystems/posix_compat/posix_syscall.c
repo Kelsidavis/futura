@@ -19,7 +19,11 @@
 #include <kernel/fut_socket.h>
 #include <kernel/signal.h>
 #include <kernel/signal_frame.h>
+#ifdef __x86_64__
 #include <arch/x86_64/regs.h>
+#elif defined(__aarch64__)
+#include <platform/arm64/regs.h>
+#endif
 
 /* ============================================================
  *   Syscall Numbers
@@ -723,6 +727,7 @@ static int64_t sys_sigreturn_handler(uint64_t frame_ptr, uint64_t arg2, uint64_t
      * The registers in uc_mcontext.gregs are in the same order as the interrupt frame */
     fut_interrupt_frame_t *frame = fut_current_frame;
     if (frame) {
+#ifdef __x86_64__
         struct sigcontext *ctx = &sigframe.uc.uc_mcontext.gregs;
 
         /* Restore GPRs */
@@ -758,6 +763,16 @@ static int64_t sys_sigreturn_handler(uint64_t frame_ptr, uint64_t arg2, uint64_t
 
         fut_printf("[SIGNAL] Restored context from sigreturn: rip=0x%llx rsp=0x%llx\n",
                    frame->rip, frame->rsp);
+#elif defined(__aarch64__)
+        /* ARM64: Restore registers from sigcontext
+         * TODO: This requires ARM64-specific sigcontext structure
+         * For now, stub implementation */
+        (void)sigframe;
+        fut_printf("[SIGNAL] ARM64 sigreturn not yet implemented\n");
+        return -ENOSYS;
+#else
+#error "Unsupported architecture for sigreturn"
+#endif
     }
 
     /* Return value is overwritten by the restored register state */
@@ -1461,6 +1476,7 @@ static bool posix_deliver_signal(fut_task_t *current, int signum,
     sigframe.info.si_timerid = 0;
 
     /* Fill in machine context (CPU registers at time of interruption) */
+#ifdef __x86_64__
     mcontext_t *mctx = &sigframe.uc.uc_mcontext;
     mctx->gregs.r8 = frame->r8;
     mctx->gregs.r9 = frame->r9;
@@ -1486,6 +1502,15 @@ static bool posix_deliver_signal(fut_task_t *current, int signum,
     mctx->gregs.__pad0 = 0;
     mctx->gregs.err = frame->error_code;
     mctx->gregs.trapno = frame->vector;
+#elif defined(__aarch64__)
+    /* ARM64: Signal frame context setup
+     * TODO: Requires ARM64-specific sigcontext structure */
+    (void)sigframe;
+    fut_printf("[SIGNAL] ARM64 signal delivery not yet fully implemented\n");
+    return false;
+#else
+#error "Unsupported architecture for signal delivery"
+#endif
 
     /* Fill in user context with signal mask tracking */
     sigframe.uc.uc_flags = 0;
@@ -1517,22 +1542,35 @@ static bool posix_deliver_signal(fut_task_t *current, int signum,
         return false;
     }
 
-    /* Modify interrupt frame to call handler
-     * The handler will be called with:
-     *   rdi = signal number
-     *   rsi = siginfo_t *
-     *   rdx = ucontext_t *
-     *
-     * Calculate offsets into the frame for siginfo_t and ucontext_t
-     */
+    /* Modify interrupt frame to call handler */
     uint64_t siginfo_addr = user_rsp + offsetof(struct rt_sigframe, info);
     uint64_t ucontext_addr = user_rsp + offsetof(struct rt_sigframe, uc);
 
+#ifdef __x86_64__
+    /* x86_64 calling convention:
+     *   rdi = signal number
+     *   rsi = siginfo_t *
+     *   rdx = ucontext_t *
+     */
     frame->rdi = (uint64_t)signum;
     frame->rsi = siginfo_addr;
     frame->rdx = ucontext_addr;
     frame->rip = (uint64_t)handler;
     frame->rsp = user_rsp;
+#elif defined(__aarch64__)
+    /* ARM64 calling convention:
+     *   x0 = signal number
+     *   x1 = siginfo_t *
+     *   x2 = ucontext_t *
+     */
+    frame->x[0] = (uint64_t)signum;
+    frame->x[1] = siginfo_addr;
+    frame->x[2] = ucontext_addr;
+    frame->pc = (uint64_t)handler;
+    frame->sp = user_rsp;
+#else
+#error "Unsupported architecture for signal frame modification"
+#endif
 
     /* Apply SA_RESETHAND flag if set:
      * Reset handler to SIG_DFL after delivery */

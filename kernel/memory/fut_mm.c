@@ -997,6 +997,7 @@ static void vma_try_merge_neighbors(fut_mm_t *mm, fut_vma_t *vma) {
  * Insert a VMA into the mm's VMA list in sorted order by start address.
  * This maintains the invariant that VMAs are sorted and non-overlapping.
  */
+static void vma_insert_sorted(fut_mm_t *mm, fut_vma_t *vma) __attribute__((unused));
 static void vma_insert_sorted(fut_mm_t *mm, fut_vma_t *vma) {
     if (!mm || !vma) {
         return;

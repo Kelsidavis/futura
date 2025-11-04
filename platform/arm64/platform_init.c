@@ -341,8 +341,6 @@ int fut_serial_getc(void) {
  * Waits indefinitely for a character to be available.
  */
 int fut_serial_getc_blocking(void) {
-    volatile uint8_t *uart = (volatile uint8_t *)UART0_BASE;
-
     /* Polling mode: wait with timeout to avoid deadlock */
     volatile int max_iterations = 10000000;  /* ~100ms at typical QEMU speed */
 

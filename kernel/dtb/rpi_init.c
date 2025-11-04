@@ -252,7 +252,7 @@ void fut_rpi_irq_init(const fut_platform_info_t *info) {
 
         /* Get the interrupt controller base address from platform info
          * For now, use a reasonable default for RPi3 if not in DTB */
-        uint64_t irq_base = info->irq_controller_base;
+        uint64_t irq_base = info->gic_dist_base;
         if (!irq_base) {
             /* Fallback: RPi3 standard address (in kernel virtual space)
              * The actual physical address 0x3F00B000 must be mapped

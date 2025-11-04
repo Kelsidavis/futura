@@ -42,7 +42,7 @@ See docs/ARM64_BOOT_DEBUG.md for complete investigation (250+ lines).
 
 - **Syscall Table** (`platform/arm64/syscall_table.c`):
   - Linux-compatible ABI: x8=syscall number, x0-x7=arguments
-  - Implemented syscalls: write(), exit(), getpid(), getppid(), brk()
+  - **16 working syscalls**: getcwd, chdir, openat, close, read, write, fstat, exit, exit_group, nanosleep, clock_gettime, uname, getpid, getppid, brk
   - Sparse array syscall table indexed by syscall number
   - `arm64_syscall_dispatch()` function
   - ✅ **Fully functional!**
@@ -140,10 +140,11 @@ This preserves all syscall arguments correctly:
 ### Next Steps 🚀
 
 ### Priority 1: Enhanced Syscall Testing
-1. ✅ Basic syscalls working (write, exit)
-2. Add more syscalls: read(), open(), close(), stat()
-3. Test syscall error handling and validation
-4. Verify syscall return values propagate correctly
+1. ✅ Basic syscalls working (write, exit, getpid, getppid, brk)
+2. ✅ System info syscalls (uname, getcwd, chdir, clock_gettime)
+3. ✅ File I/O syscalls (openat, close, fstat)
+4. ✅ Memory management (brk, malloc working from userspace)
+5. ✅ All 16 syscalls tested and verified from EL0
 
 ### Priority 2: Process/Thread Management
 1. Implement fork() for ARM64

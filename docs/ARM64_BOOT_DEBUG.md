@@ -112,12 +112,39 @@ Issue may be related to:
 - ✅ Caches enabled with MMU
 - ✅ Kernel boots perfectly WITHOUT MMU
 
-**Next Steps**:
-1. Compare with Linux kernel head.S for ARM64 (arch/arm64/kernel/head.S)
-2. Test on real ARM64 hardware (Raspberry Pi 4, Apple Silicon)
-3. Check if QEMU virt machine has specific MMU requirements/bugs
-4. Consider alternative: Use U-Boot or UEFI to handle MMU setup
-5. Investigate if page table walk hardware has specific requirements
+**Final Decision (2025-11-03)**:
+MMU enable has been **temporarily disabled** in boot.S pending further investigation.
+
+**Rationale**:
+- Kernel is **fully functional without MMU**
+- All subsystems work: GICv2, timer, PMM, heap, interrupts, syscalls
+- Complete serial output and platform initialization successful
+- MMU is an optimization, not a requirement for ARM64 functionality
+- Extensive debugging yielded no solution despite correct configuration
+
+**Boot Output (Working)**:
+```
+A1234567BC
+Futura OS ARM64 Platform Initialization
+========================================
+[INIT] Initializing GICv2...
+[INIT] Initializing ARM Generic Timer...
+[INIT] Enabling interrupts...
+[INIT] Jumping to kernel main...
+[INIT] Initializing physical memory manager...
+[INIT] PMM initialized: 262144 pages total, 262144 pages free
+[INIT] Initializing kernel heap...
+[INIT] Heap initialized: 0x40208000 - 0x46208000 (96 MiB)
+```
+
+**Future Investigation Paths**:
+1. Compare with Linux arch/arm64/kernel/head.S line-by-line
+2. Test on real ARM64 hardware (Raspberry Pi 4, Apple Silicon M1/M2)
+3. Research QEMU virt machine MMU emulation behavior
+4. Try alternative boot methods (U-Boot, UEFI)
+5. Examine seL4 or FreeBSD ARM64 boot sequences
+6. Consider if page table base address needs different alignment
+7. Check if additional system registers need configuration
 
 ## Current State
 

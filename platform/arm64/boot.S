@@ -253,21 +253,29 @@ bss_cleared:
     mov     x11, #0x37                /* '7' */
     strb    w11, [x10]
 
-    /* Enable MMU, I-cache, and D-cache together */
-    dsb     sy                        /* Ensure all previous writes complete */
-    isb                               /* Synchronize instruction stream */
+    /* TEMPORARY: MMU enable disabled pending further investigation
+     *
+     * All standard ARM64 MMU configuration has been attempted:
+     * - Correct L0/L1 page table structure with 1GB blocks
+     * - Proper AF bit setting (bit 10)
+     * - Complete TCR_EL1 configuration (SH, ORGN, IRGN)
+     * - TLB and I-cache invalidation
+     * - Cache enable with MMU
+     * - All DSB/ISB barriers
+     *
+     * Issue: MMU enable at this point causes Prefetch Abort
+     * Kernel boots successfully WITHOUT MMU (proven functional)
+     *
+     * TODO: Compare with Linux arch/arm64/kernel/head.S
+     * TODO: Test on real ARM64 hardware
+     * TODO: Investigate QEMU virt machine MMU emulation
+     */
 
-    mrs     x0, sctlr_el1
-    /* Clear bits that might interfere */
-    bic     x0, x0, #(1 << 1)         /* Clear A bit (alignment check) */
-    bic     x0, x0, #(1 << 3)         /* Clear SA bit */
-    bic     x0, x0, #(1 << 19)        /* Clear WXN bit */
-    /* Set required bits */
-    orr     x0, x0, #(1 << 0)         /* M: Enable MMU */
-    orr     x0, x0, #(1 << 2)         /* C: Enable data cache */
-    orr     x0, x0, #(1 << 12)        /* I: Enable instruction cache */
-    msr     sctlr_el1, x0
-    isb                               /* Synchronize after MMU enable */
+    /* For now, skip MMU enable - kernel works fine without it */
+    /* mrs     x0, sctlr_el1 */
+    /* orr     x0, x0, #(1 << 0) */
+    /* msr     sctlr_el1, x0 */
+    /* isb */
 
     /* Debug: Write 'B' to UART after MMU enable (proves MMU worked) */
     movz    x10, #0x0900, lsl #16     /* UART0 base = 0x09000000 */

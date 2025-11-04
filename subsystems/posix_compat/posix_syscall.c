@@ -1445,17 +1445,22 @@ static bool posix_deliver_signal(fut_task_t *current, int signum,
         return false;
     }
 
-    /* Get user stack pointer from frame */
-    uint64_t user_rsp = frame->rsp;
+    /* Get user stack pointer from frame (architecture-specific) */
+#ifdef __x86_64__
+    uint64_t user_sp = frame->rsp;
+#elif defined(__aarch64__)
+    uint64_t user_sp = frame->sp;
+#else
+#error "Unsupported architecture for signal delivery"
+#endif
 
     /* Allocate rt_sigframe on user stack (must be 16-byte aligned)
-     * Decrement RSP to make room for frame, ensuring 16-byte alignment
-     * before the RIP pushed by CALL instruction is accounted for */
-    user_rsp -= sizeof(struct rt_sigframe);
-    user_rsp &= ~15ULL;  /* Align to 16 bytes */
+     * Decrement SP to make room for frame, ensuring 16-byte alignment */
+    user_sp -= sizeof(struct rt_sigframe);
+    user_sp &= ~15ULL;  /* Align to 16 bytes */
 
     /* Verify user stack is accessible (basic check) */
-    if (user_rsp < 0x400000) {  /* Below reasonable user stack threshold */
+    if (user_sp < 0x400000) {  /* Below reasonable user stack threshold */
         fut_printf("[SIGNAL] Stack underflow attempting to deliver signal %d\n", signum);
         return false;
     }
@@ -1537,14 +1542,14 @@ static bool posix_deliver_signal(fut_task_t *current, int signum,
     sigframe.pad = 0;
 
     /* Copy frame to user stack */
-    if (fut_copy_to_user((void *)user_rsp, &sigframe, sizeof(sigframe)) != 0) {
+    if (fut_copy_to_user((void *)user_sp, &sigframe, sizeof(sigframe)) != 0) {
         fut_printf("[SIGNAL] Failed to copy sigframe to user stack for signal %d\n", signum);
         return false;
     }
 
     /* Modify interrupt frame to call handler */
-    uint64_t siginfo_addr = user_rsp + offsetof(struct rt_sigframe, info);
-    uint64_t ucontext_addr = user_rsp + offsetof(struct rt_sigframe, uc);
+    uint64_t siginfo_addr = user_sp + offsetof(struct rt_sigframe, info);
+    uint64_t ucontext_addr = user_sp + offsetof(struct rt_sigframe, uc);
 
 #ifdef __x86_64__
     /* x86_64 calling convention:
@@ -1556,7 +1561,7 @@ static bool posix_deliver_signal(fut_task_t *current, int signum,
     frame->rsi = siginfo_addr;
     frame->rdx = ucontext_addr;
     frame->rip = (uint64_t)handler;
-    frame->rsp = user_rsp;
+    frame->rsp = user_sp;
 #elif defined(__aarch64__)
     /* ARM64 calling convention:
      *   x0 = signal number
@@ -1567,7 +1572,7 @@ static bool posix_deliver_signal(fut_task_t *current, int signum,
     frame->x[1] = siginfo_addr;
     frame->x[2] = ucontext_addr;
     frame->pc = (uint64_t)handler;
-    frame->sp = user_rsp;
+    frame->sp = user_sp;
 #else
 #error "Unsupported architecture for signal frame modification"
 #endif
@@ -1580,7 +1585,7 @@ static bool posix_deliver_signal(fut_task_t *current, int signum,
     }
 
     fut_printf("[SIGNAL] Delivered signal %d to task %llu, handler=%p, frame=%p\n",
-              signum, current->pid, (void *)(uintptr_t)handler, (void *)user_rsp);
+              signum, current->pid, (void *)(uintptr_t)handler, (void *)user_sp);
 
     return true;
 }

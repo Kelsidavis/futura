@@ -226,6 +226,122 @@ fut_thread_entry_stub:
 .size fut_thread_entry_stub, . - fut_thread_entry_stub
 
 /*
+ * fut_restore_context - Restore context and transition to target exception level
+ *
+ * Arguments:
+ *   x0 = context (fut_cpu_context_t *)
+ *
+ * Restores CPU state from context and uses eret to transition to the target EL.
+ * This function handles both EL1→EL1 and EL1→EL0 transitions.
+ *
+ * Context structure offsets:
+ *   0: x0, 8: x19, 16: x20, 24: x21, 32: x22, 40: x23, 48: x24, 56: x25
+ *   64: x26, 72: x27, 80: x28, 88: x29_fp, 96: x30_lr, 104: sp, 112: pc, 120: pstate
+ */
+.global fut_restore_context
+.type fut_restore_context, @function
+fut_restore_context:
+    /* Save x0 temporarily (we'll need it until the end) */
+    mov     x2, x0
+
+    /* Load PC and PSTATE into exception return registers */
+    ldr     x1, [x2, #112]            /* Load PC */
+    msr     elr_el1, x1               /* ELR_EL1 = target PC */
+
+    ldr     x1, [x2, #120]            /* Load PSTATE */
+    msr     spsr_el1, x1              /* SPSR_EL1 = target PSTATE */
+
+    /* Restore stack pointer
+     * Check if target is EL0 (PSTATE & 0xF == 0) and set SP_EL0
+     * Otherwise set SP_EL1
+     */
+    ldr     x1, [x2, #104]            /* Load SP */
+    ldr     x3, [x2, #120]            /* Load PSTATE again */
+    and     x3, x3, #0xF              /* Extract mode bits */
+    cbnz    x3, 1f                    /* If not EL0, skip to setting SP_EL1 */
+
+    /* Target is EL0 - set SP_EL0 */
+    msr     sp_el0, x1
+    b       2f
+
+1:  /* Target is EL1 - set SP_EL1 */
+    mov     sp, x1
+
+2:  /* Continue with register restore */
+    /* Restore callee-saved registers x19-x28 */
+    ldr     x19, [x2, #8]
+    ldr     x20, [x2, #16]
+    ldr     x21, [x2, #24]
+    ldr     x22, [x2, #32]
+    ldr     x23, [x2, #40]
+    ldr     x24, [x2, #48]
+    ldr     x25, [x2, #56]
+    ldr     x26, [x2, #64]
+    ldr     x27, [x2, #72]
+    ldr     x28, [x2, #80]
+
+    /* Restore frame pointer and link register */
+    ldr     x29, [x2, #88]            /* Restore FP */
+    ldr     x30, [x2, #96]            /* Restore LR */
+
+    /* Restore x0 last (return value / first argument) */
+    ldr     x0, [x2, #0]
+
+    /* Use eret to transition to target EL with restored PC and PSTATE */
+    eret
+
+.size fut_restore_context, . - fut_restore_context
+
+/*
+ * fut_save_context - Save current context
+ *
+ * Arguments:
+ *   x0 = context (fut_cpu_context_t *)
+ *
+ * Saves the current CPU state into the context structure.
+ */
+.global fut_save_context
+.type fut_save_context, @function
+fut_save_context:
+    /* Save x0 (usually return value) */
+    str     x0, [x0, #0]
+
+    /* Save callee-saved registers x19-x28 */
+    str     x19, [x0, #8]
+    str     x20, [x0, #16]
+    str     x21, [x0, #24]
+    str     x22, [x0, #32]
+    str     x23, [x0, #40]
+    str     x24, [x0, #48]
+    str     x25, [x0, #56]
+    str     x26, [x0, #64]
+    str     x27, [x0, #72]
+    str     x28, [x0, #80]
+
+    /* Save frame pointer and link register */
+    str     x29, [x0, #88]            /* Save FP */
+    str     x30, [x0, #96]            /* Save LR */
+
+    /* Save stack pointer */
+    mov     x1, sp
+    str     x1, [x0, #104]
+
+    /* Save return address as PC */
+    adr     x1, 1f
+    str     x1, [x0, #112]
+
+    /* Save current PSTATE (using SPSR_EL1 if available, or construct from CurrentEL) */
+    mrs     x1, spsr_el1
+    str     x1, [x0, #120]
+
+    ret
+
+1:  /* Resume point */
+    ret
+
+.size fut_save_context, . - fut_save_context
+
+/*
  * Constants for PSTATE
  */
 .set PSTATE_MODE_EL0t, 0x00

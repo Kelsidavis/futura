@@ -129,13 +129,16 @@ fut_thread_t *fut_thread_create_user(fut_process_t *process, void (*entry)(void 
 
     /* Initialize CPU context for user-space execution */
     void *stack_ptr = (void *)((uint64_t)thread->user_stack + thread->user_stack_size);
-    fut_init_thread_context(&thread->context, fut_user_entry_trampoline, (void *)entry, stack_ptr);
 
-    /* Inject argument */
-    thread->context.x19 = (uint64_t)arg;
+    /* Clear context */
+    memset(&thread->context, 0, sizeof(fut_cpu_context_t));
 
-    /* Set processor state to user mode */
+    /* Set up for direct EL0 execution (no trampoline needed) */
+    thread->context.x0 = (uint64_t)arg;         /* First argument */
+    thread->context.sp = (uint64_t)stack_ptr;   /* User stack */
+    thread->context.pc = (uint64_t)entry;       /* User entry point */
     thread->context.pstate = PSTATE_MODE_EL0t;  /* EL0 user mode */
+    thread->context.x29_fp = (uint64_t)stack_ptr; /* Frame pointer */
 
     /* Use process's virtual memory context */
     thread->vmem = fut_mm_context(process->mm);

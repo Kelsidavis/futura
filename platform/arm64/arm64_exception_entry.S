@@ -24,12 +24,11 @@ sync_exception_entry:
      * - We've just taken an exception
      * - SP may be kernel stack or user stack depending on where exception came from
      * - Need to build interrupt frame and call dispatcher
+     * - ALL registers x0-x30 contain values that MUST BE PRESERVED!
      */
 
-    /* Save SP from exception context */
-    mov     x1, sp
-
     /* Allocate space for fut_interrupt_frame_t on kernel stack
+     * We'll use sub/add directly on SP to avoid clobbering any registers
      * Structure layout (from include/arch/arm64/regs.h):
      * - x[0-30]      : 31 * 8 = 248 bytes
      * - sp           : 8 bytes
@@ -39,38 +38,41 @@ sync_exception_entry:
      * - far          : 8 bytes
      * - fpu_state    : 512 bytes
      * - fpsr, fpcr   : 8 bytes
-     * Total: ~816 bytes, round to ~820
+     * Total: ~816 bytes, round to ~880
      */
 
     sub     sp, sp, #880        /* Allocate space for frame + buffer */
+
+    /* Save all general purpose registers x0-x30 directly to frame
+     * SP now points to the frame, so we can use it as base
+     */
+    stp     x0, x1, [sp, #0]    /* Save x0, x1 (syscall args 0, 1) */
+    stp     x2, x3, [sp, #16]   /* Save x2, x3 (syscall args 2, 3) */
+    stp     x4, x5, [sp, #32]   /* Save x4, x5 (syscall args 4, 5) */
+    stp     x6, x7, [sp, #48]
+    stp     x8, x9, [sp, #64]   /* x8 = syscall number */
+    stp     x10, x11, [sp, #80]
+    stp     x12, x13, [sp, #96]
+    stp     x14, x15, [sp, #112]
+    stp     x16, x17, [sp, #128]
+    stp     x18, x19, [sp, #144]
+    stp     x20, x21, [sp, #160]
+    stp     x22, x23, [sp, #176]
+    stp     x24, x25, [sp, #192]
+    stp     x26, x27, [sp, #208]
+    stp     x28, x29, [sp, #224]
+    str     x30, [sp, #240]
+
+    /* Now we can use x0 and x1 as scratch registers since they're saved */
     mov     x0, sp              /* x0 = frame pointer */
 
-    /* Save general purpose registers x0-x30 into frame->x[0-30] */
-    stp     x2, x3, [x0, #16]
-    stp     x4, x5, [x0, #32]
-    stp     x6, x7, [x0, #48]
-    stp     x8, x9, [x0, #64]
-    stp     x10, x11, [x0, #80]
-    stp     x12, x13, [x0, #96]
-    stp     x14, x15, [x0, #112]
-    stp     x16, x17, [x0, #128]
-    stp     x18, x19, [x0, #144]
-    stp     x20, x21, [x0, #160]
-    stp     x22, x23, [x0, #176]
-    stp     x24, x25, [x0, #192]
-    stp     x26, x27, [x0, #208]
-    stp     x28, x29, [x0, #224]
-    str     x30, [x0, #240]
-
-    /* Store the original x0, x1 that were in caller context
-     * x1 still has original SP from exception
-     * Need to get original x0 from somewhere - it's lost, use 0
+    /* Calculate original SP (before we allocated the frame)
+     * Original SP = current SP + 880
      */
-    str     xzr, [x0, #0]       /* frame->x[0] = 0 (will be overwritten by return value) */
-    str     x1, [x0, #8]        /* frame->x[1] = original SP */
+    add     x1, sp, #880        /* x1 = original SP */
 
     /* Save SP, PC, PSTATE */
-    str     x1, [x0, #248]      /* frame->sp */
+    str     x1, [x0, #248]      /* frame->sp = original SP */
     mrs     x1, elr_el1
     str     x1, [x0, #256]      /* frame->pc (ELR_EL1) */
     mrs     x1, spsr_el1
@@ -124,27 +126,7 @@ sync_exception_entry:
 
     mov     x0, sp              /* x0 = frame pointer (still valid) */
 
-    /* Restore general purpose registers */
-    ldp     x2, x3, [x0, #16]
-    ldp     x4, x5, [x0, #32]
-    ldp     x6, x7, [x0, #48]
-    ldp     x8, x9, [x0, #64]
-    ldp     x10, x11, [x0, #80]
-    ldp     x12, x13, [x0, #96]
-    ldp     x14, x15, [x0, #112]
-    ldp     x16, x17, [x0, #128]
-    ldp     x18, x19, [x0, #144]
-    ldp     x20, x21, [x0, #160]
-    ldp     x22, x23, [x0, #176]
-    ldp     x24, x25, [x0, #192]
-    ldp     x26, x27, [x0, #208]
-    ldp     x28, x29, [x0, #224]
-    ldr     x30, [x0, #240]
-
-    /* Restore x0, x1 from frame */
-    ldp     x0, x1, [x0, #0]   /* Load x0, x1 from frame->x[0] and frame->x[1] */
-
-    /* Restore FPU state before returning from exception
+    /* Restore FPU state BEFORE restoring x0 (since we need x0 as frame pointer)
      * FPU registers and control state must be restored
      */
 
@@ -176,12 +158,39 @@ sync_exception_entry:
     ldp     d28, d29, [x1, #0]
     ldp     d30, d31, [x1, #16]
 
-    /* Restore SP (update to next frame) */
-    ldr     x1, [x0, #248]
-    mov     sp, x1
+    /* Restore ELR_EL1 and SPSR_EL1 from frame BEFORE restoring x0 */
+    ldr     x1, [x0, #256]      /* Load PC from frame->pc */
+    msr     elr_el1, x1         /* Restore ELR_EL1 (exception return address) */
 
-    /* Restore PC and PSTATE via ERET
-     * (ERET will use ELR_EL1 and SPSR_EL1, which we've already updated)
+    ldr     x1, [x0, #264]      /* Load PSTATE from frame->pstate */
+    msr     spsr_el1, x1        /* Restore SPSR_EL1 (exception return state) */
+
+    /* Restore SP from frame */
+    ldr     x1, [x0, #248]      /* Load SP from frame->sp */
+    mov     sp, x1              /* Restore SP */
+
+    /* Restore general purpose registers x2-x30 */
+    ldp     x2, x3, [x0, #16]
+    ldp     x4, x5, [x0, #32]
+    ldp     x6, x7, [x0, #48]
+    ldp     x8, x9, [x0, #64]
+    ldp     x10, x11, [x0, #80]
+    ldp     x12, x13, [x0, #96]
+    ldp     x14, x15, [x0, #112]
+    ldp     x16, x17, [x0, #128]
+    ldp     x18, x19, [x0, #144]
+    ldp     x20, x21, [x0, #160]
+    ldp     x22, x23, [x0, #176]
+    ldp     x24, x25, [x0, #192]
+    ldp     x26, x27, [x0, #208]
+    ldp     x28, x29, [x0, #224]
+    ldr     x30, [x0, #240]
+
+    /* Restore x0, x1 LAST (x0 contains syscall return value) */
+    ldp     x0, x1, [x0, #0]   /* Load x0, x1 from frame->x[0] and frame->x[1] */
+
+    /* Return from exception
+     * ERET will use ELR_EL1 (PC) and SPSR_EL1 (PSTATE) to return to caller
      */
     eret
 

@@ -110,6 +110,11 @@ clear_bss:
     b       clear_bss
 
 bss_cleared:
+    /* Early debug: Write 'A' to UART before MMU (proves kernel started) */
+    movz    x10, #0x0900, lsl #16     /* UART0 base = 0x09000000 */
+    mov     x11, #0x41                /* ASCII 'A' */
+    strb    w11, [x10]                /* Write to UART data register */
+
     /* ========================================
      *   MMU Initialization
      * ======================================== */
@@ -125,11 +130,16 @@ bss_cleared:
 
     /* Zero out all page tables first */
     mov     x1, #0
-    mov     x2, #(4096 * 3 / 8)       /* 3 tables, 512 entries each */
+    mov     x2, #(4096 * 4 / 8)       /* 4 tables, 512 entries each (added peripheral L2) */
 1:  str     xzr, [x0, x1, lsl #3]
     add     x1, x1, #1
     cmp     x1, x2
     blt     1b
+
+    /* Debug: Tables zeroed */
+    movz    x10, #0x0900, lsl #16
+    mov     x11, #0x31                /* '1' */
+    strb    w11, [x10]
 
     /* Setup L0 table (single entry pointing to L1) */
     adrp    x0, boot_l0_table
@@ -139,15 +149,57 @@ bss_cleared:
     orr     x1, x1, #3                /* Valid table descriptor */
     str     x1, [x0]                  /* L0[0] -> L1 table */
 
-    /* Setup L1 table (single entry pointing to L2) */
+    /* Setup L1 table (two entries: peripherals and DRAM) */
     adrp    x0, boot_l1_table
     add     x0, x0, :lo12:boot_l1_table
+
+    /* L1[0] -> Peripheral L2 table (covers 0x00000000-0x40000000) */
+    adrp    x1, boot_l2_peripherals
+    add     x1, x1, :lo12:boot_l2_peripherals
+    orr     x1, x1, #3                /* Valid table descriptor */
+    str     x1, [x0, #0]              /* L1[0] -> Peripheral L2 table */
+
+    /* L1[1] -> DRAM L2 table (covers 0x40000000-0x80000000) */
     adrp    x1, boot_l2_table
     add     x1, x1, :lo12:boot_l2_table
     orr     x1, x1, #3                /* Valid table descriptor */
     str     x1, [x0, #8]              /* L1[1] -> L2 table (covers 1GB at 0x40000000) */
 
-    /* Setup L2 table (map 1GB using 512 x 2MB blocks)
+    /* Setup Peripheral L2 table (map 256MB using 128 x 2MB blocks)
+     * Covers 0x00000000-0x10000000 for UART, GIC, and other peripherals
+     * Physical address: 0x00000000 + (i * 0x200000)
+     * Block descriptor bits:
+     * [0]    = 1 (valid)
+     * [1]    = 0 (block entry, not table)
+     * [4:2]  = 001 (AttrIndx = 1 for device memory)
+     * [5]    = 1 (AF - access flag)
+     * [7:6]  = 00 (AP[2:1] = read/write for all)
+     * [9:8]  = 00 (SH[1:0] = non-shareable for device memory)
+     */
+    adrp    x0, boot_l2_peripherals
+    add     x0, x0, :lo12:boot_l2_peripherals
+    mov     x1, #0x00000000           /* Start at 0x00000000 physical */
+    mov     x2, #0                    /* Counter */
+    mov     x3, #0x25                 /* Block flags: Valid (0x01) | AttrIndx=1 (0x04) | AF (0x20) */
+    movz    x5, #0x0020, lsl #16      /* x5 = 0x200000 (2MB increment) */
+3:  orr     x4, x1, x3
+    str     x4, [x0, x2, lsl #3]
+    add     x1, x1, x5                /* Next 2MB block */
+    add     x2, x2, #1
+    cmp     x2, #128                  /* 128 entries = 256MB */
+    blt     3b
+
+    /* Debug: Peripheral L2 done */
+    movz    x10, #0x0900, lsl #16
+    mov     x11, #0x32                /* '2' */
+    strb    w11, [x10]
+
+    /* Debug: About to setup DRAM L2 */
+    movz    x10, #0x0900, lsl #16
+    mov     x11, #0x33                /* '3' */
+    strb    w11, [x10]
+
+    /* Setup DRAM L2 table (map 1GB using 512 x 2MB blocks)
      * Physical address: 0x40000000 + (i * 0x200000)
      * Block descriptor bits:
      * [0]    = 1 (valid)
@@ -159,22 +211,24 @@ bss_cleared:
      */
     adrp    x0, boot_l2_table
     add     x0, x0, :lo12:boot_l2_table
-    mov     x1, #0x40000000           /* Start at 1GB physical */
+    movz    x1, #0x4000, lsl #16      /* Start at 1GB physical = 0x40000000 */
     mov     x2, #0                    /* Counter */
     movz    x3, #0x401                /* Block flags: Valid, AF, Block */
     orr     x3, x3, #(3 << 8)         /* SH = Inner Shareable */
+    movz    x5, #0x0020, lsl #16      /* x5 = 0x200000 (2MB increment) */
 2:  orr     x4, x1, x3
     str     x4, [x0, x2, lsl #3]
-    add     x1, x1, #0x200000         /* Next 2MB block */
+    add     x1, x1, x5                /* Next 2MB block */
     add     x2, x2, #1
     cmp     x2, #512                  /* 512 entries = 1GB */
     blt     2b
 
     /* Configure MAIR_EL1 (Memory Attribute Indirection Register)
      * Attr0 = 0xFF (Normal memory, Inner/Outer Write-Back Cacheable)
-     * Attr1 = 0x00 (Device-nGnRnE)
+     * Attr1 = 0x00 (Device-nGnRnE - for UART, GIC, etc.)
+     * Combined value: 0x00FF (Attr1=0x00, Attr0=0xFF)
      */
-    movz    x0, #0xFF                 /* Attr0: Normal memory */
+    movz    x0, #0x00FF               /* Attr0=0xFF (normal), Attr1=0x00 (device) */
     msr     mair_el1, x0
 
     /* Configure TCR_EL1 (Translation Control Register)
@@ -208,9 +262,20 @@ bss_cleared:
     msr     sctlr_el1, x0
     isb
 
+    /* Debug: Write 'B' to UART after MMU enable (proves MMU worked) */
+    movz    x10, #0x0900, lsl #16     /* UART0 base = 0x09000000 */
+    mov     x11, #0x42                /* ASCII 'B' */
+    strb    w11, [x10]                /* Write to UART data register */
+
     /* Restore device tree address and call platform init */
     mov     x0, #0                    /* boot_magic = 0 */
     mov     x1, x20                   /* boot_info = device tree address */
+
+    /* Debug: Write 'C' before calling platform_init */
+    movz    x10, #0x0900, lsl #16     /* UART0 base = 0x09000000 */
+    mov     x11, #0x43                /* ASCII 'C' */
+    strb    w11, [x10]                /* Write to UART data register */
+
     bl      fut_platform_init
 
     /* Should never return */
@@ -543,4 +608,7 @@ boot_l1_table:
     .space 4096                   /* Level 1 (1GB per entry) */
 
 boot_l2_table:
-    .space 4096                   /* Level 2 (2MB per entry) */
+    .space 4096                   /* Level 2 (2MB per entry) - DRAM region */
+
+boot_l2_peripherals:
+    .space 4096                   /* Level 2 (2MB per entry) - Peripheral region */

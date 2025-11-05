@@ -341,6 +341,8 @@ int fut_serial_getc(void) {
  * Waits indefinitely for a character to be available.
  */
 int fut_serial_getc_blocking(void) {
+    extern void fut_schedule(void);
+
     /* Polling mode: wait with timeout to avoid deadlock */
     volatile int max_iterations = 10000000;  /* ~100ms at typical QEMU speed */
 
@@ -350,11 +352,9 @@ int fut_serial_getc_blocking(void) {
             return c;
         }
 
-        /* Yield to allow other operations */
-        if (iter % 1000 == 0) {
-            /* Occasional pause to prevent monopolizing CPU */
-            for (volatile int i = 0; i < 100; i++)
-                ;
+        /* Yield to scheduler to allow other threads to run */
+        if (iter % 100 == 0) {
+            fut_schedule();  /* Cooperative yield */
         }
     }
 
@@ -882,70 +882,188 @@ void arch_memory_config(uintptr_t *ram_start, uintptr_t *ram_end, size_t *heap_s
  * arch_late_init - ARM64 late initialization
  * Spawn init from embedded binary, fallback to EL0 test.
  */
-void arch_late_init(void) {
-    fut_serial_puts("\n[ARM64] Late initialization (userland disabled for kernel debugging)\n");
-    /* TEMPORARY: Disable userland spawning for kernel debugging */
-    return;
+/* Helper function to stage embedded binary to filesystem */
+static int stage_arm64_blob(const uint8_t *start, const uint8_t *end, const char *path) {
+    extern int fut_vfs_open(const char *, int, int);
+    extern long fut_vfs_write(int, const void *, size_t);
+    extern int fut_vfs_close(int);
+    extern void fut_printf(const char *, ...);
 
-#if 0  /* DISABLED for kernel debugging */
+    #define O_WRONLY 0x001
+    #define O_CREAT  0x040
+    #define O_TRUNC  0x200
+
+    size_t size = (size_t)(end - start);
+    if (!start || !end || size == 0) {
+        return -EINVAL;
+    }
+
+    fut_printf("[stage] Calling fut_vfs_open('%s', 0x%x, 0755)...\n", path, O_WRONLY | O_CREAT | O_TRUNC);
+    int fd = fut_vfs_open(path, O_WRONLY | O_CREAT | O_TRUNC, 0755);
+    fut_printf("[stage] fut_vfs_open returned %d\n", fd);
+    if (fd < 0) {
+        return fd;
+    }
+
+    size_t offset = 0;
+    while (offset < size) {
+        size_t chunk = size - offset;
+        if (chunk > 4096) {
+            chunk = 4096;
+        }
+        long wr = fut_vfs_write(fd, start + offset, chunk);
+        if (wr < 0) {
+            fut_vfs_close(fd);
+            return (int)wr;
+        }
+        offset += (size_t)wr;
+    }
+
+    fut_vfs_close(fd);
+    return 0;
+}
+
+/* Kernel thread to stage binaries and spawn init */
+static void arm64_init_spawner_thread(void *arg) {
+    extern void serial_puts(const char *);
+    serial_puts("[SPAWNER] *** ENTERED ARM64 SPAWNER FUNCTION ***\n");
+
+    (void)arg;
+
+    extern void fut_printf(const char *, ...);
+    extern int fut_vfs_mkdir(const char *, int);
+    extern int fut_exec_elf(const char *, char *const[], char *const[]);
+
+    #define EEXIST 17
+
+    fut_printf("[ARM64-SPAWNER] Init spawner thread running!\n");
+
     /* Check embedded userland binaries */
     uintptr_t init_size = (uintptr_t)_binary_build_bin_arm64_user_init_end -
                           (uintptr_t)_binary_build_bin_arm64_user_init_start;
     uintptr_t shell_size = (uintptr_t)_binary_build_bin_arm64_user_shell_end -
                            (uintptr_t)_binary_build_bin_arm64_user_shell_start;
 
-    fut_serial_puts("[ARM64] Embedded userland binaries:\n");
-    fut_serial_puts("  - init:  ");
-    if (init_size > 0) {
-        fut_serial_puts("present\n");
-    } else {
-        fut_serial_puts("MISSING!\n");
+    fut_printf("[ARM64-SPAWNER] Embedded userland binaries:\n");
+    fut_printf("  - init:  %llu bytes %s\n", (unsigned long long)init_size, init_size > 0 ? "present" : "MISSING!");
+    fut_printf("  - shell: %llu bytes %s\n\n", (unsigned long long)shell_size, shell_size > 0 ? "present" : "MISSING!");
+
+    if (init_size == 0) {
+        fut_printf("[ARM64-SPAWNER] ERROR: No init binary embedded!\n");
+        return;
     }
-    fut_serial_puts("  - shell: ");
+
+    /* Create directories */
+    fut_printf("[ARM64-SPAWNER] Creating /sbin directory...\n");
+    int ret = fut_vfs_mkdir("/sbin", 0755);
+    fut_printf("[ARM64-SPAWNER] mkdir /sbin returned: %d\n", ret);
+    if (ret < 0 && ret != -EEXIST) {
+        fut_printf("[ARM64-SPAWNER] WARN: mkdir /sbin failed: %d\n", ret);
+    }
+
+    fut_printf("[ARM64-SPAWNER] Creating /bin directory...\n");
+    ret = fut_vfs_mkdir("/bin", 0755);
+    fut_printf("[ARM64-SPAWNER] mkdir /bin returned: %d\n", ret);
+    if (ret < 0 && ret != -EEXIST) {
+        fut_printf("[ARM64-SPAWNER] WARN: mkdir /bin failed: %d\n", ret);
+    }
+
+    /* Stage init binary to filesystem */
+    fut_printf("[ARM64-SPAWNER] Staging init to /sbin/init (%llu bytes)...\n", (unsigned long long)init_size);
+    ret = stage_arm64_blob((const uint8_t *)_binary_build_bin_arm64_user_init_start,
+                          (const uint8_t *)_binary_build_bin_arm64_user_init_end,
+                          "/sbin/init");
+    if (ret != 0) {
+        fut_printf("[ARM64-SPAWNER] ERROR: Failed to stage init binary: %d\n", ret);
+        return;
+    }
+
+    fut_printf("[ARM64-SPAWNER] Init binary staged successfully!\n");
+
+    /* Stage shell binary if available */
     if (shell_size > 0) {
-        fut_serial_puts("present\n");
-    } else {
-        fut_serial_puts("MISSING!\n");
+        fut_printf("[ARM64-SPAWNER] Staging shell to /bin/shell...\n");
+        ret = stage_arm64_blob((const uint8_t *)_binary_build_bin_arm64_user_shell_start,
+                              (const uint8_t *)_binary_build_bin_arm64_user_shell_end,
+                              "/bin/shell");
+        if (ret != 0) {
+            fut_printf("[ARM64-SPAWNER] WARN: Failed to stage shell binary: %d\n", ret);
+            /* Continue anyway - init can still run */
+        } else {
+            fut_printf("[ARM64-SPAWNER] Shell binary staged successfully!\n");
+        }
     }
-    fut_serial_puts("\n");
 
-    /* Spawn init from embedded binary */
-    fut_serial_puts("====================================\n");
-    fut_serial_puts("  SPAWNING INIT FROM MEMORY\n");
-    fut_serial_puts("====================================\n\n");
+    /* Spawn init as a new task */
+    fut_printf("\n====================================\n");
+    fut_printf("  SPAWNING INIT PROCESS\n");
+    fut_printf("====================================\n\n");
 
-    /* Prepare init arguments */
     char *init_argv[] = {"/sbin/init", NULL};
     char *init_envp[] = {"PATH=/sbin:/bin", "HOME=/root", NULL};
 
-    fut_serial_puts("[ARM64] Executing init from embedded binary...\n");
+    fut_printf("[ARM64-SPAWNER] Executing /sbin/init...\n");
+    ret = fut_exec_elf("/sbin/init", init_argv, init_envp);
 
-    /* Execute init - should never return */
-    int ret = fut_exec_elf_memory(_binary_build_bin_arm64_user_init_start, init_size, init_argv, init_envp);
-
-    /* If we get here, exec failed */
-    fut_serial_puts("[ERROR] Failed to execute init! Error code: ");
-    if (ret == -EINVAL) {
-        fut_serial_puts("EINVAL (invalid argument)\n");
-    } else if (ret == -ENOMEM) {
-        fut_serial_puts("ENOMEM (out of memory)\n");
-    } else if (ret == -ESRCH) {
-        fut_serial_puts("ESRCH (no current task)\n");
+    if (ret == 0) {
+        fut_printf("[ARM64-SPAWNER] ✓ Init process spawned successfully!\n");
+        fut_printf("[ARM64-SPAWNER] Init spawner thread exiting.\n");
     } else {
-        fut_serial_puts("UNKNOWN\n");
+        fut_printf("[ARM64-SPAWNER] ERROR: Failed to spawn init! Error code: %d\n", ret);
+        if (ret == -EINVAL) {
+            fut_printf("  EINVAL (invalid argument)\n");
+        } else if (ret == -ENOMEM) {
+            fut_printf("  ENOMEM (out of memory)\n");
+        } else if (ret == -ENOENT) {
+            fut_printf("  ENOENT (file not found)\n");
+        }
     }
-    fut_serial_puts("\nFalling back to EL0 test...\n\n");
 
-    /* Test EL0 transition */
-    fut_serial_puts("====================================\n");
-    fut_serial_puts("  TESTING EL0 TRANSITION\n");
-    fut_serial_puts("====================================\n\n");
+    /* Thread exits naturally */
+}
 
-    test_el0_transition();
+void arch_late_init(void) {
+    extern void fut_printf(const char *, ...);
 
-    /* Should not reach here */
-    fut_serial_puts("[ERROR] test_el0_transition returned!\n");
-#endif  /* DISABLED for kernel debugging */
+    /* Forward declarations */
+    struct fut_task;
+    struct fut_thread;
+    typedef struct fut_task fut_task_t;
+    typedef struct fut_thread fut_thread_t;
+
+    extern fut_task_t *fut_task_create(void);
+    extern fut_thread_t *fut_thread_create(fut_task_t *, void (*)(void *), void *, size_t, uint8_t);
+
+    fut_printf("\n[ARM64] Late initialization\n");
+
+    /* Create a kernel task for the init spawner thread */
+    fut_task_t *kernel_task = fut_task_create();
+    if (!kernel_task) {
+        fut_printf("[ARM64] ERROR: Failed to create kernel task for init spawner!\n");
+        return;
+    }
+
+    fut_printf("[ARM64] Creating init spawner thread...\n");
+
+    /* Create thread to stage binaries and spawn init (runs after scheduler starts) */
+    fut_thread_t *spawner_thread = fut_thread_create(
+        kernel_task,
+        arm64_init_spawner_thread,
+        NULL,
+        16 * 1024,  /* 16KB stack */
+        100         /* Normal priority */
+    );
+
+    if (!spawner_thread) {
+        fut_printf("[ARM64] ERROR: Failed to create init spawner thread!\n");
+        return;
+    }
+
+    fut_printf("[ARM64] Init spawner thread created successfully!\n");
+    fut_printf("[ARM64]   Thread address: %p\n", (void *)spawner_thread);
+    fut_printf("[ARM64]   Task address: %p\n", (void *)kernel_task);
+    fut_printf("[ARM64] Thread should be added to scheduler and run after scheduler starts\n");
+    fut_printf("[ARM64] Returning to main kernel...\n");
 }
 
 /**

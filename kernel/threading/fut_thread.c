@@ -225,9 +225,14 @@ fut_thread_t *fut_thread_create(
     ctx->pc = (uint64_t)(uintptr_t)&fut_thread_trampoline;
     ctx->pstate = 0x3C5; // EL1h mode with IRQ/FIQ enabled (bits 6,7 clear for enabled)
 
-    // ARM64 calling convention: x0 = entry, x1 = arg
-    ctx->x19 = (uint64_t)entry;
-    ctx->x20 = (uint64_t)arg;
+    // ARM64: Store parameters in x0/x1 for trampoline
+    // x0 = entry function pointer, x1 = argument
+    ctx->x0 = (uint64_t)entry;
+    ctx->x1 = (uint64_t)arg;
+
+    extern void fut_printf(const char *, ...);
+    fut_printf("[THREAD-CREATE] ARM64 thread %llu: entry=%p arg=%p\n",
+               (unsigned long long)thread->tid, (void*)entry, arg);
 
     // FPU state already zeroed by memset above
 #endif
@@ -414,19 +419,21 @@ int fut_thread_priority_restore(fut_thread_t *thread) {
     return 0;
 }
 [[noreturn]] static void fut_thread_trampoline(void (*entry)(void *), void *arg) {
-    // extern void fut_printf(const char *, ...);
-    // fut_printf("[TRAMPOLINE] Called with entry=%llx arg=%p\n", (uint64_t)(uintptr_t)entry, arg);
+    extern void fut_printf(const char *, ...);
+    extern void serial_puts(const char *);
+
+    serial_puts("[TRAMPOLINE] Entered trampoline!\n");
+    fut_printf("[TRAMPOLINE] Called with entry=%llx arg=%p\n", (uint64_t)(uintptr_t)entry, arg);
 
     if (!entry) {
-        extern void serial_puts(const char *);
         serial_puts("[TRAMPOLINE-ERROR] NULL entry function!\n");
         fut_thread_exit();
     }
 
-    // fut_printf("[TRAMPOLINE] Calling entry(arg)...\n");
+    fut_printf("[TRAMPOLINE] Calling entry(arg)...\n");
     /* Call the entry function */
     entry(arg);
-    // fut_printf("[TRAMPOLINE] entry() returned\n");
+    fut_printf("[TRAMPOLINE] entry() returned\n");
 
     /* If entry returns (doesn't call fut_thread_exit), we exit here */
     fut_thread_exit();

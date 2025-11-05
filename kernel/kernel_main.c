@@ -1474,8 +1474,18 @@ void fut_kernel_main(void) {
     /* Should never reach here */
     fut_printf("[PANIC] Scheduler returned unexpectedly!\n");
     fut_platform_panic("Scheduler returned to kernel_main");
+#elif defined(__aarch64__)
+    /* ARM64: Timer interrupts already enabled in platform_init.c */
+    /* Enable interrupts and start scheduling */
+    fut_printf("[INIT] ARM64: Enabling interrupts and starting scheduler...\n");
+    fut_enable_interrupts();
+    fut_schedule();
+
+    /* Should never reach here */
+    fut_printf("[PANIC] ARM64 scheduler returned unexpectedly!\n");
+    fut_platform_panic("ARM64 scheduler returned to kernel_main");
 #else
-    /* ARM64 and other platforms: enter idle loop after late init */
+    /* Other platforms: enter idle loop after late init */
     arch_idle_loop();
 #endif
 }

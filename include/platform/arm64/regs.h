@@ -20,7 +20,8 @@
  */
 typedef struct fut_cpu_context {
     /* Return value register (needed for syscalls and fork) */
-    uint64_t x0;                /* x0: return value (caller-saved, but set at entry) */
+    uint64_t x0;                /* x0: return value / first parameter (caller-saved, but set at entry) */
+    uint64_t x1;                /* x1: second parameter (caller-saved, only used for thread initialization) */
 
     /* Callee-saved registers (x19-x28) */
     uint64_t x19;

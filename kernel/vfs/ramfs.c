@@ -340,10 +340,22 @@ static ssize_t ramfs_write(struct fut_vnode *vnode, const void *buf, size_t size
             uint8_t *old_data_ptr = node->file.data;
 
             /* Verify new buffer is valid before freeing old */
+#if defined(__x86_64__)
             if (!new_data || (uintptr_t)new_data < 0xFFFFFFFF80000000ULL) {
                 fut_printf("[RAMFS-REALLOC] CRITICAL: New buffer allocation is invalid! %p\n", (void*)new_data);
                 return -EIO;
             }
+#elif defined(__aarch64__)
+            if (!new_data || (uintptr_t)new_data < 0x40000000ULL) {
+                fut_printf("[RAMFS-REALLOC] CRITICAL: New buffer allocation is invalid! %p\n", (void*)new_data);
+                return -EIO;
+            }
+#else
+            if (!new_data) {
+                fut_printf("[RAMFS-REALLOC] CRITICAL: New buffer allocation is NULL!\n");
+                return -EIO;
+            }
+#endif
 
             fut_printf("[RAMFS-REALLOC] About to free old buffer: %p\n", (void*)old_data_ptr);
             fut_free(old_data_ptr);
@@ -472,17 +484,33 @@ static int ramfs_lookup(struct fut_vnode *dir, const char *name, struct fut_vnod
         }
 
         /* Validate entry pointer is in valid kernel memory range */
+        /* Note: On x86-64, kernel is at 0xFFFFFFFF80000000+, but on ARM64 it's at 0x40000000+ */
+#if defined(__x86_64__)
         if ((uintptr_t)entry < 0xFFFFFFFF80000000ULL) {
             fut_printf("[ramfs] ERROR: Invalid entry pointer %p\n", (void*)entry);
             return -EIO;
         }
+#elif defined(__aarch64__)
+        if ((uintptr_t)entry < 0x40000000ULL) {
+            fut_printf("[ramfs] ERROR: Invalid entry pointer %p\n", (void*)entry);
+            return -EIO;
+        }
+#endif
 
         /* Validate vnode pointer before comparing name */
+#if defined(__x86_64__)
         if (!entry->vnode || (uintptr_t)entry->vnode < 0xFFFFFFFF80000000ULL) {
             fut_printf("[ramfs] ERROR: Invalid vnode pointer %p in entry '%s'\n",
                       (void*)entry->vnode, entry->name);
             return -EIO;
         }
+#elif defined(__aarch64__)
+        if (!entry->vnode || (uintptr_t)entry->vnode < 0x40000000ULL) {
+            fut_printf("[ramfs] ERROR: Invalid vnode pointer %p in entry '%s'\n",
+                      (void*)entry->vnode, entry->name);
+            return -EIO;
+        }
+#endif
 
         if (str_cmp(entry->name, name) == 0) {
             fut_printf("[RAMFS-LOOKUP] Found '%s': vnode=%p fs_data=%p\n",

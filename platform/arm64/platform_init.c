@@ -619,11 +619,21 @@ void fut_timer_init(uint32_t frequency) {
     /* Set timer compare value */
     write_sysreg(cntp_tval_el0, timer_interval);
 
-    /* Enable timer: ENABLE=1, IMASK=0 */
-    write_sysreg(cntp_ctl_el0, CNTP_CTL_ENABLE);
+    /* CRITICAL FIX: Timer IRQs must be disabled during early boot.
+     * Timer IRQ handler calls fut_printf(), which creates reentrancy issues
+     * when printf is called from both main thread and IRQ context during
+     * early boot initialization. This causes serial output corruption and deadlocks.
+     *
+     * Timer IRQs will be enabled later after:
+     * 1. Console input thread is created and running
+     * 2. TCP/IP stack is initialized
+     * 3. All early boot printf-heavy initialization completes
+     */
+    /* Enable timer: ENABLE=1, IMASK=1 (MASKED - interrupts disabled) */
+    write_sysreg(cntp_ctl_el0, CNTP_CTL_ENABLE | CNTP_CTL_IMASK);
 
-    /* Enable timer interrupt (IRQ 30 on QEMU virt) */
-    fut_irq_enable(30);
+    /* Do NOT enable timer interrupt during early boot */
+    // fut_irq_enable(30);
 }
 
 uint64_t fut_timer_get_ticks(void) {

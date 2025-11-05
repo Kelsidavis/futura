@@ -619,16 +619,11 @@ void fut_timer_init(uint32_t frequency) {
     /* Set timer compare value */
     write_sysreg(cntp_tval_el0, timer_interval);
 
-    /* TODO: Timer IRQs currently disabled due to IRQ handler issues
-     * The timer IRQ handler calls fut_schedule(), which has issues when
-     * called from IRQ context before the scheduler is fully initialized.
-     * Need to investigate and fix the IRQ handler path before re-enabling.
-     */
     /* Enable timer: ENABLE=1, IMASK=0 */
-    // write_sysreg(cntp_ctl_el0, CNTP_CTL_ENABLE);
+    write_sysreg(cntp_ctl_el0, CNTP_CTL_ENABLE);
 
     /* Enable timer interrupt (IRQ 30 on QEMU virt) */
-    // fut_irq_enable(30);
+    fut_irq_enable(30);
 }
 
 uint64_t fut_timer_get_ticks(void) {

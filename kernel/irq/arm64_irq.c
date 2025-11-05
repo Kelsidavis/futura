@@ -234,17 +234,10 @@ void fut_timer_set_timeout(uint64_t ticks) {
     __asm__ volatile("msr cntp_cval_el0, %0" :: "r"(timeout));
 }
 
-void fut_timer_irq_handler(void) {
-    /* Call common timer tick handler (updates system time, wakes threads, etc.) */
-    extern void fut_timer_tick(void);
-    fut_timer_tick();
-
-    /* Re-enable timer for next interrupt */
-    uint32_t freq = fut_timer_get_frequency();
-    uint64_t count = fut_timer_read_count();
-    uint64_t timeout = count + freq;  /* 1 second */
-    __asm__ volatile("msr cntp_cval_el0, %0" :: "r"(timeout));
-}
+/* NOTE: fut_timer_irq_handler() is implemented in platform/arm64/platform_init.c
+ * The implementation there correctly uses CNTP_TVAL_EL0 (Timer Value register)
+ * instead of CNTP_CVAL_EL0 (Compare Value register) for safer timer rescheduling.
+ */
 
 /* ============================================================
  *   Exception Handling

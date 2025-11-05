@@ -837,7 +837,6 @@ void fut_platform_early_init(uint32_t boot_magic, void *boot_info) {
     /* Disable UART interrupt for now - keep in polling mode during early boot
      * TODO: Implement proper interrupt mode support with frame setup
      */
-    fut_serial_puts("[DEBUG] UART staying in polling mode\n");
 }
 
 void fut_platform_late_init(void) {

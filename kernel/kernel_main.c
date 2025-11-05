@@ -762,7 +762,6 @@ __attribute__((unused)) static void fipc_receiver_thread(void *arg) {
  * 3. Starts scheduling (never returns)
  */
 void fut_kernel_main(void) {
-    fut_serial_puts("[DEBUG] kernel_main: Entry\n");
 
 #if ENABLE_WINSRV_DEMO
     int winsrv_stage = -1;
@@ -781,7 +780,6 @@ void fut_kernel_main(void) {
      *   Step 1: Initialize Memory Subsystem
      * ======================================== */
 
-    fut_serial_puts("[DEBUG] kernel_main: Before PMM init\n");
     fut_printf("[INIT] Initializing physical memory manager...\n");
 
     /* Get platform-specific memory layout */
@@ -789,28 +787,21 @@ void fut_kernel_main(void) {
     size_t heap_size;
     arch_memory_config(&ram_start, &ram_end, &heap_size);
 
-    fut_printf("[DEBUG] Platform memory config: ram_start=0x%llx ram_end=0x%llx heap_size=%llu\n",
-               (unsigned long long)ram_start, (unsigned long long)ram_end,
-               (unsigned long long)heap_size);
 
     /* Initialize PMM with platform-specific memory range */
     size_t total_memory = ram_end - ram_start;
-    fut_serial_puts("[DEBUG] kernel_main: Before mmap setup\n");
     fut_mmap_reset();
     if (ram_start > 0) {
         fut_mmap_add(0, ram_start, 2);
     }
     fut_mmap_add(ram_start, total_memory, 1);
 
-    fut_serial_puts("[DEBUG] kernel_main: Before PMM init call\n");
     fut_pmm_init(total_memory, ram_start);
 
-    fut_serial_puts("[DEBUG] kernel_main: After PMM init\n");
     fut_printf("[INIT] PMM initialized: %llu pages total, %llu pages free\n",
                fut_pmm_total_pages(), fut_pmm_free_pages());
 
     /* Initialize kernel heap */
-    fut_serial_puts("[DEBUG] kernel_main: Before heap init\n");
     fut_printf("[INIT] Initializing kernel heap...\n");
 
     /* Heap region starts after PMM allocation region */
@@ -818,26 +809,18 @@ void fut_kernel_main(void) {
     uintptr_t heap_end = heap_start + heap_size;
 
     /* Debug: print heap addresses before initialization */
-    fut_printf("[DEBUG] heap_start: 0x%llx\n", (unsigned long long)heap_start);
-    fut_printf("[DEBUG] heap_end: 0x%llx\n", (unsigned long long)heap_end);
-    fut_printf("[DEBUG] heap_size: %llu bytes\n", (unsigned long long)heap_size);
 
-    fut_serial_puts("[DEBUG] kernel_main: Calling fut_heap_init\n");
     fut_heap_init(heap_start, heap_end);
 
-    fut_serial_puts("[DEBUG] kernel_main: After heap init\n");
     fut_printf("[INIT] Heap initialized: 0x%llx - 0x%llx (%llu MiB)\n",
                heap_start, heap_end, heap_size / (1024 * 1024));
 
-    fut_serial_puts("[DEBUG] kernel_main: Before timer init\n");
     fut_printf("[INIT] Initializing timer subsystem...\n");
     fut_timer_subsystem_init();
 
-    fut_serial_puts("[DEBUG] kernel_main: Before signal init\n");
     fut_printf("[INIT] Initializing signal subsystem...\n");
     fut_signal_init();
 
-    fut_serial_puts("[DEBUG] kernel_main: Before ACPI init\n");
     fut_printf("[INIT] Initializing ACPI...\n");
     extern bool acpi_init(void);
 #ifdef __x86_64__
@@ -874,7 +857,6 @@ void fut_kernel_main(void) {
     fut_serial_puts("[INIT] Per-CPU data initialized for CPU 0\n");
 #endif
 
-    fut_serial_puts("[DEBUG] kernel_main: Before boot banner\n");
     fut_boot_banner();
 
 #ifdef WAYLAND_INTERACTIVE_MODE
@@ -967,28 +949,23 @@ void fut_kernel_main(void) {
     /* Mount ramfs as root filesystem */
     extern volatile int vfs_debug_stage;
     vfs_debug_stage = 0;
-    fut_printf("[DEBUG] About to mount ramfs at /\n");
     int vfs_ret = fut_vfs_mount(NULL, "/", "ramfs", 0, NULL, FUT_INVALID_HANDLE);
     if (vfs_ret < 0) {
         fut_printf("[ERROR] Failed to mount root filesystem (error %d, stage=%d)\n", vfs_ret, vfs_debug_stage);
         fut_platform_panic("Failed to mount root filesystem");
     }
-    fut_printf("[DEBUG] VFS mount complete (stage=%d)\n", vfs_debug_stage);
 
     /* Create /dev directory for device files BEFORE registering devices */
-    fut_printf("[DEBUG] About to mkdir /dev\n");
     vfs_debug_stage = 0;
 
     /* Start mkdir in a way we can monitor */
     int dev_ret = fut_vfs_mkdir("/dev", 0755);
 
     /* If we get here, mkdir completed */
-    fut_printf("[DEBUG] mkdir /dev returned: %d (final stage=%d)\n", dev_ret, vfs_debug_stage);
     if (dev_ret < 0 && dev_ret != -EEXIST) {
         fut_printf("[WARN] Failed to create /dev directory (error %d)\n", dev_ret);
     }
 
-    fut_printf("[DEBUG] About to init console\n");
     fut_console_init();
     fut_printf("[INIT] Console device registered at /dev/console\n");
 

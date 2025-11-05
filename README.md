@@ -16,15 +16,16 @@ Licensed under Mozilla Public License 2.0 — see [LICENSE](LICENSE)
 
 Futura OS is a capability-first nanokernel that keeps the core minimal—time, scheduling, IPC, and hardware mediation live in the kernel while everything else runs as message-passing services over FIPC. The current development focus is on building out a practical userland surface so real applications can execute against the kernel primitives.
 
-### Status Snapshot — Updated Oct 26 2025
+### Status Snapshot — Updated Nov 4 2025
 
 - **Kernel**: Advanced memory management with COW fork, file-backed mmap, and partial munmap; comprehensive syscall surface (`fork`, `execve`, `mmap`, `munmap`, `brk`, `nanosleep`, `waitpid`, `pipe`, `dup2`).
 - **VFS**: Path resolution + RamFS production-ready; file-backed mmap integrated with eager loading; FuturaFS implementation complete with host-side tools.
 - **Shell & Userland**: 32+ built-in commands with pipes, redirections, job control, and history; `libfutura` provides crt0, syscall veneers, heap allocator, and formatted I/O.
 - **Distributed FIPC**: Host transport and registry daemons stable; remote UDP bridge for distributed communication.
 - **Wayland Compositor**: Multi-surface capable with window decorations, drop shadows, damage-aware compositing, and frame throttling.
+- **ARM64 Port**: Full multi-process support with 177 syscalls, EL0/EL1 transitions, fork/exec/wait working. MMU disabled but kernel fully functional.
 
-### What's new — Updated Oct 26 2025
+### What's new — Updated Nov 4 2025
 
 **Recent kernel enhancements (Phase 3—Memory Management):**
 - **Copy-on-write (COW) fork**: Process creation shares pages between parent and child, copying only on write via page fault handler. Hash table-based reference counting tracks shared pages with optimizations for sole-owner cases. Dramatically reduces fork() memory overhead and enables efficient fork-exec patterns.
@@ -47,7 +48,14 @@ Futura OS is a capability-first nanokernel that keeps the core minimal—time, s
 - **Console character device**: `/dev/console` via TTY driver with automatic newline normalization.
 - **libfutura**: crt0, syscall veneers, heap allocator backed by `sys_brk`, lightweight `printf` on `write(2)`, and string utilities.
 
-See `docs/CURRENT_STATUS.md` for a deeper dive into the latest changes and near-term plans.
+**ARM64 platform bring-up:**
+- **177 working syscalls**: Full Linux-compatible ABI (x8=syscall, x0-x7=args) including fork, exec, wait, networking, filesystem, I/O multiplexing, signals, timers, futex, and more.
+- **Multi-process support**: Complete fork → exec → wait → exit cycle working with EL0/EL1 context switching.
+- **Platform initialization**: Exception vectors, GICv2 interrupts, ARM Generic Timer, PL011 UART, physical memory manager (1 GB).
+- **Userland runtime**: crt0 for ARM64, syscall wrappers, working demo programs.
+- **MMU status**: Currently disabled but kernel fully functional with physical addressing; MMU enablement deferred.
+
+See `docs/CURRENT_STATUS.md` and `docs/ARM64_STATUS.md` for deeper dives into the latest changes and platform-specific progress.
 
 **Website**: [https://futuraos.com/](https://futuraos.com/)
 
@@ -81,7 +89,7 @@ futura/
 ├── platform/
 │   ├── x86_64/              # Primary hardware target (QEMU/KVM reference)
 │   │   └── drivers/         # x86-specific: AHCI, PCI, APIC
-│   └── arm64/               # Experimental bring-up scaffolding
+│   └── arm64/               # ARM64 port: 177 syscalls, multi-process support, EL0/EL1 transitions
 ├── src/user/
 │   ├── libfutura/           # Minimal C runtime (crt0, malloc, printf, syscalls)
 │   ├── shell/               # 32+ built-in commands, pipes, redirects, job control
@@ -105,7 +113,7 @@ futura/
 └── iso/                     # GRUB boot configuration and staging
 ```
 
-Futura currently targets x86-64 as the primary architecture (QEMU/KVM reference builds). The legacy 32-bit path is archived only for historical context, and a nascent arm64 port lives under `platform/arm64/` with significant TODOs.
+Futura currently targets x86-64 as the primary architecture (QEMU/KVM reference builds). The ARM64 port under `platform/arm64/` has achieved full multi-process support with 177 working syscalls and is rapidly approaching parity with x86-64.
 
 ---
 
@@ -348,13 +356,15 @@ make rust-drivers
 5. 🚧 Demand paging for file-backed mmap (page fault handler for unmapped pages)
 6. 🚧 Comprehensive test coverage for memory management edge cases
 
-**Phase 5 — Advanced Features (Planned)**
+**Phase 5 — Advanced Features (🚧 In Progress)**
 1. Distributed FIPC boot integration (automatic netd + registry startup)
 2. Enrich `libfutura` with formatted scanning, errno handling, threading helpers
 3. Signal handling support
 4. Additional subsystems (futex, semaphores, advanced IPC primitives)
-5. ARM64 complete boot sequence and platform parity with x86-64
-6. Additional drivers (AHCI/SATA, Ethernet/WiFi, USB)
+5. ✅ ARM64 multi-process support (177 syscalls working)
+6. 🚧 ARM64 MMU enablement for proper address space isolation
+7. 🚧 ARM64 platform parity with x86-64 (drivers, networking, graphics)
+8. Additional drivers (AHCI/SATA, Ethernet/WiFi, USB)
 
 **Future Enhancements (Planned)**
 - Multi-user support and permission model
@@ -388,8 +398,9 @@ We favour focused, well-tested patches. The project values quality kernel implem
 
 **Drivers & Platforms:**
 - Contribute memory-safe drivers in Rust (AHCI/SATA, Ethernet, USB).
-- Advance ARM64 bring-up (boot sequence, paging, exception handling).
+- ARM64 development: Enable MMU, port drivers (virtio-blk, virtio-net), add graphics support.
 - Improve virtio-net driver integration.
+- Test ARM64 on real hardware (Raspberry Pi, etc.).
 
 **Testing & CI:**
 - Expand performance microbenchmark coverage.

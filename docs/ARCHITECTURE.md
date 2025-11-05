@@ -1,4 +1,4 @@
-# Futura OS Architecture (Updated Oct 12 2025)
+# Futura OS Architecture (Updated Nov 4 2025)
 
 ## Layered View
 
@@ -29,6 +29,29 @@
 │         Hardware / Virtual hardware (QEMU)                   │
 └──────────────────────────────────────────────────────────────┘
 ```
+
+## Platform Support
+
+Futura OS supports multiple hardware architectures with platform-specific abstraction layers:
+
+**x86-64 (Primary Platform)**
+- Production-ready with full feature set
+- APIC/IOAPIC interrupt handling, PCI device enumeration
+- MMU with 4-level paging, COW fork, file-backed mmap
+- Virtio drivers (virtio-blk, virtio-net) in Rust
+- AHCI/SATA support
+- Wayland compositor with GPU acceleration
+
+**ARM64 (Rapid Development)**
+- 177 working syscalls with Linux-compatible ABI
+- Full multi-process support (fork → exec → wait → exit)
+- Exception handling: 16 ARM64 vectors, EL0/EL1 transitions
+- GICv2 interrupts, ARM Generic Timer, PL011 UART
+- Physical memory manager (1 GB)
+- MMU currently disabled (deferred pending QEMU debugging)
+- Approaching feature parity with x86-64
+
+Platform-specific code lives under `platform/x86_64/` and `platform/arm64/`, while the kernel core remains architecture-agnostic.
 
 ## Object Model & Rights
 
@@ -79,6 +102,18 @@ host-side loopback tests. Highlights:
    follow-up service will migrate fsd to the log skeleton via capability
    handles.
 
+## Memory Management
+
+Futura implements advanced memory management with per-task MMU contexts (`fut_mm`):
+
+- **Copy-on-write fork**: Hash table-based page reference counting tracks shared pages between parent and child processes. Optimizations for sole-owner detection dramatically reduce fork overhead (>90% reduction).
+- **File-backed mmap**: VFS integration via `fut_vfs_mmap()` with eager loading. VMAs track file backing with vnode references. Foundation for future demand paging.
+- **Partial munmap**: VMA splitting handles shrinking from edges or splitting middle sections while preserving file backing state.
+- **Per-task contexts**: Each task owns its page tables and drives CR3 switches on x86-64.
+- **Buddy + Slab allocators**: Kernel heap management with multiple size classes.
+
+The memory subsystem enables efficient process creation and memory-mapped I/O patterns essential for modern userland applications.
+
 ## Scheduler & Concurrency
 
 The kernel remains cooperative: threads yield on blocking syscalls, timer
@@ -88,13 +123,17 @@ mechanism, ensuring services such as fsd can multiplex work without busy loops.
 
 ## Userland Services & Libraries
 
-- **libfutura** – crt0, syscall veneers, heap allocator, printf, string utils.
-- **fsd** – current filesystem daemon; will adopt the log-structured backend
-  through capability handles.
-- **posixd** – POSIX compatibility over FIPC.
-- **futurawayd** – compositor + demo tests.
-- **Host tooling** – registry/netd utilities, mkfutfs, and a kernel self-test
-  (`tests/test_futfs.c`) that validates create/read/write flows end-to-end.
+- **libfutura** – crt0, syscall veneers, heap allocator (brk-backed), printf/vprintf, string utilities. Provides minimal C runtime for userland programs.
+- **shell** – Interactive shell with 32+ built-in commands (cat, grep, wc, find, ls, cp, mv, etc.), full pipe support, I/O redirection, job control, command history, and tab completion.
+- **Wayland compositor** – Production-quality compositor with multi-surface rendering, window decorations, drop shadows, damage-aware partial compositing (>30% speedup), and frame throttling.
+- **System daemons**:
+  - **init** – PID 1, service bootstrap
+  - **fsd** – Filesystem daemon (adopting log-structured backend via capability handles)
+  - **posixd** – POSIX compatibility layer over FIPC
+  - **netd** – UDP bridge for distributed FIPC
+  - **registryd** – Service discovery with HMAC-SHA256 capability protection
+- **Client demos** – wl-simple, wl-colorwheel (Wayland clients), fbtest (framebuffer demo)
+- **Host tooling** – registry/netd utilities, mkfutfs, fsck.futfs, and kernel self-tests that validate end-to-end flows.
 
 ## Security & Performance Objectives
 

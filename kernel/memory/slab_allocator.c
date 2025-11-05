@@ -167,9 +167,11 @@ static slab_t *slab_create(slab_cache_t *cache) {
     cache->slabs = slab;
     cache->num_slabs++;
 
+    /* DISABLED for ARM64: fut_printf during slab creation can cause issues
     fut_printf("[SLAB-CREATE] Created slab at %p for size %llu (obj_size=%llu, count=%llu)\n",
                (void*)slab, (unsigned long long)cache->obj_size,
                (unsigned long long)slab->obj_size, (unsigned long long)slab->obj_count);
+    */
 
     return slab;
 }

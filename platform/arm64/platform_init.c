@@ -619,11 +619,12 @@ void fut_timer_init(uint32_t frequency) {
     /* Set timer compare value */
     write_sysreg(cntp_tval_el0, timer_interval);
 
+    /* TEMPORARY: Disable timer IRQs during early boot to avoid IRQ handler issues */
     /* Enable timer: ENABLE=1, IMASK=0 */
-    write_sysreg(cntp_ctl_el0, CNTP_CTL_ENABLE);
+    // write_sysreg(cntp_ctl_el0, CNTP_CTL_ENABLE);
 
     /* Enable timer interrupt (IRQ 30 on QEMU virt) */
-    fut_irq_enable(30);
+    // fut_irq_enable(30);
 }
 
 uint64_t fut_timer_get_ticks(void) {

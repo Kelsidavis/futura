@@ -883,6 +883,7 @@ void arch_memory_config(uintptr_t *ram_start, uintptr_t *ram_end, size_t *heap_s
  * Spawn init from embedded binary, fallback to EL0 test.
  */
 /* Helper function to stage embedded binary to filesystem */
+#if 0  /* Temporarily disabled for GPU driver testing */
 static int stage_arm64_blob(const uint8_t *start, const uint8_t *end, const char *path) {
     extern int fut_vfs_open(const char *, int, int);
     extern long fut_vfs_write(int, const void *, size_t);
@@ -922,8 +923,10 @@ static int stage_arm64_blob(const uint8_t *start, const uint8_t *end, const char
     fut_vfs_close(fd);
     return 0;
 }
+#endif  /* End of stage_arm64_blob */
 
 /* Kernel thread to stage binaries and spawn init */
+#if 0  /* Temporarily disabled for GPU driver testing */
 static void arm64_init_spawner_thread(void *arg) {
     extern void serial_puts(const char *);
     serial_puts("[SPAWNER] *** ENTERED ARM64 SPAWNER FUNCTION ***\n");
@@ -1021,10 +1024,16 @@ static void arm64_init_spawner_thread(void *arg) {
 
     /* Thread exits naturally */
 }
+#endif  /* End of disabled userland spawner */
 
 void arch_late_init(void) {
     extern void fut_printf(const char *, ...);
 
+    fut_printf("\n[ARM64] Late initialization\n");
+    fut_printf("[ARM64] Userland spawner temporarily disabled for GPU driver testing\n");
+
+    /* Temporarily disabled - userland binaries not built */
+    #if 0
     /* Forward declarations */
     struct fut_task;
     struct fut_thread;
@@ -1033,8 +1042,6 @@ void arch_late_init(void) {
 
     extern fut_task_t *fut_task_create(void);
     extern fut_thread_t *fut_thread_create(fut_task_t *, void (*)(void *), void *, size_t, uint8_t);
-
-    fut_printf("\n[ARM64] Late initialization\n");
 
     /* Create a kernel task for the init spawner thread */
     fut_task_t *kernel_task = fut_task_create();
@@ -1064,6 +1071,7 @@ void arch_late_init(void) {
     fut_printf("[ARM64]   Task address: %p\n", (void *)kernel_task);
     fut_printf("[ARM64] Thread should be added to scheduler and run after scheduler starts\n");
     fut_printf("[ARM64] Returning to main kernel...\n");
+    #endif
 }
 
 /**

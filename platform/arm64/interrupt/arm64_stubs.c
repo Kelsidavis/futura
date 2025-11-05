@@ -49,31 +49,10 @@ void fut_perf_selftest_schedule(void) {
 }
 
 /* ============================================================
- *   Framebuffer Stubs (x86-64 specific)
+ *   Framebuffer - Now implemented via Rust virtio-gpu driver
  * ============================================================ */
-
-int fb_is_available(void) {
-    return 0;  /* Framebuffer not available on ARM64 */
-}
-
-void fb_boot_splash(void) {
-    /* Boot splash not implemented for ARM64 */
-}
-
-void fb_char_init(void) {
-    /* Character framebuffer not implemented for ARM64 */
-}
-
-struct fb_info {
-    void *base;
-    int width;
-    int height;
-    int stride;
-};
-
-struct fb_info *fb_get_info(void) {
-    return NULL;  /* Framebuffer not available on ARM64 */
-}
+/* Framebuffer functions (fb_boot_splash, fb_is_available, etc.)
+ * are now provided by kernel/video/fb_mmio.c with ARM64 support */
 
 /* ============================================================
  *   Networking Stubs (x86-64 specific)

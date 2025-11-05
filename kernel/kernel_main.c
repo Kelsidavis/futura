@@ -874,6 +874,16 @@ void fut_kernel_main(void) {
     fut_printf("[INIT] fb_enabled=%d fb_available=%d\n",
                fb_enabled ? 1 : 0, fb_available ? 1 : 0);
 
+#ifdef __aarch64__
+    /* ARM64: Initialize PCI and probe for virtio-gpu device */
+    extern void arm64_pci_init(void);
+    arm64_pci_init();
+
+    fb_boot_splash();
+    fb_available = fb_is_available();
+    fut_printf("[INIT] ARM64: After probe, fb_available=%d\n", fb_available ? 1 : 0);
+#endif
+
 #ifdef WAYLAND_INTERACTIVE_MODE
     /* In headful mode, always initialize fb_char for virtio-gpu even if not detected yet */
     if (fb_enabled) {

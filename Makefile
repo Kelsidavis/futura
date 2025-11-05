@@ -298,19 +298,30 @@ $(GEN_FEATURE_HDR): FORCE
 RUSTC := $(shell command -v rustc 2>/dev/null)
 CARGO := $(shell command -v cargo 2>/dev/null)
 RUST_AVAILABLE := $(if $(and $(RUSTC),$(CARGO)),yes,no)
+# Set Rust target based on platform
+ifeq ($(PLATFORM),arm64)
+RUST_TARGET := aarch64-unknown-linux-gnu
+else
 RUST_TARGET := x86_64-unknown-linux-gnu
+endif
+
 RUST_PROFILE := release
 RUST_ROOT := drivers/rust
 RUST_VIRTIO_BLK_DIR := $(RUST_ROOT)/virtio_blk
 RUST_VIRTIO_NET_DIR := $(RUST_ROOT)/virtio_net
+RUST_VIRTIO_GPU_DIR := $(RUST_ROOT)/virtio_gpu
 RUST_BUILD_DIR_BLK := $(RUST_VIRTIO_BLK_DIR)/target/$(RUST_TARGET)/$(RUST_PROFILE)
 RUST_BUILD_DIR_NET := $(RUST_VIRTIO_NET_DIR)/target/$(RUST_TARGET)/$(RUST_PROFILE)
+RUST_BUILD_DIR_GPU := $(RUST_VIRTIO_GPU_DIR)/target/$(RUST_TARGET)/$(RUST_PROFILE)
 RUST_LIB_VIRTIO_BLK := $(RUST_BUILD_DIR_BLK)/libvirtio_blk.a
 RUST_LIB_VIRTIO_NET := $(RUST_BUILD_DIR_NET)/libvirtio_net.a
+RUST_LIB_VIRTIO_GPU := $(RUST_BUILD_DIR_GPU)/libvirtio_gpu.a
 
-# Rust drivers are x86-64 only for now
+# Platform-specific Rust drivers
 ifeq ($(PLATFORM),x86_64)
 RUST_LIBS := $(RUST_LIB_VIRTIO_BLK) $(RUST_LIB_VIRTIO_NET)
+else ifeq ($(PLATFORM),arm64)
+RUST_LIBS := $(RUST_LIB_VIRTIO_GPU)
 else
 RUST_LIBS :=
 endif
@@ -535,6 +546,7 @@ else ifeq ($(PLATFORM),arm64)
         platform/arm64/interrupt/arm64_minimal_stubs.c \
         platform/arm64/interrupt/gic_irq_handler.c \
         platform/arm64/timing/perf_clock.c \
+        platform/arm64/pci_ecam.c \
         kernel/arch/arm64/hal_halt.c \
         kernel/arch/arm64/hal_interrupts.c \
         kernel/arch/arm64/arm64_threading.c \
@@ -552,7 +564,9 @@ else ifeq ($(PLATFORM),arm64)
         kernel/sys_clock_advanced.c \
         kernel/sys_fileio_advanced.c \
         kernel/sys_filesystem_stats.c \
-        kernel/kernel_main.c
+        kernel/kernel_main.c \
+        kernel/video/fb_mmio.c \
+        drivers/video/fb.c
 endif
 
 # Subsystem sources (POSIX compat)
@@ -604,7 +618,8 @@ ifeq ($(ENABLE_WAYLAND_DEMO),1)
 OBJECTS += $(WAYLAND_COMPOSITOR_BLOB) $(WAYLAND_CLIENT_BLOB) $(WAYLAND_COLOR_BLOB) $(WAYLAND_SHELL_BLOB)
 endif
 else ifeq ($(PLATFORM),arm64)
-OBJECTS += $(ARM64_INIT_BLOB) $(ARM64_SHELL_BLOB)
+# Temporarily disabled for GPU driver testing
+# OBJECTS += $(ARM64_INIT_BLOB) $(ARM64_SHELL_BLOB)
 endif
 
 # ============================================================
@@ -690,6 +705,15 @@ $(RUST_LIB_VIRTIO_NET): $(RUST_SOURCES)
 	@cd $(RUST_VIRTIO_NET_DIR) && RUSTFLAGS="-C panic=abort -C force-unwind-tables=no $(RUSTFLAGS)" $(CARGO) build --release --target $(RUST_TARGET)
 	@tmpdir=$$(mktemp -d); \
 	cd $$tmpdir && ar x $(abspath $(RUST_LIB_VIRTIO_NET)) && for obj in *.o; do $(OBJCOPY) --remove-section='.gcc_except_table*' --remove-section='.eh_frame*' $$obj >/dev/null 2>&1 || true; done && ar rcs $(abspath $(RUST_LIB_VIRTIO_NET)) *.o; \
+	rm -rf $$tmpdir
+
+$(RUST_LIB_VIRTIO_GPU): $(RUST_SOURCES)
+	@$(RUSTC) --print target-list | grep -q $(RUST_TARGET) >/dev/null || { \
+		echo "error: rust target '$(RUST_TARGET)' not installed for $(RUSTC)." >&2; exit 1; }
+	@echo "CARGO virtio_gpu ($(RUST_PROFILE))"
+	@cd $(RUST_VIRTIO_GPU_DIR) && RUSTFLAGS="-C panic=abort -C force-unwind-tables=no $(RUSTFLAGS)" $(CARGO) build --release --target $(RUST_TARGET)
+	@tmpdir=$$(mktemp -d); \
+	cd $$tmpdir && ar x $(abspath $(RUST_LIB_VIRTIO_GPU)) && for obj in *.o; do $(OBJCOPY) --remove-section='.gcc_except_table*' --remove-section='.eh_frame*' $$obj >/dev/null 2>&1 || true; done && ar rcs $(abspath $(RUST_LIB_VIRTIO_GPU)) *.o; \
 	rm -rf $$tmpdir
 else
 rust-drivers:

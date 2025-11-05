@@ -12,8 +12,12 @@
 #include <platform/platform.h>
 #include <futura/fb_ioctl.h>
 
+#ifdef __x86_64__
 #include <platform/x86_64/memory/pmap.h>
 #include <platform/x86_64/memory/pat.h>
+#elif defined(__aarch64__)
+#include <platform/arm64/memory/pmap.h>
+#endif
 
 #include <stddef.h>
 #include <stdint.h>
@@ -48,7 +52,11 @@ static int fb_ensure_mapped(struct fb_device *fb) {
     size_t length = fb->hw.info.pitch * fb->hw.info.height + offset;
     length = PAGE_ALIGN_UP(length);
 
+#ifdef __x86_64__
     uint64_t flags = PTE_PRESENT | PTE_WRITABLE | pat_choose_page_attr_wc();
+#else
+    uint64_t flags = PTE_PRESENT | PTE_WRITABLE;
+#endif
     int rc = pmap_map(virt_base,
                       phys_base,
                       length,
@@ -176,7 +184,11 @@ static void *fb_mmap(void *inode, void *private_data, void *u_addr, size_t len,
     uint64_t phys_addr = (fb->hw.phys + (uint64_t)off) & ~(uint64_t)(PAGE_SIZE - 1);
     size_t map_len = (len + PAGE_SIZE - 1) & ~(size_t)(PAGE_SIZE - 1);
 
+#ifdef __x86_64__
     uint64_t prot_flags = PTE_PRESENT | PTE_USER | pat_choose_page_attr_wc();
+#else
+    uint64_t prot_flags = PTE_PRESENT | PTE_USER;
+#endif
     if (prot & 0x2) { /* PROT_WRITE */
         prot_flags |= PTE_WRITABLE;
     }

@@ -166,19 +166,27 @@ bss_cleared:
     orr     x1, x1, #3                /* Valid table descriptor */
     str     x1, [x0, #8]
 
+    /* L1[256] -> PCIe ECAM 1GB block (for VA 0x4000000000-0x403FFFFFFF) */
+    /* 1GB block base PA = 0x4000000000 (maps ECAM at 0x4010000000 via offset) */
+    movz    x1, #0x40, lsl #32        /* PA = 0x4000000000 (1GB block base) */
+    mov     x2, #0x405                /* Valid | Block | AttrIndx=1 (device) | AF */
+    orr     x2, x2, #(2 << 8)         /* SH=10: Outer Shareable */
+    orr     x1, x1, x2                /* Combine PA with flags */
+    str     x1, [x0, #(256 * 8)]      /* L1[256] */
+
     /* Debug: L1 table configured */
     movz    x10, #0x0900, lsl #16
     mov     x11, #0x32                /* '2' */
     strb    w11, [x10]
 
-    /* Setup L2_peripherals: 80 x 2MB blocks for 0x00000000-0x0A000000 (160MB peripherals)
+    /* Setup L2_peripherals: 256 x 2MB blocks for 0x00000000-0x20000000 (512MB peripherals)
      * Each 2MB block, device memory
-     * NOTE: UART is at 0x09000000, so we need to map beyond 128MB
+     * NOTE: UART at 0x09000000, virtio-mmio at 0x0a000000, PCI MMIO at 0x10000000-0x3EFF0000
      */
     adrp    x0, boot_l2_table_peripherals
     add     x0, x0, :lo12:boot_l2_table_peripherals
     mov     x1, #0x00000000           /* Start PA */
-    mov     x3, #80                   /* Map 160MB to include UART at 0x09000000 */
+    mov     x3, #256                  /* Map 512MB to include PCI MMIO window */
     movz    x5, #0x0020, lsl #16      /* 2MB block size = 0x200000 */
 2:  mov     x2, #0x405                /* Valid (bit 0) | Block (bit 1=0) | AttrIndx=1 (bit 2) | AF (bit 10) */
     orr     x2, x2, #(2 << 8)         /* SH=10: Outer Shareable */
@@ -247,7 +255,7 @@ bss_cleared:
     orr     x0, x0, #(0x1 << 26)      /* ORGN1 = 01 */
     orr     x0, x0, #(0x1 << 24)      /* IRGN1 = 01 */
     orr     x0, x0, #(0x2 << 30)      /* TG1 = 10 (4KB granule for TTBR1) */
-    movk    x0, #1, lsl #32           /* IPS = 001 (36-bit PA) */
+    movk    x0, #2, lsl #32           /* IPS = 010 (40-bit PA for PCIe ECAM) */
     msr     tcr_el1, x0
 
     /* Debug: TCR configured */

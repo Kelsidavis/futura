@@ -32,3 +32,9 @@ int bcmp(const void *lhs, const void *rhs, size_t n) {
 void rust_eh_personality(void) {
     /* Abort-only panic handler does not unwind. */
 }
+
+/* getauxval stub for Rust compiler-builtins on ARM64 */
+unsigned long getauxval(unsigned long type) {
+    (void)type;
+    return 0;  /* Disable CPU feature detection */
+}

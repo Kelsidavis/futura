@@ -13,7 +13,7 @@
 #include <user/futura_posix.h>
 #include <user/libfutura.h>
 #include <user/sys.h>
-#include <stdlib.h>
+/* stdlib.h not available in freestanding environment */
 #include "timerfd_internal.h"
 #include "signalfd_internal.h"
 #include "eventfd_internal.h"
@@ -289,8 +289,10 @@ void *mmap(void *addr, size_t length, int prot, int flags, int fd, off_t offset)
     return mapped;
 }
 
-void *mmap64(void *addr, size_t length, int prot, int flags, int fd, off_t offset)
-    __attribute__((weak, alias("mmap")));
+/* mmap64 wrapper - aliases not supported on some toolchains */
+void *mmap64(void *addr, size_t length, int prot, int flags, int fd, off_t offset) {
+    return mmap(addr, length, prot, flags, fd, offset);
+}
 
 int munmap(void *addr, size_t length) {
     long ret = sys_munmap_call(addr, (long)length);

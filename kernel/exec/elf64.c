@@ -1037,16 +1037,39 @@ static int read_exact(int fd, void *buf, size_t len) {
 
 static int exec_copy_to_user(fut_mm_t *mm, uint64_t dest, const void *src, size_t len) {
     /* For ELF loading, map user pages and write directly */
+    /* Handle page boundaries by copying one page at a time */
     fut_vmem_context_t *vmem = fut_mm_context(mm);
-    uint64_t pte = 0;
-    /* Check if page is mapped */
-    if (pmap_probe_pte(vmem, dest, &pte) != 0) {
-        return -EFAULT;
+    const uint8_t *src_bytes = (const uint8_t *)src;
+    size_t remaining = len;
+    uint64_t vaddr = dest;
+
+    while (remaining > 0) {
+        /* Get page offset and calculate bytes to copy in this page */
+        uint64_t page_offset = vaddr & 0xFFF;
+        size_t chunk_size = PAGE_SIZE - page_offset;
+        if (chunk_size > remaining) {
+            chunk_size = remaining;
+        }
+
+        /* Probe PTE for current page */
+        uint64_t pte = 0;
+        if (pmap_probe_pte(vmem, vaddr, &pte) != 0) {
+            return -EFAULT;
+        }
+
+        /* Extract physical address and add page offset */
+        phys_addr_t phys = fut_pte_to_phys(pte) + page_offset;
+        void *virt = (void *)pmap_phys_to_virt(phys);
+
+        /* Copy chunk to this page */
+        memcpy(virt, src_bytes, chunk_size);
+
+        /* Advance pointers */
+        src_bytes += chunk_size;
+        vaddr += chunk_size;
+        remaining -= chunk_size;
     }
-    /* Convert physical address (from PTE) to kernel virtual address */
-    phys_addr_t phys = pte & ~0xFFFULL;  /* Mask off PTE flags to get physical address */
-    void *virt = (void *)pmap_phys_to_virt(phys);
-    memcpy(virt, src, len);
+
     return 0;
 }
 
@@ -1147,6 +1170,11 @@ static int build_user_stack(fut_mm_t *mm,
     if (!argv_ptrs) return -ENOMEM;
 
     for (size_t i = argc; i-- > 0;) {
+        /* Defensive: Check for NULL argv entry */
+        if (!argv[i]) {
+            fut_free(argv_ptrs);
+            return -EINVAL;
+        }
         size_t len = kstrlen(argv[i]) + 1;
         sp -= len;
         if (exec_copy_to_user(mm, sp, argv[i], len) != 0) {
@@ -1156,18 +1184,82 @@ static int build_user_stack(fut_mm_t *mm,
         argv_ptrs[i] = (uint8_t *)(uintptr_t)sp;
     }
 
+    /* Handle environment variables - copy strings first */
+    size_t envc = envc_in;
+    const char *const *envp = envp_in;
+    uint8_t **envp_ptrs = NULL;
+
+    if (envp && envc > 0) {
+        envp_ptrs = fut_malloc(sizeof(uint8_t *) * envc);
+        if (!envp_ptrs) {
+            fut_free(argv_ptrs);
+            return -ENOMEM;
+        }
+
+        /* Copy environment strings */
+        for (size_t i = envc; i-- > 0;) {
+            /* Defensive: Check for NULL envp entry */
+            if (!envp[i]) {
+                fut_free(envp_ptrs);
+                fut_free(argv_ptrs);
+                return -EINVAL;
+            }
+            size_t len = kstrlen(envp[i]) + 1;
+            sp -= len;
+            if (exec_copy_to_user(mm, sp, envp[i], len) != 0) {
+                fut_free(envp_ptrs);
+                fut_free(argv_ptrs);
+                return -EFAULT;
+            }
+            envp_ptrs[i] = (uint8_t *)(uintptr_t)sp;
+        }
+    }
+
     /* Align stack to 16-byte boundary for ARM64 ABI */
     sp &= ~0xFULL;
 
-    /* Push argv terminator */
+    /* Build stack layout (working backwards from high to low addresses):
+     * [sp] = argc
+     * [sp+8] = argv[0]
+     * [sp+16] = NULL (argv terminator)
+     * [sp+24] = envp[0]
+     * [sp+32] = envp[1] (if present)
+     * [sp+...] = NULL (envp terminator)
+     * [sp+...] = strings...
+     */
+
     uint64_t zero = 0;
+
+    /* Push envp terminator */
+    sp -= sizeof(uint64_t);
+    if (exec_copy_to_user(mm, sp, &zero, sizeof(zero)) != 0) {
+        if (envp_ptrs) fut_free(envp_ptrs);
+        fut_free(argv_ptrs);
+        return -EFAULT;
+    }
+
+    /* Push envp pointers (reverse order so envp[0] is first) */
+    if (envp && envc > 0) {
+        for (size_t i = envc; i-- > 0;) {
+            uint64_t ptr = (uint64_t)(uintptr_t)envp_ptrs[i];
+            sp -= sizeof(uint64_t);
+            if (exec_copy_to_user(mm, sp, &ptr, sizeof(ptr)) != 0) {
+                fut_free(envp_ptrs);
+                fut_free(argv_ptrs);
+                return -EFAULT;
+            }
+        }
+        fut_free(envp_ptrs);
+    }
+
+    /* Push argv terminator */
     sp -= sizeof(uint64_t);
     if (exec_copy_to_user(mm, sp, &zero, sizeof(zero)) != 0) {
         fut_free(argv_ptrs);
         return -EFAULT;
     }
 
-    /* Push argv pointers */
+    /* Push argv pointers (reverse order so argv[0] is first) */
     for (size_t i = argc; i-- > 0;) {
         uint64_t ptr = (uint64_t)(uintptr_t)argv_ptrs[i];
         sp -= sizeof(uint64_t);
@@ -1177,9 +1269,15 @@ static int build_user_stack(fut_mm_t *mm,
         }
     }
 
-    uint64_t argv_ptr __attribute__((unused)) = sp;
+    /* Push argc onto stack */
+    uint64_t argc_val = argc;
+    sp -= sizeof(uint64_t);
+    if (exec_copy_to_user(mm, sp, &argc_val, sizeof(argc_val)) != 0) {
+        fut_free(argv_ptrs);
+        return -EFAULT;
+    }
 
-    /* ARM64 ABI: argc and argv_ptr will be passed in x0 and x1 */
+    /* ARM64 process startup: [sp] = argc, [sp+8] = argv[0], ..., [sp+X] = envp[0], ... */
     *out_sp = sp;
 
     fut_free(argv_ptrs);
@@ -1188,45 +1286,317 @@ static int build_user_stack(fut_mm_t *mm,
 
 /* ARM64 user mode entry trampoline */
 [[noreturn]] __attribute__((optimize("O0"))) static void fut_user_trampoline_arm64(void *arg) {
-    extern void fut_printf(const char *, ...);
     struct fut_user_entry_arm64 *info = (struct fut_user_entry_arm64 *)arg;
     uint64_t entry = info->entry;
     uint64_t sp = info->stack;
-    uint64_t argc = info->argc;
-    fut_task_t *task __attribute__((unused)) = info->task;
+    fut_task_t *task = info->task;
 
-    fut_printf("[ARM64-TRAMPOLINE] entry=0x%llx sp=0x%llx argc=%llu\n", entry, sp, argc);
+    /* Get the PGD physical address from the task's memory manager */
+    fut_mm_t *mm = task->mm;
+    uint64_t pgd_phys = (uint64_t)mm->ctx.pgd;
+
+    /* Verify entry point is mapped and code is present */
+    extern int pmap_probe_pte(fut_vmem_context_t *ctx, uint64_t vaddr, uint64_t *pte_out);
+    extern uint64_t fut_pte_to_phys(uint64_t pte);
+    extern void *pmap_phys_to_virt(phys_addr_t phys);
+    fut_vmem_context_t *vmem = fut_mm_context(mm);
+    uint64_t entry_pte = 0;
+    if (pmap_probe_pte(vmem, entry, &entry_pte) != 0) {
+        extern void fut_serial_puts(const char *);
+        fut_serial_puts("[TRAMPOLINE] ERROR: Entry point not mapped!\n");
+        for (;;) __asm__ volatile("wfi");
+    }
+
+    /* Read first instruction at entry point to verify it loaded correctly */
+    phys_addr_t entry_phys = fut_pte_to_phys(entry_pte) + (entry & 0xFFF);
+    uint32_t *entry_code = (uint32_t *)pmap_phys_to_virt(entry_phys);
+    uint32_t first_insn = *entry_code;
+    /* Expected: 0xd280001d = mov x29, #0 */
+    if (first_insn != 0xd280001d) {
+        extern void fut_serial_puts(const char *);
+        fut_serial_puts("[TRAMPOLINE] ERROR: Entry code mismatch!\n");
+        for (;;) __asm__ volatile("wfi");
+    }
 
     /* Prepare to transition to EL0 (user mode)
      * We need to:
-     * 1. Set ELR_EL1 to entry point
-     * 2. Set SPSR_EL1 for EL0t mode
-     * 3. Set SP_EL0 to user stack
-     * 4. Set x0 to argc for ARM64 ABI
-     * 5. Execute ERET to drop to EL0
+     * 1. Switch to user page table (TTBR0_EL1)
+     * 2. Set ELR_EL1 to entry point
+     * 3. Set SPSR_EL1 for EL0t mode
+     * 4. Set SP_EL0 to user stack (pointing to argc)
+     * 5. Clear registers (let _start initialize from stack)
+     * 6. Execute ERET to drop to EL0
      */
 
+    /* Signal we're about to ERET */
+    extern void fut_serial_puts(const char *);
+    fut_serial_puts("[TRAMPOLINE] About to ERET to EL0\n");
+
     __asm__ volatile(
-        /* Set SP_EL0 (user mode stack pointer) */
+        /* Load user page table into TTBR0_EL1 */
+        "msr ttbr0_el1, %2\n\t"
+        /* Data synchronization barrier */
+        "dsb sy\n\t"
+        /* Invalidate all TLB entries */
+        "tlbi vmalle1\n\t"
+        "dsb sy\n\t"
+        /* Set SP_EL0 (user mode stack pointer) - points to argc at [sp] */
         "msr sp_el0, %0\n\t"
         /* Set ELR_EL1 (return address for ERET) */
         "msr elr_el1, %1\n\t"
-        /* Set SPSR_EL1 for EL0t mode (user mode) */
-        "mov x2, #0x00\n\t"  /* EL0t mode */
-        "msr spsr_el1, x2\n\t"
-        /* Set x0 to argc for function call convention */
-        "mov x0, %2\n\t"
+        /* Set SPSR_EL1 for EL0t mode (user mode with thread SP) */
+        /* SPSR_EL1[3:0] = 0b0000 = EL0t (M[4]=0 means use SP_EL0) */
+        /* SPSR_EL1[9:6] = 0b1111 = Mask D,A,I,F (all interrupts/exceptions) */
+        "mov x10, #0x3C0\n\t"   /* 0x3C0 = DAIF mask bits */
+        "msr spsr_el1, x10\n\t"
         /* Instruction synchronization barrier before ERET */
         "isb\n\t"
         /* Return to user mode */
         "eret\n\t"
         :
-        : "r"(sp), "r"(entry), "r"(argc)
-        : "x0", "x2", "memory"
+        : "r"(sp), "r"(entry), "r"(pgd_phys)
+        : "x10", "memory"
     );
 
     /* Never reached */
     for (;;) __asm__ volatile("wfi");
+}
+
+/* Map a single LOAD segment from memory buffer */
+static int map_segment_from_memory(fut_mm_t *mm, const void *elf_data, const elf64_phdr_t *phdr) {
+    extern void fut_printf(const char *, ...);
+
+    if (phdr->p_memsz == 0) return 0;
+    if (phdr->p_vaddr == 0) return -EINVAL;
+
+    int prot = 0;
+    if (phdr->p_flags & PF_R) prot |= PROT_READ;
+    if (phdr->p_flags & PF_W) prot |= PROT_WRITE;
+    if (phdr->p_flags & PF_X) prot |= PROT_EXEC;
+
+    fut_vmem_context_t *vmem = fut_mm_context(mm);
+    uintptr_t addr = PAGE_ALIGN_DOWN(phdr->p_vaddr);
+    size_t pages_needed = (phdr->p_vaddr + phdr->p_memsz - addr + PAGE_SIZE - 1) / PAGE_SIZE;
+
+    /* Allocate and map pages */
+    for (size_t i = 0; i < pages_needed; i++) {
+        uint64_t page_addr = addr + (i * PAGE_SIZE);
+        void *page = fut_pmm_alloc_page();
+        if (!page) {
+            return -ENOMEM;
+        }
+
+        phys_addr_t phys = pmap_virt_to_phys((uintptr_t)page);
+        if (pmap_map_user(vmem, page_addr, phys, PAGE_SIZE, prot) != 0) {
+            fut_pmm_free_page(page);
+            return -EFAULT;
+        }
+    }
+
+    /* Copy file data from memory buffer into mapped pages */
+    if (phdr->p_filesz > 0) {
+        const uint8_t *src = (const uint8_t *)elf_data + phdr->p_offset;
+        if (exec_copy_to_user(mm, phdr->p_vaddr, src, phdr->p_filesz) != 0) {
+            return -EFAULT;
+        }
+    }
+
+    /* Zero BSS section (MemSiz > FileSiz) */
+    if (phdr->p_memsz > phdr->p_filesz) {
+        uint64_t bss_start = phdr->p_vaddr + phdr->p_filesz;
+        uint64_t bss_size = phdr->p_memsz - phdr->p_filesz;
+
+        /* Zero BSS by writing zeros */
+        uint8_t zero_buf[256];
+        memset(zero_buf, 0, sizeof(zero_buf));
+
+        uint64_t remaining = bss_size;
+        uint64_t offset = 0;
+        while (remaining > 0) {
+            size_t chunk = remaining > sizeof(zero_buf) ? sizeof(zero_buf) : remaining;
+            if (exec_copy_to_user(mm, bss_start + offset, zero_buf, chunk) != 0) {
+                return -EFAULT;
+            }
+            offset += chunk;
+            remaining -= chunk;
+        }
+    }
+
+    /* Clean data cache and invalidate instruction cache for executable segments */
+    if (phdr->p_flags & PF_X) {
+        fut_vmem_context_t *vmem = fut_mm_context(mm);
+        uint64_t start_addr = PAGE_ALIGN_DOWN(phdr->p_vaddr);
+        uint64_t end_addr = PAGE_ALIGN_UP(phdr->p_vaddr + phdr->p_memsz);
+
+        /* Do cache maintenance on physical addresses (accessible from EL1) */
+        for (uint64_t vaddr = start_addr; vaddr < end_addr; vaddr += PAGE_SIZE) {
+            uint64_t pte = 0;
+            if (pmap_probe_pte(vmem, vaddr, &pte) == 0) {
+                phys_addr_t phys_page = fut_pte_to_phys(pte);
+                void *phys_ptr = (void *)pmap_phys_to_virt(phys_page);
+
+                /* Clean and invalidate cache for this page (64-byte cache lines) */
+                for (uintptr_t offset = 0; offset < PAGE_SIZE; offset += 64) {
+                    uintptr_t cache_addr = (uintptr_t)phys_ptr + offset;
+                    __asm__ volatile("dc cvau, %0" :: "r"(cache_addr) : "memory");
+                }
+            }
+        }
+
+        /* Data synchronization barrier */
+        __asm__ volatile("dsb ish" ::: "memory");
+
+        /* Invalidate instruction cache by virtual address range */
+        for (uint64_t vaddr = start_addr; vaddr < end_addr; vaddr += PAGE_SIZE) {
+            uint64_t pte = 0;
+            if (pmap_probe_pte(vmem, vaddr, &pte) == 0) {
+                phys_addr_t phys_page = fut_pte_to_phys(pte);
+                void *phys_ptr = (void *)pmap_phys_to_virt(phys_page);
+
+                for (uintptr_t offset = 0; offset < PAGE_SIZE; offset += 64) {
+                    uintptr_t cache_addr = (uintptr_t)phys_ptr + offset;
+                    __asm__ volatile("ic ivau, %0" :: "r"(cache_addr) : "memory");
+                }
+            }
+        }
+
+        /* Data synchronization barrier */
+        __asm__ volatile("dsb ish" ::: "memory");
+        /* Instruction synchronization barrier */
+        __asm__ volatile("isb" ::: "memory");
+    }
+
+    return 0;
+}
+
+/* Execute ELF from memory buffer (for embedded binaries) */
+int fut_exec_elf_memory(const void *elf_data, size_t elf_size, char *const argv[], char *const envp[]) {
+    if (!elf_data || elf_size < sizeof(elf64_ehdr_t)) {
+        return -EINVAL;
+    }
+
+    const elf64_ehdr_t *ehdr = (const elf64_ehdr_t *)elf_data;
+
+    /* Verify ELF header */
+    extern void fut_serial_puts(const char *);
+    if (*(uint32_t *)ehdr->e_ident != ELF_MAGIC ||
+        ehdr->e_ident[4] != ELF_CLASS_64 ||
+        ehdr->e_ident[5] != ELF_DATA_LE ||
+        ehdr->e_machine != 0xB7) {  /* EM_AARCH64 = 0xB7 */
+        fut_serial_puts("[EXEC-MEM] ERROR: Invalid ELF or not ARM64\n");
+        return -EINVAL;
+    }
+
+    /* Verify program headers are within bounds */
+    size_t ph_size = (size_t)ehdr->e_phnum * sizeof(elf64_phdr_t);
+    if (ehdr->e_phoff + ph_size > elf_size) {
+        fut_serial_puts("[EXEC-MEM] ERROR: Program headers out of bounds\n");
+        return -EINVAL;
+    }
+
+    const elf64_phdr_t *phdrs = (const elf64_phdr_t *)((const uint8_t *)elf_data + ehdr->e_phoff);
+
+    /* Get current task */
+    fut_task_t *task = fut_task_current();
+    if (!task) {
+        fut_serial_puts("[EXEC-MEM] ERROR: No current task\n");
+        return -ESRCH;
+    }
+
+    /* Create new memory manager */
+    fut_mm_t *new_mm = fut_mm_create();
+    if (!new_mm) {
+        fut_serial_puts("[EXEC-MEM] ERROR: Failed to create memory manager\n");
+        return -ENOMEM;
+    }
+
+    /* Load program segments */
+    uintptr_t heap_base_candidate = 0;
+    fut_serial_puts("[EXEC-MEM] Loading segments\n");
+    for (uint16_t i = 0; i < ehdr->e_phnum; i++) {
+        if (phdrs[i].p_type != PT_LOAD) continue;
+
+        /* Verify segment is within bounds */
+        if (phdrs[i].p_offset + phdrs[i].p_filesz > elf_size) {
+            fut_serial_puts("[EXEC-MEM] ERROR: Segment out of bounds\n");
+            /* Memory manager will be cleaned up by task destroy */
+            return -EINVAL;
+        }
+
+        int rc = map_segment_from_memory(new_mm, elf_data, &phdrs[i]);
+        if (rc != 0) {
+            fut_serial_puts("[EXEC-MEM] ERROR: Failed to map segment\n");
+            /* Memory manager will be cleaned up by task destroy */
+            return rc;
+        }
+
+        uint64_t seg_end = phdrs[i].p_vaddr + phdrs[i].p_memsz;
+        if (seg_end > heap_base_candidate) {
+            heap_base_candidate = (uintptr_t)seg_end;
+        }
+    }
+    fut_serial_puts("[EXEC-MEM] Segments mapped\n");
+
+    /* Set heap base */
+    uintptr_t heap_base = heap_base_candidate ? PAGE_ALIGN_UP(heap_base_candidate) : 0x400000ULL;
+    heap_base += PAGE_SIZE;
+    fut_mm_set_heap_base(new_mm, heap_base, 0);
+    fut_serial_puts("[EXEC-MEM] Heap base set\n");
+
+    /* Stage stack pages */
+    uint64_t stack_top = 0;
+    int rc = stage_stack_pages(new_mm, &stack_top);
+    if (rc != 0) {
+        fut_serial_puts("[EXEC-MEM] ERROR: Failed to stage stack\n");
+        /* Memory manager will be cleaned up by task destroy */
+        return rc;
+    }
+    fut_serial_puts("[EXEC-MEM] Stack pages staged\n");
+
+    /* Build user stack with arguments */
+    uint64_t user_sp = 0;
+    size_t argc = 0;
+    size_t envc = 0;
+    if (argv) {
+        while (argv[argc]) argc++;
+    }
+    if (envp) {
+        while (envp[envc]) envc++;
+    }
+
+    fut_serial_puts("[EXEC-MEM] Building user stack\n");
+    rc = build_user_stack(new_mm, (const char *const *)argv, argc,
+                         (const char *const *)envp, envc, &user_sp);
+    if (rc != 0) {
+        fut_serial_puts("[EXEC-MEM] ERROR: Failed to build user stack\n");
+        /* Memory manager will be cleaned up by task destroy */
+        return rc;
+    }
+    fut_serial_puts("[EXEC-MEM] User stack built\n");
+
+    /* Replace task's memory manager */
+    fut_mm_t *old_mm = task->mm;
+    task->mm = new_mm;
+    /* Old memory manager cleanup is handled elsewhere */
+    (void)old_mm;
+    fut_serial_puts("[EXEC-MEM] Memory manager replaced\n");
+
+    /* Prepare for userspace jump */
+    struct fut_user_entry_arm64 info = {
+        .entry = ehdr->e_entry,
+        .stack = user_sp,
+        .argc = argc,
+        .argv_ptr = user_sp,
+        .task = task
+    };
+
+    fut_serial_puts("[EXEC-MEM] About to call trampoline\n");
+
+    /* Jump to userspace immediately - never returns on success */
+    fut_user_trampoline_arm64(&info);
+
+    /* Should never reach here */
+    return -EFAULT;
 }
 
 int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {

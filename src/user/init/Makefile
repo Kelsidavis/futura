@@ -2,29 +2,51 @@
 # Copyright (c) 2025 Kelsi Davis
 # Licensed under MPL v2.0
 
-# Toolchain
-CC := gcc
-LD := ld
-AR := ar
+# Platform detection
+PLATFORM ?= x86_64
+
+# Toolchain (can be overridden by parent Makefile or command line)
+ifeq ($(PLATFORM),arm64)
+    CROSS_COMPILE ?= /opt/homebrew/bin/aarch64-elf-
+    CC := $(CROSS_COMPILE)gcc
+    LD := $(CROSS_COMPILE)ld
+    AR := $(CROSS_COMPILE)ar
+    ARCH_CFLAGS := -march=armv8-a -mtune=cortex-a53
+else
+    CC := gcc
+    LD := ld
+    AR := ar
+    ARCH_CFLAGS := -m64
+endif
 
 # Directories
 BUILD_DIR := ../../../build
-OBJ_DIR := $(BUILD_DIR)/obj/user/init
-BIN_DIR := $(BUILD_DIR)/bin/user
-LIB_DIR := $(BUILD_DIR)/lib
+OBJ_DIR := $(BUILD_DIR)/obj/$(PLATFORM)/user/init
+BIN_DIR := $(BUILD_DIR)/bin/$(PLATFORM)/user
+LIB_DIR := $(BUILD_DIR)/lib/$(PLATFORM)
 
 # Includes
 INCLUDES := -I../../../include
 
 # Compiler flags
-CFLAGS := -std=c2x -ffreestanding -nostdlib -fno-builtin -fno-stack-protector
+CFLAGS := -std=c2x -ffreestanding -nostdlib -nostdinc -fno-builtin -fno-stack-protector
 CFLAGS += -Wall -Wextra -Werror
 CFLAGS += -g -O2
+CFLAGS += $(ARCH_CFLAGS)
 CFLAGS += $(INCLUDES)
+CFLAGS += -isystem $(shell $(CC) -print-file-name=include)
 
 # Linker flags
-LDSCRIPT := ../libfutura/userland.ld
-LDFLAGS := -nostdlib -static -T $(LDSCRIPT)
+ifeq ($(PLATFORM),arm64)
+    LDSCRIPT := ../libfutura/userland_arm64.ld
+    LDFLAGS := -static -T $(LDSCRIPT)
+    # libgcc for compiler-generated helper functions (atomics, etc.)
+    LIBGCC := $(shell $(CC) -print-libgcc-file-name)
+else
+    LDSCRIPT := ../libfutura/userland.ld
+    LDFLAGS := -nostdlib -static -T $(LDSCRIPT)
+    LIBGCC :=
+endif
 CRT0 := $(LIB_DIR)/crt0.o
 LIBFUTURA := $(LIB_DIR)/libfutura.a
 
@@ -41,11 +63,13 @@ TARGET := $(BIN_DIR)/init
 all: $(TARGET)
 
 $(TARGET): $(OBJS) $(CRT0) $(LIBFUTURA) | $(BIN_DIR)
-	$(LD) $(LDFLAGS) -o $@ $(CRT0) $(OBJS) $(LIBFUTURA)
+	@echo "LD $@"
+	@$(LD) $(LDFLAGS) -o $@ $(CRT0) $(OBJS) $(LIBFUTURA) $(LIBGCC)
 	@echo "Built init system: $@"
 
 $(OBJ_DIR)/%.o: %.c | $(OBJ_DIR)
-	$(CC) $(CFLAGS) -c $< -o $@
+	@echo "CC $<"
+	@$(CC) $(CFLAGS) -c $< -o $@
 
 $(OBJ_DIR):
 	@mkdir -p $(OBJ_DIR)

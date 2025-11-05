@@ -4,7 +4,7 @@
 #include <stdint.h>
 
 #ifdef __has_include
-#if __has_include(<pthread.h>)
+#if __has_include_next(<pthread.h>) && defined(__STDC_HOSTED__) && __STDC_HOSTED__ == 1
 #ifdef __GNUC__
 #include_next <pthread.h>
 #define FUTURA_HAVE_NATIVE_PTHREAD 1

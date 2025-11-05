@@ -10,23 +10,29 @@
 
 #include <stdint.h>
 #include <stddef.h>
+#include <user/sys.h>
+#include <user/sysnums.h>
 
-/* Define syscall numbers for x86_64 */
-#define __NR_read       0
-#define __NR_write      1
-#define __NR_open       2
-#define __NR_close      3
-#define __NR_stat       4
-#define __NR_lseek      8
-#define __NR_pipe       22
-#define __NR_dup2       33
-#define __NR_fork       57
-#define __NR_execve     59
-#define __NR_exit       60
-#define __NR_wait4      61
-#define __NR_chdir      80
-#define __NR_getcwd     79
-#define __NR_getdents64 217
+/* Syscall number aliases for shell code */
+#define __NR_read       SYS_read
+#define __NR_write      SYS_write
+#define __NR_open       SYS_open
+#define __NR_close      SYS_close
+#define __NR_stat       SYS_stat
+#define __NR_lseek      SYS_lseek
+#define __NR_pipe       SYS_pipe
+#define __NR_dup2       SYS_dup2
+#define __NR_fork       SYS_fork
+#define __NR_execve     SYS_execve
+#define __NR_exit       SYS_exit
+#define __NR_wait4      SYS_wait4
+#define __NR_chdir      SYS_chdir
+#define __NR_getcwd     SYS_getcwd
+#define __NR_getdents64 SYS_getdents64
+#define __NR_mkdir      SYS_mkdir
+#define __NR_rmdir      SYS_rmdir
+#define __NR_unlink     SYS_unlink
+#define __NR_rename     SYS_rename
 
 /* File flags (from VFS) */
 #define O_RDONLY    0x0000
@@ -102,118 +108,64 @@ static const char *get_history(int index);
 /* Forward declaration for tab completion */
 static void complete_command(char *buf, size_t *pos, size_t max_len);
 
-/* x86_64 syscall invocation via inline asm */
-static inline long syscall3(long nr, long arg1, long arg2, long arg3) {
-    long ret;
-    __asm__ __volatile__(
-        "int $0x80\n"
-        : "=a"(ret)
-        : "a"(nr), "D"(arg1), "S"(arg2), "d"(arg3)
-        : "rcx", "r11", "memory",
-          "xmm0", "xmm1", "xmm2", "xmm3", "xmm4", "xmm5", "xmm6", "xmm7",
-          "xmm8", "xmm9", "xmm10", "xmm11", "xmm12", "xmm13", "xmm14", "xmm15"
-    );
-    return ret;
-}
-
-static inline long sys_write(int fd, const char *buf, size_t count) {
-    return syscall3(1, fd, (long)buf, count);
-}
-
-static inline long sys_read(int fd, char *buf, size_t count) {
-    return syscall3(0, fd, (long)buf, count);
-}
-
+/* Architecture-agnostic syscall wrappers using libfutura */
 static inline long syscall1(long nr, long arg1) {
-    long ret;
-    __asm__ __volatile__(
-        "int $0x80\n"
-        : "=a"(ret)
-        : "a"(nr), "D"(arg1)
-        : "rcx", "r11", "memory",
-          "xmm0", "xmm1", "xmm2", "xmm3", "xmm4", "xmm5", "xmm6", "xmm7",
-          "xmm8", "xmm9", "xmm10", "xmm11", "xmm12", "xmm13", "xmm14", "xmm15"
-    );
-    return ret;
+    return sys_call1(nr, arg1);
 }
 
 static inline long syscall2(long nr, long arg1, long arg2) {
-    long ret;
-    __asm__ __volatile__(
-        "int $0x80\n"
-        : "=a"(ret)
-        : "a"(nr), "D"(arg1), "S"(arg2)
-        : "rcx", "r11", "memory",
-          "xmm0", "xmm1", "xmm2", "xmm3", "xmm4", "xmm5", "xmm6", "xmm7",
-          "xmm8", "xmm9", "xmm10", "xmm11", "xmm12", "xmm13", "xmm14", "xmm15"
-    );
-    return ret;
+    return sys_call2(nr, arg1, arg2);
+}
+
+static inline long syscall3(long nr, long arg1, long arg2, long arg3) {
+    return sys_call3(nr, arg1, arg2, arg3);
 }
 
 static inline long sys_chdir(const char *path) {
-    return syscall1(80, (long)path);
+    return sys_chdir_call(path);
 }
 
 static inline long sys_getcwd(char *buf, size_t size) {
-    return syscall2(79, (long)buf, size);
+    return sys_getcwd_call(buf, size);
 }
 
 static inline long sys_mkdir(const char *path, unsigned int mode) {
-    return syscall2(83, (long)path, mode);
+    return sys_call2(SYS_mkdir, (long)path, mode);
 }
 
 static inline long sys_rmdir(const char *path) {
-    return syscall1(84, (long)path);
-}
-
-static inline long sys_unlink(const char *path) {
-    return syscall1(87, (long)path);
+    return sys_call1(SYS_rmdir, (long)path);
 }
 
 static inline long sys_rename(const char *oldpath, const char *newpath) {
-    return syscall2(82, (long)oldpath, (long)newpath);
+    return sys_call2(SYS_rename, (long)oldpath, (long)newpath);
 }
 
 static inline long sys_fork(void) {
-    long ret;
-    __asm__ __volatile__(
-        "int $0x80\n"
-        : "=a"(ret)
-        : "a"(__NR_fork)
-        : "rcx", "r11", "memory",
-          "xmm0", "xmm1", "xmm2", "xmm3", "xmm4", "xmm5", "xmm6", "xmm7",
-          "xmm8", "xmm9", "xmm10", "xmm11", "xmm12", "xmm13", "xmm14", "xmm15"
-    );
-    return ret;
+    return sys_fork_call();
 }
 
 static inline long sys_pipe(int pipefd[2]) {
-    return syscall1(__NR_pipe, (long)pipefd);
+    return sys_call1(SYS_pipe, (long)pipefd);
 }
 
 static inline long sys_dup2(int oldfd, int newfd) {
-    return syscall2(__NR_dup2, oldfd, newfd);
-}
-
-static inline long sys_close(int fd) {
-    return syscall1(__NR_close, fd);
+    return sys_call2(SYS_dup2, oldfd, newfd);
 }
 
 static inline long sys_waitpid(int pid, int *status, int options) {
-    return syscall3(__NR_wait4, pid, (long)status, options);
+    return sys_wait4_call(pid, status, options, NULL);
 }
 
 static inline long sys_execve(const char *pathname, char *const argv[], char *const envp[]) {
-    return syscall3(__NR_execve, (long)pathname, (long)argv, (long)envp);
-}
-
-static inline int sys_open(const char *pathname, int flags, int mode) {
-    return (int)syscall3(__NR_open, (long)pathname, flags, mode);
+    return sys_execve_call(pathname, argv, envp);
 }
 
 static inline long sys_getdents64(int fd, void *dirp, unsigned long count) {
-    return syscall3(__NR_getdents64, fd, (long)dirp, count);
+    return sys_call3(SYS_getdents64, fd, (long)dirp, count);
 }
+
+/* Note: sys_read, sys_write, sys_close, sys_unlink, sys_open are provided by sys.h */
 
 /* Redirection types */
 enum redir_type {
@@ -667,7 +619,7 @@ static const char *get_var(const char *name) {
 }
 
 /* Set variable value */
-static void set_var(const char *name, const char *value) {
+static void set_var(const char *name, const char *value, int exported) {
     /* Find existing variable or empty slot */
     int empty_slot = -1;
     for (int i = 0; i < MAX_VARS; i++) {
@@ -686,7 +638,7 @@ static void set_var(const char *name, const char *value) {
         strncpy_simple(shell_vars[empty_slot].name, name, MAX_VAR_NAME);
         strncpy_simple(shell_vars[empty_slot].value, value, MAX_VAR_VALUE);
         shell_vars[empty_slot].used = 1;
-        shell_vars[empty_slot].exported = 0;
+        shell_vars[empty_slot].exported = exported;
     }
 }
 
@@ -3227,7 +3179,7 @@ static void cmd_export(int argc, char *argv[]) {
             expand_variables(expanded_value, value, MAX_VAR_VALUE);
 
             /* Set and export */
-            set_var(name, expanded_value);
+            set_var(name, expanded_value, 0);
             export_var(name);
         } else {
             /* Just export existing variable */
@@ -4133,7 +4085,7 @@ int main(int argc, char **argv, char **envp) {
             /* Expand variables in the value */
             char expanded_value[MAX_VAR_VALUE];
             expand_variables(expanded_value, var_value, MAX_VAR_VALUE);
-            set_var(var_name, expanded_value);
+            set_var(var_name, expanded_value, 0);
             last_exit_status = 0;
             continue;
         }

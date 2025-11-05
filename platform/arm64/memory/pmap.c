@@ -18,12 +18,8 @@ static inline page_table_t *pmap_context_pgd(fut_vmem_context_t *ctx) {
         return fut_get_kernel_pgd();
     }
 
-    uintptr_t raw = (uintptr_t)ctx->pgd;
-    if (raw >= PMAP_DIRECT_VIRT_BASE) {
-        return (page_table_t *)raw;
-    }
-
-    return (page_table_t *)pmap_kmap((phys_addr_t)raw);
+    /* ARM64: Identity mapping - pgd pointer is already a virtual address */
+    return (page_table_t *)ctx->pgd;
 }
 
 /* Get virtual address for a page table from its physical address */
@@ -101,6 +97,7 @@ void pmap_dump(uint64_t vaddr, size_t len) {
  */
 
 int pmap_probe_pte(fut_vmem_context_t *ctx, uint64_t vaddr, uint64_t *pte_out) {
+    extern void fut_printf(const char *, ...);
     if (!pte_out) {
         return -EINVAL;
     }
@@ -108,6 +105,7 @@ int pmap_probe_pte(fut_vmem_context_t *ctx, uint64_t vaddr, uint64_t *pte_out) {
     /* Get the PGD (Level 0 page table) from context */
     page_table_t *pgd = pmap_context_pgd(ctx);
     if (!pgd) {
+        fut_printf("[PROBE] No PGD\n");
         return -EFAULT;
     }
 
@@ -117,23 +115,35 @@ int pmap_probe_pte(fut_vmem_context_t *ctx, uint64_t vaddr, uint64_t *pte_out) {
     uint64_t pte_idx = PTE_INDEX(vaddr);
     uint64_t page_idx = PAGE_INDEX(vaddr);
 
+    /* fut_printf("[PROBE] vaddr=0x%llx pgd=0x%llx idx[%llu,%llu,%llu,%llu]\n",
+               (unsigned long long)vaddr, (unsigned long long)(uintptr_t)pgd, pgd_idx, pmd_idx, pte_idx, page_idx); */
+
     /* Level 0: PGD walk */
     pte_t pgde = pgd->entries[pgd_idx];
     if (!fut_pte_is_present(pgde)) {
+        fut_printf("[PROBE] PGD[%llu] not present\n", pgd_idx);
         return -EFAULT;
     }
 
     /* Level 1: PMD walk */
-    page_table_t *pmd = pmap_table_from_phys(fut_pte_to_phys(pgde));
+    uint64_t pmd_phys = fut_pte_to_phys(pgde);
+    page_table_t *pmd = pmap_table_from_phys(pmd_phys);
+    /* fut_printf("[PROBE] PMD: entry=0x%llx phys=0x%llx ptr=0x%llx\n",
+               (unsigned long long)pgde, (unsigned long long)pmd_phys, (unsigned long long)(uintptr_t)pmd); */
     pte_t pmde = pmd->entries[pmd_idx];
     if (!fut_pte_is_present(pmde)) {
+        fut_printf("[PROBE] PMD[%llu] not present\n", pmd_idx);
         return -EFAULT;
     }
 
     /* Level 2: PTE walk */
-    page_table_t *pte = pmap_table_from_phys(fut_pte_to_phys(pmde));
+    uint64_t pte_phys = fut_pte_to_phys(pmde);
+    page_table_t *pte = pmap_table_from_phys(pte_phys);
+    /* fut_printf("[PROBE] PTE: entry=0x%llx phys=0x%llx ptr=0x%llx\n",
+               (unsigned long long)pmde, (unsigned long long)pte_phys, (unsigned long long)(uintptr_t)pte); */
     pte_t pte_entry = pte->entries[pte_idx];
     if (!fut_pte_is_present(pte_entry)) {
+        fut_printf("[PROBE] PTE[%llu] not present\n", pte_idx);
         return -EFAULT;
     }
 
@@ -144,12 +154,17 @@ int pmap_probe_pte(fut_vmem_context_t *ctx, uint64_t vaddr, uint64_t *pte_out) {
     }
 
     /* Level 3: PAGE walk (final level) */
-    page_table_t *page_tbl = pmap_table_from_phys(fut_pte_to_phys(pte_entry));
+    uint64_t pt_phys = fut_pte_to_phys(pte_entry);
+    page_table_t *page_tbl = pmap_table_from_phys(pt_phys);
+    /* fut_printf("[PROBE] PT: entry=0x%llx phys=0x%llx ptr=0x%llx\n",
+               (unsigned long long)pte_entry, (unsigned long long)pt_phys, (unsigned long long)(uintptr_t)page_tbl); */
     pte_t page_entry = page_tbl->entries[page_idx];
     if (!fut_pte_is_present(page_entry)) {
+        fut_printf("[PROBE] PT[%llu] not present\n", page_idx);
         return -EFAULT;
     }
 
+    /* fut_printf("[PROBE] Success: final_pte=0x%llx\n", (unsigned long long)page_entry); */
     *pte_out = page_entry;
     return 0;
 }
@@ -207,10 +222,8 @@ static void pmap_free_table_recursive(page_table_t *table, int level) {
         }
     }
 
-    /* Free this table itself (but not kernel tables) */
-    if ((uintptr_t)table >= PMAP_DIRECT_VIRT_BASE) {
-        fut_pmm_free_page((void *)table);
-    }
+    /* Free this table itself (ARM64: all tables in user context should be freed) */
+    fut_pmm_free_page((void *)table);
 }
 
 /**

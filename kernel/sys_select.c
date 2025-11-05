@@ -64,3 +64,74 @@ long sys_select(int nfds, fd_set *readfds, fd_set *writefds,
     fut_printf("[SELECT] Stub implementation - returning 0 (timeout)\n");
     return 0;  /* Simulate timeout */
 }
+
+/**
+ * sys_pselect6 - Synchronous I/O multiplexing with signal mask
+ *
+ * @param nfds      Highest FD number + 1
+ * @param readfds   Set of FDs to monitor for read
+ * @param writefds  Set of FDs to monitor for write
+ * @param exceptfds Set of FDs to monitor for exceptions
+ * @param timeout   Timeout (timespec format) or NULL to block indefinitely
+ * @param sigmask   Signal mask to temporarily install (NULL = ignored)
+ *
+ * On ARM64, pselect6 is the primary interface (select doesn't exist).
+ * For now, we ignore the sigmask parameter and provide a stub implementation.
+ *
+ * Phase 1: Stub implementation
+ * Phase 2: Implement actual FD monitoring
+ * Phase 3: Add signal mask handling
+ */
+long sys_pselect6(int nfds, void *readfds, void *writefds, void *exceptfds,
+                  void *timeout, void *sigmask) {
+    (void)sigmask;  /* Ignore signal mask for now */
+
+    fut_printf("[PSELECT6] pselect6(nfds=%d, readfds=%p, writefds=%p, exceptfds=%p, "
+               "timeout=%p, sigmask=%p)\n",
+               nfds, readfds, writefds, exceptfds, timeout, sigmask);
+
+    /* Validate nfds */
+    if (nfds < 0 || nfds > FD_SETSIZE) {
+        return -EINVAL;
+    }
+
+    fut_printf("[PSELECT6] Stub implementation - returning 0 (timeout)\n");
+    return 0;  /* Simulate timeout */
+}
+
+/* pollfd structure (for ppoll) */
+struct pollfd {
+    int fd;         /* File descriptor */
+    short events;   /* Requested events */
+    short revents;  /* Returned events */
+};
+
+/**
+ * sys_ppoll - Poll multiple file descriptors with signal mask
+ *
+ * @param fds     Array of pollfd structures
+ * @param nfds    Number of elements in fds array
+ * @param tmo_p   Timeout (timespec format) or NULL to block indefinitely
+ * @param sigmask Signal mask to temporarily install (NULL = ignored)
+ *
+ * On ARM64, ppoll is the primary interface (poll doesn't exist).
+ * For now, we ignore the sigmask parameter and provide a stub implementation.
+ *
+ * Phase 1: Stub implementation
+ * Phase 2: Implement actual FD polling
+ * Phase 3: Add signal mask handling
+ */
+long sys_ppoll(void *fds, unsigned int nfds, void *tmo_p, const void *sigmask) {
+    (void)sigmask;  /* Ignore signal mask for now */
+
+    fut_printf("[PPOLL] ppoll(fds=%p, nfds=%u, tmo_p=%p, sigmask=%p)\n",
+               fds, nfds, tmo_p, sigmask);
+
+    /* Validate parameters */
+    if (!fds && nfds > 0) {
+        return -EINVAL;
+    }
+
+    fut_printf("[PPOLL] Stub implementation - returning 0 (timeout)\n");
+    return 0;  /* Simulate timeout */
+}

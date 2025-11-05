@@ -41,7 +41,7 @@ sync_exception_entry:
      * Total: ~816 bytes, round to ~880
      */
 
-    sub     sp, sp, #880        /* Allocate space for frame + buffer */
+    sub     sp, sp, #880        /* Allocate space for frame + buffer (must be pre-aligned) */
 
     /* Save all general purpose registers x0-x30 directly to frame
      * SP now points to the frame, so we can use it as base

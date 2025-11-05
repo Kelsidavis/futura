@@ -48,7 +48,11 @@ struct fut_vma {
 
 typedef struct fut_mm {
     fut_vmem_context_t ctx;
+#if defined(__aarch64__)
+    atomic_uint_fast64_t refcnt __attribute__((aligned(8)));  /* 8-byte aligned for ARM64 atomics */
+#else
     atomic_uint_fast64_t refcnt;
+#endif
     uint32_t flags;
     uintptr_t brk_start;
     uintptr_t brk_current;

@@ -149,6 +149,7 @@ static void free_page_table(page_table_t *pt) {
  * @return Page table at child level, or NULL
  */
 static page_table_t *get_or_create_table(page_table_t *parent_table, int index, bool allocate) {
+    extern void fut_printf(const char *, ...);
     pte_t entry = parent_table->entries[index];
 
     if (!fut_pte_is_present(entry)) {
@@ -166,15 +167,21 @@ static page_table_t *get_or_create_table(page_table_t *parent_table, int index, 
         pte_t table_desc = fut_make_pte(phys_addr, PTE_VALID | PTE_TABLE);
         parent_table->entries[index] = table_desc;
 
+        /* fut_printf("[PT] Created table: parent=%p idx=%d new=%p desc=0x%llx\n",
+                   parent_table, index, new_table, (unsigned long long)table_desc); */
+
         return new_table;
     }
 
     if (fut_pte_is_table(entry)) {
         /* Extract physical address and convert to virtual */
         uint64_t phys = fut_pte_to_phys(entry);
+        /* fut_printf("[PT] Reusing table: entry=0x%llx phys=0x%llx\n",
+                   (unsigned long long)entry, (unsigned long long)phys); */
         return (page_table_t *)phys;  /* Assuming identity mapping for now */
     }
 
+    fut_printf("[PT] ERROR: Block descriptor at idx=%d\n", index);
     return NULL;  /* Block descriptor found where table expected */
 }
 
@@ -187,28 +194,35 @@ static page_table_t *get_or_create_table(page_table_t *parent_table, int index, 
  */
 
 /**
- * Translate generic PTE flags (x86_64-style) to ARM64 PTE flags.
- * Used by architecture-generic code (demand paging, COW) that
- * uses x86_64 flag constants.
- * @param generic_flags Flags using x86_64-style constants (PTE_PRESENT, PTE_USER, PTE_WRITABLE, PTE_NX)
+ * Translate generic PTE flags (x86_64-style) or PROT flags to ARM64 PTE flags.
+ * Used by architecture-generic code (demand paging, COW) and ELF loader.
+ * @param generic_flags Flags using either PTE_* or PROT_* constants
  * @return ARM64 PTE flags with proper AP bits and attributes
  */
 static uint64_t arm64_translate_flags(uint64_t generic_flags) {
     uint64_t arm64_flags = 0;
+    bool is_user = true;  /* Default to user pages */
+    bool is_writable = false;
+    bool is_executable = true;  /* Default to executable */
 
-    /* Always set VALID if PTE_PRESENT is set */
-    if (generic_flags & PTE_PRESENT) {
+    /* Detect if these are PROT_* flags (low bits only) or PTE_* flags (may have high bits) */
+    /* PROT_* values: PROT_READ=1, PROT_WRITE=2, PROT_EXEC=4 (all < 8) */
+    /* PTE_* values include PTE_NX at bit 63, PTE_USER at higher bits */
+    if ((generic_flags & ~0x7ULL) == 0) {
+        /* These look like PROT_* flags */
+        is_writable = (generic_flags & 0x2) != 0;  /* PROT_WRITE */
+        is_executable = (generic_flags & 0x4) != 0;  /* PROT_EXEC */
+        /* PROT_* flags always mean user pages for ELF loading */
         arm64_flags |= PTE_VALID;
+    } else {
+        /* These are PTE_* flags */
+        if (generic_flags & PTE_PRESENT) {
+            arm64_flags |= PTE_VALID;
+        }
+        is_user = (generic_flags & PTE_USER) != 0;
+        is_writable = (generic_flags & PTE_WRITABLE) != 0;
+        is_executable = (generic_flags & PTE_NX) == 0;  /* NX=0 means executable */
     }
-
-    /* Determine if this is a user-accessible page by checking for PTE_USER (mapped to PTE_AF_BIT) */
-    bool is_user = (generic_flags & PTE_USER) != 0;
-
-    /* Check bit 62 which is set to indicate "writable request" on ARM64.
-     * Note: On x86_64, PTE_WRITABLE is a real bit that gets into PTEs.
-     * On ARM64, we use bit 62 as a signal during translation (it won't end up in final PTE).
-     */
-    bool is_writable = (generic_flags & PTE_WRITABLE) != 0;
 
     /* Determine AP bits based on user/writable flags */
     if (is_user) {
@@ -236,8 +250,8 @@ static uint64_t arm64_translate_flags(uint64_t generic_flags) {
     /* Set access flag (required for page to be mappable) */
     arm64_flags |= PTE_AF_BIT;
 
-    /* Handle NX (no-execute) bit - set UXN if PTE_NX is set */
-    if (generic_flags & PTE_NX) {
+    /* Handle execute permission - set UXN if not executable */
+    if (!is_executable) {
         arm64_flags |= PTE_UXN_BIT;
     }
 
@@ -302,7 +316,8 @@ int fut_map_page(fut_vmem_context_t *ctx, uint64_t vaddr, uint64_t paddr, uint64
     }
 
     int page_idx = PAGE_INDEX(vaddr);
-    pte_t pte = fut_make_pte(paddr, arm64_flags);
+    /* For level 3 page descriptors, bits [1:0] must be 0b11 (PTE_VALID | PTE_TABLE) */
+    pte_t pte = fut_make_pte(paddr, arm64_flags | PTE_TABLE);
     page_table->entries[page_idx] = pte;
 
     /* Invalidate TLB entry for this address */

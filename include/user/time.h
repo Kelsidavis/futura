@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: MPL-2.0
 #pragma once
 
-/* Include system headers if available */
-#if __has_include(<time.h>)
-#include <time.h>
+#include <stdint.h>
+
+/* time_t definition */
+#ifndef time_t
+typedef int64_t time_t;
 #endif
 
 /* Define clock constants for freestanding environments */
@@ -15,11 +17,15 @@
 #define CLOCK_REALTIME 0
 #endif
 
-/* Declare clock_gettime if not already available from system headers */
-#if !__has_include(<time.h>)
+/* Always define timespec for freestanding */
+#ifndef _STRUCT_TIMESPEC
+#define _STRUCT_TIMESPEC
 struct timespec {
     long tv_sec;
     long tv_nsec;
 };
-int clock_gettime(int clock_id, struct timespec *tp);
 #endif
+
+int clock_gettime(int clock_id, struct timespec *tp);
+int nanosleep(const struct timespec *req, struct timespec *rem);
+time_t time(time_t *tloc);

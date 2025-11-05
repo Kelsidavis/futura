@@ -14,7 +14,7 @@
  * - sp: Stack pointer (must be 16-byte aligned)
  */
 
-.section .text
+.text
 .global _start
 
 _start:

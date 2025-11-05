@@ -46,8 +46,14 @@ struct rlimit {
  *   - Process ID of the calling process (always succeeds)
  */
 long sys_getpid(void) {
+    extern fut_thread_t *fut_thread_current(void);
+    fut_thread_t *thread = fut_thread_current();
     fut_task_t *task = fut_task_current();
+
+    fut_printf("[PROC] getpid() thread=%p task=%p\n", (void*)thread, (void*)task);
+
     if (!task) {
+        fut_printf("[PROC] getpid() -> 1 (task is NULL!)\n");
         return 1;  /* Default to init PID */
     }
 

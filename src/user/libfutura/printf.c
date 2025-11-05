@@ -2,7 +2,13 @@
 
 #include <stdarg.h>
 #include <stddef.h>
-#include <stdlib.h>
+/* stdlib.h not available in freestanding */
+/* Forward declarations for malloc/free from malloc.c */
+extern void *malloc(size_t size);
+extern void free(void *ptr);
+extern void *realloc(void *ptr, size_t size);
+extern void *calloc(size_t nmemb, size_t size);
+
 #include <string.h>
 
 #include <user/sys.h>

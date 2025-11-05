@@ -1354,3 +1354,30 @@ long sys_epoll_create(int size) {
     /* Delegate to modern epoll_create1 with flags=0 */
     return sys_epoll_create1(0);
 }
+
+/**
+ * sys_epoll_pwait - Wait for events on epoll instance (with signal mask)
+ *
+ * @param epfd      Epoll file descriptor
+ * @param events    Buffer for returned events
+ * @param maxevents Maximum number of events to return
+ * @param timeout   Timeout in milliseconds (-1 = block indefinitely)
+ * @param sigmask   Signal mask to temporarily install (NULL = ignored)
+ *
+ * On ARM64, epoll_pwait is the primary interface (epoll_wait doesn't exist).
+ * For now, we ignore the sigmask parameter and delegate to sys_epoll_wait.
+ *
+ * Phase 1: Simple wrapper that ignores sigmask
+ * Phase 2: Implement signal mask handling
+ */
+long sys_epoll_pwait(int epfd, struct epoll_event *events, int maxevents,
+                     int timeout, const void *sigmask) {
+    (void)sigmask;  /* Ignore signal mask for now */
+
+    fut_printf("[EPOLL_PWAIT] epoll_pwait(epfd=%d, events=%p, maxevents=%d, "
+               "timeout=%d, sigmask=%p) -> delegating to epoll_wait\n",
+               epfd, events, maxevents, timeout, sigmask);
+
+    /* Delegate to epoll_wait (signal mask handling deferred to Phase 2) */
+    return sys_epoll_wait(epfd, events, maxevents, timeout);
+}

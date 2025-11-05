@@ -21,7 +21,7 @@
 
 /* Global task list */
 fut_task_t *fut_task_list = NULL;  /* Exposed for stats/debugging */
-static _Atomic uint64_t next_pid = 1;  /* 64-bit PID counter */
+static _Atomic uint64_t next_pid __attribute__((aligned(8))) = 1;  /* 64-bit PID counter (8-byte aligned for ARM64 atomics) */
 
 /* Task list lock */
 static fut_spinlock_t task_list_lock = { .locked = 0 };
@@ -64,8 +64,25 @@ fut_task_t *fut_task_create(void) {
         parent = curr->task;
     }
 
+    /* ARM64 workaround: Use inline assembly for atomic fetch-add instead of C11 atomics
+     * The C11 atomic intrinsics have issues on ARM64 bare metal (cause alignment faults) */
+#if defined(__aarch64__)
+    uint64_t new_pid, tmp;
+    __asm__ volatile(
+        "1: ldxr    %0, [%2]\n"          /* Load exclusive from next_pid */
+        "   add     %1, %0, #1\n"        /* Add 1 to loaded value */
+        "   stxr    w3, %1, [%2]\n"      /* Store exclusive back to next_pid */
+        "   cbnz    w3, 1b\n"            /* Retry if store failed */
+        : "=&r"(new_pid), "=&r"(tmp)
+        : "r"(&next_pid)
+        : "w3", "memory"
+    );
+#else
+    uint64_t new_pid = atomic_fetch_add_explicit(&next_pid, 1, memory_order_seq_cst);
+#endif
+
     *task = (fut_task_t){
-        .pid = atomic_fetch_add_explicit(&next_pid, 1, memory_order_seq_cst),
+        .pid = new_pid,
         .mm = NULL,
         .parent = parent,
         .first_child = NULL,

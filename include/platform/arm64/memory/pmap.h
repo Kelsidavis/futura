@@ -14,19 +14,18 @@
 
 typedef uint64_t phys_addr_t;
 
-/* Permanent kernel direct-map window (higher-half). */
-#define PMAP_DIRECT_VIRT_BASE  KERNEL_VIRTUAL_BASE
+/* Permanent kernel direct-map window.
+ * NOTE: ARM64 currently uses identity mapping (physical = virtual).
+ * Higher-half kernel mapping not yet implemented. */
+#define PMAP_DIRECT_VIRT_BASE  0x0ULL
 
 static inline uintptr_t pmap_phys_to_virt(phys_addr_t phys) {
-    /* For MMIO regions, we use direct kernel mapping in higher-half */
-    return (uintptr_t)phys | PMAP_DIRECT_VIRT_BASE;
+    /* ARM64: Identity mapping - physical address = virtual address */
+    return (uintptr_t)phys;
 }
 
 static inline phys_addr_t pmap_virt_to_phys(uintptr_t virt) {
-    if (virt >= PMAP_DIRECT_VIRT_BASE) {
-        /* Mask off the high kernel bits to get physical address */
-        return (phys_addr_t)(virt & ~PMAP_DIRECT_VIRT_BASE);
-    }
+    /* ARM64: Identity mapping - virtual address = physical address */
     return (phys_addr_t)virt;
 }
 

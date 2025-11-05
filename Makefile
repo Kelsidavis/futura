@@ -13,6 +13,7 @@ SHELL := /bin/bash
 
 # Platform selection (x86_64, arm64)
 PLATFORM ?= x86_64
+export PLATFORM
 
 # Build mode (debug, release)
 BUILD_MODE ?= debug
@@ -146,11 +147,14 @@ else ifeq ($(PLATFORM),arm64)
     ARCH_LDFLAGS := -T platform/arm64/link.ld
     EXTRA_LDLIBS := /opt/homebrew/Cellar/aarch64-elf-gcc/15.2.0/lib/gcc/aarch64-elf/15.2.0/libgcc.a
     # Binary format for embedding blobs
-    OBJCOPY_BIN_FMT := elf64-aarch64
+    OBJCOPY_BIN_FMT := elf64-littleaarch64
     OBJCOPY_BIN_ARCH := aarch64
 else
     $(error Unsupported platform: $(PLATFORM))
 endif
+
+# Export toolchain variables for submakes (userland, etc.)
+export CC AS LD AR OBJCOPY
 
 # ============================================================
 #   Common Compiler Flags
@@ -396,8 +400,24 @@ KERNEL_SOURCES := \
     kernel/sys_lstat.c \
     kernel/sys_chmod.c \
     kernel/sys_fchmod.c \
+    kernel/sys_xattr.c \
+    kernel/sys_inotify.c \
+    kernel/sys_splice.c \
+    kernel/sys_ioprio.c \
+    kernel/sys_capability.c \
+    kernel/sys_personality.c \
+    kernel/sys_unshare.c \
+    kernel/sys_acct.c \
+    kernel/sys_waitid.c \
+    kernel/sys_set_tid_address.c \
+    kernel/sys_mknodat.c \
+    kernel/sys_fchdir.c \
+    kernel/sys_mount.c \
+    kernel/sys_umount2.c \
+    kernel/sys_pivot_root.c \
     kernel/sys_chown.c \
     kernel/sys_fchown.c \
+    kernel/sys_fchownat.c \
     kernel/sys_umask.c \
     kernel/sys_truncate.c \
     kernel/sys_ftruncate.c \
@@ -413,6 +433,7 @@ KERNEL_SOURCES := \
     kernel/sys_symlink.c \
     kernel/sys_readlink.c \
     kernel/sys_getdents64.c \
+    kernel/sys_utimensat.c \
     kernel/sys_pread64.c \
     kernel/sys_pwrite64.c \
     kernel/sys_readv.c \
@@ -433,8 +454,13 @@ KERNEL_SOURCES := \
     kernel/sys_mincore.c \
     kernel/sys_nanosleep.c \
     kernel/sys_time.c \
+    kernel/sys_timer.c \
+    kernel/sys_futex.c \
+    kernel/sys_eventfd.c \
     kernel/sys_chdir.c \
     kernel/sys_getcwd.c \
+    kernel/sys_vhangup.c \
+    kernel/sys_quotactl.c \
     kernel/signal/signal.c \
     kernel/rt/memory.c \
     kernel/rt/stack_chk.c \
@@ -509,13 +535,21 @@ else ifeq ($(PLATFORM),arm64)
         platform/arm64/timing/perf_clock.c \
         kernel/arch/arm64/hal_halt.c \
         kernel/arch/arm64/hal_interrupts.c \
+        kernel/arch/arm64/arm64_threading.c \
         kernel/mm/arm64_paging.c \
         kernel/dtb/arm64_dtb.c \
         kernel/dtb/rpi_init.c \
         kernel/tests/multiprocess.c \
         kernel/tests/sys_dup2.c \
         kernel/tests/sys_pipe.c \
-        kernel/tests/sys_signal.c
+        kernel/tests/sys_signal.c \
+        kernel/sys_mman.c \
+        kernel/sys_cred_advanced.c \
+        kernel/sys_prlimit.c \
+        kernel/sys_sched_advanced.c \
+        kernel/sys_clock_advanced.c \
+        kernel/sys_fileio_advanced.c \
+        kernel/sys_filesystem_stats.c
 endif
 
 # Subsystem sources (POSIX compat)
@@ -551,6 +585,12 @@ WAYLAND_COLOR_BLOB := $(OBJ_DIR)/kernel/blobs/wl_colorwheel_blob.o
 WAYLAND_SHELL_BIN := $(BIN_DIR)/user/futura-shell
 WAYLAND_SHELL_BLOB := $(OBJ_DIR)/kernel/blobs/futura_shell_blob.o
 
+# ARM64 userland binaries
+ARM64_INIT_BIN := $(BIN_DIR)/arm64/user/init
+ARM64_INIT_BLOB := $(OBJ_DIR)/kernel/blobs/arm64_init_blob.o
+ARM64_SHELL_BIN := $(BIN_DIR)/arm64/user/shell
+ARM64_SHELL_BLOB := $(OBJ_DIR)/kernel/blobs/arm64_shell_blob.o
+
 ifeq ($(PLATFORM),x86_64)
 OBJECTS += $(FBTEST_BLOB)
 ifeq ($(ENABLE_WINSRV_DEMO),1)
@@ -560,6 +600,8 @@ OBJECTS += $(INIT_STUB_BLOB) $(SECOND_STUB_BLOB)
 ifeq ($(ENABLE_WAYLAND_DEMO),1)
 OBJECTS += $(WAYLAND_COMPOSITOR_BLOB) $(WAYLAND_CLIENT_BLOB) $(WAYLAND_COLOR_BLOB) $(WAYLAND_SHELL_BLOB)
 endif
+else ifeq ($(PLATFORM),arm64)
+OBJECTS += $(ARM64_INIT_BLOB) $(ARM64_SHELL_BLOB)
 endif
 
 # ============================================================
@@ -599,6 +641,7 @@ $(OBJ_DIR) $(BIN_DIR):
 	@mkdir -p $(OBJ_DIR)/platform/$(PLATFORM)/timing
 ifeq ($(PLATFORM),arm64)
 	@mkdir -p $(OBJ_DIR)/kernel/dtb
+	@mkdir -p $(OBJ_DIR)/kernel/sched
 endif
 	@mkdir -p $(OBJ_DIR)/tests
 	@mkdir -p $(OBJ_DIR)/subsystems/posix_compat
@@ -718,6 +761,23 @@ $(WAYLAND_COLOR_BLOB): $(WAYLAND_COLOR_BIN) | $(OBJ_DIR)/kernel/blobs
 	@$(OBJCOPY) -I binary -O $(OBJCOPY_BIN_FMT) -B $(OBJCOPY_BIN_ARCH) $< $@
 
 $(WAYLAND_SHELL_BLOB): $(WAYLAND_SHELL_BIN) | $(OBJ_DIR)/kernel/blobs
+	@echo "OBJCOPY $@"
+	@$(OBJCOPY) -I binary -O $(OBJCOPY_BIN_FMT) -B $(OBJCOPY_BIN_ARCH) $< $@
+
+# ARM64 userland binaries and blobs
+$(ARM64_INIT_BIN):
+	@echo "Building ARM64 init..."
+	@$(MAKE) -C src/user/init PLATFORM=arm64 all
+
+$(ARM64_SHELL_BIN):
+	@echo "Building ARM64 shell..."
+	@$(MAKE) -C src/user/shell -f Makefile.simple PLATFORM=arm64 all
+
+$(ARM64_INIT_BLOB): $(ARM64_INIT_BIN) | $(OBJ_DIR)/kernel/blobs
+	@echo "OBJCOPY $@"
+	@$(OBJCOPY) -I binary -O $(OBJCOPY_BIN_FMT) -B $(OBJCOPY_BIN_ARCH) $< $@
+
+$(ARM64_SHELL_BLOB): $(ARM64_SHELL_BIN) | $(OBJ_DIR)/kernel/blobs
 	@echo "OBJCOPY $@"
 	@$(OBJCOPY) -I binary -O $(OBJCOPY_BIN_FMT) -B $(OBJCOPY_BIN_ARCH) $< $@
 

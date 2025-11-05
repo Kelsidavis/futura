@@ -57,8 +57,10 @@ int fstat(int fd, struct stat *st) {
     return 0;
 }
 
-__attribute__((weak, alias("fstat"), nonnull(2), leaf, nothrow))
-int fstat64(int fd, struct stat *st);
+/* fstat64 wrapper - aliases not supported on some toolchains */
+int fstat64(int fd, struct stat *st) {
+    return fstat(fd, st);
+}
 
 int __fxstat64(int ver, int fd, struct stat *st) {
     (void)ver;

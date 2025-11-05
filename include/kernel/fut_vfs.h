@@ -257,7 +257,42 @@ struct fut_vnode_ops {
  *   Filesystem Type
  * ============================================================ */
 
+/* Forward declaration for Futura-specific statfs (defined later) */
 struct fut_statfs;
+
+/* Linux-compatible filesystem statistics structure (for syscalls) */
+struct fut_linux_statfs {
+    uint64_t f_type;      /* Filesystem type */
+    uint64_t f_bsize;     /* Optimal transfer block size */
+    uint64_t f_blocks;    /* Total data blocks in filesystem */
+    uint64_t f_bfree;     /* Free blocks in filesystem */
+    uint64_t f_bavail;    /* Free blocks available to unprivileged user */
+    uint64_t f_files;     /* Total file nodes in filesystem */
+    uint64_t f_ffree;     /* Free file nodes in filesystem */
+    uint64_t f_fsid[2];   /* Filesystem ID */
+    uint64_t f_namelen;   /* Maximum length of filenames */
+    uint64_t f_frsize;    /* Fragment size */
+    uint64_t f_flags;     /* Mount flags of filesystem */
+    uint64_t f_spare[4];  /* Padding for future use */
+};
+
+/* Linux-compatible system information structure (for syscalls) */
+struct fut_linux_sysinfo {
+    uint64_t uptime;      /* Seconds since boot */
+    uint64_t loads[3];    /* 1, 5, and 15 minute load averages */
+    uint64_t totalram;    /* Total usable main memory size */
+    uint64_t freeram;     /* Available memory size */
+    uint64_t sharedram;   /* Amount of shared memory */
+    uint64_t bufferram;   /* Memory used by buffers */
+    uint64_t totalswap;   /* Total swap space size */
+    uint64_t freeswap;    /* Swap space still available */
+    uint16_t procs;       /* Number of current processes */
+    uint16_t pad;         /* Padding */
+    uint64_t totalhigh;   /* Total high memory size */
+    uint64_t freehigh;    /* Available high memory size */
+    uint32_t mem_unit;    /* Memory unit size in bytes */
+    char _f[8];           /* Padding to 64 bytes */
+};
 
 struct fut_fs_type {
     const char *name;               /* Filesystem name (e.g., "futura_fs") */

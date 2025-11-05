@@ -34,8 +34,15 @@ extern void fut_printf(const char *fmt, ...);
  *   Interrupt Context Detection
  * ============================================================ */
 
-/* Tracks whether we're currently executing in interrupt context */
+/* Tracks whether we're currently executing in interrupt context
+ * Note: On ARM64 bare metal, C11 atomics cause alignment faults.
+ * For bools, volatile is sufficient as stores/loads are naturally atomic.
+ */
+#if defined(__aarch64__)
+volatile bool fut_in_interrupt = false;
+#else
 _Atomic bool fut_in_interrupt = false;
+#endif
 
 /* Points to the current interrupt frame when in interrupt context */
 fut_interrupt_frame_t *fut_current_frame = NULL;
@@ -527,7 +534,11 @@ void fut_schedule(void) {
         extern void serial_puts(const char *s);
 
         // Check if we're in interrupt context
+#if defined(__aarch64__)
+        bool in_irq = fut_in_interrupt;  /* Simple load for volatile bool */
+#else
         bool in_irq = atomic_load_explicit(&fut_in_interrupt, memory_order_acquire);
+#endif
 
         fut_mm_t *prev_mm = (prev && prev->task) ? fut_task_get_mm(prev->task) : NULL;
         fut_mm_t *next_mm = (next && next->task) ? fut_task_get_mm(next->task) : NULL;

@@ -309,8 +309,19 @@ void fut_heap_init(uintptr_t heap_start, uintptr_t heap_end) {
  * This provides both efficiency (slab) and flexibility (buddy)
  */
 
+#if defined(__aarch64__)
+extern void *arm64_static_malloc(size_t size);
+#endif
+
 void *fut_malloc(size_t size) {
     if (!size) return nullptr;
+
+    /* On ARM64, use static allocator if heap not initialized yet */
+#if defined(__aarch64__)
+    if (heap_base == 0) {
+        return arm64_static_malloc(size);
+    }
+#endif
 
     /* Use slab allocator - it handles both small and large allocations */
     return slab_malloc(size);

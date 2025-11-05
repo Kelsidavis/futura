@@ -25,7 +25,7 @@ extern void fut_printf(const char *fmt, ...);
 extern void fut_sleep_until(fut_thread_t *thread, uint64_t wake_time);
 
 /* Thread ID counter (64-bit) */
-static _Atomic uint64_t next_tid = 1;
+static _Atomic uint64_t next_tid __attribute__((aligned(8))) = 1;  /* 8-byte aligned for ARM64 atomics */
 
 /* Current thread pointer is now per-CPU (see fut_percpu_t in fut_percpu.h) */
 
@@ -145,9 +145,25 @@ fut_thread_t *fut_thread_create(
     // This helps detect stack overflow during debugging
     *(uint64_t *)stack = 0xCAFEBABEDEADBEEFULL;  // FUT_STACK_CANARY
 
+    // Get new TID (ARM64 workaround for atomic intrinsics)
+#if defined(__aarch64__)
+    uint64_t new_tid, tmp_tid;
+    __asm__ volatile(
+        "1: ldxr    %0, [%2]\n"
+        "   add     %1, %0, #1\n"
+        "   stxr    w3, %1, [%2]\n"
+        "   cbnz    w3, 1b\n"
+        : "=&r"(new_tid), "=&r"(tmp_tid)
+        : "r"(&next_tid)
+        : "w3", "memory"
+    );
+#else
+    uint64_t new_tid = atomic_fetch_add_explicit(&next_tid, 1, memory_order_seq_cst);
+#endif
+
     // Initialize thread structure
     *thread = (fut_thread_t){
-        .tid = atomic_fetch_add_explicit(&next_tid, 1, memory_order_seq_cst),
+        .tid = new_tid,
         .task = task,
         .stack_base = stack,
         .stack_size = aligned_stack_size,

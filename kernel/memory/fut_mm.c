@@ -716,11 +716,10 @@ fut_mm_t *fut_mm_kernel(void) {
 }
 
 static void copy_kernel_half(page_table_t *dst) {
-    page_table_t *src = (page_table_t *)fut_get_kernel_pgd();
-    /* Kernel occupies upper half entries (256-511) */
-    for (size_t idx = 256; idx < 512; ++idx) {
-        dst->entries[idx] = src->entries[idx];
-    }
+    /* ARM64: No-op for identity mapping.
+     * In identity mapping, kernel and user share the same lower-half address space.
+     * There is no higher-half kernel mapping to copy. */
+    (void)dst;
 }
 
 fut_mm_t *fut_mm_create(void) {

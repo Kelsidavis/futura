@@ -9,4 +9,7 @@ int lstat64(const char *path, void *buf) {
     return -1;
 }
 
-int lstat(const char *path, void *buf) __attribute__((weak, alias("lstat64")));
+/* lstat wrapper - aliases not supported on some toolchains */
+int lstat(const char *path, void *buf) {
+    return lstat64(path, buf);
+}

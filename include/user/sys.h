@@ -7,78 +7,39 @@
 #include <shared/fut_timespec.h>
 #include <user/sysnums.h>
 
+/* Architecture-specific syscall ABI */
+#if defined(__x86_64__)
+#include <platform/x86_64/syscall_abi.h>
+#elif defined(__aarch64__) || defined(__arm64__)
+#include <platform/arm64/syscall_abi.h>
+#else
+#error "Unsupported architecture"
+#endif
+
+/* Generic syscall wrappers using architecture-specific __SYSCALL_N macros */
 static inline long sys_call0(long nr) {
-    register long rax __asm__("rax") = nr;
-    __asm__ volatile("int $0x80"
-                     : "+a"(rax)
-                     :
-                     : "rcx", "r11", "memory");
-    return rax;
+    return __SYSCALL_0(nr);
 }
 
 static inline long sys_call1(long nr, long a1) {
-    register long rax __asm__("rax") = nr;
-    register long rdi __asm__("rdi") = a1;
-    __asm__ volatile("int $0x80"
-                     : "+a"(rax)
-                     : "D"(rdi)
-                     : "rcx", "r11", "memory");
-    return rax;
+    return __SYSCALL_1(nr, a1);
 }
 
 static inline long sys_call2(long nr, long a1, long a2) {
-    register long rax __asm__("rax") = nr;
-    register long rdi __asm__("rdi") = a1;
-    register long rsi __asm__("rsi") = a2;
-    __asm__ volatile("int $0x80"
-                     : "+a"(rax)
-                     : "D"(rdi), "S"(rsi)
-                     : "rcx", "r11", "memory");
-    return rax;
+    return __SYSCALL_2(nr, a1, a2);
 }
 
 static inline long sys_call3(long nr, long a1, long a2, long a3) {
-    register long rax __asm__("rax") = nr;
-    register long rdi __asm__("rdi") = a1;
-    register long rsi __asm__("rsi") = a2;
-    register long rdx __asm__("rdx") = a3;
-    __asm__ volatile("int $0x80"
-                     : "+a"(rax)
-                     : "D"(rdi), "S"(rsi), "d"(rdx)
-                     : "rcx", "r11", "memory");
-    return rax;
+    return __SYSCALL_3(nr, a1, a2, a3);
 }
 
 static inline long sys_call4(long nr, long a1, long a2, long a3, long a4) {
-    register long rax __asm__("rax") = nr;
-    register long rdi __asm__("rdi") = a1;
-    register long rsi __asm__("rsi") = a2;
-    register long rdx __asm__("rdx") = a3;
-    __asm__ volatile(
-        "mov %[a4], %%r10\n"
-        "int $0x80"
-        : "+a"(rax)
-        : "D"(rdi), "S"(rsi), "d"(rdx), [a4]"r"(a4)
-        : "rcx", "r10", "r11", "memory");
-    return rax;
+    return __SYSCALL_4(nr, a1, a2, a3, a4);
 }
 
 static inline long sys_call6(long nr, long a1, long a2, long a3,
                              long a4, long a5, long a6) {
-    register long rax __asm__("rax") = nr;
-    register long rdi __asm__("rdi") = a1;
-    register long rsi __asm__("rsi") = a2;
-    register long rdx __asm__("rdx") = a3;
-    __asm__ volatile(
-        "mov %[a4], %%r10\n"
-        "mov %[a5], %%r8\n"
-        "mov %[a6], %%r9\n"
-        "int $0x80"
-        : "+a"(rax)
-        : "D"(rdi), "S"(rsi), "d"(rdx),
-          [a4]"r"(a4), [a5]"r"(a5), [a6]"r"(a6)
-        : "rcx", "r8", "r9", "r10", "r11", "memory");
-    return rax;
+    return __SYSCALL_6(nr, a1, a2, a3, a4, a5, a6);
 }
 
 static inline long sys_exit(long code) {

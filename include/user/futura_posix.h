@@ -17,11 +17,13 @@
 #if defined(__STDC_HOSTED__) && __STDC_HOSTED__ == 1
 #include <sys/types.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
 #endif
 
 #include <kernel/fut_fipc.h>
-#include <sys/stat.h>
 #include <user/signal.h>
+/* Always include Futura's sys/stat.h for struct stat definition */
+#include <sys/stat.h>
 
 /* ============================================================
  *   POSIX Types (for freestanding environment)
@@ -32,9 +34,7 @@
  * when they're not already available from system headers. */
 
 /* Only define types that aren't provided by sys/types.h or other system headers */
-#ifndef ssize_t
-typedef int64_t ssize_t;
-#endif
+/* Note: ssize_t is defined in fut_fipc.h, don't redefine it here */
 
 #ifndef off_t
 typedef int64_t off_t;
@@ -67,8 +67,6 @@ typedef int64_t time_t;
 #ifndef pid_t
 typedef int32_t pid_t;
 #endif
-
-#include <sys/socket.h>
 
 /* socklen_t definition - prefer system version if available */
 #if !defined(socklen_t) && !(defined(__STDC_HOSTED__) && __STDC_HOSTED__ == 1)

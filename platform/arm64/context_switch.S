@@ -22,37 +22,84 @@ fut_switch_context:
     /* Check if old context is NULL (first thread switch) */
     cbz     x0, .Lrestore_only
 
-    /* Save current context to old */
-    stp     x19, x20, [x0, #0]        /* Save x19, x20 */
-    stp     x21, x22, [x0, #16]       /* Save x21, x22 */
-    stp     x23, x24, [x0, #32]       /* Save x23, x24 */
-    stp     x25, x26, [x0, #48]       /* Save x25, x26 */
-    stp     x27, x28, [x0, #64]       /* Save x27, x28 */
-    stp     x29, x30, [x0, #80]       /* Save FP (x29), LR (x30) */
+    /* Save current context to old (matching C structure layout) */
+    /* Don't save x0 - it's caller-saved and will be set separately */
+    stp     x19, x20, [x0, #8]        /* Save x19, x20 at offset 8 */
+    stp     x21, x22, [x0, #24]       /* Save x21, x22 at offset 24 */
+    stp     x23, x24, [x0, #40]       /* Save x23, x24 at offset 40 */
+    stp     x25, x26, [x0, #56]       /* Save x25, x26 at offset 56 */
+    stp     x27, x28, [x0, #72]       /* Save x27, x28 at offset 72 */
+    stp     x29, x30, [x0, #88]       /* Save FP (x29), LR (x30) at offset 88 */
 
     /* Save stack pointer */
     mov     x2, sp
-    str     x2, [x0, #96]             /* Save SP */
+    str     x2, [x0, #104]            /* Save SP at offset 104 */
 
     /* Save return address as PC */
     adr     x2, .Lresume_point        /* Get address of resume point */
-    str     x2, [x0, #104]            /* Save PC */
+    str     x2, [x0, #112]            /* Save PC at offset 112 */
+
+    /* Save PSTATE (for EL1, it should be 0x05) */
+    mov     x2, #0x05                 /* EL1h mode */
+    str     x2, [x0, #120]            /* Save PSTATE at offset 120 */
 
 .Lrestore_only:
-    /* Restore new context */
-    ldp     x19, x20, [x1, #0]        /* Restore x19, x20 */
-    ldp     x21, x22, [x1, #16]       /* Restore x21, x22 */
-    ldp     x23, x24, [x1, #32]       /* Restore x23, x24 */
-    ldp     x25, x26, [x1, #48]       /* Restore x25, x26 */
-    ldp     x27, x28, [x1, #64]       /* Restore x27, x28 */
-    ldp     x29, x30, [x1, #80]       /* Restore FP (x29), LR (x30) */
+    /* Context structure layout:
+     *   Offset 0:   x0
+     *   Offset 8:   x19
+     *   Offset 16:  x20
+     *   ...
+     *   Offset 104: sp
+     *   Offset 112: pc
+     *   Offset 120: pstate
+     */
+
+    /* Check if target context is EL0 (PSTATE & 0xF == 0) */
+    ldr     x2, [x1, #120]            /* Load PSTATE */
+    and     x3, x2, #0xF              /* Extract mode bits */
+    cbnz    x3, .Lrestore_el1         /* If not zero, it's EL1 */
+
+    /* Target is EL0 - use ERET path */
+    /* Set up ELR_EL1 and SPSR_EL1 for exception return */
+    ldr     x2, [x1, #112]            /* Load PC */
+    msr     elr_el1, x2               /* Set exception return address */
+
+    ldr     x2, [x1, #120]            /* Load PSTATE */
+    msr     spsr_el1, x2              /* Set saved processor state */
+
+    /* Restore SP_EL0 (user stack pointer) */
+    ldr     x2, [x1, #104]            /* Load SP */
+    msr     sp_el0, x2                /* Set user stack pointer */
+
+    /* Restore callee-saved registers */
+    ldp     x19, x20, [x1, #8]        /* Restore x19, x20 */
+    ldp     x21, x22, [x1, #24]       /* Restore x21, x22 */
+    ldp     x23, x24, [x1, #40]       /* Restore x23, x24 */
+    ldp     x25, x26, [x1, #56]       /* Restore x25, x26 */
+    ldp     x27, x28, [x1, #72]       /* Restore x27, x28 */
+    ldp     x29, x30, [x1, #88]       /* Restore FP (x29), LR (x30) */
+
+    /* Restore x0 last (return value) */
+    ldr     x0, [x1, #0]              /* Restore x0 (return value) */
+
+    /* Exception return to EL0 */
+    eret
+
+.Lrestore_el1:
+    /* Target is EL1 - use regular cooperative switch */
+    ldp     x19, x20, [x1, #8]        /* Restore x19, x20 */
+    ldp     x21, x22, [x1, #24]       /* Restore x21, x22 */
+    ldp     x23, x24, [x1, #40]       /* Restore x23, x24 */
+    ldp     x25, x26, [x1, #56]       /* Restore x25, x26 */
+    ldp     x27, x28, [x1, #72]       /* Restore x27, x28 */
+    ldp     x29, x30, [x1, #88]       /* Restore FP (x29), LR (x30) */
 
     /* Restore stack pointer */
-    ldr     x2, [x1, #96]             /* Restore SP */
+    ldr     x2, [x1, #104]            /* Restore SP */
     mov     sp, x2
 
     /* Jump to saved PC */
-    ldr     x2, [x1, #104]            /* Load PC */
+    ldr     x2, [x1, #112]            /* Load PC */
     br      x2                        /* Jump to new thread */
 
 .Lresume_point:

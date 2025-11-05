@@ -18,22 +18,24 @@
  * ============================================================ */
 
 static fut_irq_handler_t irq_handlers[FUT_MAX_IRQS] = {NULL};
-static _Atomic(bool) reschedule_flag = false;
+/* Note: On ARM64 bare metal, C11 atomics cause alignment faults.
+ * For bools, volatile is sufficient as stores/loads are naturally atomic. */
+static volatile bool reschedule_flag = false;
 
 /* ============================================================
  *   Reschedule Flag Management
  * ============================================================ */
 
 bool fut_reschedule_pending(void) {
-    return atomic_load(&reschedule_flag);
+    return reschedule_flag;  /* Simple load for volatile bool */
 }
 
 void fut_request_reschedule(void) {
-    atomic_store(&reschedule_flag, true);
+    reschedule_flag = true;  /* Simple store for volatile bool */
 }
 
 void fut_clear_reschedule(void) {
-    atomic_store(&reschedule_flag, false);
+    reschedule_flag = false;  /* Simple store for volatile bool */
 }
 
 /* ============================================================

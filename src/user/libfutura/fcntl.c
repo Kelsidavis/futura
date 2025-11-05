@@ -93,4 +93,11 @@ int fcntl(int fd, int cmd, ...) {
     return result;
 }
 
-int fcntl64(int fd, int cmd, ...) __attribute__((weak, alias("fcntl")));
+/* fcntl64 wrapper - aliases not supported on some toolchains */
+int fcntl64(int fd, int cmd, ...) {
+    va_list ap;
+    va_start(ap, cmd);
+    long arg = va_arg(ap, long);
+    va_end(ap);
+    return fcntl(fd, cmd, arg);
+}

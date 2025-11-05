@@ -124,13 +124,19 @@ bss_cleared:
      * We'll use 2MB block mappings at level 2 for simplicity
      */
 
-    /* Get base address of boot page tables */
-    adrp    x0, boot_l0_table
-    add     x0, x0, :lo12:boot_l0_table
+    /* Get base address of boot page tables
+     * NOTE: For 39-bit VA (T0SZ=25), we start at Level 1, NOT Level 0!
+     * ARM64 page table walk starts at different levels based on VA size:
+     *   48-bit VA: L0  (T0SZ=16)
+     *   39-bit VA: L1  (T0SZ=25) ← We use this
+     *   30-bit VA: L2  (T0SZ=34)
+     */
+    adrp    x0, boot_l1_table
+    add     x0, x0, :lo12:boot_l1_table
 
     /* Zero out all page tables first */
     mov     x1, #0
-    mov     x2, #(4096 * 5 / 8)       /* 5 tables: L0, L1_low, L1_high, L2_peripherals, L2_dram */
+    mov     x2, #(4096 * 3 / 8)       /* 3 tables: L1, L2_peripherals, L2_dram */
 1:  str     xzr, [x0, x1, lsl #3]
     add     x1, x1, #1
     cmp     x1, x2
@@ -141,55 +147,38 @@ bss_cleared:
     mov     x11, #0x31                /* '1' */
     strb    w11, [x10]
 
-    /* Setup L0 table: Point to L1 tables (table descriptors, not blocks) */
-    adrp    x0, boot_l0_table
-    add     x0, x0, :lo12:boot_l0_table
+    /* Setup L1 table (this is the root table for 39-bit VA)
+     * L1 entry 0 (VA 0x00000000-0x3FFFFFFF): Point to L2_peripherals
+     * L1 entry 1 (VA 0x40000000-0x7FFFFFFF): Point to L2_dram
+     */
+    adrp    x0, boot_l1_table
+    add     x0, x0, :lo12:boot_l1_table
 
-    /* L0[0] -> L1_low (for VA 0x00000000-0x3FFFFFFF) */
-    adrp    x1, boot_l1_table_low
-    add     x1, x1, :lo12:boot_l1_table_low
+    /* L1[0] -> L2_peripherals (for VA 0x00000000-0x3FFFFFFF) */
+    adrp    x1, boot_l2_table_peripherals
+    add     x1, x1, :lo12:boot_l2_table_peripherals
     orr     x1, x1, #3                /* Valid table descriptor */
     str     x1, [x0, #0]
 
-    /* L0[1] -> L1_high (for VA 0x40000000-0x7FFFFFFF) */
-    adrp    x1, boot_l1_table_high
-    add     x1, x1, :lo12:boot_l1_table_high
+    /* L1[1] -> L2_dram (for VA 0x40000000-0x7FFFFFFF) */
+    adrp    x1, boot_l2_table_dram
+    add     x1, x1, :lo12:boot_l2_table_dram
     orr     x1, x1, #3                /* Valid table descriptor */
     str     x1, [x0, #8]
 
-    /* Debug: L0 setup done */
+    /* Debug: L1 table configured */
     movz    x10, #0x0900, lsl #16
     mov     x11, #0x32                /* '2' */
     strb    w11, [x10]
 
-    /* Setup L1_low: Point to L2_peripherals (table descriptor, not block!) */
-    adrp    x0, boot_l1_table_low
-    add     x0, x0, :lo12:boot_l1_table_low
-    adrp    x1, boot_l2_table_peripherals
-    add     x1, x1, :lo12:boot_l2_table_peripherals
-    orr     x1, x1, #3                /* Valid table descriptor */
-    str     x1, [x0, #0]              /* L1_low[0] -> L2_peripherals */
-
-    /* Setup L1_high: Point to L2_dram (table descriptor, not block!) */
-    adrp    x0, boot_l1_table_high
-    add     x0, x0, :lo12:boot_l1_table_high
-    adrp    x1, boot_l2_table_dram
-    add     x1, x1, :lo12:boot_l2_table_dram
-    orr     x1, x1, #3                /* Valid table descriptor */
-    str     x1, [x0, #0]              /* L1_high[0] -> L2_dram */
-
-    /* Debug: L1 tables configured */
-    movz    x10, #0x0900, lsl #16
-    mov     x11, #0x33                /* '3' */
-    strb    w11, [x10]
-
-    /* Setup L2_peripherals: 64 x 2MB blocks for 0x00000000-0x08000000 (128MB peripherals)
+    /* Setup L2_peripherals: 80 x 2MB blocks for 0x00000000-0x0A000000 (160MB peripherals)
      * Each 2MB block, device memory
+     * NOTE: UART is at 0x09000000, so we need to map beyond 128MB
      */
     adrp    x0, boot_l2_table_peripherals
     add     x0, x0, :lo12:boot_l2_table_peripherals
     mov     x1, #0x00000000           /* Start PA */
-    mov     x3, #64                   /* Only map first 128MB for peripherals */
+    mov     x3, #80                   /* Map 160MB to include UART at 0x09000000 */
     movz    x5, #0x0020, lsl #16      /* 2MB block size = 0x200000 */
 2:  mov     x2, #0x405                /* Valid (bit 0) | Block (bit 1=0) | AttrIndx=1 (bit 2) | AF (bit 10) */
     orr     x2, x2, #(2 << 8)         /* SH=10: Outer Shareable */
@@ -201,7 +190,7 @@ bss_cleared:
 
     /* Debug: L2 peripherals configured */
     movz    x10, #0x0900, lsl #16
-    mov     x11, #0x34                /* '4' */
+    mov     x11, #0x33                /* '3' */
     strb    w11, [x10]
 
     /* Setup L2_dram: 512 x 2MB blocks for 0x40000000-0x80000000 (1GB DRAM)
@@ -222,7 +211,7 @@ bss_cleared:
 
     /* Debug: L2 DRAM configured */
     movz    x10, #0x0900, lsl #16
-    mov     x11, #0x35                /* '5' */
+    mov     x11, #0x34                /* '4' */
     strb    w11, [x10]
 
     /* Configure MAIR_EL1 (Memory Attribute Indirection Register)
@@ -235,7 +224,7 @@ bss_cleared:
 
     /* Debug: MAIR configured */
     movz    x10, #0x0900, lsl #16
-    mov     x11, #0x36                /* '6' */
+    mov     x11, #0x35                /* '5' */
     strb    w11, [x10]
 
     /* Configure TCR_EL1 (Translation Control Register)
@@ -263,21 +252,25 @@ bss_cleared:
 
     /* Debug: TCR configured */
     movz    x10, #0x0900, lsl #16
-    mov     x11, #0x37                /* '7' */
+    mov     x11, #0x36                /* '6' */
     strb    w11, [x10]
 
-    /* Set TTBR1_EL1 to kernel page table */
-    adrp    x0, boot_l0_table
-    add     x0, x0, :lo12:boot_l0_table
+    /* Set TTBR1_EL1 and TTBR0_EL1 to L1 table (root for 39-bit VA) */
+    adrp    x0, boot_l1_table
+    add     x0, x0, :lo12:boot_l1_table
     msr     ttbr1_el1, x0
-
-    /* Set TTBR0_EL1 to same table for now (no user space yet) */
     msr     ttbr0_el1, x0
 
     /* Debug: TTBR configured */
     movz    x10, #0x0900, lsl #16
-    mov     x11, #0x38                /* '8' */
+    mov     x11, #0x37                /* '7' */
     strb    w11, [x10]
+
+    /* Verify L2_dram[0] descriptor (debug) */
+    adrp    x0, boot_l2_table_dram
+    add     x0, x0, :lo12:boot_l2_table_dram
+    ldr     x1, [x0, #0]              /* Load first L2 entry */
+    /* Expected: 0x40000701 - we'll continue regardless */
 
     /* Invalidate TLBs and caches before enabling MMU */
     tlbi    vmalle1                   /* Invalidate all TLB entries for EL1 */
@@ -287,54 +280,27 @@ bss_cleared:
 
     /* Debug: About to enable MMU */
     movz    x10, #0x0900, lsl #16
-    mov     x11, #0x39                /* '9' */
+    mov     x11, #0x38                /* '8' */
     strb    w11, [x10]
 
-    /* TEMPORARY: MMU enable disabled pending further investigation
+    /* Enable MMU (2025-11-05: Fixed page table level bug!)
      *
-     * All standard ARM64 MMU configuration has been attempted:
-     * - Correct L0/L1 page table structure with 1GB blocks
-     * - Proper AF bit setting (bit 10)
-     * - Complete TCR_EL1 configuration (SH, ORGN, IRGN)
-     * - TLB and I-cache invalidation
-     * - Cache enable with MMU
-     * - All DSB/ISB barriers
+     * Previous attempts failed because we used L0 as root table,
+     * but for 39-bit VA (T0SZ=25), ARM64 starts at Level 1!
      *
-     * Issue: MMU enable at this point causes Prefetch Abort
-     * Kernel boots successfully WITHOUT MMU (proven functional)
-     *
-     * TODO: Compare with Linux arch/arm64/kernel/head.S
-     * TODO: Test on real ARM64 hardware
-     * TODO: Investigate QEMU virt machine MMU emulation
+     * Corrected structure:
+     * - TTBR0/TTBR1 → L1 table (root for 39-bit VA)
+     * - L1[0] → L2_peripherals (80 x 2MB = 160MB for UART/GIC)
+     * - L1[1] → L2_dram (512 x 2MB = 1GB for kernel)
      */
+    mrs     x0, sctlr_el1
+    orr     x0, x0, #(1 << 0)    /* M: Enable MMU */
+    orr     x0, x0, #(1 << 2)    /* C: Enable data cache */
+    orr     x0, x0, #(1 << 12)   /* I: Enable instruction cache */
+    msr     sctlr_el1, x0
+    isb
 
-    /* MMU DISABLED: Multiple attempts have failed
-     *
-     * 2025-11-04 attempt #1: 1GB blocks at L1 with shareable bits
-     * 2025-11-04 attempt #2: 1GB blocks with TG1=10 fix
-     * 2025-11-04 attempt #3: 2MB blocks at L2 (this version)
-     *
-     * Result: All attempts hang at MMU enable (after debug marker '9')
-     *
-     * Current page table structure (ready for MMU when issue is resolved):
-     * - L0[0] → L1_low → L2_peripherals (64 x 2MB = 128MB for UART/GIC)
-     * - L0[1] → L1_high → L2_dram (512 x 2MB = 1GB for kernel)
-     * - MAIR: Attr0=0xFF (normal), Attr1=0x00 (device)
-     * - TCR: T0SZ=25, T1SZ=25, TG0=00, TG1=10, shareable/cacheable
-     * - Shareable: SH=10 (Outer) for device, SH=11 (Inner) for normal
-     *
-     * The kernel functions perfectly without MMU. Multi-process support
-     * works via stack copying. MMU would provide address space isolation
-     * but is not blocking further development.
-     */
-    /* mrs     x0, sctlr_el1 */
-    /* orr     x0, x0, #(1 << 0) */
-    /* orr     x0, x0, #(1 << 2) */
-    /* orr     x0, x0, #(1 << 12) */
-    /* msr     sctlr_el1, x0 */
-    /* isb */
-
-    /* Debug: Write 'B' to UART after MMU enable (proves MMU worked) */
+    /* Debug: Write 'B' to UART after MMU enable (proves MMU worked!) */
     movz    x10, #0x0900, lsl #16     /* UART0 base = 0x09000000 */
     mov     x11, #0x42                /* ASCII 'B' */
     strb    w11, [x10]                /* Write to UART data register */
@@ -673,14 +639,12 @@ no_reschedule:
 .section .bss
 .align 12                         /* 4KB alignment required for page tables */
 
-boot_l0_table:
-    .space 4096                   /* Level 0 (1GB per entry with T0SZ=25) */
-
-boot_l1_table_low:
-    .space 4096                   /* Level 1 for L0[0] (VA 0x00000000-0x3FFFFFFF) */
-
-boot_l1_table_high:
-    .space 4096                   /* Level 1 for L0[1] (VA 0x40000000-0x7FFFFFFF) */
+/* Page tables for 39-bit VA space (T0SZ=25)
+ * For 39-bit VA, ARM64 starts page table walk at Level 1 (not L0)
+ * Each L1 entry covers 1GB, each L2 entry covers 2MB
+ */
+boot_l1_table:
+    .space 4096                   /* Level 1 (root table, 512 x 1GB per entry) */
 
 boot_l2_table_peripherals:
     .space 4096                   /* Level 2 for peripherals (512 x 2MB = 1GB) */

@@ -723,20 +723,28 @@ static int lookup_vnode(const char *path, struct fut_vnode **vnode) {
     return 0;
 }
 
+/* Debug counter for ARM64 - non-allocating trace */
+volatile int vfs_debug_stage = 0;
+
 static int lookup_parent_and_name(const char *path,
                                   struct fut_vnode **parent_out,
                                   char name_out[FUT_VFS_NAME_MAX + 1]) {
+    vfs_debug_stage = 1;  /* Entry */
     if (!path || !parent_out || !name_out) {
         return -EINVAL;
     }
 
+    vfs_debug_stage = 2;  /* Before malloc */
     /* Use heap allocation to avoid stack overflow */
     char (*components)[FUT_VFS_NAME_MAX + 1] = fut_malloc(MAX_PATH_COMPONENTS * (FUT_VFS_NAME_MAX + 1));
+    vfs_debug_stage = 3;  /* After malloc */
     if (!components) {
         return -ENOMEM;
     }
 
+    vfs_debug_stage = 4;  /* Before parse_path */
     int num_components = parse_path(path, components, MAX_PATH_COMPONENTS);
+    vfs_debug_stage = 5;  /* After parse_path */
     if (num_components < 0) {
         fut_free(components);
         return num_components;

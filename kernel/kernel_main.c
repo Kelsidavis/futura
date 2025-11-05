@@ -973,15 +973,14 @@ void fut_kernel_main(void) {
     fut_printf("[DEBUG] VFS mount complete\n");
 
     /* Create /dev directory for device files BEFORE registering devices */
-    extern volatile int vfs_debug_stage;
-    fut_printf("[DEBUG] Before mkdir /dev\n");
-    vfs_debug_stage = 0;
+    fut_printf("[DEBUG] About to mkdir /dev\n");
     int dev_ret = fut_vfs_mkdir("/dev", 0755);
-    fut_printf("[DEBUG] After mkdir, ret=%d, stage=%d\n", dev_ret, vfs_debug_stage);
+    fut_printf("[DEBUG] mkdir /dev returned: %d\n", dev_ret);
     if (dev_ret < 0 && dev_ret != -EEXIST) {
         fut_printf("[WARN] Failed to create /dev directory (error %d)\n", dev_ret);
     }
 
+    fut_printf("[DEBUG] About to init console\n");
     fut_console_init();
     fut_printf("[INIT] Console device registered at /dev/console\n");
 
@@ -1003,11 +1002,8 @@ void fut_kernel_main(void) {
         fut_printf("[WARN] ✗ Failed to mount ramfs at /tmp (error %d)\n", tmp_mount_ret);
     }
 
-    fut_printf("[DEBUG] About to parse boot flags\n");
     bool perf_flag = fut_boot_arg_flag("perf");
-    fut_printf("[DEBUG] perf_flag=%d\n", perf_flag);
     bool run_async_selftests = boot_flag_enabled("async-tests", false);
-    fut_printf("[DEBUG] run_async_selftests=%d\n", run_async_selftests);
 
     uint16_t planned_tests = 1u; /* VFS smoke */
     if (fb_enabled) {

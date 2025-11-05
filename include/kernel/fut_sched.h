@@ -27,10 +27,11 @@
 
 /**
  * Spinlock for SMP synchronization (stubbed for single CPU).
+ * ARM64 requires 8-byte alignment for 64-bit atomic operations.
  */
 typedef struct {
     _Atomic uint64_t locked;
-} fut_spinlock_t;
+} __attribute__((aligned(8))) fut_spinlock_t;
 
 /**
  * Initialize a spinlock.

@@ -172,77 +172,130 @@ void hal_outb(uint16_t port, uint8_t value) {
  *   ARM64 Atomic Operation Symbols
  * ============================================================ */
 
-/* These symbols are required by libgcc for atomic operations */
-/* __aarch64_ldadd8_relax: Atomic add with relaxed semantics */
-int __aarch64_ldadd8_relax(int *ptr, int val) {
-    int result = *ptr;
-    *ptr += val;
+/*
+ * ARM64 atomic operations using inline assembly.
+ * GCC generates calls to these libgcc helpers for C11 atomic operations.
+ * We implement them using ARM64 atomic instructions (LDADD, STLR, etc.)
+ */
+
+#include <stdint.h>
+
+/* Atomic store operations (used by atomic_store_explicit) */
+void __atomic_store_8(volatile void *ptr, uint64_t val, int memorder) {
+    (void)memorder;
+    /* Use STLR (store-release) for atomic store */
+    __asm__ volatile(
+        "stlr %0, [%1]"
+        :
+        : "r"(val), "r"(ptr)
+        : "memory"
+    );
+}
+
+void __atomic_store_4(volatile void *ptr, uint32_t val, int memorder) {
+    (void)memorder;
+    __asm__ volatile(
+        "stlr %w0, [%1]"
+        :
+        : "r"(val), "r"(ptr)
+        : "memory"
+    );
+}
+
+/* Atomic load operations (used by atomic_load_explicit) */
+uint64_t __atomic_load_8(const volatile void *ptr, int memorder) {
+    (void)memorder;
+    uint64_t result;
+    /* Use LDAR (load-acquire) for atomic load */
+    __asm__ volatile(
+        "ldar %0, [%1]"
+        : "=r"(result)
+        : "r"(ptr)
+        : "memory"
+    );
     return result;
 }
 
-/* __aarch64_ldadd8_acq_rel: Atomic add with acquire/release semantics */
-int __aarch64_ldadd8_acq_rel(int *ptr, int val) {
-    int result = *ptr;
-    *ptr += val;
-    __asm__ volatile("dmb ish" ::: "memory");
+uint32_t __atomic_load_4(const volatile void *ptr, int memorder) {
+    (void)memorder;
+    uint32_t result;
+    __asm__ volatile(
+        "ldar %w0, [%1]"
+        : "=r"(result)
+        : "r"(ptr)
+        : "memory"
+    );
     return result;
 }
 
-/* __aarch64_cas8_relax: Atomic compare and swap with relaxed semantics */
-int __aarch64_cas8_relax(int *ptr, int expected, int new_val) {
-    int result = *ptr;
-    if (result == expected) {
-        *ptr = new_val;
+/* Atomic compare-and-exchange (used by atomic_compare_exchange_*) */
+_Bool __atomic_compare_exchange_8(volatile void *ptr, void *expected, uint64_t desired,
+                                   _Bool weak, int success_memorder, int failure_memorder) {
+    (void)weak;
+    (void)success_memorder;
+    (void)failure_memorder;
+
+    uint64_t *exp_ptr = (uint64_t *)expected;
+    uint64_t old_val = *exp_ptr;
+    uint64_t tmp;
+    uint32_t store_result;
+    _Bool success;
+
+    __asm__ volatile(
+        "1: ldaxr %0, [%3]\n"           // Load-exclusive with acquire
+        "   cmp %0, %4\n"                // Compare with expected
+        "   b.ne 2f\n"                   // Branch if not equal
+        "   stlxr %w1, %5, [%3]\n"       // Store-exclusive with release
+        "   cbnz %w1, 1b\n"              // Retry if store failed
+        "   mov %w2, #1\n"               // Success
+        "   b 3f\n"
+        "2: clrex\n"                     // Clear exclusive monitor
+        "   mov %w2, #0\n"               // Failure
+        "3:"
+        : "=&r"(tmp), "=&r"(store_result), "=&r"(success)
+        : "r"(ptr), "r"(old_val), "r"(desired)
+        : "cc", "memory"
+    );
+
+    if (!success) {
+        *exp_ptr = tmp;
     }
-    return result;
+
+    return success;
 }
 
-/* Also provide unsigned variants */
-unsigned __aarch64_ldadd8_relax_unsigned(unsigned *ptr, unsigned val) {
-    unsigned result = *ptr;
-    *ptr += val;
-    return result;
-}
+_Bool __atomic_compare_exchange_4(volatile void *ptr, void *expected, uint32_t desired,
+                                   _Bool weak, int success_memorder, int failure_memorder) {
+    (void)weak;
+    (void)success_memorder;
+    (void)failure_memorder;
 
-unsigned __aarch64_ldadd8_acq_rel_unsigned(unsigned *ptr, unsigned val) {
-    unsigned result = *ptr;
-    *ptr += val;
-    __asm__ volatile("dmb ish" ::: "memory");
-    return result;
-}
+    uint32_t *exp_ptr = (uint32_t *)expected;
+    uint32_t old_val = *exp_ptr;
+    uint32_t tmp;
+    uint32_t store_result;
+    _Bool success;
 
-unsigned __aarch64_cas8_relax_unsigned(unsigned *ptr, unsigned expected, unsigned new_val) {
-    unsigned result = *ptr;
-    if (result == expected) {
-        *ptr = new_val;
+    __asm__ volatile(
+        "1: ldaxr %w0, [%3]\n"
+        "   cmp %w0, %w4\n"
+        "   b.ne 2f\n"
+        "   stlxr %w1, %w5, [%3]\n"
+        "   cbnz %w1, 1b\n"
+        "   mov %w2, #1\n"
+        "   b 3f\n"
+        "2: clrex\n"
+        "   mov %w2, #0\n"
+        "3:"
+        : "=&r"(tmp), "=&r"(store_result), "=&r"(success)
+        : "r"(ptr), "r"(old_val), "r"(desired)
+        : "cc", "memory"
+    );
+
+    if (!success) {
+        *exp_ptr = tmp;
     }
-    return result;
-}
 
-/* 64-bit atomic operations */
-long long __aarch64_ldadd8_relax_longlong(long long *ptr, long long val) {
-    long long result = *ptr;
-    *ptr += val;
-    return result;
-}
-
-long long __aarch64_ldadd8_acq_rel_longlong(long long *ptr, long long val) {
-    long long result = *ptr;
-    *ptr += val;
-    __asm__ volatile("dmb ish" ::: "memory");
-    return result;
-}
-
-unsigned long long __aarch64_ldadd8_relax_ulonglong(unsigned long long *ptr, unsigned long long val) {
-    unsigned long long result = *ptr;
-    *ptr += val;
-    return result;
-}
-
-unsigned long long __aarch64_ldadd8_acq_rel_ulonglong(unsigned long long *ptr, unsigned long long val) {
-    unsigned long long result = *ptr;
-    *ptr += val;
-    __asm__ volatile("dmb ish" ::: "memory");
-    return result;
+    return success;
 }
 

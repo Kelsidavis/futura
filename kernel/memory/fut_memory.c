@@ -323,15 +323,31 @@ void *fut_malloc(size_t size) {
     }
 #endif
 
+    /* Disable interrupts during allocation to prevent re-entrancy issues
+     * (IRQ handlers must not call malloc while we're in malloc) */
+    extern uint64_t fut_save_and_disable_interrupts(void);
+    extern void fut_restore_interrupts(uint64_t state);
+    uint64_t irq_state = fut_save_and_disable_interrupts();
+
     /* Use slab allocator - it handles both small and large allocations */
-    return slab_malloc(size);
+    void *result = slab_malloc(size);
+
+    fut_restore_interrupts(irq_state);
+    return result;
 }
 
 void fut_free(void *ptr) {
     if (!ptr) return;
 
+    /* Disable interrupts during free to prevent re-entrancy issues */
+    extern uint64_t fut_save_and_disable_interrupts(void);
+    extern void fut_restore_interrupts(uint64_t state);
+    uint64_t irq_state = fut_save_and_disable_interrupts();
+
     /* Use slab allocator */
     slab_free(ptr);
+
+    fut_restore_interrupts(irq_state);
 }
 
 void *fut_realloc(void *ptr, size_t new_size) {

@@ -853,6 +853,11 @@ void fut_kernel_main(void) {
 #else
     fut_serial_puts("[INIT] Initializing per-CPU data for CPU 0...\n");
     fut_percpu_init(0, 0);
+
+    /* Set TPIDR_EL1 to point to per-CPU data (ARM64 equivalent of GS_BASE on x86_64) */
+    fut_percpu_set(&fut_percpu_data[0]);
+
+    /* Mark per-CPU data as safe to access (enables fut_thread_current()) */
     fut_thread_mark_percpu_safe();
     fut_serial_puts("[INIT] Per-CPU data initialized for CPU 0\n");
 #endif

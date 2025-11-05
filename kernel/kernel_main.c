@@ -974,15 +974,14 @@ void fut_kernel_main(void) {
 
     /* Create /dev directory for device files BEFORE registering devices */
     extern volatile int vfs_debug_stage;
-    fut_printf("[DEBUG] About to create /dev\n");
+    fut_printf("[DEBUG] Before mkdir /dev\n");
     vfs_debug_stage = 0;
     int dev_ret = fut_vfs_mkdir("/dev", 0755);
-    fut_printf("[DEBUG] mkdir /dev returned: %d (stage=%d)\n", dev_ret, vfs_debug_stage);
+    fut_printf("[DEBUG] After mkdir, ret=%d, stage=%d\n", dev_ret, vfs_debug_stage);
     if (dev_ret < 0 && dev_ret != -EEXIST) {
         fut_printf("[WARN] Failed to create /dev directory (error %d)\n", dev_ret);
     }
 
-    fut_printf("[DEBUG] About to init console\n");
     fut_console_init();
     fut_printf("[INIT] Console device registered at /dev/console\n");
 

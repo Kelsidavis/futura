@@ -602,7 +602,8 @@ ifeq ($(ENABLE_WAYLAND_DEMO),1)
 OBJECTS += $(WAYLAND_COMPOSITOR_BLOB) $(WAYLAND_CLIENT_BLOB) $(WAYLAND_COLOR_BLOB) $(WAYLAND_SHELL_BLOB)
 endif
 else ifeq ($(PLATFORM),arm64)
-OBJECTS += $(ARM64_INIT_BLOB) $(ARM64_SHELL_BLOB)
+# TEMPORARY: Disable userland embedding for ARM64 kernel debugging
+# OBJECTS += $(ARM64_INIT_BLOB) $(ARM64_SHELL_BLOB)
 endif
 
 # ============================================================

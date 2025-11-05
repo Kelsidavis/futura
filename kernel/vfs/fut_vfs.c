@@ -750,21 +750,26 @@ static int lookup_parent_and_name(const char *path,
         return num_components;
     }
 
+    vfs_debug_stage = 6;  /* After num_components check */
     if (num_components == 0) {
         fut_free(components);
         return -EINVAL;
     }
 
+    vfs_debug_stage = 7;  /* Before root_vnode check */
     if (!root_vnode) {
         fut_free(components);
         return -ENOENT;
     }
 
+    vfs_debug_stage = 8;  /* Before loop */
     struct fut_vnode *current = root_vnode;
     /* Note: Do NOT take reference to root_vnode; it is never freed */
 
     for (int i = 0; i < num_components - 1; i++) {
+        vfs_debug_stage = 10 + i;  /* Loop iteration marker */
         struct fut_mount *mount = find_mount_for_path(components, i + 1);
+        vfs_debug_stage = 20 + i;  /* After find_mount */
         if (mount && mount->root) {
             /* Release previous vnode only if it wasn't root */
             if (current != root_vnode_base) {
@@ -809,6 +814,7 @@ static int lookup_parent_and_name(const char *path,
         current = next;
     }
 
+    vfs_debug_stage = 30;  /* After loop */
     if (current == NULL || current->type != VN_DIR) {
         if (current != root_vnode_base) {
             release_lookup_ref(current);
@@ -817,10 +823,13 @@ static int lookup_parent_and_name(const char *path,
         return -ENOTDIR;
     }
 
+    vfs_debug_stage = 31;  /* Before str_copy */
     str_copy(name_out, components[num_components - 1], FUT_VFS_NAME_MAX + 1);
+    vfs_debug_stage = 32;  /* Before free */
     *parent_out = current;
     /* Return current with reference held - only release if not root */
     fut_free(components);
+    vfs_debug_stage = 33;  /* Success */
     return 0;
 }
 
@@ -889,10 +898,13 @@ int fut_vfs_rmdir(const char *path) {
 }
 
 int fut_vfs_mkdir(const char *path, uint32_t mode) {
+    vfs_debug_stage = 100;  /* Entry to mkdir */
     struct fut_vnode *parent = NULL;
     char leaf[FUT_VFS_NAME_MAX + 1];
 
+    vfs_debug_stage = 101;  /* Before lookup_parent_and_name */
     int ret = lookup_parent_and_name(path, &parent, leaf);
+    vfs_debug_stage = 102;  /* After lookup_parent_and_name */
     if (ret < 0) {
         return ret;
     }

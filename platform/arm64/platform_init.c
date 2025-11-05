@@ -868,8 +868,11 @@ void arch_memory_config(uintptr_t *ram_start, uintptr_t *ram_end, size_t *heap_s
  * Spawn init from embedded binary, fallback to EL0 test.
  */
 void arch_late_init(void) {
-    fut_serial_puts("\n[ARM64] Late initialization - spawning init...\n");
+    fut_serial_puts("\n[ARM64] Late initialization (userland disabled for kernel debugging)\n");
+    /* TEMPORARY: Disable userland spawning for kernel debugging */
+    return;
 
+#if 0  /* DISABLED for kernel debugging */
     /* Check embedded userland binaries */
     uintptr_t init_size = (uintptr_t)_binary_build_bin_arm64_user_init_end -
                           (uintptr_t)_binary_build_bin_arm64_user_init_start;
@@ -927,6 +930,7 @@ void arch_late_init(void) {
 
     /* Should not reach here */
     fut_serial_puts("[ERROR] test_el0_transition returned!\n");
+#endif  /* DISABLED for kernel debugging */
 }
 
 /**

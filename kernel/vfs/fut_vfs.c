@@ -48,6 +48,9 @@ static const struct fut_fs_type *registered_fs[MAX_FS_TYPES];
 static int num_fs_types = 0;
 
 static struct fut_mount *mount_list = NULL;
+
+/* Debug counter for ARM64 - non-allocating trace */
+volatile int vfs_debug_stage = 0;
 static uint64_t next_device_id = 1;  /* Counter for generating unique device IDs */
 static struct fut_file *file_table[MAX_OPEN_FILES];
 
@@ -263,15 +266,20 @@ static const struct fut_fs_type *find_fs_type(const char *name) {
 
 int fut_vfs_mount(const char *device, const char *mountpoint,
                   const char *fstype, int flags, void *data, fut_handle_t block_device_handle) {
+    vfs_debug_stage = 200;  /* Entry to mount */
+
     /* Find filesystem type */
     const struct fut_fs_type *fs = find_fs_type(fstype);
     if (!fs) {
         return -ENOENT;  /* Filesystem type not found */
     }
+    vfs_debug_stage = 201;  /* Found FS type */
 
     /* Create mount structure */
     struct fut_mount *mount = NULL;
+    vfs_debug_stage = 202;  /* Before fs->mount() */
     int ret = fs->mount(device, flags, data, block_device_handle, &mount);
+    vfs_debug_stage = 203;  /* After fs->mount() */
     if (ret < 0) {
         return ret;
     }
@@ -722,9 +730,6 @@ static int lookup_vnode(const char *path, struct fut_vnode **vnode) {
     VFSDBG("[vfs-heap] lookup_vnode freed %p OK\n", (void*)components);
     return 0;
 }
-
-/* Debug counter for ARM64 - non-allocating trace */
-volatile int vfs_debug_stage = 0;
 
 static int lookup_parent_and_name(const char *path,
                                   struct fut_vnode **parent_out,

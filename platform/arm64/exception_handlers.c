@@ -184,3 +184,38 @@ void kernel_idle_loop(void) {
         __asm__ volatile("wfi");
     }
 }
+
+/* ============================================================
+ *   IRQ and Interrupt Handling
+ * ============================================================ */
+
+extern void fut_timer_tick(void);  /* Timer interrupt handler */
+extern void gic_handle_irq(void);   /* GIC interrupt dispatcher */
+
+/* ARM64 IRQ Handler - called from IRQ exception vector */
+void arm64_handle_irq(fut_interrupt_frame_t *frame) {
+    (void)frame;  /* Frame available if needed for context */
+
+    /* Acknowledge and handle IRQ via GIC */
+    /* The GIC will determine which interrupt fired and dispatch to appropriate handler */
+    gic_handle_irq();
+}
+
+/* ARM64 SError (System Error) Handler */
+void arm64_handle_serror(fut_interrupt_frame_t *frame) {
+    fut_serial_puts("[EXCEPTION] SError (System Error)!\n");
+    fut_serial_puts("[EXCEPTION] PC: ");
+
+    uint64_t pc = frame->pc;
+    for (int i = 60; i >= 0; i -= 4) {
+        uint8_t nibble = (pc >> i) & 0xF;
+        char c = nibble < 10 ? '0' + nibble : 'a' + (nibble - 10);
+        fut_serial_putc(c);
+    }
+    fut_serial_putc('\n');
+
+    /* Halt on system error */
+    while (1) {
+        __asm__ volatile("wfi");
+    }
+}

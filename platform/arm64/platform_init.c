@@ -529,7 +529,8 @@ void fut_printf(const char *fmt, ...) {
  * ============================================================ */
 
 static volatile uint32_t *gicd = (volatile uint32_t *)GICD_BASE;
-static volatile uint32_t *gicc = (volatile uint32_t *)GICC_BASE;
+volatile uint32_t *gic_cpu_base = (volatile uint32_t *)GICC_BASE;  /* Global for IRQ handler */
+static volatile uint32_t *gicc = (volatile uint32_t *)GICC_BASE;   /* Keep local alias for compatibility */
 
 void fut_gic_init(void) {
     /* Disable distributor */
@@ -809,6 +810,11 @@ void fut_platform_early_init(uint32_t boot_magic, void *boot_info) {
     /* Initialize GIC */
     fut_serial_puts("[INIT] Initializing GICv2...\n");
     fut_gic_init();
+
+    /* Install exception vectors BEFORE enabling interrupts */
+    extern void arm64_install_exception_vectors(void);
+    fut_serial_puts("[INIT] Installing exception vectors...\n");
+    arm64_install_exception_vectors();
 
     /* Initialize timer */
     fut_serial_puts("[INIT] Initializing ARM Generic Timer...\n");

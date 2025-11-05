@@ -965,17 +965,25 @@ void fut_kernel_main(void) {
     fut_printf("[INIT] Registered ramfs filesystem\n");
 
     /* Mount ramfs as root filesystem */
+    extern volatile int vfs_debug_stage;
+    vfs_debug_stage = 0;
+    fut_printf("[DEBUG] About to mount ramfs at /\n");
     int vfs_ret = fut_vfs_mount(NULL, "/", "ramfs", 0, NULL, FUT_INVALID_HANDLE);
     if (vfs_ret < 0) {
-        fut_printf("[ERROR] Failed to mount root filesystem (error %d)\n", vfs_ret);
+        fut_printf("[ERROR] Failed to mount root filesystem (error %d, stage=%d)\n", vfs_ret, vfs_debug_stage);
         fut_platform_panic("Failed to mount root filesystem");
     }
-    fut_printf("[DEBUG] VFS mount complete\n");
+    fut_printf("[DEBUG] VFS mount complete (stage=%d)\n", vfs_debug_stage);
 
     /* Create /dev directory for device files BEFORE registering devices */
     fut_printf("[DEBUG] About to mkdir /dev\n");
+    vfs_debug_stage = 0;
+
+    /* Start mkdir in a way we can monitor */
     int dev_ret = fut_vfs_mkdir("/dev", 0755);
-    fut_printf("[DEBUG] mkdir /dev returned: %d\n", dev_ret);
+
+    /* If we get here, mkdir completed */
+    fut_printf("[DEBUG] mkdir /dev returned: %d (final stage=%d)\n", dev_ret, vfs_debug_stage);
     if (dev_ret < 0 && dev_ret != -EEXIST) {
         fut_printf("[WARN] Failed to create /dev directory (error %d)\n", dev_ret);
     }

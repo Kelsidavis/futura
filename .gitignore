@@ -20,6 +20,7 @@ drivers/rust/**/Cargo.lock
 
 # Claude Code artifacts (local only, not committed)
 .claude/
+.clauderc
 CLAUDE.md
 
 # OS files

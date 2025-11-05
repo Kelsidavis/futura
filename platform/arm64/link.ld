@@ -59,7 +59,7 @@ SECTIONS
     /* Kernel stack (32 KB, grows downward) */
     . = ALIGN(16);  /* Ensure 16-byte alignment for AArch64 ABI */
     _stack_start = .;
-    . += 0x8000;    /* 32 KB stack */
+    . += 0x10000;   /* 64 KB stack (increased from 32 KB, reasonable size) */
     . = ALIGN(16);
     _stack_top = .;
 

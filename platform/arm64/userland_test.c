@@ -1,10 +1,10 @@
-/* kernel_main.c - ARM64 Kernel Main Entry Point
+/* userland_test.c - ARM64 Userland Transition Test
  *
  * Copyright (c) 2025 Kelsi Davis
  * Licensed under the MPL v2.0 — see LICENSE for details.
  *
- * Main kernel entry point for ARM64 platform.
- * Tests EL0 (userspace) transition.
+ * Tests EL0 (userspace) transition with comprehensive syscall validation.
+ * Extracted from kernel_main.c during platform consolidation.
  */
 
 #include <stdint.h>
@@ -28,13 +28,6 @@ typedef long ssize_t;
 /* Forward declarations */
 extern void fut_serial_puts(const char *str);
 extern void fut_restore_context(fut_cpu_context_t *ctx) __attribute__((noreturn));
-extern void arm64_init_boot_thread(void);
-/* fut_thread_current is declared in fut_percpu.h */
-extern void fut_heap_init(uintptr_t heap_start, uintptr_t heap_end);
-extern void fut_pmm_init(uint64_t mem_size_bytes, uintptr_t phys_base);
-
-/* Linker symbols */
-extern char _stack_top[];
 
 /* Static stack for EL0 test (4KB) */
 static uint8_t el0_test_stack[4096] __attribute__((aligned(16)));
@@ -436,7 +429,7 @@ void el0_test_function(void) {
     /* Test 11: Fork → Wait lifecycle test */
     len = strcpy_local(p, "\n[EL0] ====================================\n");
     syscall3(__NR_write, 1, (uint64_t)p, len);
-    len = strcpy_local(p, "[EL0] Testing fork() \u2192 wait() lifecycle\n");
+    len = strcpy_local(p, "[EL0] Testing fork() → wait() lifecycle\n");
     syscall3(__NR_write, 1, (uint64_t)p, len);
     len = strcpy_local(p, "[EL0] ====================================\n\n");
     syscall3(__NR_write, 1, (uint64_t)p, len);
@@ -570,148 +563,6 @@ void test_el0_transition(void) {
 
     /* Should never reach here */
     fut_serial_puts("[ERROR] fut_restore_context returned!\n");
-    while (1) {
-        __asm__ volatile("wfi");
-    }
-}
-
-/* Kernel main entry point */
-void fut_kernel_main(void) {
-    fut_serial_puts("[KERNEL] ARM64 kernel main starting...\n");
-
-    /* Check exception level */
-    uint64_t el = get_current_el();
-    if (el == 1) {
-        fut_serial_puts("[KERNEL] Running at EL1 (kernel mode)\n");
-    } else {
-        fut_serial_puts("[KERNEL] Running at unexpected EL!\n");
-    }
-
-    fut_serial_puts("[KERNEL] Kernel initialization complete\n");
-    fut_serial_puts("[KERNEL] ARM64 kernel is production-ready!\n\n");
-
-    fut_serial_puts("[INFO] Memory: 120MB available (0x40800000-0x48000000)\n");
-    fut_serial_puts("[INFO] Total pages: ~30720 (4KB each)\n\n");
-
-    /* Initialize PMM and heap */
-    fut_serial_puts("[KERNEL] Initializing PMM (Physical Memory Manager)...\n");
-    uintptr_t ram_start = 0x40800000;  /* After kernel/stack */
-    uintptr_t ram_end   = 0x48000000;  /* 120MB */
-    uint64_t ram_size = ram_end - ram_start;
-    fut_pmm_init(ram_size, ram_start);
-
-    fut_serial_puts("[KERNEL] Initializing heap...\n");
-    uintptr_t heap_start = ram_start;
-    uintptr_t heap_end = heap_start + (16 * 1024 * 1024);  /* 16MB heap */
-    fut_heap_init(heap_start, heap_end);
-    fut_serial_puts("[KERNEL] PMM and heap initialized successfully\n\n");
-
-    fut_serial_puts("[KERNEL] EL0 transition infrastructure:\n");
-    fut_serial_puts("  - fut_restore_context() with ERET support\n");
-    fut_serial_puts("  - fut_thread_create_user() for EL0 threads\n");
-    fut_serial_puts("  - Exception handlers for EL0->EL1 transitions\n\n");
-
-    /* Initialize per-CPU data first (required by scheduler) */
-    fut_serial_puts("[KERNEL] Initializing per-CPU data...\n");
-    extern void fut_percpu_init(uint32_t cpu_id, uint32_t cpu_index);
-    extern fut_percpu_t fut_percpu_data[];
-    fut_percpu_init(0, 0);
-    fut_percpu_set(&fut_percpu_data[0]);
-
-    /* Initialize scheduler (sets up idle threads and runqueues) */
-    fut_serial_puts("[KERNEL] Initializing scheduler...\n");
-    extern void fut_sched_init(void);
-    fut_sched_init();
-
-    /* Initialize minimal thread subsystem for fork support */
-    fut_serial_puts("[KERNEL] Initializing threading subsystem...\n");
-    arm64_init_boot_thread();
-
-    /* Verify thread initialized */
-    void *current = fut_thread_current();
-    if (current) {
-        fut_serial_puts("[KERNEL] Boot thread initialized, fork/exec ready\n");
-    } else {
-        fut_serial_puts("[KERNEL] WARNING: Thread init failed, fork will not work\n");
-    }
-    fut_serial_puts("\n");
-
-    /* Check embedded userland binaries */
-    extern char _binary_build_bin_arm64_user_init_start[];
-    extern char _binary_build_bin_arm64_user_init_end[];
-    extern char _binary_build_bin_arm64_user_shell_start[];
-    extern char _binary_build_bin_arm64_user_shell_end[];
-
-    uintptr_t init_size = (uintptr_t)_binary_build_bin_arm64_user_init_end -
-                          (uintptr_t)_binary_build_bin_arm64_user_init_start;
-    uintptr_t shell_size = (uintptr_t)_binary_build_bin_arm64_user_shell_end -
-                           (uintptr_t)_binary_build_bin_arm64_user_shell_start;
-
-    fut_serial_puts("[KERNEL] Embedded userland binaries:\n");
-    fut_serial_puts("  - init:  ");
-    /* Print size in a simple way */
-    if (init_size > 0) {
-        fut_serial_puts("present\n");
-    } else {
-        fut_serial_puts("MISSING!\n");
-    }
-    fut_serial_puts("  - shell: ");
-    if (shell_size > 0) {
-        fut_serial_puts("present\n");
-    } else {
-        fut_serial_puts("MISSING!\n");
-    }
-    fut_serial_puts("\n");
-
-    /* Spawn init from embedded binary */
-    fut_serial_puts("====================================\n");
-    fut_serial_puts("  SPAWNING INIT FROM MEMORY\n");
-    fut_serial_puts("====================================\n\n");
-
-    fut_serial_puts("[KERNEL] Init binary: ");
-    if (init_size > 0) {
-        fut_serial_puts("117KB embedded\n");
-    }
-    fut_serial_puts("[KERNEL] Shell binary: ");
-    if (shell_size > 0) {
-        fut_serial_puts("525KB embedded\n");
-    }
-    fut_serial_puts("\n");
-
-    extern int fut_exec_elf_memory(const void *elf_data, size_t elf_size, char *const argv[], char *const envp[]);
-
-    /* Prepare init arguments */
-    char *init_argv[] = {"/sbin/init", NULL};
-    char *init_envp[] = {"PATH=/sbin:/bin", "HOME=/root", NULL};
-
-    fut_serial_puts("[KERNEL] Executing init from embedded binary...\n");
-    fut_serial_puts("[KERNEL] This will replace current context with init.\n\n");
-
-    /* Execute init - should never return */
-    int ret = fut_exec_elf_memory(_binary_build_bin_arm64_user_init_start, init_size, init_argv, init_envp);
-
-    /* If we get here, exec failed */
-    fut_serial_puts("[ERROR] Failed to execute init! Error code: ");
-    if (ret == -EINVAL) {
-        fut_serial_puts("EINVAL (invalid argument)\n");
-    } else if (ret == -ENOMEM) {
-        fut_serial_puts("ENOMEM (out of memory)\n");
-    } else if (ret == -ESRCH) {
-        fut_serial_puts("ESRCH (no current task)\n");
-    } else {
-        fut_serial_puts("UNKNOWN\n");
-    }
-    fut_serial_puts("\nFalling back to EL0 test...\n\n");
-
-    /* Test EL0 transition */
-    fut_serial_puts("====================================\n");
-    fut_serial_puts("  TESTING EL0 TRANSITION\n");
-    fut_serial_puts("====================================\n\n");
-
-    test_el0_transition();
-
-    /* Should not reach here */
-    fut_serial_puts("[ERROR] test_el0_transition returned!\n");
     while (1) {
         __asm__ volatile("wfi");
     }

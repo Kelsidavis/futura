@@ -30,6 +30,7 @@
 #include <kernel/boot_args.h>
 #include <kernel/fut_percpu.h>
 #include <kernel/input.h>
+#include <kernel/platform_hooks.h>
 #include <futura/blkdev.h>
 #include <futura/net.h>
 #include <futura/tcpip.h>
@@ -127,6 +128,30 @@ extern char _bss_end[];
 /* Memory configuration - allocate 1GB in QEMU with balanced kernel heap */
 #define TOTAL_MEMORY_SIZE       (1024 * 1024 * 1024) /* 1 GiB */
 #define KERNEL_HEAP_SIZE        (96 * 1024 * 1024)   /* 96 MiB kernel heap - supports large allocations */
+
+/* ============================================================
+ *   Platform Hook Weak Symbols
+ * ============================================================ */
+
+/* Weak implementations - platforms can override these */
+__attribute__((weak)) void arch_late_init(void) {
+    /* Default: do nothing */
+}
+
+__attribute__((weak)) void arch_idle_loop(void) {
+    /* Default: infinite loop with interrupts enabled */
+    fut_printf("[KERNEL] Entering default idle loop...\n");
+    while (1) {
+#if defined(__x86_64__)
+        __asm__ volatile("hlt");
+#elif defined(__aarch64__)
+        __asm__ volatile("wfi");
+#else
+        /* Generic: just loop */
+        for (volatile int i = 0; i < 1000000; i++);
+#endif
+    }
+}
 
 /* ============================================================
  *   Test Thread Functions
@@ -752,10 +777,6 @@ void fut_kernel_main(void) {
     int wayland_client_exec = -1;
 #endif
 
-#if defined(__x86_64__)
-    uintptr_t min_phys = KERNEL_VIRTUAL_BASE + 0x100000ULL;
-#endif
-
     /* ========================================
      *   Step 1: Initialize Memory Subsystem
      * ======================================== */
@@ -763,42 +784,26 @@ void fut_kernel_main(void) {
     fut_serial_puts("[DEBUG] kernel_main: Before PMM init\n");
     fut_printf("[INIT] Initializing physical memory manager...\n");
 
-    /* Calculate memory base (starts after kernel) - use VIRTUAL address */
-    /* In a higher-half kernel, all memory accesses must use virtual addresses */
-    uintptr_t kernel_virt_end = (uintptr_t)_kernel_end;
-    uintptr_t mem_base = (kernel_virt_end + 0xFFF) & ~0xFFFULL;  /* Page-align */
+    /* Get platform-specific memory layout */
+    uintptr_t ram_start, ram_end;
+    size_t heap_size;
+    arch_memory_config(&ram_start, &ram_end, &heap_size);
 
-#if defined(__x86_64__)
-    /* Skip legacy VGA/BIOS hole below 1 MiB */
-    if (mem_base < min_phys) {
-        mem_base = min_phys;
-    }
-#endif
+    fut_printf("[DEBUG] Platform memory config: ram_start=0x%llx ram_end=0x%llx heap_size=%llu\n",
+               (unsigned long long)ram_start, (unsigned long long)ram_end,
+               (unsigned long long)heap_size);
 
-    /* Initialize PMM with total available memory */
-#if defined(__x86_64__)
-    phys_addr_t mem_base_phys = pmap_virt_to_phys(mem_base);
-    phys_addr_t boot_ptables_start_phys = pmap_virt_to_phys((uintptr_t)boot_ptables_start);
-    phys_addr_t boot_ptables_end_phys = pmap_virt_to_phys((uintptr_t)boot_ptables_end);
-    boot_ptables_start_phys &= ~(FUT_PAGE_SIZE - 1ULL);
-    boot_ptables_end_phys = FUT_PAGE_ALIGN(boot_ptables_end_phys);
-    if (mem_base_phys < boot_ptables_end_phys) {
-        mem_base_phys = boot_ptables_end_phys;
-        mem_base = pmap_phys_to_virt(mem_base_phys);
-        min_phys = mem_base;
-    }
-#else
-    phys_addr_t mem_base_phys = mem_base;
-#endif
+    /* Initialize PMM with platform-specific memory range */
+    size_t total_memory = ram_end - ram_start;
     fut_serial_puts("[DEBUG] kernel_main: Before mmap setup\n");
     fut_mmap_reset();
-    if (mem_base_phys > 0) {
-        fut_mmap_add(0, mem_base_phys, 2);
+    if (ram_start > 0) {
+        fut_mmap_add(0, ram_start, 2);
     }
-    fut_mmap_add(mem_base_phys, TOTAL_MEMORY_SIZE, 1);
+    fut_mmap_add(ram_start, total_memory, 1);
 
     fut_serial_puts("[DEBUG] kernel_main: Before PMM init call\n");
-    fut_pmm_init(TOTAL_MEMORY_SIZE, mem_base_phys);
+    fut_pmm_init(total_memory, ram_start);
 
     fut_serial_puts("[DEBUG] kernel_main: After PMM init\n");
     fut_printf("[INIT] PMM initialized: %llu pages total, %llu pages free\n",
@@ -808,30 +813,21 @@ void fut_kernel_main(void) {
     fut_serial_puts("[DEBUG] kernel_main: Before heap init\n");
     fut_printf("[INIT] Initializing kernel heap...\n");
 
-    /* Heap region in virtual memory (after kernel end) */
-    uintptr_t heap_start = (uintptr_t)_kernel_end;
-    heap_start = (heap_start + 0xFFF) & ~0xFFFULL;  /* Page-align */
-#if defined(__x86_64__)
-    if (heap_start < min_phys) {
-        heap_start = min_phys;
-    }
-#endif
-    uintptr_t heap_end = heap_start + KERNEL_HEAP_SIZE;
+    /* Heap region starts after PMM allocation region */
+    uintptr_t heap_start = ram_start;
+    uintptr_t heap_end = heap_start + heap_size;
 
     /* Debug: print heap addresses before initialization */
-    fut_printf("[DEBUG] _kernel_end address: 0x%llx\n",
-               (unsigned long long)(uintptr_t)_kernel_end);
     fut_printf("[DEBUG] heap_start: 0x%llx\n", (unsigned long long)heap_start);
     fut_printf("[DEBUG] heap_end: 0x%llx\n", (unsigned long long)heap_end);
-    fut_printf("[DEBUG] heap_size: %llu bytes\n",
-               (unsigned long long)KERNEL_HEAP_SIZE);
+    fut_printf("[DEBUG] heap_size: %llu bytes\n", (unsigned long long)heap_size);
 
     fut_serial_puts("[DEBUG] kernel_main: Calling fut_heap_init\n");
     fut_heap_init(heap_start, heap_end);
 
     fut_serial_puts("[DEBUG] kernel_main: After heap init\n");
     fut_printf("[INIT] Heap initialized: 0x%llx - 0x%llx (%llu MiB)\n",
-               heap_start, heap_end, KERNEL_HEAP_SIZE / (1024 * 1024));
+               heap_start, heap_end, heap_size / (1024 * 1024));
 
     fut_serial_puts("[DEBUG] kernel_main: Before timer init\n");
     fut_printf("[INIT] Initializing timer subsystem...\n");
@@ -1509,15 +1505,25 @@ void fut_kernel_main(void) {
     fut_printf("[INIT] FIPC receiver thread created (TID %llu)\n", receiver_thread->tid); */
 
     /* ========================================
-     *   Step 8: Start Scheduling
+     *   Step 8: Platform Late Initialization
      * ======================================== */
 
     fut_printf("\n");
     fut_printf("=======================================================\n");
     fut_printf("   Kernel initialization complete!\n");
-    fut_printf("   Starting scheduler...\n");
+    fut_printf("   Calling platform late init...\n");
     fut_printf("=======================================================\n\n");
 
+    /* Platform-specific late initialization (spawn init, etc.) */
+    arch_late_init();
+
+    /* ========================================
+     *   Step 9: Start Scheduling
+     * ======================================== */
+
+    fut_printf("[INIT] Starting scheduler...\n");
+
+#if defined(__x86_64__)
     /* Enable timer interrupts now that all subsystems are ready */
     extern void fut_irq_enable(uint8_t irq);
     fut_printf("[INIT] Enabling timer IRQ for preemptive scheduling...\n");
@@ -1531,4 +1537,8 @@ void fut_kernel_main(void) {
     /* Should never reach here */
     fut_printf("[PANIC] Scheduler returned unexpectedly!\n");
     fut_platform_panic("Scheduler returned to kernel_main");
+#else
+    /* ARM64 and other platforms: enter idle loop after late init */
+    arch_idle_loop();
+#endif
 }

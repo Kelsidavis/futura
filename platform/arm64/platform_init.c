@@ -829,23 +829,126 @@ void fut_platform_late_init(void) {
     fut_serial_puts("[INIT] ARM64 platform late initialization complete\n\n");
 }
 
+/* ============================================================
+ *   Platform Hook Implementations (for kernel/kernel_main.c)
+ * ============================================================ */
+
+#include <kernel/platform_hooks.h>
+#include <kernel/errno.h>
+
+/* Forward declarations from kernel_main.c that will be moved here */
+extern void test_el0_transition(void);
+extern char _binary_build_bin_arm64_user_init_start[];
+extern char _binary_build_bin_arm64_user_init_end[];
+extern char _binary_build_bin_arm64_user_shell_start[];
+extern char _binary_build_bin_arm64_user_shell_end[];
+extern int fut_exec_elf_memory(const void *elf_data, size_t elf_size, char *const argv[], char *const envp[]);
+
+/**
+ * arch_early_init - ARM64 early platform initialization
+ * Called before any kernel subsystems are initialized.
+ */
+void arch_early_init(void) {
+    /* fut_platform_early_init is called from boot.S before kernel_main,
+     * so we don't need to do anything here. Serial, GIC, timer already initialized. */
+}
+
+/**
+ * arch_memory_config - Provide ARM64 memory layout
+ */
+void arch_memory_config(uintptr_t *ram_start, uintptr_t *ram_end, size_t *heap_size) {
+    /* ARM64 memory layout for QEMU virt machine */
+    *ram_start = 0x40800000;  /* After kernel/stack */
+    *ram_end   = 0x48000000;  /* 120MB total */
+    *heap_size = 16 * 1024 * 1024;  /* 16MB kernel heap */
+}
+
+/**
+ * arch_late_init - ARM64 late initialization
+ * Spawn init from embedded binary, fallback to EL0 test.
+ */
+void arch_late_init(void) {
+    fut_serial_puts("\n[ARM64] Late initialization - spawning init...\n");
+
+    /* Check embedded userland binaries */
+    uintptr_t init_size = (uintptr_t)_binary_build_bin_arm64_user_init_end -
+                          (uintptr_t)_binary_build_bin_arm64_user_init_start;
+    uintptr_t shell_size = (uintptr_t)_binary_build_bin_arm64_user_shell_end -
+                           (uintptr_t)_binary_build_bin_arm64_user_shell_start;
+
+    fut_serial_puts("[ARM64] Embedded userland binaries:\n");
+    fut_serial_puts("  - init:  ");
+    if (init_size > 0) {
+        fut_serial_puts("present\n");
+    } else {
+        fut_serial_puts("MISSING!\n");
+    }
+    fut_serial_puts("  - shell: ");
+    if (shell_size > 0) {
+        fut_serial_puts("present\n");
+    } else {
+        fut_serial_puts("MISSING!\n");
+    }
+    fut_serial_puts("\n");
+
+    /* Spawn init from embedded binary */
+    fut_serial_puts("====================================\n");
+    fut_serial_puts("  SPAWNING INIT FROM MEMORY\n");
+    fut_serial_puts("====================================\n\n");
+
+    /* Prepare init arguments */
+    char *init_argv[] = {"/sbin/init", NULL};
+    char *init_envp[] = {"PATH=/sbin:/bin", "HOME=/root", NULL};
+
+    fut_serial_puts("[ARM64] Executing init from embedded binary...\n");
+
+    /* Execute init - should never return */
+    int ret = fut_exec_elf_memory(_binary_build_bin_arm64_user_init_start, init_size, init_argv, init_envp);
+
+    /* If we get here, exec failed */
+    fut_serial_puts("[ERROR] Failed to execute init! Error code: ");
+    if (ret == -EINVAL) {
+        fut_serial_puts("EINVAL (invalid argument)\n");
+    } else if (ret == -ENOMEM) {
+        fut_serial_puts("ENOMEM (out of memory)\n");
+    } else if (ret == -ESRCH) {
+        fut_serial_puts("ESRCH (no current task)\n");
+    } else {
+        fut_serial_puts("UNKNOWN\n");
+    }
+    fut_serial_puts("\nFalling back to EL0 test...\n\n");
+
+    /* Test EL0 transition */
+    fut_serial_puts("====================================\n");
+    fut_serial_puts("  TESTING EL0 TRANSITION\n");
+    fut_serial_puts("====================================\n\n");
+
+    test_el0_transition();
+
+    /* Should not reach here */
+    fut_serial_puts("[ERROR] test_el0_transition returned!\n");
+}
+
+/**
+ * arch_idle_loop - ARM64 idle loop
+ */
+void arch_idle_loop(void) {
+    fut_serial_puts("[ARM64] Entering idle loop...\n");
+    while (1) {
+        __asm__ volatile("wfi");
+    }
+}
+
 /* Main platform entry point (called from boot.S) */
 void fut_platform_init(uint32_t boot_magic, void *boot_info) {
     /* Early initialization */
     fut_platform_early_init(boot_magic, boot_info);
 
-    /* Call kernel main */
+    /* Call kernel main (from kernel/kernel_main.c) */
     fut_serial_puts("[INIT] Jumping to kernel main...\n\n");
+    extern void fut_kernel_main(void);
     fut_kernel_main();
 
     /* Should never reach here */
     fut_platform_panic("Kernel main returned!");
-}
-
-/* Weak symbol stubs */
-void __attribute__((weak)) fut_kernel_main(void) {
-    fut_serial_puts("[KERNEL] ARM64 kernel main not implemented!\n");
-    while (1) {
-        __asm__ volatile("wfi");
-    }
 }

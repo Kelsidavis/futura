@@ -21,6 +21,7 @@
 #include <kernel/trap.h>
 #include <kernel/boot_args.h>
 #include <kernel/fut_percpu.h>
+#include <kernel/platform_hooks.h>
 
 /* Serial port definitions for debugging */
 #define SERIAL_PORT_COM1 0x3F8
@@ -625,6 +626,55 @@ static void serial_put_hex32(uint32_t value) {
     fut_serial_puts(buf);
 }
 
+/* ============================================================
+ *   Platform Hook Implementations (for kernel/kernel_main.c)
+ * ============================================================ */
+
+#include <kernel/platform_hooks.h>
+
+/**
+ * arch_early_init - x86_64 early platform initialization
+ * Called before any kernel subsystems are initialized.
+ * Note: fut_platform_init already does this, so this is a no-op.
+ */
+void arch_early_init(void) {
+    /* fut_platform_init handles early init before calling kernel_main */
+}
+
+/**
+ * arch_memory_config - Provide x86_64 memory layout
+ */
+void arch_memory_config(uintptr_t *ram_start, uintptr_t *ram_end, size_t *heap_size) {
+    extern char _kernel_end[];
+    extern char boot_ptables_start[];
+    extern char boot_ptables_end[];
+
+    /* x86_64 memory layout (higher-half kernel) */
+    uintptr_t kernel_virt_end = (uintptr_t)_kernel_end;
+    uintptr_t mem_base = (kernel_virt_end + 0xFFF) & ~0xFFFULL;  /* Page-align */
+
+    /* Skip legacy VGA/BIOS hole below 1 MiB */
+    uintptr_t min_phys = KERNEL_VIRTUAL_BASE + 0x100000ULL;
+    if (mem_base < min_phys) {
+        mem_base = min_phys;
+    }
+
+    /* Convert to physical addresses */
+    extern phys_addr_t pmap_virt_to_phys(uintptr_t vaddr);
+    phys_addr_t mem_base_phys = pmap_virt_to_phys(mem_base);
+    phys_addr_t boot_ptables_start_phys = pmap_virt_to_phys((uintptr_t)boot_ptables_start);
+    phys_addr_t boot_ptables_end_phys = pmap_virt_to_phys((uintptr_t)boot_ptables_end);
+    boot_ptables_start_phys &= ~(FUT_PAGE_SIZE - 1ULL);
+    boot_ptables_end_phys = FUT_PAGE_ALIGN(boot_ptables_end_phys);
+    if (mem_base_phys < boot_ptables_end_phys) {
+        mem_base_phys = boot_ptables_end_phys;
+    }
+
+    *ram_start = mem_base_phys;
+    *ram_end = mem_base_phys + (1024 * 1024 * 1024);  /* 1 GiB */
+    *heap_size = 96 * 1024 * 1024;  /* 96 MiB kernel heap */
+}
+
 void fut_platform_init(uint32_t multiboot_magic __attribute__((unused)),
                        uint32_t multiboot_addr __attribute__((unused))) {
     /* Early debug marker: Write 'I' to show we entered the function */
@@ -933,4 +983,77 @@ void fut_platform_panic(const char *message) {
 /* CPU halt function */
 void fut_platform_cpu_halt(void) {
     __asm__ volatile("hlt");
+}
+
+/* ========================================
+ *   Platform Hooks for Multi-Arch Support
+ * ======================================== */
+
+/**
+ * arch_early_init - Platform-specific early initialization
+ * Called before any kernel subsystems are initialized.
+ * For x86_64, this is handled by fut_platform_init which is called
+ * from boot.S before kernel_main, so we don't need to do anything here.
+ */
+void arch_early_init(void) {
+    /* Early init already done in fut_platform_init */
+}
+
+/**
+ * arch_memory_config - Get platform-specific memory layout
+ * @ram_start: Output - Start of usable RAM (physical address)
+ * @ram_end: Output - End of usable RAM (physical address)
+ * @heap_size: Output - Requested kernel heap size in bytes
+ */
+void arch_memory_config(uintptr_t *ram_start, uintptr_t *ram_end, size_t *heap_size) {
+    extern char _kernel_end[];
+    extern char boot_ptables_start[];
+    extern char boot_ptables_end[];
+    extern phys_addr_t pmap_virt_to_phys(uintptr_t vaddr);
+    extern uintptr_t pmap_phys_to_virt(phys_addr_t paddr);
+
+    /* x86_64 memory layout (higher-half kernel) */
+    uintptr_t kernel_virt_end = (uintptr_t)_kernel_end;
+    uintptr_t mem_base = (kernel_virt_end + 0xFFF) & ~0xFFFULL;
+
+    /* Skip legacy VGA/BIOS hole below 1 MiB */
+    uintptr_t min_phys = KERNEL_VIRTUAL_BASE + 0x100000ULL;
+    if (mem_base < min_phys) {
+        mem_base = min_phys;
+    }
+
+    /* Convert to physical addresses */
+    phys_addr_t mem_base_phys = pmap_virt_to_phys(mem_base);
+    phys_addr_t boot_ptables_start_phys = pmap_virt_to_phys((uintptr_t)boot_ptables_start);
+    phys_addr_t boot_ptables_end_phys = pmap_virt_to_phys((uintptr_t)boot_ptables_end);
+    boot_ptables_start_phys &= ~(FUT_PAGE_SIZE - 1ULL);
+    boot_ptables_end_phys = FUT_PAGE_ALIGN(boot_ptables_end_phys);
+    if (mem_base_phys < boot_ptables_end_phys) {
+        mem_base_phys = boot_ptables_end_phys;
+    }
+
+    *ram_start = mem_base_phys;
+    *ram_end = mem_base_phys + (1024 * 1024 * 1024);  /* 1 GiB */
+    *heap_size = 96 * 1024 * 1024;  /* 96 MiB kernel heap */
+}
+
+/**
+ * arch_late_init - Platform-specific late initialization
+ * Called after all core kernel subsystems are ready.
+ * For x86_64, init spawning is handled differently via execve_blob,
+ * so this is empty.
+ */
+void arch_late_init(void) {
+    /* x86_64 spawns init via execve_blob in kernel_main, not here */
+}
+
+/**
+ * arch_idle_loop - Platform-specific idle loop
+ * Called when kernel has nothing to do.
+ */
+void arch_idle_loop(void) {
+    fut_printf("[x86_64] Entering idle loop...\n");
+    while (1) {
+        __asm__ volatile("hlt");
+    }
 }

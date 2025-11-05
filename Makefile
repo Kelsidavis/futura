@@ -321,7 +321,7 @@ RUST_SOURCES := $(shell if [ -d $(RUST_ROOT) ]; then find $(RUST_ROOT) -type f \
 # ============================================================
 
 # Kernel core sources
-# Note: kernel_main.c is x86-64 only; ARM64 uses platform/arm64/kernel_main.c
+# Note: kernel_main.c is now shared across all platforms via platform hooks
 KERNEL_SOURCES := \
     kernel/boot/banner.c \
     kernel/boot/boot_args.c \
@@ -526,7 +526,7 @@ else ifeq ($(PLATFORM),arm64)
         platform/arm64/arm64_exception_entry.S \
         platform/arm64/context_switch.S \
         platform/arm64/platform_init.c \
-        platform/arm64/kernel_main.c \
+        platform/arm64/userland_test.c \
         platform/arm64/exception_handlers.c \
         platform/arm64/syscall_table.c \
         platform/arm64/memory/pmap.c \

@@ -1003,8 +1003,11 @@ void fut_kernel_main(void) {
         fut_printf("[WARN] ✗ Failed to mount ramfs at /tmp (error %d)\n", tmp_mount_ret);
     }
 
+    fut_printf("[DEBUG] About to parse boot flags\n");
     bool perf_flag = fut_boot_arg_flag("perf");
+    fut_printf("[DEBUG] perf_flag=%d\n", perf_flag);
     bool run_async_selftests = boot_flag_enabled("async-tests", false);
+    fut_printf("[DEBUG] run_async_selftests=%d\n", run_async_selftests);
 
     uint16_t planned_tests = 1u; /* VFS smoke */
     if (fb_enabled) {
@@ -1092,82 +1095,14 @@ void fut_kernel_main(void) {
     }
     */
 
+    /* Initialize network drivers (but not TCP/IP - that needs scheduler) */
     fut_printf("[INIT] Initializing network subsystem...\n");
     fut_net_init();
     fut_status_t vnet_rc = virtio_net_init();
     if (vnet_rc != 0) {
         fut_printf("[virtio-net] init failed: %d\n", vnet_rc);
     }
-
-    /* Initialize TCP/IP stack */
-    int tcpip_rc = tcpip_init();
-    if (tcpip_rc != 0) {
-        fut_printf("[TCP/IP] init failed: %d\n", tcpip_rc);
-    } else {
-        /* Test ping to external site (Google DNS 8.8.8.8) */
-        fut_printf("[TCP/IP-TEST] Sending ICMP ping to 8.8.8.8 (Google DNS)...\n");
-        uint32_t google_dns = (8 << 24) | (8 << 16) | (8 << 8) | 8;  /* 8.8.8.8 */
-        const char *ping_data = "Futura OS ping test";
-        int ping_rc = icmp_ping(google_dns, 1, 1, (void *)ping_data, 19);  /* strlen("Futura OS ping test") = 19 */
-        if (ping_rc == 0) {
-            fut_printf("[TCP/IP-TEST] ✓ ICMP echo request sent successfully to 8.8.8.8\n");
-        } else {
-            fut_printf("[TCP/IP-TEST] ✗ Failed to send ping: %d\n", ping_rc);
-        }
-
-        /* Test ping to another well-known DNS (1.1.1.1 - Cloudflare) */
-        fut_printf("[TCP/IP-TEST] Sending ICMP ping to 1.1.1.1 (Cloudflare DNS)...\n");
-        uint32_t cloudflare_dns = (1 << 24) | (1 << 16) | (1 << 8) | 1;  /* 1.1.1.1 */
-        ping_rc = icmp_ping(cloudflare_dns, 1, 2, (void *)ping_data, 19);  /* strlen("Futura OS ping test") = 19 */
-        if (ping_rc == 0) {
-            fut_printf("[TCP/IP-TEST] ✓ ICMP echo request sent successfully to 1.1.1.1\n");
-        } else {
-            fut_printf("[TCP/IP-TEST] ✗ Failed to send ping: %d\n", ping_rc);
-        }
-
-        /* Initialize DNS resolver - TEMPORARILY DISABLED FOR SLAB DEBUGGING */
-        fut_printf("[DNS-TEST] Skipped for slab debugging\n");
-        if (0) {  /* Disabled */
-        fut_printf("[DNS-TEST] Initializing DNS resolver...\n");
-        /* Use QEMU's built-in DNS server at 10.0.2.3 for user networking */
-        uint32_t qemu_dns_ip = (10 << 24) | (0 << 16) | (2 << 8) | 3;  /* 10.0.2.3 */
-        uint32_t google_dns_ip = (8 << 24) | (8 << 16) | (8 << 8) | 8;  /* 8.8.8.8 (fallback) */
-        int dns_rc = dns_init(qemu_dns_ip, google_dns_ip);
-        if (dns_rc != 0) {
-            fut_printf("[DNS-TEST] ✗ DNS init failed: %d\n", dns_rc);
-        } else {
-            /* Test DNS resolution */
-            fut_printf("[DNS-TEST] Testing domain resolution...\n");
-
-            /* Test 1: Resolve google.com */
-            uint32_t resolved_ip;
-            dns_rc = dns_resolve("google.com", &resolved_ip);
-            if (dns_rc == 0) {
-                char ip_str[16];
-                dns_format_ip(resolved_ip, ip_str, sizeof(ip_str));
-                fut_printf("[DNS-TEST] ✓ google.com -> %s\n", ip_str);
-            } else {
-                fut_printf("[DNS-TEST] ✗ Failed to resolve google.com: %d\n", dns_rc);
-            }
-
-            /* Test 2: Resolve example.com */
-            dns_rc = dns_resolve("example.com", &resolved_ip);
-            if (dns_rc == 0) {
-                char ip_str[16];
-                dns_format_ip(resolved_ip, ip_str, sizeof(ip_str));
-                fut_printf("[DNS-TEST] ✓ example.com -> %s\n", ip_str);
-            } else {
-                fut_printf("[DNS-TEST] ✗ Failed to resolve example.com: %d\n", dns_rc);
-            }
-
-            /* Test 3: Cache hit test - resolve google.com again */
-            dns_rc = dns_resolve("google.com", &resolved_ip);
-            if (dns_rc == 0) {
-                fut_printf("[DNS-TEST] ✓ Cache test: google.com (should be cached)\n");
-            }
-        }
-        }  /* End DNS tests disabled for slab debugging */
-    }
+    fut_printf("[INIT] Network drivers initialized (TCP/IP stack will start after scheduler)\n");
 
     /* Test block device operations - DISABLED (heap too small for 1MB ramdisk) */
     /* test_blockdev_operations(); */
@@ -1251,6 +1186,17 @@ void fut_kernel_main(void) {
                    fd0, fd1, fd2);
     } else {
         fut_printf("[INIT] Standard streams initialized (fd0=%d fd1=%d fd2=%d)\n", fd0, fd1, fd2);
+    }
+
+    /* ========================================
+     *   Initialize TCP/IP Stack (requires scheduler)
+     * ======================================== */
+    fut_printf("[INIT] Initializing TCP/IP stack...\n");
+    int tcpip_rc = tcpip_init();
+    if (tcpip_rc != 0) {
+        fut_printf("[TCP/IP] init failed: %d\n", tcpip_rc);
+    } else {
+        fut_printf("[TCP/IP] ✓ Stack initialized successfully\n");
     }
 
     /* ========================================

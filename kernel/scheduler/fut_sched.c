@@ -508,6 +508,12 @@ void fut_schedule(void) {
         next = idle;
     }
 
+    // If scheduler not initialized yet (no idle thread), just return
+    // This can happen if timer IRQs fire during early boot
+    if (!next) {
+        return;
+    }
+
     // If current thread is still runnable, put it back in ready queue
     if (prev && prev != idle && prev->state == FUT_THREAD_RUNNING) {
         prev->state = FUT_THREAD_READY;

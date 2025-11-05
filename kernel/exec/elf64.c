@@ -1298,7 +1298,7 @@ static int build_user_stack(fut_mm_t *mm,
     /* Verify entry point is mapped and code is present */
     extern int pmap_probe_pte(fut_vmem_context_t *ctx, uint64_t vaddr, uint64_t *pte_out);
     extern uint64_t fut_pte_to_phys(uint64_t pte);
-    extern void *pmap_phys_to_virt(phys_addr_t phys);
+    /* pmap_phys_to_virt is static inline from pmap.h */
     fut_vmem_context_t *vmem = fut_mm_context(mm);
     uint64_t entry_pte = 0;
     if (pmap_probe_pte(vmem, entry, &entry_pte) != 0) {

@@ -366,7 +366,8 @@ void slab_free(void *ptr) {
             }
 
             /* Validate slab->data pointer before dereferencing */
-            if (!slab->data || (uintptr_t)slab->data < 0xffffffff80000000ULL || (uintptr_t)slab->data >= 0xffffffffa0389000ULL) {
+            /* Generic check: pointer should be non-null, 8-byte aligned, and above null page */
+            if (!slab->data || ((uintptr_t)slab->data & 0x7) != 0 || (uintptr_t)slab->data < 0x1000) {
                 fut_printf("[SLAB-FREE] WARNING: Invalid slab->data pointer %p, skipping slab\n", (void*)slab->data);
                 continue;
             }

@@ -549,7 +549,8 @@ else ifeq ($(PLATFORM),arm64)
         kernel/sys_sched_advanced.c \
         kernel/sys_clock_advanced.c \
         kernel/sys_fileio_advanced.c \
-        kernel/sys_filesystem_stats.c
+        kernel/sys_filesystem_stats.c \
+        kernel/kernel_main.c
 endif
 
 # Subsystem sources (POSIX compat)

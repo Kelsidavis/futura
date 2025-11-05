@@ -171,22 +171,15 @@ static fut_net_waiter_t *fut_net_waiter_create(fut_waitq_t *queue) {
 /* -------------------------------------------------------------------------- */
 
 void fut_net_init(void) {
-    fut_printf("[NET-INIT] Entry\n");
     if (net_initialized) {
-        fut_printf("[NET-INIT] Already initialized, returning\n");
         return;
     }
 
-    fut_printf("[NET-INIT] Initializing spinlock\n");
     fut_spinlock_init(&net_lock);
-    fut_printf("[NET-INIT] Calling fut_net_dev_system_init\n");
     fut_net_dev_system_init();
-    fut_printf("[NET-INIT] Calling fut_net_loopback_init\n");
     fut_net_loopback_init();
-    fut_printf("[NET-INIT] Setting initialized flag\n");
     net_initialized = true;
     NETDBG("[net] subsystem initialized\n");
-    fut_printf("[NET-INIT] Complete\n");
 }
 
 fut_status_t fut_net_listen(uint16_t port, fut_socket_t **out) {

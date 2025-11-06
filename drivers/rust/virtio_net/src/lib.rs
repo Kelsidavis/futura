@@ -78,6 +78,7 @@ const PAGE_SIZE: usize = 4096;
 const QUEUE_SIZE: u16 = 16;
 const MAX_FRAME: usize = 2048;
 const FALLBACK_MTU: u32 = 1500;
+#[cfg(target_arch = "x86_64")]
 const PMAP_DIRECT_VIRT_BASE: usize = 0xFFFFFFFF80000000;
 const MMIO_PTE_FLAGS: u64 = MMIO_DEFAULT_FLAGS;
 
@@ -420,6 +421,9 @@ impl VirtioNetDevice {
         dev.pci = pci;
         dev.setup_bars();
 
+        // Debug: log all BAR values
+        log("virtio-net: All BARs after setup (nonzero only):");
+
         if !dev.parse_capabilities() {
             log("virtio-net: capability parsing failed");
             return Err(ENODEV);
@@ -435,6 +439,18 @@ impl VirtioNetDevice {
     }
 
     fn setup_bars(&mut self) {
+        // On ARM64, assign all BARs first, then read them
+        #[cfg(target_arch = "aarch64")]
+        {
+            for idx in 0..6u8 {
+                let assigned = unsafe { arm64_pci_assign_bar(self.pci.bus, self.pci.device, self.pci.function, idx) };
+                self.bars[idx as usize] = assigned;
+            }
+            return;
+        }
+
+        // x86_64: BARs already assigned by BIOS, just read them
+        #[cfg(target_arch = "x86_64")]
         for idx in 0..6u8 {
             let offset = 0x10 + idx * 4;
             let value = pci_read32(self.pci.bus, self.pci.device, self.pci.function, offset);
@@ -458,19 +474,23 @@ impl VirtioNetDevice {
     fn parse_capabilities(&mut self) -> bool {
         let status = pci_read8(self.pci.bus, self.pci.device, self.pci.function, 0x06);
         if (status & 0x10) == 0 {
+            log("virtio-net: No capability list in status register");
             return false; // No capability list
         }
 
         let mut cap_ptr = pci_read8(self.pci.bus, self.pci.device, self.pci.function, 0x34);
         if cap_ptr < 0x40 {
+            log("virtio-net: Capability pointer too low");
             return false;
         }
 
+        let mut cap_count = 0;
         while cap_ptr >= 0x40 && cap_ptr < 0xFF {
             let cap_id = pci_read8(self.pci.bus, self.pci.device, self.pci.function, cap_ptr);
             let next = pci_read8(self.pci.bus, self.pci.device, self.pci.function, cap_ptr + 1);
 
             if cap_id == PCI_CAP_ID_VNDR {
+                cap_count += 1;
                 self.handle_virtio_cap(cap_ptr);
             }
 
@@ -480,7 +500,11 @@ impl VirtioNetDevice {
             cap_ptr = next;
         }
 
-        !self.common.is_null() && !self.notify_base.is_null()
+        let result = !self.common.is_null() && !self.notify_base.is_null();
+        if !result {
+            log("virtio-net: Missing required capabilities (common or notify)");
+        }
+        result
     }
 
     fn handle_virtio_cap(&mut self, cap_ptr: u8) {
@@ -489,22 +513,37 @@ impl VirtioNetDevice {
         let offset = pci_read32(self.pci.bus, self.pci.device, self.pci.function, cap_ptr + 8);
         let length = pci_read32(self.pci.bus, self.pci.device, self.pci.function, cap_ptr + 12);
 
-        if (bar as usize) >= self.bars.len() || self.bars[bar as usize] == 0 {
-            return;
+        if (bar as usize) >= self.bars.len() {
+            return; // Invalid BAR index, skip this capability
+        }
+
+        if self.bars[bar as usize] == 0 {
+            return; // BAR not assigned, skip this capability
         }
 
         let phys = self.bars[bar as usize] + offset as u64;
 
+        // On ARM64 with MMU disabled, physical addresses are virtual addresses
+        #[cfg(target_arch = "aarch64")]
+        let virt = phys as *mut u8;
+
+        // On x86_64, we need to map the MMIO region
+        #[cfg(target_arch = "x86_64")]
+        let virt = unsafe { map_mmio_region(phys, length as usize, MMIO_PTE_FLAGS) };
+
         match cfg_type {
             VIRTIO_PCI_CAP_COMMON_CFG => {
-                self.common = unsafe { map_mmio_region(phys, length as usize, MMIO_PTE_FLAGS) as *mut VirtioPciCommonCfg };
+                self.common = virt as *mut VirtioPciCommonCfg;
+                log("virtio-net: Found common config");
             }
             VIRTIO_PCI_CAP_NOTIFY_CFG => {
-                self.notify_base = unsafe { map_mmio_region(phys, length as usize, MMIO_PTE_FLAGS) };
+                self.notify_base = virt;
                 self.notify_off_multiplier = pci_read32(self.pci.bus, self.pci.device, self.pci.function, cap_ptr + 16);
+                log("virtio-net: Found notify");
             }
             VIRTIO_PCI_CAP_DEVICE_CFG => {
-                self.config = unsafe { map_mmio_region(phys, length as usize, MMIO_PTE_FLAGS) as *mut VirtioNetConfig };
+                self.config = virt as *mut VirtioNetConfig;
+                log("virtio-net: Found device config");
             }
             _ => {}
         }
@@ -839,7 +878,7 @@ pub extern "C" fn virtio_net_init() -> FutStatus {
 
         // Setup net device
         device.dev = FutNetDev {
-            name: DEVICE_NAME.as_ptr() as *const i8,
+            name: DEVICE_NAME.as_ptr().cast(),
             mtu: FALLBACK_MTU,
             features: 0,
             driver_ctx: device as *mut _ as *mut c_void,
@@ -886,8 +925,15 @@ pub extern "C" fn virtio_net_init() -> FutStatus {
 }
 
 // Helper functions
+#[cfg(target_arch = "x86_64")]
 fn virt_to_phys(virt: usize) -> u64 {
     (virt - PMAP_DIRECT_VIRT_BASE) as u64
+}
+
+#[cfg(target_arch = "aarch64")]
+fn virt_to_phys(virt: usize) -> u64 {
+    // ARM64: MMU disabled, addresses are already physical
+    virt as u64
 }
 
 fn find_device() -> Option<PciAddress> {
@@ -908,6 +954,8 @@ fn find_device() -> Option<PciAddress> {
     None
 }
 
+// Platform-specific PCI access
+#[cfg(target_arch = "x86_64")]
 fn pci_read8(bus: u8, device: u8, function: u8, offset: u8) -> u8 {
     let address = 0x80000000u32
         | ((bus as u32) << 16)
@@ -921,6 +969,12 @@ fn pci_read8(bus: u8, device: u8, function: u8, offset: u8) -> u8 {
     }
 }
 
+#[cfg(target_arch = "aarch64")]
+fn pci_read8(bus: u8, device: u8, function: u8, offset: u8) -> u8 {
+    unsafe { arm64_pci_read8(bus, device, function, offset as u16) }
+}
+
+#[cfg(target_arch = "x86_64")]
 fn pci_read16(bus: u8, device: u8, function: u8, offset: u8) -> u16 {
     let address = 0x80000000u32
         | ((bus as u32) << 16)
@@ -934,6 +988,12 @@ fn pci_read16(bus: u8, device: u8, function: u8, offset: u8) -> u16 {
     }
 }
 
+#[cfg(target_arch = "aarch64")]
+fn pci_read16(bus: u8, device: u8, function: u8, offset: u8) -> u16 {
+    unsafe { arm64_pci_read16(bus, device, function, offset as u16) }
+}
+
+#[cfg(target_arch = "x86_64")]
 fn pci_read32(bus: u8, device: u8, function: u8, offset: u8) -> u32 {
     let address = 0x80000000u32
         | ((bus as u32) << 16)
@@ -947,6 +1007,12 @@ fn pci_read32(bus: u8, device: u8, function: u8, offset: u8) -> u32 {
     }
 }
 
+#[cfg(target_arch = "aarch64")]
+fn pci_read32(bus: u8, device: u8, function: u8, offset: u8) -> u32 {
+    unsafe { arm64_pci_read32(bus, device, function, offset as u16) }
+}
+
+#[cfg(target_arch = "x86_64")]
 fn pci_write16(bus: u8, device: u8, function: u8, offset: u8, value: u16) {
     let address = 0x80000000u32
         | ((bus as u32) << 16)
@@ -964,16 +1030,33 @@ fn pci_write16(bus: u8, device: u8, function: u8, offset: u8, value: u16) {
     }
 }
 
+#[cfg(target_arch = "aarch64")]
+fn pci_write16(bus: u8, device: u8, function: u8, offset: u8, value: u16) {
+    unsafe { arm64_pci_write16(bus, device, function, offset as u16, value) }
+}
+
+#[cfg(target_arch = "x86_64")]
 unsafe fn outl(port: u16, val: u32) {
     unsafe {
         asm!("out dx, eax", in("dx") port, in("eax") val, options(nostack, preserves_flags));
     }
 }
 
+#[cfg(target_arch = "x86_64")]
 unsafe fn inl(port: u16) -> u32 {
     let ret: u32;
     unsafe {
         asm!("in eax, dx", out("eax") ret, in("dx") port, options(nostack, preserves_flags));
     }
     ret
+}
+
+// ARM64 PCI ECAM functions
+#[cfg(target_arch = "aarch64")]
+unsafe extern "C" {
+    fn arm64_pci_read32(bus: u8, dev: u8, func: u8, reg: u16) -> u32;
+    fn arm64_pci_read16(bus: u8, dev: u8, func: u8, reg: u16) -> u16;
+    fn arm64_pci_read8(bus: u8, dev: u8, func: u8, reg: u16) -> u8;
+    fn arm64_pci_write16(bus: u8, dev: u8, func: u8, reg: u16, value: u16);
+    fn arm64_pci_assign_bar(bus: u8, dev: u8, func: u8, bar_num: u8) -> u64;
 }

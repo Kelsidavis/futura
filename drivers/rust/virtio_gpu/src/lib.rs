@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MPL-2.0
 /*
- * virtio_gpu - ARM64 virtio-gpu driver using virtio-mmio transport
+ * virtio_gpu - ARM64 virtio-gpu driver using virtio-pci transport
  *
- * Implements virtio-gpu protocol over virtio-mmio for ARM64 platform.
+ * Implements virtio-gpu protocol over virtio-pci for ARM64 platform.
  * Provides framebuffer initialization and display output.
  */
 
@@ -13,29 +13,28 @@ use core::ffi::c_void;
 use core::ptr::{read_volatile, write_volatile};
 use common::{log, SpinLock};
 
-/* virtio-mmio register offsets (from virtio v1.0 spec) */
-const MMIO_MAGIC_VALUE: usize = 0x000;
-const MMIO_VERSION: usize = 0x004;
-const MMIO_DEVICE_ID: usize = 0x008;
-const MMIO_VENDOR_ID: usize = 0x00c;
-const MMIO_DEVICE_FEATURES: usize = 0x010;
-const MMIO_DEVICE_FEATURES_SEL: usize = 0x014;
-const MMIO_DRIVER_FEATURES: usize = 0x020;
-const MMIO_DRIVER_FEATURES_SEL: usize = 0x024;
-const MMIO_QUEUE_SEL: usize = 0x030;
-const MMIO_QUEUE_NUM_MAX: usize = 0x034;
-const MMIO_QUEUE_NUM: usize = 0x038;
-const MMIO_QUEUE_READY: usize = 0x044;
-const MMIO_QUEUE_NOTIFY: usize = 0x050;
-const MMIO_INTERRUPT_STATUS: usize = 0x060;
-const MMIO_INTERRUPT_ACK: usize = 0x064;
-const MMIO_STATUS: usize = 0x070;
-const MMIO_QUEUE_DESC_LOW: usize = 0x080;
-const MMIO_QUEUE_DESC_HIGH: usize = 0x084;
-const MMIO_QUEUE_DRIVER_LOW: usize = 0x090;
-const MMIO_QUEUE_DRIVER_HIGH: usize = 0x094;
-const MMIO_QUEUE_DEVICE_LOW: usize = 0x0a0;
-const MMIO_QUEUE_DEVICE_HIGH: usize = 0x0a4;
+/* PCI capability types (virtio 1.0 spec) */
+const VIRTIO_PCI_CAP_COMMON_CFG: u8 = 1;
+const VIRTIO_PCI_CAP_NOTIFY_CFG: u8 = 2;
+const VIRTIO_PCI_CAP_ISR_CFG: u8 = 3;
+const VIRTIO_PCI_CAP_DEVICE_CFG: u8 = 4;
+const PCI_CAP_ID_VNDR: u8 = 0x09;
+
+/* Virtio 1.0 common configuration structure offsets */
+const VIRTIO_PCI_COMMON_DFSELECT: usize = 0x00;
+const VIRTIO_PCI_COMMON_DF: usize = 0x04;
+const VIRTIO_PCI_COMMON_GFSELECT: usize = 0x08;
+const VIRTIO_PCI_COMMON_GF: usize = 0x0c;
+const VIRTIO_PCI_COMMON_STATUS: usize = 0x14;
+const VIRTIO_PCI_COMMON_Q_SELECT: usize = 0x16;
+const VIRTIO_PCI_COMMON_Q_SIZE: usize = 0x18;
+const VIRTIO_PCI_COMMON_Q_ENABLE: usize = 0x1c;
+const VIRTIO_PCI_COMMON_Q_DESCLO: usize = 0x20;
+const VIRTIO_PCI_COMMON_Q_DESCHI: usize = 0x24;
+const VIRTIO_PCI_COMMON_Q_AVAILLO: usize = 0x28;
+const VIRTIO_PCI_COMMON_Q_AVAILHI: usize = 0x2c;
+const VIRTIO_PCI_COMMON_Q_USEDLO: usize = 0x30;
+const VIRTIO_PCI_COMMON_Q_USEDHI: usize = 0x34;
 
 /* virtio status bits */
 const VIRTIO_STATUS_ACKNOWLEDGE: u32 = 1;
@@ -168,7 +167,13 @@ struct VirtqUsed {
 
 /* Device state */
 struct VirtioGpuDevice {
-    mmio_base: *mut u8,
+    bus: u8,
+    dev: u8,
+    func: u8,
+    common_cfg: *mut u8,
+    notify_base: *mut u8,
+    isr_base: *mut u8,
+    device_cfg: *mut u8,
     desc_table: *mut VirtqDesc,
     avail: *mut VirtqAvail,
     used: *mut VirtqUsed,
@@ -186,9 +191,39 @@ unsafe impl Send for VirtioGpuDevice {}
 
 static DEVICE: SpinLock<Option<VirtioGpuDevice>> = SpinLock::new(None);
 
-/* MMIO access helpers with ARM64 memory barriers */
+/* PCI common config access helpers with ARM64 memory barriers */
 #[inline(always)]
-unsafe fn mmio_read32(base: *mut u8, offset: usize) -> u32 {
+unsafe fn common_read8(base: *mut u8, offset: usize) -> u8 {
+    unsafe { core::arch::asm!("dsb sy"); }
+    let val = unsafe { read_volatile(base.add(offset) as *const u8) };
+    unsafe { core::arch::asm!("dsb sy"); }
+    val
+}
+
+#[inline(always)]
+unsafe fn common_write8(base: *mut u8, offset: usize, value: u8) {
+    unsafe { core::arch::asm!("dsb sy"); }
+    unsafe { write_volatile(base.add(offset) as *mut u8, value); }
+    unsafe { core::arch::asm!("dsb sy"); }
+}
+
+#[inline(always)]
+unsafe fn common_read16(base: *mut u8, offset: usize) -> u16 {
+    unsafe { core::arch::asm!("dsb sy"); }
+    let val = unsafe { read_volatile(base.add(offset) as *const u16) };
+    unsafe { core::arch::asm!("dsb sy"); }
+    val
+}
+
+#[inline(always)]
+unsafe fn common_write16(base: *mut u8, offset: usize, value: u16) {
+    unsafe { core::arch::asm!("dsb sy"); }
+    unsafe { write_volatile(base.add(offset) as *mut u16, value); }
+    unsafe { core::arch::asm!("dsb sy"); }
+}
+
+#[inline(always)]
+unsafe fn common_read32(base: *mut u8, offset: usize) -> u32 {
     unsafe { core::arch::asm!("dsb sy"); }
     let val = unsafe { read_volatile(base.add(offset) as *const u32) };
     unsafe { core::arch::asm!("dsb sy"); }
@@ -196,9 +231,16 @@ unsafe fn mmio_read32(base: *mut u8, offset: usize) -> u32 {
 }
 
 #[inline(always)]
-unsafe fn mmio_write32(base: *mut u8, offset: usize, value: u32) {
+unsafe fn common_write32(base: *mut u8, offset: usize, value: u32) {
     unsafe { core::arch::asm!("dsb sy"); }
     unsafe { write_volatile(base.add(offset) as *mut u32, value); }
+    unsafe { core::arch::asm!("dsb sy"); }
+}
+
+#[inline(always)]
+unsafe fn common_write64(base: *mut u8, offset: usize, value: u64) {
+    unsafe { core::arch::asm!("dsb sy"); }
+    unsafe { write_volatile(base.add(offset) as *mut u64, value); }
     unsafe { core::arch::asm!("dsb sy"); }
 }
 
@@ -208,35 +250,24 @@ unsafe extern "C" {
     fn fut_pmm_alloc_page() -> *mut c_void;
     fn memset(s: *mut c_void, c: i32, n: usize) -> *mut c_void;
     fn memcpy(dest: *mut c_void, src: *const c_void, n: usize) -> *mut c_void;
+
+    /* ARM64 PCI ECAM functions */
+    fn arm64_pci_read32(bus: u8, dev: u8, func: u8, reg: u16) -> u32;
+    fn arm64_pci_read8(bus: u8, dev: u8, func: u8, reg: u16) -> u8;
 }
 
 impl VirtioGpuDevice {
-    unsafe fn new(mmio_base: *mut u8, width: u32, height: u32) -> Option<Self> {
-        /* Verify virtio-mmio magic value */
-        let magic = unsafe { mmio_read32(mmio_base, MMIO_MAGIC_VALUE) };
-        if magic != 0x74726976 {
-            log("[VIRTIO-GPU] Invalid magic value\n");
-            return None;
-        }
-
-        /* Verify virtio-mmio version (should be 2) */
-        let version = unsafe { mmio_read32(mmio_base, MMIO_VERSION) };
-        if version != 2 {
-            log("[VIRTIO-GPU] Unsupported virtio-mmio version\n");
-            return None;
-        }
-
-        /* Verify device ID (16 = GPU) */
-        let device_id = unsafe { mmio_read32(mmio_base, MMIO_DEVICE_ID) };
-        if device_id != 16 {
-            log("[VIRTIO-GPU] Not a GPU device\n");
-            return None;
-        }
-
-        log("[VIRTIO-GPU] Found virtio-gpu device via virtio-mmio\n");
+    unsafe fn new(bus: u8, dev: u8, func: u8, width: u32, height: u32) -> Option<Self> {
+        log("[VIRTIO-GPU] Creating device for PCI BDF\n");
 
         Some(VirtioGpuDevice {
-            mmio_base,
+            bus,
+            dev,
+            func,
+            common_cfg: core::ptr::null_mut(),
+            notify_base: core::ptr::null_mut(),
+            isr_base: core::ptr::null_mut(),
+            device_cfg: core::ptr::null_mut(),
             desc_table: core::ptr::null_mut(),
             avail: core::ptr::null_mut(),
             used: core::ptr::null_mut(),
@@ -251,40 +282,119 @@ impl VirtioGpuDevice {
         })
     }
 
+    /* Scan PCI capabilities to find virtio 1.0 structures */
+    unsafe fn scan_capabilities(&mut self) -> Result<(), ()> {
+        log("[VIRTIO-GPU] Scanning PCI capabilities\n");
+
+        /* Read capabilities pointer from offset 0x34 */
+        let mut cap_ptr = unsafe { arm64_pci_read8(self.bus, self.dev, self.func, 0x34) };
+        if cap_ptr == 0 {
+            log("[VIRTIO-GPU] No PCI capabilities found\n");
+            return Err(());
+        }
+
+        /* Track BAR addresses */
+        let mut bar_addrs: [u64; 6] = [0; 6];
+
+        /* Scan capability list */
+        let mut cap_count = 0;
+        while cap_ptr != 0 && cap_count < 32 {
+            cap_count += 1;
+
+            /* Read capability header */
+            let cap_id = unsafe { arm64_pci_read8(self.bus, self.dev, self.func, cap_ptr as u16) };
+            let cap_next = unsafe { arm64_pci_read8(self.bus, self.dev, self.func, (cap_ptr + 1) as u16) };
+
+            /* Check for vendor-specific capability */
+            if cap_id == PCI_CAP_ID_VNDR {
+                let cfg_type = unsafe { arm64_pci_read8(self.bus, self.dev, self.func, (cap_ptr + 3) as u16) };
+                let bar_idx = unsafe { arm64_pci_read8(self.bus, self.dev, self.func, (cap_ptr + 4) as u16) };
+                let cap_offset = unsafe { arm64_pci_read32(self.bus, self.dev, self.func, (cap_ptr + 8) as u16) };
+
+                if bar_idx < 6 {
+                    /* Read BAR address if not already read */
+                    if bar_addrs[bar_idx as usize] == 0 {
+                        let bar_reg = 0x10 + (bar_idx as u16 * 4);
+                        let bar_val = unsafe { arm64_pci_read32(self.bus, self.dev, self.func, bar_reg) };
+                        if (bar_val & 0x1) == 0 {  /* MMIO BAR */
+                            bar_addrs[bar_idx as usize] = (bar_val & !0xF) as u64;
+                        }
+                    }
+
+                    /* Calculate virtual address for this capability */
+                    if bar_addrs[bar_idx as usize] != 0 {
+                        let virt_addr = (bar_addrs[bar_idx as usize] + cap_offset as u64) as *mut u8;
+
+                        /* Store capability pointer */
+                        match cfg_type {
+                            VIRTIO_PCI_CAP_COMMON_CFG => {
+                                self.common_cfg = virt_addr;
+                                log("[VIRTIO-GPU] Found common config\n");
+                            }
+                            VIRTIO_PCI_CAP_NOTIFY_CFG => {
+                                self.notify_base = virt_addr;
+                                log("[VIRTIO-GPU] Found notify region\n");
+                            }
+                            VIRTIO_PCI_CAP_ISR_CFG => {
+                                self.isr_base = virt_addr;
+                                log("[VIRTIO-GPU] Found ISR region\n");
+                            }
+                            VIRTIO_PCI_CAP_DEVICE_CFG => {
+                                self.device_cfg = virt_addr;
+                                log("[VIRTIO-GPU] Found device config\n");
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+            }
+
+            cap_ptr = cap_next;
+        }
+
+        /* Verify essential structures found */
+        if self.common_cfg.is_null() {
+            log("[VIRTIO-GPU] ERROR: Common config not found\n");
+            return Err(());
+        }
+
+        log("[VIRTIO-GPU] Capability scan complete\n");
+        Ok(())
+    }
+
     unsafe fn init_device(&mut self) -> Result<(), ()> {
-        /* Reset device */
-        unsafe { mmio_write32(self.mmio_base, MMIO_STATUS, 0); }
+        log("[VIRTIO-GPU] Initializing device\n");
 
         /* Set ACKNOWLEDGE */
-        unsafe { mmio_write32(self.mmio_base, MMIO_STATUS, VIRTIO_STATUS_ACKNOWLEDGE); }
+        unsafe { common_write8(self.common_cfg, VIRTIO_PCI_COMMON_STATUS, VIRTIO_STATUS_ACKNOWLEDGE as u8); }
 
         /* Set DRIVER */
-        let mut status = unsafe { mmio_read32(self.mmio_base, MMIO_STATUS) };
-        status |= VIRTIO_STATUS_DRIVER;
-        unsafe { mmio_write32(self.mmio_base, MMIO_STATUS, status); }
+        let mut status = unsafe { common_read8(self.common_cfg, VIRTIO_PCI_COMMON_STATUS) };
+        status |= VIRTIO_STATUS_DRIVER as u8;
+        unsafe { common_write8(self.common_cfg, VIRTIO_PCI_COMMON_STATUS, status); }
 
         /* Negotiate features - read device features */
-        unsafe { mmio_write32(self.mmio_base, MMIO_DEVICE_FEATURES_SEL, 0); }
-        let features_lo = unsafe { mmio_read32(self.mmio_base, MMIO_DEVICE_FEATURES) };
-        unsafe { mmio_write32(self.mmio_base, MMIO_DEVICE_FEATURES_SEL, 1); }
-        let _features_hi = unsafe { mmio_read32(self.mmio_base, MMIO_DEVICE_FEATURES) };
+        unsafe { common_write32(self.common_cfg, VIRTIO_PCI_COMMON_DFSELECT, 0); }
+        let features_lo = unsafe { common_read32(self.common_cfg, VIRTIO_PCI_COMMON_DF) };
+        unsafe { common_write32(self.common_cfg, VIRTIO_PCI_COMMON_DFSELECT, 1); }
+        let _features_hi = unsafe { common_read32(self.common_cfg, VIRTIO_PCI_COMMON_DF) };
 
         log("[VIRTIO-GPU] Device features read\n");
 
         /* Write features we understand (accept all lower 32 bits) */
-        unsafe { mmio_write32(self.mmio_base, MMIO_DRIVER_FEATURES_SEL, 0); }
-        unsafe { mmio_write32(self.mmio_base, MMIO_DRIVER_FEATURES, features_lo); }
-        unsafe { mmio_write32(self.mmio_base, MMIO_DRIVER_FEATURES_SEL, 1); }
-        unsafe { mmio_write32(self.mmio_base, MMIO_DRIVER_FEATURES, 0); }
+        unsafe { common_write32(self.common_cfg, VIRTIO_PCI_COMMON_GFSELECT, 0); }
+        unsafe { common_write32(self.common_cfg, VIRTIO_PCI_COMMON_GF, features_lo); }
+        unsafe { common_write32(self.common_cfg, VIRTIO_PCI_COMMON_GFSELECT, 1); }
+        unsafe { common_write32(self.common_cfg, VIRTIO_PCI_COMMON_GF, 0); }
 
         /* Set FEATURES_OK */
-        status = unsafe { mmio_read32(self.mmio_base, MMIO_STATUS) };
-        status |= VIRTIO_STATUS_FEATURES_OK;
-        unsafe { mmio_write32(self.mmio_base, MMIO_STATUS, status); }
+        status = unsafe { common_read8(self.common_cfg, VIRTIO_PCI_COMMON_STATUS) };
+        status |= VIRTIO_STATUS_FEATURES_OK as u8;
+        unsafe { common_write8(self.common_cfg, VIRTIO_PCI_COMMON_STATUS, status); }
 
         /* Verify FEATURES_OK */
-        status = unsafe { mmio_read32(self.mmio_base, MMIO_STATUS) };
-        if (status & VIRTIO_STATUS_FEATURES_OK) == 0 {
+        status = unsafe { common_read8(self.common_cfg, VIRTIO_PCI_COMMON_STATUS) };
+        if (status & VIRTIO_STATUS_FEATURES_OK as u8) == 0 {
             log("[VIRTIO-GPU] Features rejected\n");
             return Err(());
         }
@@ -319,32 +429,22 @@ impl VirtioGpuDevice {
         let used_phys = used_page as u64;
 
         /* Select queue 0 (control queue) */
-        unsafe { mmio_write32(self.mmio_base, MMIO_QUEUE_SEL, 0); }
-
-        /* Check max queue size */
-        let max_queue_size = unsafe { mmio_read32(self.mmio_base, MMIO_QUEUE_NUM_MAX) };
-        if max_queue_size < VIRTIO_RING_SIZE as u32 {
-            log("[VIRTIO-GPU] Queue size too small\n");
-            return Err(());
-        }
+        unsafe { common_write16(self.common_cfg, VIRTIO_PCI_COMMON_Q_SELECT, 0); }
 
         /* Set queue size */
-        unsafe { mmio_write32(self.mmio_base, MMIO_QUEUE_NUM, VIRTIO_RING_SIZE as u32); }
+        unsafe { common_write16(self.common_cfg, VIRTIO_PCI_COMMON_Q_SIZE, VIRTIO_RING_SIZE as u16); }
 
-        /* Set descriptor table address */
-        unsafe { mmio_write32(self.mmio_base, MMIO_QUEUE_DESC_LOW, (desc_phys & 0xFFFFFFFF) as u32); }
-        unsafe { mmio_write32(self.mmio_base, MMIO_QUEUE_DESC_HIGH, (desc_phys >> 32) as u32); }
+        /* Set descriptor table address (64-bit) */
+        unsafe { common_write64(self.common_cfg, VIRTIO_PCI_COMMON_Q_DESCLO, desc_phys); }
 
-        /* Set available ring address */
-        unsafe { mmio_write32(self.mmio_base, MMIO_QUEUE_DRIVER_LOW, (avail_phys & 0xFFFFFFFF) as u32); }
-        unsafe { mmio_write32(self.mmio_base, MMIO_QUEUE_DRIVER_HIGH, (avail_phys >> 32) as u32); }
+        /* Set available ring address (64-bit) */
+        unsafe { common_write64(self.common_cfg, VIRTIO_PCI_COMMON_Q_AVAILLO, avail_phys); }
 
-        /* Set used ring address */
-        unsafe { mmio_write32(self.mmio_base, MMIO_QUEUE_DEVICE_LOW, (used_phys & 0xFFFFFFFF) as u32); }
-        unsafe { mmio_write32(self.mmio_base, MMIO_QUEUE_DEVICE_HIGH, (used_phys >> 32) as u32); }
+        /* Set used ring address (64-bit) */
+        unsafe { common_write64(self.common_cfg, VIRTIO_PCI_COMMON_Q_USEDLO, used_phys); }
 
         /* Enable queue */
-        unsafe { mmio_write32(self.mmio_base, MMIO_QUEUE_READY, 1); }
+        unsafe { common_write16(self.common_cfg, VIRTIO_PCI_COMMON_Q_ENABLE, 1); }
 
         log("[VIRTIO-GPU] Queue configured\n");
         Ok(())
@@ -423,16 +523,16 @@ impl VirtioGpuDevice {
         }
 
         /* Add to available ring */
-        unsafe {
-            let avail_idx = ((*self.avail).idx % VIRTIO_RING_SIZE as u16) as usize;
-            (*self.avail).ring[avail_idx] = cmd_desc_idx;
-            unsafe { core::arch::asm!("dsb sy"); }
-            (*self.avail).idx = (*self.avail).idx.wrapping_add(1);
-            unsafe { core::arch::asm!("dsb sy"); }
-        }
+        let avail_idx = unsafe { ((*self.avail).idx % VIRTIO_RING_SIZE as u16) as usize };
+        unsafe { (*self.avail).ring[avail_idx] = cmd_desc_idx; }
+        unsafe { core::arch::asm!("dsb sy"); }
+        unsafe { (*self.avail).idx = (*self.avail).idx.wrapping_add(1); }
+        unsafe { core::arch::asm!("dsb sy"); }
 
-        /* Notify device */
-        unsafe { mmio_write32(self.mmio_base, MMIO_QUEUE_NOTIFY, 0); }
+        /* Notify device via notify region */
+        if !self.notify_base.is_null() {
+            unsafe { write_volatile(self.notify_base as *mut u16, 0); }
+        }
 
         /* Wait for response */
         let last_used_idx = unsafe { (*self.used).idx };
@@ -552,9 +652,9 @@ impl VirtioGpuDevice {
         unsafe { self.submit_command(&flush_cmd as *const _ as *const u8, core::mem::size_of_val(&flush_cmd)); }
 
         /* Set DRIVER_OK */
-        let mut status = unsafe { mmio_read32(self.mmio_base, MMIO_STATUS) };
-        status |= VIRTIO_STATUS_DRIVER_OK;
-        unsafe { mmio_write32(self.mmio_base, MMIO_STATUS, status); }
+        let mut status = unsafe { common_read8(self.common_cfg, VIRTIO_PCI_COMMON_STATUS) };
+        status |= VIRTIO_STATUS_DRIVER_OK as u8;
+        unsafe { common_write8(self.common_cfg, VIRTIO_PCI_COMMON_STATUS, status); }
 
         log("[VIRTIO-GPU] Display initialized\n");
     }
@@ -562,48 +662,55 @@ impl VirtioGpuDevice {
 
 /* FFI exports for C kernel code */
 #[unsafe(no_mangle)]
-pub extern "C" fn virtio_gpu_init_arm64(
-    mmio_base: u64,
+pub extern "C" fn virtio_gpu_init_arm64_pci(
+    bus: u8,
+    dev: u8,
+    func: u8,
     out_fb_phys: *mut u64,
     width: u32,
     height: u32,
 ) -> i32 {
-    log("[VIRTIO-GPU] ARM64 virtio-gpu driver starting\n");
+    log("[VIRTIO-GPU] ARM64 virtio-gpu-pci driver starting\n");
 
-    let dev = unsafe { VirtioGpuDevice::new(mmio_base as *mut u8, width, height) };
-    if dev.is_none() {
-        log("[VIRTIO-GPU] Device initialization failed\n");
+    let device = unsafe { VirtioGpuDevice::new(bus, dev, func, width, height) };
+    if device.is_none() {
+        log("[VIRTIO-GPU] Device creation failed\n");
         return -1;
     }
 
-    let mut dev = dev.unwrap();
+    let mut device = device.unwrap();
 
-    if unsafe { dev.init_device().is_err() } {
+    if unsafe { device.scan_capabilities().is_err() } {
+        log("[VIRTIO-GPU] PCI capability scan failed\n");
+        return -1;
+    }
+
+    if unsafe { device.init_device().is_err() } {
         log("[VIRTIO-GPU] Device setup failed\n");
         return -1;
     }
 
-    if unsafe { dev.alloc_queues().is_err() } {
+    if unsafe { device.alloc_queues().is_err() } {
         log("[VIRTIO-GPU] Queue allocation failed\n");
         return -1;
     }
 
-    if unsafe { dev.alloc_buffers().is_err() } {
+    if unsafe { device.alloc_buffers().is_err() } {
         log("[VIRTIO-GPU] Buffer allocation failed\n");
         return -1;
     }
 
-    unsafe { dev.init_display(); }
+    unsafe { device.init_display(); }
 
     /* Return framebuffer address */
     if !out_fb_phys.is_null() {
-        unsafe { *out_fb_phys = dev.fb_phys; }
+        unsafe { *out_fb_phys = device.fb_phys; }
     }
 
     /* Store device state */
-    DEVICE.with(|slot| *slot = Some(dev));
+    DEVICE.with(|slot| *slot = Some(device));
 
-    log("[VIRTIO-GPU] ARM64 driver initialized successfully\n");
+    log("[VIRTIO-GPU] ARM64 PCI driver initialized successfully\n");
     0
 }
 

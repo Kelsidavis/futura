@@ -58,9 +58,7 @@ void fut_perf_selftest_schedule(void) {
  *   Networking Stubs (x86-64 specific)
  * ============================================================ */
 
-int virtio_net_init(void) {
-    return -ENODEV;  /* Virtio networking not implemented for ARM64 */
-}
+/* virtio_net_init now implemented in Rust for ARM64 - see drivers/rust/virtio_net */
 
 /* ============================================================
  *   Userland Binary Staging Stubs (x86-64 specific)
@@ -278,3 +276,15 @@ _Bool __atomic_compare_exchange_4(volatile void *ptr, void *expected, uint32_t d
     return success;
 }
 
+/* ============================================================
+ *   Interrupt Descriptor Table Stubs (x86-64 specific)
+ * ============================================================ */
+
+void fut_idt_set_entry(uint8_t vector, uint64_t handler, uint16_t selector, uint8_t type_attr, uint8_t ist) {
+    (void)vector;
+    (void)handler;
+    (void)selector;
+    (void)type_attr;
+    (void)ist;
+    /* IDT not used on ARM64 - interrupts handled via GIC */
+}

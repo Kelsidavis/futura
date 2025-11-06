@@ -4,12 +4,61 @@
  *
  * Early boot code for ARM64 architecture.
  * Configures the CPU and jumps to platform initialization.
+ *
+ * Linux ARM64 Image Header
+ * ------------------------
+ * This header makes the kernel compatible with m1n1 and other
+ * ARM64 bootloaders that expect the Linux ARM64 boot image format.
+ *
+ * Reference: Documentation/arm64/booting.txt in Linux kernel
  */
 
 .section .text.boot
 
 /*
- * _start - ARM64 boot entry point
+ * Linux ARM64 Image Header (64 bytes)
+ *
+ * Offset | Field         | Size | Description
+ * -------+---------------+------+-------------------------------------
+ * 0x00   | code0         | 4    | Branch instruction to _start
+ * 0x04   | code1         | 4    | Branch instruction (part 2)
+ * 0x08   | text_offset   | 8    | Image load offset (0 = load anywhere)
+ * 0x10   | image_size    | 8    | Effective kernel image size
+ * 0x18   | flags         | 8    | Kernel flags
+ * 0x20   | res2          | 8    | Reserved
+ * 0x28   | res3          | 8    | Reserved
+ * 0x30   | res4          | 8    | Reserved
+ * 0x38   | magic         | 4    | Magic: 0x644d5241 ("ARM\x64")
+ * 0x3c   | res5          | 4    | Reserved
+ */
+.global _start
+_start:
+    /* 0x00: Branch to kernel entry point (skip header) */
+    b       _kernel_entry           /* code0: branch to actual entry */
+    .long   0                       /* code1: reserved */
+
+    /* 0x08: text_offset - Image load offset from start of RAM */
+    .quad   0                       /* 0 = can be loaded anywhere */
+
+    /* 0x10: image_size - Effective size of kernel image */
+    .quad   _kernel_end - _start    /* Total kernel size */
+
+    /* 0x18: flags - Kernel flags */
+    .quad   0                       /* bit 0: LE=0, bits 1-2: 4K pages */
+
+    /* 0x20-0x30: Reserved fields */
+    .quad   0                       /* res2 */
+    .quad   0                       /* res3 */
+    .quad   0                       /* res4 */
+
+    /* 0x38: magic - ARM64 Linux magic number */
+    .long   0x644d5241              /* "ARM\x64" in little-endian */
+
+    /* 0x3c: res5 */
+    .long   0
+
+/*
+ * _kernel_entry - Actual ARM64 boot entry point (after header)
  *
  * Called by bootloader with:
  *   x0 = device tree blob address (or 0)
@@ -17,8 +66,8 @@
  *   x2 = 0
  *   x3 = 0
  */
-.global _start
-_start:
+.global _kernel_entry
+_kernel_entry:
     /* Save device tree address */
     mov     x20, x0
 

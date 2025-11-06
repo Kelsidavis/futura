@@ -135,6 +135,20 @@ fut_platform_type_t fut_dtb_detect_platform(uint64_t dtb_ptr) {
         return PLATFORM_QEMU_VIRT;
     }
 
+    /* Apple Silicon detection */
+    if (strstr(compatible, "apple,t8103") != NULL || /* M1 */
+        strstr(compatible, "apple,j274") != NULL) {   /* Mac mini M1 */
+        return PLATFORM_APPLE_M1;
+    }
+    if (strstr(compatible, "apple,t8112") != NULL || /* M2 */
+        strstr(compatible, "apple,j413") != NULL ||   /* MacBook Air M2 */
+        strstr(compatible, "apple,j493") != NULL) {   /* MacBook Pro 13" M2 (A2338) */
+        return PLATFORM_APPLE_M2;
+    }
+    if (strstr(compatible, "apple,t8103") != NULL) { /* M3 */
+        return PLATFORM_APPLE_M3;
+    }
+
     return PLATFORM_UNKNOWN;
 }
 
@@ -229,6 +243,33 @@ bool fut_dtb_get_u64_property(uint64_t dtb_ptr, const char *node_name,
     return true;
 }
 
+bool fut_dtb_get_reg(uint64_t dtb_ptr, const char *node_name,
+                     uint64_t *base_out, uint64_t *size_out) {
+    if (!fut_dtb_validate(dtb_ptr) || !base_out) {
+        return false;
+    }
+
+    /* Read "reg" property - contains (address, size) pairs
+     * On ARM64, typically 64-bit address + 64-bit size = 16 bytes per entry
+     */
+    uint64_t reg_data[4];  /* Allow for 2 address/size pairs */
+    size_t len = fut_dtb_get_property(dtb_ptr, node_name, "reg", reg_data, sizeof(reg_data));
+
+    if (len < 16) {  /* Need at least 16 bytes for one 64-bit address/size pair */
+        return false;
+    }
+
+    /* Extract base address (first 64 bits) */
+    *base_out = be64_to_cpu(reg_data[0]);
+
+    /* Extract size if requested (second 64 bits) */
+    if (size_out && len >= 16) {
+        *size_out = be64_to_cpu(reg_data[1]);
+    }
+
+    return true;
+}
+
 /* ============================================================
  *   Memory and Platform Info
  * ============================================================ */
@@ -262,7 +303,11 @@ fut_platform_info_t fut_dtb_parse(uint64_t dtb_ptr) {
         .gpio_base = 0,
         .gic_dist_base = 0,
         .gic_cpu_base = 0,
+        .aic_base = 0,
+        .ans_mailbox_base = 0,
+        .ans_nvme_base = 0,
         .has_gic = false,
+        .has_aic = false,
         .has_generic_timer = false,
         .total_memory = 2ULL * 1024 * 1024 * 1024
     };
@@ -316,6 +361,68 @@ fut_platform_info_t fut_dtb_parse(uint64_t dtb_ptr) {
             info.gic_cpu_base = 0x08010000;
             info.has_gic = true;
             info.has_generic_timer = true;
+            break;
+
+        case PLATFORM_APPLE_M1:
+            info.name = "Apple M1";
+            info.cpu_freq = 24000000;  /* 24 MHz timer frequency */
+            info.uart_base = 0x235200000;  /* Apple s5l-uart (hardcoded - TODO: DT parse) */
+            info.gpio_base = 0;  /* GPIO controller varies by device */
+            info.aic_base = 0x23B100000;  /* Apple Interrupt Controller (hardcoded - TODO: DT parse) */
+            info.has_gic = false;
+            info.has_aic = true;
+            info.has_generic_timer = true;  /* ARM Generic Timer present */
+
+            /* Parse Apple-specific device tree nodes for ANS/mailbox */
+            /* Note: These node paths are examples - actual paths vary by device */
+            /* Real implementation would search for compatible="apple,nvme-ans2" */
+            uint64_t ans_mailbox, ans_nvme;
+            if (fut_dtb_get_reg(dtb_ptr, "/arm-io/ans", &ans_nvme, NULL)) {
+                info.ans_nvme_base = ans_nvme;
+            }
+            if (fut_dtb_get_reg(dtb_ptr, "/arm-io/ans/mailbox", &ans_mailbox, NULL)) {
+                info.ans_mailbox_base = ans_mailbox;
+            }
+            break;
+
+        case PLATFORM_APPLE_M2:
+            info.name = "Apple M2";
+            info.cpu_freq = 24000000;  /* 24 MHz timer frequency */
+            info.uart_base = 0x235200000;  /* Apple s5l-uart (hardcoded - TODO: DT parse) */
+            info.gpio_base = 0;  /* GPIO controller varies by device */
+            info.aic_base = 0x23B100000;  /* Apple Interrupt Controller (hardcoded - TODO: DT parse) */
+            info.has_gic = false;
+            info.has_aic = true;
+            info.has_generic_timer = true;
+
+            /* Parse Apple-specific device tree nodes for ANS/mailbox */
+            uint64_t ans_mailbox_m2, ans_nvme_m2;
+            if (fut_dtb_get_reg(dtb_ptr, "/arm-io/ans", &ans_nvme_m2, NULL)) {
+                info.ans_nvme_base = ans_nvme_m2;
+            }
+            if (fut_dtb_get_reg(dtb_ptr, "/arm-io/ans/mailbox", &ans_mailbox_m2, NULL)) {
+                info.ans_mailbox_base = ans_mailbox_m2;
+            }
+            break;
+
+        case PLATFORM_APPLE_M3:
+            info.name = "Apple M3";
+            info.cpu_freq = 24000000;  /* 24 MHz timer frequency */
+            info.uart_base = 0x235200000;  /* Apple s5l-uart (hardcoded - TODO: DT parse) */
+            info.gpio_base = 0;  /* GPIO controller varies by device */
+            info.aic_base = 0x23B100000;  /* Apple Interrupt Controller (hardcoded - TODO: DT parse) */
+            info.has_gic = false;
+            info.has_aic = true;
+            info.has_generic_timer = true;
+
+            /* Parse Apple-specific device tree nodes for ANS/mailbox */
+            uint64_t ans_mailbox_m3, ans_nvme_m3;
+            if (fut_dtb_get_reg(dtb_ptr, "/arm-io/ans", &ans_nvme_m3, NULL)) {
+                info.ans_nvme_base = ans_nvme_m3;
+            }
+            if (fut_dtb_get_reg(dtb_ptr, "/arm-io/ans/mailbox", &ans_mailbox_m3, NULL)) {
+                info.ans_mailbox_base = ans_mailbox_m3;
+            }
             break;
 
         default:

@@ -332,32 +332,10 @@ void fb_boot_splash(void) {
     fut_printf("[FB] All mapping attempts failed\n");
 }
 #else
-/* ARM64 - virtio-mmio based graphics initialization */
+/* ARM64 - virtio-pci based graphics initialization */
 
 /* Forward declaration for Rust virtio-gpu driver */
-extern int virtio_gpu_init_arm64(uint64_t mmio_base, uint64_t *out_fb_phys, uint32_t width, uint32_t height);
-
-/* QEMU virt machine virtio-mmio device addresses */
-#define ARM64_VIRTIO_MMIO_BASE 0x0a000000UL
-#define ARM64_VIRTIO_MMIO_SIZE 0x200
-#define ARM64_VIRTIO_MMIO_COUNT 32
-
-/* virtio-mmio register offsets */
-#define VIRTIO_MMIO_MAGIC_VALUE 0x000
-#define VIRTIO_MMIO_VERSION 0x004
-#define VIRTIO_MMIO_DEVICE_ID 0x008
-
-/* virtio device IDs */
-#define VIRTIO_ID_GPU 16
-
-/* MMIO access helpers */
-static inline uint32_t arm64_mmio_read32(uint64_t addr) {
-    volatile uint32_t *ptr = (volatile uint32_t *)addr;
-    __asm__ volatile("dsb sy");
-    uint32_t val = *ptr;
-    __asm__ volatile("dsb sy");
-    return val;
-}
+extern int virtio_gpu_init_arm64_pci(uint8_t bus, uint8_t dev, uint8_t func, uint64_t *out_fb_phys, uint32_t width, uint32_t height);
 
 /* ARM64 PCI scanning for virtio-gpu */
 #include <platform/arm64/pci_ecam.h>
@@ -400,11 +378,20 @@ static int arm64_scan_pci_for_gpu(void) {
                     return -1;
                 }
 
-                /* TODO: Initialize virtio-gpu-pci driver with assigned_bar */
-                /* For now, just mark as available */
-                g_fb_hw.phys = 0;  /* Will be set by virtio driver */
-                g_fb_available = false;  /* Not yet initialized */
-                return 0;
+                /* Initialize virtio-gpu-pci driver */
+                uint64_t fb_phys = 0;
+                int rc = virtio_gpu_init_arm64_pci(0, dev, fn, &fb_phys, g_fb_hw.info.width, g_fb_hw.info.height);
+
+                if (rc == 0 && fb_phys != 0) {
+                    fut_printf("[FB] virtio-gpu-pci initialized, framebuffer at phys=0x%llx\n",
+                               (unsigned long long)fb_phys);
+                    g_fb_hw.phys = fb_phys;
+                    g_fb_available = true;
+                    return 0;
+                } else {
+                    fut_printf("[FB] virtio-gpu-pci initialization failed (rc=%d)\n", rc);
+                    return -1;
+                }
             }
         }
     }
@@ -414,58 +401,14 @@ static int arm64_scan_pci_for_gpu(void) {
 }
 
 void fb_boot_splash(void) {
-    fut_printf("[FB] ARM64: Scanning for GPU devices...\n");
+    fut_printf("[FB] ARM64: Scanning for GPU devices via PCI...\n");
 
-    /* First try PCI (modern QEMU ARM64) */
+    /* Scan PCI for virtio-gpu-pci */
     if (arm64_scan_pci_for_gpu() == 0) {
+        fut_printf("[FB] ARM64: virtio-gpu-pci initialized successfully\n");
         return;
     }
 
-    /* Fallback to virtio-mmio scanning */
-    fut_printf("[FB] ARM64: Falling back to virtio-mmio scan...\n");
-
-    /* Scan virtio-mmio device slots */
-    for (int i = 0; i < ARM64_VIRTIO_MMIO_COUNT; i++) {
-        uint64_t base = ARM64_VIRTIO_MMIO_BASE + (i * ARM64_VIRTIO_MMIO_SIZE);
-
-        /* Read magic value */
-        uint32_t magic = arm64_mmio_read32(base + VIRTIO_MMIO_MAGIC_VALUE);
-        if (magic != 0 && magic != 0xffffffff) {
-            fut_printf("[FB] Slot %d at 0x%lx: magic=0x%x\n", i, base, magic);
-        }
-        if (magic != 0x74726976) {  /* "virt" */
-            continue;
-        }
-
-        /* Read version (1 or 2 for virtio-mmio) */
-        uint32_t version = arm64_mmio_read32(base + VIRTIO_MMIO_VERSION);
-        fut_printf("[FB]   Slot %d: version=%u\n", i, version);
-        if (version < 1 || version > 2) {
-            continue;
-        }
-
-        /* Read device ID */
-        uint32_t device_id = arm64_mmio_read32(base + VIRTIO_MMIO_DEVICE_ID);
-        fut_printf("[FB]   Slot %d: device_id=%u (looking for %u)\n", i, device_id, VIRTIO_ID_GPU);
-        if (device_id == VIRTIO_ID_GPU) {
-            fut_printf("[FB] Found virtio-gpu at MMIO base 0x%lx\n", base);
-
-            /* Initialize virtio-gpu driver (Rust) */
-            uint64_t fb_phys = 0;
-            int rc = virtio_gpu_init_arm64(base, &fb_phys, g_fb_hw.info.width, g_fb_hw.info.height);
-
-            if (rc == 0 && fb_phys != 0) {
-                fut_printf("[FB] virtio-gpu initialized, framebuffer at phys=0x%llx\n",
-                           (unsigned long long)fb_phys);
-                g_fb_hw.phys = fb_phys;
-                g_fb_available = true;
-                return;
-            } else {
-                fut_printf("[FB] virtio-gpu initialization failed (rc=%d)\n", rc);
-            }
-        }
-    }
-
-    fut_printf("[FB] ARM64: No virtio-gpu device found\n");
+    fut_printf("[FB] ARM64: No virtio-gpu-pci device found\n");
 }
 #endif

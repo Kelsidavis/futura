@@ -65,7 +65,8 @@ const MSIX_CONTROL_MASK: u16 = 1u16 << 14;    // MSI-X function mask bit
 const APIC_MSG_ADDR_BASE: u32 = 0xFEE00000;
 const APIC_DESTINATION_MODE_LOGICAL: u32 = 1 << 11;  // Logical destination
 
-// Interrupt handler for virtio-blk I/O completion
+// Interrupt handler for virtio-blk I/O completion - x86_64
+#[cfg(target_arch = "x86_64")]
 #[unsafe(naked)]
 unsafe extern "C" fn virtio_blk_irq_handler() {
     core::arch::naked_asm!(
@@ -105,6 +106,12 @@ unsafe extern "C" fn virtio_blk_irq_handler() {
     );
 }
 
+// Interrupt handler for virtio-blk I/O completion - ARM64
+#[cfg(target_arch = "aarch64")]
+extern "C" fn virtio_blk_irq_handler() {
+    virtio_blk_irq_handler_inner();
+}
+
 // Inner interrupt handler logic
 extern "C" fn virtio_blk_irq_handler_inner() {
     // CRITICAL: Read ISR status register to acknowledge interrupt to VirtIO device
@@ -120,7 +127,8 @@ extern "C" fn virtio_blk_irq_handler_inner() {
     // Signal I/O completion
     IO_COMPLETED.store(1, Ordering::Release);
 
-    // Send EOI to PIC (End of Interrupt)
+    // Send EOI to PIC (End of Interrupt) - x86_64 only
+    #[cfg(target_arch = "x86_64")]
     unsafe {
         let irq = VIRTIO_BLK_IRQ_VECTOR.load(Ordering::Relaxed).saturating_sub(INT_IRQ_BASE);
 
@@ -134,12 +142,15 @@ extern "C" fn virtio_blk_irq_handler_inner() {
     }
 }
 
+// x86_64 I/O port operations
+#[cfg(target_arch = "x86_64")]
 unsafe fn outb(port: u16, value: u8) {
     unsafe {
         asm!("out dx, al", in("dx") port, in("al") value, options(nostack, preserves_flags));
     }
 }
 
+#[cfg(target_arch = "x86_64")]
 unsafe fn inb(port: u16) -> u8 {
     let value: u8;
     unsafe {
@@ -148,7 +159,8 @@ unsafe fn inb(port: u16) -> u8 {
     value
 }
 
-// Unmask an IRQ in the PIC
+// Unmask an IRQ in the PIC - x86_64 only
+#[cfg(target_arch = "x86_64")]
 unsafe fn pic_unmask_irq(irq: u8) {
     unsafe {
         let port = if irq < 8 { 0x21 } else { 0xA1 };  // PIC1 or PIC2 data port
@@ -736,31 +748,50 @@ impl VirtioBlkDevice {
     }
 
     fn setup_bars(&mut self) {
-        let mut idx = 0u8;
-        while idx < 6 {
-            let offset = 0x10 + idx * 4;
-            let value = pci_config_read32(self.pci.bus, self.pci.device, self.pci.function, offset);
-            if (value & 0x1) != 0 {
-                self.bars[idx as usize] = 0;
-                idx += 1;
-                continue;
+        // ARM64: OS must assign BARs explicitly via ECAM
+        #[cfg(target_arch = "aarch64")]
+        {
+            for idx in 0..6u8 {
+                let assigned = unsafe {
+                    arm64_pci_assign_bar(self.pci.bus, self.pci.device, self.pci.function, idx)
+                };
+                self.bars[idx as usize] = assigned;
+                if assigned != 0 {
+                    log_bar(idx, assigned as u32, assigned);
+                }
             }
+            return;
+        }
 
-            let ty = (value >> 1) & 0x3;
-            let mut base = (value & 0xFFFF_FFF0) as u64;
-            let current = idx;
+        // x86_64: Read BARs already assigned by BIOS
+        #[cfg(target_arch = "x86_64")]
+        {
+            let mut idx = 0u8;
+            while idx < 6 {
+                let offset = 0x10 + idx * 4;
+                let value = pci_config_read32(self.pci.bus, self.pci.device, self.pci.function, offset);
+                if (value & 0x1) != 0 {
+                    self.bars[idx as usize] = 0;
+                    idx += 1;
+                    continue;
+                }
 
-            if ty == 0x2 && idx + 1 < 6 {
-                let hi = pci_config_read32(self.pci.bus, self.pci.device, self.pci.function, offset + 4);
-                base |= (hi as u64) << 32;
-                self.bars[(idx + 1) as usize] = 0;
-                idx += 2;
-            } else {
-                idx += 1;
+                let ty = (value >> 1) & 0x3;
+                let mut base = (value & 0xFFFF_FFF0) as u64;
+                let current = idx;
+
+                if ty == 0x2 && idx + 1 < 6 {
+                    let hi = pci_config_read32(self.pci.bus, self.pci.device, self.pci.function, offset + 4);
+                    base |= (hi as u64) << 32;
+                    self.bars[(idx + 1) as usize] = 0;
+                    idx += 2;
+                } else {
+                    idx += 1;
+                }
+
+                self.bars[current as usize] = base;
+                log_bar(current, value, base);
             }
-
-            self.bars[current as usize] = base;
-            log_bar(current, value, base);
         }
     }
 
@@ -773,7 +804,16 @@ impl VirtioBlkDevice {
             return ptr::null_mut();
         }
         let phys = base + cap.offset as u64;
-        unsafe { map_mmio_region(phys, cap.length as usize, MMIO_PTE_FLAGS) }
+
+        // ARM64: MMU disabled, physical addresses are virtual addresses
+        #[cfg(target_arch = "aarch64")]
+        let virt = phys as *mut u8;
+
+        // x86_64: Need to map MMIO region
+        #[cfg(target_arch = "x86_64")]
+        let virt = unsafe { map_mmio_region(phys, cap.length as usize, MMIO_PTE_FLAGS) };
+
+        virt
     }
 
     fn parse_capabilities(&mut self) -> bool {
@@ -981,9 +1021,18 @@ impl VirtioBlkDevice {
             if bar_base != 0 {
                 let table_phys = bar_base + self.msix_table_offset as u64;
                 let table_size = (self.msix_table_size as usize) * size_of::<MsixTableEntry>();
-                unsafe {
-                    self.msix_table = map_mmio_region(table_phys, table_size, MMIO_PTE_FLAGS);
-                    if !self.msix_table.is_null() {
+
+                // ARM64: MMU disabled, physical addresses are virtual addresses
+                #[cfg(target_arch = "aarch64")]
+                let msix_virt = table_phys as *mut u8;
+
+                // x86_64: Need to map MMIO region
+                #[cfg(target_arch = "x86_64")]
+                let msix_virt = unsafe { map_mmio_region(table_phys, table_size, MMIO_PTE_FLAGS) };
+
+                self.msix_table = msix_virt;
+                if !self.msix_table.is_null() {
+                    unsafe {
                         fut_printf(b"[virtio-blk] MSI-X table mapped: phys=0x%lx virt=%p size=%d entries\n\0".as_ptr(),
                             table_phys, self.msix_table, self.msix_table_size as u32);
                     }
@@ -1127,7 +1176,8 @@ impl VirtioBlkDevice {
             fut_printf(b"[virtio-blk] IDT entry registered: vector=%d handler=0x%lx\n\0".as_ptr(),
                 irq_vector as u32, handler_addr);
 
-            // Unmask the IRQ in the PIC
+            // Unmask the IRQ in the PIC - x86_64 only
+            #[cfg(target_arch = "x86_64")]
             pic_unmask_irq(interrupt_line);
         }
 
@@ -1285,36 +1335,60 @@ impl VirtioBlkDevice {
             // Write descriptor table address (volatile!)
             let desc_lo_ptr = addr_of_mut!((*self.common).queue_desc_lo);
             write_volatile(desc_lo_ptr, desc_lo);
+            #[cfg(target_arch = "aarch64")]
+            core::arch::asm!("dsb sy");
             let desc_hi_ptr = addr_of_mut!((*self.common).queue_desc_hi);
             write_volatile(desc_hi_ptr, desc_hi);
+            #[cfg(target_arch = "aarch64")]
+            core::arch::asm!("dsb sy");
 
             // Readback to verify
             let readback_desc_lo = read_volatile(desc_lo_ptr);
+            #[cfg(target_arch = "aarch64")]
+            core::arch::asm!("dsb sy");
             let readback_desc_hi = read_volatile(desc_hi_ptr);
+            #[cfg(target_arch = "aarch64")]
+            core::arch::asm!("dsb sy");
             fut_printf(b"[virtio-blk]   desc readback: lo=0x%08x hi=0x%08x\n\0".as_ptr(),
                 readback_desc_lo, readback_desc_hi);
 
             // Write available ring address (volatile!)
             let avail_lo_ptr = addr_of_mut!((*self.common).queue_avail_lo);
             write_volatile(avail_lo_ptr, avail_lo);
+            #[cfg(target_arch = "aarch64")]
+            core::arch::asm!("dsb sy");
             let avail_hi_ptr = addr_of_mut!((*self.common).queue_avail_hi);
             write_volatile(avail_hi_ptr, avail_hi);
+            #[cfg(target_arch = "aarch64")]
+            core::arch::asm!("dsb sy");
 
             // Readback to verify
             let readback_avail_lo = read_volatile(avail_lo_ptr);
+            #[cfg(target_arch = "aarch64")]
+            core::arch::asm!("dsb sy");
             let readback_avail_hi = read_volatile(avail_hi_ptr);
+            #[cfg(target_arch = "aarch64")]
+            core::arch::asm!("dsb sy");
             fut_printf(b"[virtio-blk]   avail readback: lo=0x%08x hi=0x%08x\n\0".as_ptr(),
                 readback_avail_lo, readback_avail_hi);
 
             // Write used ring address (volatile!)
             let used_lo_ptr = addr_of_mut!((*self.common).queue_used_lo);
             write_volatile(used_lo_ptr, used_lo);
+            #[cfg(target_arch = "aarch64")]
+            core::arch::asm!("dsb sy");
             let used_hi_ptr = addr_of_mut!((*self.common).queue_used_hi);
             write_volatile(used_hi_ptr, used_hi);
+            #[cfg(target_arch = "aarch64")]
+            core::arch::asm!("dsb sy");
 
             // Readback to verify
             let readback_used_lo = read_volatile(used_lo_ptr);
+            #[cfg(target_arch = "aarch64")]
+            core::arch::asm!("dsb sy");
             let readback_used_hi = read_volatile(used_hi_ptr);
+            #[cfg(target_arch = "aarch64")]
+            core::arch::asm!("dsb sy");
             fut_printf(b"[virtio-blk]   used readback: lo=0x%08x hi=0x%08x\n\0".as_ptr(),
                 readback_used_lo, readback_used_hi);
 
@@ -1896,11 +1970,20 @@ impl EcamWindow {
         let map_start = start & !0xFFF;
         let map_end = (end & !0xFFF) + 0x1000;
         let size = (map_end - map_start) as usize;
+
+        // ARM64: MMU disabled, physical addresses are virtual addresses
+        #[cfg(target_arch = "aarch64")]
+        let mapped = map_start as *mut u8;
+
+        // x86_64: Need to map MMIO region
+        #[cfg(target_arch = "x86_64")]
+        let mapped = unsafe { map_mmio_region(map_start, size, MMIO_PTE_FLAGS) };
+
+        if mapped.is_null() {
+            return None;
+        }
+
         unsafe {
-            let mapped = map_mmio_region(map_start, size, MMIO_PTE_FLAGS);
-            if mapped.is_null() {
-                return None;
-            }
             let cursor = mapped.add((start - map_start) as usize);
             Some(Self { map_base: mapped, size, cursor })
         }
@@ -1913,7 +1996,13 @@ impl EcamWindow {
 
 impl Drop for EcamWindow {
     fn drop(&mut self) {
-        unsafe { unmap_mmio_region(self.map_base, self.size); }
+        // x86_64: Unmap MMIO region
+        #[cfg(target_arch = "x86_64")]
+        unsafe {
+            unmap_mmio_region(self.map_base, self.size);
+        }
+
+        // ARM64: No unmapping needed (physical addresses used directly)
     }
 }
 
@@ -1974,6 +2063,8 @@ fn read_ecam_u32(pci: PciAddress, offset: u32) -> Option<u32> {
     Some(u32::from_le_bytes(bytes))
 }
 
+// Platform-specific PCI access functions
+#[cfg(target_arch = "x86_64")]
 fn pci_config_read32(bus: u8, device: u8, function: u8, offset: u8) -> u32 {
     let address = (u32::from(bus) << 16)
         | (u32::from(device) << 11)
@@ -1986,18 +2077,36 @@ fn pci_config_read32(bus: u8, device: u8, function: u8, offset: u8) -> u32 {
     }
 }
 
+#[cfg(target_arch = "aarch64")]
+fn pci_config_read32(bus: u8, device: u8, function: u8, offset: u8) -> u32 {
+    unsafe { arm64_pci_read32(bus, device, function, offset as u16) }
+}
+
+#[cfg(target_arch = "x86_64")]
 fn pci_config_read16(bus: u8, device: u8, function: u8, offset: u8) -> u16 {
     let value = pci_config_read32(bus, device, function, offset & 0xFC);
     let shift = (offset & 2) * 8;
     ((value >> shift) & 0xFFFF) as u16
 }
 
+#[cfg(target_arch = "aarch64")]
+fn pci_config_read16(bus: u8, device: u8, function: u8, offset: u8) -> u16 {
+    unsafe { arm64_pci_read16(bus, device, function, offset as u16) }
+}
+
+#[cfg(target_arch = "x86_64")]
 fn pci_config_read8(bus: u8, device: u8, function: u8, offset: u8) -> u8 {
     let value = pci_config_read32(bus, device, function, offset & 0xFC);
     let shift = (offset & 3) * 8;
     ((value >> shift) & 0xFF) as u8
 }
 
+#[cfg(target_arch = "aarch64")]
+fn pci_config_read8(bus: u8, device: u8, function: u8, offset: u8) -> u8 {
+    unsafe { arm64_pci_read8(bus, device, function, offset as u16) }
+}
+
+#[cfg(target_arch = "x86_64")]
 fn pci_config_write16(bus: u8, device: u8, function: u8, offset: u8, value: u16) {
     let mut current = pci_config_read32(bus, device, function, offset & 0xFC);
     let shift = (offset & 2) * 8;
@@ -2006,6 +2115,12 @@ fn pci_config_write16(bus: u8, device: u8, function: u8, offset: u8, value: u16)
     pci_config_write32(bus, device, function, offset & 0xFC, current);
 }
 
+#[cfg(target_arch = "aarch64")]
+fn pci_config_write16(bus: u8, device: u8, function: u8, offset: u8, value: u16) {
+    unsafe { arm64_pci_write16(bus, device, function, offset as u16, value) }
+}
+
+#[cfg(target_arch = "x86_64")]
 fn pci_config_write32(bus: u8, device: u8, function: u8, offset: u8, value: u32) {
     let address = (u32::from(bus) << 16)
         | (u32::from(device) << 11)
@@ -2018,17 +2133,44 @@ fn pci_config_write32(bus: u8, device: u8, function: u8, offset: u8, value: u32)
     }
 }
 
+#[cfg(target_arch = "aarch64")]
+fn pci_config_write32(bus: u8, device: u8, function: u8, offset: u8, value: u32) {
+    unsafe { arm64_pci_write32(bus, device, function, offset as u16, value) }
+}
+
+// x86_64 I/O port access
+#[cfg(target_arch = "x86_64")]
 unsafe fn outl(port: u16, value: u32) {
     unsafe { asm!("out dx, eax", in("dx") port, in("eax") value, options(nostack, preserves_flags)); }
 }
 
+#[cfg(target_arch = "x86_64")]
 unsafe fn inl(port: u16) -> u32 {
     let value: u32;
     unsafe { asm!("in eax, dx", in("dx") port, out("eax") value, options(nostack, preserves_flags)); }
     value
 }
+
+// ARM64 PCI ECAM functions
+#[cfg(target_arch = "aarch64")]
+unsafe extern "C" {
+    fn arm64_pci_read32(bus: u8, dev: u8, func: u8, reg: u16) -> u32;
+    fn arm64_pci_read16(bus: u8, dev: u8, func: u8, reg: u16) -> u16;
+    fn arm64_pci_read8(bus: u8, dev: u8, func: u8, reg: u16) -> u8;
+    fn arm64_pci_write32(bus: u8, dev: u8, func: u8, reg: u16, value: u32);
+    fn arm64_pci_write16(bus: u8, dev: u8, func: u8, reg: u16, value: u16);
+    fn arm64_pci_assign_bar(bus: u8, dev: u8, func: u8, bar_num: u8) -> u64;
+}
 #[inline(always)]
+#[cfg(target_arch = "x86_64")]
 fn virt_to_phys_addr(addr: usize) -> u64 {
     debug_assert!(addr >= PMAP_DIRECT_VIRT_BASE);
     (addr - PMAP_DIRECT_VIRT_BASE) as u64
+}
+
+#[inline(always)]
+#[cfg(target_arch = "aarch64")]
+fn virt_to_phys_addr(addr: usize) -> u64 {
+    // ARM64: MMU disabled, addresses are already physical
+    addr as u64
 }

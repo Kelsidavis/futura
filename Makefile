@@ -321,7 +321,7 @@ RUST_LIB_VIRTIO_GPU := $(RUST_BUILD_DIR_GPU)/libvirtio_gpu.a
 ifeq ($(PLATFORM),x86_64)
 RUST_LIBS := $(RUST_LIB_VIRTIO_BLK) $(RUST_LIB_VIRTIO_NET)
 else ifeq ($(PLATFORM),arm64)
-RUST_LIBS := $(RUST_LIB_VIRTIO_GPU)
+RUST_LIBS := $(RUST_LIB_VIRTIO_GPU) $(RUST_LIB_VIRTIO_NET) $(RUST_LIB_VIRTIO_BLK)
 else
 RUST_LIBS :=
 endif
@@ -545,6 +545,10 @@ else ifeq ($(PLATFORM),arm64)
         platform/arm64/interrupt/arm64_stubs.c \
         platform/arm64/interrupt/arm64_minimal_stubs.c \
         platform/arm64/interrupt/gic_irq_handler.c \
+        platform/arm64/interrupt/apple_aic.c \
+        platform/arm64/drivers/apple_uart.c \
+        platform/arm64/drivers/apple_rtkit.c \
+        platform/arm64/drivers/apple_ans2.c \
         platform/arm64/timing/perf_clock.c \
         platform/arm64/pci_ecam.c \
         kernel/arch/arm64/hal_halt.c \
@@ -566,7 +570,8 @@ else ifeq ($(PLATFORM),arm64)
         kernel/sys_filesystem_stats.c \
         kernel/kernel_main.c \
         kernel/video/fb_mmio.c \
-        drivers/video/fb.c
+        drivers/video/fb.c \
+        kernel/blk/blkcore.c
 endif
 
 # Subsystem sources (POSIX compat)
@@ -618,8 +623,10 @@ ifeq ($(ENABLE_WAYLAND_DEMO),1)
 OBJECTS += $(WAYLAND_COMPOSITOR_BLOB) $(WAYLAND_CLIENT_BLOB) $(WAYLAND_COLOR_BLOB) $(WAYLAND_SHELL_BLOB)
 endif
 else ifeq ($(PLATFORM),arm64)
-# Temporarily disabled for GPU driver testing
-# OBJECTS += $(ARM64_INIT_BLOB) $(ARM64_SHELL_BLOB)
+# Re-enabled for userland testing
+OBJECTS += $(ARM64_INIT_BLOB)
+# Shell not built yet, only include init
+# OBJECTS += $(ARM64_SHELL_BLOB)
 endif
 
 # ============================================================
@@ -1172,6 +1179,22 @@ qemu-x86_64: platform-x86_64
 qemu-arm64: platform-arm64
 	@echo "Running ARM64 kernel in QEMU..."
 	@qemu-system-aarch64 -M virt -cpu cortex-a53 -kernel $(BIN_DIR)/futura_kernel.elf -serial stdio -nographic
+
+# ============================================================
+#   Apple Silicon / m1n1 Payload
+# ============================================================
+
+.PHONY: m1n1-payload m1n1-clean
+
+# Build m1n1-compatible kernel payload for Apple Silicon
+m1n1-payload: platform-arm64
+	@echo "Creating m1n1 payload from ARM64 kernel..."
+	@./scripts/create-m1n1-payload.sh $(BIN_DIR)/futura_kernel.elf build/m1n1
+
+# Clean m1n1 payload artifacts
+m1n1-clean:
+	@rm -rf build/m1n1
+	@echo "m1n1 payload artifacts cleaned"
 
 # ============================================================
 #   Help

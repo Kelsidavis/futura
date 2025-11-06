@@ -1040,16 +1040,13 @@ void fut_kernel_main(void) {
 
     fut_printf("[INIT] Initializing block device subsystem...\n");
     fut_blockdev_init();
-#ifdef __x86_64__
     fut_blk_core_init();
     fut_status_t vblk_rc = virtio_blk_init(0);
     if (vblk_rc != 0 && vblk_rc != -19) {  /* -19 = ENODEV (no device found) */
         fut_printf("[virtio-blk] init failed: %d\n", vblk_rc);
     }
+#ifdef __x86_64__
     /* ahci_init(); */  /* AHCI not yet implemented */
-#else
-    /* ARM64: block device drivers not yet implemented */
-    fut_status_t __attribute__((unused)) vblk_rc = -19;  /* ENODEV */
 #endif
     fut_printf("[INIT] Block device subsystem initialized\n");
 

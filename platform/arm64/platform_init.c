@@ -855,8 +855,9 @@ void fut_platform_late_init(void) {
 extern void test_el0_transition(void);
 extern char _binary_build_bin_arm64_user_init_start[];
 extern char _binary_build_bin_arm64_user_init_end[];
-extern char _binary_build_bin_arm64_user_shell_start[];
-extern char _binary_build_bin_arm64_user_shell_end[];
+/* Shell not built yet for ARM64 */
+// extern char _binary_build_bin_arm64_user_shell_start[];
+// extern char _binary_build_bin_arm64_user_shell_end[];
 extern int fut_exec_elf_memory(const void *elf_data, size_t elf_size, char *const argv[], char *const envp[]);
 
 /**
@@ -883,7 +884,7 @@ void arch_memory_config(uintptr_t *ram_start, uintptr_t *ram_end, size_t *heap_s
  * Spawn init from embedded binary, fallback to EL0 test.
  */
 /* Helper function to stage embedded binary to filesystem */
-#if 0  /* Temporarily disabled for GPU driver testing */
+#if 1  /* Re-enabled for userland testing */
 static int stage_arm64_blob(const uint8_t *start, const uint8_t *end, const char *path) {
     extern int fut_vfs_open(const char *, int, int);
     extern long fut_vfs_write(int, const void *, size_t);
@@ -926,7 +927,7 @@ static int stage_arm64_blob(const uint8_t *start, const uint8_t *end, const char
 #endif  /* End of stage_arm64_blob */
 
 /* Kernel thread to stage binaries and spawn init */
-#if 0  /* Temporarily disabled for GPU driver testing */
+#if 1  /* Re-enabled for userland testing */
 static void arm64_init_spawner_thread(void *arg) {
     extern void serial_puts(const char *);
     serial_puts("[SPAWNER] *** ENTERED ARM64 SPAWNER FUNCTION ***\n");
@@ -944,12 +945,15 @@ static void arm64_init_spawner_thread(void *arg) {
     /* Check embedded userland binaries */
     uintptr_t init_size = (uintptr_t)_binary_build_bin_arm64_user_init_end -
                           (uintptr_t)_binary_build_bin_arm64_user_init_start;
-    uintptr_t shell_size = (uintptr_t)_binary_build_bin_arm64_user_shell_end -
-                           (uintptr_t)_binary_build_bin_arm64_user_shell_start;
 
     fut_printf("[ARM64-SPAWNER] Embedded userland binaries:\n");
     fut_printf("  - init:  %llu bytes %s\n", (unsigned long long)init_size, init_size > 0 ? "present" : "MISSING!");
-    fut_printf("  - shell: %llu bytes %s\n\n", (unsigned long long)shell_size, shell_size > 0 ? "present" : "MISSING!");
+
+    /* Shell not built yet for ARM64 */
+    // uintptr_t shell_size = (uintptr_t)_binary_build_bin_arm64_user_shell_end -
+    //                        (uintptr_t)_binary_build_bin_arm64_user_shell_start;
+    // fut_printf("  - shell: %llu bytes %s\n\n", (unsigned long long)shell_size, shell_size > 0 ? "present" : "MISSING!");
+    fut_printf("\n");
 
     if (init_size == 0) {
         fut_printf("[ARM64-SPAWNER] ERROR: No init binary embedded!\n");
@@ -983,19 +987,8 @@ static void arm64_init_spawner_thread(void *arg) {
 
     fut_printf("[ARM64-SPAWNER] Init binary staged successfully!\n");
 
-    /* Stage shell binary if available */
-    if (shell_size > 0) {
-        fut_printf("[ARM64-SPAWNER] Staging shell to /bin/shell...\n");
-        ret = stage_arm64_blob((const uint8_t *)_binary_build_bin_arm64_user_shell_start,
-                              (const uint8_t *)_binary_build_bin_arm64_user_shell_end,
-                              "/bin/shell");
-        if (ret != 0) {
-            fut_printf("[ARM64-SPAWNER] WARN: Failed to stage shell binary: %d\n", ret);
-            /* Continue anyway - init can still run */
-        } else {
-            fut_printf("[ARM64-SPAWNER] Shell binary staged successfully!\n");
-        }
-    }
+    /* Shell not built yet for ARM64 - skip staging */
+    fut_printf("[ARM64-SPAWNER] Shell not available (not built yet)\n");
 
     /* Spawn init as a new task */
     fut_printf("\n====================================\n");
@@ -1030,10 +1023,10 @@ void arch_late_init(void) {
     extern void fut_printf(const char *, ...);
 
     fut_printf("\n[ARM64] Late initialization\n");
-    fut_printf("[ARM64] Userland spawner temporarily disabled for GPU driver testing\n");
+    fut_printf("[ARM64] Userland spawner enabled - testing init process\n");
 
-    /* Temporarily disabled - userland binaries not built */
-    #if 0
+    /* Re-enabled for userland testing */
+    #if 1
     /* Forward declarations */
     struct fut_task;
     struct fut_thread;

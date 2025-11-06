@@ -52,7 +52,10 @@ typedef enum {
     PLATFORM_RPI3 = 1,
     PLATFORM_RPI4 = 2,
     PLATFORM_RPI5 = 3,
-    PLATFORM_QEMU_VIRT = 4
+    PLATFORM_QEMU_VIRT = 4,
+    PLATFORM_APPLE_M1 = 5,
+    PLATFORM_APPLE_M2 = 6,
+    PLATFORM_APPLE_M3 = 7
 } fut_platform_type_t;
 
 typedef struct {
@@ -63,7 +66,11 @@ typedef struct {
     uint64_t gpio_base;          /* GPIO base address */
     uint64_t gic_dist_base;      /* GIC distributor base (or 0 if N/A) */
     uint64_t gic_cpu_base;       /* GIC CPU interface base (or 0 if N/A) */
+    uint64_t aic_base;           /* Apple AIC base (Apple Silicon only) */
+    uint64_t ans_mailbox_base;   /* Apple ANS mailbox base (Apple Silicon only) */
+    uint64_t ans_nvme_base;      /* Apple ANS NVMe base (Apple Silicon only) */
     bool has_gic;                /* Has GICv2 support */
+    bool has_aic;                /* Has Apple AIC (Apple Silicon only) */
     bool has_generic_timer;      /* Has ARM generic timer */
     uint32_t total_memory;       /* Total RAM in bytes */
 } fut_platform_info_t;
@@ -131,6 +138,18 @@ bool fut_dtb_get_u32_property(uint64_t dtb_ptr, const char *node_name,
  */
 bool fut_dtb_get_u64_property(uint64_t dtb_ptr, const char *node_name,
                               const char *prop_name, uint64_t *value_out);
+
+/**
+ * Get reg property (base address and size).
+ * Parses the "reg" property which contains address/size pairs.
+ * @param dtb_ptr: Physical address of DTB
+ * @param node_name: Full path to node
+ * @param base_out: Output base address
+ * @param size_out: Output size (can be NULL)
+ * @return: true if found, false otherwise
+ */
+bool fut_dtb_get_reg(uint64_t dtb_ptr, const char *node_name,
+                     uint64_t *base_out, uint64_t *size_out);
 
 /**
  * Get memory size from device tree.

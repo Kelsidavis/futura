@@ -75,9 +75,10 @@ See `docs/ARM64_STATUS.md` for detailed ARM64 progress.
 
 ### ARM64 Platform
 1. **MMU enablement**: Debug page table setup for QEMU virt machine; test on real hardware.
-2. **Driver porting**: virtio-blk, virtio-net (currently x86-64 only).
-3. **Graphics support**: Framebuffer, virtio-gpu for Wayland compositor.
-4. **Platform parity**: Match x86-64 feature set (networking, storage, graphics).
+2. **✅ Driver porting COMPLETE**: virtio-blk, virtio-net, virtio-gpu all ported to ARM64 using PCI ECAM.
+3. **🚧 Apple Silicon M2 support** (75% complete): Device tree detection, AIC interrupt controller, s5l-uart console driver implemented. See `docs/APPLE_SILICON_ROADMAP.md`.
+4. **Platform parity**: Continue matching x86-64 feature set (userland binaries, test framework).
+5. **Wayland support**: Port compositor and clients to ARM64.
 
 ### Cross-Platform
 1. **Distributed FIPC boot**: Automatic netd + registry startup.

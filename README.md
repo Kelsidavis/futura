@@ -16,16 +16,16 @@ Licensed under Mozilla Public License 2.0 — see [LICENSE](LICENSE)
 
 Futura OS is a capability-first nanokernel that keeps the core minimal—time, scheduling, IPC, and hardware mediation live in the kernel while everything else runs as message-passing services over FIPC. The current development focus is on building out a practical userland surface so real applications can execute against the kernel primitives.
 
-### Status Snapshot — Updated Nov 4 2025
+### Status Snapshot — Updated Nov 5 2025
 
 - **Kernel**: Advanced memory management with COW fork, file-backed mmap, and partial munmap; comprehensive syscall surface (`fork`, `execve`, `mmap`, `munmap`, `brk`, `nanosleep`, `waitpid`, `pipe`, `dup2`).
 - **VFS**: Path resolution + RamFS production-ready; file-backed mmap integrated with eager loading; FuturaFS implementation complete with host-side tools.
 - **Shell & Userland**: 32+ built-in commands with pipes, redirections, job control, and history; `libfutura` provides crt0, syscall veneers, heap allocator, and formatted I/O.
 - **Distributed FIPC**: Host transport and registry daemons stable; remote UDP bridge for distributed communication.
 - **Wayland Compositor**: Multi-surface capable with window decorations, drop shadows, damage-aware compositing, and frame throttling.
-- **ARM64 Port**: Full multi-process support with 177 syscalls, EL0/EL1 transitions, fork/exec/wait working. MMU disabled but kernel fully functional.
+- **ARM64 Port**: Full multi-process support with 177 syscalls, EL0/EL1 transitions, fork/exec/wait working. **Apple Silicon M2 support** with complete boot infrastructure (AIC, UART, m1n1 payload) and storage stack (RTKit, ANS2 NVMe) ready for hardware testing.
 
-### What's new — Updated Nov 4 2025
+### What's new — Updated Nov 5 2025
 
 **Recent kernel enhancements (Phase 3—Memory Management):**
 - **Copy-on-write (COW) fork**: Process creation shares pages between parent and child, copying only on write via page fault handler. Hash table-based reference counting tracks shared pages with optimizations for sole-owner cases. Dramatically reduces fork() memory overhead and enables efficient fork-exec patterns.
@@ -51,7 +51,12 @@ Futura OS is a capability-first nanokernel that keeps the core minimal—time, s
 **ARM64 platform bring-up:**
 - **177 working syscalls**: Full Linux-compatible ABI (x8=syscall, x0-x7=args) including fork, exec, wait, networking, filesystem, I/O multiplexing, signals, timers, futex, and more.
 - **Multi-process support**: Complete fork → exec → wait → exit cycle working with EL0/EL1 context switching.
-- **Platform initialization**: Exception vectors, GICv2 interrupts, ARM Generic Timer, PL011 UART, physical memory manager (1 GB).
+- **QEMU virt platform**: Exception vectors, GICv2 interrupts, ARM Generic Timer, PL011 UART, physical memory manager (1 GB).
+- **Apple Silicon M2 support** (MacBook Pro A2338):
+  - **Phase 1 (Boot): ✅ Complete** — Device tree (M1/M2/M3 detection), Apple AIC interrupt controller, Apple UART (s5l-uart), m1n1 payload (Linux ARM64 image format)
+  - **Phase 2 (Storage): ✅ Complete** — RTKit IPC mailbox protocol, ANS2 NVMe driver with TCB programming, device tree hardware address parsing
+  - **Build system**: `make m1n1-payload` creates bootable Image.gz (200 KiB compressed) for m1n1 bootloader
+  - **Ready for hardware testing** — All drivers implemented, awaiting physical MacBook Pro M2
 - **Userland runtime**: crt0 for ARM64, syscall wrappers, working demo programs.
 - **MMU status**: Currently disabled but kernel fully functional with physical addressing; MMU enablement deferred.
 
@@ -89,7 +94,7 @@ futura/
 ├── platform/
 │   ├── x86_64/              # Primary hardware target (QEMU/KVM reference)
 │   │   └── drivers/         # x86-specific: AHCI, PCI, APIC
-│   └── arm64/               # ARM64 port: 177 syscalls, multi-process support, EL0/EL1 transitions
+│   └── arm64/               # ARM64 port: QEMU virt + Apple Silicon M2 (complete boot & storage infrastructure)
 ├── src/user/
 │   ├── libfutura/           # Minimal C runtime (crt0, malloc, printf, syscalls)
 │   ├── shell/               # 32+ built-in commands, pipes, redirects, job control
@@ -362,8 +367,10 @@ make rust-drivers
 3. Signal handling support
 4. Additional subsystems (futex, semaphores, advanced IPC primitives)
 5. ✅ ARM64 multi-process support (177 syscalls working)
-6. 🚧 ARM64 MMU enablement for proper address space isolation
-7. 🚧 ARM64 platform parity with x86-64 (drivers, networking, graphics)
+6. ✅ ARM64 Apple Silicon M2 support — Phase 1 (boot) & Phase 2 (storage) complete
+7. 🚧 ARM64 MMU enablement for proper address space isolation
+8. 🚧 ARM64 Apple Silicon M2 — Phase 3 (display/input), Phase 4 (networking)
+9. 🚧 ARM64 platform parity with x86-64 (drivers, networking, graphics on QEMU virt)
 8. Additional drivers (AHCI/SATA, Ethernet/WiFi, USB)
 
 **Future Enhancements (Planned)**
@@ -399,8 +406,9 @@ We favour focused, well-tested patches. The project values quality kernel implem
 **Drivers & Platforms:**
 - Contribute memory-safe drivers in Rust (AHCI/SATA, Ethernet, USB).
 - ARM64 development: Enable MMU, port drivers (virtio-blk, virtio-net), add graphics support.
+- Apple Silicon M2: Test on MacBook Pro A2338 hardware, implement Phase 3 (DCP display driver), Phase 4 (WiFi/Ethernet).
 - Improve virtio-net driver integration.
-- Test ARM64 on real hardware (Raspberry Pi, etc.).
+- Test ARM64 on real hardware (Raspberry Pi, Apple Silicon).
 
 **Testing & CI:**
 - Expand performance microbenchmark coverage.

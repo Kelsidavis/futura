@@ -1,0 +1,802 @@
+/* apple_ans2.c - Apple ANS2 NVMe Controller Driver Implementation
+ *
+ * Copyright (c) 2025 Kelsi Davis
+ * Licensed under the MPL v2.0 — see LICENSE for details.
+ *
+ * Apple ANS2 (Apple NVMe Storage) controller driver.
+ * Implements non-standard NVMe interface with NVMMU and linear submission.
+ *
+ * Key implementation notes:
+ * - Commands require both SQ entry AND TCB programming
+ * - Submission via doorbell write (tag-based), not SQ tail pointer
+ * - Tags limited to 64 total (admin + I/O combined)
+ * - RTKit co-processor communication simplified (full impl TBD)
+ */
+
+#include <platform/arm64/apple_ans2.h>
+#include <platform/arm64/apple_rtkit.h>
+#include <platform/platform.h>
+#include <kernel/fut_memory.h>
+#include <string.h>
+
+/* ANS2 application endpoint number (from device tree, typically 0x20) */
+#define APPLE_ANS2_ENDPOINT     0x20
+
+/* ============================================================
+ *   Register Access Macros
+ * ============================================================ */
+
+#define ANS_READ32(ctrl, offset) \
+    (*((volatile uint32_t *)((ctrl)->mmio_base + (offset))))
+
+#define ANS_WRITE32(ctrl, offset, val) \
+    (*((volatile uint32_t *)((ctrl)->mmio_base + (offset))) = (val))
+
+#define ANS_READ64(ctrl, offset) \
+    (*((volatile uint64_t *)((ctrl)->mmio_base + (offset))))
+
+#define ANS_WRITE64(ctrl, offset, val) \
+    (*((volatile uint64_t *)((ctrl)->mmio_base + (offset))) = (val))
+
+/* ============================================================
+ *   RTKit Message Handler
+ * ============================================================ */
+
+static void apple_ans2_rtkit_handler(void *cookie, uint8_t endpoint, uint64_t msg) {
+    apple_ans2_ctrl_t *ctrl = (apple_ans2_ctrl_t *)cookie;
+
+    (void)ctrl;      /* Unused for now */
+    (void)endpoint;  /* Always APPLE_ANS2_ENDPOINT */
+    (void)msg;       /* ANS2-specific messages handled here */
+
+    /* TODO: Handle ANS2-specific RTKit messages */
+    /* Examples: power management, error notifications, etc. */
+}
+
+/* ============================================================
+ *   Tag Management
+ * ============================================================ */
+
+int apple_ans2_alloc_tag(apple_ans2_ctrl_t *ctrl) {
+    for (int i = 0; i < APPLE_ANS_MAX_QUEUE_DEPTH; i++) {
+        if (!(ctrl->tag_bitmap & (1ULL << i))) {
+            ctrl->tag_bitmap |= (1ULL << i);
+            return i;
+        }
+    }
+    return -1;  /* No tags available */
+}
+
+void apple_ans2_free_tag(apple_ans2_ctrl_t *ctrl, int tag) {
+    if (tag >= 0 && tag < APPLE_ANS_MAX_QUEUE_DEPTH) {
+        ctrl->tag_bitmap &= ~(1ULL << tag);
+    }
+}
+
+/* ============================================================
+ *   TCB Programming
+ * ============================================================ */
+
+void apple_ans2_program_tcb(apple_ans_tcb_t *tcb, const nvme_command_t *cmd, int tag) {
+    memset(tcb, 0, sizeof(apple_ans_tcb_t));
+
+    /* Copy command fields to TCB */
+    tcb->opcode = cmd->opcode;
+    tcb->flags = cmd->flags;
+    tcb->command_id = tag;  /* Use allocated tag as command ID */
+    tcb->nsid = cmd->nsid;
+
+    /* Copy PRPs (Apple requires duplication from SQ) */
+    tcb->prp1 = cmd->prp1;
+    tcb->prp2 = cmd->prp2;
+
+    /* Copy command dwords */
+    tcb->cdw10 = cmd->cdw10;
+    tcb->cdw11 = cmd->cdw11;
+    tcb->cdw12 = cmd->cdw12;
+    tcb->cdw13 = cmd->cdw13;
+    tcb->cdw14 = cmd->cdw14;
+    tcb->cdw15 = cmd->cdw15;
+
+    /* Set DMA direction flags based on opcode */
+    switch (cmd->opcode) {
+        case 0x02:  /* NVMe Read */
+            tcb->dma_flags = APPLE_ANS_TCB_DMA_FROM_DEVICE;
+            tcb->length = (cmd->cdw12 & 0xFFFF) + 1;  /* NLB + 1 */
+            break;
+
+        case 0x01:  /* NVMe Write */
+            tcb->dma_flags = APPLE_ANS_TCB_DMA_TO_DEVICE;
+            tcb->length = (cmd->cdw12 & 0xFFFF) + 1;
+            break;
+
+        case 0x06:  /* NVMe Identify */
+            tcb->dma_flags = APPLE_ANS_TCB_DMA_FROM_DEVICE;
+            tcb->length = 1;  /* Single 4KB page */
+            break;
+
+        default:
+            tcb->dma_flags = 0;
+            tcb->length = 0;
+            break;
+    }
+}
+
+/* ============================================================
+ *   Doorbell Operations
+ * ============================================================ */
+
+void apple_ans2_ring_admin_doorbell(apple_ans2_ctrl_t *ctrl, int tag) {
+    ANS_WRITE32(ctrl, APPLE_ANS_LINEAR_ASQ_DB, tag);
+}
+
+void apple_ans2_ring_io_doorbell(apple_ans2_ctrl_t *ctrl, int tag) {
+    ANS_WRITE32(ctrl, APPLE_ANS_LINEAR_IOSQ_DB, tag);
+}
+
+/* ============================================================
+ *   Controller Reset and Enable
+ * ============================================================ */
+
+bool fut_apple_ans2_reset(apple_ans2_ctrl_t *ctrl) {
+    if (!ctrl) {
+        return false;
+    }
+
+    fut_printf("[ANS2] Resetting controller...\n");
+
+    /* Disable controller */
+    uint32_t cc = ANS_READ32(ctrl, APPLE_NVME_REG_CC);
+    cc &= ~APPLE_NVME_CC_ENABLE;
+    ANS_WRITE32(ctrl, APPLE_NVME_REG_CC, cc);
+
+    /* Wait for controller ready to clear */
+    int timeout = 1000;
+    while (timeout-- > 0) {
+        uint32_t csts = ANS_READ32(ctrl, APPLE_NVME_REG_CSTS);
+        if (!(csts & APPLE_NVME_CSTS_RDY)) {
+            break;
+        }
+        /* Simple delay (TODO: use proper timer) */
+        for (volatile int i = 0; i < 10000; i++);
+    }
+
+    if (timeout <= 0) {
+        fut_printf("[ANS2] Error: Controller reset timeout\n");
+        return false;
+    }
+
+    fut_printf("[ANS2] Controller reset complete\n");
+    return true;
+}
+
+bool fut_apple_ans2_enable(apple_ans2_ctrl_t *ctrl) {
+    if (!ctrl) {
+        return false;
+    }
+
+    fut_printf("[ANS2] Enabling controller...\n");
+
+    /* Configure controller */
+    uint32_t cc = 0;
+    cc |= APPLE_NVME_CC_ENABLE;
+    cc |= APPLE_NVME_CC_CSS_NVM;
+    cc |= (0 << APPLE_NVME_CC_MPS_SHIFT);  /* Page size: 2^(12 + 0) = 4KB */
+    cc |= APPLE_NVME_CC_AMS_RR;
+    cc |= (6 << APPLE_NVME_CC_IOSQES_SHIFT);  /* SQE size: 2^6 = 64 bytes */
+    cc |= (4 << APPLE_NVME_CC_IOCQES_SHIFT);  /* CQE size: 2^4 = 16 bytes */
+
+    ANS_WRITE32(ctrl, APPLE_NVME_REG_CC, cc);
+
+    /* Wait for controller ready */
+    int timeout = 1000;
+    while (timeout-- > 0) {
+        uint32_t csts = ANS_READ32(ctrl, APPLE_NVME_REG_CSTS);
+        if (csts & APPLE_NVME_CSTS_RDY) {
+            fut_printf("[ANS2] Controller enabled and ready\n");
+            return true;
+        }
+
+        /* Check for fatal status */
+        if (csts & APPLE_NVME_CSTS_CFS) {
+            fut_printf("[ANS2] Error: Controller fatal status\n");
+            return false;
+        }
+
+        /* Simple delay */
+        for (volatile int i = 0; i < 10000; i++);
+    }
+
+    fut_printf("[ANS2] Error: Controller enable timeout\n");
+    return false;
+}
+
+/* ============================================================
+ *   Queue Initialization
+ * ============================================================ */
+
+static bool apple_ans2_init_admin_queue(apple_ans2_ctrl_t *ctrl) {
+    /* Allocate admin submission queue */
+    ctrl->admin_sq = (nvme_command_t *)fut_pmm_alloc_page();
+    if (!ctrl->admin_sq) {
+        fut_printf("[ANS2] Error: Failed to allocate admin SQ\n");
+        return false;
+    }
+    memset(ctrl->admin_sq, 0, FUT_PAGE_SIZE);
+
+    /* Allocate admin completion queue */
+    ctrl->admin_cq = (nvme_completion_t *)fut_pmm_alloc_page();
+    if (!ctrl->admin_cq) {
+        fut_printf("[ANS2] Error: Failed to allocate admin CQ\n");
+        return false;
+    }
+    memset(ctrl->admin_cq, 0, FUT_PAGE_SIZE);
+
+    /* Allocate admin TCB array */
+    ctrl->admin_tcbs = (apple_ans_tcb_t *)fut_pmm_alloc_page();
+    if (!ctrl->admin_tcbs) {
+        fut_printf("[ANS2] Error: Failed to allocate admin TCBs\n");
+        return false;
+    }
+    memset(ctrl->admin_tcbs, 0, FUT_PAGE_SIZE);
+
+    /* Initialize queue pointers */
+    ctrl->admin_sq_head = 0;
+    ctrl->admin_sq_tail = 0;
+    ctrl->admin_cq_head = 0;
+    ctrl->admin_cq_phase = 1;
+
+    /* Configure admin queue attributes */
+    uint32_t aqa = ((APPLE_ANS_ADMIN_QUEUE_DEPTH - 1) << 16) |
+                   (APPLE_ANS_ADMIN_QUEUE_DEPTH - 1);
+    ANS_WRITE32(ctrl, APPLE_NVME_REG_AQA, aqa);
+
+    /* Set admin queue base addresses */
+    ANS_WRITE64(ctrl, APPLE_NVME_REG_ASQ, (uint64_t)ctrl->admin_sq);
+    ANS_WRITE64(ctrl, APPLE_NVME_REG_ACQ, (uint64_t)ctrl->admin_cq);
+
+    /* Configure NVMMU for admin queue */
+    ANS_WRITE64(ctrl, APPLE_NVMMU_ASQ_TCB_BASE, (uint64_t)ctrl->admin_tcbs);
+
+    fut_printf("[ANS2] Admin queue initialized\n");
+    return true;
+}
+
+static bool apple_ans2_init_io_queue(apple_ans2_ctrl_t *ctrl) {
+    /* Allocate I/O submission queue */
+    ctrl->io_sq = (nvme_command_t *)fut_pmm_alloc_page();
+    if (!ctrl->io_sq) {
+        fut_printf("[ANS2] Error: Failed to allocate I/O SQ\n");
+        return false;
+    }
+    memset(ctrl->io_sq, 0, FUT_PAGE_SIZE);
+
+    /* Allocate I/O completion queue */
+    ctrl->io_cq = (nvme_completion_t *)fut_pmm_alloc_page();
+    if (!ctrl->io_cq) {
+        fut_printf("[ANS2] Error: Failed to allocate I/O CQ\n");
+        return false;
+    }
+    memset(ctrl->io_cq, 0, FUT_PAGE_SIZE);
+
+    /* Allocate I/O TCB array */
+    ctrl->io_tcbs = (apple_ans_tcb_t *)fut_pmm_alloc_page();
+    if (!ctrl->io_tcbs) {
+        fut_printf("[ANS2] Error: Failed to allocate I/O TCBs\n");
+        return false;
+    }
+    memset(ctrl->io_tcbs, 0, FUT_PAGE_SIZE);
+
+    /* Initialize queue pointers */
+    ctrl->io_sq_head = 0;
+    ctrl->io_sq_tail = 0;
+    ctrl->io_cq_head = 0;
+    ctrl->io_cq_phase = 1;
+
+    /* Configure NVMMU for I/O queue */
+    ANS_WRITE64(ctrl, APPLE_NVMMU_IOSQ_TCB_BASE, (uint64_t)ctrl->io_tcbs);
+
+    /* Set total TCB count */
+    ANS_WRITE32(ctrl, APPLE_NVMMU_NUM_TCBS, APPLE_ANS_MAX_QUEUE_DEPTH);
+
+    /* Enable linear submission mode */
+    ANS_WRITE32(ctrl, APPLE_ANS_LINEAR_SQ_CTRL, APPLE_ANS_LINEAR_SQ_EN);
+
+    fut_printf("[ANS2] I/O queue initialized\n");
+    return true;
+}
+
+/* ============================================================
+ *   Command Submission
+ * ============================================================ */
+
+int fut_apple_ans2_submit_admin(apple_ans2_ctrl_t *ctrl, const nvme_command_t *cmd) {
+    if (!ctrl || !cmd) {
+        return -1;
+    }
+
+    /* Allocate tag */
+    int tag = apple_ans2_alloc_tag(ctrl);
+    if (tag < 0 || tag >= APPLE_ANS_ADMIN_QUEUE_DEPTH) {
+        fut_printf("[ANS2] Error: No admin tags available\n");
+        return -1;
+    }
+
+    /* Program SQ entry */
+    nvme_command_t *sq_entry = &ctrl->admin_sq[tag];
+    memcpy(sq_entry, cmd, sizeof(nvme_command_t));
+    sq_entry->command_id = tag;
+
+    /* Program TCB */
+    apple_ans_tcb_t *tcb = &ctrl->admin_tcbs[tag];
+    apple_ans2_program_tcb(tcb, cmd, tag);
+
+    /* Ring doorbell to submit command */
+    apple_ans2_ring_admin_doorbell(ctrl, tag);
+
+    return tag;
+}
+
+int fut_apple_ans2_submit_io(apple_ans2_ctrl_t *ctrl, const nvme_command_t *cmd) {
+    if (!ctrl || !cmd) {
+        return -1;
+    }
+
+    /* Allocate tag (offset by admin queue depth) */
+    int tag = apple_ans2_alloc_tag(ctrl);
+    if (tag < APPLE_ANS_ADMIN_QUEUE_DEPTH || tag >= APPLE_ANS_MAX_QUEUE_DEPTH) {
+        fut_printf("[ANS2] Error: No I/O tags available\n");
+        return -1;
+    }
+
+    /* Calculate I/O queue index */
+    int io_idx = tag - APPLE_ANS_ADMIN_QUEUE_DEPTH;
+
+    /* Program SQ entry */
+    nvme_command_t *sq_entry = &ctrl->io_sq[io_idx];
+    memcpy(sq_entry, cmd, sizeof(nvme_command_t));
+    sq_entry->command_id = tag;
+
+    /* Program TCB */
+    apple_ans_tcb_t *tcb = &ctrl->io_tcbs[tag];
+    apple_ans2_program_tcb(tcb, cmd, tag);
+
+    /* Ring doorbell to submit command */
+    apple_ans2_ring_io_doorbell(ctrl, tag);
+
+    return tag;
+}
+
+/* ============================================================
+ *   Completion Queue Polling
+ * ============================================================ */
+
+bool fut_apple_ans2_poll_admin_cq(apple_ans2_ctrl_t *ctrl, nvme_completion_t *cqe_out) {
+    if (!ctrl || !cqe_out) {
+        return false;
+    }
+
+    nvme_completion_t *cqe = &ctrl->admin_cq[ctrl->admin_cq_head];
+
+    /* Check phase bit */
+    uint8_t phase = (cqe->status >> 0) & 1;
+    if (phase != ctrl->admin_cq_phase) {
+        return false;  /* No new completion */
+    }
+
+    /* Copy completion entry */
+    memcpy(cqe_out, cqe, sizeof(nvme_completion_t));
+
+    /* Advance CQ head */
+    ctrl->admin_cq_head++;
+    if (ctrl->admin_cq_head >= APPLE_ANS_ADMIN_QUEUE_DEPTH) {
+        ctrl->admin_cq_head = 0;
+        ctrl->admin_cq_phase ^= 1;
+    }
+
+    /* Free tag */
+    apple_ans2_free_tag(ctrl, cqe_out->command_id);
+
+    return true;
+}
+
+bool fut_apple_ans2_poll_io_cq(apple_ans2_ctrl_t *ctrl, nvme_completion_t *cqe_out) {
+    if (!ctrl || !cqe_out) {
+        return false;
+    }
+
+    nvme_completion_t *cqe = &ctrl->io_cq[ctrl->io_cq_head];
+
+    /* Check phase bit */
+    uint8_t phase = (cqe->status >> 0) & 1;
+    if (phase != ctrl->io_cq_phase) {
+        return false;  /* No new completion */
+    }
+
+    /* Copy completion entry */
+    memcpy(cqe_out, cqe, sizeof(nvme_completion_t));
+
+    /* Advance CQ head */
+    ctrl->io_cq_head++;
+    if (ctrl->io_cq_head >= APPLE_ANS_IO_QUEUE_DEPTH) {
+        ctrl->io_cq_head = 0;
+        ctrl->io_cq_phase ^= 1;
+    }
+
+    /* Free tag */
+    apple_ans2_free_tag(ctrl, cqe_out->command_id);
+
+    return true;
+}
+
+/* ============================================================
+ *   Identify Commands
+ * ============================================================ */
+
+bool fut_apple_ans2_identify_controller(apple_ans2_ctrl_t *ctrl) {
+    if (!ctrl) {
+        return false;
+    }
+
+    fut_printf("[ANS2] Identifying controller...\n");
+
+    /* Allocate buffer for identify data */
+    void *identify_buf = (void *)fut_pmm_alloc_page();
+    if (!identify_buf) {
+        fut_printf("[ANS2] Error: Failed to allocate identify buffer\n");
+        return false;
+    }
+    memset(identify_buf, 0, FUT_PAGE_SIZE);
+
+    /* Build IDENTIFY command */
+    nvme_command_t cmd = {0};
+    cmd.opcode = 0x06;  /* Admin: Identify */
+    cmd.nsid = 0;
+    cmd.prp1 = (uint64_t)identify_buf;
+    cmd.prp2 = 0;
+    cmd.cdw10 = 1;  /* CNS=1: Identify Controller */
+
+    /* Submit command */
+    int tag = fut_apple_ans2_submit_admin(ctrl, &cmd);
+    if (tag < 0) {
+        fut_pmm_free_page(identify_buf);
+        return false;
+    }
+
+    /* Poll for completion */
+    nvme_completion_t cqe;
+    int timeout = 10000;
+    while (timeout-- > 0) {
+        if (fut_apple_ans2_poll_admin_cq(ctrl, &cqe)) {
+            if (cqe.command_id == tag) {
+                /* Check status */
+                uint16_t status = (cqe.status >> 1) & 0x7FF;
+                if (status != 0) {
+                    fut_printf("[ANS2] Error: Identify controller failed (status=0x%x)\n", status);
+                    fut_pmm_free_page(identify_buf);
+                    return false;
+                }
+
+                /* Parse identify data */
+                uint8_t *data = (uint8_t *)identify_buf;
+                memcpy(ctrl->serial, data + 4, 20);
+                memcpy(ctrl->model, data + 24, 40);
+                memcpy(ctrl->firmware, data + 64, 8);
+
+                fut_printf("[ANS2] Controller identified\n");
+                fut_printf("[ANS2]   Model: %.40s\n", ctrl->model);
+                fut_printf("[ANS2]   Serial: %.20s\n", ctrl->serial);
+                fut_printf("[ANS2]   Firmware: %.8s\n", ctrl->firmware);
+
+                fut_pmm_free_page(identify_buf);
+                return true;
+            }
+        }
+        /* Simple delay */
+        for (volatile int i = 0; i < 1000; i++);
+    }
+
+    fut_printf("[ANS2] Error: Identify controller timeout\n");
+    fut_pmm_free_page(identify_buf);
+    return false;
+}
+
+bool fut_apple_ans2_identify_namespace(apple_ans2_ctrl_t *ctrl, uint32_t nsid) {
+    if (!ctrl) {
+        return false;
+    }
+
+    fut_printf("[ANS2] Identifying namespace %u...\n", nsid);
+
+    /* Allocate buffer for identify data */
+    void *identify_buf = (void *)fut_pmm_alloc_page();
+    if (!identify_buf) {
+        fut_printf("[ANS2] Error: Failed to allocate identify buffer\n");
+        return false;
+    }
+    memset(identify_buf, 0, FUT_PAGE_SIZE);
+
+    /* Build IDENTIFY command */
+    nvme_command_t cmd = {0};
+    cmd.opcode = 0x06;  /* Admin: Identify */
+    cmd.nsid = nsid;
+    cmd.prp1 = (uint64_t)identify_buf;
+    cmd.prp2 = 0;
+    cmd.cdw10 = 0;  /* CNS=0: Identify Namespace */
+
+    /* Submit command */
+    int tag = fut_apple_ans2_submit_admin(ctrl, &cmd);
+    if (tag < 0) {
+        fut_pmm_free_page(identify_buf);
+        return false;
+    }
+
+    /* Poll for completion */
+    nvme_completion_t cqe;
+    int timeout = 10000;
+    while (timeout-- > 0) {
+        if (fut_apple_ans2_poll_admin_cq(ctrl, &cqe)) {
+            if (cqe.command_id == tag) {
+                /* Check status */
+                uint16_t status = (cqe.status >> 1) & 0x7FF;
+                if (status != 0) {
+                    fut_printf("[ANS2] Error: Identify namespace failed (status=0x%x)\n", status);
+                    fut_pmm_free_page(identify_buf);
+                    return false;
+                }
+
+                /* Parse namespace data */
+                uint64_t *data = (uint64_t *)identify_buf;
+                uint64_t nsze = data[0];  /* Namespace size in blocks */
+                uint8_t *lbaf = (uint8_t *)identify_buf + 128;  /* LBA format 0 */
+                uint8_t lbads = lbaf[0] & 0xFF;  /* LBA data size (power of 2) */
+
+                ctrl->max_lba = (uint32_t)nsze;
+                ctrl->sector_size = 1 << lbads;
+
+                fut_printf("[ANS2] Namespace identified\n");
+                fut_printf("[ANS2]   Max LBA: %u\n", ctrl->max_lba);
+                fut_printf("[ANS2]   Sector size: %u bytes\n", ctrl->sector_size);
+
+                fut_pmm_free_page(identify_buf);
+                return true;
+            }
+        }
+        for (volatile int i = 0; i < 1000; i++);
+    }
+
+    fut_printf("[ANS2] Error: Identify namespace timeout\n");
+    fut_pmm_free_page(identify_buf);
+    return false;
+}
+
+/* ============================================================
+ *   Read/Write Operations
+ * ============================================================ */
+
+int fut_apple_ans2_read(apple_ans2_ctrl_t *ctrl, uint64_t lba, uint32_t count, void *buffer) {
+    if (!ctrl || !buffer || count == 0) {
+        return -1;
+    }
+
+    /* Build NVMe Read command */
+    nvme_command_t cmd = {0};
+    cmd.opcode = 0x02;  /* NVMe Read */
+    cmd.nsid = 1;       /* Namespace 1 */
+    cmd.prp1 = (uint64_t)buffer;
+    cmd.prp2 = 0;       /* TODO: Handle >1 page transfers */
+    cmd.cdw10 = (uint32_t)(lba & 0xFFFFFFFF);
+    cmd.cdw11 = (uint32_t)(lba >> 32);
+    cmd.cdw12 = (count - 1);  /* NLB (0-based) */
+
+    /* Submit command */
+    int tag = fut_apple_ans2_submit_io(ctrl, &cmd);
+    if (tag < 0) {
+        return -1;
+    }
+
+    /* Poll for completion */
+    nvme_completion_t cqe;
+    int timeout = 100000;
+    while (timeout-- > 0) {
+        if (fut_apple_ans2_poll_io_cq(ctrl, &cqe)) {
+            if (cqe.command_id == tag) {
+                uint16_t status = (cqe.status >> 1) & 0x7FF;
+                if (status != 0) {
+                    return -1;
+                }
+                return count;
+            }
+        }
+        for (volatile int i = 0; i < 100; i++);
+    }
+
+    return -1;  /* Timeout */
+}
+
+int fut_apple_ans2_write(apple_ans2_ctrl_t *ctrl, uint64_t lba, uint32_t count, const void *buffer) {
+    if (!ctrl || !buffer || count == 0) {
+        return -1;
+    }
+
+    /* Build NVMe Write command */
+    nvme_command_t cmd = {0};
+    cmd.opcode = 0x01;  /* NVMe Write */
+    cmd.nsid = 1;       /* Namespace 1 */
+    cmd.prp1 = (uint64_t)buffer;
+    cmd.prp2 = 0;       /* TODO: Handle >1 page transfers */
+    cmd.cdw10 = (uint32_t)(lba & 0xFFFFFFFF);
+    cmd.cdw11 = (uint32_t)(lba >> 32);
+    cmd.cdw12 = (count - 1);  /* NLB (0-based) */
+
+    /* Submit command */
+    int tag = fut_apple_ans2_submit_io(ctrl, &cmd);
+    if (tag < 0) {
+        return -1;
+    }
+
+    /* Poll for completion */
+    nvme_completion_t cqe;
+    int timeout = 100000;
+    while (timeout-- > 0) {
+        if (fut_apple_ans2_poll_io_cq(ctrl, &cqe)) {
+            if (cqe.command_id == tag) {
+                uint16_t status = (cqe.status >> 1) & 0x7FF;
+                if (status != 0) {
+                    return -1;
+                }
+                return count;
+            }
+        }
+        for (volatile int i = 0; i < 100; i++);
+    }
+
+    return -1;  /* Timeout */
+}
+
+/* ============================================================
+ *   Controller Initialization
+ * ============================================================ */
+
+apple_ans2_ctrl_t *fut_apple_ans2_init(const fut_platform_info_t *info) {
+    if (!info) {
+        return NULL;
+    }
+
+    fut_printf("[ANS2] Initializing Apple ANS2 NVMe controller\n");
+
+    /* Allocate controller state */
+    apple_ans2_ctrl_t *ctrl = (apple_ans2_ctrl_t *)fut_pmm_alloc_page();
+    if (!ctrl) {
+        fut_printf("[ANS2] Error: Failed to allocate controller state\n");
+        return NULL;
+    }
+    memset(ctrl, 0, sizeof(apple_ans2_ctrl_t));
+
+    /* Get NVMe base address from device tree (parsed in fut_dtb_parse) */
+    ctrl->mmio_phys = info->ans_nvme_base;
+    ctrl->mmio_base = (volatile uint8_t *)ctrl->mmio_phys;
+
+    if (ctrl->mmio_phys == 0) {
+        fut_printf("[ANS2] Warning: NVMe base address not configured\n");
+        fut_printf("[ANS2] Note: Device tree parsing for NVMe node required\n");
+        fut_pmm_free_page(ctrl);
+        return NULL;
+    }
+
+    /* Read controller capabilities */
+    ctrl->cap = ANS_READ64(ctrl, APPLE_NVME_REG_CAP);
+    ctrl->page_size = 4096;  /* 4KB pages */
+
+    /* Check boot status */
+    uint32_t boot_status = ANS_READ32(ctrl, APPLE_ANS_BOOT_STATUS);
+    if (boot_status != APPLE_ANS_BOOT_STATUS_OK) {
+        fut_printf("[ANS2] Warning: Boot status not OK (0x%08x)\n", boot_status);
+    }
+
+    /* Initialize tag bitmap */
+    ctrl->tag_bitmap = 0;
+
+    /* Initialize RTKit co-processor IPC */
+    fut_printf("[ANS2] Initializing RTKit co-processor...\n");
+
+    /* Get mailbox address from device tree (parsed in fut_dtb_parse) */
+    ctrl->mailbox_phys = info->ans_mailbox_base;
+
+    if (ctrl->mailbox_phys == 0) {
+        fut_printf("[ANS2] Warning: Mailbox address not configured\n");
+        fut_printf("[ANS2] Note: Device tree parsing for mailbox required\n");
+        /* Continue anyway for build testing */
+    } else {
+        /* Initialize RTKit */
+        ctrl->rtkit = apple_rtkit_init(ctrl->mailbox_phys);
+        if (!ctrl->rtkit) {
+            fut_printf("[ANS2] Error: RTKit initialization failed\n");
+            fut_pmm_free_page(ctrl);
+            return NULL;
+        }
+
+        /* Boot RTKit co-processor */
+        if (!apple_rtkit_boot(ctrl->rtkit)) {
+            fut_printf("[ANS2] Error: RTKit boot failed\n");
+            apple_rtkit_shutdown(ctrl->rtkit);
+            fut_pmm_free_page(ctrl);
+            return NULL;
+        }
+
+        /* Register ANS2 endpoint handler */
+        ctrl->ans2_endpoint = APPLE_ANS2_ENDPOINT;
+        if (!apple_rtkit_register_endpoint(ctrl->rtkit, ctrl->ans2_endpoint,
+                                           apple_ans2_rtkit_handler, ctrl)) {
+            fut_printf("[ANS2] Warning: Failed to register endpoint\n");
+        }
+
+        /* Start ANS2 application endpoint */
+        if (!apple_rtkit_start_endpoint(ctrl->rtkit, ctrl->ans2_endpoint)) {
+            fut_printf("[ANS2] Warning: Failed to start ANS2 endpoint\n");
+        }
+
+        fut_printf("[ANS2] RTKit co-processor initialized\n");
+    }
+
+    /* Reset controller */
+    if (!fut_apple_ans2_reset(ctrl)) {
+        fut_pmm_free_page(ctrl);
+        return NULL;
+    }
+
+    /* Initialize admin queue */
+    if (!apple_ans2_init_admin_queue(ctrl)) {
+        fut_pmm_free_page(ctrl);
+        return NULL;
+    }
+
+    /* Initialize I/O queue */
+    if (!apple_ans2_init_io_queue(ctrl)) {
+        fut_pmm_free_page(ctrl);
+        return NULL;
+    }
+
+    /* Enable controller */
+    if (!fut_apple_ans2_enable(ctrl)) {
+        fut_pmm_free_page(ctrl);
+        return NULL;
+    }
+
+    /* Identify controller */
+    if (!fut_apple_ans2_identify_controller(ctrl)) {
+        fut_printf("[ANS2] Warning: Controller identification failed\n");
+    }
+
+    /* Identify namespace 1 */
+    if (!fut_apple_ans2_identify_namespace(ctrl, 1)) {
+        fut_printf("[ANS2] Warning: Namespace identification failed\n");
+    }
+
+    fut_printf("[ANS2] Apple ANS2 NVMe controller initialized successfully\n");
+    return ctrl;
+}
+
+/* ============================================================
+ *   Platform Integration
+ * ============================================================ */
+
+bool fut_apple_ans2_platform_init(const fut_platform_info_t *info) {
+    if (!info || !info->has_aic) {
+        fut_printf("[ANS2] Error: Not an Apple Silicon platform\n");
+        return false;
+    }
+
+    fut_printf("[ANS2] Initializing Apple ANS2 NVMe subsystem\n");
+
+    apple_ans2_ctrl_t *ctrl = fut_apple_ans2_init(info);
+    if (!ctrl) {
+        fut_printf("[ANS2] Error: Failed to initialize ANS2 controller\n");
+        return false;
+    }
+
+    /* TODO: Register with block device subsystem */
+
+    fut_printf("[ANS2] Apple ANS2 NVMe subsystem initialized\n");
+    return true;
+}

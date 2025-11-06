@@ -77,6 +77,17 @@ uint16_t arm64_pci_read16(uint8_t bus, uint8_t dev, uint8_t fn, uint16_t reg) {
 }
 
 /**
+ * Write 16-bit value to PCI configuration space
+ */
+void arm64_pci_write16(uint8_t bus, uint8_t dev, uint8_t fn, uint16_t reg, uint16_t value) {
+    uint32_t old = arm64_pci_read32(bus, dev, fn, reg & ~3);
+    uint32_t shift = (reg & 2) * 8;
+    uint32_t mask = ~(0xFFFFU << shift);
+    uint32_t new_val = (old & mask) | ((uint32_t)value << shift);
+    arm64_pci_write32(bus, dev, fn, reg & ~3, new_val);
+}
+
+/**
  * Read 8-bit value from PCI configuration space
  */
 uint8_t arm64_pci_read8(uint8_t bus, uint8_t dev, uint8_t fn, uint16_t reg) {

@@ -132,14 +132,44 @@ qemu-system-aarch64 -machine virt -cpu cortex-a72 -m 256 \
 - ❌ **Init thread never executes** (MMU required)
 - ❌ Scheduler panic and system termination
 
+### Update: MMU is ENABLED ✅
+
+**Discovery**: MMU was already enabled! Boot output shows 'A12345678BC' where:
+- 'A' = before MMU
+- '12345678' = page table setup progress
+- 'B' = after MMU enable ✅
+- 'C' = platform init
+
+The issue is **NOT** that MMU is disabled. The issue is **page table permissions**.
+
+### Root Cause: Page Table Permissions Block EL0 Access
+
+**Problem**: Identity-mapped DRAM (0x40000000-0x80000000) has permissions set to **EL1-only access**.
+
+Current page table flags (line 261 in `platform/arm64/boot.S`):
+```asm
+mov     x2, #0x401    /* Valid | Block | AttrIndx=0 | AF */
+```
+
+AP (Access Permission) bits:
+- AP[2:1] = 00 (current): Read/write at EL1 only, **no access at EL0** ❌
+- AP[2:1] = 01 (needed): Read/write at EL1 and EL0 ✅
+
+**Attempted Fix**: Add bit 6 to set AP[1]=1 for EL0 access
+- Changed flags to `0x441` to add AP[1]=1 (bit 6)
+- **Result**: MMU enable fails with Prefetch Abort ❌
+- QEMU log shows: Exception 3 [Prefetch Abort] at 0x40000a00, ESR 0x8600000e (permission fault)
+
+**Issue**: Setting AP[1]=1 causes kernel code to become non-executable at EL1, triggering prefetch abort during/after MMU enable.
+
 ### Recommendations
 
-#### Immediate (Critical Path)
-1. **Enable MMU for ARM64**:
-   - Previous attempts caused system hang (see `docs/ARM64_MMU_IMPLEMENTATION.md`)
-   - Page table structure appeared correct
-   - Need to debug why MMU enable causes hang
-   - **This is now critical** - user-space execution blocked without MMU
+#### Immediate (Critical Path - BLOCKED)
+1. **Fix Page Table Permissions for EL0 Access**:
+   - Current identity mapping only allows EL1 access
+   - Need to set AP bits correctly to allow both EL1 and EL0 access without breaking EL1 execution
+   - May require separate page table entries for kernel code vs. data
+   - Alternative: Create per-process page tables with proper permissions for user-space only
 
 #### Alternative Approaches (If MMU Enable Proves Difficult)
 1. **Physical Address Execution**:

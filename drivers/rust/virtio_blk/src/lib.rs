@@ -288,6 +288,97 @@ struct VirtioPciCommonCfg {
     queue_used_hi: u32,
 }
 
+// VirtIO PCI Common Config offsets (for offset-based access)
+const VIRTIO_PCI_COMMON_DFSELECT: usize = 0x00;    // device_feature_select
+const VIRTIO_PCI_COMMON_DF: usize = 0x04;          // device_feature
+const VIRTIO_PCI_COMMON_GFSELECT: usize = 0x08;    // driver_feature_select
+const VIRTIO_PCI_COMMON_GF: usize = 0x0C;          // driver_feature
+const VIRTIO_PCI_COMMON_MSIX: usize = 0x10;        // msix_config
+const VIRTIO_PCI_COMMON_NUM_QUEUES: usize = 0x12;  // num_queues
+const VIRTIO_PCI_COMMON_STATUS: usize = 0x14;      // device_status
+const VIRTIO_PCI_COMMON_CFG_GEN: usize = 0x15;     // config_generation
+const VIRTIO_PCI_COMMON_Q_SELECT: usize = 0x16;    // queue_select
+const VIRTIO_PCI_COMMON_Q_SIZE: usize = 0x18;      // queue_size
+const VIRTIO_PCI_COMMON_Q_MSIX: usize = 0x1A;      // queue_msix_vector
+const VIRTIO_PCI_COMMON_Q_ENABLE: usize = 0x1C;    // queue_enable
+const VIRTIO_PCI_COMMON_Q_NOTIFYOFF: usize = 0x1E; // queue_notify_off
+const VIRTIO_PCI_COMMON_Q_DESCLO: usize = 0x20;    // queue_desc_lo
+const VIRTIO_PCI_COMMON_Q_DESCHI: usize = 0x24;    // queue_desc_hi
+const VIRTIO_PCI_COMMON_Q_AVAILLO: usize = 0x28;   // queue_avail_lo
+const VIRTIO_PCI_COMMON_Q_AVAILHI: usize = 0x2C;   // queue_avail_hi
+const VIRTIO_PCI_COMMON_Q_USEDLO: usize = 0x30;    // queue_used_lo
+const VIRTIO_PCI_COMMON_Q_USEDHI: usize = 0x34;    // queue_used_hi
+
+// Common config MMIO access helpers with ARM64 memory barriers
+// These helpers ensure proper ordering of MMIO operations by placing
+// DSB (Data Synchronization Barrier) instructions before and after accesses
+
+#[inline(always)]
+unsafe fn common_read8(base: *mut u8, offset: usize) -> u8 {
+    #[cfg(target_arch = "aarch64")]
+    unsafe { core::arch::asm!("dsb sy"); }
+    let val = unsafe { read_volatile(base.add(offset) as *const u8) };
+    #[cfg(target_arch = "aarch64")]
+    unsafe { core::arch::asm!("dsb sy"); }
+    val
+}
+
+#[inline(always)]
+unsafe fn common_write8(base: *mut u8, offset: usize, value: u8) {
+    #[cfg(target_arch = "aarch64")]
+    unsafe { core::arch::asm!("dsb sy"); }
+    unsafe { write_volatile(base.add(offset) as *mut u8, value); }
+    #[cfg(target_arch = "aarch64")]
+    unsafe { core::arch::asm!("dsb sy"); }
+}
+
+#[inline(always)]
+unsafe fn common_read16(base: *mut u8, offset: usize) -> u16 {
+    #[cfg(target_arch = "aarch64")]
+    unsafe { core::arch::asm!("dsb sy"); }
+    let val = unsafe { read_volatile(base.add(offset) as *const u16) };
+    #[cfg(target_arch = "aarch64")]
+    unsafe { core::arch::asm!("dsb sy"); }
+    val
+}
+
+#[inline(always)]
+unsafe fn common_write16(base: *mut u8, offset: usize, value: u16) {
+    #[cfg(target_arch = "aarch64")]
+    unsafe { core::arch::asm!("dsb sy"); }
+    unsafe { write_volatile(base.add(offset) as *mut u16, value); }
+    #[cfg(target_arch = "aarch64")]
+    unsafe { core::arch::asm!("dsb sy"); }
+}
+
+#[inline(always)]
+unsafe fn common_read32(base: *mut u8, offset: usize) -> u32 {
+    #[cfg(target_arch = "aarch64")]
+    unsafe { core::arch::asm!("dsb sy"); }
+    let val = unsafe { read_volatile(base.add(offset) as *const u32) };
+    #[cfg(target_arch = "aarch64")]
+    unsafe { core::arch::asm!("dsb sy"); }
+    val
+}
+
+#[inline(always)]
+unsafe fn common_write32(base: *mut u8, offset: usize, value: u32) {
+    #[cfg(target_arch = "aarch64")]
+    unsafe { core::arch::asm!("dsb sy"); }
+    unsafe { write_volatile(base.add(offset) as *mut u32, value); }
+    #[cfg(target_arch = "aarch64")]
+    unsafe { core::arch::asm!("dsb sy"); }
+}
+
+#[inline(always)]
+unsafe fn common_write64(base: *mut u8, offset: usize, value: u64) {
+    #[cfg(target_arch = "aarch64")]
+    unsafe { core::arch::asm!("dsb sy"); }
+    unsafe { write_volatile(base.add(offset) as *mut u64, value); }
+    #[cfg(target_arch = "aarch64")]
+    unsafe { core::arch::asm!("dsb sy"); }
+}
+
 #[repr(C, packed)]
 struct VirtioBlkConfig {
     capacity: u64,
@@ -613,7 +704,7 @@ impl VirtQueue {
 struct VirtioBlkDevice {
     pci: PciAddress,
     bars: [u64; 6],
-    common: *mut VirtioPciCommonCfg,
+    common: *mut u8,  // Changed from *mut VirtioPciCommonCfg to *mut u8 for offset-based access
     isr: *mut u8,
     config: *mut VirtioBlkConfig,
     notify_base: *mut u8,
@@ -730,16 +821,11 @@ impl VirtioBlkDevice {
 
         /* Set DRIVER_OK after all setup is complete (required by virtio spec) */
         unsafe {
-            use core::ptr::{addr_of_mut, read_volatile, write_volatile};
+            let current_status = common_read8(dev.common, VIRTIO_PCI_COMMON_STATUS);
+            common_write8(dev.common, VIRTIO_PCI_COMMON_STATUS, current_status | VIRTIO_STATUS_DRIVER_OK);
 
-            /* CRITICAL: Use volatile write for device_status (hardware register!) */
-            let status_ptr = addr_of_mut!((*dev.common).device_status);
-            let current_status = read_volatile(status_ptr);
-            write_volatile(status_ptr, current_status | VIRTIO_STATUS_DRIVER_OK);
-
-            let final_status = read_volatile(status_ptr);
-            let queue_enable_ptr = addr_of_mut!((*dev.common).queue_enable);
-            let queue_enabled = read_volatile(queue_enable_ptr);
+            let final_status = common_read8(dev.common, VIRTIO_PCI_COMMON_STATUS);
+            let queue_enabled = common_read16(dev.common, VIRTIO_PCI_COMMON_Q_ENABLE);
             fut_printf(b"[virtio-blk] DRIVER_OK set: status=0x%x queue_enable=%d\n\0".as_ptr(),
                 final_status as u32, queue_enabled as u32);
         }
@@ -948,7 +1034,7 @@ impl VirtioBlkDevice {
                     log("virtio-blk: failed to map common config capability");
                     return false;
                 }
-                self.common = mapped as *mut VirtioPciCommonCfg;
+                self.common = mapped;  // Store as raw *mut u8 for offset-based access
                 true
             }
             VIRTIO_PCI_CAP_DEVICE_CFG => {
@@ -1186,23 +1272,16 @@ impl VirtioBlkDevice {
 
     fn negotiate_features(&mut self) -> Result<(), FutStatus> {
         unsafe {
-            use core::ptr::{addr_of_mut, read_volatile, write_volatile};
+            // Set ACKNOWLEDGE | DRIVER status
+            common_write8(self.common, VIRTIO_PCI_COMMON_STATUS, VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER);
 
-            /* CRITICAL: ALL writes to packed common_cfg struct MUST use write_volatile! */
-
-            // Set ACKNOWLEDGE | DRIVER status (volatile!)
-            let status_ptr = addr_of_mut!((*self.common).device_status);
-            write_volatile(status_ptr, VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER);
-
-            // Read device features (volatile!) - word 0 (bits 0-31)
-            let feat_sel_ptr = addr_of_mut!((*self.common).device_feature_select);
-            write_volatile(feat_sel_ptr, 0u32);
-            let feat_ptr = addr_of_mut!((*self.common).device_feature);
-            let feat_low = read_volatile(feat_ptr);
+            // Read device features - word 0 (bits 0-31)
+            common_write32(self.common, VIRTIO_PCI_COMMON_DFSELECT, 0);
+            let feat_low = common_read32(self.common, VIRTIO_PCI_COMMON_DF);
 
             // Read device features - word 1 (bits 32-63)
-            write_volatile(feat_sel_ptr, 1u32);
-            let feat_high = read_volatile(feat_ptr);
+            common_write32(self.common, VIRTIO_PCI_COMMON_DFSELECT, 1);
+            let feat_high = common_read32(self.common, VIRTIO_PCI_COMMON_DF);
 
             let features = ((feat_high as u64) << 32) | feat_low as u64;
             fut_printf(b"[virtio-blk] device features: 0x%lx\n\0".as_ptr(), features);
@@ -1222,28 +1301,23 @@ impl VirtioBlkDevice {
                 driver_features |= VIRTIO_F_ANY_LAYOUT;
             }
 
-            // Write driver features (volatile!) - word 0 (bits 0-31)
-            let drv_feat_sel_ptr = addr_of_mut!((*self.common).driver_feature_select);
-            write_volatile(drv_feat_sel_ptr, 0u32);
-            let drv_feat_ptr = addr_of_mut!((*self.common).driver_feature);
-            write_volatile(drv_feat_ptr, driver_features as u32);
+            // Write driver features - word 0 (bits 0-31)
+            common_write32(self.common, VIRTIO_PCI_COMMON_GFSELECT, 0);
+            common_write32(self.common, VIRTIO_PCI_COMMON_GF, driver_features as u32);
 
             // Write driver features - word 1 (bits 32-63)
-            write_volatile(drv_feat_sel_ptr, 1u32);
-            write_volatile(drv_feat_ptr, (driver_features >> 32) as u32);
+            common_write32(self.common, VIRTIO_PCI_COMMON_GFSELECT, 1);
+            common_write32(self.common, VIRTIO_PCI_COMMON_GF, (driver_features >> 32) as u32);
 
             fut_printf(b"[virtio-blk] driver features: 0x%lx (minimal set)\n\0".as_ptr(),
                 driver_features);
 
-            // Memory fence before setting FEATURES_OK
-            core::sync::atomic::fence(core::sync::atomic::Ordering::SeqCst);
+            // Set FEATURES_OK status bit
+            let current_status = common_read8(self.common, VIRTIO_PCI_COMMON_STATUS);
+            common_write8(self.common, VIRTIO_PCI_COMMON_STATUS, current_status | VIRTIO_STATUS_FEATURES_OK);
 
-            // Set FEATURES_OK status bit (volatile!)
-            let current_status = read_volatile(status_ptr);
-            write_volatile(status_ptr, current_status | VIRTIO_STATUS_FEATURES_OK);
-
-            // Read back status to verify FEATURES_OK was accepted (volatile!)
-            let status_check = read_volatile(status_ptr);
+            // Read back status to verify FEATURES_OK was accepted
+            let status_check = common_read8(self.common, VIRTIO_PCI_COMMON_STATUS);
             fut_printf(b"[virtio-blk] device_status after FEATURES_OK: 0x%x\n\0".as_ptr(), status_check as u32);
 
             if (status_check & VIRTIO_STATUS_FEATURES_OK) == 0 {
@@ -1257,17 +1331,11 @@ impl VirtioBlkDevice {
 
     fn init_queue(&mut self) -> Result<(), FutStatus> {
         unsafe {
-            use core::ptr::{addr_of_mut, read_volatile, write_volatile};
-
-            /* CRITICAL: ALL writes to packed common_cfg struct MUST use write_volatile! */
-
             // Select queue 0
-            let queue_select_ptr = addr_of_mut!((*self.common).queue_select);
-            write_volatile(queue_select_ptr, 0u16);
+            common_write16(self.common, VIRTIO_PCI_COMMON_Q_SELECT, 0);
 
             // Read max queue size from device
-            let queue_size_ptr = addr_of_mut!((*self.common).queue_size);
-            let device_qsize = read_volatile(queue_size_ptr);
+            let device_qsize = common_read16(self.common, VIRTIO_PCI_COMMON_Q_SIZE);
             if device_qsize == 0 {
                 return Err(ENODEV);
             }
@@ -1275,12 +1343,9 @@ impl VirtioBlkDevice {
             self.queue.setup(qsize)?;
 
             // Write queue size
-            write_volatile(queue_size_ptr, qsize);
+            common_write16(self.common, VIRTIO_PCI_COMMON_Q_SIZE, qsize);
 
             /* Configure MSI-X vectors if enabled, otherwise use legacy INTx */
-            let msix_vec_ptr = addr_of_mut!((*self.common).queue_msix_vector);
-            let msix_cfg_ptr = addr_of_mut!((*self.common).msix_config);
-
             if self.msix_enabled && !self.msix_table.is_null() && self.msix_table_size > 0 {
                 // Configure MSI-X table entries for I/O completion and config changes
                 // Vector 0 for I/O queue, Vector 1 for config changes
@@ -1294,8 +1359,8 @@ impl VirtioBlkDevice {
                 }
 
                 // Tell device to use MSI-X vectors (instead of NO_VECTOR)
-                write_volatile(msix_vec_ptr, 0u16);      // Vector 0 for queue I/O
-                write_volatile(msix_cfg_ptr, 1u16);      // Vector 1 for config
+                common_write16(self.common, VIRTIO_PCI_COMMON_Q_MSIX, 0);  // Vector 0 for queue I/O
+                common_write16(self.common, VIRTIO_PCI_COMMON_MSIX, 1);    // Vector 1 for config
 
                 fut_printf(b"[virtio-blk] MSI-X enabled with vectors I/O=%d config=%d\n\0".as_ptr(),
                     io_vector as u32, cfg_vector as u32);
@@ -1310,115 +1375,33 @@ impl VirtioBlkDevice {
                 VIRTIO_BLK_IRQ_VECTOR.store(io_vector, Ordering::Relaxed);
             } else {
                 // Fall back to legacy INTx interrupts
-                write_volatile(msix_vec_ptr, 0xFFFFu16);  // NO_VECTOR - use legacy INTx
-                write_volatile(msix_cfg_ptr, 0xFFFFu16);  // NO_VECTOR for config
+                common_write16(self.common, VIRTIO_PCI_COMMON_Q_MSIX, 0xFFFF);  // NO_VECTOR - use legacy INTx
+                common_write16(self.common, VIRTIO_PCI_COMMON_MSIX, 0xFFFF);    // NO_VECTOR for config
                 fut_printf(b"[virtio-blk] MSI-X not available, using legacy INTx\n\0".as_ptr());
             }
 
             // Modern VirtIO 1.0+ uses byte addresses in queue address registers
-            // NOTE: Queue starts disabled by default, no need to explicitly disable it
-            let desc_lo = (self.queue.desc_phys & 0xFFFF_FFFF) as u32;
-            let desc_hi = (self.queue.desc_phys >> 32) as u32;
-            let avail_lo = (self.queue.avail_phys & 0xFFFF_FFFF) as u32;
-            let avail_hi = (self.queue.avail_phys >> 32) as u32;
-            let used_lo = (self.queue.used_phys & 0xFFFF_FFFF) as u32;
-            let used_hi = (self.queue.used_phys >> 32) as u32;
-
-            fut_printf(b"[virtio-blk] ADDRESS SPLIT DEBUG:\n\0".as_ptr());
-            fut_printf(b"[virtio-blk]   desc: 0x%lx -> lo=0x%08x hi=0x%08x\n\0".as_ptr(),
-                self.queue.desc_phys, desc_lo, desc_hi);
-            fut_printf(b"[virtio-blk]   avail: 0x%lx -> lo=0x%08x hi=0x%08x\n\0".as_ptr(),
-                self.queue.avail_phys, avail_lo, avail_hi);
-            fut_printf(b"[virtio-blk]   used: 0x%lx -> lo=0x%08x hi=0x%08x\n\0".as_ptr(),
-                self.queue.used_phys, used_lo, used_hi);
-
-            // Write descriptor table address (volatile!)
-            let desc_lo_ptr = addr_of_mut!((*self.common).queue_desc_lo);
-            write_volatile(desc_lo_ptr, desc_lo);
-            #[cfg(target_arch = "aarch64")]
-            core::arch::asm!("dsb sy");
-            let desc_hi_ptr = addr_of_mut!((*self.common).queue_desc_hi);
-            write_volatile(desc_hi_ptr, desc_hi);
-            #[cfg(target_arch = "aarch64")]
-            core::arch::asm!("dsb sy");
-
-            // Readback to verify
-            let readback_desc_lo = read_volatile(desc_lo_ptr);
-            #[cfg(target_arch = "aarch64")]
-            core::arch::asm!("dsb sy");
-            let readback_desc_hi = read_volatile(desc_hi_ptr);
-            #[cfg(target_arch = "aarch64")]
-            core::arch::asm!("dsb sy");
-            fut_printf(b"[virtio-blk]   desc readback: lo=0x%08x hi=0x%08x\n\0".as_ptr(),
-                readback_desc_lo, readback_desc_hi);
-
-            // Write available ring address (volatile!)
-            let avail_lo_ptr = addr_of_mut!((*self.common).queue_avail_lo);
-            write_volatile(avail_lo_ptr, avail_lo);
-            #[cfg(target_arch = "aarch64")]
-            core::arch::asm!("dsb sy");
-            let avail_hi_ptr = addr_of_mut!((*self.common).queue_avail_hi);
-            write_volatile(avail_hi_ptr, avail_hi);
-            #[cfg(target_arch = "aarch64")]
-            core::arch::asm!("dsb sy");
-
-            // Readback to verify
-            let readback_avail_lo = read_volatile(avail_lo_ptr);
-            #[cfg(target_arch = "aarch64")]
-            core::arch::asm!("dsb sy");
-            let readback_avail_hi = read_volatile(avail_hi_ptr);
-            #[cfg(target_arch = "aarch64")]
-            core::arch::asm!("dsb sy");
-            fut_printf(b"[virtio-blk]   avail readback: lo=0x%08x hi=0x%08x\n\0".as_ptr(),
-                readback_avail_lo, readback_avail_hi);
-
-            // Write used ring address (volatile!)
-            let used_lo_ptr = addr_of_mut!((*self.common).queue_used_lo);
-            write_volatile(used_lo_ptr, used_lo);
-            #[cfg(target_arch = "aarch64")]
-            core::arch::asm!("dsb sy");
-            let used_hi_ptr = addr_of_mut!((*self.common).queue_used_hi);
-            write_volatile(used_hi_ptr, used_hi);
-            #[cfg(target_arch = "aarch64")]
-            core::arch::asm!("dsb sy");
-
-            // Readback to verify
-            let readback_used_lo = read_volatile(used_lo_ptr);
-            #[cfg(target_arch = "aarch64")]
-            core::arch::asm!("dsb sy");
-            let readback_used_hi = read_volatile(used_hi_ptr);
-            #[cfg(target_arch = "aarch64")]
-            core::arch::asm!("dsb sy");
-            fut_printf(b"[virtio-blk]   used readback: lo=0x%08x hi=0x%08x\n\0".as_ptr(),
-                readback_used_lo, readback_used_hi);
-
-            // Memory fence: ensure all queue address writes are visible before enable
-            core::sync::atomic::fence(core::sync::atomic::Ordering::SeqCst);
-
-            // Enable the queue (volatile!)
-            let queue_enable_ptr = addr_of_mut!((*self.common).queue_enable);
-            write_volatile(queue_enable_ptr, 1u16);
-
-            // Read notify offset (volatile!)
-            let notify_off_ptr = addr_of_mut!((*self.common).queue_notify_off);
-            self.queue.notify_off = read_volatile(notify_off_ptr);
-
-            fut_printf(b"[virtio-blk] queue setup: desc_phys=0x%lx avail_phys=0x%lx used_phys=0x%lx\n\0".as_ptr(),
+            // Write queue addresses as 64-bit values (like virtio-gpu)
+            fut_printf(b"[virtio-blk] queue addrs: desc=0x%lx avail=0x%lx used=0x%lx\n\0".as_ptr(),
                 self.queue.desc_phys, self.queue.avail_phys, self.queue.used_phys);
 
-            /* Verify queue addresses were written correctly (use volatile reads!) */
-            let readback_select = read_volatile(queue_select_ptr);
-            let readback_desc_lo = read_volatile(desc_lo_ptr);
-            let readback_desc_hi = read_volatile(desc_hi_ptr);
-            let readback_desc = ((readback_desc_hi as u64) << 32) | (readback_desc_lo as u64);
-            let readback_enabled = read_volatile(queue_enable_ptr);
-            fut_printf(b"[virtio-blk] readback: queue_select=%d desc=0x%lx enabled=%d\n\0".as_ptr(),
-                readback_select as u32, readback_desc, readback_enabled as u32);
+            // Write descriptor table address (64-bit write with barriers)
+            common_write64(self.common, VIRTIO_PCI_COMMON_Q_DESCLO, self.queue.desc_phys);
 
-            if readback_desc != self.queue.desc_phys {
-                fut_printf(b"[virtio-blk] ERROR: desc address mismatch! wrote=0x%lx read=0x%lx\n\0".as_ptr(),
-                    self.queue.desc_phys, readback_desc);
-            }
+            // Write available ring address (64-bit write with barriers)
+            common_write64(self.common, VIRTIO_PCI_COMMON_Q_AVAILLO, self.queue.avail_phys);
+
+            // Write used ring address (64-bit write with barriers)
+            common_write64(self.common, VIRTIO_PCI_COMMON_Q_USEDLO, self.queue.used_phys);
+
+            // Enable the queue
+            common_write16(self.common, VIRTIO_PCI_COMMON_Q_ENABLE, 1);
+
+            // Read notify offset
+            self.queue.notify_off = common_read16(self.common, VIRTIO_PCI_COMMON_Q_NOTIFYOFF);
+
+            fut_printf(b"[virtio-blk] queue setup complete (notify_off=%d)\n\0".as_ptr(),
+                self.queue.notify_off as u32);
         }
         Ok(())
     }

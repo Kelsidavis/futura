@@ -252,6 +252,22 @@ void fut_sched_add_thread(fut_thread_t *thread) {
 
     fut_spinlock_acquire(&target_percpu->queue_lock);
 
+    // Check if thread is already in the ready queue by walking the list
+    // NOTE: Can't use thread->next/prev check because those are also used for task thread list
+    fut_thread_t *walker = target_percpu->ready_queue_head;
+    while (walker) {
+        if (walker == thread) {
+#if defined(__aarch64__)
+            extern void fut_printf(const char *, ...);
+            fut_printf("[SCHED-WARN] Thread tid=%llu @%p already in ready queue, skipping duplicate add\n",
+                       (unsigned long long)thread->tid, (void*)thread);
+#endif
+            fut_spinlock_release(&target_percpu->queue_lock);
+            return;
+        }
+        walker = walker->next;
+    }
+
     // Simple FIFO - insert at tail
     thread->next = NULL;
     thread->prev = target_percpu->ready_queue_tail;
@@ -461,6 +477,20 @@ static fut_thread_t *select_next_thread(void) {
 
     fut_thread_t *next = percpu->ready_queue_head;
 
+#if defined(__aarch64__)
+    // Debug: Show all threads in ready queue
+    extern void fut_printf(const char *, ...);
+    fut_printf("[SELECT] Ready queue head=%p, count=%u\n", (void*)next, percpu->ready_count);
+    fut_thread_t *walker = next;
+    int walk_count = 0;
+    while (walker && walk_count < 10) {
+        fut_printf("[SELECT]   Thread @%p tid=%llu state=%d priority=%d next=%p\n",
+                   (void*)walker, (unsigned long long)walker->tid, walker->state, walker->priority, (void*)walker->next);
+        walker = walker->next;
+        walk_count++;
+    }
+#endif
+
     // If no ready threads locally, try work-stealing
     if (!next) {
         fut_spinlock_release(&percpu->queue_lock);
@@ -505,17 +535,28 @@ void fut_schedule(void) {
     fut_thread_t *prev = fut_thread_current();
     fut_thread_t *next = select_next_thread();
 
+#if defined(__aarch64__)
+    extern void fut_printf(const char *, ...);
+    fut_printf("[SCHED] fut_schedule called: prev=%p next=%p\n", (void*)prev, (void*)next);
+#endif
+
     // Get per-CPU data for idle thread check
     fut_percpu_t *percpu = fut_percpu_get();
     fut_thread_t *idle = percpu ? percpu->idle_thread : NULL;
 
     if (!next) {
         next = idle;
+#if defined(__aarch64__)
+        fut_printf("[SCHED] No next thread, using idle=%p\n", (void*)idle);
+#endif
     }
 
     // If scheduler not initialized yet (no idle thread), just return
     // This can happen if timer IRQs fire during early boot
     if (!next) {
+#if defined(__aarch64__)
+        fut_printf("[SCHED] No threads available, returning early\n");
+#endif
         return;
     }
 
@@ -554,12 +595,22 @@ void fut_schedule(void) {
         fut_mm_t *prev_mm = (prev && prev->task) ? fut_task_get_mm(prev->task) : NULL;
         fut_mm_t *next_mm = (next && next->task) ? fut_task_get_mm(next->task) : NULL;
 
+#if defined(__aarch64__)
+        fut_printf("[SCHED-MM] prev_mm=%p next_mm=%p\n", (void*)prev_mm, (void*)next_mm);
+#endif
+
         // Only set current_thread if we're actually going to context switch
         fut_thread_set_current(next);
 
         // Switch MM if needed
         if (prev_mm != next_mm) {
+#if defined(__aarch64__)
+            fut_printf("[SCHED-MM] About to call fut_mm_switch(next_mm=%p)\n", (void*)next_mm);
+#endif
             fut_mm_switch(next_mm);
+#if defined(__aarch64__)
+            fut_printf("[SCHED-MM] fut_mm_switch returned\n");
+#endif
         }
 
         if (in_irq && prev && fut_current_frame) {
@@ -568,12 +619,20 @@ void fut_schedule(void) {
             fut_switch_context_irq(prev, next, fut_current_frame);
         } else {
             // Regular cooperative context switch (uses RET)
+#if defined(__aarch64__)
+            fut_printf("[SCHED] About to context switch: prev=%p next=%p next->tid=%llu next->context.pc=%llx\n",
+                       (void*)prev, (void*)next, (unsigned long long)(next ? next->tid : 0),
+                       (unsigned long long)(next ? next->context.pc : 0));
+#endif
             if (prev) {
                 fut_switch_context(&prev->context, &next->context);
             } else {
                 // First time - just jump to thread
                 fut_switch_context(NULL, &next->context);
             }
+#if defined(__aarch64__)
+            fut_printf("[SCHED] Context switch returned! This should never happen!\n");
+#endif
         }
     }
 }

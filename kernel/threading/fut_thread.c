@@ -11,6 +11,7 @@
 #include "../../include/kernel/fut_task.h"
 #include "../../include/kernel/fut_sched.h"
 #include "../../include/kernel/fut_memory.h"
+#include "../../include/kernel/fut_mm.h"
 #include "../../include/kernel/fut_percpu.h"
 #if defined(__x86_64__)
 #include <platform/x86_64/gdt.h>
@@ -184,6 +185,11 @@ fut_thread_t *fut_thread_create(
         .wait_next = NULL
     };
 
+#if defined(__aarch64__)
+    fut_printf("[THREAD-CREATE] tid=%llu priority=%d entry=%p thread=%p\n",
+               (unsigned long long)new_tid, priority, entry, (void*)thread);
+#endif
+
     // Calculate stack top (grows downward)
     void *stack_top = (void *)((uintptr_t)stack + aligned_stack_size);
 
@@ -233,6 +239,15 @@ fut_thread_t *fut_thread_create(
     extern void fut_printf(const char *, ...);
     fut_printf("[THREAD-CREATE] ARM64 thread %llu: entry=%p arg=%p\n",
                (unsigned long long)thread->tid, (void*)entry, arg);
+
+    // Set TTBR0_EL1 from task's memory manager for user-space page table
+    if (task->mm) {
+        ctx->ttbr0_el1 = task->mm->ctx.ttbr0_el1;
+        fut_printf("[THREAD-CREATE] Set ttbr0_el1=%llx from task mm\n",
+                   (unsigned long long)ctx->ttbr0_el1);
+    } else {
+        ctx->ttbr0_el1 = 0;  // No page table for kernel-only tasks
+    }
 
     // FPU state already zeroed by memset above
 #endif

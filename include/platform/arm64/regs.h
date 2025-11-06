@@ -48,6 +48,9 @@ typedef struct fut_cpu_context {
     /* Processor state */
     uint64_t pstate;            /* Processor state (PSTATE/CPSR) */
 
+    /* User-space page table base (for per-process address spaces) */
+    uint64_t ttbr0_el1;         /* TTBR0_EL1 value for user page table */
+
     /* FPU/SIMD state (optional, can be lazy-saved) */
     uint64_t fpu_state[64];     /* v0-v31 (128-bit each = 2x64-bit) */
     uint32_t fpsr;              /* Floating-point status register */

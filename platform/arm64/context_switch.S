@@ -72,6 +72,11 @@ fut_switch_context:
     ldr     x2, [x1, #128]            /* Load PSTATE from offset 128 */
     msr     spsr_el1, x2              /* Set saved processor state */
 
+    /* Load user page table base into TTBR0_EL1 */
+    ldr     x2, [x1, #136]            /* Load ttbr0_el1 from offset 136 */
+    msr     ttbr0_el1, x2             /* Set user page table base */
+    isb                               /* Instruction barrier to ensure TTBR0 is loaded */
+
     /* Restore SP_EL0 (user stack pointer) */
     ldr     x2, [x1, #112]            /* Load SP from offset 112 */
     msr     sp_el0, x2                /* Set user stack pointer */

@@ -1,11 +1,22 @@
 # ARM64 Port Status
 
-**Last Updated**: 2025-11-05
-**Status**: ✅ **USERLAND LAUNCHING!** Init binary staging complete, awaiting MMU enablement 🎉
+**Last Updated**: 2025-11-06
+**Status**: ✅ **ERET TO EL0 ACHIEVED!** User-mode transition executes successfully, awaiting MMU enablement 🎉
 
 ## Overview
 
-The ARM64 kernel port has achieved **complete kernel threading and init binary staging**! All kernel threads run correctly, the scheduler dispatches threads properly, and the init binary successfully stages to the filesystem and launches. The remaining blocker is MMU enablement for EL0 (user mode) execution.
+The ARM64 kernel port has achieved **successful ERET to user mode (EL0)**! All kernel threads run correctly, the scheduler dispatches threads properly, the init binary stages and launches, and the system successfully transitions to EL0 via the ERET instruction. The final blocker is MMU enablement for full user-space execution.
+
+## Latest Progress (2025-11-06)
+
+### ✅ User-Mode Transition Working
+- **Scheduler fixes**: Fixed cooperative scheduling to use continuous idle loop
+- **Context switching**: Init thread (tid=6) successfully scheduled and executed
+- **ERET executed**: System transitions to EL0 without errors
+- **TTBR0_EL1**: User page table base (0x41825000) properly set in context
+- **MMU workaround**: Bypassed fut_vmem_switch() hang for MMU-disabled mode
+
+See `docs/SESSION_2025_11_06.md` for detailed implementation notes.
 
 ## What Works ✅
 

@@ -811,7 +811,16 @@ void fut_mm_switch(fut_mm_t *mm) {
     }
 
     active_mm = mm;
+    // NOTE: ARM64 MMU is currently disabled. The context switch code in
+    // context_switch.S loads TTBR0_EL1 directly before ERET to user mode.
+    // Don't call fut_vmem_switch() until MMU is enabled.
+    // TODO: Remove this once ARM64 MMU is enabled
+    // fut_vmem_switch(&mm->ctx);
+#if defined(__aarch64__)
+    fut_printf("[MM-SWITCH] ARM64: Skipping fut_vmem_switch (MMU disabled)\n");
+#else
     fut_vmem_switch(&mm->ctx);
+#endif
 }
 
 static fut_mm_t *mm_from_current_thread(void) {

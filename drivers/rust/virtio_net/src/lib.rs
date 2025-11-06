@@ -38,7 +38,6 @@ unsafe extern "C" {
         stack_size: usize,
         priority: i32,
     ) -> *mut FutThread;
-    fn fut_sched_add_thread(thread: *mut FutThread);
 }
 
 // Error codes
@@ -907,7 +906,7 @@ pub extern "C" fn virtio_net_init() -> FutStatus {
                     );
 
                     if !rx_thread.is_null() {
-                        fut_sched_add_thread(rx_thread);
+                        // Note: fut_thread_create() already adds thread to scheduler
                         log("virtio-net: RX polling thread created");
                     } else {
                         log("virtio-net: WARNING: Failed to create RX thread");

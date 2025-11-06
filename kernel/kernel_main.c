@@ -1492,11 +1492,12 @@ void fut_kernel_main(void) {
     /* Enable interrupts and start scheduling */
     fut_printf("[INIT] ARM64: Enabling interrupts and starting scheduler...\n");
     fut_enable_interrupts();
-    fut_schedule();
 
-    /* Should never reach here */
-    fut_printf("[PANIC] ARM64 scheduler returned unexpectedly!\n");
-    fut_platform_panic("ARM64 scheduler returned to kernel_main");
+    /* Enter idle loop (cooperative scheduler will pick up threads) */
+    /* Don't use WFI - keep scheduler cycling so other threads can run! */
+    for (;;) {
+        fut_schedule();
+    }
 #else
     /* Other platforms: enter idle loop after late init */
     arch_idle_loop();

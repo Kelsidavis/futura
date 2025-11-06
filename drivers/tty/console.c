@@ -124,8 +124,15 @@ void fut_console_init(void) {
     tty_ldisc_init(&console_ldisc, console_echo, console_signal);
 
     /* Register character device - do this early, before scheduler */
-    (void)chrdev_register(CONSOLE_MAJOR, CONSOLE_MINOR, &console_fops, "console", NULL);
-    (void)devfs_create_chr("/dev/console", CONSOLE_MAJOR, CONSOLE_MINOR);
+    int ret1 = chrdev_register(CONSOLE_MAJOR, CONSOLE_MINOR, &console_fops, "console", NULL);
+    int ret2 = devfs_create_chr("/dev/console", CONSOLE_MAJOR, CONSOLE_MINOR);
+
+    if (ret1 < 0 || ret2 < 0) {
+        fut_printf("[CONSOLE] ERROR: Failed to register device (chrdev=%d devfs=%d)\n", ret1, ret2);
+    } else {
+        fut_printf("[CONSOLE] Successfully registered /dev/console (major=%d minor=%d)\n",
+                   CONSOLE_MAJOR, CONSOLE_MINOR);
+    }
 
     fut_printf("[CONSOLE] Initialized with line discipline (canonical mode, echo enabled)\n");
     fut_printf("[CONSOLE] Input thread will be started after scheduler initialization\n");

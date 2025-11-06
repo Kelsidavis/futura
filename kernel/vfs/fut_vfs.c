@@ -1057,10 +1057,7 @@ void vfs_close_fd_in_task(struct fut_task *task, int fd) {
 static int try_open_chrdev(const char *path, int flags) {
     unsigned major = 0;
     unsigned minor = 0;
-    extern void fut_printf(const char *, ...);
-    fut_printf("[TRY-CHRDEV] Attempting to open path='%s' as chrdev\n", path);
     int devfs_ret = devfs_lookup_chr(path, &major, &minor);
-    fut_printf("[TRY-CHRDEV] devfs_lookup_chr returned %d (major=%u minor=%u)\n", devfs_ret, major, minor);
     if (devfs_ret != 0) {
         return -ENOENT;
     }
@@ -1243,9 +1240,6 @@ int fut_vfs_open(const char *path, int flags, int mode) {
     int ret;
     bool created = false;
 
-    extern void fut_printf(const char *, ...);
-    fut_printf("[VFS-OPEN] path='%s' flags=0x%x mode=0%o\n", path, flags, mode);
-
     /* Get current task for per-task FD table */
     fut_task_t *task = fut_task_current();
     if (!task) {
@@ -1259,7 +1253,6 @@ int fut_vfs_open(const char *path, int flags, int mode) {
 
     /* Lookup vnode */
     ret = lookup_vnode(path, &vnode);
-    fut_printf("[VFS-OPEN] lookup_vnode returned %d\n", ret);
     if (ret < 0) {
         /* If O_CREAT is set and parent exists, create new file */
         if ((flags & O_CREAT) && (ret == -ENOENT || ret == -2)) {

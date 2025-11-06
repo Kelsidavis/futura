@@ -9,6 +9,8 @@
 
 #include <stddef.h>
 
+extern void fut_printf(const char *fmt, ...);
+
 typedef struct {
     char *path;
     unsigned major;

@@ -127,7 +127,12 @@ void fut_sched_init(void) {
     // Store idle thread in per-CPU data
     percpu->idle_thread = idle_thread;
 
-    fut_printf("[SCHED] Scheduler initialized for CPU %u\n", percpu->cpu_id);
+    // Set idle thread as current thread so kernel_main has a task context
+    // This allows opening /dev/console and other operations that need a task
+    fut_thread_set_current(idle_thread);
+    idle_thread->state = FUT_THREAD_RUNNING;
+
+    fut_printf("[SCHED] Scheduler initialized for CPU %u (current thread set to idle)\n", percpu->cpu_id);
 }
 
 /**

@@ -1164,6 +1164,12 @@ void fut_kernel_main(void) {
     fut_sched_init();
     fut_printf("[INIT] Scheduler initialized with idle thread\n");
 
+#if defined(__aarch64__)
+    /* ARM64: Initialize boot thread so per-CPU has a current thread */
+    extern void arm64_init_boot_thread(void);
+    arm64_init_boot_thread();
+#endif
+
     /* ========================================
      *   Start Console Input Thread
      * ======================================== */

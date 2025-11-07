@@ -434,6 +434,148 @@ int main(int argc, char **argv) {
         sys_write(1, rmdir_fail, msg_len);
     }
 
+    /* TEST: IPC syscalls - pipe(), dup(), dup2()
+     * This tests inter-process communication primitives and FD duplication.
+     */
+    const char *test_ipc = "[INIT-USER] Testing IPC syscalls (pipe/dup/dup2)...\n";
+    msg_len = 0; while (test_ipc[msg_len]) msg_len++;
+    sys_write(1, test_ipc, msg_len);
+
+    /* Test pipe() - create a communication channel */
+    int pipefd[2];
+    long pipe_ret = sys_pipe_call(pipefd);
+    if (pipe_ret == 0) {
+        const char *pipe_ok = "[INIT-USER] ✓ pipe() succeeded, read_fd=";
+        msg_len = 0; while (pipe_ok[msg_len]) msg_len++;
+        sys_write(1, pipe_ok, msg_len);
+
+        /* Print read_fd (pipefd[0]) */
+        char fd_buf[16];
+        long fd_idx = 0;
+        long read_fd_val = pipefd[0];
+        if (read_fd_val == 0) {
+            fd_buf[fd_idx++] = '0';
+        } else {
+            long divisor = 1;
+            long temp = read_fd_val;
+            while (temp >= 10) { temp /= 10; divisor *= 10; }
+            while (divisor > 0) {
+                fd_buf[fd_idx++] = '0' + (read_fd_val / divisor) % 10;
+                divisor /= 10;
+            }
+        }
+        sys_write(1, fd_buf, fd_idx);
+        sys_write(1, ", write_fd=", 11);
+
+        /* Print write_fd (pipefd[1]) */
+        fd_idx = 0;
+        long write_fd_val = pipefd[1];
+        if (write_fd_val == 0) {
+            fd_buf[fd_idx++] = '0';
+        } else {
+            long divisor = 1;
+            long temp = write_fd_val;
+            while (temp >= 10) { temp /= 10; divisor *= 10; }
+            while (divisor > 0) {
+                fd_buf[fd_idx++] = '0' + (write_fd_val / divisor) % 10;
+                divisor /= 10;
+            }
+        }
+        sys_write(1, fd_buf, fd_idx);
+        sys_write(1, "\n", 1);
+
+        /* Write test data to pipe */
+        const char *pipe_msg = "PIPE_TEST";
+        long write_ret = sys_write(pipefd[1], pipe_msg, 9);
+        if (write_ret == 9) {
+            const char *write_ok = "[INIT-USER] ✓ write() to pipe succeeded\n";
+            msg_len = 0; while (write_ok[msg_len]) msg_len++;
+            sys_write(1, write_ok, msg_len);
+
+            /* Read test data from pipe */
+            char pipe_buf[16];
+            long read_ret = sys_read(pipefd[0], pipe_buf, 9);
+            if (read_ret == 9) {
+                /* Verify data matches */
+                int match = 1;
+                for (int i = 0; i < 9; i++) {
+                    if (pipe_buf[i] != pipe_msg[i]) {
+                        match = 0;
+                        break;
+                    }
+                }
+
+                if (match) {
+                    const char *read_ok = "[INIT-USER] ✓ read() from pipe succeeded, data verified\n";
+                    msg_len = 0; while (read_ok[msg_len]) msg_len++;
+                    sys_write(1, read_ok, msg_len);
+                } else {
+                    const char *verify_fail = "[INIT-USER] ✗ pipe data mismatch\n";
+                    msg_len = 0; while (verify_fail[msg_len]) msg_len++;
+                    sys_write(1, verify_fail, msg_len);
+                }
+            } else {
+                const char *read_fail = "[INIT-USER] ✗ read() from pipe failed\n";
+                msg_len = 0; while (read_fail[msg_len]) msg_len++;
+                sys_write(1, read_fail, msg_len);
+            }
+        }
+
+        /* Test dup() - duplicate file descriptor to lowest available */
+        long dup_fd = sys_dup_call(pipefd[0]);
+        if (dup_fd >= 0) {
+            const char *dup_ok = "[INIT-USER] ✓ dup() succeeded, new_fd=";
+            msg_len = 0; while (dup_ok[msg_len]) msg_len++;
+            sys_write(1, dup_ok, msg_len);
+
+            /* Print dup_fd */
+            fd_idx = 0;
+            if (dup_fd == 0) {
+                fd_buf[fd_idx++] = '0';
+            } else {
+                long divisor = 1;
+                long temp = dup_fd;
+                while (temp >= 10) { temp /= 10; divisor *= 10; }
+                while (divisor > 0) {
+                    fd_buf[fd_idx++] = '0' + (dup_fd / divisor) % 10;
+                    divisor /= 10;
+                }
+            }
+            sys_write(1, fd_buf, fd_idx);
+            sys_write(1, "\n", 1);
+
+            /* Close the dup'd fd */
+            sys_close(dup_fd);
+        } else {
+            const char *dup_fail = "[INIT-USER] ✗ dup() failed\n";
+            msg_len = 0; while (dup_fail[msg_len]) msg_len++;
+            sys_write(1, dup_fail, msg_len);
+        }
+
+        /* Test dup2() - duplicate to specific fd number (10) */
+        long dup2_ret = sys_dup2_call(pipefd[0], 10);
+        if (dup2_ret == 10) {
+            const char *dup2_ok = "[INIT-USER] ✓ dup2() succeeded, newfd=10\n";
+            msg_len = 0; while (dup2_ok[msg_len]) msg_len++;
+            sys_write(1, dup2_ok, msg_len);
+
+            /* Close fd 10 */
+            sys_close(10);
+        } else {
+            const char *dup2_fail = "[INIT-USER] ✗ dup2() failed\n";
+            msg_len = 0; while (dup2_fail[msg_len]) msg_len++;
+            sys_write(1, dup2_fail, msg_len);
+        }
+
+        /* Clean up pipe fds */
+        sys_close(pipefd[0]);
+        sys_close(pipefd[1]);
+    } else {
+        const char *pipe_fail = "[INIT-USER] ✗ pipe() failed\n";
+        msg_len = 0; while (pipe_fail[msg_len]) msg_len++;
+        sys_write(1, pipe_fail, msg_len);
+    }
+
     const char *all_tests_ok = "[INIT-USER] All syscall tests passed! Entering main loop...\n";
     msg_len = 0; while (all_tests_ok[msg_len]) msg_len++;
     sys_write(1, all_tests_ok, msg_len);

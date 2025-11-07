@@ -262,4 +262,17 @@ static inline long sys_readlink_call(const char *path, char *buf, long bufsiz) {
     return sys_call3(SYS_readlink, (long)path, (long)buf, bufsiz);
 }
 
+/* IPC and file descriptor syscall veneers */
+static inline long sys_pipe_call(int pipefd[2]) {
+    return sys_call1(SYS_pipe, (long)pipefd);
+}
+
+static inline long sys_dup_call(int oldfd) {
+    return sys_call1(SYS_dup, (long)oldfd);
+}
+
+static inline long sys_dup2_call(int oldfd, int newfd) {
+    return sys_call2(SYS_dup2, (long)oldfd, (long)newfd);
+}
+
 /* Note: setpgrp and setpgid syscall veneers not provided (syscall numbers conflict) */

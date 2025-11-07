@@ -821,10 +821,13 @@ void fut_platform_early_init(uint32_t boot_magic, void *boot_info) {
     fut_serial_puts("[INIT] Initializing GICv2...\n");
     fut_gic_init();
 
-    /* Install exception vectors BEFORE enabling interrupts */
-    extern void arm64_install_exception_vectors(void);
-    fut_serial_puts("[INIT] Installing exception vectors...\n");
-    arm64_install_exception_vectors();
+    /* Install exception vectors BEFORE enabling interrupts
+     * TEMPORARY: Disabled due to TTBR0/TTBR1 translation bug (see SESSION_2025_11_06_EXCEPTION_BUG.md)
+     * Keep using boot exception vectors at 0x40000800 which are always accessible.
+     */
+    // extern void arm64_install_exception_vectors(void);
+    // fut_serial_puts("[INIT] Installing exception vectors...\n");
+    // arm64_install_exception_vectors();
 
     /* Initialize timer */
     fut_serial_puts("[INIT] Initializing ARM Generic Timer...\n");

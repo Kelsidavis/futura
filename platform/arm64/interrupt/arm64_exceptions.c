@@ -35,6 +35,8 @@ void arm64_exception_dispatch(fut_interrupt_frame_t *frame) {
     uint64_t esr = frame->esr;
     uint32_t ec = (esr >> 26) & 0x3F;  /* Exception Class [31:26] */
 
+    fut_printf("[EXCEPTION] EC=0x%02x PC=0x%llx ESR=0x%llx\n", ec, frame->pc, esr);
+
     /* Dispatch by exception type */
     switch (ec) {
         /* Synchronous exceptions */
@@ -97,6 +99,8 @@ void arm64_svc_handler(fut_interrupt_frame_t *frame) {
     uint64_t arg4 = frame->x[3];
     uint64_t arg5 = frame->x[4];
     uint64_t arg6 = frame->x[5];
+
+    fut_printf("[SVC] syscall=%llu fd=%llu buf=%llx len=%llu\n", syscall_num, arg1, arg2, arg3);
 
     /* Call syscall dispatcher */
     extern int64_t posix_syscall_dispatch(uint64_t syscall_num,

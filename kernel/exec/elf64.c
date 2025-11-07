@@ -1064,6 +1064,45 @@ static int exec_copy_to_user(fut_mm_t *mm, uint64_t dest, const void *src, size_
         /* Copy chunk to this page */
         memcpy(virt, src_bytes, chunk_size);
 
+        /* Debug: verify data was written correctly */
+        if (vaddr == 0x400000) {
+            uint32_t *first_insn = (uint32_t *)virt;
+            extern void fut_printf(const char *, ...);
+            fut_printf("[COPY-DEBUG] After memcpy: virt=%p vaddr=0x%llx phys=0x%llx first_4bytes=0x%08x\n",
+                      virt, (unsigned long long)vaddr, (unsigned long long)phys, (unsigned int)*first_insn);
+        }
+
+        /* ARM64: Clean data cache and invalidate instruction cache for code pages
+         * This is critical because ARM64 has separate instruction and data caches.
+         * After writing instructions via data cache, we must:
+         * 1. DC CVAU - Clean data cache to point of unification (write to memory)
+         * 2. IC IVAU - Invalidate instruction cache (discard stale instructions)
+         * 3. ISB - Instruction synchronization barrier (wait for completion)
+         *
+         * IMPORTANT: Must use the KERNEL virtual address where we wrote (virt),
+         * not the user virtual address (vaddr), since we're in kernel mode!
+         */
+        uint8_t *kern_start = (uint8_t *)virt;
+        uint8_t *kern_end = kern_start + chunk_size;
+        for (uint8_t *addr = kern_start; addr < kern_end; addr += 64) {
+            __asm__ volatile("dc cvau, %0" :: "r"(addr) : "memory");
+        }
+        __asm__ volatile("dsb ish" ::: "memory");  /* Ensure DC completes */
+
+        for (uint8_t *addr = kern_start; addr < kern_end; addr += 64) {
+            __asm__ volatile("ic ivau, %0" :: "r"(addr) : "memory");
+        }
+        __asm__ volatile("dsb ish" ::: "memory");  /* Ensure IC completes */
+        __asm__ volatile("isb" ::: "memory");      /* Synchronize pipeline */
+
+        /* Debug: verify data is still correct after cache ops */
+        if (vaddr - chunk_size <= 0x400000 && vaddr > 0x400000) {
+            uint32_t *first_insn = (uint32_t *)virt;
+            extern void fut_printf(const char *, ...);
+            fut_printf("[COPY-DEBUG] After cache ops: virt=%p vaddr=0x%llx first_4bytes=0x%08x\n",
+                      virt, (unsigned long long)vaddr, (unsigned int)*first_insn);
+        }
+
         /* Advance pointers */
         src_bytes += chunk_size;
         vaddr += chunk_size;

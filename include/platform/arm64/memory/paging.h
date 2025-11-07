@@ -509,3 +509,46 @@ bool fut_vmem_verify(fut_vmem_context_t *ctx);
 #define PTE_USER                PTE_AF_BIT      /* User accessible (use AF_BIT as marker, set during translation) */
 #define PTE_NX                  PTE_UXN_BIT     /* No-execute */
 #define PTE_PHYS_ADDR_MASK      0x0000FFFFFFFFF000ULL  /* Physical address bits [47:12] */
+
+/**
+ * Extract compatibility flags from ARM64 hardware PTE.
+ * Converts AP bits [7:6] back to PTE_WRITABLE for architecture-generic code.
+ * Used by sys_fork.c and other generic memory management code.
+ *
+ * @param pte Hardware PTE entry
+ * @return Compatibility flags (PTE_PRESENT | PTE_WRITABLE | PTE_USER | PTE_NX)
+ */
+static inline uint64_t pte_extract_flags(uint64_t pte) {
+    uint64_t flags = 0;
+
+    /* Check if page is present/valid */
+    if (pte & PTE_VALID) {
+        flags |= PTE_PRESENT;
+    }
+
+    /* Extract AP bits [7:6] to determine writability
+     * AP[1:0] encoding:
+     *   0b00 (0): EL1 read/write, EL0 none (kernel-only writable)
+     *   0b01 (1): EL1/EL0 read/write (user writable)
+     *   0b10 (2): EL1 read-only, EL0 none (kernel-only read-only)
+     *   0b11 (3): EL1/EL0 read-only (user read-only)
+     *
+     * If AP[1] is clear (bit 7), page is writable; if set, read-only
+     */
+    uint64_t ap = (pte >> PTE_AP_SHIFT) & 0x3;
+    if ((ap & 0x2) == 0) {  /* AP[1] == 0 means writable (RW) */
+        flags |= PTE_WRITABLE;
+    }
+
+    /* User-accessible if AP[0] is set (bit 6) */
+    if (ap & 0x1) {  /* AP[0] == 1 means user-accessible */
+        flags |= PTE_USER;
+    }
+
+    /* No-execute if UXN bit is set */
+    if (pte & PTE_UXN_BIT) {
+        flags |= PTE_NX;
+    }
+
+    return flags;
+}

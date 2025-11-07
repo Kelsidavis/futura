@@ -90,6 +90,18 @@
 #define PTE_PHYS_ADDR_MASK      0x000FFFFFFFFFF000ULL
 #define PTE_FLAGS_MASK          (~PTE_PHYS_ADDR_MASK)
 
+/**
+ * Extract compatibility flags from x86_64 hardware PTE.
+ * On x86_64, the flags are already directly encoded in the PTE bits.
+ * This function exists for API compatibility with ARM64.
+ *
+ * @param pte Hardware PTE entry
+ * @return Compatibility flags (PTE_PRESENT | PTE_WRITABLE | PTE_USER | PTE_NX)
+ */
+static inline uint64_t pte_extract_flags(uint64_t pte) {
+    return pte & (PTE_PRESENT | PTE_WRITABLE | PTE_USER | PTE_NX);
+}
+
 /* ============================================================
  *   Page Table Structure (4-Level Hierarchy)
  * ============================================================ */

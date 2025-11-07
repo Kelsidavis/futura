@@ -389,7 +389,7 @@ static fut_mm_t *clone_mm(fut_mm_t *parent_mm) {
             memcpy(child_page, parent_page, FUT_PAGE_SIZE);
 
             phys_addr_t child_phys = pmap_virt_to_phys((uintptr_t)child_page);
-            uint64_t flags = pte & (PTE_PRESENT | PTE_WRITABLE | PTE_USER | PTE_NX);
+            uint64_t flags = pte_extract_flags(pte);
 
             if (pmap_map_user(child_ctx, page, child_phys, FUT_PAGE_SIZE, flags) != 0) {
                 fut_pmm_free_page(child_page);
@@ -424,7 +424,7 @@ static fut_mm_t *clone_mm(fut_mm_t *parent_mm) {
             memcpy(child_page, parent_page, FUT_PAGE_SIZE);
 
             phys_addr_t child_phys = pmap_virt_to_phys((uintptr_t)child_page);
-            uint64_t flags = pte & (PTE_PRESENT | PTE_WRITABLE | PTE_USER | PTE_NX);
+            uint64_t flags = pte_extract_flags(pte);
 
             if (pmap_map_user(child_ctx, page, child_phys, FUT_PAGE_SIZE, flags) != 0) {
                 fut_pmm_free_page(child_page);
@@ -460,7 +460,7 @@ static fut_mm_t *clone_mm(fut_mm_t *parent_mm) {
 
             if (is_cow) {
                 /* COW: Share the page and mark read-only */
-                uint64_t flags = pte & (PTE_PRESENT | PTE_USER | PTE_NX);
+                uint64_t flags = pte_extract_flags(pte);
                 /* Remove writable flag to trigger COW on write */
                 flags &= ~PTE_WRITABLE;
 
@@ -491,7 +491,7 @@ static fut_mm_t *clone_mm(fut_mm_t *parent_mm) {
 
                 /* Map in child with same permissions */
                 phys_addr_t child_phys = pmap_virt_to_phys((uintptr_t)child_page);
-                uint64_t flags = pte & (PTE_PRESENT | PTE_WRITABLE | PTE_USER | PTE_NX);
+                uint64_t flags = pte_extract_flags(pte);
 
                 if (pmap_map_user(child_ctx, page, child_phys, FUT_PAGE_SIZE, flags) != 0) {
                     fut_pmm_free_page(child_page);

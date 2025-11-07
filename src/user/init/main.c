@@ -458,6 +458,119 @@ int main(int argc, char **argv) {
         sys_write(1, sleep_fail, msg_len);
     }
 
+    /* TEST: Process management syscalls - fork(), wait4()
+     * This tests process creation and parent-child synchronization.
+     * Note: We skip execve() test since it would replace init process.
+     * We run this test BEFORE the IPC test to avoid pipe() FD issues.
+     */
+    const char *test_fork = "[INIT-USER] Testing process management (fork/wait4)...\n";
+    msg_len = 0; while (test_fork[msg_len]) msg_len++;
+    sys_write(1, test_fork, msg_len);
+
+    long fork_ret = sys_fork_call();
+    if (fork_ret < 0) {
+        /* Fork failed */
+        const char *fork_fail = "[INIT-USER] ✗ fork() failed\n";
+        msg_len = 0; while (fork_fail[msg_len]) msg_len++;
+        sys_write(1, fork_fail, msg_len);
+    } else if (fork_ret == 0) {
+        /* Child process */
+        const char *child_msg = "[INIT-USER-CHILD] Child process running, PID=";
+        msg_len = 0; while (child_msg[msg_len]) msg_len++;
+        sys_write(1, child_msg, msg_len);
+
+        /* Get and print child PID */
+        long child_pid = sys_getpid_call();
+        char child_pid_buf[16];
+        long child_pid_idx = 0;
+        if (child_pid == 0) {
+            child_pid_buf[child_pid_idx++] = '0';
+        } else {
+            long divisor = 1;
+            long temp = child_pid;
+            while (temp >= 10) { temp /= 10; divisor *= 10; }
+            while (divisor > 0) {
+                child_pid_buf[child_pid_idx++] = '0' + (child_pid / divisor) % 10;
+                divisor /= 10;
+            }
+        }
+        sys_write(1, child_pid_buf, child_pid_idx);
+        sys_write(1, "\n", 1);
+
+        /* Child exits with status 42 */
+        const char *child_exit = "[INIT-USER-CHILD] Child exiting with status 42\n";
+        msg_len = 0; while (child_exit[msg_len]) msg_len++;
+        sys_write(1, child_exit, msg_len);
+        sys_exit(42);
+
+        /* Should never reach here */
+        for (;;);
+    } else {
+        /* Parent process */
+        const char *fork_ok = "[INIT-USER] ✓ fork() succeeded, child_pid=";
+        msg_len = 0; while (fork_ok[msg_len]) msg_len++;
+        sys_write(1, fork_ok, msg_len);
+
+        /* Print child PID */
+        char fork_pid_buf[16];
+        long fork_pid_idx = 0;
+        if (fork_ret == 0) {
+            fork_pid_buf[fork_pid_idx++] = '0';
+        } else {
+            long divisor = 1;
+            long temp = fork_ret;
+            while (temp >= 10) { temp /= 10; divisor *= 10; }
+            while (divisor > 0) {
+                fork_pid_buf[fork_pid_idx++] = '0' + (fork_ret / divisor) % 10;
+                divisor /= 10;
+            }
+        }
+        sys_write(1, fork_pid_buf, fork_pid_idx);
+        sys_write(1, "\n", 1);
+
+        /* Wait for child to exit */
+        int child_status = 0;
+        long wait_ret = sys_wait4_call(fork_ret, &child_status, 0, 0);
+        if (wait_ret == fork_ret) {
+            const char *wait_ok = "[INIT-USER] ✓ wait4() succeeded, child exited with status ";
+            msg_len = 0; while (wait_ok[msg_len]) msg_len++;
+            sys_write(1, wait_ok, msg_len);
+
+            /* Extract exit status (upper 8 bits of child_status) */
+            long exit_code = (child_status >> 8) & 0xFF;
+            char status_buf[16];
+            long status_idx = 0;
+            if (exit_code == 0) {
+                status_buf[status_idx++] = '0';
+            } else {
+                long divisor = 1;
+                long temp = exit_code;
+                while (temp >= 10) { temp /= 10; divisor *= 10; }
+                while (divisor > 0) {
+                    status_buf[status_idx++] = '0' + (exit_code / divisor) % 10;
+                    divisor /= 10;
+                }
+            }
+            sys_write(1, status_buf, status_idx);
+            sys_write(1, "\n", 1);
+
+            /* Verify exit status is 42 */
+            if (exit_code == 42) {
+                const char *verify_ok = "[INIT-USER] ✓ Verified: child exit status correct (42)\n";
+                msg_len = 0; while (verify_ok[msg_len]) msg_len++;
+                sys_write(1, verify_ok, msg_len);
+            } else {
+                const char *verify_fail = "[INIT-USER] ✗ Child exit status mismatch\n";
+                msg_len = 0; while (verify_fail[msg_len]) msg_len++;
+                sys_write(1, verify_fail, msg_len);
+            }
+        } else {
+            const char *wait_fail = "[INIT-USER] ✗ wait4() failed\n";
+            msg_len = 0; while (wait_fail[msg_len]) msg_len++;
+            sys_write(1, wait_fail, msg_len);
+        }
+    }
+
     /* TEST: IPC syscalls - pipe(), dup(), dup2()
      * This tests inter-process communication primitives and FD duplication.
      */

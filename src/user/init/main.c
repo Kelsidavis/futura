@@ -664,6 +664,97 @@ int main(int argc, char **argv) {
     cred_buf[cred_idx++] = '\n';
     sys_write(1, cred_buf, cred_idx);
 
+    /* TEST: Process group syscalls - getppid(), getpgrp(), getsid(), setsid()
+     * This tests process group and session management.
+     */
+    const char *test_pgrp = "[INIT-USER] Testing process group syscalls...\n";
+    msg_len = 0; while (test_pgrp[msg_len]) msg_len++;
+    sys_write(1, test_pgrp, msg_len);
+
+    /* Get parent process ID */
+    long ppid = sys_getppid_call();
+    const char *ppid_msg = "[INIT-USER] ✓ getppid() = ";
+    msg_len = 0; while (ppid_msg[msg_len]) msg_len++;
+    sys_write(1, ppid_msg, msg_len);
+
+    /* Print ppid */
+    char pgrp_buf[64];
+    long pgrp_idx = 0;
+    if (ppid == 0) {
+        pgrp_buf[pgrp_idx++] = '0';
+    } else {
+        long divisor = 1;
+        while (divisor * 10 <= ppid) divisor *= 10;
+        while (divisor > 0) {
+            pgrp_buf[pgrp_idx++] = '0' + ((ppid / divisor) % 10);
+            divisor /= 10;
+        }
+    }
+    pgrp_buf[pgrp_idx++] = '\n';
+    sys_write(1, pgrp_buf, pgrp_idx);
+
+    /* Get process group ID */
+    long pgrp = sys_getpgrp_call();
+    const char *pgrp_msg = "[INIT-USER] ✓ getpgrp() = ";
+    msg_len = 0; while (pgrp_msg[msg_len]) msg_len++;
+    sys_write(1, pgrp_msg, msg_len);
+
+    pgrp_idx = 0;
+    if (pgrp == 0) {
+        pgrp_buf[pgrp_idx++] = '0';
+    } else {
+        long divisor = 1;
+        while (divisor * 10 <= pgrp) divisor *= 10;
+        while (divisor > 0) {
+            pgrp_buf[pgrp_idx++] = '0' + ((pgrp / divisor) % 10);
+            divisor /= 10;
+        }
+    }
+    pgrp_buf[pgrp_idx++] = '\n';
+    sys_write(1, pgrp_buf, pgrp_idx);
+
+    /* Get session ID (should match current process) */
+    long sid = sys_getsid_call(0);  /* 0 = current process */
+    const char *sid_msg = "[INIT-USER] ✓ getsid(0) = ";
+    msg_len = 0; while (sid_msg[msg_len]) msg_len++;
+    sys_write(1, sid_msg, msg_len);
+
+    pgrp_idx = 0;
+    if (sid == 0) {
+        pgrp_buf[pgrp_idx++] = '0';
+    } else {
+        long divisor = 1;
+        while (divisor * 10 <= sid) divisor *= 10;
+        while (divisor > 0) {
+            pgrp_buf[pgrp_idx++] = '0' + ((sid / divisor) % 10);
+            divisor /= 10;
+        }
+    }
+    pgrp_buf[pgrp_idx++] = '\n';
+    sys_write(1, pgrp_buf, pgrp_idx);
+
+    /* Try setsid() - this will fail since init is already a session leader, but tests the syscall */
+    long newsid = sys_setsid_call();
+    if (newsid < 0) {
+        const char *setsid_msg = "[INIT-USER] ✓ setsid() correctly failed (already session leader)\n";
+        msg_len = 0; while (setsid_msg[msg_len]) msg_len++;
+        sys_write(1, setsid_msg, msg_len);
+    } else {
+        const char *setsid_ok = "[INIT-USER] ✓ setsid() = ";
+        msg_len = 0; while (setsid_ok[msg_len]) msg_len++;
+        sys_write(1, setsid_ok, msg_len);
+
+        pgrp_idx = 0;
+        long divisor = 1;
+        while (divisor * 10 <= newsid) divisor *= 10;
+        while (divisor > 0) {
+            pgrp_buf[pgrp_idx++] = '0' + ((newsid / divisor) % 10);
+            divisor /= 10;
+        }
+        pgrp_buf[pgrp_idx++] = '\n';
+        sys_write(1, pgrp_buf, pgrp_idx);
+    }
+
     /* TEST: IPC syscalls - pipe(), dup(), dup2()
      * This tests inter-process communication primitives and FD duplication.
      */

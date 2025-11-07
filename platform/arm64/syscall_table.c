@@ -195,6 +195,7 @@ extern long sys_prlimit64(int pid, int resource, const struct rlimit64 *new_limi
 /* Process group and session syscalls */
 extern long sys_getpgid(uint64_t pid);
 extern long sys_setpgid(uint64_t pid, uint64_t pgid);
+extern long sys_getpgrp(void);
 extern long sys_getsid(uint64_t pid);
 extern long sys_setsid(void);
 
@@ -1689,6 +1690,15 @@ static int64_t sys_setsid_wrapper(uint64_t arg0, uint64_t arg1, uint64_t arg2,
     return sys_setsid();
 }
 
+/* sys_getpgrp_wrapper - get process group ID
+ * No arguments
+ */
+static int64_t sys_getpgrp_wrapper(uint64_t arg0, uint64_t arg1, uint64_t arg2,
+                                    uint64_t arg3, uint64_t arg4, uint64_t arg5) {
+    (void)arg0; (void)arg1; (void)arg2; (void)arg3; (void)arg4; (void)arg5;
+    return sys_getpgrp();
+}
+
 /* sys_sched_setparam_wrapper - set scheduling parameters
  * x0 = pid, x1 = param
  */
@@ -2792,6 +2802,10 @@ static struct syscall_entry syscall_table[MAX_SYSCALL] = {
     [108] = { (syscall_fn_t)sys_getegid_wrapper, "getegid" },  /* SYS_getegid = 108 */
     [109] = { (syscall_fn_t)sys_seteuid_wrapper, "seteuid" },  /* SYS_seteuid = 109 */
     [110] = { (syscall_fn_t)sys_setegid_wrapper, "setegid" },  /* SYS_setegid = 110 */
+    [111] = { (syscall_fn_t)sys_getpgrp_wrapper, "getpgrp" },  /* SYS_getpgrp = 111 */
+    [112] = { (syscall_fn_t)sys_setsid_wrapper, "setsid" },    /* SYS_setsid = 112 */
+    [113] = { (syscall_fn_t)sys_getppid_wrapper, "getppid" },  /* SYS_getppid = 113 */
+    [124] = { (syscall_fn_t)sys_getsid_wrapper, "getsid" },    /* SYS_getsid = 124 */
 };
 
 /* ============================================================

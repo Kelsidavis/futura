@@ -521,9 +521,11 @@ int fut_identity_map(fut_vmem_context_t *ctx, uint64_t paddr, uint64_t size, uin
 
 /**
  * Create new virtual memory context.
- * @return New VM context with empty user space, or NULL on failure
+ * @return New VM context with identity-mapped address space, or NULL on failure
  */
 fut_vmem_context_t *fut_vmem_create(void) {
+    extern page_table_t boot_l1_table;  /* Boot page table with identity mappings */
+
     fut_vmem_context_t *ctx = (fut_vmem_context_t *)fut_malloc(sizeof(fut_vmem_context_t));
     if (!ctx) {
         return NULL;
@@ -535,8 +537,16 @@ fut_vmem_context_t *fut_vmem_create(void) {
         return NULL;
     }
 
-    /* Copy kernel portion (upper half) from kernel PGD */
-    memcpy(&ctx->pgd->entries[256], &kernel_pgd.entries[256], 256 * sizeof(pte_t));
+    /* Copy entire page table from boot_l1_table to get identity mappings.
+     * This includes:
+     *   - L1[0]: Peripherals (0x00000000-0x3FFFFFFF)
+     *   - L1[1]: DRAM (0x40000000-0x7FFFFFFF) - where user code lives
+     *   - L1[256]: PCIe ECAM (0x4000000000+)
+     *
+     * TODO: Once higher-half kernel is implemented, only copy lower half (0-255)
+     * and map kernel to upper half (256-511) separately.
+     */
+    memcpy(ctx->pgd->entries, boot_l1_table.entries, 512 * sizeof(pte_t));
 
     ctx->ttbr0_el1 = (uint64_t)ctx->pgd;
     ctx->ref_count = 1;

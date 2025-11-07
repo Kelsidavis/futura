@@ -595,22 +595,12 @@ void fut_schedule(void) {
         fut_mm_t *prev_mm = (prev && prev->task) ? fut_task_get_mm(prev->task) : NULL;
         fut_mm_t *next_mm = (next && next->task) ? fut_task_get_mm(next->task) : NULL;
 
-#if defined(__aarch64__)
-        fut_printf("[SCHED-MM] prev_mm=%p next_mm=%p\n", (void*)prev_mm, (void*)next_mm);
-#endif
-
         // Only set current_thread if we're actually going to context switch
         fut_thread_set_current(next);
 
         // Switch MM if needed
         if (prev_mm != next_mm) {
-#if defined(__aarch64__)
-            fut_printf("[SCHED-MM] About to call fut_mm_switch(next_mm=%p)\n", (void*)next_mm);
-#endif
             fut_mm_switch(next_mm);
-#if defined(__aarch64__)
-            fut_printf("[SCHED-MM] fut_mm_switch returned\n");
-#endif
         }
 
         if (in_irq && prev && fut_current_frame) {

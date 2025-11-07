@@ -811,13 +811,13 @@ void fut_mm_switch(fut_mm_t *mm) {
     }
 
     active_mm = mm;
-    // NOTE: ARM64 MMU is currently disabled. The context switch code in
-    // context_switch.S loads TTBR0_EL1 directly before ERET to user mode.
-    // Don't call fut_vmem_switch() until MMU is enabled.
-    // TODO: Remove this once ARM64 MMU is enabled
-    // fut_vmem_switch(&mm->ctx);
+    // NOTE: ARM64 uses identity mapping with boot page tables currently active.
+    // The context switch code in context_switch.S loads TTBR0_EL1 directly
+    // before ERET to user mode. Calling fut_vmem_switch() here would switch
+    // the kernel's address space mid-execution, which would break things.
+    // This is the correct behavior for ARM64.
 #if defined(__aarch64__)
-    fut_printf("[MM-SWITCH] ARM64: Skipping fut_vmem_switch (MMU disabled)\n");
+    // ARM64: context_switch.S handles TTBR0 loading before ERET
 #else
     fut_vmem_switch(&mm->ctx);
 #endif

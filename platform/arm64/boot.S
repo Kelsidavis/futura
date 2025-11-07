@@ -700,6 +700,7 @@ no_reschedule:
  * For 39-bit VA, ARM64 starts page table walk at Level 1 (not L0)
  * Each L1 entry covers 1GB, each L2 entry covers 2MB
  */
+.global boot_l1_table
 boot_l1_table:
     .space 4096                   /* Level 1 (root table, 512 x 1GB per entry) */
 

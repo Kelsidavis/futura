@@ -167,6 +167,8 @@ extern long sys_getgid(void);
 extern long sys_getegid(void);
 extern long sys_setuid(uint32_t uid);
 extern long sys_setgid(uint32_t gid);
+extern long sys_seteuid(uint32_t euid);
+extern long sys_setegid(uint32_t egid);
 extern long sys_setreuid(uint32_t ruid, uint32_t euid);
 extern long sys_setregid(uint32_t rgid, uint32_t egid);
 extern long sys_setresuid(uint32_t ruid, uint32_t euid, uint32_t suid);
@@ -1550,6 +1552,24 @@ static int64_t sys_setgid_wrapper(uint64_t gid, uint64_t arg1, uint64_t arg2,
     return sys_setgid((uint32_t)gid);
 }
 
+/* sys_seteuid_wrapper - set effective user ID
+ * x0 = euid
+ */
+static int64_t sys_seteuid_wrapper(uint64_t euid, uint64_t arg1, uint64_t arg2,
+                                    uint64_t arg3, uint64_t arg4, uint64_t arg5) {
+    (void)arg1; (void)arg2; (void)arg3; (void)arg4; (void)arg5;
+    return sys_seteuid((uint32_t)euid);
+}
+
+/* sys_setegid_wrapper - set effective group ID
+ * x0 = egid
+ */
+static int64_t sys_setegid_wrapper(uint64_t egid, uint64_t arg1, uint64_t arg2,
+                                    uint64_t arg3, uint64_t arg4, uint64_t arg5) {
+    (void)arg1; (void)arg2; (void)arg3; (void)arg4; (void)arg5;
+    return sys_setegid((uint32_t)egid);
+}
+
 /* sys_setreuid_wrapper - set real and effective user ID
  * x0 = ruid, x1 = euid
  */
@@ -2764,6 +2784,14 @@ static struct syscall_entry syscall_table[MAX_SYSCALL] = {
     [83] = { (syscall_fn_t)sys_mkdir_wrapper, "mkdir" },  /* SYS_mkdir = 83 (2-arg version) */
     [84] = { (syscall_fn_t)sys_rmdir_wrapper, "rmdir" },  /* SYS_rmdir = 84 */
     [87] = { (syscall_fn_t)sys_unlink_wrapper, "unlink" },  /* SYS_unlink = 87 */
+    [102] = { (syscall_fn_t)sys_getuid_wrapper, "getuid" },  /* SYS_getuid = 102 */
+    [104] = { (syscall_fn_t)sys_getgid_wrapper, "getgid" },  /* SYS_getgid = 104 */
+    [105] = { (syscall_fn_t)sys_setuid_wrapper, "setuid" },  /* SYS_setuid = 105 */
+    [106] = { (syscall_fn_t)sys_setgid_wrapper, "setgid" },  /* SYS_setgid = 106 */
+    [107] = { (syscall_fn_t)sys_geteuid_wrapper, "geteuid" },  /* SYS_geteuid = 107 */
+    [108] = { (syscall_fn_t)sys_getegid_wrapper, "getegid" },  /* SYS_getegid = 108 */
+    [109] = { (syscall_fn_t)sys_seteuid_wrapper, "seteuid" },  /* SYS_seteuid = 109 */
+    [110] = { (syscall_fn_t)sys_setegid_wrapper, "setegid" },  /* SYS_setegid = 110 */
 };
 
 /* ============================================================

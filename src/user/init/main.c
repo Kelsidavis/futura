@@ -571,6 +571,99 @@ int main(int argc, char **argv) {
         }
     }
 
+    /* TEST: Credential syscalls - get/set uid/gid
+     * This tests process credential management.
+     */
+    const char *test_cred = "[INIT-USER] Testing credential syscalls (uid/gid)...\n";
+    msg_len = 0; while (test_cred[msg_len]) msg_len++;
+    sys_write(1, test_cred, msg_len);
+
+    /* Get current credentials */
+    long uid = sys_getuid_call();
+    long gid = sys_getgid_call();
+    long euid = sys_geteuid_call();
+    long egid = sys_getegid_call();
+
+    const char *cred_msg = "[INIT-USER] ✓ Current credentials: uid=";
+    msg_len = 0; while (cred_msg[msg_len]) msg_len++;
+    sys_write(1, cred_msg, msg_len);
+
+    /* Print UID */
+    char cred_buf[64];  /* Increased size for "uid=X, gid=Y, euid=Z, egid=W\n" */
+    long cred_idx = 0;
+    if (uid == 0) {
+        cred_buf[cred_idx++] = '0';
+    } else {
+        long divisor = 1;
+        long temp = uid;
+        while (temp >= 10) { temp /= 10; divisor *= 10; }
+        while (divisor > 0) {
+            cred_buf[cred_idx++] = '0' + ((uid / divisor) % 10);
+            divisor /= 10;
+        }
+    }
+    cred_buf[cred_idx++] = ',';
+    cred_buf[cred_idx++] = ' ';
+    cred_buf[cred_idx++] = 'g';
+    cred_buf[cred_idx++] = 'i';
+    cred_buf[cred_idx++] = 'd';
+    cred_buf[cred_idx++] = '=';
+
+    /* Print GID */
+    if (gid == 0) {
+        cred_buf[cred_idx++] = '0';
+    } else {
+        long divisor = 1;
+        long temp = gid;
+        while (temp >= 10) { temp /= 10; divisor *= 10; }
+        while (divisor > 0) {
+            cred_buf[cred_idx++] = '0' + ((gid / divisor) % 10);
+            divisor /= 10;
+        }
+    }
+    cred_buf[cred_idx++] = ',';
+    cred_buf[cred_idx++] = ' ';
+    cred_buf[cred_idx++] = 'e';
+    cred_buf[cred_idx++] = 'u';
+    cred_buf[cred_idx++] = 'i';
+    cred_buf[cred_idx++] = 'd';
+    cred_buf[cred_idx++] = '=';
+
+    /* Print EUID */
+    if (euid == 0) {
+        cred_buf[cred_idx++] = '0';
+    } else {
+        long divisor = 1;
+        long temp = euid;
+        while (temp >= 10) { temp /= 10; divisor *= 10; }
+        while (divisor > 0) {
+            cred_buf[cred_idx++] = '0' + ((euid / divisor) % 10);
+            divisor /= 10;
+        }
+    }
+    cred_buf[cred_idx++] = ',';
+    cred_buf[cred_idx++] = ' ';
+    cred_buf[cred_idx++] = 'e';
+    cred_buf[cred_idx++] = 'g';
+    cred_buf[cred_idx++] = 'i';
+    cred_buf[cred_idx++] = 'd';
+    cred_buf[cred_idx++] = '=';
+
+    /* Print EGID */
+    if (egid == 0) {
+        cred_buf[cred_idx++] = '0';
+    } else {
+        long divisor = 1;
+        long temp = egid;
+        while (temp >= 10) { temp /= 10; divisor *= 10; }
+        while (divisor > 0) {
+            cred_buf[cred_idx++] = '0' + ((egid / divisor) % 10);
+            divisor /= 10;
+        }
+    }
+    cred_buf[cred_idx++] = '\n';
+    sys_write(1, cred_buf, cred_idx);
+
     /* TEST: IPC syscalls - pipe(), dup(), dup2()
      * This tests inter-process communication primitives and FD duplication.
      */

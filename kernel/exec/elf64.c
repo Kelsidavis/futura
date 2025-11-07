@@ -1075,6 +1075,8 @@ static int exec_copy_to_user(fut_mm_t *mm, uint64_t dest, const void *src, size_
 
 /* Map a single LOAD segment from file */
 static int map_segment(fut_mm_t *mm, int fd, const elf64_phdr_t *phdr) {
+    extern void fut_printf(const char *, ...);
+
     if (phdr->p_memsz == 0) return 0;
     if (phdr->p_vaddr == 0) return -EINVAL;
 
@@ -1087,36 +1089,66 @@ static int map_segment(fut_mm_t *mm, int fd, const elf64_phdr_t *phdr) {
     uintptr_t addr = PAGE_ALIGN_DOWN(phdr->p_vaddr);
     size_t pages_needed = (phdr->p_vaddr + phdr->p_memsz - addr + PAGE_SIZE - 1) / PAGE_SIZE;
 
+    fut_printf("[MAP-SEG-ARM64] vaddr=0x%llx memsz=0x%llx filesz=0x%llx pages=%llu prot=%d\n",
+               (unsigned long long)phdr->p_vaddr,
+               (unsigned long long)phdr->p_memsz,
+               (unsigned long long)phdr->p_filesz,
+               (unsigned long long)pages_needed, prot);
+
     for (size_t i = 0; i < pages_needed; i++) {
         uint64_t page_addr = addr + (i * PAGE_SIZE);
         void *page = fut_pmm_alloc_page();
-        if (!page) return -ENOMEM;
+        if (!page) {
+            fut_printf("[MAP-SEG-ARM64] ERROR: PMM alloc failed at page %llu/%llu\n",
+                       (unsigned long long)i, (unsigned long long)pages_needed);
+            return -ENOMEM;
+        }
 
         phys_addr_t phys = pmap_virt_to_phys((uintptr_t)page);
+        fut_printf("[MAP-SEG-ARM64] Page %llu: vaddr=0x%llx phys=0x%llx prot=%d\n",
+                   (unsigned long long)i, (unsigned long long)page_addr, (unsigned long long)phys, prot);
+
         if (pmap_map_user(vmem, page_addr, phys, PAGE_SIZE, prot) != 0) {
+            fut_printf("[MAP-SEG-ARM64] ERROR: pmap_map_user failed for page %llu\n",
+                       (unsigned long long)i);
             fut_pmm_free_page(page);
             return -EFAULT;
         }
     }
 
+    fut_printf("[MAP-SEG-ARM64] Successfully mapped %llu pages\n", (unsigned long long)pages_needed);
+
     /* Read file data into mapped pages */
+    fut_printf("[MAP-SEG-ARM64] Seeking to file offset 0x%llx\n", (unsigned long long)phdr->p_offset);
     int64_t seek_pos = fut_vfs_lseek(fd, (int64_t)phdr->p_offset, SEEK_SET);
-    if (seek_pos < 0) return (int)seek_pos;
+    if (seek_pos < 0) {
+        fut_printf("[MAP-SEG-ARM64] ERROR: lseek failed with %lld\n", (long long)seek_pos);
+        return (int)seek_pos;
+    }
 
+    fut_printf("[MAP-SEG-ARM64] Allocating buffer for %llu bytes\n", (unsigned long long)phdr->p_filesz);
     uint8_t *buf = fut_malloc(phdr->p_filesz);
-    if (!buf) return -ENOMEM;
+    if (!buf) {
+        fut_printf("[MAP-SEG-ARM64] ERROR: malloc failed for buffer\n");
+        return -ENOMEM;
+    }
 
+    fut_printf("[MAP-SEG-ARM64] Reading %llu bytes from file\n", (unsigned long long)phdr->p_filesz);
     int rc = read_exact(fd, buf, phdr->p_filesz);
     if (rc != 0) {
+        fut_printf("[MAP-SEG-ARM64] ERROR: read_exact failed with %d\n", rc);
         fut_free(buf);
         return rc;
     }
 
+    fut_printf("[MAP-SEG-ARM64] Copying data to user space at 0x%llx\n", (unsigned long long)phdr->p_vaddr);
     if (exec_copy_to_user(mm, phdr->p_vaddr, buf, phdr->p_filesz) != 0) {
+        fut_printf("[MAP-SEG-ARM64] ERROR: exec_copy_to_user failed\n");
         fut_free(buf);
         return -EFAULT;
     }
 
+    fut_printf("[MAP-SEG-ARM64] Segment load complete\n");
     __asm__ volatile("dmb sy" ::: "memory");
     fut_free(buf);
     return 0;
@@ -1286,14 +1318,21 @@ static int build_user_stack(fut_mm_t *mm,
 
 /* ARM64 user mode entry trampoline */
 [[noreturn]] __attribute__((optimize("O0"))) static void fut_user_trampoline_arm64(void *arg) {
+    extern void fut_serial_puts(const char *);
+    fut_serial_puts("[USER-TRAMPOLINE-ARM64] ENTERED!\n");
+
     struct fut_user_entry_arm64 *info = (struct fut_user_entry_arm64 *)arg;
     uint64_t entry = info->entry;
     uint64_t sp = info->stack;
     fut_task_t *task = info->task;
 
+    extern void fut_printf(const char *, ...);
+    fut_printf("[USER-TRAMPOLINE-ARM64] entry=0x%llx sp=0x%llx task=%p\n",
+               (unsigned long long)entry, (unsigned long long)sp, (void*)task);
+
     /* Get the PGD physical address from the task's memory manager */
     fut_mm_t *mm = task->mm;
-    uint64_t pgd_phys = (uint64_t)mm->ctx.pgd;
+    uint64_t pgd_phys = pmap_virt_to_phys((uintptr_t)mm->ctx.pgd);
 
     /* Verify entry point is mapped and code is present */
     extern int pmap_probe_pte(fut_vmem_context_t *ctx, uint64_t vaddr, uint64_t *pte_out);
@@ -1311,11 +1350,12 @@ static int build_user_stack(fut_mm_t *mm,
     phys_addr_t entry_phys = fut_pte_to_phys(entry_pte) + (entry & 0xFFF);
     uint32_t *entry_code = (uint32_t *)pmap_phys_to_virt(entry_phys);
     uint32_t first_insn = *entry_code;
-    /* Expected: 0xd280001d = mov x29, #0 */
-    if (first_insn != 0xd280001d) {
-        extern void fut_serial_puts(const char *);
-        fut_serial_puts("[TRAMPOLINE] ERROR: Entry code mismatch!\n");
-        for (;;) __asm__ volatile("wfi");
+
+    fut_printf("[TRAMPOLINE] Entry first instruction: 0x%08x\n", (unsigned int)first_insn);
+
+    /* Different compilers generate different entry sequences, so just log it */
+    if (first_insn == 0 || first_insn == 0xffffffff) {
+        fut_serial_puts("[TRAMPOLINE] WARNING: Entry code looks invalid!\n");
     }
 
     /* Prepare to transition to EL0 (user mode)
@@ -1378,20 +1418,32 @@ static int map_segment_from_memory(fut_mm_t *mm, const void *elf_data, const elf
     uintptr_t addr = PAGE_ALIGN_DOWN(phdr->p_vaddr);
     size_t pages_needed = (phdr->p_vaddr + phdr->p_memsz - addr + PAGE_SIZE - 1) / PAGE_SIZE;
 
+    fut_printf("[MAP-SEG] vaddr=0x%llx memsz=%llu pages=%zu prot=%d\n",
+               (unsigned long long)phdr->p_vaddr, (unsigned long long)phdr->p_memsz,
+               pages_needed, prot);
+
     /* Allocate and map pages */
     for (size_t i = 0; i < pages_needed; i++) {
         uint64_t page_addr = addr + (i * PAGE_SIZE);
         void *page = fut_pmm_alloc_page();
         if (!page) {
+            fut_printf("[MAP-SEG] ERROR: failed to allocate page %zu\n", i);
             return -ENOMEM;
         }
 
         phys_addr_t phys = pmap_virt_to_phys((uintptr_t)page);
-        if (pmap_map_user(vmem, page_addr, phys, PAGE_SIZE, prot) != 0) {
+        fut_printf("[MAP-SEG] Mapping page %zu: vaddr=0x%llx phys=0x%llx\n",
+                   i, (unsigned long long)page_addr, (unsigned long long)phys);
+
+        int map_result = pmap_map_user(vmem, page_addr, phys, PAGE_SIZE, prot);
+        if (map_result != 0) {
+            fut_printf("[MAP-SEG] ERROR: pmap_map_user failed with %d\n", map_result);
             fut_pmm_free_page(page);
             return -EFAULT;
         }
     }
+
+    fut_printf("[MAP-SEG] Successfully mapped %zu pages\n", pages_needed);
 
     /* Copy file data from memory buffer into mapped pages */
     if (phdr->p_filesz > 0) {
@@ -1724,6 +1776,10 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
     entry->task = task;
 
     /* Create thread with trampoline */
+    extern void fut_printf(const char *, ...);
+    fut_printf("[EXEC-ARM64] About to create thread: trampoline=%p entry_struct=%p user_entry=0x%llx\n",
+               (void*)fut_user_trampoline_arm64, (void*)entry, (unsigned long long)entry->entry);
+
     fut_thread_t *thread = fut_thread_create(task,
                                              fut_user_trampoline_arm64,
                                              entry,

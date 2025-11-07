@@ -109,23 +109,26 @@ int pmap_probe_pte(fut_vmem_context_t *ctx, uint64_t vaddr, uint64_t *pte_out) {
         return -EFAULT;
     }
 
-    /* Compute indices for each level of the page table hierarchy */
+    /* ARM64 with T0SZ=25 (39-bit VA) uses 3-level page tables:
+     * L1 (PGD): bits [38:30] -> L2 table
+     * L2 (PMD): bits [29:21] -> L3 table
+     * L3 (PTE): bits [20:12] -> physical page
+     */
     uint64_t pgd_idx = PGD_INDEX(vaddr);
     uint64_t pmd_idx = PMD_INDEX(vaddr);
     uint64_t pte_idx = PTE_INDEX(vaddr);
-    uint64_t page_idx = PAGE_INDEX(vaddr);
 
-    /* fut_printf("[PROBE] vaddr=0x%llx pgd=0x%llx idx[%llu,%llu,%llu,%llu]\n",
-               (unsigned long long)vaddr, (unsigned long long)(uintptr_t)pgd, pgd_idx, pmd_idx, pte_idx, page_idx); */
+    /* fut_printf("[PROBE] vaddr=0x%llx pgd=0x%llx idx[%llu,%llu,%llu]\n",
+               (unsigned long long)vaddr, (unsigned long long)(uintptr_t)pgd, pgd_idx, pmd_idx, pte_idx); */
 
-    /* Level 0: PGD walk */
+    /* L1 (PGD) walk */
     pte_t pgde = pgd->entries[pgd_idx];
     if (!fut_pte_is_present(pgde)) {
         fut_printf("[PROBE] PGD[%llu] not present\n", pgd_idx);
         return -EFAULT;
     }
 
-    /* Level 1: PMD walk */
+    /* L2 (PMD) walk */
     uint64_t pmd_phys = fut_pte_to_phys(pgde);
     page_table_t *pmd = pmap_table_from_phys(pmd_phys);
     /* fut_printf("[PROBE] PMD: entry=0x%llx phys=0x%llx ptr=0x%llx\n",
@@ -136,36 +139,26 @@ int pmap_probe_pte(fut_vmem_context_t *ctx, uint64_t vaddr, uint64_t *pte_out) {
         return -EFAULT;
     }
 
-    /* Level 2: PTE walk */
+    /* Check if this is a block descriptor (2MB page at L2) */
+    if (fut_pte_is_block(pmde)) {
+        *pte_out = pmde;
+        return 0;
+    }
+
+    /* L3 (PTE) walk - final level, read page descriptor */
     uint64_t pte_phys = fut_pte_to_phys(pmde);
-    page_table_t *pte = pmap_table_from_phys(pte_phys);
+    page_table_t *pte_table = pmap_table_from_phys(pte_phys);
     /* fut_printf("[PROBE] PTE: entry=0x%llx phys=0x%llx ptr=0x%llx\n",
-               (unsigned long long)pmde, (unsigned long long)pte_phys, (unsigned long long)(uintptr_t)pte); */
-    pte_t pte_entry = pte->entries[pte_idx];
+               (unsigned long long)pmde, (unsigned long long)pte_phys, (unsigned long long)(uintptr_t)pte_table); */
+    pte_t pte_entry = pte_table->entries[pte_idx];
     if (!fut_pte_is_present(pte_entry)) {
         fut_printf("[PROBE] PTE[%llu] not present\n", pte_idx);
         return -EFAULT;
     }
 
-    /* Check if this is a block descriptor (2MB page at L2) */
-    if (fut_pte_is_block(pte_entry)) {
-        *pte_out = pte_entry;
-        return 0;
-    }
-
-    /* Level 3: PAGE walk (final level) */
-    uint64_t pt_phys = fut_pte_to_phys(pte_entry);
-    page_table_t *page_tbl = pmap_table_from_phys(pt_phys);
-    /* fut_printf("[PROBE] PT: entry=0x%llx phys=0x%llx ptr=0x%llx\n",
-               (unsigned long long)pte_entry, (unsigned long long)pt_phys, (unsigned long long)(uintptr_t)page_tbl); */
-    pte_t page_entry = page_tbl->entries[page_idx];
-    if (!fut_pte_is_present(page_entry)) {
-        fut_printf("[PROBE] PT[%llu] not present\n", page_idx);
-        return -EFAULT;
-    }
-
-    /* fut_printf("[PROBE] Success: final_pte=0x%llx\n", (unsigned long long)page_entry); */
-    *pte_out = page_entry;
+    /* L3 is the final level - this is the page descriptor */
+    /* fut_printf("[PROBE] Success: final_pte=0x%llx\n", (unsigned long long)pte_entry); */
+    *pte_out = pte_entry;
     return 0;
 }
 

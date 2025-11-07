@@ -296,29 +296,30 @@ int fut_map_page(fut_vmem_context_t *ctx, uint64_t vaddr, uint64_t paddr, uint64
     /* Translate generic flags to ARM64 flags if needed */
     uint64_t arm64_flags = arm64_translate_flags(flags);
 
-    /* Walk page table hierarchy and create intermediate tables as needed */
+    /* Walk page table hierarchy and create intermediate tables as needed
+     * ARM64 with 39-bit VA (T0SZ=25) uses 3-level page tables:
+     * L1 (PGD): bits [38:30] -> L2 table
+     * L2 (PMD): bits [29:21] -> L3 table
+     * L3 (PTE): bits [20:12] -> physical page
+     */
     int pgd_idx = PGD_INDEX(vaddr);
     page_table_t *pmd = get_or_create_table(pgd, pgd_idx, true);
     if (!pmd) {
-        return -4;  /* Failed to allocate PMD */
+        return -4;  /* Failed to allocate L2 (PMD) */
     }
 
     int pmd_idx = PMD_INDEX(vaddr);
     page_table_t *pte_table = get_or_create_table(pmd, pmd_idx, true);
     if (!pte_table) {
-        return -5;  /* Failed to allocate PTE table */
+        return -5;  /* Failed to allocate L3 (PTE table) */
     }
 
+    /* L3 is the final level - write page descriptor here */
     int pte_idx = PTE_INDEX(vaddr);
-    page_table_t *page_table = get_or_create_table(pte_table, pte_idx, true);
-    if (!page_table) {
-        return -6;  /* Failed to allocate page table */
-    }
-
-    int page_idx = PAGE_INDEX(vaddr);
-    /* For level 3 page descriptors, bits [1:0] must be 0b11 (PTE_VALID | PTE_TABLE) */
+    /* For level 3 page descriptors, bits [1:0] must be 0b11 (PTE_TYPE_PAGE)
+     * This means we need PTE_VALID (bit 0) | PTE_TABLE (bit 1) = 0b11 */
     pte_t pte = fut_make_pte(paddr, arm64_flags | PTE_TABLE);
-    page_table->entries[page_idx] = pte;
+    pte_table->entries[pte_idx] = pte;
 
     /* Invalidate TLB entry for this address */
     fut_flush_tlb_single(vaddr);
@@ -548,8 +549,28 @@ fut_vmem_context_t *fut_vmem_create(void) {
      */
     memcpy(ctx->pgd->entries, boot_l1_table.entries, 512 * sizeof(pte_t));
 
+    /* Debug: Verify critical entries were copied */
+    extern void fut_printf(const char *, ...);
+    fut_printf("[VMEM-CREATE] boot_l1_table @ %p, new pgd @ %p\n",
+               (void*)&boot_l1_table, (void*)ctx->pgd);
+    fut_printf("[VMEM-CREATE] boot L1[0] = 0x%llx (peripherals)\n",
+               (unsigned long long)boot_l1_table.entries[0]);
+    fut_printf("[VMEM-CREATE] boot L1[1] = 0x%llx (DRAM - kernel/user code)\n",
+               (unsigned long long)boot_l1_table.entries[1]);
+    fut_printf("[VMEM-CREATE] boot L1[256] = 0x%llx (PCIe)\n",
+               (unsigned long long)boot_l1_table.entries[256]);
+    fut_printf("[VMEM-CREATE] new L1[0] = 0x%llx\n",
+               (unsigned long long)ctx->pgd->entries[0]);
+    fut_printf("[VMEM-CREATE] new L1[1] = 0x%llx\n",
+               (unsigned long long)ctx->pgd->entries[1]);
+    fut_printf("[VMEM-CREATE] new L1[256] = 0x%llx\n",
+               (unsigned long long)ctx->pgd->entries[256]);
+
     ctx->ttbr0_el1 = (uint64_t)ctx->pgd;
     ctx->ref_count = 1;
+
+    fut_printf("[VMEM-CREATE] TTBR0 will be set to 0x%llx\n",
+               (unsigned long long)ctx->ttbr0_el1);
 
     return ctx;
 }

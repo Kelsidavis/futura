@@ -1370,16 +1370,19 @@ static int build_user_stack(fut_mm_t *mm,
 
     /* Signal we're about to ERET */
     extern void fut_serial_puts(const char *);
+    fut_printf("[TRAMPOLINE] About to ERET: entry=0x%llx sp=0x%llx pgd_phys=0x%llx\n",
+               (unsigned long long)entry, (unsigned long long)sp, (unsigned long long)pgd_phys);
+    fut_printf("[TRAMPOLINE] mm->ctx.pgd=%p (virt) pgd_phys=0x%llx (phys)\n",
+               (void*)mm->ctx.pgd, (unsigned long long)pgd_phys);
+
+    /* Read back L1[1] from user PGD to verify it has kernel mappings */
+    page_table_t *user_pgd = (page_table_t *)mm->ctx.pgd;
+    fut_printf("[TRAMPOLINE] user_pgd->entries[1] = 0x%llx (should be DRAM L2 pointer)\n",
+               (unsigned long long)user_pgd->entries[1]);
+
     fut_serial_puts("[TRAMPOLINE] About to ERET to EL0\n");
 
     __asm__ volatile(
-        /* Load user page table into TTBR0_EL1 */
-        "msr ttbr0_el1, %2\n\t"
-        /* Data synchronization barrier */
-        "dsb sy\n\t"
-        /* Invalidate all TLB entries */
-        "tlbi vmalle1\n\t"
-        "dsb sy\n\t"
         /* Set SP_EL0 (user mode stack pointer) - points to argc at [sp] */
         "msr sp_el0, %0\n\t"
         /* Set ELR_EL1 (return address for ERET) */
@@ -1389,12 +1392,14 @@ static int build_user_stack(fut_mm_t *mm,
         /* SPSR_EL1[9:6] = 0b1111 = Mask D,A,I,F (all interrupts/exceptions) */
         "mov x10, #0x3C0\n\t"   /* 0x3C0 = DAIF mask bits */
         "msr spsr_el1, x10\n\t"
-        /* Instruction synchronization barrier before ERET */
+        /* TEMPORARY: Skip TTBR0 switch for identity mapping - both kernel and user share boot page tables */
+        /* TODO: Implement proper higher-half kernel to enable per-process page tables */
+        /* Synchronize before ERET */
         "isb\n\t"
         /* Return to user mode */
         "eret\n\t"
         :
-        : "r"(sp), "r"(entry), "r"(pgd_phys)
+        : "r"(sp), "r"(entry)
         : "x10", "memory"
     );
 

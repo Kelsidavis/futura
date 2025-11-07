@@ -550,6 +550,40 @@ static fut_thread_t *clone_thread(fut_thread_t *parent_thread, fut_task_t *child
         return NULL;
     }
 
+    /*
+     * Map child's stack into its page tables.
+     * fut_thread_create() allocates stack memory with fut_malloc(), which provides
+     * physical memory but creates no page table entries. This worked without MMU
+     * but causes permission faults with MMU enabled.
+     */
+    if (child_task->mm) {
+        fut_vmem_context_t *child_ctx = fut_mm_context(child_task->mm);
+        uint64_t stack_base = (uint64_t)child_thread->stack_base;
+        size_t stack_size = child_thread->stack_size;
+
+        /* Align stack_base down to page boundary */
+        uint64_t stack_page_base = stack_base & ~(FUT_PAGE_SIZE - 1);
+        uint64_t stack_end = stack_base + stack_size;
+        uint64_t stack_page_end = (stack_end + FUT_PAGE_SIZE - 1) & ~(FUT_PAGE_SIZE - 1);
+
+        for (uint64_t page = stack_page_base; page < stack_page_end; page += FUT_PAGE_SIZE) {
+            /* Check if page is already mapped (e.g., covered by block descriptor) */
+            uint64_t existing_pte = 0;
+            if (pmap_probe_pte(child_ctx, page, &existing_pte) == 0) {
+                /* Page already has a mapping, skip it */
+                continue;
+            }
+
+            phys_addr_t phys = pmap_virt_to_phys(page);
+            uint64_t flags = PTE_PRESENT | PTE_WRITABLE | PTE_USER;
+
+            if (pmap_map_user(child_ctx, page, phys, FUT_PAGE_SIZE, flags) != 0) {
+                fut_printf("[FORK] ERROR: Failed to map child stack page 0x%llx\n", page);
+                return NULL;
+            }
+        }
+    }
+
 #ifdef __x86_64__
     /*
      * x86_64: Extract registers from interrupt frame

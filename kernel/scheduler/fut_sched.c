@@ -620,9 +620,7 @@ void fut_schedule(void) {
                 // First time - just jump to thread
                 fut_switch_context(NULL, &next->context);
             }
-#if defined(__aarch64__)
-            fut_printf("[SCHED] Context switch returned! This should never happen!\n");
-#endif
+            // Context switch returns when this thread is switched back to (cooperative threading)
         }
     }
 }

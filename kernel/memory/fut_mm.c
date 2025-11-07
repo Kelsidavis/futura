@@ -716,10 +716,32 @@ fut_mm_t *fut_mm_kernel(void) {
 }
 
 static void copy_kernel_half(page_table_t *dst) {
-    /* ARM64: No-op for identity mapping.
-     * In identity mapping, kernel and user share the same lower-half address space.
-     * There is no higher-half kernel mapping to copy. */
-    (void)dst;
+    extern void fut_printf(const char *, ...);
+    extern page_table_t boot_l1_table;  /* From boot.S */
+
+    /* ARM64: Copy boot L1 table to user page tables.
+     * User processes need access to kernel code, exception vectors,
+     * and peripherals that live in the lower 2GB (TTBR0 range).
+     *
+     * After switching TTBR0 to user page tables, all addresses in
+     * the lower address space must still translate correctly.
+     */
+
+    fut_printf("[COPY-KERNEL] Copying boot_l1_table from %p to %p\n",
+               (void*)&boot_l1_table, (void*)dst);
+
+    /* Copy all 512 entries from boot L1 table */
+    for (size_t i = 0; i < 512; i++) {
+        dst->entries[i] = boot_l1_table.entries[i];
+    }
+
+    /* Debug: Verify critical mappings were copied */
+    fut_printf("[COPY-KERNEL] L1[0] = 0x%llx (peripherals 0x00000000-0x3FFFFFFF)\n",
+               (unsigned long long)dst->entries[0]);
+    fut_printf("[COPY-KERNEL] L1[1] = 0x%llx (DRAM 0x40000000-0x7FFFFFFF - kernel/vectors)\n",
+               (unsigned long long)dst->entries[1]);
+    fut_printf("[COPY-KERNEL] L1[256] = 0x%llx (PCIe ECAM 0x4000000000+)\n",
+               (unsigned long long)dst->entries[256]);
 }
 
 fut_mm_t *fut_mm_create(void) {

@@ -7,6 +7,10 @@
  * Uses Linux-compatible ABI: x8 = syscall number, x0-x7 = arguments
  */
 
+/* Disable override-init warning - we intentionally override Linux syscall numbers with Futura numbers */
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Woverride-init"
+
 #include <stdint.h>
 #include <stddef.h>
 #include <shared/fut_timeval.h>
@@ -58,6 +62,7 @@ extern long sys_pselect6(int nfds, void *readfds, void *writefds, void *exceptfd
 extern int64_t sys_lseek(int fd, int64_t offset, int whence);
 extern long sys_pread64(unsigned int fd, void *buf, size_t count, int64_t offset);
 extern long sys_pwrite64(unsigned int fd, const void *buf, size_t count, int64_t offset);
+extern long sys_open(const char *pathname, int flags, int mode);
 
 /* iovec structure for vectored I/O */
 struct iovec {
@@ -1146,6 +1151,24 @@ static int64_t sys_pselect6_wrapper(uint64_t nfds, uint64_t readfds, uint64_t wr
                                      uint64_t exceptfds, uint64_t timeout, uint64_t sigmask) {
     return sys_pselect6((int)nfds, (void *)readfds, (void *)writefds,
                         (void *)exceptfds, (void *)timeout, (void *)sigmask);
+}
+
+/* sys_open_wrapper - open file
+ * x0 = pathname, x1 = flags, x2 = mode
+ */
+static int64_t sys_open_wrapper(uint64_t pathname, uint64_t flags, uint64_t mode,
+                                 uint64_t arg3, uint64_t arg4, uint64_t arg5) {
+    (void)arg3; (void)arg4; (void)arg5;
+    return sys_open((const char *)pathname, (int)flags, (int)mode);
+}
+
+/* sys_stat_wrapper - get file status
+ * x0 = path, x1 = statbuf
+ */
+static int64_t sys_stat_wrapper(uint64_t path, uint64_t statbuf, uint64_t arg2,
+                                 uint64_t arg3, uint64_t arg4, uint64_t arg5) {
+    (void)arg2; (void)arg3; (void)arg4; (void)arg5;
+    return sys_stat((const char *)path, (void *)statbuf);
 }
 
 /* sys_lseek_wrapper - change file position
@@ -2696,6 +2719,18 @@ static struct syscall_entry syscall_table[MAX_SYSCALL] = {
     [__NR_madvise]      = { (syscall_fn_t)sys_madvise_wrapper, "madvise" },
     [__NR_wait4]        = { (syscall_fn_t)sys_waitpid_wrapper, "wait4/waitpid" },
     [__NR_prlimit64]    = { (syscall_fn_t)sys_prlimit64_wrapper, "prlimit64" },
+
+    /* Futura syscall numbers (from include/user/sysnums.h) - added last to override Linux numbers */
+    [0]  = { (syscall_fn_t)sys_read,       "read" },        /* SYS_read = 0 */
+    [1]  = { (syscall_fn_t)sys_write,      "write" },       /* SYS_write = 1 */
+    [2]  = { (syscall_fn_t)sys_open_wrapper,       "open" },        /* SYS_open = 2 */
+    [3]  = { (syscall_fn_t)sys_close,      "close" },       /* SYS_close = 3 */
+    [4]  = { (syscall_fn_t)sys_stat_wrapper, "stat" },      /* SYS_stat = 4 */
+    [5]  = { (syscall_fn_t)sys_fstat,      "fstat" },       /* SYS_fstat = 5 */
+    [8]  = { (syscall_fn_t)sys_lseek_wrapper, "lseek" },    /* SYS_lseek = 8 */
+    [9]  = { (syscall_fn_t)sys_mmap_wrapper, "mmap" },      /* SYS_mmap = 9 */
+    [11] = { (syscall_fn_t)sys_munmap_wrapper, "munmap" },  /* SYS_munmap = 11 */
+    [12] = { (syscall_fn_t)sys_brk, "brk" },        /* SYS_brk = 12 */
 };
 
 /* ============================================================
@@ -2723,7 +2758,10 @@ int64_t arm64_syscall_dispatch(uint64_t syscall_num,
     struct syscall_entry *entry = &syscall_table[syscall_num];
 
     if (entry->handler == NULL) {
-        fut_serial_puts("[SYSCALL] Unimplemented syscall: ");
+        extern void fut_printf(const char *, ...);
+        fut_printf("[SYSCALL] Unimplemented syscall %llu (%s)\n",
+                   (unsigned long long)syscall_num,
+                   entry->name ? entry->name : "unknown");
         return -ENOSYS;
     }
 

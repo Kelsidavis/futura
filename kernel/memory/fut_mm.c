@@ -720,19 +720,17 @@ static void copy_kernel_half(page_table_t *dst) {
     extern page_table_t boot_l1_table;  /* From boot.S */
 
     /* ARM64: Copy ONLY the DRAM mapping from boot L1 table.
-     * User processes need access to kernel code and exception vectors,
-     * but NOT peripherals or PCIe (those are device memory, not suitable for user code).
+     * L1[0] must NOT be copied because the boot L2 table has block descriptors
+     * which conflict with fine-grained 4KB page mappings needed for user code.
      *
-     * L1[0]: Peripherals (0x00000000-0x3FFFFFFF) - DON'T COPY (device memory)
+     * L1[0]: User space (0x00000000-0x3FFFFFFF) - Create fresh L2 on demand
      * L1[1]: DRAM (0x40000000-0x7FFFFFFF) - COPY (kernel + vectors)
-     * L1[256]: PCIe ECAM - DON'T COPY (device memory)
-     *
-     * User code can load anywhere in 0x00000000-0x3FFFFFFF via dynamic page allocation.
+     * L1[256]: PCIe ECAM - DON'T COPY (not needed yet)
      */
 
     fut_printf("[COPY-KERNEL] Copying DRAM mapping (L1[1]) from boot_l1_table\n");
 
-    /* Copy ONLY L1[1] (DRAM at 0x40000000-0x7FFFFFFF) */
+    /* Copy L1[1] (DRAM at 0x40000000-0x7FFFFFFF) */
     dst->entries[1] = boot_l1_table.entries[1];
 
     /* Zero out all other entries (will be populated by ELF loader / page fault handler) */
@@ -743,7 +741,7 @@ static void copy_kernel_half(page_table_t *dst) {
     }
 
     /* Debug: Verify mappings */
-    fut_printf("[COPY-KERNEL] L1[0] = 0x%llx (user space - empty, will be dynamically mapped)\n",
+    fut_printf("[COPY-KERNEL] L1[0] = 0x%llx (user space - fresh L2 will be created on demand)\n",
                (unsigned long long)dst->entries[0]);
     fut_printf("[COPY-KERNEL] L1[1] = 0x%llx (DRAM 0x40000000-0x7FFFFFFF - kernel/vectors)\n",
                (unsigned long long)dst->entries[1]);

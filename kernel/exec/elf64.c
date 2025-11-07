@@ -1054,12 +1054,23 @@ static int exec_copy_to_user(fut_mm_t *mm, uint64_t dest, const void *src, size_
         /* Probe PTE for current page */
         uint64_t pte = 0;
         if (pmap_probe_pte(vmem, vaddr, &pte) != 0) {
+            extern void fut_printf(const char *, ...);
+            fut_printf("[COPY-TO-USER] pmap_probe_pte FAILED for vaddr=0x%llx\n",
+                      (unsigned long long)vaddr);
             return -EFAULT;
         }
 
         /* Extract physical address and add page offset */
         phys_addr_t phys = fut_pte_to_phys(pte) + page_offset;
         void *virt = (void *)pmap_phys_to_virt(phys);
+
+        /* Debug: log probe results for first copy */
+        if (vaddr == dest) {
+            extern void fut_printf(const char *, ...);
+            fut_printf("[COPY-TO-USER] First probe: vaddr=0x%llx page_off=0x%llx pte=0x%llx phys=0x%llx virt=%p\n",
+                      (unsigned long long)vaddr, (unsigned long long)page_offset,
+                      (unsigned long long)pte, (unsigned long long)phys, virt);
+        }
 
         /* Copy chunk to this page */
         memcpy(virt, src_bytes, chunk_size);

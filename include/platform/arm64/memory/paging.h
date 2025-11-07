@@ -123,11 +123,16 @@ typedef struct page_table {
 
 _Static_assert(sizeof(page_table_t) == PAGE_SIZE, "Page table must be 4KB");
 
-/* Page table indices from virtual address (48-bit VA, 4KB granule, 4 levels) */
-#define PGD_INDEX(vaddr)        (((vaddr) >> 39) & 0x1FF)   /* Level 0 (pgd) */
-#define PMD_INDEX(vaddr)        (((vaddr) >> 30) & 0x1FF)   /* Level 1 (pmd) */
-#define PTE_INDEX(vaddr)        (((vaddr) >> 21) & 0x1FF)   /* Level 2 (pte) */
-#define PAGE_INDEX(vaddr)       (((vaddr) >> 12) & 0x1FF)   /* Level 3 (page) */
+/* Page table indices from virtual address
+ * ARM64 with T0SZ=25 (39-bit VA) uses 3-level page tables:
+ * L1 (PGD): bits [38:30] -> 512 entries × 1GB = 512GB range
+ * L2 (PMD): bits [29:21] -> 512 entries × 2MB = 1GB range
+ * L3 (PTE): bits [20:12] -> 512 entries × 4KB = 2MB range (FINAL LEVEL)
+ */
+#define PGD_INDEX(vaddr)        (((vaddr) >> 30) & 0x1FF)   /* L1: bits [38:30] */
+#define PMD_INDEX(vaddr)        (((vaddr) >> 21) & 0x1FF)   /* L2: bits [29:21] */
+#define PTE_INDEX(vaddr)        (((vaddr) >> 12) & 0x1FF)   /* L3: bits [20:12] (FINAL) */
+#define PAGE_INDEX(vaddr)       (((vaddr) >> 12) & 0x1FF)   /* Same as PTE for 3-level */
 #define PAGE_OFFSET(vaddr)      ((vaddr) & 0xFFF)           /* Page offset */
 
 /* ============================================================

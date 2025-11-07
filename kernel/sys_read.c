@@ -113,13 +113,14 @@ extern fut_task_t *fut_task_current(void);
 ssize_t sys_read(int fd, void *buf, size_t count) {
     fut_task_t *task = fut_task_current();
     if (!task) {
-        fut_printf("[READ] read(fd=%d, count=%zu) -> ESRCH (no current task)\n", fd, count);
+        /* Temporarily disabled: fut_printf crashes with %zu on ARM64 */
+        /* fut_printf("[READ] read(fd=%d, count=%zu) -> ESRCH (no current task)\n", fd, count); */
         return -ESRCH;
     }
 
     /* Phase 2: Validate fd early */
     if (fd < 0) {
-        fut_printf("[READ] read(fd=%d, count=%zu) -> EBADF (negative fd)\n", fd, count);
+        /* fut_printf("[READ] read(fd=%d, count=%zu) -> EBADF (negative fd)\n", fd, count); */
         return -EBADF;
     }
 
@@ -131,7 +132,7 @@ ssize_t sys_read(int fd, void *buf, size_t count) {
 
     /* Phase 2: Validate user buffer */
     if (!buf) {
-        fut_printf("[READ] read(fd=%d, buf=NULL, count=%zu) -> EFAULT (NULL buffer)\n", fd, count);
+        /* fut_printf("[READ] read(fd=%d, buf=NULL, count=%zu) -> EFAULT (NULL buffer)\n", fd, count); */
         return -EFAULT;
     }
 
@@ -150,19 +151,20 @@ ssize_t sys_read(int fd, void *buf, size_t count) {
     } else {
         size_category = "excessive (>1 MB)";
     }
+    (void)size_category;  /* Unused when verbose logging disabled */
 
     /* Phase 2: Sanity check - reject unreasonably large reads */
     if (count > 1024 * 1024) {  /* 1 MB limit */
-        fut_printf("[READ] read(fd=%d, count=%zu [%s]) -> EINVAL (exceeds 1 MB limit)\n",
-                   fd, count, size_category);
+        /* fut_printf("[READ] read(fd=%d, count=%zu [%s]) -> EINVAL (exceeds 1 MB limit)\n",
+                   fd, count, size_category); */
         return -EINVAL;
     }
 
     /* Allocate kernel buffer */
     void *kbuf = fut_malloc(count);
     if (!kbuf) {
-        fut_printf("[READ] read(fd=%d, count=%zu [%s]) -> ENOMEM (failed to allocate kernel buffer)\n",
-                   fd, count, size_category);
+        /* fut_printf("[READ] read(fd=%d, count=%zu [%s]) -> ENOMEM (failed to allocate kernel buffer)\n",
+                   fd, count, size_category); */
         return -ENOMEM;
     }
 
@@ -192,24 +194,25 @@ ssize_t sys_read(int fd, void *buf, size_t count) {
                 error_desc = "unknown error";
                 break;
         }
-        fut_printf("[READ] read(fd=%d, count=%zu [%s]) -> %ld (%s)\n",
-                   fd, count, size_category, ret, error_desc);
+        (void)error_desc;  /* Unused when verbose logging disabled */
+        /* fut_printf("[READ] read(fd=%d, count=%zu [%s]) -> %ld (%s)\n",
+                   fd, count, size_category, ret, error_desc); */
         fut_free(kbuf);
         return ret;
     }
 
     /* Phase 2: Handle EOF */
     if (ret == 0) {
-        fut_printf("[READ] read(fd=%d, count=%zu [%s]) -> 0 (EOF)\n",
-                   fd, count, size_category);
+        /* fut_printf("[READ] read(fd=%d, count=%zu [%s]) -> 0 (EOF)\n",
+                   fd, count, size_category); */
         fut_free(kbuf);
         return 0;
     }
 
     /* Copy to userspace on success */
     if (fut_copy_to_user(buf, kbuf, (size_t)ret) != 0) {
-        fut_printf("[READ] read(fd=%d, count=%zu [%s], read=%ld) -> EFAULT (copy_to_user failed)\n",
-                   fd, count, size_category, ret);
+        /* fut_printf("[READ] read(fd=%d, count=%zu [%s], read=%ld) -> EFAULT (copy_to_user failed)\n",
+                   fd, count, size_category, ret); */
         fut_free(kbuf);
         return -EFAULT;
     }
@@ -232,8 +235,11 @@ ssize_t sys_read(int fd, void *buf, size_t count) {
     } else {
         completion_status = "complete";
     }
+    (void)completion_status;  /* Unused when verbose logging disabled */
 
     /* Phase 2: Detailed success logging */
+    /* Temporarily disabled: fut_printf crashes with %zu on ARM64 */
+    /*
     if ((size_t)ret < count) {
         fut_printf("[READ] read(fd=%d, count=%zu [%s]) -> %ld (%s, short read: got %zu of %zu bytes, Phase 2)\n",
                    fd, count, size_category, ret, completion_status, (size_t)ret, count);
@@ -241,6 +247,7 @@ ssize_t sys_read(int fd, void *buf, size_t count) {
         fut_printf("[READ] read(fd=%d, count=%zu [%s]) -> %ld (%s, Phase 2)\n",
                    fd, count, size_category, ret, completion_status);
     }
+    */
 
     return ret;
 }

@@ -46,6 +46,7 @@ extern long sys_getsockopt(int sockfd, int level, int optname, void *optval, uin
 extern long sys_sendto(int sockfd, const void *buf, size_t len, int flags, const void *dest_addr, uint32_t addrlen);
 extern long sys_recvfrom(int sockfd, void *buf, size_t len, int flags, void *src_addr, uint32_t *addrlen);
 extern long sys_mkdir(const char *path, uint32_t mode);
+extern long sys_rmdir(const char *path);
 extern long sys_unlink(const char *path);
 extern long sys_rename(const char *oldpath, const char *newpath);
 extern long sys_stat(const char *path, void *statbuf);
@@ -478,29 +479,15 @@ static int64_t sys_brk(uint64_t new_brk, uint64_t arg1, uint64_t arg2,
     return (int64_t)current_brk;
 }
 
-/* sys_read - read from file descriptor
+/* sys_read_wrapper - read from file descriptor
  * x0 = fd, x1 = buf, x2 = count
- * For now, only supports fd=0 (stdin)
+ * Wraps kernel sys_read() for ARM64 syscall ABI
  */
-static int64_t sys_read(uint64_t fd, uint64_t buf, uint64_t count,
-                        uint64_t arg3, uint64_t arg4, uint64_t arg5) {
+extern ssize_t sys_read(int fd, void *buf, size_t count);
+static int64_t sys_read_wrapper(uint64_t fd, uint64_t buf, uint64_t count,
+                                uint64_t arg3, uint64_t arg4, uint64_t arg5) {
     (void)arg3; (void)arg4; (void)arg5;
-
-    /* Only support stdin (0) for now */
-    if (fd != 0) {
-        return -EINVAL;
-    }
-
-    /* Validate buffer pointer */
-    if (buf == 0) {
-        return -EINVAL;
-    }
-
-    /* For now, return EOF (0) since we don't have interrupt-driven input
-     * TODO: In a real implementation, this would block waiting for UART input
-     */
-    (void)count;
-    return 0;  /* EOF */
+    return (int64_t)sys_read((int)fd, (void *)buf, (size_t)count);
 }
 
 /* sys_clock_gettime - get time
@@ -730,22 +717,15 @@ static int64_t sys_openat(uint64_t dirfd, uint64_t path_ptr, uint64_t flags,
     return 3;
 }
 
-/* sys_close - close file descriptor (stub)
+/* sys_close_wrapper - close file descriptor
  * x0 = fd
+ * Wraps kernel sys_close() for ARM64 syscall ABI
  */
-static int64_t sys_close(uint64_t fd, uint64_t arg1, uint64_t arg2,
-                         uint64_t arg3, uint64_t arg4, uint64_t arg5) {
+extern long sys_close(int fd);
+static int64_t sys_close_wrapper(uint64_t fd, uint64_t arg1, uint64_t arg2,
+                                 uint64_t arg3, uint64_t arg4, uint64_t arg5) {
     (void)arg1; (void)arg2; (void)arg3; (void)arg4; (void)arg5;
-
-    /* Validate fd range */
-    if (fd < 3 || fd > 1024) {
-        return -EINVAL;
-    }
-
-    /* For now, just accept any valid fd
-     * TODO: Track open fds and validate
-     */
-    return 0;  /* Success */
+    return (int64_t)sys_close((int)fd);
 }
 
 /* sys_fstat - get file status (stub)
@@ -971,7 +951,37 @@ static int64_t sys_getsockopt_wrapper(uint64_t sockfd, uint64_t level, uint64_t 
                           (void *)optval, (uint32_t *)optlen);
 }
 
-/* sys_mkdirat_wrapper - create directory
+/* sys_mkdir_wrapper - create directory (Futura 2-arg version)
+ * x0 = pathname, x1 = mode
+ * Wraps kernel sys_mkdir() for Futura syscall ABI
+ */
+static int64_t sys_mkdir_wrapper(uint64_t pathname, uint64_t mode, uint64_t arg2,
+                                  uint64_t arg3, uint64_t arg4, uint64_t arg5) {
+    (void)arg2; (void)arg3; (void)arg4; (void)arg5;
+    return sys_mkdir((const char *)pathname, (uint32_t)mode);
+}
+
+/* sys_rmdir_wrapper - remove directory (Futura 1-arg version)
+ * x0 = pathname
+ * Wraps kernel sys_rmdir() for Futura syscall ABI
+ */
+static int64_t sys_rmdir_wrapper(uint64_t pathname, uint64_t arg1, uint64_t arg2,
+                                  uint64_t arg3, uint64_t arg4, uint64_t arg5) {
+    (void)arg1; (void)arg2; (void)arg3; (void)arg4; (void)arg5;
+    return sys_rmdir((const char *)pathname);
+}
+
+/* sys_unlink_wrapper - delete file (Futura 1-arg version)
+ * x0 = pathname
+ * Wraps kernel sys_unlink() for Futura syscall ABI
+ */
+static int64_t sys_unlink_wrapper(uint64_t pathname, uint64_t arg1, uint64_t arg2,
+                                   uint64_t arg3, uint64_t arg4, uint64_t arg5) {
+    (void)arg1; (void)arg2; (void)arg3; (void)arg4; (void)arg5;
+    return sys_unlink((const char *)pathname);
+}
+
+/* sys_mkdirat_wrapper - create directory (POSIX 3-arg version)
  * x0 = dirfd, x1 = pathname, x2 = mode
  * For ARM64, only AT_FDCWD is supported (acts like mkdir)
  */
@@ -2592,13 +2602,13 @@ static struct syscall_entry syscall_table[MAX_SYSCALL] = {
     [__NR_fchownat]     = { (syscall_fn_t)sys_fchownat_wrapper, "fchownat" },
     [__NR_fchown]       = { (syscall_fn_t)sys_fchown_wrapper, "fchown" },
     [__NR_openat]       = { (syscall_fn_t)sys_openat,     "openat" },
-    [__NR_close]        = { (syscall_fn_t)sys_close,      "close" },
+    [__NR_close]        = { (syscall_fn_t)sys_close_wrapper,      "close" },
     [__NR_vhangup]      = { (syscall_fn_t)sys_vhangup_wrapper, "vhangup" },
     [__NR_pipe2]        = { (syscall_fn_t)sys_pipe_wrapper, "pipe2/pipe" },
     [__NR_quotactl]     = { (syscall_fn_t)sys_quotactl_wrapper, "quotactl" },
     [__NR_getdents64]   = { (syscall_fn_t)sys_getdents64_wrapper, "getdents64" },
     [__NR_lseek]        = { (syscall_fn_t)sys_lseek_wrapper, "lseek" },
-    [__NR_read]         = { (syscall_fn_t)sys_read,       "read" },
+    [__NR_read]         = { (syscall_fn_t)sys_read_wrapper,       "read" },
     [__NR_write]        = { (syscall_fn_t)sys_write,      "write" },
     [__NR_readv]        = { (syscall_fn_t)sys_readv_wrapper, "readv" },
     [__NR_writev]       = { (syscall_fn_t)sys_writev_wrapper, "writev" },
@@ -2720,17 +2730,32 @@ static struct syscall_entry syscall_table[MAX_SYSCALL] = {
     [__NR_wait4]        = { (syscall_fn_t)sys_waitpid_wrapper, "wait4/waitpid" },
     [__NR_prlimit64]    = { (syscall_fn_t)sys_prlimit64_wrapper, "prlimit64" },
 
-    /* Futura syscall numbers (from include/user/sysnums.h) - added last to override Linux numbers */
-    [0]  = { (syscall_fn_t)sys_read,       "read" },        /* SYS_read = 0 */
+    /* Futura syscall numbers (from include/user/sysnums.h) - added last to override Linux numbers
+     *
+     * IMPORTANT: These entries override conflicting Linux AArch64 syscall numbers.
+     * For example:
+     *   - Futura SYS_write = 1,  Linux AArch64 __NR_write = 64
+     *   - Futura SYS_getpid = 39, Linux AArch64 __NR_umount2 = 39
+     *
+     * By placing Futura syscalls at the end of this array, they take precedence
+     * over earlier Linux mappings when userland programs use Futura syscall numbers.
+     */
+    [0]  = { (syscall_fn_t)sys_read_wrapper,       "read" },        /* SYS_read = 0 */
     [1]  = { (syscall_fn_t)sys_write,      "write" },       /* SYS_write = 1 */
     [2]  = { (syscall_fn_t)sys_open_wrapper,       "open" },        /* SYS_open = 2 */
-    [3]  = { (syscall_fn_t)sys_close,      "close" },       /* SYS_close = 3 */
+    [3]  = { (syscall_fn_t)sys_close_wrapper,      "close" },       /* SYS_close = 3 */
     [4]  = { (syscall_fn_t)sys_stat_wrapper, "stat" },      /* SYS_stat = 4 */
     [5]  = { (syscall_fn_t)sys_fstat,      "fstat" },       /* SYS_fstat = 5 */
     [8]  = { (syscall_fn_t)sys_lseek_wrapper, "lseek" },    /* SYS_lseek = 8 */
     [9]  = { (syscall_fn_t)sys_mmap_wrapper, "mmap" },      /* SYS_mmap = 9 */
     [11] = { (syscall_fn_t)sys_munmap_wrapper, "munmap" },  /* SYS_munmap = 11 */
     [12] = { (syscall_fn_t)sys_brk, "brk" },        /* SYS_brk = 12 */
+    [39] = { (syscall_fn_t)sys_getpid_wrapper, "getpid" },  /* SYS_getpid = 39 (overrides Linux umount2) */
+    [79] = { (syscall_fn_t)sys_getcwd, "getcwd" },  /* SYS_getcwd = 79 */
+    [80] = { (syscall_fn_t)sys_chdir, "chdir" },    /* SYS_chdir = 80 */
+    [83] = { (syscall_fn_t)sys_mkdir_wrapper, "mkdir" },  /* SYS_mkdir = 83 (2-arg version) */
+    [84] = { (syscall_fn_t)sys_rmdir_wrapper, "rmdir" },  /* SYS_rmdir = 84 */
+    [87] = { (syscall_fn_t)sys_unlink_wrapper, "unlink" },  /* SYS_unlink = 87 */
 };
 
 /* ============================================================

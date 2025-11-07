@@ -38,6 +38,8 @@ extern fut_interrupt_frame_t *fut_current_frame;
 #define ESR_EC_MASK         0x3F
 #define ESR_EC_SVC64        0x15    /* SVC from AArch64 state */
 #define ESR_EC_UNKNOWN      0x00    /* Unknown exception */
+#define ESR_EC_WFX_TRAP     0x01    /* Trapped WFI/WFE instruction */
+#define ESR_EC_ILL_STATE    0x0E    /* Illegal Execution state */
 #define ESR_EC_DABT_EL0     0x24    /* Data abort from lower EL */
 #define ESR_EC_DABT_EL1     0x25    /* Data abort from same EL */
 #define ESR_EC_IABT_EL0     0x20    /* Instruction abort from lower EL */
@@ -169,8 +171,49 @@ void arm64_exception_dispatch(fut_interrupt_frame_t *frame) {
             handle_unknown(frame);
             break;
 
+        case ESR_EC_UNKNOWN:
+        case ESR_EC_WFX_TRAP:
+        case ESR_EC_ILL_STATE:
+            fut_serial_puts("[EXCEPTION] EC=0x");
+            {
+                uint8_t nibble = (ec >> 4) & 0xF;
+                char c = nibble < 10 ? '0' + nibble : 'a' + (nibble - 10);
+                fut_serial_putc(c);
+                nibble = ec & 0xF;
+                c = nibble < 10 ? '0' + nibble : 'a' + (nibble - 10);
+                fut_serial_putc(c);
+            }
+            fut_serial_puts(" (");
+            if (ec == ESR_EC_UNKNOWN) fut_serial_puts("Unknown/Undefined");
+            else if (ec == ESR_EC_WFX_TRAP) fut_serial_puts("Trapped WFI/WFE");
+            else if (ec == ESR_EC_ILL_STATE) fut_serial_puts("Illegal Execution State");
+            fut_serial_puts(")\n");
+
+            /* Try to read the instruction word at PC */
+            fut_serial_puts("[EXCEPTION] Instruction at PC: ");
+            uint32_t *instr_ptr = (uint32_t *)(frame->pc);
+            uint32_t instr = *instr_ptr;
+            for (int i = 28; i >= 0; i -= 4) {
+                uint8_t nibble = (instr >> i) & 0xF;
+                char c = nibble < 10 ? '0' + nibble : 'a' + (nibble - 10);
+                fut_serial_putc(c);
+            }
+            fut_serial_putc('\n');
+
+            handle_unknown(frame);
+            break;
+
         default:
-            fut_serial_puts("[EXCEPTION] Unknown exception class: ");
+            fut_serial_puts("[EXCEPTION] Unknown exception class: EC=0x");
+            {
+                uint8_t nibble = (ec >> 4) & 0xF;
+                char c = nibble < 10 ? '0' + nibble : 'a' + (nibble - 10);
+                fut_serial_putc(c);
+                nibble = ec & 0xF;
+                c = nibble < 10 ? '0' + nibble : 'a' + (nibble - 10);
+                fut_serial_putc(c);
+            }
+            fut_serial_putc('\n');
             handle_unknown(frame);
             break;
     }

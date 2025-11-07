@@ -1433,6 +1433,12 @@ static int build_user_stack(fut_mm_t *mm,
     fut_serial_puts("[TRAMPOLINE] About to ERET to EL0\n");
 
     __asm__ volatile(
+        /* Set TTBR0_EL1 to user page table */
+        "msr ttbr0_el1, %2\n\t"
+        /* Invalidate TLB for TTBR0 changes */
+        "tlbi vmalle1\n\t"
+        "dsb ish\n\t"
+        "isb\n\t"
         /* Set SP_EL0 (user mode stack pointer) - points to argc at [sp] */
         "msr sp_el0, %0\n\t"
         /* Set ELR_EL1 (return address for ERET) */
@@ -1442,14 +1448,12 @@ static int build_user_stack(fut_mm_t *mm,
         /* SPSR_EL1[9:6] = 0b1111 = Mask D,A,I,F (all interrupts/exceptions) */
         "mov x10, #0x3C0\n\t"   /* 0x3C0 = DAIF mask bits */
         "msr spsr_el1, x10\n\t"
-        /* TEMPORARY: Skip TTBR0 switch for identity mapping - both kernel and user share boot page tables */
-        /* TODO: Implement proper higher-half kernel to enable per-process page tables */
         /* Synchronize before ERET */
         "isb\n\t"
         /* Return to user mode */
         "eret\n\t"
         :
-        : "r"(sp), "r"(entry)
+        : "r"(sp), "r"(entry), "r"(pgd_phys)
         : "x10", "memory"
     );
 

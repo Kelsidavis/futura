@@ -12,6 +12,7 @@
 #include <stdbool.h>
 #include <kernel/fut_fipc.h>
 #include <user/futura_init.h>
+#include <user/sys.h>
 
 /* Forward declarations */
 extern int init_config_parse(const char *path);
@@ -92,6 +93,12 @@ static void init_shutdown(void) {
 int main(int argc, char **argv) {
     (void)argc;
     (void)argv;
+
+    /* TEST: Verify syscalls work from user mode (EL0) */
+    const char *test_msg = "[INIT-USER] Hello from user mode! Syscalls work!\n";
+    long msg_len = 0;
+    while (test_msg[msg_len]) msg_len++;
+    sys_write(1, test_msg, msg_len);  /* fd=1 is stdout */
 
     /* Early setup */
     if (init_early_setup() < 0) {

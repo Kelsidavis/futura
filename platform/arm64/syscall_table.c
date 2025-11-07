@@ -2757,6 +2757,7 @@ static struct syscall_entry syscall_table[MAX_SYSCALL] = {
     [39] = { (syscall_fn_t)sys_getpid_wrapper, "getpid" },  /* SYS_getpid = 39 (overrides Linux umount2) */
     [57] = { (syscall_fn_t)sys_fork_wrapper, "fork" },  /* SYS_fork = 57 */
     [59] = { (syscall_fn_t)sys_execve_wrapper, "execve" },  /* SYS_execve = 59 */
+    [60] = { (syscall_fn_t)sys_exit, "exit" },  /* SYS_exit = 60 */
     [61] = { (syscall_fn_t)sys_waitpid_wrapper, "wait4/waitpid" },  /* SYS_wait4/waitpid = 61 */
     [79] = { (syscall_fn_t)sys_getcwd, "getcwd" },  /* SYS_getcwd = 79 */
     [80] = { (syscall_fn_t)sys_chdir, "chdir" },    /* SYS_chdir = 80 */

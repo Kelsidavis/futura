@@ -434,6 +434,30 @@ int main(int argc, char **argv) {
         sys_write(1, rmdir_fail, msg_len);
     }
 
+    /* TEST: nanosleep() - sleep for specified time
+     * This tests timing/delay functionality.
+     */
+    const char *test_sleep = "[INIT-USER] Testing nanosleep() syscall...\n";
+    msg_len = 0; while (test_sleep[msg_len]) msg_len++;
+    sys_write(1, test_sleep, msg_len);
+
+    /* Sleep for 100 milliseconds (0.1 seconds) */
+    fut_timespec_t sleep_time;
+    sleep_time.tv_sec = 0;
+    sleep_time.tv_nsec = 100000000;  /* 100 million nanoseconds = 100 ms */
+
+    fut_timespec_t remaining;
+    long sleep_ret = sys_nanosleep_call(&sleep_time, &remaining);
+    if (sleep_ret == 0) {
+        const char *sleep_ok = "[INIT-USER] ✓ nanosleep() succeeded (slept 100ms)\n";
+        msg_len = 0; while (sleep_ok[msg_len]) msg_len++;
+        sys_write(1, sleep_ok, msg_len);
+    } else {
+        const char *sleep_fail = "[INIT-USER] ✗ nanosleep() failed\n";
+        msg_len = 0; while (sleep_fail[msg_len]) msg_len++;
+        sys_write(1, sleep_fail, msg_len);
+    }
+
     /* TEST: IPC syscalls - pipe(), dup(), dup2()
      * This tests inter-process communication primitives and FD duplication.
      */

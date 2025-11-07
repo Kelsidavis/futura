@@ -2753,6 +2753,7 @@ static struct syscall_entry syscall_table[MAX_SYSCALL] = {
     [22] = { (syscall_fn_t)sys_pipe_wrapper, "pipe" },  /* SYS_pipe = 22 */
     [32] = { (syscall_fn_t)sys_dup_wrapper, "dup" },    /* SYS_dup = 32 */
     [33] = { (syscall_fn_t)sys_dup2_wrapper, "dup2" },  /* SYS_dup2 = 33 */
+    [35] = { (syscall_fn_t)sys_nanosleep, "nanosleep" },  /* SYS_nanosleep = 35 */
     [39] = { (syscall_fn_t)sys_getpid_wrapper, "getpid" },  /* SYS_getpid = 39 (overrides Linux umount2) */
     [79] = { (syscall_fn_t)sys_getcwd, "getcwd" },  /* SYS_getcwd = 79 */
     [80] = { (syscall_fn_t)sys_chdir, "chdir" },    /* SYS_chdir = 80 */

@@ -135,7 +135,7 @@ int pmap_probe_pte(fut_vmem_context_t *ctx, uint64_t vaddr, uint64_t *pte_out) {
                (unsigned long long)pgde, (unsigned long long)pmd_phys, (unsigned long long)(uintptr_t)pmd); */
     pte_t pmde = pmd->entries[pmd_idx];
     if (!fut_pte_is_present(pmde)) {
-        fut_printf("[PROBE] PMD[%llu] not present\n", pmd_idx);
+        /* fut_printf("[PROBE] PMD[%llu] not present\n", pmd_idx); */
         return -EFAULT;
     }
 

@@ -41,7 +41,7 @@ extern void fut_do_user_iretq(uint64_t entry, uint64_t stack, uint64_t argc, uin
 #define USER_CODE_SELECTOR  (0x18u | 0x3u)
 #define USER_DATA_SELECTOR  (0x20u | 0x3u)
 
-#define USER_STACK_TOP      0x00007FFFFFFFE000ULL  /* Standard Linux user stack location */
+#define USER_STACK_TOP      0x00007FFF000000ULL  /* Stack within 39-bit VA space (T0SZ=25) */
 #define USER_STACK_PAGES    16u  /* Increase stack pages from 4 to 16 (64KB) */
 
 typedef struct __attribute__((packed)) {
@@ -977,7 +977,8 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
 #define PF_R            0x00000004u
 
 /* ARM64 user mode stack location (high address, 128KB stack) */
-#define USER_STACK_TOP      0x00007FFFFFFFE000ULL
+/* Stack must be within 39-bit VA space (T0SZ=25) - max 0x7FFFFFFFFF */
+#define USER_STACK_TOP      0x00007FFF000000ULL
 #define USER_STACK_PAGES    32u
 
 typedef struct __attribute__((packed)) {
@@ -1543,20 +1544,83 @@ static int build_user_stack(fut_mm_t *mm,
 
     fut_serial_puts("[TRAMPOLINE] About to ERET to EL0\n");
 
+    /* Debug: Read TCR_EL1 to verify T0SZ configuration */
+    uint64_t tcr_el1;
+    __asm__ volatile("mrs %0, tcr_el1" : "=r"(tcr_el1));
+    fut_printf("[TCR-DEBUG] TCR_EL1 = 0x%llx, T0SZ = %llu\n",
+               (unsigned long long)tcr_el1,
+               (unsigned long long)(tcr_el1 & 0x3F));
+
+    /* Read back SP_EL0 after setting it to verify the value */
+    uint64_t sp_el0_readback;
+
     __asm__ volatile(
         /* Set TTBR0_EL1 to user page table */
-        "msr ttbr0_el1, %2\n\t"
-        /* Invalidate TLB for TTBR0 changes */
-        "tlbi vmalle1\n\t"
+        "msr ttbr0_el1, %3\n\t"
+        /* Invalidate ALL TLB entries (both TTBR0 and TTBR1) - inner shareable */
+        "tlbi vmalle1is\n\t"
         "dsb ish\n\t"
         "isb\n\t"
-        /* Read back TTBR0_EL1 to verify it was set */
-        "mrs x10, ttbr0_el1\n\t"
-        "nop\n\t"  /* Placeholder for debug - x10 now contains TTBR0_EL1 */
+        /* Also invalidate by ASID for TTBR0 specifically */
+        "tlbi aside1is, xzr\n\t"
+        "dsb ish\n\t"
+        "isb\n\t"
         /* Set SP_EL0 (user mode stack pointer) - points to argc at [sp] */
-        "msr sp_el0, %0\n\t"
+        "msr sp_el0, %1\n\t"
+        /* Read back SP_EL0 to verify */
+        "mrs %0, sp_el0\n\t"
+        :  "=r"(sp_el0_readback)
+        : "r"(sp), "r"(entry), "r"(pgd_phys)
+        : "memory"
+    );
+
+    fut_printf("[SP-VERIFY] Wrote 0x%llx to SP_EL0, read back 0x%llx %s\n",
+               (unsigned long long)sp, (unsigned long long)sp_el0_readback,
+               (sp == sp_el0_readback) ? "✓ MATCH" : "✗ MISMATCH!");
+
+    /* Read back TTBR0_EL1 to verify it was set correctly */
+    uint64_t ttbr0_readback;
+    __asm__ volatile("mrs %0, ttbr0_el1" : "=r"(ttbr0_readback));
+    fut_printf("[TTBR0-VERIFY] Set TTBR0_EL1 to 0x%llx, read back 0x%llx %s\n",
+               (unsigned long long)pgd_phys, (unsigned long long)ttbr0_readback,
+               (pgd_phys == ttbr0_readback) ? "✓ MATCH" : "✗ MISMATCH!");
+
+    /* Try to read PGD entries via TTBR0's physical address */
+    uint64_t *pgd_via_ttbr = (uint64_t *)(uintptr_t)ttbr0_readback;
+    fut_printf("[PGD-VIA-TTBR0] PGD at phys 0x%llx, L1[0] = 0x%llx, L1[511] = 0x%llx\n",
+               (unsigned long long)ttbr0_readback,
+               (unsigned long long)pgd_via_ttbr[0],
+               (unsigned long long)pgd_via_ttbr[511]);
+
+    /* Ensure all page table writes are visible to MMU before ERET */
+    /* Use DSB ISH (all operations) instead of ISH ST (stores only) to ensure */
+    /* page table updates are visible to the hardware page table walker */
+    __asm__ volatile("dsb ish" ::: "memory");
+    __asm__ volatile("isb" ::: "memory");
+    fut_serial_puts("[TRAMPOLINE] Memory barriers complete\n");
+
+    /* Use AT (Address Translation) instruction to test if MMU can translate the stack address */
+    /* AT S1E0R = Stage 1 EL0 Read translation */
+    __asm__ volatile("at s1e0r, %0" :: "r"(sp) : "memory");
+    __asm__ volatile("isb" ::: "memory");
+    uint64_t par_el1;
+    __asm__ volatile("mrs %0, par_el1" : "=r"(par_el1));
+
+    if (par_el1 & 1) {
+        /* Translation failed - bit 0 set means fault */
+        fut_printf("[AT-TEST] Address translation FAILED for sp=0x%llx: PAR_EL1=0x%llx\n",
+                   (unsigned long long)sp, (unsigned long long)par_el1);
+        fut_printf("[AT-TEST] FST (bits [6:1]) = 0x%llx\n", (unsigned long long)((par_el1 >> 1) & 0x3F));
+    } else {
+        /* Translation succeeded */
+        uint64_t phys = (par_el1 & 0x0000FFFFFFFFF000ULL) | (sp & 0xFFF);
+        fut_printf("[AT-TEST] Address translation SUCCESS for sp=0x%llx → phys=0x%llx\n",
+                   (unsigned long long)sp, (unsigned long long)phys);
+    }
+
+    __asm__ volatile(
         /* Set ELR_EL1 (return address for ERET) */
-        "msr elr_el1, %1\n\t"
+        "msr elr_el1, %0\n\t"
         /* Set SPSR_EL1 for EL0t mode (user mode with thread SP) */
         /* SPSR_EL1[3:0] = 0b0000 = EL0t (M[4]=0 means use SP_EL0) */
         /* SPSR_EL1[9:6] = 0b1111 = Mask D,A,I,F (all interrupts/exceptions) */
@@ -1567,7 +1631,7 @@ static int build_user_stack(fut_mm_t *mm,
         /* Return to user mode */
         "eret\n\t"
         :
-        : "r"(sp), "r"(entry), "r"(pgd_phys)
+        : "r"(entry)
         : "x10", "memory"
     );
 

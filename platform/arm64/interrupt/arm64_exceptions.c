@@ -129,6 +129,14 @@ void arm64_data_abort_handler(fut_interrupt_frame_t *frame) {
         return;
     }
 
+    /* Debug: Read TTBR0_EL1, TTBR1_EL1, TCR_EL1 at exception time */
+    uint64_t ttbr0, ttbr1, tcr;
+    __asm__ volatile("mrs %0, ttbr0_el1" : "=r"(ttbr0));
+    __asm__ volatile("mrs %0, ttbr1_el1" : "=r"(ttbr1));
+    __asm__ volatile("mrs %0, tcr_el1" : "=r"(tcr));
+    fut_printf("[EXCEPTION-DEBUG] TTBR0_EL1=0x%llx TTBR1_EL1=0x%llx TCR_EL1=0x%llx\n",
+               (unsigned long long)ttbr0, (unsigned long long)ttbr1, (unsigned long long)tcr);
+
     /* Try to handle as page fault */
     if (fut_trap_handle_page_fault(frame)) {
         return;  /* Handled successfully */

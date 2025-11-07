@@ -130,6 +130,18 @@ void arm64_exception_dispatch(fut_interrupt_frame_t *frame) {
         case ESR_EC_DABT_EL1:
             if (ec == ESR_EC_DABT_EL0) {
                 fut_serial_puts("[EXCEPTION] Data abort from lower EL (userspace)\n");
+                /* Debug: Read MMU configuration registers at exception time */
+                extern void fut_printf(const char *, ...);
+                uint64_t ttbr0, ttbr1, tcr, mair, sctlr;
+                __asm__ volatile("mrs %0, ttbr0_el1" : "=r"(ttbr0));
+                __asm__ volatile("mrs %0, ttbr1_el1" : "=r"(ttbr1));
+                __asm__ volatile("mrs %0, tcr_el1" : "=r"(tcr));
+                __asm__ volatile("mrs %0, mair_el1" : "=r"(mair));
+                __asm__ volatile("mrs %0, sctlr_el1" : "=r"(sctlr));
+                fut_printf("[EXCEPTION-DEBUG] TTBR0=0x%llx TTBR1=0x%llx\n",
+                           (unsigned long long)ttbr0, (unsigned long long)ttbr1);
+                fut_printf("[EXCEPTION-DEBUG] TCR=0x%llx MAIR=0x%llx SCTLR=0x%llx\n",
+                           (unsigned long long)tcr, (unsigned long long)mair, (unsigned long long)sctlr);
             } else {
                 fut_serial_puts("[EXCEPTION] Data abort from same EL (kernel)\n");
             }

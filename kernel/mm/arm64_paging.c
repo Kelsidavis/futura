@@ -167,8 +167,12 @@ static page_table_t *get_or_create_table(page_table_t *parent_table, int index, 
         pte_t table_desc = fut_make_pte(phys_addr, PTE_VALID | PTE_TABLE);
         parent_table->entries[index] = table_desc;
 
-        /* fut_printf("[PT] Created table: parent=%p idx=%d new=%p desc=0x%llx\n",
-                   parent_table, index, new_table, (unsigned long long)table_desc); */
+        /* Clean the table descriptor to PoC so MMU walker can see it */
+        __asm__ volatile("dc cvac, %0" :: "r"(&parent_table->entries[index]) : "memory");
+        __asm__ volatile("dsb ish" ::: "memory");
+
+        fut_printf("[PT] Created table: parent=%p idx=%d new=%p desc=0x%llx\n",
+                   parent_table, index, new_table, (unsigned long long)table_desc);
 
         return new_table;
     }
@@ -176,8 +180,8 @@ static page_table_t *get_or_create_table(page_table_t *parent_table, int index, 
     if (fut_pte_is_table(entry)) {
         /* Extract physical address and convert to virtual */
         uint64_t phys = fut_pte_to_phys(entry);
-        /* fut_printf("[PT] Reusing table: entry=0x%llx phys=0x%llx\n",
-                   (unsigned long long)entry, (unsigned long long)phys); */
+        fut_printf("[PT] Reusing table: idx=%d entry=0x%llx phys=0x%llx\n",
+                   index, (unsigned long long)entry, (unsigned long long)phys);
         return (page_table_t *)phys;  /* Assuming identity mapping for now */
     }
 
@@ -200,6 +204,8 @@ static page_table_t *get_or_create_table(page_table_t *parent_table, int index, 
  * @return ARM64 PTE flags with proper AP bits and attributes
  */
 static uint64_t arm64_translate_flags(uint64_t generic_flags) {
+    extern void fut_printf(const char *, ...);
+
     uint64_t arm64_flags = 0;
     bool is_user = true;  /* Default to user pages */
     bool is_writable = false;
@@ -214,6 +220,8 @@ static uint64_t arm64_translate_flags(uint64_t generic_flags) {
         is_executable = (generic_flags & 0x4) != 0;  /* PROT_EXEC */
         /* PROT_* flags always mean user pages for ELF loading */
         arm64_flags |= PTE_VALID;
+        fut_printf("[TRANSLATE-FLAGS] PROT_* input: 0x%llx -> is_user=%d is_writable=%d is_exec=%d\n",
+                   (unsigned long long)generic_flags, is_user, is_writable, is_executable);
     } else {
         /* These are PTE_* flags */
         if (generic_flags & PTE_PRESENT) {
@@ -222,6 +230,8 @@ static uint64_t arm64_translate_flags(uint64_t generic_flags) {
         is_user = (generic_flags & PTE_USER) != 0;
         is_writable = (generic_flags & PTE_WRITABLE) != 0;
         is_executable = (generic_flags & PTE_NX) == 0;  /* NX=0 means executable */
+        fut_printf("[TRANSLATE-FLAGS] PTE_* input: 0x%llx -> is_user=%d is_writable=%d is_exec=%d\n",
+                   (unsigned long long)generic_flags, is_user, is_writable, is_executable);
     }
 
     /* Determine AP bits based on user/writable flags */
@@ -229,15 +239,23 @@ static uint64_t arm64_translate_flags(uint64_t generic_flags) {
         /* User-accessible page */
         if (is_writable) {
             arm64_flags |= PTE_AP_RW_ALL;      /* User read/write */
+            fut_printf("[TRANSLATE-FLAGS] Setting PTE_AP_RW_ALL (0x%llx)\n",
+                       (unsigned long long)PTE_AP_RW_ALL);
         } else {
             arm64_flags |= PTE_AP_RO_ALL;      /* User read-only */
+            fut_printf("[TRANSLATE-FLAGS] Setting PTE_AP_RO_ALL (0x%llx)\n",
+                       (unsigned long long)PTE_AP_RO_ALL);
         }
     } else {
         /* Kernel-only page */
         if (is_writable) {
             arm64_flags |= PTE_AP_RW_EL1;      /* Kernel read/write only */
+            fut_printf("[TRANSLATE-FLAGS] Setting PTE_AP_RW_EL1 (0x%llx)\n",
+                       (unsigned long long)PTE_AP_RW_EL1);
         } else {
             arm64_flags |= PTE_AP_RO_EL1;      /* Kernel read-only */
+            fut_printf("[TRANSLATE-FLAGS] Setting PTE_AP_RO_EL1 (0x%llx)\n",
+                       (unsigned long long)PTE_AP_RO_EL1);
         }
     }
 
@@ -259,6 +277,10 @@ static uint64_t arm64_translate_flags(uint64_t generic_flags) {
     if (is_user) {
         arm64_flags |= PTE_PXN_BIT;
     }
+
+    fut_printf("[TRANSLATE-FLAGS] Final ARM64 flags: 0x%llx (AP bits [7:6]=0x%llx)\n",
+               (unsigned long long)arm64_flags,
+               (unsigned long long)((arm64_flags >> 6) & 0x3));
 
     return arm64_flags;
 }
@@ -303,23 +325,51 @@ int fut_map_page(fut_vmem_context_t *ctx, uint64_t vaddr, uint64_t paddr, uint64
      * L3 (PTE): bits [20:12] -> physical page
      */
     int pgd_idx = PGD_INDEX(vaddr);
+    fut_printf("[MAP-PAGE] VA=0x%llx: PGD[%d] lookup at %p\n",
+               (unsigned long long)vaddr, pgd_idx, pgd);
+
     page_table_t *pmd = get_or_create_table(pgd, pgd_idx, true);
     if (!pmd) {
         return -4;  /* Failed to allocate L2 (PMD) */
     }
+    fut_printf("[MAP-PAGE] Got PMD table at %p\n", pmd);
 
     int pmd_idx = PMD_INDEX(vaddr);
+    fut_printf("[MAP-PAGE] PMD[%d] lookup\n", pmd_idx);
+
     page_table_t *pte_table = get_or_create_table(pmd, pmd_idx, true);
     if (!pte_table) {
         return -5;  /* Failed to allocate L3 (PTE table) */
     }
+    fut_printf("[MAP-PAGE] Got PTE table at %p\n", pte_table);
 
     /* L3 is the final level - write page descriptor here */
     int pte_idx = PTE_INDEX(vaddr);
+    fut_printf("[MAP-PAGE] PTE[%d] will be written\n", pte_idx);
     /* For level 3 page descriptors, bits [1:0] must be 0b11 (PTE_TYPE_PAGE)
      * This means we need PTE_VALID (bit 0) | PTE_TABLE (bit 1) = 0b11 */
     pte_t pte = fut_make_pte(paddr, arm64_flags | PTE_TABLE);
+
+    extern void fut_printf(const char *, ...);
+    fut_printf("[MAP-PAGE] VA=0x%llx PA=0x%llx flags_in=0x%llx arm64_flags=0x%llx PTE=0x%llx (AP[7:6]=0x%llx)\n",
+               (unsigned long long)vaddr, (unsigned long long)paddr,
+               (unsigned long long)flags, (unsigned long long)arm64_flags,
+               (unsigned long long)pte, (unsigned long long)((pte >> 6) & 0x3));
+
     pte_table->entries[pte_idx] = pte;
+
+    /* Clean the PTE to Point of Coherency so MMU page table walker can see it */
+    __asm__ volatile("dc cvac, %0" :: "r"(&pte_table->entries[pte_idx]) : "memory");
+    __asm__ volatile("dsb ish" ::: "memory");
+
+    /* Read back to verify write */
+    pte_t readback = pte_table->entries[pte_idx];
+    if (readback != pte) {
+        fut_printf("[MAP-PAGE] ERROR: PTE readback mismatch! wrote=0x%llx read=0x%llx\n",
+                   (unsigned long long)pte, (unsigned long long)readback);
+    } else {
+        fut_printf("[MAP-PAGE] ✓ PTE verified: table=%p idx=%d\n", pte_table, pte_idx);
+    }
 
     /* Invalidate TLB entry for this address */
     fut_flush_tlb_single(vaddr);
@@ -731,14 +781,15 @@ void fut_paging_init(void) {
     mair |= (0x04 << 24);  /* Attribute 3: Device nGnRE */
     write_mair_el1(mair);
 
-    /* Set up translation control register */
+    /* Set up translation control register - MUST MATCH boot.S settings! */
     uint64_t tcr = 0;
-    /* T0SZ = 16 (48-bit user VA) */
-    tcr |= (16 << 0);
-    /* T1SZ = 16 (48-bit kernel VA) */
-    tcr |= (16 << 16);
-    /* TG0 = 0 (4KB granule) */
-    /* TG1 = 0 (4KB granule) */
+    /* T0SZ = 25 (39-bit user VA) - matches boot.S */
+    tcr |= (25 << 0);
+    /* T1SZ = 25 (39-bit kernel VA) - matches boot.S */
+    tcr |= (25 << 16);
+    /* TG0 = 00 (4KB granule for TTBR0) - bits [15:14] remain 0 */
+    /* TG1 = 10 (4KB granule for TTBR1) - bits [31:30] */
+    tcr |= (2 << 30);
     /* SH0 = 3 (inner shareable) */
     tcr |= (3 << 12);
     /* SH1 = 3 (inner shareable) */
@@ -751,6 +802,14 @@ void fut_paging_init(void) {
     tcr |= (1 << 8);
     /* IRGN1 = 1 */
     tcr |= (1 << 24);
+
+    /* Debug: Print TCR value before writing */
+    extern void fut_printf(const char *, ...);
+    fut_printf("[PAGING-INIT] Setting TCR_EL1 = 0x%llx, T0SZ=%llu, TG0=%llu\n",
+               (unsigned long long)tcr,
+               (unsigned long long)(tcr & 0x3F),
+               (unsigned long long)((tcr >> 14) & 0x3));
+
     write_tcr_el1(tcr);
 
     /* Load kernel TTBR1_EL1 */

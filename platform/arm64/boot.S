@@ -274,9 +274,11 @@ bss_cleared:
     /* Configure MAIR_EL1 (Memory Attribute Indirection Register)
      * Attr0 = 0xFF (Normal memory, Inner/Outer Write-Back Cacheable)
      * Attr1 = 0x00 (Device-nGnRnE - for UART, GIC, etc.)
-     * Combined value: 0x00FF (Attr1=0x00, Attr0=0xFF)
+     * Attr5 = 0xFF (Normal memory - used by user stack pages)
+     * Combined value: 0xFF000000_000000FF
      */
     movz    x0, #0x00FF               /* Attr0=0xFF (normal), Attr1=0x00 (device) */
+    movk    x0, #0xFF00, lsl #32      /* Attr5=0xFF (normal for user pages) */
     msr     mair_el1, x0
 
     /* Debug: MAIR configured */
@@ -295,16 +297,13 @@ bss_cleared:
      * ORGN1/IRGN1 = 01 (bits 27:26, 25:24): Normal, WB RA WA
      * IPS = 001 (bits 34:32): 36-bit PA space
      */
-    movz    x0, #25                   /* T0SZ = 25 */
-    orr     x0, x0, #(0x3 << 12)      /* SH0 = 11 (inner shareable) */
-    orr     x0, x0, #(0x1 << 10)      /* ORGN0 = 01 */
-    orr     x0, x0, #(0x1 << 8)       /* IRGN0 = 01 */
-    movk    x0, #25, lsl #16          /* T1SZ = 25 */
-    orr     x0, x0, #(0x3 << 28)      /* SH1 = 11 (inner shareable) */
-    orr     x0, x0, #(0x1 << 26)      /* ORGN1 = 01 */
-    orr     x0, x0, #(0x1 << 24)      /* IRGN1 = 01 */
-    orr     x0, x0, #(0x2 << 30)      /* TG1 = 10 (4KB granule for TTBR1) */
-    movk    x0, #2, lsl #32           /* IPS = 010 (40-bit PA for PCIe ECAM) */
+    /* Build TCR_EL1 value carefully to ensure TG0=00 for 4KB granule */
+    /* Start with T0SZ=25, IRGN0=01, ORGN0=01, SH0=11 */
+    movz    x0, #0x3519               /* Bits [15:0]: T0SZ=25, IRGN0=01, ORGN0=01, SH0=11, TG0=00 */
+    /* Set T1SZ=25, IRGN1=01, ORGN1=01, SH1=11, TG1=10 */
+    movk    x0, #0xB519, lsl #16     /* Bits [31:16]: T1SZ=25, IRGN1=01, ORGN1=01, SH1=11, TG1=10 */
+    /* Set IPS=010 (40-bit PA) */
+    movk    x0, #2, lsl #32           /* Bits [34:32]: IPS=010 */
     msr     tcr_el1, x0
 
     /* Debug: TCR configured */

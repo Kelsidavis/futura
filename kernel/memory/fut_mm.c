@@ -715,6 +715,111 @@ fut_mm_t *fut_mm_kernel(void) {
     return &kernel_mm;
 }
 
+/* Helper to get or create an L2 table in the L1 PGD */
+static page_table_t *get_or_create_l2(page_table_t *pgd, uint64_t l1_idx) {
+    extern void fut_printf(const char *, ...);
+
+    /* Check if L1 entry already exists as a table descriptor
+     * Table descriptor: bits [1:0] = 11 (Valid + Table)
+     * Block descriptor: bits [1:0] = 01 (Valid + Block)
+     * Invalid: bits [1:0] = 00 or 10
+     */
+    uint64_t entry = pgd->entries[l1_idx];
+    if ((entry & 0x1) != 0) {  /* Valid bit set */
+        if ((entry & 0x2) != 0) {
+            /* Table descriptor (11) - extract physical address */
+            uint64_t l2_phys = entry & 0x0000FFFFFFFFF000ULL;
+            return (page_table_t *)l2_phys;
+        } else {
+            /* Block descriptor (01) - ERROR, can't have sub-tables */
+            fut_printf("[COPY-KERNEL] ERROR: L1[%llu] is block descriptor, can't create L2\n",
+                       (unsigned long long)l1_idx);
+            return NULL;
+        }
+    }
+
+    /* Entry is invalid (00) - need to create new L2 table */
+    page_table_t *l2 = (page_table_t *)fut_pmm_alloc_page();
+    if (!l2) {
+        fut_printf("[COPY-KERNEL] ERROR: Failed to allocate L2 table\n");
+        return NULL;
+    }
+
+    memset(l2, 0, PAGE_SIZE);
+
+    /* Create L1 table descriptor pointing to new L2 */
+    uint64_t l2_phys = (uint64_t)l2;
+    pgd->entries[l1_idx] = (l2_phys & 0x0000FFFFFFFFF000ULL) | 0x3;  /* Valid + Table */
+
+    return l2;
+}
+
+/* Helper to get or create an L3 table in an L2 table */
+static page_table_t *get_or_create_l3(page_table_t *l2, uint64_t l2_idx) {
+    extern void fut_printf(const char *, ...);
+
+    /* Check if L2 entry already exists as a table descriptor
+     * Table descriptor: bits [1:0] = 11 (Valid + Table)
+     * Block descriptor: bits [1:0] = 01 (Valid + Block)  - 2MB pages at L2
+     * Invalid: bits [1:0] = 00 or 10
+     */
+    uint64_t entry = l2->entries[l2_idx];
+    if ((entry & 0x1) != 0) {  /* Valid bit set */
+        if ((entry & 0x2) != 0) {
+            /* Table descriptor (11) - extract physical address */
+            uint64_t l3_phys = entry & 0x0000FFFFFFFFF000ULL;
+            return (page_table_t *)l3_phys;
+        } else {
+            /* Block descriptor (01) - ERROR, can't have sub-tables */
+            fut_printf("[COPY-KERNEL] ERROR: L2[%llu] is block descriptor, can't create L3\n",
+                       (unsigned long long)l2_idx);
+            return NULL;
+        }
+    }
+
+    /* Entry is invalid (00) - need to create new L3 table */
+    page_table_t *l3 = (page_table_t *)fut_pmm_alloc_page();
+    if (!l3) {
+        fut_printf("[COPY-KERNEL] ERROR: Failed to allocate L3 table\n");
+        return NULL;
+    }
+
+    memset(l3, 0, PAGE_SIZE);
+
+    /* Create L2 table descriptor pointing to new L3 */
+    uint64_t l3_phys = (uint64_t)l3;
+    l2->entries[l2_idx] = (l3_phys & 0x0000FFFFFFFFF000ULL) | 0x3;  /* Valid + Table */
+
+    return l3;
+}
+
+/* Helper to map a device page (UART, GIC, etc.) with Device-nGnRnE attributes */
+static void map_device_page(page_table_t *pgd, uint64_t vaddr, uint64_t paddr) {
+    extern void fut_printf(const char *, ...);
+
+    uint64_t l1_idx = (vaddr >> 30) & 0x1FF;
+    uint64_t l2_idx = (vaddr >> 21) & 0x1FF;
+    uint64_t l3_idx = (vaddr >> 12) & 0x1FF;
+
+    page_table_t *l2 = get_or_create_l2(pgd, l1_idx);
+    if (!l2) return;
+
+    page_table_t *l3 = get_or_create_l3(l2, l2_idx);
+    if (!l3) return;
+
+    /* Create L3 page descriptor with Device-nGnRnE attributes
+     * Bits: [63:59]=Reserved, [58:55]=Reserved, [54:53]=UXN/PXN, [52:48]=Reserved
+     *       [47:12]=Output address, [11:10]=AF+nG, [9:8]=SH, [7:6]=AP, [5:4]=NS+AttrIndx, [1:0]=Valid+Page
+     */
+    uint64_t page_desc = (paddr & 0x0000FFFFFFFFF000ULL)  /* Physical address */
+                       | (1ULL << 10)                       /* AF (Access Flag) */
+                       | (0x0ULL << 6)                      /* AP[2:1] = 00 (EL1 RW, EL0 no access) */
+                       | (0x0ULL << 2)                      /* AttrIndx[2:0] = 000 (Device-nGnRnE from MAIR_EL1) */
+                       | 0x3;                               /* Valid + Page descriptor */
+
+    l3->entries[l3_idx] = page_desc;
+}
+
 static void copy_kernel_half(page_table_t *dst) {
     extern void fut_printf(const char *, ...);
     extern page_table_t boot_l1_table;  /* From boot.S */
@@ -723,7 +828,10 @@ static void copy_kernel_half(page_table_t *dst) {
      * L1[0] must NOT be copied because the boot L2 table has block descriptors
      * which conflict with fine-grained 4KB page mappings needed for user code.
      *
-     * L1[0]: User space (0x00000000-0x3FFFFFFF) - Create fresh L2 on demand
+     * Instead, we manually map critical peripherals (UART, GIC) with 4KB pages
+     * so exception handlers can access them.
+     *
+     * L1[0]: User space + peripherals (0x00000000-0x3FFFFFFF)
      * L1[1]: DRAM (0x40000000-0x7FFFFFFF) - COPY (kernel + vectors)
      * L1[256]: PCIe ECAM - DON'T COPY (not needed yet)
      */
@@ -733,18 +841,47 @@ static void copy_kernel_half(page_table_t *dst) {
     /* Copy L1[1] (DRAM at 0x40000000-0x7FFFFFFF) */
     dst->entries[1] = boot_l1_table.entries[1];
 
-    /* Zero out all other entries (will be populated by ELF loader / page fault handler) */
+    /* Zero out ONLY invalid entries (preserve user mappings already present)
+     * DON'T zero out L1[1] (DRAM) or any valid entries from previous mappings
+     * (e.g., L1[0] for user code, L1[511] for stack)
+     */
     for (size_t i = 0; i < 512; i++) {
-        if (i != 1) {
-            dst->entries[i] = 0;
+        if (i == 1) {
+            continue;  /* Skip L1[1] - already copied DRAM mapping */
         }
+        /* Only zero if entry is currently invalid (bit[0] = 0) */
+        if ((dst->entries[i] & 0x1) == 0) {
+            dst->entries[i] = 0;  /* Already zero, but be explicit */
+        }
+        /* If entry is valid, preserve it (user code/stack mappings) */
+    }
+
+    /* Map critical peripherals with 4KB pages (not block descriptors)
+     * This allows exception handlers to access UART/GIC for debug output
+     */
+    fut_printf("[COPY-KERNEL] Mapping critical peripherals with 4KB pages...\n");
+
+    /* UART at 0x09000000 (map 64KB = 16 pages for safety) */
+    for (uint64_t offset = 0; offset < 0x10000; offset += PAGE_SIZE) {
+        map_device_page(dst, 0x09000000 + offset, 0x09000000 + offset);
+    }
+
+    /* GIC Distributor at 0x08000000 (map 64KB = 16 pages) */
+    for (uint64_t offset = 0; offset < 0x10000; offset += PAGE_SIZE) {
+        map_device_page(dst, 0x08000000 + offset, 0x08000000 + offset);
+    }
+
+    /* GIC CPU Interface at 0x08010000 (map 64KB = 16 pages) */
+    for (uint64_t offset = 0; offset < 0x10000; offset += PAGE_SIZE) {
+        map_device_page(dst, 0x08010000 + offset, 0x08010000 + offset);
     }
 
     /* Debug: Verify mappings */
-    fut_printf("[COPY-KERNEL] L1[0] = 0x%llx (user space - fresh L2 will be created on demand)\n",
+    fut_printf("[COPY-KERNEL] L1[0] = 0x%llx (user space + peripheral pages)\n",
                (unsigned long long)dst->entries[0]);
     fut_printf("[COPY-KERNEL] L1[1] = 0x%llx (DRAM 0x40000000-0x7FFFFFFF - kernel/vectors)\n",
                (unsigned long long)dst->entries[1]);
+    fut_printf("[COPY-KERNEL] Peripherals mapped: UART 0x09000000, GIC 0x08000000-0x08020000\n");
 }
 
 fut_mm_t *fut_mm_create(void) {

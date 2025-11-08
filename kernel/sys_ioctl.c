@@ -8,6 +8,7 @@
 
 #include <kernel/fut_task.h>
 #include <kernel/fut_vfs.h>
+#include <kernel/chrdev.h>
 #include <kernel/errno.h>
 
 extern void fut_printf(const char *fmt, ...);
@@ -90,8 +91,22 @@ long sys_ioctl(int fd, unsigned long request, void *argp) {
             break;
     }
 
-    /* Phase 2: Return success for known ioctls (stub implementation)
-     * Phase 3+ will actually implement the operations */
+    /* Get file from fd table */
+    struct fut_file *file = task->fd_table[fd];
+    if (!file) {
+        fut_printf("[IOCTL] ioctl(fd=%d, request=0x%lx, argp=%p) -> EBADF (invalid file)\n",
+                   fd, request, argp);
+        return -EBADF;
+    }
+
+    /* Try character device operations */
+    if (file->chr_ops && file->chr_ops->ioctl) {
+        fut_printf("[IOCTL] ioctl(fd=%d, request=0x%lx [%s], argp=%p) -> dispatching to chr device\n",
+                   fd, request, request_name, argp);
+        return file->chr_ops->ioctl(file->chr_inode, file->chr_private, request, (unsigned long)argp);
+    }
+
+    /* Phase 2: Stub for terminal ioctls if no handler found */
     switch (request) {
         case TCGETS:
         case TCSETS:
@@ -101,8 +116,8 @@ long sys_ioctl(int fd, unsigned long request, void *argp) {
                        fd, request, request_name, argp, request_category);
             return 0;
         default:
-            fut_printf("[IOCTL] ioctl(fd=%d, request=0x%lx [%s], argp=%p) -> ENOTSUP (unsupported request)\n",
+            fut_printf("[IOCTL] ioctl(fd=%d, request=0x%lx [%s], argp=%p) -> ENOTTY (no ioctl op)\n",
                        fd, request, request_name, argp);
-            return -ENOTSUP;
+            return -ENOTTY;
     }
 }

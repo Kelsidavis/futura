@@ -1372,17 +1372,12 @@ static int build_user_stack(fut_mm_t *mm,
 
 /* ARM64 user mode entry trampoline */
 [[noreturn]] __attribute__((optimize("O0"))) static void fut_user_trampoline_arm64(void *arg) {
-    extern void fut_serial_puts(const char *);
-    fut_serial_puts("[USER-TRAMPOLINE-ARM64] ENTERED!\n");
-
     struct fut_user_entry_arm64 *info = (struct fut_user_entry_arm64 *)arg;
     uint64_t entry = info->entry;
     uint64_t sp = info->stack;
     fut_task_t *task = info->task;
 
     extern void fut_printf(const char *, ...);
-    fut_printf("[USER-TRAMPOLINE-ARM64] entry=0x%llx sp=0x%llx task=%p\n",
-               (unsigned long long)entry, (unsigned long long)sp, (void*)task);
 
     /* Get the PGD physical address from the task's memory manager */
     fut_mm_t *mm = task->mm;
@@ -1405,10 +1400,9 @@ static int build_user_stack(fut_mm_t *mm,
     uint32_t *entry_code = (uint32_t *)pmap_phys_to_virt(entry_phys);
     uint32_t first_insn = *entry_code;
 
-    fut_printf("[TRAMPOLINE] Entry first instruction: 0x%08x\n", (unsigned int)first_insn);
-
-    /* Different compilers generate different entry sequences, so just log it */
+    /* Different compilers generate different entry sequences, so just check for invalid */
     if (first_insn == 0 || first_insn == 0xffffffff) {
+        extern void fut_serial_puts(const char *);
         fut_serial_puts("[TRAMPOLINE] WARNING: Entry code looks invalid!\n");
     }
 
@@ -1422,118 +1416,9 @@ static int build_user_stack(fut_mm_t *mm,
      * 6. Execute ERET to drop to EL0
      */
 
-    /* Signal we're about to ERET */
-    extern void fut_serial_puts(const char *);
-    fut_printf("[TRAMPOLINE] About to ERET: entry=0x%llx sp=0x%llx pgd_phys=0x%llx\n",
-               (unsigned long long)entry, (unsigned long long)sp, (unsigned long long)pgd_phys);
-    fut_printf("[TRAMPOLINE] mm->ctx.pgd=%p (virt) pgd_phys=0x%llx (phys)\n",
-               (void*)mm->ctx.pgd, (unsigned long long)pgd_phys);
-
-    /* Read back L1[1] from user PGD to verify it has kernel mappings */
-    page_table_t *user_pgd = (page_table_t *)mm->ctx.pgd;
-    fut_printf("[TRAMPOLINE] user_pgd->entries[1] = 0x%llx (should be DRAM L2 pointer)\n",
-               (unsigned long long)user_pgd->entries[1]);
-
-    /* Check L1[511] for stack mappings (stack is at 0x7ffffffde000-0x7fffffffe000) */
-    fut_printf("[TRAMPOLINE] user_pgd->entries[511] = 0x%llx (should be L2 pointer for stack)\n",
-               (unsigned long long)user_pgd->entries[511]);
-
-    /* Check L1[0] for code mappings (code is at 0x400000) */
-    fut_printf("[TRAMPOLINE] user_pgd->entries[0] = 0x%llx (should be L2 pointer for code)\n",
-               (unsigned long long)user_pgd->entries[0]);
-
-    /* Walk page table hierarchy for stack address 0x7fffffffdfd0 */
-    uint64_t stack_test_addr = 0x7fffffffdfd0ULL;
-    uint64_t l1_idx = (stack_test_addr >> 30) & 0x1FF;
-    uint64_t l2_idx = (stack_test_addr >> 21) & 0x1FF;
-    uint64_t l3_idx = (stack_test_addr >> 12) & 0x1FF;
-
-    fut_printf("[PT-WALK] Stack addr 0x%llx: L1[%llu] L2[%llu] L3[%llu]\n",
-               (unsigned long long)stack_test_addr, (unsigned long long)l1_idx,
-               (unsigned long long)l2_idx, (unsigned long long)l3_idx);
-
-    uint64_t l1_entry = user_pgd->entries[l1_idx];
-    fut_printf("[PT-WALK] L1[%llu] = 0x%llx\n", (unsigned long long)l1_idx, (unsigned long long)l1_entry);
-
-    if ((l1_entry & 0x3) == 0x3) {  /* Valid L1 table descriptor */
-        /* Extract L2 physical address (bits [47:12]) */
-        phys_addr_t l2_phys = l1_entry & 0x0000FFFFFFFFF000ULL;
-        /* Convert to virtual address for kernel access */
-        page_table_t *l2_table = (page_table_t *)(uintptr_t)pmap_phys_to_virt(l2_phys);
-
-        fut_printf("[PT-WALK] L2 table phys=0x%llx virt=%p\n",
-                   (unsigned long long)l2_phys, (void*)l2_table);
-
-        uint64_t l2_entry = l2_table->entries[l2_idx];
-        fut_printf("[PT-WALK] L2[%llu] = 0x%llx\n", (unsigned long long)l2_idx, (unsigned long long)l2_entry);
-
-        if ((l2_entry & 0x3) == 0x3) {  /* Valid L2 table descriptor */
-            /* Extract L3 physical address (bits [47:12]) */
-            phys_addr_t l3_phys = l2_entry & 0x0000FFFFFFFFF000ULL;
-            /* Convert to virtual address for kernel access */
-            page_table_t *l3_table = (page_table_t *)(uintptr_t)pmap_phys_to_virt(l3_phys);
-
-            fut_printf("[PT-WALK] L3 table phys=0x%llx virt=%p\n",
-                       (unsigned long long)l3_phys, (void*)l3_table);
-
-            uint64_t l3_entry = l3_table->entries[l3_idx];
-            fut_printf("[PT-WALK] L3[%llu] = 0x%llx\n", (unsigned long long)l3_idx, (unsigned long long)l3_entry);
-
-            if ((l3_entry & 0x3) == 0x3) {  /* Valid L3 page descriptor */
-                phys_addr_t page_phys = l3_entry & 0x0000FFFFFFFFF000ULL;
-                fut_printf("[PT-WALK] Final page phys=0x%llx (VALID!)\n",
-                           (unsigned long long)page_phys);
-            } else {
-                fut_printf("[PT-WALK] L3[%llu] is INVALID! (bits[1:0]=0x%llx)\n",
-                           (unsigned long long)l3_idx, (unsigned long long)(l3_entry & 0x3));
-            }
-        } else {
-            fut_printf("[PT-WALK] L2[%llu] is INVALID! (bits[1:0]=0x%llx)\n",
-                       (unsigned long long)l2_idx, (unsigned long long)(l2_entry & 0x3));
-        }
-    } else {
-        fut_printf("[PT-WALK] L1[%llu] is INVALID! (bits[1:0]=0x%llx)\n",
-                   (unsigned long long)l1_idx, (unsigned long long)(l1_entry & 0x3));
-    }
-
-    /* Read current TTBR0_EL1 and TTBR1_EL1 before we change them */
-    uint64_t old_ttbr0, old_ttbr1;
-    __asm__ volatile("mrs %0, ttbr0_el1" : "=r"(old_ttbr0));
-    __asm__ volatile("mrs %0, ttbr1_el1" : "=r"(old_ttbr1));
-    fut_printf("[TRAMPOLINE] Current TTBR0_EL1 before switch: 0x%llx\n",
-               (unsigned long long)old_ttbr0);
-    fut_printf("[TRAMPOLINE] Current TTBR1_EL1: 0x%llx\n",
-               (unsigned long long)old_ttbr1);
-    fut_printf("[TRAMPOLINE] Will set TTBR0_EL1 to: 0x%llx\n",
-               (unsigned long long)pgd_phys);
-
-    /* Verify kernel mappings are present in user page tables */
-    page_table_t *boot_pgd = (page_table_t *)(uintptr_t)old_ttbr0;
-
-    /* Check L1[0] (peripherals: 0x00000000-0x3FFFFFFF) */
-    uint64_t boot_l1_entry_0 = boot_pgd->entries[0];
-    uint64_t user_l1_entry_0 = user_pgd->entries[0];
-    fut_printf("[VERIFY] Boot PGD L1[0] = 0x%llx, User PGD L1[0] = 0x%llx %s\n",
-               (unsigned long long)boot_l1_entry_0,
-               (unsigned long long)user_l1_entry_0,
-               (boot_l1_entry_0 == user_l1_entry_0) ? "✓ MATCH" : "✗ MISMATCH!");
-
-    /* Check L1[1] (kernel DRAM: 0x40000000-0x7FFFFFFF) */
-    uint64_t boot_l1_entry_1 = boot_pgd->entries[1];
-    uint64_t user_l1_entry_1 = user_pgd->entries[1];
-    fut_printf("[VERIFY] Boot PGD L1[1] = 0x%llx, User PGD L1[1] = 0x%llx %s\n",
-               (unsigned long long)boot_l1_entry_1,
-               (unsigned long long)user_l1_entry_1,
-               (boot_l1_entry_1 == user_l1_entry_1) ? "✓ MATCH" : "✗ MISMATCH!");
-
-    fut_serial_puts("[TRAMPOLINE] About to ERET to EL0\n");
-
-    /* Read back SP_EL0 after setting it to verify the value */
-    uint64_t sp_el0_readback;
-
     __asm__ volatile(
         /* Set TTBR0_EL1 to user page table */
-        "msr ttbr0_el1, %3\n\t"
+        "msr ttbr0_el1, %0\n\t"
         /* Invalidate ALL TLB entries (both TTBR0 and TTBR1) - inner shareable */
         "tlbi vmalle1is\n\t"
         "dsb ish\n\t"
@@ -1544,56 +1429,16 @@ static int build_user_stack(fut_mm_t *mm,
         "isb\n\t"
         /* Set SP_EL0 (user mode stack pointer) - points to argc at [sp] */
         "msr sp_el0, %1\n\t"
-        /* Read back SP_EL0 to verify */
-        "mrs %0, sp_el0\n\t"
-        :  "=r"(sp_el0_readback)
-        : "r"(sp), "r"(entry), "r"(pgd_phys)
+        :
+        : "r"(pgd_phys), "r"(sp)
         : "memory"
     );
-
-    fut_printf("[SP-VERIFY] Wrote 0x%llx to SP_EL0, read back 0x%llx %s\n",
-               (unsigned long long)sp, (unsigned long long)sp_el0_readback,
-               (sp == sp_el0_readback) ? "✓ MATCH" : "✗ MISMATCH!");
-
-    /* Read back TTBR0_EL1 to verify it was set correctly */
-    uint64_t ttbr0_readback;
-    __asm__ volatile("mrs %0, ttbr0_el1" : "=r"(ttbr0_readback));
-    fut_printf("[TTBR0-VERIFY] Set TTBR0_EL1 to 0x%llx, read back 0x%llx %s\n",
-               (unsigned long long)pgd_phys, (unsigned long long)ttbr0_readback,
-               (pgd_phys == ttbr0_readback) ? "✓ MATCH" : "✗ MISMATCH!");
-
-    /* Try to read PGD entries via TTBR0's physical address */
-    uint64_t *pgd_via_ttbr = (uint64_t *)(uintptr_t)ttbr0_readback;
-    fut_printf("[PGD-VIA-TTBR0] PGD at phys 0x%llx, L1[0] = 0x%llx, L1[511] = 0x%llx\n",
-               (unsigned long long)ttbr0_readback,
-               (unsigned long long)pgd_via_ttbr[0],
-               (unsigned long long)pgd_via_ttbr[511]);
 
     /* Ensure all page table writes are visible to MMU before ERET */
     /* Use DSB ISH (all operations) instead of ISH ST (stores only) to ensure */
     /* page table updates are visible to the hardware page table walker */
     __asm__ volatile("dsb ish" ::: "memory");
     __asm__ volatile("isb" ::: "memory");
-    fut_serial_puts("[TRAMPOLINE] Memory barriers complete\n");
-
-    /* Use AT (Address Translation) instruction to test if MMU can translate the stack address */
-    /* AT S1E0R = Stage 1 EL0 Read translation */
-    __asm__ volatile("at s1e0r, %0" :: "r"(sp) : "memory");
-    __asm__ volatile("isb" ::: "memory");
-    uint64_t par_el1;
-    __asm__ volatile("mrs %0, par_el1" : "=r"(par_el1));
-
-    if (par_el1 & 1) {
-        /* Translation failed - bit 0 set means fault */
-        fut_printf("[AT-TEST] Address translation FAILED for sp=0x%llx: PAR_EL1=0x%llx\n",
-                   (unsigned long long)sp, (unsigned long long)par_el1);
-        fut_printf("[AT-TEST] FST (bits [6:1]) = 0x%llx\n", (unsigned long long)((par_el1 >> 1) & 0x3F));
-    } else {
-        /* Translation succeeded */
-        uint64_t phys = (par_el1 & 0x0000FFFFFFFFF000ULL) | (sp & 0xFFF);
-        fut_printf("[AT-TEST] Address translation SUCCESS for sp=0x%llx → phys=0x%llx\n",
-                   (unsigned long long)sp, (unsigned long long)phys);
-    }
 
     __asm__ volatile(
         /* Set ELR_EL1 (return address for ERET) */

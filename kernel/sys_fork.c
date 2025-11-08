@@ -398,9 +398,9 @@ static fut_mm_t *clone_mm(fut_mm_t *parent_mm) {
             }
         }
 
-        /* Scan the stack region */
-        #define STACK_SCAN_START 0x7FFFFFF00000ULL
-        #define STACK_SCAN_END   (STACK_SCAN_START + (1 * 1024 * 1024))
+        /* Scan the stack region - must match USER_STACK_TOP in kernel/exec/elf64.c:981 (0x7FFF000000) */
+        #define STACK_SCAN_START 0x7FFEFE0000ULL  /* USER_STACK_TOP - (32 pages * 4KB) */
+        #define STACK_SCAN_END   0x7FFF000000ULL  /* USER_STACK_TOP */
 
         for (uint64_t page = STACK_SCAN_START; page < STACK_SCAN_END; page += FUT_PAGE_SIZE) {
             uint64_t pte = 0;
@@ -657,6 +657,9 @@ static fut_thread_t *clone_thread(fut_thread_t *parent_thread, fut_task_t *child
             case 28: child_thread->context.x28 = frame->x[i]; break;
         }
     }
+
+    /* CRITICAL: Copy user stack pointer (SP_EL0) from parent to child */
+    child_thread->context.sp_el0 = frame->sp_el0;
 
     /*
      * CRITICAL: Copy parent's stack to child's stack

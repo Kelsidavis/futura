@@ -40,7 +40,10 @@ typedef struct fut_cpu_context {
     uint64_t x30_lr;            /* Link register (return address) */
 
     /* Stack pointer */
-    uint64_t sp;                /* Stack pointer */
+    uint64_t sp;                /* Stack pointer (kernel/EL1 stack) */
+
+    /* User stack pointer (for userspace processes) */
+    uint64_t sp_el0;            /* SP_EL0: user mode stack pointer */
 
     /* Program counter (for new threads) */
     uint64_t pc;                /* Program counter */
@@ -82,6 +85,9 @@ typedef struct fut_interrupt_frame {
     uint64_t fpu_state[64];     /* v0-v31 (SIMD/FP registers) */
     uint32_t fpsr;              /* Floating-point status register */
     uint32_t fpcr;              /* Floating-point control register */
+
+    /* User stack pointer (critical for userspace context) */
+    uint64_t sp_el0;            /* SP_EL0: user mode stack pointer */
 } fut_interrupt_frame_t;
 
 /* ============================================================

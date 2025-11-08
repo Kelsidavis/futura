@@ -39,46 +39,52 @@ fut_switch_context:
     mov     x2, sp
     str     x2, [x0, #112]            /* Save SP at offset 112 */
 
+    /* Save SP_EL0 (user stack pointer) */
+    mrs     x2, sp_el0
+    str     x2, [x0, #120]            /* Save SP_EL0 at offset 120 */
+
     /* Save return address as PC */
     adr     x2, .Lresume_point        /* Get address of resume point */
-    str     x2, [x0, #120]            /* Save PC at offset 120 */
+    str     x2, [x0, #128]            /* Save PC at offset 128 */
 
     /* Save PSTATE (for EL1, it should be 0x05) */
     mov     x2, #0x05                 /* EL1h mode */
-    str     x2, [x0, #128]            /* Save PSTATE at offset 128 */
+    str     x2, [x0, #136]            /* Save PSTATE at offset 136 */
 
 .Lrestore_only:
-    /* Context structure layout (with x1 added):
+    /* Context structure layout (with x1 and sp_el0 added):
      *   Offset 0:   x0
      *   Offset 8:   x1
      *   Offset 16:  x19
      *   Offset 24:  x20
      *   ...
      *   Offset 112: sp
-     *   Offset 120: pc
-     *   Offset 128: pstate
+     *   Offset 120: sp_el0
+     *   Offset 128: pc
+     *   Offset 136: pstate
+     *   Offset 144: ttbr0_el1
      */
 
     /* Check if target context is EL0 (PSTATE & 0xF == 0) */
-    ldr     x2, [x1, #128]            /* Load PSTATE from offset 128 */
+    ldr     x2, [x1, #136]            /* Load PSTATE from offset 136 */
     and     x3, x2, #0xF              /* Extract mode bits */
     cbnz    x3, .Lrestore_el1         /* If not zero, it's EL1 */
 
     /* Target is EL0 - use ERET path */
     /* Set up ELR_EL1 and SPSR_EL1 for exception return */
-    ldr     x2, [x1, #120]            /* Load PC from offset 120 */
+    ldr     x2, [x1, #128]            /* Load PC from offset 128 */
     msr     elr_el1, x2               /* Set exception return address */
 
-    ldr     x2, [x1, #128]            /* Load PSTATE from offset 128 */
+    ldr     x2, [x1, #136]            /* Load PSTATE from offset 136 */
     msr     spsr_el1, x2              /* Set saved processor state */
 
     /* Load user page table base into TTBR0_EL1 */
-    ldr     x2, [x1, #136]            /* Load ttbr0_el1 from offset 136 */
+    ldr     x2, [x1, #144]            /* Load ttbr0_el1 from offset 144 */
     msr     ttbr0_el1, x2             /* Set user page table base */
     isb                               /* Instruction barrier to ensure TTBR0 is loaded */
 
-    /* Restore SP_EL0 (user stack pointer) */
-    ldr     x2, [x1, #112]            /* Load SP from offset 112 */
+    /* Restore SP_EL0 (user stack pointer) - CRITICAL for userspace */
+    ldr     x2, [x1, #120]            /* Load SP_EL0 from offset 120 */
     msr     sp_el0, x2                /* Set user stack pointer */
 
     /* Restore callee-saved registers */
@@ -113,7 +119,7 @@ fut_switch_context:
     mov     sp, x2
 
     /* Load PC */
-    ldr     x2, [x1, #120]            /* Load PC from offset 120 */
+    ldr     x2, [x1, #128]            /* Load PC from offset 128 */
 
     /* Restore x0 and x1 (parameters for new threads, or saved values for resumed threads) */
     ldp     x0, x3, [x1, #0]          /* Load x0 and x1 into x0 and x3 */
@@ -301,9 +307,10 @@ fut_thread_entry_stub:
  * Restores CPU state from context and uses eret to transition to the target EL.
  * This function handles both EL1→EL1 and EL1→EL0 transitions.
  *
- * Context structure offsets:
- *   0: x0, 8: x19, 16: x20, 24: x21, 32: x22, 40: x23, 48: x24, 56: x25
- *   64: x26, 72: x27, 80: x28, 88: x29_fp, 96: x30_lr, 104: sp, 112: pc, 120: pstate
+ * Context structure offsets (fut_cpu_context_t):
+ *   0: x0, 8: x1, 16: x19, 24: x20, 32: x21, 40: x22, 48: x23, 56: x24
+ *   64: x25, 72: x26, 80: x27, 88: x28, 96: x29_fp, 104: x30_lr
+ *   112: sp, 120: sp_el0, 128: pc, 136: pstate, 144: ttbr0_el1
  */
 .global fut_restore_context
 .type fut_restore_context, @function
@@ -312,23 +319,25 @@ fut_restore_context:
     mov     x2, x0
 
     /* Load PC and PSTATE into exception return registers */
-    ldr     x1, [x2, #112]            /* Load PC */
+    ldr     x1, [x2, #128]            /* Load PC from offset 128 */
     msr     elr_el1, x1               /* ELR_EL1 = target PC */
 
-    ldr     x1, [x2, #120]            /* Load PSTATE */
+    ldr     x1, [x2, #136]            /* Load PSTATE from offset 136 */
     msr     spsr_el1, x1              /* SPSR_EL1 = target PSTATE */
 
-    /* Restore stack pointer
+    /* Restore stack pointers
      * Check if target is EL0 (PSTATE & 0xF == 0) and set SP_EL0
      * Otherwise set SP_EL1
      */
-    ldr     x1, [x2, #104]            /* Load SP */
-    ldr     x3, [x2, #120]            /* Load PSTATE again */
+    ldr     x1, [x2, #112]            /* Load SP from offset 112 */
+    ldr     x4, [x2, #120]            /* Load SP_EL0 from offset 120 */
+    ldr     x3, [x2, #136]            /* Load PSTATE again from offset 136 */
     and     x3, x3, #0xF              /* Extract mode bits */
     cbnz    x3, 1f                    /* If not EL0, skip to setting SP_EL1 */
 
-    /* Target is EL0 - set SP_EL0 */
-    msr     sp_el0, x1
+    /* Target is EL0 - set SP_EL0 and use kernel stack for SP */
+    msr     sp_el0, x4                /* Set user stack pointer */
+    mov     sp, x1                    /* Set kernel stack pointer */
     b       2f
 
 1:  /* Target is EL1 - set SP_EL1 */
@@ -336,23 +345,24 @@ fut_restore_context:
 
 2:  /* Continue with register restore */
     /* Restore callee-saved registers x19-x28 */
-    ldr     x19, [x2, #8]
-    ldr     x20, [x2, #16]
-    ldr     x21, [x2, #24]
-    ldr     x22, [x2, #32]
-    ldr     x23, [x2, #40]
-    ldr     x24, [x2, #48]
-    ldr     x25, [x2, #56]
-    ldr     x26, [x2, #64]
-    ldr     x27, [x2, #72]
-    ldr     x28, [x2, #80]
+    ldr     x19, [x2, #16]            /* x19 at offset 16 */
+    ldr     x20, [x2, #24]            /* x20 at offset 24 */
+    ldr     x21, [x2, #32]            /* x21 at offset 32 */
+    ldr     x22, [x2, #40]            /* x22 at offset 40 */
+    ldr     x23, [x2, #48]            /* x23 at offset 48 */
+    ldr     x24, [x2, #56]            /* x24 at offset 56 */
+    ldr     x25, [x2, #64]            /* x25 at offset 64 */
+    ldr     x26, [x2, #72]            /* x26 at offset 72 */
+    ldr     x27, [x2, #80]            /* x27 at offset 80 */
+    ldr     x28, [x2, #88]            /* x28 at offset 88 */
 
     /* Restore frame pointer and link register */
-    ldr     x29, [x2, #88]            /* Restore FP */
-    ldr     x30, [x2, #96]            /* Restore LR */
+    ldr     x29, [x2, #96]            /* FP at offset 96 */
+    ldr     x30, [x2, #104]           /* LR at offset 104 */
 
-    /* Restore x0 last (return value / first argument) */
-    ldr     x0, [x2, #0]
+    /* Restore x0 and x1 last */
+    ldr     x1, [x2, #8]              /* x1 at offset 8 */
+    ldr     x0, [x2, #0]              /* x0 at offset 0 */
 
     /* Use eret to transition to target EL with restored PC and PSTATE */
     eret
@@ -370,36 +380,40 @@ fut_restore_context:
 .global fut_save_context
 .type fut_save_context, @function
 fut_save_context:
-    /* Save x0 (usually return value) */
-    str     x0, [x0, #0]
+    /* Save x0 and x1 */
+    str     x0, [x0, #0]              /* Save x0 */
+    str     x1, [x0, #8]              /* Save x1 */
 
     /* Save callee-saved registers x19-x28 */
-    str     x19, [x0, #8]
-    str     x20, [x0, #16]
-    str     x21, [x0, #24]
-    str     x22, [x0, #32]
-    str     x23, [x0, #40]
-    str     x24, [x0, #48]
-    str     x25, [x0, #56]
-    str     x26, [x0, #64]
-    str     x27, [x0, #72]
-    str     x28, [x0, #80]
+    str     x19, [x0, #16]            /* x19 at offset 16 */
+    str     x20, [x0, #24]            /* x20 at offset 24 */
+    str     x21, [x0, #32]            /* x21 at offset 32 */
+    str     x22, [x0, #40]            /* x22 at offset 40 */
+    str     x23, [x0, #48]            /* x23 at offset 48 */
+    str     x24, [x0, #56]            /* x24 at offset 56 */
+    str     x25, [x0, #64]            /* x25 at offset 64 */
+    str     x26, [x0, #72]            /* x26 at offset 72 */
+    str     x27, [x0, #80]            /* x27 at offset 80 */
+    str     x28, [x0, #88]            /* x28 at offset 88 */
 
     /* Save frame pointer and link register */
-    str     x29, [x0, #88]            /* Save FP */
-    str     x30, [x0, #96]            /* Save LR */
+    str     x29, [x0, #96]            /* FP at offset 96 */
+    str     x30, [x0, #104]           /* LR at offset 104 */
 
-    /* Save stack pointer */
+    /* Save stack pointers */
     mov     x1, sp
-    str     x1, [x0, #104]
+    str     x1, [x0, #112]            /* Save SP at offset 112 */
+
+    mrs     x1, sp_el0
+    str     x1, [x0, #120]            /* Save SP_EL0 at offset 120 */
 
     /* Save return address as PC */
     adr     x1, 1f
-    str     x1, [x0, #112]
+    str     x1, [x0, #128]            /* Save PC at offset 128 */
 
     /* Save current PSTATE (using SPSR_EL1 if available, or construct from CurrentEL) */
     mrs     x1, spsr_el1
-    str     x1, [x0, #120]
+    str     x1, [x0, #136]            /* Save PSTATE at offset 136 */
 
     ret
 

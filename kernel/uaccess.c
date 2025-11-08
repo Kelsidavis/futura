@@ -192,6 +192,12 @@ int fut_copy_from_user(void *k_dst, const void *u_src, size_t n) {
         remaining -= chunk;
     }
 
+    /* Ensure reads are complete before continuing */
+#if defined(__aarch64__)
+    /* Data synchronization barrier - ensure all reads complete */
+    __asm__ volatile("dsb sy" ::: "memory");
+#endif
+
     /* Clear AC flag */
 #if defined(__x86_64__)
     __asm__ volatile("clac");
@@ -250,6 +256,14 @@ int fut_copy_to_user(void *u_dst, const void *k_src, size_t n) {
         src += chunk;
         remaining -= chunk;
     }
+
+    /* Ensure writes are visible to userspace */
+#if defined(__aarch64__)
+    /* Data synchronization barrier - ensure all writes complete */
+    __asm__ volatile("dsb sy" ::: "memory");
+    /* Instruction synchronization barrier - ensure barrier effect visible */
+    __asm__ volatile("isb" ::: "memory");
+#endif
 
     /* Clear AC flag */
 #if defined(__x86_64__)

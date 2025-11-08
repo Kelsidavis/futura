@@ -84,6 +84,10 @@ sync_exception_entry:
     mrs     x1, far_el1
     str     x1, [x0, #280]      /* frame->far */
 
+    /* Save SP_EL0 (user stack pointer) - critical for userspace returns! */
+    mrs     x1, sp_el0
+    str     x1, [x0, #808]      /* Save SP_EL0 at offset 808 (after fpcr) */
+
     /* Save FPU state (v0-v31 registers and control registers)
      * FPU state is stored in frame->fpu_state[64] at offset 288
      * Each 128-bit register v[i] is saved as 2 x 64-bit words
@@ -168,6 +172,10 @@ sync_exception_entry:
     /* Restore SP from frame */
     ldr     x1, [x0, #248]      /* Load SP from frame->sp */
     mov     sp, x1              /* Restore SP */
+
+    /* Restore SP_EL0 (user stack pointer) - critical for userspace returns! */
+    ldr     x1, [x0, #808]      /* Load SP_EL0 from offset 808 */
+    msr     sp_el0, x1          /* Restore SP_EL0 */
 
     /* Restore general purpose registers x2-x30 */
     ldp     x2, x3, [x0, #16]

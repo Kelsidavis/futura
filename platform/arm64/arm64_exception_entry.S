@@ -121,8 +121,29 @@ sync_exception_entry:
     mrs     x1, fpcr
     str     w1, [x0, #804]
 
+    /* Save current TTBR0_EL1 (user page table) and switch to kernel page table
+     * This ensures kernel code can access kernel memory during syscalls/exceptions.
+     * We save the user's TTBR0 at offset 816 (after SP_EL0 at 808).
+     */
+    mrs     x1, ttbr0_el1
+    str     x1, [x0, #816]      /* Save user TTBR0 */
+
+    /* Load kernel page table address (boot_l1_table) */
+    adrp    x1, boot_l1_table
+    add     x1, x1, :lo12:boot_l1_table
+
+    /* Switch to kernel page table */
+    msr     ttbr0_el1, x1
+    isb                         /* Synchronize context */
+
     /* Call C-level exception dispatcher */
     bl      arm64_exception_dispatch
+
+    /* Restore user's TTBR0_EL1 before returning */
+    mov     x0, sp              /* x0 = frame pointer */
+    ldr     x1, [x0, #816]      /* Load user TTBR0 */
+    msr     ttbr0_el1, x1       /* Restore user page table */
+    isb                         /* Synchronize context */
 
     /* Restore registers from frame before returning from exception
      * frame->x[0] now contains return value if any

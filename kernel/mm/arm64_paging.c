@@ -150,15 +150,28 @@ static void free_page_table(page_table_t *pt) {
  */
 static page_table_t *get_or_create_table(page_table_t *parent_table, int index, bool allocate) {
     extern void fut_printf(const char *, ...);
+
+    /* Temporarily switch to kernel page table for page table operations
+     * to ensure we can access all physical memory. Save/restore user TTBR0.
+     */
+    extern page_table_t boot_l1_table;
+    uint64_t user_ttbr0;
+    __asm__ volatile("mrs %0, ttbr0_el1" : "=r"(user_ttbr0));
+    __asm__ volatile("msr ttbr0_el1, %0; isb" :: "r"((uint64_t)&boot_l1_table));
+
     pte_t entry = parent_table->entries[index];
 
     if (!fut_pte_is_present(entry)) {
         if (!allocate) {
+            /* Restore user page table before returning */
+            __asm__ volatile("msr ttbr0_el1, %0; isb" :: "r"(user_ttbr0));
             return NULL;
         }
 
         page_table_t *new_table = alloc_page_table();
         if (!new_table) {
+            /* Restore user page table before returning */
+            __asm__ volatile("msr ttbr0_el1, %0; isb" :: "r"(user_ttbr0));
             return NULL;
         }
 
@@ -174,6 +187,8 @@ static page_table_t *get_or_create_table(page_table_t *parent_table, int index, 
         fut_printf("[PT] Created table: parent=%p idx=%d new=%p desc=0x%llx\n",
                    parent_table, index, new_table, (unsigned long long)table_desc);
 
+        /* Restore user page table before returning */
+        __asm__ volatile("msr ttbr0_el1, %0; isb" :: "r"(user_ttbr0));
         return new_table;
     }
 
@@ -182,7 +197,12 @@ static page_table_t *get_or_create_table(page_table_t *parent_table, int index, 
         uint64_t phys = fut_pte_to_phys(entry);
         fut_printf("[PT] Reusing table: idx=%d entry=0x%llx phys=0x%llx\n",
                    index, (unsigned long long)entry, (unsigned long long)phys);
-        return (page_table_t *)phys;  /* Assuming identity mapping for now */
+
+        page_table_t *result = (page_table_t *)phys;  /* Assuming identity mapping for now */
+
+        /* Restore user page table before returning */
+        __asm__ volatile("msr ttbr0_el1, %0; isb" :: "r"(user_ttbr0));
+        return result;
     }
 
     /* Block descriptor found - split it into L3 page table for finer-grained mapping.
@@ -190,12 +210,16 @@ static page_table_t *get_or_create_table(page_table_t *parent_table, int index, 
      * (e.g., user-accessible thread stacks) within a 2MB kernel-only DRAM block. */
     if (fut_pte_is_block(entry)) {
         if (!allocate) {
+            /* Restore user page table before returning */
+            __asm__ volatile("msr ttbr0_el1, %0; isb" :: "r"(user_ttbr0));
             return NULL;  /* Can't split without allocation */
         }
 
         /* Allocate new L3 page table */
         page_table_t *new_l3_table = alloc_page_table();
         if (!new_l3_table) {
+            /* Restore user page table before returning */
+            __asm__ volatile("msr ttbr0_el1, %0; isb" :: "r"(user_ttbr0));
             return NULL;
         }
 
@@ -228,11 +252,15 @@ static page_table_t *get_or_create_table(page_table_t *parent_table, int index, 
         extern void fut_flush_tlb_all(void);
         fut_flush_tlb_all();
 
+        /* Restore user page table before returning */
+        __asm__ volatile("msr ttbr0_el1, %0; isb" :: "r"(user_ttbr0));
         return new_l3_table;
     }
 
     fut_printf("[PT] ERROR: Unknown entry type at idx=%d entry=0x%llx\n",
                index, (unsigned long long)entry);
+    /* Restore user page table before returning */
+    __asm__ volatile("msr ttbr0_el1, %0; isb" :: "r"(user_ttbr0));
     return NULL;
 }
 

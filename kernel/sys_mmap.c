@@ -120,10 +120,45 @@ static void build_prot_string(int prot, char *buf) {
 long sys_mmap(void *addr, size_t len, int prot, int flags, int fd, long offset) {
     extern void fut_printf(const char *, ...);
 
+    /* Save parameters to local variables BEFORE any TTBR0 switching on ARM64,
+     * since switching page tables may make the function's stack frame inaccessible.
+     */
+    void *addr_local = addr;
+    size_t len_local = len;
+    int prot_local = prot;
+    int flags_local = flags;
+    int fd_local = fd;
+    long offset_local = offset;
+
+#ifdef __aarch64__
+    /* ARM64: Switch to kernel page table for page table operations.
+     * This allows sys_mmap to access kernel memory (code, data, page tables)
+     * while still being able to access user memory when needed.
+     */
+    extern page_table_t boot_l1_table;
+    uint64_t user_ttbr0;
+    __asm__ volatile("mrs %0, ttbr0_el1" : "=r"(user_ttbr0));
+    __asm__ volatile("msr ttbr0_el1, %0; isb" :: "r"((uint64_t)&boot_l1_table));
+    #define RESTORE_USER_TTBR0() __asm__ volatile("msr ttbr0_el1, %0; isb" :: "r"(user_ttbr0))
+#else
+    #define RESTORE_USER_TTBR0() ((void)0)
+#endif
+
+    /* Use local copies of parameters for rest of function */
+    addr = addr_local;
+    len = len_local;
+    prot = prot_local;
+    flags = flags_local;
+    fd = fd_local;
+    offset = offset_local;
+
     /* Phase 2: Validate length early */
     if (len == 0) {
         fut_printf("[MMAP] mmap(addr=%p, len=0) -> EINVAL (zero length)\n", addr);
-        return -EINVAL;
+#ifdef __aarch64__
+        __asm__ volatile("msr ttbr0_el1, %0; isb" :: "r"(user_ttbr0));
+#endif
+        RESTORE_USER_TTBR0(); return -EINVAL;
     }
 
     /* Phase 2: Categorize address hint */
@@ -221,7 +256,7 @@ long sys_mmap(void *addr, size_t len, int prot, int flags, int fd, long offset) 
                        "flags=0x%x [%s, %s, %s, %s]) -> EPERM (no task)\n",
                        addr_hex, addr_category, len, length_category, prot_str,
                        flags, sharing_type, backing_type, fixed_hint, populate_hint);
-            return -EPERM;
+            RESTORE_USER_TTBR0(); return -EPERM;
         }
 
         fut_mm_t *mm = fut_task_get_mm(task);
@@ -231,7 +266,7 @@ long sys_mmap(void *addr, size_t len, int prot, int flags, int fd, long offset) 
                        addr_hex, addr_category, len, length_category, prot_str,
                        flags, sharing_type, backing_type, fixed_hint, populate_hint,
                        task->pid);
-            return -ENOMEM;
+            RESTORE_USER_TTBR0(); return -ENOMEM;
         }
 
         void *res = fut_mm_map_anonymous(mm, (uintptr_t)addr, len, prot, flags);
@@ -255,7 +290,7 @@ long sys_mmap(void *addr, size_t len, int prot, int flags, int fd, long offset) 
                        addr_hex, addr_category, len, length_category, prot_str,
                        flags, sharing_type, backing_type, fixed_hint, populate_hint,
                        task->pid, err, error_desc);
-            return (long)(intptr_t)res;
+            RESTORE_USER_TTBR0(); return (long)(intptr_t)res;
         }
 
         /* Phase 3: Detailed success logging with MAP_POPULATE awareness */
@@ -275,7 +310,7 @@ long sys_mmap(void *addr, size_t len, int prot, int flags, int fd, long offset) 
                    flags, sharing_type, backing_type, fixed_hint, populate_hint,
                    task->pid, result_hex, phase_note);
 
-        return (long)(intptr_t)res;
+        RESTORE_USER_TTBR0(); return (long)(intptr_t)res;
     }
 
     /* File-backed mapping */
@@ -287,7 +322,7 @@ long sys_mmap(void *addr, size_t len, int prot, int flags, int fd, long offset) 
                    addr_hex, addr_category, len, length_category, prot_str,
                    flags, sharing_type, backing_type, fixed_hint, populate_hint,
                    fd, fd_category, offset);
-        return -EPERM;
+        RESTORE_USER_TTBR0(); return -EPERM;
     }
 
     void *mapped = fut_vfs_mmap(fd, addr, len, prot, flags, (off_t)offset);
@@ -298,7 +333,7 @@ long sys_mmap(void *addr, size_t len, int prot, int flags, int fd, long offset) 
                    addr_hex, addr_category, len, length_category, prot_str,
                    flags, sharing_type, backing_type, fixed_hint, populate_hint,
                    fd, fd_category, offset, task->pid);
-        return -ENOMEM;
+        RESTORE_USER_TTBR0(); return -ENOMEM;
     }
 
     /* Phase 3: Detailed success logging for file-backed mapping with MAP_POPULATE awareness */
@@ -318,7 +353,7 @@ long sys_mmap(void *addr, size_t len, int prot, int flags, int fd, long offset) 
                flags, sharing_type, backing_type, fixed_hint, populate_hint,
                fd, fd_category, offset, task->pid, result_hex, phase_note_file);
 
-    return (long)(intptr_t)mapped;
+    RESTORE_USER_TTBR0(); return (long)(intptr_t)mapped;
 }
 
 /**

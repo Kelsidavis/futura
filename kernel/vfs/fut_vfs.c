@@ -1089,7 +1089,16 @@ static int try_open_chrdev(const char *path, int flags) {
         }
     }
 
-    int fd = alloc_fd(file);
+    /* Use per-task FD table instead of global file_table */
+    fut_task_t *task = fut_task_current();
+    int fd;
+    if (task && task->fd_table) {
+        fd = alloc_fd_for_task(task, file);
+    } else {
+        /* Fallback to global table if no task context */
+        fd = alloc_fd(file);
+    }
+
     if (fd < 0) {
         if (ops->release) {
             ops->release(inode, file->chr_private);

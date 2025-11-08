@@ -2012,6 +2012,25 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
     entry->argv_ptr = user_sp;
     entry->task = task;
 
+    /* Open stdin/stdout/stderr for the new task.
+     * We temporarily switch the current thread's task pointer so that
+     * fut_vfs_open operates on the new task's fd table. */
+    fut_thread_t *current = fut_thread_current();
+    fut_task_t *saved_task = current->task;
+    current->task = task;
+
+    int stdio_fd0 = fut_vfs_open("/dev/console", O_RDWR, 0);
+    int stdio_fd1 = fut_vfs_open("/dev/console", O_RDWR, 0);
+    int stdio_fd2 = fut_vfs_open("/dev/console", O_RDWR, 0);
+
+    current->task = saved_task;
+
+    if (stdio_fd0 != 0 || stdio_fd1 != 1 || stdio_fd2 != 2) {
+        extern void fut_printf(const char *, ...);
+        fut_printf("[EXEC-ARM64] WARNING: Failed to open stdio (got %d/%d/%d)\n",
+                   stdio_fd0, stdio_fd1, stdio_fd2);
+    }
+
     /* Create thread with trampoline */
     extern void fut_printf(const char *, ...);
     fut_printf("[EXEC-ARM64] About to create thread: trampoline=%p entry_struct=%p user_entry=0x%llx\n",

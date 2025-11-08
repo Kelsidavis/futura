@@ -10,6 +10,7 @@
 #include <stddef.h>
 #include <stdarg.h>
 #include <stdbool.h>
+#include <time.h>
 
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wpedantic"
@@ -343,23 +344,16 @@ int fut_serial_getc(void) {
 int fut_serial_getc_blocking(void) {
     extern void fut_schedule(void);
 
-    /* Polling mode: wait with timeout to avoid deadlock */
-    volatile int max_iterations = 10000000;  /* ~100ms at typical QEMU speed */
-
-    for (volatile int iter = 0; iter < max_iterations; iter++) {
+    /* Truly blocking: loop indefinitely until character available */
+    while (1) {
         int c = fut_serial_getc();
         if (c >= 0) {
             return c;
         }
 
-        /* Yield to scheduler to allow other threads to run */
-        if (iter % 100 == 0) {
-            fut_schedule();  /* Cooperative yield */
-        }
+        /* Yield to scheduler every iteration to avoid livelock */
+        fut_schedule();
     }
-
-    /* Timeout - return -1 to avoid hanging forever */
-    return -1;
 }
 
 /* Alias for compatibility */

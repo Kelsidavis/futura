@@ -1493,8 +1493,15 @@ void fut_kernel_main(void) {
     fut_printf("[INIT] ARM64: Enabling interrupts and starting scheduler...\n");
     fut_enable_interrupts();
 
-    /* Enter idle loop (cooperative scheduler will pick up threads) */
-    /* Don't use WFI - keep scheduler cycling so other threads can run! */
+    /* Exit the boot thread to let the idle thread (tid=3, priority=0) take over.
+     * The boot thread was causing livelock by staying in READY state in a yield loop.
+     * Now only the idle thread and actual work threads will be scheduled. */
+    fut_printf("[INIT] Boot thread exiting, idle thread will take over\n");
+    extern void fut_thread_exit(void) __attribute__((noreturn));
+    fut_thread_exit();
+
+    /* Should never reach here */
+    fut_printf("[PANIC] Boot thread exit failed!\n");
     for (;;) {
         fut_schedule();
     }

@@ -1,13 +1,33 @@
 # ARM64 Port Status
 
-**Last Updated**: 2025-11-07
+**Last Updated**: 2025-11-08
 **Status**: ✅ **FULL MULTI-PROCESS SUPPORT!** MMU enabled, fork/exec/wait/exit all working 🎉
 
 ## Overview
 
 The ARM64 kernel port has achieved **full multi-process support**! The MMU is enabled with identity mapping, all 177 syscalls work correctly, and the complete process lifecycle (fork → exec → wait → exit) is operational. The kernel successfully runs userspace programs with proper memory isolation.
 
-## Latest Progress (2025-11-06)
+## Latest Progress (2025-11-08)
+
+### ✅ Fork/Wait4 Fixed - SP_EL0 Context Handling
+**Problem**: Child processes crashed with translation fault when accessing stack variables after fork.
+
+**Root Cause**: SP_EL0 (EL0/user mode stack pointer) was not being:
+1. Saved/restored during syscalls (exception handling)
+2. Included in the interrupt frame structure
+3. Copied from parent to child during fork
+
+**Solution Applied**:
+- Added `sp_el0` field to `fut_interrupt_frame_t` structure at offset 808
+- Save/restore SP_EL0 in exception entry/exit code (arm64_exception_entry.S)
+- Copy SP_EL0 from parent to child in fork (sys_fork.c)
+- Updated offsets in context switch functions
+
+**Result**: ✅ Child processes now run successfully! Fork/wait4 test passes with correct exit status (42).
+
+See commit `6630602` for complete fix details.
+
+## Previous Progress (2025-11-06)
 
 ### ✅ User-Mode Transition Working
 - **Scheduler fixes**: Fixed cooperative scheduling to use continuous idle loop

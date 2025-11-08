@@ -474,20 +474,6 @@ static fut_thread_t *select_next_thread(void) {
 
     fut_thread_t *next = percpu->ready_queue_head;
 
-#if defined(__aarch64__)
-    // Debug: Show all threads in ready queue
-    extern void fut_printf(const char *, ...);
-    fut_printf("[SELECT] Ready queue head=%p, count=%u\n", (void*)next, percpu->ready_count);
-    fut_thread_t *walker = next;
-    int walk_count = 0;
-    while (walker && walk_count < 10) {
-        fut_printf("[SELECT]   Thread @%p tid=%llu state=%d priority=%d next=%p\n",
-                   (void*)walker, (unsigned long long)walker->tid, walker->state, walker->priority, (void*)walker->next);
-        walker = walker->next;
-        walk_count++;
-    }
-#endif
-
     // If no ready threads locally, try work-stealing
     if (!next) {
         fut_spinlock_release(&percpu->queue_lock);
@@ -531,11 +517,6 @@ static fut_thread_t *select_next_thread(void) {
 void fut_schedule(void) {
     fut_thread_t *prev = fut_thread_current();
     fut_thread_t *next = select_next_thread();
-
-#if defined(__aarch64__)
-    extern void fut_printf(const char *, ...);
-    fut_printf("[SCHED] fut_schedule called: prev=%p next=%p\n", (void*)prev, (void*)next);
-#endif
 
     // Get per-CPU data for idle thread check
     fut_percpu_t *percpu = fut_percpu_get();

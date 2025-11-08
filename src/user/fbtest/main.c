@@ -16,10 +16,6 @@ void *memcpy(void *dest, const void *src, size_t n);
 #define MAP_SHARED  0x1
 
 int main(void) {
-    char input[] = "AbCd";
-    char output[sizeof(input)] = {0};
-    (void)sys_echo_call(input, output, (long)sizeof(input));
-
     int fd = (int)sys_open("/dev/fb0", O_RDWR, 0);
     if (fd < 0) {
         sys_exit(-1);

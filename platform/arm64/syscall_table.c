@@ -64,6 +64,7 @@ extern int64_t sys_lseek(int fd, int64_t offset, int whence);
 extern long sys_pread64(unsigned int fd, void *buf, size_t count, int64_t offset);
 extern long sys_pwrite64(unsigned int fd, const void *buf, size_t count, int64_t offset);
 extern long sys_open(const char *pathname, int flags, int mode);
+extern long sys_echo(const char *u_in, char *u_out, size_t n);
 
 /* iovec structure for vectored I/O */
 struct iovec {
@@ -491,6 +492,16 @@ static int64_t sys_read_wrapper(uint64_t fd, uint64_t buf, uint64_t count,
                                 uint64_t arg3, uint64_t arg4, uint64_t arg5) {
     (void)arg3; (void)arg4; (void)arg5;
     return (int64_t)sys_read((int)fd, (void *)buf, (size_t)count);
+}
+
+/* sys_echo - echo syscall with case flip wrapper
+ * x0 = u_in, x1 = u_out, x2 = n
+ * Returns: number of bytes processed on success, negative errno on failure
+ */
+static int64_t sys_echo_wrapper(uint64_t u_in, uint64_t u_out, uint64_t n,
+                                uint64_t arg3, uint64_t arg4, uint64_t arg5) {
+    (void)arg3; (void)arg4; (void)arg5;
+    return (int64_t)sys_echo((const char *)u_in, (char *)u_out, (size_t)n);
 }
 
 /* sys_clock_gettime - get time
@@ -2785,6 +2796,7 @@ static struct syscall_entry syscall_table[MAX_SYSCALL] = {
     [33] = { (syscall_fn_t)sys_dup2_wrapper, "dup2" },  /* SYS_dup2 = 33 */
     [35] = { (syscall_fn_t)sys_nanosleep, "nanosleep" },  /* SYS_nanosleep = 35 */
     [39] = { (syscall_fn_t)sys_getpid_wrapper, "getpid" },  /* SYS_getpid = 39 (overrides Linux umount2) */
+    [42] = { (syscall_fn_t)sys_echo_wrapper, "echo" },  /* SYS_echo = 42 */
     [57] = { (syscall_fn_t)sys_fork_wrapper, "fork" },  /* SYS_fork = 57 */
     [59] = { (syscall_fn_t)sys_execve_wrapper, "execve" },  /* SYS_execve = 59 */
     [60] = { (syscall_fn_t)sys_exit, "exit" },  /* SYS_exit = 60 */

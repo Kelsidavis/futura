@@ -11,6 +11,7 @@
 #include <kernel/uaccess.h>
 #include <kernel/errno.h>
 #include <kernel/fut_mm.h>
+#include <kernel/fut_task.h>
 
 #if defined(__x86_64__)
 #include <platform/x86_64/memory/paging.h>
@@ -173,9 +174,29 @@ int fut_copy_from_user(void *k_dst, const void *u_src, size_t n) {
     uint8_t *dst = (uint8_t *)k_dst;
     const volatile uint8_t *src = (const volatile uint8_t *)u_src;
 
-    /* Set AC flag for SMAP */
+    /* Set AC flag for SMAP (x86-64) or switch to user page table (ARM64) */
 #if defined(__x86_64__)
     __asm__ volatile("stac");
+#elif defined(__aarch64__)
+    /* ARM64: Get user page table from current task and switch to it for user memory access */
+    extern page_table_t boot_l1_table;
+    extern fut_task_t *fut_task_current(void);
+    extern fut_vmem_context_t *fut_mm_context(fut_mm_t *mm);
+
+    fut_task_t *task = fut_task_current();
+    uint64_t user_ttbr0 = 0;
+
+    if (task && task->mm) {
+        fut_vmem_context_t *ctx = fut_mm_context(task->mm);
+        if (ctx) {
+            user_ttbr0 = ctx->ttbr0_el1;
+        }
+    }
+
+    /* Switch to user page table if we have one */
+    if (user_ttbr0 != 0) {
+        __asm__ volatile("msr ttbr0_el1, %0; isb" :: "r"(user_ttbr0));
+    }
 #endif
 
     size_t remaining = n;
@@ -196,6 +217,9 @@ int fut_copy_from_user(void *k_dst, const void *u_src, size_t n) {
 #if defined(__aarch64__)
     /* Data synchronization barrier - ensure all reads complete */
     __asm__ volatile("dsb sy" ::: "memory");
+
+    /* Switch back to kernel page table */
+    __asm__ volatile("msr ttbr0_el1, %0; isb" :: "r"((uint64_t)&boot_l1_table));
 #endif
 
     /* Clear AC flag */
@@ -208,9 +232,12 @@ int fut_copy_from_user(void *k_dst, const void *u_src, size_t n) {
 
 copy_fault:
     {
-        /* Clear AC flag on fault path */
+        /* Clear AC flag on fault path or restore kernel page table */
 #if defined(__x86_64__)
         __asm__ volatile("clac");
+#elif defined(__aarch64__)
+        extern page_table_t boot_l1_table;
+        __asm__ volatile("msr ttbr0_el1, %0; isb" :: "r"((uint64_t)&boot_l1_table));
 #endif
         int err = fut_uaccess_window_error();
         uaccess_clear();
@@ -238,9 +265,29 @@ int fut_copy_to_user(void *u_dst, const void *k_src, size_t n) {
     volatile uint8_t *dst = (volatile uint8_t *)u_dst;
     const uint8_t *src = (const uint8_t *)k_src;
 
-    /* Set AC flag for SMAP */
+    /* Set AC flag for SMAP (x86-64) or switch to user page table (ARM64) */
 #if defined(__x86_64__)
     __asm__ volatile("stac");
+#elif defined(__aarch64__)
+    /* ARM64: Get user page table from current task and switch to it for user memory access */
+    extern page_table_t boot_l1_table;
+    extern fut_task_t *fut_task_current(void);
+    extern fut_vmem_context_t *fut_mm_context(fut_mm_t *mm);
+
+    fut_task_t *task = fut_task_current();
+    uint64_t user_ttbr0 = 0;
+
+    if (task && task->mm) {
+        fut_vmem_context_t *ctx = fut_mm_context(task->mm);
+        if (ctx) {
+            user_ttbr0 = ctx->ttbr0_el1;
+        }
+    }
+
+    /* Switch to user page table if we have one */
+    if (user_ttbr0 != 0) {
+        __asm__ volatile("msr ttbr0_el1, %0; isb" :: "r"(user_ttbr0));
+    }
 #endif
 
     size_t remaining = n;
@@ -263,6 +310,9 @@ int fut_copy_to_user(void *u_dst, const void *k_src, size_t n) {
     __asm__ volatile("dsb sy" ::: "memory");
     /* Instruction synchronization barrier - ensure barrier effect visible */
     __asm__ volatile("isb" ::: "memory");
+
+    /* Switch back to kernel page table */
+    __asm__ volatile("msr ttbr0_el1, %0; isb" :: "r"((uint64_t)&boot_l1_table));
 #endif
 
     /* Clear AC flag */
@@ -275,9 +325,12 @@ int fut_copy_to_user(void *u_dst, const void *k_src, size_t n) {
 
 copy_fault:
     {
-        /* Clear AC flag on fault path */
+        /* Clear AC flag on fault path or restore kernel page table */
 #if defined(__x86_64__)
         __asm__ volatile("clac");
+#elif defined(__aarch64__)
+        extern page_table_t boot_l1_table;
+        __asm__ volatile("msr ttbr0_el1, %0; isb" :: "r"((uint64_t)&boot_l1_table));
 #endif
         int err = fut_uaccess_window_error();
         uaccess_clear();

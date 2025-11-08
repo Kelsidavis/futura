@@ -1076,14 +1076,6 @@ static int exec_copy_to_user(fut_mm_t *mm, uint64_t dest, const void *src, size_
         /* Copy chunk to this page */
         memcpy(virt, src_bytes, chunk_size);
 
-        /* Debug: verify data was written correctly */
-        if (vaddr == 0x400000) {
-            uint32_t *first_insn = (uint32_t *)virt;
-            extern void fut_printf(const char *, ...);
-            fut_printf("[COPY-DEBUG] After memcpy: virt=%p vaddr=0x%llx phys=0x%llx first_4bytes=0x%08x\n",
-                      virt, (unsigned long long)vaddr, (unsigned long long)phys, (unsigned int)*first_insn);
-        }
-
         /* ARM64: Clean data cache and invalidate instruction cache for code pages
          * This is critical because ARM64 has separate instruction and data caches.
          * After writing instructions via data cache, we must:
@@ -1106,14 +1098,6 @@ static int exec_copy_to_user(fut_mm_t *mm, uint64_t dest, const void *src, size_
         }
         __asm__ volatile("dsb ish" ::: "memory");  /* Ensure IC completes */
         __asm__ volatile("isb" ::: "memory");      /* Synchronize pipeline */
-
-        /* Debug: verify data is still correct after cache ops */
-        if (vaddr - chunk_size <= 0x400000 && vaddr > 0x400000) {
-            uint32_t *first_insn = (uint32_t *)virt;
-            extern void fut_printf(const char *, ...);
-            fut_printf("[COPY-DEBUG] After cache ops: virt=%p vaddr=0x%llx first_4bytes=0x%08x\n",
-                      virt, (unsigned long long)vaddr, (unsigned int)*first_insn);
-        }
 
         /* Advance pointers */
         src_bytes += chunk_size;
@@ -1543,13 +1527,6 @@ static int build_user_stack(fut_mm_t *mm,
                (boot_l1_entry_1 == user_l1_entry_1) ? "✓ MATCH" : "✗ MISMATCH!");
 
     fut_serial_puts("[TRAMPOLINE] About to ERET to EL0\n");
-
-    /* Debug: Read TCR_EL1 to verify T0SZ configuration */
-    uint64_t tcr_el1;
-    __asm__ volatile("mrs %0, tcr_el1" : "=r"(tcr_el1));
-    fut_printf("[TCR-DEBUG] TCR_EL1 = 0x%llx, T0SZ = %llu\n",
-               (unsigned long long)tcr_el1,
-               (unsigned long long)(tcr_el1 & 0x3F));
 
     /* Read back SP_EL0 after setting it to verify the value */
     uint64_t sp_el0_readback;

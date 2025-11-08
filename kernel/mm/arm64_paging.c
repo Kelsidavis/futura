@@ -185,8 +185,55 @@ static page_table_t *get_or_create_table(page_table_t *parent_table, int index, 
         return (page_table_t *)phys;  /* Assuming identity mapping for now */
     }
 
-    fut_printf("[PT] ERROR: Block descriptor at idx=%d\n", index);
-    return NULL;  /* Block descriptor found where table expected */
+    /* Block descriptor found - split it into L3 page table for finer-grained mapping.
+     * This is needed when user processes need 4KB pages with different permissions
+     * (e.g., user-accessible thread stacks) within a 2MB kernel-only DRAM block. */
+    if (fut_pte_is_block(entry)) {
+        if (!allocate) {
+            return NULL;  /* Can't split without allocation */
+        }
+
+        /* Allocate new L3 page table */
+        page_table_t *new_l3_table = alloc_page_table();
+        if (!new_l3_table) {
+            return NULL;
+        }
+
+        /* Extract block's base physical address (2MB-aligned) */
+        uint64_t block_base_phys = fut_pte_to_phys(entry) & ~(0x1FFFFFULL);  /* Mask to 2MB boundary */
+
+        /* Extract attribute bits from original block descriptor.
+         * Preserve: AP bits, memory attributes, shareability, access flag, etc.
+         * Clear: physical address and descriptor type bits. */
+        uint64_t block_attrs = entry & 0xFFF0000000000FFCULL;
+
+        /* Fill L3 table with 512 x 4KB page descriptors covering the 2MB block */
+        for (int i = 0; i < 512; i++) {
+            uint64_t page_phys = block_base_phys + (i * 0x1000);  /* 4KB pages */
+            /* L3 descriptors need PTE_VALID | PTE_TABLE (bits[1:0]=0b11) for page descriptor */
+            pte_t page_desc = fut_make_pte(page_phys, block_attrs | PTE_VALID | PTE_TABLE);
+            new_l3_table->entries[i] = page_desc;
+        }
+
+        /* Replace L2 block descriptor with table descriptor pointing to new L3 table */
+        uint64_t l3_table_phys = (uint64_t)new_l3_table;
+        pte_t table_desc = fut_make_pte(l3_table_phys, PTE_VALID | PTE_TABLE);
+        parent_table->entries[index] = table_desc;
+
+        /* Clean entries to Point of Coherency so MMU can see them */
+        __asm__ volatile("dc cvac, %0" :: "r"(&parent_table->entries[index]) : "memory");
+        __asm__ volatile("dsb ish" ::: "memory");
+
+        /* Flush entire TLB to ensure block mapping is replaced by page mappings */
+        extern void fut_flush_tlb_all(void);
+        fut_flush_tlb_all();
+
+        return new_l3_table;
+    }
+
+    fut_printf("[PT] ERROR: Unknown entry type at idx=%d entry=0x%llx\n",
+               index, (unsigned long long)entry);
+    return NULL;
 }
 
 /* ============================================================

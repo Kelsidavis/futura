@@ -567,16 +567,12 @@ static fut_thread_t *clone_thread(fut_thread_t *parent_thread, fut_task_t *child
         uint64_t stack_page_end = (stack_end + FUT_PAGE_SIZE - 1) & ~(FUT_PAGE_SIZE - 1);
 
         for (uint64_t page = stack_page_base; page < stack_page_end; page += FUT_PAGE_SIZE) {
-            /* Check if page is already mapped (e.g., covered by block descriptor) */
-            uint64_t existing_pte = 0;
-            if (pmap_probe_pte(child_ctx, page, &existing_pte) == 0) {
-                /* Page already has a mapping, skip it */
-                continue;
-            }
-
             phys_addr_t phys = pmap_virt_to_phys(page);
             uint64_t flags = PTE_PRESENT | PTE_WRITABLE | PTE_USER;
 
+            /* Always map stack pages with user permissions.
+             * This triggers L2 block splitting if the page is covered by a kernel-only
+             * block descriptor, creating a fine-grained L3 mapping with user access. */
             if (pmap_map_user(child_ctx, page, phys, FUT_PAGE_SIZE, flags) != 0) {
                 fut_printf("[FORK] ERROR: Failed to map child stack page 0x%llx\n", page);
                 return NULL;

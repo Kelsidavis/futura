@@ -587,11 +587,6 @@ void fut_schedule(void) {
             fut_switch_context_irq(prev, next, fut_current_frame);
         } else {
             // Regular cooperative context switch (uses RET)
-#if defined(__aarch64__)
-            fut_printf("[SCHED] About to context switch: prev=%p next=%p next->tid=%llu next->context.pc=%llx\n",
-                       (void*)prev, (void*)next, (unsigned long long)(next ? next->tid : 0),
-                       (unsigned long long)(next ? next->context.pc : 0));
-#endif
             if (prev) {
                 fut_switch_context(&prev->context, &next->context);
             } else {

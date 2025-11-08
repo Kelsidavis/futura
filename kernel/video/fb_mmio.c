@@ -361,6 +361,17 @@ static int arm64_scan_pci_for_gpu(void) {
             if (vendor_id == PCI_VENDOR_REDHAT_QUMRANET && device_id == PCI_DEVICE_VIRTIO_GPU) {
                 fut_printf("[FB] Found virtio-gpu-pci at %02x:%02x.%x\n", 0, dev, fn);
 
+                /* Set default framebuffer dimensions if not already set */
+                if (g_fb_hw.info.width == 0 || g_fb_hw.info.height == 0) {
+                    g_fb_hw.info.width = 1024;
+                    g_fb_hw.info.height = 768;
+                    g_fb_hw.info.pitch = g_fb_hw.info.width * 4u;
+                    g_fb_hw.info.bpp = 32;
+                    g_fb_hw.info.flags = FB_FLAG_LINEAR;
+                    fut_printf("[FB] Using default dimensions: %ux%ux%u\n",
+                               g_fb_hw.info.width, g_fb_hw.info.height, g_fb_hw.info.bpp);
+                }
+
                 /* Try to assign all BARs - virtio might use any of them */
                 fut_printf("[FB] Probing all BARs for virtio-gpu...\n");
                 uint64_t assigned_bar = 0;

@@ -440,21 +440,15 @@ int fut_thread_priority_restore(fut_thread_t *thread) {
     return 0;
 }
 [[noreturn]] static void fut_thread_trampoline(void (*entry)(void *), void *arg) {
-    extern void fut_printf(const char *, ...);
     extern void serial_puts(const char *);
-
-    serial_puts("[TRAMPOLINE] Entered trampoline!\n");
-    fut_printf("[TRAMPOLINE] Called with entry=%llx arg=%p\n", (uint64_t)(uintptr_t)entry, arg);
 
     if (!entry) {
         serial_puts("[TRAMPOLINE-ERROR] NULL entry function!\n");
         fut_thread_exit();
     }
 
-    fut_printf("[TRAMPOLINE] Calling entry(arg)...\n");
     /* Call the entry function */
     entry(arg);
-    fut_printf("[TRAMPOLINE] entry() returned\n");
 
     /* If entry returns (doesn't call fut_thread_exit), we exit here */
     fut_thread_exit();

@@ -612,6 +612,8 @@ ARM64_INIT_BIN := $(BIN_DIR)/arm64/user/init
 ARM64_INIT_BLOB := $(OBJ_DIR)/kernel/blobs/arm64_init_blob.o
 ARM64_SHELL_BIN := $(BIN_DIR)/arm64/user/shell
 ARM64_SHELL_BLOB := $(OBJ_DIR)/kernel/blobs/arm64_shell_blob.o
+ARM64_FBTEST_BIN := $(BIN_DIR)/arm64/user/fbtest
+ARM64_FBTEST_BLOB := $(OBJ_DIR)/kernel/blobs/arm64_fbtest_blob.o
 
 ifeq ($(PLATFORM),x86_64)
 OBJECTS += $(FBTEST_BLOB)
@@ -624,7 +626,7 @@ OBJECTS += $(WAYLAND_COMPOSITOR_BLOB) $(WAYLAND_CLIENT_BLOB) $(WAYLAND_COLOR_BLO
 endif
 else ifeq ($(PLATFORM),arm64)
 # Re-enabled for userland testing
-OBJECTS += $(ARM64_INIT_BLOB)
+OBJECTS += $(ARM64_INIT_BLOB) $(ARM64_FBTEST_BLOB)
 # Shell not built yet, only include init
 # OBJECTS += $(ARM64_SHELL_BLOB)
 endif
@@ -807,11 +809,19 @@ $(ARM64_SHELL_BIN):
 	@echo "Building ARM64 shell..."
 	@$(MAKE) -C src/user/shell -f Makefile.simple PLATFORM=arm64 all
 
+$(ARM64_FBTEST_BIN):
+	@echo "Building ARM64 fbtest..."
+	@$(MAKE) -C src/user/fbtest PLATFORM=arm64 all
+
 $(ARM64_INIT_BLOB): $(ARM64_INIT_BIN) | $(OBJ_DIR)/kernel/blobs
 	@echo "OBJCOPY $@"
 	@$(OBJCOPY) -I binary -O $(OBJCOPY_BIN_FMT) -B $(OBJCOPY_BIN_ARCH) $< $@
 
 $(ARM64_SHELL_BLOB): $(ARM64_SHELL_BIN) | $(OBJ_DIR)/kernel/blobs
+	@echo "OBJCOPY $@"
+	@$(OBJCOPY) -I binary -O $(OBJCOPY_BIN_FMT) -B $(OBJCOPY_BIN_ARCH) $< $@
+
+$(ARM64_FBTEST_BLOB): $(ARM64_FBTEST_BIN) | $(OBJ_DIR)/kernel/blobs
 	@echo "OBJCOPY $@"
 	@$(OBJCOPY) -I binary -O $(OBJCOPY_BIN_FMT) -B $(OBJCOPY_BIN_ARCH) $< $@
 

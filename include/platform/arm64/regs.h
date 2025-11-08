@@ -88,6 +88,7 @@ typedef struct fut_interrupt_frame {
 
     /* User stack pointer (critical for userspace context) */
     uint64_t sp_el0;            /* SP_EL0: user mode stack pointer */
+    uint64_t ttbr0_el1;         /* TTBR0_EL1: translation table base register (user page table) */
 } fut_interrupt_frame_t;
 
 /* ============================================================

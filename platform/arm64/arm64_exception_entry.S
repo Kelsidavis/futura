@@ -88,6 +88,18 @@ sync_exception_entry:
     mrs     x1, sp_el0
     str     x1, [x0, #808]      /* Save SP_EL0 at offset 808 (after fpcr) */
 
+    /* Save user TTBR0 before switching to kernel page table */
+    mrs     x1, ttbr0_el1
+    str     x1, [x0, #816]      /* Save TTBR0_EL1 at offset 816 (after sp_el0) */
+
+    /* Switch to kernel page table for kernel code/data access
+     * This allows syscalls to access kernel memory (code, data, page tables)
+     */
+    adrp    x1, boot_l1_table
+    add     x1, x1, :lo12:boot_l1_table
+    msr     ttbr0_el1, x1
+    isb
+
     /* Save FPU state (v0-v31 registers and control registers)
      * FPU state is stored in frame->fpu_state[64] at offset 288
      * Each 128-bit register v[i] is saved as 2 x 64-bit words
@@ -176,6 +188,11 @@ sync_exception_entry:
     /* Restore SP_EL0 (user stack pointer) - critical for userspace returns! */
     ldr     x1, [x0, #808]      /* Load SP_EL0 from offset 808 */
     msr     sp_el0, x1          /* Restore SP_EL0 */
+
+    /* Restore user TTBR0 before returning to userspace */
+    ldr     x1, [x0, #816]      /* Load TTBR0_EL1 from offset 816 */
+    msr     ttbr0_el1, x1       /* Restore TTBR0_EL1 */
+    isb
 
     /* Restore general purpose registers x2-x30 */
     ldp     x2, x3, [x0, #16]

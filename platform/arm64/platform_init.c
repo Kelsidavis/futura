@@ -344,15 +344,24 @@ int fut_serial_getc(void) {
 int fut_serial_getc_blocking(void) {
     extern void fut_schedule(void);
 
-    /* Truly blocking: loop indefinitely until character available */
+    /* Poll with exponential backoff to reduce scheduler pressure.
+     * This allows other threads to make progress without livelocking the scheduler.
+     */
+    volatile int poll_count = 0;
+    const volatile int max_poll_before_yield = 50000;
+
     while (1) {
         int c = fut_serial_getc();
         if (c >= 0) {
             return c;
         }
 
-        /* Yield to scheduler every iteration to avoid livelock */
-        fut_schedule();
+        poll_count++;
+        if (poll_count >= max_poll_before_yield) {
+            poll_count = 0;
+            /* Yield to allow other threads to run */
+            fut_schedule();
+        }
     }
 }
 

@@ -1638,15 +1638,18 @@ void *fut_vfs_mmap(int fd, void *addr, size_t len, int prot, int flags, off_t of
     extern void *fut_mm_map_file(fut_mm_t *, struct fut_vnode *, uintptr_t, size_t, int, int, uint64_t);
     extern fut_mm_t *fut_mm_current(void);
 
-    struct fut_file *file = get_file(fd);
+    fut_task_t *task = fut_task_current();
+    if (!task) {
+        return (void *)(intptr_t)(-EPERM);
+    }
+
+    struct fut_file *file = get_file_from_task(task, fd);
     if (!file) {
         return (void *)(intptr_t)(-EBADF);
     }
 
     /* Character devices may have custom mmap implementations */
-    fut_printf("[VFS-MMAP] fd=%d file=%p chr_ops=%p\n", fd, (void*)file, (void*)file->chr_ops);
     if (file->chr_ops && file->chr_ops->mmap) {
-        fut_printf("[VFS-MMAP] Calling chr device mmap\n");
         return file->chr_ops->mmap(file->chr_inode, file->chr_private, addr, len, off, prot, flags);
     }
 

@@ -257,11 +257,8 @@ void fut_sched_add_thread(fut_thread_t *thread) {
     fut_thread_t *walker = target_percpu->ready_queue_head;
     while (walker) {
         if (walker == thread) {
-#if defined(__aarch64__)
-            extern void fut_printf(const char *, ...);
-            fut_printf("[SCHED-WARN] Thread tid=%llu @%p already in ready queue, skipping duplicate add\n",
-                       (unsigned long long)thread->tid, (void*)thread);
-#endif
+            // Thread already in queue - this is benign and can happen during normal
+            // cooperative scheduling when multiple code paths try to ready the same thread
             fut_spinlock_release(&target_percpu->queue_lock);
             return;
         }

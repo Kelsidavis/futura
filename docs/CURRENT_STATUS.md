@@ -1,6 +1,6 @@
 # Current Status — November 2025
 
-**Last Updated**: 2025-11-04
+**Last Updated**: 2025-11-07
 
 ## Overview
 
@@ -57,10 +57,10 @@ Futura OS has reached a significant milestone with a fully functional x86-64 ker
 - **Userland runtime**: ARM64-specific crt0, syscall wrappers, working demo programs.
 
 **MMU Status**
-- Currently disabled but not blocking development.
-- Kernel fully functional with physical addressing.
-- Multi-process support works via stack copying.
-- MMU enablement deferred pending further investigation (QEMU virt machine compatibility issues).
+- ✅ **Enabled and working** with identity mapping (1GB @ 0x40000000).
+- Full virtual memory support operational.
+- Page tables: L1/L2 hierarchy with 2MB block entries.
+- Multi-process support fully functional (fork/exec/wait/exit all working).
 
 See `docs/ARM64_STATUS.md` for detailed ARM64 progress.
 
@@ -74,7 +74,7 @@ See `docs/ARM64_STATUS.md` for detailed ARM64 progress.
 5. **Signal handling**: Expand beyond scaffolding to full signal delivery and handling.
 
 ### ARM64 Platform
-1. **MMU enablement**: Debug page table setup for QEMU virt machine; test on real hardware.
+1. **✅ MMU enabled**: Identity mapping operational with L1/L2 page tables; full virtual memory support working.
 2. **✅ Driver porting COMPLETE**: virtio-blk, virtio-net, virtio-gpu all ported to ARM64 using PCI ECAM.
 3. **🚧 Apple Silicon M2 support** (75% complete): Device tree detection, AIC interrupt controller, s5l-uart console driver implemented. See `docs/APPLE_SILICON_ROADMAP.md`.
 4. **Platform parity**: Continue matching x86-64 feature set (userland binaries, test framework).

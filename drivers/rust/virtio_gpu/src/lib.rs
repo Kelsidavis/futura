@@ -115,11 +115,8 @@ struct VirtioGpuSetScanout {
 #[repr(C, packed)]
 struct VirtioGpuTransferToHost2D {
     hdr: VirtioGpuCtrlHdr,
+    r: VirtioGpuRect,
     offset: u64,
-    width: u32,
-    height: u32,
-    x: u32,
-    y: u32,
     resource_id: u32,
     padding: u32,
 }
@@ -127,11 +124,9 @@ struct VirtioGpuTransferToHost2D {
 #[repr(C, packed)]
 struct VirtioGpuResourceFlush {
     hdr: VirtioGpuCtrlHdr,
+    r: VirtioGpuRect,
     resource_id: u32,
-    x: u32,
-    y: u32,
-    width: u32,
-    height: u32,
+    padding: u32,
 }
 
 /* virtqueue structures */
@@ -638,11 +633,13 @@ impl VirtioGpuDevice {
                 ring_idx: 0,
                 padding: [0; 3],
             },
+            r: VirtioGpuRect {
+                x: 0,
+                y: 0,
+                width: self.width,
+                height: self.height,
+            },
             offset: 0,
-            width: self.width,
-            height: self.height,
-            x: 0,
-            y: 0,
             resource_id: RESOURCE_ID_FB,
             padding: 0,
         };
@@ -658,11 +655,14 @@ impl VirtioGpuDevice {
                 ring_idx: 0,
                 padding: [0; 3],
             },
+            r: VirtioGpuRect {
+                x: 0,
+                y: 0,
+                width: self.width,
+                height: self.height,
+            },
             resource_id: RESOURCE_ID_FB,
-            x: 0,
-            y: 0,
-            width: self.width,
-            height: self.height,
+            padding: 0,
         };
         unsafe { self.submit_command(&flush_cmd as *const _ as *const u8, core::mem::size_of_val(&flush_cmd)); }
 
@@ -743,11 +743,13 @@ pub extern "C" fn virtio_gpu_flush_arm64() {
                     ring_idx: 0,
                     padding: [0; 3],
                 },
+                r: VirtioGpuRect {
+                    x: 0,
+                    y: 0,
+                    width: dev.width,
+                    height: dev.height,
+                },
                 offset: 0,
-                width: dev.width,
-                height: dev.height,
-                x: 0,
-                y: 0,
                 resource_id: RESOURCE_ID_FB,
                 padding: 0,
             };
@@ -765,11 +767,14 @@ pub extern "C" fn virtio_gpu_flush_arm64() {
                     ring_idx: 0,
                     padding: [0; 3],
                 },
+                r: VirtioGpuRect {
+                    x: 0,
+                    y: 0,
+                    width: dev.width,
+                    height: dev.height,
+                },
                 resource_id: RESOURCE_ID_FB,
-                x: 0,
-                y: 0,
-                width: dev.width,
-                height: dev.height,
+                padding: 0,
             };
             unsafe {
                 let dev_mut = dev as *const VirtioGpuDevice as *mut VirtioGpuDevice;

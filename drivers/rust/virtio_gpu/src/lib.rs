@@ -473,18 +473,33 @@ impl VirtioGpuDevice {
         self.fb_size = (self.width * self.height * 4) as usize;
         let num_pages = (self.fb_size + 4095) / 4096;
 
-        /* Allocate first page */
+        /* Allocate all framebuffer pages contiguously */
         let fb_page = unsafe { fut_pmm_alloc_page() as *mut u8 };
         if fb_page.is_null() {
-            log("[VIRTIO-GPU] Failed to allocate framebuffer\n");
+            log("[VIRTIO-GPU] Failed to allocate framebuffer page 0\n");
             return Err(());
         }
 
         self.framebuffer = fb_page;
         self.fb_phys = fb_page as u64;
 
-        /* Zero framebuffer pages */
+        /* Allocate and zero remaining pages */
         for i in 0..num_pages {
+            if i > 0 {
+                /* Allocate additional pages */
+                let page = unsafe { fut_pmm_alloc_page() as *mut u8 };
+                if page.is_null() {
+                    log("[VIRTIO-GPU] Failed to allocate framebuffer page\n");
+                    return Err(());
+                }
+
+                /* Verify contiguous allocation */
+                let expected_addr = (self.fb_phys as usize) + (i * 4096);
+                if page as usize != expected_addr {
+                    log("[VIRTIO-GPU] WARNING: Non-contiguous framebuffer allocation\n");
+                }
+            }
+
             let page_addr = unsafe { self.framebuffer.add(i * 4096) };
             unsafe { memset(page_addr as *mut c_void, 0, 4096); }
         }

@@ -8,6 +8,7 @@
 #include <kernel/fut_task.h>
 #include <kernel/fut_thread.h>
 #include <kernel/fut_vfs.h>
+#include <platform/platform.h>
 
 #define MAP_SHARED      0x01
 #define MAP_PRIVATE     0x02
@@ -38,6 +39,7 @@ long sys_mmap(void *addr, size_t len, int prot, int flags, int fd, long offset) 
     }
 
     void *mapped = fut_vfs_mmap(fd, addr, len, prot, flags, (off_t)offset);
+    fut_printf("[SYS_MMAP] fd=%d returning 0x%llx\n", fd, (unsigned long long)(uintptr_t)mapped);
     return (long)(intptr_t)mapped;
 }
 

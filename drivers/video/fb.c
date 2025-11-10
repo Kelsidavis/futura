@@ -157,7 +157,6 @@ static ssize_t fb_write(void *inode, void *private_data,
 static void *fb_mmap(void *inode, void *private_data, void *u_addr, size_t len,
                      off_t off, int prot, int flags) {
     (void)inode;
-    (void)flags;
 
     struct fb_device *fb = private_data ? (struct fb_device *)private_data
                                         : (struct fb_device *)inode;
@@ -165,8 +164,8 @@ static void *fb_mmap(void *inode, void *private_data, void *u_addr, size_t len,
         return (void *)(intptr_t)(-ENODEV);
     }
 
-    fut_printf("[FB-CHAR] fb_mmap called: u_addr=%p len=%zu off=%ld prot=0x%x\n",
-               u_addr, len, (long)off, prot);
+    fut_printf("[FB-CHAR] fb_mmap called: u_addr=%p len=%zu off=%ld prot=0x%x flags=0x%x\n",
+               u_addr, len, (long)off, prot, flags);
 
     size_t fb_size = (size_t)fb->hw.info.pitch * fb->hw.info.height;
     if ((off & (PAGE_SIZE - 1)) != 0) {
@@ -180,7 +179,29 @@ static void *fb_mmap(void *inode, void *private_data, void *u_addr, size_t len,
         len = fb_size - (size_t)off;
     }
 
-    uint64_t user_addr = (uint64_t)u_addr;
+    /* Allocate virtual address if NULL was passed (standard mmap behavior) */
+    uint64_t user_addr;
+    if (u_addr == NULL) {
+        extern uint64_t fut_task_alloc_mmap_addr(size_t);
+        size_t map_len = (len + PAGE_SIZE - 1) & ~(size_t)(PAGE_SIZE - 1);
+        user_addr = fut_task_alloc_mmap_addr(map_len);
+        if ((int64_t)user_addr < 0) {
+            return (void *)(intptr_t)user_addr;
+        }
+        fut_printf("[FB-CHAR] allocated vaddr=0x%llx for framebuffer mapping\n",
+                   (unsigned long long)user_addr);
+    } else {
+        /* MAP_FIXED or hint provided */
+        user_addr = (uint64_t)u_addr;
+        if ((flags & 0x10)) { /* MAP_FIXED */
+            fut_printf("[FB-CHAR] using fixed address vaddr=0x%llx\n",
+                       (unsigned long long)user_addr);
+        } else {
+            fut_printf("[FB-CHAR] using hint address vaddr=0x%llx\n",
+                       (unsigned long long)user_addr);
+        }
+    }
+
     uint64_t phys_addr = (fb->hw.phys + (uint64_t)off) & ~(uint64_t)(PAGE_SIZE - 1);
     size_t map_len = (len + PAGE_SIZE - 1) & ~(size_t)(PAGE_SIZE - 1);
 
@@ -192,14 +213,25 @@ static void *fb_mmap(void *inode, void *private_data, void *u_addr, size_t len,
     if (prot & 0x2) { /* PROT_WRITE */
         prot_flags |= PTE_WRITABLE;
     }
+    /* Always enable read for framebuffer mappings even if only PROT_WRITE was requested */
+    if (prot & 0x1) { /* PROT_READ */
+        /* Read is always allowed on ARM64 (no separate read bit in PTE) */
+        /* On x86_64, PTE_USER already grants read access */
+    }
 
     fut_vmem_context_t *ctx = fut_mm_context(fut_mm_current());
     int rc = pmap_map_user(ctx, user_addr, phys_addr, map_len, prot_flags);
     if (rc != 0) {
+        fut_printf("[FB-CHAR] pmap_map_user failed: rc=%d\n", rc);
         return (void *)(intptr_t)rc;
     }
 
-    return u_addr;
+    fut_printf("[FB-CHAR] mapped framebuffer: vaddr=0x%llx -> phys=0x%llx len=0x%zx\n",
+               (unsigned long long)user_addr,
+               (unsigned long long)phys_addr,
+               map_len);
+
+    return (void *)(uintptr_t)user_addr;
 }
 
 static const struct fut_file_ops fb_fops = {

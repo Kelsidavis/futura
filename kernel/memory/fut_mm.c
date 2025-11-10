@@ -1642,3 +1642,51 @@ int fut_page_ref_get(phys_addr_t phys) {
     struct page_refcount_entry *entry = page_ref_find(phys);
     return entry ? entry->refcount : 1;
 }
+
+/**
+ * Allocate a virtual address range for mmap from current task's address space.
+ * Used by character device mmap implementations (e.g., framebuffer).
+ *
+ * @param len Size of mapping in bytes (will be page-aligned)
+ * @return Virtual address on success, negative error code on failure
+ */
+uint64_t fut_task_alloc_mmap_addr(size_t len) {
+    extern fut_task_t *fut_task_current(void);
+    extern fut_mm_t *fut_task_get_mm(const fut_task_t *);
+
+    fut_task_t *task = fut_task_current();
+    if (!task) {
+        return (uint64_t)(int64_t)(-EPERM);
+    }
+
+    fut_mm_t *mm = fut_task_get_mm(task);
+    if (!mm) {
+        return (uint64_t)(int64_t)(-ENOMEM);
+    }
+
+    /* Align length to page boundary */
+    size_t aligned = PAGE_ALIGN_UP(len);
+    if (aligned == 0) {
+        return (uint64_t)(int64_t)(-EINVAL);
+    }
+
+    /* Allocate from mmap_base */
+    uintptr_t candidate = mm->mmap_base ? mm->mmap_base : USER_MMAP_BASE;
+    if (candidate < USER_MMAP_BASE) {
+        candidate = USER_MMAP_BASE;
+    }
+    candidate = PAGE_ALIGN_UP(candidate);
+    if (candidate < mm->heap_mapped_end) {
+        candidate = PAGE_ALIGN_UP(mm->heap_mapped_end);
+    }
+
+    uintptr_t end = candidate + aligned;
+    if (end < candidate || end > USER_VMA_MAX) {
+        return (uint64_t)(int64_t)(-ENOMEM);
+    }
+
+    /* Update mmap_base for next allocation */
+    mm->mmap_base = end;
+
+    return (uint64_t)candidate;
+}

@@ -861,8 +861,8 @@ void fut_platform_late_init(void) {
 extern void test_el0_transition(void);
 extern char _binary_build_bin_arm64_user_init_start[];
 extern char _binary_build_bin_arm64_user_init_end[];
-extern char _binary_build_bin_arm64_user_arm64_gfxtest_start[];
-extern char _binary_build_bin_arm64_user_arm64_gfxtest_end[];
+extern char _binary_build_bin_arm64_user_arm64_uidemo_start[];
+extern char _binary_build_bin_arm64_user_arm64_uidemo_end[];
 /* Shell not built yet for ARM64 */
 // extern char _binary_build_bin_arm64_user_shell_start[];
 // extern char _binary_build_bin_arm64_user_shell_end[];
@@ -953,12 +953,12 @@ static void arm64_init_spawner_thread(void *arg) {
     /* Check embedded userland binaries */
     uintptr_t init_size = (uintptr_t)_binary_build_bin_arm64_user_init_end -
                           (uintptr_t)_binary_build_bin_arm64_user_init_start;
-    uintptr_t gfxtest_size = (uintptr_t)_binary_build_bin_arm64_user_arm64_gfxtest_end -
-                            (uintptr_t)_binary_build_bin_arm64_user_arm64_gfxtest_start;
+    uintptr_t uidemo_size = (uintptr_t)_binary_build_bin_arm64_user_arm64_uidemo_end -
+                            (uintptr_t)_binary_build_bin_arm64_user_arm64_uidemo_start;
 
     fut_printf("[ARM64-SPAWNER] Embedded userland binaries:\n");
-    fut_printf("  - init:    %llu bytes %s\n", (unsigned long long)init_size, init_size > 0 ? "present" : "MISSING!");
-    fut_printf("  - gfxtest: %llu bytes %s\n", (unsigned long long)gfxtest_size, gfxtest_size > 0 ? "present" : "MISSING!");
+    fut_printf("  - init:   %llu bytes %s\n", (unsigned long long)init_size, init_size > 0 ? "present" : "MISSING!");
+    fut_printf("  - uidemo: %llu bytes %s\n", (unsigned long long)uidemo_size, uidemo_size > 0 ? "present" : "MISSING!");
 
     /* Shell not built yet for ARM64 */
     // uintptr_t shell_size = (uintptr_t)_binary_build_bin_arm64_user_shell_end -
@@ -998,14 +998,14 @@ static void arm64_init_spawner_thread(void *arg) {
 
     fut_printf("[ARM64-SPAWNER] Init binary staged successfully!\n");
 
-    /* Stage gfxtest binary to filesystem */
-    if (gfxtest_size > 0) {
-        fut_printf("[ARM64-SPAWNER] Staging gfxtest to /bin/arm64_gfxtest (%llu bytes)...\n", (unsigned long long)gfxtest_size);
-        ret = stage_arm64_blob((const uint8_t *)_binary_build_bin_arm64_user_arm64_gfxtest_start,
-                              (const uint8_t *)_binary_build_bin_arm64_user_arm64_gfxtest_end,
-                              "/bin/arm64_gfxtest");
+    /* Stage uidemo binary to filesystem */
+    if (uidemo_size > 0) {
+        fut_printf("[ARM64-SPAWNER] Staging uidemo to /bin/arm64_uidemo (%llu bytes)...\n", (unsigned long long)uidemo_size);
+        ret = stage_arm64_blob((const uint8_t *)_binary_build_bin_arm64_user_arm64_uidemo_start,
+                              (const uint8_t *)_binary_build_bin_arm64_user_arm64_uidemo_end,
+                              "/bin/arm64_uidemo");
         if (ret != 0) {
-            fut_printf("[ARM64-SPAWNER] ERROR: Failed to stage gfxtest binary: %d\n", ret);
+            fut_printf("[ARM64-SPAWNER] ERROR: Failed to stage uidemo binary: %d\n", ret);
         } else {
             fut_printf("[ARM64-SPAWNER] Gfxtest binary staged successfully!\n");
         }
@@ -1014,22 +1014,22 @@ static void arm64_init_spawner_thread(void *arg) {
     /* Shell not built yet for ARM64 - skip staging */
     fut_printf("[ARM64-SPAWNER] Shell not available (not built yet)\n");
 
-    /* Spawn gfxtest for UI testing (replacing init temporarily) */
+    /* Spawn uidemo for UI testing (replacing init temporarily) */
     fut_printf("\n====================================\n");
-    fut_printf("  SPAWNING GFXTEST FOR UI TESTING\n");
+    fut_printf("  SPAWNING UI DEMO FOR UI TESTING\n");
     fut_printf("====================================\n\n");
 
-    char *gfxtest_argv[] = {"/bin/arm64_gfxtest", NULL};
-    char *gfxtest_envp[] = {"PATH=/sbin:/bin", "HOME=/root", NULL};
+    char *uidemo_argv[] = {"/bin/arm64_uidemo", NULL};
+    char *uidemo_envp[] = {"PATH=/sbin:/bin", "HOME=/root", NULL};
 
-    fut_printf("[ARM64-SPAWNER] Executing /bin/arm64_gfxtest...\n");
-    ret = fut_exec_elf("/bin/arm64_gfxtest", gfxtest_argv, gfxtest_envp);
+    fut_printf("[ARM64-SPAWNER] Executing /bin/arm64_uidemo...\n");
+    ret = fut_exec_elf("/bin/arm64_uidemo", uidemo_argv, uidemo_envp);
 
     if (ret == 0) {
         fut_printf("[ARM64-SPAWNER] ✓ Gfxtest process spawned successfully!\n");
         fut_printf("[ARM64-SPAWNER] Spawner thread exiting.\n");
     } else {
-        fut_printf("[ARM64-SPAWNER] ERROR: Failed to spawn gfxtest! Error code: %d\n", ret);
+        fut_printf("[ARM64-SPAWNER] ERROR: Failed to spawn uidemo! Error code: %d\n", ret);
         if (ret == -EINVAL) {
             fut_printf("  EINVAL (invalid argument)\n");
         } else if (ret == -ENOMEM) {

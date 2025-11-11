@@ -1335,6 +1335,19 @@ int virtio_gpu_init_arm64_pci(uint8_t bus, uint8_t dev, uint8_t func, uint64_t *
     memset((void *)g_used_arm, 0, sizeof(struct virtio_used));
     memset((void *)g_framebuffer_arm, 0x00, g_fb_size_arm);  /* Clear to black - userspace will draw content */
 
+    /* Verify ring memory is accessible by writing and reading back test values */
+    __asm__ volatile("dsb sy" ::: "memory");
+    volatile uint32_t *test_desc = (volatile uint32_t *)g_desc_table_arm;
+    *test_desc = 0xDEADBEEF;
+    __asm__ volatile("dsb sy" ::: "memory");
+    uint32_t readback = *test_desc;
+    if (readback == 0xDEADBEEF) {
+        fut_printf("[VIRTIO-GPU] ARM64: Queue memory test PASSED (desc accessible)\n");
+    } else {
+        fut_printf("[VIRTIO-GPU] ARM64: Queue memory test FAILED (read 0x%x, expected 0xDEADBEEF)\n", readback);
+    }
+    *test_desc = 0;  /* Clear test value */
+
     fut_printf("[VIRTIO-GPU] ARM64: Allocated queues at 0x%llx, FB at 0x%llx\n",
                (unsigned long long)queue_phys, (unsigned long long)fb_phys);
 

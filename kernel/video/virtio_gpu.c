@@ -99,7 +99,16 @@ static inline void pci_config_write(uint8_t bus, uint8_t slot, uint8_t func, uin
 #define VIRTIO_GPU_CMD_GET_DISPLAY_INFO 0x0100
 
 #define VIRTIO_GPU_FORMAT_B8G8R8X8_UNORM 2
+
+/* VirtIO GPU Response Types */
+#define VIRTIO_GPU_RESP_OK_NODATA 0x1000
 #define VIRTIO_GPU_RESP_OK_DISPLAY_INFO 0x1100
+#define VIRTIO_GPU_RESP_ERR_UNSPEC 0x1200
+#define VIRTIO_GPU_RESP_ERR_OUT_OF_MEMORY 0x1201
+#define VIRTIO_GPU_RESP_ERR_INVALID_SCANOUT_ID 0x1202
+#define VIRTIO_GPU_RESP_ERR_INVALID_RESOURCE_ID 0x1203
+#define VIRTIO_GPU_RESP_ERR_INVALID_CONTEXT_ID 0x1204
+#define VIRTIO_GPU_RESP_ERR_INVALID_PARAMETER 0x1205
 
 #define VIRTIO_RING_SIZE 256
 #define RESOURCE_ID_FB 1
@@ -1080,6 +1089,23 @@ static int arm64_virtio_gpu_submit_command(const void *cmd, size_t cmd_size) {
         if (completed_desc_id != expected_desc_id) {
             fut_printf("[VIRTIO-GPU] ARM64: WARNING: Got response for wrong descriptor! "
                        "Expected %u but got %u\n", expected_desc_id, completed_desc_id);
+        }
+
+        /* Check response type for errors */
+        if ((resp->type & 0x1000) == 0x1200) {
+            /* Error response */
+            const char *error_str = "Unknown error";
+            switch (resp->type) {
+                case VIRTIO_GPU_RESP_ERR_UNSPEC: error_str = "Unspecified error"; break;
+                case VIRTIO_GPU_RESP_ERR_OUT_OF_MEMORY: error_str = "Out of memory"; break;
+                case VIRTIO_GPU_RESP_ERR_INVALID_SCANOUT_ID: error_str = "Invalid scanout ID"; break;
+                case VIRTIO_GPU_RESP_ERR_INVALID_RESOURCE_ID: error_str = "Invalid resource ID"; break;
+                case VIRTIO_GPU_RESP_ERR_INVALID_CONTEXT_ID: error_str = "Invalid context ID"; break;
+                case VIRTIO_GPU_RESP_ERR_INVALID_PARAMETER: error_str = "Invalid parameter"; break;
+            }
+            fut_printf("[VIRTIO-GPU] ARM64: ERROR: Device returned error response: 0x%x (%s)\n",
+                       resp->type, error_str);
+            return -1;
         }
     } else {
         fut_printf("[VIRTIO-GPU] ARM64: Cmd type=%u TIMEOUT (used ring not updated by device)\n",

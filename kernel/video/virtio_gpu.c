@@ -1424,6 +1424,14 @@ void virtio_gpu_flush_display(void) {
     if (!g_framebuffer_arm || g_fb_width_arm == 0 || g_fb_height_arm == 0) {
         return;
     }
+
+    /* Diagnostic: Check if framebuffer has any non-zero data */
+    uint32_t sample_pixels = 0;
+    for (size_t i = 0; i < g_fb_size_arm && i < 4096; i += 4) {
+        sample_pixels |= *(uint32_t *)((volatile uint8_t *)g_framebuffer_arm + i);
+    }
+    fut_printf("[VIRTIO-GPU] ARM64: Flush: FB size=%zu has content=0x%x\n", g_fb_size_arm, sample_pixels);
+
     arm64_virtio_gpu_transfer_to_host_2d(RESOURCE_ID_FB, g_fb_width_arm, g_fb_height_arm);
     arm64_virtio_gpu_resource_flush(RESOURCE_ID_FB, g_fb_width_arm, g_fb_height_arm);
 }

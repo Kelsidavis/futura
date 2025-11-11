@@ -887,12 +887,18 @@ void fut_kernel_main(void) {
 #ifdef WAYLAND_INTERACTIVE_MODE
     /* In headful mode, always initialize fb_char for virtio-gpu even if not detected yet */
     if (fb_enabled) {
+#ifndef __aarch64__
+        /* On ARM64, fb_boot_splash() was already called above */
         fb_boot_splash();
+#endif
         fb_char_init();
 #else
     if (fb_available) {
         /* Enable framebuffer splash for virtio-gpu initialization */
+#ifndef __aarch64__
+        /* On ARM64, fb_boot_splash() was already called above */
         fb_boot_splash();
+#endif
         fb_char_init();
 #endif
         struct fut_fb_hwinfo fbinfo = {0};

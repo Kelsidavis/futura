@@ -1040,6 +1040,7 @@ static void arm64_virtio_gpu_submit_command(const void *cmd, size_t cmd_size) {
                last_used_idx, (uint16_t)(last_used_idx + 1));
 
     int timeout = 1000000;
+    int initial_timeout = timeout;
     while (timeout > 0) {
         __sync_synchronize();
         if (g_used_arm->idx != last_used_idx) {
@@ -1048,8 +1049,9 @@ static void arm64_virtio_gpu_submit_command(const void *cmd, size_t cmd_size) {
         timeout--;
     }
 
-    fut_printf("[VIRTIO-GPU] ARM64: After wait: used.idx=%u (was %u), timeout_remaining=%d\n",
-               g_used_arm->idx, last_used_idx, timeout);
+    int loops_executed = initial_timeout - timeout;
+    fut_printf("[VIRTIO-GPU] ARM64: Response wait complete: used.idx=%u (was %u), timeout_remaining=%d (loops_executed=%d)\n",
+               g_used_arm->idx, last_used_idx, timeout, loops_executed);
 
     /* Ensure device writes to response buffer are visible before reading them */
     __sync_synchronize();

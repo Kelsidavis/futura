@@ -1052,6 +1052,14 @@ static void arm64_virtio_gpu_submit_command(const void *cmd, size_t cmd_size) {
         struct virtio_gpu_ctrl_hdr *resp = (struct virtio_gpu_ctrl_hdr *)g_resp_buffer_arm;
         fut_printf("[VIRTIO-GPU] ARM64: Cmd type=%u response=0x%x\n",
                    ((struct virtio_gpu_ctrl_hdr *)cmd)->type, resp->type);
+
+        /* Consume the used ring entry to keep device in sync */
+        /* The used ring entry at index (last_used_idx % RING_SIZE) contains the descriptor ID
+         * that was completed. We need to track which descriptors we've consumed. */
+        uint16_t used_idx = last_used_idx % VIRTIO_RING_SIZE;
+        uint32_t completed_desc_id = g_used_arm->ring[used_idx].id;
+        fut_printf("[VIRTIO-GPU] ARM64: Consumed used ring entry: idx=%u id=%u\n",
+                   used_idx, completed_desc_id);
     } else {
         fut_printf("[VIRTIO-GPU] ARM64: Cmd type=%u TIMEOUT (used ring not updated by device)\n",
                    ((struct virtio_gpu_ctrl_hdr *)cmd)->type);

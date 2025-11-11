@@ -1260,7 +1260,7 @@ int virtio_gpu_init_arm64_pci(uint8_t bus, uint8_t dev, uint8_t func, uint64_t *
     memset((void *)g_desc_table_arm, 0, VIRTIO_RING_SIZE * sizeof(struct virtio_desc));
     memset((void *)g_avail_arm, 0, sizeof(struct virtio_avail));
     memset((void *)g_used_arm, 0, sizeof(struct virtio_used));
-    memset((void *)g_framebuffer_arm, 0xFF, g_fb_size_arm);  /* White test pattern */
+    memset((void *)g_framebuffer_arm, 0x00, g_fb_size_arm);  /* Clear to black - userspace will draw content */
 
     fut_printf("[VIRTIO-GPU] ARM64: Allocated queues at 0x%llx, FB at 0x%llx\n",
                (unsigned long long)queue_phys, (unsigned long long)fb_phys);

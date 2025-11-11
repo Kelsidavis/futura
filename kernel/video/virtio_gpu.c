@@ -998,9 +998,14 @@ static void arm64_virtio_gpu_submit_command(const void *cmd, size_t cmd_size) {
                cmd_desc_idx, cmd_phys, (unsigned long)cmd_size, g_desc_table_arm[cmd_desc_idx].flags, g_desc_table_arm[cmd_desc_idx].next,
                resp_desc_idx, resp_phys, RESP_BUFFER_SIZE, g_desc_table_arm[resp_desc_idx].flags);
 
+    /* Memory barrier ensures descriptors are visible before updating available ring */
+    __sync_synchronize();
+
     uint16_t old_avail_idx = g_avail_arm->idx;
     uint16_t avail_idx = old_avail_idx % VIRTIO_RING_SIZE;
     g_avail_arm->ring[avail_idx] = cmd_desc_idx;
+
+    /* Memory barrier ensures available ring entry is visible before incrementing idx */
     __sync_synchronize();
     g_avail_arm->idx++;
 

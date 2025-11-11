@@ -892,7 +892,7 @@ void arch_memory_config(uintptr_t *ram_start, uintptr_t *ram_end, size_t *heap_s
  * Spawn init from embedded binary, fallback to EL0 test.
  */
 /* Helper function to stage embedded binary to filesystem */
-#if 0  /* TEMPORARY: Disabled for VirtIO GPU testing */
+#if 1  /* Re-enabled for UI testing */
 static int stage_arm64_blob(const uint8_t *start, const uint8_t *end, const char *path) {
     extern int fut_vfs_open(const char *, int, int);
     extern long fut_vfs_write(int, const void *, size_t);
@@ -935,7 +935,7 @@ static int stage_arm64_blob(const uint8_t *start, const uint8_t *end, const char
 #endif  /* End of stage_arm64_blob */
 
 /* Kernel thread to stage binaries and spawn init */
-#if 0  /* TEMPORARY: Disabled for VirtIO GPU testing */
+#if 1  /* Re-enabled for UI testing */
 static void arm64_init_spawner_thread(void *arg) {
     extern void serial_puts(const char *);
     serial_puts("[SPAWNER] *** ENTERED ARM64 SPAWNER FUNCTION ***\n");
@@ -1052,7 +1052,7 @@ void arch_late_init(void) {
     /* Re-enabled for userland testing */
     #if 1
     /* Forward declarations */
-    #if 0  /* TEMPORARY: Disabled for VirtIO GPU testing */
+    #if 1  /* Re-enabled for UI testing */
     struct fut_task;
     struct fut_thread;
     typedef struct fut_task fut_task_t;

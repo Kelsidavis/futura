@@ -1347,6 +1347,13 @@ int virtio_gpu_init_arm64_pci(uint8_t bus, uint8_t dev, uint8_t func, uint64_t *
 
     arm64_virtio_common_write16(VIRTIO_PCI_COMMON_Q_ENABLE, 1);
 
+    /* Verify queue enable was accepted */
+    uint16_t q_enable_check = arm64_virtio_common_read16(VIRTIO_PCI_COMMON_Q_ENABLE);
+    if (q_enable_check != 1) {
+        fut_printf("[VIRTIO-GPU] ARM64: WARNING: Queue enable verification failed! Read back 0x%x instead of 1\n",
+                   q_enable_check);
+    }
+
     /* Read queue notify offset for calculating notify address */
     g_queue_notify_off_arm = arm64_virtio_common_read16(VIRTIO_PCI_COMMON_Q_NOFF);
 

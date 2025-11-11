@@ -1378,15 +1378,36 @@ int virtio_gpu_init_arm64_pci(uint8_t bus, uint8_t dev, uint8_t func, uint64_t *
     uint64_t avail_phys = queue_phys + VIRTIO_RING_SIZE * sizeof(struct virtio_desc);
     uint64_t used_phys = queue_phys + VIRTIO_RING_SIZE * sizeof(struct virtio_desc) + sizeof(struct virtio_avail);
 
+    /* Verify ring structure sizes for debugging */
+    fut_printf("[VIRTIO-GPU] ARM64: Ring sizes: desc=%zu avail=%zu used=%zu\n",
+               (size_t)(VIRTIO_RING_SIZE * sizeof(struct virtio_desc)),
+               sizeof(struct virtio_avail),
+               sizeof(struct virtio_used));
+    fut_printf("[VIRTIO-GPU] ARM64: Ring layout: avail at offset 0x%llx, used at offset 0x%llx\n",
+               (unsigned long long)(avail_phys - queue_phys),
+               (unsigned long long)(used_phys - queue_phys));
+
     /* Write descriptor ring address (low then high per VirtIO 1.0 spec) */
+    fut_printf("[VIRTIO-GPU] ARM64: Writing desc ring: 0x%llx (low=0x%08x high=0x%08x)\n",
+               (unsigned long long)queue_phys,
+               (uint32_t)(queue_phys & 0xFFFFFFFFULL),
+               (uint32_t)(queue_phys >> 32));
     arm64_virtio_common_write32(VIRTIO_PCI_COMMON_Q_DESCLO, (uint32_t)(queue_phys & 0xFFFFFFFFULL));
     arm64_virtio_common_write32(VIRTIO_PCI_COMMON_Q_DESCHI, (uint32_t)(queue_phys >> 32));
 
     /* Write available ring address (low then high per VirtIO 1.0 spec) */
+    fut_printf("[VIRTIO-GPU] ARM64: Writing avail ring: 0x%llx (low=0x%08x high=0x%08x)\n",
+               (unsigned long long)avail_phys,
+               (uint32_t)(avail_phys & 0xFFFFFFFFULL),
+               (uint32_t)(avail_phys >> 32));
     arm64_virtio_common_write32(VIRTIO_PCI_COMMON_Q_AVAILLO, (uint32_t)(avail_phys & 0xFFFFFFFFULL));
     arm64_virtio_common_write32(VIRTIO_PCI_COMMON_Q_AVAILHI, (uint32_t)(avail_phys >> 32));
 
     /* Write used ring address (low then high per VirtIO 1.0 spec) */
+    fut_printf("[VIRTIO-GPU] ARM64: Writing used ring: 0x%llx (low=0x%08x high=0x%08x)\n",
+               (unsigned long long)used_phys,
+               (uint32_t)(used_phys & 0xFFFFFFFFULL),
+               (uint32_t)(used_phys >> 32));
     arm64_virtio_common_write32(VIRTIO_PCI_COMMON_Q_USEDLO, (uint32_t)(used_phys & 0xFFFFFFFFULL));
     arm64_virtio_common_write32(VIRTIO_PCI_COMMON_Q_USEDHI, (uint32_t)(used_phys >> 32));
 

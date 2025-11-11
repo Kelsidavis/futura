@@ -962,15 +962,15 @@ static inline void arm64_virtio_common_write64(uint16_t offset, uint64_t value) 
     __asm__ volatile("dsb sy" ::: "memory");
 }
 
-static void arm64_virtio_gpu_submit_command(const void *cmd, size_t cmd_size) {
+static int arm64_virtio_gpu_submit_command(const void *cmd, size_t cmd_size) {
     if (!g_desc_table_arm || !g_avail_arm || !g_cmd_buffer_arm || !g_resp_buffer_arm) {
         fut_printf("[VIRTIO-GPU] ARM64: Command queue not initialized\n");
-        return;
+        return -1;
     }
 
     if (cmd_size > CMD_BUFFER_SIZE) {
         fut_printf("[VIRTIO-GPU] ARM64: Command too large\n");
-        return;
+        return -1;
     }
 
     /* Copy command to buffer */
@@ -1089,6 +1089,8 @@ static void arm64_virtio_gpu_submit_command(const void *cmd, size_t cmd_size) {
     /* Ensure all device interactions for this command are complete before moving to next */
     __asm__ volatile("dsb sy" ::: "memory");
     g_cmd_idx_arm++;
+
+    return timeout > 0 ? 0 : -1;  /* Return 0 on success, -1 on timeout */
 }
 
 static int arm64_virtio_gpu_resource_create_2d(uint32_t resource_id, uint32_t width, uint32_t height) {
@@ -1100,8 +1102,7 @@ static int arm64_virtio_gpu_resource_create_2d(uint32_t resource_id, uint32_t wi
         .height = height,
     };
     fut_printf("[VIRTIO-GPU] ARM64: Creating 2D resource %u (%ux%u)\n", resource_id, width, height);
-    arm64_virtio_gpu_submit_command(&cmd, sizeof(cmd));
-    return 0;
+    return arm64_virtio_gpu_submit_command(&cmd, sizeof(cmd));
 }
 
 static int arm64_virtio_gpu_resource_attach_backing(uint32_t resource_id, uint64_t fb_phys, size_t fb_size) {
@@ -1113,8 +1114,7 @@ static int arm64_virtio_gpu_resource_attach_backing(uint32_t resource_id, uint64
     };
     fut_printf("[VIRTIO-GPU] ARM64: Attaching backing: resource=%u phys=0x%llx size=0x%zx\n",
                resource_id, (unsigned long long)fb_phys, fb_size);
-    arm64_virtio_gpu_submit_command(&cmd, sizeof(cmd));
-    return 0;
+    return arm64_virtio_gpu_submit_command(&cmd, sizeof(cmd));
 }
 
 static int arm64_virtio_gpu_set_scanout(uint32_t scanout_id, uint32_t resource_id, uint32_t width, uint32_t height) {
@@ -1126,8 +1126,7 @@ static int arm64_virtio_gpu_set_scanout(uint32_t scanout_id, uint32_t resource_i
     };
     fut_printf("[VIRTIO-GPU] ARM64: Setting scanout: id=%u resource=%u %ux%u\n",
                scanout_id, resource_id, width, height);
-    arm64_virtio_gpu_submit_command(&cmd, sizeof(cmd));
-    return 0;
+    return arm64_virtio_gpu_submit_command(&cmd, sizeof(cmd));
 }
 
 static int arm64_virtio_gpu_transfer_to_host_2d(uint32_t resource_id, uint32_t width, uint32_t height) {
@@ -1142,8 +1141,7 @@ static int arm64_virtio_gpu_transfer_to_host_2d(uint32_t resource_id, uint32_t w
         .padding = 0,
     };
     fut_printf("[VIRTIO-GPU] ARM64: Transferring to host: resource=%u %ux%u\n", resource_id, width, height);
-    arm64_virtio_gpu_submit_command(&cmd, sizeof(cmd));
-    return 0;
+    return arm64_virtio_gpu_submit_command(&cmd, sizeof(cmd));
 }
 
 static int arm64_virtio_gpu_resource_flush(uint32_t resource_id, uint32_t width, uint32_t height) {
@@ -1156,8 +1154,7 @@ static int arm64_virtio_gpu_resource_flush(uint32_t resource_id, uint32_t width,
         .height = height,
     };
     fut_printf("[VIRTIO-GPU] ARM64: Flushing resource: id=%u %ux%u\n", resource_id, width, height);
-    arm64_virtio_gpu_submit_command(&cmd, sizeof(cmd));
-    return 0;
+    return arm64_virtio_gpu_submit_command(&cmd, sizeof(cmd));
 }
 
 int virtio_gpu_init_arm64_pci(uint8_t bus, uint8_t dev, uint8_t func, uint64_t *out_fb_phys, uint32_t width, uint32_t height) {
@@ -1404,11 +1401,31 @@ int virtio_gpu_init_arm64_pci(uint8_t bus, uint8_t dev, uint8_t func, uint64_t *
     /* Send VirtIO GPU display setup commands */
     fut_printf("[VIRTIO-GPU] ARM64: Sending display setup commands...\n");
 
-    arm64_virtio_gpu_resource_create_2d(RESOURCE_ID_FB, width, height);
-    arm64_virtio_gpu_resource_attach_backing(RESOURCE_ID_FB, fb_phys, g_fb_size_arm);
-    arm64_virtio_gpu_set_scanout(SCANOUT_ID, RESOURCE_ID_FB, width, height);  /* CRITICAL: This tells QEMU what to display */
-    arm64_virtio_gpu_transfer_to_host_2d(RESOURCE_ID_FB, width, height);
-    arm64_virtio_gpu_resource_flush(RESOURCE_ID_FB, width, height);
+    int rc = 0;
+    rc = arm64_virtio_gpu_resource_create_2d(RESOURCE_ID_FB, width, height);
+    if (rc != 0) {
+        fut_printf("[VIRTIO-GPU] ARM64: ERROR: resource_create_2d failed: rc=%d\n", rc);
+    }
+
+    rc = arm64_virtio_gpu_resource_attach_backing(RESOURCE_ID_FB, fb_phys, g_fb_size_arm);
+    if (rc != 0) {
+        fut_printf("[VIRTIO-GPU] ARM64: ERROR: resource_attach_backing failed: rc=%d\n", rc);
+    }
+
+    rc = arm64_virtio_gpu_set_scanout(SCANOUT_ID, RESOURCE_ID_FB, width, height);  /* CRITICAL: This tells QEMU what to display */
+    if (rc != 0) {
+        fut_printf("[VIRTIO-GPU] ARM64: ERROR: set_scanout failed: rc=%d\n", rc);
+    }
+
+    rc = arm64_virtio_gpu_transfer_to_host_2d(RESOURCE_ID_FB, width, height);
+    if (rc != 0) {
+        fut_printf("[VIRTIO-GPU] ARM64: ERROR: transfer_to_host_2d failed: rc=%d\n", rc);
+    }
+
+    rc = arm64_virtio_gpu_resource_flush(RESOURCE_ID_FB, width, height);
+    if (rc != 0) {
+        fut_printf("[VIRTIO-GPU] ARM64: ERROR: resource_flush failed: rc=%d\n", rc);
+    }
 
     fut_printf("[VIRTIO-GPU] ARM64: Display setup complete\n");
 

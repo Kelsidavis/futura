@@ -1290,14 +1290,19 @@ int virtio_gpu_init_arm64_pci(uint8_t bus, uint8_t dev, uint8_t func, uint64_t *
     /* Setup control queue */
     arm64_virtio_common_write16(VIRTIO_PCI_COMMON_Q_SELECT, 0);
     arm64_virtio_common_write16(VIRTIO_PCI_COMMON_Q_SIZE, VIRTIO_RING_SIZE);
+
+    /* Calculate physical addresses for ring structures */
+    uint64_t avail_phys = queue_phys + VIRTIO_RING_SIZE * sizeof(struct virtio_desc);
+    uint64_t used_phys = queue_phys + VIRTIO_RING_SIZE * sizeof(struct virtio_desc) + sizeof(struct virtio_avail);
+
     arm64_virtio_common_write64(VIRTIO_PCI_COMMON_Q_DESCLO, queue_phys);
-    arm64_virtio_common_write64(VIRTIO_PCI_COMMON_Q_AVAILLO, (uint64_t)g_avail_arm);
-    arm64_virtio_common_write64(VIRTIO_PCI_COMMON_Q_USEDLO, (uint64_t)g_used_arm);
+    arm64_virtio_common_write64(VIRTIO_PCI_COMMON_Q_AVAILLO, avail_phys);
+    arm64_virtio_common_write64(VIRTIO_PCI_COMMON_Q_USEDLO, used_phys);
 
     fut_printf("[VIRTIO-GPU] ARM64: Queue 0 addresses: desc=0x%llx avail=0x%llx used=0x%llx size=%u\n",
                (unsigned long long)queue_phys,
-               (unsigned long long)g_avail_arm,
-               (unsigned long long)g_used_arm,
+               (unsigned long long)avail_phys,
+               (unsigned long long)used_phys,
                VIRTIO_RING_SIZE);
 
     arm64_virtio_common_write16(VIRTIO_PCI_COMMON_Q_ENABLE, 1);

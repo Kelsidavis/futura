@@ -113,6 +113,12 @@ static int fb_ioctl(void *inode, void *private_data,
         fut_printf("[FB-CHAR] fb_ioctl FBIOSET_VSYNC_MS: %u ms\n", value);
         return 0;
     }
+    case FBIOFLUSH: {
+        fut_printf("[FB-CHAR] fb_ioctl FBIOFLUSH called\n");
+        extern void virtio_gpu_flush_display(void);
+        virtio_gpu_flush_display();
+        return 0;
+    }
     default:
         fut_printf("[FB-CHAR] fb_ioctl unknown req=0x%lx\n", req);
         break;

@@ -27,9 +27,13 @@
  * FBIOSET_VSYNC_MS
  *   Provide a compositor pacing hint in milliseconds. The kernel stores
  *   the value but does not enforce timing (yet).
+ *
+ * FBIOFLUSH
+ *   Flush framebuffer changes to the display (ARM64 VirtIO GPU).
  */
 #define FBIOGET_INFO       _FUT_IOR('F', 0x01, struct fut_fb_info)
 #define FBIOSET_VSYNC_MS   _FUT_IOW('F', 0x02, uint32_t)
+#define FBIOFLUSH          _FUT_IO('F', 0x03)
 
 /* Framebuffer flags */
 #define FB_FLAG_LINEAR     0x00000001u

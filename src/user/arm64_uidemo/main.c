@@ -219,6 +219,10 @@ int main(void) {
     draw_rect(pixels, 0, FB_HEIGHT - 30, FB_WIDTH, 30, 0xFF404040);
     draw_border(pixels, 0, FB_HEIGHT - 30, FB_WIDTH, 30, 2, COLOR_GRAY);
 
+    /* Flush framebuffer to display via ioctl */
+    #define FBIOFLUSH 0x4603
+    sys_ioctl((int)fd, FBIOFLUSH, 0);
+
     /* Success */
     sys_close((int)fd);
     sys_exit(0);

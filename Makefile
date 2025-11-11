@@ -628,7 +628,8 @@ OBJECTS += $(WAYLAND_COMPOSITOR_BLOB) $(WAYLAND_CLIENT_BLOB) $(WAYLAND_COLOR_BLO
 endif
 else ifeq ($(PLATFORM),arm64)
 # Re-enabled for userland testing
-OBJECTS += $(ARM64_INIT_BLOB) $(ARM64_UIDEMO_BLOB)
+# TEMPORARY: Disable userland blobs to test VirtIO GPU driver
+# OBJECTS += $(ARM64_INIT_BLOB) $(ARM64_UIDEMO_BLOB)
 # Shell not built yet, only include init
 # OBJECTS += $(ARM64_SHELL_BLOB)
 endif

@@ -1053,16 +1053,21 @@ static void arm64_virtio_gpu_submit_command(const void *cmd, size_t cmd_size) {
 
     if (timeout > 0) {
         struct virtio_gpu_ctrl_hdr *resp = (struct virtio_gpu_ctrl_hdr *)g_resp_buffer_arm;
-        fut_printf("[VIRTIO-GPU] ARM64: Cmd type=%u response=0x%x\n",
-                   ((struct virtio_gpu_ctrl_hdr *)cmd)->type, resp->type);
-
-        /* Consume the used ring entry to keep device in sync */
-        /* The used ring entry at index (last_used_idx % RING_SIZE) contains the descriptor ID
-         * that was completed. We need to track which descriptors we've consumed. */
         uint16_t used_idx = last_used_idx % VIRTIO_RING_SIZE;
         uint32_t completed_desc_id = g_used_arm->ring[used_idx].id;
-        fut_printf("[VIRTIO-GPU] ARM64: Consumed used ring entry: idx=%u id=%u\n",
-                   used_idx, completed_desc_id);
+        uint32_t response_length = g_used_arm->ring[used_idx].len;
+
+        fut_printf("[VIRTIO-GPU] ARM64: Cmd type=%u response=0x%x (desc_id=%u len=%u)\n",
+                   ((struct virtio_gpu_ctrl_hdr *)cmd)->type, resp->type,
+                   completed_desc_id, response_length);
+
+        /* Validate that we got a response for our command
+         * Expected descriptor ID should be the command descriptor index we submitted */
+        uint16_t expected_desc_id = (g_cmd_idx_arm * 2) % VIRTIO_RING_SIZE;
+        if (completed_desc_id != expected_desc_id) {
+            fut_printf("[VIRTIO-GPU] ARM64: WARNING: Got response for wrong descriptor! "
+                       "Expected %u but got %u\n", expected_desc_id, completed_desc_id);
+        }
     } else {
         fut_printf("[VIRTIO-GPU] ARM64: Cmd type=%u TIMEOUT (used ring not updated by device)\n",
                    ((struct virtio_gpu_ctrl_hdr *)cmd)->type);

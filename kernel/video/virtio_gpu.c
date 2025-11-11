@@ -1323,8 +1323,18 @@ int virtio_gpu_init_arm64_pci(uint8_t bus, uint8_t dev, uint8_t func, uint64_t *
     /* Feature negotiation */
     arm64_virtio_common_write32(VIRTIO_PCI_COMMON_DFSELECT, 0);
     uint32_t features = arm64_virtio_common_read32(VIRTIO_PCI_COMMON_DF);
+    fut_printf("[VIRTIO-GPU] ARM64: Device features (low): 0x%08x\n", features);
+
+    /* Read high features (bits 32-63) */
+    arm64_virtio_common_write32(VIRTIO_PCI_COMMON_DFSELECT, 1);
+    uint32_t features_high = arm64_virtio_common_read32(VIRTIO_PCI_COMMON_DF);
+    fut_printf("[VIRTIO-GPU] ARM64: Device features (high): 0x%08x\n", features_high);
+
+    /* Accept all features */
     arm64_virtio_common_write32(VIRTIO_PCI_COMMON_GFSELECT, 0);
     arm64_virtio_common_write32(VIRTIO_PCI_COMMON_GF, features);
+    arm64_virtio_common_write32(VIRTIO_PCI_COMMON_GFSELECT, 1);
+    arm64_virtio_common_write32(VIRTIO_PCI_COMMON_GF, features_high);
 
     arm64_virtio_common_write8(VIRTIO_PCI_COMMON_STATUS,
                                 arm64_virtio_common_read8(VIRTIO_PCI_COMMON_STATUS) | VIRTIO_CONFIG_S_FEATURES_OK);

@@ -162,7 +162,17 @@ uint64_t arm64_pci_get_bar(uint8_t bus, uint8_t dev, uint8_t fn, uint8_t bar_num
     if ((bar & 0x6) == 0x4) {
         uint32_t bar_hi = arm64_pci_read32(bus, dev, fn, bar_offset + 4);
         fut_printf("[PCI] BAR%d is 64-bit, hi=0x%08x\n", bar_num, bar_hi);
-        return ((uint64_t)bar_hi << 32) | (bar & ~0xFULL);
+
+        /* Sanitize: if high part is 0xFFFFFFFF but low part suggests 32-bit MMIO range,
+         * treat as 32-bit address (workaround for uninitialized/corrupted high bits) */
+        uint32_t bar_low = bar & ~0xFUL;
+        if (bar_hi == 0xFFFFFFFF && bar_low >= PCIE_MMIO_BASE && bar_low < (PCIE_MMIO_BASE + PCIE_MMIO_SIZE)) {
+            fut_printf("[PCI] BAR%d: Sanitizing invalid hi=0xFFFFFFFF to 0 (low=0x%08x in MMIO range)\n",
+                       bar_num, bar_low);
+            bar_hi = 0;
+        }
+
+        return ((uint64_t)bar_hi << 32) | (uint64_t)bar_low;
     }
 
     return bar & ~0xFULL;
@@ -179,11 +189,27 @@ uint64_t arm64_pci_assign_bar(uint8_t bus, uint8_t dev, uint8_t fn, uint8_t bar_
 
     uint16_t bar_offset = 0x10 + (bar_num * 4);
 
+    /* Save original BAR value before probing */
+    uint32_t orig_bar_low = arm64_pci_read32(bus, dev, fn, bar_offset);
+    uint32_t orig_bar_high = 0;
+
     /* Step 1: Write 0xFFFFFFFF to get BAR size */
     arm64_pci_write32(bus, dev, fn, bar_offset, 0xFFFFFFFF);
 
     /* Step 2: Read back to get size mask */
     uint32_t size_mask = arm64_pci_read32(bus, dev, fn, bar_offset);
+
+    /* If 64-bit BAR, also probe high part */
+    if ((size_mask & 0x6) == 0x4) {
+        orig_bar_high = arm64_pci_read32(bus, dev, fn, bar_offset + 4);
+        arm64_pci_write32(bus, dev, fn, bar_offset + 4, 0xFFFFFFFF);
+        arm64_pci_read32(bus, dev, fn, bar_offset + 4);  /* Read to get size */
+        /* Restore original high value to prevent corruption */
+        arm64_pci_write32(bus, dev, fn, bar_offset + 4, orig_bar_high);
+    }
+
+    /* Restore original low value after size probe */
+    arm64_pci_write32(bus, dev, fn, bar_offset, orig_bar_low);
 
     fut_printf("[PCI] BAR%d size probe returned: 0x%08x\n", bar_num, size_mask);
 
@@ -220,12 +246,38 @@ uint64_t arm64_pci_assign_bar(uint8_t bus, uint8_t dev, uint8_t fn, uint8_t bar_
 
     /* Assign the BAR */
     if (is_64bit) {
-        arm64_pci_write32(bus, dev, fn, bar_offset, (uint32_t)aligned_addr);
-        arm64_pci_write32(bus, dev, fn, bar_offset + 4, (uint32_t)(aligned_addr >> 32));
-        fut_printf("[PCI] Assigned BAR%d: 0x%llx\n", bar_num, (unsigned long long)aligned_addr);
+        /* Extract type bits from size_mask (bits 0-3) */
+        uint32_t type_bits = size_mask & 0xF;
+
+        uint32_t low_val = ((uint32_t)aligned_addr & ~0xF) | type_bits;
+        uint32_t high_val = (uint32_t)(aligned_addr >> 32);
+
+        /* For 64-bit BARs, write low part first to set address, then high part */
+        arm64_pci_write32(bus, dev, fn, bar_offset, low_val);
+        /* Memory barrier to ensure low write completes */
+        __asm__ volatile("dsb sy" ::: "memory");
+        arm64_pci_write32(bus, dev, fn, bar_offset + 4, high_val);
+        /* Memory barrier to ensure high write completes */
+        __asm__ volatile("dsb sy" ::: "memory");
+
+        /* Verify the write succeeded */
+        uint32_t readback_low = arm64_pci_read32(bus, dev, fn, bar_offset);
+        uint32_t readback_high = arm64_pci_read32(bus, dev, fn, bar_offset + 4);
+
+        fut_printf("[PCI] Assigned BAR%d: 0x%llx (wrote low=0x%08x high=0x%08x, read back low=0x%08x high=0x%08x)\n",
+                   bar_num, (unsigned long long)aligned_addr, low_val, high_val, readback_low, readback_high);
+
+        if (readback_low != low_val || readback_high != high_val) {
+            fut_printf("[PCI] WARNING: BAR%d write verification FAILED!\n", bar_num);
+        }
     } else {
-        arm64_pci_write32(bus, dev, fn, bar_offset, (uint32_t)aligned_addr);
-        fut_printf("[PCI] Assigned BAR%d: 0x%08x\n", bar_num, (uint32_t)aligned_addr);
+        /* Extract type bits from size_mask (bits 0-3) */
+        uint32_t type_bits = size_mask & 0xF;
+        uint32_t bar_val = ((uint32_t)aligned_addr & ~0xF) | type_bits;
+
+        arm64_pci_write32(bus, dev, fn, bar_offset, bar_val);
+        fut_printf("[PCI] Assigned BAR%d: 0x%08x (type_bits=0x%x)\n",
+                   bar_num, (uint32_t)aligned_addr, type_bits);
     }
 
     /* Update allocation pointer */

@@ -163,11 +163,11 @@ uint64_t arm64_pci_get_bar(uint8_t bus, uint8_t dev, uint8_t fn, uint8_t bar_num
         uint32_t bar_hi = arm64_pci_read32(bus, dev, fn, bar_offset + 4);
         fut_printf("[PCI] BAR%d is 64-bit, hi=0x%08x\n", bar_num, bar_hi);
 
-        /* Sanitize: if high part is 0xFFFFFFFF but low part suggests 32-bit MMIO range,
-         * treat as 32-bit address (workaround for uninitialized/corrupted high bits) */
+        /* Sanitize: if high part is 0xFFFFFFFF, treat as 32-bit address
+         * (QEMU ARM64 virt machine doesn't support 64-bit PCI addresses) */
         uint32_t bar_low = bar & ~0xFUL;
-        if (bar_hi == 0xFFFFFFFF && bar_low >= PCIE_MMIO_BASE && bar_low < (PCIE_MMIO_BASE + PCIE_MMIO_SIZE)) {
-            fut_printf("[PCI] BAR%d: Sanitizing invalid hi=0xFFFFFFFF to 0 (low=0x%08x in MMIO range)\n",
+        if (bar_hi == 0xFFFFFFFF) {
+            fut_printf("[PCI] BAR%d: Sanitizing invalid hi=0xFFFFFFFF to 0 (low=0x%08x)\n",
                        bar_num, bar_low);
             bar_hi = 0;
         }

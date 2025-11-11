@@ -1051,6 +1051,9 @@ static void arm64_virtio_gpu_submit_command(const void *cmd, size_t cmd_size) {
     fut_printf("[VIRTIO-GPU] ARM64: After wait: used.idx=%u (was %u), timeout_remaining=%d\n",
                g_used_arm->idx, last_used_idx, timeout);
 
+    /* Ensure device writes to response buffer are visible before reading them */
+    __sync_synchronize();
+
     if (timeout > 0) {
         struct virtio_gpu_ctrl_hdr *resp = (struct virtio_gpu_ctrl_hdr *)g_resp_buffer_arm;
         uint16_t used_idx = last_used_idx % VIRTIO_RING_SIZE;

@@ -1365,4 +1365,4 @@ void virtio_gpu_flush_display(void) {
     arm64_virtio_gpu_transfer_to_host_2d(RESOURCE_ID_FB, g_fb_width_arm, g_fb_height_arm);
     arm64_virtio_gpu_resource_flush(RESOURCE_ID_FB, g_fb_width_arm, g_fb_height_arm);
 }
-#endif /* __x86_64__ */
+#endif /* !__x86_64__ (ARM64) */

@@ -1086,6 +1086,8 @@ static void arm64_virtio_gpu_submit_command(const void *cmd, size_t cmd_size) {
                    ((struct virtio_gpu_ctrl_hdr *)cmd)->type);
     }
 
+    /* Ensure all device interactions for this command are complete before moving to next */
+    __sync_synchronize();
     g_cmd_idx_arm++;
 }
 

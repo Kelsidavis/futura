@@ -901,6 +901,10 @@ static size_t g_fb_size_arm = 0;
 static uint16_t g_cmd_idx_arm = 0;
 static uint8_t g_virtio_bus = 0, g_virtio_slot = 0;
 
+/* ARM64 physical addresses (for VirtIO register writes) */
+static uint64_t g_cmd_buffer_phys_arm = 0;
+static uint64_t g_resp_buffer_phys_arm = 0;
+
 /* Buffer sizes for ARM64 */
 #define CMD_BUFFER_SIZE 4096
 #define RESP_BUFFER_SIZE 4096
@@ -977,8 +981,8 @@ static void arm64_virtio_gpu_submit_command(const void *cmd, size_t cmd_size) {
     uint16_t cmd_desc_idx = (g_cmd_idx_arm * 2) % VIRTIO_RING_SIZE;
     uint16_t resp_desc_idx = (g_cmd_idx_arm * 2 + 1) % VIRTIO_RING_SIZE;
 
-    uint64_t cmd_phys = (uint64_t)g_cmd_buffer_arm;
-    uint64_t resp_phys = (uint64_t)g_resp_buffer_arm;
+    uint64_t cmd_phys = g_cmd_buffer_phys_arm;
+    uint64_t resp_phys = g_resp_buffer_phys_arm;
 
     g_desc_table_arm[cmd_desc_idx].addr = cmd_phys;
     g_desc_table_arm[cmd_desc_idx].len = cmd_size;
@@ -1256,6 +1260,10 @@ int virtio_gpu_init_arm64_pci(uint8_t bus, uint8_t dev, uint8_t func, uint64_t *
     g_framebuffer_arm = (volatile uint8_t *)fb_phys;
     g_cmd_buffer_arm = (volatile uint8_t *)cmd_phys;
     g_resp_buffer_arm = (volatile uint8_t *)resp_phys;
+
+    /* Save physical addresses for VirtIO register writes */
+    g_cmd_buffer_phys_arm = cmd_phys;
+    g_resp_buffer_phys_arm = resp_phys;
 
     memset((void *)g_desc_table_arm, 0, VIRTIO_RING_SIZE * sizeof(struct virtio_desc));
     memset((void *)g_avail_arm, 0, sizeof(struct virtio_avail));

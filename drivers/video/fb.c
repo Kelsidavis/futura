@@ -214,7 +214,8 @@ static void *fb_mmap(void *inode, void *private_data, void *u_addr, size_t len,
 #ifdef __x86_64__
     uint64_t prot_flags = PTE_PRESENT | PTE_USER | pat_choose_page_attr_wc();
 #else
-    uint64_t prot_flags = PTE_PRESENT | PTE_USER;
+    /* ARM64: Use device memory attributes for DMA coherency (uncached) */
+    uint64_t prot_flags = PTE_VALID | PTE_AF_BIT | PTE_AP_RW_ALL | PTE_ATTR_DEVICE_nGnRnE | PTE_SH_OUTER;
 #endif
     if (prot & 0x2) { /* PROT_WRITE */
         prot_flags |= PTE_WRITABLE;

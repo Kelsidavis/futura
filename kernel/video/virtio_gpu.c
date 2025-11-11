@@ -1345,9 +1345,17 @@ int virtio_gpu_init_arm64_pci(uint8_t bus, uint8_t dev, uint8_t func, uint64_t *
     uint64_t avail_phys = queue_phys + VIRTIO_RING_SIZE * sizeof(struct virtio_desc);
     uint64_t used_phys = queue_phys + VIRTIO_RING_SIZE * sizeof(struct virtio_desc) + sizeof(struct virtio_avail);
 
-    arm64_virtio_common_write64(VIRTIO_PCI_COMMON_Q_DESCLO, queue_phys);
-    arm64_virtio_common_write64(VIRTIO_PCI_COMMON_Q_AVAILLO, avail_phys);
-    arm64_virtio_common_write64(VIRTIO_PCI_COMMON_Q_USEDLO, used_phys);
+    /* Write descriptor ring address (low then high per VirtIO 1.0 spec) */
+    arm64_virtio_common_write32(VIRTIO_PCI_COMMON_Q_DESCLO, (uint32_t)(queue_phys & 0xFFFFFFFFULL));
+    arm64_virtio_common_write32(VIRTIO_PCI_COMMON_Q_DESCHI, (uint32_t)(queue_phys >> 32));
+
+    /* Write available ring address (low then high per VirtIO 1.0 spec) */
+    arm64_virtio_common_write32(VIRTIO_PCI_COMMON_Q_AVAILLO, (uint32_t)(avail_phys & 0xFFFFFFFFULL));
+    arm64_virtio_common_write32(VIRTIO_PCI_COMMON_Q_AVAILHI, (uint32_t)(avail_phys >> 32));
+
+    /* Write used ring address (low then high per VirtIO 1.0 spec) */
+    arm64_virtio_common_write32(VIRTIO_PCI_COMMON_Q_USEDLO, (uint32_t)(used_phys & 0xFFFFFFFFULL));
+    arm64_virtio_common_write32(VIRTIO_PCI_COMMON_Q_USEDHI, (uint32_t)(used_phys >> 32));
 
     fut_printf("[VIRTIO-GPU] ARM64: Queue 0 addresses: desc=0x%llx avail=0x%llx used=0x%llx size=%u\n",
                (unsigned long long)queue_phys,

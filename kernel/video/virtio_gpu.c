@@ -977,6 +977,9 @@ static void arm64_virtio_gpu_submit_command(const void *cmd, size_t cmd_size) {
     memcpy((void *)g_cmd_buffer_arm, cmd, cmd_size);
     memset((void *)g_resp_buffer_arm, 0, RESP_BUFFER_SIZE);
 
+    /* Ensure command and response buffers are written before we set up descriptors */
+    __sync_synchronize();
+
     /* Create descriptor chain */
     uint16_t cmd_desc_idx = (g_cmd_idx_arm * 2) % VIRTIO_RING_SIZE;
     uint16_t resp_desc_idx = (g_cmd_idx_arm * 2 + 1) % VIRTIO_RING_SIZE;

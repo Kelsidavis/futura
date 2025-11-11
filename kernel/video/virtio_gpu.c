@@ -1009,6 +1009,9 @@ static void arm64_virtio_gpu_submit_command(const void *cmd, size_t cmd_size) {
     __sync_synchronize();
     g_avail_arm->idx++;
 
+    /* Memory barrier ensures idx increment is visible before device notification */
+    __sync_synchronize();
+
     fut_printf("[VIRTIO-GPU] ARM64: Avail ring: old_idx=%u new_idx=%u ring[%u]=%u\n",
                old_avail_idx, g_avail_arm->idx, avail_idx, cmd_desc_idx);
 

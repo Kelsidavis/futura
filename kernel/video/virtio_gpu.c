@@ -978,7 +978,7 @@ static void arm64_virtio_gpu_submit_command(const void *cmd, size_t cmd_size) {
     memset((void *)g_resp_buffer_arm, 0, RESP_BUFFER_SIZE);
 
     /* Ensure command and response buffers are written before we set up descriptors */
-    __sync_synchronize();
+    __asm__ volatile("dsb sy" ::: "memory");
 
     /* Create descriptor chain */
     uint16_t cmd_desc_idx = (g_cmd_idx_arm * 2) % VIRTIO_RING_SIZE;
@@ -1001,7 +1001,7 @@ static void arm64_virtio_gpu_submit_command(const void *cmd, size_t cmd_size) {
     g_desc_table_arm[resp_desc_idx].next = 0;
 
     /* Finally set flags to mark descriptors as valid and ready for device */
-    __sync_synchronize();
+    __asm__ volatile("dsb sy" ::: "memory");
     g_desc_table_arm[cmd_desc_idx].flags = VIRTQ_DESC_F_NEXT;
     g_desc_table_arm[resp_desc_idx].flags = VIRTQ_DESC_F_WRITE;
 
@@ -1010,18 +1010,18 @@ static void arm64_virtio_gpu_submit_command(const void *cmd, size_t cmd_size) {
                resp_desc_idx, resp_phys, RESP_BUFFER_SIZE, g_desc_table_arm[resp_desc_idx].flags);
 
     /* Memory barrier ensures descriptors are visible before updating available ring */
-    __sync_synchronize();
+    __asm__ volatile("dsb sy" ::: "memory");
 
     uint16_t old_avail_idx = g_avail_arm->idx;
     uint16_t avail_idx = old_avail_idx % VIRTIO_RING_SIZE;
     g_avail_arm->ring[avail_idx] = cmd_desc_idx;
 
     /* Memory barrier ensures available ring entry is visible before incrementing idx */
-    __sync_synchronize();
+    __asm__ volatile("dsb sy" ::: "memory");
     g_avail_arm->idx++;
 
     /* Memory barrier ensures idx increment is visible before device notification */
-    __sync_synchronize();
+    __asm__ volatile("dsb sy" ::: "memory");
 
     fut_printf("[VIRTIO-GPU] ARM64: Avail ring: old_idx=%u new_idx=%u ring[%u]=%u\n",
                old_avail_idx, g_avail_arm->idx, avail_idx, cmd_desc_idx);
@@ -1050,7 +1050,7 @@ static void arm64_virtio_gpu_submit_command(const void *cmd, size_t cmd_size) {
     int timeout = 1000000;
     int initial_timeout = timeout;
     while (timeout > 0) {
-        __sync_synchronize();
+        __asm__ volatile("dsb sy" ::: "memory");
         if (g_used_arm->idx != last_used_idx) {
             break;
         }
@@ -1062,7 +1062,7 @@ static void arm64_virtio_gpu_submit_command(const void *cmd, size_t cmd_size) {
                g_used_arm->idx, last_used_idx, timeout, loops_executed);
 
     /* Ensure device writes to response buffer are visible before reading them */
-    __sync_synchronize();
+    __asm__ volatile("dsb sy" ::: "memory");
 
     if (timeout > 0) {
         struct virtio_gpu_ctrl_hdr *resp = (struct virtio_gpu_ctrl_hdr *)g_resp_buffer_arm;
@@ -1087,7 +1087,7 @@ static void arm64_virtio_gpu_submit_command(const void *cmd, size_t cmd_size) {
     }
 
     /* Ensure all device interactions for this command are complete before moving to next */
-    __sync_synchronize();
+    __asm__ volatile("dsb sy" ::: "memory");
     g_cmd_idx_arm++;
 }
 

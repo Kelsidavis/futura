@@ -987,15 +987,23 @@ static void arm64_virtio_gpu_submit_command(const void *cmd, size_t cmd_size) {
     uint64_t cmd_phys = g_cmd_buffer_phys_arm;
     uint64_t resp_phys = g_resp_buffer_phys_arm;
 
+    /* Clear descriptor flags to mark as in-progress (device must not use yet) */
+    g_desc_table_arm[cmd_desc_idx].flags = 0;
+    g_desc_table_arm[resp_desc_idx].flags = 0;
+
+    /* Now write descriptor fields in proper order */
     g_desc_table_arm[cmd_desc_idx].addr = cmd_phys;
     g_desc_table_arm[cmd_desc_idx].len = cmd_size;
-    g_desc_table_arm[cmd_desc_idx].flags = VIRTQ_DESC_F_NEXT;
     g_desc_table_arm[cmd_desc_idx].next = resp_desc_idx;
 
     g_desc_table_arm[resp_desc_idx].addr = resp_phys;
     g_desc_table_arm[resp_desc_idx].len = RESP_BUFFER_SIZE;
-    g_desc_table_arm[resp_desc_idx].flags = VIRTQ_DESC_F_WRITE;
     g_desc_table_arm[resp_desc_idx].next = 0;
+
+    /* Finally set flags to mark descriptors as valid and ready for device */
+    __sync_synchronize();
+    g_desc_table_arm[cmd_desc_idx].flags = VIRTQ_DESC_F_NEXT;
+    g_desc_table_arm[resp_desc_idx].flags = VIRTQ_DESC_F_WRITE;
 
     fut_printf("[VIRTIO-GPU] ARM64: Descriptor chain: cmd[%u]={addr=0x%llx len=%lu flags=0x%x next=%u} resp[%u]={addr=0x%llx len=%u flags=0x%x}\n",
                cmd_desc_idx, cmd_phys, (unsigned long)cmd_size, g_desc_table_arm[cmd_desc_idx].flags, g_desc_table_arm[cmd_desc_idx].next,

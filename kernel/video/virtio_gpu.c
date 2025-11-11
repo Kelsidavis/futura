@@ -1037,8 +1037,11 @@ static void arm64_virtio_gpu_submit_command(const void *cmd, size_t cmd_size) {
                last_used_idx, (uint16_t)(last_used_idx + 1));
 
     int timeout = 1000000;
-    while (g_used_arm->idx == last_used_idx && timeout > 0) {
+    while (timeout > 0) {
         __sync_synchronize();
+        if (g_used_arm->idx != last_used_idx) {
+            break;
+        }
         timeout--;
     }
 

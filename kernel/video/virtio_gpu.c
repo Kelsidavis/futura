@@ -1036,16 +1036,17 @@ static int arm64_virtio_gpu_submit_command(const void *cmd, size_t cmd_size) {
                old_avail_idx, g_avail_arm->idx, avail_idx, cmd_desc_idx);
 
     /* Notify device using VirtIO 1.0 specification:
-     * notify_addr = notify_base + (queue_notify_off * notify_off_multiplier) */
+     * notify_addr = notify_base + (queue_notify_off * notify_off_multiplier)
+     * Write queue_index to notify the device about available buffers */
     if (g_notify_base_arm) {
         volatile uint16_t *notify_addr = (volatile uint16_t *)(
             g_notify_base_arm + (g_queue_notify_off_arm * g_notify_off_multiplier_arm)
         );
-        fut_printf("[VIRTIO-GPU] ARM64: Notifying at addr=0x%lx (base=0x%lx offset=%u mult=%u)\n",
+        fut_printf("[VIRTIO-GPU] ARM64: Notifying at addr=0x%lx (base=0x%lx offset=%u mult=%u queue_idx=0)\n",
                    (unsigned long)notify_addr, (unsigned long)g_notify_base_arm,
                    g_queue_notify_off_arm, g_notify_off_multiplier_arm);
         __asm__ volatile("dsb sy" ::: "memory");
-        *notify_addr = 0;  /* Write queue index (control queue = 0) */
+        *notify_addr = 0;  /* Write queue index 0 for control queue */
         __asm__ volatile("dsb sy" ::: "memory");
     } else {
         fut_printf("[VIRTIO-GPU] ARM64: ERROR: Cannot notify - notify_base is NULL\n");

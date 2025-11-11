@@ -1,13 +1,43 @@
 # ARM64 Port Status
 
-**Last Updated**: 2025-11-08
-**Status**: ✅ **FULL MULTI-PROCESS SUPPORT!** MMU enabled, fork/exec/wait/exit all working 🎉
+**Last Updated**: 2025-11-10
+**Status**: ✅ **VIRTIO GPU WORKING! Graphics support enabled** 🎨
 
 ## Overview
 
-The ARM64 kernel port has achieved **full multi-process support**! The MMU is enabled with identity mapping, all 177 syscalls work correctly, and the complete process lifecycle (fork → exec → wait → exit) is operational. The kernel successfully runs userspace programs with proper memory isolation.
+The ARM64 kernel port continues to advance! With full multi-process support (MMU, 177 syscalls, fork/exec/wait/exit), the latest milestone adds complete VirtIO GPU support with PCI ECAM configuration space access. Framebuffer is now available at /dev/fb0 with working MMIO, display flush, and rendering capabilities.
 
-## Latest Progress (2025-11-08)
+## Latest Progress (2025-11-10)
+
+### ✅ VirtIO GPU Driver + PCI ECAM Support
+**Achievement**: Complete graphics stack operational on ARM64 QEMU virt machine
+
+**Implementation**:
+- **PCI BAR Assignment Fix**: Fixed critical bug where BAR size probing corrupted 64-bit BAR high bits
+  - Root cause: Size probe wrote 0xFFFFFFFF but didn't restore original values
+  - Fix: Save/restore BAR values around size probe, preserve type bits during assignment
+  - Location: `platform/arm64/pci_ecam.c:185-293`
+
+- **VirtIO GPU Driver**: Complete ARM64 implementation replacing stub
+  - VirtIO 1.0 PCI transport layer (capability scanning, common config, notify)
+  - Descriptor ring management with ARM64 memory barriers (dsb sy)
+  - Commands: GET_DISPLAY_INFO, RESOURCE_CREATE_2D, ATTACH_BACKING, SET_SCANOUT, TRANSFER_TO_HOST_2D, RESOURCE_FLUSH
+  - Physical address mode (MMU-compatible)
+  - Location: `kernel/video/virtio_gpu.c:881-1350` (ARM64 section)
+
+- **FBIOFLUSH ioctl**: Userspace trigger for display refresh
+  - Defined in `include/futura/fb_ioctl.h` as 0x4603
+  - Implemented in `drivers/video/fb.c` calling `virtio_gpu_flush_display()`
+
+**Result**:
+- ✅ Framebuffer available at /dev/fb0 (1024x768x32 @ phys 0x43000000)
+- ✅ Device initialization reaches status 0xF (FEATURES_OK | DRIVER_OK | DRIVER)
+- ✅ MMIO accessibility verified, display flush working
+- ✅ Ready for userspace graphics applications
+
+See commits `c1b672d` (PCI BAR fix) and `823fe54` (VirtIO GPU driver).
+
+## Previous Progress (2025-11-08)
 
 ### ✅ Fork/Wait4 Fixed - SP_EL0 Context Handling
 **Problem**: Child processes crashed with translation fault when accessing stack variables after fork.

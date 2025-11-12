@@ -1356,8 +1356,15 @@ int virtio_gpu_init_arm64_pci(uint8_t bus, uint8_t dev, uint8_t func, uint64_t *
 
     /* VirtIO device initialization */
     arm64_virtio_common_write8(VIRTIO_PCI_COMMON_STATUS, VIRTIO_CONFIG_S_ACKNOWLEDGE);
-    arm64_virtio_common_write8(VIRTIO_PCI_COMMON_STATUS,
-                                arm64_virtio_common_read8(VIRTIO_PCI_COMMON_STATUS) | VIRTIO_CONFIG_S_DRIVER);
+    uint8_t status_check = arm64_virtio_common_read8(VIRTIO_PCI_COMMON_STATUS);
+    fut_printf("[VIRTIO-GPU] ARM64: Status after ACKNOWLEDGE: 0x%x (expected 0x%x)\n",
+               status_check, VIRTIO_CONFIG_S_ACKNOWLEDGE);
+
+    status_check = arm64_virtio_common_read8(VIRTIO_PCI_COMMON_STATUS);
+    arm64_virtio_common_write8(VIRTIO_PCI_COMMON_STATUS, status_check | VIRTIO_CONFIG_S_DRIVER);
+    status_check = arm64_virtio_common_read8(VIRTIO_PCI_COMMON_STATUS);
+    fut_printf("[VIRTIO-GPU] ARM64: Status after DRIVER: 0x%x (should have ACKNOWLEDGE | DRIVER)\n",
+               status_check);
 
     /* Feature negotiation */
     arm64_virtio_common_write32(VIRTIO_PCI_COMMON_DFSELECT, 0);
@@ -1455,11 +1462,16 @@ int virtio_gpu_init_arm64_pci(uint8_t bus, uint8_t dev, uint8_t func, uint64_t *
     }
 
     /* Set DRIVER_OK */
-    arm64_virtio_common_write8(VIRTIO_PCI_COMMON_STATUS,
-                                arm64_virtio_common_read8(VIRTIO_PCI_COMMON_STATUS) | VIRTIO_CONFIG_S_DRIVER_OK);
+    status_check = arm64_virtio_common_read8(VIRTIO_PCI_COMMON_STATUS);
+    arm64_virtio_common_write8(VIRTIO_PCI_COMMON_STATUS, status_check | VIRTIO_CONFIG_S_DRIVER_OK);
+    status_check = arm64_virtio_common_read8(VIRTIO_PCI_COMMON_STATUS);
+    fut_printf("[VIRTIO-GPU] ARM64: Status after DRIVER_OK: 0x%x\n", status_check);
 
-    status = arm64_virtio_common_read8(VIRTIO_PCI_COMMON_STATUS);
-    fut_printf("[VIRTIO-GPU] ARM64: Device initialization complete, final status=0x%x\n", status);
+    if ((status_check & VIRTIO_CONFIG_S_DRIVER_OK) == 0) {
+        fut_printf("[VIRTIO-GPU] ARM64: ERROR: Device did not accept DRIVER_OK status!\n");
+    }
+
+    fut_printf("[VIRTIO-GPU] ARM64: Device initialization complete, final status=0x%x\n", status_check);
 
     /* Send VirtIO GPU display setup commands */
     fut_printf("[VIRTIO-GPU] ARM64: Sending display setup commands...\n");

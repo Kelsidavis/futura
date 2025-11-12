@@ -1212,11 +1212,9 @@ static int arm64_virtio_gpu_submit_command(const void *cmd, size_t cmd_size) {
 
         /* Check response type for errors and validity */
         const char *resp_type_str = "UNKNOWN";
-        int is_error = 0;
 
-        if ((resp->type & 0x1000) == 0x1200) {
-            /* Error response */
-            is_error = 1;
+        if (resp->type >= 0x1200) {
+            /* Error response (0x1200-0x1205) */
             switch (resp->type) {
                 case VIRTIO_GPU_RESP_ERR_UNSPEC: resp_type_str = "ERR_UNSPEC"; break;
                 case VIRTIO_GPU_RESP_ERR_OUT_OF_MEMORY: resp_type_str = "ERR_OUT_OF_MEMORY"; break;
@@ -1230,20 +1228,18 @@ static int arm64_virtio_gpu_submit_command(const void *cmd, size_t cmd_size) {
                        resp->type, resp_type_str, arm64_gpu_cmd_name(((struct virtio_gpu_ctrl_hdr *)cmd)->type));
             fut_printf("[VIRTIO-GPU] ARM64: ERROR: Command index was %u, NOT incrementing due to error\n", g_cmd_idx_arm);
             return -1;
-        } else if ((resp->type & 0x1000) == 0x1000) {
+        } else if (resp->type == VIRTIO_GPU_RESP_OK_NODATA || resp->type == VIRTIO_GPU_RESP_OK_DISPLAY_INFO) {
             /* Success response - log type for debugging */
             if (resp->type == VIRTIO_GPU_RESP_OK_NODATA) {
                 resp_type_str = "OK_NODATA";
             } else if (resp->type == VIRTIO_GPU_RESP_OK_DISPLAY_INFO) {
                 resp_type_str = "OK_DISPLAY_INFO";
-            } else {
-                resp_type_str = "OK_UNKNOWN";
             }
             fut_printf("[VIRTIO-GPU] ARM64: Command %s completed successfully, incrementing cmd_idx from %u to %u\n",
                        arm64_gpu_cmd_name(((struct virtio_gpu_ctrl_hdr *)cmd)->type), g_cmd_idx_arm, g_cmd_idx_arm + 1);
         } else {
             /* Unexpected response type - something went wrong */
-            fut_printf("[VIRTIO-GPU] ARM64: WARNING: Unexpected response type 0x%x (not 0x1000 or 0x1200 range)\n",
+            fut_printf("[VIRTIO-GPU] ARM64: WARNING: Unexpected response type 0x%x (not 0x1000, 0x1100, or 0x1200+ range)\n",
                        resp->type);
             fut_printf("[VIRTIO-GPU] ARM64: WARNING: Command index was %u, NOT incrementing due to invalid response\n", g_cmd_idx_arm);
             return -1;

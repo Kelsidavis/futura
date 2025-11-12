@@ -1093,22 +1093,34 @@ static int arm64_virtio_gpu_submit_command(const void *cmd, size_t cmd_size) {
 
     /* Wait for response */
     uint16_t last_used_idx = g_used_arm->idx;
-    fut_printf("[VIRTIO-GPU] ARM64: Waiting for response, used.idx=%u (expecting %u)\n",
+    fut_printf("[VIRTIO-GPU] ARM64: Waiting for response, used.idx=%u (expecting update to %u)\n",
                last_used_idx, (uint16_t)(last_used_idx + 1));
 
     int timeout = 1000000;
     int initial_timeout = timeout;
+    uint16_t sample_idx_start = last_used_idx;
+    uint16_t sample_idx_end = last_used_idx;
+
     while (timeout > 0) {
         __asm__ volatile("dsb sy" ::: "memory");
-        if (g_used_arm->idx != last_used_idx) {
+        uint16_t current_idx = g_used_arm->idx;
+
+        /* Track the index progression for diagnostics */
+        if (current_idx != last_used_idx && sample_idx_end == last_used_idx) {
+            sample_idx_end = current_idx;
+        }
+
+        if (current_idx != last_used_idx) {
             break;
         }
         timeout--;
     }
 
     int loops_executed = initial_timeout - timeout;
-    fut_printf("[VIRTIO-GPU] ARM64: Response wait complete: used.idx=%u (was %u), timeout_remaining=%d (loops_executed=%d)\n",
-               g_used_arm->idx, last_used_idx, timeout, loops_executed);
+    uint16_t final_idx = g_used_arm->idx;
+
+    fut_printf("[VIRTIO-GPU] ARM64: Response wait complete: used.idx=%u (was %u), timeout_remaining=%d loops_executed=%d idx_progression=%u->%u\n",
+               final_idx, last_used_idx, timeout, loops_executed, sample_idx_start, sample_idx_end);
 
     /* Ensure device writes to response buffer are visible before reading them */
     __asm__ volatile("dsb sy" ::: "memory");

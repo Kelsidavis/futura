@@ -1395,6 +1395,17 @@ int virtio_gpu_init_arm64_pci(uint8_t bus, uint8_t dev, uint8_t func, uint64_t *
 
     /* Setup control queue */
     arm64_virtio_common_write16(VIRTIO_PCI_COMMON_Q_SELECT, 0);
+
+    /* Check maximum queue size reported by device */
+    uint16_t max_queue_size = arm64_virtio_common_read16(VIRTIO_PCI_COMMON_Q_SIZE);
+    fut_printf("[VIRTIO-GPU] ARM64: Queue 0 max size from device: %u (we request %u)\n",
+               max_queue_size, VIRTIO_RING_SIZE);
+
+    if (max_queue_size < VIRTIO_RING_SIZE) {
+        fut_printf("[VIRTIO-GPU] ARM64: WARNING: Device max queue size (%u) smaller than requested (%u)\n",
+                   max_queue_size, VIRTIO_RING_SIZE);
+    }
+
     arm64_virtio_common_write16(VIRTIO_PCI_COMMON_Q_SIZE, VIRTIO_RING_SIZE);
 
     /* Calculate physical addresses for ring structures */

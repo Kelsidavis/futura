@@ -1028,8 +1028,35 @@ static int arm64_virtio_gpu_submit_command(const void *cmd, size_t cmd_size) {
     g_desc_table_arm[resp_desc_idx].flags = VIRTQ_DESC_F_WRITE;
 
     struct virtio_gpu_ctrl_hdr *hdr = (struct virtio_gpu_ctrl_hdr *)cmd;
-    fut_printf("[VIRTIO-GPU] ARM64: Submitting command: %s (type=0x%x)\n",
-               arm64_gpu_cmd_name(hdr->type), hdr->type);
+    fut_printf("[VIRTIO-GPU] ARM64: Submitting command: %s (type=0x%x) size=%zu\n",
+               arm64_gpu_cmd_name(hdr->type), hdr->type, cmd_size);
+
+    /* Verify command sizes match expected values for the command type */
+    uint32_t expected_size = 0;
+    switch (hdr->type) {
+        case VIRTIO_GPU_CMD_RESOURCE_CREATE_2D:
+            expected_size = sizeof(struct virtio_gpu_resource_create_2d);
+            break;
+        case VIRTIO_GPU_CMD_RESOURCE_ATTACH_BACKING:
+            expected_size = sizeof(struct virtio_gpu_resource_attach_backing);
+            break;
+        case VIRTIO_GPU_CMD_SET_SCANOUT:
+            expected_size = sizeof(struct virtio_gpu_set_scanout);
+            break;
+        case VIRTIO_GPU_CMD_TRANSFER_TO_HOST_2D:
+            expected_size = sizeof(struct virtio_gpu_transfer_to_host_2d);
+            break;
+        case VIRTIO_GPU_CMD_RESOURCE_FLUSH:
+            expected_size = sizeof(struct virtio_gpu_resource_flush);
+            break;
+        case VIRTIO_GPU_CMD_GET_DISPLAY_INFO:
+            expected_size = sizeof(struct virtio_gpu_ctrl_hdr);
+            break;
+    }
+    if (expected_size > 0 && cmd_size != expected_size) {
+        fut_printf("[VIRTIO-GPU] ARM64: WARNING: Command size mismatch! Sent %zu bytes, expected %u bytes\n",
+                   cmd_size, expected_size);
+    }
 
     /* Verify descriptor entries are written correctly */
     if (g_desc_table_arm[cmd_desc_idx].addr != cmd_phys) {

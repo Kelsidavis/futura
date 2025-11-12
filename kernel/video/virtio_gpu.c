@@ -1096,9 +1096,26 @@ static int arm64_virtio_gpu_submit_command(const void *cmd, size_t cmd_size) {
         uint32_t completed_desc_id = g_used_arm->ring[used_idx].id;
         uint32_t response_length = g_used_arm->ring[used_idx].len;
 
+        /* Validate used ring entry is reasonable */
+        if (completed_desc_id >= VIRTIO_RING_SIZE) {
+            fut_printf("[VIRTIO-GPU] ARM64: WARNING: Used ring entry has invalid descriptor ID %u (>= %u)\n",
+                       completed_desc_id, VIRTIO_RING_SIZE);
+        }
+        if (response_length > RESP_BUFFER_SIZE) {
+            fut_printf("[VIRTIO-GPU] ARM64: WARNING: Response length %u exceeds buffer size %u\n",
+                       response_length, RESP_BUFFER_SIZE);
+        }
+
         fut_printf("[VIRTIO-GPU] ARM64: Command %s completed with response type=0x%x (desc_id=%u len=%u)\n",
                    arm64_gpu_cmd_name(((struct virtio_gpu_ctrl_hdr *)cmd)->type), resp->type,
                    completed_desc_id, response_length);
+
+        /* Log first few bytes of response for debugging */
+        if (response_length >= 4) {
+            uint32_t *resp_data = (uint32_t *)resp;
+            fut_printf("[VIRTIO-GPU] ARM64: Response data (first 4 bytes): 0x%08x\n",
+                       resp_data[0]);
+        }
 
         /* Validate that we got a response for our command
          * Expected descriptor ID should be the command descriptor index we submitted */

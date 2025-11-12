@@ -1187,8 +1187,9 @@ static int arm64_virtio_gpu_submit_command(const void *cmd, size_t cmd_size) {
                 case VIRTIO_GPU_RESP_ERR_INVALID_PARAMETER: resp_type_str = "ERR_INVALID_PARAMETER"; break;
                 default: resp_type_str = "ERR_UNKNOWN"; break;
             }
-            fut_printf("[VIRTIO-GPU] ARM64: ERROR: Device returned error response: 0x%x (%s)\n",
-                       resp->type, resp_type_str);
+            fut_printf("[VIRTIO-GPU] ARM64: ERROR: Device returned error response: 0x%x (%s) for command %s\n",
+                       resp->type, resp_type_str, arm64_gpu_cmd_name(((struct virtio_gpu_ctrl_hdr *)cmd)->type));
+            fut_printf("[VIRTIO-GPU] ARM64: ERROR: Command index was %u, NOT incrementing due to error\n", g_cmd_idx_arm);
             return -1;
         } else if ((resp->type & 0x1000) == 0x1000) {
             /* Success response - log type for debugging */
@@ -1199,22 +1200,27 @@ static int arm64_virtio_gpu_submit_command(const void *cmd, size_t cmd_size) {
             } else {
                 resp_type_str = "OK_UNKNOWN";
             }
-            fut_printf("[VIRTIO-GPU] ARM64: Device response type: 0x%x (%s)\n", resp->type, resp_type_str);
+            fut_printf("[VIRTIO-GPU] ARM64: Command %s completed successfully, incrementing cmd_idx from %u to %u\n",
+                       arm64_gpu_cmd_name(((struct virtio_gpu_ctrl_hdr *)cmd)->type), g_cmd_idx_arm, g_cmd_idx_arm + 1);
         } else {
             /* Unexpected response type - something went wrong */
             fut_printf("[VIRTIO-GPU] ARM64: WARNING: Unexpected response type 0x%x (not 0x1000 or 0x1200 range)\n",
                        resp->type);
+            fut_printf("[VIRTIO-GPU] ARM64: WARNING: Command index was %u, NOT incrementing due to invalid response\n", g_cmd_idx_arm);
+            return -1;
         }
     } else {
         fut_printf("[VIRTIO-GPU] ARM64: Command %s TIMEOUT (used ring not updated by device)\n",
                    arm64_gpu_cmd_name(((struct virtio_gpu_ctrl_hdr *)cmd)->type));
+        fut_printf("[VIRTIO-GPU] ARM64: TIMEOUT: Command index was %u, NOT incrementing due to timeout\n", g_cmd_idx_arm);
+        return -1;
     }
 
     /* Ensure all device interactions for this command are complete before moving to next */
     __asm__ volatile("dsb sy" ::: "memory");
     g_cmd_idx_arm++;
 
-    return timeout > 0 ? 0 : -1;  /* Return 0 on success, -1 on timeout */
+    return 0;  /* Only reached after successful response handling */
 }
 
 static int arm64_virtio_gpu_resource_create_2d(uint32_t resource_id, uint32_t width, uint32_t height) {

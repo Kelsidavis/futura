@@ -1245,6 +1245,9 @@ int virtio_gpu_init_arm64_pci(uint8_t bus, uint8_t dev, uint8_t func, uint64_t *
                             g_notify_off_multiplier_arm = arm64_pci_read32(g_virtio_bus, g_virtio_slot, 0, cap_ptr + 16);
                             fut_printf("[VIRTIO-GPU] ARM64: *** Notify base registered at 0x%lx, multiplier=%u ***\n",
                                        (unsigned long)cap_addr, g_notify_off_multiplier_arm);
+                            if (g_notify_off_multiplier_arm == 0) {
+                                fut_printf("[VIRTIO-GPU] ARM64: WARNING: Notify multiplier is 0 (unusual, may indicate register read failure)\n");
+                            }
                             break;
                         default:
                             fut_printf("[VIRTIO-GPU] ARM64:   (Other capability type %u - ignoring)\n", cfg_type);

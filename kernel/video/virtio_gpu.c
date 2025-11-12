@@ -1408,6 +1408,13 @@ int virtio_gpu_init_arm64_pci(uint8_t bus, uint8_t dev, uint8_t func, uint64_t *
 
     arm64_virtio_common_write16(VIRTIO_PCI_COMMON_Q_SIZE, VIRTIO_RING_SIZE);
 
+    /* Verify queue size was accepted */
+    uint16_t q_size_readback = arm64_virtio_common_read16(VIRTIO_PCI_COMMON_Q_SIZE);
+    if (q_size_readback != VIRTIO_RING_SIZE) {
+        fut_printf("[VIRTIO-GPU] ARM64: WARNING: Queue size readback mismatch! Wrote %u, read %u\n",
+                   VIRTIO_RING_SIZE, q_size_readback);
+    }
+
     /* Calculate physical addresses for ring structures */
     uint64_t avail_phys = queue_phys + VIRTIO_RING_SIZE * sizeof(struct virtio_desc);
     uint64_t used_phys = queue_phys + VIRTIO_RING_SIZE * sizeof(struct virtio_desc) + sizeof(struct virtio_avail);

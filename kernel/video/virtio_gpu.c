@@ -1030,6 +1030,17 @@ static int arm64_virtio_gpu_submit_command(const void *cmd, size_t cmd_size) {
     struct virtio_gpu_ctrl_hdr *hdr = (struct virtio_gpu_ctrl_hdr *)cmd;
     fut_printf("[VIRTIO-GPU] ARM64: Submitting command: %s (type=0x%x)\n",
                arm64_gpu_cmd_name(hdr->type), hdr->type);
+
+    /* Verify descriptor entries are written correctly */
+    if (g_desc_table_arm[cmd_desc_idx].addr != cmd_phys) {
+        fut_printf("[VIRTIO-GPU] ARM64: WARNING: Cmd descriptor addr mismatch! Expected 0x%llx, got 0x%llx\n",
+                   (unsigned long long)cmd_phys, (unsigned long long)g_desc_table_arm[cmd_desc_idx].addr);
+    }
+    if (g_desc_table_arm[cmd_desc_idx].len != cmd_size) {
+        fut_printf("[VIRTIO-GPU] ARM64: WARNING: Cmd descriptor len mismatch! Expected %zu, got %u\n",
+                   cmd_size, g_desc_table_arm[cmd_desc_idx].len);
+    }
+
     fut_printf("[VIRTIO-GPU] ARM64: Descriptor chain: cmd[%u]={addr=0x%llx len=%lu flags=0x%x next=%u} resp[%u]={addr=0x%llx len=%u flags=0x%x}\n",
                cmd_desc_idx, cmd_phys, (unsigned long)cmd_size, g_desc_table_arm[cmd_desc_idx].flags, g_desc_table_arm[cmd_desc_idx].next,
                resp_desc_idx, resp_phys, RESP_BUFFER_SIZE, g_desc_table_arm[resp_desc_idx].flags);

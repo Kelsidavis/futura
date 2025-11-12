@@ -1084,9 +1084,20 @@ static int arm64_virtio_gpu_submit_command(const void *cmd, size_t cmd_size) {
         fut_printf("[VIRTIO-GPU] ARM64: Notifying at addr=0x%lx (base=0x%lx offset=%u mult=%u queue_idx=0)\n",
                    (unsigned long)notify_addr, (unsigned long)g_notify_base_arm,
                    g_queue_notify_off_arm, g_notify_off_multiplier_arm);
+
+        /* Verify notify address is reasonable (not obviously invalid) */
+        if ((unsigned long)notify_addr < (unsigned long)g_notify_base_arm) {
+            fut_printf("[VIRTIO-GPU] ARM64: WARNING: Calculated notify addr (0x%lx) is before notify_base (0x%lx)!\n",
+                       (unsigned long)notify_addr, (unsigned long)g_notify_base_arm);
+        }
+
         __asm__ volatile("dsb sy" ::: "memory");
         *notify_addr = 0;  /* Write queue index 0 for control queue */
         __asm__ volatile("dsb sy" ::: "memory");
+
+        /* Verify notify write was accepted by reading it back */
+        uint16_t notify_readback = *notify_addr;
+        fut_printf("[VIRTIO-GPU] ARM64: Notify register readback: wrote 0, read 0x%x\n", notify_readback);
     } else {
         fut_printf("[VIRTIO-GPU] ARM64: ERROR: Cannot notify - notify_base is NULL\n");
     }

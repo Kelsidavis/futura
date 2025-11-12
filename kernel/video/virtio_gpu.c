@@ -99,16 +99,7 @@ static inline void pci_config_write(uint8_t bus, uint8_t slot, uint8_t func, uin
 #define VIRTIO_GPU_CMD_GET_DISPLAY_INFO 0x0100
 
 #define VIRTIO_GPU_FORMAT_B8G8R8X8_UNORM 2
-
-/* VirtIO GPU Response Types */
-#define VIRTIO_GPU_RESP_OK_NODATA 0x1000
 #define VIRTIO_GPU_RESP_OK_DISPLAY_INFO 0x1100
-#define VIRTIO_GPU_RESP_ERR_UNSPEC 0x1200
-#define VIRTIO_GPU_RESP_ERR_OUT_OF_MEMORY 0x1201
-#define VIRTIO_GPU_RESP_ERR_INVALID_SCANOUT_ID 0x1202
-#define VIRTIO_GPU_RESP_ERR_INVALID_RESOURCE_ID 0x1203
-#define VIRTIO_GPU_RESP_ERR_INVALID_CONTEXT_ID 0x1204
-#define VIRTIO_GPU_RESP_ERR_INVALID_PARAMETER 0x1205
 
 #define VIRTIO_RING_SIZE 256
 #define RESOURCE_ID_FB 1
@@ -900,19 +891,15 @@ static volatile uint8_t *g_notify_base_arm = NULL;
 static uint32_t g_notify_off_multiplier_arm = 0;
 static uint16_t g_queue_notify_off_arm = 0;
 static volatile uint8_t *g_framebuffer_arm = NULL;
-static volatile struct virtio_desc *g_desc_table_arm = NULL;
-static volatile struct virtio_avail *g_avail_arm = NULL;
-static volatile struct virtio_used *g_used_arm = NULL;
+static struct virtio_desc *g_desc_table_arm = NULL;
+static struct virtio_avail *g_avail_arm = NULL;
+static struct virtio_used *g_used_arm = NULL;
 static volatile uint8_t *g_cmd_buffer_arm = NULL;
 static volatile uint8_t *g_resp_buffer_arm = NULL;
 static uint32_t g_fb_width_arm = 0, g_fb_height_arm = 0;
 static size_t g_fb_size_arm = 0;
 static uint16_t g_cmd_idx_arm = 0;
 static uint8_t g_virtio_bus = 0, g_virtio_slot = 0;
-
-/* ARM64 physical addresses (for VirtIO register writes) */
-static uint64_t g_cmd_buffer_phys_arm = 0;
-static uint64_t g_resp_buffer_phys_arm = 0;
 
 /* Buffer sizes for ARM64 */
 #define CMD_BUFFER_SIZE 4096
@@ -971,291 +958,91 @@ static inline void arm64_virtio_common_write64(uint16_t offset, uint64_t value) 
     __asm__ volatile("dsb sy" ::: "memory");
 }
 
-/* Helper to convert GPU command type to string for logging */
-static const char *arm64_gpu_cmd_name(uint32_t cmd_type) {
-    switch (cmd_type) {
-        case VIRTIO_GPU_CMD_GET_DISPLAY_INFO: return "GET_DISPLAY_INFO";
-        case VIRTIO_GPU_CMD_RESOURCE_CREATE_2D: return "RESOURCE_CREATE_2D";
-        case VIRTIO_GPU_CMD_RESOURCE_ATTACH_BACKING: return "RESOURCE_ATTACH_BACKING";
-        case VIRTIO_GPU_CMD_SET_SCANOUT: return "SET_SCANOUT";
-        case VIRTIO_GPU_CMD_TRANSFER_TO_HOST_2D: return "TRANSFER_TO_HOST_2D";
-        case VIRTIO_GPU_CMD_RESOURCE_FLUSH: return "RESOURCE_FLUSH";
-        default: return "UNKNOWN";
-    }
-}
-
-static int arm64_virtio_gpu_submit_command(const void *cmd, size_t cmd_size) {
+static void arm64_virtio_gpu_submit_command(const void *cmd, size_t cmd_size) {
     if (!g_desc_table_arm || !g_avail_arm || !g_cmd_buffer_arm || !g_resp_buffer_arm) {
         fut_printf("[VIRTIO-GPU] ARM64: Command queue not initialized\n");
-        return -1;
+        return;
     }
 
     if (cmd_size > CMD_BUFFER_SIZE) {
         fut_printf("[VIRTIO-GPU] ARM64: Command too large\n");
-        return -1;
+        return;
     }
 
     /* Copy command to buffer */
     memcpy((void *)g_cmd_buffer_arm, cmd, cmd_size);
     memset((void *)g_resp_buffer_arm, 0, RESP_BUFFER_SIZE);
 
-    /* Ensure command and response buffers are written before we set up descriptors */
-    __asm__ volatile("dsb sy" ::: "memory");
-
     /* Create descriptor chain */
     uint16_t cmd_desc_idx = (g_cmd_idx_arm * 2) % VIRTIO_RING_SIZE;
     uint16_t resp_desc_idx = (g_cmd_idx_arm * 2 + 1) % VIRTIO_RING_SIZE;
 
-    uint64_t cmd_phys = g_cmd_buffer_phys_arm;
-    uint64_t resp_phys = g_resp_buffer_phys_arm;
+    uint64_t cmd_phys = (uint64_t)g_cmd_buffer_arm;
+    uint64_t resp_phys = (uint64_t)g_resp_buffer_arm;
 
-    /* Clear descriptor flags to mark as in-progress (device must not use yet) */
-    g_desc_table_arm[cmd_desc_idx].flags = 0;
-    g_desc_table_arm[resp_desc_idx].flags = 0;
-
-    /* Now write descriptor fields in proper order */
     g_desc_table_arm[cmd_desc_idx].addr = cmd_phys;
     g_desc_table_arm[cmd_desc_idx].len = cmd_size;
+    g_desc_table_arm[cmd_desc_idx].flags = VIRTQ_DESC_F_NEXT;
     g_desc_table_arm[cmd_desc_idx].next = resp_desc_idx;
 
     g_desc_table_arm[resp_desc_idx].addr = resp_phys;
     g_desc_table_arm[resp_desc_idx].len = RESP_BUFFER_SIZE;
-    g_desc_table_arm[resp_desc_idx].next = 0;
-
-    /* Finally set flags to mark descriptors as valid and ready for device */
-    __asm__ volatile("dsb sy" ::: "memory");
-    g_desc_table_arm[cmd_desc_idx].flags = VIRTQ_DESC_F_NEXT;
     g_desc_table_arm[resp_desc_idx].flags = VIRTQ_DESC_F_WRITE;
-
-    struct virtio_gpu_ctrl_hdr *hdr = (struct virtio_gpu_ctrl_hdr *)cmd;
-    fut_printf("[VIRTIO-GPU] ARM64: Submitting command: %s (type=0x%x) size=%zu\n",
-               arm64_gpu_cmd_name(hdr->type), hdr->type, cmd_size);
-
-    /* Verify command sizes match expected values for the command type */
-    uint32_t expected_size = 0;
-    switch (hdr->type) {
-        case VIRTIO_GPU_CMD_RESOURCE_CREATE_2D:
-            expected_size = sizeof(struct virtio_gpu_resource_create_2d);
-            break;
-        case VIRTIO_GPU_CMD_RESOURCE_ATTACH_BACKING:
-            expected_size = sizeof(struct virtio_gpu_resource_attach_backing);
-            break;
-        case VIRTIO_GPU_CMD_SET_SCANOUT:
-            expected_size = sizeof(struct virtio_gpu_set_scanout);
-            break;
-        case VIRTIO_GPU_CMD_TRANSFER_TO_HOST_2D:
-            expected_size = sizeof(struct virtio_gpu_transfer_to_host_2d);
-            break;
-        case VIRTIO_GPU_CMD_RESOURCE_FLUSH:
-            expected_size = sizeof(struct virtio_gpu_resource_flush);
-            break;
-        case VIRTIO_GPU_CMD_GET_DISPLAY_INFO:
-            expected_size = sizeof(struct virtio_gpu_ctrl_hdr);
-            break;
-    }
-    if (expected_size > 0 && cmd_size != expected_size) {
-        fut_printf("[VIRTIO-GPU] ARM64: WARNING: Command size mismatch! Sent %zu bytes, expected %u bytes\n",
-                   cmd_size, expected_size);
-    }
-
-    /* Verify descriptor entries are written correctly */
-    if (g_desc_table_arm[cmd_desc_idx].addr != cmd_phys) {
-        fut_printf("[VIRTIO-GPU] ARM64: WARNING: Cmd descriptor addr mismatch! Expected 0x%llx, got 0x%llx\n",
-                   (unsigned long long)cmd_phys, (unsigned long long)g_desc_table_arm[cmd_desc_idx].addr);
-    }
-    if (g_desc_table_arm[cmd_desc_idx].len != cmd_size) {
-        fut_printf("[VIRTIO-GPU] ARM64: WARNING: Cmd descriptor len mismatch! Expected %zu, got %u\n",
-                   cmd_size, g_desc_table_arm[cmd_desc_idx].len);
-    }
+    g_desc_table_arm[resp_desc_idx].next = 0;
 
     fut_printf("[VIRTIO-GPU] ARM64: Descriptor chain: cmd[%u]={addr=0x%llx len=%lu flags=0x%x next=%u} resp[%u]={addr=0x%llx len=%u flags=0x%x}\n",
                cmd_desc_idx, cmd_phys, (unsigned long)cmd_size, g_desc_table_arm[cmd_desc_idx].flags, g_desc_table_arm[cmd_desc_idx].next,
                resp_desc_idx, resp_phys, RESP_BUFFER_SIZE, g_desc_table_arm[resp_desc_idx].flags);
 
-    /* Memory barrier ensures descriptors are visible before updating available ring */
-    __asm__ volatile("dsb sy" ::: "memory");
-
     uint16_t old_avail_idx = g_avail_arm->idx;
     uint16_t avail_idx = old_avail_idx % VIRTIO_RING_SIZE;
     g_avail_arm->ring[avail_idx] = cmd_desc_idx;
-
-    /* Memory barrier ensures available ring entry is visible before incrementing idx */
-    __asm__ volatile("dsb sy" ::: "memory");
+    __sync_synchronize();
     g_avail_arm->idx++;
 
-    /* Memory barrier ensures idx increment is visible before device notification */
-    __asm__ volatile("dsb sy" ::: "memory");
-
-    /* Verify available ring was updated correctly */
-    uint16_t avail_idx_readback = g_avail_arm->idx;
-    uint16_t avail_ring_readback = g_avail_arm->ring[avail_idx];
-    if (avail_idx_readback != (old_avail_idx + 1)) {
-        fut_printf("[VIRTIO-GPU] ARM64: WARNING: Avail idx readback mismatch! Expected %u, got %u\n",
-                   (old_avail_idx + 1), avail_idx_readback);
-    }
-    if (avail_ring_readback != cmd_desc_idx) {
-        fut_printf("[VIRTIO-GPU] ARM64: WARNING: Avail ring entry mismatch! Expected %u, got %u\n",
-                   cmd_desc_idx, avail_ring_readback);
-    }
-
-    fut_printf("[VIRTIO-GPU] ARM64: Avail ring: old_idx=%u new_idx=%u ring[%u]=%u flags=0x%x\n",
-               old_avail_idx, g_avail_arm->idx, avail_idx, cmd_desc_idx, g_avail_arm->flags);
+    fut_printf("[VIRTIO-GPU] ARM64: Avail ring: old_idx=%u new_idx=%u ring[%u]=%u\n",
+               old_avail_idx, g_avail_arm->idx, avail_idx, cmd_desc_idx);
 
     /* Notify device using VirtIO 1.0 specification:
-     * notify_addr = notify_base + (queue_notify_off * notify_off_multiplier)
-     * Write queue_index to notify the device about available buffers */
+     * notify_addr = notify_base + (queue_notify_off * notify_off_multiplier) */
     if (g_notify_base_arm) {
         volatile uint16_t *notify_addr = (volatile uint16_t *)(
             g_notify_base_arm + (g_queue_notify_off_arm * g_notify_off_multiplier_arm)
         );
-        fut_printf("[VIRTIO-GPU] ARM64: Notifying at addr=0x%lx (base=0x%lx offset=%u mult=%u queue_idx=0)\n",
+        fut_printf("[VIRTIO-GPU] ARM64: Notifying at addr=0x%lx (base=0x%lx offset=%u mult=%u)\n",
                    (unsigned long)notify_addr, (unsigned long)g_notify_base_arm,
                    g_queue_notify_off_arm, g_notify_off_multiplier_arm);
-
-        /* Verify notify address is reasonable (not obviously invalid) */
-        if ((unsigned long)notify_addr < (unsigned long)g_notify_base_arm) {
-            fut_printf("[VIRTIO-GPU] ARM64: WARNING: Calculated notify addr (0x%lx) is before notify_base (0x%lx)!\n",
-                       (unsigned long)notify_addr, (unsigned long)g_notify_base_arm);
-        }
-
         __asm__ volatile("dsb sy" ::: "memory");
-        *notify_addr = 0;  /* Write queue index 0 for control queue */
+        *notify_addr = 0;  /* Write queue index (control queue = 0) */
         __asm__ volatile("dsb sy" ::: "memory");
-
-        /* Verify notify write was accepted by reading it back */
-        uint16_t notify_readback = *notify_addr;
-        fut_printf("[VIRTIO-GPU] ARM64: Notify register readback: wrote 0, read 0x%x\n", notify_readback);
     } else {
         fut_printf("[VIRTIO-GPU] ARM64: ERROR: Cannot notify - notify_base is NULL\n");
     }
 
     /* Wait for response */
     uint16_t last_used_idx = g_used_arm->idx;
-    fut_printf("[VIRTIO-GPU] ARM64: Waiting for response, used.idx=%u (expecting update to %u)\n",
+    fut_printf("[VIRTIO-GPU] ARM64: Waiting for response, used.idx=%u (expecting %u)\n",
                last_used_idx, (uint16_t)(last_used_idx + 1));
 
     int timeout = 1000000;
-    int initial_timeout = timeout;
-    uint16_t sample_idx_start = last_used_idx;
-    uint16_t sample_idx_end = last_used_idx;
-
-    while (timeout > 0) {
-        __asm__ volatile("dsb sy" ::: "memory");
-        uint16_t current_idx = g_used_arm->idx;
-
-        /* Track the index progression for diagnostics */
-        if (current_idx != last_used_idx && sample_idx_end == last_used_idx) {
-            sample_idx_end = current_idx;
-        }
-
-        if (current_idx != last_used_idx) {
-            break;
-        }
+    while (g_used_arm->idx == last_used_idx && timeout > 0) {
+        __sync_synchronize();
         timeout--;
     }
 
-    int loops_executed = initial_timeout - timeout;
-    uint16_t final_idx = g_used_arm->idx;
-
-    fut_printf("[VIRTIO-GPU] ARM64: Response wait complete: used.idx=%u (was %u), timeout_remaining=%d loops_executed=%d idx_progression=%u->%u\n",
-               final_idx, last_used_idx, timeout, loops_executed, sample_idx_start, sample_idx_end);
-
-    /* Ensure device writes to response buffer are visible before reading them */
-    __asm__ volatile("dsb sy" ::: "memory");
+    fut_printf("[VIRTIO-GPU] ARM64: After wait: used.idx=%u (was %u), timeout_remaining=%d\n",
+               g_used_arm->idx, last_used_idx, timeout);
 
     if (timeout > 0) {
         struct virtio_gpu_ctrl_hdr *resp = (struct virtio_gpu_ctrl_hdr *)g_resp_buffer_arm;
-        uint16_t used_idx = last_used_idx % VIRTIO_RING_SIZE;
-        uint32_t completed_desc_id = g_used_arm->ring[used_idx].id;
-        uint32_t response_length = g_used_arm->ring[used_idx].len;
-
-        /* Log used ring structure for diagnostics */
-        fut_printf("[VIRTIO-GPU] ARM64: Used ring: idx=%u used_idx_slot=%u flags=0x%x\n",
-                   final_idx, used_idx, g_used_arm->flags);
-
-        /* Validate used ring entry is reasonable */
-        if (completed_desc_id >= VIRTIO_RING_SIZE) {
-            fut_printf("[VIRTIO-GPU] ARM64: WARNING: Used ring entry has invalid descriptor ID %u (>= %u)\n",
-                       completed_desc_id, VIRTIO_RING_SIZE);
-        }
-        if (response_length > RESP_BUFFER_SIZE) {
-            fut_printf("[VIRTIO-GPU] ARM64: WARNING: Response length %u exceeds buffer size %u\n",
-                       response_length, RESP_BUFFER_SIZE);
-        }
-
-        fut_printf("[VIRTIO-GPU] ARM64: Command %s completed with response type=0x%x (desc_id=%u len=%u)\n",
-                   arm64_gpu_cmd_name(((struct virtio_gpu_ctrl_hdr *)cmd)->type), resp->type,
-                   completed_desc_id, response_length);
-
-        /* Log first few bytes of response for debugging */
-        if (response_length >= 8) {
-            uint32_t *resp_data = (uint32_t *)resp;
-            fut_printf("[VIRTIO-GPU] ARM64: Response data (first 8 bytes): 0x%08x 0x%08x\n",
-                       resp_data[0], resp_data[1]);
-        } else if (response_length >= 4) {
-            uint32_t *resp_data = (uint32_t *)resp;
-            fut_printf("[VIRTIO-GPU] ARM64: Response data (first 4 bytes): 0x%08x\n",
-                       resp_data[0]);
-        }
-
-        /* Log response header fields */
-        fut_printf("[VIRTIO-GPU] ARM64: Response header: type=0x%x flags=0x%x fence_id=0x%x ctx_id=0x%x\n",
-                   resp->type, resp->flags, resp->fence_id, resp->ctx_id);
-
-        /* Validate that we got a response for our command
-         * Expected descriptor ID should be the command descriptor index we submitted */
-        uint16_t expected_desc_id = (g_cmd_idx_arm * 2) % VIRTIO_RING_SIZE;
-        if (completed_desc_id != expected_desc_id) {
-            fut_printf("[VIRTIO-GPU] ARM64: WARNING: Got response for wrong descriptor! "
-                       "Expected %u but got %u\n", expected_desc_id, completed_desc_id);
-        }
-
-        /* Check response type for errors and validity */
-        const char *resp_type_str = "UNKNOWN";
-
-        if (resp->type >= 0x1200) {
-            /* Error response (0x1200-0x1205) */
-            switch (resp->type) {
-                case VIRTIO_GPU_RESP_ERR_UNSPEC: resp_type_str = "ERR_UNSPEC"; break;
-                case VIRTIO_GPU_RESP_ERR_OUT_OF_MEMORY: resp_type_str = "ERR_OUT_OF_MEMORY"; break;
-                case VIRTIO_GPU_RESP_ERR_INVALID_SCANOUT_ID: resp_type_str = "ERR_INVALID_SCANOUT_ID"; break;
-                case VIRTIO_GPU_RESP_ERR_INVALID_RESOURCE_ID: resp_type_str = "ERR_INVALID_RESOURCE_ID"; break;
-                case VIRTIO_GPU_RESP_ERR_INVALID_CONTEXT_ID: resp_type_str = "ERR_INVALID_CONTEXT_ID"; break;
-                case VIRTIO_GPU_RESP_ERR_INVALID_PARAMETER: resp_type_str = "ERR_INVALID_PARAMETER"; break;
-                default: resp_type_str = "ERR_UNKNOWN"; break;
-            }
-            fut_printf("[VIRTIO-GPU] ARM64: ERROR: Device returned error response: 0x%x (%s) for command %s\n",
-                       resp->type, resp_type_str, arm64_gpu_cmd_name(((struct virtio_gpu_ctrl_hdr *)cmd)->type));
-            fut_printf("[VIRTIO-GPU] ARM64: ERROR: Command index was %u, NOT incrementing due to error\n", g_cmd_idx_arm);
-            return -1;
-        } else if (resp->type == VIRTIO_GPU_RESP_OK_NODATA || resp->type == VIRTIO_GPU_RESP_OK_DISPLAY_INFO) {
-            /* Success response - log type for debugging */
-            if (resp->type == VIRTIO_GPU_RESP_OK_NODATA) {
-                resp_type_str = "OK_NODATA";
-            } else if (resp->type == VIRTIO_GPU_RESP_OK_DISPLAY_INFO) {
-                resp_type_str = "OK_DISPLAY_INFO";
-            }
-            fut_printf("[VIRTIO-GPU] ARM64: Command %s completed successfully, incrementing cmd_idx from %u to %u\n",
-                       arm64_gpu_cmd_name(((struct virtio_gpu_ctrl_hdr *)cmd)->type), g_cmd_idx_arm, g_cmd_idx_arm + 1);
-        } else {
-            /* Unexpected response type - something went wrong */
-            fut_printf("[VIRTIO-GPU] ARM64: WARNING: Unexpected response type 0x%x (not 0x1000, 0x1100, or 0x1200+ range)\n",
-                       resp->type);
-            fut_printf("[VIRTIO-GPU] ARM64: WARNING: Command index was %u, NOT incrementing due to invalid response\n", g_cmd_idx_arm);
-            return -1;
-        }
+        fut_printf("[VIRTIO-GPU] ARM64: Cmd type=%u response=0x%x\n",
+                   ((struct virtio_gpu_ctrl_hdr *)cmd)->type, resp->type);
     } else {
-        fut_printf("[VIRTIO-GPU] ARM64: Command %s TIMEOUT (used ring not updated by device)\n",
-                   arm64_gpu_cmd_name(((struct virtio_gpu_ctrl_hdr *)cmd)->type));
-        fut_printf("[VIRTIO-GPU] ARM64: TIMEOUT: Command index was %u, NOT incrementing due to timeout\n", g_cmd_idx_arm);
-        return -1;
+        fut_printf("[VIRTIO-GPU] ARM64: Cmd type=%u TIMEOUT (used ring not updated by device)\n",
+                   ((struct virtio_gpu_ctrl_hdr *)cmd)->type);
     }
 
-    /* Ensure all device interactions for this command are complete before moving to next */
-    __asm__ volatile("dsb sy" ::: "memory");
     g_cmd_idx_arm++;
-
-    return 0;  /* Only reached after successful response handling */
 }
 
 static int arm64_virtio_gpu_resource_create_2d(uint32_t resource_id, uint32_t width, uint32_t height) {
@@ -1267,7 +1054,8 @@ static int arm64_virtio_gpu_resource_create_2d(uint32_t resource_id, uint32_t wi
         .height = height,
     };
     fut_printf("[VIRTIO-GPU] ARM64: Creating 2D resource %u (%ux%u)\n", resource_id, width, height);
-    return arm64_virtio_gpu_submit_command(&cmd, sizeof(cmd));
+    arm64_virtio_gpu_submit_command(&cmd, sizeof(cmd));
+    return 0;
 }
 
 static int arm64_virtio_gpu_resource_attach_backing(uint32_t resource_id, uint64_t fb_phys, size_t fb_size) {
@@ -1279,7 +1067,8 @@ static int arm64_virtio_gpu_resource_attach_backing(uint32_t resource_id, uint64
     };
     fut_printf("[VIRTIO-GPU] ARM64: Attaching backing: resource=%u phys=0x%llx size=0x%zx\n",
                resource_id, (unsigned long long)fb_phys, fb_size);
-    return arm64_virtio_gpu_submit_command(&cmd, sizeof(cmd));
+    arm64_virtio_gpu_submit_command(&cmd, sizeof(cmd));
+    return 0;
 }
 
 static int arm64_virtio_gpu_set_scanout(uint32_t scanout_id, uint32_t resource_id, uint32_t width, uint32_t height) {
@@ -1291,7 +1080,8 @@ static int arm64_virtio_gpu_set_scanout(uint32_t scanout_id, uint32_t resource_i
     };
     fut_printf("[VIRTIO-GPU] ARM64: Setting scanout: id=%u resource=%u %ux%u\n",
                scanout_id, resource_id, width, height);
-    return arm64_virtio_gpu_submit_command(&cmd, sizeof(cmd));
+    arm64_virtio_gpu_submit_command(&cmd, sizeof(cmd));
+    return 0;
 }
 
 static int arm64_virtio_gpu_transfer_to_host_2d(uint32_t resource_id, uint32_t width, uint32_t height) {
@@ -1306,7 +1096,8 @@ static int arm64_virtio_gpu_transfer_to_host_2d(uint32_t resource_id, uint32_t w
         .padding = 0,
     };
     fut_printf("[VIRTIO-GPU] ARM64: Transferring to host: resource=%u %ux%u\n", resource_id, width, height);
-    return arm64_virtio_gpu_submit_command(&cmd, sizeof(cmd));
+    arm64_virtio_gpu_submit_command(&cmd, sizeof(cmd));
+    return 0;
 }
 
 static int arm64_virtio_gpu_resource_flush(uint32_t resource_id, uint32_t width, uint32_t height) {
@@ -1319,7 +1110,8 @@ static int arm64_virtio_gpu_resource_flush(uint32_t resource_id, uint32_t width,
         .height = height,
     };
     fut_printf("[VIRTIO-GPU] ARM64: Flushing resource: id=%u %ux%u\n", resource_id, width, height);
-    return arm64_virtio_gpu_submit_command(&cmd, sizeof(cmd));
+    arm64_virtio_gpu_submit_command(&cmd, sizeof(cmd));
+    return 0;
 }
 
 int virtio_gpu_init_arm64_pci(uint8_t bus, uint8_t dev, uint8_t func, uint64_t *out_fb_phys, uint32_t width, uint32_t height) {
@@ -1329,8 +1121,6 @@ int virtio_gpu_init_arm64_pci(uint8_t bus, uint8_t dev, uint8_t func, uint64_t *
     g_fb_width_arm = width;
     g_fb_height_arm = height;
     g_fb_size_arm = width * height * 4;
-    fut_printf("[VIRTIO-GPU] ARM64: Framebuffer: %ux%u (size=%zu bytes, %zu KB)\n",
-               width, height, g_fb_size_arm, g_fb_size_arm / 1024);
 
     /* Use provided PCI device location */
     g_virtio_bus = bus;
@@ -1383,9 +1173,6 @@ int virtio_gpu_init_arm64_pci(uint8_t bus, uint8_t dev, uint8_t func, uint64_t *
                             g_notify_off_multiplier_arm = arm64_pci_read32(g_virtio_bus, g_virtio_slot, 0, cap_ptr + 16);
                             fut_printf("[VIRTIO-GPU] ARM64: *** Notify base registered at 0x%lx, multiplier=%u ***\n",
                                        (unsigned long)cap_addr, g_notify_off_multiplier_arm);
-                            if (g_notify_off_multiplier_arm == 0) {
-                                fut_printf("[VIRTIO-GPU] ARM64: WARNING: Notify multiplier is 0 (unusual, may indicate register read failure)\n");
-                            }
                             break;
                         default:
                             fut_printf("[VIRTIO-GPU] ARM64:   (Other capability type %u - ignoring)\n", cfg_type);
@@ -1470,58 +1257,24 @@ int virtio_gpu_init_arm64_pci(uint8_t bus, uint8_t dev, uint8_t func, uint64_t *
     g_cmd_buffer_arm = (volatile uint8_t *)cmd_phys;
     g_resp_buffer_arm = (volatile uint8_t *)resp_phys;
 
-    /* Save physical addresses for VirtIO register writes */
-    g_cmd_buffer_phys_arm = cmd_phys;
-    g_resp_buffer_phys_arm = resp_phys;
-
     memset((void *)g_desc_table_arm, 0, VIRTIO_RING_SIZE * sizeof(struct virtio_desc));
     memset((void *)g_avail_arm, 0, sizeof(struct virtio_avail));
     memset((void *)g_used_arm, 0, sizeof(struct virtio_used));
     memset((void *)g_framebuffer_arm, 0x00, g_fb_size_arm);  /* Clear to black - userspace will draw content */
-
-    /* Verify ring memory is accessible by writing and reading back test values */
-    __asm__ volatile("dsb sy" ::: "memory");
-    volatile uint32_t *test_desc = (volatile uint32_t *)g_desc_table_arm;
-    *test_desc = 0xDEADBEEF;
-    __asm__ volatile("dsb sy" ::: "memory");
-    uint32_t readback = *test_desc;
-    if (readback == 0xDEADBEEF) {
-        fut_printf("[VIRTIO-GPU] ARM64: Queue memory test PASSED (desc accessible)\n");
-    } else {
-        fut_printf("[VIRTIO-GPU] ARM64: Queue memory test FAILED (read 0x%x, expected 0xDEADBEEF)\n", readback);
-    }
-    *test_desc = 0;  /* Clear test value */
 
     fut_printf("[VIRTIO-GPU] ARM64: Allocated queues at 0x%llx, FB at 0x%llx\n",
                (unsigned long long)queue_phys, (unsigned long long)fb_phys);
 
     /* VirtIO device initialization */
     arm64_virtio_common_write8(VIRTIO_PCI_COMMON_STATUS, VIRTIO_CONFIG_S_ACKNOWLEDGE);
-    uint8_t status_check = arm64_virtio_common_read8(VIRTIO_PCI_COMMON_STATUS);
-    fut_printf("[VIRTIO-GPU] ARM64: Status after ACKNOWLEDGE: 0x%x (expected 0x%x)\n",
-               status_check, VIRTIO_CONFIG_S_ACKNOWLEDGE);
-
-    status_check = arm64_virtio_common_read8(VIRTIO_PCI_COMMON_STATUS);
-    arm64_virtio_common_write8(VIRTIO_PCI_COMMON_STATUS, status_check | VIRTIO_CONFIG_S_DRIVER);
-    status_check = arm64_virtio_common_read8(VIRTIO_PCI_COMMON_STATUS);
-    fut_printf("[VIRTIO-GPU] ARM64: Status after DRIVER: 0x%x (should have ACKNOWLEDGE | DRIVER)\n",
-               status_check);
+    arm64_virtio_common_write8(VIRTIO_PCI_COMMON_STATUS,
+                                arm64_virtio_common_read8(VIRTIO_PCI_COMMON_STATUS) | VIRTIO_CONFIG_S_DRIVER);
 
     /* Feature negotiation */
     arm64_virtio_common_write32(VIRTIO_PCI_COMMON_DFSELECT, 0);
     uint32_t features = arm64_virtio_common_read32(VIRTIO_PCI_COMMON_DF);
-    fut_printf("[VIRTIO-GPU] ARM64: Device features (low): 0x%08x\n", features);
-
-    /* Read high features (bits 32-63) */
-    arm64_virtio_common_write32(VIRTIO_PCI_COMMON_DFSELECT, 1);
-    uint32_t features_high = arm64_virtio_common_read32(VIRTIO_PCI_COMMON_DF);
-    fut_printf("[VIRTIO-GPU] ARM64: Device features (high): 0x%08x\n", features_high);
-
-    /* Accept all features */
     arm64_virtio_common_write32(VIRTIO_PCI_COMMON_GFSELECT, 0);
     arm64_virtio_common_write32(VIRTIO_PCI_COMMON_GF, features);
-    arm64_virtio_common_write32(VIRTIO_PCI_COMMON_GFSELECT, 1);
-    arm64_virtio_common_write32(VIRTIO_PCI_COMMON_GF, features_high);
 
     arm64_virtio_common_write8(VIRTIO_PCI_COMMON_STATUS,
                                 arm64_virtio_common_read8(VIRTIO_PCI_COMMON_STATUS) | VIRTIO_CONFIG_S_FEATURES_OK);
@@ -1536,86 +1289,18 @@ int virtio_gpu_init_arm64_pci(uint8_t bus, uint8_t dev, uint8_t func, uint64_t *
 
     /* Setup control queue */
     arm64_virtio_common_write16(VIRTIO_PCI_COMMON_Q_SELECT, 0);
-
-    /* Check maximum queue size reported by device */
-    uint16_t max_queue_size = arm64_virtio_common_read16(VIRTIO_PCI_COMMON_Q_SIZE);
-    fut_printf("[VIRTIO-GPU] ARM64: Queue 0 max size from device: %u (we request %u)\n",
-               max_queue_size, VIRTIO_RING_SIZE);
-
-    if (max_queue_size < VIRTIO_RING_SIZE) {
-        fut_printf("[VIRTIO-GPU] ARM64: WARNING: Device max queue size (%u) smaller than requested (%u)\n",
-                   max_queue_size, VIRTIO_RING_SIZE);
-    }
-
     arm64_virtio_common_write16(VIRTIO_PCI_COMMON_Q_SIZE, VIRTIO_RING_SIZE);
-
-    /* Verify queue size was accepted */
-    uint16_t q_size_readback = arm64_virtio_common_read16(VIRTIO_PCI_COMMON_Q_SIZE);
-    if (q_size_readback != VIRTIO_RING_SIZE) {
-        fut_printf("[VIRTIO-GPU] ARM64: WARNING: Queue size readback mismatch! Wrote %u, read %u\n",
-                   VIRTIO_RING_SIZE, q_size_readback);
-    }
-
-    /* Calculate physical addresses for ring structures */
-    uint64_t avail_phys = queue_phys + VIRTIO_RING_SIZE * sizeof(struct virtio_desc);
-    uint64_t used_phys = queue_phys + VIRTIO_RING_SIZE * sizeof(struct virtio_desc) + sizeof(struct virtio_avail);
-
-    /* Verify ring structure sizes for debugging */
-    fut_printf("[VIRTIO-GPU] ARM64: Ring sizes: desc=%zu avail=%zu used=%zu\n",
-               (size_t)(VIRTIO_RING_SIZE * sizeof(struct virtio_desc)),
-               sizeof(struct virtio_avail),
-               sizeof(struct virtio_used));
-    fut_printf("[VIRTIO-GPU] ARM64: Ring layout: avail at offset 0x%llx, used at offset 0x%llx\n",
-               (unsigned long long)(avail_phys - queue_phys),
-               (unsigned long long)(used_phys - queue_phys));
-
-    /* Write descriptor ring address (low then high per VirtIO 1.0 spec) */
-    fut_printf("[VIRTIO-GPU] ARM64: Writing desc ring: 0x%llx (low=0x%08x high=0x%08x)\n",
-               (unsigned long long)queue_phys,
-               (uint32_t)(queue_phys & 0xFFFFFFFFULL),
-               (uint32_t)(queue_phys >> 32));
-    arm64_virtio_common_write32(VIRTIO_PCI_COMMON_Q_DESCLO, (uint32_t)(queue_phys & 0xFFFFFFFFULL));
-    arm64_virtio_common_write32(VIRTIO_PCI_COMMON_Q_DESCHI, (uint32_t)(queue_phys >> 32));
-
-    /* Write available ring address (low then high per VirtIO 1.0 spec) */
-    fut_printf("[VIRTIO-GPU] ARM64: Writing avail ring: 0x%llx (low=0x%08x high=0x%08x)\n",
-               (unsigned long long)avail_phys,
-               (uint32_t)(avail_phys & 0xFFFFFFFFULL),
-               (uint32_t)(avail_phys >> 32));
-    arm64_virtio_common_write32(VIRTIO_PCI_COMMON_Q_AVAILLO, (uint32_t)(avail_phys & 0xFFFFFFFFULL));
-    arm64_virtio_common_write32(VIRTIO_PCI_COMMON_Q_AVAILHI, (uint32_t)(avail_phys >> 32));
-
-    /* Write used ring address (low then high per VirtIO 1.0 spec) */
-    fut_printf("[VIRTIO-GPU] ARM64: Writing used ring: 0x%llx (low=0x%08x high=0x%08x)\n",
-               (unsigned long long)used_phys,
-               (uint32_t)(used_phys & 0xFFFFFFFFULL),
-               (uint32_t)(used_phys >> 32));
-    arm64_virtio_common_write32(VIRTIO_PCI_COMMON_Q_USEDLO, (uint32_t)(used_phys & 0xFFFFFFFFULL));
-    arm64_virtio_common_write32(VIRTIO_PCI_COMMON_Q_USEDHI, (uint32_t)(used_phys >> 32));
-
-    /* Verify ring addresses were accepted by reading them back */
-    uint32_t desc_lo_rb = arm64_virtio_common_read32(VIRTIO_PCI_COMMON_Q_DESCLO);
-    uint32_t desc_hi_rb = arm64_virtio_common_read32(VIRTIO_PCI_COMMON_Q_DESCHI);
-    uint64_t desc_rb = ((uint64_t)desc_hi_rb << 32) | desc_lo_rb;
-    if (desc_rb != queue_phys) {
-        fut_printf("[VIRTIO-GPU] ARM64: WARNING: Descriptor ring address mismatch! Wrote 0x%llx, read 0x%llx\n",
-                   (unsigned long long)queue_phys, (unsigned long long)desc_rb);
-    }
+    arm64_virtio_common_write64(VIRTIO_PCI_COMMON_Q_DESCLO, queue_phys);
+    arm64_virtio_common_write64(VIRTIO_PCI_COMMON_Q_AVAILLO, (uint64_t)g_avail_arm);
+    arm64_virtio_common_write64(VIRTIO_PCI_COMMON_Q_USEDLO, (uint64_t)g_used_arm);
 
     fut_printf("[VIRTIO-GPU] ARM64: Queue 0 addresses: desc=0x%llx avail=0x%llx used=0x%llx size=%u\n",
                (unsigned long long)queue_phys,
-               (unsigned long long)avail_phys,
-               (unsigned long long)used_phys,
+               (unsigned long long)g_avail_arm,
+               (unsigned long long)g_used_arm,
                VIRTIO_RING_SIZE);
 
     arm64_virtio_common_write16(VIRTIO_PCI_COMMON_Q_ENABLE, 1);
-
-    /* Verify queue enable was accepted */
-    uint16_t q_enable_check = arm64_virtio_common_read16(VIRTIO_PCI_COMMON_Q_ENABLE);
-    if (q_enable_check != 1) {
-        fut_printf("[VIRTIO-GPU] ARM64: WARNING: Queue enable verification failed! Read back 0x%x instead of 1\n",
-                   q_enable_check);
-    }
 
     /* Read queue notify offset for calculating notify address */
     g_queue_notify_off_arm = arm64_virtio_common_read16(VIRTIO_PCI_COMMON_Q_NOFF);
@@ -1630,47 +1315,20 @@ int virtio_gpu_init_arm64_pci(uint8_t bus, uint8_t dev, uint8_t func, uint64_t *
     }
 
     /* Set DRIVER_OK */
-    status_check = arm64_virtio_common_read8(VIRTIO_PCI_COMMON_STATUS);
-    arm64_virtio_common_write8(VIRTIO_PCI_COMMON_STATUS, status_check | VIRTIO_CONFIG_S_DRIVER_OK);
-    status_check = arm64_virtio_common_read8(VIRTIO_PCI_COMMON_STATUS);
-    fut_printf("[VIRTIO-GPU] ARM64: Status after DRIVER_OK: 0x%x\n", status_check);
+    arm64_virtio_common_write8(VIRTIO_PCI_COMMON_STATUS,
+                                arm64_virtio_common_read8(VIRTIO_PCI_COMMON_STATUS) | VIRTIO_CONFIG_S_DRIVER_OK);
 
-    if ((status_check & VIRTIO_CONFIG_S_DRIVER_OK) == 0) {
-        fut_printf("[VIRTIO-GPU] ARM64: ERROR: Device did not accept DRIVER_OK status!\n");
-    }
-
-    fut_printf("[VIRTIO-GPU] ARM64: Device initialization complete, final status=0x%x\n", status_check);
+    status = arm64_virtio_common_read8(VIRTIO_PCI_COMMON_STATUS);
+    fut_printf("[VIRTIO-GPU] ARM64: Device initialization complete, final status=0x%x\n", status);
 
     /* Send VirtIO GPU display setup commands */
     fut_printf("[VIRTIO-GPU] ARM64: Sending display setup commands...\n");
 
-    int rc = 0;
-    rc = arm64_virtio_gpu_resource_create_2d(RESOURCE_ID_FB, width, height);
-    if (rc != 0) {
-        fut_printf("[VIRTIO-GPU] ARM64: ERROR: resource_create_2d failed: rc=%d\n", rc);
-    }
-
-    fut_printf("[VIRTIO-GPU] ARM64: Attaching backing: resource=%u phys=0x%llx size=0x%zx (FB size check: expected=0x%zx)\n",
-               RESOURCE_ID_FB, (unsigned long long)fb_phys, g_fb_size_arm, g_fb_size_arm);
-    rc = arm64_virtio_gpu_resource_attach_backing(RESOURCE_ID_FB, fb_phys, g_fb_size_arm);
-    if (rc != 0) {
-        fut_printf("[VIRTIO-GPU] ARM64: ERROR: resource_attach_backing failed: rc=%d\n", rc);
-    }
-
-    rc = arm64_virtio_gpu_set_scanout(SCANOUT_ID, RESOURCE_ID_FB, width, height);  /* CRITICAL: This tells QEMU what to display */
-    if (rc != 0) {
-        fut_printf("[VIRTIO-GPU] ARM64: ERROR: set_scanout failed: rc=%d\n", rc);
-    }
-
-    rc = arm64_virtio_gpu_transfer_to_host_2d(RESOURCE_ID_FB, width, height);
-    if (rc != 0) {
-        fut_printf("[VIRTIO-GPU] ARM64: ERROR: transfer_to_host_2d failed: rc=%d\n", rc);
-    }
-
-    rc = arm64_virtio_gpu_resource_flush(RESOURCE_ID_FB, width, height);
-    if (rc != 0) {
-        fut_printf("[VIRTIO-GPU] ARM64: ERROR: resource_flush failed: rc=%d\n", rc);
-    }
+    arm64_virtio_gpu_resource_create_2d(RESOURCE_ID_FB, width, height);
+    arm64_virtio_gpu_resource_attach_backing(RESOURCE_ID_FB, fb_phys, g_fb_size_arm);
+    arm64_virtio_gpu_set_scanout(SCANOUT_ID, RESOURCE_ID_FB, width, height);  /* CRITICAL: This tells QEMU what to display */
+    arm64_virtio_gpu_transfer_to_host_2d(RESOURCE_ID_FB, width, height);
+    arm64_virtio_gpu_resource_flush(RESOURCE_ID_FB, width, height);
 
     fut_printf("[VIRTIO-GPU] ARM64: Display setup complete\n");
 
@@ -1686,15 +1344,7 @@ void virtio_gpu_flush_display(void) {
     if (!g_framebuffer_arm || g_fb_width_arm == 0 || g_fb_height_arm == 0) {
         return;
     }
-
-    /* Diagnostic: Check if framebuffer has any non-zero data */
-    uint32_t sample_pixels = 0;
-    for (size_t i = 0; i < g_fb_size_arm && i < 4096; i += 4) {
-        sample_pixels |= *(uint32_t *)((volatile uint8_t *)g_framebuffer_arm + i);
-    }
-    fut_printf("[VIRTIO-GPU] ARM64: Flush: FB size=%zu has content=0x%x\n", g_fb_size_arm, sample_pixels);
-
     arm64_virtio_gpu_transfer_to_host_2d(RESOURCE_ID_FB, g_fb_width_arm, g_fb_height_arm);
     arm64_virtio_gpu_resource_flush(RESOURCE_ID_FB, g_fb_width_arm, g_fb_height_arm);
 }
-#endif /* !__x86_64__ (ARM64) */
+#endif /* __x86_64__ */

@@ -1188,11 +1188,19 @@ static int arm64_virtio_gpu_submit_command(const void *cmd, size_t cmd_size) {
                    completed_desc_id, response_length);
 
         /* Log first few bytes of response for debugging */
-        if (response_length >= 4) {
+        if (response_length >= 8) {
+            uint32_t *resp_data = (uint32_t *)resp;
+            fut_printf("[VIRTIO-GPU] ARM64: Response data (first 8 bytes): 0x%08x 0x%08x\n",
+                       resp_data[0], resp_data[1]);
+        } else if (response_length >= 4) {
             uint32_t *resp_data = (uint32_t *)resp;
             fut_printf("[VIRTIO-GPU] ARM64: Response data (first 4 bytes): 0x%08x\n",
                        resp_data[0]);
         }
+
+        /* Log response header fields */
+        fut_printf("[VIRTIO-GPU] ARM64: Response header: type=0x%x flags=0x%x fence_id=0x%x ctx_id=0x%x\n",
+                   resp->type, resp->flags, resp->fence_id, resp->ctx_id);
 
         /* Validate that we got a response for our command
          * Expected descriptor ID should be the command descriptor index we submitted */

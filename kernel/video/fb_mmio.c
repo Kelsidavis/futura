@@ -138,6 +138,10 @@ int fb_probe_from_multiboot(const void *mb_info) {
     bool fb_fallback = true;
     fut_printf("[FB] Auto-enabling fallback for headful mode (WAYLAND_INTERACTIVE_MODE=%d)\n",
                WAYLAND_INTERACTIVE_MODE);
+#elif defined(__aarch64__)
+    /* ARM64: Always enable fallback since direct kernel boot doesn't provide multiboot info */
+    bool fb_fallback = true;
+    fut_printf("[FB] ARM64: Auto-enabling fallback (direct kernel boot)\n");
 #else
     bool fb_fallback = fut_boot_arg_flag("fb-fallback");
 #endif
@@ -420,6 +424,17 @@ void fb_boot_splash(void) {
         return;
     }
 
-    fut_printf("[FB] ARM64: No virtio-gpu-pci device found\n");
+    fut_printf("[FB] ARM64: No virtio-gpu-pci device found, using fallback framebuffer address...\n");
+
+    /* Fall back to hardcoded framebuffer address */
+    g_fb_hw.phys = 0x4000000ULL;
+    g_fb_hw.info.width = 1024;
+    g_fb_hw.info.height = 768;
+    g_fb_hw.info.pitch = g_fb_hw.info.width * 4u;
+    g_fb_hw.info.bpp = 32;
+    g_fb_hw.info.flags = FB_FLAG_LINEAR;
+    g_fb_available = true;
+    fut_printf("[FB] ARM64: Fallback framebuffer initialized at phys=0x%llx (1024x768x32)\n",
+               (unsigned long long)g_fb_hw.phys);
 }
 #endif

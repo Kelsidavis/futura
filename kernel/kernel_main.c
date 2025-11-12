@@ -867,6 +867,9 @@ void fut_kernel_main(void) {
 #ifdef WAYLAND_INTERACTIVE_MODE
     /* In interactive/headful mode, always enable framebuffer for virtio-gpu */
     bool fb_enabled = true;
+#elif defined(__aarch64__)
+    /* ARM64: Enable framebuffer by default for display demos */
+    bool fb_enabled = true;
 #else
     bool fb_enabled = boot_flag_enabled("fb", false);  /* Disabled in favor of wayland */
 #endif

@@ -1148,21 +1148,39 @@ static int arm64_virtio_gpu_submit_command(const void *cmd, size_t cmd_size) {
                        "Expected %u but got %u\n", expected_desc_id, completed_desc_id);
         }
 
-        /* Check response type for errors */
+        /* Check response type for errors and validity */
+        const char *resp_type_str = "UNKNOWN";
+        int is_error = 0;
+
         if ((resp->type & 0x1000) == 0x1200) {
             /* Error response */
-            const char *error_str = "Unknown error";
+            is_error = 1;
             switch (resp->type) {
-                case VIRTIO_GPU_RESP_ERR_UNSPEC: error_str = "Unspecified error"; break;
-                case VIRTIO_GPU_RESP_ERR_OUT_OF_MEMORY: error_str = "Out of memory"; break;
-                case VIRTIO_GPU_RESP_ERR_INVALID_SCANOUT_ID: error_str = "Invalid scanout ID"; break;
-                case VIRTIO_GPU_RESP_ERR_INVALID_RESOURCE_ID: error_str = "Invalid resource ID"; break;
-                case VIRTIO_GPU_RESP_ERR_INVALID_CONTEXT_ID: error_str = "Invalid context ID"; break;
-                case VIRTIO_GPU_RESP_ERR_INVALID_PARAMETER: error_str = "Invalid parameter"; break;
+                case VIRTIO_GPU_RESP_ERR_UNSPEC: resp_type_str = "ERR_UNSPEC"; break;
+                case VIRTIO_GPU_RESP_ERR_OUT_OF_MEMORY: resp_type_str = "ERR_OUT_OF_MEMORY"; break;
+                case VIRTIO_GPU_RESP_ERR_INVALID_SCANOUT_ID: resp_type_str = "ERR_INVALID_SCANOUT_ID"; break;
+                case VIRTIO_GPU_RESP_ERR_INVALID_RESOURCE_ID: resp_type_str = "ERR_INVALID_RESOURCE_ID"; break;
+                case VIRTIO_GPU_RESP_ERR_INVALID_CONTEXT_ID: resp_type_str = "ERR_INVALID_CONTEXT_ID"; break;
+                case VIRTIO_GPU_RESP_ERR_INVALID_PARAMETER: resp_type_str = "ERR_INVALID_PARAMETER"; break;
+                default: resp_type_str = "ERR_UNKNOWN"; break;
             }
             fut_printf("[VIRTIO-GPU] ARM64: ERROR: Device returned error response: 0x%x (%s)\n",
-                       resp->type, error_str);
+                       resp->type, resp_type_str);
             return -1;
+        } else if ((resp->type & 0x1000) == 0x1000) {
+            /* Success response - log type for debugging */
+            if (resp->type == VIRTIO_GPU_RESP_OK_NODATA) {
+                resp_type_str = "OK_NODATA";
+            } else if (resp->type == VIRTIO_GPU_RESP_OK_DISPLAY_INFO) {
+                resp_type_str = "OK_DISPLAY_INFO";
+            } else {
+                resp_type_str = "OK_UNKNOWN";
+            }
+            fut_printf("[VIRTIO-GPU] ARM64: Device response type: 0x%x (%s)\n", resp->type, resp_type_str);
+        } else {
+            /* Unexpected response type - something went wrong */
+            fut_printf("[VIRTIO-GPU] ARM64: WARNING: Unexpected response type 0x%x (not 0x1000 or 0x1200 range)\n",
+                       resp->type);
         }
     } else {
         fut_printf("[VIRTIO-GPU] ARM64: Command %s TIMEOUT (used ring not updated by device)\n",

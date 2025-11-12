@@ -1452,6 +1452,15 @@ int virtio_gpu_init_arm64_pci(uint8_t bus, uint8_t dev, uint8_t func, uint64_t *
     arm64_virtio_common_write32(VIRTIO_PCI_COMMON_Q_USEDLO, (uint32_t)(used_phys & 0xFFFFFFFFULL));
     arm64_virtio_common_write32(VIRTIO_PCI_COMMON_Q_USEDHI, (uint32_t)(used_phys >> 32));
 
+    /* Verify ring addresses were accepted by reading them back */
+    uint32_t desc_lo_rb = arm64_virtio_common_read32(VIRTIO_PCI_COMMON_Q_DESCLO);
+    uint32_t desc_hi_rb = arm64_virtio_common_read32(VIRTIO_PCI_COMMON_Q_DESCHI);
+    uint64_t desc_rb = ((uint64_t)desc_hi_rb << 32) | desc_lo_rb;
+    if (desc_rb != queue_phys) {
+        fut_printf("[VIRTIO-GPU] ARM64: WARNING: Descriptor ring address mismatch! Wrote 0x%llx, read 0x%llx\n",
+                   (unsigned long long)queue_phys, (unsigned long long)desc_rb);
+    }
+
     fut_printf("[VIRTIO-GPU] ARM64: Queue 0 addresses: desc=0x%llx avail=0x%llx used=0x%llx size=%u\n",
                (unsigned long long)queue_phys,
                (unsigned long long)avail_phys,

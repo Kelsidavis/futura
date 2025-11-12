@@ -1098,8 +1098,8 @@ static int arm64_virtio_gpu_submit_command(const void *cmd, size_t cmd_size) {
                    cmd_desc_idx, avail_ring_readback);
     }
 
-    fut_printf("[VIRTIO-GPU] ARM64: Avail ring: old_idx=%u new_idx=%u ring[%u]=%u\n",
-               old_avail_idx, g_avail_arm->idx, avail_idx, cmd_desc_idx);
+    fut_printf("[VIRTIO-GPU] ARM64: Avail ring: old_idx=%u new_idx=%u ring[%u]=%u flags=0x%x\n",
+               old_avail_idx, g_avail_arm->idx, avail_idx, cmd_desc_idx, g_avail_arm->flags);
 
     /* Notify device using VirtIO 1.0 specification:
      * notify_addr = notify_base + (queue_notify_off * notify_off_multiplier)
@@ -1168,6 +1168,10 @@ static int arm64_virtio_gpu_submit_command(const void *cmd, size_t cmd_size) {
         uint16_t used_idx = last_used_idx % VIRTIO_RING_SIZE;
         uint32_t completed_desc_id = g_used_arm->ring[used_idx].id;
         uint32_t response_length = g_used_arm->ring[used_idx].len;
+
+        /* Log used ring structure for diagnostics */
+        fut_printf("[VIRTIO-GPU] ARM64: Used ring: idx=%u used_idx_slot=%u flags=0x%x\n",
+                   final_idx, used_idx, g_used_arm->flags);
 
         /* Validate used ring entry is reasonable */
         if (completed_desc_id >= VIRTIO_RING_SIZE) {

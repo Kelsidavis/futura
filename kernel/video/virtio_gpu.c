@@ -971,6 +971,19 @@ static inline void arm64_virtio_common_write64(uint16_t offset, uint64_t value) 
     __asm__ volatile("dsb sy" ::: "memory");
 }
 
+/* Helper to convert GPU command type to string for logging */
+static const char *arm64_gpu_cmd_name(uint32_t cmd_type) {
+    switch (cmd_type) {
+        case VIRTIO_GPU_CMD_GET_DISPLAY_INFO: return "GET_DISPLAY_INFO";
+        case VIRTIO_GPU_CMD_RESOURCE_CREATE_2D: return "RESOURCE_CREATE_2D";
+        case VIRTIO_GPU_CMD_RESOURCE_ATTACH_BACKING: return "RESOURCE_ATTACH_BACKING";
+        case VIRTIO_GPU_CMD_SET_SCANOUT: return "SET_SCANOUT";
+        case VIRTIO_GPU_CMD_TRANSFER_TO_HOST_2D: return "TRANSFER_TO_HOST_2D";
+        case VIRTIO_GPU_CMD_RESOURCE_FLUSH: return "RESOURCE_FLUSH";
+        default: return "UNKNOWN";
+    }
+}
+
 static int arm64_virtio_gpu_submit_command(const void *cmd, size_t cmd_size) {
     if (!g_desc_table_arm || !g_avail_arm || !g_cmd_buffer_arm || !g_resp_buffer_arm) {
         fut_printf("[VIRTIO-GPU] ARM64: Command queue not initialized\n");
@@ -1014,6 +1027,9 @@ static int arm64_virtio_gpu_submit_command(const void *cmd, size_t cmd_size) {
     g_desc_table_arm[cmd_desc_idx].flags = VIRTQ_DESC_F_NEXT;
     g_desc_table_arm[resp_desc_idx].flags = VIRTQ_DESC_F_WRITE;
 
+    struct virtio_gpu_ctrl_hdr *hdr = (struct virtio_gpu_ctrl_hdr *)cmd;
+    fut_printf("[VIRTIO-GPU] ARM64: Submitting command: %s (type=0x%x)\n",
+               arm64_gpu_cmd_name(hdr->type), hdr->type);
     fut_printf("[VIRTIO-GPU] ARM64: Descriptor chain: cmd[%u]={addr=0x%llx len=%lu flags=0x%x next=%u} resp[%u]={addr=0x%llx len=%u flags=0x%x}\n",
                cmd_desc_idx, cmd_phys, (unsigned long)cmd_size, g_desc_table_arm[cmd_desc_idx].flags, g_desc_table_arm[cmd_desc_idx].next,
                resp_desc_idx, resp_phys, RESP_BUFFER_SIZE, g_desc_table_arm[resp_desc_idx].flags);
@@ -1080,8 +1096,8 @@ static int arm64_virtio_gpu_submit_command(const void *cmd, size_t cmd_size) {
         uint32_t completed_desc_id = g_used_arm->ring[used_idx].id;
         uint32_t response_length = g_used_arm->ring[used_idx].len;
 
-        fut_printf("[VIRTIO-GPU] ARM64: Cmd type=%u response=0x%x (desc_id=%u len=%u)\n",
-                   ((struct virtio_gpu_ctrl_hdr *)cmd)->type, resp->type,
+        fut_printf("[VIRTIO-GPU] ARM64: Command %s completed with response type=0x%x (desc_id=%u len=%u)\n",
+                   arm64_gpu_cmd_name(((struct virtio_gpu_ctrl_hdr *)cmd)->type), resp->type,
                    completed_desc_id, response_length);
 
         /* Validate that we got a response for our command
@@ -1109,8 +1125,8 @@ static int arm64_virtio_gpu_submit_command(const void *cmd, size_t cmd_size) {
             return -1;
         }
     } else {
-        fut_printf("[VIRTIO-GPU] ARM64: Cmd type=%u TIMEOUT (used ring not updated by device)\n",
-                   ((struct virtio_gpu_ctrl_hdr *)cmd)->type);
+        fut_printf("[VIRTIO-GPU] ARM64: Command %s TIMEOUT (used ring not updated by device)\n",
+                   arm64_gpu_cmd_name(((struct virtio_gpu_ctrl_hdr *)cmd)->type));
     }
 
     /* Ensure all device interactions for this command are complete before moving to next */

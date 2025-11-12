@@ -1048,6 +1048,18 @@ static int arm64_virtio_gpu_submit_command(const void *cmd, size_t cmd_size) {
     /* Memory barrier ensures idx increment is visible before device notification */
     __asm__ volatile("dsb sy" ::: "memory");
 
+    /* Verify available ring was updated correctly */
+    uint16_t avail_idx_readback = g_avail_arm->idx;
+    uint16_t avail_ring_readback = g_avail_arm->ring[avail_idx];
+    if (avail_idx_readback != (old_avail_idx + 1)) {
+        fut_printf("[VIRTIO-GPU] ARM64: WARNING: Avail idx readback mismatch! Expected %u, got %u\n",
+                   (old_avail_idx + 1), avail_idx_readback);
+    }
+    if (avail_ring_readback != cmd_desc_idx) {
+        fut_printf("[VIRTIO-GPU] ARM64: WARNING: Avail ring entry mismatch! Expected %u, got %u\n",
+                   cmd_desc_idx, avail_ring_readback);
+    }
+
     fut_printf("[VIRTIO-GPU] ARM64: Avail ring: old_idx=%u new_idx=%u ring[%u]=%u\n",
                old_avail_idx, g_avail_arm->idx, avail_idx, cmd_desc_idx);
 

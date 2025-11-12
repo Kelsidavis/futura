@@ -1191,6 +1191,8 @@ int virtio_gpu_init_arm64_pci(uint8_t bus, uint8_t dev, uint8_t func, uint64_t *
     g_fb_width_arm = width;
     g_fb_height_arm = height;
     g_fb_size_arm = width * height * 4;
+    fut_printf("[VIRTIO-GPU] ARM64: Framebuffer: %ux%u (size=%zu bytes, %zu KB)\n",
+               width, height, g_fb_size_arm, g_fb_size_arm / 1024);
 
     /* Use provided PCI device location */
     g_virtio_bus = bus;
@@ -1468,6 +1470,8 @@ int virtio_gpu_init_arm64_pci(uint8_t bus, uint8_t dev, uint8_t func, uint64_t *
         fut_printf("[VIRTIO-GPU] ARM64: ERROR: resource_create_2d failed: rc=%d\n", rc);
     }
 
+    fut_printf("[VIRTIO-GPU] ARM64: Attaching backing: resource=%u phys=0x%llx size=0x%zx (FB size check: expected=0x%zx)\n",
+               RESOURCE_ID_FB, (unsigned long long)fb_phys, g_fb_size_arm, g_fb_size_arm);
     rc = arm64_virtio_gpu_resource_attach_backing(RESOURCE_ID_FB, fb_phys, g_fb_size_arm);
     if (rc != 0) {
         fut_printf("[VIRTIO-GPU] ARM64: ERROR: resource_attach_backing failed: rc=%d\n", rc);

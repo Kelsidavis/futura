@@ -54,9 +54,6 @@ static int fb_ensure_mapped(struct fb_device *fb) {
 
 #ifdef __x86_64__
     uint64_t flags = PTE_PRESENT | PTE_WRITABLE | pat_choose_page_attr_wc();
-#else
-    uint64_t flags = PTE_PRESENT | PTE_WRITABLE;
-#endif
     int rc = pmap_map(virt_base,
                       phys_base,
                       length,
@@ -64,6 +61,10 @@ static int fb_ensure_mapped(struct fb_device *fb) {
     if (rc != 0) {
         return rc;
     }
+#else
+    /* ARM64: Framebuffer is in RAM with identity mapping, pmap_phys_to_virt already
+     * gives us valid kernel VA. Don't call pmap_map for RAM regions. */
+#endif
 
     fb->kva = (void *)(virt_base + offset);
     fb->hw.length = length;
@@ -115,6 +116,45 @@ static int fb_ioctl(void *inode, void *private_data,
     }
     case FBIOFLUSH: {
         fut_printf("[FB-CHAR] fb_ioctl FBIOFLUSH called\n");
+
+#ifdef __aarch64__
+        /* ARM64: Flush CPU cache for framebuffer region to ensure GPU sees writes */
+        /* Ensure kernel has framebuffer mapped */
+        int rc = fb_ensure_mapped(fb);
+        fut_printf("[FB-CHAR] fb_ensure_mapped returned: %d (kva=%p)\n", rc, fb->kva);
+
+        if (rc == 0 && fb->kva && fb->hw.length > 0) {
+            uint64_t fb_ptr = (uint64_t)fb->kva;
+            uint64_t fb_size = fb->hw.length;
+
+            fut_printf("[FB-CHAR] Flushing cache for kernel FB at 0x%llx size=%llu bytes\n",
+                       (unsigned long long)fb_ptr, (unsigned long long)fb_size);
+
+            /* Clean AND invalidate D-cache for framebuffer memory (dc civac by VA)
+             * This is necessary because user-space may have cached the same physical
+             * memory under a different virtual address. We need both clean (flush to RAM)
+             * and invalidate (remove from cache) to ensure GPU sees fresh data. */
+            for (uint64_t addr = fb_ptr; addr < fb_ptr + fb_size; addr += 64) {
+                __asm__ volatile("dc civac, %0" : : "r"(addr));
+            }
+            __asm__ volatile("dsb sy" ::: "memory");  /* Data sync barrier */
+            fut_printf("[FB-CHAR] ✓ Cache flush complete (cleaned and invalidated)\n");
+
+            /* Diagnostic: Read back first and last pixels to verify they were written */
+            if (fb->kva) {
+                uint32_t *fb_pixels = (uint32_t *)fb->kva;
+                uint32_t first_pixel = fb_pixels[0];
+                uint32_t last_pixel = fb_pixels[(1024 * 768) - 1];
+                fut_printf("[FB-CHAR] Framebuffer content check: first=0x%x last=0x%x (expect 0xFFFFFFFF for white)\n",
+                           (unsigned int)first_pixel, (unsigned int)last_pixel);
+            }
+        } else {
+            fut_printf("[FB-CHAR] WARNING: Could not map framebuffer for cache flush (rc=%d kva=%p)\n", rc, fb->kva);
+            /* Still issue DSB as a fallback */
+            __asm__ volatile("dsb sy" ::: "memory");
+        }
+#endif
+
         extern void virtio_gpu_flush_display(void);
         virtio_gpu_flush_display();
         return 0;
@@ -172,6 +212,8 @@ static void *fb_mmap(void *inode, void *private_data, void *u_addr, size_t len,
 
     fut_printf("[FB-CHAR] fb_mmap called: u_addr=%p len=%zu off=%ld prot=0x%x flags=0x%x\n",
                u_addr, len, (long)off, prot, flags);
+    fut_printf("[FB-CHAR]   PROT_READ=%d PROT_WRITE=%d MAP_SHARED=%d\n",
+               (prot & 0x1) ? 1 : 0, (prot & 0x2) ? 1 : 0, (flags & 0x1) ? 1 : 0);
 
     size_t fb_size = (size_t)fb->hw.info.pitch * fb->hw.info.height;
     if ((off & (PAGE_SIZE - 1)) != 0) {

@@ -7,8 +7,8 @@
  * Essential for file lifecycle management and cleanup operations.
  *
  * Phase 1 (Completed): Basic file deletion with path lookup
- * Phase 2 (Current): Enhanced validation, file type identification, and detailed logging
- * Phase 3: Advanced features (atomic deletion, recursive cleanup)
+ * Phase 2 (Completed): Enhanced validation, file type identification, and detailed logging
+ * Phase 3 (Current): Advanced features (atomic deletion, recursive cleanup)
  * Phase 4: Performance optimization (batched deletion, async cleanup)
  */
 
@@ -77,8 +77,8 @@ static size_t manual_strlen(const char *s) {
  *   }
  *
  * Phase 1 (Completed): Basic file deletion with path lookup
- * Phase 2 (Current): Enhanced validation, file type identification, detailed logging
- * Phase 3: Advanced features (atomic deletion, recursive cleanup)
+ * Phase 2 (Completed): Enhanced validation, file type identification, detailed logging
+ * Phase 3 (Current): Advanced features (atomic deletion, recursive cleanup)
  * Phase 4: Performance optimization (batched deletion, async cleanup)
  */
 long sys_unlink(const char *path) {

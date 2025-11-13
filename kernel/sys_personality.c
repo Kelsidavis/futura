@@ -7,9 +7,9 @@
  * Execution domains provide compatibility with different UNIX variants
  * and control various process behaviors.
  *
- * Phase 1 (Current): Validation and stub implementation
- * Phase 2: Implement personality storage in task structure
- * Phase 3: Enforce personality flags for system call behavior
+ * Phase 1 (Completed): Validation and stub implementation
+ * Phase 2 (Current): Enhanced validation, operation type categorization, detailed logging
+ * Phase 3: Implement personality storage in task structure
  * Phase 4: Full execution domain support for binary compatibility
  */
 
@@ -80,11 +80,11 @@ long sys_personality(unsigned long persona) {
         return -ESRCH;
     }
 
-    /* Check if this is a query operation */
+    /* Phase 2: Check if this is a query operation */
     if (persona == PER_QUERY) {
         unsigned long default_persona = PER_LINUX;
-        fut_printf("[PERSONALITY] personality(PER_QUERY, pid=%d) -> 0x%lx "
-                   "(Phase 1 stub - returning default Linux personality)\n",
+        fut_printf("[PERSONALITY] personality(PER_QUERY [query], pid=%d) -> 0x%lx "
+                   "(Phase 3: task personality storage not yet implemented)\n",
                    task->pid, default_persona);
         return default_persona;
     }
@@ -93,7 +93,7 @@ long sys_personality(unsigned long persona) {
     unsigned long base_persona = persona & 0xFF;
     unsigned long flags = persona & ~0xFF;
 
-    /* Categorize personality type */
+    /* Phase 2: Categorize personality type */
     const char *persona_desc;
     switch (base_persona) {
         case PER_LINUX:       persona_desc = "Linux"; break;
@@ -103,26 +103,33 @@ long sys_personality(unsigned long persona) {
         default:              persona_desc = "unknown"; break;
     }
 
-    /* Categorize flags */
+    /* Phase 2: Categorize flags (may have multiple) */
     const char *flags_desc;
     if (flags == 0) {
         flags_desc = "none";
+    } else if ((flags & ADDR_NO_RANDOMIZE) && (flags & ADDR_LIMIT_32BIT)) {
+        flags_desc = "no ASLR + 32-bit addressing";
     } else if (flags & ADDR_NO_RANDOMIZE) {
         flags_desc = "no ASLR";
     } else if (flags & READ_IMPLIES_EXEC) {
         flags_desc = "read implies exec";
     } else if (flags & ADDR_LIMIT_32BIT) {
         flags_desc = "32-bit addressing";
+    } else if (flags & ADDR_COMPAT_LAYOUT) {
+        flags_desc = "compat layout";
     } else {
         flags_desc = "custom flags";
     }
 
-    /* Phase 1: Accept personality change and return old personality */
+    /* Phase 2: Categorize operation type */
+    const char *operation_type = "set";
+
+    /* Phase 2: Accept personality change and return old personality */
     unsigned long old_persona = PER_LINUX;
 
-    fut_printf("[PERSONALITY] personality(persona=%s, flags=%s, pid=%d) -> 0x%lx "
-               "(Phase 1 stub - no actual change yet)\n",
-               persona_desc, flags_desc, task->pid, old_persona);
+    fut_printf("[PERSONALITY] personality(persona=%s, flags=%s, op=%s, pid=%d) -> 0x%lx "
+               "(Phase 3: task personality storage not yet implemented)\n",
+               persona_desc, flags_desc, operation_type, task->pid, old_persona);
 
     return old_persona;
 }

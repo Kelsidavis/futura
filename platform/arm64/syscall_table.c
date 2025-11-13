@@ -104,6 +104,7 @@ struct sigaltstack {
 extern long sys_sigaction(int signum, const struct sigaction *act, struct sigaction *oldact);
 extern long sys_sigprocmask(int how, const sigset_t *set, sigset_t *oldset);
 extern long sys_sigpending(sigset_t *set);
+extern long sys_sigsuspend(const sigset_t *mask);
 
 /* Timespec structure (for clock_gettime, nanosleep, and timers) */
 struct timespec {
@@ -1295,6 +1296,17 @@ static int64_t sys_rt_sigpending_wrapper(uint64_t set, uint64_t sigsetsize, uint
     (void)sigsetsize; (void)arg2; (void)arg3; (void)arg4; (void)arg5;
     /* For now, ignore sigsetsize and delegate to standard sigpending */
     return sys_sigpending((sigset_t *)set);
+}
+
+/* sys_rt_sigsuspend_wrapper - atomically change signal mask and suspend
+ * x0 = mask, x1 = sigsetsize
+ * Note: ARM64 uses rt_sigsuspend instead of sigsuspend (adds sigsetsize parameter)
+ */
+static int64_t sys_rt_sigsuspend_wrapper(uint64_t mask, uint64_t sigsetsize, uint64_t arg2,
+                                          uint64_t arg3, uint64_t arg4, uint64_t arg5) {
+    (void)sigsetsize; (void)arg2; (void)arg3; (void)arg4; (void)arg5;
+    /* For now, ignore sigsetsize and delegate to standard sigsuspend */
+    return sys_sigsuspend((const sigset_t *)mask);
 }
 
 /* sys_sigaltstack_wrapper - set/get signal stack context
@@ -2618,6 +2630,7 @@ struct syscall_entry {
 #define __NR_rt_sigaction   134
 #define __NR_rt_sigprocmask 135
 #define __NR_rt_sigpending  136
+#define __NR_rt_sigsuspend  137
 #define __NR_rt_sigreturn   139
 #define __NR_setpriority    140
 #define __NR_getpriority    141
@@ -2807,6 +2820,7 @@ static struct syscall_entry syscall_table[MAX_SYSCALL] = {
     [__NR_rt_sigaction] = { (syscall_fn_t)sys_rt_sigaction_wrapper, "rt_sigaction" },
     [__NR_rt_sigprocmask] = { (syscall_fn_t)sys_rt_sigprocmask_wrapper, "rt_sigprocmask" },
     [__NR_rt_sigpending] = { (syscall_fn_t)sys_rt_sigpending_wrapper, "rt_sigpending" },
+    [__NR_rt_sigsuspend] = { (syscall_fn_t)sys_rt_sigsuspend_wrapper, "rt_sigsuspend" },
     [__NR_rt_sigreturn] = { (syscall_fn_t)sys_rt_sigreturn_wrapper, "rt_sigreturn" },
     [__NR_setpriority]  = { (syscall_fn_t)sys_setpriority_wrapper, "setpriority" },
     [__NR_getpriority]  = { (syscall_fn_t)sys_getpriority_wrapper, "getpriority" },

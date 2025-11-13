@@ -82,25 +82,10 @@ extern long sys_writev(int fd, const struct iovec *iov, int iovcnt);
 extern long sys_preadv(int fd, const struct iovec *iov, int iovcnt, int64_t offset);
 extern long sys_pwritev(int fd, const struct iovec *iov, int iovcnt, int64_t offset);
 
-/* Signal handling structures and syscalls */
-typedef void (*sighandler_t)(int);
+/* Forward declarations for signal types (fully defined in signal.h) */
+struct sigaltstack;
 
-struct sigaction {
-    sighandler_t sa_handler;  /* Handler function or SIG_DFL/SIG_IGN */
-    uint64_t     sa_mask;     /* Signals to block during handler */
-    int          sa_flags;    /* Flags (SA_RESTART, etc.) */
-};
-
-typedef struct {
-    uint64_t __mask;
-} sigset_t;
-
-struct sigaltstack {
-    void *ss_sp;      /* Stack base */
-    int ss_flags;     /* SS_DISABLE, SS_ONSTACK */
-    size_t ss_size;   /* Stack size */
-};
-
+/* Signal syscalls (definitions in signal.h) */
 extern long sys_sigaction(int signum, const struct sigaction *act, struct sigaction *oldact);
 extern long sys_sigprocmask(int how, const sigset_t *set, sigset_t *oldset);
 extern long sys_sigpending(sigset_t *set);
@@ -1354,7 +1339,7 @@ static int64_t sys_rt_sigreturn_wrapper(uint64_t arg0, uint64_t arg1, uint64_t a
         ucontext_t uc;
         void (*return_address)(void);
         uint64_t pad;
-    } *sigframe;
+    };
 
     /* Read the signal frame from user space */
     struct rt_sigframe local_frame;

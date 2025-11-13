@@ -23,6 +23,7 @@ struct rusage;
 struct tms;
 struct iovec;
 struct sigaction;
+struct sigaltstack;
 
 #ifndef _SSIZE_T_DEFINED
 #define _SSIZE_T_DEFINED

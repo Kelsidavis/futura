@@ -52,9 +52,18 @@ void arm64_init_boot_thread(void) {
     boot_task->pid = 1;  /* Boot process is PID 1 */
     boot_task->state = FUT_TASK_RUNNING;
 
-    /* Initialize FD table to prevent fork from accessing NULL */
-    boot_task->fd_table = NULL;
-    boot_task->max_fds = 0;
+    /* Initialize FD table - allocate 64 FD slots (matches fut_task_create pattern) */
+    boot_task->max_fds = 64;
+    boot_task->fd_table = (struct fut_file **)fut_malloc(64 * sizeof(struct fut_file *));
+    if (!boot_task->fd_table) {
+        fut_serial_puts("[ARM64_THREAD] ERROR: failed to allocate FD table for boot task\n");
+        return;
+    }
+    /* Zero out FD table entries */
+    for (int i = 0; i < 64; i++) {
+        boot_task->fd_table[i] = NULL;
+    }
+    boot_task->next_fd = 0;
 
     /* Allocate minimal thread structure directly */
     static fut_thread_t boot_thread_storage;

@@ -7,8 +7,8 @@
  * Essential for file ownership management on open files.
  *
  * Phase 1 (Completed): Basic ownership changing with FD lookup
- * Phase 2 (Current): Enhanced validation, uid/gid categorization, and detailed logging
- * Phase 3: Advanced features (capability checks, quota updates)
+ * Phase 2 (Completed): Enhanced validation, uid/gid categorization, and detailed logging
+ * Phase 3 (Current): Advanced features (capability checks, quota updates)
  * Phase 4: Performance optimization (batched ownership updates)
  */
 

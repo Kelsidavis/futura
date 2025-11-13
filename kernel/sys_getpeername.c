@@ -7,8 +7,8 @@
  * Essential for identifying connected clients and network diagnostics.
  *
  * Phase 1 (Completed): Basic validation stub
- * Phase 2 (Current): Full implementation with Unix domain socket support
- * Phase 3: IPv4/IPv6 address family support
+ * Phase 2 (Completed): Full implementation with Unix domain socket support
+ * Phase 3 (Current): IPv4/IPv6 address family support
  * Phase 4: UDP and edge case handling
  */
 
@@ -66,8 +66,8 @@ struct sockaddr_un {
  * - Address is truncated if buffer too small
  *
  * Phase 1 (Completed): Validates parameters and returns stub
- * Phase 2 (Current): Integrate with socket layer to retrieve actual peer address
- * Phase 3: Support different socket families (IPv4, IPv6)
+ * Phase 2 (Completed): Integrate with socket layer to retrieve actual peer address
+ * Phase 3 (Current): Support different socket families (IPv4, IPv6)
  * Phase 4: Handle edge cases (unconnected UDP sockets, etc.)
  *
  * Example: Get peer address for logging

@@ -6,8 +6,8 @@
  * Implements utimensat() for changing file timestamps with nanosecond precision.
  * Essential for touch(1), make(1), and precise timestamp management.
  *
- * Phase 1 (Current): Basic timestamp validation and stub
- * Phase 2: Implement actual timestamp updates via vnode->ops->setattr
+ * Phase 1 (Completed): Basic timestamp validation and stub
+ * Phase 2 (Current): Implement actual timestamp updates via vnode->ops->setattr
  * Phase 3: Full dirfd support and AT_SYMLINK_NOFOLLOW
  * Phase 4: Performance optimization
  */
@@ -94,8 +94,8 @@ extern uint64_t fut_get_time_ns(void);
  * Update symlink timestamps:
  *   utimensat(AT_FDCWD, "symlink", NULL, AT_SYMLINK_NOFOLLOW);
  *
- * Phase 1: Basic timestamp validation and stub
- * Phase 2: Implement actual timestamp updates via vnode->ops->setattr
+ * Phase 1 (Completed): Basic timestamp validation and stub
+ * Phase 2 (Current): Implement actual timestamp updates via vnode->ops->setattr
  * Phase 3: Full dirfd support and AT_SYMLINK_NOFOLLOW
  * Phase 4: Performance optimization
  */

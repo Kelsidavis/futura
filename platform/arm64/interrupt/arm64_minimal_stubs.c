@@ -10,23 +10,12 @@
 #include <string.h>
 
 /* ============================================================
- *   Scheduling Stubs
+ *   Scheduler and Timer Management
+ * ============================================================
+ * NOTE: fut_scheduler_init() and fut_timer_set_timeout() are
+ * implemented in kernel/sched/arm64_process.c and kernel/irq/arm64_irq.c
+ * respectively. Remove stubs that would conflict with real implementations.
  * ============================================================ */
-
-void fut_scheduler_init(void) {
-    /* Stub: Scheduler initialization (basic stub for boot) */
-    return;
-}
-
-/* ============================================================
- *   Timer Management Stubs
- * ============================================================ */
-
-void fut_timer_set_timeout(uint64_t ticks) {
-    /* Stub: Timer configuration for ARM64 */
-    (void)ticks;
-    return;
-}
 
 /* ============================================================
  *   C Library String Functions
@@ -52,20 +41,11 @@ unsigned long __getauxval(unsigned long type) {
 }
 
 /* ============================================================
- *   IRQ Handler Registration Stub
+ *   IRQ Handler Registration
+ * ============================================================
+ * NOTE: fut_register_irq_handler() is implemented in kernel/irq/arm64_irq.c
+ * Remove stub that would conflict with real implementation.
  * ============================================================ */
-
-/**
- * Stub for registering IRQ handlers on ARM64.
- * ARM64 interrupt handling is basic during early platform initialization.
- */
-typedef void (*fut_irq_handler_t)(int, struct fut_interrupt_frame *);
-
-int fut_register_irq_handler(int irq, fut_irq_handler_t handler) {
-    (void)irq;
-    (void)handler;
-    return 0;  /* Success - stub implementation */
-}
 
 /* ============================================================
  *   Serial/Console I/O

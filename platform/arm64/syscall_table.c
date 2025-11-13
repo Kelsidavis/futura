@@ -13,9 +13,14 @@
 
 #include <stdint.h>
 #include <stddef.h>
+#include <errno.h>
 #include <shared/fut_timeval.h>
 #include <shared/fut_timespec.h>
 #include <kernel/fut_vfs.h>
+#include <kernel/uaccess.h>
+#include <kernel/signal_frame.h>
+#include <kernel/signal.h>
+#include <kernel/fut_task.h>
 
 /* Forward declarations */
 extern void fut_serial_puts(const char *str);
@@ -1293,15 +1298,89 @@ static int64_t sys_sigaltstack_wrapper(uint64_t ss, uint64_t old_ss, uint64_t ar
 }
 
 /* sys_rt_sigreturn_wrapper - return from signal handler
- * No arguments
- * Stub implementation: Signal return mechanism not yet implemented
+ * No arguments (SP points to rt_sigframe on user stack)
+ * Restores processor state from signal frame and returns to interrupted code
  */
 static int64_t sys_rt_sigreturn_wrapper(uint64_t arg0, uint64_t arg1, uint64_t arg2,
                                          uint64_t arg3, uint64_t arg4, uint64_t arg5) {
     (void)arg0; (void)arg1; (void)arg2; (void)arg3; (void)arg4; (void)arg5;
-    /* Stub: Signal return not yet implemented */
-    /* Phase 2: Restore context from signal frame and return to interrupted code */
-    return -ENOSYS;
+
+    /* rt_sigreturn doesn't actually return a value in the normal sense.
+     * Instead, it modifies the exception frame that will be restored by
+     * the exception entry code. The return value is ignored.
+     *
+     * The exception frame (fut_interrupt_frame_t) is available globally
+     * and has been set by the exception handler before syscall dispatch.
+     */
+    extern fut_interrupt_frame_t *fut_current_frame;
+    extern int fut_copy_from_user(void *to, const void *from, size_t size);
+    extern int fut_signal_procmask(struct fut_task *task, int how,
+                                   const sigset_t *set, sigset_t *oldset);
+    extern struct fut_task *fut_task_current(void);
+
+    if (!fut_current_frame) {
+        return -EFAULT;  /* No frame available - shouldn't happen */
+    }
+
+    /* The signal frame was pushed onto the user stack.
+     * The SP register in the current frame points to the rt_sigframe.
+     */
+    uint64_t user_sp = fut_current_frame->sp;
+    struct rt_sigframe {
+        siginfo_t info;
+        ucontext_t uc;
+        void (*return_address)(void);
+        uint64_t pad;
+    } *sigframe;
+
+    /* Read the signal frame from user space */
+    struct rt_sigframe local_frame;
+    if (fut_copy_from_user(&local_frame, (void *)user_sp, sizeof(local_frame)) != 0) {
+        return -EFAULT;  /* Bad address */
+    }
+
+    /* Restore general purpose registers x0-x30 from saved context */
+    for (int i = 0; i < 31; i++) {
+        fut_current_frame->x[i] = local_frame.uc.uc_mcontext.gregs.x[i];
+    }
+
+    /* Restore special registers */
+    fut_current_frame->sp = local_frame.uc.uc_mcontext.gregs.sp;
+    fut_current_frame->pc = local_frame.uc.uc_mcontext.gregs.pc;
+    fut_current_frame->pstate = local_frame.uc.uc_mcontext.gregs.pstate;
+    fut_current_frame->far = local_frame.uc.uc_mcontext.gregs.fault_address;
+
+    /* Restore NEON/SIMD registers v0-v31 */
+    for (int i = 0; i < 32; i++) {
+        fut_current_frame->fpu_state[2*i] = (uint64_t)(local_frame.uc.uc_mcontext.gregs.v[i] & 0xFFFFFFFFFFFFFFFFULL);
+        fut_current_frame->fpu_state[2*i+1] = (uint64_t)((local_frame.uc.uc_mcontext.gregs.v[i] >> 64) & 0xFFFFFFFFFFFFFFFFULL);
+    }
+
+    /* Restore floating point control registers */
+    fut_current_frame->fpsr = local_frame.uc.uc_mcontext.gregs.fpsr;
+    fut_current_frame->fpcr = local_frame.uc.uc_mcontext.gregs.fpcr;
+
+    /* Restore signal mask */
+    struct fut_task *current = fut_task_current();
+    if (current) {
+        /* Restore the original signal mask that was in effect before handler */
+        fut_signal_procmask(current, SIGPROCMASK_SETMASK,
+                           (const sigset_t *)&local_frame.uc.uc_sigmask, NULL);
+    }
+
+    /* Clear the signal from pending_signals to indicate it's been handled */
+    /* Note: This is simplified; a full implementation would track which signal
+     * was being handled and clear its bit from pending_signals */
+    if (current && local_frame.info.si_signum > 0 && local_frame.info.si_signum < 32) {
+        uint64_t signal_bit = (1ULL << (local_frame.info.si_signum - 1));
+        current->pending_signals &= ~signal_bit;
+    }
+
+    /* Return 0 to indicate successful context restoration.
+     * The exception entry code will use the modified frame to restore
+     * registers and return to user code via ERET.
+     */
+    return 0;
 }
 
 /* sys_tkill_wrapper - send signal to specific thread

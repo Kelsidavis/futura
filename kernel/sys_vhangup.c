@@ -6,8 +6,8 @@
  * Implements vhangup for revoking access to the controlling terminal.
  * Essential for security: prevents unauthorized terminal access after logout.
  *
- * Phase 1 (Current): Validation and stub implementation
- * Phase 2: Basic terminal session management
+ * Phase 1 (Completed): Validation and stub implementation
+ * Phase 2 (Current): Basic terminal session management
  * Phase 3: Full TTY subsystem integration
  * Phase 4: Terminal security hardening
  */
@@ -167,8 +167,8 @@ extern void fut_printf(const char *fmt, ...);
  * - Clear terminal input/output queues
  * - Mark terminal as hung up
  *
- * Phase 1: Return success (no actual hangup)
- * Phase 2: Basic terminal session management
+ * Phase 1 (Completed): Return success (no actual hangup)
+ * Phase 2 (Current): Basic terminal session management
  * Phase 3: Full TTY subsystem integration with SIGHUP/SIGCONT
  */
 long sys_vhangup(void) {

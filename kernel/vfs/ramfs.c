@@ -1295,6 +1295,90 @@ static int ramfs_rename(struct fut_vnode *old_vnode, const char *oldpath, const 
     return 0;
 }
 
+/**
+ * ramfs_link() - Create a hard link to an existing file
+ *
+ * @old_vnode: Vnode of existing file (source)
+ * @oldpath: Path to existing file
+ * @newpath: Path where hard link should be created
+ *
+ * Creates a new directory entry in the parent of newpath that points to
+ * the same inode as oldpath. Both paths then refer to the same file data.
+ * The link count (nlinks) is incremented.
+ *
+ * Returns: 0 on success, negative error code on failure
+ */
+static int ramfs_link(struct fut_vnode *old_vnode, const char *oldpath, const char *newpath) {
+    extern void fut_printf(const char *, ...);
+
+    (void)oldpath;  /* Not needed for in-memory link */
+
+    if (!old_vnode || !newpath) {
+        return -EINVAL;
+    }
+
+    /* Cannot create hard link to directory (prevents cycles) */
+    if (old_vnode->type == VN_DIR) {
+        return -EISDIR;
+    }
+
+    /* Extract directory and basename from newpath */
+    char new_dirname[256];
+    const char *new_basename = path_extract_basename(newpath, new_dirname, sizeof(new_dirname));
+    if (!new_basename) {
+        return -EINVAL;
+    }
+
+    /* Look up the parent directory for newpath */
+    struct fut_vnode *new_parent = NULL;
+    int ret = fut_vfs_lookup(new_dirname, &new_parent);
+    if (ret < 0) {
+        fut_printf("[RAMFS-LINK] Failed to lookup new parent '%s': %d\n", new_dirname, ret);
+        return ret;
+    }
+
+    /* Parent must be a directory */
+    if (new_parent->type != VN_DIR) {
+        return -ENOTDIR;
+    }
+
+    struct ramfs_node *new_parent_node = (struct ramfs_node *)new_parent->fs_data;
+    if (!new_parent_node) {
+        return -EIO;
+    }
+
+    /* Check if newpath already exists */
+    struct ramfs_dirent *existing = new_parent_node->dir.entries;
+    while (existing) {
+        if (str_cmp(existing->name, new_basename) == 0) {
+            return -EEXIST;  /* Entry already exists */
+        }
+        existing = existing->next;
+    }
+
+    /* Create new directory entry pointing to old_vnode */
+    struct ramfs_dirent *new_entry = fut_malloc(sizeof(struct ramfs_dirent));
+    if (!new_entry) {
+        return -ENOMEM;
+    }
+
+    /* Copy the basename into the entry */
+    str_cpy_bounded(new_entry->name, new_basename, sizeof(new_entry->name));
+
+    /* Point to the same vnode */
+    new_entry->vnode = old_vnode;
+    new_entry->next = new_parent_node->dir.entries;
+    new_parent_node->dir.entries = new_entry;
+
+    /* Increment link count on the vnode */
+    old_vnode->nlinks++;
+
+    fut_printf("[RAMFS-LINK] Created hard link '%s' to ino=%lu (nlinks now %u)\n",
+               new_basename, old_vnode->ino, old_vnode->nlinks);
+
+    return 0;
+}
+
 static const struct fut_vnode_ops ramfs_vnode_ops = {
     .open = ramfs_open,
     .close = ramfs_close,
@@ -1310,7 +1394,8 @@ static const struct fut_vnode_ops ramfs_vnode_ops = {
     .setattr = NULL,
     .sync = ramfs_sync,
     .truncate = ramfs_truncate,
-    .rename = ramfs_rename
+    .rename = ramfs_rename,
+    .link = ramfs_link
 };
 
 /* ============================================================

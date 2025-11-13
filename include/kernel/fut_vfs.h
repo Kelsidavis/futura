@@ -251,6 +251,26 @@ struct fut_vnode_ops {
      *         -EIO: I/O error during operation
      */
     int (*truncate)(struct fut_vnode *vnode, uint64_t length);
+
+    /**
+     * Create a hard link to a vnode (called by link() syscall).
+     *
+     * Creates a new directory entry pointing to an existing vnode, incrementing
+     * its link count. Hard links allow multiple names to reference the same file.
+     *
+     * @param vnode   VNode to create link to
+     * @param oldpath Path to existing file
+     * @param newpath Path where hard link should be created
+     * @return 0 on success, negative error code on failure
+     *         -EEXIST: newpath already exists
+     *         -EISDIR: vnode is a directory (cannot hard link directories)
+     *         -ENOTDIR: newpath parent is not a directory
+     *         -ENOSPC: insufficient space for new directory entry
+     *         -EMLINK: too many hard links to file
+     *         -EROFS: read-only filesystem
+     *         -EACCES: permission denied
+     */
+    int (*link)(struct fut_vnode *vnode, const char *oldpath, const char *newpath);
 };
 
 /* ============================================================

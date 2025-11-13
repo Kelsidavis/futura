@@ -358,43 +358,58 @@ long sys_link(const char *oldpath, const char *newpath) {
                link_count_category, new_buf, new_path_type, current_nlinks, would_be_nlinks);
 
     /*
-     * TODO Phase 3: Implement full hard link support
+     * Phase 3: VFS Integration - Call filesystem-specific link operation
      *
-     * Implementation plan:
-     *   1. Add fut_vfs_link(oldpath, newpath) to kernel/vfs/fut_vfs.c
-     *   2. Add link operation to struct fut_vnode_ops
-     *   3. Verify both paths on same filesystem (check mount points)
-     *   4. Implement in RamFS (kernel/vfs/ramfs.c):
-     *      - Create new directory entry in parent
-     *      - Point to existing inode
-     *      - Increment vnode->nlinks atomically
-     *   5. Implement in FuturaFS (subsystems/futura_fs/):
-     *      - Update directory block with new entry
-     *      - Update inode nlinks on disk
-     *      - Ensure atomic update (journal/log)
-     *      - Handle crash recovery
-     *   6. Add tests in kernel/tests/test_vfs.c
-     *   7. Add host-side tests in tests/test_link.c
-     *   8. Update this syscall to call fut_vfs_link()
-     *   9. Handle all error cases properly
-     *  10. Add link count overflow check (EMLINK)
-     *
-     * Error handling:
-     *   - Verify oldpath and newpath on same mount
-     *   - Check write permission on newpath parent directory
-     *   - Ensure atomic nlinks increment
-     *   - Handle filesystem-specific link limits
-     *
-     * Performance:
-     *   - O(1) operation (no data copying)
-     *   - Only directory entry and metadata update
-     *   - Minimize lock contention on inode
-     *
-     * Security:
-     *   - Check permissions on newpath parent
-     *   - Some systems restrict hard links to owned files
-     *   - Prevent hard links across security boundaries
+     * The vnode's ops->link() function handles the actual hard link creation
+     * in the filesystem (RamFS, FuturaFS, etc). We already have the target
+     * vnode (old_vnode) and have validated that it's not a directory.
      */
+    if (old_vnode->ops && old_vnode->ops->link) {
+        int ret = old_vnode->ops->link(old_vnode, old_buf, new_buf);
+        if (ret < 0) {
+            const char *error_desc;
+            switch (ret) {
+                case -EEXIST:
+                    error_desc = "newpath already exists";
+                    break;
+                case -ENOSPC:
+                    error_desc = "no space for new directory entry";
+                    break;
+                case -EMLINK:
+                    error_desc = "too many hard links to file";
+                    break;
+                case -EROFS:
+                    error_desc = "read-only filesystem";
+                    break;
+                case -ENOTDIR:
+                    error_desc = "newpath parent is not a directory";
+                    break;
+                case -EACCES:
+                    error_desc = "permission denied";
+                    break;
+                default:
+                    error_desc = "link operation failed";
+                    break;
+            }
+            fut_printf("[LINK] link(old='%s' [%s], new='%s' [%s], old_type=%s, "
+                       "old_ino=%lu, old_nlinks=%u) -> %d (%s)\n",
+                       old_buf, old_path_type, new_buf, new_path_type,
+                       file_type_desc, old_vnode->ino, current_nlinks, ret, error_desc);
+            return ret;
+        }
 
+        /* Success */
+        fut_printf("[LINK] link(old='%s' [%s], new='%s' [%s], old_type=%s, "
+                   "old_ino=%lu, old_nlinks=%u->%u) -> 0 (success)\n",
+                   old_buf, old_path_type, new_buf, new_path_type,
+                   file_type_desc, old_vnode->ino, current_nlinks, would_be_nlinks);
+        return 0;
+    }
+
+    /* Filesystem doesn't support hard links */
+    fut_printf("[LINK] link(old='%s' [%s], new='%s' [%s], old_type=%s, "
+               "old_ino=%lu) -> ENOSYS (filesystem doesn't support link)\n",
+               old_buf, old_path_type, new_buf, new_path_type,
+               file_type_desc, old_vnode->ino);
     return -ENOSYS;
 }

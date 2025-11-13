@@ -58,6 +58,9 @@ struct fut_task {
     int signal_handler_flags[31];      // Per-handler flags (SA_RESTART, SA_RESETHAND, etc.)
     uint64_t pending_signals;          // Bitmask of pending signals awaiting delivery
 
+    /* Alarm timer */
+    uint64_t alarm_expires_ms;         // Alarm expiration time in milliseconds (0 = no alarm)
+
     /* File system context */
     uint64_t current_dir_ino;          // Current working directory inode (root=1)
 

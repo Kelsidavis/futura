@@ -9,8 +9,8 @@
  *
  * Phase 1 (Completed): Validation and stub implementations
  * Phase 2 (Completed): Enhanced validation, version checking, parameter categorization, detailed logging
- * Phase 3 (Current): Implement capability storage in task structure
- * Phase 4: Integrate with permission checks throughout kernel
+ * Phase 3 (Completed): Implement capability storage in task structure with task capability access
+ * Phase 4 (Current): Integrate with permission checks throughout kernel
  */
 
 #include <kernel/fut_task.h>
@@ -19,12 +19,29 @@
 #include <stddef.h>
 
 extern void fut_printf(const char *fmt, ...);
+extern fut_task_t *fut_task_current(void);
+extern int fut_copy_to_user(void *to, const void *from, size_t size);
 
 /* Capability version */
 #define _LINUX_CAPABILITY_VERSION_1  0x19980330
 #define _LINUX_CAPABILITY_VERSION_2  0x20071026
 #define _LINUX_CAPABILITY_VERSION_3  0x20080522
 #define _LINUX_CAPABILITY_U32S_3     2  /* Number of u32s for version 3 */
+
+/* Phase 3: Helper function to categorize capability type */
+static const char *categorize_capability(int cap) {
+    switch (cap) {
+        case CAP_CHOWN:            return "ownership (CHOWN)";
+        case CAP_DAC_OVERRIDE:     return "DAC bypass (DAC_OVERRIDE)";
+        case CAP_SETUID:           return "UID privilege (SETUID)";
+        case CAP_SETGID:           return "GID privilege (SETGID)";
+        case CAP_NET_BIND_SERVICE: return "privileged ports (NET_BIND_SERVICE)";
+        case CAP_NET_ADMIN:        return "network admin (NET_ADMIN)";
+        case CAP_SYS_ADMIN:        return "system admin (SYS_ADMIN)";
+        case CAP_SETPCAP:          return "capability transfer (SETPCAP)";
+        default:                   return "other";
+    }
+}
 
 /* Common capabilities (subset) */
 #define CAP_CHOWN            0   /* Change file ownership */
@@ -110,7 +127,8 @@ struct __user_cap_data_struct {
  * - Inheritable: Capabilities preserved across execve()
  *
  * Phase 1 (Completed): Validate parameters and return empty capability sets
- * Phase 2 (Current): Enhanced validation, version checking, capability structure validation
+ * Phase 2 (Completed): Enhanced validation, version checking, capability structure validation
+ * Phase 3 (Current): Retrieve capabilities from task structure and copy to userspace
  */
 long sys_capget(struct __user_cap_header_struct *hdrp,
                 struct __user_cap_data_struct *datap) {
@@ -171,12 +189,42 @@ long sys_capget(struct __user_cap_header_struct *hdrp,
      * Copy task capabilities (effective, permitted, inheritable) to userspace
      */
 
-    /* Phase 3: Task capability retrieval not yet implemented */
-    fut_printf("[CAPABILITY] capget(hdrp=? [version=%s, pid=%s], datap=%p, caller_pid=%d) "
-               "-> ENOSYS (Phase 3: task capability retrieval not yet implemented)\n",
-               version_desc, pid_desc, datap, task->pid);
+    /* Phase 3: Build capability data from task structure */
+    struct __user_cap_data_struct cap_data = {0};
 
-    return -ENOSYS;
+    /* Phase 3: Retrieve effective capabilities (currently active) */
+    cap_data.effective = task->cap_effective & 0xFFFFFFFF;
+
+    /* Phase 3: Retrieve permitted capabilities (can be made effective) */
+    cap_data.permitted = task->cap_permitted & 0xFFFFFFFF;
+
+    /* Phase 3: Retrieve inheritable capabilities (preserved across execve) */
+    cap_data.inheritable = task->cap_inheritable & 0xFFFFFFFF;
+
+    /* Phase 3: Identify highest capability bit set for logging */
+    const char *highest_cap_desc = "none";
+    for (int i = 31; i >= 0; i--) {
+        if (cap_data.effective & (1 << i)) {
+            highest_cap_desc = categorize_capability(i);
+            break;
+        }
+    }
+
+    /* Phase 3: Copy capability data to userspace */
+    if (fut_copy_to_user(datap, &cap_data, sizeof(cap_data)) != 0) {
+        fut_printf("[CAPABILITY] capget(hdrp=? [version=%s, pid=%s], datap=%p, caller_pid=%d) "
+                   "-> EFAULT (failed to copy capability data to userspace)\n",
+                   version_desc, pid_desc, datap, task->pid);
+        return -EFAULT;
+    }
+
+    /* Phase 3: Detailed success logging with capability info */
+    fut_printf("[CAPABILITY] capget(hdrp=? [version=%s, pid=%s], datap=%p [eff=0x%x, "
+               "perm=0x%x, inh=0x%x, highest=%s], caller_pid=%d) -> 0 (capabilities retrieved, Phase 3)\n",
+               version_desc, pid_desc, datap, cap_data.effective, cap_data.permitted,
+               cap_data.inheritable, highest_cap_desc, task->pid);
+
+    return 0;
 }
 
 /**
@@ -208,7 +256,8 @@ long sys_capget(struct __user_cap_header_struct *hdrp,
  * - Cannot add new permitted capabilities without CAP_SETPCAP
  *
  * Phase 1 (Completed): Validate parameters and return success
- * Phase 2 (Current): Enhanced validation, version checking, capability data validation
+ * Phase 2 (Completed): Enhanced validation, version checking, capability data validation
+ * Phase 3 (Current): Store capabilities in task structure with permission checking
  */
 long sys_capset(struct __user_cap_header_struct *hdrp,
                 const struct __user_cap_data_struct *datap) {
@@ -291,10 +340,52 @@ long sys_capset(struct __user_cap_header_struct *hdrp,
      * Store new capabilities in task structure, validate permissions, and update effective set
      */
 
-    /* Phase 3: Task capability setting not yet implemented */
-    fut_printf("[CAPABILITY] capset(hdrp=? [version=%s, pid=%s], datap=? [op=%s], "
-               "caller_pid=%d) -> ENOSYS (Phase 3: task capability storage not yet implemented)\n",
-               version_desc, pid_desc, operation_type, task->pid);
+    /* Phase 3: Retrieve target task (0 = current, >0 = other process) */
+    fut_task_t *target_task = task;  /* Default to current task */
+    if (hdr.pid != 0) {
+        /* Phase 3: For other processes, would need task lookup (simplified to current for now) */
+        if (hdr.pid != task->pid) {
+            fut_printf("[CAPABILITY] capset(hdrp=? [version=%s, pid=%s], datap=? [op=%s], "
+                       "caller_pid=%d) -> EPERM (can only set own capabilities or require CAP_SETPCAP)\n",
+                       version_desc, pid_desc, operation_type, task->pid);
+            return -EPERM;
+        }
+    }
 
-    return -ENOSYS;
+    /* Phase 3: Validate capability mask (can only set within permitted set) */
+    if (data.effective & ~target_task->cap_permitted) {
+        fut_printf("[CAPABILITY] capset(hdrp=? [version=%s, pid=%s], datap=? [op=%s], "
+                   "eff_mask=0x%x, perm=0x%x], caller_pid=%d) -> EPERM "
+                   "(cannot add capabilities outside permitted set)\n",
+                   version_desc, pid_desc, operation_type, data.effective,
+                   target_task->cap_permitted, task->pid);
+        return -EPERM;
+    }
+
+    /* Phase 3: Store old capabilities for before/after comparison */
+    uint32_t old_effective = target_task->cap_effective;
+
+    /* Phase 3: Update task capabilities in structure */
+    target_task->cap_effective = data.effective & 0xFFFFFFFF;
+    if (data.permitted != 0) {
+        target_task->cap_permitted = data.permitted & 0xFFFFFFFF;
+    }
+    if (data.inheritable != 0) {
+        target_task->cap_inheritable = data.inheritable & 0xFFFFFFFF;
+    }
+
+    /* Phase 3: Identify capability changes for logging */
+    uint32_t added_caps = target_task->cap_effective & ~old_effective;
+    uint32_t removed_caps = old_effective & ~target_task->cap_effective;
+    const char *change_type = (added_caps && removed_caps) ? "mixed" :
+                              (added_caps) ? "added" : (removed_caps) ? "removed" : "unchanged";
+
+    /* Phase 3: Detailed success logging with capability change info */
+    fut_printf("[CAPABILITY] capset(hdrp=? [version=%s, pid=%s], datap=? [op=%s, "
+               "eff: 0x%x->0x%x, perm=0x%x, inh=0x%x, change=%s], caller_pid=%d) "
+               "-> 0 (capabilities updated, Phase 3)\n",
+               version_desc, pid_desc, operation_type, old_effective, target_task->cap_effective,
+               target_task->cap_permitted, target_task->cap_inheritable, change_type, task->pid);
+
+    return 0;
 }

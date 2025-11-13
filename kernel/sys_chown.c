@@ -7,8 +7,8 @@
  * Essential for file ownership management and access control.
  *
  * Phase 1 (Completed): Basic ownership changing with vnode lookup
- * Phase 2 (Current): Enhanced validation, ownership identification, and detailed logging
- * Phase 3: Advanced features (lchown support, recursive chown)
+ * Phase 2 (Completed): Enhanced validation, ownership identification, and detailed logging
+ * Phase 3 (Current): Advanced features (lchown support, recursive chown)
  * Phase 4: Performance optimization (ownership change batching)
  */
 

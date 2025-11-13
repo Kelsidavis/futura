@@ -7,8 +7,8 @@
  * Essential for process creation and Unix process model.
  *
  * Phase 1 (Completed): Basic fork with memory cloning and FD inheritance
- * Phase 2 (Current): Enhanced validation, PID categorization, VMA/FD tracking, detailed logging
- * Phase 3: Optimized COW performance, large process handling
+ * Phase 2 (Completed): Enhanced validation, PID categorization, VMA/FD tracking, detailed logging
+ * Phase 3 (Current): Optimized COW performance, large process handling
  * Phase 4: Advanced fork features (vfork, clone with flags, namespace support)
  */
 

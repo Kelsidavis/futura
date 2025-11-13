@@ -71,6 +71,8 @@ extern long sys_pwrite64(unsigned int fd, const void *buf, size_t count, int64_t
 extern long sys_open(const char *pathname, int flags, int mode);
 extern long sys_openat(int dirfd, const char *pathname, int flags, int mode);
 extern long sys_fstat(int fd, void *statbuf);
+extern long sys_getcwd(char *buf, size_t size);
+extern long sys_chdir(const char *pathname);
 extern long sys_echo(const char *u_in, char *u_out, size_t n);
 
 /* iovec structure for vectored I/O */
@@ -586,54 +588,24 @@ static int64_t sys_uname(uint64_t buf_ptr, uint64_t arg1, uint64_t arg2,
     return 0;
 }
 
-/* sys_getcwd - get current working directory
+/* sys_getcwd_wrapper - get current working directory (ARM64 syscall ABI)
  * x0 = buf, x1 = size
+ * Wraps kernel sys_getcwd() for ARM64 calling convention
  */
-static int64_t sys_getcwd(uint64_t buf_ptr, uint64_t size, uint64_t arg2,
-                          uint64_t arg3, uint64_t arg4, uint64_t arg5) {
+static int64_t sys_getcwd_wrapper(uint64_t buf_ptr, uint64_t size, uint64_t arg2,
+                                  uint64_t arg3, uint64_t arg4, uint64_t arg5) {
     (void)arg2; (void)arg3; (void)arg4; (void)arg5;
-
-    if (buf_ptr == 0 || size == 0) {
-        return -EINVAL;
-    }
-
-    /* For now, always return "/" (root directory)
-     * TODO: Implement per-task current directory tracking
-     */
-    char *buf = (char *)buf_ptr;
-    if (size < 2) {
-        return -EINVAL;  /* Buffer too small */
-    }
-
-    buf[0] = '/';
-    buf[1] = '\0';
-
-    return (int64_t)buf_ptr;  /* Success: return buffer pointer */
+    return (int64_t)sys_getcwd((char *)buf_ptr, (size_t)size);
 }
 
-/* sys_chdir - change current working directory
+/* sys_chdir_wrapper - change current working directory (ARM64 syscall ABI)
  * x0 = path
+ * Wraps kernel sys_chdir() for ARM64 calling convention
  */
-static int64_t sys_chdir(uint64_t path_ptr, uint64_t arg1, uint64_t arg2,
-                         uint64_t arg3, uint64_t arg4, uint64_t arg5) {
+static int64_t sys_chdir_wrapper(uint64_t path_ptr, uint64_t arg1, uint64_t arg2,
+                                 uint64_t arg3, uint64_t arg4, uint64_t arg5) {
     (void)arg1; (void)arg2; (void)arg3; (void)arg4; (void)arg5;
-
-    if (path_ptr == 0) {
-        return -EINVAL;
-    }
-
-    const char *path = (const char *)path_ptr;
-
-    /* Basic validation: path must start with '/' */
-    if (path[0] != '/') {
-        return -EINVAL;
-    }
-
-    /* For now, accept any valid path and pretend to change
-     * TODO: Implement per-task current directory tracking
-     */
-    (void)path;
-    return 0;  /* Success */
+    return (int64_t)sys_chdir((const char *)path_ptr);
 }
 
 /* stat structure (simplified) */
@@ -2606,7 +2578,7 @@ static struct syscall_entry syscall_table[MAX_SYSCALL] = {
     [__NR_epoll_create1] = { (syscall_fn_t)sys_epoll_create1_wrapper, "epoll_create1" },
     [__NR_epoll_ctl]    = { (syscall_fn_t)sys_epoll_ctl_wrapper, "epoll_ctl" },
     [__NR_epoll_pwait]  = { (syscall_fn_t)sys_epoll_pwait_wrapper, "epoll_pwait" },
-    [__NR_getcwd]       = { (syscall_fn_t)sys_getcwd,     "getcwd" },
+    [__NR_getcwd]       = { (syscall_fn_t)sys_getcwd_wrapper,     "getcwd" },
     [__NR_dup]          = { (syscall_fn_t)sys_dup_wrapper, "dup" },
     [__NR_dup3]         = { (syscall_fn_t)sys_dup2_wrapper, "dup3/dup2" },
     [__NR_fcntl]        = { (syscall_fn_t)sys_fcntl_wrapper, "fcntl" },
@@ -2636,7 +2608,7 @@ static struct syscall_entry syscall_table[MAX_SYSCALL] = {
     [__NR_ftruncate]    = { (syscall_fn_t)sys_ftruncate_wrapper, "ftruncate" },
     [__NR_fallocate]    = { (syscall_fn_t)sys_fallocate_wrapper, "fallocate" },
     [__NR_faccessat]    = { (syscall_fn_t)sys_faccessat_wrapper, "faccessat" },
-    [__NR_chdir]        = { (syscall_fn_t)sys_chdir,      "chdir" },
+    [__NR_chdir]        = { (syscall_fn_t)sys_chdir_wrapper,      "chdir" },
     [__NR_fchdir]       = { (syscall_fn_t)sys_fchdir_wrapper, "fchdir" },
     [__NR_chroot]       = { (syscall_fn_t)sys_chroot_wrapper, "chroot" },
     [__NR_fchmod]       = { (syscall_fn_t)sys_fchmod_wrapper, "fchmod" },
@@ -2805,8 +2777,8 @@ static struct syscall_entry syscall_table[MAX_SYSCALL] = {
     [59] = { (syscall_fn_t)sys_execve_wrapper, "execve" },  /* SYS_execve = 59 */
     [60] = { (syscall_fn_t)sys_exit, "exit" },  /* SYS_exit = 60 */
     [61] = { (syscall_fn_t)sys_waitpid_wrapper, "wait4/waitpid" },  /* SYS_wait4/waitpid = 61 */
-    [79] = { (syscall_fn_t)sys_getcwd, "getcwd" },  /* SYS_getcwd = 79 */
-    [80] = { (syscall_fn_t)sys_chdir, "chdir" },    /* SYS_chdir = 80 */
+    [79] = { (syscall_fn_t)sys_getcwd_wrapper, "getcwd" },  /* SYS_getcwd = 79 */
+    [80] = { (syscall_fn_t)sys_chdir_wrapper, "chdir" },    /* SYS_chdir = 80 */
     [83] = { (syscall_fn_t)sys_mkdir_wrapper, "mkdir" },  /* SYS_mkdir = 83 (2-arg version) */
     [84] = { (syscall_fn_t)sys_rmdir_wrapper, "rmdir" },  /* SYS_rmdir = 84 */
     [87] = { (syscall_fn_t)sys_unlink_wrapper, "unlink" },  /* SYS_unlink = 87 */

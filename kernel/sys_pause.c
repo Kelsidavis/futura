@@ -46,75 +46,44 @@ long sys_pause(void) {
         return -ESRCH;
     }
 
-    /* Phase 2: Check for pending signals and report state */
-    int pending_signals = 0;
-    int first_pending = -1;
-
-    /* Check all standard signals for pending status */
-    for (int signum = 1; signum < _NSIG; signum++) {
-        if (fut_signal_is_pending(task, signum)) {
-            pending_signals++;
-            if (first_pending == -1) {
-                first_pending = signum;
-            }
-        }
-    }
-
-    /* Build signal name for logging */
-    const char *signal_name = "UNKNOWN";
-    if (first_pending > 0) {
-        switch (first_pending) {
-            case SIGHUP:   signal_name = "SIGHUP"; break;
-            case SIGINT:   signal_name = "SIGINT"; break;
-            case SIGQUIT:  signal_name = "SIGQUIT"; break;
-            case SIGILL:   signal_name = "SIGILL"; break;
-            case SIGTRAP:  signal_name = "SIGTRAP"; break;
-            case SIGABRT:  signal_name = "SIGABRT"; break;
-            case SIGBUS:   signal_name = "SIGBUS"; break;
-            case SIGFPE:   signal_name = "SIGFPE"; break;
-            case SIGKILL:  signal_name = "SIGKILL"; break;
-            case SIGUSR1:  signal_name = "SIGUSR1"; break;
-            case SIGSEGV:  signal_name = "SIGSEGV"; break;
-            case SIGUSR2:  signal_name = "SIGUSR2"; break;
-            case SIGPIPE:  signal_name = "SIGPIPE"; break;
-            case SIGALRM:  signal_name = "SIGALRM"; break;
-            case SIGTERM:  signal_name = "SIGTERM"; break;
-            case SIGCHLD:  signal_name = "SIGCHLD"; break;
-            case SIGCONT:  signal_name = "SIGCONT"; break;
-            case SIGSTOP:  signal_name = "SIGSTOP"; break;
-            case SIGTSTP:  signal_name = "SIGTSTP"; break;
-            case SIGTTIN:  signal_name = "SIGTTIN"; break;
-            case SIGTTOU:  signal_name = "SIGTTOU"; break;
-            default: signal_name = "UNKNOWN"; break;
-        }
-    }
-
-    if (pending_signals > 0) {
-        if (pending_signals == 1) {
-            fut_printf("[PAUSE] pause() by task %llu -> EINTR (1 pending signal: %s, Phase 2: not blocking)\n",
-                       task->pid, signal_name);
-        } else {
-            fut_printf("[PAUSE] pause() by task %llu -> EINTR (%d pending signals, first: %s, Phase 2: not blocking)\n",
-                       task->pid, pending_signals, signal_name);
-        }
-    } else {
-        fut_printf("[PAUSE] pause() by task %llu -> EINTR (no pending signals, Phase 2: not blocking)\n",
-                   task->pid);
-    }
-
-    /* Phase 2: Still returns immediately, but with better diagnostics
-     * Phase 3: Will block task on wait queue
-     * Phase 4: Signal delivery path will set EINTR and resume task
+    /* Phase 3: Block on wait queue until signal arrives
      *
-     * Future implementation (Phase 3+):
-     * if (pending_signals > 0) {
-     *     // Signal already pending, return immediately
-     *     return -EINTR;
-     * }
-     * // No pending signal, block until one arrives
-     * fut_waitq_sleep_interruptible(&task->signal_waitq);
-     * // When woken by signal delivery, return -EINTR
+     * If a signal is already pending (queued earlier), return immediately
+     * with -EINTR. Otherwise, sleep on the signal_waitq until signal_send()
+     * wakes us up during signal delivery.
+     *
+     * When a signal is delivered:
+     * 1. Signal delivery code calls fut_waitq_wake_one(&task->signal_waitq)
+     * 2. pause() wakes up and returns -EINTR
+     * 3. Exception handler catches -EINTR return and invokes signal handler
+     * 4. Signal handler executes, then control returns to user code
+     *
+     * The task is responsible for checking if a signal is already pending
+     * before blocking. This prevents a race where signal arrives between
+     * the check and the sleep.
      */
+
+    /* Check if any signal is already pending (not blocked) */
+    uint64_t unblocked_pending = task->pending_signals & ~task->signal_mask;
+
+    if (unblocked_pending > 0) {
+        /* Signal already pending, return immediately and let exception
+         * handler deliver it. */
+        fut_printf("[PAUSE] pause() by task %llu -> EINTR (signal already pending, not blocking)\n",
+                   task->pid);
+        return -EINTR;
+    }
+
+    /* No pending signals, block until one arrives */
+    fut_printf("[PAUSE] pause() by task %llu -> blocking on signal_waitq\n", task->pid);
+
+    /* Block on wait queue (this is a simple blocking sleep, signal delivery will wake us) */
+    fut_waitq_sleep_locked(&task->signal_waitq, NULL, task);
+
+    /* When we wake up, a signal has been delivered. Return -EINTR to let
+     * the exception handler invoke the signal handler. */
+    fut_printf("[PAUSE] pause() by task %llu -> woke up (signal delivered), returning -EINTR\n",
+               task->pid);
 
     /* pause() always returns -EINTR (interrupted by signal) when it returns.
      * It never returns 0 or any other value. The only way pause() doesn't

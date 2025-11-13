@@ -67,8 +67,8 @@ extern void fut_printf(const char *fmt, ...);
  * - Can be used to detect unauthorized activity
  *
  * Phase 1 (Completed): Validate parameters and accept enable/disable requests
- * Phase 2 (Current): Enhanced validation, file path categorization, operation type detection
- * Phase 3: Open accounting file and initialize record structure
+ * Phase 2 (Completed): Enhanced validation, file path categorization, operation type detection
+ * Phase 3 (Current): Open accounting file and initialize record structure
  * Phase 4: Generate and write accounting records on process exit
  */
 long sys_acct(const char *filename) {

@@ -7,8 +7,8 @@
  * Provides efficient polling of many file descriptors with event notification.
  *
  * Phase 1 (Completed): Basic implementation with event registration and polling
- * Phase 2 (Current): Enhanced validation, parameter categorization, detailed logging
- * Phase 3: Advanced event detection, edge-triggered mode, oneshot support
+ * Phase 2 (Completed): Enhanced validation, parameter categorization, detailed logging
+ * Phase 3 (Current): Advanced event detection, edge-triggered mode, oneshot support
  * Phase 4: Performance optimization, memory pooling, scalability improvements
  */
 

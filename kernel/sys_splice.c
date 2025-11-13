@@ -7,10 +7,10 @@
  * These syscalls enable zero-copy data movement between file descriptors
  * and memory, essential for high-performance applications.
  *
- * Phase 1 (Current): Validation and stub implementations
- * Phase 2: Implement pipe-based zero-copy transfers
- * Phase 3: Add page cache integration for file-to-file transfers
- * Phase 4: Performance optimization with async I/O
+ * Phase 1 (Completed): Validation and stub implementations with parameter categorization
+ * Phase 2 (Current): Enhanced validation, operation type categorization, detailed logging
+ * Phase 3: Implement pipe-based zero-copy transfers
+ * Phase 4: Add page cache integration for file-to-file transfers
  */
 
 #include <kernel/fut_task.h>
@@ -67,9 +67,10 @@ extern void fut_printf(const char *fmt, ...);
  * 3. Pipe to socket (zero-copy network send):
  *    splice(pipe_fd, NULL, socket_fd, NULL, len, SPLICE_F_MOVE | SPLICE_F_MORE);
  *
- * Phase 1: Validate parameters and return dummy count
- * Phase 2: Implement pipe-based transfers
- * Phase 3: Add page cache integration for files
+ * Phase 1 (Completed): Validate parameters and return dummy count
+ * Phase 2 (Current): Enhanced validation and operation categorization with detailed logging
+ * Phase 3: Implement pipe-based transfers
+ * Phase 4: Add page cache integration for files
  */
 long sys_splice(int fd_in, int64_t *off_in, int fd_out, int64_t *off_out,
                 size_t len, unsigned int flags) {
@@ -160,8 +161,9 @@ long sys_splice(int fd_in, int64_t *off_in, int fd_out, int64_t *off_out,
  *
  * SPLICE_F_GIFT tells kernel it can take ownership of the pages.
  *
- * Phase 1: Validate parameters and return dummy count
- * Phase 2: Map user pages and add to pipe buffer
+ * Phase 1 (Completed): Validate parameters and return dummy count
+ * Phase 2 (Current): Enhanced validation and segment categorization with detailed logging
+ * Phase 3: Map user pages and add to pipe buffer
  */
 long sys_vmsplice(int fd, const void *iov, size_t nr_segs, unsigned int flags) {
     fut_task_t *task = fut_task_current();
@@ -231,8 +233,9 @@ long sys_vmsplice(int fd, const void *iov, size_t nr_segs, unsigned int flags) {
  *   tee(input_pipe, log_pipe, len, 0);
  *   // Now input_pipe and log_pipe both have the same data
  *
- * Phase 1: Validate parameters and return dummy count
- * Phase 2: Duplicate pipe buffer pages
+ * Phase 1 (Completed): Validate parameters and return dummy count
+ * Phase 2 (Current): Enhanced validation and sanity checks with detailed logging
+ * Phase 3: Duplicate pipe buffer pages
  */
 long sys_tee(int fd_in, int fd_out, size_t len, unsigned int flags) {
     fut_task_t *task = fut_task_current();
@@ -303,8 +306,9 @@ long sys_tee(int fd_in, int fd_out, size_t len, unsigned int flags) {
  *                   SYNC_FILE_RANGE_WRITE |
  *                   SYNC_FILE_RANGE_WAIT_AFTER);
  *
- * Phase 1: Validate parameters and return success
- * Phase 2: Integrate with page cache writeback
+ * Phase 1 (Completed): Validate parameters and return success
+ * Phase 2 (Current): Enhanced validation, sync type categorization, detailed logging
+ * Phase 3: Integrate with page cache writeback
  */
 long sys_sync_file_range(int fd, int64_t offset, int64_t nbytes, unsigned int flags) {
     fut_task_t *task = fut_task_current();

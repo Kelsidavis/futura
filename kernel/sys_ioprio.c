@@ -6,9 +6,9 @@
  * Implements I/O priority syscalls for managing I/O scheduling classes and priorities.
  * Essential for prioritizing disk I/O in mixed workloads (e.g., interactive vs batch).
  *
- * Phase 1 (Current): Validation and stub implementations
- * Phase 2: Integrate with I/O scheduler
- * Phase 3: Per-process and per-thread I/O priority management
+ * Phase 1 (Completed): Validation and stub implementations
+ * Phase 2 (Current): Enhanced validation, "who" ID categorization, detailed logging
+ * Phase 3: Integrate with I/O scheduler
  * Phase 4: Performance optimization with CFQ/deadline schedulers
  */
 
@@ -87,6 +87,13 @@ long sys_ioprio_set(int which, int who, int ioprio) {
         return -EINVAL;
     }
 
+    /* Phase 2: Validate who parameter (0 = current, otherwise specific ID) */
+    if (who < 0) {
+        fut_printf("[IOPRIO] ioprio_set(which=%d, who=%d [invalid], ioprio=0x%x, pid=%d) "
+                   "-> EINVAL (negative who)\n", which, who, ioprio, task->pid);
+        return -EINVAL;
+    }
+
     /* Extract class and priority */
     int class = IOPRIO_PRIO_CLASS(ioprio);
     int data = IOPRIO_PRIO_DATA(ioprio);
@@ -114,6 +121,14 @@ long sys_ioprio_set(int which, int who, int ioprio) {
         default:                 which_desc = "unknown"; break;
     }
 
+    /* Phase 2: Categorize who ID */
+    const char *who_desc;
+    if (who == 0) {
+        who_desc = "current";
+    } else {
+        who_desc = "specific";
+    }
+
     const char *class_desc;
     switch (class) {
         case IOPRIO_CLASS_NONE: class_desc = "none"; break;
@@ -123,12 +138,12 @@ long sys_ioprio_set(int which, int who, int ioprio) {
         default:                class_desc = "unknown"; break;
     }
 
-    /* Phase 1: Accept I/O priority setting */
-    fut_printf("[IOPRIO] ioprio_set(which=%s, who=%d, class=%s, priority=%d, pid=%d) -> 0 "
-               "(Phase 1 stub - no actual priority change yet)\n",
-               which_desc, who, class_desc, data, task->pid);
+    /* Phase 2: Enhanced logging with parameter categorization */
+    fut_printf("[IOPRIO] ioprio_set(which=%s, who=%d [%s], class=%s, priority=%d, pid=%d) -> ENOSYS "
+               "(Phase 3: I/O scheduler integration not yet implemented)\n",
+               which_desc, who, who_desc, class_desc, data, task->pid);
 
-    return 0;
+    return -ENOSYS;
 }
 
 /**
@@ -167,6 +182,13 @@ long sys_ioprio_get(int which, int who) {
         return -EINVAL;
     }
 
+    /* Phase 2: Validate who parameter (0 = current, otherwise specific ID) */
+    if (who < 0) {
+        fut_printf("[IOPRIO] ioprio_get(which=%d, who=%d [invalid], pid=%d) -> EINVAL (negative who)\n",
+                   which, who, task->pid);
+        return -EINVAL;
+    }
+
     /* Categorize operation */
     const char *which_desc;
     switch (which) {
@@ -176,12 +198,18 @@ long sys_ioprio_get(int which, int who) {
         default:                 which_desc = "unknown"; break;
     }
 
-    /* Phase 1: Return default I/O priority (best-effort class, priority 4) */
-    int default_ioprio = IOPRIO_PRIO_VALUE(IOPRIO_CLASS_BE, 4);
+    /* Phase 2: Categorize who ID */
+    const char *who_desc;
+    if (who == 0) {
+        who_desc = "current";
+    } else {
+        who_desc = "specific";
+    }
 
-    fut_printf("[IOPRIO] ioprio_get(which=%s, who=%d, pid=%d) -> 0x%x "
-               "(Phase 1 stub - returning default BE priority)\n",
-               which_desc, who, task->pid, default_ioprio);
+    /* Phase 2: Enhanced logging with parameter categorization */
+    fut_printf("[IOPRIO] ioprio_get(which=%s, who=%d [%s], pid=%d) -> ENOSYS "
+               "(Phase 3: I/O priority retrieval not yet implemented)\n",
+               which_desc, who, who_desc, task->pid);
 
-    return default_ioprio;
+    return -ENOSYS;
 }

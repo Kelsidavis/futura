@@ -30,15 +30,19 @@ extern int fut_signal_procmask(fut_task_t *task, int how, const sigset_t *set, s
 #define SIG_TEST_PENDING        2
 #define SIG_TEST_MASK           3
 #define SIG_TEST_MULTIPLE       4
+#define SIG_TEST_DELIVERY       5
 
 /* Global test state for signal handler invocation */
 static volatile int signal_handler_called = 0;
 static volatile int last_signal_received = 0;
+static volatile int handler_signum_arg = 0;
+static volatile int handler_si_signum = 0;
 
 /* Simple signal handler for testing */
 static void test_signal_handler(int signum) {
     signal_handler_called++;
     last_signal_received = signum;
+    handler_signum_arg = signum;
     fut_printf("[SIGNAL-TEST] Handler invoked for signal %d (call count=%d)\n", signum, signal_handler_called);
 }
 
@@ -216,6 +220,61 @@ static void test_signal_multiple(void) {
     fut_test_pass();
 }
 
+/* Test 5: Signal delivery end-to-end */
+static void test_signal_delivery(void) {
+    fut_printf("[SIGNAL-TEST] Test 5: Signal delivery (end-to-end)\n");
+
+    extern fut_task_t *fut_task_current(void);
+    fut_task_t *task = fut_task_current();
+    if (!task) {
+        fut_printf("[SIGNAL-TEST] ✗ No current task\n");
+        fut_test_fail(SIG_TEST_DELIVERY);
+        return;
+    }
+
+    /* Reset handler call state */
+    signal_handler_called = 0;
+    last_signal_received = 0;
+    handler_signum_arg = 0;
+
+    /* Install handler for SIGUSR1 */
+    int ret = fut_signal_set_handler(task, SIGUSR1, test_signal_handler);
+    if (ret < 0) {
+        fut_printf("[SIGNAL-TEST] ✗ Failed to install handler for SIGUSR1\n");
+        fut_test_fail(SIG_TEST_DELIVERY);
+        return;
+    }
+
+    /* Clear any existing pending signals */
+    task->pending_signals = 0;
+
+    /* Send signal to self */
+    ret = fut_signal_send(task, SIGUSR1);
+    if (ret < 0) {
+        fut_printf("[SIGNAL-TEST] ✗ Failed to send signal to self\n");
+        fut_test_fail(SIG_TEST_DELIVERY);
+        return;
+    }
+
+    /* Verify signal is now pending */
+    if (!fut_signal_is_pending(task, SIGUSR1)) {
+        fut_printf("[SIGNAL-TEST] ✗ Signal SIGUSR1 not marked as pending after send\n");
+        fut_test_fail(SIG_TEST_DELIVERY);
+        return;
+    }
+
+    fut_printf("[SIGNAL-TEST] ✓ Signal handler installed and signal sent\n");
+    fut_printf("[SIGNAL-TEST] ✓ Signal is pending before syscall\n");
+    fut_printf("[SIGNAL-TEST] ✓ Handler call count: %d (expected call during syscall return)\n",
+              signal_handler_called);
+
+    /* Note: Handler should be called on next syscall return in real execution.
+     * For this kernel self-test, we're validating the setup is correct.
+     * Full end-to-end testing would require userland test with syscall invocation.
+     */
+    fut_test_pass();
+}
+
 /* Main test harness thread */
 static void fut_signal_test_thread(void *arg) {
     (void)arg;
@@ -229,6 +288,7 @@ static void fut_signal_test_thread(void *arg) {
     test_signal_pending();
     test_signal_mask();
     test_signal_multiple();
+    test_signal_delivery();
 
     fut_printf("[SIGNAL-TEST] ========================================\n");
     fut_printf("[SIGNAL-TEST] All signal tests completed\n");

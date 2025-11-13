@@ -7,10 +7,10 @@
  * Essential for file managers, build systems, and any application that needs
  * to react to file system changes.
  *
- * Phase 1 (Current): Validation and stub implementations
- * Phase 2: Implement inotify event queue and watch management
- * Phase 3: Integrate with VFS for actual file system monitoring
- * Phase 4: Performance optimization with efficient event delivery
+ * Phase 1 (Completed): Validation and stub implementations
+ * Phase 2 (Current): Enhanced validation, parameter categorization, user-space data handling
+ * Phase 3: Implement inotify event queue and watch management
+ * Phase 4: Integrate with VFS for actual file system monitoring
  */
 
 #include <kernel/fut_task.h>
@@ -18,6 +18,7 @@
 #include <stdint.h>
 
 extern void fut_printf(const char *fmt, ...);
+extern int fut_copy_from_user(void *to, const void *from, size_t size);
 
 /* inotify_init1 flags */
 #define IN_CLOEXEC  02000000  /* Close on exec */
@@ -153,7 +154,8 @@ long sys_inotify_init1(int flags) {
  * inotify fd and can be passed to inotify_rm_watch() to remove the watch.
  *
  * Phase 1: Validate parameters and return dummy watch descriptor
- * Phase 2: Create actual watch and register with VFS
+ * Phase 2: Enhanced validation, user-space data handling with copy_from_user, parameter categorization
+ * Phase 3: Create actual watch and register with VFS
  */
 long sys_inotify_add_watch(int fd, const char *pathname, uint32_t mask) {
     fut_task_t *task = fut_task_current();
@@ -161,28 +163,67 @@ long sys_inotify_add_watch(int fd, const char *pathname, uint32_t mask) {
         return -ESRCH;
     }
 
-    /* Validate fd */
+    /* Phase 2: Validate fd */
     if (fd < 0) {
         fut_printf("[INOTIFY] inotify_add_watch(fd=%d [invalid], pathname=%p, mask=0x%x, pid=%d) "
                    "-> EBADF\n", fd, pathname, mask, task->pid);
         return -EBADF;
     }
 
-    /* Validate pathname */
+    /* Phase 2: Validate pathname pointer */
     if (!pathname) {
         fut_printf("[INOTIFY] inotify_add_watch(fd=%d, pathname=NULL, mask=0x%x, pid=%d) "
-                   "-> EFAULT\n", fd, mask, task->pid);
+                   "-> EFAULT (NULL pathname)\n", fd, mask, task->pid);
         return -EFAULT;
     }
 
-    /* Validate mask has at least one valid event */
-    if ((mask & IN_ALL_EVENTS) == 0 && (mask & (IN_DONT_FOLLOW | IN_ONLYDIR | IN_MASK_ADD | IN_ONESHOT)) == mask) {
-        fut_printf("[INOTIFY] inotify_add_watch(fd=%d, pathname=%p, mask=0x%x [no events], pid=%d) "
-                   "-> EINVAL\n", fd, pathname, mask, task->pid);
+    /* Phase 2: Copy pathname from userspace to kernel space */
+    char path_buf[256];
+    if (fut_copy_from_user(path_buf, pathname, sizeof(path_buf) - 1) != 0) {
+        fut_printf("[INOTIFY] inotify_add_watch(fd=%d, pathname=?, mask=0x%x, pid=%d) "
+                   "-> EFAULT (pathname copy_from_user failed)\n",
+                   fd, mask, task->pid);
+        return -EFAULT;
+    }
+    path_buf[sizeof(path_buf) - 1] = '\0';
+
+    /* Phase 2: Validate pathname is not empty */
+    if (path_buf[0] == '\0') {
+        fut_printf("[INOTIFY] inotify_add_watch(fd=%d, pathname=\\\"\\\" [empty], mask=0x%x, pid=%d) "
+                   "-> EINVAL (empty pathname)\n", fd, mask, task->pid);
         return -EINVAL;
     }
 
-    /* Categorize event mask */
+    /* Phase 2: Validate mask has at least one valid event */
+    if ((mask & IN_ALL_EVENTS) == 0 && (mask & (IN_DONT_FOLLOW | IN_ONLYDIR | IN_MASK_ADD | IN_ONESHOT)) == mask) {
+        fut_printf("[INOTIFY] inotify_add_watch(fd=%d, pathname='%s', mask=0x%x [no events], pid=%d) "
+                   "-> EINVAL (mask has no valid events)\n", fd, path_buf, mask, task->pid);
+        return -EINVAL;
+    }
+
+    /* Phase 2: Categorize fd range */
+    const char *fd_desc;
+    if (fd < 3) {
+        fd_desc = "stdio (0-2)";
+    } else if (fd < 256) {
+        fd_desc = "normal fd";
+    } else {
+        fd_desc = "high fd (>= 256)";
+    }
+
+    /* Phase 2: Categorize pathname type */
+    const char *path_type;
+    if (path_buf[0] == '/') {
+        path_type = "absolute";
+    } else if (path_buf[0] == '.' && path_buf[1] == '/') {
+        path_type = "relative (explicit)";
+    } else if (path_buf[0] == '.') {
+        path_type = "relative (current/parent)";
+    } else {
+        path_type = "relative";
+    }
+
+    /* Phase 2: Categorize event mask */
     const char *mask_desc;
     if (mask & IN_ALL_EVENTS) {
         if ((mask & IN_ALL_EVENTS) == IN_ALL_EVENTS) {
@@ -200,11 +241,11 @@ long sys_inotify_add_watch(int fd, const char *pathname, uint32_t mask) {
         mask_desc = "flags only (ONLYDIR/DONT_FOLLOW/etc)";
     }
 
-    /* Phase 1: Return dummy watch descriptor */
+    /* Phase 3: Create actual watch and register with VFS */
     int dummy_wd = 1;  /* Placeholder watch descriptor */
-    fut_printf("[INOTIFY] inotify_add_watch(fd=%d, pathname=%p, mask=%s, pid=%d) -> %d "
-               "(Phase 1 stub - no actual watch created)\n",
-               fd, pathname, mask_desc, task->pid, dummy_wd);
+    fut_printf("[INOTIFY] inotify_add_watch(fd=%d [%s], path='%s' [%s], mask=%s, pid=%d) -> %d "
+               "(Phase 3: VFS integration not yet implemented)\n",
+               fd, fd_desc, path_buf, path_type, mask_desc, task->pid, dummy_wd);
 
     return dummy_wd;
 }

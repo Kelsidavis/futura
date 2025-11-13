@@ -7,8 +7,8 @@
  * Essential for permission checking before file operations.
  *
  * Phase 1 (Completed): Basic file existence and permission checking
- * Phase 2 (Current): Enhanced validation, mode identification, and detailed logging
- * Phase 3: Advanced permission models (uid/gid checking, ACLs)
+ * Phase 2 (Completed): Enhanced validation, mode identification, and detailed logging
+ * Phase 3 (Current): Advanced permission models (uid/gid checking, ACLs)
  * Phase 4: Performance optimization (permission caching)
  */
 

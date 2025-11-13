@@ -7,8 +7,8 @@
  * Essential for proper resource management.
  *
  * Phase 1 (Completed): Basic close with socket and file support
- * Phase 2 (Current): Enhanced validation, FD type identification, and detailed logging
- * Phase 3: Reference counting and delayed close for shared descriptors
+ * Phase 2 (Completed): Enhanced validation, FD type identification, and detailed logging
+ * Phase 3 (Current): Reference counting and delayed close for shared descriptors
  * Phase 4: Advanced features (close-on-exec handling, close_range support)
  */
 
@@ -85,8 +85,8 @@ extern int release_socket_fd(int fd);
  *   close(fd);  // Returns -EBADF (fd no longer valid)
  *
  * Phase 1 (Completed): Basic close with socket and file support
- * Phase 2 (Current): FD type identification and enhanced validation
- * Phase 3: Reference counting, delayed close for shared descriptors
+ * Phase 2 (Completed): FD type identification and enhanced validation
+ * Phase 3 (Current): Reference counting, delayed close for shared descriptors
  * Phase 4: close-on-exec flag handling, close_range bulk close
  */
 long sys_close(int fd) {

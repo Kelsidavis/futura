@@ -7,8 +7,8 @@
  * Essential for file security and access control management.
  *
  * Phase 1 (Completed): Basic permission changing with vnode lookup
- * Phase 2 (Current): Enhanced validation, mode identification, and detailed logging
- * Phase 3: Advanced features (symbolic permissions, ACL support)
+ * Phase 2 (Completed): Enhanced validation, mode identification, and detailed logging
+ * Phase 3 (Current): Advanced features (symbolic permissions, ACL support)
  * Phase 4: Performance optimization (permission change batching)
  */
 

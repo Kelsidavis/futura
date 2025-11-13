@@ -7,8 +7,8 @@
  * flexibility than wait4/waitpid. Essential for advanced process management
  * and signal handling.
  *
- * Phase 1 (Current): Validation and stub implementation
- * Phase 2: Implement wait queue integration
+ * Phase 1 (Completed): Validation and stub implementation
+ * Phase 2 (Current): Implement wait queue integration
  * Phase 3: Support all idtypes and options
  * Phase 4: Performance optimization with event notification
  */
@@ -103,8 +103,8 @@ struct siginfo {
  * - si_utime: User CPU time
  * - si_stime: System CPU time
  *
- * Phase 1: Validate parameters and return -ECHILD
- * Phase 2: Implement wait queue integration and child polling
+ * Phase 1 (Completed): Validate parameters and return -ECHILD
+ * Phase 2 (Current): Implement wait queue integration and child polling
  * Phase 3: Support all idtypes, options, and populate siginfo_t
  */
 long sys_waitid(int idtype, int id, struct siginfo *infop, int options,

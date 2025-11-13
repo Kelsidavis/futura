@@ -1075,6 +1075,226 @@ static int ramfs_truncate(struct fut_vnode *vnode, uint64_t length) {
     return 0;
 }
 
+/**
+ * Helper: Copy a string with size bounds to prevent overflow
+ */
+static void str_cpy_bounded(char *dst, const char *src, size_t dst_size) {
+    if (!dst || !src || dst_size == 0) {
+        return;
+    }
+
+    size_t i = 0;
+    while (src[i] != '\0' && i < dst_size - 1) {
+        dst[i] = src[i];
+        i++;
+    }
+    dst[i] = '\0';
+}
+
+/**
+ * Helper: Extract directory path and basename from a full path
+ * Returns the basename (last component), and fills dirname_out with the parent directory path.
+ * Returns NULL if path is invalid.
+ */
+static const char *path_extract_basename(const char *path, char *dirname_out, size_t dirname_size) {
+    if (!path || !dirname_out) {
+        return NULL;
+    }
+
+    size_t path_len = 0;
+    while (path[path_len] != '\0' && path_len < 256) {
+        path_len++;
+    }
+
+    /* Find the last '/' */
+    int last_slash = -1;
+    for (size_t i = 0; i < path_len; i++) {
+        if (path[i] == '/') {
+            last_slash = (int)i;
+        }
+    }
+
+    /* No directory component (relative path without /) */
+    if (last_slash == -1) {
+        /* dirname is current directory */
+        if (dirname_size > 1) {
+            dirname_out[0] = '.';
+            dirname_out[1] = '\0';
+        }
+        return path;
+    }
+
+    /* Path is just "/" */
+    if (last_slash == 0 && path[1] == '\0') {
+        dirname_out[0] = '/';
+        dirname_out[1] = '\0';
+        return path + 1;
+    }
+
+    /* Copy dirname up to (but not including) the slash */
+    if (last_slash + 1 > (int)dirname_size) {
+        return NULL;  /* dirname too long */
+    }
+    for (int i = 0; i < last_slash; i++) {
+        dirname_out[i] = path[i];
+    }
+    dirname_out[last_slash] = '\0';
+
+    /* Return pointer to basename (after the slash) */
+    return path + last_slash + 1;
+}
+
+/**
+ * ramfs_rename - Atomically rename/move a file or directory
+ * @old_vnode: Vnode of the file/directory to rename (unused, kept for compatibility)
+ * @oldpath: Full path to existing file/directory
+ * @newpath: Full path for the new location/name
+ *
+ * Renames a file or directory from oldpath to newpath. If newpath exists, it is
+ * atomically replaced (or must be an empty directory).
+ *
+ * Returns: 0 on success, negative error code on failure
+ */
+static int ramfs_rename(struct fut_vnode *old_vnode, const char *oldpath, const char *newpath) {
+    extern void fut_printf(const char *, ...);
+
+    (void)old_vnode;  /* Not needed for in-memory rename */
+
+    if (!oldpath || !newpath) {
+        return -EINVAL;
+    }
+
+    /* Extract directory and basename from both paths */
+    char old_dirname[256];
+    const char *old_basename = path_extract_basename(oldpath, old_dirname, sizeof(old_dirname));
+    if (!old_basename) {
+        return -EINVAL;
+    }
+
+    char new_dirname[256];
+    const char *new_basename = path_extract_basename(newpath, new_dirname, sizeof(new_dirname));
+    if (!new_basename) {
+        return -EINVAL;
+    }
+
+    /* Look up the parent directories */
+    struct fut_vnode *old_parent = NULL;
+    int ret = fut_vfs_lookup(old_dirname, &old_parent);
+    if (ret < 0) {
+        fut_printf("[RAMFS-RENAME] Failed to lookup old parent '%s': %d\n", old_dirname, ret);
+        return ret;
+    }
+
+    struct fut_vnode *new_parent = NULL;
+    ret = fut_vfs_lookup(new_dirname, &new_parent);
+    if (ret < 0) {
+        fut_printf("[RAMFS-RENAME] Failed to lookup new parent '%s': %d\n", new_dirname, ret);
+        return ret;
+    }
+
+    /* Both parents must be directories */
+    if (old_parent->type != VN_DIR || new_parent->type != VN_DIR) {
+        return -ENOTDIR;
+    }
+
+    struct ramfs_node *old_parent_node = (struct ramfs_node *)old_parent->fs_data;
+    struct ramfs_node *new_parent_node = (struct ramfs_node *)new_parent->fs_data;
+
+    if (!old_parent_node || !new_parent_node) {
+        return -EIO;
+    }
+
+    /* Find the entry to rename in the old parent directory */
+    struct ramfs_dirent *old_entry = old_parent_node->dir.entries;
+    struct ramfs_dirent *old_prev = NULL;
+
+    while (old_entry) {
+        if (str_cmp(old_entry->name, old_basename) == 0) {
+            break;
+        }
+        old_prev = old_entry;
+        old_entry = old_entry->next;
+    }
+
+    if (!old_entry) {
+        return -ENOENT;
+    }
+
+    struct fut_vnode *entry_vnode = old_entry->vnode;
+
+    /* Check for directory-specific constraints */
+    if (entry_vnode->type == VN_DIR) {
+        /* If new_parent already has an entry with new_basename, it must be an empty directory */
+        struct ramfs_dirent *existing = new_parent_node->dir.entries;
+        while (existing) {
+            if (str_cmp(existing->name, new_basename) == 0) {
+                if (existing->vnode->type != VN_DIR) {
+                    return -ENOTDIR;  /* Trying to replace non-directory with directory */
+                }
+                /* Check if target directory is empty */
+                struct ramfs_node *existing_node = (struct ramfs_node *)existing->vnode->fs_data;
+                if (existing_node && existing_node->dir.entries != NULL) {
+                    return -ENOTEMPTY;
+                }
+                break;
+            }
+            existing = existing->next;
+        }
+    }
+
+    /* Remove the entry from the old parent directory */
+    if (old_prev) {
+        old_prev->next = old_entry->next;
+    } else {
+        old_parent_node->dir.entries = old_entry->next;
+    }
+
+    /* Remove any existing entry with new_basename from new parent (atomic replacement) */
+    struct ramfs_dirent *new_entry = new_parent_node->dir.entries;
+    struct ramfs_dirent *new_prev = NULL;
+
+    while (new_entry) {
+        if (str_cmp(new_entry->name, new_basename) == 0) {
+            /* Found existing entry - remove it */
+            struct fut_vnode *old_target = new_entry->vnode;
+            struct ramfs_node *old_target_node = (struct ramfs_node *)old_target->fs_data;
+
+            if (new_prev) {
+                new_prev->next = new_entry->next;
+            } else {
+                new_parent_node->dir.entries = new_entry->next;
+            }
+
+            /* Free the old target entry */
+            if (old_target->type == VN_REG && old_target_node) {
+                if (old_target_node->file.data) {
+                    fut_free(old_target_node->file.data);
+                }
+            }
+            if (old_target_node) {
+                fut_free(old_target_node);
+            }
+            fut_free(old_target);
+            fut_free(new_entry);
+
+            break;
+        }
+        new_prev = new_entry;
+        new_entry = new_entry->next;
+    }
+
+    /* Update the old entry with the new name and add it to the new parent directory */
+    str_cpy_bounded(old_entry->name, new_basename, sizeof(old_entry->name));
+
+    old_entry->next = new_parent_node->dir.entries;
+    new_parent_node->dir.entries = old_entry;
+
+    fut_printf("[RAMFS-RENAME] Renamed '%s' to '%s' (ino=%lu)\n",
+               old_basename, new_basename, entry_vnode->ino);
+
+    return 0;
+}
+
 static const struct fut_vnode_ops ramfs_vnode_ops = {
     .open = ramfs_open,
     .close = ramfs_close,
@@ -1089,7 +1309,8 @@ static const struct fut_vnode_ops ramfs_vnode_ops = {
     .getattr = ramfs_getattr,
     .setattr = NULL,
     .sync = ramfs_sync,
-    .truncate = ramfs_truncate
+    .truncate = ramfs_truncate,
+    .rename = ramfs_rename
 };
 
 /* ============================================================

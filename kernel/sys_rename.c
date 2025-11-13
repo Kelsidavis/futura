@@ -306,50 +306,50 @@ long sys_rename(const char *oldpath, const char *newpath) {
     }
 
     /*
-     * Phase 2: Stub implementation - validates oldpath exists but doesn't perform rename
+     * Phase 3: Implement VFS rename operation
      *
-     * For now, return not supported since the VFS doesn't have atomic rename.
-     * To properly implement this, we'd need to:
-     * 1. Add a rename() operation to the filesystem interface (fut_vnode_ops)
-     * 2. Implement it in RamFS and FuturaFS
-     * 3. Handle cross-directory rename (update parent directory entries)
-     * 4. Ensure atomicity (newpath replacement must be atomic)
-     * 5. Or implement a copy-then-unlink pattern with transaction support
-     *
-     * TODO Phase 3: Implement VFS rename operation:
-     *
-     * if (old_vnode->ops && old_vnode->ops->rename) {
-     *     int ret = old_vnode->ops->rename(old_vnode, old_buf, new_buf);
-     *     if (ret < 0) {
-     *         const char *error_desc;
-     *         switch (ret) {
-     *             case -EEXIST:
-     *                 error_desc = "newpath exists and is directory but oldpath is not";
-     *                 break;
-     *             case -ENOTEMPTY:
-     *                 error_desc = "newpath is non-empty directory";
-     *                 break;
-     *             case -EXDEV:
-     *                 error_desc = "cross-filesystem rename not supported";
-     *                 break;
-     *             case -EROFS:
-     *                 error_desc = "read-only filesystem";
-     *                 break;
-     *             default:
-     *                 error_desc = "rename failed";
-     *                 break;
-     *         }
-     *         fut_printf("[RENAME] rename(old='%s' [%s], new='%s' [%s], "
-     *                    "old_type=%s, op=%s) -> %d (%s)\n",
-     *                    old_buf, old_path_type, new_buf, new_path_type,
-     *                    old_vnode_type, operation_type, ret, error_desc);
-     *         return ret;
-     *     }
-     * }
+     * Call the filesystem's rename operation if available.
+     * The rename operation handles all the atomicity and cross-directory logic.
      */
+    if (old_vnode->ops && old_vnode->ops->rename) {
+        int ret = old_vnode->ops->rename(old_vnode, old_buf, new_buf);
+        if (ret < 0) {
+            const char *error_desc;
+            switch (ret) {
+                case -EEXIST:
+                    error_desc = "newpath exists and is directory but oldpath is not";
+                    break;
+                case -ENOTEMPTY:
+                    error_desc = "newpath is non-empty directory";
+                    break;
+                case -EXDEV:
+                    error_desc = "cross-filesystem rename not supported";
+                    break;
+                case -EROFS:
+                    error_desc = "read-only filesystem";
+                    break;
+                default:
+                    error_desc = "rename failed";
+                    break;
+            }
+            fut_printf("[RENAME] rename(old='%s' [%s], new='%s' [%s], "
+                       "old_type=%s, op=%s) -> %d (%s)\n",
+                       old_buf, old_path_type, new_buf, new_path_type,
+                       old_vnode_type, operation_type, ret, error_desc);
+            return ret;
+        }
 
+        /* Success */
+        fut_printf("[RENAME] rename(old='%s' [%s], new='%s' [%s], old_ino=%lu, "
+                   "old_type=%s, op=%s) -> 0 (success)\n",
+                   old_buf, old_path_type, new_buf, new_path_type, old_vnode->ino,
+                   old_vnode_type, operation_type);
+        return 0;
+    }
+
+    /* Filesystem doesn't support rename */
     fut_printf("[RENAME] rename(old='%s' [%s], new='%s' [%s], old_ino=%lu, "
-               "old_type=%s, op=%s) -> ENOSYS (stub: atomic rename not yet implemented, Phase 2)\n",
+               "old_type=%s, op=%s) -> ENOSYS (filesystem doesn't support rename)\n",
                old_buf, old_path_type, new_buf, new_path_type, old_vnode->ino,
                old_vnode_type, operation_type);
     return -ENOSYS;

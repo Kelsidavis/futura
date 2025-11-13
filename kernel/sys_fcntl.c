@@ -8,8 +8,8 @@
  * file control operations.
  *
  * Phase 1 (Completed): Basic fcntl with F_GETFD, F_SETFD, F_GETFL, F_SETFL, F_DUPFD
- * Phase 2 (Current): Enhanced validation, command/flag categorization, detailed logging
- * Phase 3: Advanced commands (F_SETLK, F_GETLK, F_SETOWN, F_GETOWN)
+ * Phase 2 (Completed): Enhanced validation, command/flag categorization, detailed logging
+ * Phase 3 (Current): Advanced commands (F_SETLK, F_GETLK, F_SETOWN, F_GETOWN)
  * Phase 4: File sealing, lease management, and extended attributes
  */
 

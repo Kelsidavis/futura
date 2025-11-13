@@ -7,8 +7,8 @@
  * Essential for file manipulation in editors, databases, and log rotation.
  *
  * Phase 1 (Completed): Basic file truncation with size updates
- * Phase 2 (Current): Enhanced validation, FD/length categorization, and detailed logging
- * Phase 3: Block deallocation for shrink, zero-fill for extend
+ * Phase 2 (Completed): Enhanced validation, FD/length categorization, and detailed logging
+ * Phase 3 (Current): Block deallocation for shrink, zero-fill for extend
  * Phase 4: Advanced features (sparse file support, preallocation hints)
  */
 

@@ -7,8 +7,8 @@
  * Essential for path resolution, shell prompts, and process context.
  *
  * Phase 1 (Completed): Stub implementation returning root directory
- * Phase 2 (Current): Enhanced validation, buffer/path categorization, and detailed logging
- * Phase 3: VFS integration for actual path resolution
+ * Phase 2 (Completed): Enhanced validation, buffer/path categorization, and detailed logging
+ * Phase 3 (Current): VFS integration for actual path resolution
  * Phase 4: Support for symlinks, mount points, and namespace isolation
  */
 

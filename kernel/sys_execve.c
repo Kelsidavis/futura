@@ -21,6 +21,13 @@
 /* FD_CLOEXEC flag value */
 #define FD_CLOEXEC 1
 
+/* Phase 3: POSIX argument/environment limits */
+#define EXEC_ARG_MAX 131072    /* 128 KiB total args */
+#define EXEC_ENV_MAX 131072    /* 128 KiB total environment */
+#define EXEC_ARGC_MAX 4096     /* Max argument count */
+#define EXEC_ENVC_MAX 4096     /* Max environment variable count */
+#define EXEC_ARG_LEN_MAX 131072 /* Max single argument length */
+
 extern void fut_printf(const char *fmt, ...);
 extern int fut_exec_elf(const char *path, char *const argv[], char *const envp[]);
 
@@ -100,8 +107,8 @@ extern int fut_exec_elf(const char *path, char *const argv[], char *const envp[]
  *   - fcntl(): Set FD_CLOEXEC flag
  *
  * Phase 1 (Completed): Basic execve with FD_CLOEXEC handling
- * Phase 2 (Current): Enhanced validation, path categorization, detailed logging
- * Phase 3: Argument/environment limit enforcement, security checks
+ * Phase 2 (Completed): Enhanced validation, path categorization, detailed logging
+ * Phase 3 (Current): Argument/environment limit enforcement, security checks
  * Phase 4: Performance optimization, COW optimizations
  */
 long sys_execve(const char *pathname, char *const argv[], char *const envp[]) {
@@ -217,6 +224,120 @@ long sys_execve(const char *pathname, char *const argv[], char *const envp[]) {
             envc++;
         }
     }
+
+    /* Phase 3: Validate argument and environment limits */
+    unsigned long total_argv_size = 0;
+    if (argv) {
+        for (int i = 0; i < argc && i < EXEC_ARGC_MAX; i++) {
+            if (argv[i] == NULL) break;
+            size_t arg_len = 0;
+            const char *ptr = argv[i];
+            while (ptr[arg_len] != '\0' && arg_len < EXEC_ARG_LEN_MAX) {
+                arg_len++;
+            }
+            if (arg_len >= EXEC_ARG_LEN_MAX) {
+                char msg[128];
+                int pos = 0;
+                const char *text = "[EXECVE] execve() -> E2BIG (argument too long, >131KB)\\n";
+                while (*text) { msg[pos++] = *text++; }
+                msg[pos] = '\0';
+                fut_printf("%s", msg);
+                return -E2BIG;
+            }
+            total_argv_size += arg_len + 1;
+            if (total_argv_size > EXEC_ARG_MAX) {
+                char msg[128];
+                int pos = 0;
+                const char *text = "[EXECVE] execve() -> E2BIG (total arguments exceed 128KB)\\n";
+                while (*text) { msg[pos++] = *text++; }
+                msg[pos] = '\0';
+                fut_printf("%s", msg);
+                return -E2BIG;
+            }
+        }
+    }
+
+    /* Phase 3: Validate environment variable limits */
+    if (argc >= EXEC_ARGC_MAX) {
+        char msg[128];
+        int pos = 0;
+        const char *text = "[EXECVE] execve() -> E2BIG (argc exceeds 4096)\\n";
+        while (*text) { msg[pos++] = *text++; }
+        msg[pos] = '\0';
+        fut_printf("%s", msg);
+        return -E2BIG;
+    }
+
+    unsigned long total_envp_size = 0;
+    if (envp) {
+        for (int i = 0; i < envc && i < EXEC_ENVC_MAX; i++) {
+            if (envp[i] == NULL) break;
+            size_t env_len = 0;
+            const char *ptr = envp[i];
+            while (ptr[env_len] != '\0' && env_len < EXEC_ARG_LEN_MAX) {
+                env_len++;
+            }
+            if (env_len >= EXEC_ARG_LEN_MAX) {
+                char msg[128];
+                int pos = 0;
+                const char *text = "[EXECVE] execve() -> E2BIG (environment variable too long)\\n";
+                while (*text) { msg[pos++] = *text++; }
+                msg[pos] = '\0';
+                fut_printf("%s", msg);
+                return -E2BIG;
+            }
+            total_envp_size += env_len + 1;
+            if (total_envp_size > EXEC_ENV_MAX) {
+                char msg[128];
+                int pos = 0;
+                const char *text = "[EXECVE] execve() -> E2BIG (total environment exceeds 128KB)\\n";
+                while (*text) { msg[pos++] = *text++; }
+                msg[pos] = '\0';
+                fut_printf("%s", msg);
+                return -E2BIG;
+            }
+        }
+    }
+
+    if (envc >= EXEC_ENVC_MAX) {
+        char msg[128];
+        int pos = 0;
+        const char *text = "[EXECVE] execve() -> E2BIG (envc exceeds 4096)\\n";
+        while (*text) { msg[pos++] = *text++; }
+        msg[pos] = '\0';
+        fut_printf("%s", msg);
+        return -E2BIG;
+    }
+
+    /* Phase 3: Log argument and environment size limits enforcement */
+    char limit_msg[256];
+    int limit_pos = 0;
+    const char *limit_text = "[EXECVE] execve() limit check: argv_size=";
+    while (*limit_text) { limit_msg[limit_pos++] = *limit_text++; }
+
+    char num[16]; int num_pos = 0; unsigned long val = total_argv_size;
+    if (val == 0) { num[num_pos++] = '0'; }
+    else { char temp[16]; int temp_pos = 0;
+        while (val > 0) { temp[temp_pos++] = '0' + (val % 10); val /= 10; }
+        while (temp_pos > 0) { num[num_pos++] = temp[--temp_pos]; } }
+    num[num_pos] = '\0';
+    for (int i = 0; num[i]; i++) { limit_msg[limit_pos++] = num[i]; }
+
+    limit_text = ", envp_size=";
+    while (*limit_text) { limit_msg[limit_pos++] = *limit_text++; }
+
+    num_pos = 0; val = total_envp_size;
+    if (val == 0) { num[num_pos++] = '0'; }
+    else { char temp[16]; int temp_pos = 0;
+        while (val > 0) { temp[temp_pos++] = '0' + (val % 10); val /= 10; }
+        while (temp_pos > 0) { num[num_pos++] = temp[--temp_pos]; } }
+    num[num_pos] = '\0';
+    for (int i = 0; num[i]; i++) { limit_msg[limit_pos++] = num[i]; }
+
+    limit_text = " (Phase 3 limits: 128KB args, 128KB env)\\n";
+    while (*limit_text) { limit_msg[limit_pos++] = *limit_text++; }
+    limit_msg[limit_pos] = '\0';
+    fut_printf("%s", limit_msg);
 
     /* Phase 2: Categorize argument count */
     const char *argc_category;

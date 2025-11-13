@@ -35,6 +35,9 @@ LDSCRIPT := ../../libfutura/userland.ld
 CRT0 := $(BUILD_ROOT)/lib/crt0.o
 LIBFUTURA := $(BUILD_ROOT)/lib/libfutura.a
 
+# Use the platform-specific CC exported from main Makefile
+CC ?= gcc
+
 CFLAGS := -std=c2x -ffreestanding -nostdlib -fno-builtin -fno-stack-protector
 CFLAGS += -Wall -Wextra -Werror -g -O2
 CFLAGS += -I$(ROOT)/include -I$(OUT)/compositor

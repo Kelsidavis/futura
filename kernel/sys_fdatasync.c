@@ -7,8 +7,8 @@
  * Essential for database systems and applications requiring data persistence.
  *
  * Phase 1 (Completed): Basic stub with FD validation
- * Phase 2 (Current): Enhanced validation, FD/file type categorization, and detailed logging
- * Phase 3: VFS backend sync operations (data-only sync hooks)
+ * Phase 2 (Completed): Enhanced validation, FD/file type categorization, and detailed logging
+ * Phase 3 (Current): VFS backend sync operations (data-only sync hooks)
  * Phase 4: Performance optimization (selective metadata sync, async sync)
  */
 

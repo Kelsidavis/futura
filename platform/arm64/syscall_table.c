@@ -105,6 +105,7 @@ extern long sys_sigaction(int signum, const struct sigaction *act, struct sigact
 extern long sys_sigprocmask(int how, const sigset_t *set, sigset_t *oldset);
 extern long sys_sigpending(sigset_t *set);
 extern long sys_sigsuspend(const sigset_t *mask);
+extern long sys_sigaltstack(const struct sigaltstack *ss, struct sigaltstack *old_ss);
 
 /* Timespec structure (for clock_gettime, nanosleep, and timers) */
 struct timespec {
@@ -1311,14 +1312,12 @@ static int64_t sys_rt_sigsuspend_wrapper(uint64_t mask, uint64_t sigsetsize, uin
 
 /* sys_sigaltstack_wrapper - set/get signal stack context
  * x0 = ss, x1 = old_ss
- * Stub implementation: Signal alternate stack not yet implemented
+ * Note: ARM64 uses sigaltstack instead of rt_sigaltstack (no sigsetsize parameter)
  */
 static int64_t sys_sigaltstack_wrapper(uint64_t ss, uint64_t old_ss, uint64_t arg2,
                                         uint64_t arg3, uint64_t arg4, uint64_t arg5) {
-    (void)ss; (void)old_ss; (void)arg2; (void)arg3; (void)arg4; (void)arg5;
-    /* Stub: Return success without doing anything */
-    /* Phase 2: Implement alternate signal stack support */
-    return 0;
+    (void)arg2; (void)arg3; (void)arg4; (void)arg5;
+    return sys_sigaltstack((const struct sigaltstack *)ss, (struct sigaltstack *)old_ss);
 }
 
 /* sys_rt_sigreturn_wrapper - return from signal handler

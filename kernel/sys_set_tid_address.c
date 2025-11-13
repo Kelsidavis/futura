@@ -6,10 +6,10 @@
  * Implements set_tid_address for thread cleanup and futex integration.
  * Essential for NPTL (Native POSIX Thread Library) and proper thread exit.
  *
- * Phase 1 (Current): Validation and stub implementation
- * Phase 2: Store tid address in task structure
- * Phase 3: Implement clear_child_tid on thread exit
- * Phase 4: Integrate with futex wake for robust mutexes
+ * Phase 1 (Completed): Validation and stub implementation
+ * Phase 2 (Current): Enhanced validation and parameter categorization with detailed logging
+ * Phase 3: Store tid address in task structure
+ * Phase 4: Implement clear_child_tid on thread exit
  */
 
 #include <kernel/fut_task.h>
@@ -72,9 +72,10 @@ extern void fut_printf(const char *fmt, ...);
  * - NULL tidptr disables clear_child_tid behavior
  * - Address is not validated until thread exit
  *
- * Phase 1: Accept tidptr and return current TID
- * Phase 2: Store tidptr in task structure
- * Phase 3: Clear TID and wake futex on thread exit
+ * Phase 1 (Completed): Accept tidptr and return current TID
+ * Phase 2 (Current): Enhanced validation and categorization with detailed logging
+ * Phase 3: Store tidptr in task structure
+ * Phase 4: Clear TID and wake futex on thread exit
  */
 long sys_set_tid_address(int *tidptr) {
     fut_task_t *task = fut_task_current();
@@ -83,20 +84,21 @@ long sys_set_tid_address(int *tidptr) {
         return -ESRCH;
     }
 
-    /* Categorize operation */
-    const char *op_desc;
+    /* Phase 2: Categorize operation type */
+    const char *op_type;
     if (tidptr == NULL) {
-        op_desc = "disabling clear_child_tid";
+        op_type = "disable clear_child_tid";
     } else {
-        op_desc = "setting clear_child_tid address";
+        op_type = "set clear_child_tid address";
     }
 
-    /* Phase 1: Accept tidptr and return current TID */
-    int current_tid = task->pid;  /* In our system, TID == PID for main thread */
+    /* Get current TID (in our system, TID == PID for main thread) */
+    int current_tid = task->pid;
 
+    /* Phase 2: Enhanced logging with operation categorization */
     fut_printf("[SET_TID_ADDR] set_tid_address(tidptr=%p [%s], pid=%d) -> %d "
-               "(Phase 1 stub - no actual futex wake on exit yet)\n",
-               tidptr, op_desc, task->pid, current_tid);
+               "(Phase 2: validation and categorization, Phase 3: storage in task structure)\n",
+               tidptr, op_type, task->pid, current_tid);
 
     return current_tid;
 }

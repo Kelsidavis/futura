@@ -190,12 +190,26 @@ void fut_thread_sleep(uint32_t milliseconds) {
         return;
     }
 
+    /* Handle zero-length sleep as yield */
+    if (milliseconds == 0) {
+        fut_thread_yield();
+        return;
+    }
+
+    /* Calculate absolute wake time using timer frequency */
     uint32_t freq = fut_timer_get_frequency();
     uint64_t now = fut_timer_read_count();
     thread->wake_time = now + (milliseconds * freq / 1000);
 
+    /* Mark thread as sleeping */
     fut_scheduler_set_state(thread, FUT_THREAD_SLEEPING);
-    fut_thread_yield();
+
+    /* Context switch immediately to another thread (blocking behavior).
+     * The scheduler will check wake_time when selecting next thread.
+     * When timer interrupt fires and wake_time has passed, scheduler
+     * will transition thread back to READY state. */
+    extern void fut_schedule(void);
+    fut_schedule();
 }
 
 void fut_thread_wake(fut_thread_t *thread) {

@@ -169,6 +169,7 @@ ssize_t sys_recvmsg(int sockfd, void *msg, int flags);
 long sys_kill(int pid, int sig);
 long sys_sigaction(int signum, const struct sigaction *act, struct sigaction *oldact);
 long sys_sigprocmask(int how, const sigset_t *set, sigset_t *oldset);
+long sys_sigpending(sigset_t *set);
 /* Other */
 long sys_ioctl(int fd, unsigned long request, void *argp);
 long sys_select(int nfds, void *readfds, void *writefds, void *exceptfds, fut_timeval_t *timeout);

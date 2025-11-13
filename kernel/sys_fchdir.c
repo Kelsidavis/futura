@@ -6,9 +6,9 @@
  * Implements fchdir for changing current working directory via file descriptor.
  * Essential for safe directory traversal and capability-based security.
  *
- * Phase 1 (Current): Validation and stub implementation
- * Phase 2: Implement directory validation and path resolution
- * Phase 3: Integrate with VFS current working directory tracking
+ * Phase 1 (Completed): Basic fd validation and stub implementation
+ * Phase 2 (Current): Enhanced fd validation, task association, and error handling
+ * Phase 3: Integrate with VFS current working directory tracking and fd-table lookup
  * Phase 4: Performance optimization with directory cache
  */
 
@@ -126,41 +126,44 @@ extern void fut_printf(const char *fmt, ...);
  * - May have issues on some network filesystems
  * - Requires filesystem with directory support
  *
- * Phase 1: Validate fd and return success
- * Phase 2: Implement directory validation
- * Phase 3: Integrate with VFS and update task->cwd
+ * Phase 1 (Completed): Validate fd and return success
+ * Phase 2 (Current): Enhanced fd validation, task lookup, better error reporting
+ * Phase 3: VFS integration - lookup vnode, check if directory, update task->cwd
+ * Phase 4: Performance optimization with directory cache
  */
 long sys_fchdir(int fd) {
+    /* Phase 2: Get current task first for validation */
     fut_task_t *task = fut_task_current();
     if (!task) {
+        fut_printf("[FCHDIR] fchdir(fd=%d) -> ESRCH (no current task)\n", fd);
         return -ESRCH;
     }
 
-    /* Validate file descriptor */
+    /* Phase 2: Validate file descriptor range */
     if (fd < 0) {
-        fut_printf("[FCHDIR] fchdir(fd=%d [invalid], pid=%d) -> EBADF\n",
+        fut_printf("[FCHDIR] fchdir(fd=%d [negative], pid=%d) -> EBADF (invalid fd)\n",
                    fd, task->pid);
         return -EBADF;
     }
 
-    /* Categorize file descriptor for logging */
+    /* Phase 2: Categorize fd for enhanced error reporting */
     const char *fd_category;
     if (fd <= 2) {
-        fd_category = "stdio (0-2)";
+        fd_category = "stdio (0-2, usually not a directory)";
     } else if (fd < 16) {
-        fd_category = "low (3-15)";
+        fd_category = "low range (3-15)";
     } else if (fd < 256) {
-        fd_category = "mid (16-255)";
+        fd_category = "mid range (16-255)";
     } else if (fd < 1024) {
-        fd_category = "high (256-1023)";
+        fd_category = "high range (256-1023)";
     } else {
         fd_category = "very high (≥1024)";
     }
 
-    /* Phase 1: Accept fd and return success */
-    fut_printf("[FCHDIR] fchdir(fd=%d [%s], pid=%d) -> 0 "
-               "(Phase 1 stub - no actual directory change yet)\n",
+    /* Phase 2: Log detailed validation attempt */
+    fut_printf("[FCHDIR] fchdir(fd=%d [%s], pid=%d) -> ENOSYS "
+               "(Phase 3: fd-table lookup and VFS integration not yet implemented)\n",
                fd, fd_category, task->pid);
 
-    return 0;
+    return -ENOSYS;
 }

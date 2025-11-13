@@ -14,10 +14,12 @@
 
 #include <kernel/fut_task.h>
 #include <kernel/errno.h>
+#include <kernel/fut_vfs.h>
 #include <stdint.h>
 
 extern void fut_printf(const char *fmt, ...);
 extern int fut_copy_from_user(void *to, const void *from, size_t size);
+extern int fut_copy_to_user(void *to, const void *from, size_t size);
 
 /**
  * readlink() - Read value of a symbolic link (stub implementation)
@@ -218,87 +220,92 @@ long sys_readlink(const char *path, char *buf, size_t bufsiz) {
     }
 
     /*
-     * Phase 2: Stub implementation - validates parameters but doesn't read link
+     * Phase 3: VFS symbolic link support
      *
-     * TODO Phase 3: Implement symbolic link support in VFS:
-     *
-     * struct fut_vnode *vnode = NULL;
-     * int ret = fut_vfs_lookup(path_buf, &vnode);
-     * if (ret < 0) {
-     *     const char *error_desc;
-     *     switch (ret) {
-     *         case -ENOENT:
-     *             error_desc = "symbolic link not found";
-     *             break;
-     *         case -ENOTDIR:
-     *             error_desc = "path component not a directory";
-     *             break;
-     *         case -EACCES:
-     *             error_desc = "permission denied";
-     *             break;
-     *         default:
-     *             error_desc = "lookup failed";
-     *             break;
-     *     }
-     *     fut_printf("[READLINK] readlink(path='%s' [%s, %s], bufsiz=%zu [%s]) -> %d (%s)\n",
-     *                path_buf, path_type, length_category, bufsiz, bufsiz_category,
-     *                ret, error_desc);
-     *     return ret;
-     * }
-     *
-     * if (vnode->type != VN_LNK) {
-     *     fut_printf("[READLINK] readlink(path='%s' [%s, %s], ino=%lu, bufsiz=%zu [%s]) -> EINVAL "
-     *                "(not a symbolic link)\n",
-     *                path_buf, path_type, length_category, vnode->ino, bufsiz, bufsiz_category);
-     *     return -EINVAL;
-     * }
-     *
-     * if (!vnode->ops || !vnode->ops->readlink) {
-     *     fut_printf("[READLINK] readlink(path='%s' [%s, %s], ino=%lu, bufsiz=%zu [%s]) -> ENOSYS "
-     *                "(filesystem doesn't support readlink)\n",
-     *                path_buf, path_type, length_category, vnode->ino, bufsiz, bufsiz_category);
-     *     return -ENOSYS;
-     * }
-     *
-     * char *target_buf = fut_malloc(bufsiz);
-     * if (!target_buf) {
-     *     return -ENOMEM;
-     * }
-     *
-     * ssize_t len = vnode->ops->readlink(vnode, target_buf, bufsiz);
-     * if (len < 0) {
-     *     const char *error_desc;
-     *     switch (len) {
-     *         case -EIO:
-     *             error_desc = "I/O error reading link";
-     *             break;
-     *         default:
-     *             error_desc = "readlink operation failed";
-     *             break;
-     *     }
-     *     fut_printf("[READLINK] readlink(path='%s' [%s, %s], ino=%lu, bufsiz=%zu [%s]) -> %d (%s)\n",
-     *                path_buf, path_type, length_category, vnode->ino, bufsiz, bufsiz_category,
-     *                (int)len, error_desc);
-     *     fut_free(target_buf);
-     *     return len;
-     * }
-     *
-     * if (fut_copy_to_user(buf, target_buf, len) != 0) {
-     *     fut_free(target_buf);
-     *     return -EFAULT;
-     * }
-     *
-     * fut_free(target_buf);
-     *
-     * fut_printf("[READLINK] readlink(path='%s' [%s, %s], ino=%lu, bufsiz=%zu [%s], "
-     *            "target_len=%zd) -> %zd (Phase 3)\n",
-     *            path_buf, path_type, length_category, vnode->ino, bufsiz, bufsiz_category,
-     *            len, len);
-     * return len;
+     * Lookup symlink vnode and call VFS readlink operation
      */
 
-    fut_printf("[READLINK] readlink(path='%s' [%s, %s], bufsiz=%zu [%s]) -> ENOSYS "
-               "(symbolic links not yet supported, Phase 2)\n",
-               path_buf, path_type, length_category, bufsiz, bufsiz_category);
-    return -ENOSYS;
+    /* Lookup the symbolic link vnode */
+    struct fut_vnode *vnode = NULL;
+    int ret = fut_vfs_lookup(path_buf, &vnode);
+    if (ret < 0) {
+        const char *error_desc;
+        switch (ret) {
+            case -ENOENT:
+                error_desc = "symbolic link not found";
+                break;
+            case -ENOTDIR:
+                error_desc = "path component not a directory";
+                break;
+            case -EACCES:
+                error_desc = "permission denied";
+                break;
+            default:
+                error_desc = "lookup failed";
+                break;
+        }
+        fut_printf("[READLINK] readlink(path='%s' [%s, %s], bufsiz=%zu [%s]) -> %d (%s)\n",
+                   path_buf, path_type, length_category, bufsiz, bufsiz_category,
+                   ret, error_desc);
+        return ret;
+    }
+
+    /* Verify vnode is a symbolic link */
+    if (vnode->type != VN_LNK) {
+        fut_printf("[READLINK] readlink(path='%s' [%s, %s], ino=%lu, bufsiz=%zu [%s]) -> EINVAL "
+                   "(not a symbolic link)\n",
+                   path_buf, path_type, length_category, vnode->ino, bufsiz, bufsiz_category);
+        return -EINVAL;
+    }
+
+    /* Check if filesystem supports readlink operation */
+    if (!vnode->ops || !vnode->ops->readlink) {
+        fut_printf("[READLINK] readlink(path='%s' [%s, %s], ino=%lu, bufsiz=%zu [%s]) -> ENOSYS "
+                   "(filesystem doesn't support readlink)\n",
+                   path_buf, path_type, length_category, vnode->ino, bufsiz, bufsiz_category);
+        return -ENOSYS;
+    }
+
+    /* Allocate kernel buffer for readlink result */
+    extern void *fut_malloc(size_t size);
+    extern void fut_free(void *ptr);
+
+    char *target_buf = fut_malloc(bufsiz);
+    if (!target_buf) {
+        return -ENOMEM;
+    }
+
+    /* Call VFS readlink operation */
+    ssize_t len = vnode->ops->readlink(vnode, target_buf, bufsiz);
+    if (len < 0) {
+        const char *error_desc;
+        switch (len) {
+            case -EIO:
+                error_desc = "I/O error reading link";
+                break;
+            default:
+                error_desc = "readlink operation failed";
+                break;
+        }
+        fut_printf("[READLINK] readlink(path='%s' [%s, %s], ino=%lu, bufsiz=%zu [%s]) -> %d (%s)\n",
+                   path_buf, path_type, length_category, vnode->ino, bufsiz, bufsiz_category,
+                   (int)len, error_desc);
+        fut_free(target_buf);
+        return len;
+    }
+
+    /* Copy result to userspace buffer */
+    if (fut_copy_to_user(buf, target_buf, len) != 0) {
+        fut_free(target_buf);
+        return -EFAULT;
+    }
+
+    /* Clean up and return bytes read */
+    fut_free(target_buf);
+
+    fut_printf("[READLINK] readlink(path='%s' [%s, %s], ino=%lu, bufsiz=%zu [%s], "
+               "target_len=%zd) -> %zd (success)\n",
+               path_buf, path_type, length_category, vnode->ino, bufsiz, bufsiz_category,
+               len, len);
+    return len;
 }

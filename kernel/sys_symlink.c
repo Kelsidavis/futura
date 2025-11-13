@@ -14,6 +14,7 @@
 
 #include <kernel/fut_task.h>
 #include <kernel/errno.h>
+#include <kernel/fut_vfs.h>
 #include <stdint.h>
 
 extern void fut_printf(const char *fmt, ...);
@@ -235,89 +236,114 @@ long sys_symlink(const char *target, const char *linkpath) {
     }
 
     /*
-     * Phase 2: Stub implementation - validates parameters but doesn't create link
+     * Phase 3: VFS symbolic link support
      *
-     * TODO Phase 3: Implement symbolic link support in VFS:
-     *
-     * struct fut_vnode *parent = NULL;
-     * struct fut_vnode *link_vnode = NULL;
-     *
-     * // Lookup parent directory of linkpath
-     * int ret = fut_vfs_lookup_parent(link_buf, &parent);
-     * if (ret < 0) {
-     *     const char *error_desc;
-     *     switch (ret) {
-     *         case -ENOENT:
-     *             error_desc = "parent directory not found";
-     *             break;
-     *         case -ENOTDIR:
-     *             error_desc = "path component not a directory";
-     *             break;
-     *         case -EACCES:
-     *             error_desc = "permission denied";
-     *             break;
-     *         default:
-     *             error_desc = "lookup failed";
-     *             break;
-     *     }
-     *     fut_printf("[SYMLINK] symlink(target='%s' [%s, %s], link='%s' [%s], op=%s) -> %d (%s)\n",
-     *                target_buf, target_type, target_length_category, link_buf, link_type,
-     *                operation_type, ret, error_desc);
-     *     return ret;
-     * }
-     *
-     * // Check if linkpath already exists
-     * ret = fut_vfs_lookup(link_buf, &link_vnode);
-     * if (ret == 0) {
-     *     fut_printf("[SYMLINK] symlink(target='%s' [%s, %s], link='%s' [%s], op=%s) -> EEXIST "
-     *                "(linkpath already exists)\n",
-     *                target_buf, target_type, target_length_category, link_buf, link_type,
-     *                operation_type);
-     *     return -EEXIST;
-     * }
-     *
-     * // Create symbolic link via VFS
-     * if (!parent->ops || !parent->ops->symlink) {
-     *     fut_printf("[SYMLINK] symlink(target='%s' [%s, %s], link='%s' [%s], op=%s) -> ENOSYS "
-     *                "(filesystem doesn't support symlink)\n",
-     *                target_buf, target_type, target_length_category, link_buf, link_type,
-     *                operation_type);
-     *     return -ENOSYS;
-     * }
-     *
-     * ret = parent->ops->symlink(parent, link_buf, target_buf);
-     * if (ret < 0) {
-     *     const char *error_desc;
-     *     switch (ret) {
-     *         case -ENOSPC:
-     *             error_desc = "no space available";
-     *             break;
-     *         case -EROFS:
-     *             error_desc = "read-only filesystem";
-     *             break;
-     *         case -EIO:
-     *             error_desc = "I/O error";
-     *             break;
-     *         default:
-     *             error_desc = "symlink operation failed";
-     *             break;
-     *     }
-     *     fut_printf("[SYMLINK] symlink(target='%s' [%s, %s], link='%s' [%s], op=%s) -> %d (%s)\n",
-     *                target_buf, target_type, target_length_category, link_buf, link_type,
-     *                operation_type, ret, error_desc);
-     *     return ret;
-     * }
-     *
-     * fut_printf("[SYMLINK] symlink(target='%s' [%s, %s], link='%s' [%s], op=%s) -> 0 "
-     *            "(symlink created, Phase 3)\n",
-     *            target_buf, target_type, target_length_category, link_buf, link_type,
-     *            operation_type);
-     * return 0;
+     * Lookup parent directory and call VFS symlink operation
      */
 
-    fut_printf("[SYMLINK] symlink(target='%s' [%s, %s], link='%s' [%s], op=%s) -> ENOSYS "
-               "(symbolic links not yet supported, Phase 2)\n",
+    /* Lookup parent directory of linkpath */
+    char link_dirname[256];
+    const char *link_basename = NULL;
+
+    /* Extract directory from linkpath */
+    int last_slash = -1;
+    for (size_t i = 0; link_buf[i] != '\0'; i++) {
+        if (link_buf[i] == '/') {
+            last_slash = (int)i;
+        }
+    }
+
+    if (last_slash == -1) {
+        /* No directory component, use current directory */
+        link_dirname[0] = '.';
+        link_dirname[1] = '\0';
+        link_basename = link_buf;
+    } else if (last_slash == 0) {
+        /* Root directory */
+        link_dirname[0] = '/';
+        link_dirname[1] = '\0';
+        link_basename = link_buf + 1;
+    } else {
+        /* Extract directory path */
+        for (int i = 0; i < last_slash; i++) {
+            link_dirname[i] = link_buf[i];
+        }
+        link_dirname[last_slash] = '\0';
+        link_basename = link_buf + last_slash + 1;
+    }
+
+    /* Lookup parent directory */
+    struct fut_vnode *parent = NULL;
+    int ret = fut_vfs_lookup(link_dirname, &parent);
+    if (ret < 0) {
+        const char *error_desc;
+        switch (ret) {
+            case -ENOENT:
+                error_desc = "parent directory not found";
+                break;
+            case -ENOTDIR:
+                error_desc = "path component not a directory";
+                break;
+            case -EACCES:
+                error_desc = "permission denied";
+                break;
+            default:
+                error_desc = "lookup failed";
+                break;
+        }
+        fut_printf("[SYMLINK] symlink(target='%s' [%s, %s], link='%s' [%s], op=%s) -> %d (%s)\n",
+                   target_buf, target_type, target_length_category, link_buf, link_type,
+                   operation_type, ret, error_desc);
+        return ret;
+    }
+
+    /* Check if parent is a directory */
+    if (parent->type != VN_DIR) {
+        fut_printf("[SYMLINK] symlink(target='%s' [%s, %s], link='%s' [%s], op=%s) -> ENOTDIR\n",
+                   target_buf, target_type, target_length_category, link_buf, link_type,
+                   operation_type);
+        return -ENOTDIR;
+    }
+
+    /* Check if filesystem supports symlink operation */
+    if (!parent->ops || !parent->ops->symlink) {
+        fut_printf("[SYMLINK] symlink(target='%s' [%s, %s], link='%s' [%s], op=%s) -> ENOSYS "
+                   "(filesystem doesn't support symlink)\n",
+                   target_buf, target_type, target_length_category, link_buf, link_type,
+                   operation_type);
+        return -ENOSYS;
+    }
+
+    /* Create symbolic link via VFS operation */
+    ret = parent->ops->symlink(parent, link_basename, target_buf);
+    if (ret < 0) {
+        const char *error_desc;
+        switch (ret) {
+            case -EEXIST:
+                error_desc = "linkpath already exists";
+                break;
+            case -ENOSPC:
+                error_desc = "no space available";
+                break;
+            case -EROFS:
+                error_desc = "read-only filesystem";
+                break;
+            case -EIO:
+                error_desc = "I/O error";
+                break;
+            default:
+                error_desc = "symlink operation failed";
+                break;
+        }
+        fut_printf("[SYMLINK] symlink(target='%s' [%s, %s], link='%s' [%s], op=%s) -> %d (%s)\n",
+                   target_buf, target_type, target_length_category, link_buf, link_type,
+                   operation_type, ret, error_desc);
+        return ret;
+    }
+
+    /* Success */
+    fut_printf("[SYMLINK] symlink(target='%s' [%s, %s], link='%s' [%s], op=%s) -> 0 (success)\n",
                target_buf, target_type, target_length_category, link_buf, link_type,
                operation_type);
-    return -ENOSYS;
+    return 0;
 }

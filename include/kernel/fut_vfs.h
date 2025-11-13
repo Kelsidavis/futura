@@ -271,6 +271,40 @@ struct fut_vnode_ops {
      *         -EACCES: permission denied
      */
     int (*link)(struct fut_vnode *vnode, const char *oldpath, const char *newpath);
+
+    /**
+     * Create a symbolic link (called by symlink() syscall).
+     *
+     * Creates a new symbolic link vnode with the given target path string.
+     * The target is stored as-is (not resolved) allowing dangling symlinks.
+     *
+     * @param parent   Parent directory vnode
+     * @param linkpath Name of symlink to create
+     * @param target   Target path the symlink points to
+     * @return 0 on success, negative error code on failure
+     *         -EEXIST: linkpath already exists
+     *         -ENOTDIR: linkpath parent is not a directory
+     *         -ENOSPC: insufficient space for new entry or symlink data
+     *         -EROFS: read-only filesystem
+     *         -EACCES: permission denied
+     */
+    int (*symlink)(struct fut_vnode *parent, const char *linkpath, const char *target);
+
+    /**
+     * Read symbolic link target path (called by readlink() syscall).
+     *
+     * Returns the target path string stored in a symbolic link vnode.
+     * Does NOT follow the symlink or resolve relative paths.
+     *
+     * @param vnode VNode of symbolic link to read
+     * @param buf   Buffer to store target path
+     * @param size  Maximum number of bytes to read
+     * @return Number of bytes read (not including null terminator),
+     *         or negative error code on failure
+     *         -EINVAL: vnode is not a symbolic link
+     *         -EFAULT: buf is inaccessible
+     */
+    ssize_t (*readlink)(struct fut_vnode *vnode, char *buf, size_t size);
 };
 
 /* ============================================================

@@ -40,6 +40,11 @@ struct ramfs_node {
         struct {
             struct ramfs_dirent *entries;
         } dir;
+
+        /* For symbolic links: target path */
+        struct {
+            char *target;           /* Target path string (not resolved) */
+        } link;
     };
     uint64_t magic_guard_after;     /* Guard value to detect overflow after structure */
 };
@@ -1379,6 +1384,163 @@ static int ramfs_link(struct fut_vnode *old_vnode, const char *oldpath, const ch
     return 0;
 }
 
+/**
+ * ramfs_symlink() - Create a symbolic link
+ *
+ * @parent: Parent directory vnode
+ * @linkpath: Name of symlink to create
+ * @target: Target path the symlink points to
+ *
+ * Creates a new symbolic link vnode with the given target path string.
+ * The target is stored as-is (not resolved) allowing dangling symlinks.
+ *
+ * Returns: 0 on success, negative error code on failure
+ */
+static int ramfs_symlink(struct fut_vnode *parent, const char *linkpath, const char *target) {
+    extern void fut_printf(const char *, ...);
+
+    if (!parent || !linkpath || !target) {
+        return -EINVAL;
+    }
+
+    /* Parent must be a directory */
+    if (parent->type != VN_DIR) {
+        return -ENOTDIR;
+    }
+
+    struct ramfs_node *parent_node = (struct ramfs_node *)parent->fs_data;
+    if (!parent_node) {
+        return -EIO;
+    }
+
+    /* Check if linkpath already exists */
+    struct ramfs_dirent *existing = parent_node->dir.entries;
+    while (existing) {
+        if (str_cmp(existing->name, linkpath) == 0) {
+            return -EEXIST;  /* Entry already exists */
+        }
+        existing = existing->next;
+    }
+
+    /* Calculate target length */
+    size_t target_len = 0;
+    while (target[target_len] != '\0' && target_len < 4096) {
+        target_len++;
+    }
+
+    if (target_len == 0) {
+        return -EINVAL;  /* Empty target not allowed */
+    }
+
+    /* Allocate and initialize new symlink vnode */
+    struct fut_vnode *link_vnode = fut_malloc(sizeof(struct fut_vnode));
+    if (!link_vnode) {
+        return -ENOMEM;
+    }
+
+    struct ramfs_node *link_node = fut_malloc(sizeof(struct ramfs_node));
+    if (!link_node) {
+        fut_free(link_vnode);
+        return -ENOMEM;
+    }
+
+    /* Allocate target string buffer */
+    char *target_buf = fut_malloc(target_len + 1);
+    if (!target_buf) {
+        fut_free(link_node);
+        fut_free(link_vnode);
+        return -ENOMEM;
+    }
+
+    /* Copy target string */
+    for (size_t i = 0; i <= target_len; i++) {
+        target_buf[i] = target[i];
+    }
+
+    /* Initialize link_node */
+    link_node->magic_guard_before = RAMFS_NODE_MAGIC;
+    link_node->open_count = 0;
+    link_node->link.target = target_buf;
+    link_node->magic_guard_after = RAMFS_NODE_MAGIC;
+
+    /* Initialize link_vnode */
+    link_vnode->type = VN_LNK;
+    link_vnode->ino = 0;  /* Will be set by VFS layer if needed */
+    link_vnode->mode = 0777;  /* Symlinks are typically world-readable */
+    link_vnode->size = target_len;  /* Size is length of target string */
+    link_vnode->nlinks = 1;
+    link_vnode->mount = parent->mount;
+    link_vnode->fs_data = link_node;
+    link_vnode->refcount = 1;
+    link_vnode->ops = &ramfs_vnode_ops;
+
+    /* Create directory entry */
+    struct ramfs_dirent *new_entry = fut_malloc(sizeof(struct ramfs_dirent));
+    if (!new_entry) {
+        fut_free(target_buf);
+        fut_free(link_node);
+        fut_free(link_vnode);
+        return -ENOMEM;
+    }
+
+    str_cpy_bounded(new_entry->name, linkpath, sizeof(new_entry->name));
+    new_entry->vnode = link_vnode;
+    new_entry->next = parent_node->dir.entries;
+    parent_node->dir.entries = new_entry;
+
+    fut_printf("[RAMFS-SYMLINK] Created symlink '%s' -> '%s'\n", linkpath, target);
+
+    return 0;
+}
+
+/**
+ * ramfs_readlink() - Read symbolic link target
+ *
+ * @vnode: Vnode of symbolic link to read
+ * @buf: Buffer to store target path
+ * @size: Maximum number of bytes to read
+ *
+ * Returns the target path string stored in a symbolic link vnode.
+ * Does NOT follow the symlink or resolve relative paths.
+ *
+ * Returns: Number of bytes read (not including null terminator),
+ *          or negative error code on failure
+ */
+static ssize_t ramfs_readlink(struct fut_vnode *vnode, char *buf, size_t size) {
+    extern void fut_printf(const char *, ...);
+
+    if (!vnode || !buf || size == 0) {
+        return -EINVAL;
+    }
+
+    /* Only symbolic links can be read with readlink */
+    if (vnode->type != VN_LNK) {
+        return -EINVAL;
+    }
+
+    struct ramfs_node *node = (struct ramfs_node *)vnode->fs_data;
+    if (!node || !node->link.target) {
+        return -EIO;
+    }
+
+    /* Calculate target length */
+    size_t target_len = 0;
+    while (node->link.target[target_len] != '\0' && target_len < 4096) {
+        target_len++;
+    }
+
+    /* Copy target to buffer, limiting to size */
+    size_t bytes_to_copy = (target_len < size) ? target_len : size;
+    for (size_t i = 0; i < bytes_to_copy; i++) {
+        buf[i] = node->link.target[i];
+    }
+
+    fut_printf("[RAMFS-READLINK] Read symlink: %u bytes, target='%s'\n",
+               (unsigned int)bytes_to_copy, node->link.target);
+
+    return (ssize_t)bytes_to_copy;
+}
+
 static const struct fut_vnode_ops ramfs_vnode_ops = {
     .open = ramfs_open,
     .close = ramfs_close,
@@ -1395,7 +1557,9 @@ static const struct fut_vnode_ops ramfs_vnode_ops = {
     .sync = ramfs_sync,
     .truncate = ramfs_truncate,
     .rename = ramfs_rename,
-    .link = ramfs_link
+    .link = ramfs_link,
+    .symlink = ramfs_symlink,
+    .readlink = ramfs_readlink
 };
 
 /* ============================================================

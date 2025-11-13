@@ -70,6 +70,11 @@ extern int vfs_alloc_specific_fd_for_task(struct fut_task *task, int target_fd, 
  *   - -EMFILE if F_DUPFD and no descriptors available >= arg
  *   - -ESRCH if no current task context
  *
+ * Phase 1 (Completed): Basic fcntl validation and core commands
+ * Phase 2 (Current): Full command handling, flag categorization, and detailed logging
+ * Phase 3: Advanced commands (F_SETLK, F_GETLK, F_SETOWN, F_GETOWN)
+ * Phase 4: File sealing and lease management
+ *
  * Command categories:
  *
  * File descriptor flags (affect descriptor, not shared with dup'd FDs):

@@ -7,8 +7,8 @@
  * Complement to setsockopt() for querying socket configuration and state.
  *
  * Phase 1 (Completed): Basic validation stub
- * Phase 2 (Current): Implement common SOL_SOCKET options (SO_TYPE, SO_ERROR, SO_SNDBUF, SO_RCVBUF)
- * Phase 3: TCP and IP protocol options
+ * Phase 2 (Completed): Implement common SOL_SOCKET options (SO_TYPE, SO_ERROR, SO_SNDBUF, SO_RCVBUF)
+ * Phase 3 (Current): TCP and IP protocol options
  * Phase 4: Advanced options and full POSIX compliance
  */
 
@@ -78,8 +78,8 @@ typedef uint32_t socklen_t;
  * - Option values reflect current socket state
  *
  * Phase 1 (Completed): Validates parameters and returns stub
- * Phase 2 (Current): Implement common SOL_SOCKET options
- * Phase 3: Implement TCP and IP protocol options
+ * Phase 2 (Completed): Implement common SOL_SOCKET options
+ * Phase 3 (Current): Implement TCP and IP protocol options
  * Phase 4: Advanced options and error handling
  *
  * Common SOL_SOCKET options:

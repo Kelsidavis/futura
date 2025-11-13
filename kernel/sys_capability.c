@@ -8,8 +8,8 @@
  * allowing specific privileges without full root access.
  *
  * Phase 1 (Completed): Validation and stub implementations
- * Phase 2 (Current): Enhanced validation, version checking, parameter categorization, detailed logging
- * Phase 3: Implement capability storage in task structure
+ * Phase 2 (Completed): Enhanced validation, version checking, parameter categorization, detailed logging
+ * Phase 3 (Current): Implement capability storage in task structure
  * Phase 4: Integrate with permission checks throughout kernel
  */
 

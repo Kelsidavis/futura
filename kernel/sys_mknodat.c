@@ -6,10 +6,10 @@
  * Implements mknodat for creating special files (device nodes, FIFOs, sockets).
  * Essential for device management, IPC, and container initialization.
  *
- * Phase 1 (Current): Validation and stub implementation
- * Phase 2: Implement regular file and FIFO creation
- * Phase 3: Add device node creation (character and block devices)
- * Phase 4: Integrate with DevFS and container namespaces
+ * Phase 1 (Completed): Validation and stub implementation
+ * Phase 2 (Current): Enhanced validation, user-space data handling, parameter categorization
+ * Phase 3: Implement regular file and FIFO creation
+ * Phase 4: Add device node creation with capabilities checks
  */
 
 #include <kernel/fut_task.h>
@@ -18,6 +18,7 @@
 #include <stddef.h>
 
 extern void fut_printf(const char *fmt, ...);
+extern int fut_copy_from_user(void *to, const void *from, size_t size);
 
 /* File type constants from sys/stat.h */
 #define S_IFMT   0170000  /* File type mask */
@@ -173,17 +174,33 @@ long sys_mknodat(int dirfd, const char *pathname, uint32_t mode, uint32_t dev) {
         return -ESRCH;
     }
 
-    /* Validate pathname pointer */
+    /* Phase 2: Validate pathname pointer */
     if (!pathname) {
         fut_printf("[MKNODAT] mknodat(dirfd=%d, pathname=NULL, mode=0%o, dev=0x%x, pid=%d) -> EFAULT\n",
                    dirfd, mode, dev, task->pid);
         return -EFAULT;
     }
 
-    /* Validate dirfd */
+    /* Phase 2: Copy pathname from userspace to kernel space */
+    char path_buf[256];
+    if (fut_copy_from_user(path_buf, pathname, sizeof(path_buf) - 1) != 0) {
+        fut_printf("[MKNODAT] mknodat(dirfd=%d, pathname=?, mode=0%o, dev=0x%x, pid=%d) -> EFAULT "
+                   "(pathname copy_from_user failed)\n", dirfd, mode, dev, task->pid);
+        return -EFAULT;
+    }
+    path_buf[sizeof(path_buf) - 1] = '\0';
+
+    /* Phase 2: Validate pathname is not empty */
+    if (path_buf[0] == '\0') {
+        fut_printf("[MKNODAT] mknodat(dirfd=%d, pathname=\\\"\\\" [empty], mode=0%o, dev=0x%x, pid=%d) -> EINVAL\n",
+                   dirfd, mode, dev, task->pid);
+        return -EINVAL;
+    }
+
+    /* Phase 2: Validate dirfd */
     if (dirfd != AT_FDCWD && dirfd < 0) {
-        fut_printf("[MKNODAT] mknodat(dirfd=%d [invalid], pathname=%p, mode=0%o, dev=0x%x, pid=%d) -> EBADF\n",
-                   dirfd, pathname, mode, dev, task->pid);
+        fut_printf("[MKNODAT] mknodat(dirfd=%d [invalid], pathname='%s', mode=0%o, dev=0x%x, pid=%d) -> EBADF\n",
+                   dirfd, path_buf, mode, dev, task->pid);
         return -EBADF;
     }
 

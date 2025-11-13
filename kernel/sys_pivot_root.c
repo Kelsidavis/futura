@@ -6,10 +6,10 @@
  * Implements pivot_root for changing the root mount in a mount namespace.
  * Essential for container initialization and initramfs switching.
  *
- * Phase 1 (Current): Validation and stub implementation
- * Phase 2: Basic pivot_root with mount point validation
- * Phase 3: Full mount namespace integration
- * Phase 4: Container runtime optimization
+ * Phase 1 (Completed): Validation and stub implementation
+ * Phase 2 (Current): Enhanced validation, path categorization, user-space data handling
+ * Phase 3: Basic pivot_root with mount point validation
+ * Phase 4: Full mount namespace integration
  */
 
 #include <kernel/fut_task.h>
@@ -17,6 +17,7 @@
 #include <stddef.h>
 
 extern void fut_printf(const char *fmt, ...);
+extern int fut_copy_from_user(void *to, const void *from, size_t size);
 
 /**
  * pivot_root() - Change root filesystem
@@ -178,24 +179,80 @@ long sys_pivot_root(const char *new_root, const char *put_old) {
         return -ESRCH;
     }
 
-    /* Validate new_root pointer */
+    /* Phase 2: Validate new_root pointer */
     if (!new_root) {
         fut_printf("[PIVOT_ROOT] pivot_root(new_root=NULL, put_old=%p, pid=%d) -> EFAULT\n",
                    put_old, task->pid);
         return -EFAULT;
     }
 
-    /* Validate put_old pointer */
+    /* Phase 2: Copy new_root from userspace */
+    char new_root_buf[256];
+    if (fut_copy_from_user(new_root_buf, new_root, sizeof(new_root_buf) - 1) != 0) {
+        fut_printf("[PIVOT_ROOT] pivot_root(new_root=?, put_old=%p, pid=%d) -> EFAULT "
+                   "(new_root copy_from_user failed)\n",
+                   put_old, task->pid);
+        return -EFAULT;
+    }
+    new_root_buf[sizeof(new_root_buf) - 1] = '\0';
+
+    /* Phase 2: Validate new_root is not empty */
+    if (new_root_buf[0] == '\0') {
+        fut_printf("[PIVOT_ROOT] pivot_root(new_root=\"\" [empty], put_old=%p, pid=%d) -> EINVAL\n",
+                   put_old, task->pid);
+        return -EINVAL;
+    }
+
+    /* Phase 2: Validate put_old pointer */
     if (!put_old) {
-        fut_printf("[PIVOT_ROOT] pivot_root(new_root=%p, put_old=NULL, pid=%d) -> EFAULT\n",
-                   new_root, task->pid);
+        fut_printf("[PIVOT_ROOT] pivot_root(new_root='%s', put_old=NULL, pid=%d) -> EFAULT\n",
+                   new_root_buf, task->pid);
         return -EFAULT;
     }
 
-    /* Phase 1: Accept parameters and return -ENOSYS */
-    fut_printf("[PIVOT_ROOT] pivot_root(new_root=%p, put_old=%p, pid=%d) -> ENOSYS "
-               "(Phase 1 stub - no actual pivot yet)\n",
-               new_root, put_old, task->pid);
+    /* Phase 2: Copy put_old from userspace */
+    char put_old_buf[256];
+    if (fut_copy_from_user(put_old_buf, put_old, sizeof(put_old_buf) - 1) != 0) {
+        fut_printf("[PIVOT_ROOT] pivot_root(new_root='%s', put_old=?, pid=%d) -> EFAULT "
+                   "(put_old copy_from_user failed)\n",
+                   new_root_buf, task->pid);
+        return -EFAULT;
+    }
+    put_old_buf[sizeof(put_old_buf) - 1] = '\0';
+
+    /* Phase 2: Validate put_old is not empty */
+    if (put_old_buf[0] == '\0') {
+        fut_printf("[PIVOT_ROOT] pivot_root(new_root='%s', put_old=\"\" [empty], pid=%d) -> EINVAL\n",
+                   new_root_buf, task->pid);
+        return -EINVAL;
+    }
+
+    /* Phase 2: Categorize new_root path type */
+    const char *new_root_type;
+    if (new_root_buf[0] == '/') {
+        new_root_type = "absolute";
+    } else if (new_root_buf[0] == '.' && new_root_buf[1] == '/') {
+        new_root_type = "relative (explicit)";
+    } else if (new_root_buf[0] == '.') {
+        new_root_type = "relative (current)";
+    } else {
+        new_root_type = "relative";
+    }
+
+    /* Phase 2: Categorize put_old path type */
+    const char *put_old_type;
+    if (put_old_buf[0] == '/') {
+        put_old_type = "absolute";
+    } else if (put_old_buf[0] == '.' && put_old_buf[1] == '/') {
+        put_old_type = "relative (explicit)";
+    } else {
+        put_old_type = "relative";
+    }
+
+    /* Phase 2: Enhanced logging with path categorization */
+    fut_printf("[PIVOT_ROOT] pivot_root(new_root='%s' [%s], put_old='%s' [%s], pid=%d) -> ENOSYS "
+               "(Phase 3: mount namespace integration not yet implemented)\n",
+               new_root_buf, new_root_type, put_old_buf, put_old_type, task->pid);
 
     return -ENOSYS;
 }

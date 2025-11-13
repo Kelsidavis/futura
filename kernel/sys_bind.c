@@ -7,8 +7,8 @@
  *
  * Phase 1 (Completed): Basic bind implementation with Unix domain socket support
  * Phase 2 (Completed): Enhanced validation, address family identification, and detailed logging
- * Phase 3 (Current): Support for multiple address families (AF_INET, AF_INET6)
- * Phase 4: Advanced features (SO_REUSEADDR, SO_REUSEPORT, wildcard binding)
+ * Phase 3 (Completed): Support for multiple address families (AF_INET, AF_INET6)
+ * Phase 4 (Current): Advanced features (SO_REUSEADDR, SO_REUSEPORT, wildcard binding)
  */
 
 #include <kernel/fut_task.h>
@@ -28,6 +28,33 @@ typedef uint32_t socklen_t;
 #define AF_UNIX   1
 #define AF_INET   2
 #define AF_INET6  10
+
+/* Internet address structures */
+typedef struct {
+    uint16_t sin_family;
+    uint16_t sin_port;
+    uint32_t sin_addr;
+    uint8_t  sin_zero[8];
+} sockaddr_in_t;
+
+typedef struct {
+    uint16_t sin6_family;
+    uint16_t sin6_port;
+    uint32_t sin6_flowinfo;
+    uint8_t  sin6_addr[16];
+    uint32_t sin6_scope_id;
+} sockaddr_in6_t;
+
+/* Phase 3: Helper to categorize port numbers */
+static const char *categorize_port(uint16_t port) {
+    if (port < 1024) {
+        return "privileged (0-1023)";
+    } else if (port < 49152) {
+        return "registered (1024-49151)";
+    } else {
+        return "ephemeral/dynamic (49152-65535)";
+    }
+}
 
 /**
  * bind() - Bind socket to local address
@@ -70,9 +97,9 @@ typedef uint32_t socklen_t;
  *   - Empty: '' (anonymous, some systems)
  *
  * Phase 1 (Completed): Basic Unix domain socket binding
- * Phase 2 (Current): Address family identification and enhanced validation
- * Phase 3: Support for AF_INET and AF_INET6
- * Phase 4: Advanced features (SO_REUSEADDR, SO_REUSEPORT, port ranges)
+ * Phase 2 (Completed): Address family identification and enhanced validation
+ * Phase 3 (Completed): Support for AF_INET and AF_INET6
+ * Phase 4 (Current): Advanced features (SO_REUSEADDR, SO_REUSEPORT, port ranges)
  */
 long sys_bind(int sockfd, const void *addr, socklen_t addrlen) {
     fut_task_t *task = fut_task_current();
@@ -137,9 +164,58 @@ long sys_bind(int sockfd, const void *addr, socklen_t addrlen) {
             break;
     }
 
-    /* Phase 2: Only AF_UNIX supported in current phase */
+    /* Phase 3: Validate address length based on address family */
+    if (sa_family == AF_INET && addrlen < sizeof(sockaddr_in_t)) {
+        fut_printf("[BIND] bind(sockfd=%d, family=%s, addrlen=%u) -> EINVAL (AF_INET needs at least %zu bytes)\n",
+                   sockfd, family_name, addrlen, sizeof(sockaddr_in_t));
+        return -EINVAL;
+    }
+
+    if (sa_family == AF_INET6 && addrlen < sizeof(sockaddr_in6_t)) {
+        fut_printf("[BIND] bind(sockfd=%d, family=%s, addrlen=%u) -> EINVAL (AF_INET6 needs at least %zu bytes)\n",
+                   sockfd, family_name, addrlen, sizeof(sockaddr_in6_t));
+        return -EINVAL;
+    }
+
+    /* Phase 3: Handle AF_INET (IPv4) addresses */
+    if (sa_family == AF_INET) {
+        sockaddr_in_t inet_addr = {0};
+        if (fut_copy_from_user(&inet_addr, addr, sizeof(inet_addr)) != 0) {
+            fut_printf("[BIND] bind(sockfd=%d, family=%s, addrlen=%u) -> EFAULT (failed to copy AF_INET address)\n",
+                       sockfd, family_name, addrlen);
+            return -EFAULT;
+        }
+
+        /* Phase 3: Extract port and categorize */
+        uint16_t port = (inet_addr.sin_port >> 8) | ((inet_addr.sin_port & 0xFF) << 8);  /* Network to host byte order */
+        const char *port_cat = categorize_port(port);
+
+        fut_printf("[BIND] bind(sockfd=%d, family=%s, port=%u [%s], addrlen=%u) -> ENOTSUP (AF_INET binding not yet implemented)\n",
+                   sockfd, family_name, port, port_cat, addrlen);
+        return -ENOTSUP;
+    }
+
+    /* Phase 3: Handle AF_INET6 (IPv6) addresses */
+    if (sa_family == AF_INET6) {
+        sockaddr_in6_t inet6_addr = {0};
+        if (fut_copy_from_user(&inet6_addr, addr, sizeof(inet6_addr)) != 0) {
+            fut_printf("[BIND] bind(sockfd=%d, family=%s, addrlen=%u) -> EFAULT (failed to copy AF_INET6 address)\n",
+                       sockfd, family_name, addrlen);
+            return -EFAULT;
+        }
+
+        /* Phase 3: Extract port and categorize */
+        uint16_t port = (inet6_addr.sin6_port >> 8) | ((inet6_addr.sin6_port & 0xFF) << 8);  /* Network to host byte order */
+        const char *port_cat = categorize_port(port);
+
+        fut_printf("[BIND] bind(sockfd=%d, family=%s, port=%u [%s], addrlen=%u) -> ENOTSUP (AF_INET6 binding not yet implemented)\n",
+                   sockfd, family_name, port, port_cat, addrlen);
+        return -ENOTSUP;
+    }
+
+    /* Phase 2: Only AF_UNIX supported currently (Phase 3 adds AF_INET/AF_INET6 stubs) */
     if (sa_family != AF_UNIX) {
-        fut_printf("[BIND] bind(sockfd=%d, family=%u [%s, %s], addrlen=%u) -> ENOTSUP (only AF_UNIX supported in Phase 2)\n",
+        fut_printf("[BIND] bind(sockfd=%d, family=%u [%s, %s], addrlen=%u) -> ENOTSUP (unsupported address family)\n",
                    sockfd, sa_family, family_name, family_desc, addrlen);
         return -ENOTSUP;
     }

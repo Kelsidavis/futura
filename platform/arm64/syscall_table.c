@@ -69,6 +69,8 @@ extern int64_t sys_lseek(int fd, int64_t offset, int whence);
 extern long sys_pread64(unsigned int fd, void *buf, size_t count, int64_t offset);
 extern long sys_pwrite64(unsigned int fd, const void *buf, size_t count, int64_t offset);
 extern long sys_open(const char *pathname, int flags, int mode);
+extern long sys_openat(int dirfd, const char *pathname, int flags, int mode);
+extern long sys_fstat(int fd, void *statbuf);
 extern long sys_echo(const char *u_in, char *u_out, size_t n);
 
 /* iovec structure for vectored I/O */
@@ -655,29 +657,14 @@ struct stat {
 #define S_IFREG  0100000    /* Regular file */
 #define S_IFDIR  0040000    /* Directory */
 
-/* sys_openat - open file (stub)
+/* sys_openat_wrapper - open file (ARM64 syscall ABI)
  * x0 = dirfd, x1 = pathname, x2 = flags, x3 = mode
- * For simplicity, we ignore dirfd and just treat as open()
+ * Wraps kernel sys_openat() for ARM64 calling convention
  */
-static int64_t sys_openat(uint64_t dirfd, uint64_t path_ptr, uint64_t flags,
-                          uint64_t mode, uint64_t arg4, uint64_t arg5) {
-    (void)dirfd; (void)flags; (void)mode; (void)arg4; (void)arg5;
-
-    if (path_ptr == 0) {
-        return -EINVAL;
-    }
-
-    const char *path = (const char *)path_ptr;
-
-    /* For now, just validate path and return a dummy fd
-     * TODO: Implement real file descriptor table and VFS integration
-     */
-    if (path[0] != '/') {
-        return -EINVAL;  /* Path must be absolute */
-    }
-
-    /* Return a dummy fd (3 = first user fd after stdin/stdout/stderr) */
-    return 3;
+static int64_t sys_openat_wrapper(uint64_t dirfd, uint64_t path_ptr, uint64_t flags,
+                                  uint64_t mode, uint64_t arg4, uint64_t arg5) {
+    (void)arg4; (void)arg5;
+    return (int64_t)sys_openat((int)dirfd, (const char *)path_ptr, (int)flags, (int)mode);
 }
 
 /* sys_close_wrapper - close file descriptor
@@ -691,45 +678,14 @@ static int64_t sys_close_wrapper(uint64_t fd, uint64_t arg1, uint64_t arg2,
     return (int64_t)sys_close((int)fd);
 }
 
-/* sys_fstat - get file status (stub)
+/* sys_fstat_wrapper - get file status (ARM64 syscall ABI)
  * x0 = fd, x1 = statbuf
+ * Wraps kernel sys_fstat() for ARM64 calling convention
  */
-static int64_t sys_fstat(uint64_t fd, uint64_t buf_ptr, uint64_t arg2,
-                         uint64_t arg3, uint64_t arg4, uint64_t arg5) {
+static int64_t sys_fstat_wrapper(uint64_t fd, uint64_t buf_ptr, uint64_t arg2,
+                                 uint64_t arg3, uint64_t arg4, uint64_t arg5) {
     (void)arg2; (void)arg3; (void)arg4; (void)arg5;
-
-    if (buf_ptr == 0) {
-        return -EINVAL;
-    }
-
-    /* Validate fd */
-    if (fd > 1024) {
-        return -EINVAL;
-    }
-
-    struct stat *buf = (struct stat *)buf_ptr;
-
-    /* Clear the structure */
-    for (int i = 0; i < (int)sizeof(struct stat); i++) {
-        ((char *)buf)[i] = 0;
-    }
-
-    /* Fill with stub data */
-    buf->st_dev = 1;
-    buf->st_ino = 1000 + fd;
-    buf->st_mode = S_IFREG | 0644;  /* Regular file, rw-r--r-- */
-    buf->st_nlink = 1;
-    buf->st_uid = 0;
-    buf->st_gid = 0;
-    buf->st_rdev = 0;
-    buf->st_size = 1024;  /* Dummy size */
-    buf->st_blksize = 4096;
-    buf->st_blocks = 2;
-    buf->st_atime = 0;
-    buf->st_mtime = 0;
-    buf->st_ctime = 0;
-
-    return 0;
+    return (int64_t)sys_fstat((int)fd, (void *)buf_ptr);
 }
 
 /* sys_fork_wrapper - fork current process
@@ -2687,7 +2643,7 @@ static struct syscall_entry syscall_table[MAX_SYSCALL] = {
     [__NR_fchmodat]     = { (syscall_fn_t)sys_fchmodat_wrapper, "fchmodat" },
     [__NR_fchownat]     = { (syscall_fn_t)sys_fchownat_wrapper, "fchownat" },
     [__NR_fchown]       = { (syscall_fn_t)sys_fchown_wrapper, "fchown" },
-    [__NR_openat]       = { (syscall_fn_t)sys_openat,     "openat" },
+    [__NR_openat]       = { (syscall_fn_t)sys_openat_wrapper,     "openat" },
     [__NR_close]        = { (syscall_fn_t)sys_close_wrapper,      "close" },
     [__NR_vhangup]      = { (syscall_fn_t)sys_vhangup_wrapper, "vhangup" },
     [__NR_pipe2]        = { (syscall_fn_t)sys_pipe_wrapper, "pipe2/pipe" },
@@ -2712,7 +2668,7 @@ static struct syscall_entry syscall_table[MAX_SYSCALL] = {
     [__NR_tee]          = { (syscall_fn_t)sys_tee_wrapper, "tee" },
     [__NR_readlinkat]   = { (syscall_fn_t)sys_readlinkat_wrapper, "readlinkat" },
     [__NR_fstatat]      = { (syscall_fn_t)sys_fstatat_wrapper, "fstatat" },
-    [__NR_fstat]        = { (syscall_fn_t)sys_fstat,      "fstat" },
+    [__NR_fstat]        = { (syscall_fn_t)sys_fstat_wrapper,      "fstat" },
     [__NR_sync]         = { (syscall_fn_t)sys_sync_wrapper, "sync" },
     [__NR_fsync]        = { (syscall_fn_t)sys_fsync_wrapper, "fsync" },
     [__NR_fdatasync]    = { (syscall_fn_t)sys_fdatasync_wrapper, "fdatasync" },
@@ -2833,7 +2789,7 @@ static struct syscall_entry syscall_table[MAX_SYSCALL] = {
     [2]  = { (syscall_fn_t)sys_open_wrapper,       "open" },        /* SYS_open = 2 */
     [3]  = { (syscall_fn_t)sys_close_wrapper,      "close" },       /* SYS_close = 3 */
     [4]  = { (syscall_fn_t)sys_stat_wrapper, "stat" },      /* SYS_stat = 4 */
-    [5]  = { (syscall_fn_t)sys_fstat,      "fstat" },       /* SYS_fstat = 5 */
+    [5]  = { (syscall_fn_t)sys_fstat_wrapper,      "fstat" },       /* SYS_fstat = 5 */
     [8]  = { (syscall_fn_t)sys_lseek_wrapper, "lseek" },    /* SYS_lseek = 8 */
     [9]  = { (syscall_fn_t)sys_mmap_wrapper, "mmap" },      /* SYS_mmap = 9 */
     [11] = { (syscall_fn_t)sys_munmap_wrapper, "munmap" },  /* SYS_munmap = 11 */

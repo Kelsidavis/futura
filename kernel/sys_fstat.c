@@ -7,8 +7,8 @@
  * Essential for file inspection and metadata queries without path lookup.
  *
  * Phase 1 (Completed): Basic fstat with getattr support
- * Phase 2 (Current): Enhanced validation, FD categorization, file type/size identification, and detailed logging
- * Phase 3: Extended attributes (xattr) support and file handle metadata
+ * Phase 2 (Completed): Enhanced validation, FD categorization, file type/size identification, and detailed logging
+ * Phase 3 (Current): Extended attributes (xattr) support and file handle metadata
  * Phase 4: Advanced features (statx support, mount propagation flags, security labels)
  */
 

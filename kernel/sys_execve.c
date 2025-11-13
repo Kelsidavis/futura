@@ -6,8 +6,8 @@
  * Implements program execution via execve().
  *
  * Phase 1 (Completed): Basic execve with FD_CLOEXEC handling
- * Phase 2 (Current): Enhanced validation, path categorization, detailed logging
- * Phase 3: Argument/environment limit enforcement, security checks
+ * Phase 2 (Completed): Enhanced validation, path categorization, detailed logging
+ * Phase 3 (Current): Argument/environment limit enforcement, security checks
  * Phase 4: Performance optimization, COW optimizations
  */
 

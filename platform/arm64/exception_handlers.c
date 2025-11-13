@@ -178,7 +178,16 @@ void arm64_exception_dispatch(fut_interrupt_frame_t *frame) {
                 else fut_serial_puts("Unknown");
                 fut_serial_puts(")\n");
             }
-            handle_unknown(frame);
+            /* Try to handle as page fault */
+            if (fut_trap_handle_page_fault(frame)) {
+                return;  /* Handled successfully */
+            }
+
+            /* Unhandled data abort - signal task with SIGSEGV */
+            uint64_t far = frame->far;  /* Fault address */
+            fut_printf("[DATA-ABORT-UNHANDLED] Unhandled abort at VA=0x%llx PC=0x%llx\n",
+                       far, frame->pc);
+            fut_task_signal_exit(SIGSEGV);
             break;
 
         case ESR_EC_IABT_EL0:

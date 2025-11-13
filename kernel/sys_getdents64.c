@@ -7,8 +7,8 @@
  * Essential for directory listing and filesystem traversal.
  *
  * Phase 1 (Completed): Basic directory entry reading with VFS integration
- * Phase 2 (Current): Enhanced validation, FD/buffer categorization, entry counting, and detailed logging
- * Phase 3: Performance optimization (readdir caching, large directory support)
+ * Phase 2 (Completed): Enhanced validation, FD/buffer categorization, entry counting, and detailed logging
+ * Phase 3 (Current): Performance optimization (readdir caching, large directory support)
  * Phase 4: Advanced features (directory entry filtering, sorted traversal)
  */
 

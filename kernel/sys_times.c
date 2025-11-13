@@ -50,8 +50,8 @@ struct tms {
  * To convert to seconds: seconds = ticks / USER_HZ
  *
  * Phase 1 (Completed): Returns zero times and current tick count
- * Phase 2 (Current): Enhanced validation and detailed time reporting
- * Phase 3: Track and return actual CPU times from scheduler
+ * Phase 2 (Completed): Enhanced validation and detailed time reporting
+ * Phase 3 (Current): Track and return actual CPU times from scheduler
  * Phase 4: Accumulate child times from wait4()/waitpid()
  */
 long sys_times(struct tms *buf) {

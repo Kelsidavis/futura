@@ -6,8 +6,8 @@
  * Implements mount for attaching filesystems to the directory tree.
  * Essential for system initialization, container setup, and filesystem management.
  *
- * Phase 1 (Current): Validation and stub implementation
- * Phase 2: Basic mount support for existing filesystems
+ * Phase 1 (Completed): Validation and stub implementation
+ * Phase 2 (Current): Enhanced validation, filesystem type categorization, user-space parameter handling
  * Phase 3: Full mount namespace support
  * Phase 4: Advanced features (bind mounts, move mounts, remount)
  */
@@ -18,6 +18,7 @@
 #include <stddef.h>
 
 extern void fut_printf(const char *fmt, ...);
+extern int fut_copy_from_user(void *to, const void *from, size_t size);
 
 /* Mount flags */
 #define MS_RDONLY        1      /* Mount read-only */
@@ -179,18 +180,50 @@ long sys_mount(const char *source, const char *target, const char *filesystemtyp
         return -ESRCH;
     }
 
-    /* Validate target pointer (required) */
+    /* Suppress unused parameter warning - used in Phase 3 */
+    (void)data;
+
+    /* Phase 2: Validate target pointer (required) */
     if (!target) {
         fut_printf("[MOUNT] mount(source=%p, target=NULL, fstype=%p, flags=0x%lx, pid=%d) -> EFAULT\n",
                    source, filesystemtype, mountflags, task->pid);
         return -EFAULT;
     }
 
-    /* Validate filesystemtype pointer (required except for remount/bind/move) */
-    if (!filesystemtype && !(mountflags & (MS_REMOUNT | MS_BIND | MS_MOVE))) {
-        fut_printf("[MOUNT] mount(source=%p, target=%p, fstype=NULL, flags=0x%lx, pid=%d) -> EINVAL "
+    /* Phase 2: Copy target from userspace to validate it */
+    char target_buf[256];
+    if (fut_copy_from_user(target_buf, target, sizeof(target_buf) - 1) != 0) {
+        fut_printf("[MOUNT] mount(source=%p, target=?, fstype=%p, flags=0x%lx, pid=%d) -> EFAULT "
+                   "(target copy_from_user failed)\n",
+                   source, filesystemtype, mountflags, task->pid);
+        return -EFAULT;
+    }
+    target_buf[sizeof(target_buf) - 1] = '\0';
+
+    /* Phase 2: Validate target is not empty */
+    if (target_buf[0] == '\0') {
+        fut_printf("[MOUNT] mount(source=%p, target=\"\" [empty], fstype=%p, flags=0x%lx, pid=%d) -> EINVAL\n",
+                   source, filesystemtype, mountflags, task->pid);
+        return -EINVAL;
+    }
+
+    /* Phase 2: Copy filesystemtype from userspace if provided */
+    char fstype_buf[64] = {0};
+    if (filesystemtype) {
+        if (fut_copy_from_user(fstype_buf, filesystemtype, sizeof(fstype_buf) - 1) != 0) {
+            fut_printf("[MOUNT] mount(source=%p, target='%s', fstype=?, flags=0x%lx, pid=%d) -> EFAULT "
+                       "(fstype copy_from_user failed)\n",
+                       source, target_buf, mountflags, task->pid);
+            return -EFAULT;
+        }
+        fstype_buf[sizeof(fstype_buf) - 1] = '\0';
+    }
+
+    /* Phase 2: Validate filesystemtype (required except for remount/bind/move) */
+    if (fstype_buf[0] == '\0' && !(mountflags & (MS_REMOUNT | MS_BIND | MS_MOVE))) {
+        fut_printf("[MOUNT] mount(source=%p, target='%s', fstype=NULL, flags=0x%lx, pid=%d) -> EINVAL "
                    "(filesystem type required)\n",
-                   source, target, mountflags, task->pid);
+                   source, target_buf, mountflags, task->pid);
         return -EINVAL;
     }
 
@@ -245,15 +278,26 @@ long sys_mount(const char *source, const char *target, const char *filesystemtyp
     }
     *p = '\0';
 
-    /* Phase 1: Accept parameters and return -ENOSYS */
-    if (filesystemtype) {
-        fut_printf("[MOUNT] mount(source=%p, target=%p, fstype=%p, type=%s, flags=%s, data=%p, pid=%d) -> ENOSYS "
-                   "(Phase 1 stub - no actual mounting yet)\n",
-                   source, target, filesystemtype, op_type, flags_buf, data, task->pid);
+    /* Phase 2: Categorize filesystem type */
+    const char *fs_category = "unknown";
+    if (fstype_buf[0] != '\0') {
+        if (fstype_buf[0] == 't' && fstype_buf[1] == 'm') fs_category = "tmpfs (RAM-based)";
+        else if (fstype_buf[0] == 'p' && fstype_buf[1] == 'r') fs_category = "procfs (process info)";
+        else if (fstype_buf[0] == 's' && fstype_buf[1] == 'y') fs_category = "sysfs (kernel objects)";
+        else if (fstype_buf[0] == 'd' && fstype_buf[1] == 'e') fs_category = "devtmpfs (devices)";
+        else if (fstype_buf[0] == 'e' && fstype_buf[1] == 'x') fs_category = "ext4 (local filesystem)";
+        else fs_category = "other filesystem type";
+    }
+
+    /* Phase 2: Enhanced logging with categorized parameters */
+    if (fstype_buf[0] != '\0') {
+        fut_printf("[MOUNT] mount(source=%p, target='%s', fstype='%s' [%s], type=%s, flags=%s, pid=%d) -> ENOSYS "
+                   "(Phase 3: VFS mount integration not yet implemented)\n",
+                   source, target_buf, fstype_buf, fs_category, op_type, flags_buf, task->pid);
     } else {
-        fut_printf("[MOUNT] mount(source=%p, target=%p, fstype=NULL, type=%s, flags=%s, pid=%d) -> ENOSYS "
-                   "(Phase 1 stub - no actual mounting yet)\n",
-                   source, target, op_type, flags_buf, task->pid);
+        fut_printf("[MOUNT] mount(source=%p, target='%s', fstype=NULL, type=%s, flags=%s, pid=%d) -> ENOSYS "
+                   "(Phase 3: VFS mount integration not yet implemented)\n",
+                   source, target_buf, op_type, flags_buf, task->pid);
     }
 
     return -ENOSYS;

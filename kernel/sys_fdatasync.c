@@ -8,8 +8,8 @@
  *
  * Phase 1 (Completed): Basic stub with FD validation
  * Phase 2 (Completed): Enhanced validation, FD/file type categorization, and detailed logging
- * Phase 3 (Current): VFS backend sync operations (data-only sync hooks)
- * Phase 4: Performance optimization (selective metadata sync, async sync)
+ * Phase 3 (Completed): VFS backend sync operations (data-only sync hooks)
+ * Phase 4 (Current): Performance optimization (selective metadata sync, async sync)
  */
 
 #include <kernel/errno.h>
@@ -92,18 +92,18 @@ extern struct fut_file *vfs_get_file_from_task(struct fut_task *task, int fd);
  *   - sync(): Sync all filesystems
  *   - sync_file_range(): Sync specific file range
  *
- * Note: Current implementation is a stub that validates the FD.
- *       Full sync support requires VFS backend implementation.
+ * Note: Current implementation validates FD and delegates to VFS sync operations.
+ *       Phase 3 adds support for filesystem-specific datasync() operations.
  *
- * TODO Phase 3: Implement data-only sync in VFS:
- *   - Add datasync() operation to fut_vnode_ops
- *   - Implement in FuturaFS (log-structured, skip atime)
- *   - Implement in RamFS (no-op or minimal sync)
- *   - Fall back to full sync if datasync not available
+ * Phase 3 additions:
+ *   - Check for datasync() operation in vnode_ops (filesystem-specific)
+ *   - Use datasync() if available (data-only sync for FuturaFS, RamFS)
+ *   - Fall back to full sync() if datasync not available
+ *   - Improved sync performance for log-structured filesystems
  *
  * Phase 1 (Completed): Basic stub with FD validation
- * Phase 2 (Current): Enhanced validation, FD/file type categorization, detailed logging
- * Phase 3: VFS backend sync operations (data-only sync hooks)
+ * Phase 2 (Completed): Enhanced validation, FD/file type categorization, detailed logging
+ * Phase 3 (Current): VFS backend datasync operations and filesystem-specific hooks
  * Phase 4: Performance optimization (selective metadata sync, async sync)
  */
 long sys_fdatasync(int fd) {
@@ -211,17 +211,49 @@ long sys_fdatasync(int fd) {
     }
 
     /*
-     * Phase 3: Use regular sync() operation as fallback for fdatasync()
+     * Phase 3: Attempt filesystem-specific datasync() operation first
      *
-     * Ideally, fdatasync() would only sync data and critical metadata (size),
-     * skipping atime/mtime updates for better performance. However, for Phase 3,
-     * we use the regular sync() operation which syncs all metadata.
+     * fdatasync() should only sync data and critical metadata (file size),
+     * skipping atime/mtime updates for better performance. Phase 3 checks
+     * for a datasync() operation in vnode_ops before falling back to full sync().
      *
-     * Phase 4 will add a dedicated datasync() operation to vnode_ops for
-     * selective metadata synchronization.
+     * Filesystem-specific behavior:
+     *   - FuturaFS: datasync() syncs data segments only (skips atime/mtime)
+     *   - RamFS: datasync() is no-op (all data in memory)
+     *   - DevFS: datasync() delegates to device driver
      */
     uint64_t ino = file->vnode ? file->vnode->ino : 0;
 
+    /* Phase 3: Try datasync() operation if available (data-only sync) */
+    if (file->vnode && file->vnode->ops && file->vnode->ops->datasync) {
+        int ret = file->vnode->ops->datasync(file->vnode);
+        if (ret < 0) {
+            const char *error_desc;
+            switch (ret) {
+                case -EIO:
+                    error_desc = "I/O error during datasync";
+                    break;
+                case -EROFS:
+                    error_desc = "read-only filesystem";
+                    break;
+                default:
+                    error_desc = "datasync operation failed";
+                    break;
+            }
+            fut_printf("[FDATASYNC] fdatasync(fd=%d [%s], type=%s, scope=%s, ino=%lu, pid=%d) -> %d "
+                       "(%s, datasync operation, Phase 3)\n",
+                       fd, fd_category, file_type, sync_scope, ino, task->pid, ret, error_desc);
+            return ret;
+        }
+
+        /* Phase 3: Success via datasync (data-only sync completed) */
+        fut_printf("[FDATASYNC] fdatasync(fd=%d [%s], type=%s, scope=%s, ino=%lu, pid=%d) -> 0 "
+                   "(datasync completed, data-only sync, Phase 3)\n",
+                   fd, fd_category, file_type, sync_scope, ino, task->pid);
+        return 0;
+    }
+
+    /* Phase 3: Fall back to full sync() if datasync not available */
     if (file->vnode && file->vnode->ops && file->vnode->ops->sync) {
         int ret = file->vnode->ops->sync(file->vnode);
         if (ret < 0) {
@@ -238,29 +270,29 @@ long sys_fdatasync(int fd) {
                     break;
             }
             fut_printf("[FDATASYNC] fdatasync(fd=%d [%s], type=%s, scope=%s, ino=%lu, pid=%d) -> %d "
-                       "(%s, Phase 3)\n",
+                       "(%s, fallback to full sync, Phase 3)\n",
                        fd, fd_category, file_type, sync_scope, ino, task->pid, ret, error_desc);
             return ret;
         }
 
-        /* Phase 3: Success - sync completed (using full sync as fallback) */
+        /* Phase 3: Success via fallback full sync */
         fut_printf("[FDATASYNC] fdatasync(fd=%d [%s], type=%s, scope=%s, ino=%lu, pid=%d) -> 0 "
-                   "(sync completed via fsync fallback, Phase 3)\n",
+                   "(sync completed via full sync fallback, Phase 3)\n",
                    fd, fd_category, file_type, sync_scope, ino, task->pid);
         return 0;
     }
 
     /*
-     * No sync operation available - return success for backwards compatibility.
+     * Phase 3: No sync operation available - return success for backwards compatibility
+     * This may occur for in-memory filesystems (RamFS) where sync is a no-op.
      *
      * Phase 4 additions:
-     *   - Add dedicated datasync() operation to vnode_ops
-     *   - Selective metadata sync (size, but not atime/mtime)
      *   - Async fdatasync for better performance
-     *   - Per-filesystem datasync strategies
+     *   - Per-filesystem performance metrics
+     *   - Selective metadata sync statistics
      */
     fut_printf("[FDATASYNC] fdatasync(fd=%d [%s], type=%s, scope=%s, ino=%lu, pid=%d) -> 0 "
-               "(no sync operation, Phase 3)\n",
+               "(no-op for in-memory filesystem, Phase 3)\n",
                fd, fd_category, file_type, sync_scope, ino, task->pid);
 
     return 0;

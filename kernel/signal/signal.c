@@ -212,3 +212,153 @@ int fut_signal_procmask(struct fut_task *task, int how,
 
     return 0;
 }
+
+/**
+ * ARM64: Deliver a pending signal to a task via exception frame modification.
+ *
+ * This function is called before returning to userspace from an exception.
+ * If a signal is pending and unblocked, it constructs an rt_sigframe on the
+ * user stack and modifies the exception frame to transfer control to the
+ * signal handler.
+ *
+ * @param task Target task
+ * @param frame Interrupt frame to modify (exception context)
+ * @return Signal number if delivered, 0 if no pending signal, <0 on error
+ */
+#ifdef __aarch64__
+
+#include <kernel/signal_frame.h>
+#include <kernel/uaccess.h>
+
+int fut_signal_deliver(struct fut_task *task, void *frame) {
+    if (!task || !frame) {
+        return 0;
+    }
+
+    /* ARM64 exception frame type */
+    typedef struct {
+        uint64_t x[31];
+        uint64_t sp;
+        uint64_t pc;
+        uint64_t pstate;
+        uint64_t esr;
+        uint64_t far;
+        uint64_t fpu_state[64];
+        uint32_t fpsr;
+        uint32_t fpcr;
+    } arm64_frame_t;
+
+    arm64_frame_t *f = (arm64_frame_t *)frame;
+
+    /* Find first pending, unblocked signal */
+    int signum = 0;
+    for (int i = 1; i < 31; i++) {
+        uint64_t signal_bit = (1ULL << (i - 1));
+        if ((task->pending_signals & signal_bit) &&
+            !(task->signal_mask & signal_bit)) {
+            signum = i;
+            break;
+        }
+    }
+
+    /* No pending signal to deliver */
+    if (signum == 0) {
+        return 0;
+    }
+
+    /* Get handler for this signal */
+    sighandler_t handler = fut_signal_get_handler(task, signum);
+
+    /* If handler is SIG_DFL or SIG_IGN, don't deliver frame */
+    if (handler == SIG_DFL || handler == SIG_IGN) {
+        uint64_t signal_bit = (1ULL << (signum - 1));
+        task->pending_signals &= ~signal_bit;
+        return signum;  /* Caller will handle default action */
+    }
+
+    /* Allocate rt_sigframe on user stack with 16-byte alignment */
+    uint64_t sp = f->sp;
+    sp &= ~0xFULL;  /* Align to 16 bytes */
+    sp -= sizeof(struct rt_sigframe);
+
+    /* Validate stack pointer is in user space */
+    if (sp < 0x1000 || sp >= 0x400000000ULL) {
+        return -EFAULT;
+    }
+
+    /* Build rt_sigframe on kernel stack first */
+    struct rt_sigframe sframe;
+    memset(&sframe, 0, sizeof(sframe));
+
+    /* Fill siginfo_t */
+    sframe.info.si_signum = signum;
+    sframe.info.si_errno = 0;
+    sframe.info.si_code = SI_USER;
+    sframe.info.si_pid = 0;
+    sframe.info.si_uid = 0;
+    sframe.info.si_addr = (void *)f->far;
+
+    /* Fill ucontext_t */
+    sframe.uc.uc_flags = 0;
+    sframe.uc.uc_link = NULL;
+    sframe.uc.uc_stack.ss_sp = (void *)f->sp;
+    sframe.uc.uc_stack.ss_flags = 0;
+    sframe.uc.uc_stack.ss_size = 0x1000;
+
+    /* Copy registers from exception frame to sigcontext */
+    for (int i = 0; i < 31; i++) {
+        sframe.uc.uc_mcontext.gregs.x[i] = f->x[i];
+    }
+    sframe.uc.uc_mcontext.gregs.sp = f->sp;
+    sframe.uc.uc_mcontext.gregs.pc = f->pc;
+    sframe.uc.uc_mcontext.gregs.pstate = f->pstate;
+    sframe.uc.uc_mcontext.gregs.fault_address = f->far;
+
+    /* Copy NEON/FPU registers (v[32] are 128-bit, stored as 2x uint64_t) */
+    for (int i = 0; i < 32; i++) {
+        sframe.uc.uc_mcontext.gregs.v[i] =
+            ((__uint128_t)f->fpu_state[2*i+1] << 64) | f->fpu_state[2*i];
+    }
+
+    sframe.uc.uc_mcontext.gregs.fpsr = f->fpsr;
+    sframe.uc.uc_mcontext.gregs.fpcr = f->fpcr;
+
+    /* Signal mask for restoration */
+    sframe.uc.uc_sigmask.__mask = task->signal_mask;
+
+    /* Copy rt_sigframe to user stack */
+    if (fut_copy_to_user((void *)sp, &sframe, sizeof(sframe)) != 0) {
+        return -EFAULT;
+    }
+
+    /* Modify exception frame to invoke signal handler */
+    f->pc = (uint64_t)handler;
+    f->sp = sp;
+
+    /* Set up arguments for signal handler (ARM64 ABI calling convention)
+     * x0 = signal number
+     * x1 = pointer to siginfo_t (within rt_sigframe)
+     * x2 = pointer to ucontext_t (within rt_sigframe)
+     */
+    f->x[0] = signum;
+    f->x[1] = sp + offsetof(struct rt_sigframe, info);
+    f->x[2] = sp + offsetof(struct rt_sigframe, uc);
+
+    /* Clear pending signal bit */
+    uint64_t signal_bit = (1ULL << (signum - 1));
+    task->pending_signals &= ~signal_bit;
+
+    fut_printf("[SIGNAL] Delivered signal %d to task %llu (handler=%p, sp=%llx)\n",
+               signum, task->pid, handler, sp);
+
+    return signum;
+}
+
+#else
+/* x86-64 stub: not yet implemented */
+int fut_signal_deliver(struct fut_task *task, void *frame) {
+    (void)task;
+    (void)frame;
+    return 0;
+}
+#endif

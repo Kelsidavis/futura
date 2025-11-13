@@ -16,6 +16,7 @@ extern int64_t arm64_syscall_dispatch(uint64_t syscall_num,
                                       uint64_t arg0, uint64_t arg1,
                                       uint64_t arg2, uint64_t arg3,
                                       uint64_t arg4, uint64_t arg5);
+extern int fut_signal_deliver(void *task, void *frame);
 
 /* Exception frame structure (matches arm64_exception_entry.S) */
 typedef struct {
@@ -69,6 +70,13 @@ static void handle_svc(fut_interrupt_frame_t *frame) {
 
     /* Store return value in x0 */
     frame->x[0] = (uint64_t)result;
+
+    /* Check for pending signals before returning to userspace */
+    extern struct fut_task *fut_task_current(void);
+    struct fut_task *task = fut_task_current();
+    if (task) {
+        fut_signal_deliver(task, frame);
+    }
 
     /* Clear frame pointer after syscall completes */
     fut_current_frame = NULL;

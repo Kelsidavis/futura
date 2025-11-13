@@ -8,8 +8,8 @@
  *
  * Phase 1 (Completed): Basic implementation with event registration and polling
  * Phase 2 (Completed): Enhanced validation, parameter categorization, detailed logging
- * Phase 3 (Current): Advanced event detection, edge-triggered mode, oneshot support
- * Phase 4: Performance optimization, memory pooling, scalability improvements
+ * Phase 3 (Completed): Advanced event detection, edge-triggered mode, oneshot support
+ * Phase 4 (Current): Performance optimization, memory pooling, scalability improvements
  */
 
 #include <kernel/fut_vfs.h>
@@ -44,6 +44,10 @@ extern long sys_nanosleep(struct fut_timespec *req, struct fut_timespec *rem);
 /* epoll_create1 flags */
 #define EPOLL_CLOEXEC 0x80000  /* Set close-on-exec flag */
 
+/* Phase 3: epoll event modifier flags */
+#define EPOLL_ET       0x80000000  /* Edge-triggered mode (report only on transitions) */
+#define EPOLL_ONESHOT  0x40000000  /* Oneshot mode (disable after one event) */
+
 /* Maximum file descriptors per epoll instance */
 #define MAX_EPOLL_FDS 64
 
@@ -62,6 +66,11 @@ struct epoll_fd_entry {
     uint32_t events;           /* Requested events mask */
     uint64_t data;             /* User data to return on event */
     bool registered;           /* Whether this entry is active */
+    /* Phase 3: Edge-triggered and oneshot support */
+    bool edge_triggered;       /* Enable edge-triggered reporting */
+    bool oneshot;              /* Report only once, then auto-unregister */
+    bool last_was_readable;    /* Last state for edge-triggered EPOLLIN */
+    bool last_was_writable;    /* Last state for edge-triggered EPOLLOUT */
 };
 
 /* Internal epoll set structure */
@@ -162,9 +171,9 @@ static void epoll_deallocate_set(struct epoll_set *set) {
  *   - close(): Destroy epoll instance
  *
  * Phase 1 (Completed): Basic implementation with event registration
- * Phase 2 (Current): Enhanced validation, flag categorization, detailed logging
- * Phase 3: Edge-triggered mode, oneshot events
- * Phase 4: Performance optimization, memory pooling
+ * Phase 2 (Completed): Enhanced validation, flag categorization, detailed logging
+ * Phase 3 (Completed): Edge-triggered mode, oneshot events
+ * Phase 4 (Current): Performance optimization, memory pooling
  */
 long sys_epoll_create1(int flags) {
     /* Phase 2: Validate flags */
@@ -336,9 +345,9 @@ long sys_epoll_create1(int flags) {
  *   epoll_ctl(epfd, EPOLL_CTL_ADD, sockfd, &ev);
  *
  * Phase 1 (Completed): Basic add/modify/delete operations
- * Phase 2 (Current): Enhanced validation, operation categorization, detailed logging
- * Phase 3: Edge-triggered mode support, oneshot events
- * Phase 4: Performance optimization
+ * Phase 2 (Completed): Enhanced validation, operation categorization, detailed logging
+ * Phase 3 (Completed): Edge-triggered mode support, oneshot events
+ * Phase 4 (Current): Performance optimization
  */
 long sys_epoll_ctl(int epfd, int op, int fd, struct epoll_event *event) {
     /* Phase 2: Categorize epoll FD */
@@ -704,6 +713,17 @@ long sys_epoll_ctl(int epfd, int op, int fd, struct epoll_event *event) {
         set->fds[slot].events = ev.events;
         set->fds[slot].data = ev.data;
         set->fds[slot].registered = true;
+
+        /* Phase 3: Extract and store edge-triggered and oneshot flags */
+        set->fds[slot].edge_triggered = (ev.events & EPOLL_ET) != 0;
+        set->fds[slot].oneshot = (ev.events & EPOLL_ONESHOT) != 0;
+        set->fds[slot].last_was_readable = false;
+        set->fds[slot].last_was_writable = false;
+
+        /* Phase 3: Mask out modifier flags from events for actual event checking */
+        uint32_t base_events = ev.events & ~(EPOLL_ET | EPOLL_ONESHOT);
+        set->fds[slot].events = base_events;
+
         set->count++;
 
         /* Phase 2: Categorize events */
@@ -734,6 +754,18 @@ long sys_epoll_ctl(int epfd, int op, int fd, struct epoll_event *event) {
             const char *s = "none"; while (*s) { events_desc[desc_pos++] = *s++; }
         }
         events_desc[desc_pos] = '\0';
+
+        /* Phase 3: Categorize edge-triggered and oneshot modes */
+        const char *mode_desc;
+        if (set->fds[slot].edge_triggered && set->fds[slot].oneshot) {
+            mode_desc = "ET|ONESHOT";
+        } else if (set->fds[slot].edge_triggered) {
+            mode_desc = "ET";
+        } else if (set->fds[slot].oneshot) {
+            mode_desc = "ONESHOT";
+        } else {
+            mode_desc = "level-triggered";
+        }
 
         /* Success logging */
         char msg[512];
@@ -766,7 +798,10 @@ long sys_epoll_ctl(int epfd, int op, int fd, struct epoll_event *event) {
         text = "], events=";
         while (*text) { msg[pos++] = *text++; }
         for (int j = 0; events_desc[j]; j++) { msg[pos++] = events_desc[j]; }
-        text = ") -> 0 (fd registered, Phase 2)\n";
+        text = ", mode=";
+        while (*text) { msg[pos++] = *text++; }
+        while (*mode_desc) { msg[pos++] = *mode_desc++; }
+        text = ") -> 0 (fd registered, Phase 3)\n";
         while (*text) { msg[pos++] = *text++; }
         msg[pos] = '\0';
         fut_printf("%s", msg);
@@ -1024,9 +1059,9 @@ long sys_epoll_ctl(int epfd, int op, int fd, struct epoll_event *event) {
  *   }
  *
  * Phase 1 (Completed): Basic event polling with timeout
- * Phase 2 (Current): Enhanced validation, timeout categorization, detailed logging
- * Phase 3: Edge-triggered mode, oneshot events
- * Phase 4: Performance optimization
+ * Phase 2 (Completed): Enhanced validation, timeout categorization, detailed logging
+ * Phase 3 (Completed): Edge-triggered mode, oneshot events
+ * Phase 4 (Current): Performance optimization
  */
 long sys_epoll_wait(int epfd, struct epoll_event *events, int maxevents, int timeout) {
     /* Phase 2: Categorize epoll FD */
@@ -1209,11 +1244,44 @@ long sys_epoll_wait(int epfd, struct epoll_event *events, int maxevents, int tim
                 }
             }
 
-            /* Report events if any match the registered mask */
+            /* Phase 3: Handle edge-triggered mode - only report on transitions */
+            bool should_report = false;
             if (events_ready) {
+                if (set->fds[i].edge_triggered) {
+                    /* Edge-triggered: report only if transitioning from no event to event */
+                    bool is_readable = (events_ready & (EPOLLIN | EPOLLRDNORM)) != 0;
+                    bool is_writable = (events_ready & (EPOLLOUT | EPOLLWRNORM)) != 0;
+
+                    if ((is_readable && !set->fds[i].last_was_readable) ||
+                        (is_writable && !set->fds[i].last_was_writable)) {
+                        should_report = true;
+                    }
+                    /* Update state for next iteration */
+                    if (is_readable) set->fds[i].last_was_readable = true;
+                    if (is_writable) set->fds[i].last_was_writable = true;
+                } else {
+                    /* Level-triggered: report every iteration while event is ready */
+                    should_report = true;
+                }
+            } else {
+                /* Phase 3: Clear edge-triggered state when event no longer ready */
+                if (set->fds[i].edge_triggered) {
+                    set->fds[i].last_was_readable = false;
+                    set->fds[i].last_was_writable = false;
+                }
+            }
+
+            /* Report events if appropriate */
+            if (should_report) {
                 ready_events[ready_count].events = events_ready;
                 ready_events[ready_count].data = set->fds[i].data;
                 ready_count++;
+
+                /* Phase 3: Handle oneshot mode - auto-unregister after reporting */
+                if (set->fds[i].oneshot) {
+                    set->fds[i].registered = false;
+                    set->count--;
+                }
             }
         }
 
@@ -1259,7 +1327,7 @@ long sys_epoll_wait(int epfd, struct epoll_event *events, int maxevents, int tim
             num[num_pos] = '\0';
             for (int i = 0; num[i]; i++) { msg[pos++] = num[i]; }
 
-            text = " (events ready, Phase 2)\n";
+            text = " (events ready, Phase 3: ET/oneshot handling)\n";
             while (*text) { msg[pos++] = *text++; }
             msg[pos] = '\0';
             fut_printf("%s", msg);

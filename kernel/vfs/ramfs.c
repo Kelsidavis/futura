@@ -1541,6 +1541,32 @@ static ssize_t ramfs_readlink(struct fut_vnode *vnode, char *buf, size_t size) {
     return (ssize_t)bytes_to_copy;
 }
 
+/**
+ * ramfs_setattr() - Change file attributes (permissions, mode)
+ *
+ * Sets attributes on a vnode including permissions (mode bits).
+ * Called by chmod() syscall through VFS layer.
+ */
+static int ramfs_setattr(struct fut_vnode *vnode, const struct fut_stat *stat) {
+    if (!vnode || !stat) {
+        return -EINVAL;
+    }
+
+    struct ramfs_node *node = (struct ramfs_node *)vnode->fs_data;
+    if (!node) {
+        return -EIO;
+    }
+
+    /* Update mode (permissions + special bits) */
+    if (stat->st_mode != 0) {
+        vnode->mode = stat->st_mode;
+        fut_printf("[RAMFS-SETATTR] Changed mode for ino=%lu to 0%o\n",
+                   vnode->ino, vnode->mode);
+    }
+
+    return 0;
+}
+
 static const struct fut_vnode_ops ramfs_vnode_ops = {
     .open = ramfs_open,
     .close = ramfs_close,
@@ -1553,7 +1579,7 @@ static const struct fut_vnode_ops ramfs_vnode_ops = {
     .mkdir = ramfs_mkdir,
     .rmdir = ramfs_rmdir,
     .getattr = ramfs_getattr,
-    .setattr = NULL,
+    .setattr = ramfs_setattr,
     .sync = ramfs_sync,
     .truncate = ramfs_truncate,
     .rename = ramfs_rename,

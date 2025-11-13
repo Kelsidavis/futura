@@ -6,8 +6,8 @@
  * Implements the alarm() syscall for scheduling SIGALRM delivery.
  *
  * Phase 1 (Completed): Basic stub
- * Phase 2 (Current): Track alarm expiration time
- * Phase 3: Integrate with timer interrupt to deliver SIGALRM
+ * Phase 2 (Completed): Track alarm expiration time
+ * Phase 3 (Current): Integrate with timer interrupt to deliver SIGALRM
  * Phase 4: Support sub-second precision with setitimer()
  */
 

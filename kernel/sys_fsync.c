@@ -8,8 +8,8 @@
  * data persistence across system crashes.
  *
  * Phase 1 (Completed): Basic stub with minimal validation
- * Phase 2 (Current): Enhanced validation, FD/file type categorization, and detailed logging
- * Phase 3: VFS backend sync operations (FuturaFS, RamFS sync hooks)
+ * Phase 2 (Completed): Enhanced validation, FD/file type categorization, and detailed logging
+ * Phase 3 (Current): VFS backend sync operations (FuturaFS, RamFS sync hooks)
  * Phase 4: Per-filesystem sync strategies, writeback cache flushing
  */
 

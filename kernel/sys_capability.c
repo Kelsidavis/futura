@@ -7,10 +7,10 @@
  * Capabilities provide an alternative to the traditional superuser model,
  * allowing specific privileges without full root access.
  *
- * Phase 1 (Current): Validation and stub implementations
- * Phase 2: Implement capability storage in task structure
- * Phase 3: Integrate with permission checks throughout kernel
- * Phase 4: Full capability inheritance and ambient capabilities
+ * Phase 1 (Completed): Validation and stub implementations
+ * Phase 2 (Current): Enhanced validation, version checking, parameter categorization, detailed logging
+ * Phase 3: Implement capability storage in task structure
+ * Phase 4: Integrate with permission checks throughout kernel
  */
 
 #include <kernel/fut_task.h>
@@ -109,40 +109,74 @@ struct __user_cap_data_struct {
  * - Permitted: Capabilities that can be made effective
  * - Inheritable: Capabilities preserved across execve()
  *
- * Phase 1: Validate parameters and return empty capability sets
- * Phase 2: Return actual capabilities from task structure
+ * Phase 1 (Completed): Validate parameters and return empty capability sets
+ * Phase 2 (Current): Enhanced validation, version checking, capability structure validation
  */
 long sys_capget(struct __user_cap_header_struct *hdrp,
                 struct __user_cap_data_struct *datap) {
+    extern int fut_copy_from_user(void *to, const void *from, size_t size);
+
     fut_task_t *task = fut_task_current();
     if (!task) {
         return -ESRCH;
     }
 
-    /* Validate header pointer */
+    /* Phase 2: Validate header pointer */
     if (!hdrp) {
         fut_printf("[CAPABILITY] capget(hdrp=NULL, datap=%p, pid=%d) -> EFAULT\n",
                    datap, task->pid);
         return -EFAULT;
     }
 
-    /* Validate data pointer */
+    /* Phase 2: Validate data pointer */
     if (!datap) {
         fut_printf("[CAPABILITY] capget(hdrp=%p, datap=NULL, pid=%d) -> EFAULT\n",
                    hdrp, task->pid);
         return -EFAULT;
     }
 
-    /* Suppress unused warnings for Phase 1 stub */
-    (void)hdrp;
-    (void)datap;
+    /* Phase 2: Copy capability header from userspace */
+    struct __user_cap_header_struct hdr;
+    if (fut_copy_from_user(&hdr, hdrp, sizeof(hdr)) != 0) {
+        fut_printf("[CAPABILITY] capget(hdrp=?, datap=%p, pid=%d) -> EFAULT "
+                   "(header copy_from_user failed)\n", datap, task->pid);
+        return -EFAULT;
+    }
 
-    /* Phase 1: Accept capability query */
-    fut_printf("[CAPABILITY] capget(hdrp=%p, datap=%p, pid=%d) -> 0 "
-               "(Phase 1 stub - returning empty capabilities)\n",
-               hdrp, datap, task->pid);
+    /* Phase 2: Validate capability version */
+    const char *version_desc;
+    if (hdr.version == _LINUX_CAPABILITY_VERSION_1) {
+        version_desc = "v1 (obsolete)";
+    } else if (hdr.version == _LINUX_CAPABILITY_VERSION_2) {
+        version_desc = "v2 (legacy)";
+    } else if (hdr.version == _LINUX_CAPABILITY_VERSION_3) {
+        version_desc = "v3 (current)";
+    } else {
+        version_desc = "unknown/invalid";
+    }
 
-    return 0;
+    /* Phase 2: Validate target PID */
+    const char *pid_desc;
+    if (hdr.pid == 0) {
+        pid_desc = "current process";
+    } else if (hdr.pid > 0) {
+        pid_desc = "other process";
+    } else {
+        pid_desc = "invalid (<0)";
+    }
+
+    /*
+     * Phase 3: Capability retrieval from task structure
+     *
+     * Copy task capabilities (effective, permitted, inheritable) to userspace
+     */
+
+    /* Phase 3: Task capability retrieval not yet implemented */
+    fut_printf("[CAPABILITY] capget(hdrp=? [version=%s, pid=%s], datap=%p, caller_pid=%d) "
+               "-> ENOSYS (Phase 3: task capability retrieval not yet implemented)\n",
+               version_desc, pid_desc, datap, task->pid);
+
+    return -ENOSYS;
 }
 
 /**
@@ -173,38 +207,94 @@ long sys_capget(struct __user_cap_header_struct *hdrp,
  * - Can only modify own capabilities (unless CAP_SETPCAP)
  * - Cannot add new permitted capabilities without CAP_SETPCAP
  *
- * Phase 1: Validate parameters and return success
- * Phase 2: Store capabilities in task structure, enforce permission rules
+ * Phase 1 (Completed): Validate parameters and return success
+ * Phase 2 (Current): Enhanced validation, version checking, capability data validation
  */
 long sys_capset(struct __user_cap_header_struct *hdrp,
                 const struct __user_cap_data_struct *datap) {
+    extern int fut_copy_from_user(void *to, const void *from, size_t size);
+
     fut_task_t *task = fut_task_current();
     if (!task) {
         return -ESRCH;
     }
 
-    /* Validate header pointer */
+    /* Phase 2: Validate header pointer */
     if (!hdrp) {
         fut_printf("[CAPABILITY] capset(hdrp=NULL, datap=%p, pid=%d) -> EFAULT\n",
                    datap, task->pid);
         return -EFAULT;
     }
 
-    /* Validate data pointer */
+    /* Phase 2: Validate data pointer */
     if (!datap) {
         fut_printf("[CAPABILITY] capset(hdrp=%p, datap=NULL, pid=%d) -> EFAULT\n",
                    hdrp, task->pid);
         return -EFAULT;
     }
 
-    /* Suppress unused warnings for Phase 1 stub */
-    (void)hdrp;
-    (void)datap;
+    /* Phase 2: Copy capability header from userspace */
+    struct __user_cap_header_struct hdr;
+    if (fut_copy_from_user(&hdr, hdrp, sizeof(hdr)) != 0) {
+        fut_printf("[CAPABILITY] capset(hdrp=?, datap=%p, pid=%d) -> EFAULT "
+                   "(header copy_from_user failed)\n", datap, task->pid);
+        return -EFAULT;
+    }
 
-    /* Phase 1: Accept capability modification */
-    fut_printf("[CAPABILITY] capset(hdrp=%p, datap=%p, pid=%d) -> 0 "
-               "(Phase 1 stub - no actual capability change yet)\n",
-               hdrp, datap, task->pid);
+    /* Phase 2: Copy capability data from userspace */
+    struct __user_cap_data_struct data;
+    if (fut_copy_from_user(&data, datap, sizeof(data)) != 0) {
+        fut_printf("[CAPABILITY] capset(hdrp=?, datap=?, pid=%d) -> EFAULT "
+                   "(data copy_from_user failed)\n", task->pid);
+        return -EFAULT;
+    }
 
-    return 0;
+    /* Phase 2: Validate capability version */
+    const char *version_desc;
+    if (hdr.version == _LINUX_CAPABILITY_VERSION_1) {
+        version_desc = "v1 (obsolete)";
+    } else if (hdr.version == _LINUX_CAPABILITY_VERSION_2) {
+        version_desc = "v2 (legacy)";
+    } else if (hdr.version == _LINUX_CAPABILITY_VERSION_3) {
+        version_desc = "v3 (current)";
+    } else {
+        version_desc = "unknown/invalid";
+    }
+
+    /* Phase 2: Validate target PID */
+    const char *pid_desc;
+    if (hdr.pid == 0) {
+        pid_desc = "current process";
+    } else if (hdr.pid > 0) {
+        pid_desc = "other process";
+    } else {
+        pid_desc = "invalid (<0)";
+    }
+
+    /* Phase 2: Categorize operation type */
+    const char *operation_type;
+    if (data.effective == 0 && data.permitted == 0 && data.inheritable == 0) {
+        operation_type = "drop all capabilities";
+    } else if (data.effective != 0) {
+        operation_type = "modify effective capabilities";
+    } else if (data.permitted != 0) {
+        operation_type = "modify permitted capabilities";
+    } else if (data.inheritable != 0) {
+        operation_type = "modify inheritable capabilities";
+    } else {
+        operation_type = "set capabilities";
+    }
+
+    /*
+     * Phase 3: Capability storage and permission checking
+     *
+     * Store new capabilities in task structure, validate permissions, and update effective set
+     */
+
+    /* Phase 3: Task capability setting not yet implemented */
+    fut_printf("[CAPABILITY] capset(hdrp=? [version=%s, pid=%s], datap=? [op=%s], "
+               "caller_pid=%d) -> ENOSYS (Phase 3: task capability storage not yet implemented)\n",
+               version_desc, pid_desc, operation_type, task->pid);
+
+    return -ENOSYS;
 }

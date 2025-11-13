@@ -24,14 +24,15 @@ WAYLAND_LIBDIR ?= $(WAYLAND_PREFIX)/lib
 WAYLAND_PKGCONFIG ?= $(WAYLAND_PREFIX)/lib/pkgconfig
 WAYLAND_SCANNER ?= $(WAYLAND_PREFIX)/bin/wayland-scanner
 
-CC := gcc
+# Use platform-specific compiler from main Makefile
+CC ?= gcc
 
 # Extract Wayland flags
 WAYLAND_CFLAGS ?= -I$(WAYLAND_INCLUDEDIR)
 WAYLAND_LDFLAGS ?= -L$(WAYLAND_LIBDIR)
 WAYLAND_LIBS ?= -lwayland-server -lwayland-client -lffi -lpthread -lm -lrt
 
-LDSCRIPT := ../../libfutura/userland.ld
+LDSCRIPT := ../../libfutura/userland_$(PLATFORM).ld
 CRT0 := $(BUILD_ROOT)/lib/crt0.o
 LIBFUTURA := $(BUILD_ROOT)/lib/libfutura.a
 

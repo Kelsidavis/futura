@@ -759,12 +759,32 @@ static int64_t sys_sigreturn_handler(uint64_t frame_ptr, uint64_t arg2, uint64_t
         fut_printf("[SIGNAL] Restored context from sigreturn: rip=0x%llx rsp=0x%llx\n",
                    frame->rip, frame->rsp);
 #elif defined(__aarch64__)
-        /* ARM64: Restore registers from sigcontext
-         * TODO: This requires ARM64-specific sigcontext structure
-         * For now, stub implementation */
-        (void)sigframe;
-        fut_printf("[SIGNAL] ARM64 sigreturn not yet implemented\n");
-        return -ENOSYS;
+        struct sigcontext *ctx = &sigframe.uc.uc_mcontext.gregs;
+
+        /* Restore all general purpose registers x0-x30 */
+        for (int i = 0; i < 31; i++) {
+            frame->x[i] = ctx->x[i];
+        }
+
+        /* Restore special ARM64 registers */
+        frame->sp = ctx->sp;
+        frame->pc = ctx->pc;
+        frame->pstate = ctx->pstate;
+        frame->far = ctx->fault_address;
+
+        /* Restore NEON/FPU registers
+         * sigcontext stores them as __uint128_t, but interrupt_frame stores as 2x uint64_t */
+        for (int i = 0; i < 32; i++) {
+            __uint128_t v = ctx->v[i];
+            frame->fpu_state[2*i] = (uint64_t)(v & 0xFFFFFFFFFFFFFFFFULL);
+            frame->fpu_state[2*i+1] = (uint64_t)(v >> 64);
+        }
+
+        frame->fpsr = ctx->fpsr;
+        frame->fpcr = ctx->fpcr;
+
+        fut_printf("[SIGNAL] Restored context from sigreturn: pc=0x%llx sp=0x%llx\n",
+                   frame->pc, frame->sp);
 #else
 #error "Unsupported architecture for sigreturn"
 #endif
@@ -1503,11 +1523,30 @@ static bool posix_deliver_signal(fut_task_t *current, int signum,
     mctx->gregs.err = frame->error_code;
     mctx->gregs.trapno = frame->vector;
 #elif defined(__aarch64__)
-    /* ARM64: Signal frame context setup
-     * TODO: Requires ARM64-specific sigcontext structure */
-    (void)sigframe;
-    fut_printf("[SIGNAL] ARM64 signal delivery not yet fully implemented\n");
-    return false;
+    /* ARM64: Fill in machine context with registers at time of interruption */
+    mcontext_t *mctx = &sigframe.uc.uc_mcontext;
+
+    /* Copy all general purpose registers x0-x30 */
+    for (int i = 0; i < 31; i++) {
+        mctx->gregs.x[i] = frame->x[i];
+    }
+
+    /* Copy special ARM64 registers */
+    mctx->gregs.sp = frame->sp;            /* Stack pointer (SP_EL0) */
+    mctx->gregs.pc = frame->pc;            /* Program counter (ELR_EL1) */
+    mctx->gregs.pstate = frame->pstate;    /* Processor state (SPSR_EL1) */
+    mctx->gregs.fault_address = frame->far; /* Fault address (FAR_EL1) */
+
+    /* Copy NEON/FPU registers
+     * frame->fpu_state stores them as 2x uint64_t per register,
+     * but sigcontext stores them as __uint128_t */
+    for (int i = 0; i < 32; i++) {
+        __uint128_t v = ((__uint128_t)frame->fpu_state[2*i+1] << 64) | frame->fpu_state[2*i];
+        mctx->gregs.v[i] = v;
+    }
+
+    mctx->gregs.fpsr = frame->fpsr;  /* Floating-point status register */
+    mctx->gregs.fpcr = frame->fpcr;  /* Floating-point control register */
 #else
 #error "Unsupported architecture for signal delivery"
 #endif

@@ -6,8 +6,8 @@
  * Implements quotactl for managing filesystem quotas.
  * Essential for multi-user systems with disk space limits.
  *
- * Phase 1 (Current): Validation and stub implementation
- * Phase 2: Basic quota query operations
+ * Phase 1 (Completed): Validation and stub implementation
+ * Phase 2 (Current): Enhanced validation, copy_from_user, command/type categorization
  * Phase 3: Full quota management (set, enable, disable)
  * Phase 4: Advanced features (grace periods, warnings)
  */
@@ -18,6 +18,7 @@
 #include <stddef.h>
 
 extern void fut_printf(const char *fmt, ...);
+extern int fut_copy_from_user(void *to, const void *from, size_t size);
 
 /* Quota commands (high-level operations) */
 #define Q_SYNC       0x800001  /* Sync disk copy of quota */
@@ -240,11 +241,28 @@ long sys_quotactl(unsigned int cmd, const char *special, int id, void *addr) {
         return -ESRCH;
     }
 
-    /* Validate special pointer (required) */
+    /* Phase 2: Validate special pointer (required) */
     if (!special) {
         fut_printf("[QUOTACTL] quotactl(cmd=0x%x, special=NULL, id=%d, addr=%p, pid=%d) -> EFAULT\n",
                    cmd, id, addr, task->pid);
         return -EFAULT;
+    }
+
+    /* Phase 2: Copy special from userspace to validate it */
+    char special_buf[256];
+    if (fut_copy_from_user(special_buf, special, sizeof(special_buf) - 1) != 0) {
+        fut_printf("[QUOTACTL] quotactl(cmd=0x%x, special=?, id=%d, addr=%p, pid=%d) -> EFAULT "
+                   "(special copy_from_user failed)\n",
+                   cmd, id, addr, task->pid);
+        return -EFAULT;
+    }
+    special_buf[sizeof(special_buf) - 1] = '\0';
+
+    /* Phase 2: Validate special is not empty */
+    if (special_buf[0] == '\0') {
+        fut_printf("[QUOTACTL] quotactl(cmd=0x%x, special=\"\" [empty], id=%d, addr=%p, pid=%d) -> EINVAL\n",
+                   cmd, id, addr, task->pid);
+        return -EINVAL;
     }
 
     /* Extract quota type and command */
@@ -303,17 +321,17 @@ long sys_quotactl(unsigned int cmd, const char *special, int id, void *addr) {
             break;
     }
 
-    /* Phase 1: Accept parameters and return -ENOSYS */
+    /* Phase 2: Enhanced logging with parameter categorization and buffer contents */
     if (qcmd == Q_GETQUOTA || qcmd == Q_SETQUOTA) {
         /* Commands that use id parameter */
-        fut_printf("[QUOTACTL] quotactl(cmd=%s, type=%s, special=%p, id=%d, addr=%p, pid=%d) -> ENOSYS "
-                   "(Phase 1 stub - no quota support yet)\n",
-                   cmd_desc, type_desc, special, id, addr, task->pid);
+        fut_printf("[QUOTACTL] quotactl(cmd=%s, type=%s, special='%s', id=%d, addr=%p, pid=%d) -> ENOSYS "
+                   "(Phase 3: quota support integration not yet implemented)\n",
+                   cmd_desc, type_desc, special_buf, id, addr, task->pid);
     } else {
         /* Commands that don't use id parameter */
-        fut_printf("[QUOTACTL] quotactl(cmd=%s, type=%s, special=%p, addr=%p, pid=%d) -> ENOSYS "
-                   "(Phase 1 stub - no quota support yet)\n",
-                   cmd_desc, type_desc, special, addr, task->pid);
+        fut_printf("[QUOTACTL] quotactl(cmd=%s, type=%s, special='%s', addr=%p, pid=%d) -> ENOSYS "
+                   "(Phase 3: quota support integration not yet implemented)\n",
+                   cmd_desc, type_desc, special_buf, addr, task->pid);
     }
 
     return -ENOSYS;

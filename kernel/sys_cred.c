@@ -57,8 +57,8 @@ static const char *categorize_id(uint32_t id) {
  *   - getresuid(): Get real, effective, and saved UIDs
  *
  * Phase 1 (Completed): Basic ruid retrieval
- * Phase 2 (Current): UID categorization and detailed logging
- * Phase 3: Per-namespace UID mapping
+ * Phase 2 (Completed): UID categorization and detailed logging
+ * Phase 3 (Current): Per-namespace UID mapping
  * Phase 4: Capability-based UID queries
  */
 long sys_getuid(void) {

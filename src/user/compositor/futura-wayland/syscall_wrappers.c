@@ -2,8 +2,10 @@
  *
  * Direct syscall wrappers for Wayland compositor
  *
- * These override the weak symbols in libwayland-server to use int 0x80
- * syscalls instead of SYSCALL instruction, bypassing QEMU limitations.
+ * x86-64: Override weak symbols to use int 0x80 syscalls instead of SYSCALL,
+ *         bypassing QEMU's SYSCALL instruction emulation limitations.
+ * ARM64:  Override weak symbols to use SVC syscalls with proper ARM64 ABI
+ *         (X8=syscall number, X0-X7=arguments, X0=return value).
  */
 
 #define _GNU_SOURCE
@@ -26,7 +28,9 @@ static const char *strerror_simple(int err);
 #define SYS_CONNECT 42
 #define SYS_EPOLL_CTL 233
 
-/* Direct int 0x80 syscall helpers - QEMU bug workaround
+#if defined(__x86_64__)
+
+/* x86-64: Direct int 0x80 syscall helpers - QEMU bug workaround
  * QEMU's int 0x80 in 64-bit mode reads from x86_64 ABI registers (RDI/RSI/RDX)
  * instead of i386 ABI registers (EBX/ECX/EDX), so we use RDI/RSI/RDX */
 static inline long int80_open(const char *pathname, int flags, mode_t mode) {
@@ -139,6 +143,184 @@ static inline long int80_fchmod(int fd, mode_t mode) {
     return result;
 }
 
+#elif defined(__aarch64__)
+
+/* ARM64: Direct SVC syscall helpers
+ * ARM64 EABI: X8=syscall number, X0-X7=arguments, X0=return value */
+
+static inline long svc_open(const char *pathname, int flags, mode_t mode) {
+    register long x0 asm("x0") = (long)pathname;
+    register long x1 asm("x1") = flags;
+    register long x2 asm("x2") = mode;
+    register long x8 asm("x8") = SYS_OPEN;
+
+    __asm__ __volatile__ (
+        "svc #0"
+        : "+r" (x0)
+        : "r" (x1), "r" (x2), "r" (x8)
+        : "memory"
+    );
+    return x0;
+}
+
+static inline long svc_socket(int domain, int type, int protocol) {
+    register long x0 asm("x0") = domain;
+    register long x1 asm("x1") = type;
+    register long x2 asm("x2") = protocol;
+    register long x8 asm("x8") = SYS_SOCKET;
+
+    __asm__ __volatile__ (
+        "svc #0"
+        : "+r" (x0)
+        : "r" (x1), "r" (x2), "r" (x8)
+        : "memory"
+    );
+    return x0;
+}
+
+static inline long svc_bind(int sockfd, const struct sockaddr *addr, socklen_t addrlen) {
+    register long x0 asm("x0") = sockfd;
+    register long x1 asm("x1") = (long)addr;
+    register long x2 asm("x2") = addrlen;
+    register long x8 asm("x8") = SYS_BIND;
+
+    __asm__ __volatile__ (
+        "svc #0"
+        : "+r" (x0)
+        : "r" (x1), "r" (x2), "r" (x8)
+        : "memory"
+    );
+    return x0;
+}
+
+static inline long svc_listen(int sockfd, int backlog) {
+    register long x0 asm("x0") = sockfd;
+    register long x1 asm("x1") = backlog;
+    register long x8 asm("x8") = SYS_LISTEN;
+
+    __asm__ __volatile__ (
+        "svc #0"
+        : "+r" (x0)
+        : "r" (x1), "r" (x8)
+        : "memory"
+    );
+    return x0;
+}
+
+static inline long svc_connect(int sockfd, const struct sockaddr *addr, socklen_t addrlen) {
+    register long x0 asm("x0") = sockfd;
+    register long x1 asm("x1") = (long)addr;
+    register long x2 asm("x2") = addrlen;
+    register long x8 asm("x8") = SYS_CONNECT;
+
+    __asm__ __volatile__ (
+        "svc #0"
+        : "+r" (x0)
+        : "r" (x1), "r" (x2), "r" (x8)
+        : "memory"
+    );
+    return x0;
+}
+
+static inline long svc_epoll_ctl(int epfd, int op, int fd, void *event) {
+    register long x0 asm("x0") = epfd;
+    register long x1 asm("x1") = op;
+    register long x2 asm("x2") = fd;
+    register long x3 asm("x3") = (long)event;
+    register long x8 asm("x8") = SYS_EPOLL_CTL;
+
+    __asm__ __volatile__ (
+        "svc #0"
+        : "+r" (x0)
+        : "r" (x1), "r" (x2), "r" (x3), "r" (x8)
+        : "memory"
+    );
+    return x0;
+}
+
+static inline long svc_fcntl(int fd, int cmd, long arg) {
+    register long x0 asm("x0") = fd;
+    register long x1 asm("x1") = cmd;
+    register long x2 asm("x2") = arg;
+    register long x8 asm("x8") = 72;  /* SYS_fcntl */
+
+    __asm__ __volatile__ (
+        "svc #0"
+        : "+r" (x0)
+        : "r" (x1), "r" (x2), "r" (x8)
+        : "memory"
+    );
+    return x0;
+}
+
+static inline long svc_unlink(const char *pathname) {
+    register long x0 asm("x0") = (long)pathname;
+    register long x8 asm("x8") = 87;  /* SYS_unlink */
+
+    __asm__ __volatile__ (
+        "svc #0"
+        : "+r" (x0)
+        : "r" (x8)
+        : "memory"
+    );
+    return x0;
+}
+
+static inline long svc_chmod(const char *pathname, mode_t mode) {
+    register long x0 asm("x0") = (long)pathname;
+    register long x1 asm("x1") = mode;
+    register long x8 asm("x8") = 90;  /* SYS_chmod */
+
+    __asm__ __volatile__ (
+        "svc #0"
+        : "+r" (x0)
+        : "r" (x1), "r" (x8)
+        : "memory"
+    );
+    return x0;
+}
+
+static inline long svc_fchmod(int fd, mode_t mode) {
+    register long x0 asm("x0") = fd;
+    register long x1 asm("x1") = mode;
+    register long x8 asm("x8") = 91;  /* SYS_fchmod */
+
+    __asm__ __volatile__ (
+        "svc #0"
+        : "+r" (x0)
+        : "r" (x1), "r" (x8)
+        : "memory"
+    );
+    return x0;
+}
+
+#endif  /* __x86_64__ or __aarch64__ */
+
+/* Architecture-agnostic syscall macros */
+#if defined(__x86_64__)
+#define SYSCALL_OPEN(p, f, m)          int80_open(p, f, m)
+#define SYSCALL_SOCKET(d, t, p)        int80_socket(d, t, p)
+#define SYSCALL_BIND(s, a, l)          int80_bind(s, a, l)
+#define SYSCALL_LISTEN(s, b)           int80_listen(s, b)
+#define SYSCALL_CONNECT(s, a, l)       int80_connect(s, a, l)
+#define SYSCALL_EPOLL_CTL(e, o, f, ev) int80_epoll_ctl(e, o, f, ev)
+#define SYSCALL_FCNTL(f, c, a)         int80_fcntl(f, c, a)
+#define SYSCALL_UNLINK(p)              int80_unlink(p)
+#define SYSCALL_CHMOD(p, m)            int80_chmod(p, m)
+#define SYSCALL_FCHMOD(f, m)           int80_fchmod(f, m)
+#elif defined(__aarch64__)
+#define SYSCALL_OPEN(p, f, m)          svc_open(p, f, m)
+#define SYSCALL_SOCKET(d, t, p)        svc_socket(d, t, p)
+#define SYSCALL_BIND(s, a, l)          svc_bind(s, a, l)
+#define SYSCALL_LISTEN(s, b)           svc_listen(s, b)
+#define SYSCALL_CONNECT(s, a, l)       svc_connect(s, a, l)
+#define SYSCALL_EPOLL_CTL(e, o, f, ev) svc_epoll_ctl(e, o, f, ev)
+#define SYSCALL_FCNTL(f, c, a)         svc_fcntl(f, c, a)
+#define SYSCALL_UNLINK(p)              svc_unlink(p)
+#define SYSCALL_CHMOD(p, m)            svc_chmod(p, m)
+#define SYSCALL_FCHMOD(f, m)           svc_fchmod(f, m)
+#endif
+
 /* Linker-wrapped flock() - always succeeds (single-process OS) */
 int __wrap_flock(int fd, int operation) {
     (void)fd;
@@ -176,7 +358,7 @@ int __wrap_open64(const char *pathname, int flags, ...) {
         va_end(ap);
     }
 
-    long result = int80_open(pathname, flags, mode);
+    long result = SYSCALL_OPEN(pathname, flags, mode);
     if (result < 0) {
         errno = -result;
         return -1;
@@ -196,7 +378,7 @@ int __wrap_open(const char *pathname, int flags, ...) {
         va_end(ap);
     }
 
-    long result = int80_open(pathname, flags, mode);
+    long result = SYSCALL_OPEN(pathname, flags, mode);
     if (result < 0) {
         errno = -result;
         return -1;
@@ -222,7 +404,7 @@ int __wrap_openat(int dirfd, const char *pathname, int flags, ...) {
         return -1;
     }
 
-    long result = int80_open(pathname, flags, mode);
+    long result = SYSCALL_OPEN(pathname, flags, mode);
     if (result < 0) {
         errno = -result;
         return -1;
@@ -243,7 +425,7 @@ int __wrap_socket(int domain, int type, int protocol) {
 
     /* Strip SOCK_CLOEXEC and SOCK_NONBLOCK flags - kernel doesn't support them */
     int type_masked = type & 0xF;  /* Keep only the socket type bits */
-    long result = int80_socket(domain, type_masked, protocol);
+    long result = SYSCALL_SOCKET(domain, type_masked, protocol);
     if (result < 0) {
         int err = -(int)result;
         errno = err;
@@ -272,7 +454,7 @@ int __wrap_bind(int sockfd, const struct sockaddr *addr, socklen_t addrlen) {
     debug_write_int(addrlen);
     debug_write(")\n");
 
-    long result = int80_bind(sockfd, addr, addrlen);
+    long result = SYSCALL_BIND(sockfd, addr, addrlen);
     if (result < 0) {
         int err = -(int)result;
         errno = err;
@@ -366,7 +548,7 @@ int __wrap_listen(int sockfd, int backlog) {
     debug_write_int(backlog);
     debug_write(")\n");
 
-    long result = int80_listen(sockfd, backlog);
+    long result = SYSCALL_LISTEN(sockfd, backlog);
 
     if (result < 0) {
         int err = -(int)result;
@@ -394,7 +576,7 @@ int __wrap_epoll_ctl(int epfd, int op, int fd, struct epoll_event *event) {
     debug_write_int(fd);
     debug_write(")\n");
 
-    long result = int80_epoll_ctl(epfd, op, fd, (void *)event);
+    long result = SYSCALL_EPOLL_CTL(epfd, op, fd, (void *)event);
 
     if (result < 0) {
         int err = -(int)result;
@@ -411,7 +593,7 @@ int __wrap_epoll_ctl(int epfd, int op, int fd, struct epoll_event *event) {
 
 /* Linker-wrapped connect() */
 int __wrap_connect(int sockfd, const struct sockaddr *addr, socklen_t addrlen) {
-    long result = int80_connect(sockfd, addr, addrlen);
+    long result = SYSCALL_CONNECT(sockfd, addr, addrlen);
     if (result < 0) {
         errno = -result;
         return -1;
@@ -428,7 +610,7 @@ int __wrap_fcntl(int fd, int cmd, ...) {
     va_end(ap);
 
     debug_write("[WRAP_FCNTL] Called\n");
-    long result = int80_fcntl(fd, cmd, arg);
+    long result = SYSCALL_FCNTL(fd, cmd, arg);
     if (result < 0) {
         errno = -result;
         debug_write("[WRAP_FCNTL] Failed\n");
@@ -442,7 +624,7 @@ int __wrap_fcntl(int fd, int cmd, ...) {
 /* Linker-wrapped unlink() */
 int __wrap_unlink(const char *pathname) {
     debug_write("[WRAP_UNLINK] Called\n");
-    long result = int80_unlink(pathname);
+    long result = SYSCALL_UNLINK(pathname);
     if (result < 0) {
         errno = -result;
         debug_write("[WRAP_UNLINK] Failed\n");
@@ -456,7 +638,7 @@ int __wrap_unlink(const char *pathname) {
 /* Linker-wrapped chmod() */
 int __wrap_chmod(const char *pathname, mode_t mode) {
     debug_write("[WRAP_CHMOD] Called\n");
-    long result = int80_chmod(pathname, mode);
+    long result = SYSCALL_CHMOD(pathname, mode);
     if (result < 0) {
         errno = -result;
         debug_write("[WRAP_CHMOD] Failed\n");
@@ -470,7 +652,7 @@ int __wrap_chmod(const char *pathname, mode_t mode) {
 /* Linker-wrapped fchmod() */
 int __wrap_fchmod(int fd, mode_t mode) {
     debug_write("[WRAP_FCHMOD] Called\n");
-    long result = int80_fchmod(fd, mode);
+    long result = SYSCALL_FCHMOD(fd, mode);
     if (result < 0) {
         errno = -result;
         debug_write("[WRAP_FCHMOD] Failed\n");
@@ -487,13 +669,13 @@ long __wrap_syscall(long number, ...) {
     va_start(ap, number);
     long result = -1;
 
-    /* Handle syscalls that need int 0x80 translation */
+    /* Handle syscalls that need translation */
     switch (number) {
     case 2: { /* SYS_open */
         const char *pathname = va_arg(ap, const char *);
         int flags = va_arg(ap, int);
         mode_t mode = va_arg(ap, mode_t);
-        result = int80_open(pathname, flags, mode);
+        result = SYSCALL_OPEN(pathname, flags, mode);
         break;
     }
     case 257: { /* SYS_openat */
@@ -503,7 +685,7 @@ long __wrap_syscall(long number, ...) {
         mode_t mode = va_arg(ap, mode_t);
         /* Convert openat(AT_FDCWD, ...) to open(...) */
         if (dirfd == -100) { /* AT_FDCWD */
-            result = int80_open(pathname, flags, mode);
+            result = SYSCALL_OPEN(pathname, flags, mode);
         } else {
             errno = EBADF;
             result = -1;
@@ -516,21 +698,21 @@ long __wrap_syscall(long number, ...) {
         int protocol = va_arg(ap, int);
         /* Strip SOCK_CLOEXEC and SOCK_NONBLOCK flags */
         int type_masked = type & 0xF;
-        result = int80_socket(domain, type_masked, protocol);
+        result = SYSCALL_SOCKET(domain, type_masked, protocol);
         break;
     }
     case 49: { /* SYS_bind */
         int sockfd = va_arg(ap, int);
         const struct sockaddr *addr = va_arg(ap, const struct sockaddr *);
         socklen_t addrlen = va_arg(ap, socklen_t);
-        result = int80_bind(sockfd, addr, addrlen);
+        result = SYSCALL_BIND(sockfd, addr, addrlen);
         break;
     }
     case 50: { /* SYS_listen */
         debug_write("[WRAP_SYSCALL listen] Called\n");
         int sockfd = va_arg(ap, int);
         int backlog = va_arg(ap, int);
-        result = int80_listen(sockfd, backlog);
+        result = SYSCALL_LISTEN(sockfd, backlog);
         if (result >= 0) {
             errno = 0;  /* Clear errno on success */
             debug_write("[WRAP_SYSCALL listen] Success, errno cleared\n");
@@ -543,7 +725,7 @@ long __wrap_syscall(long number, ...) {
         int sockfd = va_arg(ap, int);
         const struct sockaddr *addr = va_arg(ap, const struct sockaddr *);
         socklen_t addrlen = va_arg(ap, socklen_t);
-        result = int80_connect(sockfd, addr, addrlen);
+        result = SYSCALL_CONNECT(sockfd, addr, addrlen);
         break;
     }
     case 72: { /* SYS_fcntl */
@@ -551,7 +733,7 @@ long __wrap_syscall(long number, ...) {
         int fd = va_arg(ap, int);
         int cmd = va_arg(ap, int);
         long arg = va_arg(ap, long);
-        result = int80_fcntl(fd, cmd, arg);
+        result = SYSCALL_FCNTL(fd, cmd, arg);
         if (result >= 0) {
             errno = 0;
             debug_write("[WRAP_SYSCALL fcntl] Success\n");
@@ -563,7 +745,7 @@ long __wrap_syscall(long number, ...) {
     case 87: { /* SYS_unlink */
         debug_write("[WRAP_SYSCALL unlink] Called\n");
         const char *pathname = va_arg(ap, const char *);
-        result = int80_unlink(pathname);
+        result = SYSCALL_UNLINK(pathname);
         if (result >= 0) {
             errno = 0;
             debug_write("[WRAP_SYSCALL unlink] Success\n");
@@ -576,7 +758,7 @@ long __wrap_syscall(long number, ...) {
         debug_write("[WRAP_SYSCALL chmod] Called\n");
         const char *pathname = va_arg(ap, const char *);
         mode_t mode = va_arg(ap, mode_t);
-        result = int80_chmod(pathname, mode);
+        result = SYSCALL_CHMOD(pathname, mode);
         if (result >= 0) {
             errno = 0;
             debug_write("[WRAP_SYSCALL chmod] Success\n");
@@ -589,7 +771,7 @@ long __wrap_syscall(long number, ...) {
         debug_write("[WRAP_SYSCALL fchmod] Called\n");
         int fd = va_arg(ap, int);
         mode_t mode = va_arg(ap, mode_t);
-        result = int80_fchmod(fd, mode);
+        result = SYSCALL_FCHMOD(fd, mode);
         if (result >= 0) {
             errno = 0;
             debug_write("[WRAP_SYSCALL fchmod] Success\n");

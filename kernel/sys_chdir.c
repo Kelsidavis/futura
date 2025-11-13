@@ -7,8 +7,8 @@
  * Essential for directory navigation and relative path resolution.
  *
  * Phase 1 (Completed): Basic directory changing with vnode lookup
- * Phase 2 (Current): Enhanced validation, path type identification, and detailed logging
- * Phase 3: Advanced features (fchdir support, path caching)
+ * Phase 2 (Completed): Enhanced validation, path type identification, and detailed logging
+ * Phase 3 (Current): Advanced features (fchdir support, path caching)
  * Phase 4: Performance optimization (directory change tracking)
  */
 

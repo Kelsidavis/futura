@@ -131,8 +131,8 @@ typedef uint32_t socklen_t;
  *   // client_len now contains actual address size
  *
  * Phase 1 (Completed): Basic validation and socket acceptance
- * Phase 2 (Current): Enhanced validation, state identification, detailed logging
- * Phase 3: Non-blocking support and connection queue management
+ * Phase 2 (Completed): Enhanced validation, state identification, detailed logging
+ * Phase 3 (Current): Non-blocking support and connection queue management
  * Phase 4: Address family specific peer address return
  */
 long sys_accept(int sockfd, void *addr, socklen_t *addrlen) {

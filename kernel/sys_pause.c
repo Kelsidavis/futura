@@ -78,7 +78,7 @@ long sys_pause(void) {
     fut_printf("[PAUSE] pause() by task %llu -> blocking on signal_waitq\n", task->pid);
 
     /* Block on wait queue (this is a simple blocking sleep, signal delivery will wake us) */
-    fut_waitq_sleep_locked(&task->signal_waitq, NULL, task);
+    fut_waitq_sleep_locked(&task->signal_waitq, NULL);
 
     /* When we wake up, a signal has been delivered. Return -EINTR to let
      * the exception handler invoke the signal handler. */

@@ -9,6 +9,8 @@
 #include "../../include/kernel/fut_thread.h"
 #include "../../include/kernel/fut_sched.h"
 #include "../../include/kernel/fut_memory.h"
+#include "../../include/kernel/fut_task.h"
+#include "../../include/kernel/signal.h"
 #include <stdatomic.h>
 
 /* Forward declaration: LAPIC EOI is only used in interrupt handler */
@@ -27,6 +29,10 @@ extern void fut_printf(const char *fmt, ...);
 extern void fut_schedule(void);
 extern void serial_puts(const char *s);
 extern void fut_irq_send_eoi(uint8_t irq);
+extern int fut_signal_send(struct fut_task *task, int signum);
+
+/* Forward declarations */
+struct fut_task;
 
 /* ============================================================
  *   Timer State
@@ -166,6 +172,19 @@ void fut_timer_tick(void) {
 
     // Process timer events
     process_timer_events();
+
+    // Check for expired alarms and deliver SIGALRM
+    extern fut_task_t *fut_task_list;
+    uint64_t current_ms = atomic_load_explicit(&system_ticks, memory_order_relaxed);
+
+    for (fut_task_t *task = fut_task_list; task != nullptr; task = task->next) {
+        if (task->alarm_expires_ms > 0 && current_ms >= task->alarm_expires_ms) {
+            // Alarm has expired - queue SIGALRM for this task
+            fut_signal_send(task, SIGALRM);
+            // Clear alarm (only one alarm per task)
+            task->alarm_expires_ms = 0;
+        }
+    }
 
     // Only trigger preemptive scheduling if the scheduler has been started
     // (i.e., current_thread != NULL). This prevents premature scheduling

@@ -8,8 +8,8 @@
  *
  * Phase 1 (Completed): Basic fork with memory cloning and FD inheritance
  * Phase 2 (Completed): Enhanced validation, PID categorization, VMA/FD tracking, detailed logging
- * Phase 3 (Current): Optimized COW performance, large process handling
- * Phase 4: Advanced fork features (vfork, clone with flags, namespace support)
+ * Phase 3 (Completed): Optimized COW performance, large process handling
+ * Phase 4 (Current): Advanced fork features (vfork, clone with flags, namespace support)
  */
 
 #include <kernel/fut_task.h>
@@ -160,8 +160,8 @@ static void dummy_entry(void *arg) {
  *   - wait()/waitpid(): Wait for child to exit
  *
  * Phase 1 (Completed): Basic fork with memory cloning and FD inheritance
- * Phase 2 (Current): Enhanced validation, PID categorization, VMA/FD tracking, detailed logging
- * Phase 3: Optimized COW performance, large process handling
+ * Phase 2 (Completed): Enhanced validation, PID categorization, VMA/FD tracking, detailed logging
+ * Phase 3 (Current): Optimized COW performance, large process handling
  * Phase 4: Advanced features (vfork, clone with flags, namespace support)
  */
 long sys_fork(void) {
@@ -296,13 +296,29 @@ long sys_fork(void) {
         clone_strategy = "copy-on-write (COW)";
     }
 
-    /* Phase 2: Detailed success logging */
+    /* Phase 3: Calculate memory efficiency metrics for COW optimization */
+    uint64_t parent_memory = parent_mm ? (parent_mm->brk_current - parent_mm->brk_start) : 0;
+    const char *process_size_category;
+    if (parent_memory == 0) {
+        process_size_category = "minimal (0 bytes)";
+    } else if (parent_memory < 1024 * 1024) {  /* < 1 MB */
+        process_size_category = "small (< 1 MB)";
+    } else if (parent_memory < 10 * 1024 * 1024) {  /* < 10 MB */
+        process_size_category = "medium (1-10 MB)";
+    } else if (parent_memory < 100 * 1024 * 1024) {  /* < 100 MB */
+        process_size_category = "large (10-100 MB)";
+    } else {
+        process_size_category = "very large (> 100 MB)";
+    }
+
+    /* Phase 3: Detailed success logging with COW efficiency metrics */
     fut_printf("[FORK] fork(parent_pid=%u [%s], child_pid=%u [%s], "
-               "strategy=%s, vmas=%d, fds=%d, parent_tid=%llu, child_tid=%llu) -> %u "
-               "(process cloned, Phase 2)\n",
+               "strategy=%s, vmas=%d, fds=%d, mem=%lu [%s], parent_tid=%llu, child_tid=%llu) -> %u "
+               "(COW process cloned, Phase 3)\n",
                parent_task->pid, parent_pid_category,
                child_task->pid, child_pid_category,
                clone_strategy, vma_count, fd_count,
+               parent_memory, process_size_category,
                parent_thread->tid, child_thread->tid,
                child_task->pid);
 

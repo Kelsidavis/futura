@@ -118,8 +118,8 @@ extern fut_task_t *fut_task_current(void);
  *   - Use access() for informational purposes, not security decisions
  *
  * Phase 1 (Completed): Basic file existence and permission checking
- * Phase 2 (Current): Enhanced validation, mode identification, detailed logging
- * Phase 3: Advanced permission models (uid/gid checking, ACLs)
+ * Phase 2 (Completed): Enhanced validation, mode identification, detailed logging
+ * Phase 3 (Current): Advanced permission models (uid/gid checking, ACLs)
  * Phase 4: Performance optimization (permission caching)
  */
 long sys_access(const char *pathname, int mode) {

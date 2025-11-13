@@ -204,6 +204,12 @@ bool fb_is_available(void) {
 }
 
 #ifdef __x86_64__
+void *fb_get_virt_addr(void) {
+    return (void *)g_fb_virt;
+}
+#endif
+
+#ifdef __x86_64__
 void fb_boot_splash(void) {
     /* Attempt to initialize device-specific drivers if applicable */
     /* For virtio-gpu (vendor 0x1af4), initialize VIRTIO GPU device */
@@ -330,6 +336,11 @@ void fb_boot_splash(void) {
 
         fut_printf("[FB] Screen fill complete\n");
         fut_printf("[FB] If entire screen is bright green, framebuffer is working!\n");
+
+        /* Initialize framebuffer console for text output */
+        extern int fb_console_init(void);
+        fb_console_init();
+        fut_printf("[FB] Framebuffer console initialized\n");
         return;
     }
 

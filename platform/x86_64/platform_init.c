@@ -207,6 +207,10 @@ void fut_serial_putc(char c) {
     while ((inb(SERIAL_LINE_STATUS(SERIAL_PORT_COM1)) & 0x20) == 0)
         ;
     outb(SERIAL_DATA(SERIAL_PORT_COM1), c);
+
+    /* Also write to framebuffer console if available */
+    extern void fb_console_putc(char c);
+    fb_console_putc(c);
 }
 
 int fut_serial_getc(void) {
@@ -664,8 +668,8 @@ void arch_memory_config(uintptr_t *ram_start, uintptr_t *ram_end, size_t *heap_s
     phys_addr_t mem_base_phys = pmap_virt_to_phys(mem_base);
     phys_addr_t boot_ptables_start_phys = pmap_virt_to_phys((uintptr_t)boot_ptables_start);
     phys_addr_t boot_ptables_end_phys = pmap_virt_to_phys((uintptr_t)boot_ptables_end);
-    boot_ptables_start_phys &= ~(FUT_PAGE_SIZE - 1ULL);
-    boot_ptables_end_phys = FUT_PAGE_ALIGN(boot_ptables_end_phys);
+    boot_ptables_start_phys &= ~(PAGE_SIZE - 1ULL);
+    boot_ptables_end_phys = PAGE_ALIGN_UP(boot_ptables_end_phys);
     if (mem_base_phys < boot_ptables_end_phys) {
         mem_base_phys = boot_ptables_end_phys;
     }
@@ -673,6 +677,23 @@ void arch_memory_config(uintptr_t *ram_start, uintptr_t *ram_end, size_t *heap_s
     *ram_start = mem_base_phys;
     *ram_end = mem_base_phys + (1024 * 1024 * 1024);  /* 1 GiB */
     *heap_size = 96 * 1024 * 1024;  /* 96 MiB kernel heap */
+}
+
+/**
+ * fut_save_and_disable_interrupts - Save interrupt state and disable interrupts
+ * Returns: Current RFLAGS IF flag value for later restoration with fut_restore_interrupts
+ */
+uint64_t fut_save_and_disable_interrupts(void) {
+    uint64_t rflags;
+    __asm__ volatile(
+        "pushfq\n"
+        "popq %0\n"
+        "cli\n"
+        : "=r"(rflags)
+        :
+        : "memory"
+    );
+    return rflags & RFLAGS_IF;  /* Return only the IF flag for fut_restore_interrupts */
 }
 
 void fut_platform_init(uint32_t multiboot_magic __attribute__((unused)),
@@ -988,54 +1009,6 @@ void fut_platform_cpu_halt(void) {
 /* ========================================
  *   Platform Hooks for Multi-Arch Support
  * ======================================== */
-
-/**
- * arch_early_init - Platform-specific early initialization
- * Called before any kernel subsystems are initialized.
- * For x86_64, this is handled by fut_platform_init which is called
- * from boot.S before kernel_main, so we don't need to do anything here.
- */
-void arch_early_init(void) {
-    /* Early init already done in fut_platform_init */
-}
-
-/**
- * arch_memory_config - Get platform-specific memory layout
- * @ram_start: Output - Start of usable RAM (physical address)
- * @ram_end: Output - End of usable RAM (physical address)
- * @heap_size: Output - Requested kernel heap size in bytes
- */
-void arch_memory_config(uintptr_t *ram_start, uintptr_t *ram_end, size_t *heap_size) {
-    extern char _kernel_end[];
-    extern char boot_ptables_start[];
-    extern char boot_ptables_end[];
-    extern phys_addr_t pmap_virt_to_phys(uintptr_t vaddr);
-    extern uintptr_t pmap_phys_to_virt(phys_addr_t paddr);
-
-    /* x86_64 memory layout (higher-half kernel) */
-    uintptr_t kernel_virt_end = (uintptr_t)_kernel_end;
-    uintptr_t mem_base = (kernel_virt_end + 0xFFF) & ~0xFFFULL;
-
-    /* Skip legacy VGA/BIOS hole below 1 MiB */
-    uintptr_t min_phys = KERNEL_VIRTUAL_BASE + 0x100000ULL;
-    if (mem_base < min_phys) {
-        mem_base = min_phys;
-    }
-
-    /* Convert to physical addresses */
-    phys_addr_t mem_base_phys = pmap_virt_to_phys(mem_base);
-    phys_addr_t boot_ptables_start_phys = pmap_virt_to_phys((uintptr_t)boot_ptables_start);
-    phys_addr_t boot_ptables_end_phys = pmap_virt_to_phys((uintptr_t)boot_ptables_end);
-    boot_ptables_start_phys &= ~(FUT_PAGE_SIZE - 1ULL);
-    boot_ptables_end_phys = FUT_PAGE_ALIGN(boot_ptables_end_phys);
-    if (mem_base_phys < boot_ptables_end_phys) {
-        mem_base_phys = boot_ptables_end_phys;
-    }
-
-    *ram_start = mem_base_phys;
-    *ram_end = mem_base_phys + (1024 * 1024 * 1024);  /* 1 GiB */
-    *heap_size = 96 * 1024 * 1024;  /* 96 MiB kernel heap */
-}
 
 /**
  * arch_late_init - Platform-specific late initialization

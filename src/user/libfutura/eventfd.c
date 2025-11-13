@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: MPL-2.0
 
 #include <errno.h>
-#include <limits.h>
+// #include <limits.h>  // Temporarily disabled due to build issue
+#define INT_MAX 2147483647
+#define ULLONG_MAX 18446744073709551615ULL
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>

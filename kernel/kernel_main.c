@@ -804,9 +804,17 @@ void fut_kernel_main(void) {
     /* Initialize kernel heap */
     fut_printf("[INIT] Initializing kernel heap...\n");
 
-    /* Heap region starts after PMM allocation region */
+    /* Heap region starts after PMM allocation region
+     * NOTE: arch_memory_config returns physical addresses,
+     * but fut_heap_init expects virtual addresses. */
+#ifdef __x86_64__
+    extern uintptr_t pmap_phys_to_virt(phys_addr_t paddr);
+    uintptr_t heap_start = pmap_phys_to_virt(ram_start);
+    uintptr_t heap_end = pmap_phys_to_virt(ram_start + heap_size);
+#else
     uintptr_t heap_start = ram_start;
     uintptr_t heap_end = heap_start + heap_size;
+#endif
 
     /* Debug: print heap addresses before initialization */
 

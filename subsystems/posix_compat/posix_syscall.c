@@ -19,11 +19,6 @@
 #include <kernel/fut_socket.h>
 #include <kernel/signal.h>
 #include <kernel/signal_frame.h>
-#ifdef __x86_64__
-#include <arch/x86_64/regs.h>
-#elif defined(__aarch64__)
-#include <platform/arm64/regs.h>
-#endif
 
 /* ============================================================
  *   Syscall Numbers

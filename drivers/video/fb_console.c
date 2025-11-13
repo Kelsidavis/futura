@@ -238,7 +238,18 @@ int fb_console_init(void) {
     cons->height = hw_info.info.height;
     cons->pitch = hw_info.info.pitch;
     cons->bpp = hw_info.info.bpp;
+
+#ifdef __x86_64__
+    /* Get the virtual address of the framebuffer (already mapped by fb_boot_splash) */
+    extern void *fb_get_virt_addr(void);
+    cons->fb_mem = (volatile uint8_t *)fb_get_virt_addr();
+    if (!cons->fb_mem) {
+        fut_printf("[FB_CONSOLE] Failed to get framebuffer virtual address\n");
+        return -1;
+    }
+#else
     cons->fb_mem = (volatile uint8_t *)hw_info.phys;
+#endif
 
     cons->char_width = 8;
     cons->char_height = 8;

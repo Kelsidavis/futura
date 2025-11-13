@@ -1,7 +1,8 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
-#include <limits.h>
+// #include <limits.h>  // Temporarily disabled due to build issue
+#define INT_MAX 2147483647
 
 #include <shared/fut_timespec.h>
 #include <user/sys.h>

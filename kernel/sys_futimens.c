@@ -7,8 +7,8 @@
  * Similar to utimensat() but operates on open file descriptor instead of path.
  *
  * Phase 1 (Completed): Basic stub returning -ENOSYS
- * Phase 2 (Current): Enhanced validation, parameter categorization, detailed logging
- * Phase 3: FD lookup and vnode->ops->setattr() integration
+ * Phase 2 (Completed): Enhanced validation, parameter categorization, detailed logging
+ * Phase 3 (Current): FD lookup and vnode->ops->setattr() integration
  * Phase 4: Performance optimization (fd caching, batch updates)
  */
 

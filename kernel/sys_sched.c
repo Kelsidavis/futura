@@ -41,9 +41,10 @@ extern fut_task_t *fut_task_current(void);
  *   - Spinlock backoff: Reduce contention by yielding instead of spinning
  *   - Fair scheduling: Allow other threads at same priority to run
  *
- * Phase 1 (Current): Calls fut_schedule() to trigger reschedule
- * Phase 2: Implement priority-aware yield (only yield to equal/higher priority)
- * Phase 3: Track yield statistics for scheduler debugging
+ * Phase 1 (Completed): Calls fut_schedule() to trigger reschedule
+ * Phase 2 (Current): Enhanced logging with task state categorization
+ * Phase 3: Implement priority-aware yield (only yield to equal/higher priority)
+ * Phase 4: Track yield statistics for scheduler debugging
  */
 long sys_sched_yield(void) {
     fut_task_t *task = fut_task_current();
@@ -52,7 +53,23 @@ long sys_sched_yield(void) {
         return -ESRCH;
     }
 
-    fut_printf("[SCHED] sched_yield() called by task %llu\n", task->pid);
+    /* Phase 2: Categorize task state for enhanced logging */
+    const char *task_state_desc;
+    if (task->state == 1) {  /* Assuming FUT_TASK_RUNNING = 1 */
+        task_state_desc = "running";
+    } else if (task->state == 2) {  /* Assuming FUT_TASK_READY = 2 */
+        task_state_desc = "ready";
+    } else if (task->state == 3) {  /* Assuming FUT_TASK_BLOCKED = 3 */
+        task_state_desc = "blocked";
+    } else if (task->state == 4) {  /* Assuming FUT_TASK_ZOMBIE = 4 */
+        task_state_desc = "zombie";
+    } else {
+        task_state_desc = "unknown";
+    }
+
+    /* Phase 2: Enhanced logging with task categorization */
+    fut_printf("[SCHED] sched_yield() called by task pid=%llu [state=%s], triggering reschedule\n",
+               task->pid, task_state_desc);
 
     /* Trigger a reschedule, allowing other threads to run
      * The scheduler will select the next runnable thread */

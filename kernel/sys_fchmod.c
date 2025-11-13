@@ -7,8 +7,8 @@
  * Essential for file security and access control management on open files.
  *
  * Phase 1 (Completed): Basic permission changing with FD lookup
- * Phase 2 (Current): Enhanced validation, mode categorization, and detailed logging
- * Phase 3: Advanced features (ACL support, extended permissions)
+ * Phase 2 (Completed): Enhanced validation, mode categorization, and detailed logging
+ * Phase 3 (Current): Advanced features (ACL support, extended permissions)
  * Phase 4: Performance optimization (batched permission updates)
  */
 

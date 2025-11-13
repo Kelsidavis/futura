@@ -7,8 +7,8 @@
  * Essential for system auditing, billing, and resource monitoring.
  *
  * Phase 1 (Completed): Validation and stub implementation
- * Phase 2 (Current): Enhanced validation, file path handling, operation type categorization
- * Phase 3: Open accounting file and initialize record structure
+ * Phase 2 (Completed): Enhanced validation, file path handling, operation type categorization
+ * Phase 3 (Current): Open accounting file and initialize record structure
  * Phase 4: Generate and write accounting records on process exit
  */
 

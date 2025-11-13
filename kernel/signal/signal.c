@@ -111,6 +111,7 @@ int fut_signal_is_pending(struct fut_task *task, int signum) {
 /**
  * Queue a signal for delivery to a task.
  * The signal will be delivered when the task runs and is not blocked.
+ * If the task is blocked on pause(), this will wake it up.
  *
  * @param task Target task
  * @param signum Signal number
@@ -125,6 +126,12 @@ int fut_signal_send(struct fut_task *task, int signum) {
 
     /* Queue the signal */
     task->pending_signals |= signal_bit;
+
+    /* Wake task if it's blocked on pause() syscall.
+     * When the task wakes, sys_pause() will check pending_signals
+     * and return -EINTR to deliver the signal. */
+    extern void fut_waitq_wake_one(void *waitq);
+    fut_waitq_wake_one(&task->signal_waitq);
 
     fut_printf("[SIGNAL] Queued signal %d for task %llu\n", signum, task->pid);
 

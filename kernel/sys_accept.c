@@ -8,8 +8,8 @@
  * socket servers, and other connection-oriented protocols.
  *
  * Phase 1 (Completed): Basic validation and socket acceptance
- * Phase 2 (Current): Enhanced validation, socket state identification, and detailed logging
- * Phase 3: Non-blocking accept, EAGAIN handling, and connection queue management
+ * Phase 2 (Completed): Enhanced validation, socket state identification, and detailed logging
+ * Phase 3 (Current): Non-blocking accept, EAGAIN handling, and connection queue management
  * Phase 4: Address family specific peer address return (AF_INET, AF_INET6, AF_UNIX)
  */
 

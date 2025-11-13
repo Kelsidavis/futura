@@ -1505,7 +1505,10 @@ void fut_kernel_main(void) {
     fut_printf("[PANIC] Scheduler returned unexpectedly!\n");
     fut_platform_panic("Scheduler returned to kernel_main");
 #elif defined(__aarch64__)
-    /* ARM64: Timer interrupts already enabled in platform_init.c */
+    /* ARM64: Enable timer IRQ and start scheduling */
+    /* The timer IRQ must be enabled explicitly here for alarm() delivery */
+    fut_irq_enable(27);  /* Enable ARM Generic Timer virtual timer interrupt */
+
     /* Enable interrupts and start scheduling */
     fut_printf("[INIT] ARM64: Enabling interrupts and starting scheduler...\n");
     fut_enable_interrupts();

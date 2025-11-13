@@ -65,9 +65,9 @@ struct sockaddr_un {
  * - addrlen is value-result parameter (input: buffer size, output: actual size)
  * - Address is truncated if buffer too small
  *
- * Phase 1 (Current): Validates parameters and returns stub
- * Phase 2: Integrate with socket layer to retrieve actual peer address
- * Phase 3: Support different socket families (Unix domain, IPv4, IPv6)
+ * Phase 1 (Completed): Validates parameters and returns stub
+ * Phase 2 (Current): Integrate with socket layer to retrieve actual peer address
+ * Phase 3: Support different socket families (IPv4, IPv6)
  * Phase 4: Handle edge cases (unconnected UDP sockets, etc.)
  *
  * Example: Get peer address for logging

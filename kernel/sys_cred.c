@@ -7,8 +7,8 @@
  * Provides access to real, effective, and saved user/group IDs.
  *
  * Phase 1 (Completed): Basic credential get/set operations
- * Phase 2 (Current): Enhanced validation, UID/GID categorization, detailed logging
- * Phase 3: Capability-based access control, fine-grained permissions
+ * Phase 2 (Completed): Enhanced validation, UID/GID categorization, detailed logging
+ * Phase 3 (Current): Capability-based access control, fine-grained permissions
  * Phase 4: Per-namespace credential management, user namespaces
  */
 

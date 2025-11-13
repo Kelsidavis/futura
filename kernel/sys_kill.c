@@ -6,8 +6,8 @@
  * Implements kill() to send signals to processes.
  *
  * Phase 1 (Completed): Basic signal sending to self and children
- * Phase 2 (Current): Enhanced validation, signal name identification, and detailed logging
- * Phase 3: Process group signal delivery
+ * Phase 2 (Completed): Enhanced validation, signal name identification, and detailed logging
+ * Phase 3 (Current): Process group signal delivery
  * Phase 4: Permission checks and broadcast signals
  */
 
@@ -42,8 +42,8 @@ extern fut_task_t *fut_task_current(void);
  *   - Performs permission check without sending signal
  *   - Used to check if process exists and is accessible
  *
- * Phase 2 (Current): Signal name identification and PID categorization
- * Phase 3: Process group signal delivery
+ * Phase 2 (Completed): Signal name identification and PID categorization
+ * Phase 3 (Current): Process group signal delivery
  * Phase 4: Permission checks and broadcast signals
  */
 long sys_kill(int pid, int sig) {

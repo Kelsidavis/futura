@@ -632,11 +632,10 @@ void fut_timer_init(uint32_t frequency) {
      * 2. TCP/IP stack is initialized
      * 3. All early boot printf-heavy initialization completes
      */
-    /* Enable timer: ENABLE=1, IMASK=1 (MASKED - interrupts disabled) */
-    write_sysreg(cntp_ctl_el0, CNTP_CTL_ENABLE | CNTP_CTL_IMASK);
-
-    /* Do NOT enable timer interrupt during early boot */
-    // fut_irq_enable(30);
+    /* Enable timer: ENABLE=1 (interrupts NOT masked)
+     * The GIC will be configured to route this interrupt in kernel_main.c
+     * after all subsystems are initialized */
+    write_sysreg(cntp_ctl_el0, CNTP_CTL_ENABLE);  /* No IMASK bit set */
 }
 
 uint64_t fut_timer_get_ticks(void) {

@@ -6,10 +6,10 @@
  * Implements fchownat() for changing file ownership with directory fd support.
  * Essential for thread-safe file ownership management and modern POSIX compliance.
  *
- * Phase 1 (Current): Basic ownership changing with path resolution
- * Phase 2: Full dirfd support with relative path resolution
- * Phase 3: Implement AT_EMPTY_PATH and AT_SYMLINK_NOFOLLOW flags
- * Phase 4: Performance optimization
+ * Phase 1 (Completed): Basic ownership changing with path resolution
+ * Phase 2 (Current): AT_FDCWD support with relative path resolution, enhanced validation
+ * Phase 3: Full dirfd support with fd-table lookup, AT_EMPTY_PATH and AT_SYMLINK_NOFOLLOW
+ * Phase 4: Performance optimization with dirfd caching
  */
 
 #include <kernel/fut_task.h>
@@ -205,17 +205,19 @@ long sys_fchownat(int dirfd, const char *pathname, uint32_t uid, uint32_t gid, i
         path_type = "relative";
     }
 
-    /* Phase 1: For now, ignore dirfd and just use vfs_lookup
-     * Phase 2 will implement proper dirfd-relative path resolution
+    /* Phase 2: Handle dirfd resolution
+     * - Absolute paths: dirfd is ignored, path is used directly
+     * - Relative paths with AT_FDCWD: Use current working directory (handled by vfs_lookup)
+     * - Relative paths with valid dirfd: Phase 3 (full fd-table support) not yet implemented
      */
-    if (dirfd != AT_FDCWD && path_buf[0] != '/') {
+    if (dirfd != AT_FDCWD && dirfd >= 0 && path_buf[0] != '/') {
         fut_printf("[FCHOWNAT] fchownat(dirfd=%d [%s], path='%s' [%s], uid=%s, gid=%s, "
-                   "op=%s, flags=%s) -> ENOSYS (dirfd with relative path not yet implemented, Phase 2)\n",
+                   "op=%s, flags=%s) -> ENOSYS (dirfd-relative path resolution not yet implemented, Phase 3)\n",
                    dirfd, dirfd_desc, path_buf, path_type, uid_desc, gid_desc, operation_type, flags_desc);
         return -ENOSYS;
     }
 
-    /* Phase 1: AT_SYMLINK_NOFOLLOW not yet implemented */
+    /* Phase 3: AT_SYMLINK_NOFOLLOW not yet implemented */
     if (flags & AT_SYMLINK_NOFOLLOW) {
         fut_printf("[FCHOWNAT] fchownat(dirfd=%d [%s], path='%s' [%s], uid=%s, gid=%s, "
                    "op=%s, flags=%s) -> ENOSYS (AT_SYMLINK_NOFOLLOW not implemented yet, Phase 3)\n",

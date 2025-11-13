@@ -9,8 +9,8 @@
  * Essential for normal program completion and error reporting.
  *
  * Phase 1 (Completed): Basic exit with status code
- * Phase 2 (Current): Enhanced validation, exit code categorization, detailed logging
- * Phase 3: Resource cleanup tracking, exit hooks
+ * Phase 2 (Completed): Enhanced validation, exit code categorization, detailed logging
+ * Phase 3 (Current): Resource cleanup tracking, exit hooks
  * Phase 4: Process groups, session leaders, zombie reaping
  */
 

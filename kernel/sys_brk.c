@@ -8,8 +8,8 @@
  *
  * Phase 1 (Completed): Basic heap expansion and contraction with page mapping
  * Phase 2 (Completed): Enhanced validation, operation categorization, and detailed logging
- * Phase 3 (Current): Heap statistics tracking and memory pressure handling
- * Phase 4: Advanced features (heap preallocation, lazy mapping, huge pages)
+ * Phase 3 (Completed): Heap statistics tracking and memory pressure handling
+ * Phase 4 (Current): Advanced features (heap preallocation, lazy mapping, huge pages)
  */
 
 #if defined(__x86_64__)
@@ -91,9 +91,9 @@ static void brk_unmap_range(fut_vmem_context_t *ctx, uintptr_t start, uintptr_t 
  *   return old_brk;
  *
  * Phase 1 (Completed): Basic heap expansion and contraction
- * Phase 2 (Current): Enhanced validation, operation categorization, detailed logging
- * Phase 3: Heap statistics tracking and memory pressure handling
- * Phase 4: Heap preallocation, lazy mapping, huge pages
+ * Phase 2 (Completed): Enhanced validation, operation categorization, detailed logging
+ * Phase 3 (Completed): Heap statistics tracking and memory pressure handling
+ * Phase 4 (Current): Heap preallocation, lazy mapping, huge pages
  */
 long sys_brk(uintptr_t new_break) {
     fut_task_t *task = fut_task_current();
@@ -169,6 +169,44 @@ long sys_brk(uintptr_t new_break) {
                    new_break, current, change_category, new_break);
         return (long)new_break;
     }
+
+    /* Phase 3: Calculate and track heap statistics */
+    uintptr_t heap_size_current = current - brk_start;
+    uintptr_t heap_size_new = new_break - brk_start;
+    uintptr_t heap_limit_size = brk_limit - brk_start;
+
+    /* Phase 3: Calculate memory pressure as percentage of limit */
+    unsigned int mem_pressure_current = (heap_size_current * 100) / heap_limit_size;
+    unsigned int mem_pressure_new = (heap_size_new * 100) / heap_limit_size;
+
+    /* Phase 3: Categorize memory pressure levels */
+    const char *pressure_category_current;
+    if (mem_pressure_current < 25) {
+        pressure_category_current = "low";
+    } else if (mem_pressure_current < 50) {
+        pressure_category_current = "moderate";
+    } else if (mem_pressure_current < 75) {
+        pressure_category_current = "high";
+    } else {
+        pressure_category_current = "critical";
+    }
+
+    const char *pressure_category_new;
+    if (mem_pressure_new < 25) {
+        pressure_category_new = "low";
+    } else if (mem_pressure_new < 50) {
+        pressure_category_new = "moderate";
+    } else if (mem_pressure_new < 75) {
+        pressure_category_new = "high";
+    } else {
+        pressure_category_new = "critical";
+    }
+
+    /* Phase 3: Log heap statistics */
+    fut_printf("[BRK] Heap stats: current=%u%% (%s) -> new=%u%% (%s), size: 0x%lx -> 0x%lx bytes\n",
+               mem_pressure_current, pressure_category_current,
+               mem_pressure_new, pressure_category_new,
+               heap_size_current, heap_size_new);
 
     fut_vmem_context_t *ctx = fut_mm_context(mm);
 

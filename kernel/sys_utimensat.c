@@ -20,6 +20,7 @@
 
 extern void fut_printf(const char *fmt, ...);
 extern int fut_copy_from_user(void *to, const void *from, size_t size);
+extern uint64_t fut_get_time_ns(void);
 
 /* Special values */
 #define AT_FDCWD            -100
@@ -289,12 +290,93 @@ long sys_utimensat(int dirfd, const char *pathname, const fut_timespec_t *times,
         return ret < 0 ? ret : -ENOENT;
     }
 
-    /* Phase 1: Stub - return success
-     * Phase 2 will implement actual timestamp updates via vnode->ops->setattr
-     */
+    /* Phase 2: Implement actual timestamp updates via vnode->ops->setattr */
+
+    /* Check if filesystem supports setattr operation */
+    if (!vnode->ops || !vnode->ops->setattr) {
+        fut_printf("[UTIMENSAT] utimensat(dirfd=%d [%s], path='%s' [%s, %s, len=%zu], "
+                   "vnode_ino=%lu, times=%s, flags=%s, pid=%d) -> ENOSYS "
+                   "(filesystem doesn't support setattr)\n",
+                   dirfd, dirfd_desc, path_buf, path_type, path_len_cat, path_len,
+                   vnode->ino, time_spec_desc, flags_desc, task->pid);
+        return -ENOSYS;
+    }
+
+    /* Build stat structure with new timestamps */
+    struct fut_stat stat = {0};
+
+    /* Get current time if needed */
+    uint64_t now_ns = 0;
+    if (times == NULL ||
+        (times && (time_buf[0].tv_nsec == UTIME_NOW || time_buf[1].tv_nsec == UTIME_NOW))) {
+        now_ns = fut_get_time_ns();
+    }
+
+    /* Set access time */
+    if (times == NULL) {
+        /* NULL times means set both to current time */
+        stat.st_atime = now_ns / 1000000000;  /* seconds */
+        stat.st_atime_nsec = now_ns % 1000000000;  /* nanoseconds */
+    } else if (time_buf[0].tv_nsec == UTIME_NOW) {
+        stat.st_atime = now_ns / 1000000000;
+        stat.st_atime_nsec = now_ns % 1000000000;
+    } else if (time_buf[0].tv_nsec == UTIME_OMIT) {
+        /* Don't change atime - use sentinel value */
+        stat.st_atime = (time_t)-1;
+    } else {
+        /* Use provided atime */
+        stat.st_atime = time_buf[0].tv_sec;
+        stat.st_atime_nsec = time_buf[0].tv_nsec;
+    }
+
+    /* Set modification time */
+    if (times == NULL) {
+        /* NULL times means set both to current time */
+        stat.st_mtime = now_ns / 1000000000;  /* seconds */
+        stat.st_mtime_nsec = now_ns % 1000000000;  /* nanoseconds */
+    } else if (time_buf[1].tv_nsec == UTIME_NOW) {
+        stat.st_mtime = now_ns / 1000000000;
+        stat.st_mtime_nsec = now_ns % 1000000000;
+    } else if (time_buf[1].tv_nsec == UTIME_OMIT) {
+        /* Don't change mtime - use sentinel value */
+        stat.st_mtime = (time_t)-1;
+    } else {
+        /* Use provided mtime */
+        stat.st_mtime = time_buf[1].tv_sec;
+        stat.st_mtime_nsec = time_buf[1].tv_nsec;
+    }
+
+    /* Call the filesystem's setattr operation */
+    int ret = vnode->ops->setattr(vnode, &stat);
+
+    /* Handle errors */
+    if (ret < 0) {
+        const char *error_desc;
+        switch (ret) {
+            case -EPERM:
+                error_desc = "operation not permitted";
+                break;
+            case -EACCES:
+                error_desc = "permission denied";
+                break;
+            case -EROFS:
+                error_desc = "read-only filesystem";
+                break;
+            default:
+                error_desc = "setattr failed";
+                break;
+        }
+
+        fut_printf("[UTIMENSAT] utimensat(dirfd=%d [%s], path='%s' [%s, %s, len=%zu], "
+                   "vnode_ino=%lu, times=%s, flags=%s, pid=%d) -> %d (%s)\n",
+                   dirfd, dirfd_desc, path_buf, path_type, path_len_cat, path_len,
+                   vnode->ino, time_spec_desc, flags_desc, task->pid, ret, error_desc);
+        return ret;
+    }
+
+    /* Success */
     fut_printf("[UTIMENSAT] utimensat(dirfd=%d [%s], path='%s' [%s, %s, len=%zu], "
-               "vnode_ino=%lu, times=%s, flags=%s, pid=%d) -> 0 "
-               "(accepted, Phase 1 stub - timestamps not actually updated yet)\n",
+               "vnode_ino=%lu, times=%s, flags=%s, pid=%d) -> 0 (success, Phase 2)\n",
                dirfd, dirfd_desc, path_buf, path_type, path_len_cat, path_len,
                vnode->ino, time_spec_desc, flags_desc, task->pid);
 

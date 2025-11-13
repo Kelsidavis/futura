@@ -1542,10 +1542,15 @@ static ssize_t ramfs_readlink(struct fut_vnode *vnode, char *buf, size_t size) {
 }
 
 /**
- * ramfs_setattr() - Change file attributes (permissions, mode)
+ * ramfs_setattr() - Change file attributes (permissions, mode, timestamps, ownership)
  *
- * Sets attributes on a vnode including permissions (mode bits).
- * Called by chmod() syscall through VFS layer.
+ * Sets attributes on a vnode including:
+ * - Permissions (mode bits and special bits)
+ * - Access time (atime) and modification time (mtime)
+ * - Ownership (uid, gid)
+ * Uses sentinel value (time_t)-1 to indicate "don't change this field"
+ *
+ * Called by chmod(), chown(), utimensat() syscalls through VFS layer.
  */
 static int ramfs_setattr(struct fut_vnode *vnode, const struct fut_stat *stat) {
     if (!vnode || !stat) {
@@ -1562,6 +1567,34 @@ static int ramfs_setattr(struct fut_vnode *vnode, const struct fut_stat *stat) {
         vnode->mode = stat->st_mode;
         fut_printf("[RAMFS-SETATTR] Changed mode for ino=%lu to 0%o\n",
                    vnode->ino, vnode->mode);
+    }
+
+    /* Update access time */
+    if (stat->st_atime != (time_t)-1) {
+        vnode->atime = stat->st_atime;
+        node->atime_nsec = stat->st_atime_nsec;
+        fut_printf("[RAMFS-SETATTR] Changed atime for ino=%lu to %ld.%09lu\n",
+                   vnode->ino, stat->st_atime, stat->st_atime_nsec);
+    }
+
+    /* Update modification time */
+    if (stat->st_mtime != (time_t)-1) {
+        vnode->mtime = stat->st_mtime;
+        node->mtime_nsec = stat->st_mtime_nsec;
+        fut_printf("[RAMFS-SETATTR] Changed mtime for ino=%lu to %ld.%09lu\n",
+                   vnode->ino, stat->st_mtime, stat->st_mtime_nsec);
+    }
+
+    /* Update ownership (uid/gid) */
+    if (stat->st_uid != (uid_t)-1) {
+        vnode->uid = stat->st_uid;
+        fut_printf("[RAMFS-SETATTR] Changed uid for ino=%lu to %u\n",
+                   vnode->ino, stat->st_uid);
+    }
+    if (stat->st_gid != (gid_t)-1) {
+        vnode->gid = stat->st_gid;
+        fut_printf("[RAMFS-SETATTR] Changed gid for ino=%lu to %u\n",
+                   vnode->ino, stat->st_gid);
     }
 
     return 0;

@@ -7,8 +7,8 @@
  * Foundation for dynamic memory allocation (malloc/free).
  *
  * Phase 1 (Completed): Basic heap expansion and contraction with page mapping
- * Phase 2 (Current): Enhanced validation, operation categorization, and detailed logging
- * Phase 3: Heap statistics tracking and memory pressure handling
+ * Phase 2 (Completed): Enhanced validation, operation categorization, and detailed logging
+ * Phase 3 (Current): Heap statistics tracking and memory pressure handling
  * Phase 4: Advanced features (heap preallocation, lazy mapping, huge pages)
  */
 

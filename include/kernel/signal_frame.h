@@ -1,10 +1,11 @@
-/* signal_frame.h - x86_64 signal frame structures for userspace signal handlers
+/* signal_frame.h - Signal frame structures for userspace signal handlers
  *
  * Copyright (c) 2025 Kelsi Davis
  * Licensed under the MPL v2.0 — see LICENSE for details.
  *
  * Defines the signal frame layout on the user stack when delivering signals
  * to userspace handlers. This allows proper context restoration via sigreturn().
+ * Supports both x86-64 and ARM64 architectures.
  */
 
 #ifndef __KERNEL_SIGNAL_FRAME_H__
@@ -13,7 +14,9 @@
 #include <stdint.h>
 #include <kernel/signal.h>
 
-/* x86_64 general purpose registers in signal context */
+#if defined(__x86_64__)
+
+/* x86-64 general purpose registers in signal context */
 struct sigcontext {
     uint64_t r8;
     uint64_t r9;
@@ -40,6 +43,42 @@ struct sigcontext {
     uint64_t err;
     uint64_t trapno;
 };
+
+#elif defined(__aarch64__)
+
+/* ARM64 general purpose registers and state in signal context
+ *
+ * Covers all 31 general-purpose registers (x0-x30), program counter (ELR_EL1),
+ * processor state (SPSR_EL1), fault address, and NEON SIMD state.
+ */
+struct sigcontext {
+    /* General purpose registers x0-x30 */
+    uint64_t x[31];
+
+    /* Stack pointer (SP_EL0) */
+    uint64_t sp;
+
+    /* Program counter (ELR_EL1) - instruction to resume at */
+    uint64_t pc;
+
+    /* Processor state (SPSR_EL1)
+     * Includes condition codes, interrupt masks, exception level, etc. */
+    uint64_t pstate;
+
+    /* Fault address (FAR_EL1) - used for memory exceptions */
+    uint64_t fault_address;
+
+    /* NEON SIMD registers (v0-v31, each 128-bit) */
+    __uint128_t v[32];
+
+    /* Floating-point control registers */
+    uint32_t fpsr;        /* Floating-point status register */
+    uint32_t fpcr;        /* Floating-point control register */
+};
+
+#else
+#error "Unsupported architecture for signal frames"
+#endif
 
 /* Machine context - registers and flags */
 typedef struct {
@@ -84,12 +123,17 @@ typedef struct {
  *
  * Layout (growing downward from high addresses):
  *   [user code that was interrupted]
- *   RSP → [rt_sigframe structure below]
+ *   SP → [rt_sigframe structure below]
  *
- * The signal handler receives:
- *   rdi = signal number
- *   rsi = siginfo_t *
- *   rdx = ucontext_t *
+ * The signal handler receives (architecture-specific calling convention):
+ *   x86-64:
+ *     rdi = signal number
+ *     rsi = siginfo_t *
+ *     rdx = ucontext_t *
+ *   ARM64:
+ *     x0 = signal number
+ *     x1 = siginfo_t *
+ *     x2 = ucontext_t *
  */
 struct rt_sigframe {
     /* Signal info - passed as second argument to handler */

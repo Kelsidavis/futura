@@ -2,10 +2,10 @@
 # Copyright (c) 2025 Kelsi Davis
 # Licensed under MPL v2.0
 
-# Toolchain
-CC := gcc
-LD := ld
-AR := ar
+# Toolchain (use platform-specific compiler from main Makefile)
+CC ?= gcc
+LD ?= ld
+AR ?= ar
 
 # Directories
 BUILD_DIR := ../../../build

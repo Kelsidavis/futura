@@ -7,8 +7,8 @@
  * Essential for I/O redirection in shells and process management.
  *
  * Phase 1 (Completed): Basic FD duplication with per-task isolation
- * Phase 2 (Current): Enhanced validation, operation categorization, and detailed logging
- * Phase 3: Atomic close-and-dup with proper error handling
+ * Phase 2 (Completed): Enhanced validation, operation categorization, and detailed logging
+ * Phase 3 (Current): Atomic close-and-dup with proper error handling
  * Phase 4: Advanced features (O_CLOEXEC handling, dup3 support)
  */
 
@@ -85,8 +85,8 @@ extern void fut_printf(const char *fmt, ...);
  *   dup2(3, 3);  // Returns 3, validates fd 3 is open, no actual duplication
  *
  * Phase 1 (Completed): Basic FD duplication with per-task isolation
- * Phase 2 (Current): Enhanced validation, operation categorization, detailed logging
- * Phase 3: Atomic close-and-dup with proper error handling
+ * Phase 2 (Completed): Enhanced validation, operation categorization, detailed logging
+ * Phase 3 (Current): Atomic close-and-dup with proper error handling
  * Phase 4: O_CLOEXEC handling, dup3 support with flags
  */
 long sys_dup2(int oldfd, int newfd) {

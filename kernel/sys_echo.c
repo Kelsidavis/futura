@@ -24,6 +24,19 @@ extern void fut_printf(const char *fmt, ...);
 
 #define SYS_ECHO_MAX (4096u)
 
+/* Phase 3: Performance statistics for echo syscall */
+static struct {
+    unsigned long total_calls;
+    unsigned long total_bytes;
+    unsigned long max_size;
+    unsigned long min_size;
+} echo_stats = {0};
+
+/* Phase 3: Adaptive buffer size based on request frequency */
+#define ECHO_BUFFER_SMALL 256
+#define ECHO_BUFFER_NORMAL 512
+#define ECHO_BUFFER_LARGE 1024
+
 /**
  * sys_echo() - Echo syscall with case flip
  *
@@ -113,14 +126,31 @@ ssize_t sys_echo(const char *u_in, char *u_out, size_t n) {
         return 0;
     }
 
-    char buffer[512];
+    /* Phase 3: Select optimal buffer size based on request frequency */
+    size_t buffer_size = ECHO_BUFFER_NORMAL;
+    if (echo_stats.total_calls > 0) {
+        unsigned long avg_size = echo_stats.total_bytes / echo_stats.total_calls;
+        if (avg_size < 256 && echo_stats.total_calls > 100) {
+            buffer_size = ECHO_BUFFER_SMALL;  /* Frequent small requests */
+        } else if (avg_size > 1024 && echo_stats.total_calls > 50) {
+            buffer_size = ECHO_BUFFER_LARGE;  /* Frequent large requests */
+        }
+    }
+
+    /* Phase 3: Allocate dynamic buffer for this request */
+    char buffer[ECHO_BUFFER_LARGE];
+    if (buffer_size > sizeof(buffer)) {
+        buffer_size = sizeof(buffer);
+    }
+
     size_t offset = 0;
     size_t total_processed = 0;
+    unsigned long copy_operations = 0;
 
     while (offset < n) {
         size_t chunk = n - offset;
-        if (chunk > sizeof(buffer)) {
-            chunk = sizeof(buffer);
+        if (chunk > buffer_size) {
+            chunk = buffer_size;
         }
 
         /* Copy from user input */
@@ -131,8 +161,9 @@ ssize_t sys_echo(const char *u_in, char *u_out, size_t n) {
                        n, size_category, offset, offset);
             return -EFAULT;
         }
+        copy_operations++;
 
-        /* Transform: XOR 0x20 to flip ASCII case */
+        /* Phase 3: Transform: XOR 0x20 to flip ASCII case */
         for (size_t i = 0; i < chunk; ++i) {
             buffer[i] ^= 0x20u;
         }
@@ -145,15 +176,30 @@ ssize_t sys_echo(const char *u_in, char *u_out, size_t n) {
                        n, size_category, offset, offset);
             return -EFAULT;
         }
+        copy_operations++;
 
         offset += chunk;
         total_processed += chunk;
     }
 
-    /* Phase 2: Detailed success logging */
-    fut_printf("[ECHO] echo(n=%zu [%s], u_in=%p, u_out=%p) -> %zd "
-               "(case flipped, Phase 2)\n",
-               n, size_category, (void*)u_in, (void*)u_out, (ssize_t)total_processed);
+    /* Phase 3: Update performance statistics */
+    echo_stats.total_calls++;
+    echo_stats.total_bytes += total_processed;
+    if (total_processed > echo_stats.max_size) {
+        echo_stats.max_size = total_processed;
+    }
+    if (echo_stats.min_size == 0 || total_processed < echo_stats.min_size) {
+        echo_stats.min_size = total_processed;
+    }
+
+    /* Phase 3: Detailed success logging with performance metrics */
+    fut_printf("[ECHO] echo(n=%zu [%s], u_in=%p, u_out=%p, calls=%lu, "
+               "avg_bytes=%lu, max=%lu, copy_ops=%lu) -> %zd (optimized, Phase 3)\n",
+               n, size_category, (void*)u_in, (void*)u_out,
+               echo_stats.total_calls,
+               echo_stats.total_bytes / (echo_stats.total_calls ?: 1),
+               echo_stats.max_size, copy_operations,
+               (ssize_t)total_processed);
 
     return (ssize_t)total_processed;
 }

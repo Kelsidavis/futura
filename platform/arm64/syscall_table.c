@@ -122,6 +122,7 @@ extern long sys_timer_settime(timer_t timerid, int flags, const struct itimerspe
 extern long sys_timer_gettime(timer_t timerid, struct itimerspec *curr_value);
 extern long sys_timer_getoverrun(timer_t timerid);
 extern long sys_timer_delete(timer_t timerid);
+extern long sys_nanosleep(const fut_timespec_t *u_req, fut_timespec_t *u_rem);
 
 /* Futex (fast userspace locking) structures and syscalls */
 struct robust_list {
@@ -524,60 +525,15 @@ static int64_t sys_clock_gettime(uint64_t clockid, uint64_t ts_ptr,
 
 /* sys_nanosleep - sleep for specified time
  * x0 = req (timespec*), x1 = rem (timespec*)
+ * Delegates to the main kernel implementation in kernel/sys_nanosleep.c
  */
-static int64_t sys_nanosleep(uint64_t req_ptr, uint64_t rem_ptr,
-                             uint64_t arg2, uint64_t arg3,
-                             uint64_t arg4, uint64_t arg5) {
+static int64_t sys_nanosleep_wrapper(uint64_t req_ptr, uint64_t rem_ptr,
+                                     uint64_t arg2, uint64_t arg3,
+                                     uint64_t arg4, uint64_t arg5) {
     (void)arg2; (void)arg3; (void)arg4; (void)arg5;
 
-    if (req_ptr == 0) {
-        fut_serial_puts("[SYSCALL] nanosleep() null req_ptr\n");
-        return -EINVAL;
-    }
-
-    fut_serial_puts("[SYSCALL] nanosleep() reading timespec\n");
-    struct timespec *req = (struct timespec *)req_ptr;
-
-    /* Convert requested time to nanoseconds */
-    fut_serial_puts("[SYSCALL] nanosleep() converting to ns\n");
-    uint64_t sleep_ns = req->tv_sec * 1000000000ULL + req->tv_nsec;
-
-    fut_serial_puts("[SYSCALL] nanosleep() getting start time\n");
-    /* Get start time */
-    uint64_t start_cycles = fut_rdtsc();
-
-    fut_serial_puts("[SYSCALL] nanosleep() entering busy wait\n");
-    /* Busy wait (simple implementation)
-     * TODO: Use timer interrupts for real sleep
-     */
-    uint64_t iterations = 0;
-    while (1) {
-        uint64_t current_cycles = fut_rdtsc();
-        uint64_t elapsed_cycles = current_cycles - start_cycles;
-        uint64_t elapsed_ns = fut_cycles_to_ns(elapsed_cycles);
-
-        if (elapsed_ns >= sleep_ns) {
-            break;
-        }
-
-        /* Limit iterations to prevent infinite loop during debugging */
-        iterations++;
-        if (iterations > 100000000) {
-            fut_serial_puts("[SYSCALL] nanosleep() iteration limit reached\n");
-            break;
-        }
-    }
-
-    fut_serial_puts("[SYSCALL] nanosleep() sleep complete\n");
-
-    /* No remaining time */
-    if (rem_ptr != 0) {
-        struct timespec *rem = (struct timespec *)rem_ptr;
-        rem->tv_sec = 0;
-        rem->tv_nsec = 0;
-    }
-
-    return 0;
+    /* Call the main kernel implementation */
+    return sys_nanosleep((const fut_timespec_t *)req_ptr, (fut_timespec_t *)rem_ptr);
 }
 
 /* utsname structure (for uname syscall) */
@@ -2778,7 +2734,7 @@ static struct syscall_entry syscall_table[MAX_SYSCALL] = {
     [__NR_futex]        = { (syscall_fn_t)sys_futex_wrapper, "futex" },
     [__NR_set_robust_list] = { (syscall_fn_t)sys_set_robust_list_wrapper, "set_robust_list" },
     [__NR_get_robust_list] = { (syscall_fn_t)sys_get_robust_list_wrapper, "get_robust_list" },
-    [__NR_nanosleep]    = { (syscall_fn_t)sys_nanosleep,  "nanosleep" },
+    [__NR_nanosleep]    = { (syscall_fn_t)sys_nanosleep_wrapper,  "nanosleep" },
     [__NR_getitimer]    = { (syscall_fn_t)sys_getitimer_wrapper, "getitimer" },
     [__NR_setitimer]    = { (syscall_fn_t)sys_setitimer_wrapper, "setitimer" },
     [__NR_timer_create] = { (syscall_fn_t)sys_timer_create_wrapper, "timer_create" },
@@ -2886,7 +2842,7 @@ static struct syscall_entry syscall_table[MAX_SYSCALL] = {
     [22] = { (syscall_fn_t)sys_pipe_wrapper, "pipe" },  /* SYS_pipe = 22 */
     [32] = { (syscall_fn_t)sys_dup_wrapper, "dup" },    /* SYS_dup = 32 */
     [33] = { (syscall_fn_t)sys_dup2_wrapper, "dup2" },  /* SYS_dup2 = 33 */
-    [35] = { (syscall_fn_t)sys_nanosleep, "nanosleep" },  /* SYS_nanosleep = 35 */
+    [35] = { (syscall_fn_t)sys_nanosleep_wrapper, "nanosleep" },  /* SYS_nanosleep = 35 */
     [39] = { (syscall_fn_t)sys_getpid_wrapper, "getpid" },  /* SYS_getpid = 39 (overrides Linux umount2) */
     [42] = { (syscall_fn_t)sys_echo_wrapper, "echo" },  /* SYS_echo = 42 */
     [57] = { (syscall_fn_t)sys_fork_wrapper, "fork" },  /* SYS_fork = 57 */

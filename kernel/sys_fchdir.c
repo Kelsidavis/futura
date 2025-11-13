@@ -7,16 +7,21 @@
  * Essential for safe directory traversal and capability-based security.
  *
  * Phase 1 (Completed): Basic fd validation and stub implementation
- * Phase 2 (Current): Enhanced fd validation, task association, and error handling
- * Phase 3: Integrate with VFS current working directory tracking and fd-table lookup
- * Phase 4: Performance optimization with directory cache
+ * Phase 2 (Completed): Enhanced fd validation, task association, and error handling
+ * Phase 3 (Completed): Integrate with VFS current working directory tracking and fd-table lookup
+ * Phase 4 (Current): Performance optimization with directory cache
  */
 
 #include <kernel/fut_task.h>
+#include <kernel/fut_vfs.h>
 #include <kernel/errno.h>
 #include <stdint.h>
 
 extern void fut_printf(const char *fmt, ...);
+
+/* Phase 3: Vnode type definitions for directory validation */
+#define VN_DIR 1   /* Directory type from fut_vnode */
+#define VN_REG 2   /* Regular file type */
 
 /**
  * fchdir() - Change working directory via file descriptor
@@ -127,8 +132,8 @@ extern void fut_printf(const char *fmt, ...);
  * - Requires filesystem with directory support
  *
  * Phase 1 (Completed): Validate fd and return success
- * Phase 2 (Current): Enhanced fd validation, task lookup, better error reporting
- * Phase 3: VFS integration - lookup vnode, check if directory, update task->cwd
+ * Phase 2 (Completed): Enhanced fd validation, task lookup, better error reporting
+ * Phase 3 (Current): VFS integration - lookup vnode, check if directory, update task->cwd
  * Phase 4: Performance optimization with directory cache
  */
 long sys_fchdir(int fd) {
@@ -160,10 +165,69 @@ long sys_fchdir(int fd) {
         fd_category = "very high (≥1024)";
     }
 
-    /* Phase 2: Log detailed validation attempt */
-    fut_printf("[FCHDIR] fchdir(fd=%d [%s], pid=%d) -> ENOSYS "
-               "(Phase 3: fd-table lookup and VFS integration not yet implemented)\n",
-               fd, fd_category, task->pid);
+    /* Phase 3: Validate fd is within valid range */
+    if (fd >= task->max_fds || fd >= 1024) {
+        fut_printf("[FCHDIR] fchdir(fd=%d [%s], pid=%d) -> EBADF "
+                   "(fd out of range, max_fds=%d)\n",
+                   fd, fd_category, task->pid, task->max_fds);
+        return -EBADF;
+    }
 
-    return -ENOSYS;
+    /* Phase 3: Validate fd_table exists and get vnode */
+    if (!task->fd_table) {
+        fut_printf("[FCHDIR] fchdir(fd=%d [%s], pid=%d) -> EBADF "
+                   "(fd_table not initialized)\n",
+                   fd, fd_category, task->pid);
+        return -EBADF;
+    }
+
+    /* Phase 3: Get file from fd_table and validate it exists */
+    struct fut_file *file = task->fd_table[fd];
+    if (!file) {
+        fut_printf("[FCHDIR] fchdir(fd=%d [%s], pid=%d) -> EBADF "
+                   "(fd not open)\n",
+                   fd, fd_category, task->pid);
+        return -EBADF;
+    }
+
+    /* Phase 3: Get vnode from file (assumes file->vnode exists) */
+    struct fut_vnode *vnode = file->vnode;
+    if (!vnode) {
+        fut_printf("[FCHDIR] fchdir(fd=%d [%s], pid=%d) -> EBADF "
+                   "(no vnode associated with fd)\n",
+                   fd, fd_category, task->pid);
+        return -EBADF;
+    }
+
+    /* Phase 3: Verify vnode is a directory */
+    if (vnode->type != VN_DIR) {
+        const char *type_desc;
+        if (vnode->type == VN_REG) {
+            type_desc = "regular file";
+        } else {
+            type_desc = "non-directory";
+        }
+        fut_printf("[FCHDIR] fchdir(fd=%d [%s], vnode_type=%s, pid=%d) -> ENOTDIR "
+                   "(target is not a directory)\n",
+                   fd, fd_category, type_desc, task->pid);
+        return -ENOTDIR;
+    }
+
+    /* Phase 3: Store old directory inode for logging */
+    uint64_t old_dir_ino = task->current_dir_ino;
+
+    /* Phase 3: Update current working directory to vnode's inode */
+    task->current_dir_ino = vnode->ino;
+
+    /* Phase 3: Invalidate any cached working directory path */
+    if (task->cwd_cache) {
+        task->cwd_cache = NULL;
+    }
+
+    /* Phase 3: Detailed success logging with VFS integration */
+    fut_printf("[FCHDIR] fchdir(fd=%d [%s], vnode_ino=%lu, old_dir_ino=%lu, pid=%d) "
+               "-> 0 (cwd changed via fd, Phase 3 VFS integration)\n",
+               fd, fd_category, vnode->ino, old_dir_ino, task->pid);
+
+    return 0;
 }

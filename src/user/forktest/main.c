@@ -92,7 +92,10 @@ int main(void) {
             sys_exit(1);
         }
 
-        if (status == 42) {
+        /* Extract exit code from wait status (WEXITSTATUS macro) */
+        int exit_code = (status >> 8) & 0xff;
+
+        if (exit_code == 42) {
             write_str(msg_pass);
             sys_exit(0);
         } else {

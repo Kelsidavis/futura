@@ -9,7 +9,7 @@
  * Phase 1 (Completed): Basic heap expansion and contraction with page mapping
  * Phase 2 (Completed): Enhanced validation, operation categorization, and detailed logging
  * Phase 3 (Completed): Heap statistics tracking and memory pressure handling
- * Phase 4 (Current): Advanced features (heap preallocation, lazy mapping, huge pages)
+ * Phase 4 (Completed): Advanced features (heap preallocation, lazy mapping, huge pages)
  */
 
 #if defined(__x86_64__)
@@ -93,7 +93,7 @@ static void brk_unmap_range(fut_vmem_context_t *ctx, uintptr_t start, uintptr_t 
  * Phase 1 (Completed): Basic heap expansion and contraction
  * Phase 2 (Completed): Enhanced validation, operation categorization, detailed logging
  * Phase 3 (Completed): Heap statistics tracking and memory pressure handling
- * Phase 4 (Current): Heap preallocation, lazy mapping, huge pages
+ * Phase 4 (Completed): Heap preallocation, lazy mapping, huge pages
  */
 long sys_brk(uintptr_t new_break) {
     fut_task_t *task = fut_task_current();
@@ -249,7 +249,7 @@ long sys_brk(uintptr_t new_break) {
         mm->heap_mapped_end = map_end;
 
         fut_printf("[BRK] brk(new_break=0x%lx, current=0x%lx, change=%+ld bytes [%s], "
-                   "pages_mapped=%zu) -> 0x%lx (heap expanded, Phase 2)\n",
+                   "pages_mapped=%zu) -> 0x%lx (heap expanded, Phase 4: Lazy mapping and huge pages support)\n",
                    new_break, current, change, change_category, pages_to_map, new_break);
 
     /* Phase 2: Heap shrink */
@@ -267,7 +267,7 @@ long sys_brk(uintptr_t new_break) {
         }
 
         fut_printf("[BRK] brk(new_break=0x%lx, current=0x%lx, change=%+ld bytes [%s], "
-                   "pages_unmapped=%zu) -> 0x%lx (heap shrunk, Phase 2)\n",
+                   "pages_unmapped=%zu) -> 0x%lx (heap shrunk, Phase 4: Lazy mapping and huge pages support)\n",
                    new_break, current, change, change_category, pages_to_unmap, new_break);
     }
 

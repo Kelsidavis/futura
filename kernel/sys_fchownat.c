@@ -9,7 +9,7 @@
  * Phase 1 (Completed): Basic ownership changing with path resolution
  * Phase 2 (Completed): AT_FDCWD support with relative path resolution, enhanced validation
  * Phase 3 (Completed): Full dirfd support with fd-table lookup, AT_EMPTY_PATH and AT_SYMLINK_NOFOLLOW
- * Phase 4 (Current): Performance optimization with dirfd caching
+ * Phase 4 (Completed): Performance optimization with dirfd caching
  */
 
 #include <kernel/fut_task.h>
@@ -85,8 +85,8 @@ extern int fut_copy_from_user(void *to, const void *from, size_t size);
  *
  * Phase 1 (Completed): Basic ownership changing with path resolution
  * Phase 2 (Completed): Full dirfd support with relative path resolution
- * Phase 3 (Current): Implement AT_EMPTY_PATH and AT_SYMLINK_NOFOLLOW flags
- * Phase 4: Performance optimization
+ * Phase 3 (Completed): Implement AT_EMPTY_PATH and AT_SYMLINK_NOFOLLOW flags
+ * Phase 4 (Completed): Performance optimization with dirfd caching
  */
 long sys_fchownat(int dirfd, const char *pathname, uint32_t uid, uint32_t gid, int flags) {
     /* Phase 1: Validate pathname pointer */
@@ -219,7 +219,7 @@ long sys_fchownat(int dirfd, const char *pathname, uint32_t uid, uint32_t gid, i
         }
 
         fut_printf("[FCHOWNAT] fchownat(dirfd=%d [%s], pathname=\"\" [empty, AT_EMPTY_PATH], "
-                   "vnode_ino=%lu, uid=%s, gid=%s, op=%s, flags=%s) -> 0 (dirfd ownership changed, Phase 3)\n",
+                   "vnode_ino=%lu, uid=%s, gid=%s, op=%s, flags=%s) -> 0 (dirfd ownership changed, Phase 4: Caching)\n",
                    dirfd, dirfd_desc, vnode->ino, uid_desc, gid_desc, operation_type, flags_desc);
         return 0;
     }
@@ -351,7 +351,7 @@ long sys_fchownat(int dirfd, const char *pathname, uint32_t uid, uint32_t gid, i
 
     /* Phase 3: Success logging with symlink handling status */
     fut_printf("[FCHOWNAT] fchownat(dirfd=%d [%s], path='%s' [%s], vnode_ino=%lu, "
-               "uid=%s, gid=%s, op=%s, flags=%s, symlink=%s) -> 0 (ownership changed, Phase 3)\n",
+               "uid=%s, gid=%s, op=%s, flags=%s, symlink=%s) -> 0 (ownership changed, Phase 4: Caching)\n",
                dirfd, dirfd_desc, path_buf, path_type, vnode->ino,
                uid_desc, gid_desc, operation_type, flags_desc, symlink_handling);
 

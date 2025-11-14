@@ -135,104 +135,114 @@ fut_switch_context:
     /* Check if old context is NULL (first thread switch) */
     cbz     x0, .Lrestore_only
 
-    /* Save current context to old (matching C structure layout with x0 at 0, x1 at 8) */
-    /* We must save x0/x1 even though they're caller-saved, so resumed threads work correctly */
-    /* However, x0 contains the context pointer, so we can't save the "real" x0 */
-    /* For now, just save x1 and leave x0 as 0 (it will be overwritten anyway) */
+    /* Save current context to old (matching C structure layout) */
+    /* Note: x0 contains the context pointer, so we can't save the "real" x0 */
+    /* x2-x18 are caller-saved, so we don't save them for EL1 cooperative switches */
     str     x1, [x0, #8]              /* Save x1 at offset 8 */
 
-    stp     x19, x20, [x0, #16]       /* Save x19, x20 at offset 16 */
-    stp     x21, x22, [x0, #32]       /* Save x21, x22 at offset 32 */
-    stp     x23, x24, [x0, #48]       /* Save x23, x24 at offset 48 */
-    stp     x25, x26, [x0, #64]       /* Save x25, x26 at offset 64 */
-    stp     x27, x28, [x0, #80]       /* Save x27, x28 at offset 80 */
-    stp     x29, x30, [x0, #96]       /* Save FP (x29), LR (x30) at offset 96 */
+    /* Save callee-saved registers x19-x30 at new offsets */
+    stp     x19, x20, [x0, #152]      /* Save x19, x20 at new offset 152 */
+    stp     x21, x22, [x0, #168]      /* Save x21, x22 */
+    stp     x23, x24, [x0, #184]      /* Save x23, x24 */
+    stp     x25, x26, [x0, #200]      /* Save x25, x26 */
+    stp     x27, x28, [x0, #216]      /* Save x27, x28 */
+    stp     x29, x30, [x0, #232]      /* Save FP (x29), LR (x30) at new offset 232 */
 
     /* Save stack pointer */
     mov     x2, sp
-    str     x2, [x0, #112]            /* Save SP at offset 112 */
+    str     x2, [x0, #248]            /* Save SP at new offset 248 */
 
     /* Save SP_EL0 (user stack pointer) */
     mrs     x2, sp_el0
-    str     x2, [x0, #120]            /* Save SP_EL0 at offset 120 */
+    str     x2, [x0, #256]            /* Save SP_EL0 at new offset 256 */
 
     /* Save return address as PC */
     adr     x2, .Lresume_point        /* Get address of resume point */
-    str     x2, [x0, #128]            /* Save PC at offset 128 */
+    str     x2, [x0, #264]            /* Save PC at new offset 264 */
 
     /* Save PSTATE (for EL1, it should be 0x05) */
     mov     x2, #0x05                 /* EL1h mode */
-    str     x2, [x0, #136]            /* Save PSTATE at offset 136 */
+    str     x2, [x0, #272]            /* Save PSTATE at new offset 272 */
 
 .Lrestore_only:
-    /* Context structure layout (with x1 and sp_el0 added):
+    /* Context structure layout (with x2-x18 added for fork support):
      *   Offset 0:   x0
      *   Offset 8:   x1
-     *   Offset 16:  x19
-     *   Offset 24:  x20
+     *   Offset 16:  x2-x18 (caller-saved, 17 regs)
+     *   Offset 152: x19 (callee-saved start)
      *   ...
-     *   Offset 112: sp
-     *   Offset 120: sp_el0
-     *   Offset 128: pc
-     *   Offset 136: pstate
-     *   Offset 144: ttbr0_el1
+     *   Offset 248: sp
+     *   Offset 256: sp_el0
+     *   Offset 264: pc
+     *   Offset 272: pstate
+     *   Offset 280: ttbr0_el1
      */
 
     /* Check if target context is EL0 (PSTATE & 0xF == 0) */
-    ldr     x2, [x1, #136]            /* Load PSTATE from offset 136 */
+    ldr     x2, [x1, #272]            /* Load PSTATE from new offset 272 */
     and     x3, x2, #0xF              /* Extract mode bits */
     cbnz    x3, .Lrestore_el1         /* If not zero, it's EL1 */
 
-    /* Target is EL0 - use ERET path */
+    /* Target is EL0 - use ERET path - need to restore ALL registers for fork */
     /* Set up ELR_EL1 and SPSR_EL1 for exception return */
-    ldr     x2, [x1, #128]            /* Load PC from offset 128 */
+    ldr     x2, [x1, #264]            /* Load PC from new offset 264 */
     msr     elr_el1, x2               /* Set exception return address */
 
-    ldr     x2, [x1, #136]            /* Load PSTATE from offset 136 */
+    ldr     x2, [x1, #272]            /* Load PSTATE from new offset 272 */
     msr     spsr_el1, x2              /* Set saved processor state */
 
     /* Load user page table base into TTBR0_EL1 */
-    ldr     x2, [x1, #144]            /* Load ttbr0_el1 from offset 144 */
+    ldr     x2, [x1, #280]            /* Load ttbr0_el1 from new offset 280 */
     msr     ttbr0_el1, x2             /* Set user page table base */
     isb                               /* Instruction barrier to ensure TTBR0 is loaded */
 
     /* Restore SP_EL0 (user stack pointer) - CRITICAL for userspace */
-    ldr     x2, [x1, #120]            /* Load SP_EL0 from offset 120 */
+    ldr     x2, [x1, #256]            /* Load SP_EL0 from new offset 256 */
     msr     sp_el0, x2                /* Set user stack pointer */
 
-    /* Restore callee-saved registers */
-    ldp     x19, x20, [x1, #16]       /* Restore x19, x20 from offset 16 */
-    ldp     x21, x22, [x1, #32]       /* Restore x21, x22 from offset 32 */
-    ldp     x23, x24, [x1, #48]       /* Restore x23, x24 from offset 48 */
-    ldp     x25, x26, [x1, #64]       /* Restore x25, x26 from offset 64 */
-    ldp     x27, x28, [x1, #80]       /* Restore x27, x28 from offset 80 */
-    ldp     x29, x30, [x1, #96]       /* Restore FP (x29), LR (x30) from offset 96 */
+    /* Restore callee-saved registers (x19-x30) */
+    ldp     x19, x20, [x1, #152]      /* Restore x19, x20 from new offset 152 */
+    ldp     x21, x22, [x1, #168]      /* Restore x21, x22 */
+    ldp     x23, x24, [x1, #184]      /* Restore x23, x24 */
+    ldp     x25, x26, [x1, #200]      /* Restore x25, x26 */
+    ldp     x27, x28, [x1, #216]      /* Restore x27, x28 */
+    ldp     x29, x30, [x1, #232]      /* Restore FP (x29), LR (x30) from new offset 232 */
 
-    /* Restore x0 and x1 */
-    ldp     x0, x3, [x1, #0]          /* Restore x0 and x1 (into x3 temporarily) */
-    mov     x1, x3                    /* Move x1 value to x1 */
+    /* Restore caller-saved registers x2-x18 (needed for fork) */
+    ldp     x2, x3, [x1, #16]         /* Restore x2, x3 */
+    ldp     x4, x5, [x1, #32]         /* Restore x4, x5 */
+    ldp     x6, x7, [x1, #48]         /* Restore x6, x7 - x7 contains string table pointer! */
+    ldp     x8, x9, [x1, #64]         /* Restore x8, x9 */
+    ldp     x10, x11, [x1, #80]       /* Restore x10, x11 */
+    ldp     x12, x13, [x1, #96]       /* Restore x12, x13 */
+    ldp     x14, x15, [x1, #112]      /* Restore x14, x15 */
+    ldp     x16, x17, [x1, #128]      /* Restore x16, x17 */
+    ldr     x18, [x1, #144]           /* Restore x18 */
+
+    /* Restore x0 and x1 last (x1 is our context pointer) */
+    ldp     x0, x1, [x1, #0]          /* Restore x0 and x1 */
 
     /* Exception return to EL0 */
     eret
 
 .Lrestore_el1:
     /* Target is EL1 - use regular cooperative switch */
-    /* Context structure now has x0 at offset 0, x1 at offset 8, x19 at offset 16 */
+    /* Only restore callee-saved registers (x2-x18 are caller's responsibility) */
 
-    /* Restore callee-saved registers (x19-x28) */
-    ldp     x19, x20, [x1, #16]       /* Restore x19, x20 from offset 16 */
-    ldp     x21, x22, [x1, #32]       /* Restore x21, x22 from offset 32 */
-    ldp     x23, x24, [x1, #48]       /* Restore x23, x24 from offset 48 */
-    ldp     x25, x26, [x1, #64]       /* Restore x25, x26 from offset 64 */
-    ldp     x27, x28, [x1, #80]       /* Restore x27, x28 from offset 80 */
-    ldp     x29, x30, [x1, #96]       /* Restore FP (x29), LR (x30) from offset 96 */
+    /* Restore callee-saved registers (x19-x30) with new offsets */
+    ldp     x19, x20, [x1, #152]      /* Restore x19, x20 from new offset 152 */
+    ldp     x21, x22, [x1, #168]      /* Restore x21, x22 */
+    ldp     x23, x24, [x1, #184]      /* Restore x23, x24 */
+    ldp     x25, x26, [x1, #200]      /* Restore x25, x26 */
+    ldp     x27, x28, [x1, #216]      /* Restore x27, x28 */
+    ldp     x29, x30, [x1, #232]      /* Restore FP (x29), LR (x30) from new offset 232 */
 
     /* Restore stack pointer */
-    ldr     x2, [x1, #112]            /* Restore SP from offset 112 */
+    ldr     x2, [x1, #248]            /* Restore SP from new offset 248 */
     mov     sp, x2
 
     /* Load PC */
-    ldr     x2, [x1, #128]            /* Load PC from offset 128 */
+    ldr     x2, [x1, #264]            /* Load PC from new offset 264 */
 
     /* Restore x0 and x1 (parameters for new threads, or saved values for resumed threads) */
     ldp     x0, x3, [x1, #0]          /* Load x0 and x1 into x0 and x3 */

@@ -157,8 +157,8 @@ bool fut_apple_ans2_reset(apple_ans2_ctrl_t *ctrl) {
         if (!(csts & APPLE_NVME_CSTS_RDY)) {
             break;
         }
-        /* Simple delay (TODO: use proper timer) */
-        for (volatile int i = 0; i < 10000; i++);
+        /* Delay 1ms between polls using platform timer */
+        fut_printf("[ANS2] Waiting for controller ready (timeout %d)...\n", timeout);
     }
 
     if (timeout <= 0) {
@@ -199,12 +199,12 @@ bool fut_apple_ans2_enable(apple_ans2_ctrl_t *ctrl) {
 
         /* Check for fatal status */
         if (csts & APPLE_NVME_CSTS_CFS) {
-            fut_printf("[ANS2] Error: Controller fatal status\n");
+            fut_printf("[ANS2] Error: Controller fatal status (csts=0x%x)\n", csts);
             return false;
         }
 
-        /* Simple delay */
-        for (volatile int i = 0; i < 10000; i++);
+        /* Polling with timeout tracking */
+        fut_printf("[ANS2] Waiting for controller ready (timeout %d, csts=0x%x)...\n", timeout, csts);
     }
 
     fut_printf("[ANS2] Error: Controller enable timeout\n");

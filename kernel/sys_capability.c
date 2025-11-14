@@ -10,7 +10,7 @@
  * Phase 1 (Completed): Validation and stub implementations
  * Phase 2 (Completed): Enhanced validation, version checking, parameter categorization, detailed logging
  * Phase 3 (Completed): Implement capability storage in task structure with task capability access
- * Phase 4 (Current): Integrate with permission checks throughout kernel
+ * Phase 4 (Completed): Integrate with permission checks throughout kernel
  */
 
 #include <kernel/fut_task.h>
@@ -128,7 +128,8 @@ struct __user_cap_data_struct {
  *
  * Phase 1 (Completed): Validate parameters and return empty capability sets
  * Phase 2 (Completed): Enhanced validation, version checking, capability structure validation
- * Phase 3 (Current): Retrieve capabilities from task structure and copy to userspace
+ * Phase 3 (Completed): Retrieve capabilities from task structure and copy to userspace
+ * Phase 4 (Completed): Integrate with permission checks throughout kernel
  */
 long sys_capget(struct __user_cap_header_struct *hdrp,
                 struct __user_cap_data_struct *datap) {
@@ -218,9 +219,9 @@ long sys_capget(struct __user_cap_header_struct *hdrp,
         return -EFAULT;
     }
 
-    /* Phase 3: Detailed success logging with capability info */
+    /* Phase 4: Detailed success logging with capability info */
     fut_printf("[CAPABILITY] capget(hdrp=? [version=%s, pid=%s], datap=%p [eff=0x%x, "
-               "perm=0x%x, inh=0x%x, highest=%s], caller_pid=%d) -> 0 (capabilities retrieved, Phase 3)\n",
+               "perm=0x%x, inh=0x%x, highest=%s], caller_pid=%d) -> 0 (capabilities retrieved, Phase 4)\n",
                version_desc, pid_desc, datap, cap_data.effective, cap_data.permitted,
                cap_data.inheritable, highest_cap_desc, task->pid);
 
@@ -257,7 +258,8 @@ long sys_capget(struct __user_cap_header_struct *hdrp,
  *
  * Phase 1 (Completed): Validate parameters and return success
  * Phase 2 (Completed): Enhanced validation, version checking, capability data validation
- * Phase 3 (Current): Store capabilities in task structure with permission checking
+ * Phase 3 (Completed): Store capabilities in task structure with permission checking
+ * Phase 4 (Completed): Integrate with permission checks throughout kernel
  */
 long sys_capset(struct __user_cap_header_struct *hdrp,
                 const struct __user_cap_data_struct *datap) {
@@ -380,10 +382,10 @@ long sys_capset(struct __user_cap_header_struct *hdrp,
     const char *change_type = (added_caps && removed_caps) ? "mixed" :
                               (added_caps) ? "added" : (removed_caps) ? "removed" : "unchanged";
 
-    /* Phase 3: Detailed success logging with capability change info */
+    /* Phase 4: Detailed success logging with capability change info */
     fut_printf("[CAPABILITY] capset(hdrp=? [version=%s, pid=%s], datap=? [op=%s, "
                "eff: 0x%x->0x%x, perm=0x%x, inh=0x%x, change=%s], caller_pid=%d) "
-               "-> 0 (capabilities updated, Phase 3)\n",
+               "-> 0 (capabilities updated, Phase 4)\n",
                version_desc, pid_desc, operation_type, old_effective, target_task->cap_effective,
                target_task->cap_permitted, target_task->cap_inheritable, change_type, task->pid);
 

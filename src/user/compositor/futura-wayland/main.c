@@ -13,39 +13,11 @@
 #include <user/stdio.h>
 #include <user/stdlib.h>
 
-/* Direct syscall wrappers to avoid header conflicts */
-#define __NR_open  2
-#define __NR_write 1
-#define __NR_close 3
-#define __NR_mkdir 39
+/* Portable syscall wrappers using libfutura */
+#include "../libfutura/syscall_portable.h"
+
 #define O_RDWR     0x0002
 #define O_CREAT    0x0040
-
-static inline long syscall3(long nr, long arg1, long arg2, long arg3) {
-    /* Use x86-64 calling convention for int 0x80 (RAX=syscall, RDI=arg1, RSI=arg2, RDX=arg3)
-     * This matches what the kernel's isr_stubs.S expects when extracting arguments */
-    long result;
-    __asm__ volatile(
-        "int $0x80"
-        : "=a"(result)
-        : "a"(nr), "D"(arg1), "S"(arg2), "d"(arg3)
-        : "memory", "rcx", "r11"
-    );
-    return result;
-}
-
-static inline long syscall1(long nr, long arg1) {
-    /* Use x86-64 calling convention for int 0x80 (RAX=syscall, RDI=arg1)
-     * This matches what the kernel's isr_stubs.S expects when extracting arguments */
-    long result;
-    __asm__ volatile(
-        "int $0x80"
-        : "=a"(result)
-        : "a"(nr), "D"(arg1)
-        : "memory", "rcx", "r11"
-    );
-    return result;
-}
 
 static inline int sys_open(const char *pathname, int flags, int mode) {
     return (int)syscall3(__NR_open, (long)pathname, flags, mode);

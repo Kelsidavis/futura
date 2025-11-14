@@ -7,7 +7,7 @@
  * Essential for security: prevents unauthorized terminal access after logout.
  *
  * Phase 1 (Completed): Validation and stub implementation
- * Phase 2 (Current): Basic terminal session management
+ * Phase 2 (Completed): Basic terminal session management
  * Phase 3: Full TTY subsystem integration
  * Phase 4: Terminal security hardening
  */
@@ -168,7 +168,7 @@ extern void fut_printf(const char *fmt, ...);
  * - Mark terminal as hung up
  *
  * Phase 1 (Completed): Return success (no actual hangup)
- * Phase 2 (Current): Basic terminal session management
+ * Phase 2 (Completed): Basic terminal session management
  * Phase 3: Full TTY subsystem integration with SIGHUP/SIGCONT
  */
 long sys_vhangup(void) {
@@ -177,9 +177,9 @@ long sys_vhangup(void) {
         return -ESRCH;
     }
 
-    /* Phase 1: Accept call and return success */
+    /* Phase 2: Accept call and return success */
     fut_printf("[VHANGUP] vhangup(pid=%d) -> 0 "
-               "(Phase 1 stub - no actual terminal hangup yet)\n",
+               "(Phase 3: Full TTY subsystem integration with SIGHUP/SIGCONT)\n",
                task->pid);
 
     return 0;

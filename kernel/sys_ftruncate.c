@@ -9,7 +9,7 @@
  * Phase 1 (Completed): Basic file truncation with size updates
  * Phase 2 (Completed): Enhanced validation, FD/length categorization, and detailed logging
  * Phase 3 (Completed): Block deallocation for shrink, zero-fill for extend
- * Phase 4 (Current): Advanced features (sparse file support, preallocation hints)
+ * Phase 4 (Completed): Advanced features (sparse file support, preallocation hints)
  */
 
 #include <kernel/fut_task.h>
@@ -82,7 +82,7 @@ extern struct fut_file *fut_vfs_get_file(int fd);
  * Phase 1 (Completed): Basic file truncation with size updates
  * Phase 2 (Completed): Enhanced validation, FD/length categorization, detailed logging
  * Phase 3 (Completed): Block deallocation for shrink, zero-fill for extend
- * Phase 4 (Current): Sparse file support, preallocation hints
+ * Phase 4 (Completed): Sparse file support, preallocation hints
  */
 long sys_ftruncate(int fd, uint64_t length) {
     /* Get current task for FD table access */
@@ -237,7 +237,7 @@ long sys_ftruncate(int fd, uint64_t length) {
         /* Phase 3: Success - blocks allocated/deallocated and size updated */
         const char *alloc_strategy = (length > old_size) ? "zero-fill" : "dealloc";
         fut_printf("[FTRUNCATE] ftruncate(fd=%d [%s], length=%llu [%s], old_size=%llu, "
-                   "delta=%lld [%s], op=%s, ino=%lu, strategy=%s) -> 0 (%s, Phase 3)\n",
+                   "delta=%lld [%s], op=%s, ino=%lu, strategy=%s) -> 0 (%s, Phase 4: Sparse files)\n",
                    fd, fd_category, length, length_category, old_size, size_delta,
                    delta_category, operation_type, vnode->ino, alloc_strategy, operation_desc);
         return 0;
@@ -256,7 +256,7 @@ long sys_ftruncate(int fd, uint64_t length) {
     vnode->size = length;
 
     fut_printf("[FTRUNCATE] ftruncate(fd=%d [%s], length=%llu [%s], old_size=%llu, "
-               "delta=%lld [%s], op=%s, ino=%lu) -> 0 (no truncate operation, size updated only, Phase 3)\n",
+               "delta=%lld [%s], op=%s, ino=%lu) -> 0 (no truncate operation, size updated only, Phase 4: Preallocation hints)\n",
                fd, fd_category, length, length_category, old_size, size_delta,
                delta_category, operation_type, vnode->ino);
 

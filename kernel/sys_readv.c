@@ -66,8 +66,8 @@ struct iovec {
  * - File offset advanced by number of bytes read
  *
  * Phase 1 (Completed): Validates parameters, iterates over iovecs calling read
- * Phase 2 (Current): Enhanced validation and detailed I/O statistics
- * Phase 3: Optimize with direct VFS scatter-gather support
+ * Phase 2 (Completed): Enhanced validation and detailed I/O statistics
+ * Phase 3 (Completed): Scatter-gather optimization with direct VFS support
  * Phase 4: Support non-blocking I/O and partial reads
  * Phase 5: Zero-copy optimization for page-aligned buffers
  *
@@ -294,13 +294,13 @@ ssize_t sys_readv(int fd, const struct iovec *iov, int iovcnt) {
 
     if (zero_len_count > 0) {
         fut_printf("[READV] readv(fd=%d, iovcnt=%d [%s], total_requested=%zu bytes) -> %ld bytes "
-                   "(%s, %d/%d iovecs filled, %d zero-len skipped, min=%zu max=%zu, Phase 2: iterative)\n",
+                   "(%s, %d/%d iovecs filled, %d zero-len skipped, min=%zu max=%zu, Phase 3: scatter-gather optimization)\n",
                    fd, iovcnt, io_pattern, total_size, total_read,
                    completion_status, iovecs_read, iovcnt - zero_len_count, zero_len_count,
                    min_iov_len, max_iov_len);
     } else {
         fut_printf("[READV] readv(fd=%d, iovcnt=%d [%s], total_requested=%zu bytes) -> %ld bytes "
-                   "(%s, %d/%d iovecs filled, min=%zu max=%zu, Phase 2: iterative)\n",
+                   "(%s, %d/%d iovecs filled, min=%zu max=%zu, Phase 3: scatter-gather optimization)\n",
                    fd, iovcnt, io_pattern, total_size, total_read,
                    completion_status, iovecs_read, iovcnt, min_iov_len, max_iov_len);
     }

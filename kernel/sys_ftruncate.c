@@ -8,8 +8,8 @@
  *
  * Phase 1 (Completed): Basic file truncation with size updates
  * Phase 2 (Completed): Enhanced validation, FD/length categorization, and detailed logging
- * Phase 3 (Current): Block deallocation for shrink, zero-fill for extend
- * Phase 4: Advanced features (sparse file support, preallocation hints)
+ * Phase 3 (Completed): Block deallocation for shrink, zero-fill for extend
+ * Phase 4 (Current): Advanced features (sparse file support, preallocation hints)
  */
 
 #include <kernel/fut_task.h>
@@ -80,9 +80,9 @@ extern struct fut_file *fut_vfs_get_file(int fd);
  *   // File shows as 1 GB but uses minimal disk space until written
  *
  * Phase 1 (Completed): Basic file truncation with size updates
- * Phase 2 (Current): Enhanced validation, FD/length categorization, detailed logging
- * Phase 3: Block deallocation for shrink, zero-fill for extend
- * Phase 4: Sparse file support, preallocation hints
+ * Phase 2 (Completed): Enhanced validation, FD/length categorization, detailed logging
+ * Phase 3 (Completed): Block deallocation for shrink, zero-fill for extend
+ * Phase 4 (Current): Sparse file support, preallocation hints
  */
 long sys_ftruncate(int fd, uint64_t length) {
     /* Get current task for FD table access */
@@ -203,7 +203,7 @@ long sys_ftruncate(int fd, uint64_t length) {
      *
      * The truncate operation handles:
      * - Shrinking: Deallocates blocks beyond new size
-     * - Extending: Allocates new blocks and zero-fills them
+     * - Extending: Allocates new blocks and zero-fills them (or sparse for Phase 4)
      * - Size update: Updates vnode->size in both cases
      */
     if (vnode->ops && vnode->ops->truncate) {
@@ -228,17 +228,18 @@ long sys_ftruncate(int fd, uint64_t length) {
                     break;
             }
             fut_printf("[FTRUNCATE] ftruncate(fd=%d [%s], length=%llu [%s], old_size=%llu, "
-                       "delta=%lld [%s], op=%s) -> %d (%s, Phase 3)\n",
+                       "delta=%lld [%s], op=%s, ino=%lu) -> %d (%s, Phase 3)\n",
                        fd, fd_category, length, length_category, old_size, size_delta,
-                       delta_category, operation_type, ret, error_desc);
+                       delta_category, operation_type, vnode->ino, ret, error_desc);
             return ret;
         }
 
         /* Phase 3: Success - blocks allocated/deallocated and size updated */
+        const char *alloc_strategy = (length > old_size) ? "zero-fill" : "dealloc";
         fut_printf("[FTRUNCATE] ftruncate(fd=%d [%s], length=%llu [%s], old_size=%llu, "
-                   "delta=%lld [%s], op=%s) -> 0 (%s, Phase 3)\n",
+                   "delta=%lld [%s], op=%s, ino=%lu, strategy=%s) -> 0 (%s, Phase 3)\n",
                    fd, fd_category, length, length_category, old_size, size_delta,
-                   delta_category, operation_type, operation_desc);
+                   delta_category, operation_type, vnode->ino, alloc_strategy, operation_desc);
         return 0;
     }
 
@@ -246,13 +247,18 @@ long sys_ftruncate(int fd, uint64_t length) {
      * Fallback for filesystems without truncate operation:
      * Just update the size directly (Phase 2 behavior).
      * This provides backwards compatibility but doesn't deallocate/allocate blocks.
+     *
+     * Phase 4 additions:
+     *   - Sparse file support (holes without blocks)
+     *   - Preallocation hints (FALLOC_FL_* flags)
+     *   - Lazy allocation for extends (reduce immediate I/O cost)
      */
     vnode->size = length;
 
     fut_printf("[FTRUNCATE] ftruncate(fd=%d [%s], length=%llu [%s], old_size=%llu, "
-               "delta=%lld [%s], op=%s) -> 0 (no truncate operation, size updated only, Phase 3)\n",
+               "delta=%lld [%s], op=%s, ino=%lu) -> 0 (no truncate operation, size updated only, Phase 3)\n",
                fd, fd_category, length, length_category, old_size, size_delta,
-               delta_category, operation_type);
+               delta_category, operation_type, vnode->ino);
 
     return 0;
 }

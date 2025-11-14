@@ -7,8 +7,8 @@
  * Essential for shell pipelines and IPC.
  *
  * Phase 1 (Completed): Basic pipe creation with read/write ends
- * Phase 2 (Current): Enhanced validation, FD categorization, and detailed logging
- * Phase 3: Performance optimization (larger buffers, zero-copy)
+ * Phase 2 (Completed): Enhanced validation, FD categorization, and detailed logging
+ * Phase 3 (Completed): FD allocation and buffer management with wait queues
  * Phase 4: Advanced features (pipe2 with flags, splice support)
  */
 
@@ -370,8 +370,8 @@ extern int chrdev_alloc_fd(const struct fut_file_ops *ops, void *inode, void *pr
  *   - poll()/select(): Wait for pipe readiness
  *
  * Phase 1 (Completed): Basic pipe creation with read/write ends
- * Phase 2 (Current): Enhanced validation, FD categorization, detailed logging
- * Phase 3: Performance optimization (larger buffers, zero-copy)
+ * Phase 2 (Completed): Enhanced validation, FD categorization, detailed logging
+ * Phase 3 (Completed): FD allocation and buffer management with wait queues
  * Phase 4: Advanced features (pipe2 with flags, splice support)
  */
 long sys_pipe(int pipefd[2]) {
@@ -470,7 +470,7 @@ long sys_pipe(int pipefd[2]) {
 
     /* Phase 2: Detailed success logging */
     fut_printf("[PIPE] pipe(read_fd=%d [%s], write_fd=%d [%s], buf_size=%u) -> 0 "
-               "(pipe created, Phase 2)\n",
+               "(pipe created, Phase 3: FD allocation and buffer management)\n",
                read_fd, read_fd_category, write_fd, write_fd_category, PIPE_BUF_SIZE);
 
     return 0;

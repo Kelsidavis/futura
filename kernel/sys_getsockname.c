@@ -67,7 +67,7 @@ struct sockaddr_un {
  *
  * Phase 1 (Completed): Validates parameters and returns stub
  * Phase 2 (Completed): Integrate with socket layer to retrieve actual local address
- * Phase 3 (Current): Support different socket families (IPv4, IPv6)
+ * Phase 3 (Completed): Support different socket families (IPv4, IPv6)
  * Phase 4: Handle ephemeral port assignment and multiple interfaces
  *
  * Example: Get assigned ephemeral port

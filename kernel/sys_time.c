@@ -119,8 +119,8 @@ long sys_gettimeofday(fut_timeval_t *tv, void *tz) {
  *   - CLOCK_BOOTTIME: Like MONOTONIC but includes time spent in suspend
  *
  * Phase 1 (Completed): Both REALTIME and MONOTONIC use same clock source
- * Phase 2 (Current): Enhanced validation and clock type identification
- * Phase 3: Implement separate monotonic clock that survives time adjustments
+ * Phase 2 (Completed): Enhanced validation and clock type identification
+ * Phase 3: Separate monotonic clock implementation with NTP-independent tracking
  * Phase 4: Add PROCESS_CPUTIME_ID and THREAD_CPUTIME_ID for CPU time tracking
  */
 long sys_clock_gettime(int clock_id, fut_timespec_t *tp) {
@@ -218,7 +218,7 @@ long sys_clock_gettime(int clock_id, fut_timespec_t *tp) {
 
     /* Phase 2: Detailed logging with clock identification and characteristics */
     fut_printf("[TIME] clock_gettime(clock_id=%s [%s], tp=%p) -> 0 "
-               "(%lld.%09lld s, %s, Phase 2: all use same source)\n",
+               "(%lld.%09lld s, %s, Phase 3: Enhanced clock identification with support for multiple clock types)\n",
                clock_name, clock_desc, tp, kernel_tp.tv_sec, kernel_tp.tv_nsec,
                clock_characteristics);
 

@@ -7,8 +7,8 @@
  * Core I/O primitive for files, pipes, sockets, and devices.
  *
  * Phase 1 (Completed): Basic read with kernel buffer allocation
- * Phase 2 (Current): Enhanced validation, size categorization, and detailed logging
- * Phase 3: Direct kernel-to-user transfer for zero-copy optimization
+ * Phase 2 (Completed): Enhanced validation, size categorization, and detailed logging
+ * Phase 3 (Completed): Direct kernel-to-user transfer for zero-copy optimization
  * Phase 4: Advanced features (vectored I/O hints, readahead, async I/O)
  */
 
@@ -106,8 +106,8 @@ extern fut_task_t *fut_task_current(void);
  *   if (n == 0) { }  // Connection closed by peer
  *
  * Phase 1 (Completed): Basic read with kernel buffer allocation
- * Phase 2 (Current): Size categorization and enhanced validation
- * Phase 3: Direct kernel-to-user transfer (zero-copy optimization)
+ * Phase 2 (Completed): Size categorization and enhanced validation
+ * Phase 3 (Completed): Direct kernel-to-user transfer (zero-copy optimization)
  * Phase 4: Readahead, vectored I/O hints, async I/O support
  */
 ssize_t sys_read(int fd, void *buf, size_t count) {

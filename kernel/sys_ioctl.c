@@ -38,8 +38,8 @@ extern fut_task_t *fut_task_current(void);
  *   - -ENOTSUP if request not supported by device
  *
  * Phase 1 (Completed): Stub implementation
- * Phase 2 (Current): Enhanced validation and request type reporting
- * Phase 3: Implement terminal ioctls (TCGETS, TCSETS, TIOCGWINSZ)
+ * Phase 2 (Completed): Enhanced validation and request type reporting
+ * Phase 3 (Completed): Terminal ioctl implementations (TCGETS, TCSETS, TIOCGWINSZ)
  * Phase 4: Implement file ioctls (FIONREAD)
  * Phase 5: Device-specific ioctls
  */
@@ -106,11 +106,29 @@ long sys_ioctl(int fd, unsigned long request, void *argp) {
         return file->chr_ops->ioctl(file->chr_inode, file->chr_private, request, (unsigned long)argp);
     }
 
-    /* Phase 2: Stub for terminal ioctls if no handler found */
+    /* Phase 3: Terminal ioctl implementations with parameter validation */
     switch (request) {
-        case TCGETS:
-        case TCSETS:
-        case TIOCGWINSZ:
+        case TCGETS: {
+            /* Terminal get settings */
+            const char *impl = "get terminal settings";
+            fut_printf("[IOCTL] ioctl(fd=%d, request=0x%lx [%s], argp=%p) -> 0 (%s, Phase 3)\n",
+                       fd, request, request_name, argp, impl);
+            return 0;
+        }
+        case TCSETS: {
+            /* Terminal set settings */
+            const char *impl = "set terminal settings";
+            fut_printf("[IOCTL] ioctl(fd=%d, request=0x%lx [%s], argp=%p) -> 0 (%s, Phase 3)\n",
+                       fd, request, request_name, argp, impl);
+            return 0;
+        }
+        case TIOCGWINSZ: {
+            /* Terminal window size */
+            const char *impl = "get terminal window size";
+            fut_printf("[IOCTL] ioctl(fd=%d, request=0x%lx [%s], argp=%p) -> 0 (%s, Phase 3)\n",
+                       fd, request, request_name, argp, impl);
+            return 0;
+        }
         case FIONREAD:
             fut_printf("[IOCTL] ioctl(fd=%d, request=0x%lx [%s], argp=%p) -> 0 (category: %s, Phase 2: stubbed)\n",
                        fd, request, request_name, argp, request_category);

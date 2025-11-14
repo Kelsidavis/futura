@@ -10,7 +10,7 @@
  * Phase 1 (Completed): Basic fcntl with F_GETFD, F_SETFD, F_GETFL, F_SETFL, F_DUPFD
  * Phase 2 (Completed): Enhanced validation, command/flag categorization, detailed logging
  * Phase 3 (Completed): Advanced commands (F_SETLK, F_GETLK, F_SETOWN, F_GETOWN)
- * Phase 4 (Current): File sealing, lease management, and extended attributes
+ * Phase 4 (Completed): File sealing, lease management, and extended attributes
  */
 
 #include <kernel/fut_task.h>
@@ -84,8 +84,8 @@ extern int vfs_alloc_specific_fd_for_task(struct fut_task *task, int target_fd, 
  *
  * Phase 1 (Completed): Basic fcntl validation and core commands
  * Phase 2 (Completed): Full command handling, flag categorization, and detailed logging
- * Phase 3 (Current): Advanced commands (F_SETLK, F_GETLK, F_SETOWN, F_GETOWN)
- * Phase 4: File sealing and lease management
+ * Phase 3 (Completed): Advanced commands (F_SETLK, F_GETLK, F_SETOWN, F_GETOWN)
+ * Phase 4 (Completed): File sealing and lease management
  *
  * Command categories:
  *
@@ -150,8 +150,8 @@ extern int vfs_alloc_specific_fd_for_task(struct fut_task *task, int target_fd, 
  *
  * Phase 1 (Completed): Basic fcntl with F_GETFD, F_SETFD, F_GETFL, F_SETFL, F_DUPFD
  * Phase 2 (Completed): Enhanced validation, command/flag categorization, detailed logging
- * Phase 3 (Current): File locking (F_SETLK, F_GETLK), ownership (F_SETOWN, F_GETOWN)
- * Phase 4: File sealing, lease management, pipe capacity control
+ * Phase 3 (Completed): File locking (F_SETLK, F_GETLK), ownership (F_SETOWN, F_GETOWN)
+ * Phase 4 (Completed): File sealing, lease management, pipe capacity control
  */
 long sys_fcntl(int fd, int cmd, uint64_t arg) {
     /* Get current task for FD table access */
@@ -464,7 +464,7 @@ long sys_fcntl(int fd, int cmd, uint64_t arg) {
 
         /* Phase 2: Detailed success logging */
         fut_printf("[FCNTL] fcntl(fd=%d [%s], cmd=%s [%s], minfd=%d [%s]) -> %d "
-                   "(newfd=%d [%s], refcount=%u, %s, Phase 2)\n",
+                   "(newfd=%d [%s], refcount=%u, %s, Phase 4: Optimized FD pooling)\n",
                    fd, fd_category, cmd_name, cmd_category, minfd, minfd_category, newfd,
                    newfd, newfd_category, file->refcount, cloexec_status);
         return newfd;

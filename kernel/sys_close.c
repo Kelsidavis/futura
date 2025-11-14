@@ -86,7 +86,7 @@ extern int release_socket_fd(int fd);
  *
  * Phase 1 (Completed): Basic close with socket and file support
  * Phase 2 (Completed): FD type identification and enhanced validation
- * Phase 3 (Current): Reference counting, delayed close for shared descriptors
+ * Phase 3 (Completed): Reference counting, delayed close for shared descriptors
  * Phase 4: close-on-exec flag handling, close_range bulk close
  */
 long sys_close(int fd) {

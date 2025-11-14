@@ -1,0 +1,23 @@
+/* asm_debug.c - Debug helpers callable from assembly
+ *
+ * Copyright (c) 2025 Kelsi Davis
+ * Licensed under the MPL v2.0 — see LICENSE for details.
+ *
+ * Simple debug functions that can be called from assembly code.
+ */
+
+#include <stdint.h>
+#include <platform/platform.h>
+
+/* Called from context_switch.S to trace execution path */
+void fut_debug_context_path(const char *label, uint64_t x1_val, uint64_t x2_val, uint64_t x3_val)
+{
+    fut_printf("[ASM-DEBUG] %s: x1=%p x2=0x%llx x3=0x%llx\n",
+               label, (void*)x1_val, x2_val, x3_val);
+}
+
+/* Called to show register value before restoration */
+void fut_debug_show_reg(const char *name, uint64_t value)
+{
+    fut_printf("[ASM-DEBUG] Before restore: %s=0x%llx\n", name, value);
+}

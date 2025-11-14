@@ -344,6 +344,7 @@ KERNEL_SOURCES := \
     kernel/threading/fut_task.c \
     kernel/threading/fut_thread.c \
     kernel/scheduler/fut_sched.c \
+    kernel/scheduler/asm_debug.c \
     kernel/scheduler/fut_stats.c \
     kernel/scheduler/fut_waitq.c \
     kernel/percpu/fut_percpu.c \

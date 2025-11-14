@@ -184,6 +184,11 @@ fut_switch_context:
     cbnz    x3, .Lrestore_el1         /* If not zero, it's EL1 */
 
     /* Target is EL0 - use ERET path - need to restore ALL registers for fork */
+    /* CRITICAL: Load all registers BEFORE switching page table! */
+    /* The context is in kernel memory (0x40000000+) which is only mapped in
+     * the kernel's TTBR0_EL1, not in user TTBR0_EL1, so we must load everything
+     * before switching. */
+
     /* Set up ELR_EL1 and SPSR_EL1 for exception return */
     ldr     x2, [x1, #264]            /* Load PC from new offset 264 */
     msr     elr_el1, x2               /* Set exception return address */
@@ -191,16 +196,11 @@ fut_switch_context:
     ldr     x2, [x1, #272]            /* Load PSTATE from new offset 272 */
     msr     spsr_el1, x2              /* Set saved processor state */
 
-    /* Load user page table base into TTBR0_EL1 */
-    ldr     x2, [x1, #280]            /* Load ttbr0_el1 from new offset 280 */
-    msr     ttbr0_el1, x2             /* Set user page table base */
-    isb                               /* Instruction barrier to ensure TTBR0 is loaded */
-
     /* Restore SP_EL0 (user stack pointer) - CRITICAL for userspace */
     ldr     x2, [x1, #256]            /* Load SP_EL0 from new offset 256 */
     msr     sp_el0, x2                /* Set user stack pointer */
 
-    /* Restore callee-saved registers (x19-x30) */
+    /* Restore callee-saved registers (x19-x30) BEFORE switching page table */
     ldp     x19, x20, [x1, #152]      /* Restore x19, x20 from new offset 152 */
     ldp     x21, x22, [x1, #168]      /* Restore x21, x22 */
     ldp     x23, x24, [x1, #184]      /* Restore x23, x24 */
@@ -219,8 +219,15 @@ fut_switch_context:
     ldp     x16, x17, [x1, #128]      /* Restore x16, x17 */
     ldr     x18, [x1, #144]           /* Restore x18 */
 
+    /* Save TTBR0_EL1 value in x2 before we lose x1 */
+    ldr     x2, [x1, #280]            /* Load ttbr0_el1 from new offset 280 */
+
     /* Restore x0 and x1 last (x1 is our context pointer) */
     ldp     x0, x1, [x1, #0]          /* Restore x0 and x1 */
+
+    /* NOW switch to user page table, after all registers are loaded */
+    msr     ttbr0_el1, x2             /* Set user page table base */
+    isb                               /* Instruction barrier to ensure TTBR0 is loaded */
 
     /* Exception return to EL0 */
     eret
@@ -544,6 +551,21 @@ fut_save_context:
     ret
 
 .size fut_save_context, . - fut_save_context
+
+/*
+ * Debug message strings
+ */
+.section .rodata
+.Ldebug_msg_branch_check:
+    .asciz "branch_check"
+.Ldebug_msg_eret_path:
+    .asciz "ERET_PATH"
+.Ldebug_msg_el1_path:
+    .asciz "EL1_PATH"
+.Ldebug_msg_x7:
+    .asciz "x7"
+
+.section .text
 
 /*
  * Constants for PSTATE

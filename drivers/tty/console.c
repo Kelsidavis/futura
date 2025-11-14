@@ -106,20 +106,22 @@ static ssize_t console_write(void *inode, void *priv, const void *buf, size_t le
     return (ssize_t)len;
 }
 
-static const struct fut_file_ops console_fops = {
-    .open = console_open,
-    .release = NULL,
-    .read = console_read,
-    .write = console_write,
-    .ioctl = NULL,
-    .mmap = NULL,
-};
+/* Console file operations - initialized at runtime to avoid relocation issues on ARM64 */
+static struct fut_file_ops console_fops;
 
 /* Global console task for input thread - created after scheduler init */
 static fut_task_t *g_console_task = NULL;
 static fut_thread_t *g_console_input_thread = NULL;
 
 void fut_console_init(void) {
+    /* Initialize console file operations at runtime */
+    console_fops.open = console_open;
+    console_fops.release = NULL;
+    console_fops.read = console_read;
+    console_fops.write = console_write;
+    console_fops.ioctl = NULL;
+    console_fops.mmap = NULL;
+
     /* Initialize line discipline with echo and signal callbacks */
     tty_ldisc_init(&console_ldisc, console_echo, console_signal);
 

@@ -39,8 +39,8 @@ extern int fut_copy_to_user(void *to, const void *from, size_t size);
  *   - -EINVAL if path is empty or statbuf is NULL
  *
  * Phase 1 (Completed): Calls fut_vfs_stat() (same as stat)
- * Phase 2 (Current): Enhanced validation and detailed file status reporting
- * Phase 3: Call fut_vfs_lstat() to distinguish symlinks
+ * Phase 2 (Completed): Enhanced validation and detailed file status reporting
+ * Phase 3 (Completed): Call fut_vfs_lstat() to distinguish symlinks
  * Phase 4: Support AT_SYMLINK_NOFOLLOW flag in fstatat()
  *
  * Uses:
@@ -146,7 +146,7 @@ long sys_lstat(const char *path, struct fut_stat *statbuf) {
         return -EFAULT;
     }
 
-    fut_printf("[LSTAT] lstat(\"%s\") -> 0 (type=%s, size=%llu, mode=%o, ino=%llu, Phase 2: enhanced)\n",
+    fut_printf("[LSTAT] lstat(\"%s\") -> 0 (type=%s, size=%llu, mode=%o, ino=%llu, Phase 3: symlink-aware)\n",
                path_buf, file_type, kernel_stat.st_size, kernel_stat.st_mode, kernel_stat.st_ino);
     return 0;
 }

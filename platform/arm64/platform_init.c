@@ -1257,22 +1257,22 @@ static void arm64_init_spawner_thread(void *arg) {
         }
     }
 
-    /* Spawn forktest to demonstrate multi-process functionality */
+    /* Spawn shell as interactive session */
     fut_printf("\n====================================\n");
-    fut_printf("  SPAWNING FORKTEST\n");
+    fut_printf("  SPAWNING SHELL\n");
     fut_printf("====================================\n\n");
 
-    char *test_argv[] = {"/bin/forktest", NULL};
-    char *test_envp[] = {"PATH=/sbin:/bin", "HOME=/root", NULL};
+    char *shell_argv[] = {"/bin/shell", NULL};
+    char *shell_envp[] = {"PATH=/sbin:/bin", "HOME=/root", NULL};
 
-    fut_printf("[ARM64-SPAWNER] Executing /bin/forktest...\n");
-    ret = fut_exec_elf("/bin/forktest", test_argv, test_envp);
+    fut_printf("[ARM64-SPAWNER] Executing /bin/shell...\n");
+    ret = fut_exec_elf("/bin/shell", shell_argv, shell_envp);
 
     if (ret == 0) {
-        fut_printf("[ARM64-SPAWNER] ✓ Forktest process spawned successfully!\n");
+        fut_printf("[ARM64-SPAWNER] ✓ Shell process spawned successfully!\n");
         fut_printf("[ARM64-SPAWNER] Spawner thread exiting.\n");
     } else {
-        fut_printf("[ARM64-SPAWNER] ERROR: Failed to spawn forktest! Error code: %d\n", ret);
+        fut_printf("[ARM64-SPAWNER] ERROR: Failed to spawn shell! Error code: %d\n", ret);
         if (ret == -EINVAL) {
             fut_printf("  EINVAL (invalid argument)\n");
         } else if (ret == -ENOMEM) {

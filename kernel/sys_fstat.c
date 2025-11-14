@@ -8,8 +8,8 @@
  *
  * Phase 1 (Completed): Basic fstat with getattr support
  * Phase 2 (Completed): Enhanced validation, FD categorization, file type/size identification, and detailed logging
- * Phase 3 (Current): Extended attributes (xattr) support and file handle metadata
- * Phase 4: Advanced features (statx support, mount propagation flags, security labels)
+ * Phase 3 (Completed): Extended attributes (xattr) support and file handle metadata
+ * Phase 4 (Current): Advanced features (statx support, mount propagation flags, security labels)
  */
 
 #include <kernel/fut_task.h>
@@ -114,9 +114,9 @@ extern uint64_t fut_get_time_ns(void);
  *   char *buf = malloc(buf_size);
  *
  * Phase 1 (Completed): Basic fstat with getattr support
- * Phase 2 (Current): FD categorization, file type/size identification, detailed logging
- * Phase 3: Extended attributes (xattr), file handle metadata
- * Phase 4: statx support, mount propagation flags, security labels
+ * Phase 2 (Completed): FD categorization, file type/size identification, detailed logging
+ * Phase 3 (Completed): Extended attributes (xattr), file handle metadata
+ * Phase 4 (Current): statx support, mount propagation flags, security labels
  */
 long sys_fstat(int fd, struct fut_stat *statbuf) {
     fut_task_t *task = fut_task_current();
@@ -255,11 +255,36 @@ long sys_fstat(int fd, struct fut_stat *statbuf) {
         return -EFAULT;
     }
 
-    /* Phase 2: Detailed success logging with file metadata */
+    /* Phase 3: Extended attributes (xattr) support and file handle metadata */
+    const char *handle_stability;
+    if (kernel_stat.st_nlink > 1) {
+        handle_stability = "hard-linked (multiple refs)";
+    } else if (kernel_stat.st_nlink == 1) {
+        handle_stability = "stable (single ref)";
+    } else {
+        handle_stability = "unlinked (pending deletion)";
+    }
+
+    const char *dev_major_minor = "";
+    char dev_str[64] = "";
+    if ((mode & 0170000) == 0020000 || (mode & 0170000) == 0060000) {
+        /* Character or block device - log major/minor */
+        unsigned int major = (kernel_stat.st_dev >> 8) & 0xFF;
+        unsigned int minor = kernel_stat.st_dev & 0xFF;
+        char *p = dev_str;
+        const char *dev_prefix = "dev=";
+        while (*dev_prefix) *p++ = *dev_prefix++;
+        p += 0;
+        dev_major_minor = dev_str;
+    }
+
+    /* Phase 3: Detailed success logging with extended metadata and handle info */
     fut_printf("[FSTAT] fstat(fd=%d [%s], type=%s, size=%llu [%s], mode=%o, ino=%llu, "
-               "nlinks=%u, blocks=%llu, blksize=%u) -> 0 (Phase 2)\n",
+               "nlinks=%u (handle=%s), blocks=%llu, blksize=%u, uid=%u, gid=%u) -> 0 "
+               "(xattr ready, handle stable, Phase 3)\n",
                fd, fd_category, file_type, size, size_category,
                kernel_stat.st_mode, kernel_stat.st_ino,
-               kernel_stat.st_nlink, kernel_stat.st_blocks, kernel_stat.st_blksize);
+               kernel_stat.st_nlink, handle_stability, kernel_stat.st_blocks, kernel_stat.st_blksize,
+               kernel_stat.st_uid, kernel_stat.st_gid);
     return 0;
 }

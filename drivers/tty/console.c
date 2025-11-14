@@ -145,16 +145,6 @@ void fut_console_init(void) {
  * This is called from kernel_main after fut_sched_init().
  */
 void fut_console_start_input_thread(void) {
-#ifdef __aarch64__
-    /* TEMPORARY: Disable console input thread on ARM64 to debug scheduler livelock.
-     * The console input thread's polling causes livelock with other I/O threads.
-     * TODO: Implement proper blocking I/O with wait queues instead of polling.
-     */
-    fut_printf("[CONSOLE] Console input thread DISABLED on ARM64 (temporary workaround)\n");
-    fut_printf("[CONSOLE] TODO: Implement blocking I/O with wait queues\n");
-    return;
-#endif
-
     /* Create a task for the input thread */
     g_console_task = fut_task_create();
     if (!g_console_task) {

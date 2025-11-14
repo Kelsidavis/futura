@@ -138,6 +138,8 @@
 #include <platform/arm64/interrupt/irq.h>
 #include <platform/platform.h>
 #include <config/futura_config.h>
+#include <kernel/fut_waitq.h>
+#include <kernel/fut_task.h>
 
 /* Note: IRQ handler types and functions (fut_register_irq_handler, fut_irq_enable, etc.)
  * are now properly declared in <arch/arm64/irq.h> and implemented in kernel/irq/arm64_irq.c.
@@ -180,13 +182,17 @@ void mmio_write64(volatile void *addr, uint64_t value) {
 static volatile char uart_tx_buffer[UART_TX_BUFFER_SIZE];
 static volatile uint32_t uart_tx_head = 0;  /* Write position */
 static volatile uint32_t uart_tx_tail = 0;  /* Read position */
-static volatile _Bool uart_irq_mode = 0;    /* false = polling, true = interrupt */
+static volatile _Bool uart_tx_irq_mode = 0; /* false = polling, true = interrupt (TX) */
+static volatile _Bool uart_rx_irq_mode = 0; /* false = polling, true = interrupt (RX) */
 
 /* UART RX ring buffer */
 #define UART_RX_BUFFER_SIZE 4096
 volatile char uart_rx_buffer[UART_RX_BUFFER_SIZE];
 volatile uint32_t uart_rx_head = 0;  /* Write position (filled by ISR) */
 volatile uint32_t uart_rx_tail = 0;  /* Read position (consumed by getc) */
+
+/* UART RX wait queue - threads sleep here when waiting for input */
+static fut_waitq_t uart_rx_waitq;
 
 /* ============================================================
  *   UART Interrupt Handlers
@@ -227,6 +233,7 @@ static void uart_handle_tx(void) {
  */
 static void uart_handle_rx(void) {
     volatile uint8_t *uart = (volatile uint8_t *)UART0_BASE;
+    bool had_data = false;
 
     /* Read all available characters from FIFO */
     while (!(mmio_read32((volatile void *)(uart + UART_FR)) & UART_FR_RXFE)) {
@@ -238,8 +245,14 @@ static void uart_handle_rx(void) {
         if (next_head != uart_rx_tail) {
             uart_rx_buffer[uart_rx_head] = c;
             uart_rx_head = next_head;
+            had_data = true;
         }
         /* else buffer full - drop character */
+    }
+
+    /* Wake any threads waiting for input */
+    if (had_data) {
+        fut_waitq_wake_one(&uart_rx_waitq);
     }
 }
 
@@ -340,6 +353,9 @@ void fut_serial_init(void) {
     /* Enable UART IRQ in GIC */
     fut_irq_enable(FUT_IRQ_UART);
 
+    /* Initialize UART RX wait queue for blocking I/O */
+    fut_waitq_init(&uart_rx_waitq);
+
     /* Note: Interrupt-driven mode is enabled later after all subsystems are initialized
      * For now, stay in polling mode to ensure boot messages are always visible */
     /* uart_irq_mode = 1; */
@@ -374,9 +390,16 @@ void fut_serial_enable_irq_mode(void) {
     uint32_t mis = mmio_read32((volatile void *)(uart + UART_MIS));
     uint32_t fr = mmio_read32((volatile void *)(uart + UART_FR));
 
-    fut_serial_puts("[UART] Interrupt infrastructure ready (diagnostics)\n");
+    fut_serial_puts("[UART] Enabling interrupt-driven mode\n");
     fut_printf("[UART] Status: IMSC=0x%x MIS=0x%x FR=0x%x\n", imsc, mis, fr);
-    fut_printf("[UART] Staying in polling mode - interrupts not routed\n");
+
+    fut_serial_puts("[UART] About to enable interrupt mode...\n");
+    /* Enable interrupt mode for RX only (blocking I/O with wait queues)
+     * TX remains in polling mode due to QEMU ARM64 PL011 limitations */
+    uart_rx_irq_mode = 1;
+    fut_serial_puts("[UART] Interrupt mode variable set\n");
+    fut_printf("[UART] RX interrupt mode enabled (TX remains polling)\n");
+    fut_serial_puts("[UART] Done with interrupt mode setup\n");
 
     /* Handler and GIC infrastructure confirmed working via:
      * 1. Handler symbol present in binary
@@ -392,7 +415,7 @@ void fut_serial_enable_irq_mode(void) {
 void fut_serial_putc(char c) {
     volatile uint8_t *uart = (volatile uint8_t *)UART0_BASE;
 
-    if (!uart_irq_mode) {
+    if (!uart_tx_irq_mode) {
         /* Polling mode: direct write to UART with adaptive delays
          *
          * ISSUE: Infinite loop on UART_FR_TXFF caused timing sensitivity and hangs
@@ -464,14 +487,8 @@ void fut_serial_puts(const char *str) {
 int fut_serial_getc(void) {
     volatile uint8_t *uart = (volatile uint8_t *)UART0_BASE;
 
-    /* Check if RX FIFO is empty (UART_FR bit 4 = RXFE) */
-    uint32_t fr = mmio_read32((volatile void *)(uart + UART_FR));
-    if (fr & UART_FR_RXFE) {
-        return -1;  /* No data available */
-    }
-
     /* Read character from RX buffer if in interrupt mode */
-    if (uart_irq_mode) {
+    if (uart_rx_irq_mode) {
         if (uart_rx_tail != uart_rx_head) {
             char c = uart_rx_buffer[uart_rx_tail];
             uart_rx_tail = (uart_rx_tail + 1) % UART_RX_BUFFER_SIZE;
@@ -481,6 +498,12 @@ int fut_serial_getc(void) {
     }
 
     /* In polling mode, read directly from UART FIFO */
+    /* Check if RX FIFO is empty (UART_FR bit 4 = RXFE) */
+    uint32_t fr = mmio_read32((volatile void *)(uart + UART_FR));
+    if (fr & UART_FR_RXFE) {
+        return -1;  /* No data available */
+    }
+
     uint32_t data = mmio_read32((volatile void *)(uart + UART_DR));
     return (int)(data & 0xFF);
 }
@@ -488,28 +511,31 @@ int fut_serial_getc(void) {
 /**
  * Blocking character read from UART.
  * Waits indefinitely for a character to be available.
+ *
+ * Uses wait queue for efficient blocking I/O instead of polling.
+ * Thread sleeps until UART RX interrupt wakes it when data arrives.
  */
 int fut_serial_getc_blocking(void) {
-    extern void fut_schedule(void);
-
-    /* Poll with exponential backoff to reduce scheduler pressure.
-     * This allows other threads to make progress without livelocking the scheduler.
-     */
-    volatile int poll_count = 0;
-    const volatile int max_poll_before_yield = 50000;
-
     while (1) {
+        /* Try to read character */
         int c = fut_serial_getc();
         if (c >= 0) {
             return c;
         }
 
-        poll_count++;
-        if (poll_count >= max_poll_before_yield) {
-            poll_count = 0;
-            /* Yield to allow other threads to run */
-            fut_schedule();
+        /* No data available - sleep on wait queue until interrupt wakes us */
+        fut_spinlock_acquire(&uart_rx_waitq.lock);
+
+        /* Double-check buffer while holding lock */
+        c = fut_serial_getc();
+        if (c >= 0) {
+            fut_spinlock_release(&uart_rx_waitq.lock);
+            return c;
         }
+
+        /* Sleep until uart_handle_rx() wakes us */
+        fut_waitq_sleep_locked(&uart_rx_waitq, &uart_rx_waitq.lock, FUT_THREAD_BLOCKED);
+        fut_spinlock_release(&uart_rx_waitq.lock);
     }
 }
 
@@ -1294,15 +1320,7 @@ void arch_late_init(void) {
 
     /* Re-enabled for userland testing */
     #if 1
-    /* Forward declarations */
-    #if 1  /* Re-enabled for UI testing */
-    struct fut_task;
-    struct fut_thread;
-    typedef struct fut_task fut_task_t;
-    typedef struct fut_thread fut_thread_t;
-
-    extern fut_task_t *fut_task_create(void);
-    extern fut_thread_t *fut_thread_create(fut_task_t *, void (*)(void *), void *, size_t, uint8_t);
+    /* fut_task and fut_thread types are now available via fut_waitq.h -> fut_thread.h */
 
     /* Create a kernel task for the init spawner thread */
     fut_task_t *kernel_task = fut_task_create();
@@ -1333,7 +1351,6 @@ void arch_late_init(void) {
     fut_printf("[ARM64] Thread should be added to scheduler and run after scheduler starts\n");
     fut_printf("[ARM64] Returning to main kernel...\n");
     #endif
-    #endif  /* TEMPORARY: VirtIO GPU testing */
 }
 
 /**

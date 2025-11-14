@@ -1161,7 +1161,7 @@ static const char *path_extract_basename(const char *path, char *dirname_out, si
  * Returns: 0 on success, negative error code on failure
  */
 /* Forward declaration - defined later after all helper functions */
-static const struct fut_vnode_ops ramfs_vnode_ops;
+static struct fut_vnode_ops ramfs_vnode_ops;
 
 /**
  * ramfs_link() - Create a hard link to an existing file
@@ -1439,25 +1439,29 @@ static int ramfs_setattr(struct fut_vnode *vnode, const struct fut_stat *stat) {
     return 0;
 }
 
-static const struct fut_vnode_ops ramfs_vnode_ops = {
-    .open = ramfs_open,
-    .close = ramfs_close,
-    .read = ramfs_read,
-    .write = ramfs_write,
-    .readdir = ramfs_readdir,
-    .lookup = ramfs_lookup,
-    .create = ramfs_create,
-    .unlink = ramfs_unlink,
-    .mkdir = ramfs_mkdir,
-    .rmdir = ramfs_rmdir,
-    .getattr = ramfs_getattr,
-    .setattr = ramfs_setattr,
-    .sync = ramfs_sync,
-    .truncate = ramfs_truncate,
-    .link = ramfs_link,
-    .symlink = ramfs_symlink,
-    .readlink = ramfs_readlink
-};
+/* Vnode operations structure - initialized at runtime to avoid relocation issues on ARM64 */
+static struct fut_vnode_ops ramfs_vnode_ops;
+
+/* Initialize ramfs vnode operations */
+static void ramfs_init_vnode_ops(void) {
+    ramfs_vnode_ops.open = ramfs_open;
+    ramfs_vnode_ops.close = ramfs_close;
+    ramfs_vnode_ops.read = ramfs_read;
+    ramfs_vnode_ops.write = ramfs_write;
+    ramfs_vnode_ops.readdir = ramfs_readdir;
+    ramfs_vnode_ops.lookup = ramfs_lookup;
+    ramfs_vnode_ops.create = ramfs_create;
+    ramfs_vnode_ops.unlink = ramfs_unlink;
+    ramfs_vnode_ops.mkdir = ramfs_mkdir;
+    ramfs_vnode_ops.rmdir = ramfs_rmdir;
+    ramfs_vnode_ops.getattr = ramfs_getattr;
+    ramfs_vnode_ops.setattr = ramfs_setattr;
+    ramfs_vnode_ops.sync = ramfs_sync;
+    ramfs_vnode_ops.truncate = ramfs_truncate;
+    ramfs_vnode_ops.link = ramfs_link;
+    ramfs_vnode_ops.symlink = ramfs_symlink;
+    ramfs_vnode_ops.readlink = ramfs_readlink;
+}
 
 /* ============================================================
  *   Filesystem Operations
@@ -1655,16 +1659,21 @@ static int ramfs_unmount(struct fut_mount *mount) {
     return 0;
 }
 
-static const struct fut_fs_type ramfs_type = {
-    .name = "ramfs",
-    .mount = ramfs_mount,
-    .unmount = ramfs_unmount
-};
+/* Static ramfs type structure - initialized at runtime to avoid relocation issues */
+static struct fut_fs_type ramfs_type;
 
 /* ============================================================
  *   RamFS Registration
  * ============================================================ */
 
 void fut_ramfs_init(void) {
+    /* Initialize vnode operations first */
+    ramfs_init_vnode_ops();
+
+    /* Initialize the ramfs type structure at runtime */
+    ramfs_type.name = "ramfs";
+    ramfs_type.mount = ramfs_mount;
+    ramfs_type.unmount = ramfs_unmount;
+
     fut_vfs_register_fs(&ramfs_type);
 }

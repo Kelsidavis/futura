@@ -90,12 +90,23 @@ static int ramdisk_flush(struct fut_blockdev *dev) {
     return 0;
 }
 
-static const struct fut_blockdev_ops ramdisk_ops = {
-    .read = ramdisk_read,
-    .write = ramdisk_write,
-    .flush = ramdisk_flush,
-    .get_info = NULL
-};
+/* Ramdisk operations - initialized at runtime to avoid ARM64 relocation issues */
+static struct fut_blockdev_ops ramdisk_ops;
+
+/* Initialize ramdisk operations at runtime */
+static void ramdisk_init_ops(void) {
+    static bool initialized = false;
+    if (initialized) {
+        return;
+    }
+
+    ramdisk_ops.read = ramdisk_read;
+    ramdisk_ops.write = ramdisk_write;
+    ramdisk_ops.flush = ramdisk_flush;
+    ramdisk_ops.get_info = NULL;
+
+    initialized = true;
+}
 
 /* ============================================================
  *   Ramdisk Creation
@@ -189,7 +200,11 @@ static struct fut_blockdev *ramdisk_create_common(const char *name,
     dev->capacity = size_bytes;
     dev->read_only = false;
     dev->flags = BLOCKDEV_FLAG_VIRTUAL;
+
+    /* Initialize operations at runtime */
+    ramdisk_init_ops();
     dev->ops = &ramdisk_ops;
+
     dev->private_data = data;
     dev->reads = 0;
     dev->writes = 0;

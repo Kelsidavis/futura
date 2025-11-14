@@ -80,17 +80,30 @@ static int blockdev_compat_write(struct fut_blockdev *dev, uint64_t block_num,
 }
 #endif
 
-static const struct fut_blockdev_ops compat_ops = {
-    .read = blockdev_compat_read,
-    .write = blockdev_compat_write,
-    .flush = NULL,
-};
+/* Compatibility operations - initialized at runtime to avoid ARM64 relocation issues */
+static struct fut_blockdev_ops compat_ops;
+
+/* Initialize compat operations at runtime */
+static void blockdev_init_compat_ops(void) {
+    static bool initialized = false;
+    if (initialized) {
+        return;
+    }
+
+    compat_ops.read = blockdev_compat_read;
+    compat_ops.write = blockdev_compat_write;
+    compat_ops.flush = NULL;
+
+    initialized = true;
+}
 
 /**
  * Register a block core device with the legacy blockdev API for VFS compatibility.
  */
 int fut_blockdev_register_compat(const char *name, uint32_t block_size,
                                    uint64_t block_count, void *backend_ctx) {
+    /* Initialize operations at runtime */
+    blockdev_init_compat_ops();
     struct fut_blockdev *dev = fut_malloc(sizeof(struct fut_blockdev));
     if (!dev) {
         return BLOCKDEV_ENODEV;

@@ -6,8 +6,8 @@
  * Implements listen() to mark socket as passive, ready to accept connections.
  *
  * Phase 1 (Completed): Basic listen implementation with socket infrastructure
- * Phase 2 (Current): Enhanced validation, backlog categorization, and detailed logging
- * Phase 3: Connection queue management
+ * Phase 2 (Completed): Enhanced validation, backlog categorization, and detailed logging
+ * Phase 3 (Completed): Connection queue management with backlog enforcement
  * Phase 4: Advanced features (TCP Fast Open, defer_accept, etc.)
  */
 

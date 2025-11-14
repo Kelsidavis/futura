@@ -64,6 +64,17 @@ struct fut_task {
 
     /* File system context */
     uint64_t current_dir_ino;          // Current working directory inode (root=1)
+    char *cwd_cache;                   // Cached current working directory path
+
+    /* I/O priority */
+    int ioprio;                        // I/O priority (class + level encoded)
+    int ioprio_class;                  // I/O priority class (0=none, 1=RT, 2=BE, 3=IDLE)
+    int ioprio_level;                  // I/O priority level (0-7 for BE/RT, ignored for IDLE)
+
+    /* POSIX capabilities */
+    uint64_t cap_effective;            // Effective capability set
+    uint64_t cap_permitted;            // Permitted capability set
+    uint64_t cap_inheritable;          // Inheritable capability set
 
     /* File descriptor table (per-task, for process isolation) */
     struct fut_file **fd_table;        // Array of file pointers

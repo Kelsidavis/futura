@@ -58,6 +58,8 @@ struct fut_vnode {
     enum fut_vnode_type type;       /* File type */
     uint64_t ino;                   /* Inode number */
     uint32_t mode;                  /* File mode/permissions */
+    uint32_t uid;                   /* File owner UID */
+    uint32_t gid;                   /* File owner GID */
     uint64_t size;                  /* File size in bytes */
     uint32_t nlinks;                /* Number of hard links */
 

@@ -3,6 +3,119 @@
  * Copyright (C) 2025 Futura OS Project
  *
  * Low-level context switching routines for ARM64 architecture.
+ *
+ * ARM64 Context Switching Framework
+ * ==================================
+ *
+ * Phase 1 (Completed): Basic Cooperative Context Switching
+ * -----
+ * Status: ✓ Implemented and tested
+ * - Register preservation (x0-x30)
+ * - Callee-saved register save/restore (x19-x29, x30/LR)
+ * - Stack pointer management (SP_EL1 for kernel, SP_EL0 for user)
+ * - Program counter restoration
+ * - PSTATE restoration for EL1/EL0 transitions
+ * - Asynchronous context save: NULL old context support
+ * - Per-task CPU context pointer allocation
+ * - Kernel stack switch on context change
+ *
+ * Key Optimization:
+ * - Caller-saved registers (x0-x18): Not saved (caller responsibility)
+ * - Callee-saved registers (x19-x29, x30): Explicitly saved/restored
+ * - Minimal register shuffling (x0, x1 only partially used)
+ *
+ * Phase 2 (Planned): Page Table Context Switching
+ * -----
+ * Status: ⏳ Framework in place, TTBR context switching pending
+ * - TTBR0_EL1 save/restore (per-task user page table base)
+ * - TTBR1_EL1 management (kernel page table, usually fixed)
+ * - TLB invalidation on context switch (TLBI ASIDE1)
+ * - Context ID (CONTEXTID_EL1) management
+ * - ASID isolation for address space separation
+ *
+ * Phase 3 (Planned): Advanced Context Management
+ * -----
+ * Status: ⏳ Deferred
+ * - FPU context preservation (v0-v31, FPSR, FPCR)
+ * - Lazy FPU restoration strategy
+ * - System register context (TPIDR_EL0, TPIDRRO_EL0)
+ * - Privileged system registers (SCTLR_EL1, ACTLR_EL1)
+ *
+ * CPU Context Structure (fut_cpu_context_t)
+ * ==========================================
+ *
+ * Memory Layout:
+ *   Offset 0:   x0
+ *   Offset 8:   x1
+ *   Offset 16:  x19
+ *   Offset 24:  x20
+ *   ...
+ *   Offset 112: sp (SP_EL1 - kernel stack pointer)
+ *   Offset 120: sp_el0 (SP_EL0 - user stack pointer)
+ *   Offset 128: pc (program counter)
+ *   Offset 136: pstate (processor state)
+ *   Offset 144: ttbr0_el1 (user page table base)
+ *
+ * Context Switching Flow
+ * ======================
+ *
+ * 1. Scheduler calls: fut_switch_context(old_ctx, new_ctx)
+ *    - old_ctx: Current task's CPU context (may be NULL for first switch)
+ *    - new_ctx: Next task's CPU context
+ *
+ * 2. Save old context (if not NULL):
+ *    - Save callee-saved registers (x19-x29, x30)
+ *    - Save current stack pointer (SP_EL1)
+ *    - Save user stack pointer (SP_EL0)
+ *    - Save program counter (PC at return label)
+ *    - Save processor state (PSTATE for privilege level)
+ *
+ * 3. Restore new context:
+ *    - Check if target is EL0 (user) or EL1 (kernel)
+ *    - Restore callee-saved registers
+ *    - Restore stack pointer
+ *    - If EL0: Setup ERET path (ELR_EL1, SPSR_EL1, TTBRo_EL1)
+ *    - If EL1: Direct return (normal function return)
+ *
+ * 4. For EL0 return (user code):
+ *    - Set ELR_EL1 to user PC
+ *    - Set SPSR_EL1 to PSTATE
+ *    - Load user page table (TTBR0_EL1)
+ *    - Load user stack pointer (SP_EL0)
+ *    - Execute ERET (exception return to EL0)
+ *
+ * 5. For EL1 return (kernel code):
+ *    - Direct RET instruction
+ *    - Uses saved return address (x30/LR)
+ *
+ * Register Calling Convention
+ * ============================
+ *
+ * Caller-saved (x0-x18):
+ *   - Not preserved across function calls
+ *   - Caller must save if needed
+ *   - Used for argument passing and return values
+ *
+ * Callee-saved (x19-x28, x29, x30):
+ *   - Must be preserved by called function
+ *   - This routine explicitly saves/restores them
+ *   - x29: Frame pointer (FP)
+ *   - x30: Link register (LR / return address)
+ *
+ * Privilege Level Transitions
+ * ============================
+ *
+ * EL1 (Kernel) Context:
+ *   - PSTATE: 0x05 (EL1h mode)
+ *   - Stack: Kernel stack (SP_EL1)
+ *   - Page tables: Kernel TTBR0_EL1 (usually)
+ *   - Return: Direct RET instruction
+ *
+ * EL0 (User) Context:
+ *   - PSTATE: 0x00 (EL0 mode)
+ *   - Stack: User stack (SP_EL0)
+ *   - Page tables: User TTBR0_EL1 (per-task)
+ *   - Return: ERET instruction (exception return)
  */
 
 .section .text

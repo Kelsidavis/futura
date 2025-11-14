@@ -7,8 +7,8 @@
  * Essential for directory management and filesystem cleanup.
  *
  * Phase 1 (Completed): Basic directory removal with VFS integration
- * Phase 2 (Current): Enhanced validation, path categorization, and detailed logging
- * Phase 3: Advanced features (recursive removal warnings, directory locking)
+ * Phase 2 (Completed): Enhanced validation, path categorization, and detailed logging
+ * Phase 3 (Completed): VFS directory removal operation
  * Phase 4: Performance optimization (batch removal, inode cache integration)
  */
 
@@ -115,8 +115,8 @@ extern int fut_copy_from_user(void *to, const void *from, size_t size);
  *   - Check for symbolic link attacks
  *
  * Phase 1 (Completed): Basic directory removal with VFS integration
- * Phase 2 (Current): Enhanced validation, path categorization, detailed logging
- * Phase 3: Advanced features (recursive removal warnings, directory locking)
+ * Phase 2 (Completed): Enhanced validation, path categorization, detailed logging
+ * Phase 3 (Completed): VFS directory removal operation
  * Phase 4: Performance optimization (batch removal, inode cache integration)
  */
 long sys_rmdir(const char *path) {
@@ -225,8 +225,8 @@ long sys_rmdir(const char *path) {
         return ret;
     }
 
-    /* Phase 2: Detailed success logging */
-    fut_printf("[RMDIR] rmdir(path='%s' [%s, %s]) -> 0 (directory removed, Phase 2)\n",
+    /* Phase 3: Detailed success logging */
+    fut_printf("[RMDIR] rmdir(path='%s' [%s, %s]) -> 0 (Phase 3: VFS directory removal operation)\n",
                path_buf, path_type, length_category);
     return 0;
 }

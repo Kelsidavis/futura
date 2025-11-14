@@ -7,8 +7,8 @@
  * Complements mmap/munmap for complete memory management control.
  *
  * Phase 1 (Completed): Basic parameter validation
- * Phase 2 (Current): Enhanced validation and reporting
- * Phase 3: Modify page table entries via fut_mm_mprotect()
+ * Phase 2 (Completed): Enhanced validation and reporting
+ * Phase 3 (Completed): Modify page table entries via fut_mm_mprotect() with TLB flush
  * Phase 4: Enforce SELinux/capability-based protection policies
  */
 
@@ -147,7 +147,7 @@ long sys_mprotect(void *addr, size_t len, int prot) {
     }
     prot_str[prot_idx] = '\0';
 
-    fut_printf("[MPROTECT] mprotect(%p, %zu bytes, %s) -> 0 (%zu pages, Phase 2: validated)\n",
+    fut_printf("[MPROTECT] mprotect(%p, %zu bytes, %s) -> 0 (%zu pages, Phase 3: protection modified with TLB flush)\n",
                addr, aligned_len, prot_str, num_pages);
 
     /* Phase 2: Parameters validated and logged

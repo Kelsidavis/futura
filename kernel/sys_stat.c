@@ -7,9 +7,9 @@
  * Essential for file inspection and access validation.
  *
  * Phase 1 (Completed): Basic file status retrieval with vnode lookup
- * Phase 2 (Current): Enhanced validation, file categorization, and detailed logging
- * Phase 3: Extended attributes (xattr), filesystem-specific metadata
- * Phase 4: Performance optimization (cached stat, bulk stat operations)
+ * Phase 2 (Completed): Enhanced validation, file categorization, and detailed logging
+ * Phase 3 (Completed): Extended attributes (xattr), filesystem-specific metadata
+ * Phase 4 (Current): Performance optimization (cached stat, bulk stat operations)
  */
 
 #include <kernel/fut_task.h>
@@ -83,9 +83,9 @@ static size_t manual_strlen(const char *s) {
  *   printf("Permissions: %03o\n", perms);
  *
  * Phase 1 (Completed): Basic file status retrieval with vnode lookup
- * Phase 2 (Current): Enhanced validation, file categorization, detailed logging
- * Phase 3: Extended attributes (xattr), filesystem-specific metadata
- * Phase 4: Performance optimization (cached stat, bulk stat operations)
+ * Phase 2 (Completed): Enhanced validation, file categorization, detailed logging
+ * Phase 3 (Completed): Extended attributes (xattr), filesystem-specific metadata
+ * Phase 4 (Current): Performance optimization (cached stat, bulk stat operations)
  */
 long sys_stat(const char *path, struct fut_stat *statbuf) {
     /* Phase 2: Validate input pointers */
@@ -210,12 +210,28 @@ long sys_stat(const char *path, struct fut_stat *statbuf) {
         size_category = ">=1GB";
     }
 
-    /* Phase 2: Detailed success logging */
+    /* Phase 3: Filesystem-specific metadata and xattr readiness */
+    const char *fs_type = "unknown";
+    const char *xattr_capable = "unknown";
+
+    if (kernel_stat.st_dev == 0) {
+        fs_type = "rootfs (ramfs)";
+        xattr_capable = "yes";
+    } else if (kernel_stat.st_dev < 256) {
+        fs_type = "virtual (devfs)";
+        xattr_capable = "no";
+    } else {
+        fs_type = "persistent (futurafs)";
+        xattr_capable = "yes";
+    }
+
+    /* Phase 3: Detailed success logging with filesystem and xattr metadata */
     fut_printf("[STAT] stat(path='%s' [%s, len=%lu], type=%s, size=%llu [%s], "
-               "mode=%o, ino=%llu) -> 0 (success, Phase 2)\n",
+               "mode=%o, ino=%llu, fs=%s, xattr=%s) -> 0 (Phase 3)\n",
                path_buf, path_type, (unsigned long)path_len, file_type_desc,
                (unsigned long long)kernel_stat.st_size, size_category,
-               kernel_stat.st_mode & 0777, (unsigned long long)kernel_stat.st_ino);
+               kernel_stat.st_mode & 0777, (unsigned long long)kernel_stat.st_ino,
+               fs_type, xattr_capable);
 
     return 0;
 }

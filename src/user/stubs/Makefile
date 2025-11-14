@@ -2,20 +2,45 @@
 #
 # Simple user-space stubs used by kernel exec regression tests.
 
+# Platform detection (defaults to x86_64 if not specified)
+PLATFORM ?= x86_64
+
+# Toolchain (can be overridden by parent Makefile or command line)
+ifeq ($(PLATFORM),arm64)
+    CROSS_COMPILE ?= /opt/homebrew/bin/aarch64-elf-
+    CC := $(CROSS_COMPILE)gcc
+    LD := $(CROSS_COMPILE)ld
+    AR := $(CROSS_COMPILE)ar
+    ARCH_CFLAGS := -march=armv8-a -mtune=cortex-a53
+else
+    CC := gcc
+    LD := ld
+    AR := ar
+    ARCH_CFLAGS := -m64
+endif
+
 ROOT := ../../..
 BUILD_ROOT := $(ROOT)/build
-OBJ_DIR := $(BUILD_ROOT)/obj/user/stubs
-BIN_DIR := $(BUILD_ROOT)/bin/user
-LIB_DIR := $(BUILD_ROOT)/lib
-
-CC := gcc
-LD := ld
+OBJ_DIR := $(BUILD_ROOT)/obj/$(PLATFORM)/user/stubs
+BIN_DIR := $(BUILD_ROOT)/bin/$(PLATFORM)/user
+LIB_DIR := $(BUILD_ROOT)/lib/$(PLATFORM)
 
 CFLAGS := -std=c2x -ffreestanding -nostdlib -fno-builtin -fno-stack-protector
 CFLAGS += -Wall -Wextra -Werror -g -O2
+CFLAGS += $(ARCH_CFLAGS)
 CFLAGS += -I$(ROOT)/include
 
-LDSCRIPT := ../libfutura/userland.ld
+# Linker flags
+ifeq ($(PLATFORM),arm64)
+    LDSCRIPT := ../libfutura/userland_arm64.ld
+    LDFLAGS := -static -T $(LDSCRIPT)
+    LIBGCC := $(shell $(CC) -print-libgcc-file-name)
+else
+    LDSCRIPT := ../libfutura/userland.ld
+    LDFLAGS := -nostdlib -static -T $(LDSCRIPT)
+    LIBGCC :=
+endif
+
 CRT0 := $(LIB_DIR)/crt0.o
 LIBFUTURA := $(LIB_DIR)/libfutura.a
 
@@ -31,11 +56,11 @@ all: $(TARGETS)
 
 $(BIN_DIR)/init_stub: $(OBJ_DIR)/init_stub.o $(CRT0) $(LIBFUTURA) | $(BIN_DIR)
 	@echo "LD $@"
-	@$(LD) -nostdlib -T $(LDSCRIPT) --unresolved-symbols=ignore-all -o $@ $(CRT0) $(OBJ_DIR)/init_stub.o $(LIBFUTURA)
+	@$(LD) $(LDFLAGS) --unresolved-symbols=ignore-all -o $@ $(CRT0) $(OBJ_DIR)/init_stub.o $(LIBFUTURA) $(LIBGCC)
 
 $(BIN_DIR)/second: $(OBJ_DIR)/second.o $(CRT0) $(LIBFUTURA) | $(BIN_DIR)
 	@echo "LD $@"
-	@$(LD) -nostdlib -T $(LDSCRIPT) --unresolved-symbols=ignore-all -o $@ $(CRT0) $(OBJ_DIR)/second.o $(LIBFUTURA)
+	@$(LD) $(LDFLAGS) --unresolved-symbols=ignore-all -o $@ $(CRT0) $(OBJ_DIR)/second.o $(LIBFUTURA) $(LIBGCC)
 
 $(OBJ_DIR)/init_stub.o: init_stub.c | $(OBJ_DIR)
 	@echo "CC $<"

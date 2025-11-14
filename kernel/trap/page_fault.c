@@ -473,6 +473,14 @@ bool fut_trap_handle_page_fault(fut_interrupt_frame_t *frame) {
                (unsigned long long)fault_addr,
                (unsigned long long)esr,
                (unsigned long long)frame->pc);
+    fut_printf("[#PF-ARM64] Registers: x0=0x%llx x1=0x%llx x2=0x%llx x3=0x%llx\n",
+               (unsigned long long)frame->x[0], (unsigned long long)frame->x[1],
+               (unsigned long long)frame->x[2], (unsigned long long)frame->x[3]);
+    fut_printf("[#PF-ARM64] x4=0x%llx x5=0x%llx x6=0x%llx x7=0x%llx\n",
+               (unsigned long long)frame->x[4], (unsigned long long)frame->x[5],
+               (unsigned long long)frame->x[6], (unsigned long long)frame->x[7]);
+    fut_printf("[#PF-ARM64] sp=0x%llx sp_el0=0x%llx\n",
+               (unsigned long long)frame->sp, (unsigned long long)frame->sp_el0);
 
     return false;
 }

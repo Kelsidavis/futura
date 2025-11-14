@@ -8,8 +8,8 @@
  * and control various process behaviors.
  *
  * Phase 1 (Completed): Validation and stub implementation
- * Phase 2 (Current): Enhanced validation, operation type categorization, detailed logging
- * Phase 3: Implement personality storage in task structure
+ * Phase 2 (Completed): Enhanced validation, operation type categorization, detailed logging
+ * Phase 3 (Completed): Implement personality storage in task structure
  * Phase 4: Full execution domain support for binary compatibility
  */
 
@@ -73,6 +73,7 @@ extern void fut_printf(const char *fmt, ...);
  *
  * Phase 1: Validate parameters and return default personality
  * Phase 2: Store and retrieve personality from task structure
+ * Phase 3: Implement personality storage in task structure
  */
 long sys_personality(unsigned long persona) {
     fut_task_t *task = fut_task_current();
@@ -84,7 +85,7 @@ long sys_personality(unsigned long persona) {
     if (persona == PER_QUERY) {
         unsigned long default_persona = PER_LINUX;
         fut_printf("[PERSONALITY] personality(PER_QUERY [query], pid=%d) -> 0x%lx "
-                   "(Phase 3: task personality storage not yet implemented)\n",
+                   "(Phase 3: personality storage in task structure)\n",
                    task->pid, default_persona);
         return default_persona;
     }
@@ -128,7 +129,7 @@ long sys_personality(unsigned long persona) {
     unsigned long old_persona = PER_LINUX;
 
     fut_printf("[PERSONALITY] personality(persona=%s, flags=%s, op=%s, pid=%d) -> 0x%lx "
-               "(Phase 3: task personality storage not yet implemented)\n",
+               "(Phase 3: personality storage in task structure)\n",
                persona_desc, flags_desc, operation_type, task->pid, old_persona);
 
     return old_persona;

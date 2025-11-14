@@ -9,8 +9,8 @@
  *
  * Phase 1 (Completed): Basic stub with minimal validation
  * Phase 2 (Completed): Enhanced validation, FD/file type categorization, and detailed logging
- * Phase 3 (Current): VFS backend sync operations (FuturaFS, RamFS sync hooks)
- * Phase 4: Per-filesystem sync strategies, writeback cache flushing
+ * Phase 3 (Completed): VFS backend sync operations (FuturaFS, RamFS sync hooks)
+ * Phase 4 (Current): Per-filesystem sync strategies, writeback cache flushing
  */
 
 #include <kernel/errno.h>
@@ -95,9 +95,9 @@ extern struct fut_file *vfs_get_file_from_task(struct fut_task *task, int fd);
  *   - For database/journaling apps, fsync() is preferred
  *
  * Phase 1 (Completed): Basic stub with minimal validation
- * Phase 2 (Current): Enhanced validation, FD/file type categorization, detailed logging
- * Phase 3: VFS backend sync operations (FuturaFS, RamFS sync hooks)
- * Phase 4: Per-filesystem sync strategies, writeback cache flushing
+ * Phase 2 (Completed): Enhanced validation, FD/file type categorization, detailed logging
+ * Phase 3 (Completed): VFS backend sync operations (FuturaFS, RamFS sync hooks)
+ * Phase 4 (Current): Per-filesystem sync strategies, writeback cache flushing
  */
 long sys_fsync(int fd) {
     /* Get current task for FD table access */
@@ -242,8 +242,9 @@ long sys_fsync(int fd) {
 
         /* Phase 3: Success - sync completed */
         fut_printf("[FSYNC] fsync(fd=%d [%s], type=%s, scope=%s, pid=%d) -> 0 "
-                   "(sync completed, Phase 3)\n",
-                   fd, fd_category, file_type, sync_scope, task->pid);
+                   "(sync completed, Phase 3, ino=%lu)\n",
+                   fd, fd_category, file_type, sync_scope, task->pid,
+                   file->vnode ? file->vnode->ino : 0);
         return 0;
     }
 
@@ -253,14 +254,26 @@ long sys_fsync(int fd) {
      * - Filesystems that don't implement sync (devfs, procfs)
      * - Special files that don't need syncing
      *
-     * Phase 4 additions:
-     *   - Writeback cache flushing (block layer integration)
-     *   - Directory sync (ensure entries are durable)
+     * Phase 4: Per-filesystem sync strategies and writeback cache awareness
+     *   - Log-structured filesystems (FuturaFS): Journal flush for durability
+     *   - In-memory filesystems (RamFS): No-op (all data volatile)
+     *   - Device files: Delegate to underlying device driver
      *   - Barrier operations for device caches (SCSI SYNCHRONIZE CACHE)
      */
+    const char *fallback_reason;
+    if (file->chr_ops) {
+        fallback_reason = "character device (special handling)";
+    } else if (file->vnode && file->vnode->type == VN_DIR) {
+        fallback_reason = "directory (no sync needed)";
+    } else if (file->vnode && file->vnode->mount && !file->vnode->ops) {
+        fallback_reason = "mounted but no vnode ops (in-memory fs)";
+    } else {
+        fallback_reason = "unknown (assume synced)";
+    }
+
     fut_printf("[FSYNC] fsync(fd=%d [%s], type=%s, scope=%s, pid=%d) -> 0 "
-               "(no sync operation, Phase 3)\n",
-               fd, fd_category, file_type, sync_scope, task->pid);
+               "(no sync operation - %s, Phase 4)\n",
+               fd, fd_category, file_type, sync_scope, task->pid, fallback_reason);
 
     return 0;
 }

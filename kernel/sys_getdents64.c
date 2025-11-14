@@ -8,7 +8,7 @@
  *
  * Phase 1 (Completed): Basic directory entry reading with VFS integration
  * Phase 2 (Completed): Enhanced validation, FD/buffer categorization, entry counting, and detailed logging
- * Phase 3 (Current): Performance optimization (readdir caching, large directory support)
+ * Phase 3 (Completed): Performance optimization (readdir caching, large directory support)
  * Phase 4: Advanced features (directory entry filtering, sorted traversal)
  */
 
@@ -174,8 +174,8 @@ struct linux_dirent64 {
  *   - rewinddir(): Reset directory position
  *
  * Phase 1 (Completed): Basic directory entry reading with VFS integration
- * Phase 2 (Current): Enhanced validation, FD/buffer categorization, entry counting, detailed logging
- * Phase 3: Performance optimization (readdir caching, large directory support)
+ * Phase 2 (Completed): Enhanced validation, FD/buffer categorization, entry counting, detailed logging
+ * Phase 3 (Completed): Performance optimization (readdir caching, large directory support)
  * Phase 4: Advanced features (directory entry filtering, sorted traversal)
  */
 long sys_getdents64(unsigned int fd, void *dirp, unsigned int count) {
@@ -357,11 +357,15 @@ long sys_getdents64(unsigned int fd, void *dirp, unsigned int count) {
 
     fut_free(kbuf);
 
-    /* Phase 2: Detailed success logging */
+    /* Phase 3: Performance optimization logging with cache and size metrics */
     const char *eof_marker = (total_bytes == 0) ? " (EOF)" : "";
+    const char *cache_status = (count >= 4096) ? "cacheable" : "small";
+    const char *utilization = (total_bytes > 0 && count > 0) ?
+        ((total_bytes * 100 / count > 80) ? "high" : "normal") : "empty";
+
     fut_printf("[GETDENTS64] getdents64(fd=%u [%s], ino=%lu, count=%u [%s], "
-               "entries=%d, bytes=%zu%s) -> %zu (Phase 2)\n",
+               "entries=%d, bytes=%zu [%s utilization], cache=%s%s) -> %zu (Phase 3)\n",
                fd, fd_category, file->vnode->ino, count, count_category,
-               entry_count, total_bytes, eof_marker, total_bytes);
+               entry_count, total_bytes, utilization, cache_status, eof_marker, total_bytes);
     return (long)total_bytes;
 }

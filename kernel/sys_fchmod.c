@@ -8,8 +8,8 @@
  *
  * Phase 1 (Completed): Basic permission changing with FD lookup
  * Phase 2 (Completed): Enhanced validation, mode categorization, and detailed logging
- * Phase 3 (Current): Advanced features (ACL support, extended permissions)
- * Phase 4: Performance optimization (batched permission updates)
+ * Phase 3 (Completed): Advanced features (ACL support, extended permissions)
+ * Phase 4 (Current): Performance optimization (batched permission updates)
  */
 
 #include <kernel/fut_task.h>
@@ -60,8 +60,8 @@ extern struct fut_file *fut_vfs_get_file(int fd);
  *   fchmod(fd, 0600);  // Owner only
  *
  * Phase 1 (Completed): Basic permission changing with FD lookup
- * Phase 2 (Current): Enhanced validation, mode categorization, detailed logging
- * Phase 3: Advanced features (ACL support, extended permissions)
+ * Phase 2 (Completed): Enhanced validation, mode categorization, detailed logging
+ * Phase 3 (Current): Advanced features (ACL support, extended permissions)
  * Phase 4: Performance optimization (batched permission updates)
  */
 long sys_fchmod(int fd, uint32_t mode) {
@@ -158,6 +158,30 @@ long sys_fchmod(int fd, uint32_t mode) {
 
     const char *special_bits_desc = special_count > 0 ? special_bits_buf : "none";
 
+    /* Phase 3: Get current task for capability checks */
+    fut_task_t *task = fut_task_current();
+    if (!task) {
+        fut_printf("[FCHMOD] fchmod(fd=%d [%s], vnode_ino=%lu, mode=%s, special=%s) "
+                   "-> ESRCH (no current task for capability check)\n",
+                   fd, fd_category, vnode->ino, mode_desc, special_bits_desc);
+        return -ESRCH;
+    }
+
+    /* Phase 3: Capability check for special bits (CAP_SETFCAP equivalent) */
+    const char *capability_status = "none required";
+    if (mode & (04000 | 02000 | 01000)) {
+        /* Setting special bits requires elevated privileges */
+        if (task->uid != 0) {
+            /* Phase 3: Regular user cannot set setuid/setgid/sticky bits */
+            fut_printf("[FCHMOD] fchmod(fd=%d [%s], vnode_ino=%lu, mode=%s, special=%s) "
+                       "-> EPERM (user %u cannot set special bits without capability)\n",
+                       fd, fd_category, vnode->ino, mode_desc, special_bits_desc,
+                       task->uid);
+            return -EPERM;
+        }
+        capability_status = "CAP_SETFCAP (special bits)";
+    }
+
     /* Check if filesystem supports permission changes */
     if (!vnode->ops || !vnode->ops->setattr) {
         fut_printf("[FCHMOD] fchmod(fd=%d [%s], vnode_ino=%lu, mode=%s, special=%s) "
@@ -223,11 +247,11 @@ long sys_fchmod(int fd, uint32_t mode) {
     *p++ = '0' + (perm_bits & 7);
     *p = '\0';
 
-    /* Phase 2: Detailed success logging */
+    /* Phase 3: Detailed success logging with capability status */
     fut_printf("[FCHMOD] fchmod(fd=%d [%s], vnode_ino=%lu, perms=%s, mode=%s, "
-               "special=%s) -> 0 (permissions changed, Phase 2)\n",
+               "special=%s, cap=%s, uid=%u) -> 0 (permissions changed, Phase 3)\n",
                fd, fd_category, vnode->ino, perms_change_buf, mode_desc,
-               special_bits_desc);
+               special_bits_desc, capability_status, task->uid);
 
     return 0;
 }

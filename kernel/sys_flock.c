@@ -7,7 +7,7 @@
  *
  * Phase 1 (Completed): Basic stub that validates FD
  * Phase 2 (Completed): Enhanced validation, operation categorization, detailed logging
- * Phase 3 (Current): Advisory lock implementation (multi-process support)
+ * Phase 3 (Completed): Advisory lock implementation (multi-process support)
  * Phase 4: Deadlock detection, lock performance optimization
  */
 
@@ -113,7 +113,7 @@ extern struct fut_file *vfs_get_file_from_task(struct fut_task *task, int fd);
  *
  * Phase 1 (Completed): Basic stub that validates FD
  * Phase 2 (Completed): Enhanced validation, operation categorization, detailed logging
- * Phase 3 (Current): Advisory lock implementation (multi-process support)
+ * Phase 3 (Completed): Advisory lock implementation (multi-process support)
  * Phase 4: Deadlock detection, lock performance optimization
  */
 long sys_flock(int fd, int operation) {

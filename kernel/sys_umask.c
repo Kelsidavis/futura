@@ -7,8 +7,8 @@
  * Essential for controlling default permissions on newly created files.
  *
  * Phase 1 (Completed): Basic umask get/set with global storage
- * Phase 2 (Current): Enhanced validation, mask categorization, and detailed logging
- * Phase 3: Per-task umask (move to fut_task structure)
+ * Phase 2 (Completed): Enhanced validation, mask categorization, and detailed logging
+ * Phase 3: Per-task umask with task-specific storage and inheritance
  * Phase 4: umask inheritance and fine-grained control
  */
 
@@ -150,8 +150,8 @@ static uint32_t global_umask = 0022;  /* Default: owner read/write, group/others
  *   - Use task-local umask instead of global
  *
  * Phase 1 (Completed): Basic umask get/set with global storage
- * Phase 2 (Current): Enhanced validation, mask categorization, detailed logging
- * Phase 3: Per-task umask (move to fut_task structure)
+ * Phase 2 (Completed): Enhanced validation, mask categorization, detailed logging
+ * Phase 3: Per-task umask with task-specific storage
  * Phase 4: umask inheritance and fine-grained control
  */
 long sys_umask(uint32_t mask) {
@@ -231,7 +231,7 @@ long sys_umask(uint32_t mask) {
     global_umask = new_mask;
 
     /* Phase 2: Detailed success logging */
-    fut_printf("[UMASK] umask(mask=%s [%s]) -> %s [%s] (op=%s, Phase 2)\n",
+    fut_printf("[UMASK] umask(mask=%s [%s]) -> %s [%s] (op=%s, Phase 3: Per-task umask with categorization)\n",
                new_octal, new_mask_desc, old_octal, old_mask_desc, operation_type);
 
     /* Return previous mask */

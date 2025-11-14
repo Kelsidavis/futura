@@ -140,17 +140,19 @@ long sys_ioprio_set(int which, int who, int ioprio) {
     }
 
     /* Phase 3: Store I/O priority in task structure for I/O scheduler integration */
-    /* Note: Priority is encoded with class in high bits, level in low bits */
-    task->ioprio = ioprio;
-    task->ioprio_class = class;
-    task->ioprio_level = data;
+    /* TODO: I/O priority fields not yet added to fut_task_t struct */
+    /* Unimplemented - these fields would need to be added to the task structure:
+       task->ioprio = ioprio;
+       task->ioprio_class = class;
+       task->ioprio_level = data;
+    */
 
-    /* Phase 3: Enhanced logging with scheduler enforcement tracking */
-    fut_printf("[IOPRIO] ioprio_set(which=%s, who=%d [%s], class=%s, priority=%d, pid=%d) -> 0 "
-               "(Phase 3: stored ioprio=0x%x, class=%d, level=%d, I/O scheduler will enforce)\n",
-               which_desc, who, who_desc, class_desc, data, task->pid, ioprio, class, data);
+    /* Return -ENOSYS for now - I/O priority scheduling not yet implemented */
+    fut_printf("[IOPRIO] ioprio_set(which=%s, who=%d [%s], class=%s, priority=%d, pid=%d) -> ENOSYS "
+               "(I/O priority scheduling not yet implemented)\n",
+               which_desc, who, who_desc, class_desc, data, task->pid);
 
-    return 0;
+    return -ENOSYS;
 }
 
 /**
@@ -215,24 +217,17 @@ long sys_ioprio_get(int which, int who) {
     }
 
     /* Phase 3: Retrieve I/O priority from task structure */
-    int stored_ioprio = task->ioprio;
-    int stored_class = IOPRIO_PRIO_CLASS(stored_ioprio);
-    int stored_level = IOPRIO_PRIO_DATA(stored_ioprio);
+    /* TODO: I/O priority fields not yet added to fut_task_t struct */
+    /* Unimplemented - would retrieve from:
+       int stored_ioprio = task->ioprio;
+       int stored_class = IOPRIO_PRIO_CLASS(stored_ioprio);
+       int stored_level = IOPRIO_PRIO_DATA(stored_ioprio);
+    */
 
-    /* Default to best-effort with priority 4 if not set */
-    if (stored_ioprio == 0) {
-        stored_ioprio = IOPRIO_PRIO_VALUE(IOPRIO_CLASS_BE, 4);
-        stored_class = IOPRIO_CLASS_BE;
-        stored_level = 4;
-    }
+    /* Return -ENOSYS for now - I/O priority scheduling not yet implemented */
+    fut_printf("[IOPRIO] ioprio_get(which=%s, who=%d [%s], pid=%d) -> ENOSYS "
+               "(I/O priority scheduling not yet implemented)\n",
+               which_desc, who, who_desc, task->pid);
 
-    /* Phase 3: Enhanced logging with retrieved priority */
-    fut_printf("[IOPRIO] ioprio_get(which=%s, who=%d [%s], pid=%d) -> 0x%x "
-               "(Phase 3: retrieved ioprio=0x%x, class=%d [%s], level=%d)\n",
-               which_desc, who, who_desc, task->pid, stored_ioprio, stored_ioprio, stored_class,
-               (stored_class == IOPRIO_CLASS_BE ? "best-effort" :
-                stored_class == IOPRIO_CLASS_RT ? "realtime" :
-                stored_class == IOPRIO_CLASS_IDLE ? "idle" : "none"), stored_level);
-
-    return stored_ioprio;
+    return -ENOSYS;
 }

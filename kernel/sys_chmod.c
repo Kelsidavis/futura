@@ -39,7 +39,7 @@ static uint32_t parse_symbolic_permissions(const char *mode_str) {
     uint32_t result = 0;
     if (!mode_str) return 0;
 
-    /* Phase 3: Parse symbolic permission strings like "u+rwx", "g-w", "o=" */
+    // Phase 3: Parse symbolic permission strings like "u+rwx", "g-w", "o="
     const char *p = mode_str;
     uint32_t who = 0;         /* u=owner, g=group, o=other, a=all */
     uint32_t op = 0;          /* +=add, -=remove, ==set */

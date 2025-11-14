@@ -46,6 +46,10 @@ else
     LIBGCC :=
 endif
 
+# Libfutura paths
+CRT0 := $(LIB_DIR)/crt0.o
+LIBFUTURA := $(LIB_DIR)/libfutura.a
+
 # Source files
 SRCS := main.c
 OBJS := $(SRCS:%.c=$(OBJ_DIR)/%.o)
@@ -58,8 +62,8 @@ TARGET := $(BIN_DIR)/posixd
 
 all: $(TARGET)
 
-$(TARGET): $(OBJS) | $(BIN_DIR)
-	$(LD) $(LDFLAGS) -o $@ $(OBJS) $(LIBGCC)
+$(TARGET): $(OBJS) $(CRT0) $(LIBFUTURA) | $(BIN_DIR)
+	$(LD) $(LDFLAGS) -o $@ $(CRT0) $(OBJS) $(LIBFUTURA) $(LIBGCC)
 	@echo "Built posixd: $@"
 
 $(OBJ_DIR)/%.o: %.c | $(OBJ_DIR)
@@ -70,6 +74,12 @@ $(OBJ_DIR):
 
 $(BIN_DIR):
 	@mkdir -p $(BIN_DIR)
+
+$(CRT0):
+	@$(MAKE) -C ../libfutura PLATFORM=$(PLATFORM) all
+
+$(LIBFUTURA):
+	@$(MAKE) -C ../libfutura PLATFORM=$(PLATFORM) all
 
 clean:
 	rm -rf $(OBJ_DIR) $(TARGET)

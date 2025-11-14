@@ -6,38 +6,9 @@
 
 #include <stdint.h>
 #include <stddef.h>
-
-/* Syscall numbers */
-#define __NR_read   0
-#define __NR_write  1
-#define __NR_open   2
-#define __NR_close  3
-#define __NR_exit   60
+#include "../libfutura/syscall_portable.h"
 
 typedef long ssize_t;
-
-/* Syscall wrappers */
-static inline long syscall3(long nr, long arg1, long arg2, long arg3) {
-    long ret;
-    __asm__ __volatile__(
-        "int $0x80\n"
-        : "=a"(ret)
-        : "a"(nr), "D"(arg1), "S"(arg2), "d"(arg3)
-        : "rcx", "r11", "memory"
-    );
-    return ret;
-}
-
-static inline long syscall1(long nr, long arg1) {
-    long ret;
-    __asm__ __volatile__(
-        "int $0x80\n"
-        : "=a"(ret)
-        : "a"(nr), "D"(arg1)
-        : "rcx", "r11", "memory"
-    );
-    return ret;
-}
 
 static inline ssize_t sys_read(int fd, void *buf, size_t count) {
     return syscall3(__NR_read, fd, (long)buf, count);

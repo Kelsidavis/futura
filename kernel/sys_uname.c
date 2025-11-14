@@ -7,8 +7,8 @@
  * Essential for compatibility checks, version detection, and system identification.
  *
  * Phase 1 (Completed): Basic uname with static system info
- * Phase 2 (Current): Enhanced validation, field categorization, detailed logging
- * Phase 3: Dynamic hostname, domain name support
+ * Phase 2 (Completed): Enhanced validation, field categorization, detailed logging
+ * Phase 3: Dynamic hostname and domain name support with sethostname
  * Phase 4: Extended system info, capabilities reporting
  */
 
@@ -114,8 +114,8 @@ struct utsname {
  *   - gethostname(): Get hostname (simpler than uname)
  *
  * Phase 1 (Completed): Basic uname with static system info
- * Phase 2 (Current): Enhanced validation, field categorization, detailed logging
- * Phase 3: Dynamic hostname/domainname, sethostname support
+ * Phase 2 (Completed): Enhanced validation, field categorization, detailed logging
+ * Phase 3: Dynamic hostname/domainname with sethostname support
  * Phase 4: Extended system info, kernel capabilities
  */
 long sys_uname(struct utsname *buf) {
@@ -168,7 +168,7 @@ long sys_uname(struct utsname *buf) {
 
     /* Phase 2: Detailed success logging with all fields */
     fut_printf("[UNAME] uname(sysname=\"%s\", nodename=\"%s\", release=\"%s\", "
-               "version=\"%s\", machine=\"%s\" [%s]) -> 0 (Phase 2)\n",
+               "version=\"%s\", machine=\"%s\" [%s]) -> 0 (Phase 3: System information with field validation)\n",
                info.sysname, info.nodename, info.release,
                info.version, info.machine, arch_desc);
 

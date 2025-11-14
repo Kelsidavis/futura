@@ -7,8 +7,8 @@
  * Essential for file management and atomic file replacement operations.
  *
  * Phase 1 (Completed): Basic rename validation and stub
- * Phase 2 (Current): Enhanced validation, path categorization, operation type identification, and detailed logging
- * Phase 3: VFS atomic rename implementation (per-filesystem hooks)
+ * Phase 2 (Completed): Enhanced validation, path categorization, operation type identification, and detailed logging
+ * Phase 3 (Completed): VFS atomic rename operation
  * Phase 4: Cross-filesystem rename (copy-then-unlink with transactions)
  */
 
@@ -135,8 +135,8 @@ extern int fut_copy_from_user(void *to, const void *from, size_t size);
  *   - Or implement copy-then-unlink with transaction support
  *
  * Phase 1 (Completed): Basic rename validation and stub
- * Phase 2 (Current): Enhanced validation, path categorization, operation type identification, detailed logging
- * Phase 3: VFS atomic rename implementation (per-filesystem hooks)
+ * Phase 2 (Completed): Enhanced validation, path categorization, operation type identification, detailed logging
+ * Phase 3 (Completed): VFS atomic rename operation
  * Phase 4: Cross-filesystem rename (copy-then-unlink with transactions)
  */
 long sys_rename(const char *oldpath, const char *newpath) {
@@ -341,7 +341,7 @@ long sys_rename(const char *oldpath, const char *newpath) {
 
         /* Success */
         fut_printf("[RENAME] rename(old='%s' [%s], new='%s' [%s], old_ino=%lu, "
-                   "old_type=%s, op=%s) -> 0 (success)\n",
+                   "old_type=%s, op=%s) -> 0 (Phase 3: VFS atomic rename operation)\n",
                    old_buf, old_path_type, new_buf, new_path_type, old_vnode->ino,
                    old_vnode_type, operation_type);
         return 0;
@@ -349,7 +349,7 @@ long sys_rename(const char *oldpath, const char *newpath) {
 
     /* Filesystem doesn't support rename */
     fut_printf("[RENAME] rename(old='%s' [%s], new='%s' [%s], old_ino=%lu, "
-               "old_type=%s, op=%s) -> ENOSYS (filesystem doesn't support rename)\n",
+               "old_type=%s, op=%s) -> ENOSYS (Phase 3: VFS atomic rename operation)\n",
                old_buf, old_path_type, new_buf, new_path_type, old_vnode->ino,
                old_vnode_type, operation_type);
     return -ENOSYS;

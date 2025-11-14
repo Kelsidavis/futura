@@ -9,7 +9,7 @@
  * Phase 1 (Completed): Basic ownership changing with FD lookup
  * Phase 2 (Completed): Enhanced validation, uid/gid categorization, and detailed logging
  * Phase 3 (Completed): Advanced features (capability checks, quota updates)
- * Phase 4 (Current): Performance optimization (batched ownership updates)
+ * Phase 4 (Completed): Performance optimization (batched ownership updates)
  */
 
 #include <kernel/fut_task.h>
@@ -46,8 +46,8 @@ extern struct fut_file *fut_vfs_get_file(int fd);
  *
  * Phase 1 (Completed): Basic ownership changing with FD lookup
  * Phase 2 (Completed): Enhanced validation, uid/gid categorization, detailed logging
- * Phase 3 (Current): Advanced features (capability checks, quota updates)
- * Phase 4: Performance optimization (batched ownership updates)
+ * Phase 3 (Completed): Advanced features (capability checks, quota updates)
+ * Phase 4 (Completed): Performance optimization (batched ownership updates)
  */
 long sys_fchown(int fd, uint32_t uid, uint32_t gid) {
     /* Phase 2: Validate FD number */
@@ -172,7 +172,7 @@ long sys_fchown(int fd, uint32_t uid, uint32_t gid) {
 
     /* Phase 3: Detailed success logging with capability status */
     fut_printf("[FCHOWN] fchown(fd=%d [%s], vnode_ino=%lu, uid=%u [%s], gid=%u [%s], "
-               "cap=%s, caller_uid=%u) -> 0 (ownership changed, Phase 3)\n",
+               "cap=%s, caller_uid=%u) -> 0 (ownership changed, Phase 4: Batched ownership updates)\n",
                fd, fd_category, vnode->ino, uid, uid_desc, gid, gid_desc,
                capability_status, task->uid);
 

@@ -2560,241 +2560,467 @@ struct syscall_entry {
 #define MAX_SYSCALL         300
 
 /* Syscall table - sparse array indexed by syscall number */
-static struct syscall_entry syscall_table[MAX_SYSCALL] = {
-    /* Extended attributes (xattr) - syscalls 5-16 */
-    [__NR_setxattr]     = { (syscall_fn_t)sys_setxattr_wrapper, "setxattr" },
-    [__NR_lsetxattr]    = { (syscall_fn_t)sys_lsetxattr_wrapper, "lsetxattr" },
-    [__NR_fsetxattr]    = { (syscall_fn_t)sys_fsetxattr_wrapper, "fsetxattr" },
-    [__NR_getxattr]     = { (syscall_fn_t)sys_getxattr_wrapper, "getxattr" },
-    [__NR_lgetxattr]    = { (syscall_fn_t)sys_lgetxattr_wrapper, "lgetxattr" },
-    [__NR_fgetxattr]    = { (syscall_fn_t)sys_fgetxattr_wrapper, "fgetxattr" },
-    [__NR_listxattr]    = { (syscall_fn_t)sys_listxattr_wrapper, "listxattr" },
-    [__NR_llistxattr]   = { (syscall_fn_t)sys_llistxattr_wrapper, "llistxattr" },
-    [__NR_flistxattr]   = { (syscall_fn_t)sys_flistxattr_wrapper, "flistxattr" },
-    [__NR_removexattr]  = { (syscall_fn_t)sys_removexattr_wrapper, "removexattr" },
-    [__NR_lremovexattr] = { (syscall_fn_t)sys_lremovexattr_wrapper, "lremovexattr" },
-    [__NR_fremovexattr] = { (syscall_fn_t)sys_fremovexattr_wrapper, "fremovexattr" },
-    [__NR_eventfd2]     = { (syscall_fn_t)sys_eventfd2_wrapper, "eventfd2" },
-    [__NR_epoll_create1] = { (syscall_fn_t)sys_epoll_create1_wrapper, "epoll_create1" },
-    [__NR_epoll_ctl]    = { (syscall_fn_t)sys_epoll_ctl_wrapper, "epoll_ctl" },
-    [__NR_epoll_pwait]  = { (syscall_fn_t)sys_epoll_pwait_wrapper, "epoll_pwait" },
-    [__NR_getcwd]       = { (syscall_fn_t)sys_getcwd_wrapper,     "getcwd" },
-    [__NR_dup]          = { (syscall_fn_t)sys_dup_wrapper, "dup" },
-    [__NR_dup3]         = { (syscall_fn_t)sys_dup2_wrapper, "dup3/dup2" },
-    [__NR_fcntl]        = { (syscall_fn_t)sys_fcntl_wrapper, "fcntl" },
-    /* File monitoring (inotify) - syscalls 26-28 */
-    [__NR_inotify_init1] = { (syscall_fn_t)sys_inotify_init1_wrapper, "inotify_init1" },
-    [__NR_inotify_add_watch] = { (syscall_fn_t)sys_inotify_add_watch_wrapper, "inotify_add_watch" },
-    [__NR_inotify_rm_watch] = { (syscall_fn_t)sys_inotify_rm_watch_wrapper, "inotify_rm_watch" },
-    [__NR_ioctl]        = { (syscall_fn_t)sys_ioctl_wrapper, "ioctl" },
-    /* I/O priority - syscalls 30-31 */
-    [__NR_ioprio_set]   = { (syscall_fn_t)sys_ioprio_set_wrapper, "ioprio_set" },
-    [__NR_ioprio_get]   = { (syscall_fn_t)sys_ioprio_get_wrapper, "ioprio_get" },
-    /* File locking and special files - syscalls 32-33 */
-    [__NR_flock]        = { (syscall_fn_t)sys_flock_wrapper, "flock" },
-    [__NR_mknodat]      = { (syscall_fn_t)sys_mknodat_wrapper, "mknodat" },
-    [__NR_mkdirat]      = { (syscall_fn_t)sys_mkdirat_wrapper, "mkdirat" },
-    [__NR_unlinkat]     = { (syscall_fn_t)sys_unlinkat_wrapper, "unlinkat" },
-    [__NR_symlinkat]    = { (syscall_fn_t)sys_symlinkat_wrapper, "symlinkat" },
-    [__NR_linkat]       = { (syscall_fn_t)sys_linkat_wrapper, "linkat" },
-    [__NR_renameat]     = { (syscall_fn_t)sys_renameat_wrapper, "renameat" },
-    /* Mount operations - syscalls 39-41 */
-    [__NR_umount2]      = { (syscall_fn_t)sys_umount2_wrapper, "umount2" },
-    [__NR_mount]        = { (syscall_fn_t)sys_mount_wrapper, "mount" },
-    [__NR_pivot_root]   = { (syscall_fn_t)sys_pivot_root_wrapper, "pivot_root" },
-    [__NR_statfs]       = { (syscall_fn_t)sys_statfs_wrapper, "statfs" },
-    [__NR_fstatfs]      = { (syscall_fn_t)sys_fstatfs_wrapper, "fstatfs" },
-    [__NR_truncate]     = { (syscall_fn_t)sys_truncate_wrapper, "truncate" },
-    [__NR_ftruncate]    = { (syscall_fn_t)sys_ftruncate_wrapper, "ftruncate" },
-    [__NR_fallocate]    = { (syscall_fn_t)sys_fallocate_wrapper, "fallocate" },
-    [__NR_faccessat]    = { (syscall_fn_t)sys_faccessat_wrapper, "faccessat" },
-    [__NR_chdir]        = { (syscall_fn_t)sys_chdir_wrapper,      "chdir" },
-    [__NR_fchdir]       = { (syscall_fn_t)sys_fchdir_wrapper, "fchdir" },
-    [__NR_chroot]       = { (syscall_fn_t)sys_chroot_wrapper, "chroot" },
-    [__NR_fchmod]       = { (syscall_fn_t)sys_fchmod_wrapper, "fchmod" },
-    [__NR_fchmodat]     = { (syscall_fn_t)sys_fchmodat_wrapper, "fchmodat" },
-    [__NR_fchownat]     = { (syscall_fn_t)sys_fchownat_wrapper, "fchownat" },
-    [__NR_fchown]       = { (syscall_fn_t)sys_fchown_wrapper, "fchown" },
-    [__NR_openat]       = { (syscall_fn_t)sys_openat_wrapper,     "openat" },
-    [__NR_close]        = { (syscall_fn_t)sys_close_wrapper,      "close" },
-    [__NR_vhangup]      = { (syscall_fn_t)sys_vhangup_wrapper, "vhangup" },
-    [__NR_pipe2]        = { (syscall_fn_t)sys_pipe_wrapper, "pipe2/pipe" },
-    [__NR_quotactl]     = { (syscall_fn_t)sys_quotactl_wrapper, "quotactl" },
-    [__NR_getdents64]   = { (syscall_fn_t)sys_getdents64_wrapper, "getdents64" },
-    [__NR_lseek]        = { (syscall_fn_t)sys_lseek_wrapper, "lseek" },
-    [__NR_read]         = { (syscall_fn_t)sys_read_wrapper,       "read" },
-    [__NR_write]        = { (syscall_fn_t)sys_write,      "write" },
-    [__NR_readv]        = { (syscall_fn_t)sys_readv_wrapper, "readv" },
-    [__NR_writev]       = { (syscall_fn_t)sys_writev_wrapper, "writev" },
-    [__NR_pread64]      = { (syscall_fn_t)sys_pread64_wrapper, "pread64" },
-    [__NR_pwrite64]     = { (syscall_fn_t)sys_pwrite64_wrapper, "pwrite64" },
-    [__NR_preadv]       = { (syscall_fn_t)sys_preadv_wrapper, "preadv" },
-    [__NR_pwritev]      = { (syscall_fn_t)sys_pwritev_wrapper, "pwritev" },
-    [__NR_sendfile]     = { (syscall_fn_t)sys_sendfile_wrapper, "sendfile" },
-    [__NR_pselect6]     = { (syscall_fn_t)sys_pselect6_wrapper, "pselect6" },
-    [__NR_ppoll]        = { (syscall_fn_t)sys_ppoll_wrapper, "ppoll" },
-    [__NR_signalfd4]    = { (syscall_fn_t)sys_signalfd4_wrapper, "signalfd4" },
-    /* Zero-copy I/O (splice family) - syscalls 75-77 */
-    [__NR_vmsplice]     = { (syscall_fn_t)sys_vmsplice_wrapper, "vmsplice" },
-    [__NR_splice]       = { (syscall_fn_t)sys_splice_wrapper, "splice" },
-    [__NR_tee]          = { (syscall_fn_t)sys_tee_wrapper, "tee" },
-    [__NR_readlinkat]   = { (syscall_fn_t)sys_readlinkat_wrapper, "readlinkat" },
-    [__NR_fstatat]      = { (syscall_fn_t)sys_fstatat_wrapper, "fstatat" },
-    [__NR_fstat]        = { (syscall_fn_t)sys_fstat_wrapper,      "fstat" },
-    [__NR_sync]         = { (syscall_fn_t)sys_sync_wrapper, "sync" },
-    [__NR_fsync]        = { (syscall_fn_t)sys_fsync_wrapper, "fsync" },
-    [__NR_fdatasync]    = { (syscall_fn_t)sys_fdatasync_wrapper, "fdatasync" },
-    [__NR_sync_file_range] = { (syscall_fn_t)sys_sync_file_range_wrapper, "sync_file_range" },
-    [__NR_timerfd_create] = { (syscall_fn_t)sys_timerfd_create_wrapper, "timerfd_create" },
-    [__NR_timerfd_settime] = { (syscall_fn_t)sys_timerfd_settime_wrapper, "timerfd_settime" },
-    [__NR_timerfd_gettime] = { (syscall_fn_t)sys_timerfd_gettime_wrapper, "timerfd_gettime" },
-    [__NR_utimensat]    = { (syscall_fn_t)sys_utimensat_wrapper, "utimensat" },
-    [__NR_acct]         = { (syscall_fn_t)sys_acct_wrapper, "acct" },
-    /* Capabilities and process management - syscalls 90-92, 95-97 */
-    [__NR_capget]       = { (syscall_fn_t)sys_capget_wrapper, "capget" },
-    [__NR_capset]       = { (syscall_fn_t)sys_capset_wrapper, "capset" },
-    [__NR_personality]  = { (syscall_fn_t)sys_personality_wrapper, "personality" },
-    [__NR_exit]         = { (syscall_fn_t)sys_exit,       "exit" },
-    [__NR_exit_group]   = { (syscall_fn_t)sys_exit,       "exit_group" },
-    [__NR_waitid]       = { (syscall_fn_t)sys_waitid_wrapper, "waitid" },
-    [__NR_set_tid_address] = { (syscall_fn_t)sys_set_tid_address_wrapper, "set_tid_address" },
-    [__NR_unshare]      = { (syscall_fn_t)sys_unshare_wrapper, "unshare" },
-    [__NR_futex]        = { (syscall_fn_t)sys_futex_wrapper, "futex" },
-    [__NR_set_robust_list] = { (syscall_fn_t)sys_set_robust_list_wrapper, "set_robust_list" },
-    [__NR_get_robust_list] = { (syscall_fn_t)sys_get_robust_list_wrapper, "get_robust_list" },
-    [__NR_nanosleep]    = { (syscall_fn_t)sys_nanosleep_wrapper,  "nanosleep" },
-    [__NR_getitimer]    = { (syscall_fn_t)sys_getitimer_wrapper, "getitimer" },
-    [__NR_setitimer]    = { (syscall_fn_t)sys_setitimer_wrapper, "setitimer" },
-    [__NR_timer_create] = { (syscall_fn_t)sys_timer_create_wrapper, "timer_create" },
-    [__NR_timer_gettime]= { (syscall_fn_t)sys_timer_gettime_wrapper, "timer_gettime" },
-    [__NR_timer_getoverrun] = { (syscall_fn_t)sys_timer_getoverrun_wrapper, "timer_getoverrun" },
-    [__NR_timer_settime]= { (syscall_fn_t)sys_timer_settime_wrapper, "timer_settime" },
-    [__NR_timer_delete] = { (syscall_fn_t)sys_timer_delete_wrapper, "timer_delete" },
-    [__NR_clock_settime]= { (syscall_fn_t)sys_clock_settime_wrapper, "clock_settime" },
-    [__NR_clock_gettime]= { (syscall_fn_t)sys_clock_gettime, "clock_gettime" },
-    [__NR_clock_getres] = { (syscall_fn_t)sys_clock_getres_wrapper, "clock_getres" },
-    [__NR_clock_nanosleep] = { (syscall_fn_t)sys_clock_nanosleep_wrapper, "clock_nanosleep" },
-    [__NR_sched_setparam] = { (syscall_fn_t)sys_sched_setparam_wrapper, "sched_setparam" },
-    [__NR_sched_setscheduler] = { (syscall_fn_t)sys_sched_setscheduler_wrapper, "sched_setscheduler" },
-    [__NR_sched_getscheduler] = { (syscall_fn_t)sys_sched_getscheduler_wrapper, "sched_getscheduler" },
-    [__NR_sched_getparam] = { (syscall_fn_t)sys_sched_getparam_wrapper, "sched_getparam" },
-    [__NR_sched_yield]  = { (syscall_fn_t)sys_sched_yield_wrapper, "sched_yield" },
-    [__NR_sched_get_priority_max] = { (syscall_fn_t)sys_sched_get_priority_max_wrapper, "sched_get_priority_max" },
-    [__NR_sched_get_priority_min] = { (syscall_fn_t)sys_sched_get_priority_min_wrapper, "sched_get_priority_min" },
-    [__NR_kill]         = { (syscall_fn_t)sys_kill_wrapper, "kill" },
-    [__NR_tkill]        = { (syscall_fn_t)sys_tkill_wrapper, "tkill" },
-    [__NR_tgkill]       = { (syscall_fn_t)sys_tgkill_wrapper, "tgkill" },
-    [__NR_sigaltstack]  = { (syscall_fn_t)sys_sigaltstack_wrapper, "sigaltstack" },
-    [__NR_rt_sigaction] = { (syscall_fn_t)sys_rt_sigaction_wrapper, "rt_sigaction" },
-    [__NR_rt_sigprocmask] = { (syscall_fn_t)sys_rt_sigprocmask_wrapper, "rt_sigprocmask" },
-    [__NR_rt_sigpending] = { (syscall_fn_t)sys_rt_sigpending_wrapper, "rt_sigpending" },
-    [__NR_rt_sigsuspend] = { (syscall_fn_t)sys_rt_sigsuspend_wrapper, "rt_sigsuspend" },
-    [__NR_rt_sigreturn] = { (syscall_fn_t)sys_rt_sigreturn_wrapper, "rt_sigreturn" },
-    [__NR_setpriority]  = { (syscall_fn_t)sys_setpriority_wrapper, "setpriority" },
-    [__NR_getpriority]  = { (syscall_fn_t)sys_getpriority_wrapper, "getpriority" },
-    [__NR_setregid]     = { (syscall_fn_t)sys_setregid_wrapper, "setregid" },
-    [__NR_setgid]       = { (syscall_fn_t)sys_setgid_wrapper, "setgid" },
-    [__NR_setreuid]     = { (syscall_fn_t)sys_setreuid_wrapper, "setreuid" },
-    [__NR_setuid]       = { (syscall_fn_t)sys_setuid_wrapper, "setuid" },
-    [__NR_setresuid]    = { (syscall_fn_t)sys_setresuid_wrapper, "setresuid" },
-    [__NR_getresuid]    = { (syscall_fn_t)sys_getresuid_wrapper, "getresuid" },
-    [__NR_setresgid]    = { (syscall_fn_t)sys_setresgid_wrapper, "setresgid" },
-    [__NR_getresgid]    = { (syscall_fn_t)sys_getresgid_wrapper, "getresgid" },
-    [__NR_times]        = { (syscall_fn_t)sys_times_wrapper, "times" },
-    [__NR_setpgid]      = { (syscall_fn_t)sys_setpgid_wrapper, "setpgid" },
-    [__NR_getpgid]      = { (syscall_fn_t)sys_getpgid_wrapper, "getpgid" },
-    [__NR_getsid]       = { (syscall_fn_t)sys_getsid_wrapper, "getsid" },
-    [__NR_setsid]       = { (syscall_fn_t)sys_setsid_wrapper, "setsid" },
-    [__NR_getrlimit]    = { (syscall_fn_t)sys_getrlimit_wrapper, "getrlimit" },
-    [__NR_setrlimit]    = { (syscall_fn_t)sys_setrlimit_wrapper, "setrlimit" },
-    [__NR_getrusage]    = { (syscall_fn_t)sys_getrusage_wrapper, "getrusage" },
-    [__NR_umask]        = { (syscall_fn_t)sys_umask_wrapper, "umask" },
-    [__NR_gettimeofday] = { (syscall_fn_t)sys_gettimeofday_wrapper, "gettimeofday" },
-    [__NR_settimeofday] = { (syscall_fn_t)sys_settimeofday_wrapper, "settimeofday" },
-    [__NR_adjtimex]     = { (syscall_fn_t)sys_adjtimex_wrapper, "adjtimex" },
-    [__NR_uname]        = { (syscall_fn_t)sys_uname,      "uname" },
-    [__NR_getuid]       = { (syscall_fn_t)sys_getuid_wrapper, "getuid" },
-    [__NR_geteuid]      = { (syscall_fn_t)sys_geteuid_wrapper, "geteuid" },
-    [__NR_getgid]       = { (syscall_fn_t)sys_getgid_wrapper, "getgid" },
-    [__NR_getegid]      = { (syscall_fn_t)sys_getegid_wrapper, "getegid" },
-    [__NR_sysinfo]      = { (syscall_fn_t)sys_sysinfo_wrapper, "sysinfo" },
-    [__NR_getpid]       = { (syscall_fn_t)sys_getpid_wrapper,     "getpid" },
-    [__NR_getppid]      = { (syscall_fn_t)sys_getppid_wrapper,    "getppid" },
-    [__NR_socket]       = { (syscall_fn_t)sys_socket_wrapper, "socket" },
-    [__NR_bind]         = { (syscall_fn_t)sys_bind_wrapper, "bind" },
-    [__NR_listen]       = { (syscall_fn_t)sys_listen_wrapper, "listen" },
-    [__NR_accept]       = { (syscall_fn_t)sys_accept_wrapper, "accept" },
-    [__NR_connect]      = { (syscall_fn_t)sys_connect_wrapper, "connect" },
-    [__NR_sendto]       = { (syscall_fn_t)sys_sendto_wrapper, "sendto" },
-    [__NR_recvfrom]     = { (syscall_fn_t)sys_recvfrom_wrapper, "recvfrom" },
-    [__NR_setsockopt]   = { (syscall_fn_t)sys_setsockopt_wrapper, "setsockopt" },
-    [__NR_getsockopt]   = { (syscall_fn_t)sys_getsockopt_wrapper, "getsockopt" },
-    [__NR_shutdown]     = { (syscall_fn_t)sys_shutdown_wrapper, "shutdown" },
-    [__NR_brk]          = { (syscall_fn_t)sys_brk,        "brk" },
-    [__NR_munmap]       = { (syscall_fn_t)sys_munmap_wrapper, "munmap" },
-    [__NR_clone]        = { (syscall_fn_t)sys_fork_wrapper, "clone/fork" },
-    [__NR_execve]       = { (syscall_fn_t)sys_execve_wrapper, "execve" },
-    [__NR_mmap]         = { (syscall_fn_t)sys_mmap_wrapper, "mmap" },
-    [__NR_mprotect]     = { (syscall_fn_t)sys_mprotect_wrapper, "mprotect" },
-    [__NR_msync]        = { (syscall_fn_t)sys_msync_wrapper, "msync" },
-    [__NR_mlock]        = { (syscall_fn_t)sys_mlock_wrapper, "mlock" },
-    [__NR_munlock]      = { (syscall_fn_t)sys_munlock_wrapper, "munlock" },
-    [__NR_mlockall]     = { (syscall_fn_t)sys_mlockall_wrapper, "mlockall" },
-    [__NR_munlockall]   = { (syscall_fn_t)sys_munlockall_wrapper, "munlockall" },
-    [__NR_mincore]      = { (syscall_fn_t)sys_mincore_wrapper, "mincore" },
-    [__NR_madvise]      = { (syscall_fn_t)sys_madvise_wrapper, "madvise" },
-    [__NR_wait4]        = { (syscall_fn_t)sys_waitpid_wrapper, "wait4/waitpid" },
-    [__NR_prlimit64]    = { (syscall_fn_t)sys_prlimit64_wrapper, "prlimit64" },
+/* Syscall table - initialized at runtime to avoid ARM64 relocation issues */
+static struct syscall_entry syscall_table[MAX_SYSCALL];
+static bool syscall_table_initialized = false;
 
+/* Initialize syscall table at runtime to avoid ARM64 relocation issues */
+static void arm64_syscall_table_init(void) {
+    if (syscall_table_initialized) {
+        return;
+    }
+
+    /* Extended attributes (xattr) - syscalls 5-16 */
+    syscall_table[__NR_setxattr].handler = (syscall_fn_t)sys_setxattr_wrapper;
+    syscall_table[__NR_setxattr].name = "setxattr";
+    syscall_table[__NR_lsetxattr].handler = (syscall_fn_t)sys_lsetxattr_wrapper;
+    syscall_table[__NR_lsetxattr].name = "lsetxattr";
+    syscall_table[__NR_fsetxattr].handler = (syscall_fn_t)sys_fsetxattr_wrapper;
+    syscall_table[__NR_fsetxattr].name = "fsetxattr";
+    syscall_table[__NR_getxattr].handler = (syscall_fn_t)sys_getxattr_wrapper;
+    syscall_table[__NR_getxattr].name = "getxattr";
+    syscall_table[__NR_lgetxattr].handler = (syscall_fn_t)sys_lgetxattr_wrapper;
+    syscall_table[__NR_lgetxattr].name = "lgetxattr";
+    syscall_table[__NR_fgetxattr].handler = (syscall_fn_t)sys_fgetxattr_wrapper;
+    syscall_table[__NR_fgetxattr].name = "fgetxattr";
+    syscall_table[__NR_listxattr].handler = (syscall_fn_t)sys_listxattr_wrapper;
+    syscall_table[__NR_listxattr].name = "listxattr";
+    syscall_table[__NR_llistxattr].handler = (syscall_fn_t)sys_llistxattr_wrapper;
+    syscall_table[__NR_llistxattr].name = "llistxattr";
+    syscall_table[__NR_flistxattr].handler = (syscall_fn_t)sys_flistxattr_wrapper;
+    syscall_table[__NR_flistxattr].name = "flistxattr";
+    syscall_table[__NR_removexattr].handler = (syscall_fn_t)sys_removexattr_wrapper;
+    syscall_table[__NR_removexattr].name = "removexattr";
+    syscall_table[__NR_lremovexattr].handler = (syscall_fn_t)sys_lremovexattr_wrapper;
+    syscall_table[__NR_lremovexattr].name = "lremovexattr";
+    syscall_table[__NR_fremovexattr].handler = (syscall_fn_t)sys_fremovexattr_wrapper;
+    syscall_table[__NR_fremovexattr].name = "fremovexattr";
+    syscall_table[__NR_eventfd2].handler = (syscall_fn_t)sys_eventfd2_wrapper;
+    syscall_table[__NR_eventfd2].name = "eventfd2";
+    syscall_table[__NR_epoll_create1].handler = (syscall_fn_t)sys_epoll_create1_wrapper;
+    syscall_table[__NR_epoll_create1].name = "epoll_create1";
+    syscall_table[__NR_epoll_ctl].handler = (syscall_fn_t)sys_epoll_ctl_wrapper;
+    syscall_table[__NR_epoll_ctl].name = "epoll_ctl";
+    syscall_table[__NR_epoll_pwait].handler = (syscall_fn_t)sys_epoll_pwait_wrapper;
+    syscall_table[__NR_epoll_pwait].name = "epoll_pwait";
+    syscall_table[__NR_getcwd].handler = (syscall_fn_t)sys_getcwd_wrapper;
+    syscall_table[__NR_getcwd].name = "getcwd";
+    syscall_table[__NR_dup].handler = (syscall_fn_t)sys_dup_wrapper;
+    syscall_table[__NR_dup].name = "dup";
+    syscall_table[__NR_dup3].handler = (syscall_fn_t)sys_dup2_wrapper;
+    syscall_table[__NR_dup3].name = "dup3/dup2";
+    syscall_table[__NR_fcntl].handler = (syscall_fn_t)sys_fcntl_wrapper;
+    syscall_table[__NR_fcntl].name = "fcntl";
+    /* File monitoring (inotify) - syscalls 26-28 */
+    syscall_table[__NR_inotify_init1].handler = (syscall_fn_t)sys_inotify_init1_wrapper;
+    syscall_table[__NR_inotify_init1].name = "inotify_init1";
+    syscall_table[__NR_inotify_add_watch].handler = (syscall_fn_t)sys_inotify_add_watch_wrapper;
+    syscall_table[__NR_inotify_add_watch].name = "inotify_add_watch";
+    syscall_table[__NR_inotify_rm_watch].handler = (syscall_fn_t)sys_inotify_rm_watch_wrapper;
+    syscall_table[__NR_inotify_rm_watch].name = "inotify_rm_watch";
+    syscall_table[__NR_ioctl].handler = (syscall_fn_t)sys_ioctl_wrapper;
+    syscall_table[__NR_ioctl].name = "ioctl";
+    /* I/O priority - syscalls 30-31 */
+    syscall_table[__NR_ioprio_set].handler = (syscall_fn_t)sys_ioprio_set_wrapper;
+    syscall_table[__NR_ioprio_set].name = "ioprio_set";
+    syscall_table[__NR_ioprio_get].handler = (syscall_fn_t)sys_ioprio_get_wrapper;
+    syscall_table[__NR_ioprio_get].name = "ioprio_get";
+    /* File locking and special files - syscalls 32-33 */
+    syscall_table[__NR_flock].handler = (syscall_fn_t)sys_flock_wrapper;
+    syscall_table[__NR_flock].name = "flock";
+    syscall_table[__NR_mknodat].handler = (syscall_fn_t)sys_mknodat_wrapper;
+    syscall_table[__NR_mknodat].name = "mknodat";
+    syscall_table[__NR_mkdirat].handler = (syscall_fn_t)sys_mkdirat_wrapper;
+    syscall_table[__NR_mkdirat].name = "mkdirat";
+    syscall_table[__NR_unlinkat].handler = (syscall_fn_t)sys_unlinkat_wrapper;
+    syscall_table[__NR_unlinkat].name = "unlinkat";
+    syscall_table[__NR_symlinkat].handler = (syscall_fn_t)sys_symlinkat_wrapper;
+    syscall_table[__NR_symlinkat].name = "symlinkat";
+    syscall_table[__NR_linkat].handler = (syscall_fn_t)sys_linkat_wrapper;
+    syscall_table[__NR_linkat].name = "linkat";
+    syscall_table[__NR_renameat].handler = (syscall_fn_t)sys_renameat_wrapper;
+    syscall_table[__NR_renameat].name = "renameat";
+    /* Mount operations - syscalls 39-41 */
+    syscall_table[__NR_umount2].handler = (syscall_fn_t)sys_umount2_wrapper;
+    syscall_table[__NR_umount2].name = "umount2";
+    syscall_table[__NR_mount].handler = (syscall_fn_t)sys_mount_wrapper;
+    syscall_table[__NR_mount].name = "mount";
+    syscall_table[__NR_pivot_root].handler = (syscall_fn_t)sys_pivot_root_wrapper;
+    syscall_table[__NR_pivot_root].name = "pivot_root";
+    syscall_table[__NR_statfs].handler = (syscall_fn_t)sys_statfs_wrapper;
+    syscall_table[__NR_statfs].name = "statfs";
+    syscall_table[__NR_fstatfs].handler = (syscall_fn_t)sys_fstatfs_wrapper;
+    syscall_table[__NR_fstatfs].name = "fstatfs";
+    syscall_table[__NR_truncate].handler = (syscall_fn_t)sys_truncate_wrapper;
+    syscall_table[__NR_truncate].name = "truncate";
+    syscall_table[__NR_ftruncate].handler = (syscall_fn_t)sys_ftruncate_wrapper;
+    syscall_table[__NR_ftruncate].name = "ftruncate";
+    syscall_table[__NR_fallocate].handler = (syscall_fn_t)sys_fallocate_wrapper;
+    syscall_table[__NR_fallocate].name = "fallocate";
+    syscall_table[__NR_faccessat].handler = (syscall_fn_t)sys_faccessat_wrapper;
+    syscall_table[__NR_faccessat].name = "faccessat";
+    syscall_table[__NR_chdir].handler = (syscall_fn_t)sys_chdir_wrapper;
+    syscall_table[__NR_chdir].name = "chdir";
+    syscall_table[__NR_fchdir].handler = (syscall_fn_t)sys_fchdir_wrapper;
+    syscall_table[__NR_fchdir].name = "fchdir";
+    syscall_table[__NR_chroot].handler = (syscall_fn_t)sys_chroot_wrapper;
+    syscall_table[__NR_chroot].name = "chroot";
+    syscall_table[__NR_fchmod].handler = (syscall_fn_t)sys_fchmod_wrapper;
+    syscall_table[__NR_fchmod].name = "fchmod";
+    syscall_table[__NR_fchmodat].handler = (syscall_fn_t)sys_fchmodat_wrapper;
+    syscall_table[__NR_fchmodat].name = "fchmodat";
+    syscall_table[__NR_fchownat].handler = (syscall_fn_t)sys_fchownat_wrapper;
+    syscall_table[__NR_fchownat].name = "fchownat";
+    syscall_table[__NR_fchown].handler = (syscall_fn_t)sys_fchown_wrapper;
+    syscall_table[__NR_fchown].name = "fchown";
+    syscall_table[__NR_openat].handler = (syscall_fn_t)sys_openat_wrapper;
+    syscall_table[__NR_openat].name = "openat";
+    syscall_table[__NR_close].handler = (syscall_fn_t)sys_close_wrapper;
+    syscall_table[__NR_close].name = "close";
+    syscall_table[__NR_vhangup].handler = (syscall_fn_t)sys_vhangup_wrapper;
+    syscall_table[__NR_vhangup].name = "vhangup";
+    syscall_table[__NR_pipe2].handler = (syscall_fn_t)sys_pipe_wrapper;
+    syscall_table[__NR_pipe2].name = "pipe2/pipe";
+    syscall_table[__NR_quotactl].handler = (syscall_fn_t)sys_quotactl_wrapper;
+    syscall_table[__NR_quotactl].name = "quotactl";
+    syscall_table[__NR_getdents64].handler = (syscall_fn_t)sys_getdents64_wrapper;
+    syscall_table[__NR_getdents64].name = "getdents64";
+    syscall_table[__NR_lseek].handler = (syscall_fn_t)sys_lseek_wrapper;
+    syscall_table[__NR_lseek].name = "lseek";
+    syscall_table[__NR_read].handler = (syscall_fn_t)sys_read_wrapper;
+    syscall_table[__NR_read].name = "read";
+    syscall_table[__NR_write].handler = (syscall_fn_t)sys_write;
+    syscall_table[__NR_write].name = "write";
+    syscall_table[__NR_readv].handler = (syscall_fn_t)sys_readv_wrapper;
+    syscall_table[__NR_readv].name = "readv";
+    syscall_table[__NR_writev].handler = (syscall_fn_t)sys_writev_wrapper;
+    syscall_table[__NR_writev].name = "writev";
+    syscall_table[__NR_pread64].handler = (syscall_fn_t)sys_pread64_wrapper;
+    syscall_table[__NR_pread64].name = "pread64";
+    syscall_table[__NR_pwrite64].handler = (syscall_fn_t)sys_pwrite64_wrapper;
+    syscall_table[__NR_pwrite64].name = "pwrite64";
+    syscall_table[__NR_preadv].handler = (syscall_fn_t)sys_preadv_wrapper;
+    syscall_table[__NR_preadv].name = "preadv";
+    syscall_table[__NR_pwritev].handler = (syscall_fn_t)sys_pwritev_wrapper;
+    syscall_table[__NR_pwritev].name = "pwritev";
+    syscall_table[__NR_sendfile].handler = (syscall_fn_t)sys_sendfile_wrapper;
+    syscall_table[__NR_sendfile].name = "sendfile";
+    syscall_table[__NR_pselect6].handler = (syscall_fn_t)sys_pselect6_wrapper;
+    syscall_table[__NR_pselect6].name = "pselect6";
+    syscall_table[__NR_ppoll].handler = (syscall_fn_t)sys_ppoll_wrapper;
+    syscall_table[__NR_ppoll].name = "ppoll";
+    syscall_table[__NR_signalfd4].handler = (syscall_fn_t)sys_signalfd4_wrapper;
+    syscall_table[__NR_signalfd4].name = "signalfd4";
+    /* Zero-copy I/O (splice family) - syscalls 75-77 */
+    syscall_table[__NR_vmsplice].handler = (syscall_fn_t)sys_vmsplice_wrapper;
+    syscall_table[__NR_vmsplice].name = "vmsplice";
+    syscall_table[__NR_splice].handler = (syscall_fn_t)sys_splice_wrapper;
+    syscall_table[__NR_splice].name = "splice";
+    syscall_table[__NR_tee].handler = (syscall_fn_t)sys_tee_wrapper;
+    syscall_table[__NR_tee].name = "tee";
+    syscall_table[__NR_readlinkat].handler = (syscall_fn_t)sys_readlinkat_wrapper;
+    syscall_table[__NR_readlinkat].name = "readlinkat";
+    syscall_table[__NR_fstatat].handler = (syscall_fn_t)sys_fstatat_wrapper;
+    syscall_table[__NR_fstatat].name = "fstatat";
+    syscall_table[__NR_fstat].handler = (syscall_fn_t)sys_fstat_wrapper;
+    syscall_table[__NR_fstat].name = "fstat";
+    syscall_table[__NR_sync].handler = (syscall_fn_t)sys_sync_wrapper;
+    syscall_table[__NR_sync].name = "sync";
+    syscall_table[__NR_fsync].handler = (syscall_fn_t)sys_fsync_wrapper;
+    syscall_table[__NR_fsync].name = "fsync";
+    syscall_table[__NR_fdatasync].handler = (syscall_fn_t)sys_fdatasync_wrapper;
+    syscall_table[__NR_fdatasync].name = "fdatasync";
+    syscall_table[__NR_sync_file_range].handler = (syscall_fn_t)sys_sync_file_range_wrapper;
+    syscall_table[__NR_sync_file_range].name = "sync_file_range";
+    syscall_table[__NR_timerfd_create].handler = (syscall_fn_t)sys_timerfd_create_wrapper;
+    syscall_table[__NR_timerfd_create].name = "timerfd_create";
+    syscall_table[__NR_timerfd_settime].handler = (syscall_fn_t)sys_timerfd_settime_wrapper;
+    syscall_table[__NR_timerfd_settime].name = "timerfd_settime";
+    syscall_table[__NR_timerfd_gettime].handler = (syscall_fn_t)sys_timerfd_gettime_wrapper;
+    syscall_table[__NR_timerfd_gettime].name = "timerfd_gettime";
+    syscall_table[__NR_utimensat].handler = (syscall_fn_t)sys_utimensat_wrapper;
+    syscall_table[__NR_utimensat].name = "utimensat";
+    syscall_table[__NR_acct].handler = (syscall_fn_t)sys_acct_wrapper;
+    syscall_table[__NR_acct].name = "acct";
+    /* Capabilities and process management - syscalls 90-92, 95-97 */
+    syscall_table[__NR_capget].handler = (syscall_fn_t)sys_capget_wrapper;
+    syscall_table[__NR_capget].name = "capget";
+    syscall_table[__NR_capset].handler = (syscall_fn_t)sys_capset_wrapper;
+    syscall_table[__NR_capset].name = "capset";
+    syscall_table[__NR_personality].handler = (syscall_fn_t)sys_personality_wrapper;
+    syscall_table[__NR_personality].name = "personality";
+    syscall_table[__NR_exit].handler = (syscall_fn_t)sys_exit;
+    syscall_table[__NR_exit].name = "exit";
+    syscall_table[__NR_exit_group].handler = (syscall_fn_t)sys_exit;
+    syscall_table[__NR_exit_group].name = "exit_group";
+    syscall_table[__NR_waitid].handler = (syscall_fn_t)sys_waitid_wrapper;
+    syscall_table[__NR_waitid].name = "waitid";
+    syscall_table[__NR_set_tid_address].handler = (syscall_fn_t)sys_set_tid_address_wrapper;
+    syscall_table[__NR_set_tid_address].name = "set_tid_address";
+    syscall_table[__NR_unshare].handler = (syscall_fn_t)sys_unshare_wrapper;
+    syscall_table[__NR_unshare].name = "unshare";
+    syscall_table[__NR_futex].handler = (syscall_fn_t)sys_futex_wrapper;
+    syscall_table[__NR_futex].name = "futex";
+    syscall_table[__NR_set_robust_list].handler = (syscall_fn_t)sys_set_robust_list_wrapper;
+    syscall_table[__NR_set_robust_list].name = "set_robust_list";
+    syscall_table[__NR_get_robust_list].handler = (syscall_fn_t)sys_get_robust_list_wrapper;
+    syscall_table[__NR_get_robust_list].name = "get_robust_list";
+    syscall_table[__NR_nanosleep].handler = (syscall_fn_t)sys_nanosleep_wrapper;
+    syscall_table[__NR_nanosleep].name = "nanosleep";
+    syscall_table[__NR_getitimer].handler = (syscall_fn_t)sys_getitimer_wrapper;
+    syscall_table[__NR_getitimer].name = "getitimer";
+    syscall_table[__NR_setitimer].handler = (syscall_fn_t)sys_setitimer_wrapper;
+    syscall_table[__NR_setitimer].name = "setitimer";
+    syscall_table[__NR_timer_create].handler = (syscall_fn_t)sys_timer_create_wrapper;
+    syscall_table[__NR_timer_create].name = "timer_create";
+    syscall_table[__NR_timer_gettime].handler = (syscall_fn_t)sys_timer_gettime_wrapper;
+    syscall_table[__NR_timer_gettime].name = "timer_gettime";
+    syscall_table[__NR_timer_getoverrun].handler = (syscall_fn_t)sys_timer_getoverrun_wrapper;
+    syscall_table[__NR_timer_getoverrun].name = "timer_getoverrun";
+    syscall_table[__NR_timer_settime].handler = (syscall_fn_t)sys_timer_settime_wrapper;
+    syscall_table[__NR_timer_settime].name = "timer_settime";
+    syscall_table[__NR_timer_delete].handler = (syscall_fn_t)sys_timer_delete_wrapper;
+    syscall_table[__NR_timer_delete].name = "timer_delete";
+    syscall_table[__NR_clock_settime].handler = (syscall_fn_t)sys_clock_settime_wrapper;
+    syscall_table[__NR_clock_settime].name = "clock_settime";
+    syscall_table[__NR_clock_gettime].handler = (syscall_fn_t)sys_clock_gettime;
+    syscall_table[__NR_clock_gettime].name = "clock_gettime";
+    syscall_table[__NR_clock_getres].handler = (syscall_fn_t)sys_clock_getres_wrapper;
+    syscall_table[__NR_clock_getres].name = "clock_getres";
+    syscall_table[__NR_clock_nanosleep].handler = (syscall_fn_t)sys_clock_nanosleep_wrapper;
+    syscall_table[__NR_clock_nanosleep].name = "clock_nanosleep";
+    syscall_table[__NR_sched_setparam].handler = (syscall_fn_t)sys_sched_setparam_wrapper;
+    syscall_table[__NR_sched_setparam].name = "sched_setparam";
+    syscall_table[__NR_sched_setscheduler].handler = (syscall_fn_t)sys_sched_setscheduler_wrapper;
+    syscall_table[__NR_sched_setscheduler].name = "sched_setscheduler";
+    syscall_table[__NR_sched_getscheduler].handler = (syscall_fn_t)sys_sched_getscheduler_wrapper;
+    syscall_table[__NR_sched_getscheduler].name = "sched_getscheduler";
+    syscall_table[__NR_sched_getparam].handler = (syscall_fn_t)sys_sched_getparam_wrapper;
+    syscall_table[__NR_sched_getparam].name = "sched_getparam";
+    syscall_table[__NR_sched_yield].handler = (syscall_fn_t)sys_sched_yield_wrapper;
+    syscall_table[__NR_sched_yield].name = "sched_yield";
+    syscall_table[__NR_sched_get_priority_max].handler = (syscall_fn_t)sys_sched_get_priority_max_wrapper;
+    syscall_table[__NR_sched_get_priority_max].name = "sched_get_priority_max";
+    syscall_table[__NR_sched_get_priority_min].handler = (syscall_fn_t)sys_sched_get_priority_min_wrapper;
+    syscall_table[__NR_sched_get_priority_min].name = "sched_get_priority_min";
+    syscall_table[__NR_kill].handler = (syscall_fn_t)sys_kill_wrapper;
+    syscall_table[__NR_kill].name = "kill";
+    syscall_table[__NR_tkill].handler = (syscall_fn_t)sys_tkill_wrapper;
+    syscall_table[__NR_tkill].name = "tkill";
+    syscall_table[__NR_tgkill].handler = (syscall_fn_t)sys_tgkill_wrapper;
+    syscall_table[__NR_tgkill].name = "tgkill";
+    syscall_table[__NR_sigaltstack].handler = (syscall_fn_t)sys_sigaltstack_wrapper;
+    syscall_table[__NR_sigaltstack].name = "sigaltstack";
+    syscall_table[__NR_rt_sigaction].handler = (syscall_fn_t)sys_rt_sigaction_wrapper;
+    syscall_table[__NR_rt_sigaction].name = "rt_sigaction";
+    syscall_table[__NR_rt_sigprocmask].handler = (syscall_fn_t)sys_rt_sigprocmask_wrapper;
+    syscall_table[__NR_rt_sigprocmask].name = "rt_sigprocmask";
+    syscall_table[__NR_rt_sigpending].handler = (syscall_fn_t)sys_rt_sigpending_wrapper;
+    syscall_table[__NR_rt_sigpending].name = "rt_sigpending";
+    syscall_table[__NR_rt_sigsuspend].handler = (syscall_fn_t)sys_rt_sigsuspend_wrapper;
+    syscall_table[__NR_rt_sigsuspend].name = "rt_sigsuspend";
+    syscall_table[__NR_rt_sigreturn].handler = (syscall_fn_t)sys_rt_sigreturn_wrapper;
+    syscall_table[__NR_rt_sigreturn].name = "rt_sigreturn";
+    syscall_table[__NR_setpriority].handler = (syscall_fn_t)sys_setpriority_wrapper;
+    syscall_table[__NR_setpriority].name = "setpriority";
+    syscall_table[__NR_getpriority].handler = (syscall_fn_t)sys_getpriority_wrapper;
+    syscall_table[__NR_getpriority].name = "getpriority";
+    syscall_table[__NR_setregid].handler = (syscall_fn_t)sys_setregid_wrapper;
+    syscall_table[__NR_setregid].name = "setregid";
+    syscall_table[__NR_setgid].handler = (syscall_fn_t)sys_setgid_wrapper;
+    syscall_table[__NR_setgid].name = "setgid";
+    syscall_table[__NR_setreuid].handler = (syscall_fn_t)sys_setreuid_wrapper;
+    syscall_table[__NR_setreuid].name = "setreuid";
+    syscall_table[__NR_setuid].handler = (syscall_fn_t)sys_setuid_wrapper;
+    syscall_table[__NR_setuid].name = "setuid";
+    syscall_table[__NR_setresuid].handler = (syscall_fn_t)sys_setresuid_wrapper;
+    syscall_table[__NR_setresuid].name = "setresuid";
+    syscall_table[__NR_getresuid].handler = (syscall_fn_t)sys_getresuid_wrapper;
+    syscall_table[__NR_getresuid].name = "getresuid";
+    syscall_table[__NR_setresgid].handler = (syscall_fn_t)sys_setresgid_wrapper;
+    syscall_table[__NR_setresgid].name = "setresgid";
+    syscall_table[__NR_getresgid].handler = (syscall_fn_t)sys_getresgid_wrapper;
+    syscall_table[__NR_getresgid].name = "getresgid";
+    syscall_table[__NR_times].handler = (syscall_fn_t)sys_times_wrapper;
+    syscall_table[__NR_times].name = "times";
+    syscall_table[__NR_setpgid].handler = (syscall_fn_t)sys_setpgid_wrapper;
+    syscall_table[__NR_setpgid].name = "setpgid";
+    syscall_table[__NR_getpgid].handler = (syscall_fn_t)sys_getpgid_wrapper;
+    syscall_table[__NR_getpgid].name = "getpgid";
+    syscall_table[__NR_getsid].handler = (syscall_fn_t)sys_getsid_wrapper;
+    syscall_table[__NR_getsid].name = "getsid";
+    syscall_table[__NR_setsid].handler = (syscall_fn_t)sys_setsid_wrapper;
+    syscall_table[__NR_setsid].name = "setsid";
+    syscall_table[__NR_getrlimit].handler = (syscall_fn_t)sys_getrlimit_wrapper;
+    syscall_table[__NR_getrlimit].name = "getrlimit";
+    syscall_table[__NR_setrlimit].handler = (syscall_fn_t)sys_setrlimit_wrapper;
+    syscall_table[__NR_setrlimit].name = "setrlimit";
+    syscall_table[__NR_getrusage].handler = (syscall_fn_t)sys_getrusage_wrapper;
+    syscall_table[__NR_getrusage].name = "getrusage";
+    syscall_table[__NR_umask].handler = (syscall_fn_t)sys_umask_wrapper;
+    syscall_table[__NR_umask].name = "umask";
+    syscall_table[__NR_gettimeofday].handler = (syscall_fn_t)sys_gettimeofday_wrapper;
+    syscall_table[__NR_gettimeofday].name = "gettimeofday";
+    syscall_table[__NR_settimeofday].handler = (syscall_fn_t)sys_settimeofday_wrapper;
+    syscall_table[__NR_settimeofday].name = "settimeofday";
+    syscall_table[__NR_adjtimex].handler = (syscall_fn_t)sys_adjtimex_wrapper;
+    syscall_table[__NR_adjtimex].name = "adjtimex";
+    syscall_table[__NR_uname].handler = (syscall_fn_t)sys_uname;
+    syscall_table[__NR_uname].name = "uname";
+    syscall_table[__NR_getuid].handler = (syscall_fn_t)sys_getuid_wrapper;
+    syscall_table[__NR_getuid].name = "getuid";
+    syscall_table[__NR_geteuid].handler = (syscall_fn_t)sys_geteuid_wrapper;
+    syscall_table[__NR_geteuid].name = "geteuid";
+    syscall_table[__NR_getgid].handler = (syscall_fn_t)sys_getgid_wrapper;
+    syscall_table[__NR_getgid].name = "getgid";
+    syscall_table[__NR_getegid].handler = (syscall_fn_t)sys_getegid_wrapper;
+    syscall_table[__NR_getegid].name = "getegid";
+    syscall_table[__NR_sysinfo].handler = (syscall_fn_t)sys_sysinfo_wrapper;
+    syscall_table[__NR_sysinfo].name = "sysinfo";
+    syscall_table[__NR_getpid].handler = (syscall_fn_t)sys_getpid_wrapper;
+    syscall_table[__NR_getpid].name = "getpid";
+    syscall_table[__NR_getppid].handler = (syscall_fn_t)sys_getppid_wrapper;
+    syscall_table[__NR_getppid].name = "getppid";
+    syscall_table[__NR_socket].handler = (syscall_fn_t)sys_socket_wrapper;
+    syscall_table[__NR_socket].name = "socket";
+    syscall_table[__NR_bind].handler = (syscall_fn_t)sys_bind_wrapper;
+    syscall_table[__NR_bind].name = "bind";
+    syscall_table[__NR_listen].handler = (syscall_fn_t)sys_listen_wrapper;
+    syscall_table[__NR_listen].name = "listen";
+    syscall_table[__NR_accept].handler = (syscall_fn_t)sys_accept_wrapper;
+    syscall_table[__NR_accept].name = "accept";
+    syscall_table[__NR_connect].handler = (syscall_fn_t)sys_connect_wrapper;
+    syscall_table[__NR_connect].name = "connect";
+    syscall_table[__NR_sendto].handler = (syscall_fn_t)sys_sendto_wrapper;
+    syscall_table[__NR_sendto].name = "sendto";
+    syscall_table[__NR_recvfrom].handler = (syscall_fn_t)sys_recvfrom_wrapper;
+    syscall_table[__NR_recvfrom].name = "recvfrom";
+    syscall_table[__NR_setsockopt].handler = (syscall_fn_t)sys_setsockopt_wrapper;
+    syscall_table[__NR_setsockopt].name = "setsockopt";
+    syscall_table[__NR_getsockopt].handler = (syscall_fn_t)sys_getsockopt_wrapper;
+    syscall_table[__NR_getsockopt].name = "getsockopt";
+    syscall_table[__NR_shutdown].handler = (syscall_fn_t)sys_shutdown_wrapper;
+    syscall_table[__NR_shutdown].name = "shutdown";
+    syscall_table[__NR_brk].handler = (syscall_fn_t)sys_brk;
+    syscall_table[__NR_brk].name = "brk";
+    syscall_table[__NR_munmap].handler = (syscall_fn_t)sys_munmap_wrapper;
+    syscall_table[__NR_munmap].name = "munmap";
+    syscall_table[__NR_clone].handler = (syscall_fn_t)sys_fork_wrapper;
+    syscall_table[__NR_clone].name = "clone/fork";
+    syscall_table[__NR_execve].handler = (syscall_fn_t)sys_execve_wrapper;
+    syscall_table[__NR_execve].name = "execve";
+    syscall_table[__NR_mmap].handler = (syscall_fn_t)sys_mmap_wrapper;
+    syscall_table[__NR_mmap].name = "mmap";
+    syscall_table[__NR_mprotect].handler = (syscall_fn_t)sys_mprotect_wrapper;
+    syscall_table[__NR_mprotect].name = "mprotect";
+    syscall_table[__NR_msync].handler = (syscall_fn_t)sys_msync_wrapper;
+    syscall_table[__NR_msync].name = "msync";
+    syscall_table[__NR_mlock].handler = (syscall_fn_t)sys_mlock_wrapper;
+    syscall_table[__NR_mlock].name = "mlock";
+    syscall_table[__NR_munlock].handler = (syscall_fn_t)sys_munlock_wrapper;
+    syscall_table[__NR_munlock].name = "munlock";
+    syscall_table[__NR_mlockall].handler = (syscall_fn_t)sys_mlockall_wrapper;
+    syscall_table[__NR_mlockall].name = "mlockall";
+    syscall_table[__NR_munlockall].handler = (syscall_fn_t)sys_munlockall_wrapper;
+    syscall_table[__NR_munlockall].name = "munlockall";
+    syscall_table[__NR_mincore].handler = (syscall_fn_t)sys_mincore_wrapper;
+    syscall_table[__NR_mincore].name = "mincore";
+    syscall_table[__NR_madvise].handler = (syscall_fn_t)sys_madvise_wrapper;
+    syscall_table[__NR_madvise].name = "madvise";
+    syscall_table[__NR_wait4].handler = (syscall_fn_t)sys_waitpid_wrapper;
+    syscall_table[__NR_wait4].name = "wait4/waitpid";
+    syscall_table[__NR_prlimit64].handler = (syscall_fn_t)sys_prlimit64_wrapper;
+    syscall_table[__NR_prlimit64].name = "prlimit64";
+    
     /* Futura syscall numbers (from include/user/sysnums.h) - added last to override Linux numbers
-     *
-     * IMPORTANT: These entries override conflicting Linux AArch64 syscall numbers.
-     * For example:
-     *   - Futura SYS_write = 1,  Linux AArch64 __NR_write = 64
-     *   - Futura SYS_getpid = 39, Linux AArch64 __NR_umount2 = 39
-     *
-     * By placing Futura syscalls at the end of this array, they take precedence
-     * over earlier Linux mappings when userland programs use Futura syscall numbers.
-     */
-    [0]  = { (syscall_fn_t)sys_read_wrapper,       "read" },        /* SYS_read = 0 */
-    [1]  = { (syscall_fn_t)sys_write,      "write" },       /* SYS_write = 1 */
-    [2]  = { (syscall_fn_t)sys_open_wrapper,       "open" },        /* SYS_open = 2 */
-    [3]  = { (syscall_fn_t)sys_close_wrapper,      "close" },       /* SYS_close = 3 */
-    [4]  = { (syscall_fn_t)sys_stat_wrapper, "stat" },      /* SYS_stat = 4 */
-    [5]  = { (syscall_fn_t)sys_fstat_wrapper,      "fstat" },       /* SYS_fstat = 5 */
-    [8]  = { (syscall_fn_t)sys_lseek_wrapper, "lseek" },    /* SYS_lseek = 8 */
-    [9]  = { (syscall_fn_t)sys_mmap_wrapper, "mmap" },      /* SYS_mmap = 9 */
-    [11] = { (syscall_fn_t)sys_munmap_wrapper, "munmap" },  /* SYS_munmap = 11 */
-    [12] = { (syscall_fn_t)sys_brk, "brk" },        /* SYS_brk = 12 */
-    [16] = { (syscall_fn_t)sys_ioctl_wrapper, "ioctl" },  /* SYS_ioctl = 16 (overrides Linux fremovexattr) */
-    [22] = { (syscall_fn_t)sys_pipe_wrapper, "pipe" },  /* SYS_pipe = 22 */
-    [32] = { (syscall_fn_t)sys_dup_wrapper, "dup" },    /* SYS_dup = 32 */
-    [33] = { (syscall_fn_t)sys_dup2_wrapper, "dup2" },  /* SYS_dup2 = 33 */
-    [35] = { (syscall_fn_t)sys_nanosleep_wrapper, "nanosleep" },  /* SYS_nanosleep = 35 */
-    [39] = { (syscall_fn_t)sys_getpid_wrapper, "getpid" },  /* SYS_getpid = 39 (overrides Linux umount2) */
-    [42] = { (syscall_fn_t)sys_echo_wrapper, "echo" },  /* SYS_echo = 42 */
-    [57] = { (syscall_fn_t)sys_fork_wrapper, "fork" },  /* SYS_fork = 57 */
-    [59] = { (syscall_fn_t)sys_execve_wrapper, "execve" },  /* SYS_execve = 59 */
-    [60] = { (syscall_fn_t)sys_exit, "exit" },  /* SYS_exit = 60 */
-    [61] = { (syscall_fn_t)sys_waitpid_wrapper, "wait4/waitpid" },  /* SYS_wait4/waitpid = 61 */
-    [79] = { (syscall_fn_t)sys_getcwd_wrapper, "getcwd" },  /* SYS_getcwd = 79 */
-    [80] = { (syscall_fn_t)sys_chdir_wrapper, "chdir" },    /* SYS_chdir = 80 */
-    [83] = { (syscall_fn_t)sys_mkdir_wrapper, "mkdir" },  /* SYS_mkdir = 83 (2-arg version) */
-    [84] = { (syscall_fn_t)sys_rmdir_wrapper, "rmdir" },  /* SYS_rmdir = 84 */
-    [87] = { (syscall_fn_t)sys_unlink_wrapper, "unlink" },  /* SYS_unlink = 87 */
-    [102] = { (syscall_fn_t)sys_getuid_wrapper, "getuid" },  /* SYS_getuid = 102 */
-    [104] = { (syscall_fn_t)sys_getgid_wrapper, "getgid" },  /* SYS_getgid = 104 */
-    [105] = { (syscall_fn_t)sys_setuid_wrapper, "setuid" },  /* SYS_setuid = 105 */
-    [106] = { (syscall_fn_t)sys_setgid_wrapper, "setgid" },  /* SYS_setgid = 106 */
-    [107] = { (syscall_fn_t)sys_geteuid_wrapper, "geteuid" },  /* SYS_geteuid = 107 */
-    [108] = { (syscall_fn_t)sys_getegid_wrapper, "getegid" },  /* SYS_getegid = 108 */
-    [109] = { (syscall_fn_t)sys_seteuid_wrapper, "seteuid" },  /* SYS_seteuid = 109 */
-    [110] = { (syscall_fn_t)sys_setegid_wrapper, "setegid" },  /* SYS_setegid = 110 */
-    [111] = { (syscall_fn_t)sys_getpgrp_wrapper, "getpgrp" },  /* SYS_getpgrp = 111 */
-    [112] = { (syscall_fn_t)sys_setsid_wrapper, "setsid" },    /* SYS_setsid = 112 */
-    [113] = { (syscall_fn_t)sys_getppid_wrapper, "getppid" },  /* SYS_getppid = 113 */
-    [124] = { (syscall_fn_t)sys_getsid_wrapper, "getsid" },    /* SYS_getsid = 124 */
-};
+    *
+    * IMPORTANT: These entries override conflicting Linux AArch64 syscall numbers.
+    * For example:
+    *   - Futura SYS_write = 1,  Linux AArch64 __NR_write = 64
+    *   - Futura SYS_getpid = 39, Linux AArch64 __NR_umount2 = 39
+    *
+    * By placing Futura syscalls at the end of this array, they take precedence
+    * over earlier Linux mappings when userland programs use Futura syscall numbers.
+    */
+    syscall_table[0].handler = (syscall_fn_t)sys_read_wrapper;
+    syscall_table[0].name = "read";
+    syscall_table[1].handler = (syscall_fn_t)sys_write;
+    syscall_table[1].name = "write";
+    syscall_table[2].handler = (syscall_fn_t)sys_open_wrapper;
+    syscall_table[2].name = "open";
+    syscall_table[3].handler = (syscall_fn_t)sys_close_wrapper;
+    syscall_table[3].name = "close";
+    syscall_table[4].handler = (syscall_fn_t)sys_stat_wrapper;
+    syscall_table[4].name = "stat";
+    syscall_table[5].handler = (syscall_fn_t)sys_fstat_wrapper;
+    syscall_table[5].name = "fstat";
+    syscall_table[8].handler = (syscall_fn_t)sys_lseek_wrapper;
+    syscall_table[8].name = "lseek";
+    syscall_table[9].handler = (syscall_fn_t)sys_mmap_wrapper;
+    syscall_table[9].name = "mmap";
+    syscall_table[11].handler = (syscall_fn_t)sys_munmap_wrapper;
+    syscall_table[11].name = "munmap";
+    syscall_table[12].handler = (syscall_fn_t)sys_brk;
+    syscall_table[12].name = "brk";
+    syscall_table[16].handler = (syscall_fn_t)sys_ioctl_wrapper;
+    syscall_table[16].name = "ioctl";
+    syscall_table[22].handler = (syscall_fn_t)sys_pipe_wrapper;
+    syscall_table[22].name = "pipe";
+    syscall_table[32].handler = (syscall_fn_t)sys_dup_wrapper;
+    syscall_table[32].name = "dup";
+    syscall_table[33].handler = (syscall_fn_t)sys_dup2_wrapper;
+    syscall_table[33].name = "dup2";
+    syscall_table[35].handler = (syscall_fn_t)sys_nanosleep_wrapper;
+    syscall_table[35].name = "nanosleep";
+    syscall_table[39].handler = (syscall_fn_t)sys_getpid_wrapper;
+    syscall_table[39].name = "getpid";
+    syscall_table[42].handler = (syscall_fn_t)sys_echo_wrapper;
+    syscall_table[42].name = "echo";
+    syscall_table[57].handler = (syscall_fn_t)sys_fork_wrapper;
+    syscall_table[57].name = "fork";
+    syscall_table[59].handler = (syscall_fn_t)sys_execve_wrapper;
+    syscall_table[59].name = "execve";
+    syscall_table[60].handler = (syscall_fn_t)sys_exit;
+    syscall_table[60].name = "exit";
+    syscall_table[61].handler = (syscall_fn_t)sys_waitpid_wrapper;
+    syscall_table[61].name = "wait4/waitpid";
+    syscall_table[79].handler = (syscall_fn_t)sys_getcwd_wrapper;
+    syscall_table[79].name = "getcwd";
+    syscall_table[80].handler = (syscall_fn_t)sys_chdir_wrapper;
+    syscall_table[80].name = "chdir";
+    syscall_table[83].handler = (syscall_fn_t)sys_mkdir_wrapper;
+    syscall_table[83].name = "mkdir";
+    syscall_table[84].handler = (syscall_fn_t)sys_rmdir_wrapper;
+    syscall_table[84].name = "rmdir";
+    syscall_table[87].handler = (syscall_fn_t)sys_unlink_wrapper;
+    syscall_table[87].name = "unlink";
+    syscall_table[102].handler = (syscall_fn_t)sys_getuid_wrapper;
+    syscall_table[102].name = "getuid";
+    syscall_table[104].handler = (syscall_fn_t)sys_getgid_wrapper;
+    syscall_table[104].name = "getgid";
+    syscall_table[105].handler = (syscall_fn_t)sys_setuid_wrapper;
+    syscall_table[105].name = "setuid";
+    syscall_table[106].handler = (syscall_fn_t)sys_setgid_wrapper;
+    syscall_table[106].name = "setgid";
+    syscall_table[107].handler = (syscall_fn_t)sys_geteuid_wrapper;
+    syscall_table[107].name = "geteuid";
+    syscall_table[108].handler = (syscall_fn_t)sys_getegid_wrapper;
+    syscall_table[108].name = "getegid";
+    syscall_table[109].handler = (syscall_fn_t)sys_seteuid_wrapper;
+    syscall_table[109].name = "seteuid";
+    syscall_table[110].handler = (syscall_fn_t)sys_setegid_wrapper;
+    syscall_table[110].name = "setegid";
+    syscall_table[111].handler = (syscall_fn_t)sys_getpgrp_wrapper;
+    syscall_table[111].name = "getpgrp";
+    syscall_table[112].handler = (syscall_fn_t)sys_setsid_wrapper;
+    syscall_table[112].name = "setsid";
+    syscall_table[113].handler = (syscall_fn_t)sys_getppid_wrapper;
+    syscall_table[113].name = "getppid";
+    syscall_table[124].handler = (syscall_fn_t)sys_getsid_wrapper;
+    syscall_table[124].name = "getsid";
+
+    syscall_table_initialized = true;
+}
 
 /* ============================================================
  *   System Call Dispatcher
@@ -2811,6 +3037,9 @@ int64_t arm64_syscall_dispatch(uint64_t syscall_num,
                                uint64_t arg0, uint64_t arg1,
                                uint64_t arg2, uint64_t arg3,
                                uint64_t arg4, uint64_t arg5) {
+    /* Initialize syscall table on first call */
+    arm64_syscall_table_init();
+
     /* Validate syscall number */
     if (syscall_num >= MAX_SYSCALL) {
         fut_serial_puts("[SYSCALL] Invalid syscall number: ");

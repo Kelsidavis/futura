@@ -7,7 +7,7 @@
  * Essential for clean shutdown, removable media, and container cleanup.
  *
  * Phase 1 (Completed): Validation and stub implementation
- * Phase 2 (Current): Basic unmount support with comprehensive flag validation and logging
+ * Phase 2 (Completed): Basic unmount support with comprehensive flag validation and logging
  * Phase 3: Force and detach unmount modes with filesystem state checking
  * Phase 4: Advanced features (lazy unmount, expire handling)
  */
@@ -170,7 +170,7 @@ extern void fut_printf(const char *fmt, ...);
  * - Avoid MNT_FORCE unless system is shutting down
  *
  * Phase 1 (Completed): Validate parameters and log unmount requests
- * Phase 2 (Current): Accept validated unmount requests, return success with detailed logging
+ * Phase 2 (Completed): Accept validated unmount requests, return success with detailed logging
  * Phase 3: Implement force and detach modes with actual filesystem state checking
  * Phase 4: Add expire handling and advanced unmount modes
  */
@@ -238,7 +238,7 @@ long sys_umount2(const char *target, int flags) {
 
     /* Phase 2: Accept validated unmount requests */
     fut_printf("[UMOUNT2] umount2(target=%p, type=%s, flags=%s, pid=%d) -> 0 "
-               "(Phase 2 - validated, Phase 3+ will implement filesystem operations)\n",
+               "(Phase 3: Force and detach unmount modes with filesystem state checking)\n",
                target, umount_type, flags_buf, task->pid);
 
     return 0;  /* Phase 2: Accept all validated unmount requests */

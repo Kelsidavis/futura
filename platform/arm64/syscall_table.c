@@ -340,37 +340,16 @@ extern long sys_quotactl(unsigned int cmd, const char *special, int id, void *ad
  *   System Call Implementations
  * ============================================================ */
 
-/* sys_write - write to file descriptor
- * x0 = fd, x1 = buf, x2 = count
- * For now, only supports fd=1 (stdout) and fd=2 (stderr)
+/* sys_write wrapper - use kernel implementation from kernel/sys_write.c
+ * The kernel implementation properly uses fut_copy_from_user to safely
+ * access userspace memory, which is required on ARM64.
  */
-static int64_t sys_write(uint64_t fd, uint64_t buf, uint64_t count,
-                         uint64_t arg3, uint64_t arg4, uint64_t arg5) {
+extern ssize_t sys_write(int fd, const void *buf, size_t count);
+
+static int64_t sys_write_wrapper(uint64_t fd, uint64_t buf, uint64_t count,
+                                 uint64_t arg3, uint64_t arg4, uint64_t arg5) {
     (void)arg3; (void)arg4; (void)arg5;
-
-    /* Only support stdout (1) and stderr (2) for now */
-    if (fd != 1 && fd != 2) {
-        fut_serial_puts("[SYSCALL] write() failed: invalid fd\n");
-        return -EINVAL;
-    }
-
-    /* Validate buffer pointer (simple check) */
-    if (buf == 0) {
-        fut_serial_puts("[SYSCALL] write() failed: null buffer\n");
-        return -EINVAL;
-    }
-
-    if (count == 0) {
-        return 0;  /* Writing 0 bytes is success */
-    }
-
-    /* Write each character to serial console */
-    const char *buffer = (const char *)buf;
-    for (size_t i = 0; i < count; i++) {
-        fut_serial_putc(buffer[i]);
-    }
-
-    return (int64_t)count;
+    return (int64_t)sys_write((int)fd, (const void *)buf, (size_t)count);
 }
 
 /* Forward declaration of kernel exit function */
@@ -2689,7 +2668,7 @@ static void arm64_syscall_table_init(void) {
     syscall_table[__NR_lseek].name = "lseek";
     syscall_table[__NR_read].handler = (syscall_fn_t)sys_read_wrapper;
     syscall_table[__NR_read].name = "read";
-    syscall_table[__NR_write].handler = (syscall_fn_t)sys_write;
+    syscall_table[__NR_write].handler = (syscall_fn_t)sys_write_wrapper;
     syscall_table[__NR_write].name = "write";
     syscall_table[__NR_readv].handler = (syscall_fn_t)sys_readv_wrapper;
     syscall_table[__NR_readv].name = "readv";
@@ -2944,7 +2923,7 @@ static void arm64_syscall_table_init(void) {
     */
     syscall_table[0].handler = (syscall_fn_t)sys_read_wrapper;
     syscall_table[0].name = "read";
-    syscall_table[1].handler = (syscall_fn_t)sys_write;
+    syscall_table[1].handler = (syscall_fn_t)sys_write_wrapper;
     syscall_table[1].name = "write";
     syscall_table[2].handler = (syscall_fn_t)sys_open_wrapper;
     syscall_table[2].name = "open";

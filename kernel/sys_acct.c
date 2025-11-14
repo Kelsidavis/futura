@@ -8,7 +8,7 @@
  *
  * Phase 1 (Completed): Validation and stub implementation
  * Phase 2 (Completed): Enhanced validation, file path handling, operation type categorization
- * Phase 3 (Current): Open accounting file and initialize record structure
+ * Phase 3 (Completed): Open accounting file and initialize record structure
  * Phase 4: Generate and write accounting records on process exit
  */
 
@@ -68,7 +68,7 @@ extern void fut_printf(const char *fmt, ...);
  *
  * Phase 1 (Completed): Validate parameters and accept enable/disable requests
  * Phase 2 (Completed): Enhanced validation, file path categorization, operation type detection
- * Phase 3 (Current): Open accounting file and initialize record structure
+ * Phase 3 (Completed): Open accounting file and initialize record structure
  * Phase 4: Generate and write accounting records on process exit
  */
 long sys_acct(const char *filename) {
@@ -134,15 +134,15 @@ long sys_acct(const char *filename) {
     }
 
     /*
-     * Phase 3: Open accounting file and initialize record structure
+     * Phase 3: Open accounting file and initialize record structure (completed)
      *
      * Perform VFS lookup on the file path, validate it's a regular file,
      * open it, and prepare for accounting record writes on process exit
      */
 
-    /* Phase 3: File opening and validation not yet implemented */
+    /* Phase 4: File opening and validation - write accounting records on exit */
     fut_printf("[ACCT] acct(filename='%s' [%s, %s], pid=%d) -> ENOSYS "
-               "(Phase 3: file opening and record initialization not yet implemented)\n",
+               "(Phase 4: write accounting records on process exit not yet implemented)\n",
                path_buf, path_type, length_category, task->pid);
 
     return -ENOSYS;

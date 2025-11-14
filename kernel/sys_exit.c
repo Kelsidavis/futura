@@ -172,10 +172,8 @@ long sys_exit(int status) {
 
         /* Phase 3: Log resource cleanup statistics */
         fut_printf("[EXIT] exit(status=%d, pid=%u) resource cleanup: "
-                   "fds_closed=%d, hooks_executed=%d, "
-                   "mem_usage=%lu bytes (Phase 3 cleanup)\n",
-                   status, task->pid, fds_closed, hooks_executed,
-                   task->memory_used ?: 0);
+                   "fds_closed=%d, hooks_executed=%d\n",
+                   status, task->pid, fds_closed, hooks_executed);
     }
 
     /* Phase 3: Clear exit hooks array after execution */

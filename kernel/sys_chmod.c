@@ -34,6 +34,7 @@ struct fut_acl {
 };
 
 /* Phase 3: Helper function to parse symbolic permissions (simplified) */
+/* Currently unused - commenting out to fix compilation warnings
 static uint32_t parse_symbolic_permissions(const char *mode_str) {
     uint32_t result = 0;
     if (!mode_str) return 0;
@@ -91,6 +92,7 @@ static uint32_t parse_symbolic_permissions(const char *mode_str) {
 
     return result;
 }
+*/
 
 /**
  * chmod() - Change file permissions
@@ -217,7 +219,7 @@ long sys_chmod(const char *pathname, uint32_t mode) {
      * For numeric, mode will be a 32-bit number; for symbolic strings we'd need different syscall
      * This is simplified: in real implementation, fchmodat() with AT_SYMLINK_NOFOLLOW flag exists
      */
-    const char *mode_type = (mode & 0777000) ? "special bits set" : "standard permissions";
+    /* Unused: const char *mode_type = (mode & 0777000) ? "special bits set" : "standard permissions"; */
 
     /* Phase 2: Categorize permission mode */
     const char *mode_desc;
@@ -416,10 +418,12 @@ long sys_chmod(const char *pathname, uint32_t mode) {
     const char *acl_status = "none";
 
     /* Phase 3: Log ACL information if applicable */
+    /* ACL support not yet implemented in vnode structure
     if (vnode->acl) {
         acl_summary = "ACL entries present";
         acl_status = "applied";
     }
+    */
 
     /* Phase 4: Detailed success logging with ACL info */
     fut_printf("[CHMOD] chmod(path='%s' [%s], vnode_ino=%lu, perms=%s, mode=%s, "
@@ -428,10 +432,12 @@ long sys_chmod(const char *pathname, uint32_t mode) {
                special_bits_desc, acl_summary, acl_status);
 
     /* Phase 3: Release any ACL entries if they exist */
+    /* ACL support not yet implemented in vnode structure
     if (vnode->acl) {
-        /* Phase 3: Placeholder for ACL cleanup */
+        // Phase 3: Placeholder for ACL cleanup
         vnode->acl = NULL;
     }
+    */
 
     return 0;
 }

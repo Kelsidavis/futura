@@ -306,48 +306,15 @@ long sys_rename(const char *oldpath, const char *newpath) {
     }
 
     /*
-     * Phase 3: Implement VFS rename operation
+     * Phase 3: VFS rename operation not yet implemented
      *
-     * Call the filesystem's rename operation if available.
-     * The rename operation handles all the atomicity and cross-directory logic.
+     * The rename operation is not yet available in the VFS layer.
+     * TODO: Implement atomic rename in vnode_ops:
+     *   - Add rename() operation to fut_vnode_ops structure
+     *   - Implement in RamFS (in-memory rename)
+     *   - Implement in FuturaFS (log-structured rename)
+     *   - Handle cross-directory rename atomically
      */
-    if (old_vnode->ops && old_vnode->ops->rename) {
-        int ret = old_vnode->ops->rename(old_vnode, old_buf, new_buf);
-        if (ret < 0) {
-            const char *error_desc;
-            switch (ret) {
-                case -EEXIST:
-                    error_desc = "newpath exists and is directory but oldpath is not";
-                    break;
-                case -ENOTEMPTY:
-                    error_desc = "newpath is non-empty directory";
-                    break;
-                case -EXDEV:
-                    error_desc = "cross-filesystem rename not supported";
-                    break;
-                case -EROFS:
-                    error_desc = "read-only filesystem";
-                    break;
-                default:
-                    error_desc = "rename failed";
-                    break;
-            }
-            fut_printf("[RENAME] rename(old='%s' [%s], new='%s' [%s], "
-                       "old_type=%s, op=%s) -> %d (%s)\n",
-                       old_buf, old_path_type, new_buf, new_path_type,
-                       old_vnode_type, operation_type, ret, error_desc);
-            return ret;
-        }
-
-        /* Success */
-        fut_printf("[RENAME] rename(old='%s' [%s], new='%s' [%s], old_ino=%lu, "
-                   "old_type=%s, op=%s) -> 0 (Phase 3: VFS atomic rename operation)\n",
-                   old_buf, old_path_type, new_buf, new_path_type, old_vnode->ino,
-                   old_vnode_type, operation_type);
-        return 0;
-    }
-
-    /* Filesystem doesn't support rename */
     fut_printf("[RENAME] rename(old='%s' [%s], new='%s' [%s], old_ino=%lu, "
                "old_type=%s, op=%s) -> ENOSYS (Phase 3: VFS atomic rename operation)\n",
                old_buf, old_path_type, new_buf, new_path_type, old_vnode->ino,

@@ -23,8 +23,10 @@ extern int fut_copy_to_user(void *to, const void *from, size_t size);
 /* Phase 3: Helper to check capability-based privilege */
 static int has_cap_setuid(fut_task_t *task) {
     if (!task) return 0;
-    /* Phase 3: Check CAP_SETUID capability (capability 7) */
-    return (task->cap_effective & (1 << 7)) ? 1 : 0;
+    /* Phase 3: Check CAP_SETUID capability (capability 7)
+     * Note: Capability system not yet implemented in fut_task structure.
+     * For now, grant privilege to root (uid 0) only. */
+    return (task->uid == 0) ? 1 : 0;
 }
 
 /* Helper to categorize UID/GID values */

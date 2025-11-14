@@ -265,18 +265,7 @@ long sys_fstat(int fd, struct fut_stat *statbuf) {
         handle_stability = "unlinked (pending deletion)";
     }
 
-    const char *dev_major_minor = "";
-    char dev_str[64] = "";
-    if ((mode & 0170000) == 0020000 || (mode & 0170000) == 0060000) {
-        /* Character or block device - log major/minor */
-        unsigned int major = (kernel_stat.st_dev >> 8) & 0xFF;
-        unsigned int minor = kernel_stat.st_dev & 0xFF;
-        char *p = dev_str;
-        const char *dev_prefix = "dev=";
-        while (*dev_prefix) *p++ = *dev_prefix++;
-        p += 0;
-        dev_major_minor = dev_str;
-    }
+    /* Note: Device major/minor not logged in this simplified implementation */
 
     /* Phase 3: Detailed success logging with extended metadata and handle info */
     fut_printf("[FSTAT] fstat(fd=%d [%s], type=%s, size=%llu [%s], mode=%o, ino=%llu, "

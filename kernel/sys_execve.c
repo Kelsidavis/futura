@@ -388,13 +388,13 @@ long sys_execve(const char *pathname, char *const argv[], char *const envp[]) {
     text = "], argc=";
     while (*text) { msg[pos++] = *text++; }
 
-    char num[16]; int num_pos = 0; int val = argc;
-    if (val == 0) { num[num_pos++] = '0'; }
+    char num2[16]; int num_pos2 = 0; int val2 = argc;
+    if (val2 == 0) { num2[num_pos2++] = '0'; }
     else { char temp[16]; int temp_pos = 0;
-        while (val > 0) { temp[temp_pos++] = '0' + (val % 10); val /= 10; }
-        while (temp_pos > 0) { num[num_pos++] = temp[--temp_pos]; } }
-    num[num_pos] = '\0';
-    for (int i = 0; num[i]; i++) { msg[pos++] = num[i]; }
+        while (val2 > 0) { temp[temp_pos++] = '0' + (val2 % 10); val2 /= 10; }
+        while (temp_pos > 0) { num2[num_pos2++] = temp[--temp_pos]; } }
+    num2[num_pos2] = '\0';
+    for (int i = 0; num2[i]; i++) { msg[pos++] = num2[i]; }
 
     text = " [";
     while (*text) { msg[pos++] = *text++; }
@@ -402,35 +402,35 @@ long sys_execve(const char *pathname, char *const argv[], char *const envp[]) {
     text = "], envc=";
     while (*text) { msg[pos++] = *text++; }
 
-    num_pos = 0; val = envc;
-    if (val == 0) { num[num_pos++] = '0'; }
+    num_pos2 = 0; val2 = envc;
+    if (val2 == 0) { num2[num_pos2++] = '0'; }
     else { char temp[16]; int temp_pos = 0;
-        while (val > 0) { temp[temp_pos++] = '0' + (val % 10); val /= 10; }
-        while (temp_pos > 0) { num[num_pos++] = temp[--temp_pos]; } }
-    num[num_pos] = '\0';
-    for (int i = 0; num[i]; i++) { msg[pos++] = num[i]; }
+        while (val2 > 0) { temp[temp_pos++] = '0' + (val2 % 10); val2 /= 10; }
+        while (temp_pos > 0) { num2[num_pos2++] = temp[--temp_pos]; } }
+    num2[num_pos2] = '\0';
+    for (int i = 0; num2[i]; i++) { msg[pos++] = num2[i]; }
 
     text = ", cloexec_fds=";
     while (*text) { msg[pos++] = *text++; }
 
-    num_pos = 0; val = cloexec_count;
-    if (val == 0) { num[num_pos++] = '0'; }
+    num_pos2 = 0; val2 = cloexec_count;
+    if (val2 == 0) { num2[num_pos2++] = '0'; }
     else { char temp[16]; int temp_pos = 0;
-        while (val > 0) { temp[temp_pos++] = '0' + (val % 10); val /= 10; }
-        while (temp_pos > 0) { num[num_pos++] = temp[--temp_pos]; } }
-    num[num_pos] = '\0';
-    for (int i = 0; num[i]; i++) { msg[pos++] = num[i]; }
+        while (val2 > 0) { temp[temp_pos++] = '0' + (val2 % 10); val2 /= 10; }
+        while (temp_pos > 0) { num2[num_pos2++] = temp[--temp_pos]; } }
+    num2[num_pos2] = '\0';
+    for (int i = 0; num2[i]; i++) { msg[pos++] = num2[i]; }
 
     text = ", pid=";
     while (*text) { msg[pos++] = *text++; }
 
-    num_pos = 0; unsigned int uval = task->pid;
-    if (uval == 0) { num[num_pos++] = '0'; }
+    num_pos2 = 0; unsigned int uval = task->pid;
+    if (uval == 0) { num2[num_pos2++] = '0'; }
     else { char temp[16]; int temp_pos = 0;
         while (uval > 0) { temp[temp_pos++] = '0' + (uval % 10); uval /= 10; }
-        while (temp_pos > 0) { num[num_pos++] = temp[--temp_pos]; } }
-    num[num_pos] = '\0';
-    for (int i = 0; num[i]; i++) { msg[pos++] = num[i]; }
+        while (temp_pos > 0) { num2[num_pos2++] = temp[--temp_pos]; } }
+    num2[num_pos2] = '\0';
+    for (int i = 0; num2[i]; i++) { msg[pos++] = num2[i]; }
 
     text = ") (replacing process image, Phase 2)\n";
     while (*text) { msg[pos++] = *text++; }

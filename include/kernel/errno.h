@@ -83,6 +83,10 @@
 #define EISDIR      21
 #endif
 
+#ifndef EXDEV
+#define EXDEV       18
+#endif
+
 #ifndef EINVAL
 #define EINVAL      22
 #endif

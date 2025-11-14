@@ -13,7 +13,8 @@
 #include <kernel/fut_timer.h>
 #include <kernel/errno.h>
 
-static const struct fut_vnode_ops futurafs_vnode_ops;
+/* FuturaFS vnode operations - initialized at runtime to avoid ARM64 relocation issues */
+static struct fut_vnode_ops futurafs_vnode_ops;
 
 /* ============================================================
  *   I/O Transition Wrappers (Dual-Mode Support)
@@ -3643,20 +3644,21 @@ static int futurafs_vnode_rmdir(struct fut_vnode *dir, const char *name) {
     return 0;
 }
 
-static const struct fut_vnode_ops futurafs_vnode_ops = {
-    .open = NULL,
-    .close = NULL,
-    .read = futurafs_vnode_read,
-    .write = futurafs_vnode_write,
-    .readdir = futurafs_vnode_readdir,
-    .lookup = futurafs_vnode_lookup,
-    .create = futurafs_vnode_create,
-    .unlink = futurafs_vnode_unlink,
-    .mkdir = futurafs_vnode_mkdir,
-    .rmdir = futurafs_vnode_rmdir,
-    .getattr = NULL,
-    .setattr = NULL,
-};
+/* Initialize FuturaFS vnode operations at runtime */
+static void futurafs_init_vnode_ops(void) {
+    futurafs_vnode_ops.open = NULL;
+    futurafs_vnode_ops.close = NULL;
+    futurafs_vnode_ops.read = futurafs_vnode_read;
+    futurafs_vnode_ops.write = futurafs_vnode_write;
+    futurafs_vnode_ops.readdir = futurafs_vnode_readdir;
+    futurafs_vnode_ops.lookup = futurafs_vnode_lookup;
+    futurafs_vnode_ops.create = futurafs_vnode_create;
+    futurafs_vnode_ops.unlink = futurafs_vnode_unlink;
+    futurafs_vnode_ops.mkdir = futurafs_vnode_mkdir;
+    futurafs_vnode_ops.rmdir = futurafs_vnode_rmdir;
+    futurafs_vnode_ops.getattr = NULL;
+    futurafs_vnode_ops.setattr = NULL;
+}
 
 /* ============================================================
  *   Filesystem Operations
@@ -3865,6 +3867,9 @@ static const struct fut_fs_type futurafs_type = {
  * ============================================================ */
 
 void fut_futurafs_init(void) {
+    /* Initialize vnode operations at runtime */
+    futurafs_init_vnode_ops();
+
     fut_vfs_register_fs(&futurafs_type);
 }
 

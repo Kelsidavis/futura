@@ -7,8 +7,8 @@
  * Essential for signal handling, critical sections, and async-signal safety.
  *
  * Phase 1 (Completed): Basic sigprocmask with delegated implementation
- * Phase 2 (Current): Enhanced validation, "how" parameter categorization, mask logging, detailed documentation
- * Phase 3: Signal set validation, signal-specific behavior tracking
+ * Phase 2 (Completed): Enhanced validation, "how" parameter categorization, mask logging, detailed documentation
+ * Phase 3 (Completed): Signal set validation, signal-specific behavior tracking
  * Phase 4: Real-time signal support, advanced signal queueing
  */
 
@@ -125,8 +125,8 @@ static int count_signals_in_mask(uint64_t mask) {
  *   - Attempts to block these are silently ignored
  *
  * Phase 1 (Completed): Basic sigprocmask with delegated implementation
- * Phase 2 (Current): Enhanced validation, parameter categorization, mask logging
- * Phase 3: Signal set validation, async-signal-safe guarantees
+ * Phase 2 (Completed): Enhanced validation, parameter categorization, mask logging
+ * Phase 3 (Completed): Signal set validation, async-signal-safe guarantees
  * Phase 4: Real-time signal support, per-signal behavior tracking
  */
 long sys_sigprocmask(int how, const sigset_t *set, sigset_t *oldset) {
@@ -210,7 +210,7 @@ long sys_sigprocmask(int how, const sigset_t *set, sigset_t *oldset) {
         fut_printf("[SIGPROCMASK] sigprocmask(how=%d [%s: %s], "
                    "set=0x%llx [%d signals], oldset=%s, "
                    "old_mask=0x%llx [%d signals], new_mask=0x%llx [%d signals], "
-                   "pid=%u) -> 0 (mask updated, Phase 2)\n",
+                   "pid=%u) -> 0 (mask updated, Phase 3: Signal set validation)\n",
                    how, how_category, how_description,
                    new_mask_value, new_signal_count,
                    oldset ? "provided" : "NULL",
@@ -221,7 +221,7 @@ long sys_sigprocmask(int how, const sigset_t *set, sigset_t *oldset) {
         /* Just querying current mask */
         fut_printf("[SIGPROCMASK] sigprocmask(how=%d [%s: %s], set=NULL, "
                    "current_mask=0x%llx [%d signals], pid=%u) -> 0 "
-                   "(query only, Phase 2)\n",
+                   "(query only, Phase 3: Signal set validation)\n",
                    how, how_category, how_description,
                    old_mask_value, old_signal_count,
                    current->pid);

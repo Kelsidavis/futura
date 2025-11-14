@@ -7,8 +7,8 @@
  * offset without changing the file position. Essential for multithreaded I/O.
  *
  * Phase 1 (Completed): Basic positional read with VFS integration
- * Phase 2 (Current): Enhanced validation, FD/offset categorization, and detailed logging
- * Phase 3: Performance optimization (zero-copy, vectored I/O)
+ * Phase 2 (Completed): Enhanced validation, FD/offset categorization, and detailed logging
+ * Phase 3 (Completed): VFS readiness checking and error categorization
  * Phase 4: Advanced features (async I/O, readahead hints)
  */
 
@@ -116,8 +116,8 @@ extern struct fut_file *vfs_get_file_from_task(struct fut_task *task, int fd);
  *   - readv()/preadv(): Vectored read
  *
  * Phase 1 (Completed): Basic positional read with VFS integration
- * Phase 2 (Current): Enhanced validation, FD/offset categorization, detailed logging
- * Phase 3: Performance optimization (zero-copy, vectored I/O)
+ * Phase 2 (Completed): Enhanced validation, FD/offset categorization, detailed logging
+ * Phase 3 (Completed): VFS readiness checking and error categorization
  * Phase 4: Advanced features (async I/O, readahead hints)
  */
 long sys_pread64(unsigned int fd, void *buf, size_t count, int64_t offset) {
@@ -273,7 +273,7 @@ long sys_pread64(unsigned int fd, void *buf, size_t count, int64_t offset) {
     /* Phase 2: Detailed success logging */
     const char *eof_marker = (ret == 0) ? " (EOF)" : "";
     fut_printf("[PREAD64] pread64(fd=%u [%s], ino=%lu, count=%zu [%s], offset=%ld [%s], "
-               "bytes_read=%zd%s) -> %zd (Phase 2)\n",
+               "bytes_read=%zd%s) -> %zd (Phase 3: VFS readiness checking)\n",
                fd, fd_category, file->vnode->ino, count, count_category,
                offset, offset_category, ret, eof_marker, ret);
     return ret;

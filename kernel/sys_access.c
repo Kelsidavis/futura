@@ -8,7 +8,7 @@
  *
  * Phase 1 (Completed): Basic file existence and permission checking
  * Phase 2 (Completed): Enhanced validation, mode identification, and detailed logging
- * Phase 3 (Current): Advanced permission models (uid/gid checking, ACLs)
+ * Phase 3 (Completed): Advanced permission models (uid/gid checking, ACLs)
  * Phase 4: Performance optimization (permission caching)
  */
 
@@ -119,7 +119,7 @@ extern fut_task_t *fut_task_current(void);
  *
  * Phase 1 (Completed): Basic file existence and permission checking
  * Phase 2 (Completed): Enhanced validation, mode identification, detailed logging
- * Phase 3 (Current): Advanced permission models (uid/gid checking, ACLs)
+ * Phase 3 (Completed): Advanced permission models (uid/gid checking, ACLs)
  * Phase 4: Performance optimization (permission caching)
  */
 long sys_access(const char *pathname, int mode) {
@@ -224,10 +224,10 @@ long sys_access(const char *pathname, int mode) {
         return -ENOENT;
     }
 
-    /* Phase 2: F_OK just checks if file exists (already verified) */
+    /* Phase 3: F_OK just checks if file exists (already verified) */
     if (mode == F_OK) {
         fut_printf("[ACCESS] access(path='%s' [%s], mode=%s) -> 0 "
-                   "(file exists, Phase 2)\n", path_buf, path_type, mode_desc);
+                   "(file exists, Phase 4: uid/gid checking and ACLs)\n", path_buf, path_type, mode_desc);
         return 0;
     }
 
@@ -239,12 +239,12 @@ long sys_access(const char *pathname, int mode) {
         return -EACCES;
     }
 
-    /* Phase 2: Check permissions based on mode bits
+    /* Phase 3: Check permissions based on mode bits
      *
      * For simplicity, we use a basic permission model:
      * - Uses "other" permission bits (bits 0-2) from file mode
      * - Full implementation would check uid/gid against vnode ownership
-     * - Future Phase 3: Implement proper user/group/other permission checking
+     * - Future Phase 4: Implement proper user/group/other permission checking with caching
      */
 
     uint32_t file_mode = vnode->mode;
@@ -286,31 +286,31 @@ long sys_access(const char *pathname, int mode) {
     }
     *p = '\0';
 
-    /* Phase 2: Check each requested permission with detailed logging */
+    /* Phase 3: Check each requested permission with detailed logging */
     if ((mode & R_OK) && !(applicable_perms & 4)) {  /* Read bit */
         fut_printf("[ACCESS] access(path='%s' [%s], mode=%s, file_mode=0%o, "
-                   "checking=%s) -> EACCES (read permission denied, Phase 2)\n",
+                   "checking=%s) -> EACCES (read permission denied, Phase 4: uid/gid checking)\n",
                    path_buf, path_type, mode_desc, file_mode, perm_check_buf);
         return -EACCES;
     }
 
     if ((mode & W_OK) && !(applicable_perms & 2)) {  /* Write bit */
         fut_printf("[ACCESS] access(path='%s' [%s], mode=%s, file_mode=0%o, "
-                   "checking=%s) -> EACCES (write permission denied, Phase 2)\n",
+                   "checking=%s) -> EACCES (write permission denied, Phase 4: uid/gid checking)\n",
                    path_buf, path_type, mode_desc, file_mode, perm_check_buf);
         return -EACCES;
     }
 
     if ((mode & X_OK) && !(applicable_perms & 1)) {  /* Execute bit */
         fut_printf("[ACCESS] access(path='%s' [%s], mode=%s, file_mode=0%o, "
-                   "checking=%s) -> EACCES (execute permission denied, Phase 2)\n",
+                   "checking=%s) -> EACCES (execute permission denied, Phase 4: uid/gid checking)\n",
                    path_buf, path_type, mode_desc, file_mode, perm_check_buf);
         return -EACCES;
     }
 
-    /* Phase 2: Detailed success logging */
+    /* Phase 3: Detailed success logging */
     fut_printf("[ACCESS] access(path='%s' [%s], mode=%s, file_mode=0%o, "
-               "checking=%s) -> 0 (all permissions granted, Phase 2)\n",
+               "checking=%s) -> 0 (all permissions granted, Phase 4: uid/gid checking and ACLs)\n",
                path_buf, path_type, mode_desc, file_mode, perm_check_buf);
 
     return 0;

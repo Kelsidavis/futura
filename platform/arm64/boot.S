@@ -642,6 +642,70 @@ irq_handler_entry:
  * Simplified handler that only dispatches timer IRQs properly.
  * Other IRQs (like UART) are handled via registered handlers in arm64_irq.c,
  * but require proper interrupt frame setup which is currently simplified.
+ *
+ * Handler Dispatch Implementation Plan:
+ *
+ * Phase 1 (Current): Timer-only dispatch
+ * - Timer IRQ (30) routed to dedicated handler with full frame context
+ * - All other IRQs: acknowledge and return (no dispatch framework)
+ * - Rationale: Timer is critical for scheduler; other IRQs not yet needed
+ * - Status: Functional but limited
+ *
+ * Phase 2 (Planned): Registered handler framework
+ * - Build IRQ dispatch table indexed by IRQ number
+ * - For each IRQ: save full context frame, dispatch to registered handler
+ * - Handlers registered via arm64_irq_register_handler(irq, fn)
+ * - Frame structure passed to handler function (like exception handlers)
+ * - EOI sent after handler returns (unless handler defers it)
+ * - Rationale: Enables UART, virtio, PCI, and device driver interrupts
+ * - Requirements: Handler table allocation, handler function signature
+ *
+ * Phase 3 (Future): Context-preserving dispatch with return values
+ * - Handlers can modify interrupt frame (like signal delivery)
+ * - Handler return value indicates: handled, deferred, error
+ * - Integrate with scheduler for handler preemption
+ * - Nested interrupt support with interrupt stack
+ * - Rationale: Complex interrupt handling scenarios
+ * - Requirements: Handler priority levels, nested interrupt stacks
+ *
+ * Current Limitations:
+ * - No IRQ handler dispatch for devices (UART, VirtIO, etc.)
+ * - Each device must work around this or be timer-polled
+ * - No mechanism to register device-specific handlers
+ * - Devices that need interrupts are not yet supported on ARM64
+ *
+ * Handler Frame Structure (to be used in Phase 2):
+ * - Identical to exception frame from arm64_exception_entry.S
+ * - Registers X0-X30 preserved for handler inspection
+ * - X0-X7 available for handler arguments/return values
+ * - Handler can modify PC (similar to signal delivery)
+ * - SP, PSTATE preserved for correct return-to-interrupted context
+ *
+ * UART Interrupt Example (Phase 2):
+ * 1. UART IRQ asserted (IRQ 33 on virt machine)
+ * 2. CPU vectors to IRQ handler, saves context
+ * 3. fut_irq_handler reads GIC, gets IRQ 33
+ * 4. Dispatch table[33] = uart_irq_handler
+ * 5. Call uart_irq_handler(frame) with full context
+ * 6. Handler processes UART FIFO, signals reading task
+ * 7. Return and send EOI to GIC
+ * 8. Check reschedule flag (like timer does)
+ * 9. ERET returns to interrupted context
+ *
+ * VirtIO Block/Net Example (Phase 2):
+ * 1. Device completion interrupt asserted
+ * 2. fut_irq_handler routes to registered virtio_handler
+ * 3. Handler processes completion descriptors
+ * 4. Wakes up blocked I/O waiters
+ * 5. EOI sent, context restored
+ * 6. I/O tasks scheduled if needed
+ *
+ * Design Decision (Current):
+ * - Keep Phase 1 simple: only timer works
+ * - No partial device interrupt support
+ * - Better to have working timer than broken device interrupts
+ * - Phase 2 requires design decisions: priority levels, handler contexts
+ * - Wait for real device usage to drive requirements
  */
 .type fut_irq_handler, @function
 fut_irq_handler:
@@ -654,7 +718,7 @@ fut_irq_handler:
     beq     handle_timer_irq
 
     /* For non-timer IRQs, just acknowledge and return */
-    /* TODO: Implement proper frame setup for registered handler dispatch */
+    /* Phase 1: No registered handler dispatch framework yet (see above) */
     mov     x0, x19
     bl      fut_irq_send_eoi
     ret

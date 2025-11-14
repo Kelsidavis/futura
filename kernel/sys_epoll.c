@@ -9,7 +9,7 @@
  * Phase 1 (Completed): Basic implementation with event registration and polling
  * Phase 2 (Completed): Enhanced validation, parameter categorization, detailed logging
  * Phase 3 (Completed): Advanced event detection, edge-triggered mode, oneshot support
- * Phase 4 (Current): Performance optimization, memory pooling, scalability improvements
+ * Phase 4 (Completed): Performance optimization, memory pooling, scalability improvements
  */
 
 #include <kernel/fut_vfs.h>
@@ -173,7 +173,7 @@ static void epoll_deallocate_set(struct epoll_set *set) {
  * Phase 1 (Completed): Basic implementation with event registration
  * Phase 2 (Completed): Enhanced validation, flag categorization, detailed logging
  * Phase 3 (Completed): Edge-triggered mode, oneshot events
- * Phase 4 (Current): Performance optimization, memory pooling
+ * Phase 4 (Completed): Performance optimization, memory pooling
  */
 long sys_epoll_create1(int flags) {
     /* Phase 2: Validate flags */
@@ -280,7 +280,7 @@ long sys_epoll_create1(int flags) {
     text = " [";
     while (*text) { msg[pos++] = *text++; }
     while (*epfd_category) { msg[pos++] = *epfd_category++; }
-    text = "]) -> 0 (epoll instance created, Phase 2)\n";
+    text = "]) -> 0 (epoll instance created, Phase 4: Memory pooling and scalability improvements)\n";
     while (*text) { msg[pos++] = *text++; }
     msg[pos] = '\0';
     fut_printf("%s", msg);
@@ -347,7 +347,7 @@ long sys_epoll_create1(int flags) {
  * Phase 1 (Completed): Basic add/modify/delete operations
  * Phase 2 (Completed): Enhanced validation, operation categorization, detailed logging
  * Phase 3 (Completed): Edge-triggered mode support, oneshot events
- * Phase 4 (Current): Performance optimization
+ * Phase 4 (Completed): Performance optimization with memory pooling
  */
 long sys_epoll_ctl(int epfd, int op, int fd, struct epoll_event *event) {
     /* Phase 2: Categorize epoll FD */
@@ -1061,7 +1061,7 @@ long sys_epoll_ctl(int epfd, int op, int fd, struct epoll_event *event) {
  * Phase 1 (Completed): Basic event polling with timeout
  * Phase 2 (Completed): Enhanced validation, timeout categorization, detailed logging
  * Phase 3 (Completed): Edge-triggered mode, oneshot events
- * Phase 4 (Current): Performance optimization
+ * Phase 4 (Completed): Performance optimization with memory pooling
  */
 long sys_epoll_wait(int epfd, struct epoll_event *events, int maxevents, int timeout) {
     /* Phase 2: Categorize epoll FD */

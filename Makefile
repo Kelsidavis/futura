@@ -696,6 +696,10 @@ else
 	@rm $@.tmp
 endif
 	@echo "Build complete: $@"
+ifeq ($(PLATFORM),arm64)
+	@echo "OBJCOPY $(BIN_DIR)/futura_kernel.bin"
+	@aarch64-elf-objcopy -O binary $@ $(BIN_DIR)/futura_kernel.bin
+endif
 
 ifeq ($(RUST_AVAILABLE),yes)
 rust-drivers: $(RUST_LIBS)
@@ -1197,8 +1201,8 @@ qemu-x86_64: platform-x86_64
 	@qemu-system-x86_64 -kernel $(BIN_DIR)/futura_kernel.elf -serial stdio -nographic
 
 qemu-arm64: platform-arm64
-	@echo "Running ARM64 kernel in QEMU..."
-	@qemu-system-aarch64 -M virt -cpu cortex-a53 -kernel $(BIN_DIR)/futura_kernel.elf -serial stdio -nographic
+	@echo "Running ARM64 kernel in QEMU (virt 10.0 with VirtIO GPU)..."
+	@qemu-system-aarch64 -M virt-10.0 -cpu cortex-a53 -m 512M -kernel $(BIN_DIR)/futura_kernel.bin -device virtio-gpu-pci -display cocoa -serial stdio -no-reboot
 
 # ============================================================
 #   Apple Silicon / m1n1 Payload

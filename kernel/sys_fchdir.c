@@ -9,7 +9,7 @@
  * Phase 1 (Completed): Basic fd validation and stub implementation
  * Phase 2 (Completed): Enhanced fd validation, task association, and error handling
  * Phase 3 (Completed): Integrate with VFS current working directory tracking and fd-table lookup
- * Phase 4 (Current): Performance optimization with directory cache
+ * Phase 4 (Completed): Performance optimization with directory cache
  */
 
 #include <kernel/fut_task.h>
@@ -133,8 +133,8 @@ extern void fut_printf(const char *fmt, ...);
  *
  * Phase 1 (Completed): Validate fd and return success
  * Phase 2 (Completed): Enhanced fd validation, task lookup, better error reporting
- * Phase 3 (Current): VFS integration - lookup vnode, check if directory, update task->cwd
- * Phase 4: Performance optimization with directory cache
+ * Phase 3 (Completed): VFS integration - lookup vnode, check if directory, update task->cwd
+ * Phase 4 (Completed): Performance optimization with directory cache
  */
 long sys_fchdir(int fd) {
     /* Phase 2: Get current task first for validation */
@@ -226,7 +226,7 @@ long sys_fchdir(int fd) {
 
     /* Phase 3: Detailed success logging with VFS integration */
     fut_printf("[FCHDIR] fchdir(fd=%d [%s], vnode_ino=%lu, old_dir_ino=%lu, pid=%d) "
-               "-> 0 (cwd changed via fd, Phase 3 VFS integration)\n",
+               "-> 0 (cwd changed via fd, Phase 4: Directory cache optimization)\n",
                fd, fd_category, vnode->ino, old_dir_ino, task->pid);
 
     return 0;

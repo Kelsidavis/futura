@@ -55,24 +55,33 @@ static ssize_t pipe_write(void *inode, void *priv, const void *buf, size_t len, 
 static int pipe_release_read(void *inode, void *priv);
 static int pipe_release_write(void *inode, void *priv);
 
-/* Pipe file operations */
-static const struct fut_file_ops pipe_read_fops = {
-    .open = NULL,
-    .release = pipe_release_read,
-    .read = pipe_read,
-    .write = NULL,
-    .ioctl = NULL,
-    .mmap = NULL,
-};
+/* Pipe file operations - initialized at runtime to avoid ARM64 relocation issues */
+static struct fut_file_ops pipe_read_fops;
+static struct fut_file_ops pipe_write_fops;
+static bool pipe_fops_initialized = false;
 
-static const struct fut_file_ops pipe_write_fops = {
-    .open = NULL,
-    .release = pipe_release_write,
-    .read = NULL,
-    .write = pipe_write,
-    .ioctl = NULL,
-    .mmap = NULL,
-};
+/* Initialize pipe file operations at runtime */
+static void init_pipe_fops(void) {
+    if (pipe_fops_initialized) {
+        return;
+    }
+
+    pipe_read_fops.open = NULL;
+    pipe_read_fops.release = pipe_release_read;
+    pipe_read_fops.read = pipe_read;
+    pipe_read_fops.write = NULL;
+    pipe_read_fops.ioctl = NULL;
+    pipe_read_fops.mmap = NULL;
+
+    pipe_write_fops.open = NULL;
+    pipe_write_fops.release = pipe_release_write;
+    pipe_write_fops.read = NULL;
+    pipe_write_fops.write = pipe_write;
+    pipe_write_fops.ioctl = NULL;
+    pipe_write_fops.mmap = NULL;
+
+    pipe_fops_initialized = true;
+}
 
 /**
  * Create a new pipe buffer.
@@ -375,6 +384,9 @@ extern int chrdev_alloc_fd(const struct fut_file_ops *ops, void *inode, void *pr
  * Phase 4: Advanced features (pipe2 with flags, splice support)
  */
 long sys_pipe(int pipefd[2]) {
+    /* Initialize pipe file operations on first use */
+    init_pipe_fops();
+
     /* Phase 2: Validate user pointer */
     if (!pipefd) {
         fut_printf("[PIPE] pipe(pipefd=NULL) -> EINVAL (NULL pipefd array)\n");

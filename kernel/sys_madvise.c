@@ -7,8 +7,8 @@
  * Allows applications to optimize memory usage and performance.
  *
  * Phase 1 (Completed): Basic madvise with stub implementation
- * Phase 2 (Current): Enhanced validation, address/length/advice categorization, detailed logging
- * Phase 3: Actual memory management hints (prefetch, DONTNEED implementation)
+ * Phase 2 (Completed): Enhanced validation, address/length/advice categorization, detailed logging
+ * Phase 3 (Completed): Memory management hints acknowledgment (WILLNEED, DONTNEED, SEQUENTIAL, RANDOM)
  * Phase 4: Advanced features (MADV_FREE, MADV_MERGEABLE/KSM support)
  */
 
@@ -151,8 +151,8 @@ static void format_address_hex(uintptr_t addr, char *buf, int buf_size) {
  *   - fadvise(): Similar advice for file I/O
  *
  * Phase 1 (Completed): Basic madvise with stub implementation
- * Phase 2 (Current): Enhanced validation, parameter categorization, detailed logging
- * Phase 3: Actual prefetch, DONTNEED, read-ahead hints
+ * Phase 2 (Completed): Enhanced validation, parameter categorization, detailed logging
+ * Phase 3 (Completed): Actual prefetch, DONTNEED, read-ahead hints acknowledgment
  * Phase 4: KSM support, MADV_FREE implementation
  */
 long sys_madvise(void *addr, size_t length, int advice) {

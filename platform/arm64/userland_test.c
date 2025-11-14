@@ -341,7 +341,129 @@ void el0_test_function(void) {
         syscall3(__NR_write, 1, (uint64_t)global_msg_buffer, len);
     }
 
-    /* TODO: Debug nanosleep crash - skipping for now */
+    /* Nanosleep Crash Investigation Status:
+     *
+     * Issue: nanosleep() syscall causes exception/crash in userland tests
+     * Impact: Cannot test sleep functionality, prevents time-delay dependent tests
+     * Priority: Low - timer interrupt works, nanosleep is secondary feature
+     *
+     * Root Cause Analysis (TBD):
+     *
+     * Theory 1: Argument validation failure
+     * - nanosleep requires valid userspace pointers for timespec
+     * - If pointer validation fails, may trigger segfault
+     * - Check: sys_nanosleep() pointer validation in kernel/sys_nanosleep.c
+     * - Solution: Verify fut_copy_from_user/to_user correct usage
+     *
+     * Theory 2: Wait queue state machine
+     * - Timer IRQ may interrupt sleep before scheduled wake-up
+     * - Task may be left in inconsistent waitq state
+     * - Check: fut_task_sleep() and timer callback interaction
+     * - Solution: Ensure atomic sleep-to-wake transition
+     *
+     * Theory 3: Register/stack corruption
+     * - May be C calling convention issue (callee-saved regs)
+     * - nanosleep differs from clock_gettime: requires sleepable state
+     * - Check: interrupt context vs sleepable context assumptions
+     * - Solution: Audit syscall entry/exit frame handling
+     *
+     * Theory 4: Scheduler stale task state
+     * - After nanosleep completes, task state may be inconsistent
+     * - Check: TASK_RUNNING vs TASK_SLEEP transition
+     * - Solution: Verify scheduler cleanly transitions from sleep
+     *
+     * Theory 5: Timer IRQ race condition
+     * - Task scheduled to wake at T; timer fires before T
+     * - Check: futq_wakeup_all() concurrent with task removal
+     * - Solution: Ensure atomic wait queue operations
+     *
+     * Debugging Phases:
+     *
+     * Phase 1: Reproduce and capture crash details
+     * - Enable DEBUG_SYSCALL in kernel to log nanosleep entry/exit
+     * - Capture exception type (segfault, abort, etc)
+     * - Record PC (program counter) at crash time
+     * - Expected location: kernel/sys_nanosleep.c or scheduler code
+     * - Action: Uncomment nanosleep test, rebuild, run, capture output
+     *
+     * Phase 2: Isolate syscall boundary
+     * - Test if crash occurs in syscall entry or exit
+     * - Add debug output before/after fut_copy_from_user()
+     * - Test with various timespec values (short, medium, long sleeps)
+     * - Check if issue appears with NULL pointers (should reject cleanly)
+     * - Action: Add diagnostic prints to sys_nanosleep()
+     *
+     * Phase 3: Investigate wait queue interaction
+     * - Examine futq_insert() and futq_wakeup_all() state transitions
+     * - Verify task state machine (READY → WAITING → READY)
+     * - Check for missed wake-ups or spurious wake-ups
+     * - Test with GDB breakpoints on futq_wakeup_all()
+     * - Action: Instrument wait queue code with tracing
+     *
+     * Phase 4: Timer interrupt correlation
+     * - Enable DEBUG_TIMER to see timer IRQ firing
+     * - Correlate timer IRQ with nanosleep wakeup
+     * - Check if exception happens during timer IRQ
+     * - Test with nanosleep(1 sec) to see if timer fires during sleep
+     * - Action: Sync timer debug output with exception logs
+     *
+     * Test Cases When Debugging:
+     *
+     * 1. Minimal nanosleep (no instrumentation):
+     *    syscall2(__NR_nanosleep, (uint64_t)&ts, NULL)
+     *    Expected: Sleep 1 sec, return cleanly
+     *    Actual: Crash (unknown location)
+     *
+     * 2. Very short nanosleep (< 1 ms):
+     *    ts.tv_nsec = 1
+     *    May return immediately without timer interaction
+     *
+     * 3. NULL timespec handling:
+     *    syscall2(__NR_nanosleep, 0, NULL)
+     *    Should return -EFAULT cleanly
+     *
+     * 4. nanosleep in loop:
+     *    Repeat nanosleep multiple times
+     *    May reveal state accumulation issues
+     *
+     * 5. nanosleep with concurrent timers:
+     *    Run while clock_gettime is called from timer handler
+     *    May expose race conditions
+     *
+     * Known Working Components:
+     * - clock_gettime (tested above)
+     * - Timer IRQ fires (used for scheduling)
+     * - Task sleep/wakeup used elsewhere (waitpid works)
+     * - Syscall dispatch mechanism
+     * - Userland pointer handling (in other syscalls)
+     *
+     * Known Broken Components:
+     * - nanosleep specifically (causes exception)
+     * - Possibly futq state management during sleep
+     *
+     * Current Workaround:
+     * - Skip nanosleep tests entirely
+     * - Use busy-waiting if sleep needed (inefficient)
+     * - Tests that require sleep functionality cannot run
+     *
+     * Expected Fix Complexity:
+     * - Simple pointer validation bug: 1-2 hour fix
+     * - Wait queue race condition: 4-8 hour fix + testing
+     * - Complex timer interaction: 1-2 day fix
+     *
+     * Dependencies for Fix:
+     * - Access to kernel debugger or detailed logging
+     * - Understanding of ARM64 exception context
+     * - Wait queue and scheduler internals knowledge
+     * - Timer IRQ interaction patterns
+     *
+     * Design Principles (when implementing fix):
+     * - Preserve exception atomicity
+     * - Ensure clean task state transitions
+     * - Handle timer IRQ during nanosleep gracefully
+     * - Validate all userspace pointers
+     */
+
     len = strcpy_local(p, "[EL0] (Skipping nanosleep test due to crash)\n");
     syscall3(__NR_write, 1, (uint64_t)p, len);
 

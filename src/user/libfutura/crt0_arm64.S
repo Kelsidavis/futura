@@ -51,11 +51,12 @@ _start:
     mov x0, x3
     bl __libc_init_environ
 
-    /* Restore argc and argv from callee-saved registers for main call */
+    /* Restore argc, argv, and envp for main call */
     mov x0, x19                 /* argc in x0 */
     mov x1, x20                 /* argv in x1 */
+    mov x2, x3                  /* envp in x2 (calculated above) */
 
-    /* Call main(argc, argv) */
+    /* Call main(argc, argv, envp) */
     bl main
 
     /* main() returned, x0 contains exit code */

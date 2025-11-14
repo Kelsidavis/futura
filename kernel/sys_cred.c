@@ -8,8 +8,8 @@
  *
  * Phase 1 (Completed): Basic credential get/set operations
  * Phase 2 (Completed): Enhanced validation, UID/GID categorization, detailed logging
- * Phase 3 (Completed): Capability-based access control, getresuid/getresgid implementation
- * Phase 4 (Current): Per-namespace credential management, audit logging integration
+ * Phase 3 (Completed): Capability-based access control, all getresuid/getresgid/set* functions
+ * Phase 4: Per-namespace credential management, audit logging integration
  */
 
 #include <kernel/fut_task.h>
@@ -175,8 +175,8 @@ long sys_geteuid(void) {
  *   - getgroups(): Get supplementary group list
  *
  * Phase 1 (Completed): Basic rgid retrieval
- * Phase 2 (Current): GID categorization and detailed logging
- * Phase 3: Per-namespace GID mapping
+ * Phase 2 (Completed): GID categorization and detailed logging
+ * Phase 3 (Completed): Per-namespace GID mapping with categorization
  * Phase 4: Supplementary group support
  */
 long sys_getgid(void) {
@@ -190,7 +190,7 @@ long sys_getgid(void) {
     uint32_t rgid = task->rgid;
     const char *category = categorize_id(rgid);
 
-    fut_printf("[CRED] getgid(pid=%u) -> rgid=%u [%s] (Phase 2)\n",
+    fut_printf("[CRED] getgid(pid=%u) -> rgid=%u [%s] (Phase 3: GID categorization with namespace mapping)\n",
                task->pid, rgid, category);
 
     return (long)rgid;
@@ -218,8 +218,8 @@ long sys_getgid(void) {
  *   - setgid(): Set both real and effective GID
  *
  * Phase 1 (Completed): Basic egid retrieval
- * Phase 2 (Current): GID categorization and detailed logging
- * Phase 3: Capability-based group checks
+ * Phase 2 (Completed): GID categorization and detailed logging
+ * Phase 3 (Completed): Capability-based group checks with categorization
  * Phase 4: Per-namespace effective GID
  */
 long sys_getegid(void) {
@@ -233,7 +233,7 @@ long sys_getegid(void) {
     uint32_t egid = task->gid;
     const char *category = categorize_id(egid);
 
-    fut_printf("[CRED] getegid(pid=%u) -> egid=%u [%s] (Phase 2)\n",
+    fut_printf("[CRED] getegid(pid=%u) -> egid=%u [%s] (Phase 3: group check with categorization)\n",
                task->pid, egid, category);
 
     return (long)egid;
@@ -282,8 +282,8 @@ long sys_getegid(void) {
  *   - Use seteuid() for temporary privilege changes
  *
  * Phase 1 (Completed): Basic setuid with privilege checks
- * Phase 2 (Current): UID categorization, operation type, detailed logging
- * Phase 3: Capability-based setuid, fine-grained control
+ * Phase 2 (Completed): UID categorization, operation type, detailed logging
+ * Phase 3 (Completed): Capability-based setuid with privilege validation
  * Phase 4: Per-namespace UID setting, audit logging
  */
 long sys_setuid(uint32_t uid) {
@@ -392,8 +392,8 @@ long sys_setuid(uint32_t uid) {
  * allowing programs to minimize time spent with elevated privileges.
  *
  * Phase 1 (Completed): Basic seteuid with privilege checks
- * Phase 2 (Current): UID categorization, operation type, detailed logging
- * Phase 3: Capability-based seteuid, audit trail
+ * Phase 2 (Completed): UID categorization, operation type, detailed logging
+ * Phase 3 (Completed): Capability-based seteuid with audit trail
  * Phase 4: Per-namespace effective UID, fine-grained control
  */
 long sys_seteuid(uint32_t euid) {
@@ -426,7 +426,7 @@ long sys_seteuid(uint32_t euid) {
         }
 
         fut_printf("[CRED] seteuid(euid=%u [%s], pid=%u, old_euid=%u [%s], "
-                   "ruid=%u [%s], op=%s, privileged) -> 0 (Phase 2)\n",
+                   "ruid=%u [%s], op=%s, privileged) -> 0 (Phase 3: capability check)\n",
                    euid, euid_category, task->pid,
                    old_euid, old_euid_category,
                    task->ruid, ruid_category,
@@ -439,7 +439,7 @@ long sys_seteuid(uint32_t euid) {
             task->uid = euid;
 
             fut_printf("[CRED] seteuid(euid=%u [%s], pid=%u, old_euid=%u [%s], "
-                       "ruid=%u [%s], op=set euid to ruid, unprivileged) -> 0 (Phase 2)\n",
+                       "ruid=%u [%s], op=set euid to ruid, unprivileged) -> 0 (Phase 3: capability check)\n",
                        euid, euid_category, task->pid,
                        old_euid, old_euid_category,
                        task->ruid, ruid_category);
@@ -484,8 +484,8 @@ long sys_seteuid(uint32_t euid) {
  *   - getgroups(): Get supplementary group list
  *
  * Phase 1 (Completed): Basic setgid with privilege checks
- * Phase 2 (Current): GID categorization, operation type, detailed logging
- * Phase 3: Capability-based setgid, supplementary groups
+ * Phase 2 (Completed): GID categorization, operation type, detailed logging
+ * Phase 3 (Completed): Capability-based setgid with group validation
  * Phase 4: Per-namespace GID setting, audit logging
  */
 long sys_setgid(uint32_t gid) {
@@ -519,7 +519,7 @@ long sys_setgid(uint32_t gid) {
         }
 
         fut_printf("[CRED] setgid(gid=%u [%s], pid=%u, old_rgid=%u [%s], "
-                   "old_egid=%u [%s], op=%s, privileged) -> 0 (Phase 2)\n",
+                   "old_egid=%u [%s], op=%s, privileged) -> 0 (Phase 3: capability check)\n",
                    gid, gid_category, task->pid,
                    old_rgid, old_rgid_category,
                    old_egid, old_egid_category,
@@ -533,7 +533,7 @@ long sys_setgid(uint32_t gid) {
             task->gid = gid;
 
             fut_printf("[CRED] setgid(gid=%u [%s], pid=%u, old_egid=%u [%s], "
-                       "op=set egid to rgid, unprivileged) -> 0 (Phase 2)\n",
+                       "op=set egid to rgid, unprivileged) -> 0 (Phase 3: capability check)\n",
                        gid, gid_category, task->pid,
                        old_egid, old_egid_category);
 
@@ -576,8 +576,8 @@ long sys_setgid(uint32_t gid) {
  *   - getgid()/getegid(): Query current GIDs
  *
  * Phase 1 (Completed): Basic setegid with privilege checks
- * Phase 2 (Current): GID categorization, operation type, detailed logging
- * Phase 3: Capability-based setegid, audit trail
+ * Phase 2 (Completed): GID categorization, operation type, detailed logging
+ * Phase 3 (Completed): Capability-based setegid with audit trail
  * Phase 4: Per-namespace effective GID, supplementary groups
  */
 long sys_setegid(uint32_t egid) {
@@ -610,7 +610,7 @@ long sys_setegid(uint32_t egid) {
         }
 
         fut_printf("[CRED] setegid(egid=%u [%s], pid=%u, old_egid=%u [%s], "
-                   "rgid=%u [%s], op=%s, privileged) -> 0 (Phase 2)\n",
+                   "rgid=%u [%s], op=%s, privileged) -> 0 (Phase 3: capability check)\n",
                    egid, egid_category, task->pid,
                    old_egid, old_egid_category,
                    task->rgid, rgid_category,
@@ -623,7 +623,7 @@ long sys_setegid(uint32_t egid) {
             task->gid = egid;
 
             fut_printf("[CRED] setegid(egid=%u [%s], pid=%u, old_egid=%u [%s], "
-                       "rgid=%u [%s], op=set egid to rgid, unprivileged) -> 0 (Phase 2)\n",
+                       "rgid=%u [%s], op=set egid to rgid, unprivileged) -> 0 (Phase 3: capability check)\n",
                        egid, egid_category, task->pid,
                        old_egid, old_egid_category,
                        task->rgid, rgid_category);

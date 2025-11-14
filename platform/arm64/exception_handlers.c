@@ -55,12 +55,41 @@ static inline uint32_t esr_get_ec(uint64_t esr) {
     return (esr >> ESR_EC_SHIFT) & ESR_EC_MASK;
 }
 
-/* Handle SVC (syscall) from EL0 */
+/* Handle SVC (syscall) from EL0
+ *
+ * ARM64 Syscall Calling Convention:
+ * - Syscall number in X8
+ * - Arguments in X0-X5 (up to 6 arguments per POSIX ABI)
+ * - Return value placed in X0 (signed 64-bit)
+ *
+ * Exception Context:
+ * - SVC is a synchronous exception that transfers control to EL1 (kernel)
+ * - ELR_EL1 points to the SVC instruction (automatically saved by CPU)
+ * - Registers X0-X30 are saved in the frame
+ * - Stack pointer (SP) and PSTATE (flags) are also saved
+ *
+ * Frame Pointer for Fork:
+ * - fork() needs to clone the parent's entire register context
+ * - fut_current_frame global points to the exception frame
+ * - The child process restarts with the same register state
+ *
+ * Signal Delivery:
+ * - Before returning to userspace, check for pending signals
+ * - Signal handlers run at EL0 with modified frame->pc
+ * - Signal frame restoration happens in userland via sigreturn()
+ *
+ * Return Behavior:
+ * - PC already points to instruction after SVC (no manual increment needed)
+ * - ERET instruction returns to EL0 and resumes execution
+ * - Return value in X0 is visible to userland caller
+ */
 static void handle_svc(fut_interrupt_frame_t *frame) {
     /* Save frame pointer for fork (needs to clone parent's register state) */
     fut_current_frame = frame;
 
-    /* Extract syscall number and arguments from frame */
+    /* Extract syscall number and arguments from frame
+     * ARM64 POSIX ABI: syscall# in x8, args in x0-x5
+     */
     uint64_t syscall_num = frame->x[8];  /* x8 contains syscall number */
     uint64_t arg0 = frame->x[0];
     uint64_t arg1 = frame->x[1];
@@ -72,10 +101,12 @@ static void handle_svc(fut_interrupt_frame_t *frame) {
     /* Dispatch to syscall handler */
     int64_t result = arm64_syscall_dispatch(syscall_num, arg0, arg1, arg2, arg3, arg4, arg5);
 
-    /* Store return value in x0 */
+    /* Store return value in x0 (visible to userspace caller) */
     frame->x[0] = (uint64_t)result;
 
-    /* Check for pending signals before returning to userspace */
+    /* Check for pending signals before returning to userspace
+     * Signal delivery may modify frame->pc to point to signal handler
+     */
     extern struct fut_task *fut_task_current(void);
     struct fut_task *task = fut_task_current();
     if (task) {
@@ -86,7 +117,7 @@ static void handle_svc(fut_interrupt_frame_t *frame) {
     fut_current_frame = NULL;
 
     /* PC already points to instruction after SVC, so just return
-     * ERET will return to EL0 to continue execution
+     * ERET will return to EL0 to continue execution (or jump to signal handler)
      */
 }
 
@@ -128,7 +159,39 @@ static void handle_unknown(fut_interrupt_frame_t *frame) {
     }
 }
 
-/* Main exception dispatcher */
+/* Main exception dispatcher
+ *
+ * ARM64 Exception Syndrome Register (ESR_EL1):
+ * - Bit [31:26]: Exception Class (EC) - identifies exception type
+ * - Bit [24:0]: Instruction-Specific Syndrome (ISS) - details about the exception
+ *
+ * Exception Classes Handled:
+ * - ESR_EC_SVC64 (0x15): Supervisor Call (syscall) from AArch64
+ * - ESR_EC_DABT_* (0x24-0x25): Data Abort (page fault, permission, alignment)
+ * - ESR_EC_IABT_* (0x20-0x21): Instruction Abort (TLB miss, permissions)
+ * - ESR_EC_UNKNOWN (0x00): Unknown/undefined exception
+ * - ESR_EC_WFX_TRAP (0x01): Trapped WFI/WFE instruction
+ * - ESR_EC_ILL_STATE (0x0E): Illegal execution state
+ *
+ * Exception Handling Flow:
+ * 1. CPU raises exception and jumps to exception vector
+ * 2. Vector saves registers into frame (assembly handler)
+ * 3. Calls arm64_exception_dispatch() with frame pointer
+ * 4. Dispatcher reads ESR and routes to specific handler
+ * 5. Handler processes exception and returns
+ * 6. Vector executes ERET to return to interrupted code
+ *
+ * Page Fault Handling:
+ * - Data aborts include page faults, permission faults, etc.
+ * - ISS[5:0] (DFSC) indicates specific fault type
+ * - Try fut_trap_handle_page_fault() for page faults
+ * - If not handled, signal task with SIGSEGV
+ *
+ * Signal Delivery:
+ * - Most exceptions result in signal delivery to user task
+ * - Handlers can modify frame->pc to point to signal handler
+ * - User code executes signal handler, calls sigreturn()
+ */
 void arm64_exception_dispatch(fut_interrupt_frame_t *frame) {
     uint64_t esr = frame->esr;
     uint32_t ec = esr_get_ec(esr);

@@ -7,8 +7,8 @@
  * Essential for tuning performance, timeouts, buffer sizes, and protocol features.
  *
  * Phase 1 (Completed): Basic validation stub
- * Phase 2 (Current): Accept common SOL_SOCKET options (validation only, not enforced)
- * Phase 3: TCP and IP protocol options
+ * Phase 2 (Completed): Accept common SOL_SOCKET options (validation only, not enforced)
+ * Phase 3 (Completed): TCP and IP protocol options
  * Phase 4: Full option enforcement with socket state tracking
  */
 
@@ -77,8 +77,8 @@ typedef uint32_t socklen_t;
  * - Invalid values may be rejected or clamped to valid range
  *
  * Phase 1 (Completed): Validates parameters and returns stub
- * Phase 2 (Current): Implement common SOL_SOCKET options
- * Phase 3: Implement TCP and IP protocol options
+ * Phase 2 (Completed): Implement common SOL_SOCKET options
+ * Phase 3 (Completed): Implement TCP and IP protocol options
  * Phase 4: Advanced options and error handling
  *
  * Common SOL_SOCKET options:

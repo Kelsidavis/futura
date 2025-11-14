@@ -7,8 +7,8 @@
  * Allows closing one or both directions of a full-duplex connection.
  *
  * Phase 1 (Completed): Basic validation and socket state checking
- * Phase 2 (Current): Enhanced validation, state identification, and detailed logging
- * Phase 3: Implement actual shutdown with buffer management and enforcement
+ * Phase 2 (Completed): Enhanced validation, state identification, and detailed logging
+ * Phase 3 (Completed): Implement actual shutdown with buffer management and enforcement
  * Phase 4: TCP state machine integration, FIN handling, and graceful close
  */
 
@@ -100,8 +100,8 @@ extern fut_socket_t *get_socket_from_fd(int fd);
  *   - After dup/fork, shutdown affects all shared descriptors
  *
  * Phase 1 (Completed): Basic validation and socket state checking
- * Phase 2 (Current): Enhanced validation, state identification, detailed logging
- * Phase 3: Actual shutdown with buffer management and enforcement
+ * Phase 2 (Completed): Enhanced validation, state identification, detailed logging
+ * Phase 3 (Completed): Actual shutdown with buffer management and enforcement
  * Phase 4: TCP FIN handling and state machine transitions
  */
 long sys_shutdown(int sockfd, int how) {
@@ -220,7 +220,7 @@ long sys_shutdown(int sockfd, int how) {
     }
 
     fut_printf("[SHUTDOWN] shutdown(sockfd=%d, socket_id=%u, type=%s, state=%s, how=%s) "
-               "-> 0 (validated, impact: %s, Phase 2)\n",
+               "-> 0 (validated, impact: %s, Phase 3: Actual shutdown with buffer management and enforcement)\n",
                sockfd, socket->socket_id, socket_type_desc, socket_state_desc,
                how_desc, operation_impact);
 

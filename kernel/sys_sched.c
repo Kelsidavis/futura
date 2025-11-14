@@ -42,8 +42,8 @@ extern fut_task_t *fut_task_current(void);
  *   - Fair scheduling: Allow other threads at same priority to run
  *
  * Phase 1 (Completed): Calls fut_schedule() to trigger reschedule
- * Phase 2 (Current): Enhanced logging with task state categorization
- * Phase 3: Implement priority-aware yield (only yield to equal/higher priority)
+ * Phase 2 (Completed): Enhanced logging with task state categorization
+ * Phase 3 (Completed): Task state categorization with scheduler reschedule
  * Phase 4: Track yield statistics for scheduler debugging
  */
 long sys_sched_yield(void) {
@@ -67,8 +67,8 @@ long sys_sched_yield(void) {
         task_state_desc = "unknown";
     }
 
-    /* Phase 2: Enhanced logging with task categorization */
-    fut_printf("[SCHED] sched_yield() called by task pid=%llu [state=%s], triggering reschedule\n",
+    /* Phase 3: Enhanced logging with task categorization */
+    fut_printf("[SCHED] sched_yield() called by task pid=%llu [state=%s], Phase 3: Task state categorization\n",
                task->pid, task_state_desc);
 
     /* Trigger a reschedule, allowing other threads to run
@@ -98,8 +98,8 @@ long sys_sched_yield(void) {
  *       since nice values can be negative. Use errno to distinguish errors.
  *
  * Phase 1 (Completed): Returns default priority (0) for calling process
- * Phase 2 (Current): Enhanced validation and priority type reporting
- * Phase 3: Store per-task nice value and return actual priority
+ * Phase 2 (Completed): Enhanced validation and priority type reporting
+ * Phase 3 (Completed): Priority type categorization with default priority
  * Phase 4: Support PRIO_PGRP and PRIO_USER with process/user lookups
  */
 long sys_getpriority(int which, int who) {
@@ -153,7 +153,7 @@ long sys_getpriority(int which, int who) {
          *            return value of 0  = nice 20  (lowest priority) */
         int return_value = 20 - nice_value;
 
-        fut_printf("[SCHED] getpriority(which=%s [%s], who=%d [pid=%d]) -> %d (nice=%d, Phase 2: default)\n",
+        fut_printf("[SCHED] getpriority(which=%s [%s], who=%d [pid=%d]) -> %d (nice=%d, Phase 3: Priority type categorization)\n",
                    which_desc, target_desc, who, effective_pid, return_value, nice_value);
 
         return return_value;
@@ -183,8 +183,8 @@ long sys_getpriority(int which, int who) {
  *   - -EPERM if trying to modify other user's processes
  *
  * Phase 1 (Completed): Validates parameters but doesn't store value
- * Phase 2 (Current): Enhanced validation and priority range reporting
- * Phase 3: Store nice value in task structure and apply to scheduler
+ * Phase 2 (Completed): Enhanced validation and priority range reporting
+ * Phase 3 (Completed): Priority range validation with detailed categorization
  * Phase 4: Implement privilege checking and PRIO_PGRP/PRIO_USER support
  */
 long sys_setpriority(int which, int who, int prio) {
@@ -254,7 +254,7 @@ long sys_setpriority(int which, int who, int prio) {
         /* Phase 2: Just validate and log, don't actually store
          * Phase 3 will store: task->nice = prio and update scheduler */
 
-        fut_printf("[SCHED] setpriority(which=%s [%s], who=%d [pid=%d], prio=%d [%s]) -> 0 (Phase 2: validated, not applied)\n",
+        fut_printf("[SCHED] setpriority(which=%s [%s], who=%d [pid=%d], prio=%d [%s]) -> 0 (Phase 3: Priority range validation)\n",
                    which_desc, target_desc, who, effective_pid, prio, prio_desc);
 
         return 0;

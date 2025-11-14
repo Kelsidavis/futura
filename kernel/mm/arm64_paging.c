@@ -14,6 +14,19 @@
 #include <stdatomic.h>
 
 /* ============================================================
+ *   Debug Output Control
+ * ============================================================ */
+
+/* Uncomment to enable verbose ARM64 paging debug output */
+// #define DEBUG_ARM64_PAGING
+
+#ifdef DEBUG_ARM64_PAGING
+#define PAGING_DEBUG(...) fut_printf(__VA_ARGS__)
+#else
+#define PAGING_DEBUG(...) do {} while(0)
+#endif
+
+/* ============================================================
  *   Kernel Page Table (Static)
  * ============================================================ */
 
@@ -184,7 +197,7 @@ static page_table_t *get_or_create_table(page_table_t *parent_table, int index, 
         __asm__ volatile("dc cvac, %0" :: "r"(&parent_table->entries[index]) : "memory");
         __asm__ volatile("dsb ish" ::: "memory");
 
-        fut_printf("[PT] Created table: parent=%p idx=%d new=%p desc=0x%llx\n",
+        PAGING_DEBUG("[PT] Created table: parent=%p idx=%d new=%p desc=0x%llx\n",
                    parent_table, index, new_table, (unsigned long long)table_desc);
 
         /* Restore user page table before returning */
@@ -195,7 +208,7 @@ static page_table_t *get_or_create_table(page_table_t *parent_table, int index, 
     if (fut_pte_is_table(entry)) {
         /* Extract physical address and convert to virtual */
         uint64_t phys = fut_pte_to_phys(entry);
-        fut_printf("[PT] Reusing table: idx=%d entry=0x%llx phys=0x%llx\n",
+        PAGING_DEBUG("[PT] Reusing table: idx=%d entry=0x%llx phys=0x%llx\n",
                    index, (unsigned long long)entry, (unsigned long long)phys);
 
         page_table_t *result = (page_table_t *)phys;  /* Assuming identity mapping for now */
@@ -257,7 +270,7 @@ static page_table_t *get_or_create_table(page_table_t *parent_table, int index, 
         return new_l3_table;
     }
 
-    fut_printf("[PT] ERROR: Unknown entry type at idx=%d entry=0x%llx\n",
+    PAGING_DEBUG("[PT] ERROR: Unknown entry type at idx=%d entry=0x%llx\n",
                index, (unsigned long long)entry);
     /* Restore user page table before returning */
     __asm__ volatile("msr ttbr0_el1, %0; isb" :: "r"(user_ttbr0));
@@ -295,7 +308,7 @@ static uint64_t arm64_translate_flags(uint64_t generic_flags) {
         is_executable = (generic_flags & 0x4) != 0;  /* PROT_EXEC */
         /* PROT_* flags always mean user pages for ELF loading */
         arm64_flags |= PTE_VALID;
-        fut_printf("[TRANSLATE-FLAGS] PROT_* input: 0x%llx -> is_user=%d is_writable=%d is_exec=%d\n",
+        PAGING_DEBUG("[TRANSLATE-FLAGS] PROT_* input: 0x%llx -> is_user=%d is_writable=%d is_exec=%d\n",
                    (unsigned long long)generic_flags, is_user, is_writable, is_executable);
     } else {
         /* These are PTE_* flags */
@@ -305,7 +318,7 @@ static uint64_t arm64_translate_flags(uint64_t generic_flags) {
         is_user = (generic_flags & PTE_USER) != 0;
         is_writable = (generic_flags & PTE_WRITABLE) != 0;
         is_executable = (generic_flags & PTE_NX) == 0;  /* NX=0 means executable */
-        fut_printf("[TRANSLATE-FLAGS] PTE_* input: 0x%llx -> is_user=%d is_writable=%d is_exec=%d\n",
+        PAGING_DEBUG("[TRANSLATE-FLAGS] PTE_* input: 0x%llx -> is_user=%d is_writable=%d is_exec=%d\n",
                    (unsigned long long)generic_flags, is_user, is_writable, is_executable);
     }
 
@@ -314,22 +327,22 @@ static uint64_t arm64_translate_flags(uint64_t generic_flags) {
         /* User-accessible page */
         if (is_writable) {
             arm64_flags |= PTE_AP_RW_ALL;      /* User read/write */
-            fut_printf("[TRANSLATE-FLAGS] Setting PTE_AP_RW_ALL (0x%llx)\n",
+            PAGING_DEBUG("[TRANSLATE-FLAGS] Setting PTE_AP_RW_ALL (0x%llx)\n",
                        (unsigned long long)PTE_AP_RW_ALL);
         } else {
             arm64_flags |= PTE_AP_RO_ALL;      /* User read-only */
-            fut_printf("[TRANSLATE-FLAGS] Setting PTE_AP_RO_ALL (0x%llx)\n",
+            PAGING_DEBUG("[TRANSLATE-FLAGS] Setting PTE_AP_RO_ALL (0x%llx)\n",
                        (unsigned long long)PTE_AP_RO_ALL);
         }
     } else {
         /* Kernel-only page */
         if (is_writable) {
             arm64_flags |= PTE_AP_RW_EL1;      /* Kernel read/write only */
-            fut_printf("[TRANSLATE-FLAGS] Setting PTE_AP_RW_EL1 (0x%llx)\n",
+            PAGING_DEBUG("[TRANSLATE-FLAGS] Setting PTE_AP_RW_EL1 (0x%llx)\n",
                        (unsigned long long)PTE_AP_RW_EL1);
         } else {
             arm64_flags |= PTE_AP_RO_EL1;      /* Kernel read-only */
-            fut_printf("[TRANSLATE-FLAGS] Setting PTE_AP_RO_EL1 (0x%llx)\n",
+            PAGING_DEBUG("[TRANSLATE-FLAGS] Setting PTE_AP_RO_EL1 (0x%llx)\n",
                        (unsigned long long)PTE_AP_RO_EL1);
         }
     }
@@ -353,7 +366,7 @@ static uint64_t arm64_translate_flags(uint64_t generic_flags) {
         arm64_flags |= PTE_PXN_BIT;
     }
 
-    fut_printf("[TRANSLATE-FLAGS] Final ARM64 flags: 0x%llx (AP bits [7:6]=0x%llx)\n",
+    PAGING_DEBUG("[TRANSLATE-FLAGS] Final ARM64 flags: 0x%llx (AP bits [7:6]=0x%llx)\n",
                (unsigned long long)arm64_flags,
                (unsigned long long)((arm64_flags >> 6) & 0x3));
 
@@ -400,33 +413,33 @@ int fut_map_page(fut_vmem_context_t *ctx, uint64_t vaddr, uint64_t paddr, uint64
      * L3 (PTE): bits [20:12] -> physical page
      */
     int pgd_idx = PGD_INDEX(vaddr);
-    fut_printf("[MAP-PAGE] VA=0x%llx: PGD[%d] lookup at %p\n",
+    PAGING_DEBUG("[MAP-PAGE] VA=0x%llx: PGD[%d] lookup at %p\n",
                (unsigned long long)vaddr, pgd_idx, pgd);
 
     page_table_t *pmd = get_or_create_table(pgd, pgd_idx, true);
     if (!pmd) {
         return -4;  /* Failed to allocate L2 (PMD) */
     }
-    fut_printf("[MAP-PAGE] Got PMD table at %p\n", pmd);
+    PAGING_DEBUG("[MAP-PAGE] Got PMD table at %p\n", pmd);
 
     int pmd_idx = PMD_INDEX(vaddr);
-    fut_printf("[MAP-PAGE] PMD[%d] lookup\n", pmd_idx);
+    PAGING_DEBUG("[MAP-PAGE] PMD[%d] lookup\n", pmd_idx);
 
     page_table_t *pte_table = get_or_create_table(pmd, pmd_idx, true);
     if (!pte_table) {
         return -5;  /* Failed to allocate L3 (PTE table) */
     }
-    fut_printf("[MAP-PAGE] Got PTE table at %p\n", pte_table);
+    PAGING_DEBUG("[MAP-PAGE] Got PTE table at %p\n", pte_table);
 
     /* L3 is the final level - write page descriptor here */
     int pte_idx = PTE_INDEX(vaddr);
-    fut_printf("[MAP-PAGE] PTE[%d] will be written\n", pte_idx);
+    PAGING_DEBUG("[MAP-PAGE] PTE[%d] will be written\n", pte_idx);
     /* For level 3 page descriptors, bits [1:0] must be 0b11 (PTE_TYPE_PAGE)
      * This means we need PTE_VALID (bit 0) | PTE_TABLE (bit 1) = 0b11 */
     pte_t pte = fut_make_pte(paddr, arm64_flags | PTE_TABLE);
 
     extern void fut_printf(const char *, ...);
-    fut_printf("[MAP-PAGE] VA=0x%llx PA=0x%llx flags_in=0x%llx arm64_flags=0x%llx PTE=0x%llx (AP[7:6]=0x%llx)\n",
+    PAGING_DEBUG("[MAP-PAGE] VA=0x%llx PA=0x%llx flags_in=0x%llx arm64_flags=0x%llx PTE=0x%llx (AP[7:6]=0x%llx)\n",
                (unsigned long long)vaddr, (unsigned long long)paddr,
                (unsigned long long)flags, (unsigned long long)arm64_flags,
                (unsigned long long)pte, (unsigned long long)((pte >> 6) & 0x3));
@@ -440,10 +453,10 @@ int fut_map_page(fut_vmem_context_t *ctx, uint64_t vaddr, uint64_t paddr, uint64
     /* Read back to verify write */
     pte_t readback = pte_table->entries[pte_idx];
     if (readback != pte) {
-        fut_printf("[MAP-PAGE] ERROR: PTE readback mismatch! wrote=0x%llx read=0x%llx\n",
+        PAGING_DEBUG("[MAP-PAGE] ERROR: PTE readback mismatch! wrote=0x%llx read=0x%llx\n",
                    (unsigned long long)pte, (unsigned long long)readback);
     } else {
-        fut_printf("[MAP-PAGE] ✓ PTE verified: table=%p idx=%d\n", pte_table, pte_idx);
+        PAGING_DEBUG("[MAP-PAGE] ✓ PTE verified: table=%p idx=%d\n", pte_table, pte_idx);
     }
 
     /* Invalidate TLB entry for this address */

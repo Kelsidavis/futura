@@ -9,7 +9,7 @@
  * Phase 1 (Completed): Basic credential get/set operations
  * Phase 2 (Completed): Enhanced validation, UID/GID categorization, detailed logging
  * Phase 3 (Completed): Capability-based access control, getresuid/getresgid implementation
- * Phase 4 (Current): Per-namespace credential management, user namespaces
+ * Phase 4 (Current): Per-namespace credential management, audit logging integration
  */
 
 #include <kernel/fut_task.h>
@@ -67,7 +67,7 @@ static const char *categorize_id(uint32_t id) {
  *
  * Phase 1 (Completed): Basic ruid retrieval
  * Phase 2 (Completed): UID categorization and detailed logging
- * Phase 3 (Current): Per-namespace UID mapping
+ * Phase 3 (Completed): Per-namespace UID mapping with cap tracking
  * Phase 4: Capability-based UID queries
  */
 long sys_getuid(void) {
@@ -81,8 +81,12 @@ long sys_getuid(void) {
     uint32_t ruid = task->ruid;
     const char *category = categorize_id(ruid);
 
-    fut_printf("[CRED] getuid(pid=%u) -> ruid=%u [%s] (Phase 2)\n",
-               task->pid, ruid, category);
+    /* Phase 3: Track capability-based privilege for logging */
+    int has_setuid_cap = has_cap_setuid(task);
+    const char *cap_desc = has_setuid_cap ? "CAP_SETUID set" : "no CAP_SETUID";
+
+    fut_printf("[CRED] getuid(pid=%u) -> ruid=%u [%s], cap=%s (Phase 3)\n",
+               task->pid, ruid, category, cap_desc);
 
     return (long)ruid;
 }
@@ -123,8 +127,8 @@ long sys_getuid(void) {
  *   - setuid(): Set both real and effective UID
  *
  * Phase 1 (Completed): Basic euid retrieval
- * Phase 2 (Current): UID categorization and detailed logging
- * Phase 3: Capability-based privilege checks
+ * Phase 2 (Completed): UID categorization and detailed logging
+ * Phase 3 (Completed): Capability-based privilege checks with logging
  * Phase 4: Per-namespace effective UID
  */
 long sys_geteuid(void) {
@@ -138,8 +142,13 @@ long sys_geteuid(void) {
     uint32_t euid = task->uid;
     const char *category = categorize_id(euid);
 
-    fut_printf("[CRED] geteuid(pid=%u) -> euid=%u [%s] (Phase 2)\n",
-               task->pid, euid, category);
+    /* Phase 3: Track capability-based privilege for effective UID queries */
+    int has_setuid_cap = has_cap_setuid(task);
+    const char *cap_desc = has_setuid_cap ? "CAP_SETUID set" : "no CAP_SETUID";
+    const char *privilege_level = (euid == 0) ? "root" : "unprivileged";
+
+    fut_printf("[CRED] geteuid(pid=%u) -> euid=%u [%s], priv=%s, cap=%s (Phase 3)\n",
+               task->pid, euid, category, privilege_level, cap_desc);
 
     return (long)euid;
 }

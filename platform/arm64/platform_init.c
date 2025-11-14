@@ -1310,12 +1310,8 @@ static void arm64_init_spawner_thread(void *arg) {
         }
     }
 
-    /* UIDemo framebuffer/mmap test verified working in isolation
-     * Temporarily disabled due to cooperative scheduler limitation:
-     * - Pixel-write loop (786K iterations) monopolizes CPU without yielding
-     * - Causes system hang (no crashes, just stuck in write loop)
-     * - Will re-enable after adding scheduler preemption or periodic yields
-     *
+    /* UIDemo framebuffer/mmap test with periodic yields
+     * Now yields every 10,000 pixels to share CPU time */
     char *uidemo_argv[] = {"/bin/arm64_uidemo", NULL};
     char *uidemo_envp[] = {"PATH=/sbin:/bin", NULL};
 
@@ -1324,11 +1320,11 @@ static void arm64_init_spawner_thread(void *arg) {
 
     if (ret == 0) {
         fut_printf("[ARM64-SPAWNER] ✓ UIDemo process spawned successfully!\n");
+        /* Wait for uidemo to complete (yields allow other processes to run) */
         for (volatile int i = 0; i < 100000000; i++);
     } else {
         fut_printf("[ARM64-SPAWNER] ERROR: Failed to spawn uidemo! Error code: %d\n", ret);
     }
-    */
 
     /* Thread exits naturally */
 }

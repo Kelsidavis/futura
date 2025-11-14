@@ -584,9 +584,21 @@ void fut_schedule(void) {
         if (in_irq && prev && fut_current_frame) {
             // IRQ-safe context switch (uses IRET)
             // This modifies the interrupt frame on the stack so IRET returns to next thread
+#if defined(__aarch64__)
+            fut_printf("[SCHED] IRQ path: prev=%p next=%p next->pstate=0x%llx next->ttbr0=0x%llx\n",
+                       (void*)prev, (void*)next,
+                       (unsigned long long)next->context.pstate,
+                       (unsigned long long)next->context.ttbr0_el1);
+#endif
             fut_switch_context_irq(prev, next, fut_current_frame);
         } else {
             // Regular cooperative context switch (uses RET)
+#if defined(__aarch64__)
+            fut_printf("[SCHED] Coop path: prev=%p next=%p next->pstate=0x%llx next->ttbr0=0x%llx\n",
+                       (void*)prev, (void*)next,
+                       (unsigned long long)next->context.pstate,
+                       (unsigned long long)next->context.ttbr0_el1);
+#endif
             if (prev) {
                 fut_switch_context(&prev->context, &next->context);
             } else {

@@ -275,4 +275,9 @@ static inline long sys_dup2_call(int oldfd, int newfd) {
     return sys_call2(SYS_dup2, (long)oldfd, (long)newfd);
 }
 
+/* Scheduler syscall veneers */
+static inline long sys_sched_yield(void) {
+    return sys_call0(SYS_sched_yield);
+}
+
 /* Note: setpgrp and setpgid syscall veneers not provided (syscall numbers conflict) */

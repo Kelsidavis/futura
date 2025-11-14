@@ -40,13 +40,15 @@ typedef struct fut_cpu_context {
     uint64_t x30_lr;            /* Link register (return address) */
 
     /* Stack pointer */
-    uint64_t sp;                /* Stack pointer */
+    uint64_t sp;                /* Stack pointer (SP_EL1) - offset 112 */
+    uint64_t sp_el0;            /* SP_EL0: user mode stack pointer - offset 120 */
 
     /* Program counter (for new threads) */
-    uint64_t pc;                /* Program counter */
+    uint64_t pc;                /* Program counter - offset 128 */
 
     /* Processor state */
-    uint64_t pstate;            /* Processor state (PSTATE/CPSR) */
+    uint64_t pstate;            /* Processor state (PSTATE/CPSR) - offset 136 */
+    uint64_t ttbr0_el1;         /* TTBR0_EL1: user page table base register - offset 144 */
 
     /* FPU/SIMD state (optional, can be lazy-saved) */
     uint64_t fpu_state[64];     /* v0-v31 (128-bit each = 2x64-bit) */

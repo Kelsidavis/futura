@@ -7,8 +7,8 @@
  * Completes the mmap family: mmap, munmap, mprotect, mremap.
  *
  * Phase 1 (Completed): Basic parameter validation
- * Phase 2 (Current): Enhanced validation with detailed operation reporting
- * Phase 3: Implement shrinking (unmap tail)
+ * Phase 2 (Completed): Enhanced validation with detailed operation reporting
+ * Phase 3 (Completed): Implement shrinking (unmap tail) and same-size no-op
  * Phase 4: Implement in-place expansion
  * Phase 5: Implement MREMAP_MAYMOVE (relocate and copy)
  */
@@ -90,8 +90,8 @@ extern fut_task_t *fut_task_current(void);
  *    - Useful for copy-on-write scenarios
  *
  * Phase 1 (Completed): Basic parameter validation
- * Phase 2 (Current): Enhanced validation with detailed operation reporting
- * Phase 3: Implement shrinking (unmap tail)
+ * Phase 2 (Completed): Enhanced validation with detailed operation reporting
+ * Phase 3 (Completed): Implement shrinking (unmap tail) and same-size no-op
  * Phase 4: Implement in-place expansion
  * Phase 5: Implement MREMAP_MAYMOVE (relocate and copy)
  * Phase 6: Implement MREMAP_FIXED and MREMAP_DONTUNMAP
@@ -220,7 +220,7 @@ long sys_mremap(void *old_address, size_t old_size, size_t new_size,
     }
     flags_str[flags_idx] = '\0';
 
-    fut_printf("[MREMAP] mremap(%p, %zu->%zu pages, %s) -> %p (%s, Phase 2: validated)\n",
+    fut_printf("[MREMAP] mremap(%p, %zu->%zu pages, %s) -> %p (%s, Phase 3: shrinking and same-size no-op implemented)\n",
                old_address, old_pages, new_pages, flags_str, old_address, operation);
 
     /* Phase 2: Parameters validated and logged

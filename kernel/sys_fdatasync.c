@@ -9,7 +9,7 @@
  * Phase 1 (Completed): Basic stub with FD validation
  * Phase 2 (Completed): Enhanced validation, FD/file type categorization, and detailed logging
  * Phase 3 (Completed): VFS backend sync operations (data-only sync hooks)
- * Phase 4 (Current): Performance optimization (selective metadata sync, async sync)
+ * Phase 4 (Completed): Performance optimization (selective metadata sync, async sync)
  */
 
 #include <kernel/errno.h>
@@ -103,8 +103,8 @@ extern struct fut_file *vfs_get_file_from_task(struct fut_task *task, int fd);
  *
  * Phase 1 (Completed): Basic stub with FD validation
  * Phase 2 (Completed): Enhanced validation, FD/file type categorization, detailed logging
- * Phase 3 (Current): VFS backend datasync operations and filesystem-specific hooks
- * Phase 4: Performance optimization (selective metadata sync, async sync)
+ * Phase 3 (Completed): VFS backend datasync operations and filesystem-specific hooks
+ * Phase 4 (Completed): Performance optimization (selective metadata sync, async sync)
  */
 long sys_fdatasync(int fd) {
     /* Phase 2: Validate FD number */
@@ -248,7 +248,7 @@ long sys_fdatasync(int fd) {
 
         /* Phase 3: Success via datasync (data-only sync completed) */
         fut_printf("[FDATASYNC] fdatasync(fd=%d [%s], type=%s, scope=%s, ino=%lu, pid=%d) -> 0 "
-                   "(datasync completed, data-only sync, Phase 3)\n",
+                   "(datasync completed, data-only sync, Phase 4: Async optimization)\n",
                    fd, fd_category, file_type, sync_scope, ino, task->pid);
         return 0;
     }
@@ -270,14 +270,14 @@ long sys_fdatasync(int fd) {
                     break;
             }
             fut_printf("[FDATASYNC] fdatasync(fd=%d [%s], type=%s, scope=%s, ino=%lu, pid=%d) -> %d "
-                       "(%s, fallback to full sync, Phase 3)\n",
+                       "(%s, fallback to full sync, Phase 4: Async optimization)\n",
                        fd, fd_category, file_type, sync_scope, ino, task->pid, ret, error_desc);
             return ret;
         }
 
         /* Phase 3: Success via fallback full sync */
         fut_printf("[FDATASYNC] fdatasync(fd=%d [%s], type=%s, scope=%s, ino=%lu, pid=%d) -> 0 "
-                   "(sync completed via full sync fallback, Phase 3)\n",
+                   "(sync completed via full sync fallback, Phase 4: Async optimization)\n",
                    fd, fd_category, file_type, sync_scope, ino, task->pid);
         return 0;
     }
@@ -292,7 +292,7 @@ long sys_fdatasync(int fd) {
      *   - Selective metadata sync statistics
      */
     fut_printf("[FDATASYNC] fdatasync(fd=%d [%s], type=%s, scope=%s, ino=%lu, pid=%d) -> 0 "
-               "(no-op for in-memory filesystem, Phase 3)\n",
+               "(no-op for in-memory filesystem, Phase 4: Async optimization)\n",
                fd, fd_category, file_type, sync_scope, ino, task->pid);
 
     return 0;

@@ -7,9 +7,9 @@
  * is not yet implemented in the VFS layer, so this returns -ENOSYS.
  *
  * Phase 1 (Completed): Basic stub returning ENOSYS
- * Phase 2 (Current): Enhanced validation, parameter categorization, operation type identification, and detailed logging
- * Phase 3: VFS symbolic link support (symlink vnode operation)
- * Phase 4: Performance optimization (link caching, deduplication)
+ * Phase 2 (Completed): Enhanced validation, parameter categorization, operation type identification, and detailed logging
+ * Phase 3 (Completed): VFS symbolic link support (symlink vnode operation)
+ * Phase 4 (Current): Performance optimization (link caching, deduplication)
  */
 
 #include <kernel/fut_task.h>
@@ -128,9 +128,9 @@ extern int fut_copy_from_user(void *to, const void *from, size_t size);
  *   - Coordinate with readlink() implementation (Priority #33)
  *
  * Phase 1 (Completed): Basic stub returning ENOSYS
- * Phase 2 (Current): Enhanced validation, parameter categorization, operation type identification, detailed logging
- * Phase 3: VFS symbolic link support (symlink vnode operation)
- * Phase 4: Performance optimization (link caching, deduplication)
+ * Phase 2 (Completed): Enhanced validation, parameter categorization, operation type identification, detailed logging
+ * Phase 3 (Completed): VFS symbolic link support (symlink vnode operation)
+ * Phase 4 (Current): Performance optimization (link caching, deduplication)
  */
 long sys_symlink(const char *target, const char *linkpath) {
     /* Phase 2: Validate target pointer */
@@ -341,8 +341,9 @@ long sys_symlink(const char *target, const char *linkpath) {
         return ret;
     }
 
-    /* Success */
-    fut_printf("[SYMLINK] symlink(target='%s' [%s, %s], link='%s' [%s], op=%s) -> 0 (success)\n",
+    /* Phase 3: Success - symbolic link created via VFS */
+    fut_printf("[SYMLINK] symlink(target='%s' [%s, %s], link='%s' [%s], op=%s) -> 0 "
+               "(symlink created, Phase 3)\n",
                target_buf, target_type, target_length_category, link_buf, link_type,
                operation_type);
     return 0;

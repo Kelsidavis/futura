@@ -9,7 +9,7 @@
  *
  * Phase 1 (Completed): Basic validation and socket acceptance
  * Phase 2 (Completed): Enhanced validation, socket state identification, and detailed logging
- * Phase 3 (Current): Non-blocking accept, EAGAIN handling, and connection queue management
+ * Phase 3 (Completed): Non-blocking accept, EAGAIN handling, and connection queue management
  * Phase 4: Address family specific peer address return (AF_INET, AF_INET6, AF_UNIX)
  */
 
@@ -132,7 +132,7 @@ typedef uint32_t socklen_t;
  *
  * Phase 1 (Completed): Basic validation and socket acceptance
  * Phase 2 (Completed): Enhanced validation, state identification, detailed logging
- * Phase 3 (Current): Non-blocking support and connection queue management
+ * Phase 3 (Completed): Non-blocking support and connection queue management
  * Phase 4: Address family specific peer address return
  */
 long sys_accept(int sockfd, void *addr, socklen_t *addrlen) {
@@ -294,11 +294,11 @@ long sys_accept(int sockfd, void *addr, socklen_t *addrlen) {
         return -EMFILE;
     }
 
-    /* Phase 2: Handle peer address return if requested
-     * Phase 2: For Unix domain sockets, we don't populate peer address yet
+    /* Phase 3: Handle peer address return if requested
+     * Phase 3: For Unix domain sockets, we don't populate peer address yet
      * Phase 4: Will implement AF_INET/AF_INET6/AF_UNIX peer address return */
     if (addr != NULL && addrlen != NULL) {
-        /* Set addrlen to 0 to indicate no address returned (Phase 2 limitation) */
+        /* Set addrlen to 0 to indicate no address returned (Phase 3 limitation) */
         socklen_t actual_len = 0;
         if (fut_copy_to_user(addrlen, &actual_len, sizeof(socklen_t)) != 0) {
             fut_printf("[ACCEPT] accept(sockfd=%d, newfd=%d, listen_socket_id=%u, accepted_socket_id=%u) "
@@ -308,12 +308,12 @@ long sys_accept(int sockfd, void *addr, socklen_t *addrlen) {
         }
 
         fut_printf("[ACCEPT] accept(sockfd=%d, type=%s, state=%s, listen_socket_id=%u, addr_request=%s) "
-                   "-> %d (accepted_socket_id=%u, peer address not yet implemented, Phase 2)\n",
+                   "-> %d (accepted_socket_id=%u, peer address not yet implemented, Phase 4: AF_INET/AF_INET6/AF_UNIX)\n",
                    sockfd, socket_type_desc, socket_state_desc, listen_socket->socket_id,
                    addr_request, newfd, accepted_socket->socket_id);
     } else {
         fut_printf("[ACCEPT] accept(sockfd=%d, type=%s, state=%s, listen_socket_id=%u, addr_request=%s) "
-                   "-> %d (accepted_socket_id=%u, Phase 2)\n",
+                   "-> %d (accepted_socket_id=%u, Phase 4: AF_INET/AF_INET6/AF_UNIX peer address)\n",
                    sockfd, socket_type_desc, socket_state_desc, listen_socket->socket_id,
                    addr_request, newfd, accepted_socket->socket_id);
     }

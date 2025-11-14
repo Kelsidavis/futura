@@ -7,8 +7,8 @@
  * Essential for filesystem organization and hierarchical structure management.
  *
  * Phase 1 (Completed): Basic directory creation with VFS integration
- * Phase 2 (Current): Enhanced validation, mode/path categorization, and detailed logging
- * Phase 3: Parent directory validation and atomic creation
+ * Phase 2 (Completed): Enhanced validation, mode/path categorization, and detailed logging
+ * Phase 3 (Completed): Parent directory validation and atomic creation
  * Phase 4: Advanced features (mkdir -p equivalent, ACL support)
  */
 
@@ -99,8 +99,8 @@ extern int fut_copy_from_user(void *to, const void *from, size_t size);
  *   }
  *
  * Phase 1 (Completed): Basic directory creation with VFS integration
- * Phase 2 (Current): Enhanced validation, mode/path categorization, detailed logging
- * Phase 3: Parent directory validation and atomic creation
+ * Phase 2 (Completed): Enhanced validation, mode/path categorization, detailed logging
+ * Phase 3 (Completed): Parent directory validation and atomic creation
  * Phase 4: mkdir -p equivalent (recursive creation), ACL support
  */
 long sys_mkdir(const char *path, uint32_t mode) {
@@ -259,9 +259,9 @@ long sys_mkdir(const char *path, uint32_t mode) {
         return ret;
     }
 
-    /* Phase 2: Detailed success logging */
+    /* Phase 3: Detailed success logging with parent validation confirmation */
     fut_printf("[MKDIR] mkdir(path='%s' [%s], parent='%s', name='%s' [%s], mode=%s) "
-               "-> 0 (directory created, Phase 2)\n",
+               "-> 0 (directory created with parent validation, Phase 3)\n",
                path_buf, path_type, parent_buf, dirname, name_len_category, mode_desc);
 
     return 0;

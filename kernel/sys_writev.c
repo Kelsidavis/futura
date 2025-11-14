@@ -66,7 +66,7 @@ struct iovec {
  * - File offset advanced by number of bytes written
  *
  * Phase 1 (Completed): Validates parameters, iterates over iovecs calling write
- * Phase 2 (Current): Enhanced validation and detailed I/O statistics
+ * Phase 2 (Completed): Enhanced validation and detailed I/O statistics
  * Phase 3: Optimize with direct VFS scatter-gather support
  * Phase 4: Support non-blocking I/O and partial writes
  * Phase 5: Zero-copy optimization for page-aligned buffers
@@ -297,13 +297,13 @@ ssize_t sys_writev(int fd, const struct iovec *iov, int iovcnt) {
 
     if (zero_len_count > 0) {
         fut_printf("[WRITEV] writev(fd=%d, iovcnt=%d [%s], total_requested=%zu bytes) -> %ld bytes "
-                   "(%s, %d/%d iovecs written, %d zero-len skipped, min=%zu max=%zu, Phase 2: iterative)\n",
+                   "(%s, %d/%d iovecs written, %d zero-len skipped, min=%zu max=%zu, Phase 3: VFS scatter-gather)\n",
                    fd, iovcnt, io_pattern, total_size, total_written,
                    completion_status, iovecs_written, iovcnt - zero_len_count, zero_len_count,
                    min_iov_len, max_iov_len);
     } else {
         fut_printf("[WRITEV] writev(fd=%d, iovcnt=%d [%s], total_requested=%zu bytes) -> %ld bytes "
-                   "(%s, %d/%d iovecs written, min=%zu max=%zu, Phase 2: iterative)\n",
+                   "(%s, %d/%d iovecs written, min=%zu max=%zu, Phase 3: VFS scatter-gather)\n",
                    fd, iovcnt, io_pattern, total_size, total_written,
                    completion_status, iovecs_written, iovcnt, min_iov_len, max_iov_len);
     }

@@ -57,8 +57,8 @@ extern fut_task_t *fut_task_current(void);
  *   - -EACCES if requested protection violates mapping constraints
  *
  * Phase 1 (Completed): Basic parameter validation
- * Phase 2 (Current): Enhanced validation with detailed protection flag reporting
- * Phase 3: Modify page table entries via fut_mm_mprotect()
+ * Phase 2 (Completed): Enhanced validation with detailed protection flag reporting
+ * Phase 3 (Completed): Modify page table entries via fut_mm_mprotect() with TLB flush
  * Phase 4: Enforce SELinux/capability-based protection policies
  * Phase 5: Support PROT_GROWSDOWN/PROT_GROWSUP for stack guards
  *

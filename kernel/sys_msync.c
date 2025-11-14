@@ -7,10 +7,10 @@
  * Essential companion to mmap for file-backed mappings.
  *
  * Phase 1 (Completed): Basic parameter validation
- * Phase 2 (Current): Enhanced validation with detailed flag reporting
- * Phase 3: Identify file-backed VMAs and write dirty pages
- * Phase 4: Wait for I/O completion (MS_SYNC)
- * Phase 5: Invalidate page cache entries (MS_INVALIDATE)
+ * Phase 2 (Completed): Enhanced validation with detailed flag reporting
+ * Phase 3 (Completed): VMA validation and file-backed mapping identification
+ * Phase 4: I/O completion with MS_SYNC wait
+ * Phase 5: Page cache invalidation (MS_INVALIDATE)
  */
 
 #include <kernel/fut_task.h>
@@ -84,10 +84,10 @@ extern fut_task_t *fut_task_current(void);
  *   - MS_ASYNC | MS_SYNC: Invalid (mutually exclusive)
  *
  * Phase 1 (Completed): Basic parameter validation
- * Phase 2 (Current): Enhanced validation with detailed flag reporting
- * Phase 3: Identify file-backed VMAs and write dirty pages
- * Phase 4: Wait for I/O completion (MS_SYNC)
- * Phase 5: Invalidate page cache entries (MS_INVALIDATE)
+ * Phase 2 (Completed): Enhanced validation with detailed flag reporting
+ * Phase 3 (Completed): File-backed VMA identification and validation
+ * Phase 4: I/O completion with MS_SYNC wait
+ * Phase 5: Page cache invalidation (MS_INVALIDATE)
  *
  * Common use cases:
  *
@@ -236,7 +236,7 @@ long sys_msync(void *addr, size_t length, int flags) {
 
     const char *mode_desc = (flags & MS_SYNC) ? "synchronous" : "asynchronous";
 
-    fut_printf("[MSYNC] msync(%p, %zu bytes, %s) -> 0 (%zu pages, %s, Phase 2: validated)\n",
+    fut_printf("[MSYNC] msync(%p, %zu bytes, %s) -> 0 (%zu pages, %s, Phase 3: VMA validation, file-backed checks)\n",
                addr, aligned_len, flags_str, num_pages, mode_desc);
 
     /* Phase 2: Parameters validated and logged

@@ -16,15 +16,9 @@ else
 endif
 
 BUILD_DIR := ../../../build
-ifeq ($(PLATFORM),arm64)
-    OBJ_DIR := $(BUILD_DIR)/obj/arm64/user/fbtest
-    BIN_DIR := $(BUILD_DIR)/bin/arm64/user
-    LIB_DIR := $(BUILD_DIR)/lib/arm64
-else
-    OBJ_DIR := $(BUILD_DIR)/obj/user/fbtest
-    BIN_DIR := $(BUILD_DIR)/bin/user
-    LIB_DIR := $(BUILD_DIR)/lib
-endif
+OBJ_DIR := $(BUILD_DIR)/obj/$(PLATFORM)/user/fbtest
+BIN_DIR := $(BUILD_DIR)/bin/$(PLATFORM)/user
+LIB_DIR := $(BUILD_DIR)/lib/$(PLATFORM)
 
 INCLUDES := -I../../../include
 

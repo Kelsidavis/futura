@@ -9,7 +9,7 @@
  * Essential for parent processes to reap child zombies and get exit status.
  *
  * Phase 1 (Completed): Basic waitpid with status return
- * Phase 2 (Current): Enhanced validation, PID/flag categorization, detailed logging
+ * Phase 2 (Completed): Enhanced validation, PID/flag categorization, detailed logging
  * Phase 3: Non-blocking wait, wait for specific children, process groups
  * Phase 4: Advanced wait options (WSTOPPED, WCONTINUED), waitid support
  */
@@ -135,7 +135,7 @@ extern void fut_printf(const char *fmt, ...);
  *   - Orphaned zombies reparented to init (PID 1)
  *
  * Phase 1 (Completed): Basic waitpid with status return
- * Phase 2 (Current): Enhanced validation, PID/flag categorization, detailed logging
+ * Phase 2 (Completed): Enhanced validation, PID/flag categorization, detailed logging
  * Phase 3: Non-blocking wait (WNOHANG), process group support
  * Phase 4: Advanced options (WUNTRACED, WCONTINUED), waitid, rusage
  */
@@ -195,7 +195,7 @@ long sys_waitpid(int pid, int *u_status, int flags) {
         }
 
         fut_printf("[WAITPID] waitpid(pid=%d [%s: %s], flags=0x%x [%s]) -> %d "
-                   "(%s, Phase 2)\n",
+                   "(%s, Phase 3: Non-blocking wait and process group support)\n",
                    pid, pid_category, pid_meaning, flags, flags_desc, rc, error_desc);
 
         return rc;

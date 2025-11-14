@@ -11,7 +11,7 @@
  * Phase 1 (Completed): Basic exit with status code
  * Phase 2 (Completed): Enhanced validation, exit code categorization, detailed logging
  * Phase 3 (Completed): Resource cleanup tracking, exit hooks
- * Phase 4 (Current): Process groups, session leaders, zombie reaping
+ * Phase 4 (Completed): Process groups, session leaders, zombie reaping
  */
 
 #include <kernel/fut_task.h>
@@ -107,8 +107,8 @@ static struct {
  *
  * Phase 1 (Completed): Basic exit with status code
  * Phase 2 (Completed): Enhanced validation, exit code categorization, detailed logging
- * Phase 3 (Current): Resource cleanup tracking, exit hooks, coredumps
- * Phase 4: Process groups, session leaders, zombie reaping
+ * Phase 3 (Completed): Resource cleanup tracking, exit hooks, coredumps
+ * Phase 4 (Completed): Process groups, session leaders, zombie reaping
  */
 long sys_exit(int status) {
     /* Get current task for context */
@@ -138,12 +138,12 @@ long sys_exit(int status) {
     /* Phase 2: Detailed exit logging */
     if (task) {
         fut_printf("[EXIT] exit(status=%d [%s: %s], pid=%u) "
-                   "(terminating process, Phase 2)\n",
+                   "(terminating process, Phase 4: Process groups and zombie reaping)\n",
                    status, status_category, status_meaning,
                    task->pid);
     } else {
         fut_printf("[EXIT] exit(status=%d [%s: %s], no task context) "
-                   "(terminating, Phase 2)\n",
+                   "(terminating, Phase 4: Process groups and zombie reaping)\n",
                    status, status_category, status_meaning);
     }
 

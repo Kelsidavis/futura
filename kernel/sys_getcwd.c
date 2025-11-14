@@ -178,7 +178,8 @@ long sys_getcwd(char *buf, size_t size) {
     /* Phase 3: Get current directory inode from task structure
      * For now, if task has no explicit cwd, default to root (inode 1)
      */
-    uint64_t cwd_inode = (task->cwd_inode) ? task->cwd_inode : 1;
+    /* TODO: Add cwd_inode field to struct fut_task_t */
+    uint64_t cwd_inode = 1;  /* (task->cwd_inode) ? task->cwd_inode : 1; */
 
     /* Phase 3: Build path from current directory
      * In production, this would call fut_vfs_get_path(cwd_inode, buf, size)

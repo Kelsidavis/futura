@@ -16,6 +16,7 @@
 #include <kernel/errno.h>
 #include <kernel/fut_vfs.h>
 #include <stdint.h>
+#include <string.h>
 
 extern void fut_printf(const char *fmt, ...);
 extern struct fut_file *fut_vfs_get_file(int fd);

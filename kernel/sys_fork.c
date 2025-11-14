@@ -657,26 +657,46 @@ static fut_thread_t *clone_thread(fut_thread_t *parent_thread, fut_task_t *child
 
     /* Copy general purpose registers and special registers */
     child_thread->context.x0 = 0;           /* Return value: 0 for child */
+    child_thread->context.x1 = frame->x[1]; /* x1 from parent */
+
+    /* Copy caller-saved registers x2-x18 (needed for fork to preserve full state) */
+    child_thread->context.x2 = frame->x[2];
+    child_thread->context.x3 = frame->x[3];
+    child_thread->context.x4 = frame->x[4];
+    child_thread->context.x5 = frame->x[5];
+    child_thread->context.x6 = frame->x[6];
+    child_thread->context.x7 = frame->x[7];   /* Critical: string table pointer! */
+    fut_printf("[FORK-DEBUG] Copied x7 from frame->x[7]=0x%llx to child context\n",
+               (unsigned long long)frame->x[7]);
+    child_thread->context.x8 = frame->x[8];
+    child_thread->context.x9 = frame->x[9];
+    child_thread->context.x10 = frame->x[10];
+    child_thread->context.x11 = frame->x[11];
+    child_thread->context.x12 = frame->x[12];
+    child_thread->context.x13 = frame->x[13];
+    child_thread->context.x14 = frame->x[14];
+    child_thread->context.x15 = frame->x[15];
+    child_thread->context.x16 = frame->x[16];
+    child_thread->context.x17 = frame->x[17];
+    child_thread->context.x18 = frame->x[18];
+
+    /* Copy callee-saved registers (x19-x28) from frame */
+    child_thread->context.x19 = frame->x[19];
+    child_thread->context.x20 = frame->x[20];
+    child_thread->context.x21 = frame->x[21];
+    child_thread->context.x22 = frame->x[22];
+    child_thread->context.x23 = frame->x[23];
+    child_thread->context.x24 = frame->x[24];
+    child_thread->context.x25 = frame->x[25];
+    child_thread->context.x26 = frame->x[26];
+    child_thread->context.x27 = frame->x[27];
+    child_thread->context.x28 = frame->x[28];
+
+    /* Copy frame pointer and link register */
     child_thread->context.x29_fp = frame->x[29];  /* Frame pointer */
     child_thread->context.x30_lr = frame->x[30];  /* Link register */
     child_thread->context.pc = frame->pc;         /* Program counter */
     child_thread->context.pstate = frame->pstate; /* Processor state */
-
-    /* Copy callee-saved registers (x19-x28) from frame */
-    for (int i = 19; i < 29; i++) {
-        switch(i) {
-            case 19: child_thread->context.x19 = frame->x[i]; break;
-            case 20: child_thread->context.x20 = frame->x[i]; break;
-            case 21: child_thread->context.x21 = frame->x[i]; break;
-            case 22: child_thread->context.x22 = frame->x[i]; break;
-            case 23: child_thread->context.x23 = frame->x[i]; break;
-            case 24: child_thread->context.x24 = frame->x[i]; break;
-            case 25: child_thread->context.x25 = frame->x[i]; break;
-            case 26: child_thread->context.x26 = frame->x[i]; break;
-            case 27: child_thread->context.x27 = frame->x[i]; break;
-            case 28: child_thread->context.x28 = frame->x[i]; break;
-        }
-    }
 
     /* CRITICAL: Copy user stack pointer (SP_EL0) from parent to child */
     child_thread->context.sp_el0 = frame->sp_el0;

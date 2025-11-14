@@ -45,12 +45,38 @@
 static void apple_ans2_rtkit_handler(void *cookie, uint8_t endpoint, uint64_t msg) {
     apple_ans2_ctrl_t *ctrl = (apple_ans2_ctrl_t *)cookie;
 
-    (void)ctrl;      /* Unused for now */
-    (void)endpoint;  /* Always APPLE_ANS2_ENDPOINT */
-    (void)msg;       /* ANS2-specific messages handled here */
+    if (!ctrl) {
+        return;
+    }
 
-    /* TODO: Handle ANS2-specific RTKit messages */
-    /* Examples: power management, error notifications, etc. */
+    /* Extract message components */
+    uint8_t tag = (msg >> 0) & 0xFF;
+    uint8_t type = (msg >> 8) & 0xFF;
+    uint16_t code = (msg >> 16) & 0xFFFF;
+
+    /* Log all RTKit messages for debugging */
+    fut_printf("[ANS2] RTKit message from endpoint 0x%02x: tag=%u type=0x%02x code=0x%04x msg=0x%016lx\n",
+               endpoint, tag, type, code, (unsigned long)msg);
+
+    /* Handle specific message types */
+    switch (type) {
+        case 0x01:  /* Power notification */
+            fut_printf("[ANS2] RTKit power notification: code=0x%04x\n", code);
+            break;
+
+        case 0x02:  /* Error notification */
+            fut_printf("[ANS2] RTKit error notification: code=0x%04x\n", code);
+            break;
+
+        case 0x03:  /* Status update */
+            fut_printf("[ANS2] RTKit status update: code=0x%04x\n", code);
+            break;
+
+        default:
+            /* Unknown message type - log tag and code for debugging */
+            fut_printf("[ANS2] RTKit unknown message type 0x%02x\n", type);
+            break;
+    }
 }
 
 /* ============================================================

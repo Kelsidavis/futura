@@ -1,8 +1,11 @@
 # SPDX-License-Identifier: MPL-2.0
 
+# Platform detection (defaults to x86_64 if not specified)
+PLATFORM ?= x86_64
+
 ROOT := ../../../..
 BUILD_ROOT := $(ROOT)/build
-OBJ_DIR := $(BUILD_ROOT)/obj/user/shell/futura-shell
+OBJ_DIR := $(BUILD_ROOT)/obj/$(PLATFORM)/user/shell/futura-shell
 BIN_DIR := $(BUILD_ROOT)/bin/user
 
 include $(ROOT)/mk/wayland.mk
@@ -33,8 +36,8 @@ WAYLAND_LDFLAGS ?= -L$(WAYLAND_LIBDIR)
 WAYLAND_LIBS ?= -lwayland-server -lwayland-client -lffi -lpthread -lm -lrt
 
 LDSCRIPT := ../../libfutura/userland_$(PLATFORM).ld
-CRT0 := $(BUILD_ROOT)/lib/crt0.o
-LIBFUTURA := $(BUILD_ROOT)/lib/libfutura.a
+CRT0 := $(BUILD_ROOT)/lib/$(PLATFORM)/crt0.o
+LIBFUTURA := $(BUILD_ROOT)/lib/$(PLATFORM)/libfutura.a
 
 CFLAGS := -std=c2x -ffreestanding -nostdlib -fno-builtin -fno-stack-protector
 CFLAGS += -Wall -Wextra -Werror -g -O2

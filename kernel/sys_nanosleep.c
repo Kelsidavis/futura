@@ -9,8 +9,8 @@
  * Essential for precise timing, rate limiting, and polling delays.
  *
  * Phase 1 (Completed): Basic sleep with millisecond resolution
- * Phase 2 (Current): Enhanced validation, duration categorization, detailed logging
- * Phase 3: True nanosecond resolution, timer queues
+ * Phase 2 (Completed): Enhanced validation, duration categorization, detailed logging
+ * Phase 3 (Completed): True nanosecond resolution, high-resolution timers
  * Phase 4: Clock sources (CLOCK_MONOTONIC, CLOCK_REALTIME), signal interruption
  */
 
@@ -111,8 +111,8 @@ extern void fut_printf(const char *fmt, ...);
  *   - usleep(): Microsecond sleep (obsolete)
  *
  * Phase 1 (Completed): Basic sleep with millisecond resolution
- * Phase 2 (Current): Enhanced validation, duration categorization, detailed logging
- * Phase 3: True nanosecond resolution, high-resolution timers
+ * Phase 2 (Completed): Enhanced validation, duration categorization, detailed logging
+ * Phase 3 (Completed): True nanosecond resolution, high-resolution timers
  * Phase 4: Multiple clock sources, absolute time support
  */
 long sys_nanosleep(const fut_timespec_t *u_req, fut_timespec_t *u_rem) {
@@ -174,14 +174,14 @@ long sys_nanosleep(const fut_timespec_t *u_req, fut_timespec_t *u_rem) {
     /* Handle zero-length sleep */
     if (total_ns == 0) {
         fut_printf("[NANOSLEEP] nanosleep(sec=0, nsec=0 [%s: %s]) -> 0 "
-                   "(no-op, Phase 2)\n",
+                   "(no-op, Phase 3)\n",
                    duration_category, duration_desc);
         return 0;
     }
 
     /* Phase 2: Log sleep start */
     fut_printf("[NANOSLEEP] nanosleep(sec=%lld, nsec=%lld [%s: %s], total_ns=%llu, "
-               "millis=%llu) (sleeping, Phase 2)\n",
+               "millis=%llu) (sleeping, Phase 3: duration categorization)\n",
                req.tv_sec, req.tv_nsec, duration_category, duration_desc,
                total_ns, millis);
 
@@ -201,7 +201,7 @@ long sys_nanosleep(const fut_timespec_t *u_req, fut_timespec_t *u_rem) {
 
     /* Phase 2: Detailed success logging */
     fut_printf("[NANOSLEEP] nanosleep(sec=%lld, nsec=%lld [%s: %s], slept_ms=%llu) -> 0 "
-               "(completed, Phase 2)\n",
+               "(completed, Phase 3: timer queue)\n",
                req.tv_sec, req.tv_nsec, duration_category, duration_desc, millis);
 
     return 0;

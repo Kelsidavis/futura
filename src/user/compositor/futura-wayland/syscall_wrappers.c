@@ -2,9 +2,12 @@
  *
  * Direct syscall wrappers for Wayland compositor
  *
- * x86-64: Override weak symbols to use int 0x80 syscalls instead of SYSCALL,
- *         bypassing QEMU's SYSCALL instruction emulation limitations.
- * ARM64:  Override weak symbols to use SVC syscalls with proper ARM64 ABI
+ * Uses portable syscall interface from ../libfutura/syscall_portable.h
+ * for x86-64 (int $0x80) and ARM64 (svc #0) syscall dispatch.
+ *
+ * x86-64: Workaround for QEMU's SYSCALL instruction emulation limitations
+ *         by using int 0x80 syscalls instead.
+ * ARM64:  Uses standard SVC syscalls with proper ARM64 ABI
  *         (X8=syscall number, X0-X7=arguments, X0=return value).
  */
 
@@ -16,310 +19,37 @@
 #include <stdarg.h>
 #include <errno.h>
 
+/* Portable syscall interface - provides architecture-agnostic wrapper functions */
+#include "../libfutura/syscall_portable.h"
+
 /* Forward declarations for debug helpers */
 static void debug_write(const char *msg);
 static void debug_write_int(long num);
 static const char *strerror_simple(int err);
 
-#define SYS_OPEN 2
-#define SYS_SOCKET 41
-#define SYS_BIND 49
-#define SYS_LISTEN 50
-#define SYS_CONNECT 42
-#define SYS_EPOLL_CTL 233
+/* Syscall number constants - use portable definitions where available */
+#define SYS_OPEN      (__NR_open)
+#define SYS_SOCKET    (__NR_socket)
+#define SYS_BIND      (__NR_bind)
+#define SYS_LISTEN    (__NR_listen)
+#define SYS_CONNECT   (__NR_connect)
+#define SYS_EPOLL_CTL (__NR_epoll_ctl)
+#define SYS_FCNTL     (__NR_fcntl)
+#define SYS_UNLINK    (__NR_unlink)
+#define SYS_CHMOD     (__NR_chmod)
+#define SYS_FCHMOD    (__NR_fchmod)
 
-#if defined(__x86_64__)
-
-/* x86-64: Direct int 0x80 syscall helpers - QEMU bug workaround
- * QEMU's int 0x80 in 64-bit mode reads from x86_64 ABI registers (RDI/RSI/RDX)
- * instead of i386 ABI registers (EBX/ECX/EDX), so we use RDI/RSI/RDX */
-static inline long int80_open(const char *pathname, int flags, mode_t mode) {
-    long result;
-    __asm__ __volatile__ (
-        "int $0x80"
-        : "=a" (result)
-        : "a" (SYS_OPEN), "D" ((long)pathname), "S" (flags), "d" (mode)
-        : "memory", "rcx", "r11"
-    );
-    return result;
-}
-
-static inline long int80_socket(int domain, int type, int protocol) {
-    long result;
-    __asm__ __volatile__ (
-        "int $0x80"
-        : "=a" (result)
-        : "a" (SYS_SOCKET), "D" (domain), "S" (type), "d" (protocol)
-        : "memory", "rcx", "r11"
-    );
-    return result;
-}
-
-static inline long int80_bind(int sockfd, const struct sockaddr *addr, socklen_t addrlen) {
-    long result;
-    __asm__ __volatile__ (
-        "int $0x80"
-        : "=a" (result)
-        : "a" (SYS_BIND), "D" (sockfd), "S" ((long)addr), "d" (addrlen)
-        : "memory", "rcx", "r11"
-    );
-    return result;
-}
-
-static inline long int80_listen(int sockfd, int backlog) {
-    long result;
-    __asm__ __volatile__ (
-        "int $0x80"
-        : "=a" (result)
-        : "a" (SYS_LISTEN), "D" (sockfd), "S" (backlog)
-        : "memory", "rcx", "r11"
-    );
-    return result;
-}
-
-static inline long int80_connect(int sockfd, const struct sockaddr *addr, socklen_t addrlen) {
-    long result;
-    __asm__ __volatile__ (
-        "int $0x80"
-        : "=a" (result)
-        : "a" (SYS_CONNECT), "D" (sockfd), "S" ((long)addr), "d" (addrlen)
-        : "memory", "rcx", "r11"
-    );
-    return result;
-}
-
-static inline long int80_epoll_ctl(int epfd, int op, int fd, void *event) {
-    long result;
-    __asm__ __volatile__ (
-        "int $0x80"
-        : "=a" (result)
-        : "a" (SYS_EPOLL_CTL), "D" (epfd), "S" (op), "d" (fd), "c" ((long)event)
-        : "memory", "r11"
-    );
-    return result;
-}
-
-static inline long int80_fcntl(int fd, int cmd, long arg) {
-    long result;
-    __asm__ __volatile__ (
-        "int $0x80"
-        : "=a" (result)
-        : "a" (72), "D" (fd), "S" (cmd), "d" (arg)
-        : "memory", "rcx", "r11"
-    );
-    return result;
-}
-
-static inline long int80_unlink(const char *pathname) {
-    long result;
-    __asm__ __volatile__ (
-        "int $0x80"
-        : "=a" (result)
-        : "a" (87), "D" ((long)pathname)
-        : "memory", "rcx", "r11"
-    );
-    return result;
-}
-
-static inline long int80_chmod(const char *pathname, mode_t mode) {
-    long result;
-    __asm__ __volatile__ (
-        "int $0x80"
-        : "=a" (result)
-        : "a" (90), "D" ((long)pathname), "S" (mode)
-        : "memory", "rcx", "r11"
-    );
-    return result;
-}
-
-static inline long int80_fchmod(int fd, mode_t mode) {
-    long result;
-    __asm__ __volatile__ (
-        "int $0x80"
-        : "=a" (result)
-        : "a" (91), "D" (fd), "S" (mode)
-        : "memory", "rcx", "r11"
-    );
-    return result;
-}
-
-#elif defined(__aarch64__)
-
-/* ARM64: Direct SVC syscall helpers
- * ARM64 EABI: X8=syscall number, X0-X7=arguments, X0=return value */
-
-static inline long svc_open(const char *pathname, int flags, mode_t mode) {
-    register long x0 asm("x0") = (long)pathname;
-    register long x1 asm("x1") = flags;
-    register long x2 asm("x2") = mode;
-    register long x8 asm("x8") = SYS_OPEN;
-
-    __asm__ __volatile__ (
-        "svc #0"
-        : "+r" (x0)
-        : "r" (x1), "r" (x2), "r" (x8)
-        : "memory"
-    );
-    return x0;
-}
-
-static inline long svc_socket(int domain, int type, int protocol) {
-    register long x0 asm("x0") = domain;
-    register long x1 asm("x1") = type;
-    register long x2 asm("x2") = protocol;
-    register long x8 asm("x8") = SYS_SOCKET;
-
-    __asm__ __volatile__ (
-        "svc #0"
-        : "+r" (x0)
-        : "r" (x1), "r" (x2), "r" (x8)
-        : "memory"
-    );
-    return x0;
-}
-
-static inline long svc_bind(int sockfd, const struct sockaddr *addr, socklen_t addrlen) {
-    register long x0 asm("x0") = sockfd;
-    register long x1 asm("x1") = (long)addr;
-    register long x2 asm("x2") = addrlen;
-    register long x8 asm("x8") = SYS_BIND;
-
-    __asm__ __volatile__ (
-        "svc #0"
-        : "+r" (x0)
-        : "r" (x1), "r" (x2), "r" (x8)
-        : "memory"
-    );
-    return x0;
-}
-
-static inline long svc_listen(int sockfd, int backlog) {
-    register long x0 asm("x0") = sockfd;
-    register long x1 asm("x1") = backlog;
-    register long x8 asm("x8") = SYS_LISTEN;
-
-    __asm__ __volatile__ (
-        "svc #0"
-        : "+r" (x0)
-        : "r" (x1), "r" (x8)
-        : "memory"
-    );
-    return x0;
-}
-
-static inline long svc_connect(int sockfd, const struct sockaddr *addr, socklen_t addrlen) {
-    register long x0 asm("x0") = sockfd;
-    register long x1 asm("x1") = (long)addr;
-    register long x2 asm("x2") = addrlen;
-    register long x8 asm("x8") = SYS_CONNECT;
-
-    __asm__ __volatile__ (
-        "svc #0"
-        : "+r" (x0)
-        : "r" (x1), "r" (x2), "r" (x8)
-        : "memory"
-    );
-    return x0;
-}
-
-static inline long svc_epoll_ctl(int epfd, int op, int fd, void *event) {
-    register long x0 asm("x0") = epfd;
-    register long x1 asm("x1") = op;
-    register long x2 asm("x2") = fd;
-    register long x3 asm("x3") = (long)event;
-    register long x8 asm("x8") = SYS_EPOLL_CTL;
-
-    __asm__ __volatile__ (
-        "svc #0"
-        : "+r" (x0)
-        : "r" (x1), "r" (x2), "r" (x3), "r" (x8)
-        : "memory"
-    );
-    return x0;
-}
-
-static inline long svc_fcntl(int fd, int cmd, long arg) {
-    register long x0 asm("x0") = fd;
-    register long x1 asm("x1") = cmd;
-    register long x2 asm("x2") = arg;
-    register long x8 asm("x8") = 72;  /* SYS_fcntl */
-
-    __asm__ __volatile__ (
-        "svc #0"
-        : "+r" (x0)
-        : "r" (x1), "r" (x2), "r" (x8)
-        : "memory"
-    );
-    return x0;
-}
-
-static inline long svc_unlink(const char *pathname) {
-    register long x0 asm("x0") = (long)pathname;
-    register long x8 asm("x8") = 87;  /* SYS_unlink */
-
-    __asm__ __volatile__ (
-        "svc #0"
-        : "+r" (x0)
-        : "r" (x8)
-        : "memory"
-    );
-    return x0;
-}
-
-static inline long svc_chmod(const char *pathname, mode_t mode) {
-    register long x0 asm("x0") = (long)pathname;
-    register long x1 asm("x1") = mode;
-    register long x8 asm("x8") = 90;  /* SYS_chmod */
-
-    __asm__ __volatile__ (
-        "svc #0"
-        : "+r" (x0)
-        : "r" (x1), "r" (x8)
-        : "memory"
-    );
-    return x0;
-}
-
-static inline long svc_fchmod(int fd, mode_t mode) {
-    register long x0 asm("x0") = fd;
-    register long x1 asm("x1") = mode;
-    register long x8 asm("x8") = 91;  /* SYS_fchmod */
-
-    __asm__ __volatile__ (
-        "svc #0"
-        : "+r" (x0)
-        : "r" (x1), "r" (x8)
-        : "memory"
-    );
-    return x0;
-}
-
-#endif  /* __x86_64__ or __aarch64__ */
-
-/* Architecture-agnostic syscall macros */
-#if defined(__x86_64__)
-#define SYSCALL_OPEN(p, f, m)          int80_open(p, f, m)
-#define SYSCALL_SOCKET(d, t, p)        int80_socket(d, t, p)
-#define SYSCALL_BIND(s, a, l)          int80_bind(s, a, l)
-#define SYSCALL_LISTEN(s, b)           int80_listen(s, b)
-#define SYSCALL_CONNECT(s, a, l)       int80_connect(s, a, l)
-#define SYSCALL_EPOLL_CTL(e, o, f, ev) int80_epoll_ctl(e, o, f, ev)
-#define SYSCALL_FCNTL(f, c, a)         int80_fcntl(f, c, a)
-#define SYSCALL_UNLINK(p)              int80_unlink(p)
-#define SYSCALL_CHMOD(p, m)            int80_chmod(p, m)
-#define SYSCALL_FCHMOD(f, m)           int80_fchmod(f, m)
-#elif defined(__aarch64__)
-#define SYSCALL_OPEN(p, f, m)          svc_open(p, f, m)
-#define SYSCALL_SOCKET(d, t, p)        svc_socket(d, t, p)
-#define SYSCALL_BIND(s, a, l)          svc_bind(s, a, l)
-#define SYSCALL_LISTEN(s, b)           svc_listen(s, b)
-#define SYSCALL_CONNECT(s, a, l)       svc_connect(s, a, l)
-#define SYSCALL_EPOLL_CTL(e, o, f, ev) svc_epoll_ctl(e, o, f, ev)
-#define SYSCALL_FCNTL(f, c, a)         svc_fcntl(f, c, a)
-#define SYSCALL_UNLINK(p)              svc_unlink(p)
-#define SYSCALL_CHMOD(p, m)            svc_chmod(p, m)
-#define SYSCALL_FCHMOD(f, m)           svc_fchmod(f, m)
-#endif
+/* Architecture-agnostic syscall dispatch using portable wrappers */
+#define SYSCALL_OPEN(p, f, m)          syscall3(__NR_open, (long)(p), (long)(f), (long)(m))
+#define SYSCALL_SOCKET(d, t, p)        syscall3(__NR_socket, (long)(d), (long)(t), (long)(p))
+#define SYSCALL_BIND(s, a, l)          syscall3(__NR_bind, (long)(s), (long)(a), (long)(l))
+#define SYSCALL_LISTEN(s, b)           syscall2(__NR_listen, (long)(s), (long)(b))
+#define SYSCALL_CONNECT(s, a, l)       syscall3(__NR_connect, (long)(s), (long)(a), (long)(l))
+#define SYSCALL_EPOLL_CTL(e, o, f, ev) syscall4(__NR_epoll_ctl, (long)(e), (long)(o), (long)(f), (long)(ev))
+#define SYSCALL_FCNTL(f, c, a)         syscall3(__NR_fcntl, (long)(f), (long)(c), (long)(a))
+#define SYSCALL_UNLINK(p)              syscall1(__NR_unlink, (long)(p))
+#define SYSCALL_CHMOD(p, m)            syscall2(__NR_chmod, (long)(p), (long)(m))
+#define SYSCALL_FCHMOD(f, m)           syscall2(__NR_fchmod, (long)(f), (long)(m))
 
 /* Linker-wrapped flock() - always succeeds (single-process OS) */
 int __wrap_flock(int fd, int operation) {

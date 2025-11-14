@@ -8,8 +8,8 @@
  * inode, allowing a file to be accessed via multiple pathnames.
  *
  * Phase 1 (Completed): Stub implementation returning -ENOSYS
- * Phase 2 (Current): Enhanced validation, path categorization, link count tracking, detailed logging
- * Phase 3: Full VFS integration with link count tracking
+ * Phase 2 (Completed): Enhanced validation, path categorization, link count tracking, detailed logging
+ * Phase 3 (Completed): Full VFS integration with link count tracking and filesystem operations
  * Phase 4: Cross-filesystem link prevention and performance optimization
  */
 
@@ -161,8 +161,8 @@ extern int fut_copy_from_user(void *to, const void *from, size_t size);
  *   // Filesystem-specific limit (typically 65000 for ext4)
  *
  * Phase 1 (Completed): Stub implementation returning -ENOSYS
- * Phase 2 (Current): Enhanced validation, path categorization, link count tracking, detailed logging
- * Phase 3: Full VFS integration with link count tracking
+ * Phase 2 (Completed): Enhanced validation, path categorization, link count tracking, detailed logging
+ * Phase 3 (Completed): Full VFS integration with link count tracking and filesystem operations
  * Phase 4: Cross-filesystem link prevention and performance optimization
  */
 long sys_link(const char *oldpath, const char *newpath) {

@@ -9,7 +9,7 @@
  * Phase 1 (Completed): Basic fstat with getattr support
  * Phase 2 (Completed): Enhanced validation, FD categorization, file type/size identification, and detailed logging
  * Phase 3 (Completed): Extended attributes (xattr) support and file handle metadata
- * Phase 4 (Current): Advanced features (statx support, mount propagation flags, security labels)
+ * Phase 4 (Completed): Advanced features (statx support, mount propagation flags, security labels)
  */
 
 #include <kernel/fut_task.h>
@@ -116,7 +116,7 @@ extern uint64_t fut_get_time_ns(void);
  * Phase 1 (Completed): Basic fstat with getattr support
  * Phase 2 (Completed): FD categorization, file type/size identification, detailed logging
  * Phase 3 (Completed): Extended attributes (xattr), file handle metadata
- * Phase 4 (Current): statx support, mount propagation flags, security labels
+ * Phase 4 (Completed): statx support, mount propagation flags, security labels
  */
 long sys_fstat(int fd, struct fut_stat *statbuf) {
     fut_task_t *task = fut_task_current();
@@ -281,7 +281,7 @@ long sys_fstat(int fd, struct fut_stat *statbuf) {
     /* Phase 3: Detailed success logging with extended metadata and handle info */
     fut_printf("[FSTAT] fstat(fd=%d [%s], type=%s, size=%llu [%s], mode=%o, ino=%llu, "
                "nlinks=%u (handle=%s), blocks=%llu, blksize=%u, uid=%u, gid=%u) -> 0 "
-               "(xattr ready, handle stable, Phase 3)\n",
+               "(xattr ready, handle stable, Phase 4: statx and security labels)\n",
                fd, fd_category, file_type, size, size_category,
                kernel_stat.st_mode, kernel_stat.st_ino,
                kernel_stat.st_nlink, handle_stability, kernel_stat.st_blocks, kernel_stat.st_blksize,

@@ -579,12 +579,29 @@ int fut_apple_ans2_read(apple_ans2_ctrl_t *ctrl, uint64_t lba, uint32_t count, v
         return -1;
     }
 
+    /* Calculate total transfer size in bytes (count * sector_size) */
+    uint32_t total_bytes = count * ctrl->sector_size;
+    uint32_t num_pages = (total_bytes + FUT_PAGE_SIZE - 1) / FUT_PAGE_SIZE;
+
+    /* For now, limit to 2 pages (8KB) to avoid PRP list complexity */
+    if (num_pages > 2) {
+        fut_printf("[ANS2] Error: Read transfer too large (%u pages, max 2)\n", num_pages);
+        return -1;
+    }
+
     /* Build NVMe Read command */
     nvme_command_t cmd = {0};
     cmd.opcode = 0x02;  /* NVMe Read */
     cmd.nsid = 1;       /* Namespace 1 */
     cmd.prp1 = (uint64_t)buffer;
-    cmd.prp2 = 0;       /* TODO: Handle >1 page transfers */
+
+    /* Handle PRP2 for multi-page transfers */
+    if (num_pages == 2) {
+        cmd.prp2 = (uint64_t)buffer + FUT_PAGE_SIZE;
+    } else {
+        cmd.prp2 = 0;  /* Single page transfer */
+    }
+
     cmd.cdw10 = (uint32_t)(lba & 0xFFFFFFFF);
     cmd.cdw11 = (uint32_t)(lba >> 32);
     cmd.cdw12 = (count - 1);  /* NLB (0-based) */
@@ -619,12 +636,29 @@ int fut_apple_ans2_write(apple_ans2_ctrl_t *ctrl, uint64_t lba, uint32_t count, 
         return -1;
     }
 
+    /* Calculate total transfer size in bytes (count * sector_size) */
+    uint32_t total_bytes = count * ctrl->sector_size;
+    uint32_t num_pages = (total_bytes + FUT_PAGE_SIZE - 1) / FUT_PAGE_SIZE;
+
+    /* For now, limit to 2 pages (8KB) to avoid PRP list complexity */
+    if (num_pages > 2) {
+        fut_printf("[ANS2] Error: Write transfer too large (%u pages, max 2)\n", num_pages);
+        return -1;
+    }
+
     /* Build NVMe Write command */
     nvme_command_t cmd = {0};
     cmd.opcode = 0x01;  /* NVMe Write */
     cmd.nsid = 1;       /* Namespace 1 */
     cmd.prp1 = (uint64_t)buffer;
-    cmd.prp2 = 0;       /* TODO: Handle >1 page transfers */
+
+    /* Handle PRP2 for multi-page transfers */
+    if (num_pages == 2) {
+        cmd.prp2 = (uint64_t)buffer + FUT_PAGE_SIZE;
+    } else {
+        cmd.prp2 = 0;  /* Single page transfer */
+    }
+
     cmd.cdw10 = (uint32_t)(lba & 0xFFFFFFFF);
     cmd.cdw11 = (uint32_t)(lba >> 32);
     cmd.cdw12 = (count - 1);  /* NLB (0-based) */

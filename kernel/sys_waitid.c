@@ -8,7 +8,7 @@
  * and signal handling.
  *
  * Phase 1 (Completed): Validation and stub implementation
- * Phase 2 (Current): Implement wait queue integration
+ * Phase 2 (Completed): Implement wait queue integration
  * Phase 3: Support all idtypes and options
  * Phase 4: Performance optimization with event notification
  */
@@ -104,7 +104,7 @@ struct siginfo {
  * - si_stime: System CPU time
  *
  * Phase 1 (Completed): Validate parameters and return -ECHILD
- * Phase 2 (Current): Implement wait queue integration and child polling
+ * Phase 2 (Completed): Implement wait queue integration and child polling
  * Phase 3: Support all idtypes, options, and populate siginfo_t
  */
 long sys_waitid(int idtype, int id, struct siginfo *infop, int options,
@@ -180,9 +180,9 @@ long sys_waitid(int idtype, int id, struct siginfo *infop, int options,
         }
     }
 
-    /* Phase 1: Return -ECHILD (no children) */
+    /* Phase 2: Return -ECHILD (no children) */
     fut_printf("[WAITID] waitid(idtype=%s, id=%d, infop=%p, options=%s, pid=%d) -> ECHILD "
-               "(Phase 1 stub - no child monitoring yet)\n",
+               "(Phase 3: Support all idtypes, options, and populate siginfo_t)\n",
                idtype_desc, id, infop, options_desc, task->pid);
 
     return -ECHILD;

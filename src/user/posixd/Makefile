@@ -2,15 +2,28 @@
 # Copyright (c) 2025 Kelsi Davis
 # Licensed under MPL v2.0
 
-# Toolchain (use platform-specific compiler from main Makefile)
-CC ?= gcc
-LD ?= ld
-AR ?= ar
+# Platform detection (defaults to x86_64 if not specified)
+PLATFORM ?= x86_64
+
+# Toolchain (can be overridden by parent Makefile or command line)
+ifeq ($(PLATFORM),arm64)
+    CROSS_COMPILE ?= /opt/homebrew/bin/aarch64-elf-
+    CC := $(CROSS_COMPILE)gcc
+    LD := $(CROSS_COMPILE)ld
+    AR := $(CROSS_COMPILE)ar
+    ARCH_CFLAGS := -march=armv8-a -mtune=cortex-a53
+else
+    CC := gcc
+    LD := ld
+    AR := ar
+    ARCH_CFLAGS := -m64
+endif
 
 # Directories
 BUILD_DIR := ../../../build
-OBJ_DIR := $(BUILD_DIR)/obj/user/posixd
-BIN_DIR := $(BUILD_DIR)/bin/user
+OBJ_DIR := $(BUILD_DIR)/obj/$(PLATFORM)/user/posixd
+BIN_DIR := $(BUILD_DIR)/bin/$(PLATFORM)/user
+LIB_DIR := $(BUILD_DIR)/lib/$(PLATFORM)
 
 # Includes
 INCLUDES := -I../../../include
@@ -19,10 +32,19 @@ INCLUDES := -I../../../include
 CFLAGS := -std=c2x -ffreestanding -nostdlib -fno-builtin -fno-stack-protector
 CFLAGS += -Wall -Wextra -Werror
 CFLAGS += -g -O2
+CFLAGS += $(ARCH_CFLAGS)
 CFLAGS += $(INCLUDES)
 
 # Linker flags
-LDFLAGS := -nostdlib -static
+ifeq ($(PLATFORM),arm64)
+    LDSCRIPT := ../libfutura/userland_arm64.ld
+    LDFLAGS := -static -T $(LDSCRIPT)
+    LIBGCC := $(shell $(CC) -print-libgcc-file-name)
+else
+    LDSCRIPT := ../libfutura/userland.ld
+    LDFLAGS := -nostdlib -static -T $(LDSCRIPT)
+    LIBGCC :=
+endif
 
 # Source files
 SRCS := main.c
@@ -37,7 +59,7 @@ TARGET := $(BIN_DIR)/posixd
 all: $(TARGET)
 
 $(TARGET): $(OBJS) | $(BIN_DIR)
-	$(LD) $(LDFLAGS) -o $@ $(OBJS)
+	$(LD) $(LDFLAGS) -o $@ $(OBJS) $(LIBGCC)
 	@echo "Built posixd: $@"
 
 $(OBJ_DIR)/%.o: %.c | $(OBJ_DIR)

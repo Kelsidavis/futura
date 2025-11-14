@@ -7,8 +7,8 @@
  * is not yet implemented in the VFS layer, so this returns -ENOSYS.
  *
  * Phase 1 (Completed): Basic stub returning ENOSYS
- * Phase 2 (Current): Enhanced validation, parameter categorization, and detailed logging
- * Phase 3: VFS symbolic link support (readlink vnode operation)
+ * Phase 2 (Completed): Enhanced validation, parameter categorization, and detailed logging
+ * Phase 3 (Completed): VFS symbolic link support with readlink vnode operation
  * Phase 4: Performance optimization (link target caching, path resolution)
  */
 
@@ -134,8 +134,8 @@ extern int fut_copy_to_user(void *to, const void *from, size_t size);
  *   - Coordinate with symlink() implementation
  *
  * Phase 1 (Completed): Basic stub returning ENOSYS
- * Phase 2 (Current): Enhanced validation, parameter categorization, detailed logging
- * Phase 3: VFS symbolic link support (readlink vnode operation)
+ * Phase 2 (Completed): Enhanced validation, parameter categorization, detailed logging
+ * Phase 3 (Completed): VFS symbolic link support with readlink vnode operation
  * Phase 4: Performance optimization (link target caching, path resolution)
  */
 long sys_readlink(const char *path, char *buf, size_t bufsiz) {
@@ -244,7 +244,7 @@ long sys_readlink(const char *path, char *buf, size_t bufsiz) {
                 error_desc = "lookup failed";
                 break;
         }
-        fut_printf("[READLINK] readlink(path='%s' [%s, %s], bufsiz=%zu [%s]) -> %d (%s)\n",
+        fut_printf("[READLINK] readlink(path='%s' [%s, %s], bufsiz=%zu [%s]) -> %d (%s, Phase 3: VFS readlink operation)\n",
                    path_buf, path_type, length_category, bufsiz, bufsiz_category,
                    ret, error_desc);
         return ret;
@@ -287,7 +287,7 @@ long sys_readlink(const char *path, char *buf, size_t bufsiz) {
                 error_desc = "readlink operation failed";
                 break;
         }
-        fut_printf("[READLINK] readlink(path='%s' [%s, %s], ino=%lu, bufsiz=%zu [%s]) -> %d (%s)\n",
+        fut_printf("[READLINK] readlink(path='%s' [%s, %s], ino=%lu, bufsiz=%zu [%s]) -> %d (%s, Phase 3: VFS readlink operation)\n",
                    path_buf, path_type, length_category, vnode->ino, bufsiz, bufsiz_category,
                    (int)len, error_desc);
         fut_free(target_buf);
@@ -304,7 +304,7 @@ long sys_readlink(const char *path, char *buf, size_t bufsiz) {
     fut_free(target_buf);
 
     fut_printf("[READLINK] readlink(path='%s' [%s, %s], ino=%lu, bufsiz=%zu [%s], "
-               "target_len=%zd) -> %zd (success)\n",
+               "target_len=%zd) -> %zd (Phase 3: VFS readlink operation)\n",
                path_buf, path_type, length_category, vnode->ino, bufsiz, bufsiz_category,
                len, len);
     return len;

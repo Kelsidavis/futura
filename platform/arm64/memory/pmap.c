@@ -105,7 +105,7 @@ int pmap_probe_pte(fut_vmem_context_t *ctx, uint64_t vaddr, uint64_t *pte_out) {
     /* Get the PGD (Level 0 page table) from context */
     page_table_t *pgd = pmap_context_pgd(ctx);
     if (!pgd) {
-        fut_printf("[PROBE] No PGD\n");
+        /* fut_printf("[PROBE] No PGD\n"); */
         return -EFAULT;
     }
 
@@ -124,7 +124,7 @@ int pmap_probe_pte(fut_vmem_context_t *ctx, uint64_t vaddr, uint64_t *pte_out) {
     /* L1 (PGD) walk */
     pte_t pgde = pgd->entries[pgd_idx];
     if (!fut_pte_is_present(pgde)) {
-        fut_printf("[PROBE] PGD[%llu] not present\n", pgd_idx);
+        /* fut_printf("[PROBE] PGD[%llu] not present\n", pgd_idx); */
         return -EFAULT;
     }
 
@@ -152,7 +152,7 @@ int pmap_probe_pte(fut_vmem_context_t *ctx, uint64_t vaddr, uint64_t *pte_out) {
                (unsigned long long)pmde, (unsigned long long)pte_phys, (unsigned long long)(uintptr_t)pte_table); */
     pte_t pte_entry = pte_table->entries[pte_idx];
     if (!fut_pte_is_present(pte_entry)) {
-        fut_printf("[PROBE] PTE[%llu] not present\n", pte_idx);
+        /* fut_printf("[PROBE] PTE[%llu] not present\n", pte_idx); */
         return -EFAULT;
     }
 

@@ -22,14 +22,39 @@
  *   Mailbox Register Offsets (Simplified)
  * ============================================================ */
 
-/* TODO: These offsets are placeholders - need actual hardware documentation */
-#define APPLE_MBOX_TX_DATA      0x00    /* Transmit data register */
-#define APPLE_MBOX_TX_STATUS    0x04    /* Transmit status */
-#define APPLE_MBOX_RX_DATA      0x08    /* Receive data register */
-#define APPLE_MBOX_RX_STATUS    0x0C    /* Receive status */
+/* Mailbox Register Layout (simplified model)
+ *
+ * Apple's RTKit mailbox has evolved across chip generations:
+ * - M1/M2/M3: Proprietary mailbox at different base addresses per chip
+ * - QEMU virt: Simulated mailbox (not present on real hardware)
+ *
+ * Current implementation uses generic register offsets that must be adjusted
+ * per platform. These placeholders assume a simple FIFO mailbox model:
+ *
+ * Register Map:
+ * +0x00: TX_DATA       - Write command to submit to co-processor
+ * +0x04: TX_STATUS     - Status bits: bit 0 = TX_EMPTY (ready to send)
+ * +0x08: RX_DATA       - Read response from co-processor
+ * +0x0C: RX_STATUS     - Status bits: bit 0 = RX_FULL (data available)
+ *
+ * For Apple Silicon hardware, actual offsets must be determined from:
+ * 1. Device tree: /dts-v1/ parsing for mailbox node
+ * 2. Apple reference drivers: m1n1 bootloader source
+ * 3. Asahi Linux kernel driver: linux/drivers/mailbox/apple-mailbox.c
+ *
+ * Phase 1 (Current): Use generic offsets for QEMU compatibility
+ * Phase 2: Implement platform-specific offset tables for M1/M2/M3
+ * Phase 3: Add runtime device tree parsing for offset discovery
+ */
 
-#define APPLE_MBOX_TX_EMPTY     (1 << 0)
-#define APPLE_MBOX_RX_FULL      (1 << 0)
+#define APPLE_MBOX_TX_DATA      0x00    /* Transmit data register (write command) */
+#define APPLE_MBOX_TX_STATUS    0x04    /* Transmit status register */
+#define APPLE_MBOX_RX_DATA      0x08    /* Receive data register (read response) */
+#define APPLE_MBOX_RX_STATUS    0x0C    /* Receive status register */
+
+/* Mailbox status flags */
+#define APPLE_MBOX_TX_EMPTY     (1 << 0)    /* TX FIFO empty, ready to accept command */
+#define APPLE_MBOX_RX_FULL      (1 << 0)    /* RX FIFO full, response available */
 
 /* ============================================================
  *   Mailbox Register Access
@@ -72,25 +97,40 @@ bool apple_rtkit_send_message(apple_rtkit_ctx_t *ctx, uint8_t endpoint, uint64_t
         return false;
     }
 
-    /* Wait for TX FIFO to have space */
+    /* Wait for TX FIFO to have space
+     * Status register bit 0 = TX_EMPTY (can accept new command)
+     * Polling with timeout prevents infinite wait on stuck hardware
+     */
     int timeout = 10000;
+    int polls = 0;
     while (timeout-- > 0) {
         if (MBOX_READ32(ctx, APPLE_MBOX_TX_STATUS) & APPLE_MBOX_TX_EMPTY) {
             break;
         }
-        /* Simple delay */
+        polls++;
+        /* Platform delay - should use nanosleep for production */
         for (volatile int i = 0; i < 100; i++);
     }
 
     if (timeout <= 0) {
-        fut_printf("[RTKit] Error: TX timeout\n");
+        fut_printf("[RTKit] Error: TX timeout after %d polls (mailbox may be stuck)\n", polls);
         return false;
     }
 
-    /* Encode endpoint in upper 8 bits of message */
+    /* RTKit message format: endpoint in upper 8 bits, payload in lower 56 bits
+     *
+     * Message structure (64-bit):
+     * [63:56] = endpoint (co-processor endpoint number, 0-255)
+     * [55:0]  = payload (command, event, or response data)
+     *
+     * Example:
+     * - HELLO request: ep=0x0 (mgmt), payload with version
+     * - EPMAP request: ep=0x0 (mgmt), payload with bitmap offset
+     * - Application IPC: ep=0x20 (ANS2), payload with command
+     */
     uint64_t full_msg = ((uint64_t)endpoint << 56) | (msg & 0x00FFFFFFFFFFFFFFULL);
 
-    /* Write message to mailbox */
+    /* Write message to mailbox TX register to submit command */
     MBOX_WRITE64(ctx, APPLE_MBOX_TX_DATA, full_msg);
 
     return true;
@@ -101,15 +141,32 @@ bool apple_rtkit_recv_message(apple_rtkit_ctx_t *ctx, uint8_t *endpoint_out, uin
         return false;
     }
 
-    /* Check if RX FIFO has data */
+    /* Check if RX FIFO has data
+     * Status register bit 0 = RX_FULL (response available from co-processor)
+     * Non-blocking check: returns false if no message waiting (caller can poll later)
+     */
     if (!(MBOX_READ32(ctx, APPLE_MBOX_RX_STATUS) & APPLE_MBOX_RX_FULL)) {
-        return false;  /* No message */
+        return false;  /* No message available yet */
     }
 
-    /* Read message from mailbox */
+    /* Read 64-bit message from mailbox RX register
+     * This dequeues one message from co-processor's response queue
+     * Message format: endpoint in upper 8 bits, payload in lower 56 bits
+     */
     uint64_t full_msg = MBOX_READ64(ctx, APPLE_MBOX_RX_DATA);
 
-    /* Extract endpoint and message */
+    /* RTKit message format: Extract endpoint and message
+     *
+     * Message structure (64-bit):
+     * [63:56] = endpoint (identifies which co-processor endpoint sent response)
+     * [55:0]  = payload (response data, acknowledgment, or event notification)
+     *
+     * Example responses:
+     * - HELLO_REPLY: ep=0x0 (mgmt), payload with negotiated version
+     * - EPMAP_REPLY: ep=0x0 (mgmt), payload with endpoint bitmap
+     * - ANS2 Response: ep=0x20 (ANS), payload with command result
+     * - Interrupt: ep=0x20 (ANS), payload with notification/error
+     */
     *endpoint_out = (uint8_t)(full_msg >> 56);
     *msg_out = full_msg & 0x00FFFFFFFFFFFFFFULL;
 
@@ -158,27 +215,50 @@ static void apple_rtkit_handle_ap_pwr_ack(apple_rtkit_ctx_t *ctx, uint64_t msg) 
 }
 
 static void apple_rtkit_handle_mgmt_message(apple_rtkit_ctx_t *ctx, uint64_t msg) {
+    /* Management message dispatcher (endpoint 0)
+     *
+     * Management endpoint handles all co-processor lifecycle and control messages:
+     * - Version negotiation (HELLO/HELLO_REPLY)
+     * - Endpoint discovery (EPMAP/EPMAP_REPLY)
+     * - Power state management (AP_PWR_STATE, IOP_PWR_STATE, etc.)
+     * - Endpoint lifecycle (STARTEP, STOPEP, etc.)
+     *
+     * Message structure:
+     * [31:24] = msg_type (distinguishes different management commands)
+     * [23:0]  = type-specific payload
+     *
+     * Typical boot sequence:
+     * 1. HELLO -> get version
+     * 2. EPMAP -> discover available endpoints
+     * 3. STARTEP -> start required system endpoints (syslog, crashlog, etc.)
+     * 4. PWR_STATE -> transition to ON power state
+     * 5. Application ready for endpoint communication
+     */
     uint8_t msg_type = APPLE_RTKIT_MSG_TYPE(msg);
 
     switch (msg_type) {
         case APPLE_RTKIT_MGMT_MSG_HELLO_REPLY:
+            /* Version negotiation complete - stores negotiated version in ctx */
             apple_rtkit_handle_hello_reply(ctx, msg);
             break;
 
         case APPLE_RTKIT_MGMT_MSG_EPMAP_REPLY:
+            /* Endpoint bitmap response - populate endpoint availability bitmap */
             apple_rtkit_handle_epmap_reply(ctx, msg);
             break;
 
         case APPLE_RTKIT_MGMT_MSG_IOP_PWR_ACK:
+            /* Input/Output Processor power state acknowledgment */
             apple_rtkit_handle_iop_pwr_ack(ctx, msg);
             break;
 
         case APPLE_RTKIT_MGMT_MSG_AP_PWR_ACK:
+            /* Application Processor power state acknowledgment */
             apple_rtkit_handle_ap_pwr_ack(ctx, msg);
             break;
 
         case APPLE_RTKIT_MGMT_MSG_STARTEP_ACK:
-            /* Endpoint started successfully */
+            /* Endpoint started successfully - ready for application messages */
             break;
 
         default:

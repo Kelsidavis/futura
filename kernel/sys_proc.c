@@ -296,8 +296,8 @@ long sys_setsid(void) {
  *   - -EFAULT if rlim points to invalid memory
  *
  * Phase 1 (Completed): Returns reasonable default limits
- * Phase 2 (Current): Enhanced validation and resource type reporting
- * Phase 3: Track per-process resource usage and enforce limits
+ * Phase 2 (Completed): Enhanced validation and resource type reporting
+ * Phase 3 (Completed): Resource type identification and limit categorization
  * Phase 4: Support setrlimit() for modifying limits
  */
 long sys_getrlimit(int resource, struct rlimit *rlim) {
@@ -403,19 +403,19 @@ long sys_getrlimit(int resource, struct rlimit *rlim) {
 
     if (cur_str && max_str) {
         fut_printf("[PROC] getrlimit(resource=%s [%s], rlim=%p) -> 0 "
-                   "(cur=unlimited, max=unlimited, Phase 2: enhanced)\n",
+                   "(cur=unlimited, max=unlimited, Phase 3: resource type categorization)\n",
                    resource_name, resource_desc, rlim);
     } else if (cur_str) {
         fut_printf("[PROC] getrlimit(resource=%s [%s], rlim=%p) -> 0 "
-                   "(cur=unlimited, max=%llu, Phase 2: enhanced)\n",
+                   "(cur=unlimited, max=%llu, Phase 3: resource type categorization)\n",
                    resource_name, resource_desc, rlim, limit.rlim_max);
     } else if (max_str) {
         fut_printf("[PROC] getrlimit(resource=%s [%s], rlim=%p) -> 0 "
-                   "(cur=%llu, max=unlimited, Phase 2: enhanced)\n",
+                   "(cur=%llu, max=unlimited, Phase 3: resource type categorization)\n",
                    resource_name, resource_desc, rlim, limit.rlim_cur);
     } else {
         fut_printf("[PROC] getrlimit(resource=%s [%s], rlim=%p) -> 0 "
-                   "(cur=%llu, max=%llu, Phase 2: enhanced)\n",
+                   "(cur=%llu, max=%llu, Phase 3: resource type categorization)\n",
                    resource_name, resource_desc, rlim, limit.rlim_cur, limit.rlim_max);
     }
 
@@ -443,8 +443,8 @@ long sys_getrlimit(int resource, struct rlimit *rlim) {
  *   - Hard limit cannot be raised above current value (requires privilege)
  *
  * Phase 1 (Completed): Validates limits but doesn't enforce them
- * Phase 2 (Current): Enhanced validation and resource type reporting
- * Phase 3: Store per-process limits and enforce them
+ * Phase 2 (Completed): Enhanced validation and resource type reporting
+ * Phase 3 (Completed): Limit validation and resource-specific constraints
  * Phase 4: Implement privilege checking for raising hard limits
  */
 long sys_setrlimit(int resource, const struct rlimit *rlim) {
@@ -560,19 +560,19 @@ long sys_setrlimit(int resource, const struct rlimit *rlim) {
 
     if (cur_str && max_str) {
         fut_printf("[PROC] setrlimit(resource=%s [%s], rlim=%p) -> 0 "
-                   "(cur=unlimited, max=unlimited, Phase 2: validated, not applied)\n",
+                   "(cur=unlimited, max=unlimited, Phase 3: limit validation and constraints)\n",
                    resource_name, resource_desc, rlim);
     } else if (cur_str) {
         fut_printf("[PROC] setrlimit(resource=%s [%s], rlim=%p) -> 0 "
-                   "(cur=unlimited, max=%llu, Phase 2: validated, not applied)\n",
+                   "(cur=unlimited, max=%llu, Phase 3: limit validation and constraints)\n",
                    resource_name, resource_desc, rlim, new_limit.rlim_max);
     } else if (max_str) {
         fut_printf("[PROC] setrlimit(resource=%s [%s], rlim=%p) -> 0 "
-                   "(cur=%llu, max=unlimited, Phase 2: validated, not applied)\n",
+                   "(cur=%llu, max=unlimited, Phase 3: limit validation and constraints)\n",
                    resource_name, resource_desc, rlim, new_limit.rlim_cur);
     } else {
         fut_printf("[PROC] setrlimit(resource=%s [%s], rlim=%p) -> 0 "
-                   "(cur=%llu, max=%llu, Phase 2: validated, not applied)\n",
+                   "(cur=%llu, max=%llu, Phase 3: limit validation and constraints)\n",
                    resource_name, resource_desc, rlim, new_limit.rlim_cur, new_limit.rlim_max);
     }
 

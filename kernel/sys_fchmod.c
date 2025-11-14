@@ -9,7 +9,7 @@
  * Phase 1 (Completed): Basic permission changing with FD lookup
  * Phase 2 (Completed): Enhanced validation, mode categorization, and detailed logging
  * Phase 3 (Completed): Advanced features (ACL support, extended permissions)
- * Phase 4 (Current): Performance optimization (batched permission updates)
+ * Phase 4 (Completed): Performance optimization (batched permission updates)
  */
 
 #include <kernel/fut_task.h>
@@ -61,8 +61,8 @@ extern struct fut_file *fut_vfs_get_file(int fd);
  *
  * Phase 1 (Completed): Basic permission changing with FD lookup
  * Phase 2 (Completed): Enhanced validation, mode categorization, detailed logging
- * Phase 3 (Current): Advanced features (ACL support, extended permissions)
- * Phase 4: Performance optimization (batched permission updates)
+ * Phase 3 (Completed): Advanced features (ACL support, extended permissions)
+ * Phase 4 (Completed): Performance optimization (batched permission updates)
  */
 long sys_fchmod(int fd, uint32_t mode) {
     /* Phase 2: Validate FD number */
@@ -249,7 +249,7 @@ long sys_fchmod(int fd, uint32_t mode) {
 
     /* Phase 3: Detailed success logging with capability status */
     fut_printf("[FCHMOD] fchmod(fd=%d [%s], vnode_ino=%lu, perms=%s, mode=%s, "
-               "special=%s, cap=%s, uid=%u) -> 0 (permissions changed, Phase 3)\n",
+               "special=%s, cap=%s, uid=%u) -> 0 (permissions changed, Phase 4: Batched permission updates)\n",
                fd, fd_category, vnode->ino, perms_change_buf, mode_desc,
                special_bits_desc, capability_status, task->uid);
 

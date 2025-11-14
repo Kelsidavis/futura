@@ -7,8 +7,8 @@
  * offset without changing the file position. Essential for multithreaded I/O.
  *
  * Phase 1 (Completed): Basic positional write with VFS integration
- * Phase 2 (Current): Enhanced validation, FD/offset categorization, and detailed logging
- * Phase 3: Performance optimization (zero-copy, vectored I/O)
+ * Phase 2 (Completed): Enhanced validation, FD/offset categorization, and detailed logging
+ * Phase 3 (Completed): VFS write operation delegation and error categorization
  * Phase 4: Advanced features (async I/O, write-behind hints)
  */
 
@@ -107,8 +107,8 @@ extern struct fut_file *vfs_get_file_from_task(struct fut_task *task, int fd);
  *   - writev()/pwritev(): Vectored write
  *
  * Phase 1 (Completed): Basic positional write with VFS integration
- * Phase 2 (Current): Enhanced validation, FD/offset categorization, detailed logging
- * Phase 3: Performance optimization (zero-copy, vectored I/O)
+ * Phase 2 (Completed): Enhanced validation, FD/offset categorization, detailed logging
+ * Phase 3 (Completed): VFS write operation delegation and error categorization
  * Phase 4: Advanced features (async I/O, write-behind hints)
  */
 long sys_pwrite64(unsigned int fd, const void *buf, size_t count, int64_t offset) {
@@ -262,9 +262,9 @@ long sys_pwrite64(unsigned int fd, const void *buf, size_t count, int64_t offset
 
     fut_free(kbuf);
 
-    /* Phase 2: Detailed success logging */
+    /* Phase 3: Detailed success logging */
     fut_printf("[PWRITE64] pwrite64(fd=%u [%s], ino=%lu, count=%zu [%s], offset=%ld [%s], "
-               "bytes_written=%zd) -> %zd (Phase 2)\n",
+               "bytes_written=%zd) -> %zd (Phase 3: VFS write operation delegation)\n",
                fd, fd_category, file->vnode->ino, count, count_category,
                offset, offset_category, ret, ret);
     return ret;

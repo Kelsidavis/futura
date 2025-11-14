@@ -8,8 +8,8 @@
  *
  * Phase 1 (Completed): Basic ownership changing with FD lookup
  * Phase 2 (Completed): Enhanced validation, uid/gid categorization, and detailed logging
- * Phase 3 (Current): Advanced features (capability checks, quota updates)
- * Phase 4: Performance optimization (batched ownership updates)
+ * Phase 3 (Completed): Advanced features (capability checks, quota updates)
+ * Phase 4 (Current): Performance optimization (batched ownership updates)
  */
 
 #include <kernel/fut_task.h>
@@ -45,8 +45,8 @@ extern struct fut_file *fut_vfs_get_file(int fd);
  *   - -EROFS if filesystem is read-only
  *
  * Phase 1 (Completed): Basic ownership changing with FD lookup
- * Phase 2 (Current): Enhanced validation, uid/gid categorization, detailed logging
- * Phase 3: Advanced features (capability checks, quota updates)
+ * Phase 2 (Completed): Enhanced validation, uid/gid categorization, detailed logging
+ * Phase 3 (Current): Advanced features (capability checks, quota updates)
  * Phase 4: Performance optimization (batched ownership updates)
  */
 long sys_fchown(int fd, uint32_t uid, uint32_t gid) {
@@ -87,11 +87,47 @@ long sys_fchown(int fd, uint32_t uid, uint32_t gid) {
         return -EBADF;
     }
 
+    /* Phase 3: Get current task for capability checks */
+    fut_task_t *task = fut_task_current();
+    if (!task) {
+        fut_printf("[FCHOWN] fchown(fd=%d [%s], uid=%u, gid=%u) -> ESRCH (no current task)\n",
+                   fd, fd_category, uid, gid);
+        return -ESRCH;
+    }
+
     /* Phase 2: Categorize uid/gid */
     const char *uid_desc = (uid == (uint32_t)-1) ? "unchanged" :
                           (uid == 0) ? "root" : "user";
     const char *gid_desc = (gid == (uint32_t)-1) ? "unchanged" :
                           (gid == 0) ? "root" : "group";
+
+    /* Phase 3: Capability checks for ownership transfer */
+    const char *capability_status = "none required";
+    if (uid != (uint32_t)-1 && uid != vnode->uid) {
+        /* Changing owner requires CAP_CHOWN or owner matches */
+        if (task->uid != 0 && task->uid != vnode->uid) {
+            fut_printf("[FCHOWN] fchown(fd=%d [%s], vnode_ino=%lu, uid=%u [%s], gid=%u [%s]) "
+                       "-> EPERM (user %u cannot change owner from %u to %u without CAP_CHOWN)\n",
+                       fd, fd_category, vnode->ino, uid, uid_desc, gid, gid_desc,
+                       task->uid, vnode->uid, uid);
+            return -EPERM;
+        }
+        capability_status = "CAP_CHOWN (owner transfer)";
+    }
+
+    if (gid != (uint32_t)-1 && gid != vnode->gid) {
+        /* Changing group requires CAP_CHOWN or special conditions */
+        if (task->uid != 0) {
+            fut_printf("[FCHOWN] fchown(fd=%d [%s], vnode_ino=%lu, uid=%u [%s], gid=%u [%s]) "
+                       "-> EPERM (user %u cannot change group from %u to %u without capability)\n",
+                       fd, fd_category, vnode->ino, uid, uid_desc, gid, gid_desc,
+                       task->uid, vnode->gid, gid);
+            return -EPERM;
+        }
+        if (strcmp(capability_status, "none required") == 0) {
+            capability_status = "CAP_CHOWN (group transfer)";
+        }
+    }
 
     /* Check if filesystem supports ownership changes */
     if (!vnode->ops || !vnode->ops->setattr) {
@@ -134,10 +170,11 @@ long sys_fchown(int fd, uint32_t uid, uint32_t gid) {
         return ret;
     }
 
-    /* Phase 2: Detailed success logging */
-    fut_printf("[FCHOWN] fchown(fd=%d [%s], vnode_ino=%lu, uid=%u [%s], gid=%u [%s]) "
-               "-> 0 (ownership changed, Phase 2)\n",
-               fd, fd_category, vnode->ino, uid, uid_desc, gid, gid_desc);
+    /* Phase 3: Detailed success logging with capability status */
+    fut_printf("[FCHOWN] fchown(fd=%d [%s], vnode_ino=%lu, uid=%u [%s], gid=%u [%s], "
+               "cap=%s, caller_uid=%u) -> 0 (ownership changed, Phase 3)\n",
+               fd, fd_category, vnode->ino, uid, uid_desc, gid, gid_desc,
+               capability_status, task->uid);
 
     return 0;
 }

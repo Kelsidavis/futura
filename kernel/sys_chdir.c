@@ -252,22 +252,23 @@ long sys_chdir(const char *pathname) {
                pathname, path_type, old_dir_ino, vnode->ino);
 
     /* Phase 3: Cache the directory path in task structure for faster lookup */
+    /* TODO: Add cwd_cache_buf field to struct fut_task_t for path caching */
     if (task->cwd_cache) {
         /* Phase 3: Free old cache if present */
         task->cwd_cache = NULL;
     }
 
     /* Phase 3: Store the new directory path in cache */
-    char *cache_path = task->cwd_cache_buf;
-    if (cache_path) {
-        size_t path_len = 0;
-        while (pathname[path_len] && path_len < 255) {
-            cache_path[path_len] = pathname[path_len];
-            path_len++;
-        }
-        cache_path[path_len] = '\0';
-        task->cwd_cache = cache_path;
-    }
+    /* char *cache_path = task->cwd_cache_buf; */
+    /* if (cache_path) { */
+    /*     size_t path_len = 0; */
+    /*     while (pathname[path_len] && path_len < 255) { */
+    /*         cache_path[path_len] = pathname[path_len]; */
+    /*         path_len++; */
+    /*     } */
+    /*     cache_path[path_len] = '\0'; */
+    /*     task->cwd_cache = cache_path; */
+    /* } */
 
     /* Release the vnode reference */
     fut_vnode_unref(vnode);

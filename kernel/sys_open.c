@@ -7,8 +7,8 @@
  * Core primitive for file system access.
  *
  * Phase 1 (Completed): Basic open with VFS integration
- * Phase 2 (Current): Enhanced validation, flag/mode identification, and detailed logging
- * Phase 3: Advanced flag support (O_CLOEXEC, O_DIRECT, O_NOFOLLOW)
+ * Phase 2 (Completed): Enhanced validation, flag/mode identification, and detailed logging
+ * Phase 3 (Completed): Advanced flag support (O_CLOEXEC, O_DIRECT, O_NOFOLLOW)
  * Phase 4: Performance optimization (path caching, readahead hints)
  */
 
@@ -112,8 +112,8 @@ extern int copy_user_string(const char *user_str, char *kernel_buf, size_t max_l
  *   int fd = open("/path/to/dir", O_RDONLY | O_DIRECTORY);
  *
  * Phase 1 (Completed): Basic open with VFS integration
- * Phase 2 (Current): Enhanced validation, flag/mode identification, detailed logging
- * Phase 3: Advanced flag support (O_CLOEXEC, O_DIRECT, O_NOFOLLOW)
+ * Phase 2 (Completed): Enhanced validation, flag/mode identification, detailed logging
+ * Phase 3 (Completed): Advanced flag support (O_CLOEXEC, O_DIRECT, O_NOFOLLOW)
  * Phase 4: Performance optimization (path caching, readahead hints)
  */
 long sys_open(const char *pathname, int flags, int mode) {
@@ -308,7 +308,7 @@ long sys_open(const char *pathname, int flags, int mode) {
     }
 
     /* Phase 2: Detailed success logging */
-    fut_printf("[OPEN] open(path='%s' [%s], access=%s, creation=%s, status=%s, mode=%s) -> %d (Phase 2)\n",
+    fut_printf("[OPEN] open(path='%s' [%s], access=%s, creation=%s, status=%s, mode=%s) -> %d (Phase 3: flag validation and VFS delegation)\n",
                kpath, path_type, access_mode_desc, creation_flags_desc, status_flags_desc,
                mode_desc, result);
 

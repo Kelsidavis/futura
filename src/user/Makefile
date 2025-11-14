@@ -2,6 +2,10 @@
 # Copyright (c) 2025 Kelsi Davis
 # Licensed under MPL v2.0
 
+# Platform selection (inherited from parent Makefile)
+PLATFORM ?= x86_64
+export PLATFORM
+
 # Subdirectories
 USERLAND_DIRS := libfutura init shell cat echo wc fsd posixd futurawayd fbtest stubs services/winsrv apps/winstub
 
@@ -15,8 +19,8 @@ all: libfutura $(USERLAND_DIRS)
 init shell cat echo wc fsd posixd futurawayd fbtest services/winsrv apps/winstub: libfutura
 
 $(USERLAND_DIRS):
-	@echo "Building $@..."
-	@$(MAKE) -C $@ all
+	@echo "Building $@ for $(PLATFORM)..."
+	@$(MAKE) -C $@ all PLATFORM=$(PLATFORM)
 
 clean:
 	@for dir in $(USERLAND_DIRS); do \

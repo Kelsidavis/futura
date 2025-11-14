@@ -22,7 +22,7 @@
 extern void fut_printf(const char *fmt, ...);
 
 /* Uncomment for verbose VFS tracing */
-#define DEBUG_VFS 1
+#define DEBUG_VFS 0
 #define DEBUG_READ 0
 
 #if DEBUG_VFS

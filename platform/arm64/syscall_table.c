@@ -22,6 +22,9 @@
 #include <kernel/signal.h>
 #include <kernel/fut_task.h>
 
+/* Debug control - set to 0 to disable verbose syscall logging */
+#define DEBUG_SYSCALL 0
+
 /* Forward declarations */
 extern void fut_serial_puts(const char *str);
 extern void fut_serial_putc(char c);
@@ -3037,9 +3040,11 @@ int64_t arm64_syscall_dispatch(uint64_t syscall_num,
     }
 
     /* Log syscall (optional - can be disabled for production) */
+#if DEBUG_SYSCALL
     fut_serial_puts("[SYSCALL] ");
     fut_serial_puts(entry->name);
     fut_serial_puts("()\n");
+#endif
 
     /* Call syscall handler */
     return entry->handler(arg0, arg1, arg2, arg3, arg4, arg5);

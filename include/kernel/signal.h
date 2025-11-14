@@ -74,6 +74,20 @@ typedef struct {
 #define SIGPROCMASK_UNBLOCK 1   /* SIG_UNBLOCK: Remove signals from mask */
 #define SIGPROCMASK_SETMASK 2   /* SIG_SETMASK: Set mask exactly */
 
+/* Signal alternate stack (sigaltstack) */
+struct sigaltstack {
+    void   *ss_sp;      /* Stack base pointer */
+    int     ss_flags;   /* Flags (SS_DISABLE, SS_ONSTACK) */
+    size_t  ss_size;    /* Stack size in bytes */
+};
+
+/* sigaltstack flags */
+#define SS_ONSTACK  0x01    /* Currently executing on signal stack */
+#define SS_DISABLE  0x02    /* Disable signal stack */
+
+/* Minimum signal stack size (4 KiB) */
+#define MINSIGSTKSZ 4096
+
 /* Forward declaration */
 struct fut_task;
 

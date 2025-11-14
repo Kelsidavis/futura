@@ -58,6 +58,7 @@ struct fut_task {
     int signal_handler_flags[31];      // Per-handler flags (SA_RESTART, SA_RESETHAND, etc.)
     uint64_t pending_signals;          // Bitmask of pending signals awaiting delivery
     fut_waitq_t signal_waitq;          // Wait queue for pause() blocking until signal
+    struct sigaltstack sig_altstack;   // Alternate signal stack configuration
 
     /* Alarm timer */
     uint64_t alarm_expires_ms;         // Alarm expiration time in milliseconds (0 = no alarm)

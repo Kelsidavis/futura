@@ -398,6 +398,9 @@ KERNEL_SOURCES := \
     kernel/sys_kill.c \
     kernel/sys_sigaction.c \
     kernel/sys_sigprocmask.c \
+    kernel/sys_sigpending.c \
+    kernel/sys_sigsuspend.c \
+    kernel/sys_sigaltstack.c \
     kernel/sys_ioctl.c \
     kernel/sys_select.c \
     kernel/sys_getpeername.c \

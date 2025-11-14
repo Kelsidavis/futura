@@ -1082,6 +1082,8 @@ extern char _binary_build_bin_arm64_user_arm64_uidemo_start[];
 extern char _binary_build_bin_arm64_user_arm64_uidemo_end[];
 extern char _binary_build_bin_arm64_user_shell_start[];
 extern char _binary_build_bin_arm64_user_shell_end[];
+extern char _binary_build_bin_arm64_user_forktest_start[];
+extern char _binary_build_bin_arm64_user_forktest_end[];
 extern int fut_exec_elf_memory(const void *elf_data, size_t elf_size, char *const argv[], char *const envp[]);
 
 /**
@@ -1175,10 +1177,14 @@ static void arm64_init_spawner_thread(void *arg) {
     uintptr_t shell_size = (uintptr_t)_binary_build_bin_arm64_user_shell_end -
                            (uintptr_t)_binary_build_bin_arm64_user_shell_start;
 
+    uintptr_t forktest_size = (uintptr_t)_binary_build_bin_arm64_user_forktest_end -
+                              (uintptr_t)_binary_build_bin_arm64_user_forktest_start;
+
     fut_printf("[ARM64-SPAWNER] Embedded userland binaries:\n");
-    fut_printf("  - init:   %llu bytes %s\n", (unsigned long long)init_size, init_size > 0 ? "present" : "MISSING!");
-    fut_printf("  - shell:  %llu bytes %s\n", (unsigned long long)shell_size, shell_size > 0 ? "present" : "MISSING!");
-    fut_printf("  - uidemo: %llu bytes %s\n\n", (unsigned long long)uidemo_size, uidemo_size > 0 ? "present" : "MISSING!");
+    fut_printf("  - init:     %llu bytes %s\n", (unsigned long long)init_size, init_size > 0 ? "present" : "MISSING!");
+    fut_printf("  - shell:    %llu bytes %s\n", (unsigned long long)shell_size, shell_size > 0 ? "present" : "MISSING!");
+    fut_printf("  - uidemo:   %llu bytes %s\n", (unsigned long long)uidemo_size, uidemo_size > 0 ? "present" : "MISSING!");
+    fut_printf("  - forktest: %llu bytes %s\n\n", (unsigned long long)forktest_size, forktest_size > 0 ? "present" : "MISSING!");
 
     if (init_size == 0) {
         fut_printf("[ARM64-SPAWNER] ERROR: No init binary embedded!\n");
@@ -1238,22 +1244,35 @@ static void arm64_init_spawner_thread(void *arg) {
         }
     }
 
-    /* Spawn shell as interactive session */
+    /* Stage forktest binary to filesystem */
+    if (forktest_size > 0) {
+        fut_printf("[ARM64-SPAWNER] Staging forktest to /bin/forktest (%llu bytes)...\n", (unsigned long long)forktest_size);
+        ret = stage_arm64_blob((const uint8_t *)_binary_build_bin_arm64_user_forktest_start,
+                              (const uint8_t *)_binary_build_bin_arm64_user_forktest_end,
+                              "/bin/forktest");
+        if (ret != 0) {
+            fut_printf("[ARM64-SPAWNER] ERROR: Failed to stage forktest binary: %d\n", ret);
+        } else {
+            fut_printf("[ARM64-SPAWNER] Forktest binary staged successfully!\n");
+        }
+    }
+
+    /* Spawn forktest to demonstrate multi-process functionality */
     fut_printf("\n====================================\n");
-    fut_printf("  SPAWNING SHELL\n");
+    fut_printf("  SPAWNING FORKTEST\n");
     fut_printf("====================================\n\n");
 
-    char *shell_argv[] = {"/bin/shell", NULL};
-    char *shell_envp[] = {"PATH=/sbin:/bin", "HOME=/root", NULL};
+    char *test_argv[] = {"/bin/forktest", NULL};
+    char *test_envp[] = {"PATH=/sbin:/bin", "HOME=/root", NULL};
 
-    fut_printf("[ARM64-SPAWNER] Executing /bin/shell...\n");
-    ret = fut_exec_elf("/bin/shell", shell_argv, shell_envp);
+    fut_printf("[ARM64-SPAWNER] Executing /bin/forktest...\n");
+    ret = fut_exec_elf("/bin/forktest", test_argv, test_envp);
 
     if (ret == 0) {
-        fut_printf("[ARM64-SPAWNER] ✓ Shell process spawned successfully!\n");
+        fut_printf("[ARM64-SPAWNER] ✓ Forktest process spawned successfully!\n");
         fut_printf("[ARM64-SPAWNER] Spawner thread exiting.\n");
     } else {
-        fut_printf("[ARM64-SPAWNER] ERROR: Failed to spawn shell! Error code: %d\n", ret);
+        fut_printf("[ARM64-SPAWNER] ERROR: Failed to spawn forktest! Error code: %d\n", ret);
         if (ret == -EINVAL) {
             fut_printf("  EINVAL (invalid argument)\n");
         } else if (ret == -ENOMEM) {

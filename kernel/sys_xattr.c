@@ -7,7 +7,7 @@
  * Extended attributes store name-value pairs associated with filesystem objects.
  *
  * Phase 1 (Completed): Validation and stub implementations
- * Phase 2 (Current): Implement actual xattr storage via vnode->ops->setxattr/getxattr
+ * Phase 2 (Completed): Implement actual xattr storage via vnode->ops->setxattr/getxattr
  * Phase 3: Add namespace validation and security checks
  * Phase 4: Performance optimization with caching
  */

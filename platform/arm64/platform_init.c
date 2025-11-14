@@ -1288,7 +1288,7 @@ static void arm64_init_spawner_thread(void *arg) {
     fut_printf("  SPAWNING TEST PROGRAM\n");
     fut_printf("====================================\n\n");
 
-    /* Temporarily disabled - testing uidemo in isolation
+    /* Run forktest to verify multi-process functionality */
     char *forktest_argv[] = {"/bin/forktest", NULL};
     char *forktest_envp[] = {"PATH=/sbin:/bin", NULL};
 
@@ -1297,6 +1297,7 @@ static void arm64_init_spawner_thread(void *arg) {
 
     if (ret == 0) {
         fut_printf("[ARM64-SPAWNER] ✓ Forktest process spawned successfully!\n");
+        /* Wait for forktest to complete */
         for (volatile int i = 0; i < 50000000; i++);
     } else {
         fut_printf("[ARM64-SPAWNER] ERROR: Failed to spawn forktest! Error code: %d\n", ret);
@@ -1308,9 +1309,13 @@ static void arm64_init_spawner_thread(void *arg) {
             fut_printf("  ENOENT (file not found)\n");
         }
     }
-    */
 
-    /* Testing uidemo in isolation to verify framebuffer/mmap */
+    /* UIDemo framebuffer/mmap test verified working in isolation
+     * Temporarily disabled due to cooperative scheduler limitation:
+     * - Pixel-write loop (786K iterations) monopolizes CPU without yielding
+     * - Causes system hang (no crashes, just stuck in write loop)
+     * - Will re-enable after adding scheduler preemption or periodic yields
+     *
     char *uidemo_argv[] = {"/bin/arm64_uidemo", NULL};
     char *uidemo_envp[] = {"PATH=/sbin:/bin", NULL};
 
@@ -1319,11 +1324,11 @@ static void arm64_init_spawner_thread(void *arg) {
 
     if (ret == 0) {
         fut_printf("[ARM64-SPAWNER] ✓ UIDemo process spawned successfully!\n");
-        /* Wait for uidemo to complete (longer timeout for pixel writes) */
         for (volatile int i = 0; i < 100000000; i++);
     } else {
         fut_printf("[ARM64-SPAWNER] ERROR: Failed to spawn uidemo! Error code: %d\n", ret);
     }
+    */
 
     /* Thread exits naturally */
 }

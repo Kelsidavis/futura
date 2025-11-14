@@ -666,8 +666,9 @@ static fut_thread_t *clone_thread(fut_thread_t *parent_thread, fut_task_t *child
     child_thread->context.x5 = frame->x[5];
     child_thread->context.x6 = frame->x[6];
     child_thread->context.x7 = frame->x[7];   /* Critical: string table pointer! */
-    fut_printf("[FORK-DEBUG] Copied x7 from frame->x[7]=0x%llx to child context\n",
-               (unsigned long long)frame->x[7]);
+    fut_printf("[FORK-DEBUG] Copied x7=0x%llx to child_thread=%p &context.x7=%p\n",
+               (unsigned long long)frame->x[7], (void*)child_thread,
+               (void*)&child_thread->context.x7);
     child_thread->context.x8 = frame->x[8];
     child_thread->context.x9 = frame->x[9];
     child_thread->context.x10 = frame->x[10];

@@ -8,7 +8,7 @@
  *
  * Phase 1 (Completed): Basic ownership changing with vnode lookup
  * Phase 2 (Completed): Enhanced validation, ownership identification, and detailed logging
- * Phase 3 (Current): Advanced features (lchown support, recursive chown)
+ * Phase 3 (Completed): Advanced features (lchown support, recursive chown)
  * Phase 4: Performance optimization (ownership change batching)
  */
 
@@ -123,7 +123,7 @@ extern int fut_copy_from_user(void *to, const void *from, size_t size);
  *
  * Phase 1 (Completed): Basic ownership changing with vnode lookup
  * Phase 2 (Completed): Enhanced validation, ownership identification, detailed logging
- * Phase 3 (Current): Advanced features (lchown support, recursive chown)
+ * Phase 3 (Completed): Advanced features (lchown support, recursive chown)
  * Phase 4: Performance optimization (ownership change batching)
  */
 long sys_chown(const char *pathname, uint32_t uid, uint32_t gid) {

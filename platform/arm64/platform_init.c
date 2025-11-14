@@ -1080,9 +1080,8 @@ extern char _binary_build_bin_arm64_user_init_start[];
 extern char _binary_build_bin_arm64_user_init_end[];
 extern char _binary_build_bin_arm64_user_arm64_uidemo_start[];
 extern char _binary_build_bin_arm64_user_arm64_uidemo_end[];
-/* Shell not built yet for ARM64 */
-// extern char _binary_build_bin_arm64_user_shell_start[];
-// extern char _binary_build_bin_arm64_user_shell_end[];
+extern char _binary_build_bin_arm64_user_shell_start[];
+extern char _binary_build_bin_arm64_user_shell_end[];
 extern int fut_exec_elf_memory(const void *elf_data, size_t elf_size, char *const argv[], char *const envp[]);
 
 /**
@@ -1173,15 +1172,13 @@ static void arm64_init_spawner_thread(void *arg) {
     uintptr_t uidemo_size = (uintptr_t)_binary_build_bin_arm64_user_arm64_uidemo_end -
                             (uintptr_t)_binary_build_bin_arm64_user_arm64_uidemo_start;
 
+    uintptr_t shell_size = (uintptr_t)_binary_build_bin_arm64_user_shell_end -
+                           (uintptr_t)_binary_build_bin_arm64_user_shell_start;
+
     fut_printf("[ARM64-SPAWNER] Embedded userland binaries:\n");
     fut_printf("  - init:   %llu bytes %s\n", (unsigned long long)init_size, init_size > 0 ? "present" : "MISSING!");
-    fut_printf("  - uidemo: %llu bytes %s\n", (unsigned long long)uidemo_size, uidemo_size > 0 ? "present" : "MISSING!");
-
-    /* Shell not built yet for ARM64 */
-    // uintptr_t shell_size = (uintptr_t)_binary_build_bin_arm64_user_shell_end -
-    //                        (uintptr_t)_binary_build_bin_arm64_user_shell_start;
-    // fut_printf("  - shell: %llu bytes %s\n\n", (unsigned long long)shell_size, shell_size > 0 ? "present" : "MISSING!");
-    fut_printf("\n");
+    fut_printf("  - shell:  %llu bytes %s\n", (unsigned long long)shell_size, shell_size > 0 ? "present" : "MISSING!");
+    fut_printf("  - uidemo: %llu bytes %s\n\n", (unsigned long long)uidemo_size, uidemo_size > 0 ? "present" : "MISSING!");
 
     if (init_size == 0) {
         fut_printf("[ARM64-SPAWNER] ERROR: No init binary embedded!\n");
@@ -1228,25 +1225,35 @@ static void arm64_init_spawner_thread(void *arg) {
         }
     }
 
-    /* Shell not built yet for ARM64 - skip staging */
-    fut_printf("[ARM64-SPAWNER] Shell not available (not built yet)\n");
+    /* Stage shell binary to filesystem */
+    if (shell_size > 0) {
+        fut_printf("[ARM64-SPAWNER] Staging shell to /bin/shell (%llu bytes)...\n", (unsigned long long)shell_size);
+        ret = stage_arm64_blob((const uint8_t *)_binary_build_bin_arm64_user_shell_start,
+                              (const uint8_t *)_binary_build_bin_arm64_user_shell_end,
+                              "/bin/shell");
+        if (ret != 0) {
+            fut_printf("[ARM64-SPAWNER] ERROR: Failed to stage shell binary: %d\n", ret);
+        } else {
+            fut_printf("[ARM64-SPAWNER] Shell binary staged successfully!\n");
+        }
+    }
 
-    /* Spawn uidemo for UI testing (replacing init temporarily) */
+    /* Spawn shell as interactive session */
     fut_printf("\n====================================\n");
-    fut_printf("  SPAWNING UI DEMO FOR UI TESTING\n");
+    fut_printf("  SPAWNING SHELL\n");
     fut_printf("====================================\n\n");
 
-    char *uidemo_argv[] = {"/bin/arm64_uidemo", NULL};
-    char *uidemo_envp[] = {"PATH=/sbin:/bin", "HOME=/root", NULL};
+    char *shell_argv[] = {"/bin/shell", NULL};
+    char *shell_envp[] = {"PATH=/sbin:/bin", "HOME=/root", NULL};
 
-    fut_printf("[ARM64-SPAWNER] Executing /bin/arm64_uidemo...\n");
-    ret = fut_exec_elf("/bin/arm64_uidemo", uidemo_argv, uidemo_envp);
+    fut_printf("[ARM64-SPAWNER] Executing /bin/shell...\n");
+    ret = fut_exec_elf("/bin/shell", shell_argv, shell_envp);
 
     if (ret == 0) {
-        fut_printf("[ARM64-SPAWNER] ✓ Gfxtest process spawned successfully!\n");
+        fut_printf("[ARM64-SPAWNER] ✓ Shell process spawned successfully!\n");
         fut_printf("[ARM64-SPAWNER] Spawner thread exiting.\n");
     } else {
-        fut_printf("[ARM64-SPAWNER] ERROR: Failed to spawn uidemo! Error code: %d\n", ret);
+        fut_printf("[ARM64-SPAWNER] ERROR: Failed to spawn shell! Error code: %d\n", ret);
         if (ret == -EINVAL) {
             fut_printf("  EINVAL (invalid argument)\n");
         } else if (ret == -ENOMEM) {

@@ -631,9 +631,7 @@ OBJECTS += $(WAYLAND_COMPOSITOR_BLOB) $(WAYLAND_CLIENT_BLOB) $(WAYLAND_COLOR_BLO
 endif
 else ifeq ($(PLATFORM),arm64)
 # Re-enabled for UI testing
-OBJECTS += $(ARM64_INIT_BLOB) $(ARM64_UIDEMO_BLOB)
-# Shell not built yet, only include init
-# OBJECTS += $(ARM64_SHELL_BLOB)
+OBJECTS += $(ARM64_INIT_BLOB) $(ARM64_UIDEMO_BLOB) $(ARM64_SHELL_BLOB)
 endif
 
 # ============================================================

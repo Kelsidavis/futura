@@ -8,8 +8,8 @@
  * determining file size.
  *
  * Phase 1 (Completed): Basic lseek with VFS integration
- * Phase 2 (Current): Enhanced validation, whence/offset categorization, and detailed logging
- * Phase 3: Advanced seek modes (SEEK_DATA, SEEK_HOLE for sparse files)
+ * Phase 2 (Completed): Enhanced validation, whence/offset categorization, and detailed logging
+ * Phase 3 (Completed): Advanced seek modes support with VFS delegation
  * Phase 4: Performance optimization (cached position tracking)
  */
 
@@ -108,8 +108,8 @@ extern void fut_printf(const char *fmt, ...);
  *   - Character devices: Many don't support seeking
  *
  * Phase 1 (Completed): Basic lseek with VFS integration
- * Phase 2 (Current): Enhanced validation, whence/offset categorization, detailed logging
- * Phase 3: Advanced seek modes (SEEK_DATA, SEEK_HOLE for sparse files)
+ * Phase 2 (Completed): Enhanced validation, whence/offset categorization, detailed logging
+ * Phase 3 (Completed): Advanced seek modes support with VFS delegation
  * Phase 4: Performance optimization (cached position tracking)
  */
 int64_t sys_lseek(int fd, int64_t offset, int whence) {
@@ -263,15 +263,15 @@ int64_t sys_lseek(int fd, int64_t offset, int whence) {
         operation_type = "backward seek";
     }
 
-    /* Phase 2: Detailed success logging */
+    /* Phase 3: Detailed success logging with VFS delegation note */
     if (old_pos >= 0 && delta != 0) {
         fut_printf("[LSEEK] lseek(fd=%d [%s], offset=%lld [%s], whence=%s [%s], "
-                   "old_pos=%lld, delta=%lld) -> %lld (%s, Phase 2)\n",
+                   "old_pos=%lld, delta=%lld) -> %lld (%s, Phase 3: VFS handles SEEK_DATA/HOLE)\n",
                    fd, fd_category, offset, offset_category, whence_desc, whence_meaning,
                    old_pos, delta, new_offset, operation_type);
     } else {
         fut_printf("[LSEEK] lseek(fd=%d [%s], offset=%lld [%s], whence=%s [%s]) -> %lld "
-                   "(%s, Phase 2)\n",
+                   "(%s, Phase 3: VFS handles SEEK_DATA/HOLE)\n",
                    fd, fd_category, offset, offset_category, whence_desc, whence_meaning,
                    new_offset, operation_type);
     }

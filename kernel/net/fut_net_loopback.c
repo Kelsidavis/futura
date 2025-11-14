@@ -10,6 +10,7 @@
 #include <string.h>
 
 static fut_netdev_t loopback_dev;
+static fut_netdev_ops_t loopback_ops;  /* Initialized at runtime to avoid ARM64 relocation issues */
 
 static fut_status_t loopback_tx(fut_netdev_t *dev, const void *frame, size_t len) {
     if (!frame || len == 0) {
@@ -21,14 +22,15 @@ static fut_status_t loopback_tx(fut_netdev_t *dev, const void *frame, size_t len
 
 void fut_net_loopback_init(void) {
     memset(&loopback_dev, 0, sizeof(loopback_dev));
-    static const fut_netdev_ops_t ops = {
-        .tx = loopback_tx,
-        .irq_ack = NULL,
-    };
+
+    /* Initialize ops structure at runtime to avoid ARM64 relocation issues */
+    loopback_ops.tx = loopback_tx;
+    loopback_ops.irq_ack = NULL;
+
     loopback_dev.name = "loopback0";
     loopback_dev.mtu = 1500;
     loopback_dev.features = 0;
-    loopback_dev.ops = &ops;
+    loopback_dev.ops = &loopback_ops;
     loopback_dev.handle = FUT_INVALID_HANDLE;
 
     fut_net_register(&loopback_dev);

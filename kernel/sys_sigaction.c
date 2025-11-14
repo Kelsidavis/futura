@@ -8,8 +8,8 @@
  * various flags like SA_RESTART and SA_RESETHAND.
  *
  * Phase 1 (Completed): Basic validation stub
- * Phase 2 (Current): Full sigaction implementation with sa_handler, sa_mask, sa_flags
- * Phase 3: Signal delivery and trampoline setup
+ * Phase 2 (Completed): Full sigaction implementation with sa_handler, sa_mask, sa_flags
+ * Phase 3 (Completed): Signal delivery and trampoline setup
  * Phase 4: Nested signal handling and sigreturn
  */
 
@@ -42,8 +42,8 @@ extern fut_task_t *fut_task_current(void);
  * - sa_mask: Signals to block during handler execution
  * - sa_flags: Handler behavior flags (SA_RESTART, SA_RESETHAND, etc.)
  *
- * Phase 2 (Current): Fully manages signal action storage in task structure
- * Phase 3: Signal delivery will invoke handlers with proper masking
+ * Phase 2 (Completed): Fully manages signal action storage in task structure
+ * Phase 3 (Completed): Signal delivery will invoke handlers with proper masking
  * Phase 4: Nested signals and SA_RESETHAND handling
  */
 long sys_sigaction(int signum, const struct sigaction *act, struct sigaction *oldact) {

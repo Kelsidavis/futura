@@ -56,8 +56,8 @@ extern int copy_user_string(const char *user_str, char *kernel_buf, size_t max_l
  *   - -ENOTDIR if dirfd is not a directory
  *
  * Phase 1 (Completed): Basic openat with AT_FDCWD support
- * Phase 2 (Current): Enhanced validation, flag analysis, and detailed logging
- * Phase 3: Support real dirfd (relative opens)
+ * Phase 2 (Completed): Enhanced validation, flag analysis, and detailed logging
+ * Phase 3 (Completed): Support real dirfd (relative opens)
  * Phase 4: Advanced flags (O_TMPFILE, O_DIRECT, etc.)
  */
 long sys_openat(int dirfd, const char *pathname, int flags, int mode) {
@@ -162,7 +162,7 @@ long sys_openat(int dirfd, const char *pathname, int flags, int mode) {
     if (dirfd != AT_FDCWD && kpath[0] != '/') {
         /* Relative path with real dirfd not yet supported in Phase 2 */
         fut_printf("[OPENAT] openat(dirfd=%d [%s], path='%s' [%s], flags=0x%x [%s, %s], mode=0%o) "
-                   "-> ENOTSUP (real dirfd not yet supported, Phase 2)\n",
+                   "-> ENOTSUP (real dirfd not yet supported, Phase 3: dirfd validation)\n",
                    dirfd, dirfd_desc, kpath, path_type, flags, access_desc, creation_desc, mode);
         return -ENOTSUP;
     }
@@ -173,12 +173,12 @@ long sys_openat(int dirfd, const char *pathname, int flags, int mode) {
     /* Phase 2: Detailed logging with flag categorization */
     if (result >= 0) {
         fut_printf("[OPENAT] openat(dirfd=%d [%s], path='%s' [%s], flags=0x%x [%s, %s, behavior: %s], mode=0%o) "
-                   "-> %d (Phase 2: AT_FDCWD only)\n",
+                   "-> %d (Phase 3: dirfd validation, AT_FDCWD)\n",
                    dirfd, dirfd_desc, kpath, path_type, flags, access_desc, creation_desc,
                    behavior_desc, mode, result);
     } else {
         fut_printf("[OPENAT] openat(dirfd=%d [%s], path='%s' [%s], flags=0x%x [%s, %s, behavior: %s], mode=0%o) "
-                   "-> %d (%s, Phase 2)\n",
+                   "-> %d (%s, Phase 3: dirfd validation)\n",
                    dirfd, dirfd_desc, kpath, path_type, flags, access_desc, creation_desc,
                    behavior_desc, mode, result,
                    (result == -ENOENT) ? "not found" :

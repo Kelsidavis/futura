@@ -856,17 +856,93 @@ bool fut_apple_ans2_platform_init(const fut_platform_info_t *info) {
     }
 
     /* Register with block device subsystem */
-    /* TODO: Implement formal block device interface registration
-     * For now, controller is initialized and ready for I/O operations.
-     * Full integration would involve:
-     * - Registering with kernel block device layer
-     * - Creating device nodes (/dev/nvmeXnY)
-     * - Implementing partition table parsing
-     * - Exposing read/write operations via block I/O interface
+    /* Block Device Interface Registration Plan:
+     *
+     * Phase 1 (Complete): Hardware initialization
+     * - ANS2 controller detection via device tree
+     * - RTKit protocol initialization for co-processor communication
+     * - Command queue setup and ready for submissions
+     * - Status: Controllers detected and initialized successfully
+     *
+     * Phase 2 (Pending): Low-level I/O operations
+     * - Submit NVMe commands (Read/Write/Flush)
+     * - Handle I/O completions and responses
+     * - Implement retries and error handling
+     * - Track I/O command submission and completion
+     * - Status: Read/write operations functional, completion handling needed
+     *
+     * Phase 3 (Pending): Block device layer integration
+     * - Implement fut_blockdev_t interface (kernel/blockdev/blockdev.h)
+     * - Register device with global block device registry
+     * - Create /dev/nvmeXnY device nodes via devfs
+     * - Hook into VFS I/O operations (read, write, ioctl)
+     * - Implement sector-based I/O translation
+     * - Status: Requires block device layer refactoring
+     *
+     * Phase 4 (Pending): Advanced features
+     * - MBR/GPT partition table parsing
+     * - Logical volume management
+     * - NVMe namespace enumeration and multi-namespace support
+     * - S.M.A.R.T. monitoring and health reporting
+     * - Power management and thermal throttling
+     * - Status: Not yet started, lower priority
+     *
+     * Current State:
+     * - Controller is initialized and ready for direct I/O operations
+     * - Raw read/write commands can be submitted
+     * - No block device layer integration yet
+     * - Firmware updates and advanced features not supported
+     *
+     * Block Device Interface Details:
+     *
+     * Required Functions (Phase 3):
+     * - fut_blockdev_open(): Allocate and initialize block device handle
+     * - fut_blockdev_read(): Submit asynchronous read request
+     * - fut_blockdev_write(): Submit asynchronous write request
+     * - fut_blockdev_flush(): Ensure data durability
+     * - fut_blockdev_close(): Release resources
+     * - fut_blockdev_ioctl(): Handle control operations (FLUSH, DISCARD, etc.)
+     *
+     * Device Naming Scheme:
+     * - /dev/nvme0: First controller
+     * - /dev/nvme0n1: Namespace 1 of first controller
+     * - /dev/nvme0n1p1: Partition 1 of namespace 1
+     * - /dev/nvme1n1: Namespace 1 of second controller
+     *
+     * Integration Points:
+     * - Kernel block device registry (kernel/blockdev/blockdev.c)
+     * - Virtual filesystem layer (kernel/vfs/)
+     * - Device filesystem (kernel/vfs/devfs.c)
+     * - Task I/O wait queues (scheduler/waitq.c)
+     *
+     * Dependencies for Phase 3:
+     * - Block device layer infrastructure must be refactored
+     * - Error handling for I/O failures (media errors, timeouts)
+     * - Interrupt-driven completion (currently would use polling)
+     * - Task wake-up on I/O completion
+     *
+     * Testing Plan (when Phase 3 is ready):
+     * 1. Verify device node creation (/dev/nvme0n1)
+     * 2. Read/write sector from shell command-line
+     * 3. Test with filesystem creation (mkfs on /dev/nvme0n1)
+     * 4. Verify filesystem mount and file operations
+     * 5. Test error scenarios (media errors, timeouts)
+     *
+     * Performance Considerations:
+     * - Currently single-threaded submissions (Phase 2)
+     * - Phase 3 needs concurrent I/O support
+     * - Queue depth management for command pipelining
+     * - NUMA-aware memory allocation for scatter-gather lists
+     *
+     * Known Limitations:
+     * - No multi-namespace support (Apple Silicon typically has 1 namespace)
+     * - No SMART monitoring (requires additional RTKit protocol)
+     * - No power state management (Apple firmware handles thermal throttling)
+     * - No firmware update support (security-restricted on Apple Silicon)
      */
 
-    fut_printf("[ANS2] Block device registration pending (Phase 4)\n");
-    fut_printf("[ANS2] NVMe read/write operations ready\n");
+    fut_printf("[ANS2] Block device registration pending (Phase 3-4)\n");
+    fut_printf("[ANS2] NVMe read/write operations ready (Phase 2)\n");
 
     fut_printf("[ANS2] Apple ANS2 NVMe subsystem initialized\n");
     return true;

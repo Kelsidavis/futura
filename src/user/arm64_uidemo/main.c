@@ -54,9 +54,15 @@ int main(void) {
 
     unsigned int *pixels = (unsigned int *)fb;
 
-    /* SIMPLE TEST: Fill entire screen with bright WHITE */
+    /* Fill entire screen with bright WHITE
+     * Yield periodically to share CPU in cooperative scheduler */
     for (unsigned int i = 0; i < (FB_WIDTH * FB_HEIGHT); i++) {
         pixels[i] = 0xFFFFFFFF;
+
+        /* Yield every 10,000 pixels to allow other processes to run */
+        if ((i % 10000) == 0 && i > 0) {
+            sys_sched_yield();
+        }
     }
 
     /* Flush framebuffer to display via ioctl */

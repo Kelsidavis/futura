@@ -33,6 +33,8 @@ typedef struct {
     uint64_t fpu_state[64];     /* FPU/SIMD registers */
     uint32_t fpsr;              /* FP status register */
     uint32_t fpcr;              /* FP control register */
+    uint64_t sp_el0;            /* SP_EL0: user mode stack pointer (offset 808) */
+    uint64_t ttbr0_el1;         /* TTBR0_EL1: user page table base (offset 816) */
 } fut_interrupt_frame_t;
 
 /* Global interrupt frame pointer (used by fork to clone context) */
@@ -205,16 +207,18 @@ void arm64_exception_dispatch(fut_interrupt_frame_t *frame) {
         case ESR_EC_DABT_EL1:
             if (ec == ESR_EC_DABT_EL0) {
                 fut_serial_puts("[EXCEPTION] Data abort from lower EL (userspace)\n");
-                /* Debug: Read MMU configuration registers at exception time */
+                /* Debug: Read MMU configuration registers and saved TTBR0 from frame */
                 extern void fut_printf(const char *, ...);
-                uint64_t ttbr0, ttbr1, tcr, mair, sctlr;
-                __asm__ volatile("mrs %0, ttbr0_el1" : "=r"(ttbr0));
+                uint64_t ttbr0_current, ttbr1, tcr, mair, sctlr;
+                __asm__ volatile("mrs %0, ttbr0_el1" : "=r"(ttbr0_current));
                 __asm__ volatile("mrs %0, ttbr1_el1" : "=r"(ttbr1));
                 __asm__ volatile("mrs %0, tcr_el1" : "=r"(tcr));
                 __asm__ volatile("mrs %0, mair_el1" : "=r"(mair));
                 __asm__ volatile("mrs %0, sctlr_el1" : "=r"(sctlr));
-                fut_printf("[EXCEPTION-DEBUG] TTBR0=0x%llx TTBR1=0x%llx\n",
-                           (unsigned long long)ttbr0, (unsigned long long)ttbr1);
+                /* Read saved user TTBR0 from frame (offset 816) */
+                uint64_t ttbr0_saved = frame->ttbr0_el1;
+                fut_printf("[EXCEPTION-DEBUG] TTBR0_saved=0x%llx TTBR0_current=0x%llx TTBR1=0x%llx\n",
+                           (unsigned long long)ttbr0_saved, (unsigned long long)ttbr0_current, (unsigned long long)ttbr1);
                 fut_printf("[EXCEPTION-DEBUG] TCR=0x%llx MAIR=0x%llx SCTLR=0x%llx\n",
                            (unsigned long long)tcr, (unsigned long long)mair, (unsigned long long)sctlr);
             } else {

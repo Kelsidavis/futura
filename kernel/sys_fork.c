@@ -418,6 +418,7 @@ static fut_mm_t *clone_mm(fut_mm_t *parent_mm) {
         #define STACK_SCAN_START 0x7FFEFE0000ULL  /* USER_STACK_TOP - (32 pages * 4KB) */
         #define STACK_SCAN_END   0x7FFF000000ULL  /* USER_STACK_TOP */
 
+        int stack_pages_copied = 0;
         for (uint64_t page = STACK_SCAN_START; page < STACK_SCAN_END; page += FUT_PAGE_SIZE) {
             uint64_t pte = 0;
 
@@ -447,7 +448,10 @@ static fut_mm_t *clone_mm(fut_mm_t *parent_mm) {
                 fut_mm_release(child_mm);
                 return NULL;
             }
+            stack_pages_copied++;
         }
+        fut_printf("[FORK] Copied %d stack pages from 0x%llx-0x%llx\n",
+                   stack_pages_copied, STACK_SCAN_START, STACK_SCAN_END);
 
         return child_mm;
     }
@@ -676,6 +680,28 @@ static fut_thread_t *clone_thread(fut_thread_t *parent_thread, fut_task_t *child
 
     /* CRITICAL: Copy user stack pointer (SP_EL0) from parent to child */
     child_thread->context.sp_el0 = frame->sp_el0;
+
+    /* ARM64: Set TTBR0_EL1 from child task's page table base for context switch */
+    child_thread->context.ttbr0_el1 = child_task->mm->ctx.ttbr0_el1;
+    fut_printf("[FORK] Child context: pstate=0x%llx ttbr0_el1=0x%llx pc=0x%llx sp=0x%llx\n",
+               (unsigned long long)child_thread->context.pstate,
+               (unsigned long long)child_thread->context.ttbr0_el1,
+               (unsigned long long)child_thread->context.pc,
+               (unsigned long long)child_thread->context.sp_el0);
+    fut_printf("[FORK] Child x19-x24: 0x%llx 0x%llx 0x%llx 0x%llx 0x%llx 0x%llx\n",
+               (unsigned long long)child_thread->context.x19,
+               (unsigned long long)child_thread->context.x20,
+               (unsigned long long)child_thread->context.x21,
+               (unsigned long long)child_thread->context.x22,
+               (unsigned long long)child_thread->context.x23,
+               (unsigned long long)child_thread->context.x24);
+    fut_printf("[FORK] Child x25-x28, fp, lr: 0x%llx 0x%llx 0x%llx 0x%llx 0x%llx 0x%llx\n",
+               (unsigned long long)child_thread->context.x25,
+               (unsigned long long)child_thread->context.x26,
+               (unsigned long long)child_thread->context.x27,
+               (unsigned long long)child_thread->context.x28,
+               (unsigned long long)child_thread->context.x29_fp,
+               (unsigned long long)child_thread->context.x30_lr);
 
     /*
      * CRITICAL: Copy parent's stack to child's stack

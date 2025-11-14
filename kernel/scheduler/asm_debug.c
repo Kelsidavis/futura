@@ -21,3 +21,15 @@ void fut_debug_show_reg(const char *name, uint64_t value)
 {
     fut_printf("[ASM-DEBUG] Before restore: %s=0x%llx\n", name, value);
 }
+
+/* Called to show x7 value from context structure */
+void fut_debug_show_x7_value(const char *label, uint64_t value)
+{
+    fut_printf("[CTX-DEBUG] %s: context.x7=0x%llx\n", label, value);
+}
+
+/* Called to show x6 and x7 values after ldp */
+void fut_debug_show_x6_x7_loaded(uint64_t x6_val, uint64_t x7_val)
+{
+    fut_printf("[LDP-DEBUG] After ldp x6, x7: x6=0x%llx x7=0x%llx\n", x6_val, x7_val);
+}

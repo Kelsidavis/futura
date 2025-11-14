@@ -208,8 +208,19 @@ fut_switch_context:
     ldp     x27, x28, [x1, #216]      /* Restore x27, x28 */
     ldp     x29, x30, [x1, #232]      /* Restore FP (x29), LR (x30) from new offset 232 */
 
-    /* Restore caller-saved registers x2-x18 (needed for fork) */
-    ldp     x2, x3, [x1, #16]         /* Restore x2, x3 */
+    /* Strategy: Use TPIDRRO_EL0 to temporarily save user's x2 value while we use x2
+     * as scratch register for TTBR0 switch. TPIDRRO_EL0 is writable from EL1 but
+     * read-only from EL0, and kernel doesn't use it for per-CPU data. */
+
+    /* Load user's x2 value and save to TPIDRRO_EL0 */
+    ldr     x2, [x1, #16]             /* Load user's x2 value */
+    msr     tpidrro_el0, x2           /* Save it to TPIDRRO_EL0 temporarily */
+
+    /* Now load TTBR0 value into x2 for the page table switch */
+    ldr     x2, [x1, #280]            /* Load ttbr0_el1 value into x2 */
+
+    /* Restore caller-saved registers x3-x18 (needed for fork) */
+    ldr     x3, [x1, #24]             /* Restore x3 */
     ldp     x4, x5, [x1, #32]         /* Restore x4, x5 */
     ldp     x6, x7, [x1, #48]         /* Restore x6, x7 - x7 contains string table pointer! */
     ldp     x8, x9, [x1, #64]         /* Restore x8, x9 */
@@ -219,15 +230,15 @@ fut_switch_context:
     ldp     x16, x17, [x1, #128]      /* Restore x16, x17 */
     ldr     x18, [x1, #144]           /* Restore x18 */
 
-    /* Save TTBR0_EL1 value in x2 before we lose x1 */
-    ldr     x2, [x1, #280]            /* Load ttbr0_el1 from new offset 280 */
-
-    /* Restore x0 and x1 last (x1 is our context pointer) */
+    /* Restore x0 and x1 BEFORE switching page table */
     ldp     x0, x1, [x1, #0]          /* Restore x0 and x1 */
 
-    /* NOW switch to user page table, after all registers are loaded */
+    /* Switch page table using x2 (which holds TTBR0 value) */
     msr     ttbr0_el1, x2             /* Set user page table base */
-    isb                               /* Instruction barrier to ensure TTBR0 is loaded */
+    isb                               /* Instruction synchronization barrier */
+
+    /* Restore user's x2 from TPIDRRO_EL0 - now ALL registers have correct values */
+    mrs     x2, tpidrro_el0           /* Restore user's x2 value */
 
     /* Exception return to EL0 */
     eret
@@ -564,6 +575,8 @@ fut_save_context:
     .asciz "EL1_PATH"
 .Ldebug_msg_x7:
     .asciz "x7"
+.Ldebug_msg_ctx_x7:
+    .asciz "ctx_load"
 
 .section .text
 

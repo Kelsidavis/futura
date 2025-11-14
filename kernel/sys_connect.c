@@ -73,7 +73,7 @@ typedef uint32_t socklen_t;
  *
  * Phase 1 (Completed): Basic Unix domain socket connection
  * Phase 2 (Completed): Address family identification and enhanced validation
- * Phase 3 (Current): AF_INET/AF_INET6 support and non-blocking connect
+ * Phase 3 (Completed): AF_INET/AF_INET6 support and non-blocking connect
  * Phase 4: Connection timeout, retry logic, TCP Fast Open
  */
 long sys_connect(int sockfd, const void *addr, socklen_t addrlen) {

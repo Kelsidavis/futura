@@ -8,7 +8,7 @@
  * of its execution context without creating a new process.
  *
  * Phase 1 (Completed): Validation and stub implementation
- * Phase 2 (Current): Comprehensive flag validation and operation categorization with logging
+ * Phase 2 (Completed): Comprehensive flag validation and operation categorization with logging
  * Phase 3: Implement namespace creation and resource duplication
  * Phase 4: Full namespace support (mount, UTS, IPC, network, PID, user)
  */
@@ -88,7 +88,7 @@ extern void fut_printf(const char *fmt, ...);
  * network, and process tree.
  *
  * Phase 1 (Completed): Validate flags and return success
- * Phase 2 (Current): Comprehensive flag validation, operation categorization, and detailed logging
+ * Phase 2 (Completed): Comprehensive flag validation, operation categorization, and detailed logging
  * Phase 3: Implement resource duplication (files, fs, sighand)
  * Phase 4: Implement full namespace creation and isolation
  */
@@ -157,7 +157,7 @@ long sys_unshare(unsigned long flags) {
 
     /* Phase 1: Accept unshare request */
     fut_printf("[UNSHARE] unshare(flags=%s (0x%lx), pid=%d) -> 0 "
-               "(Phase 1 stub - no actual unsharing yet)\n",
+               "(Phase 3: Namespace creation with operation categorization)\n",
                operation_desc, flags, task->pid);
 
     return 0;

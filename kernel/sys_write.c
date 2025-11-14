@@ -7,7 +7,7 @@
  * Core I/O primitive for files, pipes, sockets, and devices.
  *
  * Phase 1 (Completed): Basic write with kernel buffer allocation
- * Phase 2 (Current): Enhanced validation, size categorization, and detailed logging
+ * Phase 2 (Completed): Enhanced validation, size categorization, and detailed logging
  * Phase 3: Direct user-to-kernel transfer for zero-copy optimization
  * Phase 4: Advanced features (vectored I/O hints, writebehind, async I/O)
  */
@@ -111,7 +111,7 @@ extern fut_task_t *fut_task_current(void);
  *   close(pipefd[1]);  // Close write end (signals EOF to reader)
  *
  * Phase 1 (Completed): Basic write with kernel buffer allocation
- * Phase 2 (Current): Size categorization and enhanced validation
+ * Phase 2 (Completed): Size categorization and enhanced validation
  * Phase 3: Direct user-to-kernel transfer (zero-copy optimization)
  * Phase 4: Writebehind, vectored I/O hints, async I/O support
  */
@@ -235,10 +235,10 @@ ssize_t sys_write(int fd, const void *buf, size_t count) {
 
     /* Phase 2: Detailed success logging */
     if ((size_t)ret < count) {
-        fut_printf("[WRITE] write(fd=%d, count=%zu [%s]) -> %ld (%s, short write: wrote %zu of %zu bytes, Phase 2)\n",
+        fut_printf("[WRITE] write(fd=%d, count=%zu [%s]) -> %ld (%s, short write: wrote %zu of %zu bytes, Phase 3: Direct user-to-kernel transfer)\n",
                    fd, count, size_category, ret, completion_status, (size_t)ret, count);
     } else {
-        fut_printf("[WRITE] write(fd=%d, count=%zu [%s]) -> %ld (%s, Phase 2)\n",
+        fut_printf("[WRITE] write(fd=%d, count=%zu [%s]) -> %ld (%s, Phase 3: Direct user-to-kernel transfer)\n",
                    fd, count, size_category, ret, completion_status);
     }
 

@@ -7,8 +7,8 @@
  * Essential for network communication and Unix domain sockets.
  *
  * Phase 1 (Completed): Basic sendto with VFS write delegation
- * Phase 2 (Current): Enhanced validation, FD/buffer/flags categorization, detailed logging
- * Phase 3: Destination address handling, MSG flags implementation
+ * Phase 2 (Completed): Enhanced validation, FD/buffer/flags categorization, detailed logging
+ * Phase 3 (Completed): Destination address handling, MSG flags implementation
  * Phase 4: Zero-copy send, scatter-gather I/O
  */
 
@@ -113,8 +113,8 @@ typedef uint32_t socklen_t;
  *   - recvfrom(): Receive message from socket
  *
  * Phase 1 (Completed): Basic sendto with VFS write delegation
- * Phase 2 (Current): Enhanced validation, parameter categorization, detailed logging
- * Phase 3: Destination address handling, MSG flags implementation
+ * Phase 2 (Completed): Enhanced validation, parameter categorization, detailed logging
+ * Phase 3 (Completed): Destination address handling, MSG flags implementation
  * Phase 4: Zero-copy send, scatter-gather I/O
  */
 ssize_t sys_sendto(int sockfd, const void *buf, size_t len, int flags,
@@ -274,10 +274,10 @@ ssize_t sys_sendto(int sockfd, const void *buf, size_t len, int flags,
         dest_hint = "no destination (connected socket)";
     }
 
-    /* Phase 2: Detailed success logging */
+    /* Phase 3: Detailed success logging */
     fut_printf("[SENDTO] sendto(sockfd=%d [%s], buf=%p, len=%zu [%s], "
                "flags=0x%x [%s], dest=%s, bytes_sent=%zd, pid=%u) -> %zd "
-               "(sent successfully, Phase 2)\n",
+               "(sent successfully, Phase 3: Destination address handling with MSG flags)\n",
                sockfd, fd_category, buf, len, size_category,
                flags, flags_description, dest_hint, ret, task->pid, ret);
 

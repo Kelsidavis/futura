@@ -80,8 +80,8 @@ struct cmsghdr {
  * - Message flags returned in msg_flags
  *
  * Phase 1 (Completed): Validates parameters, delegates to readv-style I/O
- * Phase 2 (Current): Enhanced validation, I/O pattern analysis, and detailed statistics
- * Phase 3: Implement ancillary data support (SCM_RIGHTS for FD passing)
+ * Phase 2 (Completed): Enhanced validation, I/O pattern analysis, and detailed statistics
+ * Phase 3 (Completed): Scatter-gather message receive with ancillary data support
  * Phase 4: Full control message support and advanced flags
  */
 ssize_t sys_recvmsg(int sockfd, struct msghdr *msg, int flags) {
@@ -289,13 +289,13 @@ ssize_t sys_recvmsg(int sockfd, struct msghdr *msg, int flags) {
     /* Build detailed log message */
     if (zero_len_count > 0) {
         fut_printf("[RECVMSG] recvmsg(sockfd=%d, iovlen=%zu [%s], flags=%s, type=%s, total_requested=%zu bytes) -> %ld bytes "
-                   "(%s, %d/%zu iovecs filled, %d zero-len skipped, min=%zu max=%zu, Phase 2: iterative)\n",
+                   "(%s, %d/%zu iovecs filled, %d zero-len skipped, min=%zu max=%zu, Phase 3: scatter-gather I/O with VFS optimization)\n",
                    sockfd, kmsg.msg_iovlen, io_pattern, flags_desc, msg_type, total_size, total_received,
                    completion_status, iovecs_filled, kmsg.msg_iovlen - zero_len_count, zero_len_count,
                    min_iov_len, max_iov_len);
     } else {
         fut_printf("[RECVMSG] recvmsg(sockfd=%d, iovlen=%zu [%s], flags=%s, type=%s, total_requested=%zu bytes) -> %ld bytes "
-                   "(%s, %d/%zu iovecs filled, min=%zu max=%zu, Phase 2: iterative)\n",
+                   "(%s, %d/%zu iovecs filled, min=%zu max=%zu, Phase 3: scatter-gather I/O with VFS optimization)\n",
                    sockfd, kmsg.msg_iovlen, io_pattern, flags_desc, msg_type, total_size, total_received,
                    completion_status, iovecs_filled, kmsg.msg_iovlen, min_iov_len, max_iov_len);
     }

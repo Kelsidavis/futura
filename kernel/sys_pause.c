@@ -35,8 +35,8 @@ extern fut_task_t *fut_task_current(void);
  *   pause();                    // Wait for SIGALRM (returns after handler)
  *
  * Phase 1 (Completed): Returns -EINTR immediately (stub)
- * Phase 2 (Current): Check for pending signals and enhanced logging
- * Phase 3: Block on wait queue until signal delivery
+ * Phase 2 (Completed): Check for pending signals and enhanced logging
+ * Phase 3 (Completed): Block on wait queue until signal delivery
  * Phase 4: Integrate with signal delivery path to wake blocked tasks
  */
 long sys_pause(void) {

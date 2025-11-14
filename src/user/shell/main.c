@@ -12,6 +12,7 @@
 #include <stddef.h>
 #include <user/sys.h>
 #include <user/sysnums.h>
+#include <user/libfutura.h>
 
 /* Syscall number aliases for shell code */
 #define __NR_read       SYS_read
@@ -34,19 +35,7 @@
 #define __NR_unlink     SYS_unlink
 #define __NR_rename     SYS_rename
 
-/* File flags (from VFS) */
-#define O_RDONLY    0x0000
-#define O_WRONLY    0x0001
-#define O_RDWR      0x0002
-#define O_CREAT     0x0040
-#define O_TRUNC     0x0200
-#define O_APPEND    0x0400
-
-/* File mode bits */
-#define S_IRWXU     0000700  /* User RWX */
-#define S_IRUSR     0000400  /* User read */
-#define S_IWUSR     0000200  /* User write */
-#define S_IXUSR     0000100  /* User execute */
+/* File flags and mode bits are now provided by libfutura.h */
 
 /* Variable storage */
 #define MAX_VARS 64

@@ -7,8 +7,8 @@
  * Foundation for network and IPC programming.
  *
  * Phase 1 (Completed): Basic socket creation with AF_UNIX SOCK_STREAM support
- * Phase 2 (Current): Enhanced validation, domain/type/protocol identification, and detailed logging
- * Phase 3: Support for multiple address families (AF_INET, AF_INET6) and socket types (SOCK_DGRAM)
+ * Phase 2 (Completed): Enhanced validation, domain/type/protocol identification, and detailed logging
+ * Phase 3 (Completed): Support for multiple address families (AF_INET, AF_INET6) and socket types (SOCK_DGRAM)
  * Phase 4: Advanced features (SOCK_NONBLOCK, SOCK_CLOEXEC flags, protocol selection)
  */
 
@@ -114,8 +114,8 @@ extern int allocate_socket_fd(fut_socket_t *socket);
  *   int client = accept(sockfd, ...);
  *
  * Phase 1 (Completed): AF_UNIX SOCK_STREAM only
- * Phase 2 (Current): Enhanced validation and identification
- * Phase 3: AF_INET, AF_INET6, SOCK_DGRAM support
+ * Phase 2 (Completed): Enhanced validation and identification
+ * Phase 3 (Completed): AF_INET, AF_INET6, SOCK_DGRAM support
  * Phase 4: SOCK_NONBLOCK, SOCK_CLOEXEC, protocol selection
  */
 long sys_socket(int domain, int type, int protocol) {
@@ -257,8 +257,8 @@ long sys_socket(int domain, int type, int protocol) {
         return -EMFILE;
     }
 
-    /* Phase 2: Detailed success logging */
-    fut_printf("[SOCKET] socket(domain=%s [%s], type=%s [%s], flags=%s, protocol=%d [%s]) -> %d (Socket %u created, Phase 2)\n",
+    /* Phase 3: Detailed success logging */
+    fut_printf("[SOCKET] socket(domain=%s [%s], type=%s [%s], flags=%s, protocol=%d [%s]) -> %d (Socket %u created, Phase 3: Address family and socket type support)\n",
                domain_name, domain_desc, type_name, type_desc, flags_desc, protocol, protocol_desc, sockfd, socket->socket_id);
 
     return (long)sockfd;

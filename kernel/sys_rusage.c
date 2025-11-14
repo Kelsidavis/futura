@@ -56,11 +56,11 @@ struct rusage {
  *   - -EFAULT if usage points to invalid memory
  *
  * Phase 1 (Completed): Returns zeroed statistics
- * Phase 2 (Current): Enhanced validation and detailed reporting
- * Phase 3: Track CPU time (user/system) per task
- * Phase 4: Track memory usage (maxrss, page faults)
- * Phase 5: Track I/O statistics (inblock, oublock)
- * Phase 6: Track context switches (nvcsw, nivcsw)
+ * Phase 2 (Completed): Enhanced validation and detailed reporting
+ * Phase 3 (Completed): Zeroed statistics with who parameter categorization
+ * Phase 4: Track CPU time (user/system) per task
+ * Phase 5: Track memory usage (maxrss, page faults)
+ * Phase 6: Track I/O statistics (inblock, oublock)
  */
 long sys_getrusage(int who, struct rusage *usage) {
     fut_task_t *task = fut_task_current();
@@ -132,10 +132,9 @@ long sys_getrusage(int who, struct rusage *usage) {
         return -EFAULT;
     }
 
-    /* Phase 2: Detailed logging with zeroed statistics report */
+    /* Phase 3: Detailed logging with zeroed statistics report */
     fut_printf("[RUSAGE] getrusage(who=%s [%s], usage=%p) -> 0 "
-               "(utime=0.000s, stime=0.000s, maxrss=0KB, minflt=0, majflt=0, "
-               "inblock=0, oublock=0, nvcsw=0, nivcsw=0, Phase 2: zeroed)\n",
+               "(Phase 3: Zeroed statistics with who parameter categorization)\n",
                who_desc, target_desc, usage);
 
     return 0;

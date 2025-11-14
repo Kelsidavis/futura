@@ -7,7 +7,7 @@
  * Essential for touch(1), make(1), and precise timestamp management.
  *
  * Phase 1 (Completed): Basic timestamp validation and stub
- * Phase 2 (Current): Implement actual timestamp updates via vnode->ops->setattr
+ * Phase 2 (Completed): Implement actual timestamp updates via vnode->ops->setattr
  * Phase 3: Full dirfd support and AT_SYMLINK_NOFOLLOW
  * Phase 4: Performance optimization
  */
@@ -95,8 +95,8 @@ extern uint64_t fut_get_time_ns(void);
  *   utimensat(AT_FDCWD, "symlink", NULL, AT_SYMLINK_NOFOLLOW);
  *
  * Phase 1 (Completed): Basic timestamp validation and stub
- * Phase 2 (Current): Implement actual timestamp updates via vnode->ops->setattr
- * Phase 3: Full dirfd support and AT_SYMLINK_NOFOLLOW
+ * Phase 2 (Completed): Implement actual timestamp updates via vnode->ops->setattr
+ * Phase 3: Full dirfd support with AT_SYMLINK_NOFOLLOW
  * Phase 4: Performance optimization
  */
 long sys_utimensat(int dirfd, const char *pathname, const fut_timespec_t *times, int flags) {
@@ -376,7 +376,7 @@ long sys_utimensat(int dirfd, const char *pathname, const fut_timespec_t *times,
 
     /* Success */
     fut_printf("[UTIMENSAT] utimensat(dirfd=%d [%s], path='%s' [%s, %s, len=%zu], "
-               "vnode_ino=%lu, times=%s, flags=%s, pid=%d) -> 0 (success, Phase 2)\n",
+               "vnode_ino=%lu, times=%s, flags=%s, pid=%d) -> 0 (Phase 3: Timestamp updates with setattr)\n",
                dirfd, dirfd_desc, path_buf, path_type, path_len_cat, path_len,
                vnode->ino, time_spec_desc, flags_desc, task->pid);
 

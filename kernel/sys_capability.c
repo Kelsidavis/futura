@@ -28,22 +28,7 @@ extern int fut_copy_to_user(void *to, const void *from, size_t size);
 #define _LINUX_CAPABILITY_VERSION_3  0x20080522
 #define _LINUX_CAPABILITY_U32S_3     2  /* Number of u32s for version 3 */
 
-/* Phase 3: Helper function to categorize capability type */
-static const char *categorize_capability(int cap) {
-    switch (cap) {
-        case CAP_CHOWN:            return "ownership (CHOWN)";
-        case CAP_DAC_OVERRIDE:     return "DAC bypass (DAC_OVERRIDE)";
-        case CAP_SETUID:           return "UID privilege (SETUID)";
-        case CAP_SETGID:           return "GID privilege (SETGID)";
-        case CAP_NET_BIND_SERVICE: return "privileged ports (NET_BIND_SERVICE)";
-        case CAP_NET_ADMIN:        return "network admin (NET_ADMIN)";
-        case CAP_SYS_ADMIN:        return "system admin (SYS_ADMIN)";
-        case CAP_SETPCAP:          return "capability transfer (SETPCAP)";
-        default:                   return "other";
-    }
-}
-
-/* Common capabilities (subset) */
+/* Common capabilities (subset) - MUST be defined before use in categorize_capability() */
 #define CAP_CHOWN            0   /* Change file ownership */
 #define CAP_DAC_OVERRIDE     1   /* Bypass file read/write/execute permission checks */
 #define CAP_DAC_READ_SEARCH  2   /* Bypass file read and directory search checks */
@@ -76,6 +61,21 @@ static const char *categorize_capability(int cap) {
 #define CAP_AUDIT_WRITE      29  /* Write records to kernel auditing log */
 #define CAP_AUDIT_CONTROL    30  /* Enable and disable kernel auditing */
 #define CAP_SETFCAP          31  /* Set file capabilities */
+
+/* Phase 3: Helper function to categorize capability type */
+static const char *categorize_capability(int cap) {
+    switch (cap) {
+        case CAP_CHOWN:            return "ownership (CHOWN)";
+        case CAP_DAC_OVERRIDE:     return "DAC bypass (DAC_OVERRIDE)";
+        case CAP_SETUID:           return "UID privilege (SETUID)";
+        case CAP_SETGID:           return "GID privilege (SETGID)";
+        case CAP_NET_BIND_SERVICE: return "privileged ports (NET_BIND_SERVICE)";
+        case CAP_NET_ADMIN:        return "network admin (NET_ADMIN)";
+        case CAP_SYS_ADMIN:        return "system admin (SYS_ADMIN)";
+        case CAP_SETPCAP:          return "capability transfer (SETPCAP)";
+        default:                   return "other";
+    }
+}
 
 /**
  * struct __user_cap_header_struct - Capability header
@@ -346,7 +346,7 @@ long sys_capset(struct __user_cap_header_struct *hdrp,
     fut_task_t *target_task = task;  /* Default to current task */
     if (hdr.pid != 0) {
         /* Phase 3: For other processes, would need task lookup (simplified to current for now) */
-        if (hdr.pid != task->pid) {
+        if ((uint64_t)hdr.pid != task->pid) {
             fut_printf("[CAPABILITY] capset(hdrp=? [version=%s, pid=%s], datap=? [op=%s], "
                        "caller_pid=%d) -> EPERM (can only set own capabilities or require CAP_SETPCAP)\n",
                        version_desc, pid_desc, operation_type, task->pid);

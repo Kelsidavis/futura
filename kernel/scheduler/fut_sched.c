@@ -594,10 +594,11 @@ void fut_schedule(void) {
         } else {
             // Regular cooperative context switch (uses RET)
 #if defined(__aarch64__)
-            fut_printf("[SCHED] Coop path: prev=%p next=%p next->pstate=0x%llx next->ttbr0=0x%llx\n",
-                       (void*)prev, (void*)next,
+            fut_printf("[SCHED] Coop path: prev=%p next=%p &next->context=%p next->pstate=0x%llx next->ttbr0=0x%llx next->x7=0x%llx\n",
+                       (void*)prev, (void*)next, (void*)&next->context,
                        (unsigned long long)next->context.pstate,
-                       (unsigned long long)next->context.ttbr0_el1);
+                       (unsigned long long)next->context.ttbr0_el1,
+                       (unsigned long long)next->context.x7);
 #endif
             if (prev) {
                 fut_switch_context(&prev->context, &next->context);

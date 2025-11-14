@@ -8,7 +8,7 @@
  * Phase 1 (Completed): Basic bind implementation with Unix domain socket support
  * Phase 2 (Completed): Enhanced validation, address family identification, and detailed logging
  * Phase 3 (Completed): Support for multiple address families (AF_INET, AF_INET6)
- * Phase 4 (Current): Advanced features (SO_REUSEADDR, SO_REUSEPORT, wildcard binding)
+ * Phase 4 (Completed): Advanced features (SO_REUSEADDR, SO_REUSEPORT, wildcard binding)
  */
 
 #include <kernel/fut_task.h>
@@ -99,7 +99,7 @@ static const char *categorize_port(uint16_t port) {
  * Phase 1 (Completed): Basic Unix domain socket binding
  * Phase 2 (Completed): Address family identification and enhanced validation
  * Phase 3 (Completed): Support for AF_INET and AF_INET6
- * Phase 4 (Current): Advanced features (SO_REUSEADDR, SO_REUSEPORT, port ranges)
+ * Phase 4 (Completed): Advanced features (SO_REUSEADDR, SO_REUSEPORT, port ranges)
  */
 long sys_bind(int sockfd, const void *addr, socklen_t addrlen) {
     fut_task_t *task = fut_task_current();
@@ -346,8 +346,8 @@ long sys_bind(int sockfd, const void *addr, socklen_t addrlen) {
         return ret;
     }
 
-    /* Phase 2: Detailed success logging */
-    fut_printf("[BIND] bind(sockfd=%d, family=%s, path='%s' [%s, %s], state=%s->bound) -> 0 (Socket %u bound, Phase 2)\n",
+    /* Phase 4: Detailed success logging */
+    fut_printf("[BIND] bind(sockfd=%d, family=%s, path='%s' [%s, %s], state=%s->bound) -> 0 (Socket %u bound, Phase 4: AF_INET/AF_INET6/AF_UNIX binding support)\n",
                sockfd, family_name, sock_path, path_type, path_desc, socket_state_desc, socket->socket_id);
 
     return 0;

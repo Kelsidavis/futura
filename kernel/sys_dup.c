@@ -8,7 +8,7 @@
  *
  * Phase 1 (Completed): Basic FD duplication with per-task isolation
  * Phase 2 (Completed): Enhanced validation, FD range identification, and detailed logging
- * Phase 3 (Current): Advanced features (O_CLOEXEC handling, error recovery)
+ * Phase 3 (Completed): Advanced features (O_CLOEXEC handling, error recovery)
  * Phase 4: Performance optimization (FD table search hints)
  */
 
@@ -112,7 +112,7 @@ extern struct fut_file *vfs_get_file_from_task(struct fut_task *task, int fd);
  *
  * Phase 1 (Completed): Basic FD duplication with per-task isolation
  * Phase 2 (Completed): Enhanced validation, FD range identification, detailed logging
- * Phase 3 (Current): Advanced features (O_CLOEXEC handling, error recovery)
+ * Phase 3 (Completed): Advanced features (O_CLOEXEC handling, error recovery)
  * Phase 4: Performance optimization (FD table search hints)
  */
 long sys_dup(int oldfd) {

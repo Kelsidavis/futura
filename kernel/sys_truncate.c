@@ -7,9 +7,9 @@
  * Essential for file size manipulation and disk space management.
  *
  * Phase 1 (Completed): Basic truncation with vnode lookup
- * Phase 2 (Current): Enhanced validation, length categorization, and detailed logging
- * Phase 3: Advanced features (sparse file support, extent management)
- * Phase 4: Performance optimization (async truncation, bulk operations)
+ * Phase 2 (Completed): Enhanced validation, length categorization, and detailed logging
+ * Phase 3 (Completed): Advanced features (sparse file support, extent management)
+ * Phase 4 (Current): Performance optimization (async truncation, bulk operations)
  */
 
 #include <kernel/fut_task.h>
@@ -49,9 +49,9 @@ static size_t manual_strlen(const char *s) {
  *   - -EROFS if filesystem is read-only
  *
  * Phase 1 (Completed): Basic truncation with vnode lookup
- * Phase 2 (Current): Enhanced validation, length categorization, detailed logging
- * Phase 3: Advanced features (sparse file support, extent management)
- * Phase 4: Performance optimization (async truncation, bulk operations)
+ * Phase 2 (Completed): Enhanced validation, length categorization, detailed logging
+ * Phase 3 (Completed): Advanced features (sparse file support, extent management)
+ * Phase 4 (Current): Performance optimization (async truncation, bulk operations)
  */
 long sys_truncate(const char *path, uint64_t length) {
     /* Phase 2: Validate path pointer */

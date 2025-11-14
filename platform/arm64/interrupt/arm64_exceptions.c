@@ -5,6 +5,166 @@
  *
  * Exception dispatch router for ARM64 synchronous exceptions.
  * Handles data aborts, instruction aborts, and system calls.
+ *
+ * ARM64 Exception Handling Framework
+ * ===================================
+ *
+ * Phase 1 (Completed): Synchronous Exception Dispatch Router
+ * -----
+ * Status: ✓ Implemented and tested
+ * - Exception syndrome register (ESR_EL1) examination
+ * - Exception class (EC) extraction from ESR[31:26]
+ * - Switch-based routing to specialized handlers
+ * - Support for:
+ *   - SVC (0x15): Supervisor calls from AArch64
+ *   - Data aborts (0x24-0x25): Page faults, permission issues
+ *   - Instruction aborts (0x20-0x21): TLB misses, permission issues
+ *   - Unknown exceptions (0x00)
+ *   - WFI/WFE traps (0x01)
+ *   - Illegal execution states (0x0E)
+ *
+ * Key Features:
+ * - C-level dispatcher called from assembly exception entry
+ * - Exception context (fut_interrupt_frame_t) provided to handlers
+ * - Flexible architecture for handler registration
+ * - Diagnostic output for exception classification
+ *
+ * Phase 2 (In Progress): Data Abort Handler Enhancements
+ * -----
+ * Status: ⏳ Page fault handling framework in place
+ * - Page fault detection and classification
+ * - TLB miss vs permission fault distinction
+ * - Access flag fault handling
+ * - Translation fault handling (L0-L3)
+ * - Alignment fault detection
+ * - Signal delivery for unhandled aborts (SIGSEGV)
+ * - Fault address register (FAR) examination
+ *
+ * Phase 3 (Planned): Instruction Abort Handler
+ * -----
+ * Status: ⏳ Deferred
+ * - Instruction TLB miss handling
+ * - Instruction access permission faults
+ * - Instruction prefetch aborts
+ * - Userspace instruction validation
+ *
+ * Phase 4 (Planned): Advanced Exception Handling
+ * -----
+ * Status: ⏳ Deferred
+ * - Breakpoint/watchpoint exceptions (0x30-0x36)
+ * - Trapped MSR/MRS instructions (0x18)
+ * - PAC (Pointer Authentication Code) failures
+ * - BTI (Branch Target Identification) violations
+ * - Asynchronous abort handling (SError)
+ *
+ * Exception Syndrome Register (ESR_EL1)
+ * ======================================
+ *
+ * Structure:
+ *   [31:26] EC (Exception Class): Type of exception
+ *   [24:0]  ISS (Instruction-Specific Syndrome): Details
+ *
+ * Exception Classes (EC):
+ *   0x00 = Unknown exception
+ *   0x01 = WFI/WFE instruction trapped
+ *   0x03 = MCR/MRC instruction trapped (AArch32)
+ *   0x04 = MCRR/MRRC instruction trapped (AArch32)
+ *   0x05 = MCR/MRC instruction trapped (AArch32)
+ *   0x06 = LDC/STC instruction trapped (AArch32)
+ *   0x07 = SVE instruction trapped
+ *   0x0A = LD64B/ST64B instruction trapped
+ *   0x0C = MRRS/MSRR instruction trapped (AArch32)
+ *   0x0E = Illegal execution state
+ *   0x11 = SVC instruction from AArch32
+ *   0x12 = HVC instruction (EL2)
+ *   0x13 = SMC instruction (secure)
+ *   0x15 = SVC instruction from AArch64
+ *   0x18 = MSR/MRS/System instruction trapped
+ *   0x19 = SVE instruction trapped
+ *   0x1A = ERET/ERETAA/ERETAB instructions
+ *   0x1B = FPAC instruction
+ *   0x1C = Pointer Authentication instruction
+ *   0x20 = Instruction abort from lower EL (userspace)
+ *   0x21 = Instruction abort from current EL
+ *   0x22 = PC alignment fault
+ *   0x24 = Data abort from lower EL (userspace)
+ *   0x25 = Data abort from current EL
+ *   0x26 = SP alignment fault
+ *   0x28 = Floating-point exception
+ *   0x2C = Floating-point trap
+ *   0x2F = SError (asynchronous abort)
+ *   0x30-0x36 = Breakpoint exceptions
+ *   0x38-0x39 = Software step exceptions
+ *   0x3A = Watchpoint exceptions
+ *
+ * Data Fault Status Code (DFSC) in ISS[5:0]
+ * ===========================================
+ *
+ * Translation faults (TF) - TLB entry not found:
+ *   0x04 = Translation fault at L0
+ *   0x05 = Translation fault at L1
+ *   0x06 = Translation fault at L2
+ *   0x07 = Translation fault at L3
+ *
+ * Access flag faults (AF) - Access flag bit not set:
+ *   0x09 = Access flag fault at L1
+ *   0x0A = Access flag fault at L2
+ *   0x0B = Access flag fault at L3
+ *
+ * Permission faults (PF) - AP/XN bits restrict access:
+ *   0x0D = Permission fault at L1
+ *   0x0E = Permission fault at L2
+ *   0x0F = Permission fault at L3
+ *
+ * Other faults:
+ *   0x01 = Alignment fault
+ *   0x10 = Synchronous external abort
+ *   0x18 = Synchronous parity error
+ *   0x11-0x1F = External abort variants
+ *
+ * Handler Organization
+ * ====================
+ *
+ * arm64_exception_dispatch():
+ *   - Entry point for all exceptions from assembly vector
+ *   - Examines ESR_EL1 to extract exception class
+ *   - Dispatches to appropriate handler based on EC
+ *   - Fallback for unrecognized exceptions
+ *
+ * arm64_svc_handler():
+ *   - Handles SVC (0x15) - system calls from EL0
+ *   - Extracts syscall number and arguments
+ *   - Dispatches to kernel syscall table
+ *   - Manages signal delivery before return
+ *
+ * arm64_data_abort_handler():
+ *   - Handles data aborts (0x24-0x25)
+ *   - Attempts page fault handling via fut_trap_handle_page_fault()
+ *   - Sends SIGSEGV for unhandled aborts
+ *   - Examines FAR for fault address
+ *
+ * arm64_instruction_abort_handler():
+ *   - Handles instruction aborts (0x20-0x21)
+ *   - Currently calls handle_unknown() (Phase 3 placeholder)
+ *   - Will distinguish TLB vs permission faults
+ *   - Will handle instruction validation for userspace
+ *
+ * Signal Delivery Integration
+ * ============================
+ *
+ * Unhandled faults trigger signal delivery:
+ *   - SIGSEGV: Data or instruction abort at invalid address
+ *   - SIGBUS: Alignment faults, external aborts
+ *   - SIGILL: Illegal execution state
+ *   - SIGTRAP: Breakpoint, watchpoint, step exceptions
+ *
+ * Process:
+ *   1. Exception occurs in userspace (EL0)
+ *   2. Exception vector saves frame (arm64_exception_entry.S)
+ *   3. Dispatcher routes to handler (arm64_exception_dispatch)
+ *   4. Handler processes exception
+ *   5. If unhandled: fut_task_signal_exit(signal) called
+ *   6. Signal context delivered at next userspace entry
  */
 
 #include "../../include/platform/arm64/regs.h"

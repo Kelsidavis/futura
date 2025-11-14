@@ -6,40 +6,13 @@
 
 #include <stdint.h>
 #include <stddef.h>
-
-/* Syscall numbers */
-#define __NR_write  1
-#define __NR_exit   60
-
-typedef long ssize_t;
-
-/* Syscall wrapper */
-static inline long syscall3(long nr, long arg1, long arg2, long arg3) {
-    long ret;
-    __asm__ __volatile__(
-        "int $0x80\n"
-        : "=a"(ret)
-        : "a"(nr), "D"(arg1), "S"(arg2), "d"(arg3)
-        : "rcx", "r11", "memory"
-    );
-    return ret;
-}
-
-static inline long syscall1(long nr, long arg1) {
-    long ret;
-    __asm__ __volatile__(
-        "int $0x80\n"
-        : "=a"(ret)
-        : "a"(nr), "D"(arg1)
-        : "rcx", "r11", "memory"
-    );
-    return ret;
-}
+#include "../libfutura/syscall_portable.h"
 
 static inline ssize_t sys_write(int fd, const void *buf, size_t count) {
     return syscall3(__NR_write, fd, (long)buf, count);
 }
 
+__attribute__((used))
 static inline void sys_exit(int status) {
     syscall1(__NR_exit, status);
     __builtin_unreachable();

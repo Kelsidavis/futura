@@ -1,11 +1,11 @@
-/* userland_arm64.ld - Linker Script for Futura OS Userland Programs (ARM64)
+/* userland_x86_64.ld - Linker Script for Futura OS Userland Programs (x86-64)
  *
  * Copyright (c) 2025 Kelsi Davis
  * Licensed under the MPL v2.0 — see LICENSE for details.
  */
 
-OUTPUT_FORMAT("elf64-littleaarch64")
-OUTPUT_ARCH(aarch64)
+OUTPUT_FORMAT("elf64-x86-64")
+OUTPUT_ARCH(i386:x86-64)
 ENTRY(_start)
 
 SECTIONS

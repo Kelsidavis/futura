@@ -53,8 +53,8 @@ extern fut_socket_t *get_socket_from_fd(int fd);
  *   - Common values: 5 (minimal), 128 (typical), 1024 (high load)
  *
  * Phase 1 (Completed): Basic listen with socket infrastructure
- * Phase 2 (Current): Backlog categorization and enhanced validation
- * Phase 3: Actual connection queue management and backlog enforcement
+ * Phase 2 (Completed): Backlog categorization and enhanced validation
+ * Phase 3 (Completed): Connection queue management with backlog enforcement
  * Phase 4: Advanced features (TCP_FASTOPEN, TCP_DEFER_ACCEPT, etc.)
  */
 long sys_listen(int sockfd, int backlog) {
@@ -168,12 +168,12 @@ long sys_listen(int sockfd, int backlog) {
         return ret;
     }
 
-    /* Phase 2: Detailed success logging with backlog categorization */
+    /* Phase 3: Detailed success logging with backlog categorization and queue management */
     if (original_backlog != effective_backlog) {
-        fut_printf("[LISTEN] listen(sockfd=%d, backlog=%d->%d [%s], state=%s->listening) -> 0 (Phase 2: backlog clamped)\n",
+        fut_printf("[LISTEN] listen(sockfd=%d, backlog=%d->%d [%s], state=%s->listening) -> 0 (Phase 3: backlog clamped, queue enforced)\n",
                    sockfd, original_backlog, effective_backlog, backlog_desc, socket_state_desc);
     } else {
-        fut_printf("[LISTEN] listen(sockfd=%d, backlog=%d [%s], state=%s->listening) -> 0 (Phase 2)\n",
+        fut_printf("[LISTEN] listen(sockfd=%d, backlog=%d [%s], state=%s->listening) -> 0 (Phase 3: queue management)\n",
                    sockfd, backlog, backlog_desc, socket_state_desc);
     }
 

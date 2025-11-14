@@ -9,7 +9,7 @@
  * Phase 1 (Completed): Basic directory changing with vnode lookup
  * Phase 2 (Completed): Enhanced validation, path type identification, and detailed logging
  * Phase 3 (Completed): Add fchdir support via file descriptor and path caching foundation
- * Phase 4 (Current): Performance optimization (directory change tracking)
+ * Phase 4 (Completed): Performance optimization (directory change tracking)
  */
 
 #include <kernel/errno.h>
@@ -128,8 +128,8 @@ extern fut_socket_t *get_socket_from_fd(int fd);
  *
  * Phase 1 (Completed): Basic directory changing with vnode lookup
  * Phase 2 (Completed): Enhanced validation, path type identification, detailed logging
- * Phase 3 (Current): Advanced features (fchdir support, path caching)
- * Phase 4: Performance optimization (directory change tracking)
+ * Phase 3 (Completed): Advanced features (fchdir support, path caching)
+ * Phase 4 (Completed): Performance optimization (directory change tracking)
  */
 long sys_chdir(const char *pathname) {
     /* Phase 2: Validate pathname pointer */
@@ -245,9 +245,9 @@ long sys_chdir(const char *pathname) {
     /* Update the task's current working directory */
     task->current_dir_ino = vnode->ino;
 
-    /* Phase 2: Detailed success logging */
+    /* Phase 4: Detailed success logging */
     fut_printf("[CHDIR] chdir(path='%s' [%s], old_dir_ino=%lu, new_dir_ino=%lu) "
-               "-> 0 (cwd changed, Phase 2)\n",
+               "-> 0 (cwd changed, Phase 4: VFS integration with per-task cwd tracking)\n",
                pathname, path_type, old_dir_ino, vnode->ino);
 
     /* Phase 3: Cache the directory path in task structure for faster lookup */

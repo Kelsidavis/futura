@@ -2948,6 +2948,8 @@ static void arm64_syscall_table_init(void) {
     syscall_table[16].name = "ioctl";
     syscall_table[22].handler = (syscall_fn_t)sys_pipe_wrapper;
     syscall_table[22].name = "pipe";
+    syscall_table[24].handler = (syscall_fn_t)sys_sched_yield_wrapper;
+    syscall_table[24].name = "sched_yield";
     syscall_table[32].handler = (syscall_fn_t)sys_dup_wrapper;
     syscall_table[32].name = "dup";
     syscall_table[33].handler = (syscall_fn_t)sys_dup2_wrapper;

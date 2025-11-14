@@ -619,6 +619,8 @@ ARM64_FBTEST_BIN := $(BIN_DIR)/arm64/user/fbtest
 ARM64_FBTEST_BLOB := $(OBJ_DIR)/kernel/blobs/arm64_fbtest_blob.o
 ARM64_UIDEMO_BIN := $(BIN_DIR)/arm64/user/arm64_uidemo
 ARM64_UIDEMO_BLOB := $(OBJ_DIR)/kernel/blobs/arm64_uidemo_blob.o
+ARM64_FORKTEST_BIN := $(BIN_DIR)/arm64/user/forktest
+ARM64_FORKTEST_BLOB := $(OBJ_DIR)/kernel/blobs/arm64_forktest_blob.o
 
 ifeq ($(PLATFORM),x86_64)
 OBJECTS += $(FBTEST_BLOB)
@@ -631,7 +633,7 @@ OBJECTS += $(WAYLAND_COMPOSITOR_BLOB) $(WAYLAND_CLIENT_BLOB) $(WAYLAND_COLOR_BLO
 endif
 else ifeq ($(PLATFORM),arm64)
 # Re-enabled for UI testing
-OBJECTS += $(ARM64_INIT_BLOB) $(ARM64_UIDEMO_BLOB) $(ARM64_SHELL_BLOB)
+OBJECTS += $(ARM64_INIT_BLOB) $(ARM64_UIDEMO_BLOB) $(ARM64_SHELL_BLOB) $(ARM64_FORKTEST_BLOB)
 endif
 
 # ============================================================
@@ -824,6 +826,10 @@ $(ARM64_UIDEMO_BIN):
 	@echo "Building ARM64 uidemo..."
 	@$(MAKE) -C src/user/arm64_uidemo PLATFORM=arm64 all
 
+$(ARM64_FORKTEST_BIN):
+	@echo "Building ARM64 forktest..."
+	@$(MAKE) -C src/user/forktest PLATFORM=arm64 all
+
 $(ARM64_INIT_BLOB): $(ARM64_INIT_BIN) | $(OBJ_DIR)/kernel/blobs
 	@echo "OBJCOPY $@"
 	@$(OBJCOPY) -I binary -O $(OBJCOPY_BIN_FMT) -B $(OBJCOPY_BIN_ARCH) $< $@
@@ -837,6 +843,10 @@ $(ARM64_FBTEST_BLOB): $(ARM64_FBTEST_BIN) | $(OBJ_DIR)/kernel/blobs
 	@$(OBJCOPY) -I binary -O $(OBJCOPY_BIN_FMT) -B $(OBJCOPY_BIN_ARCH) $< $@
 
 $(ARM64_UIDEMO_BLOB): $(ARM64_UIDEMO_BIN) | $(OBJ_DIR)/kernel/blobs
+	@echo "OBJCOPY $@"
+	@$(OBJCOPY) -I binary -O $(OBJCOPY_BIN_FMT) -B $(OBJCOPY_BIN_ARCH) $< $@
+
+$(ARM64_FORKTEST_BLOB): $(ARM64_FORKTEST_BIN) | $(OBJ_DIR)/kernel/blobs
 	@echo "OBJCOPY $@"
 	@$(OBJCOPY) -I binary -O $(OBJCOPY_BIN_FMT) -B $(OBJCOPY_BIN_ARCH) $< $@
 

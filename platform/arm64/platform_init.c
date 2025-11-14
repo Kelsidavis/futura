@@ -4,6 +4,125 @@
  *
  * Platform-specific initialization for ARM64 (AArch64) architecture.
  * Supports QEMU virt machine with GICv2 and PL011 UART.
+ *
+ * ARM64 Platform Initialization Framework
+ * ========================================
+ *
+ * Phase 1 (Completed): Console I/O Initialization
+ * -----
+ * Status: ✓ Implemented and tested
+ * - UART base address mapping from device tree or hardcoded
+ * - PL011 UART character transmission and reception
+ * - TX ring buffer: Circular buffer for output characters
+ * - RX ring buffer: Circular buffer for input characters
+ * - Interrupt-driven mode for console I/O
+ * - Polling mode fallback for early boot
+ * - fut_serial_putc() and fut_serial_gets() veneers
+ *
+ * Key Features:
+ * - Full-duplex asynchronous communication
+ * - Hardware FIFO utilization (TX and RX)
+ * - Interrupt enable/disable for TX and RX events
+ * - Buffer management with wrap-around support
+ * - Non-blocking operations for system responsiveness
+ *
+ * Phase 2 (In Progress): Platform Device Initialization
+ * -----
+ * Status: ⏳ UART interrupt handlers registered, GIC integration pending
+ * - GICv2 interrupt controller initialization
+ * - PL011 UART interrupt registration (IRQ 33 on QEMU virt)
+ * - Interrupt priority configuration
+ * - Interrupt target/route specification
+ * - Interrupt mask/enable management
+ * - Hardware interrupt dispatch to registered handlers
+ *
+ * Phase 3 (Planned): Timer and Clock Management
+ * -----
+ * Status: ⏳ Deferred
+ * - ARM Generic Timer initialization
+ * - Timer tick frequency configuration (1000 Hz or configurable)
+ * - Physical timer or virtual timer selection
+ * - Timer interrupt routing to scheduler
+ * - Frequency and prescaler configuration
+ *
+ * Phase 4 (Planned): Device Tree Parsing
+ * -----
+ * Status: ⏳ Deferred
+ * - Device tree blob (DTB) parsing
+ * - Platform capability discovery from device tree
+ * - Dynamic UART base address assignment
+ * - Device memory mapping from device tree nodes
+ * - Interrupt line mapping from device tree
+ *
+ * Platform Detection & Configuration
+ * ===================================
+ *
+ * QEMU virt Machine (Primary):
+ *   - UART: PL011 at 0x9000000 (virtio)
+ *   - Interrupt Controller: GICv2 at 0x8000000/0x8010000
+ *   - Timer: ARM Generic Timer
+ *   - Memory: Configurable (512 MB default)
+ *
+ * Apple Silicon (M1/M2/M3):
+ *   - UART: Apple s5l-uart (from platform/arm64/drivers/apple_uart.c)
+ *   - Interrupt Controller: Apple AIC (from platform/arm64/interrupt/apple_aic.c)
+ *   - NVMe: ANS2 controller (from platform/arm64/drivers/apple_ans2.c)
+ *   - RTKit: Mailbox IPC (from platform/arm64/drivers/apple_rtkit.c)
+ *
+ * MMIO Operations
+ * ================
+ *
+ * Memory-Mapped I/O helpers with memory barriers:
+ *   - mmio_read32(addr): Read 32-bit value with DMB
+ *   - mmio_write32(addr, value): Write 32-bit value with DMB
+ *   - mmio_read64(addr): Read 64-bit value with DMB
+ *   - mmio_write64(addr, value): Write 64-bit value with DMB
+ *
+ * DMB (Data Memory Barrier):
+ *   - Ensures all prior memory operations complete before next operation
+ *   - Critical for hardware register access ordering
+ *   - Prevents CPU reordering of MMIO operations
+ *
+ * UART Ring Buffer Implementation
+ * ================================
+ *
+ * TX Buffer (Output):
+ *   - Size: 4096 bytes circular queue
+ *   - Head: Write position (filled by system)
+ *   - Tail: Read position (drained by ISR)
+ *   - ISR drains to UART FIFO when space available
+ *   - Block if buffer full
+ *
+ * RX Buffer (Input):
+ *   - Size: 4096 bytes circular queue
+ *   - Head: Write position (filled by ISR)
+ *   - Tail: Read position (consumed by getc)
+ *   - ISR fills from UART FIFO when data available
+ *   - Drop if buffer full
+ *
+ * Interrupt Handling Context
+ * ============================
+ *
+ * Handler Function Signature:
+ *   void uart_irq_handler(int irq_num, fut_interrupt_frame_t *frame)
+ *
+ * Parameters:
+ *   - irq_num: Hardware IRQ number (e.g., 33 for PL011)
+ *   - frame: Interrupt context (saved CPU registers)
+ *
+ * Context Availability:
+ *   - frame contains full CPU state at interrupt time
+ *   - Registers X0-X30, SP, PC, PSTATE, ESR, FAR preserved
+ *   - FPU state not automatically saved (Phase 2 enhancement)
+ *   - System register state (TPIDR_EL0) available
+ *
+ * Safe Operations in Handler:
+ *   - Read/write UART registers (MMIO operations)
+ *   - Update ring buffer head/tail pointers
+ *   - Call other ISRs (priority-managed by GIC)
+ *   - NO: Long-running operations (blocks other interrupts)
+ *   - NO: Memory allocation (may sleep)
+ *   - NO: System calls (async context, no process context)
  */
 
 #include <stdint.h>

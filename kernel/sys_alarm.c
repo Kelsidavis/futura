@@ -8,7 +8,7 @@
  * Phase 1 (Completed): Basic stub
  * Phase 2 (Completed): Track alarm expiration time
  * Phase 3 (Completed): Integrate with timer interrupt to deliver SIGALRM
- * Phase 4 (Current): Support sub-second precision with setitimer()
+ * Phase 4 (Completed): Support sub-second precision with setitimer()
  */
 
 #include <kernel/fut_task.h>
@@ -44,7 +44,7 @@ extern int fut_signal_deliver(fut_task_t *task, int sig);
  *
  * Phase 2 (Completed): Tracks alarm expiration time (per-task storage)
  * Phase 3 (Completed): Integrate with timer interrupt to deliver SIGALRM at expiration
- * Phase 4 (Current): Support sub-second precision with setitimer()
+ * Phase 4 (Completed): Support sub-second precision with setitimer()
  */
 long sys_alarm(unsigned int seconds) {
     fut_task_t *task = fut_task_current();

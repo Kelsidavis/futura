@@ -855,7 +855,18 @@ bool fut_apple_ans2_platform_init(const fut_platform_info_t *info) {
         return false;
     }
 
-    /* TODO: Register with block device subsystem */
+    /* Register with block device subsystem */
+    /* TODO: Implement formal block device interface registration
+     * For now, controller is initialized and ready for I/O operations.
+     * Full integration would involve:
+     * - Registering with kernel block device layer
+     * - Creating device nodes (/dev/nvmeXnY)
+     * - Implementing partition table parsing
+     * - Exposing read/write operations via block I/O interface
+     */
+
+    fut_printf("[ANS2] Block device registration pending (Phase 4)\n");
+    fut_printf("[ANS2] NVMe read/write operations ready\n");
 
     fut_printf("[ANS2] Apple ANS2 NVMe subsystem initialized\n");
     return true;

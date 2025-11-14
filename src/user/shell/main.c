@@ -1239,7 +1239,10 @@ static void cmd_tail(int argc, char *argv[]) {
 
     /* Helper function to process a file descriptor */
     auto int process_fd(int fd, int max_lines) {
-        char *file_buffer = (char *)0x50000000;  /* Use high memory region */
+        char *file_buffer = malloc(MAX_FILE_SIZE);  /* Dynamically allocate buffer */
+        if (!file_buffer) {
+            return 0;
+        }
         long total_bytes = 0;
         long bytes_read;
         char chunk[256];

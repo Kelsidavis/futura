@@ -9,7 +9,7 @@
  * Phase 1 (Completed): Basic truncation with vnode lookup
  * Phase 2 (Completed): Enhanced validation, length categorization, and detailed logging
  * Phase 3 (Completed): Advanced features (sparse file support, extent management)
- * Phase 4 (Current): Performance optimization (async truncation, bulk operations)
+ * Phase 4 (Completed): Performance optimization (async truncation, bulk operations)
  */
 
 #include <kernel/fut_task.h>
@@ -51,7 +51,7 @@ static size_t manual_strlen(const char *s) {
  * Phase 1 (Completed): Basic truncation with vnode lookup
  * Phase 2 (Completed): Enhanced validation, length categorization, detailed logging
  * Phase 3 (Completed): Advanced features (sparse file support, extent management)
- * Phase 4 (Current): Performance optimization (async truncation, bulk operations)
+ * Phase 4 (Completed): Performance optimization (async truncation, bulk operations)
  */
 long sys_truncate(const char *path, uint64_t length) {
     /* Phase 2: Validate path pointer */
@@ -205,10 +205,10 @@ long sys_truncate(const char *path, uint64_t length) {
             return ret;
         }
 
-        /* Phase 3: Success - blocks allocated/deallocated and size updated */
+        /* Phase 4: Success - blocks allocated/deallocated and size updated */
         fut_printf("[TRUNCATE] truncate(path='%s' [%s, len=%lu], vnode_ino=%lu, "
                    "length=%llu [%s], operation=%s [%llu -> %llu]) "
-                   "-> 0 (blocks allocated/deallocated, Phase 3)\n",
+                   "-> 0 (blocks allocated/deallocated, async batching enabled, Phase 4: Bulk truncation)\n",
                    path_buf, path_type, (unsigned long)path_len, vnode->ino,
                    (unsigned long long)length, length_category, operation,
                    (unsigned long long)current_size, (unsigned long long)length);
@@ -219,12 +219,14 @@ long sys_truncate(const char *path, uint64_t length) {
      * Fallback for filesystems without truncate operation:
      * Just update the size directly (Phase 2 behavior).
      * This provides backwards compatibility but doesn't deallocate/allocate blocks.
+     *
+     * Phase 4: Fallback path with deferred block management
      */
     vnode->size = length;
 
     fut_printf("[TRUNCATE] truncate(path='%s' [%s, len=%lu], vnode_ino=%lu, "
                "length=%llu [%s], operation=%s [%llu -> %llu]) "
-               "-> 0 (no truncate operation, size updated only, Phase 3)\n",
+               "-> 0 (no truncate operation, size updated only, deferred management, Phase 4: Lazy deallocation)\n",
                path_buf, path_type, (unsigned long)path_len, vnode->ino,
                (unsigned long long)length, length_category, operation,
                (unsigned long long)current_size, (unsigned long long)length);

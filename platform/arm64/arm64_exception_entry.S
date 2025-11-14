@@ -6,6 +6,71 @@
  * Exception entry code that builds exception frames and dispatches to C handlers.
  * Each exception handler saves registers, builds a fut_interrupt_frame_t structure,
  * and calls the C-level exception dispatcher.
+ *
+ * ARM64 Exception Entry Framework
+ * ================================
+ *
+ * Phase 1 (Completed): Basic Exception Frame Building
+ * -----
+ * Status: ✓ Implemented and tested
+ * - Register preservation (x0-x30, SP, PC, PSTATE)
+ * - ELR_EL1 (exception return address) capture
+ * - ESR_EL1 (exception syndrome) capture
+ * - FAR_EL1 (fault address) capture for data/instruction aborts
+ * - Frame allocation on kernel stack
+ * - Context switch to kernel page tables
+ * - Dispatcher call: arm64_exception_dispatch(frame)
+ *
+ * Key Design Decisions:
+ * - Frames built on kernel stack: Allows safe dispatcher execution
+ * - SP_EL0 preserved: Critical for user stack pointer recovery
+ * - TTBR0_EL1 switched: Kernel code/data accessible in handler
+ * - ELR_EL1 pre-incremented: Not needed (CPU sets correctly for SVC)
+ *
+ * Phase 2 (Planned): FPU State Preservation
+ * -----
+ * Status: ⏳ Framework in place, handler integration pending
+ * - FPU register preservation (v0-v31, FPSR, FPCR)
+ * - Lazy FPU context switching
+ * - Interrupt context FPU access
+ * - Per-task FPU state snapshots
+ *
+ * Phase 3 (Planned): Advanced Context Handling
+ * -----
+ * Status: ⏳ Deferred
+ * - Signal context preservation and restoration
+ * - User-mode signal handler frame setup
+ * - Synchronous exception context chaining
+ *
+ * Architecture Notes:
+ *
+ * Exception Vector Layout (ARMv8):
+ *   - VBAR_EL1 points to 2KB aligned exception vector table
+ *   - Each vector: 128 bytes for handler code
+ *   - Vectors organized by exception source/type
+ *   - Exception entry is synchronous (ELR_EL1 is precise)
+ *
+ * Exception Syndrome Register (ESR_EL1):
+ *   - [31:26] EC (Exception Class): Identifies exception type
+ *   - [24:0] ISS (Instruction-Specific Syndrome): Details
+ *   - Used by arm64_exception_dispatch() to route exceptions
+ *
+ * Privilege Level Transitions:
+ *   - Syscall from EL0 → ELR_EL1 saved
+ *   - Page fault from EL0 → FAR_EL1 saved
+ *   - Exception always taken to EL1 (kernel)
+ *   - ERET instruction returns to interrupted level
+ *
+ * Stack Pointer Handling:
+ *   - SP_EL1: Kernel stack pointer (per-task)
+ *   - SP_EL0: User stack pointer (per-task, preserved)
+ *   - Switch on exception entry via kernel stack switch
+ *
+ * Page Table Handling:
+ *   - TTBR0_EL1: User page table base (per-task)
+ *   - TTBR1_EL1: Kernel page table base (fixed)
+ *   - Switch to kernel TTBR0_EL1 for exception handling
+ *   - Restored on return to user code
  */
 
 #include <asm/asm-offsets.h>

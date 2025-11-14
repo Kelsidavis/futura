@@ -1283,12 +1283,12 @@ static void arm64_init_spawner_thread(void *arg) {
         }
     }
 
-    /* Spawn shell as interactive session */
+    /* Spawn test program */
     fut_printf("\n====================================\n");
-    fut_printf("  SPAWNING SHELL\n");
+    fut_printf("  SPAWNING TEST PROGRAM\n");
     fut_printf("====================================\n\n");
 
-    /* First, run forktest to verify multi-process functionality */
+    /* Temporarily disabled - testing uidemo in isolation
     char *forktest_argv[] = {"/bin/forktest", NULL};
     char *forktest_envp[] = {"PATH=/sbin:/bin", NULL};
 
@@ -1297,7 +1297,6 @@ static void arm64_init_spawner_thread(void *arg) {
 
     if (ret == 0) {
         fut_printf("[ARM64-SPAWNER] ✓ Forktest process spawned successfully!\n");
-        /* Wait longer for forktest to complete */
         for (volatile int i = 0; i < 50000000; i++);
     } else {
         fut_printf("[ARM64-SPAWNER] ERROR: Failed to spawn forktest! Error code: %d\n", ret);
@@ -1309,8 +1308,9 @@ static void arm64_init_spawner_thread(void *arg) {
             fut_printf("  ENOENT (file not found)\n");
         }
     }
+    */
 
-    /* TODO: Add uidemo test after forktest is more stable
+    /* Testing uidemo in isolation to verify framebuffer/mmap */
     char *uidemo_argv[] = {"/bin/arm64_uidemo", NULL};
     char *uidemo_envp[] = {"PATH=/sbin:/bin", NULL};
 
@@ -1319,11 +1319,11 @@ static void arm64_init_spawner_thread(void *arg) {
 
     if (ret == 0) {
         fut_printf("[ARM64-SPAWNER] ✓ UIDemo process spawned successfully!\n");
+        /* Wait for uidemo to complete (longer timeout for pixel writes) */
         for (volatile int i = 0; i < 100000000; i++);
     } else {
         fut_printf("[ARM64-SPAWNER] ERROR: Failed to spawn uidemo! Error code: %d\n", ret);
     }
-    */
 
     /* Thread exits naturally */
 }

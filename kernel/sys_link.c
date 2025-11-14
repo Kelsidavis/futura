@@ -375,9 +375,9 @@ long sys_link(const char *oldpath, const char *newpath) {
                 case -ENOSPC:
                     error_desc = "no space for new directory entry";
                     break;
-                case -EMLINK:
-                    error_desc = "too many hard links to file";
-                    break;
+                /* case -EMLINK: TODO: Define EMLINK errno constant */
+                /*    error_desc = "too many hard links to file";
+                    break; */
                 case -EROFS:
                     error_desc = "read-only filesystem";
                     break;

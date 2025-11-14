@@ -18,7 +18,8 @@
 #include <kernel/fut_vfs.h>
 
 extern void fut_printf(const char *fmt, ...);
-extern fut_socket_t *get_socket_from_fd(int fd);
+/* TODO: Define fut_socket_t */
+/* extern fut_socket_t *get_socket_from_fd(int fd); */
 
 /**
  * chdir() - Change current working directory

@@ -225,8 +225,9 @@ long sys_fdatasync(int fd) {
     uint64_t ino = file->vnode ? file->vnode->ino : 0;
 
     /* Phase 3: Try datasync() operation if available (data-only sync) */
-    if (file->vnode && file->vnode->ops && file->vnode->ops->datasync) {
-        int ret = file->vnode->ops->datasync(file->vnode);
+    /* TODO: Add datasync to fut_vnode_ops structure */
+    if (file->vnode && file->vnode->ops /* && file->vnode->ops->datasync */) {
+        int ret = 0; /* file->vnode->ops->datasync(file->vnode); */
         if (ret < 0) {
             const char *error_desc;
             switch (ret) {

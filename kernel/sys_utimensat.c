@@ -316,13 +316,14 @@ long sys_utimensat(int dirfd, const char *pathname, const fut_timespec_t *times,
     if (times == NULL) {
         /* NULL times means set both to current time */
         stat.st_atime = now_ns / 1000000000;  /* seconds */
-        stat.st_atime_nsec = now_ns % 1000000000;  /* nanoseconds */
+        /* TODO: Add st_atime_nsec field to struct fut_stat */
+        /* stat.st_atime_nsec = now_ns % 1000000000;  nanoseconds */
     } else if (time_buf[0].tv_nsec == UTIME_NOW) {
         stat.st_atime = now_ns / 1000000000;
-        stat.st_atime_nsec = now_ns % 1000000000;
+        /* stat.st_atime_nsec = now_ns % 1000000000; */
     } else if (time_buf[0].tv_nsec == UTIME_OMIT) {
         /* Don't change atime - use sentinel value */
-        stat.st_atime = (time_t)-1;
+        stat.st_atime = -1;  /* (time_t)-1; */
     } else {
         /* Use provided atime */
         stat.st_atime = time_buf[0].tv_sec;

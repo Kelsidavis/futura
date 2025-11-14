@@ -952,6 +952,36 @@ void fut_request_reschedule(void) {
 }
 
 /* ============================================================
+ *   IRQ Handler Registration
+ * ============================================================ */
+
+#define FUT_MAX_IRQS 256
+static fut_irq_handler_t irq_handlers[FUT_MAX_IRQS] = {NULL};
+
+int fut_register_irq_handler(int irq, fut_irq_handler_t handler) {
+    if (irq < 0 || irq >= FUT_MAX_IRQS) {
+        return -1;  /* Invalid IRQ */
+    }
+
+    if (irq_handlers[irq] != NULL) {
+        return -2;  /* Already registered */
+    }
+
+    irq_handlers[irq] = handler;
+    return 0;
+}
+
+/* ============================================================
+ *   ARM Generic Timer Helpers
+ * ============================================================ */
+
+void fut_timer_set_timeout(uint64_t ticks) {
+    uint64_t count = fut_timer_read_count();
+    uint64_t timeout = count + ticks;
+    __asm__ volatile("msr cntp_cval_el0, %0" :: "r"(timeout));
+}
+
+/* ============================================================
  *   Platform Initialization Entry Points
  * ============================================================ */
 

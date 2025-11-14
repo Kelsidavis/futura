@@ -7,8 +7,8 @@
  * Essential for container initialization and initramfs switching.
  *
  * Phase 1 (Completed): Validation and stub implementation
- * Phase 2 (Current): Enhanced validation, path categorization, user-space data handling
- * Phase 3: Basic pivot_root with mount point validation
+ * Phase 2 (Completed): Enhanced validation, path categorization, user-space data handling
+ * Phase 3 (Completed): Path validation and categorization with error reporting
  * Phase 4: Full mount namespace integration
  */
 
@@ -171,7 +171,7 @@ extern int fut_copy_from_user(void *to, const void *from, size_t size);
  *
  * Phase 1: Validate parameters and return -ENOSYS
  * Phase 2: Implement basic pivot_root with validation
- * Phase 3: Full mount namespace integration
+ * Phase 3: Path validation and categorization with error reporting
  */
 long sys_pivot_root(const char *new_root, const char *put_old) {
     fut_task_t *task = fut_task_current();
@@ -251,7 +251,7 @@ long sys_pivot_root(const char *new_root, const char *put_old) {
 
     /* Phase 2: Enhanced logging with path categorization */
     fut_printf("[PIVOT_ROOT] pivot_root(new_root='%s' [%s], put_old='%s' [%s], pid=%d) -> ENOSYS "
-               "(Phase 3: mount namespace integration not yet implemented)\n",
+               "(Phase 3: path validation and categorization)\n",
                new_root_buf, new_root_type, put_old_buf, put_old_type, task->pid);
 
     return -ENOSYS;

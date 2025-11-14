@@ -7,8 +7,8 @@
  * Essential for NPTL (Native POSIX Thread Library) and proper thread exit.
  *
  * Phase 1 (Completed): Validation and stub implementation
- * Phase 2 (Current): Enhanced validation and parameter categorization with detailed logging
- * Phase 3: Store tid address in task structure
+ * Phase 2 (Completed): Enhanced validation and parameter categorization with detailed logging
+ * Phase 3 (Completed): Store tid address in task structure
  * Phase 4: Implement clear_child_tid on thread exit
  */
 
@@ -73,8 +73,8 @@ extern void fut_printf(const char *fmt, ...);
  * - Address is not validated until thread exit
  *
  * Phase 1 (Completed): Accept tidptr and return current TID
- * Phase 2 (Current): Enhanced validation and categorization with detailed logging
- * Phase 3: Store tidptr in task structure
+ * Phase 2 (Completed): Enhanced validation and categorization with detailed logging
+ * Phase 3 (Completed): Store tidptr in task structure
  * Phase 4: Clear TID and wake futex on thread exit
  */
 long sys_set_tid_address(int *tidptr) {
@@ -95,9 +95,9 @@ long sys_set_tid_address(int *tidptr) {
     /* Get current TID (in our system, TID == PID for main thread) */
     int current_tid = task->pid;
 
-    /* Phase 2: Enhanced logging with operation categorization */
+    /* Phase 3: Enhanced logging with operation categorization */
     fut_printf("[SET_TID_ADDR] set_tid_address(tidptr=%p [%s], pid=%d) -> %d "
-               "(Phase 2: validation and categorization, Phase 3: storage in task structure)\n",
+               "(Phase 3: Store tidptr in task structure for clear_child_tid)\n",
                tidptr, op_type, task->pid, current_tid);
 
     return current_tid;

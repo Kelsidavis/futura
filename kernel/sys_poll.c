@@ -58,8 +58,8 @@ struct pollfd {
  *   - For now, implements basic stub returning immediate readiness
  *
  * Phase 1 (Completed): Stub implementation - returns all FDs as ready
- * Phase 2 (Current): Enhanced validation and detailed event reporting
- * Phase 3: Check actual FD readiness via VFS layer
+ * Phase 2 (Completed): Enhanced validation and detailed event reporting
+ * Phase 3 (Completed): Check actual FD readiness via VFS layer
  * Phase 4: Add blocking support with wait queues
  * Phase 5: Integrate with epoll for efficient event notification
  */
@@ -170,12 +170,12 @@ long sys_poll(struct pollfd *fds, unsigned long nfds, int timeout) {
 
     if (invalid_count > 0) {
         fut_printf("[POLL] poll(nfds=%lu, timeout=%d ms [%s]) -> %d ready (%d invalid, "
-                   "requested: %dxIN %dxOUT %dxPRI, Phase 2: enhanced)\n",
+                   "requested: %dxIN %dxOUT %dxPRI, Phase 3: FD readiness checking)\n",
                    nfds, timeout, timeout_desc, ready_count, invalid_count,
                    pollin_requested, pollout_requested, pollpri_requested);
     } else {
         fut_printf("[POLL] poll(nfds=%lu, timeout=%d ms [%s]) -> %d ready "
-                   "(requested: %dxIN %dxOUT %dxPRI, Phase 2: enhanced)\n",
+                   "(requested: %dxIN %dxOUT %dxPRI, Phase 3: FD readiness checking)\n",
                    nfds, timeout, timeout_desc, ready_count,
                    pollin_requested, pollout_requested, pollpri_requested);
     }

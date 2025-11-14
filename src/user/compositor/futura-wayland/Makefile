@@ -1,9 +1,26 @@
 # SPDX-License-Identifier: MPL-2.0
 
+# Platform detection (defaults to x86_64 if not specified)
+PLATFORM ?= x86_64
+
+# Toolchain (can be overridden by parent Makefile or command line)
+ifeq ($(PLATFORM),arm64)
+    CROSS_COMPILE ?= /opt/homebrew/bin/aarch64-elf-
+    CC := $(CROSS_COMPILE)gcc
+    LD := $(CROSS_COMPILE)ld
+    AR := $(CROSS_COMPILE)ar
+    ARCH_CFLAGS := -march=armv8-a -mtune=cortex-a53
+else
+    CC := gcc
+    LD := ld
+    AR := ar
+    ARCH_CFLAGS := -m64
+endif
+
 ROOT := ../../../..
 BUILD_ROOT := $(ROOT)/build
-OBJ_DIR := $(BUILD_ROOT)/obj/user/compositor/futura-wayland
-BIN_DIR := $(BUILD_ROOT)/bin/user
+OBJ_DIR := $(BUILD_ROOT)/obj/$(PLATFORM)/user/compositor/futura-wayland
+BIN_DIR := $(BUILD_ROOT)/bin/$(PLATFORM)/user
 
 include $(ROOT)/mk/wayland.mk
 
@@ -24,22 +41,28 @@ WAYLAND_LIBDIR ?= $(WAYLAND_PREFIX)/lib
 WAYLAND_PKGCONFIG ?= $(WAYLAND_PREFIX)/lib/pkgconfig
 WAYLAND_SCANNER ?= $(WAYLAND_PREFIX)/bin/wayland-scanner
 
-CC := gcc
-
 # Extract Wayland flags using pkg-config
 WAYLAND_CFLAGS ?= -I$(WAYLAND_INCLUDEDIR)
 WAYLAND_LDFLAGS ?= -L$(WAYLAND_LIBDIR)
 WAYLAND_LIBS ?= -lwayland-server -lwayland-client -lffi -lpthread -lm -lrt
 
-LDSCRIPT := ../../libfutura/userland.ld
-CRT0 := $(BUILD_ROOT)/lib/crt0.o
-LIBFUTURA := $(BUILD_ROOT)/lib/libfutura.a
+# Linker flags
+ifeq ($(PLATFORM),arm64)
+    LDSCRIPT := ../../libfutura/userland_arm64.ld
+    LDFLAGS := -static -T $(LDSCRIPT)
+    LIBGCC := $(shell $(CC) -print-libgcc-file-name)
+else
+    LDSCRIPT := ../../libfutura/userland.ld
+    LDFLAGS := -nostdlib -static -T $(LDSCRIPT)
+    LIBGCC :=
+endif
 
-# Use the platform-specific CC exported from main Makefile
-CC ?= gcc
+CRT0 := $(BUILD_ROOT)/lib/$(PLATFORM)/crt0.o
+LIBFUTURA := $(BUILD_ROOT)/lib/$(PLATFORM)/libfutura.a
 
 CFLAGS := -std=c2x -ffreestanding -nostdlib -fno-builtin -fno-stack-protector
 CFLAGS += -Wall -Wextra -Werror -g -O2
+CFLAGS += $(ARCH_CFLAGS)
 CFLAGS += -I$(ROOT)/include -I$(OUT)/compositor
 CFLAGS += -I$(WAYLAND_INCLUDEDIR) $(WAYLAND_CFLAGS)
 
@@ -49,8 +72,8 @@ ifeq ($(DEBUG_WAYLAND),1)
 CFLAGS += -DDEBUG_WAYLAND
 endif
 
-LDFLAGS := -nostdlib -static -no-pie -T $(LDSCRIPT) $(WAYLAND_LDFLAGS) -Wl,--wrap=openat -Wl,--wrap=syscall -Wl,--wrap=open -Wl,--wrap=open64 -Wl,--wrap=socket -Wl,--wrap=bind -Wl,--wrap=listen -Wl,--wrap=connect -Wl,--wrap=epoll_ctl -Wl,--wrap=flock -Wl,--wrap=close -Wl,--wrap=fcntl -Wl,--wrap=unlink -Wl,--wrap=chmod -Wl,--wrap=fchmod
-LDLIBS := $(WAYLAND_LIBS) $(LIBFUTURA)
+FINAL_LDFLAGS := $(LDFLAGS) -no-pie $(WAYLAND_LDFLAGS) -Wl,--wrap=openat -Wl,--wrap=syscall -Wl,--wrap=open -Wl,--wrap=open64 -Wl,--wrap=socket -Wl,--wrap=bind -Wl,--wrap=listen -Wl,--wrap=connect -Wl,--wrap=epoll_ctl -Wl,--wrap=flock -Wl,--wrap=close -Wl,--wrap=fcntl -Wl,--wrap=unlink -Wl,--wrap=chmod -Wl,--wrap=fchmod
+LDLIBS := $(WAYLAND_LIBS) $(LIBFUTURA) $(LIBGCC)
 
 .PHONY: all clean
 
@@ -58,7 +81,7 @@ all: $(TARGET)
 
 $(TARGET): $(OBJS) | $(BIN_DIR) $(CRT0) $(LIBFUTURA)
 	@echo "LD $@"
-	@$(CC) $(LDFLAGS) $(CRT0) $(OBJS) $(LDLIBS) -o $@
+	@$(CC) $(FINAL_LDFLAGS) $(CRT0) $(OBJS) $(LDLIBS) -o $@
 
 $(OBJ_DIR)/%.o: %.c $(WAYLAND_GEN_HDRS) | $(OBJ_DIR)
 	@echo "CC $<"

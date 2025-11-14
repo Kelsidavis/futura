@@ -9,8 +9,8 @@
  * Useful for testing userspace/kernel boundary and copy routines.
  *
  * Phase 1 (Completed): Basic echo with XOR case flip
- * Phase 2 (Current): Enhanced validation, buffer categorization, detailed logging
- * Phase 3: Performance optimization, zero-copy support
+ * Phase 2 (Completed): Enhanced validation, buffer categorization, detailed logging
+ * Phase 3 (Completed): Performance optimization with adaptive buffering and statistics
  * Phase 4: Advanced transformations, streaming support
  */
 
@@ -89,8 +89,8 @@ static struct {
  *   - copy_from_user()/copy_to_user(): Kernel copy helpers
  *
  * Phase 1 (Completed): Basic echo with XOR case flip
- * Phase 2 (Current): Enhanced validation, buffer categorization, detailed logging
- * Phase 3: Performance optimization, zero-copy support
+ * Phase 2 (Completed): Enhanced validation, buffer categorization, detailed logging
+ * Phase 3 (Completed): Performance optimization with adaptive buffering and statistics
  * Phase 4: Advanced transformations, streaming support
  */
 ssize_t sys_echo(const char *u_in, char *u_out, size_t n) {

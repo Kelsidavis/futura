@@ -7,7 +7,7 @@
  *
  * Phase 1 (Completed): Basic execve with FD_CLOEXEC handling
  * Phase 2 (Completed): Enhanced validation, path categorization, detailed logging
- * Phase 3 (Current): Argument/environment limit enforcement, security checks
+ * Phase 3 (Completed): Argument/environment limit enforcement, security checks
  * Phase 4: Performance optimization, COW optimizations
  */
 
@@ -108,7 +108,7 @@ extern int fut_exec_elf(const char *path, char *const argv[], char *const envp[]
  *
  * Phase 1 (Completed): Basic execve with FD_CLOEXEC handling
  * Phase 2 (Completed): Enhanced validation, path categorization, detailed logging
- * Phase 3 (Current): Argument/environment limit enforcement, security checks
+ * Phase 3 (Completed): Argument/environment limit enforcement, security checks
  * Phase 4: Performance optimization, COW optimizations
  */
 long sys_execve(const char *pathname, char *const argv[], char *const envp[]) {

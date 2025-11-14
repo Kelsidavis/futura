@@ -8,7 +8,7 @@
  *
  * Phase 1 (Completed): Basic FD duplication with per-task isolation
  * Phase 2 (Completed): Enhanced validation, operation categorization, and detailed logging
- * Phase 3 (Current): Atomic close-and-dup with proper error handling
+ * Phase 3 (Completed): Atomic close-and-dup with proper error handling
  * Phase 4: Advanced features (O_CLOEXEC handling, dup3 support)
  */
 
@@ -86,7 +86,7 @@ extern void fut_printf(const char *fmt, ...);
  *
  * Phase 1 (Completed): Basic FD duplication with per-task isolation
  * Phase 2 (Completed): Enhanced validation, operation categorization, detailed logging
- * Phase 3 (Current): Atomic close-and-dup with proper error handling
+ * Phase 3 (Completed): Atomic close-and-dup with proper error handling
  * Phase 4: O_CLOEXEC handling, dup3 support with flags
  */
 long sys_dup2(int oldfd, int newfd) {

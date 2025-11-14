@@ -47,9 +47,17 @@ void fut_waitq_sleep_locked(fut_waitq_t *q, fut_spinlock_t *released_lock,
     }
     thread->state = state;
 
-    fut_spinlock_acquire(&q->lock);
+    // Check if released_lock is the same as q->lock to avoid double-acquire deadlock
+    // This can happen when caller already holds the wait queue lock
+    int lock_already_held = (released_lock == &q->lock);
+
+    if (!lock_already_held) {
+        fut_spinlock_acquire(&q->lock);
+    }
     fut_waitq_enqueue(q, thread);
-    fut_spinlock_release(&q->lock);
+    if (!lock_already_held) {
+        fut_spinlock_release(&q->lock);
+    }
 
     if (released_lock) {
         fut_spinlock_release(released_lock);

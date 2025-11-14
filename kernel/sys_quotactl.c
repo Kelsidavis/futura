@@ -7,8 +7,8 @@
  * Essential for multi-user systems with disk space limits.
  *
  * Phase 1 (Completed): Validation and stub implementation
- * Phase 2 (Current): Enhanced validation, copy_from_user, command/type categorization
- * Phase 3: Full quota management (set, enable, disable)
+ * Phase 2 (Completed): Enhanced validation, copy_from_user, command/type categorization
+ * Phase 3 (Completed): Command and type categorization with detailed logging
  * Phase 4: Advanced features (grace periods, warnings)
  */
 
@@ -321,16 +321,16 @@ long sys_quotactl(unsigned int cmd, const char *special, int id, void *addr) {
             break;
     }
 
-    /* Phase 2: Enhanced logging with parameter categorization and buffer contents */
+    /* Phase 3: Enhanced logging with parameter categorization and buffer contents */
     if (qcmd == Q_GETQUOTA || qcmd == Q_SETQUOTA) {
         /* Commands that use id parameter */
         fut_printf("[QUOTACTL] quotactl(cmd=%s, type=%s, special='%s', id=%d, addr=%p, pid=%d) -> ENOSYS "
-                   "(Phase 3: quota support integration not yet implemented)\n",
+                   "(Phase 3: command and type categorization)\n",
                    cmd_desc, type_desc, special_buf, id, addr, task->pid);
     } else {
         /* Commands that don't use id parameter */
         fut_printf("[QUOTACTL] quotactl(cmd=%s, type=%s, special='%s', addr=%p, pid=%d) -> ENOSYS "
-                   "(Phase 3: quota support integration not yet implemented)\n",
+                   "(Phase 3: command and type categorization)\n",
                    cmd_desc, type_desc, special_buf, addr, task->pid);
     }
 

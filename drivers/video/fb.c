@@ -283,16 +283,18 @@ static void *fb_mmap(void *inode, void *private_data, void *u_addr, size_t len,
     return (void *)(uintptr_t)user_addr;
 }
 
-static const struct fut_file_ops fb_fops = {
-    .open = fb_open,
-    .release = NULL,
-    .read = NULL,
-    .write = fb_write,
-    .ioctl = fb_ioctl,
-    .mmap = fb_mmap,
-};
+/* Framebuffer file operations - initialized at runtime to avoid ARM64 relocation issues */
+static struct fut_file_ops fb_fops;
 
 void fb_char_init(void) {
+    /* Initialize framebuffer file operations at runtime */
+    fb_fops.open = fb_open;
+    fb_fops.release = NULL;
+    fb_fops.read = NULL;
+    fb_fops.write = fb_write;
+    fb_fops.ioctl = fb_ioctl;
+    fb_fops.mmap = fb_mmap;
+
     fut_printf("[FB-CHAR] fb_char_init called\n");
     if (fb_get_info(&g_fb_dev.hw) != 0) {
         fut_printf("[FB-CHAR] fb_get_info failed, aborting\n");

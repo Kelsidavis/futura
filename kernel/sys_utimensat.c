@@ -17,6 +17,7 @@
 #include <kernel/fut_vfs.h>
 #include <shared/fut_timespec.h>
 #include <stdint.h>
+#include <time.h>
 
 extern void fut_printf(const char *fmt, ...);
 extern int fut_copy_from_user(void *to, const void *from, size_t size);
@@ -327,28 +328,32 @@ long sys_utimensat(int dirfd, const char *pathname, const fut_timespec_t *times,
     } else {
         /* Use provided atime */
         stat.st_atime = time_buf[0].tv_sec;
-        stat.st_atime_nsec = time_buf[0].tv_nsec;
+        /* TODO: Add st_atime_nsec field to struct fut_stat */
+        /* stat.st_atime_nsec = time_buf[0].tv_nsec; */
     }
 
     /* Set modification time */
     if (times == NULL) {
         /* NULL times means set both to current time */
         stat.st_mtime = now_ns / 1000000000;  /* seconds */
-        stat.st_mtime_nsec = now_ns % 1000000000;  /* nanoseconds */
+        /* TODO: Add st_mtime_nsec field to struct fut_stat */
+        /* stat.st_mtime_nsec = now_ns % 1000000000;  nanoseconds */
     } else if (time_buf[1].tv_nsec == UTIME_NOW) {
         stat.st_mtime = now_ns / 1000000000;
-        stat.st_mtime_nsec = now_ns % 1000000000;
+        /* TODO: Add st_mtime_nsec field to struct fut_stat */
+        /* stat.st_mtime_nsec = now_ns % 1000000000; */
     } else if (time_buf[1].tv_nsec == UTIME_OMIT) {
         /* Don't change mtime - use sentinel value */
         stat.st_mtime = (time_t)-1;
     } else {
         /* Use provided mtime */
         stat.st_mtime = time_buf[1].tv_sec;
-        stat.st_mtime_nsec = time_buf[1].tv_nsec;
+        /* TODO: Add st_mtime_nsec field to struct fut_stat */
+        /* stat.st_mtime_nsec = time_buf[1].tv_nsec; */
     }
 
     /* Call the filesystem's setattr operation */
-    int ret = vnode->ops->setattr(vnode, &stat);
+    ret = vnode->ops->setattr(vnode, &stat);
 
     /* Handle errors */
     if (ret < 0) {

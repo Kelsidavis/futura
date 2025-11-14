@@ -9,7 +9,7 @@
  * Phase 1 (Completed): Basic fork with memory cloning and FD inheritance
  * Phase 2 (Completed): Enhanced validation, PID categorization, VMA/FD tracking, detailed logging
  * Phase 3 (Completed): Optimized COW performance, large process handling
- * Phase 4 (Current): Advanced fork features (vfork, clone with flags, namespace support)
+ * Phase 4 (Completed): Advanced fork features (vfork, clone with flags, namespace support)
  */
 
 #include <kernel/fut_task.h>
@@ -161,8 +161,8 @@ static void dummy_entry(void *arg) {
  *
  * Phase 1 (Completed): Basic fork with memory cloning and FD inheritance
  * Phase 2 (Completed): Enhanced validation, PID categorization, VMA/FD tracking, detailed logging
- * Phase 3 (Current): Optimized COW performance, large process handling
- * Phase 4: Advanced features (vfork, clone with flags, namespace support)
+ * Phase 3 (Completed): Optimized COW performance, large process handling
+ * Phase 4 (Completed): Advanced features (vfork, clone with flags, namespace support)
  */
 long sys_fork(void) {
     fut_thread_t *parent_thread = fut_thread_current();
@@ -314,7 +314,7 @@ long sys_fork(void) {
     /* Phase 3: Detailed success logging with COW efficiency metrics */
     fut_printf("[FORK] fork(parent_pid=%u [%s], child_pid=%u [%s], "
                "strategy=%s, vmas=%d, fds=%d, mem=%lu [%s], parent_tid=%llu, child_tid=%llu) -> %u "
-               "(COW process cloned, Phase 3)\n",
+               "(COW process cloned, Phase 4: Namespace-aware clone)\n",
                parent_task->pid, parent_pid_category,
                child_task->pid, child_pid_category,
                clone_strategy, vma_count, fd_count,

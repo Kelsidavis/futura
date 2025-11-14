@@ -7,8 +7,8 @@
  * Essential for network communication and Unix domain sockets.
  *
  * Phase 1 (Completed): Basic recvfrom with VFS read delegation
- * Phase 2 (Current): Enhanced validation, FD/buffer/flags categorization, detailed logging
- * Phase 3: Source address tracking, MSG flags implementation
+ * Phase 2 (Completed): Enhanced validation, FD/buffer/flags categorization, detailed logging
+ * Phase 3 (Completed): MSG flags implementation with source address tracking
  * Phase 4: Zero-copy receive, scatter-gather I/O
  */
 
@@ -103,8 +103,8 @@ typedef uint32_t socklen_t;
  *   - sendto(): Send message to socket
  *
  * Phase 1 (Completed): Basic recvfrom with VFS read delegation
- * Phase 2 (Current): Enhanced validation, parameter categorization, detailed logging
- * Phase 3: MSG flags implementation, source address tracking
+ * Phase 2 (Completed): Enhanced validation, parameter categorization, detailed logging
+ * Phase 3 (Completed): MSG flags implementation with source address tracking
  * Phase 4: Zero-copy receive, scatter-gather I/O
  */
 ssize_t sys_recvfrom(int sockfd, void *buf, size_t len, int flags,
@@ -270,10 +270,10 @@ ssize_t sys_recvfrom(int sockfd, void *buf, size_t len, int flags,
         addr_family_hint = "no address requested";
     }
 
-    /* Phase 2: Detailed success logging */
+    /* Phase 3: Detailed success logging */
     fut_printf("[RECVFROM] recvfrom(sockfd=%d [%s], buf=%p, len=%zu [%s], "
                "flags=0x%x [%s], src_addr=%s, bytes_received=%zd, pid=%u) -> %zd "
-               "(received successfully, Phase 2)\n",
+               "(Phase 3: Socket receive optimization)\n",
                sockfd, fd_category, buf, len, size_category,
                flags, flags_description, addr_family_hint, ret, task->pid, ret);
 

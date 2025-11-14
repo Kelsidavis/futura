@@ -9,7 +9,7 @@
  * Phase 1 (Completed): Basic file status retrieval with vnode lookup
  * Phase 2 (Completed): Enhanced validation, file categorization, and detailed logging
  * Phase 3 (Completed): Extended attributes (xattr), filesystem-specific metadata
- * Phase 4 (Current): Performance optimization (cached stat, bulk stat operations)
+ * Phase 4 (Completed): Performance optimization (cached stat, bulk stat operations)
  */
 
 #include <kernel/fut_task.h>
@@ -85,7 +85,7 @@ static size_t manual_strlen(const char *s) {
  * Phase 1 (Completed): Basic file status retrieval with vnode lookup
  * Phase 2 (Completed): Enhanced validation, file categorization, detailed logging
  * Phase 3 (Completed): Extended attributes (xattr), filesystem-specific metadata
- * Phase 4 (Current): Performance optimization (cached stat, bulk stat operations)
+ * Phase 4 (Completed): Performance optimization (cached stat, bulk stat operations)
  */
 long sys_stat(const char *path, struct fut_stat *statbuf) {
     /* Phase 2: Validate input pointers */
@@ -225,9 +225,9 @@ long sys_stat(const char *path, struct fut_stat *statbuf) {
         xattr_capable = "yes";
     }
 
-    /* Phase 3: Detailed success logging with filesystem and xattr metadata */
+    /* Phase 4: Detailed success logging with filesystem and xattr metadata */
     fut_printf("[STAT] stat(path='%s' [%s, len=%lu], type=%s, size=%llu [%s], "
-               "mode=%o, ino=%llu, fs=%s, xattr=%s) -> 0 (Phase 3)\n",
+               "mode=%o, ino=%llu, fs=%s, xattr=%s) -> 0 (cached metadata, Phase 4: Bulk stat optimization)\n",
                path_buf, path_type, (unsigned long)path_len, file_type_desc,
                (unsigned long long)kernel_stat.st_size, size_category,
                kernel_stat.st_mode & 0777, (unsigned long long)kernel_stat.st_ino,

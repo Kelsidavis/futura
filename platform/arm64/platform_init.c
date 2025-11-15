@@ -1151,9 +1151,13 @@ static int stage_arm64_blob(const uint8_t *start, const uint8_t *end, const char
         return -EINVAL;
     }
 
+#ifdef DEBUG_SPAWN
     fut_printf("[stage] Calling fut_vfs_open('%s', 0x%x, 0755)...\n", path, O_WRONLY | O_CREAT | O_TRUNC);
+#endif
     int fd = fut_vfs_open(path, O_WRONLY | O_CREAT | O_TRUNC, 0755);
+#ifdef DEBUG_SPAWN
     fut_printf("[stage] fut_vfs_open returned %d\n", fd);
+#endif
     if (fd < 0) {
         return fd;
     }

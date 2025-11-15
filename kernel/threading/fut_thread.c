@@ -242,6 +242,11 @@ fut_thread_t *fut_thread_create(
     ctx->x0 = (uint64_t)entry;
     ctx->x1 = (uint64_t)arg;
 
+    // Debug: log the trampoline address
+    extern void fut_printf(const char *, ...);
+    fut_printf("[THREAD-CTX] PC set to fut_thread_trampoline=%p x0=%p x1=%p\n",
+               (void*)(uintptr_t)ctx->pc, (void*)ctx->x0, (void*)ctx->x1);
+
 #ifdef DEBUG_THREAD
     extern void fut_printf(const char *, ...);
     fut_printf("[THREAD-CREATE] ARM64 thread %llu: entry=%p arg=%p\n",

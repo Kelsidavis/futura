@@ -319,12 +319,19 @@ static int virtio_mmio_probe_device(uint64_t phys_addr, uint32_t irq) {
  * Initialize VirtIO MMIO subsystem by scanning device tree.
  */
 void virtio_mmio_init(uint64_t dtb_ptr) {
-    (void)dtb_ptr;  /* TODO: Parse device tree for virtio-mmio devices */
+    (void)dtb_ptr;
 
-    fut_printf("[virtio-mmio] Scanning device tree for virtio-mmio devices...\n");
+    fut_printf("[virtio-mmio] Probing QEMU virt MMIO device slots...\n");
 
-    /* Scan for virtio-mmio devices in device tree */
-    /* QEMU virt uses addresses 0x0a000000 + n*0x200 for up to 32 devices */
+    /* Probe VirtIO MMIO devices at QEMU virt machine fixed addresses.
+     * QEMU virt uses addresses 0x0a000000 + n*0x200 for up to 32 devices.
+     *
+     * TODO: Parse device tree to discover device addresses dynamically
+     * instead of hardcoding QEMU virt addresses. This would allow:
+     *   - Portable boot on other ARM64 platforms
+     *   - Discovery of non-contiguous device ranges
+     *   - Dynamic IRQ mapping from FDT interrupt properties
+     */
     for (int i = 0; i < 32; i++) {
         uint64_t base = 0x0a000000 + (i * 0x200);
         uint32_t irq = 16 + i;  /* IRQs 16-47 (0x10-0x2f in device tree) */

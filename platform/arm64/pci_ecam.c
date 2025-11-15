@@ -211,10 +211,14 @@ uint64_t arm64_pci_assign_bar(uint8_t bus, uint8_t dev, uint8_t fn, uint8_t bar_
     /* Restore original low value after size probe */
     arm64_pci_write32(bus, dev, fn, bar_offset, orig_bar_low);
 
+#ifdef DEBUG_PCI
     fut_printf("[PCI] BAR%d size probe returned: 0x%08x\n", bar_num, size_mask);
+#endif
 
     if (size_mask == 0 || size_mask == 0xFFFFFFFF) {
+#ifdef DEBUG_PCI
         fut_printf("[PCI] BAR%d not implemented (mask=0x%08x)\n", bar_num, size_mask);
+#endif
         return 0;
     }
 
@@ -223,7 +227,9 @@ uint64_t arm64_pci_assign_bar(uint8_t bus, uint8_t dev, uint8_t fn, uint8_t bar_
     bool is_64bit = ((size_mask & 0x6) == 0x4);
 
     if (is_io) {
+#ifdef DEBUG_PCI
         fut_printf("[PCI] BAR%d is I/O space (not supported)\n", bar_num);
+#endif
         arm64_pci_write32(bus, dev, fn, bar_offset, 0);  /* Clear BAR */
         return 0;
     }
@@ -232,8 +238,10 @@ uint64_t arm64_pci_assign_bar(uint8_t bus, uint8_t dev, uint8_t fn, uint8_t bar_
     uint32_t size_bits = size_mask & ~0xFUL;
     uint32_t size = (~size_bits + 1) & 0xFFFFFFFF;
 
+#ifdef DEBUG_PCI
     fut_printf("[PCI] BAR%d size: %u bytes (%s)\n",
                bar_num, size, is_64bit ? "64-bit" : "32-bit");
+#endif
 
     /* Align allocation to BAR size */
     uint64_t aligned_addr = (g_bar_alloc_next + size - 1) & ~((uint64_t)size - 1);
@@ -264,8 +272,10 @@ uint64_t arm64_pci_assign_bar(uint8_t bus, uint8_t dev, uint8_t fn, uint8_t bar_
         uint32_t readback_low = arm64_pci_read32(bus, dev, fn, bar_offset);
         uint32_t readback_high = arm64_pci_read32(bus, dev, fn, bar_offset + 4);
 
+#ifdef DEBUG_PCI
         fut_printf("[PCI] Assigned BAR%d: 0x%llx (wrote low=0x%08x high=0x%08x, read back low=0x%08x high=0x%08x)\n",
                    bar_num, (unsigned long long)aligned_addr, low_val, high_val, readback_low, readback_high);
+#endif
 
         if (readback_low != low_val || readback_high != high_val) {
             fut_printf("[PCI] WARNING: BAR%d write verification FAILED!\n", bar_num);
@@ -276,8 +286,10 @@ uint64_t arm64_pci_assign_bar(uint8_t bus, uint8_t dev, uint8_t fn, uint8_t bar_
         uint32_t bar_val = ((uint32_t)aligned_addr & ~0xF) | type_bits;
 
         arm64_pci_write32(bus, dev, fn, bar_offset, bar_val);
+#ifdef DEBUG_PCI
         fut_printf("[PCI] Assigned BAR%d: 0x%08x (type_bits=0x%x)\n",
                    bar_num, (uint32_t)aligned_addr, type_bits);
+#endif
     }
 
     /* Update allocation pointer */

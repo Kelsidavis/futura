@@ -47,7 +47,7 @@ static int fb_ensure_mapped(struct fb_device *fb) {
     }
 
     uintptr_t phys_base = PAGE_ALIGN_DOWN(fb->hw.phys);
-    uintptr_t virt_base = pmap_phys_to_virt(phys_base);
+    uintptr_t virt_base = (uintptr_t)pmap_phys_to_virt(phys_base);
     size_t offset = (size_t)(fb->hw.phys - phys_base);
     size_t length = fb->hw.info.pitch * fb->hw.info.height + offset;
     length = PAGE_ALIGN_UP(length);

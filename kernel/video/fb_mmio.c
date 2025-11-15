@@ -238,7 +238,7 @@ void fb_boot_splash(void) {
             uint64_t offset = virtio_fb_phys - phys_base;
             uint64_t fb_size = (size_t)g_fb_hw.info.pitch * (size_t)g_fb_hw.info.height;
             uint64_t map_size = fb_size + offset;
-            uintptr_t virt_base = pmap_phys_to_virt(phys_base);
+            uintptr_t virt_base = (uintptr_t)pmap_phys_to_virt(phys_base);
 
             fut_printf("[FB] Mapping virtio guest FB: phys=0x%llx size=0x%llx\n",
                        (unsigned long long)phys_base,
@@ -305,7 +305,7 @@ void fb_boot_splash(void) {
         uint64_t offset = test_addr - phys_base;
         uint64_t fb_size = (size_t)g_fb_hw.info.pitch * (size_t)g_fb_hw.info.height;
         uint64_t map_size = fb_size + offset;
-        uintptr_t virt_base = pmap_phys_to_virt(phys_base);
+        uintptr_t virt_base = (uintptr_t)pmap_phys_to_virt(phys_base);
 
         fut_printf("[FB] Map attempt %d: phys=0x%llx size=0x%llx\n",
                    attempt + 1,

@@ -12,7 +12,15 @@ ENTRY(_start)
 MEMORY
 {
     /* QEMU virt machine loads kernel at 0x40000000 */
-    RAM (rwx) : ORIGIN = 0x40000000, LENGTH = 128M
+    RAM : ORIGIN = 0x40000000, LENGTH = 128M
+}
+
+/* Program headers for proper memory permissions */
+PHDRS
+{
+    text PT_LOAD FLAGS(5);    /* R+E: Read + Execute */
+    rodata PT_LOAD FLAGS(4);  /* R: Read only */
+    data PT_LOAD FLAGS(6);    /* R+W: Read + Write */
 }
 
 /* Sections */
@@ -24,25 +32,25 @@ SECTIONS
     /* Boot code (must be first) */
     .text.boot : {
         *(.text.boot)
-    } > RAM
+    } > RAM :text
 
     /* Text section (code) */
     .text : ALIGN(4096) {
         *(.text)
         *(.text.*)
-    } > RAM
+    } > RAM :text
 
     /* Read-only data */
     .rodata : ALIGN(4096) {
         *(.rodata)
         *(.rodata.*)
-    } > RAM
+    } > RAM :rodata
 
     /* Data section (initialized data) */
     .data : ALIGN(4096) {
         *(.data)
         *(.data.*)
-    } > RAM
+    } > RAM :data
 
     /* BSS section (uninitialized data) */
     .bss : ALIGN(4096) {
@@ -51,7 +59,7 @@ SECTIONS
         *(.bss.*)
         *(COMMON)
         _bss_end = .;
-    } > RAM
+    } > RAM :data
 
     /* Kernel end marker */
     _kernel_end = .;

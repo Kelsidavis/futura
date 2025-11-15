@@ -9,6 +9,20 @@ The ARM64 kernel port has made critical progress in exception handling. Severe b
 
 ## Latest Progress (2025-11-14)
 
+### ✅ ELF Loader Debug Logging Cleanup (Commits e466268, 7745a6d)
+**Achievement**: Silenced verbose ELF segment loading and copy-to-user debug logging
+
+**Problem**: ARM64 ELF loader had extensive debug logging producing ~68 messages per process spawn:
+- MAP-SEG-ARM64: ~9 messages per segment (vaddr/memsz/filesz, per-page mapping, seek/allocate/read/copy operations)
+- COPY-TO-USER: Page translation details (vaddr, page_off, pte, phys, virt) for every copy operation
+
+**Solution**:
+- Wrapped verbose logging in `#ifdef DEBUG_ELF` guards in `kernel/exec/elf64.c`
+- Kept critical error messages always enabled
+- Reduced boot noise from 68+ messages to zero
+
+**Impact**: Boot output now shows clean process spawning messages instead of detailed segment loading and page translation traces. Debug logging can be re-enabled with `-DDEBUG_ELF` if needed for ELF loader troubleshooting.
+
 ### ✅ RAMFS Debug Logging Cleanup (Commit 37cd485)
 **Achievement**: Silenced verbose RAMFS debug logging behind DEBUG_RAMFS flag
 

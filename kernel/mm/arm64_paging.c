@@ -171,7 +171,7 @@ static page_table_t *get_or_create_table(page_table_t *parent_table, int index, 
     extern page_table_t boot_l1_table;
     uint64_t user_ttbr0;
     __asm__ volatile("mrs %0, ttbr0_el1" : "=r"(user_ttbr0));
-    __asm__ volatile("msr ttbr0_el1, %0; isb" :: "r"((uint64_t)&boot_l1_table));
+    __asm__ volatile("msr ttbr0_el1, %0; isb" :: "r"(pmap_virt_to_phys(&boot_l1_table)));
 
     pte_t entry = parent_table->entries[index];
 

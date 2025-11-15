@@ -272,10 +272,10 @@ static int virtio_mmio_probe_device(uint64_t phys_addr, uint32_t irq) {
         return -1;
     }
 
-    /* Check version (must be 2 for VirtIO 1.0) */
+    /* Check version (1 = legacy 0.9.5, 2 = VirtIO 1.0) */
     uint32_t version = virtio_mmio_read32(virt_addr, VIRTIO_MMIO_VERSION);
-    if (version != 2) {
-        return -1;
+    if (version < 1 || version > 2) {
+        return -1;  /* Only support version 1 (legacy) and 2 (modern) */
     }
 
     /* Read device type */
@@ -329,11 +329,8 @@ void virtio_mmio_init(uint64_t dtb_ptr) {
         uint64_t base = 0x0a000000 + (i * 0x200);
         uint32_t irq = 16 + i;  /* IRQs 16-47 (0x10-0x2f in device tree) */
 
-        int rc = virtio_mmio_probe_device(base, irq);
-        if (rc < 0) {
-            /* No more devices */
-            break;
-        }
+        virtio_mmio_probe_device(base, irq);
+        /* Continue scanning all slots - devices may not be contiguous */
     }
 
     fut_printf("[virtio-mmio] Found %d virtio device(s)\n", virtio_device_count);

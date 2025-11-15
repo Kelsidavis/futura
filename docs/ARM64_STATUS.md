@@ -9,6 +9,37 @@ The ARM64 kernel port has made critical progress in exception handling. Severe b
 
 ## Latest Progress (2025-11-14)
 
+### ✅ RAMFS Debug Logging Cleanup (Commit 37cd485)
+**Achievement**: Silenced verbose RAMFS debug logging behind DEBUG_RAMFS flag
+
+**Problem**: RAMFS implementation had extensive debug logging for allocation, reallocation, read, write, and lookup operations that was polluting boot output with hundreds of lines of detailed memory operation traces.
+
+**Solution**:
+- Wrapped verbose logging in `#ifdef DEBUG_RAMFS` guards
+- Kept critical error messages (CRITICAL prefix) always enabled
+- Clean up boot output while preserving debugging capability
+
+**Impact**: Boot output now shows clean file staging instead of detailed buffer reallocation traces. Debug logging can be re-enabled with `-DDEBUG_RAMFS` if needed for troubleshooting. Boot log readability significantly improved.
+
+### ✅ Linker Security Hardening (Commit 0ac868b)
+**Achievement**: Eliminated RWX permission warnings from linker
+
+**Problem**: Both kernel and userland linker scripts were generating warnings:
+```
+warning: build/bin/futura_kernel.elf.tmp has a LOAD segment with RWX permissions
+```
+
+**Root Cause**: Linker scripts had RAM regions marked as "rwx" (read+write+execute) without proper segment separation. This violates W^X (Write XOR Execute) security principle where memory should be either writable OR executable, never both.
+
+**Solution Applied**:
+- Added PHDRS directives to both `platform/arm64/link.ld` (kernel) and `src/user/libfutura/userland_arm64.ld`
+- Separated memory segments with proper permissions:
+  - text PT_LOAD FLAGS(5)    /* R+E: Read + Execute */
+  - rodata PT_LOAD FLAGS(4)  /* R: Read only */
+  - data PT_LOAD FLAGS(6)    /* R+W: Read + Write */
+
+**Impact**: Kernel and userland binaries now have proper memory protection. Code sections are read+execute only, data sections are read+write only. All RWX warnings eliminated.
+
 ### ✅ CPU Detection (Commit 9e5cfe7)
 **Achievement**: Implemented ARM64 CPU identification via MIDR_EL1 register
 

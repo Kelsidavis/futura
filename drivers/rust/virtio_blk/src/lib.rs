@@ -26,9 +26,14 @@ use common::{
     FUT_BLK_WRITE, MMIO_DEFAULT_FLAGS,
 };
 
+#[cfg(target_arch = "aarch64")]
+use common::MmioTransport;
+
 unsafe extern "C" {
     fn fut_printf(fmt: *const u8, ...);
     fn fut_idt_set_entry(vector: u8, handler: u64, selector: u16, type_attr: u8, ist: u8);
+    #[cfg(target_arch = "aarch64")]
+    fn virtio_mmio_get_base_addr(dev: *mut core::ffi::c_void) -> u64;
 }
 
 const GDT_KERNEL_CODE: u16 = 0x08;     // Kernel code segment
@@ -191,6 +196,60 @@ const VIRTIO_PCI_CAP_DEVICE_CFG: u8 = 4;
 const VIRTIO_VENDOR_ID: u16 = 0x1AF4;
 const VIRTIO_DEVICE_ID_BLOCK_LEGACY: u16 = 0x1001;
 const VIRTIO_DEVICE_ID_BLOCK_MODERN: u16 = 0x1042;
+
+// VirtIO MMIO register offsets (for ARM64)
+#[cfg(target_arch = "aarch64")]
+const VIRTIO_MMIO_MAGIC_VALUE: u32 = 0x000;
+#[cfg(target_arch = "aarch64")]
+const VIRTIO_MMIO_VERSION: u32 = 0x004;
+#[cfg(target_arch = "aarch64")]
+const VIRTIO_MMIO_DEVICE_ID: u32 = 0x008;
+#[cfg(target_arch = "aarch64")]
+const VIRTIO_MMIO_VENDOR_ID: u32 = 0x00c;
+#[cfg(target_arch = "aarch64")]
+const VIRTIO_MMIO_DEVICE_FEATURES: u32 = 0x010;
+#[cfg(target_arch = "aarch64")]
+const VIRTIO_MMIO_DEVICE_FEATURES_SEL: u32 = 0x014;
+#[cfg(target_arch = "aarch64")]
+const VIRTIO_MMIO_DRIVER_FEATURES: u32 = 0x020;
+#[cfg(target_arch = "aarch64")]
+const VIRTIO_MMIO_DRIVER_FEATURES_SEL: u32 = 0x024;
+#[cfg(target_arch = "aarch64")]
+const VIRTIO_MMIO_QUEUE_SEL: u32 = 0x030;
+#[cfg(target_arch = "aarch64")]
+const VIRTIO_MMIO_QUEUE_NUM_MAX: u32 = 0x034;
+#[cfg(target_arch = "aarch64")]
+const VIRTIO_MMIO_QUEUE_NUM: u32 = 0x038;
+#[cfg(target_arch = "aarch64")]
+const VIRTIO_MMIO_QUEUE_READY: u32 = 0x044;
+#[cfg(target_arch = "aarch64")]
+const VIRTIO_MMIO_QUEUE_NOTIFY: u32 = 0x050;
+#[cfg(target_arch = "aarch64")]
+const VIRTIO_MMIO_INTERRUPT_STATUS: u32 = 0x060;
+#[cfg(target_arch = "aarch64")]
+const VIRTIO_MMIO_INTERRUPT_ACK: u32 = 0x064;
+#[cfg(target_arch = "aarch64")]
+const VIRTIO_MMIO_STATUS: u32 = 0x070;
+#[cfg(target_arch = "aarch64")]
+const VIRTIO_MMIO_QUEUE_DESC_LOW: u32 = 0x080;
+#[cfg(target_arch = "aarch64")]
+const VIRTIO_MMIO_QUEUE_DESC_HIGH: u32 = 0x084;
+#[cfg(target_arch = "aarch64")]
+const VIRTIO_MMIO_QUEUE_DRIVER_LOW: u32 = 0x090;
+#[cfg(target_arch = "aarch64")]
+const VIRTIO_MMIO_QUEUE_DRIVER_HIGH: u32 = 0x094;
+#[cfg(target_arch = "aarch64")]
+const VIRTIO_MMIO_QUEUE_DEVICE_LOW: u32 = 0x0a0;
+#[cfg(target_arch = "aarch64")]
+const VIRTIO_MMIO_QUEUE_DEVICE_HIGH: u32 = 0x0a4;
+#[cfg(target_arch = "aarch64")]
+const VIRTIO_MMIO_CONFIG_GENERATION: u32 = 0x0fc;
+#[cfg(target_arch = "aarch64")]
+const VIRTIO_MMIO_CONFIG: u32 = 0x100;
+
+// VirtIO device type for block devices
+#[cfg(target_arch = "aarch64")]
+const VIRTIO_DEV_BLOCK: u32 = 2;
 
 const PCI_COMMAND: u8 = 0x04;
 const PCI_COMMAND_IO: u16 = 0x1;
@@ -724,7 +783,13 @@ struct VirtioBlkDevice {
     has_flush: bool,
     io_lock: RawSpinLock,
     blk_dev: MaybeUninit<FutBlkDev>,
+    #[cfg(target_arch = "aarch64")]
+    mmio_base: u64,  // MMIO base address for ARM64
 }
+
+// ARM64: Store MMIO device handle globally for access in probe()
+#[cfg(target_arch = "aarch64")]
+static mut MMIO_DEVICE_HANDLE: *mut c_void = ptr::null_mut();
 
 unsafe impl Send for VirtioBlkDevice {}
 unsafe impl Sync for VirtioBlkDevice {}
@@ -773,6 +838,24 @@ impl VirtioBlkDevice {
         }
     }
 
+    // ARM64 MMIO helper methods
+    #[cfg(target_arch = "aarch64")]
+    fn mmio_read32(&self, offset: u32) -> u32 {
+        unsafe {
+            let reg = (self.mmio_base + offset as u64) as *const u32;
+            core::ptr::read_volatile(reg)
+        }
+    }
+
+    #[cfg(target_arch = "aarch64")]
+    fn mmio_write32(&mut self, offset: u32, value: u32) {
+        unsafe {
+            let reg = (self.mmio_base + offset as u64) as *mut u32;
+            core::ptr::write_volatile(reg, value);
+            core::sync::atomic::fence(core::sync::atomic::Ordering::SeqCst);
+        }
+    }
+
     fn probe(pci_hint: u64) -> Result<Self, FutStatus> {
         let pci = match find_device(pci_hint) {
             Some(addr) => addr,
@@ -805,7 +888,23 @@ impl VirtioBlkDevice {
             has_flush: false,
             io_lock: RawSpinLock::new(),
             blk_dev: MaybeUninit::uninit(),
+            #[cfg(target_arch = "aarch64")]
+            mmio_base: 0,
         };
+
+        // ARM64: Initialize MMIO base address
+        #[cfg(target_arch = "aarch64")]
+        {
+            unsafe {
+                if !MMIO_DEVICE_HANDLE.is_null() {
+                    dev.mmio_base = virtio_mmio_get_base_addr(MMIO_DEVICE_HANDLE);
+                    log("virtio-blk: MMIO base address configured");
+                } else {
+                    log("virtio-blk: ERROR - No MMIO device handle");
+                    return Err(ENODEV);
+                }
+            }
+        }
 
         dev.setup_bars();
         if !dev.parse_capabilities() {
@@ -1270,6 +1369,7 @@ impl VirtioBlkDevice {
         Ok(())
     }
 
+    #[cfg(target_arch = "x86_64")]
     fn negotiate_features(&mut self) -> Result<(), FutStatus> {
         unsafe {
             // Set ACKNOWLEDGE | DRIVER status
@@ -1329,6 +1429,47 @@ impl VirtioBlkDevice {
         Ok(())
     }
 
+    #[cfg(target_arch = "aarch64")]
+    fn negotiate_features(&mut self) -> Result<(), FutStatus> {
+        log("virtio-blk: MMIO feature negotiation");
+
+        // Acknowledge device
+        self.mmio_write32(VIRTIO_MMIO_STATUS, VIRTIO_STATUS_ACKNOWLEDGE as u32);
+
+        // Announce driver
+        self.mmio_write32(VIRTIO_MMIO_STATUS, (VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER) as u32);
+
+        // Read device features
+        self.mmio_write32(VIRTIO_MMIO_DEVICE_FEATURES_SEL, 0);
+        let device_features = self.mmio_read32(VIRTIO_MMIO_DEVICE_FEATURES);
+
+        log("virtio-blk: Device offers features");
+
+        // Accept all offered features for now
+        self.mmio_write32(VIRTIO_MMIO_DRIVER_FEATURES_SEL, 0);
+        self.mmio_write32(VIRTIO_MMIO_DRIVER_FEATURES, device_features);
+
+        self.mmio_write32(VIRTIO_MMIO_STATUS,
+            (VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER | VIRTIO_STATUS_FEATURES_OK) as u32);
+
+        let status = self.mmio_read32(VIRTIO_MMIO_STATUS);
+        if (status & VIRTIO_STATUS_FEATURES_OK as u32) == 0 {
+            log("virtio-blk: WARNING - Device rejected our feature selection");
+            // Try again with no features
+            self.mmio_write32(VIRTIO_MMIO_DRIVER_FEATURES, 0);
+            self.mmio_write32(VIRTIO_MMIO_STATUS,
+                (VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER | VIRTIO_STATUS_FEATURES_OK) as u32);
+            let status2 = self.mmio_read32(VIRTIO_MMIO_STATUS);
+            if (status2 & VIRTIO_STATUS_FEATURES_OK as u32) == 0 {
+                return Err(EIO);
+            }
+        }
+
+        log("virtio-blk: Feature negotiation complete");
+        Ok(())
+    }
+
+    #[cfg(target_arch = "x86_64")]
     fn init_queue(&mut self) -> Result<(), FutStatus> {
         unsafe {
             // Select queue 0
@@ -1406,6 +1547,27 @@ impl VirtioBlkDevice {
         Ok(())
     }
 
+    #[cfg(target_arch = "aarch64")]
+    fn init_queue(&mut self) -> Result<(), FutStatus> {
+        log("virtio-blk: MMIO queue initialization");
+
+        // Setup queue
+        self.mmio_write32(VIRTIO_MMIO_QUEUE_SEL, 0);
+        self.queue.setup(QUEUE_SIZE)?;
+        self.mmio_write32(VIRTIO_MMIO_QUEUE_NUM, QUEUE_SIZE as u32);
+        self.mmio_write32(VIRTIO_MMIO_QUEUE_DESC_LOW, (self.queue.desc_phys & 0xFFFFFFFF) as u32);
+        self.mmio_write32(VIRTIO_MMIO_QUEUE_DESC_HIGH, (self.queue.desc_phys >> 32) as u32);
+        self.mmio_write32(VIRTIO_MMIO_QUEUE_DRIVER_LOW, (self.queue.avail_phys & 0xFFFFFFFF) as u32);
+        self.mmio_write32(VIRTIO_MMIO_QUEUE_DRIVER_HIGH, (self.queue.avail_phys >> 32) as u32);
+        self.mmio_write32(VIRTIO_MMIO_QUEUE_DEVICE_LOW, (self.queue.used_phys & 0xFFFFFFFF) as u32);
+        self.mmio_write32(VIRTIO_MMIO_QUEUE_DEVICE_HIGH, (self.queue.used_phys >> 32) as u32);
+        self.mmio_write32(VIRTIO_MMIO_QUEUE_READY, 1);
+        self.queue.notify_off = 0; // MMIO uses direct queue_notify register
+
+        log("virtio-blk: Queue configured");
+        Ok(())
+    }
+
     fn init_dma(&mut self) -> Result<(), FutStatus> {
         unsafe {
             let page = alloc_page() as *mut VirtioBlkDma;
@@ -1431,6 +1593,7 @@ impl VirtioBlkDevice {
         }
     }
 
+    #[cfg(target_arch = "x86_64")]
     fn notify_queue(&self) {
         unsafe {
             let off = (self.queue.notify_off as u32 * self.notify_off_multiplier) as usize;
@@ -1450,6 +1613,17 @@ impl VirtioBlkDevice {
             let _readback = read_volatile(ptr as *const u16);
 
             fut_printf(b"[virtio-blk] notified queue 0 (wrote to ptr=%p)\n\0".as_ptr(), ptr);
+        }
+    }
+
+    #[cfg(target_arch = "aarch64")]
+    fn notify_queue(&self) {
+        // MMIO: write queue index to QUEUE_NOTIFY register
+        unsafe {
+            let reg = (self.mmio_base + VIRTIO_MMIO_QUEUE_NOTIFY as u64) as *mut u32;
+            write_volatile(reg, 0);
+            // Memory barrier
+            core::sync::atomic::fence(core::sync::atomic::Ordering::SeqCst);
         }
     }
 
@@ -1844,6 +2018,24 @@ unsafe extern "C" fn backend_flush(ctx: *mut c_void) -> FutStatus {
     status
 }
 
+// ARM64: Find VirtIO block device via MMIO transport
+#[cfg(target_arch = "aarch64")]
+fn find_device(_pci_hint: u64) -> Option<PciAddress> {
+    const VIRTIO_DEV_BLOCK: u32 = 2;
+    if let Some(transport) = MmioTransport::find_device(VIRTIO_DEV_BLOCK) {
+        log("virtio-blk: found device via MMIO transport");
+        unsafe {
+            MMIO_DEVICE_HANDLE = transport.as_ptr();
+        }
+        // Return dummy PCI address for compatibility
+        return Some(PciAddress { bus: 0xFF, device: 0xFF, function: 0xFF });
+    }
+    log("virtio-blk: no virtio device found");
+    None
+}
+
+// x86-64: Find VirtIO block device via PCI
+#[cfg(target_arch = "x86_64")]
 fn find_device(pci_hint: u64) -> Option<PciAddress> {
     if let Some(addr) = decode_pci_hint(pci_hint) {
         let vendor = pci_config_read16(addr.bus, addr.device, addr.function, 0x00);

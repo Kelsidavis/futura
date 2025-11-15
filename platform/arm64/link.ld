@@ -36,8 +36,10 @@ SECTIONS
     . = 0xFFFFFF8040000000;
 
     /* Boot code (must be first)
-     * AT() specifies physical load address (where QEMU loads it)
+     * AT() specifies physical load address (ELF metadata, not actual QEMU load addr!)
      * Virtual address is from . = 0xFFFFFF8040000000 above
+     * QEMU virt ignores AT() and loads at 0x40200000 (reserves 0x40000000-0x40200000 for DTB)
+     * Page tables handle the actual mapping: VA 0xFFFFFF8040000000 → PA 0x40200000
      */
     .text.boot : AT(0x40000000) {
         *(.text.boot)

@@ -242,15 +242,20 @@ fut_thread_t *fut_thread_create(
     ctx->x0 = (uint64_t)entry;
     ctx->x1 = (uint64_t)arg;
 
+#ifdef DEBUG_THREAD
     extern void fut_printf(const char *, ...);
     fut_printf("[THREAD-CREATE] ARM64 thread %llu: entry=%p arg=%p\n",
                (unsigned long long)thread->tid, (void*)entry, arg);
+#endif
 
     // Set TTBR0_EL1 from task's memory manager for user-space page table
     if (task->mm) {
         ctx->ttbr0_el1 = task->mm->ctx.ttbr0_el1;
+#ifdef DEBUG_THREAD
+        extern void fut_printf(const char *, ...);
         fut_printf("[THREAD-CREATE] Set ttbr0_el1=%llx from task mm\n",
                    (unsigned long long)ctx->ttbr0_el1);
+#endif
     } else {
         ctx->ttbr0_el1 = 0;  // No page table for kernel-only tasks
     }

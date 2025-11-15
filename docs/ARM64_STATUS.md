@@ -9,6 +9,25 @@ The ARM64 kernel port is now fully functional for multi-process support! The for
 
 ## Latest Progress (2025-11-15)
 
+### ✅ Async Selftest Support Enabled (Commits e9b514d, 4829827)
+**Achievement**: Enabled network and FuturaFS async selftests for ARM64
+
+**Background**: Futura supports async selftests that run in separate threads when the `async-tests` boot flag is enabled. These tests verify subsystem functionality (networking, filesystem, block I/O, etc.) at boot time. Previously, these were x86-64 only.
+
+**Implementation**:
+- Removed `fut_net_selftest_schedule` stub from ARM64 stubs (Commit e9b514d)
+- Added `tests/test_net.c` to ARM64 platform sources
+- Removed `fut_futfs_selftest_schedule` stub from ARM64 stubs (Commit 4829827)
+- Added `tests/test_futfs.c` and FuturaFS implementation files (`subsystems/futura_fs/futfs.c`, `subsystems/futura_fs/futfs_gc.c`) to ARM64 build
+- Fixed `futfs_gc.c` header includes (removed non-existent `<stdlib.h>`, kept `<string.h>`)
+
+**Result**: ARM64 now supports async selftests for:
+- ✅ Network stack (`test_net.c`) - validates TCP/IP, loopback, socket operations
+- ✅ FuturaFS filesystem (`test_futfs.c`) - validates mount, create, read/write, directory operations
+- ✅ Block device core (`test_blkcore.c`) - already enabled
+
+**Remaining**: Performance selftests (`perf.c`, `perf_ipc.c`, `perf_sched.c`, `perf_blk.c`, `perf_net.c`) require porting the test framework (`test_api.c`), which depends on x86-64-specific `qemu_exit` functionality.
+
 ### ✅ Fork Multi-Process Support Fixed (Commits 33eb5a3, 5bc4ac4)
 **Achievement**: Fixed fork() system call - multi-process support now fully functional
 

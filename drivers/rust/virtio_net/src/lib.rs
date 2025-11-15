@@ -18,6 +18,12 @@ use core::sync::atomic::{AtomicBool, AtomicU16, Ordering};
 use common::net::{self, FutNetDev, FutNetDevOps};
 use common::{alloc_page, free_page, log, map_mmio_region, thread_yield, FutStatus, RawSpinLock, MMIO_DEFAULT_FLAGS};
 
+#[cfg(target_arch = "aarch64")]
+use common::transport::MmioTransport;
+
+#[cfg(target_arch = "x86_64")]
+use common::transport::PciTransport;
+
 // Kernel thread functions
 #[repr(C)]
 struct FutTask {
@@ -52,6 +58,7 @@ const ETIMEDOUT: FutStatus = -110;
 const VIRTIO_VENDOR_ID: u16 = 0x1AF4;
 const VIRTIO_DEVICE_ID_NET_LEGACY: u16 = 0x1000;
 const VIRTIO_DEVICE_ID_NET_MODERN: u16 = 0x1041;
+const VIRTIO_DEV_NET: u32 = 1;  // VirtIO device type for network
 
 const VIRTIO_STATUS_ACKNOWLEDGE: u8 = 1;
 const VIRTIO_STATUS_DRIVER: u8 = 2;
@@ -935,6 +942,19 @@ fn virt_to_phys(virt: usize) -> u64 {
     virt as u64
 }
 
+// Platform-conditional device detection
+#[cfg(target_arch = "aarch64")]
+fn find_device() -> Option<PciAddress> {
+    // On ARM64, use MMIO transport via C layer
+    if let Some(_transport) = MmioTransport::find_device(VIRTIO_DEV_NET) {
+        log("virtio-net: found device via MMIO transport");
+        // Return placeholder PciAddress - actual MMIO operations will bypass PCI layer
+        return Some(PciAddress { bus: 0xFF, device: 0xFF, function: 0xFF });
+    }
+    None
+}
+
+#[cfg(target_arch = "x86_64")]
 fn find_device() -> Option<PciAddress> {
     for bus in 0..=255u8 {
         for device in 0..32u8 {

@@ -414,6 +414,16 @@ static fut_mm_t *clone_mm(fut_mm_t *parent_mm) {
                 fut_mm_release(child_mm);
                 return NULL;
             }
+
+            /* Debug: Verify the mapping was created correctly */
+            if (code_pages_copied <= 2) {
+                uint64_t verify_pte = 0;
+                if (pmap_probe_pte(child_ctx, page, &verify_pte) == 0) {
+                    fut_printf("[FORK-MAP] Code page 0x%llx: parent_pte=0x%llx child_pte=0x%llx flags=0x%llx\n",
+                               (unsigned long long)page, (unsigned long long)pte,
+                               (unsigned long long)verify_pte, (unsigned long long)flags);
+                }
+            }
         }
         fut_printf("[FORK] Copied %d code pages from 0x%llx-0x%llx\n",
                    code_pages_copied,

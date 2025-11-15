@@ -568,6 +568,7 @@ else ifeq ($(PLATFORM),arm64)
         kernel/tests/sys_pipe.c \
         kernel/tests/sys_signal.c \
         tests/test_blkcore.c \
+        tests/test_net.c \
         kernel/sys_mman.c \
         kernel/sys_cred_advanced.c \
         kernel/sys_prlimit.c \

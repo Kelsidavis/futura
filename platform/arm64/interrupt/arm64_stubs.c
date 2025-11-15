@@ -36,10 +36,6 @@ void fut_futfs_selftest_schedule(void) {
     /* FutureFS self-test not implemented for ARM64 */
 }
 
-void fut_net_selftest_schedule(void) {
-    /* Network self-test not implemented for ARM64 */
-}
-
 void fut_perf_selftest_schedule(void) {
     /* Performance self-test not implemented for ARM64 */
 }

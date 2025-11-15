@@ -14,7 +14,4 @@ int fut_tests_completed(void) { return 1; }
 /* Filesystem stubs - async test (not implemented) */
 void fut_futfs_selftest_schedule(struct fut_task *task __attribute__((unused))) {}
 
-/* Network stubs - async test (not implemented) */
-void fut_net_selftest_schedule(struct fut_task *task __attribute__((unused))) {}
-
 /* Note: Framebuffer, PS2, Block register, and Perf stubs are now implemented in their respective source files */

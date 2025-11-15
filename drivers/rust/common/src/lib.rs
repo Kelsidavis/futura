@@ -153,3 +153,6 @@ fn panic(_info: &PanicInfo) -> ! {
 }
 
 pub use mmio::{map_mmio_region, unmap_mmio_region, MMIO_DEFAULT_FLAGS};
+
+#[cfg(target_arch = "aarch64")]
+pub use transport::MmioTransport;

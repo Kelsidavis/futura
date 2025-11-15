@@ -415,6 +415,7 @@ static fut_mm_t *clone_mm(fut_mm_t *parent_mm) {
                 return NULL;
             }
 
+#ifdef DEBUG_FORK
             /* Debug: Verify the mapping was created correctly */
             if (code_pages_copied <= 2) {
                 uint64_t verify_pte = 0;
@@ -424,6 +425,7 @@ static fut_mm_t *clone_mm(fut_mm_t *parent_mm) {
                                (unsigned long long)verify_pte, (unsigned long long)flags);
                 }
             }
+#endif
         }
         fut_printf("[FORK] Copied %d code pages from 0x%llx-0x%llx\n",
                    code_pages_copied,
@@ -687,9 +689,11 @@ static fut_thread_t *clone_thread(fut_thread_t *parent_thread, fut_task_t *child
     child_thread->context.x5 = frame->x[5];
     child_thread->context.x6 = frame->x[6];
     child_thread->context.x7 = frame->x[7];   /* Critical: string table pointer! */
+#ifdef DEBUG_FORK
     fut_printf("[FORK-DEBUG] Copied x7=0x%llx to child_thread=%p &context.x7=%p\n",
                (unsigned long long)frame->x[7], (void*)child_thread,
                (void*)&child_thread->context.x7);
+#endif
     child_thread->context.x8 = frame->x[8];
     child_thread->context.x9 = frame->x[9];
     child_thread->context.x10 = frame->x[10];

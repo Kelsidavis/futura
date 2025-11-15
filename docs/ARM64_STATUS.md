@@ -9,6 +9,28 @@ The ARM64 kernel port has made critical progress in exception handling. Severe b
 
 ## Latest Progress (2025-11-14)
 
+### ✅ Build System Fix (Commit 3a2802c)
+**Achievement**: Fixed ARM64 userland build dependency issue after `make clean`
+
+**Problem**: After `make clean`, ARM64 userland build would fail with:
+```
+make[1]: *** No rule to make target `../../../build/lib/arm64/crt0.o', needed by `../../../build/bin/arm64/user/init'.  Stop.
+```
+
+**Root Cause**:
+- ARM64 userland binaries (init, shell, forktest, uidemo) depend on `libfutura.a` and `crt0.o`
+- Makefiles in `src/user/init/`, `src/user/shell/`, etc. list these as dependencies
+- However, there were no rules to build libfutura for ARM64 platform before attempting to link binaries
+- After `make clean`, `crt0.o` would be deleted but not rebuilt
+
+**Solution Applied**:
+- Added `arm64-libfutura` phony target that builds libfutura for ARM64
+- Made all ARM64 userland binary targets depend on `arm64-libfutura`
+- Ensures libfutura is built first before attempting to link any ARM64 userland programs
+- Location: `Makefile:814-836`
+
+**Impact**: Build system now works correctly after `make clean` for ARM64 platform
+
 ### ✅ Critical Exception Handler Fixes (Commit bb7a42d)
 **Achievement**: Fixed severe bugs in asynchronous exception handlers that could cause register corruption
 

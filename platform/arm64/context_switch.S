@@ -247,14 +247,6 @@ fut_switch_context:
     ldr     x2, [sp, #8]              /* Load user's x2 from stack */
     add     sp, sp, #16               /* Pop both values from stack */
 
-    /* Ensure all register loads complete */
-    dsb     sy                        /* Data synchronization barrier */
-    isb                               /* Instruction synchronization barrier */
-
-    /* Disable interrupts before ERET to prevent IRQ from clobbering registers */
-    msr     daifset, #0xf             /* Disable Debug, SError, IRQ, FIQ */
-    isb                               /* Ensure interrupt mask takes effect */
-
     /* Exception return to EL0 */
     eret
 

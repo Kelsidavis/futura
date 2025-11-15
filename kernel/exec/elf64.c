@@ -102,20 +102,35 @@ static int exec_copy_to_user(fut_mm_t *mm, uint64_t dest, const void *src, size_
      * we perform a direct kernel-space copy instead of switching MM and risking
      * instruction encoding issues with inline assembly in privileged instructions. */
 
+    extern void fut_printf(const char *, ...);
+    fut_printf("[EXEC-COPY] dest=0x%llx src=%p len=%zu\n",
+               (unsigned long long)dest, src, len);
+
     /* Get the PTE to extract physical address */
     uint64_t pte = 0;
     if (pmap_probe_pte(mm_context(mm), dest, &pte) != 0) {
+        fut_printf("[EXEC-COPY] pmap_probe_pte FAILED for dest=0x%llx\n",
+                   (unsigned long long)dest);
         return -EFAULT;
     }
 
+    fut_printf("[EXEC-COPY] pte=0x%llx\n", (unsigned long long)pte);
+
     /* Extract physical address from PTE (bits 12-51) */
     phys_addr_t phys = pte & 0xFFFFFFFFF000ULL;
+    fut_printf("[EXEC-COPY] phys (from PTE)=0x%llx\n", (unsigned long long)phys);
+
+    /* Add page offset from dest VA to get the complete physical address */
+    phys_addr_t phys_with_offset = phys + (dest & 0xFFF);
+    fut_printf("[EXEC-COPY] phys_with_offset=0x%llx\n", (unsigned long long)phys_with_offset);
 
     /* Convert physical to kernel virtual address */
-    uint8_t *kern_addr = (uint8_t *)pmap_phys_to_virt(phys);
+    uint8_t *kern_addr = (uint8_t *)pmap_phys_to_virt(phys_with_offset);
+    fut_printf("[EXEC-COPY] kern_addr=%p (about to memcpy)\n", kern_addr);
 
     /* Simple kernel-space memcpy (no privilege escalation or memory context switches) */
     memcpy(kern_addr, src, len);
+    fut_printf("[EXEC-COPY] memcpy complete\n");
     return 0;
 }
 
@@ -1747,42 +1762,57 @@ int fut_exec_elf_memory(const void *elf_data, size_t elf_size, char *const argv[
 }
 
 int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
+    extern void fut_printf(const char *, ...);
+    fut_printf("[EXEC-ELF] ENTER: path=%s\n", path ? path : "(null)");
+
     if (!path) return -EINVAL;
 
     int fd = fut_vfs_open(path, O_RDONLY, 0);
+    fut_printf("[EXEC-ELF] fut_vfs_open returned fd=%d\n", fd);
     if (fd < 0) return fd;
 
     elf64_ehdr_t ehdr;
+    fut_printf("[EXEC-ELF] About to read ELF header (%llu bytes)\n", (unsigned long long)sizeof(ehdr));
     int rc = read_exact(fd, &ehdr, sizeof(ehdr));
+    fut_printf("[EXEC-ELF] read_exact returned rc=%d\n", rc);
     if (rc != 0) {
         fut_vfs_close(fd);
         return rc;
     }
 
+    fut_printf("[EXEC-ELF] Verifying ELF header...\n");
     /* Verify ELF header */
     if (*(uint32_t *)ehdr.e_ident != ELF_MAGIC ||
         ehdr.e_ident[4] != ELF_CLASS_64 ||
         ehdr.e_ident[5] != ELF_DATA_LE ||
         ehdr.e_machine != 0xB7) {  /* EM_AARCH64 = 0xB7 */
+        fut_printf("[EXEC-ELF] ELF header invalid\n");
         fut_vfs_close(fd);
         return -EINVAL;
     }
 
+    fut_printf("[EXEC-ELF] ELF header valid, phnum=%d\n", ehdr.e_phnum);
     size_t ph_size = (size_t)ehdr.e_phnum * sizeof(elf64_phdr_t);
+    fut_printf("[EXEC-ELF] About to allocate %llu bytes for program headers\n", (unsigned long long)ph_size);
     elf64_phdr_t *phdrs = fut_malloc(ph_size);
+    fut_printf("[EXEC-ELF] fut_malloc returned %p\n", phdrs);
     if (!phdrs) {
         fut_vfs_close(fd);
         return -ENOMEM;
     }
 
+    fut_printf("[EXEC-ELF] About to lseek to phoff=0x%llx\n", (unsigned long long)ehdr.e_phoff);
     int64_t seek_rc = fut_vfs_lseek(fd, (int64_t)ehdr.e_phoff, SEEK_SET);
+    fut_printf("[EXEC-ELF] lseek returned %lld\n", (long long)seek_rc);
     if (seek_rc < 0) {
         fut_free(phdrs);
         fut_vfs_close(fd);
         return (int)seek_rc;
     }
 
+    fut_printf("[EXEC-ELF] About to read %llu bytes of program headers\n", (unsigned long long)ph_size);
     rc = read_exact(fd, phdrs, ph_size);
+    fut_printf("[EXEC-ELF] read_exact for phdrs returned rc=%d\n", rc);
     if (rc != 0) {
         fut_free(phdrs);
         fut_vfs_close(fd);
@@ -1790,14 +1820,18 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
     }
 
     /* Create task and memory manager */
+    fut_printf("[EXEC-ELF] About to create task\n");
     fut_task_t *task = fut_task_create();
+    fut_printf("[EXEC-ELF] fut_task_create returned %p\n", task);
     if (!task) {
         fut_free(phdrs);
         fut_vfs_close(fd);
         return -ENOMEM;
     }
 
+    fut_printf("[EXEC-ELF] About to create mm\n");
     fut_mm_t *mm = fut_mm_create();
+    fut_printf("[EXEC-ELF] fut_mm_create returned %p\n", mm);
     if (!mm) {
         fut_task_destroy(task);
         fut_free(phdrs);
@@ -1805,14 +1839,39 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
         return -ENOMEM;
     }
 
+    fut_printf("[EXEC-ELF] About to set mm on task\n");
     fut_task_set_mm(task, mm);
+    fut_printf("[EXEC-ELF] Task mm set\n");
+
+#ifdef __aarch64__
+    /* ARM64: Load the new page table immediately so subsequent kernel code
+     * (like map_segment) can access user space through TTBR0 */
+    __asm__ volatile("msr ttbr0_el1, %0; isb" :: "r"(mm->ctx.ttbr0_el1));
+
+    /* CRITICAL: Also update current thread's context so that context switches
+     * don't revert TTBR0 to the old value! */
+    fut_thread_t *cur_thread = fut_thread_current();
+    if (cur_thread) {
+        cur_thread->context.ttbr0_el1 = mm->ctx.ttbr0_el1;
+    }
+
+    fut_printf("[EXEC-ELF] ARM64: Loaded TTBR0=0x%llx (cur_thread=%p)\n",
+               (unsigned long long)mm->ctx.ttbr0_el1, cur_thread);
+#endif
 
     /* Map LOAD segments */
     uintptr_t heap_base_candidate = 0;
+    fut_printf("[EXEC-ELF] About to map %d program headers\n", ehdr.e_phnum);
     for (uint16_t i = 0; i < ehdr.e_phnum; ++i) {
-        if (phdrs[i].p_type != PT_LOAD) continue;
+        if (phdrs[i].p_type != PT_LOAD) {
+            fut_printf("[EXEC-ELF] phdr[%d]: type=%d (skipping non-LOAD)\n", i, phdrs[i].p_type);
+            continue;
+        }
 
+        fut_printf("[EXEC-ELF] Mapping segment %d: vaddr=0x%llx memsz=0x%llx\n",
+                   i, (unsigned long long)phdrs[i].p_vaddr, (unsigned long long)phdrs[i].p_memsz);
         rc = map_segment(mm, fd, &phdrs[i]);
+        fut_printf("[EXEC-ELF] map_segment returned rc=%d\n", rc);
         if (rc != 0) {
             fut_task_destroy(task);
             fut_free(phdrs);

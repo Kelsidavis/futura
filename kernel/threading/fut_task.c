@@ -255,6 +255,22 @@ void fut_task_set_mm(fut_task_t *task, struct fut_mm *mm) {
     }
 
     task->mm = mm;
+
+#ifdef __aarch64__
+    /* ARM64: Update current thread's TTBR0 if we're modifying the current task
+     * This is critical for exec() which creates a new mm and needs to use it immediately */
+    extern void fut_printf(const char *, ...);
+    fut_thread_t *current = fut_thread_current();
+    fut_printf("[TASK-SET-MM] current=%p task=%p mm=%p\n", current, task, mm);
+    if (current) {
+        fut_printf("[TASK-SET-MM] current->task=%p\n", current->task);
+    }
+    if (current && current->task == task && mm) {
+        current->context.ttbr0_el1 = mm->ctx.ttbr0_el1;
+        fut_printf("[TASK-SET-MM] Updated current thread ttbr0_el1=0x%llx\n",
+                   (unsigned long long)current->context.ttbr0_el1);
+    }
+#endif
 }
 
 struct fut_mm *fut_task_get_mm(const fut_task_t *task) {

@@ -145,9 +145,8 @@
  *
  * arm64_instruction_abort_handler():
  *   - Handles instruction aborts (0x20-0x21)
- *   - Currently calls handle_unknown() (Phase 3 placeholder)
- *   - Will distinguish TLB vs permission faults
- *   - Will handle instruction validation for userspace
+ *   - Delivers SIGILL for permission and translation faults
+ *   - Covers execute-never violations and unmapped instruction pages
  *
  * Signal Delivery Integration
  * ============================

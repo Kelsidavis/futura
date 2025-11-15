@@ -233,13 +233,6 @@ fut_switch_context:
     ldr     x2, [x1, #256]            /* Load SP_EL0 from new offset 256 */
     msr     sp_el0, x2                /* Set user stack pointer */
 
-    /* DEBUG CHECKPOINT 1: After SPSR/SP_EL0 set */
-    stp     x0, x1, [sp, #-16]!
-    mrs     x0, elr_el1
-    mov     x1, #0xC1                 /* 'A' + checkpoint 1 marker */
-    bl      debug_elr_checkpoint
-    ldp     x0, x1, [sp], #16
-
     /* Strategy: Save both context pointer (x1) and user's x2 to stack early,
      * then restore ALL user registers from context, then use stack values for
      * TTBR0 switch. This way kernel stack is always accessible (mapped in both
@@ -261,13 +254,6 @@ fut_switch_context:
     ldp     x27, x28, [x1, #216]      /* Restore x27, x28 */
     ldp     x29, x30, [x1, #232]      /* Restore FP (x29), LR (x30) from new offset 232 */
 
-    /* DEBUG CHECKPOINT 2: After callee-saved register restore */
-    stp     x0, x1, [sp, #-16]!
-    mrs     x0, elr_el1
-    mov     x1, #0xC2                 /* 'B' + checkpoint 2 marker */
-    bl      debug_elr_checkpoint
-    ldp     x0, x1, [sp], #16
-
     /* Restore caller-saved registers x3-x18 (needed for fork) */
     ldr     x3, [x1, #24]             /* Restore x3 */
     ldp     x4, x5, [x1, #32]         /* Restore x4, x5 */
@@ -283,13 +269,6 @@ fut_switch_context:
     /* Restore x0 and x1 BEFORE switching page table */
     ldp     x0, x1, [x1, #0]          /* Restore x0 and x1 */
 
-    /* DEBUG CHECKPOINT 3: Before page table switch */
-    stp     x0, x1, [sp, #-16]!
-    mrs     x0, elr_el1
-    mov     x1, #0xC3                 /* 'C' + checkpoint 3 marker */
-    bl      debug_elr_checkpoint
-    ldp     x0, x1, [sp], #16
-
     /* Now ALL user registers except x2 have correct values.
      * Pop TTBR0 from stack and switch page table */
     ldr     x2, [sp], #16             /* Pop TTBR0 value into x2 */
@@ -301,23 +280,10 @@ fut_switch_context:
     dsb     ish                       /* Data synchronization barrier */
     isb                               /* Instruction synchronization barrier */
 
-    /* DEBUG CHECKPOINT 4: After page table switch */
-    stp     x0, x1, [sp, #-16]!
-    mrs     x0, elr_el1
-    mov     x1, #0xC4                 /* 'D' + checkpoint 4 marker */
-    bl      debug_elr_checkpoint
-    ldp     x0, x1, [sp], #16
-
     /* Stack now has [context_ptr, user_x2]. Pop user's x2 value.
      * Skip context_ptr (we don't need it anymore). */
     ldr     x2, [sp, #8]              /* Load user's x2 from stack */
     add     sp, sp, #16               /* Pop both values from stack */
-
-    /* DEBUG: Check ELR_EL1 one final time before ERET */
-    stp     x0, x1, [sp, #-16]!
-    mrs     x0, elr_el1
-    bl      debug_elr_before_eret
-    ldp     x0, x1, [sp], #16
 
     /* Exception return to EL0 */
     eret

@@ -483,9 +483,18 @@ static fut_mm_t *clone_mm(fut_mm_t *parent_mm) {
         for (uint64_t page = vma->start; page < vma->end; page += FUT_PAGE_SIZE) {
             uint64_t pte = 0;
 
+            /* Debug: Log VA before probe */
+            if (page_count < 3) {  /* Only log first few pages */
+                fut_printf("[FORK-DBG] probing page VA=0x%016llx\n", (unsigned long long)page);
+            }
+
             /* Check if this page is mapped in parent */
             if (pmap_probe_pte(parent_ctx, page, &pte) != 0) {
                 continue;  /* Not mapped */
+            }
+
+            if (page_count < 3) {
+                fut_printf("[FORK-DBG] pte=0x%016llx\n", (unsigned long long)pte);
             }
 
             if ((pte & PTE_PRESENT) == 0) {
@@ -493,6 +502,10 @@ static fut_mm_t *clone_mm(fut_mm_t *parent_mm) {
             }
 
             phys_addr_t parent_phys = pte & PTE_PHYS_ADDR_MASK;
+
+            if (page_count < 3) {
+                fut_printf("[FORK-DBG] parent_phys=0x%016llx\n", (unsigned long long)parent_phys);
+            }
 
             if (is_cow) {
                 /* COW: Share the page and mark read-only */
@@ -523,6 +536,11 @@ static fut_mm_t *clone_mm(fut_mm_t *parent_mm) {
 
                 /* Copy page contents */
                 void *parent_page = (void *)pmap_phys_to_virt(parent_phys);
+
+                if (page_count < 3) {
+                    fut_printf("[FORK-DBG] parent_page VA=0x%016llx\n", (unsigned long long)(uintptr_t)parent_page);
+                }
+
                 memcpy(child_page, parent_page, FUT_PAGE_SIZE);
 
                 /* Map in child with same permissions */

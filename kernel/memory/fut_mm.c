@@ -836,7 +836,9 @@ static void copy_kernel_half(page_table_t *dst) {
      * L1[256]: PCIe ECAM - DON'T COPY (not needed yet)
      */
 
+#ifdef DEBUG_MM
     fut_printf("[COPY-KERNEL] Copying DRAM mapping (L1[1]) from boot_l1_table\n");
+#endif
 
     /* Copy L1[1] (DRAM at 0x40000000-0x7FFFFFFF) */
     dst->entries[1] = boot_l1_table.entries[1];
@@ -859,7 +861,9 @@ static void copy_kernel_half(page_table_t *dst) {
     /* Map critical peripherals with 4KB pages (not block descriptors)
      * This allows exception handlers to access UART/GIC for debug output
      */
+#ifdef DEBUG_MM
     fut_printf("[COPY-KERNEL] Mapping critical peripherals with 4KB pages...\n");
+#endif
 
     /* UART at 0x09000000 (map 64KB = 16 pages for safety) */
     for (uint64_t offset = 0; offset < 0x10000; offset += PAGE_SIZE) {
@@ -876,18 +880,22 @@ static void copy_kernel_half(page_table_t *dst) {
         map_device_page(dst, 0x08010000 + offset, 0x08010000 + offset);
     }
 
+#ifdef DEBUG_MM
     /* Debug: Verify mappings */
     fut_printf("[COPY-KERNEL] L1[0] = 0x%llx (user space + peripheral pages)\n",
                (unsigned long long)dst->entries[0]);
     fut_printf("[COPY-KERNEL] L1[1] = 0x%llx (DRAM 0x40000000-0x7FFFFFFF - kernel/vectors)\n",
                (unsigned long long)dst->entries[1]);
     fut_printf("[COPY-KERNEL] Peripherals mapped: UART 0x09000000, GIC 0x08000000-0x08020000\n");
+#endif
 }
 
 fut_mm_t *fut_mm_create(void) {
     extern void fut_printf(const char *, ...);
 
+#ifdef DEBUG_MM
     fut_printf("[MM-CREATE] ARM64: Allocating MM structure...\n");
+#endif
     fut_mm_t *mm = (fut_mm_t *)fut_malloc(sizeof(*mm));
     if (!mm) {
         fut_printf("[MM-CREATE] FAILED: malloc returned NULL\n");
@@ -895,14 +903,18 @@ fut_mm_t *fut_mm_create(void) {
     }
     memset(mm, 0, sizeof(*mm));
 
+#ifdef DEBUG_MM
     fut_printf("[MM-CREATE] ARM64: Allocating PGD page...\n");
+#endif
     void *pgd_page = fut_pmm_alloc_page();
     if (!pgd_page) {
         fut_printf("[MM-CREATE] FAILED: pmm_alloc_page returned NULL (out of physical pages)\n");
         fut_free(mm);
         return NULL;
     }
+#ifdef DEBUG_MM
     fut_printf("[MM-CREATE] ARM64: PGD allocated successfully at %p\n", pgd_page);
+#endif
 
     memset(pgd_page, 0, PAGE_SIZE);
     page_table_t *pgd = (page_table_t *)pgd_page;
@@ -912,8 +924,10 @@ fut_mm_t *fut_mm_create(void) {
     /* ARM64: TTBR0_EL1 must contain PHYSICAL address, not virtual */
     extern phys_addr_t pmap_virt_to_phys(uintptr_t virt);
     phys_addr_t pgd_phys = pmap_virt_to_phys((uintptr_t)pgd);
+#ifdef DEBUG_MM
     fut_printf("[MM-CREATE] ARM64: PGD virtual=%p physical=0x%llx\n",
                pgd, (unsigned long long)pgd_phys);
+#endif
     mm->ctx.ttbr0_el1 = pgd_phys;
     mm->ctx.ref_count = 1;
     atomic_store_explicit(&mm->refcnt, 1, memory_order_relaxed);
@@ -925,7 +939,9 @@ fut_mm_t *fut_mm_create(void) {
     mm->mmap_base = USER_MMAP_BASE;
     mm->vma_list = NULL;
 
+#ifdef DEBUG_MM
     fut_printf("[MM-CREATE] ARM64: MM created successfully\n");
+#endif
     return mm;
 }
 

@@ -1384,7 +1384,9 @@ int fut_vfs_open(const char *path, int flags, int mode) {
         vnode->mode = mode & 0777;  /* Use provided mode, mask to permission bits only */
     }
 
+#if DEBUG_VFS
     fut_printf("[VFS-OPEN] SUCCESS: opened '%s' as fd=%d (mode=0%o)\n", path, fd, vnode->mode);
+#endif
     return fd;
 }
 

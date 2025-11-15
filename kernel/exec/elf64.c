@@ -1065,6 +1065,7 @@ static int exec_copy_to_user(fut_mm_t *mm, uint64_t dest, const void *src, size_
         phys_addr_t phys = fut_pte_to_phys(pte) + page_offset;
         void *virt = (void *)pmap_phys_to_virt(phys);
 
+#ifdef DEBUG_ELF
         /* Debug: log probe results for first copy */
         if (vaddr == dest) {
             extern void fut_printf(const char *, ...);
@@ -1072,6 +1073,7 @@ static int exec_copy_to_user(fut_mm_t *mm, uint64_t dest, const void *src, size_
                       (unsigned long long)vaddr, (unsigned long long)page_offset,
                       (unsigned long long)pte, (unsigned long long)phys, virt);
         }
+#endif
 
         /* Copy chunk to this page */
         memcpy(virt, src_bytes, chunk_size);

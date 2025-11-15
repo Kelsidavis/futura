@@ -1,7 +1,7 @@
 # ARM64 Fork X7 Register Corruption Mystery
 
 ## Status
-**UNRESOLVED** - Extensive investigation conducted, root cause unknown
+**UNRESOLVED** - Extensive investigation conducted, critical exception handler bugs fixed, root cause still unknown
 
 ## Problem Description
 After fork(), the child process executes with incorrect x7 register value (0x1 instead of expected 0x401308), causing immediate fault when attempting to access string literals.
@@ -78,8 +78,34 @@ Systematic debugging revealed:
 5. Try different QEMU versions or ARM64 CPU models
 6. Consider filing QEMU bug report if hardware behaves differently
 
+## Critical Bugs Fixed (November 14, 2025)
+Following expert analysis, discovered and fixed severe bugs in asynchronous exception handlers:
+
+### IRQ Handler Bug (arm64_vectors.S:274)
+- **Before**: Saved only x0-x3, x29-x30
+- **After**: Saves ALL caller-saved registers (x0-x18, x29-x30)
+- **Impact**: `arm64_handle_irq()` C function could clobber x4-x18 per ARM64 ABI
+- **Fix**: Complete register save/restore in `irq_exception_entry`
+
+### SError Handler Bug (arm64_vectors.S:321)
+- **Before**: Saved only x0-x1
+- **After**: Saves ALL caller-saved registers (x0-x18, x29-x30)
+- **Impact**: `arm64_handle_serror()` C function could clobber x2-x18
+- **Fix**: Complete register save/restore in `serror_exception_entry`
+
+These fixes were critical for system stability - ANY C function call from an exception handler can clobber caller-saved registers (x0-x18), so all async exception paths must preserve them.
+
+### Additional Hardening
+- Added interrupt masking (daifset) before ERET in context switch
+- Added DSB/ISB memory barriers before ERET
+- These did not resolve the fork issue but improve robustness
+
+## Fork Issue Persists
+Despite fixing the exception handlers, child process after fork() still executes with x7=0x1 instead of expected x7=0x401308. This suggests an even deeper issue - possibly QEMU-specific or undiscovered architectural edge case.
+
 ## Workaround
 None currently available. Fork cannot work on ARM64 until this is resolved.
 
-## Session Date
-November 14, 2025
+## Sessions
+- November 14, 2025: Initial investigation, TTBR0 fix, PTE verification
+- November 14, 2025 (evening): Exception handler investigation and fixes (commit bb7a42d)

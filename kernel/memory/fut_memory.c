@@ -229,11 +229,8 @@ void fut_heap_init(uintptr_t heap_start, uintptr_t heap_end) {
                (unsigned long long)((heap_limit - heap_base) / 1024));
 
     if (heap_limit > heap_base) {
-#if defined(__x86_64__)
-        /* NOTE: On x86_64, boot.S maps 1GB of physical memory (512 × 2MB pages)
-         * which is more than sufficient for our heap (typically 96MB).
-         * We don't need to map individual heap pages since they're already accessible.
-         * We just need to reserve the physical memory range to prevent re-allocation. */
+        /* Reserve the physical memory range to prevent PMM from reallocating it.
+         * We need to convert heap VAs to physical addresses for PMM. */
         phys_addr_t heap_base_phys = pmap_virt_to_phys((void *)heap_base);
         size_t heap_size = heap_limit - heap_base;
         fut_pmm_reserve_range(heap_base_phys, heap_size + FUT_PAGE_SIZE);
@@ -241,9 +238,6 @@ void fut_heap_init(uintptr_t heap_start, uintptr_t heap_end) {
                    (unsigned long long)heap_base_phys,
                    (unsigned long long)(heap_base_phys + heap_size),
                    (unsigned long long)(heap_size / 1024));
-#else
-        fut_pmm_reserve_range(heap_base, heap_limit - heap_base + FUT_PAGE_SIZE);
-#endif
     }
 
     FUT_ASSERT(heap_base >= bitmap_guard);

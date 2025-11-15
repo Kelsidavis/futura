@@ -60,7 +60,7 @@ static uintptr_t map_user_page(uintptr_t uaddr) {
     if (!page) {
         return 0;
     }
-    phys_addr_t phys = pmap_virt_to_phys((uintptr_t)page);
+    phys_addr_t phys = pmap_virt_to_phys(page);
     if (pmap_map(uaddr, phys, PAGE_SIZE, PTE_PRESENT | PTE_WRITABLE | PTE_USER) != 0) {
         return 0;
     }

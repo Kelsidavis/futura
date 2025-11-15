@@ -234,8 +234,7 @@ void fut_heap_init(uintptr_t heap_start, uintptr_t heap_end) {
          * which is more than sufficient for our heap (typically 96MB).
          * We don't need to map individual heap pages since they're already accessible.
          * We just need to reserve the physical memory range to prevent re-allocation. */
-        extern phys_addr_t pmap_virt_to_phys(uintptr_t vaddr);
-        phys_addr_t heap_base_phys = pmap_virt_to_phys(heap_base);
+        phys_addr_t heap_base_phys = pmap_virt_to_phys((void *)heap_base);
         size_t heap_size = heap_limit - heap_base;
         fut_pmm_reserve_range(heap_base_phys, heap_size + FUT_PAGE_SIZE);
         fut_printf("[HEAP-INIT] Reserved physical memory range: 0x%llx - 0x%llx (%llu KB)\n",

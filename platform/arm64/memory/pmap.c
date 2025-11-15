@@ -7,6 +7,7 @@
  */
 
 #include <platform/arm64/memory/pmap.h>
+#include <platform/arm64/memory/paging.h>
 #include <kernel/errno.h>
 #include <kernel/fut_memory.h>
 

@@ -406,7 +406,7 @@ static fut_mm_t *clone_mm(fut_mm_t *parent_mm) {
             void *parent_page = (void *)pmap_phys_to_virt(parent_phys);
             memcpy(child_page, parent_page, FUT_PAGE_SIZE);
 
-            phys_addr_t child_phys = pmap_virt_to_phys((uintptr_t)child_page);
+            phys_addr_t child_phys = pmap_virt_to_phys(child_page);
             uint64_t flags = pte_extract_flags(pte);
 
             if (pmap_map_user(child_ctx, page, child_phys, FUT_PAGE_SIZE, flags) != 0) {
@@ -456,7 +456,7 @@ static fut_mm_t *clone_mm(fut_mm_t *parent_mm) {
             void *parent_page = (void *)pmap_phys_to_virt(parent_phys);
             memcpy(child_page, parent_page, FUT_PAGE_SIZE);
 
-            phys_addr_t child_phys = pmap_virt_to_phys((uintptr_t)child_page);
+            phys_addr_t child_phys = pmap_virt_to_phys(child_page);
             uint64_t flags = pte_extract_flags(pte);
 
             if (pmap_map_user(child_ctx, page, child_phys, FUT_PAGE_SIZE, flags) != 0) {
@@ -526,7 +526,7 @@ static fut_mm_t *clone_mm(fut_mm_t *parent_mm) {
                 memcpy(child_page, parent_page, FUT_PAGE_SIZE);
 
                 /* Map in child with same permissions */
-                phys_addr_t child_phys = pmap_virt_to_phys((uintptr_t)child_page);
+                phys_addr_t child_phys = pmap_virt_to_phys(child_page);
                 uint64_t flags = pte_extract_flags(pte);
 
                 if (pmap_map_user(child_ctx, page, child_phys, FUT_PAGE_SIZE, flags) != 0) {
@@ -603,7 +603,7 @@ static fut_thread_t *clone_thread(fut_thread_t *parent_thread, fut_task_t *child
         uint64_t stack_page_end = (stack_end + FUT_PAGE_SIZE - 1) & ~(FUT_PAGE_SIZE - 1);
 
         for (uint64_t page = stack_page_base; page < stack_page_end; page += FUT_PAGE_SIZE) {
-            phys_addr_t phys = pmap_virt_to_phys(page);
+            phys_addr_t phys = pmap_virt_to_phys((void *)page);
             uint64_t flags = PTE_PRESENT | PTE_WRITABLE | PTE_USER;
 
             /* Always map stack pages with user permissions.

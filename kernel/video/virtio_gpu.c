@@ -1280,10 +1280,10 @@ int virtio_gpu_init_arm64_pci(uint8_t bus, uint8_t dev, uint8_t func, uint64_t *
 
     /* ARM64: Use identity mapping via pmap_phys_to_virt */
     /* The kernel virtual addresses are the same as physical addresses for identity-mapped region */
-    uint64_t queue_virt = pmap_phys_to_virt(queue_phys);
-    uint64_t fb_virt = pmap_phys_to_virt(fb_phys);
-    uint64_t cmd_virt = pmap_phys_to_virt(cmd_phys);
-    uint64_t resp_virt = pmap_phys_to_virt(resp_phys);
+    uint64_t queue_virt = (uintptr_t)pmap_phys_to_virt(queue_phys);
+    uint64_t fb_virt = (uintptr_t)pmap_phys_to_virt(fb_phys);
+    uint64_t cmd_virt = (uintptr_t)pmap_phys_to_virt(cmd_phys);
+    uint64_t resp_virt = (uintptr_t)pmap_phys_to_virt(resp_phys);
 
     fut_printf("[VIRTIO-GPU] ARM64: Using identity-mapped addresses:\n");
     fut_printf("  Queue: phys=0x%llx virt=0x%llx\n", (unsigned long long)queue_phys, (unsigned long long)queue_virt);

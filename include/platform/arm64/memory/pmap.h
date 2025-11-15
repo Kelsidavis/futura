@@ -50,4 +50,14 @@ static inline uint64_t pmap_virt_to_phys(const void *va) {
 
 typedef uint64_t phys_addr_t;
 
+/* Forward declaration for vmem context */
+struct fut_vmem_context;
+
+/* Platform-specific paging functions */
+int pmap_probe_pte(struct fut_vmem_context *ctx, uint64_t vaddr, uint64_t *pte_out);
+int pmap_map_user(struct fut_vmem_context *ctx, uint64_t uaddr, phys_addr_t paddr,
+                  size_t len, uint64_t prot);
+int pmap_unmap(uint64_t vaddr, size_t len);
+void *pmap_kmap(phys_addr_t phys);
+
 #endif /* ARM64_PMAP_H */

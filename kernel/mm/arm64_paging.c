@@ -744,9 +744,9 @@ static void free_page_tables_recursive(page_table_t *table, int level) {
 
         /* Check if entry is valid and points to a table (not a block descriptor) */
         if ((pte & PTE_VALID) && (pte & PTE_TABLE)) {
-            /* Extract physical address of next level table */
+            /* Extract physical address of next level table and convert to VA */
             phys_addr_t phys = pte & PTE_PHYS_ADDR_MASK;
-            page_table_t *child = (page_table_t *)phys;
+            page_table_t *child = (page_table_t *)pmap_phys_to_virt(phys);
 
             /* Recursively free child table */
             free_page_tables_recursive(child, level + 1);
@@ -949,9 +949,9 @@ void fut_dump_page_tables(fut_vmem_context_t *ctx, uint64_t vaddr) {
         return;
     }
 
-    /* Level 1: PMD */
+    /* Level 1: PMD - convert PA to VA for kernel access */
     phys_addr_t pmd_phys = pgd_entry & PTE_PHYS_ADDR_MASK;
-    page_table_t *pmd = (page_table_t *)pmd_phys;
+    page_table_t *pmd = (page_table_t *)pmap_phys_to_virt(pmd_phys);
     int pmd_idx = PMD_INDEX(vaddr);
     pte_t pmd_entry = pmd->entries[pmd_idx];
     fut_printf("[PT-DUMP]  PMD[%d] = 0x%llx %s\n", pmd_idx, pmd_entry,
@@ -961,9 +961,9 @@ void fut_dump_page_tables(fut_vmem_context_t *ctx, uint64_t vaddr) {
         return;
     }
 
-    /* Level 2: PTE */
+    /* Level 2: PTE - convert PA to VA for kernel access */
     phys_addr_t pte_phys = pmd_entry & PTE_PHYS_ADDR_MASK;
-    page_table_t *pte_table = (page_table_t *)pte_phys;
+    page_table_t *pte_table = (page_table_t *)pmap_phys_to_virt(pte_phys);
     int pte_idx = PTE_INDEX(vaddr);
     pte_t pte_entry = pte_table->entries[pte_idx];
     fut_printf("[PT-DUMP]   PTE[%d] = 0x%llx %s\n", pte_idx, pte_entry,
@@ -973,9 +973,9 @@ void fut_dump_page_tables(fut_vmem_context_t *ctx, uint64_t vaddr) {
         return;
     }
 
-    /* Level 3: Page */
+    /* Level 3: Page - convert PA to VA for kernel access */
     phys_addr_t page_phys = pte_entry & PTE_PHYS_ADDR_MASK;
-    page_table_t *page_table = (page_table_t *)page_phys;
+    page_table_t *page_table = (page_table_t *)pmap_phys_to_virt(page_phys);
     int page_idx = PAGE_INDEX(vaddr);
     pte_t page_entry = page_table->entries[page_idx];
     fut_printf("[PT-DUMP]    Page[%d] = 0x%llx %s\n", page_idx, page_entry,

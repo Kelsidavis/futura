@@ -554,6 +554,7 @@ else ifeq ($(PLATFORM),arm64)
         platform/arm64/drivers/apple_uart.c \
         platform/arm64/drivers/apple_rtkit.c \
         platform/arm64/drivers/apple_ans2.c \
+        platform/arm64/drivers/virtio_mmio.c \
         platform/arm64/timing/perf_clock.c \
         platform/arm64/pci_ecam.c \
         kernel/arch/arm64/hal_halt.c \

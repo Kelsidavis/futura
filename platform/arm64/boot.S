@@ -319,10 +319,13 @@ bss_cleared:
     subs    x3, x3, #1
     bne     5b
 
-    /* Setup kernel_l2_table_dram: Same as boot, but for high VA */
+    /* Setup kernel_l2_table_dram: Map high VA to where QEMU actually loaded kernel
+     * QEMU virt reserves 0x40000000-0x40200000 for DTB, loads kernel at 0x40200000
+     * Identity map (boot_l2_table_dram above) keeps PA 0x40000000 for DTB access
+     * High-VA kernel mapping must point to actual kernel PA 0x40200000 */
     adrp    x0, kernel_l2_table_dram
     add     x0, x0, :lo12:kernel_l2_table_dram
-    movz    x1, #0x4000, lsl #16      /* Start PA = 0x40000000 */
+    movz    x1, #0x4020, lsl #16      /* Start PA = 0x40200000 (QEMU kernel load address) */
     mov     x3, #512                  /* 512 x 2MB = 1GB */
     movz    x5, #0x0020, lsl #16      /* 2MB block size */
 6:  mov     x2, #0x401                /* Valid | Block | AttrIndx=0 (normal) | AF */
@@ -436,14 +439,17 @@ bss_cleared:
      * Currently executing at low VA (identity mapped via TTBR0)
      * Need to switch to high VA (mapped via TTBR1)
      *
-     * Strategy: Get PC-relative address of target, then set high VA bits
-     * We're linked at 0xFFFFFF8040000000 but executing at 0x40000000
-     * Need to set the high bits to create 0xFFFFFF8000000000
+     * QEMU loads kernel at PA 0x40200000, but linker expects PA 0x40000000
+     * Page tables map VA 0xFFFFFF8040000000 → PA 0x40200000
+     * So: PA 0x40200xxx → VA 0xFFFFFF8040000xxx (subtract PA base, add VA base)
      */
-    adr     x0, .Lhigh_va_entry       /* Get low VA address (PC-relative, ~0x400xxx) */
-    movz    x1, #0xFFFF, lsl #48      /* Load high VA prefix (0xFFFF000000000000) */
-    movk    x1, #0xFF80, lsl #32      /* Add middle bits (0xFFFFFF8000000000) */
-    orr     x0, x0, x1                /* Set high VA bits: x0 |= 0xFFFFFF8000000000 */
+    adr     x0, .Lhigh_va_entry       /* Get actual PA (PC-relative, ~0x4020xxxx) */
+    movz    x1, #0x4020, lsl #16      /* PA base = 0x40200000 */
+    sub     x0, x0, x1                /* x0 = offset from PA base */
+    movz    x1, #0xFFFF, lsl #48      /* VA base (high 16 bits) */
+    movk    x1, #0xFF80, lsl #32      /* VA base (bits 47:32) */
+    movk    x1, #0x4000, lsl #16      /* VA base (bits 31:16) = 0xFFFFFF8040000000 */
+    add     x0, x0, x1                /* x0 = VA base + offset */
     br      x0                        /* Jump to high VA */
 
 .Lhigh_va_entry:

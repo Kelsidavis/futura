@@ -194,7 +194,7 @@ static int map_segment(fut_mm_t *mm, int fd, const elf64_phdr_t *phdr) {
 
         memset(page, 0, PAGE_SIZE);
 
-        phys_addr_t phys = pmap_virt_to_phys((uintptr_t)page);
+        phys_addr_t phys = pmap_virt_to_phys((void *)page);
         int rc = pmap_map_user(mm_context(mm),
                                seg_start + (uint64_t)i * PAGE_SIZE,
                                phys,
@@ -497,7 +497,7 @@ static int stage_stack_pages(fut_mm_t *mm, uint64_t *out_stack_top) {
         }
 
         memset(page, 0, PAGE_SIZE);
-        phys_addr_t phys = pmap_virt_to_phys((uintptr_t)page);
+        phys_addr_t phys = pmap_virt_to_phys((void *)page);
 
         pages[i] = page;
         fut_printf("[EXEC] stage_stack page[%u]=%p\n", (unsigned)i, (void *)page);
@@ -1143,7 +1143,7 @@ static int map_segment(fut_mm_t *mm, int fd, const elf64_phdr_t *phdr) {
             return -ENOMEM;
         }
 
-        phys_addr_t phys = pmap_virt_to_phys((uintptr_t)page);
+        phys_addr_t phys = pmap_virt_to_phys((void *)page);
 #ifdef DEBUG_ELF
         fut_printf("[MAP-SEG-ARM64] Page %llu: vaddr=0x%llx phys=0x%llx prot=%d\n",
                    (unsigned long long)i, (unsigned long long)page_addr, (unsigned long long)phys, prot);
@@ -1232,7 +1232,7 @@ static int stage_stack_pages(fut_mm_t *mm, uint64_t *out_stack_top) {
             return -ENOMEM;
         }
 
-        phys_addr_t phys = pmap_virt_to_phys((uintptr_t)page);
+        phys_addr_t phys = pmap_virt_to_phys((void *)page);
         if (pmap_map_user(vmem, page_addr, phys, PAGE_SIZE, PROT_READ | PROT_WRITE) != 0) {
             fut_printf("[STACK] Failed to map page: vaddr=0x%llx phys=0x%llx\n",
                        (unsigned long long)page_addr, (unsigned long long)phys);
@@ -1407,7 +1407,7 @@ static int build_user_stack(fut_mm_t *mm,
 
     /* Get the PGD physical address from the task's memory manager */
     fut_mm_t *mm = task->mm;
-    uint64_t pgd_phys = pmap_virt_to_phys((uintptr_t)mm->ctx.pgd);
+    uint64_t pgd_phys = pmap_virt_to_phys((void *)mm->ctx.pgd);
 
     /* Verify entry point is mapped and code is present */
     extern int pmap_probe_pte(fut_vmem_context_t *ctx, uint64_t vaddr, uint64_t *pte_out);
@@ -1516,7 +1516,7 @@ static int map_segment_from_memory(fut_mm_t *mm, const void *elf_data, const elf
             return -ENOMEM;
         }
 
-        phys_addr_t phys = pmap_virt_to_phys((uintptr_t)page);
+        phys_addr_t phys = pmap_virt_to_phys((void *)page);
         fut_printf("[MAP-SEG] Mapping page %zu: vaddr=0x%llx phys=0x%llx\n",
                    i, (unsigned long long)page_addr, (unsigned long long)phys);
 

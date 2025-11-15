@@ -98,7 +98,7 @@ void fut_mm_system_init(void) {
     /* Initialize kernel page table root (architecture-neutral) */
     fut_vmem_set_root(&kernel_mm.ctx, fut_get_kernel_pml4());
     fut_vmem_set_reload_value(&kernel_mm.ctx,
-                              pmap_virt_to_phys((uintptr_t)fut_vmem_get_root(&kernel_mm.ctx)));
+                              pmap_virt_to_phys(fut_vmem_get_root(&kernel_mm.ctx)));
     kernel_mm.ctx.ref_count = 1;
     atomic_store_explicit(&kernel_mm.refcnt, 1, memory_order_relaxed);
     kernel_mm.flags = FUT_MM_KERNEL;
@@ -155,7 +155,7 @@ fut_mm_t *fut_mm_create(void) {
 
     /* Initialize page table root (architecture-neutral) */
     fut_vmem_set_root(&mm->ctx, pml4);
-    fut_vmem_set_reload_value(&mm->ctx, pmap_virt_to_phys((uintptr_t)pml4));
+    fut_vmem_set_reload_value(&mm->ctx, pmap_virt_to_phys(pml4));
     mm->ctx.ref_count = 1;
     atomic_store_explicit(&mm->refcnt, 1, memory_order_relaxed);
     mm->flags = FUT_MM_USER;
@@ -370,7 +370,7 @@ void *fut_mm_map_anonymous(fut_mm_t *mm, uintptr_t hint, size_t len, int prot, i
             goto fail;
         }
         memset(page, 0, PAGE_SIZE);
-        phys_addr_t phys = pmap_virt_to_phys((uintptr_t)page);
+        phys_addr_t phys = pmap_virt_to_phys(page);
         if (pmap_map_user(ctx, addr, phys, PAGE_SIZE, pte_flags) != 0) {
             fut_pmm_free_page(page);
             mapped = (addr - base) / PAGE_SIZE;
@@ -922,8 +922,7 @@ fut_mm_t *fut_mm_create(void) {
 
     mm->ctx.pgd = pgd;
     /* ARM64: TTBR0_EL1 must contain PHYSICAL address, not virtual */
-    extern phys_addr_t pmap_virt_to_phys(uintptr_t virt);
-    phys_addr_t pgd_phys = pmap_virt_to_phys((uintptr_t)pgd);
+    phys_addr_t pgd_phys = pmap_virt_to_phys(pgd);
 #ifdef DEBUG_MM
     fut_printf("[MM-CREATE] ARM64: PGD virtual=%p physical=0x%llx\n",
                pgd, (unsigned long long)pgd_phys);

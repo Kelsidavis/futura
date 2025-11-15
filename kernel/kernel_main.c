@@ -875,6 +875,29 @@ void fut_kernel_main(void) {
 
     fut_boot_banner();
 
+    /* ARM64: Debug check for VA-to-PA mapping using known kernel symbols */
+#ifdef __aarch64__
+    {
+        /* Use _bss_start which is already declared at the top of this file */
+        uintptr_t bss_va = (uintptr_t)_bss_start;
+        uint64_t bss_pa = pmap_virt_to_phys((void *)bss_va);
+
+        fut_printf("[VA-PA-CHECK] _bss_start VA=0x%016llx PA=0x%016llx (offset=0x%016llx)\n",
+                   (unsigned long long)bss_va, (unsigned long long)bss_pa,
+                   (unsigned long long)(bss_va - bss_pa));
+
+        /* Expected offset should be 0xFFFFFF8000000000 for ARM64 high-VA kernel */
+        uint64_t expected_offset = 0xFFFFFF8000000000ULL;
+        uint64_t actual_offset = bss_va - bss_pa;
+        if (actual_offset != expected_offset) {
+            fut_printf("[VA-PA-CHECK] WARNING: Offset mismatch! Expected=0x%016llx Actual=0x%016llx Diff=0x%016llx\n",
+                       (unsigned long long)expected_offset,
+                       (unsigned long long)actual_offset,
+                       (unsigned long long)(actual_offset - expected_offset));
+        }
+    }
+#endif
+
 #ifdef WAYLAND_INTERACTIVE_MODE
     /* In interactive/headful mode, always enable framebuffer for virtio-gpu */
     bool fb_enabled = true;

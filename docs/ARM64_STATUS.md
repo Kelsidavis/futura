@@ -68,6 +68,24 @@ The ARM64 kernel port has made critical progress in exception handling. Severe b
 
 **Impact**: Boot output now shows concise thread creation without ARM64 implementation details. Boot log reduced from 273 to 262 lines. Debug logging can be re-enabled with `-DDEBUG_THREAD` if needed for thread troubleshooting.
 
+### ✅ PCI BAR Enumeration Logging Cleanup (Commit b1280a6)
+**Achievement**: Silenced verbose PCI BAR enumeration debug logging
+
+**Problem**: PCI ECAM initialization had extensive BAR probe logging producing 14 verbose messages:
+- Size probe results for each BAR (BAR0-BAR5)
+- "Not implemented" messages for unused BARs
+- "I/O space not supported" messages
+- BAR size calculations and type information (32-bit/64-bit)
+- Detailed BAR assignment with register write/readback verification values
+
+**Solution**:
+- Wrapped verbose BAR probe and assignment logging in `#ifdef DEBUG_PCI` guards in `platform/arm64/pci_ecam.c`
+- Kept critical warnings (BAR write verification failures) always enabled
+- Kept essential ECAM initialization messages (ECAM base, access working confirmation)
+- Reduced noise from 17 to 3 PCI messages
+
+**Impact**: Boot output now shows clean PCI initialization without verbose BAR enumeration traces. Boot log reduced from 262 to 248 lines. Debug logging can be re-enabled with `-DDEBUG_PCI` if needed for PCI troubleshooting.
+
 ### ✅ RAMFS Debug Logging Cleanup (Commit 37cd485)
 **Achievement**: Silenced verbose RAMFS debug logging behind DEBUG_RAMFS flag
 

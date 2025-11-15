@@ -181,9 +181,12 @@ typedef struct fut_interrupt_frame {
  *   GIC (Generic Interrupt Controller) Definitions
  * ============================================================ */
 
-/* GICv2 QEMU virt machine addresses */
-#define GICD_BASE               0x08000000  /* Distributor base */
-#define GICC_BASE               0x08010000  /* CPU interface base */
+/* GICv2 QEMU virt machine addresses
+ * Physical addresses: 0x08000000 (GICD), 0x08010000 (GICC)
+ * High VA mappings: 0xFFFFFF8008000000, 0xFFFFFF8008010000 (kernel TTBR1 space)
+ */
+#define GICD_BASE               0xFFFFFF8008000000UL  /* Distributor base */
+#define GICC_BASE               0xFFFFFF8008010000UL  /* CPU interface base */
 
 /* GICD registers */
 #define GICD_CTLR               0x000       /* Control register */
@@ -204,8 +207,11 @@ typedef struct fut_interrupt_frame {
  *   PL011 UART Definitions
  * ============================================================ */
 
-/* PL011 UART registers (QEMU virt machine) */
-#define UART0_BASE              0x09000000
+/* PL011 UART registers (QEMU virt machine)
+ * Physical address: 0x09000000
+ * High VA mapping: 0xFFFFFF8009000000 (kernel TTBR1 space)
+ */
+#define UART0_BASE              0xFFFFFF8009000000UL
 
 #define UART_DR                 0x000       /* Data register */
 #define UART_FR                 0x018       /* Flag register */

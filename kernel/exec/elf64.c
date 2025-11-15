@@ -1404,6 +1404,11 @@ static int build_user_stack(fut_mm_t *mm,
     fut_task_t *task = info->task;
 
     extern void fut_printf(const char *, ...);
+    fut_printf("[TRAMPOLINE] Received: arg=%p info=%p entry=0x%llx sp=0x%llx task=%p\n",
+               arg, info,
+               (unsigned long long)entry,
+               (unsigned long long)sp,
+               task);
 
     /* Get the PGD physical address from the task's memory manager */
     fut_mm_t *mm = task->mm;
@@ -1465,6 +1470,11 @@ static int build_user_stack(fut_mm_t *mm,
     /* page table updates are visible to the hardware page table walker */
     __asm__ volatile("dsb ish" ::: "memory");
     __asm__ volatile("isb" ::: "memory");
+
+    fut_printf("[TRAMPOLINE] About to ERET to entry=0x%llx with sp=0x%llx pgd_phys=0x%llx\n",
+               (unsigned long long)entry,
+               (unsigned long long)sp,
+               (unsigned long long)pgd_phys);
 
     __asm__ volatile(
         /* Set ELR_EL1 (return address for ERET) */
@@ -1859,6 +1869,12 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
     entry->argc = argc;
     entry->argv_ptr = user_sp;
     entry->task = task;
+
+    extern void fut_printf(const char *, ...);
+    fut_printf("[EXEC-ARM64] Set entry structure: entry=0x%llx stack=0x%llx argc=%llu\n",
+               (unsigned long long)entry->entry,
+               (unsigned long long)entry->stack,
+               (unsigned long long)entry->argc);
 
     /* Open stdin/stdout/stderr for the new task.
      * We temporarily switch the current thread's task pointer so that

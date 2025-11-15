@@ -225,12 +225,19 @@ static ssize_t ramfs_read(struct fut_vnode *vnode, void *buf, size_t size, uint6
 
     /* Manual copy to avoid SSE/AVX instructions in memcpy */
     uint8_t *dest = (uint8_t *)buf;
+
+    /* DEBUG: Print file.data pointer value BEFORE using it */
+    if (offset == 0 && to_read >= 4) {
+        fut_printf("[RAMFS-READ-DEBUG] node=%p node->file.data=%p offset=%llu\n",
+                   node, (void*)node->file.data, (unsigned long long)offset);
+    }
+
     const uint8_t *src = node->file.data + (size_t)offset;
 
     /* Debug: check first bytes for ELF magic */
     if (offset == 0 && to_read >= 4) {
         uint32_t *magic = (uint32_t *)src;
-        fut_printf("[RAMFS-READ] First 4 bytes at %p: 0x%08x\n", (void*)src, *magic);
+        fut_printf("[RAMFS-READ] src=%p (after adding offset) First 4 bytes: 0x%08x\n", (void*)src, *magic);
     }
 
     for (size_t i = 0; i < to_read; i++) {

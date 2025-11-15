@@ -107,7 +107,10 @@ bool acpi_init(void) {
     /* Find RSDP */
     rsdp = acpi_find_rsdp();
     if (!rsdp) {
+#ifndef __aarch64__
+        /* On ARM64, acpi_find_rsdp() already explains why ACPI is unavailable */
         fut_printf("[ACPI] RSDP not found\n");
+#endif
         return false;
     }
 

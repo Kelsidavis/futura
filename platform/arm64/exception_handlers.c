@@ -290,6 +290,10 @@ void arm64_exception_dispatch(fut_interrupt_frame_t *frame) {
 
             /* Unhandled data abort - signal task with SIGSEGV */
             uint64_t far = frame->far;  /* Fault address */
+           uint64_t ttbr0, ttbr1;
+            __asm__ volatile("mrs %0, ttbr0_el1" : "=r"(ttbr0));
+            __asm__ volatile("mrs %0, ttbr1_el1" : "=r"(ttbr1));
+
             if (far >= 0xFFFFFF8000000000ULL) {
                 fut_printf("[DATA-ABORT-UNHANDLED] Kernel VA abort: FAR_EL1=0x%016llx PC=0x%016llx\n",
                            (unsigned long long)far, (unsigned long long)frame->pc);
@@ -297,6 +301,12 @@ void arm64_exception_dispatch(fut_interrupt_frame_t *frame) {
                 fut_printf("[DATA-ABORT-UNHANDLED] User VA abort: FAR_EL1=0x%016llx PC=0x%016llx\n",
                            (unsigned long long)far, (unsigned long long)frame->pc);
             }
+            fut_printf("[DATA-ABORT-DEBUG] TTBR0=0x%016llx TTBR1=0x%016llx\n",
+                       (unsigned long long)ttbr0, (unsigned long long)ttbr1);
+            fut_printf("[DATA-ABORT-DEBUG] SP=0x%016llx LR=0x%016llx\n",
+                       (unsigned long long)frame->sp, (unsigned long long)frame->x[30]);
+            fut_printf("[DATA-ABORT-DEBUG] X0=0x%016llx X1=0x%016llx\n",
+                       (unsigned long long)frame->x[0], (unsigned long long)frame->x[1]);
             fut_task_signal_exit(SIGSEGV);
             break;
 

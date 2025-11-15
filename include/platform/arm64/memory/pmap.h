@@ -10,6 +10,7 @@
 #define ARM64_PMAP_H
 
 #include <stdint.h>
+#include <stddef.h>
 
 /* ARM64 Memory Layout (after high VA kernel migration):
  *

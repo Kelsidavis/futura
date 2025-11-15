@@ -455,7 +455,7 @@ static int virtio_gpu_alloc_queues(void) {
     /* For simplicity, allocate directly from a known safe location */
     /* Allocate in guest physical memory for VIRTIO to access */
     uint64_t queue_phys = 0x2000000ULL;  /* Safe location in RAM */
-    uintptr_t queue_virt = pmap_phys_to_virt(queue_phys);
+    uintptr_t queue_virt = (uintptr_t)pmap_phys_to_virt(queue_phys);
 
     if (!queue_virt) {
         fut_printf("[VIRTIO-GPU] Failed to map queue memory\n");
@@ -515,7 +515,7 @@ static int virtio_gpu_alloc_framebuffer(uint32_t width, uint32_t height) {
 
     /* Allocate at a safe physical address */
     uint64_t fb_phys = 0x2100000ULL;  /* After the queue structures */
-    uintptr_t fb_virt = pmap_phys_to_virt(fb_phys);
+    uintptr_t fb_virt = (uintptr_t)pmap_phys_to_virt(fb_phys);
 
     if (!fb_virt) {
         fut_printf("[VIRTIO-GPU] Failed to map framebuffer memory\n");
@@ -762,7 +762,7 @@ int virtio_gpu_init(uint64_t *out_fb_phys, uint32_t width, uint32_t height) {
 
     /* Map command buffer for VIRTIO command submission */
     g_cmd_buffer_phys = CMD_BUFFER_PHYS;
-    uintptr_t cmd_virt = pmap_phys_to_virt(CMD_BUFFER_PHYS);
+    uintptr_t cmd_virt = (uintptr_t)pmap_phys_to_virt(CMD_BUFFER_PHYS);
     if (!cmd_virt) {
         fut_printf("[VIRTIO-GPU] Failed to map command buffer\n");
         return -1;
@@ -774,7 +774,7 @@ int virtio_gpu_init(uint64_t *out_fb_phys, uint32_t width, uint32_t height) {
 
     /* Map response buffer for VIRTIO command responses */
     g_resp_buffer_phys = RESP_BUFFER_PHYS;
-    uintptr_t resp_virt = pmap_phys_to_virt(RESP_BUFFER_PHYS);
+    uintptr_t resp_virt = (uintptr_t)pmap_phys_to_virt(RESP_BUFFER_PHYS);
     if (!resp_virt) {
         fut_printf("[VIRTIO-GPU] Failed to map response buffer\n");
         return -1;

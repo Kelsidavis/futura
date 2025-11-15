@@ -38,6 +38,36 @@ The ARM64 kernel port has made critical progress in exception handling. Severe b
 
 **Impact**: Boot output now shows clean process creation without MM implementation details. Boot log reduced from 312 to 282 lines. Debug logging can be re-enabled with `-DDEBUG_MM` if needed for memory management troubleshooting.
 
+### ✅ Scheduler Context Switch Logging Cleanup (Commit bd1f75c)
+**Achievement**: Silenced verbose scheduler context switch debug logging
+
+**Problem**: Scheduler had verbose "Coop path" logging producing 9 messages per boot showing detailed context switch information:
+- Each context switch logged prev/next thread pointers, context addresses, pstate, ttbr0_el1, and x7 register values
+- Low-level implementation details not useful in normal operation
+- Cluttered boot output with ARM64-specific register dumps
+
+**Solution**:
+- Modified `#if defined(__aarch64__)` guard to `#if defined(__aarch64__) && defined(DEBUG_SCHED)` in `kernel/scheduler/fut_sched.c`
+- Kept important initialization message always enabled
+- Reduced noise from 10 to 1 SCHED message
+
+**Impact**: Boot output now shows clean scheduler initialization without verbose context switch traces. Boot log reduced from 282 to 273 lines. Debug logging can be re-enabled with `-DDEBUG_SCHED` if needed for scheduler troubleshooting.
+
+### ✅ Thread Creation Logging Cleanup (Commit 2c57c0a)
+**Achievement**: Silenced verbose ARM64 thread creation debug logging
+
+**Problem**: Thread creation had redundant logging producing 2 messages per thread (19 total):
+- First message: Generic thread info (tid, priority, entry, thread pointer)
+- Second message: ARM64-specific duplicate (entry point and arg, which is usually 0)
+- Third message: TTBR0_EL1 register details from task memory manager
+
+**Solution**:
+- Wrapped ARM64-specific logging in `#ifdef DEBUG_THREAD` guards in `kernel/threading/fut_thread.c`
+- Kept the important generic thread creation message
+- Silenced 11 redundant messages (ARM64-specific entry/arg and ttbr0_el1 details)
+
+**Impact**: Boot output now shows concise thread creation without ARM64 implementation details. Boot log reduced from 273 to 262 lines. Debug logging can be re-enabled with `-DDEBUG_THREAD` if needed for thread troubleshooting.
+
 ### ✅ RAMFS Debug Logging Cleanup (Commit 37cd485)
 **Achievement**: Silenced verbose RAMFS debug logging behind DEBUG_RAMFS flag
 

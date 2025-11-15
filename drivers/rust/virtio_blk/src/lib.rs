@@ -1338,42 +1338,52 @@ impl VirtioBlkDevice {
     }
 
     fn setup_interrupt(&mut self) -> Result<(), FutStatus> {
-        // Read PCI interrupt line register (offset 0x3C)
-        let interrupt_line = pci_config_read8(self.pci.bus, self.pci.device, self.pci.function, 0x3C);
+        #[cfg(target_arch = "aarch64")]
+        {
+            // ARM64 MMIO: Interrupts configured via GIC, skip PCI interrupt setup
+            log("virtio-blk: ARM64 MMIO mode, skipping PCI interrupt setup");
+            return Ok(());
+        }
 
-        if interrupt_line == 0xFF || interrupt_line == 0 {
-            unsafe {
-                fut_printf(b"[virtio-blk] No valid interrupt line (read 0x%x)\n\0".as_ptr(),
-                    interrupt_line as u32);
+        #[cfg(not(target_arch = "aarch64"))]
+        {
+            // Read PCI interrupt line register (offset 0x3C)
+            let interrupt_line = pci_config_read8(self.pci.bus, self.pci.device, self.pci.function, 0x3C);
+
+            if interrupt_line == 0xFF || interrupt_line == 0 {
+                unsafe {
+                    fut_printf(b"[virtio-blk] No valid interrupt line (read 0x%x)\n\0".as_ptr(),
+                        interrupt_line as u32);
+                }
+                return Err(ENODEV);
             }
-            return Err(ENODEV);
-        }
 
-        // Calculate IRQ vector (IRQ lines start at vector 32)
-        let irq_vector = INT_IRQ_BASE + interrupt_line;
-        VIRTIO_BLK_IRQ_VECTOR.store(irq_vector, Ordering::Relaxed);
+            // Calculate IRQ vector (IRQ lines start at vector 32)
+            let irq_vector = INT_IRQ_BASE + interrupt_line;
+            VIRTIO_BLK_IRQ_VECTOR.store(irq_vector, Ordering::Relaxed);
 
-        unsafe {
-            fut_printf(b"[virtio-blk] Using legacy INTx: IRQ line=%d vector=%d\n\0".as_ptr(),
-                interrupt_line as u32, irq_vector as u32);
-        }
+            unsafe {
+                fut_printf(b"[virtio-blk] Using legacy INTx: IRQ line=%d vector=%d\n\0".as_ptr(),
+                    interrupt_line as u32, irq_vector as u32);
+            }
 
-        // Register interrupt handler with IDT
-        unsafe {
-            let handler_addr = virtio_blk_irq_handler as u64;
-            fut_idt_set_entry(
-                irq_vector,
-                handler_addr,
-                GDT_KERNEL_CODE,
-                IDT_TYPE_INTERRUPT,
-                0  // IST = 0 (use default stack)
-            );
-            fut_printf(b"[virtio-blk] IDT entry registered: vector=%d handler=0x%lx\n\0".as_ptr(),
-                irq_vector as u32, handler_addr);
+            // Register interrupt handler with IDT
+            unsafe {
+                let handler_addr = virtio_blk_irq_handler as u64;
+                fut_idt_set_entry(
+                    irq_vector,
+                    handler_addr,
+                    GDT_KERNEL_CODE,
+                    IDT_TYPE_INTERRUPT,
+                    0  // IST = 0 (use default stack)
+                );
+                fut_printf(b"[virtio-blk] IDT entry registered: vector=%d handler=0x%lx\n\0".as_ptr(),
+                    irq_vector as u32, handler_addr);
 
-            // Unmask the IRQ in the PIC - x86_64 only
-            #[cfg(target_arch = "x86_64")]
-            pic_unmask_irq(interrupt_line);
+                // Unmask the IRQ in the PIC - x86_64 only
+                #[cfg(target_arch = "x86_64")]
+                pic_unmask_irq(interrupt_line);
+            }
         }
 
         Ok(())

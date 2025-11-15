@@ -425,17 +425,28 @@ impl VirtioNetDevice {
 
         let mut dev = Self::uninit();
         dev.pci = pci;
-        dev.setup_bars();
 
-        // Debug: log all BAR values
-        log("virtio-net: All BARs after setup (nonzero only):");
+        // Platform-specific device initialization
+        #[cfg(target_arch = "x86_64")]
+        {
+            dev.setup_bars();
+            log("virtio-net: All BARs after setup (nonzero only):");
 
-        if !dev.parse_capabilities() {
-            log("virtio-net: capability parsing failed");
-            return Err(ENODEV);
+            if !dev.parse_capabilities() {
+                log("virtio-net: capability parsing failed");
+                return Err(ENODEV);
+            }
+
+            dev.enable_bus_master();
         }
 
-        dev.enable_bus_master();
+        #[cfg(target_arch = "aarch64")]
+        {
+            log("virtio-net: ARM64 MMIO initialization - skipping PCI setup");
+            // MMIO device setup is handled by C layer (virtio_mmio_setup_device)
+            // No BARs, capabilities, or bus mastering on MMIO devices
+        }
+
         dev.negotiate_features()?;
         dev.init_queues()?;
         dev.alloc_buffers()?;

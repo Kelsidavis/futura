@@ -119,6 +119,21 @@ The ARM64 kernel port has made critical progress in exception handling. Severe b
 
 **Impact**: Boot output no longer shows file creation implementation details. Boot log reduced from 238 to 220 lines. Debug logging can be re-enabled with `DEBUG_VFS=1` or `-DDEBUG_RAMFS` if needed for filesystem troubleshooting.
 
+### ✅ Binary Staging Debug Logging Cleanup (Commit 70d3365)
+**Achievement**: Silenced verbose binary staging debug logging
+
+**Problem**: ARM64 spawner had verbose file staging logging producing 8 messages:
+- "[stage] Calling fut_vfs_open('path', flags, mode)..." for each binary (4 messages)
+- "[stage] fut_vfs_open returned N" confirmation for each binary (4 messages)
+- Low-level VFS call details not useful in normal operation
+
+**Solution**:
+- Wrapped staging logging in `#ifdef DEBUG_SPAWN` guards in `platform/arm64/platform_init.c`
+- Kept critical error handling (fd < 0 checks) always enabled
+- Reduced noise from 8 to 0 stage messages
+
+**Impact**: Boot output no longer shows VFS call details during binary staging. Boot log reduced from 220 to 212 lines. Debug logging can be re-enabled with `-DDEBUG_SPAWN` if needed for spawner troubleshooting.
+
 ### ✅ RAMFS Debug Logging Cleanup (Commit 37cd485)
 **Achievement**: Silenced verbose RAMFS debug logging behind DEBUG_RAMFS flag
 

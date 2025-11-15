@@ -1002,14 +1002,24 @@ impl VirtioBlkDevice {
     }
 
     fn parse_capabilities(&mut self) -> bool {
-        let mut found_vendor = self.parse_standard_capabilities();
-        if !found_vendor {
-            found_vendor = self.parse_extended_capabilities();
+        #[cfg(target_arch = "aarch64")]
+        {
+            // ARM64 MMIO: Skip PCI capability parsing, use direct MMIO access
+            log("virtio-blk: ARM64 MMIO mode, skipping PCI capability parsing");
+            return true;
         }
-        if !found_vendor {
-            log("virtio-blk: no virtio vendor capabilities discovered");
+
+        #[cfg(not(target_arch = "aarch64"))]
+        {
+            let mut found_vendor = self.parse_standard_capabilities();
+            if !found_vendor {
+                found_vendor = self.parse_extended_capabilities();
+            }
+            if !found_vendor {
+                log("virtio-blk: no virtio vendor capabilities discovered");
+            }
+            !self.common.is_null() && !self.config.is_null() && !self.notify_base.is_null()
         }
-        !self.common.is_null() && !self.config.is_null() && !self.notify_base.is_null()
     }
 
     fn parse_standard_capabilities(&mut self) -> bool {

@@ -1,13 +1,52 @@
 # ARM64 Port Status
 
-**Last Updated**: 2025-11-10
-**Status**: ✅ **VIRTIO GPU WORKING! Graphics support enabled** 🎨
+**Last Updated**: 2025-11-14
+**Status**: ⚠️ **EXCEPTION HANDLERS FIXED, FORK REGRESSION UNDER INVESTIGATION**
 
 ## Overview
 
-The ARM64 kernel port continues to advance! With full multi-process support (MMU, 177 syscalls, fork/exec/wait/exit), the latest milestone adds complete VirtIO GPU support with PCI ECAM configuration space access. Framebuffer is now available at /dev/fb0 with working MMIO, display flush, and rendering capabilities.
+The ARM64 kernel port has made critical progress in exception handling. Severe bugs in IRQ and SError handlers have been identified and fixed - these could have caused random register corruption system-wide. However, fork() is currently broken with a mysterious register corruption issue under investigation. The kernel boots successfully, VirtIO GPU works, and most functionality is operational except multi-process support via fork.
 
-## Latest Progress (2025-11-10)
+## Latest Progress (2025-11-14)
+
+### ✅ Critical Exception Handler Fixes (Commit bb7a42d)
+**Achievement**: Fixed severe bugs in asynchronous exception handlers that could cause register corruption
+
+**Problem**: IRQ and SError handlers were not saving all caller-saved registers before calling C functions.
+
+**Root Cause**:
+- `irq_exception_entry` only saved x0-x3, x29-x30 before calling `arm64_handle_irq()`
+- `serror_exception_entry` only saved x0-x1 before calling `arm64_handle_serror()`
+- Per ARM64 ABI, C functions can clobber x0-x18 (all caller-saved registers)
+- If IRQ/SError fired during critical operations, x4-x18 would be corrupted without restoration
+
+**Solution Applied**:
+- IRQ handler now saves/restores ALL caller-saved registers (x0-x18, x29-x30)
+- SError handler now saves/restores ALL caller-saved registers (x0-x18, x29-x30)
+- Location: `platform/arm64/arm64_vectors.S:274-361`
+
+**Impact**: Critical fix for system stability - prevents random register corruption when asynchronous exceptions occur
+
+### ⚠️ Fork Regression - Register Corruption Mystery
+**Status**: Child processes crash with Translation fault after fork(), x7=0x1 instead of expected 0x401308
+
+**Investigation Summary**:
+- TTBR0_EL1 physical address bug fixed (commit cbdade1)
+- PTE verification shows correct page table setup (commit b054fdc)
+- Fork correctly copies all registers including x7=0x401308 to child context
+- Context switch correctly loads registers from child context
+- Exception handlers now properly save/restore all registers (commit bb7a42d)
+- Despite all fixes, child still executes with corrupted x7=0x1
+
+**Current Theory**: May be QEMU-specific bug or undiscovered ARM64 architectural edge case. Evidence shows correct values everywhere except final execution - suggests something between ERET and user code execution.
+
+**Next Steps**: Test on real ARM64 hardware or use QEMU GDB stub for instruction-level debugging
+
+**Documentation**: See `docs/ARM64_FORK_X7_BUG.md` for detailed investigation log
+
+**Note**: Fork was previously working (as of 2025-11-08), suggesting either regression or incomplete fix from previous session.
+
+## Previous Progress (2025-11-10)
 
 ### ✅ VirtIO GPU Driver + PCI ECAM Support
 **Achievement**: Complete graphics stack operational on ARM64 QEMU virt machine

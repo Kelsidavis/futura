@@ -909,7 +909,12 @@ fut_mm_t *fut_mm_create(void) {
     copy_kernel_half(pgd);
 
     mm->ctx.pgd = pgd;
-    mm->ctx.ttbr0_el1 = (uint64_t)pgd;
+    /* ARM64: TTBR0_EL1 must contain PHYSICAL address, not virtual */
+    extern phys_addr_t pmap_virt_to_phys(uintptr_t virt);
+    phys_addr_t pgd_phys = pmap_virt_to_phys((uintptr_t)pgd);
+    fut_printf("[MM-CREATE] ARM64: PGD virtual=%p physical=0x%llx\n",
+               pgd, (unsigned long long)pgd_phys);
+    mm->ctx.ttbr0_el1 = pgd_phys;
     mm->ctx.ref_count = 1;
     atomic_store_explicit(&mm->refcnt, 1, memory_order_relaxed);
     mm->flags = FUT_MM_USER;

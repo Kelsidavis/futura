@@ -383,6 +383,7 @@ static fut_mm_t *clone_mm(fut_mm_t *parent_mm) {
         #define CLONE_SCAN_START 0x400000ULL
         #define CLONE_SCAN_END   0x500000ULL
 
+        int code_pages_copied = 0;
         for (uint64_t page = CLONE_SCAN_START; page < CLONE_SCAN_END; page += FUT_PAGE_SIZE) {
             uint64_t pte = 0;
 
@@ -394,6 +395,7 @@ static fut_mm_t *clone_mm(fut_mm_t *parent_mm) {
                 continue;
             }
 
+            code_pages_copied++;
             void *child_page = fut_pmm_alloc_page();
             if (!child_page) {
                 fut_mm_release(child_mm);
@@ -413,6 +415,10 @@ static fut_mm_t *clone_mm(fut_mm_t *parent_mm) {
                 return NULL;
             }
         }
+        fut_printf("[FORK] Copied %d code pages from 0x%llx-0x%llx\n",
+                   code_pages_copied,
+                   (unsigned long long)CLONE_SCAN_START,
+                   (unsigned long long)CLONE_SCAN_END);
 
         /* Scan the stack region - must match USER_STACK_TOP in kernel/exec/elf64.c:981 (0x7FFF000000) */
         #define STACK_SCAN_START 0x7FFEFE0000ULL  /* USER_STACK_TOP - (32 pages * 4KB) */

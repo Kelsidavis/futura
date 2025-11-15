@@ -593,7 +593,7 @@ void fut_schedule(void) {
             fut_switch_context_irq(prev, next, fut_current_frame);
         } else {
             // Regular cooperative context switch (uses RET)
-#if defined(__aarch64__)
+#if defined(__aarch64__) && defined(DEBUG_SCHED)
             fut_printf("[SCHED] Coop path: prev=%p next=%p &next->context=%p next->pstate=0x%llx next->ttbr0=0x%llx next->x7=0x%llx\n",
                        (void*)prev, (void*)next, (void*)&next->context,
                        (unsigned long long)next->context.pstate,

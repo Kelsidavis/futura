@@ -1080,6 +1080,13 @@ void fut_kernel_main(void) {
      *   Step 4: Initialize Block Device Subsystem
      * ======================================== */
 
+#ifdef __aarch64__
+    /* On ARM64, initialize VirtIO-MMIO transport layer */
+    extern void virtio_mmio_init(uint64_t dtb_ptr);
+    extern uint64_t arm64_dtb_physical_address;
+    virtio_mmio_init(arm64_dtb_physical_address);
+#endif
+
     fut_printf("[INIT] Initializing block device subsystem...\n");
     fut_blockdev_init();
     fut_blk_core_init();

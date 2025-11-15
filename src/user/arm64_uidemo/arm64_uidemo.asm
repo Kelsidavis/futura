@@ -93,13 +93,13 @@ Disassembly of section .text:
   400154:	d4000001 	svc	#0x0
   400158:	52800000 	mov	w0, #0x0                   	// #0
   40015c:	d65f03c0 	ret
-  400160:	004011c8 	.word	0x004011c8
+  400160:	00402000 	.word	0x00402000
 	...
 
 0000000000400170 <find_index>:
-  400170:	b0000001 	adrp	x1, 401000 <strtol+0xe0>
-  400174:	9108a022 	add	x2, x1, #0x228
-  400178:	f9411426 	ldr	x6, [x1, #552]
+  400170:	f0000001 	adrp	x1, 403000 <g_env_count>
+  400174:	91000022 	add	x2, x1, #0x0
+  400178:	f9400026 	ldr	x6, [x1]
   40017c:	b4000346 	cbz	x6, 4001e4 <find_index+0x74>
   400180:	f9400448 	ldr	x8, [x2, #8]
   400184:	f100001f 	cmp	x0, #0x0
@@ -151,8 +151,8 @@ Disassembly of section .text:
   400234:	940002e7 	bl	400dd0 <strchr>
   400238:	b5001140 	cbnz	x0, 400460 <set_pair+0x260>
   40023c:	f100029f 	cmp	x20, #0x0
-  400240:	b0000013 	adrp	x19, 401000 <strtol+0xe0>
-  400244:	91074273 	add	x19, x19, #0x1d0
+  400240:	d0000013 	adrp	x19, 402000 <__aarch64_swp1_acq+0xe60>
+  400244:	91002273 	add	x19, x19, #0x8
   400248:	aa1503e0 	mov	x0, x21
   40024c:	9a940273 	csel	x19, x19, x20, eq	// eq = none
   400250:	a9046bf9 	stp	x25, x26, [sp, #64]
@@ -163,8 +163,8 @@ Disassembly of section .text:
   400264:	94000263 	bl	400bf0 <strlen>
   400268:	aa0003f9 	mov	x25, x0
   40026c:	b4000497 	cbz	x23, 4002fc <set_pair+0xfc>
-  400270:	b0000014 	adrp	x20, 401000 <strtol+0xe0>
-  400274:	9108a299 	add	x25, x20, #0x228
+  400270:	f0000014 	adrp	x20, 403000 <g_env_count>
+  400274:	91000299 	add	x25, x20, #0x0
   400278:	91004333 	add	x19, x25, #0x10
   40027c:	d503201f 	nop
   400280:	aa1303e1 	mov	x1, x19
@@ -188,7 +188,7 @@ Disassembly of section .text:
   4002c8:	f9400721 	ldr	x1, [x25, #8]
   4002cc:	8b130021 	add	x1, x1, x19
   4002d0:	f9000036 	str	x22, [x1]
-  4002d4:	9108a294 	add	x20, x20, #0x228
+  4002d4:	91000294 	add	x20, x20, #0x0
   4002d8:	91004294 	add	x20, x20, #0x10
   4002dc:	089ffe9f 	stlrb	wzr, [x20]
   4002e0:	a94153f3 	ldp	x19, x20, [sp, #16]
@@ -216,7 +216,7 @@ Disassembly of section .text:
   400338:	9400035a 	bl	4010a0 <memcpy>
   40033c:	3900075f 	strb	wzr, [x26, #1]
   400340:	17ffffcc 	b	400270 <set_pair+0x70>
-  400344:	f9411681 	ldr	x1, [x20, #552]
+  400344:	f9400281 	ldr	x1, [x20]
   400348:	f9400f33 	ldr	x19, [x25, #24]
   40034c:	91000820 	add	x0, x1, #0x2
   400350:	eb13001f 	cmp	x0, x19
@@ -226,7 +226,7 @@ Disassembly of section .text:
   400360:	91000420 	add	x0, x1, #0x1
   400364:	f8217ab6 	str	x22, [x21, x1, lsl #3]
   400368:	8b010ea1 	add	x1, x21, x1, lsl #3
-  40036c:	f9011680 	str	x0, [x20, #552]
+  40036c:	f9000280 	str	x0, [x20]
   400370:	f900043f 	str	xzr, [x1, #8]
   400374:	17ffffd8 	b	4002d4 <set_pair+0xd4>
   400378:	089ffe7f 	stlrb	wzr, [x19]
@@ -242,9 +242,9 @@ Disassembly of section .text:
   4003a0:	aa1803e0 	mov	x0, x24
   4003a4:	94000183 	bl	4009b0 <malloc>
   4003a8:	aa0003f5 	mov	x21, x0
-  4003ac:	9108a280 	add	x0, x20, #0x228
+  4003ac:	91000280 	add	x0, x20, #0x0
   4003b0:	b4000755 	cbz	x21, 400498 <set_pair+0x298>
-  4003b4:	f9411682 	ldr	x2, [x20, #552]
+  4003b4:	f9400282 	ldr	x2, [x20]
   4003b8:	f9400400 	ldr	x0, [x0, #8]
   4003bc:	b4000682 	cbz	x2, 40048c <set_pair+0x28c>
   4003c0:	d2800001 	mov	x1, #0x0                   	// #0
@@ -265,11 +265,11 @@ Disassembly of section .text:
   4003fc:	eb03003f 	cmp	x1, x3
   400400:	54ffffc1 	b.ne	4003f8 <set_pair+0x1f8>  // b.any
   400404:	940001bb 	bl	400af0 <free>
-  400408:	b0000001 	adrp	x1, 401000 <strtol+0xe0>
-  40040c:	f9410421 	ldr	x1, [x1, #520]
-  400410:	9108a280 	add	x0, x20, #0x228
+  400408:	d0000001 	adrp	x1, 402000 <__aarch64_swp1_acq+0xe60>
+  40040c:	f9402021 	ldr	x1, [x1, #64]
+  400410:	91000280 	add	x0, x20, #0x0
   400414:	f9000035 	str	x21, [x1]
-  400418:	f9411681 	ldr	x1, [x20, #552]
+  400418:	f9400281 	ldr	x1, [x20]
   40041c:	f9000415 	str	x21, [x0, #8]
   400420:	f9000c13 	str	x19, [x0, #24]
   400424:	17ffffcf 	b	400360 <set_pair+0x160>
@@ -336,8 +336,8 @@ Disassembly of section .text:
   400510:	f8616862 	ldr	x2, [x3, x1]
   400514:	b5ffff62 	cbnz	x2, 400500 <__libc_init_environ+0x30>
   400518:	91000b18 	add	x24, x24, #0x2
-  40051c:	b000001b 	adrp	x27, 401000 <strtol+0xe0>
-  400520:	9108a37a 	add	x26, x27, #0x228
+  40051c:	f000001b 	adrp	x27, 403000 <g_env_count>
+  400520:	9100037a 	add	x26, x27, #0x0
   400524:	aa0003f6 	mov	x22, x0
   400528:	d37df319 	lsl	x25, x24, #3
   40052c:	aa1903e0 	mov	x0, x25
@@ -368,24 +368,24 @@ Disassembly of section .text:
   400590:	91002273 	add	x19, x19, #0x8
   400594:	eb19027f 	cmp	x19, x25
   400598:	54fffea1 	b.ne	40056c <__libc_init_environ+0x9c>  // b.any
-  40059c:	9108a360 	add	x0, x27, #0x228
+  40059c:	91000360 	add	x0, x27, #0x0
   4005a0:	f9400400 	ldr	x0, [x0, #8]
   4005a4:	f837681f 	str	xzr, [x0, x23]
   4005a8:	a94153f3 	ldp	x19, x20, [sp, #16]
   4005ac:	a9425bf5 	ldp	x21, x22, [sp, #32]
   4005b0:	a9446bf9 	ldp	x25, x26, [sp, #64]
-  4005b4:	f901177c 	str	x28, [x27, #552]
-  4005b8:	b0000001 	adrp	x1, 401000 <strtol+0xe0>
-  4005bc:	f9410421 	ldr	x1, [x1, #520]
+  4005b4:	f900037c 	str	x28, [x27]
+  4005b8:	d0000001 	adrp	x1, 402000 <__aarch64_swp1_acq+0xe60>
+  4005bc:	f9402021 	ldr	x1, [x1, #64]
   4005c0:	f9000020 	str	x0, [x1]
-  4005c4:	9108a360 	add	x0, x27, #0x228
+  4005c4:	91000360 	add	x0, x27, #0x0
   4005c8:	f9000c18 	str	x24, [x0, #24]
   4005cc:	a94363f7 	ldp	x23, x24, [sp, #48]
   4005d0:	a94573fb 	ldp	x27, x28, [sp, #80]
   4005d4:	a8c67bfd 	ldp	x29, x30, [sp], #96
   4005d8:	d65f03c0 	ret
-  4005dc:	b000001b 	adrp	x27, 401000 <strtol+0xe0>
-  4005e0:	9108a360 	add	x0, x27, #0x228
+  4005dc:	f000001b 	adrp	x27, 403000 <g_env_count>
+  4005e0:	91000360 	add	x0, x27, #0x0
   4005e4:	f900041f 	str	xzr, [x0, #8]
   4005e8:	d2800000 	mov	x0, #0x0                   	// #0
   4005ec:	d280001c 	mov	x28, #0x0                   	// #0
@@ -404,8 +404,8 @@ Disassembly of section .text:
   400618:	910003fd 	mov	x29, sp
   40061c:	a90153f3 	stp	x19, x20, [sp, #16]
   400620:	a9025bf5 	stp	x21, x22, [sp, #32]
-  400624:	b0000014 	adrp	x20, 401000 <strtol+0xe0>
-  400628:	9108a295 	add	x21, x20, #0x228
+  400624:	f0000014 	adrp	x20, 403000 <g_env_count>
+  400628:	91000295 	add	x21, x20, #0x0
   40062c:	aa0003f6 	mov	x22, x0
   400630:	910042a1 	add	x1, x21, #0x10
   400634:	52800020 	mov	w0, #0x1                   	// #1
@@ -421,7 +421,7 @@ Disassembly of section .text:
   40065c:	940001dd 	bl	400dd0 <strchr>
   400660:	b4000120 	cbz	x0, 400684 <getenv+0x74>
   400664:	91000400 	add	x0, x0, #0x1
-  400668:	9108a294 	add	x20, x20, #0x228
+  400668:	91000294 	add	x20, x20, #0x0
   40066c:	91004294 	add	x20, x20, #0x10
   400670:	089ffe9f 	stlrb	wzr, [x20]
   400674:	a94153f3 	ldp	x19, x20, [sp, #16]
@@ -429,7 +429,7 @@ Disassembly of section .text:
   40067c:	a8c37bfd 	ldp	x29, x30, [sp], #48
   400680:	d65f03c0 	ret
   400684:	d2800000 	mov	x0, #0x0                   	// #0
-  400688:	9108a294 	add	x20, x20, #0x228
+  400688:	91000294 	add	x20, x20, #0x0
   40068c:	91004294 	add	x20, x20, #0x10
   400690:	089ffe9f 	stlrb	wzr, [x20]
   400694:	a94153f3 	ldp	x19, x20, [sp, #16]
@@ -508,8 +508,8 @@ Disassembly of section .text:
   400790:	94000190 	bl	400dd0 <strchr>
   400794:	b5000560 	cbnz	x0, 400840 <unsetenv+0xd0>
   400798:	a90153f3 	stp	x19, x20, [sp, #16]
-  40079c:	b0000014 	adrp	x20, 401000 <strtol+0xe0>
-  4007a0:	9108a296 	add	x22, x20, #0x228
+  40079c:	f0000014 	adrp	x20, 403000 <g_env_count>
+  4007a0:	91000296 	add	x22, x20, #0x0
   4007a4:	d503201f 	nop
   4007a8:	910042c1 	add	x1, x22, #0x10
   4007ac:	52800020 	mov	w0, #0x1                   	// #1
@@ -519,7 +519,7 @@ Disassembly of section .text:
   4007bc:	97fffe6d 	bl	400170 <find_index>
   4007c0:	2a0003f5 	mov	w21, w0
   4007c4:	36f80120 	tbz	w0, #31, 4007e8 <unsetenv+0x78>
-  4007c8:	9108a294 	add	x20, x20, #0x228
+  4007c8:	91000294 	add	x20, x20, #0x0
   4007cc:	91004294 	add	x20, x20, #0x10
   4007d0:	089ffe9f 	stlrb	wzr, [x20]
   4007d4:	a94153f3 	ldp	x19, x20, [sp, #16]
@@ -532,7 +532,7 @@ Disassembly of section .text:
   4007f0:	91000673 	add	x19, x19, #0x1
   4007f4:	f8755800 	ldr	x0, [x0, w21, uxtw #3]
   4007f8:	940000be 	bl	400af0 <free>
-  4007fc:	f9411683 	ldr	x3, [x20, #552]
+  4007fc:	f9400283 	ldr	x3, [x20]
   400800:	f94006c4 	ldr	x4, [x22, #8]
   400804:	eb03027f 	cmp	x19, x3
   400808:	54000122 	b.cs	40082c <unsetenv+0xbc>  // b.hs, b.nlast
@@ -545,7 +545,7 @@ Disassembly of section .text:
   400824:	eb02001f 	cmp	x0, x2
   400828:	54ffff81 	b.ne	400818 <unsetenv+0xa8>  // b.any
   40082c:	d1000463 	sub	x3, x3, #0x1
-  400830:	f9011683 	str	x3, [x20, #552]
+  400830:	f9000283 	str	x3, [x20]
   400834:	b4fffca4 	cbz	x4, 4007c8 <unsetenv+0x58>
   400838:	f823789f 	str	xzr, [x4, x3, lsl #3]
   40083c:	17ffffe3 	b	4007c8 <unsetenv+0x58>
@@ -563,17 +563,17 @@ Disassembly of section .text:
   400864:	910003fd 	mov	x29, sp
   400868:	a90153f3 	stp	x19, x20, [sp, #16]
   40086c:	a9025bf5 	stp	x21, x22, [sp, #32]
-  400870:	b0000016 	adrp	x22, 401000 <strtol+0xe0>
-  400874:	9108a2d3 	add	x19, x22, #0x228
+  400870:	f0000016 	adrp	x22, 403000 <g_env_count>
+  400874:	910002d3 	add	x19, x22, #0x0
   400878:	91004273 	add	x19, x19, #0x10
   40087c:	d503201f 	nop
   400880:	aa1303e1 	mov	x1, x19
   400884:	52800020 	mov	w0, #0x1                   	// #1
   400888:	94000246 	bl	4011a0 <__aarch64_swp1_acq>
   40088c:	3707ffa0 	tbnz	w0, #0, 400880 <clearenv+0x20>
-  400890:	f94116c0 	ldr	x0, [x22, #552]
+  400890:	f94002c0 	ldr	x0, [x22]
   400894:	b40001a0 	cbz	x0, 4008c8 <clearenv+0x68>
-  400898:	9108a2d5 	add	x21, x22, #0x228
+  400898:	910002d5 	add	x21, x22, #0x0
   40089c:	d2800014 	mov	x20, #0x0                   	// #0
   4008a0:	d2800013 	mov	x19, #0x0                   	// #0
   4008a4:	d503201f 	nop
@@ -585,12 +585,12 @@ Disassembly of section .text:
   4008bc:	f94002a0 	ldr	x0, [x21]
   4008c0:	eb13001f 	cmp	x0, x19
   4008c4:	54ffff28 	b.hi	4008a8 <clearenv+0x48>  // b.pmore
-  4008c8:	9108a2d3 	add	x19, x22, #0x228
+  4008c8:	910002d3 	add	x19, x22, #0x0
   4008cc:	f9400660 	ldr	x0, [x19, #8]
   4008d0:	94000088 	bl	400af0 <free>
-  4008d4:	f90116df 	str	xzr, [x22, #552]
-  4008d8:	b0000000 	adrp	x0, 401000 <strtol+0xe0>
-  4008dc:	f9410400 	ldr	x0, [x0, #520]
+  4008d4:	f90002df 	str	xzr, [x22]
+  4008d8:	d0000000 	adrp	x0, 402000 <__aarch64_swp1_acq+0xe60>
+  4008dc:	f9402000 	ldr	x0, [x0, #64]
   4008e0:	f900067f 	str	xzr, [x19, #8]
   4008e4:	f9000e7f 	str	xzr, [x19, #24]
   4008e8:	f900001f 	str	xzr, [x0]
@@ -606,12 +606,12 @@ Disassembly of section .text:
 0000000000400910 <insert_free_block>:
   400910:	52800021 	mov	w1, #0x1                   	// #1
   400914:	39002001 	strb	w1, [x0, #8]
-  400918:	b0000001 	adrp	x1, 401000 <strtol+0xe0>
-  40091c:	f9412822 	ldr	x2, [x1, #592]
+  400918:	f0000001 	adrp	x1, 403000 <g_env_count>
+  40091c:	f9401422 	ldr	x2, [x1, #40]
   400920:	f100005f 	cmp	x2, #0x0
   400924:	fa401042 	ccmp	x2, x0, #0x2, ne	// ne = any
   400928:	540002a9 	b.ls	40097c <insert_free_block+0x6c>  // b.plast
-  40092c:	f9012820 	str	x0, [x1, #592]
+  40092c:	f9001420 	str	x0, [x1, #40]
   400930:	f9000802 	str	x2, [x0, #16]
   400934:	14000006 	b	40094c <insert_free_block+0x3c>
   400938:	f9400043 	ldr	x3, [x2]
@@ -649,8 +649,8 @@ Disassembly of section .text:
   4009b0:	b4000640 	cbz	x0, 400a78 <malloc+0xc8>
   4009b4:	91003c00 	add	x0, x0, #0xf
   4009b8:	927c6c02 	and	x2, x0, #0xfffffff0
-  4009bc:	b0000005 	adrp	x5, 401000 <strtol+0xe0>
-  4009c0:	f94128a0 	ldr	x0, [x5, #592]
+  4009bc:	f0000005 	adrp	x5, 403000 <g_env_count>
+  4009c0:	f94014a0 	ldr	x0, [x5, #40]
   4009c4:	b4000180 	cbz	x0, 4009f4 <malloc+0x44>
   4009c8:	d2800003 	mov	x3, #0x0                   	// #0
   4009cc:	14000002 	b	4009d4 <malloc+0x24>
@@ -718,7 +718,7 @@ Disassembly of section .text:
   400ac4:	f81f801f 	stur	xzr, [x0, #-8]
   400ac8:	d65f03c0 	ret
   400acc:	91006000 	add	x0, x0, #0x18
-  400ad0:	f90128a4 	str	x4, [x5, #592]
+  400ad0:	f90014a4 	str	x4, [x5, #40]
   400ad4:	381f001f 	sturb	wzr, [x0, #-16]
   400ad8:	f81f801f 	stur	xzr, [x0, #-8]
   400adc:	d65f03c0 	ret
@@ -794,8 +794,8 @@ Disassembly of section .text:
 	...
 
 0000000000400be0 <__errno_location@GLIBC_2.2.5>:
-  400be0:	b0000000 	adrp	x0, 401000 <strtol+0xe0>
-  400be4:	91096000 	add	x0, x0, #0x258
+  400be0:	f0000000 	adrp	x0, 403000 <g_env_count>
+  400be4:	9100c000 	add	x0, x0, #0x30
   400be8:	d65f03c0 	ret
   400bec:	00000000 	udf	#0
 
@@ -1196,8 +1196,8 @@ Disassembly of section .text:
   40119c:	00000000 	udf	#0
 
 00000000004011a0 <__aarch64_swp1_acq>:
-  4011a0:	90000010 	adrp	x16, 401000 <strtol+0xe0>
-  4011a4:	39497210 	ldrb	w16, [x16, #604]
+  4011a0:	d0000010 	adrp	x16, 403000 <g_env_count>
+  4011a4:	3940d210 	ldrb	w16, [x16, #52]
   4011a8:	34000070 	cbz	w16, 4011b4 <__aarch64_swp1_acq+0x14>
   4011ac:	38a08020 	swpab	w0, w0, [x1]
   4011b0:	d65f03c0 	ret

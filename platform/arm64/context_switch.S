@@ -190,8 +190,41 @@ fut_switch_context:
      * before switching. */
 
     /* Set up ELR_EL1 and SPSR_EL1 for exception return */
+
+    /* DEBUG: Log what we're actually loading before setting ELR_EL1 */
+    stp     x0, x1, [sp, #-48]!       /* Save x0, x1 */
+    stp     x2, x3, [sp, #16]         /* Save x2, x3 */
+    stp     x30, xzr, [sp, #32]       /* Save LR */
+
+    /* Load and log the values */
+    mov     x0, x1                     /* x0 = context pointer */
+    ldr     x1, [x0, #240]            /* x1 = value at offset 240 (x30_lr) */
+    ldr     x2, [x0, #264]            /* x2 = value at offset 264 (pc) */
+
+    /* Call debug function: void debug_context_switch(void *ctx, uint64_t lr_val, uint64_t pc_val) */
+    bl      debug_context_switch
+
+    /* Restore registers */
+    ldp     x30, xzr, [sp, #32]
+    ldp     x2, x3, [sp, #16]
+    ldp     x0, x1, [sp], #48
+
     ldr     x2, [x1, #264]            /* Load PC from new offset 264 */
     msr     elr_el1, x2               /* Set exception return address */
+
+    /* DEBUG: Read back ELR_EL1 to verify it was set correctly */
+    mrs     x3, elr_el1
+    cmp     x2, x3
+    b.eq    1f
+    /* ELR_EL1 doesn't match what we set! */
+    stp     x0, x1, [sp, #-32]!
+    stp     x2, x3, [sp, #16]
+    mov     x0, x2                    /* Expected value */
+    mov     x1, x3                    /* Actual ELR_EL1 value */
+    bl      debug_elr_mismatch
+    ldp     x2, x3, [sp, #16]
+    ldp     x0, x1, [sp], #32
+1:
 
     ldr     x2, [x1, #272]            /* Load PSTATE from new offset 272 */
     msr     spsr_el1, x2              /* Set saved processor state */
@@ -199,6 +232,13 @@ fut_switch_context:
     /* Restore SP_EL0 (user stack pointer) - CRITICAL for userspace */
     ldr     x2, [x1, #256]            /* Load SP_EL0 from new offset 256 */
     msr     sp_el0, x2                /* Set user stack pointer */
+
+    /* DEBUG CHECKPOINT 1: After SPSR/SP_EL0 set */
+    stp     x0, x1, [sp, #-16]!
+    mrs     x0, elr_el1
+    mov     x1, #0xC1                 /* 'A' + checkpoint 1 marker */
+    bl      debug_elr_checkpoint
+    ldp     x0, x1, [sp], #16
 
     /* Strategy: Save both context pointer (x1) and user's x2 to stack early,
      * then restore ALL user registers from context, then use stack values for
@@ -221,6 +261,13 @@ fut_switch_context:
     ldp     x27, x28, [x1, #216]      /* Restore x27, x28 */
     ldp     x29, x30, [x1, #232]      /* Restore FP (x29), LR (x30) from new offset 232 */
 
+    /* DEBUG CHECKPOINT 2: After callee-saved register restore */
+    stp     x0, x1, [sp, #-16]!
+    mrs     x0, elr_el1
+    mov     x1, #0xC2                 /* 'B' + checkpoint 2 marker */
+    bl      debug_elr_checkpoint
+    ldp     x0, x1, [sp], #16
+
     /* Restore caller-saved registers x3-x18 (needed for fork) */
     ldr     x3, [x1, #24]             /* Restore x3 */
     ldp     x4, x5, [x1, #32]         /* Restore x4, x5 */
@@ -236,16 +283,36 @@ fut_switch_context:
     /* Restore x0 and x1 BEFORE switching page table */
     ldp     x0, x1, [x1, #0]          /* Restore x0 and x1 */
 
+    /* DEBUG CHECKPOINT 3: Before page table switch */
+    stp     x0, x1, [sp, #-16]!
+    mrs     x0, elr_el1
+    mov     x1, #0xC3                 /* 'C' + checkpoint 3 marker */
+    bl      debug_elr_checkpoint
+    ldp     x0, x1, [sp], #16
+
     /* Now ALL user registers except x2 have correct values.
      * Pop TTBR0 from stack and switch page table */
     ldr     x2, [sp], #16             /* Pop TTBR0 value into x2 */
     msr     ttbr0_el1, x2             /* Set user page table base */
     isb                               /* Instruction synchronization barrier */
 
+    /* DEBUG CHECKPOINT 4: After page table switch */
+    stp     x0, x1, [sp, #-16]!
+    mrs     x0, elr_el1
+    mov     x1, #0xC4                 /* 'D' + checkpoint 4 marker */
+    bl      debug_elr_checkpoint
+    ldp     x0, x1, [sp], #16
+
     /* Stack now has [context_ptr, user_x2]. Pop user's x2 value.
      * Skip context_ptr (we don't need it anymore). */
     ldr     x2, [sp, #8]              /* Load user's x2 from stack */
     add     sp, sp, #16               /* Pop both values from stack */
+
+    /* DEBUG: Check ELR_EL1 one final time before ERET */
+    stp     x0, x1, [sp, #-16]!
+    mrs     x0, elr_el1
+    bl      debug_elr_before_eret
+    ldp     x0, x1, [sp], #16
 
     /* Exception return to EL0 */
     eret

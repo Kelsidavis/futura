@@ -753,76 +753,23 @@ static fut_thread_t *clone_thread(fut_thread_t *parent_thread, fut_task_t *child
                (unsigned long long)child_thread->context.x30_lr);
 
     /*
-     * CRITICAL: Copy parent's stack to child's stack
-     * Without MMU, parent and child share the same physical memory.
-     * We must copy the stack contents so each process has independent stack.
+     * NOTE: Child's kernel stack (context.sp) is already initialized by fut_thread_create.
      *
-     * ARM64 stacks grow downward:
-     * - stack_base = lowest address (bottom of stack)
-     * - stack_base + stack_size = highest address (top of stack)
-     * - SP grows downward from top
+     * We do NOT copy the parent's kernel stack because:
+     * 1. frame->sp is the parent's USER stack (SP_EL0), not kernel stack
+     * 2. The child will ERET to user mode, not return via kernel stack unwinding
+     * 3. fut_thread_create already set context.sp to top of child's kernel stack
+     *
+     * The child's kernel stack just needs to be valid for context switch machinery.
      */
-    uint64_t parent_sp = frame->sp;
-    uintptr_t parent_stack_base;
-    size_t parent_stack_size;
-    uintptr_t child_stack_top = (uintptr_t)child_thread->stack_base + child_thread->stack_size;
 
-    /* Detect which stack the parent is using
-     * If the SP is outside the thread's registered stack range, infer the stack
-     * bounds from the SP itself (assume 8KB stack aligned to 8KB boundary)
-     */
-    uintptr_t thread_stack_base = (uintptr_t)parent_thread->stack_base;
-    uintptr_t thread_stack_top = thread_stack_base + parent_thread->stack_size;
-    uintptr_t parent_stack_top;
-
-    if (parent_sp >= thread_stack_base && parent_sp < thread_stack_top) {
-        /* Parent is using registered thread stack */
-        parent_stack_base = thread_stack_base;
-        parent_stack_size = parent_thread->stack_size;
-        parent_stack_top = thread_stack_top;
-    } else {
-        /* Parent is using a different stack (e.g., el0_test_stack)
-         * Infer stack bounds: align SP down to 4KB boundary, assume 4KB stack
-         */
-        parent_stack_base = parent_sp & ~0xFFFUL;  /* Align down to 4KB */
-        parent_stack_size = 4096;
-        parent_stack_top = parent_stack_base + parent_stack_size;
-        fut_printf("[FORK] Inferred parent stack from SP: base=0x%llx size=%zu\n",
-                   (uint64_t)parent_stack_base, parent_stack_size);
-    }
-
-    /* Calculate how much of parent's stack is in use */
-    if (parent_sp >= parent_stack_base && parent_sp < parent_stack_top) {
-        size_t stack_used = parent_stack_top - parent_sp;
-
-        /* Validate stack bounds */
-        if (stack_used > parent_stack_size || stack_used > child_thread->stack_size) {
-            fut_printf("[FORK] ERROR: Invalid stack usage (used=%zu, parent_size=%zu, child_size=%zu)\n",
-                       stack_used, parent_stack_size, child_thread->stack_size);
-            return NULL;
-        }
-
-        /* Calculate child's new SP at the same offset from stack top */
-        uint64_t child_sp = child_stack_top - stack_used;
-
-        /* Copy parent's stack contents to child (used portion only) */
-        memcpy((void *)child_sp, (void *)parent_sp, stack_used);
-
-        /* Set child's SP to point to the copied stack */
-        child_thread->context.sp = child_sp;
-
-        fut_printf("[FORK] Stack copied: parent_sp=0x%llx child_sp=0x%llx size=%zu bytes\n",
-                   parent_sp, child_sp, stack_used);
-    } else {
-        /* SP is outside known stacks - use child's stack top and hope for the best */
-        child_thread->context.sp = child_stack_top;
-        fut_printf("[FORK] WARNING: Parent SP (0x%llx) outside known stacks, using child stack top\n",
-                   parent_sp);
-    }
-
-    fut_printf("[FORK] Parent frame: PC=0x%llx SP=0x%llx\n", frame->pc, frame->sp);
-    fut_printf("[FORK] Child context: PC=0x%llx SP=0x%llx X0=0\n",
-               child_thread->context.pc, child_thread->context.sp);
+    fut_printf("[FORK] Child kernel stack: base=%p top=%p sp=%p\n",
+               child_thread->stack_base,
+               (void *)((uintptr_t)child_thread->stack_base + child_thread->stack_size),
+               (void *)child_thread->context.sp);
+    fut_printf("[FORK] Child will ERET to user mode: pc=0x%llx sp_el0=0x%llx\n",
+               (unsigned long long)child_thread->context.pc,
+               (unsigned long long)child_thread->context.sp_el0);
 
 #endif
 

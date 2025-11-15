@@ -49,43 +49,13 @@ void fut_perf_selftest_schedule(void) {
 /* virtio_net_init now implemented in Rust for ARM64 - see drivers/rust/virtio_net */
 
 /* ============================================================
- *   Userland Binary Staging Stubs (x86-64 specific)
- * ============================================================ */
-
-int fut_stage_shell_binary(void) {
-    return -ENODEV;  /* Userland not available for ARM64 */
-}
-
-int fut_stage_init_binary(void) {
-    return -ENODEV;  /* Userland not available for ARM64 */
-}
-
-int fut_stage_cat_binary(void) {
-    return -ENODEV;  /* Userland not available for ARM64 */
-}
-
-int fut_stage_echo_binary(void) {
-    return -ENODEV;  /* Userland not available for ARM64 */
-}
-
-int fut_stage_wc_binary(void) {
-    return -ENODEV;  /* Userland not available for ARM64 */
-}
-
-int fut_stage_fsd_binary(void) {
-    return -ENODEV;  /* Userland not available for ARM64 */
-}
-
-int fut_stage_posixd_binary(void) {
-    return -ENODEV;  /* Userland not available for ARM64 */
-}
-
-int fut_stage_fbtest_binary(void) {
-    return -ENODEV;  /* Userland not available for ARM64 */
-}
-
-/* ============================================================
  *   Wayland Staging Stubs (x86-64 specific)
+ * ============================================================
+ *
+ * NOTE: ARM64 userland binary staging works differently than x86-64.
+ *       ARM64 uses arm64_init_spawner_thread() in platform_init.c
+ *       which stages binaries directly via stage_arm64_blob().
+ *       The fut_stage_*_binary() functions are x86-64 specific.
  * ============================================================ */
 
 int fut_stage_wayland_compositor_binary(void) {

@@ -886,8 +886,9 @@ void fut_kernel_main(void) {
                    (unsigned long long)bss_va, (unsigned long long)bss_pa,
                    (unsigned long long)(bss_va - bss_pa));
 
-        /* Expected offset should be 0xFFFFFF8000000000 for ARM64 high-VA kernel */
-        uint64_t expected_offset = 0xFFFFFF8000000000ULL;
+        /* Expected offset: Virtual base 0xFFFFFF8040000000 - Physical load 0x40200000
+         * (QEMU virt reserves 0x40000000-0x40200000 for DTB) */
+        uint64_t expected_offset = 0xFFFFFF7FFFE00000ULL;
         uint64_t actual_offset = bss_va - bss_pa;
         if (actual_offset != expected_offset) {
             fut_printf("[VA-PA-CHECK] WARNING: Offset mismatch! Expected=0x%016llx Actual=0x%016llx Diff=0x%016llx\n",

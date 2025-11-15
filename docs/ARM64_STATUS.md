@@ -86,6 +86,39 @@ The ARM64 kernel port has made critical progress in exception handling. Severe b
 
 **Impact**: Boot output now shows clean PCI initialization without verbose BAR enumeration traces. Boot log reduced from 262 to 248 lines. Debug logging can be re-enabled with `-DDEBUG_PCI` if needed for PCI troubleshooting.
 
+### ✅ Stack Mapping Debug Logging Cleanup (Commit 51de073)
+**Achievement**: Silenced verbose stack mapping debug logging
+
+**Problem**: ELF loader had verbose stack staging logging producing 10 messages (5 per process):
+- "stage_stack_pages() called" entry logging
+- "Mapping stack: start=... end=... pages=..." parameters
+- "Mapped page X: vaddr=... phys=..." for first and last pages
+- "Successfully staged N stack pages, stack_top=..." completion confirmation
+
+**Solution**:
+- Wrapped verbose logging in `#ifdef DEBUG_ELF` guards in `kernel/exec/elf64.c`
+- Kept critical error messages (allocation failures, mapping failures) always enabled
+- Reduced noise from 10 to 0 STACK messages
+
+**Impact**: Boot output no longer shows stack mapping implementation details. Boot log reduced from 248 to 238 lines. Debug logging can be re-enabled with `-DDEBUG_ELF` if needed for stack troubleshooting.
+
+### ✅ VFS and RAMFS File Creation Logging Cleanup (Commit 2d629dd)
+**Achievement**: Silenced verbose VFS and RAMFS file creation debug logging
+
+**Problem**: VFS and RAMFS had extensive file creation logging producing 18+ messages per boot:
+- VFS-OPEN: "SUCCESS: opened 'X' as fd=Y (mode=...)" for every file open (6 messages)
+- RAMFS-CREATE-ENTRY: Entry point logging with dir/name/mode/result pointers (4 messages)
+- RAMFS-CREATE: "Creating file 'X': new vnode=... new node=..." with pointer details (4 messages)
+- RAMFS-CREATE: "Set vnode->fs_data=..." implementation details (4 messages)
+
+**Solution**:
+- Fixed VFS logging to use `#if DEBUG_VFS` instead of `#ifdef DEBUG_VFS` (DEBUG_VFS is defined as 0)
+- Wrapped RAMFS-CREATE-ENTRY logging in `#ifdef DEBUG_RAMFS` guards
+- Wrapped RAMFS-CREATE verbose messages in `#ifdef DEBUG_RAMFS` guards
+- Kept critical error messages (invalid params, allocation failures) always enabled
+
+**Impact**: Boot output no longer shows file creation implementation details. Boot log reduced from 238 to 220 lines. Debug logging can be re-enabled with `DEBUG_VFS=1` or `-DDEBUG_RAMFS` if needed for filesystem troubleshooting.
+
 ### ✅ RAMFS Debug Logging Cleanup (Commit 37cd485)
 **Achievement**: Silenced verbose RAMFS debug logging behind DEBUG_RAMFS flag
 

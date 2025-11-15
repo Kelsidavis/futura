@@ -236,11 +236,13 @@ static ssize_t ramfs_read(struct fut_vnode *vnode, void *buf, size_t size, uint6
 
     const uint8_t *src = node->file.data + (size_t)offset;
 
+#ifdef DEBUG_RAMFS
     /* Debug: check first bytes for ELF magic */
     if (offset == 0 && to_read >= 4) {
         uint32_t *magic = (uint32_t *)src;
         fut_printf("[RAMFS-READ] src=%p (after adding offset) First 4 bytes: 0x%08x\n", (void*)src, *magic);
     }
+#endif
 
     for (size_t i = 0; i < to_read; i++) {
         dest[i] = src[i];

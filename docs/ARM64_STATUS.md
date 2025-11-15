@@ -23,6 +23,21 @@ The ARM64 kernel port has made critical progress in exception handling. Severe b
 
 **Impact**: Boot output now shows clean process spawning messages instead of detailed segment loading and page translation traces. Debug logging can be re-enabled with `-DDEBUG_ELF` if needed for ELF loader troubleshooting.
 
+### ✅ Memory Manager Debug Logging Cleanup (Commit 78fd518)
+**Achievement**: Silenced verbose MM debug logging for memory context creation and kernel page table copying
+
+**Problem**: Memory manager had extensive debug logging producing ~30 messages per boot:
+- MM-CREATE: ~5 messages per MM context (allocation, PGD allocation, virtual/physical addresses, success confirmation)
+- COPY-KERNEL: ~3 messages per MM context (DRAM mapping, peripheral mapping, verification)
+- Each process spawn (init, uidemo, forktest, shell) created an MM context with full debug traces
+
+**Solution**:
+- Wrapped verbose logging in `#ifdef DEBUG_MM` guards in `kernel/memory/fut_mm.c`
+- Kept critical error messages (malloc failures, pmm_alloc_page failures) always enabled
+- Reduced boot noise from 30+ messages to zero
+
+**Impact**: Boot output now shows clean process creation without MM implementation details. Boot log reduced from 312 to 282 lines. Debug logging can be re-enabled with `-DDEBUG_MM` if needed for memory management troubleshooting.
+
 ### ✅ RAMFS Debug Logging Cleanup (Commit 37cd485)
 **Achievement**: Silenced verbose RAMFS debug logging behind DEBUG_RAMFS flag
 

@@ -1763,56 +1763,82 @@ int fut_exec_elf_memory(const void *elf_data, size_t elf_size, char *const argv[
 
 int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
     extern void fut_printf(const char *, ...);
+#ifdef DEBUG_ELF
     fut_printf("[EXEC-ELF] ENTER: path=%s\n", path ? path : "(null)");
+#endif
 
     if (!path) return -EINVAL;
 
     int fd = fut_vfs_open(path, O_RDONLY, 0);
+#ifdef DEBUG_ELF
     fut_printf("[EXEC-ELF] fut_vfs_open returned fd=%d\n", fd);
+#endif
     if (fd < 0) return fd;
 
     elf64_ehdr_t ehdr;
+#ifdef DEBUG_ELF
     fut_printf("[EXEC-ELF] About to read ELF header (%llu bytes)\n", (unsigned long long)sizeof(ehdr));
+#endif
     int rc = read_exact(fd, &ehdr, sizeof(ehdr));
+#ifdef DEBUG_ELF
     fut_printf("[EXEC-ELF] read_exact returned rc=%d\n", rc);
+#endif
     if (rc != 0) {
         fut_vfs_close(fd);
         return rc;
     }
 
+#ifdef DEBUG_ELF
     fut_printf("[EXEC-ELF] Verifying ELF header...\n");
+#endif
     /* Verify ELF header */
     if (*(uint32_t *)ehdr.e_ident != ELF_MAGIC ||
         ehdr.e_ident[4] != ELF_CLASS_64 ||
         ehdr.e_ident[5] != ELF_DATA_LE ||
         ehdr.e_machine != 0xB7) {  /* EM_AARCH64 = 0xB7 */
+#ifdef DEBUG_ELF
         fut_printf("[EXEC-ELF] ELF header invalid\n");
+#endif
         fut_vfs_close(fd);
         return -EINVAL;
     }
 
+#ifdef DEBUG_ELF
     fut_printf("[EXEC-ELF] ELF header valid, phnum=%d\n", ehdr.e_phnum);
+#endif
     size_t ph_size = (size_t)ehdr.e_phnum * sizeof(elf64_phdr_t);
+#ifdef DEBUG_ELF
     fut_printf("[EXEC-ELF] About to allocate %llu bytes for program headers\n", (unsigned long long)ph_size);
+#endif
     elf64_phdr_t *phdrs = fut_malloc(ph_size);
+#ifdef DEBUG_ELF
     fut_printf("[EXEC-ELF] fut_malloc returned %p\n", phdrs);
+#endif
     if (!phdrs) {
         fut_vfs_close(fd);
         return -ENOMEM;
     }
 
+#ifdef DEBUG_ELF
     fut_printf("[EXEC-ELF] About to lseek to phoff=0x%llx\n", (unsigned long long)ehdr.e_phoff);
+#endif
     int64_t seek_rc = fut_vfs_lseek(fd, (int64_t)ehdr.e_phoff, SEEK_SET);
+#ifdef DEBUG_ELF
     fut_printf("[EXEC-ELF] lseek returned %lld\n", (long long)seek_rc);
+#endif
     if (seek_rc < 0) {
         fut_free(phdrs);
         fut_vfs_close(fd);
         return (int)seek_rc;
     }
 
+#ifdef DEBUG_ELF
     fut_printf("[EXEC-ELF] About to read %llu bytes of program headers\n", (unsigned long long)ph_size);
+#endif
     rc = read_exact(fd, phdrs, ph_size);
+#ifdef DEBUG_ELF
     fut_printf("[EXEC-ELF] read_exact for phdrs returned rc=%d\n", rc);
+#endif
     if (rc != 0) {
         fut_free(phdrs);
         fut_vfs_close(fd);
@@ -1820,18 +1846,26 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
     }
 
     /* Create task and memory manager */
+#ifdef DEBUG_ELF
     fut_printf("[EXEC-ELF] About to create task\n");
+#endif
     fut_task_t *task = fut_task_create();
+#ifdef DEBUG_ELF
     fut_printf("[EXEC-ELF] fut_task_create returned %p\n", task);
+#endif
     if (!task) {
         fut_free(phdrs);
         fut_vfs_close(fd);
         return -ENOMEM;
     }
 
+#ifdef DEBUG_ELF
     fut_printf("[EXEC-ELF] About to create mm\n");
+#endif
     fut_mm_t *mm = fut_mm_create();
+#ifdef DEBUG_ELF
     fut_printf("[EXEC-ELF] fut_mm_create returned %p\n", mm);
+#endif
     if (!mm) {
         fut_task_destroy(task);
         fut_free(phdrs);
@@ -1839,9 +1873,13 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
         return -ENOMEM;
     }
 
+#ifdef DEBUG_ELF
     fut_printf("[EXEC-ELF] About to set mm on task\n");
+#endif
     fut_task_set_mm(task, mm);
+#ifdef DEBUG_ELF
     fut_printf("[EXEC-ELF] Task mm set\n");
+#endif
 
 #ifdef __aarch64__
     /* ARM64: For the spawner thread running exec, we need to update ITS context
@@ -1850,28 +1888,40 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
     fut_thread_t *cur_thread = fut_thread_current();
     if (cur_thread) {
         cur_thread->context.ttbr0_el1 = mm->ctx.ttbr0_el1;
+#ifdef DEBUG_ELF
         fut_printf("[EXEC-ELF] ARM64: Updated cur_thread %p context.ttbr0_el1=0x%llx\n",
                    cur_thread, (unsigned long long)mm->ctx.ttbr0_el1);
+#endif
 
         /* Load TTBR0 now so map_segment can access user space */
         __asm__ volatile("msr ttbr0_el1, %0; isb" :: "r"(mm->ctx.ttbr0_el1));
+#ifdef DEBUG_ELF
         fut_printf("[EXEC-ELF] ARM64: Loaded TTBR0 hardware register\n");
+#endif
     }
 #endif
 
     /* Map LOAD segments */
     uintptr_t heap_base_candidate = 0;
+#ifdef DEBUG_ELF
     fut_printf("[EXEC-ELF] About to map %d program headers\n", ehdr.e_phnum);
+#endif
     for (uint16_t i = 0; i < ehdr.e_phnum; ++i) {
         if (phdrs[i].p_type != PT_LOAD) {
+#ifdef DEBUG_ELF
             fut_printf("[EXEC-ELF] phdr[%d]: type=%d (skipping non-LOAD)\n", i, phdrs[i].p_type);
+#endif
             continue;
         }
 
+#ifdef DEBUG_ELF
         fut_printf("[EXEC-ELF] Mapping segment %d: vaddr=0x%llx memsz=0x%llx\n",
                    i, (unsigned long long)phdrs[i].p_vaddr, (unsigned long long)phdrs[i].p_memsz);
+#endif
         rc = map_segment(mm, fd, &phdrs[i]);
+#ifdef DEBUG_ELF
         fut_printf("[EXEC-ELF] map_segment returned rc=%d\n", rc);
+#endif
         if (rc != 0) {
             fut_task_destroy(task);
             fut_free(phdrs);
@@ -1906,10 +1956,14 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
     if (argv) {
         while (argv[argc]) argc++;
     }
+#ifdef DEBUG_ELF
     fut_printf("[EXEC-DBG] Before build_user_stack: task=%p task->threads=%p\n", task, task->threads);
+#endif
     rc = build_user_stack(mm, (const char *const *)argv, argc, (const char *const *)envp, 0, &user_sp);
+#ifdef DEBUG_ELF
     fut_printf("[EXEC-DBG] After build_user_stack: task=%p task->threads=%p user_sp=0x%llx\n",
                task, task->threads, (unsigned long long)user_sp);
+#endif
     if (rc != 0) {
         fut_task_destroy(task);
         fut_free(phdrs);
@@ -1932,11 +1986,13 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
     entry->argv_ptr = user_sp;
     entry->task = task;
 
+#ifdef DEBUG_ELF
     extern void fut_printf(const char *, ...);
     fut_printf("[EXEC-ARM64] Set entry structure: entry=0x%llx stack=0x%llx argc=%llu\n",
                (unsigned long long)entry->entry,
                (unsigned long long)entry->stack,
                (unsigned long long)entry->argc);
+#endif
 
     /* Open stdin/stdout/stderr for the new task.
      * We temporarily switch the current thread's task pointer so that
@@ -1958,9 +2014,11 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
     }
 
     /* Create thread with trampoline */
+#ifdef DEBUG_ELF
     extern void fut_printf(const char *, ...);
     fut_printf("[EXEC-ARM64] About to create thread: trampoline=%p entry_struct=%p user_entry=0x%llx\n",
                (void*)fut_user_trampoline_arm64, (void*)entry, (unsigned long long)entry->entry);
+#endif
 
     fut_thread_t *thread = fut_thread_create(task,
                                              fut_user_trampoline_arm64,

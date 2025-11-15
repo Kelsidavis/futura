@@ -62,8 +62,10 @@ fut_task_t *fut_task_create(void) {
     /* Zero out the entire structure first to avoid uninitialized memory */
     memset(task, 0, sizeof(fut_task_t));
 
+#ifdef DEBUG_TASK
     extern void fut_printf(const char *, ...);
     fut_printf("[TASK-CREATE-DBG] After memset: task=%p task->threads=%p\n", task, task->threads);
+#endif
 
     fut_task_t *parent = NULL;
     fut_thread_t *curr = fut_thread_current();
@@ -148,21 +150,27 @@ fut_task_t *fut_task_create(void) {
  * Add a thread to a task's thread list.
  */
 void fut_task_add_thread(fut_task_t *task, fut_thread_t *thread) {
+#ifdef DEBUG_TASK
     extern void fut_printf(const char *, ...);
+#endif
 
     if (!task || !thread) {
         return;
     }
 
+#ifdef DEBUG_TASK
     // Debug: Log task->threads value before linking
     fut_printf("[ADD-THREAD-DBG] task=%p thread=%p task->threads=%p thread_count=%d\n",
                task, thread, task->threads, task->thread_count);
+#endif
 
     // Link thread into task's thread list
     thread->next = task->threads;
     if (task->threads) {
+#ifdef DEBUG_TASK
         fut_printf("[ADD-THREAD-DBG] About to write prev: task->threads=%p task->threads->prev_addr=%p\n",
                    task->threads, &task->threads->prev);
+#endif
         task->threads->prev = thread;
     }
     thread->prev = NULL;

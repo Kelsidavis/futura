@@ -13,6 +13,8 @@
 
 #if defined(__x86_64__)
 #include <platform/x86_64/memory/pmap.h>
+#elif defined(__aarch64__)
+#include <platform/arm64/memory/pmap.h>
 #endif
 
 /* ============================================================
@@ -64,12 +66,11 @@ void fut_pmm_init(uint64_t mem_size_bytes, uintptr_t phys_base) {
 
     // Bitmap size: 1 bit per page
     uint64_t bitmap_bytes = (pmm_total + 7u) / 8u;
-    pmm_bitmap =
-#if defined(__x86_64__)
-        (uint8_t *)(uintptr_t)pmap_phys_to_virt((phys_addr_t)phys_base);
-#else
-        (uint8_t *)(uintptr_t)phys_base;
-#endif
+
+    /* Map physical bitmap location to kernel virtual address
+     * Both x86_64 and ARM64 now use high-VA kernels, so we need phys_to_virt translation
+     */
+    pmm_bitmap = (uint8_t *)(uintptr_t)pmap_phys_to_virt((phys_addr_t)phys_base);
 
     // Clear the bitmap (all pages free initially)
     for (uint64_t i = 0; i < bitmap_bytes; ++i) {
@@ -102,6 +103,9 @@ void *fut_pmm_alloc_page(void) {
              * Use direct computation to ensure compiler doesn't optimize it away. */
             uintptr_t virt = phys + KERNEL_VIRTUAL_BASE;
             return (void *)virt;
+#elif defined(__aarch64__)
+            /* ARM64: Convert physical address to kernel virtual address */
+            return pmap_phys_to_virt(phys);
 #else
             return (void *)(uintptr_t)phys;
 #endif

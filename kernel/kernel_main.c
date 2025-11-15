@@ -28,6 +28,13 @@
 #include <kernel/console.h>
 #include <kernel/boot_banner.h>
 #include <kernel/boot_args.h>
+
+/* Platform-specific memory mapping */
+#if defined(__x86_64__)
+#include <platform/x86_64/memory/pmap.h>
+#elif defined(__aarch64__)
+#include <platform/arm64/memory/pmap.h>
+#endif
 #include <kernel/fut_percpu.h>
 #include <kernel/input.h>
 #include <kernel/platform_hooks.h>
@@ -806,15 +813,11 @@ void fut_kernel_main(void) {
 
     /* Heap region starts after PMM allocation region
      * NOTE: arch_memory_config returns physical addresses,
-     * but fut_heap_init expects virtual addresses. */
-#ifdef __x86_64__
-    extern uintptr_t pmap_phys_to_virt(phys_addr_t paddr);
-    uintptr_t heap_start = pmap_phys_to_virt(ram_start);
-    uintptr_t heap_end = pmap_phys_to_virt(ram_start + heap_size);
-#else
-    uintptr_t heap_start = ram_start;
-    uintptr_t heap_end = heap_start + heap_size;
-#endif
+     * but fut_heap_init expects virtual addresses.
+     * Both x86_64 and ARM64 now use high-VA kernels and need phys_to_virt.
+     */
+    uintptr_t heap_start = (uintptr_t)pmap_phys_to_virt(ram_start);
+    uintptr_t heap_end = (uintptr_t)pmap_phys_to_virt(ram_start + heap_size);
 
     /* Debug: print heap addresses before initialization */
 
@@ -886,13 +889,11 @@ void fut_kernel_main(void) {
                fb_enabled ? 1 : 0, fb_available ? 1 : 0);
 
 #ifdef __aarch64__
-    /* ARM64: Initialize PCI and probe for virtio-gpu device */
-    extern void arm64_pci_init(void);
-    arm64_pci_init();
-
-    fb_boot_splash();
-    fb_available = fb_is_available();
-    fut_printf("[INIT] ARM64: After probe, fb_available=%d\n", fb_available ? 1 : 0);
+    /* ARM64: PCI initialization disabled (ECAM region needs page table mapping)
+     * TODO: Add ECAM region (0x4010000000) to boot.S page tables
+     */
+    fut_printf("[INIT] ARM64: PCI initialization skipped (ECAM not mapped yet)\n");
+    fb_available = 0;
 #endif
 
 #ifdef WAYLAND_INTERACTIVE_MODE

@@ -65,6 +65,38 @@ const VIRTIO_STATUS_DRIVER: u8 = 2;
 const VIRTIO_STATUS_DRIVER_OK: u8 = 4;
 const VIRTIO_STATUS_FEATURES_OK: u8 = 8;
 
+// VirtIO MMIO Register Offsets (ARM64)
+#[cfg(target_arch = "aarch64")]
+const VIRTIO_MMIO_DEVICE_FEATURES: u32 = 0x010;
+#[cfg(target_arch = "aarch64")]
+const VIRTIO_MMIO_DEVICE_FEATURES_SEL: u32 = 0x014;
+#[cfg(target_arch = "aarch64")]
+const VIRTIO_MMIO_DRIVER_FEATURES: u32 = 0x020;
+#[cfg(target_arch = "aarch64")]
+const VIRTIO_MMIO_DRIVER_FEATURES_SEL: u32 = 0x024;
+#[cfg(target_arch = "aarch64")]
+const VIRTIO_MMIO_QUEUE_SEL: u32 = 0x030;
+#[cfg(target_arch = "aarch64")]
+const VIRTIO_MMIO_QUEUE_NUM_MAX: u32 = 0x034;
+#[cfg(target_arch = "aarch64")]
+const VIRTIO_MMIO_QUEUE_NUM: u32 = 0x038;
+#[cfg(target_arch = "aarch64")]
+const VIRTIO_MMIO_QUEUE_READY: u32 = 0x044;
+#[cfg(target_arch = "aarch64")]
+const VIRTIO_MMIO_STATUS: u32 = 0x070;
+#[cfg(target_arch = "aarch64")]
+const VIRTIO_MMIO_QUEUE_DESC_LOW: u32 = 0x080;
+#[cfg(target_arch = "aarch64")]
+const VIRTIO_MMIO_QUEUE_DESC_HIGH: u32 = 0x084;
+#[cfg(target_arch = "aarch64")]
+const VIRTIO_MMIO_QUEUE_DRIVER_LOW: u32 = 0x090;
+#[cfg(target_arch = "aarch64")]
+const VIRTIO_MMIO_QUEUE_DRIVER_HIGH: u32 = 0x094;
+#[cfg(target_arch = "aarch64")]
+const VIRTIO_MMIO_QUEUE_DEVICE_LOW: u32 = 0x0a0;
+#[cfg(target_arch = "aarch64")]
+const VIRTIO_MMIO_QUEUE_DEVICE_HIGH: u32 = 0x0a4;
+
 const VIRTQ_DESC_F_NEXT: u16 = 1;
 const VIRTQ_DESC_F_WRITE: u16 = 2;
 
@@ -376,6 +408,11 @@ struct VirtioNetDevice {
     notify_base: *mut u8,
     notify_off_multiplier: u32,
     config: *mut VirtioNetConfig,
+
+    // ARM64 MMIO transport fields
+    #[cfg(target_arch = "aarch64")]
+    mmio_base: u64,  // MMIO base address for register access
+
     rx_queue: VirtQueue,
     tx_queue: VirtQueue,
     rx_buffers: [*mut u8; QUEUE_SIZE as usize],
@@ -400,6 +437,10 @@ impl VirtioNetDevice {
             notify_base: ptr::null_mut(),
             notify_off_multiplier: 0,
             config: ptr::null_mut(),
+
+            #[cfg(target_arch = "aarch64")]
+            mmio_base: 0,
+
             rx_queue: VirtQueue::new(),
             tx_queue: VirtQueue::new(),
             rx_buffers: [NULL_PTR; QUEUE_SIZE as usize],

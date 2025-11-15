@@ -33,3 +33,10 @@ void fut_debug_show_x6_x7_loaded(uint64_t x6_val, uint64_t x7_val)
 {
     fut_printf("[LDP-DEBUG] After ldp x6, x7: x6=0x%llx x7=0x%llx\n", x6_val, x7_val);
 }
+
+/* Called before loading x6/x7 to show what's in memory */
+void fut_debug_before_x7_load(uint64_t ctx_ptr, uint64_t x6_from_mem, uint64_t x7_from_mem)
+{
+    fut_printf("[CTX-LOAD-DEBUG] Before ldp x6,x7: ctx=%p mem[+48]=0x%llx mem[+56]=0x%llx\n",
+               (void*)ctx_ptr, x6_from_mem, x7_from_mem);
+}

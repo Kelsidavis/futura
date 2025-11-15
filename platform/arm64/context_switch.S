@@ -226,7 +226,6 @@ fut_switch_context:
     ldp     x4, x5, [x1, #32]         /* Restore x4, x5 */
 
     ldp     x6, x7, [x1, #48]         /* Restore x6, x7 - x7 contains string table pointer! */
-
     ldp     x8, x9, [x1, #64]         /* Restore x8, x9 */
     ldp     x10, x11, [x1, #80]       /* Restore x10, x11 */
     ldp     x12, x13, [x1, #96]       /* Restore x12, x13 */
@@ -247,6 +246,14 @@ fut_switch_context:
      * Skip context_ptr (we don't need it anymore). */
     ldr     x2, [sp, #8]              /* Load user's x2 from stack */
     add     sp, sp, #16               /* Pop both values from stack */
+
+    /* Ensure all register loads complete */
+    dsb     sy                        /* Data synchronization barrier */
+    isb                               /* Instruction synchronization barrier */
+
+    /* Disable interrupts before ERET to prevent IRQ from clobbering registers */
+    msr     daifset, #0xf             /* Disable Debug, SError, IRQ, FIQ */
+    isb                               /* Ensure interrupt mask takes effect */
 
     /* Exception return to EL0 */
     eret
@@ -585,6 +592,10 @@ fut_save_context:
     .asciz "x7"
 .Ldebug_msg_ctx_x7:
     .asciz "ctx_load"
+.Ldebug_x7_fmt:
+    .asciz "[CTX-SWITCH] Loaded x7=0x%llx before ERET\n"
+.Ldebug_x7_before_eret_fmt:
+    .asciz "[CTX-SWITCH] x7=0x%llx RIGHT BEFORE ERET\n"
 
 .section .text
 

@@ -272,20 +272,44 @@ lower_el_aarch32_serror:
 
 /* IRQ Exception Entry - saves state and calls C handler */
 irq_exception_entry:
-    /* Save minimal context */
+    /* Save ALL caller-saved registers (x0-x18) that C code can clobber
+     * This is critical for fork: if IRQ fires during context switch return,
+     * we must preserve all registers including x7 (string table pointer) */
     sub     sp, sp, #880
+
+    /* Save x0-x18 (all caller-saved registers) */
     stp     x0, x1, [sp, #0]
     stp     x2, x3, [sp, #16]
+    stp     x4, x5, [sp, #32]
+    stp     x6, x7, [sp, #48]      // Critical: x7 must be preserved!
+    stp     x8, x9, [sp, #64]
+    stp     x10, x11, [sp, #80]
+    stp     x12, x13, [sp, #96]
+    stp     x14, x15, [sp, #112]
+    stp     x16, x17, [sp, #128]
+    str     x18, [sp, #144]
+
+    /* Save callee-saved registers and FP/LR */
     stp     x29, x30, [sp, #224]
 
     /* Call C IRQ handler */
     mov     x0, sp
     bl      arm64_handle_irq
 
-    /* Restore context */
+    /* Restore ALL registers in reverse order */
     ldp     x29, x30, [sp, #224]
+
+    ldr     x18, [sp, #144]
+    ldp     x16, x17, [sp, #128]
+    ldp     x14, x15, [sp, #112]
+    ldp     x12, x13, [sp, #96]
+    ldp     x10, x11, [sp, #80]
+    ldp     x8, x9, [sp, #64]
+    ldp     x6, x7, [sp, #48]      // Restore x7!
+    ldp     x4, x5, [sp, #32]
     ldp     x2, x3, [sp, #16]
     ldp     x0, x1, [sp, #0]
+
     add     sp, sp, #880
     eret
 
@@ -295,12 +319,44 @@ fiq_exception_entry:
 
 /* SError Exception Entry - system error */
 serror_exception_entry:
-    /* Save minimal context and call handler */
+    /* Save ALL caller-saved registers (x0-x18) that C code can clobber
+     * SErrors are asynchronous and can fire at any time, including during
+     * context switch, so we must preserve all registers */
     sub     sp, sp, #880
+
+    /* Save x0-x18 (all caller-saved registers) */
     stp     x0, x1, [sp, #0]
+    stp     x2, x3, [sp, #16]
+    stp     x4, x5, [sp, #32]
+    stp     x6, x7, [sp, #48]      // Preserve x7
+    stp     x8, x9, [sp, #64]
+    stp     x10, x11, [sp, #80]
+    stp     x12, x13, [sp, #96]
+    stp     x14, x15, [sp, #112]
+    stp     x16, x17, [sp, #128]
+    str     x18, [sp, #144]
+
+    /* Save callee-saved registers and FP/LR */
+    stp     x29, x30, [sp, #224]
+
+    /* Call C SError handler */
     mov     x0, sp
     bl      arm64_handle_serror
+
+    /* Restore ALL registers in reverse order */
+    ldp     x29, x30, [sp, #224]
+
+    ldr     x18, [sp, #144]
+    ldp     x16, x17, [sp, #128]
+    ldp     x14, x15, [sp, #112]
+    ldp     x12, x13, [sp, #96]
+    ldp     x10, x11, [sp, #80]
+    ldp     x8, x9, [sp, #64]
+    ldp     x6, x7, [sp, #48]      // Restore x7
+    ldp     x4, x5, [sp, #32]
+    ldp     x2, x3, [sp, #16]
     ldp     x0, x1, [sp, #0]
+
     add     sp, sp, #880
     eret
 

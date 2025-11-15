@@ -7,6 +7,7 @@
  */
 
 #include <platform/arm64/memory/paging.h>
+#include <platform/arm64/memory/pmap.h>
 #include <platform/arm64/regs.h>
 #include <kernel/fut_mm.h>
 #include <kernel/fut_memory.h>
@@ -188,8 +189,9 @@ static page_table_t *get_or_create_table(page_table_t *parent_table, int index, 
             return NULL;
         }
 
-        /* Create table descriptor pointing to new table */
-        uint64_t phys_addr = (uint64_t)new_table;
+        /* Create table descriptor pointing to new table
+         * CRITICAL: PTEs must contain physical addresses, not virtual */
+        uint64_t phys_addr = pmap_virt_to_phys(new_table);
         pte_t table_desc = fut_make_pte(phys_addr, PTE_VALID | PTE_TABLE);
         parent_table->entries[index] = table_desc;
 
@@ -704,10 +706,14 @@ fut_vmem_context_t *fut_vmem_create(void) {
     fut_printf("[VMEM-CREATE] new L1[256] = 0x%llx\n",
                (unsigned long long)ctx->pgd->entries[256]);
 
-    ctx->ttbr0_el1 = (uint64_t)ctx->pgd;
+    /* CRITICAL: TTBR0_EL1 must contain physical address, not virtual
+     * ctx->pgd is a kernel VA (0xFFFFFF80...), convert to PA */
+    ctx->ttbr0_el1 = pmap_virt_to_phys(ctx->pgd);
     ctx->ref_count = 1;
 
-    fut_printf("[VMEM-CREATE] TTBR0 will be set to 0x%llx\n",
+    fut_printf("[VMEM-CREATE] PGD VA=0x%llx PA=0x%llx, TTBR0=0x%llx\n",
+               (unsigned long long)ctx->pgd,
+               (unsigned long long)ctx->ttbr0_el1,
                (unsigned long long)ctx->ttbr0_el1);
 
     return ctx;
@@ -856,9 +862,10 @@ void fut_kernel_unmap(void *vaddr, uint64_t size) {
  * Sets up kernel page tables and enables MMU.
  */
 void fut_paging_init(void) {
-    /* Initialize kernel VMem context */
+    /* Initialize kernel VMem context
+     * CRITICAL: TTBR0_EL1 must contain physical address */
     kernel_vmem_context.pgd = &kernel_pgd;
-    kernel_vmem_context.ttbr0_el1 = (uint64_t)&kernel_pgd;
+    kernel_vmem_context.ttbr0_el1 = pmap_virt_to_phys(&kernel_pgd);
     kernel_vmem_context.ref_count = 1;
 
     /* Set up memory attributes */
@@ -900,8 +907,9 @@ void fut_paging_init(void) {
 
     write_tcr_el1(tcr);
 
-    /* Load kernel TTBR1_EL1 */
-    write_ttbr1_el1((uint64_t)&kernel_pgd);
+    /* Load kernel TTBR1_EL1
+     * CRITICAL: TTBR1_EL1 must contain physical address */
+    write_ttbr1_el1(pmap_virt_to_phys(&kernel_pgd));
 
     /* Enable MMU by setting SCTLR_EL1.M bit */
     uint64_t sctlr = read_sctlr_el1();

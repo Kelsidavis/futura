@@ -290,8 +290,13 @@ void arm64_exception_dispatch(fut_interrupt_frame_t *frame) {
 
             /* Unhandled data abort - signal task with SIGSEGV */
             uint64_t far = frame->far;  /* Fault address */
-            fut_printf("[DATA-ABORT-UNHANDLED] Unhandled abort at VA=0x%llx PC=0x%llx\n",
-                       far, frame->pc);
+            if (far >= 0xFFFFFF8000000000ULL) {
+                fut_printf("[DATA-ABORT-UNHANDLED] Kernel VA abort: FAR_EL1=0x%016llx PC=0x%016llx\n",
+                           (unsigned long long)far, (unsigned long long)frame->pc);
+            } else {
+                fut_printf("[DATA-ABORT-UNHANDLED] User VA abort: FAR_EL1=0x%016llx PC=0x%016llx\n",
+                           (unsigned long long)far, (unsigned long long)frame->pc);
+            }
             fut_task_signal_exit(SIGSEGV);
             break;
 

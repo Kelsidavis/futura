@@ -11,9 +11,6 @@ void fut_test_pass(void) {}
 void fut_test_fail(void) {}
 int fut_tests_completed(void) { return 1; }
 
-/* Block device stubs - async test (not implemented) */
-void fut_blk_async_selftest_schedule(struct fut_task *task __attribute__((unused))) {}
-
 /* Filesystem stubs - async test (not implemented) */
 void fut_futfs_selftest_schedule(struct fut_task *task __attribute__((unused))) {}
 

@@ -224,7 +224,9 @@ fut_switch_context:
     /* Restore caller-saved registers x3-x18 (needed for fork) */
     ldr     x3, [x1, #24]             /* Restore x3 */
     ldp     x4, x5, [x1, #32]         /* Restore x4, x5 */
+
     ldp     x6, x7, [x1, #48]         /* Restore x6, x7 - x7 contains string table pointer! */
+
     ldp     x8, x9, [x1, #64]         /* Restore x8, x9 */
     ldp     x10, x11, [x1, #80]       /* Restore x10, x11 */
     ldp     x12, x13, [x1, #96]       /* Restore x12, x13 */

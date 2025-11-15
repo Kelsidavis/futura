@@ -40,3 +40,9 @@ void fut_debug_before_x7_load(uint64_t ctx_ptr, uint64_t x6_from_mem, uint64_t x
     fut_printf("[CTX-LOAD-DEBUG] Before ldp x6,x7: ctx=%p mem[+48]=0x%llx mem[+56]=0x%llx\n",
                (void*)ctx_ptr, x6_from_mem, x7_from_mem);
 }
+
+/* Called immediately after loading x6,x7 to show what's in registers */
+void fut_debug_after_x7_load(uint64_t x6_val, uint64_t x7_val)
+{
+    fut_printf("[AFTER-LDP] x6=0x%llx x7=0x%llx\n", x6_val, x7_val);
+}

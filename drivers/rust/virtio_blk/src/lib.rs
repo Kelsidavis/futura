@@ -919,6 +919,7 @@ impl VirtioBlkDevice {
         dev.read_geometry();
 
         /* Set DRIVER_OK after all setup is complete (required by virtio spec) */
+        #[cfg(not(target_arch = "aarch64"))]
         unsafe {
             let current_status = common_read8(dev.common, VIRTIO_PCI_COMMON_STATUS);
             common_write8(dev.common, VIRTIO_PCI_COMMON_STATUS, current_status | VIRTIO_STATUS_DRIVER_OK);
@@ -927,6 +928,19 @@ impl VirtioBlkDevice {
             let queue_enabled = common_read16(dev.common, VIRTIO_PCI_COMMON_Q_ENABLE);
             fut_printf(b"[virtio-blk] DRIVER_OK set: status=0x%x queue_enable=%d\n\0".as_ptr(),
                 final_status as u32, queue_enabled as u32);
+        }
+
+        #[cfg(target_arch = "aarch64")]
+        {
+            // On ARM64 MMIO, set DRIVER_OK via MMIO status register
+            let current_status = dev.mmio_read32(VIRTIO_MMIO_STATUS) as u8;
+            dev.mmio_write32(VIRTIO_MMIO_STATUS, (current_status | VIRTIO_STATUS_DRIVER_OK) as u32);
+
+            let final_status = dev.mmio_read32(VIRTIO_MMIO_STATUS);
+            log("virtio-blk: DRIVER_OK set via MMIO");
+            unsafe {
+                fut_printf(b"[virtio-blk] DRIVER_OK set: status=0x%x\n\0".as_ptr(), final_status);
+            }
         }
 
         Ok(dev)
@@ -1601,6 +1615,7 @@ impl VirtioBlkDevice {
         Ok(())
     }
 
+    #[cfg(target_arch = "x86_64")]
     fn read_geometry(&mut self) {
         unsafe {
             if self.config.is_null() {
@@ -1611,6 +1626,23 @@ impl VirtioBlkDevice {
             self.block_size = if blk_size == 0 { 512 } else { blk_size };
             self.has_flush = (*self.config).writeback != 0;
         }
+    }
+
+    #[cfg(target_arch = "aarch64")]
+    fn read_geometry(&mut self) {
+        // On ARM64 MMIO, read device config directly from MMIO registers
+        // Config space starts at offset 0x100
+        let capacity_low = self.mmio_read32(0x100) as u64;
+        let capacity_high = self.mmio_read32(0x104) as u64;
+        self.capacity_sectors = (capacity_high << 32) | capacity_low;
+
+        let blk_size = self.mmio_read32(0x114);
+        self.block_size = if blk_size == 0 { 512 } else { blk_size };
+
+        // Writeback feature - not critical for basic operation
+        self.has_flush = false;
+
+        log("virtio-blk: Read device geometry from MMIO config space");
     }
 
     #[cfg(target_arch = "x86_64")]

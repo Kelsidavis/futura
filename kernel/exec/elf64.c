@@ -1844,19 +1844,19 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
     fut_printf("[EXEC-ELF] Task mm set\n");
 
 #ifdef __aarch64__
-    /* ARM64: Load the new page table immediately so subsequent kernel code
-     * (like map_segment) can access user space through TTBR0 */
-    __asm__ volatile("msr ttbr0_el1, %0; isb" :: "r"(mm->ctx.ttbr0_el1));
-
-    /* CRITICAL: Also update current thread's context so that context switches
-     * don't revert TTBR0 to the old value! */
+    /* ARM64: For the spawner thread running exec, we need to update ITS context
+     * with the new task's TTBR0. Normally fut_task_set_mm only updates if
+     * current->task == task, but exec creates a NEW task so we must handle manually. */
     fut_thread_t *cur_thread = fut_thread_current();
     if (cur_thread) {
         cur_thread->context.ttbr0_el1 = mm->ctx.ttbr0_el1;
-    }
+        fut_printf("[EXEC-ELF] ARM64: Updated cur_thread %p context.ttbr0_el1=0x%llx\n",
+                   cur_thread, (unsigned long long)mm->ctx.ttbr0_el1);
 
-    fut_printf("[EXEC-ELF] ARM64: Loaded TTBR0=0x%llx (cur_thread=%p)\n",
-               (unsigned long long)mm->ctx.ttbr0_el1, cur_thread);
+        /* Load TTBR0 now so map_segment can access user space */
+        __asm__ volatile("msr ttbr0_el1, %0; isb" :: "r"(mm->ctx.ttbr0_el1));
+        fut_printf("[EXEC-ELF] ARM64: Loaded TTBR0 hardware register\n");
+    }
 #endif
 
     /* Map LOAD segments */

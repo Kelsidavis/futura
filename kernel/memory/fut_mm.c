@@ -695,7 +695,7 @@ void fut_mm_system_init(void) {
 
     /* Initialize kernel page table root (architecture-neutral) */
     fut_vmem_set_root(&kernel_mm.ctx, fut_get_kernel_pgd());
-    fut_vmem_set_reload_value(&kernel_mm.ctx, (uint64_t)fut_vmem_get_root(&kernel_mm.ctx));
+    fut_vmem_set_reload_value(&kernel_mm.ctx, pmap_virt_to_phys(fut_vmem_get_root(&kernel_mm.ctx)));
     kernel_mm.ctx.ref_count = 1;
     atomic_store_explicit(&kernel_mm.refcnt, 1, memory_order_relaxed);
     kernel_mm.flags = FUT_MM_KERNEL;

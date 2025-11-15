@@ -18,6 +18,7 @@
 #include <platform/x86_64/memory/pmap.h>
 #elif defined(__aarch64__)
 #include <platform/arm64/memory/paging.h>
+#include <platform/arm64/memory/pmap.h>
 #endif
 
 #include <stdbool.h>
@@ -219,7 +220,7 @@ int fut_copy_from_user(void *k_dst, const void *u_src, size_t n) {
     __asm__ volatile("dsb sy" ::: "memory");
 
     /* Switch back to kernel page table */
-    __asm__ volatile("msr ttbr0_el1, %0; isb" :: "r"((uint64_t)&boot_l1_table));
+    __asm__ volatile("msr ttbr0_el1, %0; isb" :: "r"(pmap_virt_to_phys(&boot_l1_table)));
 #endif
 
     /* Clear AC flag */
@@ -237,7 +238,7 @@ copy_fault:
         __asm__ volatile("clac");
 #elif defined(__aarch64__)
         extern page_table_t boot_l1_table;
-        __asm__ volatile("msr ttbr0_el1, %0; isb" :: "r"((uint64_t)&boot_l1_table));
+        __asm__ volatile("msr ttbr0_el1, %0; isb" :: "r"(pmap_virt_to_phys(&boot_l1_table)));
 #endif
         int err = fut_uaccess_window_error();
         uaccess_clear();
@@ -312,7 +313,7 @@ int fut_copy_to_user(void *u_dst, const void *k_src, size_t n) {
     __asm__ volatile("isb" ::: "memory");
 
     /* Switch back to kernel page table */
-    __asm__ volatile("msr ttbr0_el1, %0; isb" :: "r"((uint64_t)&boot_l1_table));
+    __asm__ volatile("msr ttbr0_el1, %0; isb" :: "r"(pmap_virt_to_phys(&boot_l1_table)));
 #endif
 
     /* Clear AC flag */
@@ -330,7 +331,7 @@ copy_fault:
         __asm__ volatile("clac");
 #elif defined(__aarch64__)
         extern page_table_t boot_l1_table;
-        __asm__ volatile("msr ttbr0_el1, %0; isb" :: "r"((uint64_t)&boot_l1_table));
+        __asm__ volatile("msr ttbr0_el1, %0; isb" :: "r"(pmap_virt_to_phys(&boot_l1_table)));
 #endif
         int err = fut_uaccess_window_error();
         uaccess_clear();

@@ -811,23 +811,27 @@ $(WAYLAND_SHELL_BLOB): $(WAYLAND_SHELL_BIN) | $(OBJ_DIR)/kernel/blobs
 	@$(OBJCOPY) -I binary -O $(OBJCOPY_BIN_FMT) -B $(OBJCOPY_BIN_ARCH) $< $@
 
 # ARM64 userland binaries and blobs
-$(ARM64_INIT_BIN):
+.PHONY: arm64-libfutura
+arm64-libfutura:
+	@$(MAKE) -C src/user/libfutura PLATFORM=arm64 all
+
+$(ARM64_INIT_BIN): arm64-libfutura
 	@echo "Building ARM64 init..."
 	@$(MAKE) -C src/user/init PLATFORM=arm64 all
 
-$(ARM64_SHELL_BIN):
+$(ARM64_SHELL_BIN): arm64-libfutura
 	@echo "Building ARM64 shell..."
 	@$(MAKE) -C src/user/shell -f Makefile.simple PLATFORM=arm64 all
 
-$(ARM64_FBTEST_BIN):
+$(ARM64_FBTEST_BIN): arm64-libfutura
 	@echo "Building ARM64 fbtest..."
 	@$(MAKE) -C src/user/fbtest PLATFORM=arm64 all
 
-$(ARM64_UIDEMO_BIN):
+$(ARM64_UIDEMO_BIN): arm64-libfutura
 	@echo "Building ARM64 uidemo..."
 	@$(MAKE) -C src/user/arm64_uidemo PLATFORM=arm64 all
 
-$(ARM64_FORKTEST_BIN):
+$(ARM64_FORKTEST_BIN): arm64-libfutura
 	@echo "Building ARM64 forktest..."
 	@$(MAKE) -C src/user/forktest PLATFORM=arm64 all
 

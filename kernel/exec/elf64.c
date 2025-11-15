@@ -1124,11 +1124,13 @@ static int map_segment(fut_mm_t *mm, int fd, const elf64_phdr_t *phdr) {
     uintptr_t addr = PAGE_ALIGN_DOWN(phdr->p_vaddr);
     size_t pages_needed = (phdr->p_vaddr + phdr->p_memsz - addr + PAGE_SIZE - 1) / PAGE_SIZE;
 
+#ifdef DEBUG_ELF
     fut_printf("[MAP-SEG-ARM64] vaddr=0x%llx memsz=0x%llx filesz=0x%llx pages=%llu prot=%d\n",
                (unsigned long long)phdr->p_vaddr,
                (unsigned long long)phdr->p_memsz,
                (unsigned long long)phdr->p_filesz,
                (unsigned long long)pages_needed, prot);
+#endif
 
     for (size_t i = 0; i < pages_needed; i++) {
         uint64_t page_addr = addr + (i * PAGE_SIZE);
@@ -1140,8 +1142,10 @@ static int map_segment(fut_mm_t *mm, int fd, const elf64_phdr_t *phdr) {
         }
 
         phys_addr_t phys = pmap_virt_to_phys((uintptr_t)page);
+#ifdef DEBUG_ELF
         fut_printf("[MAP-SEG-ARM64] Page %llu: vaddr=0x%llx phys=0x%llx prot=%d\n",
                    (unsigned long long)i, (unsigned long long)page_addr, (unsigned long long)phys, prot);
+#endif
 
         if (pmap_map_user(vmem, page_addr, phys, PAGE_SIZE, prot) != 0) {
             fut_printf("[MAP-SEG-ARM64] ERROR: pmap_map_user failed for page %llu\n",
@@ -1151,24 +1155,32 @@ static int map_segment(fut_mm_t *mm, int fd, const elf64_phdr_t *phdr) {
         }
     }
 
+#ifdef DEBUG_ELF
     fut_printf("[MAP-SEG-ARM64] Successfully mapped %llu pages\n", (unsigned long long)pages_needed);
+#endif
 
     /* Read file data into mapped pages */
+#ifdef DEBUG_ELF
     fut_printf("[MAP-SEG-ARM64] Seeking to file offset 0x%llx\n", (unsigned long long)phdr->p_offset);
+#endif
     int64_t seek_pos = fut_vfs_lseek(fd, (int64_t)phdr->p_offset, SEEK_SET);
     if (seek_pos < 0) {
         fut_printf("[MAP-SEG-ARM64] ERROR: lseek failed with %lld\n", (long long)seek_pos);
         return (int)seek_pos;
     }
 
+#ifdef DEBUG_ELF
     fut_printf("[MAP-SEG-ARM64] Allocating buffer for %llu bytes\n", (unsigned long long)phdr->p_filesz);
+#endif
     uint8_t *buf = fut_malloc(phdr->p_filesz);
     if (!buf) {
         fut_printf("[MAP-SEG-ARM64] ERROR: malloc failed for buffer\n");
         return -ENOMEM;
     }
 
+#ifdef DEBUG_ELF
     fut_printf("[MAP-SEG-ARM64] Reading %llu bytes from file\n", (unsigned long long)phdr->p_filesz);
+#endif
     int rc = read_exact(fd, buf, phdr->p_filesz);
     if (rc != 0) {
         fut_printf("[MAP-SEG-ARM64] ERROR: read_exact failed with %d\n", rc);
@@ -1176,14 +1188,18 @@ static int map_segment(fut_mm_t *mm, int fd, const elf64_phdr_t *phdr) {
         return rc;
     }
 
+#ifdef DEBUG_ELF
     fut_printf("[MAP-SEG-ARM64] Copying data to user space at 0x%llx\n", (unsigned long long)phdr->p_vaddr);
+#endif
     if (exec_copy_to_user(mm, phdr->p_vaddr, buf, phdr->p_filesz) != 0) {
         fut_printf("[MAP-SEG-ARM64] ERROR: exec_copy_to_user failed\n");
         fut_free(buf);
         return -EFAULT;
     }
 
+#ifdef DEBUG_ELF
     fut_printf("[MAP-SEG-ARM64] Segment load complete\n");
+#endif
     __asm__ volatile("dmb sy" ::: "memory");
     fut_free(buf);
     return 0;

@@ -7,8 +7,6 @@
 
 #include <kernel/fut_memory.h>
 #include <platform/platform.h>
-
-#include <stdlib.h>
 #include <string.h>
 
 static bool g_futfs_crash_compaction = false;

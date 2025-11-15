@@ -14,9 +14,6 @@
 #include <platform/platform.h>
 #include <platform/arm64/dtb.h>
 #include <platform/arm64/memory/pmap.h>
-#include <platform/arm64/interrupt/gic.h>
-#include <kernel/memory/pmm.h>
-#include <kernel/memory/vmm.h>
 
 /* ============================================================
  *   VirtIO MMIO Register Offsets (VirtIO 1.0 Spec)
@@ -196,6 +193,14 @@ static int virtio_mmio_init_queue(virtio_mmio_device_t *dev, uint32_t queue_idx,
         queue_size = max_size;
     }
 
+    /* TODO: Allocate queue memory (descriptor, available, and used rings) */
+    /* For now, virtqueue setup is stubbed out - device detection works without it */
+    (void)dev;
+    (void)queue_idx;
+    (void)queue_size;
+    return -1;  /* Not implemented yet */
+
+#if 0  /* Disabled until PMM multi-page allocation is available */
     /* Allocate queue memory (descriptor, available, and used rings) */
     size_t desc_size = sizeof(struct virtq_desc) * queue_size;
     size_t avail_size = sizeof(struct virtq_avail) + sizeof(uint16_t) * queue_size + sizeof(uint16_t);
@@ -216,7 +221,6 @@ static int virtio_mmio_init_queue(virtio_mmio_device_t *dev, uint32_t queue_idx,
         fut_pmm_free_pages(desc_phys, total_pages);
         return -1;
     }
-
     /* Zero the memory */
     memset((void *)desc_virt, 0, total_pages * 4096);
 
@@ -247,6 +251,7 @@ static int virtio_mmio_init_queue(virtio_mmio_device_t *dev, uint32_t queue_idx,
     virtio_mmio_write32(dev->base_addr, VIRTIO_MMIO_QUEUE_READY, 1);
 
     return 0;
+#endif
 }
 
 /**
@@ -257,11 +262,9 @@ static int virtio_mmio_probe_device(uint64_t phys_addr, uint32_t irq) {
         return -1;
     }
 
-    /* Map device registers to kernel virtual memory */
-    uint64_t virt_addr = fut_pmap_kernel_map_range(phys_addr, 4096, PMAP_KERNEL_RW);
-    if (!virt_addr) {
-        return -1;
-    }
+    /* Map device registers to kernel virtual memory
+     * ARM64 peripheral mapping: PA 0x00000000 -> VA 0xFFFFFF8000000000 */
+    uint64_t virt_addr = 0xFFFFFF8000000000ULL + phys_addr;
 
     /* Check magic value */
     uint32_t magic = virtio_mmio_read32(virt_addr, VIRTIO_MMIO_MAGIC_VALUE);
@@ -316,6 +319,8 @@ static int virtio_mmio_probe_device(uint64_t phys_addr, uint32_t irq) {
  * Initialize VirtIO MMIO subsystem by scanning device tree.
  */
 void virtio_mmio_init(uint64_t dtb_ptr) {
+    (void)dtb_ptr;  /* TODO: Parse device tree for virtio-mmio devices */
+
     fut_printf("[virtio-mmio] Scanning device tree for virtio-mmio devices...\n");
 
     /* Scan for virtio-mmio devices in device tree */

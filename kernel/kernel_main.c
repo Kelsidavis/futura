@@ -1083,8 +1083,7 @@ void fut_kernel_main(void) {
 #ifdef __aarch64__
     /* On ARM64, initialize VirtIO-MMIO transport layer */
     extern void virtio_mmio_init(uint64_t dtb_ptr);
-    extern uint64_t arm64_dtb_physical_address;
-    virtio_mmio_init(arm64_dtb_physical_address);
+    virtio_mmio_init(0);  /* TODO: Pass actual DTB pointer once device tree parsing is implemented */
 #endif
 
     fut_printf("[INIT] Initializing block device subsystem...\n");

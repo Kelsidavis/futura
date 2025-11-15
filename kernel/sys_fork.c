@@ -718,7 +718,14 @@ static fut_thread_t *clone_thread(fut_thread_t *parent_thread, fut_task_t *child
     child_thread->context.x29_fp = frame->x[29];  /* Frame pointer */
     child_thread->context.x30_lr = frame->x[30];  /* Link register */
     child_thread->context.pc = frame->pc;         /* Program counter */
-    child_thread->context.pstate = frame->pstate; /* Processor state */
+
+    /*
+     * CRITICAL: Set pstate to EL0 user mode with exception masking.
+     * Do NOT copy frame->pstate, as it was captured after SVC elevated to EL1.
+     * ERET requires SPSR_EL1 to indicate target is EL0t with DAIF masked.
+     * Use 0x3C0 = EL0t (0x0) + DAIF mask (0x3C0) to match exec trampoline.
+     */
+    child_thread->context.pstate = 0x3C0;  /* EL0t with exceptions masked */
 
     /* CRITICAL: Copy user stack pointer (SP_EL0) from parent to child */
     child_thread->context.sp_el0 = frame->sp_el0;

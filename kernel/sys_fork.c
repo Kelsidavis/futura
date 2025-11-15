@@ -605,34 +605,21 @@ static fut_thread_t *clone_thread(fut_thread_t *parent_thread, fut_task_t *child
     }
 
     /*
-     * Map child's stack into its page tables.
-     * fut_thread_create() allocates stack memory with fut_malloc(), which provides
-     * physical memory but creates no page table entries. This worked without MMU
-     * but causes permission faults with MMU enabled.
+     * NOTE: Child's kernel stack does NOT need to be mapped into child's TTBR0.
+     *
+     * The kernel stack is allocated from kernel heap (fut_malloc) which gives
+     * kernel virtual addresses (0xffffff80...). These are already mapped in TTBR1
+     * (kernel page table) which is shared by all tasks.
+     *
+     * Attempting to map kernel VAs into TTBR0 (user page table) is incorrect:
+     * - TTBR0 handles user VA space (< 0x0001000000000000)
+     * - TTBR1 handles kernel VA space (>= 0xffff000000000000)
+     * - Kernel addresses must only be in TTBR1
+     *
+     * The previous code caused Translation fault L0 errors because fut_map_range()
+     * tried to create L0 page table entries for kernel VAs in TTBR0, which is
+     * fundamentally incompatible with ARM64's split address space model.
      */
-    if (child_task->mm) {
-        fut_vmem_context_t *child_ctx = fut_mm_context(child_task->mm);
-        uint64_t stack_base = (uint64_t)child_thread->stack_base;
-        size_t stack_size = child_thread->stack_size;
-
-        /* Align stack_base down to page boundary */
-        uint64_t stack_page_base = stack_base & ~(FUT_PAGE_SIZE - 1);
-        uint64_t stack_end = stack_base + stack_size;
-        uint64_t stack_page_end = (stack_end + FUT_PAGE_SIZE - 1) & ~(FUT_PAGE_SIZE - 1);
-
-        for (uint64_t page = stack_page_base; page < stack_page_end; page += FUT_PAGE_SIZE) {
-            phys_addr_t phys = pmap_virt_to_phys((void *)page);
-            uint64_t flags = PTE_PRESENT | PTE_WRITABLE | PTE_USER;
-
-            /* Always map stack pages with user permissions.
-             * This triggers L2 block splitting if the page is covered by a kernel-only
-             * block descriptor, creating a fine-grained L3 mapping with user access. */
-            if (pmap_map_user(child_ctx, page, phys, FUT_PAGE_SIZE, flags) != 0) {
-                fut_printf("[FORK] ERROR: Failed to map child stack page 0x%llx\n", page);
-                return NULL;
-            }
-        }
-    }
 
 #ifdef __x86_64__
     /*

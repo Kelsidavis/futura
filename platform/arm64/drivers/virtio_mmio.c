@@ -181,6 +181,11 @@ static void virtio_mmio_set_status(virtio_mmio_device_t *dev, uint8_t status) {
  * Initialize a single virtqueue.
  */
 static int virtio_mmio_init_queue(virtio_mmio_device_t *dev, uint32_t queue_idx, uint32_t queue_size) {
+    extern void *fut_malloc_pages(size_t num_pages);
+    extern void fut_free_pages(void *ptr, size_t num_pages);
+    extern phys_addr_t pmap_virt_to_phys(const void *virt);
+    extern void *memset(void *, int, size_t);
+
     /* Select queue */
     virtio_mmio_write32(dev->base_addr, VIRTIO_MMIO_QUEUE_SEL, queue_idx);
 
@@ -193,45 +198,37 @@ static int virtio_mmio_init_queue(virtio_mmio_device_t *dev, uint32_t queue_idx,
         queue_size = max_size;
     }
 
-    /* TODO: Allocate queue memory (descriptor, available, and used rings) */
-    /* For now, virtqueue setup is stubbed out - device detection works without it */
-    (void)dev;
-    (void)queue_idx;
-    (void)queue_size;
-    return -1;  /* Not implemented yet */
-
-#if 0  /* Disabled until PMM multi-page allocation is available */
     /* Allocate queue memory (descriptor, available, and used rings) */
     size_t desc_size = sizeof(struct virtq_desc) * queue_size;
     size_t avail_size = sizeof(struct virtq_avail) + sizeof(uint16_t) * queue_size + sizeof(uint16_t);
     size_t used_size = sizeof(struct virtq_used) + sizeof(struct virtq_used_elem) * queue_size + sizeof(uint16_t);
 
-    /* Allocate contiguous physical pages */
+    /* Allocate contiguous pages (already mapped in kernel virtual address space) */
     size_t total_size = desc_size + avail_size + used_size;
     size_t total_pages = (total_size + 4095) / 4096;
 
-    uint64_t desc_phys = fut_pmm_alloc_pages(total_pages);
-    if (!desc_phys) {
-        return -1;
-    }
-
-    /* Map to kernel virtual address space */
-    uint64_t desc_virt = fut_pmap_kernel_map_range(desc_phys, total_pages * 4096, PMAP_KERNEL_RW);
+    void *desc_virt = fut_malloc_pages(total_pages);
     if (!desc_virt) {
-        fut_pmm_free_pages(desc_phys, total_pages);
         return -1;
     }
+
     /* Zero the memory */
-    memset((void *)desc_virt, 0, total_pages * 4096);
+    memset(desc_virt, 0, total_pages * 4096);
 
-    /* Setup queue pointers */
+    /* Convert virtual addresses to physical addresses for device */
+    phys_addr_t desc_phys = pmap_virt_to_phys(desc_virt);
+    phys_addr_t avail_phys = desc_phys + desc_size;
+    phys_addr_t used_phys = desc_phys + desc_size + avail_size;
+
+    /* Setup queue pointers (virtual addresses for CPU access) */
     dev->desc = (struct virtq_desc *)desc_virt;
-    dev->avail = (struct virtq_avail *)(desc_virt + desc_size);
-    dev->used = (struct virtq_used *)(desc_virt + desc_size + avail_size);
+    dev->avail = (struct virtq_avail *)((uintptr_t)desc_virt + desc_size);
+    dev->used = (struct virtq_used *)((uintptr_t)desc_virt + desc_size + avail_size);
 
+    /* Save physical addresses for device configuration */
     dev->desc_phys = desc_phys;
-    dev->avail_phys = desc_phys + desc_size;
-    dev->used_phys = desc_phys + desc_size + avail_size;
+    dev->avail_phys = avail_phys;
+    dev->used_phys = used_phys;
 
     dev->queue_size = queue_size;
     dev->last_used_idx = 0;
@@ -243,15 +240,14 @@ static int virtio_mmio_init_queue(virtio_mmio_device_t *dev, uint32_t queue_idx,
     }
     dev->desc[queue_size - 1].next = 0;  /* Last wraps to 0 */
 
-    /* Configure queue in device */
+    /* Configure queue in device (device uses physical addresses) */
     virtio_mmio_write32(dev->base_addr, VIRTIO_MMIO_QUEUE_NUM, queue_size);
-    virtio_mmio_write64(dev->base_addr, VIRTIO_MMIO_QUEUE_DESC_LOW, dev->desc_phys);
-    virtio_mmio_write64(dev->base_addr, VIRTIO_MMIO_QUEUE_DRIVER_LOW, dev->avail_phys);
-    virtio_mmio_write64(dev->base_addr, VIRTIO_MMIO_QUEUE_DEVICE_LOW, dev->used_phys);
+    virtio_mmio_write64(dev->base_addr, VIRTIO_MMIO_QUEUE_DESC_LOW, desc_phys);
+    virtio_mmio_write64(dev->base_addr, VIRTIO_MMIO_QUEUE_DRIVER_LOW, avail_phys);
+    virtio_mmio_write64(dev->base_addr, VIRTIO_MMIO_QUEUE_DEVICE_LOW, used_phys);
     virtio_mmio_write32(dev->base_addr, VIRTIO_MMIO_QUEUE_READY, 1);
 
     return 0;
-#endif
 }
 
 /**

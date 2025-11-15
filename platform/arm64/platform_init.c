@@ -787,8 +787,7 @@ void fut_timer_init(uint32_t frequency) {
     /* Read timer frequency from system register */
     timer_frequency = read_sysreg(cntfrq_el0);
 
-    fut_serial_puts("[TIMER] ARM Generic Timer frequency: ");
-    fut_serial_puts("\n");
+    fut_printf("[TIMER] ARM Generic Timer frequency: %u Hz\n", timer_frequency);
 
     /* Calculate timer value for desired frequency */
     uint32_t timer_interval = timer_frequency / frequency;

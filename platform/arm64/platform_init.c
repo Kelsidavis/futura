@@ -601,6 +601,7 @@ void fut_printf(const char *fmt, ...) {
             /* Parse length modifiers */
             int is_long = 0;
             int is_longlong = 0;
+            int is_size_t = 0;
             if (*fmt == 'l') {
                 fmt++;
                 is_long = 1;
@@ -608,6 +609,9 @@ void fut_printf(const char *fmt, ...) {
                     fmt++;
                     is_longlong = 1;
                 }
+            } else if (*fmt == 'z') {
+                fmt++;
+                is_size_t = 1;  /* size_t is unsigned long on ARM64 */
             }
 
             /* Process format specifier */
@@ -617,7 +621,7 @@ void fut_printf(const char *fmt, ...) {
                     int64_t val;
                     if (is_longlong) {
                         val = va_arg(args, int64_t);
-                    } else if (is_long) {
+                    } else if (is_long || is_size_t) {
                         val = va_arg(args, long);
                     } else {
                         val = va_arg(args, int);
@@ -629,7 +633,7 @@ void fut_printf(const char *fmt, ...) {
                     uint64_t val;
                     if (is_longlong) {
                         val = va_arg(args, uint64_t);
-                    } else if (is_long) {
+                    } else if (is_long || is_size_t) {
                         val = va_arg(args, unsigned long);
                     } else {
                         val = va_arg(args, unsigned int);
@@ -641,7 +645,7 @@ void fut_printf(const char *fmt, ...) {
                     uint64_t val;
                     if (is_longlong) {
                         val = va_arg(args, uint64_t);
-                    } else if (is_long) {
+                    } else if (is_long || is_size_t) {
                         val = va_arg(args, unsigned long);
                     } else {
                         val = va_arg(args, unsigned int);
@@ -653,7 +657,7 @@ void fut_printf(const char *fmt, ...) {
                     uint64_t val;
                     if (is_longlong) {
                         val = va_arg(args, uint64_t);
-                    } else if (is_long) {
+                    } else if (is_long || is_size_t) {
                         val = va_arg(args, unsigned long);
                     } else {
                         val = va_arg(args, unsigned int);

@@ -58,14 +58,81 @@ static void get_cpu_brand(char brand[49]) {
     }
 }
 
-#else  /* !__x86_64__ */
+#elif defined(__aarch64__)
+
+/* ARM64 CPU detection via MIDR_EL1 register */
+static void get_cpu_brand(char brand[49]) {
+    uint64_t midr;
+    __asm__ volatile("mrs %0, midr_el1" : "=r"(midr));
+
+    uint32_t implementer = (midr >> 24) & 0xFF;
+    uint32_t variant = (midr >> 20) & 0xF;
+    uint32_t partnum = (midr >> 4) & 0xFFF;
+    uint32_t revision = midr & 0xF;
+
+    const char *cpu_name = "ARM CPU";
+
+    /* ARM implementer codes */
+    if (implementer == 0x41) {  /* ARM Limited */
+        switch (partnum) {
+            case 0xD03: cpu_name = "Cortex-A53"; break;
+            case 0xD04: cpu_name = "Cortex-A35"; break;
+            case 0xD05: cpu_name = "Cortex-A55"; break;
+            case 0xD07: cpu_name = "Cortex-A57"; break;
+            case 0xD08: cpu_name = "Cortex-A72"; break;
+            case 0xD09: cpu_name = "Cortex-A73"; break;
+            case 0xD0A: cpu_name = "Cortex-A75"; break;
+            case 0xD0B: cpu_name = "Cortex-A76"; break;
+            case 0xD0C: cpu_name = "Neoverse N1"; break;
+            case 0xD0D: cpu_name = "Cortex-A77"; break;
+            case 0xD0E: cpu_name = "Cortex-A76AE"; break;
+            case 0xD40: cpu_name = "Neoverse V1"; break;
+            case 0xD41: cpu_name = "Cortex-A78"; break;
+            case 0xD44: cpu_name = "Cortex-X1"; break;
+            case 0xD46: cpu_name = "Cortex-A510"; break;
+            case 0xD47: cpu_name = "Cortex-A710"; break;
+            case 0xD48: cpu_name = "Cortex-X2"; break;
+            case 0xD49: cpu_name = "Neoverse N2"; break;
+            case 0xD4A: cpu_name = "Neoverse E1"; break;
+            case 0xD4B: cpu_name = "Cortex-A78AE"; break;
+            case 0xD4C: cpu_name = "Cortex-X1C"; break;
+            case 0xD4D: cpu_name = "Cortex-A715"; break;
+            case 0xD4E: cpu_name = "Cortex-X3"; break;
+            default: break;
+        }
+    } else if (implementer == 0x61) {  /* Apple */
+        cpu_name = "Apple Silicon";
+    } else if (implementer == 0x51) {  /* Qualcomm */
+        cpu_name = "Qualcomm Kryo";
+    }
+
+    /* Format: "CPU Name r<variant>p<revision>" */
+    size_t len = 0;
+    while (cpu_name[len] != '\0' && len < 40) {
+        brand[len] = cpu_name[len];
+        len++;
+    }
+
+    /* Append variant and revision manually */
+    if (len < 45) {
+        brand[len++] = ' ';
+        brand[len++] = 'r';
+        brand[len++] = '0' + variant;
+        brand[len++] = 'p';
+        brand[len++] = '0' + revision;
+        brand[len] = '\0';
+    } else {
+        brand[len] = '\0';
+    }
+}
+
+#else  /* Other architectures */
 
 static void get_cpu_brand(char brand[49]) {
-    /* For non-x86_64 architectures, we don't query CPU brand via CPUID */
     brand[0] = '\0';
 }
 
-#endif  /* __x86_64__ */
+#endif  /* Architecture selection */
 
 void fut_boot_banner(void) {
 #ifdef __x86_64__

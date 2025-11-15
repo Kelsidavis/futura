@@ -1071,7 +1071,7 @@ static int exec_copy_to_user(fut_mm_t *mm, uint64_t dest, const void *src, size_
         uint64_t pte = 0;
         if (pmap_probe_pte(vmem, vaddr, &pte) != 0) {
             extern void fut_printf(const char *, ...);
-            fut_printf("[COPY-TO-USER] pmap_probe_pte FAILED for vaddr=0x%llx\n",
+            fut_printf("[COPY-TO-USER] pmap_probe_pte FAILED for vaddr=0x%016llx\n",
                       (unsigned long long)vaddr);
             return -EFAULT;
         }
@@ -1906,7 +1906,10 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
     if (argv) {
         while (argv[argc]) argc++;
     }
+    fut_printf("[EXEC-DBG] Before build_user_stack: task=%p task->threads=%p\n", task, task->threads);
     rc = build_user_stack(mm, (const char *const *)argv, argc, (const char *const *)envp, 0, &user_sp);
+    fut_printf("[EXEC-DBG] After build_user_stack: task=%p task->threads=%p user_sp=0x%llx\n",
+               task, task->threads, (unsigned long long)user_sp);
     if (rc != 0) {
         fut_task_destroy(task);
         fut_free(phdrs);

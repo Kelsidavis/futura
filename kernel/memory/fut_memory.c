@@ -154,11 +154,8 @@ uintptr_t fut_pmm_base_phys(void) {
 
 uintptr_t fut_pmm_bitmap_end_virt(void) {
     uintptr_t offset = pmm_reserved_pages * FUT_PAGE_SIZE;
-#if defined(__x86_64__)
-    return pmap_phys_to_virt(pmm_base + offset);
-#else
-    return pmm_base + offset;
-#endif
+    /* Both x86_64 and ARM64 use high-VA kernels, so convert PA to kernel VA */
+    return (uintptr_t)pmap_phys_to_virt(pmm_base + offset);
 }
 
 void fut_pmm_reserve_range(uintptr_t phys_addr, size_t size_bytes) {

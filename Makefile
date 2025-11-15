@@ -541,6 +541,7 @@ else ifeq ($(PLATFORM),arm64)
         platform/arm64/arm64_exception_entry.S \
         platform/arm64/arm64_vectors.S \
         platform/arm64/context_switch.S \
+        platform/arm64/debug_context_switch.c \
         platform/arm64/platform_init.c \
         platform/arm64/userland_test.c \
         platform/arm64/exception_handlers.c \

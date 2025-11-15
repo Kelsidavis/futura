@@ -92,6 +92,9 @@ sync_exception_entry:
      * - ALL registers x0-x30 contain values that MUST BE PRESERVED!
      */
 
+    /* DEBUG: Read ELR_EL1 immediately to check if it's already corrupted */
+    mrs     x18, elr_el1         /* Save ELR_EL1 in x18 (callee-saved, won't be clobbered) */
+
     /* Allocate space for fut_interrupt_frame_t on kernel stack
      * We'll use sub/add directly on SP to avoid clobbering any registers
      * Structure layout (from include/arch/arm64/regs.h):
@@ -153,17 +156,11 @@ sync_exception_entry:
     mrs     x1, sp_el0
     str     x1, [x0, #808]      /* Save SP_EL0 at offset 808 (after fpcr) */
 
-    /* Save user TTBR0 before switching to kernel page table */
+    /* Save user TTBR0_EL1 (user page table)
+     * No need to switch page tables - kernel is always mapped in TTBR1!
+     */
     mrs     x1, ttbr0_el1
     str     x1, [x0, #816]      /* Save TTBR0_EL1 at offset 816 (after sp_el0) */
-
-    /* Switch to kernel page table for kernel code/data access
-     * This allows syscalls to access kernel memory (code, data, page tables)
-     */
-    adrp    x1, boot_l1_table
-    add     x1, x1, :lo12:boot_l1_table
-    msr     ttbr0_el1, x1
-    isb
 
     /* Save FPU state (v0-v31 registers and control registers)
      * FPU state is stored in frame->fpu_state[64] at offset 288

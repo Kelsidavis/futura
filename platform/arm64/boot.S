@@ -271,6 +271,73 @@ bss_cleared:
     mov     x11, #0x34                /* '4' */
     strb    w11, [x10]
 
+    /* ========================================
+     *   Setup Kernel Page Tables (TTBR1_EL1)
+     *   Maps high VA to same physical addresses as boot tables
+     * ======================================== */
+
+    /* Zero out kernel page tables */
+    adrp    x0, kernel_l1_table
+    add     x0, x0, :lo12:kernel_l1_table
+    mov     x1, #0
+    mov     x2, #(4096 * 3 / 8)       /* 3 tables: L1, L2_peripherals, L2_dram */
+4:  str     xzr, [x0, x1, lsl #3]
+    add     x1, x1, #1
+    cmp     x1, x2
+    blt     4b
+
+    /* Setup kernel_l1_table for high VA
+     * L1[0] (VA 0xFFFF000000000000) -> kernel_l2_table_peripherals
+     * L1[1] (VA 0xFFFF000040000000) -> kernel_l2_table_dram
+     */
+    adrp    x0, kernel_l1_table
+    add     x0, x0, :lo12:kernel_l1_table
+
+    /* kernel_l1[0] -> kernel_l2_table_peripherals */
+    adrp    x1, kernel_l2_table_peripherals
+    add     x1, x1, :lo12:kernel_l2_table_peripherals
+    orr     x1, x1, #3                /* Valid table descriptor */
+    str     x1, [x0, #0]
+
+    /* kernel_l1[1] -> kernel_l2_table_dram */
+    adrp    x1, kernel_l2_table_dram
+    add     x1, x1, :lo12:kernel_l2_table_dram
+    orr     x1, x1, #3                /* Valid table descriptor */
+    str     x1, [x0, #8]
+
+    /* Setup kernel_l2_table_peripherals: Same as boot, but for high VA */
+    adrp    x0, kernel_l2_table_peripherals
+    add     x0, x0, :lo12:kernel_l2_table_peripherals
+    mov     x1, #0x00000000           /* Start PA */
+    mov     x3, #256                  /* 256 x 2MB = 512MB */
+    movz    x5, #0x0020, lsl #16      /* 2MB block size */
+5:  mov     x2, #0x405                /* Valid | Block | AttrIndx=1 (device) | AF */
+    orr     x2, x2, #(2 << 8)         /* SH=10: Outer Shareable */
+    orr     x2, x1, x2                /* Combine PA with flags */
+    str     x2, [x0], #8              /* Store and advance */
+    add     x1, x1, x5                /* Next 2MB block */
+    subs    x3, x3, #1
+    bne     5b
+
+    /* Setup kernel_l2_table_dram: Same as boot, but for high VA */
+    adrp    x0, kernel_l2_table_dram
+    add     x0, x0, :lo12:kernel_l2_table_dram
+    movz    x1, #0x4000, lsl #16      /* Start PA = 0x40000000 */
+    mov     x3, #512                  /* 512 x 2MB = 1GB */
+    movz    x5, #0x0020, lsl #16      /* 2MB block size */
+6:  mov     x2, #0x401                /* Valid | Block | AttrIndx=0 (normal) | AF */
+    orr     x2, x2, #(3 << 8)         /* SH=11: Inner Shareable */
+    orr     x2, x1, x2                /* Combine PA with flags */
+    str     x2, [x0], #8              /* Store and advance */
+    add     x1, x1, x5                /* Next 2MB block */
+    subs    x3, x3, #1
+    bne     6b
+
+    /* Debug: Kernel tables configured */
+    movz    x10, #0x0900, lsl #16
+    mov     x11, #0x4B                /* 'K' for Kernel */
+    strb    w11, [x10]
+
     /* Configure MAIR_EL1 (Memory Attribute Indirection Register)
      * Attr0 = 0xFF (Normal memory, Inner/Outer Write-Back Cacheable)
      * Attr1 = 0x00 (Device-nGnRnE - for UART, GIC, etc.)
@@ -311,11 +378,15 @@ bss_cleared:
     mov     x11, #0x36                /* '6' */
     strb    w11, [x10]
 
-    /* Set TTBR1_EL1 and TTBR0_EL1 to L1 table (root for 39-bit VA) */
+    /* Set TTBR0_EL1 to boot table (identity mapping for early boot) */
     adrp    x0, boot_l1_table
     add     x0, x0, :lo12:boot_l1_table
-    msr     ttbr1_el1, x0
     msr     ttbr0_el1, x0
+
+    /* Set TTBR1_EL1 to kernel table (high VA mapping for kernel) */
+    adrp    x0, kernel_l1_table
+    add     x0, x0, :lo12:kernel_l1_table
+    msr     ttbr1_el1, x0
 
     /* Debug: TTBR configured */
     movz    x10, #0x0900, lsl #16
@@ -361,14 +432,72 @@ bss_cleared:
     mov     x11, #0x42                /* ASCII 'B' */
     strb    w11, [x10]                /* Write to UART data register */
 
+    /* Jump to high VA kernel address
+     * Currently executing at low VA (identity mapped via TTBR0)
+     * Need to switch to high VA (mapped via TTBR1)
+     *
+     * Strategy: Get PC-relative address of target, then set high VA bits
+     * We're linked at 0xFFFFFF8040000000 but executing at 0x40000000
+     * Need to set the high bits to create 0xFFFFFF8000000000
+     */
+    adr     x0, .Lhigh_va_entry       /* Get low VA address (PC-relative, ~0x400xxx) */
+    movz    x1, #0xFFFF, lsl #48      /* Load high VA prefix (0xFFFF000000000000) */
+    movk    x1, #0xFF80, lsl #32      /* Add middle bits (0xFFFFFF8000000000) */
+    orr     x0, x0, x1                /* Set high VA bits: x0 |= 0xFFFFFF8000000000 */
+    br      x0                        /* Jump to high VA */
+
+.Lhigh_va_entry:
+    /* Now executing at high VA! All addresses from here on are high VA */
+
+    /* Debug: Write 'H' to UART (now at high VA)
+     * UART at PA 0x09000000 is mapped at VA 0xFFFFFF8009000000
+     * (kernel_l1[0] -> peripherals at 0xFFFFFF8000000000+)
+     */
+    movz    x10, #0xFFFF, lsl #48     /* High VA base (0xFFFF000000000000) */
+    movk    x10, #0xFF80, lsl #32     /* Add kernel offset (0xFFFFFF8000000000) */
+    movk    x10, #0x0900, lsl #16     /* Add UART offset (0x09000000) */
+    mov     x11, #0x48                /* ASCII 'H' for High VA */
+    strb    w11, [x10]
+
+    /* Update VBAR_EL1 to high VA exception vectors
+     * The exception vector table is now at high VA, so update VBAR
+     */
+    adrp    x0, exception_vectors
+    add     x0, x0, :lo12:exception_vectors
+    msr     vbar_el1, x0
+    isb
+
+    /* Debug: VBAR updated */
+    movz    x10, #0xFFFF, lsl #48
+    movk    x10, #0xFF80, lsl #32
+    movk    x10, #0x0900, lsl #16
+    mov     x11, #0x56                /* 'V' for VBAR */
+    strb    w11, [x10]
+
+    /* Clear TTBR0_EL1 now that we're running at high VA
+     * User processes will set their own TTBR0 page tables later
+     */
+    mov     x0, #0
+    msr     ttbr0_el1, x0
+    isb
+
+    /* Debug: TTBR0 cleared */
+    movz    x10, #0xFFFF, lsl #48
+    movk    x10, #0xFF80, lsl #32
+    movk    x10, #0x0900, lsl #16
+    mov     x11, #0x54                /* 'T' for TTBR0 cleared */
+    strb    w11, [x10]
+
     /* Restore device tree address and call platform init */
     mov     x0, #0                    /* boot_magic = 0 */
     mov     x1, x20                   /* boot_info = device tree address */
 
     /* Debug: Write 'C' before calling platform_init */
-    movz    x10, #0x0900, lsl #16     /* UART0 base = 0x09000000 */
+    movz    x10, #0xFFFF, lsl #48     /* High VA base */
+    movk    x10, #0xFF80, lsl #32     /* Add kernel offset */
+    movk    x10, #0x0900, lsl #16     /* Add UART offset */
     mov     x11, #0x43                /* ASCII 'C' */
-    strb    w11, [x10]                /* Write to UART data register */
+    strb    w11, [x10]
 
     bl      fut_platform_init
 
@@ -763,6 +892,8 @@ no_reschedule:
  * For 39-bit VA, ARM64 starts page table walk at Level 1 (not L0)
  * Each L1 entry covers 1GB, each L2 entry covers 2MB
  */
+
+/* Boot page tables - TTBR0_EL1 (identity mapping for early boot) */
 .global boot_l1_table
 boot_l1_table:
     .space 4096                   /* Level 1 (root table, 512 x 1GB per entry) */
@@ -772,3 +903,17 @@ boot_l2_table_peripherals:
 
 boot_l2_table_dram:
     .space 4096                   /* Level 2 for DRAM (512 x 2MB = 1GB) */
+
+/* Kernel page tables - TTBR1_EL1 (high VA mapping for kernel)
+ * Maps high VA 0xFFFF000000000000+ to physical addresses
+ * This allows kernel to run at high VA while user space uses low VA
+ */
+.global kernel_l1_table
+kernel_l1_table:
+    .space 4096                   /* Level 1 for high VA */
+
+kernel_l2_table_peripherals:
+    .space 4096                   /* Level 2 for high VA peripherals */
+
+kernel_l2_table_dram:
+    .space 4096                   /* Level 2 for high VA kernel */

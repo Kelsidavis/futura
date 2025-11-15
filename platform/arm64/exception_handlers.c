@@ -136,6 +136,40 @@ static void handle_unknown(fut_interrupt_frame_t *frame) {
     }
     fut_serial_putc('\n');
 
+    /* DEBUG: Print early ELR_EL1 captured in x18 at exception entry */
+    fut_serial_puts("[EXCEPTION] Early ELR_EL1 (from x18): ");
+    uint64_t early_elr = frame->x[18];
+    for (int i = 60; i >= 0; i -= 4) {
+        uint8_t nibble = (early_elr >> i) & 0xF;
+        char c = nibble < 10 ? '0' + nibble : 'a' + (nibble - 10);
+        fut_serial_putc(c);
+    }
+    fut_serial_putc('\n');
+
+    /* DEBUG: Print raw frame structure bytes around PC field */
+    fut_serial_puts("[EXCEPTION] DEBUG: Raw frame bytes (offset 240-280):\n");
+    unsigned char *frame_bytes = (unsigned char *)frame;
+    for (int off = 240; off < 288; off += 8) {
+        fut_serial_puts("  [");
+        for (int i = 28; i >= 0; i -= 4) {
+            uint8_t nibble = (off >> i) & 0xF;
+            char c = nibble < 10 ? '0' + nibble : 'a' + (nibble - 10);
+            fut_serial_putc(c);
+        }
+        fut_serial_puts("]: ");
+        for (int b = 0; b < 8; b++) {
+            uint8_t byte = frame_bytes[off + b];
+            uint8_t hi = (byte >> 4) & 0xF;
+            uint8_t lo = byte & 0xF;
+            char c1 = hi < 10 ? '0' + hi : 'a' + (hi - 10);
+            char c2 = lo < 10 ? '0' + lo : 'a' + (lo - 10);
+            fut_serial_putc(c1);
+            fut_serial_putc(c2);
+            fut_serial_putc(' ');
+        }
+        fut_serial_putc('\n');
+    }
+
     fut_serial_puts("[EXCEPTION] PC: ");
     uint64_t pc = frame->pc;
     for (int i = 60; i >= 0; i -= 4) {

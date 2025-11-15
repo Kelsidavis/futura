@@ -200,6 +200,19 @@ fut_switch_context:
     ldr     x2, [x1, #256]            /* Load SP_EL0 from new offset 256 */
     msr     sp_el0, x2                /* Set user stack pointer */
 
+    /* Strategy: Save both context pointer (x1) and user's x2 to stack early,
+     * then restore ALL user registers from context, then use stack values for
+     * TTBR0 switch. This way kernel stack is always accessible (mapped in both
+     * kernel and user page tables via TTBR1_EL1). */
+
+    /* Push context pointer and user's x2 onto kernel stack */
+    ldr     x2, [x1, #16]             /* Load user's x2 value */
+    stp     x1, x2, [sp, #-16]!       /* Push context ptr and user's x2 */
+
+    /* Now load TTBR0 value into x2 for later use */
+    ldr     x2, [x1, #280]            /* Load ttbr0_el1 value into x2 */
+    str     x2, [sp, #-16]!           /* Push TTBR0 value onto stack */
+
     /* Restore callee-saved registers (x19-x30) BEFORE switching page table */
     ldp     x19, x20, [x1, #152]      /* Restore x19, x20 from new offset 152 */
     ldp     x21, x22, [x1, #168]      /* Restore x21, x22 */
@@ -207,17 +220,6 @@ fut_switch_context:
     ldp     x25, x26, [x1, #200]      /* Restore x25, x26 */
     ldp     x27, x28, [x1, #216]      /* Restore x27, x28 */
     ldp     x29, x30, [x1, #232]      /* Restore FP (x29), LR (x30) from new offset 232 */
-
-    /* Strategy: Use TPIDRRO_EL0 to temporarily save user's x2 value while we use x2
-     * as scratch register for TTBR0 switch. TPIDRRO_EL0 is writable from EL1 but
-     * read-only from EL0, and kernel doesn't use it for per-CPU data. */
-
-    /* Load user's x2 value and save to TPIDRRO_EL0 */
-    ldr     x2, [x1, #16]             /* Load user's x2 value */
-    msr     tpidrro_el0, x2           /* Save it to TPIDRRO_EL0 temporarily */
-
-    /* Now load TTBR0 value into x2 for the page table switch */
-    ldr     x2, [x1, #280]            /* Load ttbr0_el1 value into x2 */
 
     /* Restore caller-saved registers x3-x18 (needed for fork) */
     ldr     x3, [x1, #24]             /* Restore x3 */
@@ -233,12 +235,16 @@ fut_switch_context:
     /* Restore x0 and x1 BEFORE switching page table */
     ldp     x0, x1, [x1, #0]          /* Restore x0 and x1 */
 
-    /* Switch page table using x2 (which holds TTBR0 value) */
+    /* Now ALL user registers except x2 have correct values.
+     * Pop TTBR0 from stack and switch page table */
+    ldr     x2, [sp], #16             /* Pop TTBR0 value into x2 */
     msr     ttbr0_el1, x2             /* Set user page table base */
     isb                               /* Instruction synchronization barrier */
 
-    /* Restore user's x2 from TPIDRRO_EL0 - now ALL registers have correct values */
-    mrs     x2, tpidrro_el0           /* Restore user's x2 value */
+    /* Stack now has [context_ptr, user_x2]. Pop user's x2 value.
+     * Skip context_ptr (we don't need it anymore). */
+    ldr     x2, [sp, #8]              /* Load user's x2 from stack */
+    add     sp, sp, #16               /* Pop both values from stack */
 
     /* Exception return to EL0 */
     eret

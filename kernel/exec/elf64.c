@@ -1212,13 +1212,17 @@ static int stage_stack_pages(fut_mm_t *mm, uint64_t *out_stack_top) {
     if (!out_stack_top) return -EINVAL;
 
     extern void fut_serial_puts(const char *);
+#ifdef DEBUG_ELF
     fut_serial_puts("[STACK] stage_stack_pages() called\n");
+#endif
 
     fut_vmem_context_t *vmem = fut_mm_context(mm);
     uint64_t stack_addr = USER_STACK_TOP - (USER_STACK_PAGES * PAGE_SIZE);
 
+#ifdef DEBUG_ELF
     fut_printf("[STACK] Mapping stack: start=0x%llx end=0x%llx pages=%d\n",
                (unsigned long long)stack_addr, (unsigned long long)USER_STACK_TOP, (int)USER_STACK_PAGES);
+#endif
 
     for (size_t i = 0; i < USER_STACK_PAGES; i++) {
         uint64_t page_addr = stack_addr + (i * PAGE_SIZE);
@@ -1237,13 +1241,17 @@ static int stage_stack_pages(fut_mm_t *mm, uint64_t *out_stack_top) {
         }
 
         if (i == 0 || i == USER_STACK_PAGES - 1) {
+#ifdef DEBUG_ELF
             fut_printf("[STACK] Mapped page %d: vaddr=0x%llx phys=0x%llx\n",
                        (int)i, (unsigned long long)page_addr, (unsigned long long)phys);
+#endif
         }
     }
 
+#ifdef DEBUG_ELF
     fut_printf("[STACK] Successfully staged %d stack pages, stack_top=0x%llx\n",
                (int)USER_STACK_PAGES, (unsigned long long)USER_STACK_TOP);
+#endif
 
     *out_stack_top = USER_STACK_TOP;
     return 0;

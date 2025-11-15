@@ -100,6 +100,11 @@ impl MmioTransport {
             }
         }
     }
+
+    /// Get the device handle pointer for passing to C functions
+    pub fn as_ptr(&self) -> *mut c_void {
+        self.device.as_ptr()
+    }
 }
 
 #[cfg(target_arch = "aarch64")]

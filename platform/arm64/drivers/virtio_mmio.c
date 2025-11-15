@@ -367,6 +367,13 @@ virtio_mmio_device_t *virtio_mmio_get_device(int device_idx) {
 }
 
 /**
+ * Get device MMIO base address.
+ */
+uint64_t virtio_mmio_get_base_addr(virtio_mmio_device_t *dev) {
+    return dev ? dev->base_addr : 0;
+}
+
+/**
  * Read 32-bit value from device-specific configuration space.
  */
 uint32_t virtio_mmio_read_config32(virtio_mmio_device_t *dev, uint32_t offset) {

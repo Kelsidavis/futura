@@ -9,6 +9,30 @@ The ARM64 kernel port has made critical progress in exception handling. Severe b
 
 ## Latest Progress (2025-11-14)
 
+### ✅ CPU Detection (Commit 9e5cfe7)
+**Achievement**: Implemented ARM64 CPU identification via MIDR_EL1 register
+
+**Implementation**:
+- Read MIDR_EL1 system register to get CPU information
+- Decode implementer, part number, variant, and revision fields
+- Support for 30+ ARM CPU models including:
+  - ARM Cortex-A series (A53, A55, A57, A72, A73, A75, A76, A77, A78, etc.)
+  - ARM Neoverse series (N1, N2, V1, E1)
+  - ARM Cortex-X series (X1, X2, X3)
+  - Apple Silicon (generic detection)
+  - Qualcomm Kryo (generic detection)
+
+**Result**: Boot banner now shows specific CPU model and revision (e.g., "Cortex-A72 r0p3") instead of "Unknown CPU"
+
+### ✅ Timer Frequency Display (Commit e08f51b)
+**Achievement**: Added timer frequency display in boot output
+
+**Problem**: Timer frequency was read from CNTFRQ_EL0 but never displayed
+
+**Solution**: Changed from `fut_serial_puts()` to `fut_printf()` to show actual frequency value
+
+**Result**: Boot output now shows `[TIMER] ARM Generic Timer frequency: 62500000 Hz` (62.5 MHz for QEMU virt machine)
+
 ### ✅ Build System Fix (Commit 3a2802c)
 **Achievement**: Fixed ARM64 userland build dependency issue after `make clean`
 

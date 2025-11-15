@@ -488,6 +488,22 @@ bss_cleared:
     mov     x11, #0x54                /* 'T' for TTBR0 cleared */
     strb    w11, [x10]
 
+    /* Fix stack pointer for high VA execution
+     * SP_EL1 was set up at low VA during early boot. Now that we're executing
+     * at high VA, we need to adjust SP to point to the high VA stack.
+     * Kernel virtual offset: 0xFFFFFF8040000000 - 0x40000000 = 0xFFFFFF8000000000
+     */
+    movz    x18, #0xFFFF, lsl #48     /* Load kernel virtual offset */
+    movk    x18, #0xFF80, lsl #32     /* 0xFFFFFF8000000000 */
+    add     sp, sp, x18               /* SP = SP + kernel_virt_offset */
+
+    /* Debug: Stack pointer updated */
+    movz    x10, #0xFFFF, lsl #48
+    movk    x10, #0xFF80, lsl #32
+    movk    x10, #0x0900, lsl #16
+    mov     x11, #0x53                /* 'S' for Stack updated */
+    strb    w11, [x10]
+
     /* Restore device tree address and call platform init */
     mov     x0, #0                    /* boot_magic = 0 */
     mov     x1, x20                   /* boot_info = device tree address */

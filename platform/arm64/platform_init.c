@@ -1017,8 +1017,14 @@ void fut_platform_early_init(uint32_t boot_magic, void *boot_info) {
     (void)boot_magic;
     (void)boot_info;
 
+    /* Debug: Mark entry to early_init */
+    volatile uint32_t *uart = (volatile uint32_t *)0xFFFFFF8009000000UL;
+    *uart = 'E';  /* 'E' for Early init */
+
     /* Initialize serial console first */
+    *uart = 'I';  /* 'I' before serial init */
     fut_serial_init();
+    *uart = 'X';  /* 'X' after serial init */
     fut_serial_puts("\nFutura OS ARM64 Platform Initialization\n");
     fut_serial_puts("========================================\n\n");
 
@@ -1386,6 +1392,10 @@ void arch_idle_loop(void) {
 
 /* Main platform entry point (called from boot.S) */
 void fut_platform_init(uint32_t boot_magic, void *boot_info) {
+    /* Debug: Write 'P' to UART to confirm we entered platform_init at high VA */
+    volatile uint32_t *uart = (volatile uint32_t *)0xFFFFFF8009000000UL;
+    *uart = 'P';  /* PL011 UART data register */
+
     /* Early initialization */
     fut_platform_early_init(boot_magic, boot_info);
 

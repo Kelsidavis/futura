@@ -890,7 +890,7 @@ void fut_platform_udelay(uint32_t usec) {
 void fut_platform_mem_init(uint64_t mem_lower, uint64_t mem_upper) {
     (void)mem_lower;
     (void)mem_upper;
-    /* Phase 2: Basic identity mapping, no paging yet */
+    /* ARM64 memory management initialization handled by arm64_enable_mmu() */
     fut_serial_puts("[MEM] ARM64 memory management stub\n");
 }
 

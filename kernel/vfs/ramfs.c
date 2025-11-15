@@ -571,7 +571,9 @@ static int ramfs_lookup(struct fut_vnode *dir, const char *name, struct fut_vnod
 static int ramfs_create(struct fut_vnode *dir, const char *name, uint32_t mode, struct fut_vnode **result) {
     extern void fut_printf(const char *, ...);
 
+#ifdef DEBUG_RAMFS
     fut_printf("[RAMFS-CREATE-ENTRY] dir=%p name=%s mode=0%o result=%p\n", (void*)dir, name ? name : "(null)", mode, (void*)result);
+#endif
 
     if (!dir || !name || !result) {
         fut_printf("[RAMFS-CREATE] FAILED: Invalid params - dir=%p name=%p result=%p\n", (void*)dir, (void*)name, (void*)result);
@@ -612,8 +614,10 @@ static int ramfs_create(struct fut_vnode *dir, const char *name, uint32_t mode, 
         return -ENOMEM;
     }
 
+#ifdef DEBUG_RAMFS
     fut_printf("[RAMFS-CREATE] Creating file '%s': new vnode=%p new node=%p\n",
               name, (void*)vnode, (void*)node);
+#endif
 
     /* Initialize vnode */
     vnode->type = VN_REG;
@@ -629,7 +633,9 @@ static int ramfs_create(struct fut_vnode *dir, const char *name, uint32_t mode, 
     /* Phase 3: Initialize advisory file locking state */
     fut_vnode_lock_init(vnode);
 
+#ifdef DEBUG_RAMFS
     fut_printf("[RAMFS-CREATE] Set vnode->fs_data=%p for '%s'\n", (void*)node, name);
+#endif
 
     /* Initialize guard values to detect buffer overflows */
     node->magic_guard_before = RAMFS_NODE_MAGIC;

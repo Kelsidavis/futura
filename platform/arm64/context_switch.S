@@ -296,6 +296,11 @@ fut_switch_context:
     msr     ttbr0_el1, x2             /* Set user page table base */
     isb                               /* Instruction synchronization barrier */
 
+    /* CRITICAL: Invalidate TLB after switching page table to prevent stale entries */
+    tlbi    vmalle1is                 /* Invalidate all EL0/EL1 TLB entries, Inner Shareable */
+    dsb     ish                       /* Data synchronization barrier */
+    isb                               /* Instruction synchronization barrier */
+
     /* DEBUG CHECKPOINT 4: After page table switch */
     stp     x0, x1, [sp, #-16]!
     mrs     x0, elr_el1

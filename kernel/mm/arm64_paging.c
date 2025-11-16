@@ -213,7 +213,7 @@ static page_table_t *get_or_create_table(page_table_t *parent_table, int index, 
         PAGING_DEBUG("[PT] Reusing table: idx=%d entry=0x%llx phys=0x%llx\n",
                    index, (unsigned long long)entry, (unsigned long long)phys);
 
-        page_table_t *result = (page_table_t *)phys;  /* Assuming identity mapping for now */
+        page_table_t *result = (page_table_t *)pmap_phys_to_virt(phys);
 
         /* Restore user page table before returning */
         __asm__ volatile("msr ttbr0_el1, %0; isb" :: "r"(user_ttbr0));
@@ -255,7 +255,7 @@ static page_table_t *get_or_create_table(page_table_t *parent_table, int index, 
         }
 
         /* Replace L2 block descriptor with table descriptor pointing to new L3 table */
-        uint64_t l3_table_phys = (uint64_t)new_l3_table;
+        uint64_t l3_table_phys = pmap_virt_to_phys(new_l3_table);
         pte_t table_desc = fut_make_pte(l3_table_phys, PTE_VALID | PTE_TABLE);
         parent_table->entries[index] = table_desc;
 

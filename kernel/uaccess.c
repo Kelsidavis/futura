@@ -207,18 +207,6 @@ int fut_copy_from_user(void *k_dst, const void *u_src, size_t n) {
     /* Switch to user page table if we have one */
     if (user_ttbr0 != 0) {
         __asm__ volatile("msr ttbr0_el1, %0; isb" :: "r"(user_ttbr0));
-        fut_printf("[UACCESS] Switched to user page table\n");
-
-        /* Debug: For the problematic 0x402000 address, check what we're reading */
-        if ((uint64_t)u_src == 0x402000 && n >= 9) {
-            /* After switching TTBR0, try to read from the user address */
-            volatile const uint8_t *test_read = (volatile const uint8_t *)u_src;
-            fut_printf("[UACCESS] After TTBR0 switch, reading from 0x402000: %02x %02x %02x %02x %02x %02x %02x %02x %02x\n",
-                       test_read[0], test_read[1], test_read[2], test_read[3],
-                       test_read[4], test_read[5], test_read[6], test_read[7], test_read[8]);
-        }
-    } else {
-        fut_printf("[UACCESS] WARNING: No user page table, staying on kernel page table\n");
     }
 #endif
 

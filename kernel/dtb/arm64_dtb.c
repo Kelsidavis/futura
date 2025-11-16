@@ -11,36 +11,6 @@
 #include <platform/platform.h>
 
 /* ============================================================
- *   DTB Validation
- * ============================================================ */
-
-bool fut_dtb_validate(uint64_t dtb_ptr) {
-    if (!dtb_ptr) {
-        return false;
-    }
-
-    dtb_header_t *header = (dtb_header_t *)dtb_ptr;
-
-    /* Validate magic number (big-endian) */
-    if (header->magic != 0xd00dfeed) {
-        return false;
-    }
-
-    /* Validate version is reasonable */
-    if (header->version < 1 || header->version > 17) {
-        return false;
-    }
-
-    /* Validate offsets are within bounds */
-    if (header->off_dt_struct >= header->totalsize ||
-        header->off_dt_strings >= header->totalsize) {
-        return false;
-    }
-
-    return true;
-}
-
-/* ============================================================
  *   Helper Functions for DTB Traversal
  * ============================================================ */
 
@@ -73,6 +43,47 @@ static inline uint64_t be64_to_cpu(uint64_t value) {
  */
 static inline size_t align_offset(size_t offset) {
     return (offset + 3) & ~3;
+}
+
+/* ============================================================
+ *   DTB Validation
+ * ============================================================ */
+
+bool fut_dtb_validate(uint64_t dtb_ptr) {
+    if (!dtb_ptr) {
+        fut_printf("[DTB] Validation failed: NULL pointer\n");
+        return false;
+    }
+
+    dtb_header_t *header = (dtb_header_t *)dtb_ptr;
+
+    /* Validate magic number (big-endian) */
+    uint32_t magic = be32_to_cpu(header->magic);
+    if (magic != 0xd00dfeed) {
+        fut_printf("[DTB] Validation failed: bad magic 0x%08x (expected 0xd00dfeed)\n", magic);
+        return false;
+    }
+
+    /* Validate version is reasonable */
+    uint32_t version = be32_to_cpu(header->version);
+    if (version < 1 || version > 17) {
+        fut_printf("[DTB] Validation failed: bad version %u\n", version);
+        return false;
+    }
+
+    /* Validate offsets are within bounds */
+    uint32_t off_dt_struct = be32_to_cpu(header->off_dt_struct);
+    uint32_t off_dt_strings = be32_to_cpu(header->off_dt_strings);
+    uint32_t totalsize = be32_to_cpu(header->totalsize);
+    if (off_dt_struct >= totalsize || off_dt_strings >= totalsize) {
+        fut_printf("[DTB] Validation failed: bad offsets (struct=%u strings=%u total=%u)\n",
+                   off_dt_struct, off_dt_strings, totalsize);
+        return false;
+    }
+
+    fut_printf("[DTB] Validation passed! (magic=0x%08x version=%u size=%u)\n",
+               magic, version, totalsize);
+    return true;
 }
 
 /* ============================================================
@@ -473,8 +484,11 @@ bool fut_dtb_get_interrupt(uint64_t dtb_ptr, const char *node_name, uint32_t *ir
 int fut_dtb_find_compatible_nodes(uint64_t dtb_ptr, const char *compatible,
                                    fut_dtb_node_t *nodes_out, int max_nodes) {
     if (!fut_dtb_validate(dtb_ptr) || !compatible || !nodes_out || max_nodes <= 0) {
+        fut_printf("[DTB-SEARCH] Invalid parameters or validation failed\n");
         return 0;
     }
+
+    fut_printf("[DTB-SEARCH] Searching for compatible=\"%s\", max_nodes=%d\n", compatible, max_nodes);
 
     dtb_header_t *header = (dtb_header_t *)dtb_ptr;
     char *strings_base = (char *)(dtb_ptr + be32_to_cpu(header->off_dt_strings));
@@ -482,6 +496,7 @@ int fut_dtb_find_compatible_nodes(uint64_t dtb_ptr, const char *compatible,
     uint32_t *p = struct_ptr;
 
     int found_count = 0;
+    int node_count = 0;
     char current_node_name[64] = {0};
     bool in_matching_node = false;
     uint64_t current_base = 0;
@@ -497,10 +512,15 @@ int fut_dtb_find_compatible_nodes(uint64_t dtb_ptr, const char *compatible,
             const char *node_name_ptr = (const char *)&p[1];
             size_t name_len = strlen(node_name_ptr);
 
+            node_count++;
+
             /* Copy node name for tracking */
             if (name_len > 0 && name_len < sizeof(current_node_name)) {
                 memcpy(current_node_name, node_name_ptr, name_len);
                 current_node_name[name_len] = '\0';
+                if (node_count < 20) {  /* Limit debug spam */
+                    fut_printf("[DTB-SEARCH] Node #%d: '%s'\n", node_count, current_node_name);
+                }
             } else {
                 current_node_name[0] = '\0';
             }
@@ -522,28 +542,26 @@ int fut_dtb_find_compatible_nodes(uint64_t dtb_ptr, const char *compatible,
             const char *prop_name = strings_base + name_off;
             void *prop_value = (void *)&prop[1];
 
+            /* Always extract reg and interrupts for every node (property order is not guaranteed) */
+            if (strcmp(prop_name, "reg") == 0 && prop_len >= 16) {
+                /* Extract 64-bit base and size */
+                uint64_t *reg_data = (uint64_t *)prop_value;
+                current_base = be64_to_cpu(reg_data[0]);
+                current_size = be64_to_cpu(reg_data[1]);
+            }
+
+            if (strcmp(prop_name, "interrupts") == 0 && prop_len >= 12) {
+                /* Extract interrupt number from 3-cell format */
+                uint32_t *int_data = (uint32_t *)prop_value;
+                current_irq = be32_to_cpu(int_data[1]);  /* Second cell is interrupt number */
+            }
+
             /* Check if this is a compatible property matching our search */
             if (strcmp(prop_name, "compatible") == 0 && prop_len > 0) {
                 /* Compatible strings are null-terminated, possibly multiple */
                 const char *compat_str = (const char *)prop_value;
                 if (strstr(compat_str, compatible) != NULL) {
                     in_matching_node = true;
-                }
-            }
-
-            /* If we're in a matching node, extract reg and interrupts */
-            if (in_matching_node) {
-                if (strcmp(prop_name, "reg") == 0 && prop_len >= 16) {
-                    /* Extract 64-bit base and size */
-                    uint64_t *reg_data = (uint64_t *)prop_value;
-                    current_base = be64_to_cpu(reg_data[0]);
-                    current_size = be64_to_cpu(reg_data[1]);
-                }
-
-                if (strcmp(prop_name, "interrupts") == 0 && prop_len >= 12) {
-                    /* Extract interrupt number from 3-cell format */
-                    uint32_t *int_data = (uint32_t *)prop_value;
-                    current_irq = be32_to_cpu(int_data[1]);  /* Second cell is interrupt number */
                 }
             }
 
@@ -583,6 +601,8 @@ int fut_dtb_find_compatible_nodes(uint64_t dtb_ptr, const char *compatible,
         }
     }
 
+    fut_printf("[DTB-SEARCH] Search complete: found %d matching nodes (searched %d total nodes)\n",
+               found_count, node_count);
     return found_count;
 }
 

@@ -227,9 +227,17 @@ long sys_open(const char *pathname, int flags, int mode) {
         mode_desc = "ignored (O_CREAT not set)";
     }
 
+    /* Debug: Print pathname pointer before copy */
+    fut_printf("[OPEN-DEBUG] About to copy pathname from userspace pointer 0x%llx\n",
+               (unsigned long long)pathname);
+
     /* Copy pathname from userspace */
     char kpath[256];
+    fut_printf("[OPEN-DEBUG] Calling copy_user_string(0x%llx, kpath, 256)\n",
+               (unsigned long long)pathname);
     int rc = copy_user_string(pathname, kpath, sizeof(kpath));
+    fut_printf("[OPEN-DEBUG] copy_user_string returned %d, kpath[0]=%d kpath='%s'\n",
+               rc, (int)kpath[0], kpath);
     if (rc != 0) {
         const char *error_desc;
         switch (rc) {

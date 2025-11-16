@@ -104,3 +104,26 @@ char *strstr(const char *haystack, const char *needle)
 
     return NULL;
 }
+
+char *strchr(const char *s, int c)
+{
+    while (*s != '\0') {
+        if (*s == (char)c) {
+            return (char *)s;
+        }
+        s++;
+    }
+    return (*s == (char)c) ? (char *)s : NULL;
+}
+
+char *strncpy(char *dest, const char *src, size_t n)
+{
+    size_t i;
+    for (i = 0; i < n && src[i] != '\0'; i++) {
+        dest[i] = src[i];
+    }
+    for ( ; i < n; i++) {
+        dest[i] = '\0';
+    }
+    return dest;
+}

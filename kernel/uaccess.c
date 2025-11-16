@@ -183,20 +183,42 @@ int fut_copy_from_user(void *k_dst, const void *u_src, size_t n) {
     extern page_table_t boot_l1_table;
     extern fut_task_t *fut_task_current(void);
     extern fut_vmem_context_t *fut_mm_context(fut_mm_t *mm);
+    extern void fut_printf(const char *, ...);
 
     fut_task_t *task = fut_task_current();
     uint64_t user_ttbr0 = 0;
+
+    fut_printf("[UACCESS] copy_from_user: u_src=0x%llx n=%llu task=%p\n",
+               (unsigned long long)u_src, (unsigned long long)n, task);
 
     if (task && task->mm) {
         fut_vmem_context_t *ctx = fut_mm_context(task->mm);
         if (ctx) {
             user_ttbr0 = ctx->ttbr0_el1;
+            fut_printf("[UACCESS] task->mm valid, user_ttbr0=0x%llx\n",
+                       (unsigned long long)user_ttbr0);
+        } else {
+            fut_printf("[UACCESS] task->mm valid but ctx is NULL\n");
         }
+    } else {
+        fut_printf("[UACCESS] task=%p task->mm=%p\n", task, task ? task->mm : NULL);
     }
 
     /* Switch to user page table if we have one */
     if (user_ttbr0 != 0) {
         __asm__ volatile("msr ttbr0_el1, %0; isb" :: "r"(user_ttbr0));
+        fut_printf("[UACCESS] Switched to user page table\n");
+
+        /* Debug: For the problematic 0x402000 address, check what we're reading */
+        if ((uint64_t)u_src == 0x402000 && n >= 9) {
+            /* After switching TTBR0, try to read from the user address */
+            volatile const uint8_t *test_read = (volatile const uint8_t *)u_src;
+            fut_printf("[UACCESS] After TTBR0 switch, reading from 0x402000: %02x %02x %02x %02x %02x %02x %02x %02x %02x\n",
+                       test_read[0], test_read[1], test_read[2], test_read[3],
+                       test_read[4], test_read[5], test_read[6], test_read[7], test_read[8]);
+        }
+    } else {
+        fut_printf("[UACCESS] WARNING: No user page table, staying on kernel page table\n");
     }
 #endif
 

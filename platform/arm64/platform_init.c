@@ -140,6 +140,7 @@
 #include <config/futura_config.h>
 #include <kernel/fut_waitq.h>
 #include <kernel/fut_task.h>
+#include <platform/arm64/memory/pmap.h>
 
 /* Note: IRQ handler types and functions (fut_register_irq_handler, fut_irq_enable, etc.)
  * are now properly declared in <arch/arm64/irq.h> and implemented in kernel/irq/arm64_irq.c.
@@ -193,6 +194,9 @@ volatile uint32_t uart_rx_tail = 0;  /* Read position (consumed by getc) */
 
 /* UART RX wait queue - threads sleep here when waiting for input */
 static fut_waitq_t uart_rx_waitq;
+
+/* Global DTB pointer saved at boot */
+static uint64_t g_dtb_ptr = 0;
 
 /* ============================================================
  *   UART Interrupt Handlers
@@ -927,6 +931,14 @@ uint64_t fut_platform_get_features(void) {
            PLATFORM_FEATURE_UART;
 }
 
+/**
+ * Get device tree blob pointer passed at boot.
+ * @return DTB pointer or 0 if not available
+ */
+uint64_t fut_platform_get_dtb(void) {
+    return g_dtb_ptr;
+}
+
 /* ============================================================
  *   Panic Handler
  * ============================================================ */
@@ -1019,7 +1031,9 @@ extern void fut_kernel_main(void);
 
 void fut_platform_early_init(uint32_t boot_magic, void *boot_info) {
     (void)boot_magic;
-    (void)boot_info;
+
+    /* Save DTB pointer for later use (convert physical to virtual address) */
+    g_dtb_ptr = (uint64_t)pmap_phys_to_virt((uint64_t)boot_info);
 
     /* Debug: Mark entry to early_init */
     volatile uint32_t *uart = (volatile uint32_t *)0xFFFFFF8009000000UL;

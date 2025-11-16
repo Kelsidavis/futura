@@ -315,28 +315,40 @@ static int virtio_mmio_probe_device(uint64_t phys_addr, uint32_t irq) {
  * Initialize VirtIO MMIO subsystem by scanning device tree.
  */
 void virtio_mmio_init(uint64_t dtb_ptr) {
-    (void)dtb_ptr;
+    fut_printf("[virtio-mmio] Initializing VirtIO MMIO subsystem...\n");
 
-    fut_printf("[virtio-mmio] Probing QEMU virt MMIO device slots...\n");
+    /* Try device tree discovery first */
+    bool dt_used = false;
+    if (dtb_ptr && fut_dtb_validate(dtb_ptr)) {
+        fut_dtb_node_t dt_nodes[MAX_VIRTIO_DEVICES];
+        int dt_count = fut_dtb_find_compatible_nodes(dtb_ptr, "virtio,mmio",
+                                                      dt_nodes, MAX_VIRTIO_DEVICES);
 
-    /* Probe VirtIO MMIO devices at QEMU virt machine fixed addresses.
-     * QEMU virt uses addresses 0x0a000000 + n*0x200 for up to 32 devices.
-     *
-     * TODO: Parse device tree to discover device addresses dynamically
-     * instead of hardcoding QEMU virt addresses. This would allow:
-     *   - Portable boot on other ARM64 platforms
-     *   - Discovery of non-contiguous device ranges
-     *   - Dynamic IRQ mapping from FDT interrupt properties
-     */
-    for (int i = 0; i < 32; i++) {
-        uint64_t base = 0x0a000000 + (i * 0x200);
-        uint32_t irq = 16 + i;  /* IRQs 16-47 (0x10-0x2f in device tree) */
+        if (dt_count > 0) {
+            fut_printf("[virtio-mmio] Found %d device(s) via device tree\n", dt_count);
+            dt_used = true;
 
-        virtio_mmio_probe_device(base, irq);
-        /* Continue scanning all slots - devices may not be contiguous */
+            /* Probe each device found in device tree */
+            for (int i = 0; i < dt_count && i < MAX_VIRTIO_DEVICES; i++) {
+                virtio_mmio_probe_device(dt_nodes[i].base_addr, dt_nodes[i].irq);
+            }
+        }
     }
 
-    fut_printf("[virtio-mmio] Found %d virtio device(s)\n", virtio_device_count);
+    /* Fallback to hardcoded QEMU virt addresses if device tree not available */
+    if (!dt_used) {
+        fut_printf("[virtio-mmio] Device tree unavailable, using hardcoded QEMU virt addresses\n");
+
+        /* QEMU virt uses addresses 0x0a000000 + n*0x200 for up to 32 devices */
+        for (int i = 0; i < 32; i++) {
+            uint64_t base = 0x0a000000 + (i * 0x200);
+            uint32_t irq = 16 + i;  /* IRQs 16-47 (0x10-0x2f in device tree) */
+
+            virtio_mmio_probe_device(base, irq);
+        }
+    }
+
+    fut_printf("[virtio-mmio] Discovered %d VirtIO device(s)\n", virtio_device_count);
 }
 
 /**

@@ -433,6 +433,160 @@ fut_platform_info_t fut_dtb_parse(uint64_t dtb_ptr) {
 }
 
 /* ============================================================
+ *   Device Tree Node Discovery
+ * ============================================================ */
+
+bool fut_dtb_get_interrupt(uint64_t dtb_ptr, const char *node_name, uint32_t *irq_out) {
+    if (!fut_dtb_validate(dtb_ptr) || !node_name || !irq_out) {
+        return false;
+    }
+
+    /* Read "interrupts" property - contains (type, number, flags) triplets
+     * Format: <type, number, flags>
+     *   type: 0=SPI (Shared Peripheral Interrupt), 1=PPI (Private Peripheral Interrupt)
+     *   number: Interrupt number
+     *   flags: Trigger type (bit 0: edge=1, level=0)
+     */
+    uint32_t int_data[3];  /* One interrupt triplet */
+    size_t len = fut_dtb_get_property(dtb_ptr, node_name, "interrupts", int_data, sizeof(int_data));
+
+    if (len < 12) {  /* Need at least 12 bytes for one triplet */
+        return false;
+    }
+
+    /* Extract interrupt number (second cell) */
+    uint32_t int_type = be32_to_cpu(int_data[0]);
+    uint32_t int_num = be32_to_cpu(int_data[1]);
+    uint32_t int_flags = be32_to_cpu(int_data[2]);
+
+    /* For SPI interrupts (type 0), the interrupt number is used directly.
+     * The GIC driver handles the offset internally (SPI starts at 32).
+     * For PPI interrupts (type 1), the number is also used directly.
+     */
+    (void)int_type;   /* Type not currently used */
+    (void)int_flags;  /* Flags not currently used */
+
+    *irq_out = int_num;
+    return true;
+}
+
+int fut_dtb_find_compatible_nodes(uint64_t dtb_ptr, const char *compatible,
+                                   fut_dtb_node_t *nodes_out, int max_nodes) {
+    if (!fut_dtb_validate(dtb_ptr) || !compatible || !nodes_out || max_nodes <= 0) {
+        return 0;
+    }
+
+    dtb_header_t *header = (dtb_header_t *)dtb_ptr;
+    char *strings_base = (char *)(dtb_ptr + be32_to_cpu(header->off_dt_strings));
+    uint32_t *struct_ptr = (uint32_t *)(dtb_ptr + be32_to_cpu(header->off_dt_struct));
+    uint32_t *p = struct_ptr;
+
+    int found_count = 0;
+    char current_node_name[64] = {0};
+    bool in_matching_node = false;
+    uint64_t current_base = 0;
+    uint64_t current_size = 0;
+    uint32_t current_irq = 0;
+
+    /* Iterate through device tree structure */
+    while (be32_to_cpu(p[0]) != FDT_END) {
+        uint32_t token = be32_to_cpu(p[0]);
+
+        if (token == FDT_BEGIN_NODE) {
+            /* Extract node name (null-terminated string after token) */
+            const char *node_name_ptr = (const char *)&p[1];
+            size_t name_len = strlen(node_name_ptr);
+
+            /* Copy node name for tracking */
+            if (name_len > 0 && name_len < sizeof(current_node_name)) {
+                memcpy(current_node_name, node_name_ptr, name_len);
+                current_node_name[name_len] = '\0';
+            } else {
+                current_node_name[0] = '\0';
+            }
+
+            /* Reset matching state for new node */
+            in_matching_node = false;
+            current_base = 0;
+            current_size = 0;
+            current_irq = 0;
+
+            /* Move past node name (aligned to 4 bytes) */
+            size_t aligned_name_len = align_offset(name_len + 1);
+            p = (uint32_t *)((char *)&p[1] + aligned_name_len);
+
+        } else if (token == FDT_PROP) {
+            dtb_prop_t *prop = (dtb_prop_t *)&p[1];
+            uint32_t prop_len = be32_to_cpu(prop->len);
+            uint32_t name_off = be32_to_cpu(prop->nameoff);
+            const char *prop_name = strings_base + name_off;
+            void *prop_value = (void *)&prop[1];
+
+            /* Check if this is a compatible property matching our search */
+            if (strcmp(prop_name, "compatible") == 0 && prop_len > 0) {
+                /* Compatible strings are null-terminated, possibly multiple */
+                const char *compat_str = (const char *)prop_value;
+                if (strstr(compat_str, compatible) != NULL) {
+                    in_matching_node = true;
+                }
+            }
+
+            /* If we're in a matching node, extract reg and interrupts */
+            if (in_matching_node) {
+                if (strcmp(prop_name, "reg") == 0 && prop_len >= 16) {
+                    /* Extract 64-bit base and size */
+                    uint64_t *reg_data = (uint64_t *)prop_value;
+                    current_base = be64_to_cpu(reg_data[0]);
+                    current_size = be64_to_cpu(reg_data[1]);
+                }
+
+                if (strcmp(prop_name, "interrupts") == 0 && prop_len >= 12) {
+                    /* Extract interrupt number from 3-cell format */
+                    uint32_t *int_data = (uint32_t *)prop_value;
+                    current_irq = be32_to_cpu(int_data[1]);  /* Second cell is interrupt number */
+                }
+            }
+
+            /* Move to next property */
+            p = (uint32_t *)((char *)p + sizeof(uint32_t) + sizeof(dtb_prop_t) + prop_len);
+            p = (uint32_t *)align_offset((size_t)p);
+
+        } else if (token == FDT_END_NODE) {
+            /* If we found a matching node with all required properties, add it */
+            if (in_matching_node && current_base != 0) {
+                if (found_count < max_nodes) {
+                    /* Copy node info to output array */
+                    size_t name_len = strlen(current_node_name);
+                    if (name_len >= sizeof(nodes_out[found_count].name)) {
+                        name_len = sizeof(nodes_out[found_count].name) - 1;
+                    }
+                    memcpy(nodes_out[found_count].name, current_node_name, name_len);
+                    nodes_out[found_count].name[name_len] = '\0';
+
+                    nodes_out[found_count].base_addr = current_base;
+                    nodes_out[found_count].size = current_size;
+                    nodes_out[found_count].irq = current_irq;
+                }
+                found_count++;
+            }
+
+            /* Reset for next node */
+            in_matching_node = false;
+            current_node_name[0] = '\0';
+            p += 1;
+
+        } else if (token == FDT_NOP) {
+            p += 1;
+        } else {
+            /* Unknown token, stop */
+            break;
+        }
+    }
+
+    return found_count;
+}
+
+/* ============================================================
  *   Platform Initialization Stubs
  * ============================================================ */
 

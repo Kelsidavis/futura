@@ -166,6 +166,47 @@ uint64_t fut_dtb_get_memory_size(uint64_t dtb_ptr);
 bool fut_dtb_validate(uint64_t dtb_ptr);
 
 /* ============================================================
+ *   Device Tree Node Discovery
+ * ============================================================ */
+
+/**
+ * Device tree node information for compatible string matching.
+ */
+typedef struct {
+    char name[64];           /* Node name (e.g., "virtio_mmio@a000000") */
+    uint64_t base_addr;      /* Base address from reg property */
+    uint64_t size;           /* Size from reg property */
+    uint32_t irq;            /* Interrupt number from interrupts property */
+} fut_dtb_node_t;
+
+/**
+ * Find all nodes with a specific compatible string.
+ * Iterates through device tree and collects nodes matching the compatible property.
+ *
+ * @param dtb_ptr: Physical address of DTB
+ * @param compatible: Compatible string to search for (e.g., "virtio,mmio")
+ * @param nodes_out: Output array to store matching nodes
+ * @param max_nodes: Maximum number of nodes to return
+ * @return: Number of matching nodes found (may exceed max_nodes if limited)
+ */
+int fut_dtb_find_compatible_nodes(uint64_t dtb_ptr, const char *compatible,
+                                   fut_dtb_node_t *nodes_out, int max_nodes);
+
+/**
+ * Get interrupt property from a node.
+ * Parses ARM GIC interrupt format: <type, number, flags>
+ *   - type: 0=SPI, 1=PPI
+ *   - number: Interrupt number
+ *   - flags: Interrupt flags (edge/level triggered)
+ *
+ * @param dtb_ptr: Physical address of DTB
+ * @param node_name: Full path to node
+ * @param irq_out: Output interrupt number
+ * @return: true if found, false otherwise
+ */
+bool fut_dtb_get_interrupt(uint64_t dtb_ptr, const char *node_name, uint32_t *irq_out);
+
+/* ============================================================
  *   Platform-Specific Initialization
  * ============================================================ */
 

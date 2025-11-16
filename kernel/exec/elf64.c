@@ -1093,6 +1093,27 @@ static int exec_copy_to_user(fut_mm_t *mm, uint64_t dest, const void *src, size_
         /* Copy chunk to this page */
         memcpy(virt, src_bytes, chunk_size);
 
+        /* Always-on debug for rodata segment (vaddr 0x402000) containing pathname strings */
+        if ((vaddr & ~0xFFFULL) == 0x402000 && vaddr == dest) {
+            extern void fut_printf(const char *, ...);
+            fut_printf("[EXEC-COPY] vaddr=0x%llx phys=0x%llx virt=%p len=%llu\n",
+                      (unsigned long long)vaddr, (unsigned long long)(phys - page_offset),
+                      virt, (unsigned long long)chunk_size);
+            /* Dump first 16 bytes or full chunk, whichever is smaller */
+            size_t dump_len = (chunk_size < 16) ? chunk_size : 16;
+            const uint8_t *debug_src = src_bytes;
+            const uint8_t *debug_dst = (const uint8_t *)virt;
+            fut_printf("[EXEC-COPY] SRC: ");
+            for (size_t i = 0; i < dump_len; ++i) {
+                fut_printf("%02x ", debug_src[i]);
+            }
+            fut_printf("\n[EXEC-COPY] DST: ");
+            for (size_t i = 0; i < dump_len; ++i) {
+                fut_printf("%02x ", debug_dst[i]);
+            }
+            fut_printf("\n");
+        }
+
         /* ARM64: Clean data cache and invalidate instruction cache for code pages
          * This is critical because ARM64 has separate instruction and data caches.
          * After writing instructions via data cache, we must:
@@ -1915,8 +1936,14 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
         }
 
 #ifdef DEBUG_ELF
-        fut_printf("[EXEC-ELF] Mapping segment %d: vaddr=0x%llx memsz=0x%llx\n",
-                   i, (unsigned long long)phdrs[i].p_vaddr, (unsigned long long)phdrs[i].p_memsz);
+        fut_printf("[EXEC-ELF] Mapping segment %d: vaddr=0x%llx memsz=0x%llx filesz=0x%llx offset=0x%llx\n",
+                   i, (unsigned long long)phdrs[i].p_vaddr, (unsigned long long)phdrs[i].p_memsz,
+                   (unsigned long long)phdrs[i].p_filesz, (unsigned long long)phdrs[i].p_offset);
+#else
+        /* Always log segment mapping for ARM64 ELF debugging */
+        fut_printf("[EXEC-ELF] Mapping segment %d: vaddr=0x%llx memsz=0x%llx filesz=0x%llx offset=0x%llx\n",
+                   i, (unsigned long long)phdrs[i].p_vaddr, (unsigned long long)phdrs[i].p_memsz,
+                   (unsigned long long)phdrs[i].p_filesz, (unsigned long long)phdrs[i].p_offset);
 #endif
         rc = map_segment(mm, fd, &phdrs[i]);
 #ifdef DEBUG_ELF

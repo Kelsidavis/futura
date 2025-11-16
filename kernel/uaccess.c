@@ -179,25 +179,8 @@ int fut_copy_from_user(void *k_dst, const void *u_src, size_t n) {
 #if defined(__x86_64__)
     __asm__ volatile("stac");
 #elif defined(__aarch64__)
-    /* ARM64: Get user page table from current task and switch to it for user memory access */
-    extern page_table_t boot_l1_table;
-    extern fut_task_t *fut_task_current(void);
-    extern fut_vmem_context_t *fut_mm_context(fut_mm_t *mm);
-
-    fut_task_t *task = fut_task_current();
-    uint64_t user_ttbr0 = 0;
-
-    if (task && task->mm) {
-        fut_vmem_context_t *ctx = fut_mm_context(task->mm);
-        if (ctx) {
-            user_ttbr0 = ctx->ttbr0_el1;
-        }
-    }
-
-    /* Switch to user page table if we have one */
-    if (user_ttbr0 != 0) {
-        __asm__ volatile("msr ttbr0_el1, %0; isb" :: "r"(user_ttbr0));
-    }
+    /* ARM64 note: TTBR0 should already be set by context switch, so we don't need to switch here.
+     * The context switch loads the user's TTBR0 before entering user mode. */
 #endif
 
     size_t remaining = n;
@@ -214,15 +197,6 @@ int fut_copy_from_user(void *k_dst, const void *u_src, size_t n) {
         remaining -= chunk;
     }
 
-    /* Ensure reads are complete before continuing */
-#if defined(__aarch64__)
-    /* Data synchronization barrier - ensure all reads complete */
-    __asm__ volatile("dsb sy" ::: "memory");
-
-    /* Switch back to kernel page table */
-    __asm__ volatile("msr ttbr0_el1, %0; isb" :: "r"(pmap_virt_to_phys(&boot_l1_table)));
-#endif
-
     /* Clear AC flag */
 #if defined(__x86_64__)
     __asm__ volatile("clac");
@@ -233,12 +207,9 @@ int fut_copy_from_user(void *k_dst, const void *u_src, size_t n) {
 
 copy_fault:
     {
-        /* Clear AC flag on fault path or restore kernel page table */
+        /* Clear AC flag on fault path */
 #if defined(__x86_64__)
         __asm__ volatile("clac");
-#elif defined(__aarch64__)
-        extern page_table_t boot_l1_table;
-        __asm__ volatile("msr ttbr0_el1, %0; isb" :: "r"(pmap_virt_to_phys(&boot_l1_table)));
 #endif
         int err = fut_uaccess_window_error();
         uaccess_clear();
@@ -270,25 +241,8 @@ int fut_copy_to_user(void *u_dst, const void *k_src, size_t n) {
 #if defined(__x86_64__)
     __asm__ volatile("stac");
 #elif defined(__aarch64__)
-    /* ARM64: Get user page table from current task and switch to it for user memory access */
-    extern page_table_t boot_l1_table;
-    extern fut_task_t *fut_task_current(void);
-    extern fut_vmem_context_t *fut_mm_context(fut_mm_t *mm);
-
-    fut_task_t *task = fut_task_current();
-    uint64_t user_ttbr0 = 0;
-
-    if (task && task->mm) {
-        fut_vmem_context_t *ctx = fut_mm_context(task->mm);
-        if (ctx) {
-            user_ttbr0 = ctx->ttbr0_el1;
-        }
-    }
-
-    /* Switch to user page table if we have one */
-    if (user_ttbr0 != 0) {
-        __asm__ volatile("msr ttbr0_el1, %0; isb" :: "r"(user_ttbr0));
-    }
+    /* ARM64 note: TTBR0 should already be set by context switch, so we don't need to switch here.
+     * The context switch loads the user's TTBR0 before entering user mode. */
 #endif
 
     size_t remaining = n;
@@ -305,17 +259,6 @@ int fut_copy_to_user(void *u_dst, const void *k_src, size_t n) {
         remaining -= chunk;
     }
 
-    /* Ensure writes are visible to userspace */
-#if defined(__aarch64__)
-    /* Data synchronization barrier - ensure all writes complete */
-    __asm__ volatile("dsb sy" ::: "memory");
-    /* Instruction synchronization barrier - ensure barrier effect visible */
-    __asm__ volatile("isb" ::: "memory");
-
-    /* Switch back to kernel page table */
-    __asm__ volatile("msr ttbr0_el1, %0; isb" :: "r"(pmap_virt_to_phys(&boot_l1_table)));
-#endif
-
     /* Clear AC flag */
 #if defined(__x86_64__)
     __asm__ volatile("clac");
@@ -326,12 +269,9 @@ int fut_copy_to_user(void *u_dst, const void *k_src, size_t n) {
 
 copy_fault:
     {
-        /* Clear AC flag on fault path or restore kernel page table */
+        /* Clear AC flag on fault path */
 #if defined(__x86_64__)
         __asm__ volatile("clac");
-#elif defined(__aarch64__)
-        extern page_table_t boot_l1_table;
-        __asm__ volatile("msr ttbr0_el1, %0; isb" :: "r"(pmap_virt_to_phys(&boot_l1_table)));
 #endif
         int err = fut_uaccess_window_error();
         uaccess_clear();

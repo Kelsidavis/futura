@@ -359,6 +359,7 @@ static inline void fut_flush_tlb_single(uint64_t vaddr) {
     /* ARM64: TLBI VALE1 - TLB invalidate by VA at EL1 */
     __asm__ volatile("tlbi vale1, %0" :: "r"(vaddr >> 12) : "memory");
     __asm__ volatile("dsb sy" ::: "memory");
+    __asm__ volatile("isb" ::: "memory");
 }
 
 /**

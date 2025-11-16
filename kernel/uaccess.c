@@ -183,25 +183,15 @@ int fut_copy_from_user(void *k_dst, const void *u_src, size_t n) {
     extern page_table_t boot_l1_table;
     extern fut_task_t *fut_task_current(void);
     extern fut_vmem_context_t *fut_mm_context(fut_mm_t *mm);
-    extern void fut_printf(const char *, ...);
 
     fut_task_t *task = fut_task_current();
     uint64_t user_ttbr0 = 0;
-
-    fut_printf("[UACCESS] copy_from_user: u_src=0x%llx n=%llu task=%p\n",
-               (unsigned long long)u_src, (unsigned long long)n, task);
 
     if (task && task->mm) {
         fut_vmem_context_t *ctx = fut_mm_context(task->mm);
         if (ctx) {
             user_ttbr0 = ctx->ttbr0_el1;
-            fut_printf("[UACCESS] task->mm valid, user_ttbr0=0x%llx\n",
-                       (unsigned long long)user_ttbr0);
-        } else {
-            fut_printf("[UACCESS] task->mm valid but ctx is NULL\n");
         }
-    } else {
-        fut_printf("[UACCESS] task=%p task->mm=%p\n", task, task ? task->mm : NULL);
     }
 
     /* Switch to user page table if we have one */

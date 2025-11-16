@@ -259,26 +259,7 @@ void arm64_svc_handler(fut_interrupt_frame_t *frame) {
     uint64_t arg5 = frame->x[4];
     uint64_t arg6 = frame->x[5];
 
-    /* Debug: Print all syscalls to trace execution */
-    fut_printf("[SVC] syscall=%llu x0=0x%llx x1=0x%llx x2=0x%llx\n",
-               syscall_num, arg1, arg2, arg3);
-
-    /* Debug: For open syscall (2), print pathname pointer and first few bytes */
-    if (syscall_num == 2) {  /* SYS_open */
-        const char *pathname_ptr = (const char *)arg1;
-        fut_printf("[SVC-DEBUG] open: pathname_ptr=0x%llx flags=%llu mode=%llu\n",
-                   arg1, arg2, arg3);
-        if (pathname_ptr) {
-            /* Read first 16 bytes to see what's there */
-            unsigned char bytes[16];
-            for (int i = 0; i < 16; i++) {
-                bytes[i] = pathname_ptr[i];
-            }
-            fut_printf("[SVC-DEBUG] First 16 bytes: %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x\n",
-                       bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
-                       bytes[8], bytes[9], bytes[10], bytes[11], bytes[12], bytes[13], bytes[14], bytes[15]);
-        }
-    }
+    fut_printf("[SVC] syscall=%llu fd=%llu buf=%llx len=%llu\n", syscall_num, arg1, arg2, arg3);
 
     /* Call syscall dispatcher */
     extern int64_t posix_syscall_dispatch(uint64_t syscall_num,

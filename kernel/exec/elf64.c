@@ -1055,10 +1055,6 @@ static int exec_copy_to_user(fut_mm_t *mm, uint64_t dest, const void *src, size_
     /* For ELF loading, map user pages and write directly */
     /* Handle page boundaries by copying one page at a time */
     fut_vmem_context_t *vmem = fut_mm_context(mm);
-    extern void fut_printf(const char *, ...);
-    fut_printf("[EXEC-COPY] dest=0x%llx len=%zu vmem=%p ttbr0=0x%llx\n",
-               (unsigned long long)dest, len, vmem,
-               (unsigned long long)(vmem ? vmem->ttbr0_el1 : 0));
     const uint8_t *src_bytes = (const uint8_t *)src;
     size_t remaining = len;
     uint64_t vaddr = dest;
@@ -1096,14 +1092,6 @@ static int exec_copy_to_user(fut_mm_t *mm, uint64_t dest, const void *src, size_
 
         /* Copy chunk to this page */
         memcpy(virt, src_bytes, chunk_size);
-
-        /* Debug: For .rodata strings, print what was actually written */
-        if (vaddr == 0x402000 && chunk_size >= 9) {
-            const uint8_t *check = (const uint8_t *)virt;
-            fut_printf("[EXEC-COPY] Wrote to 0x402000: phys=0x%llx virt=%p data='%02x %02x %02x %02x %02x %02x %02x %02x %02x'\n",
-                       (unsigned long long)phys, virt,
-                       check[0], check[1], check[2], check[3], check[4], check[5], check[6], check[7], check[8]);
-        }
 
         /* ARM64: Clean data cache and invalidate instruction cache for code pages
          * This is critical because ARM64 has separate instruction and data caches.
@@ -1220,27 +1208,10 @@ static int map_segment(fut_mm_t *mm, int fd, const elf64_phdr_t *phdr) {
 #ifdef DEBUG_ELF
     fut_printf("[MAP-SEG-ARM64] Copying data to user space at 0x%llx\n", (unsigned long long)phdr->p_vaddr);
 #endif
-    /* Debug: Check if this segment contains the .rodata string */
-    if (phdr->p_vaddr <= 0x402000 && (phdr->p_vaddr + phdr->p_filesz) > 0x402000) {
-        fut_printf("[ELF-DEBUG] Segment contains 0x402000! vaddr=0x%llx filesz=0x%llx\n",
-                   (unsigned long long)phdr->p_vaddr, (unsigned long long)phdr->p_filesz);
-        size_t offset_in_buf = 0x402000 - phdr->p_vaddr;
-        fut_printf("[ELF-DEBUG] Buffer data at offset 0x%llx (0x402000): %02x %02x %02x %02x %02x %02x %02x %02x %02x\n",
-                   (unsigned long long)offset_in_buf,
-                   buf[offset_in_buf], buf[offset_in_buf+1], buf[offset_in_buf+2], buf[offset_in_buf+3],
-                   buf[offset_in_buf+4], buf[offset_in_buf+5], buf[offset_in_buf+6], buf[offset_in_buf+7],
-                   buf[offset_in_buf+8]);
-    }
-
     if (exec_copy_to_user(mm, phdr->p_vaddr, buf, phdr->p_filesz) != 0) {
         fut_printf("[MAP-SEG-ARM64] ERROR: exec_copy_to_user failed\n");
         fut_free(buf);
         return -EFAULT;
-    }
-
-    /* Debug: Verify copy succeeded */
-    if (phdr->p_vaddr <= 0x402000 && (phdr->p_vaddr + phdr->p_filesz) > 0x402000) {
-        fut_printf("[ELF-DEBUG] exec_copy_to_user completed for segment containing 0x402000\n");
     }
 
 #ifdef DEBUG_ELF

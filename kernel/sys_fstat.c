@@ -119,43 +119,49 @@ extern uint64_t fut_get_time_ns(void);
  * Phase 4 (Completed): statx support, mount propagation flags, security labels
  */
 long sys_fstat(int fd, struct fut_stat *statbuf) {
+    /* ARM64 FIX: Copy parameters to local variables immediately to ensure they're preserved
+     * on the stack across potentially blocking calls. VFS and copy operations may block and
+     * corrupt register-passed parameters upon resumption. */
+    int local_fd = fd;
+    struct fut_stat *local_statbuf = statbuf;
+
     fut_task_t *task = fut_task_current();
     if (!task) {
-        fut_printf("[FSTAT] fstat(fd=%d) -> ESRCH (no current task)\n", fd);
+        fut_printf("[FSTAT] fstat(fd=%d) -> ESRCH (no current task)\n", local_fd);
         return -ESRCH;
     }
 
     /* Phase 2: Validate fd early */
-    if (fd < 0) {
-        fut_printf("[FSTAT] fstat(fd=%d) -> EBADF (negative fd)\n", fd);
+    if (local_fd < 0) {
+        fut_printf("[FSTAT] fstat(fd=%d) -> EBADF (negative fd)\n", local_fd);
         return -EBADF;
     }
 
     /* Phase 2: Validate statbuf pointer */
-    if (!statbuf) {
-        fut_printf("[FSTAT] fstat(fd=%d, statbuf=NULL) -> EINVAL (NULL buffer)\n", fd);
+    if (!local_statbuf) {
+        fut_printf("[FSTAT] fstat(fd=%d, statbuf=NULL) -> EINVAL (NULL buffer)\n", local_fd);
         return -EINVAL;
     }
 
     /* Phase 2: Categorize FD range for diagnostics */
     const char *fd_category;
-    if (fd <= 2) {
+    if (local_fd <= 2) {
         fd_category = "stdio (0-2)";
-    } else if (fd < 10) {
+    } else if (local_fd < 10) {
         fd_category = "low (3-9)";
-    } else if (fd < 100) {
+    } else if (local_fd < 100) {
         fd_category = "normal (10-99)";
-    } else if (fd < 1000) {
+    } else if (local_fd < 1000) {
         fd_category = "high (100-999)";
     } else {
         fd_category = "very high (≥1000)";
     }
 
     /* Get the file structure from the file descriptor */
-    struct fut_file *file = fut_vfs_get_file(fd);
+    struct fut_file *file = fut_vfs_get_file(local_fd);
     if (!file) {
         fut_printf("[FSTAT] fstat(fd=%d [%s]) -> EBADF (invalid fd, not open)\n",
-                   fd, fd_category);
+                   local_fd, fd_category);
         return -EBADF;
     }
 
@@ -163,7 +169,7 @@ long sys_fstat(int fd, struct fut_stat *statbuf) {
     struct fut_vnode *vnode = file->vnode;
     if (!vnode) {
         fut_printf("[FSTAT] fstat(fd=%d [%s]) -> EBADF (no vnode attached)\n",
-                   fd, fd_category);
+                   local_fd, fd_category);
         return -EBADF;
     }
 
@@ -188,7 +194,7 @@ long sys_fstat(int fd, struct fut_stat *statbuf) {
                     break;
             }
             fut_printf("[FSTAT] fstat(fd=%d [%s], ino=%llu) -> %d (%s)\n",
-                       fd, fd_category, vnode->ino, ret, error_desc);
+                       local_fd, fd_category, vnode->ino, ret, error_desc);
             return ret;
         }
     } else {
@@ -249,9 +255,9 @@ long sys_fstat(int fd, struct fut_stat *statbuf) {
     }
 
     /* Copy stat buffer to userspace */
-    if (fut_copy_to_user(statbuf, &kernel_stat, sizeof(struct fut_stat)) != 0) {
+    if (fut_copy_to_user(local_statbuf, &kernel_stat, sizeof(struct fut_stat)) != 0) {
         fut_printf("[FSTAT] fstat(fd=%d [%s], type=%s, ino=%llu) -> EFAULT (copy_to_user failed)\n",
-                   fd, fd_category, file_type, kernel_stat.st_ino);
+                   local_fd, fd_category, file_type, kernel_stat.st_ino);
         return -EFAULT;
     }
 
@@ -271,7 +277,7 @@ long sys_fstat(int fd, struct fut_stat *statbuf) {
     fut_printf("[FSTAT] fstat(fd=%d [%s], type=%s, size=%llu [%s], mode=%o, ino=%llu, "
                "nlinks=%u (handle=%s), blocks=%llu, blksize=%u, uid=%u, gid=%u) -> 0 "
                "(xattr ready, handle stable, Phase 4: statx and security labels)\n",
-               fd, fd_category, file_type, size, size_category,
+               local_fd, fd_category, file_type, size, size_category,
                kernel_stat.st_mode, kernel_stat.st_ino,
                kernel_stat.st_nlink, handle_stability, kernel_stat.st_blocks, kernel_stat.st_blksize,
                kernel_stat.st_uid, kernel_stat.st_gid);

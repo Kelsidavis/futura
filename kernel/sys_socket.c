@@ -119,10 +119,17 @@ extern int allocate_socket_fd(fut_socket_t *socket);
  * Phase 4: SOCK_NONBLOCK, SOCK_CLOEXEC, protocol selection
  */
 long sys_socket(int domain, int type, int protocol) {
+    /* ARM64 FIX: Copy parameters to local variables immediately to ensure they're preserved
+     * on the stack across potentially blocking calls. Socket operations may block and corrupt
+     * register-passed parameters upon resumption. */
+    int local_domain = domain;
+    int local_type = type;
+    int local_protocol = protocol;
+
     fut_task_t *task = fut_task_current();
     if (!task) {
         fut_printf("[SOCKET] socket(domain=%d, type=%d, protocol=%d) -> ESRCH (no current task)\n",
-                   domain, type, protocol);
+                   local_domain, local_type, local_protocol);
         return -ESRCH;
     }
 
@@ -130,7 +137,7 @@ long sys_socket(int domain, int type, int protocol) {
     const char *domain_name;
     const char *domain_desc;
 
-    switch (domain) {
+    switch (local_domain) {
         case AF_UNSPEC:
             domain_name = "AF_UNSPEC";
             domain_desc = "unspecified";
@@ -154,8 +161,8 @@ long sys_socket(int domain, int type, int protocol) {
     }
 
     /* Phase 2: Extract socket type and flags */
-    int base_type = type & 0xFF;  /* Lower 8 bits are base type */
-    int type_flags = type & ~0xFF; /* Upper bits are flags */
+    int base_type = local_type & 0xFF;  /* Lower 8 bits are base type */
+    int type_flags = local_type & ~0xFF; /* Upper bits are flags */
 
     /* Phase 2: Identify socket type */
     const char *type_name;
@@ -213,38 +220,38 @@ long sys_socket(int domain, int type, int protocol) {
     }
 
     /* Phase 2: Validate address family (only AF_UNIX supported) */
-    if (domain != AF_UNIX) {
+    if (local_domain != AF_UNIX) {
         fut_printf("[SOCKET] socket(domain=%d [%s, %s], type=%d [%s, %s], flags=%s, protocol=%d [%s]) -> ENOTSUP (only AF_UNIX supported in Phase 2)\n",
-                   domain, domain_name, domain_desc, base_type, type_name, type_desc, flags_desc, protocol, protocol_desc);
+                   local_domain, domain_name, domain_desc, base_type, type_name, type_desc, flags_desc, local_protocol, protocol_desc);
         return -ENOTSUP;
     }
 
     /* Phase 2: Validate socket type (only SOCK_STREAM supported) */
     if (base_type != SOCK_STREAM) {
         fut_printf("[SOCKET] socket(domain=%s, type=%d [%s, %s], flags=%s, protocol=%d [%s]) -> ENOTSUP (only SOCK_STREAM supported in Phase 2)\n",
-                   domain_name, base_type, type_name, type_desc, flags_desc, protocol, protocol_desc);
+                   domain_name, base_type, type_name, type_desc, flags_desc, local_protocol, protocol_desc);
         return -ENOTSUP;
     }
 
     /* Phase 2: Validate flags (not yet supported) */
     if (type_flags != 0) {
         fut_printf("[SOCKET] socket(domain=%s, type=%s, flags=%s [0x%x], protocol=%d [%s]) -> EINVAL (socket flags not yet supported in Phase 2)\n",
-                   domain_name, type_name, flags_desc, type_flags, protocol, protocol_desc);
+                   domain_name, type_name, flags_desc, type_flags, local_protocol, protocol_desc);
         return -EINVAL;
     }
 
     /* Phase 2: Validate protocol (should be 0 for AF_UNIX) */
-    if (protocol != 0) {
+    if (local_protocol != 0) {
         fut_printf("[SOCKET] socket(domain=%s, type=%s, flags=%s, protocol=%d [%s]) -> EINVAL (AF_UNIX requires protocol=0)\n",
-                   domain_name, type_name, flags_desc, protocol, protocol_desc);
+                   domain_name, type_name, flags_desc, local_protocol, protocol_desc);
         return -EINVAL;
     }
 
     /* Create kernel socket object */
-    fut_socket_t *socket = fut_socket_create(domain, base_type);
+    fut_socket_t *socket = fut_socket_create(local_domain, base_type);
     if (!socket) {
         fut_printf("[SOCKET] socket(domain=%s, type=%s, flags=%s, protocol=%d) -> ENOMEM (fut_socket_create failed)\n",
-                   domain_name, type_name, flags_desc, protocol);
+                   domain_name, type_name, flags_desc, local_protocol);
         return -ENOMEM;
     }
 
@@ -252,14 +259,14 @@ long sys_socket(int domain, int type, int protocol) {
     int sockfd = allocate_socket_fd(socket);
     if (sockfd < 0) {
         fut_printf("[SOCKET] socket(domain=%s, type=%s, flags=%s, protocol=%d) -> EMFILE (failed to allocate FD)\n",
-                   domain_name, type_name, flags_desc, protocol);
+                   domain_name, type_name, flags_desc, local_protocol);
         fut_socket_unref(socket);
         return -EMFILE;
     }
 
     /* Phase 3: Detailed success logging */
     fut_printf("[SOCKET] socket(domain=%s [%s], type=%s [%s], flags=%s, protocol=%d [%s]) -> %d (Socket %u created, Phase 3: Address family and socket type support)\n",
-               domain_name, domain_desc, type_name, type_desc, flags_desc, protocol, protocol_desc, sockfd, socket->socket_id);
+               domain_name, domain_desc, type_name, type_desc, flags_desc, local_protocol, protocol_desc, sockfd, socket->socket_id);
 
     return (long)sockfd;
 }

@@ -140,12 +140,18 @@ extern int fut_copy_from_user(void *to, const void *from, size_t size);
  * Phase 4: Cross-filesystem rename (copy-then-unlink with transactions)
  */
 long sys_rename(const char *oldpath, const char *newpath) {
+    /* ARM64 FIX: Copy parameters to local variables immediately to ensure they're preserved
+     * on the stack across potentially blocking calls. VFS and copy operations may block and
+     * corrupt register-passed parameters upon resumption. */
+    const char *local_oldpath = oldpath;
+    const char *local_newpath = newpath;
+
     /* Phase 2: Validate path pointers */
-    if (!oldpath) {
+    if (!local_oldpath) {
         fut_printf("[RENAME] rename(oldpath=NULL, newpath=?) -> EINVAL (NULL oldpath)\n");
         return -EINVAL;
     }
-    if (!newpath) {
+    if (!local_newpath) {
         fut_printf("[RENAME] rename(oldpath=?, newpath=NULL) -> EINVAL (NULL newpath)\n");
         return -EINVAL;
     }
@@ -154,13 +160,13 @@ long sys_rename(const char *oldpath, const char *newpath) {
     char old_buf[256];
     char new_buf[256];
 
-    if (fut_copy_from_user(old_buf, oldpath, sizeof(old_buf) - 1) != 0) {
+    if (fut_copy_from_user(old_buf, local_oldpath, sizeof(old_buf) - 1) != 0) {
         fut_printf("[RENAME] rename(oldpath=?, newpath=?) -> EFAULT (oldpath copy_from_user failed)\n");
         return -EFAULT;
     }
     old_buf[sizeof(old_buf) - 1] = '\0';
 
-    if (fut_copy_from_user(new_buf, newpath, sizeof(new_buf) - 1) != 0) {
+    if (fut_copy_from_user(new_buf, local_newpath, sizeof(new_buf) - 1) != 0) {
         fut_printf("[RENAME] rename(oldpath='%s', newpath=?) -> EFAULT (newpath copy_from_user failed)\n",
                    old_buf);
         return -EFAULT;

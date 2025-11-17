@@ -86,36 +86,36 @@ long sys_connect(int sockfd, const void *addr, socklen_t addrlen) {
 
     fut_task_t *task = fut_task_current();
     if (!task) {
-        fut_printf("[CONNECT] connect(sockfd=%d) -> ESRCH (no current task)\n", sockfd);
+        fut_printf("[CONNECT] connect(sockfd=%d) -> ESRCH (no current task)\n", local_sockfd);
         return -ESRCH;
     }
 
     /* Phase 2: Validate sockfd early */
-    if (sockfd < 0) {
+    if (local_sockfd < 0) {
         fut_printf("[CONNECT] connect(sockfd=%d, addrlen=%u) -> EBADF (negative fd)\n",
-                   sockfd, addrlen);
+                   local_sockfd, local_addrlen);
         return -EBADF;
     }
 
     /* Phase 2: Validate addr pointer */
-    if (!addr) {
+    if (!local_addr) {
         fut_printf("[CONNECT] connect(sockfd=%d, addr=NULL, addrlen=%u) -> EFAULT (NULL addr)\n",
-                   sockfd, addrlen);
+                   local_sockfd, local_addrlen);
         return -EFAULT;
     }
 
     /* Phase 2: Validate minimum address length (family field is 2 bytes) */
-    if (addrlen < 2) {
+    if (local_addrlen < 2) {
         fut_printf("[CONNECT] connect(sockfd=%d, addrlen=%u) -> EINVAL (too small, need at least 2 bytes for family)\n",
-                   sockfd, addrlen);
+                   local_sockfd, local_addrlen);
         return -EINVAL;
     }
 
     /* Copy address family from userspace */
     uint16_t sa_family;
-    if (fut_copy_from_user(&sa_family, addr, 2) != 0) {
+    if (fut_copy_from_user(&sa_family, local_addr, 2) != 0) {
         fut_printf("[CONNECT] connect(sockfd=%d, addrlen=%u) -> EFAULT (failed to copy sa_family)\n",
-                   sockfd, addrlen);
+                   local_sockfd, local_addrlen);
         return -EFAULT;
     }
 
@@ -149,31 +149,31 @@ long sys_connect(int sockfd, const void *addr, socklen_t addrlen) {
     /* Phase 2: Only AF_UNIX supported in current phase */
     if (sa_family != AF_UNIX) {
         fut_printf("[CONNECT] connect(sockfd=%d, family=%u [%s, %s], addrlen=%u) -> ENOTSUP (only AF_UNIX supported in Phase 2)\n",
-                   sockfd, sa_family, family_name, family_desc, addrlen);
+                   local_sockfd, sa_family, family_name, family_desc, local_addrlen);
         return -ENOTSUP;
     }
 
     /* Phase 2: Validate addrlen for Unix domain socket (2 bytes family + path) */
-    if (addrlen < 3) {
+    if (local_addrlen < 3) {
         fut_printf("[CONNECT] connect(sockfd=%d, family=%s, addrlen=%u) -> EINVAL (AF_UNIX needs at least 3 bytes: 2 for family + 1 for path)\n",
-                   sockfd, family_name, addrlen);
+                   local_sockfd, family_name, local_addrlen);
         return -EINVAL;
     }
 
     /* Copy Unix domain socket path from userspace */
     char sock_path[256];
-    size_t path_len = addrlen - 2;  /* Subtract family field */
+    size_t path_len = local_addrlen - 2;  /* Subtract family field */
 
     if (path_len > sizeof(sock_path) - 1) {
         fut_printf("[CONNECT] connect(sockfd=%d, family=%s, path_len=%zu) -> ENAMETOOLONG (max %zu bytes)\n",
-                   sockfd, family_name, path_len, sizeof(sock_path) - 1);
+                   local_sockfd, family_name, path_len, sizeof(sock_path) - 1);
         path_len = sizeof(sock_path) - 1;  /* Truncate */
     }
 
     if (path_len > 0) {
-        if (fut_copy_from_user(sock_path, (const char *)addr + 2, path_len) != 0) {
+        if (fut_copy_from_user(sock_path, (const char *)local_addr + 2, path_len) != 0) {
             fut_printf("[CONNECT] connect(sockfd=%d, family=%s, path_len=%zu) -> EFAULT (failed to copy sun_path)\n",
-                       sockfd, family_name, path_len);
+                       local_sockfd, family_name, path_len);
             return -EFAULT;
         }
         sock_path[path_len] = '\0';
@@ -202,10 +202,10 @@ long sys_connect(int sockfd, const void *addr, socklen_t addrlen) {
     }
 
     /* Get socket from file descriptor */
-    fut_socket_t *socket = get_socket_from_fd(sockfd);
+    fut_socket_t *socket = get_socket_from_fd(local_sockfd);
     if (!socket) {
         fut_printf("[CONNECT] connect(sockfd=%d, family=%s, path='%s' [%s]) -> EBADF (not a socket)\n",
-                   sockfd, family_name, sock_path, path_type);
+                   local_sockfd, family_name, sock_path, path_type);
         return -EBADF;
     }
 
@@ -238,7 +238,7 @@ long sys_connect(int sockfd, const void *addr, socklen_t addrlen) {
     /* Phase 2: Validate socket state (should be CREATED or BOUND) */
     if (socket->state == FUT_SOCK_CONNECTED) {
         fut_printf("[CONNECT] connect(sockfd=%d, family=%s, path='%s', state=%s) -> EISCONN (socket already connected to '%s')\n",
-                   sockfd, family_name, sock_path, socket_state_desc,
+                   local_sockfd, family_name, sock_path, socket_state_desc,
                    socket->pair && socket->pair->peer && socket->pair->peer->bound_path ?
                    socket->pair->peer->bound_path : "(unknown)");
         return -EISCONN;
@@ -246,19 +246,19 @@ long sys_connect(int sockfd, const void *addr, socklen_t addrlen) {
 
     if (socket->state == FUT_SOCK_LISTENING) {
         fut_printf("[CONNECT] connect(sockfd=%d, family=%s, path='%s', state=%s) -> EINVAL (cannot connect listening socket)\n",
-                   sockfd, family_name, sock_path, socket_state_desc);
+                   local_sockfd, family_name, sock_path, socket_state_desc);
         return -EINVAL;
     }
 
     if (socket->state == FUT_SOCK_CONNECTING) {
         fut_printf("[CONNECT] connect(sockfd=%d, family=%s, path='%s', state=%s) -> EINVAL (connection already in progress)\n",
-                   sockfd, family_name, sock_path, socket_state_desc);
+                   local_sockfd, family_name, sock_path, socket_state_desc);
         return -EINVAL;  /* EALREADY semantics, using EINVAL until EALREADY defined */
     }
 
     if (socket->state == FUT_SOCK_CLOSED) {
         fut_printf("[CONNECT] connect(sockfd=%d, family=%s, path='%s', state=%s) -> EINVAL (socket closed)\n",
-                   sockfd, family_name, sock_path, socket_state_desc);
+                   local_sockfd, family_name, sock_path, socket_state_desc);
         return -EINVAL;
     }
 
@@ -291,13 +291,13 @@ long sys_connect(int sockfd, const void *addr, socklen_t addrlen) {
         }
 
         fut_printf("[CONNECT] connect(sockfd=%d, family=%s, path='%s' [%s, %s], state=%s) -> %d (%s)\n",
-                   sockfd, family_name, sock_path, path_type, path_desc, socket_state_desc, ret, error_desc);
+                   local_sockfd, family_name, sock_path, path_type, path_desc, socket_state_desc, ret, error_desc);
         return ret;
     }
 
     /* Phase 2: Detailed success logging */
     fut_printf("[CONNECT] connect(sockfd=%d, family=%s, path='%s' [%s, %s], state=%s->connected) -> 0 (Socket %u connected, Phase 2)\n",
-               sockfd, family_name, sock_path, path_type, path_desc, socket_state_desc, socket->socket_id);
+               local_sockfd, family_name, sock_path, path_type, path_desc, socket_state_desc, socket->socket_id);
 
     return 0;
 }

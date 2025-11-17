@@ -58,41 +58,47 @@ extern fut_socket_t *get_socket_from_fd(int fd);
  * Phase 4: Advanced features (TCP_FASTOPEN, TCP_DEFER_ACCEPT, etc.)
  */
 long sys_listen(int sockfd, int backlog) {
+    /* ARM64 FIX: Copy parameters to local variables immediately to ensure they're preserved
+     * on the stack across potentially blocking calls. Socket operations may block and corrupt
+     * register-passed parameters upon resumption. */
+    int local_sockfd = sockfd;
+    int local_backlog = backlog;
+
     fut_task_t *task = fut_task_current();
     if (!task) {
         fut_printf("[LISTEN] listen(sockfd=%d, backlog=%d) -> ESRCH (no current task)\n",
-                   sockfd, backlog);
+                   local_sockfd, local_backlog);
         return -ESRCH;
     }
 
     /* Phase 2: Validate sockfd early */
-    if (sockfd < 0) {
+    if (local_sockfd < 0) {
         fut_printf("[LISTEN] listen(sockfd=%d, backlog=%d) -> EBADF (negative fd)\n",
-                   sockfd, backlog);
+                   local_sockfd, local_backlog);
         return -EBADF;
     }
 
     /* Phase 2: Categorize backlog for diagnostics */
     const char *backlog_desc;
-    int original_backlog = backlog;
-    int effective_backlog = backlog;
+    int original_backlog = local_backlog;
+    int effective_backlog = local_backlog;
 
-    if (backlog < 0) {
+    if (local_backlog < 0) {
         /* Negative backlog: treat as 0 or minimal default */
         backlog_desc = "negative (will use default)";
         effective_backlog = 128;  /* Common default */
-    } else if (backlog == 0) {
+    } else if (local_backlog == 0) {
         backlog_desc = "zero (minimal queue)";
         effective_backlog = 1;  /* At least 1 */
-    } else if (backlog <= 5) {
+    } else if (local_backlog <= 5) {
         backlog_desc = "minimal (simple servers)";
-    } else if (backlog <= 64) {
+    } else if (local_backlog <= 64) {
         backlog_desc = "small (low traffic)";
-    } else if (backlog <= 256) {
+    } else if (local_backlog <= 256) {
         backlog_desc = "typical (moderate traffic)";
-    } else if (backlog <= 1024) {
+    } else if (local_backlog <= 1024) {
         backlog_desc = "large (high traffic)";
-    } else if (backlog <= SOMAXCONN) {
+    } else if (local_backlog <= SOMAXCONN) {
         backlog_desc = "very large (heavy load)";
     } else {
         /* Backlog exceeds SOMAXCONN, will be clamped */
@@ -101,10 +107,10 @@ long sys_listen(int sockfd, int backlog) {
     }
 
     /* Phase 2: Get socket and validate */
-    fut_socket_t *socket = get_socket_from_fd(sockfd);
+    fut_socket_t *socket = get_socket_from_fd(local_sockfd);
     if (!socket) {
         fut_printf("[LISTEN] listen(sockfd=%d, backlog=%d [%s]) -> EBADF (socket not found)\n",
-                   sockfd, backlog, backlog_desc);
+                   local_sockfd, local_backlog, backlog_desc);
         return -EBADF;
     }
 
@@ -137,13 +143,13 @@ long sys_listen(int sockfd, int backlog) {
     /* Phase 2: Enhanced error messages based on socket state */
     if (socket->state == FUT_SOCK_LISTENING) {
         fut_printf("[LISTEN] listen(sockfd=%d, backlog=%d [%s]) -> EINVAL (socket already listening)\n",
-                   sockfd, backlog, backlog_desc);
+                   local_sockfd, local_backlog, backlog_desc);
         return -EINVAL;
     }
 
     if (socket->state == FUT_SOCK_CONNECTED) {
         fut_printf("[LISTEN] listen(sockfd=%d, backlog=%d [%s]) -> EINVAL (socket already connected, state=%s)\n",
-                   sockfd, backlog, backlog_desc, socket_state_desc);
+                   local_sockfd, local_backlog, backlog_desc, socket_state_desc);
         return -EINVAL;
     }
 
@@ -164,17 +170,17 @@ long sys_listen(int sockfd, int backlog) {
         }
 
         fut_printf("[LISTEN] listen(sockfd=%d, backlog=%d [%s], state=%s) -> %d (%s)\n",
-                   sockfd, backlog, backlog_desc, socket_state_desc, ret, error_desc);
+                   local_sockfd, local_backlog, backlog_desc, socket_state_desc, ret, error_desc);
         return ret;
     }
 
     /* Phase 3: Detailed success logging with backlog categorization and queue management */
     if (original_backlog != effective_backlog) {
         fut_printf("[LISTEN] listen(sockfd=%d, backlog=%d->%d [%s], state=%s->listening) -> 0 (Phase 3: backlog clamped, queue enforced)\n",
-                   sockfd, original_backlog, effective_backlog, backlog_desc, socket_state_desc);
+                   local_sockfd, original_backlog, effective_backlog, backlog_desc, socket_state_desc);
     } else {
         fut_printf("[LISTEN] listen(sockfd=%d, backlog=%d [%s], state=%s->listening) -> 0 (Phase 3: queue management)\n",
-                   sockfd, backlog, backlog_desc, socket_state_desc);
+                   local_sockfd, local_backlog, backlog_desc, socket_state_desc);
     }
 
     return 0;

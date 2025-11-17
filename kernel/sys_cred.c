@@ -661,17 +661,24 @@ long sys_setegid(uint32_t egid) {
  * Phase 3: Implementation with atomic retrieval and copy to user
  */
 long sys_getresuid(uint32_t *ruid, uint32_t *euid, uint32_t *suid) {
+    /* ARM64 FIX: Copy parameters to local variables immediately to ensure they're preserved
+     * on the stack across potentially blocking calls. Memory operations may block and corrupt
+     * register-passed parameters upon resumption. */
+    uint32_t *local_ruid = ruid;
+    uint32_t *local_euid = euid;
+    uint32_t *local_suid = suid;
+
     fut_task_t *task = fut_task_current();
     if (!task) {
         fut_printf("[CRED] getresuid(ruid=%p, euid=%p, suid=%p) -> ESRCH\n",
-                   (void*)ruid, (void*)euid, (void*)suid);
+                   (void*)local_ruid, (void*)local_euid, (void*)local_suid);
         return -ESRCH;
     }
 
     /* Phase 3: Validate pointers */
-    if (!ruid || !euid || !suid) {
+    if (!local_ruid || !local_euid || !local_suid) {
         fut_printf("[CRED] getresuid(ruid=%p, euid=%p, suid=%p) -> EFAULT (NULL pointer)\n",
-                   (void*)ruid, (void*)euid, (void*)suid);
+                   (void*)local_ruid, (void*)local_euid, (void*)local_suid);
         return -EFAULT;
     }
 
@@ -679,13 +686,13 @@ long sys_getresuid(uint32_t *ruid, uint32_t *euid, uint32_t *suid) {
     uint32_t saved_uid = task->ruid;
 
     /* Phase 3: Copy IDs to userspace */
-    if (fut_copy_to_user(ruid, &task->ruid, sizeof(uint32_t)) != 0) {
+    if (fut_copy_to_user(local_ruid, &task->ruid, sizeof(uint32_t)) != 0) {
         return -EFAULT;
     }
-    if (fut_copy_to_user(euid, &task->uid, sizeof(uint32_t)) != 0) {
+    if (fut_copy_to_user(local_euid, &task->uid, sizeof(uint32_t)) != 0) {
         return -EFAULT;
     }
-    if (fut_copy_to_user(suid, &saved_uid, sizeof(uint32_t)) != 0) {
+    if (fut_copy_to_user(local_suid, &saved_uid, sizeof(uint32_t)) != 0) {
         return -EFAULT;
     }
 
@@ -717,17 +724,24 @@ long sys_getresuid(uint32_t *ruid, uint32_t *euid, uint32_t *suid) {
  * Phase 3: Implementation with atomic retrieval and copy to user
  */
 long sys_getresgid(uint32_t *rgid, uint32_t *egid, uint32_t *sgid) {
+    /* ARM64 FIX: Copy parameters to local variables immediately to ensure they're preserved
+     * on the stack across potentially blocking calls. Memory operations may block and corrupt
+     * register-passed parameters upon resumption. */
+    uint32_t *local_rgid = rgid;
+    uint32_t *local_egid = egid;
+    uint32_t *local_sgid = sgid;
+
     fut_task_t *task = fut_task_current();
     if (!task) {
         fut_printf("[CRED] getresgid(rgid=%p, egid=%p, sgid=%p) -> ESRCH\n",
-                   (void*)rgid, (void*)egid, (void*)sgid);
+                   (void*)local_rgid, (void*)local_egid, (void*)local_sgid);
         return -ESRCH;
     }
 
     /* Phase 3: Validate pointers */
-    if (!rgid || !egid || !sgid) {
+    if (!local_rgid || !local_egid || !local_sgid) {
         fut_printf("[CRED] getresgid(rgid=%p, egid=%p, sgid=%p) -> EFAULT (NULL pointer)\n",
-                   (void*)rgid, (void*)egid, (void*)sgid);
+                   (void*)local_rgid, (void*)local_egid, (void*)local_sgid);
         return -EFAULT;
     }
 
@@ -735,13 +749,13 @@ long sys_getresgid(uint32_t *rgid, uint32_t *egid, uint32_t *sgid) {
     uint32_t saved_gid = task->rgid;
 
     /* Phase 3: Copy IDs to userspace */
-    if (fut_copy_to_user(rgid, &task->rgid, sizeof(uint32_t)) != 0) {
+    if (fut_copy_to_user(local_rgid, &task->rgid, sizeof(uint32_t)) != 0) {
         return -EFAULT;
     }
-    if (fut_copy_to_user(egid, &task->gid, sizeof(uint32_t)) != 0) {
+    if (fut_copy_to_user(local_egid, &task->gid, sizeof(uint32_t)) != 0) {
         return -EFAULT;
     }
-    if (fut_copy_to_user(sgid, &saved_gid, sizeof(uint32_t)) != 0) {
+    if (fut_copy_to_user(local_sgid, &saved_gid, sizeof(uint32_t)) != 0) {
         return -EFAULT;
     }
 

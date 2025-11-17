@@ -140,17 +140,24 @@ extern void fut_printf(const char *fmt, ...);
  * Phase 4: Advanced options (WUNTRACED, WCONTINUED), waitid, rusage
  */
 long sys_waitpid(int pid, int *u_status, int flags) {
+    /* ARM64 FIX: Copy parameters to local variables immediately to ensure they're preserved
+     * on the stack across blocking calls. When fut_task_waitpid blocks and resumes,
+     * register-passed parameters may be corrupted. */
+    int local_pid = pid;
+    int *local_u_status = u_status;
+    int local_flags = flags;
+
     /* Phase 2: Categorize PID argument */
     const char *pid_category;
     const char *pid_meaning;
 
-    if (pid > 0) {
+    if (local_pid > 0) {
         pid_category = "specific (>0)";
         pid_meaning = "wait for specific child";
-    } else if (pid == 0) {
+    } else if (local_pid == 0) {
         pid_category = "group (0)";
         pid_meaning = "wait for any child in same process group";
-    } else if (pid == -1) {
+    } else if (local_pid == -1) {
         pid_category = "any (-1)";
         pid_meaning = "wait for any child (most common)";
     } else {
@@ -160,13 +167,13 @@ long sys_waitpid(int pid, int *u_status, int flags) {
 
     /* Phase 2: Categorize flags */
     const char *flags_desc;
-    if (flags == 0) {
+    if (local_flags == 0) {
         flags_desc = "blocking (0)";
-    } else if (flags & WNOHANG) {
+    } else if (local_flags & WNOHANG) {
         flags_desc = "non-blocking (WNOHANG)";
-    } else if (flags & WUNTRACED) {
+    } else if (local_flags & WUNTRACED) {
         flags_desc = "with stopped (WUNTRACED)";
-    } else if (flags & WCONTINUED) {
+    } else if (local_flags & WCONTINUED) {
         flags_desc = "with continued (WCONTINUED)";
     } else {
         flags_desc = "custom flags";
@@ -174,7 +181,7 @@ long sys_waitpid(int pid, int *u_status, int flags) {
 
     /* Call kernel waitpid implementation */
     int status = 0;
-    int rc = fut_task_waitpid(pid, &status);
+    int rc = fut_task_waitpid(local_pid, &status);
 
     /* Phase 2: Handle error cases with detailed logging */
     if (rc < 0) {
@@ -196,17 +203,17 @@ long sys_waitpid(int pid, int *u_status, int flags) {
 
         fut_printf("[WAITPID] waitpid(pid=%d [%s: %s], flags=0x%x [%s]) -> %d "
                    "(%s, Phase 3: Non-blocking wait and process group support)\n",
-                   pid, pid_category, pid_meaning, flags, flags_desc, rc, error_desc);
+                   local_pid, pid_category, pid_meaning, local_flags, flags_desc, rc, error_desc);
 
         return rc;
     }
 
     /* Copy status to userspace if requested */
-    if (u_status) {
-        if (fut_copy_to_user(u_status, &status, sizeof(status)) != 0) {
+    if (local_u_status) {
+        if (fut_copy_to_user(local_u_status, &status, sizeof(status)) != 0) {
             fut_printf("[WAITPID] waitpid(pid=%d [%s], child_pid=%d) -> EFAULT "
                        "(copy_to_user failed, Phase 2)\n",
-                       pid, pid_category, rc);
+                       local_pid, pid_category, rc);
             return -EFAULT;
         }
     }
@@ -236,17 +243,17 @@ long sys_waitpid(int pid, int *u_status, int flags) {
     if (WIFEXITED(status)) {
         fut_printf("[WAITPID] waitpid(pid=%d [%s: %s], flags=0x%x [%s]) -> %d "
                    "(child pid, %s, exit_code=%d, Phase 2)\n",
-                   pid, pid_category, pid_meaning, flags, flags_desc, rc,
+                   local_pid, pid_category, pid_meaning, local_flags, flags_desc, rc,
                    status_category, exit_code);
     } else if (WIFSIGNALED(status)) {
         fut_printf("[WAITPID] waitpid(pid=%d [%s: %s], flags=0x%x [%s]) -> %d "
                    "(child pid, %s, signal=%d, Phase 2)\n",
-                   pid, pid_category, pid_meaning, flags, flags_desc, rc,
+                   local_pid, pid_category, pid_meaning, local_flags, flags_desc, rc,
                    status_category, term_signal);
     } else {
         fut_printf("[WAITPID] waitpid(pid=%d [%s: %s], flags=0x%x [%s]) -> %d "
                    "(child pid, %s, Phase 2)\n",
-                   pid, pid_category, pid_meaning, flags, flags_desc, rc,
+                   local_pid, pid_category, pid_meaning, local_flags, flags_desc, rc,
                    status_category);
     }
 

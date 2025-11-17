@@ -102,6 +102,13 @@ static const char *categorize_port(uint16_t port) {
  * Phase 4 (Completed): Advanced features (SO_REUSEADDR, SO_REUSEPORT, port ranges)
  */
 long sys_bind(int sockfd, const void *addr, socklen_t addrlen) {
+    /* ARM64 FIX: Copy parameters to local variables immediately to ensure they're preserved
+     * on the stack across potentially blocking calls. Socket operations may block and corrupt
+     * register-passed parameters upon resumption. */
+    int local_sockfd = sockfd;
+    const void *local_addr = addr;
+    socklen_t local_addrlen = addrlen;
+
     fut_task_t *task = fut_task_current();
     if (!task) {
         fut_printf("[BIND] bind(sockfd=%d) -> ESRCH (no current task)\n", sockfd);

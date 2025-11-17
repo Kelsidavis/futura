@@ -77,6 +77,13 @@ typedef uint32_t socklen_t;
  * Phase 4: Connection timeout, retry logic, TCP Fast Open
  */
 long sys_connect(int sockfd, const void *addr, socklen_t addrlen) {
+    /* ARM64 FIX: Copy parameters to local variables immediately to ensure they're preserved
+     * on the stack across potentially blocking calls. Socket operations may block and corrupt
+     * register-passed parameters upon resumption. */
+    int local_sockfd = sockfd;
+    const void *local_addr = addr;
+    socklen_t local_addrlen = addrlen;
+
     fut_task_t *task = fut_task_current();
     if (!task) {
         fut_printf("[CONNECT] connect(sockfd=%d) -> ESRCH (no current task)\n", sockfd);

@@ -166,15 +166,21 @@ extern int fut_copy_from_user(void *to, const void *from, size_t size);
  * Phase 4: Cross-filesystem link prevention and performance optimization
  */
 long sys_link(const char *oldpath, const char *newpath) {
+    /* ARM64 FIX: Copy parameters to local variables immediately to ensure they're preserved
+     * on the stack across potentially blocking calls. VFS and copy operations may block and
+     * corrupt register-passed parameters upon resumption. */
+    const char *local_oldpath = oldpath;
+    const char *local_newpath = newpath;
+
     /* Phase 2: Validate oldpath pointer */
-    if (!oldpath) {
+    if (!local_oldpath) {
         fut_printf("[LINK] link(oldpath=NULL, newpath=?) -> EINVAL "
                    "(NULL oldpath, Phase 2)\n");
         return -EINVAL;
     }
 
     /* Phase 2: Validate newpath pointer */
-    if (!newpath) {
+    if (!local_newpath) {
         fut_printf("[LINK] link(oldpath=?, newpath=NULL) -> EINVAL "
                    "(NULL newpath, Phase 2)\n");
         return -EINVAL;
@@ -182,7 +188,7 @@ long sys_link(const char *oldpath, const char *newpath) {
 
     /* Copy oldpath from userspace to kernel space */
     char old_buf[256];
-    if (fut_copy_from_user(old_buf, oldpath, sizeof(old_buf) - 1) != 0) {
+    if (fut_copy_from_user(old_buf, local_oldpath, sizeof(old_buf) - 1) != 0) {
         fut_printf("[LINK] link(oldpath=?, newpath=?) -> EFAULT "
                    "(copy_from_user failed for oldpath, Phase 2)\n");
         return -EFAULT;
@@ -191,7 +197,7 @@ long sys_link(const char *oldpath, const char *newpath) {
 
     /* Copy newpath from userspace to kernel space */
     char new_buf[256];
-    if (fut_copy_from_user(new_buf, newpath, sizeof(new_buf) - 1) != 0) {
+    if (fut_copy_from_user(new_buf, local_newpath, sizeof(new_buf) - 1) != 0) {
         fut_printf("[LINK] link(oldpath='%s', newpath=?) -> EFAULT "
                    "(copy_from_user failed for newpath, Phase 2)\n", old_buf);
         return -EFAULT;

@@ -12,8 +12,56 @@
 #include <stdint.h>
 #include <stdbool.h>
 
-/* Forward declaration */
-typedef struct virtio_mmio_device_s virtio_mmio_device_t;
+/* VirtQueue descriptor (part of split virtqueue layout) */
+struct virtq_desc {
+    uint64_t addr;   /* Physical address */
+    uint32_t len;    /* Length */
+    uint16_t flags;  /* Flags */
+    uint16_t next;   /* Next descriptor index (if VIRTQ_DESC_F_NEXT) */
+} __attribute__((packed));
+
+/* Available ring (driver -> device) */
+struct virtq_avail {
+    uint16_t flags;
+    uint16_t idx;
+    uint16_t ring[];  /* Variable length: ring[queue_size] */
+    /* uint16_t used_event follows ring[] but we don't use event_idx yet */
+} __attribute__((packed));
+
+/* Used ring element */
+struct virtq_used_elem {
+    uint32_t id;   /* Index of descriptor chain */
+    uint32_t len;  /* Total bytes written */
+} __attribute__((packed));
+
+/* Used ring (device -> driver) */
+struct virtq_used {
+    uint16_t flags;
+    uint16_t idx;
+    struct virtq_used_elem ring[];  /* Variable length: ring[queue_size] */
+    /* uint16_t avail_event follows ring[] but we don't use event_idx yet */
+} __attribute__((packed));
+
+/* VirtIO MMIO device structure */
+typedef struct {
+    uint64_t base_addr;       /* MMIO base address (virtual) */
+    uint32_t irq;             /* GIC IRQ number */
+    uint32_t device_type;     /* VirtIO device type */
+    bool in_use;              /* Device claimed */
+
+    /* Virtqueue state (single queue for now) */
+    uint32_t queue_size;
+    struct virtq_desc *desc;
+    struct virtq_avail *avail;
+    struct virtq_used *used;
+    uint16_t last_used_idx;   /* Last processed used index */
+    uint16_t next_free_desc;  /* Next free descriptor */
+
+    /* Physical addresses for queue */
+    uint64_t desc_phys;
+    uint64_t avail_phys;
+    uint64_t used_phys;
+} virtio_mmio_device_t;
 
 /* VirtIO Device Types */
 #define VIRTIO_DEV_NET      1

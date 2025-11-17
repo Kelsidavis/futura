@@ -17,6 +17,7 @@
 #include <kernel/video/pci_vga.h>
 #include <kernel/video/cirrus_vga.h>
 #include <kernel/video/virtio_gpu.h>
+#include <kernel/video/virtio_gpu_mmio.h>
 #include <platform/platform.h>
 
 #include <stddef.h>
@@ -348,105 +349,39 @@ void fb_boot_splash(void) {
     fut_printf("[FB] All mapping attempts failed\n");
 }
 #else
-/* ARM64 - virtio-pci based graphics initialization */
-
-/* Forward declaration for Rust virtio-gpu driver */
-extern int virtio_gpu_init_arm64_pci(uint8_t bus, uint8_t dev, uint8_t func, uint64_t *out_fb_phys, uint32_t width, uint32_t height);
-
-/* ARM64 PCI scanning for virtio-gpu */
-#include <platform/arm64/pci_ecam.h>
-
-static int arm64_scan_pci_for_gpu(void) {
-    fut_printf("[FB] ARM64: Scanning PCI bus for virtio-gpu...\n");
-
-    /* Scan bus 0 (typical for QEMU virt machine) */
-    for (uint8_t dev = 0; dev < 32; dev++) {
-        for (uint8_t fn = 0; fn < 8; fn++) {
-            uint16_t vendor_id, device_id;
-            uint8_t class_code, subclass;
-
-            if (!arm64_pci_scan_device(0, dev, fn, &vendor_id, &device_id, &class_code, &subclass)) {
-                if (fn == 0) break;  /* No device at function 0, skip other functions */
-                continue;
-            }
-
-            fut_printf("[FB] PCI %02x:%02x.%x: vendor=0x%04x device=0x%04x class=0x%02x\n",
-                       0, dev, fn, vendor_id, device_id, class_code);
-
-            /* Check for virtio-gpu-pci (Red Hat/Qumranet vendor) */
-            if (vendor_id == PCI_VENDOR_REDHAT_QUMRANET && device_id == PCI_DEVICE_VIRTIO_GPU) {
-                fut_printf("[FB] Found virtio-gpu-pci at %02x:%02x.%x\n", 0, dev, fn);
-
-                /* Set default framebuffer dimensions if not already set */
-                if (g_fb_hw.info.width == 0 || g_fb_hw.info.height == 0) {
-                    g_fb_hw.info.width = 1024;
-                    g_fb_hw.info.height = 768;
-                    g_fb_hw.info.pitch = g_fb_hw.info.width * 4u;
-                    g_fb_hw.info.bpp = 32;
-                    g_fb_hw.info.flags = FB_FLAG_LINEAR;
-                    fut_printf("[FB] Using default dimensions: %ux%ux%u\n",
-                               g_fb_hw.info.width, g_fb_hw.info.height, g_fb_hw.info.bpp);
-                }
-
-                /* Try to assign all BARs - virtio might use any of them */
-                fut_printf("[FB] Probing all BARs for virtio-gpu...\n");
-                uint64_t assigned_bar = 0;
-                for (uint8_t bar_num = 0; bar_num < 6; bar_num++) {
-                    uint64_t bar = arm64_pci_assign_bar(0, dev, fn, bar_num);
-                    if (bar != 0 && assigned_bar == 0) {
-                        assigned_bar = bar;
-                        fut_printf("[FB] Using BAR%d at 0x%llx for virtio-gpu\n",
-                                   bar_num, (unsigned long long)bar);
-                    }
-                }
-
-                if (assigned_bar == 0) {
-                    fut_printf("[FB] No valid BARs found for virtio-gpu\n");
-                    return -1;
-                }
-
-                /* Initialize virtio-gpu-pci driver */
-                uint64_t fb_phys = 0;
-                int rc = virtio_gpu_init_arm64_pci(0, dev, fn, &fb_phys, g_fb_hw.info.width, g_fb_hw.info.height);
-
-                if (rc == 0 && fb_phys != 0) {
-                    fut_printf("[FB] virtio-gpu-pci initialized, framebuffer at phys=0x%llx\n",
-                               (unsigned long long)fb_phys);
-                    g_fb_hw.phys = fb_phys;
-                    g_fb_available = true;
-                    return 0;
-                } else {
-                    fut_printf("[FB] virtio-gpu-pci initialization failed (rc=%d)\n", rc);
-                    return -1;
-                }
-            }
-        }
-    }
-
-    fut_printf("[FB] No virtio-gpu-pci device found\n");
-    return -1;
-}
+/* ARM64 - virtio-mmio based graphics initialization */
 
 void fb_boot_splash(void) {
-    fut_printf("[FB] ARM64: Scanning for GPU devices via PCI...\n");
+    fut_printf("[FB] ARM64: Initializing framebuffer via virtio-gpu (MMIO)...\n");
 
-    /* Scan PCI for virtio-gpu-pci */
-    if (arm64_scan_pci_for_gpu() == 0) {
-        fut_printf("[FB] ARM64: virtio-gpu-pci initialized successfully\n");
-        return;
-    }
-
-    fut_printf("[FB] ARM64: No virtio-gpu-pci device found, using fallback framebuffer address...\n");
-
-    /* Fall back to hardcoded framebuffer address */
-    g_fb_hw.phys = 0x4000000ULL;
+    /* Try virtio-gpu MMIO driver */
+    uint64_t fb_phys = 0;
     g_fb_hw.info.width = 1024;
     g_fb_hw.info.height = 768;
     g_fb_hw.info.pitch = g_fb_hw.info.width * 4u;
     g_fb_hw.info.bpp = 32;
     g_fb_hw.info.flags = FB_FLAG_LINEAR;
+
+    int rc = virtio_gpu_init_mmio(&fb_phys, g_fb_hw.info.width, g_fb_hw.info.height);
+
+    if (rc == 0 && fb_phys != 0) {
+        fut_printf("[FB] ARM64: virtio-gpu-mmio initialized, framebuffer at phys=0x%llx\n",
+                   (unsigned long long)fb_phys);
+        g_fb_hw.phys = fb_phys;
+        g_fb_hw.length = (size_t)g_fb_hw.info.pitch * (size_t)g_fb_hw.info.height;
+        g_fb_available = true;
+        fut_printf("[FB] ARM64: Display ready (%ux%ux%u)\n",
+                   g_fb_hw.info.width, g_fb_hw.info.height, g_fb_hw.info.bpp);
+        return;
+    }
+
+    fut_printf("[FB] ARM64: virtio-gpu-mmio initialization failed (rc=%d), using fallback\n", rc);
+
+    /* Fall back to hardcoded framebuffer address */
+    g_fb_hw.phys = 0x4000000ULL;
+    g_fb_hw.length = (size_t)g_fb_hw.info.pitch * (size_t)g_fb_hw.info.height;
     g_fb_available = true;
-    fut_printf("[FB] ARM64: Fallback framebuffer initialized at phys=0x%llx (1024x768x32)\n",
+    fut_printf("[FB] ARM64: Fallback framebuffer at phys=0x%llx (1024x768x32)\n",
                (unsigned long long)g_fb_hw.phys);
 }
 #endif

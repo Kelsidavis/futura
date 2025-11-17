@@ -581,6 +581,7 @@ else ifeq ($(PLATFORM),arm64)
         kernel/sys_filesystem_stats.c \
         kernel/kernel_main.c \
         kernel/video/fb_mmio.c \
+        kernel/video/virtio_gpu_mmio.c \
         drivers/video/fb.c \
         kernel/blk/blkcore.c
 endif

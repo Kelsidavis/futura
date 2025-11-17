@@ -208,9 +208,15 @@ struct fut_acl {
  * Phase 4 (Completed): Performance optimization (permission change batching)
  */
 long sys_chmod(const char *pathname, uint32_t mode) {
+    /* ARM64 FIX: Copy parameters to local variables immediately to ensure they're preserved
+     * on the stack across potentially blocking calls. VFS and copy operations may block and
+     * corrupt register-passed parameters upon resumption. */
+    const char *local_pathname = pathname;
+    uint32_t local_mode = mode;
+
     /* Phase 2: Validate pathname pointer */
-    if (!pathname) {
-        fut_printf("[CHMOD] chmod(pathname=NULL, mode=0%o) -> EINVAL (NULL pathname)\n", mode);
+    if (!local_pathname) {
+        fut_printf("[CHMOD] chmod(pathname=NULL, mode=0%o) -> EINVAL (NULL pathname)\n", local_mode);
         return -EINVAL;
     }
 
@@ -218,11 +224,11 @@ long sys_chmod(const char *pathname, uint32_t mode) {
      * For numeric, mode will be a 32-bit number; for symbolic strings we'd need different syscall
      * This is simplified: in real implementation, fchmodat() with AT_SYMLINK_NOFOLLOW flag exists
      */
-    /* Unused: const char *mode_type = (mode & 0777000) ? "special bits set" : "standard permissions"; */
+    /* Unused: const char *mode_type = (local_mode & 0777000) ? "special bits set" : "standard permissions"; */
 
     /* Phase 2: Categorize permission mode */
     const char *mode_desc;
-    uint32_t perm_bits = mode & 0777;
+    uint32_t perm_bits = local_mode & 0777;
 
     if (perm_bits == 0644) {
         mode_desc = "0644 (rw-r--r--, typical file)";
@@ -249,21 +255,21 @@ long sys_chmod(const char *pathname, uint32_t mode) {
     char *p = special_bits_buf;
     int special_count = 0;
 
-    if (mode & 04000) {
+    if (local_mode & 04000) {
         if (special_count++ > 0) {
             *p++ = '|';
         }
         const char *s = "setuid";
         while (*s) *p++ = *s++;
     }
-    if (mode & 02000) {
+    if (local_mode & 02000) {
         if (special_count++ > 0) {
             *p++ = '|';
         }
         const char *s = "setgid";
         while (*s) *p++ = *s++;
     }
-    if (mode & 01000) {
+    if (local_mode & 01000) {
         if (special_count++ > 0) {
             *p++ = '|';
         }
@@ -276,7 +282,7 @@ long sys_chmod(const char *pathname, uint32_t mode) {
 
     /* Copy pathname from userspace to kernel space */
     char path_buf[256];
-    if (fut_copy_from_user(path_buf, pathname, sizeof(path_buf) - 1) != 0) {
+    if (fut_copy_from_user(path_buf, local_pathname, sizeof(path_buf) - 1) != 0) {
         fut_printf("[CHMOD] chmod(pathname=?, mode=%s, special=%s) -> EFAULT "
                    "(copy_from_user failed)\n", mode_desc, special_bits_desc);
         return -EFAULT;
@@ -382,7 +388,7 @@ long sys_chmod(const char *pathname, uint32_t mode) {
 
     /* Create a stat structure with the new mode */
     struct fut_stat stat = {0};
-    stat.st_mode = mode;
+    stat.st_mode = local_mode;
 
     /* Call the filesystem's setattr operation */
     ret = vnode->ops->setattr(vnode, &stat);

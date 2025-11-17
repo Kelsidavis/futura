@@ -133,8 +133,13 @@ extern void fut_printf(const char *fmt, ...);
  * Phase 4 (Completed): Performance optimization (directory change tracking)
  */
 long sys_chdir(const char *pathname) {
+    /* ARM64 FIX: Copy parameters to local variables immediately to ensure they're preserved
+     * on the stack across potentially blocking calls. VFS lookup operations may block and
+     * corrupt register-passed parameters upon resumption. */
+    const char *local_pathname = pathname;
+
     /* Phase 2: Validate pathname pointer */
-    if (!pathname) {
+    if (!local_pathname) {
         fut_printf("[CHDIR] chdir(pathname=NULL) -> EINVAL (NULL pathname)\n");
         return -EINVAL;
     }
@@ -148,15 +153,15 @@ long sys_chdir(const char *pathname) {
 
     /* Phase 2: Categorize path type (before VFS lookup to avoid copy overhead) */
     const char *path_type;
-    if (pathname[0] == '/') {
+    if (local_pathname[0] == '/') {
         path_type = "absolute";
-    } else if (pathname[0] == '.' && pathname[1] == '\0') {
+    } else if (local_pathname[0] == '.' && local_pathname[1] == '\0') {
         path_type = "current (.)";
-    } else if (pathname[0] == '.' && pathname[1] == '.' && pathname[2] == '\0') {
+    } else if (local_pathname[0] == '.' && local_pathname[1] == '.' && local_pathname[2] == '\0') {
         path_type = "parent (..)";
-    } else if (pathname[0] == '.' && pathname[1] == '/') {
+    } else if (local_pathname[0] == '.' && local_pathname[1] == '/') {
         path_type = "relative (explicit)";
-    } else if (pathname[0] == '.') {
+    } else if (local_pathname[0] == '.') {
         path_type = "relative (current/parent)";
     } else {
         path_type = "relative";
@@ -167,7 +172,7 @@ long sys_chdir(const char *pathname) {
 
     /* Look up the path */
     struct fut_vnode *vnode = NULL;
-    int ret = fut_vfs_lookup(pathname, &vnode);
+    int ret = fut_vfs_lookup(local_pathname, &vnode);
 
     /* Phase 2: Handle lookup errors with detailed logging */
     if (ret < 0) {
@@ -194,14 +199,14 @@ long sys_chdir(const char *pathname) {
         }
 
         fut_printf("[CHDIR] chdir(path='%s' [%s], old_dir_ino=%lu) -> %d (%s)\n",
-                   pathname, path_type, old_dir_ino, ret, error_desc);
+                   local_pathname, path_type, old_dir_ino, ret, error_desc);
         return ret;
     }
 
     /* Phase 2: Validate vnode is not NULL */
     if (!vnode) {
         fut_printf("[CHDIR] chdir(path='%s' [%s], old_dir_ino=%lu) -> ENOENT "
-                   "(vnode is NULL)\n", pathname, path_type, old_dir_ino);
+                   "(vnode is NULL)\n", local_pathname, path_type, old_dir_ino);
         return -ENOENT;
     }
 
@@ -238,7 +243,7 @@ long sys_chdir(const char *pathname) {
     if (vnode->type != VN_DIR) {
         fut_printf("[CHDIR] chdir(path='%s' [%s], vnode_ino=%lu, vnode_type=%s) "
                    "-> ENOTDIR (target is %s, not directory)\n",
-                   pathname, path_type, vnode->ino, vnode_type_desc, vnode_type_desc);
+                   local_pathname, path_type, vnode->ino, vnode_type_desc, vnode_type_desc);
         fut_vnode_unref(vnode);
         return -ENOTDIR;
     }
@@ -249,7 +254,7 @@ long sys_chdir(const char *pathname) {
     /* Phase 4: Detailed success logging */
     fut_printf("[CHDIR] chdir(path='%s' [%s], old_dir_ino=%lu, new_dir_ino=%lu) "
                "-> 0 (cwd changed, Phase 4: VFS integration with per-task cwd tracking)\n",
-               pathname, path_type, old_dir_ino, vnode->ino);
+               local_pathname, path_type, old_dir_ino, vnode->ino);
 
     /* Phase 3: Cache the directory path in task structure for faster lookup */
     /* TODO: Add cwd_cache_buf field to struct fut_task_t for path caching */

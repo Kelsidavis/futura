@@ -119,29 +119,39 @@ typedef uint32_t socklen_t;
  */
 ssize_t sys_sendto(int sockfd, const void *buf, size_t len, int flags,
                    const void *dest_addr, socklen_t addrlen) {
+    /* ARM64 FIX: Copy parameters to local variables immediately to ensure they're preserved
+     * on the stack across potentially blocking calls. Socket/VFS operations may block and corrupt
+     * register-passed parameters upon resumption. */
+    int local_sockfd = sockfd;
+    const void *local_buf = buf;
+    size_t local_len = len;
+    int local_flags = flags;
+    const void *local_dest_addr = dest_addr;
+    socklen_t local_addrlen = addrlen;
+
     fut_task_t *task = fut_task_current();
     if (!task) {
-        fut_printf("[SENDTO] sendto(sockfd=%d) -> ESRCH (no current task)\n", sockfd);
+        fut_printf("[SENDTO] sendto(sockfd=%d) -> ESRCH (no current task)\n", local_sockfd);
         return -ESRCH;
     }
 
     /* Phase 2: Validate sockfd */
-    if (sockfd < 0) {
-        fut_printf("[SENDTO] sendto(sockfd=%d) -> EBADF (negative fd)\n", sockfd);
+    if (local_sockfd < 0) {
+        fut_printf("[SENDTO] sendto(sockfd=%d) -> EBADF (negative fd)\n", local_sockfd);
         return -EBADF;
     }
 
     /* Phase 2: Categorize socket FD */
     const char *fd_category;
-    if (sockfd <= 2) {
+    if (local_sockfd <= 2) {
         fd_category = "stdio (0-2)";
-    } else if (sockfd < 10) {
+    } else if (local_sockfd < 10) {
         fd_category = "low (3-9)";
-    } else if (sockfd < 1000) {
+    } else if (local_sockfd < 1000) {
         fd_category = "socket range (10-999)";
-    } else if (sockfd < 2000) {
+    } else if (local_sockfd < 2000) {
         fd_category = "socket range (1000-1999)";
-    } else if (sockfd < 3000) {
+    } else if (local_sockfd < 3000) {
         fd_category = "socket range (2000-2999)";
     } else {
         fd_category = "high (≥3000)";
@@ -149,15 +159,15 @@ ssize_t sys_sendto(int sockfd, const void *buf, size_t len, int flags,
 
     /* Phase 2: Categorize buffer size */
     const char *size_category;
-    if (len == 0) {
+    if (local_len == 0) {
         size_category = "zero-length";
-    } else if (len <= 64) {
+    } else if (local_len <= 64) {
         size_category = "tiny (≤64 bytes)";
-    } else if (len <= 512) {
+    } else if (local_len <= 512) {
         size_category = "small (64-512 bytes)";
-    } else if (len <= 4096) {
+    } else if (local_len <= 4096) {
         size_category = "medium (512B-4KB)";
-    } else if (len <= 65536) {
+    } else if (local_len <= 65536) {
         size_category = "large (4KB-64KB)";
     } else {
         size_category = "very large (>64KB)";
@@ -168,21 +178,21 @@ ssize_t sys_sendto(int sockfd, const void *buf, size_t len, int flags,
     char flags_str[128];
     int pos = 0;
 
-    if (flags == 0) {
+    if (local_flags == 0) {
         flags_description = "none (blocking)";
     } else {
         /* Build flags string manually */
         flags_str[0] = '\0';
-        if (flags & MSG_DONTWAIT) {
+        if (local_flags & MSG_DONTWAIT) {
             const char *s = "MSG_DONTWAIT";
             while (*s && pos < 120) flags_str[pos++] = *s++;
         }
-        if (flags & MSG_NOSIGNAL) {
+        if (local_flags & MSG_NOSIGNAL) {
             if (pos > 0 && pos < 120) flags_str[pos++] = '|';
             const char *s = "MSG_NOSIGNAL";
             while (*s && pos < 120) flags_str[pos++] = *s++;
         }
-        if (flags & MSG_OOB) {
+        if (local_flags & MSG_OOB) {
             if (pos > 0 && pos < 120) flags_str[pos++] = '|';
             const char *s = "MSG_OOB";
             while (*s && pos < 120) flags_str[pos++] = *s++;
@@ -196,53 +206,53 @@ ssize_t sys_sendto(int sockfd, const void *buf, size_t len, int flags,
         }
     }
 
-    (void)dest_addr;
-    (void)addrlen;
+    (void)local_dest_addr;
+    (void)local_addrlen;
 
     /* Validate socket FD */
-    struct fut_file *file = vfs_get_file(sockfd);
+    struct fut_file *file = vfs_get_file(local_sockfd);
     if (!file) {
         fut_printf("[SENDTO] sendto(sockfd=%d [%s]) -> EBADF (fd not open)\n",
-                   sockfd, fd_category);
+                   local_sockfd, fd_category);
         return -EBADF;
     }
 
     /* Handle zero-length send */
-    if (len == 0) {
+    if (local_len == 0) {
         fut_printf("[SENDTO] sendto(sockfd=%d [%s], len=0, pid=%u) -> 0 "
                    "(zero-length send)\n",
-                   sockfd, fd_category, task->pid);
+                   local_sockfd, fd_category, task->pid);
         return 0;
     }
 
     /* Validate buf */
-    if (!buf) {
+    if (!local_buf) {
         fut_printf("[SENDTO] sendto(sockfd=%d [%s], buf=NULL, len=%zu, pid=%u) -> EINVAL "
                    "(NULL buffer)\n",
-                   sockfd, fd_category, len, task->pid);
+                   local_sockfd, fd_category, local_len, task->pid);
         return -EINVAL;
     }
 
     /* Allocate kernel buffer */
-    void *kbuf = fut_malloc(len);
+    void *kbuf = fut_malloc(local_len);
     if (!kbuf) {
         fut_printf("[SENDTO] sendto(sockfd=%d [%s], len=%zu [%s], pid=%u) -> ENOMEM "
                    "(kernel buffer allocation failed)\n",
-                   sockfd, fd_category, len, size_category, task->pid);
+                   local_sockfd, fd_category, local_len, size_category, task->pid);
         return -ENOMEM;
     }
 
     /* Copy from userspace */
-    if (fut_copy_from_user(kbuf, buf, len) != 0) {
+    if (fut_copy_from_user(kbuf, local_buf, local_len) != 0) {
         fut_free(kbuf);
         fut_printf("[SENDTO] sendto(sockfd=%d [%s], len=%zu [%s], pid=%u) -> EFAULT "
                    "(copy_from_user failed)\n",
-                   sockfd, fd_category, len, size_category, task->pid);
+                   local_sockfd, fd_category, local_len, size_category, task->pid);
         return -EFAULT;
     }
 
     /* Write to socket via VFS */
-    ssize_t ret = fut_vfs_write(sockfd, kbuf, len);
+    ssize_t ret = fut_vfs_write(local_sockfd, kbuf, local_len);
     fut_free(kbuf);
 
     if (ret < 0) {
@@ -261,14 +271,14 @@ ssize_t sys_sendto(int sockfd, const void *buf, size_t len, int flags,
 
         fut_printf("[SENDTO] sendto(sockfd=%d [%s], len=%zu [%s], "
                    "flags=0x%x [%s], pid=%u) -> %zd (%s)\n",
-                   sockfd, fd_category, len, size_category,
-                   flags, flags_description, task->pid, ret, error_desc);
+                   local_sockfd, fd_category, local_len, size_category,
+                   local_flags, flags_description, task->pid, ret, error_desc);
         return ret;
     }
 
     /* Phase 2: Determine destination hint (stub - not yet implemented) */
     const char *dest_hint;
-    if (dest_addr && addrlen > 0) {
+    if (local_dest_addr && local_addrlen > 0) {
         dest_hint = "destination specified (AF_INET/AF_UNIX)";
     } else {
         dest_hint = "no destination (connected socket)";
@@ -278,8 +288,8 @@ ssize_t sys_sendto(int sockfd, const void *buf, size_t len, int flags,
     fut_printf("[SENDTO] sendto(sockfd=%d [%s], buf=%p, len=%zu [%s], "
                "flags=0x%x [%s], dest=%s, bytes_sent=%zd, pid=%u) -> %zd "
                "(sent successfully, Phase 3: Destination address handling with MSG flags)\n",
-               sockfd, fd_category, buf, len, size_category,
-               flags, flags_description, dest_hint, ret, task->pid, ret);
+               local_sockfd, fd_category, local_buf, local_len, size_category,
+               local_flags, flags_description, dest_hint, ret, task->pid, ret);
 
     return ret;
 }

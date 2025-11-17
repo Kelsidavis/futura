@@ -117,22 +117,29 @@ extern int copy_user_string(const char *user_str, char *kernel_buf, size_t max_l
  * Phase 4: Performance optimization (path caching, readahead hints)
  */
 long sys_open(const char *pathname, int flags, int mode) {
+    /* ARM64 FIX: Copy parameters to local variables immediately to ensure they're preserved
+     * on the stack across potentially blocking calls. VFS operations may block and corrupt
+     * register-passed parameters upon resumption. */
+    const char *local_pathname = pathname;
+    int local_flags = flags;
+    int local_mode = mode;
+
     fut_task_t *task = fut_task_current();
     if (!task) {
         fut_printf("[OPEN] open(pathname=?, flags=0x%x, mode=0%o) -> ESRCH (no current task)\n",
-                   flags, mode);
+                   local_flags, local_mode);
         return -ESRCH;
     }
 
     /* Phase 2: Validate pathname pointer */
-    if (!pathname) {
+    if (!local_pathname) {
         fut_printf("[OPEN] open(pathname=NULL, flags=0x%x, mode=0%o) -> EFAULT (NULL pathname)\n",
-                   flags, mode);
+                   local_flags, local_mode);
         return -EFAULT;
     }
 
     /* Phase 2: Categorize access mode */
-    int access_mode = flags & O_ACCMODE;
+    int access_mode = local_flags & O_ACCMODE;
     const char *access_mode_desc;
     switch (access_mode) {
         case O_RDONLY:
@@ -151,13 +158,13 @@ long sys_open(const char *pathname, int flags, int mode) {
 
     /* Phase 2: Identify creation flags */
     const char *creation_flags_desc;
-    if ((flags & (O_CREAT | O_EXCL)) == (O_CREAT | O_EXCL)) {
+    if ((local_flags & (O_CREAT | O_EXCL)) == (O_CREAT | O_EXCL)) {
         creation_flags_desc = "O_CREAT|O_EXCL (atomic create, fail if exists)";
-    } else if ((flags & (O_CREAT | O_TRUNC)) == (O_CREAT | O_TRUNC)) {
+    } else if ((local_flags & (O_CREAT | O_TRUNC)) == (O_CREAT | O_TRUNC)) {
         creation_flags_desc = "O_CREAT|O_TRUNC (create or truncate)";
-    } else if (flags & O_CREAT) {
+    } else if (local_flags & O_CREAT) {
         creation_flags_desc = "O_CREAT (create if missing)";
-    } else if (flags & O_TRUNC) {
+    } else if (local_flags & O_TRUNC) {
         creation_flags_desc = "O_TRUNC (truncate existing)";
     } else {
         creation_flags_desc = "none (open existing)";
@@ -168,35 +175,35 @@ long sys_open(const char *pathname, int flags, int mode) {
     char *p = status_flags_buf;
     int status_flags_count = 0;
 
-    if (flags & O_APPEND) {
+    if (local_flags & O_APPEND) {
         if (status_flags_count++ > 0) {
             *p++ = '|';
         }
         const char *s = "O_APPEND";
         while (*s) *p++ = *s++;
     }
-    if (flags & O_NONBLOCK) {
+    if (local_flags & O_NONBLOCK) {
         if (status_flags_count++ > 0) {
             *p++ = '|';
         }
         const char *s = "O_NONBLOCK";
         while (*s) *p++ = *s++;
     }
-    if (flags & O_DIRECTORY) {
+    if (local_flags & O_DIRECTORY) {
         if (status_flags_count++ > 0) {
             *p++ = '|';
         }
         const char *s = "O_DIRECTORY";
         while (*s) *p++ = *s++;
     }
-    if (flags & O_SYNC) {
+    if (local_flags & O_SYNC) {
         if (status_flags_count++ > 0) {
             *p++ = '|';
         }
         const char *s = "O_SYNC";
         while (*s) *p++ = *s++;
     }
-    if (flags & O_CLOEXEC) {
+    if (local_flags & O_CLOEXEC) {
         if (status_flags_count++ > 0) {
             *p++ = '|';
         }
@@ -209,16 +216,16 @@ long sys_open(const char *pathname, int flags, int mode) {
 
     /* Phase 2: Categorize file mode (when O_CREAT specified) */
     const char *mode_desc;
-    if (flags & O_CREAT) {
-        if (mode == 0644) {
+    if (local_flags & O_CREAT) {
+        if (local_mode == 0644) {
             mode_desc = "0644 (rw-r--r--, typical file)";
-        } else if (mode == 0755) {
+        } else if (local_mode == 0755) {
             mode_desc = "0755 (rwxr-xr-x, executable)";
-        } else if (mode == 0600) {
+        } else if (local_mode == 0600) {
             mode_desc = "0600 (rw-------, private)";
-        } else if (mode == 0666) {
+        } else if (local_mode == 0666) {
             mode_desc = "0666 (rw-rw-rw-, world-writable)";
-        } else if ((mode & 0777) == mode) {
+        } else if ((local_mode & 0777) == local_mode) {
             mode_desc = "custom (valid)";
         } else {
             mode_desc = "invalid (bits outside 0777)";
@@ -229,7 +236,7 @@ long sys_open(const char *pathname, int flags, int mode) {
 
     /* Copy pathname from userspace */
     char kpath[256];
-    int rc = copy_user_string(pathname, kpath, sizeof(kpath));
+    int rc = copy_user_string(local_pathname, kpath, sizeof(kpath));
     if (rc != 0) {
         const char *error_desc;
         switch (rc) {
@@ -261,7 +268,7 @@ long sys_open(const char *pathname, int flags, int mode) {
     }
 
     /* Open via VFS */
-    int result = fut_vfs_open(kpath, flags, mode);
+    int result = fut_vfs_open(kpath, local_flags, local_mode);
 
     /* Phase 2: Handle error cases with detailed logging */
     if (result < 0) {

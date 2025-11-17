@@ -63,22 +63,28 @@ extern int fut_copy_to_user(void *to, const void *from, size_t size);
  * - Hard links are indistinguishable by stat/lstat (same inode)
  */
 long sys_lstat(const char *path, struct fut_stat *statbuf) {
-    if (!path || !statbuf) {
-        fut_printf("[LSTAT] lstat(%p, %p) -> EINVAL (NULL pointer)\n", path, statbuf);
+    /* ARM64 FIX: Copy parameters to local variables immediately to ensure they're preserved
+     * on the stack across potentially blocking calls. VFS and copy operations may block and
+     * corrupt register-passed parameters upon resumption. */
+    const char *local_path = path;
+    struct fut_stat *local_statbuf = statbuf;
+
+    if (!local_path || !local_statbuf) {
+        fut_printf("[LSTAT] lstat(%p, %p) -> EINVAL (NULL pointer)\n", local_path, local_statbuf);
         return -EINVAL;
     }
 
     /* Copy path from userspace to kernel space */
     char path_buf[256];
-    if (fut_copy_from_user(path_buf, path, sizeof(path_buf) - 1) != 0) {
-        fut_printf("[LSTAT] lstat(%p, %p) -> EFAULT (path copy failed)\n", path, statbuf);
+    if (fut_copy_from_user(path_buf, local_path, sizeof(path_buf) - 1) != 0) {
+        fut_printf("[LSTAT] lstat(%p, %p) -> EFAULT (path copy failed)\n", local_path, local_statbuf);
         return -EFAULT;
     }
     path_buf[sizeof(path_buf) - 1] = '\0';
 
     /* Validate path is not empty */
     if (path_buf[0] == '\0') {
-        fut_printf("[LSTAT] lstat(\"\", %p) -> EINVAL (empty path)\n", statbuf);
+        fut_printf("[LSTAT] lstat(\"\", %p) -> EINVAL (empty path)\n", local_statbuf);
         return -EINVAL;
     }
 
@@ -141,7 +147,7 @@ long sys_lstat(const char *path, struct fut_stat *statbuf) {
     }
 
     /* Copy stat buffer to userspace */
-    if (fut_copy_to_user(statbuf, &kernel_stat, sizeof(struct fut_stat)) != 0) {
+    if (fut_copy_to_user(local_statbuf, &kernel_stat, sizeof(struct fut_stat)) != 0) {
         fut_printf("[LSTAT] lstat(\"%s\") -> EFAULT (copy_to_user failed)\n", path_buf);
         return -EFAULT;
     }

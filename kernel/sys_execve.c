@@ -112,6 +112,13 @@ extern int fut_exec_elf(const char *path, char *const argv[], char *const envp[]
  * Phase 4: Performance optimization, COW optimizations
  */
 long sys_execve(const char *pathname, char *const argv[], char *const envp[]) {
+    /* ARM64 FIX: Copy parameters to local variables immediately to ensure they're preserved
+     * on the stack across potentially blocking calls. VFS operations, access checks, and
+     * copy operations may block and corrupt register-passed parameters upon resumption. */
+    const char *local_pathname = pathname;
+    char *const *local_argv = argv;
+    char *const *local_envp = envp;
+
     /* Get current task for PID logging */
     fut_task_t *task = fut_task_current();
     if (!task) {
@@ -125,7 +132,7 @@ long sys_execve(const char *pathname, char *const argv[], char *const envp[]) {
     }
 
     /* Phase 2: Validate pathname */
-    if (!pathname) {
+    if (!local_pathname) {
         char msg[128];
         int pos = 0;
         const char *text = "[EXECVE] execve(path=NULL) -> EINVAL (NULL pathname, pid=";
@@ -147,7 +154,7 @@ long sys_execve(const char *pathname, char *const argv[], char *const envp[]) {
     }
 
     /* Validate that pathname is a valid userspace pointer (readable) */
-    if (fut_access_ok(pathname, 1, 0) != 0) {
+    if (fut_access_ok(local_pathname, 1, 0) != 0) {
         char msg[128];
         int pos = 0;
         const char *text = "[EXECVE] execve(path=?) -> EFAULT (pathname not accessible, pid=";
@@ -169,12 +176,12 @@ long sys_execve(const char *pathname, char *const argv[], char *const envp[]) {
     }
 
     /* Validate that argv is a valid userspace pointer (readable) */
-    if (argv && fut_access_ok(argv, sizeof(char *), 0) != 0) {
+    if (local_argv && fut_access_ok(local_argv, sizeof(char *), 0) != 0) {
         char msg[128];
         int pos = 0;
         const char *text = "[EXECVE] execve(path=";
         while (*text) { msg[pos++] = *text++; }
-        const char *p = pathname;
+        const char *p = local_pathname;
         while (*p && pos < 100) { msg[pos++] = *p++; }
         text = ") -> EFAULT (argv not accessible)\n";
         while (*text) { msg[pos++] = *text++; }
@@ -184,12 +191,12 @@ long sys_execve(const char *pathname, char *const argv[], char *const envp[]) {
     }
 
     /* Validate that envp is a valid userspace pointer (readable) if provided */
-    if (envp && fut_access_ok(envp, sizeof(char *), 0) != 0) {
+    if (local_envp && fut_access_ok(local_envp, sizeof(char *), 0) != 0) {
         char msg[128];
         int pos = 0;
         const char *text = "[EXECVE] execve(path=";
         while (*text) { msg[pos++] = *text++; }
-        const char *p = pathname;
+        const char *p = local_pathname;
         while (*p && pos < 100) { msg[pos++] = *p++; }
         text = ") -> EFAULT (envp not accessible)\n";
         while (*text) { msg[pos++] = *text++; }
@@ -200,11 +207,11 @@ long sys_execve(const char *pathname, char *const argv[], char *const envp[]) {
 
     /* Phase 2: Categorize path type */
     const char *path_type;
-    if (pathname[0] == '/') {
+    if (local_pathname[0] == '/') {
         path_type = "absolute";
-    } else if (pathname[0] == '.' && pathname[1] == '/') {
+    } else if (local_pathname[0] == '.' && local_pathname[1] == '/') {
         path_type = "relative (./...)";
-    } else if (pathname[0] == '.' && pathname[1] == '.' && pathname[2] == '/') {
+    } else if (local_pathname[0] == '.' && local_pathname[1] == '.' && local_pathname[2] == '/') {
         path_type = "relative (../...)";
     } else {
         path_type = "basename (no path)";
@@ -212,26 +219,26 @@ long sys_execve(const char *pathname, char *const argv[], char *const envp[]) {
 
     /* Phase 2: Count argv and envp entries */
     int argc = 0;
-    if (argv) {
-        while (argv[argc] != NULL && argc < 1000) {
+    if (local_argv) {
+        while (local_argv[argc] != NULL && argc < 1000) {
             argc++;
         }
     }
 
     int envc = 0;
-    if (envp) {
-        while (envp[envc] != NULL && envc < 1000) {
+    if (local_envp) {
+        while (local_envp[envc] != NULL && envc < 1000) {
             envc++;
         }
     }
 
     /* Phase 3: Validate argument and environment limits */
     unsigned long total_argv_size = 0;
-    if (argv) {
+    if (local_argv) {
         for (int i = 0; i < argc && i < EXEC_ARGC_MAX; i++) {
-            if (argv[i] == NULL) break;
+            if (local_argv[i] == NULL) break;
             size_t arg_len = 0;
-            const char *ptr = argv[i];
+            const char *ptr = local_argv[i];
             while (ptr[arg_len] != '\0' && arg_len < EXEC_ARG_LEN_MAX) {
                 arg_len++;
             }
@@ -269,11 +276,11 @@ long sys_execve(const char *pathname, char *const argv[], char *const envp[]) {
     }
 
     unsigned long total_envp_size = 0;
-    if (envp) {
+    if (local_envp) {
         for (int i = 0; i < envc && i < EXEC_ENVC_MAX; i++) {
-            if (envp[i] == NULL) break;
+            if (local_envp[i] == NULL) break;
             size_t env_len = 0;
-            const char *ptr = envp[i];
+            const char *ptr = local_envp[i];
             while (ptr[env_len] != '\0' && env_len < EXEC_ARG_LEN_MAX) {
                 env_len++;
             }
@@ -379,7 +386,7 @@ long sys_execve(const char *pathname, char *const argv[], char *const envp[]) {
     int pos = 0;
     const char *text = "[EXECVE] execve(path=";
     while (*text) { msg[pos++] = *text++; }
-    const char *p = pathname;
+    const char *p = local_pathname;
     int path_len = 0;
     while (*p && path_len < 80) { msg[pos++] = *p++; path_len++; }
     text = " [";
@@ -438,7 +445,7 @@ long sys_execve(const char *pathname, char *const argv[], char *const envp[]) {
     fut_printf("%s", msg);
 
     /* Call the ELF loader which replaces the current process */
-    int ret = fut_exec_elf(pathname, argv, envp);
+    int ret = fut_exec_elf(local_pathname, local_argv, local_envp);
 
     /*
      * If fut_exec_elf returns, it failed.
@@ -468,7 +475,7 @@ long sys_execve(const char *pathname, char *const argv[], char *const envp[]) {
     pos = 0;
     text = "[EXECVE] execve(path=";
     while (*text) { msg[pos++] = *text++; }
-    p = pathname;
+    p = local_pathname;
     path_len = 0;
     while (*p && path_len < 80) { msg[pos++] = *p++; path_len++; }
     text = ") -> ";

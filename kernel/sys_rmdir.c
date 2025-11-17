@@ -120,15 +120,20 @@ extern int fut_copy_from_user(void *to, const void *from, size_t size);
  * Phase 4: Performance optimization (batch removal, inode cache integration)
  */
 long sys_rmdir(const char *path) {
+    /* ARM64 FIX: Copy parameters to local variables immediately to ensure they're preserved
+     * on the stack across potentially blocking calls. VFS and copy operations may block and
+     * corrupt register-passed parameters upon resumption. */
+    const char *local_path = path;
+
     /* Phase 2: Validate path pointer */
-    if (!path) {
+    if (!local_path) {
         fut_printf("[RMDIR] rmdir(path=NULL) -> EINVAL (NULL path)\n");
         return -EINVAL;
     }
 
     /* Copy path from userspace to kernel space */
     char path_buf[256];
-    if (fut_copy_from_user(path_buf, path, sizeof(path_buf) - 1) != 0) {
+    if (fut_copy_from_user(path_buf, local_path, sizeof(path_buf) - 1) != 0) {
         fut_printf("[RMDIR] rmdir(path=?) -> EFAULT (copy_from_user failed)\n");
         return -EFAULT;
     }

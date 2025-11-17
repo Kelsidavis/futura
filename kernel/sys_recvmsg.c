@@ -85,6 +85,13 @@ struct cmsghdr {
  * Phase 4: Full control message support and advanced flags
  */
 ssize_t sys_recvmsg(int sockfd, struct msghdr *msg, int flags) {
+    /* ARM64 FIX: Copy parameters to local variables immediately to ensure they're preserved
+     * on the stack across potentially blocking calls. Socket/VFS operations may block and corrupt
+     * register-passed parameters upon resumption. */
+    int local_sockfd = sockfd;
+    struct msghdr *local_msg = msg;
+    int local_flags = flags;
+
     fut_task_t *task = fut_task_current();
     if (!task) {
         return -ESRCH;
@@ -121,31 +128,31 @@ ssize_t sys_recvmsg(int sockfd, struct msghdr *msg, int flags) {
     }
 
     /* Validate socket FD */
-    struct fut_file *file = vfs_get_file(sockfd);
+    struct fut_file *file = vfs_get_file(local_sockfd);
     if (!file) {
-        fut_printf("[RECVMSG] ERROR: socket fd %d is not valid\n", sockfd);
+        fut_printf("[RECVMSG] ERROR: socket fd %d is not valid\n", local_sockfd);
         return -EBADF;
     }
 
     /* Validate msg pointer */
-    if (!msg) {
+    if (!local_msg) {
         return -EFAULT;
     }
 
     /* Copy msghdr from userspace */
     struct msghdr kmsg;
-    if (fut_copy_from_user(&kmsg, msg, sizeof(struct msghdr)) != 0) {
+    if (fut_copy_from_user(&kmsg, local_msg, sizeof(struct msghdr)) != 0) {
         return -EFAULT;
     }
 
     /* Validate iovlen */
     if (kmsg.msg_iovlen == 0) {
-        fut_printf("[RECVMSG] recvmsg(sockfd=%d, iovlen=0) -> 0 (nothing to receive)\n", sockfd);
+        fut_printf("[RECVMSG] recvmsg(sockfd=%d, iovlen=0) -> 0 (nothing to receive)\n", local_sockfd);
         return 0;  /* Nothing to receive */
     }
     if (kmsg.msg_iovlen > 1024) {
         fut_printf("[RECVMSG] recvmsg(sockfd=%d, iovlen=%zu) -> EINVAL (exceeds UIO_MAXIOV=1024)\n",
-                   sockfd, kmsg.msg_iovlen);
+                   local_sockfd, kmsg.msg_iovlen);
         return -EINVAL;
     }
 
@@ -160,14 +167,14 @@ ssize_t sys_recvmsg(int sockfd, struct msghdr *msg, int flags) {
         struct iovec iov;
         if (fut_copy_from_user(&iov, &kmsg.msg_iov[i], sizeof(struct iovec)) != 0) {
             fut_printf("[RECVMSG] recvmsg(sockfd=%d, iovlen=%zu) -> EFAULT (copy_from_user iovec %zu failed)\n",
-                       sockfd, kmsg.msg_iovlen, i);
+                       local_sockfd, kmsg.msg_iovlen, i);
             return -EFAULT;
         }
 
         /* Check for overflow */
         if (total_size + iov.iov_len < total_size) {
             fut_printf("[RECVMSG] recvmsg(sockfd=%d, iovlen=%zu) -> EINVAL (size overflow at iovec %zu)\n",
-                       sockfd, kmsg.msg_iovlen, i);
+                       local_sockfd, kmsg.msg_iovlen, i);
             return -EINVAL;
         }
         total_size += iov.iov_len;
@@ -214,7 +221,7 @@ ssize_t sys_recvmsg(int sockfd, struct msghdr *msg, int flags) {
      * Phase 4: Handle ancillary data (SCM_RIGHTS for FD receiving)
      */
 
-    (void)flags;  /* Ignore flags in Phase 2 (will implement in Phase 3) */
+    (void)local_flags;  /* Ignore flags in Phase 2 (will implement in Phase 3) */
 
     /* Phase 2: Iterate through iovecs and read each buffer */
     ssize_t total_received = 0;
@@ -236,7 +243,7 @@ ssize_t sys_recvmsg(int sockfd, struct msghdr *msg, int flags) {
         }
 
         /* Read from socket */
-        ssize_t ret = fut_vfs_read(sockfd, kbuf, iov.iov_len);
+        ssize_t ret = fut_vfs_read(local_sockfd, kbuf, iov.iov_len);
 
         if (ret > 0) {
             /* Copy to userspace */
@@ -272,7 +279,7 @@ ssize_t sys_recvmsg(int sockfd, struct msghdr *msg, int flags) {
     kmsg.msg_controllen = 0;
 
     /* Write updated msghdr back to userspace */
-    if (fut_copy_to_user(msg, &kmsg, sizeof(struct msghdr)) != 0) {
+    if (fut_copy_to_user(local_msg, &kmsg, sizeof(struct msghdr)) != 0) {
         return total_received > 0 ? total_received : -EFAULT;
     }
 
@@ -290,13 +297,13 @@ ssize_t sys_recvmsg(int sockfd, struct msghdr *msg, int flags) {
     if (zero_len_count > 0) {
         fut_printf("[RECVMSG] recvmsg(sockfd=%d, iovlen=%zu [%s], flags=%s, type=%s, total_requested=%zu bytes) -> %ld bytes "
                    "(%s, %d/%zu iovecs filled, %d zero-len skipped, min=%zu max=%zu, Phase 3: scatter-gather I/O with VFS optimization)\n",
-                   sockfd, kmsg.msg_iovlen, io_pattern, flags_desc, msg_type, total_size, total_received,
+                   local_sockfd, kmsg.msg_iovlen, io_pattern, flags_desc, msg_type, total_size, total_received,
                    completion_status, iovecs_filled, kmsg.msg_iovlen - zero_len_count, zero_len_count,
                    min_iov_len, max_iov_len);
     } else {
         fut_printf("[RECVMSG] recvmsg(sockfd=%d, iovlen=%zu [%s], flags=%s, type=%s, total_requested=%zu bytes) -> %ld bytes "
                    "(%s, %d/%zu iovecs filled, min=%zu max=%zu, Phase 3: scatter-gather I/O with VFS optimization)\n",
-                   sockfd, kmsg.msg_iovlen, io_pattern, flags_desc, msg_type, total_size, total_received,
+                   local_sockfd, kmsg.msg_iovlen, io_pattern, flags_desc, msg_type, total_size, total_received,
                    completion_status, iovecs_filled, kmsg.msg_iovlen, min_iov_len, max_iov_len);
     }
 

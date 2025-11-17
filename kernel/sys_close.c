@@ -90,15 +90,20 @@ extern int release_socket_fd(int fd);
  * Phase 4: close-on-exec flag handling, close_range bulk close
  */
 long sys_close(int fd) {
+    /* ARM64 FIX: Copy parameters to local variables immediately to ensure they're preserved
+     * on the stack across potentially blocking calls. VFS and socket operations may block and
+     * corrupt register-passed parameters upon resumption. */
+    int local_fd = fd;
+
     fut_task_t *task = fut_task_current();
     if (!task) {
-        fut_printf("[CLOSE] close(fd=%d) -> ESRCH (no current task)\n", fd);
+        fut_printf("[CLOSE] close(fd=%d) -> ESRCH (no current task)\n", local_fd);
         return -ESRCH;
     }
 
     /* Phase 2: Validate fd early */
-    if (fd < 0) {
-        fut_printf("[CLOSE] close(fd=%d) -> EBADF (negative fd)\n", fd);
+    if (local_fd < 0) {
+        fut_printf("[CLOSE] close(fd=%d) -> EBADF (negative fd)\n", local_fd);
         return -EBADF;
     }
 
@@ -108,7 +113,7 @@ long sys_close(int fd) {
     int ret;
 
     /* Check if FD is a socket first */
-    fut_socket_t *socket = get_socket_from_fd(fd);
+    fut_socket_t *socket = get_socket_from_fd(local_fd);
     if (socket) {
         /* Phase 2: Identify socket state for diagnostics */
         const char *socket_state;
@@ -140,7 +145,7 @@ long sys_close(int fd) {
         fd_desc = socket_state;
 
         /* Release socket */
-        ret = release_socket_fd(fd);
+        ret = release_socket_fd(local_fd);
         if (ret < 0) {
             const char *error_desc;
             switch (ret) {
@@ -155,12 +160,12 @@ long sys_close(int fd) {
                     break;
             }
             fut_printf("[CLOSE] close(fd=%d, type=%s [%s], socket_id=%u) -> %d (%s)\n",
-                       fd, fd_type, fd_desc, socket->socket_id, ret, error_desc);
+                       local_fd, fd_type, fd_desc, socket->socket_id, ret, error_desc);
             return (long)ret;
         }
 
         fut_printf("[CLOSE] close(fd=%d, type=%s [%s], socket_id=%u) -> 0 (Phase 2)\n",
-                   fd, fd_type, fd_desc, socket->socket_id);
+                   local_fd, fd_type, fd_desc, socket->socket_id);
         return 0;
     }
 
@@ -168,7 +173,7 @@ long sys_close(int fd) {
     fd_type = "file";
     fd_desc = "regular file or special device";
 
-    ret = fut_vfs_close(fd);
+    ret = fut_vfs_close(local_fd);
     if (ret < 0) {
         const char *error_desc;
         switch (ret) {
@@ -186,11 +191,11 @@ long sys_close(int fd) {
                 break;
         }
         fut_printf("[CLOSE] close(fd=%d, type=%s [%s]) -> %d (%s)\n",
-                   fd, fd_type, fd_desc, ret, error_desc);
+                   local_fd, fd_type, fd_desc, ret, error_desc);
         return (long)ret;
     }
 
     fut_printf("[CLOSE] close(fd=%d, type=%s [%s]) -> 0 (Phase 2)\n",
-               fd, fd_type, fd_desc);
+               local_fd, fd_type, fd_desc);
     return 0;
 }

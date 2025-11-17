@@ -88,24 +88,30 @@ static size_t manual_strlen(const char *s) {
  * Phase 4 (Completed): Performance optimization (cached stat, bulk stat operations)
  */
 long sys_stat(const char *path, struct fut_stat *statbuf) {
+    /* ARM64 FIX: Copy parameters to local variables immediately to ensure they're preserved
+     * on the stack across potentially blocking calls. VFS and copy operations may block and
+     * corrupt register-passed parameters upon resumption. */
+    const char *local_path = path;
+    struct fut_stat *local_statbuf = statbuf;
+
     /* Phase 2: Validate input pointers */
-    if (!path) {
+    if (!local_path) {
         fut_printf("[STAT] stat(path=NULL, statbuf=%p) -> EINVAL (NULL path)\n",
-                   (void *)statbuf);
+                   (void *)local_statbuf);
         return -EINVAL;
     }
 
-    if (!statbuf) {
+    if (!local_statbuf) {
         fut_printf("[STAT] stat(path=%p, statbuf=NULL) -> EINVAL (NULL statbuf)\n",
-                   (const void *)path);
+                   (const void *)local_path);
         return -EINVAL;
     }
 
     /* Copy path from userspace to kernel space */
     char path_buf[256];
-    if (fut_copy_from_user(path_buf, path, sizeof(path_buf) - 1) != 0) {
+    if (fut_copy_from_user(path_buf, local_path, sizeof(path_buf) - 1) != 0) {
         fut_printf("[STAT] stat(path=?, statbuf=%p) -> EFAULT (copy_from_user failed)\n",
-                   (void *)statbuf);
+                   (void *)local_statbuf);
         return -EFAULT;
     }
     path_buf[sizeof(path_buf) - 1] = '\0';
@@ -113,7 +119,7 @@ long sys_stat(const char *path, struct fut_stat *statbuf) {
     /* Phase 2: Validate path is not empty */
     if (path_buf[0] == '\0') {
         fut_printf("[STAT] stat(path=\"\" [empty], statbuf=%p) -> EINVAL (empty path)\n",
-                   (void *)statbuf);
+                   (void *)local_statbuf);
         return -EINVAL;
     }
 
@@ -161,13 +167,13 @@ long sys_stat(const char *path, struct fut_stat *statbuf) {
         }
 
         fut_printf("[STAT] stat(path='%s' [%s, len=%lu], statbuf=%p) -> %d (%s)\n",
-                   path_buf, path_type, (unsigned long)path_len, (void *)statbuf,
+                   path_buf, path_type, (unsigned long)path_len, (void *)local_statbuf,
                    ret, error_desc);
         return ret;
     }
 
     /* Copy stat buffer to userspace */
-    if (fut_copy_to_user(statbuf, &kernel_stat, sizeof(struct fut_stat)) != 0) {
+    if (fut_copy_to_user(local_statbuf, &kernel_stat, sizeof(struct fut_stat)) != 0) {
         fut_printf("[STAT] stat(path='%s' [%s, len=%lu]) -> EFAULT "
                    "(copy_to_user failed)\n",
                    path_buf, path_type, (unsigned long)path_len);

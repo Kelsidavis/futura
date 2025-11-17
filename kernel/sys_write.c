@@ -116,71 +116,78 @@ extern fut_task_t *fut_task_current(void);
  * Phase 4: Writebehind, vectored I/O hints, async I/O support
  */
 ssize_t sys_write(int fd, const void *buf, size_t count) {
+    /* ARM64 FIX: Copy parameters to local variables immediately to ensure they're preserved
+     * on the stack across potentially blocking calls. If fut_malloc blocks and resumes,
+     * register-passed parameters may be corrupted. */
+    int local_fd = fd;
+    const void *local_buf = buf;
+    size_t local_count = count;
+
     fut_task_t *task = fut_task_current();
     if (!task) {
-        fut_printf("[WRITE] write(fd=%d, count=%zu) -> ESRCH (no current task)\n", fd, count);
+        fut_printf("[WRITE] write(fd=%d, count=%zu) -> ESRCH (no current task)\n", local_fd, local_count);
         return -ESRCH;
     }
 
     /* Phase 2: Validate fd early */
-    if (fd < 0) {
-        fut_printf("[WRITE] write(fd=%d, count=%zu) -> EBADF (negative fd)\n", fd, count);
+    if (local_fd < 0) {
+        fut_printf("[WRITE] write(fd=%d, count=%zu) -> EBADF (negative fd)\n", local_fd, local_count);
         return -EBADF;
     }
 
     /* Phase 2: Handle empty write (valid, returns 0 immediately) */
-    if (count == 0) {
-        fut_printf("[WRITE] write(fd=%d, count=0) -> 0 (empty write)\n", fd);
+    if (local_count == 0) {
+        fut_printf("[WRITE] write(fd=%d, count=0) -> 0 (empty write)\n", local_fd);
         return 0;
     }
 
     /* Phase 2: Validate user buffer */
-    if (!buf) {
-        fut_printf("[WRITE] write(fd=%d, buf=NULL, count=%zu) -> EFAULT (NULL buffer)\n", fd, count);
+    if (!local_buf) {
+        fut_printf("[WRITE] write(fd=%d, buf=NULL, count=%zu) -> EFAULT (NULL buffer)\n", local_fd, local_count);
         return -EFAULT;
     }
 
     /* Phase 2: Categorize write size */
     const char *size_category;
-    if (count <= 16) {
+    if (local_count <= 16) {
         size_category = "tiny (≤16 bytes)";
-    } else if (count <= 512) {
+    } else if (local_count <= 512) {
         size_category = "small (≤512 bytes)";
-    } else if (count <= 4096) {
+    } else if (local_count <= 4096) {
         size_category = "typical (≤4 KB)";
-    } else if (count <= 65536) {
+    } else if (local_count <= 65536) {
         size_category = "large (≤64 KB)";
-    } else if (count <= 1024 * 1024) {
+    } else if (local_count <= 1024 * 1024) {
         size_category = "very large (≤1 MB)";
     } else {
         size_category = "excessive (>1 MB)";
     }
 
     /* Phase 2: Sanity check - reject unreasonably large writes */
-    if (count > 1024 * 1024) {  /* 1 MB limit */
+    if (local_count > 1024 * 1024) {  /* 1 MB limit */
         fut_printf("[WRITE] write(fd=%d, count=%zu [%s]) -> EINVAL (exceeds 1 MB limit)\n",
-                   fd, count, size_category);
+                   local_fd, local_count, size_category);
         return -EINVAL;
     }
 
     /* Allocate kernel buffer */
-    void *kbuf = fut_malloc(count);
+    void *kbuf = fut_malloc(local_count);
     if (!kbuf) {
         fut_printf("[WRITE] write(fd=%d, count=%zu [%s]) -> ENOMEM (failed to allocate kernel buffer)\n",
-                   fd, count, size_category);
+                   local_fd, local_count, size_category);
         return -ENOMEM;
     }
 
     /* Copy from userspace */
-    if (fut_copy_from_user(kbuf, buf, count) != 0) {
+    if (fut_copy_from_user(kbuf, local_buf, local_count) != 0) {
         fut_printf("[WRITE] write(fd=%d, count=%zu [%s]) -> EFAULT (copy_from_user failed)\n",
-                   fd, count, size_category);
+                   local_fd, local_count, size_category);
         fut_free(kbuf);
         return -EFAULT;
     }
 
     /* Write to VFS */
-    ssize_t ret = fut_vfs_write(fd, kbuf, count);
+    ssize_t ret = fut_vfs_write(local_fd, kbuf, local_count);
 
     /* Phase 2: Handle error cases with detailed logging */
     if (ret < 0) {
@@ -209,7 +216,7 @@ ssize_t sys_write(int fd, const void *buf, size_t count) {
                 break;
         }
         fut_printf("[WRITE] write(fd=%d, count=%zu [%s]) -> %ld (%s)\n",
-                   fd, count, size_category, ret, error_desc);
+                   local_fd, local_count, size_category, ret, error_desc);
         fut_free(kbuf);
         return ret;
     }
@@ -218,8 +225,8 @@ ssize_t sys_write(int fd, const void *buf, size_t count) {
 
     /* Phase 2: Categorize write completion status */
     const char *completion_status;
-    if ((size_t)ret < count) {
-        size_t percent = ((size_t)ret * 100) / count;
+    if ((size_t)ret < local_count) {
+        size_t percent = ((size_t)ret * 100) / local_count;
         if (percent < 25) {
             completion_status = "partial (< 25%)";
         } else if (percent < 50) {
@@ -234,12 +241,12 @@ ssize_t sys_write(int fd, const void *buf, size_t count) {
     }
 
     /* Phase 2: Detailed success logging */
-    if ((size_t)ret < count) {
+    if ((size_t)ret < local_count) {
         fut_printf("[WRITE] write(fd=%d, count=%zu [%s]) -> %ld (%s, short write: wrote %zu of %zu bytes, Phase 3: Direct user-to-kernel transfer)\n",
-                   fd, count, size_category, ret, completion_status, (size_t)ret, count);
+                   local_fd, local_count, size_category, ret, completion_status, (size_t)ret, local_count);
     } else {
         fut_printf("[WRITE] write(fd=%d, count=%zu [%s]) -> %ld (%s, Phase 3: Direct user-to-kernel transfer)\n",
-                   fd, count, size_category, ret, completion_status);
+                   local_fd, local_count, size_category, ret, completion_status);
     }
 
     return ret;

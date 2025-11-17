@@ -127,20 +127,27 @@ extern int fut_copy_from_user(void *to, const void *from, size_t size);
  * Phase 4: Performance optimization (ownership change batching)
  */
 long sys_chown(const char *pathname, uint32_t uid, uint32_t gid) {
+    /* ARM64 FIX: Copy parameters to local variables immediately to ensure they're preserved
+     * on the stack across potentially blocking calls. VFS and copy operations may block and
+     * corrupt register-passed parameters upon resumption. */
+    const char *local_pathname = pathname;
+    uint32_t local_uid = uid;
+    uint32_t local_gid = gid;
+
     /* Phase 2: Validate pathname pointer */
-    if (!pathname) {
+    if (!local_pathname) {
         fut_printf("[CHOWN] chown(pathname=NULL, uid=%u, gid=%u) -> EINVAL (NULL pathname)\n",
-                   uid, gid);
+                   local_uid, local_gid);
         return -EINVAL;
     }
 
     /* Phase 2: Categorize uid change type */
     const char *uid_desc;
-    if (uid == CHOWN_UNCHANGED) {
+    if (local_uid == CHOWN_UNCHANGED) {
         uid_desc = "unchanged (-1)";
-    } else if (uid == 0) {
+    } else if (local_uid == 0) {
         uid_desc = "root (0)";
-    } else if (uid < 1000) {
+    } else if (local_uid < 1000) {
         uid_desc = "system user (<1000)";
     } else {
         uid_desc = "regular user (≥1000)";
@@ -148,11 +155,11 @@ long sys_chown(const char *pathname, uint32_t uid, uint32_t gid) {
 
     /* Phase 2: Categorize gid change type */
     const char *gid_desc;
-    if (gid == CHOWN_UNCHANGED) {
+    if (local_gid == CHOWN_UNCHANGED) {
         gid_desc = "unchanged (-1)";
-    } else if (gid == 0) {
+    } else if (local_gid == 0) {
         gid_desc = "root/wheel (0)";
-    } else if (gid < 1000) {
+    } else if (local_gid < 1000) {
         gid_desc = "system group (<1000)";
     } else {
         gid_desc = "user group (≥1000)";
@@ -160,11 +167,11 @@ long sys_chown(const char *pathname, uint32_t uid, uint32_t gid) {
 
     /* Phase 2: Categorize operation type */
     const char *operation_type;
-    if (uid == CHOWN_UNCHANGED && gid == CHOWN_UNCHANGED) {
+    if (local_uid == CHOWN_UNCHANGED && local_gid == CHOWN_UNCHANGED) {
         operation_type = "no-op (both unchanged)";
-    } else if (uid != CHOWN_UNCHANGED && gid == CHOWN_UNCHANGED) {
+    } else if (local_uid != CHOWN_UNCHANGED && local_gid == CHOWN_UNCHANGED) {
         operation_type = "change owner only";
-    } else if (uid == CHOWN_UNCHANGED && gid != CHOWN_UNCHANGED) {
+    } else if (local_uid == CHOWN_UNCHANGED && local_gid != CHOWN_UNCHANGED) {
         operation_type = "change group only";
     } else {
         operation_type = "change both owner and group";
@@ -172,7 +179,7 @@ long sys_chown(const char *pathname, uint32_t uid, uint32_t gid) {
 
     /* Copy pathname from userspace to kernel space */
     char path_buf[256];
-    if (fut_copy_from_user(path_buf, pathname, sizeof(path_buf) - 1) != 0) {
+    if (fut_copy_from_user(path_buf, local_pathname, sizeof(path_buf) - 1) != 0) {
         fut_printf("[CHOWN] chown(pathname=?, uid=%s, gid=%s, op=%s) -> EFAULT "
                    "(copy_from_user failed)\n", uid_desc, gid_desc, operation_type);
         return -EFAULT;
@@ -288,13 +295,13 @@ long sys_chown(const char *pathname, uint32_t uid, uint32_t gid) {
     while (*arrow) *p++ = *arrow++;
 
     // New ownership (using actual uid/gid or -1)
-    if (uid == CHOWN_UNCHANGED) {
+    if (local_uid == CHOWN_UNCHANGED) {
         *p++ = '-';
         *p++ = '1';
-    } else if (uid < 10) {
-        *p++ = '0' + uid;
+    } else if (local_uid < 10) {
+        *p++ = '0' + local_uid;
     } else {
-        uint32_t temp_uid = uid;
+        uint32_t temp_uid = local_uid;
         char digits[12];
         int digit_count = 0;
         do {
@@ -308,13 +315,13 @@ long sys_chown(const char *pathname, uint32_t uid, uint32_t gid) {
 
     *p++ = ':';
 
-    if (gid == CHOWN_UNCHANGED) {
+    if (local_gid == CHOWN_UNCHANGED) {
         *p++ = '-';
         *p++ = '1';
-    } else if (gid < 10) {
-        *p++ = '0' + gid;
+    } else if (local_gid < 10) {
+        *p++ = '0' + local_gid;
     } else {
-        uint32_t temp_gid = gid;
+        uint32_t temp_gid = local_gid;
         char digits[12];
         int digit_count = 0;
         do {
@@ -338,8 +345,8 @@ long sys_chown(const char *pathname, uint32_t uid, uint32_t gid) {
 
     /* Create a stat structure with the new ownership */
     struct fut_stat stat = {0};
-    stat.st_uid = uid;
-    stat.st_gid = gid;
+    stat.st_uid = local_uid;
+    stat.st_gid = local_gid;
 
     /* Call the filesystem's setattr operation */
     ret = vnode->ops->setattr(vnode, &stat);

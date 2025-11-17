@@ -116,28 +116,33 @@ extern struct fut_file *vfs_get_file_from_task(struct fut_task *task, int fd);
  * Phase 4: Performance optimization (FD table search hints)
  */
 long sys_dup(int oldfd) {
+    /* ARM64 FIX: Copy parameters to local variables immediately to ensure they're preserved
+     * on the stack across potentially blocking calls. VFS operations may block and corrupt
+     * register-passed parameters upon resumption. */
+    int local_oldfd = oldfd;
+
     /* Get current task for FD table access */
     fut_task_t *task = fut_task_current();
     if (!task) {
-        fut_printf("[DUP] dup(oldfd=%d) -> ESRCH (no current task)\n", oldfd);
+        fut_printf("[DUP] dup(oldfd=%d) -> ESRCH (no current task)\n", local_oldfd);
         return -ESRCH;
     }
 
     /* Phase 2: Validate oldfd early */
-    if (oldfd < 0) {
-        fut_printf("[DUP] dup(oldfd=%d) -> EBADF (negative oldfd)\n", oldfd);
+    if (local_oldfd < 0) {
+        fut_printf("[DUP] dup(oldfd=%d) -> EBADF (negative oldfd)\n", local_oldfd);
         return -EBADF;
     }
 
     /* Phase 2: Categorize oldfd range */
     const char *oldfd_category;
-    if (oldfd <= 2) {
+    if (local_oldfd <= 2) {
         oldfd_category = "standard (stdin/stdout/stderr)";
-    } else if (oldfd < 10) {
+    } else if (local_oldfd < 10) {
         oldfd_category = "low (common user FDs)";
-    } else if (oldfd < 100) {
+    } else if (local_oldfd < 100) {
         oldfd_category = "typical (normal range)";
-    } else if (oldfd < 1024) {
+    } else if (local_oldfd < 1024) {
         oldfd_category = "high (many open files)";
     } else {
         oldfd_category = "very high (unusual)";
@@ -146,15 +151,15 @@ long sys_dup(int oldfd) {
     /* Validate FD table exists */
     if (!task->fd_table) {
         fut_printf("[DUP] dup(oldfd=%d [%s]) -> EBADF (no FD table)\n",
-                   oldfd, oldfd_category);
+                   local_oldfd, oldfd_category);
         return -EBADF;
     }
 
     /* Get the file structure for oldfd from current task's FD table */
-    struct fut_file *old_file = vfs_get_file_from_task(task, oldfd);
+    struct fut_file *old_file = vfs_get_file_from_task(task, local_oldfd);
     if (!old_file) {
         fut_printf("[DUP] dup(oldfd=%d [%s]) -> EBADF (oldfd not open)\n",
-                   oldfd, oldfd_category);
+                   local_oldfd, oldfd_category);
         return -EBADF;
     }
 
@@ -171,7 +176,7 @@ long sys_dup(int oldfd) {
     if (newfd < 0) {
         fut_printf("[DUP] dup(oldfd=%d [%s], max_fds=%d) -> EMFILE "
                    "(all FDs in use, no available slots)\n",
-                   oldfd, oldfd_category, task->max_fds);
+                   local_oldfd, oldfd_category, task->max_fds);
         return -EMFILE;
     }
 
@@ -198,7 +203,7 @@ long sys_dup(int oldfd) {
     /* Phase 2: Detailed success logging */
     fut_printf("[DUP] dup(oldfd=%d [%s]) -> %d [%s] (refcount=%u, "
                "lowest available FD, Phase 2)\n",
-               oldfd, oldfd_category, newfd, newfd_category, old_file->refcount);
+               local_oldfd, oldfd_category, newfd, newfd_category, old_file->refcount);
 
     return newfd;
 }

@@ -54,18 +54,24 @@ static size_t manual_strlen(const char *s) {
  * Phase 4 (Completed): Performance optimization (async truncation, bulk operations)
  */
 long sys_truncate(const char *path, uint64_t length) {
+    /* ARM64 FIX: Copy parameters to local variables immediately to ensure they're preserved
+     * on the stack across potentially blocking calls. VFS and copy operations may block and
+     * corrupt register-passed parameters upon resumption. */
+    const char *local_path = path;
+    uint64_t local_length = length;
+
     /* Phase 2: Validate path pointer */
-    if (!path) {
+    if (!local_path) {
         fut_printf("[TRUNCATE] truncate(path=NULL, length=%llu) -> EINVAL (NULL path)\n",
-                   (unsigned long long)length);
+                   (unsigned long long)local_length);
         return -EINVAL;
     }
 
     /* Copy path from userspace to kernel space */
     char path_buf[256];
-    if (fut_copy_from_user(path_buf, path, sizeof(path_buf) - 1) != 0) {
+    if (fut_copy_from_user(path_buf, local_path, sizeof(path_buf) - 1) != 0) {
         fut_printf("[TRUNCATE] truncate(path=?, length=%llu) -> EFAULT (copy_from_user failed)\n",
-                   (unsigned long long)length);
+                   (unsigned long long)local_length);
         return -EFAULT;
     }
     path_buf[sizeof(path_buf) - 1] = '\0';
@@ -73,7 +79,7 @@ long sys_truncate(const char *path, uint64_t length) {
     /* Phase 2: Validate path is not empty */
     if (path_buf[0] == '\0') {
         fut_printf("[TRUNCATE] truncate(path=\"\" [empty], length=%llu) -> EINVAL (empty path)\n",
-                   (unsigned long long)length);
+                   (unsigned long long)local_length);
         return -EINVAL;
     }
 
@@ -94,13 +100,13 @@ long sys_truncate(const char *path, uint64_t length) {
 
     /* Phase 2: Categorize length */
     const char *length_category;
-    if (length == 0) {
+    if (local_length == 0) {
         length_category = "empty file";
-    } else if (length < 1024) {
+    } else if (local_length < 1024) {
         length_category = "<1KB";
-    } else if (length < 1024 * 1024) {
+    } else if (local_length < 1024 * 1024) {
         length_category = "<1MB";
-    } else if (length < 1024 * 1024 * 1024) {
+    } else if (local_length < 1024 * 1024 * 1024) {
         length_category = "<1GB";
     } else {
         length_category = ">=1GB";
@@ -134,7 +140,7 @@ long sys_truncate(const char *path, uint64_t length) {
         fut_printf("[TRUNCATE] truncate(path='%s' [%s, len=%lu], length=%llu [%s]) "
                    "-> %d (%s)\n",
                    path_buf, path_type, (unsigned long)path_len,
-                   (unsigned long long)length, length_category, ret, error_desc);
+                   (unsigned long long)local_length, length_category, ret, error_desc);
         return ret;
     }
 
@@ -142,7 +148,7 @@ long sys_truncate(const char *path, uint64_t length) {
         fut_printf("[TRUNCATE] truncate(path='%s' [%s, len=%lu], length=%llu [%s]) "
                    "-> ENOENT (vnode is NULL)\n",
                    path_buf, path_type, (unsigned long)path_len,
-                   (unsigned long long)length, length_category);
+                   (unsigned long long)local_length, length_category);
         return -ENOENT;
     }
 
@@ -151,7 +157,7 @@ long sys_truncate(const char *path, uint64_t length) {
         fut_printf("[TRUNCATE] truncate(path='%s' [%s, len=%lu], vnode_ino=%lu, "
                    "length=%llu [%s]) -> EISDIR (cannot truncate directory)\n",
                    path_buf, path_type, (unsigned long)path_len, vnode->ino,
-                   (unsigned long long)length, length_category);
+                   (unsigned long long)local_length, length_category);
         return -EISDIR;
     }
 
@@ -160,9 +166,9 @@ long sys_truncate(const char *path, uint64_t length) {
 
     /* Phase 2: Determine operation type */
     const char *operation;
-    if (length < current_size) {
+    if (local_length < current_size) {
         operation = "shrink";
-    } else if (length > current_size) {
+    } else if (local_length > current_size) {
         operation = "extend";
     } else {
         operation = "no-change";
@@ -177,7 +183,7 @@ long sys_truncate(const char *path, uint64_t length) {
      * - Size update: Updates vnode->size in both cases
      */
     if (vnode->ops && vnode->ops->truncate) {
-        int ret = vnode->ops->truncate(vnode, length);
+        int ret = vnode->ops->truncate(vnode, local_length);
         if (ret < 0) {
             const char *error_desc;
             switch (ret) {
@@ -200,7 +206,7 @@ long sys_truncate(const char *path, uint64_t length) {
             fut_printf("[TRUNCATE] truncate(path='%s' [%s, len=%lu], vnode_ino=%lu, "
                        "length=%llu [%s], operation=%s) -> %d (%s, Phase 3)\n",
                        path_buf, path_type, (unsigned long)path_len, vnode->ino,
-                       (unsigned long long)length, length_category, operation,
+                       (unsigned long long)local_length, length_category, operation,
                        ret, error_desc);
             return ret;
         }
@@ -210,8 +216,8 @@ long sys_truncate(const char *path, uint64_t length) {
                    "length=%llu [%s], operation=%s [%llu -> %llu]) "
                    "-> 0 (blocks allocated/deallocated, async batching enabled, Phase 4: Bulk truncation)\n",
                    path_buf, path_type, (unsigned long)path_len, vnode->ino,
-                   (unsigned long long)length, length_category, operation,
-                   (unsigned long long)current_size, (unsigned long long)length);
+                   (unsigned long long)local_length, length_category, operation,
+                   (unsigned long long)current_size, (unsigned long long)local_length);
         return 0;
     }
 
@@ -222,14 +228,14 @@ long sys_truncate(const char *path, uint64_t length) {
      *
      * Phase 4: Fallback path with deferred block management
      */
-    vnode->size = length;
+    vnode->size = local_length;
 
     fut_printf("[TRUNCATE] truncate(path='%s' [%s, len=%lu], vnode_ino=%lu, "
                "length=%llu [%s], operation=%s [%llu -> %llu]) "
                "-> 0 (no truncate operation, size updated only, deferred management, Phase 4: Lazy deallocation)\n",
                path_buf, path_type, (unsigned long)path_len, vnode->ino,
-               (unsigned long long)length, length_category, operation,
-               (unsigned long long)current_size, (unsigned long long)length);
+               (unsigned long long)local_length, length_category, operation,
+               (unsigned long long)current_size, (unsigned long long)local_length);
 
     return 0;
 }

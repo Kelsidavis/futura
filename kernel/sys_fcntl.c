@@ -154,47 +154,54 @@ extern int vfs_alloc_specific_fd_for_task(struct fut_task *task, int target_fd, 
  * Phase 4 (Completed): File sealing, lease management, pipe capacity control
  */
 long sys_fcntl(int fd, int cmd, uint64_t arg) {
+    /* ARM64 FIX: Copy parameters to local variables immediately to ensure they're preserved
+     * on the stack across potentially blocking calls. VFS operations may block and
+     * corrupt register-passed parameters upon resumption. */
+    int local_fd = fd;
+    int local_cmd = cmd;
+    uint64_t local_arg = arg;
+
     /* Get current task for FD table access */
     fut_task_t *task = fut_task_current();
     if (!task) {
         fut_printf("[FCNTL] fcntl(fd=%d, cmd=%d, arg=%llu) -> ESRCH (no current task)\n",
-                   fd, cmd, arg);
+                   local_fd, local_cmd, local_arg);
         return -ESRCH;
     }
 
     /* Phase 2: Validate fd early */
-    if (fd < 0) {
+    if (local_fd < 0) {
         fut_printf("[FCNTL] fcntl(fd=%d, cmd=%d, arg=%llu) -> EBADF (negative fd)\n",
-                   fd, cmd, arg);
+                   local_fd, local_cmd, local_arg);
         return -EBADF;
     }
 
     /* Phase 2: Categorize FD range */
     const char *fd_category;
-    if (fd <= 2) {
+    if (local_fd <= 2) {
         fd_category = "standard (stdin/stdout/stderr)";
-    } else if (fd < 10) {
+    } else if (local_fd < 10) {
         fd_category = "low (common user FDs)";
-    } else if (fd < 100) {
+    } else if (local_fd < 100) {
         fd_category = "typical (normal range)";
-    } else if (fd < 1024) {
+    } else if (local_fd < 1024) {
         fd_category = "high (many open files)";
     } else {
         fd_category = "very high (unusual)";
     }
 
     /* Get file structure for this fd from task's FD table */
-    struct fut_file *file = vfs_get_file_from_task(task, fd);
+    struct fut_file *file = vfs_get_file_from_task(task, local_fd);
     if (!file) {
         fut_printf("[FCNTL] fcntl(fd=%d [%s], cmd=%d, arg=%llu) -> EBADF (fd not open)\n",
-                   fd, fd_category, cmd, arg);
+                   local_fd, fd_category, local_cmd, local_arg);
         return -EBADF;
     }
 
     /* Phase 2: Categorize command */
     const char *cmd_name;
     const char *cmd_category;
-    switch (cmd) {
+    switch (local_cmd) {
         case F_GETFD:
             cmd_name = "F_GETFD";
             cmd_category = "get descriptor flags";
@@ -245,7 +252,7 @@ long sys_fcntl(int fd, int cmd, uint64_t arg) {
             break;
     }
 
-    switch (cmd) {
+    switch (local_cmd) {
     case F_GETFD: {
         /* Return file descriptor flags */
         /* Phase 2: Identify flags */
@@ -253,14 +260,14 @@ long sys_fcntl(int fd, int cmd, uint64_t arg) {
                                   "FD_CLOEXEC set" : "no flags set";
 
         fut_printf("[FCNTL] fcntl(fd=%d [%s], cmd=%s [%s]) -> %d (%s, Phase 2)\n",
-                   fd, fd_category, cmd_name, cmd_category, file->fd_flags, flags_desc);
+                   local_fd, fd_category, cmd_name, cmd_category, file->fd_flags, flags_desc);
         return file->fd_flags;
     }
 
     case F_SETFD: {
         /* Set file descriptor flags (only FD_CLOEXEC supported) */
         int old_flags = file->fd_flags;
-        int new_flags = ((int)arg & FD_CLOEXEC);
+        int new_flags = ((int)local_arg & FD_CLOEXEC);
         file->fd_flags = new_flags;
 
         /* Phase 2: Identify flag changes */
@@ -276,7 +283,7 @@ long sys_fcntl(int fd, int cmd, uint64_t arg) {
         }
 
         fut_printf("[FCNTL] fcntl(fd=%d [%s], cmd=%s [%s], arg=%d) -> 0 (%s, Phase 2)\n",
-                   fd, fd_category, cmd_name, cmd_category, new_flags, change_desc);
+                   local_fd, fd_category, cmd_name, cmd_category, new_flags, change_desc);
         return 0;
     }
 
@@ -314,7 +321,7 @@ long sys_fcntl(int fd, int cmd, uint64_t arg) {
         const char *flags_desc = (flags_buf[0] != '\0') ? flags_buf : "no flags";
 
         fut_printf("[FCNTL] fcntl(fd=%d [%s], cmd=%s [%s]) -> 0x%x (%s, Phase 2)\n",
-                   fd, fd_category, cmd_name, cmd_category, file->flags, flags_desc);
+                   local_fd, fd_category, cmd_name, cmd_category, file->flags, flags_desc);
         return file->flags;
     }
 
@@ -325,7 +332,7 @@ long sys_fcntl(int fd, int cmd, uint64_t arg) {
 
         /* Preserve access mode and other flags, update only O_NONBLOCK and O_APPEND */
         new_flags &= ~(O_NONBLOCK | O_APPEND);
-        new_flags |= ((int)arg & (O_NONBLOCK | O_APPEND));
+        new_flags |= ((int)local_arg & (O_NONBLOCK | O_APPEND));
 
         file->flags = new_flags;
 
@@ -358,20 +365,20 @@ long sys_fcntl(int fd, int cmd, uint64_t arg) {
         const char *change_desc = (changes > 0) ? change_buf : "no flags changed";
 
         fut_printf("[FCNTL] fcntl(fd=%d [%s], cmd=%s [%s], arg=0x%x) -> 0 (%s, Phase 2)\n",
-                   fd, fd_category, cmd_name, cmd_category, (int)arg, change_desc);
+                   local_fd, fd_category, cmd_name, cmd_category, (int)local_arg, change_desc);
         return 0;
     }
 
     case F_DUPFD:
     case F_DUPFD_CLOEXEC: {
         /* Duplicate file descriptor to minimum fd >= arg */
-        int minfd = (int)arg;
+        int minfd = (int)local_arg;
 
         /* Phase 2: Validate minfd */
         if (minfd < 0) {
             fut_printf("[FCNTL] fcntl(fd=%d [%s], cmd=%s [%s], minfd=%d) -> EINVAL "
                        "(negative minfd, Phase 2)\n",
-                       fd, fd_category, cmd_name, cmd_category, minfd);
+                       local_fd, fd_category, cmd_name, cmd_category, minfd);
             return -EINVAL;
         }
 
@@ -401,7 +408,7 @@ long sys_fcntl(int fd, int cmd, uint64_t arg) {
         if (newfd >= 1024) {
             fut_printf("[FCNTL] fcntl(fd=%d [%s], cmd=%s [%s], minfd=%d [%s]) -> EMFILE "
                        "(no FDs available >= minfd, Phase 2)\n",
-                       fd, fd_category, cmd_name, cmd_category, minfd, minfd_category);
+                       local_fd, fd_category, cmd_name, cmd_category, minfd, minfd_category);
             return -EMFILE;
         }
 
@@ -447,14 +454,14 @@ long sys_fcntl(int fd, int cmd, uint64_t arg) {
 
             fut_printf("[FCNTL] fcntl(fd=%d [%s], cmd=%s [%s], minfd=%d [%s]) -> %d "
                        "(%s, Phase 2)\n",
-                       fd, fd_category, cmd_name, cmd_category, minfd, minfd_category,
+                       local_fd, fd_category, cmd_name, cmd_category, minfd, minfd_category,
                        ret, error_desc);
             return ret;
         }
 
         /* Set close-on-exec if F_DUPFD_CLOEXEC */
         const char *cloexec_status = "FD_CLOEXEC not set";
-        if (cmd == F_DUPFD_CLOEXEC) {
+        if (local_cmd == F_DUPFD_CLOEXEC) {
             struct fut_file *new_file = vfs_get_file_from_task(task, newfd);
             if (new_file) {
                 new_file->fd_flags |= FD_CLOEXEC;
@@ -465,7 +472,7 @@ long sys_fcntl(int fd, int cmd, uint64_t arg) {
         /* Phase 2: Detailed success logging */
         fut_printf("[FCNTL] fcntl(fd=%d [%s], cmd=%s [%s], minfd=%d [%s]) -> %d "
                    "(newfd=%d [%s], refcount=%u, %s, Phase 4: Optimized FD pooling)\n",
-                   fd, fd_category, cmd_name, cmd_category, minfd, minfd_category, newfd,
+                   local_fd, fd_category, cmd_name, cmd_category, minfd, minfd_category, newfd,
                    newfd, newfd_category, file->refcount, cloexec_status);
         return newfd;
     }
@@ -473,7 +480,7 @@ long sys_fcntl(int fd, int cmd, uint64_t arg) {
     case F_GET_SEALS:
         /* Stub: return no seals set (Phase 4 will implement actual sealing) */
         fut_printf("[FCNTL] fcntl(fd=%d [%s], cmd=%s [%s]) -> 0 (stub, no seals, Phase 2)\n",
-                   fd, fd_category, cmd_name, cmd_category);
+                   local_fd, fd_category, cmd_name, cmd_category);
         return 0;
 
     case F_SETLK: {
@@ -482,7 +489,7 @@ long sys_fcntl(int fd, int cmd, uint64_t arg) {
         /* Full implementation would track lock regions and check conflicts */
         fut_printf("[FCNTL] fcntl(fd=%d [%s], cmd=%s [%s], arg=%llu) -> 0 "
                    "(advisory lock set, Phase 3)\n",
-                   fd, fd_category, cmd_name, cmd_category, arg);
+                   local_fd, fd_category, cmd_name, cmd_category, local_arg);
         return 0;
     }
 
@@ -492,19 +499,19 @@ long sys_fcntl(int fd, int cmd, uint64_t arg) {
         /* For now, indicate no conflicting lock (lock would be available) */
         fut_printf("[FCNTL] fcntl(fd=%d [%s], cmd=%s [%s], arg=%llu) -> 0 "
                    "(no conflicting lock, Phase 3)\n",
-                   fd, fd_category, cmd_name, cmd_category, arg);
+                   local_fd, fd_category, cmd_name, cmd_category, local_arg);
         return 0;
     }
 
     case F_SETOWN: {
         /* Phase 3: Set owner process for async I/O signals (SIGIO/SIGURG) */
-        int owner_pid = (int)arg;
+        int owner_pid = (int)local_arg;
 
         /* Validate owner PID (can be positive or negative for process groups) */
         if (owner_pid == 0) {
             fut_printf("[FCNTL] fcntl(fd=%d [%s], cmd=%s [%s], owner_pid=%d) -> EINVAL "
                        "(zero PID invalid, Phase 3)\n",
-                       fd, fd_category, cmd_name, cmd_category, owner_pid);
+                       local_fd, fd_category, cmd_name, cmd_category, owner_pid);
             return -EINVAL;
         }
 
@@ -517,7 +524,7 @@ long sys_fcntl(int fd, int cmd, uint64_t arg) {
 
         fut_printf("[FCNTL] fcntl(fd=%d [%s], cmd=%s [%s], owner_pid=%d) -> 0 "
                    "(owner set for async signals, Phase 3)\n",
-                   fd, fd_category, cmd_name, cmd_category, owner_pid);
+                   local_fd, fd_category, cmd_name, cmd_category, owner_pid);
         return 0;
     }
 
@@ -528,7 +535,7 @@ long sys_fcntl(int fd, int cmd, uint64_t arg) {
 
         fut_printf("[FCNTL] fcntl(fd=%d [%s], cmd=%s [%s]) -> %d "
                    "(owner process retrieved, Phase 3)\n",
-                   fd, fd_category, cmd_name, cmd_category, owner_pid);
+                   local_fd, fd_category, cmd_name, cmd_category, owner_pid);
         return (long)owner_pid;
     }
 
@@ -536,7 +543,7 @@ long sys_fcntl(int fd, int cmd, uint64_t arg) {
         /* Unknown command */
         fut_printf("[FCNTL] fcntl(fd=%d [%s], cmd=%d [%s], arg=%llu) -> EINVAL "
                    "(unknown command, Phase 2)\n",
-                   fd, fd_category, cmd, cmd_category, arg);
+                   local_fd, fd_category, local_cmd, cmd_category, local_arg);
         return -EINVAL;
     }
 }

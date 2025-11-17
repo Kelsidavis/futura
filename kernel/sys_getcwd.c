@@ -125,34 +125,40 @@ extern void fut_printf(const char *fmt, ...);
  * Phase 4: Symlink resolution, mount points, namespace isolation
  */
 long sys_getcwd(char *buf, size_t size) {
+    /* ARM64 FIX: Copy parameters to local variables immediately to ensure they're preserved
+     * on the stack across potentially blocking calls. VFS and copy operations may block and
+     * corrupt register-passed parameters upon resumption. */
+    char *local_buf = buf;
+    size_t local_size = size;
+
     /* Get current task for directory tracking */
     fut_task_t *task = fut_task_current();
     if (!task) {
         fut_printf("[GETCWD] getcwd(buf=%p, size=%zu) -> ESRCH (no current task)\n",
-                   (void *)buf, size);
+                   (void *)local_buf, local_size);
         return -ESRCH;
     }
 
     /* Phase 2: Validate buffer pointer */
-    if (!buf) {
+    if (!local_buf) {
         fut_printf("[GETCWD] getcwd(buf=NULL, size=%zu) -> EINVAL (null buffer)\n",
-                   size);
+                   local_size);
         return -EINVAL;
     }
 
     /* Phase 2: Categorize buffer size */
     const char *size_category;
     const char *size_desc;
-    if (size < 2) {
+    if (local_size < 2) {
         size_category = "invalid (too small)";
         size_desc = "insufficient for minimum path '/'";
-    } else if (size < 64) {
+    } else if (local_size < 64) {
         size_category = "tiny (2-63 bytes)";
         size_desc = "minimal, only very short paths";
-    } else if (size < 256) {
+    } else if (local_size < 256) {
         size_category = "small (64-255 bytes)";
         size_desc = "adequate for simple paths";
-    } else if (size < 1024) {
+    } else if (local_size < 1024) {
         size_category = "typical (256-1023 bytes)";
         size_desc = "standard buffer size";
     } else {
@@ -161,9 +167,9 @@ long sys_getcwd(char *buf, size_t size) {
     }
 
     /* Validate minimum buffer size (need at least 2 bytes for "/" + null) */
-    if (size < 2) {
+    if (local_size < 2) {
         fut_printf("[GETCWD] getcwd(buf=%p, size=%zu [%s]) -> ERANGE (%s)\n",
-                   (void *)buf, size, size_category, size_desc);
+                   (void *)local_buf, local_size, size_category, size_desc);
         return -ERANGE;
     }
 
@@ -187,14 +193,14 @@ long sys_getcwd(char *buf, size_t size) {
      */
     if (cwd_inode == 1) {
         /* At root directory */
-        buf[0] = '/';
-        buf[1] = '\0';
+        local_buf[0] = '/';
+        local_buf[1] = '\0';
     } else {
         /* Phase 3: Track non-root path (stub: return "/" for now)
          * Full implementation would walk VFS tree and build path string
          */
-        buf[0] = '/';
-        buf[1] = '\0';
+        local_buf[0] = '/';
+        local_buf[1] = '\0';
     }
 
     /* Phase 3: Categorize path length */
@@ -211,7 +217,7 @@ long sys_getcwd(char *buf, size_t size) {
     }
 
     /* Phase 2: Calculate buffer utilization */
-    const size_t utilization_pct = ((path_len + 1) * 100) / size;
+    const size_t utilization_pct = ((path_len + 1) * 100) / local_size;
     const char *utilization_desc;
     if (utilization_pct < 25) {
         utilization_desc = "plenty of space";
@@ -228,8 +234,8 @@ long sys_getcwd(char *buf, size_t size) {
     /* Phase 2: Detailed success logging */
     fut_printf("[GETCWD] getcwd(buf=%p, size=%zu [%s], cwd_inode=%lu) -> %p "
                "(path='/', len=%zu [%s], util=%zu%% [%s], Phase 2 stub)\n",
-               (void *)buf, size, size_category, (unsigned long)cwd_inode,
-               (void *)buf, path_len, path_category, utilization_pct, utilization_desc);
+               (void *)local_buf, local_size, size_category, (unsigned long)cwd_inode,
+               (void *)local_buf, path_len, path_category, utilization_pct, utilization_desc);
 
-    return (long)(uintptr_t)buf;
+    return (long)(uintptr_t)local_buf;
 }

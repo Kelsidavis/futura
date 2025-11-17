@@ -1114,12 +1114,14 @@ static int exec_copy_to_user(fut_mm_t *mm, uint64_t dest, const void *src, size_
             fut_printf("\n");
         }
 
-        /* ARM64: Clean data cache and invalidate instruction cache for code pages
-         * This is critical because ARM64 has separate instruction and data caches.
-         * After writing instructions via data cache, we must:
-         * 1. DC CVAU - Clean data cache to point of unification (write to memory)
-         * 2. IC IVAU - Invalidate instruction cache (discard stale instructions)
-         * 3. ISB - Instruction synchronization barrier (wait for completion)
+        /* ARM64: Clean and Invalidate data cache to Point of Coherency for ALL pages
+         * This is critical because kernel writes data through its own mapping,
+         * and userspace will read it through a different mapping. We must ensure:
+         * 1. Data is written to memory (Clean)
+         * 2. Cache lines are invalidated so next access fetches from memory
+         *
+         * DC CIVAC (Clean and Invalidate to PoC) ensures userspace reads fresh data
+         * instead of stale cached zeros from when the page was initially allocated.
          *
          * IMPORTANT: Must use the KERNEL virtual address where we wrote (virt),
          * not the user virtual address (vaddr), since we're in kernel mode!
@@ -1127,15 +1129,9 @@ static int exec_copy_to_user(fut_mm_t *mm, uint64_t dest, const void *src, size_
         uint8_t *kern_start = (uint8_t *)virt;
         uint8_t *kern_end = kern_start + chunk_size;
         for (uint8_t *addr = kern_start; addr < kern_end; addr += 64) {
-            __asm__ volatile("dc cvau, %0" :: "r"(addr) : "memory");
+            __asm__ volatile("dc civac, %0" :: "r"(addr) : "memory");
         }
         __asm__ volatile("dsb ish" ::: "memory");  /* Ensure DC completes */
-
-        for (uint8_t *addr = kern_start; addr < kern_end; addr += 64) {
-            __asm__ volatile("ic ivau, %0" :: "r"(addr) : "memory");
-        }
-        __asm__ volatile("dsb ish" ::: "memory");  /* Ensure IC completes */
-        __asm__ volatile("isb" ::: "memory");      /* Synchronize pipeline */
 
         /* Advance pointers */
         src_bytes += chunk_size;
@@ -1915,9 +1911,13 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
 #endif
 
         /* Load TTBR0 now so map_segment can access user space */
-        __asm__ volatile("msr ttbr0_el1, %0; isb" :: "r"(mm->ctx.ttbr0_el1));
+        __asm__ volatile("msr ttbr0_el1, %0" :: "r"(mm->ctx.ttbr0_el1));
+        __asm__ volatile("isb" ::: "memory");                    /* Ensure TTBR0 write completes */
+        __asm__ volatile("tlbi vmalle1is" ::: "memory");         /* Invalidate all EL0/EL1 TLB entries */
+        __asm__ volatile("dsb ish" ::: "memory");                /* Data synchronization barrier */
+        __asm__ volatile("isb" ::: "memory");                    /* Instruction synchronization barrier */
 #ifdef DEBUG_ELF
-        fut_printf("[EXEC-ELF] ARM64: Loaded TTBR0 hardware register\n");
+        fut_printf("[EXEC-ELF] ARM64: Loaded TTBR0 and invalidated TLB\n");
 #endif
     }
 #endif

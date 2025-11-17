@@ -156,6 +156,11 @@ int fut_access_ok(const void *u_ptr, size_t len, int write) {
 }
 
 int fut_copy_from_user(void *k_dst, const void *u_src, size_t n) {
+#if defined(__aarch64__)
+    uint64_t saved_ttbr0;
+    struct fut_mm *mm;
+#endif
+
     if (n == 0) {
         return 0;
     }
@@ -175,12 +180,21 @@ int fut_copy_from_user(void *k_dst, const void *u_src, size_t n) {
     uint8_t *dst = (uint8_t *)k_dst;
     const volatile uint8_t *src = (const volatile uint8_t *)u_src;
 
-    /* Set AC flag for SMAP (x86-64) or switch to user page table (ARM64) */
+    /* Set AC flag for SMAP (x86-64) or ensure user page table is loaded (ARM64) */
 #if defined(__x86_64__)
     __asm__ volatile("stac");
 #elif defined(__aarch64__)
-    /* ARM64 note: TTBR0 should already be set by context switch, so we don't need to switch here.
-     * The context switch loads the user's TTBR0 before entering user mode. */
+    /* ARM64: Save current TTBR0, load the user's TTBR0, then restore after copy.
+     * During syscalls, TTBR0 may have been switched to kernel page table by page table operations. */
+    extern struct fut_task *fut_task_current(void);
+    extern struct fut_mm *fut_mm_current(void);
+    __asm__ volatile("mrs %0, ttbr0_el1" : "=r"(saved_ttbr0));
+
+    mm = fut_mm_current();
+    if (mm && mm->ctx.ttbr0_el1 && saved_ttbr0 != mm->ctx.ttbr0_el1) {
+        __asm__ volatile("msr ttbr0_el1, %0" :: "r"(mm->ctx.ttbr0_el1));
+        __asm__ volatile("isb" ::: "memory");
+    }
 #endif
 
     size_t remaining = n;
@@ -197,9 +211,15 @@ int fut_copy_from_user(void *k_dst, const void *u_src, size_t n) {
         remaining -= chunk;
     }
 
-    /* Clear AC flag */
+    /* Clear AC flag / Restore TTBR0 */
 #if defined(__x86_64__)
     __asm__ volatile("clac");
+#elif defined(__aarch64__)
+    /* ARM64: Restore original TTBR0 */
+    if (mm && mm->ctx.ttbr0_el1 && saved_ttbr0 != mm->ctx.ttbr0_el1) {
+        __asm__ volatile("msr ttbr0_el1, %0" :: "r"(saved_ttbr0));
+        __asm__ volatile("isb" ::: "memory");
+    }
 #endif
 
     uaccess_clear();
@@ -207,9 +227,15 @@ int fut_copy_from_user(void *k_dst, const void *u_src, size_t n) {
 
 copy_fault:
     {
-        /* Clear AC flag on fault path */
+        /* Clear AC flag / Restore TTBR0 on fault path */
 #if defined(__x86_64__)
         __asm__ volatile("clac");
+#elif defined(__aarch64__)
+        /* ARM64: Restore original TTBR0 */
+        if (mm && mm->ctx.ttbr0_el1 && saved_ttbr0 != mm->ctx.ttbr0_el1) {
+            __asm__ volatile("msr ttbr0_el1, %0" :: "r"(saved_ttbr0));
+            __asm__ volatile("isb" ::: "memory");
+        }
 #endif
         int err = fut_uaccess_window_error();
         uaccess_clear();

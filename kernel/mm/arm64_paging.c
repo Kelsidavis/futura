@@ -19,7 +19,7 @@
  * ============================================================ */
 
 /* Uncomment to enable verbose ARM64 paging debug output */
-// #define DEBUG_ARM64_PAGING
+#define DEBUG_ARM64_PAGING
 
 #ifdef DEBUG_ARM64_PAGING
 #define PAGING_DEBUG(...) fut_printf(__VA_ARGS__)

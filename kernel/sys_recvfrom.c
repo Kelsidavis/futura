@@ -109,29 +109,39 @@ typedef uint32_t socklen_t;
  */
 ssize_t sys_recvfrom(int sockfd, void *buf, size_t len, int flags,
                      void *src_addr, socklen_t *addrlen) {
+    /* ARM64 FIX: Copy parameters to local variables immediately to ensure they're preserved
+     * on the stack across potentially blocking calls. Socket/VFS operations may block and corrupt
+     * register-passed parameters upon resumption. */
+    int local_sockfd = sockfd;
+    void *local_buf = buf;
+    size_t local_len = len;
+    int local_flags = flags;
+    void *local_src_addr = src_addr;
+    socklen_t *local_addrlen = addrlen;
+
     fut_task_t *task = fut_task_current();
     if (!task) {
-        fut_printf("[RECVFROM] recvfrom(sockfd=%d) -> ESRCH (no current task)\n", sockfd);
+        fut_printf("[RECVFROM] recvfrom(sockfd=%d) -> ESRCH (no current task)\n", local_sockfd);
         return -ESRCH;
     }
 
     /* Phase 2: Validate sockfd */
-    if (sockfd < 0) {
-        fut_printf("[RECVFROM] recvfrom(sockfd=%d) -> EBADF (negative fd)\n", sockfd);
+    if (local_sockfd < 0) {
+        fut_printf("[RECVFROM] recvfrom(sockfd=%d) -> EBADF (negative fd)\n", local_sockfd);
         return -EBADF;
     }
 
     /* Phase 2: Categorize socket FD */
     const char *fd_category;
-    if (sockfd <= 2) {
+    if (local_sockfd <= 2) {
         fd_category = "stdio (0-2)";
-    } else if (sockfd < 10) {
+    } else if (local_sockfd < 10) {
         fd_category = "low (3-9)";
-    } else if (sockfd < 1000) {
+    } else if (local_sockfd < 1000) {
         fd_category = "socket range (10-999)";
-    } else if (sockfd < 2000) {
+    } else if (local_sockfd < 2000) {
         fd_category = "socket range (1000-1999)";
-    } else if (sockfd < 3000) {
+    } else if (local_sockfd < 3000) {
         fd_category = "socket range (2000-2999)";
     } else {
         fd_category = "high (≥3000)";
@@ -139,15 +149,15 @@ ssize_t sys_recvfrom(int sockfd, void *buf, size_t len, int flags,
 
     /* Phase 2: Categorize buffer size */
     const char *size_category;
-    if (len == 0) {
+    if (local_len == 0) {
         size_category = "zero-length";
-    } else if (len <= 64) {
+    } else if (local_len <= 64) {
         size_category = "tiny (≤64 bytes)";
-    } else if (len <= 512) {
+    } else if (local_len <= 512) {
         size_category = "small (64-512 bytes)";
-    } else if (len <= 4096) {
+    } else if (local_len <= 4096) {
         size_category = "medium (512B-4KB)";
-    } else if (len <= 65536) {
+    } else if (local_len <= 65536) {
         size_category = "large (4KB-64KB)";
     } else {
         size_category = "very large (>64KB)";
@@ -158,26 +168,26 @@ ssize_t sys_recvfrom(int sockfd, void *buf, size_t len, int flags,
     char flags_str[128];
     int pos = 0;
 
-    if (flags == 0) {
+    if (local_flags == 0) {
         flags_description = "none (blocking)";
     } else {
         /* Build flags string manually */
         flags_str[0] = '\0';
-        if (flags & MSG_DONTWAIT) {
+        if (local_flags & MSG_DONTWAIT) {
             const char *s = "MSG_DONTWAIT";
             while (*s && pos < 120) flags_str[pos++] = *s++;
         }
-        if (flags & MSG_PEEK) {
+        if (local_flags & MSG_PEEK) {
             if (pos > 0 && pos < 120) flags_str[pos++] = '|';
             const char *s = "MSG_PEEK";
             while (*s && pos < 120) flags_str[pos++] = *s++;
         }
-        if (flags & MSG_WAITALL) {
+        if (local_flags & MSG_WAITALL) {
             if (pos > 0 && pos < 120) flags_str[pos++] = '|';
             const char *s = "MSG_WAITALL";
             while (*s && pos < 120) flags_str[pos++] = *s++;
         }
-        if (flags & MSG_TRUNC) {
+        if (local_flags & MSG_TRUNC) {
             if (pos > 0 && pos < 120) flags_str[pos++] = '|';
             const char *s = "MSG_TRUNC";
             while (*s && pos < 120) flags_str[pos++] = *s++;
@@ -191,44 +201,44 @@ ssize_t sys_recvfrom(int sockfd, void *buf, size_t len, int flags,
         }
     }
 
-    (void)src_addr;
-    (void)addrlen;
+    (void)local_src_addr;
+    (void)local_addrlen;
 
     /* Validate socket FD */
-    struct fut_file *file = vfs_get_file(sockfd);
+    struct fut_file *file = vfs_get_file(local_sockfd);
     if (!file) {
         fut_printf("[RECVFROM] recvfrom(sockfd=%d [%s]) -> EBADF (fd not open)\n",
-                   sockfd, fd_category);
+                   local_sockfd, fd_category);
         return -EBADF;
     }
 
     /* Handle zero-length receive */
-    if (len == 0) {
+    if (local_len == 0) {
         fut_printf("[RECVFROM] recvfrom(sockfd=%d [%s], len=0, pid=%u) -> 0 "
                    "(zero-length receive)\n",
-                   sockfd, fd_category, task->pid);
+                   local_sockfd, fd_category, task->pid);
         return 0;
     }
 
     /* Validate buf */
-    if (!buf) {
+    if (!local_buf) {
         fut_printf("[RECVFROM] recvfrom(sockfd=%d [%s], buf=NULL, len=%zu, pid=%u) -> EINVAL "
                    "(NULL buffer)\n",
-                   sockfd, fd_category, len, task->pid);
+                   local_sockfd, fd_category, local_len, task->pid);
         return -EINVAL;
     }
 
     /* Allocate kernel buffer */
-    void *kbuf = fut_malloc(len);
+    void *kbuf = fut_malloc(local_len);
     if (!kbuf) {
         fut_printf("[RECVFROM] recvfrom(sockfd=%d [%s], len=%zu [%s], pid=%u) -> ENOMEM "
                    "(kernel buffer allocation failed)\n",
-                   sockfd, fd_category, len, size_category, task->pid);
+                   local_sockfd, fd_category, local_len, size_category, task->pid);
         return -ENOMEM;
     }
 
     /* Read from socket via VFS */
-    ssize_t ret = fut_vfs_read(sockfd, kbuf, len);
+    ssize_t ret = fut_vfs_read(local_sockfd, kbuf, local_len);
 
     if (ret < 0) {
         const char *error_desc;
@@ -244,18 +254,18 @@ ssize_t sys_recvfrom(int sockfd, void *buf, size_t len, int flags,
         fut_free(kbuf);
         fut_printf("[RECVFROM] recvfrom(sockfd=%d [%s], len=%zu [%s], "
                    "flags=0x%x [%s], pid=%u) -> %zd (%s)\n",
-                   sockfd, fd_category, len, size_category,
-                   flags, flags_description, task->pid, ret, error_desc);
+                   local_sockfd, fd_category, local_len, size_category,
+                   local_flags, flags_description, task->pid, ret, error_desc);
         return ret;
     }
 
     /* Copy to userspace */
     if (ret > 0) {
-        if (fut_copy_to_user(buf, kbuf, (size_t)ret) != 0) {
+        if (fut_copy_to_user(local_buf, kbuf, (size_t)ret) != 0) {
             fut_free(kbuf);
             fut_printf("[RECVFROM] recvfrom(sockfd=%d [%s], len=%zu [%s], pid=%u) -> EFAULT "
                        "(copy_to_user failed)\n",
-                       sockfd, fd_category, len, size_category, task->pid);
+                       local_sockfd, fd_category, local_len, size_category, task->pid);
             return -EFAULT;
         }
     }
@@ -264,7 +274,7 @@ ssize_t sys_recvfrom(int sockfd, void *buf, size_t len, int flags,
 
     /* Phase 2: Determine address family hint (stub - not yet implemented) */
     const char *addr_family_hint;
-    if (src_addr && addrlen) {
+    if (local_src_addr && local_addrlen) {
         addr_family_hint = "address requested (AF_INET/AF_UNIX)";
     } else {
         addr_family_hint = "no address requested";
@@ -274,8 +284,8 @@ ssize_t sys_recvfrom(int sockfd, void *buf, size_t len, int flags,
     fut_printf("[RECVFROM] recvfrom(sockfd=%d [%s], buf=%p, len=%zu [%s], "
                "flags=0x%x [%s], src_addr=%s, bytes_received=%zd, pid=%u) -> %zd "
                "(Phase 3: Socket receive optimization)\n",
-               sockfd, fd_category, buf, len, size_category,
-               flags, flags_description, addr_family_hint, ret, task->pid, ret);
+               local_sockfd, fd_category, local_buf, local_len, size_category,
+               local_flags, flags_description, addr_family_hint, ret, task->pid, ret);
 
     return ret;
 }

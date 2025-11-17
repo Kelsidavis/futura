@@ -123,17 +123,23 @@ extern fut_task_t *fut_task_current(void);
  * Phase 4: Performance optimization (permission caching)
  */
 long sys_access(const char *pathname, int mode) {
+    /* ARM64 FIX: Copy parameters to local variables immediately to ensure they're preserved
+     * on the stack across potentially blocking calls. VFS and copy operations may block and
+     * corrupt register-passed parameters upon resumption. */
+    const char *local_pathname = pathname;
+    int local_mode = mode;
+
     /* Phase 2: Validate pathname pointer */
-    if (!pathname) {
-        fut_printf("[ACCESS] access(pathname=NULL, mode=%d) -> EINVAL (NULL pathname)\n", mode);
+    if (!local_pathname) {
+        fut_printf("[ACCESS] access(pathname=NULL, mode=%d) -> EINVAL (NULL pathname)\n", local_mode);
         return -EINVAL;
     }
 
     /* Phase 2: Categorize mode bits */
     const char *mode_desc;
-    int mode_bits = mode & (R_OK | W_OK | X_OK);
+    int mode_bits = local_mode & (R_OK | W_OK | X_OK);
 
-    if (mode == F_OK) {
+    if (local_mode == F_OK) {
         mode_desc = "F_OK (existence only)";
     } else if (mode_bits == R_OK) {
         mode_desc = "R_OK (read)";
@@ -154,15 +160,15 @@ long sys_access(const char *pathname, int mode) {
     }
 
     /* Phase 2: Validate mode contains only valid bits */
-    if (mode & ~(F_OK | R_OK | W_OK | X_OK)) {
+    if (local_mode & ~(F_OK | R_OK | W_OK | X_OK)) {
         fut_printf("[ACCESS] access(pathname=?, mode=0x%x [%s]) -> EINVAL "
-                   "(invalid mode bits)\n", mode, mode_desc);
+                   "(invalid mode bits)\n", local_mode, mode_desc);
         return -EINVAL;
     }
 
     /* Copy pathname from userspace to kernel space */
     char path_buf[256];
-    if (fut_copy_from_user(path_buf, pathname, sizeof(path_buf) - 1) != 0) {
+    if (fut_copy_from_user(path_buf, local_pathname, sizeof(path_buf) - 1) != 0) {
         fut_printf("[ACCESS] access(pathname=?, mode=%s) -> EFAULT "
                    "(copy_from_user failed)\n", mode_desc);
         return -EFAULT;
@@ -225,7 +231,7 @@ long sys_access(const char *pathname, int mode) {
     }
 
     /* Phase 3: F_OK just checks if file exists (already verified) */
-    if (mode == F_OK) {
+    if (local_mode == F_OK) {
         fut_printf("[ACCESS] access(path='%s' [%s], mode=%s) -> 0 "
                    "(file exists, Phase 4: uid/gid checking and ACLs)\n", path_buf, path_type, mode_desc);
         return 0;
@@ -263,21 +269,21 @@ long sys_access(const char *pathname, int mode) {
     char *p = perm_check_buf;
     int perm_count = 0;
 
-    if (mode & R_OK) {
+    if (local_mode & R_OK) {
         if (perm_count++ > 0) {
             *p++ = '+';
         }
         const char *s = "read";
         while (*s) *p++ = *s++;
     }
-    if (mode & W_OK) {
+    if (local_mode & W_OK) {
         if (perm_count++ > 0) {
             *p++ = '+';
         }
         const char *s = "write";
         while (*s) *p++ = *s++;
     }
-    if (mode & X_OK) {
+    if (local_mode & X_OK) {
         if (perm_count++ > 0) {
             *p++ = '+';
         }
@@ -287,21 +293,21 @@ long sys_access(const char *pathname, int mode) {
     *p = '\0';
 
     /* Phase 3: Check each requested permission with detailed logging */
-    if ((mode & R_OK) && !(applicable_perms & 4)) {  /* Read bit */
+    if ((local_mode & R_OK) && !(applicable_perms & 4)) {  /* Read bit */
         fut_printf("[ACCESS] access(path='%s' [%s], mode=%s, file_mode=0%o, "
                    "checking=%s) -> EACCES (read permission denied, Phase 4: uid/gid checking)\n",
                    path_buf, path_type, mode_desc, file_mode, perm_check_buf);
         return -EACCES;
     }
 
-    if ((mode & W_OK) && !(applicable_perms & 2)) {  /* Write bit */
+    if ((local_mode & W_OK) && !(applicable_perms & 2)) {  /* Write bit */
         fut_printf("[ACCESS] access(path='%s' [%s], mode=%s, file_mode=0%o, "
                    "checking=%s) -> EACCES (write permission denied, Phase 4: uid/gid checking)\n",
                    path_buf, path_type, mode_desc, file_mode, perm_check_buf);
         return -EACCES;
     }
 
-    if ((mode & X_OK) && !(applicable_perms & 1)) {  /* Execute bit */
+    if ((local_mode & X_OK) && !(applicable_perms & 1)) {  /* Execute bit */
         fut_printf("[ACCESS] access(path='%s' [%s], mode=%s, file_mode=0%o, "
                    "checking=%s) -> EACCES (execute permission denied, Phase 4: uid/gid checking)\n",
                    path_buf, path_type, mode_desc, file_mode, perm_check_buf);

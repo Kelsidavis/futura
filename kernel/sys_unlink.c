@@ -82,15 +82,20 @@ static size_t manual_strlen(const char *s) {
  * Phase 4: Performance optimization (batched deletion, async cleanup)
  */
 long sys_unlink(const char *path) {
+    /* ARM64 FIX: Copy parameters to local variables immediately to ensure they're preserved
+     * on the stack across potentially blocking calls. VFS and copy operations may block and
+     * corrupt register-passed parameters upon resumption. */
+    const char *local_path = path;
+
     /* Phase 2: Validate path pointer */
-    if (!path) {
+    if (!local_path) {
         fut_printf("[UNLINK] unlink(path=NULL) -> EINVAL (NULL path)\n");
         return -EINVAL;
     }
 
     /* Copy path from userspace to kernel space */
     char path_buf[256];
-    if (fut_copy_from_user(path_buf, path, sizeof(path_buf) - 1) != 0) {
+    if (fut_copy_from_user(path_buf, local_path, sizeof(path_buf) - 1) != 0) {
         fut_printf("[UNLINK] unlink(path=?) -> EFAULT (copy_from_user failed)\n");
         return -EFAULT;
     }

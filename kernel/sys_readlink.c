@@ -139,35 +139,42 @@ extern int fut_copy_to_user(void *to, const void *from, size_t size);
  * Phase 4: Performance optimization (link target caching, path resolution)
  */
 long sys_readlink(const char *path, char *buf, size_t bufsiz) {
+    /* ARM64 FIX: Copy parameters to local variables immediately to ensure they're preserved
+     * on the stack across potentially blocking calls. VFS and copy operations may block and
+     * corrupt register-passed parameters upon resumption. */
+    const char *local_path = path;
+    char *local_buf = buf;
+    size_t local_bufsiz = bufsiz;
+
     /* Phase 2: Validate path pointer */
-    if (!path) {
+    if (!local_path) {
         fut_printf("[READLINK] readlink(path=NULL, buf=?, bufsiz=%zu) -> EINVAL (NULL path)\n",
-                   bufsiz);
+                   local_bufsiz);
         return -EINVAL;
     }
 
     /* Phase 2: Validate buffer pointer */
-    if (!buf) {
+    if (!local_buf) {
         fut_printf("[READLINK] readlink(path=?, buf=NULL, bufsiz=%zu) -> EFAULT (NULL buffer)\n",
-                   bufsiz);
+                   local_bufsiz);
         return -EFAULT;
     }
 
     /* Phase 2: Validate buffer size */
-    if (bufsiz == 0) {
+    if (local_bufsiz == 0) {
         fut_printf("[READLINK] readlink(path=?, buf=?, bufsiz=0) -> EINVAL (zero buffer size)\n");
         return -EINVAL;
     }
 
     /* Phase 2: Categorize buffer size */
     const char *bufsiz_category;
-    if (bufsiz < 256) {
+    if (local_bufsiz < 256) {
         bufsiz_category = "small (<256 bytes)";
-    } else if (bufsiz < 1024) {
+    } else if (local_bufsiz < 1024) {
         bufsiz_category = "medium (<1 KB)";
-    } else if (bufsiz < 4096) {
+    } else if (local_bufsiz < 4096) {
         bufsiz_category = "large (<4 KB)";
-    } else if (bufsiz == 4096) {
+    } else if (local_bufsiz == 4096) {
         bufsiz_category = "PATH_MAX (4 KB)";
     } else {
         bufsiz_category = "very large (>4 KB)";
@@ -175,9 +182,9 @@ long sys_readlink(const char *path, char *buf, size_t bufsiz) {
 
     /* Phase 2: Copy path from userspace to validate it */
     char path_buf[256];
-    if (fut_copy_from_user(path_buf, path, sizeof(path_buf) - 1) != 0) {
+    if (fut_copy_from_user(path_buf, local_path, sizeof(path_buf) - 1) != 0) {
         fut_printf("[READLINK] readlink(path=?, buf=?, bufsiz=%zu [%s]) -> EFAULT "
-                   "(path copy_from_user failed)\n", bufsiz, bufsiz_category);
+                   "(path copy_from_user failed)\n", local_bufsiz, bufsiz_category);
         return -EFAULT;
     }
     path_buf[sizeof(path_buf) - 1] = '\0';
@@ -185,7 +192,7 @@ long sys_readlink(const char *path, char *buf, size_t bufsiz) {
     /* Phase 2: Validate path is not empty */
     if (path_buf[0] == '\0') {
         fut_printf("[READLINK] readlink(path=\"\" [empty], buf=?, bufsiz=%zu [%s]) -> EINVAL "
-                   "(empty path)\n", bufsiz, bufsiz_category);
+                   "(empty path)\n", local_bufsiz, bufsiz_category);
         return -EINVAL;
     }
 
@@ -245,7 +252,7 @@ long sys_readlink(const char *path, char *buf, size_t bufsiz) {
                 break;
         }
         fut_printf("[READLINK] readlink(path='%s' [%s, %s], bufsiz=%zu [%s]) -> %d (%s, Phase 3: VFS readlink operation)\n",
-                   path_buf, path_type, length_category, bufsiz, bufsiz_category,
+                   path_buf, path_type, length_category, local_bufsiz, bufsiz_category,
                    ret, error_desc);
         return ret;
     }
@@ -254,7 +261,7 @@ long sys_readlink(const char *path, char *buf, size_t bufsiz) {
     if (vnode->type != VN_LNK) {
         fut_printf("[READLINK] readlink(path='%s' [%s, %s], ino=%lu, bufsiz=%zu [%s]) -> EINVAL "
                    "(not a symbolic link)\n",
-                   path_buf, path_type, length_category, vnode->ino, bufsiz, bufsiz_category);
+                   path_buf, path_type, length_category, vnode->ino, local_bufsiz, bufsiz_category);
         return -EINVAL;
     }
 
@@ -262,7 +269,7 @@ long sys_readlink(const char *path, char *buf, size_t bufsiz) {
     if (!vnode->ops || !vnode->ops->readlink) {
         fut_printf("[READLINK] readlink(path='%s' [%s, %s], ino=%lu, bufsiz=%zu [%s]) -> ENOSYS "
                    "(filesystem doesn't support readlink)\n",
-                   path_buf, path_type, length_category, vnode->ino, bufsiz, bufsiz_category);
+                   path_buf, path_type, length_category, vnode->ino, local_bufsiz, bufsiz_category);
         return -ENOSYS;
     }
 
@@ -270,13 +277,13 @@ long sys_readlink(const char *path, char *buf, size_t bufsiz) {
     extern void *fut_malloc(size_t size);
     extern void fut_free(void *ptr);
 
-    char *target_buf = fut_malloc(bufsiz);
+    char *target_buf = fut_malloc(local_bufsiz);
     if (!target_buf) {
         return -ENOMEM;
     }
 
     /* Call VFS readlink operation */
-    ssize_t len = vnode->ops->readlink(vnode, target_buf, bufsiz);
+    ssize_t len = vnode->ops->readlink(vnode, target_buf, local_bufsiz);
     if (len < 0) {
         const char *error_desc;
         switch (len) {
@@ -288,14 +295,14 @@ long sys_readlink(const char *path, char *buf, size_t bufsiz) {
                 break;
         }
         fut_printf("[READLINK] readlink(path='%s' [%s, %s], ino=%lu, bufsiz=%zu [%s]) -> %d (%s, Phase 3: VFS readlink operation)\n",
-                   path_buf, path_type, length_category, vnode->ino, bufsiz, bufsiz_category,
+                   path_buf, path_type, length_category, vnode->ino, local_bufsiz, bufsiz_category,
                    (int)len, error_desc);
         fut_free(target_buf);
         return len;
     }
 
     /* Copy result to userspace buffer */
-    if (fut_copy_to_user(buf, target_buf, len) != 0) {
+    if (fut_copy_to_user(local_buf, target_buf, len) != 0) {
         fut_free(target_buf);
         return -EFAULT;
     }
@@ -305,7 +312,7 @@ long sys_readlink(const char *path, char *buf, size_t bufsiz) {
 
     fut_printf("[READLINK] readlink(path='%s' [%s, %s], ino=%lu, bufsiz=%zu [%s], "
                "target_len=%zd) -> %zd (Phase 3: VFS readlink operation)\n",
-               path_buf, path_type, length_category, vnode->ino, bufsiz, bufsiz_category,
+               path_buf, path_type, length_category, vnode->ino, local_bufsiz, bufsiz_category,
                len, len);
     return len;
 }

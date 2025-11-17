@@ -104,15 +104,21 @@ extern int fut_copy_from_user(void *to, const void *from, size_t size);
  * Phase 4: mkdir -p equivalent (recursive creation), ACL support
  */
 long sys_mkdir(const char *path, uint32_t mode) {
+    /* ARM64 FIX: Copy parameters to local variables immediately to ensure they're preserved
+     * on the stack across potentially blocking calls. VFS and copy operations may block and
+     * corrupt register-passed parameters upon resumption. */
+    const char *local_path = path;
+    uint32_t local_mode = mode;
+
     /* Phase 2: Validate path pointer */
-    if (!path) {
-        fut_printf("[MKDIR] mkdir(path=NULL, mode=0%o) -> EINVAL (NULL path)\n", mode);
+    if (!local_path) {
+        fut_printf("[MKDIR] mkdir(path=NULL, mode=0%o) -> EINVAL (NULL path)\n", local_mode);
         return -EINVAL;
     }
 
     /* Phase 2: Categorize permission mode */
     const char *mode_desc;
-    uint32_t perm_bits = mode & 0777;
+    uint32_t perm_bits = local_mode & 0777;
 
     if (perm_bits == 0755) {
         mode_desc = "0755 (rwxr-xr-x, typical directory)";
@@ -132,7 +138,7 @@ long sys_mkdir(const char *path, uint32_t mode) {
 
     /* Copy path from userspace to kernel space */
     char path_buf[256];
-    if (fut_copy_from_user(path_buf, path, sizeof(path_buf) - 1) != 0) {
+    if (fut_copy_from_user(path_buf, local_path, sizeof(path_buf) - 1) != 0) {
         fut_printf("[MKDIR] mkdir(path=?, mode=%s) -> EFAULT (copy_from_user failed)\n",
                    mode_desc);
         return -EFAULT;
@@ -217,7 +223,7 @@ long sys_mkdir(const char *path, uint32_t mode) {
     }
 
     /* Create the directory via VFS */
-    int ret = fut_vfs_mkdir(path_buf, mode);
+    int ret = fut_vfs_mkdir(path_buf, local_mode);
 
     /* Phase 2: Handle error cases with detailed logging */
     if (ret < 0) {

@@ -133,14 +133,20 @@ extern int fut_copy_from_user(void *to, const void *from, size_t size);
  * Phase 4 (Completed): Performance optimization (link caching, deduplication)
  */
 long sys_symlink(const char *target, const char *linkpath) {
+    /* ARM64 FIX: Copy parameters to local variables immediately to ensure they're preserved
+     * on the stack across potentially blocking calls. VFS and copy operations may block and
+     * corrupt register-passed parameters upon resumption. */
+    const char *local_target = target;
+    const char *local_linkpath = linkpath;
+
     /* Phase 2: Validate target pointer */
-    if (!target) {
+    if (!local_target) {
         fut_printf("[SYMLINK] symlink(target=NULL, linkpath=?) -> EINVAL (NULL target)\n");
         return -EINVAL;
     }
 
     /* Phase 2: Validate linkpath pointer */
-    if (!linkpath) {
+    if (!local_linkpath) {
         fut_printf("[SYMLINK] symlink(target=?, linkpath=NULL) -> EINVAL (NULL linkpath)\n");
         return -EINVAL;
     }
@@ -149,14 +155,14 @@ long sys_symlink(const char *target, const char *linkpath) {
     char target_buf[256];
     char link_buf[256];
 
-    if (fut_copy_from_user(target_buf, target, sizeof(target_buf) - 1) != 0) {
+    if (fut_copy_from_user(target_buf, local_target, sizeof(target_buf) - 1) != 0) {
         fut_printf("[SYMLINK] symlink(target=?, linkpath=?) -> EFAULT "
                    "(target copy_from_user failed)\n");
         return -EFAULT;
     }
     target_buf[sizeof(target_buf) - 1] = '\0';
 
-    if (fut_copy_from_user(link_buf, linkpath, sizeof(link_buf) - 1) != 0) {
+    if (fut_copy_from_user(link_buf, local_linkpath, sizeof(link_buf) - 1) != 0) {
         fut_printf("[SYMLINK] symlink(target='%s', linkpath=?) -> EFAULT "
                    "(linkpath copy_from_user failed)\n", target_buf);
         return -EFAULT;

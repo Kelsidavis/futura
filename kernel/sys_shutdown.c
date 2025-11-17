@@ -105,23 +105,29 @@ extern fut_socket_t *get_socket_from_fd(int fd);
  * Phase 4: TCP FIN handling and state machine transitions
  */
 long sys_shutdown(int sockfd, int how) {
+    /* ARM64 FIX: Copy parameters to local variables immediately to ensure they're preserved
+     * on the stack across potentially blocking calls. Socket operations may block and corrupt
+     * register-passed parameters upon resumption. */
+    int local_sockfd = sockfd;
+    int local_how = how;
+
     fut_task_t *task = fut_task_current();
     if (!task) {
         fut_printf("[SHUTDOWN] shutdown(sockfd=%d, how=%d) -> ESRCH (no current task)\n",
-                   sockfd, how);
+                   local_sockfd, local_how);
         return -ESRCH;
     }
 
     /* Phase 2: Validate sockfd early */
-    if (sockfd < 0) {
+    if (local_sockfd < 0) {
         fut_printf("[SHUTDOWN] shutdown(sockfd=%d, how=%d) -> EBADF (negative fd)\n",
-                   sockfd, how);
+                   local_sockfd, local_how);
         return -EBADF;
     }
 
     /* Phase 2: Categorize and validate how parameter */
     const char *how_desc;
-    switch (how) {
+    switch (local_how) {
         case SHUT_RD:
             how_desc = "SHUT_RD (disallow receives, send still allowed)";
             break;
@@ -133,15 +139,15 @@ long sys_shutdown(int sockfd, int how) {
             break;
         default:
             fut_printf("[SHUTDOWN] shutdown(sockfd=%d, how=%d) -> EINVAL (invalid how, must be 0/1/2)\n",
-                       sockfd, how);
+                       local_sockfd, local_how);
             return -EINVAL;
     }
 
     /* Get socket from FD */
-    fut_socket_t *socket = get_socket_from_fd(sockfd);
+    fut_socket_t *socket = get_socket_from_fd(local_sockfd);
     if (!socket) {
         fut_printf("[SHUTDOWN] shutdown(sockfd=%d, how=%s) -> EBADF (not a socket)\n",
-                   sockfd, how_desc);
+                   local_sockfd, how_desc);
         return -EBADF;
     }
 
@@ -174,7 +180,7 @@ long sys_shutdown(int sockfd, int how) {
     /* Phase 2: Validate socket is connected */
     if (socket->state != FUT_SOCK_CONNECTED) {
         fut_printf("[SHUTDOWN] shutdown(sockfd=%d, socket_id=%u, state=%s, how=%s) -> ENOTCONN (socket not connected)\n",
-                   sockfd, socket->socket_id, socket_state_desc, how_desc);
+                   local_sockfd, socket->socket_id, socket_state_desc, how_desc);
         return -ENOTCONN;
     }
 
@@ -211,9 +217,9 @@ long sys_shutdown(int sockfd, int how) {
 
     /* Phase 2: Detailed success logging */
     const char *operation_impact;
-    if (how == SHUT_RD) {
+    if (local_how == SHUT_RD) {
         operation_impact = "recv() will return 0 (EOF), send() still works";
-    } else if (how == SHUT_WR) {
+    } else if (local_how == SHUT_WR) {
         operation_impact = "send() will return -EPIPE, recv() still works";
     } else {
         operation_impact = "both recv() and send() will fail";
@@ -221,7 +227,7 @@ long sys_shutdown(int sockfd, int how) {
 
     fut_printf("[SHUTDOWN] shutdown(sockfd=%d, socket_id=%u, type=%s, state=%s, how=%s) "
                "-> 0 (validated, impact: %s, Phase 3: Actual shutdown with buffer management and enforcement)\n",
-               sockfd, socket->socket_id, socket_type_desc, socket_state_desc,
+               local_sockfd, socket->socket_id, socket_type_desc, socket_state_desc,
                how_desc, operation_impact);
 
     return 0;

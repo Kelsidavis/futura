@@ -1050,6 +1050,11 @@ void fut_platform_early_init(uint32_t boot_magic, void *boot_info) {
     fut_serial_puts("[INIT] Initializing GICv2...\n");
     fut_gic_init();
 
+    /* Probe framebuffer from device tree / fallback */
+    fut_serial_puts("[INIT] Probing framebuffer...\n");
+    extern int fb_probe_from_multiboot(const void *mb_info);
+    (void)fb_probe_from_multiboot(NULL);  /* ARM64 uses fallback mode */
+
     /* Install exception vectors BEFORE enabling interrupts
      * TEMPORARY: Disabled due to TTBR0/TTBR1 translation bug (see SESSION_2025_11_06_EXCEPTION_BUG.md)
      * Keep using boot exception vectors at 0x40000800 which are always accessible.

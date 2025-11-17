@@ -87,8 +87,8 @@ static const void *mb2_next_tag(const struct multiboot_tag *tag) {
 int fb_probe_from_multiboot(const void *mb_info) {
     fut_printf("[FB] fb_probe_from_multiboot called, mb_info=%p\n", mb_info);
     if (!mb_info) {
-        fut_printf("[FB] No multiboot info provided, checking if QEMU is providing it anyway\n");
-        /* Even with mb_info NULL, the bootloader might have set up memory-based structures */
+        fut_printf("[FB] No multiboot info provided, skipping tag parsing and using fallback\n");
+        goto fallback;
     }
 
     const struct multiboot_tag *tag =
@@ -125,6 +125,7 @@ int fb_probe_from_multiboot(const void *mb_info) {
     }
     fut_printf("[FB] parsed %d tags, no framebuffer tag found\n", tag_count);
 
+fallback:
     /* Fallback for boot loaders that did not supply a framebuffer tag.
      *
      * With direct kernel boot (-kernel flag), QEMU doesn't provide multiboot info.

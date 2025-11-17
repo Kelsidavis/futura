@@ -912,14 +912,6 @@ void fut_kernel_main(void) {
     fut_printf("[INIT] fb_enabled=%d fb_available=%d\n",
                fb_enabled ? 1 : 0, fb_available ? 1 : 0);
 
-#ifdef __aarch64__
-    /* ARM64: PCI initialization disabled (ECAM region needs page table mapping)
-     * TODO: Add ECAM region (0x4010000000) to boot.S page tables
-     */
-    fut_printf("[INIT] ARM64: PCI initialization skipped (ECAM not mapped yet)\n");
-    fb_available = 0;
-#endif
-
 #ifdef WAYLAND_INTERACTIVE_MODE
     /* In headful mode, always initialize fb_char for virtio-gpu even if not detected yet */
     if (fb_enabled) {

@@ -43,16 +43,25 @@ typedef struct {
  */
 long sys_select(int nfds, fd_set *readfds, fd_set *writefds,
                 fd_set *exceptfds, fut_timeval_t *timeout) {
+    /* ARM64 FIX: Copy parameters to local variables immediately to ensure they're preserved
+     * on the stack across potentially blocking calls. Task operations may block and corrupt
+     * register-passed parameters upon resumption. */
+    int local_nfds = nfds;
+    fd_set *local_readfds = readfds;
+    fd_set *local_writefds = writefds;
+    fd_set *local_exceptfds = exceptfds;
+    fut_timeval_t *local_timeout = timeout;
+
     fut_task_t *task = fut_task_current();
     if (!task) {
         return -ESRCH;
     }
 
     fut_printf("[SELECT] nfds=%d readfds=0x%p writefds=0x%p exceptfds=0x%p timeout=0x%p\n",
-               nfds, readfds, writefds, exceptfds, timeout);
+               local_nfds, local_readfds, local_writefds, local_exceptfds, local_timeout);
 
     /* Validate nfds */
-    if (nfds < 0 || nfds > FD_SETSIZE) {
+    if (local_nfds < 0 || local_nfds > FD_SETSIZE) {
         return -EINVAL;
     }
 
@@ -84,14 +93,24 @@ long sys_select(int nfds, fd_set *readfds, fd_set *writefds,
  */
 long sys_pselect6(int nfds, void *readfds, void *writefds, void *exceptfds,
                   void *timeout, void *sigmask) {
-    (void)sigmask;  /* Ignore signal mask for now */
+    /* ARM64 FIX: Copy parameters to local variables immediately to ensure they're preserved
+     * on the stack across potentially blocking calls. Task operations may block and corrupt
+     * register-passed parameters upon resumption. */
+    int local_nfds = nfds;
+    void *local_readfds = readfds;
+    void *local_writefds = writefds;
+    void *local_exceptfds = exceptfds;
+    void *local_timeout = timeout;
+    void *local_sigmask = sigmask;
+
+    (void)local_sigmask;  /* Ignore signal mask for now */
 
     fut_printf("[PSELECT6] pselect6(nfds=%d, readfds=%p, writefds=%p, exceptfds=%p, "
                "timeout=%p, sigmask=%p)\n",
-               nfds, readfds, writefds, exceptfds, timeout, sigmask);
+               local_nfds, local_readfds, local_writefds, local_exceptfds, local_timeout, local_sigmask);
 
     /* Validate nfds */
-    if (nfds < 0 || nfds > FD_SETSIZE) {
+    if (local_nfds < 0 || local_nfds > FD_SETSIZE) {
         return -EINVAL;
     }
 
@@ -122,13 +141,21 @@ struct pollfd {
  * Phase 3: Add signal mask handling
  */
 long sys_ppoll(void *fds, unsigned int nfds, void *tmo_p, const void *sigmask) {
-    (void)sigmask;  /* Ignore signal mask for now */
+    /* ARM64 FIX: Copy parameters to local variables immediately to ensure they're preserved
+     * on the stack across potentially blocking calls. Task operations may block and corrupt
+     * register-passed parameters upon resumption. */
+    void *local_fds = fds;
+    unsigned int local_nfds = nfds;
+    void *local_tmo_p = tmo_p;
+    const void *local_sigmask = sigmask;
+
+    (void)local_sigmask;  /* Ignore signal mask for now */
 
     fut_printf("[PPOLL] ppoll(fds=%p, nfds=%u, tmo_p=%p, sigmask=%p)\n",
-               fds, nfds, tmo_p, sigmask);
+               local_fds, local_nfds, local_tmo_p, local_sigmask);
 
     /* Validate parameters */
-    if (!fds && nfds > 0) {
+    if (!local_fds && local_nfds > 0) {
         return -EINVAL;
     }
 

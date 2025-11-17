@@ -136,38 +136,45 @@ typedef uint32_t socklen_t;
  * Phase 4: Address family specific peer address return
  */
 long sys_accept(int sockfd, void *addr, socklen_t *addrlen) {
+    /* ARM64 FIX: Copy parameters to local variables immediately to ensure they're preserved
+     * on the stack across potentially blocking calls. Socket operations may block and corrupt
+     * register-passed parameters upon resumption. */
+    int local_sockfd = sockfd;
+    void *local_addr = addr;
+    socklen_t *local_addrlen = addrlen;
+
     fut_task_t *task = fut_task_current();
     if (!task) {
-        fut_printf("[ACCEPT] accept(sockfd=%d) -> ESRCH (no current task)\n", sockfd);
+        fut_printf("[ACCEPT] accept(local_sockfd=%d) -> ESRCH (no current task)\n", local_sockfd);
         return -ESRCH;
     }
 
-    /* Phase 2: Validate sockfd early */
-    if (sockfd < 0) {
-        fut_printf("[ACCEPT] accept(sockfd=%d) -> EBADF (negative fd)\n", sockfd);
+    /* Phase 2: Validate local_sockfd early */
+    if (local_sockfd < 0) {
+        fut_printf("[ACCEPT] accept(local_sockfd=%d) -> EBADF (negative fd)\n", local_sockfd);
         return -EBADF;
     }
 
     /* Phase 2: Categorize address request */
     const char *addr_request;
-    if (addr == NULL && addrlen == NULL) {
+    if (local_addr == NULL && local_addrlen == NULL) {
         addr_request = "no address requested";
-    } else if (addr != NULL && addrlen != NULL) {
+    } else if (local_addr != NULL && local_addrlen != NULL) {
         addr_request = "address requested";
-    } else if (addr != NULL && addrlen == NULL) {
-        fut_printf("[ACCEPT] accept(sockfd=%d) -> EFAULT (addr non-NULL but addrlen is NULL)\n", sockfd);
+    } else if (local_addr != NULL && local_addrlen == NULL) {
+        fut_printf("[ACCEPT] accept(local_sockfd=%d) -> EFAULT (local_addr non-NULL but local_addrlen is NULL)\n", local_sockfd);
         return -EFAULT;
     } else {
-        // addr == NULL && addrlen != NULL
-        addr_request = "addrlen without addr (unusual)";
+        // local_addr == NULL && local_addrlen != NULL
+        addr_request = "local_addrlen without local_addr (unusual)";
     }
 
-    /* Phase 2: If addrlen provided, validate it */
+    /* Phase 2: If local_addrlen provided, validate it */
     socklen_t len = 0;
-    if (addrlen != NULL) {
-        if (fut_copy_from_user(&len, addrlen, sizeof(socklen_t)) != 0) {
-            fut_printf("[ACCEPT] accept(sockfd=%d, addr_request=%s) -> EFAULT (copy_from_user addrlen failed)\n",
-                       sockfd, addr_request);
+    if (local_addrlen != NULL) {
+        if (fut_copy_from_user(&len, local_addrlen, sizeof(socklen_t)) != 0) {
+            fut_printf("[ACCEPT] accept(local_sockfd=%d, addr_request=%s) -> EFAULT (copy_from_user local_addrlen failed)\n",
+                       local_sockfd, addr_request);
             return -EFAULT;
         }
 
@@ -187,19 +194,19 @@ long sys_accept(int sockfd, void *addr, socklen_t *addrlen) {
             buffer_size_category = "excessive (>1 KB)";
         }
 
-        /* Phase 2: Sanity check on addrlen */
+        /* Phase 2: Sanity check on local_addrlen */
         if (len > 1024) {
-            fut_printf("[ACCEPT] accept(sockfd=%d, addrlen=%u [%s]) -> EINVAL (excessive address length)\n",
-                       sockfd, len, buffer_size_category);
+            fut_printf("[ACCEPT] accept(local_sockfd=%d, local_addrlen=%u [%s]) -> EINVAL (excessive address length)\n",
+                       local_sockfd, len, buffer_size_category);
             return -EINVAL;
         }
     }
 
     /* Get listening socket from FD */
-    fut_socket_t *listen_socket = get_socket_from_fd(sockfd);
+    fut_socket_t *listen_socket = get_socket_from_fd(local_sockfd);
     if (!listen_socket) {
-        fut_printf("[ACCEPT] accept(sockfd=%d, addr_request=%s) -> EBADF (not a socket)\n",
-                   sockfd, addr_request);
+        fut_printf("[ACCEPT] accept(local_sockfd=%d, addr_request=%s) -> EBADF (not a socket)\n",
+                   local_sockfd, addr_request);
         return -EBADF;
     }
 
@@ -231,8 +238,8 @@ long sys_accept(int sockfd, void *addr, socklen_t *addrlen) {
 
     /* Phase 2: Validate socket is in listening state */
     if (listen_socket->state != FUT_SOCK_LISTENING) {
-        fut_printf("[ACCEPT] accept(sockfd=%d, state=%s, addr_request=%s) -> EINVAL (socket not listening)\n",
-                   sockfd, socket_state_desc, addr_request);
+        fut_printf("[ACCEPT] accept(local_sockfd=%d, state=%s, addr_request=%s) -> EINVAL (socket not listening)\n",
+                   local_sockfd, socket_state_desc, addr_request);
         return -EINVAL;
     }
 
@@ -278,8 +285,8 @@ long sys_accept(int sockfd, void *addr, socklen_t *addrlen) {
                 break;
         }
 
-        fut_printf("[ACCEPT] accept(sockfd=%d, type=%s, state=%s, socket_id=%u, addr_request=%s) -> %d (%s)\n",
-                   sockfd, socket_type_desc, socket_state_desc, listen_socket->socket_id,
+        fut_printf("[ACCEPT] accept(local_sockfd=%d, type=%s, state=%s, socket_id=%u, addr_request=%s) -> %d (%s)\n",
+                   local_sockfd, socket_type_desc, socket_state_desc, listen_socket->socket_id,
                    addr_request, ret, error_desc);
         return ret;
     }
@@ -287,8 +294,8 @@ long sys_accept(int sockfd, void *addr, socklen_t *addrlen) {
     /* Allocate new file descriptor for accepted socket */
     int newfd = allocate_socket_fd(accepted_socket);
     if (newfd < 0) {
-        fut_printf("[ACCEPT] accept(sockfd=%d, socket_id=%u) -> EMFILE (failed to allocate FD)\n",
-                   sockfd, listen_socket->socket_id);
+        fut_printf("[ACCEPT] accept(local_sockfd=%d, socket_id=%u) -> EMFILE (failed to allocate FD)\n",
+                   local_sockfd, listen_socket->socket_id);
         // TODO: Clean up accepted socket
         fut_socket_unref(accepted_socket);
         return -EMFILE;
@@ -297,24 +304,24 @@ long sys_accept(int sockfd, void *addr, socklen_t *addrlen) {
     /* Phase 3: Handle peer address return if requested
      * Phase 3: For Unix domain sockets, we don't populate peer address yet
      * Phase 4: Will implement AF_INET/AF_INET6/AF_UNIX peer address return */
-    if (addr != NULL && addrlen != NULL) {
-        /* Set addrlen to 0 to indicate no address returned (Phase 3 limitation) */
+    if (local_addr != NULL && local_addrlen != NULL) {
+        /* Set local_addrlen to 0 to indicate no address returned (Phase 3 limitation) */
         socklen_t actual_len = 0;
-        if (fut_copy_to_user(addrlen, &actual_len, sizeof(socklen_t)) != 0) {
-            fut_printf("[ACCEPT] accept(sockfd=%d, newfd=%d, listen_socket_id=%u, accepted_socket_id=%u) "
-                       "-> warning: failed to update addrlen (connection established)\n",
-                       sockfd, newfd, listen_socket->socket_id, accepted_socket->socket_id);
+        if (fut_copy_to_user(local_addrlen, &actual_len, sizeof(socklen_t)) != 0) {
+            fut_printf("[ACCEPT] accept(local_sockfd=%d, newfd=%d, listen_socket_id=%u, accepted_socket_id=%u) "
+                       "-> warning: failed to update local_addrlen (connection established)\n",
+                       local_sockfd, newfd, listen_socket->socket_id, accepted_socket->socket_id);
             /* Not fatal - connection is established, just couldn't return address */
         }
 
-        fut_printf("[ACCEPT] accept(sockfd=%d, type=%s, state=%s, listen_socket_id=%u, addr_request=%s) "
+        fut_printf("[ACCEPT] accept(local_sockfd=%d, type=%s, state=%s, listen_socket_id=%u, addr_request=%s) "
                    "-> %d (accepted_socket_id=%u, peer address not yet implemented, Phase 4: AF_INET/AF_INET6/AF_UNIX)\n",
-                   sockfd, socket_type_desc, socket_state_desc, listen_socket->socket_id,
+                   local_sockfd, socket_type_desc, socket_state_desc, listen_socket->socket_id,
                    addr_request, newfd, accepted_socket->socket_id);
     } else {
-        fut_printf("[ACCEPT] accept(sockfd=%d, type=%s, state=%s, listen_socket_id=%u, addr_request=%s) "
+        fut_printf("[ACCEPT] accept(local_sockfd=%d, type=%s, state=%s, listen_socket_id=%u, addr_request=%s) "
                    "-> %d (accepted_socket_id=%u, Phase 4: AF_INET/AF_INET6/AF_UNIX peer address)\n",
-                   sockfd, socket_type_desc, socket_state_desc, listen_socket->socket_id,
+                   local_sockfd, socket_type_desc, socket_state_desc, listen_socket->socket_id,
                    addr_request, newfd, accepted_socket->socket_id);
     }
 

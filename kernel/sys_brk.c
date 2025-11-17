@@ -305,15 +305,20 @@ static void brk_unmap_range(fut_vmem_context_t *ctx, uintptr_t start, uintptr_t 
  * See x86-64 version for full documentation.
  */
 long sys_brk(uintptr_t new_break) {
+    /* ARM64 FIX: Copy parameters to local variables immediately to ensure they're preserved
+     * on the stack across potentially blocking calls. Memory operations may block and corrupt
+     * register-passed parameters upon resumption. */
+    uintptr_t local_new_break = new_break;
+
     fut_task_t *task = fut_task_current();
     if (!task) {
-        fut_printf("[BRK] brk(new_break=0x%lx) -> EPERM (no current task)\n", new_break);
+        fut_printf("[BRK] brk(new_break=0x%lx) -> EPERM (no current task)\n", local_new_break);
         return -EPERM;
     }
 
     fut_mm_t *mm = fut_task_get_mm(task);
     if (!mm) {
-        fut_printf("[BRK] brk(new_break=0x%lx) -> ENOMEM (no mm context)\n", new_break);
+        fut_printf("[BRK] brk(new_break=0x%lx) -> ENOMEM (no mm context)\n", local_new_break);
         return -ENOMEM;
     }
 

@@ -90,47 +90,53 @@ extern void fut_printf(const char *fmt, ...);
  * Phase 4: O_CLOEXEC handling, dup3 support with flags
  */
 long sys_dup2(int oldfd, int newfd) {
+    /* ARM64 FIX: Copy parameters to local variables immediately to ensure they're preserved
+     * on the stack across potentially blocking calls. VFS operations may block and corrupt
+     * register-passed parameters upon resumption. */
+    int local_oldfd = oldfd;
+    int local_newfd = newfd;
+
     /* Get current task for FD table access */
     fut_task_t *task = fut_task_current();
     if (!task) {
         fut_printf("[DUP2] dup2(oldfd=%d, newfd=%d) -> ESRCH (no current task)\n",
-                   oldfd, newfd);
+                   local_oldfd, local_newfd);
         return -ESRCH;
     }
 
     /* Phase 2: Validate oldfd early */
-    if (oldfd < 0) {
+    if (local_oldfd < 0) {
         fut_printf("[DUP2] dup2(oldfd=%d, newfd=%d) -> EBADF (negative oldfd)\n",
-                   oldfd, newfd);
+                   local_oldfd, local_newfd);
         return -EBADF;
     }
 
     /* Phase 2: Validate newfd early */
-    if (newfd < 0) {
+    if (local_newfd < 0) {
         fut_printf("[DUP2] dup2(oldfd=%d, newfd=%d) -> EBADF (negative newfd)\n",
-                   oldfd, newfd);
+                   local_oldfd, local_newfd);
         return -EBADF;
     }
 
     /* Phase 2: Categorize FD range */
     const char *newfd_category;
-    if (newfd <= 2) {
+    if (local_newfd <= 2) {
         newfd_category = "standard (stdin/stdout/stderr)";
-    } else if (newfd < 10) {
+    } else if (local_newfd < 10) {
         newfd_category = "low (common user FDs)";
-    } else if (newfd < 100) {
+    } else if (local_newfd < 100) {
         newfd_category = "typical (normal range)";
-    } else if (newfd < 1024) {
+    } else if (local_newfd < 1024) {
         newfd_category = "high (many open files)";
     } else {
         newfd_category = "very high (unusual)";
     }
 
     /* Get the file structure for oldfd from current task's FD table */
-    struct fut_file *old_file = vfs_get_file_from_task(task, oldfd);
+    struct fut_file *old_file = vfs_get_file_from_task(task, local_oldfd);
     if (!old_file) {
         fut_printf("[DUP2] dup2(oldfd=%d, newfd=%d [%s]) -> EBADF (oldfd not open)\n",
-                   oldfd, newfd, newfd_category);
+                   local_oldfd, local_newfd, newfd_category);
         return -EBADF;
     }
 
@@ -138,17 +144,17 @@ long sys_dup2(int oldfd, int newfd) {
     const char *operation_type;
     const char *operation_desc;
 
-    if (oldfd == newfd) {
+    if (local_oldfd == local_newfd) {
         operation_type = "no-op (same FD)";
         operation_desc = "validates oldfd is open, no duplication";
 
         fut_printf("[DUP2] dup2(oldfd=%d, newfd=%d [%s], op=%s) -> %d (%s, Phase 2)\n",
-                   oldfd, newfd, newfd_category, operation_type, newfd, operation_desc);
-        return newfd;
+                   local_oldfd, local_newfd, newfd_category, operation_type, local_newfd, operation_desc);
+        return local_newfd;
     }
 
     /* Check if newfd is currently open (will be closed) */
-    struct fut_file *existing_file = vfs_get_file_from_task(task, newfd);
+    struct fut_file *existing_file = vfs_get_file_from_task(task, local_newfd);
     if (existing_file) {
         operation_type = "close-and-dup";
         operation_desc = "closes existing newfd, then duplicates";
@@ -164,7 +170,7 @@ long sys_dup2(int oldfd, int newfd) {
 
     /* Allocate newfd pointing to the same file in task's FD table */
     /* alloc_specific_fd_for_task handles closing existing FD if needed */
-    int ret = vfs_alloc_specific_fd_for_task(task, newfd, old_file);
+    int ret = vfs_alloc_specific_fd_for_task(task, local_newfd, old_file);
     if (ret < 0) {
         /* Failed to allocate, decrement ref count */
         if (old_file && old_file->refcount > 0) {
@@ -189,14 +195,14 @@ long sys_dup2(int oldfd, int newfd) {
         }
 
         fut_printf("[DUP2] dup2(oldfd=%d, newfd=%d [%s], op=%s) -> %d (%s)\n",
-                   oldfd, newfd, newfd_category, operation_type, ret, error_desc);
+                   local_oldfd, local_newfd, newfd_category, operation_type, ret, error_desc);
         return ret;
     }
 
     /* Phase 2: Detailed success logging */
     fut_printf("[DUP2] dup2(oldfd=%d, newfd=%d [%s], op=%s, refcount=%u) -> %d (%s, Phase 2)\n",
-               oldfd, newfd, newfd_category, operation_type, old_file->refcount, newfd,
+               local_oldfd, local_newfd, newfd_category, operation_type, old_file->refcount, local_newfd,
                operation_desc);
 
-    return newfd;
+    return local_newfd;
 }

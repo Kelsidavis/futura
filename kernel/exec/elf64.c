@@ -1168,6 +1168,16 @@ static int map_segment(fut_mm_t *mm, int fd, const elf64_phdr_t *phdr) {
 
     for (size_t i = 0; i < pages_needed; i++) {
         uint64_t page_addr = addr + (i * PAGE_SIZE);
+
+        /* Check if this page is already mapped (happens when segments overlap) */
+        uint64_t existing_pte = 0;
+        if (pmap_probe_pte(vmem, page_addr, &existing_pte) == 0) {
+            /* Page already mapped, skip allocation/mapping but verify it's present */
+            fut_printf("[MAP-SEG-ARM64] Page %llu at 0x%llx already mapped (overlapping segment), skipping\n",
+                       (unsigned long long)i, (unsigned long long)page_addr);
+            continue;
+        }
+
         void *page = fut_pmm_alloc_page();
         if (!page) {
             fut_printf("[MAP-SEG-ARM64] ERROR: PMM alloc failed at page %llu/%llu\n",

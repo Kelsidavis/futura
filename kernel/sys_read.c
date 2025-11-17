@@ -111,42 +111,49 @@ extern fut_task_t *fut_task_current(void);
  * Phase 4: Readahead, vectored I/O hints, async I/O support
  */
 ssize_t sys_read(int fd, void *buf, size_t count) {
+    /* ARM64 FIX: Copy parameters to local variables immediately to ensure they're preserved
+     * on the stack across potentially blocking calls. If fut_malloc blocks and resumes,
+     * register-passed parameters may be corrupted. */
+    int local_fd = fd;
+    void *local_buf = buf;
+    size_t local_count = count;
+
     fut_task_t *task = fut_task_current();
     if (!task) {
         /* Temporarily disabled: fut_printf crashes with %zu on ARM64 */
-        /* fut_printf("[READ] read(fd=%d, count=%zu) -> ESRCH (no current task)\n", fd, count); */
+        /* fut_printf("[READ] read(fd=%d, count=%zu) -> ESRCH (no current task)\n", local_fd, local_count); */
         return -ESRCH;
     }
 
     /* Phase 2: Validate fd early */
-    if (fd < 0) {
-        /* fut_printf("[READ] read(fd=%d, count=%zu) -> EBADF (negative fd)\n", fd, count); */
+    if (local_fd < 0) {
+        /* fut_printf("[READ] read(fd=%d, count=%zu) -> EBADF (negative fd)\n", local_fd, local_count); */
         return -EBADF;
     }
 
     /* Phase 2: Handle empty read (valid, returns 0 immediately) */
-    if (count == 0) {
-        fut_printf("[READ] read(fd=%d, count=0) -> 0 (empty read)\n", fd);
+    if (local_count == 0) {
+        fut_printf("[READ] read(fd=%d, count=0) -> 0 (empty read)\n", local_fd);
         return 0;
     }
 
     /* Phase 2: Validate user buffer */
-    if (!buf) {
-        /* fut_printf("[READ] read(fd=%d, buf=NULL, count=%zu) -> EFAULT (NULL buffer)\n", fd, count); */
+    if (!local_buf) {
+        /* fut_printf("[READ] read(fd=%d, buf=NULL, count=%zu) -> EFAULT (NULL buffer)\n", local_fd, local_count); */
         return -EFAULT;
     }
 
     /* Phase 2: Categorize read size */
     const char *size_category;
-    if (count <= 16) {
+    if (local_count <= 16) {
         size_category = "tiny (≤16 bytes)";
-    } else if (count <= 512) {
+    } else if (local_count <= 512) {
         size_category = "small (≤512 bytes)";
-    } else if (count <= 4096) {
+    } else if (local_count <= 4096) {
         size_category = "typical (≤4 KB)";
-    } else if (count <= 65536) {
+    } else if (local_count <= 65536) {
         size_category = "large (≤64 KB)";
-    } else if (count <= 1024 * 1024) {
+    } else if (local_count <= 1024 * 1024) {
         size_category = "very large (≤1 MB)";
     } else {
         size_category = "excessive (>1 MB)";
@@ -154,22 +161,22 @@ ssize_t sys_read(int fd, void *buf, size_t count) {
     (void)size_category;  /* Unused when verbose logging disabled */
 
     /* Phase 2: Sanity check - reject unreasonably large reads */
-    if (count > 1024 * 1024) {  /* 1 MB limit */
+    if (local_count > 1024 * 1024) {  /* 1 MB limit */
         /* fut_printf("[READ] read(fd=%d, count=%zu [%s]) -> EINVAL (exceeds 1 MB limit)\n",
-                   fd, count, size_category); */
+                   local_fd, local_count, size_category); */
         return -EINVAL;
     }
 
     /* Allocate kernel buffer */
-    void *kbuf = fut_malloc(count);
+    void *kbuf = fut_malloc(local_count);
     if (!kbuf) {
         /* fut_printf("[READ] read(fd=%d, count=%zu [%s]) -> ENOMEM (failed to allocate kernel buffer)\n",
-                   fd, count, size_category); */
+                   local_fd, local_count, size_category); */
         return -ENOMEM;
     }
 
     /* Read from VFS */
-    ssize_t ret = fut_vfs_read(fd, kbuf, count);
+    ssize_t ret = fut_vfs_read(local_fd, kbuf, local_count);
 
     /* Phase 2: Handle error cases with detailed logging */
     if (ret < 0) {
@@ -210,9 +217,9 @@ ssize_t sys_read(int fd, void *buf, size_t count) {
     }
 
     /* Copy to userspace on success */
-    if (fut_copy_to_user(buf, kbuf, (size_t)ret) != 0) {
+    if (fut_copy_to_user(local_buf, kbuf, (size_t)ret) != 0) {
         /* fut_printf("[READ] read(fd=%d, count=%zu [%s], read=%ld) -> EFAULT (copy_to_user failed)\n",
-                   fd, count, size_category, ret); */
+                   local_fd, local_count, size_category, ret); */
         fut_free(kbuf);
         return -EFAULT;
     }

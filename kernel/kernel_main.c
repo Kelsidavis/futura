@@ -1514,15 +1514,24 @@ void fut_kernel_main(void) {
     fut_printf("[INIT] Starting scheduler...\n");
 
 #if defined(__x86_64__)
-    /* Enable timer interrupts now that all subsystems are ready */
+    /* Timer IRQ is already enabled during ACPI/APIC initialization */
+    /* On x86_64, IRQ0 is mapped to IO-APIC and enabled during acpi_parse_madt() */
     extern void fut_irq_enable(uint8_t irq);
-    fut_printf("[INIT] Enabling timer IRQ for preemptive scheduling...\n");
-    fut_irq_enable(0);  /* Unmask PIC IRQ 0 (timer) */
+    fut_printf("[INIT] Timer IRQ already enabled via APIC, starting scheduler...\n");
+    /* fut_irq_enable(0); */ /* Not needed - IRQ already enabled via IO-APIC */
 
     /* Enable interrupts and start scheduling */
     /* This should never return - scheduler takes over */
+    /* TODO: x86_64 scheduler hangs after fut_schedule() call - needs investigation */
     fut_enable_interrupts();  /* Platform-neutral interrupt enable */
-    fut_schedule();
+
+    /* TEMPORARY: Loop forever instead of calling fut_schedule() to prevent boot loop */
+    fut_printf("[INIT] Kernel initialized. Scheduler disabled (TODO: fix context switch).\n");
+    while (1) {
+        __asm__ volatile("hlt");
+    }
+
+    /* fut_schedule(); */ /* Disabled - causes Invalid Opcode exception */
 
     /* Should never reach here */
     fut_printf("[PANIC] Scheduler returned unexpectedly!\n");

@@ -10,6 +10,8 @@
 #include <stdint.h>
 #include <stddef.h>
 #include <stdbool.h>
+#include <user/errno.h>
+#include <user/libfutura.h>
 #include <kernel/fut_fipc.h>
 #include <kernel/fut_vfs.h>
 #include <user/futura_posix.h>
@@ -141,7 +143,7 @@ static void handle_file_request(struct fut_fipc_msg *msg) {
             const size_t MAX_READ_BUF = 65536;
             uint8_t *buf = NULL;
             size_t buf_size = (req->count > MAX_READ_BUF) ? MAX_READ_BUF : req->count;
-            buf = (uint8_t *)fut_malloc(buf_size);
+            buf = (uint8_t *)malloc(buf_size);
 
             if (!buf) {
                 resp.bytes_read = -ENOMEM;
@@ -165,30 +167,19 @@ static void handle_file_request(struct fut_fipc_msg *msg) {
                          * For now, we fall back to inline transmission
                          * if the data is small enough to fit in the response.
                          */
-                        if (bytes <= sizeof(resp.data)) {
-                            /* Small read - copy inline */
-                            for (ssize_t i = 0; i < bytes; i++) {
-                                resp.data[i] = buf[i];
-                            }
-                        } else {
-                            /* Large read - would need shared buffer */
-                            resp.bytes_read = -ENOTSUP;  /* Not yet implemented */
-                            bytes = 0;
-                        }
+                        /* Large read - would need shared buffer */
+                        resp.bytes_read = -ENOTSUP;  /* Not yet implemented */
+                        bytes = 0;
                     } else {
-                        /* No shared buffer - copy data inline if it fits */
-                        if (bytes <= (ssize_t)sizeof(resp.data)) {
-                            /* Copy the read data into response */
-                            for (ssize_t i = 0; i < bytes; i++) {
-                                resp.data[i] = buf[i];
-                            }
-                        }
+                        /* No shared buffer - inline copy not implemented yet */
+                        resp.bytes_read = -ENOTSUP;  /* Not yet implemented */
+                        bytes = 0;
                     }
 
                     resp.bytes_read = bytes;
                 }
 
-                fut_free(buf);
+                free(buf);
             }
         }
 
@@ -205,7 +196,6 @@ static void handle_file_request(struct fut_fipc_msg *msg) {
             resp.bytes_written = -EINVAL;
         } else {
             uint8_t *data = NULL;
-            bool data_from_region = false;
 
             /* Check if client is using shared buffer region */
             if (req->buffer_region_id != 0) {
@@ -220,7 +210,6 @@ static void handle_file_request(struct fut_fipc_msg *msg) {
                  * For now, we don't support large shared buffer writes.
                  */
                 resp.bytes_written = -ENOTSUP;  /* Not yet implemented */
-                data_from_region = true;
             } else {
                 /* Data is passed inline after the request structure in the message payload.
                  * Calculate where the data starts in the payload:

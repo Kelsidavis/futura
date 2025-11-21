@@ -21,7 +21,10 @@ int memcmp(const void *lhs, const void *rhs, size_t n);
 
 size_t strlen(const char *s);
 int strcmp(const char *s1, const char *s2);
+int strncmp(const char *s1, const char *s2, size_t n);
 char *strstr(const char *haystack, const char *needle);
+char *strdup(const char *s);
+char *strrchr(const char *s, int c);
 
 #ifdef __cplusplus
 }

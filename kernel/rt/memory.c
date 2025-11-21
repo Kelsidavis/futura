@@ -82,6 +82,22 @@ int strcmp(const char *s1, const char *s2)
     return (int)(unsigned char)*s1 - (int)(unsigned char)*s2;
 }
 
+int strncmp(const char *s1, const char *s2, size_t n)
+{
+    if (n == 0) {
+        return 0;
+    }
+    while (n > 0 && *s1 != '\0' && *s1 == *s2) {
+        s1++;
+        s2++;
+        n--;
+    }
+    if (n == 0) {
+        return 0;
+    }
+    return (int)(unsigned char)*s1 - (int)(unsigned char)*s2;
+}
+
 char *strstr(const char *haystack, const char *needle)
 {
     if (*needle == '\0') {
@@ -102,5 +118,31 @@ char *strstr(const char *haystack, const char *needle)
         }
     }
 
+    return NULL;
+}
+
+char *strrchr(const char *s, int c)
+{
+    const char *last = NULL;
+    char ch = (char)c;
+
+    while (*s != '\0') {
+        if (*s == ch) {
+            last = s;
+        }
+        s++;
+    }
+
+    if (ch == '\0') {
+        return (char *)s;
+    }
+
+    return (char *)last;
+}
+
+char *strdup(const char *s)
+{
+    /* Not implemented in kernel - requires dynamic allocation */
+    (void)s;
     return NULL;
 }

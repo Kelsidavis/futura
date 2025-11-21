@@ -197,7 +197,7 @@ ssize_t sys_echo(const char *u_in, char *u_out, size_t n) {
                "avg_bytes=%lu, max=%lu, copy_ops=%lu) -> %zd (optimized, Phase 3)\n",
                n, size_category, (void*)u_in, (void*)u_out,
                echo_stats.total_calls,
-               echo_stats.total_bytes / (echo_stats.total_calls ?: 1),
+               echo_stats.total_bytes / (echo_stats.total_calls ? echo_stats.total_calls : 1),
                echo_stats.max_size, copy_operations,
                (ssize_t)total_processed);
 

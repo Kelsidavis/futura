@@ -30,8 +30,8 @@ void fut_echo_selftest(void) {
         return;
     }
 
-    phys_addr_t phys_in = pmap_virt_to_phys(page_in);
-    phys_addr_t phys_out = pmap_virt_to_phys(page_out);
+    phys_addr_t phys_in = pmap_virt_to_phys((uintptr_t)page_in);
+    phys_addr_t phys_out = pmap_virt_to_phys((uintptr_t)page_out);
 
     uintptr_t user_in = g_user_lo;
     uintptr_t user_out = g_user_lo + PAGE_SIZE;

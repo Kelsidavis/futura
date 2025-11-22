@@ -326,19 +326,7 @@ void fb_boot_splash(void) {
         g_fb_hw.length = map_size;
         g_fb_available = true;
 
-        /* Write solid GREEN across entire framebuffer for diagnostic */
-        volatile uint32_t *fb = (volatile uint32_t *)g_fb_virt;
-
-        fut_printf("[FB] Filling entire screen with solid GREEN\n");
-
-        /* Fill all pixels with pure green */
-        size_t total_pixels = (g_fb_hw.info.width * g_fb_hw.info.height);
-        for (size_t i = 0; i < total_pixels; ++i) {
-            fb[i] = 0xFF00FF00;  /* Should be GREEN */
-        }
-
-        fut_printf("[FB] Screen fill complete\n");
-        fut_printf("[FB] If entire screen is bright green, framebuffer is working!\n");
+        /* Green screen fill disabled - init will launch fbtest GUI instead */
 
         /* Initialize framebuffer console for text output */
         extern int fb_console_init(void);

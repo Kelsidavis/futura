@@ -1250,6 +1250,39 @@ void fut_kernel_main(void) {
 #endif
 
     /* ========================================
+     *   Launch Init Process with Framebuffer Demo
+     * ======================================== */
+    extern int fut_stage_init_stub_binary(void);
+    extern int fut_stage_fbtest_binary(void);
+
+    fut_printf("[INIT] Staging init process and fbtest...\n");
+
+    /* Stage init_stub */
+    int init_stage = fut_stage_init_stub_binary();
+    if (init_stage != 0) {
+        fut_printf("[WARN] Failed to stage init_stub (error %d)\n", init_stage);
+    }
+
+    /* Stage fbtest binary */
+    int fbtest_stage = fut_stage_fbtest_binary();
+    if (fbtest_stage != 0) {
+        fut_printf("[WARN] Failed to stage fbtest binary (error %d)\n", fbtest_stage);
+    }
+
+    /* Launch init process */
+    if (init_stage == 0) {
+        fut_printf("[INIT] Launching init process...\n");
+        char init_name[] = "init";
+        char *init_args[] = { init_name, NULL };
+        int init_exec = fut_exec_elf("/sbin/init_stub", init_args, NULL);
+        if (init_exec != 0) {
+            fut_printf("[WARN] Failed to launch /sbin/init_stub (error %d)\n", init_exec);
+        } else {
+            fut_printf("[INIT] Init process launched successfully\n");
+        }
+    }
+
+    /* ========================================
      *   Launch Interactive Shell
      * ======================================== */
     /* Shell binary is staged as a file in initramfs, not embedded */

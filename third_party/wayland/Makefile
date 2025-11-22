@@ -50,7 +50,7 @@ MESON_FLAGS := \
 	-Ddocumentation=false \
 	-Ddtd_validation=false
 
-NATIVE_C_ARGS_LIST := '-O2', '-g0', '-fPIC', '-fvisibility=hidden', '-ffunction-sections', '-fdata-sections', '-fno-semantic-interposition', '-fno-stack-protector', '-I$(ROOT_DIR)/include', '-DFUTURA_NO_GLIBC=1'
+NATIVE_C_ARGS_LIST := '-O2', '-g0', '-fPIC', '-fvisibility=hidden', '-ffunction-sections', '-fdata-sections', '-fno-semantic-interposition', '-fno-stack-protector', '-DFUTURA_NO_GLIBC=1'
 NATIVE_LINK_ARGS_LIST := '-Wl,--build-id=none', '-Wl,--gc-sections'
 
 .PHONY: all clean distclean info
@@ -101,8 +101,8 @@ ifneq ($(PATCHES),)
 	done
 endif
 	@cp $(ROOT_DIR)/third_party/wayland/wayland_nofortify.h $(SRC_DIR)/
-	@sed -i '' "s|add_project_arguments(cc_args, language: 'c')|cc_args += ['-D_GNU_SOURCE','-U_FORTIFY_SOURCE','-D_FORTIFY_SOURCE=0','-include','$(SRC_DIR)/wayland_nofortify.h']\\nadd_project_arguments(cc_args, language: 'c')|" $(SRC_DIR)/meson.build
-	@sed -i '' "s|#error \"Don't know how to read ucred on this platform\"|/* Futura: no ucred support, continue */|" $(SRC_DIR)/src/wayland-os.c
+	@sed -i "s|add_project_arguments(cc_args, language: 'c')|cc_args += ['-D_GNU_SOURCE','-U_FORTIFY_SOURCE','-D_FORTIFY_SOURCE=0','-include','$(SRC_DIR)/wayland_nofortify.h']\\nadd_project_arguments(cc_args, language: 'c')|" $(SRC_DIR)/meson.build
+	@sed -i "s|#error \"Don't know how to read ucred on this platform\"|/* Futura: no ucred support, continue */|" $(SRC_DIR)/src/wayland-os.c
 	@perl -0pi -e "s/if \(lstat\(socket->addr.sun_path, &socket_stat\) < 0 \)\s*\{\s*if \(errno != ENOENT\) \{\s*wl_log\(\"did not manage to stat file %s\\n\",\s*socket->addr.sun_path\);\s*goto err_fd;\s*\}\s*\}\s*else if \(socket_stat.st_mode & S_IWUSR \\|\\|\s*socket_stat.st_mode & S_IWGRP\) \{\s*unlink\(socket->addr.sun_path\);\s*\}/\tunlink(socket->addr.sun_path);\n/" $(SRC_DIR)/src/wayland-server.c
 	@touch $@
 

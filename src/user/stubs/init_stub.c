@@ -1,53 +1,43 @@
 // SPDX-License-Identifier: MPL-2.0
 
 #include <user/sys.h>
+#include <user/stdio.h>
+#include <shared/fut_timespec.h>
 
 int main(void) {
-    // Init process - launch compositor and shell, then supervise them
+    // Init process - show boot messages, then launch framebuffer demo
 
-    // Fork for the Wayland compositor
-    long compositor_pid = sys_fork_call();
+    printf("Futura OS Init - Launching framebuffer demo in 2 seconds...\n");
 
-    if (compositor_pid == 0) {
-        // Child process - exec into compositor
-        const char *comp_argv[] = { "/sbin/futura-wayland", 0 };
-        const char *comp_envp[] = { 0 };
-        sys_execve_call("/sbin/futura-wayland", (char * const *)comp_argv, (char * const *)comp_envp);
-        // If execve fails, exit child
+    // Wait 2 seconds to let user see boot messages
+    fut_timespec_t delay = { .tv_sec = 2, .tv_nsec = 0 };
+    sys_nanosleep_call(&delay, 0);
+
+    // Fork and exec fbtest
+    long fbtest_pid = sys_fork_call();
+
+    if (fbtest_pid == 0) {
+        // Child process - exec into fbtest
+        const char *argv[] = { "/bin/fbtest", 0 };
+        const char *envp[] = { 0 };
+        sys_execve_call("/bin/fbtest", (char * const *)argv, (char * const *)envp);
+        // If execve fails, print error and exit
+        printf("Failed to exec /bin/fbtest\n");
         sys_exit(1);
-    } else if (compositor_pid > 0) {
-        // Parent continues to launch shell
-
-        // Small delay to let compositor initialize (simple busy-wait)
-        for (volatile int i = 0; i < 500000000; i++) {
-            // Wait for compositor to start
-        }
-
-        // Fork for the shell
-        long shell_pid = sys_fork_call();
-
-        if (shell_pid == 0) {
-            // Child process - exec into shell launcher
-            const char *shell_argv[] = { "/sbin/launch-shell", 0 };
-            const char *shell_envp[] = { 0 };
-            sys_execve_call("/sbin/launch-shell", (char * const *)shell_argv, (char * const *)shell_envp);
-            // If execve fails, exit child
-            sys_exit(1);
-        } else if (shell_pid > 0) {
-            // Parent waits for children
-            int wstatus = 0;
-            while (1) {
-                // Wait for any child process to exit
-                long wait_result = sys_wait4_call(-1, &wstatus, 0, 0);
-                if (wait_result > 0) {
-                    // Child exited, restart it
-                    // For now just loop
-                }
-            }
-        }
+    } else if (fbtest_pid > 0) {
+        // Parent waits for fbtest to complete
+        int wstatus = 0;
+        sys_wait4_call(fbtest_pid, &wstatus, 0, 0);
+        printf("Framebuffer demo complete!\n");
+    } else {
+        printf("Failed to fork for fbtest\n");
     }
 
-    // Should never reach here
-    sys_exit(127);
-    return 127;
+    // Keep init running - sleep forever
+    fut_timespec_t forever = { .tv_sec = 3600, .tv_nsec = 0 };
+    while (1) {
+        sys_nanosleep_call(&forever, 0);
+    }
+
+    return 0;
 }

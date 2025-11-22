@@ -224,7 +224,7 @@ int fb_console_init(void) {
     extern int fb_get_info(struct fut_fb_hwinfo *out);
     struct fut_fb_hwinfo hw_info = {0};
 
-    if (!fb_get_info(&hw_info)) {
+    if (fb_get_info(&hw_info) != 0) {
         fut_printf("[FB_CONSOLE] No framebuffer available\n");
         return -1;
     }

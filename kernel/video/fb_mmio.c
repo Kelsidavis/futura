@@ -324,6 +324,7 @@ void fb_boot_splash(void) {
 
         g_fb_virt = (volatile uint8_t *)(uintptr_t)(virt_base + offset);
         g_fb_hw.length = map_size;
+        g_fb_available = true;
 
         /* Write solid GREEN across entire framebuffer for diagnostic */
         volatile uint32_t *fb = (volatile uint32_t *)g_fb_virt;

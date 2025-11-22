@@ -280,6 +280,14 @@ void fut_sched_add_thread(fut_thread_t *thread) {
     target_percpu->queue_depth = target_percpu->ready_count;
 
     fut_spinlock_release(&target_percpu->queue_lock);
+
+    // Debug: Log when threads are added (only first 10)
+    static int add_count = 0;
+    if (add_count < 10) {
+        fut_printf("[SCHED] Added thread tid=%llu to ready queue (count now %llu)\n",
+                   (unsigned long long)thread->tid, (unsigned long long)target_percpu->ready_count);
+        add_count++;
+    }
 }
 
 /**
@@ -474,6 +482,7 @@ static fut_thread_t *select_next_thread(void) {
 
     fut_thread_t *next = percpu->ready_queue_head;
 
+
     // If no ready threads locally, try work-stealing
     if (!next) {
         fut_spinlock_release(&percpu->queue_lock);
@@ -546,6 +555,15 @@ void fut_schedule(void) {
 
     // Mark next thread as running
     next->state = FUT_THREAD_RUNNING;
+
+    // Debug: Log first few context switches to trace scheduler behavior
+    static int switch_count = 0;
+    if (switch_count < 10 && prev != next) {
+        fut_printf("[SCHED] Switching: tid=%llu -> tid=%llu\n",
+                   prev ? (unsigned long long)prev->tid : 0ULL,
+                   (unsigned long long)next->tid);
+        switch_count++;
+    }
 
 #if defined(__x86_64__)
     if (next->stack_base && next->stack_size) {

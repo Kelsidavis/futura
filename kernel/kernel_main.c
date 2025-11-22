@@ -1276,9 +1276,11 @@ void fut_kernel_main(void) {
         fut_printf("[WARN] Failed to stage fbtest binary (error %d)\n", fbtest_stage);
     }
 
-    /* Start console input thread now that kernel init is complete */
-    fut_printf("[INIT] Starting console input thread...\n");
-    fut_console_start_input_thread();
+    /* TEMPORARILY DISABLED: Console input thread busy-waits and prevents
+     * user processes from running. Need to fix scheduler preemption first.
+     * TODO: Re-enable after fixing busy-wait or implementing proper blocking. */
+    // fut_printf("[INIT] Starting console input thread...\n");
+    // fut_console_start_input_thread();
 
     /* Launch init process */
     if (init_stage == 0) {
@@ -1562,6 +1564,17 @@ void fut_kernel_main(void) {
     fut_printf("[INIT] Kernel init complete. Entering idle loop.\n");
 
 #if defined(__x86_64__)
+    /* Force initial context switch from boot thread to idle/user threads.
+     * The scheduler has set idle_thread as current, but we're still running
+     * in kernel_main's stack. This explicit schedule() call will switch us
+     * to the idle thread or a ready user thread. */
+    fut_printf("[INIT] Triggering initial context switch...\n");
+    extern void fut_schedule(void);
+    fut_schedule();
+
+    /* Should never reach here if schedule() worked correctly */
+    fut_printf("[INIT] ERROR: Returned from fut_schedule() - idle thread not running!\n");
+
     /* Idle loop - scheduler runs via timer IRQs (already enabled earlier) */
     while (1) {
         __asm__ volatile("hlt");

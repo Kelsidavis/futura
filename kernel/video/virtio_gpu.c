@@ -722,6 +722,7 @@ int virtio_gpu_init(uint64_t *out_fb_phys, uint32_t width, uint32_t height) {
 
     /* Find virtio-gpu device on PCI bus 0 */
     g_bus = 0;
+    bool found = false;
     for (uint8_t slot = 0; slot < 32; slot++) {
         uint32_t vdid = pci_config_read(g_bus, slot, 0, 0x00);
         uint16_t vendor = vdid & 0xFFFF;
@@ -731,11 +732,12 @@ int virtio_gpu_init(uint64_t *out_fb_phys, uint32_t width, uint32_t height) {
             fut_printf("[VIRTIO-GPU] Found at slot %u\n", slot);
             g_slot = slot;
             g_func = 0;
+            found = true;
             break;
         }
     }
 
-    if (!g_slot) {
+    if (!found) {
         fut_printf("[VIRTIO-GPU] Device not found on PCI bus\n");
         return -1;
     }

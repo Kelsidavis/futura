@@ -7,6 +7,27 @@
 int main(void) {
     // Init process - launch shell on framebuffer console
 
+    // First, set up our own file descriptors to /dev/console
+    int test_fd = sys_open("/dev/console", 2, 0);  // O_RDWR = 2
+    if (test_fd >= 0) {
+        const char *test_msg = "[INIT-MAIN] Successfully opened /dev/console, fd=%d\n";
+        // Can't use printf yet, write directly
+        char buf[100];
+        int len = 0;
+        const char *p = test_msg;
+        while (*p && len < 90) {
+            if (*p == '%' && *(p+1) == 'd') {
+                buf[len++] = '0' + (test_fd / 10);
+                buf[len++] = '0' + (test_fd % 10);
+                p += 2;
+            } else {
+                buf[len++] = *p++;
+            }
+        }
+        sys_write(test_fd, buf, len);
+        sys_close(test_fd);
+    }
+
     printf("Futura OS Init - Launching shell...\n");
 
     // Brief delay to let boot messages settle
@@ -17,12 +38,31 @@ int main(void) {
     long shell_pid = sys_fork_call();
 
     if (shell_pid == 0) {
-        // Child process - exec into shell
+        // Child process - set up file descriptors and exec into shell
+        // Close any inherited file descriptors first
+        sys_close(0);
+        sys_close(1);
+        sys_close(2);
+
+        // Open /dev/console for stdin, stdout, stderr
+        int fd0 = sys_open("/dev/console", 2, 0);  // O_RDWR = 2
+        int fd1 = sys_open("/dev/console", 2, 0);
+        int fd2 = sys_open("/dev/console", 2, 0);
+
+        // Now we can print debug output since stdout is open
+        printf("[INIT-CHILD] FDs: fd0=%d fd1=%d fd2=%d\n", fd0, fd1, fd2);
+
+        if (fd0 != 0 || fd1 != 1 || fd2 != 2) {
+            // File descriptors aren't in expected order - this is a problem
+            printf("[INIT-CHILD] WARNING: FDs not in expected order!\n");
+        }
+
+        printf("[INIT-CHILD] About to exec /bin/shell\n");
         const char *argv[] = { "/bin/shell", 0 };
         const char *envp[] = { 0 };
         sys_execve_call("/bin/shell", (char * const *)argv, (char * const *)envp);
         // If execve fails, print error and exit
-        printf("Failed to exec /bin/shell\n");
+        printf("[INIT-CHILD] Failed to exec /bin/shell\n");
         sys_exit(1);
     } else if (shell_pid > 0) {
         // Parent waits for shell to complete (when user exits)
@@ -34,6 +74,14 @@ int main(void) {
         while (1) {
             shell_pid = sys_fork_call();
             if (shell_pid == 0) {
+                // Set up file descriptors for restarted shell
+                sys_close(0);
+                sys_close(1);
+                sys_close(2);
+                sys_open("/dev/console", 2, 0);  // fd 0 (stdin)
+                sys_open("/dev/console", 2, 0);  // fd 1 (stdout)
+                sys_open("/dev/console", 2, 0);  // fd 2 (stderr)
+
                 const char *argv[] = { "/bin/shell", 0 };
                 const char *envp[] = { 0 };
                 sys_execve_call("/bin/shell", (char * const *)argv, (char * const *)envp);

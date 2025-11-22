@@ -1211,6 +1211,16 @@ void fut_kernel_main(void) {
 #endif
 
     /* ========================================
+     *   Enable Interrupts and Start Scheduler
+     * ======================================== */
+    /* Enable interrupts NOW so the scheduler can run and user processes can execute */
+    fut_printf("[INIT] Enabling interrupts to start scheduler...\n");
+    fut_enable_interrupts();  /* Platform-neutral interrupt enable */
+
+    /* Console input thread will be started after kernel init completes */
+    fut_printf("[INIT] Scheduler running via timer IRQs\n");
+
+    /* ========================================
      *   Seed Standard File Descriptors
      * ======================================== */
     /* Note: Console input thread will be started AFTER scheduler is running */
@@ -1265,6 +1275,10 @@ void fut_kernel_main(void) {
     if (fbtest_stage != 0) {
         fut_printf("[WARN] Failed to stage fbtest binary (error %d)\n", fbtest_stage);
     }
+
+    /* Start console input thread now that kernel init is complete */
+    fut_printf("[INIT] Starting console input thread...\n");
+    fut_console_start_input_thread();
 
     /* Launch init process */
     if (init_stage == 0) {
@@ -1542,29 +1556,13 @@ void fut_kernel_main(void) {
     arch_late_init();
 
     /* ========================================
-     *   Step 9: Start Scheduling
+     *   Step 9: Enter Idle Loop
      * ======================================== */
 
-    fut_printf("[INIT] Starting scheduler...\n");
+    fut_printf("[INIT] Kernel init complete. Entering idle loop.\n");
 
 #if defined(__x86_64__)
-    /* Timer IRQ is already enabled during ACPI/APIC initialization */
-    /* On x86_64, IRQ0 is mapped to IO-APIC and enabled during acpi_parse_madt() */
-    extern void fut_irq_enable(uint8_t irq);
-    fut_printf("[INIT] Timer IRQ already enabled via APIC, starting scheduler...\n");
-    /* fut_irq_enable(0); */ /* Not needed - IRQ already enabled via IO-APIC */
-
-    /* Enable interrupts and enter idle loop */
-    /* Timer interrupts will drive the scheduler from here on */
-    fut_enable_interrupts();  /* Platform-neutral interrupt enable */
-
-    /* Start console input thread now that scheduler is running */
-    /* The thread can now be preempted by timer interrupts */
-    fut_console_start_input_thread();
-
-    fut_printf("[INIT] Kernel init complete. Entering idle loop, scheduler will run via timer IRQs.\n");
-
-    /* Idle loop - scheduler runs via timer interrupts */
+    /* Idle loop - scheduler runs via timer IRQs (already enabled earlier) */
     while (1) {
         __asm__ volatile("hlt");
     }

@@ -91,6 +91,10 @@ static ssize_t console_write(void *inode, void *priv, const void *buf, size_t le
     (void)inode;
     (void)priv;
 
+    /* Write to both serial console AND framebuffer console */
+    extern void fb_console_write(const char *str, size_t len);
+    fb_console_write((const char *)buf, len);
+
     const uint8_t *bytes = (const uint8_t *)buf;
     for (size_t i = 0; i < len; ++i) {
         char c = (char)bytes[i];

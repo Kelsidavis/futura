@@ -598,7 +598,7 @@ ALL_SOURCES := $(KERNEL_SOURCES) $(PLATFORM_SOURCES) $(SUBSYSTEM_SOURCES)
 OBJECTS := $(patsubst %.c,$(OBJ_DIR)/%.o,$(filter %.c,$(ALL_SOURCES)))
 OBJECTS += $(patsubst %.S,$(OBJ_DIR)/%.o,$(filter %.S,$(ALL_SOURCES)))
 
-SHELL_BIN := $(BIN_DIR)/user/futura-shell
+SHELL_BIN := $(BIN_DIR)/user/shell
 SHELL_BLOB := $(OBJ_DIR)/kernel/blobs/shell_blob.o
 FBTEST_BIN := $(BIN_DIR)/$(PLATFORM)/user/fbtest
 FBTEST_BLOB := $(OBJ_DIR)/kernel/blobs/fbtest_blob.o
@@ -775,8 +775,9 @@ $(WAYLAND_SHELL_BIN):
 $(OBJ_DIR)/kernel/blobs:
 	@mkdir -p $@
 
-$(SHELL_BIN):
-	@$(MAKE) -C src/user shell
+$(SHELL_BIN): libfutura
+	@echo "Building shell..."
+	@$(MAKE) -C src/user/shell -f Makefile.simple PLATFORM=$(PLATFORM) all
 
 $(SHELL_BLOB): $(SHELL_BIN) | $(OBJ_DIR)/kernel/blobs
 	@echo "OBJCOPY $@"

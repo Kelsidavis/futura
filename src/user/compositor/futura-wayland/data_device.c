@@ -5,7 +5,7 @@
 #include "seat.h"
 
 #include <stdlib.h>
-#include <string.h>
+#include <user/libfutura.h>
 
 #include <wayland-server.h>
 

@@ -5,35 +5,52 @@
 #include <shared/fut_timespec.h>
 
 int main(void) {
-    // Init process - show boot messages, then launch framebuffer demo
+    // Init process - launch shell on framebuffer console
 
-    printf("Futura OS Init - Launching framebuffer demo in 2 seconds...\n");
+    printf("Futura OS Init - Launching shell...\n");
 
-    // Wait 2 seconds to let user see boot messages
-    fut_timespec_t delay = { .tv_sec = 2, .tv_nsec = 0 };
+    // Brief delay to let boot messages settle
+    fut_timespec_t delay = { .tv_sec = 1, .tv_nsec = 0 };
     sys_nanosleep_call(&delay, 0);
 
-    // Fork and exec fbtest
-    long fbtest_pid = sys_fork_call();
+    // Fork and exec shell
+    long shell_pid = sys_fork_call();
 
-    if (fbtest_pid == 0) {
-        // Child process - exec into fbtest
-        const char *argv[] = { "/bin/fbtest", 0 };
+    if (shell_pid == 0) {
+        // Child process - exec into shell
+        const char *argv[] = { "/bin/shell", 0 };
         const char *envp[] = { 0 };
-        sys_execve_call("/bin/fbtest", (char * const *)argv, (char * const *)envp);
+        sys_execve_call("/bin/shell", (char * const *)argv, (char * const *)envp);
         // If execve fails, print error and exit
-        printf("Failed to exec /bin/fbtest\n");
+        printf("Failed to exec /bin/shell\n");
         sys_exit(1);
-    } else if (fbtest_pid > 0) {
-        // Parent waits for fbtest to complete
+    } else if (shell_pid > 0) {
+        // Parent waits for shell to complete (when user exits)
         int wstatus = 0;
-        sys_wait4_call(fbtest_pid, &wstatus, 0, 0);
-        printf("Framebuffer demo complete!\n");
+        sys_wait4_call(shell_pid, &wstatus, 0, 0);
+        printf("Shell exited. Restarting...\n");
+
+        // Restart shell if it exits
+        while (1) {
+            shell_pid = sys_fork_call();
+            if (shell_pid == 0) {
+                const char *argv[] = { "/bin/shell", 0 };
+                const char *envp[] = { 0 };
+                sys_execve_call("/bin/shell", (char * const *)argv, (char * const *)envp);
+                sys_exit(1);
+            } else if (shell_pid > 0) {
+                sys_wait4_call(shell_pid, &wstatus, 0, 0);
+                printf("Shell exited. Restarting...\n");
+            } else {
+                printf("Failed to fork for shell\n");
+                break;
+            }
+        }
     } else {
-        printf("Failed to fork for fbtest\n");
+        printf("Failed to fork for shell\n");
     }
 
-    // Keep init running - sleep forever
+    // Keep init running - sleep forever if shell fails
     fut_timespec_t forever = { .tv_sec = 3600, .tv_nsec = 0 };
     while (1) {
         sys_nanosleep_call(&forever, 0);

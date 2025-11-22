@@ -28,6 +28,13 @@
  * NOTE: Don't use noreturn attribute - it may cause bad codegen */
 extern void fut_do_user_iretq(uint64_t entry, uint64_t stack, uint64_t argc, uint64_t argv);
 
+/* Debug output macro for verbose exec/staging logs */
+#ifdef DEBUG_EXEC
+#define EXEC_DEBUG(...) fut_printf(__VA_ARGS__)
+#else
+#define EXEC_DEBUG(...) do {} while (0)
+#endif
+
 #define ELF_MAGIC       0x464C457FULL
 #define ELF_CLASS_64    0x02
 #define ELF_DATA_LE     0x01
@@ -161,7 +168,7 @@ static int map_segment(fut_mm_t *mm, int fd, const elf64_phdr_t *phdr) {
     size_t page_count = (size_t)((seg_end - seg_start) / PAGE_SIZE);
 
     extern void fut_printf(const char *, ...);
-    fut_printf("[EXEC][MAP-SEGMENT] vaddr=0x%llx memsz=0x%llx filesz=0x%llx page_count=%llu\n",
+    EXEC_DEBUG("[EXEC][MAP-SEGMENT] vaddr=0x%llx memsz=0x%llx filesz=0x%llx page_count=%llu\n",
                (unsigned long long)phdr->p_vaddr,
                (unsigned long long)phdr->p_memsz,
                (unsigned long long)phdr->p_filesz,
@@ -174,7 +181,7 @@ static int map_segment(fut_mm_t *mm, int fd, const elf64_phdr_t *phdr) {
     if ((phdr->p_flags & PF_X) == 0) {
         flags |= PTE_NX;
     }
-    fut_printf("[EXEC][MAP-SEGMENT] phdr->p_flags=0x%x (R=%d W=%d X=%d) -> flags=0x%llx (NX=%d)\n",
+    EXEC_DEBUG("[EXEC][MAP-SEGMENT] phdr->p_flags=0x%x (R=%d W=%d X=%d) -> flags=0x%llx (NX=%d)\n",
                (unsigned)phdr->p_flags,
                (int)((phdr->p_flags & PF_R) != 0),
                (int)((phdr->p_flags & PF_W) != 0),
@@ -183,21 +190,21 @@ static int map_segment(fut_mm_t *mm, int fd, const elf64_phdr_t *phdr) {
                (int)((flags & PTE_NX) != 0));
 
     size_t pages_array_size = page_count * sizeof(uint8_t *);
-    fut_printf("[EXEC][MAP-SEGMENT] Allocating pages array: %llu bytes\n",
+    EXEC_DEBUG("[EXEC][MAP-SEGMENT] Allocating pages array: %llu bytes\n",
                (unsigned long long)pages_array_size);
     uint8_t **pages = fut_malloc(pages_array_size);
     if (!pages) {
-        fut_printf("[EXEC][MAP-SEGMENT] FAILED: pages array malloc returned NULL\n");
+        EXEC_DEBUG("[EXEC][MAP-SEGMENT] FAILED: pages array malloc returned NULL\n");
         return -ENOMEM;
     }
-    fut_printf("[EXEC][MAP-SEGMENT] pages array allocated at %p\n", (void*)pages);
+    EXEC_DEBUG("[EXEC][MAP-SEGMENT] pages array allocated at %p\n", (void*)pages);
 
     for (size_t i = 0; i < page_count; ++i) {
-        fut_printf("[EXEC][MAP-SEGMENT] Allocating physical page %llu/%llu\n",
+        EXEC_DEBUG("[EXEC][MAP-SEGMENT] Allocating physical page %llu/%llu\n",
                    (unsigned long long)i, (unsigned long long)page_count);
         uint8_t *page = fut_pmm_alloc_page();
         if (!page) {
-            fut_printf("[EXEC][MAP-SEGMENT] FAILED: PMM alloc_page returned NULL at iteration %llu/%llu\n",
+            EXEC_DEBUG("[EXEC][MAP-SEGMENT] FAILED: PMM alloc_page returned NULL at iteration %llu/%llu\n",
                        (unsigned long long)i, (unsigned long long)page_count);
             for (size_t j = 0; j < i; ++j) {
                 fut_unmap_range(mm_context(mm), seg_start + j * PAGE_SIZE, PAGE_SIZE);
@@ -229,7 +236,7 @@ static int map_segment(fut_mm_t *mm, int fd, const elf64_phdr_t *phdr) {
 
         uint64_t pte = 0;
         if (pmap_probe_pte(mm_context(mm), seg_start + (uint64_t)i * PAGE_SIZE, &pte) == 0) {
-            fut_printf("[EXEC][MAP] vaddr=0x%llx pte=0x%llx flags=0x%llx NX=%d\n",
+            EXEC_DEBUG("[EXEC][MAP] vaddr=0x%llx pte=0x%llx flags=0x%llx NX=%d\n",
                        (unsigned long long)(seg_start + (uint64_t)i * PAGE_SIZE),
                        (unsigned long long)pte,
                        (unsigned long long)fut_pte_flags(pte),
@@ -238,15 +245,15 @@ static int map_segment(fut_mm_t *mm, int fd, const elf64_phdr_t *phdr) {
     }
 
     if (phdr->p_filesz > 0) {
-        fut_printf("[EXEC][MAP-SEGMENT] Allocating file buffer: %llu bytes\n",
+        EXEC_DEBUG("[EXEC][MAP-SEGMENT] Allocating file buffer: %llu bytes\n",
                    (unsigned long long)phdr->p_filesz);
         uint8_t *buffer = fut_malloc((size_t)phdr->p_filesz);
         if (!buffer) {
-            fut_printf("[EXEC][MAP-SEGMENT] FAILED: file buffer malloc returned NULL\n");
+            EXEC_DEBUG("[EXEC][MAP-SEGMENT] FAILED: file buffer malloc returned NULL\n");
             fut_free(pages);
             return -ENOMEM;
         }
-        fut_printf("[EXEC][MAP-SEGMENT] file buffer allocated at %p\n", (void*)buffer);
+        EXEC_DEBUG("[EXEC][MAP-SEGMENT] file buffer allocated at %p\n", (void*)buffer);
 
         int64_t off = fut_vfs_lseek(fd, (int64_t)phdr->p_offset, SEEK_SET);
         if (off < 0) {
@@ -282,7 +289,7 @@ static int map_segment(fut_mm_t *mm, int fd, const elf64_phdr_t *phdr) {
         /* Ensure all writes are visible before we execute this code */
         __asm__ volatile("mfence" ::: "memory");
 
-        fut_printf("[EXEC][MAP-SEGMENT] Copied %llu bytes to pages, memory barrier done\n",
+        EXEC_DEBUG("[EXEC][MAP-SEGMENT] Copied %llu bytes to pages, memory barrier done\n",
                    (unsigned long long)phdr->p_filesz);
 
         fut_free(buffer);
@@ -515,7 +522,7 @@ static int stage_stack_pages(fut_mm_t *mm, uint64_t *out_stack_top) {
         phys_addr_t phys = pmap_virt_to_phys((uintptr_t)page);
 
         pages[i] = page;
-        fut_printf("[EXEC] stage_stack page[%u]=%p\n", (unsigned)i, (void *)page);
+        EXEC_DEBUG("[EXEC] stage_stack page[%u]=%p\n", (unsigned)i, (void *)page);
 
         int rc = pmap_map_user(mm_context(mm),
                                base + (uint64_t)i * PAGE_SIZE,
@@ -562,43 +569,43 @@ extern const uint8_t _binary_build_bin_x86_64_user_futura_shell_end[];
 #endif
 
 int fut_stage_fbtest_binary(void) {
-    fut_printf("[STAGE] fut_stage_fbtest_binary start\n");
+    EXEC_DEBUG("[STAGE] fut_stage_fbtest_binary start\n");
 
-    fut_printf("[STAGE] calculating binary size\n");
+    EXEC_DEBUG("[STAGE] calculating binary size\n");
     size_t size = (size_t)(_binary_build_bin_x86_64_user_fbtest_end - _binary_build_bin_x86_64_user_fbtest_start);
-    fut_printf("[STAGE] binary size = %llu bytes\n", (unsigned long long)size);
+    EXEC_DEBUG("[STAGE] binary size = %llu bytes\n", (unsigned long long)size);
     if (size == 0) {
         return -EINVAL;
     }
 
-    fut_printf("[STAGE] calling fut_vfs_mkdir\n");
+    EXEC_DEBUG("[STAGE] calling fut_vfs_mkdir\n");
     (void)fut_vfs_mkdir("/bin", 0755);
 
-    fut_printf("[STAGE] calling fut_vfs_open\n");
+    EXEC_DEBUG("[STAGE] calling fut_vfs_open\n");
     int fd = fut_vfs_open("/bin/fbtest", O_WRONLY | O_CREAT | O_TRUNC, 0755);
-    fut_printf("[STAGE] fut_vfs_open returned fd=%d\n", fd);
+    EXEC_DEBUG("[STAGE] fut_vfs_open returned fd=%d\n", fd);
     if (fd < 0) {
         return fd;
     }
 
-    fut_printf("[STAGE] entering write loop, size=%llu\n", (unsigned long long)size);
+    EXEC_DEBUG("[STAGE] entering write loop, size=%llu\n", (unsigned long long)size);
     size_t offset = 0;
     while (offset < size) {
-        fut_printf("[STAGE] loop iteration: offset=%llu size=%llu\n",
+        EXEC_DEBUG("[STAGE] loop iteration: offset=%llu size=%llu\n",
                    (unsigned long long)offset, (unsigned long long)size);
         size_t chunk = size - offset;
-        fut_printf("[STAGE] calculated chunk=%llu\n", (unsigned long long)chunk);
+        EXEC_DEBUG("[STAGE] calculated chunk=%llu\n", (unsigned long long)chunk);
         if (chunk > 4096) {
             chunk = 4096;
         }
-        fut_printf("[STAGE] limited chunk=%llu\n", (unsigned long long)chunk);
+        EXEC_DEBUG("[STAGE] limited chunk=%llu\n", (unsigned long long)chunk);
 
-        fut_printf("[STAGE] calling fut_vfs_write fd=%d chunk=%llu\n",
+        EXEC_DEBUG("[STAGE] calling fut_vfs_write fd=%d chunk=%llu\n",
                    fd, (unsigned long long)chunk);
         ssize_t wr = fut_vfs_write(fd,
                                    _binary_build_bin_x86_64_user_fbtest_start + offset,
                                    chunk);
-        fut_printf("[STAGE] fut_vfs_write returned %lld\n", (long long)wr);
+        EXEC_DEBUG("[STAGE] fut_vfs_write returned %lld\n", (long long)wr);
         if (wr < 0) {
             fut_vfs_close(fd);
             return (int)wr;
@@ -606,41 +613,41 @@ int fut_stage_fbtest_binary(void) {
         offset += (size_t)wr;
     }
 
-    fut_printf("[STAGE] calling fut_vfs_close\n");
+    EXEC_DEBUG("[STAGE] calling fut_vfs_close\n");
     fut_vfs_close(fd);
-    fut_printf("[STAGE] fut_stage_fbtest_binary complete\n");
+    EXEC_DEBUG("[STAGE] fut_stage_fbtest_binary complete\n");
     return 0;
 }
 
 static int stage_blob(const uint8_t *start,
                       const uint8_t *end,
                       const char *path) {
-    fut_printf("[stage_blob] enter path=%s\n", path);
+    EXEC_DEBUG("[stage_blob] enter path=%s\n", path);
     size_t size = (size_t)(end - start);
-    fut_printf("[stage_blob] size calculated\n");
+    EXEC_DEBUG("[stage_blob] size calculated\n");
     if (!start || !end || size == 0) {
         fut_printf("[stage_blob] invalid params\n");
         return -EINVAL;
     }
 
-    fut_printf("[stage_blob] calling fut_vfs_open\n");
+    EXEC_DEBUG("[stage_blob] calling fut_vfs_open\n");
     int fd = fut_vfs_open(path, O_WRONLY | O_CREAT | O_TRUNC, 0755);
-    fut_printf("[stage_blob] fut_vfs_open returned fd=%d\n", fd);
+    EXEC_DEBUG("[stage_blob] fut_vfs_open returned fd=%d\n", fd);
     if (fd < 0) {
         fut_printf("[stage_blob] open failed\n");
         return fd;
     }
 
-    fut_printf("[stage_blob] entering write loop\n");
+    EXEC_DEBUG("[stage_blob] entering write loop\n");
     size_t offset = 0;
     while (offset < size) {
         size_t chunk = size - offset;
         if (chunk > 4096) {
             chunk = 4096;
         }
-        fut_printf("[stage_blob] calling fut_vfs_write offset=%llu chunk=%llu\n", (unsigned long long)offset, (unsigned long long)chunk);
+        EXEC_DEBUG("[stage_blob] calling fut_vfs_write offset=%llu chunk=%llu\n", (unsigned long long)offset, (unsigned long long)chunk);
         ssize_t wr = fut_vfs_write(fd, start + offset, chunk);
-        fut_printf("[stage_blob] fut_vfs_write returned wr=%zd\n", wr);
+        EXEC_DEBUG("[stage_blob] fut_vfs_write returned wr=%zd\n", wr);
         if (wr < 0) {
             fut_printf("[stage_blob] write error, closing fd\n");
             fut_vfs_close(fd);
@@ -649,10 +656,9 @@ static int stage_blob(const uint8_t *start,
         offset += (size_t)wr;
     }
 
-    fut_printf("[stage_blob] all writes complete, closing fd=%d\n", fd);
-    int close_ret = fut_vfs_close(fd);
-    fut_printf("[stage_blob] fut_vfs_close returned %d\n", close_ret);
-    fut_printf("[stage_blob] returning success\n");
+    EXEC_DEBUG("[stage_blob] all writes complete, closing fd=%d\n", fd);
+    (void)fut_vfs_close(fd);
+    EXEC_DEBUG("[stage_blob] returning success\n");
     return 0;
 }
 
@@ -717,7 +723,7 @@ int fut_stage_wayland_compositor_binary(void) {
     (void)fut_vfs_mkdir("/sbin", 0755);
 
     size_t wayland_size = (size_t)(_binary_build_bin_x86_64_user_futura_wayland_end - _binary_build_bin_x86_64_user_futura_wayland_start);
-    fut_printf("[STAGE] Wayland binary: start=%p end=%p size=%llu\n",
+    EXEC_DEBUG("[STAGE] Wayland binary: start=%p end=%p size=%llu\n",
                (void*)_binary_build_bin_x86_64_user_futura_wayland_start,
                (void*)_binary_build_bin_x86_64_user_futura_wayland_end,
                (unsigned long long)wayland_size);
@@ -773,44 +779,44 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
         return rc;
     }
 
-    fut_printf("[EXEC] Read ELF header: magic=0x%08x class=%d data=%d\n",
+    EXEC_DEBUG("[EXEC] Read ELF header: magic=0x%08x class=%d data=%d\n",
                *(uint32_t *)ehdr.e_ident, ehdr.e_ident[4], ehdr.e_ident[5]);
-    fut_printf("[EXEC] ELF header: type=%d machine=%d version=%d entry=0x%llx\n",
+    EXEC_DEBUG("[EXEC] ELF header: type=%d machine=%d version=%d entry=0x%llx\n",
                ehdr.e_type, ehdr.e_machine, ehdr.e_version,
                (unsigned long long)ehdr.e_entry);
-    fut_printf("[EXEC] Program headers: phoff=%llu phentsize=%d phnum=%d\n",
+    EXEC_DEBUG("[EXEC] Program headers: phoff=%llu phentsize=%d phnum=%d\n",
                (unsigned long long)ehdr.e_phoff, ehdr.e_phentsize, ehdr.e_phnum);
 
     if (*(uint32_t *)ehdr.e_ident != ELF_MAGIC) {
-        fut_printf("[EXEC] FAIL: Bad ELF magic 0x%08x (expected 0x%08x)\n",
+        EXEC_DEBUG("[EXEC] FAIL: Bad ELF magic 0x%08x (expected 0x%08x)\n",
                    *(uint32_t *)ehdr.e_ident, ELF_MAGIC);
         fut_vfs_close(fd);
         return -EINVAL;
     }
 
     if (ehdr.e_ident[4] != ELF_CLASS_64) {
-        fut_printf("[EXEC] FAIL: Bad ELF class %d (expected %d)\n",
+        EXEC_DEBUG("[EXEC] FAIL: Bad ELF class %d (expected %d)\n",
                    ehdr.e_ident[4], ELF_CLASS_64);
         fut_vfs_close(fd);
         return -EINVAL;
     }
 
     if (ehdr.e_ident[5] != ELF_DATA_LE) {
-        fut_printf("[EXEC] FAIL: Bad ELF data %d (expected %d)\n",
+        EXEC_DEBUG("[EXEC] FAIL: Bad ELF data %d (expected %d)\n",
                    ehdr.e_ident[5], ELF_DATA_LE);
         fut_vfs_close(fd);
         return -EINVAL;
     }
 
     if (ehdr.e_phentsize != sizeof(elf64_phdr_t)) {
-        fut_printf("[EXEC] FAIL: Bad phentsize %d (expected %zu)\n",
+        EXEC_DEBUG("[EXEC] FAIL: Bad phentsize %d (expected %zu)\n",
                    ehdr.e_phentsize, sizeof(elf64_phdr_t));
         fut_vfs_close(fd);
         return -EINVAL;
     }
 
     if (ehdr.e_phnum == 0) {
-        fut_printf("[EXEC] FAIL: No program headers (phnum=0)\n");
+        EXEC_DEBUG("[EXEC] FAIL: No program headers (phnum=0)\n");
         fut_vfs_close(fd);
         return -EINVAL;
     }
@@ -837,47 +843,47 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
     }
 
     extern void fut_printf(const char *, ...);
-    fut_printf("[EXEC] Creating task...\n");
+    EXEC_DEBUG("[EXEC] Creating task...\n");
     fut_task_t *task = fut_task_create();
     if (!task) {
-        fut_printf("[EXEC] FAILED: fut_task_create returned NULL\n");
+        EXEC_DEBUG("[EXEC] FAILED: fut_task_create returned NULL\n");
         fut_free(phdrs);
         fut_vfs_close(fd);
         return -ENOMEM;
     }
-    fut_printf("[EXEC] Task created at %p\n", (void*)task);
+    EXEC_DEBUG("[EXEC] Task created at %p\n", (void*)task);
 
-    fut_printf("[EXEC] Creating memory manager...\n");
+    EXEC_DEBUG("[EXEC] Creating memory manager...\n");
     fut_mm_t *mm = fut_mm_create();
     if (!mm) {
-        fut_printf("[EXEC] FAILED: fut_mm_create returned NULL\n");
+        EXEC_DEBUG("[EXEC] FAILED: fut_mm_create returned NULL\n");
         fut_task_destroy(task);
         fut_free(phdrs);
         fut_vfs_close(fd);
         return -ENOMEM;
     }
-    fut_printf("[EXEC] MM created at %p\n", (void*)mm);
+    EXEC_DEBUG("[EXEC] MM created at %p\n", (void*)mm);
 
     fut_task_set_mm(task, mm);
 
     uintptr_t heap_base_candidate = 0;
 
-    fut_printf("[EXEC] Mapping %u segments...\n", ehdr.e_phnum);
+    EXEC_DEBUG("[EXEC] Mapping %u segments...\n", ehdr.e_phnum);
     for (uint16_t i = 0; i < ehdr.e_phnum; ++i) {
         if (phdrs[i].p_type != PT_LOAD) {
-            fut_printf("[EXEC] Segment %u: not PT_LOAD (type=%u), skipping\n", i, phdrs[i].p_type);
+            EXEC_DEBUG("[EXEC] Segment %u: not PT_LOAD (type=%u), skipping\n", i, phdrs[i].p_type);
             continue;
         }
-        fut_printf("[EXEC] Segment %u: PT_LOAD, calling map_segment...\n", i);
+        EXEC_DEBUG("[EXEC] Segment %u: PT_LOAD, calling map_segment...\n", i);
         rc = map_segment(mm, fd, &phdrs[i]);
         if (rc != 0) {
-            fut_printf("[EXEC] FAILED: map_segment returned %d for segment %u\n", rc, i);
+            EXEC_DEBUG("[EXEC] FAILED: map_segment returned %d for segment %u\n", rc, i);
             fut_task_destroy(task);
             fut_free(phdrs);
             fut_vfs_close(fd);
             return rc;
         }
-        fut_printf("[EXEC] Segment %u: map_segment succeeded\n", i);
+        EXEC_DEBUG("[EXEC] Segment %u: map_segment succeeded\n", i);
         uint64_t seg_end = phdrs[i].p_vaddr + phdrs[i].p_memsz;
         if (seg_end > heap_base_candidate) {
             heap_base_candidate = (uintptr_t)seg_end;

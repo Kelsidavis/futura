@@ -1240,7 +1240,7 @@ void fut_kernel_main(void) {
      * ======================================== */
 
 #ifdef __x86_64__
-    bool mm_tests_enabled = boot_flag_enabled("mm-tests", true);  /* Default ON for testing */
+    bool mm_tests_enabled = boot_flag_enabled("mm-tests", false);  /* Default OFF - enable with mm-tests boot flag */
     if (mm_tests_enabled) {
         fut_mm_tests_run();
     }

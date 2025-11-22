@@ -125,8 +125,30 @@ fut_switch_context:
  * RSI = pointer to next thread (fut_thread_t *next)
  * RDX = pointer to interrupt frame (fut_interrupt_frame_t *frame)
  *
- * This function modifies the interrupt frame to return to the next thread
- * and never returns directly - execution continues via IRET in the ISR.
+ * CRITICAL: This function does NOT return normally to its caller!
+ *
+ * Architecture:
+ * 1. Timer IRQ handler pushes all registers, creating interrupt frame on stack
+ * 2. Calls this function: fut_switch_context_irq(prev, next, frame_ptr)
+ * 3. We save PREV thread's state to prev->irq_frame (allocating if needed)
+ * 4. We copy NEXT thread's saved state to the stack (or construct if first time)
+ * 5. We restore ALL of next thread's registers from the stack
+ * 6. We execute IRETQ to jump directly to next thread
+ *
+ * The IRQ handler's register restoration code is NEVER reached - we bypass it
+ * entirely by doing IRETQ ourselves. This is necessary because if we returned
+ * normally, the IRQ handler would pop the OLD thread's registers back, undoing
+ * the context switch!
+ *
+ * Stack layout on entry:
+ *   [5 callee-saved: rbx, r12-r15]  <- we push these (40 bytes)
+ *   [return address]                 <- points to IRQ handler (8 bytes)
+ *   [alignment padding]              <- 0-8 bytes for 16-byte align
+ *   [interrupt frame (208 bytes)]    <- RDX points here
+ *     - gs, fs, es, ds               (32 bytes)
+ *     - 15 GPRs                      (120 bytes)
+ *     - vector, error                (16 bytes)
+ *     - rip, cs, rflags, rsp, ss     (40 bytes) <- hardware-pushed for IRET
  *
  * Thread structure offsets (see include/kernel/fut_thread.h):
  *   +0:   tid (8 bytes)
@@ -136,7 +158,7 @@ fut_switch_context:
  *   +32:  alloc_base (8 bytes)
  *   +40:  _padding (8 bytes)
  *   +48:  context (672 bytes)
- *   +720: irq_frame (8 bytes pointer)
+ *   +720: irq_frame (8 bytes pointer to saved interrupt frame)
  */
 .global fut_switch_context_irq
 .type fut_switch_context_irq, @function
@@ -276,15 +298,60 @@ fut_switch_context_irq:
     leaq 208(%r13), %rax    /* rax = &next->context.fx_area */
     fxrstor64 (%rax)
 
-    /* Restore callee-saved registers */
-    popq %r15
-    popq %r14
-    popq %r13
-    popq %r12
-    popq %rbx
+    /* Step 5: Set stack pointer directly to the interrupt frame */
+    /* R14 still contains the pointer to the frame (passed as RDX parameter) */
+    /* We can't just add to RSP because of stack alignment - use R14 directly */
+    movq %r14, %rsp         /* RSP now points to start of interrupt frame */
 
-    /* Step 5: Return - IRET will restore from modified frame */
-    ret
+    /* Step 6: Restore all registers from the interrupt frame on stack */
+    /* The interrupt frame layout (see fut_interrupt_frame in regs.h):
+     *   +0:   gs (8)       +32:  rax (8)      +152: r15 (8)
+     *   +8:   fs (8)       +40:  rbx (8)      +160: vector (8)
+     *   +16:  es (8)       +48:  rcx (8)      +168: error_code (8)
+     *   +24:  ds (8)       +56:  rdx (8)      +176: rip (8)        <- for IRET
+     *   ...               +64:  rsi (8)      +184: cs (8)         <- for IRET
+     *                      +72:  rdi (8)      +192: rflags (8)     <- for IRET
+     *                      +80:  rbp (8)      +200: rsp (8)        <- for IRET (if CPL change)
+     *                      +88-144: r8-r14    +208: ss (8)         <- for IRET (if CPL change)
+     */
+
+    /* Restore segment registers */
+    /* IMPORTANT: Do NOT restore GS - it uses GS_BASE MSR for per-CPU data!
+     * The IRQ handler preserves GS_BASE, and we must do the same. */
+    popq %rax               /* Discard saved GS value */
+    /* GS intentionally NOT restored - must preserve GS_BASE MSR */
+
+    popq %rax               /* Pop fs */
+    movw %ax, %fs
+    popq %rax               /* Pop es */
+    movw %ax, %es
+    popq %rax               /* Pop ds */
+    movw %ax, %ds
+
+    /* Restore general purpose registers */
+    popq %rax
+    popq %rbx
+    popq %rcx
+    popq %rdx
+    popq %rsi
+    popq %rdi
+    popq %rbp
+    popq %r8
+    popq %r9
+    popq %r10
+    popq %r11
+    popq %r12
+    popq %r13
+    popq %r14
+    popq %r15
+
+    /* Skip vector number and error code (16 bytes) */
+    addq $16, %rsp
+
+    /* Step 7: Execute IRETQ to jump to the next thread */
+    /* Stack now has: rip, cs, rflags, rsp, ss (pushed by hardware during IRQ) */
+    /* IRETQ will pop these and jump to the new thread's saved RIP */
+    iretq
 
 .size fut_switch_context_irq, . - fut_switch_context_irq
 

@@ -16,7 +16,7 @@ use core::ptr::{self, write_volatile, addr_of_mut, addr_of};
 use core::sync::atomic::{AtomicBool, AtomicU16, Ordering};
 
 use common::net::{self, FutNetDev, FutNetDevOps};
-use common::{alloc_page, free_page, log, map_mmio_region, thread_yield, FutStatus, RawSpinLock, MMIO_DEFAULT_FLAGS};
+use common::{alloc_page, free_page, log, map_mmio_region, thread_yield, thread_sleep, FutStatus, RawSpinLock, MMIO_DEFAULT_FLAGS};
 
 #[cfg(target_arch = "aarch64")]
 use common::transport::MmioTransport;
@@ -1011,8 +1011,8 @@ extern "C" fn rx_poll_thread(_arg: *mut c_void) {
                 net::submit_rx(dev_ptr, data.as_ptr(), len);
             }
         } else {
-            // No packets, yield to other threads
-            thread_yield();
+            // No packets, sleep to allow other threads to run
+            thread_sleep(1);  // Sleep 1ms
         }
     }
 }

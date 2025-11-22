@@ -25,6 +25,7 @@ unsafe extern "C" {
     fn fut_pmm_alloc_page() -> *mut c_void;
     fn fut_pmm_free_page(ptr: *mut c_void);
     fn fut_thread_yield();
+    fn fut_thread_sleep(millis: u64);
 }
 
 #[repr(C)]
@@ -96,6 +97,10 @@ pub unsafe fn free_page(ptr: *mut u8) {
 
 pub fn thread_yield() {
     unsafe { fut_thread_yield(); }
+}
+
+pub fn thread_sleep(millis: u64) {
+    unsafe { fut_thread_sleep(millis); }
 }
 
 pub struct RawSpinLock {

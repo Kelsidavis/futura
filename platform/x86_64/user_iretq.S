@@ -32,8 +32,7 @@ fut_do_user_iretq:
     /* Move arguments to temporary registers */
     movq %rdi, %r11                     /* r11 = entry (RIP) */
     movq %rsi, %r10                     /* r10 = user stack (RSP) */
-    movq %rdx, %rdi                     /* rdi = argc (first user arg) */
-    movq %rcx, %rsi                     /* rsi = argv (second user arg) */
+    /* DON'T set rdi/rsi - _start expects argc on stack, not in registers */
 
     /* Build IRETQ frame on stack
      * Stack layout (growing down):

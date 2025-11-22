@@ -19,6 +19,7 @@
 #include <kernel/video/virtio_gpu.h>
 #include <kernel/video/virtio_gpu_mmio.h>
 #include <platform/platform.h>
+#include <kernel/boot_logo.h>
 
 #include <stddef.h>
 #include <stdint.h>
@@ -333,110 +334,69 @@ void fb_boot_splash(void) {
         fb_console_init();
         fut_printf("[FB] Framebuffer console initialized\n");
 
-        /* Draw Rory the Ouroboros logo in top-right corner */
+        /* Display Futura banner on framebuffer */
+        fut_printf("\n");
+        fut_printf("-------------------------------\n");
+        fut_printf("   ____     __                 \n");
+        fut_printf("  / __/_ __/ /___ _________ _  \n");
+        fut_printf(" / _// // / __/ // / __/ _ `/  \n");
+        fut_printf("/_/  \\_,_/\\__\\_,_/_/  \\_,_/   \n");
+        fut_printf("-------------------------------\n");
+        fut_printf(" Futura OS\n");
+        fut_printf("-------------------------------\n");
+        fut_printf("\n");
+
+        /* Draw Rory the Ouroboros logo from BMP in top-right corner */
         volatile uint32_t *fb = (volatile uint32_t *)g_fb_virt;
         uint32_t w = g_fb_hw.info.width;
         uint32_t h = g_fb_hw.info.height;
 
+        /* Parse BMP header */
+        const unsigned char *bmp = boot_bmp;
+        uint32_t pixel_offset = bmp[10] | (bmp[11] << 8) | (bmp[12] << 16) | (bmp[13] << 24);
+        uint32_t bmp_width = bmp[18] | (bmp[19] << 8) | (bmp[20] << 16) | (bmp[21] << 24);
+        uint32_t bmp_height = bmp[22] | (bmp[23] << 8) | (bmp[24] << 16) | (bmp[25] << 24);
+        uint16_t bpp = bmp[28] | (bmp[29] << 8);
+
+        if (bpp != 24) {
+            fut_printf("[FB] BMP logo must be 24-bit color\n");
+            return;
+        }
+
         /* Position in top-right corner with margin */
-        int logo_size = 80;
         int margin = 20;
-        int cx = w - margin - logo_size/2;
-        int cy = margin + logo_size/2;
+        int logo_x = w - margin - bmp_width;
+        int logo_y = margin;
 
-        /* Colors - ARGB format matching Rory's design */
-        uint32_t teal = 0xFF7FD4D4;         /* Teal body */
-        uint32_t yellow = 0xFFFFF4B3;       /* Yellow segments */
-        uint32_t purple = 0xFFD4B3E8;       /* Purple segments */
-        uint32_t black = 0xFF000000;        /* Outlines */
+        /* BMP rows are padded to 4-byte boundary */
+        uint32_t row_size = ((bmp_width * 3 + 3) / 4) * 4;
 
-        /* Draw circular snake body */
-        int outer_r = 35;
-        int inner_r = 25;
+        /* Render BMP (BMPs are stored bottom-to-top, BGR format) */
+        for (uint32_t y = 0; y < bmp_height; y++) {
+            for (uint32_t x = 0; x < bmp_width; x++) {
+                /* BMP is bottom-to-top, so invert y */
+                uint32_t bmp_y = bmp_height - 1 - y;
+                uint32_t pixel_idx = pixel_offset + (bmp_y * row_size) + (x * 3);
 
-        /* Draw filled ring with color segments */
-        for (int y = -outer_r; y <= outer_r; y++) {
-            for (int x = -outer_r; x <= outer_r; x++) {
-                int dist_sq = x*x + y*y;
-                int px = cx + x;
-                int py = cy + y;
+                /* Read BGR pixel */
+                uint8_t b = bmp[pixel_idx + 0];
+                uint8_t g = bmp[pixel_idx + 1];
+                uint8_t r = bmp[pixel_idx + 2];
 
-                if (dist_sq <= outer_r*outer_r && dist_sq >= inner_r*inner_r) {
-                    /* Determine color based on position (angle) */
-                    int angle = 0;
-                    if (x != 0) {
-                        /* Approximate angle in segments */
-                        angle = ((x + outer_r) * 12 / (outer_r * 2)) % 4;
-                    }
-
-                    uint32_t color;
-                    switch (angle) {
-                        case 0: color = teal; break;
-                        case 1: color = yellow; break;
-                        case 2: color = purple; break;
-                        default: color = teal; break;
-                    }
-
-                    if (px >= 0 && px < (int)w && py >= 0 && py < (int)h) {
-                        fb[py * w + px] = color;
-                    }
+                /* Skip transparent pixels (black background) */
+                if (r == 0 && g == 0 && b == 0) {
+                    continue;
                 }
-            }
-        }
 
-        /* Draw cute head at top-left of circle */
-        int head_x = cx - 25;
-        int head_y = cy - 15;
+                /* Convert to ARGB */
+                uint32_t color = 0xFF000000 | (r << 16) | (g << 8) | b;
 
-        /* Head blob */
-        for (int dy = -10; dy <= 10; dy++) {
-            for (int dx = -8; dx <= 12; dx++) {
-                if ((dx-2)*(dx-2)/4 + dy*dy/2 <= 25) {
-                    int px = head_x + dx;
-                    int py = head_y + dy;
-                    if (px >= 0 && px < (int)w && py >= 0 && py < (int)h) {
-                        fb[py * w + px] = teal;
-                    }
+                /* Write to framebuffer */
+                int fb_x = logo_x + x;
+                int fb_y = logo_y + y;
+                if (fb_x >= 0 && fb_x < (int)w && fb_y >= 0 && fb_y < (int)h) {
+                    fb[fb_y * w + fb_x] = color;
                 }
-            }
-        }
-
-        /* Horns */
-        for (int i = 0; i < 6; i++) {
-            int px1 = head_x - 6 + i/2;
-            int py1 = head_y - 8 - i;
-            int px2 = head_x + 8 + i/2;
-            int py2 = head_y - 8 - i;
-
-            if (px1 >= 0 && px1 < (int)w && py1 >= 0 && py1 < (int)h) {
-                fb[py1 * w + px1] = black;
-            }
-            if (px2 >= 0 && px2 < (int)w && py2 >= 0 && py2 < (int)h) {
-                fb[py2 * w + px2] = black;
-            }
-        }
-
-        /* Happy eyes (^ ^) */
-        for (int i = -2; i <= 2; i++) {
-            int px1 = head_x - 3 + i;
-            int py1 = head_y - 2 - (2-i*(i<0?-1:1))/2;
-            int px2 = head_x + 5 + i;
-            int py2 = head_y - 2 - (2-i*(i<0?-1:1))/2;
-
-            if (px1 >= 0 && px1 < (int)w && py1 >= 0 && py1 < (int)h) {
-                fb[py1 * w + px1] = black;
-            }
-            if (px2 >= 0 && px2 < (int)w && py2 >= 0 && py2 < (int)h) {
-                fb[py2 * w + px2] = black;
-            }
-        }
-
-        /* Smile */
-        for (int i = -4; i <= 4; i++) {
-            int px = head_x + i;
-            int py = head_y + 3 + (i*i)/8;
-            if (px >= 0 && px < (int)w && py >= 0 && py < (int)h) {
-                fb[py * w + px] = black;
             }
         }
 

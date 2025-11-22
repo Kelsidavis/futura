@@ -135,6 +135,8 @@ struct fb_console_state {
     int char_height;                 /* Character height in pixels (8) */
     int cols;                        /* Number of columns */
     int rows;                        /* Number of rows */
+    int protected_x_start;           /* Start column of protected region (logo area) */
+    int protected_y_end;             /* End row of protected region (logo area) */
     int initialized;                 /* Has been initialized */
 };
 
@@ -191,20 +193,25 @@ static void fb_console_scroll(void) {
 
     uint8_t *fb = (uint8_t *)cons->fb_mem;
 
-    /* Move all lines up by one character height */
+    /* Calculate protected region pixel boundaries */
+    int protected_x_pixels = cons->protected_x_start * cons->char_width * 4; /* In bytes */
+
+    /* Move all lines up by one character height, but avoid the logo area */
     for (int y = 0; y < (cons->rows - 1) * cons->char_height; y++) {
         uint32_t src_offset = (y + cons->char_height) * cons->pitch;
         uint32_t dst_offset = y * cons->pitch;
-        for (uint32_t x = 0; x < cons->pitch; x++) {
+
+        /* Only scroll the text area (left side), not the logo area (right side) */
+        for (uint32_t x = 0; x < (uint32_t)protected_x_pixels; x++) {
             fb[dst_offset + x] = fb[src_offset + x];
         }
     }
 
-    /* Clear the bottom line */
+    /* Clear the bottom line (only in text area, not logo area) */
     uint32_t bottom_offset = (cons->rows - 1) * cons->char_height * cons->pitch;
     uint32_t bg_color = make_color(0, 0, 0, 255);
     uint32_t *fb_word = (uint32_t *)(fb + bottom_offset);
-    for (uint32_t i = 0; i < cons->pitch / 4; i++) {
+    for (uint32_t i = 0; i < (uint32_t)(protected_x_pixels / 4); i++) {
         fb_word[i] = bg_color;
     }
 }
@@ -253,10 +260,20 @@ int fb_console_init(void) {
 
     cons->char_width = 8;
     cons->char_height = 8;
-    cons->cols = cons->width / cons->char_width;
+
+    /* Reserve space for Rory logo in top-right corner */
+    /* Logo is 100 pixels wide + 20px margin = 120 pixels, that's 15 columns */
+    int logo_cols = 15;
+    int logo_rows = 15;  /* Logo height 100 pixels + 20px margin = 120 pixels / 8 = 15 rows */
+
+    cons->cols = (cons->width / cons->char_width) - logo_cols;
     cons->rows = cons->height / cons->char_height;
     cons->cursor_x = 0;
     cons->cursor_y = 0;
+
+    /* Store protected region info for the logo */
+    cons->protected_x_start = cons->cols;  /* Start of protected columns */
+    cons->protected_y_end = logo_rows;     /* End of protected rows */
     cons->initialized = 1;
 
     fut_printf("[FB_CONSOLE] Initialized: %ux%u, %u cols x %u rows\n",

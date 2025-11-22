@@ -451,12 +451,16 @@ int fut_thread_priority_restore(fut_thread_t *thread) {
 }
 [[noreturn]] static void fut_thread_trampoline(void (*entry)(void *), void *arg) {
     extern void serial_puts(const char *);
+    extern void fut_printf(const char *, ...);
+
+    fut_printf("[TRAMPOLINE] entry=0x%llx arg=%p\n", (unsigned long long)(uintptr_t)entry, arg);
 
     if (!entry) {
         serial_puts("[TRAMPOLINE-ERROR] NULL entry function!\n");
         fut_thread_exit();
     }
 
+    fut_printf("[TRAMPOLINE] About to call entry function\n");
     /* Call the entry function */
     entry(arg);
 

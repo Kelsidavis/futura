@@ -538,34 +538,34 @@ static int stage_stack_pages(fut_mm_t *mm, uint64_t *out_stack_top) {
     return 0;
 }
 
-extern const uint8_t _binary_build_bin_user_fbtest_start[];
-extern const uint8_t _binary_build_bin_user_fbtest_end[];
-extern const uint8_t _binary_build_bin_user_shell_start[];
-extern const uint8_t _binary_build_bin_user_shell_end[];
-extern const uint8_t _binary_build_bin_user_winsrv_start[];
-extern const uint8_t _binary_build_bin_user_winsrv_end[];
-extern const uint8_t _binary_build_bin_user_winstub_start[];
-extern const uint8_t _binary_build_bin_user_winstub_end[];
-extern const uint8_t _binary_build_bin_user_init_stub_start[];
-extern const uint8_t _binary_build_bin_user_init_stub_end[];
-extern const uint8_t _binary_build_bin_user_second_start[];
-extern const uint8_t _binary_build_bin_user_second_end[];
+extern const uint8_t _binary_build_bin_x86_64_user_fbtest_start[];
+extern const uint8_t _binary_build_bin_x86_64_user_fbtest_end[];
+extern const uint8_t _binary_build_bin_x86_64_user_shell_start[];
+extern const uint8_t _binary_build_bin_x86_64_user_shell_end[];
+extern const uint8_t _binary_build_bin_x86_64_user_winsrv_start[];
+extern const uint8_t _binary_build_bin_x86_64_user_winsrv_end[];
+extern const uint8_t _binary_build_bin_x86_64_user_winstub_start[];
+extern const uint8_t _binary_build_bin_x86_64_user_winstub_end[];
+extern const uint8_t _binary_build_bin_x86_64_user_init_stub_start[];
+extern const uint8_t _binary_build_bin_x86_64_user_init_stub_end[];
+extern const uint8_t _binary_build_bin_x86_64_user_second_start[];
+extern const uint8_t _binary_build_bin_x86_64_user_second_end[];
 #if ENABLE_WAYLAND_DEMO
-extern const uint8_t _binary_build_bin_user_futura_wayland_start[];
-extern const uint8_t _binary_build_bin_user_futura_wayland_end[];
-extern const uint8_t _binary_build_bin_user_wl_simple_start[];
-extern const uint8_t _binary_build_bin_user_wl_simple_end[];
-extern const uint8_t _binary_build_bin_user_wl_colorwheel_start[];
-extern const uint8_t _binary_build_bin_user_wl_colorwheel_end[];
-extern const uint8_t _binary_build_bin_user_futura_shell_start[];
-extern const uint8_t _binary_build_bin_user_futura_shell_end[];
+extern const uint8_t _binary_build_bin_x86_64_user_futura_wayland_start[];
+extern const uint8_t _binary_build_bin_x86_64_user_futura_wayland_end[];
+extern const uint8_t _binary_build_bin_x86_64_user_wl_simple_start[];
+extern const uint8_t _binary_build_bin_x86_64_user_wl_simple_end[];
+extern const uint8_t _binary_build_bin_x86_64_user_wl_colorwheel_start[];
+extern const uint8_t _binary_build_bin_x86_64_user_wl_colorwheel_end[];
+extern const uint8_t _binary_build_bin_x86_64_user_futura_shell_start[];
+extern const uint8_t _binary_build_bin_x86_64_user_futura_shell_end[];
 #endif
 
 int fut_stage_fbtest_binary(void) {
     fut_printf("[STAGE] fut_stage_fbtest_binary start\n");
 
     fut_printf("[STAGE] calculating binary size\n");
-    size_t size = (size_t)(_binary_build_bin_user_fbtest_end - _binary_build_bin_user_fbtest_start);
+    size_t size = (size_t)(_binary_build_bin_x86_64_user_fbtest_end - _binary_build_bin_x86_64_user_fbtest_start);
     fut_printf("[STAGE] binary size = %llu bytes\n", (unsigned long long)size);
     if (size == 0) {
         return -EINVAL;
@@ -596,7 +596,7 @@ int fut_stage_fbtest_binary(void) {
         fut_printf("[STAGE] calling fut_vfs_write fd=%d chunk=%llu\n",
                    fd, (unsigned long long)chunk);
         ssize_t wr = fut_vfs_write(fd,
-                                   _binary_build_bin_user_fbtest_start + offset,
+                                   _binary_build_bin_x86_64_user_fbtest_start + offset,
                                    chunk);
         fut_printf("[STAGE] fut_vfs_write returned %lld\n", (long long)wr);
         if (wr < 0) {
@@ -669,15 +669,15 @@ int fut_stage_shell_binary(void) {
 #if ENABLE_WINSRV_DEMO
 int fut_stage_winsrv_binary(void) {
     (void)fut_vfs_mkdir("/sbin", 0755);
-    return stage_blob(_binary_build_bin_user_winsrv_start,
-                      _binary_build_bin_user_winsrv_end,
+    return stage_blob(_binary_build_bin_x86_64_user_winsrv_start,
+                      _binary_build_bin_x86_64_user_winsrv_end,
                       "/sbin/winsrv");
 }
 
 int fut_stage_winstub_binary(void) {
     (void)fut_vfs_mkdir("/bin", 0755);
-    return stage_blob(_binary_build_bin_user_winstub_start,
-                      _binary_build_bin_user_winstub_end,
+    return stage_blob(_binary_build_bin_x86_64_user_winstub_start,
+                      _binary_build_bin_x86_64_user_winstub_end,
                       "/bin/winstub");
 }
 #else
@@ -693,15 +693,15 @@ int fut_stage_winstub_binary(void) {
 #ifdef __x86_64__
 int fut_stage_init_stub_binary(void) {
     (void)fut_vfs_mkdir("/sbin", 0755);
-    return stage_blob(_binary_build_bin_user_init_stub_start,
-                      _binary_build_bin_user_init_stub_end,
+    return stage_blob(_binary_build_bin_x86_64_user_init_stub_start,
+                      _binary_build_bin_x86_64_user_init_stub_end,
                       "/sbin/init_stub");
 }
 
 int fut_stage_second_stub_binary(void) {
     (void)fut_vfs_mkdir("/sbin", 0755);
-    return stage_blob(_binary_build_bin_user_second_start,
-                      _binary_build_bin_user_second_end,
+    return stage_blob(_binary_build_bin_x86_64_user_second_start,
+                      _binary_build_bin_x86_64_user_second_end,
                       "/sbin/second");
 }
 #else /* !__x86_64__ */
@@ -719,28 +719,28 @@ int fut_stage_wayland_compositor_binary(void) {
     extern void fut_printf(const char *, ...);
     (void)fut_vfs_mkdir("/sbin", 0755);
 
-    size_t wayland_size = (size_t)(_binary_build_bin_user_futura_wayland_end - _binary_build_bin_user_futura_wayland_start);
+    size_t wayland_size = (size_t)(_binary_build_bin_x86_64_user_futura_wayland_end - _binary_build_bin_x86_64_user_futura_wayland_start);
     fut_printf("[STAGE] Wayland binary: start=%p end=%p size=%llu\n",
-               (void*)_binary_build_bin_user_futura_wayland_start,
-               (void*)_binary_build_bin_user_futura_wayland_end,
+               (void*)_binary_build_bin_x86_64_user_futura_wayland_start,
+               (void*)_binary_build_bin_x86_64_user_futura_wayland_end,
                (unsigned long long)wayland_size);
 
-    return stage_blob(_binary_build_bin_user_futura_wayland_start,
-                      _binary_build_bin_user_futura_wayland_end,
+    return stage_blob(_binary_build_bin_x86_64_user_futura_wayland_start,
+                      _binary_build_bin_x86_64_user_futura_wayland_end,
                       "/sbin/futura-wayland");
 }
 
 int fut_stage_wayland_client_binary(void) {
     (void)fut_vfs_mkdir("/bin", 0755);
-    return stage_blob(_binary_build_bin_user_wl_simple_start,
-                      _binary_build_bin_user_wl_simple_end,
+    return stage_blob(_binary_build_bin_x86_64_user_wl_simple_start,
+                      _binary_build_bin_x86_64_user_wl_simple_end,
                       "/bin/wl-simple");
 }
 
 int fut_stage_wayland_color_client_binary(void) {
     (void)fut_vfs_mkdir("/bin", 0755);
-    return stage_blob(_binary_build_bin_user_wl_colorwheel_start,
-                      _binary_build_bin_user_wl_colorwheel_end,
+    return stage_blob(_binary_build_bin_x86_64_user_wl_colorwheel_start,
+                      _binary_build_bin_x86_64_user_wl_colorwheel_end,
                       "/bin/wl-colorwheel");
 }
 #else

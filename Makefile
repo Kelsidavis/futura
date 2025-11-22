@@ -598,25 +598,25 @@ ALL_SOURCES := $(KERNEL_SOURCES) $(PLATFORM_SOURCES) $(SUBSYSTEM_SOURCES)
 OBJECTS := $(patsubst %.c,$(OBJ_DIR)/%.o,$(filter %.c,$(ALL_SOURCES)))
 OBJECTS += $(patsubst %.S,$(OBJ_DIR)/%.o,$(filter %.S,$(ALL_SOURCES)))
 
-SHELL_BIN := $(BIN_DIR)/user/shell
+SHELL_BIN := $(BIN_DIR)/$(PLATFORM)/user/shell
 SHELL_BLOB := $(OBJ_DIR)/kernel/blobs/shell_blob.o
-FBTEST_BIN := $(BIN_DIR)/user/fbtest
+FBTEST_BIN := $(BIN_DIR)/$(PLATFORM)/user/fbtest
 FBTEST_BLOB := $(OBJ_DIR)/kernel/blobs/fbtest_blob.o
-WINSRV_BIN := $(BIN_DIR)/user/winsrv
+WINSRV_BIN := $(BIN_DIR)/$(PLATFORM)/user/winsrv
 WINSRV_BLOB := $(OBJ_DIR)/kernel/blobs/winsrv_blob.o
-WINSTUB_BIN := $(BIN_DIR)/user/winstub
+WINSTUB_BIN := $(BIN_DIR)/$(PLATFORM)/user/winstub
 WINSTUB_BLOB := $(OBJ_DIR)/kernel/blobs/winstub_blob.o
-INIT_STUB_BIN := $(BIN_DIR)/user/init_stub
+INIT_STUB_BIN := $(BIN_DIR)/$(PLATFORM)/user/init_stub
 INIT_STUB_BLOB := $(OBJ_DIR)/kernel/blobs/init_stub_blob.o
-SECOND_STUB_BIN := $(BIN_DIR)/user/second
+SECOND_STUB_BIN := $(BIN_DIR)/$(PLATFORM)/user/second
 SECOND_STUB_BLOB := $(OBJ_DIR)/kernel/blobs/second_stub_blob.o
-WAYLAND_COMPOSITOR_BIN := $(BIN_DIR)/user/futura-wayland
+WAYLAND_COMPOSITOR_BIN := $(BIN_DIR)/$(PLATFORM)/user/futura-wayland
 WAYLAND_COMPOSITOR_BLOB := $(OBJ_DIR)/kernel/blobs/futura_wayland_blob.o
-WAYLAND_CLIENT_BIN := $(BIN_DIR)/user/wl-simple
+WAYLAND_CLIENT_BIN := $(BIN_DIR)/$(PLATFORM)/user/wl-simple
 WAYLAND_CLIENT_BLOB := $(OBJ_DIR)/kernel/blobs/wl_simple_blob.o
-WAYLAND_COLOR_BIN := $(BIN_DIR)/user/wl-colorwheel
+WAYLAND_COLOR_BIN := $(BIN_DIR)/$(PLATFORM)/user/wl-colorwheel
 WAYLAND_COLOR_BLOB := $(OBJ_DIR)/kernel/blobs/wl_colorwheel_blob.o
-WAYLAND_SHELL_BIN := $(BIN_DIR)/user/futura-shell
+WAYLAND_SHELL_BIN := $(BIN_DIR)/$(PLATFORM)/user/futura-shell
 WAYLAND_SHELL_BLOB := $(OBJ_DIR)/kernel/blobs/futura_shell_blob.o
 
 # ARM64 userland binaries

@@ -1522,16 +1522,11 @@ void fut_kernel_main(void) {
 
     /* Enable interrupts and start scheduling */
     /* This should never return - scheduler takes over */
-    /* TODO: x86_64 scheduler hangs after fut_schedule() call - needs investigation */
     fut_enable_interrupts();  /* Platform-neutral interrupt enable */
 
-    /* TEMPORARY: Loop forever instead of calling fut_schedule() to prevent boot loop */
-    fut_printf("[INIT] Kernel initialized. Scheduler disabled (TODO: fix context switch).\n");
-    while (1) {
-        __asm__ volatile("hlt");
-    }
-
-    /* fut_schedule(); */ /* Disabled - causes Invalid Opcode exception */
+    fut_printf("[INIT] About to call fut_schedule()...\n");
+    fut_schedule();
+    fut_printf("[INIT] fut_schedule() returned!\n");
 
     /* Should never reach here */
     fut_printf("[PANIC] Scheduler returned unexpectedly!\n");

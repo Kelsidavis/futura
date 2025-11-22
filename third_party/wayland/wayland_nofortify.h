@@ -27,14 +27,4 @@
 #define __fstat64_time64(fd, st) fstat((fd), (st))
 #define __fxstat64(ver, fd, st)  fstat((fd), (st))
 
-#ifdef SFD_CLOEXEC
-#undef SFD_CLOEXEC
-#endif
-#define SFD_CLOEXEC  0x080000
-
-#ifdef SFD_NONBLOCK
-#undef SFD_NONBLOCK
-#endif
-#define SFD_NONBLOCK 0x0800
-
 #endif /* WAYLAND_NOFORTIFY_H */

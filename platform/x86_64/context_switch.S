@@ -43,30 +43,12 @@
 .global fut_switch_context
 .type fut_switch_context, @function
 fut_switch_context:
-    /* Debug: Write 'C' to serial port (0x3F8) */
-    pushq %rax
-    pushq %rdx
-    movw $0x3F8, %dx
-    movb $'C', %al
-    outb %al, %dx
-    popq %rdx
-    popq %rax
-
     /* Stash next context pointer in %r11 (scratch) */
     movq %rsi, %r11
 
     /* Save current context if present */
     testq %rdi, %rdi
     jz 1f
-
-    /* Debug: Write 'S' (saving context) */
-    pushq %rax
-    pushq %rdx
-    movw $0x3F8, %dx
-    movb $'S', %al
-    outb %al, %dx
-    popq %rdx
-    popq %rax
 
     movq %r15, CTX_R15(%rdi)
     movq %r14, CTX_R14(%rdi)
@@ -94,49 +76,13 @@ fut_switch_context:
      * restore them explicitly below rather than from saved context
      */
 
-    /* Debug: Write 'F' (before fxsave) */
-    pushq %rax
-    pushq %rdx
-    movw $0x3F8, %dx
-    movb $'F', %al
-    outb %al, %dx
-    popq %rdx
-    popq %rax
-
     leaq CTX_FX(%rdi), %rax
     fxsave64 (%rax)
 
-    /* Debug: Write 'X' (after fxsave) */
-    pushq %rax
-    pushq %rdx
-    movw $0x3F8, %dx
-    movb $'X', %al
-    outb %al, %dx
-    popq %rdx
-    popq %rax
-
 1:
-    /* Debug: Write 'R' (before fxrstor) */
-    pushq %rax
-    pushq %rdx
-    movw $0x3F8, %dx
-    movb $'R', %al
-    outb %al, %dx
-    popq %rdx
-    popq %rax
-
     /* Restore next context (pointer in %r11) */
     leaq CTX_FX(%r11), %rax
     fxrstor64 (%rax)
-
-    /* Debug: Write 'T' (after fxrstor) */
-    pushq %rax
-    pushq %rdx
-    movw $0x3F8, %dx
-    movb $'T', %al
-    outb %al, %dx
-    popq %rdx
-    popq %rax
 
     movq CTX_RFLAGS(%r11), %rax
     pushq %rax

@@ -1253,17 +1253,21 @@ void fut_kernel_main(void) {
      *   Launch Interactive Shell
      * ======================================== */
     /* Shell binary is staged as a file in initramfs, not embedded */
-    /* fut_printf("[INIT] Staging shell binary...\n");
+    fut_printf("[INIT] Staging shell binary...\n");
     int shell_stage = fut_stage_shell_binary();
     if (shell_stage != 0) {
         fut_printf("[WARN] Failed to stage shell binary (error %d)\n", shell_stage);
-    } */
-
-    /* Shell binary (futura-shell) is not currently built due to Wayland dependency.
-     * Shell support can be re-enabled once the Wayland client libraries are available.
-     * For now, skip shell launching and proceed with other services.
-     */
-    fut_printf("[INIT] Shell binary not available (Wayland dependency required)\n");
+    } else {
+        fut_printf("[INIT] Launching shell...\n");
+        char shell_name[] = "shell";
+        char *shell_args[] = { shell_name, NULL };
+        int shell_exec = fut_exec_elf("/bin/shell", shell_args, NULL);
+        if (shell_exec != 0) {
+            fut_printf("[WARN] Failed to launch /bin/shell (error %d)\n", shell_exec);
+        } else {
+            fut_printf("[INIT] Shell launched successfully\n");
+        }
+    }
 
 #if ENABLE_WINSRV_DEMO
     if (winsrv_stage == 0) {
@@ -1520,17 +1524,16 @@ void fut_kernel_main(void) {
     fut_printf("[INIT] Timer IRQ already enabled via APIC, starting scheduler...\n");
     /* fut_irq_enable(0); */ /* Not needed - IRQ already enabled via IO-APIC */
 
-    /* Enable interrupts and start scheduling */
-    /* This should never return - scheduler takes over */
+    /* Enable interrupts and enter idle loop */
+    /* Timer interrupts will drive the scheduler from here on */
     fut_enable_interrupts();  /* Platform-neutral interrupt enable */
 
-    fut_printf("[INIT] About to call fut_schedule()...\n");
-    fut_schedule();
-    fut_printf("[INIT] fut_schedule() returned!\n");
+    fut_printf("[INIT] Kernel init complete. Entering idle loop, scheduler will run via timer IRQs.\n");
 
-    /* Should never reach here */
-    fut_printf("[PANIC] Scheduler returned unexpectedly!\n");
-    fut_platform_panic("Scheduler returned to kernel_main");
+    /* Idle loop - scheduler runs via timer interrupts */
+    while (1) {
+        __asm__ volatile("hlt");
+    }
 #elif defined(__aarch64__)
     /* ARM64: Enable timer IRQ and start scheduling */
     /* The timer IRQ must be enabled explicitly here for alarm() delivery */

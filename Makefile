@@ -632,7 +632,7 @@ ARM64_FORKTEST_BIN := $(BIN_DIR)/arm64/user/forktest
 ARM64_FORKTEST_BLOB := $(OBJ_DIR)/kernel/blobs/arm64_forktest_blob.o
 
 ifeq ($(PLATFORM),x86_64)
-OBJECTS += $(FBTEST_BLOB)
+OBJECTS += $(FBTEST_BLOB) $(SHELL_BLOB)
 ifeq ($(ENABLE_WINSRV_DEMO),1)
 OBJECTS += $(WINSRV_BLOB) $(WINSTUB_BLOB)
 endif

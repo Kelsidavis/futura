@@ -63,7 +63,7 @@ LIBFUTURA := $(BUILD_ROOT)/lib/$(PLATFORM)/libfutura.a
 CFLAGS := -std=c2x -ffreestanding -nostdlib -fno-builtin -fno-stack-protector
 CFLAGS += -Wall -Wextra -Werror -g -O2
 CFLAGS += $(ARCH_CFLAGS)
-CFLAGS += -I$(ROOT)/include -I$(OUT)/compositor
+CFLAGS += -I$(ROOT)/include -I$(OUT)/compositor -I$(ROOT)/src/user/libfutura
 CFLAGS += -I$(WAYLAND_INCLUDEDIR) $(WAYLAND_CFLAGS)
 
 CPPFLAGS += -DWAYLAND_MULTI_BUILD=1

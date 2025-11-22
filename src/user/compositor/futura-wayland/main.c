@@ -14,10 +14,10 @@
 #include <user/stdlib.h>
 
 /* Portable syscall wrappers using libfutura */
-#include "../libfutura/syscall_portable.h"
+#include "syscall_portable.h"
 
-#define O_RDWR     0x0002
-#define O_CREAT    0x0040
+/* Additional syscall numbers not in syscall_portable.h */
+#define __NR_mkdir 83
 
 static inline int sys_open(const char *pathname, int flags, int mode) {
     return (int)syscall3(__NR_open, (long)pathname, flags, mode);
@@ -32,7 +32,13 @@ static inline int sys_close(int fd) {
 }
 
 static inline int sys_mkdir(const char *pathname, int mode) {
-    return (int)syscall3(__NR_mkdir, (long)pathname, mode, 0);
+    return (int)syscall2(__NR_mkdir, (long)pathname, mode);
+}
+
+/* Simple strerror stub */
+static const char *strerror(int errnum) {
+    (void)errnum;
+    return "error";
 }
 
 /* Helper: Test if directory is writable for sockets */

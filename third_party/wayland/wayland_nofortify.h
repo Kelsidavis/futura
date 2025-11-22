@@ -27,4 +27,9 @@
 #define __fstat64_time64(fd, st) fstat((fd), (st))
 #define __fxstat64(ver, fd, st)  fstat((fd), (st))
 
+/* Define AT_FDCWD for openat() syscall compatibility */
+#ifndef AT_FDCWD
+#define AT_FDCWD -100
+#endif
+
 #endif /* WAYLAND_NOFORTIFY_H */

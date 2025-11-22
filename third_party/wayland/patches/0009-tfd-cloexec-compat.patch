@@ -1,8 +1,8 @@
 --- a/meson.build
 +++ b/meson.build
-@@ -84,7 +84,6 @@ if get_option('libraries')
+@@ -84,8 +84,6 @@ if get_option('libraries')
  	decls = [
- 		{ 'header': 'sys/signalfd.h', 'symbol': 'SFD_CLOEXEC' },
+-		{ 'header': 'sys/signalfd.h', 'symbol': 'SFD_CLOEXEC' },
 -		{ 'header': 'sys/timerfd.h', 'symbol': 'TFD_CLOEXEC' },
  		{ 'header': 'time.h', 'symbol': 'CLOCK_MONOTONIC' },
  	]

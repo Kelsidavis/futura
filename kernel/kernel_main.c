@@ -1211,12 +1211,9 @@ void fut_kernel_main(void) {
 #endif
 
     /* ========================================
-     *   Start Console Input Thread
+     *   Seed Standard File Descriptors
      * ======================================== */
-    /* Now that scheduler is initialized, start the console input thread */
-    fut_console_start_input_thread();
-
-    /* Now that input thread is running, seed standard file descriptors */
+    /* Note: Console input thread will be started AFTER scheduler is running */
     int fd0 = fut_vfs_open("/dev/console", O_RDWR, 0);
     int fd1 = fut_vfs_open("/dev/console", O_RDWR, 0);
     int fd2 = fut_vfs_open("/dev/console", O_RDWR, 0);
@@ -1560,6 +1557,10 @@ void fut_kernel_main(void) {
     /* Enable interrupts and enter idle loop */
     /* Timer interrupts will drive the scheduler from here on */
     fut_enable_interrupts();  /* Platform-neutral interrupt enable */
+
+    /* Start console input thread now that scheduler is running */
+    /* The thread can now be preempted by timer interrupts */
+    fut_console_start_input_thread();
 
     fut_printf("[INIT] Kernel init complete. Entering idle loop, scheduler will run via timer IRQs.\n");
 

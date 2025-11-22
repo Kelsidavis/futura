@@ -109,35 +109,26 @@ static int exec_copy_to_user(fut_mm_t *mm, uint64_t dest, const void *src, size_
      * we perform a direct kernel-space copy instead of switching MM and risking
      * instruction encoding issues with inline assembly in privileged instructions. */
 
-    extern void fut_printf(const char *, ...);
-    fut_printf("[EXEC-COPY] dest=0x%llx src=%p len=%zu\n",
-               (unsigned long long)dest, src, len);
+    /* Debug output disabled - multiple printf calls with timer IRQs enabled
+     * can cause preemption during critical ELF loading operations */
 
     /* Get the PTE to extract physical address */
     uint64_t pte = 0;
     if (pmap_probe_pte(mm_context(mm), dest, &pte) != 0) {
-        fut_printf("[EXEC-COPY] pmap_probe_pte FAILED for dest=0x%llx\n",
-                   (unsigned long long)dest);
         return -EFAULT;
     }
 
-    fut_printf("[EXEC-COPY] pte=0x%llx\n", (unsigned long long)pte);
-
     /* Extract physical address from PTE (bits 12-51) */
     phys_addr_t phys = pte & 0xFFFFFFFFF000ULL;
-    fut_printf("[EXEC-COPY] phys (from PTE)=0x%llx\n", (unsigned long long)phys);
 
     /* Add page offset from dest VA to get the complete physical address */
     phys_addr_t phys_with_offset = phys + (dest & 0xFFF);
-    fut_printf("[EXEC-COPY] phys_with_offset=0x%llx\n", (unsigned long long)phys_with_offset);
 
     /* Convert physical to kernel virtual address */
     uint8_t *kern_addr = (uint8_t *)pmap_phys_to_virt(phys_with_offset);
-    fut_printf("[EXEC-COPY] kern_addr=%p (about to memcpy)\n", kern_addr);
 
     /* Simple kernel-space memcpy (no privilege escalation or memory context switches) */
     memcpy(kern_addr, src, len);
-    fut_printf("[EXEC-COPY] memcpy complete\n");
     return 0;
 }
 

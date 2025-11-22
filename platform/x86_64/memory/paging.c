@@ -275,23 +275,11 @@ int fut_map_page(fut_vmem_context_t *ctx, uint64_t vaddr, uint64_t paddr, uint64
     }
     pt->entries[pt_idx] = fut_make_pte(paddr, flags | PTE_PRESENT);
 
-    /* Debug: check all levels for NX bit if this is a user mapping */
-    if (ctx && (vaddr == 0x400000)) {
-        extern void fut_printf(const char *, ...);
-        fut_printf("[PAGING-DEBUG] Mapping vaddr=0x%llx:\n", (unsigned long long)vaddr);
-        fut_printf("  PML4[%llu] = 0x%llx (NX=%d)\n",
-                   (unsigned long long)pml4_idx, (unsigned long long)pml4[pml4_idx],
-                   (int)((pml4[pml4_idx] & PTE_NX) != 0));
-        fut_printf("  PDPT[%llu] = 0x%llx (NX=%d)\n",
-                   (unsigned long long)pdpt_idx, (unsigned long long)pdpt->entries[pdpt_idx],
-                   (int)((pdpt->entries[pdpt_idx] & PTE_NX) != 0));
-        fut_printf("  PD[%llu] = 0x%llx (NX=%d)\n",
-                   (unsigned long long)pd_idx, (unsigned long long)pd->entries[pd_idx],
-                   (int)((pd->entries[pd_idx] & PTE_NX) != 0));
-        fut_printf("  PT[%llu] = 0x%llx (NX=%d)\n",
-                   (unsigned long long)pt_idx, (unsigned long long)pt->entries[pt_idx],
-                   (int)((pt->entries[pt_idx] & PTE_NX) != 0));
-    }
+    /* Debug output disabled - was causing hang with timer IRQs */
+    (void)pml4_idx;
+    (void)pdpt_idx;
+    (void)pd_idx;
+    (void)pt_idx;
 
     /* Flush TLB for this address */
     fut_flush_tlb_single(vaddr);

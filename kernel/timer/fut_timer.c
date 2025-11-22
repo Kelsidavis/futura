@@ -165,7 +165,13 @@ static void process_timer_events(void) {
  */
 void fut_timer_tick(void) {
     // Increment tick counter
-    atomic_fetch_add_explicit(&system_ticks, 1, memory_order_relaxed);
+    uint64_t ticks = atomic_fetch_add_explicit(&system_ticks, 1, memory_order_relaxed);
+
+    // Debug: Log first few timer ticks to confirm IRQs are firing
+    if (ticks < 5) {
+        extern void fut_printf(const char *fmt, ...);
+        fut_printf("[TIMER] Tick %llu\n", (unsigned long long)ticks);
+    }
 
     // Wake any threads whose sleep time has expired
     wake_sleeping_threads();

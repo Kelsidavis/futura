@@ -826,6 +826,11 @@ void fut_kernel_main(void) {
     fut_printf("[INIT] Heap initialized: 0x%llx - 0x%llx (%llu MiB)\n",
                heap_start, heap_end, heap_size / (1024 * 1024));
 
+    /* Initialize MM subsystem (kernel page table context) */
+    fut_printf("[INIT] Initializing MM subsystem...\n");
+    extern void fut_mm_system_init(void);
+    fut_mm_system_init();
+
     fut_printf("[INIT] Initializing timer subsystem...\n");
     fut_timer_subsystem_init();
 

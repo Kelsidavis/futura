@@ -332,6 +332,114 @@ void fb_boot_splash(void) {
         extern int fb_console_init(void);
         fb_console_init();
         fut_printf("[FB] Framebuffer console initialized\n");
+
+        /* Draw Rory the Ouroboros logo in top-right corner */
+        volatile uint32_t *fb = (volatile uint32_t *)g_fb_virt;
+        uint32_t w = g_fb_hw.info.width;
+        uint32_t h = g_fb_hw.info.height;
+
+        /* Position in top-right corner with margin */
+        int logo_size = 80;
+        int margin = 20;
+        int cx = w - margin - logo_size/2;
+        int cy = margin + logo_size/2;
+
+        /* Colors - ARGB format matching Rory's design */
+        uint32_t teal = 0xFF7FD4D4;         /* Teal body */
+        uint32_t yellow = 0xFFFFF4B3;       /* Yellow segments */
+        uint32_t purple = 0xFFD4B3E8;       /* Purple segments */
+        uint32_t black = 0xFF000000;        /* Outlines */
+
+        /* Draw circular snake body */
+        int outer_r = 35;
+        int inner_r = 25;
+
+        /* Draw filled ring with color segments */
+        for (int y = -outer_r; y <= outer_r; y++) {
+            for (int x = -outer_r; x <= outer_r; x++) {
+                int dist_sq = x*x + y*y;
+                int px = cx + x;
+                int py = cy + y;
+
+                if (dist_sq <= outer_r*outer_r && dist_sq >= inner_r*inner_r) {
+                    /* Determine color based on position (angle) */
+                    int angle = 0;
+                    if (x != 0) {
+                        /* Approximate angle in segments */
+                        angle = ((x + outer_r) * 12 / (outer_r * 2)) % 4;
+                    }
+
+                    uint32_t color;
+                    switch (angle) {
+                        case 0: color = teal; break;
+                        case 1: color = yellow; break;
+                        case 2: color = purple; break;
+                        default: color = teal; break;
+                    }
+
+                    if (px >= 0 && px < (int)w && py >= 0 && py < (int)h) {
+                        fb[py * w + px] = color;
+                    }
+                }
+            }
+        }
+
+        /* Draw cute head at top-left of circle */
+        int head_x = cx - 25;
+        int head_y = cy - 15;
+
+        /* Head blob */
+        for (int dy = -10; dy <= 10; dy++) {
+            for (int dx = -8; dx <= 12; dx++) {
+                if ((dx-2)*(dx-2)/4 + dy*dy/2 <= 25) {
+                    int px = head_x + dx;
+                    int py = head_y + dy;
+                    if (px >= 0 && px < (int)w && py >= 0 && py < (int)h) {
+                        fb[py * w + px] = teal;
+                    }
+                }
+            }
+        }
+
+        /* Horns */
+        for (int i = 0; i < 6; i++) {
+            int px1 = head_x - 6 + i/2;
+            int py1 = head_y - 8 - i;
+            int px2 = head_x + 8 + i/2;
+            int py2 = head_y - 8 - i;
+
+            if (px1 >= 0 && px1 < (int)w && py1 >= 0 && py1 < (int)h) {
+                fb[py1 * w + px1] = black;
+            }
+            if (px2 >= 0 && px2 < (int)w && py2 >= 0 && py2 < (int)h) {
+                fb[py2 * w + px2] = black;
+            }
+        }
+
+        /* Happy eyes (^ ^) */
+        for (int i = -2; i <= 2; i++) {
+            int px1 = head_x - 3 + i;
+            int py1 = head_y - 2 - (2-i*(i<0?-1:1))/2;
+            int px2 = head_x + 5 + i;
+            int py2 = head_y - 2 - (2-i*(i<0?-1:1))/2;
+
+            if (px1 >= 0 && px1 < (int)w && py1 >= 0 && py1 < (int)h) {
+                fb[py1 * w + px1] = black;
+            }
+            if (px2 >= 0 && px2 < (int)w && py2 >= 0 && py2 < (int)h) {
+                fb[py2 * w + px2] = black;
+            }
+        }
+
+        /* Smile */
+        for (int i = -4; i <= 4; i++) {
+            int px = head_x + i;
+            int py = head_y + 3 + (i*i)/8;
+            if (px >= 0 && px < (int)w && py >= 0 && py < (int)h) {
+                fb[py * w + px] = black;
+            }
+        }
+
         return;
     }
 

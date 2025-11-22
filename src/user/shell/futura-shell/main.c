@@ -297,6 +297,21 @@ static const struct wl_registry_listener registry_listener = {
 int main(void) {
     struct shell_state state = {0};
 
+    /* Initialize standard streams */
+    int console_fd = sys_open("/dev/console", O_RDWR, 0);
+    if (console_fd < 0) {
+        /* Can't print error - no stdout yet! Just exit. */
+        return -1;
+    }
+    /* console_fd should be 0 (stdin). Dup to stdout and stderr. */
+    if (console_fd != 0) {
+        sys_close(0);
+        sys_dup2_call(console_fd, 0);
+        sys_close(console_fd);
+    }
+    sys_dup2_call(0, 1);  /* stdout */
+    sys_dup2_call(0, 2);  /* stderr */
+
     /* Connect to Wayland */
     state.display = wl_display_connect(NULL);
     if (!state.display) {

@@ -480,6 +480,20 @@ __attribute__((used)) static void fut_thread_trampoline_impl(void (*entry)(void 
         "movw $0x3F8, %%dx\n"
         "movb $'T', %%al\n"
         "outb %%al, %%dx\n"
+
+        /* Debug: Check if RDI is NULL */
+        "testq %%rdi, %%rdi\n"
+        "jnz .rdi_not_null\n"
+        /* RDI is NULL! Print 'N' for NULL */
+        "movb $'N', %%al\n"
+        "outb %%al, %%dx\n"
+        "jmp .rdi_checked\n"
+        ".rdi_not_null:\n"
+        /* RDI is not NULL, print 'V' for valid */
+        "movb $'V', %%al\n"
+        "outb %%al, %%dx\n"
+        ".rdi_checked:\n"
+
         "popq %%rdx\n"
         "popq %%rax\n"
 

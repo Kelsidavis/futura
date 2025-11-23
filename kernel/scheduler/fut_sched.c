@@ -616,9 +616,8 @@ void fut_schedule(void) {
         // Only set current_thread if we're actually going to context switch
         fut_thread_set_current(next);
 
-        // TEMPORARY: Disable IRETQ-based context switching to debug GPF issue
-        // Force use of RET-based context switch for all threads
-        if (false && in_irq && prev && fut_current_frame) {
+        // Re-enable IRETQ path for investigation
+        if (in_irq && prev && fut_current_frame) {
             // IRQ-safe context switch (uses IRET)
             // This modifies the interrupt frame on the stack so IRET returns to next thread
 #if defined(__aarch64__)

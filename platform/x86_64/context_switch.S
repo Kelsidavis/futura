@@ -493,6 +493,34 @@ fut_switch_context_irq:
     outb %al, %dx
     popq %rax
 
+    /* Print RFLAGS value (before printing RIP nibbles) */
+    movq 32(%rsp), %r8          /* Get RFLAGS from stack */
+
+    /* Check if RFLAGS has IF (interrupt enable) bit set */
+    testq $0x200, %r8           /* IF is bit 9 */
+    jnz .if_set
+    movb $'i', %al              /* i = interrupts disabled */
+    outb %al, %dx
+    jmp .if_done
+.if_set:
+    movb $'I', %al              /* I = interrupts enabled */
+    outb %al, %dx
+.if_done:
+
+    /* Check if RFLAGS has reserved bit 1 set (must always be 1) */
+    testq $0x2, %r8             /* Bit 1 */
+    jnz .res_ok
+    movb $'!', %al              /* ! = RFLAGS invalid (bit 1 not set) */
+    outb %al, %dx
+    jmp .res_done
+.res_ok:
+    movb $'V', %al              /* V = RFLAGS valid */
+    outb %al, %dx
+.res_done:
+
+    /* Restore RAX with RIP value for further processing */
+    movq 16(%rsp), %rax
+
     /* Check if RIP is in kernel space (high bit set) */
     testq %rax, %rax
     js .rip_kernel

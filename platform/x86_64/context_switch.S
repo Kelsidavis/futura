@@ -346,6 +346,7 @@ fut_switch_context_irq:
 
     /* Fix up SS with current value */
     movw %ss, %ax           /* Get current SS (again, after checks) */
+    movzwq %ax, %rax        /* Zero-extend 16-bit AX to 64-bit RAX */
     movq %rax, 200(%r15)    /* Store in saved frame->ss */
 
     /* Debug: Print the SS value we just stored */
@@ -491,6 +492,31 @@ fut_switch_context_irq:
     movb $'K', %al          /* K = kernel CS in saved frame to restore */
     outb %al, %dx
 .restore_cs_done:
+
+    /* Debug: Print RIP from saved frame (first 2 hex digits) */
+    movq 168(%r11), %rax    /* Get RIP from saved frame */
+    pushq %rax              /* Save full RIP */
+    shrq $56, %rax          /* Get top byte */
+    andb $0xF, %al          /* Get low nibble */
+    addb $'0', %al
+    cmpb $'9', %al
+    jle .rip_nibble1_ok
+    addb $7, %al
+.rip_nibble1_ok:
+    outb %al, %dx
+
+    popq %rax               /* Restore full RIP */
+    pushq %rax              /* Save again */
+    shrq $52, %rax          /* Get next nibble */
+    andb $0xF, %al
+    addb $'0', %al
+    cmpb $'9', %al
+    jle .rip_nibble2_ok
+    addb $7, %al
+.rip_nibble2_ok:
+    outb %al, %dx
+
+    popq %rax               /* Restore RIP value */
 
     movb $'}', %al          /* } = end restore frame debug */
     outb %al, %dx

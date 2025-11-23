@@ -227,13 +227,13 @@ fut_thread_t *fut_thread_create(
      * The trampoline itself handles the transition to ring 3. */
     ctx->cs = 0x08; // Kernel code segment
     ctx->ss = 0x10; // Kernel stack segment
-    /* In 64-bit mode, DS/ES/FS are mostly ignored (segmentation is disabled).
-     * Set them to NULL selector (0) to avoid any potential GPF from invalid descriptors.
-     * FS/GS bases are set via MSRs when needed. */
-    ctx->ds = 0;
-    ctx->es = 0;
-    ctx->fs = 0;
-    ctx->gs = 0;
+    /* In 64-bit mode, DS/ES/FS/GS should be set to valid kernel selectors.
+     * While NULL selectors (0) are valid to load, we set them to kernel data
+     * segment (0x10) for consistency with the ISR and to avoid potential issues. */
+    ctx->ds = 0x10;
+    ctx->es = 0x10;
+    ctx->fs = 0x10;
+    ctx->gs = 0x10;
 
     ctx->rdi = (uint64_t)entry;
     ctx->rsi = (uint64_t)arg;

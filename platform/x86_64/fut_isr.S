@@ -42,6 +42,7 @@ irq0_stub:
     pushq %es
     pushq %fs
     pushq %gs
+    /* Note: SS is saved by hardware (CPU) during interrupt, not by software */
 
     /* RSP now points to complete interrupt frame (gs is at lowest address) */
 
@@ -51,6 +52,7 @@ irq0_stub:
     mov %ax, %es
     mov %ax, %fs
     mov %ax, %gs
+    /* Note: Do NOT modify SS in ISR - it's managed by hardware/IRETQ */
 
     /* Output 'T' to serial to show timer interrupt fired */
     mov $0x3F8, %dx

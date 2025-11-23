@@ -130,8 +130,14 @@ void fut_sched_init(void) {
     // IMPORTANT: Load idle thread's segment registers BEFORE marking it as running
     // This ensures the first hardware interrupt will capture correct segment values
 #if defined(__x86_64__)
-    fut_printf("[SCHED-IDLE] Loading idle thread segments: DS/ES/FS/SS = 0x%04x\n",
-               (unsigned int)idle_thread->context.ds);
+    fut_printf("[SCHED-IDLE] Loading idle thread segments: DS=0x%04x SS=0x%04x\n",
+               (unsigned int)idle_thread->context.ds, (unsigned int)idle_thread->context.ss);
+
+    // Read current SS before modification
+    uint16_t ss_before = 0;
+    __asm__ volatile("movw %%ss, %0" : "=r"(ss_before));
+    fut_printf("[SCHED-IDLE] SS before load: 0x%04x\n", (unsigned int)ss_before);
+
     __asm__ volatile(
         "movw %0, %%ds\n"
         "movw %0, %%es\n"
@@ -141,7 +147,11 @@ void fut_sched_init(void) {
         : "r"((uint16_t)idle_thread->context.ds), "r"((uint16_t)idle_thread->context.ss)
         : "memory"
     );
-    fut_printf("[SCHED-IDLE] Idle thread segments loaded\n");
+
+    // Read SS after modification to verify
+    uint16_t ss_after = 0;
+    __asm__ volatile("movw %%ss, %0" : "=r"(ss_after));
+    fut_printf("[SCHED-IDLE] SS after load: 0x%04x\n", (unsigned int)ss_after);
 #endif
 
     // Set idle thread as current thread so kernel_main has a task context
@@ -575,7 +585,7 @@ void fut_schedule(void) {
 
     // Debug: Log first few context switches to trace scheduler behavior
     static int switch_count = 0;
-    if (switch_count < 10 && prev != next) {
+    if (switch_count < 20 && prev != next) {
         fut_printf("[SCHED] Switching: tid=%llu -> tid=%llu\n",
                    prev ? (unsigned long long)prev->tid : 0ULL,
                    (unsigned long long)next->tid);

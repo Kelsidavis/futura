@@ -207,6 +207,86 @@ fut_switch_context_irq:
     cld
     rep movsq
 
+    /* CRITICAL FIX: For kernel-mode interrupts, the CPU does NOT push RSP/SS.
+     * Offsets 192/200 in the frame contain garbage. We must fix them up with
+     * the actual current values so when we restore this frame later, we have
+     * valid SS to load.
+     *
+     * ALSO: Fix up CS to ensure it matches current privilege level. If we're in
+     * kernel mode (CPL=0), ensure CS is 0x08, not some garbage value. */
+    pushq %rax
+    pushq %rdx
+
+    /* Debug: Check what CS and RIP values were saved */
+    movw $0x3F8, %dx
+    movb $'[', %al          /* [ = start frame save debug */
+    outb %al, %dx
+
+    /* Check RIP first */
+    movq 168(%r15), %rax    /* Get saved RIP from frame */
+    testq %rax, %rax
+    jnz .save_rip_nonzero
+    movb $'0', %al          /* 0 = RIP is zero! */
+    outb %al, %dx
+    jmp .save_rip_done
+.save_rip_nonzero:
+    movb $'r', %al          /* r = RIP is non-zero */
+    outb %al, %dx
+.save_rip_done:
+
+    /* Check CS */
+    movq 176(%r15), %rax    /* Get saved CS from frame */
+    cmpq $0x08, %rax
+    je .save_cs_kernel
+    movb $'u', %al          /* u = user CS in saved frame */
+    outb %al, %dx
+    jmp .save_cs_done
+.save_cs_kernel:
+    movb $'k', %al          /* k = kernel CS in saved frame */
+    outb %al, %dx
+.save_cs_done:
+
+    /* CRITICAL FIX: If current SS is 0x10 (kernel), we're in kernel mode.
+     * Ensure CS is also kernel (0x08), not garbage. The CPU should have pushed
+     * the correct CS, but if we see otherwise, fix it. */
+    movw %ss, %ax           /* Get current SS */
+    cmpw $0x10, %ax         /* Is it kernel SS? */
+    jne .fix_ss_done        /* If not kernel SS, skip CS fixup */
+
+    /* We're in kernel mode - ensure CS in frame is 0x08 */
+    movq 176(%r15), %rax    /* Get CS from saved frame */
+    cmpq $0x08, %rax        /* Already kernel CS? */
+    je .fix_cs_done         /* Yes, skip fix */
+
+    /* CS is wrong! Fix it */
+    movq $0x08, 176(%r15)   /* Force CS to kernel */
+
+    /* Debug: Print '!' to indicate we fixed CS */
+    movb $'!', %al
+    outb %al, %dx
+.fix_cs_done:
+.fix_ss_done:
+
+    /* Fix up SS with current value */
+    movw %ss, %ax           /* Get current SS (again, after checks) */
+    movq %rax, 200(%r15)    /* Store in saved frame->ss */
+
+    /* Debug: Print the SS value we just stored */
+    shrw $4, %ax
+    andb $0xF, %al
+    addb $'0', %al
+    cmpb $'9', %al
+    jle .save_ss_digit
+    addb $7, %al
+.save_ss_digit:
+    outb %al, %dx
+
+    movb $']', %al          /* ] = end frame save debug */
+    outb %al, %dx
+
+    popq %rdx
+    popq %rax
+
 1:
     /* Step 2: Get next thread's saved frame pointer */
     movq 720(%r13), %r11
@@ -317,6 +397,30 @@ fut_switch_context_irq:
     jmp 2f
 
 .restore_saved_frame:
+    /* Debug: Check what CS value is in saved frame we're about to restore */
+    pushq %rax
+    pushq %rdx
+    movw $0x3F8, %dx
+    movb $'{', %al          /* { = start restore frame debug */
+    outb %al, %dx
+
+    movq 176(%r11), %rax    /* Get CS from saved frame */
+    cmpq $0x08, %rax
+    je .restore_cs_kernel
+    movb $'U', %al          /* U = user CS in saved frame to restore */
+    outb %al, %dx
+    jmp .restore_cs_done
+.restore_cs_kernel:
+    movb $'K', %al          /* K = kernel CS in saved frame to restore */
+    outb %al, %dx
+.restore_cs_done:
+
+    movb $'}', %al          /* } = end restore frame debug */
+    outb %al, %dx
+
+    popq %rdx
+    popq %rax
+
     /* Step 3: Copy saved frame to current interrupt frame location */
     movq %r14, %rdi         /* dest = current frame on stack */
     movq %r11, %rsi         /* src = next->irq_frame */

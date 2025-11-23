@@ -16,6 +16,7 @@
 #if defined(__x86_64__)
 #include <platform/x86_64/memory/paging.h>
 #include <platform/x86_64/memory/pmap.h>
+#include <platform/x86_64/cpu.h>
 #elif defined(__aarch64__)
 #include <platform/arm64/memory/paging.h>
 #include <platform/arm64/memory/pmap.h>
@@ -23,6 +24,25 @@
 
 #include <stdbool.h>
 #include <string.h>
+
+#if defined(__x86_64__)
+static inline void smap_stac(void) {
+    const fut_cpu_features_t *features = cpu_features_get();
+    if (features && features->smap) {
+        __asm__ volatile("stac");
+    }
+}
+
+static inline void smap_clac(void) {
+    const fut_cpu_features_t *features = cpu_features_get();
+    if (features && features->smap) {
+        __asm__ volatile("clac");
+    }
+}
+#else
+#define smap_stac() do {} while(0)
+#define smap_clac() do {} while(0)
+#endif
 
 uintptr_t g_user_lo = 0x0000000000400000ULL;
 uintptr_t g_user_hi = USER_SPACE_END + 1ULL; /* exclusive upper bound */
@@ -182,7 +202,7 @@ int fut_copy_from_user(void *k_dst, const void *u_src, size_t n) {
 
     /* Set AC flag for SMAP (x86-64) or ensure user page table is loaded (ARM64) */
 #if defined(__x86_64__)
-    __asm__ volatile("stac");
+    smap_stac();
 #elif defined(__aarch64__)
     /* ARM64: Save current TTBR0, load the user's TTBR0, then restore after copy.
      * During syscalls, TTBR0 may have been switched to kernel page table by page table operations. */
@@ -213,7 +233,7 @@ int fut_copy_from_user(void *k_dst, const void *u_src, size_t n) {
 
     /* Clear AC flag / Restore TTBR0 */
 #if defined(__x86_64__)
-    __asm__ volatile("clac");
+    smap_clac();
 #elif defined(__aarch64__)
     /* ARM64: Restore original TTBR0 */
     if (mm && mm->ctx.ttbr0_el1 && saved_ttbr0 != mm->ctx.ttbr0_el1) {
@@ -229,7 +249,7 @@ copy_fault:
     {
         /* Clear AC flag / Restore TTBR0 on fault path */
 #if defined(__x86_64__)
-        __asm__ volatile("clac");
+        smap_clac();
 #elif defined(__aarch64__)
         /* ARM64: Restore original TTBR0 */
         if (mm && mm->ctx.ttbr0_el1 && saved_ttbr0 != mm->ctx.ttbr0_el1) {
@@ -265,7 +285,7 @@ int fut_copy_to_user(void *u_dst, const void *k_src, size_t n) {
 
     /* Set AC flag for SMAP (x86-64) or switch to user page table (ARM64) */
 #if defined(__x86_64__)
-    __asm__ volatile("stac");
+    smap_stac();
 #elif defined(__aarch64__)
     /* ARM64 note: TTBR0 should already be set by context switch, so we don't need to switch here.
      * The context switch loads the user's TTBR0 before entering user mode. */
@@ -287,7 +307,7 @@ int fut_copy_to_user(void *u_dst, const void *k_src, size_t n) {
 
     /* Clear AC flag */
 #if defined(__x86_64__)
-    __asm__ volatile("clac");
+    smap_clac();
 #endif
 
     uaccess_clear();
@@ -297,7 +317,7 @@ copy_fault:
     {
         /* Clear AC flag on fault path */
 #if defined(__x86_64__)
-        __asm__ volatile("clac");
+        smap_clac();
 #endif
         int err = fut_uaccess_window_error();
         uaccess_clear();

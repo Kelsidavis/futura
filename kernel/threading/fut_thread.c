@@ -205,24 +205,41 @@ fut_thread_t *fut_thread_create(
 
 #if defined(__x86_64__)
     uintptr_t aligned_top = ((uintptr_t)stack_top) & ~0xFULL;
-    // Provide 16-byte alignment at the point of entry (post-ret => %rsp % 16 == 8)
-    ctx->rsp = aligned_top - 8;
+
+    /* CRITICAL FIX: Push a dummy return address onto the stack.
+     * When we IRETQ to fut_thread_trampoline, we're JUMPING to it, not CALLING it.
+     * The C function expects a proper call with return address on stack.
+     * Without this, the function prologue will crash when setting up the stack frame.
+     * We push fut_thread_exit as the return address so if trampoline returns, we exit cleanly. */
+    extern void fut_thread_exit(void);
+    aligned_top -= 8;  // Make room for return address
+    *(uint64_t *)aligned_top = (uint64_t)(uintptr_t)&fut_thread_exit;
+
+    // Stack is now 16-byte aligned (after the "return address" push)
+    ctx->rsp = aligned_top;
     ctx->rip = (uint64_t)(uintptr_t)&fut_thread_trampoline;
     // RFLAGS bit 1 must be 1 (reserved), bit 9 is interrupt enable
     ctx->rflags = 0x202;  // Bit 1 (reserved=1) | Bit 9 (IF=1)
+
+    /* ALL threads (kernel and user) start in kernel mode (ring 0).
+     * For user threads, the entry point is fut_user_trampoline (a kernel function)
+     * which executes in kernel mode and then uses IRETQ to switch to user mode.
+     * The trampoline itself handles the transition to ring 3. */
     ctx->cs = 0x08; // Kernel code segment
-    ctx->ss = 0x10; // Kernel data segment
+    ctx->ss = 0x10; // Kernel stack segment
+    /* In 64-bit mode, DS/ES/FS are mostly ignored (segmentation is disabled).
+     * Set them to NULL selector (0) to avoid any potential GPF from invalid descriptors.
+     * FS/GS bases are set via MSRs when needed. */
+    ctx->ds = 0;
+    ctx->es = 0;
+    ctx->fs = 0;
+    ctx->gs = 0;
+
     ctx->rdi = (uint64_t)entry;
     ctx->rsi = (uint64_t)arg;
     ctx->rax = 0;
     ctx->rcx = 0;
     ctx->rdx = 0;
-
-    /* Initialize data segment registers to kernel data segment */
-    ctx->ds = 0x10;
-    ctx->es = 0x10;
-    ctx->fs = 0x10;
-    ctx->gs = 0x10;
 
     /* Initialize FPU/XMM state with a valid clean state.
      * This is critical: fxrstor64 requires a properly formatted FXSAVE area.
@@ -449,7 +466,40 @@ int fut_thread_priority_restore(fut_thread_t *thread) {
     thread->pi_boosted = false;
     return 0;
 }
-[[noreturn]] static void fut_thread_trampoline(void (*entry)(void *), void *arg) {
+/* Forward declare the actual trampoline implementation */
+__attribute__((used)) static void fut_thread_trampoline_impl(void (*entry)(void *), void *arg);
+
+/* Naked assembly wrapper that receives the IRETQ and calls the C implementation.
+ * CRITICAL: naked attribute prevents compiler from generating prologue/epilogue.
+ * We manually set up the stack frame and then call the C function. */
+[[noreturn]] __attribute__((naked)) static void fut_thread_trampoline(void (*entry)(void *) __attribute__((unused)), void *arg __attribute__((unused))) {
+    __asm__ volatile(
+        /* Print 'T' debug marker immediately */
+        "pushq %%rax\n"
+        "pushq %%rdx\n"
+        "movw $0x3F8, %%dx\n"
+        "movb $'T', %%al\n"
+        "outb %%al, %%dx\n"
+        "popq %%rdx\n"
+        "popq %%rax\n"
+
+        /* Set up stack frame */
+        "pushq %%rbp\n"
+        "movq %%rsp, %%rbp\n"
+
+        /* Parameters are already in RDI and RSI (x86-64 calling convention) */
+        /* Call the C implementation */
+        "call fut_thread_trampoline_impl\n"
+
+        /* Should never return, but if it does, infinite loop */
+        "1: hlt\n"
+        "jmp 1b\n"
+        ::: "memory"
+    );
+}
+
+/* The actual C implementation, called by the assembly wrapper */
+[[noreturn]] __attribute__((optimize("O0"))) static void fut_thread_trampoline_impl(void (*entry)(void *), void *arg) {
     extern void serial_puts(const char *);
 
     if (!entry) {

@@ -127,6 +127,22 @@ void fut_sched_init(void) {
     // Store idle thread in per-CPU data
     percpu->idle_thread = idle_thread;
 
+    // IMPORTANT: Load idle thread's segment registers BEFORE marking it as running
+    // This ensures the first hardware interrupt will capture correct segment values
+#if defined(__x86_64__)
+    fut_printf("[SCHED-IDLE] Loading idle thread segments: DS/ES/FS = 0x%04x\n",
+               (unsigned int)idle_thread->context.ds);
+    __asm__ volatile(
+        "movw %0, %%ds\n"
+        "movw %0, %%es\n"
+        "movw %0, %%fs\n"
+        : /* no outputs */
+        : "r"((uint16_t)idle_thread->context.ds)
+        : "memory"
+    );
+    fut_printf("[SCHED-IDLE] Idle thread segments loaded\n");
+#endif
+
     // Set idle thread as current thread so kernel_main has a task context
     // This allows opening /dev/console and other operations that need a task
     fut_thread_set_current(idle_thread);
@@ -588,18 +604,21 @@ void fut_schedule(void) {
         bool in_irq = atomic_load_explicit(&fut_in_interrupt, memory_order_acquire);
 #endif
 
-        fut_mm_t *prev_mm = (prev && prev->task) ? fut_task_get_mm(prev->task) : NULL;
-        fut_mm_t *next_mm = (next && next->task) ? fut_task_get_mm(next->task) : NULL;
+        // CRITICAL FIX: Do NOT switch CR3 here!
+        // The kernel trampoline (fut_thread_trampoline) needs to execute in kernel CR3.
+        // For user threads, fut_user_trampoline will switch CR3 right before jumping to user space.
+        // Removed CR3 switching from scheduler - trampolines handle it.
+        // Old code:
+        // fut_mm_t *prev_mm = (prev && prev->task) ? fut_task_get_mm(prev->task) : NULL;
+        // fut_mm_t *next_mm = (next && next->task) ? fut_task_get_mm(next->task) : NULL;
+        // if (prev_mm != next_mm) { fut_mm_switch(next_mm); }
 
         // Only set current_thread if we're actually going to context switch
         fut_thread_set_current(next);
 
-        // Switch MM if needed
-        if (prev_mm != next_mm) {
-            fut_mm_switch(next_mm);
-        }
-
-        if (in_irq && prev && fut_current_frame) {
+        // TEMPORARY: Disable IRETQ-based context switching to debug GPF issue
+        // Force use of RET-based context switch for all threads
+        if (false && in_irq && prev && fut_current_frame) {
             // IRQ-safe context switch (uses IRET)
             // This modifies the interrupt frame on the stack so IRET returns to next thread
 #if defined(__aarch64__)

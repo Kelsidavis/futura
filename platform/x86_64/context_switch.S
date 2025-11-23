@@ -211,9 +211,25 @@ fut_switch_context_irq:
     /* Step 2: Get next thread's saved frame pointer */
     movq 720(%r13), %r11
 
-    /* If next->irq_frame is NULL, construct frame from context */
+    /* Debug: Check if we have a saved frame */
     testq %r11, %r11
-    jnz .restore_saved_frame
+    jz .no_saved_frame
+    /* We have a saved frame! Print 'S' */
+    pushq %rdx
+    movw $0x3F8, %dx
+    movb $'S', %al
+    outb %al, %dx
+    popq %rdx
+    jmp .restore_saved_frame
+.no_saved_frame:
+    /* No saved frame, will construct from context. Print 'C' */
+    pushq %rdx
+    movw $0x3F8, %dx
+    movb $'C', %al
+    outb %al, %dx
+    popq %rdx
+
+    /* If next->irq_frame is NULL, construct frame from context */
 
     /* Construct interrupt frame from thread context */
     /* Thread structure: context starts at offset 48 */
@@ -271,16 +287,38 @@ fut_switch_context_irq:
 
     /* Copy control registers (CPU-pushed values) */
     movq 48(%rsi), %rax     /* context.rip */
+
+    /* Debug: Check if RIP is NULL */
+    testq %rax, %rax
+    jnz .rip_ok
+    /* RIP is NULL! Print '!' and halt */
+    pushq %rdx
+    movw $0x3F8, %dx
+    movb $'!', %al
+    outb %al, %dx
+    popq %rdx
+    hlt
+.rip_ok:
+
     movq %rax, 168(%rdi)    /* frame->rip */
     movq 72(%rsi), %rax     /* context.cs */
     movq %rax, 176(%rdi)    /* frame->cs */
     movq 64(%rsi), %rax     /* context.rflags */
     movq %rax, 184(%rdi)    /* frame->rflags */
+
+    /* Only write RSP/SS if switching to user mode (privilege level change) */
+    /* Check if CS is user mode (0x18 or 0x23) vs kernel mode (0x08) */
+    movq 72(%rsi), %rax     /* context.cs */
+    cmpq $0x08, %rax        /* Is it kernel CS? */
+    je .skip_rsp_ss         /* If yes, skip RSP/SS (no privilege change) */
+
+    /* Switching to user mode - write RSP/SS for IRETQ */
     movq 56(%rsi), %rax     /* context.rsp */
     movq %rax, 192(%rdi)    /* frame->rsp */
     movq 80(%rsi), %rax     /* context.ss */
     movq %rax, 200(%rdi)    /* frame->ss */
 
+.skip_rsp_ss:
     jmp 2f
 
 .restore_saved_frame:
@@ -295,8 +333,41 @@ fut_switch_context_irq:
     /* Step 4: Restore FPU state from next thread's context */
     /* context is at offset 48, fx_area is at offset 160 within context */
     /* So fx_area is at 48 + 160 = 208 */
+
+    /* Debug: Check if R13 (next thread pointer) is valid */
+    testq %r13, %r13
+    jnz .r13_ok
+    /* R13 is NULL! Print '?' and halt */
+    pushq %rdx
+    movw $0x3F8, %dx
+    movb $'?', %al
+    outb %al, %dx
+    popq %rdx
+    hlt
+.r13_ok:
+
     leaq 208(%r13), %rax    /* rax = &next->context.fx_area */
+
+    /* Debug: Check if RAX is valid after calculation */
+    testq %rax, %rax
+    jnz .rax_ok
+    /* RAX is NULL after leaq! Print '@' and halt */
+    pushq %rdx
+    movw $0x3F8, %dx
+    movb $'@', %al
+    outb %al, %dx
+    popq %rdx
+    hlt
+.rax_ok:
+
     fxrstor64 (%rax)
+
+    /* Debug: FPU restore successful, print '#' */
+    pushq %rdx
+    movw $0x3F8, %dx
+    movb $'#', %al
+    outb %al, %dx
+    popq %rdx
 
     /* Step 5: Set stack pointer directly to the interrupt frame */
     /* R14 still contains the pointer to the frame (passed as RDX parameter) */
@@ -321,12 +392,57 @@ fut_switch_context_irq:
     popq %rax               /* Discard saved GS value */
     /* GS intentionally NOT restored - must preserve GS_BASE MSR */
 
+    /* Validate and load FS */
+    movq 0(%rsp), %rax      /* Peek at FS value without popping */
+    testw %ax, %ax          /* Check if NULL selector (0) */
+    jz .fs_skip             /* NULL is valid, skip loading */
+    cmpw $0x10, %ax         /* Check if valid kernel segment */
+    je .fs_ok
+    cmpw $0x23, %ax         /* Check if valid user segment */
+    je .fs_ok
+    /* FS value is invalid! Skip loading it, use current FS */
+.fs_skip:
+    addq $8, %rsp           /* Skip the FS value */
+    jmp .fs_done
+.fs_ok:
     popq %rax               /* Pop fs */
     movw %ax, %fs
+.fs_done:
+
+    /* Validate and load ES */
+    movq 0(%rsp), %rax      /* Peek at ES value without popping */
+    testw %ax, %ax          /* Check if NULL selector (0) */
+    jz .es_skip             /* NULL is valid, skip loading */
+    cmpw $0x10, %ax         /* Check if valid kernel segment */
+    je .es_ok
+    cmpw $0x23, %ax         /* Check if valid user segment */
+    je .es_ok
+    /* ES value is invalid! Skip loading it, use current ES */
+.es_skip:
+    addq $8, %rsp           /* Skip the ES value */
+    jmp .es_done
+.es_ok:
     popq %rax               /* Pop es */
     movw %ax, %es
+.es_done:
+
+    /* Validate and load DS */
+    movq 0(%rsp), %rax      /* Peek at DS value without popping */
+    testw %ax, %ax          /* Check if NULL selector (0) */
+    jz .ds_skip             /* NULL is valid, skip loading */
+    cmpw $0x10, %ax         /* Check if valid kernel segment */
+    je .ds_ok
+    cmpw $0x23, %ax         /* Check if valid user segment */
+    je .ds_ok
+    /* DS value is invalid! Skip loading it and use current DS */
+.ds_skip:
+    addq $8, %rsp           /* Skip the DS value */
+    jmp .segments_done
+.ds_ok:
     popq %rax               /* Pop ds */
     movw %ax, %ds
+
+.segments_done:
 
     /* Restore general purpose registers */
     popq %rax
@@ -351,6 +467,110 @@ fut_switch_context_irq:
     /* Step 7: Execute IRETQ to jump to the next thread */
     /* Stack now has: rip, cs, rflags, rsp, ss (pushed by hardware during IRQ) */
     /* IRETQ will pop these and jump to the new thread's saved RIP */
+
+    /* Debug: About to IRETQ, print '$' */
+    pushq %rdx
+    pushq %rax
+    movw $0x3F8, %dx
+    movb $'$', %al
+    outb %al, %dx
+
+    /* Debug: Print all IRETQ frame values */
+    /* Stack layout after pushing RAX and RDX:
+     * [RSP+0]  = RAX (temp)
+     * [RSP+8]  = RDX (temp)
+     * [RSP+16] = RIP (IRETQ frame)
+     * [RSP+24] = CS  (IRETQ frame)
+     * [RSP+32] = RFLAGS (IRETQ frame)
+     * [RSP+40] = RSP (only if CPL change)
+     * [RSP+48] = SS  (only if CPL change)
+     */
+
+    /* Print 'R' and RIP value */
+    movq 16(%rsp), %rax        /* Get RIP from stack */
+    pushq %rax
+    movb $'R', %al
+    outb %al, %dx
+    popq %rax
+
+    /* Check if RIP is in kernel space (high bit set) */
+    testq %rax, %rax
+    js .rip_kernel
+    movb $'U', %al              /* U = user space RIP */
+    outb %al, %dx
+    jmp .rip_checked
+.rip_kernel:
+    movb $'K', %al              /* K = kernel space RIP */
+    outb %al, %dx
+.rip_checked:
+
+    /* Print high nibble of byte 7 (most significant byte) */
+    movq %rax, %rcx
+    shrq $60, %rcx
+    andb $0xF, %cl
+    cmpb $10, %cl
+    jl .rip_digit1
+    addb $('A' - 10), %cl
+    jmp .rip_print1
+.rip_digit1:
+    addb $'0', %cl
+.rip_print1:
+    pushq %rax
+    movb %cl, %al
+    outb %al, %dx
+    popq %rax
+
+    /* Print low nibble of byte 7 */
+    movq %rax, %rcx
+    shrq $56, %rcx
+    andb $0xF, %cl
+    cmpb $10, %cl
+    jl .rip_digit2
+    addb $('A' - 10), %cl
+    jmp .rip_print2
+.rip_digit2:
+    addb $'0', %cl
+.rip_print2:
+    pushq %rax
+    movb %cl, %al
+    outb %al, %dx
+    popq %rax
+
+    /* Check if RIP is NULL */
+    testq %rax, %rax
+    jnz .rip_not_null
+    /* RIP IS NULL! Print 'Z' and halt */
+    movb $'Z', %al
+    outb %al, %dx
+    hlt
+.rip_not_null:
+
+    /* Debug: Check CS value on stack (at RSP+24 after pushing RDX and RAX) */
+    movq 24(%rsp), %rax        /* Get CS from stack */
+    cmpq $0x08, %rax          /* Is it kernel CS? */
+    je .cs_valid
+    /* CS is NOT 0x08! Print 'X' */
+    movb $'X', %al
+    outb %al, %dx
+    jmp .cs_done
+.cs_valid:
+    /* CS is 0x08, print 'K' */
+    movb $'K', %al
+    outb %al, %dx
+.cs_done:
+
+    popq %rax
+    popq %rdx
+
+    /* Debug: Print '>' immediately before IRETQ */
+    pushq %rax
+    pushq %rdx
+    movw $0x3F8, %dx
+    movb $'>', %al
+    outb %al, %dx
+    popq %rdx
+    popq %rax
+
     iretq
 
 .size fut_switch_context_irq, . - fut_switch_context_irq

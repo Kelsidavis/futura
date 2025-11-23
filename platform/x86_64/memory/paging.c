@@ -705,3 +705,24 @@ int fut_virt_to_phys(fut_vmem_context_t *ctx, uint64_t vaddr, uint64_t *paddr) {
     *paddr = fut_pte_to_phys(pt->entries[pt_idx]) + offset;
     return 0;
 }
+
+/**
+ * Switch to a different address space by loading CR3.
+ *
+ * @param ctx Virtual memory context containing the CR3 value to load.
+ */
+void fut_vmem_switch(fut_vmem_context_t *ctx) {
+    extern void fut_printf(const char *, ...);
+
+    if (!ctx) {
+        fut_printf("[MM-SWITCH] CR3 switch called with NULL ctx!\n");
+        return;
+    }
+
+    fut_printf("[MM-SWITCH] Loading CR3=0x%llx\n", (unsigned long long)ctx->cr3_value);
+
+    /* Load the new CR3 value to switch page tables */
+    __asm__ volatile("mov %0, %%cr3" : : "r"(ctx->cr3_value) : "memory");
+
+    fut_printf("[MM-SWITCH] CR3 loaded successfully\n");
+}

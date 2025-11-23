@@ -265,6 +265,83 @@ fut_switch_context_irq:
     movb $'!', %al
     outb %al, %dx
 .fix_cs_done:
+
+    /* CRITICAL FIX: Check if RIP/RSP are invalid.
+     * For kernel→kernel interrupts, hardware doesn't push RSP, leaving garbage
+     * at offset 192. RIP can also be garbage if the interrupt frame wasn't
+     * properly initialized. Check if these values are in valid kernel space
+     * (high half: 0xFFFF800000000000+). If not, use values from thread context. */
+
+    /* Check RIP */
+    movq 168(%r15), %rax    /* Get RIP from saved frame */
+    movq %rax, %rcx         /* Copy for testing */
+    shrq $47, %rcx          /* Shift to get top bits */
+    cmpq $0x1FFFF, %rcx     /* Valid kernel address has top 17 bits all 1s */
+    jge .rip_valid          /* RIP is in kernel space, keep it */
+
+    /* RIP is invalid! Get it from thread context */
+    testq %r12, %r12        /* Do we have a prev thread? */
+    jz .fix_rip_done        /* No prev thread, can't fix */
+
+    movq 96(%r12), %rax     /* Get context.rip (thread offset 48 + context offset 48) */
+    testq %rax, %rax        /* Is context RIP also NULL? */
+    jz .fix_rip_done        /* Can't fix with NULL */
+
+    /* Fix RIP with value from context */
+    movq %rax, 168(%r15)    /* Store context RIP in frame */
+
+    /* Debug: Print '@' to indicate we fixed RIP */
+    movb $'@', %al
+    outb %al, %dx
+    jmp .fix_rip_done
+
+.rip_valid:
+.fix_rip_done:
+
+    /* Check RSP - must also be in kernel space */
+    movq 192(%r15), %rax    /* Get RSP from saved frame */
+    movq %rax, %rcx         /* Copy for testing */
+    shrq $47, %rcx          /* Shift to get top bits */
+    cmpq $0x1FFFF, %rcx     /* Valid kernel address? */
+    jge .rsp_valid          /* RSP is in kernel space, keep it */
+
+    /* RSP is invalid! Get current RSP (approximately) */
+    /* We can't use the exact current RSP, but we can use the prev thread's
+     * stack top as a reasonable value */
+    testq %r12, %r12        /* Do we have a prev thread? */
+    jz .fix_rsp_done        /* No prev thread, can't fix */
+
+    movq 16(%r12), %rax     /* Get thread->stack_base */
+    addq 24(%r12), %rax     /* Add thread->stack_size for stack_top */
+    testq %rax, %rax        /* Valid? */
+    jz .fix_rsp_done        /* Can't fix */
+
+    /* Fix RSP with stack top */
+    movq %rax, 192(%r15)    /* Store in frame */
+
+    /* Debug: Print '^' to indicate we fixed RSP */
+    movb $'^', %al
+    outb %al, %dx
+    jmp .fix_rsp_done
+
+.rsp_valid:
+.fix_rsp_done:
+
+    /* CRITICAL FIX: Check if RFLAGS is valid.
+     * RFLAGS bit 1 must always be set (it's a reserved bit).
+     * If it's not set, the frame has garbage and IRETQ will fault. */
+    movq 184(%r15), %rax    /* Get RFLAGS from saved frame */
+    testq $0x2, %rax        /* Check if bit 1 is set */
+    jnz .fix_rflags_done    /* Bit 1 is set, RFLAGS is valid */
+
+    /* RFLAGS is invalid! Set bit 1 and IF (bit 9) for interrupts */
+    orq $0x202, %rax        /* Set bit 1 (reserved) and bit 9 (IF) */
+    movq %rax, 184(%r15)    /* Store fixed RFLAGS */
+
+    /* Debug: Print '~' to indicate we fixed RFLAGS */
+    movb $'~', %al
+    outb %al, %dx
+.fix_rflags_done:
 .fix_ss_done:
 
     /* Fix up SS with current value */

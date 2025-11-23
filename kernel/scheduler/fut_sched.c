@@ -130,14 +130,15 @@ void fut_sched_init(void) {
     // IMPORTANT: Load idle thread's segment registers BEFORE marking it as running
     // This ensures the first hardware interrupt will capture correct segment values
 #if defined(__x86_64__)
-    fut_printf("[SCHED-IDLE] Loading idle thread segments: DS/ES/FS = 0x%04x\n",
+    fut_printf("[SCHED-IDLE] Loading idle thread segments: DS/ES/FS/SS = 0x%04x\n",
                (unsigned int)idle_thread->context.ds);
     __asm__ volatile(
         "movw %0, %%ds\n"
         "movw %0, %%es\n"
         "movw %0, %%fs\n"
+        "movw %1, %%ss\n"
         : /* no outputs */
-        : "r"((uint16_t)idle_thread->context.ds)
+        : "r"((uint16_t)idle_thread->context.ds), "r"((uint16_t)idle_thread->context.ss)
         : "memory"
     );
     fut_printf("[SCHED-IDLE] Idle thread segments loaded\n");

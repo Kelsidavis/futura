@@ -306,19 +306,14 @@ fut_switch_context_irq:
     movq 64(%rsi), %rax     /* context.rflags */
     movq %rax, 184(%rdi)    /* frame->rflags */
 
-    /* Only write RSP/SS if switching to user mode (privilege level change) */
-    /* Check if CS is user mode (0x18 or 0x23) vs kernel mode (0x08) */
-    movq 72(%rsi), %rax     /* context.cs */
-    cmpq $0x08, %rax        /* Is it kernel CS? */
-    je .skip_rsp_ss         /* If yes, skip RSP/SS (no privilege change) */
-
-    /* Switching to user mode - write RSP/SS for IRETQ */
+    /* ALWAYS initialize RSP/SS in frame, even for kernel mode.
+     * While IRETQ won't read these for same-privilege returns (kernel->kernel),
+     * initializing them prevents issues with garbage values and ensures
+     * the frame is always in a valid state. */
     movq 56(%rsi), %rax     /* context.rsp */
     movq %rax, 192(%rdi)    /* frame->rsp */
     movq 80(%rsi), %rax     /* context.ss */
     movq %rax, 200(%rdi)    /* frame->ss */
-
-.skip_rsp_ss:
     jmp 2f
 
 .restore_saved_frame:

@@ -127,6 +127,10 @@ void fut_sched_init(void) {
     // Store idle thread in per-CPU data
     percpu->idle_thread = idle_thread;
 
+    // CRITICAL: Idle thread should NEVER use saved interrupt frames
+    // Always construct frames from context to avoid stale frame issues
+    idle_thread->irq_frame = NULL;
+
     // IMPORTANT: Load idle thread's segment registers BEFORE marking it as running
     // This ensures the first hardware interrupt will capture correct segment values
 #if defined(__x86_64__)
@@ -627,8 +631,13 @@ void fut_schedule(void) {
         // Only set current_thread if we're actually going to context switch
         fut_thread_set_current(next);
 
-        // Re-enable IRETQ path for investigation
-        if (in_irq && prev && fut_current_frame) {
+        // CRITICAL: Idle thread (tid=1) must NEVER use IRETQ-based switching!
+        // Its context structure contains stale bootstrap values. Once it starts running,
+        // we can't construct valid interrupt frames from it. Force cooperative switching.
+        bool idle_involved = (prev && prev->tid == 1) || (next && next->tid == 1);
+
+        // Re-enable IRETQ path for investigation (but not for idle thread)
+        if (in_irq && prev && fut_current_frame && !idle_involved) {
             // IRQ-safe context switch (uses IRET)
             // This modifies the interrupt frame on the stack so IRET returns to next thread
 #if defined(__aarch64__)

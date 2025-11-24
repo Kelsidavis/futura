@@ -313,6 +313,28 @@ fut_switch_context_irq:
     popq %rax
 
 1:
+    /* CRITICAL: Never allow idle thread (tid=1) to have saved interrupt frames.
+     * Idle thread should always construct frames from context to avoid corruption.
+     * If prev is idle thread, ensure its irq_frame is NULL. */
+    testq %r12, %r12        /* Check if we have a prev thread */
+    jz .check_next_idle
+    movq 0(%r12), %rax      /* Get prev->tid (first field in struct) */
+    cmpq $1, %rax           /* Is it tid=1 (idle thread)? */
+    jne .check_next_idle
+    /* prev is idle thread - ensure irq_frame is NULL */
+    movq $0, 720(%r12)      /* prev->irq_frame = NULL */
+
+.check_next_idle:
+    /* Similarly, if next is idle thread, ensure its irq_frame is NULL */
+    testq %r13, %r13        /* Check if we have a next thread */
+    jz .get_next_frame
+    movq 0(%r13), %rax      /* Get next->tid */
+    cmpq $1, %rax           /* Is it tid=1 (idle thread)? */
+    jne .get_next_frame
+    /* next is idle thread - clear irq_frame to force construction from context */
+    movq $0, 720(%r13)      /* next->irq_frame = NULL */
+
+.get_next_frame:
     /* Step 2: Get next thread's saved frame pointer */
     movq 720(%r13), %r11
 

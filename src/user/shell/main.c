@@ -4020,21 +4020,26 @@ int main(int argc, char **argv, char **envp) {
     }
 
     /* Initialize standard file descriptors if not already open */
-    /* Try to open /dev/console for stdin (fd 0), stdout (fd 1), stderr (fd 2) */
+    /* Open /dev/console and use dup2 to set up stdin (fd 0), stdout (fd 1), stderr (fd 2) */
     int console_fd = sys_open("/dev/console", O_RDWR, 0);
     if (console_fd < 0) {
-        /* /dev/console open failed, but we can still try to write to stdout */
-        /* Fall back to assuming stdout works through some other mechanism */
+        /* /dev/console open failed - try to continue anyway */
+        /* Shell may have inherited fds from parent process */
     } else {
-        /* Successfully opened /dev/console */
-        /* The fd returned should be 0 if it's the first open (or close then reopen stdin first) */
-        /* For now, we assume the syscall layer will handle proper fd assignment */
-        if (console_fd > 0) {
-            /* If we got fd > 0, close it since we need stdin on fd 0 */
-            /* In a real system we'd dup2(console_fd, 0) but we don't have that yet */
+        /* Successfully opened /dev/console - use dup2 to set up standard streams */
+        /* dup2 will close the target fd if it's already open, then duplicate */
+        if (console_fd != 0) {
+            sys_dup2(console_fd, 0);  /* stdin */
+        }
+        if (console_fd != 1) {
+            sys_dup2(console_fd, 1);  /* stdout */
+        }
+        if (console_fd != 2) {
+            sys_dup2(console_fd, 2);  /* stderr */
+        }
+        /* Close original fd if it's not one of the standard streams */
+        if (console_fd > 2) {
             sys_close(console_fd);
-            /* Try to open again, hoping it gets fd 0 */
-            console_fd = sys_open("/dev/console", O_RDWR, 0);
         }
     }
 

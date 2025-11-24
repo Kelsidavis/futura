@@ -658,11 +658,11 @@ static fut_thread_t *clone_thread(fut_thread_t *parent_thread, fut_task_t *child
     child_thread->context.cs = user_cs;
     child_thread->context.ss = user_ss;
 
-    /* Set segment registers to user data segment */
-    child_thread->context.ds = 0x10;  // User data segment
-    child_thread->context.es = 0x10;
-    child_thread->context.fs = 0x10;
-    child_thread->context.gs = 0x10;
+    /* Set segment registers to user data segment (0x20 | 3 = 0x23 with RPL=3) */
+    child_thread->context.ds = 0x23;  // User data segment with RPL=3
+    child_thread->context.es = 0x23;
+    child_thread->context.fs = 0x23;
+    child_thread->context.gs = 0x23;
 
     /* Set child's fork() return value to 0 */
     child_thread->context.rax = 0;

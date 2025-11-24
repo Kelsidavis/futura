@@ -378,10 +378,18 @@ bool fut_trap_handle_page_fault(fut_interrupt_frame_t *frame) {
     }
 
     if ((frame->cs & 0x3u) != 0) {
-        fut_printf("[#PF] user fault addr=0x%016llx err=0x%llx rip=0x%016llx\n",
+        /* Get current thread for better diagnostics */
+        fut_thread_t *thread = fut_thread_current();
+        int tid = thread ? (int)thread->tid : -1;
+
+        /* Enhanced logging with thread ID and fault type detection */
+        const char *fault_type = (fault_addr < PAGE_SIZE) ? " [NULL+offset]" : "";
+        fut_printf("[#PF] user fault (tid=%d) addr=0x%016llx err=0x%llx rip=0x%016llx%s\n",
+                   tid,
                    (unsigned long long)fault_addr,
                    (unsigned long long)frame->error_code,
-                   (unsigned long long)frame->rip);
+                   (unsigned long long)frame->rip,
+                   fault_type);
         fut_printf("[#PF] rsp=0x%016llx rbp=0x%016llx rax=0x%016llx\n",
                    (unsigned long long)frame->rsp,
                    (unsigned long long)frame->rbp,
@@ -390,6 +398,12 @@ bool fut_trap_handle_page_fault(fut_interrupt_frame_t *frame) {
                    (unsigned long long)frame->rbx,
                    (unsigned long long)frame->rcx,
                    (unsigned long long)frame->rdx);
+
+        /* Check if this might be a stale CR2 issue */
+        if (fault_addr < PAGE_SIZE) {
+            fut_printf("[#PF] NOTE: Fault at very low address - possible stale CR2 or segment issue\n");
+        }
+
         fut_task_signal_exit(SIGSEGV);
     }
 

@@ -222,13 +222,24 @@ fut_switch_context_irq:
     movb $'[', %al          /* [ = start frame save debug */
     outb %al, %dx
 
-    /* Check RIP first */
+    /* Check RIP first - if it's ZERO, don't save this frame! */
     movq 168(%r15), %rax    /* Get saved RIP from frame */
     testq %rax, %rax
     jnz .save_rip_nonzero
-    movb $'0', %al          /* 0 = RIP is zero! */
+
+    /* RIP is ZERO - thread hasn't started yet, skip saving frame */
+    movb $'0', %al          /* 0 = RIP is zero, skipping frame save! */
     outb %al, %dx
-    jmp .save_rip_done
+    movb $']', %al
+    outb %al, %dx
+
+    /* IMPORTANT: Clear prev->irq_frame to prevent restoring stale zero-RIP frame */
+    testq %r12, %r12        /* Check if we have a prev thread */
+    jz 1f                   /* No prev thread, skip to restore next */
+    movq $0, 720(%r12)      /* prev->irq_frame = NULL (offset 720) */
+
+    jmp 1f                  /* Skip to step 2: restore next thread */
+
 .save_rip_nonzero:
     movb $'r', %al          /* r = RIP is non-zero */
     outb %al, %dx
@@ -246,119 +257,55 @@ fut_switch_context_irq:
     outb %al, %dx
 .save_cs_done:
 
-    /* CRITICAL FIX: If current SS is 0x10 (kernel), we're in kernel mode.
-     * Ensure CS is also kernel (0x08), not garbage. The CPU should have pushed
-     * the correct CS, but if we see otherwise, fix it. */
-    movw %ss, %ax           /* Get current SS */
-    cmpw $0x10, %ax         /* Is it kernel SS? */
-    jne .fix_ss_done        /* If not kernel SS, skip CS fixup */
+    /* CRITICAL: Trust hardware-pushed frames. If we see unexpected values,
+     * the frame is corrupted and should be REJECTED, not fixed! */
 
-    /* We're in kernel mode - ensure CS in frame is 0x08 */
+    /* Validate frame consistency: CS must match RIP address space */
     movq 176(%r15), %rax    /* Get CS from saved frame */
-    cmpq $0x08, %rax        /* Already kernel CS? */
-    je .fix_cs_done         /* Yes, skip fix */
+    cmpq $0x08, %rax        /* Is it kernel CS? */
+    je .validate_kernel_frame
 
-    /* CS is wrong! Fix it */
-    movq $0x08, 176(%r15)   /* Force CS to kernel */
+    /* User CS - validate RIP is in user space (< 0x800000000000) */
+    movq 168(%r15), %rax    /* Get RIP */
+    movq %rax, %rcx
+    shrq $47, %rcx          /* Get top 17 bits */
+    testq %rcx, %rcx        /* Should be 0 for user addresses */
+    jz .skip_all_fixups     /* Valid user frame */
 
-    /* Debug: Print '!' to indicate we fixed CS */
-    movb $'!', %al
+    /* User CS but kernel RIP - corrupted! Skip save */
+    movb $'!', %al          /* ! = frame validation failed */
     outb %al, %dx
-.fix_cs_done:
+    jmp .skip_save_corrupted
 
-    /* CRITICAL FIX: Check if RIP/RSP are invalid.
-     * For kernel→kernel interrupts, hardware doesn't push RSP, leaving garbage
-     * at offset 192. RIP can also be garbage if the interrupt frame wasn't
-     * properly initialized. Check if these values are in valid kernel space
-     * (high half: 0xFFFF800000000000+). If not, use values from thread context. */
+.validate_kernel_frame:
+    /* Kernel CS - validate RIP is in kernel space (>= 0xFFFF800000000000) */
+    movq 168(%r15), %rax    /* Get RIP */
+    movq %rax, %rcx
+    shrq $47, %rcx          /* Get top 17 bits */
+    cmpq $0x1FFFF, %rcx     /* Should be 0x1FFFF for kernel addresses */
+    je .skip_all_fixups     /* Valid kernel frame */
 
-    /* Check RIP */
-    movq 168(%r15), %rax    /* Get RIP from saved frame */
-    movq %rax, %rcx         /* Copy for testing */
-    shrq $47, %rcx          /* Shift to get top bits */
-    cmpq $0x1FFFF, %rcx     /* Valid kernel address has top 17 bits all 1s */
-    jge .rip_valid          /* RIP is in kernel space, keep it */
-
-    /* RIP is invalid! Get it from thread context */
-    testq %r12, %r12        /* Do we have a prev thread? */
-    jz .fix_rip_done        /* No prev thread, can't fix */
-
-    movq 96(%r12), %rax     /* Get context.rip (thread offset 48 + context offset 48) */
-    testq %rax, %rax        /* Is context RIP also NULL? */
-    jz .fix_rip_done        /* Can't fix with NULL */
-
-    /* Fix RIP with value from context */
-    movq %rax, 168(%r15)    /* Store context RIP in frame */
-
-    /* Debug: Print '@' to indicate we fixed RIP */
-    movb $'@', %al
+    /* Kernel CS but non-kernel RIP - corrupted! Skip save */
+    movb $'!', %al          /* ! = frame validation failed */
     outb %al, %dx
-    jmp .fix_rip_done
+    jmp .skip_save_corrupted
 
-.rip_valid:
-.fix_rip_done:
-
-    /* Check RSP - must also be in kernel space */
-    movq 192(%r15), %rax    /* Get RSP from saved frame */
-    movq %rax, %rcx         /* Copy for testing */
-    shrq $47, %rcx          /* Shift to get top bits */
-    cmpq $0x1FFFF, %rcx     /* Valid kernel address? */
-    jge .rsp_valid          /* RSP is in kernel space, keep it */
-
-    /* RSP is invalid! Get current RSP (approximately) */
-    /* We can't use the exact current RSP, but we can use the prev thread's
-     * stack top as a reasonable value */
-    testq %r12, %r12        /* Do we have a prev thread? */
-    jz .fix_rsp_done        /* No prev thread, can't fix */
-
-    movq 16(%r12), %rax     /* Get thread->stack_base */
-    addq 24(%r12), %rax     /* Add thread->stack_size for stack_top */
-    testq %rax, %rax        /* Valid? */
-    jz .fix_rsp_done        /* Can't fix */
-
-    /* Fix RSP with stack top */
-    movq %rax, 192(%r15)    /* Store in frame */
-
-    /* Debug: Print '^' to indicate we fixed RSP */
-    movb $'^', %al
+.skip_save_corrupted:
+    /* Frame is corrupted - don't save it */
+    movb $'Y', %al          /* Y = skipping corrupted frame */
     outb %al, %dx
-    jmp .fix_rsp_done
-
-.rsp_valid:
-.fix_rsp_done:
-
-    /* CRITICAL FIX: Check if RFLAGS is valid.
-     * RFLAGS bit 1 must always be set (it's a reserved bit).
-     * If it's not set, the frame has garbage and IRETQ will fault. */
-    movq 184(%r15), %rax    /* Get RFLAGS from saved frame */
-    testq $0x2, %rax        /* Check if bit 1 is set */
-    jnz .fix_rflags_done    /* Bit 1 is set, RFLAGS is valid */
-
-    /* RFLAGS is invalid! Set bit 1 and IF (bit 9) for interrupts */
-    orq $0x202, %rax        /* Set bit 1 (reserved) and bit 9 (IF) */
-    movq %rax, 184(%r15)    /* Store fixed RFLAGS */
-
-    /* Debug: Print '~' to indicate we fixed RFLAGS */
-    movb $'~', %al
-    outb %al, %dx
-.fix_rflags_done:
-.fix_ss_done:
-
-    /* Fix up SS with current value */
-    movw %ss, %ax           /* Get current SS (again, after checks) */
-    movzwq %ax, %rax        /* Zero-extend 16-bit AX to 64-bit RAX */
-    movq %rax, 200(%r15)    /* Store in saved frame->ss */
-
-    /* Debug: Print the SS value we just stored */
-    shrw $4, %ax
-    andb $0xF, %al
-    addb $'0', %al
-    cmpb $'9', %al
-    jle .save_ss_digit
-    addb $7, %al
-.save_ss_digit:
+    movb $']', %al
     outb %al, %dx
 
+    /* Clear prev->irq_frame to prevent using stale frame */
+    testq %r12, %r12
+    jz 1f
+    movq $0, 720(%r12)      /* prev->irq_frame = NULL */
+
+    jmp 1f                  /* Skip to restore next thread */
+
+.skip_all_fixups:
+    /* Frame is valid - save it as-is without any modifications */
     movb $']', %al          /* ] = end frame save debug */
     outb %al, %dx
 
@@ -386,6 +333,14 @@ fut_switch_context_irq:
     movb $'C', %al
     outb %al, %dx
     popq %rdx
+
+    /* IMPORTANT: Clear next->irq_frame to prevent reusing stale frames */
+    /* This handles both the case where irq_frame was NULL and where
+     * we jumped here from validation failure (line 468) */
+    testq %r13, %r13        /* Check if we have a next thread */
+    jz .skip_clear_next
+    movq $0, 720(%r13)      /* next->irq_frame = NULL */
+.skip_clear_next:
 
     /* If next->irq_frame is NULL, construct frame from context */
 
@@ -470,11 +425,57 @@ fut_switch_context_irq:
      * the frame is always in a valid state. */
     movq 56(%rsi), %rax     /* context.rsp */
     movq %rax, 192(%rdi)    /* frame->rsp */
-    movq 80(%rsi), %rax     /* context.ss */
+
+    /* CRITICAL: Always set SS to valid selector */
+    /* context.ss might be 0 (uninitialized), which causes GP fault on IRETQ */
+    /* For safety, ALWAYS use kernel SS (0x10) when constructing frames */
+    /* This handles the case where context is corrupted/uninitialized */
+    movq $0x10, %rax        /* Force SS to kernel selector */
     movq %rax, 200(%rdi)    /* frame->ss */
     jmp 2f
 
 .restore_saved_frame:
+    /* CRITICAL: Validate saved frame before restoring! */
+    /* First check: RIP must NOT be zero (invalid for any mode) */
+    movq 168(%r11), %rax    /* Get RIP from saved frame */
+    testq %rax, %rax        /* Is RIP zero? */
+    jz .restore_frame_invalid  /* Zero RIP is always invalid! */
+
+    /* Check if kernel or user mode */
+    movq 176(%r11), %rax    /* Get CS from saved frame */
+    cmpq $0x08, %rax        /* Is it kernel CS? */
+    jne .validate_user_frame  /* User thread - validate user constraints */
+
+    /* Kernel thread - validate RIP is in kernel space (>= 0xFFFF800000000000) */
+    movq 168(%r11), %rax    /* Get RIP from saved frame */
+    movq %rax, %rcx         /* Copy for test */
+    shrq $47, %rcx          /* Get top 17 bits */
+    cmpq $0x1FFFF, %rcx     /* Should be 0x1FFFF for kernel addresses */
+    je .restore_frame_ok    /* Valid kernel RIP */
+    jmp .restore_frame_invalid  /* Invalid kernel RIP */
+
+.validate_user_frame:
+    /* User thread - validate RIP is in user space (< 0x800000000000) */
+    movq 168(%r11), %rax    /* Get RIP from saved frame */
+    movq %rax, %rcx         /* Copy for test */
+    shrq $47, %rcx          /* Get top 17 bits */
+    testq %rcx, %rcx        /* Should be 0 for user addresses */
+    jz .restore_frame_ok    /* Valid user RIP */
+    /* Fall through to .restore_frame_invalid */
+
+.restore_frame_invalid:
+    /* Invalid RIP in saved frame! Clear irq_frame and construct from context */
+    pushq %rdx
+    movw $0x3F8, %dx
+    movb $'X', %al          /* X = frame validation failed! */
+    outb %al, %dx
+    popq %rdx
+
+    /* Clear next->irq_frame so we don't use this corrupted frame again */
+    movq $0, 720(%r13)      /* next->irq_frame = NULL */
+    jmp .no_saved_frame     /* Construct from context instead */
+
+.restore_frame_ok:
     /* Debug: Check what CS value is in saved frame we're about to restore */
     pushq %rax
     pushq %rdx

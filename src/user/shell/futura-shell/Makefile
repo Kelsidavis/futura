@@ -6,7 +6,7 @@ PLATFORM ?= x86_64
 ROOT := ../../../..
 BUILD_ROOT := $(ROOT)/build
 OBJ_DIR := $(BUILD_ROOT)/obj/$(PLATFORM)/user/shell/futura-shell
-BIN_DIR := $(BUILD_ROOT)/bin/user
+BIN_DIR := $(BUILD_ROOT)/bin/$(PLATFORM)/user
 
 include $(ROOT)/mk/wayland.mk
 

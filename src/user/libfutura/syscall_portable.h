@@ -224,14 +224,26 @@ static inline long syscall6(long nr, long arg1, long arg2, long arg3, long arg4,
 #define __NR_write          1
 #define __NR_open           2
 #define __NR_close          3
+#define __NR_socket         41
+#define __NR_connect        42
+#define __NR_bind           49
+#define __NR_listen         50
 #define __NR_exit           60
+#define __NR_fcntl          72
+#define __NR_unlink         87
+#define __NR_chmod          90
+#define __NR_fchmod         91
+#define __NR_epoll_ctl      233
 
-/* Common file flags */
+/* Common file flags - only define if not already defined by system headers */
+#ifndef O_RDONLY
 #define O_RDONLY            0
 #define O_WRONLY            1
 #define O_RDWR              2
 #define O_CREAT             (1 << 6)    /* 0100 */
 #define O_TRUNC             (1 << 9)    /* 01000 */
 #define O_APPEND            (1 << 10)   /* 02000 */
+#define O_TMPFILE           (020000000 | 0200000)  /* Create unnamed temporary file */
+#endif
 
 #endif /* _SYSCALL_PORTABLE_H */

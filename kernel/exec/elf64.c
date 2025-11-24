@@ -718,6 +718,7 @@ int fut_stage_wayland_compositor_binary(void) {
                (void*)_binary_build_bin_x86_64_user_futura_wayland_start,
                (void*)_binary_build_bin_x86_64_user_futura_wayland_end,
                (unsigned long long)wayland_size);
+    (void)wayland_size;  /* Used in EXEC_DEBUG macro, may be unused if debug disabled */
 
     return stage_blob(_binary_build_bin_x86_64_user_futura_wayland_start,
                       _binary_build_bin_x86_64_user_futura_wayland_end,

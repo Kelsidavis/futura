@@ -26,6 +26,7 @@ typedef uint32_t mode_t;
 #define O_DIRECTORY 00200000    /* Must be a directory */
 #define O_NOFOLLOW  00400000    /* Don't follow symbolic links */
 #define O_CLOEXEC   02000000    /* Close on exec */
+#define O_TMPFILE   (020000000 | O_DIRECTORY)  /* Create unnamed temporary file */
 
 /* fcntl() commands */
 #define F_DUPFD     0    /* Duplicate file descriptor */

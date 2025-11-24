@@ -28,9 +28,7 @@ int main(void) {
         sys_close(test_fd);
     }
 
-    printf("Futura OS Init - Launching shell...\n");
-
-    // Brief delay to let boot messages settle
+    // Brief delay to let boot messages settle before launching shell
     fut_timespec_t delay = { .tv_sec = 1, .tv_nsec = 0 };
     sys_nanosleep_call(&delay, 0);
 

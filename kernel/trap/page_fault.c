@@ -382,6 +382,14 @@ bool fut_trap_handle_page_fault(fut_interrupt_frame_t *frame) {
                    (unsigned long long)fault_addr,
                    (unsigned long long)frame->error_code,
                    (unsigned long long)frame->rip);
+        fut_printf("[#PF] rsp=0x%016llx rbp=0x%016llx rax=0x%016llx\n",
+                   (unsigned long long)frame->rsp,
+                   (unsigned long long)frame->rbp,
+                   (unsigned long long)frame->rax);
+        fut_printf("[#PF] rbx=0x%016llx rcx=0x%016llx rdx=0x%016llx\n",
+                   (unsigned long long)frame->rbx,
+                   (unsigned long long)frame->rcx,
+                   (unsigned long long)frame->rdx);
         fut_task_signal_exit(SIGSEGV);
     }
 

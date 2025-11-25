@@ -323,8 +323,9 @@ static int map_segment(fut_mm_t *mm, int fd, const elf64_phdr_t *phdr) {
 
         fut_free(buffer);
 
-        /* Re-enable interrupts after copy completes */
-        __asm__ volatile("sti");
+        /* NOTE: Interrupts stay disabled - they are disabled at the start of
+         * fut_exec_elf and re-enabled when transitioning to user mode via IRET.
+         * This prevents timer interrupts from corrupting forked children. */
     }
 
     fut_free(pages);
@@ -834,6 +835,15 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
         return -EINVAL;
     }
 
+    /* CRITICAL: Disable interrupts for the ENTIRE exec operation.
+     * When a forked child calls exec, its thread->context still contains
+     * user-mode values (user RIP, user CS) from fork(). If a timer interrupt
+     * fires during exec and the scheduler constructs a frame from the stale
+     * user-mode context, IRET will jump to a user address in the just-replaced
+     * address space - resulting in GPF or page faults.
+     * Interrupts will be re-enabled when transitioning to user mode via IRET. */
+    __asm__ volatile("cli");
+
     /* CRITICAL: Copy argv and envp to kernel memory BEFORE creating new MM.
      * If argv/envp point to userspace, a context switch during exec could
      * cause the old address space to become inaccessible, leading to page faults. */
@@ -846,13 +856,14 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
         while (argv[argc]) argc++;
         if (argc > 0) {
             kargv = fut_malloc((argc + 1) * sizeof(char *));
-            if (!kargv) return -ENOMEM;
+            if (!kargv) { __asm__ volatile("sti"); return -ENOMEM; }
             for (size_t i = 0; i < argc; i++) {
                 size_t len = kstrlen(argv[i]) + 1;
                 kargv[i] = fut_malloc(len);
                 if (!kargv[i]) {
                     for (size_t j = 0; j < i; j++) fut_free(kargv[j]);
                     fut_free(kargv);
+                    __asm__ volatile("sti");
                     return -ENOMEM;
                 }
                 memcpy(kargv[i], argv[i], len);
@@ -870,6 +881,7 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
                     for (size_t i = 0; i < argc; i++) fut_free(kargv[i]);
                     fut_free(kargv);
                 }
+                __asm__ volatile("sti");
                 return -ENOMEM;
             }
             for (size_t i = 0; i < envc; i++) {
@@ -882,6 +894,7 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
                         for (size_t j = 0; j < argc; j++) fut_free(kargv[j]);
                         fut_free(kargv);
                     }
+                    __asm__ volatile("sti");
                     return -ENOMEM;
                 }
                 memcpy(kenvp[i], envp[i], len);
@@ -900,12 +913,14 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
             for (size_t i = 0; i < envc; i++) fut_free(kenvp[i]);
             fut_free(kenvp);
         }
+        __asm__ volatile("sti");
         return fd;
     }
 
     fut_vfs_check_root_canary("fut_exec_elf:enter");
 
-    /* Helper macro for cleanup */
+    /* Helper macro for cleanup - also re-enables interrupts since we
+     * disabled them at the start of fut_exec_elf */
     #define EXEC_CLEANUP_KARGS() do { \
         if (kargv) { \
             for (size_t _i = 0; _i < argc; _i++) fut_free(kargv[_i]); \
@@ -915,6 +930,7 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
             for (size_t _i = 0; _i < envc; _i++) fut_free(kenvp[_i]); \
             fut_free(kenvp); \
         } \
+        __asm__ volatile("sti"); \
     } while (0)
 
     elf64_ehdr_t ehdr;

@@ -35,6 +35,9 @@ extern void fut_do_user_iretq(uint64_t entry, uint64_t stack, uint64_t argc, uin
 #define EXEC_DEBUG(...) do {} while (0)
 #endif
 
+/* Debug output for user trampoline serial output (U1234567A characters) */
+/* #define DEBUG_USER_TRAMPOLINE */
+
 #define ELF_MAGIC       0x464C457FULL
 #define ELF_CLASS_64    0x02
 #define ELF_DATA_LE     0x01
@@ -283,8 +286,7 @@ static int map_segment(fut_mm_t *mm, int fd, const elf64_phdr_t *phdr) {
         size_t page_offset = (size_t)seg_offset;
         uint8_t *src = buffer;
 
-        extern void fut_printf(const char *, ...);
-        fut_printf("[MAP-SEG] Starting copy loop: remaining=%zu pages=%zu offset=%zu\n",
+        EXEC_DEBUG("[MAP-SEG] Starting copy loop: remaining=%zu pages=%zu offset=%zu\n",
                    remaining, page_count, page_offset);
         while (remaining > 0 && page_index < page_count) {
             size_t chunk = PAGE_SIZE - page_offset;
@@ -293,7 +295,7 @@ static int map_segment(fut_mm_t *mm, int fd, const elf64_phdr_t *phdr) {
             }
             /* Sanity check: pages[page_index] must be a kernel address */
             uint8_t *dest = pages[page_index];
-            fut_printf("[MAP-SEG] Loop: idx=%zu dest=%p chunk=%zu\n",
+            EXEC_DEBUG("[MAP-SEG] Loop: idx=%zu dest=%p chunk=%zu\n",
                        page_index, (void*)dest, chunk);
             if ((uintptr_t)dest < 0xFFFFFFFF80000000ULL) {
                 fut_printf("[MAP-SEG] FATAL: pages[%zu]=%p is USER addr, not kernel!\n",
@@ -306,9 +308,9 @@ static int map_segment(fut_mm_t *mm, int fd, const elf64_phdr_t *phdr) {
                 fut_free(pages);
                 return -EFAULT;
             }
-            fut_printf("[MAP-SEG] About to memcpy to %p\n", (void*)(dest + page_offset));
+            EXEC_DEBUG("[MAP-SEG] About to memcpy to %p\n", (void*)(dest + page_offset));
             memcpy(dest + page_offset, src, chunk);
-            fut_printf("[MAP-SEG] memcpy done\n");
+            EXEC_DEBUG("[MAP-SEG] memcpy done\n");
             src += chunk;
             remaining -= chunk;
             page_index++;
@@ -473,6 +475,7 @@ static int build_user_stack(fut_mm_t *mm,
      * corrupting our state during the transition to user mode! */
     __asm__ volatile("cli");
 
+#ifdef DEBUG_USER_TRAMPOLINE
     /* Debug: Print 'U' to indicate we reached fut_user_trampoline */
     __asm__ volatile(
         "pushq %%rax\n"
@@ -484,6 +487,7 @@ static int build_user_stack(fut_mm_t *mm,
         "popq %%rax\n"
         ::: "memory"
     );
+#endif
 
     if (!arg) {
         __asm__ volatile("sti");  /* Re-enable before exit */
@@ -494,61 +498,83 @@ static int build_user_stack(fut_mm_t *mm,
     /* Extract values from the user entry structure BEFORE freeing it */
     struct fut_user_entry *info = (struct fut_user_entry *)arg;
 
+#ifdef DEBUG_USER_TRAMPOLINE
     /* Debug: Print '1' after casting - must use DX form for ports > 255 */
     __asm__ volatile("movw $0x3F8, %%dx; movb $'1', %%al; outb %%al, %%dx" ::: "al", "dx", "memory");
+#endif
 
     uint64_t entry = info->entry;
 
+#ifdef DEBUG_USER_TRAMPOLINE
     /* Debug: Print '2' after reading entry */
     __asm__ volatile("movw $0x3F8, %%dx; movb $'2', %%al; outb %%al, %%dx" ::: "al", "dx", "memory");
+#endif
 
     uint64_t stack = info->stack;
     uint64_t argc = info->argc;
     uint64_t argv_ptr = info->argv_ptr;
     fut_task_t *task = info->task;
 
+#ifdef DEBUG_USER_TRAMPOLINE
     /* Debug: Print '3' after reading task */
     __asm__ volatile("movw $0x3F8, %%dx; movb $'3', %%al; outb %%al, %%dx" ::: "al", "dx", "memory");
+#endif
 
     /* Get the mm from the task */
     fut_mm_t *mm = task ? task->mm : NULL;
 
+#ifdef DEBUG_USER_TRAMPOLINE
     /* Debug: Print '4' after getting mm */
     __asm__ volatile("movw $0x3F8, %%dx; movb $'4', %%al; outb %%al, %%dx" ::: "al", "dx", "memory");
+#endif
 
     if (!task || !mm) {
+#ifdef DEBUG_USER_TRAMPOLINE
         __asm__ volatile("movw $0x3F8, %%dx; movb $'X', %%al; outb %%al, %%dx" ::: "al", "dx", "memory");
+#endif
         __asm__ volatile("sti");  /* Re-enable before exit */
         extern void fut_thread_exit(void);
         fut_thread_exit();
     }
 
+#ifdef DEBUG_USER_TRAMPOLINE
     /* Debug: Print '5' after task/mm check */
     __asm__ volatile("movw $0x3F8, %%dx; movb $'5', %%al; outb %%al, %%dx" ::: "al", "dx", "memory");
+#endif
 
     /* Verify we're using the task's CR3, not the kernel CR3 */
     extern uint64_t fut_read_cr3(void);
     uint64_t current_cr3 = fut_read_cr3();
 
+#ifdef DEBUG_USER_TRAMPOLINE
     /* Debug: Print '6' after reading CR3 */
     __asm__ volatile("movw $0x3F8, %%dx; movb $'6', %%al; outb %%al, %%dx" ::: "al", "dx", "memory");
+#endif
 
     uint64_t expected_cr3 = mm_context(mm)->cr3_value;
 
+#ifdef DEBUG_USER_TRAMPOLINE
     /* Debug: Print '7' after getting expected_cr3 */
     __asm__ volatile("movw $0x3F8, %%dx; movb $'7', %%al; outb %%al, %%dx" ::: "al", "dx", "memory");
+#endif
 
     if (current_cr3 != expected_cr3) {
+#ifdef DEBUG_USER_TRAMPOLINE
         /* Debug: Print '8' before CR3 write */
         __asm__ volatile("movw $0x3F8, %%dx; movb $'8', %%al; outb %%al, %%dx" ::: "al", "dx", "memory");
+#endif
         extern void fut_write_cr3(uint64_t);
         fut_write_cr3(expected_cr3);
+#ifdef DEBUG_USER_TRAMPOLINE
         /* Debug: Print '9' after CR3 write */
         __asm__ volatile("movw $0x3F8, %%dx; movb $'9', %%al; outb %%al, %%dx" ::: "al", "dx", "memory");
+#endif
     }
 
+#ifdef DEBUG_USER_TRAMPOLINE
     /* Debug: Print 'A' before fut_do_user_iretq */
     __asm__ volatile("movw $0x3F8, %%dx; movb $'A', %%al; outb %%al, %%dx" ::: "al", "dx", "memory");
+#endif
 
     /* NO DEBUG OUTPUT ALLOWED HERE - printf triggers CR3 switches that break IRETQ! */
 

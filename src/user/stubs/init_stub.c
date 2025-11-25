@@ -5,7 +5,7 @@
 #include <shared/fut_timespec.h>
 
 int main(void) {
-    // Init process - launch shell on framebuffer console
+    // Init process - launch wl-term Wayland terminal
 
     // First, set up our own file descriptors to /dev/console
     int test_fd = sys_open("/dev/console", 2, 0);  // O_RDWR = 2
@@ -28,15 +28,15 @@ int main(void) {
         sys_close(test_fd);
     }
 
-    // Brief delay to let boot messages settle before launching shell
-    fut_timespec_t delay = { .tv_sec = 1, .tv_nsec = 0 };
+    // Delay to let compositor fully start before launching wl-term
+    fut_timespec_t delay = { .tv_sec = 2, .tv_nsec = 0 };
     sys_nanosleep_call(&delay, 0);
 
-    // Fork and exec shell
+    // Fork and exec wl-term
     long shell_pid = sys_fork_call();
 
     if (shell_pid == 0) {
-        // Child process - set up file descriptors and exec into shell
+        // Child process - set up file descriptors and exec into wl-term
         // Close any inherited file descriptors first
         sys_close(0);
         sys_close(1);
@@ -55,24 +55,28 @@ int main(void) {
             printf("[INIT-CHILD] WARNING: FDs not in expected order!\n");
         }
 
-        printf("[INIT-CHILD] About to exec /bin/shell\n");
-        const char *argv[] = { "/bin/shell", 0 };
-        const char *envp[] = { 0 };
-        sys_execve_call("/bin/shell", (char * const *)argv, (char * const *)envp);
+        printf("[INIT-CHILD] About to exec /bin/wl-term\n");
+        const char *argv[] = { "/bin/wl-term", 0 };
+        const char *envp[] = {
+            "WAYLAND_DISPLAY=wayland-0",
+            "XDG_RUNTIME_DIR=/tmp",
+            0
+        };
+        sys_execve_call("/bin/wl-term", (char * const *)argv, (char * const *)envp);
         // If execve fails, print error and exit
-        printf("[INIT-CHILD] Failed to exec /bin/shell\n");
+        printf("[INIT-CHILD] Failed to exec /bin/wl-term\n");
         sys_exit(1);
     } else if (shell_pid > 0) {
-        // Parent waits for shell to complete (when user exits)
+        // Parent waits for wl-term to complete (when user exits)
         int wstatus = 0;
         sys_wait4_call(shell_pid, &wstatus, 0, 0);
-        printf("Shell exited. Restarting...\n");
+        printf("wl-term exited. Restarting...\n");
 
-        // Restart shell if it exits
+        // Restart wl-term if it exits
         while (1) {
             shell_pid = sys_fork_call();
             if (shell_pid == 0) {
-                // Set up file descriptors for restarted shell
+                // Set up file descriptors for restarted wl-term
                 sys_close(0);
                 sys_close(1);
                 sys_close(2);
@@ -80,23 +84,27 @@ int main(void) {
                 sys_open("/dev/console", 2, 0);  // fd 1 (stdout)
                 sys_open("/dev/console", 2, 0);  // fd 2 (stderr)
 
-                const char *argv[] = { "/bin/shell", 0 };
-                const char *envp[] = { 0 };
-                sys_execve_call("/bin/shell", (char * const *)argv, (char * const *)envp);
+                const char *argv[] = { "/bin/wl-term", 0 };
+                const char *envp[] = {
+                    "WAYLAND_DISPLAY=wayland-0",
+                    "XDG_RUNTIME_DIR=/tmp",
+                    0
+                };
+                sys_execve_call("/bin/wl-term", (char * const *)argv, (char * const *)envp);
                 sys_exit(1);
             } else if (shell_pid > 0) {
                 sys_wait4_call(shell_pid, &wstatus, 0, 0);
-                printf("Shell exited. Restarting...\n");
+                printf("wl-term exited. Restarting...\n");
             } else {
-                printf("Failed to fork for shell\n");
+                printf("Failed to fork for wl-term\n");
                 break;
             }
         }
     } else {
-        printf("Failed to fork for shell\n");
+        printf("Failed to fork for wl-term\n");
     }
 
-    // Keep init running - sleep forever if shell fails
+    // Keep init running - sleep forever if wl-term fails
     fut_timespec_t forever = { .tv_sec = 3600, .tv_nsec = 0 };
     while (1) {
         sys_nanosleep_call(&forever, 0);

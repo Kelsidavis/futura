@@ -1303,8 +1303,9 @@ void fut_kernel_main(void) {
     /* ========================================
      *   Launch Interactive Shell
      * ======================================== */
+    /* NOTE: Shell launch disabled - init_stub now launches wl-term instead */
     /* Shell binary is staged as a file in initramfs, not embedded */
-    fut_printf("[INIT] Staging shell binary...\n");
+    /* fut_printf("[INIT] Staging shell binary...\n");
     int shell_stage = fut_stage_shell_binary();
     if (shell_stage != 0) {
         fut_printf("[WARN] Failed to stage shell binary (error %d)\n", shell_stage);
@@ -1318,7 +1319,7 @@ void fut_kernel_main(void) {
         } else {
             fut_printf("[INIT] Shell launched successfully\n");
         }
-    }
+    } */
 
 #if ENABLE_WINSRV_DEMO
     if (winsrv_stage == 0) {

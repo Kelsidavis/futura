@@ -619,14 +619,21 @@ void fut_schedule(void) {
         bool in_irq = atomic_load_explicit(&fut_in_interrupt, memory_order_acquire);
 #endif
 
-        // CRITICAL FIX: Do NOT switch CR3 here!
-        // The kernel trampoline (fut_thread_trampoline) needs to execute in kernel CR3.
-        // For user threads, fut_user_trampoline will switch CR3 right before jumping to user space.
-        // Removed CR3 switching from scheduler - trampolines handle it.
-        // Old code:
-        // fut_mm_t *prev_mm = (prev && prev->task) ? fut_task_get_mm(prev->task) : NULL;
-        // fut_mm_t *next_mm = (next && next->task) ? fut_task_get_mm(next->task) : NULL;
-        // if (prev_mm != next_mm) { fut_mm_switch(next_mm); }
+        // CRITICAL: CR3 switching for user threads being resumed from interrupts
+        // - Trampolines handle CR3 for newly created threads
+        // - But for threads interrupted mid-execution (e.g., sleeping in syscall),
+        //   we MUST switch CR3 here before returning to userspace via IRET
+        fut_mm_t *prev_mm = (prev && prev->task) ? fut_task_get_mm(prev->task) : NULL;
+        fut_mm_t *next_mm = (next && next->task) ? fut_task_get_mm(next->task) : NULL;
+
+        // Switch CR3 if different address spaces
+        // CRITICAL: Must switch CR3 for ANY context switch to a different mm,
+        // not just IRQ-based switches. Cooperative switches (e.g., when a sleeping
+        // thread wakes up via timer callback and gets scheduled by fut_schedule())
+        // also need the correct CR3 before returning to userspace.
+        if (prev_mm != next_mm && next_mm) {
+            fut_mm_switch(next_mm);
+        }
 
         // Only set current_thread if we're actually going to context switch
         fut_thread_set_current(next);

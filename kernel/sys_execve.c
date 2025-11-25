@@ -444,15 +444,22 @@ long sys_execve(const char *pathname, char *const argv[], char *const envp[]) {
     msg[pos] = '\0';
     fut_printf("%s", msg);
 
-    /* Call the ELF loader which replaces the current process */
+    /* Call the ELF loader which creates the new process image */
     int ret = fut_exec_elf(local_pathname, local_argv, local_envp);
 
     /*
-     * If fut_exec_elf returns, it failed.
-     * On success, it never returns (process is replaced).
+     * fut_exec_elf returns 0 on success (new process created), or negative error.
+     * On success, the current thread must exit to let the new process run.
+     * This is the correct POSIX execve() semantics: the calling process is replaced.
      */
+    if (ret == 0) {
+        /* Success - exit the current thread, the new process will run */
+        extern void fut_thread_exit(void) __attribute__((noreturn));
+        fut_thread_exit();
+        /* Should not reach here */
+    }
 
-    /* Phase 2: Detailed error logging */
+    /* If we get here, fut_exec_elf failed. Log the error. */
     const char *error_desc;
     switch (ret) {
         case -ENOENT:

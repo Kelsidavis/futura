@@ -146,7 +146,7 @@ isr_syscall_int80_stub:
     /* We pushed: 4 segment regs + 6 arg regs + 6 callee-saved + CR3 + RAX = 18 values */
     /* Frame (RIP) is at: RSP + (18 * 8) = RSP + 144 bytes */
     movq %rsp, %r15
-    addq $144, %r15           /* r15 = pointer to interrupt frame (RIP) */
+    addq $144, %r15           /* r15 = pointer to CPU-pushed frame (RIP onwards) */
 
     /* Set global fut_current_frame so sys_fork() can access it */
     movq %r15, fut_current_frame(%rip)
@@ -482,6 +482,17 @@ isr_common_stub:
     pxor %xmm14, %xmm14
     pxor %xmm15, %xmm15
 
+    /* CRITICAL FIX: In 64-bit mode, CPU pushes SS unconditionally, but kernel may
+     * run with SS=0 (which works normally but IRETQ may fault when loading it).
+     * Fix SS to kernel data segment before IRETQ if returning to kernel mode.
+     * Note: CPU-pushed RSP is correct and must NOT be modified. */
+    testb $3, 8(%rsp)           /* Test RPL of saved CS (at RIP+8) */
+    jnz .isr_common_iretq       /* If RPL != 0, returning to user - SS is valid */
+
+    /* Returning to kernel mode - fix up SS only (RSP is correct as pushed by CPU) */
+    movq $0x10, 32(%rsp)        /* Store kernel SS (0x10) at SS slot */
+
+.isr_common_iretq:
     /* Return from interrupt */
     iretq
 
@@ -589,6 +600,17 @@ irq_common_stub:
     pxor %xmm14, %xmm14
     pxor %xmm15, %xmm15
 
+    /* CRITICAL FIX: In 64-bit mode, CPU pushes SS unconditionally, but kernel may
+     * run with SS=0 (which works normally but IRETQ may fault when loading it).
+     * Fix SS to kernel data segment before IRETQ if returning to kernel mode.
+     * Note: CPU-pushed RSP is correct and must NOT be modified. */
+    testb $3, 8(%rsp)           /* Test RPL of saved CS (at RIP+8) */
+    jnz .irq_common_iretq       /* If RPL != 0, returning to user - SS is valid */
+
+    /* Returning to kernel mode - fix up SS only (RSP is correct as pushed by CPU) */
+    movq $0x10, 32(%rsp)        /* Store kernel SS (0x10) at SS slot */
+
+.irq_common_iretq:
     /* Return from interrupt */
     iretq
 
@@ -711,6 +733,17 @@ irq0_timer:
     pxor %xmm14, %xmm14
     pxor %xmm15, %xmm15
 
+    /* CRITICAL FIX: In 64-bit mode, CPU pushes SS unconditionally, but kernel may
+     * run with SS=0 (which works normally but IRETQ may fault when loading it).
+     * Fix SS to kernel data segment before IRETQ if returning to kernel mode.
+     * Note: CPU-pushed RSP is correct and must NOT be modified. */
+    testb $3, 8(%rsp)           /* Test RPL of saved CS (at RIP+8) */
+    jnz .irq0_iretq             /* If RPL != 0, returning to user - SS is valid */
+
+    /* Returning to kernel mode - fix up SS only (RSP is correct as pushed by CPU) */
+    movq $0x10, 32(%rsp)        /* Store kernel SS (0x10) at SS slot */
+
+.irq0_iretq:
     /* Return from interrupt */
     iretq
 

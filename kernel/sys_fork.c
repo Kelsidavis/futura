@@ -626,9 +626,9 @@ static fut_thread_t *clone_thread(fut_thread_t *parent_thread, fut_task_t *child
 #ifdef __x86_64__
     /*
      * x86_64: Extract registers from interrupt frame
-     * Syscall stack layout (from isr_stubs.S):
-     * frame points to CPU-pushed part: RIP, CS, RFLAGS, RSP, SS
-     * Before that: RAX, CR3, RBP, RBX, R12, R13, R14, R15
+     * Syscall entry stub layout: fut_current_frame points to CPU-pushed portion (RIP onwards)
+     * frame points to: RIP, CS, RFLAGS, RSP, SS
+     * Before that on stack: RAX, CR3, RBP, RBX, R12, R13, R14, R15
      */
     uint64_t *frame_ptr = (uint64_t *)frame;
     uint64_t user_rip = frame_ptr[0];
@@ -642,8 +642,12 @@ static fut_thread_t *clone_thread(fut_thread_t *parent_thread, fut_task_t *child
     uint64_t user_r13 = frame_ptr[-6];
     uint64_t user_r14 = frame_ptr[-7];
     uint64_t user_r15 = frame_ptr[-8];
+    /* DS, ES, FS are further back on the stack */
+    uint64_t user_ds = frame_ptr[-15];   /* RSP+24 = frame-120 = frame_ptr[-15] */
+    uint64_t user_es = frame_ptr[-16];   /* RSP+16 = frame-128 = frame_ptr[-16] */
+    uint64_t user_fs = frame_ptr[-17];   /* RSP+8  = frame-136 = frame_ptr[-17] */
 
-    fut_printf("[FORK] Parent frame: RIP=0x%llx RSP=0x%llx\n", user_rip, user_rsp);
+    fut_printf("[FORK] Parent frame: RIP=0x%llx RSP=0x%llx SS=0x%llx\n", user_rip, user_rsp, user_ss);
 
     /* Build child context from syscall frame */
     child_thread->context.rip = user_rip;
@@ -659,10 +663,10 @@ static fut_thread_t *clone_thread(fut_thread_t *parent_thread, fut_task_t *child
     child_thread->context.ss = user_ss;
 
     /* Set segment registers to user data segment (0x20 | 3 = 0x23 with RPL=3) */
-    child_thread->context.ds = 0x23;  // User data segment with RPL=3
-    child_thread->context.es = 0x23;
-    child_thread->context.fs = 0x23;
-    child_thread->context.gs = 0x23;
+    child_thread->context.ds = (uint16_t)user_ds;  // Copy from parent
+    child_thread->context.es = (uint16_t)user_es;
+    child_thread->context.fs = (uint16_t)user_fs;
+    child_thread->context.gs = 0;                  // GS not used in userspace, set to 0
 
     /* Set child's fork() return value to 0 */
     child_thread->context.rax = 0;

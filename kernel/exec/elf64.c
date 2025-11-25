@@ -87,6 +87,45 @@ struct fut_user_entry {
     fut_task_t *task;  /* Task pointer to access mm */
 };
 
+/* Copy data to user memory in the target MM context.
+ * This directly accesses mapped pages through their kernel virtual addresses
+ * rather than switching contexts, avoiding issues with fut_mm_current(). */
+static int exec_copy_to_user(fut_mm_t *mm, uint64_t dest, const void *src, size_t len) {
+    fut_vmem_context_t *vmem = fut_mm_context(mm);
+    const uint8_t *src_bytes = (const uint8_t *)src;
+    size_t remaining = len;
+    uint64_t vaddr = dest;
+
+    while (remaining > 0) {
+        /* Get page offset and calculate bytes to copy in this page */
+        uint64_t page_offset = vaddr & 0xFFF;
+        size_t chunk_size = PAGE_SIZE - page_offset;
+        if (chunk_size > remaining) {
+            chunk_size = remaining;
+        }
+
+        /* Probe PTE for current page */
+        uint64_t pte = 0;
+        if (pmap_probe_pte(vmem, vaddr, &pte) != 0) {
+            return -EFAULT;
+        }
+
+        /* Extract physical address from PTE and add page offset */
+        phys_addr_t phys = (pte & 0xFFFFFFFFF000ULL) + page_offset;
+
+        /* Convert to kernel virtual address and copy */
+        void *kern_addr = (void *)pmap_phys_to_virt(phys);
+        memcpy(kern_addr, src_bytes, chunk_size);
+
+        /* Advance pointers */
+        src_bytes += chunk_size;
+        vaddr += chunk_size;
+        remaining -= chunk_size;
+    }
+
+    return 0;
+}
+
 static size_t kstrlen(const char *s) {
     if (!s) {
         return 0;
@@ -102,35 +141,7 @@ static inline fut_vmem_context_t *mm_context(fut_mm_t *mm) {
     return fut_mm_context(mm);
 }
 
-static int exec_copy_to_user(fut_mm_t *mm, uint64_t dest, const void *src, size_t len) {
-    /* For ELF loading during exec, we map user pages into kernel address space,
-     * so we can write directly without switching memory contexts.
-     * Since pages are already kernel-accessible (allocated via fut_pmm_alloc_page()),
-     * we perform a direct kernel-space copy instead of switching MM and risking
-     * instruction encoding issues with inline assembly in privileged instructions. */
-
-    /* Debug output disabled - multiple printf calls with timer IRQs enabled
-     * can cause preemption during critical ELF loading operations */
-
-    /* Get the PTE to extract physical address */
-    uint64_t pte = 0;
-    if (pmap_probe_pte(mm_context(mm), dest, &pte) != 0) {
-        return -EFAULT;
-    }
-
-    /* Extract physical address from PTE (bits 12-51) */
-    phys_addr_t phys = pte & 0xFFFFFFFFF000ULL;
-
-    /* Add page offset from dest VA to get the complete physical address */
-    phys_addr_t phys_with_offset = phys + (dest & 0xFFF);
-
-    /* Convert physical to kernel virtual address */
-    uint8_t *kern_addr = (uint8_t *)pmap_phys_to_virt(phys_with_offset);
-
-    /* Simple kernel-space memcpy (no privilege escalation or memory context switches) */
-    memcpy(kern_addr, src, len);
-    return 0;
-}
+/* REMOVED: Duplicate definition - see line 1049 for active implementation */
 
 static int read_exact(int fd, void *buf, size_t len) {
     size_t done = 0;
@@ -236,11 +247,16 @@ static int map_segment(fut_mm_t *mm, int fd, const elf64_phdr_t *phdr) {
     }
 
     if (phdr->p_filesz > 0) {
+        /* Disable interrupts during file copy to prevent timer IRQs from
+         * corrupting state mid-operation */
+        __asm__ volatile("cli");
+
         EXEC_DEBUG("[EXEC][MAP-SEGMENT] Allocating file buffer: %llu bytes\n",
                    (unsigned long long)phdr->p_filesz);
         uint8_t *buffer = fut_malloc((size_t)phdr->p_filesz);
         if (!buffer) {
             EXEC_DEBUG("[EXEC][MAP-SEGMENT] FAILED: file buffer malloc returned NULL\n");
+            __asm__ volatile("sti");  /* Re-enable interrupts before error return */
             fut_free(pages);
             return -ENOMEM;
         }
@@ -248,6 +264,7 @@ static int map_segment(fut_mm_t *mm, int fd, const elf64_phdr_t *phdr) {
 
         int64_t off = fut_vfs_lseek(fd, (int64_t)phdr->p_offset, SEEK_SET);
         if (off < 0) {
+            __asm__ volatile("sti");  /* Re-enable interrupts before error return */
             fut_free(buffer);
             fut_free(pages);
             return (int)off;
@@ -255,6 +272,7 @@ static int map_segment(fut_mm_t *mm, int fd, const elf64_phdr_t *phdr) {
 
         int rc = read_exact(fd, buffer, (size_t)phdr->p_filesz);
         if (rc != 0) {
+            __asm__ volatile("sti");  /* Re-enable interrupts before error return */
             fut_free(buffer);
             fut_free(pages);
             return rc;
@@ -265,12 +283,32 @@ static int map_segment(fut_mm_t *mm, int fd, const elf64_phdr_t *phdr) {
         size_t page_offset = (size_t)seg_offset;
         uint8_t *src = buffer;
 
+        extern void fut_printf(const char *, ...);
+        fut_printf("[MAP-SEG] Starting copy loop: remaining=%zu pages=%zu offset=%zu\n",
+                   remaining, page_count, page_offset);
         while (remaining > 0 && page_index < page_count) {
             size_t chunk = PAGE_SIZE - page_offset;
             if (chunk > remaining) {
                 chunk = remaining;
             }
-            memcpy(pages[page_index] + page_offset, src, chunk);
+            /* Sanity check: pages[page_index] must be a kernel address */
+            uint8_t *dest = pages[page_index];
+            fut_printf("[MAP-SEG] Loop: idx=%zu dest=%p chunk=%zu\n",
+                       page_index, (void*)dest, chunk);
+            if ((uintptr_t)dest < 0xFFFFFFFF80000000ULL) {
+                fut_printf("[MAP-SEG] FATAL: pages[%zu]=%p is USER addr, not kernel!\n",
+                           page_index, (void*)dest);
+                fut_printf("[MAP-SEG] page_count=%zu seg_start=0x%llx\n",
+                           page_count, (unsigned long long)seg_start);
+                /* Don't crash - return error */
+                __asm__ volatile("sti");  /* Re-enable interrupts before error return */
+                fut_free(buffer);
+                fut_free(pages);
+                return -EFAULT;
+            }
+            fut_printf("[MAP-SEG] About to memcpy to %p\n", (void*)(dest + page_offset));
+            memcpy(dest + page_offset, src, chunk);
+            fut_printf("[MAP-SEG] memcpy done\n");
             src += chunk;
             remaining -= chunk;
             page_index++;
@@ -284,6 +322,9 @@ static int map_segment(fut_mm_t *mm, int fd, const elf64_phdr_t *phdr) {
                    (unsigned long long)phdr->p_filesz);
 
         fut_free(buffer);
+
+        /* Re-enable interrupts after copy completes */
+        __asm__ volatile("sti");
     }
 
     fut_free(pages);
@@ -427,50 +468,86 @@ static int build_user_stack(fut_mm_t *mm,
 }
 
 [[noreturn]] __attribute__((optimize("O0"))) static void fut_user_trampoline(void *arg) {
-    extern void fut_printf(const char *, ...);
-    fut_printf("[USER-TRAMPOLINE] Called with arg=%p\n", arg);
+    /* CRITICAL: Disable interrupts IMMEDIATELY to prevent timer interrupts from
+     * corrupting our state during the transition to user mode! */
+    __asm__ volatile("cli");
+
+    /* Debug: Print 'U' to indicate we reached fut_user_trampoline */
+    __asm__ volatile(
+        "pushq %%rax\n"
+        "pushq %%rdx\n"
+        "movw $0x3F8, %%dx\n"
+        "movb $'U', %%al\n"
+        "outb %%al, %%dx\n"
+        "popq %%rdx\n"
+        "popq %%rax\n"
+        ::: "memory"
+    );
 
     if (!arg) {
-        fut_printf("[USER-TRAMPOLINE] ERROR: NULL arg!\n");
+        __asm__ volatile("sti");  /* Re-enable before exit */
         extern void fut_thread_exit(void);
         fut_thread_exit();
     }
 
     /* Extract values from the user entry structure BEFORE freeing it */
-    /* CRITICAL: Extract ALL values BEFORE any printf! Printf can trigger CR3 switches! */
     struct fut_user_entry *info = (struct fut_user_entry *)arg;
+
+    /* Debug: Print '1' after casting - must use DX form for ports > 255 */
+    __asm__ volatile("movw $0x3F8, %%dx; movb $'1', %%al; outb %%al, %%dx" ::: "al", "dx", "memory");
+
     uint64_t entry = info->entry;
+
+    /* Debug: Print '2' after reading entry */
+    __asm__ volatile("movw $0x3F8, %%dx; movb $'2', %%al; outb %%al, %%dx" ::: "al", "dx", "memory");
+
     uint64_t stack = info->stack;
     uint64_t argc = info->argc;
     uint64_t argv_ptr = info->argv_ptr;
     fut_task_t *task = info->task;
 
-    /* Now safe to printf - values are in local variables */
-    fut_printf("[EXTRACT] entry=0x%llx stack=0x%llx argc=%llu argv=0x%llx\n",
-               entry, stack, argc, argv_ptr);
+    /* Debug: Print '3' after reading task */
+    __asm__ volatile("movw $0x3F8, %%dx; movb $'3', %%al; outb %%al, %%dx" ::: "al", "dx", "memory");
 
-    /* Don't free the arg structure - we never return from IRETQ anyway
-     * and freeing might corrupt something */
-
-    /* Get the mm from the task (task already extracted above) */
+    /* Get the mm from the task */
     fut_mm_t *mm = task ? task->mm : NULL;
 
+    /* Debug: Print '4' after getting mm */
+    __asm__ volatile("movw $0x3F8, %%dx; movb $'4', %%al; outb %%al, %%dx" ::: "al", "dx", "memory");
+
     if (!task || !mm) {
-        extern void fut_printf(const char *, ...);
-        fut_printf("[USER-TRAMPOLINE] FATAL: No task (%p) or mm (%p)\n", (void*)task, (void*)mm);
+        __asm__ volatile("movw $0x3F8, %%dx; movb $'X', %%al; outb %%al, %%dx" ::: "al", "dx", "memory");
+        __asm__ volatile("sti");  /* Re-enable before exit */
         extern void fut_thread_exit(void);
         fut_thread_exit();
     }
 
+    /* Debug: Print '5' after task/mm check */
+    __asm__ volatile("movw $0x3F8, %%dx; movb $'5', %%al; outb %%al, %%dx" ::: "al", "dx", "memory");
+
     /* Verify we're using the task's CR3, not the kernel CR3 */
     extern uint64_t fut_read_cr3(void);
     uint64_t current_cr3 = fut_read_cr3();
+
+    /* Debug: Print '6' after reading CR3 */
+    __asm__ volatile("movw $0x3F8, %%dx; movb $'6', %%al; outb %%al, %%dx" ::: "al", "dx", "memory");
+
     uint64_t expected_cr3 = mm_context(mm)->cr3_value;
 
+    /* Debug: Print '7' after getting expected_cr3 */
+    __asm__ volatile("movw $0x3F8, %%dx; movb $'7', %%al; outb %%al, %%dx" ::: "al", "dx", "memory");
+
     if (current_cr3 != expected_cr3) {
+        /* Debug: Print '8' before CR3 write */
+        __asm__ volatile("movw $0x3F8, %%dx; movb $'8', %%al; outb %%al, %%dx" ::: "al", "dx", "memory");
         extern void fut_write_cr3(uint64_t);
         fut_write_cr3(expected_cr3);
+        /* Debug: Print '9' after CR3 write */
+        __asm__ volatile("movw $0x3F8, %%dx; movb $'9', %%al; outb %%al, %%dx" ::: "al", "dx", "memory");
     }
+
+    /* Debug: Print 'A' before fut_do_user_iretq */
+    __asm__ volatile("movw $0x3F8, %%dx; movb $'A', %%al; outb %%al, %%dx" ::: "al", "dx", "memory");
 
     /* NO DEBUG OUTPUT ALLOWED HERE - printf triggers CR3 switches that break IRETQ! */
 
@@ -757,17 +834,94 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
         return -EINVAL;
     }
 
+    /* CRITICAL: Copy argv and envp to kernel memory BEFORE creating new MM.
+     * If argv/envp point to userspace, a context switch during exec could
+     * cause the old address space to become inaccessible, leading to page faults. */
+    size_t argc = 0;
+    size_t envc = 0;
+    char **kargv = NULL;
+    char **kenvp = NULL;
+
+    if (argv) {
+        while (argv[argc]) argc++;
+        if (argc > 0) {
+            kargv = fut_malloc((argc + 1) * sizeof(char *));
+            if (!kargv) return -ENOMEM;
+            for (size_t i = 0; i < argc; i++) {
+                size_t len = kstrlen(argv[i]) + 1;
+                kargv[i] = fut_malloc(len);
+                if (!kargv[i]) {
+                    for (size_t j = 0; j < i; j++) fut_free(kargv[j]);
+                    fut_free(kargv);
+                    return -ENOMEM;
+                }
+                memcpy(kargv[i], argv[i], len);
+            }
+            kargv[argc] = NULL;
+        }
+    }
+
+    if (envp) {
+        while (envp[envc]) envc++;
+        if (envc > 0) {
+            kenvp = fut_malloc((envc + 1) * sizeof(char *));
+            if (!kenvp) {
+                if (kargv) {
+                    for (size_t i = 0; i < argc; i++) fut_free(kargv[i]);
+                    fut_free(kargv);
+                }
+                return -ENOMEM;
+            }
+            for (size_t i = 0; i < envc; i++) {
+                size_t len = kstrlen(envp[i]) + 1;
+                kenvp[i] = fut_malloc(len);
+                if (!kenvp[i]) {
+                    for (size_t j = 0; j < i; j++) fut_free(kenvp[j]);
+                    fut_free(kenvp);
+                    if (kargv) {
+                        for (size_t j = 0; j < argc; j++) fut_free(kargv[j]);
+                        fut_free(kargv);
+                    }
+                    return -ENOMEM;
+                }
+                memcpy(kenvp[i], envp[i], len);
+            }
+            kenvp[envc] = NULL;
+        }
+    }
+
     int fd = fut_vfs_open(path, O_RDONLY, 0);
     if (fd < 0) {
+        if (kargv) {
+            for (size_t i = 0; i < argc; i++) fut_free(kargv[i]);
+            fut_free(kargv);
+        }
+        if (kenvp) {
+            for (size_t i = 0; i < envc; i++) fut_free(kenvp[i]);
+            fut_free(kenvp);
+        }
         return fd;
     }
 
     fut_vfs_check_root_canary("fut_exec_elf:enter");
 
+    /* Helper macro for cleanup */
+    #define EXEC_CLEANUP_KARGS() do { \
+        if (kargv) { \
+            for (size_t _i = 0; _i < argc; _i++) fut_free(kargv[_i]); \
+            fut_free(kargv); \
+        } \
+        if (kenvp) { \
+            for (size_t _i = 0; _i < envc; _i++) fut_free(kenvp[_i]); \
+            fut_free(kenvp); \
+        } \
+    } while (0)
+
     elf64_ehdr_t ehdr;
     int rc = read_exact(fd, &ehdr, sizeof(ehdr));
     if (rc != 0) {
         fut_vfs_close(fd);
+        EXEC_CLEANUP_KARGS();
         return rc;
     }
 
@@ -783,6 +937,7 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
         EXEC_DEBUG("[EXEC] FAIL: Bad ELF magic 0x%08x (expected 0x%08x)\n",
                    *(uint32_t *)ehdr.e_ident, ELF_MAGIC);
         fut_vfs_close(fd);
+        EXEC_CLEANUP_KARGS();
         return -EINVAL;
     }
 
@@ -790,6 +945,7 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
         EXEC_DEBUG("[EXEC] FAIL: Bad ELF class %d (expected %d)\n",
                    ehdr.e_ident[4], ELF_CLASS_64);
         fut_vfs_close(fd);
+        EXEC_CLEANUP_KARGS();
         return -EINVAL;
     }
 
@@ -797,6 +953,7 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
         EXEC_DEBUG("[EXEC] FAIL: Bad ELF data %d (expected %d)\n",
                    ehdr.e_ident[5], ELF_DATA_LE);
         fut_vfs_close(fd);
+        EXEC_CLEANUP_KARGS();
         return -EINVAL;
     }
 
@@ -804,12 +961,14 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
         EXEC_DEBUG("[EXEC] FAIL: Bad phentsize %d (expected %zu)\n",
                    ehdr.e_phentsize, sizeof(elf64_phdr_t));
         fut_vfs_close(fd);
+        EXEC_CLEANUP_KARGS();
         return -EINVAL;
     }
 
     if (ehdr.e_phnum == 0) {
         EXEC_DEBUG("[EXEC] FAIL: No program headers (phnum=0)\n");
         fut_vfs_close(fd);
+        EXEC_CLEANUP_KARGS();
         return -EINVAL;
     }
 
@@ -817,6 +976,7 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
     elf64_phdr_t *phdrs = fut_malloc(ph_size);
     if (!phdrs) {
         fut_vfs_close(fd);
+        EXEC_CLEANUP_KARGS();
         return -ENOMEM;
     }
 
@@ -824,6 +984,7 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
     if (seek_rc < 0) {
         fut_free(phdrs);
         fut_vfs_close(fd);
+        EXEC_CLEANUP_KARGS();
         return (int)seek_rc;
     }
 
@@ -831,16 +992,17 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
     if (rc != 0) {
         fut_free(phdrs);
         fut_vfs_close(fd);
+        EXEC_CLEANUP_KARGS();
         return rc;
     }
 
-    extern void fut_printf(const char *, ...);
     EXEC_DEBUG("[EXEC] Creating task...\n");
     fut_task_t *task = fut_task_create();
     if (!task) {
         EXEC_DEBUG("[EXEC] FAILED: fut_task_create returned NULL\n");
         fut_free(phdrs);
         fut_vfs_close(fd);
+        EXEC_CLEANUP_KARGS();
         return -ENOMEM;
     }
     EXEC_DEBUG("[EXEC] Task created at %p\n", (void*)task);
@@ -852,27 +1014,35 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
         fut_task_destroy(task);
         fut_free(phdrs);
         fut_vfs_close(fd);
+        EXEC_CLEANUP_KARGS();
         return -ENOMEM;
     }
     EXEC_DEBUG("[EXEC] MM created at %p\n", (void*)mm);
-
-    fut_task_set_mm(task, mm);
+    /* NOTE: We do NOT call fut_task_set_mm here - task->mm must remain NULL
+     * until all pages are mapped. If a timer IRQ fires and the scheduler
+     * switches CR3 to an incomplete MM, we'll get page faults.
+     * The task->mm is set only after build_user_stack completes. */
 
     uintptr_t heap_base_candidate = 0;
 
     EXEC_DEBUG("[EXEC] Mapping %u segments...\n", ehdr.e_phnum);
     for (uint16_t i = 0; i < ehdr.e_phnum; ++i) {
-        if (phdrs[i].p_type != PT_LOAD) {
-            EXEC_DEBUG("[EXEC] Segment %u: not PT_LOAD (type=%u), skipping\n", i, phdrs[i].p_type);
+        /* Cache p_type locally to prevent potential compiler optimization issues
+         * when checking non-PT_LOAD segments (fixes GPF during shell exec). */
+        uint32_t p_type = phdrs[i].p_type;
+        if (p_type != PT_LOAD) {
+            EXEC_DEBUG("[EXEC] Segment %u: not PT_LOAD (type=%u), skipping\n", i, p_type);
             continue;
         }
         EXEC_DEBUG("[EXEC] Segment %u: PT_LOAD, calling map_segment...\n", i);
         rc = map_segment(mm, fd, &phdrs[i]);
         if (rc != 0) {
             EXEC_DEBUG("[EXEC] FAILED: map_segment returned %d for segment %u\n", rc, i);
+            fut_mm_release(mm);  /* mm not attached to task yet */
             fut_task_destroy(task);
             fut_free(phdrs);
             fut_vfs_close(fd);
+            EXEC_CLEANUP_KARGS();
             return rc;
         }
         EXEC_DEBUG("[EXEC] Segment %u: map_segment succeeded\n", i);
@@ -890,9 +1060,11 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
     uint64_t stack_top = 0;
     rc = stage_stack_pages(mm, &stack_top);
     if (rc != 0) {
+        fut_mm_release(mm);  /* mm not attached to task yet */
         fut_task_destroy(task);
         fut_free(phdrs);
         fut_vfs_close(fd);
+        EXEC_CLEANUP_KARGS();
         return rc;
     }
 
@@ -901,25 +1073,33 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
     uint64_t user_rsp = 0;
     uint64_t user_argv = 0;
     uint64_t user_argc = 0;
-    size_t argc = 0;
-    if (argv) {
-        while (argv[argc]) {
-            argc++;
-        }
-    }
-    rc = build_user_stack(mm, (const char *const *)argv, argc, (const char *const *)envp, 0, &user_rsp, &user_argv, &user_argc);
+    /* Use the kernel copies of argv/envp that we made at the start */
+    rc = build_user_stack(mm, (const char *const *)kargv, argc, (const char *const *)kenvp, envc, &user_rsp, &user_argv, &user_argc);
     if (rc != 0) {
+        fut_mm_release(mm);  /* mm not attached to task yet */
         fut_task_destroy(task);
         fut_free(phdrs);
         fut_vfs_close(fd);
+        if (kargv) {
+            for (size_t i = 0; i < argc; i++) fut_free(kargv[i]);
+            fut_free(kargv);
+        }
+        if (kenvp) {
+            for (size_t i = 0; i < envc; i++) fut_free(kenvp[i]);
+            fut_free(kenvp);
+        }
         return rc;
     }
+
+    /* NOW it's safe to attach mm to task - all user pages are mapped */
+    fut_task_set_mm(task, mm);
 
     struct fut_user_entry *entry = fut_malloc(sizeof(*entry));
     if (!entry) {
         fut_task_destroy(task);
         fut_free(phdrs);
         fut_vfs_close(fd);
+        EXEC_CLEANUP_KARGS();
         return -ENOMEM;
     }
 
@@ -939,11 +1119,29 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
         fut_task_destroy(task);
         fut_free(phdrs);
         fut_vfs_close(fd);
+        if (kargv) {
+            for (size_t i = 0; i < argc; i++) fut_free(kargv[i]);
+            fut_free(kargv);
+        }
+        if (kenvp) {
+            for (size_t i = 0; i < envc; i++) fut_free(kenvp[i]);
+            fut_free(kenvp);
+        }
         return -ENOMEM;
     }
 
     fut_free(phdrs);
     fut_vfs_close(fd);
+
+    /* Free the kernel copies of argv/envp - they've been copied to user stack */
+    if (kargv) {
+        for (size_t i = 0; i < argc; i++) fut_free(kargv[i]);
+        fut_free(kargv);
+    }
+    if (kenvp) {
+        for (size_t i = 0; i < envc; i++) fut_free(kenvp[i]);
+        fut_free(kenvp);
+    }
 
     fut_vfs_check_root_canary("fut_exec_elf:exit");
 
@@ -1047,94 +1245,27 @@ static int read_exact(int fd, void *buf, size_t len) {
 }
 
 static int exec_copy_to_user(fut_mm_t *mm, uint64_t dest, const void *src, size_t len) {
-    /* For ELF loading, map user pages and write directly */
-    /* Handle page boundaries by copying one page at a time */
-    fut_vmem_context_t *vmem = fut_mm_context(mm);
-    const uint8_t *src_bytes = (const uint8_t *)src;
-    size_t remaining = len;
-    uint64_t vaddr = dest;
+    /* For ELF loading during exec, we need to write to pages in the NEW process's
+     * address space. Since we're still running with the OLD process's CR3, we must
+     * temporarily switch to the target MM context to access those pages via SMAP. */
 
-    while (remaining > 0) {
-        /* Get page offset and calculate bytes to copy in this page */
-        uint64_t page_offset = vaddr & 0xFFF;
-        size_t chunk_size = PAGE_SIZE - page_offset;
-        if (chunk_size > remaining) {
-            chunk_size = remaining;
-        }
+    extern fut_mm_t *fut_mm_current(void);
+    extern void fut_mm_switch(fut_mm_t *mm);
+    extern int fut_copy_to_user(void *u_dst, const void *k_src, size_t n);
 
-        /* Probe PTE for current page */
-        uint64_t pte = 0;
-        if (pmap_probe_pte(vmem, vaddr, &pte) != 0) {
-            extern void fut_printf(const char *, ...);
-            fut_printf("[COPY-TO-USER] pmap_probe_pte FAILED for vaddr=0x%016llx\n",
-                      (unsigned long long)vaddr);
-            return -EFAULT;
-        }
+    /* Save current MM context */
+    fut_mm_t *saved_mm = fut_mm_current();
 
-        /* Extract physical address and add page offset */
-        phys_addr_t phys = fut_pte_to_phys(pte) + page_offset;
-        void *virt = (void *)pmap_phys_to_virt(phys);
+    /* Switch to target MM context so we can access the new pages */
+    fut_mm_switch(mm);
 
-#ifdef DEBUG_ELF
-        /* Debug: log probe results for first copy */
-        if (vaddr == dest) {
-            extern void fut_printf(const char *, ...);
-            fut_printf("[COPY-TO-USER] First probe: vaddr=0x%llx page_off=0x%llx pte=0x%llx phys=0x%llx virt=%p\n",
-                      (unsigned long long)vaddr, (unsigned long long)page_offset,
-                      (unsigned long long)pte, (unsigned long long)phys, virt);
-        }
-#endif
+    /* Use standard fut_copy_to_user which handles SMAP correctly */
+    int result = fut_copy_to_user((void *)dest, src, len);
 
-        /* Copy chunk to this page */
-        memcpy(virt, src_bytes, chunk_size);
+    /* Restore original MM context */
+    fut_mm_switch(saved_mm);
 
-        /* Always-on debug for rodata segment (vaddr 0x402000) containing pathname strings */
-        if ((vaddr & ~0xFFFULL) == 0x402000 && vaddr == dest) {
-            extern void fut_printf(const char *, ...);
-            fut_printf("[EXEC-COPY] vaddr=0x%llx phys=0x%llx virt=%p len=%llu\n",
-                      (unsigned long long)vaddr, (unsigned long long)(phys - page_offset),
-                      virt, (unsigned long long)chunk_size);
-            /* Dump first 16 bytes or full chunk, whichever is smaller */
-            size_t dump_len = (chunk_size < 16) ? chunk_size : 16;
-            const uint8_t *debug_src = src_bytes;
-            const uint8_t *debug_dst = (const uint8_t *)virt;
-            fut_printf("[EXEC-COPY] SRC: ");
-            for (size_t i = 0; i < dump_len; ++i) {
-                fut_printf("%02x ", debug_src[i]);
-            }
-            fut_printf("\n[EXEC-COPY] DST: ");
-            for (size_t i = 0; i < dump_len; ++i) {
-                fut_printf("%02x ", debug_dst[i]);
-            }
-            fut_printf("\n");
-        }
-
-        /* ARM64: Clean and Invalidate data cache to Point of Coherency for ALL pages
-         * This is critical because kernel writes data through its own mapping,
-         * and userspace will read it through a different mapping. We must ensure:
-         * 1. Data is written to memory (Clean)
-         * 2. Cache lines are invalidated so next access fetches from memory
-         *
-         * DC CIVAC (Clean and Invalidate to PoC) ensures userspace reads fresh data
-         * instead of stale cached zeros from when the page was initially allocated.
-         *
-         * IMPORTANT: Must use the KERNEL virtual address where we wrote (virt),
-         * not the user virtual address (vaddr), since we're in kernel mode!
-         */
-        uint8_t *kern_start = (uint8_t *)virt;
-        uint8_t *kern_end = kern_start + chunk_size;
-        for (uint8_t *addr = kern_start; addr < kern_end; addr += 64) {
-            __asm__ volatile("dc civac, %0" :: "r"(addr) : "memory");
-        }
-        __asm__ volatile("dsb ish" ::: "memory");  /* Ensure DC completes */
-
-        /* Advance pointers */
-        src_bytes += chunk_size;
-        vaddr += chunk_size;
-        remaining -= chunk_size;
-    }
-
-    return 0;
+    return result;
 }
 
 /* Map a single LOAD segment from file */
@@ -1988,14 +2119,10 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
     if (argv) {
         while (argv[argc]) argc++;
     }
-#ifdef DEBUG_ELF
-    fut_printf("[EXEC-DBG] Before build_user_stack: task=%p task->threads=%p\n", task, task->threads);
-#endif
+    EXEC_DEBUG("[EXEC] Before build_user_stack: task=%p task->threads=%p\n", task, task->threads);
     rc = build_user_stack(mm, (const char *const *)argv, argc, (const char *const *)envp, 0, &user_sp);
-#ifdef DEBUG_ELF
-    fut_printf("[EXEC-DBG] After build_user_stack: task=%p task->threads=%p user_sp=0x%llx\n",
+    EXEC_DEBUG("[EXEC] After build_user_stack: task=%p task->threads=%p user_sp=0x%llx\n",
                task, task->threads, (unsigned long long)user_sp);
-#endif
     if (rc != 0) {
         fut_task_destroy(task);
         fut_free(phdrs);

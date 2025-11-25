@@ -283,7 +283,15 @@ fut_switch_context_irq:
     movq %rax, %rcx
     shrq $47, %rcx          /* Get top 17 bits */
     cmpq $0x1FFFF, %rcx     /* Should be 0x1FFFF for kernel addresses */
-    je .skip_all_fixups     /* Valid kernel frame */
+    jne .kernel_rip_invalid /* Invalid - skip save */
+
+    /* CRITICAL FIX: In 64-bit mode, CPU pushes SS unconditionally, but kernel
+     * may run with SS=0. Fix SS to kernel data segment for IRETQ.
+     * Note: CPU-pushed RSP at offset 192 is already correct - don't modify it! */
+    movq $0x10, 200(%r15)   /* SS = kernel data segment selector */
+    jmp .skip_all_fixups    /* Valid kernel frame, SS now fixed up */
+
+.kernel_rip_invalid:
 
     /* Kernel CS but non-kernel RIP - corrupted! Skip save */
     movb $'!', %al          /* ! = frame validation failed */
@@ -448,11 +456,13 @@ fut_switch_context_irq:
     movq 56(%rsi), %rax     /* context.rsp */
     movq %rax, 192(%rdi)    /* frame->rsp */
 
-    /* CRITICAL: Always set SS to valid selector */
-    /* context.ss might be 0 (uninitialized), which causes GP fault on IRETQ */
-    /* For safety, ALWAYS use kernel SS (0x10) when constructing frames */
-    /* This handles the case where context is corrupted/uninitialized */
-    movq $0x10, %rax        /* Force SS to kernel selector */
+    /* Set SS from context (or default to kernel SS if zero) */
+    movq 80(%rsi), %rax     /* context.ss */
+    testq %rax, %rax        /* Is it zero (uninitialized)? */
+    jnz .ss_valid
+    /* context.ss is 0 - default to kernel SS for safety */
+    movq $0x10, %rax
+.ss_valid:
     movq %rax, 200(%rdi)    /* frame->ss */
     jmp 2f
 
@@ -612,10 +622,12 @@ fut_switch_context_irq:
      */
 
     /* Restore segment registers */
-    /* IMPORTANT: Do NOT restore GS - it uses GS_BASE MSR for per-CPU data!
-     * The IRQ handler preserves GS_BASE, and we must do the same. */
-    popq %rax               /* Discard saved GS value */
-    /* GS intentionally NOT restored - must preserve GS_BASE MSR */
+
+    /* CRITICAL: NEVER load GS! The kernel uses GS_BASE MSR for per-CPU data.
+     * Loading any GS selector would read the base from the GDT descriptor
+     * (which is 0 for user data segment), corrupting the per-CPU pointer.
+     * Just skip the saved GS value entirely. */
+    addq $8, %rsp           /* Skip the GS value - never load it */
 
     /* Validate and load FS */
     movq 0(%rsp), %rax      /* Peek at FS value without popping */
@@ -821,6 +833,34 @@ fut_switch_context_irq:
     movw $0x3F8, %dx
     movb $'>', %al
     outb %al, %dx
+
+    /* CRITICAL FIX: Validate SS in IRETQ frame is never 0.
+     * In x86-64 mode, IRETQ always pops SS from RSP+32.
+     * If SS is 0, loading it causes undefined behavior.
+     * Stack layout after our push: [RSP+0]=RAX, [RSP+8]=RDX
+     * IRETQ frame starts at RSP+16: RIP(+16), CS(+24), RFLAGS(+32), RSP(+40), SS(+48) */
+    movq 48(%rsp), %rax     /* Get SS from IRETQ frame */
+    testw %ax, %ax          /* Is SS zero? */
+    jnz .ss_iretq_ok
+
+    /* SS is zero - fix it! */
+    movb $'Z', %al          /* Z = Zero SS detected, fixing! */
+    outb %al, %dx
+
+    /* Determine correct SS value based on CS (kernel vs user) */
+    movq 24(%rsp), %rax     /* Get CS from frame */
+    cmpq $0x08, %rax        /* Is it kernel CS? */
+    je .fix_kernel_ss
+    /* User CS - set SS to user data segment 0x23 */
+    movq $0x23, %rax
+    jmp .write_fixed_ss
+.fix_kernel_ss:
+    /* Kernel CS - set SS to kernel data segment 0x10 */
+    movq $0x10, %rax
+.write_fixed_ss:
+    movq %rax, 48(%rsp)     /* Write fixed SS back to frame */
+
+.ss_iretq_ok:
     popq %rdx
     popq %rax
 

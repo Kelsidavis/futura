@@ -515,11 +515,23 @@ __attribute__((used)) static void fut_thread_trampoline_impl(void (*entry)(void 
 /* The actual C implementation, called by the assembly wrapper */
 [[noreturn]] __attribute__((optimize("O0"))) static void fut_thread_trampoline_impl(void (*entry)(void *), void *arg) {
     extern void serial_puts(const char *);
+    extern void fut_printf(const char *, ...);
+
+    serial_puts("[TRAMPOLINE-IMPL] Entered\n");
+    fut_printf("[TRAMPOLINE-IMPL] entry=0x%llx arg=%p\n", (unsigned long long)(uintptr_t)entry, arg);
 
     if (!entry) {
         serial_puts("[TRAMPOLINE-ERROR] NULL entry function!\n");
         fut_thread_exit();
     }
+
+    /* Check if entry is in kernel space (should be for fut_user_trampoline) */
+    if ((uintptr_t)entry < 0xFFFFFFFF80000000ULL) {
+        fut_printf("[TRAMPOLINE-ERROR] entry=0x%llx is NOT in kernel space!\n", (unsigned long long)(uintptr_t)entry);
+        fut_thread_exit();
+    }
+
+    serial_puts("[TRAMPOLINE-IMPL] About to call entry()\n");
 
     /* Call the entry function */
     entry(arg);

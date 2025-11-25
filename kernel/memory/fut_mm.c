@@ -127,11 +127,27 @@ static void copy_kernel_half(pte_t *dst) {
 fut_mm_t *fut_mm_create(void) {
     extern void fut_printf(const char *, ...);
 
+    /* CRITICAL: When called from a user process context (e.g., fork), the current
+     * CR3 might have stale kernel page table mappings. The kernel heap can expand
+     * dynamically, adding new mappings to the kernel's master page tables, but
+     * user processes have copies of the kernel half that might be outdated.
+     *
+     * We MUST switch to the kernel's CR3 before allocating/accessing kernel heap
+     * memory to ensure we see the latest mappings. */
+    uint64_t saved_cr3 = fut_read_cr3();
+    uint64_t kernel_cr3 = fut_vmem_get_reload_value(&kernel_mm.ctx);
+
+    if (saved_cr3 != kernel_cr3) {
+        fut_printf("[MM-CREATE] Switching to kernel CR3 (0x%llx -> 0x%llx)\n",
+                   (unsigned long long)saved_cr3, (unsigned long long)kernel_cr3);
+        fut_write_cr3(kernel_cr3);
+    }
+
     fut_printf("[MM-CREATE] Allocating MM structure...\n");
     fut_mm_t *mm = (fut_mm_t *)fut_malloc(sizeof(*mm));
     if (!mm) {
         fut_printf("[MM-CREATE] FAILED: malloc returned NULL\n");
-        return NULL;
+        goto fail_restore_cr3;
     }
     memset(mm, 0, sizeof(*mm));
 
@@ -140,7 +156,7 @@ fut_mm_t *fut_mm_create(void) {
     if (!pml4_page) {
         fut_printf("[MM-CREATE] FAILED: pmm_alloc_page returned NULL (out of physical pages)\n");
         fut_free(mm);
-        return NULL;
+        goto fail_restore_cr3;
     }
     fut_printf("[MM-CREATE] PML4 allocated successfully at %p\n", pml4_page);
 
@@ -151,13 +167,30 @@ fut_mm_t *fut_mm_create(void) {
     pte_t *pml4 = (pte_t *)pml4_page;
     fut_printf("[MM-CREATE] About to copy kernel half, pml4=%p\n", pml4);
     copy_kernel_half(pml4);
-    fut_printf("[MM-CREATE] Kernel half copied\n");
+    fut_printf("[MM-CREATE] Kernel half copied, mm=%p\n", (void*)mm);
+
+    /* Check mm pointer is still valid kernel address */
+    if ((uintptr_t)mm < 0xFFFFFFFF80000000ULL) {
+        fut_printf("[MM-CREATE] FATAL: mm=%p is not kernel addr!\n", (void*)mm);
+        fut_pmm_free_page(pml4_page);
+        goto fail_restore_cr3;
+    }
 
     /* Initialize page table root (architecture-neutral) */
+    fut_printf("[MM-CREATE] Line 157: about to call fut_vmem_set_root\n");
     fut_vmem_set_root(&mm->ctx, pml4);
-    fut_vmem_set_reload_value(&mm->ctx, pmap_virt_to_phys((uintptr_t)pml4));
+    fut_printf("[MM-CREATE] Line 159: about to call fut_vmem_set_reload_value\n");
+    /* Direct serial markers to pinpoint hang */
+    __asm__ volatile("movw $0x3F8, %%dx; movb $'a', %%al; outb %%al, %%dx" ::: "ax", "dx");
+    phys_addr_t pml4_phys = pmap_virt_to_phys((uintptr_t)pml4);
+    __asm__ volatile("movw $0x3F8, %%dx; movb $'b', %%al; outb %%al, %%dx" ::: "ax", "dx");
+    fut_vmem_set_reload_value(&mm->ctx, pml4_phys);
+    __asm__ volatile("movw $0x3F8, %%dx; movb $'c', %%al; outb %%al, %%dx" ::: "ax", "dx");
+    fut_printf("[MM-CREATE] Line 161: about to set ref_count\n");
     mm->ctx.ref_count = 1;
+    fut_printf("[MM-CREATE] Line 163: about to set refcnt atomic\n");
     atomic_store_explicit(&mm->refcnt, 1, memory_order_relaxed);
+    fut_printf("[MM-CREATE] Line 165: setting flags\n");
     mm->flags = FUT_MM_USER;
     mm->brk_start = 0;
     mm->brk_current = 0;
@@ -165,8 +198,22 @@ fut_mm_t *fut_mm_create(void) {
     mm->heap_mapped_end = 0;
     mm->mmap_base = USER_MMAP_BASE;
     mm->vma_list = NULL;
+    fut_printf("[MM-CREATE] Line 172: all fields set\n");
 
+    /* Restore original CR3 before returning */
+    if (saved_cr3 != kernel_cr3) {
+        fut_printf("[MM-CREATE] Restoring CR3 (0x%llx)\n", (unsigned long long)saved_cr3);
+        fut_write_cr3(saved_cr3);
+    }
+
+    fut_printf("[MM-CREATE] Returning mm=%p\n", mm);
     return mm;
+
+fail_restore_cr3:
+    if (saved_cr3 != kernel_cr3) {
+        fut_write_cr3(saved_cr3);
+    }
+    return NULL;
 }
 
 void fut_mm_retain(fut_mm_t *mm) {

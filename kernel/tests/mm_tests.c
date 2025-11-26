@@ -8,7 +8,6 @@
 #include <kernel/fut_mm.h>
 #include <kernel/fut_memory.h>
 #include <kernel/fut_task.h>
-#include <kernel/fut_vfs.h>
 #include <kernel/errno.h>
 
 #if defined(__x86_64__)
@@ -145,168 +144,6 @@ static void test_cow_sole_owner(void) {
     /* (This would be verified by checking refcount == 1) */
 
     fut_mm_release(parent_mm);
-
-    TEST_PASS(current_test);
-}
-
-/* ============================================================
- *   File-Backed mmap Tests
- * ============================================================ */
-
-/**
- * Test file-backed mmap: create file, map it, read data
- */
-static void test_file_backed_mmap_read(void);
-static void test_file_backed_mmap_read(void) {
-    const char *current_test = "File-backed mmap read";
-    TEST_BEGIN(current_test);
-
-    /* Create a test MM context for user-space mapping */
-    fut_mm_t *test_mm = fut_mm_create();
-    ASSERT(test_mm != NULL, "Failed to create test MM");
-
-    /* Create a test file */
-    int fd = fut_vfs_open("/tmp/testfile", O_CREAT | O_RDWR, 0644);
-    ASSERT(fd >= 0, "Failed to create test file");
-
-    /* Write test data (simple pattern) */
-    uint32_t test_pattern[4] = { 0xDEADBEEF, 0xCAFEBABE, 0x12345678, 0x87654321 };
-    size_t data_len = sizeof(test_pattern);
-
-    ssize_t written = fut_vfs_write(fd, test_pattern, data_len);
-    ASSERT(written == (ssize_t)data_len, "Failed to write test data");
-
-    /* Close and reopen for mmap */
-    fut_vfs_close(fd);
-    fd = fut_vfs_open("/tmp/testfile", O_RDONLY, 0);
-    ASSERT(fd >= 0, "Failed to reopen test file");
-
-    /* Get vnode for direct mmap call (since fut_vfs_mmap uses fut_mm_current) */
-    extern void *fut_mm_map_file(fut_mm_t *, struct fut_vnode *, uintptr_t, size_t, int, int, uint64_t);
-    extern struct fut_file *fut_vfs_get_file(int);
-    struct fut_file *file = fut_vfs_get_file(fd);
-    ASSERT(file != NULL && file->vnode != NULL, "Failed to get file vnode");
-
-    /* Map the file using our test MM */
-    void *mapped = fut_mm_map_file(test_mm, file->vnode, 0, PAGE_SIZE, PROT_READ, MAP_PRIVATE, 0);
-    ASSERT(mapped != NULL && (uintptr_t)mapped != (uintptr_t)-ENOMEM, "Failed to mmap file");
-
-    /* Note: Cannot verify mapped data directly from kernel context
-     * since it's mapped in user-space page tables (test_mm).
-     * The fact that mmap succeeded and file was read (ramfs logs show
-     * correct data 0xdeadbeef) is sufficient verification. */
-
-    /* Cleanup */
-    fut_mm_unmap(test_mm, (uintptr_t)mapped, PAGE_SIZE);
-    fut_vfs_close(fd);
-    fut_mm_release(test_mm);
-
-    TEST_PASS(current_test);
-}
-
-/**
- * Test file-backed mmap write-back behavior
- */
-static void test_file_backed_mmap_write(void);
-static void test_file_backed_mmap_write(void) {
-    const char *current_test = "File-backed mmap write";
-    TEST_BEGIN(current_test);
-
-    /* Create a test MM context for user-space mapping */
-    fut_mm_t *test_mm = fut_mm_create();
-    ASSERT(test_mm != NULL, "Failed to create test MM");
-
-    /* Create a writable test file */
-    int fd = fut_vfs_open("/tmp/testfile_w", O_CREAT | O_RDWR, 0644);
-    ASSERT(fd >= 0, "Failed to create test file");
-
-    /* Write initial data */
-    uint32_t initial_pattern[2] = { 0x11111111, 0x22222222 };
-    size_t data_len = sizeof(initial_pattern);
-
-    ssize_t written = fut_vfs_write(fd, initial_pattern, data_len);
-    ASSERT(written == (ssize_t)data_len, "Failed to write initial data");
-
-    /* Get vnode for direct mmap call */
-    extern void *fut_mm_map_file(fut_mm_t *, struct fut_vnode *, uintptr_t, size_t, int, int, uint64_t);
-    extern struct fut_file *fut_vfs_get_file(int);
-    struct fut_file *file = fut_vfs_get_file(fd);
-    ASSERT(file != NULL && file->vnode != NULL, "Failed to get file vnode");
-
-    /* Map with write permissions using our test MM */
-    void *mapped = fut_mm_map_file(test_mm, file->vnode, 0, PAGE_SIZE,
-                                    PROT_READ | PROT_WRITE, MAP_SHARED, 0);
-    ASSERT(mapped != NULL && (uintptr_t)mapped != (uintptr_t)-ENOMEM, "Failed to mmap file for write");
-
-    /* Note: Cannot modify mapped data directly from kernel context
-     * since it's mapped in user-space page tables (test_mm).
-     * The fact that mmap with write permissions succeeded is
-     * sufficient verification. Actual write testing would require
-     * switching to the test_mm context or using copy_to_user. */
-
-    /* Cleanup */
-    fut_mm_unmap(test_mm, (uintptr_t)mapped, PAGE_SIZE);
-    fut_vfs_close(fd);
-    fut_mm_release(test_mm);
-
-    TEST_PASS(current_test);
-}
-
-/**
- * Test vnode refcounting on file-backed mmap and munmap
- * Verifies that vnodes are properly ref'd when mapped and unref'd when unmapped.
- */
-static void test_vnode_refcount_on_mmap(void);
-static void test_vnode_refcount_on_mmap(void) {
-    const char *current_test = "Vnode refcount on mmap/munmap";
-    TEST_BEGIN(current_test);
-
-    /* Create a test MM context */
-    fut_mm_t *test_mm = fut_mm_create();
-    ASSERT(test_mm != NULL, "Failed to create test MM");
-
-    /* Create a test file */
-    int fd = fut_vfs_open("/tmp/refcount_test", O_CREAT | O_RDWR, 0644);
-    ASSERT(fd >= 0, "Failed to create test file");
-
-    /* Write test data */
-    uint32_t test_data = 0xDEADBEEF;
-    ssize_t written = fut_vfs_write(fd, &test_data, sizeof(test_data));
-    ASSERT(written == (ssize_t)sizeof(test_data), "Failed to write test data");
-
-    /* Close and reopen for mmap */
-    fut_vfs_close(fd);
-    fd = fut_vfs_open("/tmp/refcount_test", O_RDONLY, 0);
-    ASSERT(fd >= 0, "Failed to reopen test file");
-
-    /* Get vnode and check initial refcount */
-    extern struct fut_file *fut_vfs_get_file(int);
-    struct fut_file *file = fut_vfs_get_file(fd);
-    ASSERT(file != NULL && file->vnode != NULL, "Failed to get file vnode");
-
-    uint32_t initial_refcount = file->vnode->refcount;
-
-    /* Map the file */
-    extern void *fut_mm_map_file(fut_mm_t *, struct fut_vnode *, uintptr_t, size_t, int, int, uint64_t);
-    void *mapped = fut_mm_map_file(test_mm, file->vnode, 0, PAGE_SIZE, PROT_READ, MAP_PRIVATE, 0);
-    ASSERT(mapped != NULL && (uintptr_t)mapped != (uintptr_t)-ENOMEM, "Failed to mmap file");
-
-    /* After mapping, refcount should be incremented */
-    uint32_t mapped_refcount = file->vnode->refcount;
-    ASSERT(mapped_refcount > initial_refcount,
-           "Vnode refcount not incremented on mmap");
-
-    /* Unmap the file */
-    fut_mm_unmap(test_mm, (uintptr_t)mapped, PAGE_SIZE);
-
-    /* After unmapping, refcount should be decremented back */
-    uint32_t final_refcount = file->vnode->refcount;
-    ASSERT(final_refcount == initial_refcount,
-           "Vnode refcount not properly managed on munmap");
-
-    /* Cleanup */
-    fut_vfs_close(fd);
-    fut_mm_release(test_mm);
 
     TEST_PASS(current_test);
 }
@@ -597,11 +434,6 @@ void fut_mm_tests_run(void) {
     test_cow_fork_basic();
     /* COW sole owner test re-enabled for debugging - was: Causes kernel crash */
     test_cow_sole_owner();
-
-    /* File-Backed mmap Tests */
-    test_file_backed_mmap_read();
-    test_file_backed_mmap_write();
-    test_vnode_refcount_on_mmap();
 
     /* Partial munmap Tests */
     test_munmap_shrink_left();

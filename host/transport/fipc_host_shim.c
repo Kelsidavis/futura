@@ -11,6 +11,7 @@
 
 #include <kernel/fut_memory.h>
 #include <kernel/fut_timer.h>
+#include <kernel/fut_waitq.h>
 #include <stdarg.h>
 #include <stdbool.h>
 #include <stdint.h>
@@ -288,4 +289,27 @@ int fut_thread_priority_restore(fut_thread_t *thread) {
     thread->priority = thread->pi_saved_priority;
     thread->pi_boosted = false;
     return 0;
+}
+
+/* ------------------------------------------------------------ */
+/* Wait queue stubs for host build                             */
+
+void fut_waitq_init(fut_waitq_t *wq) {
+    if (wq) {
+        wq->head = NULL;
+    }
+}
+
+void fut_waitq_sleep_locked(fut_waitq_t *wq, fut_spinlock_t *lock, enum fut_thread_state state) {
+    /* Host build doesn't have proper scheduler, so just unlock and return */
+    (void)wq;
+    (void)state;
+    if (lock) {
+        fut_spinlock_release(lock);
+    }
+}
+
+void fut_waitq_wake_one(fut_waitq_t *wq) {
+    /* No-op in host build since we don't have a real scheduler */
+    (void)wq;
 }

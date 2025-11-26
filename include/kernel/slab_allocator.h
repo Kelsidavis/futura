@@ -24,4 +24,7 @@ void *slab_realloc(void *ptr, size_t size);
 /* Print statistics */
 void slab_print_stats(void);
 
+/* Debug helper to validate all slabs and report corruption sources */
+void slab_debug_validate_all(const char *context);
+
 #endif /* _KERNEL_SLAB_ALLOCATOR_H_ */

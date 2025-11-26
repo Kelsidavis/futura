@@ -167,11 +167,14 @@ static slab_t *slab_create(slab_cache_t *cache) {
     cache->slabs = slab;
     cache->num_slabs++;
 
-    /* DISABLED for ARM64: fut_printf during slab creation can cause issues
-    fut_printf("[SLAB-CREATE] Created slab at %p for size %llu (obj_size=%llu, count=%llu)\n",
-               (void*)slab, (unsigned long long)cache->obj_size,
-               (unsigned long long)slab->obj_size, (unsigned long long)slab->obj_count);
-    */
+#ifndef __aarch64__
+    fut_printf("[SLAB-CREATE] cache_size=%llu slab=%p data=%p obj_size=%llu count=%llu\n",
+               (unsigned long long)cache->obj_size,
+               (void*)slab,
+               (void*)slab->data,
+               (unsigned long long)slab->obj_size,
+               (unsigned long long)slab->obj_count);
+#endif
 
     return slab;
 }
@@ -184,8 +187,11 @@ static int slab_is_valid(slab_t *slab) {
 
     /* Check magic number */
     if (slab->magic != SLAB_MAGIC) {
-        fut_printf("[SLAB-VALIDATE] ERROR: Slab %p has corrupted magic 0x%llx (expected 0x%llx)\n",
-                   (void*)slab, (unsigned long long)slab->magic, (unsigned long long)SLAB_MAGIC);
+        fut_printf("[SLAB-VALIDATE] ERROR: Slab %p (obj_size=%llu) has corrupted magic 0x%llx (expected 0x%llx)\n",
+                   (void*)slab,
+                   (unsigned long long)slab->obj_size,
+                   (unsigned long long)slab->magic,
+                   (unsigned long long)SLAB_MAGIC);
         return 0;
     }
 
@@ -463,4 +469,21 @@ void slab_print_stats(void) {
     (void)total_allocated;  /* Suppress unused warning */
     (void)total_freed;
     (void)total_slabs;
+}
+
+void slab_debug_validate_all(const char *context) {
+    extern void fut_printf(const char *, ...);
+
+    for (size_t i = 0; i < NUM_SLAB_SIZES; i++) {
+        slab_cache_t *cache = &slab_caches[i];
+        for (slab_t *slab = cache->slabs; slab; slab = slab->next) {
+            if (slab->magic != SLAB_MAGIC) {
+                fut_printf("[SLAB-DEBUG] %s: slab %p cache_size=%llu magic=0x%llx corrupted\n",
+                           context ? context : "(unknown)",
+                           (void*)slab,
+                           (unsigned long long)cache->obj_size,
+                           (unsigned long long)slab->magic);
+            }
+        }
+    }
 }

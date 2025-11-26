@@ -184,31 +184,41 @@ void buddy_heap_init(uintptr_t start, uintptr_t end) {
         int block_order = MIN_ORDER;
 
         /* Determine the maximum order based on address alignment */
+        int alignment_shift = MIN_ORDER;
         if (current_addr != 0) {
             uintptr_t alignment = current_addr & -current_addr;
-            int alignment_shift = 0;
+            alignment_shift = 0;
             uintptr_t temp = alignment;
             while (temp > 1) {
                 temp >>= 1;
                 alignment_shift++;
             }
-            if (alignment_shift >= MIN_ORDER) {
-                block_order = alignment_shift;
+            if (alignment_shift < MIN_ORDER) {
+                alignment_shift = MIN_ORDER;
+            } else if (alignment_shift > MAX_ORDER) {
+                alignment_shift = MAX_ORDER;
             }
-            BUDDY_DEBUG_PRINTF("[BUDDY-INIT][%d] addr=%p alignment=0x%llx align_shift=%d initial_block_order=%d\n",
+            BUDDY_DEBUG_PRINTF("[BUDDY-INIT][%d] addr=%p alignment=0x%llx align_shift=%d\n",
                        iteration, (void*)current_addr, (unsigned long long)alignment,
-                       alignment_shift, block_order);
+                       alignment_shift);
         }
 
-        int block_order_before_size_constraint __attribute__((unused)) = block_order;
-        /* Also constrain by remaining space */
-        while (block_order < MAX_ORDER && (size_t)(1UL << block_order) <= remaining_size) {
-            block_order++;
+        block_order = alignment_shift;
+
+        /* Constrain by remaining space: largest order whose block fits */
+        int size_order = MAX_ORDER;
+        while (size_order > MIN_ORDER && (1UL << size_order) > remaining_size) {
+            size_order--;
         }
-        block_order--;  /* Step back to the last valid order */
-        BUDDY_DEBUG_PRINTF("[BUDDY-INIT][%d] before_size_constraint=%d after_size_constraint=%d remaining=%llu\n",
-                   iteration, block_order_before_size_constraint, block_order,
-                   (unsigned long long)remaining_size);
+        if (size_order < MIN_ORDER) {
+            size_order = MIN_ORDER;
+        }
+
+        if (block_order > size_order) {
+            block_order = size_order;
+        }
+        BUDDY_DEBUG_PRINTF("[BUDDY-INIT][%d] after size constraint block_order=%d remaining=%llu\n",
+                   iteration, block_order, (unsigned long long)remaining_size);
 
         /* Ensure block_order is at least MIN_ORDER */
         if (block_order < MIN_ORDER) {

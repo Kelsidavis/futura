@@ -11,6 +11,7 @@
 #include <kernel/fut_memory.h>
 #include <kernel/fut_timer.h>
 #include <kernel/fut_lock.h>
+#include <kernel/slab_allocator.h>
 #include <stddef.h>
 #include <string.h>
 
@@ -328,6 +329,13 @@ static ssize_t ramfs_write(struct fut_vnode *vnode, const void *buf, size_t size
             return -ENOMEM;
         }
 
+        fut_printf("[RAMFS-REALLOC] required=%llu old_capacity=%llu -> new_capacity=%llu old=%p new=%p\n",
+                   (unsigned long long)required,
+                   (unsigned long long)node->file.capacity,
+                   (unsigned long long)new_capacity,
+                   (void*)node->file.data,
+                   (void*)new_data);
+
 #ifdef DEBUG_RAMFS
         fut_printf("[RAMFS-REALLOC] New buffer allocated: %p\n", (void*)new_data);
 #endif
@@ -407,6 +415,8 @@ static ssize_t ramfs_write(struct fut_vnode *vnode, const void *buf, size_t size
             fut_printf("[RAMFS-REALLOC] CRITICAL: Node corrupted after reallocation!\n");
             return -EIO;
         }
+
+        slab_debug_validate_all("ramfs_realloc");
 
 #ifdef DEBUG_RAMFS
         fut_printf("[RAMFS-REALLOC] Reallocation complete: node->file.data=%p capacity=%llu\n",

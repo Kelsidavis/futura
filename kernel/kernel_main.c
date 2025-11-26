@@ -1258,9 +1258,8 @@ void fut_kernel_main(void) {
      *   Launch Init Process with Framebuffer Demo
      * ======================================== */
     extern int fut_stage_init_stub_binary(void);
-    extern int fut_stage_fbtest_binary(void);
 
-    fut_printf("[INIT] Staging init process and fbtest...\n");
+    fut_printf("[INIT] Staging init process...\n");
 
     /* Stage init_stub */
     int init_stage = fut_stage_init_stub_binary();
@@ -1268,11 +1267,14 @@ void fut_kernel_main(void) {
         fut_printf("[WARN] Failed to stage init_stub (error %d)\n", init_stage);
     }
 
+#if ENABLE_FB_DIAGNOSTICS
+    extern int fut_stage_fbtest_binary(void);
     /* Stage fbtest binary */
     int fbtest_stage = fut_stage_fbtest_binary();
     if (fbtest_stage != 0) {
         fut_printf("[WARN] Failed to stage fbtest binary (error %d)\n", fbtest_stage);
     }
+#endif
 
     /* TEMPORARILY DISABLED: Console input thread busy-waits and prevents
      * user processes from running. Need to fix scheduler preemption first.

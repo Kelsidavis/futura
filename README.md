@@ -16,30 +16,38 @@ Licensed under Mozilla Public License 2.0 — see [LICENSE](LICENSE)
 
 Futura OS is a capability-first nanokernel that keeps the core minimal—time, scheduling, IPC, and hardware mediation live in the kernel while everything else runs as message-passing services over FIPC. The current development focus is on building out a practical userland surface so real applications can execute against the kernel primitives.
 
-### Status Snapshot — Updated Nov 5 2025
+### Status Snapshot — Updated Nov 15 2025
 
 - **Kernel**: Advanced memory management with COW fork, file-backed mmap, and partial munmap; comprehensive syscall surface (`fork`, `execve`, `mmap`, `munmap`, `brk`, `nanosleep`, `waitpid`, `pipe`, `dup2`).
 - **VFS**: Path resolution + RamFS production-ready; file-backed mmap integrated with eager loading; FuturaFS implementation complete with host-side tools.
 - **Shell & Userland**: 32+ built-in commands with pipes, redirections, job control, and history; `libfutura` provides crt0, syscall veneers, heap allocator, and formatted I/O.
 - **Distributed FIPC**: Host transport and registry daemons stable; remote UDP bridge for distributed communication.
 - **Wayland Compositor**: Multi-surface capable with window decorations, drop shadows, damage-aware compositing, and frame throttling.
-- **ARM64 Port**: Full multi-process support with 177 syscalls, EL0/EL1 transitions, fork/exec/wait working. **Apple Silicon M2 support** with complete boot infrastructure (AIC, UART, m1n1 payload) and storage stack (RTKit, ANS2 NVMe) ready for hardware testing.
+- **ARM64 Port**: Full multi-process support with 177 syscalls, MMU enabled with identity-mapped L1/L2 tables, virtio-blk/net/gpu parity via PCI ECAM, and async network + FuturaFS selftests now running. **Apple Silicon M2 support** with boot (AIC, UART, m1n1 payload) and storage (RTKit, ANS2 NVMe) stacks ready for on-hardware testing.
 
-### What's new — Updated Nov 5 2025
+### What's new — Updated Nov 15 2025
 
-**Recent kernel enhancements (Phase 3—Memory Management):**
+**ARM64 breakthroughs:**
+- **Fork stability**: Fixed the ARM64 `fork()` return path by flushing TLBs after TTBR0 switches, eliminating ERET faults and making multi-process workloads reliable across all 177 syscalls.
+- **MMU enabled**: Identity-mapped L1/L2 page tables now stay active at runtime, bringing per-task virtual memory semantics and copy-on-write behavior to the ARM64 port.
+
+**Parity + coverage improvements:**
+- **Virtio driver parity**: virtio-blk, virtio-net, and virtio-gpu all run through the PCI ECAM path on ARM64, giving the graphics, networking, and block stacks the same coverage as x86-64.
+- **Async selftests**: Network and FuturaFS async boot tests now run on ARM64 (no more stubs), so the platform exercises the same crash-consistency and socket harnesses at boot.
+
+**Phase 3 memory management recap:**
 - **Copy-on-write (COW) fork**: Process creation shares pages between parent and child, copying only on write via page fault handler. Hash table-based reference counting tracks shared pages with optimizations for sole-owner cases. Dramatically reduces fork() memory overhead and enables efficient fork-exec patterns.
 - **File-backed mmap**: VFS-backed memory mappings through `fut_vfs_mmap()`. Files are eagerly loaded with vnode reference counting. VMAs track file backing for future demand paging.
 - **Partial munmap with VMA splitting**: `munmap()` handles shrinking VMAs from edges or splitting middle sections while preserving file backing.
 
-**Recent userland focus (Shell & utilities):**
+**Userland focus (Shell & utilities):**
 - **32+ shell built-in commands**: Comprehensive Unix-like shell with full support for pipes (`|`), input/output redirection (`<`, `>`, `>>`), job control (`&`, `fg`, `bg`), and command history with arrow keys + tab completion.
   - **File operations**: `cat`, `cp` (multi-file), `mv` (atomic rename), `rm` (with `-f`), `touch`, `mkdir` (recursive `-p`), `rmdir`, `ls` (with `-a`, `-l` flags)
   - **Text processing**: `grep`, `wc`, `head`, `tail`, `cut`, `tr`, `sort`, `uniq`, `paste`, `diff`, `tee`
   - **Utilities**: `find`, `echo`, `test`, `[`, `pwd`, `cd`, `clear`, `help`, and more
   - **Stdin support across all tools**: Proper pipeline integration for Unix-style data flow.
 
-**Advanced compositor:**
+**Advanced compositor & tooling:**
 - **Wayland compositor** with multi-surface support, window decorations, drop shadows, damage-aware partial compositing (>30% speedup), and frame throttling for smooth rendering.
 - **FuturaFS host tools**: `mkfutfs` (formats images with configurable segments), `fsck.futfs` (offline integrity checker with repair).
 
@@ -51,6 +59,9 @@ Futura OS is a capability-first nanokernel that keeps the core minimal—time, s
 **ARM64 platform bring-up:**
 - **177 working syscalls**: Full Linux-compatible ABI (x8=syscall, x0-x7=args) including fork, exec, wait, networking, filesystem, I/O multiplexing, signals, timers, futex, and more.
 - **Multi-process support**: Complete fork → exec → wait → exit cycle working with EL0/EL1 context switching.
+- **MMU enabled**: Identity-mapped L1/L2 tables stay active with TLB invalidation on every TTBR0 switch, so per-task virtual memory and copy-on-write behavior now match the x86-64 build.
+- **Virtio driver parity**: virtio-blk, virtio-net, and virtio-gpu all use the PCI ECAM implementation, providing shared coverage across storage, networking, and graphics stacks.
+- **Async selftests**: Network and FuturaFS async boot harnesses now execute on ARM64 just like x86-64 when the `async-tests` flag is set.
 - **QEMU virt platform**: Exception vectors, GICv2 interrupts, ARM Generic Timer, PL011 UART, physical memory manager (1 GB).
 - **Apple Silicon M2 support** (MacBook Pro A2338):
   - **Phase 1 (Boot): ✅ Complete** — Device tree (M1/M2/M3 detection), Apple AIC interrupt controller, Apple UART (s5l-uart), m1n1 payload (Linux ARM64 image format)
@@ -58,7 +69,6 @@ Futura OS is a capability-first nanokernel that keeps the core minimal—time, s
   - **Build system**: `make m1n1-payload` creates bootable Image.gz (200 KiB compressed) for m1n1 bootloader
   - **Ready for hardware testing** — All drivers implemented, awaiting physical MacBook Pro M2
 - **Userland runtime**: crt0 for ARM64, syscall wrappers, working demo programs.
-- **MMU status**: Currently disabled but kernel fully functional with physical addressing; MMU enablement deferred.
 
 See `docs/CURRENT_STATUS.md` and `docs/ARM64_STATUS.md` for deeper dives into the latest changes and platform-specific progress.
 
@@ -368,10 +378,10 @@ make rust-drivers
 4. Additional subsystems (futex, semaphores, advanced IPC primitives)
 5. ✅ ARM64 multi-process support (177 syscalls working)
 6. ✅ ARM64 Apple Silicon M2 support — Phase 1 (boot) & Phase 2 (storage) complete
-7. 🚧 ARM64 MMU enablement for proper address space isolation
+7. ✅ ARM64 MMU enablement (identity-mapped L1/L2 tables live with TLB flushes on context switch)
 8. 🚧 ARM64 Apple Silicon M2 — Phase 3 (display/input), Phase 4 (networking)
 9. 🚧 ARM64 platform parity with x86-64 (drivers, networking, graphics on QEMU virt)
-8. Additional drivers (AHCI/SATA, Ethernet/WiFi, USB)
+10. Additional drivers (AHCI/SATA, Ethernet/WiFi, USB)
 
 **Future Enhancements (Planned)**
 - Multi-user support and permission model
@@ -405,7 +415,7 @@ We favour focused, well-tested patches. The project values quality kernel implem
 
 **Drivers & Platforms:**
 - Contribute memory-safe drivers in Rust (AHCI/SATA, Ethernet, USB).
-- ARM64 development: Enable MMU, port drivers (virtio-blk, virtio-net), add graphics support.
+- ARM64 development: Stress-test the MMU path, extend virtio/display/input drivers, and keep the port aligned with x86-64 feature parity.
 - Apple Silicon M2: Test on MacBook Pro A2338 hardware, implement Phase 3 (DCP display driver), Phase 4 (WiFi/Ethernet).
 - Improve virtio-net driver integration.
 - Test ARM64 on real hardware (Raspberry Pi, Apple Silicon).

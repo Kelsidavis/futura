@@ -6,10 +6,11 @@ CC := gcc
 LD := ld
 
 ROOT := ../../../..
+PLATFORM ?= x86_64
 BUILD_DIR := $(ROOT)/build
 OBJ_DIR := $(BUILD_DIR)/obj/user/apps/winstub
 BIN_DIR := $(BUILD_DIR)/bin/user
-LIB_DIR := $(BUILD_DIR)/lib
+LIB_DIR := $(BUILD_DIR)/lib/$(PLATFORM)
 
 INCLUDES := -I$(ROOT)/include -I. -I../../services/winsrv
 

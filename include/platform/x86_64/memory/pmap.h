@@ -23,15 +23,14 @@ typedef uint64_t phys_addr_t;
 #define PMAP_DIRECT_VIRT_BASE  KERNEL_VIRTUAL_BASE
 
 static inline uintptr_t pmap_phys_to_virt(phys_addr_t phys) {
-    /* For MMIO regions, we can't use simple addition as it overflows.
-     * Instead, OR the high bits to create proper kernel virtual address */
-    return (uintptr_t)phys | PMAP_DIRECT_VIRT_BASE;
+    /* Add the physical address to the kernel virtual base */
+    return (uintptr_t)phys + PMAP_DIRECT_VIRT_BASE;
 }
 
 static inline phys_addr_t pmap_virt_to_phys(uintptr_t virt) {
     if (virt >= PMAP_DIRECT_VIRT_BASE) {
-        /* Mask off the high kernel bits to get physical address */
-        return (phys_addr_t)(virt & ~PMAP_DIRECT_VIRT_BASE);
+        /* Subtract the kernel virtual base to get physical address */
+        return (phys_addr_t)(virt - PMAP_DIRECT_VIRT_BASE);
     }
     return (phys_addr_t)virt;
 }

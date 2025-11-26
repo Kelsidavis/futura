@@ -5,6 +5,8 @@
  */
 
 #include <platform/x86_64/interrupt/ioapic.h>
+#include <platform/x86_64/memory/paging.h>
+#include <platform/x86_64/memory/pmap.h>
 #include <stddef.h>
 
 extern void fut_printf(const char *fmt, ...);
@@ -41,14 +43,23 @@ static void ioapic_write(uint8_t reg, uint32_t value) {
 
 /**
  * Map IO-APIC MMIO region.
- *
- * Note: IO-APIC MMIO mapping is not yet implemented. The kernel's page table
- * allocation system does not support mapping arbitrary MMIO addresses in the
- * higher half. As a workaround, we disable IO-APIC and rely on the PIC instead.
  */
-static void *ioapic_map_mmio(uint64_t phys_addr __attribute__((unused))) {
-    fut_printf("[IOAPIC] IO-APIC MMIO mapping not yet implemented\n");
-    return NULL;
+static void *ioapic_map_mmio(uint64_t phys_addr) {
+    phys_addr_t phys_base = PAGE_ALIGN_DOWN(phys_addr);
+    uint64_t offset = phys_addr - phys_base;
+    uintptr_t virt_base = (uintptr_t)pmap_phys_to_virt(phys_base);
+
+    int rc = pmap_map(virt_base,
+                      phys_base,
+                      PAGE_SIZE,
+                      PTE_KERNEL_RW | PTE_CACHE_DISABLE | PTE_WRITE_THROUGH);
+    if (rc != 0) {
+        fut_printf("[IOAPIC] ERROR: pmap_map failed rc=%d for phys=0x%llx\n",
+                   rc, (unsigned long long)phys_base);
+        return NULL;
+    }
+
+    return (void *)(virt_base + offset);
 }
 
 /**

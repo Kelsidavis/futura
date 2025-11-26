@@ -89,15 +89,17 @@ static page_table_t *alloc_page_table(void) {
     extern void *fut_pmm_alloc_page(void);
     extern void fut_printf(const char *, ...);
 
-    /* Allocate a properly aligned 4KB page from PMM */
-    phys_addr_t phys = (phys_addr_t)fut_pmm_alloc_page();
-    if (!phys) {
+    /* Allocate a properly aligned 4KB page from PMM.
+     * IMPORTANT: fut_pmm_alloc_page() returns a VIRTUAL address
+     * (physical + KERNEL_VIRTUAL_BASE), NOT a physical address. */
+    void *page_virt = fut_pmm_alloc_page();
+    if (!page_virt) {
         fut_printf("[PAGING] Failed to allocate page table from PMM\n");
         return NULL;
     }
 
-    /* Convert physical address to virtual address */
-    page_table_t *page = (page_table_t *)(uintptr_t)pmap_phys_to_virt(phys);
+    /* The PMM already returns a virtual address, use it directly */
+    page_table_t *page = (page_table_t *)page_virt;
 
     /* Zero the page table */
     memset(page, 0, PAGE_SIZE);

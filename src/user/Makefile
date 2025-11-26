@@ -7,7 +7,7 @@ PLATFORM ?= x86_64
 export PLATFORM
 
 # Subdirectories
-USERLAND_DIRS := libfutura init shell cat echo wc fsd posixd futurawayd fbtest stubs services/winsrv apps/winstub
+USERLAND_DIRS := libfutura init shell cat echo wc fsd posixd futurawayd fbtest stubs services/winsrv apps/winstub clients/wl-simple clients/wl-colorwheel clients/wl-term
 
 # Build targets
 .PHONY: all clean $(USERLAND_DIRS)
@@ -16,7 +16,7 @@ USERLAND_DIRS := libfutura init shell cat echo wc fsd posixd futurawayd fbtest s
 all: libfutura $(USERLAND_DIRS)
 
 # Ensure services depend on libfutura
-init shell cat echo wc fsd posixd futurawayd fbtest services/winsrv apps/winstub: libfutura
+init shell cat echo wc fsd posixd futurawayd fbtest services/winsrv apps/winstub clients/wl-simple clients/wl-colorwheel clients/wl-term: libfutura
 
 $(USERLAND_DIRS):
 	@echo "Building $@ for $(PLATFORM)..."

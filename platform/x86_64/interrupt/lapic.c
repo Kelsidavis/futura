@@ -39,30 +39,16 @@ static inline void lapic_write(uint32_t reg, uint32_t value) {
 
 /**
  * Map LAPIC MMIO region to kernel virtual address space.
+ *
+ * Note: This function relies on pmap_kmap() which only works if the kernel's
+ * page tables are already set up for the target address range. For MMIO regions
+ * like LAPIC, this requires the kernel to pre-allocate page tables during boot,
+ * which doesn't happen for arbitrary MMIO addresses. As a workaround, we simply
+ * don't use LAPIC for now and rely on PIC (Programmable Interrupt Controller).
  */
-static void *lapic_map_mmio(uint64_t phys_addr) {
-    /* Map LAPIC MMIO region with uncacheable attribute */
-    /* Use a fixed virtual address for LAPIC */
-    const uint64_t lapic_virt = 0xFFFFFFFFFEE00000ULL;  /* Match physical layout */
-
-    extern int pmap_map(uint64_t vaddr, uint64_t paddr, uint64_t len, uint64_t prot);
-    extern void *pmap_kmap(uint64_t phys);
-
-    /* PAGE_PRESENT | PAGE_WRITE | PAGE_PCD (Cache Disable) | PAGE_PWT (Write Through) */
-    const uint64_t PAGE_PRESENT = 0x001;
-    const uint64_t PAGE_WRITE = 0x002;
-    const uint64_t PAGE_PCD = 0x010;  /* Cache Disable for MMIO */
-    const uint64_t PAGE_PWT = 0x008;  /* Write Through */
-    const uint64_t prot = PAGE_PRESENT | PAGE_WRITE | PAGE_PCD | PAGE_PWT;
-
-    /* Map one page (4KB) for LAPIC registers */
-    int ret = pmap_map(lapic_virt, phys_addr, 4096, prot);
-    if (ret != 0) {
-        fut_printf("[LAPIC] ERROR: Failed to map LAPIC MMIO (error %d)\n", ret);
-        return NULL;
-    }
-
-    return (void *)lapic_virt;
+static void *lapic_map_mmio(uint64_t phys_addr __attribute__((unused))) {
+    fut_printf("[LAPIC] LAPIC MMIO mapping not yet implemented\n");
+    return NULL;
 }
 
 /**

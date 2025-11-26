@@ -41,28 +41,14 @@ static void ioapic_write(uint8_t reg, uint32_t value) {
 
 /**
  * Map IO-APIC MMIO region.
+ *
+ * Note: IO-APIC MMIO mapping is not yet implemented. The kernel's page table
+ * allocation system does not support mapping arbitrary MMIO addresses in the
+ * higher half. As a workaround, we disable IO-APIC and rely on the PIC instead.
  */
-static void *ioapic_map_mmio(uint64_t phys_addr) {
-    extern int pmap_map(uint64_t vaddr, uint64_t paddr, uint64_t len, uint64_t prot);
-
-    /* Use a fixed virtual address for IO-APIC */
-    const uint64_t ioapic_virt = 0xFFFFFFFFFEC00000ULL;  /* Match physical layout */
-
-    /* PAGE_PRESENT | PAGE_WRITE | PAGE_PCD (Cache Disable) | PAGE_PWT (Write Through) */
-    const uint64_t PAGE_PRESENT = 0x001;
-    const uint64_t PAGE_WRITE = 0x002;
-    const uint64_t PAGE_PCD = 0x010;  /* Cache Disable for MMIO */
-    const uint64_t PAGE_PWT = 0x008;  /* Write Through */
-    const uint64_t prot = PAGE_PRESENT | PAGE_WRITE | PAGE_PCD | PAGE_PWT;
-
-    /* Map one page (4KB) for IO-APIC registers */
-    int ret = pmap_map(ioapic_virt, phys_addr, 4096, prot);
-    if (ret != 0) {
-        fut_printf("[IOAPIC] ERROR: Failed to map IO-APIC MMIO (error %d)\n", ret);
-        return NULL;
-    }
-
-    return (void *)ioapic_virt;
+static void *ioapic_map_mmio(uint64_t phys_addr __attribute__((unused))) {
+    fut_printf("[IOAPIC] IO-APIC MMIO mapping not yet implemented\n");
+    return NULL;
 }
 
 /**

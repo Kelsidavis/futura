@@ -1175,7 +1175,7 @@ void fut_kernel_main(void) {
     fut_printf("[INIT-DEBUG] About to stage wl-simple\n");
 
     fut_printf("[INIT] Staging wl-simple client...\n");
-    wayland_client_stage = fut_stage_wayland_client_binary();
+    int wayland_client_stage = fut_stage_wayland_client_binary();
     if (wayland_client_stage != 0) {
         fut_printf("[WARN] Failed to stage wl-simple binary (error %d, continuing)\n", wayland_client_stage);
         /* Continue even if staging fails for interactive testing */

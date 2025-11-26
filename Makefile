@@ -199,7 +199,7 @@ CFLAGS += -DWAYLAND_INTERACTIVE_MODE=1
 endif
 
 # Feature toggles
-ENABLE_WAYLAND_TEST_CLIENTS ?= 1  # Wayland test clients (wl-simple, wl-colorwheel)
+ENABLE_WAYLAND_TEST_CLIENTS := 1  # Wayland test clients (wl-simple, wl-colorwheel)
 ENABLE_FB_DIAGNOSTICS ?= 0        # Optional: fbtest framebuffer diagnostic tool
 
 # Debug vs Release flags
@@ -638,10 +638,8 @@ OBJECTS += $(FBTEST_BLOB)
 endif
 # Core Wayland binaries (production)
 OBJECTS += $(WAYLAND_COMPOSITOR_BLOB) $(WAYLAND_SHELL_BLOB) $(WL_TERM_BLOB)
-# Test clients (optional)
-ifeq ($(ENABLE_WAYLAND_TEST_CLIENTS),1)
+# Test clients - always enabled
 OBJECTS += $(WAYLAND_CLIENT_BLOB) $(WAYLAND_COLOR_BLOB)
-endif
 else ifeq ($(PLATFORM),arm64)
 # Re-enabled for UI testing
 OBJECTS += $(ARM64_INIT_BLOB) $(ARM64_UIDEMO_BLOB) $(ARM64_SHELL_BLOB) $(ARM64_FORKTEST_BLOB)

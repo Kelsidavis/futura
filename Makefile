@@ -199,7 +199,7 @@ CFLAGS += -DWAYLAND_INTERACTIVE_MODE=1
 endif
 
 # Feature toggles
-ENABLE_WAYLAND_TEST_CLIENTS ?= 0  # Optional: wl-simple, wl-colorwheel test clients
+ENABLE_WAYLAND_TEST_CLIENTS ?= 1  # Wayland test clients (wl-simple, wl-colorwheel)
 ENABLE_FB_DIAGNOSTICS ?= 0        # Optional: fbtest framebuffer diagnostic tool
 
 # Debug vs Release flags

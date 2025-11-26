@@ -199,8 +199,10 @@ CFLAGS += -DWAYLAND_INTERACTIVE_MODE=1
 endif
 
 # Feature toggles
+ENABLE_WAYLAND_DEMO ?= 1          # Core Wayland compositor + wl-term
 ENABLE_WAYLAND_TEST_CLIENTS := 1  # Wayland test clients (wl-simple, wl-colorwheel)
 ENABLE_FB_DIAGNOSTICS ?= 0        # Optional: fbtest framebuffer diagnostic tool
+CFLAGS += -DENABLE_WAYLAND_DEMO=$(ENABLE_WAYLAND_DEMO)
 
 # Debug vs Release flags
 ifeq ($(BUILD_MODE),debug)

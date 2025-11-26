@@ -774,10 +774,13 @@ void fut_kernel_main(void) {
     int wayland_stage = -1;
     __attribute__((unused)) int wayland_exec = -1;  /* TODO: Make compositor exec unconditional */
 
-#if ENABLE_WAYLAND_DEMO
+#if ENABLE_WAYLAND_TEST_CLIENTS
     /* Test client variables (optional) */
     int wayland_client_stage = -1;
     int wayland_client_exec = -1;
+#else
+    __attribute__((unused)) int wayland_client_stage = -1;
+    __attribute__((unused)) int wayland_client_exec = -1;
 #endif
 
     /* ========================================
@@ -1178,7 +1181,7 @@ void fut_kernel_main(void) {
     fut_printf("[INIT-DEBUG] About to stage wl-simple\n");
 
     fut_printf("[INIT] Staging wl-simple client...\n");
-    int wayland_client_stage = fut_stage_wayland_client_binary();
+    wayland_client_stage = fut_stage_wayland_client_binary();
     if (wayland_client_stage != 0) {
         fut_printf("[WARN] Failed to stage wl-simple binary (error %d, continuing)\n", wayland_client_stage);
         /* Continue even if staging fails for interactive testing */
@@ -1338,8 +1341,8 @@ void fut_kernel_main(void) {
     }
 
     /* Multi-client Wayland: Launch wl-simple and optionally wl-colorwheel */
+#if ENABLE_WAYLAND_TEST_CLIENTS
     wayland_client_exec = 0;  /* Will be set by actual exec below */
-#if 1  /* Enabled: multi-client Wayland support */
     if (wayland_exec == 0 && wayland_client_stage == 0) {
         fut_boot_delay_ms(100);
 
@@ -1351,7 +1354,7 @@ void fut_kernel_main(void) {
         wayland_client_exec = fut_exec_elf("/bin/wl-simple", args1, envp);
         if (wayland_client_exec != 0) {
             fut_printf("[WARN] Failed to launch /bin/wl-simple (error %d)\n", wayland_client_exec);
-#if ENABLE_WAYLAND_DEMO
+#if ENABLE_WAYLAND_TEST_CLIENTS
             fut_test_fail(WAYLAND_TEST_CLIENT_FAIL);
 #endif
         } else {
@@ -1371,7 +1374,7 @@ void fut_kernel_main(void) {
             }
         }
     }
-#endif
+#endif /* ENABLE_WAYLAND_TEST_CLIENTS */
 
     /* Check if interactive mode is enabled (for GUI testing) */
     /* When ENABLE_WAYLAND_DEMO is set, enable interactive mode so user can interact with shell */
@@ -1381,7 +1384,12 @@ void fut_kernel_main(void) {
     wayland_interactive = true;
 #endif
 
-    if (wayland_exec == 0 && wayland_client_exec == 0) {
+    bool wayland_ready = (wayland_exec == 0);
+#if ENABLE_WAYLAND_TEST_CLIENTS
+    wayland_ready = wayland_ready && (wayland_client_exec == 0);
+#endif
+
+    if (wayland_ready) {
         uint32_t finalize_delay_ms = 2500;
         fut_boot_delay_ms(finalize_delay_ms);
 

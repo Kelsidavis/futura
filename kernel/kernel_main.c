@@ -863,6 +863,9 @@ void fut_kernel_main(void) {
     /* Mark per-CPU data as safe to access (enables fut_thread_current()) */
     fut_thread_mark_percpu_safe();
     fut_printf("[INIT] Per-CPU data marked as safe for access\n");
+
+    /* Provide a bootstrap task/thread context so VFS/syscalls work before scheduler */
+    fut_thread_init_bootstrap();
 #else
     fut_serial_puts("[INIT] Initializing per-CPU data for CPU 0...\n");
     fut_percpu_init(0, 0);

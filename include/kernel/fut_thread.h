@@ -144,6 +144,13 @@ void fut_thread_mark_percpu_safe(void);
  */
 void fut_thread_set_current(fut_thread_t *thread);
 
+/**
+ * Initialize a bootstrap kernel thread/task so early subsystems that rely on
+ * fut_task_current() (e.g., VFS) can operate before the scheduler runs.
+ * Safe to call multiple times; subsequent calls become no-ops.
+ */
+void fut_thread_init_bootstrap(void);
+
 fut_thread_t *fut_thread_find(uint64_t tid);
 void fut_thread_set_deadline(uint64_t abs_tick);
 uint64_t fut_thread_get_deadline(void);

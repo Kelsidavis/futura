@@ -417,6 +417,60 @@ void fut_thread_set_current(fut_thread_t *thread) {
     }
 }
 
+#if defined(__x86_64__)
+void fut_thread_init_bootstrap(void) {
+    fut_percpu_t *percpu = fut_percpu_get();
+    if (!percpu) {
+        fut_printf("[THREAD] bootstrap init failed: percpu unavailable\n");
+        return;
+    }
+    if (percpu->current_thread) {
+        return;  /* Already have a current thread (scheduler running) */
+    }
+
+    static bool bootstrap_ready = false;
+    static fut_task_t bootstrap_task;
+    static fut_thread_t bootstrap_thread;
+    static uint8_t bootstrap_stack[8192] __attribute__((aligned(16)));
+
+    if (!bootstrap_ready) {
+        memset(&bootstrap_task, 0, sizeof(bootstrap_task));
+        bootstrap_task.pid = 1;
+        bootstrap_task.state = FUT_TASK_RUNNING;
+        bootstrap_task.current_dir_ino = 1;  /* Root */
+        bootstrap_task.uid = 0;
+        bootstrap_task.gid = 0;
+        bootstrap_task.max_fds = 64;
+        bootstrap_task.fd_table = fut_malloc(sizeof(struct fut_file *) * bootstrap_task.max_fds);
+        if (!bootstrap_task.fd_table) {
+            fut_printf("[THREAD] bootstrap init failed: no fd table\n");
+            return;
+        }
+        memset(bootstrap_task.fd_table, 0, sizeof(struct fut_file *) * bootstrap_task.max_fds);
+        bootstrap_task.next_fd = 0;
+
+        memset(&bootstrap_thread, 0, sizeof(bootstrap_thread));
+        bootstrap_thread.tid = 1;
+        bootstrap_thread.task = &bootstrap_task;
+        bootstrap_thread.state = FUT_THREAD_RUNNING;
+        bootstrap_thread.priority = FUT_DEFAULT_PRIORITY;
+        bootstrap_thread.stack_base = bootstrap_stack;
+        bootstrap_thread.stack_size = sizeof(bootstrap_stack);
+
+        bootstrap_task.threads = &bootstrap_thread;
+        bootstrap_task.thread_count = 1;
+
+        bootstrap_ready = true;
+    }
+
+    percpu->current_thread = &bootstrap_thread;
+}
+#else
+void fut_thread_init_bootstrap(void) {
+    /* ARM64 platform wires up its boot thread via arm64_init_boot_thread(). */
+}
+#endif
+
 fut_thread_t *fut_thread_find(uint64_t tid) {
     for (fut_thread_t *t = fut_thread_list; t; t = t->global_next) {
         if (t->tid == tid) {

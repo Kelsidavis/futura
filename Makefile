@@ -881,8 +881,10 @@ stage: userland
 	@mkdir -p $(INITROOT)/sbin $(INITROOT)/bin $(INITROOT)/lib $(INITROOT)/tmp
 	@chmod 1777 $(INITROOT)/tmp
 	@install -m 0755 $(WAYLAND_COMPOSITOR_BIN) $(INITROOT)/sbin/futura-wayland
+ifeq ($(ENABLE_WAYLAND_TEST_CLIENTS),1)
 	@install -m 0755 $(WAYLAND_CLIENT_BIN) $(INITROOT)/bin/wl-simple
 	@install -m 0755 $(WAYLAND_COLOR_BIN) $(INITROOT)/bin/wl-colorwheel
+endif
 	@install -m 0755 $(WAYLAND_SHELL_BIN) $(INITROOT)/sbin/futura-shell
 	@install -m 0755 src/user/shell/futura-shell/launch_shell.sh $(INITROOT)/sbin/launch-shell
 	@if [ -f $(BUILD_DIR)/lib/libopen_wrapper.so ]; then install -m 0755 $(BUILD_DIR)/lib/libopen_wrapper.so $(INITROOT)/lib/libopen_wrapper.so; fi

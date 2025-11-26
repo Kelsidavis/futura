@@ -76,7 +76,7 @@ extern void fut_signal_selftest_schedule(fut_task_t *task);
 #define WAYLAND_TEST_CLIENT_FAIL   0xD3u
 #endif
 
-#if ENABLE_WINSRV_DEMO || ENABLE_WAYLAND_DEMO
+#if ENABLE_WAYLAND_DEMO
 __attribute__((unused)) static void fut_boot_delay_ms(uint32_t delay_ms) {
     if (delay_ms == 0) {
         return;
@@ -770,16 +770,13 @@ __attribute__((unused)) static void fipc_receiver_thread(void *arg) {
  */
 void fut_kernel_main(void) {
 
-#if ENABLE_WINSRV_DEMO
-    int winsrv_stage = -1;
-    int winstub_stage = -1;
-    int winsrv_exec = -1;
-    int winstub_exec = -1;
-#endif
-#if ENABLE_WAYLAND_DEMO
+    /* Core Wayland variables (production) */
     int wayland_stage = -1;
+    __attribute__((unused)) int wayland_exec = -1;  /* TODO: Make compositor exec unconditional */
+
+#if ENABLE_WAYLAND_DEMO
+    /* Test client variables (optional) */
     int wayland_client_stage = -1;
-    int wayland_exec = -1;
     int wayland_client_exec = -1;
 #endif
 
@@ -1150,25 +1147,9 @@ void fut_kernel_main(void) {
     /* Slab debugging complete - disabled again for interactive mode */
     /* test_futurafs_operations(); */
 
-#if ENABLE_WINSRV_DEMO
-    fut_printf("[INIT] Staging winsrv user binary...\n");
-    winsrv_stage = fut_stage_winsrv_binary();
-    if (winsrv_stage != 0) {
-        fut_printf("[WARN] Failed to stage winsrv binary (error %d)\n", winsrv_stage);
-    } else {
-        fut_printf("[INIT] winsrv binary staged at /sbin/winsrv\n");
-    }
-
-    fut_printf("[INIT] Staging winstub user binary...\n");
-    winstub_stage = fut_stage_winstub_binary();
-    if (winstub_stage != 0) {
-        fut_printf("[WARN] Failed to stage winstub binary (error %d)\n", winstub_stage);
-    } else {
-        fut_printf("[INIT] winstub binary staged at /bin/winstub\n");
-    }
-#endif
-
-#if ENABLE_WAYLAND_DEMO
+    /* ========================================
+     *   Stage Core Wayland Binaries (Production)
+     * ======================================== */
     fut_printf("[INIT] Staging futura-wayland compositor...\n");
     fut_printf("[INIT-DEBUG] About to call fut_stage_wayland_compositor_binary\n");
     wayland_stage = fut_stage_wayland_compositor_binary();
@@ -1179,6 +1160,18 @@ void fut_kernel_main(void) {
     } else {
         fut_printf("[INIT] futura-wayland staged at /sbin/futura-wayland\n");
     }
+
+    int wl_term_stage = fut_stage_wl_term_binary();
+    if (wl_term_stage != 0) {
+        fut_printf("[WARN] Failed to stage wl-term binary (error %d)\n", wl_term_stage);
+    } else {
+        fut_printf("[INIT] wl-term staged at /bin/wl-term\n");
+    }
+
+#if ENABLE_WAYLAND_TEST_CLIENTS
+    /* ========================================
+     *   Stage Test Clients (Optional)
+     * ======================================== */
     fut_printf("[INIT-DEBUG] About to stage wl-simple\n");
 
     fut_printf("[INIT] Staging wl-simple client...\n");
@@ -1320,31 +1313,6 @@ void fut_kernel_main(void) {
             fut_printf("[INIT] Shell launched successfully\n");
         }
     } */
-
-#if ENABLE_WINSRV_DEMO
-    if (winsrv_stage == 0) {
-        char winsrv_name[] = "winsrv";
-        char *winsrv_args[] = { winsrv_name, NULL };
-        winsrv_exec = fut_exec_elf("/sbin/winsrv", winsrv_args, NULL);
-        if (winsrv_exec != 0) {
-            fut_printf("[WARN] Failed to launch /sbin/winsrv (error %d)\n", winsrv_exec);
-        } else {
-            fut_printf("[INIT] Scheduled /sbin/winsrv service\n");
-        }
-    }
-
-    if (winsrv_exec == 0 && winstub_stage == 0) {
-        fut_boot_delay_ms(100);
-        char winstub_name[] = "winstub";
-        char *winstub_args[] = { winstub_name, NULL };
-        winstub_exec = fut_exec_elf("/bin/winstub", winstub_args, NULL);
-        if (winstub_exec != 0) {
-            fut_printf("[WARN] Failed to launch /bin/winstub (error %d)\n", winstub_exec);
-        } else {
-            fut_printf("[INIT] Scheduled /bin/winstub demo client\n");
-        }
-    }
-#endif
 
 #if ENABLE_WAYLAND_DEMO
     if (wayland_stage == 0) {

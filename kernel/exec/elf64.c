@@ -640,29 +640,33 @@ static int stage_stack_pages(fut_mm_t *mm, uint64_t *out_stack_top) {
     return 0;
 }
 
+/* Framebuffer diagnostics (optional) */
+#if ENABLE_FB_DIAGNOSTICS
 extern const uint8_t _binary_build_bin_x86_64_user_fbtest_start[];
 extern const uint8_t _binary_build_bin_x86_64_user_fbtest_end[];
+#endif
 extern const uint8_t _binary_build_bin_x86_64_user_shell_start[];
 extern const uint8_t _binary_build_bin_x86_64_user_shell_end[];
-extern const uint8_t _binary_build_bin_x86_64_user_winsrv_start[];
-extern const uint8_t _binary_build_bin_x86_64_user_winsrv_end[];
-extern const uint8_t _binary_build_bin_x86_64_user_winstub_start[];
-extern const uint8_t _binary_build_bin_x86_64_user_winstub_end[];
 extern const uint8_t _binary_build_bin_x86_64_user_init_stub_start[];
 extern const uint8_t _binary_build_bin_x86_64_user_init_stub_end[];
 extern const uint8_t _binary_build_bin_x86_64_user_second_start[];
 extern const uint8_t _binary_build_bin_x86_64_user_second_end[];
-#if ENABLE_WAYLAND_DEMO
+/* Core Wayland binaries (production) */
 extern const uint8_t _binary_build_bin_x86_64_user_futura_wayland_start[];
 extern const uint8_t _binary_build_bin_x86_64_user_futura_wayland_end[];
+extern const uint8_t _binary_build_bin_x86_64_user_futura_shell_start[];
+extern const uint8_t _binary_build_bin_x86_64_user_futura_shell_end[];
+extern const uint8_t _binary_build_bin_x86_64_user_wl_term_start[];
+extern const uint8_t _binary_build_bin_x86_64_user_wl_term_end[];
+/* Test clients (optional) */
+#if ENABLE_WAYLAND_TEST_CLIENTS
 extern const uint8_t _binary_build_bin_x86_64_user_wl_simple_start[];
 extern const uint8_t _binary_build_bin_x86_64_user_wl_simple_end[];
 extern const uint8_t _binary_build_bin_x86_64_user_wl_colorwheel_start[];
 extern const uint8_t _binary_build_bin_x86_64_user_wl_colorwheel_end[];
-extern const uint8_t _binary_build_bin_x86_64_user_futura_shell_start[];
-extern const uint8_t _binary_build_bin_x86_64_user_futura_shell_end[];
 #endif
 
+#if ENABLE_FB_DIAGNOSTICS
 int fut_stage_fbtest_binary(void) {
     EXEC_DEBUG("[STAGE] fut_stage_fbtest_binary start\n");
 
@@ -713,6 +717,7 @@ int fut_stage_fbtest_binary(void) {
     EXEC_DEBUG("[STAGE] fut_stage_fbtest_binary complete\n");
     return 0;
 }
+#endif
 
 static int stage_blob(const uint8_t *start,
                       const uint8_t *end,
@@ -764,30 +769,6 @@ int fut_stage_shell_binary(void) {
                       "/bin/shell");
 }
 
-#if ENABLE_WINSRV_DEMO
-int fut_stage_winsrv_binary(void) {
-    (void)fut_vfs_mkdir("/sbin", 0755);
-    return stage_blob(_binary_build_bin_x86_64_user_winsrv_start,
-                      _binary_build_bin_x86_64_user_winsrv_end,
-                      "/sbin/winsrv");
-}
-
-int fut_stage_winstub_binary(void) {
-    (void)fut_vfs_mkdir("/bin", 0755);
-    return stage_blob(_binary_build_bin_x86_64_user_winstub_start,
-                      _binary_build_bin_x86_64_user_winstub_end,
-                      "/bin/winstub");
-}
-#else
-int fut_stage_winsrv_binary(void) {
-    return 0;
-}
-
-int fut_stage_winstub_binary(void) {
-    return 0;
-}
-#endif
-
 #ifdef __x86_64__
 int fut_stage_init_stub_binary(void) {
     (void)fut_vfs_mkdir("/sbin", 0755);
@@ -812,7 +793,7 @@ int fut_stage_second_stub_binary(void) {
 }
 #endif /* __x86_64__ */
 
-#if ENABLE_WAYLAND_DEMO
+/* Core Wayland binaries (production - always built) */
 int fut_stage_wayland_compositor_binary(void) {
     extern void fut_printf(const char *, ...);
     (void)fut_vfs_mkdir("/sbin", 0755);
@@ -829,6 +810,15 @@ int fut_stage_wayland_compositor_binary(void) {
                       "/sbin/futura-wayland");
 }
 
+int fut_stage_wl_term_binary(void) {
+    (void)fut_vfs_mkdir("/bin", 0755);
+    return stage_blob(_binary_build_bin_x86_64_user_wl_term_start,
+                      _binary_build_bin_x86_64_user_wl_term_end,
+                      "/bin/wl-term");
+}
+
+/* Test client binaries (optional - only built with ENABLE_WAYLAND_TEST_CLIENTS) */
+#if ENABLE_WAYLAND_TEST_CLIENTS
 int fut_stage_wayland_client_binary(void) {
     (void)fut_vfs_mkdir("/bin", 0755);
     return stage_blob(_binary_build_bin_x86_64_user_wl_simple_start,
@@ -843,10 +833,6 @@ int fut_stage_wayland_color_client_binary(void) {
                       "/bin/wl-colorwheel");
 }
 #else
-int fut_stage_wayland_compositor_binary(void) {
-    return -ENOSYS;
-}
-
 int fut_stage_wayland_client_binary(void) {
     return -ENOSYS;
 }

@@ -199,8 +199,8 @@ CFLAGS += -DWAYLAND_INTERACTIVE_MODE=1
 endif
 
 # Feature toggles
-ENABLE_WINSRV_DEMO ?= 0
-ENABLE_WAYLAND_DEMO ?= 0
+ENABLE_WAYLAND_TEST_CLIENTS ?= 0  # Optional: wl-simple, wl-colorwheel test clients
+ENABLE_FB_DIAGNOSTICS ?= 0        # Optional: fbtest framebuffer diagnostic tool
 
 # Debug vs Release flags
 ifeq ($(BUILD_MODE),debug)
@@ -287,7 +287,7 @@ $(GEN_FEATURE_HDR): FORCE
 		echo "/* Auto-generated. Do not edit. */"; \
 		echo "#pragma once"; \
 		echo "#define ENABLE_WINSRV_DEMO $(ENABLE_WINSRV_DEMO)"; \
-		echo "#define ENABLE_WAYLAND_DEMO $(ENABLE_WAYLAND_DEMO)"; \
+		echo "#define ENABLE_WAYLAND_TEST_CLIENTS $(ENABLE_WAYLAND_TEST_CLIENTS)"; \
 	} > $$tmp; \
 	if [ ! -f $@ ] || ! cmp -s $$tmp $@; then mv $$tmp $@; else rm $$tmp; fi
 
@@ -602,10 +602,6 @@ SHELL_BIN := $(BIN_DIR)/$(PLATFORM)/user/shell
 SHELL_BLOB := $(OBJ_DIR)/kernel/blobs/shell_blob.o
 FBTEST_BIN := $(BIN_DIR)/$(PLATFORM)/user/fbtest
 FBTEST_BLOB := $(OBJ_DIR)/kernel/blobs/fbtest_blob.o
-WINSRV_BIN := $(BIN_DIR)/$(PLATFORM)/user/winsrv
-WINSRV_BLOB := $(OBJ_DIR)/kernel/blobs/winsrv_blob.o
-WINSTUB_BIN := $(BIN_DIR)/$(PLATFORM)/user/winstub
-WINSTUB_BLOB := $(OBJ_DIR)/kernel/blobs/winstub_blob.o
 INIT_STUB_BIN := $(BIN_DIR)/$(PLATFORM)/user/init_stub
 INIT_STUB_BLOB := $(OBJ_DIR)/kernel/blobs/init_stub_blob.o
 SECOND_STUB_BIN := $(BIN_DIR)/$(PLATFORM)/user/second
@@ -618,6 +614,8 @@ WAYLAND_COLOR_BIN := $(BIN_DIR)/$(PLATFORM)/user/wl-colorwheel
 WAYLAND_COLOR_BLOB := $(OBJ_DIR)/kernel/blobs/wl_colorwheel_blob.o
 WAYLAND_SHELL_BIN := $(BIN_DIR)/$(PLATFORM)/user/futura-shell
 WAYLAND_SHELL_BLOB := $(OBJ_DIR)/kernel/blobs/futura_shell_blob.o
+WL_TERM_BIN := $(BIN_DIR)/$(PLATFORM)/user/wl-term
+WL_TERM_BLOB := $(OBJ_DIR)/kernel/blobs/wl_term_blob.o
 
 # ARM64 userland binaries
 ARM64_INIT_BIN := $(BIN_DIR)/arm64/user/init
@@ -632,13 +630,17 @@ ARM64_FORKTEST_BIN := $(BIN_DIR)/arm64/user/forktest
 ARM64_FORKTEST_BLOB := $(OBJ_DIR)/kernel/blobs/arm64_forktest_blob.o
 
 ifeq ($(PLATFORM),x86_64)
-OBJECTS += $(FBTEST_BLOB) $(SHELL_BLOB)
-ifeq ($(ENABLE_WINSRV_DEMO),1)
-OBJECTS += $(WINSRV_BLOB) $(WINSTUB_BLOB)
-endif
+OBJECTS += $(SHELL_BLOB)
 OBJECTS += $(INIT_STUB_BLOB) $(SECOND_STUB_BLOB)
-ifeq ($(ENABLE_WAYLAND_DEMO),1)
-OBJECTS += $(WAYLAND_COMPOSITOR_BLOB) $(WAYLAND_CLIENT_BLOB) $(WAYLAND_COLOR_BLOB) $(WAYLAND_SHELL_BLOB)
+# Diagnostics (optional)
+ifeq ($(ENABLE_FB_DIAGNOSTICS),1)
+OBJECTS += $(FBTEST_BLOB)
+endif
+# Core Wayland binaries (production)
+OBJECTS += $(WAYLAND_COMPOSITOR_BLOB) $(WAYLAND_SHELL_BLOB) $(WL_TERM_BLOB)
+# Test clients (optional)
+ifeq ($(ENABLE_WAYLAND_TEST_CLIENTS),1)
+OBJECTS += $(WAYLAND_CLIENT_BLOB) $(WAYLAND_COLOR_BLOB)
 endif
 else ifeq ($(PLATFORM),arm64)
 # Re-enabled for UI testing
@@ -688,8 +690,8 @@ endif
 	@mkdir -p $(OBJ_DIR)/subsystems/posix_compat
 	@mkdir -p $(OBJ_DIR)/subsystems/futura_fs
 
-# Build kernel
-kernel: $(BIN_DIR)/futura_kernel.elf
+# Build kernel (depends on userland to ensure Wayland binaries are built)
+kernel: userland $(BIN_DIR)/futura_kernel.elf
 
 .PHONY: futfs-crash-test
 futfs-crash-test: kernel tools
@@ -751,12 +753,6 @@ endif
 $(FBTEST_BIN):
 	@$(MAKE) -C src/user fbtest
 
-$(WINSRV_BIN):
-	@$(MAKE) -C src/user services/winsrv
-
-$(WINSTUB_BIN):
-	@$(MAKE) -C src/user apps/winstub
-
 $(INIT_STUB_BIN) $(SECOND_STUB_BIN):
 	@$(MAKE) -C src/user stubs
 
@@ -765,6 +761,9 @@ $(WAYLAND_COMPOSITOR_BIN):
 
 $(WAYLAND_CLIENT_BIN):
 	@$(MAKE) -C src/user/clients/wl-simple all
+
+$(WL_TERM_BIN):
+	@$(MAKE) -C src/user/clients/wl-term all
 
 $(WAYLAND_COLOR_BIN):
 	@$(MAKE) -C src/user/clients/wl-colorwheel all
@@ -787,14 +786,6 @@ $(FBTEST_BLOB): $(FBTEST_BIN) | $(OBJ_DIR)/kernel/blobs
 	@echo "OBJCOPY $@"
 	@$(OBJCOPY) -I binary -O $(OBJCOPY_BIN_FMT) -B $(OBJCOPY_BIN_ARCH) $< $@
 
-$(WINSRV_BLOB): $(WINSRV_BIN) | $(OBJ_DIR)/kernel/blobs
-	@echo "OBJCOPY $@"
-	@$(OBJCOPY) -I binary -O $(OBJCOPY_BIN_FMT) -B $(OBJCOPY_BIN_ARCH) $< $@
-
-$(WINSTUB_BLOB): $(WINSTUB_BIN) | $(OBJ_DIR)/kernel/blobs
-	@echo "OBJCOPY $@"
-	@$(OBJCOPY) -I binary -O $(OBJCOPY_BIN_FMT) -B $(OBJCOPY_BIN_ARCH) $< $@
-
 $(INIT_STUB_BLOB): $(INIT_STUB_BIN) | $(OBJ_DIR)/kernel/blobs
 	@echo "OBJCOPY $@"
 	@$(OBJCOPY) -I binary -O $(OBJCOPY_BIN_FMT) -B $(OBJCOPY_BIN_ARCH) $< $@
@@ -808,6 +799,10 @@ $(WAYLAND_COMPOSITOR_BLOB): $(WAYLAND_COMPOSITOR_BIN) | $(OBJ_DIR)/kernel/blobs
 	@$(OBJCOPY) -I binary -O $(OBJCOPY_BIN_FMT) -B $(OBJCOPY_BIN_ARCH) $< $@
 
 $(WAYLAND_CLIENT_BLOB): $(WAYLAND_CLIENT_BIN) | $(OBJ_DIR)/kernel/blobs
+	@echo "OBJCOPY $@"
+	@$(OBJCOPY) -I binary -O $(OBJCOPY_BIN_FMT) -B $(OBJCOPY_BIN_ARCH) $< $@
+
+$(WL_TERM_BLOB): $(WL_TERM_BIN) | $(OBJ_DIR)/kernel/blobs
 	@echo "OBJCOPY $@"
 	@$(OBJCOPY) -I binary -O $(OBJCOPY_BIN_FMT) -B $(OBJCOPY_BIN_ARCH) $< $@
 
@@ -864,12 +859,12 @@ $(ARM64_FORKTEST_BLOB): $(ARM64_FORKTEST_BIN) | $(OBJ_DIR)/kernel/blobs
 	@echo "OBJCOPY $@"
 	@$(OBJCOPY) -I binary -O $(OBJCOPY_BIN_FMT) -B $(OBJCOPY_BIN_ARCH) $< $@
 
-# Build userland services
-userland:
+# Build userland services (all user binaries: compositor, shell, utilities)
+userland: libfutura vendor
 	@echo "Building userland services..."
 	@$(MAKE) -C src/user all
 
-.PHONY: vendor libfutura open_wrapper userspace stage
+.PHONY: vendor libfutura open_wrapper stage
 
 vendor: third_party-wayland
 
@@ -880,15 +875,7 @@ open_wrapper:
 	@mkdir -p $(BUILD_DIR)/lib
 	@gcc-14 -m64 -fPIC -shared -o $(BUILD_DIR)/lib/libopen_wrapper.so src/user/libfutura/open_wrapper.c
 
-userspace: vendor libfutura
-	@echo "Building Wayland demo userland..."
-	@$(MAKE) -C src/user/compositor/futura-wayland all
-	@$(MAKE) -C src/user/clients/wl-simple all
-	@$(MAKE) -C src/user/clients/wl-colorwheel all
-	@$(MAKE) -C src/user/shell/futura-shell all
-	@$(MAKE) -C src/user/stubs all
-
-stage: userspace
+stage: userland
 	@echo "==> Staging userland into initramfs"
 	@rm -rf $(INITROOT)
 	@mkdir -p $(INITROOT)/sbin $(INITROOT)/bin $(INITROOT)/lib $(INITROOT)/tmp
@@ -1008,12 +995,12 @@ desktop-step2:
 .PHONY: run run-debug run-headful run-clean help-run
 
 run:
-	@$(MAKE) ENABLE_WAYLAND_DEMO=1 vendor
-	@$(MAKE) ENABLE_WAYLAND_DEMO=1 sym-audit
-	@$(MAKE) ENABLE_WAYLAND_DEMO=1 libfutura
-	@$(MAKE) ENABLE_WAYLAND_DEMO=1 DEBUG_WAYLAND=$(DEBUG) DEBUG_NETUNIX=$(DEBUG) userspace
-	@$(MAKE) ENABLE_WAYLAND_DEMO=1 DEBUG_WAYLAND=$(DEBUG) DEBUG_NETUNIX=$(DEBUG) HEADFUL=$(HEADFUL) kernel
-	@$(MAKE) ENABLE_WAYLAND_DEMO=1 DEBUG_WAYLAND=$(DEBUG) DEBUG_NETUNIX=$(DEBUG) stage
+	@$(MAKE) vendor
+	@$(MAKE) sym-audit
+	@$(MAKE) libfutura
+	@$(MAKE) DEBUG_WAYLAND=$(DEBUG) DEBUG_NETUNIX=$(DEBUG) userland
+	@$(MAKE) DEBUG_WAYLAND=$(DEBUG) DEBUG_NETUNIX=$(DEBUG) HEADFUL=$(HEADFUL) kernel
+	@$(MAKE) DEBUG_WAYLAND=$(DEBUG) DEBUG_NETUNIX=$(DEBUG) stage
 	@$(MAKE) disk >/dev/null
 	@echo "==> Running QEMU (headful=$(HEADFUL), mem=$(MEM) MiB, debug=$(DEBUG))"
 ifeq ($(HEADFUL),1)

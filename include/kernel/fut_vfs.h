@@ -662,13 +662,27 @@ void vfs_close_fd_in_task(struct fut_task *task, int fd);
 
 /* Open flags */
 #define O_RDONLY    0x0000
+#ifndef O_WRONLY
 #define O_WRONLY    0x0001
+#endif
+#ifndef O_RDWR
 #define O_RDWR      0x0002
+#endif
+#ifndef O_CREAT
 #define O_CREAT     0x0040
+#endif
+#ifndef O_EXCL
 #define O_EXCL      0x0080
+#endif
+#ifndef O_TRUNC
 #define O_TRUNC     0x0200
+#endif
+#ifndef O_APPEND
 #define O_APPEND    0x0400
+#endif
+#ifndef O_NONBLOCK
 #define O_NONBLOCK  0x0800
+#endif
 
 /* Error codes */
 #define ENOENT      2       /* No such file or directory */

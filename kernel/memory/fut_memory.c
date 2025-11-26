@@ -95,13 +95,12 @@ void *fut_pmm_alloc_page(void) {
             --pmm_free;
             uintptr_t phys = pmm_base + i * FUT_PAGE_SIZE;
 #if defined(__x86_64__)
-            /* Use inline assembly to force the address conversion.
-             * GCC with -O2 was optimizing away the address conversion,
-             * causing the function to return physical addresses instead of virtual addresses.
-             * This assembly ensures the addition happens and can't be optimized away. */
-            /* Convert physical to virtual address.
-             * Use direct computation to ensure compiler doesn't optimize it away. */
-            uintptr_t virt = phys + KERNEL_VIRTUAL_BASE;
+            /* Convert physical to virtual using OR to set high bits.
+             * This approach is more reliable than addition because:
+             * 1. OR cannot be optimized to a no-op
+             * 2. Works correctly even if physical address has high bits set
+             * 3. Matches pmap_phys_to_virt behavior for consistency */
+            uintptr_t virt = phys | KERNEL_VIRTUAL_BASE;
             return (void *)virt;
 #elif defined(__aarch64__)
             /* ARM64: Convert physical address to kernel virtual address */

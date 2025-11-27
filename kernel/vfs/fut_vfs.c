@@ -1636,6 +1636,76 @@ int fut_vfs_stat(const char *path, struct fut_stat *stat) {
     return ret;
 }
 
+/**
+ * Get file statistics without following final symlink (lstat semantics).
+ * Like fut_vfs_stat() but does NOT follow the final symlink - returns
+ * information about the symlink itself instead of its target.
+ */
+int fut_vfs_lstat(const char *path, struct fut_stat *stat) {
+    if (!path || !stat) {
+        return -EINVAL;
+    }
+
+    /* Handle root directory - lstat of "/" is same as stat of "/" */
+    if (path[0] == '/' && path[1] == '\0') {
+        return fut_vfs_stat(path, stat);
+    }
+
+    /* Get parent directory and final component name */
+    struct fut_vnode *parent = NULL;
+    char name[FUT_VFS_NAME_MAX + 1];
+    int ret = lookup_parent_and_name(path, &parent, name);
+    if (ret < 0) {
+        return ret;
+    }
+
+    /* Lookup the final component in the parent directory */
+    struct fut_vnode *vnode = NULL;
+    if (!parent->ops || !parent->ops->lookup) {
+        release_lookup_ref(parent);
+        return -ENOENT;
+    }
+
+    ret = parent->ops->lookup(parent, name, &vnode);
+    release_lookup_ref(parent);
+    if (ret < 0) {
+        return ret;
+    }
+
+    if (!vnode) {
+        return -ENOENT;
+    }
+
+    /* Get stats from vnode - do NOT follow it if it's a symlink */
+    if (vnode->ops && vnode->ops->getattr) {
+        ret = vnode->ops->getattr(vnode, stat);
+    } else {
+        /* Fill basic stat info from vnode */
+        stat->st_ino = vnode->ino;
+        stat->st_mode = vnode->mode;
+        stat->st_nlink = vnode->nlinks;
+        stat->st_size = vnode->size;
+        stat->st_dev = vnode->mount ? vnode->mount->st_dev : 0;
+        stat->st_uid = 0;
+        stat->st_gid = 0;
+        stat->st_blksize = 4096;
+        stat->st_blocks = (vnode->size + 4095) / 4096;
+
+        /* Set timestamps */
+        uint64_t now_ns = fut_get_time_ns();
+        stat->st_atime = now_ns / 1000000000;
+        stat->st_atime_nsec = now_ns % 1000000000;
+        stat->st_mtime = now_ns / 1000000000;
+        stat->st_mtime_nsec = now_ns % 1000000000;
+        stat->st_ctime = now_ns / 1000000000;
+        stat->st_ctime_nsec = now_ns % 1000000000;
+        ret = 0;
+    }
+
+    release_lookup_ref(vnode);
+    return ret;
+}
+
 int fut_vfs_ioctl(int fd, unsigned long req, unsigned long arg) {
     struct fut_file *file = get_file(fd);
     if (!file) {

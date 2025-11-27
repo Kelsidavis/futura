@@ -650,6 +650,17 @@ int64_t fut_vfs_lseek(int fd, int64_t offset, int whence);
  */
 int fut_vfs_stat(const char *path, struct fut_stat *stat);
 
+/**
+ * Get file statistics without following final symlink.
+ * Like stat() but for lstat() - returns information about the symlink itself,
+ * not what it points to.
+ *
+ * @param path File path
+ * @param stat Pointer to stat structure
+ * @return 0 on success, negative error code on failure
+ */
+int fut_vfs_lstat(const char *path, struct fut_stat *stat);
+
 int fut_vfs_ioctl(int fd, unsigned long req, unsigned long arg);
 void *fut_vfs_mmap(int fd, void *addr, size_t len, int prot, int flags, off_t off);
 

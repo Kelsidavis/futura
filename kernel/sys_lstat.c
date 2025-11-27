@@ -101,22 +101,11 @@ long sys_lstat(const char *path, struct fut_stat *statbuf) {
         return -ENAMETOOLONG;
     }
 
-    /* Phase 2: Use fut_vfs_stat() (same as stat - follows symlinks)
-     * Phase 3: Will call fut_vfs_lstat() which doesn't follow symlinks
-     *
-     * Future implementation:
-     * int ret = fut_vfs_lstat(path_buf, &kernel_stat);
-     *
-     * The VFS layer will need to:
-     * 1. Resolve path components up to the final component
-     * 2. For the final component, if it's a symlink:
-     *    - lstat: return symlink inode metadata
-     *    - stat:  follow symlink and return target metadata
-     * 3. Set st_mode with S_IFLNK (0120000) for symlinks
-     * 4. Set st_size to strlen(symlink_target)
+    /* Phase 3: Call fut_vfs_lstat() which doesn't follow the final symlink
+     * This returns metadata about the symlink itself, not its target.
      */
     struct fut_stat kernel_stat;
-    int ret = fut_vfs_stat(path_buf, &kernel_stat);
+    int ret = fut_vfs_lstat(path_buf, &kernel_stat);
     if (ret < 0) {
         const char *err_desc = (ret == -ENOENT) ? "not found" :
                                (ret == -EACCES) ? "access denied" :
@@ -152,7 +141,7 @@ long sys_lstat(const char *path, struct fut_stat *statbuf) {
         return -EFAULT;
     }
 
-    fut_printf("[LSTAT] lstat(\"%s\") -> 0 (type=%s, size=%llu, mode=%o, ino=%llu, Phase 3: symlink-aware)\n",
+    fut_printf("[LSTAT] lstat(\"%s\") -> 0 (type=%s, size=%llu, mode=%o, ino=%llu)\n",
                path_buf, file_type, kernel_stat.st_size, kernel_stat.st_mode, kernel_stat.st_ino);
     return 0;
 }

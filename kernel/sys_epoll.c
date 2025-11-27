@@ -1111,6 +1111,14 @@ long sys_epoll_wait(int epfd, struct epoll_event *events, int maxevents, int tim
         return -EINVAL;
     }
 
+    /* Phase 3: Validate maxevents doesn't exceed system capability (MAX_EPOLL_FDS) */
+    if (maxevents > MAX_EPOLL_FDS) {
+        fut_printf("[EPOLL_WAIT] epoll_wait(epfd=%d, maxevents=%d) -> EINVAL "
+                   "(maxevents exceeds MAX_EPOLL_FDS %d, Phase 3)\n",
+                   epfd, maxevents, MAX_EPOLL_FDS);
+        return -EINVAL;
+    }
+
     /* Validate events pointer */
     if (!events) {
         char msg[128];

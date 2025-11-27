@@ -60,8 +60,24 @@ long sys_select(int nfds, fd_set *readfds, fd_set *writefds,
     fut_printf("[SELECT] nfds=%d readfds=0x%p writefds=0x%p exceptfds=0x%p timeout=0x%p\n",
                local_nfds, local_readfds, local_writefds, local_exceptfds, local_timeout);
 
-    /* Validate nfds */
-    if (local_nfds < 0 || local_nfds > FD_SETSIZE) {
+    /* Phase 5: Validate nfds against both static limit and task's actual FD table limit */
+    if (local_nfds < 0) {
+        fut_printf("[SELECT] select(nfds=%d, ...) -> EINVAL (negative nfds, Phase 5)\n",
+                   local_nfds);
+        return -EINVAL;
+    }
+
+    /* Check against static FD_SETSIZE limit */
+    if (local_nfds > FD_SETSIZE) {
+        fut_printf("[SELECT] select(nfds=%d, ...) -> EINVAL (nfds exceeds FD_SETSIZE=%d, Phase 5)\n",
+                   local_nfds, FD_SETSIZE);
+        return -EINVAL;
+    }
+
+    /* Phase 5: Check against task's actual max_fds to prevent out-of-bounds access */
+    if (task->max_fds > 0 && local_nfds > (int)task->max_fds) {
+        fut_printf("[SELECT] select(nfds=%d, ...) -> EINVAL (nfds=%d exceeds task max_fds=%u, Phase 5)\n",
+                   local_nfds, local_nfds, task->max_fds);
         return -EINVAL;
     }
 
@@ -109,8 +125,30 @@ long sys_pselect6(int nfds, void *readfds, void *writefds, void *exceptfds,
                "timeout=%p, sigmask=%p)\n",
                local_nfds, local_readfds, local_writefds, local_exceptfds, local_timeout, local_sigmask);
 
-    /* Validate nfds */
-    if (local_nfds < 0 || local_nfds > FD_SETSIZE) {
+    /* Get current task for FD table bounds checking */
+    fut_task_t *task = fut_task_current();
+    if (!task) {
+        return -ESRCH;
+    }
+
+    /* Phase 5: Validate nfds against both static limit and task's actual FD table limit */
+    if (local_nfds < 0) {
+        fut_printf("[PSELECT6] pselect6(nfds=%d, ...) -> EINVAL (negative nfds, Phase 5)\n",
+                   local_nfds);
+        return -EINVAL;
+    }
+
+    /* Check against static FD_SETSIZE limit */
+    if (local_nfds > FD_SETSIZE) {
+        fut_printf("[PSELECT6] pselect6(nfds=%d, ...) -> EINVAL (nfds exceeds FD_SETSIZE=%d, Phase 5)\n",
+                   local_nfds, FD_SETSIZE);
+        return -EINVAL;
+    }
+
+    /* Phase 5: Check against task's actual max_fds to prevent out-of-bounds access */
+    if (task->max_fds > 0 && local_nfds > (int)task->max_fds) {
+        fut_printf("[PSELECT6] pselect6(nfds=%d, ...) -> EINVAL (nfds=%d exceeds task max_fds=%u, Phase 5)\n",
+                   local_nfds, local_nfds, task->max_fds);
         return -EINVAL;
     }
 

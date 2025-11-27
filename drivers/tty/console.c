@@ -235,3 +235,12 @@ void fut_console_start_input_thread(void) {
 
     fut_printf("[CONSOLE] Input thread created and ready\n");
 }
+
+/**
+ * Get the console line discipline for keyboard integration.
+ * This allows the keyboard driver to feed characters directly
+ * to the console.
+ */
+tty_ldisc_t *kbd_console_get_ldisc(void) {
+    return &console_ldisc;
+}

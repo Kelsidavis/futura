@@ -490,6 +490,7 @@ KERNEL_SOURCES := \
     kernel/video/virtio_gpu.c \
     drivers/tty/console.c \
     drivers/tty/tty_ldisc.c \
+    drivers/tty/kbd_console.c \
     drivers/video/fb_console.c \
     kernel/rust/rustffi.c
 

@@ -50,11 +50,18 @@ static uint16_t translate_scancode(uint8_t code, bool extended) {
     }
 }
 
+/* Forward declaration for keyboard-to-console integration */
+extern void kbd_console_handle_key(uint16_t scancode, bool pressed);
+
 static void emit_key_event(struct ps2_kbd_device *dev, uint16_t keycode, bool pressed) {
     if (!dev || !keycode) {
         return;
     }
 
+    /* Feed key events to console line discipline for terminal input */
+    kbd_console_handle_key(keycode, pressed);
+
+    /* Also queue the raw event for applications that want raw input (like Wayland) */
     struct fut_input_event ev = {
         .ts_ns = fut_input_now_ns(),
         .type = FUT_EV_KEY,

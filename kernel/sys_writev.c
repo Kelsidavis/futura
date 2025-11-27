@@ -20,6 +20,8 @@ extern void fut_printf(const char *fmt, ...);
 extern fut_task_t *fut_task_current(void);
 extern int fut_copy_from_user(void *to, const void *from, size_t size);
 extern ssize_t fut_vfs_write(int fd, const void *buf, size_t count);
+extern void *fut_malloc(size_t size);
+extern void fut_free(void *ptr);
 
 /* iovec structure for scatter-gather I/O */
 struct iovec {
@@ -195,10 +197,20 @@ ssize_t sys_writev(int fd, const struct iovec *iov, int iovcnt) {
         return -EFAULT;
     }
 
-    /* Copy iovec array from userspace */
-    struct iovec *kernel_iov = (struct iovec *)__builtin_alloca(iovcnt * sizeof(struct iovec));
+    /* Phase 5: Prevent stack overflow DoS - use malloc instead of alloca
+     * Check for integer overflow in allocation size */
+    size_t iov_alloc_size = (size_t)iovcnt * sizeof(struct iovec);
+    if (iov_alloc_size / sizeof(struct iovec) != (size_t)iovcnt) {
+        fut_printf("[WRITEV] writev(fd=%d, iov=%p, iovcnt=%d) -> EINVAL "
+                   "(allocation size would overflow, Phase 5)\n",
+                   fd, iov, iovcnt);
+        return -EINVAL;
+    }
+
+    /* Copy iovec array from userspace using heap instead of stack */
+    struct iovec *kernel_iov = (struct iovec *)fut_malloc(iov_alloc_size);
     if (!kernel_iov) {
-        fut_printf("[WRITEV] writev(fd=%d, iov=%p, iovcnt=%d) -> ENOMEM (alloca failed)\n",
+        fut_printf("[WRITEV] writev(fd=%d, iov=%p, iovcnt=%d) -> ENOMEM (malloc failed for iovec array)\n",
                    fd, iov, iovcnt);
         return -ENOMEM;
     }
@@ -206,34 +218,49 @@ ssize_t sys_writev(int fd, const struct iovec *iov, int iovcnt) {
     if (fut_copy_from_user(kernel_iov, iov, iovcnt * sizeof(struct iovec)) != 0) {
         fut_printf("[WRITEV] writev(fd=%d, iov=%p, iovcnt=%d) -> EFAULT (copy_from_user failed)\n",
                    fd, iov, iovcnt);
+        fut_free(kernel_iov);
         return -EFAULT;
     }
 
-    /* Phase 2: Validate iov_base pointers before using them
+    /* Phase 5: Validate iov_base pointers before using them
      * Ensure each iov_base is not NULL and appears to be valid userspace address */
     for (int i = 0; i < iovcnt; i++) {
         if (!kernel_iov[i].iov_base && kernel_iov[i].iov_len > 0) {
             fut_printf("[WRITEV] writev(fd=%d, iov=%p, iovcnt=%d) -> EFAULT "
                        "(iov_base[%d] is NULL with non-zero length)\n",
                        fd, iov, iovcnt, i);
+            fut_free(kernel_iov);
             return -EFAULT;
         }
     }
 
-    /* Phase 2: Calculate total size, validate iovecs, and gather statistics */
+    /* Phase 5: Calculate total size, validate iovecs, and gather statistics
+     * Prevent DoS via huge total buffer allocations */
     size_t total_size = 0;
     int zero_len_count = 0;
     size_t min_iov_len = (size_t)-1;
     size_t max_iov_len = 0;
+    const size_t MAX_TOTAL_SIZE = 16 * 1024 * 1024;  /* 16 MB limit per writev */
 
     for (int i = 0; i < iovcnt; i++) {
         /* Check for overflow */
         if (total_size + kernel_iov[i].iov_len < total_size) {
-            fut_printf("[WRITEV] writev(fd=%d, iov=%p, iovcnt=%d) -> EINVAL (size overflow at iovec %d)\n",
+            fut_printf("[WRITEV] writev(fd=%d, iov=%p, iovcnt=%d) -> EINVAL "
+                       "(size overflow at iovec %d, Phase 5)\n",
                        fd, iov, iovcnt, i);
+            fut_free(kernel_iov);
             return -EINVAL;
         }
         total_size += kernel_iov[i].iov_len;
+
+        /* Phase 5: Prevent DoS via excessively large total size */
+        if (total_size > MAX_TOTAL_SIZE) {
+            fut_printf("[WRITEV] writev(fd=%d, iov=%p, iovcnt=%d) -> EINVAL "
+                       "(total size %zu exceeds limit %zu MB, Phase 5)\n",
+                       fd, iov, iovcnt, total_size, MAX_TOTAL_SIZE / (1024 * 1024));
+            fut_free(kernel_iov);
+            return -EINVAL;
+        }
 
         /* Gather statistics */
         if (kernel_iov[i].iov_len == 0) {
@@ -282,6 +309,7 @@ ssize_t sys_writev(int fd, const struct iovec *iov, int iovcnt) {
                 /* No bytes written yet, return error */
                 fut_printf("[WRITEV] writev(fd=%d, iov=%p, iovcnt=%d) -> %ld (write error on iovec %d)\n",
                            fd, iov, iovcnt, n, i);
+                fut_free(kernel_iov);
                 return n;
             }
         }
@@ -308,16 +336,18 @@ ssize_t sys_writev(int fd, const struct iovec *iov, int iovcnt) {
 
     if (zero_len_count > 0) {
         fut_printf("[WRITEV] writev(fd=%d, iovcnt=%d [%s], total_requested=%zu bytes) -> %ld bytes "
-                   "(%s, %d/%d iovecs written, %d zero-len skipped, min=%zu max=%zu, Phase 3: VFS scatter-gather)\n",
+                   "(%s, %d/%d iovecs written, %d zero-len skipped, min=%zu max=%zu, Phase 5: validation & malloc)\n",
                    fd, iovcnt, io_pattern, total_size, total_written,
                    completion_status, iovecs_written, iovcnt - zero_len_count, zero_len_count,
                    min_iov_len, max_iov_len);
     } else {
         fut_printf("[WRITEV] writev(fd=%d, iovcnt=%d [%s], total_requested=%zu bytes) -> %ld bytes "
-                   "(%s, %d/%d iovecs written, min=%zu max=%zu, Phase 3: VFS scatter-gather)\n",
+                   "(%s, %d/%d iovecs written, min=%zu max=%zu, Phase 5: validation & malloc)\n",
                    fd, iovcnt, io_pattern, total_size, total_written,
                    completion_status, iovecs_written, iovcnt, min_iov_len, max_iov_len);
     }
+
+    fut_free(kernel_iov);
 
     /* Phase 3 implementation with VFS optimization:
      *

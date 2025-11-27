@@ -152,6 +152,18 @@ long sys_mkdir(const char *path, uint32_t mode) {
         return -EINVAL;
     }
 
+    /* Phase 3: Validate path length - check if it was truncated */
+    size_t actual_path_len = 0;
+    while (path_buf[actual_path_len] != '\0' && actual_path_len < sizeof(path_buf) - 1) {
+        actual_path_len++;
+    }
+    if (path_buf[actual_path_len] != '\0' || (actual_path_len > 0 && path_buf[actual_path_len - 1] != '\0')) {
+        /* Path was truncated during copy_from_user */
+        fut_printf("[MKDIR] mkdir(path_len>255, mode=%s) -> ENAMETOOLONG (path was truncated)\n",
+                   mode_desc);
+        return -ENAMETOOLONG;
+    }
+
     /* Phase 2: Categorize path type */
     const char *path_type;
     if (path_buf[0] == '/') {

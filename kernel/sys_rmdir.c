@@ -169,6 +169,12 @@ long sys_rmdir(const char *path) {
         return -EINVAL;
     }
 
+    /* Phase 3: Prevent removal of root directory */
+    if (path_buf[0] == '/' && path_buf[1] == '\0') {
+        fut_printf("[RMDIR] rmdir(path='/' [root]) -> EPERM (cannot remove root directory)\n");
+        return -EPERM;
+    }
+
     /* Phase 2: Calculate path length for categorization */
     size_t path_len = 0;
     while (path_buf[path_len] != '\0' && path_len < 256) {

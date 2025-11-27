@@ -806,9 +806,12 @@ static int ramfs_unlink(struct fut_vnode *dir, const char *name) {
             /* Found the entry */
             struct fut_vnode *vnode = entry->vnode;
 
-            /* Can only unlink regular files */
-            if (vnode->type != VN_REG) {
-                return -EISDIR;
+            /* Can unlink regular files and symlinks, but not directories */
+            if (vnode->type == VN_DIR) {
+                return -EISDIR;  /* Must use rmdir for directories */
+            }
+            if (vnode->type != VN_REG && vnode->type != VN_LNK) {
+                return -EACCES;  /* Cannot unlink other types (devices, sockets, FIFOs) */
             }
 
             /* Check if file is still open */

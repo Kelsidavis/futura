@@ -330,6 +330,15 @@ long sys_fcntl(int fd, int cmd, uint64_t arg) {
         int old_flags = file->flags;
         int new_flags = file->flags;
 
+        /* Phase 3: Validate that only supported flags are being set */
+        int unsupported_flags = (int)local_arg & ~(O_NONBLOCK | O_APPEND);
+        if (unsupported_flags != 0) {
+            fut_printf("[FCNTL] fcntl(fd=%d [%s], cmd=%s [%s], arg=0x%x) -> EINVAL "
+                       "(unsupported flags 0x%x, only O_NONBLOCK|O_APPEND allowed, Phase 3)\n",
+                       local_fd, fd_category, cmd_name, cmd_category, (int)local_arg, unsupported_flags);
+            return -EINVAL;
+        }
+
         /* Preserve access mode and other flags, update only O_NONBLOCK and O_APPEND */
         new_flags &= ~(O_NONBLOCK | O_APPEND);
         new_flags |= ((int)local_arg & (O_NONBLOCK | O_APPEND));

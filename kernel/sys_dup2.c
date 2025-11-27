@@ -111,6 +111,13 @@ long sys_dup2(int oldfd, int newfd) {
         return -EBADF;
     }
 
+    /* Phase 4: Validate oldfd is within FD table bounds before checking existence */
+    if (local_oldfd >= (int)task->max_fds) {
+        fut_printf("[DUP2] dup2(oldfd=%d, newfd=%d) -> EBADF (oldfd %d >= max_fds %u, Phase 4)\n",
+                   local_oldfd, local_newfd, local_oldfd, task->max_fds);
+        return -EBADF;
+    }
+
     /* Phase 2: Validate newfd early */
     if (local_newfd < 0) {
         fut_printf("[DUP2] dup2(oldfd=%d, newfd=%d) -> EBADF (negative newfd)\n",

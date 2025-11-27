@@ -143,6 +143,10 @@ static inline long sys_epoll_create_call(int size) {
     return sys_call1(SYS_epoll_create, (long)size);
 }
 
+static inline long sys_epoll_create1_call(int flags) {
+    return sys_call1(SYS_epoll_create1, (long)flags);
+}
+
 static inline long sys_epoll_ctl_call(int epfd, int op, int fd, void *event) {
     return sys_call4(SYS_epoll_ctl, (long)epfd, (long)op, (long)fd, (long)event);
 }
@@ -154,6 +158,10 @@ static inline long sys_epoll_wait_call(int epfd, void *events, int maxevents, in
 /* madvise() syscall veneer */
 static inline long sys_madvise_call(void *addr, size_t length, int advice) {
     return sys_call3(SYS_madvise, (long)addr, (long)length, (long)advice);
+}
+
+static inline long sys_eventfd2_call(unsigned int initval, int flags) {
+    return sys_call2(SYS_eventfd2, (long)initval, (long)flags);
 }
 
 /* Process credential syscall veneers */

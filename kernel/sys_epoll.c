@@ -12,10 +12,11 @@
  * Phase 4 (Completed): Performance optimization, memory pooling, scalability improvements
  */
 
+#include <kernel/eventfd.h>
 #include <kernel/fut_vfs.h>
 #include <kernel/errno.h>
 #include <kernel/uaccess.h>
-#include <shared/fut_timespec.h>
+#include <kernel/fut_thread.h>
 #include <string.h>
 #include <stdint.h>
 #include <stdbool.h>
@@ -23,7 +24,6 @@
 extern void fut_printf(const char *fmt, ...);
 extern void *fut_malloc(size_t size);
 extern void fut_free(void *ptr);
-extern long sys_nanosleep(struct fut_timespec *req, struct fut_timespec *rem);
 
 /* epoll event flag definitions */
 #define EPOLLIN      0x00000001  /* Data available for reading */
@@ -1223,9 +1223,14 @@ long sys_epoll_wait(int epfd, struct epoll_event *events, int maxevents, int tim
 
             /* Check if FD is readable/writable */
             uint32_t events_ready = 0;
+            bool handled = false;
+
+            if (fut_eventfd_poll(file, set->fds[i].events, &events_ready)) {
+                handled = true;
+            }
 
             /* For regular files: always ready for both read and write */
-            if (file->vnode && file->vnode->type == 1) {  /* VNODE_FILE */
+            if (!handled && file->vnode && file->vnode->type == 1) {  /* VNODE_FILE */
                 if (set->fds[i].events & (EPOLLIN | EPOLLRDNORM)) {
                     events_ready |= EPOLLIN | EPOLLRDNORM;
                 }
@@ -1235,7 +1240,7 @@ long sys_epoll_wait(int epfd, struct epoll_event *events, int maxevents, int tim
             }
             /* For character devices/sockets: would need more sophisticated checks */
             /* For now, report as ready if requested */
-            else if (file->vnode) {
+            else if (!handled && file->vnode) {
                 if (set->fds[i].events & (EPOLLIN | EPOLLRDNORM)) {
                     events_ready |= EPOLLIN | EPOLLRDNORM;
                 }
@@ -1360,10 +1365,7 @@ long sys_epoll_wait(int epfd, struct epoll_event *events, int maxevents, int tim
         }
 
         /* Sleep for 10ms before next iteration */
-        fut_timespec_t ts;
-        ts.tv_sec = 0;
-        ts.tv_nsec = 10000000;  /* 10ms */
-        sys_nanosleep(&ts, NULL);
+        fut_thread_sleep(10);
 
         iteration++;
     }

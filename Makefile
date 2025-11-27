@@ -36,6 +36,7 @@ MEM              ?= 1024
 HEADFUL          ?= 0
 DEBUG            ?= 0
 ASYNC            ?= 0
+AUTOEXIT        ?= 0
 EXTRA_QEMU_FLAGS ?=
 
 # Set QEMU binary based on platform
@@ -61,6 +62,9 @@ KAPPEND += async-tests=1
 endif
 ifeq ($(PERF),1)
 KAPPEND += perf
+endif
+ifeq ($(AUTOEXIT),1)
+KAPPEND += wayland-autoclose=1
 endif
 ifneq ($(strip $(WAYLAND_ENV)),)
 KAPPEND += $(WAYLAND_ENV)
@@ -881,6 +885,7 @@ stage: userland
 	@mkdir -p $(INITROOT)/sbin $(INITROOT)/bin $(INITROOT)/lib $(INITROOT)/tmp
 	@chmod 1777 $(INITROOT)/tmp
 	@install -m 0755 $(WAYLAND_COMPOSITOR_BIN) $(INITROOT)/sbin/futura-wayland
+	@install -m 0755 $(WL_TERM_BIN) $(INITROOT)/bin/wl-term
 	@install -m 0755 $(WAYLAND_CLIENT_BIN) $(INITROOT)/bin/wl-simple
 	@install -m 0755 $(WAYLAND_COLOR_BIN) $(INITROOT)/bin/wl-colorwheel
 	@install -m 0755 $(WAYLAND_SHELL_BIN) $(INITROOT)/sbin/futura-shell
@@ -1055,6 +1060,7 @@ help-run:
 	@echo "  SPICE=1             # use SPICE display (headless-compatible)"
 	@echo "  DEBUG=1             # enable DEBUG_WAYLAND/DEBUG_NETUNIX"
 	@echo "  ASYNC=1             # enable async self-tests via kernel cmdline"
+	@echo "  AUTOEXIT=1          # request Wayland demo to auto-exit after launch"
 	@echo "  EXTRA_QEMU_FLAGS='-s -S' # append custom QEMU flags"
 	@echo
 	@echo "Display backend (HEADFUL mode):"

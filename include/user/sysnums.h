@@ -80,6 +80,7 @@
 #define SYS_gettid      186
 #define SYS_openat       257
 #define SYS_epoll_create 228
+#define SYS_epoll_create1 291
 #define SYS_epoll_ctl    229
 #define SYS_epoll_wait   230
 #define SYS_madvise      231
@@ -109,5 +110,7 @@
 #define SYS_time         201
 #define SYS_preadv       295
 #define SYS_pwritev      296
+/* Event notification */
+#define SYS_eventfd2     290
 /* Note: SYS_setpgrp would be 109 but that conflicts with SYS_seteuid from Priority #14 */
 #define SYS_time_millis  400

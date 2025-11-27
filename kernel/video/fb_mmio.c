@@ -133,20 +133,15 @@ fallback:
      * With direct kernel boot (-kernel flag), QEMU doesn't provide multiboot info.
      * We fall back to PCI discovery + hardcoded address.
      */
-#ifdef WAYLAND_INTERACTIVE_MODE
-    /* When interactive mode (headful) is enabled at compile time,
-     * always enable framebuffer fallback with PCI discovery since:
-     * 1. Direct kernel boot doesn't provide multiboot info
-     * 2. Command line args aren't available in multiboot structure */
+#if defined(WAYLAND_INTERACTIVE_MODE) || defined(__aarch64__)
     bool fb_fallback = true;
-    fut_printf("[FB] Auto-enabling fallback for headful mode (WAYLAND_INTERACTIVE_MODE=%d)\n",
+    fut_printf("[FB] Auto-enabling fallback for interactive/direct boot (WAYLAND_INTERACTIVE_MODE=%d)\n",
                WAYLAND_INTERACTIVE_MODE);
-#elif defined(__aarch64__)
-    /* ARM64: Always enable fallback since direct kernel boot doesn't provide multiboot info */
-    bool fb_fallback = true;
-    fut_printf("[FB] ARM64: Auto-enabling fallback (direct kernel boot)\n");
 #else
-    bool fb_fallback = fut_boot_arg_flag("fb-fallback");
+    /* Boot arguments may not be parsed yet when this runs. Direct kernel boot
+     * (without a Multiboot framebuffer) therefore defaults to the fallback,
+     * but users can opt-out later via the fb=0 boot flag. */
+    bool fb_fallback = true;
 #endif
 
     fut_printf("[FB] fb-fallback flag: %d\n", fb_fallback ? 1 : 0);

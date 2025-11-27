@@ -774,6 +774,14 @@ void fut_kernel_main(void) {
     int wayland_stage = -1;
     __attribute__((unused)) int wayland_exec = -1;  /* TODO: Make compositor exec unconditional */
 
+    /* Detect interactive/headful boot mode from kernel cmdline */
+#ifdef WAYLAND_INTERACTIVE_MODE
+    bool wayland_interactive_boot = true;
+#else
+    bool wayland_interactive_boot = fut_boot_arg_flag("WAYLAND_INTERACTIVE");
+#endif
+    bool wayland_autoclose = boot_flag_enabled("wayland-autoclose", false);
+
 #if ENABLE_WAYLAND_TEST_CLIENTS
     /* Test client variables (optional) */
     int wayland_client_stage = -1;
@@ -907,47 +915,40 @@ void fut_kernel_main(void) {
     }
 #endif
 
-#ifdef WAYLAND_INTERACTIVE_MODE
-    /* In interactive/headful mode, always enable framebuffer for virtio-gpu */
-    bool fb_enabled = true;
-#elif defined(__aarch64__)
-    /* ARM64: Enable framebuffer by default for display demos */
-    bool fb_enabled = true;
+#if defined(__aarch64__)
+    bool fb_enabled = true;  /* Display always on for ARM64 demos */
 #else
     bool fb_enabled = boot_flag_enabled("fb", false);  /* Disabled in favor of wayland */
 #endif
+    if (wayland_interactive_boot) {
+        fb_enabled = true;
+    }
+
     bool fb_available = fb_enabled && fb_is_available();
     fut_printf("[INIT] fb_enabled=%d fb_available=%d\n",
                fb_enabled ? 1 : 0, fb_available ? 1 : 0);
 
-#ifdef WAYLAND_INTERACTIVE_MODE
-    /* In headful mode, always initialize fb_char for virtio-gpu even if not detected yet */
     if (fb_enabled) {
+        bool should_init_fb = wayland_interactive_boot || fb_available;
+        if (should_init_fb) {
 #ifndef __aarch64__
-        /* On ARM64, fb_boot_splash() was already called above */
-        fb_boot_splash();
+            /* On ARM64, fb_boot_splash() was already called above */
+            fb_boot_splash();
 #endif
-        fb_char_init();
-#else
-    if (fb_available) {
-        /* Enable framebuffer splash for virtio-gpu initialization */
-#ifndef __aarch64__
-        /* On ARM64, fb_boot_splash() was already called above */
-        fb_boot_splash();
-#endif
-        fb_char_init();
-#endif
-        struct fut_fb_hwinfo fbinfo = {0};
-        if (fb_get_info(&fbinfo) == 0) {
-            fut_printf("[INIT] fb geometry %ux%u pitch=%u bpp=%u phys=0x%llx\n",
-                       fbinfo.info.width,
-                       fbinfo.info.height,
-                       fbinfo.info.pitch,
-                       fbinfo.info.bpp,
-                       (unsigned long long)fbinfo.phys);
+            fb_char_init();
+
+            struct fut_fb_hwinfo fbinfo = {0};
+            if (fb_get_info(&fbinfo) == 0) {
+                fut_printf("[INIT] fb geometry %ux%u pitch=%u bpp=%u phys=0x%llx\n",
+                           fbinfo.info.width,
+                           fbinfo.info.height,
+                           fbinfo.info.pitch,
+                           fbinfo.info.bpp,
+                           (unsigned long long)fbinfo.phys);
+            }
+        } else {
+            fb_enabled = false;
         }
-    } else {
-        fb_enabled = false;
     }
 
     /* ========================================
@@ -1326,9 +1327,30 @@ void fut_kernel_main(void) {
     if (wayland_stage == 0) {
         char name[] = "futura-wayland";
         char *args[] = { name, NULL };
-        /* Environment with LD_PRELOAD for syscall routing via int 0x80 */
+        /* Environment with LD_PRELOAD and runtime parameters */
         char ld_preload[] = "LD_PRELOAD=/lib/libopen_wrapper.so";
-        char *envp[] = { ld_preload, NULL };
+        char xdg_runtime[] = "XDG_RUNTIME_DIR=/tmp";
+        char wayland_display_env[] = "WAYLAND_DISPLAY=wayland-0";
+        char wayland_multi_env[] = "WAYLAND_MULTI=1";
+        char wayland_backbuffer_env[] = "WAYLAND_BACKBUFFER=1";
+        char wayland_deco_env[] = "WAYLAND_DECO=1";
+        char wayland_shadow_env[] = "WAYLAND_SHADOW=1";
+        char wayland_resize_env[] = "WAYLAND_RESIZE=1";
+        char wayland_throttle_env[] = "WAYLAND_THROTTLE=1";
+        char wayland_interactive_env[] = "WAYLAND_INTERACTIVE=1";
+        char *envp[] = {
+            ld_preload,
+            xdg_runtime,
+            wayland_display_env,
+            wayland_multi_env,
+            wayland_backbuffer_env,
+            wayland_deco_env,
+            wayland_shadow_env,
+            wayland_resize_env,
+            wayland_throttle_env,
+            wayland_interactive_env,
+            NULL
+        };
         wayland_exec = fut_exec_elf("/sbin/futura-wayland", args, envp);
         if (wayland_exec != 0) {
             fut_printf("[WARN] Failed to launch /sbin/futura-wayland (error %d)\n", wayland_exec);
@@ -1350,7 +1372,9 @@ void fut_kernel_main(void) {
         char name1[] = "wl-simple";
         char *args1[] = { name1, NULL };
         char ld_preload[] = "LD_PRELOAD=/lib/libopen_wrapper.so";
-        char *envp[] = { ld_preload, NULL };
+        char xdg_runtime[] = "XDG_RUNTIME_DIR=/tmp";
+        char wayland_display_env[] = "WAYLAND_DISPLAY=wayland-0";
+        char *envp[] = { ld_preload, xdg_runtime, wayland_display_env, NULL };
         wayland_client_exec = fut_exec_elf("/bin/wl-simple", args1, envp);
         if (wayland_client_exec != 0) {
             fut_printf("[WARN] Failed to launch /bin/wl-simple (error %d)\n", wayland_client_exec);
@@ -1383,6 +1407,9 @@ void fut_kernel_main(void) {
     /* For wayland demo, keep system interactive for user interaction */
     wayland_interactive = true;
 #endif
+    if (wayland_autoclose) {
+        wayland_interactive = true;
+    }
 
     bool wayland_ready = (wayland_exec == 0);
 #if ENABLE_WAYLAND_TEST_CLIENTS
@@ -1397,6 +1424,14 @@ void fut_kernel_main(void) {
             /* Auto-exit for automated testing (default behavior) */
 #ifdef __x86_64__
             hal_outb(0xf4u, 0u);  /* x86-64 debug port exit */
+#endif
+#if ENABLE_WAYLAND_DEMO
+            fut_test_pass();
+#endif
+        } else if (wayland_autoclose) {
+            fut_printf("[INIT] Wayland autoclose flag set - exiting demo after bring-up\n");
+#ifdef __x86_64__
+            hal_outb(0xf4u, 0u);
 #endif
 #if ENABLE_WAYLAND_DEMO
             fut_test_pass();

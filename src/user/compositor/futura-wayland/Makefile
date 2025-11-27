@@ -79,7 +79,7 @@ LDLIBS := $(WAYLAND_LIBS) $(LIBFUTURA) $(LIBGCC)
 
 all: $(TARGET)
 
-$(TARGET): $(OBJS) | $(BIN_DIR) $(CRT0) $(LIBFUTURA)
+$(TARGET): $(OBJS) $(CRT0) $(LIBFUTURA) | $(BIN_DIR)
 	@echo "LD $@"
 	@$(CC) $(FINAL_LDFLAGS) $(CRT0) $(OBJS) $(LDLIBS) -o $@
 

@@ -939,7 +939,20 @@ static int alloc_fd(struct fut_file *file) {
 }
 
 static struct fut_file *get_file(int fd) {
-    if (fd < 0 || fd >= MAX_OPEN_FILES) {
+    if (fd < 0) {
+        return NULL;
+    }
+
+    /* Prefer the current task's FD table so user FDs stay isolated. */
+    fut_task_t *task = fut_task_current();
+    if (task) {
+        struct fut_file *file = get_file_from_task(task, fd);
+        if (file) {
+            return file;
+        }
+    }
+
+    if (fd >= MAX_OPEN_FILES) {
         return NULL;
     }
     return file_table[fd];

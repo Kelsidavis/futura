@@ -135,6 +135,8 @@
 #define SYS_setrlimit    160
 #define SYS_time         201
 #define SYS_getdents64   217
+#define SYS_eventfd2     290
+#define SYS_epoll_create1 291
 #define SYS_getpriority  140
 #define SYS_setpriority  141
 
@@ -226,6 +228,8 @@ extern long sys_pipe(int pipefd[2]);
 extern long sys_dup2(int oldfd, int newfd);
 extern long sys_chdir(const char *path);
 extern long sys_getcwd(char *buf, size_t size);
+extern long sys_eventfd2(unsigned int initval, int flags);
+extern long sys_epoll_create1(int flags);
 
 /* Helpers for missing syscalls */
 extern int chrdev_alloc_fd(const struct fut_file_ops *ops, void *inode, void *priv);
@@ -261,6 +265,15 @@ static int64_t sys_dup2_handler(uint64_t arg1, uint64_t arg2, uint64_t arg3,
     return (int64_t)sys_dup2((int)arg1, (int)arg2);
 }
 
+static int64_t sys_eventfd2_handler(uint64_t initval, uint64_t flags, uint64_t arg3,
+                                    uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg3;
+    (void)arg4;
+    (void)arg5;
+    (void)arg6;
+    return (int64_t)sys_eventfd2((unsigned int)initval, (int)flags);
+}
+
 static int64_t sys_poll_handler(uint64_t fds, uint64_t nfds, uint64_t timeout,
                                 uint64_t arg4, uint64_t arg5, uint64_t arg6) {
     (void)arg4;
@@ -285,7 +298,7 @@ int copy_user_string(const char *u_path, char *kbuf, size_t max_len) {
 }
 
 static int64_t sys_open_handler(uint64_t pathname, uint64_t flags, uint64_t mode,
-                                uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+                                  uint64_t arg4, uint64_t arg5, uint64_t arg6) {
     (void)arg4; (void)arg5; (void)arg6;
     extern long sys_open(const char *pathname, int flags, int mode);
     return sys_open((const char *)(uintptr_t)pathname, (int)flags, (int)mode);
@@ -512,13 +525,23 @@ static int64_t sys_time_millis_handler(uint64_t arg1, uint64_t arg2, uint64_t ar
 static int64_t sys_mkdir_handler(uint64_t pathname, uint64_t mode, uint64_t arg3,
                                   uint64_t arg4, uint64_t arg5, uint64_t arg6) {
     (void)arg3; (void)arg4; (void)arg5; (void)arg6;
-    return (int64_t)fut_vfs_mkdir((const char *)pathname, (uint32_t)mode);
+    char path_buf[256];
+    if (fut_copy_from_user(path_buf, (const void *)pathname, sizeof(path_buf) - 1) != 0) {
+        return -EFAULT;
+    }
+    path_buf[sizeof(path_buf) - 1] = '\0';
+    return (int64_t)fut_vfs_mkdir(path_buf, (uint32_t)mode);
 }
 
 static int64_t sys_rmdir_handler(uint64_t pathname, uint64_t arg2, uint64_t arg3,
                                   uint64_t arg4, uint64_t arg5, uint64_t arg6) {
     (void)arg2; (void)arg3; (void)arg4; (void)arg5; (void)arg6;
-    return (int64_t)fut_vfs_rmdir((const char *)pathname);
+    char path_buf[256];
+    if (fut_copy_from_user(path_buf, (const void *)pathname, sizeof(path_buf) - 1) != 0) {
+        return -EFAULT;
+    }
+    path_buf[sizeof(path_buf) - 1] = '\0';
+    return (int64_t)fut_vfs_rmdir(path_buf);
 }
 
 static int64_t sys_unlink_handler(uint64_t pathname, uint64_t arg2, uint64_t arg3,
@@ -983,6 +1006,12 @@ static int64_t sys_epoll_create_handler(uint64_t size, uint64_t arg2, uint64_t a
     return sys_epoll_create((int)size);
 }
 
+static int64_t sys_epoll_create1_handler(uint64_t flags, uint64_t arg2, uint64_t arg3,
+                                         uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg2; (void)arg3; (void)arg4; (void)arg5; (void)arg6;
+    return sys_epoll_create1((int)flags);
+}
+
 static int64_t sys_epoll_ctl_handler(uint64_t epfd, uint64_t op, uint64_t fd,
                                      uint64_t event, uint64_t arg5, uint64_t arg6) {
     (void)arg5; (void)arg6;
@@ -1324,6 +1353,7 @@ static syscall_handler_t syscall_table[MAX_SYSCALL] = {
     [SYS_gettimeofday] = sys_gettimeofday_handler,
     [SYS_time]       = sys_time_handler,
     [SYS_clock_gettime] = sys_clock_gettime_handler,
+    [SYS_eventfd2]   = sys_eventfd2_handler,
     /* Socket operations */
     [SYS_socket]     = sys_socket_handler,
     [SYS_bind]       = sys_bind_handler,
@@ -1340,6 +1370,7 @@ static syscall_handler_t syscall_table[MAX_SYSCALL] = {
     [SYS_sendmsg]    = sys_sendmsg_handler,
     [SYS_recvmsg]    = sys_recvmsg_handler,
     /* epoll operations */
+    [SYS_epoll_create1] = sys_epoll_create1_handler,
     [SYS_epoll_create] = sys_epoll_create_handler,
     [SYS_epoll_ctl]    = sys_epoll_ctl_handler,
     [SYS_epoll_wait]   = sys_epoll_wait_handler,
@@ -1401,6 +1432,11 @@ int64_t posix_syscall_dispatch(uint64_t syscall_num,
     syscall_handler_t handler = syscall_table[syscall_num];
     if (handler == NULL) {
         handler = sys_unimplemented;
+    }
+
+    if (handler == sys_unimplemented) {
+        extern void fut_printf(const char *, ...);
+        fut_printf("[SYSCALL] unimplemented nr=%lu\n", syscall_num);
     }
 
     /* Call handler */

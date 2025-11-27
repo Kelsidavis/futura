@@ -301,6 +301,15 @@ void fut_printf(const char *fmt, ...) {
         if (*fmt == '%') {
             fmt++;
 
+            /* Parse flags (currently only '+' supported for signed integers) */
+            int show_plus = 0;
+            while (*fmt == '+' || *fmt == ' ') {
+                if (*fmt == '+') {
+                    show_plus = 1;
+                }
+                fmt++;
+            }
+
             /* Parse width */
             int width = 0;
             while (*fmt >= '0' && *fmt <= '9') {
@@ -336,6 +345,12 @@ void fut_printf(const char *fmt, ...) {
                         val = va_arg(args, long);
                     } else {
                         val = va_arg(args, int);
+                    }
+                    if (show_plus && val >= 0) {
+                        fut_serial_putc('+');
+                        if (width > 0) {
+                            width--;
+                        }
                     }
                     print_num((uint64_t)val, 10, 0, 1, width);
                     break;

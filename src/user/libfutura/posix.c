@@ -21,8 +21,6 @@
 #include "fd.h"
 #include "memory_map.h"
 
-extern int __fut_epoll_close(int fd);
-
 /* Connection to posixd daemon */
 static struct fut_fipc_channel *posixd_channel = NULL;
 
@@ -93,11 +91,6 @@ int open(const char *path, int flags, ...) {
  * Close a file descriptor.
  */
 int close(int fd) {
-    if (__fut_epoll_close(fd) == 0) {
-        fut_fd_release(fd);
-        return 0;
-    }
-
     if (__fut_timerfd_close(fd) == 0) {
         fut_fd_release(fd);
         return 0;

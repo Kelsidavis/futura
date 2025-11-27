@@ -1122,6 +1122,30 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
     /* NOW it's safe to attach mm to task - all user pages are mapped */
     fut_task_set_mm(task, mm);
 
+    /* Open stdin/stdout/stderr for the new task (x86_64 path).
+     * Temporarily make the new task current so fut_vfs_open attaches to it. */
+#if defined(__x86_64__)
+    fut_thread_t *cur = fut_thread_current();
+    fut_task_t *saved_task = NULL;
+    if (cur) {
+        saved_task = cur->task;
+        cur->task = task;
+    }
+
+    int stdio_fd0 = fut_vfs_open("/dev/console", O_RDWR, 0);
+    int stdio_fd1 = fut_vfs_open("/dev/console", O_RDWR, 0);
+    int stdio_fd2 = fut_vfs_open("/dev/console", O_RDWR, 0);
+
+    if (cur) {
+        cur->task = saved_task;
+    }
+
+    if (stdio_fd0 != 0 || stdio_fd1 != 1 || stdio_fd2 != 2) {
+        fut_printf("[EXEC-X86] WARNING: Failed to open stdio (got %d/%d/%d)\n",
+                   stdio_fd0, stdio_fd1, stdio_fd2);
+    }
+#endif
+
     struct fut_user_entry *entry = fut_malloc(sizeof(*entry));
     if (!entry) {
         fut_task_destroy(task);

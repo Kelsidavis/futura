@@ -8,9 +8,18 @@
  * integrate with epoll/poll/select for unified event handling.
  */
 
-#include <kernel/fut_task.h>
+#include <kernel/chrdev.h>
 #include <kernel/errno.h>
+#include <kernel/eventfd.h>
+#include <kernel/fut_memory.h>
+#include <kernel/fut_sched.h>
+#include <kernel/fut_task.h>
+#include <kernel/fut_vfs.h>
+#include <kernel/fut_waitq.h>
+#include <kernel/uaccess.h>
 #include <shared/fut_timespec.h>
+#include <stdbool.h>
+#include <stdint.h>
 
 extern void fut_printf(const char *fmt, ...);
 extern fut_task_t *fut_task_current(void);
@@ -19,6 +28,9 @@ extern fut_task_t *fut_task_current(void);
 #define EFD_CLOEXEC     02000000
 #define EFD_NONBLOCK    00004000
 #define EFD_SEMAPHORE   00000001
+#ifndef FD_CLOEXEC
+#define FD_CLOEXEC      1
+#endif
 
 /* signalfd flags */
 #define SFD_CLOEXEC     02000000
@@ -42,19 +54,214 @@ struct itimerspec {
     struct timespec it_value;  /* Initial expiration */
 };
 
+struct eventfd_ctx {
+    uint64_t counter;
+    bool semaphore;
+    fut_spinlock_t lock;
+    fut_waitq_t read_waitq;
+    fut_waitq_t write_waitq;
+};
+
+struct eventfd_file {
+    struct eventfd_ctx *ctx;
+    struct fut_file *file;
+};
+
+/* epoll event masks (mirrors kernel/sys_epoll.c) */
+#define EPOLLIN      0x00000001
+#define EPOLLOUT     0x00000004
+#define EPOLLRDNORM  0x00000040
+#define EPOLLWRNORM  0x00000100
+
+static ssize_t eventfd_read(void *inode, void *priv, void *u_buf, size_t len, off_t *pos);
+static ssize_t eventfd_write(void *inode, void *priv, const void *u_buf, size_t len, off_t *pos);
+static int eventfd_release(void *inode, void *priv);
+
+static const struct fut_file_ops eventfd_fops = {
+    .open = NULL,
+    .release = eventfd_release,
+    .read = eventfd_read,
+    .write = eventfd_write,
+    .ioctl = NULL,
+    .mmap = NULL,
+};
+
+static bool eventfd_is_nonblock(struct eventfd_file *file) {
+    if (!file || !file->file) {
+        return false;
+    }
+    return (file->file->flags & O_NONBLOCK) != 0;
+}
+
+static void eventfd_ctx_destroy(struct eventfd_ctx *ctx) {
+    if (!ctx) {
+        return;
+    }
+    fut_waitq_wake_all(&ctx->read_waitq);
+    fut_waitq_wake_all(&ctx->write_waitq);
+    fut_free(ctx);
+}
+
+static struct eventfd_ctx *eventfd_ctx_create(unsigned int initval, bool semaphore) {
+    struct eventfd_ctx *ctx = fut_malloc(sizeof(struct eventfd_ctx));
+    if (!ctx) {
+        return NULL;
+    }
+    ctx->counter = (uint64_t)initval;
+    ctx->semaphore = semaphore;
+    fut_spinlock_init(&ctx->lock);
+    fut_waitq_init(&ctx->read_waitq);
+    fut_waitq_init(&ctx->write_waitq);
+    return ctx;
+}
+
+static ssize_t eventfd_read(void *inode, void *priv, void *u_buf, size_t len, off_t *pos) {
+    (void)inode;
+    (void)pos;
+    if (!priv || !u_buf || len < sizeof(uint64_t)) {
+        return -EINVAL;
+    }
+
+    struct eventfd_file *efile = (struct eventfd_file *)priv;
+    struct eventfd_ctx *ctx = efile->ctx;
+    if (!ctx) {
+        return -EINVAL;
+    }
+
+    uint64_t value = 0;
+
+    while (true) {
+        fut_spinlock_acquire(&ctx->lock);
+        if (ctx->counter > 0) {
+            if (ctx->semaphore) {
+                value = 1;
+                ctx->counter -= 1;
+            } else {
+                value = ctx->counter;
+                ctx->counter = 0;
+            }
+            fut_spinlock_release(&ctx->lock);
+            break;
+        }
+
+        if (eventfd_is_nonblock(efile)) {
+            fut_spinlock_release(&ctx->lock);
+            return -EAGAIN;
+        }
+
+        fut_waitq_sleep_locked(&ctx->read_waitq, &ctx->lock, FUT_THREAD_BLOCKED);
+        /* Lock released by fut_waitq_sleep_locked; loop to reacquire */
+    }
+
+    if (fut_copy_to_user(u_buf, &value, sizeof(value)) != 0) {
+        /* Restore counter on copy failure */
+        fut_spinlock_acquire(&ctx->lock);
+        if (ctx->semaphore) {
+            ctx->counter += 1;
+        } else {
+            ctx->counter += value;
+        }
+        fut_spinlock_release(&ctx->lock);
+        return -EFAULT;
+    }
+
+    fut_waitq_wake_one(&ctx->write_waitq);
+    return (ssize_t)sizeof(value);
+}
+
+static ssize_t eventfd_write(void *inode, void *priv, const void *u_buf, size_t len, off_t *pos) {
+    (void)inode;
+    (void)pos;
+    if (!priv || !u_buf || len < sizeof(uint64_t)) {
+        return -EINVAL;
+    }
+
+    struct eventfd_file *efile = (struct eventfd_file *)priv;
+    struct eventfd_ctx *ctx = efile->ctx;
+    if (!ctx) {
+        return -EINVAL;
+    }
+
+    uint64_t value = 0;
+    if (fut_copy_from_user(&value, u_buf, sizeof(value)) != 0) {
+        return -EFAULT;
+    }
+    if (value == UINT64_MAX) {
+        return -EINVAL;
+    }
+
+    while (true) {
+        fut_spinlock_acquire(&ctx->lock);
+        if (UINT64_MAX - ctx->counter > value) {
+            ctx->counter += value;
+            fut_spinlock_release(&ctx->lock);
+            break;
+        }
+
+        if (eventfd_is_nonblock(efile)) {
+            fut_spinlock_release(&ctx->lock);
+            return -EAGAIN;
+        }
+
+        fut_waitq_sleep_locked(&ctx->write_waitq, &ctx->lock, FUT_THREAD_BLOCKED);
+    }
+
+    fut_waitq_wake_one(&ctx->read_waitq);
+    return (ssize_t)sizeof(value);
+}
+
+static int eventfd_release(void *inode, void *priv) {
+    (void)inode;
+    struct eventfd_file *efile = (struct eventfd_file *)priv;
+    if (!efile) {
+        return 0;
+    }
+
+    bool last_fd = true;
+    if (efile->file && efile->file->refcount > 1) {
+        last_fd = false;
+    }
+
+    if (last_fd) {
+        eventfd_ctx_destroy(efile->ctx);
+        fut_free(efile);
+    }
+
+    return 0;
+}
+
+bool fut_eventfd_poll(struct fut_file *file, uint32_t requested, uint32_t *ready_out) {
+    if (!file || file->chr_private == NULL || file->chr_ops != &eventfd_fops) {
+        return false;
+    }
+
+    struct eventfd_file *efile = (struct eventfd_file *)file->chr_private;
+    struct eventfd_ctx *ctx = efile->ctx;
+    if (!ctx) {
+        return false;
+    }
+
+    uint32_t ready = 0;
+    fut_spinlock_acquire(&ctx->lock);
+    if (ctx->counter > 0 && (requested & (EPOLLIN | EPOLLRDNORM))) {
+        ready |= (EPOLLIN | EPOLLRDNORM);
+    }
+    if (ctx->counter < UINT64_MAX && (requested & (EPOLLOUT | EPOLLWRNORM))) {
+        ready |= (EPOLLOUT | EPOLLWRNORM);
+    }
+    fut_spinlock_release(&ctx->lock);
+
+    if (ready_out) {
+        *ready_out = ready;
+    }
+    return true;
+}
+
 /**
  * sys_eventfd2 - Create an event notification file descriptor
  *
  * @param initval: Initial counter value
  * @param flags:   EFD_CLOEXEC, EFD_NONBLOCK, EFD_SEMAPHORE
- *
- * eventfd provides a wait/notify mechanism via a file descriptor.
- * Writing increments a counter, reading retrieves and resets it.
- * Can be used with epoll for event-driven programming.
- *
- * Phase 1: Stub - returns dummy file descriptor
- * Phase 2: Implement counter and file operations
- * Phase 3: Integrate with epoll for event notification
  *
  * Returns:
  *   - File descriptor on success
@@ -67,21 +274,55 @@ long sys_eventfd2(unsigned int initval, int flags) {
         return -ESRCH;
     }
 
-    fut_printf("[EVENTFD2] eventfd2(initval=%u, flags=0x%x)\n", initval, flags);
-
     /* Validate flags */
     int valid_flags = EFD_CLOEXEC | EFD_NONBLOCK | EFD_SEMAPHORE;
     if (flags & ~valid_flags) {
         return -EINVAL;
     }
 
-    /* Phase 1: Stub - return dummy fd */
-    /* Phase 2: Allocate eventfd structure, create file descriptor */
-    /* Phase 3: Implement read/write operations on eventfd */
+    struct eventfd_ctx *ctx = eventfd_ctx_create(initval, (flags & EFD_SEMAPHORE) != 0);
+    if (!ctx) {
+        return -ENOMEM;
+    }
 
-    (void)initval;
-    fut_printf("[EVENTFD2] Stub implementation - returning fd 10\n");
-    return 10;  /* Dummy file descriptor */
+    struct eventfd_file *efile = fut_malloc(sizeof(struct eventfd_file));
+    if (!efile) {
+        eventfd_ctx_destroy(ctx);
+        return -ENOMEM;
+    }
+    efile->ctx = ctx;
+    efile->file = NULL;
+
+    int fd = chrdev_alloc_fd(&eventfd_fops, NULL, efile);
+    if (fd < 0) {
+        fut_free(efile);
+        eventfd_ctx_destroy(ctx);
+        return fd;
+    }
+
+    struct fut_file *file = NULL;
+    if (task->fd_table && fd >= 0 && fd < task->max_fds) {
+        file = task->fd_table[fd];
+    }
+    if (!file) {
+        fut_printf("[EVENTFD2] BUG: newly created fd %d missing file\n", fd);
+        fut_vfs_close(fd);
+        eventfd_ctx_destroy(ctx);
+        fut_free(efile);
+        return -EFAULT;
+    }
+    efile->file = file;
+
+    if (flags & EFD_NONBLOCK) {
+        file->flags |= O_NONBLOCK;
+    }
+    if (flags & EFD_CLOEXEC) {
+        file->fd_flags |= FD_CLOEXEC;
+    }
+
+    fut_printf("[EVENTFD2] eventfd created fd=%d init=%u flags=0x%x\n",
+               fd, initval, flags);
+    return fd;
 }
 
 /**

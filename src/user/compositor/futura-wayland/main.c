@@ -157,12 +157,14 @@ int main(void) {
 #ifdef DEBUG_WAYLAND
     printf("[WAYLAND-DEBUG] About to call wl_display_create()...\n");
 #endif
+    errno = 0;
     comp.display = wl_display_create();
+    int create_errno = errno;
 #ifdef DEBUG_WAYLAND
     printf("[WAYLAND-DEBUG] wl_display_create() returned: %p\n", (void *)comp.display);
 #endif
     if (!comp.display) {
-        printf("[WAYLAND] failed to create wl_display\n");
+        printf("[WAYLAND] failed to create wl_display (errno=%d)\n", create_errno);
         comp_state_finish(&comp);
         return -1;
     }

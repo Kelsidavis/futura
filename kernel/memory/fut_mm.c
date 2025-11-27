@@ -334,8 +334,12 @@ void fut_mm_set_heap_base(fut_mm_t *mm, uintptr_t base, uintptr_t limit) {
     mm->brk_current = base;
     mm->heap_mapped_end = PAGE_ALIGN_UP(base);
     mm->heap_limit = capped_limit;
-    if (mm->mmap_base < capped_limit) {
-        mm->mmap_base = capped_limit;
+    uintptr_t mmap_floor = USER_MMAP_BASE;
+    if (mm->heap_mapped_end > mmap_floor) {
+        mmap_floor = mm->heap_mapped_end;
+    }
+    if (mm->mmap_base < mmap_floor) {
+        mm->mmap_base = mmap_floor;
     }
 }
 
@@ -1724,14 +1728,17 @@ int fut_page_ref_get(phys_addr_t phys) {
 uint64_t fut_task_alloc_mmap_addr(size_t len) {
     extern fut_task_t *fut_task_current(void);
     extern fut_mm_t *fut_task_get_mm(const fut_task_t *);
+    extern void fut_printf(const char *, ...);
 
     fut_task_t *task = fut_task_current();
     if (!task) {
+        fut_printf("[MM-MMAP] fut_task_alloc_mmap_addr: no current task\n");
         return (uint64_t)(int64_t)(-EPERM);
     }
 
     fut_mm_t *mm = fut_task_get_mm(task);
     if (!mm) {
+        fut_printf("[MM-MMAP] fut_task_alloc_mmap_addr: task %p has no mm\n", (void *)task);
         return (uint64_t)(int64_t)(-ENOMEM);
     }
 
@@ -1753,7 +1760,24 @@ uint64_t fut_task_alloc_mmap_addr(size_t len) {
 
     uintptr_t end = candidate + aligned;
     if (end < candidate || end > USER_VMA_MAX) {
-        return (uint64_t)(int64_t)(-ENOMEM);
+        fut_printf("[MM-MMAP] allocation overflow: cand=0x%llx len=0x%zx end=0x%llx limit=0x%llx (wrap)\n",
+                   (unsigned long long)candidate,
+                   aligned,
+                   (unsigned long long)end,
+                   (unsigned long long)USER_VMA_MAX);
+        candidate = PAGE_ALIGN_UP(USER_MMAP_BASE);
+        if (candidate < mm->heap_mapped_end) {
+            candidate = PAGE_ALIGN_UP(mm->heap_mapped_end);
+        }
+        end = candidate + aligned;
+        if (end < candidate || end > USER_VMA_MAX) {
+            fut_printf("[MM-MMAP] allocation failed after wrap: cand=0x%llx len=0x%zx end=0x%llx limit=0x%llx\n",
+                       (unsigned long long)candidate,
+                       aligned,
+                       (unsigned long long)end,
+                       (unsigned long long)USER_VMA_MAX);
+            return (uint64_t)(int64_t)(-ENOMEM);
+        }
     }
 
     /* Update mmap_base for next allocation */

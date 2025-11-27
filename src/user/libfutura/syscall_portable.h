@@ -76,10 +76,11 @@ static inline long syscall3(long nr, long arg1, long arg2, long arg3) {
 
 static inline long syscall4(long nr, long arg1, long arg2, long arg3, long arg4) {
     long ret;
+    register long r10 __asm__("r10") = arg4;
     __asm__ __volatile__(
         "int $0x80\n"
         : "=a"(ret)
-        : "a"(nr), "D"(arg1), "S"(arg2), "d"(arg3), "r"(arg4)
+        : "a"(nr), "D"(arg1), "S"(arg2), "d"(arg3), "r"(r10)
         : "rcx", "r11", "memory"
     );
     return ret;
@@ -87,10 +88,12 @@ static inline long syscall4(long nr, long arg1, long arg2, long arg3, long arg4)
 
 static inline long syscall5(long nr, long arg1, long arg2, long arg3, long arg4, long arg5) {
     long ret;
+    register long r10 __asm__("r10") = arg4;
+    register long r8  __asm__("r8")  = arg5;
     __asm__ __volatile__(
         "int $0x80\n"
         : "=a"(ret)
-        : "a"(nr), "D"(arg1), "S"(arg2), "d"(arg3), "r"(arg4), "r"(arg5)
+        : "a"(nr), "D"(arg1), "S"(arg2), "d"(arg3), "r"(r10), "r"(r8)
         : "rcx", "r11", "memory"
     );
     return ret;
@@ -98,10 +101,13 @@ static inline long syscall5(long nr, long arg1, long arg2, long arg3, long arg4,
 
 static inline long syscall6(long nr, long arg1, long arg2, long arg3, long arg4, long arg5, long arg6) {
     long ret;
+    register long r10 __asm__("r10") = arg4;
+    register long r8  __asm__("r8")  = arg5;
+    register long r9  __asm__("r9")  = arg6;
     __asm__ __volatile__(
         "int $0x80\n"
         : "=a"(ret)
-        : "a"(nr), "D"(arg1), "S"(arg2), "d"(arg3), "r"(arg4), "r"(arg5), "r"(arg6)
+        : "a"(nr), "D"(arg1), "S"(arg2), "d"(arg3), "r"(r10), "r"(r8), "r"(r9)
         : "rcx", "r11", "memory"
     );
     return ret;
@@ -233,7 +239,7 @@ static inline long syscall6(long nr, long arg1, long arg2, long arg3, long arg4,
 #define __NR_unlink         87
 #define __NR_chmod          90
 #define __NR_fchmod         91
-#define __NR_epoll_ctl      233
+#define __NR_epoll_ctl      229
 
 /* Common file flags - only define if not already defined by system headers */
 #ifndef O_RDONLY

@@ -30,3 +30,4 @@ struct fut_file_ops {
 int  chrdev_register(unsigned major, unsigned minor, const struct fut_file_ops *fops,
                      const char *name, void *driver_data);
 const struct fut_file_ops *chrdev_lookup(unsigned major, unsigned minor, void **out_drv);
+int  chrdev_alloc_fd(const struct fut_file_ops *ops, void *inode, void *priv);

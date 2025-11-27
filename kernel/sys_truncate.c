@@ -112,6 +112,16 @@ long sys_truncate(const char *path, uint64_t length) {
         length_category = ">=1GB";
     }
 
+    /* Phase 2: Validate length bounds (16TB maximum file size) */
+    #define MAX_FILE_SIZE (16ULL * 1024 * 1024 * 1024 * 1024)  /* 16TB */
+    if (local_length > MAX_FILE_SIZE) {
+        fut_printf("[TRUNCATE] truncate(path='%s' [%s, len=%lu], length=%llu [%s]) "
+                   "-> -ERANGE (length exceeds maximum file size)\n",
+                   path_buf, path_type, (unsigned long)path_len,
+                   (unsigned long long)local_length, length_category);
+        return -ERANGE;
+    }
+
     /* Lookup the vnode */
     struct fut_vnode *vnode = NULL;
     int ret = fut_vfs_lookup(path_buf, &vnode);

@@ -156,6 +156,15 @@ long sys_ftruncate(int fd, uint64_t length) {
         return -EISDIR;
     }
 
+    /* Phase 2: Validate length bounds (16TB maximum file size) */
+    #define MAX_FILE_SIZE (16ULL * 1024 * 1024 * 1024 * 1024)  /* 16TB */
+    if (length > MAX_FILE_SIZE) {
+        fut_printf("[FTRUNCATE] ftruncate(fd=%d [%s], length=%llu [%s]) -> ERANGE "
+                   "(length exceeds maximum file size)\n",
+                   fd, fd_category, length, length_category);
+        return -ERANGE;
+    }
+
     /* Phase 2: Track old size for before/after comparison */
     uint64_t old_size = vnode->size;
 

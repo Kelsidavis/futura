@@ -164,6 +164,14 @@ long sys_pwrite64(unsigned int fd, const void *buf, size_t count, int64_t offset
         count_category = "very large (>1 MB)";
     }
 
+    /* Phase 2: Validate count doesn't exceed 1MB limit (prevent DoS) */
+    if (count > 1048576) {
+        fut_printf("[PWRITE64] pwrite64(fd=%u, count=%zu [%s], offset=%ld) -> EINVAL "
+                   "(count exceeds maximum 1MB limit)\n",
+                   fd, count, count_category, offset);
+        return -EINVAL;
+    }
+
     /* Phase 2: Categorize offset */
     const char *offset_category;
     if (offset == 0) {

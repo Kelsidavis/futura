@@ -22,6 +22,7 @@
 #include <kernel/boot_args.h>
 #include <kernel/fut_percpu.h>
 #include <kernel/platform_hooks.h>
+#include <kernel/fut_sched.h>
 
 /* Serial port definitions for debugging */
 #define SERIAL_PORT_COM1 0x3F8
@@ -223,12 +224,16 @@ int fut_serial_getc(void) {
 }
 
 int fut_serial_getc_blocking(void) {
-    /* Wait for data to be available, using pause hint for better CPU efficiency */
+    /* Wait for data to be available, yielding to scheduler when idle */
     while ((inb(SERIAL_LINE_STATUS(SERIAL_PORT_COM1)) & 0x01) == 0) {
-        /* Pause instruction hints to CPU that we're in a spin loop,
-         * allowing better power management and hyper-threading performance.
-         * This doesn't context switch, but timer interrupts will still preempt us. */
-        __asm__ volatile("pause" ::: "memory");
+        /* Yield to let other threads run instead of spinning.
+         * Only yield if scheduler is started (avoids issues during early boot). */
+        if (fut_sched_is_started()) {
+            fut_schedule();
+        } else {
+            /* During early boot, use pause hint for CPU efficiency */
+            __asm__ volatile("pause" ::: "memory");
+        }
     }
     /* Read and return the character */
     return (int)inb(SERIAL_DATA(SERIAL_PORT_COM1));

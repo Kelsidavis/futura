@@ -12,6 +12,7 @@
 #include <kernel/fut_thread.h>
 #include <kernel/signal.h>
 #include <platform/platform.h>
+#include <shared/termios.h>
 
 #define CONSOLE_MAJOR 4
 #define CONSOLE_MINOR 0
@@ -110,6 +111,68 @@ static ssize_t console_write(void *inode, void *priv, const void *buf, size_t le
     return (ssize_t)len;
 }
 
+/**
+ * Console ioctl - handles terminal control operations.
+ */
+static int console_ioctl(void *inode, void *priv, unsigned long req, unsigned long arg) {
+    (void)inode;
+    (void)priv;
+
+    switch (req) {
+        case TCGETS: {
+            /* Get terminal settings */
+            struct termios *tp = (struct termios *)arg;
+            if (!tp) {
+                return -EFAULT;
+            }
+            return tty_ldisc_get_termios(&console_ldisc, tp);
+        }
+
+        case TCSETS:
+        case TCSETSW:
+        case TCSETSF: {
+            /* Set terminal settings (TCSETSW/F: after drain/flush - not fully implemented) */
+            const struct termios *tp = (const struct termios *)arg;
+            if (!tp) {
+                return -EFAULT;
+            }
+            return tty_ldisc_set_termios(&console_ldisc, tp);
+        }
+
+        case TIOCGWINSZ: {
+            /* Get window size */
+            struct winsize *ws = (struct winsize *)arg;
+            if (!ws) {
+                return -EFAULT;
+            }
+            return tty_ldisc_get_winsize(&console_ldisc, ws);
+        }
+
+        case TIOCSWINSZ: {
+            /* Set window size */
+            const struct winsize *ws = (const struct winsize *)arg;
+            if (!ws) {
+                return -EFAULT;
+            }
+            return tty_ldisc_set_winsize(&console_ldisc, ws);
+        }
+
+        case FIONREAD: {
+            /* Get bytes available to read */
+            int *count = (int *)arg;
+            if (!count) {
+                return -EFAULT;
+            }
+            *count = (int)tty_ldisc_bytes_available(&console_ldisc);
+            return 0;
+        }
+
+        default:
+            fut_printf("[CONSOLE] Unsupported ioctl: 0x%lx\n", req);
+            return -ENOTTY;
+    }
+}
+
 /* Console file operations - initialized at runtime to avoid relocation issues on ARM64 */
 static struct fut_file_ops console_fops;
 
@@ -123,7 +186,7 @@ void fut_console_init(void) {
     console_fops.release = NULL;
     console_fops.read = console_read;
     console_fops.write = console_write;
-    console_fops.ioctl = NULL;
+    console_fops.ioctl = console_ioctl;
     console_fops.mmap = NULL;
 
     /* Initialize line discipline with echo and signal callbacks */

@@ -1287,11 +1287,10 @@ void fut_kernel_main(void) {
     }
 #endif
 
-    /* TEMPORARILY DISABLED: Console input thread busy-waits and prevents
-     * user processes from running. Need to fix scheduler preemption first.
-     * TODO: Re-enable after fixing busy-wait or implementing proper blocking. */
-    // fut_printf("[INIT] Starting console input thread...\n");
-    // fut_console_start_input_thread();
+    /* Start console input thread - reads from serial and feeds line discipline.
+     * Now uses scheduler yield instead of busy-spinning. */
+    fut_printf("[INIT] Starting console input thread...\n");
+    fut_console_start_input_thread();
 
     /* Launch init process with environment for Wayland */
     if (init_stage == 0) {

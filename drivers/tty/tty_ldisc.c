@@ -27,6 +27,41 @@ void tty_ldisc_init(tty_ldisc_t *ldisc, void (*echo)(char), void (*signal)(int))
     /* Enable canonical mode and echo by default */
     ldisc->flags = TTY_CANONICAL | TTY_ECHO | TTY_SIGNAL;
 
+    /* Initialize POSIX termios with sensible defaults */
+    memset(&ldisc->termios, 0, sizeof(ldisc->termios));
+    ldisc->termios.c_iflag = TERMIOS_DEFAULT_IFLAG;
+    ldisc->termios.c_oflag = TERMIOS_DEFAULT_OFLAG;
+    ldisc->termios.c_cflag = TERMIOS_DEFAULT_CFLAG;
+    ldisc->termios.c_lflag = TERMIOS_DEFAULT_LFLAG;
+    ldisc->termios.c_line = 0;  /* N_TTY line discipline */
+
+    /* Initialize control characters with defaults */
+    ldisc->termios.c_cc[VINTR] = CINTR;
+    ldisc->termios.c_cc[VQUIT] = CQUIT;
+    ldisc->termios.c_cc[VERASE] = CERASE;
+    ldisc->termios.c_cc[VKILL] = CKILL;
+    ldisc->termios.c_cc[VEOF] = CEOF;
+    ldisc->termios.c_cc[VTIME] = 0;
+    ldisc->termios.c_cc[VMIN] = 1;
+    ldisc->termios.c_cc[VSTART] = CSTART;
+    ldisc->termios.c_cc[VSTOP] = CSTOP;
+    ldisc->termios.c_cc[VSUSP] = CSUSP;
+    ldisc->termios.c_cc[VEOL] = 0;
+    ldisc->termios.c_cc[VREPRINT] = CREPRINT;
+    ldisc->termios.c_cc[VDISCARD] = CDISCARD;
+    ldisc->termios.c_cc[VWERASE] = CWERASE;
+    ldisc->termios.c_cc[VLNEXT] = CLNEXT;
+
+    /* Default baud rate */
+    ldisc->termios.c_ispeed = B115200;
+    ldisc->termios.c_ospeed = B115200;
+
+    /* Initialize window size with sensible defaults */
+    ldisc->winsize.ws_row = TTY_DEFAULT_ROWS;
+    ldisc->winsize.ws_col = TTY_DEFAULT_COLS;
+    ldisc->winsize.ws_xpixel = 0;
+    ldisc->winsize.ws_ypixel = 0;
+
     /* Initialize spinlock for synchronizing buffer access */
     fut_spinlock_init(&ldisc->lock);
 
@@ -360,4 +395,78 @@ void tty_ldisc_set_flags(tty_ldisc_t *ldisc, uint32_t flags) {
  */
 uint32_t tty_ldisc_get_flags(const tty_ldisc_t *ldisc) {
     return ldisc->flags;
+}
+
+/**
+ * Helper to sync legacy flags from termios.
+ */
+static void sync_flags_from_termios(tty_ldisc_t *ldisc) {
+    ldisc->flags = 0;
+    if (ldisc->termios.c_lflag & ICANON) {
+        ldisc->flags |= TTY_CANONICAL;
+    }
+    if (ldisc->termios.c_lflag & ECHO) {
+        ldisc->flags |= TTY_ECHO;
+    }
+    if (ldisc->termios.c_lflag & ISIG) {
+        ldisc->flags |= TTY_SIGNAL;
+    }
+}
+
+/**
+ * Get termios settings.
+ */
+int tty_ldisc_get_termios(const tty_ldisc_t *ldisc, struct termios *termios) {
+    if (!ldisc || !termios) {
+        return -EINVAL;
+    }
+
+    memcpy(termios, &ldisc->termios, sizeof(struct termios));
+    return 0;
+}
+
+/**
+ * Set termios settings.
+ */
+int tty_ldisc_set_termios(tty_ldisc_t *ldisc, const struct termios *termios) {
+    if (!ldisc || !termios) {
+        return -EINVAL;
+    }
+
+    fut_spinlock_acquire(&ldisc->lock);
+    memcpy(&ldisc->termios, termios, sizeof(struct termios));
+
+    /* Sync legacy flags from new termios settings */
+    sync_flags_from_termios(ldisc);
+
+    fut_spinlock_release(&ldisc->lock);
+    return 0;
+}
+
+/**
+ * Get window size.
+ */
+int tty_ldisc_get_winsize(const tty_ldisc_t *ldisc, struct winsize *ws) {
+    if (!ldisc || !ws) {
+        return -EINVAL;
+    }
+
+    memcpy(ws, &ldisc->winsize, sizeof(struct winsize));
+    return 0;
+}
+
+/**
+ * Set window size.
+ */
+int tty_ldisc_set_winsize(tty_ldisc_t *ldisc, const struct winsize *ws) {
+    if (!ldisc || !ws) {
+        return -EINVAL;
+    }
+
+    fut_spinlock_acquire(&ldisc->lock);
+    memcpy(&ldisc->winsize, ws, sizeof(struct winsize));
+    fut_spinlock_release(&ldisc->lock);
+
+    /* TODO: Send SIGWINCH to foreground process group */
+    return 0;
 }

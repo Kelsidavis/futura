@@ -162,6 +162,12 @@ long sys_open(const char *pathname, int flags, int mode) {
             break;
     }
 
+    /* Phase 3: Validate O_APPEND flag - incompatible with O_RDONLY */
+    if ((local_flags & O_APPEND) && access_mode == O_RDONLY) {
+        fut_printf("[OPEN] open(pathname=?, flags=O_APPEND with O_RDONLY) -> EINVAL (O_APPEND requires write access)\n");
+        return -EINVAL;
+    }
+
     /* Phase 2: Identify creation flags */
     const char *creation_flags_desc;
     if ((local_flags & (O_CREAT | O_EXCL)) == (O_CREAT | O_EXCL)) {

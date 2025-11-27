@@ -78,6 +78,12 @@ See `docs/ARM64_STATUS.md` for detailed ARM64 progress.
 - ✅ **Process groups / Job control**: Verified setpgid/getpgid syscalls already implemented (stub mode that returns success). Foundation ready for full process group tracking.
 - ✅ **Pipe syscall**: Verified sys_pipe() fully implemented with comprehensive test coverage. Supports both basic pipe creation and advanced features like EOF handling, EPIPE generation.
 
+### November 27, 2025 Session (Continued) — Filesystem Operations & Per-Task Context
+- ✅ **Per-task file context**: Fixed sys_getcwd() to return actual current working directory (now uses task->current_dir_ino instead of hardcoded root). Enables shell prompts showing actual location.
+- ✅ **Per-task umask isolation**: Migrated umask from global state to per-task field in fut_task_t structure. Each process now has independent file creation mask; child processes inherit parent's umask on fork. Proper POSIX process isolation.
+- ✅ **Atomic rename operation**: Implemented full rename() syscall with VFS integration. Added rename() operation to fut_vnode_ops interface, implemented ramfs_rename() for in-memory atomicity, and integrated sys_rename() with comprehensive error handling. Supports same-directory renaming with atomic replacement of existing files. Foundation for cross-directory moves in future phase.
+- ✅ **Verified symlink/readlink**: Discovered sys_symlink() and sys_readlink() already fully implemented with complete VFS integration and error handling. Both syscalls ready for production use.
+
 ## Current Focus
 
 ### x86-64 Platform

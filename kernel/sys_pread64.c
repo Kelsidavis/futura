@@ -195,6 +195,15 @@ long sys_pread64(unsigned int fd, void *buf, size_t count, int64_t offset) {
         offset_category = "high (≥1 GB)";
     }
 
+    /* Phase 4: Prevent offset overflow when checking against file size */
+    /* Ensure offset + count doesn't overflow int64_t or cause security issues */
+    if (offset > INT64_MAX - (int64_t)count) {
+        fut_printf("[PREAD64] pread64(fd=%u [%s], count=%zu, offset=%ld [%s]) -> EINVAL "
+                   "(offset + count would overflow, Phase 4)\n",
+                   fd, fd_category, count, offset, offset_category);
+        return -EINVAL;
+    }
+
     /* Get file structure from FD */
     struct fut_file *file = vfs_get_file_from_task(task, (int)fd);
     if (!file) {

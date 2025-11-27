@@ -194,6 +194,14 @@ long sys_getdents64(unsigned int fd, void *dirp, unsigned int count) {
         return -EINVAL;
     }
 
+    /* Phase 3: Validate count doesn't exceed maximum buffer size (prevent DoS) */
+    if (count > 1048576) {  /* 1MB limit */
+        fut_printf("[GETDENTS64] getdents64(fd=%u, count=%u) -> EINVAL "
+                   "(count exceeds maximum 1MB limit)\n",
+                   fd, count);
+        return -EINVAL;
+    }
+
     /* Phase 2: Get current task for FD table access */
     fut_task_t *task = fut_task_current();
     if (!task) {

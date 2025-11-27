@@ -204,10 +204,20 @@ ssize_t sys_preadv(int fd, const struct iovec *iov, int iovcnt, int64_t offset) 
         return -EFAULT;
     }
 
-    /* Copy iovec array from userspace */
-    struct iovec *kernel_iov = (struct iovec *)__builtin_alloca(iovcnt * sizeof(struct iovec));
+    /* Phase 5: Prevent stack overflow DoS - use malloc instead of alloca
+     * Check for integer overflow in allocation size */
+    size_t iov_alloc_size = (size_t)iovcnt * sizeof(struct iovec);
+    if (iov_alloc_size / sizeof(struct iovec) != (size_t)iovcnt) {
+        fut_printf("[PREADV] preadv(fd=%d, iov=%p, iovcnt=%d, offset=%ld) -> EINVAL "
+                   "(allocation size would overflow, Phase 5)\n",
+                   fd, iov, iovcnt, offset);
+        return -EINVAL;
+    }
+
+    /* Copy iovec array from userspace using heap instead of stack */
+    struct iovec *kernel_iov = (struct iovec *)fut_malloc(iov_alloc_size);
     if (!kernel_iov) {
-        fut_printf("[PREADV] preadv(fd=%d, iov=%p, iovcnt=%d, offset=%ld) -> ENOMEM (alloca failed)\n",
+        fut_printf("[PREADV] preadv(fd=%d, iov=%p, iovcnt=%d, offset=%ld) -> ENOMEM (malloc failed for iovec array)\n",
                    fd, iov, iovcnt, offset);
         return -ENOMEM;
     }
@@ -215,23 +225,49 @@ ssize_t sys_preadv(int fd, const struct iovec *iov, int iovcnt, int64_t offset) 
     if (fut_copy_from_user(kernel_iov, iov, iovcnt * sizeof(struct iovec)) != 0) {
         fut_printf("[PREADV] preadv(fd=%d, iov=%p, iovcnt=%d, offset=%ld) -> EFAULT (copy_from_user failed)\n",
                    fd, iov, iovcnt, offset);
+        fut_free(kernel_iov);
         return -EFAULT;
     }
 
-    /* Phase 2: Calculate total size, validate iovecs, and gather statistics */
+    /* Phase 5: Validate iov_base pointers before using them
+     * Ensure each iov_base is not NULL and appears to be valid userspace address */
+    for (int i = 0; i < iovcnt; i++) {
+        if (!kernel_iov[i].iov_base && kernel_iov[i].iov_len > 0) {
+            fut_printf("[PREADV] preadv(fd=%d, iov=%p, iovcnt=%d, offset=%ld) -> EFAULT "
+                       "(iov_base[%d] is NULL with non-zero length)\n",
+                       fd, iov, iovcnt, offset, i);
+            fut_free(kernel_iov);
+            return -EFAULT;
+        }
+    }
+
+    /* Phase 5: Calculate total size, validate iovecs, and gather statistics
+     * Prevent DoS via huge total buffer allocations */
     size_t total_size = 0;
     int zero_len_count = 0;
     size_t min_iov_len = (size_t)-1;
     size_t max_iov_len = 0;
+    const size_t MAX_TOTAL_SIZE = 16 * 1024 * 1024;  /* 16 MB limit per preadv */
 
     for (int i = 0; i < iovcnt; i++) {
         /* Check for overflow */
         if (total_size + kernel_iov[i].iov_len < total_size) {
-            fut_printf("[PREADV] preadv(fd=%d, iov=%p, iovcnt=%d, offset=%ld) -> EINVAL (size overflow at iovec %d)\n",
+            fut_printf("[PREADV] preadv(fd=%d, iov=%p, iovcnt=%d, offset=%ld) -> EINVAL "
+                       "(size overflow at iovec %d, Phase 5)\n",
                        fd, iov, iovcnt, offset, i);
+            fut_free(kernel_iov);
             return -EINVAL;
         }
         total_size += kernel_iov[i].iov_len;
+
+        /* Phase 5: Prevent DoS via excessively large total size */
+        if (total_size > MAX_TOTAL_SIZE) {
+            fut_printf("[PREADV] preadv(fd=%d, iov=%p, iovcnt=%d, offset=%ld) -> EINVAL "
+                       "(total size %zu exceeds limit %zu MB, Phase 5)\n",
+                       fd, iov, iovcnt, offset, total_size, MAX_TOTAL_SIZE / (1024 * 1024));
+            fut_free(kernel_iov);
+            return -EINVAL;
+        }
 
         /* Gather statistics */
         if (kernel_iov[i].iov_len == 0) {
@@ -303,6 +339,7 @@ ssize_t sys_preadv(int fd, const struct iovec *iov, int iovcnt, int64_t offset) 
         /* Allocate kernel buffer for this iovec */
         void *kbuf = fut_malloc(kernel_iov[i].iov_len);
         if (!kbuf) {
+            fut_free(kernel_iov);
             if (total_read > 0) {
                 break;  /* Return bytes read so far */
             }
@@ -365,16 +402,18 @@ ssize_t sys_preadv(int fd, const struct iovec *iov, int iovcnt, int64_t offset) 
 
     if (zero_len_count > 0) {
         fut_printf("[PREADV] preadv(fd=%d, iovcnt=%d [%s], offset=%ld, total_requested=%zu bytes) -> %ld bytes "
-                   "(%s, %d/%d iovecs filled, %d zero-len skipped, min=%zu max=%zu, Phase 3: scatter-gather optimization)\n",
+                   "(%s, %d/%d iovecs filled, %d zero-len skipped, min=%zu max=%zu, Phase 5: validation & malloc)\n",
                    fd, iovcnt, io_pattern, offset, total_size, total_read,
                    completion_status, iovecs_read, iovcnt - zero_len_count, zero_len_count,
                    min_iov_len, max_iov_len);
     } else {
         fut_printf("[PREADV] preadv(fd=%d, iovcnt=%d [%s], offset=%ld, total_requested=%zu bytes) -> %ld bytes "
-                   "(%s, %d/%d iovecs filled, min=%zu max=%zu, Phase 3: scatter-gather optimization)\n",
+                   "(%s, %d/%d iovecs filled, min=%zu max=%zu, Phase 5: validation & malloc)\n",
                    fd, iovcnt, io_pattern, offset, total_size, total_read,
                    completion_status, iovecs_read, iovcnt, min_iov_len, max_iov_len);
     }
+
+    fut_free(kernel_iov);
 
     /* Phase 3 implementation with VFS optimization:
      *

@@ -382,6 +382,14 @@ long sys_fcntl(int fd, int cmd, uint64_t arg) {
             return -EINVAL;
         }
 
+        /* Phase 2: Validate minfd doesn't exceed reasonable limit (65536) */
+        if (minfd >= 65536) {
+            fut_printf("[FCNTL] fcntl(fd=%d [%s], cmd=%s [%s], minfd=%d) -> EINVAL "
+                       "(minfd exceeds maximum limit, Phase 2)\n",
+                       local_fd, fd_category, cmd_name, cmd_category, minfd);
+            return -EINVAL;
+        }
+
         /* Phase 2: Categorize minfd range */
         const char *minfd_category;
         if (minfd <= 2) {

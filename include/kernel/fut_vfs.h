@@ -453,9 +453,15 @@ struct fut_stat {
     uint64_t st_size;               /* File size */
     uint64_t st_blksize;            /* Block size */
     uint64_t st_blocks;             /* Number of blocks */
-    uint64_t st_atime;              /* Access time */
-    uint64_t st_mtime;              /* Modification time */
-    uint64_t st_ctime;              /* Status change time */
+    uint64_t st_atime;              /* Access time (seconds since epoch) */
+    uint32_t st_atime_nsec;         /* Access time nanoseconds */
+    uint32_t _pad_atime;            /* Padding for alignment */
+    uint64_t st_mtime;              /* Modification time (seconds since epoch) */
+    uint32_t st_mtime_nsec;         /* Modification time nanoseconds */
+    uint32_t _pad_mtime;            /* Padding for alignment */
+    uint64_t st_ctime;              /* Status change time (seconds since epoch) */
+    uint32_t st_ctime_nsec;         /* Status change time nanoseconds */
+    uint32_t _pad_ctime;            /* Padding for alignment */
 };
 
 /* Filesystem feature flags returned by statfs */

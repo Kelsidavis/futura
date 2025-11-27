@@ -1044,9 +1044,12 @@ static int ramfs_getattr(struct fut_vnode *vnode, struct fut_stat *stat) {
 
     /* Timestamps - using current time as default since ramfs is in-memory */
     uint64_t now_ns = fut_get_time_ns();
-    stat->st_atime = now_ns;        /* Access time (current) */
-    stat->st_mtime = now_ns;        /* Modification time (current) */
-    stat->st_ctime = now_ns;        /* Change time (current) */
+    stat->st_atime = now_ns / 1000000000;        /* Access time (seconds) */
+    stat->st_atime_nsec = now_ns % 1000000000;   /* Access time nanoseconds */
+    stat->st_mtime = now_ns / 1000000000;        /* Modification time (seconds) */
+    stat->st_mtime_nsec = now_ns % 1000000000;   /* Modification time nanoseconds */
+    stat->st_ctime = now_ns / 1000000000;        /* Change time (seconds) */
+    stat->st_ctime_nsec = now_ns % 1000000000;   /* Change time nanoseconds */
 
     return 0;
 }

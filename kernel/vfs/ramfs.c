@@ -1463,6 +1463,121 @@ static ssize_t ramfs_readlink(struct fut_vnode *vnode, char *buf, size_t size) {
 }
 
 /**
+ * ramfs_rename() - Rename or replace a file/directory within a directory
+ * @parent: Parent directory vnode
+ * @oldname: Current name of the file/directory
+ * @newname: New name for the file/directory
+ *
+ * Atomically renames oldname to newname. If newname exists, it is replaced.
+ * Both names must be in the same parent directory.
+ *
+ * Returns: 0 on success, negative error code on failure
+ */
+static int ramfs_rename(struct fut_vnode *parent, const char *oldname, const char *newname) {
+    extern void fut_printf(const char *, ...);
+
+    if (!parent || !oldname || !newname) {
+        return -EINVAL;
+    }
+
+    if (parent->type != VN_DIR) {
+        return -ENOTDIR;
+    }
+
+    struct ramfs_node *parent_node = (struct ramfs_node *)parent->fs_data;
+    if (!parent_node) {
+        return -EIO;
+    }
+
+    /* Find oldname entry */
+    struct ramfs_dirent *old_entry = parent_node->dir.entries;
+
+    while (old_entry) {
+        if (str_cmp(old_entry->name, oldname) == 0) {
+            break;
+        }
+        old_entry = old_entry->next;
+    }
+
+    if (!old_entry) {
+        return -ENOENT;
+    }
+
+    struct fut_vnode *old_vnode = old_entry->vnode;
+
+    /* Find and remove newname entry if it exists */
+    struct ramfs_dirent *new_entry = parent_node->dir.entries;
+    struct ramfs_dirent *new_prev = NULL;
+
+    while (new_entry) {
+        if (str_cmp(new_entry->name, newname) == 0) {
+            /* Found existing newname - need to replace it */
+            struct fut_vnode *new_vnode = new_entry->vnode;
+
+            /* Can't replace directory with non-directory */
+            if (new_vnode->type == VN_DIR && old_vnode->type != VN_DIR) {
+                return -EISDIR;
+            }
+
+            /* Can't replace non-directory with directory */
+            if (new_vnode->type != VN_DIR && old_vnode->type == VN_DIR) {
+                return -ENOTDIR;
+            }
+
+            /* Check if new is non-empty directory */
+            if (new_vnode->type == VN_DIR) {
+                struct ramfs_node *new_node = (struct ramfs_node *)new_vnode->fs_data;
+                if (new_node && new_node->dir.entries) {
+                    return -ENOTEMPTY;
+                }
+            }
+
+            /* Remove new_entry from linked list */
+            if (new_prev) {
+                new_prev->next = new_entry->next;
+            } else {
+                parent_node->dir.entries = new_entry->next;
+            }
+
+            /* Clean up newname */
+            struct ramfs_node *new_node = (struct ramfs_node *)new_vnode->fs_data;
+            if (new_node && new_node->file.data) {
+                fut_free(new_node->file.data);
+            }
+            if (new_node) {
+                fut_free(new_node);
+            }
+            fut_free(new_vnode);
+            fut_free(new_entry);
+            break;
+        }
+        new_prev = new_entry;
+        new_entry = new_entry->next;
+    }
+
+    /* Now rename oldname to newname by updating the entry name */
+    size_t newname_len = 0;
+    while (newname[newname_len] != '\0' && newname_len < FUT_VFS_NAME_MAX) {
+        newname_len++;
+    }
+
+    if (newname_len >= FUT_VFS_NAME_MAX) {
+        return -ENAMETOOLONG;
+    }
+
+    /* Copy new name into the old entry */
+    for (size_t i = 0; i <= newname_len; i++) {
+        old_entry->name[i] = newname[i];
+    }
+
+    fut_printf("[RAMFS-RENAME] Renamed '%s' to '%s' (ino=%lu, type=%s)\n",
+               oldname, newname, old_vnode->ino,
+               old_vnode->type == VN_DIR ? "dir" : old_vnode->type == VN_REG ? "file" : "other");
+
+    return 0;
+}
+
+/**
  * ramfs_setattr() - Change file attributes (permissions, mode, timestamps, ownership)
  *
  * Sets attributes on a vnode including:
@@ -1519,6 +1634,7 @@ static void ramfs_init_vnode_ops(void) {
     ramfs_vnode_ops.link = ramfs_link;
     ramfs_vnode_ops.symlink = ramfs_symlink;
     ramfs_vnode_ops.readlink = ramfs_readlink;
+    ramfs_vnode_ops.rename = ramfs_rename;
 }
 
 /* ============================================================

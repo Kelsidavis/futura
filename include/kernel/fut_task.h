@@ -66,6 +66,7 @@ struct fut_task {
     /* File system context */
     uint64_t current_dir_ino;          // Current working directory inode (root=1)
     char *cwd_cache;                   // Cached current working directory path
+    uint32_t umask;                    // File creation mask (per-task, not global)
 
     /* I/O priority */
     int ioprio;                        // I/O priority (class + level encoded)

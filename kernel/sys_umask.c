@@ -18,11 +18,9 @@
 
 extern void fut_printf(const char *fmt, ...);
 
-/* Global umask value for current implementation.
- * TODO Phase 3: When per-task state is added to fut_task structure, move this
- * to a per-task umask field for proper multi-process isolation.
+/* Note: umask is now per-task in fut_task_t structure, initialized to 0022 at task creation.
+ * This is no longer global - each task has its own umask value for proper multi-process isolation.
  */
-static uint32_t global_umask = 0022;  /* Default: owner read/write, group/others read only */
 
 /**
  * umask() syscall - Set file creation mask.
@@ -30,6 +28,9 @@ static uint32_t global_umask = 0022;  /* Default: owner read/write, group/others
  * Sets the file creation mask (umask) for the calling process. The umask
  * is used to turn off permission bits when creating new files and directories.
  * This syscall always succeeds and returns the previous umask value.
+ *
+ * Each task maintains its own umask, ensuring process isolation and allowing
+ * different processes to have different file creation permissions.
  *
  * @param mask New file creation mask (permission bits to mask off)
  *
@@ -155,11 +156,18 @@ static uint32_t global_umask = 0022;  /* Default: owner read/write, group/others
  * Phase 4: umask inheritance and fine-grained control
  */
 long sys_umask(uint32_t mask) {
+    /* Get current task for per-task umask */
+    fut_task_t *task = fut_task_current();
+    if (!task) {
+        fut_printf("[UMASK] umask(mask=?) -> -ESRCH (no current task)\n");
+        return -ESRCH;
+    }
+
     /* Phase 2: Only use the permission bits (0777 octal = 511 decimal) */
     uint32_t new_mask = mask & 0777;
 
-    /* Phase 2: Get previous mask value */
-    uint32_t old_mask = global_umask;
+    /* Phase 3: Get previous mask value from per-task umask */
+    uint32_t old_mask = task->umask;
 
     /* Phase 2: Categorize old mask */
     const char *old_mask_desc;
@@ -227,11 +235,11 @@ long sys_umask(uint32_t mask) {
     *p++ = '0' + (new_mask & 7);
     *p = '\0';
 
-    /* Set new mask */
-    global_umask = new_mask;
+    /* Phase 3: Set new mask in per-task structure */
+    task->umask = new_mask;
 
-    /* Phase 2: Detailed success logging */
-    fut_printf("[UMASK] umask(mask=%s [%s]) -> %s [%s] (op=%s, Phase 3: Per-task umask with categorization)\n",
+    /* Phase 3: Detailed success logging */
+    fut_printf("[UMASK] umask(mask=%s [%s]) -> %s [%s] (op=%s, Phase 3: Per-task umask isolation)\n",
                new_octal, new_mask_desc, old_octal, old_mask_desc, operation_type);
 
     /* Return previous mask */
@@ -244,11 +252,15 @@ long sys_umask(uint32_t mask) {
  * This function is called by mkdir, open with O_CREAT, etc. to apply
  * the umask to newly created files and directories.
  *
- * @return Current umask value
+ * Phase 3: Now uses per-task umask from task structure for proper process isolation.
  *
- * TODO Phase 3: When moving to per-task umask, this should accept
- * fut_task_t* parameter and return task->umask instead of global_umask.
+ * @return Current umask value from current task's umask field
  */
 uint32_t fut_get_umask(void) {
-    return global_umask;
+    fut_task_t *task = fut_task_current();
+    if (!task) {
+        /* Fallback to default if no task context */
+        return 0022;
+    }
+    return task->umask;
 }

@@ -254,76 +254,90 @@ long sys_rename(const char *oldpath, const char *newpath) {
         operation_type = "move between directories (mixed paths)";
     }
 
-    /* Check if oldpath exists */
-    struct fut_vnode *old_vnode = NULL;
-    int ret = fut_vfs_lookup(old_buf, &old_vnode);
+    /* Extract old parent path and filename */
+    char old_parent_path[256];
+    char old_name[256];
+    size_t old_parent_len = 0;
+    size_t old_name_len = 0;
+
+    if (old_last_slash == 0) {
+        /* oldpath is /filename - parent is root */
+        old_parent_path[0] = '/';
+        old_parent_len = 1;
+    } else if (old_last_slash > 0) {
+        /* Copy path up to last slash */
+        for (int i = 0; i < old_last_slash && i < 255; i++) {
+            old_parent_path[i] = old_buf[i];
+            old_parent_len++;
+        }
+    }
+    old_parent_path[old_parent_len] = '\0';
+
+    /* Extract filename after last slash */
+    for (size_t i = old_last_slash + 1; old_buf[i] != '\0' && old_name_len < 255; i++) {
+        old_name[old_name_len++] = old_buf[i];
+    }
+    old_name[old_name_len] = '\0';
+
+    /* Lookup old parent directory */
+    struct fut_vnode *old_parent = NULL;
+    int ret = fut_vfs_lookup(old_parent_path, &old_parent);
     if (ret < 0) {
         const char *error_desc;
         switch (ret) {
             case -ENOENT:
-                error_desc = "oldpath not found";
+                error_desc = "oldpath parent not found";
                 break;
             case -ENOTDIR:
                 error_desc = "path component not a directory";
                 break;
-            case -ENAMETOOLONG:
-                error_desc = "pathname too long";
-                break;
-            case -EACCES:
-                error_desc = "permission denied";
-                break;
             default:
-                error_desc = "lookup failed";
+                error_desc = "parent lookup failed";
                 break;
         }
-
         fut_printf("[RENAME] rename(old='%s' [%s], new='%s' [%s], op=%s) -> %d (%s)\n",
                    old_buf, old_path_type, new_buf, new_path_type, operation_type, ret, error_desc);
         return ret;
     }
 
-    /* Phase 2: Identify old vnode type */
-    const char *old_vnode_type;
-    switch (old_vnode->type) {
-        case VN_REG:
-            old_vnode_type = "regular file";
-            break;
-        case VN_DIR:
-            old_vnode_type = "directory";
-            break;
-        case VN_LNK:
-            old_vnode_type = "symbolic link";
-            break;
-        case VN_CHR:
-            old_vnode_type = "character device";
-            break;
-        case VN_BLK:
-            old_vnode_type = "block device";
-            break;
-        case VN_FIFO:
-            old_vnode_type = "FIFO";
-            break;
-        case VN_SOCK:
-            old_vnode_type = "socket";
-            break;
-        default:
-            old_vnode_type = "unknown";
-            break;
+    if (old_parent->type != VN_DIR) {
+        fut_printf("[RENAME] rename(old='%s' [%s], new='%s' [%s], op=%s) -> ENOTDIR (parent not directory)\n",
+                   old_buf, old_path_type, new_buf, new_path_type, operation_type);
+        return -ENOTDIR;
     }
 
-    /*
-     * Phase 3: VFS rename operation not yet implemented
-     *
-     * The rename operation is not yet available in the VFS layer.
-     * TODO: Implement atomic rename in vnode_ops:
-     *   - Add rename() operation to fut_vnode_ops structure
-     *   - Implement in RamFS (in-memory rename)
-     *   - Implement in FuturaFS (log-structured rename)
-     *   - Handle cross-directory rename atomically
-     */
-    fut_printf("[RENAME] rename(old='%s' [%s], new='%s' [%s], old_ino=%lu, "
-               "old_type=%s, op=%s) -> ENOSYS (Phase 3: VFS atomic rename operation)\n",
-               old_buf, old_path_type, new_buf, new_path_type, old_vnode->ino,
-               old_vnode_type, operation_type);
-    return -ENOSYS;
+    /* For same-directory rename, extract new filename and call rename */
+    if (same_directory && old_last_slash >= 0) {
+        char new_name[256];
+        size_t new_name_len = 0;
+
+        /* Extract newname (filename after last slash) */
+        for (size_t i = new_last_slash + 1; new_buf[i] != '\0' && new_name_len < 255; i++) {
+            new_name[new_name_len++] = new_buf[i];
+        }
+        new_name[new_name_len] = '\0';
+
+        /* Call VFS rename operation */
+        if (!old_parent->ops || !old_parent->ops->rename) {
+            fut_printf("[RENAME] rename(old='%s' [%s], new='%s' [%s], op=%s) -> ENOSYS (no rename operation)\n",
+                       old_buf, old_path_type, new_buf, new_path_type, operation_type);
+            return -ENOSYS;
+        }
+
+        ret = old_parent->ops->rename(old_parent, old_name, new_name);
+        if (ret == 0) {
+            fut_printf("[RENAME] rename(old='%s' [%s], new='%s' [%s], op=%s) -> 0 (success, same-dir)\n",
+                       old_buf, old_path_type, new_buf, new_path_type, operation_type);
+        } else {
+            fut_printf("[RENAME] rename(old='%s' [%s], new='%s' [%s], op=%s) -> %d (error)\n",
+                       old_buf, old_path_type, new_buf, new_path_type, operation_type, ret);
+        }
+        return ret;
+    } else {
+        /* Cross-directory rename not yet supported */
+        fut_printf("[RENAME] rename(old='%s' [%s], new='%s' [%s], op=%s) -> EXDEV "
+                   "(cross-directory rename not supported)\n",
+                   old_buf, old_path_type, new_buf, new_path_type, operation_type);
+        return -EXDEV;
+    }
 }

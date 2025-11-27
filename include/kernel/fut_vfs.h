@@ -307,6 +307,28 @@ struct fut_vnode_ops {
      *         -EFAULT: buf is inaccessible
      */
     ssize_t (*readlink)(struct fut_vnode *vnode, char *buf, size_t size);
+
+    /**
+     * Rename or move a file/directory (called by rename() syscall).
+     *
+     * Atomically renames oldname to newname within the directory.
+     * If newname already exists, it is atomically replaced.
+     * Does NOT support cross-directory moves; for that use separate
+     * unlink/create operations or implement cross-parent move support.
+     *
+     * @param parent  Parent directory vnode containing both old and new names
+     * @param oldname Name of existing file/directory to rename
+     * @param newname New name for the file/directory
+     * @return 0 on success, negative error code on failure
+     *         -ENOENT: oldname does not exist
+     *         -EEXIST: newname exists and is directory but oldname is not
+     *         -EISDIR: newname is directory but oldname is not
+     *         -ENOTDIR: newname parent is not a directory
+     *         -ENOTEMPTY: newname is non-empty directory
+     *         -EROFS: read-only filesystem
+     *         -EACCES: permission denied
+     */
+    int (*rename)(struct fut_vnode *parent, const char *oldname, const char *newname);
 };
 
 /* ============================================================

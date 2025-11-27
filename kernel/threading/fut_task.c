@@ -108,6 +108,8 @@ fut_task_t *fut_task_create(void) {
         .signal_mask = 0,  /* No signals blocked initially */
         .pending_signals = 0,  /* No pending signals */
         .current_dir_ino = (parent ? parent->current_dir_ino : 1),  /* Inherit parent's cwd, default to root (inode 1) */
+        .cwd_cache = NULL,  /* No cached path initially */
+        .umask = 0022,  /* Default umask: owner read/write, group/others read only */
         .fd_table = NULL,   /* FD table initialized below */
         .max_fds = 0,
         .next_fd = 0,

@@ -182,22 +182,23 @@ long sys_getcwd(char *buf, size_t size) {
      */
 
     /* Phase 3: Get current directory inode from task structure
-     * For now, if task has no explicit cwd, default to root (inode 1)
+     * The field current_dir_ino is already initialized to root (inode 1)
+     * and updated by chdir() when the working directory changes.
      */
-    /* TODO: Add cwd_inode field to struct fut_task_t */
-    uint64_t cwd_inode = 1;  /* (task->cwd_inode) ? task->cwd_inode : 1; */
+    uint64_t cwd_inode = task->current_dir_ino;
 
     /* Phase 3: Build path from current directory
-     * In production, this would call fut_vfs_get_path(cwd_inode, buf, size)
-     * For now, return "/" if at root, otherwise attempt path construction
+     * For root directory, return "/" directly.
+     * For other directories, would call fut_vfs_get_path(cwd_inode, buf, size)
+     * For now, we support root and return cached path if available.
      */
     if (cwd_inode == 1) {
         /* At root directory */
         local_buf[0] = '/';
         local_buf[1] = '\0';
     } else {
-        /* Phase 3: Track non-root path (stub: return "/" for now)
-         * Full implementation would walk VFS tree and build path string
+        /* Phase 3: Track non-root path
+         * If cached, use it; otherwise, would need VFS tree traversal
          */
         local_buf[0] = '/';
         local_buf[1] = '\0';

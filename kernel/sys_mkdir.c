@@ -164,6 +164,13 @@ long sys_mkdir(const char *path, uint32_t mode) {
         return -ENAMETOOLONG;
     }
 
+    /* Phase 3: Normalize path by stripping trailing "/" (if not root) */
+    if (actual_path_len > 1 && path_buf[actual_path_len - 1] == '/') {
+        path_buf[actual_path_len - 1] = '\0';
+        actual_path_len--;
+        fut_printf("[MKDIR] mkdir(path normalized: removed trailing /)\n");
+    }
+
     /* Phase 2: Categorize path type */
     const char *path_type;
     if (path_buf[0] == '/') {

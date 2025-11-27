@@ -1293,12 +1293,16 @@ void fut_kernel_main(void) {
     // fut_printf("[INIT] Starting console input thread...\n");
     // fut_console_start_input_thread();
 
-    /* Launch init process */
+    /* Launch init process with environment for Wayland */
     if (init_stage == 0) {
         fut_printf("[INIT] Launching init process...\n");
         char init_name[] = "init";
         char *init_args[] = { init_name, NULL };
-        int init_exec = fut_exec_elf("/sbin/init_stub", init_args, NULL);
+        /* Pass Wayland environment to init so it can launch wl-term */
+        char xdg_runtime[] = "XDG_RUNTIME_DIR=/tmp";
+        char wayland_display[] = "WAYLAND_DISPLAY=wayland-0";
+        char *init_envp[] = { xdg_runtime, wayland_display, NULL };
+        int init_exec = fut_exec_elf("/sbin/init_stub", init_args, init_envp);
         if (init_exec != 0) {
             fut_printf("[WARN] Failed to launch /sbin/init_stub (error %d)\n", init_exec);
         } else {

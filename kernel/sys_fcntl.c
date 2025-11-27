@@ -423,17 +423,18 @@ long sys_fcntl(int fd, int cmd, uint64_t arg) {
 
         /* Find first available fd >= minfd */
         int newfd = minfd;
-        for (; newfd < task->max_fds; newfd++) {  /* Use actual task FD table limit */
+        for (; newfd < (int)task->max_fds; newfd++) {  /* Use actual task FD table limit */
             struct fut_file *existing = vfs_get_file_from_task(task, newfd);
             if (!existing) {
                 break;  /* Found available fd */
             }
         }
 
-        if (newfd >= 1024) {
+        /* Phase 5: Check against task's actual max_fds, not hardcoded limit */
+        if (newfd >= (int)task->max_fds) {
             fut_printf("[FCNTL] fcntl(fd=%d [%s], cmd=%s [%s], minfd=%d [%s]) -> EMFILE "
-                       "(no FDs available >= minfd, Phase 2)\n",
-                       local_fd, fd_category, cmd_name, cmd_category, minfd, minfd_category);
+                       "(no FDs available >= minfd (reached task max_fds=%u), Phase 5)\n",
+                       local_fd, fd_category, cmd_name, cmd_category, minfd, minfd_category, task->max_fds);
             return -EMFILE;
         }
 

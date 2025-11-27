@@ -390,6 +390,14 @@ long sys_fcntl(int fd, int cmd, uint64_t arg) {
             return -EINVAL;
         }
 
+        /* Phase 3: Validate minfd is within task's FD table range */
+        if (minfd >= (int)task->max_fds) {
+            fut_printf("[FCNTL] fcntl(fd=%d [%s], cmd=%s [%s], minfd=%d) -> EINVAL "
+                       "(minfd %d >= max_fds %u, Phase 3)\n",
+                       local_fd, fd_category, cmd_name, cmd_category, minfd, minfd, task->max_fds);
+            return -EINVAL;
+        }
+
         /* Phase 2: Categorize minfd range */
         const char *minfd_category;
         if (minfd <= 2) {

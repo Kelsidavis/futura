@@ -116,6 +116,13 @@ long sys_mkdir(const char *path, uint32_t mode) {
         return -EINVAL;
     }
 
+    /* Phase 3: Validate mode bits - reject any bits outside permission mask (07777) */
+    if (local_mode & ~07777) {
+        fut_printf("[MKDIR] mkdir(path=?, mode=0%o) -> EINVAL (invalid mode bits 0%o outside 07777)\n",
+                   local_mode, local_mode & ~07777);
+        return -EINVAL;
+    }
+
     /* Phase 2: Categorize permission mode */
     const char *mode_desc;
     uint32_t perm_bits = local_mode & 0777;

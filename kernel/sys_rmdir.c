@@ -175,6 +175,16 @@ long sys_rmdir(const char *path) {
         return -EPERM;
     }
 
+    /* Phase 3: Validate path length - check if it was truncated */
+    size_t truncation_check = 0;
+    while (path_buf[truncation_check] != '\0' && truncation_check < sizeof(path_buf) - 1) {
+        truncation_check++;
+    }
+    if (path_buf[truncation_check] != '\0') {
+        fut_printf("[RMDIR] rmdir(path_len>255) -> ENAMETOOLONG (path was truncated)\n");
+        return -ENAMETOOLONG;
+    }
+
     /* Phase 2: Calculate path length for categorization */
     size_t path_len = 0;
     while (path_buf[path_len] != '\0' && path_len < 256) {

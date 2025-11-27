@@ -138,6 +138,12 @@ long sys_open(const char *pathname, int flags, int mode) {
         return -EFAULT;
     }
 
+    /* Phase 3: Validate O_EXCL flag - requires O_CREAT */
+    if ((local_flags & O_EXCL) && !(local_flags & O_CREAT)) {
+        fut_printf("[OPEN] open(pathname=?, flags=O_EXCL without O_CREAT) -> EINVAL (O_EXCL requires O_CREAT)\n");
+        return -EINVAL;
+    }
+
     /* Phase 2: Categorize access mode */
     int access_mode = local_flags & O_ACCMODE;
     const char *access_mode_desc;

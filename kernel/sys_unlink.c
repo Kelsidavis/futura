@@ -107,6 +107,16 @@ long sys_unlink(const char *path) {
         return -EINVAL;
     }
 
+    /* Phase 3: Validate path length - check if it was truncated */
+    size_t truncation_check = 0;
+    while (path_buf[truncation_check] != '\0' && truncation_check < sizeof(path_buf) - 1) {
+        truncation_check++;
+    }
+    if (path_buf[truncation_check] != '\0') {
+        fut_printf("[UNLINK] unlink(path_len>255) -> ENAMETOOLONG (path was truncated)\n");
+        return -ENAMETOOLONG;
+    }
+
     /* Phase 2: Categorize path type */
     const char *path_type;
     if (path_buf[0] == '/') {

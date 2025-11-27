@@ -11,6 +11,7 @@
 #include <kernel/fut_memory.h>
 #include <kernel/fut_timer.h>
 #include <kernel/fut_lock.h>
+#include <kernel/vfs_credentials.h>
 #include <kernel/slab_allocator.h>
 #include <stddef.h>
 #include <string.h>
@@ -643,13 +644,18 @@ static int ramfs_create(struct fut_vnode *dir, const char *name, uint32_t mode, 
     /* Initialize vnode */
     vnode->type = VN_REG;
     vnode->ino = (uint64_t)vnode;  /* Use pointer as inode number */
-    vnode->mode = mode;
+    vnode->mode = 0;  /* Will be set by vfs_init_vnode_ownership */
     vnode->size = 0;
     vnode->nlinks = 1;
     vnode->mount = dir->mount;
     vnode->fs_data = node;
     vnode->refcount = 1;
     vnode->ops = dir->ops;  /* Same ops as parent */
+    vnode->uid = 0;  /* Will be set by vfs_init_vnode_ownership */
+    vnode->gid = 0;  /* Will be set by vfs_init_vnode_ownership */
+
+    /* Initialize vnode ownership based on creating process and parent directory */
+    vfs_init_vnode_ownership(vnode, dir, mode);
 
     /* Phase 3: Initialize advisory file locking state */
     fut_vnode_lock_init(vnode);
@@ -726,13 +732,18 @@ static int ramfs_mkdir(struct fut_vnode *dir, const char *name, uint32_t mode) {
     /* Initialize vnode */
     vnode->type = VN_DIR;
     vnode->ino = (uint64_t)vnode;
-    vnode->mode = mode;
+    vnode->mode = 0;  /* Will be set by vfs_init_vnode_ownership */
     vnode->size = 0;
     vnode->nlinks = 2;  /* "." and parent reference */
     vnode->mount = dir->mount;
     vnode->fs_data = node;
     vnode->refcount = 1;
     vnode->ops = dir->ops;
+    vnode->uid = 0;  /* Will be set by vfs_init_vnode_ownership */
+    vnode->gid = 0;  /* Will be set by vfs_init_vnode_ownership */
+
+    /* Initialize vnode ownership based on creating process and parent directory */
+    vfs_init_vnode_ownership(vnode, dir, mode);
 
     /* Phase 3: Initialize advisory file locking state */
     fut_vnode_lock_init(vnode);

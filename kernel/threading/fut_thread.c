@@ -26,13 +26,9 @@ extern void fut_printf(const char *fmt, ...);
 extern void fut_sleep_until(fut_thread_t *thread, uint64_t wake_time);
 
 /* Thread ID counter (64-bit) */
-#ifdef __aarch64__
-/* On ARM64, TID 1 is reserved for the boot thread (see arm64_threading.c).
+/* TID 1 is reserved for the boot/bootstrap thread on all platforms.
  * Start allocation at TID 2 to avoid collision. */
 static _Atomic uint64_t next_tid __attribute__((aligned(8))) = 2;  /* 8-byte aligned for ARM64 atomics */
-#else
-static _Atomic uint64_t next_tid __attribute__((aligned(8))) = 1;  /* 8-byte aligned for ARM64 atomics */
-#endif
 
 /* Current thread pointer is now per-CPU (see fut_percpu_t in fut_percpu.h) */
 

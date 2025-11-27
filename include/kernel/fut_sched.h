@@ -91,6 +91,19 @@ void fut_sched_init(void);
 void fut_sched_init_cpu(void);
 
 /**
+ * Start the scheduler, enabling preemptive context switches.
+ *
+ * Must be called after all kernel initialization is complete.
+ * Before this is called, timer interrupts won't cause context switches.
+ */
+void fut_sched_start(void);
+
+/**
+ * Check if scheduler has been started.
+ */
+bool fut_sched_is_started(void);
+
+/**
  * Schedule next thread to run.
  *
  * Selects highest priority READY thread and context switches to it.

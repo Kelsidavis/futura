@@ -373,6 +373,12 @@ static int build_user_stack(fut_mm_t *mm,
                 envc++;
             }
         }
+#ifdef DEBUG_EXEC
+        fut_printf("[EXEC-DEBUG] build_user_stack: envc=%zu\n", envc);
+        for (size_t i = 0; i < envc; i++) {
+            fut_printf("[EXEC-DEBUG]   envp[%zu]='%s'\n", i, envp[i]);
+        }
+#endif
     }
 
     /* Allocate string pointers for both argv and envp */

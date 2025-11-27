@@ -1218,9 +1218,13 @@ void fut_kernel_main(void) {
     /* ========================================
      *   Enable Interrupts and Start Scheduler
      * ======================================== */
-    /* Enable interrupts NOW so the scheduler can run and user processes can execute */
-    fut_printf("[INIT] Enabling interrupts to start scheduler...\n");
+    /* Enable interrupts and start scheduler. Timer IRQs will now cause context switches. */
+    fut_printf("[INIT] Enabling interrupts...\n");
     fut_enable_interrupts();  /* Platform-neutral interrupt enable */
+
+    /* Start the scheduler to enable preemptive context switches */
+    fut_printf("[INIT] Starting scheduler...\n");
+    fut_sched_start();  /* Enable scheduling on timer IRQs */
 
     /* Console input thread will be started after kernel init completes */
     fut_printf("[INIT] Scheduler running via timer IRQs\n");

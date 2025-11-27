@@ -47,6 +47,11 @@ _Atomic bool fut_in_interrupt = false;
 /* Points to the current interrupt frame when in interrupt context */
 fut_interrupt_frame_t *fut_current_frame = NULL;
 
+/* Tracks whether the scheduler has been explicitly started.
+ * This prevents premature context switches during early boot when
+ * timer interrupts are already enabled but kernel_main hasn't finished. */
+static volatile bool scheduler_started = false;
+
 /* ============================================================
  *   Scheduler State
  * ============================================================ */
@@ -164,6 +169,22 @@ void fut_sched_init(void) {
     idle_thread->state = FUT_THREAD_RUNNING;
 
     fut_printf("[SCHED] Scheduler initialized for CPU %u (current thread set to idle)\n", percpu->cpu_id);
+}
+
+/**
+ * Start the scheduler, allowing context switches to occur.
+ * Must be called after all kernel initialization is complete.
+ */
+void fut_sched_start(void) {
+    scheduler_started = true;
+    fut_printf("[SCHED] Scheduler started - preemptive scheduling now enabled\n");
+}
+
+/**
+ * Check if scheduler is started.
+ */
+bool fut_sched_is_started(void) {
+    return scheduler_started;
 }
 
 /**
@@ -555,6 +576,11 @@ static fut_thread_t *select_next_thread(void) {
  * Main scheduler - select and switch to next thread.
  */
 void fut_schedule(void) {
+    // Don't allow context switches until scheduler is explicitly started
+    if (!scheduler_started) {
+        return;
+    }
+
     fut_thread_t *prev = fut_thread_current();
     fut_thread_t *next = select_next_thread();
 

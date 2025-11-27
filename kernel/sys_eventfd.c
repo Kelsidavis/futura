@@ -274,6 +274,14 @@ long sys_eventfd2(unsigned int initval, int flags) {
         return -ESRCH;
     }
 
+    /* Phase 3: Validate initval doesn't exceed counter capacity */
+    /* eventfd counter is uint64_t, reject overly large initial values */
+    if (initval > 0xFFFFFFFE) {
+        fut_printf("[EVENTFD2] sys_eventfd2(initval=%u, flags=0x%x) -> EINVAL (initval exceeds counter capacity)\n",
+                   initval, flags);
+        return -EINVAL;
+    }
+
     /* Validate flags */
     int valid_flags = EFD_CLOEXEC | EFD_NONBLOCK | EFD_SEMAPHORE;
     if (flags & ~valid_flags) {

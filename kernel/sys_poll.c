@@ -89,6 +89,15 @@ long sys_poll(struct pollfd *fds, unsigned long nfds, int timeout) {
         return -EINVAL;
     }
 
+    /* Phase 4: Check for integer overflow in size calculation (prevent allocation DoS) */
+    /* sizeof(struct pollfd) = 8 bytes, so max safe nfds for size_t is SIZE_MAX / 8 */
+    const size_t max_safe_nfds = (size_t)-1 / sizeof(struct pollfd);
+    if (nfds > max_safe_nfds) {
+        fut_printf("[POLL] poll(fds, %lu, %d) -> EINVAL (nfds would cause integer overflow, max=%zu)\n",
+                   nfds, timeout, max_safe_nfds);
+        return -EINVAL;
+    }
+
     /* Allocate kernel buffer for pollfd array */
     size_t size = nfds * sizeof(struct pollfd);
     struct pollfd *kfds = fut_malloc(size);

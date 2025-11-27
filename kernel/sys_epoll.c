@@ -350,6 +350,13 @@ long sys_epoll_create1(int flags) {
  * Phase 4 (Completed): Performance optimization with memory pooling
  */
 long sys_epoll_ctl(int epfd, int op, int fd, struct epoll_event *event) {
+    /* Phase 5: Validate fd is non-negative early */
+    if (fd < 0) {
+        fut_printf("[EPOLL_CTL] epoll_ctl(epfd=%d, op=%d, fd=%d) -> EBADF (fd is negative, Phase 5)\n",
+                   epfd, op, fd);
+        return -EBADF;
+    }
+
     /* Phase 2: Categorize epoll FD */
     const char *epfd_category;
     if (epfd >= 4000 && epfd < 5000) {
@@ -362,9 +369,7 @@ long sys_epoll_ctl(int epfd, int op, int fd, struct epoll_event *event) {
 
     /* Phase 2: Categorize target FD */
     const char *fd_category;
-    if (fd < 0) {
-        fd_category = "invalid (negative)";
-    } else if (fd <= 2) {
+    if (fd <= 2) {
         fd_category = "stdio (0-2)";
     } else if (fd < 16) {
         fd_category = "low (3-15)";
@@ -625,6 +630,18 @@ long sys_epoll_ctl(int epfd, int op, int fd, struct epoll_event *event) {
             fut_printf("%s", msg);
 
             return -EFAULT;
+        }
+
+        /* Phase 5: Validate event mask doesn't contain invalid bits */
+        uint32_t valid_events = EPOLLIN | EPOLLOUT | EPOLLERR | EPOLLHUP |
+                               EPOLLRDNORM | EPOLLRDBAND | EPOLLWRNORM | EPOLLWRBAND |
+                               EPOLL_ET | EPOLL_ONESHOT;
+        if (ev.events & ~valid_events) {
+            uint32_t invalid_bits = ev.events & ~valid_events;
+            fut_printf("[EPOLL_CTL] epoll_ctl(epfd=%d, op=%s, fd=%d, events=0x%x) -> EINVAL "
+                       "(invalid event bits 0x%x detected, valid=0x%x, Phase 5)\n",
+                       epfd, op_name, fd, ev.events, invalid_bits, valid_events);
+            return -EINVAL;
         }
     }
 

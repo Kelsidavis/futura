@@ -152,6 +152,14 @@ int64_t sys_lseek(int fd, int64_t offset, int whence) {
             return -EINVAL;
     }
 
+    /* Phase 2: Validate SEEK_SET doesn't allow negative offsets */
+    if (whence == SEEK_SET && offset < 0) {
+        fut_printf("[LSEEK] lseek(fd=%d, offset=%lld [negative], whence=SEEK_SET) -> EINVAL "
+                   "(SEEK_SET offset cannot be negative)\n",
+                   fd, offset);
+        return -EINVAL;
+    }
+
     /* Phase 2: Categorize offset magnitude */
     const char *offset_category;
     if (offset == 0) {

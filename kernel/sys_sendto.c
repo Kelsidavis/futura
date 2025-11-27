@@ -225,6 +225,22 @@ ssize_t sys_sendto(int sockfd, const void *buf, size_t len, int flags,
         return 0;
     }
 
+    /* Phase 2: Validate address length when destination is specified */
+    if (local_dest_addr && local_addrlen == 0) {
+        fut_printf("[SENDTO] sendto(sockfd=%d [%s], dest_addr=%p, addrlen=0) -> EINVAL "
+                   "(destination specified but addrlen is zero, pid=%u)\n",
+                   local_sockfd, fd_category, local_dest_addr, task->pid);
+        return -EINVAL;
+    }
+
+    /* Phase 2: Validate address length doesn't exceed maximum (prevent buffer overruns) */
+    if (local_addrlen > 128) {  /* Max reasonable address length */
+        fut_printf("[SENDTO] sendto(sockfd=%d [%s], addrlen=%u) -> EINVAL "
+                   "(address length exceeds maximum 128 bytes, Phase 2)\n",
+                   local_sockfd, fd_category, local_addrlen);
+        return -EINVAL;
+    }
+
     /* Validate buf */
     if (!local_buf) {
         fut_printf("[SENDTO] sendto(sockfd=%d [%s], buf=NULL, len=%zu, pid=%u) -> EINVAL "

@@ -118,6 +118,13 @@ long sys_dup2(int oldfd, int newfd) {
         return -EBADF;
     }
 
+    /* Phase 3: Validate newfd is within task's FD table range */
+    if (local_newfd >= (int)task->max_fds) {
+        fut_printf("[DUP2] dup2(oldfd=%d, newfd=%d) -> EINVAL (newfd %d >= max_fds %u)\n",
+                   local_oldfd, local_newfd, local_newfd, task->max_fds);
+        return -EINVAL;
+    }
+
     /* Phase 2: Categorize FD range */
     const char *newfd_category;
     if (local_newfd <= 2) {

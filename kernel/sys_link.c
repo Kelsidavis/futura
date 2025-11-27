@@ -343,6 +343,66 @@ long sys_link(const char *oldpath, const char *newpath) {
         return type_error;
     }
 
+    /* Phase 3: Lookup newpath's parent directory to check filesystem compatibility */
+    char new_parent_path[256];
+    size_t new_parent_len = 0;
+    int new_last_slash = -1;
+
+    for (size_t i = 0; new_buf[i] != '\0'; i++) {
+        if (new_buf[i] == '/') new_last_slash = (int)i;
+    }
+
+    if (new_last_slash == 0) {
+        /* newpath is /filename - parent is root */
+        new_parent_path[0] = '/';
+        new_parent_len = 1;
+    } else if (new_last_slash > 0) {
+        /* Copy path up to last slash */
+        for (int i = 0; i < new_last_slash && i < 255; i++) {
+            new_parent_path[i] = new_buf[i];
+            new_parent_len++;
+        }
+    }
+    new_parent_path[new_parent_len] = '\0';
+
+    struct fut_vnode *new_parent = NULL;
+    int new_parent_lookup_ret = fut_vfs_lookup(new_parent_path, &new_parent);
+
+    if (new_parent_lookup_ret < 0) {
+        const char *error_desc;
+        switch (new_parent_lookup_ret) {
+            case -ENOENT:
+                error_desc = "newpath parent not found";
+                break;
+            case -ENOTDIR:
+                error_desc = "newpath parent component not a directory";
+                break;
+            default:
+                error_desc = "newpath parent lookup failed";
+                break;
+        }
+        fut_printf("[LINK] link(old='%s' [%s], new='%s' [%s]) -> %d "
+                   "(%s)\n",
+                   old_buf, old_path_type, new_buf, new_path_type,
+                   new_parent_lookup_ret, error_desc);
+        return new_parent_lookup_ret;
+    }
+
+    if (!new_parent) {
+        fut_printf("[LINK] link(old='%s' [%s], new='%s' [%s]) -> EINVAL "
+                   "(newpath parent vnode is NULL)\n",
+                   old_buf, old_path_type, new_buf, new_path_type);
+        return -EINVAL;
+    }
+
+    /* Phase 3: Check if both files are on same filesystem (EXDEV error for cross-fs) */
+    if (old_vnode->mount != new_parent->mount) {
+        fut_printf("[LINK] link(old='%s' [%s, %s], new='%s' [%s]) -> EXDEV "
+                   "(different filesystems)\n",
+                   old_buf, old_path_type, file_type_desc, new_buf, new_path_type);
+        return -EXDEV;
+    }
+
     /* Phase 3: Check if newpath already exists (will be checked by VFS layer too) */
     struct fut_vnode *new_vnode = NULL;
     int new_lookup_ret = fut_vfs_lookup(new_buf, &new_vnode);

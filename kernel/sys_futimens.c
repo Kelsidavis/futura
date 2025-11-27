@@ -15,8 +15,8 @@
 #include <kernel/fut_task.h>
 #include <kernel/errno.h>
 #include <kernel/fut_vfs.h>
-#include <kernel/fut_file.h>
 #include <stdint.h>
+#include <shared/fut_timespec.h>
 
 extern void fut_printf(const char *fmt, ...);
 extern int fut_copy_from_user(void *to, const void *from, size_t size);
@@ -122,7 +122,7 @@ extern uint64_t fut_get_time_ns(void);
  * Phase 3: FD lookup and setattr() integration
  * Phase 4: Performance optimization
  */
-long sys_futimens(int fd, const struct timespec *times) {
+long sys_futimens(int fd, const fut_timespec_t *times) {
     /* Phase 2: Validate fd */
     if (fd < 0) {
         fut_printf("[FUTIMENS] futimens(fd=%d, times=%p) -> EBADF (fd < 0)\n",
@@ -141,7 +141,7 @@ long sys_futimens(int fd, const struct timespec *times) {
     }
 
     /* Phase 2: Validate times parameter if provided */
-    struct timespec time_buf[2] = {0};
+    fut_timespec_t time_buf[2] = {0};
     if (times) {
         if (fut_copy_from_user(time_buf, times, sizeof(time_buf)) != 0) {
             fut_printf("[FUTIMENS] futimens(fd=%d [%s], times=%p) -> EFAULT "
@@ -175,16 +175,92 @@ long sys_futimens(int fd, const struct timespec *times) {
 
     /* Get current task to access fd table */
     extern fut_task_t *fut_task_current(void);
+    extern struct fut_file *vfs_get_file_from_task(struct fut_task *task, int fd);
+
     fut_task_t *task = fut_task_current();
     if (!task) {
         return -ESRCH;
     }
 
     /* Look up file object from fd table */
-    /* Stub: Return -ENOSYS since we don't have full fd table integration yet */
-    fut_printf("[FUTIMENS] futimens(fd=%d [%s], times=%p, op=%s) -> ENOSYS "
-               "(FD lookup not yet implemented)\n",
-               fd, fd_desc, times, operation_type);
+    struct fut_file *file = vfs_get_file_from_task(task, fd);
+    if (!file) {
+        fut_printf("[FUTIMENS] futimens(fd=%d [%s], times=%p, op=%s) -> EBADF "
+                   "(fd not found in task fd_table)\n",
+                   fd, fd_desc, times, operation_type);
+        return -EBADF;
+    }
 
-    return -ENOSYS;
+    /* File must have a vnode */
+    if (!file->vnode) {
+        fut_printf("[FUTIMENS] futimens(fd=%d [%s], times=%p, op=%s) -> EINVAL "
+                   "(file vnode is NULL)\n",
+                   fd, fd_desc, times, operation_type);
+        return -EINVAL;
+    }
+
+    /* Build stat structure with only the timestamp fields set */
+    struct fut_stat stat_buf = {0};
+
+    /* Get current time if needed */
+    uint64_t now_ns = 0;
+    if (!times || time_buf[0].tv_nsec == UTIME_NOW || time_buf[1].tv_nsec == UTIME_NOW) {
+        now_ns = fut_get_time_ns();
+    }
+
+    /* Set atime */
+    if (!times || time_buf[0].tv_nsec == UTIME_NOW) {
+        stat_buf.st_atime = now_ns / 1000000000;  /* Convert nanoseconds to seconds */
+    } else if (time_buf[0].tv_nsec == UTIME_OMIT) {
+        /* Leave st_atime at 0 - indicates "don't change" */
+        stat_buf.st_atime = 0;
+    } else {
+        stat_buf.st_atime = time_buf[0].tv_sec + (time_buf[0].tv_nsec / 1000000000);
+    }
+
+    /* Set mtime */
+    if (!times || time_buf[1].tv_nsec == UTIME_NOW) {
+        stat_buf.st_mtime = now_ns / 1000000000;  /* Convert nanoseconds to seconds */
+    } else if (time_buf[1].tv_nsec == UTIME_OMIT) {
+        /* Leave st_mtime at 0 - indicates "don't change" */
+        stat_buf.st_mtime = 0;
+    } else {
+        stat_buf.st_mtime = time_buf[1].tv_sec + (time_buf[1].tv_nsec / 1000000000);
+    }
+
+    /* Check if filesystem supports setattr operation */
+    if (!file->vnode->ops || !file->vnode->ops->setattr) {
+        fut_printf("[FUTIMENS] futimens(fd=%d [%s], times=%p, op=%s, ino=%lu) -> ENOSYS "
+                   "(filesystem doesn't support setattr)\n",
+                   fd, fd_desc, times, operation_type, file->vnode->ino);
+        return -ENOSYS;
+    }
+
+    /* Call VFS setattr operation */
+    int ret = file->vnode->ops->setattr(file->vnode, &stat_buf);
+    if (ret < 0) {
+        const char *error_desc;
+        switch (ret) {
+            case -EPERM:
+                error_desc = "permission denied (not owner or root)";
+                break;
+            case -EROFS:
+                error_desc = "read-only filesystem";
+                break;
+            case -EIO:
+                error_desc = "I/O error";
+                break;
+            default:
+                error_desc = "setattr operation failed";
+                break;
+        }
+        fut_printf("[FUTIMENS] futimens(fd=%d [%s], times=%p, op=%s, ino=%lu) -> %d (%s)\n",
+                   fd, fd_desc, times, operation_type, file->vnode->ino, ret, error_desc);
+        return ret;
+    }
+
+    /* Success */
+    fut_printf("[FUTIMENS] futimens(fd=%d [%s], times=%p, op=%s, ino=%lu) -> 0 (success)\n",
+               fd, fd_desc, times, operation_type, file->vnode->ino);
+    return 0;
 }

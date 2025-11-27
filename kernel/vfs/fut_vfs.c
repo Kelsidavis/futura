@@ -711,10 +711,60 @@ static int lookup_vnode(const char *path, struct fut_vnode **vnode) {
             return -ENOENT;
         }
 
-        VFSDBG("[vfs]  -> lookup('%s') = %p (ino=%llu)\n",
+        VFSDBG("[vfs]  -> lookup('%s') = %p (ino=%llu type=%d)\n",
                component,
                (void *)next,
-               next ? (unsigned long long)next->ino : 0ULL);
+               next ? (unsigned long long)next->ino : 0ULL,
+               next ? (int)next->type : -1);
+
+        /* Follow symlinks during path resolution (unless it's the final component and we want lstat semantics) */
+        if (next->type == VN_LNK) {
+            /* Check if there's a readlink operation */
+            if (next->ops && next->ops->readlink) {
+                char link_target[256];
+                int link_ret = next->ops->readlink(next, link_target, sizeof(link_target) - 1);
+                if (link_ret > 0) {
+                    link_target[link_ret] = '\0';
+                    VFSDBG("[vfs]  symlink '%s' -> '%s'\n", component, link_target);
+
+                    /* Release the symlink vnode */
+                    release_lookup_ref(next);
+
+                    /* Recursively resolve the symlink target */
+                    int symlink_ret = lookup_vnode(link_target, &next);
+                    if (symlink_ret < 0) {
+                        release_lookup_ref(current);
+                        fut_free(components);
+                        VFSDBG("[vfs] ELOOP: failed to resolve symlink target '%s' ret=%d\n", link_target, symlink_ret);
+                        return symlink_ret;
+                    }
+
+                    if (!next) {
+                        release_lookup_ref(current);
+                        fut_free(components);
+                        VFSDBG("[vfs] ELOOP: symlink target '%s' resolved to NULL\n", link_target);
+                        return -ENOENT;
+                    }
+
+                    VFSDBG("[vfs]  resolved symlink to vnode=%p ino=%llu\n",
+                           (void *)next, next ? (unsigned long long)next->ino : 0ULL);
+                } else if (link_ret < 0) {
+                    /* readlink failed */
+                    release_lookup_ref(current);
+                    release_lookup_ref(next);
+                    fut_free(components);
+                    VFSDBG("[vfs] ELOOP: readlink failed ret=%d\n", link_ret);
+                    return link_ret;
+                }
+            } else {
+                /* No readlink operation - treat symlink as broken */
+                release_lookup_ref(current);
+                release_lookup_ref(next);
+                fut_free(components);
+                VFSDBG("[vfs] ELOOP: symlink has no readlink operation\n");
+                return -ELOOP;
+            }
+        }
 
         release_lookup_ref(current);
         current = next;

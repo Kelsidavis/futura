@@ -406,7 +406,7 @@ long sys_fcntl(int fd, int cmd, uint64_t arg) {
 
         /* Find first available fd >= minfd */
         int newfd = minfd;
-        for (; newfd < 1024; newfd++) {  /* Max 1024 FDs */
+        for (; newfd < task->max_fds; newfd++) {  /* Use actual task FD table limit */
             struct fut_file *existing = vfs_get_file_from_task(task, newfd);
             if (!existing) {
                 break;  /* Found available fd */

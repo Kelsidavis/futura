@@ -166,6 +166,14 @@ long sys_readlink(const char *path, char *buf, size_t bufsiz) {
         return -EINVAL;
     }
 
+    /* Phase 2: Validate buffer size is reasonable (PATH_MAX limit) */
+    #define READLINK_MAX_SIZE (4096)  /* PATH_MAX */
+    if (local_bufsiz > READLINK_MAX_SIZE) {
+        fut_printf("[READLINK] readlink(path=?, buf=?, bufsiz=%zu) -> EINVAL "
+                   "(buffer size exceeds maximum)\n", local_bufsiz);
+        return -EINVAL;
+    }
+
     /* Phase 2: Categorize buffer size */
     const char *bufsiz_category;
     if (local_bufsiz < 256) {

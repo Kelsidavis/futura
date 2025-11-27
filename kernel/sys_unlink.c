@@ -132,6 +132,13 @@ long sys_unlink(const char *path) {
     /* Phase 2: Calculate path length */
     size_t path_len = manual_strlen(path_buf);
 
+    /* Phase 3: Check if path ends with "/" - directories must use rmdir, not unlink */
+    if (path_len > 0 && path_buf[path_len - 1] == '/') {
+        fut_printf("[UNLINK] unlink(path='%s' [%s, ends with /]) -> EISDIR (use rmdir for directories)\n",
+                   path_buf, path_type);
+        return -EISDIR;
+    }
+
     /* Delete the file via VFS */
     int ret = fut_vfs_unlink(path_buf);
 

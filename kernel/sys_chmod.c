@@ -226,6 +226,13 @@ long sys_chmod(const char *pathname, uint32_t mode) {
      */
     /* Unused: const char *mode_type = (local_mode & 0777000) ? "special bits set" : "standard permissions"; */
 
+    /* Phase 3: Validate mode - reject bits outside valid range (07777: special bits + permissions) */
+    if (local_mode & ~07777) {
+        fut_printf("[CHMOD] chmod(pathname=?, mode=0%o) -> EINVAL (invalid mode bits outside 07777)\n",
+                   local_mode);
+        return -EINVAL;
+    }
+
     /* Phase 2: Categorize permission mode */
     const char *mode_desc;
     uint32_t perm_bits = local_mode & 0777;

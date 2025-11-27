@@ -1491,9 +1491,34 @@ static bool posix_deliver_signal(fut_task_t *current, int signum,
     uint64_t signal_bit = (1ULL << (signum - 1));
     current->pending_signals &= ~signal_bit;
 
-    /* If no handler or SIG_IGN, skip delivery */
-    if (!handler || handler == SIG_IGN || handler == SIG_DFL) {
-        return false;
+    /* Handle SIG_IGN - just ignore the signal */
+    if (handler == SIG_IGN) {
+        return true;  /* Signal was "handled" by ignoring it */
+    }
+
+    /* Handle SIG_DFL - perform default action */
+    if (!handler || handler == SIG_DFL) {
+        extern void fut_task_signal_exit(int sig);
+        int action = fut_signal_get_default_action(signum);
+        switch (action) {
+            case 0:  /* SIG_ACTION_TERM */
+            case 1:  /* SIG_ACTION_CORE */
+                fut_printf("[SIGNAL] Default action: terminate task %llu on signal %d\n",
+                           current->pid, signum);
+                fut_task_signal_exit(signum);
+                return true;
+            case 2:  /* SIG_ACTION_STOP */
+                fut_printf("[SIGNAL] Default action: stop task %llu on signal %d (not implemented)\n",
+                           current->pid, signum);
+                return true;
+            case 3:  /* SIG_ACTION_CONT */
+                fut_printf("[SIGNAL] Default action: continue task %llu on signal %d (not implemented)\n",
+                           current->pid, signum);
+                return true;
+            case 4:  /* SIG_ACTION_IGN */
+            default:
+                return true;  /* Signal was "handled" by default ignore */
+        }
     }
 
     /* Get user stack pointer from frame (architecture-specific) */

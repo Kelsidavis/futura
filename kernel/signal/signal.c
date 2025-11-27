@@ -9,6 +9,7 @@
 #include <kernel/fut_task.h>
 #include <kernel/errno.h>
 #include <string.h>
+#include <stddef.h>
 
 extern void fut_printf(const char *fmt, ...);
 
@@ -360,11 +361,181 @@ int fut_signal_deliver(struct fut_task *task, void *frame) {
     return signum;
 }
 
-#else
-/* x86-64 stub: not yet implemented */
+#elif defined(__x86_64__)
+
+#include <kernel/signal_frame.h>
+#include <kernel/uaccess.h>
+#include <platform/x86_64/regs.h>
+#include <platform/x86_64/memory/paging.h>
+
+/**
+ * x86-64: Deliver a pending signal to a task via interrupt frame modification.
+ *
+ * This is the standalone signal delivery function for x86-64. It is typically
+ * called from the POSIX syscall compatibility layer (posix_syscall.c) which
+ * has its own more complete implementation. This function serves as a fallback
+ * and for non-syscall interrupt returns.
+ *
+ * For syscall returns, the posix_deliver_signal() function in posix_syscall.c
+ * handles signal delivery with full SA_* flags support.
+ *
+ * @param task Target task
+ * @param frame Interrupt frame to modify (fut_interrupt_frame_t *)
+ * @return Signal number if delivered, 0 if no pending signal, <0 on error
+ */
 int fut_signal_deliver(struct fut_task *task, void *frame) {
-    (void)task;
-    (void)frame;
-    return 0;
+    if (!task || !frame) {
+        return 0;
+    }
+
+    fut_interrupt_frame_t *f = (fut_interrupt_frame_t *)frame;
+
+    /* Only deliver signals when returning to userspace (CPL 3) */
+    if ((f->cs & 3) == 0) {
+        return 0;  /* Returning to kernel mode, don't deliver */
+    }
+
+    /* Find first pending, unblocked signal */
+    int signum = 0;
+    for (int i = 1; i < _NSIG; i++) {
+        uint64_t signal_bit = (1ULL << (i - 1));
+        if ((task->pending_signals & signal_bit) &&
+            !(task->signal_mask & signal_bit)) {
+            signum = i;
+            break;
+        }
+    }
+
+    /* No pending signal to deliver */
+    if (signum == 0) {
+        return 0;
+    }
+
+    /* Get handler for this signal */
+    sighandler_t handler = fut_signal_get_handler(task, signum);
+
+    /* Clear pending signal bit first */
+    uint64_t signal_bit = (1ULL << (signum - 1));
+    task->pending_signals &= ~signal_bit;
+
+    /* Handle SIG_IGN - just ignore the signal */
+    if (handler == SIG_IGN) {
+        return signum;
+    }
+
+    /* Handle SIG_DFL - perform default action */
+    if (handler == SIG_DFL) {
+        int action = fut_signal_get_default_action(signum);
+        switch (action) {
+            case SIG_ACTION_TERM:
+            case SIG_ACTION_CORE:
+                fut_printf("[SIGNAL] Default action: terminate task %llu on signal %d\n",
+                           task->pid, signum);
+                fut_task_signal_exit(signum);
+                return signum;
+            case SIG_ACTION_STOP:
+            case SIG_ACTION_CONT:
+                /* Not yet implemented */
+                return signum;
+            case SIG_ACTION_IGN:
+            default:
+                return signum;
+        }
+    }
+
+    /* User-defined handler - set up signal frame on user stack */
+
+    /* Allocate rt_sigframe on user stack with 16-byte alignment */
+    uint64_t sp = f->rsp;
+    sp -= sizeof(struct rt_sigframe);
+    sp &= ~0xFULL;  /* Align to 16 bytes */
+
+    /* Validate stack pointer is in user space */
+    if (sp < 0x1000 || sp >= USER_SPACE_END) {
+        fut_printf("[SIGNAL] Invalid user stack pointer %llx for task %llu\n",
+                   sp, task->pid);
+        return -EFAULT;
+    }
+
+    /* Build rt_sigframe on kernel stack first */
+    struct rt_sigframe sframe;
+    memset(&sframe, 0, sizeof(sframe));
+
+    /* Fill siginfo_t */
+    sframe.info.si_signum = signum;
+    sframe.info.si_errno = 0;
+    sframe.info.si_code = SI_USER;
+    sframe.info.si_pid = 0;
+    sframe.info.si_uid = 0;
+    sframe.info.si_addr = NULL;
+
+    /* Fill ucontext_t */
+    sframe.uc.uc_flags = 0;
+    sframe.uc.uc_link = NULL;
+    sframe.uc.uc_stack.ss_sp = (void *)f->rsp;
+    sframe.uc.uc_stack.ss_flags = 0;
+    sframe.uc.uc_stack.ss_size = 0x1000;
+
+    /* Copy registers from interrupt frame to sigcontext */
+    sframe.uc.uc_mcontext.gregs.r8 = f->r8;
+    sframe.uc.uc_mcontext.gregs.r9 = f->r9;
+    sframe.uc.uc_mcontext.gregs.r10 = f->r10;
+    sframe.uc.uc_mcontext.gregs.r11 = f->r11;
+    sframe.uc.uc_mcontext.gregs.r12 = f->r12;
+    sframe.uc.uc_mcontext.gregs.r13 = f->r13;
+    sframe.uc.uc_mcontext.gregs.r14 = f->r14;
+    sframe.uc.uc_mcontext.gregs.r15 = f->r15;
+    sframe.uc.uc_mcontext.gregs.rdi = f->rdi;
+    sframe.uc.uc_mcontext.gregs.rsi = f->rsi;
+    sframe.uc.uc_mcontext.gregs.rbp = f->rbp;
+    sframe.uc.uc_mcontext.gregs.rbx = f->rbx;
+    sframe.uc.uc_mcontext.gregs.rdx = f->rdx;
+    sframe.uc.uc_mcontext.gregs.rax = f->rax;
+    sframe.uc.uc_mcontext.gregs.rcx = f->rcx;
+    sframe.uc.uc_mcontext.gregs.rsp = f->rsp;
+    sframe.uc.uc_mcontext.gregs.rip = f->rip;
+    sframe.uc.uc_mcontext.gregs.eflags = f->rflags;
+    sframe.uc.uc_mcontext.gregs.cs = (uint16_t)f->cs;
+    sframe.uc.uc_mcontext.gregs.gs = (uint16_t)f->gs;
+    sframe.uc.uc_mcontext.gregs.fs = (uint16_t)f->fs;
+    sframe.uc.uc_mcontext.gregs.err = f->error_code;
+    sframe.uc.uc_mcontext.gregs.trapno = f->vector;
+
+    /* Signal mask for restoration */
+    sframe.uc.uc_sigmask.__mask = task->signal_mask;
+
+    /* Set return address to NULL - handler should call sigreturn explicitly */
+    sframe.return_address = NULL;
+
+    /* Copy rt_sigframe to user stack */
+    if (fut_copy_to_user((void *)sp, &sframe, sizeof(sframe)) != 0) {
+        fut_printf("[SIGNAL] Failed to copy sigframe to user stack for task %llu\n",
+                   task->pid);
+        return -EFAULT;
+    }
+
+    /* Modify interrupt frame to invoke signal handler */
+    f->rip = (uint64_t)handler;
+    f->rsp = sp;
+
+    /* Set up arguments for signal handler (System V AMD64 ABI)
+     * rdi = signal number
+     * rsi = pointer to siginfo_t (within rt_sigframe)
+     * rdx = pointer to ucontext_t (within rt_sigframe)
+     */
+    f->rdi = signum;
+    f->rsi = sp + offsetof(struct rt_sigframe, info);
+    f->rdx = sp + offsetof(struct rt_sigframe, uc);
+
+    /* Block the signal while handler is running */
+    task->signal_mask |= signal_bit;
+
+    fut_printf("[SIGNAL] Delivered signal %d to task %llu (handler=%p, sp=%llx)\n",
+               signum, task->pid, handler, sp);
+
+    return signum;
 }
+
+#else
+#error "Unsupported architecture for signal delivery"
 #endif

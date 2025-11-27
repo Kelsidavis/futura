@@ -218,6 +218,28 @@ long sys_link(const char *oldpath, const char *newpath) {
         return -EINVAL;
     }
 
+    /* Phase 2: Check for path truncation in oldpath */
+    size_t old_len = 0;
+    while (old_buf[old_len] != '\0' && old_len < sizeof(old_buf) - 1) {
+        old_len++;
+    }
+    if (old_buf[old_len] != '\0') {
+        fut_printf("[LINK] link(oldpath_len>255, newpath='%s') -> ENAMETOOLONG "
+                   "(oldpath truncated, Phase 2)\n", new_buf);
+        return -ENAMETOOLONG;
+    }
+
+    /* Phase 2: Check for path truncation in newpath */
+    size_t new_len = 0;
+    while (new_buf[new_len] != '\0' && new_len < sizeof(new_buf) - 1) {
+        new_len++;
+    }
+    if (new_buf[new_len] != '\0') {
+        fut_printf("[LINK] link(oldpath='%s', newpath_len>255) -> ENAMETOOLONG "
+                   "(newpath truncated, Phase 2)\n", old_buf);
+        return -ENAMETOOLONG;
+    }
+
     /* Phase 2: Categorize oldpath type */
     const char *old_path_type;
     if (old_buf[0] == '/') {

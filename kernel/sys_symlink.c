@@ -99,6 +99,28 @@ long sys_symlink(const char *target, const char *linkpath) {
         return -EINVAL;
     }
 
+    /* Check for path truncation in target */
+    size_t target_len = 0;
+    while (target_buf[target_len] != '\0' && target_len < sizeof(target_buf) - 1) {
+        target_len++;
+    }
+    if (target_buf[target_len] != '\0') {
+        fut_printf("[SYMLINK] symlink(target_len>255, linkpath='%s') -> ENAMETOOLONG (target truncated)\n",
+                   linkpath_buf);
+        return -ENAMETOOLONG;
+    }
+
+    /* Check for path truncation in linkpath */
+    size_t linkpath_len = 0;
+    while (linkpath_buf[linkpath_len] != '\0' && linkpath_len < sizeof(linkpath_buf) - 1) {
+        linkpath_len++;
+    }
+    if (linkpath_buf[linkpath_len] != '\0') {
+        fut_printf("[SYMLINK] symlink(target='%s', linkpath_len>255) -> ENAMETOOLONG (linkpath truncated)\n",
+                   target_buf);
+        return -ENAMETOOLONG;
+    }
+
     /* Categorize path types */
     const char *target_type = (target_buf[0] == '/') ? "absolute" : "relative";
     const char *linkpath_type = (linkpath_buf[0] == '/') ? "absolute" : "relative";

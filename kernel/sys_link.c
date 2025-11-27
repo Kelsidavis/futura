@@ -242,12 +242,12 @@ long sys_link(const char *oldpath, const char *newpath) {
         new_path_type = "relative";
     }
 
-    /* Phase 2: Attempt to lookup oldpath to provide better diagnostics */
+    /* Phase 3: Lookup oldpath (existing file to hard link to) */
     struct fut_vnode *old_vnode = NULL;
     int old_lookup_ret = fut_vfs_lookup(old_buf, &old_vnode);
 
     if (old_lookup_ret < 0) {
-        /* Phase 2: Detailed error logging for oldpath lookup failure */
+        /* Return appropriate error code for oldpath lookup failure */
         const char *error_desc;
         switch (old_lookup_ret) {
             case -ENOENT:
@@ -267,17 +267,17 @@ long sys_link(const char *oldpath, const char *newpath) {
                 break;
         }
 
-        fut_printf("[LINK] link(oldpath='%s' [%s], newpath='%s' [%s]) -> ENOSYS "
-                   "(%s, would fail when implemented, Phase 2)\n",
-                   old_buf, old_path_type, new_buf, new_path_type, error_desc);
-        return -ENOSYS;  /* Still return -ENOSYS in Phase 2 */
+        fut_printf("[LINK] link(oldpath='%s' [%s], newpath='%s' [%s]) -> %d "
+                   "(%s, Phase 3)\n",
+                   old_buf, old_path_type, new_buf, new_path_type, old_lookup_ret, error_desc);
+        return old_lookup_ret;
     }
 
     if (!old_vnode) {
-        fut_printf("[LINK] link(oldpath='%s' [%s], newpath='%s' [%s]) -> ENOSYS "
-                   "(oldpath vnode is NULL, would fail when implemented, Phase 2)\n",
+        fut_printf("[LINK] link(oldpath='%s' [%s], newpath='%s' [%s]) -> EINVAL "
+                   "(oldpath vnode is NULL, Phase 3)\n",
                    old_buf, old_path_type, new_buf, new_path_type);
-        return -ENOSYS;  /* Still return -ENOSYS in Phase 2 */
+        return -EINVAL;
     }
 
     /* Phase 2: File type validation - cannot hard link directories */
@@ -333,33 +333,33 @@ long sys_link(const char *oldpath, const char *newpath) {
         link_count_category = "very many links (>100)";
     }
 
+    /* Phase 3: File type validation - cannot hard link directories */
     if (would_fail_type_check) {
         fut_printf("[LINK] link(oldpath='%s' [%s, %s, nlinks=%u [%s]], "
-                   "newpath='%s' [%s]) -> ENOSYS "
-                   "(cannot hard link %s, would return %d when implemented, Phase 2)\n",
+                   "newpath='%s' [%s]) -> %d "
+                   "(cannot hard link %s, Phase 3)\n",
                    old_buf, old_path_type, file_type_desc, current_nlinks,
-                   link_count_category, new_buf, new_path_type, file_type_desc, type_error);
-        return -ENOSYS;  /* Still return -ENOSYS in Phase 2 */
+                   link_count_category, new_buf, new_path_type, type_error, file_type_desc);
+        return type_error;
     }
 
-    /* Phase 2: Check if newpath already exists */
+    /* Phase 3: Check if newpath already exists (will be checked by VFS layer too) */
     struct fut_vnode *new_vnode = NULL;
     int new_lookup_ret = fut_vfs_lookup(new_buf, &new_vnode);
 
     if (new_lookup_ret == 0 && new_vnode) {
         fut_printf("[LINK] link(oldpath='%s' [%s, %s, nlinks=%u [%s]], "
-                   "newpath='%s' [%s]) -> ENOSYS "
-                   "(newpath already exists, would return -EEXIST when implemented, Phase 2)\n",
+                   "newpath='%s' [%s]) -> EEXIST "
+                   "(newpath already exists, Phase 3)\n",
                    old_buf, old_path_type, file_type_desc, current_nlinks,
                    link_count_category, new_buf, new_path_type);
-        return -ENOSYS;  /* Still return -ENOSYS in Phase 2 */
+        return -EEXIST;
     }
 
-    /* Phase 2: Detailed logging - would succeed when implemented */
+    /* Phase 3: Detailed logging before VFS integration */
     fut_printf("[LINK] link(oldpath='%s' [%s, %s, ino=%lu, nlinks=%u [%s]], "
-               "newpath='%s' [%s]) -> ENOSYS "
-               "(hard links not yet supported, would increment nlinks %u->%u when "
-               "implemented, Phase 2)\n",
+               "newpath='%s' [%s]) attempting to create hard link "
+               "(would increment nlinks %u->%u, Phase 3)\n",
                old_buf, old_path_type, file_type_desc, old_vnode->ino, current_nlinks,
                link_count_category, new_buf, new_path_type, current_nlinks, would_be_nlinks);
 

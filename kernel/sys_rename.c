@@ -306,18 +306,34 @@ long sys_rename(const char *oldpath, const char *newpath) {
         return -ENOTDIR;
     }
 
-    /* For same-directory rename, extract new filename and call rename */
-    if (same_directory && old_last_slash >= 0) {
-        char new_name[256];
-        size_t new_name_len = 0;
+    /* Extract new filename and parent for both cases */
+    char new_name[256];
+    size_t new_name_len = 0;
+    char new_parent_path[256];
+    size_t new_parent_len = 0;
 
-        /* Extract newname (filename after last slash) */
-        for (size_t i = new_last_slash + 1; new_buf[i] != '\0' && new_name_len < 255; i++) {
-            new_name[new_name_len++] = new_buf[i];
+    /* Extract newname (filename after last slash) */
+    for (size_t i = new_last_slash + 1; new_buf[i] != '\0' && new_name_len < 255; i++) {
+        new_name[new_name_len++] = new_buf[i];
+    }
+    new_name[new_name_len] = '\0';
+
+    if (new_last_slash == 0) {
+        /* newpath is /filename - parent is root */
+        new_parent_path[0] = '/';
+        new_parent_len = 1;
+    } else if (new_last_slash > 0) {
+        /* Copy path up to last slash */
+        for (int i = 0; i < new_last_slash && i < 255; i++) {
+            new_parent_path[i] = new_buf[i];
+            new_parent_len++;
         }
-        new_name[new_name_len] = '\0';
+    }
+    new_parent_path[new_parent_len] = '\0';
 
-        /* Call VFS rename operation */
+    /* For same-directory rename */
+    if (same_directory && old_last_slash >= 0) {
+        /* Call VFS rename operation on common parent */
         if (!old_parent->ops || !old_parent->ops->rename) {
             fut_printf("[RENAME] rename(old='%s' [%s], new='%s' [%s], op=%s) -> ENOSYS (no rename operation)\n",
                        old_buf, old_path_type, new_buf, new_path_type, operation_type);
@@ -333,11 +349,78 @@ long sys_rename(const char *oldpath, const char *newpath) {
                        old_buf, old_path_type, new_buf, new_path_type, operation_type, ret);
         }
         return ret;
-    } else {
-        /* Cross-directory rename not yet supported */
-        fut_printf("[RENAME] rename(old='%s' [%s], new='%s' [%s], op=%s) -> EXDEV "
-                   "(cross-directory rename not supported)\n",
+    }
+
+    /* Cross-directory rename: lookup both parent directories */
+    struct fut_vnode *new_parent = NULL;
+    ret = fut_vfs_lookup(new_parent_path, &new_parent);
+    if (ret < 0) {
+        const char *error_desc;
+        switch (ret) {
+            case -ENOENT:
+                error_desc = "newpath parent not found";
+                break;
+            case -ENOTDIR:
+                error_desc = "path component not a directory";
+                break;
+            default:
+                error_desc = "parent lookup failed";
+                break;
+        }
+        fut_printf("[RENAME] rename(old='%s' [%s], new='%s' [%s], op=%s) -> %d (%s, cross-dir)\n",
+                   old_buf, old_path_type, new_buf, new_path_type, operation_type, ret, error_desc);
+        return ret;
+    }
+
+    if (new_parent->type != VN_DIR) {
+        fut_printf("[RENAME] rename(old='%s' [%s], new='%s' [%s], op=%s) -> ENOTDIR (new parent not directory)\n",
+                   old_buf, old_path_type, new_buf, new_path_type, operation_type);
+        return -ENOTDIR;
+    }
+
+    /* Check if both parents are on same filesystem (simplification: all in RamFS for now) */
+    if (old_parent->mount != new_parent->mount) {
+        fut_printf("[RENAME] rename(old='%s' [%s], new='%s' [%s], op=%s) -> EXDEV (different filesystems)\n",
                    old_buf, old_path_type, new_buf, new_path_type, operation_type);
         return -EXDEV;
     }
+
+    /* For cross-directory rename, we need to:
+     * 1. Unlink from old parent
+     * 2. Link into new parent with new name
+     * This is not atomic but is necessary for cross-directory moves
+     */
+
+    if (!old_parent->ops || !old_parent->ops->unlink) {
+        fut_printf("[RENAME] rename(old='%s' [%s], new='%s' [%s], op=%s) -> ENOSYS (no unlink operation)\n",
+                   old_buf, old_path_type, new_buf, new_path_type, operation_type);
+        return -ENOSYS;
+    }
+
+    if (!new_parent->ops || !new_parent->ops->link) {
+        fut_printf("[RENAME] rename(old='%s' [%s], new='%s' [%s], op=%s) -> ENOSYS (no link operation)\n",
+                   old_buf, old_path_type, new_buf, new_path_type, operation_type);
+        return -ENOSYS;
+    }
+
+    /* Create link in new parent (this will be full path to file) */
+    ret = new_parent->ops->link(new_parent, old_buf, new_buf);
+    if (ret < 0) {
+        fut_printf("[RENAME] rename(old='%s' [%s], new='%s' [%s], op=%s) -> %d (link failed, cross-dir)\n",
+                   old_buf, old_path_type, new_buf, new_path_type, operation_type, ret);
+        return ret;
+    }
+
+    /* Unlink from old parent */
+    ret = old_parent->ops->unlink(old_parent, old_name);
+    if (ret < 0) {
+        /* Link created but unlink failed - this leaves duplicate, report error */
+        fut_printf("[RENAME] rename(old='%s' [%s], new='%s' [%s], op=%s) -> %d (unlink failed after link, cross-dir, WARNING: duplicate file created)\n",
+                   old_buf, old_path_type, new_buf, new_path_type, operation_type, ret);
+        return ret;
+    }
+
+    fut_printf("[RENAME] rename(old='%s' [%s], new='%s' [%s], op=%s) -> 0 (success, cross-dir)\n",
+               old_buf, old_path_type, new_buf, new_path_type, operation_type);
+    return 0;
 }

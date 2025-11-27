@@ -119,6 +119,23 @@ long sys_brk(uintptr_t new_break) {
     uintptr_t brk_limit = fut_mm_brk_limit(mm);
     uintptr_t current = fut_mm_brk_current(mm);
 
+    /* Phase 2: Validate break address is within userspace (prevent kernel space corruption) */
+    #if defined(__x86_64__)
+    /* x86-64: Kernel space starts at 0xFFFFFFFF80000000 */
+    if (new_break >= 0xFFFFFFFF80000000UL) {
+        fut_printf("[BRK] brk(new_break=0x%lx) -> EINVAL (address in kernel space, Phase 2)\n",
+                   new_break);
+        return -EINVAL;
+    }
+    #elif defined(__aarch64__)
+    /* ARM64: Kernel space starts at 0xFFFFFF8000000000 */
+    if (new_break >= 0xFFFFFF8000000000UL) {
+        fut_printf("[BRK] brk(new_break=0x%lx) -> EINVAL (address in kernel space, ARM64)\n",
+                   new_break);
+        return -EINVAL;
+    }
+    #endif
+
     /* Phase 2: Categorize requested change */
     long change = (long)new_break - (long)current;
     const char *change_category;
@@ -323,7 +340,7 @@ long sys_brk(uintptr_t new_break) {
     }
 
     /* Query operation (new_break == 0) */
-    if (new_break == 0) {
+    if (local_new_break == 0) {
         uintptr_t current = fut_mm_brk_current(mm);
         fut_printf("[BRK] brk(new_break=0) -> 0x%lx (query current break, ARM64)\n", current);
         return (long)current;
@@ -333,8 +350,16 @@ long sys_brk(uintptr_t new_break) {
     uintptr_t brk_limit = fut_mm_brk_limit(mm);
     uintptr_t current = fut_mm_brk_current(mm);
 
+    /* Phase 2: Validate break address is within userspace (prevent kernel space corruption) */
+    /* ARM64: Kernel space starts at 0xFFFFFF8000000000 */
+    if (local_new_break >= 0xFFFFFF8000000000UL) {
+        fut_printf("[BRK] brk(new_break=0x%lx) -> EINVAL (address in kernel space, ARM64)\n",
+                   local_new_break);
+        return -EINVAL;
+    }
+
     /* Categorize requested change */
-    long change = (long)new_break - (long)current;
+    long change = (long)local_new_break - (long)current;
     const char *change_category;
     if (change == 0) {
         change_category = "no change (no-op)";
@@ -361,38 +386,38 @@ long sys_brk(uintptr_t new_break) {
     }
 
     /* Clamp to brk_start */
-    if (new_break < brk_start) {
+    if (local_new_break < brk_start) {
         fut_printf("[BRK] brk(new_break=0x%lx, current=0x%lx, change=%s) -> 0x%lx "
                    "(clamped to brk_start, ARM64)\n",
-                   new_break, current, change_category, brk_start);
-        new_break = brk_start;
+                   local_new_break, current, change_category, brk_start);
+        local_new_break = brk_start;
     }
 
     /* Check limit */
-    if (new_break > brk_limit) {
+    if (local_new_break > brk_limit) {
         fut_printf("[BRK] brk(new_break=0x%lx, current=0x%lx, limit=0x%lx, change=%s) -> ENOMEM "
                    "(exceeds heap limit, ARM64)\n",
-                   new_break, current, brk_limit, change_category);
+                   local_new_break, current, brk_limit, change_category);
         return -ENOMEM;
     }
 
     /* No-op check */
-    if (new_break == current) {
+    if (local_new_break == current) {
         fut_printf("[BRK] brk(new_break=0x%lx, current=0x%lx, change=%s) -> 0x%lx "
                    "(no change, ARM64)\n",
-                   new_break, current, change_category, new_break);
-        return (long)new_break;
+                   local_new_break, current, change_category, local_new_break);
+        return (long)local_new_break;
     }
 
     fut_vmem_context_t *ctx = fut_mm_context(mm);
 
     /* Heap expansion */
-    if (new_break > current) {
+    if (local_new_break > current) {
         uintptr_t map_start = mm->heap_mapped_end;
         if (map_start < PAGE_ALIGN_UP(mm->brk_start)) {
             map_start = PAGE_ALIGN_UP(mm->brk_start);
         }
-        uintptr_t map_end = PAGE_ALIGN_UP(new_break);
+        uintptr_t map_end = PAGE_ALIGN_UP(local_new_break);
         uint64_t flags = heap_page_flags();
         uintptr_t mapped = map_start;
 
@@ -406,7 +431,7 @@ long sys_brk(uintptr_t new_break) {
                 brk_unmap_range(ctx, map_start, mapped);
                 fut_printf("[BRK] brk(new_break=0x%lx, current=0x%lx, change=%s, pages=%zu) "
                            "-> ENOMEM (page allocation failed at 0x%lx, ARM64)\n",
-                           new_break, current, change_category, pages_to_map, addr);
+                           local_new_break, current, change_category, pages_to_map, addr);
                 return -ENOMEM;
             }
             memset(page, 0, PAGE_SIZE);
@@ -416,7 +441,7 @@ long sys_brk(uintptr_t new_break) {
                 brk_unmap_range(ctx, map_start, mapped);
                 fut_printf("[BRK] brk(new_break=0x%lx, current=0x%lx, change=%s, pages=%zu) "
                            "-> ENOMEM (page mapping failed at 0x%lx, ARM64)\n",
-                           new_break, current, change_category, pages_to_map, addr);
+                           local_new_break, current, change_category, pages_to_map, addr);
                 return -ENOMEM;
             }
             mapped += PAGE_SIZE;
@@ -426,11 +451,11 @@ long sys_brk(uintptr_t new_break) {
 
         fut_printf("[BRK] brk(new_break=0x%lx, current=0x%lx, change=%+ld bytes [%s], "
                    "pages_mapped=%zu) -> 0x%lx (heap expanded, ARM64)\n",
-                   new_break, current, change, change_category, pages_to_map, new_break);
+                   local_new_break, current, change, change_category, pages_to_map, local_new_break);
 
     /* Heap shrink */
     } else {
-        uintptr_t retain = PAGE_ALIGN_UP(new_break);
+        uintptr_t retain = PAGE_ALIGN_UP(local_new_break);
         if (retain < PAGE_ALIGN_UP(mm->brk_start)) {
             retain = PAGE_ALIGN_UP(mm->brk_start);
         }
@@ -444,11 +469,11 @@ long sys_brk(uintptr_t new_break) {
 
         fut_printf("[BRK] brk(new_break=0x%lx, current=0x%lx, change=%+ld bytes [%s], "
                    "pages_unmapped=%zu) -> 0x%lx (heap shrunk, ARM64)\n",
-                   new_break, current, change, change_category, pages_to_unmap, new_break);
+                   local_new_break, current, change, change_category, pages_to_unmap, local_new_break);
     }
 
-    fut_mm_set_brk_current(mm, new_break);
-    return (long)new_break;
+    fut_mm_set_brk_current(mm, local_new_break);
+    return (long)local_new_break;
 }
 
 #else

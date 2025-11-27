@@ -210,22 +210,28 @@ long sys_futimens(int fd, const fut_timespec_t *times) {
 
     /* Set atime */
     if (!times || time_buf[0].tv_nsec == UTIME_NOW) {
-        stat_buf.st_atime = now_ns / 1000000000;  /* Convert nanoseconds to seconds */
+        stat_buf.st_atime = now_ns / 1000000000;
+        stat_buf.st_atime_nsec = now_ns % 1000000000;
     } else if (time_buf[0].tv_nsec == UTIME_OMIT) {
-        /* Leave st_atime at 0 - indicates "don't change" */
-        stat_buf.st_atime = 0;
+        /* Sentinel value indicates "don't change" */
+        stat_buf.st_atime = (uint64_t)-1;
+        stat_buf.st_atime_nsec = 0;
     } else {
-        stat_buf.st_atime = time_buf[0].tv_sec + (time_buf[0].tv_nsec / 1000000000);
+        stat_buf.st_atime = time_buf[0].tv_sec;
+        stat_buf.st_atime_nsec = time_buf[0].tv_nsec;
     }
 
     /* Set mtime */
     if (!times || time_buf[1].tv_nsec == UTIME_NOW) {
-        stat_buf.st_mtime = now_ns / 1000000000;  /* Convert nanoseconds to seconds */
+        stat_buf.st_mtime = now_ns / 1000000000;
+        stat_buf.st_mtime_nsec = now_ns % 1000000000;
     } else if (time_buf[1].tv_nsec == UTIME_OMIT) {
-        /* Leave st_mtime at 0 - indicates "don't change" */
-        stat_buf.st_mtime = 0;
+        /* Sentinel value indicates "don't change" */
+        stat_buf.st_mtime = (uint64_t)-1;
+        stat_buf.st_mtime_nsec = 0;
     } else {
-        stat_buf.st_mtime = time_buf[1].tv_sec + (time_buf[1].tv_nsec / 1000000000);
+        stat_buf.st_mtime = time_buf[1].tv_sec;
+        stat_buf.st_mtime_nsec = time_buf[1].tv_nsec;
     }
 
     /* Check if filesystem supports setattr operation */

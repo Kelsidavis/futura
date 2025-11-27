@@ -185,6 +185,17 @@ long sys_rmdir(const char *path) {
         return -ENAMETOOLONG;
     }
 
+    /* Phase 3: Normalize path by stripping trailing "/" (if not root, if not . or ..) */
+    size_t actual_len = truncation_check;
+    if (actual_len > 1 && path_buf[actual_len - 1] == '/') {
+        /* Don't strip "/" from paths like "/" or "./" */
+        if (!(path_buf[0] == '/' && actual_len == 1) &&
+            !(path_buf[0] == '.' && path_buf[1] == '/' && actual_len == 2)) {
+            path_buf[actual_len - 1] = '\0';
+            actual_len--;
+        }
+    }
+
     /* Phase 2: Calculate path length for categorization */
     size_t path_len = 0;
     while (path_buf[path_len] != '\0' && path_len < 256) {

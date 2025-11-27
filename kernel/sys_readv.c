@@ -206,6 +206,17 @@ ssize_t sys_readv(int fd, const struct iovec *iov, int iovcnt) {
         return -EFAULT;
     }
 
+    /* Phase 2: Validate iov_base pointers before using them
+     * Ensure each iov_base is not NULL and appears to be valid userspace address */
+    for (int i = 0; i < iovcnt; i++) {
+        if (!kernel_iov[i].iov_base && kernel_iov[i].iov_len > 0) {
+            fut_printf("[READV] readv(fd=%d, iov=%p, iovcnt=%d) -> EFAULT "
+                       "(iov_base[%d] is NULL with non-zero length)\n",
+                       fd, iov, iovcnt, i);
+            return -EFAULT;
+        }
+    }
+
     /* Phase 2: Calculate total size, validate iovecs, and gather statistics */
     size_t total_size = 0;
     int zero_len_count = 0;

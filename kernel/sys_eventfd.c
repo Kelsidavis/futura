@@ -282,9 +282,13 @@ long sys_eventfd2(unsigned int initval, int flags) {
         return -EINVAL;
     }
 
-    /* Validate flags */
+    /* Phase 4: Validate flags contains only supported bits (prevent invalid flag combinations) */
     int valid_flags = EFD_CLOEXEC | EFD_NONBLOCK | EFD_SEMAPHORE;
     if (flags & ~valid_flags) {
+        int invalid_bits = flags & ~valid_flags;
+        fut_printf("[EVENTFD2] sys_eventfd2(initval=%u, flags=0x%x) -> EINVAL "
+                   "(invalid flag bits 0x%x detected, valid=0x%x, Phase 4)\n",
+                   initval, flags, invalid_bits, valid_flags);
         return -EINVAL;
     }
 

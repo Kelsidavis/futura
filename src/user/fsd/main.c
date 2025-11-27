@@ -22,6 +22,15 @@
 #define FSD_MSG_CLOSE       0x4004
 #define FSD_MSG_READ        0x4005
 #define FSD_MSG_WRITE       0x4006
+#define FSD_MSG_MKDIR       0x4007
+#define FSD_MSG_RMDIR       0x4008
+#define FSD_MSG_STAT        0x4009
+#define FSD_MSG_LSEEK       0x400a
+#define FSD_MSG_READDIR     0x400b
+#define FSD_MSG_UNLINK      0x400c
+#define FSD_MSG_FSYNC       0x400d
+#define FSD_MSG_CHMOD       0x400e
+#define FSD_MSG_CHOWN       0x400f
 
 /* Global state */
 static bool running = true;
@@ -45,6 +54,44 @@ struct fsd_read_resp {
 
 struct fsd_write_resp {
     ssize_t bytes_written;
+};
+
+struct fsd_mkdir_resp {
+    int result;
+};
+
+struct fsd_rmdir_resp {
+    int result;
+};
+
+struct fsd_unlink_resp {
+    int result;
+};
+
+struct fsd_stat_resp {
+    int result;
+    /* stat data would be included here */
+};
+
+struct fsd_lseek_resp {
+    off_t offset;
+};
+
+struct fsd_readdir_resp {
+    int result;  /* > 0 for valid entry, 0 for end of dir */
+    /* dirent data would be included here */
+};
+
+struct fsd_fsync_resp {
+    int result;
+};
+
+struct fsd_chmod_resp {
+    int result;
+};
+
+struct fsd_chown_resp {
+    int result;
 };
 
 /**
@@ -192,6 +239,94 @@ static void handle_close(struct fut_fipc_msg *msg) {
 #pragma GCC diagnostic pop
 
 /**
+ * Handle mkdir request via syscall
+ */
+static void handle_mkdir(struct fut_fipc_msg *msg) {
+    struct fsd_mkdir_resp resp = { .result = -EINVAL };
+    (void)msg;
+
+    /* Minimal implementation - full version would parse message */
+    fsd_send_response(FSD_MSG_MKDIR, &resp, sizeof(resp));
+}
+
+/**
+ * Handle rmdir request via syscall
+ */
+static void handle_rmdir(struct fut_fipc_msg *msg) {
+    struct fsd_rmdir_resp resp = { .result = -EINVAL };
+    (void)msg;
+
+    /* Minimal implementation - full version would parse message */
+    fsd_send_response(FSD_MSG_RMDIR, &resp, sizeof(resp));
+}
+
+/**
+ * Handle unlink request via syscall
+ */
+static void handle_unlink(struct fut_fipc_msg *msg) {
+    struct fsd_unlink_resp resp = { .result = -EINVAL };
+    (void)msg;
+
+    /* Minimal implementation - full version would parse message */
+    fsd_send_response(FSD_MSG_UNLINK, &resp, sizeof(resp));
+}
+
+/**
+ * Handle stat request via syscall
+ */
+static void handle_stat(struct fut_fipc_msg *msg) {
+    struct fsd_stat_resp resp = { .result = -EINVAL };
+    (void)msg;
+
+    /* Minimal implementation - full version would parse message */
+    fsd_send_response(FSD_MSG_STAT, &resp, sizeof(resp));
+}
+
+/**
+ * Handle lseek request via syscall
+ */
+static void handle_lseek(struct fut_fipc_msg *msg) {
+    struct fsd_lseek_resp resp = { .offset = -EINVAL };
+    (void)msg;
+
+    /* Minimal implementation - full version would parse message */
+    fsd_send_response(FSD_MSG_LSEEK, &resp, sizeof(resp));
+}
+
+/**
+ * Handle fsync request via syscall
+ */
+static void handle_fsync(struct fut_fipc_msg *msg) {
+    struct fsd_fsync_resp resp = { .result = -EINVAL };
+    (void)msg;
+
+    /* Minimal implementation - full version would parse message */
+    fsd_send_response(FSD_MSG_FSYNC, &resp, sizeof(resp));
+}
+
+/**
+ * Handle chmod request via syscall
+ */
+static void handle_chmod(struct fut_fipc_msg *msg) {
+    struct fsd_chmod_resp resp = { .result = -EINVAL };
+    (void)msg;
+
+    /* Minimal implementation - full version would parse message */
+    fsd_send_response(FSD_MSG_CHMOD, &resp, sizeof(resp));
+}
+
+/**
+ * Handle chown request via syscall
+ */
+static void handle_chown(struct fut_fipc_msg *msg) {
+    struct fsd_chown_resp resp = { .result = -EINVAL };
+    (void)msg;
+
+    /* Minimal implementation - full version would parse message */
+    fsd_send_response(FSD_MSG_CHOWN, &resp, sizeof(resp));
+}
+
+/**
  * Main event loop - receive and dispatch FIPC messages
  */
 static void fsd_main_loop(void) {
@@ -218,6 +353,30 @@ static void fsd_main_loop(void) {
             case FSD_MSG_WRITE:
                 handle_write(&msg);
                 break;
+            case FSD_MSG_MKDIR:
+                handle_mkdir(&msg);
+                break;
+            case FSD_MSG_RMDIR:
+                handle_rmdir(&msg);
+                break;
+            case FSD_MSG_UNLINK:
+                handle_unlink(&msg);
+                break;
+            case FSD_MSG_STAT:
+                handle_stat(&msg);
+                break;
+            case FSD_MSG_LSEEK:
+                handle_lseek(&msg);
+                break;
+            case FSD_MSG_FSYNC:
+                handle_fsync(&msg);
+                break;
+            case FSD_MSG_CHMOD:
+                handle_chmod(&msg);
+                break;
+            case FSD_MSG_CHOWN:
+                handle_chown(&msg);
+                break;
             default:
                 /* Unknown message type */
                 break;
@@ -237,10 +396,20 @@ static void fsd_main_loop(void) {
  */
 static void fsd_init(void) {
     /* Filesystem daemon initialization
-     * In the future, fsd will:
      * - Create FIPC listen channel for filesystem service
      * - Register with service registry
-     * - Load filesystem drivers
+     * - Load filesystem drivers (stub for future)
+     */
+
+    /* In a full implementation, this would:
+     * 1. Create a FIPC channel for listening to requests
+     * 2. Register the channel with the service registry daemon
+     * 3. Load filesystem drivers (FuturaFS, ext4, etc.)
+     * 4. Mount filesystems based on configuration
+     *
+     * Currently, this is scaffolding for future integration.
+     * The FSD daemon can be invoked by clients that know the
+     * FIPC channel endpoint in advance.
      */
 }
 

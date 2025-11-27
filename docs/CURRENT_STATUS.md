@@ -1,6 +1,6 @@
 # Current Status — November 2025
 
-**Last Updated**: 2025-11-07
+**Last Updated**: 2025-11-27
 
 ## Overview
 
@@ -64,14 +64,21 @@ Futura OS has reached a significant milestone with a fully functional x86-64 ker
 
 See `docs/ARM64_STATUS.md` for detailed ARM64 progress.
 
+## Recent Completions (November 27, 2025)
+
+### x86-64 Platform — Latest Work
+- ✅ **TTY input stack**: Implemented POSIX termios with canonical mode, line discipline, echo, and control characters. Serial input now yields to scheduler instead of spinning.
+- ✅ **Keyboard integration**: PS/2 keyboard driver with US QWERTY keymap, modifier key handling (shift, ctrl, caps lock), and scancode-to-ASCII conversion.
+- ✅ **Signal handling**: Implemented x86-64 signal delivery via interrupt frame modification with full rt_sigframe construction on user stack. Supports SIG_DFL default actions (TERM, CORE, STOP, CONT, IGN) and custom handlers. sigreturn syscall already implemented.
+- ✅ **FuturaFS**: Async composite operations (file_read_async, file_write_async, dir_lookup_async, dir_add_async) already complete. Full directory operations (mkdir, rmdir, create, unlink, lookup, readdir) functional. 96 MiB kernel heap resolves previous allocation limits.
+
 ## Current Focus
 
 ### x86-64 Platform
-1. **Demand paging**: Transition file-backed mmap from eager loading to lazy page fault handler.
-2. **TTY input stack**: Extend `/dev/console` with canonical mode, line discipline, control characters.
-3. **FuturaFS integration**: Complete fsd FIPC bridge for kernel filesystem access.
-4. **Memory management tests**: Comprehensive edge case coverage for COW, mmap, munmap.
-5. **Signal handling**: Expand beyond scaffolding to full signal delivery and handling.
+1. **FSD daemon integration**: Connect fsd to kernel VFS for FIPC filesystem service (or integrate userland FuturaFS).
+2. **Process groups / Job control**: Implement setpgid/getpgid for shell fg/bg/Ctrl+Z support.
+3. **Pipe enhancements**: Verify pipe() syscall works correctly for shell pipelines.
+4. **libfutura enhancements**: Add scanf, strtol, errno, threading helpers.
 
 ### ARM64 Platform
 1. **✅ MMU enabled**: Identity mapping operational with L1/L2 page tables; full virtual memory support working.

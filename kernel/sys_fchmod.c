@@ -72,6 +72,13 @@ long sys_fchmod(int fd, uint32_t mode) {
         return -EBADF;
     }
 
+    /* Phase 2: Validate mode parameter has only valid permission bits */
+    if (mode & ~07777) {
+        fut_printf("[FCHMOD] fchmod(fd=%d, mode=0%o) -> EINVAL (invalid mode bits 0x%x)\n",
+                   fd, mode, mode & ~07777);
+        return -EINVAL;
+    }
+
     /* Phase 2: Categorize FD type */
     const char *fd_category;
     if (fd == 0) {

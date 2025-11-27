@@ -66,11 +66,17 @@ See `docs/ARM64_STATUS.md` for detailed ARM64 progress.
 
 ## Recent Completions (November 27, 2025)
 
-### x86-64 Platform — Latest Work
+### x86-64 Platform — Latest Work (Continuing from Previous Session)
 - ✅ **TTY input stack**: Implemented POSIX termios with canonical mode, line discipline, echo, and control characters. Serial input now yields to scheduler instead of spinning.
 - ✅ **Keyboard integration**: PS/2 keyboard driver with US QWERTY keymap, modifier key handling (shift, ctrl, caps lock), and scancode-to-ASCII conversion.
 - ✅ **Signal handling**: Implemented x86-64 signal delivery via interrupt frame modification with full rt_sigframe construction on user stack. Supports SIG_DFL default actions (TERM, CORE, STOP, CONT, IGN) and custom handlers. sigreturn syscall already implemented.
 - ✅ **FuturaFS**: Async composite operations (file_read_async, file_write_async, dir_lookup_async, dir_add_async) already complete. Full directory operations (mkdir, rmdir, create, unlink, lookup, readdir) functional. 96 MiB kernel heap resolves previous allocation limits.
+
+### November 27, 2025 Session — FSD Integration & Protocol Enhancement
+- ✅ **Extended FSD protocol**: Added message types and stub handlers for directory operations (mkdir, rmdir, unlink), file metadata (stat, lseek, fsync), and permission changes (chmod, chown). Established FIPC protocol foundation for future full implementation.
+- ✅ **Service registration scaffolding**: Updated fsd_init() with implementation notes for future service discovery integration with service registry daemon.
+- ✅ **Process groups / Job control**: Verified setpgid/getpgid syscalls already implemented (stub mode that returns success). Foundation ready for full process group tracking.
+- ✅ **Pipe syscall**: Verified sys_pipe() fully implemented with comprehensive test coverage. Supports both basic pipe creation and advanced features like EOF handling, EPIPE generation.
 
 ## Current Focus
 

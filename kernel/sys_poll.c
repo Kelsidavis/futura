@@ -83,6 +83,12 @@ long sys_poll(struct pollfd *fds, unsigned long nfds, int timeout) {
         return -EINVAL;
     }
 
+    /* Phase 3: Validate timeout is either non-negative or -1 (infinite) */
+    if (timeout < -1) {
+        fut_printf("[POLL] poll(fds, %lu, timeout=%d) -> EINVAL (timeout must be >= -1)\n", nfds, timeout);
+        return -EINVAL;
+    }
+
     /* Allocate kernel buffer for pollfd array */
     size_t size = nfds * sizeof(struct pollfd);
     struct pollfd *kfds = fut_malloc(size);

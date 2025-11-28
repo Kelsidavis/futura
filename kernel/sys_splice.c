@@ -15,6 +15,7 @@
 
 #include <kernel/fut_task.h>
 #include <kernel/errno.h>
+#include <kernel/uaccess.h>
 #include <stdint.h>
 #include <stddef.h>
 
@@ -94,6 +95,58 @@ long sys_splice(int fd_in, int64_t *off_in, int fd_out, int64_t *off_out,
         fut_printf("[SPLICE] splice(fd_in=%d, fd_out=%d, len=%zu, flags=0x%x [invalid], pid=%d) "
                    "-> EINVAL\n", fd_in, fd_out, len, flags, task->pid);
         return -EINVAL;
+    }
+
+    /* Phase 5: Validate offset pointers are readable/writable if non-NULL
+     * Prevent arbitrary kernel memory access when offsets are used */
+    if (off_in != NULL) {
+        int64_t test_offset;
+        /* Test readability - kernel needs to read current offset */
+        if (fut_copy_from_user(&test_offset, off_in, sizeof(int64_t)) != 0) {
+            fut_printf("[SPLICE] splice(fd_in=%d, off_in=%p) -> EFAULT "
+                       "(off_in not readable, Phase 5)\n",
+                       fd_in, off_in);
+            return -EFAULT;
+        }
+        /* Test writability - kernel needs to write updated offset */
+        if (fut_copy_to_user(off_in, &test_offset, sizeof(int64_t)) != 0) {
+            fut_printf("[SPLICE] splice(fd_in=%d, off_in=%p) -> EFAULT "
+                       "(off_in not writable, Phase 5)\n",
+                       fd_in, off_in);
+            return -EFAULT;
+        }
+        /* Phase 5: Validate offset value is non-negative */
+        if (test_offset < 0) {
+            fut_printf("[SPLICE] splice(fd_in=%d, off_in=%p, offset=%ld) -> EINVAL "
+                       "(negative offset, Phase 5)\n",
+                       fd_in, off_in, test_offset);
+            return -EINVAL;
+        }
+    }
+
+    if (off_out != NULL) {
+        int64_t test_offset;
+        /* Test readability - kernel needs to read current offset */
+        if (fut_copy_from_user(&test_offset, off_out, sizeof(int64_t)) != 0) {
+            fut_printf("[SPLICE] splice(fd_out=%d, off_out=%p) -> EFAULT "
+                       "(off_out not readable, Phase 5)\n",
+                       fd_out, off_out);
+            return -EFAULT;
+        }
+        /* Test writability - kernel needs to write updated offset */
+        if (fut_copy_to_user(off_out, &test_offset, sizeof(int64_t)) != 0) {
+            fut_printf("[SPLICE] splice(fd_out=%d, off_out=%p) -> EFAULT "
+                       "(off_out not writable, Phase 5)\n",
+                       fd_out, off_out);
+            return -EFAULT;
+        }
+        /* Phase 5: Validate offset value is non-negative */
+        if (test_offset < 0) {
+            fut_printf("[SPLICE] splice(fd_out=%d, off_out=%p, offset=%ld) -> EINVAL "
+                       "(negative offset, Phase 5)\n",
+                       fd_out, off_out, test_offset);
+            return -EINVAL;
+        }
     }
 
     /* Categorize operation */

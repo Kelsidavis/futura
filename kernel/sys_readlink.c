@@ -309,6 +309,27 @@ long sys_readlink(const char *path, char *buf, size_t bufsiz) {
         return len;
     }
 
+    /* Phase 5: Validate returned length is within buffer bounds
+     * Malicious or buggy filesystem could return len > bufsiz causing buffer overflow */
+    if (len > (ssize_t)local_bufsiz) {
+        fut_printf("[READLINK] readlink(path='%s', ino=%lu, bufsiz=%zu) -> ENAMETOOLONG "
+                   "(returned length %zd exceeds buffer size, Phase 5)\n",
+                   path_buf, vnode->ino, local_bufsiz, len);
+        fut_free(target_buf);
+        return -ENAMETOOLONG;
+    }
+
+    /* Phase 5: Validate symlink target length against PATH_MAX (4096 bytes)
+     * Symlinks with targets exceeding PATH_MAX are invalid */
+    #define PATH_MAX 4096
+    if (len > PATH_MAX) {
+        fut_printf("[READLINK] readlink(path='%s', ino=%lu) -> ENAMETOOLONG "
+                   "(symlink target length %zd exceeds PATH_MAX %d, Phase 5)\n",
+                   path_buf, vnode->ino, len, PATH_MAX);
+        fut_free(target_buf);
+        return -ENAMETOOLONG;
+    }
+
     /* Copy result to userspace buffer */
     if (fut_copy_to_user(local_buf, target_buf, len) != 0) {
         fut_free(target_buf);

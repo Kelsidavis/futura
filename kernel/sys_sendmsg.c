@@ -147,6 +147,26 @@ ssize_t sys_sendmsg(int sockfd, const struct msghdr *msg, int flags) {
         return -EFAULT;
     }
 
+    /* Phase 5: Validate control message length
+     * Limit to 64KB to prevent DoS via excessively large control messages */
+    if (kmsg.msg_controllen > 0) {
+        const size_t MAX_CONTROL_LEN = 65536;  /* 64KB */
+        if (kmsg.msg_controllen > MAX_CONTROL_LEN) {
+            fut_printf("[SENDMSG] sendmsg(sockfd=%d, controllen=%zu) -> EINVAL "
+                       "(control message too large, max %zu bytes, Phase 5)\n",
+                       local_sockfd, kmsg.msg_controllen, MAX_CONTROL_LEN);
+            return -EINVAL;
+        }
+
+        /* Validate control buffer pointer is not NULL */
+        if (!kmsg.msg_control) {
+            fut_printf("[SENDMSG] sendmsg(sockfd=%d, controllen=%zu) -> EFAULT "
+                       "(msg_control is NULL with non-zero length, Phase 5)\n",
+                       local_sockfd, kmsg.msg_controllen);
+            return -EFAULT;
+        }
+    }
+
     /* Validate iovlen */
     if (kmsg.msg_iovlen == 0) {
         fut_printf("[SENDMSG] sendmsg(sockfd=%d, iovlen=0) -> 0 (nothing to send)\n", local_sockfd);

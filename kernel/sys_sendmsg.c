@@ -193,6 +193,21 @@ ssize_t sys_sendmsg(int sockfd, const struct msghdr *msg, int flags) {
             return -EFAULT;
         }
 
+        /* Security hardening: Limit individual iovec size to prevent memory exhaustion DoS
+         * Without per-buffer limits, attacker can request gigabytes per iovec:
+         *   - msg_iovlen=1024, iov_len=64MB each = 64GB kernel memory allocation
+         *   - Single syscall exhausts kernel heap, triggers OOM killer
+         *   - System-wide denial of service
+         *
+         * Defense: Limit each iovec to reasonable size (16MB like preadv/pwritev) */
+        const size_t MAX_IOV_SIZE = 16 * 1024 * 1024;  /* 16MB per iovec */
+        if (iov.iov_len > MAX_IOV_SIZE) {
+            fut_printf("[SENDMSG] sendmsg(sockfd=%d, iovlen=%zu) -> EINVAL "
+                       "(iov[%zu].iov_len=%zu exceeds max %zu bytes)\n",
+                       local_sockfd, kmsg.msg_iovlen, i, iov.iov_len, MAX_IOV_SIZE);
+            return -EINVAL;
+        }
+
         /* Check for overflow */
         if (total_size + iov.iov_len < total_size) {
             fut_printf("[SENDMSG] sendmsg(sockfd=%d, iovlen=%zu) -> EINVAL (size overflow at iovec %zu)\n",

@@ -156,6 +156,17 @@ long sys_ftruncate(int fd, uint64_t length) {
         return -EISDIR;
     }
 
+    /* Phase 5: Verify file was opened with write permission
+     * ftruncate() modifies file contents - require write access */
+    #define O_WRONLY 0x0001
+    #define O_RDWR   0x0002
+    if (!(file->flags & (O_WRONLY | O_RDWR))) {
+        fut_printf("[FTRUNCATE] ftruncate(fd=%d [%s], length=%llu [%s], flags=0x%x) -> EBADF "
+                   "(file not opened for writing, Phase 5 write permission check)\n",
+                   fd, fd_category, length, length_category, file->flags);
+        return -EBADF;
+    }
+
     /* Phase 2: Validate length bounds (16TB maximum file size) */
     #define MAX_FILE_SIZE (16ULL * 1024 * 1024 * 1024 * 1024)  /* 16TB */
     if (length > MAX_FILE_SIZE) {

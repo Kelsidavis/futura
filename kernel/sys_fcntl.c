@@ -386,7 +386,7 @@ long sys_fcntl(int fd, int cmd, uint64_t arg) {
         /* Phase 2: Validate minfd */
         if (minfd < 0) {
             fut_printf("[FCNTL] fcntl(fd=%d [%s], cmd=%s [%s], minfd=%d) -> EINVAL "
-                       "(negative minfd, Phase 2)\n",
+                       "(negative minfd)\n",
                        local_fd, fd_category, cmd_name, cmd_category, minfd);
             return -EINVAL;
         }
@@ -394,7 +394,7 @@ long sys_fcntl(int fd, int cmd, uint64_t arg) {
         /* Phase 2: Validate minfd doesn't exceed reasonable limit (65536) */
         if (minfd >= 65536) {
             fut_printf("[FCNTL] fcntl(fd=%d [%s], cmd=%s [%s], minfd=%d) -> EINVAL "
-                       "(minfd exceeds maximum limit, Phase 2)\n",
+                       "(minfd exceeds maximum limit)\n",
                        local_fd, fd_category, cmd_name, cmd_category, minfd);
             return -EINVAL;
         }
@@ -402,10 +402,14 @@ long sys_fcntl(int fd, int cmd, uint64_t arg) {
         /* Phase 3: Validate minfd is within task's FD table range */
         if (minfd >= (int)task->max_fds) {
             fut_printf("[FCNTL] fcntl(fd=%d [%s], cmd=%s [%s], minfd=%d) -> EINVAL "
-                       "(minfd %d >= max_fds %u, Phase 3)\n",
+                       "(minfd %d >= max_fds %u)\n",
                        local_fd, fd_category, cmd_name, cmd_category, minfd, minfd, task->max_fds);
             return -EINVAL;
         }
+
+        /* Security hardening: Increment refcount IMMEDIATELY to prevent use-after-free
+         * Prevents TOCTOU race where file could be closed between retrieval and dup */
+        file->refcount++;
 
         /* Phase 2: Categorize minfd range */
         const char *minfd_category;
@@ -430,10 +434,12 @@ long sys_fcntl(int fd, int cmd, uint64_t arg) {
             }
         }
 
-        /* Phase 5: Check against task's actual max_fds, not hardcoded limit */
+        /* Check against task's actual max_fds */
         if (newfd >= (int)task->max_fds) {
+            /* Decrement refcount on failure path */
+            file->refcount--;
             fut_printf("[FCNTL] fcntl(fd=%d [%s], cmd=%s [%s], minfd=%d [%s]) -> EMFILE "
-                       "(no FDs available >= minfd (reached task max_fds=%u), Phase 5)\n",
+                       "(no FDs available >= minfd (reached task max_fds=%u))\n",
                        local_fd, fd_category, cmd_name, cmd_category, minfd, minfd_category, task->max_fds);
             return -EMFILE;
         }
@@ -451,9 +457,6 @@ long sys_fcntl(int fd, int cmd, uint64_t arg) {
         } else {
             newfd_category = "very high (unusual)";
         }
-
-        /* Increment reference count on source file */
-        file->refcount++;
 
         /* Allocate newfd pointing to same file in task's FD table */
         int ret = vfs_alloc_specific_fd_for_task(task, newfd, file);

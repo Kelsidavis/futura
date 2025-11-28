@@ -194,6 +194,17 @@ long sys_ppoll(void *fds, unsigned int nfds, void *tmo_p, const void *sigmask) {
 
     /* Validate parameters */
     if (!local_fds && local_nfds > 0) {
+        fut_printf("[PPOLL] ppoll(fds=NULL, nfds=%u) -> EINVAL (NULL fds with non-zero nfds)\n",
+                   local_nfds);
+        return -EINVAL;
+    }
+
+    /* Phase 5: Validate nfds against reasonable limit to prevent DoS
+     * Match sys_poll's limit of 1024 for consistency */
+    if (local_nfds > 1024) {
+        fut_printf("[PPOLL] ppoll(fds=%p, nfds=%u) -> EINVAL "
+                   "(nfds exceeds limit of 1024, Phase 5)\n",
+                   local_fds, local_nfds);
         return -EINVAL;
     }
 

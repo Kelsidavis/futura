@@ -180,7 +180,48 @@ long sys_mount(const char *source, const char *target, const char *filesystemtyp
         return -ESRCH;
     }
 
-    /* Suppress unused parameter warning - used in Phase 3 */
+    /* Phase 5: Validate data parameter if provided
+     * Prevent unbounded memory reads when options parsing is implemented */
+    if (data) {
+        /* Validate data pointer is readable and bounded
+         * Mount options should be reasonable size (< 4KB) */
+        const size_t MAX_MOUNT_DATA_SIZE = 4096;
+        char test_byte;
+
+        /* Test first byte to ensure pointer is readable */
+        if (fut_copy_from_user(&test_byte, data, 1) != 0) {
+            fut_printf("[MOUNT] mount(source=%p, data=%p) -> EFAULT "
+                       "(data pointer not readable, Phase 5)\n",
+                       source, data);
+            return -EFAULT;
+        }
+
+        /* Validate data is null-terminated string within reasonable length
+         * Scan up to MAX_MOUNT_DATA_SIZE bytes for null terminator */
+        bool found_null = false;
+        for (size_t i = 0; i < MAX_MOUNT_DATA_SIZE; i++) {
+            char c;
+            if (fut_copy_from_user(&c, (const char *)data + i, 1) != 0) {
+                fut_printf("[MOUNT] mount(source=%p, data=%p) -> EFAULT "
+                           "(data not readable at offset %zu, Phase 5)\n",
+                           source, data, i);
+                return -EFAULT;
+            }
+            if (c == '\0') {
+                found_null = true;
+                break;
+            }
+        }
+
+        if (!found_null) {
+            fut_printf("[MOUNT] mount(source=%p, data=%p) -> EINVAL "
+                       "(data exceeds maximum size %zu bytes without null terminator, Phase 5)\n",
+                       source, data, MAX_MOUNT_DATA_SIZE);
+            return -EINVAL;
+        }
+    }
+
+    /* Data parameter validated - will be used in Phase 3 options parsing */
     (void)data;
 
     /* Phase 2: Validate target pointer (required) */

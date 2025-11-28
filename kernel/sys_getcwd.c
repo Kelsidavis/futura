@@ -187,6 +187,16 @@ long sys_getcwd(char *buf, size_t size) {
      */
     uint64_t cwd_inode = task->current_dir_ino;
 
+    /* Phase 5: Pre-emptive validation for future path resolution
+     * Ensure buffer is large enough for at least "/" + null terminator
+     * Prevents buffer overflow when VFS path resolution is added */
+    if (local_size < 2) {  /* Minimum: "/" + '\0' */
+        fut_printf("[GETCWD] getcwd(buf=%p, size=%zu) -> ERANGE "
+                   "(buffer too small for minimum path, Phase 5)\n",
+                   (void *)local_buf, local_size);
+        return -ERANGE;
+    }
+
     /* Phase 3: Build path from current directory
      * For root directory, return "/" directly.
      * For other directories, would call fut_vfs_get_path(cwd_inode, buf, size)
@@ -203,6 +213,10 @@ long sys_getcwd(char *buf, size_t size) {
         local_buf[0] = '/';
         local_buf[1] = '\0';
     }
+
+    /* Phase 5: Always ensure null termination within buffer bounds
+     * Critical when VFS path resolution is implemented to prevent overflow */
+    local_buf[local_size - 1] = '\0';
 
     /* Phase 3: Categorize path length */
     const size_t path_len = 1;  /* Length of "/" without null terminator */

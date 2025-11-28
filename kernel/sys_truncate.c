@@ -67,14 +67,41 @@ long sys_truncate(const char *path, uint64_t length) {
         return -EINVAL;
     }
 
-    /* Copy path from userspace to kernel space */
+    /* Phase 5: Copy path from userspace with truncation detection
+     * VULNERABILITY: Silent Path Truncation Leading to Wrong File Truncation
+     *
+     * ATTACK SCENARIO:
+     * Attacker provides path longer than 256 bytes to exploit truncation
+     * 1. Attacker calls truncate(long_path, 0) with long_path = "/home/user/important.txt" + [230 bytes padding] + "_backup"
+     * 2. fut_copy_from_user copies only 255 bytes, truncating "_backup" suffix
+     * 3. Line 77 force-terminates: path_buf = "/home/user/important.txt" + [230 bytes] + '\0'
+     * 4. VFS truncates /home/user/important.txt instead of intended _backup file
+     * 5. Data loss: Original file cleared, backup file untouched
+     *
+     * CRITICAL IMPACT:
+     * - Data corruption: Wrong file truncated to zero bytes
+     * - Privilege escalation: Truncate system files via path manipulation
+     * - DoS: Clear critical configuration files
+     *
+     * DEFENSE (Phase 5):
+     * Detect truncation by checking if path_buf[255] != '\0' after copy
+     * Return -ENAMETOOLONG if truncation detected
+     * Matches sys_openat pattern (commit f68ce63) */
     char path_buf[256];
-    if (fut_copy_from_user(path_buf, local_path, sizeof(path_buf) - 1) != 0) {
+    if (fut_copy_from_user(path_buf, local_path, sizeof(path_buf)) != 0) {
         fut_printf("[TRUNCATE] truncate(path=?, length=%llu) -> EFAULT (copy_from_user failed)\n",
                    (unsigned long long)local_length);
         return -EFAULT;
     }
-    path_buf[sizeof(path_buf) - 1] = '\0';
+
+    /* Phase 5: Verify path was not truncated (NULL terminator must exist before buffer end)
+     * If path_buf[255] != '\0', the path was truncated and full path exceeds 255 chars */
+    if (path_buf[sizeof(path_buf) - 1] != '\0') {
+        fut_printf("[TRUNCATE] truncate(path=<truncated>, length=%llu) -> ENAMETOOLONG "
+                   "(path exceeds %zu bytes, truncation detected, Phase 5)\n",
+                   (unsigned long long)local_length, sizeof(path_buf) - 1);
+        return -ENAMETOOLONG;
+    }
 
     /* Phase 2: Validate path is not empty */
     if (path_buf[0] == '\0') {

@@ -138,13 +138,25 @@ long sys_stat(const char *path, struct fut_stat *statbuf) {
     /* Phase 2: Calculate path length */
     size_t path_len = manual_strlen(path_buf);
 
-    /* Phase 4: Early buffer writability test before expensive VFS operation
+    /* Phase 5: Validate buffer alignment before expensive VFS operation
+     * struct fut_stat requires 8-byte alignment for uint64_t fields (st_size, st_ino, etc.)
+     * Unaligned access can cause performance degradation or crashes on some architectures */
+    if (((uintptr_t)local_statbuf & 7) != 0) {
+        fut_printf("[STAT] stat(path='%s' [%s, len=%lu], statbuf=%p) -> EINVAL "
+                   "(buffer not 8-byte aligned, Phase 5)\n",
+                   path_buf, path_type, (unsigned long)path_len, (void *)local_statbuf);
+        return -EINVAL;
+    }
+
+    /* Phase 5: Early buffer writability test before expensive VFS operation
      * Test if we can write to statbuf before calling fut_vfs_stat(), which
      * requires path lookup and inode access. This optimization fails fast if
-     * the buffer is in inaccessible memory. */
-    if (fut_copy_to_user(local_statbuf, local_statbuf, 0) != 0) {
+     * the buffer is in inaccessible memory. Use actual write test with first byte. */
+    char test_byte;
+    if (fut_copy_from_user(&test_byte, (const char *)local_statbuf, 1) != 0 ||
+        fut_copy_to_user((char *)local_statbuf, &test_byte, 1) != 0) {
         fut_printf("[STAT] stat(path='%s' [%s, len=%lu], statbuf=%p) -> EFAULT "
-                   "(buffer writability test failed)\n",
+                   "(buffer not accessible, Phase 5)\n",
                    path_buf, path_type, (unsigned long)path_len, (void *)local_statbuf);
         return -EFAULT;
     }

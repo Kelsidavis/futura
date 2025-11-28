@@ -173,7 +173,7 @@ long sys_mremap(void *old_address, size_t old_size, size_t new_size,
         return -EINVAL;
     }
 
-    /* Security hardening: Validate size + PAGE_SIZE won't overflow before alignment
+    /* Phase 5: Security hardening - Validate size + PAGE_SIZE won't overflow before alignment
      * Prevent integer wraparound attacks where huge size wraps to tiny aligned value.
      *
      * ATTACK SCENARIO:
@@ -184,17 +184,23 @@ long sys_mremap(void *old_address, size_t old_size, size_t new_size,
      *   Out-of-bounds access, memory corruption, privilege escalation
      *
      * Similar to CVE-2016-3135 (Linux kernel mremap DoS via integer overflow)
+     *
+     * Defense: Check BEFORE alignment arithmetic (line 203-204)
+     *   - if (old_size > SIZE_MAX - PAGE_SIZE + 1) → reject
+     *   - Ensures old_size + PAGE_SIZE - 1 cannot overflow
+     *   - Safe to compute: old_aligned = (old_size + 4095) & ~4095
+     *   - Same protection for new_size
      */
     if (old_size > SIZE_MAX - PAGE_SIZE + 1) {
         fut_printf("[MREMAP] mremap(%p, %zu, %zu, 0x%x, %p) -> EINVAL "
-                   "(old_size too large for page alignment, would overflow)\n",
+                   "(old_size too large for page alignment, would overflow, Phase 5)\n",
                    old_address, old_size, new_size, flags, new_address);
         return -EINVAL;
     }
 
     if (new_size > SIZE_MAX - PAGE_SIZE + 1) {
         fut_printf("[MREMAP] mremap(%p, %zu, %zu, 0x%x, %p) -> EINVAL "
-                   "(new_size too large for page alignment, would overflow)\n",
+                   "(new_size too large for page alignment, would overflow, Phase 5)\n",
                    old_address, old_size, new_size, flags, new_address);
         return -EINVAL;
     }

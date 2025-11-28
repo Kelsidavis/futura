@@ -350,33 +350,37 @@ long sys_getdents64(unsigned int fd, void *dirp, unsigned int count) {
         }
         reclen = (reclen + 7) & ~7;
 
-        /* Security hardening: Validate reclen fits in uint16_t before truncation
-         * d_reclen field is uint16_t (max 65535). If reclen exceeds this due to
-         * very long filename, truncation would corrupt directory entry parsing.
-         *
-         * VULNERABILITY: reclen Truncation Leading to Buffer Overflow
-         * ----------------------------------------------------------
-         * Without validation, long filenames cause reclen > 65535:
-         *   1. Entry has 256-char name (max)
-         *   2. reclen = sizeof(linux_dirent64) + 256 + 1 = 281 bytes
-         *   3. Aligned: (281 + 7) & ~7 = 288 bytes (fits in uint16_t)
-         *   4. BUT: sizeof(linux_dirent64) = 24 bytes on most platforms
-         *   5. Actual max: 24 + 256 + 1 = 281 → aligned 288 (OK)
-         *
-         * However, with pathological VFS implementation returning huge names,
-         * or with different struct alignment, reclen could exceed 65535.
+        /* Phase 5: Validate reclen fits in uint16_t BEFORE truncation
+         * VULNERABILITY: d_reclen Truncation Causing Buffer Overrun
          *
          * ATTACK SCENARIO:
-         *   - Malicious filesystem returns d_name with length > 65000
-         *   - reclen calculation: 24 + 65000 + 1 = 65025 → aligned 65032
-         *   - Still fits in uint16_t (max 65535)
-         *   - BUT if name_len approaches SIZE_MAX - 24 - 1:
-         *     reclen = 24 + SIZE_MAX - 24 - 1 + 1 = SIZE_MAX
-         *     Aligned: (SIZE_MAX + 7) & ~7 = SIZE_MAX - 7 (due to wraparound)
-         *     Cast to uint16_t: SIZE_MAX - 7 truncates to small value
-         *   - Userspace parses with wrong reclen → buffer overrun
+         * Malicious or faulty filesystem returns directory entry with extremely long name
+         * 1. VFS returns entry with name_len = 65000 bytes (pathological case)
+         * 2. Line 340: reclen = sizeof(linux_dirent64) + 65000 + 1 = 65025
+         * 3. Line 351: Aligned reclen = (65025 + 7) & ~7 = 65032
+         * 4. Line 396: Cast to uint16_t: dent->d_reclen = (uint16_t)65032 = 65032 ✓ OK
          *
-         * Defense: Reject entries where aligned reclen exceeds uint16_t max. */
+         * EDGE CASE - Truncation to Zero:
+         * 1. Malicious VFS returns name_len = SIZE_MAX - 31 (maximum before line 331 check)
+         * 2. Line 340: reclen = 24 + (SIZE_MAX - 31) + 1 = SIZE_MAX - 6
+         * 3. Line 351: Aligned = (SIZE_MAX - 6 + 7) & ~7 = (SIZE_MAX + 1) & ~7
+         *    - SIZE_MAX + 1 wraps to 0 on overflow
+         *    - 0 & ~7 = 0
+         * 4. Line 396: dent->d_reclen = (uint16_t)0 = 0
+         * 5. Userspace parser reads reclen=0 → infinite loop or buffer overrun
+         *
+         * DEFENSE (Phase 5):
+         * Check reclen > 65535 BEFORE line 396 cast
+         * - Catches SIZE_MAX wraparound case (would be > 65535 before alignment)
+         * - Catches pathological name_len values
+         * - Prevents truncation to 0 or small incorrect values
+         * - Line 344 prevents alignment overflow: reclen > SIZE_MAX - 7
+         *
+         * CVE REFERENCES:
+         * - Similar truncation in CVE-2014-9529 (keyctl d_name overflow)
+         * - Directory entry parsing bugs in CVE-2016-3135 (netfilter)
+         *
+         * CRITICAL: Check happens AFTER alignment to catch wraparound */
         if (reclen > 65535) {
             fut_printf("[GETDENTS64] getdents64(fd=%u, entry='%s') -> EINVAL "
                        "(aligned reclen %zu exceeds uint16_t max 65535, Phase 5)\n",

@@ -355,6 +355,25 @@ long sys_chmod(const char *pathname, uint32_t mode) {
         return -ENOENT;
     }
 
+    /* Security hardening: Reject chmod on symbolic links
+     * Symlink permissions are meaningless (target permissions matter, not link itself).
+     * Following symlinks in chmod creates privilege escalation risk:
+     *   - Attacker creates symlink to sensitive file (e.g., /etc/passwd)
+     *   - Privileged process calls chmod on what it thinks is safe path
+     *   - Symlink followed, sensitive file permissions changed
+     *
+     * POSIX provides fchmodat(AT_SYMLINK_NOFOLLOW) for this reason.
+     * Here we reject symlinks unconditionally since chmod() has no flags parameter.
+     *
+     * Note: On Linux, chmod() follows symlinks, but lchmod() does not follow them
+     * (and typically returns ENOTSUP). We take the safer default of rejecting symlinks. */
+    if (vnode->type == VN_LNK) {
+        fut_printf("[CHMOD] chmod(path='%s' [%s], vnode_ino=%lu, type=symlink, mode=%s, "
+                   "special=%s) -> ENOTSUP (cannot change permissions on symbolic link)\n",
+                   path_buf, path_type, vnode->ino, mode_desc, special_bits_desc);
+        return -ENOTSUP;
+    }
+
     /* Phase 5: Validate special bits are appropriate for file type
      * POSIX semantics require special bit restrictions to prevent security issues */
 

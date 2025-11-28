@@ -64,6 +64,17 @@ long sys_ioctl(int fd, unsigned long request, void *argp) {
         return -EBADF;
     }
 
+    /* Phase 5: Validate request code is in reasonable range
+     * Prevents malformed requests from reaching device handlers
+     * Standard ioctl codes use _IO/_IOR/_IOW macros with reasonable values */
+    #define MAX_IOCTL_REQUEST 0x10000  /* 64K - reasonable upper bound */
+    if (request > MAX_IOCTL_REQUEST) {
+        fut_printf("[IOCTL] ioctl(fd=%d, request=0x%lx, argp=%p) -> EINVAL "
+                   "(request code out of range, max 0x%x, Phase 5)\n",
+                   fd, request, argp, MAX_IOCTL_REQUEST);
+        return -EINVAL;
+    }
+
     /* Identify request type for logging */
     const char *request_name = "UNKNOWN";
     const char *request_category = "unknown";

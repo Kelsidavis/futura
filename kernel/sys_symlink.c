@@ -68,22 +68,59 @@ long sys_symlink(const char *target, const char *linkpath) {
         return -EINVAL;
     }
 
-    /* Copy target from userspace */
+    /* Phase 5: Copy target from userspace with truncation detection
+     * VULNERABILITY: Silent Path Truncation Leading to Wrong Symlink Target
+     *
+     * ATTACK SCENARIO:
+     * Attacker provides target path longer than 256 bytes to exploit truncation
+     * 1. Attacker calls symlink(long_target, linkpath) where:
+     *    long_target = "/safe/path/to/file" + [230 bytes padding] + "../../../etc/shadow"
+     * 2. OLD code (line 72): fut_copy_from_user copies only 255 bytes, truncating "../../../etc/shadow"
+     * 3. OLD code (line 76): Force-terminates: target_buf = "/safe/path/to/file" + [230 bytes] + '\0'
+     * 4. Line 200: Filesystem creates symlink pointing to "/safe/path/to/file" + [230 bytes]
+     * 5. Result: Symlink points to wrong target (attacker's intended malicious path lost)
+     *
+     * CRITICAL IMPACT:
+     * - Symlink confusion: Link points to unintended target
+     * - Unlike truncate/open, symlink stores path AS-IS
+     * - Attacker could create symlink pointing to benign path, expecting malicious suffix
+     * - Application resolves symlink, gets wrong file
+     *
+     * DEFENSE (Phase 5):
+     * Detect truncation by copying full buffer, check if target_buf[255] != '\0'
+     * Return -ENAMETOOLONG if truncation detected
+     * Matches sys_openat/sys_truncate pattern (commits f68ce63, cc20d22)
+     */
     char target_buf[256];
-    if (fut_copy_from_user(target_buf, local_target, sizeof(target_buf) - 1) != 0) {
+    if (fut_copy_from_user(target_buf, local_target, sizeof(target_buf)) != 0) {
         fut_printf("[SYMLINK] symlink(target=?, linkpath=?) -> EFAULT (copy_from_user target failed)\n");
         return -EFAULT;
     }
-    target_buf[sizeof(target_buf) - 1] = '\0';
 
-    /* Copy linkpath from userspace */
+    /* Phase 5: Verify target path was not truncated */
+    if (target_buf[sizeof(target_buf) - 1] != '\0') {
+        fut_printf("[SYMLINK] symlink(target=<truncated>, linkpath=?) -> ENAMETOOLONG "
+                   "(target path exceeds %zu bytes, truncation detected, Phase 5)\n",
+                   sizeof(target_buf) - 1);
+        return -ENAMETOOLONG;
+    }
+
+    /* Phase 5: Copy linkpath from userspace with truncation detection
+     * Same vulnerability as target path - linkpath could be truncated */
     char linkpath_buf[256];
-    if (fut_copy_from_user(linkpath_buf, local_linkpath, sizeof(linkpath_buf) - 1) != 0) {
+    if (fut_copy_from_user(linkpath_buf, local_linkpath, sizeof(linkpath_buf)) != 0) {
         fut_printf("[SYMLINK] symlink(target='%s', linkpath=?) -> EFAULT (copy_from_user linkpath failed)\n",
                    target_buf);
         return -EFAULT;
     }
-    linkpath_buf[sizeof(linkpath_buf) - 1] = '\0';
+
+    /* Phase 5: Verify linkpath was not truncated */
+    if (linkpath_buf[sizeof(linkpath_buf) - 1] != '\0') {
+        fut_printf("[SYMLINK] symlink(target='%s', linkpath=<truncated>) -> ENAMETOOLONG "
+                   "(linkpath exceeds %zu bytes, truncation detected, Phase 5)\n",
+                   target_buf, sizeof(linkpath_buf) - 1);
+        return -ENAMETOOLONG;
+    }
 
     /* Validate target is not empty */
     if (target_buf[0] == '\0') {
@@ -99,27 +136,8 @@ long sys_symlink(const char *target, const char *linkpath) {
         return -EINVAL;
     }
 
-    /* Check for path truncation in target */
-    size_t target_len = 0;
-    while (target_buf[target_len] != '\0' && target_len < sizeof(target_buf) - 1) {
-        target_len++;
-    }
-    if (target_buf[target_len] != '\0') {
-        fut_printf("[SYMLINK] symlink(target_len>255, linkpath='%s') -> ENAMETOOLONG (target truncated)\n",
-                   linkpath_buf);
-        return -ENAMETOOLONG;
-    }
-
-    /* Check for path truncation in linkpath */
-    size_t linkpath_len = 0;
-    while (linkpath_buf[linkpath_len] != '\0' && linkpath_len < sizeof(linkpath_buf) - 1) {
-        linkpath_len++;
-    }
-    if (linkpath_buf[linkpath_len] != '\0') {
-        fut_printf("[SYMLINK] symlink(target='%s', linkpath_len>255) -> ENAMETOOLONG (linkpath truncated)\n",
-                   target_buf);
-        return -ENAMETOOLONG;
-    }
+    /* Phase 5: Old truncation detection removed (lines 139-159)
+     * Replaced with robust detection at lines 100-106 and 117-123 */
 
     /* Categorize path types */
     const char *target_type = (target_buf[0] == '/') ? "absolute" : "relative";

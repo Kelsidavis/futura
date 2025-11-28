@@ -169,15 +169,37 @@ long sys_connect(int sockfd, const void *addr, socklen_t addrlen) {
         return -EINVAL;
     }
 
-    /* Security hardening: Validate path length BEFORE copying to prevent truncation attacks
-     * Silent truncation could allow connecting to unintended sockets */
+    /* Phase 5: Security hardening - Validate path length BEFORE copying to prevent truncation attacks
+     * VULNERABILITY: Silent Path Truncation Leading to Unintended Socket Connection
+     *
+     * ATTACK SCENARIO:
+     * Attacker provides addrlen = 200 (path_len = 198 bytes)
+     * Malicious path: "/tmp/trusted_socket" + [192 bytes of garbage]
+     *
+     * Without validation:
+     * 1. Kernel copies 198 bytes to 108-byte buffer
+     * 2. Path silently truncated to "/tmp/trusted_socket\0" (20 bytes)
+     * 3. Connection succeeds to /tmp/trusted_socket
+     * 4. Attacker intended to connect to /tmp/trusted_socket<malicious-suffix>
+     * 5. Application believes it connected to different socket
+     * 6. Potential privilege escalation, authentication bypass
+     *
+     * Real-world impact:
+     * - Database clients connecting to wrong instance
+     * - Privilege escalation via socket confusion
+     * - Authentication bypass in IPC protocols
+     *
+     * DEFENSE (lines 174-183):
+     * Reject oversized paths BEFORE any copying occurs
+     * Return explicit -ENAMETOOLONG instead of silent truncation
+     */
     size_t path_len = local_addrlen - 2;  /* Subtract family field */
 
-    /* Unix domain socket maximum path length (108 bytes on most systems) */
+    /* Unix domain socket maximum path length (108 bytes on most systems, POSIX standard) */
     #define UNIX_PATH_MAX 108
     if (path_len > UNIX_PATH_MAX) {
         fut_printf("[CONNECT] connect(sockfd=%d, family=%s, path_len=%zu) -> ENAMETOOLONG "
-                   "(exceeds UNIX_PATH_MAX %d bytes)\n",
+                   "(exceeds UNIX_PATH_MAX %d bytes, Phase 5)\n",
                    local_sockfd, family_name, path_len, UNIX_PATH_MAX);
         return -ENAMETOOLONG;
     }

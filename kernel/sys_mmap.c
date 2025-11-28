@@ -102,6 +102,21 @@ long sys_munmap(void *addr, size_t len) {
         return -EINVAL;
     }
 
+    /* Phase 5: Validate length is within reasonable bounds (matching mmap)
+     * Without size limits, attacker can request unbounded unmap operations:
+     *   - munmap(addr, SIZE_MAX)
+     *   - Causes fut_mm_unmap to iterate over entire address space
+     *   - CPU exhaustion DoS from excessive page table walking
+     *   - Potential memory corruption if overlapping unmapped regions
+     * Defense: Limit to same maximum as mmap (SIZE_MAX / 2) */
+    const size_t MAX_MUNMAP_LEN = (SIZE_MAX / 2);
+    if (len > MAX_MUNMAP_LEN) {
+        fut_printf("[MUNMAP] munmap(addr=%p, len=%zu) -> EINVAL "
+                   "(length exceeds maximum %zu, Phase 5: DoS prevention)\n",
+                   addr, len, MAX_MUNMAP_LEN);
+        return -EINVAL;
+    }
+
     fut_task_t *task = fut_task_current();
     if (!task) {
         return -EPERM;

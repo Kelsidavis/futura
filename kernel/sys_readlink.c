@@ -309,8 +309,29 @@ long sys_readlink(const char *path, char *buf, size_t bufsiz) {
         return len;
     }
 
-    /* Phase 5: Validate returned length is within buffer bounds
-     * Malicious or buggy filesystem could return len > bufsiz causing buffer overflow */
+    /* Phase 5: Validate VFS return length BEFORE using it
+     * VULNERABILITY: Buffer Overrun via Untrusted VFS Return Value
+     *
+     * ATTACK SCENARIO:
+     * Malicious or buggy filesystem's readlink operation returns len > bufsiz
+     * 1. Line 288: Kernel allocates target_buf with size = local_bufsiz (e.g., 256 bytes)
+     * 2. Line 294: vnode->ops->readlink(vnode, target_buf, 256) called
+     * 3. Malicious VFS returns len = 512 (claims to have read 512 bytes)
+     * 4. WITHOUT Phase 5 check:
+     *    - Line 334: fut_copy_to_user(local_buf, target_buf, 512)
+     *    - Copies 512 bytes from 256-byte buffer
+     *    - Result: Information disclosure (kernel heap leak beyond buffer)
+     *
+     * TRUSTED vs UNTRUSTED VFS:
+     * - Trusted filesystems (ext4, RamFS): Return valid lengths
+     * - FUSE filesystems: Userspace can return arbitrary values
+     * - Network filesystems: Remote attacker could craft responses
+     * - Kernel must validate ALL VFS return values
+     *
+     * DEFENSE LAYER 1 (Phase 5): Validate len <= bufsiz
+     * Check returned length doesn't exceed allocated buffer size
+     * Prevents reading beyond kernel buffer (information disclosure)
+     * Critical for FUSE and network filesystems */
     if (len > (ssize_t)local_bufsiz) {
         fut_printf("[READLINK] readlink(path='%s', ino=%lu, bufsiz=%zu) -> ENAMETOOLONG "
                    "(returned length %zd exceeds buffer size, Phase 5)\n",
@@ -319,8 +340,10 @@ long sys_readlink(const char *path, char *buf, size_t bufsiz) {
         return -ENAMETOOLONG;
     }
 
-    /* Phase 5: Validate symlink target length against PATH_MAX (4096 bytes)
-     * Symlinks with targets exceeding PATH_MAX are invalid */
+    /* DEFENSE LAYER 2 (Phase 5): Validate len <= PATH_MAX
+     * Symlinks with targets exceeding PATH_MAX (4096 bytes) are invalid
+     * Prevents pathologically long symlink targets
+     * Secondary defense if bufsiz > PATH_MAX */
     #define PATH_MAX 4096
     if (len > PATH_MAX) {
         fut_printf("[READLINK] readlink(path='%s', ino=%lu) -> ENAMETOOLONG "

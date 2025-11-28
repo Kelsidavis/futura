@@ -141,6 +141,26 @@ long sys_chown(const char *pathname, uint32_t uid, uint32_t gid) {
         return -EINVAL;
     }
 
+    /* Phase 5: Validate uid/gid are within valid ranges
+     * Allow -1 (0xFFFFFFFF) as special "unchanged" value
+     * Reject other extremely large values that could indicate corruption
+     * Standard systems limit uid/gid to 60000 or less */
+    const uint32_t MAX_VALID_ID = 65535;  /* Standard POSIX uid_t/gid_t max */
+
+    if (local_uid != CHOWN_UNCHANGED && local_uid > MAX_VALID_ID) {
+        fut_printf("[CHOWN] chown(pathname=?, uid=%u, gid=%u) -> EINVAL "
+                   "(uid %u exceeds maximum valid ID %u, Phase 5)\n",
+                   local_uid, local_gid, local_uid, MAX_VALID_ID);
+        return -EINVAL;
+    }
+
+    if (local_gid != CHOWN_UNCHANGED && local_gid > MAX_VALID_ID) {
+        fut_printf("[CHOWN] chown(pathname=?, uid=%u, gid=%u) -> EINVAL "
+                   "(gid %u exceeds maximum valid ID %u, Phase 5)\n",
+                   local_uid, local_gid, local_gid, MAX_VALID_ID);
+        return -EINVAL;
+    }
+
     /* Phase 2: Categorize uid change type */
     const char *uid_desc;
     if (local_uid == CHOWN_UNCHANGED) {

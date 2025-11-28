@@ -445,6 +445,38 @@ long sys_rename(const char *oldpath, const char *newpath) {
         return -ENOSYS;
     }
 
+    /* Phase 5: Cross-directory rename atomicity protection
+     * VULNERABILITY: Non-Atomic Cross-Directory Rename Leading to File Duplication
+     *
+     * ATTACK SCENARIO:
+     * Exploit link() then unlink() non-atomicity for data corruption
+     *
+     * Normal cross-directory rename:
+     * 1. Application calls rename("/dir1/file", "/dir2/file")
+     * 2. Kernel creates link at /dir2/file (line 449)
+     * 3. Kernel removes link at /dir1/file (line 457)
+     * 4. Expected: File atomically moves from dir1 to dir2
+     *
+     * Attack via unlink() failure:
+     * 5. After link() succeeds, trigger unlink() failure:
+     *    - Concurrent mmap() locks old file
+     *    - SELinux/AppArmor denies unlink permission
+     *    - Filesystem error (disk full on metadata update)
+     * 6. unlink() returns error, but link() already succeeded
+     * 7. File now exists at BOTH /dir1/file and /dir2/file
+     * 8. File duplication violates POSIX rename atomicity
+     *
+     * Real-world impact:
+     * - Database corruption (duplicate entries in index)
+     * - File lock confusion (two paths to same inode)
+     * - Quota bypass (file counted twice)
+     * - Backup inconsistency (duplicate in snapshot)
+     * - Application logic errors (expected one copy, got two)
+     *
+     * DEFENSE (Phase 5):
+     * Rollback link() if unlink() fails to maintain atomicity
+     */
+
     /* Create link in new parent first (this will be full path to file) */
     ret = new_parent->ops->link(new_parent, old_buf, new_buf);
     if (ret < 0) {
@@ -453,16 +485,26 @@ long sys_rename(const char *oldpath, const char *newpath) {
         return ret;
     }
 
-    /* Unlink from old parent - CRITICAL: If this fails, duplicate exists */
+    /* Unlink from old parent - CRITICAL: If this fails, must rollback link to maintain atomicity */
     ret = old_parent->ops->unlink(old_parent, old_name);
     if (ret < 0) {
-        /* ATOMICITY VIOLATION: Link created but unlink failed
-         * This leaves a duplicate file entry at both old and new paths.
-         * Applications expecting atomic rename may see inconsistent state.
-         * Proper fix requires rollback of the link operation or VFS transactions. */
-        fut_printf("[RENAME] rename(old='%s' [%s], new='%s' [%s], op=%s) -> %d "
-                   "(ATOMICITY VIOLATION: unlink failed after link, duplicate file at both paths)\n",
-                   old_buf, old_path_type, new_buf, new_path_type, operation_type, ret);
+        /* Phase 5: ROLLBACK - Unlink the newly created link to restore original state
+         * Without rollback: File exists at both old and new paths (duplicate)
+         * With rollback: Unlink new path, file remains only at old path (atomic failure)
+         */
+        int rollback_ret = new_parent->ops->unlink(new_parent, new_name);
+        if (rollback_ret < 0) {
+            /* Double fault: Both unlink operations failed
+             * File duplication is unavoidable - system in inconsistent state */
+            fut_printf("[RENAME] rename(old='%s' [%s], new='%s' [%s], op=%s) -> %d "
+                       "(CRITICAL: unlink failed AND rollback failed, file duplicated at both paths, Phase 5)\n",
+                       old_buf, old_path_type, new_buf, new_path_type, operation_type, ret);
+        } else {
+            /* Rollback succeeded: File remains only at old path, rename failed cleanly */
+            fut_printf("[RENAME] rename(old='%s' [%s], new='%s' [%s], op=%s) -> %d "
+                       "(unlink failed, rollback succeeded, file remains at old path only, Phase 5)\n",
+                       old_buf, old_path_type, new_buf, new_path_type, operation_type, ret);
+        }
         return ret;
     }
 

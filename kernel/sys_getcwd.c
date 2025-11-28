@@ -17,6 +17,7 @@
 #include <stdint.h>
 
 extern void fut_printf(const char *fmt, ...);
+extern int fut_copy_to_user(void *to, const void *from, size_t size);
 
 /**
  * getcwd() - Get current working directory
@@ -144,6 +145,50 @@ long sys_getcwd(char *buf, size_t size) {
         fut_printf("[GETCWD] getcwd(buf=NULL, size=%zu) -> EINVAL (null buffer)\n",
                    local_size);
         return -EINVAL;
+    }
+
+    /* Phase 5: Validate buffer write permission BEFORE any operations
+     * VULNERABILITY: Missing Write Permission Validation
+     *
+     * ATTACK SCENARIO:
+     * Attacker passes read-only memory region as getcwd() buffer
+     *
+     * Without write validation:
+     * 1. getcwd(readonly_buf, 1024)
+     * 2. Kernel validates buf != NULL (passes)
+     * 3. Kernel validates size >= 2 (passes)
+     * 4. Kernel attempts to write path to readonly_buf at line 207
+     * 5. Page fault in kernel mode
+     * 6. Potential kernel panic or undefined behavior
+     * 7. Information disclosure via error messages
+     * 8. DoS if kernel cannot recover from fault
+     *
+     * Real-world attack vectors:
+     * - Memory-mapped read-only file sections (.rodata)
+     * - mmap(PROT_READ) regions without PROT_WRITE
+     * - mprotect() hardened memory regions
+     * - Shared memory with read-only permissions
+     * - Stack guard pages (no write permission)
+     *
+     * DEFENSE (Phase 5):
+     * Probe write permission BEFORE any path operations
+     * - Attempt 1-byte write to first byte of buffer
+     * - If fails: return -EFAULT immediately
+     * - If succeeds: buffer is writable, safe to proceed
+     * - Prevents kernel page faults on write attempts
+     *
+     * Critical: Validation must occur BEFORE line 207 direct write
+     */
+    if (local_size > 0) {
+        /* Probe buffer write permission with 1-byte test write
+         * Use fut_copy_to_user to safely check write access without faulting */
+        char probe = '\0';
+        if (fut_copy_to_user(local_buf, &probe, 1) != 0) {
+            fut_printf("[GETCWD] getcwd(buf=%p, size=%zu) -> EFAULT "
+                       "(buffer not writable, Phase 5 write permission validation)\n",
+                       (void *)local_buf, local_size);
+            return -EFAULT;
+        }
     }
 
     /* Phase 2: Categorize buffer size */

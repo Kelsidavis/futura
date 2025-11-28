@@ -74,7 +74,42 @@ long sys_select(int nfds, fd_set *readfds, fd_set *writefds,
         return -EINVAL;
     }
 
-    /* Phase 5: Check against task's actual max_fds to prevent out-of-bounds access */
+    /* Phase 5: Validate nfds against task FD table size
+     * VULNERABILITY: Out-of-Bounds FD Array Access via fd_set Bitmask
+     *
+     * ATTACK SCENARIO (Future implementation risk):
+     * When actual fd_set processing is implemented, unchecked FD numbers can cause OOB access
+     *
+     * Background: fd_set structure
+     * - Bitmask representing FDs (1024 bits = 128 bytes on most systems)
+     * - Each FD number maps to bit position: bit = FD % 8, byte = FD / 8
+     * - nfds parameter specifies highest FD+1 to check
+     *
+     * Vulnerability when processing fd_set:
+     * 1. Attacker calls select(1024, &readfds, NULL, NULL, &timeout)
+     * 2. Validation: nfds <= FD_SETSIZE (1024) ✓ passes
+     * 3. Validation: nfds <= task->max_fds (e.g., 256) ✗ SHOULD FAIL
+     * 4. WITHOUT Phase 5 check: Kernel iterates FDs 0-1023
+     * 5. Kernel accesses task->fd_table[1023] but table only has 256 entries
+     * 6. Out-of-bounds read → information disclosure or kernel panic
+     *
+     * Attack amplification:
+     * - fd_set can contain ANY bit pattern (attacker controlled)
+     * - Bits set beyond task->max_fds access invalid memory
+     * - Can probe kernel memory layout via timing side-channel
+     * - Potential KASLR bypass via OOB timing differences
+     *
+     * DEFENSE (Phase 5):
+     * Validate nfds against task's ACTUAL FD table size, not just static limit
+     * - task->max_fds reflects real FD table allocation
+     * - Reject nfds > max_fds BEFORE any fd_set processing
+     * - Prevents iterating beyond allocated FD table bounds
+     *
+     * Critical for future phases:
+     * - Phase 2: Actual fd_set iteration will access task->fd_table[fd]
+     * - Phase 3: Timeout processing may extend attack window
+     * - Phase 4: Epoll backend needs same validation
+     */
     if (task->max_fds > 0 && local_nfds > (int)task->max_fds) {
         fut_printf("[SELECT] select(nfds=%d, ...) -> EINVAL (nfds=%d exceeds task max_fds=%u, Phase 5)\n",
                    local_nfds, local_nfds, task->max_fds);
@@ -145,7 +180,15 @@ long sys_pselect6(int nfds, void *readfds, void *writefds, void *exceptfds,
         return -EINVAL;
     }
 
-    /* Phase 5: Check against task's actual max_fds to prevent out-of-bounds access */
+    /* Phase 5: Validate nfds against task FD table size (same protection as select)
+     * See sys_select Phase 5 documentation (lines 77-112) for detailed attack scenario
+     *
+     * Key points for pselect6:
+     * - ARM64 primary interface (select doesn't exist on ARM64)
+     * - Same fd_set OOB vulnerability as select
+     * - Additional sigmask parameter doesn't affect FD validation
+     * - Must check task->max_fds before any fd_set iteration
+     */
     if (task->max_fds > 0 && local_nfds > (int)task->max_fds) {
         fut_printf("[PSELECT6] pselect6(nfds=%d, ...) -> EINVAL (nfds=%d exceeds task max_fds=%u, Phase 5)\n",
                    local_nfds, local_nfds, task->max_fds);

@@ -243,11 +243,25 @@ ssize_t sys_writev(int fd, const struct iovec *iov, int iovcnt) {
     const size_t MAX_TOTAL_SIZE = 16 * 1024 * 1024;  /* 16 MB limit per writev */
 
     for (int i = 0; i < iovcnt; i++) {
-        /* Check for overflow */
-        if (total_size + kernel_iov[i].iov_len < total_size) {
+        /* Phase 5: Prevent integer overflow in total_size accumulation
+         * Check BEFORE addition to handle SIZE_MAX edge case correctly
+         * Previous vulnerable pattern: if (total_size + iov_len < total_size)
+         *   - When total_size == SIZE_MAX, any addition wraps but check may pass
+         *   - Need explicit SIZE_MAX check before arithmetic
+         *
+         * ATTACK SCENARIO:
+         * Attacker with iovcnt=1024, iov_len values carefully chosen to sum to SIZE_MAX+N
+         * Without SIZE_MAX check: total_size wraps at SIZE_MAX boundary
+         * Result: Bypasses MAX_TOTAL_SIZE limit at line 257, DoS via huge allocation
+         *
+         * DEFENSE:
+         * Check BEFORE addition: if (total_size == SIZE_MAX || iov_len > SIZE_MAX - total_size)
+         * Prevents wraparound even when approaching SIZE_MAX limit
+         * Matches sys_recvmsg/sys_sendmsg pattern for consistency */
+        if (total_size == SIZE_MAX || kernel_iov[i].iov_len > SIZE_MAX - total_size) {
             fut_printf("[WRITEV] writev(fd=%d, iov=%p, iovcnt=%d) -> EINVAL "
-                       "(size overflow at iovec %d, Phase 5)\n",
-                       fd, iov, iovcnt, i);
+                       "(size overflow at iovec %d, total=%zu, iov_len=%zu, Phase 5)\n",
+                       fd, iov, iovcnt, i, total_size, kernel_iov[i].iov_len);
             fut_free(kernel_iov);
             return -EINVAL;
         }

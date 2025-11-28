@@ -191,10 +191,15 @@ ssize_t sys_recvmsg(int sockfd, struct msghdr *msg, int flags) {
             return -EFAULT;
         }
 
-        /* Check for overflow */
-        if (total_size + iov.iov_len < total_size) {
-            fut_printf("[RECVMSG] recvmsg(sockfd=%d, iovlen=%zu) -> EINVAL (size overflow at iovec %zu)\n",
-                       local_sockfd, kmsg.msg_iovlen, i);
+        /* Phase 5: Prevent integer overflow in total_size accumulation
+         * Check BEFORE addition to handle SIZE_MAX edge case correctly
+         * Previous vulnerable pattern: if (total_size + iov_len < total_size)
+         *   - When total_size == SIZE_MAX, any addition wraps but check may pass
+         *   - Need explicit SIZE_MAX check before arithmetic */
+        if (total_size == SIZE_MAX || iov.iov_len > SIZE_MAX - total_size) {
+            fut_printf("[RECVMSG] recvmsg(sockfd=%d, iovlen=%zu) -> EINVAL "
+                       "(size overflow at iovec %zu, total=%zu, iov_len=%zu, Phase 5)\n",
+                       local_sockfd, kmsg.msg_iovlen, i, total_size, iov.iov_len);
             return -EINVAL;
         }
         total_size += iov.iov_len;
@@ -256,8 +261,24 @@ ssize_t sys_recvmsg(int sockfd, struct msghdr *msg, int flags) {
             continue;
         }
 
-        /* Phase 5: Validate iov_base pointer before allocating memory
-         * Prevents memory exhaustion DoS from repeated invalid pointers */
+        /* Phase 5: Validate iov_base write permission BEFORE allocation
+         * VULNERABILITY: Missing Write Permission Validation on Receive Buffer
+         *
+         * ATTACK SCENARIO:
+         * Attacker provides read-only memory as receive buffer
+         *
+         * Without write validation:
+         * 1. recvmsg(sockfd, &msg, 0) with iov_base = readonly_memory
+         * 2. Kernel allocates iov_len bytes (e.g., 16MB) at line 287
+         * 3. Kernel reads data from socket into kernel buffer (line 293)
+         * 4. Kernel attempts copy_to_user to readonly iov_base (line 297)
+         * 5. Copy fails with page fault (write to read-only page)
+         * 6. Kernel buffer leaked, socket data lost
+         * 7. Repeated attacks exhaust kernel memory (DoS)
+         *
+         * DEFENSE (Phase 5):
+         * Validate buffer is writable BEFORE allocating kernel memory
+         */
         if (!iov.iov_base) {
             fut_printf("[RECVMSG] recvmsg(sockfd=%d) -> EFAULT "
                        "(iov_base[%zu] is NULL with non-zero length %zu, Phase 5)\n",
@@ -265,7 +286,7 @@ ssize_t sys_recvmsg(int sockfd, struct msghdr *msg, int flags) {
             return total_received > 0 ? total_received : -EFAULT;
         }
 
-        /* Phase 5: Validate iov_base is writable before allocating kernel buffer */
+        /* Phase 5: Probe write permission with 1-byte test */
         uint8_t test_byte;
         if (fut_copy_from_user(&test_byte, iov.iov_base, 1) != 0 ||
             fut_copy_to_user(iov.iov_base, &test_byte, 1) != 0) {

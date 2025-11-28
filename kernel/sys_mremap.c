@@ -173,7 +173,33 @@ long sys_mremap(void *old_address, size_t old_size, size_t new_size,
         return -EINVAL;
     }
 
-    /* Round sizes up to page boundaries */
+    /* Security hardening: Validate size + PAGE_SIZE won't overflow before alignment
+     * Prevent integer wraparound attacks where huge size wraps to tiny aligned value.
+     *
+     * ATTACK SCENARIO:
+     *   old_size = SIZE_MAX - 2000 (e.g., 0xFFFFFFFFFFFFF830 on 64-bit)
+     *   old_size + PAGE_SIZE - 1 = SIZE_MAX - 2000 + 4095 overflows to 2094
+     *   old_aligned becomes 4096 instead of expected huge value
+     *   Kernel allocates 4KB VMA but attacker believes they have ~18EB region
+     *   Out-of-bounds access, memory corruption, privilege escalation
+     *
+     * Similar to CVE-2016-3135 (Linux kernel mremap DoS via integer overflow)
+     */
+    if (old_size > SIZE_MAX - PAGE_SIZE + 1) {
+        fut_printf("[MREMAP] mremap(%p, %zu, %zu, 0x%x, %p) -> EINVAL "
+                   "(old_size too large for page alignment, would overflow)\n",
+                   old_address, old_size, new_size, flags, new_address);
+        return -EINVAL;
+    }
+
+    if (new_size > SIZE_MAX - PAGE_SIZE + 1) {
+        fut_printf("[MREMAP] mremap(%p, %zu, %zu, 0x%x, %p) -> EINVAL "
+                   "(new_size too large for page alignment, would overflow)\n",
+                   old_address, old_size, new_size, flags, new_address);
+        return -EINVAL;
+    }
+
+    /* Round sizes up to page boundaries (overflow-safe after above checks) */
     size_t old_aligned = (old_size + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1);
     size_t new_aligned = (new_size + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1);
 

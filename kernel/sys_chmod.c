@@ -355,6 +355,83 @@ long sys_chmod(const char *pathname, uint32_t mode) {
         return -ENOENT;
     }
 
+    /* Phase 5: Validate special bits are appropriate for file type
+     * POSIX semantics require special bit restrictions to prevent security issues */
+
+    /* Sticky bit (01000) should only be set on directories */
+    if ((local_mode & 01000) && vnode->type != VN_DIR) {
+        const char *type_desc;
+        switch (vnode->type) {
+            case VN_REG:
+                type_desc = "regular file";
+                break;
+            case VN_LNK:
+                type_desc = "symbolic link";
+                break;
+            case VN_CHR:
+                type_desc = "character device";
+                break;
+            case VN_BLK:
+                type_desc = "block device";
+                break;
+            case VN_FIFO:
+                type_desc = "FIFO";
+                break;
+            case VN_SOCK:
+                type_desc = "socket";
+                break;
+            default:
+                type_desc = "non-directory";
+                break;
+        }
+        fut_printf("[CHMOD] chmod(path='%s' [%s], vnode_ino=%lu, type=%s, mode=%s, "
+                   "special=%s) -> EINVAL (sticky bit on %s, Phase 5)\n",
+                   path_buf, path_type, vnode->ino, type_desc, mode_desc,
+                   special_bits_desc, type_desc);
+        return -EINVAL;
+    }
+
+    /* Setuid/setgid bits (04000/02000) should only be on regular files or directories
+     * Other file types don't support execution or privilege escalation */
+    if ((local_mode & 06000) && vnode->type != VN_REG && vnode->type != VN_DIR) {
+        const char *type_desc;
+        const char *which_bit;
+
+        if ((local_mode & 04000) && (local_mode & 02000)) {
+            which_bit = "setuid and setgid bits";
+        } else if (local_mode & 04000) {
+            which_bit = "setuid bit";
+        } else {
+            which_bit = "setgid bit";
+        }
+
+        switch (vnode->type) {
+            case VN_LNK:
+                type_desc = "symbolic link";
+                break;
+            case VN_CHR:
+                type_desc = "character device";
+                break;
+            case VN_BLK:
+                type_desc = "block device";
+                break;
+            case VN_FIFO:
+                type_desc = "FIFO";
+                break;
+            case VN_SOCK:
+                type_desc = "socket";
+                break;
+            default:
+                type_desc = "non-file/directory";
+                break;
+        }
+        fut_printf("[CHMOD] chmod(path='%s' [%s], vnode_ino=%lu, type=%s, mode=%s, "
+                   "special=%s) -> EINVAL (%s on %s, Phase 5)\n",
+                   path_buf, path_type, vnode->ino, type_desc, mode_desc,
+                   special_bits_desc, which_bit, type_desc);
+        return -EINVAL;
+    }
+
     /* Phase 2: Store old mode for before/after comparison */
     uint32_t old_mode = vnode->mode & 07777;  // Permissions + special bits
     uint32_t old_perms = old_mode & 0777;      // Permissions only

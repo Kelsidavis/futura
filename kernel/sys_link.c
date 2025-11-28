@@ -272,7 +272,8 @@ long sys_link(const char *oldpath, const char *newpath) {
         new_path_type = "relative";
     }
 
-    /* Security hardening WARNING: TOCTOU Race Condition in link()
+    /* Phase 5: Security hardening WARNING: TOCTOU Race Condition in link()
+     * VULNERABILITY: Time-of-Check-Time-of-Use Race in Path Resolution
      *
      * link() has inherent time-of-check-time-of-use vulnerabilities between VFS
      * lookups and the actual link creation. Multiple threads can race to modify

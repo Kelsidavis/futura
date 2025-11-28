@@ -283,43 +283,52 @@ long sys_bind(int sockfd, const void *addr, socklen_t addrlen) {
         return -EBADF;
     }
 
-    /* Phase 2: Check socket state */
-    const char *socket_state_desc;
-    switch (socket->state) {
-        case FUT_SOCK_CREATED:
-            socket_state_desc = "created";
-            break;
-        case FUT_SOCK_BOUND:
-            socket_state_desc = "already bound";
-            break;
-        case FUT_SOCK_LISTENING:
-            socket_state_desc = "listening";
-            break;
-        case FUT_SOCK_CONNECTING:
-            socket_state_desc = "connecting";
-            break;
-        case FUT_SOCK_CONNECTED:
-            socket_state_desc = "connected";
-            break;
-        case FUT_SOCK_CLOSED:
-            socket_state_desc = "closed";
-            break;
-        default:
-            socket_state_desc = "unknown state";
-            break;
-    }
-
-    /* Phase 2: Validate socket state (should be CREATED) */
-    if (socket->state == FUT_SOCK_BOUND) {
-        fut_printf("[BIND] bind(sockfd=%d, family=%s, path='%s', state=%s) -> EINVAL (socket already bound to '%s')\n",
-                   local_sockfd, family_name, sock_path, socket_state_desc,
-                   socket->bound_path ? socket->bound_path : "(none)");
-        return -EINVAL;
-    }
-
+    /* Phase 5: Validate socket state IMMEDIATELY after retrieval
+     * Socket must be in CREATED state only - reject all other states to prevent
+     * race conditions and invalid state transitions */
     if (socket->state != FUT_SOCK_CREATED) {
-        fut_printf("[BIND] bind(sockfd=%d, family=%s, path='%s', state=%s) -> EINVAL (socket not in created state)\n",
-                   local_sockfd, family_name, sock_path, socket_state_desc);
+        const char *socket_state_desc;
+        const char *error_reason;
+
+        switch (socket->state) {
+            case FUT_SOCK_BOUND:
+                socket_state_desc = "already bound";
+                error_reason = socket->bound_path ? socket->bound_path : "(unknown path)";
+                fut_printf("[BIND] bind(sockfd=%d, family=%s, path='%s', state=%s) -> EINVAL "
+                           "(socket already bound to '%s', Phase 5)\n",
+                           local_sockfd, family_name, sock_path, socket_state_desc, error_reason);
+                break;
+            case FUT_SOCK_LISTENING:
+                socket_state_desc = "listening";
+                fut_printf("[BIND] bind(sockfd=%d, family=%s, path='%s', state=%s) -> EINVAL "
+                           "(cannot bind listening socket, Phase 5)\n",
+                           local_sockfd, family_name, sock_path, socket_state_desc);
+                break;
+            case FUT_SOCK_CONNECTING:
+                socket_state_desc = "connecting";
+                fut_printf("[BIND] bind(sockfd=%d, family=%s, path='%s', state=%s) -> EINVAL "
+                           "(cannot bind connecting socket, Phase 5)\n",
+                           local_sockfd, family_name, sock_path, socket_state_desc);
+                break;
+            case FUT_SOCK_CONNECTED:
+                socket_state_desc = "connected";
+                fut_printf("[BIND] bind(sockfd=%d, family=%s, path='%s', state=%s) -> EINVAL "
+                           "(cannot bind connected socket, Phase 5)\n",
+                           local_sockfd, family_name, sock_path, socket_state_desc);
+                break;
+            case FUT_SOCK_CLOSED:
+                socket_state_desc = "closed";
+                fut_printf("[BIND] bind(sockfd=%d, family=%s, path='%s', state=%s) -> EINVAL "
+                           "(cannot bind closed socket, Phase 5)\n",
+                           local_sockfd, family_name, sock_path, socket_state_desc);
+                break;
+            default:
+                socket_state_desc = "unknown";
+                fut_printf("[BIND] bind(sockfd=%d, family=%s, path='%s', state=%s) -> EINVAL "
+                           "(socket in invalid state %d, Phase 5)\n",
+                           local_sockfd, family_name, sock_path, socket_state_desc, socket->state);
+                break;
+        }
         return -EINVAL;
     }
 
@@ -348,14 +357,14 @@ long sys_bind(int sockfd, const void *addr, socklen_t addrlen) {
                 break;
         }
 
-        fut_printf("[BIND] bind(sockfd=%d, family=%s, path='%s' [%s, %s], state=%s) -> %d (%s)\n",
-                   local_sockfd, family_name, sock_path, path_type, path_desc, socket_state_desc, ret, error_desc);
+        fut_printf("[BIND] bind(sockfd=%d, family=%s, path='%s' [%s, %s]) -> %d (%s)\n",
+                   local_sockfd, family_name, sock_path, path_type, path_desc, ret, error_desc);
         return ret;
     }
 
     /* Phase 4: Detailed success logging */
-    fut_printf("[BIND] bind(sockfd=%d, family=%s, path='%s' [%s, %s], state=%s->bound) -> 0 (Socket %u bound, Phase 4: AF_INET/AF_INET6/AF_UNIX binding support)\n",
-               local_sockfd, family_name, sock_path, path_type, path_desc, socket_state_desc, socket->socket_id);
+    fut_printf("[BIND] bind(sockfd=%d, family=%s, path='%s' [%s, %s], state=created->bound) -> 0 (Socket %u bound, Phase 5)\n",
+               local_sockfd, family_name, sock_path, path_type, path_desc, socket->socket_id);
 
     return 0;
 }

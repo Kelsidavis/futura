@@ -336,6 +336,34 @@ ssize_t sys_preadv(int fd, const struct iovec *iov, int iovcnt, int64_t offset) 
             continue;  /* Skip zero-length buffers */
         }
 
+        /* Phase 5: Check for offset overflow BEFORE read operation
+         * VULNERABILITY: Offset Wraparound in File Position Tracking
+         *
+         * ATTACK SCENARIO:
+         * Attacker calls preadv(fd, iov, iovcnt, offset=INT64_MAX-1000)
+         * If we read 2000 bytes successfully without pre-check:
+         * - Line 352: Reads at offset INT64_MAX-1000 (valid positive offset)
+         * - Line 398: current_offset += 2000 wraps to negative value
+         * - Next iteration reads from NEGATIVE offset (wrong file location)
+         * - Result: Information disclosure (reading from unintended offset)
+         *
+         * DEFENSE (Phase 5):
+         * Check BEFORE reading: Validate that current_offset + iov_len won't overflow
+         * If overflow would occur, stop reading and return bytes read so far
+         * Prevents reading from negative/wrapped offsets
+         */
+        if (kernel_iov[i].iov_len > 0 && current_offset > INT64_MAX - (int64_t)kernel_iov[i].iov_len) {
+            fut_free(kernel_iov);
+            if (total_read > 0) {
+                /* Return bytes successfully read before overflow would occur */
+                break;
+            }
+            fut_printf("[PREADV] preadv(fd=%d, iov=%p, iovcnt=%d, offset=%ld) -> EOVERFLOW "
+                       "(offset would overflow INT64_MAX for iovec %d, current_offset=%ld, iov_len=%zu, Phase 5)\n",
+                       fd, iov, iovcnt, i, current_offset, kernel_iov[i].iov_len);
+            return -EOVERFLOW;
+        }
+
         /* Allocate kernel buffer for this iovec */
         void *kbuf = fut_malloc(kernel_iov[i].iov_len);
         if (!kbuf) {
@@ -381,20 +409,7 @@ ssize_t sys_preadv(int fd, const struct iovec *iov, int iovcnt, int64_t offset) 
         fut_free(kbuf);
         total_read += n;
 
-        /* Phase 5: Check for offset overflow before incrementing
-         * If current_offset + n would overflow INT64_MAX, stop reading to prevent
-         * wraparound to negative values which could cause data corruption */
-        if (n > 0 && current_offset > INT64_MAX - n) {
-            fut_free(kernel_iov);
-            if (total_read > 0) {
-                /* Return bytes successfully read before overflow would occur */
-                break;
-            }
-            fut_printf("[PREADV] preadv(fd=%d, iov=%p, iovcnt=%d, offset=%ld) -> EOVERFLOW "
-                       "(offset would overflow INT64_MAX after reading %zd bytes, Phase 5)\n",
-                       fd, iov, iovcnt, offset, n);
-            return -EOVERFLOW;
-        }
+        /* Phase 5: Update offset (overflow already checked before read at line 355) */
         current_offset += n;
         iovecs_read++;
 

@@ -104,10 +104,19 @@ long sys_connect(int sockfd, const void *addr, socklen_t addrlen) {
         return -EFAULT;
     }
 
-    /* Phase 2: Validate minimum address length (family field is 2 bytes) */
+    /* Phase 5: Validate address length bounds (minimum and maximum) */
     if (local_addrlen < 2) {
-        fut_printf("[CONNECT] connect(sockfd=%d, addrlen=%u) -> EINVAL (too small, need at least 2 bytes for family)\n",
+        fut_printf("[CONNECT] connect(sockfd=%d, addrlen=%u) -> EINVAL (too small, need at least 2 bytes for family, Phase 5)\n",
                    local_sockfd, local_addrlen);
+        return -EINVAL;
+    }
+
+    /* Phase 5: Maximum bound check to prevent integer overflow and excessive memory operations
+     * Standard sockaddr_storage is 128 bytes, so 256 is generous upper limit */
+    const socklen_t MAX_ADDRLEN = 256;
+    if (local_addrlen > MAX_ADDRLEN) {
+        fut_printf("[CONNECT] connect(sockfd=%d, addrlen=%u) -> EINVAL (exceeds maximum %u, Phase 5)\n",
+                   local_sockfd, local_addrlen, MAX_ADDRLEN);
         return -EINVAL;
     }
 

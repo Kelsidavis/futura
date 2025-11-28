@@ -166,12 +166,36 @@ long sys_rename(const char *oldpath, const char *newpath) {
     }
     old_buf[sizeof(old_buf) - 1] = '\0';
 
+    /* Security hardening: Detect path truncation BEFORE proceeding
+     * Silent truncation could allow renaming unintended files */
+    size_t old_path_len = 0;
+    while (old_buf[old_path_len] != '\0' && old_path_len < sizeof(old_buf) - 1) {
+        old_path_len++;
+    }
+    if (old_buf[old_path_len] != '\0') {
+        /* Path was truncated - null terminator not found before buffer end */
+        fut_printf("[RENAME] rename(oldpath=<truncated>, newpath=?) -> ENAMETOOLONG "
+                   "(oldpath exceeds %zu bytes)\n", sizeof(old_buf) - 1);
+        return -ENAMETOOLONG;
+    }
+
     if (fut_copy_from_user(new_buf, local_newpath, sizeof(new_buf) - 1) != 0) {
         fut_printf("[RENAME] rename(oldpath='%s', newpath=?) -> EFAULT (newpath copy_from_user failed)\n",
                    old_buf);
         return -EFAULT;
     }
     new_buf[sizeof(new_buf) - 1] = '\0';
+
+    /* Security hardening: Detect newpath truncation */
+    size_t new_path_len = 0;
+    while (new_buf[new_path_len] != '\0' && new_path_len < sizeof(new_buf) - 1) {
+        new_path_len++;
+    }
+    if (new_buf[new_path_len] != '\0') {
+        fut_printf("[RENAME] rename(oldpath='%s', newpath=<truncated>) -> ENAMETOOLONG "
+                   "(newpath exceeds %zu bytes)\n", old_buf, sizeof(new_buf) - 1);
+        return -ENAMETOOLONG;
+    }
 
     /* Phase 2: Validate paths are not empty */
     if (old_buf[0] == '\0') {
@@ -385,10 +409,28 @@ long sys_rename(const char *oldpath, const char *newpath) {
         return -EXDEV;
     }
 
+    /* Security hardening NOTE: TOCTOU vulnerability between lookup and operations
+     * The vnode lookups above (fut_vfs_lookup) and the operations below (link/unlink)
+     * are not atomic. Symlinks could be replaced between lookup and operation,
+     * redirecting the rename to unintended targets.
+     *
+     * Proper fix requires VFS-level atomic rename operation that:
+     * 1. Locks both parent directories
+     * 2. Validates vnodes still match expected inodes
+     * 3. Performs operation atomically
+     * 4. Releases locks
+     *
+     * Current mitigation: Document limitation and rely on upper-layer locking.
+     * Applications requiring atomicity should use flock() or O_EXCL.
+     */
+
     /* For cross-directory rename, we need to:
-     * 1. Unlink from old parent
-     * 2. Link into new parent with new name
-     * This is not atomic but is necessary for cross-directory moves
+     * 1. Link into new parent with new name (create new entry)
+     * 2. Unlink from old parent (remove old entry)
+     *
+     * ATOMICITY WARNING: This is NOT atomic. If unlink fails after link succeeds,
+     * a duplicate file entry will exist. Proper fix requires filesystem-level
+     * transaction support or VFS-level rename primitive.
      */
 
     if (!old_parent->ops || !old_parent->ops->unlink) {
@@ -403,7 +445,7 @@ long sys_rename(const char *oldpath, const char *newpath) {
         return -ENOSYS;
     }
 
-    /* Create link in new parent (this will be full path to file) */
+    /* Create link in new parent first (this will be full path to file) */
     ret = new_parent->ops->link(new_parent, old_buf, new_buf);
     if (ret < 0) {
         fut_printf("[RENAME] rename(old='%s' [%s], new='%s' [%s], op=%s) -> %d (link failed, cross-dir)\n",
@@ -411,11 +453,15 @@ long sys_rename(const char *oldpath, const char *newpath) {
         return ret;
     }
 
-    /* Unlink from old parent */
+    /* Unlink from old parent - CRITICAL: If this fails, duplicate exists */
     ret = old_parent->ops->unlink(old_parent, old_name);
     if (ret < 0) {
-        /* Link created but unlink failed - this leaves duplicate, report error */
-        fut_printf("[RENAME] rename(old='%s' [%s], new='%s' [%s], op=%s) -> %d (unlink failed after link, cross-dir, WARNING: duplicate file created)\n",
+        /* ATOMICITY VIOLATION: Link created but unlink failed
+         * This leaves a duplicate file entry at both old and new paths.
+         * Applications expecting atomic rename may see inconsistent state.
+         * Proper fix requires rollback of the link operation or VFS transactions. */
+        fut_printf("[RENAME] rename(old='%s' [%s], new='%s' [%s], op=%s) -> %d "
+                   "(ATOMICITY VIOLATION: unlink failed after link, duplicate file at both paths)\n",
                    old_buf, old_path_type, new_buf, new_path_type, operation_type, ret);
         return ret;
     }

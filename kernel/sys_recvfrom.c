@@ -220,6 +220,21 @@ ssize_t sys_recvfrom(int sockfd, void *buf, size_t len, int flags,
         return 0;
     }
 
+    /* Security hardening: Limit buffer size to prevent memory exhaustion DoS
+     * Without size limits, attacker can request gigabytes of kernel memory:
+     *   - recvfrom(sockfd, buf, SIZE_MAX, 0, NULL, NULL)
+     *   - Single syscall requests 18 exabytes of kernel memory
+     *   - fut_malloc() exhausts kernel heap → OOM killer → system-wide DoS
+     *
+     * Defense: Limit to reasonable maximum (16MB, matching sendmsg/preadv/pwritev) */
+    const size_t MAX_RECV_SIZE = 16 * 1024 * 1024;  /* 16MB per recv */
+    if (local_len > MAX_RECV_SIZE) {
+        fut_printf("[RECVFROM] recvfrom(sockfd=%d [%s], len=%zu [%s]) -> EINVAL "
+                   "(length exceeds max %zu bytes, Phase 5: memory exhaustion prevention)\n",
+                   local_sockfd, fd_category, local_len, size_category, MAX_RECV_SIZE);
+        return -EINVAL;
+    }
+
     /* Validate buf */
     if (!local_buf) {
         fut_printf("[RECVFROM] recvfrom(sockfd=%d [%s], buf=NULL, len=%zu, pid=%u) -> EINVAL "

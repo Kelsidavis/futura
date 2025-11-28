@@ -117,8 +117,9 @@ long sys_ioctl(int fd, unsigned long request, void *argp) {
         if (argp != NULL) {
             uintptr_t argp_val = (uintptr_t)argp;
 
-            /* Check if argp looks like a pointer (high bit set on x86-64 kernel addrs)
-             * Values < 0x1000 are likely integers, not pointers */
+            /* Phase 5: Check if argp looks like a pointer (high bit set on kernel addrs)
+             * Values < 0x1000 are likely integers, not pointers
+             * Critical: Prevent userspace from passing kernel addresses to device handlers */
             #if defined(__x86_64__)
             const uintptr_t KERNEL_START = 0xFFFFFFFF80000000UL;
             const uintptr_t USERSPACE_MAX = 0x800000000000UL;  /* 128TB */
@@ -126,13 +127,35 @@ long sys_ioctl(int fd, unsigned long request, void *argp) {
             if (argp_val >= 0x1000) {  /* Looks like pointer, not small integer */
                 if (argp_val >= KERNEL_START) {
                     fut_printf("[IOCTL] ioctl(fd=%d, request=0x%lx [%s], argp=%p) -> EFAULT "
-                               "(argp in kernel address space)\n",
+                               "(argp in kernel address space, Phase 5)\n",
                                fd, request, request_name, argp);
                     return -EFAULT;
                 }
                 if (argp_val >= USERSPACE_MAX) {
                     fut_printf("[IOCTL] ioctl(fd=%d, request=0x%lx [%s], argp=%p) -> EFAULT "
-                               "(argp exceeds userspace limit)\n",
+                               "(argp exceeds userspace limit, Phase 5)\n",
+                               fd, request, request_name, argp);
+                    return -EFAULT;
+                }
+            }
+            #elif defined(__aarch64__)
+            /* ARM64 kernel address validation
+             * ARM64 uses split address space with TTBR0_EL1 (user) and TTBR1_EL1 (kernel)
+             * Kernel addresses start at 0xFFFF000000000000 (top 16 bits = 0xFFFF)
+             * Userspace limited to lower 48 bits (0x0000FFFFFFFFFFFF) */
+            const uintptr_t KERNEL_START_ARM64 = 0xFFFF000000000000UL;
+            const uintptr_t USERSPACE_MAX_ARM64 = 0x0001000000000000UL;  /* 48-bit limit */
+
+            if (argp_val >= 0x1000) {  /* Looks like pointer, not small integer */
+                if (argp_val >= KERNEL_START_ARM64) {
+                    fut_printf("[IOCTL] ioctl(fd=%d, request=0x%lx [%s], argp=%p) -> EFAULT "
+                               "(argp in ARM64 kernel address space, Phase 5)\n",
+                               fd, request, request_name, argp);
+                    return -EFAULT;
+                }
+                if (argp_val >= USERSPACE_MAX_ARM64) {
+                    fut_printf("[IOCTL] ioctl(fd=%d, request=0x%lx [%s], argp=%p) -> EFAULT "
+                               "(argp exceeds ARM64 userspace limit, Phase 5)\n",
                                fd, request, request_name, argp);
                     return -EFAULT;
                 }

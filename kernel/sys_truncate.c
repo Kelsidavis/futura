@@ -162,13 +162,44 @@ long sys_truncate(const char *path, uint64_t length) {
         return -ENOENT;
     }
 
-    /* Cannot truncate a directory */
+    /* Phase 5: Validate file type - truncate only works on regular files
+     * POSIX requires -EISDIR for directories, -EINVAL for other non-regular files */
     if (vnode->type == VN_DIR) {
         fut_printf("[TRUNCATE] truncate(path='%s' [%s, len=%lu], vnode_ino=%lu, "
-                   "length=%llu [%s]) -> EISDIR (cannot truncate directory)\n",
+                   "length=%llu [%s]) -> EISDIR (cannot truncate directory, Phase 5)\n",
                    path_buf, path_type, (unsigned long)path_len, vnode->ino,
                    (unsigned long long)local_length, length_category);
         return -EISDIR;
+    }
+
+    /* Phase 5: Validate vnode is a regular file - reject symlinks, devices, FIFOs, sockets */
+    if (vnode->type != VN_REG) {
+        const char *type_desc;
+        switch (vnode->type) {
+            case VN_LNK:
+                type_desc = "symbolic link";
+                break;
+            case VN_CHR:
+                type_desc = "character device";
+                break;
+            case VN_BLK:
+                type_desc = "block device";
+                break;
+            case VN_FIFO:
+                type_desc = "FIFO";
+                break;
+            case VN_SOCK:
+                type_desc = "socket";
+                break;
+            default:
+                type_desc = "non-regular file";
+                break;
+        }
+        fut_printf("[TRUNCATE] truncate(path='%s' [%s, len=%lu], vnode_ino=%lu, type=%s, "
+                   "length=%llu [%s]) -> EINVAL (cannot truncate %s, Phase 5)\n",
+                   path_buf, path_type, (unsigned long)path_len, vnode->ino, type_desc,
+                   (unsigned long long)local_length, length_category, type_desc);
+        return -EINVAL;
     }
 
     /* Phase 2: Store current size for before/after comparison */

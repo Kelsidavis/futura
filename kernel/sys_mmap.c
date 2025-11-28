@@ -29,6 +29,17 @@ long sys_mmap(void *addr, size_t len, int prot, int flags, int fd, long offset) 
         return -EINVAL;
     }
 
+    /* Phase 5: Validate length is within reasonable bounds before overflow arithmetic
+     * Limit to half of address space to prevent integer overflow in subsequent checks.
+     * This ensures len can be safely used in offset+len calculations. */
+    const size_t MAX_MMAP_LEN = (SIZE_MAX / 2);
+    if (len > MAX_MMAP_LEN) {
+        fut_printf("[MMAP] mmap(addr=%p, len=%zu) -> EINVAL "
+                   "(length exceeds maximum %zu, Phase 5)\n",
+                   addr, len, MAX_MMAP_LEN);
+        return -EINVAL;
+    }
+
     /* Phase 5: Validate prot flags don't contain unsupported bits */
     int valid_prot = PROT_NONE | PROT_READ | PROT_WRITE | PROT_EXEC;
     if (prot & ~valid_prot) {
@@ -55,7 +66,7 @@ long sys_mmap(void *addr, size_t len, int prot, int flags, int fd, long offset) 
         return -EINVAL;
     }
 
-    /* Phase 5: Check for offset + len overflow */
+    /* Phase 5: Check for offset + len overflow (now safe since len <= MAX_MMAP_LEN) */
     if (offset > LONG_MAX - (long)len) {
         fut_printf("[MMAP] mmap(addr=%p, len=%zu, offset=%ld) -> EINVAL "
                    "(offset + len would overflow, Phase 5)\n",

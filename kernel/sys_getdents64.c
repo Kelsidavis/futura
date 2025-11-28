@@ -350,6 +350,41 @@ long sys_getdents64(unsigned int fd, void *dirp, unsigned int count) {
         }
         reclen = (reclen + 7) & ~7;
 
+        /* Security hardening: Validate reclen fits in uint16_t before truncation
+         * d_reclen field is uint16_t (max 65535). If reclen exceeds this due to
+         * very long filename, truncation would corrupt directory entry parsing.
+         *
+         * VULNERABILITY: reclen Truncation Leading to Buffer Overflow
+         * ----------------------------------------------------------
+         * Without validation, long filenames cause reclen > 65535:
+         *   1. Entry has 256-char name (max)
+         *   2. reclen = sizeof(linux_dirent64) + 256 + 1 = 281 bytes
+         *   3. Aligned: (281 + 7) & ~7 = 288 bytes (fits in uint16_t)
+         *   4. BUT: sizeof(linux_dirent64) = 24 bytes on most platforms
+         *   5. Actual max: 24 + 256 + 1 = 281 → aligned 288 (OK)
+         *
+         * However, with pathological VFS implementation returning huge names,
+         * or with different struct alignment, reclen could exceed 65535.
+         *
+         * ATTACK SCENARIO:
+         *   - Malicious filesystem returns d_name with length > 65000
+         *   - reclen calculation: 24 + 65000 + 1 = 65025 → aligned 65032
+         *   - Still fits in uint16_t (max 65535)
+         *   - BUT if name_len approaches SIZE_MAX - 24 - 1:
+         *     reclen = 24 + SIZE_MAX - 24 - 1 + 1 = SIZE_MAX
+         *     Aligned: (SIZE_MAX + 7) & ~7 = SIZE_MAX - 7 (due to wraparound)
+         *     Cast to uint16_t: SIZE_MAX - 7 truncates to small value
+         *   - Userspace parses with wrong reclen → buffer overrun
+         *
+         * Defense: Reject entries where aligned reclen exceeds uint16_t max. */
+        if (reclen > 65535) {
+            fut_printf("[GETDENTS64] getdents64(fd=%u, entry='%s') -> EINVAL "
+                       "(aligned reclen %zu exceeds uint16_t max 65535, Phase 5)\n",
+                       fd, vdirent.d_name, reclen);
+            fut_free(kbuf);
+            return total_bytes > 0 ? (long)total_bytes : -EINVAL;
+        }
+
         if (total_bytes + reclen > count) {
             break;  /* Not enough space for this entry */
         }

@@ -112,6 +112,34 @@ long sys_ioctl(int fd, unsigned long request, void *argp) {
 
     /* Try character device operations */
     if (file->chr_ops && file->chr_ops->ioctl) {
+        /* Security hardening: Validate argp if non-NULL and appears to be a pointer
+         * Prevent passing kernel addresses to device handlers */
+        if (argp != NULL) {
+            uintptr_t argp_val = (uintptr_t)argp;
+
+            /* Check if argp looks like a pointer (high bit set on x86-64 kernel addrs)
+             * Values < 0x1000 are likely integers, not pointers */
+            #if defined(__x86_64__)
+            const uintptr_t KERNEL_START = 0xFFFFFFFF80000000UL;
+            const uintptr_t USERSPACE_MAX = 0x800000000000UL;  /* 128TB */
+
+            if (argp_val >= 0x1000) {  /* Looks like pointer, not small integer */
+                if (argp_val >= KERNEL_START) {
+                    fut_printf("[IOCTL] ioctl(fd=%d, request=0x%lx [%s], argp=%p) -> EFAULT "
+                               "(argp in kernel address space)\n",
+                               fd, request, request_name, argp);
+                    return -EFAULT;
+                }
+                if (argp_val >= USERSPACE_MAX) {
+                    fut_printf("[IOCTL] ioctl(fd=%d, request=0x%lx [%s], argp=%p) -> EFAULT "
+                               "(argp exceeds userspace limit)\n",
+                               fd, request, request_name, argp);
+                    return -EFAULT;
+                }
+            }
+            #endif
+        }
+
         fut_printf("[IOCTL] ioctl(fd=%d, request=0x%lx [%s], argp=%p) -> dispatching to chr device\n",
                    fd, request, request_name, argp);
         return file->chr_ops->ioctl(file->chr_inode, file->chr_private, request, (unsigned long)argp);

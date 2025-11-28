@@ -123,7 +123,7 @@ long sys_brk(uintptr_t new_break) {
     #if defined(__x86_64__)
     /* x86-64: Kernel space starts at 0xFFFFFFFF80000000 */
     if (new_break >= 0xFFFFFFFF80000000UL) {
-        fut_printf("[BRK] brk(new_break=0x%lx) -> EINVAL (address in kernel space, Phase 2)\n",
+        fut_printf("[BRK] brk(new_break=0x%lx) -> EINVAL (address in kernel space)\n",
                    new_break);
         return -EINVAL;
     }
@@ -135,6 +135,41 @@ long sys_brk(uintptr_t new_break) {
         return -EINVAL;
     }
     #endif
+
+    /* Security hardening: Validate new_break doesn't cause wraparound with brk_start
+     * Prevent heap allocation into kernel space via integer overflow */
+    if (new_break < brk_start) {
+        /* Valid case: shrinking below start gets clamped, not an overflow */
+    } else {
+        /* Expanding: validate heap_size = new_break - brk_start won't wrap */
+        uintptr_t heap_size = new_break - brk_start;
+
+        /* Validate brk_start + heap_size doesn't wrap around UINTPTR_MAX */
+        if (brk_start > UINTPTR_MAX - heap_size) {
+            fut_printf("[BRK] brk(new_break=0x%lx, brk_start=0x%lx) -> EINVAL "
+                       "(heap size calculation wraps around address space)\n",
+                       new_break, brk_start);
+            return -EINVAL;
+        }
+
+        /* Validate brk_start + heap_size doesn't exceed kernel space boundary
+         * This catches cases where wraparound protection above passes but result still in kernel */
+        #if defined(__x86_64__)
+        if (brk_start + heap_size >= 0xFFFFFFFF80000000UL) {
+            fut_printf("[BRK] brk(new_break=0x%lx, brk_start=0x%lx, heap_size=0x%lx) -> EINVAL "
+                       "(heap would extend into kernel space)\n",
+                       new_break, brk_start, heap_size);
+            return -EINVAL;
+        }
+        #elif defined(__aarch64__)
+        if (brk_start + heap_size >= 0xFFFFFF8000000000UL) {
+            fut_printf("[BRK] brk(new_break=0x%lx, brk_start=0x%lx, heap_size=0x%lx) -> EINVAL "
+                       "(heap would extend into kernel space, ARM64)\n",
+                       new_break, brk_start, heap_size);
+            return -EINVAL;
+        }
+        #endif
+    }
 
     /* Phase 2: Categorize requested change */
     long change = (long)new_break - (long)current;

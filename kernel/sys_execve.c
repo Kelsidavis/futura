@@ -237,8 +237,31 @@ long sys_execve(const char *pathname, char *const argv[], char *const envp[]) {
     if (local_argv) {
         for (int i = 0; i < argc && i < EXEC_ARGC_MAX; i++) {
             if (local_argv[i] == NULL) break;
-            size_t arg_len = 0;
+
+            /* Phase 5: Validate that argv[i] pointer is accessible before dereferencing */
             const char *ptr = local_argv[i];
+            if (fut_access_ok(ptr, EXEC_ARG_LEN_MAX, 0) != 0) {
+                char msg[128];
+                int pos = 0;
+                const char *text = "[EXECVE] execve() -> EFAULT (argv[";
+                while (*text) { msg[pos++] = *text++; }
+                /* Convert i to string */
+                char num[16]; int num_pos = 0;
+                int val = i;
+                if (val == 0) { num[num_pos++] = '0'; }
+                else { char temp[16]; int temp_pos = 0;
+                    while (val > 0) { temp[temp_pos++] = '0' + (val % 10); val /= 10; }
+                    while (temp_pos > 0) { num[num_pos++] = temp[--temp_pos]; } }
+                num[num_pos] = '\0';
+                for (int j = 0; num[j]; j++) { msg[pos++] = num[j]; }
+                text = "] pointer invalid, Phase 5)\n";
+                while (*text) { msg[pos++] = *text++; }
+                msg[pos] = '\0';
+                fut_printf("%s", msg);
+                return -EFAULT;
+            }
+
+            size_t arg_len = 0;
             while (ptr[arg_len] != '\0' && arg_len < EXEC_ARG_LEN_MAX) {
                 arg_len++;
             }
@@ -279,8 +302,31 @@ long sys_execve(const char *pathname, char *const argv[], char *const envp[]) {
     if (local_envp) {
         for (int i = 0; i < envc && i < EXEC_ENVC_MAX; i++) {
             if (local_envp[i] == NULL) break;
-            size_t env_len = 0;
+
+            /* Phase 5: Validate that envp[i] pointer is accessible before dereferencing */
             const char *ptr = local_envp[i];
+            if (fut_access_ok(ptr, EXEC_ARG_LEN_MAX, 0) != 0) {
+                char msg[128];
+                int pos = 0;
+                const char *text = "[EXECVE] execve() -> EFAULT (envp[";
+                while (*text) { msg[pos++] = *text++; }
+                /* Convert i to string */
+                char num[16]; int num_pos = 0;
+                int val = i;
+                if (val == 0) { num[num_pos++] = '0'; }
+                else { char temp[16]; int temp_pos = 0;
+                    while (val > 0) { temp[temp_pos++] = '0' + (val % 10); val /= 10; }
+                    while (temp_pos > 0) { num[num_pos++] = temp[--temp_pos]; } }
+                num[num_pos] = '\0';
+                for (int j = 0; num[j]; j++) { msg[pos++] = num[j]; }
+                text = "] pointer invalid, Phase 5)\n";
+                while (*text) { msg[pos++] = *text++; }
+                msg[pos] = '\0';
+                fut_printf("%s", msg);
+                return -EFAULT;
+            }
+
+            size_t env_len = 0;
             while (ptr[env_len] != '\0' && env_len < EXEC_ARG_LEN_MAX) {
                 env_len++;
             }

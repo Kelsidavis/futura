@@ -272,6 +272,143 @@ long sys_link(const char *oldpath, const char *newpath) {
         new_path_type = "relative";
     }
 
+    /* Security hardening WARNING: TOCTOU Race Condition in link()
+     *
+     * link() has inherent time-of-check-time-of-use vulnerabilities between VFS
+     * lookups and the actual link creation. Multiple threads can race to modify
+     * filesystem state between validation and operation.
+     *
+     * VULNERABILITY: Path Substitution Between Lookup and Link Creation
+     * ------------------------------------------------------------------
+     * Current flow:
+     *   1. sys_link looks up oldpath to validate it exists (line 277)
+     *   2. sys_link validates file type, link count, etc. (lines 313-374)
+     *   3. sys_link looks up newpath to check it doesn't exist (line 438)
+     *   4. sys_link calls vnode->ops->link() to create link (line 464)
+     *   5. VFS layer performs ANOTHER lookup during link creation
+     *
+     * ATTACK SCENARIO 1: Oldpath Symlink Substitution
+     *   Thread A (attacker syscall):
+     *     link("/home/user/safe.txt", "/tmp/link");
+     *   Thread B (concurrent modifier):
+     *     // After oldpath lookup (line 277), before link() call (line 464)
+     *     unlink("/home/user/safe.txt");
+     *     symlink("/etc/shadow", "/home/user/safe.txt");
+     *   Result: Creates hard link to /etc/shadow instead of safe.txt
+     *   Impact: Privilege escalation, password file accessible to attacker
+     *
+     * ATTACK SCENARIO 2: Newpath Race (Existence Check Bypass)
+     *   Thread A:
+     *     link("/file.txt", "/important/config");
+     *   Thread B:
+     *     // After newpath existence check (line 438), before link() call
+     *     link("/malicious", "/important/config");
+     *   Result: Thread A gets -EEXIST, but Thread B may succeed
+     *   Impact: Unintended file replacement, integrity violation
+     *
+     * ATTACK SCENARIO 3: Directory Traversal via Path Manipulation
+     *   Thread A:
+     *     link("/tmp/file", "/safe/link");
+     *   Thread B:
+     *     // After validation, before link() call
+     *     rename("/safe", "/tmp/evil");
+     *     mkdir("/safe");  // Now controlled by attacker
+     *   Result: Link created in attacker-controlled directory
+     *   Impact: Attacker gains access to file via unexpected path
+     *
+     * ATTACK SCENARIO 4: Mount Point Substitution
+     *   Thread A:
+     *     link("/mnt/usb/file", "/mnt/usb/link");
+     *   Thread B:
+     *     // After filesystem check (line 429), before link() call
+     *     umount("/mnt/usb");
+     *     mount("/dev/evil", "/mnt/usb");
+     *   Result: Link created on different filesystem
+     *   Impact: Violates same-filesystem invariant
+     *
+     * WHY MITIGATION IS DIFFICULT:
+     * -----------------------------
+     * 1. Multi-Stage Operation:
+     *    - Path lookup uses VFS layer (resolves symlinks, mounts)
+     *    - Type/permission validation requires vnode metadata
+     *    - Link creation is filesystem-specific operation
+     *    - Each stage can block, allowing concurrent modifications
+     *
+     * 2. VFS Architecture:
+     *    - fut_vfs_lookup() doesn't lock vnodes or paths
+     *    - vnode->ops->link() may perform additional lookups
+     *    - No path-level locking mechanism exists
+     *    - Rename, unlink, mount can change paths at any time
+     *
+     * 3. POSIX Atomicity Requirements:
+     *    - link() should be atomic from caller perspective
+     *    - BUT POSIX doesn't mandate filesystem-level atomicity
+     *    - Concurrent link() calls have undefined ordering
+     *    - Applications responsible for serialization
+     *
+     * PARTIAL MITIGATIONS IN PLACE:
+     * ------------------------------
+     * ✓ Path truncation detection (lines 221-241)
+     * ✓ Identical path check (lines 243-249)
+     * ✓ Directory hard link prevention (lines 366-374)
+     * ✓ Cross-filesystem check (lines 428-434)
+     * ✓ Newpath existence check (lines 436-447)
+     * ✓ Filesystem-level link() validates paths again
+     *
+     * These prevent SOME attack variations but cannot eliminate TOCTOU races.
+     *
+     * PROPER FIXES (Future Work):
+     * ----------------------------
+     * 1. VFS-Level Path Locking:
+     *    - Acquire read lock on oldpath during lookup
+     *    - Acquire write lock on newpath parent directory
+     *    - Hold locks until link() completes
+     *    - Requires per-vnode/per-dentry lock infrastructure
+     *
+     * 2. Atomic Path Resolution and Link:
+     *    - Combine lookup and link into single VFS operation
+     *    - Pass userspace paths directly to filesystem
+     *    - Filesystem resolves and validates atomically
+     *    - Similar to openat() with O_NOFOLLOW
+     *
+     * 3. File Descriptor Based Linking (linkat):
+     *    - Use directory file descriptors instead of paths
+     *    - linkat(old_dirfd, "file", new_dirfd, "link", flags)
+     *    - Reduces but doesn't eliminate TOCTOU window
+     *    - AT_SYMLINK_FOLLOW flag controls symlink behavior
+     *
+     * COMPARISON TO SIMILAR VULNERABILITIES:
+     * --------------------------------------
+     * - CVE-2009-1897: Linux kernel execve() TOCTOU (argv modification)
+     * - CVE-2016-6516: Linux kernel symlink TOCTOU in link()
+     * - CVE-2014-9529: Linux kernel keyring TOCTOU
+     *
+     * POSIX GUIDANCE (IEEE Std 1003.1):
+     *   "If path1 names a symbolic link, a link to the symbolic link
+     *    is created (not to what it points to)."
+     *   "The implementation may require that the calling process has
+     *    permission to access the existing file."
+     *   Does NOT specify atomicity between lookup and link creation.
+     *
+     * DEVELOPER GUIDANCE:
+     * -------------------
+     * Applications MUST serialize link() calls with filesystem operations:
+     *
+     *   flock(dir_fd, LOCK_EX);  // Lock directory
+     *   if (access(oldpath, F_OK) == 0 && access(newpath, F_OK) != 0) {
+     *       link(oldpath, newpath);
+     *   }
+     *   flock(dir_fd, LOCK_UN);
+     *
+     * Better: Use linkat() with AT_SYMLINK_FOLLOW for explicit control:
+     *   int old_dirfd = open("/path/to/dir", O_DIRECTORY);
+     *   int new_dirfd = open("/other/dir", O_DIRECTORY);
+     *   linkat(old_dirfd, "file", new_dirfd, "link", 0);  // No symlink follow
+     *
+     * This vulnerability affects ALL Unix-like systems without VFS-level locking.
+     * It is a fundamental limitation of path-based syscall interfaces.
+     */
+
     /* Phase 3: Lookup oldpath (existing file to hard link to) */
     struct fut_vnode *old_vnode = NULL;
     int old_lookup_ret = fut_vfs_lookup(old_buf, &old_vnode);

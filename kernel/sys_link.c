@@ -240,6 +240,14 @@ long sys_link(const char *oldpath, const char *newpath) {
         return -ENAMETOOLONG;
     }
 
+    /* Phase 5: Validate oldpath and newpath are not identical
+     * Linking a file to itself is invalid and could cause filesystem corruption */
+    if (strcmp(old_buf, new_buf) == 0) {
+        fut_printf("[LINK] link(oldpath='%s', newpath='%s') -> EINVAL "
+                   "(oldpath and newpath are identical, Phase 5)\n", old_buf, new_buf);
+        return -EINVAL;
+    }
+
     /* Phase 2: Categorize oldpath type */
     const char *old_path_type;
     if (old_buf[0] == '/') {

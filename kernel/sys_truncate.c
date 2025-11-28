@@ -202,6 +202,56 @@ long sys_truncate(const char *path, uint64_t length) {
         return -EINVAL;
     }
 
+    /* Security hardening: Check write permission before allowing truncation
+     * truncate() modifies file contents, so write permission is required.
+     * This prevents unauthorized file truncation via path-based access. */
+    fut_task_t *task = fut_task_current();
+    if (!task) {
+        fut_printf("[TRUNCATE] truncate(path='%s', vnode_ino=%lu) -> ESRCH (no current task)\n",
+                   path_buf, vnode->ino);
+        return -ESRCH;
+    }
+
+    /* Check write permission using standard Unix permission model:
+     * - Root (uid=0) can always write
+     * - Owner checks owner write bit (0200)
+     * - Group member checks group write bit (0020)
+     * - Others check other write bit (0002) */
+    uint32_t task_uid = task->uid;
+    uint32_t task_gid = task->gid;
+    int has_write_perm = 0;
+
+    if (task_uid == 0) {
+        /* Root can truncate any file */
+        has_write_perm = 1;
+    } else if (task_uid == vnode->uid) {
+        /* Owner - check owner write permission */
+        has_write_perm = (vnode->mode & 0200) != 0;
+    } else if (task_gid == vnode->gid) {
+        /* Group member - check group write permission */
+        has_write_perm = (vnode->mode & 0020) != 0;
+    } else {
+        /* Other - check other write permission */
+        has_write_perm = (vnode->mode & 0002) != 0;
+    }
+
+    if (!has_write_perm) {
+        const char *denial_reason;
+        if (task_uid == vnode->uid) {
+            denial_reason = "owner lacks write permission";
+        } else if (task_gid == vnode->gid) {
+            denial_reason = "group lacks write permission";
+        } else {
+            denial_reason = "other lacks write permission";
+        }
+
+        fut_printf("[TRUNCATE] truncate(path='%s' [%s], vnode_ino=%lu, mode=0%o, "
+                   "task_uid=%u, vnode_uid=%u, task_gid=%u, vnode_gid=%u) -> EACCES (%s)\n",
+                   path_buf, path_type, vnode->ino, vnode->mode,
+                   task_uid, vnode->uid, task_gid, vnode->gid, denial_reason);
+        return -EACCES;
+    }
+
     /* Phase 2: Store current size for before/after comparison */
     uint64_t current_size = vnode->size;
 

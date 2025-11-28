@@ -89,17 +89,22 @@ long sys_poll(struct pollfd *fds, unsigned long nfds, int timeout) {
         return -EINVAL;
     }
 
-    /* Phase 5: Check for integer overflow in size calculation (prevent allocation DoS) */
-    /* Validate size_t multiplication: nfds * sizeof(struct pollfd)
-     * Check before performing multiplication to prevent overflow */
-    size_t size = nfds * sizeof(struct pollfd);
-
-    /* Overflow detection: if (size / sizeof(struct pollfd)) != nfds, then overflow occurred */
-    if (size / sizeof(struct pollfd) != nfds) {
-        fut_printf("[POLL] poll(fds, %lu, %d) -> EINVAL (nfds * sizeof(pollfd) would overflow, Phase 5)\n",
-                   nfds, timeout);
+    /* Phase 5: Check for integer overflow in size calculation (prevent allocation DoS)
+     * CRITICAL: Check BEFORE multiplication to avoid wraparound
+     * Vulnerable pattern: size = nfds * sizeof(pollfd); if (size / sizeof(pollfd) != nfds)
+     *   - If nfds = SIZE_MAX / sizeof(pollfd) + 1, multiplication wraps to small value
+     *   - Division check: (small / sizeof(pollfd)) != nfds passes when it shouldn't
+     *   - Then fut_malloc(small) succeeds, but loop at line 133 reads beyond buffer
+     * Defense: Validate nfds <= SIZE_MAX / sizeof(pollfd) BEFORE multiplication */
+    if (nfds > SIZE_MAX / sizeof(struct pollfd)) {
+        fut_printf("[POLL] poll(fds, %lu, %d) -> EINVAL "
+                   "(nfds exceeds max safe %zu, would cause overflow, Phase 5)\n",
+                   nfds, timeout, SIZE_MAX / sizeof(struct pollfd));
         return -EINVAL;
     }
+
+    /* Now safe to multiply since overflow is impossible */
+    size_t size = nfds * sizeof(struct pollfd);
 
     /* Allocate kernel buffer for pollfd array */
     struct pollfd *kfds = fut_malloc(size);

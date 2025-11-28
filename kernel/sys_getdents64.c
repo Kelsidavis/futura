@@ -326,8 +326,28 @@ long sys_getdents64(unsigned int fd, void *dirp, unsigned int count) {
             name_len++;
         }
 
+        /* Phase 5: Validate reclen calculation won't overflow
+         * Prevent integer overflow when calculating entry size */
+        if (name_len > SIZE_MAX - sizeof(struct linux_dirent64) - 1) {
+            fut_printf("[GETDENTS64] getdents64(fd=%u) -> EINVAL "
+                       "(name_len %zu would overflow reclen calculation, Phase 5)\n",
+                       fd, name_len);
+            fut_free(kbuf);
+            return total_bytes > 0 ? (long)total_bytes : -EINVAL;
+        }
+
         /* Align to 8-byte boundary for next entry */
         size_t reclen = sizeof(struct linux_dirent64) + name_len + 1;
+
+        /* Phase 5: Validate aligned reclen won't overflow or exceed bounds
+         * Ensure rounding up to 8-byte alignment doesn't overflow */
+        if (reclen > SIZE_MAX - 7) {
+            fut_printf("[GETDENTS64] getdents64(fd=%u) -> EINVAL "
+                       "(reclen %zu too large for 8-byte alignment, Phase 5)\n",
+                       fd, reclen);
+            fut_free(kbuf);
+            return total_bytes > 0 ? (long)total_bytes : -EINVAL;
+        }
         reclen = (reclen + 7) & ~7;
 
         if (total_bytes + reclen > count) {

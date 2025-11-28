@@ -178,7 +178,16 @@ long sys_accept(int sockfd, void *addr, socklen_t *addrlen) {
             return -EFAULT;
         }
 
-        /* Phase 2: Categorize buffer size */
+        /* Phase 5: IMMEDIATE bounds validation after copy to prevent TOCTOU
+         * Validate BEFORE any categorization or other operations */
+        if (len > 1024) {
+            fut_printf("[ACCEPT] accept(local_sockfd=%d, local_addrlen=%u) -> EINVAL "
+                       "(excessive address length, max 1024 bytes, Phase 5 TOCTOU protection)\n",
+                       local_sockfd, len);
+            return -EINVAL;
+        }
+
+        /* Phase 2: Categorize buffer size (safe after bounds check) */
         const char *buffer_size_category;
         if (len == 0) {
             buffer_size_category = "zero (no space)";
@@ -188,18 +197,12 @@ long sys_accept(int sockfd, void *addr, socklen_t *addrlen) {
             buffer_size_category = "typical (sockaddr_un)";
         } else if (len < 256) {
             buffer_size_category = "large (generous buffer)";
-        } else if (len <= 1024) {
-            buffer_size_category = "very large (≤1 KB)";
         } else {
-            buffer_size_category = "excessive (>1 KB)";
+            buffer_size_category = "very large (≤1 KB)";
         }
 
-        /* Phase 2: Sanity check on local_addrlen */
-        if (len > 1024) {
-            fut_printf("[ACCEPT] accept(local_sockfd=%d, local_addrlen=%u [%s]) -> EINVAL (excessive address length)\n",
-                       local_sockfd, len, buffer_size_category);
-            return -EINVAL;
-        }
+        /* Categorization for logging only - bounds already checked */
+        (void)buffer_size_category;
     }
 
     /* Get listening socket from FD */

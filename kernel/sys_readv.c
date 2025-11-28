@@ -240,11 +240,16 @@ ssize_t sys_readv(int fd, const struct iovec *iov, int iovcnt) {
     const size_t MAX_TOTAL_SIZE = 16 * 1024 * 1024;  /* 16 MB limit per readv */
 
     for (int i = 0; i < iovcnt; i++) {
-        /* Check for overflow */
-        if (total_size + kernel_iov[i].iov_len < total_size) {
+        /* Phase 5: Check for overflow BEFORE addition to prevent SIZE_MAX edge case
+         * Vulnerable pattern: if (total_size + iov_len < total_size)
+         *   - When total_size == SIZE_MAX, adding any value wraps but check may pass
+         *   - Need to validate total_size != SIZE_MAX before addition
+         * Defense: Check SIZE_MAX explicitly and validate addition won't overflow */
+        if (total_size == SIZE_MAX ||
+            kernel_iov[i].iov_len > SIZE_MAX - total_size) {
             fut_printf("[READV] readv(fd=%d, iov=%p, iovcnt=%d) -> EINVAL "
-                       "(size overflow at iovec %d, Phase 5)\n",
-                       fd, iov, iovcnt, i);
+                       "(size overflow at iovec %d, total=%zu, iov_len=%zu, Phase 5)\n",
+                       fd, iov, iovcnt, i, total_size, kernel_iov[i].iov_len);
             fut_free(kernel_iov);
             return -EINVAL;
         }

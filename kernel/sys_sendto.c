@@ -241,6 +241,18 @@ ssize_t sys_sendto(int sockfd, const void *buf, size_t len, int flags,
         return -EINVAL;
     }
 
+    /* Phase 5: Validate dest_addr buffer is readable before using it
+     * Prevents kernel page fault from invalid userspace pointer */
+    if (local_dest_addr && local_addrlen > 0) {
+        uint8_t addr_test_byte;
+        if (fut_copy_from_user(&addr_test_byte, local_dest_addr, 1) != 0) {
+            fut_printf("[SENDTO] sendto(sockfd=%d [%s], dest_addr=%p, addrlen=%u) -> EFAULT "
+                       "(destination address not readable, Phase 5)\n",
+                       local_sockfd, fd_category, local_dest_addr, local_addrlen);
+            return -EFAULT;
+        }
+    }
+
     /* Validate buf */
     if (!local_buf) {
         fut_printf("[SENDTO] sendto(sockfd=%d [%s], buf=NULL, len=%zu, pid=%u) -> EINVAL "

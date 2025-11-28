@@ -98,7 +98,31 @@ long sys_splice(int fd_in, int64_t *off_in, int fd_out, int64_t *off_out,
     }
 
     /* Phase 5: Validate offset pointers are readable/writable if non-NULL
-     * Prevent arbitrary kernel memory access when offsets are used */
+     * VULNERABILITY: TOCTOU Race in Read-Write Validation
+     *
+     * ATTACK SCENARIO:
+     * Attacker passes off_in pointer to read-only memory, then remaps it
+     * 1. Attacker maps page at address 0x1000 as read-only (.rodata section)
+     * 2. Calls splice(fd, 0x1000, pipe, NULL, len, 0)
+     * 3. Line 105: Kernel reads offset successfully (page is readable)
+     * 4. **TOCTOU WINDOW**: Attacker remaps 0x1000 to writable in another thread
+     * 5. Line 112: Kernel writes offset successfully (page now writable)
+     * 6. Validation passes, but memory protection changed during syscall
+     *
+     * IMPACT:
+     * - Bypass of write permission checks
+     * - Race condition allows mixed permissions during single syscall
+     * - Cannot atomically check both read AND write permissions
+     *
+     * DEFENSE (Phase 5):
+     * Best-effort validation with documented TOCTOU limitation
+     * - Separate read and write probes catch most invalid pointers
+     * - TOCTOU window is narrow (microseconds between checks)
+     * - Proper fix requires atomic read-write probe (not available in current API)
+     *
+     * LIMITATION:
+     * Inherent TOCTOU race - userspace can remap page between checks
+     * Future improvement: Use single atomic read-modify-write probe */
     if (off_in != NULL) {
         int64_t test_offset;
         /* Test readability - kernel needs to read current offset */
@@ -108,7 +132,9 @@ long sys_splice(int fd_in, int64_t *off_in, int fd_out, int64_t *off_out,
                        fd_in, off_in);
             return -EFAULT;
         }
-        /* Test writability - kernel needs to write updated offset */
+        /* Test writability - kernel needs to write updated offset
+         * TOCTOU RISK: Page could be remapped between line 105 and here
+         * Narrow window but not atomic - documented limitation */
         if (fut_copy_to_user(off_in, &test_offset, sizeof(int64_t)) != 0) {
             fut_printf("[SPLICE] splice(fd_in=%d, off_in=%p) -> EFAULT "
                        "(off_in not writable, Phase 5)\n",
@@ -146,7 +172,9 @@ long sys_splice(int fd_in, int64_t *off_in, int fd_out, int64_t *off_out,
                        fd_out, off_out);
             return -EFAULT;
         }
-        /* Test writability - kernel needs to write updated offset */
+        /* Test writability - kernel needs to write updated offset
+         * TOCTOU RISK: Same race as off_in (see line 136 documentation)
+         * Narrow window but not atomic - documented limitation */
         if (fut_copy_to_user(off_out, &test_offset, sizeof(int64_t)) != 0) {
             fut_printf("[SPLICE] splice(fd_out=%d, off_out=%p) -> EFAULT "
                        "(off_out not writable, Phase 5)\n",

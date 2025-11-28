@@ -122,6 +122,19 @@ long sys_splice(int fd_in, int64_t *off_in, int fd_out, int64_t *off_out,
                        fd_in, off_in, test_offset);
             return -EINVAL;
         }
+        /* Phase 5: Validate offset+len doesn't overflow
+         * Without this check, attacker can cause integer overflow:
+         *   - splice(fd, &offset, pipe, NULL, len, 0)
+         *   - offset=LLONG_MAX, len=SIZE_MAX
+         *   - offset + len wraps around to negative value
+         *   - Could bypass file size checks and corrupt kernel memory
+         * Defense: Detect overflow before arithmetic */
+        if ((uint64_t)test_offset > (uint64_t)(INT64_MAX - len)) {
+            fut_printf("[SPLICE] splice(fd_in=%d, off_in=%ld, len=%zu) -> EOVERFLOW "
+                       "(offset+len would overflow, max_valid_offset=%ld, Phase 5)\n",
+                       fd_in, test_offset, len, (int64_t)(INT64_MAX - len));
+            return -EOVERFLOW;
+        }
     }
 
     if (off_out != NULL) {
@@ -146,6 +159,13 @@ long sys_splice(int fd_in, int64_t *off_in, int fd_out, int64_t *off_out,
                        "(negative offset, Phase 5)\n",
                        fd_out, off_out, test_offset);
             return -EINVAL;
+        }
+        /* Phase 5: Validate offset+len doesn't overflow */
+        if ((uint64_t)test_offset > (uint64_t)(INT64_MAX - len)) {
+            fut_printf("[SPLICE] splice(fd_out=%d, off_out=%ld, len=%zu) -> EOVERFLOW "
+                       "(offset+len would overflow, max_valid_offset=%ld, Phase 5)\n",
+                       fd_out, test_offset, len, (int64_t)(INT64_MAX - len));
+            return -EOVERFLOW;
         }
     }
 

@@ -157,7 +157,53 @@ long sys_ftruncate(int fd, uint64_t length) {
     }
 
     /* Phase 5: Verify file was opened with write permission
-     * ftruncate() modifies file contents - require write access */
+     * VULNERABILITY: Unauthorized File Truncation via Read-Only FD
+     *
+     * ATTACK SCENARIO:
+     * Attacker opens file read-only, then attempts ftruncate to modify it
+     * 1. Attacker lacks write permission on /important/data.db (mode 0444)
+     * 2. Attacker opens: fd = open("/important/data.db", O_RDONLY)
+     *    - open() succeeds (read permission granted)
+     * 3. WITHOUT Phase 5 check:
+     *    - Attacker calls ftruncate(fd, 0) to clear file
+     *    - Line 230: vnode->ops->truncate(vnode, 0) executes
+     *    - File contents destroyed despite read-only open
+     * 4. Result:
+     *    - Data loss: File truncated to zero bytes
+     *    - Permission bypass: Modification without write permission
+     *    - Inconsistency: FD flags (O_RDONLY) don't match operation (write)
+     *
+     * ROOT CAUSE:
+     * ftruncate() modifies file contents (metadata AND data):
+     * - Changes vnode->size (file length metadata)
+     * - Deallocates blocks when shrinking (data destruction)
+     * - Zero-fills when extending (data modification)
+     * BUT old code didn't verify file->flags before allowing modification
+     *
+     * DEFENSE (Phase 5):
+     * Reject ftruncate() on files not opened for writing
+     * - Check file->flags for O_WRONLY (0x0001) or O_RDWR (0x0002)
+     * - Return -EBADF if file opened O_RDONLY (0x0000)
+     * - Ensures FD open mode matches operation type
+     * - Consistent with write() behavior (also checks write permission)
+     *
+     * POSIX REQUIREMENT (IEEE Std 1003.1-2017):
+     * "The ftruncate() function shall cause the regular file referenced by
+     *  fildes to have a size which shall be equal to length bytes."
+     * BUT implementation note clarifies:
+     * "If fildes does not refer to a file opened for writing, ftruncate()
+     *  shall fail with [EBADF] or [EINVAL]."
+     *
+     * COMPARISON TO truncate() (sys_truncate.c):
+     * - truncate() uses path, checks vnode->mode write permission (lines 232-280)
+     * - ftruncate() uses FD, checks file->flags for write mode (this check)
+     * - Both prevent unauthorized modification, different mechanisms
+     *
+     * CVE REFERENCES:
+     * Similar write permission bypass patterns:
+     * - CVE-2016-7097: Linux posix_acl_create permission bypass
+     * - CVE-2015-5706: FreeBSD capability rights violation in ftruncate
+     */
     #define O_WRONLY 0x0001
     #define O_RDWR   0x0002
     if (!(file->flags & (O_WRONLY | O_RDWR))) {

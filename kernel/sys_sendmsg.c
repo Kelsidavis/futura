@@ -208,10 +208,24 @@ ssize_t sys_sendmsg(int sockfd, const struct msghdr *msg, int flags) {
             return -EINVAL;
         }
 
-        /* Check for overflow */
-        if (total_size + iov.iov_len < total_size) {
-            fut_printf("[SENDMSG] sendmsg(sockfd=%d, iovlen=%zu) -> EINVAL (size overflow at iovec %zu)\n",
-                       local_sockfd, kmsg.msg_iovlen, i);
+        /* Phase 5: Prevent integer overflow in total_size accumulation
+         * Check BEFORE addition to handle SIZE_MAX edge case correctly
+         * Previous vulnerable pattern: if (total_size + iov_len < total_size)
+         *   - When total_size == SIZE_MAX, any addition wraps but check may pass
+         *   - Need explicit SIZE_MAX check before arithmetic
+         *
+         * ATTACK SCENARIO:
+         * Attacker with iovcnt=1024, iov_len=16MB each = 16GB total_size
+         * Without SIZE_MAX check: total_size wraps at SIZE_MAX boundary
+         * With MAX_IOV_SIZE limit: Still possible to reach SIZE_MAX with 256 iovecs of 16MB
+         *
+         * DEFENSE:
+         * Check BEFORE addition: if (total_size == SIZE_MAX || iov_len > SIZE_MAX - total_size)
+         * Prevents wraparound even when approaching SIZE_MAX limit */
+        if (total_size == SIZE_MAX || iov.iov_len > SIZE_MAX - total_size) {
+            fut_printf("[SENDMSG] sendmsg(sockfd=%d, iovlen=%zu) -> EINVAL "
+                       "(size overflow at iovec %zu, total=%zu, iov_len=%zu, Phase 5)\n",
+                       local_sockfd, kmsg.msg_iovlen, i, total_size, iov.iov_len);
             return -EINVAL;
         }
         total_size += iov.iov_len;

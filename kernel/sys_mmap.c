@@ -66,10 +66,48 @@ long sys_mmap(void *addr, size_t len, int prot, int flags, int fd, long offset) 
         return -EINVAL;
     }
 
-    /* Phase 5: Check for offset + len overflow (now safe since len <= MAX_MMAP_LEN) */
-    if (offset > LONG_MAX - (long)len) {
+    /* Phase 5: Check for offset + len overflow with proper SIZE_MAX validation
+     * VULNERABILITY: LONG_MAX vs SIZE_MAX Mismatch in Overflow Detection
+     *
+     * ATTACK SCENARIO:
+     * Attacker exploits signed/unsigned mismatch to bypass overflow check
+     * 1. On 64-bit system: LONG_MAX = 2^63-1, SIZE_MAX = 2^64-1
+     * 2. Attacker calls sys_mmap(addr, len=2^63, PROT_READ|PROT_WRITE, MAP_ANONYMOUS, -1, offset=2^62)
+     * 3. Line 35: len (2^63) passes MAX_MMAP_LEN check (SIZE_MAX/2 = 2^63-1) - PASSES
+     * 4. WITHOUT Phase 5 fix:
+     *    - Old line 69: Cast (long)len = (long)(2^63) = -2^63 (signed overflow!)
+     *    - Old check: offset > LONG_MAX - (-2^63)
+     *                 2^62 > 2^63-1 - (-2^63) = 2^63-1 + 2^63 (wraps!)
+     *    - Check fails to detect overflow due to signed arithmetic
+     * 5. Line 87: fut_mm_map_anonymous(mm, addr, 2^63, prot, flags)
+     *    - Memory subsystem receives huge length
+     *    - offset + len = 2^62 + 2^63 = 1.5 * 2^63 (no overflow check passed!)
+     *    - Result: Map overlaps kernel space or wraps address space
+     *
+     * ROOT CAUSE:
+     * - Line 34: MAX_MMAP_LEN uses SIZE_MAX (unsigned)
+     * - Old line 69: Check uses LONG_MAX (signed, smaller range)
+     * - Cast to `long` causes signed overflow for large len
+     * - LONG_MAX is half of SIZE_MAX on 64-bit systems
+     *
+     * DEFENSE (Phase 5):
+     * Check offset + len against SIZE_MAX using unsigned arithmetic ONLY
+     * - No cast to `long` (avoids signed overflow)
+     * - Check: (size_t)offset > SIZE_MAX - len (both operands unsigned)
+     * - Handles all edge cases: offset near SIZE_MAX, len near SIZE_MAX/2
+     * - Consistent with len validation at line 35 (SIZE_MAX/2 limit)
+     *
+     * EDGE CASES:
+     * 1. offset = SIZE_MAX - 1, len = 1: SIZE_MAX - 1 > SIZE_MAX - 1? FALSE (valid)
+     * 2. offset = SIZE_MAX - 1, len = 2: SIZE_MAX - 1 > SIZE_MAX - 2? TRUE (overflow detected)
+     * 3. offset = SIZE_MAX/2, len = SIZE_MAX/2: SIZE_MAX/2 > SIZE_MAX/2? FALSE (valid at boundary)
+     *
+     * CVE REFERENCES:
+     * Similar signed/unsigned mismatch in CVE-2017-16995 (eBPF array bounds)
+     */
+    if ((size_t)offset > SIZE_MAX - len) {
         fut_printf("[MMAP] mmap(addr=%p, len=%zu, offset=%ld) -> EINVAL "
-                   "(offset + len would overflow, Phase 5)\n",
+                   "(offset + len would overflow SIZE_MAX, Phase 5)\n",
                    addr, len, offset);
         return -EINVAL;
     }

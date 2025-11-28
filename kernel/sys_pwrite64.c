@@ -126,6 +126,19 @@ long sys_pwrite64(unsigned int fd, const void *buf, size_t count, int64_t offset
         return -EINVAL;
     }
 
+    /* Phase 5: Prevent offset+count overflow
+     * Without this check, attacker can cause integer overflow:
+     *   - pwrite64(fd, buf, SIZE_MAX, LLONG_MAX)
+     *   - offset + count wraps around to negative value
+     *   - Could bypass file size checks and corrupt kernel memory
+     * Defense: Detect overflow before arithmetic (matching pread64 validation) */
+    if (offset > INT64_MAX - (int64_t)count) {
+        fut_printf("[PWRITE64] pwrite64(fd=%u, count=%zu, offset=%ld) -> EOVERFLOW "
+                   "(offset+count would overflow, max_valid_offset=%ld, Phase 5)\n",
+                   fd, count, offset, (int64_t)(INT64_MAX - count));
+        return -EOVERFLOW;
+    }
+
     /* Phase 2: Get current task for FD table access */
     fut_task_t *task = fut_task_current();
     if (!task) {

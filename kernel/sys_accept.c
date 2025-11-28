@@ -169,7 +169,35 @@ long sys_accept(int sockfd, void *addr, socklen_t *addrlen) {
         addr_request = "local_addrlen without local_addr (unusual)";
     }
 
-    /* Phase 2: If local_addrlen provided, validate it */
+    /* Phase 5: TOCTOU Protection - Copy addrlen to kernel memory atomically
+     * VULNERABILITY: Time-of-Check-Time-of-Use on addrlen parameter
+     *
+     * ATTACK SCENARIO:
+     * Concurrent threads exploit addrlen value-result parameter
+     *
+     * Thread 1 (attacker - accept call):
+     * - accept(sockfd, &addr, &addrlen)
+     * - Kernel copies addrlen = 128 from userspace (line 175)
+     * - Kernel validates len <= 1024 (passes)
+     *
+     * Thread 2 (attacker - concurrent modifier):
+     * - Waits for Thread 1 to pass validation
+     * - Modifies addrlen to 0xFFFFFFFF (4GB)
+     *
+     * Thread 1 continues:
+     * - Kernel writes back to addrlen at line 313
+     * - Uses cached len value, but userspace now has 0xFFFFFFFF
+     * - Application reads corrupted addrlen value
+     * - Buffer overflow when parsing address structure
+     * - Information disclosure, potential RCE
+     *
+     * DEFENSE:
+     * 1. Copy addrlen once to kernel memory (line 175)
+     * 2. Validate immediately (line 183-188)
+     * 3. Use kernel copy for ALL subsequent operations
+     * 4. Never re-read from userspace
+     * 5. Write back to userspace only at end (line 313)
+     */
     socklen_t len = 0;
     if (local_addrlen != NULL) {
         if (fut_copy_from_user(&len, local_addrlen, sizeof(socklen_t)) != 0) {
@@ -179,7 +207,8 @@ long sys_accept(int sockfd, void *addr, socklen_t *addrlen) {
         }
 
         /* Phase 5: IMMEDIATE bounds validation after copy to prevent TOCTOU
-         * Validate BEFORE any categorization or other operations */
+         * Validate BEFORE any categorization or other operations
+         * Standard sockaddr_storage is 128 bytes, 1024 is generous upper bound */
         if (len > 1024) {
             fut_printf("[ACCEPT] accept(local_sockfd=%d, local_addrlen=%u) -> EINVAL "
                        "(excessive address length, max 1024 bytes, Phase 5 TOCTOU protection)\n",

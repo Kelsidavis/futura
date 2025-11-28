@@ -169,14 +169,27 @@ long sys_connect(int sockfd, const void *addr, socklen_t addrlen) {
         return -EINVAL;
     }
 
-    /* Copy Unix domain socket path from userspace */
-    char sock_path[256];
+    /* Security hardening: Validate path length BEFORE copying to prevent truncation attacks
+     * Silent truncation could allow connecting to unintended sockets */
     size_t path_len = local_addrlen - 2;  /* Subtract family field */
 
+    /* Unix domain socket maximum path length (108 bytes on most systems) */
+    #define UNIX_PATH_MAX 108
+    if (path_len > UNIX_PATH_MAX) {
+        fut_printf("[CONNECT] connect(sockfd=%d, family=%s, path_len=%zu) -> ENAMETOOLONG "
+                   "(exceeds UNIX_PATH_MAX %d bytes)\n",
+                   local_sockfd, family_name, path_len, UNIX_PATH_MAX);
+        return -ENAMETOOLONG;
+    }
+
+    /* Copy Unix domain socket path from userspace */
+    char sock_path[256];
+
     if (path_len > sizeof(sock_path) - 1) {
-        fut_printf("[CONNECT] connect(sockfd=%d, family=%s, path_len=%zu) -> ENAMETOOLONG (max %zu bytes)\n",
+        fut_printf("[CONNECT] connect(sockfd=%d, family=%s, path_len=%zu) -> ENAMETOOLONG "
+                   "(exceeds kernel buffer %zu bytes)\n",
                    local_sockfd, family_name, path_len, sizeof(sock_path) - 1);
-        path_len = sizeof(sock_path) - 1;  /* Truncate */
+        return -ENAMETOOLONG;
     }
 
     if (path_len > 0) {

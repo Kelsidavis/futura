@@ -379,6 +379,21 @@ ssize_t sys_pwritev(int fd, const struct iovec *iov, int iovcnt, int64_t offset)
         }
 
         total_written += n;
+
+        /* Phase 5: Check for offset overflow before incrementing
+         * If current_offset + n would overflow INT64_MAX, stop writing to prevent
+         * wraparound to negative values which could cause data corruption */
+        if (n > 0 && current_offset > INT64_MAX - n) {
+            fut_free(kernel_iov);
+            if (total_written > 0) {
+                /* Return bytes successfully written before overflow would occur */
+                break;
+            }
+            fut_printf("[PWRITEV] pwritev(fd=%d, iov=%p, iovcnt=%d, offset=%ld) -> EOVERFLOW "
+                       "(offset would overflow INT64_MAX after writing %zd bytes, Phase 5)\n",
+                       fd, iov, iovcnt, offset, n);
+            return -EOVERFLOW;
+        }
         current_offset += n;
         iovecs_written++;
 

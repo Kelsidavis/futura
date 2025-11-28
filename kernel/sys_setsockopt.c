@@ -362,14 +362,89 @@ long sys_setsockopt(int sockfd, int level, int optname, const void *optval, sock
 
             case SO_RCVLOWAT:
             case SO_SNDLOWAT:
+                /* Low-water mark options - require int value
+                 * Phase 5: Validate optlen matches expected size */
+                {
+                    if (optlen < sizeof(int)) {
+                        fut_printf("[SETSOCKOPT] setsockopt(sockfd=%d, SOL_SOCKET, optname=%d, optlen=%u) -> EINVAL "
+                                   "(optlen too small, expected %zu bytes, Phase 5)\n",
+                                   sockfd, optname, optlen, sizeof(int));
+                        return -EINVAL;
+                    }
+                    int value;
+                    if (fut_copy_from_user(&value, optval, sizeof(int)) != 0) {
+                        return -EFAULT;
+                    }
+                    fut_printf("[SETSOCKOPT] setsockopt(sockfd=%d, SOL_SOCKET, optname=%d, value=%d) -> ENOPROTOOPT (not yet implemented)\n",
+                               sockfd, optname, value);
+                    return -ENOPROTOOPT;
+                }
+
             case SO_RCVTIMEO:
             case SO_SNDTIMEO:
+                /* Timeout options - require struct timeval
+                 * Phase 5: Validate optlen matches struct timeval size */
+                {
+                    struct timeval {
+                        long tv_sec;
+                        long tv_usec;
+                    };
+                    if (optlen < sizeof(struct timeval)) {
+                        fut_printf("[SETSOCKOPT] setsockopt(sockfd=%d, SOL_SOCKET, optname=%d, optlen=%u) -> EINVAL "
+                                   "(optlen too small for struct timeval, expected %zu bytes, Phase 5)\n",
+                                   sockfd, optname, optlen, sizeof(struct timeval));
+                        return -EINVAL;
+                    }
+                    struct timeval tv;
+                    if (fut_copy_from_user(&tv, optval, sizeof(struct timeval)) != 0) {
+                        return -EFAULT;
+                    }
+                    fut_printf("[SETSOCKOPT] setsockopt(sockfd=%d, SOL_SOCKET, optname=%d, tv_sec=%ld, tv_usec=%ld) -> ENOPROTOOPT (not yet implemented)\n",
+                               sockfd, optname, tv.tv_sec, tv.tv_usec);
+                    return -ENOPROTOOPT;
+                }
+
             case SO_LINGER:
+                /* Linger option - requires struct linger
+                 * Phase 5: Validate optlen matches struct linger size */
+                {
+                    struct linger {
+                        int l_onoff;
+                        int l_linger;
+                    };
+                    if (optlen < sizeof(struct linger)) {
+                        fut_printf("[SETSOCKOPT] setsockopt(sockfd=%d, SOL_SOCKET, SO_LINGER, optlen=%u) -> EINVAL "
+                                   "(optlen too small for struct linger, expected %zu bytes, Phase 5)\n",
+                                   sockfd, optlen, sizeof(struct linger));
+                        return -EINVAL;
+                    }
+                    struct linger ling;
+                    if (fut_copy_from_user(&ling, optval, sizeof(struct linger)) != 0) {
+                        return -EFAULT;
+                    }
+                    fut_printf("[SETSOCKOPT] setsockopt(sockfd=%d, SOL_SOCKET, SO_LINGER, l_onoff=%d, l_linger=%d) -> ENOPROTOOPT (not yet implemented)\n",
+                               sockfd, ling.l_onoff, ling.l_linger);
+                    return -ENOPROTOOPT;
+                }
+
             case SO_TIMESTAMP:
-                /* Advanced options not yet implemented */
-                fut_printf("[SETSOCKOPT] setsockopt(sockfd=%d, SOL_SOCKET, optname=%d) -> ENOPROTOOPT (not yet implemented)\n",
-                           sockfd, optname);
-                return -ENOPROTOOPT;
+                /* Timestamp option - requires int value
+                 * Phase 5: Validate optlen matches expected size */
+                {
+                    if (optlen < sizeof(int)) {
+                        fut_printf("[SETSOCKOPT] setsockopt(sockfd=%d, SOL_SOCKET, SO_TIMESTAMP, optlen=%u) -> EINVAL "
+                                   "(optlen too small, expected %zu bytes, Phase 5)\n",
+                                   sockfd, optlen, sizeof(int));
+                        return -EINVAL;
+                    }
+                    int value;
+                    if (fut_copy_from_user(&value, optval, sizeof(int)) != 0) {
+                        return -EFAULT;
+                    }
+                    fut_printf("[SETSOCKOPT] setsockopt(sockfd=%d, SOL_SOCKET, SO_TIMESTAMP, value=%d) -> ENOPROTOOPT (not yet implemented)\n",
+                               sockfd, value);
+                    return -ENOPROTOOPT;
+                }
 
             default:
                 /* Unknown option */

@@ -238,6 +238,24 @@ ssize_t sys_sendmsg(int sockfd, const struct msghdr *msg, int flags) {
             continue;
         }
 
+        /* Phase 5: Validate iov_base pointer before allocating memory
+         * Prevents memory exhaustion DoS from repeated invalid pointers */
+        if (!iov.iov_base) {
+            fut_printf("[SENDMSG] sendmsg(sockfd=%d) -> EFAULT "
+                       "(iov_base[%zu] is NULL with non-zero length %zu, Phase 5)\n",
+                       local_sockfd, i, iov.iov_len);
+            return total_sent > 0 ? total_sent : -EFAULT;
+        }
+
+        /* Phase 5: Validate iov_base is readable before allocating kernel buffer */
+        uint8_t test_byte;
+        if (fut_copy_from_user(&test_byte, iov.iov_base, 1) != 0) {
+            fut_printf("[SENDMSG] sendmsg(sockfd=%d) -> EFAULT "
+                       "(iov_base[%zu] not accessible, len=%zu, Phase 5)\n",
+                       local_sockfd, i, iov.iov_len);
+            return total_sent > 0 ? total_sent : -EFAULT;
+        }
+
         /* Allocate kernel buffer */
         void *kbuf = fut_malloc(iov.iov_len);
         if (!kbuf) {

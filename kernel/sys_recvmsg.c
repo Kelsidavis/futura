@@ -236,6 +236,25 @@ ssize_t sys_recvmsg(int sockfd, struct msghdr *msg, int flags) {
             continue;
         }
 
+        /* Phase 5: Validate iov_base pointer before allocating memory
+         * Prevents memory exhaustion DoS from repeated invalid pointers */
+        if (!iov.iov_base) {
+            fut_printf("[RECVMSG] recvmsg(sockfd=%d) -> EFAULT "
+                       "(iov_base[%zu] is NULL with non-zero length %zu, Phase 5)\n",
+                       local_sockfd, i, iov.iov_len);
+            return total_received > 0 ? total_received : -EFAULT;
+        }
+
+        /* Phase 5: Validate iov_base is writable before allocating kernel buffer */
+        uint8_t test_byte;
+        if (fut_copy_from_user(&test_byte, iov.iov_base, 1) != 0 ||
+            fut_copy_to_user(iov.iov_base, &test_byte, 1) != 0) {
+            fut_printf("[RECVMSG] recvmsg(sockfd=%d) -> EFAULT "
+                       "(iov_base[%zu] not writable, len=%zu, Phase 5)\n",
+                       local_sockfd, i, iov.iov_len);
+            return total_received > 0 ? total_received : -EFAULT;
+        }
+
         /* Allocate kernel buffer */
         void *kbuf = fut_malloc(iov.iov_len);
         if (!kbuf) {

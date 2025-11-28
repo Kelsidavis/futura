@@ -128,8 +128,38 @@ long sys_mprotect(void *addr, size_t len, int prot) {
         return -EINVAL;
     }
 
+    /* Phase 5: Validate len + PAGE_SIZE won't overflow before alignment
+     * Prevent integer overflow in alignment calculation */
+    if (len > SIZE_MAX - PAGE_SIZE + 1) {
+        fut_printf("[MPROTECT] mprotect(%p, %zu) -> EINVAL "
+                   "(length too large for page alignment, would overflow, Phase 5)\n",
+                   addr, len);
+        return -EINVAL;
+    }
+
     /* Round length up to page boundary */
     size_t aligned_len = (len + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1);
+
+    /* Phase 5: Validate addr + aligned_len doesn't wrap around
+     * Prevent address range wraparound attacks */
+    uintptr_t start = (uintptr_t)addr;
+    if (start > UINTPTR_MAX - aligned_len) {
+        fut_printf("[MPROTECT] mprotect(%p, %zu) -> EINVAL "
+                   "(address range wraps around, Phase 5)\n",
+                   addr, aligned_len);
+        return -EINVAL;
+    }
+
+    /* Phase 5: Validate end address is within userspace limits
+     * Prevent modifying kernel memory protection */
+    uintptr_t end = start + aligned_len;
+    const uintptr_t USERSPACE_MAX = 0x800000000000UL;  /* 128TB on x86-64 */
+    if (end > USERSPACE_MAX) {
+        fut_printf("[MPROTECT] mprotect(%p, %zu) -> EINVAL "
+                   "(end address 0x%lx exceeds userspace limit 0x%lx, Phase 5)\n",
+                   addr, aligned_len, end, USERSPACE_MAX);
+        return -EINVAL;
+    }
     size_t num_pages = aligned_len / PAGE_SIZE;
 
     /* Build protection string for logging */

@@ -476,9 +476,22 @@ long sys_pipe(int pipefd[2]) {
         write_fd_category = "very high (≥1000)";
     }
 
-    /* Return file descriptors to userspace */
-    pipefd[0] = read_fd;
-    pipefd[1] = write_fd;
+    /* Phase 5: Copy file descriptors to userspace safely
+     * Validate write access IMMEDIATELY before use to prevent TOCTOU */
+    int fds[2];
+    fds[0] = read_fd;
+    fds[1] = write_fd;
+
+    if (fut_copy_to_user(pipefd, fds, sizeof(int) * 2) != 0) {
+        fut_printf("[PIPE] pipe(read_fd=%d, write_fd=%d) -> EFAULT "
+                   "(failed to copy FDs to userspace, Phase 5 write pointer validation)\n",
+                   read_fd, write_fd);
+        /* Clean up both FDs - pipe creation failed */
+        extern int fut_vfs_close(int fd);
+        fut_vfs_close(read_fd);
+        fut_vfs_close(write_fd);
+        return -EFAULT;
+    }
 
     /* Phase 2: Detailed success logging */
     fut_printf("[PIPE] pipe(read_fd=%d [%s], write_fd=%d [%s], buf_size=%u) -> 0 "

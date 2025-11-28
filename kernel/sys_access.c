@@ -314,9 +314,42 @@ long sys_access(const char *pathname, int mode) {
         return -EACCES;
     }
 
-    /* Phase 3: Detailed success logging */
+    /* Security hardening WARNING: TOCTOU Race Condition
+     *
+     * access() is inherently vulnerable to time-of-check-time-of-use attacks:
+     *
+     * VULNERABLE PATTERN:
+     *   if (access("/tmp/file", W_OK) == 0) {  // Check at time T1
+     *       fd = open("/tmp/file", O_WRONLY);   // Use at time T2
+     *   }
+     *
+     * ATTACK SCENARIO:
+     *   1. Attacker creates /tmp/file as regular file (access() returns 0)
+     *   2. Between access() and open(), attacker replaces /tmp/file with symlink to /etc/passwd
+     *   3. open() follows symlink, privileged program writes to /etc/passwd
+     *   4. System compromised
+     *
+     * PROPER ALTERNATIVES:
+     *   1. Don't use access() for security decisions - just call open() and handle errors:
+     *      fd = open(path, O_WRONLY);
+     *      if (fd < 0) { handle_error(errno); }
+     *
+     *   2. Use faccessat() with AT_EACCESS flag to check effective permissions
+     *   3. Use O_EXCL with O_CREAT to prevent symlink following
+     *   4. Use openat() with directory FD to prevent path substitution
+     *
+     * POSIX GUIDANCE (IEEE Std 1003.1):
+     *   "The use of access() is a security problem because time of check to time of use
+     *    (TOCTOU) race conditions can occur."
+     *
+     * This implementation CANNOT fix the fundamental TOCTOU race in access().
+     * Applications must avoid access() for security checks.
+     */
+
+    /* Phase 3: Detailed success logging with TOCTOU warning */
     fut_printf("[ACCESS] access(path='%s' [%s], mode=%s, file_mode=0%o, "
-               "checking=%s) -> 0 (all permissions granted, Phase 4: uid/gid checking and ACLs)\n",
+               "checking=%s) -> 0 (all permissions granted, Phase 4: uid/gid checking and ACLs) "
+               "WARNING: access() is vulnerable to TOCTOU - use open() directly instead\n",
                path_buf, path_type, mode_desc, file_mode, perm_check_buf);
 
     return 0;

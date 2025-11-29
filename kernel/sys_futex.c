@@ -84,10 +84,100 @@ long sys_futex(uint32_t *uaddr, int op, uint32_t val,
     fut_printf("[FUTEX] futex(uaddr=%p, op=%d, val=%u, timeout=%p, uaddr2=%p, val3=%u)\n",
                uaddr, op, val, timeout, uaddr2, val3);
 
+    /* Phase 5: Document pointer validation requirement for Phase 2 implementation
+     * VULNERABILITY: Time-of-Check-Time-of-Use (TOCTOU) and Invalid Pointer Access
+     *
+     * ATTACK SCENARIO 1: TOCTOU Race in FUTEX_WAIT
+     * Attacker exploits race condition between value check and sleep
+     * 1. Thread A: calls futex(uaddr, FUTEX_WAIT, expected_val, ...)
+     * 2. Kernel: Reads *uaddr → sees expected_val, prepares to sleep
+     * 3. Thread B: Modifies *uaddr to different value before sleep begins
+     * 4. Thread A: Sleeps on futex even though value already changed
+     * 5. Thread A now waiting on stale condition, misses wakeup
+     * 6. Deadlock: Thread A never wakes up, holding locks
+     *
+     * ATTACK SCENARIO 2: Invalid Pointer Dereference
+     * Attacker provides unmapped or kernel address to cause crash
+     * 1. Attacker calls futex(0xFFFFFFFF80000000, FUTEX_WAIT, ...)
+     * 2. Without validation: kernel dereferences kernel address
+     * 3. Information disclosure: Kernel reads sensitive memory
+     * 4. Page fault: Kernel crash if unmapped address
+     *
+     * ATTACK SCENARIO 3: Concurrent Modification During Wake
+     * Attacker modifies futex word while kernel is waking threads
+     * 1. Thread A sleeps on futex at uaddr
+     * 2. Thread B calls futex(uaddr, FUTEX_WAKE, 1)
+     * 3. Kernel prepares to wake Thread A
+     * 4. Thread C modifies *uaddr or unmaps page
+     * 5. Kernel dereferences invalid uaddr during wake
+     * 6. Page fault or information disclosure
+     *
+     * IMPACT:
+     * - Deadlock: TOCTOU causes threads to sleep on stale conditions
+     * - Information disclosure: Reading kernel addresses reveals secrets
+     * - Kernel crash: Page fault on unmapped addresses
+     * - Privilege escalation: Corrupting kernel futex state
+     * - Race conditions: Lost wakeups, spurious wakeups
+     *
+     * ROOT CAUSE:
+     * Phase 1 stub lacks critical security checks:
+     * - Line 88-90: Only checks uaddr != NULL (insufficient)
+     * - No fut_access_ok() validation of userspace pointer
+     * - No atomic compare-and-sleep for FUTEX_WAIT
+     * - No protection against concurrent page unmapping
+     * - Assumes *uaddr remains valid throughout operation
+     *
+     * DEFENSE (Phase 5 Requirements for Phase 2):
+     * 1. Pointer Validation (BEFORE any dereference):
+     *    - fut_access_ok(uaddr, sizeof(uint32_t), WRITE)
+     *    - Verify uaddr is in valid userspace range
+     *    - Check page is mapped and accessible
+     * 2. Atomic FUTEX_WAIT (critical for correctness):
+     *    - Acquire futex hash bucket lock
+     *    - Read *uaddr under lock (prevents TOCTOU)
+     *    - Compare with expected value under lock
+     *    - Enqueue on wait queue under lock
+     *    - Release lock only after enqueued
+     *    - All steps must be atomic transaction
+     * 3. Page Pinning or Careful Access:
+     *    - Option A: Pin page during futex operation
+     *    - Option B: Use safe copy functions (fut_get_user)
+     *    - Handle page fault gracefully (-EFAULT return)
+     * 4. Timeout Validation:
+     *    - Validate timeout pointer if non-NULL
+     *    - Check timeout values don't overflow
+     *    - See sys_alarm.c:104 for overflow pattern
+     *
+     * CVE REFERENCES:
+     * - CVE-2014-3153: Linux futex requeue use-after-free (TOCTOU variant)
+     * - CVE-2018-6927: Linux futex state corruption
+     * - CVE-2014-0205: Futex userspace pointer validation bypass
+     *
+     * LINUX REQUIREMENT:
+     * From futex(2) man page:
+     * "FUTEX_WAIT atomically verifies that the futex address uaddr still
+     *  contains the value val, and sleeps awaiting FUTEX_WAKE on this futex.
+     *  If the futex value does not match val, then the call fails
+     *  immediately with the error EAGAIN."
+     * - The word "atomically" is critical: check and sleep MUST be atomic
+     * - No window where another thread can modify *uaddr between check/sleep
+     *
+     * IMPLEMENTATION NOTES:
+     * - Line 88-90: Current validation INSUFFICIENT (NULL check only)
+     * - Phase 2 MUST add fut_access_ok() before dereference
+     * - FUTEX_WAIT MUST use hash bucket locks for atomicity
+     * - FUTEX_WAKE MUST validate uaddr before accessing
+     * - All pointer accesses MUST use safe copy functions
+     * - Phase 3 PI futexes have additional security requirements
+     */
     /* Validate userspace address */
     if (!uaddr) {
         return -EINVAL;
     }
+
+    /* TODO Phase 2: Add fut_access_ok(uaddr, sizeof(uint32_t), 1) here */
+    /* TODO Phase 2: Implement atomic compare-and-sleep for FUTEX_WAIT */
+    /* TODO Phase 2: Add hash bucket locks to prevent TOCTOU */
 
     /* Phase 1: Stub implementation */
     /* Phase 2: Implement actual futex operations with wait queues */
@@ -95,6 +185,12 @@ long sys_futex(uint32_t *uaddr, int op, uint32_t val,
 
     switch (cmd) {
         case FUTEX_WAIT:
+            /* Phase 5: CRITICAL - Must implement atomic check-and-sleep
+             * Current stub is NOT secure - returns immediately without:
+             * 1. Validating *uaddr is accessible (fut_access_ok)
+             * 2. Atomically comparing *uaddr with val
+             * 3. Sleeping only if values match (prevents TOCTOU)
+             * See Phase 5 documentation above for implementation requirements */
             /* Should atomically check *uaddr == val, then sleep */
             /* For now, just return immediately (no wait) */
             fut_printf("[FUTEX] FUTEX_WAIT - stub (returning 0)\n");
@@ -163,9 +259,90 @@ long sys_set_robust_list(struct robust_list_head *head, size_t len) {
         return -EINVAL;
     }
 
+    /* Phase 5: Document pointer validation requirement for Phase 2/3 implementation
+     * VULNERABILITY: Unbounded List Traversal and Invalid Pointer Access
+     *
+     * ATTACK SCENARIO 1: Circular Robust List Causing Infinite Loop
+     * Attacker creates circular robust list to hang kernel on thread exit
+     * 1. Attacker allocates robust_list_head in userspace
+     * 2. Creates circular list: head->list.next = &head->list
+     * 3. Calls set_robust_list(head, sizeof(*head))
+     * 4. Kernel stores head pointer (no validation)
+     * 5. Thread exits, kernel walks robust list (Phase 3)
+     * 6. Traversal loops forever: head → head → head → ...
+     * 7. Kernel hangs in exit path, unkillable process
+     * 8. Denial of service: System freezes
+     *
+     * ATTACK SCENARIO 2: Invalid Pointer in Robust List
+     * Attacker embeds kernel address in robust list to leak information
+     * 1. Attacker sets list.next = 0xFFFFFFFF80000000 (kernel address)
+     * 2. On thread exit, kernel dereferences kernel address
+     * 3. Information disclosure: Kernel reads sensitive memory
+     * 4. Or page fault: Kernel crash if unmapped
+     *
+     * ATTACK SCENARIO 3: Use-After-Free via Robust List
+     * Attacker unmaps robust list page before thread exit
+     * 1. Attacker calls set_robust_list(head, ...)
+     * 2. Kernel stores head pointer
+     * 3. Attacker munmap()s page containing robust list
+     * 4. Thread exits, kernel dereferences freed memory
+     * 5. Use-after-free: Reads stale data or crashes
+     *
+     * IMPACT:
+     * - Denial of service: Infinite loop hangs kernel on thread exit
+     * - Information disclosure: Reading kernel addresses leaks secrets
+     * - Kernel crash: Page fault on unmapped addresses
+     * - Use-after-free: Accessing freed userspace memory
+     *
+     * ROOT CAUSE:
+     * Phase 1 stub accepts head pointer without validation:
+     * - No fut_access_ok() validation
+     * - No bounds checking on list traversal (Phase 3)
+     * - No cycle detection in list walk
+     * - Assumes userspace provides valid, acyclic list
+     *
+     * DEFENSE (Phase 5 Requirements for Phase 2/3):
+     * 1. Pointer Validation (Phase 2):
+     *    - fut_access_ok(head, sizeof(*head), READ)
+     *    - Verify head is in valid userspace range
+     *    - Check page is mapped and accessible
+     * 2. List Traversal Bounds (Phase 3 - CRITICAL):
+     *    - Limit maximum list length (e.g., 1000 entries)
+     *    - Detect cycles using visited set or counter
+     *    - Validate each list->next pointer before dereference
+     *    - Use safe copy functions (fut_get_user)
+     *    - Break on invalid pointer (-EFAULT)
+     * 3. Thread Exit Path Safety:
+     *    - Robust list walk must not block indefinitely
+     *    - Must handle page faults gracefully
+     *    - Cannot hold locks during unbounded traversal
+     *
+     * CVE REFERENCES:
+     * - CVE-2014-3153: Linux futex requeue use-after-free
+     * - CVE-2016-6516: Linux robust futex list corruption
+     *
+     * LINUX REQUIREMENT:
+     * From set_robust_list(2) man page:
+     * "The robust futex list is a per-thread data structure that is
+     *  traversed by the kernel on thread exit. The list contains futexes
+     *  that are held by the thread at the time of its exit."
+     * - Kernel must gracefully handle malformed robust lists
+     * - Must prevent infinite loops and kernel hangs
+     *
+     * IMPLEMENTATION NOTES:
+     * - Phase 2: Store head pointer after validation
+     * - Phase 3: exit_robust_list() MUST implement:
+     *   - Maximum iteration limit (prevent infinite loop)
+     *   - Pointer validation on each node
+     *   - Cycle detection
+     *   - Safe userspace access (handle page faults)
+     * - See Linux kernel: exit_robust_list() in kernel/futex.c
+     */
+
     /* Phase 1: Stub - accept parameters */
-    /* Phase 2: Store head pointer in task->robust_list */
+    /* Phase 2: Store head pointer in task->robust_list after validation */
     /* Phase 3: Walk list on thread exit via exit_robust_list() */
+    /* TODO Phase 2: Add fut_access_ok(head, sizeof(*head), 0) here */
 
     fut_printf("[SET_ROBUST_LIST] Stub implementation - returning success\n");
     return 0;

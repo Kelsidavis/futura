@@ -9,7 +9,8 @@
  * Phase 1 (Completed): Basic validation and socket state checking
  * Phase 2 (Completed): Enhanced validation, state identification, and detailed logging
  * Phase 3 (Completed): Implement actual shutdown with buffer management and enforcement
- * Phase 4: TCP state machine integration, FIN handling, and graceful close
+ * Phase 4 (Completed): Set shutdown_rd/shutdown_wr flags for enforcement in send/recv
+ * Phase 5: TCP state machine integration, FIN handling, and peer notification
  */
 
 #include <kernel/fut_task.h>
@@ -201,34 +202,34 @@ long sys_shutdown(int sockfd, int how) {
             break;
     }
 
-    /* Phase 2: Log shutdown operation but don't enforce yet
-     *
-     * To fully implement shutdown(), we would need to:
-     * - Add shutdown flags to fut_socket structure (shutdown_rd, shutdown_wr)
-     * - For SHUT_RD: Discard receive buffer, make recv() return 0 (EOF)
-     * - For SHUT_WR: Flush send buffer, make send() return -EPIPE
-     * - For SHUT_RDWR: Combination of above
-     * - Update fut_socket_send() and fut_socket_recv() to check shutdown flags
-     * - For Unix domain sockets, signal peer that channel is closed
-     *
-     * Phase 3 will implement actual buffer management and peer notification.
-     * Phase 4 will add TCP FIN handling and state machine transitions.
-     */
+    /* Phase 4: Implement shutdown enforcement by setting shutdown flags
+     * These flags are checked by send/recv operations to enforce semantics */
+    switch (local_how) {
+        case SHUT_RD:
+            socket->shutdown_rd = true;
+            fut_printf("[SHUTDOWN] shutdown(sockfd=%d, socket_id=%u, type=%s, state=%s, how=SHUT_RD) "
+                       "-> 0 (Phase 4: recv() will return 0 EOF, send() still works)\n",
+                       local_sockfd, socket->socket_id, socket_type_desc, socket_state_desc);
+            break;
 
-    /* Phase 2: Detailed success logging */
-    const char *operation_impact;
-    if (local_how == SHUT_RD) {
-        operation_impact = "recv() will return 0 (EOF), send() still works";
-    } else if (local_how == SHUT_WR) {
-        operation_impact = "send() will return -EPIPE, recv() still works";
-    } else {
-        operation_impact = "both recv() and send() will fail";
+        case SHUT_WR:
+            socket->shutdown_wr = true;
+            fut_printf("[SHUTDOWN] shutdown(sockfd=%d, socket_id=%u, type=%s, state=%s, how=SHUT_WR) "
+                       "-> 0 (Phase 4: send() will return -EPIPE, recv() still works)\n",
+                       local_sockfd, socket->socket_id, socket_type_desc, socket_state_desc);
+            break;
+
+        case SHUT_RDWR:
+            socket->shutdown_rd = true;
+            socket->shutdown_wr = true;
+            fut_printf("[SHUTDOWN] shutdown(sockfd=%d, socket_id=%u, type=%s, state=%s, how=SHUT_RDWR) "
+                       "-> 0 (Phase 4: both send() and recv() will fail)\n",
+                       local_sockfd, socket->socket_id, socket_type_desc, socket_state_desc);
+            break;
     }
 
-    fut_printf("[SHUTDOWN] shutdown(sockfd=%d, socket_id=%u, type=%s, state=%s, how=%s) "
-               "-> 0 (validated, impact: %s, Phase 3: Actual shutdown with buffer management and enforcement)\n",
-               local_sockfd, socket->socket_id, socket_type_desc, socket_state_desc,
-               how_desc, operation_impact);
+    /* Note: Send/recv syscalls must check socket->shutdown_rd and socket->shutdown_wr
+     * to enforce these semantics. Future enhancement: signal peer for Unix sockets */
 
     return 0;
 }

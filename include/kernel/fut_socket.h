@@ -134,6 +134,10 @@ typedef struct fut_socket {
     int socket_type;                        /* SOCK_STREAM, etc (AF_UNIX only) */
     int address_family;                     /* AF_UNIX only */
 
+    /* Shutdown state (Phase 4) */
+    bool shutdown_rd;                       /* Read channel shut down (SHUT_RD) */
+    bool shutdown_wr;                       /* Write channel shut down (SHUT_WR) */
+
     /* Refcounting and lifecycle */
     uint64_t refcount;                      /* Reference count */
     struct fut_waitq *close_waitq;          /* Wait queue for close completion */

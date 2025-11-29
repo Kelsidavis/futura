@@ -426,6 +426,7 @@ KERNEL_SOURCES := \
     kernel/sys_mkdirat.c \
     kernel/sys_chmod.c \
     kernel/sys_fchmod.c \
+    kernel/sys_fchmodat.c \
     kernel/sys_xattr.c \
     kernel/sys_inotify.c \
     kernel/sys_splice.c \
@@ -453,6 +454,7 @@ KERNEL_SOURCES := \
     kernel/sys_fdatasync.c \
     kernel/sys_futimens.c \
     kernel/sys_access.c \
+    kernel/sys_faccessat.c \
     kernel/sys_mkdir.c \
     kernel/sys_rmdir.c \
     kernel/sys_unlink.c \

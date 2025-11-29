@@ -20,6 +20,7 @@
 #include <string.h>
 #include <stdint.h>
 #include <stdbool.h>
+#include <limits.h>
 
 extern void fut_printf(const char *fmt, ...);
 extern void *fut_malloc(size_t size);
@@ -97,8 +98,72 @@ static struct epoll_set *epoll_get_set(int epfd) {
 
 /* Helper to allocate a new epoll set */
 static struct epoll_set *epoll_allocate_set(void) {
+    /* Phase 5: Document epoll FD counter overflow protection requirement
+     * VULNERABILITY: Integer Overflow in Epoll File Descriptor Counter
+     *
+     * ATTACK SCENARIO:
+     * Attacker creates and closes epoll instances repeatedly to overflow next_epoll_fd
+     * 1. Static global next_epoll_fd starts at 4000 (line 86)
+     * 2. Each epoll_create1() increments: next_epoll_fd++ (line 104)
+     * 3. Attacker loops: epfd = epoll_create1(0); close(epfd);
+     * 4. After (INT_MAX - 4000) iterations: next_epoll_fd = INT_MAX
+     * 5. Next increment: INT_MAX + 1 → INT_MIN (signed overflow = UB)
+     * 6. Or if unsigned: UINT_MAX + 1 → 0 (wraps to zero)
+     * 7. New epoll FDs collide with existing FDs (0, 1, 2 = stdio)
+     * 8. epoll_get_set() matches wrong FD, corrupts unrelated file
+     *
+     * IMPACT:
+     * - File descriptor collision: epoll FD collides with stdio/regular FDs
+     * - Undefined behavior: Signed integer overflow (C standard §6.5/5)
+     * - Security bypass: Attacker can manipulate wrong file descriptors
+     * - Data corruption: epoll operations target unrelated files
+     * - Denial of service: System becomes unstable after overflow
+     *
+     * ROOT CAUSE:
+     * Line 104: epoll_instances[i].epfd = next_epoll_fd++;
+     * - Global counter never wraps or validates bounds
+     * - No check for INT_MAX before increment
+     * - Signed overflow causes undefined behavior
+     * - No mechanism to prevent FD collision with regular FDs
+     * - Relies on assumption that counter won't reach INT_MAX
+     *
+     * DEFENSE (Phase 5):
+     * Validate next_epoll_fd won't overflow before incrementing
+     * - Check next_epoll_fd < INT_MAX before assignment
+     * - Return NULL (ENOMEM) if counter would overflow
+     * - Alternative: Use wrapping with collision detection
+     * - Alternative: Reuse deallocated epoll FDs from free pool
+     * - Document that system supports finite number of epoll instances
+     * - MAX_EPOLL_INSTANCES (256) limits active instances, but doesn't prevent
+     *   overflow if instances are created/destroyed repeatedly
+     *
+     * CVE REFERENCES:
+     * - CVE-2015-8839: Linux timer integer overflow (similar counter pattern)
+     * - CVE-2014-2851: Linux group_info refcount overflow
+     *
+     * POSIX REQUIREMENT:
+     * POSIX does not specify epoll (Linux extension), but general FD requirements:
+     * - File descriptors must be unique system-wide
+     * - Reusing FDs requires proper close/free cycle
+     * - Overflow causing FD collision violates POSIX uniqueness guarantee
+     *
+     * IMPLEMENTATION NOTES:
+     * - Current limit: 256 active instances (MAX_EPOLL_INSTANCES)
+     * - Counter starts at 4000 to avoid collision with regular FDs
+     * - If counter reaches INT_MAX (2,147,483,647):
+     *   - Requires ~2.1 billion epoll_create1() calls
+     *   - At 1000 create/destroy per second: ~24 days continuous operation
+     * - Phase 5 documents requirement for overflow check before increment
+     */
     for (int i = 0; i < MAX_EPOLL_INSTANCES; i++) {
         if (!epoll_instances[i].active) {
+            /* Phase 5: Check for FD counter overflow before allocation */
+            if (next_epoll_fd >= INT_MAX) {
+                fut_printf("[EPOLL_ALLOCATE] epoll_allocate_set() -> NULL "
+                           "(epoll FD counter would overflow INT_MAX, Phase 5)\n");
+                return NULL;
+            }
+
             memset(&epoll_instances[i], 0, sizeof(epoll_instances[i]));
             epoll_instances[i].active = true;
             epoll_instances[i].epfd = next_epoll_fd++;

@@ -406,6 +406,93 @@ long sys_quotactl(unsigned int cmd, const char *special, int id, void *addr) {
             break;
     }
 
+    /* Phase 5: Document addr parameter validation requirements for Phase 2 implementation
+     * VULNERABILITY: Unbounded Structure Copy and NULL Pointer Dereference
+     *
+     * ATTACK SCENARIO 1: NULL Pointer Dereference in Q_GETQUOTA/Q_SETQUOTA
+     * Attacker provides NULL addr pointer for commands requiring data buffer
+     * 1. Attacker calls quotactl(QCMD(Q_GETQUOTA, USRQUOTA), "/dev/sda1", 1000, NULL)
+     * 2. Without validation: Phase 2 implementation attempts copy_to_user(NULL, &dqblk, ...)
+     * 3. NULL pointer dereference in userspace copy
+     * 4. Page fault causes kernel crash or EFAULT return
+     *
+     * ATTACK SCENARIO 2: Size Calculation Overflow in Q_SETINFO
+     * Attacker provides crafted dqinfo structure with extreme values
+     * 1. Attacker creates dqinfo with dqi_bgrace = UINT64_MAX
+     * 2. Phase 2 code calculates grace_period_end = current_time + dqi_bgrace
+     * 3. Integer overflow: grace_period_end wraps to small value
+     * 4. Grace period expires immediately instead of far future
+     * 5. Soft limit becomes hard limit prematurely
+     * 6. Denial of service: Users cannot write despite having quota
+     *
+     * ATTACK SCENARIO 3: Invalid dqblk Field Validation
+     * Attacker provides quota limits that exceed filesystem capacity
+     * 1. Attacker sets dqb_bhardlimit = UINT64_MAX (exabytes of quota)
+     * 2. dqb_bsoftlimit = UINT64_MAX - 1 (also exabytes)
+     * 3. Phase 2 stores values without validation
+     * 4. Filesystem quota check: UINT64_MAX - current_usage always passes
+     * 5. User can consume entire filesystem (quota bypass)
+     * 6. Denial of service for other users
+     *
+     * IMPACT:
+     * - NULL pointer dereference: Kernel crash via page fault
+     * - Integer overflow: Grace period calculation wraparound
+     * - Quota bypass: Unrealistic limits disable enforcement
+     * - Denial of service: Filesystem exhaustion or premature limit
+     *
+     * ROOT CAUSE:
+     * Phase 1 stub accepts addr parameter without validation:
+     * - No NULL check for commands requiring addr (Q_GETQUOTA, Q_SETQUOTA, Q_GETINFO, Q_SETINFO)
+     * - No structure field validation for dqblk/dqinfo contents
+     * - No size overflow checks in grace period calculations
+     * - Assumes userspace provides valid, realistic quota values
+     *
+     * DEFENSE (Phase 5 Requirements for Phase 2):
+     * 1. NULL Pointer Validation:
+     *    - Q_GETQUOTA/Q_SETQUOTA: Require addr != NULL (dqblk structure)
+     *    - Q_GETINFO/Q_SETINFO: Require addr != NULL (dqinfo structure)
+     *    - Q_QUOTAON: addr may be NULL or quota file path
+     *    - Q_SYNC/Q_QUOTAOFF/Q_GETFMT: addr may be NULL
+     * 2. Structure Size Validation:
+     *    - Validate fut_copy_from_user size matches expected structure size
+     *    - Prevent partial structure copy (truncation attack)
+     * 3. Field Value Validation (Q_SETQUOTA):
+     *    - dqb_bhardlimit <= filesystem_capacity
+     *    - dqb_bsoftlimit <= dqb_bhardlimit (soft <= hard)
+     *    - dqb_ihardlimit <= filesystem_max_inodes
+     *    - dqb_isoftlimit <= dqb_ihardlimit
+     * 4. Grace Period Overflow Protection (Q_SETINFO):
+     *    - Check dqi_bgrace addition won't overflow: UINT64_MAX - current_time > dqi_bgrace
+     *    - Check dqi_igrace addition won't overflow
+     *    - Clamp grace periods to reasonable maximum (e.g., 10 years)
+     * 5. Quota Format Validation (Q_QUOTAON):
+     *    - Validate id parameter is valid format: QFMT_VFS_V0, QFMT_VFS_V1, etc.
+     *    - Reject unknown quota formats
+     *
+     * CVE REFERENCES:
+     * - CVE-2012-6538: Linux ext4 quota integer overflow in grace period
+     * - CVE-2013-1848: Linux ext4 quota bypass via extreme limits
+     * - CVE-2018-10879: Linux ext4 quota out-of-bounds via invalid structure
+     *
+     * LINUX REQUIREMENT:
+     * From quotactl(2) man page:
+     * \"For commands that read information from the quota file (Q_GETQUOTA,
+     *  Q_GETINFO), addr is a pointer to a variable of the appropriate type
+     *  into which the command stores the requested information. For commands
+     *  that set information (Q_SETQUOTA, Q_SETINFO), addr is a pointer to a
+     *  variable containing the new values.\"
+     * - addr must be valid pointer for commands requiring data transfer
+     * - Kernel must validate structure contents to prevent quota bypass
+     *
+     * IMPLEMENTATION NOTES:
+     * - Phase 1: Current stub accepts all addr values (no validation)
+     * - Phase 2 MUST validate addr != NULL for data transfer commands
+     * - Phase 2 MUST validate structure field values before applying
+     * - Phase 2 MUST check grace period arithmetic for overflow
+     * - Phase 3 MAY add additional validation for quota file paths
+     * - See Linux kernel: fs/quota/quota.c do_quotactl() for reference
+     */
+
     /* Phase 3: Enhanced logging with parameter categorization and buffer contents */
     if (qcmd == Q_GETQUOTA || qcmd == Q_SETQUOTA) {
         /* Commands that use id parameter */
@@ -418,6 +505,10 @@ long sys_quotactl(unsigned int cmd, const char *special, int id, void *addr) {
                    "(Phase 3: command and type categorization)\n",
                    cmd_desc, type_desc, special_buf, addr, task->pid);
     }
+
+    /* TODO Phase 2: Validate addr != NULL for Q_GETQUOTA, Q_SETQUOTA, Q_GETINFO, Q_SETINFO */
+    /* TODO Phase 2: Validate dqblk field values (limits <= fs capacity, soft <= hard) */
+    /* TODO Phase 2: Check grace period arithmetic for overflow (current_time + grace < UINT64_MAX) */
 
     return -ENOSYS;
 }

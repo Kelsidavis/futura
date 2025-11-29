@@ -46,6 +46,103 @@ long sys_mlock(const void *addr, size_t len) {
 
     fut_printf("[MLOCK] mlock(addr=%p, len=%zu)\n", addr, len);
 
+    /* Phase 5: Document validation and security requirements
+     * VULNERABILITY: Memory Exhaustion and RLIMIT_MEMLOCK Bypass
+     *
+     * ATTACK SCENARIO 1: Size Overflow in Page Count Calculation
+     * Attacker provides len value causing overflow in page arithmetic
+     * 1. Attacker calls mlock(addr, SIZE_MAX - 0xFFF)
+     * 2. Phase 2 calculates pages needed: pages = (len + 0xFFF) >> 12
+     * 3. Calculation: (SIZE_MAX - 0xFFF + 0xFFF) >> 12 = SIZE_MAX >> 12
+     * 4. Overflow: Result wraps to small value (e.g., 0 pages)
+     * 5. RLIMIT_MEMLOCK check passes (0 bytes < 64KB limit)
+     * 6. VMA iteration locks all pages despite check passing
+     * 7. All physical RAM pinned, system unresponsive (DoS)
+     *
+     * ATTACK SCENARIO 2: RLIMIT_MEMLOCK Bypass via Repeated Calls
+     * Attacker makes many small mlock() calls to exceed limit
+     * 1. Attacker allocates 1000 x 64KB buffers via mmap()
+     * 2. Calls mlock() on each buffer (64KB each, under RLIMIT_MEMLOCK)
+     * 3. Each call passes: 64KB <= 64KB limit (Phase 2 check)
+     * 4. But no cumulative accounting across calls
+     * 5. Total locked: 1000 x 64KB = 64MB (exceeds limit)
+     * 6. Physical RAM exhausted, other processes cannot allocate
+     *
+     * ATTACK SCENARIO 3: Unaligned Address Integer Wraparound
+     * Attacker exploits alignment check weakness for wraparound
+     * 1. Attacker calls mlock(0x1000, SIZE_MAX)
+     * 2. Line 50-52: Alignment check passes (0x1000 & 0xFFF == 0)
+     * 3. Phase 2 calculates end address: end = addr + len
+     * 4. Calculation: 0x1000 + SIZE_MAX = 0x0FFF (wraps to start of address space)
+     * 5. VMA walk: locks from 0x1000 to 0x0FFF (entire address space)
+     * 6. All process memory pinned unintentionally
+     *
+     * IMPACT:
+     * - Denial of service: Physical RAM exhaustion via integer overflow
+     * - RLIMIT_MEMLOCK bypass: Cumulative locking exceeds limit
+     * - Address space wraparound: Unintended memory regions locked
+     * - OOM killer triggered: System kills random processes
+     *
+     * ROOT CAUSE:
+     * Phase 1 stub lacks security checks:
+     * - Line 50-52: Only checks address alignment, not len bounds
+     * - No check for SIZE_MAX or near-MAX values causing overflow
+     * - No validation that addr + len doesn't wrap around
+     * - No cumulative RLIMIT_MEMLOCK accounting
+     * - Assumes Phase 2 will add checks (not documented)
+     *
+     * DEFENSE (Phase 5 Requirements for Phase 2):
+     * 1. Size Overflow Prevention:
+     *    - Check len doesn't cause overflow: SIZE_MAX - addr >= len
+     *    - Validate len < SIZE_MAX / 2 (reasonable upper bound)
+     *    - Calculate pages with overflow check: if ((len + 0xFFF) < len) return -ENOMEM
+     * 2. RLIMIT_MEMLOCK Enforcement:
+     *    - Track cumulative locked bytes in task->locked_vm
+     *    - Check before locking: locked_vm + new_lock_size <= RLIMIT_MEMLOCK
+     *    - Update locked_vm atomically on success
+     *    - Decrement locked_vm in munlock()
+     * 3. Address Range Validation:
+     *    - Verify addr + len > addr (no wraparound)
+     *    - Check range is in valid userspace (< TASK_SIZE)
+     *    - Validate VMAs exist for entire range
+     * 4. Capability Check:
+     *    - Require CAP_IPC_LOCK if locked_vm would exceed RLIMIT_MEMLOCK
+     *    - Or if RLIMIT_MEMLOCK is unlimited (RLIM64_INFINITY)
+     * 5. Zero-Length Handling:
+     *    - If len == 0: Return 0 immediately (no-op, POSIX compliant)
+     *
+     * CVE REFERENCES:
+     * - CVE-2017-1000405: Linux mm subsystem integer overflow via mlock
+     * - CVE-2016-10044: Linux aio integer overflow similar pattern
+     * - CVE-2014-2706: Linux mmap_region integer overflow
+     *
+     * POSIX REQUIREMENT:
+     * From POSIX.1-2008 mlock(2):
+     * "The mlock() function shall cause those whole pages containing any
+     *  part of the address space of the process starting at address addr
+     *  and continuing for len bytes to be memory-resident until unlocked."
+     * - Must validate addr + len doesn't overflow
+     * - Must enforce RLIMIT_MEMLOCK
+     * - Address range must be valid for process
+     *
+     * LINUX REQUIREMENT:
+     * From mlock(2) man page:
+     * "On Linux, mlock(), mlock2(), and munlock() automatically round
+     *  addr down to the nearest page boundary. However, POSIX.1 allows
+     *  an implementation to require that addr is page aligned."
+     * - Implementation should validate alignment for security
+     * - Must return ENOMEM if RLIMIT_MEMLOCK exceeded
+     * - Must return EPERM if non-privileged and RLIMIT_MEMLOCK == 0
+     *
+     * IMPLEMENTATION NOTES:
+     * - Phase 1: Current stub only validates alignment (UNSAFE)
+     * - Phase 2 MUST add overflow checks before arithmetic
+     * - Phase 2 MUST implement cumulative RLIMIT_MEMLOCK tracking
+     * - Phase 2 MUST validate address range doesn't wrap
+     * - Phase 3 MAY add per-user locked memory accounting
+     * - See Linux kernel: mm/mlock.c do_mlock() for reference
+     */
+
     /* Validate address alignment */
     if ((uintptr_t)addr & 0xFFF) {
         return -EINVAL;
@@ -54,6 +151,10 @@ long sys_mlock(const void *addr, size_t len) {
     /* Phase 1: Stub - accept parameters */
     /* Phase 2: Mark VMA as VM_LOCKED, prefault pages */
     /* Phase 3: Check RLIMIT_MEMLOCK, implement page pinning */
+    /* TODO Phase 2: Add overflow check: SIZE_MAX - (uintptr_t)addr >= len */
+    /* TODO Phase 2: Validate addr + len > addr (no wraparound) */
+    /* TODO Phase 2: Check cumulative locked_vm + new_pages <= RLIMIT_MEMLOCK */
+    /* TODO Phase 2: Require CAP_IPC_LOCK if exceeding RLIMIT_MEMLOCK */
 
     fut_printf("[MLOCK] Stub implementation - pages marked locked\n");
     return 0;
@@ -126,9 +227,128 @@ long sys_mlockall(int flags) {
         return -EINVAL;
     }
 
+    /* Phase 5: Document VMA iteration and RLIMIT_MEMLOCK requirements
+     * VULNERABILITY: Unbounded VMA Iteration and Memory Exhaustion
+     *
+     * ATTACK SCENARIO 1: Unbounded VMA Walk with Crafted Mappings
+     * Attacker creates many VMAs to cause excessive kernel work
+     * 1. Attacker creates 1,000,000 tiny VMAs via mmap() in loop
+     *    (each VMA is 4KB, non-contiguous to prevent merging)
+     * 2. Calls mlockall(MCL_CURRENT)
+     * 3. Phase 2 walks all VMAs: for (vma = mm->mmap; vma; vma = vma->vm_next)
+     * 4. Each VMA requires lock acquisition, page table walk, page pinning
+     * 5. Loop runs 1M iterations with no bounds check or timeout
+     * 6. Kernel spins in VMA walk for minutes (CPU exhaustion DoS)
+     * 7. Other processes starved for CPU time
+     *
+     * ATTACK SCENARIO 2: RLIMIT_MEMLOCK Exhaustion via mlockall
+     * Attacker bypasses per-call limit by locking entire address space
+     * 1. Attacker allocates 1GB of memory via mmap(PROT_NONE)
+     * 2. Memory is reserved but not backed by physical pages
+     * 3. Calls mlockall(MCL_CURRENT)
+     * 4. Phase 2 prefaults all pages in VMAs (1GB / 4KB = 262,144 pages)
+     * 5. No RLIMIT_MEMLOCK check before mass locking
+     * 6. All 1GB pinned despite 64KB RLIMIT_MEMLOCK default
+     * 7. Physical RAM exhausted, OOM killer triggered
+     *
+     * ATTACK SCENARIO 3: MCL_FUTURE Fork Bomb Amplification
+     * Attacker uses MCL_FUTURE to amplify memory consumption across forks
+     * 1. Attacker calls mlockall(MCL_FUTURE)
+     * 2. Phase 2 sets task->mlockall_flags = MCL_FUTURE
+     * 3. Attacker forks 1000 child processes
+     * 4. Each child inherits MCL_FUTURE flag
+     * 5. Each child's new mmaps are auto-locked (no RLIMIT check)
+     * 6. 1000 processes x 100MB each = 100GB pinned RAM
+     * 7. System runs out of physical memory (DoS)
+     *
+     * ATTACK SCENARIO 4: Integer Overflow in Total Locked Calculation
+     * Attacker exploits overflow in cumulative locked page accounting
+     * 1. Attacker has many VMAs totaling SIZE_MAX bytes
+     * 2. Phase 2 calculates total: total_pages += (vma->vm_end - vma->vm_start) >> 12
+     * 3. Accumulation overflows: total_pages wraps to small value
+     * 4. RLIMIT_MEMLOCK check: small_value <= 64KB (passes)
+     * 5. Actual locking pins gigabytes despite check passing
+     * 6. Physical RAM exhausted
+     *
+     * IMPACT:
+     * - CPU exhaustion DoS: Unbounded VMA iteration
+     * - Memory exhaustion DoS: RLIMIT_MEMLOCK bypass
+     * - Fork bomb amplification: MCL_FUTURE inherited without limit
+     * - Integer overflow: Total locked pages wraps to small value
+     * - OOM killer: Random process termination
+     *
+     * ROOT CAUSE:
+     * Phase 1 stub lacks iteration and resource limits:
+     * - Line 130-134: No VMA iteration bounds (assume unlimited work)
+     * - No check for number of VMAs before iteration
+     * - No timeout or work budget for VMA walk
+     * - No RLIMIT_MEMLOCK check before mass locking
+     * - No overflow protection in total locked page calculation
+     * - No consideration of MCL_FUTURE inheritance across fork
+     *
+     * DEFENSE (Phase 5 Requirements for Phase 2):
+     * 1. VMA Iteration Bounds:
+     *    - Limit maximum VMAs to walk (e.g., 65536 VMAs)
+     *    - Return -ENOMEM if VMA count exceeds limit
+     *    - Consider work budget or timeout for very large address spaces
+     * 2. RLIMIT_MEMLOCK Enforcement:
+     *    - Calculate total lockable bytes before iteration
+     *    - Check total <= RLIMIT_MEMLOCK before any locking
+     *    - Use saturating arithmetic to prevent overflow
+     *    - Require CAP_IPC_LOCK if RLIMIT_MEMLOCK exceeded
+     * 3. Overflow Prevention:
+     *    - Validate total_pages calculation won't overflow
+     *    - Check: if (SIZE_MAX >> 12 - total_pages < new_pages) return -ENOMEM
+     *    - Clamp to SIZE_MAX >> 12 maximum
+     * 4. MCL_FUTURE Limits:
+     *    - Inherit MCL_FUTURE across fork, but re-check RLIMIT_MEMLOCK in child
+     *    - Clear MCL_FUTURE on exec to prevent privilege escalation
+     *    - Enforce per-user locked page limit (not just per-process)
+     * 5. Prefaulting Limits:
+     *    - Don't prefault PROT_NONE pages (no backing store)
+     *    - Limit prefault to resident pages only
+     *    - Defer locking for huge address spaces (use MCL_ONFAULT behavior)
+     *
+     * CVE REFERENCES:
+     * - CVE-2016-10044: Linux mm integer overflow in page count
+     * - CVE-2017-1000364: Stack-based buffer overflow via mlockall
+     * - CVE-2014-2309: Linux kernel DoS via excessive mlock calls
+     *
+     * POSIX REQUIREMENT:
+     * From POSIX.1-2008 mlockall(2):
+     * "The mlockall() function shall cause all of the pages currently
+     *  mapped by the address space of a process to be memory-resident
+     *  until unlocked or until the process terminates or execs another
+     *  process image."
+     * - Must enforce RLIMIT_MEMLOCK
+     * - MCL_FUTURE applies to future mappings until cleared
+     * - Must handle large address spaces gracefully
+     *
+     * LINUX REQUIREMENT:
+     * From mlockall(2) man page:
+     * "MCL_CURRENT locks all pages which are currently mapped into the
+     *  address space of the process. MCL_FUTURE locks pages which will
+     *  become mapped into the address space of the process in the future."
+     * - Must return ENOMEM if RLIMIT_MEMLOCK exceeded
+     * - Must return EPERM if non-privileged and RLIMIT_MEMLOCK == 0
+     *
+     * IMPLEMENTATION NOTES:
+     * - Phase 1: Current stub only validates flags (UNSAFE)
+     * - Phase 2 MUST add VMA count check before iteration
+     * - Phase 2 MUST calculate total locked bytes with overflow check
+     * - Phase 2 MUST enforce RLIMIT_MEMLOCK before any locking
+     * - Phase 2 MUST handle fork() inheritance safely
+     * - Phase 3 MAY add work budget or timeout for large VMA lists
+     * - See Linux kernel: mm/mlock.c do_mlockall() for reference
+     */
+
     /* Phase 1: Stub - accept flags */
     /* Phase 2: Walk VMAs, lock if MCL_CURRENT, set task flag for MCL_FUTURE */
     /* Phase 3: Implement MCL_ONFAULT lazy locking */
+    /* TODO Phase 2: Add VMA count check (limit to 65536 VMAs) */
+    /* TODO Phase 2: Calculate total lockable bytes with overflow protection */
+    /* TODO Phase 2: Check total <= RLIMIT_MEMLOCK before locking */
+    /* TODO Phase 2: Require CAP_IPC_LOCK if exceeding limit */
 
     fut_printf("[MLOCKALL] Stub implementation - all pages marked locked\n");
     return 0;

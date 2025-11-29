@@ -340,6 +340,55 @@ long sys_getsockopt(int sockfd, int level, int optname, void *optval, socklen_t 
         return -EINVAL;
     }
 
+    /* Phase 5: Validate optval buffer write permission BEFORE socket processing
+     * VULNERABILITY: Missing Output Buffer Write Permission Validation
+     *
+     * ATTACK SCENARIO:
+     * Attacker provides read-only memory as optval output buffer
+     * 1. Attacker maps read-only page:
+     *    void *readonly = mmap(NULL, 4096, PROT_READ, MAP_PRIVATE|MAP_ANONYMOUS, -1, 0);
+     *    socklen_t len = sizeof(int);
+     * 2. Attacker calls getsockopt:
+     *    getsockopt(sockfd, SOL_SOCKET, SO_TYPE, readonly, &len);
+     * 3. WITHOUT Phase 5 check:
+     *    - Lines 337-341: len validation passes (len=4, valid range)
+     *    - Line 344: get_socket_from_fd succeeds
+     *    - Line 358: Retrieves socket type value
+     *    - Line 363: fut_copy_to_user attempts write to readonly
+     *    - Result: Page fault → kernel panic/DoS
+     * 4. Impact:
+     *    - Kernel page fault when writing to read-only memory
+     *    - DoS via repeated faults
+     *    - Wasted resources: Socket lookup before discovering fault
+     *
+     * ROOT CAUSE:
+     * - Lines 337-341: Only validate LENGTH, not memory PERMISSIONS
+     * - No validation that optval buffer is writable
+     * - Kernel assumes NULL check + length check is sufficient
+     * - fut_copy_to_user at lines 363/383/401/419 discovers problem too late
+     *
+     * DEFENSE (Phase 5):
+     * Test write permission BEFORE socket lookup and option processing
+     * - Use fut_copy_to_user with dummy byte to test writeability
+     * - Fail fast before wasting resources on socket operations
+     * - Matches sys_read pattern (validates write permission on output buffer)
+     * - Consistent with POSIX: getsockopt() requires writable optval buffer
+     *
+     * CVE REFERENCES:
+     * - CVE-2016-10229: Linux udp.c recvmsg write to readonly
+     * - CVE-2018-5953: Linux kernel swiotlb map_sg write to readonly
+     */
+    if (optval != NULL) {
+        extern int fut_copy_to_user(void *to, const void *from, size_t size);
+        char test_byte = 0;
+        if (fut_copy_to_user(optval, &test_byte, 1) != 0) {
+            fut_printf("[GETSOCKOPT] getsockopt(sockfd=%d, level=%d, optname=%d, optval=%p) -> EFAULT "
+                       "(buffer not writable, Phase 5)\n",
+                       sockfd, level, optname, optval);
+            return -EFAULT;
+        }
+    }
+
     /* Get socket from FD */
     fut_socket_t *socket = get_socket_from_fd(sockfd);
     if (!socket) {

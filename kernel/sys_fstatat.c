@@ -9,7 +9,7 @@
  *
  * Phase 1 (Completed): Basic fstatat with dirfd and AT_SYMLINK_NOFOLLOW support
  * Phase 2 (Completed): Directory FD resolution via VFS with proper validation
- * Phase 3: AT_EMPTY_PATH support for fstat via dirfd
+ * Phase 3 (Completed): AT_EMPTY_PATH support for fstat via dirfd
  */
 
 #include <kernel/fut_task.h>
@@ -155,10 +155,62 @@ long sys_fstatat(int dirfd, const char *pathname, void *statbuf, int flags) {
     /* Check for empty pathname with AT_EMPTY_PATH */
     if (path_buf[0] == '\0') {
         if (local_flags & AT_EMPTY_PATH) {
-            /* TODO Phase 2: Implement fstat via dirfd */
-            fut_printf("[FSTATAT] fstatat(dirfd=%d, pathname=\"\" [empty], flags=AT_EMPTY_PATH) -> ENOTSUP (AT_EMPTY_PATH not yet implemented)\n",
+            /* Phase 3: Implement fstat via dirfd
+             * When pathname is empty and AT_EMPTY_PATH is set, stat the FD itself */
+
+            if (local_dirfd == AT_FDCWD) {
+                /* Stat the current working directory */
+                fut_printf("[FSTATAT] fstatat(dirfd=AT_FDCWD, pathname=\"\" [empty], flags=AT_EMPTY_PATH) -> EINVAL (cannot fstat CWD)\n",
+                           local_dirfd);
+                return -EINVAL;
+            }
+
+            /* Get file structure from dirfd */
+            struct fut_file *dir_file = vfs_get_file_from_task(task, local_dirfd);
+
+            if (!dir_file) {
+                fut_printf("[FSTATAT] fstatat(dirfd=%d, pathname=\"\" [empty], flags=AT_EMPTY_PATH) -> EBADF (invalid dirfd)\n",
+                           local_dirfd);
+                return -EBADF;
+            }
+
+            /* Verify dirfd has a vnode */
+            if (!dir_file->vnode) {
+                fut_printf("[FSTATAT] fstatat(dirfd=%d, pathname=\"\" [empty], flags=AT_EMPTY_PATH) -> EBADF (dirfd has no vnode)\n",
+                           local_dirfd);
+                return -EBADF;
+            }
+
+            /* Use vnode's getattr to get status */
+            if (!dir_file->vnode->ops || !dir_file->vnode->ops->getattr) {
+                fut_printf("[FSTATAT] fstatat(dirfd=%d, pathname=\"\" [empty], flags=AT_EMPTY_PATH) -> ENOSYS (no getattr operation)\n",
+                           local_dirfd);
+                return -ENOSYS;
+            }
+
+            /* Get attributes from vnode */
+            int ret = dir_file->vnode->ops->getattr(dir_file->vnode, local_statbuf);
+
+            if (ret < 0) {
+                const char *error_desc;
+                switch (ret) {
+                    case -EACCES:
+                        error_desc = "permission denied";
+                        break;
+                    default:
+                        error_desc = "getattr failed";
+                        break;
+                }
+
+                fut_printf("[FSTATAT] fstatat(dirfd=%d, pathname=\"\" [empty], flags=AT_EMPTY_PATH) -> %d (%s)\n",
+                           local_dirfd, ret, error_desc);
+                return ret;
+            }
+
+            /* Success */
+            fut_printf("[FSTATAT] fstatat(dirfd=%d, pathname=\"\" [empty], flags=AT_EMPTY_PATH) -> 0 (Phase 3: fstat via dirfd)\n",
                        local_dirfd);
-            return -ENOTSUP;
+            return 0;
         } else {
             fut_printf("[FSTATAT] fstatat(dirfd=%d, pathname=\"\" [empty]) -> EINVAL (empty pathname without AT_EMPTY_PATH)\n",
                        local_dirfd);
@@ -300,7 +352,7 @@ long sys_fstatat(int dirfd, const char *pathname, void *statbuf, int flags) {
     }
 
     /* Success */
-    fut_printf("[FSTATAT] fstatat(dirfd=%d, pathname='%s' [%s, len=%lu], flags=%s) -> 0 (Phase 2: directory FD resolution)\n",
+    fut_printf("[FSTATAT] fstatat(dirfd=%d, pathname='%s' [%s, len=%lu], flags=%s) -> 0 (Phase 3: directory FD resolution + AT_EMPTY_PATH)\n",
                local_dirfd, path_buf, path_type, (unsigned long)path_len, flags_desc);
 
     return 0;

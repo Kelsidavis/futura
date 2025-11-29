@@ -16,6 +16,7 @@
 extern void fut_printf(const char *fmt, ...);
 extern fut_task_t *fut_task_current(void);
 extern struct fut_file *vfs_get_file_from_task(struct fut_task *task, int fd);
+extern int fut_copy_from_user(void *to, const void *from, size_t size);
 
 /**
  * sys_sync - Synchronize all filesystems
@@ -155,9 +156,10 @@ long sys_chroot(const char *path) {
  * data to/from userspace. This is much faster than read()+write() for large
  * file copies.
  *
- * Phase 1: Validate parameters, return stub value
- * Phase 2: Implement via read()+write() loop (inefficient but functional)
- * Phase 3: Zero-copy transfer using kernel buffers
+ * Phase 1 (Completed): Validate parameters, return stub value
+ * Phase 2 (Completed): Copy offset parameter from userspace with validation
+ * Phase 3: Implement via read()+write() loop (inefficient but functional)
+ * Phase 4: Zero-copy transfer using kernel buffers
  *
  * Returns:
  *   - Number of bytes transferred on success
@@ -234,9 +236,14 @@ long sys_sendfile(int out_fd, int in_fd, uint64_t *offset, size_t count) {
     const char *offset_mode;
     uint64_t start_offset = 0;
     if (offset) {
-        /* TODO: Copy offset from userspace in Phase 2 */
+        /* Phase 2: Copy offset from userspace */
+        if (fut_copy_from_user(&start_offset, offset, sizeof(uint64_t)) != 0) {
+            fut_printf("[SENDFILE] sendfile(out_fd=%d, in_fd=%d, count=%zu, pid=%d) -> EFAULT "
+                       "(invalid offset pointer)\n",
+                       out_fd, in_fd, count, task->pid);
+            return -EFAULT;
+        }
         offset_mode = "explicit offset";
-        start_offset = 0;  /* Stub: would read from userspace */
     } else {
         offset_mode = "current position";
         start_offset = in_file->offset;
@@ -248,10 +255,10 @@ long sys_sendfile(int out_fd, int in_fd, uint64_t *offset, size_t count) {
      */
 
     fut_printf("[SENDFILE] sendfile(out_fd=%d, in_fd=%d, offset=%s [%lu], count=%zu [%s], "
-               "pid=%d) -> 0 (%s, Phase 1 stub)\n",
+               "pid=%d) -> 0 (%s, Phase 2: offset validated)\n",
                out_fd, in_fd, offset_mode, start_offset, count, size_category,
                task->pid, size_desc);
 
-    /* Phase 1: Return 0 bytes transferred */
+    /* Phase 2: Return 0 bytes transferred (offset validated, transfer not implemented) */
     return 0;
 }

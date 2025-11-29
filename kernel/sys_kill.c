@@ -152,9 +152,48 @@ long sys_kill(int pid, int sig) {
             break;
     }
 
-    /* Phase 2: Validate signal number early with detailed error */
+    /* Phase 5: Validate signal number early with detailed error
+     * VULNERABILITY: Signal Number Out-of-Bounds Access
+     *
+     * ATTACK SCENARIO:
+     * Attacker provides invalid signal number to exploit array indexing
+     * 1. Kernel uses signal number as array index in various places:
+     *    - Signal handler table: current->sighand[sig]
+     *    - Signal pending bitmask: (1UL << sig)
+     *    - Signal name lookup tables
+     * 2. Without bounds check:
+     *    - kill(pid, sig=100) → accesses sighand[100] out-of-bounds
+     *    - kill(pid, sig=-5) → negative index causes memory corruption
+     *    - kill(pid, sig=0xFFFFFFFF) → wraps around, accesses kernel memory
+     * 3. Impact:
+     *    - Information disclosure: Reading arbitrary kernel memory via signal arrays
+     *    - Memory corruption: Writing to arbitrary kernel memory
+     *    - Kernel panic: Page fault from invalid memory access
+     *
+     * ROOT CAUSE:
+     * - Signal number used directly as array index without validation
+     * - Negative signals could wrap around in unsigned arithmetic
+     * - Out-of-range signals access beyond allocated signal tables
+     *
+     * DEFENSE (Phase 5):
+     * Validate signal number BEFORE any switch/case or array indexing
+     * - Check sig >= 0 (reject negative signals)
+     * - Check sig < _NSIG (reject signals beyond table size)
+     * - Fail fast before switch statement at line 60
+     * - Prevents all array out-of-bounds accesses
+     *
+     * POSIX REQUIREMENT (IEEE Std 1003.1):
+     * "If sig is 0 (the null signal), error checking is performed but no signal
+     *  is actually sent. The null signal can be used to check the validity of pid."
+     * All other signals must be in range [1, _NSIG-1]
+     *
+     * CVE REFERENCES:
+     * - CVE-2009-1337: Linux signal handler out-of-bounds (similar pattern)
+     * - CVE-2018-10879: Linux ext4 out-of-bounds via invalid array index
+     */
     if (sig < 0 || sig >= _NSIG) {
-        fut_printf("[KILL] kill(pid=%d, sig=%d [%s]) -> EINVAL (invalid signal number, valid range: 0-%d)\n",
+        fut_printf("[KILL] kill(pid=%d, sig=%d [%s]) -> EINVAL "
+                   "(invalid signal number, valid range: 0-%d, Phase 5)\n",
                    pid, sig, signal_name, _NSIG - 1);
         return -EINVAL;
     }

@@ -524,7 +524,61 @@ static fut_mm_t *clone_mm(fut_mm_t *parent_mm) {
                 /* Mark parent page as read-only too */
                 pmap_set_page_ro(parent_ctx, page);
 
-                /* Increment page reference count */
+                /* Phase 5: Document page refcount overflow protection requirement
+                 * VULNERABILITY: Page Reference Count Overflow in Copy-on-Write (COW)
+                 *
+                 * ATTACK SCENARIO:
+                 * Attacker forks process repeatedly to overflow page refcount
+                 * 1. Process has a writable page at VA 0x400000
+                 * 2. Process calls fork() creating child1 (refcount: 1 → 2)
+                 * 3. Child1 calls fork() creating child2 (refcount: 2 → 3)
+                 * 4. Attacker repeats fork() 65534 times
+                 * 5. Refcount reaches UINT16_MAX (65535 or similar limit)
+                 * 6. One more fork() causes overflow: 65535 + 1 → 0 (or wraps)
+                 * 7. Page appears to have zero references
+                 * 8. PMM frees the page prematurely while still in use
+                 * 9. Page reallocated to different process
+                 * 10. Two processes now share same physical page unsafely
+                 *
+                 * IMPACT:
+                 * - Use-after-free: Page freed while still referenced
+                 * - Information disclosure: New owner reads old process data
+                 * - Privilege escalation: Two processes share page unsafely
+                 * - Memory corruption: Processes write to each other's memory
+                 *
+                 * ROOT CAUSE:
+                 * Line 528: fut_page_ref_inc(parent_phys) without overflow check
+                 * - Page refcount is finite (typically uint16_t or uint32_t)
+                 * - No validation that increment won't overflow
+                 * - No check that parent_phys is within valid PMM range
+                 * - Assumption that fork won't be called excessively
+                 *
+                 * DEFENSE (Phase 5):
+                 * fut_page_ref_inc MUST validate refcount won't overflow
+                 * - Check refcount < MAX before increment
+                 * - Return error if overflow would occur
+                 * - Validate parent_phys is within valid PMM range
+                 * - Prevent fork if refcount at maximum
+                 * - PMM layer responsibility to enforce limits
+                 *
+                 * CVE REFERENCES:
+                 * - CVE-2016-0728: Linux keyring refcount overflow
+                 * - CVE-2014-2851: Linux group_info refcount overflow
+                 *
+                 * IMPLEMENTATION NOTES:
+                 * - fut_page_ref_inc is PMM function (memory/fut_pmm.c)
+                 * - PMM MUST validate:
+                 *   1. parent_phys is within valid physical memory range
+                 *   2. Refcount < MAX before increment
+                 *   3. Return error code if validation fails
+                 * - fork() layer MUST check fut_page_ref_inc return value
+                 * - If refcount increment fails, abort fork with -ENOMEM
+                 *
+                 * REFCOUNT LIMITS:
+                 * - uint8_t: 255 processes (too low)
+                 * - uint16_t: 65535 processes (common, reasonable)
+                 * - uint32_t: 4+ billion processes (excessive but safe)
+                 */
                 fut_page_ref_inc(parent_phys);
 
                 page_count++;

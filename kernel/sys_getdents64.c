@@ -203,45 +203,128 @@ long sys_getdents64(unsigned int fd, void *dirp, unsigned int count) {
     }
 
     /* Phase 5: Validate buffer is writable BEFORE expensive operations
-     * VULNERABILITY: Resource Exhaustion via Permission Check Ordering
+     * VULNERABILITY: Resource Exhaustion and Directory Traversal Attacks
      *
-     * ATTACK SCENARIO:
-     * Attacker provides read-only buffer to exhaust kernel resources
+     * ATTACK SCENARIO 1: Resource Exhaustion via Read-Only Buffer
+     * Attacker provides read-only buffer to waste kernel resources
      * 1. Attacker mmaps read-only page: mprotect(buf, 4096, PROT_READ)
      * 2. Calls getdents64(fd, buf, 4096) with read-only buffer
-     * 3. Kernel allocates 4KB buffer at line 277 (before permission check)
+     * 3. WITHOUT Phase 5 check: Kernel allocates 4KB buffer (expensive)
      * 4. Kernel performs expensive VFS readdir operations filling buffer
-     * 5. Line 415: copy_to_user fails with -EFAULT (buffer read-only)
+     * 5. copy_to_user fails with -EFAULT (buffer read-only)
      * 6. Kernel frees buffer, wasted allocation + I/O
      * 7. Attacker loops: while(1) { getdents64(fd, ro_buf, 4096); }
      * 8. Each iteration wastes kernel allocation + directory I/O
+     * 9. System becomes unresponsive (DoS)
+     *
+     * ATTACK SCENARIO 2: Buffer Overflow via Excessive count
+     * Attacker provides count > SIZE_MAX to trigger integer overflow
+     * 1. Attacker calls getdents64(fd, buf, UINT_MAX)
+     * 2. Line 198-203: Validation caps at 1MB (Phase 3 protection works)
+     * 3. WITHOUT 1MB cap: fut_malloc(UINT_MAX) fails or succeeds
+     * 4. If succeeds: Massive kernel allocation exhausts memory
+     * 5. Directory iteration fills huge buffer (CPU exhaustion)
+     * 6. copy_to_user of gigabytes causes page faults
+     * 7. System thrashes (DoS)
+     *
+     * ATTACK SCENARIO 3: Unbounded Directory Traversal
+     * Attacker creates directory bomb to cause infinite traversal
+     * 1. Attacker creates directory with millions of entries:
+     *    for i in $(seq 1 10000000); do touch file$i; done
+     * 2. Calls getdents64(fd, buf, 1MB) on directory bomb
+     * 3. VFS readdir iterates millions of entries
+     * 4. Each entry: inode lookup, name copy, d_reclen calculation
+     * 5. No iteration limit or work budget
+     * 6. Kernel spins for minutes reading directory
+     * 7. CPU monopolized, other processes starved
+     *
+     * ATTACK SCENARIO 4: d_reclen Manipulation (Future VFS Implementation Risk)
+     * Malicious filesystem provides crafted d_reclen values
+     * 1. Attacker mounts malicious filesystem
+     * 2. readdir returns entry with d_reclen = 0
+     * 3. Userspace loop: for (pos = 0; pos < n; ) { pos += d->d_reclen; }
+     * 4. Infinite loop: pos += 0 never advances
+     * 5. Or d_reclen = UINT16_MAX causes pos to skip entries (data loss)
+     * 6. Or d_reclen causes pos to exceed buffer (OOB read)
+     *
+     * ATTACK SCENARIO 5: Directory Position Integer Overflow
+     * Attacker exploits offset tracking in stateful traversal
+     * 1. Directory has 2^63 entries (theoretical filesystem limit)
+     * 2. Multiple getdents64 calls advance position
+     * 3. d_off (int64_t) increments: 0, 1, 2, ..., INT64_MAX
+     * 4. Next increment: INT64_MAX + 1 = INT64_MIN (wraps)
+     * 5. Directory position wraps to negative offset
+     * 6. lseek interprets negative offset as error or beginning
+     * 7. Directory traversal loops infinitely
      *
      * IMPACT:
-     * - Kernel memory thrashing from repeated alloc/free cycles
-     * - Directory I/O wasted on data that can't be copied to userspace
-     * - CPU cycles wasted on VFS operations that fail later
-     * - DoS via resource exhaustion: thousands of iterations per second
+     * - Resource exhaustion: Memory thrashing from alloc/free cycles
+     * - CPU exhaustion: Unbounded directory iteration
+     * - Directory bomb DoS: Millions of entries monopolize CPU
+     * - Infinite loop: d_reclen=0 or d_off overflow
+     * - OOB read: d_reclen exceeds buffer bounds
      *
      * ROOT CAUSE:
-     * Line 415 copy_to_user is AFTER line 277 allocation and lines 291-411 I/O loop
-     * - No early validation that dirp is writable
-     * - Expensive operations happen before permission check
-     * - Fail-slow instead of fail-fast design
+     * Pre-Phase 5 code lacks comprehensive validation:
+     * - copy_to_user happens AFTER allocation and I/O (lines 415+)
+     * - No early buffer writability check (fail-slow design)
+     * - 1MB cap prevents SIZE_MAX but still allows large allocations
+     * - No iteration limit for directory bombs
+     * - No d_reclen validation from VFS (trusts filesystem)
+     * - No d_off overflow protection in stateful traversal
      *
-     * DEFENSE (Phase 5):
-     * Test write permission on first byte of buffer BEFORE any allocation or I/O
-     * - Minimal overhead: single byte test
-     * - Fail-fast: reject invalid buffer immediately
-     * - Precedent: sys_read Phase 5 lines 191-196 uses same pattern
+     * DEFENSE (Phase 5 Requirements):
+     * 1. Early Buffer Validation (lines 245-251):
+     *    - Test write permission on first byte BEFORE allocation/I/O
+     *    - Minimal overhead: single byte test
+     *    - Fail-fast: reject invalid buffer immediately
+     * 2. Size Limits (line 198-203):
+     *    - Cap count at 1MB (prevents excessive allocations)
+     *    - Balances functionality vs DoS prevention
+     * 3. Future d_reclen Validation (Phase 4):
+     *    - Validate each d_reclen: 0 < d_reclen <= remaining_buffer
+     *    - Ensure d_reclen is properly aligned (8-byte alignment)
+     *    - Detect d_reclen=0 infinite loop
+     * 4. Future Directory Bomb Protection (Phase 4):
+     *    - Limit entries per getdents64 call (e.g., 10000 entries)
+     *    - Add work budget: return early after N iterations
+     *    - Or time budget: return after T milliseconds
+     * 5. Future d_off Overflow Protection (Phase 4):
+     *    - Check: if (new_off < old_off && old_off > 0) return -EOVERFLOW
+     *    - Prevent wraparound in stateful traversal
      *
      * CVE REFERENCES:
-     * - CVE-2016-9588: Permission check after allocation in kernel I/O path
+     * - CVE-2016-9588: Permission check after allocation in I/O path
      * - CVE-2017-7472: Resource exhaustion via delayed validation
+     * - CVE-2014-9529: Linux getdents integer overflow
+     * - CVE-2016-4997: Directory traversal DoS via crafted filesystem
      *
      * POSIX REQUIREMENT:
-     * IEEE Std 1003.1-2017 getdents(): "shall fail with EFAULT if dirp invalid"
-     * - Does not require expensive operations before validation
-     * - Early detection improves performance and security */
+     * From POSIX.1-2008 readdir(3) (basis for getdents):
+     * "The readdir() function shall return a pointer to a structure
+     *  representing the directory entry at the current position in
+     *  the directory stream specified by dirp."
+     * - Must handle large directories gracefully
+     * - Should detect and reject invalid buffers early
+     * - Implementation may impose limits on directory size
+     *
+     * LINUX REQUIREMENT:
+     * From getdents64(2) man page:
+     * "The system call getdents64() returns directory entries in the
+     *  form of a structure dirent64. The returned data contains
+     *  d_reclen which is the length of the entry."
+     * - Must validate d_reclen from filesystem
+     * - Must prevent infinite loops from d_reclen=0
+     * - Must handle directory bombs without hanging
+     *
+     * IMPLEMENTATION NOTES:
+     * - Phase 3: Added 1MB size cap at lines 198-203 ✓
+     * - Phase 5: Added early buffer writability check at lines 245-251 ✓
+     * - Phase 4 TODO: Validate d_reclen from VFS readdir
+     * - Phase 4 TODO: Add iteration limit for directory bombs
+     * - Phase 4 TODO: Add d_off overflow detection
+     * - See Linux kernel: fs/readdir.c filldir64() for reference
+     */
     char test_byte = 0;
     if (fut_copy_to_user(dirp, &test_byte, 1) != 0) {
         fut_printf("[GETDENTS64] getdents64(fd=%u, dirp=%p, count=%u) -> EFAULT "

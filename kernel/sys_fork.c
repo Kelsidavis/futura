@@ -12,6 +12,445 @@
  * Phase 4 (Completed): Advanced fork features (vfork, clone with flags, namespace support)
  */
 
+/* ============================================================
+ * PHASE 5 COMPREHENSIVE SECURITY DOCUMENTATION
+ * ============================================================
+ *
+ * VULNERABILITY OVERVIEW:
+ * -----------------------
+ * fork() is the fundamental process creation primitive in Unix-like systems,
+ * creating an exact duplicate of the calling process. This operation involves
+ * complex resource duplication (address space, file descriptors, credentials)
+ * and introduces critical attack surfaces:
+ *
+ * 1. Page reference count overflow in copy-on-write (COW) sharing
+ * 2. File descriptor refcount overflow via repeated forking
+ * 3. PID exhaustion denial of service (fork bomb)
+ * 4. Memory exhaustion through unbounded fork recursion
+ * 5. Race conditions in concurrent page table cloning
+ *
+ * Each vulnerability can lead to use-after-free, privilege escalation, or
+ * system-wide denial of service. fork() is particularly dangerous because
+ * unprivileged users can call it freely, making resource limits critical.
+ *
+ * ATTACK SCENARIO 1: Page Reference Count Overflow in COW Sharing
+ * =================================================================
+ * DESCRIPTION:
+ * Attacker repeatedly forks to overflow the physical page reference counter,
+ * causing premature page deallocation and use-after-free exploitation.
+ *
+ * EXPLOITATION STEPS:
+ * 1. Attacker process has writable page at VA 0x400000 (physical page P)
+ *    - Page P has refcount = 1 (owned by parent process)
+ * 2. Attacker calls fork() creating child1
+ *    - COW: Page P marked read-only in both parent and child1
+ *    - Line 582: fut_page_ref_inc(parent_phys) increments refcount: 1 → 2
+ * 3. Child1 calls fork() creating child2
+ *    - Page P now shared by parent, child1, child2
+ *    - Refcount: 2 → 3
+ * 4. Attacker repeats fork() recursively 65533 more times
+ *    - Each fork increments refcount of shared page P
+ *    - Refcount reaches UINT16_MAX (65535) if refcount is uint16_t
+ * 5. One more fork() causes overflow without validation
+ *    - Refcount: 65535 + 1 → 0 (wraps to zero)
+ * 6. PMM sees refcount=0, assumes page is free
+ *    - PMM places page P on free list
+ * 7. New allocation request gets page P
+ *    - Second process now owns page P while first 65536 processes still reference it
+ * 8. Write to page P in any of the 65536 original processes
+ *    - COW triggers, but page already reallocated to second process
+ *    - Use-after-free: Original processes access freed page
+ *    - Data corruption: Second process sees writes from first processes
+ * 9. Attacker reads sensitive data from second process
+ *    - Information disclosure or privilege escalation
+ *
+ * IMPACT:
+ * - Use-after-free: Page freed while 65536 processes still reference it
+ * - Memory corruption: Multiple processes unsafely share physical page
+ * - Information disclosure: New owner reads stale data from old processes
+ * - Privilege escalation: Attacker overwrites kernel structures if page reused
+ *
+ * ROOT CAUSE:
+ * Line 582: fut_page_ref_inc(parent_phys) with no overflow validation
+ * - Page refcount is finite (typically uint16_t = 65535 max)
+ * - No check that increment won't overflow maximum
+ * - No validation that parent_phys is within valid PMM range
+ * - Assumption: fork won't be called 65535+ times on same page
+ * - PMM layer (fut_pmm.c) must enforce refcount limits
+ *
+ * DEFENSE STRATEGY:
+ * [DONE] Document refcount overflow vulnerability (lines 527-581):
+ *   - Comprehensive inline comment explaining attack
+ *   - References CVE-2016-0728 (keyring refcount), CVE-2014-2851 (group_info)
+ *   - Specifies PMM layer must validate refcount < MAX before increment
+ *   - Requires fork() to check fut_page_ref_inc() return value
+ *
+ * [TODO] Implement refcount overflow check in fut_page_ref_inc():
+ *   - Add bounds check in memory/fut_pmm.c
+ *   - Return error code if refcount >= UINT16_MAX (or configured limit)
+ *   - Validate parent_phys is within valid physical memory range
+ *   - Log warning when refcount approaches maximum
+ *
+ * [TODO] Check fut_page_ref_inc() return value in clone_mm():
+ *   - Modify line 582 to: if (fut_page_ref_inc(parent_phys) != 0) { abort fork }
+ *   - Return NULL from clone_mm() on refcount failure
+ *   - Clean up partially cloned VMAs before aborting
+ *   - Return -ENOMEM to userspace (no pages available for COW)
+ *
+ * [TODO] Add refcount stress test:
+ *   - Fork process 1000 times, verify refcount doesn't overflow
+ *   - Monitor PMM refcount values during mass forking
+ *   - Verify fork fails gracefully when refcount limit reached
+ *
+ * ATTACK SCENARIO 2: File Descriptor Refcount Overflow via Mass Forking
+ * =======================================================================
+ * DESCRIPTION:
+ * Attacker forks repeatedly while holding many open file descriptors, causing
+ * file object refcount to overflow and files to be prematurely closed.
+ *
+ * EXPLOITATION STEPS:
+ * 1. Attacker opens 1024 files (RLIMIT_NOFILE limit)
+ *    - Each file has struct fut_file with refcount = 1
+ * 2. Attacker calls fork()
+ *    - Line 204: parent_file->refcount++ for each FD
+ *    - All 1024 files now have refcount = 2 (parent + child)
+ * 3. Child calls fork() again
+ *    - Each file refcount: 2 → 3 (parent + child1 + child2)
+ * 4. Attacker forks 65533 more times
+ *    - Refcount increments on every fork for all 1024 files
+ *    - If refcount is uint16_t: 65535 processes × 1024 files
+ * 5. One more fork() causes overflow on all files
+ *    - Refcount: 65535 + 1 → 0 (wraps to zero)
+ * 6. VFS layer sees refcount=0, closes all files
+ *    - All 1024 file descriptors suddenly invalid
+ *    - File objects deallocated from kernel heap
+ * 7. New file allocations reuse freed struct fut_file memory
+ *    - Use-after-free: 65536 processes still reference old fut_file pointers
+ * 8. Attacker reads/writes to file descriptor
+ *    - Accesses freed memory or different file (confused deputy)
+ * 9. Information disclosure or privilege escalation
+ *    - Read data from wrong file, write to wrong file
+ *
+ * IMPACT:
+ * - Use-after-free: File objects freed while 65536 processes hold references
+ * - File descriptor confusion: Processes access wrong files after reallocation
+ * - Information disclosure: Read data from unintended files
+ * - Privilege escalation: Write to privileged files (e.g., /etc/passwd)
+ *
+ * ROOT CAUSE:
+ * Line 204: parent_file->refcount++ with no overflow check
+ * - File refcount is finite (likely uint32_t but still bounded)
+ * - No validation that increment won't overflow
+ * - No check that parent_file pointer is valid
+ * - Inherited from parent without per-fork validation
+ *
+ * DEFENSE STRATEGY:
+ * [TODO] Add refcount overflow check in FD inheritance (line 204):
+ *   - Check parent_file->refcount < UINT32_MAX before increment
+ *   - Return -ENOMEM from sys_fork() if overflow would occur
+ *   - Log warning when file refcount approaches maximum
+ *   - Clean up child_task on failure (release allocated resources)
+ *
+ * [TODO] Use atomic refcount operations:
+ *   - Replace parent_file->refcount++ with atomic_inc_check_overflow()
+ *   - Atomic operation returns error if overflow detected
+ *   - Prevents race condition where concurrent forks overflow refcount
+ *
+ * [TODO] Implement per-process file descriptor limit:
+ *   - Enforce RLIMIT_NOFILE during fork (currently only at open)
+ *   - Reject fork if child would exceed file descriptor quota
+ *   - Prevents mass forking with high FD count
+ *
+ * [TODO] Add file refcount stress test:
+ *   - Open 1024 files, fork 1000 times
+ *   - Verify all file refcounts correct (1024000 total references)
+ *   - Close files in random order, verify refcount decrements correctly
+ *
+ * ATTACK SCENARIO 3: PID Exhaustion Denial of Service (Fork Bomb)
+ * =================================================================
+ * DESCRIPTION:
+ * Attacker executes fork bomb to exhaust PID namespace, preventing legitimate
+ * processes from spawning and causing system-wide denial of service.
+ *
+ * EXPLOITATION STEPS:
+ * 1. Attacker executes classic fork bomb:
+ *    while (1) { fork(); }
+ * 2. Without limits: creates exponential process growth
+ *    - Iteration 1: 2 processes (parent + child1)
+ *    - Iteration 2: 4 processes (both parent and child1 fork)
+ *    - Iteration 3: 8 processes
+ *    - Iteration N: 2^N processes
+ * 3. After 15 iterations: 32768 processes created
+ *    - System typically has PID limit of 32768 (default)
+ * 4. fut_task_create() exhausts PID allocator
+ *    - Line 191: child_task = fut_task_create() returns NULL
+ *    - All available PIDs consumed by attacker's processes
+ * 5. Legitimate users cannot create new processes
+ *    - Login shells fail (no PID for bash)
+ *    - System daemons cannot fork workers
+ *    - Init cannot spawn services
+ * 6. System becomes unresponsive
+ *    - OOM killer may activate, killing random processes
+ *    - System requires hard reboot to recover
+ *
+ * IMPACT:
+ * - Denial of service: PID namespace exhausted, no new processes
+ * - System instability: OOM killer thrashing, services failing
+ * - Service disruption: Web servers, databases cannot spawn workers
+ * - Recovery difficulty: Requires reboot or kernel panic
+ *
+ * ROOT CAUSE:
+ * Line 191: fut_task_create() with no per-user process limit
+ * - No check for user's current process count before fork
+ * - RLIMIT_NPROC exists in POSIX but not enforced here
+ * - Unprivileged user can consume all PIDs
+ * - No protection against exponential fork growth
+ *
+ * DEFENSE STRATEGY:
+ * [TODO] Implement RLIMIT_NPROC enforcement:
+ *   - Before line 191, check parent_task->uid process count
+ *   - Reject fork if user has >= RLIMIT_NPROC processes (default 4096)
+ *   - Maintain per-UID process counter
+ *   - Exempt root (UID 0) from limit (admin recovery)
+ *
+ * [TODO] Add global PID limit check:
+ *   - Check global process count before fut_task_create()
+ *   - Reject fork if >= MAX_PIDS (e.g., 30000 of 32768)
+ *   - Reserve PIDs for root user (last 1000 PIDs)
+ *   - Return -EAGAIN (resource temporarily unavailable)
+ *
+ * [TODO] Implement fork rate limiting:
+ *   - Track forks per second per UID
+ *   - Reject fork if rate > 100/second for non-root
+ *   - Prevents exponential growth attack
+ *   - Allow burst of 10 forks, then throttle
+ *
+ * [TODO] Add fork bomb detection:
+ *   - Detect pattern: same process forking rapidly in loop
+ *   - If 10 forks in 1 second from same PID: log warning
+ *   - If 100 forks in 10 seconds: kill process tree
+ *   - Protect against accidental and malicious fork bombs
+ *
+ * ATTACK SCENARIO 4: Memory Exhaustion Through Unbounded Fork Recursion
+ * =======================================================================
+ * DESCRIPTION:
+ * Attacker allocates large memory region, then forks repeatedly to exhaust
+ * physical memory via COW page duplication on first write.
+ *
+ * EXPLOITATION STEPS:
+ * 1. Attacker allocates 1 GB memory region via mmap
+ *    - mmap(NULL, 1GB, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANONYMOUS, -1, 0)
+ *    - 1 GB = 262144 pages (4KB each)
+ *    - Pages initially zero-filled, lazily allocated
+ * 2. Attacker writes to all pages to force allocation
+ *    - Kernel allocates 262144 physical pages (1 GB RAM)
+ * 3. Attacker calls fork()
+ *    - Line 582: All 262144 pages marked COW (shared, read-only)
+ *    - Refcount incremented: 262144 × 1 increment
+ *    - Physical memory still 1 GB (shared between parent and child)
+ * 4. Child writes to 1 byte in each page
+ *    - COW triggers on all 262144 pages
+ *    - Kernel allocates NEW physical page for each COW fault
+ *    - Physical memory: 1 GB (parent) + 1 GB (child) = 2 GB
+ * 5. Attacker forks child again (grandchild)
+ *    - Grandchild writes to all pages
+ *    - Physical memory: 1 GB + 1 GB + 1 GB = 3 GB
+ * 6. After 16 forks with COW write: 16 GB physical memory consumed
+ *    - System has 8 GB RAM: OOM killer activates
+ * 7. OOM killer kills random processes to free memory
+ *    - May kill critical daemons (sshd, init, etc.)
+ * 8. System thrashes, becomes unresponsive
+ *    - Swap exhausted, kernel panics
+ *
+ * IMPACT:
+ * - Memory exhaustion: Physical RAM consumed by COW duplication
+ * - Denial of service: OOM killer thrashing, system unusable
+ * - Process termination: Critical services killed to free memory
+ * - System crash: Kernel panic when even kernel cannot allocate
+ *
+ * ROOT CAUSE:
+ * Lines 477-622: COW cloning with no memory accounting
+ * - No check for available free memory before fork
+ * - No limit on total pages a user can COW-duplicate
+ * - COW fault handler allocates without checking quotas
+ * - Attacker can multiply memory footprint via repeated fork+write
+ *
+ * DEFENSE STRATEGY:
+ * [TODO] Add memory accounting before fork:
+ *   - Calculate total parent memory (sum of all VMAs)
+ *   - Check available free memory >= parent memory (worst case: full COW)
+ *   - Reject fork if insufficient memory: return -ENOMEM
+ *   - Account for kernel overhead (page tables, task structs)
+ *
+ * [TODO] Implement per-user memory limits (RLIMIT_AS):
+ *   - Track total virtual memory per UID
+ *   - Reject fork if parent + child > user's RLIMIT_AS
+ *   - Enforce limit at COW fault time (when pages duplicated)
+ *
+ * [TODO] Add COW budget tracking:
+ *   - Track how many COW pages each VMA can duplicate
+ *   - Fail COW fault if budget exceeded
+ *   - Force sharing instead of duplication when over budget
+ *
+ * [TODO] Reserve memory for OOM recovery:
+ *   - Reserve 10% of RAM for root processes
+ *   - Prevent unprivileged fork if free memory < 10%
+ *   - Allow admin to log in and kill runaway processes
+ *
+ * ATTACK SCENARIO 5: Race Condition in Concurrent Page Table Cloning
+ * ====================================================================
+ * DESCRIPTION:
+ * Parent process modifies memory mappings while fork() is cloning page tables,
+ * causing inconsistent child address space or use-after-free.
+ *
+ * EXPLOITATION STEPS:
+ * 1. Attacker process has 1000 VMAs (many mmap regions)
+ * 2. Thread A calls fork()
+ *    - Line 477: Iterates VMAs in parent_mm->vma_list
+ *    - For each VMA, iterates pages (line 485)
+ *    - Cloning is slow: 1000 VMAs × 256 pages each = 256000 iterations
+ * 3. Thread B concurrently calls munmap() to unmap VMA #500
+ *    - Removes VMA from parent_mm->vma_list
+ *    - Frees VMA structure back to kernel heap
+ *    - Updates page tables to remove mapping
+ * 4. Thread A (fork) reaches VMA #500 during iteration
+ *    - Line 479: vma = vma->next (accesses freed VMA pointer)
+ *    - Use-after-free: Reads vma->next from deallocated memory
+ *    - vma->next contains garbage or reallocated object
+ * 5. Fork continues with corrupted VMA pointer
+ *    - Line 481: Attempts to clone garbage VMA range
+ *    - pmap_probe_pte() reads invalid addresses
+ *    - Page fault or memory corruption
+ * 6. Child process has inconsistent address space
+ *    - Some VMAs cloned, others missing
+ *    - Page tables contain dangling mappings
+ *    - Child crashes on first memory access
+ *
+ * IMPACT:
+ * - Use-after-free: Fork accesses freed VMA structures
+ * - Memory corruption: Child gets inconsistent page tables
+ * - Kernel panic: Invalid page table walk causes fault
+ * - Information disclosure: Child inherits wrong memory mappings
+ *
+ * ROOT CAUSE:
+ * Lines 477-622: VMA iteration without holding mm lock
+ * - Parent VMA list modified concurrently by munmap/mmap
+ * - No lock protects parent_mm->vma_list during cloning
+ * - clone_mm() is long-running (yields every 64 pages at line 616)
+ * - Parent can modify mappings while fork holds stale VMA pointers
+ *
+ * DEFENSE STRATEGY:
+ * [TODO] Hold parent MM lock during VMA cloning:
+ *   - Acquire parent_mm->lock before line 477 (VMA iteration)
+ *   - Release lock periodically (every 64 pages) and reacquire
+ *   - Verify VMA list hasn't changed after reacquiring lock
+ *   - Restart cloning if VMA list modified during yield
+ *
+ * [TODO] Use RCU for VMA list traversal:
+ *   - Protect VMA list with RCU read lock
+ *   - Allow concurrent readers (fork) and writers (munmap)
+ *   - Delay VMA deallocation until no readers active
+ *   - Prevents use-after-free on VMA structures
+ *
+ * [TODO] Snapshot VMA list before cloning:
+ *   - Copy parent_mm->vma_list to temporary array
+ *   - Increment refcount on each VMA during snapshot
+ *   - Clone from snapshot instead of live list
+ *   - Decrement refcount after cloning complete
+ *
+ * [TODO] Add VMA consistency check after cloning:
+ *   - Verify child_mm->vma_list matches expected structure
+ *   - Check for dangling pointers or overlapping ranges
+ *   - Abort fork if inconsistency detected
+ *   - Return -EAGAIN (caller can retry)
+ *
+ * CVE REFERENCES (Similar Historical Vulnerabilities):
+ * ======================================================
+ * 1. CVE-2016-0728: Linux kernel keyring refcount overflow
+ *    - Refcount overflow via repeated key attachment
+ *    - Attacker caused refcount wraparound to zero
+ *    - Keyring freed while still referenced (use-after-free)
+ *    - Similar to Attack Scenario 1 (page refcount overflow)
+ *
+ * 2. CVE-2014-2851: Linux group_info refcount overflow
+ *    - Integer overflow in group_info reference counter
+ *    - Attacker repeatedly called setgroups() to overflow refcount
+ *    - Structure freed prematurely, leading to privilege escalation
+ *    - Same pattern as file descriptor refcount (Attack Scenario 2)
+ *
+ * 3. CVE-2019-11815: Linux rds_perk leak via refcount race
+ *    - Race condition in concurrent reference counting
+ *    - No atomic protection on refcount increment/decrement
+ *    - Led to use-after-free in RDS socket handling
+ *    - Similar to Attack Scenario 5 (concurrent cloning race)
+ *
+ * 4. CVE-2018-17182: Linux vmacache flush use-after-free
+ *    - Cache invalidation race during fork()
+ *    - Parent freed VMA while child fork was cloning
+ *    - Child accessed freed VMA structure (use-after-free)
+ *    - Exact match for Attack Scenario 5 (VMA cloning race)
+ *
+ * 5. CVE-2016-5195 (Dirty COW): Linux COW race condition
+ *    - Race condition in COW page fault handler
+ *    - Attacker triggered concurrent writes to COW page
+ *    - Broke COW isolation, wrote to read-only mappings
+ *    - Related to COW implementation in clone_mm() (lines 512-526)
+ *
+ * REQUIREMENTS (POSIX / Linux Specifications):
+ * =============================================
+ * POSIX fork() specification (IEEE Std 1003.1-2008):
+ * - "fork() creates a new process. The new process (child) is an exact copy
+ *    of the calling process (parent) except as detailed below."
+ * - "The child process shall have its own copy of the parent's file descriptors.
+ *    Each of the child's file descriptors shall refer to the same open file
+ *    description with the corresponding file descriptor of the parent."
+ * - "The child process shall have its own copy of the parent's open directory
+ *    streams. Each open directory stream in the child process may share directory
+ *    stream positioning with the corresponding directory stream of the parent."
+ * - "The child process shall have its own copy of the parent's message catalog
+ *    descriptors."
+ * - "Memory mappings created in the parent shall be retained in the child process."
+ *
+ * Linux fork() semantics (fork(2) man page):
+ * - "fork() creates a new process by duplicating the calling process."
+ * - "The child process and the parent process run in separate memory spaces.
+ *    At the time of fork() both memory spaces have the same content."
+ * - "Memory writes, file mappings (mmap(2)), and unmappings (munmap(2))
+ *    performed by one of the processes do not affect the other."
+ * - "The child does not inherit outstanding asynchronous I/O operations."
+ * - "The child does not inherit file locks and timers."
+ *
+ * Resource limits (POSIX):
+ * - RLIMIT_NPROC: Maximum number of processes for real UID
+ * - RLIMIT_AS: Maximum size of virtual memory (address space)
+ * - RLIMIT_NOFILE: Maximum number of open file descriptors
+ *
+ * IMPLEMENTATION NOTES:
+ * =====================
+ * Completed Security Hardening:
+ * - Page refcount overflow documented (Attack Scenario 1): lines 527-581
+ * - CVE references for refcount vulnerabilities (CVE-2016-0728, CVE-2014-2851)
+ * - COW implementation with read-only marking (lines 512-526)
+ * - FD inheritance with refcount increment (lines 199-211)
+ * - Detailed logging for debugging (VMA count, FD count, memory size)
+ *
+ * TODO (Remaining Hardening):
+ * - Refcount overflow checks in fut_page_ref_inc() (PMM layer)
+ * - File descriptor refcount overflow validation (Attack Scenario 2)
+ * - RLIMIT_NPROC enforcement for fork bomb prevention (Attack Scenario 3)
+ * - Memory exhaustion checks before fork (Attack Scenario 4)
+ * - VMA list locking during cloning (Attack Scenario 5)
+ * - Fork rate limiting (100 forks/second per UID)
+ * - Comprehensive fork stress tests (refcount, PID, memory, concurrency)
+ *
+ * Phase Summary:
+ * - Phase 1: Basic fork with memory/FD cloning
+ * - Phase 2: Enhanced validation and detailed logging
+ * - Phase 3: COW performance optimization for large processes
+ * - Phase 4: Advanced features (vfork, clone, namespaces)
+ * - Phase 5: Security hardening (refcount limits, resource quotas, race protection)
+ */
+
 #include <kernel/fut_task.h>
 #include <kernel/fut_thread.h>
 #include <kernel/fut_mm.h>

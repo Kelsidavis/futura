@@ -457,8 +457,11 @@ KERNEL_SOURCES := \
     kernel/sys_rmdir.c \
     kernel/sys_unlink.c \
     kernel/sys_link.c \
+    kernel/sys_linkat.c \
     kernel/sys_symlink.c \
+    kernel/sys_symlinkat.c \
     kernel/sys_readlink.c \
+    kernel/sys_readlinkat.c \
     kernel/sys_getdents64.c \
     kernel/sys_utimensat.c \
     kernel/sys_pread64.c \

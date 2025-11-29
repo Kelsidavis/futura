@@ -223,13 +223,30 @@ long sys_select(int nfds, fd_set *readfds, fd_set *writefds,
         return -EFAULT;
     }
 
+    /* Phase 2: CPU work budget - prevent DoS via excessive nfds */
+    #define SELECT_MAX_WORK_BUDGET 10000  /* Maximum FD iterations to prevent CPU DoS */
+    int work_budget = SELECT_MAX_WORK_BUDGET;
+
+    /* Phase 2: Validate each FD in nfds range against task->max_fds */
+    if (task->max_fds > 0 && local_nfds > task->max_fds) {
+        fut_printf("[SELECT] select(nfds=%d, ...) -> EINVAL (nfds exceeds task max_fds=%d)\n",
+                   local_nfds, task->max_fds);
+        return -EINVAL;
+    }
+
+    /* Phase 2: Limit iterations to prevent CPU exhaustion attacks */
+    if (local_nfds > work_budget) {
+        fut_printf("[SELECT] select(nfds=%d, ...) -> EINVAL (nfds exceeds work budget=%d, DoS prevention)\n",
+                   local_nfds, work_budget);
+        return -EINVAL;
+    }
+
     /* Phase 1: Stub - return immediately indicating all FDs ready */
     /* Phase 2: Implement actual FD monitoring with poll backend */
     /* Phase 3: Implement timeout support */
     /* Phase 4: Optimize with epoll backend */
     /* Phase 2 (Completed): Added fut_access_ok() validation for readfds, writefds, exceptfds, timeout pointers */
-    /* TODO Phase 2: Validate each FD in fd_set is < task->max_fds before fd_table access */
-    /* TODO Phase 2: Add CPU work budget or iteration limit (prevent DoS via large nfds) */
+    /* Phase 2 (Completed): Added FD validation against task->max_fds and CPU work budget */
     /* TODO Phase 3: Consider constant-time FD validation (timing side-channel mitigation) */
 
     fut_printf("[SELECT] Stub implementation - returning 0 (timeout)\n");

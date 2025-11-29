@@ -506,9 +506,17 @@ long sys_quotactl(unsigned int cmd, const char *special, int id, void *addr) {
                    cmd_desc, type_desc, special_buf, addr, task->pid);
     }
 
-    /* TODO Phase 2: Validate addr != NULL for Q_GETQUOTA, Q_SETQUOTA, Q_GETINFO, Q_SETINFO */
-    /* TODO Phase 2: Validate dqblk field values (limits <= fs capacity, soft <= hard) */
-    /* TODO Phase 2: Check grace period arithmetic for overflow (current_time + grace < UINT64_MAX) */
+    /* Phase 2: Validate addr pointer for commands that require data transfer */
+    if (qcmd == Q_GETQUOTA || qcmd == Q_SETQUOTA || qcmd == Q_GETINFO || qcmd == Q_SETINFO) {
+        if (!addr) {
+            fut_printf("[QUOTACTL] quotactl(cmd=%s) -> EINVAL (addr is NULL for data transfer command)\n",
+                       cmd_desc);
+            return -EINVAL;
+        }
+    }
+
+    /* TODO Phase 3: Validate dqblk field values (limits <= fs capacity, soft <= hard) */
+    /* TODO Phase 3: Check grace period arithmetic for overflow (current_time + grace < UINT64_MAX) */
 
     return -ENOSYS;
 }

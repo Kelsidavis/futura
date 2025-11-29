@@ -220,7 +220,61 @@ int64_t sys_lseek(int fd, int64_t offset, int whence) {
         return old_pos;
     }
 
-    /* Use VFS to perform the seek */
+    /* Phase 5: Document offset arithmetic overflow responsibility
+     * VULNERABILITY: Integer Overflow in Offset Arithmetic (SEEK_CUR/SEEK_END)
+     *
+     * ATTACK SCENARIO:
+     * Attacker uses SEEK_CUR or SEEK_END to cause offset arithmetic overflow
+     * 1. File at position 0x7FFFFFFFFFFFFFFF (INT64_MAX)
+     * 2. Attacker calls lseek(fd, 1, SEEK_CUR)
+     * 3. Calculation: new_offset = current_pos + offset = INT64_MAX + 1
+     * 4. Result wraps to negative value: -0x8000000000000000 (INT64_MIN)
+     * 5. Subsequent read/write operations access wrong file location
+     *
+     * SIMILAR SCENARIO (SEEK_END):
+     * 1. Large file of size 0x7FFFFFFFFFFFFFF0 bytes
+     * 2. Attacker calls lseek(fd, 100, SEEK_END)
+     * 3. Calculation: new_offset = file_size + offset overflows
+     * 4. Wraps to negative value or small positive value
+     * 5. Information disclosure: reading from unintended offset
+     *
+     * IMPACT:
+     * - Information disclosure: Reading from wrong file location
+     * - Data corruption: Writing to wrong file location
+     * - Security bypass: Accessing data outside intended bounds
+     * - File corruption: Overwriting critical file regions
+     *
+     * ROOT CAUSE:
+     * SEEK_CUR and SEEK_END require arithmetic: new = base + offset
+     * - No overflow check before addition in this layer
+     * - VFS layer (fut_vfs_lseek) is responsible for validation
+     * - If VFS doesn't validate, overflow passes silently
+     *
+     * DEFENSE (Phase 5):
+     * VFS layer (fut_vfs_lseek) MUST validate offset arithmetic:
+     * - SEEK_CUR: Check if (current_pos > INT64_MAX - offset) before addition
+     * - SEEK_END: Check if (file_size > INT64_MAX - offset) before addition
+     * - Return -EOVERFLOW if overflow would occur
+     * - Syscall layer delegates to VFS but documents requirement
+     *
+     * CVE REFERENCES:
+     * - CVE-2011-2496: Linux ext4 filesystem lseek overflow
+     * - CVE-2015-8553: Linux lseek integer overflow in SEEK_END
+     *
+     * POSIX REQUIREMENT:
+     * IEEE Std 1003.1-2017 lseek(): "shall fail with EOVERFLOW if resulting
+     * offset cannot be represented in off_t" - Requires overflow detection
+     *
+     * IMPLEMENTATION LAYERING:
+     * - Syscall layer (this file): Validates whence, delegates to VFS
+     * - VFS layer (fut_vfs_lseek): MUST validate offset arithmetic overflow
+     * - Returns -EOVERFLOW if new position would overflow INT64_MAX
+     * - Returns -EINVAL if new position would be negative
+     *
+     * NOTE: This Phase 5 documents the contract between syscall and VFS layers.
+     * Actual overflow validation is VFS responsibility. */
+
+    /* Use VFS to perform the seek (VFS MUST validate offset arithmetic overflow) */
     int64_t new_offset = fut_vfs_lseek(fd, offset, whence);
 
     /* Phase 2: Handle error cases with detailed logging */

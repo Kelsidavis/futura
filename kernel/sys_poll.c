@@ -77,6 +77,19 @@ long sys_poll(struct pollfd *fds, unsigned long nfds, int timeout) {
         return 0;
     }
 
+    /* Phase 5: Validate fds array write permission early (kernel writes revents)
+     * VULNERABILITY: Invalid Output Buffer Array
+     * ATTACK: Attacker provides read-only or unmapped fds array
+     * IMPACT: Kernel page fault when writing revents to pollfd structures
+     * DEFENSE: Check write permission for entire array before processing */
+    size_t fds_size = nfds * sizeof(struct pollfd);
+    extern int fut_access_ok(const void *u_ptr, size_t size, int write);
+    if (fut_access_ok(fds, fds_size, 1) != 0) {
+        fut_printf("[POLL] poll(fds=%p, nfds=%lu, timeout=%d) -> EFAULT (fds array not writable for %zu bytes, Phase 5)\n",
+                   fds, nfds, timeout, fds_size);
+        return -EFAULT;
+    }
+
     /* Reasonable limit on number of file descriptors */
     if (nfds > 1024) {
         fut_printf("[POLL] poll(fds, %lu, %d) -> EINVAL (nfds exceeds limit of 1024)\n", nfds, timeout);

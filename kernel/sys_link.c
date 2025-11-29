@@ -186,23 +186,57 @@ long sys_link(const char *oldpath, const char *newpath) {
         return -EINVAL;
     }
 
-    /* Copy oldpath from userspace to kernel space */
+    /* Phase 5: Copy oldpath with truncation detection
+     * VULNERABILITY: Path Truncation Attack
+     *
+     * ATTACK SCENARIO:
+     * Silent truncation allows creating hard link to wrong file
+     * 1. Attacker provides oldpath exceeding 256 bytes:
+     *    link("/home/user/" + "A"*240 + "/secret", "/tmp/link")
+     * 2. Old code: fut_copy_from_user(old_buf, oldpath, 255)
+     *    - Copies only first 255 bytes: "/home/user/AAA...AAA"
+     *    - Silently drops "/secret" suffix
+     * 3. VFS resolves truncated path (wrong file)
+     * 4. Hard link created to unintended file
+     * 5. Attacker gains access to wrong file's data
+     *
+     * IMPACT:
+     * - Data corruption: Link to wrong file
+     * - Privilege escalation: Access to unintended files
+     * - Information disclosure: Reading wrong file data
+     *
+     * CVE REFERENCES:
+     * - CVE-2018-14633: Linux chdir path truncation
+     * - CVE-2017-7889: Linux mount path truncation
+     */
     char old_buf[256];
-    if (fut_copy_from_user(old_buf, local_oldpath, sizeof(old_buf) - 1) != 0) {
+    if (fut_copy_from_user(old_buf, local_oldpath, sizeof(old_buf)) != 0) {
         fut_printf("[LINK] link(oldpath=?, newpath=?) -> EFAULT "
-                   "(copy_from_user failed for oldpath, Phase 2)\n");
+                   "(copy_from_user failed for oldpath, Phase 5)\n");
         return -EFAULT;
     }
-    old_buf[sizeof(old_buf) - 1] = '\0';
 
-    /* Copy newpath from userspace to kernel space */
+    /* Phase 5: Verify oldpath was not truncated */
+    if (old_buf[sizeof(old_buf) - 1] != '\0') {
+        fut_printf("[LINK] link(oldpath=<truncated>, newpath=?) -> ENAMETOOLONG "
+                   "(oldpath exceeds %zu bytes, Phase 5)\n", sizeof(old_buf) - 1);
+        return -ENAMETOOLONG;
+    }
+
+    /* Phase 5: Copy newpath with truncation detection */
     char new_buf[256];
-    if (fut_copy_from_user(new_buf, local_newpath, sizeof(new_buf) - 1) != 0) {
+    if (fut_copy_from_user(new_buf, local_newpath, sizeof(new_buf)) != 0) {
         fut_printf("[LINK] link(oldpath='%s', newpath=?) -> EFAULT "
-                   "(copy_from_user failed for newpath, Phase 2)\n", old_buf);
+                   "(copy_from_user failed for newpath, Phase 5)\n", old_buf);
         return -EFAULT;
     }
-    new_buf[sizeof(new_buf) - 1] = '\0';
+
+    /* Phase 5: Verify newpath was not truncated */
+    if (new_buf[sizeof(new_buf) - 1] != '\0') {
+        fut_printf("[LINK] link(oldpath='%s', newpath=<truncated>) -> ENAMETOOLONG "
+                   "(newpath exceeds %zu bytes, Phase 5)\n", old_buf, sizeof(new_buf) - 1);
+        return -ENAMETOOLONG;
+    }
 
     /* Phase 2: Validate oldpath is not empty */
     if (old_buf[0] == '\0') {

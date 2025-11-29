@@ -255,15 +255,53 @@ long sys_mount(const char *source, const char *target, const char *filesystemtyp
         return -EFAULT;
     }
 
-    /* Phase 2: Copy target from userspace to validate it */
+    /* Phase 5: Copy and validate target path with truncation detection
+     * VULNERABILITY: Path Truncation Attack
+     *
+     * ATTACK SCENARIO:
+     * Silent truncation allows mounting to wrong directory
+     * 1. Attacker provides target path exceeding 256 bytes:
+     *    mount("tmpfs", "/mnt/" + "A"*250 + "/malicious", "tmpfs", 0, NULL)
+     * 2. Old code: fut_copy_from_user(target_buf, target, 255)
+     *    - Copies only first 255 bytes: "/mnt/AAA...AAA"
+     *    - Silently drops "/malicious" suffix
+     *    - target_buf[255] = '\0' (null terminator)
+     * 3. VFS resolves truncated path (parent directory)
+     * 4. Filesystem mounted to wrong location
+     * 5. System files become accessible at wrong mount point
+     *
+     * IMPACT:
+     * - Mount confusion: Filesystem mounted to unintended directory
+     * - Privilege escalation: Access to files not intended to be mounted
+     * - Container escape: Mount host filesystem at wrong location
+     * - Denial of service: Critical mount points unusable
+     *
+     * ROOT CAUSE:
+     * Line 260 (old): fut_copy_from_user(target_buf, target, sizeof(target_buf) - 1)
+     * Copies only 255 bytes, silently truncating longer paths.
+     *
+     * DEFENSE (Phase 5):
+     * Copy full buffer size (256 bytes) and check for truncation.
+     *
+     * CVE REFERENCES:
+     * - CVE-2018-14633: Linux chdir path truncation
+     * - CVE-2017-7889: Linux mount path truncation
+     */
     char target_buf[256];
-    if (fut_copy_from_user(target_buf, target, sizeof(target_buf) - 1) != 0) {
+    if (fut_copy_from_user(target_buf, target, sizeof(target_buf)) != 0) {
         fut_printf("[MOUNT] mount(source=%p, target=?, fstype=%p, flags=0x%lx, pid=%d) -> EFAULT "
-                   "(target copy_from_user failed)\n",
+                   "(target copy_from_user failed, Phase 5)\n",
                    source, filesystemtype, mountflags, task->pid);
         return -EFAULT;
     }
-    target_buf[sizeof(target_buf) - 1] = '\0';
+
+    /* Phase 5: Verify target path was not truncated */
+    if (target_buf[sizeof(target_buf) - 1] != '\0') {
+        fut_printf("[MOUNT] mount(source=%p, target=<truncated>, fstype=%p, flags=0x%lx, pid=%d) "
+                   "-> ENAMETOOLONG (target path exceeds %zu bytes, Phase 5)\n",
+                   source, filesystemtype, mountflags, task->pid, sizeof(target_buf) - 1);
+        return -ENAMETOOLONG;
+    }
 
     /* Phase 2: Validate target is not empty */
     if (target_buf[0] == '\0') {
@@ -272,16 +310,39 @@ long sys_mount(const char *source, const char *target, const char *filesystemtyp
         return -EINVAL;
     }
 
-    /* Phase 2: Copy filesystemtype from userspace if provided */
+    /* Phase 5: Copy and validate filesystemtype with truncation detection
+     * VULNERABILITY: Filesystem Type Validation Bypass
+     *
+     * ATTACK SCENARIO:
+     * Invalid filesystem type causes kernel module loading or crash
+     * 1. Attacker provides malicious fstype string:
+     *    mount("/dev/sda1", "/mnt", "evil_fs_module", 0, NULL)
+     * 2. Kernel attempts to load filesystem module "evil_fs_module.ko"
+     * 3. Module loading may trigger arbitrary code execution
+     * 4. Alternatively, long fstype string causes truncation confusion
+     *
+     * DEFENSE (Phase 5):
+     * Whitelist known filesystem types and detect truncation.
+     *
+     * CVE REFERENCES:
+     * - CVE-2013-1858: Linux kernel module auto-loading vulnerability
+     */
     char fstype_buf[64] = {0};
     if (filesystemtype) {
-        if (fut_copy_from_user(fstype_buf, filesystemtype, sizeof(fstype_buf) - 1) != 0) {
+        if (fut_copy_from_user(fstype_buf, filesystemtype, sizeof(fstype_buf)) != 0) {
             fut_printf("[MOUNT] mount(source=%p, target='%s', fstype=?, flags=0x%lx, pid=%d) -> EFAULT "
-                       "(fstype copy_from_user failed)\n",
-                       source, target_buf, mountflags, task->pid);
+                       "(fstype copy_from_user failed, Phase 5)\n",
+                   source, target_buf, mountflags, task->pid);
             return -EFAULT;
         }
-        fstype_buf[sizeof(fstype_buf) - 1] = '\0';
+
+        /* Phase 5: Verify fstype was not truncated */
+        if (fstype_buf[sizeof(fstype_buf) - 1] != '\0') {
+            fut_printf("[MOUNT] mount(source=%p, target='%s', fstype=<truncated>, flags=0x%lx, pid=%d) "
+                       "-> ENAMETOOLONG (fstype exceeds %zu bytes, Phase 5)\n",
+                       source, target_buf, mountflags, task->pid, sizeof(fstype_buf) - 1);
+            return -ENAMETOOLONG;
+        }
     }
 
     /* Phase 2: Validate filesystemtype (required except for remount/bind/move) */

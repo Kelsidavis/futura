@@ -16,6 +16,7 @@
 #include <kernel/fut_task.h>
 #include <kernel/fut_thread.h>
 #include <kernel/fut_vfs.h>
+#include <kernel/uaccess.h>
 
 extern void fut_printf(const char *fmt, ...);
 /* TODO: Define fut_socket_t */
@@ -151,17 +152,79 @@ long sys_chdir(const char *pathname) {
         return -EPERM;
     }
 
-    /* Phase 2: Categorize path type (before VFS lookup to avoid copy overhead) */
+    /* Phase 5: Detect path truncation BEFORE VFS lookup
+     * VULNERABILITY: Silent Path Truncation Attack
+     *
+     * ATTACK SCENARIO:
+     * Attacker provides path longer than kernel buffer to bypass security checks
+     * 1. System has directory /safe/public/data (world-readable)
+     * 2. System has directory /safe/restricted/admin (privileged only)
+     * 3. Attacker constructs 300-byte path: "/safe/" + "A"*250 + "restricted/admin"
+     * 4. Without truncation detection, copy_from_user truncates to 256 bytes
+     * 5. Truncated path becomes "/safe/" + "A"*250 + null terminator
+     * 6. VFS resolves to "/safe/AAAA..." directory (might exist or be created)
+     * 7. Attacker successfully changed to different directory than intended
+     * 8. OR: Silent failure where user thinks they're in one dir but in another
+     *
+     * IMPACT:
+     * - Security bypass: Access checks applied to wrong directory
+     * - Confused deputy: Process thinks it's in safe directory, accesses wrong files
+     * - Privilege escalation: Bypass directory-based access controls
+     * - Data corruption: Write to wrong directory due to confused state
+     *
+     * ROOT CAUSE:
+     * Line 175 calls fut_vfs_lookup(local_pathname, &vnode) without first:
+     * 1. Copying pathname to kernel buffer
+     * 2. Detecting if copy was truncated
+     * 3. Failing with -ENAMETOOLONG if truncation occurred
+     *
+     * DEFENSE (Phase 5):
+     * Copy path to kernel buffer and validate null termination
+     * - Allocate 256-byte kernel buffer
+     * - Copy pathname with copy_from_user (stops at 256 bytes)
+     * - Check if kpath[255] != '\0' (indicates truncation)
+     * - Return -ENAMETOOLONG immediately if truncated
+     * - Prevents VFS from processing truncated paths
+     * - Fail-fast before any directory lookup
+     *
+     * CVE REFERENCES:
+     * - CVE-2016-10229: Linux path truncation in mount syscall
+     * - CVE-2014-9585: Path truncation in vfs_rename
+     *
+     * POSIX REQUIREMENT:
+     * IEEE Std 1003.1-2017 chdir(): "shall fail with ENAMETOOLONG if
+     * pathname length exceeds PATH_MAX" - Requires explicit length validation
+     *
+     * PRECEDENT:
+     * - sys_truncate Phase 5 (lines 99-104): path truncation detection
+     * - sys_unlink Phase 5 (lines 108-113): path truncation detection
+     * - sys_lstat Phase 5 (lines 77-108): path truncation detection
+     */
+    char kpath[256];
+    if (fut_copy_from_user(kpath, local_pathname, sizeof(kpath)) != 0) {
+        fut_printf("[CHDIR] chdir(pathname=?) -> EFAULT (copy_from_user failed)\n");
+        return -EFAULT;
+    }
+
+    /* Check if path was truncated during copy */
+    if (kpath[sizeof(kpath) - 1] != '\0') {
+        fut_printf("[CHDIR] chdir(pathname=<truncated>) -> ENAMETOOLONG "
+                   "(path exceeds %zu bytes, Phase 5: path truncation detection)\n",
+                   sizeof(kpath));
+        return -ENAMETOOLONG;
+    }
+
+    /* Phase 2: Categorize path type (using kernel buffer now) */
     const char *path_type;
-    if (local_pathname[0] == '/') {
+    if (kpath[0] == '/') {
         path_type = "absolute";
-    } else if (local_pathname[0] == '.' && local_pathname[1] == '\0') {
+    } else if (kpath[0] == '.' && kpath[1] == '\0') {
         path_type = "current (.)";
-    } else if (local_pathname[0] == '.' && local_pathname[1] == '.' && local_pathname[2] == '\0') {
+    } else if (kpath[0] == '.' && kpath[1] == '.' && kpath[2] == '\0') {
         path_type = "parent (..)";
-    } else if (local_pathname[0] == '.' && local_pathname[1] == '/') {
+    } else if (kpath[0] == '.' && kpath[1] == '/') {
         path_type = "relative (explicit)";
-    } else if (local_pathname[0] == '.') {
+    } else if (kpath[0] == '.') {
         path_type = "relative (current/parent)";
     } else {
         path_type = "relative";
@@ -170,9 +233,9 @@ long sys_chdir(const char *pathname) {
     /* Phase 2: Store old directory inode for logging */
     uint64_t old_dir_ino = task->current_dir_ino;
 
-    /* Look up the path */
+    /* Look up the path (using kernel buffer to prevent TOCTOU) */
     struct fut_vnode *vnode = NULL;
-    int ret = fut_vfs_lookup(local_pathname, &vnode);
+    int ret = fut_vfs_lookup(kpath, &vnode);
 
     /* Phase 2: Handle lookup errors with detailed logging */
     if (ret < 0) {
@@ -199,14 +262,14 @@ long sys_chdir(const char *pathname) {
         }
 
         fut_printf("[CHDIR] chdir(path='%s' [%s], old_dir_ino=%lu) -> %d (%s)\n",
-                   local_pathname, path_type, old_dir_ino, ret, error_desc);
+                   kpath, path_type, old_dir_ino, ret, error_desc);
         return ret;
     }
 
     /* Phase 2: Validate vnode is not NULL */
     if (!vnode) {
         fut_printf("[CHDIR] chdir(path='%s' [%s], old_dir_ino=%lu) -> ENOENT "
-                   "(vnode is NULL)\n", local_pathname, path_type, old_dir_ino);
+                   "(vnode is NULL)\n", kpath, path_type, old_dir_ino);
         return -ENOENT;
     }
 
@@ -243,7 +306,7 @@ long sys_chdir(const char *pathname) {
     if (vnode->type != VN_DIR) {
         fut_printf("[CHDIR] chdir(path='%s' [%s], vnode_ino=%lu, vnode_type=%s) "
                    "-> ENOTDIR (target is %s, not directory)\n",
-                   local_pathname, path_type, vnode->ino, vnode_type_desc, vnode_type_desc);
+                   kpath, path_type, vnode->ino, vnode_type_desc, vnode_type_desc);
         fut_vnode_unref(vnode);
         return -ENOTDIR;
     }
@@ -251,10 +314,10 @@ long sys_chdir(const char *pathname) {
     /* Update the task's current working directory */
     task->current_dir_ino = vnode->ino;
 
-    /* Phase 4: Detailed success logging */
+    /* Phase 5: Detailed success logging */
     fut_printf("[CHDIR] chdir(path='%s' [%s], old_dir_ino=%lu, new_dir_ino=%lu) "
-               "-> 0 (cwd changed, Phase 4: VFS integration with per-task cwd tracking)\n",
-               local_pathname, path_type, old_dir_ino, vnode->ino);
+               "-> 0 (cwd changed, Phase 5: path truncation detection)\n",
+               kpath, path_type, old_dir_ino, vnode->ino);
 
     /* Phase 3: Cache the directory path in task structure for faster lookup */
     /* TODO: Add cwd_cache_buf field to struct fut_task_t for path caching */

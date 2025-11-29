@@ -182,15 +182,60 @@ long sys_inotify_add_watch(int fd, const char *pathname, uint32_t mask) {
         return -EFAULT;
     }
 
-    /* Phase 2: Copy pathname from userspace to kernel space */
+    /* Phase 5: Copy full pathname to detect truncation
+     * VULNERABILITY: Path Truncation Attack
+     *
+     * ATTACK SCENARIO:
+     * Silent truncation allows accessing unintended files
+     * 1. Attacker provides pathname exceeding 256 bytes:
+     *    inotify_add_watch(fd, "/tmp/" + "A"*250 + "/secret", IN_MODIFY)
+     * 2. Old code: fut_copy_from_user(path_buf, pathname, 255)
+     *    - Copies only first 255 bytes: "/tmp/AAA...AAA"
+     *    - Silently drops "/secret" suffix
+     *    - path_buf[255] = '\0' (null terminator)
+     * 3. VFS lookup resolves truncated path "/tmp/AAA...AAA"
+     * 4. Watch registered on wrong directory (parent instead of intended file)
+     * 5. Attacker bypasses monitoring by modifying actual /tmp/.../secret
+     *
+     * IMPACT:
+     * - Security bypass: File monitoring fails for intended target
+     * - Access control violation: Watch applies to wrong file/directory
+     * - Information disclosure: Events from unintended directory
+     * - Audit failure: Modifications to actual target go unmonitored
+     *
+     * ROOT CAUSE:
+     * Line 187 (old): fut_copy_from_user(path_buf, pathname, sizeof(path_buf) - 1)
+     * - Copies only 255 bytes even if pathname is longer
+     * - Silently truncates path without error
+     * - No detection that full path didn't fit
+     * - Application assumes watch is on full path
+     *
+     * DEFENSE (Phase 5):
+     * Copy full buffer size (256 bytes) and check for truncation
+     * - Copy 256 bytes instead of 255
+     * - Check if path_buf[255] != '\0' after copy
+     * - Return -ENAMETOOLONG if truncation detected
+     * - Fail explicitly instead of silent truncation
+     *
+     * CVE REFERENCES:
+     * - CVE-2018-14633: Linux chdir path truncation
+     * - CVE-2017-7889: Linux mount path truncation
+     */
     char path_buf[256];
-    if (fut_copy_from_user(path_buf, pathname, sizeof(path_buf) - 1) != 0) {
+    if (fut_copy_from_user(path_buf, pathname, sizeof(path_buf)) != 0) {
         fut_printf("[INOTIFY] inotify_add_watch(fd=%d, pathname=?, mask=0x%x, pid=%d) "
-                   "-> EFAULT (pathname copy_from_user failed)\n",
+                   "-> EFAULT (pathname copy_from_user failed, Phase 5)\n",
                    fd, mask, task->pid);
         return -EFAULT;
     }
-    path_buf[sizeof(path_buf) - 1] = '\0';
+
+    /* Phase 5: Verify path was not truncated */
+    if (path_buf[sizeof(path_buf) - 1] != '\0') {
+        fut_printf("[INOTIFY] inotify_add_watch(fd=%d, pathname=<truncated>, mask=0x%x, pid=%d) "
+                   "-> ENAMETOOLONG (path exceeds %zu bytes, truncation detected, Phase 5)\n",
+                   fd, mask, task->pid, sizeof(path_buf) - 1);
+        return -ENAMETOOLONG;
+    }
 
     /* Phase 2: Validate pathname is not empty */
     if (path_buf[0] == '\0') {

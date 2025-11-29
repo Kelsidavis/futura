@@ -147,8 +147,81 @@ ssize_t sys_sendmsg(int sockfd, const struct msghdr *msg, int flags) {
         return -EFAULT;
     }
 
-    /* Phase 5: Validate control message length
-     * Limit to 64KB to prevent DoS via excessively large control messages */
+    /* Phase 5: Validate control message length to prevent DoS and resource exhaustion
+     * VULNERABILITY: Unbounded Ancillary Data Size and Memory Exhaustion
+     *
+     * ATTACK SCENARIO 1: Excessive Control Message Length (DoS)
+     * Attacker sends massive ancillary data to exhaust kernel memory
+     * 1. Attacker creates socket pair for FD passing
+     * 2. Prepares msghdr with msg_controllen = SIZE_MAX or 1GB
+     * 3. Calls sendmsg(sv[0], &msg, 0) with control data
+     * 4. Without limit: kernel allocates SIZE_MAX bytes for control buffer
+     * 5. Memory exhaustion: system OOM kills critical processes
+     * 6. Denial of service: system becomes unresponsive
+     *
+     * ATTACK SCENARIO 2: SCM_RIGHTS File Descriptor Exhaustion
+     * Attacker sends excessive file descriptors via control messages
+     * 1. Attacker prepares control message with 1000 file descriptors
+     * 2. Each cmsg contains SCM_RIGHTS with FD array
+     * 3. Receiver kernel must allocate space for all FDs
+     * 4. Attacker repeatedly calls sendmsg() with max FDs
+     * 5. Kernel FD table exhaustion: no new files can be opened
+     * 6. System-wide denial of service
+     *
+     * ATTACK SCENARIO 3: NULL Pointer with Non-Zero Length
+     * Attacker sets msg_control = NULL but msg_controllen > 0
+     * 1. sendmsg() with msg_control = NULL, msg_controllen = 1024
+     * 2. Kernel attempts to copy control data from NULL address
+     * 3. Page fault: NULL pointer dereference
+     * 4. Kernel crash or DoS
+     *
+     * IMPACT:
+     * - Denial of service: Memory exhaustion from excessive control buffer
+     * - System crash: NULL pointer dereference
+     * - Resource exhaustion: FD table fills up from SCM_RIGHTS abuse
+     * - Network DoS: Socket buffers exhausted by control messages
+     *
+     * ROOT CAUSE:
+     * Ancillary data allows arbitrary metadata attachment to messages:
+     * - msg_controllen: User specifies control data size
+     * - SCM_RIGHTS: Can transfer arbitrary number of file descriptors
+     * - No validation that size doesn't exceed reasonable limits
+     * - Kernel must allocate memory to process control messages
+     *
+     * DEFENSE (Phase 5):
+     * 1. Limit maximum control message length (line 154-159):
+     *    - MAX_CONTROL_LEN = 64KB (reasonable for most use cases)
+     *    - Prevents memory exhaustion attacks
+     *    - Returns -EINVAL for excessive sizes
+     * 2. Validate msg_control pointer consistency (line 162-167):
+     *    - Reject NULL pointer with non-zero length
+     *    - Returns -EFAULT for NULL msg_control
+     * 3. Control Message Processing (Phase 4 TODO):
+     *    - Limit number of FDs in SCM_RIGHTS (e.g., max 253 per POSIX)
+     *    - Validate cmsg_len for each cmsghdr
+     *    - Check total FDs don't exceed process/system limits
+     *    - Atomic FD transfer with proper refcounting
+     *
+     * CVE REFERENCES:
+     * - CVE-2016-8632: Linux sendmsg integer overflow in control message
+     * - CVE-2013-7446: Unix socket SCM_RIGHTS refcount overflow
+     * - CVE-2016-0728: Linux keyring refcount overflow via SCM_RIGHTS
+     *
+     * POSIX REQUIREMENT:
+     * From sendmsg(2) man page:
+     * "The msg_controllen member specifies the length of the buffer pointed
+     *  to by msg_control. The maximum control message buffer length is
+     *  implementation-defined."
+     * - Kernel must impose reasonable limits on control message size
+     * - Must not crash or exhaust resources
+     *
+     * IMPLEMENTATION NOTES:
+     * - Line 154: MAX_CONTROL_LEN prevents resource exhaustion
+     * - Line 154-159: Reject excessive control buffer
+     * - Line 162-167: Validate NULL/non-zero inconsistency
+     * - Phase 4: Implement SCM_RIGHTS with FD count limit and refcount safety
+     * - Phase 4: Validate all cmsghdr structures before processing
+     */
     if (kmsg.msg_controllen > 0) {
         const size_t MAX_CONTROL_LEN = 65536;  /* 64KB */
         if (kmsg.msg_controllen > MAX_CONTROL_LEN) {

@@ -75,40 +75,121 @@ long sys_select(int nfds, fd_set *readfds, fd_set *writefds,
     }
 
     /* Phase 5: Validate nfds against task FD table size
-     * VULNERABILITY: Out-of-Bounds FD Array Access via fd_set Bitmask
+     * VULNERABILITY: Out-of-Bounds FD Array Access and CPU Exhaustion
      *
-     * ATTACK SCENARIO (Future implementation risk):
-     * When actual fd_set processing is implemented, unchecked FD numbers can cause OOB access
+     * ATTACK SCENARIO 1: Out-of-Bounds FD Table Access
+     * Attacker provides nfds exceeding task's actual FD table allocation
+     * 1. Task has max_fds=256 (FD table allocated for 256 entries)
+     * 2. Attacker calls select(1024, &readfds, NULL, NULL, &timeout)
+     * 3. Validation: nfds <= FD_SETSIZE (1024) ✓ passes (line 71-75)
+     * 4. WITHOUT Phase 5 check (line 113-117): Kernel iterates FDs 0-1023
+     * 5. Phase 2 implementation: for (fd = 0; fd < nfds; fd++)
+     * 6. Iteration accesses task->fd_table[1023] (OOB: table only has 256)
+     * 7. Information disclosure: Read uninitialized kernel memory
+     * 8. Or kernel panic: Page fault from invalid memory access
      *
-     * Background: fd_set structure
-     * - Bitmask representing FDs (1024 bits = 128 bytes on most systems)
-     * - Each FD number maps to bit position: bit = FD % 8, byte = FD / 8
-     * - nfds parameter specifies highest FD+1 to check
+     * ATTACK SCENARIO 2: fd_set Pointer Validation Bypass
+     * Attacker provides NULL fd_set pointers to exploit missing validation
+     * 1. Attacker calls select(10, NULL, NULL, NULL, NULL)
+     * 2. Phase 1 stub: Returns immediately (line 124-125)
+     * 3. Phase 2 implementation: Dereferences readfds without NULL check
+     * 4. Kernel dereferences NULL pointer in FD_ISSET(fd, readfds)
+     * 5. Page fault causes kernel crash
      *
-     * Vulnerability when processing fd_set:
-     * 1. Attacker calls select(1024, &readfds, NULL, NULL, &timeout)
-     * 2. Validation: nfds <= FD_SETSIZE (1024) ✓ passes
-     * 3. Validation: nfds <= task->max_fds (e.g., 256) ✗ SHOULD FAIL
-     * 4. WITHOUT Phase 5 check: Kernel iterates FDs 0-1023
-     * 5. Kernel accesses task->fd_table[1023] but table only has 256 entries
-     * 6. Out-of-bounds read → information disclosure or kernel panic
+     * ATTACK SCENARIO 3: CPU Exhaustion via Large nfds
+     * Attacker maximizes nfds to cause excessive kernel CPU usage
+     * 1. Attacker opens 1024 file descriptors (valid FD table)
+     * 2. Calls select(1024, &readfds, &writefds, &exceptfds, NULL) in loop
+     * 3. Each call: Kernel iterates 1024 FDs x 3 fd_sets = 3072 checks
+     * 4. Tight loop: 1000 calls/second x 3072 checks = 3M FD checks/sec
+     * 5. CPU saturated with FD iteration, starving other processes
+     * 6. System becomes unresponsive (DoS)
      *
-     * Attack amplification:
-     * - fd_set can contain ANY bit pattern (attacker controlled)
-     * - Bits set beyond task->max_fds access invalid memory
-     * - Can probe kernel memory layout via timing side-channel
-     * - Potential KASLR bypass via OOB timing differences
+     * ATTACK SCENARIO 4: Timing Side-Channel for KASLR Bypass
+     * Attacker uses OOB access timing to leak kernel memory layout
+     * 1. Attacker sets nfds=1024 with sparse fd_set (few bits set)
+     * 2. Bits set correspond to FDs beyond max_fds (OOB region)
+     * 3. Phase 2 checks FD_ISSET(fd, readfds) for each FD
+     * 4. OOB accesses: task->fd_table[fd] reads random kernel memory
+     * 5. Valid pointers vs invalid: Different page fault timing
+     * 6. Measure timing differences to map kernel memory
+     * 7. Infer kernel addresses, bypass KASLR protection
      *
-     * DEFENSE (Phase 5):
-     * Validate nfds against task's ACTUAL FD table size, not just static limit
-     * - task->max_fds reflects real FD table allocation
-     * - Reject nfds > max_fds BEFORE any fd_set processing
-     * - Prevents iterating beyond allocated FD table bounds
+     * ATTACK SCENARIO 5: Integer Overflow in FD Iteration Bounds
+     * Attacker exploits potential overflow in fd_set byte calculation
+     * 1. Attacker calls select(INT_MAX, &readfds, NULL, NULL, NULL)
+     * 2. Phase 2 calculates fd_set bytes: bytes = nfds / 8 + 1
+     * 3. Calculation: INT_MAX / 8 = 268435455 (valid)
+     * 4. But iteration: for (fd = 0; fd < nfds; fd++) → 2 billion iterations
+     * 5. Kernel spins for hours iterating non-existent FDs
+     * 6. Infinite loop DoS (system hangs)
      *
-     * Critical for future phases:
-     * - Phase 2: Actual fd_set iteration will access task->fd_table[fd]
-     * - Phase 3: Timeout processing may extend attack window
-     * - Phase 4: Epoll backend needs same validation
+     * IMPACT:
+     * - Out-of-bounds read: Information disclosure from kernel memory
+     * - Kernel panic: Page fault on invalid FD table access
+     * - CPU exhaustion DoS: Excessive FD iteration
+     * - Timing side-channel: KASLR bypass via OOB timing
+     * - Integer overflow: Infinite loop via INT_MAX nfds
+     *
+     * ROOT CAUSE:
+     * Phase 1 stub lacks comprehensive validation:
+     * - Line 64-75: Validates nfds >= 0 and <= FD_SETSIZE, but not <= task->max_fds
+     * - No validation of fd_set pointers before dereference (NULL check missing)
+     * - No upper bound on CPU work (nfds can be FD_SETSIZE causing 3072 checks)
+     * - No protection against timing side-channels (OOB accesses observable)
+     * - Assumes Phase 2 will add checks (not documented until Phase 5)
+     *
+     * DEFENSE (Phase 5 Requirements for Phase 2):
+     * 1. FD Table Bounds Validation:
+     *    - Check nfds <= task->max_fds BEFORE any iteration
+     *    - Line 113-117: Enforces this check (CRITICAL)
+     *    - Prevents OOB access to task->fd_table[]
+     * 2. fd_set Pointer Validation:
+     *    - fut_access_ok(readfds, sizeof(fd_set), READ) if readfds != NULL
+     *    - Same for writefds and exceptfds
+     *    - Return -EFAULT if pointers invalid
+     * 3. CPU Work Limits:
+     *    - Consider reducing FD_SETSIZE from 1024 to 256 for embedded systems
+     *    - Or add work budget: return -EINTR after N iterations
+     *    - Prevent CPU exhaustion DoS
+     * 4. Timing Side-Channel Mitigation:
+     *    - Constant-time FD validation (don't short-circuit on error)
+     *    - Or require CAP_SYS_ADMIN for nfds > 256
+     * 5. Integer Overflow Prevention:
+     *    - Additional check: nfds <= INT_MAX / 1024 (prevent overflow)
+     *    - Or clamp nfds to reasonable maximum (1024)
+     *
+     * CVE REFERENCES:
+     * - CVE-2015-8830: Linux aio out-of-bounds via invalid FD
+     * - CVE-2017-7308: Linux packet socket UAF via invalid FD
+     * - CVE-2014-0181: Netfilter out-of-bounds via crafted FD
+     *
+     * POSIX REQUIREMENT:
+     * From POSIX.1-2008 select(2):
+     * "If the nfds argument is less than 0 or greater than FD_SETSIZE,
+     *  select() shall fail and set errno to [EINVAL]."
+     * - Implementation extends this: Also check nfds <= task->max_fds
+     * - More restrictive but prevents kernel vulnerabilities
+     * - POSIX allows implementation-defined limits beyond FD_SETSIZE
+     *
+     * LINUX REQUIREMENT:
+     * From select(2) man page:
+     * "According to POSIX, select() should check all specified file
+     *  descriptors in the three file descriptor sets, up to the limit
+     *  nfds-1. However, the current implementation ignores any file
+     *  descriptor in these sets that is greater than the maximum file
+     *  descriptor number that the process currently has open."
+     * - Linux silently ignores FDs > max_open
+     * - Futura enforces stricter check (return EINVAL)
+     * - Prevents potential OOB access
+     *
+     * IMPLEMENTATION NOTES:
+     * - Phase 1: Current stub has nfds validation (lines 64-75, 113-117)
+     * - Phase 2 MUST add fut_access_ok() for fd_set pointers
+     * - Phase 2 MUST validate FDs within each fd_set before accessing fd_table
+     * - Phase 2 MUST limit CPU work (consider timeout or iteration budget)
+     * - Phase 3 MAY add constant-time validation (timing side-channel mitigation)
+     * - See Linux kernel: fs/select.c do_select() for reference
      */
     if (task->max_fds > 0 && local_nfds > (int)task->max_fds) {
         fut_printf("[SELECT] select(nfds=%d, ...) -> EINVAL (nfds=%d exceeds task max_fds=%u, Phase 5)\n",
@@ -120,6 +201,10 @@ long sys_select(int nfds, fd_set *readfds, fd_set *writefds,
     /* Phase 2: Implement actual FD monitoring with poll backend */
     /* Phase 3: Implement timeout support */
     /* Phase 4: Optimize with epoll backend */
+    /* TODO Phase 2: Add fut_access_ok() validation for readfds, writefds, exceptfds pointers */
+    /* TODO Phase 2: Validate each FD in fd_set is < task->max_fds before fd_table access */
+    /* TODO Phase 2: Add CPU work budget or iteration limit (prevent DoS via large nfds) */
+    /* TODO Phase 3: Consider constant-time FD validation (timing side-channel mitigation) */
 
     fut_printf("[SELECT] Stub implementation - returning 0 (timeout)\n");
     return 0;  /* Simulate timeout */

@@ -90,9 +90,75 @@ long sys_personality(unsigned long persona) {
         return default_persona;
     }
 
-    /* Extract base personality and flags */
+    /* Phase 5: Validate persona parameter bounds
+     * VULNERABILITY: Invalid Personality Flags
+     *
+     * ATTACK SCENARIO:
+     * Invalid personality flags cause undefined behavior in execution domain setup
+     * 1. Attacker provides personality with invalid flags:
+     *    personality(PER_LINUX | 0x10000000)  // Bit 28 undefined
+     * 2. Kernel extracts flags without validation (line 95 old)
+     * 3. Invalid flags may be used in bitmask tests throughout kernel:
+     *    - if (persona & UNKNOWN_FLAG) { ... }  // Undefined behavior
+     *    - Memory layout decisions based on unknown flags
+     *    - Security checks (ASLR, exec permissions) bypassed
+     * 4. Application behavior becomes unpredictable
+     * 5. Potential security bypass if flags control access checks
+     *
+     * IMPACT:
+     * - Security bypass: Unknown flags may disable protections
+     * - Memory corruption: Invalid flags affect address space layout
+     * - Undefined behavior: Kernel makes decisions on unknown bits
+     * - ASLR bypass: Invalid flags may disable randomization
+     *
+     * ROOT CAUSE:
+     * Line 94-95 (old): Extracts base_persona and flags without validation
+     * No check that flags contain only known valid bits
+     * Unknown flags propagate through personality checks
+     *
+     * DEFENSE (Phase 5):
+     * Validate flags contain only known personality bits
+     * - Define ALL_VALID_FLAGS bitmask
+     * - Check (flags & ~ALL_VALID_FLAGS) == 0
+     * - Return -EINVAL if unknown flags present
+     * - Validate base_persona is known value
+     *
+     * POSIX/LINUX REQUIREMENT:
+     * personality() should reject unknown flags to prevent undefined behavior
+     * Applications rely on predictable personality semantics
+     *
+     * CVE REFERENCES:
+     * - CVE-2016-3135: Linux personality() privilege escalation
+     * - CVE-2015-3290: Linux personality() ASLR bypass
+     */
+
+    /* Extract base personality and flags BEFORE validation */
     unsigned long base_persona = persona & 0xFF;
     unsigned long flags = persona & ~0xFF;
+
+    /* Phase 5: Validate base personality is known */
+    if (base_persona != PER_LINUX &&
+        base_persona != PER_LINUX_32BIT &&
+        base_persona != PER_SVR4 &&
+        base_persona != PER_BSD) {
+        fut_printf("[PERSONALITY] personality(persona=0x%lx [unknown base 0x%lx], pid=%d) "
+                   "-> EINVAL (unknown personality, valid: 0x00/0x08/0x01/0x06, Phase 5)\n",
+                   persona, base_persona, task->pid);
+        return -EINVAL;
+    }
+
+    /* Phase 5: Validate flags contain only known bits */
+    const unsigned long ALL_VALID_FLAGS = ADDR_NO_RANDOMIZE | ADDR_COMPAT_LAYOUT |
+                                          READ_IMPLIES_EXEC | ADDR_LIMIT_32BIT |
+                                          SHORT_INODE | WHOLE_SECONDS |
+                                          STICKY_TIMEOUTS | ADDR_LIMIT_3GB;
+
+    if (flags & ~ALL_VALID_FLAGS) {
+        fut_printf("[PERSONALITY] personality(persona=0x%lx [invalid flags 0x%lx], pid=%d) "
+                   "-> EINVAL (unknown flags present, valid mask: 0x%lx, Phase 5)\n",
+                   persona, flags & ~ALL_VALID_FLAGS, task->pid, ALL_VALID_FLAGS);
+        return -EINVAL;
+    }
 
     /* Phase 2: Categorize personality type */
     const char *persona_desc;

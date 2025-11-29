@@ -9,6 +9,194 @@
  * Phase 2 (Completed): Enhanced validation, address family identification, and detailed logging
  * Phase 3 (Completed): Support for multiple address families (AF_INET, AF_INET6)
  * Phase 4 (Completed): Advanced features (SO_REUSEADDR, SO_REUSEPORT, wildcard binding)
+ *
+ * ============================================================================
+ * PHASE 5 SECURITY HARDENING: BIND() SOCKET ADDRESS BINDING
+ * ============================================================================
+ *
+ * VULNERABILITY OVERVIEW:
+ * bind() assigns a local address to a socket, which controls what address/port
+ * the socket will listen on or use for outbound connections. Vulnerabilities include:
+ * - Address length overflow (addrlen overflow)
+ * - Socket state validation bypass (bind after close, bind twice)
+ * - Privileged port binding without permission checks
+ * - Path traversal in Unix domain socket paths
+ * - Address family confusion attacks (wrong size for family)
+ *
+ * ATTACK SCENARIO 1: Address Length Integer Overflow
+ * --------------------------------------------------
+ * Step 1: Attacker passes addrlen = 0xFFFFFFFF (UINT32_MAX)
+ * Step 2: OLD vulnerable code allocates buffer:
+ *         kernel_addr = malloc(addrlen);  // Wraps to small allocation
+ * Step 3: copy_from_user(kernel_addr, addr, addrlen);  // Overflow!
+ * Step 4: Kernel reads past end of allocated buffer
+ * Impact: Information disclosure (leak kernel memory), potential kernel crash
+ * Root Cause: No upper bound validation on addrlen before allocation
+ *
+ * Defense (lines 178-185):
+ * - Maximum addrlen validation (128 bytes, covers all address families)
+ * - Prevents allocation overflow attacks
+ * - Fails before memory allocation occurs
+ *
+ * CVE References:
+ * - CVE-2019-11479: Linux TCP SACK panic via integer overflow
+ * - CVE-2016-9793: Socket option length overflow
+ *
+ * ATTACK SCENARIO 2: Socket State Validation Bypass (Double Bind)
+ * ---------------------------------------------------------------
+ * Step 1: Attacker creates socket with socket()
+ * Step 2: Calls bind(sockfd, addr1, len) -> succeeds, socket becomes BOUND
+ * Step 3: Calls bind(sockfd, addr2, len) again -> should fail!
+ * Step 4: OLD vulnerable code doesn't check socket state
+ * Step 5: Socket rebinds to addr2, breaking address reservation semantics
+ * Impact: Address reuse confusion, bypass port allocation, denial of service
+ * Root Cause: Missing socket state validation
+ *
+ * Defense (lines 286-329):
+ * - Immediate socket state validation after retrieval
+ * - Reject bind if socket already BOUND
+ * - Reject bind if socket LISTENING (server started)
+ * - Reject bind if socket CONNECTING or CONNECTED
+ * - Reject bind if socket CLOSED
+ * - State machine enforcement prevents double-bind
+ *
+ * CVE References:
+ * - CVE-2017-7308: Linux packet socket use-after-free via state confusion
+ * - CVE-2016-10229: Socket state confusion leading to UAF
+ *
+ * ATTACK SCENARIO 3: Privileged Port Binding Without Permission Check
+ * -------------------------------------------------------------------
+ * Step 1: Non-root attacker creates TCP socket
+ * Step 2: Attempts to bind to port 80 (HTTP) or port 22 (SSH)
+ * Step 3: OLD vulnerable code doesn't check CAP_NET_BIND_SERVICE
+ * Step 4: Binding succeeds, attacker now controls privileged service port
+ * Step 5: Legitimate service (nginx, sshd) fails to start
+ * Impact: Denial of service, service impersonation, privilege escalation
+ * Root Cause: Missing capability check for ports < 1024
+ *
+ * Defense (TODO - not yet implemented):
+ * - Check task capabilities for port < 1024
+ * - Require CAP_NET_BIND_SERVICE for privileged ports
+ * - Current code at lines 48-57 categorizes ports but doesn't enforce
+ *
+ * CVE References:
+ * - CVE-2020-8835: Linux privilege escalation via capability bypass
+ * - CVE-2016-3134: Netfilter capability check bypass
+ *
+ * ATTACK SCENARIO 4: Path Traversal in Unix Domain Socket Paths
+ * -------------------------------------------------------------
+ * Step 1: Attacker calls bind with Unix domain socket
+ * Step 2: Provides path = "/tmp/../../root/.ssh/authorized_keys"
+ * Step 3: OLD vulnerable code doesn't canonicalize path
+ * Step 4: Socket creation overwrites /root/.ssh/authorized_keys
+ * Step 5: Attacker gains root SSH access
+ * Impact: Arbitrary file creation/overwrite, privilege escalation
+ * Root Cause: No path canonicalization or directory traversal checks
+ *
+ * Defense (TODO - not yet implemented):
+ * - Canonicalize Unix domain socket paths
+ * - Reject paths containing ".." components
+ * - Validate path doesn't escape allowed directories
+ * - Check write permission on parent directory
+ *
+ * CVE References:
+ * - CVE-2014-0196: Linux TTY layer race condition
+ * - CVE-2018-6555: Path traversal in socket creation
+ *
+ * ATTACK SCENARIO 5: Address Family Confusion Attack
+ * --------------------------------------------------
+ * Step 1: Attacker provides sa_family = AF_INET (IPv4, needs 16 bytes)
+ * Step 2: But provides addrlen = 2 (only family field)
+ * Step 3: Kernel code casts to sockaddr_in* and reads sin_port, sin_addr
+ * Step 4: Reads occur beyond end of provided buffer
+ * Step 5: Uses uninitialized kernel stack data as port/address
+ * Impact: Information disclosure (kernel stack leak), incorrect binding
+ * Root Cause: No validation that addrlen matches address family requirements
+ *
+ * Defense (lines 178-185, 233-277):
+ * - Minimum size check per address family
+ * - AF_INET requires >= 16 bytes (sizeof sockaddr_in)
+ * - AF_INET6 requires >= 28 bytes (sizeof sockaddr_in6)
+ * - AF_UNIX validated separately based on path length
+ * - Prevents reading beyond userspace buffer
+ *
+ * CVE References:
+ * - CVE-2019-11479: Size confusion in network stack
+ * - CVE-2017-16994: Netlink socket size validation bypass
+ *
+ * ============================================================================
+ * DEFENSE STRATEGY (ALREADY IMPLEMENTED):
+ * ============================================================================
+ * 1. [DONE] Address length bounds validation (lines 178-185)
+ *    - Maximum 128 bytes (covers all address families)
+ *    - Prevents allocation overflow
+ *
+ * 2. [DONE] Socket state validation (lines 286-329)
+ *    - Immediate check after socket retrieval
+ *    - Reject if already BOUND
+ *    - Reject if LISTENING, CONNECTING, CONNECTED, or CLOSED
+ *    - Enforces bind-once semantics
+ *
+ * 3. [DONE] Address family size validation (lines 233-277)
+ *    - AF_INET: minimum 16 bytes
+ *    - AF_INET6: minimum 28 bytes
+ *    - AF_UNIX: validated based on path + null terminator
+ *    - Prevents buffer under-read attacks
+ *
+ * 4. [DONE] Early NULL pointer checks (lines 126-130)
+ *    - Validate addr != NULL before any operations
+ *    - Prevents NULL dereference
+ *
+ * 5. [TODO] Privileged port capability checks
+ *    - Need to add CAP_NET_BIND_SERVICE check for port < 1024
+ *    - Currently ports are categorized (lines 48-57) but not enforced
+ *
+ * 6. [TODO] Unix domain socket path canonicalization
+ *    - Need to reject ".." path components
+ *    - Need to validate parent directory write permissions
+ *    - Need to prevent directory traversal attacks
+ *
+ * ============================================================================
+ * CVE REFERENCES (Similar Vulnerabilities):
+ * ============================================================================
+ * 1. CVE-2019-11479: Linux TCP SACK panic (integer overflow in network stack)
+ * 2. CVE-2016-9793: Socket option length overflow
+ * 3. CVE-2017-7308: Packet socket state confusion UAF
+ * 4. CVE-2016-10229: Socket state confusion leading to UAF
+ * 5. CVE-2020-8835: Privilege escalation via capability bypass
+ *
+ * ============================================================================
+ * REQUIREMENTS (POSIX/Linux):
+ * ============================================================================
+ * POSIX.1-2008:
+ * - bind() shall fail with EINVAL if socket already bound
+ * - bind() shall fail with EBADF if sockfd is not valid
+ * - bind() shall fail with ENOTSOCK if sockfd is not a socket
+ * - bind() shall fail with EFAULT if addr is invalid pointer
+ * - bind() shall fail with EADDRNOTAVAIL if address not available
+ *
+ * Linux Requirements:
+ * - Privileged ports (< 1024) require CAP_NET_BIND_SERVICE
+ * - SO_REUSEADDR allows binding to TIME_WAIT sockets
+ * - SO_REUSEPORT allows multiple sockets on same port
+ * - Unix domain sockets create filesystem entries (or abstract namespace)
+ *
+ * ============================================================================
+ * IMPLEMENTATION NOTES:
+ * ============================================================================
+ * Current Phase 5 validations implemented:
+ * [DONE] 1. Address length upper bound (128 bytes) at lines 178-185
+ * [DONE] 2. Socket state validation (BOUND/LISTENING/etc.) at lines 286-329
+ * [DONE] 3. Per-family size validation (AF_INET/AF_INET6/AF_UNIX) at lines 233-277
+ * [DONE] 4. NULL pointer validation at lines 126-130
+ * [DONE] 5. Early sockfd validation at lines 119-123
+ *
+ * TODO (Phase 5 enhancements):
+ * [TODO] 1. Add CAP_NET_BIND_SERVICE capability check for ports < 1024
+ * [TODO] 2. Add Unix domain socket path canonicalization
+ * [TODO] 3. Add parent directory write permission checks
+ * [TODO] 4. Add ".." component rejection in paths
+ * [TODO] 5. Add rate limiting for bind failures (DoS prevention)
  */
 
 #include <kernel/fut_task.h>

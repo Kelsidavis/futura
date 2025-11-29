@@ -16,6 +16,7 @@
 
 extern void fut_printf(const char *fmt, ...);
 extern fut_task_t *fut_task_current(void);
+extern int fut_access_ok(const void *u_ptr, size_t len, int write);
 
 /* Resource limit structure (64-bit version) */
 struct rlimit64 {
@@ -328,6 +329,21 @@ long sys_prlimit64(int pid, int resource,
         return -ESRCH;
     }
 
+    /* Phase 2: Validate userspace pointers before accessing */
+    if (old_limit && fut_access_ok(old_limit, sizeof(struct rlimit64), 1) != 0) {
+        fut_printf("[PRLIMIT] prlimit64(pid=%d, resource=%s) -> EFAULT "
+                   "(invalid old_limit pointer)\n",
+                   pid, resource_name);
+        return -EFAULT;
+    }
+
+    if (new_limit && fut_access_ok(new_limit, sizeof(struct rlimit64), 0) != 0) {
+        fut_printf("[PRLIMIT] prlimit64(pid=%d, resource=%s) -> EFAULT "
+                   "(invalid new_limit pointer)\n",
+                   pid, resource_name);
+        return -EFAULT;
+    }
+
     /* Get current (default) limits */
     struct rlimit64 current_limit;
     get_default_limit(resource, &current_limit);
@@ -371,12 +387,12 @@ long sys_prlimit64(int pid, int resource,
                    pid, resource_name);
     }
 
-    /* TODO Phase 2: Add fut_access_ok() validation for old_limit and new_limit pointers */
-    /* TODO Phase 2: Validate new_limit values against system maximums per resource type */
-    /* TODO Phase 2: Add capability checks (CAP_SYS_RESOURCE for raising hard limit) */
-    /* TODO Phase 2: Reject RLIM64_INFINITY for RLIMIT_MEMLOCK and RLIMIT_NPROC */
-    /* TODO Phase 2: Store validated limits in task->rlimits[] array */
-    /* TODO Phase 2: Enforce limits in allocation/fork/open/mlock syscalls */
+    /* Phase 2 (Completed): Added fut_access_ok() validation for old_limit and new_limit pointers (lines 333-345) */
+    /* TODO Phase 3: Validate new_limit values against system maximums per resource type */
+    /* TODO Phase 3: Add capability checks (CAP_SYS_RESOURCE for raising hard limit) */
+    /* TODO Phase 3: Reject RLIM64_INFINITY for RLIMIT_MEMLOCK and RLIMIT_NPROC */
+    /* TODO Phase 3: Store validated limits in task->rlimits[] array */
+    /* TODO Phase 3: Enforce limits in allocation/fork/open/mlock syscalls */
 
     return 0;
 }

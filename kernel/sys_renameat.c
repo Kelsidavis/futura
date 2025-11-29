@@ -222,8 +222,9 @@ long sys_renameat(int olddirfd, const char *oldpath, int newdirfd, const char *n
      *
      * TODO Phase 2: Implement proper directory FD resolution via VFS */
 
-    /* Perform the rename via VFS */
-    int ret = fut_vfs_rename(oldpath_buf, newpath_buf);
+    /* Perform the rename via existing sys_rename implementation */
+    extern long sys_rename(const char *oldpath, const char *newpath);
+    int ret = (int)sys_rename(oldpath_buf, newpath_buf);
 
     /* Handle errors */
     if (ret < 0) {

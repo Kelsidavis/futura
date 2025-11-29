@@ -417,9 +417,13 @@ KERNEL_SOURCES := \
     kernel/sys_getsockopt.c \
     kernel/sys_uname.c \
     kernel/sys_rename.c \
+    kernel/sys_renameat.c \
     kernel/sys_stat.c \
     kernel/sys_fstat.c \
+    kernel/sys_fstatat.c \
     kernel/sys_lstat.c \
+    kernel/sys_unlinkat.c \
+    kernel/sys_mkdirat.c \
     kernel/sys_chmod.c \
     kernel/sys_fchmod.c \
     kernel/sys_xattr.c \

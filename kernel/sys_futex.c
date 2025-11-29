@@ -14,6 +14,7 @@
 
 extern void fut_printf(const char *fmt, ...);
 extern fut_task_t *fut_task_current(void);
+extern int fut_access_ok(const void *u_ptr, size_t len, int write);
 
 /* Futex operations */
 #define FUTEX_WAIT              0
@@ -175,9 +176,13 @@ long sys_futex(uint32_t *uaddr, int op, uint32_t val,
         return -EINVAL;
     }
 
-    /* TODO Phase 2: Add fut_access_ok(uaddr, sizeof(uint32_t), 1) here */
-    /* TODO Phase 2: Implement atomic compare-and-sleep for FUTEX_WAIT */
-    /* TODO Phase 2: Add hash bucket locks to prevent TOCTOU */
+    /* Phase 2: Validate userspace pointer with write access (futexes modify memory) */
+    if (fut_access_ok(uaddr, sizeof(uint32_t), 1) != 0) {
+        return -EFAULT;
+    }
+
+    /* TODO Phase 3: Implement atomic compare-and-sleep for FUTEX_WAIT */
+    /* TODO Phase 3: Add hash bucket locks to prevent TOCTOU */
 
     /* Phase 1: Stub implementation */
     /* Phase 2: Implement actual futex operations with wait queues */
@@ -342,7 +347,11 @@ long sys_set_robust_list(struct robust_list_head *head, size_t len) {
     /* Phase 1: Stub - accept parameters */
     /* Phase 2: Store head pointer in task->robust_list after validation */
     /* Phase 3: Walk list on thread exit via exit_robust_list() */
-    /* TODO Phase 2: Add fut_access_ok(head, sizeof(*head), 0) here */
+
+    /* Phase 2: Validate robust_list head pointer before accessing */
+    if (head && fut_access_ok(head, sizeof(struct robust_list_head), 0) != 0) {
+        return -EFAULT;
+    }
 
     fut_printf("[SET_ROBUST_LIST] Stub implementation - returning success\n");
     return 0;
@@ -379,6 +388,14 @@ long sys_get_robust_list(int pid, struct robust_list_head **head_ptr,
     /* Validate output pointers */
     if (!head_ptr || !len_ptr) {
         return -EINVAL;
+    }
+
+    /* Phase 2: Validate userspace pointers with write access (kernel writes to them) */
+    if (fut_access_ok(head_ptr, sizeof(struct robust_list_head *), 1) != 0) {
+        return -EFAULT;
+    }
+    if (fut_access_ok(len_ptr, sizeof(size_t), 1) != 0) {
+        return -EFAULT;
     }
 
     /* Phase 1: Stub - return null pointer */

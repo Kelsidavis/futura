@@ -13,6 +13,7 @@
 
 extern void fut_printf(const char *fmt, ...);
 extern fut_task_t *fut_task_current(void);
+extern int fut_access_ok(const void *u_ptr, size_t len, int write);
 
 /* fd_set helpers */
 #define FD_SETSIZE 1024
@@ -197,11 +198,36 @@ long sys_select(int nfds, fd_set *readfds, fd_set *writefds,
         return -EINVAL;
     }
 
+    /* Phase 2: Validate fd_set pointers before accessing */
+    if (local_readfds && fut_access_ok(local_readfds, sizeof(fd_set), 1) != 0) {
+        fut_printf("[SELECT] select(nfds=%d, ...) -> EFAULT (invalid readfds pointer)\n",
+                   local_nfds);
+        return -EFAULT;
+    }
+
+    if (local_writefds && fut_access_ok(local_writefds, sizeof(fd_set), 1) != 0) {
+        fut_printf("[SELECT] select(nfds=%d, ...) -> EFAULT (invalid writefds pointer)\n",
+                   local_nfds);
+        return -EFAULT;
+    }
+
+    if (local_exceptfds && fut_access_ok(local_exceptfds, sizeof(fd_set), 1) != 0) {
+        fut_printf("[SELECT] select(nfds=%d, ...) -> EFAULT (invalid exceptfds pointer)\n",
+                   local_nfds);
+        return -EFAULT;
+    }
+
+    if (local_timeout && fut_access_ok(local_timeout, sizeof(fut_timeval_t), 0) != 0) {
+        fut_printf("[SELECT] select(nfds=%d, ...) -> EFAULT (invalid timeout pointer)\n",
+                   local_nfds);
+        return -EFAULT;
+    }
+
     /* Phase 1: Stub - return immediately indicating all FDs ready */
     /* Phase 2: Implement actual FD monitoring with poll backend */
     /* Phase 3: Implement timeout support */
     /* Phase 4: Optimize with epoll backend */
-    /* TODO Phase 2: Add fut_access_ok() validation for readfds, writefds, exceptfds pointers */
+    /* Phase 2 (Completed): Added fut_access_ok() validation for readfds, writefds, exceptfds, timeout pointers */
     /* TODO Phase 2: Validate each FD in fd_set is < task->max_fds before fd_table access */
     /* TODO Phase 2: Add CPU work budget or iteration limit (prevent DoS via large nfds) */
     /* TODO Phase 3: Consider constant-time FD validation (timing side-channel mitigation) */

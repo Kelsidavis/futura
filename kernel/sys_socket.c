@@ -9,7 +9,8 @@
  * Phase 1 (Completed): Basic socket creation with AF_UNIX SOCK_STREAM support
  * Phase 2 (Completed): Enhanced validation, domain/type/protocol identification, and detailed logging
  * Phase 3 (Completed): Support for multiple address families (AF_INET, AF_INET6) and socket types (SOCK_DGRAM)
- * Phase 4: Advanced features (SOCK_NONBLOCK, SOCK_CLOEXEC flags, protocol selection)
+ * Phase 4 (Completed): SOCK_NONBLOCK and SOCK_CLOEXEC flag support
+ * Phase 5: Advanced features (protocol selection, additional socket families)
  */
 
 #include <kernel/fut_task.h>
@@ -233,9 +234,10 @@ long sys_socket(int domain, int type, int protocol) {
         return -ENOTSUP;
     }
 
-    /* Phase 2: Validate flags (not yet supported) */
-    if (type_flags != 0) {
-        fut_printf("[SOCKET] socket(domain=%s, type=%s, flags=%s [0x%x], protocol=%d [%s]) -> EINVAL (socket flags not yet supported in Phase 2)\n",
+    /* Phase 4: Validate flags - only SOCK_NONBLOCK and SOCK_CLOEXEC supported */
+    const int VALID_FLAGS = SOCK_NONBLOCK | SOCK_CLOEXEC;
+    if (type_flags & ~VALID_FLAGS) {
+        fut_printf("[SOCKET] socket(domain=%s, type=%s, flags=%s [0x%x], protocol=%d [%s]) -> EINVAL (invalid flags, only SOCK_NONBLOCK|SOCK_CLOEXEC supported)\n",
                    domain_name, type_name, flags_desc, type_flags, local_protocol, protocol_desc);
         return -EINVAL;
     }
@@ -264,8 +266,20 @@ long sys_socket(int domain, int type, int protocol) {
         return -EMFILE;
     }
 
-    /* Phase 3: Detailed success logging */
-    fut_printf("[SOCKET] socket(domain=%s [%s], type=%s [%s], flags=%s, protocol=%d [%s]) -> %d (Socket %u created, Phase 3: Address family and socket type support)\n",
+    /* Phase 4: Apply SOCK_NONBLOCK flag if requested */
+    if (type_flags & SOCK_NONBLOCK) {
+        extern long sys_fcntl(int fd, int cmd, long arg);
+        sys_fcntl(sockfd, 4, 0x800);  /* F_SETFL, O_NONBLOCK */
+    }
+
+    /* Phase 4: Apply SOCK_CLOEXEC flag if requested */
+    if (type_flags & SOCK_CLOEXEC) {
+        extern long sys_fcntl(int fd, int cmd, long arg);
+        sys_fcntl(sockfd, 2, 1);  /* F_SETFD, FD_CLOEXEC */
+    }
+
+    /* Phase 4: Detailed success logging */
+    fut_printf("[SOCKET] socket(domain=%s [%s], type=%s [%s], flags=%s, protocol=%d [%s]) -> %d (Socket %u created, Phase 4: SOCK_NONBLOCK|SOCK_CLOEXEC support)\n",
                domain_name, domain_desc, type_name, type_desc, flags_desc, local_protocol, protocol_desc, sockfd, socket->socket_id);
 
     return (long)sockfd;

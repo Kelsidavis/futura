@@ -197,6 +197,129 @@ long sys_prlimit64(int pid, int resource,
 
     const char *resource_name = get_resource_name(resource);
 
+    /* Phase 5: Document pointer and limit validation requirements
+     * VULNERABILITY: Resource Limit Bypass and Denial of Service
+     *
+     * ATTACK SCENARIO 1: NULL Pointer Dereference in Limit Copy
+     * Attacker exploits missing pointer validation for old_limit/new_limit
+     * 1. Attacker calls prlimit64(0, RLIMIT_NOFILE, invalid_ptr, NULL)
+     * 2. Line 225-244: Code dereferences new_limit without validation
+     * 3. Phase 1 code directly accesses new_limit->rlim_cur at line 227
+     * 4. If new_limit is invalid userspace pointer: page fault
+     * 5. Kernel crash or EFAULT return (implementation-dependent)
+     *
+     * ATTACK SCENARIO 2: Resource Exhaustion via RLIMIT_NOFILE=INFINITY
+     * Attacker sets unlimited file descriptor limit to exhaust kernel memory
+     * 1. Attacker calls prlimit64(0, RLIMIT_NOFILE, {RLIM64_INFINITY, RLIM64_INFINITY}, NULL)
+     * 2. Line 238-243: Phase 1 stub accepts limit without validation
+     * 3. Phase 2 stores limit: task->rlimits[RLIMIT_NOFILE] = RLIM64_INFINITY
+     * 4. Attacker opens files in loop until kernel heap exhausted
+     * 5. Each open() succeeds (no EMFILE check against RLIMIT_NOFILE)
+     * 6. Kernel runs out of memory allocating file structures
+     * 7. System becomes unresponsive (global DoS)
+     *
+     * ATTACK SCENARIO 3: Privilege Escalation via RLIMIT_MEMLOCK Bypass
+     * Attacker increases RLIMIT_MEMLOCK to pin entire RAM
+     * 1. Unprivileged attacker calls prlimit64(0, RLIMIT_MEMLOCK, {SIZE_MAX, SIZE_MAX}, NULL)
+     * 2. Line 227-235: Validation only checks cur <= max (passes: SIZE_MAX <= SIZE_MAX)
+     * 3. Phase 2 stores unlimited MEMLOCK limit
+     * 4. Attacker calls mlock(addr, SIZE_MAX) to pin all physical memory
+     * 5. All RAM pinned in attacker's address space
+     * 6. Other processes cannot allocate memory (DoS)
+     * 7. Root processes also affected (privilege escalation impact)
+     *
+     * ATTACK SCENARIO 4: Integer Overflow in Limit Comparison
+     * Attacker crafts limits causing wraparound in enforcement checks
+     * 1. Attacker sets RLIMIT_FSIZE to RLIM64_INFINITY - 1
+     * 2. Phase 2 file write: checks if (file_size + write_len > rlim_cur)
+     * 3. Calculation: (UINT64_MAX - 1) + write_len overflows to small value
+     * 4. Overflow check passes incorrectly
+     * 5. Write succeeds despite exceeding limit
+     * 6. Filesystem exhaustion (DoS for all users)
+     *
+     * ATTACK SCENARIO 5: DoS via RLIMIT_NPROC=0 Fork Bomb Prevention Bypass
+     * Attacker sets RLIMIT_NPROC=0 to disable own fork capability, then exploits
+     * 1. Attacker calls prlimit64(0, RLIMIT_NPROC, {0, 0}, NULL)
+     * 2. Line 227-235: Accepts rlim_cur=0 (valid: 0 <= 0)
+     * 3. Attacker already has running process (this one)
+     * 4. Now attacker cannot fork() new processes (returns EAGAIN)
+     * 5. But attacker creates many threads via clone(CLONE_VM)
+     * 6. RLIMIT_NPROC only checks processes, not threads
+     * 7. Attacker exhausts PIDs via thread creation (DoS)
+     *
+     * IMPACT:
+     * - Denial of service: Resource exhaustion via unlimited limits
+     * - Kernel crash: NULL/invalid pointer dereference
+     * - Privilege escalation: Unprivileged user pins all RAM
+     * - Filesystem exhaustion: Integer overflow in size checks
+     * - Fork bomb variant: Thread exhaustion bypassing NPROC limit
+     *
+     * ROOT CAUSE:
+     * Phase 1 stub lacks comprehensive validation:
+     * - Line 213-222: Dereferences old_limit without NULL/bounds check
+     * - Line 225-244: Dereferences new_limit without validation
+     * - Line 227-235: Only validates cur <= max, not against system limits
+     * - No check for RLIM64_INFINITY on resources requiring bounded limits
+     * - No enforcement of minimum/maximum reasonable values per resource
+     * - Assumes Phase 2 will add enforcement (not documented)
+     *
+     * DEFENSE (Phase 5 Requirements for Phase 2):
+     * 1. Pointer Validation:
+     *    - fut_access_ok(new_limit, sizeof(*new_limit), READ) before dereference
+     *    - fut_access_ok(old_limit, sizeof(*old_limit), WRITE) before copy_to_user
+     *    - Return -EFAULT if pointers invalid
+     * 2. Limit Bounds Validation (per resource type):
+     *    - RLIMIT_NOFILE: Cap at system maximum (e.g., 1048576)
+     *    - RLIMIT_NPROC: Cap at PID_MAX (e.g., 32768)
+     *    - RLIMIT_MEMLOCK: Require CAP_IPC_LOCK for > system_memlock_limit
+     *    - RLIMIT_NICE: Validate range [-20, 19] encoded as [1, 40]
+     *    - RLIMIT_RTPRIO: Cap at 99 (MAX_RT_PRIO)
+     * 3. Overflow Prevention in Enforcement:
+     *    - File size check: Use saturating arithmetic or explicit overflow check
+     *    - Memory allocation: Check addition won't overflow before allowing
+     * 4. Capability Requirements:
+     *    - Raising hard limit above current: Require CAP_SYS_RESOURCE
+     *    - Setting RLIMIT_MEMLOCK > 64KB: Require CAP_IPC_LOCK
+     *    - Querying other process (pid != 0): Require CAP_SYS_RESOURCE or same UID
+     * 5. Special Value Handling:
+     *    - RLIM64_INFINITY must be explicitly allowed per resource
+     *    - RLIMIT_MEMLOCK: Infinity not allowed (must be bounded)
+     *    - RLIMIT_NPROC: Infinity not allowed (prevent fork bomb)
+     *    - RLIMIT_RTTIME: Infinity allowed (no RT task timeout)
+     *
+     * CVE REFERENCES:
+     * - CVE-2017-1000364: Linux stack-based buffer overflow via RLIMIT_STACK manipulation
+     * - CVE-2018-14634: Integer overflow in Linux create_elf_tables via RLIMIT_STACK
+     * - CVE-2019-11479: SACK panic via crafted resource limits
+     * - CVE-2016-3135: Linux netfilter xt_compat_target_from_user integer overflow
+     *
+     * POSIX REQUIREMENT:
+     * From POSIX.1-2008 setrlimit(2):
+     * "If a process attempts to set the hard limit or soft limit for
+     *  RLIMIT_NOFILE to a value greater than the system-imposed maximum,
+     *  the call shall fail with errno set to [EINVAL]."
+     * - Kernel must enforce system-imposed maximums
+     * - Raising hard limit requires appropriate privileges
+     * - Soft limit cannot exceed hard limit
+     *
+     * LINUX REQUIREMENT:
+     * From prlimit(2) man page:
+     * "To change the soft or hard limit for a resource, the caller must have
+     *  the CAP_SYS_RESOURCE capability. Non-privileged processes can only lower
+     *  the soft limit to a value in the range from 0 up to the hard limit."
+     * - Privilege checks required for increasing limits
+     * - Other process query requires permission check
+     *
+     * IMPLEMENTATION NOTES:
+     * - Phase 1: Current stub accepts all limits (UNSAFE)
+     * - Phase 2 MUST add fut_access_ok() for pointers (lines 213, 225)
+     * - Phase 2 MUST validate limits against system maximums per resource
+     * - Phase 2 MUST add capability checks (CAP_SYS_RESOURCE, CAP_IPC_LOCK)
+     * - Phase 2 MUST use saturating arithmetic in enforcement checks
+     * - Phase 3 MAY add per-user accounting for RLIMIT_NPROC
+     * - See Linux kernel: kernel/sys.c do_prlimit() for reference implementation
+     */
+
     /* Phase 1: Only support pid=0 (self) for now */
     if (pid != 0) {
         fut_printf("[PRLIMIT] prlimit64(pid=%d, resource=%s) -> ESRCH "
@@ -247,6 +370,13 @@ long sys_prlimit64(int pid, int resource,
         fut_printf("[PRLIMIT] prlimit64(pid=%d, resource=%s) -> 0 (no-op)\n",
                    pid, resource_name);
     }
+
+    /* TODO Phase 2: Add fut_access_ok() validation for old_limit and new_limit pointers */
+    /* TODO Phase 2: Validate new_limit values against system maximums per resource type */
+    /* TODO Phase 2: Add capability checks (CAP_SYS_RESOURCE for raising hard limit) */
+    /* TODO Phase 2: Reject RLIM64_INFINITY for RLIMIT_MEMLOCK and RLIMIT_NPROC */
+    /* TODO Phase 2: Store validated limits in task->rlimits[] array */
+    /* TODO Phase 2: Enforce limits in allocation/fork/open/mlock syscalls */
 
     return 0;
 }

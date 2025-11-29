@@ -148,13 +148,33 @@ long sys_mlock(const void *addr, size_t len) {
         return -EINVAL;
     }
 
+    /* Phase 2: Zero-length handling (POSIX compliant no-op) */
+    if (len == 0) {
+        return 0;
+    }
+
+    /* Phase 2: Overflow check - prevent SIZE_MAX values causing wraparound */
+    uintptr_t addr_val = (uintptr_t)addr;
+    if (SIZE_MAX - addr_val < len) {
+        fut_printf("[MLOCK] mlock(addr=%p, len=%zu) -> ENOMEM (overflow: SIZE_MAX - addr < len)\n",
+                   addr, len);
+        return -ENOMEM;
+    }
+
+    /* Phase 2: Wraparound check - validate addr + len doesn't wrap */
+    uintptr_t end_addr = addr_val + len;
+    if (end_addr <= addr_val) {
+        fut_printf("[MLOCK] mlock(addr=%p, len=%zu) -> ENOMEM (wraparound: addr + len <= addr)\n",
+                   addr, len);
+        return -ENOMEM;
+    }
+
     /* Phase 1: Stub - accept parameters */
     /* Phase 2: Mark VMA as VM_LOCKED, prefault pages */
     /* Phase 3: Check RLIMIT_MEMLOCK, implement page pinning */
-    /* TODO Phase 2: Add overflow check: SIZE_MAX - (uintptr_t)addr >= len */
-    /* TODO Phase 2: Validate addr + len > addr (no wraparound) */
-    /* TODO Phase 2: Check cumulative locked_vm + new_pages <= RLIMIT_MEMLOCK */
-    /* TODO Phase 2: Require CAP_IPC_LOCK if exceeding RLIMIT_MEMLOCK */
+    /* Phase 2 (Completed): Added overflow and wraparound checks */
+    /* TODO Phase 3: Check cumulative locked_vm + new_pages <= RLIMIT_MEMLOCK */
+    /* TODO Phase 3: Require CAP_IPC_LOCK if exceeding RLIMIT_MEMLOCK */
 
     fut_printf("[MLOCK] Stub implementation - pages marked locked\n");
     return 0;
@@ -188,8 +208,30 @@ long sys_munlock(const void *addr, size_t len) {
         return -EINVAL;
     }
 
+    /* Phase 2: Zero-length handling (POSIX compliant no-op) */
+    if (len == 0) {
+        return 0;
+    }
+
+    /* Phase 2: Overflow check - prevent SIZE_MAX values causing wraparound */
+    uintptr_t addr_val = (uintptr_t)addr;
+    if (SIZE_MAX - addr_val < len) {
+        fut_printf("[MUNLOCK] munlock(addr=%p, len=%zu) -> ENOMEM (overflow: SIZE_MAX - addr < len)\n",
+                   addr, len);
+        return -ENOMEM;
+    }
+
+    /* Phase 2: Wraparound check - validate addr + len doesn't wrap */
+    uintptr_t end_addr = addr_val + len;
+    if (end_addr <= addr_val) {
+        fut_printf("[MUNLOCK] munlock(addr=%p, len=%zu) -> ENOMEM (wraparound: addr + len <= addr)\n",
+                   addr, len);
+        return -ENOMEM;
+    }
+
     /* Phase 1: Stub - accept parameters */
     /* Phase 2: Clear VM_LOCKED flag from VMAs */
+    /* Phase 2 (Completed): Added overflow and wraparound checks */
 
     fut_printf("[MUNLOCK] Stub implementation - pages unlocked\n");
     return 0;

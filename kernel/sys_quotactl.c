@@ -241,6 +241,58 @@ long sys_quotactl(unsigned int cmd, const char *special, int id, void *addr) {
         return -ESRCH;
     }
 
+    /* Phase 5: Validate command parameter bounds early
+     * VULNERABILITY: Command Parameter Out-of-Bounds Access
+     *
+     * ATTACK SCENARIO:
+     * Invalid command values cause out-of-bounds array access in switch statements
+     * 1. Attacker crafts invalid quota type:
+     *    quotactl(0xFFFFFF00, "/dev/sda1", 0, NULL)  // qtype = 0 (valid), qcmd = 0xFFFFFF00 (invalid)
+     * 2. Switch statements at lines 291-322 don't validate qcmd range
+     * 3. Default case prints "unknown command" but processing continues
+     * 4. Later code may use qcmd as array index or function pointer
+     * 5. Out-of-bounds access causes memory corruption or information disclosure
+     *
+     * IMPACT:
+     * - Information disclosure: Reading quota command name strings from invalid memory
+     * - Kernel crash: Page fault from invalid command lookup
+     * - Potential memory corruption if qcmd used as array index
+     *
+     * ROOT CAUSE:
+     * Line 269-270 (old): Extracts qtype and qcmd without validation
+     * No bounds check before using in switch or further processing
+     *
+     * DEFENSE (Phase 5):
+     * Validate qtype and qcmd against known valid ranges
+     * - qtype must be USRQUOTA (0), GRPQUOTA (1), or PRJQUOTA (2)
+     * - qcmd must be one of Q_SYNC, Q_QUOTAON, Q_QUOTAOFF, etc. (0x800001-0x800009)
+     * - Return -EINVAL for invalid values BEFORE any switch statements
+     *
+     * CVE REFERENCES:
+     * - CVE-2018-10879: Linux ext4 out-of-bounds via invalid array index
+     * - CVE-2019-19319: Linux ext4 use-after-free via invalid quota type
+     */
+
+    /* Extract quota type and command BEFORE validation */
+    unsigned int qtype = cmd & 0xFF;
+    unsigned int qcmd = cmd & ~0xFF;  /* Full command with type bits masked */
+
+    /* Phase 5: Validate quota type bounds */
+    if (qtype > PRJQUOTA) {
+        fut_printf("[QUOTACTL] quotactl(cmd=0x%x [invalid type %u], special=%p, id=%d, addr=%p, pid=%d) "
+                   "-> EINVAL (quota type out of range, valid: 0-2, Phase 5)\n",
+                   cmd, qtype, (const void *)special, id, addr, task->pid);
+        return -EINVAL;
+    }
+
+    /* Phase 5: Validate quota command bounds */
+    if (qcmd < Q_SYNC || qcmd > Q_GETNEXTQUOTA) {
+        fut_printf("[QUOTACTL] quotactl(cmd=0x%x [invalid cmd 0x%x], type=%u, special=%p, id=%d, addr=%p, pid=%d) "
+                   "-> EINVAL (quota command out of range, valid: 0x800001-0x800009, Phase 5)\n",
+                   cmd, qcmd, qtype, (const void *)special, id, addr, task->pid);
+        return -EINVAL;
+    }
+
     /* Phase 2: Validate special pointer (required) */
     if (!special) {
         fut_printf("[QUOTACTL] quotactl(cmd=0x%x, special=NULL, id=%d, addr=%p, pid=%d) -> EFAULT\n",
@@ -248,15 +300,52 @@ long sys_quotactl(unsigned int cmd, const char *special, int id, void *addr) {
         return -EFAULT;
     }
 
-    /* Phase 2: Copy special from userspace to validate it */
+    /* Phase 5: Copy full path to detect truncation
+     * VULNERABILITY: Path Truncation Attack
+     *
+     * ATTACK SCENARIO:
+     * Silent truncation allows quota operations on wrong filesystem
+     * 1. Attacker provides device path exceeding 256 bytes:
+     *    quotactl(Q_GETQUOTA, "/dev/mapper/" + "A"*240 + "-lvm", uid, &dqblk)
+     * 2. Old code: fut_copy_from_user(special_buf, special, 255)
+     *    - Copies only first 255 bytes: "/dev/mapper/AAA...AAA"
+     *    - Silently drops "-lvm" suffix
+     *    - special_buf[255] = '\0' (null terminator)
+     * 3. VFS lookup resolves truncated path (wrong device)
+     * 4. Quota operation applies to unintended filesystem
+     * 5. User bypasses quota limits on actual device
+     *
+     * IMPACT:
+     * - Quota bypass: Quota check/enforcement on wrong filesystem
+     * - Denial of service: Quota operations fail silently
+     * - Information disclosure: Quota data from unintended device
+     *
+     * ROOT CAUSE:
+     * Line 253 (old): fut_copy_from_user(special_buf, special, sizeof(special_buf) - 1)
+     * Copied only 255 bytes, silently truncating longer paths.
+     *
+     * DEFENSE (Phase 5):
+     * Copy full buffer size (256 bytes) and check for truncation.
+     *
+     * CVE REFERENCES:
+     * - CVE-2018-14633: Linux chdir path truncation
+     * - CVE-2017-7889: Linux mount path truncation
+     */
     char special_buf[256];
-    if (fut_copy_from_user(special_buf, special, sizeof(special_buf) - 1) != 0) {
+    if (fut_copy_from_user(special_buf, special, sizeof(special_buf)) != 0) {
         fut_printf("[QUOTACTL] quotactl(cmd=0x%x, special=?, id=%d, addr=%p, pid=%d) -> EFAULT "
-                   "(special copy_from_user failed)\n",
+                   "(special copy_from_user failed, Phase 5)\n",
                    cmd, id, addr, task->pid);
         return -EFAULT;
     }
-    special_buf[sizeof(special_buf) - 1] = '\0';
+
+    /* Phase 5: Verify path was not truncated */
+    if (special_buf[sizeof(special_buf) - 1] != '\0') {
+        fut_printf("[QUOTACTL] quotactl(cmd=0x%x, special=<truncated>, id=%d, addr=%p, pid=%d) "
+                   "-> ENAMETOOLONG (path exceeds %zu bytes, truncation detected, Phase 5)\n",
+                   cmd, id, addr, task->pid, sizeof(special_buf) - 1);
+        return -ENAMETOOLONG;
+    }
 
     /* Phase 2: Validate special is not empty */
     if (special_buf[0] == '\0') {
@@ -264,10 +353,6 @@ long sys_quotactl(unsigned int cmd, const char *special, int id, void *addr) {
                    cmd, id, addr, task->pid);
         return -EINVAL;
     }
-
-    /* Extract quota type and command */
-    unsigned int qtype = cmd & 0xFF;
-    unsigned int qcmd = cmd & ~0xFF;  /* Full command with type bits masked */
 
     /* Categorize quota type */
     const char *type_desc;

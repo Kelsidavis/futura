@@ -10,7 +10,8 @@
  * Phase 1 (Completed): Basic validation and socket acceptance
  * Phase 2 (Completed): Enhanced validation, socket state identification, and detailed logging
  * Phase 3 (Completed): Non-blocking accept, EAGAIN handling, and connection queue management
- * Phase 4: Address family specific peer address return (AF_INET, AF_INET6, AF_UNIX)
+ * Phase 4 (Completed): accept4() with SOCK_NONBLOCK and SOCK_CLOEXEC flags
+ * Phase 5: Address family specific peer address return (AF_INET, AF_INET6, AF_UNIX)
  */
 
 #include <kernel/fut_task.h>
@@ -133,7 +134,8 @@ typedef uint32_t socklen_t;
  * Phase 1 (Completed): Basic validation and socket acceptance
  * Phase 2 (Completed): Enhanced validation, state identification, detailed logging
  * Phase 3 (Completed): Non-blocking support and connection queue management
- * Phase 4: Address family specific peer address return
+ * Phase 4 (Completed): accept4() with SOCK_NONBLOCK and SOCK_CLOEXEC flags
+ * Phase 5: Address family specific peer address return
  */
 long sys_accept(int sockfd, void *addr, socklen_t *addrlen) {
     /* ARM64 FIX: Copy parameters to local variables immediately to ensure they're preserved
@@ -509,10 +511,152 @@ long sys_accept(int sockfd, void *addr, socklen_t *addrlen) {
                    addr_request, newfd, accepted_socket->socket_id);
     } else {
         fut_printf("[ACCEPT] accept(local_sockfd=%d, type=%s, state=%s, listen_socket_id=%u, addr_request=%s) "
-                   "-> %d (accepted_socket_id=%u, Phase 4: AF_INET/AF_INET6/AF_UNIX peer address)\n",
+                   "-> %d (accepted_socket_id=%u, Phase 5: AF_INET/AF_INET6/AF_UNIX peer address)\n",
                    local_sockfd, socket_type_desc, socket_state_desc, listen_socket->socket_id,
                    addr_request, newfd, accepted_socket->socket_id);
     }
+
+    return newfd;
+}
+
+/* Socket type flags (same as socket()) */
+#define SOCK_NONBLOCK  0x800   /* Non-blocking mode */
+#define SOCK_CLOEXEC   0x80000 /* Close-on-exec flag */
+
+/**
+ * accept4() - Accept incoming connection with flags
+ *
+ * Like accept(), but allows atomically setting flags on the accepted socket.
+ * Prevents TOCTOU races that would occur with separate accept() + fcntl() calls.
+ *
+ * @param sockfd Socket file descriptor (must be in listening state)
+ * @param addr   Pointer to sockaddr structure to receive peer address (may be NULL)
+ * @param addrlen Pointer to size of addr buffer (in/out parameter, may be NULL if addr is NULL)
+ * @param flags  Flags to set atomically (SOCK_NONBLOCK, SOCK_CLOEXEC, or combination)
+ *
+ * Returns:
+ *   - Non-negative file descriptor for accepted connection on success
+ *   - -EBADF if sockfd is not a valid file descriptor
+ *   - -EFAULT if addr or addrlen point to invalid memory
+ *   - -EINVAL if socket is not listening, addrlen is invalid, addr/addrlen inconsistent, or flags invalid
+ *   - -ENOTSOCK if sockfd is not a socket
+ *   - -ENOTSUP if socket type does not support accepting connections
+ *   - -EAGAIN if socket is non-blocking and no connections are pending
+ *   - -EMFILE if per-process file descriptor limit reached
+ *   - -ENFILE if system-wide file descriptor limit reached
+ *   - -ENOMEM if insufficient memory available
+ *
+ * Flags (Phase 4):
+ *
+ * SOCK_NONBLOCK (0x800):
+ *   - Set O_NONBLOCK on accepted socket
+ *   - Non-blocking I/O without separate fcntl() call
+ *   - Prevents TOCTOU race between accept() and fcntl()
+ *   - Example:
+ *     int connfd = accept4(listenfd, NULL, NULL, SOCK_NONBLOCK);
+ *     // connfd is immediately non-blocking
+ *
+ * SOCK_CLOEXEC (0x80000):
+ *   - Set FD_CLOEXEC on accepted socket
+ *   - Socket closes automatically on exec()
+ *   - Security: Prevents FD leaks to child processes
+ *   - Example:
+ *     int connfd = accept4(listenfd, NULL, NULL, SOCK_CLOEXEC);
+ *     execve(...);  // connfd automatically closed
+ *
+ * Combined flags:
+ *   int connfd = accept4(listenfd, NULL, NULL, SOCK_NONBLOCK | SOCK_CLOEXEC);
+ *   // Both non-blocking and close-on-exec set atomically
+ *
+ * Advantages over accept() + fcntl():
+ * 1. Atomicity: Flags set before FD returned to userspace
+ * 2. Race-free: No window where another thread can use FD
+ * 3. Performance: One syscall instead of two/three
+ * 4. Security: No TOCTOU vulnerabilities
+ *
+ * Common usage patterns:
+ *
+ * Non-blocking server with event loop:
+ *   while (1) {
+ *       int connfd = accept4(listenfd, NULL, NULL, SOCK_NONBLOCK);
+ *       if (connfd < 0) {
+ *           if (errno == EAGAIN) continue;
+ *           perror("accept4");
+ *           break;
+ *       }
+ *       // connfd is already non-blocking
+ *       add_to_event_loop(connfd);
+ *   }
+ *
+ * Secure server (no FD leaks to exec'd processes):
+ *   int connfd = accept4(listenfd, NULL, NULL, SOCK_CLOEXEC);
+ *   handle_request(connfd);
+ *   // If handle_request() calls exec(), connfd won't leak
+ *
+ * Phase 4: SOCK_NONBLOCK and SOCK_CLOEXEC flag support
+ * Phase 5: Address family specific peer address return
+ */
+long sys_accept4(int sockfd, void *addr, socklen_t *addrlen, int flags) {
+    /* ARM64 FIX: Copy parameters to local variables immediately */
+    int local_sockfd = sockfd;
+    void *local_addr = addr;
+    socklen_t *local_addrlen = addrlen;
+    int local_flags = flags;
+
+    /* Phase 4: Validate flags - only SOCK_NONBLOCK and SOCK_CLOEXEC supported */
+    const int VALID_FLAGS = SOCK_NONBLOCK | SOCK_CLOEXEC;
+    if (local_flags & ~VALID_FLAGS) {
+        const char *flags_desc;
+        if (local_flags == 0) {
+            flags_desc = "none";
+        } else if (local_flags == SOCK_NONBLOCK) {
+            flags_desc = "SOCK_NONBLOCK";
+        } else if (local_flags == SOCK_CLOEXEC) {
+            flags_desc = "SOCK_CLOEXEC";
+        } else if (local_flags == (SOCK_NONBLOCK | SOCK_CLOEXEC)) {
+            flags_desc = "SOCK_NONBLOCK|SOCK_CLOEXEC";
+        } else {
+            flags_desc = "invalid flags";
+        }
+
+        fut_printf("[ACCEPT4] accept4(sockfd=%d, flags=0x%x [%s]) -> EINVAL (invalid flags, only SOCK_NONBLOCK|SOCK_CLOEXEC supported)\n",
+                   local_sockfd, local_flags, flags_desc);
+        return -EINVAL;
+    }
+
+    /* Delegate to accept() for actual connection acceptance */
+    long newfd = sys_accept(local_sockfd, local_addr, local_addrlen);
+    if (newfd < 0) {
+        /* accept() already logged error */
+        return newfd;
+    }
+
+    /* Phase 4: Apply SOCK_NONBLOCK flag if requested */
+    if (local_flags & SOCK_NONBLOCK) {
+        extern long sys_fcntl(int fd, int cmd, long arg);
+        sys_fcntl((int)newfd, 4, 0x800);  /* F_SETFL, O_NONBLOCK */
+    }
+
+    /* Phase 4: Apply SOCK_CLOEXEC flag if requested */
+    if (local_flags & SOCK_CLOEXEC) {
+        extern long sys_fcntl(int fd, int cmd, long arg);
+        sys_fcntl((int)newfd, 2, 1);  /* F_SETFD, FD_CLOEXEC */
+    }
+
+    /* Determine flags description for logging */
+    const char *flags_desc;
+    if (local_flags == 0) {
+        flags_desc = "none";
+    } else if (local_flags == SOCK_NONBLOCK) {
+        flags_desc = "SOCK_NONBLOCK";
+    } else if (local_flags == SOCK_CLOEXEC) {
+        flags_desc = "SOCK_CLOEXEC";
+    } else {
+        flags_desc = "SOCK_NONBLOCK|SOCK_CLOEXEC";
+    }
+
+    fut_printf("[ACCEPT4] accept4(sockfd=%d, flags=%s) -> %ld (Phase 4: atomic flag setting)\n",
+               local_sockfd, flags_desc, newfd);
 
     return newfd;
 }

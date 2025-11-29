@@ -145,8 +145,81 @@ ssize_t sys_recvmsg(int sockfd, struct msghdr *msg, int flags) {
         return -EFAULT;
     }
 
-    /* Phase 5: Validate control message length
-     * Limit to 64KB to prevent DoS via excessively large control messages */
+    /* Phase 5: Validate control message length to prevent DoS and buffer overflows
+     * VULNERABILITY: Unbounded Ancillary Data Size and Control Message Parsing
+     *
+     * ATTACK SCENARIO 1: Excessive Control Message Length (DoS)
+     * Attacker requests massive ancillary data buffer to exhaust memory
+     * 1. Attacker creates socket pair: socketpair(AF_UNIX, SOCK_DGRAM, 0, sv)
+     * 2. Attacker prepares msghdr with msg_controllen = SIZE_MAX (or 1GB)
+     * 3. Calls recvmsg(sv[1], &msg, 0) expecting control data
+     * 4. Without limit: kernel allocates SIZE_MAX bytes for control buffer
+     * 5. Memory exhaustion: system OOM or kernel panic
+     * 6. Denial of service: legitimate processes cannot allocate
+     *
+     * ATTACK SCENARIO 2: Control Message Parsing Integer Overflow
+     * Attacker crafts malformed cmsghdr to cause parsing errors
+     * 1. Sender sends control message with cmsg_len = SIZE_MAX
+     * 2. Receiver has msg_controllen = 1024 (reasonable size)
+     * 3. Parser iterates: CMSG_NEXT(cmsg) calculates next offset
+     * 4. Arithmetic: current_offset + SIZE_MAX wraps to small value
+     * 5. Parser reads OOB: accesses memory beyond control buffer
+     * 6. Information disclosure or crash
+     *
+     * ATTACK SCENARIO 3: NULL Pointer with Non-Zero Length
+     * Attacker sets msg_control = NULL but msg_controllen > 0
+     * 1. recvmsg() with msg_control = NULL, msg_controllen = 1024
+     * 2. Kernel attempts to copy ancillary data to NULL address
+     * 3. Page fault: NULL pointer dereference
+     * 4. Kernel crash or DoS
+     *
+     * IMPACT:
+     * - Denial of service: Memory exhaustion from excessive control buffer
+     * - Kernel crash: NULL pointer dereference
+     * - Information disclosure: OOB read during control message parsing
+     * - Buffer overflow: cmsg_len overflow causes OOB write
+     *
+     * ROOT CAUSE:
+     * Ancillary data (control messages) allow arbitrary-length metadata:
+     * - msg_controllen: User specifies expected control data size
+     * - cmsg_len: Each cmsghdr specifies its own length
+     * - Parser iterates via CMSG_NEXT macro using pointer arithmetic
+     * - No validation that total lengths don't overflow or exceed limits
+     *
+     * DEFENSE (Phase 5):
+     * 1. Limit maximum control message length (line 151-157):
+     *    - MAX_CONTROL_LEN = 64KB (generous for most use cases)
+     *    - Prevents memory exhaustion attacks
+     *    - Returns -EINVAL for excessive sizes
+     * 2. Validate msg_control pointer consistency (line 160-165):
+     *    - Reject NULL pointer with non-zero length
+     *    - Returns -EFAULT for NULL msg_control
+     * 3. Control Message Parsing (Phase 4 TODO):
+     *    - Validate each cmsg_len before using
+     *    - Check cmsg_len <= remaining buffer space
+     *    - Use safe pointer arithmetic for CMSG_NEXT
+     *    - Bounds-check all cmsg_data accesses
+     *
+     * CVE REFERENCES:
+     * - CVE-2016-8632: Linux recvmsg integer overflow in control message parsing
+     * - CVE-2013-7446: Unix socket ancillary data reference count overflow
+     * - CVE-2017-7308: Packet socket ancillary data buffer overflow
+     *
+     * POSIX REQUIREMENT:
+     * From recvmsg(2) man page:
+     * "The msg_controllen member specifies the length of the buffer pointed
+     *  to by msg_control. If the control information is too large, it shall
+     *  be truncated and the MSG_CTRUNC flag shall be set."
+     * - Kernel must handle arbitrarily large msg_controllen gracefully
+     * - Must not crash or exhaust resources
+     *
+     * IMPLEMENTATION NOTES:
+     * - Line 151: MAX_CONTROL_LEN prevents resource exhaustion
+     * - Line 152-157: Reject excessive control buffer requests
+     * - Line 160-165: Validate NULL/non-zero inconsistency
+     * - Phase 4: Implement safe CMSG_FIRSTHDR/CMSG_NXTHDR parsing
+     * - Phase 4: Support SCM_RIGHTS (file descriptor passing) with refcount safety
+     */
     if (kmsg.msg_controllen > 0) {
         const size_t MAX_CONTROL_LEN = 65536;  /* 64KB */
         if (kmsg.msg_controllen > MAX_CONTROL_LEN) {

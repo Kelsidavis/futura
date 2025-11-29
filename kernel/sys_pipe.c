@@ -9,7 +9,8 @@
  * Phase 1 (Completed): Basic pipe creation with read/write ends
  * Phase 2 (Completed): Enhanced validation, FD categorization, and detailed logging
  * Phase 3 (Completed): FD allocation and buffer management with wait queues
- * Phase 4: Advanced features (pipe2 with flags, splice support)
+ * Phase 4 (Completed): pipe2() with O_NONBLOCK and O_CLOEXEC flags
+ * Phase 5: Advanced features (splice support, pipe capacity control)
  */
 
 #include <kernel/errno.h>
@@ -497,6 +498,130 @@ long sys_pipe(int pipefd[2]) {
     fut_printf("[PIPE] pipe(read_fd=%d [%s], write_fd=%d [%s], buf_size=%u) -> 0 "
                "(pipe created, Phase 3: FD allocation and buffer management)\n",
                read_fd, read_fd_category, write_fd, write_fd_category, PIPE_BUF_SIZE);
+
+    return 0;
+}
+
+/**
+ * sys_pipe2() - Create pipe with flags
+ *
+ * Similar to pipe() but allows atomically setting flags on the pipe FDs.
+ * This is essential for avoiding race conditions when setting O_NONBLOCK
+ * or O_CLOEXEC.
+ *
+ * @param pipefd  User-space array to store [read_fd, write_fd]
+ * @param flags   Bitwise OR of O_NONBLOCK (0x800) and O_CLOEXEC (0x80000)
+ *
+ * Returns:
+ *   - 0 on success (pipefd filled with read/write FDs)
+ *   - -EINVAL if pipefd is NULL or flags contains invalid bits
+ *   - -EFAULT if pipefd not accessible
+ *   - -ENOMEM if memory allocation fails
+ *   - -EMFILE if no free file descriptors
+ *
+ * Supported flags:
+ *   - O_NONBLOCK (0x800): Set non-blocking mode on both FDs
+ *   - O_CLOEXEC (0x80000): Set close-on-exec on both FDs
+ *
+ * Phase 4: Initial implementation with O_NONBLOCK and O_CLOEXEC support
+ */
+long sys_pipe2(int pipefd[2], int flags) {
+    /* Initialize pipe file operations on first use */
+    init_pipe_fops();
+
+    /* Validate flags */
+    const int VALID_FLAGS = 0x800 | 0x80000;  /* O_NONBLOCK | O_CLOEXEC */
+    if (flags & ~VALID_FLAGS) {
+        fut_printf("[PIPE2] pipe2(pipefd=%p, flags=0x%x) -> EINVAL (invalid flags)\n",
+                   pipefd, flags);
+        return -EINVAL;
+    }
+
+    /* Validate user pointer */
+    if (!pipefd) {
+        fut_printf("[PIPE2] pipe2(pipefd=NULL, flags=0x%x) -> EINVAL (NULL pipefd array)\n",
+                   flags);
+        return -EINVAL;
+    }
+
+    if (fut_access_ok(pipefd, sizeof(int) * 2, 1) != 0) {
+        fut_printf("[PIPE2] pipe2(pipefd=?, flags=0x%x) -> EFAULT (pipefd not accessible)\n",
+                   flags);
+        return -EFAULT;
+    }
+
+    /* Create pipe buffer */
+    struct pipe_buffer *pipe = pipe_buffer_create();
+    if (!pipe) {
+        fut_printf("[PIPE2] pipe2(flags=0x%x) -> ENOMEM (pipe buffer allocation failed)\n",
+                   flags);
+        return -ENOMEM;
+    }
+
+    /* Allocate read end file descriptor */
+    int read_fd = chrdev_alloc_fd(&pipe_read_fops, NULL, pipe);
+    if (read_fd < 0) {
+        fut_printf("[PIPE2] pipe2(flags=0x%x) -> %d (read_fd allocation failed)\n",
+                   flags, read_fd);
+        pipe_buffer_destroy(pipe);
+        return read_fd;
+    }
+
+    /* Allocate write end file descriptor */
+    int write_fd = chrdev_alloc_fd(&pipe_write_fops, NULL, pipe);
+    if (write_fd < 0) {
+        fut_printf("[PIPE2] pipe2(flags=0x%x, read_fd=%d) -> %d (write_fd allocation failed)\n",
+                   flags, read_fd, write_fd);
+        extern int fut_vfs_close(int fd);
+        fut_vfs_close(read_fd);
+        return write_fd;
+    }
+
+    /* Apply O_NONBLOCK flag if requested */
+    if (flags & 0x800) {  /* O_NONBLOCK */
+        /* Set non-blocking mode on both FDs via fcntl */
+        extern long sys_fcntl(int fd, int cmd, long arg);
+        sys_fcntl(read_fd, 4, 0x800);   /* F_SETFL, O_NONBLOCK */
+        sys_fcntl(write_fd, 4, 0x800);  /* F_SETFL, O_NONBLOCK */
+    }
+
+    /* Apply O_CLOEXEC flag if requested */
+    if (flags & 0x80000) {  /* O_CLOEXEC */
+        /* Set close-on-exec on both FDs via fcntl */
+        extern long sys_fcntl(int fd, int cmd, long arg);
+        sys_fcntl(read_fd, 2, 1);   /* F_SETFD, FD_CLOEXEC */
+        sys_fcntl(write_fd, 2, 1);  /* F_SETFD, FD_CLOEXEC */
+    }
+
+    /* Copy file descriptors to userspace */
+    int fds[2];
+    fds[0] = read_fd;
+    fds[1] = write_fd;
+
+    if (fut_copy_to_user(pipefd, fds, sizeof(int) * 2) != 0) {
+        fut_printf("[PIPE2] pipe2(flags=0x%x, read_fd=%d, write_fd=%d) -> EFAULT "
+                   "(failed to copy FDs to userspace)\n",
+                   flags, read_fd, write_fd);
+        extern int fut_vfs_close(int fd);
+        fut_vfs_close(read_fd);
+        fut_vfs_close(write_fd);
+        return -EFAULT;
+    }
+
+    const char *flags_desc = "";
+    if ((flags & 0x800) && (flags & 0x80000)) {
+        flags_desc = "O_NONBLOCK|O_CLOEXEC";
+    } else if (flags & 0x800) {
+        flags_desc = "O_NONBLOCK";
+    } else if (flags & 0x80000) {
+        flags_desc = "O_CLOEXEC";
+    } else {
+        flags_desc = "none";
+    }
+
+    fut_printf("[PIPE2] pipe2(read_fd=%d, write_fd=%d, flags=0x%x [%s], buf_size=%u) -> 0 "
+               "(pipe created with flags, Phase 4)\n",
+               read_fd, write_fd, flags, flags_desc, PIPE_BUF_SIZE);
 
     return 0;
 }

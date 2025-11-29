@@ -763,19 +763,27 @@ int fut_socket_poll(fut_socket_t *socket, int events) {
             ready |= 0x1;
         }
     } else if (socket->state == FUT_SOCK_CONNECTED && socket->pair) {
-        if ((events & 0x1)) {  /* POLLIN - readable if data available */
-            uint32_t available = (socket->pair->recv_head + socket->pair->recv_size -
-                                 socket->pair->recv_tail) % socket->pair->recv_size;
-            if (available > 0) {
+        if ((events & 0x1)) {  /* POLLIN - readable if data available OR shutdown_rd */
+            /* If shutdown_rd is set, socket is always readable (recv returns EOF) */
+            if (socket->shutdown_rd) {
                 ready |= 0x1;
+            } else {
+                uint32_t available = (socket->pair->recv_head + socket->pair->recv_size -
+                                     socket->pair->recv_tail) % socket->pair->recv_size;
+                if (available > 0) {
+                    ready |= 0x1;
+                }
             }
         }
-        if ((events & 0x4)) {  /* POLLOUT - writable if space available */
-            uint32_t available = socket->pair->recv_size -
-                ((socket->pair->recv_head + socket->pair->recv_size -
-                  socket->pair->recv_tail) % socket->pair->recv_size);
-            if (available > 0) {
-                ready |= 0x4;
+        if ((events & 0x4)) {  /* POLLOUT - writable if space available AND NOT shutdown_wr */
+            /* If shutdown_wr is set, socket is never writable (send returns EPIPE) */
+            if (!socket->shutdown_wr) {
+                uint32_t available = socket->pair->recv_size -
+                    ((socket->pair->recv_head + socket->pair->recv_size -
+                      socket->pair->recv_tail) % socket->pair->recv_size);
+                if (available > 0) {
+                    ready |= 0x4;
+                }
             }
         }
     }

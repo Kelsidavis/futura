@@ -352,7 +352,7 @@ long sys_accept(int sockfd, void *addr, socklen_t *addrlen) {
      * - Phase 5: Added atomic addrlen copy with TOCTOU protection (line 201-207) ✓
      * - Phase 5: Added addrlen bounds validation (line 212-217) ✓
      * - Phase 5: Added addr/addrlen consistency check (line 164-170) ✓
-     * - Phase 5 TODO: Add addr write permission check (early validation)
+     * - Phase 5 (Completed): Added addr write permission check at line 378-384
      * - Phase 4 TODO: Implement actual peer address return (AF_INET, AF_INET6, AF_UNIX)
      * - Phase 4 TODO: Consider rejecting addrlen=0 when addr != NULL
      * - See Linux kernel: net/socket.c __sys_accept4() for reference
@@ -373,6 +373,14 @@ long sys_accept(int sockfd, void *addr, socklen_t *addrlen) {
                        "(excessive address length, max 1024 bytes, Phase 5 TOCTOU protection)\n",
                        local_sockfd, len);
             return -EINVAL;
+        }
+
+        /* Phase 5: Validate addr write permission early (before accepting connection) */
+        extern int fut_access_ok(const void *u_ptr, size_t size, int write);
+        if (local_addr && fut_access_ok(local_addr, len, 1) != 0) {
+            fut_printf("[ACCEPT] accept(local_sockfd=%d) -> EFAULT (addr not writable for %u bytes)\n",
+                       local_sockfd, len);
+            return -EFAULT;
         }
 
         /* Phase 2: Categorize buffer size (safe after bounds check) */

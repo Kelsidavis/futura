@@ -394,7 +394,7 @@ ssize_t sys_recvfrom(int sockfd, void *buf, size_t len, int flags,
      *
      * IMPLEMENTATION NOTES:
      * - Phase 5: Added buffer size limit (16MB) at line 230-236 ✓
-     * - Phase 5 TODO: Add buf write permission check (early validation)
+     * - Phase 5 (Completed): Added buf write permission check at line 417-423
      * - Phase 4 TODO: Implement actual src_addr return (currently stub)
      * - Phase 4 TODO: Add addrlen TOCTOU protection
      * - Phase 4 TODO: Add src_addr/addrlen consistency validation
@@ -412,6 +412,14 @@ ssize_t sys_recvfrom(int sockfd, void *buf, size_t len, int flags,
                    "(length exceeds max %zu bytes, Phase 5: memory exhaustion prevention)\n",
                    local_sockfd, fd_category, local_len, size_category, MAX_RECV_SIZE);
         return -EINVAL;
+    }
+
+    /* Phase 5: Validate buf write permission early (kernel writes received data) */
+    extern int fut_access_ok(const void *u_ptr, size_t size, int write);
+    if (local_buf && local_len > 0 && fut_access_ok(local_buf, local_len, 1) != 0) {
+        fut_printf("[RECVFROM] recvfrom(sockfd=%d, len=%zu) -> EFAULT (buf not writable)\n",
+                   local_sockfd, local_len);
+        return -EFAULT;
     }
 
     /* Validate buf */

@@ -508,7 +508,7 @@ long sys_getsockopt(int sockfd, int level, int optname, void *optval, socklen_t 
      * IMPLEMENTATION NOTES:
      * - Phase 5: Added optlen range validation (line 337-341) ✓
      * - Phase 5: Added optval write permission check (line 381-390) ✓
-     * - Phase 5 TODO: Add optlen write permission check (early validation)
+     * - Phase 5 (Completed): Added optlen write permission check at line 524-530
      * - Phase 4 TODO: Implement remaining SOL_SOCKET options (SO_LINGER, etc.)
      * - Phase 4 TODO: Add protocol-specific options (IPPROTO_TCP, IPPROTO_IP)
      * - See Linux kernel: net/core/sock.c sock_getsockopt() for reference
@@ -519,6 +519,14 @@ long sys_getsockopt(int sockfd, int level, int optname, void *optval, socklen_t 
         fut_printf("[GETSOCKOPT] getsockopt(sockfd=%d, level=%d, optname=%d, optlen=%u) -> EINVAL\n",
                    sockfd, level, optname, len);
         return -EINVAL;
+    }
+
+    /* Phase 5: Validate optlen write permission early (kernel writes back actual size) */
+    extern int fut_access_ok(const void *u_ptr, size_t size, int write);
+    if (optlen && fut_access_ok(optlen, sizeof(socklen_t), 1) != 0) {
+        fut_printf("[GETSOCKOPT] getsockopt(sockfd=%d) -> EFAULT (optlen not writable)\n",
+                   sockfd);
+        return -EFAULT;
     }
 
     /* Phase 5: Validate optval buffer write permission BEFORE socket processing

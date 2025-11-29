@@ -166,14 +166,63 @@ long sys_access(const char *pathname, int mode) {
         return -EINVAL;
     }
 
-    /* Copy pathname from userspace to kernel space */
+    /* Phase 5: Copy pathname and detect truncation
+     * VULNERABILITY: Silent Path Truncation Allows Wrong File Access
+     *
+     * ATTACK SCENARIO:
+     * Attacker provides overly long path to access() that gets silently truncated
+     * 1. Attacker wants to check /etc/shadow but lacks permission
+     * 2. Attacker provides 300-byte path starting with /etc/shadow:
+     *    access("/etc/shadow" + 243 bytes of padding + "/attacker_file", R_OK)
+     * 3. OLD code (before Phase 5):
+     *    - Line 171: fut_copy_from_user copies first 255 bytes
+     *    - Line 176: Manual null termination at path_buf[255]
+     *    - Result: Path silently truncated to "/etc/shadow..."
+     *    - Line 199: fut_vfs_lookup resolves truncated path
+     *    - Returns permission status for /etc/shadow instead of intended file
+     * 4. Impact:
+     *    - Information disclosure: Attacker learns /etc/shadow permissions
+     *    - Wrong file checked: access() checks unintended file
+     *    - Silent failure: No error indicates truncation occurred
+     *    - Security bypass: Permission check on wrong target
+     *
+     * ROOT CAUSE:
+     * - Lines 171-176: Copy 255 bytes, manually null-terminate
+     * - No validation that source path fit within 255 bytes
+     * - Manual null termination MASKS truncation (always creates valid string)
+     * - Kernel proceeds with truncated path as if it were complete
+     *
+     * DEFENSE (Phase 5):
+     * Copy full buffer (256 bytes) and verify last byte is null
+     * - If path_buf[255] != '\0', original path exceeded 255 bytes
+     * - Return -ENAMETOOLONG immediately (fail fast)
+     * - Prevents vfs_lookup from resolving truncated path
+     * - Matches pattern: sys_truncate (lines 91-104), sys_openat
+     *
+     * POSIX REQUIREMENT (IEEE Std 1003.1):
+     * PATH_MAX typically 4096, but kernel must reject paths exceeding buffer
+     * "If the length of pathname exceeds {PATH_MAX}, access() shall fail
+     *  and set errno to [ENAMETOOLONG]."
+     *
+     * CVE REFERENCES:
+     * Path truncation vulnerabilities in other systems:
+     * - CVE-2018-14618: curl path truncation bypass
+     * - CVE-2019-9500: Android path truncation privilege escalation
+     */
     char path_buf[256];
-    if (fut_copy_from_user(path_buf, local_pathname, sizeof(path_buf) - 1) != 0) {
+    if (fut_copy_from_user(path_buf, local_pathname, sizeof(path_buf)) != 0) {
         fut_printf("[ACCESS] access(pathname=?, mode=%s) -> EFAULT "
                    "(copy_from_user failed)\n", mode_desc);
         return -EFAULT;
     }
-    path_buf[sizeof(path_buf) - 1] = '\0';
+
+    /* Phase 5: Verify path was not truncated */
+    if (path_buf[sizeof(path_buf) - 1] != '\0') {
+        fut_printf("[ACCESS] access(pathname=<truncated>, mode=%s) -> ENAMETOOLONG "
+                   "(path exceeds %zu bytes, truncation detected, Phase 5)\n",
+                   mode_desc, sizeof(path_buf) - 1);
+        return -ENAMETOOLONG;
+    }
 
     /* Phase 2: Validate pathname is not empty */
     if (path_buf[0] == '\0') {

@@ -83,6 +83,12 @@ struct fut_task {
     int max_fds;                       // Allocated size of fd_table
     int next_fd;                       // Next FD index to allocate
 
+    /* Resource limits (POSIX rlimits) */
+    struct rlimit64 {
+        uint64_t rlim_cur;             // Soft limit
+        uint64_t rlim_max;             // Hard limit (ceiling for rlim_cur)
+    } rlimits[16];                     // RLIMIT_NLIMITS = 16
+
     fut_task_t *next;                  // Next task in system list
 };
 

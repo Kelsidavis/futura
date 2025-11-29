@@ -27,6 +27,26 @@ static _Atomic uint64_t next_pid __attribute__((aligned(8))) = 1;  /* 64-bit PID
 /* Task list lock */
 static fut_spinlock_t task_list_lock = { .locked = 0 };
 
+/* Resource limit constants (matching sys_prlimit.c) */
+#define RLIMIT_CPU        0   /* CPU time in seconds */
+#define RLIMIT_FSIZE      1   /* Maximum file size */
+#define RLIMIT_DATA       2   /* Max data size */
+#define RLIMIT_STACK      3   /* Max stack size */
+#define RLIMIT_CORE       4   /* Max core file size */
+#define RLIMIT_RSS        5   /* Max resident set size */
+#define RLIMIT_NPROC      6   /* Max number of processes */
+#define RLIMIT_NOFILE     7   /* Max number of open files */
+#define RLIMIT_MEMLOCK    8   /* Max locked-in-memory address space */
+#define RLIMIT_AS         9   /* Address space limit */
+#define RLIMIT_LOCKS      10  /* Max file locks */
+#define RLIMIT_SIGPENDING 11  /* Max pending signals */
+#define RLIMIT_MSGQUEUE   12  /* Max bytes in POSIX message queues */
+#define RLIMIT_NICE       13  /* Max nice priority */
+#define RLIMIT_RTPRIO     14  /* Max realtime priority */
+#define RLIMIT_RTTIME     15  /* Timeout for RT tasks (microseconds) */
+
+#define RLIM64_INFINITY   ((uint64_t)-1)
+
 static void task_attach_child(fut_task_t *parent, fut_task_t *child) {
     if (!parent || !child) {
         return;
@@ -123,6 +143,24 @@ fut_task_t *fut_task_create(void) {
         task->signal_handler_masks[i] = 0;  /* No additional signals blocked during handler */
         task->signal_handler_flags[i] = 0;  /* No SA_* flags set initially */
     }
+
+    /* Initialize resource limits with default values */
+    task->rlimits[RLIMIT_CPU] = (struct rlimit64){RLIM64_INFINITY, RLIM64_INFINITY};
+    task->rlimits[RLIMIT_FSIZE] = (struct rlimit64){RLIM64_INFINITY, RLIM64_INFINITY};
+    task->rlimits[RLIMIT_DATA] = (struct rlimit64){RLIM64_INFINITY, RLIM64_INFINITY};
+    task->rlimits[RLIMIT_STACK] = (struct rlimit64){8 * 1024 * 1024, RLIM64_INFINITY};  /* 8 MB soft */
+    task->rlimits[RLIMIT_CORE] = (struct rlimit64){0, RLIM64_INFINITY};  /* No core dumps */
+    task->rlimits[RLIMIT_RSS] = (struct rlimit64){RLIM64_INFINITY, RLIM64_INFINITY};
+    task->rlimits[RLIMIT_NPROC] = (struct rlimit64){1024, 2048};  /* 1024 soft, 2048 hard */
+    task->rlimits[RLIMIT_NOFILE] = (struct rlimit64){1024, 4096};  /* 1024 soft, 4096 hard */
+    task->rlimits[RLIMIT_MEMLOCK] = (struct rlimit64){64 * 1024, 64 * 1024};  /* 64 KB */
+    task->rlimits[RLIMIT_AS] = (struct rlimit64){RLIM64_INFINITY, RLIM64_INFINITY};
+    task->rlimits[RLIMIT_LOCKS] = (struct rlimit64){RLIM64_INFINITY, RLIM64_INFINITY};
+    task->rlimits[RLIMIT_SIGPENDING] = (struct rlimit64){1024, 1024};
+    task->rlimits[RLIMIT_MSGQUEUE] = (struct rlimit64){819200, 819200};  /* 800 KB */
+    task->rlimits[RLIMIT_NICE] = (struct rlimit64){0, 0};
+    task->rlimits[RLIMIT_RTPRIO] = (struct rlimit64){0, 0};
+    task->rlimits[RLIMIT_RTTIME] = (struct rlimit64){RLIM64_INFINITY, RLIM64_INFINITY};
 
     /* Initialize per-task file descriptor table (initially 64 FDs) */
     task->max_fds = 64;

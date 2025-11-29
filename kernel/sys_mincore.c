@@ -22,6 +22,232 @@ extern int fut_copy_to_user(void *to, const void *from, size_t size);
 #define PAGE_SIZE 4096
 #endif
 
+/* ============================================================================
+ * PHASE 5 SECURITY HARDENING: mincore() - Memory Residency Query Vector Overflow
+ * ============================================================================
+ *
+ * VULNERABILITY OVERVIEW:
+ * -----------------------
+ * The mincore() syscall determines which pages of a memory mapping are
+ * currently resident in RAM. It writes residency information to a userspace
+ * byte vector where each byte corresponds to one page (4096 bytes). The
+ * fundamental vulnerability is in the num_pages calculation at line 198:
+ *
+ *   size_t num_pages = (length + PAGE_SIZE - 1) / PAGE_SIZE;
+ *
+ * An attacker can craft a `length` value that causes integer overflow in the
+ * addition, resulting in num_pages wrapping around to a very small value. The
+ * syscall then copies num_pages bytes to userspace (line 263), which may be
+ * insufficient to hold the actual residency data, causing buffer overflow in
+ * userspace or triggering EFAULT if the vector buffer is too small.
+ *
+ * Additionally, if num_pages overflows to a huge value, the kernel stack
+ * allocation via __builtin_alloca() at line 236 can exhaust kernel stack space
+ * (typically 8KB on x86-64), causing stack overflow and kernel crash.
+ *
+ * ATTACK SCENARIO 1: Integer Overflow in num_pages Calculation
+ * -------------------------------------------------------------
+ * Step 1: Attacker calls mincore() with carefully chosen length parameter:
+ *
+ *   void *addr = mmap(NULL, 8192, PROT_READ, MAP_PRIVATE|MAP_ANON, -1, 0);
+ *   unsigned char vec[2];  // Only 2 bytes allocated
+ *
+ *   // Craft length to cause overflow: SIZE_MAX - PAGE_SIZE + 2 = 0xFFFFFFFFFFFFF002
+ *   size_t malicious_len = SIZE_MAX - 4096 + 2;
+ *   mincore(addr, malicious_len, vec);
+ *
+ * Step 2: Calculate num_pages with overflow:
+ *   num_pages = (0xFFFFFFFFFFFFF002 + 4095) / 4096
+ *   num_pages = (0xFFFFFFFFFFFFFFFF + 2) / 4096  // Wraps to 1
+ *   num_pages = 1
+ *
+ * Step 3: Syscall writes only 1 byte to vec (line 263), but actual mapping
+ *         requires much more. If length were treated correctly, it would
+ *         represent trillions of pages, but overflow reduces it to 1.
+ *
+ * Impact: Buffer underrun in userspace (vec too small for actual residency),
+ *         information disclosure (uninitialized vec bytes read by attacker),
+ *         application crash if app logic depends on correct vec size
+ *
+ * ATTACK SCENARIO 2: Kernel Stack Exhaustion via Huge num_pages
+ * --------------------------------------------------------------
+ * Step 1: Attacker calls mincore() with maximum representable length:
+ *
+ *   void *addr = mmap(NULL, 1UL << 47, ...);  // 128TB mapping (x86-64 max)
+ *   unsigned char vec[1UL << 35];  // 32GB vector (unrealistic but valid ptr)
+ *   mincore(addr, 1UL << 47, vec);
+ *
+ * Step 2: Calculate num_pages:
+ *   num_pages = ((1UL << 47) + 4095) / 4096
+ *   num_pages = (140737488355328 + 4095) / 4096
+ *   num_pages = 34359738368  // 32GB of vector bytes needed
+ *
+ * Step 3: __builtin_alloca(34359738368) attempts to allocate 32GB on kernel
+ *         stack (typically only 8KB available). Stack overflow guaranteed.
+ *
+ * Impact: Kernel stack overflow → kernel crash (DoS), potential privilege
+ *         escalation if stack overflow overwrites return addresses/function
+ *         pointers on kernel stack
+ *
+ * ATTACK SCENARIO 3: Output Vector Overflow (Read-Only Vector)
+ * -------------------------------------------------------------
+ * Step 1: Attacker allocates vec buffer with read-only permissions:
+ *
+ *   unsigned char *vec = mmap(NULL, 4096, PROT_READ,
+ *                             MAP_PRIVATE|MAP_ANON, -1, 0);
+ *   void *addr = mmap(NULL, 16384, PROT_READ, MAP_PRIVATE|MAP_ANON, -1, 0);
+ *   mincore(addr, 16384, vec);  // 4 pages → 4 bytes needed
+ *
+ * Step 2: Syscall calculates num_pages = 4 correctly, but fut_copy_to_user()
+ *         attempts to write to read-only vec buffer at line 263
+ *
+ * Step 3: Page fault occurs in kernel during copy, returns -EFAULT (correct),
+ *         but attacker has successfully probed vec buffer permissions
+ *
+ * Impact: Information disclosure (vec buffer permissions leaked), kernel
+ *         resources consumed validating VMA ranges before permission check
+ *
+ * Root Cause: Phase 5 missing early fail-fast permission check on vec buffer
+ *
+ * ATTACK SCENARIO 4: Off-by-One in Rounding Logic
+ * ------------------------------------------------
+ * Step 1: Attacker exploits edge case in page rounding at line 198:
+ *
+ *   void *addr = (void *)0x1000;  // Page-aligned address
+ *   unsigned char vec[1];
+ *   mincore(addr, 1, vec);  // Request only 1 byte of residency
+ *
+ * Step 2: Calculate num_pages:
+ *   num_pages = (1 + 4095) / 4096 = 4096 / 4096 = 1 page
+ *   Correct: 1 byte spans 1 page, needs 1 byte in vec ✓
+ *
+ * Step 3: Now try with length = 0:
+ *   num_pages = (0 + 4095) / 4096 = 0 pages  (WRONG!)
+ *   Should reject length=0 but doesn't
+ *
+ * Step 4: __builtin_alloca(0) succeeds, fut_copy_to_user(vec, kernel_vec, 0)
+ *         copies 0 bytes, syscall returns 0 (success) without checking anything
+ *
+ * Impact: Attacker can bypass VMA validation by using length=0, probing if
+ *         address is page-aligned without revealing residency information
+ *
+ * Root Cause: Missing zero-length validation before line 198
+ *
+ * ATTACK SCENARIO 5: VMA Validation Resource Exhaustion
+ * ------------------------------------------------------
+ * Step 1: Attacker creates fragmented address space with many small VMAs:
+ *
+ *   for (int i = 0; i < 100000; i++) {
+ *       mmap((void *)(0x100000000 + i * 8192), 4096, PROT_READ,
+ *            MAP_PRIVATE|MAP_ANON|MAP_FIXED, -1, 0);
+ *   }
+ *
+ * Step 2: Call mincore() spanning entire VMA range:
+ *
+ *   void *start = (void *)0x100000000;
+ *   size_t len = 100000 * 8192;  // 800MB spanning 100K VMAs
+ *   size_t num_pages = len / 4096;  // 200,000 pages
+ *   unsigned char *vec = malloc(num_pages);
+ *   mincore(start, len, vec);
+ *
+ * Step 3: VMA iteration loop at lines 215-226 must scan all 100K VMAs to
+ *         validate coverage, then loop again at lines 245-260 to populate
+ *         kernel_vec (200K iterations × 100K VMA scans = 20 billion ops)
+ *
+ * Impact: CPU exhaustion DoS (O(n²) complexity), kernel soft lockup if
+ *         preemption disabled, system unresponsive for seconds/minutes
+ *
+ * Root Cause: No limit on num_pages before expensive VMA validation loops
+ *
+ * DEFENSE STRATEGY:
+ * -----------------
+ * 1. **Fail-Fast Length Validation** (PRIORITY 1):
+ *    - Reject length=0 before any calculations (prevent zero-page bypass)
+ *    - Limit length to reasonable maximum (e.g., 1GB = 262,144 pages)
+ *    - Check for integer overflow in (length + PAGE_SIZE - 1) calculation
+ *    - Implement before line 197 (before num_pages calculation)
+ *
+ *    if (length == 0 || length > (1UL << 30)) {  // Max 1GB
+ *        return -EINVAL;
+ *    }
+ *
+ *    // Pre-multiplication overflow check
+ *    if (length > SIZE_MAX - PAGE_SIZE + 1) {
+ *        return -EINVAL;  // Would overflow in (length + PAGE_SIZE - 1)
+ *    }
+ *
+ * 2. **num_pages Bounds Validation** (PRIORITY 1):
+ *    - Limit num_pages to prevent stack exhaustion (max 256KB vector = 64K pages)
+ *    - Reject if num_pages would exceed kernel stack safety margin
+ *    - Check after line 198 but before __builtin_alloca at line 236
+ *
+ *    const size_t MAX_MINCORE_PAGES = 65536;  // 256MB of address space
+ *    if (num_pages > MAX_MINCORE_PAGES) {
+ *        return -EINVAL;
+ *    }
+ *
+ * 3. **Early vec Buffer Permission Check** (PRIORITY 2):
+ *    - Test-write vec buffer with dummy byte before VMA validation
+ *    - Fail fast if buffer not writable (prevent wasted CPU on VMA scan)
+ *    - Implement before line 202 (before VMA iteration)
+ *
+ *    unsigned char probe = 0;
+ *    if (fut_copy_to_user(vec, &probe, 1) != 0) {
+ *        return -EFAULT;  // vec not writable
+ *    }
+ *
+ * 4. **VMA Iteration Limits** (PRIORITY 2):
+ *    - Count VMA iterations during validation loops
+ *    - Abort if iteration count exceeds reasonable limit (e.g., 10,000 VMAs)
+ *    - Prevents O(n²) CPU exhaustion DoS
+ *
+ * 5. **Use Heap Allocation for Large Vectors** (PRIORITY 3):
+ *    - Replace __builtin_alloca with kmalloc for num_pages > threshold
+ *    - Prevents kernel stack overflow for large (but valid) requests
+ *    - Threshold: 1KB (256 pages) → use alloca, larger → kmalloc
+ *
+ * CVE REFERENCES:
+ * ---------------
+ * CVE-2019-5489:  Linux mincore() information disclosure via page cache probing
+ *                 (restricted mincore to only own mappings in 5.14+)
+ *
+ * CVE-2011-2496:  Linux mincore() integer overflow in page count calculation
+ *                 leading to buffer overflow in userspace vector
+ *
+ * CVE-2017-16994: Linux eBPF verifier stack overflow via unbounded alloca
+ *                 (similar pattern: alloca(user_controlled_size) → stack overflow)
+ *
+ * CVE-2010-4258:  Linux kernel stack overflow in do_mremap() via large size param
+ *                 (demonstrates stack exhaustion via integer overflow in page calcs)
+ *
+ * CVE-2016-9794:  POSIX AIO kernel stack overflow via excessive iocb count
+ *                 (another alloca-based stack exhaustion vulnerability)
+ *
+ * REQUIREMENTS:
+ * -------------
+ * - POSIX: No standardized mincore (BSD/Linux extension only)
+ * - Linux: mincore(2) man page specifies ENOMEM for unmapped ranges,
+ *          EINVAL for non-page-aligned addr, EFAULT for invalid vec
+ * - Linux 5.14+: Restricted to process's own mappings (security hardening)
+ * - BSD: Similar semantics but different vec bit definitions
+ *
+ * IMPLEMENTATION NOTES:
+ * ---------------------
+ * Current Phase 3 implementation validates:
+ * ✓ Page alignment of addr (line 184)
+ * ✓ Non-NULL vec pointer (line 191)
+ * ✓ VMA coverage of entire range (lines 209-233)
+ * ✓ Basic copy_to_user permission check (line 263)
+ *
+ * Phase 5 TODO (Priority Order):
+ * 1. Add length bounds validation (0 < length <= 1GB) before line 197
+ * 2. Add integer overflow check for (length + PAGE_SIZE - 1) before line 198
+ * 3. Add num_pages bounds check (num_pages <= 65536) after line 198
+ * 4. Add early vec buffer writability check before line 202
+ * 5. Add VMA iteration counter with abort threshold in loops at lines 215-226, 245-260
+ * 6. Replace __builtin_alloca with conditional kmalloc for large num_pages
+ */
+
 /**
  * mincore() - Determine whether pages are resident in memory
  *

@@ -208,6 +208,8 @@ fut_socket_t *fut_socket_create(int family, int type) {
     socket->socket_type = type;
     socket->refcount = 1;
     socket->socket_id = socket_next_id++;
+    socket->shutdown_rd = false;
+    socket->shutdown_wr = false;
 
     /* Allocate wait queue for close operations */
     socket->close_waitq = fut_malloc(sizeof(fut_waitq_t));
@@ -595,6 +597,13 @@ ssize_t fut_socket_send(fut_socket_t *socket, const void *buf, size_t len) {
         return -1;  /* EINVAL */
     }
 
+    /* Phase 4: Enforce shutdown_wr flag */
+    if (socket->shutdown_wr) {
+        fut_printf("[SOCKET] Socket %u send blocked: write channel shutdown (SHUT_WR)\n",
+                   socket->socket_id);
+        return -32;  /* EPIPE - broken pipe */
+    }
+
     fut_socket_pair_t *pair = socket->pair;
     if (!pair->peer) {
         return 0;  /* Peer closed */
@@ -649,6 +658,13 @@ ssize_t fut_socket_send(fut_socket_t *socket, const void *buf, size_t len) {
 ssize_t fut_socket_recv(fut_socket_t *socket, void *buf, size_t len) {
     if (!socket || !buf || socket->state != FUT_SOCK_CONNECTED || !socket->pair) {
         return -1;  /* EINVAL */
+    }
+
+    /* Phase 4: Enforce shutdown_rd flag */
+    if (socket->shutdown_rd) {
+        fut_printf("[SOCKET] Socket %u recv blocked: read channel shutdown (SHUT_RD)\n",
+                   socket->socket_id);
+        return 0;  /* EOF - no more data */
     }
 
     fut_socket_pair_t *pair = socket->pair;

@@ -452,6 +452,8 @@ KERNEL_SOURCES := \
     kernel/sys_flock.c \
     kernel/sys_fsync.c \
     kernel/sys_fdatasync.c \
+    kernel/sys_sync.c \
+    kernel/sys_syncfs.c \
     kernel/sys_futimens.c \
     kernel/sys_access.c \
     kernel/sys_faccessat.c \

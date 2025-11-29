@@ -9,7 +9,8 @@
  * Phase 1 (Completed): Basic FD duplication with per-task isolation
  * Phase 2 (Completed): Enhanced validation, operation categorization, and detailed logging
  * Phase 3 (Completed): Atomic close-and-dup with proper error handling
- * Phase 4: Advanced features (O_CLOEXEC handling, dup3 support)
+ * Phase 4 (Completed): dup3() with O_CLOEXEC flag support
+ * Phase 5: Advanced features (F_DUPFD_CLOEXEC in fcntl)
  */
 
 #include <kernel/errno.h>
@@ -265,6 +266,126 @@ long sys_dup2(int oldfd, int newfd) {
     fut_printf("[DUP2] dup2(oldfd=%d, newfd=%d [%s], op=%s, refcount=%u) -> %d (%s, Phase 5: FD bounds validation)\n",
                local_oldfd, local_newfd, newfd_category, operation_type, old_file->refcount, local_newfd,
                operation_desc);
+
+    return local_newfd;
+}
+
+/**
+ * sys_dup3() - Duplicate file descriptor with flags
+ *
+ * Like dup2() but allows atomically setting O_CLOEXEC on the new FD.
+ * This is essential for avoiding race conditions in multithreaded programs.
+ *
+ * @param oldfd Source file descriptor to duplicate
+ * @param newfd Target file descriptor number
+ * @param flags Must be O_CLOEXEC (0x80000) or 0
+ *
+ * Returns:
+ *   - newfd on success
+ *   - -EBADF if oldfd is not a valid open file descriptor
+ *   - -EINVAL if newfd is outside allowed range or oldfd == newfd or invalid flags
+ *   - -ESRCH if no current task context
+ *
+ * Differences from dup2():
+ *   - dup3(fd, fd, flags) returns -EINVAL (dup2 returns fd)
+ *   - Can set O_CLOEXEC atomically without race condition
+ *   - Only supports O_CLOEXEC flag (other flags return -EINVAL)
+ *
+ * Phase 4: Initial implementation with O_CLOEXEC support
+ */
+long sys_dup3(int oldfd, int newfd, int flags) {
+    /* Copy parameters to local variables for ARM64 */
+    int local_oldfd = oldfd;
+    int local_newfd = newfd;
+    int local_flags = flags;
+
+    /* Validate flags - only O_CLOEXEC is supported */
+    if (local_flags & ~0x80000) {  /* Only O_CLOEXEC */
+        fut_printf("[DUP3] dup3(oldfd=%d, newfd=%d, flags=0x%x) -> EINVAL (invalid flags)\n",
+                   local_oldfd, local_newfd, local_flags);
+        return -EINVAL;
+    }
+
+    /* dup3() requires oldfd != newfd (unlike dup2) */
+    if (local_oldfd == local_newfd) {
+        fut_printf("[DUP3] dup3(oldfd=%d, newfd=%d, flags=0x%x) -> EINVAL (oldfd == newfd not allowed)\n",
+                   local_oldfd, local_newfd, local_flags);
+        return -EINVAL;
+    }
+
+    /* Get current task */
+    fut_task_t *task = fut_task_current();
+    if (!task) {
+        fut_printf("[DUP3] dup3(oldfd=%d, newfd=%d, flags=0x%x) -> ESRCH (no current task)\n",
+                   local_oldfd, local_newfd, local_flags);
+        return -ESRCH;
+    }
+
+    /* Validate oldfd */
+    if (local_oldfd < 0) {
+        fut_printf("[DUP3] dup3(oldfd=%d, newfd=%d, flags=0x%x) -> EBADF (negative oldfd)\n",
+                   local_oldfd, local_newfd, local_flags);
+        return -EBADF;
+    }
+
+    /* Validate newfd */
+    if (local_newfd < 0) {
+        fut_printf("[DUP3] dup3(oldfd=%d, newfd=%d, flags=0x%x) -> EINVAL (negative newfd)\n",
+                   local_oldfd, local_newfd, local_flags);
+        return -EINVAL;
+    }
+
+    /* Get the file structure for oldfd */
+    struct fut_file *old_file = vfs_get_file_from_task(task, local_oldfd);
+    if (!old_file) {
+        fut_printf("[DUP3] dup3(oldfd=%d, newfd=%d, flags=0x%x) -> EBADF (oldfd not open)\n",
+                   local_oldfd, local_newfd, local_flags);
+        return -EBADF;
+    }
+
+    /* Increment reference count since we're creating another reference */
+    if (old_file) {
+        old_file->refcount++;
+    }
+
+    /* Allocate newfd pointing to the same file */
+    int ret = vfs_alloc_specific_fd_for_task(task, local_newfd, old_file);
+    if (ret < 0) {
+        /* Failed to allocate, decrement ref count */
+        if (old_file && old_file->refcount > 0) {
+            old_file->refcount--;
+        }
+
+        const char *error_desc;
+        switch (ret) {
+            case -EBADF:
+                error_desc = "invalid file descriptor";
+                break;
+            case -EINVAL:
+                error_desc = "newfd out of range";
+                break;
+            case -ENOMEM:
+                error_desc = "insufficient memory";
+                break;
+            default:
+                error_desc = "unknown error";
+                break;
+        }
+        fut_printf("[DUP3] dup3(oldfd=%d, newfd=%d, flags=0x%x) -> %d (%s)\n",
+                   local_oldfd, local_newfd, local_flags, ret, error_desc);
+        return ret;
+    }
+
+    /* Apply O_CLOEXEC if requested */
+    if (local_flags & 0x80000) {  /* O_CLOEXEC */
+        extern long sys_fcntl(int fd, int cmd, long arg);
+        sys_fcntl(local_newfd, 2, 1);  /* F_SETFD, FD_CLOEXEC */
+    }
+
+    const char *flags_desc = (local_flags & 0x80000) ? "O_CLOEXEC" : "none";
+
+    fut_printf("[DUP3] dup3(oldfd=%d, newfd=%d, flags=0x%x [%s]) -> %d (Phase 4: atomic dup with flags)\n",
+               local_oldfd, local_newfd, local_flags, flags_desc, local_newfd);
 
     return local_newfd;
 }

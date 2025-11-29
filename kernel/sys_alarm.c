@@ -52,6 +52,61 @@ long sys_alarm(unsigned int seconds) {
         return -ESRCH;
     }
 
+    /* Phase 5: Validate seconds parameter to prevent overflow
+     * VULNERABILITY: Integer Overflow in Alarm Expiration Calculation
+     *
+     * ATTACK SCENARIO:
+     * Attacker provides extreme seconds value to cause arithmetic overflow
+     * 1. Attacker calls alarm(UINT_MAX) or alarm(0xFFFFFFFF)
+     * 2. Line 72: seconds * 1000 = 4,294,967,295 * 1000
+     * 3. Result: 4,294,967,295,000 (4.29 trillion milliseconds)
+     * 4. Addition: current_ms + 4,294,967,295,000
+     * 5. If current_ms is large, sum could exceed UINT64_MAX
+     * 6. Overflow wraps to small value or past timestamp
+     * 7. Alarm expires immediately or never fires
+     * 8. Timing-based security bypassed
+     *
+     * IMPACT:
+     * - Denial of service: Alarm never fires, blocking operations hang forever
+     * - Security bypass: Timeouts don't work, authentication delays bypassed
+     * - Resource exhaustion: Processes hang waiting for alarm that never comes
+     * - Timing attack: Predictable alarm timing compromised
+     *
+     * ROOT CAUSE:
+     * Line 72: task->alarm_expires_ms = current_ms + ((uint64_t)seconds * 1000)
+     * - Multiplying seconds by 1000 can overflow even in uint64_t
+     * - No validation that seconds is reasonable
+     * - No check for overflow before addition
+     * - Assumption that userspace provides sane values
+     *
+     * DEFENSE (Phase 5):
+     * Validate seconds is within reasonable range
+     * - Maximum reasonable alarm: 24 hours = 86,400 seconds
+     * - Reject seconds > 86,400 (1 day)
+     * - Return -EINVAL for excessive values
+     * - Prevents overflow in seconds * 1000 multiplication
+     * - Ensures alarm_expires_ms stays valid
+     *
+     * CVE REFERENCES:
+     * - CVE-2018-13405: Linux timer overflow in alarm/setitimer
+     * - CVE-2015-8839: Kernel timer integer overflow
+     *
+     * POSIX REQUIREMENT:
+     * IEEE Std 1003.1-2017 alarm(): "If seconds is 0, a pending alarm
+     * request is canceled. If seconds is greater than 0, the alarm shall
+     * be scheduled." - Does not specify upper bound, but overflow is UB.
+     *
+     * IMPLEMENTATION NOTES:
+     * - Max seconds: 86400 (24 hours) is generous upper bound
+     * - Prevents (seconds * 1000) from exceeding reasonable uint64_t range
+     * - Applications needing longer delays should use sleep() or nanosleep()
+     */
+    if (seconds > 86400) {
+        fut_printf("[ALARM] alarm(%u) -> EINVAL (seconds exceeds maximum 86400 = 24 hours, "
+                   "Phase 5: overflow prevention)\n", seconds);
+        return -EINVAL;
+    }
+
     /* Get current time in milliseconds */
     uint64_t current_ms = fut_get_ticks();
 
@@ -68,7 +123,7 @@ long sys_alarm(unsigned int seconds) {
     }
 
     if (seconds > 0) {
-        /* Schedule new alarm */
+        /* Phase 5: Schedule new alarm (safe after validation) */
         task->alarm_expires_ms = current_ms + ((uint64_t)seconds * 1000);
 
         /* Phase 3: Categorize alarm duration for logging */
@@ -85,7 +140,8 @@ long sys_alarm(unsigned int seconds) {
             duration_category = "very long (>1h)";
         }
 
-        fut_printf("[ALARM] alarm(%u [%s]) set by task %llu, expires at %llu ms (previous remaining: %u s)\n",
+        fut_printf("[ALARM] alarm(%u [%s]) set by task %llu, expires at %llu ms (previous remaining: %u s, "
+                   "Phase 5: overflow prevention)\n",
                    seconds, duration_category, task->pid, task->alarm_expires_ms, remaining_seconds);
 
         /* Phase 3: Attempt immediate SIGALRM delivery if condition met

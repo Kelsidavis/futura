@@ -147,6 +147,18 @@ long sys_waitpid(int pid, int *u_status, int flags) {
     int *local_u_status = u_status;
     int local_flags = flags;
 
+    /* Phase 5: Validate u_status write permission early (kernel writes exit status)
+     * VULNERABILITY: Invalid Output Buffer Pointer
+     * ATTACK: Attacker provides read-only or unmapped u_status buffer
+     * IMPACT: Kernel page fault when writing exit status after potentially blocking wait
+     * DEFENSE: Check write permission before blocking on fut_task_waitpid */
+    extern int fut_access_ok(const void *u_ptr, size_t size, int write);
+    if (local_u_status && fut_access_ok(local_u_status, sizeof(int), 1) != 0) {
+        fut_printf("[WAITPID] waitpid(pid=%d, u_status=%p) -> EFAULT (u_status not writable for %zu bytes, Phase 5)\n",
+                   local_pid, local_u_status, sizeof(int));
+        return -EFAULT;
+    }
+
     /* Phase 2: Categorize PID argument */
     const char *pid_category;
     const char *pid_meaning;

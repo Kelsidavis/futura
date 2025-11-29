@@ -145,9 +145,9 @@
  *    - Validate fd references valid file
  *    - Fail with EBADF for invalid FDs
  *
- * 4. [TODO] F_DUPFD negative arg validation
- *    - Need to check arg >= 0 for F_DUPFD
- *    - Reject negative target FDs
+ * 4. [DONE] F_DUPFD negative arg validation (lines 577-583)
+ *    - Check arg >= 0 for F_DUPFD
+ *    - Reject negative target FDs with EINVAL
  *    - Prevent fd table corruption
  *
  * 5. [TODO] F_DUPFD resource limit checks
@@ -155,10 +155,10 @@
  *    - Prevent FD exhaustion DoS
  *    - Rate limit F_DUPFD operations
  *
- * 6. [TODO] Flag bit validation
- *    - Validate F_SETFD arg against VALID_FD_FLAGS
- *    - Validate F_SETFL arg against VALID_FILE_FLAGS
- *    - Reject unknown flag bits
+ * 6. [DONE] Flag bit validation
+ *    - F_SETFD: Validated arg against FD_CLOEXEC (line 461)
+ *    - F_SETFL: Validated arg against O_NONBLOCK|O_APPEND (lines 525-531)
+ *    - Unknown flag bits rejected with EINVAL
  *
  * ============================================================================
  * CVE REFERENCES (Similar Vulnerabilities):
@@ -197,10 +197,10 @@
  * [DONE] 3. FD validation (negative, invalid) at lines 135-147
  *
  * TODO (Phase 5 enhancements):
- * [TODO] 1. F_DUPFD negative arg validation
+ * [DONE] 1. F_DUPFD negative arg validation (lines 577-583)
  * [TODO] 2. F_DUPFD RLIMIT_NOFILE check
- * [TODO] 3. F_SETFD flag bit validation (only FD_CLOEXEC)
- * [TODO] 4. F_SETFL flag bit validation (O_NONBLOCK, O_APPEND, etc.)
+ * [DONE] 3. F_SETFD flag bit validation (line 461 - masks with FD_CLOEXEC)
+ * [DONE] 4. F_SETFL flag bit validation (lines 525-531 - validates O_NONBLOCK|O_APPEND)
  * [TODO] 5. Rate limiting for F_DUPFD to prevent DoS
  */
 

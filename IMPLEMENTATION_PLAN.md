@@ -2,19 +2,32 @@
 
 This document outlines a structured plan for implementing the remaining Phase 2 and Phase 3 TODOs in the Futura OS kernel.
 
+## Completion Status
+
+### ✅ Completed Priorities (Phase 1):
+1. **Priority 1: Memory Access Validation** - fut_access_ok() infrastructure complete and used across 50+ syscalls
+2. **Priority 2: Resource Limits Infrastructure** - rlimits array operational with full validation
+3. **Priority 3: Memory Management Safety** - Overflow checks and cumulative lock tracking complete
+
+### ⏳ Remaining Work (Requires Infrastructure):
+4. **Priority 4: VFS Filesystem Sync Support** - Needs VFS sync operations and mount table
+5. **Priority 5: Permission Checking** - Needs VFS permission helpers and vnode ownership
+6. **Priority 6: Advanced Features** - Futex, symlinks, atomic operations
+7. **Phase 4 TODOs** - Capability checking (needs CAP_* constants and helper functions)
+
 ## Overview
 
-The codebase has completed most *at() syscall directory FD resolution (Phase 2) and basic parameter validation. Remaining work falls into these categories:
+The codebase has completed the foundational Phase 1 infrastructure. Remaining work falls into these categories:
 
-1. **Memory Access Validation** - Implement fut_access_ok() for userspace pointer validation
-2. **Resource Limits** - Add RLIMIT enforcement infrastructure
-3. **VFS Enhancements** - Filesystem sync, atomic operations, symlink support
-4. **Permission Checking** - Implement actual permission validation beyond stubs
-5. **Memory Management** - Overflow checks, VMA limits, lock accounting
+1. ✅ **Memory Access Validation** - fut_access_ok() implemented and deployed
+2. ✅ **Resource Limits** - RLIMIT enforcement infrastructure complete
+3. ✅ **Memory Management** - Overflow checks and lock accounting operational
+4. ⏳ **VFS Enhancements** - Filesystem sync, atomic operations, symlink support
+5. ⏳ **Permission Checking** - Actual permission validation beyond stubs
 
-## Priority 1: Memory Access Validation (Foundation) - ✅ ALREADY IMPLEMENTED
+## Priority 1: Memory Access Validation (Foundation) - ✅ COMPLETE
 
-**Status:** fut_access_ok() already exists in kernel/uaccess.c (line 135)!
+**Status:** fut_access_ok() exists and is widely used across syscalls!
 
 ### Existing Implementation
 - **File:** `kernel/uaccess.c`
@@ -26,26 +39,27 @@ The codebase has completed most *at() syscall directory FD resolution (Phase 2) 
   - Checks PTE_WRITABLE flag if write=1
   - Returns 0 on success, -EFAULT on invalid access
 
-### TODOs This Already Unlocks
-The existing fut_access_ok() can be used immediately for:
-- sys_select.c:204 - Validate readfds/writefds/exceptfds pointers
-- sys_futex.c:178 - Validate uaddr for atomic operations
-- sys_futex.c:345 - Validate robust_list head pointer
-- sys_prlimit.c:374 - Validate old_limit/new_limit pointers
+### Completed Validations
+All mentioned syscalls now use fut_access_ok():
+- ✅ sys_select.c - Validates readfds/writefds/exceptfds pointers (lines 202-218)
+- ✅ sys_futex.c - Validates uaddr for atomic operations (line 180)
+- ✅ sys_futex.c - Validates robust_list head pointer (line 352)
+- ✅ sys_prlimit.c - Validates old_limit/new_limit pointers (lines 240, 247)
+- ✅ sys_lstat.c - Validates statbuf pointer with fut_access_ok (line 83)
+- ✅ Plus 50+ other syscalls with Phase 5 validation
 
-**Action Required:** Use existing fut_access_ok() from kernel/uaccess.c
-**Estimated Effort:** None - infrastructure already complete
+**Status:** Complete - All priority syscalls have pointer validation
 
 ---
 
-## Priority 2: Resource Limits Infrastructure
+## Priority 2: Resource Limits Infrastructure - ✅ COMPLETE
 
-**Why Second:** Enables many security validations and DoS prevention.
+**Status:** Resource limits infrastructure fully implemented and operational!
 
-### Files to Modify
-- `include/kernel/fut_task.h` - Add rlimits[] array to fut_task
-- `kernel/threading/fut_task.c` - Initialize default limits
-- `kernel/sys_prlimit.c` - Complete Phase 2 validation and storage
+### Completed Implementation
+- ✅ `include/kernel/fut_task.h` - rlimits[] array exists in fut_task (lines 86-90)
+- ✅ `kernel/threading/fut_task.c` - Default limits initialized (lines 148-163)
+- ✅ `kernel/sys_prlimit.c` - Validation and storage complete (Phase 3)
 
 ### Implementation Steps
 
@@ -78,23 +92,28 @@ The existing fut_access_ok() can be used immediately for:
    - Reject RLIM64_INFINITY for RLIMIT_MEMLOCK and RLIMIT_NPROC
    - Store validated limits in task->rlimits[]
 
-### TODOs This Unlocks
-- sys_prlimit.c:375-379 - All Phase 2 prlimit validations
-- sys_mman.c:156 - Check cumulative locked_vm vs RLIMIT_MEMLOCK
-- sys_mman.c:350-351 - Memory lock limit enforcement
-- sys_fcntl.c - F_DUPFD resource limit checks
+### Unlocked Features
+- ✅ sys_prlimit.c - All Phase 2/3 prlimit validations complete
+- ✅ sys_mman.c - Cumulative locked_vm vs RLIMIT_MEMLOCK (see Priority 3)
+- ✅ RLIMIT_NOFILE, RLIMIT_MEMLOCK, RLIMIT_NPROC all enforced
 
-**Estimated Complexity:** Medium (3-4 hours)
-**Files Modified:** 3 files, ~300 lines of code
+**Implementation Complete:** All core rlimit functionality operational
 
 ---
 
-## Priority 3: Memory Management Safety
+## Priority 3: Memory Management Safety - ✅ COMPLETE
 
-**Why Third:** Prevents integer overflow and DoS attacks in memory operations.
+**Status:** Core memory management safety features implemented!
 
-### Files to Modify
-- `kernel/sys_mman.c` - Add overflow checks and VMA limits
+### Completed Implementation
+- ✅ Integer overflow checks in sys_mman.c (Phase 2 complete, lines 162-176)
+- ✅ Cumulative memory lock tracking with locked_vm field (Phase 3 Full)
+- ✅ RLIMIT_MEMLOCK enforcement in mlock() syscall
+
+### Files Modified
+- ✅ `include/kernel/fut_mm.h` - Added locked_vm field (line 67)
+- ✅ `kernel/memory/fut_mm.c` - Initialize locked_vm in both x86_64 and ARM64
+- ✅ `kernel/sys_mman.c` - Cumulative RLIMIT_MEMLOCK tracking (lines 178-217)
 
 ### Implementation Steps
 
@@ -124,12 +143,15 @@ The existing fut_access_ok() can be used immediately for:
    - Check against RLIMIT_MEMLOCK before mlock()
    - Require CAP_IPC_LOCK if exceeding limit
 
-### TODOs This Unlocks
-- sys_mman.c:154-157 - All mlock overflow checks
-- sys_mman.c:348-351 - VMA and lock limit enforcement
+### Completed TODOs
+- ✅ sys_mman.c overflow checks (lines 162-176)
+- ✅ sys_mman.c cumulative lock limit enforcement (lines 178-217)
 
-**Estimated Complexity:** Low-Medium (2-3 hours)
-**Files Modified:** 1-2 files, ~150 lines of code
+### Remaining Work (Requires VMA Infrastructure)
+- ⏳ mlockall() VMA count check (needs VMA walking infrastructure)
+- ⏳ VMA count limits (needs full VMA management implementation)
+
+**Core Priority 3 Complete:** Overflow protection and lock tracking operational
 
 ---
 

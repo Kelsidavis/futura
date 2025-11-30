@@ -10,7 +10,9 @@
 #include <kernel/fut_task.h>
 #include <kernel/fut_mm.h>
 #include <kernel/errno.h>
+#include <kernel/slab_allocator.h>
 #include <stdint.h>
+#include <stdbool.h>
 #include <string.h>
 
 extern void fut_printf(const char *fmt, ...);
@@ -437,9 +439,34 @@ long sys_mincore(void *addr, size_t length, unsigned char *vec) {
         return -ENOMEM;
     }
 
+    /* Phase 5 Priority 2: Add integer overflow check for (length + PAGE_SIZE - 1)
+     * VULNERABILITY: Integer Overflow in Page Count Calculation
+     * ATTACK: Attacker passes length near SIZE_MAX
+     * IMPACT: (length + PAGE_SIZE - 1) wraps to small value, num_pages becomes 0 or 1
+     *         causing vec buffer overflow when writing residency bits
+     * DEFENSE: Detect overflow by checking if result would wrap around */
+    if (length > SIZE_MAX - (PAGE_SIZE - 1)) {
+        fut_printf("[MINCORE] mincore(%p, %zu, %p) -> EINVAL (length causes overflow in page calculation, Phase 5)\n",
+                   addr, length, vec);
+        return -EINVAL;
+    }
+
     /* Calculate number of pages and round length */
     size_t num_pages = (length + PAGE_SIZE - 1) / PAGE_SIZE;
     size_t aligned_len = num_pages * PAGE_SIZE;
+
+    /* Phase 5 Priority 3: Add num_pages bounds check (num_pages <= 65536)
+     * VULNERABILITY: Unbounded Page Count
+     * ATTACK: Attacker passes large but valid length (e.g., 256 MB)
+     * IMPACT: Excessive memory allocation via __builtin_alloca, kernel stack overflow
+     * DEFENSE: Limit to 65536 pages (256 MB at 4KB pages) to prevent stack abuse
+     * NOTE: This works with Priority 1's 1GB limit (1GB = 262144 pages) */
+    #define MINCORE_MAX_PAGES 65536  /* 256 MB at 4KB pages */
+    if (num_pages > MINCORE_MAX_PAGES) {
+        fut_printf("[MINCORE] mincore(%p, %zu, %p) -> ENOMEM (num_pages %zu exceeds max %u, Phase 5)\n",
+                   addr, length, vec, num_pages, MINCORE_MAX_PAGES);
+        return -ENOMEM;
+    }
 
     /* Phase 5 Priority 4: Add early vec buffer writability check
      * VULNERABILITY: Invalid Output Buffer Pointer
@@ -466,9 +493,24 @@ long sys_mincore(void *addr, size_t length, unsigned char *vec) {
     uintptr_t end = start + aligned_len;
     size_t mapped_pages = 0;
 
+    /* Phase 5 Priority 5: Add VMA iteration counter with abort threshold
+     * VULNERABILITY: Infinite VMA Loop / DoS via Excessive VMA Traversal
+     * ATTACK: Malicious task creates circular VMA list or excessive VMAs
+     * IMPACT: Infinite loop or excessive CPU consumption in kernel
+     * DEFENSE: Abort after scanning 10000 VMAs (reasonable for legitimate tasks) */
+    #define MINCORE_MAX_VMA_ITERS 10000
+    size_t vma_iters = 0;
+
     /* Iterate through VMA list to find coverage */
     struct fut_vma *vma = mm->vma_list;
     while (vma) {
+        /* Check iteration limit */
+        if (++vma_iters > MINCORE_MAX_VMA_ITERS) {
+            fut_printf("[MINCORE] mincore(%p, %zu, %p) -> ELOOP (VMA iteration limit %u exceeded, Phase 5)\n",
+                       addr, length, vec, MINCORE_MAX_VMA_ITERS);
+            return -ELOOP;
+        }
+
         /* Check if this VMA overlaps with our range */
         if (vma->start < end && vma->end > start) {
             /* Calculate overlap */
@@ -487,10 +529,28 @@ long sys_mincore(void *addr, size_t length, unsigned char *vec) {
         return -ENOMEM;
     }
 
-    /* Allocate temporary buffer to hold residency info */
-    unsigned char *kernel_vec = (unsigned char *)__builtin_alloca(num_pages);
-    if (!kernel_vec) {
-        return -ENOMEM;
+    /* Phase 5 Priority 6: Replace __builtin_alloca with conditional kmalloc for large num_pages
+     * VULNERABILITY: Kernel Stack Overflow via Large Alloca
+     * ATTACK: Attacker passes large length causing excessive stack allocation
+     * IMPACT: Kernel stack overflow when __builtin_alloca exceeds stack space (typically 8KB)
+     * DEFENSE: Use stack for small allocations (<= 1KB), heap for large allocations
+     * THRESHOLD: 1024 bytes (safe for typical 8KB kernel stacks with ~6KB headroom) */
+    #define MINCORE_STACK_THRESHOLD 1024
+    unsigned char *kernel_vec;
+    bool heap_allocated = false;
+
+    if (num_pages <= MINCORE_STACK_THRESHOLD) {
+        /* Small allocation - safe to use stack */
+        kernel_vec = (unsigned char *)__builtin_alloca(num_pages);
+    } else {
+        /* Large allocation - use heap to avoid stack overflow */
+        kernel_vec = (unsigned char *)slab_malloc(num_pages);
+        if (!kernel_vec) {
+            fut_printf("[MINCORE] mincore(%p, %zu, %p) -> ENOMEM (slab_malloc failed for %zu bytes, Phase 5)\n",
+                       addr, length, vec, num_pages);
+            return -ENOMEM;
+        }
+        heap_allocated = true;
     }
 
     /* Phase 2: Mark pages as resident if in mapped VMA
@@ -500,9 +560,23 @@ long sys_mincore(void *addr, size_t length, unsigned char *vec) {
     for (size_t i = 0; i < num_pages; i++, page_addr += PAGE_SIZE) {
         int page_resident = 0;
 
+        /* Phase 5 Priority 5: Reset VMA counter for each page iteration */
+        size_t page_vma_iters = 0;
+
         /* Find VMA covering this page */
         vma = mm->vma_list;
         while (vma) {
+            /* Check iteration limit (Phase 5 Priority 5) */
+            if (++page_vma_iters > MINCORE_MAX_VMA_ITERS) {
+                fut_printf("[MINCORE] mincore(%p, %zu, %p) -> ELOOP (VMA iteration limit %u exceeded at page %zu, Phase 5)\n",
+                           addr, length, vec, MINCORE_MAX_VMA_ITERS, i);
+                /* Phase 5 Priority 6: Free heap-allocated buffer before returning */
+                if (heap_allocated) {
+                    slab_free(kernel_vec);
+                }
+                return -ELOOP;
+            }
+
             if (page_addr >= vma->start && page_addr < vma->end) {
                 /* Page is in a VMA, consider it resident */
                 page_resident = 1;
@@ -518,10 +592,19 @@ long sys_mincore(void *addr, size_t length, unsigned char *vec) {
     if (fut_copy_to_user(vec, kernel_vec, num_pages) != 0) {
         fut_printf("[MINCORE] mincore(%p, %zu, %p) -> EFAULT (copy_to_user failed)\n",
                    addr, aligned_len, vec);
+        /* Phase 5 Priority 6: Free heap-allocated buffer before returning */
+        if (heap_allocated) {
+            slab_free(kernel_vec);
+        }
         return -EFAULT;
     }
 
-    fut_printf("[MINCORE] mincore(%p, %zu, %p) -> 0 (%zu pages, Phase 3: VMA validated, PTE checks pending)\n",
+    /* Phase 5 Priority 6: Free heap-allocated buffer before success return */
+    if (heap_allocated) {
+        slab_free(kernel_vec);
+    }
+
+    fut_printf("[MINCORE] mincore(%p, %zu, %p) -> 0 (%zu pages, Phase 5 complete: all validations + heap safety)\n",
                addr, aligned_len, vec, num_pages);
 
     /* Phase 3-5 future implementation (check actual page table entries):

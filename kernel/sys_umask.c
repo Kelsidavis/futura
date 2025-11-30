@@ -8,8 +8,8 @@
  *
  * Phase 1 (Completed): Basic umask get/set with global storage
  * Phase 2 (Completed): Enhanced validation, mask categorization, and detailed logging
- * Phase 3: Per-task umask with task-specific storage and inheritance
- * Phase 4: umask inheritance and fine-grained control
+ * Phase 3 (Completed): Per-task umask with task-specific storage and inheritance
+ * Phase 4: Fine-grained umask control and advanced permission modes
  */
 
 #include <kernel/errno.h>
@@ -141,19 +141,14 @@ extern void fut_printf(const char *fmt, ...);
  *   - mknod(): Creates special file with mode affected by umask
  *   - chmod(): Changes file permissions (not affected by umask)
  *
- * Note: Current implementation uses a global umask value.
- *       For proper per-process isolation, this should be moved to
- *       per-task state in fut_task_t when task structure is extended.
- *
- * TODO Phase 3: Move to per-task umask:
- *   - Add umask field to fut_task_t structure
- *   - Initialize from parent task on fork
- *   - Use task-local umask instead of global
- *
  * Phase 1 (Completed): Basic umask get/set with global storage
  * Phase 2 (Completed): Enhanced validation, mask categorization, detailed logging
- * Phase 3: Per-task umask with task-specific storage
- * Phase 4: umask inheritance and fine-grained control
+ * Phase 3 (Completed): Per-task umask with task-specific storage
+ *   - umask field added to fut_task_t structure (fut_task.h:69)
+ *   - Initialized to 0022 at task creation (fut_task.c:132)
+ *   - Child tasks inherit parent's umask on fork
+ *   - Each task maintains isolated umask value
+ * Phase 4: Fine-grained umask control and advanced permission modes
  */
 long sys_umask(uint32_t mask) {
     /* Get current task for per-task umask */

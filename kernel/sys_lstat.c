@@ -74,6 +74,18 @@ long sys_lstat(const char *path, struct fut_stat *statbuf) {
         return -EINVAL;
     }
 
+    /* Phase 5: Validate statbuf write permission early (kernel writes stat structure)
+     * VULNERABILITY: Invalid Output Buffer Pointer
+     * ATTACK: Attacker provides read-only or unmapped statbuf buffer
+     * IMPACT: Kernel page fault when writing stat structure
+     * DEFENSE: Check write permission before path resolution and VFS operations */
+    extern int fut_access_ok(const void *u_ptr, size_t size, int write);
+    if (fut_access_ok(local_statbuf, sizeof(struct fut_stat), 1) != 0) {
+        fut_printf("[LSTAT] lstat(path=%p, statbuf=%p) -> EFAULT (statbuf not writable for %zu bytes, Phase 5)\n",
+                   local_path, local_statbuf, sizeof(struct fut_stat));
+        return -EFAULT;
+    }
+
     /* Phase 5: Validate path length BEFORE copying to prevent truncation attacks
      * Check original path is null-terminated within reasonable length */
     const size_t MAX_PATH = 4096;  /* PATH_MAX */

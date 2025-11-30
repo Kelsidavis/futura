@@ -9,10 +9,16 @@
  */
 
 #include <kernel/fut_task.h>
+#include <kernel/fut_mm.h>
 #include <kernel/errno.h>
 
 extern void fut_printf(const char *fmt, ...);
 extern fut_task_t *fut_task_current(void);
+
+/* Page size constant */
+#ifndef PAGE_SIZE
+#define PAGE_SIZE 4096
+#endif
 
 /* mlockall flags */
 #define MCL_CURRENT      1  /* Lock currently mapped pages */
@@ -169,30 +175,45 @@ long sys_mlock(const void *addr, size_t len) {
         return -ENOMEM;
     }
 
-    /* Phase 3: Basic RLIMIT_MEMLOCK check (per-call, not cumulative yet)
-     * Check that this individual mlock() call doesn't exceed the limit.
-     * Full implementation requires locked_vm tracking in fut_mm structure. */
+    /* Phase 3 Full: Cumulative RLIMIT_MEMLOCK enforcement with locked_vm tracking */
+    fut_mm_t *mm = fut_task_get_mm(task);
+    if (!mm) {
+        fut_printf("[MLOCK] mlock(addr=%p, len=%zu) -> ENOMEM (no MM context)\n",
+                   addr, len);
+        return -ENOMEM;
+    }
+
+    /* Calculate number of pages to lock (round up to page boundary) */
+    size_t new_pages = (len + PAGE_SIZE - 1) / PAGE_SIZE;
+
+    /* Get RLIMIT_MEMLOCK from task (in bytes) */
     uint64_t rlimit_memlock = task->rlimits[8].rlim_cur;  /* RLIMIT_MEMLOCK = 8 */
 
+    /* Phase 3 Full: Check cumulative locked pages against limit */
     if (rlimit_memlock != (uint64_t)-1) {  /* Not RLIM64_INFINITY */
-        if (len > rlimit_memlock) {
+        /* Convert limit from bytes to pages for comparison */
+        size_t limit_pages = rlimit_memlock / PAGE_SIZE;
+
+        /* Check if adding new_pages would exceed limit */
+        if (mm->locked_vm + new_pages > limit_pages) {
             fut_printf("[MLOCK] mlock(addr=%p, len=%zu) -> ENOMEM "
-                       "(len %zu exceeds RLIMIT_MEMLOCK %llu, Phase 3)\n",
-                       addr, len, len, (unsigned long long)rlimit_memlock);
+                       "(locked_vm %zu + new_pages %zu > limit %zu pages, Phase 3 Full)\n",
+                       addr, len, mm->locked_vm, new_pages, limit_pages);
             return -ENOMEM;
         }
     }
 
+    /* Phase 3 Full: Update cumulative locked pages counter */
+    mm->locked_vm += new_pages;
+
     /* Phase 1: Stub - accept parameters */
     /* Phase 2 (Completed): Mark VMA as VM_LOCKED, prefault pages, added overflow checks */
-    /* Phase 3 (Partial): Basic per-call RLIMIT_MEMLOCK enforcement */
-    /* TODO Phase 3 Full: Add locked_vm field to fut_mm for cumulative tracking */
-    /* TODO Phase 3 Full: Check cumulative locked_vm + new_pages <= RLIMIT_MEMLOCK */
+    /* Phase 3 Full (Completed): Cumulative RLIMIT_MEMLOCK enforcement with locked_vm tracking */
     /* TODO Phase 4: Require CAP_IPC_LOCK if exceeding RLIMIT_MEMLOCK */
 
-    fut_printf("[MLOCK] mlock(addr=%p, len=%zu) -> 0 "
-               "(stub, Phase 3: basic RLIMIT_MEMLOCK per-call check passed)\n",
-               addr, len);
+    fut_printf("[MLOCK] mlock(addr=%p, len=%zu, new_pages=%zu) -> 0 "
+               "(Phase 3 Full: cumulative locked_vm now %zu pages)\n",
+               addr, len, new_pages, mm->locked_vm);
     return 0;
 }
 

@@ -198,6 +198,7 @@ fut_mm_t *fut_mm_create(void) {
     mm->heap_mapped_end = 0;
     mm->mmap_base = USER_MMAP_BASE;
     mm->vma_list = NULL;
+    mm->locked_vm = 0;  /* Phase 3: Initialize locked pages counter */
     fut_printf("[MM-CREATE] Line 172: all fields set\n");
 
     /* Restore original CR3 before returning */
@@ -992,6 +993,7 @@ fut_mm_t *fut_mm_create(void) {
     mm->heap_mapped_end = 0;
     mm->mmap_base = USER_MMAP_BASE;
     mm->vma_list = NULL;
+    mm->locked_vm = 0;  /* Phase 3: Initialize locked pages counter */
 
 #ifdef DEBUG_MM
     fut_printf("[MM-CREATE] ARM64: MM created successfully\n");

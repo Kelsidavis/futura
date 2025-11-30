@@ -60,6 +60,11 @@ typedef struct fut_mm {
     uintptr_t heap_mapped_end;
     uintptr_t mmap_base;
     struct fut_vma *vma_list;
+
+    /* Memory locking statistics (Phase 3: Memory Management Safety)
+     * locked_vm: Total number of pages currently locked in memory via mlock/mlockall
+     * Used to enforce RLIMIT_MEMLOCK resource limit per process */
+    size_t locked_vm;  /* Number of locked pages (in PAGE_SIZE units) */
 } fut_mm_t;
 
 enum {

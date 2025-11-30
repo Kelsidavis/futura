@@ -420,9 +420,38 @@ long sys_mincore(void *addr, size_t length, unsigned char *vec) {
         return -EFAULT;
     }
 
+    /* Phase 5 Priority 1: Add length bounds validation (0 < length <= 1GB)
+     * VULNERABILITY: Unbounded Length Parameter
+     * ATTACK: Attacker passes very large length (e.g., SIZE_MAX)
+     * IMPACT: Integer overflow in num_pages calculation, excessive CPU/memory use
+     * DEFENSE: Limit length to 1GB (prevents overflow and DoS) */
+    #define MINCORE_MAX_LENGTH (1UL << 30)  /* 1 GB */
+    if (length == 0) {
+        fut_printf("[MINCORE] mincore(%p, %zu, %p) -> EINVAL (length is zero, Phase 5)\n",
+                   addr, length, vec);
+        return -EINVAL;
+    }
+    if (length > MINCORE_MAX_LENGTH) {
+        fut_printf("[MINCORE] mincore(%p, %zu, %p) -> ENOMEM (length %zu exceeds max %lu, Phase 5)\n",
+                   addr, length, vec, length, MINCORE_MAX_LENGTH);
+        return -ENOMEM;
+    }
+
     /* Calculate number of pages and round length */
     size_t num_pages = (length + PAGE_SIZE - 1) / PAGE_SIZE;
     size_t aligned_len = num_pages * PAGE_SIZE;
+
+    /* Phase 5 Priority 4: Add early vec buffer writability check
+     * VULNERABILITY: Invalid Output Buffer Pointer
+     * ATTACK: Attacker provides read-only or unmapped vec buffer
+     * IMPACT: Kernel page fault when writing residency bits after VMA validation
+     * DEFENSE: Check write permission before VMA traversal to fail fast */
+    extern int fut_access_ok(const void *u_ptr, size_t size, int write);
+    if (fut_access_ok(vec, num_pages, 1) != 0) {
+        fut_printf("[MINCORE] mincore(%p, %zu, %p) -> EFAULT (vec not writable for %zu bytes, Phase 5)\n",
+                   addr, length, vec, num_pages);
+        return -EFAULT;
+    }
 
     /* Phase 2: Validate VMA coverage */
     fut_mm_t *mm = fut_task_get_mm(task);

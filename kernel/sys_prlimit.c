@@ -13,16 +13,11 @@
 #include <kernel/fut_task.h>
 #include <kernel/errno.h>
 #include <stdint.h>
+#include <stdbool.h>
 
 extern void fut_printf(const char *fmt, ...);
 extern fut_task_t *fut_task_current(void);
 extern int fut_access_ok(const void *u_ptr, size_t len, int write);
-
-/* Resource limit structure (64-bit version) */
-struct rlimit64 {
-    uint64_t rlim_cur;  /* Soft limit */
-    uint64_t rlim_max;  /* Hard limit (ceiling for rlim_cur) */
-};
 
 /* Resource types */
 #define RLIMIT_CPU        0   /* CPU time in seconds */
@@ -69,95 +64,7 @@ static const char *get_resource_name(int resource) {
     }
 }
 
-/* Helper to get default limits for a resource */
-static void get_default_limit(int resource, struct rlimit64 *limit) {
-    switch (resource) {
-        case RLIMIT_CPU:
-            limit->rlim_cur = RLIM64_INFINITY;
-            limit->rlim_max = RLIM64_INFINITY;
-            break;
-
-        case RLIMIT_FSIZE:
-            limit->rlim_cur = RLIM64_INFINITY;
-            limit->rlim_max = RLIM64_INFINITY;
-            break;
-
-        case RLIMIT_DATA:
-            limit->rlim_cur = RLIM64_INFINITY;
-            limit->rlim_max = RLIM64_INFINITY;
-            break;
-
-        case RLIMIT_STACK:
-            limit->rlim_cur = 8 * 1024 * 1024;  /* 8 MB soft */
-            limit->rlim_max = RLIM64_INFINITY;
-            break;
-
-        case RLIMIT_CORE:
-            limit->rlim_cur = 0;  /* No core dumps by default */
-            limit->rlim_max = RLIM64_INFINITY;
-            break;
-
-        case RLIMIT_RSS:
-            limit->rlim_cur = RLIM64_INFINITY;
-            limit->rlim_max = RLIM64_INFINITY;
-            break;
-
-        case RLIMIT_NPROC:
-            limit->rlim_cur = 256;
-            limit->rlim_max = 512;
-            break;
-
-        case RLIMIT_NOFILE:
-            limit->rlim_cur = 1024;
-            limit->rlim_max = 65536;
-            break;
-
-        case RLIMIT_MEMLOCK:
-            limit->rlim_cur = 64 * 1024;  /* 64 KB */
-            limit->rlim_max = 64 * 1024;
-            break;
-
-        case RLIMIT_AS:
-            limit->rlim_cur = RLIM64_INFINITY;
-            limit->rlim_max = RLIM64_INFINITY;
-            break;
-
-        case RLIMIT_LOCKS:
-            limit->rlim_cur = RLIM64_INFINITY;
-            limit->rlim_max = RLIM64_INFINITY;
-            break;
-
-        case RLIMIT_SIGPENDING:
-            limit->rlim_cur = 1024;
-            limit->rlim_max = 1024;
-            break;
-
-        case RLIMIT_MSGQUEUE:
-            limit->rlim_cur = 800 * 1024;  /* 800 KB */
-            limit->rlim_max = 800 * 1024;
-            break;
-
-        case RLIMIT_NICE:
-            limit->rlim_cur = 0;
-            limit->rlim_max = 0;
-            break;
-
-        case RLIMIT_RTPRIO:
-            limit->rlim_cur = 0;
-            limit->rlim_max = 0;
-            break;
-
-        case RLIMIT_RTTIME:
-            limit->rlim_cur = RLIM64_INFINITY;
-            limit->rlim_max = RLIM64_INFINITY;
-            break;
-
-        default:
-            limit->rlim_cur = 0;
-            limit->rlim_max = 0;
-            break;
-    }
-}
+/* Phase 3: No longer need get_default_limit() - limits stored in task->rlimits[] */
 
 /**
  * sys_prlimit64 - Get and/or set process resource limits
@@ -344,9 +251,8 @@ long sys_prlimit64(int pid, int resource,
         return -EFAULT;
     }
 
-    /* Get current (default) limits */
-    struct rlimit64 current_limit;
-    get_default_limit(resource, &current_limit);
+    /* Phase 3: Get current limits from task structure (not defaults) */
+    struct rlimit64 current_limit = task->rlimits[resource];
 
     /* If old_limit requested, copy out current limits */
     if (old_limit) {
@@ -360,9 +266,9 @@ long sys_prlimit64(int pid, int resource,
                    (unsigned long long)old_limit->rlim_max);
     }
 
-    /* If new_limit provided, validate and "set" (stub for now) */
+    /* If new_limit provided, validate and set */
     if (new_limit) {
-        /* Phase 1: Validate but don't actually enforce */
+        /* Phase 3: Basic validation - soft limit cannot exceed hard limit */
         if (new_limit->rlim_cur > new_limit->rlim_max &&
             new_limit->rlim_max != RLIM64_INFINITY) {
             fut_printf("[PRLIMIT] prlimit64(pid=%d, resource=%s) -> EINVAL "
@@ -373,13 +279,70 @@ long sys_prlimit64(int pid, int resource,
             return -EINVAL;
         }
 
-        /* Phase 1: Accept limits but don't store */
-        /* Phase 2: Store in task structure and enforce */
+        /* Phase 3: Reject RLIM64_INFINITY for resources requiring bounded limits */
+        if (new_limit->rlim_cur == RLIM64_INFINITY || new_limit->rlim_max == RLIM64_INFINITY) {
+            if (resource == RLIMIT_MEMLOCK || resource == RLIMIT_NPROC) {
+                fut_printf("[PRLIMIT] prlimit64(pid=%d, resource=%s) -> EINVAL "
+                           "(RLIM64_INFINITY not allowed for %s)\n",
+                           pid, resource_name, resource_name);
+                return -EINVAL;
+            }
+        }
+
+        /* Phase 3: Validate against system-imposed maximums per resource */
+        uint64_t system_max = RLIM64_INFINITY;
+        switch (resource) {
+            case RLIMIT_NOFILE:
+                system_max = 1048576;  /* 1M file descriptors max */
+                break;
+            case RLIMIT_NPROC:
+                system_max = 32768;    /* 32K processes max (PID_MAX) */
+                break;
+            case RLIMIT_MEMLOCK:
+                system_max = 1ULL << 40;  /* 1 TB max locked memory */
+                break;
+            case RLIMIT_NICE:
+                system_max = 40;  /* Nice range [-20, 19] encoded as [1, 40] */
+                break;
+            case RLIMIT_RTPRIO:
+                system_max = 99;  /* MAX_RT_PRIO */
+                break;
+            default:
+                /* Other resources allow RLIM64_INFINITY */
+                break;
+        }
+
+        if (new_limit->rlim_max != RLIM64_INFINITY && new_limit->rlim_max > system_max) {
+            fut_printf("[PRLIMIT] prlimit64(pid=%d, resource=%s) -> EINVAL "
+                       "(max=%llu exceeds system maximum %llu)\n",
+                       pid, resource_name,
+                       (unsigned long long)new_limit->rlim_max,
+                       (unsigned long long)system_max);
+            return -EINVAL;
+        }
+
+        /* Phase 3: Capability check for raising hard limit
+         * TODO Phase 4: Implement CAP_SYS_RESOURCE capability checking
+         * For now, allow all limit changes (assumes single-user system) */
+        bool raising_hard_limit = (new_limit->rlim_max > current_limit.rlim_max);
+        if (raising_hard_limit) {
+            /* TODO: Check if task has CAP_SYS_RESOURCE capability
+             * For now, log and allow (privileged operation) */
+            fut_printf("[PRLIMIT] prlimit64(pid=%d, resource=%s) -> raising hard limit "
+                       "(would require CAP_SYS_RESOURCE in Phase 4)\n",
+                       pid, resource_name);
+        }
+
+        /* Phase 3: Store validated limits in task structure */
+        task->rlimits[resource].rlim_cur = new_limit->rlim_cur;
+        task->rlimits[resource].rlim_max = new_limit->rlim_max;
+
         fut_printf("[PRLIMIT] prlimit64(pid=%d, resource=%s) -> new_limit: "
-                   "cur=%llu, max=%llu (accepted, Phase 1 stub)\n",
+                   "cur=%llu, max=%llu (stored in task->rlimits[%d], Phase 3)\n",
                    pid, resource_name,
                    (unsigned long long)new_limit->rlim_cur,
-                   (unsigned long long)new_limit->rlim_max);
+                   (unsigned long long)new_limit->rlim_max,
+                   resource);
     }
 
     if (!new_limit && !old_limit) {
@@ -388,11 +351,12 @@ long sys_prlimit64(int pid, int resource,
     }
 
     /* Phase 2 (Completed): Added fut_access_ok() validation for old_limit and new_limit pointers (lines 333-345) */
-    /* TODO Phase 3: Validate new_limit values against system maximums per resource type */
-    /* TODO Phase 3: Add capability checks (CAP_SYS_RESOURCE for raising hard limit) */
-    /* TODO Phase 3: Reject RLIM64_INFINITY for RLIMIT_MEMLOCK and RLIMIT_NPROC */
-    /* TODO Phase 3: Store validated limits in task->rlimits[] array */
-    /* TODO Phase 3: Enforce limits in allocation/fork/open/mlock syscalls */
+    /* Phase 3 (Completed): Retrieve limits from task->rlimits[] (line 348) */
+    /* Phase 3 (Completed): Validate new_limit values against system maximums per resource type (lines 385-415) */
+    /* Phase 3 (Completed): Reject RLIM64_INFINITY for RLIMIT_MEMLOCK and RLIMIT_NPROC (lines 375-383) */
+    /* Phase 3 (Completed): Store validated limits in task->rlimits[] array (lines 430-431) */
+    /* TODO Phase 4: Add capability checks (CAP_SYS_RESOURCE for raising hard limit) - logged at line 424 */
+    /* TODO Phase 4: Enforce limits in allocation/fork/open/mlock syscalls (sys_mman.c, sys_fork.c, sys_open.c) */
 
     return 0;
 }

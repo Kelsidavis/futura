@@ -4,7 +4,6 @@
  */
 
 #include <kernel/hal/halt.h>
-#include <stdio.h>
 
 extern void fut_printf(const char *fmt, ...);
 

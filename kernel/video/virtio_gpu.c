@@ -16,6 +16,7 @@
 #ifdef __x86_64__
 #include <platform/x86_64/memory/paging.h>
 #include <platform/x86_64/memory/pmap.h>
+#include <arch/x86_64/regs.h>
 #elif defined(__aarch64__)
 #include <platform/arm64/memory/paging.h>
 #include <platform/arm64/memory/pmap.h>
@@ -29,10 +30,8 @@ static inline uint32_t pci_config_read(uint8_t bus, uint8_t slot, uint8_t func, 
                   | ((uint32_t)slot << 11)
                   | ((uint32_t)func << 8)
                   | ((uint32_t)offset & 0xFC);
-    __asm__ volatile("outl %0, %1" : : "a"(addr), "Nd"(0xCF8));
-    uint32_t result;
-    __asm__ volatile("inl %1, %0" : "=a"(result) : "Nd"(0xCFC));
-    return result;
+    fut_outl(0xCF8, addr);
+    return fut_inl(0xCFC);
 }
 
 static inline void pci_config_write(uint8_t bus, uint8_t slot, uint8_t func, uint8_t offset, uint32_t value) {
@@ -41,8 +40,8 @@ static inline void pci_config_write(uint8_t bus, uint8_t slot, uint8_t func, uin
                   | ((uint32_t)slot << 11)
                   | ((uint32_t)func << 8)
                   | ((uint32_t)offset & 0xFC);
-    __asm__ volatile("outl %0, %1" : : "a"(addr), "Nd"(0xCF8));
-    __asm__ volatile("outl %0, %1" : : "a"(value), "Nd"(0xCFC));
+    fut_outl(0xCF8, addr);
+    fut_outl(0xCFC, value);
 }
 #endif /* __x86_64__ */
 

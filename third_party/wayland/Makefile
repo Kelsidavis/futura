@@ -50,8 +50,18 @@ MESON_FLAGS := \
 	-Ddocumentation=false \
 	-Ddtd_validation=false
 
+# macOS: Remove -fno-semantic-interposition (unsupported by Clang) and add -D_POSIX_C_SOURCE
+ifeq ($(shell uname -s),Darwin)
+NATIVE_C_ARGS_LIST := '-O2', '-g0', '-fPIC', '-fvisibility=hidden', '-ffunction-sections', '-fdata-sections', '-fno-stack-protector', '-DFUTURA_NO_GLIBC=1', '-D_POSIX_C_SOURCE=200809L'
+else
 NATIVE_C_ARGS_LIST := '-O2', '-g0', '-fPIC', '-fvisibility=hidden', '-ffunction-sections', '-fdata-sections', '-fno-semantic-interposition', '-fno-stack-protector', '-DFUTURA_NO_GLIBC=1'
+endif
+# macOS uses Apple ld, not GNU ld - use compatible flags
+ifeq ($(shell uname -s),Darwin)
+NATIVE_LINK_ARGS_LIST := '-Wl,-dead_strip'
+else
 NATIVE_LINK_ARGS_LIST := '-Wl,--build-id=none', '-Wl,--gc-sections'
+endif
 
 .PHONY: all clean distclean info
 
@@ -97,13 +107,14 @@ ifneq ($(PATCHES),)
 	@echo ">> Applying patches"
 	@for patch in $(PATCHES); do \
 		echo "   -> $$patch"; \
-		patch -d $(SRC_DIR) -p1 < $$patch; \
+		patch -d $(SRC_DIR) -p1 < $$patch || true; \
 	done
 endif
 	@cp $(ROOT_DIR)/third_party/wayland/wayland_nofortify.h $(SRC_DIR)/
-	@sed -i "s|add_project_arguments(cc_args, language: 'c')|cc_args += ['-D_GNU_SOURCE','-U_FORTIFY_SOURCE','-D_FORTIFY_SOURCE=0','-include','$(SRC_DIR)/wayland_nofortify.h']\\nadd_project_arguments(cc_args, language: 'c')|" $(SRC_DIR)/meson.build
-	@sed -i "s|#error \"Don't know how to read ucred on this platform\"|/* Futura: no ucred support, continue */|" $(SRC_DIR)/src/wayland-os.c
+	@sed -i.bak "s|add_project_arguments(cc_args, language: 'c')|cc_args += ['-D_GNU_SOURCE','-U_FORTIFY_SOURCE','-D_FORTIFY_SOURCE=0','-include','$(SRC_DIR)/wayland_nofortify.h']\\nadd_project_arguments(cc_args, language: 'c')|" $(SRC_DIR)/meson.build
+	@sed -i.bak "s|#error \"Don't know how to read ucred on this platform\"|/* Futura: no ucred support, continue */|" $(SRC_DIR)/src/wayland-os.c
 	@perl -0pi -e "s/if \(lstat\(socket->addr.sun_path, &socket_stat\) < 0 \)\s*\{\s*if \(errno != ENOENT\) \{\s*wl_log\(\"did not manage to stat file %s\\n\",\s*socket->addr.sun_path\);\s*goto err_fd;\s*\}\s*\}\s*else if \(socket_stat.st_mode & S_IWUSR \\|\\|\s*socket_stat.st_mode & S_IWGRP\) \{\s*unlink\(socket->addr.sun_path\);\s*\}/\tunlink(socket->addr.sun_path);\n/" $(SRC_DIR)/src/wayland-server.c
+	@sed -i.bak '/SFD_CLOEXEC/d; /TFD_CLOEXEC/d' $(SRC_DIR)/meson.build
 	@touch $@
 
 $(NATIVE_FILE): | $(STATE_DIR)

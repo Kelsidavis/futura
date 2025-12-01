@@ -6,8 +6,14 @@
 PLATFORM ?= x86_64
 export PLATFORM
 
-# Subdirectories
+# Subdirectories - conditionally exclude Wayland programs on macOS
+ifeq ($(shell uname -s),Darwin)
+# On macOS, only build non-Wayland programs (init requires no Wayland deps)
+USERLAND_DIRS := libfutura init stubs
+else
+# On Linux, build everything
 USERLAND_DIRS := libfutura init shell cat echo wc fsd posixd futurawayd fbtest stubs services/winsrv apps/winstub clients/wl-simple clients/wl-colorwheel clients/wl-term
+endif
 
 # Build targets
 .PHONY: all clean $(USERLAND_DIRS)
@@ -16,7 +22,11 @@ USERLAND_DIRS := libfutura init shell cat echo wc fsd posixd futurawayd fbtest s
 all: libfutura $(USERLAND_DIRS)
 
 # Ensure services depend on libfutura
+ifeq ($(shell uname -s),Darwin)
+init stubs: libfutura
+else
 init shell cat echo wc fsd posixd futurawayd fbtest services/winsrv apps/winstub clients/wl-simple clients/wl-colorwheel clients/wl-term: libfutura
+endif
 
 $(USERLAND_DIRS):
 	@echo "Building $@ for $(PLATFORM)..."

@@ -14,9 +14,17 @@ ifeq ($(PLATFORM),arm64)
     ARCH_CFLAGS := -march=armv8-a -mtune=cortex-a53
     ARCH_ASFLAGS :=
 else
-    CC := gcc
-    AS := as
-    AR := ar
+    # x86_64 platform - use cross-compiler on macOS
+    ifeq ($(shell uname -s),Darwin)
+        CROSS_COMPILE_X86 ?= /opt/homebrew/bin/x86_64-elf-
+        CC := $(CROSS_COMPILE_X86)gcc
+        AS := $(CROSS_COMPILE_X86)as
+        AR := $(CROSS_COMPILE_X86)ar
+    else
+        CC := gcc
+        AS := as
+        AR := ar
+    endif
     ARCH_CFLAGS := -m64
     ARCH_ASFLAGS := --64
 endif

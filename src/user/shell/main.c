@@ -1018,6 +1018,67 @@ static void int_to_str(long n, char *buf, int size) {
     }
 }
 
+/* Helper: count lines, words, and bytes in a file descriptor */
+static void wc_count_fd(int fd, long *lines, long *words, long *bytes) {
+    *lines = 0;
+    *words = 0;
+    *bytes = 0;
+    int in_word = 0;
+
+    char buffer[256];
+    long bytes_read;
+
+    while ((bytes_read = sys_read(fd, buffer, sizeof(buffer))) > 0) {
+        *bytes += bytes_read;
+
+        for (long i = 0; i < bytes_read; i++) {
+            char c = buffer[i];
+
+            /* Count newlines */
+            if (c == '\n') {
+                (*lines)++;
+            }
+
+            /* Count words (whitespace-delimited) */
+            if (c == ' ' || c == '\t' || c == '\n' || c == '\r') {
+                in_word = 0;
+            } else if (!in_word) {
+                in_word = 1;
+                (*words)++;
+            }
+        }
+    }
+}
+
+/* Helper: print wc counts */
+static void wc_print_counts(long lines, long words, long bytes, const char *name,
+                            int show_lines, int show_words, int show_bytes) {
+    char num_buf[32];
+
+    if (show_lines) {
+        int_to_str(lines, num_buf, sizeof(num_buf));
+        write_str(1, num_buf);
+        write_char(1, ' ');
+    }
+
+    if (show_words) {
+        int_to_str(words, num_buf, sizeof(num_buf));
+        write_str(1, num_buf);
+        write_char(1, ' ');
+    }
+
+    if (show_bytes) {
+        int_to_str(bytes, num_buf, sizeof(num_buf));
+        write_str(1, num_buf);
+        write_char(1, ' ');
+    }
+
+    if (name) {
+        write_str(1, name);
+    }
+    write_char(1, '\n');
+}
+
 /* Built-in: wc - Count lines, words, and bytes */
 static void cmd_wc(int argc, char *argv[]) {
     int show_lines = 0;
@@ -1054,72 +1115,12 @@ static void cmd_wc(int argc, char *argv[]) {
         show_lines = show_words = show_bytes = 1;
     }
 
-    /* Helper function to count lines, words, and bytes in a file descriptor */
-    auto void count_fd(int fd, long *lines, long *words, long *bytes) {
-        *lines = 0;
-        *words = 0;
-        *bytes = 0;
-        int in_word = 0;
-
-        char buffer[256];
-        long bytes_read;
-
-        while ((bytes_read = sys_read(fd, buffer, sizeof(buffer))) > 0) {
-            *bytes += bytes_read;
-
-            for (long i = 0; i < bytes_read; i++) {
-                char c = buffer[i];
-
-                /* Count newlines */
-                if (c == '\n') {
-                    (*lines)++;
-                }
-
-                /* Count words (whitespace-delimited) */
-                if (c == ' ' || c == '\t' || c == '\n' || c == '\r') {
-                    in_word = 0;
-                } else if (!in_word) {
-                    in_word = 1;
-                    (*words)++;
-                }
-            }
-        }
-    }
-
-    /* Helper function to print counts */
-    auto void print_counts(long lines, long words, long bytes, const char *name) {
-        char num_buf[32];
-
-        if (show_lines) {
-            int_to_str(lines, num_buf, sizeof(num_buf));
-            write_str(1, num_buf);
-            write_char(1, ' ');
-        }
-
-        if (show_words) {
-            int_to_str(words, num_buf, sizeof(num_buf));
-            write_str(1, num_buf);
-            write_char(1, ' ');
-        }
-
-        if (show_bytes) {
-            int_to_str(bytes, num_buf, sizeof(num_buf));
-            write_str(1, num_buf);
-            write_char(1, ' ');
-        }
-
-        if (name) {
-            write_str(1, name);
-        }
-        write_char(1, '\n');
-    }
-
     /* Process files or stdin */
     if (arg_start >= argc) {
         /* Read from stdin */
         long lines, words, bytes;
-        count_fd(0, &lines, &words, &bytes);
-        print_counts(lines, words, bytes, NULL);
+        wc_count_fd(0, &lines, &words, &bytes);
+        wc_print_counts(lines, words, bytes, NULL, show_lines, show_words, show_bytes);
     } else {
         /* Process each file */
         for (int file_idx = arg_start; file_idx < argc; file_idx++) {
@@ -1134,10 +1135,28 @@ static void cmd_wc(int argc, char *argv[]) {
             }
 
             long lines, words, bytes;
-            count_fd(fd, &lines, &words, &bytes);
+            wc_count_fd(fd, &lines, &words, &bytes);
             sys_close(fd);
 
-            print_counts(lines, words, bytes, path);
+            wc_print_counts(lines, words, bytes, path, show_lines, show_words, show_bytes);
+        }
+    }
+}
+
+/* Helper: process file descriptor for head command */
+static void head_process_fd(int fd, int max_lines) {
+    int lines_printed = 0;
+    char buffer[256];
+    long bytes_read;
+
+    while (lines_printed < max_lines &&
+           (bytes_read = sys_read(fd, buffer, sizeof(buffer))) > 0) {
+        for (long i = 0; i < bytes_read && lines_printed < max_lines; i++) {
+            char c = buffer[i];
+            write_char(1, c);
+            if (c == '\n') {
+                lines_printed++;
+            }
         }
     }
 }
@@ -1156,28 +1175,10 @@ static void cmd_head(int argc, char *argv[]) {
         file_start = 3;
     }
 
-    /* Helper function to process a file descriptor */
-    auto void process_fd(int fd, int max_lines) {
-        int lines_printed = 0;
-        char buffer[256];
-        long bytes_read;
-
-        while (lines_printed < max_lines &&
-               (bytes_read = sys_read(fd, buffer, sizeof(buffer))) > 0) {
-            for (long i = 0; i < bytes_read && lines_printed < max_lines; i++) {
-                char c = buffer[i];
-                write_char(1, c);
-                if (c == '\n') {
-                    lines_printed++;
-                }
-            }
-        }
-    }
-
     /* Process files or stdin */
     if (file_start >= argc) {
         /* Read from stdin */
-        process_fd(0, num_lines);
+        head_process_fd(0, num_lines);
     } else {
         /* Process each file */
         for (int file_idx = file_start; file_idx < argc; file_idx++) {
@@ -1203,11 +1204,85 @@ static void cmd_head(int argc, char *argv[]) {
             }
 
             /* Read and print first N lines */
-            process_fd(fd, num_lines);
+            head_process_fd(fd, num_lines);
 
             sys_close(fd);
         }
     }
+}
+
+/* Helper: process file descriptor for tail command */
+#define TAIL_MAX_FILE_SIZE 65536  /* 64KB limit for simplicity */
+
+static int tail_process_fd(int fd, int max_lines) {
+    char *file_buffer = malloc(TAIL_MAX_FILE_SIZE);  /* Dynamically allocate buffer */
+    if (!file_buffer) {
+        return 0;
+    }
+    long total_bytes = 0;
+    long bytes_read;
+    char chunk[256];
+
+    /* Read entire input into buffer */
+    while ((bytes_read = sys_read(fd, chunk, sizeof(chunk))) > 0) {
+        if (total_bytes + bytes_read > TAIL_MAX_FILE_SIZE) {
+            free(file_buffer);
+            return -1;  /* File too large */
+        }
+        for (long i = 0; i < bytes_read; i++) {
+            file_buffer[total_bytes++] = chunk[i];
+        }
+    }
+
+    if (bytes_read < 0) {
+        free(file_buffer);
+        return -2;  /* Read error */
+    }
+
+    /* Count total lines */
+    long total_lines = 0;
+    for (long i = 0; i < total_bytes; i++) {
+        if (file_buffer[i] == '\n') {
+            total_lines++;
+        }
+    }
+
+    /* If file doesn't end with newline, count the last line */
+    if (total_bytes > 0 && file_buffer[total_bytes - 1] != '\n') {
+        total_lines++;
+    }
+
+    /* Calculate how many lines to skip */
+    long skip_lines = total_lines > max_lines ? total_lines - max_lines : 0;
+
+    /* Output the last N lines */
+    long current_line = 0;
+    int started_output = 0;
+
+    for (long i = 0; i < total_bytes; i++) {
+        /* Check if we've reached the lines to output */
+        if (current_line >= skip_lines) {
+            if (!started_output && file_buffer[i] == '\n' && current_line == skip_lines) {
+                /* Skip the newline that ends the skip_lines-th line */
+                current_line++;
+                continue;
+            }
+            started_output = 1;
+            write_char(1, file_buffer[i]);
+        }
+
+        if (file_buffer[i] == '\n') {
+            current_line++;
+        }
+    }
+
+    /* Ensure output ends with newline if file didn't */
+    if (total_bytes > 0 && file_buffer[total_bytes - 1] != '\n') {
+        write_char(1, '\n');
+    }
+
+    free(file_buffer);
+    return 0;  /* Success */
 }
 
 /* Built-in: tail - Display last N lines of files */
@@ -1224,81 +1299,10 @@ static void cmd_tail(int argc, char *argv[]) {
         file_start = 3;
     }
 
-    #define MAX_FILE_SIZE 65536  /* 64KB limit for simplicity */
-
-    /* Helper function to process a file descriptor */
-    auto int process_fd(int fd, int max_lines) {
-        char *file_buffer = malloc(MAX_FILE_SIZE);  /* Dynamically allocate buffer */
-        if (!file_buffer) {
-            return 0;
-        }
-        long total_bytes = 0;
-        long bytes_read;
-        char chunk[256];
-
-        /* Read entire input into buffer */
-        while ((bytes_read = sys_read(fd, chunk, sizeof(chunk))) > 0) {
-            if (total_bytes + bytes_read > MAX_FILE_SIZE) {
-                return -1;  /* File too large */
-            }
-            for (long i = 0; i < bytes_read; i++) {
-                file_buffer[total_bytes++] = chunk[i];
-            }
-        }
-
-        if (bytes_read < 0) {
-            return -2;  /* Read error */
-        }
-
-        /* Count total lines */
-        long total_lines = 0;
-        for (long i = 0; i < total_bytes; i++) {
-            if (file_buffer[i] == '\n') {
-                total_lines++;
-            }
-        }
-
-        /* If file doesn't end with newline, count the last line */
-        if (total_bytes > 0 && file_buffer[total_bytes - 1] != '\n') {
-            total_lines++;
-        }
-
-        /* Calculate how many lines to skip */
-        long skip_lines = total_lines > max_lines ? total_lines - max_lines : 0;
-
-        /* Output the last N lines */
-        long current_line = 0;
-        int started_output = 0;
-
-        for (long i = 0; i < total_bytes; i++) {
-            /* Check if we've reached the lines to output */
-            if (current_line >= skip_lines) {
-                if (!started_output && file_buffer[i] == '\n' && current_line == skip_lines) {
-                    /* Skip the newline that ends the skip_lines-th line */
-                    current_line++;
-                    continue;
-                }
-                started_output = 1;
-                write_char(1, file_buffer[i]);
-            }
-
-            if (file_buffer[i] == '\n') {
-                current_line++;
-            }
-        }
-
-        /* Ensure output ends with newline if file didn't */
-        if (total_bytes > 0 && file_buffer[total_bytes - 1] != '\n') {
-            write_char(1, '\n');
-        }
-
-        return 0;  /* Success */
-    }
-
     /* Process files or stdin */
     if (file_start >= argc) {
         /* Read from stdin */
-        int result = process_fd(0, num_lines);
+        int result = tail_process_fd(0, num_lines);
         if (result == -1) {
             write_str(2, "tail: input too large\n");
         } else if (result == -2) {
@@ -1328,7 +1332,7 @@ static void cmd_tail(int argc, char *argv[]) {
                 continue;
             }
 
-            int result = process_fd(fd, num_lines);
+            int result = tail_process_fd(fd, num_lines);
             sys_close(fd);
 
             if (result == -1) {
@@ -1342,8 +1346,115 @@ static void cmd_tail(int argc, char *argv[]) {
             }
         }
     }
+}
 
-    #undef MAX_FILE_SIZE
+/* Helper: output a line with its count for uniq command */
+static void uniq_output_line(const char *line, int count, int count_mode,
+                              int duplicates_only, int unique_only) {
+    /* Apply filters */
+    if (duplicates_only && count <= 1) return;
+    if (unique_only && count > 1) return;
+
+    /* Output with optional count */
+    if (count_mode) {
+        /* Convert count to string and output */
+        char count_str[32];
+        int count_len = 0;
+        int temp_count = count;
+
+        /* Build count string in reverse */
+        do {
+            count_str[count_len++] = '0' + (temp_count % 10);
+            temp_count /= 10;
+        } while (temp_count > 0);
+
+        /* Output count with leading spaces (7 chars wide) */
+        for (int i = count_len; i < 7; i++) {
+            write_char(1, ' ');
+        }
+
+        /* Output count digits in correct order */
+        for (int i = count_len - 1; i >= 0; i--) {
+            write_char(1, count_str[i]);
+        }
+
+        write_char(1, ' ');
+    }
+
+    write_str(1, line);
+    write_char(1, '\n');
+}
+
+#define UNIQ_MAX_LINE 1024
+
+/* Helper: process file descriptor for uniq command */
+static void uniq_process_fd(int fd, char *prev_line, char *curr_line,
+                             int *prev_line_valid, int *curr_count,
+                             int count_mode, int duplicates_only, int unique_only) {
+    /* Read line by line */
+    char read_buf[256];
+    int line_pos = 0;
+    long bytes_read;
+
+    while ((bytes_read = sys_read(fd, read_buf, sizeof(read_buf))) > 0) {
+        for (long i = 0; i < bytes_read; i++) {
+            char c = read_buf[i];
+
+            if (c == '\n' || line_pos >= UNIQ_MAX_LINE - 1) {
+                curr_line[line_pos] = '\0';
+
+                /* Compare with previous line */
+                if (*prev_line_valid && strcmp_simple(curr_line, prev_line) == 0) {
+                    /* Same as previous, increment count */
+                    (*curr_count)++;
+                } else {
+                    /* Different from previous */
+                    if (*prev_line_valid) {
+                        /* Output the previous line with its count */
+                        uniq_output_line(prev_line, *curr_count, count_mode,
+                                       duplicates_only, unique_only);
+                    }
+
+                    /* Copy current to previous */
+                    int copy_idx = 0;
+                    while (curr_line[copy_idx] && copy_idx < UNIQ_MAX_LINE - 1) {
+                        prev_line[copy_idx] = curr_line[copy_idx];
+                        copy_idx++;
+                    }
+                    prev_line[copy_idx] = '\0';
+                    *prev_line_valid = 1;
+                    *curr_count = 1;
+                }
+
+                line_pos = 0;
+            } else {
+                curr_line[line_pos++] = c;
+            }
+        }
+    }
+
+    /* Handle last line if input doesn't end with newline */
+    if (line_pos > 0) {
+        curr_line[line_pos] = '\0';
+
+        if (*prev_line_valid && strcmp_simple(curr_line, prev_line) == 0) {
+            (*curr_count)++;
+        } else {
+            if (*prev_line_valid) {
+                uniq_output_line(prev_line, *curr_count, count_mode,
+                               duplicates_only, unique_only);
+            }
+
+            int copy_idx = 0;
+            while (curr_line[copy_idx] && copy_idx < UNIQ_MAX_LINE - 1) {
+                prev_line[copy_idx] = curr_line[copy_idx];
+                copy_idx++;
+            }
+            prev_line[copy_idx] = '\0';
+            *prev_line_valid = 1;
+            *curr_count = 1;
+        }
+    }
 }
 
 /* Helper: Simple wildcard pattern matching for find -name */
@@ -1552,118 +1663,16 @@ static void cmd_uniq(int argc, char *argv[]) {
     }
 
     /* Allocate buffers for lines */
-    #define UNIQ_MAX_LINE 1024
     static char prev_line[UNIQ_MAX_LINE];
     static char curr_line[UNIQ_MAX_LINE];
     int prev_line_valid = 0;
     int curr_count = 0;
 
-    /* Helper function to output a line with its count */
-    auto void output_line(const char *line, int count) {
-        /* Apply filters */
-        if (duplicates_only && count <= 1) return;
-        if (unique_only && count > 1) return;
-
-        /* Output with optional count */
-        if (count_mode) {
-            /* Convert count to string and output */
-            char count_str[32];
-            int count_len = 0;
-            int temp_count = count;
-
-            /* Build count string in reverse */
-            do {
-                count_str[count_len++] = '0' + (temp_count % 10);
-                temp_count /= 10;
-            } while (temp_count > 0);
-
-            /* Output count with leading spaces (7 chars wide) */
-            for (int i = count_len; i < 7; i++) {
-                write_char(1, ' ');
-            }
-
-            /* Output count digits in correct order */
-            for (int i = count_len - 1; i >= 0; i--) {
-                write_char(1, count_str[i]);
-            }
-
-            write_char(1, ' ');
-        }
-
-        write_str(1, line);
-        write_char(1, '\n');
-    }
-
-    /* Helper function to process a file descriptor */
-    auto void process_fd(int fd) {
-        /* Read line by line */
-        char read_buf[256];
-        int line_pos = 0;
-        long bytes_read;
-
-        while ((bytes_read = sys_read(fd, read_buf, sizeof(read_buf))) > 0) {
-            for (long i = 0; i < bytes_read; i++) {
-                char c = read_buf[i];
-
-                if (c == '\n' || line_pos >= UNIQ_MAX_LINE - 1) {
-                    curr_line[line_pos] = '\0';
-
-                    /* Compare with previous line */
-                    if (prev_line_valid && strcmp_simple(curr_line, prev_line) == 0) {
-                        /* Same as previous, increment count */
-                        curr_count++;
-                    } else {
-                        /* Different from previous */
-                        if (prev_line_valid) {
-                            /* Output the previous line with its count */
-                            output_line(prev_line, curr_count);
-                        }
-
-                        /* Copy current to previous */
-                        int copy_idx = 0;
-                        while (curr_line[copy_idx] && copy_idx < UNIQ_MAX_LINE - 1) {
-                            prev_line[copy_idx] = curr_line[copy_idx];
-                            copy_idx++;
-                        }
-                        prev_line[copy_idx] = '\0';
-                        prev_line_valid = 1;
-                        curr_count = 1;
-                    }
-
-                    line_pos = 0;
-                } else {
-                    curr_line[line_pos++] = c;
-                }
-            }
-        }
-
-        /* Handle last line if input doesn't end with newline */
-        if (line_pos > 0) {
-            curr_line[line_pos] = '\0';
-
-            if (prev_line_valid && strcmp_simple(curr_line, prev_line) == 0) {
-                curr_count++;
-            } else {
-                if (prev_line_valid) {
-                    output_line(prev_line, curr_count);
-                }
-
-                int copy_idx = 0;
-                while (curr_line[copy_idx] && copy_idx < UNIQ_MAX_LINE - 1) {
-                    prev_line[copy_idx] = curr_line[copy_idx];
-                    copy_idx++;
-                }
-                prev_line[copy_idx] = '\0';
-                prev_line_valid = 1;
-                curr_count = 1;
-            }
-        }
-    }
-
     /* Process files or stdin */
     if (arg_start >= argc) {
         /* Read from stdin */
-        process_fd(0);
+        uniq_process_fd(0, prev_line, curr_line, &prev_line_valid, &curr_count,
+                        count_mode, duplicates_only, unique_only);
     } else {
         /* Process each file */
         for (int file_idx = arg_start; file_idx < argc; file_idx++) {
@@ -1677,14 +1686,91 @@ static void cmd_uniq(int argc, char *argv[]) {
                 continue;
             }
 
-            process_fd(fd);
+            uniq_process_fd(fd, prev_line, curr_line, &prev_line_valid, &curr_count,
+                            count_mode, duplicates_only, unique_only);
             sys_close(fd);
         }
     }
 
     /* Output the last line */
     if (prev_line_valid) {
-        output_line(prev_line, curr_count);
+        uniq_output_line(prev_line, curr_count, count_mode, duplicates_only, unique_only);
+    }
+}
+
+/* Helper function to process a single line for cut command */
+#define CUT_MAX_LINE 2048
+static void cut_process_line(const char *line, int char_mode, int char_start, int char_end,
+                             int field_num, char delimiter) {
+    if (char_mode) {
+        /* Character mode: extract characters char_start to char_end */
+        int len = 0;
+        while (line[len]) len++;
+
+        for (int pos = char_start; pos <= char_end && pos <= len; pos++) {
+            write_char(1, line[pos - 1]);
+        }
+        write_char(1, '\n');
+    } else {
+        /* Field mode: split by delimiter and extract field */
+        int current_field = 1;
+        int idx = 0;
+
+        while (1) {
+            /* Find end of current field */
+            int field_end = idx;
+            while (line[field_end] && line[field_end] != delimiter) {
+                field_end++;
+            }
+
+            /* Check if this is the field we want */
+            if (current_field == field_num) {
+                /* Output this field */
+                for (int j = idx; j < field_end; j++) {
+                    write_char(1, line[j]);
+                }
+                write_char(1, '\n');
+                break;
+            }
+
+            /* Move to next field */
+            if (line[field_end] == '\0') {
+                /* No more fields, output empty line */
+                write_char(1, '\n');
+                break;
+            }
+
+            idx = field_end + 1;
+            current_field++;
+        }
+    }
+}
+
+/* Helper function to process a file descriptor for cut command */
+static void cut_process_fd(int fd, char *line_buf, int char_mode, int char_start, int char_end,
+                           int field_num, char delimiter) {
+    char read_buf[256];
+    int line_pos = 0;
+    long bytes_read;
+
+    while ((bytes_read = sys_read(fd, read_buf, sizeof(read_buf))) > 0) {
+        for (long i = 0; i < bytes_read; i++) {
+            char c = read_buf[i];
+
+            if (c == '\n' || line_pos >= CUT_MAX_LINE - 1) {
+                line_buf[line_pos] = '\0';
+                cut_process_line(line_buf, char_mode, char_start, char_end, field_num, delimiter);
+                line_pos = 0;
+            } else {
+                line_buf[line_pos++] = c;
+            }
+        }
+    }
+
+    /* Handle last line if input doesn't end with newline */
+    if (line_pos > 0) {
+        line_buf[line_pos] = '\0';
+        cut_process_line(line_buf, char_mode, char_start, char_end, field_num, delimiter);
     }
 }
 
@@ -1773,86 +1859,12 @@ static void cmd_cut(int argc, char *argv[]) {
         return;
     }
 
-    /* Helper function to process a single line */
-    #define CUT_MAX_LINE 2048
     static char line_buf[CUT_MAX_LINE];
-
-    auto void process_line(const char *line) {
-        if (char_mode) {
-            /* Character mode: extract characters char_start to char_end */
-            int len = 0;
-            while (line[len]) len++;
-
-            for (int pos = char_start; pos <= char_end && pos <= len; pos++) {
-                write_char(1, line[pos - 1]);
-            }
-            write_char(1, '\n');
-        } else {
-            /* Field mode: split by delimiter and extract field */
-            int current_field = 1;
-            int idx = 0;
-
-            while (1) {
-                /* Find end of current field */
-                int field_end = idx;
-                while (line[field_end] && line[field_end] != delimiter) {
-                    field_end++;
-                }
-
-                /* Check if this is the field we want */
-                if (current_field == field_num) {
-                    /* Output this field */
-                    for (int j = idx; j < field_end; j++) {
-                        write_char(1, line[j]);
-                    }
-                    write_char(1, '\n');
-                    break;
-                }
-
-                /* Move to next field */
-                if (line[field_end] == '\0') {
-                    /* No more fields, output empty line */
-                    write_char(1, '\n');
-                    break;
-                }
-
-                idx = field_end + 1;
-                current_field++;
-            }
-        }
-    }
-
-    /* Helper function to process a file descriptor */
-    auto void process_fd(int fd) {
-        char read_buf[256];
-        int line_pos = 0;
-        long bytes_read;
-
-        while ((bytes_read = sys_read(fd, read_buf, sizeof(read_buf))) > 0) {
-            for (long i = 0; i < bytes_read; i++) {
-                char c = read_buf[i];
-
-                if (c == '\n' || line_pos >= CUT_MAX_LINE - 1) {
-                    line_buf[line_pos] = '\0';
-                    process_line(line_buf);
-                    line_pos = 0;
-                } else {
-                    line_buf[line_pos++] = c;
-                }
-            }
-        }
-
-        /* Handle last line if input doesn't end with newline */
-        if (line_pos > 0) {
-            line_buf[line_pos] = '\0';
-            process_line(line_buf);
-        }
-    }
 
     /* Process files or stdin */
     if (arg_start >= argc) {
         /* Read from stdin */
-        process_fd(0);
+        cut_process_fd(0, line_buf, char_mode, char_start, char_end, field_num, delimiter);
     } else {
         /* Process each file */
         for (int file_idx = arg_start; file_idx < argc; file_idx++) {
@@ -1866,8 +1878,43 @@ static void cmd_cut(int argc, char *argv[]) {
                 continue;
             }
 
-            process_fd(fd);
+            cut_process_fd(fd, line_buf, char_mode, char_start, char_end, field_num, delimiter);
             sys_close(fd);
+        }
+    }
+}
+
+/* Helper function to process a file descriptor for tr command */
+static void tr_process_fd(int fd, const char *trans_map, int delete_mode, int squeeze_mode) {
+    char read_buf[256];
+    char last_char = '\0';
+    long bytes_read;
+
+    while ((bytes_read = sys_read(fd, read_buf, sizeof(read_buf))) > 0) {
+        for (long i = 0; i < bytes_read; i++) {
+            char c = read_buf[i];
+            unsigned char uc = (unsigned char)c;
+
+            if (delete_mode) {
+                /* Skip deleted characters */
+                if (trans_map[uc] == '\0') {
+                    continue;
+                }
+                /* Output character */
+                if (squeeze_mode && c == last_char) {
+                    continue;  /* Skip repeated character */
+                }
+                write_char(1, c);
+                last_char = c;
+            } else {
+                /* Translate character */
+                char out_char = trans_map[uc];
+                if (squeeze_mode && out_char == last_char) {
+                    continue;  /* Skip repeated character */
+                }
+                write_char(1, out_char);
+                last_char = out_char;
+            }
         }
     }
 }
@@ -1940,45 +1987,10 @@ static void cmd_tr(int argc, char *argv[]) {
         }
     }
 
-    /* Helper function to process a file descriptor */
-    auto void process_fd(int fd) {
-        char read_buf[256];
-        char last_char = '\0';
-        long bytes_read;
-
-        while ((bytes_read = sys_read(fd, read_buf, sizeof(read_buf))) > 0) {
-            for (long i = 0; i < bytes_read; i++) {
-                char c = read_buf[i];
-                unsigned char uc = (unsigned char)c;
-
-                if (delete_mode) {
-                    /* Skip deleted characters */
-                    if (trans_map[uc] == '\0') {
-                        continue;
-                    }
-                    /* Output character */
-                    if (squeeze_mode && c == last_char) {
-                        continue;  /* Skip repeated character */
-                    }
-                    write_char(1, c);
-                    last_char = c;
-                } else {
-                    /* Translate character */
-                    char out_char = trans_map[uc];
-                    if (squeeze_mode && out_char == last_char) {
-                        continue;  /* Skip repeated character */
-                    }
-                    write_char(1, out_char);
-                    last_char = out_char;
-                }
-            }
-        }
-    }
-
     /* Process files or stdin */
     if (file_start >= argc) {
         /* Read from stdin */
-        process_fd(0);
+        tr_process_fd(0, trans_map, delete_mode, squeeze_mode);
     } else {
         /* Process each file */
         for (int file_idx = file_start; file_idx < argc; file_idx++) {
@@ -1992,7 +2004,7 @@ static void cmd_tr(int argc, char *argv[]) {
                 continue;
             }
 
-            process_fd(fd);
+            tr_process_fd(fd, trans_map, delete_mode, squeeze_mode);
             sys_close(fd);
         }
     }
@@ -2063,6 +2075,26 @@ static void cmd_tee(int argc, char *argv[]) {
     }
 }
 
+/* Helper function to read one line from a file descriptor for paste command */
+static int paste_read_line(int fd, char *buffer, int max_len) {
+    int pos = 0;
+    char c;
+    long nread;
+
+    while (pos < max_len - 1) {
+        nread = sys_read(fd, &c, 1);
+        if (nread <= 0) {
+            return (pos > 0) ? pos : -1;  /* Return -1 on EOF with no data */
+        }
+        if (c == '\n') {
+            break;
+        }
+        buffer[pos++] = c;
+    }
+    buffer[pos] = '\0';
+    return pos;
+}
+
 /* Built-in: paste - Merge lines of files */
 static void cmd_paste(int argc, char *argv[]) {
     char delimiter = '\t';
@@ -2072,26 +2104,6 @@ static void cmd_paste(int argc, char *argv[]) {
     if (argc > 2 && strcmp_simple(argv[1], "-d") == 0) {
         delimiter = argv[2][0];
         arg_start = 3;
-    }
-
-    /* Helper function to read one line from a file descriptor */
-    auto int read_line(int fd, char *buffer, int max_len) {
-        int pos = 0;
-        char c;
-        long nread;
-
-        while (pos < max_len - 1) {
-            nread = sys_read(fd, &c, 1);
-            if (nread <= 0) {
-                return (pos > 0) ? pos : -1;  /* Return -1 on EOF with no data */
-            }
-            if (c == '\n') {
-                break;
-            }
-            buffer[pos++] = c;
-        }
-        buffer[pos] = '\0';
-        return pos;
     }
 
     /* Open all files or use stdin */
@@ -2138,7 +2150,7 @@ static void cmd_paste(int argc, char *argv[]) {
                 continue;
             }
 
-            int result = read_line(fds[i], lines[i], PASTE_LINE_MAX);
+            int result = paste_read_line(fds[i], lines[i], PASTE_LINE_MAX);
             if (result < 0) {
                 /* EOF reached */
                 if (fds[i] > 0) {  /* Don't close stdin */
@@ -2336,6 +2348,114 @@ static void cmd_diff(int argc, char *argv[]) {
     }
 }
 
+/* Helper function to convert char to lowercase for grep command */
+static char grep_to_lower(char c) {
+    if (c >= 'A' && c <= 'Z') return c + 32;
+    return c;
+}
+
+/* Helper function to check if pattern matches in line for grep command */
+static int grep_pattern_matches(const char *line, int line_len, const char *pattern,
+                                int pattern_len, int case_insensitive) {
+    for (int i = 0; i <= line_len - pattern_len; i++) {
+        int match = 1;
+        for (int j = 0; j < pattern_len; j++) {
+            char c1 = line[i + j];
+            char c2 = pattern[j];
+            if (case_insensitive) {
+                c1 = grep_to_lower(c1);
+                c2 = grep_to_lower(c2);
+            }
+            if (c1 != c2) {
+                match = 0;
+                break;
+            }
+        }
+        if (match) return 1;
+    }
+    return 0;
+}
+
+/* Helper function to process one file for grep command */
+#define GREP_LINE_MAX 2048
+static void grep_file(int fd, const char *filename, int show_filename, const char *pattern,
+                     int pattern_len, int case_insensitive, int show_line_numbers,
+                     int invert_match) {
+    static char line[GREP_LINE_MAX];
+    int line_num = 0;
+
+    while (1) {
+        /* Read one line */
+        int pos = 0;
+        char c;
+        long nread;
+        int eof = 0;
+
+        while (pos < GREP_LINE_MAX - 1) {
+            nread = sys_read(fd, &c, 1);
+            if (nread <= 0) {
+                eof = 1;
+                break;
+            }
+            if (c == '\n') {
+                break;
+            }
+            line[pos++] = c;
+        }
+
+        if (eof && pos == 0) break;
+
+        line[pos] = '\0';
+        line_num++;
+
+        int matches = grep_pattern_matches(line, pos, pattern, pattern_len, case_insensitive);
+
+        /* Apply invert match logic */
+        if (invert_match) {
+            matches = !matches;
+        }
+
+        if (matches) {
+            /* Print filename if searching multiple files */
+            if (show_filename) {
+                write_str(1, filename);
+                write_char(1, ':');
+            }
+
+            /* Print line number if requested */
+            if (show_line_numbers) {
+                char num_buf[16];
+                int num_pos = 0;
+                int n = line_num;
+
+                if (n == 0) {
+                    num_buf[num_pos++] = '0';
+                } else {
+                    char temp[16];
+                    int temp_pos = 0;
+                    while (n > 0) {
+                        temp[temp_pos++] = '0' + (n % 10);
+                        n /= 10;
+                    }
+                    for (int i = temp_pos - 1; i >= 0; i--) {
+                        num_buf[num_pos++] = temp[i];
+                    }
+                }
+                num_buf[num_pos] = '\0';
+
+                write_str(1, num_buf);
+                write_char(1, ':');
+            }
+
+            /* Print the line */
+            write_str(1, line);
+            write_char(1, '\n');
+        }
+
+        if (eof) break;
+    }
+}
+
 /* Built-in: grep - Search for patterns in files */
 static void cmd_grep(int argc, char *argv[]) {
     int case_insensitive = 0;
@@ -2376,117 +2496,13 @@ static void cmd_grep(int argc, char *argv[]) {
     int pattern_len = 0;
     while (pattern[pattern_len]) pattern_len++;
 
-    /* Helper function to convert char to lowercase */
-    auto char to_lower(char c) {
-        if (c >= 'A' && c <= 'Z') return c + 32;
-        return c;
-    }
-
-    /* Helper function to check if pattern matches in line */
-    auto int pattern_matches(const char *line, int line_len) {
-        for (int i = 0; i <= line_len - pattern_len; i++) {
-            int match = 1;
-            for (int j = 0; j < pattern_len; j++) {
-                char c1 = line[i + j];
-                char c2 = pattern[j];
-                if (case_insensitive) {
-                    c1 = to_lower(c1);
-                    c2 = to_lower(c2);
-                }
-                if (c1 != c2) {
-                    match = 0;
-                    break;
-                }
-            }
-            if (match) return 1;
-        }
-        return 0;
-    }
-
-    /* Helper function to process one file */
-    auto void grep_file(int fd, const char *filename, int show_filename) {
-        #define GREP_LINE_MAX 2048
-        static char line[GREP_LINE_MAX];
-        int line_num = 0;
-
-        while (1) {
-            /* Read one line */
-            int pos = 0;
-            char c;
-            long nread;
-            int eof = 0;
-
-            while (pos < GREP_LINE_MAX - 1) {
-                nread = sys_read(fd, &c, 1);
-                if (nread <= 0) {
-                    eof = 1;
-                    break;
-                }
-                if (c == '\n') {
-                    break;
-                }
-                line[pos++] = c;
-            }
-
-            if (eof && pos == 0) break;
-
-            line[pos] = '\0';
-            line_num++;
-
-            int matches = pattern_matches(line, pos);
-
-            /* Apply invert match logic */
-            if (invert_match) {
-                matches = !matches;
-            }
-
-            if (matches) {
-                /* Print filename if searching multiple files */
-                if (show_filename) {
-                    write_str(1, filename);
-                    write_char(1, ':');
-                }
-
-                /* Print line number if requested */
-                if (show_line_numbers) {
-                    char num_buf[16];
-                    int num_pos = 0;
-                    int n = line_num;
-
-                    if (n == 0) {
-                        num_buf[num_pos++] = '0';
-                    } else {
-                        char temp[16];
-                        int temp_pos = 0;
-                        while (n > 0) {
-                            temp[temp_pos++] = '0' + (n % 10);
-                            n /= 10;
-                        }
-                        for (int i = temp_pos - 1; i >= 0; i--) {
-                            num_buf[num_pos++] = temp[i];
-                        }
-                    }
-                    num_buf[num_pos] = '\0';
-
-                    write_str(1, num_buf);
-                    write_char(1, ':');
-                }
-
-                /* Print the line */
-                write_str(1, line);
-                write_char(1, '\n');
-            }
-
-            if (eof) break;
-        }
-    }
-
     /* Process files */
     int num_files = argc - arg_start - 1;
 
     if (num_files == 0) {
         /* Read from stdin */
-        grep_file(0, "(standard input)", 0);
+        grep_file(0, "(standard input)", 0, pattern, pattern_len, case_insensitive,
+                 show_line_numbers, invert_match);
     } else {
         /* Process each file */
         for (int i = 0; i < num_files; i++) {
@@ -2500,9 +2516,77 @@ static void cmd_grep(int argc, char *argv[]) {
                 continue;
             }
 
-            grep_file(fd, filename, num_files > 1);
+            grep_file(fd, filename, num_files > 1, pattern, pattern_len, case_insensitive,
+                     show_line_numbers, invert_match);
             sys_close(fd);
         }
+    }
+}
+
+/* Helper function to read lines from a file descriptor for sort command */
+#define SORT_MAX_LINES 1000
+#define SORT_LINE_MAX 512
+static void sort_read_lines(int fd, char lines[][SORT_LINE_MAX], int *line_count) {
+    char c;
+    long nread;
+    int pos = 0;
+
+    while (*line_count < SORT_MAX_LINES) {
+        nread = sys_read(fd, &c, 1);
+        if (nread <= 0) {
+            if (pos > 0) {
+                lines[*line_count][pos] = '\0';
+                (*line_count)++;
+            }
+            break;
+        }
+
+        if (c == '\n') {
+            lines[*line_count][pos] = '\0';
+            (*line_count)++;
+            pos = 0;
+        } else if (pos < SORT_LINE_MAX - 1) {
+            lines[*line_count][pos++] = c;
+        }
+    }
+}
+
+/* Helper function to parse integer from string for sort command */
+static int sort_parse_int(const char *s) {
+    int result = 0;
+    int neg = 0;
+    if (*s == '-') {
+        neg = 1;
+        s++;
+    }
+    while (*s >= '0' && *s <= '9') {
+        result = result * 10 + (*s - '0');
+        s++;
+    }
+    return neg ? -result : result;
+}
+
+/* Helper function to compare two lines for sort command */
+static int sort_compare_lines(const char lines[][SORT_LINE_MAX], int i, int j,
+                              int numeric, int reverse) {
+    if (numeric) {
+        int n1 = sort_parse_int(lines[i]);
+        int n2 = sort_parse_int(lines[j]);
+        if (n1 < n2) return reverse ? 1 : -1;
+        if (n1 > n2) return reverse ? -1 : 1;
+        return 0;
+    } else {
+        const char *s1 = lines[i];
+        const char *s2 = lines[j];
+        while (*s1 && *s2) {
+            if (*s1 < *s2) return reverse ? 1 : -1;
+            if (*s1 > *s2) return reverse ? -1 : 1;
+            s1++;
+            s2++;
+        }
+        if (*s1) return reverse ? -1 : 1;
+        if (*s2) return reverse ? 1 : -1;
+        return 0;
     }
 }
 
@@ -2537,40 +2621,12 @@ static void cmd_sort(int argc, char *argv[]) {
     }
 
     /* Storage for lines */
-    #define MAX_LINES 1000
-    #define LINE_MAX 512
-    static char lines[MAX_LINES][LINE_MAX];
+    static char lines[SORT_MAX_LINES][SORT_LINE_MAX];
     int line_count = 0;
-
-    /* Helper function to read lines from a file descriptor */
-    auto void read_lines(int fd) {
-        char c;
-        long nread;
-        int pos = 0;
-
-        while (line_count < MAX_LINES) {
-            nread = sys_read(fd, &c, 1);
-            if (nread <= 0) {
-                if (pos > 0) {
-                    lines[line_count][pos] = '\0';
-                    line_count++;
-                }
-                break;
-            }
-
-            if (c == '\n') {
-                lines[line_count][pos] = '\0';
-                line_count++;
-                pos = 0;
-            } else if (pos < LINE_MAX - 1) {
-                lines[line_count][pos++] = c;
-            }
-        }
-    }
 
     /* Read input from files or stdin */
     if (argc - arg_start == 0) {
-        read_lines(0);
+        sort_read_lines(0, lines, &line_count);
     } else {
         for (int i = arg_start; i < argc; i++) {
             int fd = sys_open(argv[i], O_RDONLY, 0);
@@ -2580,56 +2636,18 @@ static void cmd_sort(int argc, char *argv[]) {
                 write_str(2, ": cannot open file\n");
                 continue;
             }
-            read_lines(fd);
+            sort_read_lines(fd, lines, &line_count);
             sys_close(fd);
-        }
-    }
-
-    /* Helper function to parse integer from string */
-    auto int parse_int(const char *s) {
-        int result = 0;
-        int neg = 0;
-        if (*s == '-') {
-            neg = 1;
-            s++;
-        }
-        while (*s >= '0' && *s <= '9') {
-            result = result * 10 + (*s - '0');
-            s++;
-        }
-        return neg ? -result : result;
-    }
-
-    /* Helper function to compare two lines */
-    auto int compare_lines(int i, int j) {
-        if (numeric) {
-            int n1 = parse_int(lines[i]);
-            int n2 = parse_int(lines[j]);
-            if (n1 < n2) return reverse ? 1 : -1;
-            if (n1 > n2) return reverse ? -1 : 1;
-            return 0;
-        } else {
-            const char *s1 = lines[i];
-            const char *s2 = lines[j];
-            while (*s1 && *s2) {
-                if (*s1 < *s2) return reverse ? 1 : -1;
-                if (*s1 > *s2) return reverse ? -1 : 1;
-                s1++;
-                s2++;
-            }
-            if (*s1) return reverse ? -1 : 1;
-            if (*s2) return reverse ? 1 : -1;
-            return 0;
         }
     }
 
     /* Bubble sort (simple but works for our use case) */
     for (int i = 0; i < line_count - 1; i++) {
         for (int j = 0; j < line_count - i - 1; j++) {
-            if (compare_lines(j, j + 1) > 0) {
+            if (sort_compare_lines(lines, j, j + 1, numeric, reverse) > 0) {
                 /* Swap lines[j] and lines[j+1] */
-                char temp[LINE_MAX];
-                for (int k = 0; k < LINE_MAX; k++) {
+                char temp[SORT_LINE_MAX];
+                for (int k = 0; k < SORT_LINE_MAX; k++) {
                     temp[k] = lines[j][k];
                     lines[j][k] = lines[j + 1][k];
                     lines[j + 1][k] = temp[k];
@@ -2716,36 +2734,10 @@ static void cmd_ls(int argc, char *argv[]) {
 
 /* Built-in: cat - Display file contents */
 static void cmd_cat(int argc, char *argv[]) {
-    /* Helper function to process a file descriptor */
-    auto int process_fd(int fd) {
-        char buffer[256];
-        long bytes_read;
-
-        while ((bytes_read = sys_read(fd, buffer, sizeof(buffer))) > 0) {
-            /* Write chunk to stdout */
-            long written = 0;
-            while (written < bytes_read) {
-                long n = sys_write(1, buffer + written, bytes_read - written);
-                if (n <= 0) {
-                    write_str(2, "cat: write error\n");
-                    return -1;
-                }
-                written += n;
-            }
-        }
-
-        if (bytes_read < 0) {
-            write_str(2, "cat: read error\n");
-            return -1;
-        }
-
-        return 0;
-    }
-
     /* Process files or stdin */
     if (argc < 2) {
         /* Read from stdin */
-        process_fd(0);
+        cat_process_fd(0);
     } else {
         /* Process each file */
         for (int i = 1; i < argc; i++) {
@@ -2761,12 +2753,91 @@ static void cmd_cat(int argc, char *argv[]) {
             }
 
             /* Process file */
-            process_fd(fd);
+            cat_process_fd(fd);
 
             /* Close file */
             sys_close(fd);
         }
     }
+}
+
+/* Helper: process file descriptor for cat command */
+static int cat_process_fd(int fd) {
+    char buffer[256];
+    long bytes_read;
+
+    while ((bytes_read = sys_read(fd, buffer, sizeof(buffer))) > 0) {
+        /* Write chunk to stdout */
+        long written = 0;
+        while (written < bytes_read) {
+            long n = sys_write(1, buffer + written, bytes_read - written);
+            if (n <= 0) {
+                write_str(2, "cat: write error\n");
+                return -1;
+            }
+            written += n;
+        }
+    }
+
+    if (bytes_read < 0) {
+        write_str(2, "cat: read error\n");
+        return -1;
+    }
+
+    return 0;
+}
+
+/* Helper function to create directory with parents for mkdir command */
+static int mkdir_recursive(const char *path, int create_parents) {
+    if (!path || path[0] == '\0') {
+        return 0;
+    }
+
+    /* Try to create the directory first */
+    long ret = sys_mkdir(path, 0755);
+    if (ret == 0 || !create_parents) {
+        /* Success or not using -p flag */
+        return ret;
+    }
+
+    /* If -p flag is set, try to create parent directories */
+    /* Build path component by component */
+    static char temp_path[512];
+    int path_len = 0;
+    while (path[path_len]) path_len++;
+
+    if (path_len >= 512) {
+        write_str(2, "mkdir: path too long\n");
+        return -1;
+    }
+
+    /* Copy path to temp buffer */
+    for (int i = 0; i <= path_len; i++) {
+        temp_path[i] = path[i];
+    }
+
+    /* Create each parent directory */
+    int i = (temp_path[0] == '/') ? 1 : 0;  /* Skip leading slash */
+
+    while (temp_path[i]) {
+        /* Find next slash */
+        if (temp_path[i] == '/') {
+            /* Temporarily null-terminate at this position */
+            temp_path[i] = '\0';
+
+            /* Try to create this intermediate directory */
+            sys_mkdir(temp_path, 0755);
+            /* Ignore errors - directory might already exist */
+
+            /* Restore the slash */
+            temp_path[i] = '/';
+        }
+        i++;
+    }
+
+    /* Finally, create the target directory */
+    ret = sys_mkdir(temp_path, 0755);
+    return ret;
 }
 
 /* Built-in: mkdir - Create a directory */
@@ -2786,63 +2857,10 @@ static void cmd_mkdir(int argc, char *argv[]) {
         return;
     }
 
-    /* Helper function to create directory with parents */
-    auto int mkdir_recursive(const char *path) {
-        if (!path || path[0] == '\0') {
-            return 0;
-        }
-
-        /* Try to create the directory first */
-        long ret = sys_mkdir(path, 0755);
-        if (ret == 0 || !create_parents) {
-            /* Success or not using -p flag */
-            return ret;
-        }
-
-        /* If -p flag is set, try to create parent directories */
-        /* Build path component by component */
-        static char temp_path[512];
-        int path_len = 0;
-        while (path[path_len]) path_len++;
-
-        if (path_len >= 512) {
-            write_str(2, "mkdir: path too long\n");
-            return -1;
-        }
-
-        /* Copy path to temp buffer */
-        for (int i = 0; i <= path_len; i++) {
-            temp_path[i] = path[i];
-        }
-
-        /* Create each parent directory */
-        int i = (temp_path[0] == '/') ? 1 : 0;  /* Skip leading slash */
-
-        while (temp_path[i]) {
-            /* Find next slash */
-            if (temp_path[i] == '/') {
-                /* Temporarily null-terminate at this position */
-                temp_path[i] = '\0';
-
-                /* Try to create this intermediate directory */
-                sys_mkdir(temp_path, 0755);
-                /* Ignore errors - directory might already exist */
-
-                /* Restore the slash */
-                temp_path[i] = '/';
-            }
-            i++;
-        }
-
-        /* Finally, create the target directory */
-        ret = sys_mkdir(temp_path, 0755);
-        return ret;
-    }
-
     /* Process each directory argument */
     for (int i = arg_start; i < argc; i++) {
         const char *path = argv[i];
-        long ret = mkdir_recursive(path);
+        long ret = mkdir_recursive(path, create_parents);
 
         if (ret < 0 && !create_parents) {
             write_str(2, "mkdir: cannot create directory '");
@@ -2931,95 +2949,96 @@ static void cmd_touch(int argc, char *argv[]) {
     }
 }
 
+/* Helper function to copy one file for cp command */
+static int cp_copy_file(const char *src_path, const char *dst_path) {
+    /* Open source file for reading */
+    int src_fd = sys_open(src_path, O_RDONLY, 0);
+    if (src_fd < 0) {
+        write_str(2, "cp: cannot open '");
+        write_str(2, src_path);
+        write_str(2, "'\n");
+        return -1;
+    }
+
+    /* Open destination file for writing (create if needed) */
+    int dst_fd = sys_open(dst_path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (dst_fd < 0) {
+        write_str(2, "cp: cannot create '");
+        write_str(2, dst_path);
+        write_str(2, "'\n");
+        sys_close(src_fd);
+        return -1;
+    }
+
+    /* Copy data from source to destination */
+    char buffer[4096];
+    long bytes_read;
+    while ((bytes_read = sys_read(src_fd, buffer, sizeof(buffer))) > 0) {
+        long total_written = 0;
+        while (total_written < bytes_read) {
+            long written = sys_write(dst_fd, buffer + total_written, bytes_read - total_written);
+            if (written <= 0) {
+                write_str(2, "cp: write error\n");
+                sys_close(src_fd);
+                sys_close(dst_fd);
+                return -1;
+            }
+            total_written += written;
+        }
+    }
+
+    if (bytes_read < 0) {
+        write_str(2, "cp: read error\n");
+        sys_close(src_fd);
+        sys_close(dst_fd);
+        return -1;
+    }
+
+    sys_close(src_fd);
+    sys_close(dst_fd);
+    return 0;
+}
+
+/* Helper function to get basename from path for cp command */
+static const char *cp_get_basename(const char *path) {
+    const char *last_slash = path;
+    for (const char *p = path; *p != '\0'; p++) {
+        if (*p == '/') {
+            last_slash = p + 1;
+        }
+    }
+    return last_slash;
+}
+
+/* Helper function to build destination path for cp command */
+static void cp_build_dest_path(char *dest_buf, size_t dest_size, const char *dest_dir,
+                               const char *basename) {
+    size_t dir_len = 0;
+    while (dest_dir[dir_len] != '\0' && dir_len < dest_size - 2) {
+        dest_buf[dir_len] = dest_dir[dir_len];
+        dir_len++;
+    }
+
+    /* Add slash if needed */
+    if (dir_len > 0 && dest_buf[dir_len - 1] != '/') {
+        dest_buf[dir_len++] = '/';
+    }
+
+    /* Append basename */
+    size_t i = 0;
+    while (basename[i] != '\0' && dir_len + i < dest_size - 1) {
+        dest_buf[dir_len + i] = basename[i];
+        i++;
+    }
+    dest_buf[dir_len + i] = '\0';
+}
+
 /* Built-in: cp */
 static void cmd_cp(int argc, char *argv[]) {
     if (argc < 3) {
         write_str(2, "cp: missing operand\n");
         write_str(2, "Usage: cp <source>... <dest>\n");
         return;
-    }
-
-    /* Helper function to copy one file */
-    auto int copy_file(const char *src_path, const char *dst_path) {
-        /* Open source file for reading */
-        int src_fd = sys_open(src_path, O_RDONLY, 0);
-        if (src_fd < 0) {
-            write_str(2, "cp: cannot open '");
-            write_str(2, src_path);
-            write_str(2, "'\n");
-            return -1;
-        }
-
-        /* Open destination file for writing (create if needed) */
-        int dst_fd = sys_open(dst_path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
-        if (dst_fd < 0) {
-            write_str(2, "cp: cannot create '");
-            write_str(2, dst_path);
-            write_str(2, "'\n");
-            sys_close(src_fd);
-            return -1;
-        }
-
-        /* Copy data from source to destination */
-        char buffer[4096];
-        long bytes_read;
-        while ((bytes_read = sys_read(src_fd, buffer, sizeof(buffer))) > 0) {
-            long total_written = 0;
-            while (total_written < bytes_read) {
-                long written = sys_write(dst_fd, buffer + total_written, bytes_read - total_written);
-                if (written <= 0) {
-                    write_str(2, "cp: write error\n");
-                    sys_close(src_fd);
-                    sys_close(dst_fd);
-                    return -1;
-                }
-                total_written += written;
-            }
-        }
-
-        if (bytes_read < 0) {
-            write_str(2, "cp: read error\n");
-            sys_close(src_fd);
-            sys_close(dst_fd);
-            return -1;
-        }
-
-        sys_close(src_fd);
-        sys_close(dst_fd);
-        return 0;
-    }
-
-    /* Helper function to get basename from path */
-    auto const char *get_basename(const char *path) {
-        const char *last_slash = path;
-        for (const char *p = path; *p != '\0'; p++) {
-            if (*p == '/') {
-                last_slash = p + 1;
-            }
-        }
-        return last_slash;
-    }
-
-    /* Helper function to build destination path */
-    auto void build_dest_path(char *dest_buf, size_t dest_size, const char *dest_dir, const char *basename) {
-        size_t dir_len = 0;
-        while (dest_dir[dir_len] != '\0' && dir_len < dest_size - 2) {
-            dest_buf[dir_len] = dest_dir[dir_len];
-            dir_len++;
-        }
-
-        /* Add slash if needed */
-        if (dir_len > 0 && dest_buf[dir_len - 1] != '/') {
-            dest_buf[dir_len++] = '/';
-        }
-
-        /* Append basename */
-        size_t i = 0;
-        while (basename[i] != '\0' && dir_len + i < dest_size - 1) {
-            dest_buf[dir_len + i] = basename[i];
-            i++;
-        }
-        dest_buf[dir_len + i] = '\0';
     }
 
     /* Multiple source files: cp file1 file2 file3 destdir/ */
@@ -3029,18 +3048,18 @@ static void cmd_cp(int argc, char *argv[]) {
         /* Copy each source file to destination directory */
         for (int i = 1; i < argc - 1; i++) {
             const char *src_path = argv[i];
-            const char *basename = get_basename(src_path);
+            const char *basename = cp_get_basename(src_path);
 
             static char dest_path[512];
-            build_dest_path(dest_path, sizeof(dest_path), dest_dir, basename);
+            cp_build_dest_path(dest_path, sizeof(dest_path), dest_dir, basename);
 
-            copy_file(src_path, dest_path);
+            cp_copy_file(src_path, dest_path);
         }
     } else {
         /* Single source file: cp source dest */
         const char *src_path = argv[1];
         const char *dst_path = argv[2];
-        copy_file(src_path, dst_path);
+        cp_copy_file(src_path, dst_path);
     }
 }
 

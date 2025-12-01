@@ -205,7 +205,7 @@ rustc --print target-list | grep -E '(x86_64-unknown-linux|aarch64-unknown-linux
 | init + stubs + forktest userland | ✅ Working | ARM64 userland builds successfully |
 | **Blocked on macOS** | | |
 | Wayland libraries | ❌ Blocked | Requires Linux-specific syscalls |
-| Shell binary | ❌ Blocked | Uses GNU nested functions (clang incompatible) |
+| Shell binary | ⚠️ Needs Wayland | Clang-compatible (nested functions removed 2025-12-01), but requires Wayland libs |
 | Full Wayland userland | ❌ Blocked | Depends on Wayland |
 
 ## Additional macOS Build Fixes (2025-11-30)
@@ -430,3 +430,78 @@ OBJCOPY build/bin/futura_kernel.bin
 ```
 
 **Kernel size:** 3.2MB (ARM aarch64 ELF64 executable)
+
+## Shell Refactoring for Clang Compatibility (2025-12-01)
+
+The Futura shell (`src/user/shell/main.c`) has been refactored to remove GNU nested functions, making it compatible with clang.
+
+### Problem
+
+The shell used 21 nested functions with the `auto` keyword, which is a GCC-specific extension not supported by clang/LLVM. This prevented compilation on macOS using the system compiler.
+
+Example of problematic code:
+```c
+static void cmd_wc(int argc, char *argv[]) {
+    int show_lines = 1;
+    auto void count_fd(int fd) {
+        // Accesses parent variable show_lines
+        if (show_lines) { ... }
+    }
+    count_fd(0);
+}
+```
+
+### Solution
+
+All 21 nested functions were extracted as static helper functions with descriptive names:
+- Added command name prefixes (e.g., `wc_`, `grep_`, `sort_`)
+- Parent variables passed as function parameters
+- Call sites updated to pass required parameters
+
+After refactoring:
+```c
+static void wc_count_fd(int fd, long *lines, long *words, long *bytes) {
+    // Implementation
+}
+
+static void cmd_wc(int argc, char *argv[]) {
+    long lines, words, bytes;
+    wc_count_fd(0, &lines, &words, &bytes);
+}
+```
+
+### Refactored Commands
+
+- **cmd_wc**: 2 functions (wc_count_fd, wc_print_counts)
+- **cmd_head**: 1 function (head_process_fd)
+- **cmd_tail**: 1 function (tail_process_fd)
+- **cmd_uniq**: 2 functions (uniq_output_line, uniq_process_fd)
+- **cmd_cat**: 1 function (cat_process_fd)
+- **cmd_cut**: 2 functions (cut_process_line, cut_process_fd)
+- **cmd_tr**: 1 function (tr_process_fd)
+- **cmd_paste**: 1 function (paste_read_line)
+- **cmd_grep**: 3 functions (grep_to_lower, grep_pattern_matches, grep_file)
+- **cmd_sort**: 3 functions (sort_read_lines, sort_parse_int, sort_compare_lines)
+- **cmd_mkdir**: 1 function (mkdir_recursive)
+- **cmd_cp**: 3 functions (cp_copy_file, cp_get_basename, cp_build_dest_path)
+
+### Verification
+
+```bash
+# Verify no nested functions remain
+grep -E '^\s+auto (void|int|long|char)' src/user/shell/main.c
+# (no results)
+
+# Test with clang syntax checker
+clang -fsyntax-only -Wno-implicit-function-declaration -std=c2x src/user/shell/main.c
+# (no nested function errors)
+```
+
+### Status
+
+✅ **Shell code is now clang-compatible**
+
+However, the shell still cannot be built on macOS because it depends on Wayland libraries, which require Linux-specific syscalls. The shell will work once either:
+1. Wayland is ported to work on macOS (requires significant effort)
+2. The build is run in a Linux container or VM
+

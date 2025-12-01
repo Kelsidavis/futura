@@ -519,7 +519,8 @@ int fut_thread_priority_restore(fut_thread_t *thread) {
 /* Forward declare the actual trampoline implementation */
 __attribute__((used)) static void fut_thread_trampoline_impl(void (*entry)(void *), void *arg);
 
-/* Naked assembly wrapper that receives the IRETQ and calls the C implementation.
+#if defined(__x86_64__)
+/* x86_64: Naked assembly wrapper that receives the IRETQ and calls the C implementation.
  * CRITICAL: naked attribute prevents compiler from generating prologue/epilogue.
  * We manually set up the stack frame and then call the C function. */
 [[noreturn]] __attribute__((naked)) static void fut_thread_trampoline(void (*entry)(void *) __attribute__((unused)), void *arg __attribute__((unused))) {
@@ -561,6 +562,17 @@ __attribute__((used)) static void fut_thread_trampoline_impl(void (*entry)(void 
         ::: "memory"
     );
 }
+#elif defined(__aarch64__)
+/* ARM64: Simple wrapper that calls the implementation.
+ * The ARM64 calling convention (X0, X1 for parameters) is handled by the compiler. */
+[[noreturn]] static void fut_thread_trampoline(void (*entry)(void *), void *arg) {
+    fut_thread_trampoline_impl(entry, arg);
+    /* Should never return, but if it does, infinite loop */
+    while (1) {
+        __asm__ volatile("wfi");  // Wait for interrupt
+    }
+}
+#endif
 
 /* The actual C implementation, called by the assembly wrapper */
 [[noreturn]] __attribute__((optimize("O0"))) static void fut_thread_trampoline_impl(void (*entry)(void *), void *arg) {
@@ -576,7 +588,12 @@ __attribute__((used)) static void fut_thread_trampoline_impl(void (*entry)(void 
     }
 
     /* Check if entry is in kernel space (should be for fut_user_trampoline) */
-    if ((uintptr_t)entry < 0xFFFFFFFF80000000ULL) {
+#if defined(__x86_64__)
+    const uintptr_t kernel_base = 0xFFFFFFFF80000000ULL;
+#elif defined(__aarch64__)
+    const uintptr_t kernel_base = 0xFFFFFF8000000000ULL;
+#endif
+    if ((uintptr_t)entry < kernel_base) {
         fut_printf("[TRAMPOLINE-ERROR] entry=0x%llx is NOT in kernel space!\n", (unsigned long long)(uintptr_t)entry);
         fut_thread_exit();
     }

@@ -70,6 +70,26 @@ int fut_stage_wayland_color_client_binary(void) {
     return -ENODEV;  /* Wayland not available for ARM64 */
 }
 
+int fut_stage_wl_term_binary(void) {
+    return -ENODEV;  /* Wayland not available for ARM64 */
+}
+
+int fut_stage_init_stub_binary(void) {
+    return -ENODEV;  /* Not implemented for ARM64 */
+}
+
+int fut_stage_second_stub_binary(void) {
+    return -ENODEV;  /* Not implemented for ARM64 */
+}
+
+int fut_stage_shell_binary(void) {
+    return -ENODEV;  /* Not implemented for ARM64 */
+}
+
+int fut_stage_fbtest_binary(void) {
+    return -ENODEV;  /* Not implemented for ARM64 */
+}
+
 /* ============================================================
  *   Page Table Management
  * ============================================================

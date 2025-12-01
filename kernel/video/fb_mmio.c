@@ -135,8 +135,12 @@ fallback:
      */
 #if defined(WAYLAND_INTERACTIVE_MODE) || defined(__aarch64__)
     bool fb_fallback = true;
+#ifdef WAYLAND_INTERACTIVE_MODE
     fut_printf("[FB] Auto-enabling fallback for interactive/direct boot (WAYLAND_INTERACTIVE_MODE=%d)\n",
                WAYLAND_INTERACTIVE_MODE);
+#else
+    fut_printf("[FB] Auto-enabling fallback for ARM64 direct boot\n");
+#endif
 #else
     /* Boot arguments may not be parsed yet when this runs. Direct kernel boot
      * (without a Multiboot framebuffer) therefore defaults to the fallback,

@@ -19,41 +19,6 @@ extern struct fut_file *vfs_get_file_from_task(struct fut_task *task, int fd);
 extern int fut_copy_from_user(void *to, const void *from, size_t size);
 
 /**
- * sys_sync - Synchronize all filesystems
- *
- * Commits all pending writes across all mounted filesystems to storage devices.
- * This is a system-wide operation that ensures all dirty buffers are written.
- *
- * Phase 1: Stub that returns success
- * Phase 2: Iterate all mounted filesystems and call sync operation
- * Phase 3: Flush block device caches and wait for completion
- *
- * Returns:
- *   - Always returns 0 (sync is async, may return before completion)
- */
-long sys_sync(void) {
-    fut_task_t *task = fut_task_current();
-
-    /* Phase 1: Stub implementation - would iterate all mounted filesystems
-     * Phase 2: Call sync operation on all mounted filesystems:
-     *   - For each mounted filesystem:
-     *     - Call filesystem-specific sync operation
-     *     - Wait for dirty buffers to be written
-     *   - Flush block device write caches
-     * Phase 3: Add barrier operations for device cache coherency
-     */
-
-    const char *caller_desc = task ? "from process" : "from kernel";
-    int pid = task ? task->pid : 0;
-
-    fut_printf("[SYNC] sync() called %s (pid=%d) -> 0 (Phase 1 stub, no-op)\n",
-               caller_desc, pid);
-
-    /* POSIX sync() always succeeds (async operation) */
-    return 0;
-}
-
-/**
  * sys_chroot - Change root directory
  *
  * @param path: New root directory path

@@ -286,7 +286,7 @@ long sys_brk(uintptr_t new_break) {
                 return -ENOMEM;
             }
             memset(page, 0, PAGE_SIZE);
-            phys_addr_t phys = pmap_virt_to_phys((uintptr_t)page);
+            phys_addr_t phys = pmap_virt_to_phys((void *)page);
             if (pmap_map_user(ctx, addr, phys, PAGE_SIZE, flags) != 0) {
                 fut_pmm_free_page(page);
                 brk_unmap_range(ctx, map_start, mapped);
@@ -470,7 +470,7 @@ long sys_brk(uintptr_t new_break) {
                 return -ENOMEM;
             }
             memset(page, 0, PAGE_SIZE);
-            phys_addr_t phys = pmap_virt_to_phys((uintptr_t)page);
+            phys_addr_t phys = pmap_virt_to_phys((void *)page);
             if (pmap_map_user(ctx, addr, phys, PAGE_SIZE, flags) != 0) {
                 fut_pmm_free_page(page);
                 brk_unmap_range(ctx, map_start, mapped);

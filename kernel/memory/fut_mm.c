@@ -98,7 +98,7 @@ void fut_mm_system_init(void) {
     /* Initialize kernel page table root (architecture-neutral) */
     fut_vmem_set_root(&kernel_mm.ctx, fut_get_kernel_pml4());
     fut_vmem_set_reload_value(&kernel_mm.ctx,
-                              pmap_virt_to_phys((uintptr_t)fut_vmem_get_root(&kernel_mm.ctx)));
+                              pmap_virt_to_phys((void *)fut_vmem_get_root(&kernel_mm.ctx)));
     kernel_mm.ctx.ref_count = 1;
     atomic_store_explicit(&kernel_mm.refcnt, 1, memory_order_relaxed);
     kernel_mm.flags = FUT_MM_KERNEL;
@@ -182,7 +182,7 @@ fut_mm_t *fut_mm_create(void) {
     fut_printf("[MM-CREATE] Line 159: about to call fut_vmem_set_reload_value\n");
     /* Direct serial markers to pinpoint hang */
     __asm__ volatile("movw $0x3F8, %%dx; movb $'a', %%al; outb %%al, %%dx" ::: "ax", "dx");
-    phys_addr_t pml4_phys = pmap_virt_to_phys((uintptr_t)pml4);
+    phys_addr_t pml4_phys = pmap_virt_to_phys((void *)pml4);
     __asm__ volatile("movw $0x3F8, %%dx; movb $'b', %%al; outb %%al, %%dx" ::: "ax", "dx");
     fut_vmem_set_reload_value(&mm->ctx, pml4_phys);
     __asm__ volatile("movw $0x3F8, %%dx; movb $'c', %%al; outb %%al, %%dx" ::: "ax", "dx");
@@ -422,7 +422,7 @@ void *fut_mm_map_anonymous(fut_mm_t *mm, uintptr_t hint, size_t len, int prot, i
             goto fail;
         }
         memset(page, 0, PAGE_SIZE);
-        phys_addr_t phys = pmap_virt_to_phys((uintptr_t)page);
+        phys_addr_t phys = pmap_virt_to_phys((void *)page);
         if (pmap_map_user(ctx, addr, phys, PAGE_SIZE, pte_flags) != 0) {
             fut_pmm_free_page(page);
             mapped = (addr - base) / PAGE_SIZE;

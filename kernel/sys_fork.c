@@ -845,7 +845,7 @@ static fut_mm_t *clone_mm(fut_mm_t *parent_mm) {
             void *parent_page = (void *)pmap_phys_to_virt(parent_phys);
             memcpy(child_page, parent_page, FUT_PAGE_SIZE);
 
-            phys_addr_t child_phys = pmap_virt_to_phys((uintptr_t)child_page);
+            phys_addr_t child_phys = pmap_virt_to_phys((void *)child_page);
             uint64_t flags = pte_extract_flags(pte);
 
             if (pmap_map_user(child_ctx, page, child_phys, FUT_PAGE_SIZE, flags) != 0) {
@@ -897,7 +897,7 @@ static fut_mm_t *clone_mm(fut_mm_t *parent_mm) {
             void *parent_page = (void *)pmap_phys_to_virt(parent_phys);
             memcpy(child_page, parent_page, FUT_PAGE_SIZE);
 
-            phys_addr_t child_phys = pmap_virt_to_phys((uintptr_t)child_page);
+            phys_addr_t child_phys = pmap_virt_to_phys((void *)child_page);
             uint64_t flags = pte_extract_flags(pte);
 
             if (pmap_map_user(child_ctx, page, child_phys, FUT_PAGE_SIZE, flags) != 0) {
@@ -1039,7 +1039,7 @@ static fut_mm_t *clone_mm(fut_mm_t *parent_mm) {
                 memcpy(child_page, parent_page, FUT_PAGE_SIZE);
 
                 /* Map in child with same permissions */
-                phys_addr_t child_phys = pmap_virt_to_phys((uintptr_t)child_page);
+                phys_addr_t child_phys = pmap_virt_to_phys((void *)child_page);
                 uint64_t flags = pte_extract_flags(pte);
 
                 if (pmap_map_user(child_ctx, page, child_phys, FUT_PAGE_SIZE, flags) != 0) {

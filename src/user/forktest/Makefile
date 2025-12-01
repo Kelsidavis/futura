@@ -3,9 +3,17 @@
 PLATFORM ?= x86_64
 
 ifeq ($(PLATFORM),arm64)
-    CC = aarch64-elf-gcc
-    LD = aarch64-elf-ld
-    OBJCOPY = aarch64-elf-objcopy
+    # On macOS, use the cross-compiler from Homebrew
+    ifeq ($(shell uname -s),Darwin)
+        CROSS_COMPILE_ARM64 ?= /opt/homebrew/bin/aarch64-elf-
+        CC = $(CROSS_COMPILE_ARM64)gcc
+        LD = $(CROSS_COMPILE_ARM64)ld
+        OBJCOPY = $(CROSS_COMPILE_ARM64)objcopy
+    else
+        CC = aarch64-elf-gcc
+        LD = aarch64-elf-ld
+        OBJCOPY = aarch64-elf-objcopy
+    endif
     CFLAGS = -std=c23 -ffreestanding -nostdlib -fno-builtin \
              -Wall -Wextra -O2 -g \
              -I../../../include \

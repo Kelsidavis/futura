@@ -126,11 +126,21 @@ endif
 
 ifeq ($(PLATFORM),x86_64)
     # x86-64 toolchain
-    CC := gcc-14
-    AS := as
-    LD := ld
-    AR := ar
-    OBJCOPY := objcopy
+    # On macOS, use the cross-compiler; on Linux, use native tools
+    ifeq ($(shell uname -s),Darwin)
+        CROSS_COMPILE_X86 ?= /opt/homebrew/bin/x86_64-elf-
+        CC := $(CROSS_COMPILE_X86)gcc
+        AS := $(CROSS_COMPILE_X86)as
+        LD := $(CROSS_COMPILE_X86)ld
+        AR := $(CROSS_COMPILE_X86)ar
+        OBJCOPY := $(CROSS_COMPILE_X86)objcopy
+    else
+        CC := gcc-14
+        AS := as
+        LD := ld
+        AR := ar
+        OBJCOPY := objcopy
+    endif
     ARCH_CFLAGS := -m64 -mcmodel=kernel -mno-red-zone -mno-sse -mno-avx -mno-avx2 -fno-tree-vectorize
     ARCH_ASFLAGS := --64
     ARCH_LDFLAGS := -m elf_x86_64 -T platform/x86_64/link.ld
@@ -207,6 +217,11 @@ ENABLE_WAYLAND_DEMO ?= 1          # Core Wayland compositor + wl-term
 ENABLE_WAYLAND_TEST_CLIENTS ?= 0  # Wayland test clients (wl-simple, wl-colorwheel) - disabled by default
 ENABLE_FB_DIAGNOSTICS ?= 0        # Optional: fbtest framebuffer diagnostic tool
 CFLAGS += -DENABLE_WAYLAND_DEMO=$(ENABLE_WAYLAND_DEMO)
+
+# macOS host build flag (disables userland blobs that can't build on macOS)
+ifeq ($(shell uname -s),Darwin)
+CFLAGS += -DFUTURA_MACOS_HOST_BUILD=1
+endif
 
 # Debug vs Release flags
 ifeq ($(BUILD_MODE),debug)
@@ -650,16 +665,21 @@ ARM64_FORKTEST_BIN := $(BIN_DIR)/arm64/user/forktest
 ARM64_FORKTEST_BLOB := $(OBJ_DIR)/kernel/blobs/arm64_forktest_blob.o
 
 ifeq ($(PLATFORM),x86_64)
+# Skip shell blob on macOS (uses GNU nested functions not supported by clang)
+ifneq ($(shell uname -s),Darwin)
 OBJECTS += $(SHELL_BLOB)
+endif
 OBJECTS += $(INIT_STUB_BLOB) $(SECOND_STUB_BLOB)
 # Diagnostics (optional)
 ifeq ($(ENABLE_FB_DIAGNOSTICS),1)
 OBJECTS += $(FBTEST_BLOB)
 endif
-# Core Wayland binaries (production)
+# Core Wayland binaries (production) - skip on macOS
+ifneq ($(shell uname -s),Darwin)
 OBJECTS += $(WAYLAND_COMPOSITOR_BLOB) $(WAYLAND_SHELL_BLOB) $(WL_TERM_BLOB)
 # Test clients - always enabled
 OBJECTS += $(WAYLAND_CLIENT_BLOB) $(WAYLAND_COLOR_BLOB)
+endif
 else ifeq ($(PLATFORM),arm64)
 # Re-enabled for UI testing
 OBJECTS += $(ARM64_INIT_BLOB) $(ARM64_UIDEMO_BLOB) $(ARM64_SHELL_BLOB) $(ARM64_FORKTEST_BLOB)
@@ -730,7 +750,7 @@ endif
 	@echo "Build complete: $@"
 ifeq ($(PLATFORM),arm64)
 	@echo "OBJCOPY $(BIN_DIR)/futura_kernel.bin"
-	@aarch64-elf-objcopy -O binary $@ $(BIN_DIR)/futura_kernel.bin
+	@$(OBJCOPY) -O binary $@ $(BIN_DIR)/futura_kernel.bin
 endif
 
 ifeq ($(RUST_AVAILABLE),yes)
@@ -742,7 +762,7 @@ $(RUST_LIB_VIRTIO_BLK): $(RUST_SOURCES)
 	@echo "CARGO virtio_blk ($(RUST_PROFILE))"
 	@cd $(RUST_VIRTIO_BLK_DIR) && RUSTFLAGS="-C panic=abort -C force-unwind-tables=no $(RUSTFLAGS)" $(CARGO) build --release --target $(RUST_TARGET)
 	@tmpdir=$$(mktemp -d); \
-	cd $$tmpdir && ar x $(abspath $(RUST_LIB_VIRTIO_BLK)) && for obj in *.o; do $(OBJCOPY) --remove-section='.gcc_except_table*' --remove-section='.eh_frame*' $$obj >/dev/null 2>&1 || true; done && ar rcs $(abspath $(RUST_LIB_VIRTIO_BLK)) *.o; \
+	cd $$tmpdir && $(AR) x $(abspath $(RUST_LIB_VIRTIO_BLK)) && for obj in *.o; do $(OBJCOPY) --remove-section='.gcc_except_table*' --remove-section='.eh_frame*' $$obj >/dev/null 2>&1 || true; done && $(AR) rcs $(abspath $(RUST_LIB_VIRTIO_BLK)) *.o; \
 	rm -rf $$tmpdir
 
 $(RUST_LIB_VIRTIO_NET): $(RUST_SOURCES)
@@ -751,7 +771,7 @@ $(RUST_LIB_VIRTIO_NET): $(RUST_SOURCES)
 	@echo "CARGO virtio_net ($(RUST_PROFILE))"
 	@cd $(RUST_VIRTIO_NET_DIR) && RUSTFLAGS="-C panic=abort -C force-unwind-tables=no $(RUSTFLAGS)" $(CARGO) build --release --target $(RUST_TARGET)
 	@tmpdir=$$(mktemp -d); \
-	cd $$tmpdir && ar x $(abspath $(RUST_LIB_VIRTIO_NET)) && for obj in *.o; do $(OBJCOPY) --remove-section='.gcc_except_table*' --remove-section='.eh_frame*' $$obj >/dev/null 2>&1 || true; done && ar rcs $(abspath $(RUST_LIB_VIRTIO_NET)) *.o; \
+	cd $$tmpdir && $(AR) x $(abspath $(RUST_LIB_VIRTIO_NET)) && for obj in *.o; do $(OBJCOPY) --remove-section='.gcc_except_table*' --remove-section='.eh_frame*' $$obj >/dev/null 2>&1 || true; done && $(AR) rcs $(abspath $(RUST_LIB_VIRTIO_NET)) *.o; \
 	rm -rf $$tmpdir
 
 $(RUST_LIB_VIRTIO_GPU): $(RUST_SOURCES)
@@ -760,7 +780,7 @@ $(RUST_LIB_VIRTIO_GPU): $(RUST_SOURCES)
 	@echo "CARGO virtio_gpu ($(RUST_PROFILE))"
 	@cd $(RUST_VIRTIO_GPU_DIR) && RUSTFLAGS="-C panic=abort -C force-unwind-tables=no $(RUSTFLAGS)" $(CARGO) build --release --target $(RUST_TARGET)
 	@tmpdir=$$(mktemp -d); \
-	cd $$tmpdir && ar x $(abspath $(RUST_LIB_VIRTIO_GPU)) && for obj in *.o; do $(OBJCOPY) --remove-section='.gcc_except_table*' --remove-section='.eh_frame*' $$obj >/dev/null 2>&1 || true; done && ar rcs $(abspath $(RUST_LIB_VIRTIO_GPU)) *.o; \
+	cd $$tmpdir && $(AR) x $(abspath $(RUST_LIB_VIRTIO_GPU)) && for obj in *.o; do $(OBJCOPY) --remove-section='.gcc_except_table*' --remove-section='.eh_frame*' $$obj >/dev/null 2>&1 || true; done && $(AR) rcs $(abspath $(RUST_LIB_VIRTIO_GPU)) *.o; \
 	rm -rf $$tmpdir
 else
 rust-drivers:
@@ -884,7 +904,13 @@ userland: libfutura vendor
 
 .PHONY: vendor libfutura open_wrapper stage
 
+# On macOS, skip Wayland (requires Linux-specific syscalls)
+ifeq ($(shell uname -s),Darwin)
+vendor:
+	@echo "Skipping Wayland on macOS (requires Linux-specific syscalls)"
+else
 vendor: third_party-wayland
+endif
 
 libfutura:
 	@$(MAKE) -C src/user/libfutura all

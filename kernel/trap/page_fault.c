@@ -115,7 +115,7 @@ static bool load_demand_page(uint64_t page_addr, struct fut_vma *vma, fut_vmem_c
     }
 
     /* Map the page */
-    phys_addr_t phys = pmap_virt_to_phys((void *)page);
+    phys_addr_t phys = pmap_virt_to_phys((uintptr_t)page);
     if (pmap_map_user(ctx, page_addr, phys, PAGE_SIZE, pte_flags) != 0) {
         fut_pmm_free_page(page);
         return false;
@@ -291,7 +291,7 @@ static bool handle_cow_fault_generic(uint64_t fault_addr, bool is_write, bool is
         memcpy(new_page, old_page, PAGE_SIZE);
 
         /* Map new page with write permission */
-        phys_addr_t new_phys = pmap_virt_to_phys((void *)new_page);
+        phys_addr_t new_phys = pmap_virt_to_phys((uintptr_t)new_page);
         uint64_t flags = (pte & (PTE_PRESENT | PTE_USER | PTE_NX)) | PTE_WRITABLE;
 
         fut_unmap_range(ctx, page_addr, PAGE_SIZE);

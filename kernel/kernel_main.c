@@ -780,7 +780,7 @@ void fut_kernel_main(void) {
 #else
     bool wayland_interactive_boot = fut_boot_arg_flag("WAYLAND_INTERACTIVE");
 #endif
-    bool wayland_autoclose = boot_flag_enabled("wayland-autoclose", false);
+    __attribute__((unused)) bool wayland_autoclose = boot_flag_enabled("wayland-autoclose", false);
 
 #if ENABLE_WAYLAND_TEST_CLIENTS
     /* Test client variables (optional) */
@@ -896,7 +896,7 @@ void fut_kernel_main(void) {
     {
         /* Use _bss_start which is already declared at the top of this file */
         uintptr_t bss_va = (uintptr_t)_bss_start;
-        uint64_t bss_pa = pmap_virt_to_phys((void *)bss_va);
+        uint64_t bss_pa = pmap_virt_to_phys((uintptr_t)bss_va);
 
         fut_printf("[VA-PA-CHECK] _bss_start VA=0x%016llx PA=0x%016llx (offset=0x%016llx)\n",
                    (unsigned long long)bss_va, (unsigned long long)bss_pa,

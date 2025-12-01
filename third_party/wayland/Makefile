@@ -115,6 +115,16 @@ endif
 	@sed -i.bak "s|#error \"Don't know how to read ucred on this platform\"|/* Futura: no ucred support, continue */|" $(SRC_DIR)/src/wayland-os.c
 	@perl -0pi -e "s/if \(lstat\(socket->addr.sun_path, &socket_stat\) < 0 \)\s*\{\s*if \(errno != ENOENT\) \{\s*wl_log\(\"did not manage to stat file %s\\n\",\s*socket->addr.sun_path\);\s*goto err_fd;\s*\}\s*\}\s*else if \(socket_stat.st_mode & S_IWUSR \\|\\|\s*socket_stat.st_mode & S_IWGRP\) \{\s*unlink\(socket->addr.sun_path\);\s*\}/\tunlink(socket->addr.sun_path);\n/" $(SRC_DIR)/src/wayland-server.c
 	@sed -i.bak '/SFD_CLOEXEC/d; /TFD_CLOEXEC/d' $(SRC_DIR)/meson.build
+	@# macOS: Skip CLOCK_MONOTONIC check
+	@sed -i.bak "s/error('@0@ is needed to compile Wayland libraries'.format(d\['symbol'\]))/# macOS: Skip check/" $(SRC_DIR)/meson.build
+ifeq ($(shell uname -s),Darwin)
+	@# macOS: Comment out Linux-specific includes (we provide stubs in wayland_nofortify.h)
+	@sed -i.bak 's|#include <sys/epoll.h>|/* #include <sys/epoll.h> - using stub from wayland_nofortify.h */|' $(SRC_DIR)/src/wayland-os.c
+	@sed -i.bak 's|#include <sys/epoll.h>|/* #include <sys/epoll.h> - using stub from wayland_nofortify.h */|' $(SRC_DIR)/src/event-loop.c
+	@sed -i.bak 's|#include <sys/eventfd.h>|/* #include <sys/eventfd.h> - using stub from wayland_nofortify.h */|' $(SRC_DIR)/src/wayland-server.c
+	@sed -i.bak 's|#include <sys/signalfd.h>|/* #include <sys/signalfd.h> - using stub from wayland_nofortify.h */|' $(SRC_DIR)/src/event-loop.c
+	@sed -i.bak 's|#include <sys/timerfd.h>|/* #include <sys/timerfd.h> - using stub from wayland_nofortify.h */|' $(SRC_DIR)/src/event-loop.c
+endif
 	@touch $@
 
 $(NATIVE_FILE): | $(STATE_DIR)

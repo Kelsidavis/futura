@@ -390,8 +390,16 @@ static int build_user_stack(fut_mm_t *mm,
     uint64_t sp = USER_STACK_TOP;
 
     /* Copy environment variable strings first (highest addresses) */
+    extern void fut_printf(const char *, ...);
+    fut_printf("[STACK-DEBUG] Copying %zu envp strings, envp=%p\n", envc, envp);
     for (size_t i = envc; i-- > 0;) {
-        size_t len = kstrlen(envp[i]) + 1;
+        /* Debug: Read the pointer value from the array */
+        const char *ptr = envp[i];
+        uintptr_t ptr_val = (uintptr_t)ptr;
+        fut_printf("[STACK-DEBUG] envp[%zu]=%p (0x%016lx) kernel=%d\n",
+                   i, ptr, ptr_val, ptr_val >= 0xFFFF800000000000ULL);
+        size_t len = kstrlen(ptr) + 1;
+        fut_printf("[STACK-DEBUG] envp[%zu] len=%zu\n", i, len);
         sp -= len;
         if (exec_copy_to_user(mm, sp, envp[i], len) != 0) {
             fut_free(string_ptrs);
@@ -865,6 +873,9 @@ int fut_stage_wayland_color_client_binary(void) {
 #endif
 
 int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
+    extern void fut_printf(const char *, ...);
+    fut_printf("[EXEC-ELF] ENTER: path=%s argv=%p envp=%p\n", path ? path : "(null)", argv, envp);
+
     if (!path) {
         return -EINVAL;
     }
@@ -882,14 +893,23 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
      * If argv/envp point to userspace, a context switch during exec could
      * cause the old address space to become inaccessible, leading to page faults.
      *
-     * SMAP FIX: All userspace pointer accesses use fut_copy_from_user to avoid
-     * triggering SMAP violations on x86-64. */
+     * SMAP FIX: Detect if argv/envp are kernel or userspace pointers.
+     * sys_execve may pass kernel arrays (kernel_argv/kernel_envp) that are already
+     * safe kernel copies. Only use fut_copy_from_user for userspace pointers. */
     size_t argc = 0;
     size_t envc = 0;
     char **kargv = NULL;
     char **kenvp = NULL;
 
-    if (argv) {
+    /* Check if argv is a kernel pointer (high half of address space on x86_64) */
+    int argv_is_kernel = (argv && (uintptr_t)argv >= 0xFFFF800000000000ULL);
+    int envp_is_kernel = (envp && (uintptr_t)envp >= 0xFFFF800000000000ULL);
+    int kargv_needs_free = 0;  /* Track if we allocated kargv */
+    int kenvp_needs_free = 0;  /* Track if we allocated kenvp */
+
+    fut_printf("[EXEC-ELF] argv_is_kernel=%d envp_is_kernel=%d\n", argv_is_kernel, envp_is_kernel);
+
+    if (argv && !argv_is_kernel) {
         /* SMAP FIX: Count arguments using safe userspace copy */
         char *ptr = NULL;
         while (argc < 1000) {
@@ -903,6 +923,7 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
         }
         if (argc > 0) {
             kargv = fut_malloc((argc + 1) * sizeof(char *));
+            kargv_needs_free = 1;
             if (!kargv) { __asm__ volatile("sti"); return -ENOMEM; }
             for (size_t i = 0; i < argc; i++) {
                 /* SMAP FIX: Read argv[i] pointer safely */
@@ -943,9 +964,38 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
             }
             kargv[argc] = NULL;
         }
+    } else if (argv && argv_is_kernel) {
+        /* argv is a kernel pointer - count entries first */
+        const char *const *src_argv = (const char *const *)argv;
+        while (src_argv[argc]) argc++;
+        fut_printf("[EXEC-ELF] Kernel argv has %zu entries, copying strings...\n", argc);
+
+        /* IMPORTANT: Must COPY strings even from kernel pointers!
+         * See envp comment above - CR3 switch makes old allocations inaccessible. */
+        if (argc > 0) {
+            kargv = fut_malloc((argc + 1) * sizeof(char *));
+            kargv_needs_free = 1;
+            if (!kargv) { __asm__ volatile("sti"); return -ENOMEM; }
+            for (size_t i = 0; i < argc; i++) {
+                fut_printf("[EXEC-ELF]   Copying argv[%zu] from %p...\n", i, src_argv[i]);
+                size_t len = kstrlen(src_argv[i]) + 1;
+                fut_printf("[EXEC-ELF]   argv[%zu] len=%zu\n", i, len);
+                kargv[i] = fut_malloc(len);
+                if (!kargv[i]) {
+                    for (size_t j = 0; j < i; j++) fut_free(kargv[j]);
+                    fut_free(kargv);
+                    __asm__ volatile("sti");
+                    return -ENOMEM;
+                }
+                extern void *memcpy(void *, const void *, size_t);
+                memcpy(kargv[i], src_argv[i], len);
+            }
+            kargv[argc] = NULL;
+        }
+        fut_printf("[EXEC-ELF] Copied kernel argv, argc=%zu\n", argc);
     }
 
-    if (envp) {
+    if (envp && !envp_is_kernel) {
         /* SMAP FIX: Count environment variables using safe userspace copy */
         char *ptr = NULL;
         while (envc < 1000) {
@@ -959,8 +1009,9 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
         }
         if (envc > 0) {
             kenvp = fut_malloc((envc + 1) * sizeof(char *));
+            kenvp_needs_free = 1;
             if (!kenvp) {
-                if (kargv) {
+                if (kargv && kargv_needs_free) {
                     for (size_t i = 0; i < argc; i++) fut_free(kargv[i]);
                     fut_free(kargv);
                 }
@@ -973,7 +1024,7 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
                 if (fut_copy_from_user((void *)&env_ptr, &envp[i], sizeof(char *)) != 0) {
                     for (size_t j = 0; j < i; j++) fut_free(kenvp[j]);
                     fut_free(kenvp);
-                    if (kargv) {
+                    if (kargv && kargv_needs_free) {
                         for (size_t j = 0; j < argc; j++) fut_free(kargv[j]);
                         fut_free(kargv);
                     }
@@ -997,7 +1048,7 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
                 if (!kenvp[i]) {
                     for (size_t j = 0; j < i; j++) fut_free(kenvp[j]);
                     fut_free(kenvp);
-                    if (kargv) {
+                    if (kargv && kargv_needs_free) {
                         for (size_t j = 0; j < argc; j++) fut_free(kargv[j]);
                         fut_free(kargv);
                     }
@@ -1008,7 +1059,7 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
                 if (fut_copy_from_user(kenvp[i], env_ptr, len) != 0) {
                     for (size_t j = 0; j <= i; j++) fut_free(kenvp[j]);
                     fut_free(kenvp);
-                    if (kargv) {
+                    if (kargv && kargv_needs_free) {
                         for (size_t j = 0; j < argc; j++) fut_free(kargv[j]);
                         fut_free(kargv);
                     }
@@ -1018,18 +1069,66 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
             }
             kenvp[envc] = NULL;
         }
+    } else if (envp && envp_is_kernel) {
+        /* envp is a kernel pointer - count entries first */
+        const char *const *src_envp = (const char *const *)envp;
+        while (src_envp[envc]) envc++;
+       fut_printf("[EXEC-ELF] Kernel envp has %zu entries, copying strings...\n", envc);
+
+        /* IMPORTANT: Even though envp is a kernel pointer, we must COPY the strings!
+         * The strings were allocated in the OLD address space. When we call fut_mm_create()
+         * below, it will switch CR3, making those allocations inaccessible. We need fresh
+         * copies that will survive the CR3 switch. */
+        if (envc > 0) {
+            kenvp = fut_malloc((envc + 1) * sizeof(char *));
+            kenvp_needs_free = 1;
+            if (!kenvp) { __asm__ volatile("sti"); return -ENOMEM; }
+            for (size_t i = 0; i < envc; i++) {
+                fut_printf("[EXEC-ELF]   Copying envp[%zu] from %p...\n", i, src_envp[i]);
+                /* Use kstrlen since source is kernel memory */
+                size_t len = kstrlen(src_envp[i]) + 1;
+                fut_printf("[EXEC-ELF]   envp[%zu] len=%zu\n", i, len);
+                kenvp[i] = fut_malloc(len);
+                fut_printf("[EXEC-ELF]   Allocated kenvp[%zu]=%p\n", i, kenvp[i]);
+                if (!kenvp[i]) {
+                    for (size_t j = 0; j < i; j++) fut_free(kenvp[j]);
+                    fut_free(kenvp);
+                    __asm__ volatile("sti");
+                    return -ENOMEM;
+                }
+                /* Use memcpy since both are kernel pointers */
+                extern void *memcpy(void *, const void *, size_t);
+                memcpy(kenvp[i], src_envp[i], len);
+            }
+            kenvp[envc] = NULL;
+        }
+        fut_printf("[EXEC-ELF] Copied kernel envp, envc=%zu\n", envc);
     }
 
+    fut_printf("[EXEC-ELF] About to open file: %s\n", path);
     int fd = fut_vfs_open(path, O_RDONLY, 0);
+    fut_printf("[EXEC-ELF] Opened file, fd=%d\n", fd);
     if (fd < 0) {
-        if (kargv) {
-            for (size_t i = 0; i < argc; i++) fut_free(kargv[i]);
+        fut_printf("[EXEC-ELF] File open failed (fd=%d), cleaning up...\n", fd);
+        if (kargv && kargv_needs_free) {
+            fut_printf("[EXEC-ELF] Freeing kargv, argc=%zu\n", argc);
+            for (size_t i = 0; i < argc; i++) {
+                fut_printf("[EXEC-ELF]   Freeing kargv[%zu]=%p\n", i, kargv[i]);
+                fut_free(kargv[i]);
+            }
+            fut_printf("[EXEC-ELF] Freeing kargv array at %p\n", kargv);
             fut_free(kargv);
         }
-        if (kenvp) {
-            for (size_t i = 0; i < envc; i++) fut_free(kenvp[i]);
+        if (kenvp && kenvp_needs_free) {
+            fut_printf("[EXEC-ELF] Freeing kenvp, envc=%zu\n", envc);
+            for (size_t i = 0; i < envc; i++) {
+                fut_printf("[EXEC-ELF]   Freeing kenvp[%zu]=%p\n", i, kenvp[i]);
+                fut_free(kenvp[i]);
+            }
+            fut_printf("[EXEC-ELF] Freeing kenvp array at %p\n", kenvp);
             fut_free(kenvp);
         }
+        fut_printf("[EXEC-ELF] Cleanup done, re-enabling interrupts\n");
         __asm__ volatile("sti");
         return fd;
     }
@@ -1039,11 +1138,11 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
     /* Helper macro for cleanup - also re-enables interrupts since we
      * disabled them at the start of fut_exec_elf */
     #define EXEC_CLEANUP_KARGS() do { \
-        if (kargv) { \
+        if (kargv && kargv_needs_free) { \
             for (size_t _i = 0; _i < argc; _i++) fut_free(kargv[_i]); \
             fut_free(kargv); \
         } \
-        if (kenvp) { \
+        if (kenvp && kenvp_needs_free) { \
             for (size_t _i = 0; _i < envc; _i++) fut_free(kenvp[_i]); \
             fut_free(kenvp); \
         } \
@@ -1207,17 +1306,22 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
     uint64_t user_argv = 0;
     uint64_t user_argc = 0;
     /* Use the kernel copies of argv/envp that we made at the start */
+    fut_printf("[EXEC-DEBUG] About to build_user_stack: argc=%zu envc=%zu kargv=%p kenvp=%p\n",
+               argc, envc, kargv, kenvp);
+    if (kargv && argc > 0) {
+        fut_printf("[EXEC-DEBUG] kargv[0]=%p (content:'%.20s')\n", kargv[0], kargv[0] ? kargv[0] : "(null)");
+    }
     rc = build_user_stack(mm, (const char *const *)kargv, argc, (const char *const *)kenvp, envc, &user_rsp, &user_argv, &user_argc);
     if (rc != 0) {
         fut_mm_release(mm);  /* mm not attached to task yet */
         fut_task_destroy(task);
         fut_free(phdrs);
         fut_vfs_close(fd);
-        if (kargv) {
+        if (kargv && kargv_needs_free) {
             for (size_t i = 0; i < argc; i++) fut_free(kargv[i]);
             fut_free(kargv);
         }
-        if (kenvp) {
+        if (kenvp && kenvp_needs_free) {
             for (size_t i = 0; i < envc; i++) fut_free(kenvp[i]);
             fut_free(kenvp);
         }
@@ -1276,11 +1380,11 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
         fut_task_destroy(task);
         fut_free(phdrs);
         fut_vfs_close(fd);
-        if (kargv) {
+        if (kargv && kargv_needs_free) {
             for (size_t i = 0; i < argc; i++) fut_free(kargv[i]);
             fut_free(kargv);
         }
-        if (kenvp) {
+        if (kenvp && kenvp_needs_free) {
             for (size_t i = 0; i < envc; i++) fut_free(kenvp[i]);
             fut_free(kenvp);
         }
@@ -1291,11 +1395,11 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
     fut_vfs_close(fd);
 
     /* Free the kernel copies of argv/envp - they've been copied to user stack */
-    if (kargv) {
+    if (kargv && kargv_needs_free) {
         for (size_t i = 0; i < argc; i++) fut_free(kargv[i]);
         fut_free(kargv);
     }
-    if (kenvp) {
+    if (kenvp && kenvp_needs_free) {
         for (size_t i = 0; i < envc; i++) fut_free(kenvp[i]);
         fut_free(kenvp);
     }
@@ -1643,6 +1747,7 @@ static int build_user_stack(fut_mm_t *mm,
         /* Copy environment strings */
         for (size_t i = envc; i-- > 0;) {
             /* Defensive: Check for NULL envp entry */
+            fut_printf("[STACK-DEBUG] envp[%zu]=%p\n", i, envp[i]);
             if (!envp[i]) {
                 fut_free(envp_ptrs);
                 fut_free(argv_ptrs);

@@ -5,13 +5,12 @@
 #include <shared/fut_timespec.h>
 
 int main(void) {
-    // Init process - launch wl-term Wayland terminal
+    // Init process - launch Wayland compositor and wl-term terminal
 
     // First, set up our own file descriptors to /dev/console
     int test_fd = sys_open("/dev/console", 2, 0);  // O_RDWR = 2
     if (test_fd >= 0) {
-        const char *test_msg = "[INIT-MAIN] Successfully opened /dev/console, fd=%d\n";
-        // Can't use printf yet, write directly
+        const char *test_msg = "[INIT-STUB] Opened /dev/console, fd=%d\n";
         char buf[100];
         int len = 0;
         const char *p = test_msg;
@@ -28,11 +27,46 @@ int main(void) {
         sys_close(test_fd);
     }
 
-    // Delay to let compositor fully start before launching wl-term
+    // Create /tmp directory for Wayland socket
+    sys_mkdir_call("/tmp", 0755);
+    printf("[INIT-STUB] Created /tmp directory\n");
+
+    // Fork and exec the Wayland compositor first
+    printf("[INIT-STUB] Launching futura-wayland compositor...\n");
+    long compositor_pid = sys_fork_call();
+
+    if (compositor_pid == 0) {
+        // Child process - exec into futura-wayland compositor
+        sys_close(0);
+        sys_close(1);
+        sys_close(2);
+        sys_open("/dev/console", 2, 0);  // fd 0 (stdin)
+        sys_open("/dev/console", 2, 0);  // fd 1 (stdout)
+        sys_open("/dev/console", 2, 0);  // fd 2 (stderr)
+
+        const char *argv[] = { "/sbin/futura-wayland", 0 };
+        const char *envp[] = {
+            "XDG_RUNTIME_DIR=/tmp",
+            0
+        };
+        sys_execve_call("/sbin/futura-wayland", (char * const *)argv, (char * const *)envp);
+        // If execve fails, print error and exit
+        printf("[INIT-STUB] FATAL: Failed to exec /sbin/futura-wayland\n");
+        sys_exit(1);
+    } else if (compositor_pid < 0) {
+        printf("[INIT-STUB] FATAL: Failed to fork for compositor\n");
+        // Fall through and try wl-term anyway
+    } else {
+        printf("[INIT-STUB] Compositor launched with PID %ld\n", compositor_pid);
+    }
+
+    // Give compositor time to initialize and create Wayland socket
+    printf("[INIT-STUB] Waiting for compositor to start...\n");
     fut_timespec_t delay = { .tv_sec = 2, .tv_nsec = 0 };
     sys_nanosleep_call(&delay, 0);
 
     // Fork and exec wl-term
+    printf("[INIT-STUB] Launching wl-term...\n");
     long shell_pid = sys_fork_call();
 
     if (shell_pid == 0) {

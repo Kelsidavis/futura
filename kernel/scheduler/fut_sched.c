@@ -664,10 +664,12 @@ void fut_schedule(void) {
         // Only set current_thread if we're actually going to context switch
         fut_thread_set_current(next);
 
-        // CRITICAL: Idle thread (tid=1) must NEVER use IRETQ-based switching!
-        // Its context structure contains stale bootstrap values. Once it starts running,
-        // we can't construct valid interrupt frames from it. Force cooperative switching.
-        bool idle_involved = (prev && prev->tid == 1) || (next && next->tid == 1);
+        // CRITICAL: Idle threads must NEVER use IRETQ-based switching!
+        // Their context structures contain stale bootstrap values. Once they start running,
+        // we can't construct valid interrupt frames from them. Force cooperative switching.
+        // Note: Each CPU has its own idle thread, so we must check against percpu->idle_thread
+        // rather than hardcoding tid==1 (which is only the BSP's idle thread).
+        bool idle_involved = (prev && prev == idle) || (next && next == idle);
 
         // Re-enable IRETQ path for investigation (but not for idle thread)
         if (in_irq && prev && fut_current_frame && !idle_involved) {

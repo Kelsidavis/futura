@@ -472,6 +472,10 @@
 
 extern void fut_printf(const char *fmt, ...);
 extern fut_interrupt_frame_t *fut_current_frame;
+extern int fut_task_count_by_uid(uint32_t uid);
+
+/* Resource limit constants */
+#define RLIMIT_NPROC 6  /* Maximum number of processes for real UID */
 
 /* Forward declarations */
 static fut_mm_t *clone_mm(fut_mm_t *parent_mm);
@@ -623,6 +627,21 @@ long sys_fork(void) {
             if (parent_task->fd_table[i] != NULL) {
                 fd_count++;
             }
+        }
+    }
+
+    /* Phase 5: Enforce RLIMIT_NPROC to prevent fork bombs (Attack Scenario 3) */
+    /* Root (UID 0) is exempt from the limit to allow admin recovery */
+    if (parent_task->uid != 0) {
+        uint64_t rlim_nproc = parent_task->rlimits[RLIMIT_NPROC].rlim_cur;
+        int current_count = fut_task_count_by_uid(parent_task->uid);
+
+        /* Check if user has reached their process limit */
+        if (current_count >= (int)rlim_nproc) {
+            fut_printf("[FORK] fork(parent_pid=%u, uid=%u) -> EAGAIN "
+                       "(RLIMIT_NPROC limit reached: %d >= %llu)\n",
+                       parent_task->pid, parent_task->uid, current_count, rlim_nproc);
+            return -EAGAIN;
         }
     }
 

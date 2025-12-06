@@ -528,3 +528,27 @@ int fut_task_foreach_pgid(uint64_t pgid, void (*callback)(fut_task_t *task, void
     fut_spinlock_release(&task_list_lock);
     return count;
 }
+
+/**
+ * fut_task_count_by_uid - Count processes owned by a specific UID
+ * @uid: User ID to count processes for
+ *
+ * Returns: Number of non-zombie processes owned by the specified UID
+ *
+ * Used for RLIMIT_NPROC enforcement to prevent fork bombs.
+ * Iterates the global task list and counts tasks matching the UID.
+ * Excludes zombie processes from the count.
+ */
+int fut_task_count_by_uid(uint32_t uid) {
+    int count = 0;
+    fut_spinlock_acquire(&task_list_lock);
+    fut_task_t *task = fut_task_list;
+    while (task) {
+        if (task->uid == uid && task->state != FUT_TASK_ZOMBIE) {
+            count++;
+        }
+        task = task->next;
+    }
+    fut_spinlock_release(&task_list_lock);
+    return count;
+}

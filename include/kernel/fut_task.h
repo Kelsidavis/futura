@@ -166,6 +166,14 @@ fut_task_t *fut_task_by_pid(uint64_t pid);
 int fut_task_foreach_pgid(uint64_t pgid, void (*callback)(fut_task_t *task, void *data), void *data);
 
 /**
+ * Count processes owned by a specific UID.
+ *
+ * @param uid User ID to count processes for
+ * @return Number of non-zombie processes owned by the UID
+ */
+int fut_task_count_by_uid(uint32_t uid);
+
+/**
  * Get the effective UID of a task.
  *
  * @param task Task (NULL for current task)

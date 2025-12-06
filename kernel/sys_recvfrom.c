@@ -9,7 +9,8 @@
  * Phase 1 (Completed): Basic recvfrom with VFS read delegation
  * Phase 2 (Completed): Enhanced validation, FD/buffer/flags categorization, detailed logging
  * Phase 3 (Completed): MSG flags implementation with source address tracking
- * Phase 4: Zero-copy receive, scatter-gather I/O
+ * Phase 4 (Completed): Peer address return for AF_UNIX connected sockets
+ * Phase 5: Zero-copy receive, scatter-gather I/O
  */
 
 #include <kernel/fut_task.h>
@@ -17,12 +18,14 @@
 #include <kernel/fut_memory.h>
 #include <kernel/uaccess.h>
 #include <kernel/errno.h>
+#include <kernel/fut_socket.h>
 #include <stddef.h>
 #include <stdint.h>
 
 extern void fut_printf(const char *fmt, ...);
 extern fut_task_t *fut_task_current(void);
 extern struct fut_file *vfs_get_file(int fd);
+extern fut_socket_t *get_socket_from_fd(int fd);
 
 typedef uint32_t socklen_t;
 
@@ -105,7 +108,8 @@ typedef uint32_t socklen_t;
  * Phase 1 (Completed): Basic recvfrom with VFS read delegation
  * Phase 2 (Completed): Enhanced validation, parameter categorization, detailed logging
  * Phase 3 (Completed): MSG flags implementation with source address tracking
- * Phase 4: Zero-copy receive, scatter-gather I/O
+ * Phase 4 (Completed): Peer address return for AF_UNIX connected sockets
+ * Phase 5: Zero-copy receive, scatter-gather I/O
  */
 ssize_t sys_recvfrom(int sockfd, void *buf, size_t len, int flags,
                      void *src_addr, socklen_t *addrlen) {
@@ -200,9 +204,6 @@ ssize_t sys_recvfrom(int sockfd, void *buf, size_t len, int flags,
             flags_description = flags_str;
         }
     }
-
-    (void)local_src_addr;
-    (void)local_addrlen;
 
     /* Validate socket FD */
     struct fut_file *file = vfs_get_file(local_sockfd);
@@ -474,18 +475,81 @@ ssize_t sys_recvfrom(int sockfd, void *buf, size_t len, int flags,
 
     fut_free(kbuf);
 
-    /* Phase 2: Determine address family hint (stub - not yet implemented) */
-    const char *addr_family_hint;
+    /* Phase 4: Return peer address if requested (for connected sockets like SOCK_STREAM)
+     * For connection-oriented protocols, recvfrom() returns the same address as getpeername()
+     * For datagram sockets, this would return the sender's address for the specific packet */
+    const char *addr_family_hint = "no address requested";
+
     if (local_src_addr && local_addrlen) {
-        addr_family_hint = "address requested (AF_INET/AF_UNIX)";
-    } else {
-        addr_family_hint = "no address requested";
+        /* Atomic copy of addrlen to prevent TOCTOU race */
+        socklen_t len = 0;
+        if (fut_copy_from_user(&len, local_addrlen, sizeof(socklen_t)) != 0) {
+            fut_printf("[RECVFROM] recvfrom(sockfd=%d) -> EFAULT (failed to read addrlen)\n",
+                       local_sockfd);
+            return -EFAULT;
+        }
+
+        /* Get socket to retrieve peer address */
+        fut_socket_t *socket = get_socket_from_fd(local_sockfd);
+        if (socket && socket->address_family == 1 /* AF_UNIX */) {
+            /* AF_UNIX: Return peer's bound path if connected */
+            if (socket->pair && socket->pair->peer) {
+                struct {
+                    unsigned short sun_family;
+                    char sun_path[108];
+                } peer_addr;
+
+                peer_addr.sun_family = 1;  /* AF_UNIX */
+
+                /* Get peer socket's bound path */
+                const char *peer_path = "";
+                if (socket->pair->peer->bound_path) {
+                    peer_path = socket->pair->peer->bound_path;
+                }
+
+                /* Copy peer path (truncate if needed) */
+                int i;
+                for (i = 0; i < 107 && peer_path[i] != '\0'; i++) {
+                    peer_addr.sun_path[i] = peer_path[i];
+                }
+                peer_addr.sun_path[i] = '\0';
+
+                /* Calculate actual address length (sun_family + path + null) */
+                unsigned short actual_len = (unsigned short)((char*)&peer_addr.sun_path[0] - (char*)&peer_addr) + i + 1;
+
+                /* Copy address to userspace (truncate if buffer too small) */
+                socklen_t copy_len = (actual_len < len) ? actual_len : len;
+                if (fut_copy_to_user(local_src_addr, &peer_addr, copy_len) != 0) {
+                    fut_printf("[RECVFROM] recvfrom(sockfd=%d) -> EFAULT (failed to copy peer address)\n",
+                               local_sockfd);
+                    /* Note: We already received data successfully, so we can't fail now.
+                     * Just skip writing the address and continue. */
+                    actual_len = 0;
+                }
+
+                /* Write back actual address length */
+                if (fut_copy_to_user(local_addrlen, &actual_len, sizeof(socklen_t)) != 0) {
+                    fut_printf("[RECVFROM] recvfrom(sockfd=%d) -> warning: failed to write back addrlen\n",
+                               local_sockfd);
+                    /* Non-fatal: data was received successfully */
+                } else {
+                    fut_printf("[RECVFROM] AF_UNIX peer address: path='%s', actual_len=%u, copied=%u\n",
+                               peer_path, actual_len, copy_len);
+                }
+
+                addr_family_hint = "AF_UNIX peer address returned";
+            } else {
+                addr_family_hint = "AF_UNIX (not connected, no peer address)";
+            }
+        } else {
+            addr_family_hint = "address requested (non-UNIX family not yet supported)";
+        }
     }
 
-    /* Phase 3: Detailed success logging */
+    /* Phase 4: Detailed success logging with peer address info */
     fut_printf("[RECVFROM] recvfrom(sockfd=%d [%s], buf=%p, len=%zu [%s], "
                "flags=0x%x [%s], src_addr=%s, bytes_received=%zd, pid=%u) -> %zd "
-               "(Phase 3: Socket receive optimization)\n",
+               "(Phase 4: Socket receive with peer address return)\n",
                local_sockfd, fd_category, local_buf, local_len, size_category,
                local_flags, flags_description, addr_family_hint, ret, task->pid, ret);
 

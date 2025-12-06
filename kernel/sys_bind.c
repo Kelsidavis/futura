@@ -233,6 +233,9 @@ typedef struct {
     uint32_t sin6_scope_id;
 } sockaddr_in6_t;
 
+/* Capability constants */
+#define CAP_NET_BIND_SERVICE 10  /* Bind to ports < 1024 */
+
 /* Phase 3: Helper to categorize port numbers */
 static const char *categorize_port(uint16_t port) {
     if (port < 1024) {
@@ -242,6 +245,19 @@ static const char *categorize_port(uint16_t port) {
     } else {
         return "ephemeral/dynamic (49152-65535)";
     }
+}
+
+/* Phase 5: Helper to check if task has CAP_NET_BIND_SERVICE capability */
+static int has_cap_net_bind_service(fut_task_t *task) {
+    if (!task) return 0;
+
+    /* Check if CAP_NET_BIND_SERVICE is in effective capability set */
+    if (task->cap_effective & (1ULL << CAP_NET_BIND_SERVICE)) {
+        return 1;
+    }
+
+    /* Fallback: root (uid 0) has all capabilities */
+    return (task->uid == 0) ? 1 : 0;
 }
 
 /**
@@ -385,6 +401,14 @@ long sys_bind(int sockfd, const void *addr, socklen_t addrlen) {
         uint16_t port = (inet_addr.sin_port >> 8) | ((inet_addr.sin_port & 0xFF) << 8);  /* Network to host byte order */
         const char *port_cat = categorize_port(port);
 
+        /* Phase 5: Enforce CAP_NET_BIND_SERVICE for privileged ports */
+        if (port < 1024 && !has_cap_net_bind_service(task)) {
+            fut_printf("[BIND] bind(sockfd=%d, family=%s, port=%u [%s]) -> EACCES "
+                       "(privileged port requires CAP_NET_BIND_SERVICE, uid=%u)\n",
+                       local_sockfd, family_name, port, port_cat, task->uid);
+            return -EACCES;
+        }
+
         fut_printf("[BIND] bind(sockfd=%d, family=%s, port=%u [%s], addrlen=%u) -> ENOTSUP (AF_INET binding not yet implemented)\n",
                    local_sockfd, family_name, port, port_cat, local_addrlen);
         return -ENOTSUP;
@@ -402,6 +426,14 @@ long sys_bind(int sockfd, const void *addr, socklen_t addrlen) {
         /* Phase 3: Extract port and categorize */
         uint16_t port = (inet6_addr.sin6_port >> 8) | ((inet6_addr.sin6_port & 0xFF) << 8);  /* Network to host byte order */
         const char *port_cat = categorize_port(port);
+
+        /* Phase 5: Enforce CAP_NET_BIND_SERVICE for privileged ports */
+        if (port < 1024 && !has_cap_net_bind_service(task)) {
+            fut_printf("[BIND] bind(sockfd=%d, family=%s, port=%u [%s]) -> EACCES "
+                       "(privileged port requires CAP_NET_BIND_SERVICE, uid=%u)\n",
+                       local_sockfd, family_name, port, port_cat, task->uid);
+            return -EACCES;
+        }
 
         fut_printf("[BIND] bind(sockfd=%d, family=%s, port=%u [%s], addrlen=%u) -> ENOTSUP (AF_INET6 binding not yet implemented)\n",
                    local_sockfd, family_name, port, port_cat, local_addrlen);

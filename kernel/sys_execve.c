@@ -650,16 +650,6 @@ long sys_execve(const char *pathname, char *const argv[], char *const envp[]) {
             /* Ensure null termination (defense in depth) */
             kernel_envp[i][env_len] = '\0';
         }
-        /* Debug: log kernel_envp contents */
-        if (kernel_envp) {
-            fut_printf("[EXECVE] kernel_envp array at %p:\n", kernel_envp);
-            for (int i = 0; i < envc; i++) {
-                /* Try to read first char to verify it's accessible */
-                char first_char = kernel_envp[i] ? kernel_envp[i][0] : '?';
-                fut_printf("[EXECVE]   kernel_envp[%d]=%p first_char='%c' (0x%02x)\n",
-                          i, kernel_envp[i], first_char >= 32 && first_char < 127 ? first_char : '?', (unsigned char)first_char);
-            }
-        }
     }
 
     if (envc >= EXEC_ENVC_MAX) {
@@ -821,13 +811,11 @@ long sys_execve(const char *pathname, char *const argv[], char *const envp[]) {
                            kernel_argv ? kernel_argv : (char *const *)local_argv,
                            kernel_envp ? kernel_envp : (char *const *)local_envp);
 
-    fut_printf("[EXECVE] fut_exec_elf returned %d\n", ret);
     /*
      * fut_exec_elf returns 0 on success (new process created), or negative error.
      * On success, the current thread must exit to let the new process run.
      * This is the correct POSIX execve() semantics: the calling process is replaced.
      */
-    fut_printf("[EXECVE] Checking if ret == 0...\n");
     if (ret == 0) {
         /* Success - exit the current thread, the new process will run */
         extern void fut_thread_exit(void) __attribute__((noreturn));
@@ -835,10 +823,8 @@ long sys_execve(const char *pathname, char *const argv[], char *const envp[]) {
         /* Should not reach here */
     }
 
-    fut_printf("[EXECVE] exec failed, handling error...\n");
     /* If we get here, fut_exec_elf failed. Log the error. */
     const char *error_desc;
-    fut_printf("[EXECVE] About to switch on ret=%d...\n", ret);
     switch (ret) {
         case -ENOENT:
             error_desc = "file not found";

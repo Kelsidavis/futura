@@ -968,18 +968,15 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
         /* argv is a kernel pointer - count entries first */
         const char *const *src_argv = (const char *const *)argv;
         while (src_argv[argc]) argc++;
-        fut_printf("[EXEC-ELF] Kernel argv has %zu entries, copying strings...\n", argc);
 
         /* IMPORTANT: Must COPY strings even from kernel pointers!
-         * See envp comment above - CR3 switch makes old allocations inaccessible. */
+         * See envp comment below - CR3 switch makes old allocations inaccessible. */
         if (argc > 0) {
             kargv = fut_malloc((argc + 1) * sizeof(char *));
             kargv_needs_free = 1;
             if (!kargv) { __asm__ volatile("sti"); return -ENOMEM; }
             for (size_t i = 0; i < argc; i++) {
-                fut_printf("[EXEC-ELF]   Copying argv[%zu] from %p...\n", i, src_argv[i]);
                 size_t len = kstrlen(src_argv[i]) + 1;
-                fut_printf("[EXEC-ELF]   argv[%zu] len=%zu\n", i, len);
                 kargv[i] = fut_malloc(len);
                 if (!kargv[i]) {
                     for (size_t j = 0; j < i; j++) fut_free(kargv[j]);
@@ -992,7 +989,6 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
             }
             kargv[argc] = NULL;
         }
-        fut_printf("[EXEC-ELF] Copied kernel argv, argc=%zu\n", argc);
     }
 
     if (envp && !envp_is_kernel) {
@@ -1073,7 +1069,6 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
         /* envp is a kernel pointer - count entries first */
         const char *const *src_envp = (const char *const *)envp;
         while (src_envp[envc]) envc++;
-       fut_printf("[EXEC-ELF] Kernel envp has %zu entries, copying strings...\n", envc);
 
         /* IMPORTANT: Even though envp is a kernel pointer, we must COPY the strings!
          * The strings were allocated in the OLD address space. When we call fut_mm_create()
@@ -1084,12 +1079,9 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
             kenvp_needs_free = 1;
             if (!kenvp) { __asm__ volatile("sti"); return -ENOMEM; }
             for (size_t i = 0; i < envc; i++) {
-                fut_printf("[EXEC-ELF]   Copying envp[%zu] from %p...\n", i, src_envp[i]);
                 /* Use kstrlen since source is kernel memory */
                 size_t len = kstrlen(src_envp[i]) + 1;
-                fut_printf("[EXEC-ELF]   envp[%zu] len=%zu\n", i, len);
                 kenvp[i] = fut_malloc(len);
-                fut_printf("[EXEC-ELF]   Allocated kenvp[%zu]=%p\n", i, kenvp[i]);
                 if (!kenvp[i]) {
                     for (size_t j = 0; j < i; j++) fut_free(kenvp[j]);
                     fut_free(kenvp);
@@ -1102,33 +1094,22 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
             }
             kenvp[envc] = NULL;
         }
-        fut_printf("[EXEC-ELF] Copied kernel envp, envc=%zu\n", envc);
     }
 
-    fut_printf("[EXEC-ELF] About to open file: %s\n", path);
     int fd = fut_vfs_open(path, O_RDONLY, 0);
-    fut_printf("[EXEC-ELF] Opened file, fd=%d\n", fd);
     if (fd < 0) {
-        fut_printf("[EXEC-ELF] File open failed (fd=%d), cleaning up...\n", fd);
         if (kargv && kargv_needs_free) {
-            fut_printf("[EXEC-ELF] Freeing kargv, argc=%zu\n", argc);
             for (size_t i = 0; i < argc; i++) {
-                fut_printf("[EXEC-ELF]   Freeing kargv[%zu]=%p\n", i, kargv[i]);
                 fut_free(kargv[i]);
             }
-            fut_printf("[EXEC-ELF] Freeing kargv array at %p\n", kargv);
             fut_free(kargv);
         }
         if (kenvp && kenvp_needs_free) {
-            fut_printf("[EXEC-ELF] Freeing kenvp, envc=%zu\n", envc);
             for (size_t i = 0; i < envc; i++) {
-                fut_printf("[EXEC-ELF]   Freeing kenvp[%zu]=%p\n", i, kenvp[i]);
                 fut_free(kenvp[i]);
             }
-            fut_printf("[EXEC-ELF] Freeing kenvp array at %p\n", kenvp);
             fut_free(kenvp);
         }
-        fut_printf("[EXEC-ELF] Cleanup done, re-enabling interrupts\n");
         __asm__ volatile("sti");
         return fd;
     }

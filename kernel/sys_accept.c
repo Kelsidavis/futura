@@ -500,26 +500,68 @@ long sys_accept(int sockfd, void *addr, socklen_t *addrlen) {
         return -EMFILE;
     }
 
-    /* Phase 3: Handle peer address return if requested
-     * Phase 3: For Unix domain sockets, we don't populate peer address yet
-     * Phase 4: Will implement AF_INET/AF_INET6/AF_UNIX peer address return */
+    /* Phase 5: Handle peer address return if requested */
     if (local_addr != NULL && local_addrlen != NULL) {
-        /* Set local_addrlen to 0 to indicate no address returned (Phase 3 limitation) */
+        /* Build peer address based on address family */
         socklen_t actual_len = 0;
+
+        if (accepted_socket->address_family == 1 /* AF_UNIX */) {
+            /* AF_UNIX: Return peer's bound path if available */
+            struct {
+                unsigned short sun_family;
+                char sun_path[108];
+            } peer_addr;
+
+            peer_addr.sun_family = 1;  /* AF_UNIX */
+
+            /* Get peer socket's bound path */
+            const char *peer_path = "";
+            if (accepted_socket->pair && accepted_socket->pair->peer) {
+                if (accepted_socket->pair->peer->bound_path) {
+                    peer_path = accepted_socket->pair->peer->bound_path;
+                }
+            }
+
+            /* Copy peer path (truncate if needed) */
+            int i;
+            for (i = 0; i < 107 && peer_path[i] != '\0'; i++) {
+                peer_addr.sun_path[i] = peer_path[i];
+            }
+            peer_addr.sun_path[i] = '\0';
+
+            /* Calculate actual address length (sun_family + path + null) */
+            actual_len = (unsigned short)((char*)&peer_addr.sun_path[0] - (char*)&peer_addr) + i + 1;
+
+            /* Copy address to userspace (truncate if buffer too small) */
+            socklen_t copy_len = (actual_len < len) ? actual_len : len;
+            if (fut_copy_to_user(local_addr, &peer_addr, copy_len) != 0) {
+                fut_printf("[ACCEPT] accept(local_sockfd=%d, newfd=%d) -> warning: failed to copy peer address (connection established)\n",
+                           local_sockfd, newfd);
+                /* Not fatal - connection is established, just couldn't return address */
+                actual_len = 0;
+            } else {
+                fut_printf("[ACCEPT] AF_UNIX peer address: path='%s', actual_len=%u, copied=%u\n",
+                           peer_path, actual_len, copy_len);
+            }
+        } else {
+            /* Other address families not yet supported */
+            actual_len = 0;
+        }
+
+        /* Write back actual address length */
         if (fut_copy_to_user(local_addrlen, &actual_len, sizeof(socklen_t)) != 0) {
-            fut_printf("[ACCEPT] accept(local_sockfd=%d, newfd=%d, listen_socket_id=%u, accepted_socket_id=%u) "
-                       "-> warning: failed to update local_addrlen (connection established)\n",
-                       local_sockfd, newfd, listen_socket->socket_id, accepted_socket->socket_id);
-            /* Not fatal - connection is established, just couldn't return address */
+            fut_printf("[ACCEPT] accept(local_sockfd=%d, newfd=%d) -> warning: failed to update addrlen (connection established)\n",
+                       local_sockfd, newfd);
+            /* Not fatal - connection is established, just couldn't return address length */
         }
 
         fut_printf("[ACCEPT] accept(local_sockfd=%d, type=%s, state=%s, listen_socket_id=%u, addr_request=%s) "
-                   "-> %d (accepted_socket_id=%u, peer address not yet implemented, Phase 4: AF_INET/AF_INET6/AF_UNIX)\n",
+                   "-> %d (accepted_socket_id=%u, peer address returned, actual_len=%u)\n",
                    local_sockfd, socket_type_desc, socket_state_desc, listen_socket->socket_id,
-                   addr_request, newfd, accepted_socket->socket_id);
+                   addr_request, newfd, accepted_socket->socket_id, actual_len);
     } else {
         fut_printf("[ACCEPT] accept(local_sockfd=%d, type=%s, state=%s, listen_socket_id=%u, addr_request=%s) "
-                   "-> %d (accepted_socket_id=%u, Phase 5: AF_INET/AF_INET6/AF_UNIX peer address)\n",
+                   "-> %d (accepted_socket_id=%u, no address requested)\n",
                    local_sockfd, socket_type_desc, socket_state_desc, listen_socket->socket_id,
                    addr_request, newfd, accepted_socket->socket_id);
     }

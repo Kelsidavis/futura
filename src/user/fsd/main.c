@@ -19,11 +19,28 @@
 #include <string.h>
 #include <errno.h>
 #include <user/sys.h>
-#include <kernel/fut_fipc.h>
-#include <user/futura_posix.h>
-#include <stdio.h>
 
-/* Message types for fsd (internal - not in public header yet) */
+/* FIPC message header structure (matches kernel definition) */
+struct fsd_fipc_msg {
+    uint32_t type;
+    uint32_t length;
+    uint64_t timestamp;
+    uint32_t src_pid;
+    uint32_t dst_pid;
+    uint64_t capability;
+    uint8_t payload[];
+};
+
+/* FIPC channel flags (matches kernel definition) */
+#define FSD_FIPC_BLOCKING     0x00000001
+#define FSD_FIPC_NONBLOCKING  0x00000002
+
+/* FIPC events */
+#define FSD_FIPC_EVENT_MESSAGE 0x01
+
+/* Message types for fsd */
+#define FSD_MSG_REGISTER    0x4001
+#define FSD_MSG_UNREGISTER  0x4002
 #define FSD_MSG_OPEN        0x4003
 #define FSD_MSG_CLOSE       0x4004
 #define FSD_MSG_READ        0x4005
@@ -37,6 +54,9 @@
 #define FSD_MSG_FSYNC       0x400d
 #define FSD_MSG_CHMOD       0x400e
 #define FSD_MSG_CHOWN       0x400f
+
+/* Well-known file for publishing FSD channel ID */
+#define FSD_CHANNEL_FILE "/run/fsd.channel"
 
 /* Per-client FD tracking structure
  * Maps client file descriptors to kernel file descriptors.
@@ -59,10 +79,108 @@ struct fsd_client {
     bool active;                                /* Whether this client is active */
 };
 
+/* Request structures */
+struct fsd_open_req {
+    char path[256];
+    int flags;
+    int mode;
+};
+
+struct fsd_close_req {
+    int fd;
+};
+
+struct fsd_read_req {
+    int fd;
+    size_t count;
+};
+
+struct fsd_write_req {
+    int fd;
+    size_t count;
+    /* data follows immediately after this struct in the message */
+};
+
+struct fsd_mkdir_req {
+    char path[256];
+    int mode;
+};
+
+struct fsd_rmdir_req {
+    char path[256];
+};
+
+struct fsd_unlink_req {
+    char path[256];
+};
+
+struct fsd_stat_req {
+    char path[256];
+};
+
+struct fsd_lseek_req {
+    int fd;
+    int64_t offset;
+    int whence;
+};
+
+struct fsd_fsync_req {
+    int fd;
+};
+
+struct fsd_chmod_req {
+    char path[256];
+    int mode;
+};
+
+struct fsd_chown_req {
+    char path[256];
+    int uid;
+    int gid;
+};
+
 /* Global state */
 static bool running = true;
-static struct fut_fipc_channel *listen_channel = NULL;
+static long listen_channel_id = -1;
 static struct fsd_client clients[FSD_MAX_CLIENTS] = {0};
+
+/* Message buffer */
+#define FSD_MSG_BUFFER_SIZE 8192
+static uint8_t msg_buffer[FSD_MSG_BUFFER_SIZE];
+
+/**
+ * Simple printf-like output for daemon logging
+ */
+static void fsd_log(const char *msg) {
+    size_t len = 0;
+    while (msg[len]) len++;
+    sys_write(2, msg, len);  /* Write to stderr */
+}
+
+static void fsd_log_num(const char *prefix, long num) {
+    fsd_log(prefix);
+    char buf[32];
+    int i = 0;
+    if (num < 0) {
+        buf[i++] = '-';
+        num = -num;
+    }
+    if (num == 0) {
+        buf[i++] = '0';
+    } else {
+        char digits[20];
+        int d = 0;
+        while (num > 0) {
+            digits[d++] = '0' + (num % 10);
+            num /= 10;
+        }
+        while (d > 0) {
+            buf[i++] = digits[--d];
+        }
+    }
+    buf[i++] = '\n';
+    sys_write(2, buf, i);
+}
 
 /**
  * Register a new client with the FSD.
@@ -70,7 +188,7 @@ static struct fsd_client clients[FSD_MAX_CLIENTS] = {0};
  *
  * @return: Client index on success, -1 on failure
  */
-static int __attribute__((unused)) fsd_client_register(uint64_t client_id) {
+static int fsd_client_register(uint64_t client_id) {
     for (int i = 0; i < FSD_MAX_CLIENTS; i++) {
         if (!clients[i].active) {
             clients[i].client_id = client_id;
@@ -82,11 +200,11 @@ static int __attribute__((unused)) fsd_client_register(uint64_t client_id) {
                 clients[i].fds[j].client_fd = -1;
                 clients[i].fds[j].valid = false;
             }
-            printf("[FSD] Registered client %lu at index %d\n", client_id, i);
+            fsd_log_num("[FSD] Registered client at index ", i);
             return i;
         }
     }
-    printf("[FSD] Cannot register client %lu: table full\n", client_id);
+    fsd_log("[FSD] Cannot register client: table full\n");
     return -1;
 }
 
@@ -95,7 +213,7 @@ static int __attribute__((unused)) fsd_client_register(uint64_t client_id) {
  *
  * @return: Client index on success, -1 if not found
  */
-static int __attribute__((unused)) fsd_client_find(uint64_t client_id) {
+static int fsd_client_find(uint64_t client_id) {
     for (int i = 0; i < FSD_MAX_CLIENTS; i++) {
         if (clients[i].active && clients[i].client_id == client_id) {
             return i;
@@ -110,7 +228,7 @@ static int __attribute__((unused)) fsd_client_find(uint64_t client_id) {
  *
  * @return: Client FD on success, -1 on failure
  */
-static int __attribute__((unused)) fsd_client_fd_alloc(int client_idx, int kernel_fd, int flags) {
+static int fsd_client_fd_alloc(int client_idx, int kernel_fd, int flags) {
     if (client_idx < 0 || client_idx >= FSD_MAX_CLIENTS || !clients[client_idx].active) {
         return -1;
     }
@@ -133,7 +251,7 @@ static int __attribute__((unused)) fsd_client_fd_alloc(int client_idx, int kerne
         }
     }
 
-    printf("[FSD] Cannot allocate FD for client %lu: FD table full\n", client->client_id);
+    fsd_log("[FSD] Cannot allocate FD: table full\n");
     return -1;
 }
 
@@ -142,7 +260,7 @@ static int __attribute__((unused)) fsd_client_fd_alloc(int client_idx, int kerne
  *
  * @return: Kernel FD on success, -1 if not found
  */
-static int __attribute__((unused)) fsd_client_fd_get_kernel(int client_idx, int client_fd) {
+static int fsd_client_fd_get_kernel(int client_idx, int client_fd) {
     if (client_idx < 0 || client_idx >= FSD_MAX_CLIENTS) {
         return -1;
     }
@@ -195,7 +313,7 @@ static int fsd_client_fd_free(int client_idx, int client_fd) {
 /**
  * Unregister a client and clean up its resources.
  */
-static void __attribute__((unused)) fsd_client_unregister(int client_idx) {
+static void fsd_client_unregister(int client_idx) {
     if (client_idx < 0 || client_idx >= FSD_MAX_CLIENTS || !clients[client_idx].active) {
         return;
     }
@@ -210,395 +328,582 @@ static void __attribute__((unused)) fsd_client_unregister(int client_idx) {
     }
 
     client->active = false;
-    printf("[FSD] Unregistered client %lu\n", client->client_id);
+    fsd_log_num("[FSD] Unregistered client at index ", client_idx);
 }
 
 /**
- * Response structures for file operations
- */
-struct fsd_open_resp {
-    int fd;
-};
-
-struct fsd_close_resp {
-    int result;
-};
-
-struct fsd_read_resp {
-    ssize_t bytes_read;
-    uint8_t data[4000];  /* Max data in FIPC message */
-};
-
-struct fsd_write_resp {
-    ssize_t bytes_written;
-};
-
-struct fsd_mkdir_resp {
-    int result;
-};
-
-struct fsd_rmdir_resp {
-    int result;
-};
-
-struct fsd_unlink_resp {
-    int result;
-};
-
-struct fsd_stat_resp {
-    int result;
-    /* stat data would be included here */
-};
-
-struct fsd_lseek_resp {
-    off_t offset;
-};
-
-struct fsd_readdir_resp {
-    int result;  /* > 0 for valid entry, 0 for end of dir */
-    /* dirent data would be included here */
-};
-
-struct fsd_fsync_resp {
-    int result;
-};
-
-struct fsd_chmod_resp {
-    int result;
-};
-
-struct fsd_chown_resp {
-    int result;
-};
-
-/**
- * Send response back to client
+ * Send response back to client via FIPC syscall
  */
 static void fsd_send_response(uint32_t type, const void *payload, size_t size) {
-    if (listen_channel) {
-        fut_fipc_send(listen_channel, type, payload, size);
+    if (listen_channel_id >= 0) {
+        sys_fipc_send(listen_channel_id, type, payload, size);
     }
+}
+
+/**
+ * Handle client registration request
+ */
+static void handle_register(struct fsd_fipc_msg *msg) {
+    int32_t result = -EINVAL;
+
+    if (msg) {
+        int idx = fsd_client_register(msg->src_pid);
+        if (idx >= 0) {
+            result = idx;
+        }
+    }
+
+    fsd_send_response(FSD_MSG_REGISTER, &result, sizeof(result));
+}
+
+/**
+ * Handle client unregistration request
+ */
+static void handle_unregister(struct fsd_fipc_msg *msg) {
+    int32_t result = -EINVAL;
+
+    if (msg) {
+        int idx = fsd_client_find(msg->src_pid);
+        if (idx >= 0) {
+            fsd_client_unregister(idx);
+            result = 0;
+        }
+    }
+
+    fsd_send_response(FSD_MSG_UNREGISTER, &result, sizeof(result));
 }
 
 /**
  * Handle file open request via syscall
  */
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Warray-bounds"
-static void handle_open(struct fut_fipc_msg *msg) {
-    struct fsd_open_resp resp = { .fd = -EINVAL };
+static void handle_open(struct fsd_fipc_msg *msg) {
+    int32_t result = -EINVAL;
 
-    /* Validate message size */
-    if (!msg || msg->length < sizeof(struct posixd_open_req)) {
-        fsd_send_response(FSD_MSG_OPEN, &resp, sizeof(resp));
+    if (!msg || msg->length < sizeof(struct fsd_open_req)) {
+        fsd_send_response(FSD_MSG_OPEN, &result, sizeof(result));
         return;
     }
 
-    const struct posixd_open_req *req = (const struct posixd_open_req *)(uintptr_t)msg->payload;
+    const struct fsd_open_req *req = (const struct fsd_open_req *)msg->payload;
     if (!req->path[0]) {
-        fsd_send_response(FSD_MSG_OPEN, &resp, sizeof(resp));
+        fsd_send_response(FSD_MSG_OPEN, &result, sizeof(result));
+        return;
+    }
+
+    /* Find or register client */
+    int client_idx = fsd_client_find(msg->src_pid);
+    if (client_idx < 0) {
+        client_idx = fsd_client_register(msg->src_pid);
+    }
+
+    if (client_idx < 0) {
+        result = -ENOMEM;
+        fsd_send_response(FSD_MSG_OPEN, &result, sizeof(result));
         return;
     }
 
     /* Use syscall to open file */
-    long fd = sys_open(req->path, req->flags, req->mode);
-    resp.fd = (int)fd;
+    long kernel_fd = sys_open(req->path, req->flags, req->mode);
+    if (kernel_fd < 0) {
+        result = (int32_t)kernel_fd;
+        fsd_send_response(FSD_MSG_OPEN, &result, sizeof(result));
+        return;
+    }
 
-    fsd_send_response(FSD_MSG_OPEN, &resp, sizeof(resp));
+    /* Allocate client FD */
+    int client_fd = fsd_client_fd_alloc(client_idx, (int)kernel_fd, req->flags);
+    if (client_fd < 0) {
+        sys_close(kernel_fd);
+        result = -ENOMEM;
+        fsd_send_response(FSD_MSG_OPEN, &result, sizeof(result));
+        return;
+    }
+
+    result = client_fd;
+    fsd_send_response(FSD_MSG_OPEN, &result, sizeof(result));
 }
-#pragma GCC diagnostic pop
 
 /**
  * Handle file read request via syscall
  */
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Warray-bounds"
-static void handle_read(struct fut_fipc_msg *msg) {
+static void handle_read(struct fsd_fipc_msg *msg) {
     struct {
-        struct fsd_read_resp header;
-    } resp = { .header = { .bytes_read = -EINVAL } };
+        int32_t bytes_read;
+        uint8_t data[4000];
+    } resp = { .bytes_read = -EINVAL };
 
-    /* Validate message */
-    if (!msg || msg->length < sizeof(struct posixd_read_req)) {
-        fsd_send_response(FSD_MSG_READ, &resp.header, sizeof(resp.header));
+    if (!msg || msg->length < sizeof(struct fsd_read_req)) {
+        fsd_send_response(FSD_MSG_READ, &resp, sizeof(resp.bytes_read));
         return;
     }
 
-    const struct posixd_read_req *req = (const struct posixd_read_req *)(uintptr_t)msg->payload;
-    if (req->fd < 0) {
-        fsd_send_response(FSD_MSG_READ, &resp.header, sizeof(resp.header));
+    const struct fsd_read_req *req = (const struct fsd_read_req *)msg->payload;
+
+    /* Find client and get kernel FD */
+    int client_idx = fsd_client_find(msg->src_pid);
+    if (client_idx < 0) {
+        fsd_send_response(FSD_MSG_READ, &resp, sizeof(resp.bytes_read));
+        return;
+    }
+
+    int kernel_fd = fsd_client_fd_get_kernel(client_idx, req->fd);
+    if (kernel_fd < 0) {
+        resp.bytes_read = -EBADF;
+        fsd_send_response(FSD_MSG_READ, &resp, sizeof(resp.bytes_read));
         return;
     }
 
     /* Limit read size to response buffer capacity */
     size_t read_size = req->count;
-    if (read_size > sizeof(resp.header.data)) {
-        read_size = sizeof(resp.header.data);
+    if (read_size > sizeof(resp.data)) {
+        read_size = sizeof(resp.data);
     }
 
     /* Use syscall to read file */
-    long bytes_read = sys_read(req->fd, resp.header.data, read_size);
-    resp.header.bytes_read = bytes_read;
+    long bytes_read = sys_read(kernel_fd, resp.data, read_size);
+    resp.bytes_read = (int32_t)bytes_read;
 
     /* Send response with data */
-    size_t response_size = sizeof(resp.header.bytes_read);
+    size_t response_size = sizeof(resp.bytes_read);
     if (bytes_read > 0) {
-        response_size += bytes_read;
+        response_size += (size_t)bytes_read;
     }
 
-    /* Pack response: just the bytes_read value + data */
-    struct fsd_read_resp *send_resp = (struct fsd_read_resp *)&resp.header;
-    fsd_send_response(FSD_MSG_READ, send_resp, response_size);
+    fsd_send_response(FSD_MSG_READ, &resp, response_size);
 }
-#pragma GCC diagnostic pop
 
 /**
  * Handle file write request via syscall
  */
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Warray-bounds"
-static void handle_write(struct fut_fipc_msg *msg) {
-    struct fsd_write_resp resp = { .bytes_written = -EINVAL };
+static void handle_write(struct fsd_fipc_msg *msg) {
+    int32_t result = -EINVAL;
 
-    /* Validate message */
-    if (!msg || msg->length < sizeof(struct posixd_write_req)) {
-        fsd_send_response(FSD_MSG_WRITE, &resp, sizeof(resp));
+    if (!msg || msg->length < sizeof(struct fsd_write_req)) {
+        fsd_send_response(FSD_MSG_WRITE, &result, sizeof(result));
         return;
     }
 
-    const struct posixd_write_req *req = (const struct posixd_write_req *)(uintptr_t)msg->payload;
-    if (req->fd < 0) {
-        fsd_send_response(FSD_MSG_WRITE, &resp, sizeof(resp));
+    const struct fsd_write_req *req = (const struct fsd_write_req *)msg->payload;
+
+    /* Find client and get kernel FD */
+    int client_idx = fsd_client_find(msg->src_pid);
+    if (client_idx < 0) {
+        fsd_send_response(FSD_MSG_WRITE, &result, sizeof(result));
+        return;
+    }
+
+    int kernel_fd = fsd_client_fd_get_kernel(client_idx, req->fd);
+    if (kernel_fd < 0) {
+        result = -EBADF;
+        fsd_send_response(FSD_MSG_WRITE, &result, sizeof(result));
         return;
     }
 
     /* Extract write data from message payload (after request header) */
-    const uint8_t *write_data = (const uint8_t *)(uintptr_t)(msg->payload) + sizeof(*req);
+    const uint8_t *write_data = msg->payload + sizeof(struct fsd_write_req);
 
     /* Calculate available data size in message */
-    size_t available_data = msg->length - sizeof(*req);
+    size_t available_data = msg->length - sizeof(struct fsd_write_req);
     size_t write_size = (req->count < available_data) ? req->count : available_data;
 
     /* Use syscall to write file */
-    long bytes_written = sys_write(req->fd, write_data, write_size);
-    resp.bytes_written = bytes_written;
+    long bytes_written = sys_write(kernel_fd, write_data, write_size);
+    result = (int32_t)bytes_written;
 
-    fsd_send_response(FSD_MSG_WRITE, &resp, sizeof(resp));
+    fsd_send_response(FSD_MSG_WRITE, &result, sizeof(result));
 }
-#pragma GCC diagnostic pop
 
 /**
  * Handle file close request via syscall
  */
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Warray-bounds"
-static void handle_close(struct fut_fipc_msg *msg) {
-    struct fsd_close_resp resp = { .result = -EINVAL };
+static void handle_close(struct fsd_fipc_msg *msg) {
+    int32_t result = -EINVAL;
 
-    /* Validate message */
-    if (!msg || msg->length < sizeof(struct posixd_close_req)) {
-        fsd_send_response(FSD_MSG_CLOSE, &resp, sizeof(resp));
+    if (!msg || msg->length < sizeof(struct fsd_close_req)) {
+        fsd_send_response(FSD_MSG_CLOSE, &result, sizeof(result));
         return;
     }
 
-    const struct posixd_close_req *req = (const struct posixd_close_req *)(uintptr_t)msg->payload;
-    if (req->fd < 0) {
-        fsd_send_response(FSD_MSG_CLOSE, &resp, sizeof(resp));
+    const struct fsd_close_req *req = (const struct fsd_close_req *)msg->payload;
+
+    /* Find client */
+    int client_idx = fsd_client_find(msg->src_pid);
+    if (client_idx < 0) {
+        fsd_send_response(FSD_MSG_CLOSE, &result, sizeof(result));
         return;
     }
 
-    /* Use syscall to close file */
-    long result = sys_close(req->fd);
-    resp.result = (int)result;
+    /* Free the client FD (this also closes the kernel FD) */
+    int ret = fsd_client_fd_free(client_idx, req->fd);
+    result = (ret == 0) ? 0 : -EBADF;
 
-    fsd_send_response(FSD_MSG_CLOSE, &resp, sizeof(resp));
+    fsd_send_response(FSD_MSG_CLOSE, &result, sizeof(result));
 }
-#pragma GCC diagnostic pop
 
 /**
  * Handle mkdir request via syscall
  */
-static void handle_mkdir(struct fut_fipc_msg *msg) {
-    struct fsd_mkdir_resp resp = { .result = -EINVAL };
-    (void)msg;
+static void handle_mkdir(struct fsd_fipc_msg *msg) {
+    int32_t result = -EINVAL;
 
-    /* Minimal implementation - full version would parse message */
-    fsd_send_response(FSD_MSG_MKDIR, &resp, sizeof(resp));
+    if (!msg || msg->length < sizeof(struct fsd_mkdir_req)) {
+        fsd_send_response(FSD_MSG_MKDIR, &result, sizeof(result));
+        return;
+    }
+
+    const struct fsd_mkdir_req *req = (const struct fsd_mkdir_req *)msg->payload;
+    if (!req->path[0]) {
+        fsd_send_response(FSD_MSG_MKDIR, &result, sizeof(result));
+        return;
+    }
+
+    result = (int32_t)sys_mkdir_call(req->path, req->mode);
+    fsd_send_response(FSD_MSG_MKDIR, &result, sizeof(result));
 }
 
 /**
  * Handle rmdir request via syscall
  */
-static void handle_rmdir(struct fut_fipc_msg *msg) {
-    struct fsd_rmdir_resp resp = { .result = -EINVAL };
-    (void)msg;
+static void handle_rmdir(struct fsd_fipc_msg *msg) {
+    int32_t result = -EINVAL;
 
-    /* Minimal implementation - full version would parse message */
-    fsd_send_response(FSD_MSG_RMDIR, &resp, sizeof(resp));
+    if (!msg || msg->length < sizeof(struct fsd_rmdir_req)) {
+        fsd_send_response(FSD_MSG_RMDIR, &result, sizeof(result));
+        return;
+    }
+
+    const struct fsd_rmdir_req *req = (const struct fsd_rmdir_req *)msg->payload;
+    if (!req->path[0]) {
+        fsd_send_response(FSD_MSG_RMDIR, &result, sizeof(result));
+        return;
+    }
+
+    result = (int32_t)sys_rmdir_call(req->path);
+    fsd_send_response(FSD_MSG_RMDIR, &result, sizeof(result));
 }
 
 /**
  * Handle unlink request via syscall
  */
-static void handle_unlink(struct fut_fipc_msg *msg) {
-    struct fsd_unlink_resp resp = { .result = -EINVAL };
-    (void)msg;
+static void handle_unlink(struct fsd_fipc_msg *msg) {
+    int32_t result = -EINVAL;
 
-    /* Minimal implementation - full version would parse message */
-    fsd_send_response(FSD_MSG_UNLINK, &resp, sizeof(resp));
+    if (!msg || msg->length < sizeof(struct fsd_unlink_req)) {
+        fsd_send_response(FSD_MSG_UNLINK, &result, sizeof(result));
+        return;
+    }
+
+    const struct fsd_unlink_req *req = (const struct fsd_unlink_req *)msg->payload;
+    if (!req->path[0]) {
+        fsd_send_response(FSD_MSG_UNLINK, &result, sizeof(result));
+        return;
+    }
+
+    result = (int32_t)sys_unlink(req->path);
+    fsd_send_response(FSD_MSG_UNLINK, &result, sizeof(result));
 }
 
 /**
  * Handle stat request via syscall
  */
-static void handle_stat(struct fut_fipc_msg *msg) {
-    struct fsd_stat_resp resp = { .result = -EINVAL };
-    (void)msg;
+static void handle_stat(struct fsd_fipc_msg *msg) {
+    struct {
+        int32_t result;
+        uint8_t stat_buf[128];  /* Space for struct stat */
+    } resp = { .result = -EINVAL };
 
-    /* Minimal implementation - full version would parse message */
-    fsd_send_response(FSD_MSG_STAT, &resp, sizeof(resp));
+    if (!msg || msg->length < sizeof(struct fsd_stat_req)) {
+        fsd_send_response(FSD_MSG_STAT, &resp, sizeof(resp.result));
+        return;
+    }
+
+    const struct fsd_stat_req *req = (const struct fsd_stat_req *)msg->payload;
+    if (!req->path[0]) {
+        fsd_send_response(FSD_MSG_STAT, &resp, sizeof(resp.result));
+        return;
+    }
+
+    resp.result = (int32_t)sys_stat_call(req->path, resp.stat_buf);
+
+    if (resp.result == 0) {
+        fsd_send_response(FSD_MSG_STAT, &resp, sizeof(resp));
+    } else {
+        fsd_send_response(FSD_MSG_STAT, &resp, sizeof(resp.result));
+    }
 }
 
 /**
  * Handle lseek request via syscall
  */
-static void handle_lseek(struct fut_fipc_msg *msg) {
-    struct fsd_lseek_resp resp = { .offset = -EINVAL };
-    (void)msg;
+static void handle_lseek(struct fsd_fipc_msg *msg) {
+    int64_t result = -EINVAL;
 
-    /* Minimal implementation - full version would parse message */
-    fsd_send_response(FSD_MSG_LSEEK, &resp, sizeof(resp));
+    if (!msg || msg->length < sizeof(struct fsd_lseek_req)) {
+        fsd_send_response(FSD_MSG_LSEEK, &result, sizeof(result));
+        return;
+    }
+
+    const struct fsd_lseek_req *req = (const struct fsd_lseek_req *)msg->payload;
+
+    /* Find client and get kernel FD */
+    int client_idx = fsd_client_find(msg->src_pid);
+    if (client_idx < 0) {
+        fsd_send_response(FSD_MSG_LSEEK, &result, sizeof(result));
+        return;
+    }
+
+    int kernel_fd = fsd_client_fd_get_kernel(client_idx, req->fd);
+    if (kernel_fd < 0) {
+        result = -EBADF;
+        fsd_send_response(FSD_MSG_LSEEK, &result, sizeof(result));
+        return;
+    }
+
+    result = sys_lseek_call(kernel_fd, req->offset, req->whence);
+    fsd_send_response(FSD_MSG_LSEEK, &result, sizeof(result));
 }
 
 /**
  * Handle fsync request via syscall
  */
-static void handle_fsync(struct fut_fipc_msg *msg) {
-    struct fsd_fsync_resp resp = { .result = -EINVAL };
-    (void)msg;
+static void handle_fsync(struct fsd_fipc_msg *msg) {
+    int32_t result = -EINVAL;
 
-    /* Minimal implementation - full version would parse message */
-    fsd_send_response(FSD_MSG_FSYNC, &resp, sizeof(resp));
+    if (!msg || msg->length < sizeof(struct fsd_fsync_req)) {
+        fsd_send_response(FSD_MSG_FSYNC, &result, sizeof(result));
+        return;
+    }
+
+    const struct fsd_fsync_req *req = (const struct fsd_fsync_req *)msg->payload;
+
+    /* Find client and get kernel FD */
+    int client_idx = fsd_client_find(msg->src_pid);
+    if (client_idx < 0) {
+        fsd_send_response(FSD_MSG_FSYNC, &result, sizeof(result));
+        return;
+    }
+
+    int kernel_fd = fsd_client_fd_get_kernel(client_idx, req->fd);
+    if (kernel_fd < 0) {
+        result = -EBADF;
+        fsd_send_response(FSD_MSG_FSYNC, &result, sizeof(result));
+        return;
+    }
+
+    result = (int32_t)sys_fsync_call(kernel_fd);
+    fsd_send_response(FSD_MSG_FSYNC, &result, sizeof(result));
 }
 
 /**
  * Handle chmod request via syscall
  */
-static void handle_chmod(struct fut_fipc_msg *msg) {
-    struct fsd_chmod_resp resp = { .result = -EINVAL };
-    (void)msg;
+static void handle_chmod(struct fsd_fipc_msg *msg) {
+    int32_t result = -EINVAL;
 
-    /* Minimal implementation - full version would parse message */
-    fsd_send_response(FSD_MSG_CHMOD, &resp, sizeof(resp));
+    if (!msg || msg->length < sizeof(struct fsd_chmod_req)) {
+        fsd_send_response(FSD_MSG_CHMOD, &result, sizeof(result));
+        return;
+    }
+
+    const struct fsd_chmod_req *req = (const struct fsd_chmod_req *)msg->payload;
+    if (!req->path[0]) {
+        fsd_send_response(FSD_MSG_CHMOD, &result, sizeof(result));
+        return;
+    }
+
+    result = (int32_t)sys_chmod_call(req->path, req->mode);
+    fsd_send_response(FSD_MSG_CHMOD, &result, sizeof(result));
 }
 
 /**
  * Handle chown request via syscall
  */
-static void handle_chown(struct fut_fipc_msg *msg) {
-    struct fsd_chown_resp resp = { .result = -EINVAL };
-    (void)msg;
+static void handle_chown(struct fsd_fipc_msg *msg) {
+    int32_t result = -EINVAL;
 
-    /* Minimal implementation - full version would parse message */
-    fsd_send_response(FSD_MSG_CHOWN, &resp, sizeof(resp));
+    if (!msg || msg->length < sizeof(struct fsd_chown_req)) {
+        fsd_send_response(FSD_MSG_CHOWN, &result, sizeof(result));
+        return;
+    }
+
+    const struct fsd_chown_req *req = (const struct fsd_chown_req *)msg->payload;
+    if (!req->path[0]) {
+        fsd_send_response(FSD_MSG_CHOWN, &result, sizeof(result));
+        return;
+    }
+
+    result = (int32_t)sys_chown_call(req->path, req->uid, req->gid);
+    fsd_send_response(FSD_MSG_CHOWN, &result, sizeof(result));
 }
 
 /**
  * Main event loop - receive and dispatch FIPC messages
  */
 static void fsd_main_loop(void) {
+    fsd_log("[FSD] Entering main event loop\n");
+
     while (running) {
-        if (!listen_channel) {
-            continue;
+        if (listen_channel_id < 0) {
+            fsd_log("[FSD] No listen channel, exiting\n");
+            break;
         }
 
-        struct fut_fipc_msg msg;
-        long received = fut_fipc_recv(listen_channel, &msg, sizeof(msg));
+        /* Receive message via FIPC syscall */
+        long received = sys_fipc_recv(listen_channel_id, msg_buffer, FSD_MSG_BUFFER_SIZE);
 
         if (received > 0) {
+            struct fsd_fipc_msg *msg = (struct fsd_fipc_msg *)msg_buffer;
+
             /* Route to appropriate handler */
-            switch (msg.type) {
+            switch (msg->type) {
+            case FSD_MSG_REGISTER:
+                handle_register(msg);
+                break;
+            case FSD_MSG_UNREGISTER:
+                handle_unregister(msg);
+                break;
             case FSD_MSG_OPEN:
-                handle_open(&msg);
+                handle_open(msg);
                 break;
             case FSD_MSG_CLOSE:
-                handle_close(&msg);
+                handle_close(msg);
                 break;
             case FSD_MSG_READ:
-                handle_read(&msg);
+                handle_read(msg);
                 break;
             case FSD_MSG_WRITE:
-                handle_write(&msg);
+                handle_write(msg);
                 break;
             case FSD_MSG_MKDIR:
-                handle_mkdir(&msg);
+                handle_mkdir(msg);
                 break;
             case FSD_MSG_RMDIR:
-                handle_rmdir(&msg);
+                handle_rmdir(msg);
                 break;
             case FSD_MSG_UNLINK:
-                handle_unlink(&msg);
+                handle_unlink(msg);
                 break;
             case FSD_MSG_STAT:
-                handle_stat(&msg);
+                handle_stat(msg);
                 break;
             case FSD_MSG_LSEEK:
-                handle_lseek(&msg);
+                handle_lseek(msg);
                 break;
             case FSD_MSG_FSYNC:
-                handle_fsync(&msg);
+                handle_fsync(msg);
                 break;
             case FSD_MSG_CHMOD:
-                handle_chmod(&msg);
+                handle_chmod(msg);
                 break;
             case FSD_MSG_CHOWN:
-                handle_chown(&msg);
+                handle_chown(msg);
                 break;
             default:
-                /* Unknown message type */
+                fsd_log_num("[FSD] Unknown message type: ", msg->type);
                 break;
             }
         } else if (received == -EAGAIN) {
-            /* Timeout - keep looping */
-            continue;
+            /* Non-blocking mode, no message available */
+            /* Could yield here or do other work */
+            sys_sched_yield();
         } else if (received < 0) {
-            /* Error - continue trying */
-            continue;
+            /* Error */
+            fsd_log_num("[FSD] recv error: ", received);
         }
     }
 }
 
 /**
- * Initialization
+ * Publish channel ID to well-known file
  */
-static void fsd_init(void) {
-    /* Filesystem daemon initialization
-     * - Create FIPC listen channel for filesystem service
-     * - Register with service registry
-     * - Load filesystem drivers (stub for future)
-     */
+static int fsd_publish_channel(long channel_id) {
+    /* Create /run directory if it doesn't exist */
+    sys_mkdir_call("/run", 0755);
 
-    /* In a full implementation, this would:
-     * 1. Create a FIPC channel for listening to requests
-     * 2. Register the channel with the service registry daemon
-     * 3. Load filesystem drivers (FuturaFS, ext4, etc.)
-     * 4. Mount filesystems based on configuration
-     *
-     * Currently, this is scaffolding for future integration.
-     * The FSD daemon can be invoked by clients that know the
-     * FIPC channel endpoint in advance.
-     */
+    /* Write channel ID to file */
+    long fd = sys_open(FSD_CHANNEL_FILE, 0x0241 /* O_CREAT | O_TRUNC | O_WRONLY */, 0644);
+    if (fd < 0) {
+        fsd_log("[FSD] Failed to create channel file\n");
+        return -1;
+    }
+
+    /* Convert channel ID to string */
+    char buf[32];
+    int i = 0;
+    long num = channel_id;
+    if (num == 0) {
+        buf[i++] = '0';
+    } else {
+        char digits[20];
+        int d = 0;
+        while (num > 0) {
+            digits[d++] = '0' + (num % 10);
+            num /= 10;
+        }
+        while (d > 0) {
+            buf[i++] = digits[--d];
+        }
+    }
+    buf[i++] = '\n';
+
+    sys_write(fd, buf, i);
+    sys_close(fd);
+
+    fsd_log_num("[FSD] Published channel ID: ", channel_id);
+    return 0;
 }
 
 /**
- * Shutdown
+ * Initialization - create FIPC channel and publish it
+ */
+static int fsd_init(void) {
+    fsd_log("[FSD] Filesystem daemon starting...\n");
+
+    /* Create FIPC channel for listening to requests */
+    listen_channel_id = sys_fipc_create(FSD_FIPC_BLOCKING, 16384);
+    if (listen_channel_id < 0) {
+        fsd_log("[FSD] Failed to create FIPC channel\n");
+        return -1;
+    }
+
+    fsd_log_num("[FSD] Created FIPC channel: ", listen_channel_id);
+
+    /* Publish channel ID so clients can connect */
+    if (fsd_publish_channel(listen_channel_id) < 0) {
+        fsd_log("[FSD] Failed to publish channel\n");
+        sys_fipc_close(listen_channel_id);
+        listen_channel_id = -1;
+        return -1;
+    }
+
+    fsd_log("[FSD] Initialization complete\n");
+    return 0;
+}
+
+/**
+ * Shutdown - cleanup resources
  */
 static void fsd_shutdown(void) {
-    if (listen_channel) {
-        /* Close FIPC channel */
-        listen_channel = NULL;
+    fsd_log("[FSD] Shutting down...\n");
+
+    /* Unregister all clients */
+    for (int i = 0; i < FSD_MAX_CLIENTS; i++) {
+        if (clients[i].active) {
+            fsd_client_unregister(i);
+        }
     }
+
+    /* Close FIPC channel */
+    if (listen_channel_id >= 0) {
+        sys_fipc_close(listen_channel_id);
+        listen_channel_id = -1;
+    }
+
+    /* Remove channel file */
+    sys_unlink(FSD_CHANNEL_FILE);
+
     running = false;
+    fsd_log("[FSD] Shutdown complete\n");
 }
 
 /**
@@ -608,7 +913,10 @@ int main(int argc, char *argv[]) {
     (void)argc;
     (void)argv;
 
-    fsd_init();
+    if (fsd_init() < 0) {
+        return 1;
+    }
+
     fsd_main_loop();
     fsd_shutdown();
 

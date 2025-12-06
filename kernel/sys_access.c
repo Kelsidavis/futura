@@ -21,6 +21,11 @@ extern void fut_printf(const char *fmt, ...);
 extern int fut_copy_from_user(void *to, const void *from, size_t size);
 extern fut_task_t *fut_task_current(void);
 
+/* VFS permission checking functions */
+extern int vfs_check_read_perm(struct fut_vnode *vnode);
+extern int vfs_check_write_perm(struct fut_vnode *vnode);
+extern int vfs_check_exec_perm(struct fut_vnode *vnode);
+
 /* access() mode bits */
 #define F_OK 0  /* File exists */
 #define X_OK 1  /* Execute permission */
@@ -286,34 +291,7 @@ long sys_access(const char *pathname, int mode) {
         return 0;
     }
 
-    /* Get current task for permission checking */
-    fut_task_t *current = fut_task_current();
-    if (!current) {
-        fut_printf("[ACCESS] access(path='%s' [%s], mode=%s) -> EACCES "
-                   "(no current task)\n", path_buf, path_type, mode_desc);
-        return -EACCES;
-    }
-
-    /* Phase 3: Check permissions based on mode bits
-     *
-     * For simplicity, we use a basic permission model:
-     * - Uses "other" permission bits (bits 0-2) from file mode
-     * - Full implementation would check uid/gid against vnode ownership
-     * - Future Phase 4: Implement proper user/group/other permission checking with caching
-     */
-
-    uint32_t file_mode = vnode->mode;
-
-    /* Extract permission bits from file mode (st_mode follows Unix convention:
-     * bits 0-8 are permissions: user(6-8), group(3-5), other(0-2) */
-    uint32_t other_perms = (file_mode >> 0) & 0x7;   /* rwx for others */
-
-    /* Simplified permission check: use "other" permissions for all users
-     * A full implementation would check uid/gid against vnode ownership
-     * and apply user/group/other permissions accordingly */
-    uint32_t applicable_perms = other_perms;
-
-    /* Phase 2: Build permission check description */
+    /* Phase 4: Build permission check description */
     char perm_check_buf[64];
     char *p = perm_check_buf;
     int perm_count = 0;
@@ -341,26 +319,39 @@ long sys_access(const char *pathname, int mode) {
     }
     *p = '\0';
 
-    /* Phase 3: Check each requested permission with detailed logging */
-    if ((local_mode & R_OK) && !(applicable_perms & 4)) {  /* Read bit */
-        fut_printf("[ACCESS] access(path='%s' [%s], mode=%s, file_mode=0%o, "
-                   "checking=%s) -> EACCES (read permission denied, Phase 4: uid/gid checking)\n",
-                   path_buf, path_type, mode_desc, file_mode, perm_check_buf);
-        return -EACCES;
+    uint32_t file_mode = vnode->mode;
+
+    /* Phase 4: Check permissions using real uid/gid-aware permission checks
+     * Uses vfs_check_*_perm functions that properly check owner/group/other */
+
+    if (local_mode & R_OK) {
+        int ret = vfs_check_read_perm(vnode);
+        if (ret < 0) {
+            fut_printf("[ACCESS] access(path='%s' [%s], mode=%s, file_mode=0%o, uid=%u, gid=%u, "
+                       "checking=%s) -> EACCES (read permission denied)\n",
+                       path_buf, path_type, mode_desc, file_mode, vnode->uid, vnode->gid, perm_check_buf);
+            return -EACCES;
+        }
     }
 
-    if ((local_mode & W_OK) && !(applicable_perms & 2)) {  /* Write bit */
-        fut_printf("[ACCESS] access(path='%s' [%s], mode=%s, file_mode=0%o, "
-                   "checking=%s) -> EACCES (write permission denied, Phase 4: uid/gid checking)\n",
-                   path_buf, path_type, mode_desc, file_mode, perm_check_buf);
-        return -EACCES;
+    if (local_mode & W_OK) {
+        int ret = vfs_check_write_perm(vnode);
+        if (ret < 0) {
+            fut_printf("[ACCESS] access(path='%s' [%s], mode=%s, file_mode=0%o, uid=%u, gid=%u, "
+                       "checking=%s) -> EACCES (write permission denied)\n",
+                       path_buf, path_type, mode_desc, file_mode, vnode->uid, vnode->gid, perm_check_buf);
+            return -EACCES;
+        }
     }
 
-    if ((local_mode & X_OK) && !(applicable_perms & 1)) {  /* Execute bit */
-        fut_printf("[ACCESS] access(path='%s' [%s], mode=%s, file_mode=0%o, "
-                   "checking=%s) -> EACCES (execute permission denied, Phase 4: uid/gid checking)\n",
-                   path_buf, path_type, mode_desc, file_mode, perm_check_buf);
-        return -EACCES;
+    if (local_mode & X_OK) {
+        int ret = vfs_check_exec_perm(vnode);
+        if (ret < 0) {
+            fut_printf("[ACCESS] access(path='%s' [%s], mode=%s, file_mode=0%o, uid=%u, gid=%u, "
+                       "checking=%s) -> EACCES (execute permission denied)\n",
+                       path_buf, path_type, mode_desc, file_mode, vnode->uid, vnode->gid, perm_check_buf);
+            return -EACCES;
+        }
     }
 
     /* Security hardening WARNING: TOCTOU Race Condition
@@ -395,11 +386,11 @@ long sys_access(const char *pathname, int mode) {
      * Applications must avoid access() for security checks.
      */
 
-    /* Phase 3: Detailed success logging with TOCTOU warning */
-    fut_printf("[ACCESS] access(path='%s' [%s], mode=%s, file_mode=0%o, "
-               "checking=%s) -> 0 (all permissions granted, Phase 4: uid/gid checking and ACLs) "
+    /* Phase 4: Detailed success logging with TOCTOU warning */
+    fut_printf("[ACCESS] access(path='%s' [%s], mode=%s, file_mode=0%o, uid=%u, gid=%u, "
+               "checking=%s) -> 0 (all permissions granted with uid/gid checks) "
                "WARNING: access() is vulnerable to TOCTOU - use open() directly instead\n",
-               path_buf, path_type, mode_desc, file_mode, perm_check_buf);
+               path_buf, path_type, mode_desc, file_mode, vnode->uid, vnode->gid, perm_check_buf);
 
     return 0;
 }

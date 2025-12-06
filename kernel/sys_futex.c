@@ -9,12 +9,60 @@
  */
 
 #include <kernel/fut_task.h>
+#include <kernel/fut_thread.h>
+#include <kernel/fut_waitq.h>
+#include <kernel/fut_sched.h>
+#include <kernel/fut_timer.h>
 #include <kernel/errno.h>
 #include <shared/fut_timespec.h>
 
 extern void fut_printf(const char *fmt, ...);
 extern fut_task_t *fut_task_current(void);
+extern fut_thread_t *fut_thread_current(void);
 extern int fut_access_ok(const void *u_ptr, size_t len, int write);
+extern int fut_copy_from_user(void *to, const void *from, size_t size);
+
+/* ============================================================
+ *   Futex Hash Table
+ * ============================================================ */
+
+#define FUTEX_HASH_SIZE 256  /* Number of hash buckets */
+
+/* Futex hash table bucket - contains wait queue for all futexes hashing to this bucket */
+typedef struct futex_bucket {
+    fut_spinlock_t lock;
+    fut_waitq_t waiters;
+} futex_bucket_t;
+
+/* Global futex hash table */
+static futex_bucket_t futex_hash[FUTEX_HASH_SIZE];
+static bool futex_initialized = false;
+
+/* Simple hash function for futex addresses */
+static inline uint32_t futex_hash_key(uint32_t *uaddr) {
+    /* Use address bits for hashing - ignore lowest bits (alignment) */
+    uint64_t addr = (uint64_t)uaddr;
+    return (uint32_t)((addr >> 2) % FUTEX_HASH_SIZE);
+}
+
+/* Initialize futex subsystem */
+static void futex_init_once(void) {
+    if (futex_initialized) {
+        return;
+    }
+    for (int i = 0; i < FUTEX_HASH_SIZE; i++) {
+        futex_hash[i].lock.locked = 0;
+        fut_waitq_init(&futex_hash[i].waiters);
+    }
+    futex_initialized = true;
+}
+
+/* Get hash bucket for a futex address */
+static futex_bucket_t *futex_get_bucket(uint32_t *uaddr) {
+    futex_init_once();
+    uint32_t key = futex_hash_key(uaddr);
+    return &futex_hash[key];
+}
 
 /* Futex operations */
 #define FUTEX_WAIT              0
@@ -190,23 +238,105 @@ long sys_futex(uint32_t *uaddr, int op, uint32_t val,
 
     switch (cmd) {
         case FUTEX_WAIT:
-            /* Phase 5: CRITICAL - Must implement atomic check-and-sleep
-             * Current stub is NOT secure - returns immediately without:
-             * 1. Validating *uaddr is accessible (fut_access_ok)
-             * 2. Atomically comparing *uaddr with val
-             * 3. Sleeping only if values match (prevents TOCTOU)
-             * See Phase 5 documentation above for implementation requirements */
-            /* Should atomically check *uaddr == val, then sleep */
-            /* For now, just return immediately (no wait) */
-            fut_printf("[FUTEX] FUTEX_WAIT - stub (returning 0)\n");
+        case FUTEX_WAIT_BITSET: {
+            /* FUTEX_WAIT: Atomically check *uaddr == val, then sleep
+             * This is the core primitive for userspace mutexes/condvars */
+
+            /* Get the hash bucket for this futex address */
+            futex_bucket_t *bucket = futex_get_bucket(uaddr);
+
+            /* Acquire bucket lock to ensure atomicity of check-and-sleep */
+            fut_spinlock_acquire(&bucket->lock);
+
+            /* Read current value from userspace (under lock) */
+            uint32_t current_val;
+            if (fut_copy_from_user(&current_val, uaddr, sizeof(uint32_t)) != 0) {
+                fut_spinlock_release(&bucket->lock);
+                return -EFAULT;
+            }
+
+            /* Compare with expected value */
+            if (current_val != val) {
+                /* Value doesn't match - return immediately (no race) */
+                fut_spinlock_release(&bucket->lock);
+                fut_printf("[FUTEX] FUTEX_WAIT - value mismatch (*uaddr=%u, expected=%u)\n",
+                           current_val, val);
+                return -EAGAIN;
+            }
+
+            /* Value matches - add to wait queue and sleep */
+            fut_thread_t *thread = fut_thread_current();
+            if (!thread) {
+                fut_spinlock_release(&bucket->lock);
+                return -ESRCH;
+            }
+
+            /* Store futex address in thread for later matching during wake */
+            thread->futex_addr = uaddr;
+
+            /* Sleep on wait queue (releases bucket lock) */
+            fut_printf("[FUTEX] FUTEX_WAIT - sleeping on futex at %p\n", uaddr);
+            fut_waitq_sleep_locked(&bucket->waiters, &bucket->lock, FUT_THREAD_BLOCKED);
+
+            /* Woken up - clear futex address */
+            thread->futex_addr = NULL;
+
+            /* TODO: Handle timeout if specified */
             (void)timeout;
+
+            fut_printf("[FUTEX] FUTEX_WAIT - woken up\n");
             return 0;
+        }
 
         case FUTEX_WAKE:
-            /* Should wake up to 'val' threads */
-            /* For now, just return 0 (no threads woken) */
-            fut_printf("[FUTEX] FUTEX_WAKE - stub (returning 0 threads woken)\n");
-            return 0;
+        case FUTEX_WAKE_BITSET: {
+            /* FUTEX_WAKE: Wake up to 'val' threads waiting on futex at uaddr */
+
+            futex_bucket_t *bucket = futex_get_bucket(uaddr);
+            fut_spinlock_acquire(&bucket->lock);
+
+            int woken = 0;
+            uint32_t max_wake = val;
+
+            /* Walk the wait queue and wake threads waiting on this specific address */
+            fut_waitq_t *wq = &bucket->waiters;
+            fut_thread_t *thread = wq->head;
+            fut_thread_t *prev = NULL;
+
+            while (thread && woken < (int)max_wake) {
+                fut_thread_t *next = thread->wq_next;
+
+                /* Check if this thread is waiting on our specific futex address */
+                if (thread->futex_addr == uaddr) {
+                    /* Remove from wait queue */
+                    if (prev) {
+                        prev->wq_next = next;
+                    } else {
+                        wq->head = next;
+                    }
+                    if (wq->tail == thread) {
+                        wq->tail = prev;
+                    }
+                    thread->wq_next = NULL;
+
+                    /* Wake up the thread - set state to READY and add to run queue */
+                    thread->state = FUT_THREAD_READY;
+                    fut_sched_add_thread(thread);
+                    woken++;
+
+                    fut_printf("[FUTEX] FUTEX_WAKE - woke thread %p\n", (void*)thread);
+                } else {
+                    prev = thread;
+                }
+
+                thread = next;
+            }
+
+            fut_spinlock_release(&bucket->lock);
+
+            fut_printf("[FUTEX] FUTEX_WAKE - woke %d threads\n", woken);
+            return woken;
+        }
 
         case FUTEX_REQUEUE:
             /* Should requeue threads from uaddr to uaddr2 */

@@ -307,7 +307,7 @@ $(GEN_FEATURE_HDR): FORCE
 	{ \
 		echo "/* Auto-generated. Do not edit. */"; \
 		echo "#pragma once"; \
-		echo "#define ENABLE_WINSRV_DEMO $(ENABLE_WINSRV_DEMO)"; \
+		echo "#define ENABLE_WAYLAND_DEMO 1"; \
 		echo "#define ENABLE_WAYLAND_TEST_CLIENTS $(ENABLE_WAYLAND_TEST_CLIENTS)"; \
 	} > $$tmp; \
 	if [ ! -f $@ ] || ! cmp -s $$tmp $@; then mv $$tmp $@; else rm $$tmp; fi
@@ -515,6 +515,7 @@ KERNEL_SOURCES := \
     kernel/rt/stack_chk.c \
     kernel/uaccess.c \
     kernel/vfs/devfs.c \
+    kernel/sys_fipc.c \
     kernel/video/virtio_gpu.c \
     drivers/tty/console.c \
     drivers/tty/tty_ldisc.c \
@@ -589,6 +590,7 @@ else ifeq ($(PLATFORM),arm64)
         platform/arm64/drivers/apple_uart.c \
         platform/arm64/drivers/apple_rtkit.c \
         platform/arm64/drivers/apple_ans2.c \
+        platform/arm64/drivers/apple_dcp.c \
         platform/arm64/drivers/virtio_mmio.c \
         platform/arm64/timing/perf_clock.c \
         platform/arm64/pci_ecam.c \
@@ -1016,7 +1018,7 @@ test: iso disk
 
 .PHONY: desktop-step2
 desktop-step2:
-	@$(MAKE) ENABLE_WINSRV_DEMO=1 iso disk
+	@$(MAKE) iso disk
 	@echo "Running desktop-step2 scenario under QEMU..."
 	@img=$(QEMU_DISK_IMG); \
 		echo "[DESKTOP] Using disk $$img"; \

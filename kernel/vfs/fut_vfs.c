@@ -21,6 +21,15 @@
 
 extern void fut_printf(const char *fmt, ...);
 
+/* Permission checking functions from vfs_credentials.c */
+extern int vfs_check_read_perm(struct fut_vnode *vnode);
+extern int vfs_check_write_perm(struct fut_vnode *vnode);
+extern int vfs_check_exec_perm(struct fut_vnode *vnode);
+
+/* Forward declarations for sync functions */
+int fut_vfs_sync_all(void);
+int fut_vfs_sync_fs(struct fut_mount *mount);
+
 /* Uncomment for verbose VFS tracing */
 #define DEBUG_VFS 0
 #define DEBUG_READ 0
@@ -1389,6 +1398,31 @@ int fut_vfs_open(const char *path, int flags, int mode) {
         return -EISDIR;
     }
 
+    /* Permission checks based on access mode (unless we just created the file) */
+    if (!created) {
+        int access_mode = flags & O_ACCMODE;
+
+        /* Check read permission for O_RDONLY and O_RDWR */
+        if (access_mode == O_RDONLY || access_mode == O_RDWR) {
+            ret = vfs_check_read_perm(vnode);
+            if (ret < 0) {
+                VFSDBG("[vfs-open] read permission denied\n");
+                release_lookup_ref(vnode);
+                return -EACCES;
+            }
+        }
+
+        /* Check write permission for O_WRONLY and O_RDWR */
+        if (access_mode == O_WRONLY || access_mode == O_RDWR) {
+            ret = vfs_check_write_perm(vnode);
+            if (ret < 0) {
+                VFSDBG("[vfs-open] write permission denied\n");
+                release_lookup_ref(vnode);
+                return -EACCES;
+            }
+        }
+    }
+
     /* Call vnode open operation */
     VFSDBG("[vfs-open] checking if vnode has open op\n");
     if (vnode->ops && vnode->ops->open) {
@@ -1862,4 +1896,70 @@ void fut_vnode_unref(struct fut_vnode *vnode) {
 
         fut_free(vnode);
     }
+}
+
+/* ============================================================
+ *   Sync Operations (Phase 2)
+ * ============================================================ */
+
+/**
+ * Synchronize a specific filesystem to storage.
+ * Calls the sync operation on the filesystem's root vnode.
+ *
+ * @param mount Mount point to sync
+ * @return 0 on success, negative error on failure
+ */
+int fut_vfs_sync_fs(struct fut_mount *mount) {
+    if (!mount || !mount->root) {
+        return -EINVAL;
+    }
+
+    /* Call sync operation if available */
+    if (mount->root->ops && mount->root->ops->sync) {
+        int ret = mount->root->ops->sync(mount->root);
+        if (ret < 0) {
+            fut_printf("[VFS-SYNC] Failed to sync filesystem at %s: %d\n",
+                       mount->mountpoint ? mount->mountpoint : "(root)", ret);
+            return ret;
+        }
+        fut_printf("[VFS-SYNC] Synced filesystem at %s\n",
+                   mount->mountpoint ? mount->mountpoint : "(root)");
+        return 0;
+    }
+
+    /* No sync operation - assume in-memory filesystem (no-op) */
+    fut_printf("[VFS-SYNC] Filesystem at %s has no sync operation (in-memory?)\n",
+               mount->mountpoint ? mount->mountpoint : "(root)");
+    return 0;
+}
+
+/**
+ * Synchronize all mounted filesystems to storage.
+ * Iterates through mount list and syncs each filesystem.
+ *
+ * @return 0 on success, negative error on failure (first error encountered)
+ */
+int fut_vfs_sync_all(void) {
+    int first_error = 0;
+    int synced = 0;
+
+    struct fut_mount *mount = mount_list;
+    while (mount) {
+        int ret = fut_vfs_sync_fs(mount);
+        if (ret < 0 && first_error == 0) {
+            first_error = ret;  /* Record first error */
+        }
+        if (ret == 0) {
+            synced++;
+        }
+        mount = mount->next;
+    }
+
+    if (synced == 0) {
+        fut_printf("[VFS-SYNC] No filesystems to sync (empty mount list)\n");
+    } else {
+        fut_printf("[VFS-SYNC] Synced %d filesystem(s)\n", synced);
+    }
+
+    return first_error;
 }

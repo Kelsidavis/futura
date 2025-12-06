@@ -707,6 +707,9 @@ void vfs_close_fd_in_task(struct fut_task *task, int fd);
 #ifndef O_RDWR
 #define O_RDWR      0x0002
 #endif
+#ifndef O_ACCMODE
+#define O_ACCMODE   0x0003  /* Mask for access mode (O_RDONLY, O_WRONLY, O_RDWR) */
+#endif
 #ifndef O_CREAT
 #define O_CREAT     0x0040
 #endif

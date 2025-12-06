@@ -114,3 +114,11 @@
 #define SYS_eventfd2     290
 /* Note: SYS_setpgrp would be 109 but that conflicts with SYS_seteuid from Priority #14 */
 #define SYS_time_millis  400
+
+/* FIPC (Futura Inter-Process Communication) syscalls */
+#define SYS_fipc_create  401
+#define SYS_fipc_send    402
+#define SYS_fipc_recv    403
+#define SYS_fipc_close   404
+#define SYS_fipc_poll    405
+#define SYS_fipc_connect 406

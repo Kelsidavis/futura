@@ -13,6 +13,7 @@
 
 extern void fut_printf(const char *fmt, ...);
 extern fut_task_t *fut_task_current(void);
+extern fut_task_t *fut_task_by_pid(uint64_t pid);
 extern int fut_copy_to_user(void *to, const void *from, size_t size);
 extern int fut_copy_from_user(void *to, const void *from, size_t size);
 
@@ -109,10 +110,8 @@ long sys_getppid(void) {
  * Returns the process group ID (PGID) of the calling process.
  * Process groups are used for job control in shells.
  *
- * For now, each process is its own process group (no pgrp tracking yet).
- *
  * Returns:
- *   - Process group ID of the calling process (equal to PID)
+ *   - Process group ID of the calling process
  */
 long sys_getpgrp(void) {
     fut_task_t *task = fut_task_current();
@@ -120,9 +119,8 @@ long sys_getpgrp(void) {
         return 1;  /* Default to init process group */
     }
 
-    /* Each process is its own process group by default */
-    fut_printf("[PROC] getpgrp() -> pgrp=%llu\n", task->pid);
-    return task->pid;
+    fut_printf("[PROC] getpgrp() -> pgrp=%llu\n", task->pgid);
+    return task->pgid;
 }
 
 /**
@@ -131,47 +129,44 @@ long sys_getpgrp(void) {
  * Returns the process group ID (PGID) of the process specified by pid.
  * Process groups are used for job control in shells and signal handling.
  *
- * For now, each process is its own process group (no pgrp tracking yet).
- *
  * @param pid  Process ID (0 = calling process)
  *
  * Returns:
- *   - Process group ID of the specified process (equal to PID)
+ *   - Process group ID of the specified process
  *   - -ESRCH if pid not found
  */
 long sys_getpgid(uint64_t pid) {
-    fut_task_t *task = fut_task_current();
-    if (!task) {
+    fut_task_t *current = fut_task_current();
+    if (!current) {
         return -ESRCH;
     }
 
     /* If pid is 0, use calling process */
     if (pid == 0) {
-        pid = task->pid;
+        fut_printf("[PROC] getpgid(pid=0 -> %llu) -> pgrp=%llu\n", current->pid, current->pgid);
+        return current->pgid;
     }
 
-    /* For simplicity, only support getpgid on self (stub implementation) */
-    if (pid != task->pid) {
-        /* Would need task_by_pid to support other processes */
+    /* Look up the target task */
+    fut_task_t *target = fut_task_by_pid(pid);
+    if (!target) {
+        fut_printf("[PROC] getpgid(pid=%llu) -> ESRCH (not found)\n", pid);
         return -ESRCH;
     }
 
-    /* Each process is its own process group by default */
-    fut_printf("[PROC] getpgid(pid=%llu) -> pgrp=%llu\n", pid, task->pid);
-    return task->pid;
+    fut_printf("[PROC] getpgid(pid=%llu) -> pgrp=%llu\n", pid, target->pgid);
+    return target->pgid;
 }
 
 /**
- * setpgrp() - Create new process group or join existing one
+ * setpgrp() - Create new process group
  *
- * Changes the calling process's process group ID. For now, this is a no-op
- * that returns success, since full process group tracking is not yet implemented.
- *
- * By default, setpgrp() with no arguments makes the calling process
- * the leader of its own process group.
+ * Makes the calling process the leader of a new process group.
+ * Equivalent to setpgid(0, 0).
  *
  * Returns:
- *   - 0 on success (always, as stub implementation)
+ *   - 0 on success
+ *   - -EPERM if process is already a session leader
  */
 long sys_setpgrp(void) {
     fut_task_t *task = fut_task_current();
@@ -179,8 +174,16 @@ long sys_setpgrp(void) {
         return -ESRCH;
     }
 
-    /* Stub: process is already its own group leader */
-    fut_printf("[PROC] setpgrp() -> success (stub implementation)\n");
+    /* Cannot change process group if we are a session leader */
+    if (task->pid == task->sid) {
+        fut_printf("[PROC] setpgrp() -> EPERM (session leader cannot change pgrp)\n");
+        return -EPERM;
+    }
+
+    uint64_t old_pgid = task->pgid;
+    task->pgid = task->pid;  /* Become leader of own process group */
+
+    fut_printf("[PROC] setpgrp() -> 0 (pgid %llu -> %llu)\n", old_pgid, task->pgid);
     return 0;
 }
 
@@ -188,41 +191,89 @@ long sys_setpgrp(void) {
  * setpgid(pid_t pid, pid_t pgid) - Set process group ID
  *
  * Sets the process group ID of the process specified by pid.
- * For now, this is a stub that validates the pid exists and returns success.
- * Full process group tracking is not yet implemented.
+ *
+ * POSIX rules:
+ * - A process can only set its own pgid or that of a child
+ * - A process cannot change the pgid of a child that has called exec
+ * - The target pgid must be in the same session
+ * - A session leader cannot change its process group
  *
  * @param pid   Process ID to modify (0 = calling process)
  * @param pgid  Process group ID to set (0 = use pid as pgid)
  *
  * Returns:
  *   - 0 on success
- *   - -ESRCH if pid not found
+ *   - -ESRCH if pid not found or not callable
  *   - -EINVAL if pgid is negative
+ *   - -EPERM if operation not permitted
+ *   - -EACCES if target has exec'd (simplified: we skip this check)
  */
 long sys_setpgid(uint64_t pid, uint64_t pgid) {
-    fut_task_t *task = fut_task_current();
-    if (!task) {
+    fut_task_t *current = fut_task_current();
+    if (!current) {
         return -ESRCH;
     }
 
     /* If pid is 0, use calling process */
     if (pid == 0) {
-        pid = task->pid;
+        pid = current->pid;
+    }
+
+    /* If pgid is 0, set pgid = pid (make process its own group leader) */
+    if (pgid == 0) {
+        pgid = pid;
     }
 
     /* Validate pgid */
-    if ((int64_t)pgid < -1) {
+    if ((int64_t)pgid < 0) {
+        fut_printf("[PROC] setpgid(pid=%llu, pgid=%llu) -> EINVAL (negative pgid)\n", pid, pgid);
         return -EINVAL;
     }
 
-    /* For simplicity, only allow setpgid on self (stub implementation) */
-    if (pid != task->pid) {
-        /* Would need task_by_pid to support other processes */
-        return -ESRCH;
+    /* Find target task */
+    fut_task_t *target;
+    if (pid == current->pid) {
+        target = current;
+    } else {
+        target = fut_task_by_pid(pid);
+        if (!target) {
+            fut_printf("[PROC] setpgid(pid=%llu, pgid=%llu) -> ESRCH (not found)\n", pid, pgid);
+            return -ESRCH;
+        }
+
+        /* Can only setpgid on our own children */
+        if (target->parent != current) {
+            fut_printf("[PROC] setpgid(pid=%llu, pgid=%llu) -> ESRCH (not our child)\n", pid, pgid);
+            return -ESRCH;
+        }
     }
 
-    /* Stub: pgid would be set here if we had pgrp tracking */
-    fut_printf("[PROC] setpgid(pid=%llu, pgid=%llu) -> success (stub)\n", pid, pgid);
+    /* Session leader cannot change its process group */
+    if (target->pid == target->sid) {
+        fut_printf("[PROC] setpgid(pid=%llu, pgid=%llu) -> EPERM (session leader)\n", pid, pgid);
+        return -EPERM;
+    }
+
+    /* Target pgid must be in the same session */
+    if (pgid != target->pid) {
+        /* Check if pgid exists and is in same session */
+        fut_task_t *pgrp_leader = fut_task_by_pid(pgid);
+        if (!pgrp_leader) {
+            /* Creating new process group - pgid must match target pid */
+            if (pgid != pid) {
+                fut_printf("[PROC] setpgid(pid=%llu, pgid=%llu) -> EPERM (pgid doesn't exist)\n", pid, pgid);
+                return -EPERM;
+            }
+        } else if (pgrp_leader->sid != target->sid) {
+            fut_printf("[PROC] setpgid(pid=%llu, pgid=%llu) -> EPERM (different session)\n", pid, pgid);
+            return -EPERM;
+        }
+    }
+
+    uint64_t old_pgid = target->pgid;
+    target->pgid = pgid;
+
+    fut_printf("[PROC] setpgid(pid=%llu, pgid=%llu) -> 0 (was %llu)\n", pid, pgid, old_pgid);
     return 0;
 }
 
@@ -230,44 +281,51 @@ long sys_setpgid(uint64_t pid, uint64_t pgid) {
  * getsid(pid_t pid) - Get session ID
  *
  * Returns the session ID of the process specified by pid.
- * For now, each process is its own session (no sid tracking yet).
  *
  * @param pid  Process ID (0 = calling process)
  *
  * Returns:
- *   - Session ID of the specified process (equal to PID)
+ *   - Session ID of the specified process
  *   - -ESRCH if pid not found
  */
 long sys_getsid(uint64_t pid) {
-    fut_task_t *task = fut_task_current();
-    if (!task) {
+    fut_task_t *current = fut_task_current();
+    if (!current) {
         return -ESRCH;
     }
 
     /* If pid is 0, use calling process */
     if (pid == 0) {
-        pid = task->pid;
+        fut_printf("[PROC] getsid(pid=0 -> %llu) -> sid=%llu\n", current->pid, current->sid);
+        return current->sid;
     }
 
-    /* For simplicity, only work for the calling process (stub implementation) */
-    if (pid != task->pid) {
-        /* Would need task_by_pid to support other processes */
+    /* Look up target task */
+    fut_task_t *target = fut_task_by_pid(pid);
+    if (!target) {
+        fut_printf("[PROC] getsid(pid=%llu) -> ESRCH (not found)\n", pid);
         return -ESRCH;
     }
 
-    /* Each process is its own session by default */
-    fut_printf("[PROC] getsid(pid=%llu) -> sid=%llu\n", pid, task->pid);
-    return task->pid;
+    fut_printf("[PROC] getsid(pid=%llu) -> sid=%llu\n", pid, target->sid);
+    return target->sid;
 }
 
 /**
  * setsid() - Create new session
  *
  * Creates a new session where the calling process becomes the session leader.
- * For now, this is a no-op that returns success, since sid/pgrp tracking is not implemented.
+ * The calling process becomes:
+ * - The session leader of the new session
+ * - The process group leader of a new process group
+ * - Detached from any controlling terminal
+ *
+ * POSIX rules:
+ * - The calling process must not already be a process group leader
  *
  * Returns:
  *   - Session ID (same as process PID) on success
+ *   - -EPERM if already a process group leader
  */
 long sys_setsid(void) {
     fut_task_t *task = fut_task_current();
@@ -275,9 +333,22 @@ long sys_setsid(void) {
         return -ESRCH;
     }
 
-    /* Stub: process is already its own session leader */
-    fut_printf("[PROC] setsid() -> sid=%llu (stub)\n", task->pid);
-    return task->pid;
+    /* Cannot create new session if we're already a process group leader */
+    if (task->pid == task->pgid) {
+        fut_printf("[PROC] setsid() -> EPERM (already process group leader)\n");
+        return -EPERM;
+    }
+
+    uint64_t old_sid = task->sid;
+    uint64_t old_pgid = task->pgid;
+
+    /* Become session leader and process group leader */
+    task->sid = task->pid;
+    task->pgid = task->pid;
+
+    fut_printf("[PROC] setsid() -> sid=%llu (was sid=%llu, pgid=%llu)\n",
+               task->sid, old_sid, old_pgid);
+    return task->sid;
 }
 
 /**

@@ -2732,6 +2732,9 @@ static void cmd_ls(int argc, char *argv[]) {
     sys_close(fd);
 }
 
+/* Forward declaration */
+static int cat_process_fd(int fd);
+
 /* Built-in: cat - Display file contents */
 static void cmd_cat(int argc, char *argv[]) {
     /* Process files or stdin */

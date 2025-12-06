@@ -69,8 +69,14 @@ typedef struct {
     uint64_t aic_base;           /* Apple AIC base (Apple Silicon only) */
     uint64_t ans_mailbox_base;   /* Apple ANS mailbox base (Apple Silicon only) */
     uint64_t ans_nvme_base;      /* Apple ANS NVMe base (Apple Silicon only) */
+    uint64_t dcp_base;           /* Apple DCP base (Apple Silicon only) */
+    uint64_t dcp_mailbox_base;   /* Apple DCP mailbox base (Apple Silicon only) */
+    uint64_t dart_base;          /* Apple DART IOMMU base (Apple Silicon only) */
+    uint32_t display_width;      /* Native panel width (Apple Silicon only) */
+    uint32_t display_height;     /* Native panel height (Apple Silicon only) */
     bool has_gic;                /* Has GICv2 support */
     bool has_aic;                /* Has Apple AIC (Apple Silicon only) */
+    bool has_dcp;                /* Has Apple DCP (Apple Silicon only) */
     bool has_generic_timer;      /* Has ARM generic timer */
     uint32_t total_memory;       /* Total RAM in bytes */
 } fut_platform_info_t;

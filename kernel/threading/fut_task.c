@@ -125,6 +125,8 @@ fut_task_t *fut_task_create(void) {
         .gid = 0,          /* Default to root GID */
         .ruid = 0,         /* Real UID (for future use) */
         .rgid = 0,         /* Real GID (for future use) */
+        .pgid = (parent ? parent->pgid : new_pid),  /* Inherit parent's PGID, or self if init */
+        .sid = (parent ? parent->sid : new_pid),    /* Inherit parent's SID, or self if init */
         .signal_mask = 0,  /* No signals blocked initially */
         .pending_signals = 0,  /* No pending signals */
         .current_dir_ino = (parent ? parent->current_dir_ino : 1),  /* Inherit parent's cwd, default to root (inode 1) */
@@ -482,4 +484,47 @@ void fut_task_set_credentials(fut_task_t *task, uint32_t uid, uint32_t gid) {
     }
     task->uid = uid;
     task->gid = gid;
+}
+
+/**
+ * Look up a task by PID.
+ * Iterates the global task list to find a task with the specified PID.
+ *
+ * NOTE: This does NOT hold the task_list_lock. Caller should be aware
+ * of potential races in preemptive contexts.
+ */
+fut_task_t *fut_task_by_pid(uint64_t pid) {
+    fut_spinlock_acquire(&task_list_lock);
+    fut_task_t *task = fut_task_list;
+    while (task) {
+        if (task->pid == pid) {
+            fut_spinlock_release(&task_list_lock);
+            return task;
+        }
+        task = task->next;
+    }
+    fut_spinlock_release(&task_list_lock);
+    return NULL;
+}
+
+/**
+ * Iterate all tasks in a process group and call callback for each.
+ * Used for sending signals to process groups (kill -pgrp).
+ * If callback is NULL, just counts the tasks in the group.
+ */
+int fut_task_foreach_pgid(uint64_t pgid, void (*callback)(fut_task_t *task, void *data), void *data) {
+    int count = 0;
+    fut_spinlock_acquire(&task_list_lock);
+    fut_task_t *task = fut_task_list;
+    while (task) {
+        if (task->pgid == pgid && task->state != FUT_TASK_ZOMBIE) {
+            if (callback) {
+                callback(task, data);
+            }
+            count++;
+        }
+        task = task->next;
+    }
+    fut_spinlock_release(&task_list_lock);
+    return count;
 }

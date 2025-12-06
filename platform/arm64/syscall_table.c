@@ -327,6 +327,14 @@ extern long sys_chroot(const char *path);
 
 /* Terminal and quota operations */
 extern long sys_vhangup(void);
+
+/* FIPC (Futura IPC) syscalls */
+extern long sys_fipc_create(uint32_t flags, size_t queue_size);
+extern long sys_fipc_send(uint64_t channel_id, uint32_t type, const void *data, size_t size);
+extern long sys_fipc_recv(uint64_t channel_id, void *buf, size_t buf_size);
+extern long sys_fipc_close(uint64_t channel_id);
+extern long sys_fipc_poll(uint64_t channel_id, uint32_t event_mask);
+extern long sys_fipc_connect(uint64_t channel_id);
 extern long sys_quotactl(unsigned int cmd, const char *special, int id, void *addr);
 
 /* Syscall return values */
@@ -1663,6 +1671,64 @@ static int64_t sys_getpgrp_wrapper(uint64_t arg0, uint64_t arg1, uint64_t arg2,
     return sys_getpgrp();
 }
 
+/* ============================================================
+ *   FIPC (Futura IPC) System Call Wrappers
+ * ============================================================ */
+
+/* sys_fipc_create_wrapper - create FIPC channel
+ * x0 = flags, x1 = queue_size
+ */
+static int64_t sys_fipc_create_wrapper(uint64_t flags, uint64_t queue_size, uint64_t arg2,
+                                        uint64_t arg3, uint64_t arg4, uint64_t arg5) {
+    (void)arg2; (void)arg3; (void)arg4; (void)arg5;
+    return sys_fipc_create((uint32_t)flags, (size_t)queue_size);
+}
+
+/* sys_fipc_send_wrapper - send message on FIPC channel
+ * x0 = channel_id, x1 = type, x2 = data, x3 = size
+ */
+static int64_t sys_fipc_send_wrapper(uint64_t channel_id, uint64_t type, uint64_t data,
+                                      uint64_t size, uint64_t arg4, uint64_t arg5) {
+    (void)arg4; (void)arg5;
+    return sys_fipc_send(channel_id, (uint32_t)type, (const void *)data, (size_t)size);
+}
+
+/* sys_fipc_recv_wrapper - receive message from FIPC channel
+ * x0 = channel_id, x1 = buf, x2 = buf_size
+ */
+static int64_t sys_fipc_recv_wrapper(uint64_t channel_id, uint64_t buf, uint64_t buf_size,
+                                      uint64_t arg3, uint64_t arg4, uint64_t arg5) {
+    (void)arg3; (void)arg4; (void)arg5;
+    return sys_fipc_recv(channel_id, (void *)buf, (size_t)buf_size);
+}
+
+/* sys_fipc_close_wrapper - close FIPC channel
+ * x0 = channel_id
+ */
+static int64_t sys_fipc_close_wrapper(uint64_t channel_id, uint64_t arg1, uint64_t arg2,
+                                       uint64_t arg3, uint64_t arg4, uint64_t arg5) {
+    (void)arg1; (void)arg2; (void)arg3; (void)arg4; (void)arg5;
+    return sys_fipc_close(channel_id);
+}
+
+/* sys_fipc_poll_wrapper - poll FIPC channel for events
+ * x0 = channel_id, x1 = event_mask
+ */
+static int64_t sys_fipc_poll_wrapper(uint64_t channel_id, uint64_t event_mask, uint64_t arg2,
+                                      uint64_t arg3, uint64_t arg4, uint64_t arg5) {
+    (void)arg2; (void)arg3; (void)arg4; (void)arg5;
+    return sys_fipc_poll(channel_id, (uint32_t)event_mask);
+}
+
+/* sys_fipc_connect_wrapper - connect to existing FIPC channel
+ * x0 = channel_id
+ */
+static int64_t sys_fipc_connect_wrapper(uint64_t channel_id, uint64_t arg1, uint64_t arg2,
+                                         uint64_t arg3, uint64_t arg4, uint64_t arg5) {
+    (void)arg1; (void)arg2; (void)arg3; (void)arg4; (void)arg5;
+    return sys_fipc_connect(channel_id);
+}
+
 /* sys_sched_setparam_wrapper - set scheduling parameters
  * x0 = pid, x1 = param
  */
@@ -2538,8 +2604,16 @@ struct syscall_entry {
 #define __NR_wait4          260  /* wait4/waitpid */
 #define __NR_prlimit64      261
 
+/* FIPC (Futura IPC) syscalls - Futura-specific range 401-406 */
+#define __NR_fipc_create    401
+#define __NR_fipc_send      402
+#define __NR_fipc_recv      403
+#define __NR_fipc_close     404
+#define __NR_fipc_poll      405
+#define __NR_fipc_connect   406
+
 /* Maximum syscall number */
-#define MAX_SYSCALL         300
+#define MAX_SYSCALL         410
 
 /* Syscall table - sparse array indexed by syscall number */
 /* Syscall table - initialized at runtime to avoid ARM64 relocation issues */
@@ -3002,6 +3076,20 @@ static void arm64_syscall_table_init(void) {
     syscall_table[113].name = "getppid";
     syscall_table[124].handler = (syscall_fn_t)sys_getsid_wrapper;
     syscall_table[124].name = "getsid";
+
+    /* FIPC syscalls - Futura-specific range 401-406 */
+    syscall_table[__NR_fipc_create].handler = (syscall_fn_t)sys_fipc_create_wrapper;
+    syscall_table[__NR_fipc_create].name = "fipc_create";
+    syscall_table[__NR_fipc_send].handler = (syscall_fn_t)sys_fipc_send_wrapper;
+    syscall_table[__NR_fipc_send].name = "fipc_send";
+    syscall_table[__NR_fipc_recv].handler = (syscall_fn_t)sys_fipc_recv_wrapper;
+    syscall_table[__NR_fipc_recv].name = "fipc_recv";
+    syscall_table[__NR_fipc_close].handler = (syscall_fn_t)sys_fipc_close_wrapper;
+    syscall_table[__NR_fipc_close].name = "fipc_close";
+    syscall_table[__NR_fipc_poll].handler = (syscall_fn_t)sys_fipc_poll_wrapper;
+    syscall_table[__NR_fipc_poll].name = "fipc_poll";
+    syscall_table[__NR_fipc_connect].handler = (syscall_fn_t)sys_fipc_connect_wrapper;
+    syscall_table[__NR_fipc_connect].name = "fipc_connect";
 
     syscall_table_initialized = true;
 }

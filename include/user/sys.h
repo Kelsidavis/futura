@@ -250,6 +250,14 @@ static inline long sys_access_call(const char *path, long mode) {
     return sys_call2(SYS_access, (long)path, mode);
 }
 
+static inline long sys_fsync_call(int fd) {
+    return sys_call1(SYS_fsync, (long)fd);
+}
+
+static inline long sys_fdatasync_call(int fd) {
+    return sys_call1(SYS_fdatasync, (long)fd);
+}
+
 static inline long sys_mkdir_call(const char *path, long mode) {
     return sys_call2(SYS_mkdir, (long)path, mode);
 }
@@ -286,6 +294,31 @@ static inline long sys_dup2_call(int oldfd, int newfd) {
 /* Scheduler syscall veneers */
 static inline long sys_sched_yield(void) {
     return sys_call0(SYS_sched_yield);
+}
+
+/* FIPC syscall veneers */
+static inline long sys_fipc_create(long flags, long queue_size) {
+    return sys_call2(SYS_fipc_create, flags, queue_size);
+}
+
+static inline long sys_fipc_send(long channel_id, long type, const void *data, long size) {
+    return sys_call4(SYS_fipc_send, channel_id, type, (long)data, size);
+}
+
+static inline long sys_fipc_recv(long channel_id, void *buf, long buf_size) {
+    return sys_call3(SYS_fipc_recv, channel_id, (long)buf, buf_size);
+}
+
+static inline long sys_fipc_close(long channel_id) {
+    return sys_call1(SYS_fipc_close, channel_id);
+}
+
+static inline long sys_fipc_poll(long channel_id, long event_mask) {
+    return sys_call2(SYS_fipc_poll, channel_id, event_mask);
+}
+
+static inline long sys_fipc_connect(long channel_id) {
+    return sys_call1(SYS_fipc_connect, channel_id);
 }
 
 /* Note: setpgrp and setpgid syscall veneers not provided (syscall numbers conflict) */

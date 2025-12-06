@@ -51,6 +51,10 @@ struct fut_task {
     uint32_t ruid;                     // Real UID (for future use)
     uint32_t rgid;                     // Real GID (for future use)
 
+    /* Process group and session (job control) */
+    uint64_t pgid;                     // Process group ID (for job control)
+    uint64_t sid;                      // Session ID (controlling terminal session)
+
     /* Signal handling */
     sighandler_t signal_handlers[31];  // Array of signal handlers (index 1-30)
     uint64_t signal_mask;              // Mask of currently blocked signals
@@ -140,6 +144,26 @@ fut_task_t *fut_task_current(void);
 void fut_task_exit_current(int status);
 int fut_task_waitpid(int pid, int *status_out);
 void fut_task_signal_exit(int signal);
+
+/**
+ * Look up a task by PID.
+ *
+ * @param pid Process ID to find
+ * @return Task with that PID, or NULL if not found
+ *
+ * NOTE: Caller must hold task_list_lock or accept potential races.
+ */
+fut_task_t *fut_task_by_pid(uint64_t pid);
+
+/**
+ * Iterate all tasks in a process group and call callback for each.
+ *
+ * @param pgid Process group ID
+ * @param callback Function to call for each task in the group
+ * @param data User data passed to callback
+ * @return Number of tasks in the group
+ */
+int fut_task_foreach_pgid(uint64_t pgid, void (*callback)(fut_task_t *task, void *data), void *data);
 
 /**
  * Get the effective UID of a task.

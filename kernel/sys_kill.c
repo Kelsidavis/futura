@@ -17,6 +17,26 @@
 
 extern void fut_printf(const char *fmt, ...);
 extern fut_task_t *fut_task_current(void);
+extern fut_task_t *fut_task_by_pid(uint64_t pid);
+extern int fut_task_foreach_pgid(uint64_t pgid, void (*callback)(fut_task_t *task, void *data), void *data);
+
+/* Callback data for process group signaling */
+struct pgrp_signal_data {
+    int sig;
+    int count;
+    int error;
+};
+
+/* Callback to send signal to each task in a process group */
+static void pgrp_signal_callback(fut_task_t *task, void *data) {
+    struct pgrp_signal_data *psd = (struct pgrp_signal_data *)data;
+    int result = fut_signal_send(task, psd->sig);
+    if (result == 0) {
+        psd->count++;
+    } else if (psd->error == 0) {
+        psd->error = result;  /* Record first error */
+    }
+}
 
 /**
  * kill() - Send signal to process or process group
@@ -216,65 +236,110 @@ long sys_kill(int pid, int sig) {
         target_type = "group";
     }
 
-    /* Find target task by PID */
-    fut_task_t *target = NULL;
-
+    /* Handle different PID cases */
     if (pid == 0) {
-        /* Phase 2: Send to current process group - not yet implemented */
-        fut_printf("[KILL] kill(pid=0 [%s], sig=%d [%s, %s]) -> EINVAL (process groups not yet supported, Phase 2)\n",
-                   pid_desc, sig, signal_name, signal_desc);
-        return -EINVAL;
+        /* Send to all processes in current process group */
+        struct pgrp_signal_data psd = { .sig = sig, .count = 0, .error = 0 };
+
+        if (sig == 0) {
+            /* Permission check only - just check if we have a process group */
+            fut_printf("[KILL] kill(pid=0 [%s], sig=0) -> 0 (permission check, pgrp=%llu)\n",
+                       pid_desc, current->pgid);
+            return 0;
+        }
+
+        int total = fut_task_foreach_pgid(current->pgid, pgrp_signal_callback, &psd);
+
+        if (total == 0) {
+            fut_printf("[KILL] kill(pid=0 [%s], sig=%d [%s]) -> ESRCH (empty process group)\n",
+                       pid_desc, sig, signal_name);
+            return -ESRCH;
+        }
+
+        fut_printf("[KILL] kill(pid=0 [%s], sig=%d [%s]) -> 0 (sent to %d/%d in pgrp %llu)\n",
+                   pid_desc, sig, signal_name, psd.count, total, current->pgid);
+        return psd.error ? psd.error : 0;
+
     } else if (pid == -1) {
-        /* Phase 2: Broadcast to all processes - not yet implemented */
-        fut_printf("[KILL] kill(pid=-1 [%s], sig=%d [%s, %s]) -> EINVAL (broadcast not yet supported, Phase 2)\n",
+        /* Broadcast to all processes except init (pid=1) - not yet fully implemented */
+        fut_printf("[KILL] kill(pid=-1 [%s], sig=%d [%s, %s]) -> EINVAL (broadcast not yet supported)\n",
                    pid_desc, sig, signal_name, signal_desc);
         return -EINVAL;
+
     } else if (pid < -1) {
-        /* Phase 2: Send to process group |pid| - not yet implemented */
-        fut_printf("[KILL] kill(pid=%d [%s %d], sig=%d [%s, %s]) -> EINVAL (process groups not yet supported, Phase 2)\n",
-                   pid, pid_desc, -pid, sig, signal_name, signal_desc);
-        return -EINVAL;
+        /* Send to process group |pid| */
+        uint64_t target_pgid = (uint64_t)(-pid);
+        struct pgrp_signal_data psd = { .sig = sig, .count = 0, .error = 0 };
+
+        if (sig == 0) {
+            /* Permission check - verify process group exists */
+            int count = fut_task_foreach_pgid(target_pgid, NULL, NULL);
+            if (count == 0) {
+                fut_printf("[KILL] kill(pid=%d [%s %llu], sig=0) -> ESRCH (no such process group)\n",
+                           pid, pid_desc, target_pgid);
+                return -ESRCH;
+            }
+            fut_printf("[KILL] kill(pid=%d [%s %llu], sig=0) -> 0 (permission check, %d processes)\n",
+                       pid, pid_desc, target_pgid, count);
+            return 0;
+        }
+
+        int total = fut_task_foreach_pgid(target_pgid, pgrp_signal_callback, &psd);
+
+        if (total == 0) {
+            fut_printf("[KILL] kill(pid=%d [%s %llu], sig=%d [%s]) -> ESRCH (no such process group)\n",
+                       pid, pid_desc, target_pgid, sig, signal_name);
+            return -ESRCH;
+        }
+
+        fut_printf("[KILL] kill(pid=%d [%s %llu], sig=%d [%s]) -> 0 (sent to %d/%d)\n",
+                   pid, pid_desc, target_pgid, sig, signal_name, psd.count, total);
+        return psd.error ? psd.error : 0;
+
     } else {
         /* pid > 0: Send to specific process */
+        fut_task_t *target = NULL;
+
         if ((uint64_t)pid == current->pid) {
             target = current;
             target_type = "self";
         } else {
-            /* Look through children */
-            target = current->first_child;
-            while (target && target->pid != (uint64_t)pid) {
-                target = target->sibling;
-            }
+            /* Look up by PID in global task list */
+            target = fut_task_by_pid((uint64_t)pid);
             if (target) {
-                target_type = "child";
+                if (target->parent == current) {
+                    target_type = "child";
+                } else {
+                    target_type = "other";
+                }
             }
         }
+
+        if (!target) {
+            fut_printf("[KILL] kill(pid=%d [%s], sig=%d [%s, %s]) -> ESRCH (process not found)\n",
+                       pid, pid_desc, sig, signal_name, signal_desc);
+            return -ESRCH;  /* No such process */
+        }
+
+        /* Handle null signal (permission check only) */
+        if (sig == 0) {
+            fut_printf("[KILL] kill(pid=%d [%s, target=%s], sig=0 [%s]) -> 0 (permission check only, target exists)\n",
+                       pid, pid_desc, target_type, signal_name);
+            return 0;
+        }
+
+        /* Queue the signal */
+        int result = fut_signal_send(target, sig);
+
+        /* Detailed logging with signal and target information */
+        if (result == 0) {
+            fut_printf("[KILL] kill(pid=%d [%s, target=%s], sig=%d [%s, %s]) -> 0 (signal queued)\n",
+                       pid, pid_desc, target_type, sig, signal_name, signal_desc);
+        } else {
+            fut_printf("[KILL] kill(pid=%d [%s, target=%s], sig=%d [%s, %s]) -> %d (signal send failed)\n",
+                       pid, pid_desc, target_type, sig, signal_name, signal_desc, result);
+        }
+
+        return result;
     }
-
-    if (!target) {
-        fut_printf("[KILL] kill(pid=%d [%s], sig=%d [%s, %s]) -> ESRCH (process not found)\n",
-                   pid, pid_desc, sig, signal_name, signal_desc);
-        return -ESRCH;  /* No such process */
-    }
-
-    /* Handle null signal (permission check only) */
-    if (sig == 0) {
-        fut_printf("[KILL] kill(pid=%d [%s, target=%s], sig=0 [%s]) -> 0 (permission check only, target exists)\n",
-                   pid, pid_desc, target_type, signal_name);
-        return 0;
-    }
-
-    /* Queue the signal */
-    int result = fut_signal_send(target, sig);
-
-    /* Phase 2: Detailed logging with signal and target information */
-    if (result == 0) {
-        fut_printf("[KILL] kill(pid=%d [%s, target=%s], sig=%d [%s, %s]) -> 0 (signal queued, Phase 2)\n",
-                   pid, pid_desc, target_type, sig, signal_name, signal_desc);
-    } else {
-        fut_printf("[KILL] kill(pid=%d [%s, target=%s], sig=%d [%s, %s]) -> %d (signal send failed)\n",
-                   pid, pid_desc, target_type, sig, signal_name, signal_desc, result);
-    }
-
-    return result;
 }

@@ -17,6 +17,7 @@
 
 extern void fut_printf(const char *fmt, ...);
 extern fut_task_t *fut_task_current(void);
+extern int fut_vfs_sync_all(void);
 
 /**
  * sync() - Synchronize all filesystem data to disk
@@ -115,14 +116,21 @@ long sys_sync(void) {
         return -ESRCH;
     }
 
-    /* Phase 1: Log sync operation
-     * TODO Phase 2: Iterate all mounted filesystems and flush dirty pages
-     * TODO Phase 2: Call VFS sync operation for each filesystem
-     * TODO Phase 2: Wait for all I/O completion
-     * TODO Phase 2: Ensure journal commits (for journaling filesystems) */
+    /* Phase 2: Call VFS to sync all mounted filesystems
+     * This iterates the mount list and calls the sync operation on each filesystem.
+     * Filesystems with a sync() operation will flush dirty pages and commit journals.
+     * In-memory filesystems (RamFS) typically have no sync operation (no-op). */
 
-    fut_printf("[SYNC] sync() -> 0 (Phase 1: logged, actual sync not yet implemented)\n");
+    int ret = fut_vfs_sync_all();
 
-    /* Always returns 0 (success) */
+    if (ret < 0) {
+        fut_printf("[SYNC] sync() -> %d (Phase 2: some filesystems failed to sync)\n", ret);
+        /* Per POSIX, sync() doesn't return errors - always returns 0 */
+        return 0;
+    }
+
+    fut_printf("[SYNC] sync() -> 0 (Phase 2: all filesystems synced successfully)\n");
+
+    /* Always returns 0 (success) per POSIX spec */
     return 0;
 }

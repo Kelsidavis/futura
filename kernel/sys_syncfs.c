@@ -12,11 +12,14 @@
  */
 
 #include <kernel/fut_task.h>
+#include <kernel/fut_vfs.h>
 #include <kernel/errno.h>
 #include <stdint.h>
 
 extern void fut_printf(const char *fmt, ...);
 extern fut_task_t *fut_task_current(void);
+extern struct fut_file *vfs_get_file_from_task(struct fut_task *task, int fd);
+extern int fut_vfs_sync_fs(struct fut_mount *mount);
 
 /**
  * syncfs() - Synchronize a specific filesystem to disk
@@ -140,16 +143,35 @@ long sys_syncfs(int fd) {
         return -EBADF;
     }
 
-    /* Phase 1: Log syncfs operation
-     * TODO Phase 2: Resolve FD to vnode and get filesystem mount point
-     * TODO Phase 2: Call VFS sync operation for that specific filesystem
-     * TODO Phase 2: Flush dirty pages for that filesystem only
-     * TODO Phase 2: Wait for I/O completion
-     * TODO Phase 2: Return -EBADF if FD is not open */
+    /* Phase 2: Resolve FD to file and get mount point */
+    struct fut_file *file = vfs_get_file_from_task(task, local_fd);
+    if (!file) {
+        fut_printf("[SYNCFS] syncfs(fd=%d) -> EBADF (fd not open)\n", local_fd);
+        return -EBADF;
+    }
 
-    fut_printf("[SYNCFS] syncfs(fd=%d) -> 0 (Phase 1: logged, actual sync not yet implemented)\n",
+    /* Get the vnode for this file */
+    if (!file->vnode) {
+        fut_printf("[SYNCFS] syncfs(fd=%d) -> EBADF (no vnode for fd)\n", local_fd);
+        return -EBADF;
+    }
+
+    /* Get the mount point for this vnode */
+    struct fut_mount *mount = file->vnode->mount;
+    if (!mount) {
+        fut_printf("[SYNCFS] syncfs(fd=%d) -> EINVAL (no mount point for vnode)\n", local_fd);
+        return -EINVAL;
+    }
+
+    /* Phase 2: Sync the specific filesystem */
+    int ret = fut_vfs_sync_fs(mount);
+    if (ret < 0) {
+        fut_printf("[SYNCFS] syncfs(fd=%d) -> %d (Phase 2: filesystem sync failed)\n",
+                   local_fd, ret);
+        return ret;
+    }
+
+    fut_printf("[SYNCFS] syncfs(fd=%d) -> 0 (Phase 2: filesystem synced successfully)\n",
                local_fd);
-
-    /* Always returns 0 (success) in Phase 1 */
     return 0;
 }

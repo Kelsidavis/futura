@@ -880,19 +880,52 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
 
     /* CRITICAL: Copy argv and envp to kernel memory BEFORE creating new MM.
      * If argv/envp point to userspace, a context switch during exec could
-     * cause the old address space to become inaccessible, leading to page faults. */
+     * cause the old address space to become inaccessible, leading to page faults.
+     *
+     * SMAP FIX: All userspace pointer accesses use fut_copy_from_user to avoid
+     * triggering SMAP violations on x86-64. */
     size_t argc = 0;
     size_t envc = 0;
     char **kargv = NULL;
     char **kenvp = NULL;
 
     if (argv) {
-        while (argv[argc]) argc++;
+        /* SMAP FIX: Count arguments using safe userspace copy */
+        char *ptr = NULL;
+        while (argc < 1000) {
+            if (fut_copy_from_user(&ptr, &argv[argc], sizeof(char *)) != 0) {
+                break;  /* Access error */
+            }
+            if (ptr == NULL) {
+                break;  /* NULL terminator */
+            }
+            argc++;
+        }
         if (argc > 0) {
             kargv = fut_malloc((argc + 1) * sizeof(char *));
             if (!kargv) { __asm__ volatile("sti"); return -ENOMEM; }
             for (size_t i = 0; i < argc; i++) {
-                size_t len = kstrlen(argv[i]) + 1;
+                /* SMAP FIX: Read argv[i] pointer safely */
+                const char *arg_ptr = NULL;
+                if (fut_copy_from_user((void *)&arg_ptr, &argv[i], sizeof(char *)) != 0) {
+                    for (size_t j = 0; j < i; j++) fut_free(kargv[j]);
+                    fut_free(kargv);
+                    __asm__ volatile("sti");
+                    return -EFAULT;
+                }
+                /* SMAP FIX: Calculate string length safely */
+                size_t len = 0;
+                char ch = 1;
+                while (len < 4096) {
+                    if (fut_copy_from_user(&ch, arg_ptr + len, 1) != 0) {
+                        break;
+                    }
+                    if (ch == '\0') {
+                        break;
+                    }
+                    len++;
+                }
+                len++;  /* Include null terminator */
                 kargv[i] = fut_malloc(len);
                 if (!kargv[i]) {
                     for (size_t j = 0; j < i; j++) fut_free(kargv[j]);
@@ -900,14 +933,30 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
                     __asm__ volatile("sti");
                     return -ENOMEM;
                 }
-                memcpy(kargv[i], argv[i], len);
+                /* SMAP FIX: Copy string safely */
+                if (fut_copy_from_user(kargv[i], arg_ptr, len) != 0) {
+                    for (size_t j = 0; j <= i; j++) fut_free(kargv[j]);
+                    fut_free(kargv);
+                    __asm__ volatile("sti");
+                    return -EFAULT;
+                }
             }
             kargv[argc] = NULL;
         }
     }
 
     if (envp) {
-        while (envp[envc]) envc++;
+        /* SMAP FIX: Count environment variables using safe userspace copy */
+        char *ptr = NULL;
+        while (envc < 1000) {
+            if (fut_copy_from_user(&ptr, &envp[envc], sizeof(char *)) != 0) {
+                break;  /* Access error */
+            }
+            if (ptr == NULL) {
+                break;  /* NULL terminator */
+            }
+            envc++;
+        }
         if (envc > 0) {
             kenvp = fut_malloc((envc + 1) * sizeof(char *));
             if (!kenvp) {
@@ -919,7 +968,31 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
                 return -ENOMEM;
             }
             for (size_t i = 0; i < envc; i++) {
-                size_t len = kstrlen(envp[i]) + 1;
+                /* SMAP FIX: Read envp[i] pointer safely */
+                const char *env_ptr = NULL;
+                if (fut_copy_from_user((void *)&env_ptr, &envp[i], sizeof(char *)) != 0) {
+                    for (size_t j = 0; j < i; j++) fut_free(kenvp[j]);
+                    fut_free(kenvp);
+                    if (kargv) {
+                        for (size_t j = 0; j < argc; j++) fut_free(kargv[j]);
+                        fut_free(kargv);
+                    }
+                    __asm__ volatile("sti");
+                    return -EFAULT;
+                }
+                /* SMAP FIX: Calculate string length safely */
+                size_t len = 0;
+                char ch = 1;
+                while (len < 4096) {
+                    if (fut_copy_from_user(&ch, env_ptr + len, 1) != 0) {
+                        break;
+                    }
+                    if (ch == '\0') {
+                        break;
+                    }
+                    len++;
+                }
+                len++;  /* Include null terminator */
                 kenvp[i] = fut_malloc(len);
                 if (!kenvp[i]) {
                     for (size_t j = 0; j < i; j++) fut_free(kenvp[j]);
@@ -931,7 +1004,17 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
                     __asm__ volatile("sti");
                     return -ENOMEM;
                 }
-                memcpy(kenvp[i], envp[i], len);
+                /* SMAP FIX: Copy string safely */
+                if (fut_copy_from_user(kenvp[i], env_ptr, len) != 0) {
+                    for (size_t j = 0; j <= i; j++) fut_free(kenvp[j]);
+                    fut_free(kenvp);
+                    if (kargv) {
+                        for (size_t j = 0; j < argc; j++) fut_free(kargv[j]);
+                        fut_free(kargv);
+                    }
+                    __asm__ volatile("sti");
+                    return -EFAULT;
+                }
             }
             kenvp[envc] = NULL;
         }

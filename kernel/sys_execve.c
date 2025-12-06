@@ -178,43 +178,41 @@ long sys_execve(const char *pathname, char *const argv[], char *const envp[]) {
         return -EFAULT;
     }
 
+    /* SMAP FIX: Copy pathname to kernel buffer for safe access */
+    char kernel_pathname[256];
+    size_t path_len = 0;
+    char ch = 1;
+    while (path_len < 255) {
+        if (fut_copy_from_user(&ch, local_pathname + path_len, 1) != 0) {
+            break;
+        }
+        kernel_pathname[path_len] = ch;
+        if (ch == '\0') {
+            break;
+        }
+        path_len++;
+    }
+    kernel_pathname[path_len] = '\0';  /* Ensure null termination */
+
     /* Validate that argv is a valid userspace pointer (readable) */
     if (local_argv && fut_access_ok(local_argv, sizeof(char *), 0) != 0) {
-        char msg[128];
-        int pos = 0;
-        const char *text = "[EXECVE] execve(path=";
-        while (*text) { msg[pos++] = *text++; }
-        const char *p = local_pathname;
-        while (*p && pos < 100) { msg[pos++] = *p++; }
-        text = ") -> EFAULT (argv not accessible)\n";
-        while (*text) { msg[pos++] = *text++; }
-        msg[pos] = '\0';
-        fut_printf("%s", msg);
+        fut_printf("[EXECVE] execve(path=%s) -> EFAULT (argv not accessible)\n", kernel_pathname);
         return -EFAULT;
     }
 
     /* Validate that envp is a valid userspace pointer (readable) if provided */
     if (local_envp && fut_access_ok(local_envp, sizeof(char *), 0) != 0) {
-        char msg[128];
-        int pos = 0;
-        const char *text = "[EXECVE] execve(path=";
-        while (*text) { msg[pos++] = *text++; }
-        const char *p = local_pathname;
-        while (*p && pos < 100) { msg[pos++] = *p++; }
-        text = ") -> EFAULT (envp not accessible)\n";
-        while (*text) { msg[pos++] = *text++; }
-        msg[pos] = '\0';
-        fut_printf("%s", msg);
+        fut_printf("[EXECVE] execve(path=%s) -> EFAULT (envp not accessible)\n", kernel_pathname);
         return -EFAULT;
     }
 
-    /* Phase 2: Categorize path type */
+    /* Phase 2: Categorize path type - use kernel_pathname for safe access */
     const char *path_type;
-    if (local_pathname[0] == '/') {
+    if (kernel_pathname[0] == '/') {
         path_type = "absolute";
-    } else if (local_pathname[0] == '.' && local_pathname[1] == '/') {
+    } else if (kernel_pathname[0] == '.' && kernel_pathname[1] == '/') {
         path_type = "relative (./...)";
-    } else if (local_pathname[0] == '.' && local_pathname[1] == '.' && local_pathname[2] == '/') {
+    } else if (kernel_pathname[0] == '.' && kernel_pathname[1] == '.' && kernel_pathname[2] == '/') {
         path_type = "relative (../...)";
     } else {
         path_type = "basename (no path)";
@@ -338,17 +336,33 @@ long sys_execve(const char *pathname, char *const argv[], char *const envp[]) {
      * It is a fundamental limitation of the POSIX execve() interface.
      */
 
-    /* Phase 2: Count argv and envp entries */
+    /* Phase 2: Count argv and envp entries
+     * SMAP FIX: Use fut_copy_from_user to safely read from userspace pointers.
+     * Direct access to local_argv[argc] would trigger SMAP violation on x86-64. */
     int argc = 0;
     if (local_argv) {
-        while (local_argv[argc] != NULL && argc < 1000) {
+        char *ptr = NULL;
+        while (argc < 1000) {
+            if (fut_copy_from_user(&ptr, &local_argv[argc], sizeof(char *)) != 0) {
+                break;  /* Access error - stop counting */
+            }
+            if (ptr == NULL) {
+                break;  /* NULL terminator reached */
+            }
             argc++;
         }
     }
 
     int envc = 0;
     if (local_envp) {
-        while (local_envp[envc] != NULL && envc < 1000) {
+        char *ptr = NULL;
+        while (envc < 1000) {
+            if (fut_copy_from_user(&ptr, &local_envp[envc], sizeof(char *)) != 0) {
+                break;  /* Access error - stop counting */
+            }
+            if (ptr == NULL) {
+                break;  /* NULL terminator reached */
+            }
             envc++;
         }
     }
@@ -372,15 +386,14 @@ long sys_execve(const char *pathname, char *const argv[], char *const envp[]) {
         }
     }
 
-    /* Phase 3/5: Validate arguments and copy to kernel memory atomically */
+    /* Phase 3/5: Validate arguments and copy to kernel memory atomically
+     * SMAP FIX: All userspace pointer accesses use fut_copy_from_user */
     unsigned long total_argv_size = 0;
     if (local_argv) {
         for (int i = 0; i < argc && i < EXEC_ARGC_MAX; i++) {
-            if (local_argv[i] == NULL) break;
-
-            /* Phase 5: Validate that argv[i] pointer is accessible before dereferencing */
-            const char *ptr = local_argv[i];
-            if (fut_access_ok(ptr, EXEC_ARG_LEN_MAX, 0) != 0) {
+            /* SMAP FIX: Read argv[i] pointer using safe copy */
+            const char *ptr = NULL;
+            if (fut_copy_from_user((void *)&ptr, &local_argv[i], sizeof(char *)) != 0) {
                 /* Cleanup on error */
                 if (kernel_argv) {
                     for (int j = 0; j < i; j++) {
@@ -388,28 +401,27 @@ long sys_execve(const char *pathname, char *const argv[], char *const envp[]) {
                     }
                     fut_free(kernel_argv);
                 }
-                char msg[128];
-                int pos = 0;
-                const char *text = "[EXECVE] execve() -> EFAULT (argv[";
-                while (*text) { msg[pos++] = *text++; }
-                /* Convert i to string */
-                char num[16]; int num_pos = 0;
-                int val = i;
-                if (val == 0) { num[num_pos++] = '0'; }
-                else { char temp[16]; int temp_pos = 0;
-                    while (val > 0) { temp[temp_pos++] = '0' + (val % 10); val /= 10; }
-                    while (temp_pos > 0) { num[num_pos++] = temp[--temp_pos]; } }
-                num[num_pos] = '\0';
-                for (int j = 0; num[j]; j++) { msg[pos++] = num[j]; }
-                text = "] pointer invalid, Phase 5)\n";
-                while (*text) { msg[pos++] = *text++; }
-                msg[pos] = '\0';
-                fut_printf("%s", msg);
+                fut_printf("[EXECVE] execve() -> EFAULT (argv[%d] pointer read failed)\n", i);
                 return -EFAULT;
             }
+            if (ptr == NULL) break;
 
+            /* NOTE: We removed the fut_access_ok(ptr, EXEC_ARG_LEN_MAX, 0) check here
+             * because it was too conservative - it required 128KB of mapped memory
+             * starting from the string pointer, but most arguments are short strings
+             * in smaller memory regions. The byte-by-byte copy below safely handles
+             * any access errors by returning from fut_copy_from_user early. */
+
+            /* SMAP FIX: Calculate string length by copying byte-by-byte from userspace */
             size_t arg_len = 0;
-            while (ptr[arg_len] != '\0' && arg_len < EXEC_ARG_LEN_MAX) {
+            char ch = 1;
+            while (arg_len < EXEC_ARG_LEN_MAX) {
+                if (fut_copy_from_user(&ch, ptr + arg_len, 1) != 0) {
+                    break;  /* Access error */
+                }
+                if (ch == '\0') {
+                    break;  /* Found null terminator */
+                }
                 arg_len++;
             }
             if (arg_len >= EXEC_ARG_LEN_MAX) {
@@ -516,11 +528,9 @@ long sys_execve(const char *pathname, char *const argv[], char *const envp[]) {
     unsigned long total_envp_size = 0;
     if (local_envp) {
         for (int i = 0; i < envc && i < EXEC_ENVC_MAX; i++) {
-            if (local_envp[i] == NULL) break;
-
-            /* Phase 5: Validate that envp[i] pointer is accessible before dereferencing */
-            const char *ptr = local_envp[i];
-            if (fut_access_ok(ptr, EXEC_ARG_LEN_MAX, 0) != 0) {
+            /* SMAP FIX: Read envp[i] pointer using safe copy */
+            const char *ptr = NULL;
+            if (fut_copy_from_user((void *)&ptr, &local_envp[i], sizeof(char *)) != 0) {
                 /* Cleanup on error */
                 if (kernel_envp) {
                     for (int j = 0; j < i; j++) {
@@ -534,28 +544,27 @@ long sys_execve(const char *pathname, char *const argv[], char *const envp[]) {
                     }
                     fut_free(kernel_argv);
                 }
-                char msg[128];
-                int pos = 0;
-                const char *text = "[EXECVE] execve() -> EFAULT (envp[";
-                while (*text) { msg[pos++] = *text++; }
-                /* Convert i to string */
-                char num[16]; int num_pos = 0;
-                int val = i;
-                if (val == 0) { num[num_pos++] = '0'; }
-                else { char temp[16]; int temp_pos = 0;
-                    while (val > 0) { temp[temp_pos++] = '0' + (val % 10); val /= 10; }
-                    while (temp_pos > 0) { num[num_pos++] = temp[--temp_pos]; } }
-                num[num_pos] = '\0';
-                for (int j = 0; num[j]; j++) { msg[pos++] = num[j]; }
-                text = "] pointer invalid, Phase 5)\n";
-                while (*text) { msg[pos++] = *text++; }
-                msg[pos] = '\0';
-                fut_printf("%s", msg);
+                fut_printf("[EXECVE] execve() -> EFAULT (envp[%d] pointer read failed)\n", i);
                 return -EFAULT;
             }
+            if (ptr == NULL) break;
 
+            /* NOTE: We removed the fut_access_ok(ptr, EXEC_ARG_LEN_MAX, 0) check here
+             * because it was too conservative - it required 128KB of mapped memory
+             * starting from the string pointer, but most environment variables are short
+             * strings in smaller memory regions. The byte-by-byte copy below safely handles
+             * any access errors by returning from fut_copy_from_user early. */
+
+            /* SMAP FIX: Calculate string length by copying byte-by-byte from userspace */
             size_t env_len = 0;
-            while (ptr[env_len] != '\0' && env_len < EXEC_ARG_LEN_MAX) {
+            char ch = 1;
+            while (env_len < EXEC_ARG_LEN_MAX) {
+                if (fut_copy_from_user(&ch, ptr + env_len, 1) != 0) {
+                    break;  /* Access error */
+                }
+                if (ch == '\0') {
+                    break;  /* Found null terminator */
+                }
                 env_len++;
             }
             if (env_len >= EXEC_ARG_LEN_MAX) {
@@ -731,14 +740,15 @@ long sys_execve(const char *pathname, char *const argv[], char *const envp[]) {
         }
     }
 
-    /* Phase 2: Detailed pre-exec logging */
+    /* Phase 2: Detailed pre-exec logging (use kernel_pathname for SMAP safety) */
     char msg[256];
     int pos = 0;
     const char *text = "[EXECVE] execve(path=";
     while (*text) { msg[pos++] = *text++; }
-    const char *p = local_pathname;
-    int path_len = 0;
-    while (*p && path_len < 80) { msg[pos++] = *p++; path_len++; }
+    /* Use kernel_pathname (already safely copied) instead of local_pathname */
+    const char *p = kernel_pathname;
+    int log_path_len = 0;
+    while (*p && log_path_len < 80) { msg[pos++] = *p++; log_path_len++; }
     text = " [";
     while (*text) { msg[pos++] = *text++; }
     while (*path_type) { msg[pos++] = *path_type++; }
@@ -796,8 +806,8 @@ long sys_execve(const char *pathname, char *const argv[], char *const envp[]) {
 
     /* Phase 5: Call ELF loader with kernel-space argv/envp
      * This prevents TOCTOU race: userspace can no longer modify arguments after validation.
-     * kernel_argv and kernel_envp contain immutable kernel copies of all arguments. */
-    int ret = fut_exec_elf(local_pathname,
+     * kernel_argv, kernel_envp, and kernel_pathname are immutable kernel copies. */
+    int ret = fut_exec_elf(kernel_pathname,
                            kernel_argv ? kernel_argv : (char *const *)local_argv,
                            kernel_envp ? kernel_envp : (char *const *)local_envp);
 

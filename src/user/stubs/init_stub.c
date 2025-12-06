@@ -61,9 +61,22 @@ int main(void) {
     }
 
     // Give compositor time to initialize and create Wayland socket
-    printf("[INIT-STUB] Waiting for compositor to start...\n");
-    fut_timespec_t delay = { .tv_sec = 2, .tv_nsec = 0 };
-    sys_nanosleep_call(&delay, 0);
+    // NOTE: Using busy-wait instead of nanosleep due to timer wake issue
+    printf("[INIT-STUB] Waiting for compositor to start (busy wait)...\n");
+    volatile unsigned long wait_count = 0;
+    while (wait_count < 50000000) {
+        wait_count++;
+        // Check if compositor socket exists
+        if (wait_count % 10000000 == 0) {
+            int fd = sys_open("/tmp/wayland-0", 0, 0);  // O_RDONLY
+            if (fd >= 0) {
+                sys_close(fd);
+                printf("[INIT-STUB] Wayland socket found!\n");
+                break;
+            }
+        }
+    }
+    printf("[INIT-STUB] Done waiting\n");
 
     // Fork and exec wl-term
     printf("[INIT-STUB] Launching wl-term...\n");

@@ -564,6 +564,15 @@ fut_switch_context_irq:
     cld
     rep movsq
 
+    /* CRITICAL FIX: Clear next->irq_frame after copying to prevent reusing stale frames.
+     * When this thread gets preempted next time, we want to save the ACTUAL interrupt
+     * state, not reuse this old frame. The frame we just copied represents where the
+     * thread WAS, not where it will be when next interrupted.
+     *
+     * Without this fix, threads can get "stuck" with old RIP values because the saved
+     * frame never gets updated when they make progress. */
+    movq $0, 720(%r13)      /* next->irq_frame = NULL */
+
 2:
     /* Step 4: Restore FPU state from next thread's context */
     /* context is at offset 48, fx_area is at offset 160 within context */

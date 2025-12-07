@@ -918,7 +918,14 @@ void fut_kernel_main(void) {
 #if defined(__aarch64__)
     bool fb_enabled = true;  /* Display always on for ARM64 demos */
 #else
-    bool fb_enabled = boot_flag_enabled("fb", false);  /* Disabled in favor of wayland */
+    /* Enable framebuffer by default when Wayland demo is enabled, since the
+     * compositor needs /dev/fb0 for hardware-accelerated rendering.
+     * Can be disabled via boot flag fb=0 if needed. */
+    #if ENABLE_WAYLAND_DEMO
+    bool fb_enabled = boot_flag_enabled("fb", true);  /* Enabled by default for Wayland */
+    #else
+    bool fb_enabled = boot_flag_enabled("fb", false);  /* Disabled when no GUI */
+    #endif
 #endif
     if (wayland_interactive_boot) {
         fb_enabled = true;

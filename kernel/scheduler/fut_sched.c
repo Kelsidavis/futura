@@ -671,8 +671,9 @@ void fut_schedule(void) {
         // rather than hardcoding tid==1 (which is only the BSP's idle thread).
         bool idle_involved = (prev && prev == idle) || (next && next == idle);
 
-        // Re-enable IRETQ path for investigation (but not for idle thread)
-        if (in_irq && prev && fut_current_frame && !idle_involved) {
+        // TEMPORARILY DISABLED: IRETQ path has context corruption bugs
+        // Using cooperative switching only until IRQ path is fixed
+        if (0 && in_irq && prev && fut_current_frame && !idle_involved) {
             // IRQ-safe context switch (uses IRET)
             // This modifies the interrupt frame on the stack so IRET returns to next thread
 #if defined(__aarch64__)

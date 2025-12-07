@@ -810,19 +810,41 @@ fut_switch_context_irq:
     hlt
 .rip_not_null:
 
-    /* Debug: Check CS value on stack (at RSP+24 after pushing RDX and RAX) */
+    /* CRITICAL: Validate and fix CS value in IRETQ frame */
+    /* Valid CS values: 0x08 (kernel), 0x1B (user with RPL=3) */
     movq 24(%rsp), %rax        /* Get CS from stack */
     cmpq $0x08, %rax          /* Is it kernel CS? */
-    je .cs_valid
-    /* CS is NOT 0x08! Print 'X' */
-    movb $'X', %al
+    je .cs_iretq_ok
+    cmpq $0x1B, %rax          /* Is it user CS (0x18 | 3)? */
+    je .cs_iretq_ok
+
+    /* CS is INVALID! Fix it based on RIP address space */
+    movb $'C', %al            /* C = Invalid CS detected */
     outb %al, %dx
-    jmp .cs_done
-.cs_valid:
-    /* CS is 0x08, print 'K' */
-    movb $'K', %al
+    movb $'!', %al
     outb %al, %dx
-.cs_done:
+
+    /* Check if RIP is kernel or user space to determine correct CS */
+    movq 16(%rsp), %rax       /* Get RIP from frame */
+    testq %rax, %rax
+    js .fix_kernel_cs         /* High bit set = kernel address */
+    /* User space RIP - set user CS */
+    movq $0x1B, 24(%rsp)      /* CS = user code (0x18 | 3) */
+    jmp .cs_iretq_ok
+.fix_kernel_cs:
+    movq $0x08, 24(%rsp)      /* CS = kernel code */
+.cs_iretq_ok:
+    /* Print current CS for debug */
+    movq 24(%rsp), %rax
+    cmpq $0x08, %rax
+    je .cs_print_k
+    movb $'u', %al            /* u = user CS */
+    outb %al, %dx
+    jmp .cs_print_done
+.cs_print_k:
+    movb $'K', %al            /* K = kernel CS */
+    outb %al, %dx
+.cs_print_done:
 
     popq %rax
     popq %rdx
@@ -834,17 +856,23 @@ fut_switch_context_irq:
     movb $'>', %al
     outb %al, %dx
 
-    /* CRITICAL FIX: Validate SS in IRETQ frame is never 0.
+    /* CRITICAL FIX: Validate SS in IRETQ frame.
      * In x86-64 mode, IRETQ always pops SS from RSP+32.
-     * If SS is 0, loading it causes undefined behavior.
+     * Invalid SS values cause #GP. Valid values: 0, 0x10 (kernel), 0x23 (user).
      * Stack layout after our push: [RSP+0]=RAX, [RSP+8]=RDX
      * IRETQ frame starts at RSP+16: RIP(+16), CS(+24), RFLAGS(+32), RSP(+40), SS(+48) */
     movq 48(%rsp), %rax     /* Get SS from IRETQ frame */
-    testw %ax, %ax          /* Is SS zero? */
-    jnz .ss_iretq_ok
 
-    /* SS is zero - fix it! */
-    movb $'Z', %al          /* Z = Zero SS detected, fixing! */
+    /* Check if SS is a valid selector: 0, 0x10, or 0x23 */
+    testw %ax, %ax          /* Is SS zero? */
+    jz .ss_iretq_ok         /* Zero is valid (kernel can use NULL SS in 64-bit mode) */
+    cmpw $0x10, %ax         /* Is SS kernel data segment? */
+    je .ss_iretq_ok
+    cmpw $0x23, %ax         /* Is SS user data segment? */
+    je .ss_iretq_ok
+
+    /* SS is INVALID - fix it! */
+    movb $'!', %al          /* ! = Invalid SS detected, fixing! */
     outb %al, %dx
 
     /* Determine correct SS value based on CS (kernel vs user) */

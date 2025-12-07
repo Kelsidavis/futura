@@ -901,6 +901,31 @@ fut_switch_context_irq:
     popq %rdx
     popq %rax
 
+    /* CRITICAL: Send EOI to LAPIC before IRETQ.
+     *
+     * This function was called from fut_timer_irq() which was called from irq0_timer.
+     * If we do IRETQ without sending EOI, the LAPIC will have the timer interrupt
+     * stuck in "in-service" state, preventing any future timer interrupts.
+     *
+     * We write 0 directly to LAPIC_REG_EOI (base + 0xB0).
+     * The LAPIC base is mapped at a fixed virtual address. We use the
+     * lapic_base symbol which contains the mapped virtual address.
+     *
+     * NOTE: This is safe because we're still in kernel mode with kernel page tables.
+     * The LAPIC is mapped at its physical address 0xFEE00000 to a kernel VA.
+     */
+    pushq %rax
+    pushq %rcx
+    /* Get LAPIC base from the global variable */
+    movq lapic_base(%rip), %rcx
+    testq %rcx, %rcx        /* Check if LAPIC is initialized */
+    jz .skip_eoi            /* Skip if NULL */
+    /* Write 0 to EOI register (offset 0xB0 / 4 = index 0x2C) */
+    movl $0, 0xB0(%rcx)
+.skip_eoi:
+    popq %rcx
+    popq %rax
+
     iretq
 
 .size fut_switch_context_irq, . - fut_switch_context_irq

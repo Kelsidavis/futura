@@ -17,8 +17,8 @@ extern void fut_printf(const char *fmt, ...);
 #define APIC_BASE_ENABLE (1ULL << 11)
 #define APIC_BASE_BSP    (1ULL << 8)
 
-/* LAPIC MMIO base address (virtual) */
-static volatile uint32_t *lapic_base = NULL;
+/* LAPIC MMIO base address (virtual) - exported for assembly access */
+volatile uint32_t *lapic_base = NULL;
 
 /* Flag indicating LAPIC is fully initialized and safe to use */
 static bool lapic_initialized = false;

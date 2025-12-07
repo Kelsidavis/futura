@@ -16,6 +16,48 @@
 #define EPOLLOUT 0x004u
 #endif
 
+/* Kernel syscall wrappers for socket operations */
+#define __NR_socket 41
+#define __NR_bind   49
+#define __NR_listen 50
+#define __NR_connect 53
+
+static inline long sys_socket(int domain, int type, int protocol) {
+    long ret;
+    __asm__ volatile("syscall"
+                     : "=a"(ret)
+                     : "0"(__NR_socket), "D"((long)domain), "S"((long)type), "d"((long)protocol)
+                     : "rcx", "r11", "memory");
+    return ret;
+}
+
+static inline long sys_bind(int sockfd, const void *addr, uint32_t addrlen) {
+    long ret;
+    __asm__ volatile("syscall"
+                     : "=a"(ret)
+                     : "0"(__NR_bind), "D"((long)sockfd), "S"((long)addr), "d"((long)addrlen)
+                     : "rcx", "r11", "memory");
+    return ret;
+}
+
+static inline long sys_listen(int sockfd, int backlog) {
+    long ret;
+    __asm__ volatile("syscall"
+                     : "=a"(ret)
+                     : "0"(__NR_listen), "D"((long)sockfd), "S"((long)backlog)
+                     : "rcx", "r11", "memory");
+    return ret;
+}
+
+static inline long sys_connect(int sockfd, const void *addr, uint32_t addrlen) {
+    long ret;
+    __asm__ volatile("syscall"
+                     : "=a"(ret)
+                     : "0"(__NR_connect), "D"((long)sockfd), "S"((long)addr), "d"((long)addrlen)
+                     : "rcx", "r11", "memory");
+    return ret;
+}
+
 #define UNIX_MAX_STREAMS       64
 #define UNIX_MAX_LISTENERS     16
 #define UNIX_MAX_CONNECTIONS   32
@@ -407,7 +449,22 @@ static struct unix_stream *socket_from_fd(int fd) {
 }
 
 int socket(int domain, int type, int protocol) {
-    if (domain != AF_UNIX || type != SOCK_STREAM || protocol != 0) {
+    /* Use kernel syscall for all AF_UNIX sockets
+     * This ensures the kernel socket FD table has the entry, which is
+     * required for inter-process connections via the VFS socket layer.
+     *
+     * We don't register these with the userspace FD table because:
+     * 1. Client sockets only need kernel-side handling for connect()
+     * 2. Server sockets that bind/listen will be handled by the kernel
+     * 3. Avoiding FD number mismatch between kernel and userspace tables
+     */
+    if (domain == AF_UNIX) {
+        long fd = sys_socket(domain, type, protocol);
+        return (int)fd;
+    }
+
+    /* For non-AF_UNIX, use userspace-only implementation (backwards compat) */
+    if (type != SOCK_STREAM || protocol != 0) {
         return -1;
     }
     struct unix_stream *stream = alloc_stream();
@@ -424,8 +481,15 @@ int socket(int domain, int type, int protocol) {
 }
 
 int bind(int fd, const struct sockaddr *addr, socklen_t len) {
+    /* First check if this is a userspace-tracked socket */
     struct unix_stream *stream = socket_from_fd(fd);
-    if (!stream || stream->state != STREAM_INIT) {
+
+    /* If not in userspace table, use kernel syscall directly */
+    if (!stream) {
+        return (int)sys_bind(fd, addr, len);
+    }
+
+    if (stream->state != STREAM_INIT) {
         return -1;
     }
     if (!addr || len < sizeof(struct sockaddr_un)) {
@@ -458,7 +522,13 @@ int bind(int fd, const struct sockaddr *addr, socklen_t len) {
 
 int listen(int fd, int backlog) {
     struct unix_stream *stream = socket_from_fd(fd);
-    if (!stream || stream->state != STREAM_BOUND || !stream->listener) {
+
+    /* If not in userspace table, use kernel syscall directly */
+    if (!stream) {
+        return (int)sys_listen(fd, backlog);
+    }
+
+    if (stream->state != STREAM_BOUND || !stream->listener) {
         return -1;
     }
     if (backlog <= 0) {
@@ -473,7 +543,8 @@ int listen(int fd, int backlog) {
 int connect(int fd, const struct sockaddr *addr, socklen_t len) {
     struct unix_stream *stream = socket_from_fd(fd);
     if (!stream || stream->state != STREAM_INIT) {
-        return -1;
+        /* Not a userspace socket - fall back to kernel */
+        return (int)sys_connect(fd, addr, len);
     }
     if (!addr || len < sizeof(struct sockaddr_un)) {
         return -1;
@@ -484,7 +555,8 @@ int connect(int fd, const struct sockaddr *addr, socklen_t len) {
     }
     struct unix_listener *listener = find_listener(sun->sun_path);
     if (!listener || listener->pending_count >= listener->backlog) {
-        return -1;
+        /* No local listener found - try kernel */
+        return (int)sys_connect(fd, addr, len);
     }
     struct unix_connection *conn = alloc_connection();
     if (!conn) {

@@ -34,7 +34,8 @@ static uint64_t now_ms(void) {
 }
 
 static uint64_t timespec_to_ms(const struct timespec *ts) {
-    if (!ts) {
+    /* Validate pointer - reject NULL and obviously invalid addresses (< 0x1000) */
+    if (!ts || (uintptr_t)ts < 0x1000) {
         return 0;
     }
     int64_t sec = ts->tv_sec;
@@ -113,7 +114,8 @@ int timerfd_settime(int fd, int flags,
                     const struct itimerspec *new_value,
                     struct itimerspec *old_value) {
     struct fut_timerfd *t = lookup_timerfd(fd);
-    if (!t || !new_value) {
+    /* Validate pointers - reject NULL and obviously invalid addresses (< 0x1000) */
+    if (!t || !new_value || (uintptr_t)new_value < 0x1000) {
         return -1;
     }
 

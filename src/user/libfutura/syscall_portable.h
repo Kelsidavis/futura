@@ -231,7 +231,7 @@ static inline long syscall6(long nr, long arg1, long arg2, long arg3, long arg4,
 #define __NR_open           2
 #define __NR_close          3
 #define __NR_socket         41
-#define __NR_connect        42
+#define __NR_connect        53   /* Futura uses 53 (42 is echo in Futura) */
 #define __NR_bind           49
 #define __NR_listen         50
 #define __NR_exit           60

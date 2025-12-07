@@ -156,13 +156,35 @@
 /** Per-task socket FD table mapping FDs to kernel socket objects */
 static fut_socket_t *socket_fd_table[MAX_SOCKET_FDS] = {NULL};
 
+/** Owner tid for each socket fd - prevents cross-process socket closes */
+static uint64_t socket_fd_owner[MAX_SOCKET_FDS] = {0};
+
+/* Get current thread ID for socket ownership checks */
+#include "../../include/kernel/fut_percpu.h"
+
+static inline uint64_t get_current_tid(void) {
+    fut_percpu_t *percpu = fut_percpu_get();
+    if (percpu && percpu->current_thread) {
+        return percpu->current_thread->tid;
+    }
+    return 0;
+}
+
 /**
  * Get a kernel socket object from a file descriptor.
- * Returns NULL if FD is invalid or not a socket.
+ * Returns NULL if FD is invalid, not a socket, or belongs to another process.
  */
 fut_socket_t *get_socket_from_fd(int fd) {
     if (fd < 0 || fd >= MAX_SOCKET_FDS) {
         return NULL;
+    }
+    if (socket_fd_table[fd] == NULL) {
+        return NULL;
+    }
+    /* Check ownership - only allow access to sockets owned by current thread */
+    uint64_t tid = get_current_tid();
+    if (socket_fd_owner[fd] != tid) {
+        return NULL;  /* Socket belongs to a different thread/process */
     }
     return socket_fd_table[fd];
 }
@@ -184,9 +206,11 @@ static inline int set_socket_for_fd(int fd, fut_socket_t *socket) {
  * Returns FD number (>=0) on success, -1 if no space.
  */
 int allocate_socket_fd(fut_socket_t *socket) {
+    uint64_t tid = get_current_tid();
     for (int i = 3; i < MAX_SOCKET_FDS; i++) {  /* Skip stdin/stdout/stderr */
         if (socket_fd_table[i] == NULL) {
             socket_fd_table[i] = socket;
+            socket_fd_owner[i] = tid;
             return i;
         }
     }
@@ -205,8 +229,9 @@ int release_socket_fd(int fd) {
     /* Close the socket */
     int ret = fut_socket_close(socket);
 
-    /* Release the FD slot */
+    /* Release the FD slot and clear owner */
     socket_fd_table[fd] = NULL;
+    socket_fd_owner[fd] = 0;
 
     return ret < 0 ? ret : 0;
 }
@@ -385,6 +410,11 @@ static int64_t sys_ioctl_handler(uint64_t fd, uint64_t req, uint64_t argp,
 
 static int64_t sys_mmap_handler(uint64_t addr, uint64_t len, uint64_t prot,
                                 uint64_t flags, uint64_t fd, uint64_t off) {
+    extern void fut_printf(const char *, ...);
+    fut_printf("[MMAP-HANDLER] addr=0x%llx len=%llu prot=%llu flags=%llu fd=%llu off=%llu\n",
+               (unsigned long long)addr, (unsigned long long)len,
+               (unsigned long long)prot, (unsigned long long)flags,
+               (unsigned long long)fd, (unsigned long long)off);
     return sys_mmap((void *)addr, (size_t)len, (int)prot, (int)flags, (int)fd, (long)off);
 }
 
@@ -930,7 +960,11 @@ static int64_t sys_connect_handler(uint64_t sockfd, uint64_t addr, uint64_t addr
                                    uint64_t arg4, uint64_t arg5, uint64_t arg6) {
     (void)arg4; (void)arg5; (void)arg6;
     extern long sys_connect(int sockfd, const void *addr, uint32_t addrlen);
-    return sys_connect((int)sockfd, (const void *)addr, (uint32_t)addrlen);
+    fut_printf("[CONNECT] connect(sockfd=%llu, addr=0x%llx, addrlen=%llu) entering\n",
+               sockfd, addr, addrlen);
+    long result = sys_connect((int)sockfd, (const void *)addr, (uint32_t)addrlen);
+    fut_printf("[CONNECT] connect() -> %ld\n", result);
+    return result;
 }
 
 /**
@@ -1421,9 +1455,19 @@ static syscall_handler_t syscall_table[MAX_SYSCALL] = {
 int64_t posix_syscall_dispatch(uint64_t syscall_num,
                                 uint64_t arg1, uint64_t arg2, uint64_t arg3,
                                 uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    extern void fut_printf(const char *, ...);
+
+    /* Debug: Log mmap syscalls to diagnose fd corruption */
+    if (syscall_num == 9) {  /* SYS_mmap */
+        fut_printf("[DISPATCH-MMAP] nr=%llu a1=0x%llx a2=%llu a3=%llu a4=%llu a5=%llu a6=%llu\n",
+                   (unsigned long long)syscall_num,
+                   (unsigned long long)arg1, (unsigned long long)arg2,
+                   (unsigned long long)arg3, (unsigned long long)arg4,
+                   (unsigned long long)arg5, (unsigned long long)arg6);
+    }
+
     /* Validate syscall number */
     if (syscall_num >= MAX_SYSCALL) {
-        extern void fut_printf(const char *, ...);
         fut_printf("[DISPATCHER] ERROR: syscall %lu >= MAX_SYSCALL %d\n", syscall_num, MAX_SYSCALL);
         return -1;  /* ENOSYS */
     }
@@ -1435,7 +1479,6 @@ int64_t posix_syscall_dispatch(uint64_t syscall_num,
     }
 
     if (handler == sys_unimplemented) {
-        extern void fut_printf(const char *, ...);
         fut_printf("[SYSCALL] unimplemented nr=%lu\n", syscall_num);
     }
 

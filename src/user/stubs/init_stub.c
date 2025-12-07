@@ -5,7 +5,9 @@
 #include <shared/fut_timespec.h>
 
 int main(void) {
-    // Init process - launch Wayland compositor and wl-term terminal
+    // Init process - wait for compositor (launched by kernel) and start wl-term
+    // NOTE: The kernel launches futura-wayland compositor when ENABLE_WAYLAND_DEMO=1
+    // We just need to wait for the socket and launch wl-term
 
     // First, set up our own file descriptors to /dev/console
     int test_fd = sys_open("/dev/console", 2, 0);  // O_RDWR = 2
@@ -27,56 +29,45 @@ int main(void) {
         sys_close(test_fd);
     }
 
-    // Create /tmp directory for Wayland socket
-    sys_mkdir_call("/tmp", 0755);
-    printf("[INIT-STUB] Created /tmp directory\n");
+    printf("[INIT-STUB] Started, waiting for compositor socket...\n");
 
-    // Fork and exec the Wayland compositor first
-    printf("[INIT-STUB] Launching futura-wayland compositor...\n");
-    long compositor_pid = sys_fork_call();
+    // Wait for compositor (launched by kernel) to create Wayland socket
+    int socket_found = 0;
 
-    if (compositor_pid == 0) {
-        // Child process - exec into futura-wayland compositor
-        sys_close(0);
-        sys_close(1);
-        sys_close(2);
-        sys_open("/dev/console", 2, 0);  // fd 0 (stdin)
-        sys_open("/dev/console", 2, 0);  // fd 1 (stdout)
-        sys_open("/dev/console", 2, 0);  // fd 2 (stderr)
-
-        const char *argv[] = { "/sbin/futura-wayland", 0 };
-        const char *envp[] = {
-            "XDG_RUNTIME_DIR=/tmp",
-            0
-        };
-        sys_execve_call("/sbin/futura-wayland", (char * const *)argv, (char * const *)envp);
-        // If execve fails, print error and exit
-        printf("[INIT-STUB] FATAL: Failed to exec /sbin/futura-wayland\n");
-        sys_exit(1);
-    } else if (compositor_pid < 0) {
-        printf("[INIT-STUB] FATAL: Failed to fork for compositor\n");
-        // Fall through and try wl-term anyway
-    } else {
-        printf("[INIT-STUB] Compositor launched with PID %ld\n", compositor_pid);
+    // Initial delay to let compositor initialize
+    for (volatile unsigned long i = 0; i < 500000000UL; i++) {
+        // Empty loop - burn cycles to give compositor time to start
     }
 
-    // Give compositor time to initialize and create Wayland socket
-    // NOTE: Using busy-wait instead of nanosleep due to timer wake issue
-    printf("[INIT-STUB] Waiting for compositor to start (busy wait)...\n");
-    volatile unsigned long wait_count = 0;
-    while (wait_count < 50000000) {
-        wait_count++;
-        // Check if compositor socket exists
-        if (wait_count % 10000000 == 0) {
-            int fd = sys_open("/tmp/wayland-0", 0, 0);  // O_RDONLY
-            if (fd >= 0) {
-                sys_close(fd);
-                printf("[INIT-STUB] Wayland socket found!\n");
-                break;
+    for (int attempt = 0; attempt < 1000; attempt++) {
+        // Busy-wait between checks
+        for (volatile unsigned long i = 0; i < 5000000UL; i++) {
+            // Empty loop
+        }
+
+        // Try to open the socket file
+        int fd = sys_open("/tmp/wayland-0", 0, 0);  // O_RDONLY
+        if (fd >= 0) {
+            sys_close(fd);
+            printf("[INIT-STUB] Wayland socket found on attempt %d!\n", attempt + 1);
+            socket_found = 1;
+
+            // Extra wait for compositor to finish listening setup
+            for (volatile unsigned long i = 0; i < 100000000UL; i++) {
+                // Empty loop
             }
+            break;
+        }
+
+        if (attempt % 200 == 199) {
+            printf("[INIT-STUB] Still waiting for socket... (attempt %d)\n", attempt + 1);
         }
     }
-    printf("[INIT-STUB] Done waiting\n");
+
+    if (!socket_found) {
+        printf("[INIT-STUB] WARNING: Wayland socket not found after 1000 attempts\n");
+    }
+    printf("[INIT-STUB] Done waiting, launching wl-term\n");
 
     // Fork and exec wl-term
     printf("[INIT-STUB] Launching wl-term...\n");

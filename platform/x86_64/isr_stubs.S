@@ -620,6 +620,15 @@ irq_common_stub:
 .global irq0_timer
 .type irq0_timer, @function
 irq0_timer:
+    /* Debug: Print 'T' for timer entry - use direct port I/O before any stack changes */
+    pushq %rax
+    pushq %rdx
+    movw $0x3F8, %dx
+    movb $'~', %al      /* ~ = timer IRQ entry */
+    outb %al, %dx
+    popq %rdx
+    popq %rax
+
     pushq $0                            /* Dummy error code */
     pushq $32                           /* IRQ0 vector */
 

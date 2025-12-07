@@ -214,8 +214,17 @@ fut_thread_t *fut_thread_create(
     // Stack is now 16-byte aligned (after the "return address" push)
     ctx->rsp = aligned_top;
     ctx->rip = (uint64_t)(uintptr_t)&fut_thread_trampoline;
-    // RFLAGS bit 1 must be 1 (reserved), bit 9 is interrupt enable
-    ctx->rflags = 0x202;  // Bit 1 (reserved=1) | Bit 9 (IF=1)
+
+    fut_printf("[THREAD-CREATE] tid=%llu rip=0x%llx (trampoline=0x%llx entry=0x%llx)\n",
+               (unsigned long long)thread->tid, (unsigned long long)ctx->rip,
+               (unsigned long long)(uintptr_t)&fut_thread_trampoline,
+               (unsigned long long)(uintptr_t)entry);
+
+    /* RFLAGS bit 1 must be 1 (reserved), bit 9 is interrupt enable.
+     * CRITICAL: Start with IF=0 (interrupts DISABLED) to prevent the timer
+     * from interrupting before the trampoline executes its first instruction.
+     * The trampoline will enable interrupts after critical setup is complete. */
+    ctx->rflags = 0x002;  // Bit 1 (reserved=1) | Bit 9 (IF=0) - interrupts disabled
 
     /* ALL threads (kernel and user) start in kernel mode (ring 0).
      * For user threads, the entry point is fut_user_trampoline (a kernel function)
@@ -551,6 +560,13 @@ __attribute__((used)) static void fut_thread_trampoline_impl(void (*entry)(void 
         /* Set up stack frame */
         "pushq %%rbp\n"
         "movq %%rsp, %%rbp\n"
+
+        /* DO NOT enable interrupts here!
+         * New threads start with IF=0 and run to completion with interrupts
+         * disabled until they reach a point where they can safely be preempted.
+         * For user threads, fut_user_trampoline handles the transition and
+         * enables interrupts when entering user mode via IRETQ.
+         * For kernel threads, the entry function can enable interrupts when ready. */
 
         /* Parameters are already in RDI and RSI (x86-64 calling convention) */
         /* Call the C implementation */

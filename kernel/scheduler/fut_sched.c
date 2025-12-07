@@ -333,12 +333,12 @@ void fut_sched_add_thread(fut_thread_t *thread) {
 
     fut_spinlock_release(&target_percpu->queue_lock);
 
-    // Debug: Log when threads are added (only first 10)
+    // Debug: Log when threads are added (extend to 30 for fork debugging)
     static int add_count = 0;
-    if (add_count < 10) {
+    if (add_count < 30 || thread->tid >= 6) {
         fut_printf("[SCHED] Added thread tid=%llu to ready queue (count now %llu)\n",
                    (unsigned long long)thread->tid, (unsigned long long)target_percpu->ready_count);
-        add_count++;
+        if (add_count < 30) add_count++;
     }
 }
 
@@ -584,6 +584,17 @@ void fut_schedule(void) {
     fut_thread_t *prev = fut_thread_current();
     fut_thread_t *next = select_next_thread();
 
+    // Debug: Log scheduler calls to understand preemption
+    static int sched_call_count = 0;
+    if (sched_call_count < 100 || (prev && prev->tid >= 6)) {
+        fut_percpu_t *dbg_percpu = fut_percpu_get();
+        fut_printf("[SCHED-DBG] schedule called: prev_tid=%llu next_tid=%llu queue=%llu\n",
+                   prev ? (unsigned long long)prev->tid : 0ULL,
+                   next ? (unsigned long long)next->tid : 0ULL,
+                   dbg_percpu ? (unsigned long long)dbg_percpu->ready_count : 0ULL);
+        if (sched_call_count < 100) sched_call_count++;
+    }
+
     // Get per-CPU data for idle thread check
     fut_percpu_t *percpu = fut_percpu_get();
     fut_thread_t *idle = percpu ? percpu->idle_thread : NULL;
@@ -615,11 +626,12 @@ void fut_schedule(void) {
 
     // Debug: Log first few context switches to trace scheduler behavior
     static int switch_count = 0;
-    if (switch_count < 20 && prev != next) {
-        fut_printf("[SCHED] Switching: tid=%llu -> tid=%llu\n",
+    if ((switch_count < 50 || (next && next->tid >= 6)) && prev != next) {
+        fut_printf("[SCHED] Switching: tid=%llu -> tid=%llu (queue_count=%llu)\n",
                    prev ? (unsigned long long)prev->tid : 0ULL,
-                   (unsigned long long)next->tid);
-        switch_count++;
+                   (unsigned long long)next->tid,
+                   percpu ? (unsigned long long)percpu->ready_count : 0ULL);
+        if (switch_count < 50) switch_count++;
     }
 
 #if defined(__x86_64__)

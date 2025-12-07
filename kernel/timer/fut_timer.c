@@ -197,6 +197,15 @@ void fut_timer_tick(void) {
     // before the test harness has created any threads.
     extern fut_thread_t *fut_thread_current(void);
     fut_thread_t *current = fut_thread_current();
+
+    // Debug: Log timer tick to diagnose preemption issues (sparse logging)
+    static int timer_debug_count = 0;
+    if ((ticks % 50 == 0 && timer_debug_count < 50) || (current && current->tid >= 6)) {
+        fut_printf("[TIMER-DBG] tick: current_tid=%llu ticks=%llu\n",
+                   current ? (unsigned long long)current->tid : 0ULL, ticks);
+        if (timer_debug_count < 50) timer_debug_count++;
+    }
+
     if (current != nullptr) {
         // Trigger preemptive scheduling
         // This will call fut_switch_context_irq() if a thread switch is needed
@@ -295,9 +304,22 @@ uint64_t fut_get_time_us(void) {
 }
 
 void fut_timer_irq(void) {
+    // Debug: Check if timer IRQ is firing at low level
+    static int irq_debug_count = 0;
+    uint64_t ticks = atomic_load(&system_ticks);
+    if (ticks % 100 == 0 && irq_debug_count < 30) {
+        serial_puts("[TIMER-IRQ] ");
+        irq_debug_count++;
+    }
+
     fut_timer_tick();
 
-    /* Send EOI to LAPIC (PIC EOI no longer needed in APIC mode) */
+    /* Send EOI to LAPIC - in IOAPIC mode (which we use), only LAPIC EOI is needed.
+     * The legacy 8259 PIC is disabled by ACPI initialization.
+     *
+     * NOTE: If fut_timer_tick() triggers a context switch via fut_switch_context_irq(),
+     * that function does its own IRETQ and never returns here. In that case, we need
+     * to send EOI from the context switch path instead. */
 #ifdef __x86_64__
     lapic_send_eoi();
 #endif

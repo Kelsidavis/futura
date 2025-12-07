@@ -431,6 +431,88 @@ fut_switch_context_irq:
     /* Copy control registers (CPU-pushed values) */
     movq 48(%rsi), %rax     /* context.rip */
 
+    /* Debug: Print '<' and first few nibbles of context RIP for C path */
+    pushq %rdx
+    pushq %rax
+    movw $0x3F8, %dx
+    movb $'<', %al          /* < = context RIP about to be loaded */
+    outb %al, %dx
+
+    /* Print nibbles 7-12 of context RIP (bits 31-8) */
+    popq %rax
+    pushq %rax
+
+    /* nibble 8 (bits 31-28) */
+    movq %rax, %rcx
+    shrq $28, %rcx
+    andb $0xF, %cl
+    cmpb $10, %cl
+    jl .ctx_rip_nib8_digit
+    addb $('A' - 10), %cl
+    jmp .ctx_rip_nib8_print
+.ctx_rip_nib8_digit:
+    addb $'0', %cl
+.ctx_rip_nib8_print:
+    movb %cl, %al
+    outb %al, %dx
+
+    popq %rax
+    pushq %rax
+
+    /* nibble 9 (bits 27-24) */
+    movq %rax, %rcx
+    shrq $24, %rcx
+    andb $0xF, %cl
+    cmpb $10, %cl
+    jl .ctx_rip_nib9_digit
+    addb $('A' - 10), %cl
+    jmp .ctx_rip_nib9_print
+.ctx_rip_nib9_digit:
+    addb $'0', %cl
+.ctx_rip_nib9_print:
+    movb %cl, %al
+    outb %al, %dx
+
+    popq %rax
+    pushq %rax
+
+    /* nibble 10 (bits 23-20) */
+    movq %rax, %rcx
+    shrq $20, %rcx
+    andb $0xF, %cl
+    cmpb $10, %cl
+    jl .ctx_rip_nib10_digit
+    addb $('A' - 10), %cl
+    jmp .ctx_rip_nib10_print
+.ctx_rip_nib10_digit:
+    addb $'0', %cl
+.ctx_rip_nib10_print:
+    movb %cl, %al
+    outb %al, %dx
+
+    popq %rax
+    pushq %rax
+
+    /* nibble 11 (bits 19-16) */
+    movq %rax, %rcx
+    shrq $16, %rcx
+    andb $0xF, %cl
+    cmpb $10, %cl
+    jl .ctx_rip_nib11_digit
+    addb $('A' - 10), %cl
+    jmp .ctx_rip_nib11_print
+.ctx_rip_nib11_digit:
+    addb $'0', %cl
+.ctx_rip_nib11_print:
+    movb %cl, %al
+    outb %al, %dx
+
+    movb $'>', %al          /* > = end of context RIP */
+    outb %al, %dx
+
+    popq %rax
+    popq %rdx
+
     /* Debug: Check if RIP is NULL */
     testq %rax, %rax
     jnz .rip_ok
@@ -549,7 +631,157 @@ fut_switch_context_irq:
 .rip_nibble2_ok:
     outb %al, %dx
 
-    popq %rax               /* Restore RIP value */
+    popq %rax               /* Restore full RIP for more nibbles */
+    pushq %rax
+
+    /* Print nibble 3 (bits 51-48) */
+    shrq $48, %rax
+    andb $0xF, %al
+    cmpb $10, %al
+    jl .rip_nib3_digit
+    addb $('A' - 10), %al
+    jmp .rip_nib3_print
+.rip_nib3_digit:
+    addb $'0', %al
+.rip_nib3_print:
+    outb %al, %dx
+
+    popq %rax
+    pushq %rax
+
+    /* Print nibble 4 (bits 47-44) */
+    shrq $44, %rax
+    andb $0xF, %al
+    cmpb $10, %al
+    jl .rip_nib4_digit
+    addb $('A' - 10), %al
+    jmp .rip_nib4_print
+.rip_nib4_digit:
+    addb $'0', %al
+.rip_nib4_print:
+    outb %al, %dx
+
+    popq %rax
+    pushq %rax
+
+    /* Print nibble 5 (bits 43-40) */
+    shrq $40, %rax
+    andb $0xF, %al
+    cmpb $10, %al
+    jl .rip_nib5_digit
+    addb $('A' - 10), %al
+    jmp .rip_nib5_print
+.rip_nib5_digit:
+    addb $'0', %al
+.rip_nib5_print:
+    outb %al, %dx
+
+    popq %rax
+    pushq %rax
+
+    /* Print nibble 6 (bits 39-36) */
+    shrq $36, %rax
+    andb $0xF, %al
+    cmpb $10, %al
+    jl .rip_nib6_digit
+    addb $('A' - 10), %al
+    jmp .rip_nib6_print
+.rip_nib6_digit:
+    addb $'0', %al
+.rip_nib6_print:
+    outb %al, %dx
+
+    popq %rax
+    pushq %rax
+
+    /* Print nibble 7 (bits 35-32) */
+    shrq $32, %rax
+    andb $0xF, %al
+    cmpb $10, %al
+    jl .rip_nib7_digit
+    addb $('A' - 10), %al
+    jmp .rip_nib7_print
+.rip_nib7_digit:
+    addb $'0', %al
+.rip_nib7_print:
+    outb %al, %dx
+
+    popq %rax
+    pushq %rax
+
+    /* Print nibble 8 (bits 31-28) */
+    shrq $28, %rax
+    andb $0xF, %al
+    cmpb $10, %al
+    jl .rip_nib8_digit
+    addb $('A' - 10), %al
+    jmp .rip_nib8_print
+.rip_nib8_digit:
+    addb $'0', %al
+.rip_nib8_print:
+    outb %al, %dx
+
+    popq %rax
+    pushq %rax
+
+    /* Print nibble 9 (bits 27-24) */
+    shrq $24, %rax
+    andb $0xF, %al
+    cmpb $10, %al
+    jl .rip_nib9_digit
+    addb $('A' - 10), %al
+    jmp .rip_nib9_print
+.rip_nib9_digit:
+    addb $'0', %al
+.rip_nib9_print:
+    outb %al, %dx
+
+    popq %rax
+    pushq %rax
+
+    /* Print nibble 10 (bits 23-20) */
+    shrq $20, %rax
+    andb $0xF, %al
+    cmpb $10, %al
+    jl .rip_nib10_digit
+    addb $('A' - 10), %al
+    jmp .rip_nib10_print
+.rip_nib10_digit:
+    addb $'0', %al
+.rip_nib10_print:
+    outb %al, %dx
+
+    popq %rax
+    pushq %rax
+
+    /* Print nibble 11 (bits 19-16) */
+    shrq $16, %rax
+    andb $0xF, %al
+    cmpb $10, %al
+    jl .rip_nib11_digit
+    addb $('A' - 10), %al
+    jmp .rip_nib11_print
+.rip_nib11_digit:
+    addb $'0', %al
+.rip_nib11_print:
+    outb %al, %dx
+
+    popq %rax
+    pushq %rax
+
+    /* Print nibble 12 (bits 15-12) */
+    shrq $12, %rax
+    andb $0xF, %al
+    cmpb $10, %al
+    jl .rip_nib12_digit
+    addb $('A' - 10), %al
+    jmp .rip_nib12_print
+.rip_nib12_digit:
+    addb $'0', %al
+.rip_nib12_print:
+    outb %al, %dx
+
+    popq %rax               /* Final restore of RIP value */
 
     movb $'}', %al          /* } = end restore frame debug */
     outb %al, %dx
@@ -563,6 +795,19 @@ fut_switch_context_irq:
     movq $26, %rcx          /* 208 bytes / 8 = 26 qwords */
     cld
     rep movsq
+
+    /* CRITICAL FIX: Clear IF in RFLAGS to give the thread time to execute!
+     * The saved frame has IF=1 (from when the thread was interrupted). If we
+     * restore this with IRETQ, the pending timer interrupt fires immediately
+     * and the thread never executes even one instruction.
+     *
+     * By clearing IF, the thread runs with interrupts disabled for its first
+     * instruction. When it next gets interrupted, the new frame will have
+     * whatever IF value was current at that time.
+     *
+     * RFLAGS is at offset 184 in the interrupt frame. r14 still points to
+     * the frame base (rep movsq only modifies rdi, not r14). */
+    andq $~0x200, 184(%r14)  /* Clear IF (bit 9) in RFLAGS at offset 184 */
 
     /* CRITICAL FIX: Clear next->irq_frame after copying to prevent reusing stale frames.
      * When this thread gets preempted next time, we want to save the ACTUAL interrupt

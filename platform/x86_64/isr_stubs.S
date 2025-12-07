@@ -245,6 +245,10 @@ isr_syscall_int80_stub:
      * GCC-generated code that stores pointers in XMM will crash when it finds NULL.
      * XMM registers must be preserved across syscalls per the calling convention. */
 
+    /* CRITICAL: Ensure IF is set in RFLAGS before returning to userspace!
+     * RFLAGS is at RSP+16 in the IRETQ frame */
+    orq $0x200, 16(%rsp)        /* Set IF (bit 9) in RFLAGS */
+
     iretq
 .size isr_syscall_int80_stub, . - isr_syscall_int80_stub
 
@@ -364,6 +368,13 @@ isr_syscall_fastpath:
 
     /* Pop RFLAGS into R11 for SYSRET */
     popq %r11
+
+    /* CRITICAL: Ensure IF (bit 9) is set in RFLAGS before returning to userspace!
+     * New threads start with IF=0 for their first instruction to prevent immediate
+     * preemption. However, once a thread makes its first syscall and returns,
+     * it should be preemptable. Without this, IF=0 gets saved/restored forever
+     * and timer interrupts never fire for this thread. */
+    orq $0x200, %r11
 
     /* Skip CS placeholder */
     addq $8, %rsp
@@ -487,10 +498,16 @@ isr_common_stub:
      * Fix SS to kernel data segment before IRETQ if returning to kernel mode.
      * Note: CPU-pushed RSP is correct and must NOT be modified. */
     testb $3, 8(%rsp)           /* Test RPL of saved CS (at RIP+8) */
-    jnz .isr_common_iretq       /* If RPL != 0, returning to user - SS is valid */
+    jnz .isr_common_iretq_user  /* If RPL != 0, returning to user */
 
     /* Returning to kernel mode - fix up SS only (RSP is correct as pushed by CPU) */
     movq $0x10, 32(%rsp)        /* Store kernel SS (0x10) at SS slot */
+    jmp .isr_common_iretq
+
+.isr_common_iretq_user:
+    /* Returning to userspace - ensure IF is set so timer can preempt
+     * RFLAGS is at RSP+16 in the IRETQ frame */
+    orq $0x200, 16(%rsp)        /* Set IF (bit 9) in RFLAGS */
 
 .isr_common_iretq:
     /* Return from interrupt */
@@ -605,10 +622,16 @@ irq_common_stub:
      * Fix SS to kernel data segment before IRETQ if returning to kernel mode.
      * Note: CPU-pushed RSP is correct and must NOT be modified. */
     testb $3, 8(%rsp)           /* Test RPL of saved CS (at RIP+8) */
-    jnz .irq_common_iretq       /* If RPL != 0, returning to user - SS is valid */
+    jnz .irq_common_iretq_user  /* If RPL != 0, returning to user */
 
     /* Returning to kernel mode - fix up SS only (RSP is correct as pushed by CPU) */
     movq $0x10, 32(%rsp)        /* Store kernel SS (0x10) at SS slot */
+    jmp .irq_common_iretq
+
+.irq_common_iretq_user:
+    /* Returning to userspace - ensure IF is set so timer can preempt
+     * RFLAGS is at RSP+16 in the IRETQ frame */
+    orq $0x200, 16(%rsp)        /* Set IF (bit 9) in RFLAGS */
 
 .irq_common_iretq:
     /* Return from interrupt */
@@ -747,10 +770,16 @@ irq0_timer:
      * Fix SS to kernel data segment before IRETQ if returning to kernel mode.
      * Note: CPU-pushed RSP is correct and must NOT be modified. */
     testb $3, 8(%rsp)           /* Test RPL of saved CS (at RIP+8) */
-    jnz .irq0_iretq             /* If RPL != 0, returning to user - SS is valid */
+    jnz .irq0_iretq_user        /* If RPL != 0, returning to user */
 
     /* Returning to kernel mode - fix up SS only (RSP is correct as pushed by CPU) */
     movq $0x10, 32(%rsp)        /* Store kernel SS (0x10) at SS slot */
+    jmp .irq0_iretq
+
+.irq0_iretq_user:
+    /* Returning to userspace - ensure IF is set so timer can preempt
+     * RFLAGS is at RSP+16 in the IRETQ frame */
+    orq $0x200, 16(%rsp)        /* Set IF (bit 9) in RFLAGS */
 
 .irq0_iretq:
     /* Return from interrupt */

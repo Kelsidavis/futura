@@ -408,21 +408,26 @@ static bool main_loop_iteration(struct client_state *state) {
 }
 
 int main(void) {
+    printf("[WL-TERM] Starting...\n");
     struct client_state state = {0};
     state.running = true;
     state.frame_done = true;
 
+    printf("[WL-TERM] Initializing terminal...\n");
     /* Initialize terminal */
     term_init(&state.term);
 
+    printf("[WL-TERM] Connecting to Wayland display...\n");
     /* Connect to Wayland display */
     state.display = wl_display_connect(NULL);
     if (!state.display) {
         printf("[WL-TERM] Failed to connect to Wayland\n");
         return -1;
     }
+    printf("[WL-TERM] Connected to Wayland!\n");
 
     /* Get registry and bind globals */
+    printf("[WL-TERM] Getting registry...\n");
     state.registry = wl_display_get_registry(state.display);
     wl_registry_add_listener(state.registry, &registry_listener, &state);
     wl_display_roundtrip(state.display);

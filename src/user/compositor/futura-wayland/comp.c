@@ -298,11 +298,15 @@ static void comp_apply_committed_size(struct compositor_state *comp,
 
 static int bb_create(struct backbuffer *bb, int width, int height, int pitch) {
     if (!bb || width <= 0 || height <= 0 || pitch <= 0) {
+        printf("[BB-CREATE] Invalid params: bb=%p w=%d h=%d p=%d\n", (void*)bb, width, height, pitch);
         return -1;
     }
     size_t size = (size_t)pitch * (size_t)height;
+    printf("[BB-CREATE] Allocating backbuffer: %d x %d, pitch=%d, size=%lu\n", width, height, pitch, (unsigned long)size);
     uint32_t *mem = malloc(size);
+    printf("[BB-CREATE] malloc(%lu) returned %p\n", (unsigned long)size, (void*)mem);
     if (!mem) {
+        printf("[BB-CREATE] malloc failed!\n");
         return -1;
     }
     bb->px = mem;
@@ -824,14 +828,16 @@ int comp_state_init(struct compositor_state *comp) {
         }
 
         size_t map_size = (size_t)info.pitch * info.height;
+        printf("[WAYLAND] About to mmap: fd=%d map_size=%lu\n", fd, (unsigned long)map_size);
         map = (void *)sys_mmap(NULL,
                                (long)map_size,
                                PROT_READ | PROT_WRITE,
                                MAP_SHARED,
                                fd,
                                0);
+        printf("[WAYLAND] mmap returned 0x%lx\n", (unsigned long)map);
         if ((long)map < 0) {
-            printf("[WAYLAND] mmap framebuffer failed\n");
+            printf("[WAYLAND] mmap framebuffer failed (fd was %d)\n", fd);
             sys_close(fd);
             return -1;
         }
@@ -840,6 +846,7 @@ int comp_state_init(struct compositor_state *comp) {
         comp->fb_map = (uint8_t *)map;
         comp->fb_map_size = map_size;
         comp->fb_info = info;
+        printf("[WAYLAND] fb setup complete: fd=%d map=%p size=%lu\n", fd, map, (unsigned long)map_size);
     }
     comp->running = true;
     comp->last_present_ns = 0;
@@ -847,22 +854,28 @@ int comp_state_init(struct compositor_state *comp) {
     comp->bb_index = 0;
     comp->pointer_x = (int32_t)info.width / 2;
     comp->pointer_y = (int32_t)info.height / 2;
+    printf("[WAYLAND] creating cursor...\n");
     comp->cursor = cursor_create();
     if (!comp->cursor) {
         printf("[WAYLAND] failed to create cursor state\n");
         comp_state_finish(comp);
         return -1;
     }
+    printf("[WAYLAND] cursor created, configuring backbuffers...\n");
     cursor_set_position(comp->cursor, comp->pointer_x, comp->pointer_y);
     if (comp_configure_backbuffers(comp) != 0) {
         printf("[WAYLAND] failed to allocate backbuffer\n");
         comp_state_finish(comp);
         return -1;
     }
+    printf("[WAYLAND] comp_state_init success\n");
+    printf("[WAYLAND] calling sys_ioctl for vsync...\n");
     uint32_t hint = comp->vsync_hint_ms;
     (void)sys_ioctl(comp->fb_fd, FBIOSET_VSYNC_MS, (long)&hint);
     comp->vsync_hint_ms = hint;
+    printf("[WAYLAND] calling comp_now_ns()...\n");
     comp->last_present_ns = comp_now_ns() - (uint64_t)comp->target_ms * 1000000ULL;
+    printf("[WAYLAND] comp_state_init returning 0\n");
     return 0;
 }
 

@@ -150,27 +150,19 @@ int main(void) {
         printf("[WAYLAND] ERROR: comp_state_init() failed\n");
         return -1;
     }
-#ifdef DEBUG_WAYLAND
-    printf("[WAYLAND-DEBUG] comp_state_init() succeeded\n");
-#endif
+    printf("[WAYLAND] comp_state_init() succeeded\n");
 
-#ifdef DEBUG_WAYLAND
-    printf("[WAYLAND-DEBUG] About to call wl_display_create()...\n");
-#endif
+    printf("[WAYLAND] About to call wl_display_create()...\n");
     errno = 0;
     comp.display = wl_display_create();
     int create_errno = errno;
-#ifdef DEBUG_WAYLAND
-    printf("[WAYLAND-DEBUG] wl_display_create() returned: %p\n", (void *)comp.display);
-#endif
+    printf("[WAYLAND] wl_display_create() returned: %p (errno=%d)\n", (void *)comp.display, create_errno);
     if (!comp.display) {
         printf("[WAYLAND] failed to create wl_display (errno=%d)\n", create_errno);
         comp_state_finish(&comp);
         return -1;
     }
-#ifdef DEBUG_WAYLAND
-    printf("[WAYLAND-DEBUG] wl_display successfully created\n");
-#endif
+    printf("[WAYLAND] wl_display successfully created\n");
 
     comp.loop = wl_display_get_event_loop(comp.display);
 

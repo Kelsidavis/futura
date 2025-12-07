@@ -1,4 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
+// Simple bump allocator - no free list, no splitting
+// This wastes memory but is simple and correct
 
 #include <stddef.h>
 #include <stdint.h>
@@ -7,116 +9,53 @@
 
 #include <user/sys.h>
 
-typedef struct block_header {
-    size_t size;
-    bool free;
-    struct block_header *next;
-} block_header_t;
+/* Thread-safe spinlock for malloc */
+static volatile int malloc_lock = 0;
 
-static block_header_t *free_list = NULL;
+static inline void malloc_lock_acquire(void) {
+    while (__atomic_test_and_set(&malloc_lock, __ATOMIC_ACQUIRE)) {
+        /* Spin */
+    }
+}
+
+static inline void malloc_lock_release(void) {
+    __atomic_clear(&malloc_lock, __ATOMIC_RELEASE);
+}
+
+/* Simple header to track allocation size (needed for realloc) */
+typedef struct {
+    size_t size;
+} alloc_header_t;
+
+#define HEADER_SIZE sizeof(alloc_header_t)
 
 static size_t align_size(size_t size) {
     return (size + 15u) & ~15u;
 }
 
-static block_header_t *block_from_ptr(void *ptr) {
-    if (!ptr) {
-        return NULL;
+/* Debug print - only for large allocations to avoid spam */
+static void malloc_debug(const char *msg, size_t val1, size_t val2) {
+    /* Simple syscall-based debug - use write to stderr */
+    char buf[128];
+    int len = 0;
+    const char *p = msg;
+    while (*p && len < 80) buf[len++] = *p++;
+    buf[len++] = ' ';
+    /* Print val1 as hex */
+    buf[len++] = '0'; buf[len++] = 'x';
+    for (int i = 60; i >= 0; i -= 4) {
+        int d = (val1 >> i) & 0xf;
+        if (d || i == 0 || len > 4) buf[len++] = d < 10 ? '0' + d : 'a' + d - 10;
     }
-    return (block_header_t *)((uint8_t *)ptr - sizeof(block_header_t));
-}
-
-static void remove_from_free_list(block_header_t *block, block_header_t *prev) {
-    if (prev) {
-        prev->next = block->next;
-    } else {
-        free_list = block->next;
+    buf[len++] = ' ';
+    /* Print val2 as hex */
+    buf[len++] = '0'; buf[len++] = 'x';
+    for (int i = 60; i >= 0; i -= 4) {
+        int d = (val2 >> i) & 0xf;
+        if (d || i == 0 || len > 4) buf[len++] = d < 10 ? '0' + d : 'a' + d - 10;
     }
-    block->next = NULL;
-    block->free = false;
-}
-
-static block_header_t *split_block(block_header_t *block, size_t size) {
-    const size_t remaining = block->size - size;
-    if (remaining <= sizeof(block_header_t)) {
-        return NULL;
-    }
-
-    uint8_t *payload = (uint8_t *)block + sizeof(block_header_t);
-    block_header_t *split = (block_header_t *)(payload + size);
-    split->size = remaining - sizeof(block_header_t);
-    split->free = true;
-    split->next = block->next;
-
-    block->size = size;
-    block->next = split;
-    return split;
-}
-
-static void coalesce_list(void) {
-    block_header_t *curr = free_list;
-    while (curr && curr->next) {
-        uintptr_t curr_end = (uintptr_t)curr + sizeof(block_header_t) + curr->size;
-        if (curr_end == (uintptr_t)curr->next) {
-            curr->size += sizeof(block_header_t) + curr->next->size;
-            curr->next = curr->next->next;
-        } else {
-            curr = curr->next;
-        }
-    }
-}
-
-static void insert_free_block(block_header_t *block) {
-    block->free = true;
-
-    if (!free_list || block < free_list) {
-        block->next = free_list;
-        free_list = block;
-    } else {
-        block_header_t *curr = free_list;
-        while (curr->next && curr->next < block) {
-            curr = curr->next;
-        }
-        block->next = curr->next;
-        curr->next = block;
-    }
-
-    coalesce_list();
-}
-
-static block_header_t *find_suitable_block(size_t size, block_header_t **out_prev) {
-    block_header_t *prev = NULL;
-    for (block_header_t *curr = free_list; curr; prev = curr, curr = curr->next) {
-        if (curr->free && curr->size >= size) {
-            if (out_prev) {
-                *out_prev = prev;
-            }
-            return curr;
-        }
-    }
-    return NULL;
-}
-
-static block_header_t *request_from_kernel(size_t size) {
-    size_t total = sizeof(block_header_t) + size;
-    total = align_size(total);
-
-    long current = sys_brk_call(NULL);
-    if (current < 0) {
-        return NULL;
-    }
-
-    long requested = current + (long)total;
-    long rc = sys_brk_call((void *)(uintptr_t)requested);
-    if (rc < 0 || rc < requested) {
-        return NULL;
-    }
-
-    block_header_t *block = (block_header_t *)(uintptr_t)current;
-    block->size = total - sizeof(block_header_t);
-    block->free = false;
-    block->next = NULL;
-    return block;
+    buf[len++] = '\n';
+    sys_write(2, buf, len);
 }
 
 void *malloc(size_t size) {
@@ -124,36 +63,52 @@ void *malloc(size_t size) {
         return NULL;
     }
 
-    size = align_size(size);
+    size_t aligned = align_size(size);
+    size_t total = HEADER_SIZE + aligned;
 
-    block_header_t *prev = NULL;
-    block_header_t *block = find_suitable_block(size, &prev);
-    if (block) {
-        split_block(block, size);
-        remove_from_free_list(block, prev);
-        return (uint8_t *)block + sizeof(block_header_t);
+    /* Debug large allocations */
+    if (size > 100000) {
+        malloc_debug("[MALLOC] large alloc size=", size, total);
     }
 
-    block = request_from_kernel(size);
-    if (!block) {
+    malloc_lock_acquire();
+
+    /* Get current break */
+    long current = sys_brk_call(NULL);
+    if (current < 0) {
+        malloc_lock_release();
+        if (size > 100000) malloc_debug("[MALLOC] brk(NULL) failed rc=", (size_t)current, 0);
         return NULL;
     }
 
-    block_header_t *split = split_block(block, size);
-    if (split) {
-        insert_free_block(split);
-        block->next = NULL;
+    /* Expand break */
+    long requested = current + (long)total;
+    if (size > 100000) {
+        malloc_debug("[MALLOC] current brk=", (size_t)current, (size_t)requested);
     }
-    return (uint8_t *)block + sizeof(block_header_t);
+    long rc = sys_brk_call((void *)(uintptr_t)requested);
+    if (rc < 0 || rc < requested) {
+        malloc_lock_release();
+        if (size > 100000) malloc_debug("[MALLOC] brk expand failed rc=", (size_t)rc, (size_t)requested);
+        return NULL;
+    }
+
+    malloc_lock_release();
+
+    /* Set up header */
+    alloc_header_t *header = (alloc_header_t *)(uintptr_t)current;
+    header->size = aligned;
+
+    void *result = (void *)((uint8_t *)header + HEADER_SIZE);
+    if (size > 100000) {
+        malloc_debug("[MALLOC] success ptr=", (size_t)result, size);
+    }
+    return result;
 }
 
 void free(void *ptr) {
-    if (!ptr) {
-        return;
-    }
-
-    block_header_t *block = block_from_ptr(ptr);
-    insert_free_block(block);
+    /* Bump allocator doesn't actually free - memory is leaked */
+    (void)ptr;
 }
 
 void *calloc(size_t nmemb, size_t size) {
@@ -174,8 +129,11 @@ void *realloc(void *ptr, size_t size) {
         return NULL;
     }
 
-    block_header_t *block = block_from_ptr(ptr);
-    if (block->size >= size) {
+    /* Get old size from header */
+    alloc_header_t *header = (alloc_header_t *)((uint8_t *)ptr - HEADER_SIZE);
+    size_t old_size = header->size;
+
+    if (old_size >= size) {
         return ptr;
     }
 
@@ -184,7 +142,7 @@ void *realloc(void *ptr, size_t size) {
         return NULL;
     }
 
-    size_t copy = block->size < size ? block->size : size;
+    size_t copy = old_size < size ? old_size : size;
     memcpy(new_ptr, ptr, copy);
     free(ptr);
     return new_ptr;

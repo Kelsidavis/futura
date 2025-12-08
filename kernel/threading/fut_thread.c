@@ -595,8 +595,13 @@ __attribute__((used)) static void fut_thread_trampoline_impl(void (*entry)(void 
     extern void serial_puts(const char *);
     extern void fut_printf(const char *, ...);
 
-    serial_puts("[TRAMPOLINE-IMPL] Entered\n");
-    fut_printf("[TRAMPOLINE-IMPL] entry=0x%llx arg=%p\n", (unsigned long long)(uintptr_t)entry, arg);
+    // Debug: limited logging for perf
+    static int trampoline_count = 0;
+    if (trampoline_count < 10) {
+        serial_puts("[TRAMPOLINE-IMPL] Entered\n");
+        fut_printf("[TRAMPOLINE-IMPL] entry=0x%llx arg=%p\n", (unsigned long long)(uintptr_t)entry, arg);
+        trampoline_count++;
+    }
 
     if (!entry) {
         serial_puts("[TRAMPOLINE-ERROR] NULL entry function!\n");
@@ -613,8 +618,6 @@ __attribute__((used)) static void fut_thread_trampoline_impl(void (*entry)(void 
         fut_printf("[TRAMPOLINE-ERROR] entry=0x%llx is NOT in kernel space!\n", (unsigned long long)(uintptr_t)entry);
         fut_thread_exit();
     }
-
-    serial_puts("[TRAMPOLINE-IMPL] About to call entry()\n");
 
     /* Call the entry function */
     entry(arg);

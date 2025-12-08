@@ -198,12 +198,12 @@ void fut_timer_tick(void) {
     extern fut_thread_t *fut_thread_current(void);
     fut_thread_t *current = fut_thread_current();
 
-    // Debug: Log timer tick to diagnose preemption issues (sparse logging)
+    // Debug: Log timer tick to diagnose preemption issues (sparse logging - disabled for perf)
     static int timer_debug_count = 0;
-    if ((ticks % 50 == 0 && timer_debug_count < 50) || (current && current->tid >= 6)) {
+    if (ticks % 500 == 0 && timer_debug_count < 20) {
         fut_printf("[TIMER-DBG] tick: current_tid=%llu ticks=%llu\n",
                    current ? (unsigned long long)current->tid : 0ULL, ticks);
-        if (timer_debug_count < 50) timer_debug_count++;
+        if (timer_debug_count < 20) timer_debug_count++;
     }
 
     if (current != nullptr) {

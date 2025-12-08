@@ -27,6 +27,10 @@
 
 extern void fut_printf(const char *fmt, ...);
 
+/* Disable verbose BRK debugging for performance - too many malloc/free calls */
+#define BRK_DEBUG 0
+#define brk_printf(...) do { if (BRK_DEBUG) fut_printf(__VA_ARGS__); } while(0)
+
 #if defined(__x86_64__)
 
 static uint64_t heap_page_flags(void) {
@@ -98,20 +102,20 @@ static void brk_unmap_range(fut_vmem_context_t *ctx, uintptr_t start, uintptr_t 
 long sys_brk(uintptr_t new_break) {
     fut_task_t *task = fut_task_current();
     if (!task) {
-        fut_printf("[BRK] brk(new_break=0x%lx) -> EPERM (no current task)\n", new_break);
+        brk_printf("[BRK] brk(new_break=0x%lx) -> EPERM (no current task)\n", new_break);
         return -EPERM;
     }
 
     fut_mm_t *mm = fut_task_get_mm(task);
     if (!mm) {
-        fut_printf("[BRK] brk(new_break=0x%lx) -> ENOMEM (no mm context)\n", new_break);
+        brk_printf("[BRK] brk(new_break=0x%lx) -> ENOMEM (no mm context)\n", new_break);
         return -ENOMEM;
     }
 
     /* Phase 2: Query operation (new_break == 0) */
     if (new_break == 0) {
         uintptr_t current = fut_mm_brk_current(mm);
-        fut_printf("[BRK] brk(new_break=0) -> 0x%lx (query current break, Phase 2)\n", current);
+        brk_printf("[BRK] brk(new_break=0) -> 0x%lx (query current break, Phase 2)\n", current);
         return (long)current;
     }
 
@@ -123,14 +127,14 @@ long sys_brk(uintptr_t new_break) {
     #if defined(__x86_64__)
     /* x86-64: Kernel space starts at 0xFFFFFFFF80000000 */
     if (new_break >= 0xFFFFFFFF80000000UL) {
-        fut_printf("[BRK] brk(new_break=0x%lx) -> EINVAL (address in kernel space)\n",
+        brk_printf("[BRK] brk(new_break=0x%lx) -> EINVAL (address in kernel space)\n",
                    new_break);
         return -EINVAL;
     }
     #elif defined(__aarch64__)
     /* ARM64: Kernel space starts at 0xFFFFFF8000000000 */
     if (new_break >= 0xFFFFFF8000000000UL) {
-        fut_printf("[BRK] brk(new_break=0x%lx) -> EINVAL (address in kernel space, ARM64)\n",
+        brk_printf("[BRK] brk(new_break=0x%lx) -> EINVAL (address in kernel space, ARM64)\n",
                    new_break);
         return -EINVAL;
     }
@@ -146,7 +150,7 @@ long sys_brk(uintptr_t new_break) {
 
         /* Validate brk_start + heap_size doesn't wrap around UINTPTR_MAX */
         if (brk_start > UINTPTR_MAX - heap_size) {
-            fut_printf("[BRK] brk(new_break=0x%lx, brk_start=0x%lx) -> EINVAL "
+            brk_printf("[BRK] brk(new_break=0x%lx, brk_start=0x%lx) -> EINVAL "
                        "(heap size calculation wraps around address space)\n",
                        new_break, brk_start);
             return -EINVAL;
@@ -156,14 +160,14 @@ long sys_brk(uintptr_t new_break) {
          * This catches cases where wraparound protection above passes but result still in kernel */
         #if defined(__x86_64__)
         if (brk_start + heap_size >= 0xFFFFFFFF80000000UL) {
-            fut_printf("[BRK] brk(new_break=0x%lx, brk_start=0x%lx, heap_size=0x%lx) -> EINVAL "
+            brk_printf("[BRK] brk(new_break=0x%lx, brk_start=0x%lx, heap_size=0x%lx) -> EINVAL "
                        "(heap would extend into kernel space)\n",
                        new_break, brk_start, heap_size);
             return -EINVAL;
         }
         #elif defined(__aarch64__)
         if (brk_start + heap_size >= 0xFFFFFF8000000000UL) {
-            fut_printf("[BRK] brk(new_break=0x%lx, brk_start=0x%lx, heap_size=0x%lx) -> EINVAL "
+            brk_printf("[BRK] brk(new_break=0x%lx, brk_start=0x%lx, heap_size=0x%lx) -> EINVAL "
                        "(heap would extend into kernel space, ARM64)\n",
                        new_break, brk_start, heap_size);
             return -EINVAL;
@@ -200,7 +204,7 @@ long sys_brk(uintptr_t new_break) {
 
     /* Phase 2: Clamp to brk_start */
     if (new_break < brk_start) {
-        fut_printf("[BRK] brk(new_break=0x%lx, current=0x%lx, change=%s) -> 0x%lx "
+        brk_printf("[BRK] brk(new_break=0x%lx, current=0x%lx, change=%s) -> 0x%lx "
                    "(clamped to brk_start, Phase 2)\n",
                    new_break, current, change_category, brk_start);
         new_break = brk_start;
@@ -208,7 +212,7 @@ long sys_brk(uintptr_t new_break) {
 
     /* Phase 2: Check limit */
     if (new_break > brk_limit) {
-        fut_printf("[BRK] brk(new_break=0x%lx, current=0x%lx, limit=0x%lx, change=%s) -> ENOMEM "
+        brk_printf("[BRK] brk(new_break=0x%lx, current=0x%lx, limit=0x%lx, change=%s) -> ENOMEM "
                    "(exceeds heap limit, Phase 2)\n",
                    new_break, current, brk_limit, change_category);
         return -ENOMEM;
@@ -216,7 +220,7 @@ long sys_brk(uintptr_t new_break) {
 
     /* Phase 2: No-op check */
     if (new_break == current) {
-        fut_printf("[BRK] brk(new_break=0x%lx, current=0x%lx, change=%s) -> 0x%lx "
+        brk_printf("[BRK] brk(new_break=0x%lx, current=0x%lx, change=%s) -> 0x%lx "
                    "(no change, Phase 2)\n",
                    new_break, current, change_category, new_break);
         return (long)new_break;
@@ -255,7 +259,7 @@ long sys_brk(uintptr_t new_break) {
     }
 
     /* Phase 3: Log heap statistics */
-    fut_printf("[BRK] Heap stats: current=%u%% (%s) -> new=%u%% (%s), size: 0x%lx -> 0x%lx bytes\n",
+    brk_printf("[BRK] Heap stats: current=%u%% (%s) -> new=%u%% (%s), size: 0x%lx -> 0x%lx bytes\n",
                mem_pressure_current, pressure_category_current,
                mem_pressure_new, pressure_category_new,
                heap_size_current, heap_size_new);
@@ -280,7 +284,7 @@ long sys_brk(uintptr_t new_break) {
             if (!page) {
                 /* Allocation failed, unmap partial allocations */
                 brk_unmap_range(ctx, map_start, mapped);
-                fut_printf("[BRK] brk(new_break=0x%lx, current=0x%lx, change=%s, pages=%zu) "
+                brk_printf("[BRK] brk(new_break=0x%lx, current=0x%lx, change=%s, pages=%zu) "
                            "-> ENOMEM (page allocation failed at 0x%lx)\n",
                            new_break, current, change_category, pages_to_map, addr);
                 return -ENOMEM;
@@ -290,7 +294,7 @@ long sys_brk(uintptr_t new_break) {
             if (pmap_map_user(ctx, addr, phys, PAGE_SIZE, flags) != 0) {
                 fut_pmm_free_page(page);
                 brk_unmap_range(ctx, map_start, mapped);
-                fut_printf("[BRK] brk(new_break=0x%lx, current=0x%lx, change=%s, pages=%zu) "
+                brk_printf("[BRK] brk(new_break=0x%lx, current=0x%lx, change=%s, pages=%zu) "
                            "-> ENOMEM (page mapping failed at 0x%lx)\n",
                            new_break, current, change_category, pages_to_map, addr);
                 return -ENOMEM;
@@ -300,7 +304,7 @@ long sys_brk(uintptr_t new_break) {
 
         mm->heap_mapped_end = map_end;
 
-        fut_printf("[BRK] brk(new_break=0x%lx, current=0x%lx, change=%+ld bytes [%s], "
+        brk_printf("[BRK] brk(new_break=0x%lx, current=0x%lx, change=%+ld bytes [%s], "
                    "pages_mapped=%zu) -> 0x%lx (heap expanded, Phase 4: Lazy mapping and huge pages support)\n",
                    new_break, current, change, change_category, pages_to_map, new_break);
 
@@ -318,7 +322,7 @@ long sys_brk(uintptr_t new_break) {
             mm->heap_mapped_end = retain;
         }
 
-        fut_printf("[BRK] brk(new_break=0x%lx, current=0x%lx, change=%+ld bytes [%s], "
+        brk_printf("[BRK] brk(new_break=0x%lx, current=0x%lx, change=%+ld bytes [%s], "
                    "pages_unmapped=%zu) -> 0x%lx (heap shrunk, Phase 4: Lazy mapping and huge pages support)\n",
                    new_break, current, change, change_category, pages_to_unmap, new_break);
     }
@@ -364,20 +368,20 @@ long sys_brk(uintptr_t new_break) {
 
     fut_task_t *task = fut_task_current();
     if (!task) {
-        fut_printf("[BRK] brk(new_break=0x%lx) -> EPERM (no current task)\n", local_new_break);
+        brk_printf("[BRK] brk(new_break=0x%lx) -> EPERM (no current task)\n", local_new_break);
         return -EPERM;
     }
 
     fut_mm_t *mm = fut_task_get_mm(task);
     if (!mm) {
-        fut_printf("[BRK] brk(new_break=0x%lx) -> ENOMEM (no mm context)\n", local_new_break);
+        brk_printf("[BRK] brk(new_break=0x%lx) -> ENOMEM (no mm context)\n", local_new_break);
         return -ENOMEM;
     }
 
     /* Query operation (new_break == 0) */
     if (local_new_break == 0) {
         uintptr_t current = fut_mm_brk_current(mm);
-        fut_printf("[BRK] brk(new_break=0) -> 0x%lx (query current break, ARM64)\n", current);
+        brk_printf("[BRK] brk(new_break=0) -> 0x%lx (query current break, ARM64)\n", current);
         return (long)current;
     }
 
@@ -388,7 +392,7 @@ long sys_brk(uintptr_t new_break) {
     /* Phase 2: Validate break address is within userspace (prevent kernel space corruption) */
     /* ARM64: Kernel space starts at 0xFFFFFF8000000000 */
     if (local_new_break >= 0xFFFFFF8000000000UL) {
-        fut_printf("[BRK] brk(new_break=0x%lx) -> EINVAL (address in kernel space, ARM64)\n",
+        brk_printf("[BRK] brk(new_break=0x%lx) -> EINVAL (address in kernel space, ARM64)\n",
                    local_new_break);
         return -EINVAL;
     }
@@ -422,7 +426,7 @@ long sys_brk(uintptr_t new_break) {
 
     /* Clamp to brk_start */
     if (local_new_break < brk_start) {
-        fut_printf("[BRK] brk(new_break=0x%lx, current=0x%lx, change=%s) -> 0x%lx "
+        brk_printf("[BRK] brk(new_break=0x%lx, current=0x%lx, change=%s) -> 0x%lx "
                    "(clamped to brk_start, ARM64)\n",
                    local_new_break, current, change_category, brk_start);
         local_new_break = brk_start;
@@ -430,7 +434,7 @@ long sys_brk(uintptr_t new_break) {
 
     /* Check limit */
     if (local_new_break > brk_limit) {
-        fut_printf("[BRK] brk(new_break=0x%lx, current=0x%lx, limit=0x%lx, change=%s) -> ENOMEM "
+        brk_printf("[BRK] brk(new_break=0x%lx, current=0x%lx, limit=0x%lx, change=%s) -> ENOMEM "
                    "(exceeds heap limit, ARM64)\n",
                    local_new_break, current, brk_limit, change_category);
         return -ENOMEM;
@@ -438,7 +442,7 @@ long sys_brk(uintptr_t new_break) {
 
     /* No-op check */
     if (local_new_break == current) {
-        fut_printf("[BRK] brk(new_break=0x%lx, current=0x%lx, change=%s) -> 0x%lx "
+        brk_printf("[BRK] brk(new_break=0x%lx, current=0x%lx, change=%s) -> 0x%lx "
                    "(no change, ARM64)\n",
                    local_new_break, current, change_category, local_new_break);
         return (long)local_new_break;
@@ -464,7 +468,7 @@ long sys_brk(uintptr_t new_break) {
             if (!page) {
                 /* Allocation failed, unmap partial allocations */
                 brk_unmap_range(ctx, map_start, mapped);
-                fut_printf("[BRK] brk(new_break=0x%lx, current=0x%lx, change=%s, pages=%zu) "
+                brk_printf("[BRK] brk(new_break=0x%lx, current=0x%lx, change=%s, pages=%zu) "
                            "-> ENOMEM (page allocation failed at 0x%lx, ARM64)\n",
                            local_new_break, current, change_category, pages_to_map, addr);
                 return -ENOMEM;
@@ -474,7 +478,7 @@ long sys_brk(uintptr_t new_break) {
             if (pmap_map_user(ctx, addr, phys, PAGE_SIZE, flags) != 0) {
                 fut_pmm_free_page(page);
                 brk_unmap_range(ctx, map_start, mapped);
-                fut_printf("[BRK] brk(new_break=0x%lx, current=0x%lx, change=%s, pages=%zu) "
+                brk_printf("[BRK] brk(new_break=0x%lx, current=0x%lx, change=%s, pages=%zu) "
                            "-> ENOMEM (page mapping failed at 0x%lx, ARM64)\n",
                            local_new_break, current, change_category, pages_to_map, addr);
                 return -ENOMEM;
@@ -484,7 +488,7 @@ long sys_brk(uintptr_t new_break) {
 
         mm->heap_mapped_end = map_end;
 
-        fut_printf("[BRK] brk(new_break=0x%lx, current=0x%lx, change=%+ld bytes [%s], "
+        brk_printf("[BRK] brk(new_break=0x%lx, current=0x%lx, change=%+ld bytes [%s], "
                    "pages_mapped=%zu) -> 0x%lx (heap expanded, ARM64)\n",
                    local_new_break, current, change, change_category, pages_to_map, local_new_break);
 
@@ -502,7 +506,7 @@ long sys_brk(uintptr_t new_break) {
             mm->heap_mapped_end = retain;
         }
 
-        fut_printf("[BRK] brk(new_break=0x%lx, current=0x%lx, change=%+ld bytes [%s], "
+        brk_printf("[BRK] brk(new_break=0x%lx, current=0x%lx, change=%+ld bytes [%s], "
                    "pages_unmapped=%zu) -> 0x%lx (heap shrunk, ARM64)\n",
                    local_new_break, current, change, change_category, pages_to_unmap, local_new_break);
     }
@@ -514,7 +518,7 @@ long sys_brk(uintptr_t new_break) {
 #else
 /* Unsupported platform stub */
 long sys_brk(uintptr_t new_break __attribute__((unused))) {
-    fut_printf("[BRK] brk(new_break=0x%lx) -> ENOSYS (platform not supported)\n", new_break);
+    brk_printf("[BRK] brk(new_break=0x%lx) -> ENOSYS (platform not supported)\n", new_break);
     return -ENOSYS;
 }
 #endif

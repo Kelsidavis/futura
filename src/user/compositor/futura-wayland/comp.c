@@ -1659,21 +1659,21 @@ int comp_run(struct compositor_state *comp) {
 }
 
 int comp_scheduler_start(struct compositor_state *comp) {
+    printf("[SCHEDULER] comp_scheduler_start called\n");
     if (!comp || !comp->loop) {
-#ifdef DEBUG_WAYLAND
-        printf("[SCHEDULER-DEBUG] comp or loop is NULL\n");
-#endif
+        printf("[SCHEDULER] comp or loop is NULL (comp=%p loop=%p)\n", comp, comp ? comp->loop : NULL);
         return -1;
     }
     if (comp->timerfd >= 0) {
+        printf("[SCHEDULER] timerfd already created\n");
         return 0;
     }
 
+    printf("[SCHEDULER] calling timerfd_create...\n");
     int fd = timerfd_create(CLOCK_MONOTONIC, TFD_NONBLOCK);
+    printf("[SCHEDULER] timerfd_create returned fd=%d errno=%d\n", fd, errno);
     if (fd < 0) {
-#ifdef DEBUG_WAYLAND
-        printf("[SCHEDULER-DEBUG] timerfd_create failed: %d\n", errno);
-#endif
+        printf("[SCHEDULER] timerfd_create FAILED!\n");
         return -1;
     }
 #ifdef DEBUG_WAYLAND

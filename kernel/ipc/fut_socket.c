@@ -693,7 +693,33 @@ ssize_t fut_socket_send(fut_socket_t *socket, const void *buf, size_t len) {
         return -32;  /* EPIPE - broken pipe */
     }
 
-    fut_socket_pair_t *pair = socket->pair;
+    /* Select which pair to send on:
+     * For a bidirectional socket, we try pair first (client→server direction).
+     * If pair has no space but pair_reverse does, use pair_reverse (server response).
+     * This allows both sides to send without knowing which pair is theirs.
+     */
+    fut_socket_pair_t *pair = NULL;
+    uint32_t pair_space = socket->pair->recv_size -
+        ((socket->pair->recv_head + socket->pair->recv_size -
+          socket->pair->recv_tail) % socket->pair->recv_size);
+
+    if (pair_space > 0) {
+        /* Use forward pair if it has space */
+        pair = socket->pair;
+    } else if (socket->pair_reverse) {
+        /* Fall back to reverse pair if forward is full */
+        uint32_t pair_rev_space = socket->pair_reverse->recv_size -
+            ((socket->pair_reverse->recv_head + socket->pair_reverse->recv_size -
+              socket->pair_reverse->recv_tail) % socket->pair_reverse->recv_size);
+        if (pair_rev_space > 0) {
+            pair = socket->pair_reverse;
+        }
+    }
+
+    if (!pair) {
+        /* Both pairs are full, use pair as default and let it block */
+        pair = socket->pair;
+    }
     if (!pair->peer) {
         return 0;  /* Peer closed */
     }
@@ -756,15 +782,31 @@ ssize_t fut_socket_recv(fut_socket_t *socket, void *buf, size_t len) {
         return 0;  /* EOF - no more data */
     }
 
-    /* Use pair to receive (where peer sends to us).
-     * Pair layout after accept():
-     * - pair_forward: client sends here (client->server), we read from recv_buf
-     * - pair_reverse: server sends here (server->client), we read from recv_buf
-     * For a socket that's bidirectional, we always read from pair (client data).
-     * For receiving responses, the peer must have written to our send_buf.
-     * But this socket has both roles, so we use pair for receiving requests.
+    /* Select which pair to receive from:
+     * For a bidirectional socket, we try pair first (client→server messages).
+     * If pair has no data but pair_reverse does, read from pair_reverse (responses).
+     * This allows both sides to receive without knowing which pair is theirs.
      */
-    fut_socket_pair_t *pair = socket->pair;
+    fut_socket_pair_t *pair = NULL;
+    uint32_t pair_avail = (socket->pair->recv_head + socket->pair->recv_size -
+                           socket->pair->recv_tail) % socket->pair->recv_size;
+
+    if (pair_avail > 0) {
+        /* Use forward pair if it has data */
+        pair = socket->pair;
+    } else if (socket->pair_reverse) {
+        /* Fall back to reverse pair if forward is empty */
+        uint32_t pair_rev_avail = (socket->pair_reverse->recv_head + socket->pair_reverse->recv_size -
+                                   socket->pair_reverse->recv_tail) % socket->pair_reverse->recv_size;
+        if (pair_rev_avail > 0) {
+            pair = socket->pair_reverse;
+        }
+    }
+
+    if (!pair) {
+        /* No data in either pair, use forward pair and block */
+        pair = socket->pair;
+    }
 
     fut_spinlock_acquire(&pair->lock);
 
@@ -868,27 +910,42 @@ int fut_socket_poll(fut_socket_t *socket, int events) {
             ready |= 0x1;
         }
     } else if (socket->state == FUT_SOCK_CONNECTED && socket->pair) {
-        if ((events & 0x1)) {  /* POLLIN - readable if data available in pair OR shutdown_rd */
+        if ((events & 0x1)) {  /* POLLIN - readable if data available in either pair OR shutdown_rd */
             /* If shutdown_rd is set, socket is always readable (recv returns EOF) */
             if (socket->shutdown_rd) {
                 ready |= 0x1;
             } else {
-                /* Check if data available in pair (where peer sends to us) */
-                uint32_t available = (socket->pair->recv_head + socket->pair->recv_size -
-                                     socket->pair->recv_tail) % socket->pair->recv_size;
-                if (available > 0) {
+                /* Check if data available in pair (client→server) */
+                uint32_t pair_available = (socket->pair->recv_head + socket->pair->recv_size -
+                                           socket->pair->recv_tail) % socket->pair->recv_size;
+                /* Check if data available in pair_reverse (server→client) - for responses */
+                uint32_t pair_rev_available = 0;
+                if (socket->pair_reverse) {
+                    pair_rev_available = (socket->pair_reverse->recv_head + socket->pair_reverse->recv_size -
+                                         socket->pair_reverse->recv_tail) % socket->pair_reverse->recv_size;
+                }
+                /* Readable if either direction has data */
+                if (pair_available > 0 || pair_rev_available > 0) {
                     ready |= 0x1;
                 }
             }
         }
-        if ((events & 0x4)) {  /* POLLOUT - writable if space available in pair_reverse AND NOT shutdown_wr */
+        if ((events & 0x4)) {  /* POLLOUT - writable if space available to send AND NOT shutdown_wr */
             /* If shutdown_wr is set, socket is never writable (send returns EPIPE) */
-            if (!socket->shutdown_wr && socket->pair_reverse) {
-                /* Check if space available in pair_reverse (where peer receives from us) */
-                uint32_t available = socket->pair_reverse->recv_size -
-                    ((socket->pair_reverse->recv_head + socket->pair_reverse->recv_size -
-                      socket->pair_reverse->recv_tail) % socket->pair_reverse->recv_size);
-                if (available > 0) {
+            if (!socket->shutdown_wr) {
+                /* Check if space available in pair (for sending forward) */
+                uint32_t pair_space = socket->pair->recv_size -
+                    ((socket->pair->recv_head + socket->pair->recv_size -
+                      socket->pair->recv_tail) % socket->pair->recv_size);
+                /* Check if space available in pair_reverse (for sending reverse) */
+                uint32_t pair_rev_space = 0;
+                if (socket->pair_reverse) {
+                    pair_rev_space = socket->pair_reverse->recv_size -
+                        ((socket->pair_reverse->recv_head + socket->pair_reverse->recv_size -
+                          socket->pair_reverse->recv_tail) % socket->pair_reverse->recv_size);
+                }
+                /* Writable if either direction has space */
+                if (pair_space > 0 || pair_rev_space > 0) {
                     ready |= 0x4;
                 }
             }

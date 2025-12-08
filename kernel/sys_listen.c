@@ -16,6 +16,10 @@
 #include <kernel/errno.h>
 
 extern void fut_printf(const char *fmt, ...);
+
+/* Disable verbose LISTEN debugging for performance */
+#define LISTEN_DEBUG 0
+#define listen_printf(...) do { if (LISTEN_DEBUG) fut_printf(__VA_ARGS__); } while(0)
 extern fut_task_t *fut_task_current(void);
 extern fut_socket_t *get_socket_from_fd(int fd);
 
@@ -66,14 +70,14 @@ long sys_listen(int sockfd, int backlog) {
 
     fut_task_t *task = fut_task_current();
     if (!task) {
-        fut_printf("[LISTEN] listen(sockfd=%d, backlog=%d) -> ESRCH (no current task)\n",
+        listen_printf("[LISTEN] listen(sockfd=%d, backlog=%d) -> ESRCH (no current task)\n",
                    local_sockfd, local_backlog);
         return -ESRCH;
     }
 
     /* Phase 2: Validate sockfd early */
     if (local_sockfd < 0) {
-        fut_printf("[LISTEN] listen(sockfd=%d, backlog=%d) -> EBADF (negative fd)\n",
+        listen_printf("[LISTEN] listen(sockfd=%d, backlog=%d) -> EBADF (negative fd)\n",
                    local_sockfd, local_backlog);
         return -EBADF;
     }
@@ -109,7 +113,7 @@ long sys_listen(int sockfd, int backlog) {
     /* Phase 2: Get socket and validate */
     fut_socket_t *socket = get_socket_from_fd(local_sockfd);
     if (!socket) {
-        fut_printf("[LISTEN] listen(sockfd=%d, backlog=%d [%s]) -> EBADF (socket not found)\n",
+        listen_printf("[LISTEN] listen(sockfd=%d, backlog=%d [%s]) -> EBADF (socket not found)\n",
                    local_sockfd, local_backlog, backlog_desc);
         return -EBADF;
     }
@@ -142,13 +146,13 @@ long sys_listen(int sockfd, int backlog) {
 
     /* Phase 2: Enhanced error messages based on socket state */
     if (socket->state == FUT_SOCK_LISTENING) {
-        fut_printf("[LISTEN] listen(sockfd=%d, backlog=%d [%s]) -> EINVAL (socket already listening)\n",
+        listen_printf("[LISTEN] listen(sockfd=%d, backlog=%d [%s]) -> EINVAL (socket already listening)\n",
                    local_sockfd, local_backlog, backlog_desc);
         return -EINVAL;
     }
 
     if (socket->state == FUT_SOCK_CONNECTED) {
-        fut_printf("[LISTEN] listen(sockfd=%d, backlog=%d [%s]) -> EINVAL (socket already connected, state=%s)\n",
+        listen_printf("[LISTEN] listen(sockfd=%d, backlog=%d [%s]) -> EINVAL (socket already connected, state=%s)\n",
                    local_sockfd, local_backlog, backlog_desc, socket_state_desc);
         return -EINVAL;
     }
@@ -169,17 +173,17 @@ long sys_listen(int sockfd, int backlog) {
                 break;
         }
 
-        fut_printf("[LISTEN] listen(sockfd=%d, backlog=%d [%s], state=%s) -> %d (%s)\n",
+        listen_printf("[LISTEN] listen(sockfd=%d, backlog=%d [%s], state=%s) -> %d (%s)\n",
                    local_sockfd, local_backlog, backlog_desc, socket_state_desc, ret, error_desc);
         return ret;
     }
 
     /* Phase 3: Detailed success logging with backlog categorization and queue management */
     if (original_backlog != effective_backlog) {
-        fut_printf("[LISTEN] listen(sockfd=%d, backlog=%d->%d [%s], state=%s->listening) -> 0 (Phase 3: backlog clamped, queue enforced)\n",
+        listen_printf("[LISTEN] listen(sockfd=%d, backlog=%d->%d [%s], state=%s->listening) -> 0 (Phase 3: backlog clamped, queue enforced)\n",
                    local_sockfd, original_backlog, effective_backlog, backlog_desc, socket_state_desc);
     } else {
-        fut_printf("[LISTEN] listen(sockfd=%d, backlog=%d [%s], state=%s->listening) -> 0 (Phase 3: queue management)\n",
+        listen_printf("[LISTEN] listen(sockfd=%d, backlog=%d [%s], state=%s->listening) -> 0 (Phase 3: queue management)\n",
                    local_sockfd, local_backlog, backlog_desc, socket_state_desc);
     }
 

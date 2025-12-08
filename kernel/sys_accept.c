@@ -21,6 +21,10 @@
 #include <stdint.h>
 
 extern void fut_printf(const char *fmt, ...);
+
+/* Disable verbose ACCEPT debugging for performance */
+#define ACCEPT_DEBUG 0
+#define accept_printf(...) do { if (ACCEPT_DEBUG) fut_printf(__VA_ARGS__); } while(0)
 extern fut_task_t *fut_task_current(void);
 extern fut_socket_t *get_socket_from_fd(int fd);
 extern int allocate_socket_fd(fut_socket_t *socket);
@@ -147,13 +151,13 @@ long sys_accept(int sockfd, void *addr, socklen_t *addrlen) {
 
     fut_task_t *task = fut_task_current();
     if (!task) {
-        fut_printf("[ACCEPT] accept(local_sockfd=%d) -> ESRCH (no current task)\n", local_sockfd);
+        accept_printf("[ACCEPT] accept(local_sockfd=%d) -> ESRCH (no current task)\n", local_sockfd);
         return -ESRCH;
     }
 
     /* Phase 2: Validate local_sockfd early */
     if (local_sockfd < 0) {
-        fut_printf("[ACCEPT] accept(local_sockfd=%d) -> EBADF (negative fd)\n", local_sockfd);
+        accept_printf("[ACCEPT] accept(local_sockfd=%d) -> EBADF (negative fd)\n", local_sockfd);
         return -EBADF;
     }
 
@@ -164,7 +168,7 @@ long sys_accept(int sockfd, void *addr, socklen_t *addrlen) {
     } else if (local_addr != NULL && local_addrlen != NULL) {
         addr_request = "address requested";
     } else if (local_addr != NULL && local_addrlen == NULL) {
-        fut_printf("[ACCEPT] accept(local_sockfd=%d) -> EFAULT (local_addr non-NULL but local_addrlen is NULL)\n", local_sockfd);
+        accept_printf("[ACCEPT] accept(local_sockfd=%d) -> EFAULT (local_addr non-NULL but local_addrlen is NULL)\n", local_sockfd);
         return -EFAULT;
     } else {
         // local_addr == NULL && local_addrlen != NULL
@@ -360,7 +364,7 @@ long sys_accept(int sockfd, void *addr, socklen_t *addrlen) {
     socklen_t len = 0;
     if (local_addrlen != NULL) {
         if (fut_copy_from_user(&len, local_addrlen, sizeof(socklen_t)) != 0) {
-            fut_printf("[ACCEPT] accept(local_sockfd=%d, addr_request=%s) -> EFAULT (copy_from_user local_addrlen failed)\n",
+            accept_printf("[ACCEPT] accept(local_sockfd=%d, addr_request=%s) -> EFAULT (copy_from_user local_addrlen failed)\n",
                        local_sockfd, addr_request);
             return -EFAULT;
         }
@@ -369,7 +373,7 @@ long sys_accept(int sockfd, void *addr, socklen_t *addrlen) {
          * Validate BEFORE any categorization or other operations
          * Standard sockaddr_storage is 128 bytes, 1024 is generous upper bound */
         if (len > 1024) {
-            fut_printf("[ACCEPT] accept(local_sockfd=%d, local_addrlen=%u) -> EINVAL "
+            accept_printf("[ACCEPT] accept(local_sockfd=%d, local_addrlen=%u) -> EINVAL "
                        "(excessive address length, max 1024 bytes, Phase 5 TOCTOU protection)\n",
                        local_sockfd, len);
             return -EINVAL;
@@ -378,7 +382,7 @@ long sys_accept(int sockfd, void *addr, socklen_t *addrlen) {
         /* Phase 5: Validate addr write permission early (before accepting connection) */
         extern int fut_access_ok(const void *u_ptr, size_t size, int write);
         if (local_addr && fut_access_ok(local_addr, len, 1) != 0) {
-            fut_printf("[ACCEPT] accept(local_sockfd=%d) -> EFAULT (addr not writable for %u bytes)\n",
+            accept_printf("[ACCEPT] accept(local_sockfd=%d) -> EFAULT (addr not writable for %u bytes)\n",
                        local_sockfd, len);
             return -EFAULT;
         }
@@ -404,7 +408,7 @@ long sys_accept(int sockfd, void *addr, socklen_t *addrlen) {
     /* Get listening socket from FD */
     fut_socket_t *listen_socket = get_socket_from_fd(local_sockfd);
     if (!listen_socket) {
-        fut_printf("[ACCEPT] accept(local_sockfd=%d, addr_request=%s) -> EBADF (not a socket)\n",
+        accept_printf("[ACCEPT] accept(local_sockfd=%d, addr_request=%s) -> EBADF (not a socket)\n",
                    local_sockfd, addr_request);
         return -EBADF;
     }
@@ -437,7 +441,7 @@ long sys_accept(int sockfd, void *addr, socklen_t *addrlen) {
 
     /* Phase 2: Validate socket is in listening state */
     if (listen_socket->state != FUT_SOCK_LISTENING) {
-        fut_printf("[ACCEPT] accept(local_sockfd=%d, state=%s, addr_request=%s) -> EINVAL (socket not listening)\n",
+        accept_printf("[ACCEPT] accept(local_sockfd=%d, state=%s, addr_request=%s) -> EINVAL (socket not listening)\n",
                    local_sockfd, socket_state_desc, addr_request);
         return -EINVAL;
     }
@@ -484,7 +488,7 @@ long sys_accept(int sockfd, void *addr, socklen_t *addrlen) {
                 break;
         }
 
-        fut_printf("[ACCEPT] accept(local_sockfd=%d, type=%s, state=%s, socket_id=%u, addr_request=%s) -> %d (%s)\n",
+        accept_printf("[ACCEPT] accept(local_sockfd=%d, type=%s, state=%s, socket_id=%u, addr_request=%s) -> %d (%s)\n",
                    local_sockfd, socket_type_desc, socket_state_desc, listen_socket->socket_id,
                    addr_request, ret, error_desc);
         return ret;
@@ -493,7 +497,7 @@ long sys_accept(int sockfd, void *addr, socklen_t *addrlen) {
     /* Allocate new file descriptor for accepted socket */
     int newfd = allocate_socket_fd(accepted_socket);
     if (newfd < 0) {
-        fut_printf("[ACCEPT] accept(local_sockfd=%d, socket_id=%u) -> EMFILE (failed to allocate FD)\n",
+        accept_printf("[ACCEPT] accept(local_sockfd=%d, socket_id=%u) -> EMFILE (failed to allocate FD)\n",
                    local_sockfd, listen_socket->socket_id);
         // TODO: Clean up accepted socket
         fut_socket_unref(accepted_socket);
@@ -535,12 +539,12 @@ long sys_accept(int sockfd, void *addr, socklen_t *addrlen) {
             /* Copy address to userspace (truncate if buffer too small) */
             socklen_t copy_len = (actual_len < len) ? actual_len : len;
             if (fut_copy_to_user(local_addr, &peer_addr, copy_len) != 0) {
-                fut_printf("[ACCEPT] accept(local_sockfd=%d, newfd=%d) -> warning: failed to copy peer address (connection established)\n",
+                accept_printf("[ACCEPT] accept(local_sockfd=%d, newfd=%d) -> warning: failed to copy peer address (connection established)\n",
                            local_sockfd, newfd);
                 /* Not fatal - connection is established, just couldn't return address */
                 actual_len = 0;
             } else {
-                fut_printf("[ACCEPT] AF_UNIX peer address: path='%s', actual_len=%u, copied=%u\n",
+                accept_printf("[ACCEPT] AF_UNIX peer address: path='%s', actual_len=%u, copied=%u\n",
                            peer_path, actual_len, copy_len);
             }
         } else {
@@ -550,17 +554,17 @@ long sys_accept(int sockfd, void *addr, socklen_t *addrlen) {
 
         /* Write back actual address length */
         if (fut_copy_to_user(local_addrlen, &actual_len, sizeof(socklen_t)) != 0) {
-            fut_printf("[ACCEPT] accept(local_sockfd=%d, newfd=%d) -> warning: failed to update addrlen (connection established)\n",
+            accept_printf("[ACCEPT] accept(local_sockfd=%d, newfd=%d) -> warning: failed to update addrlen (connection established)\n",
                        local_sockfd, newfd);
             /* Not fatal - connection is established, just couldn't return address length */
         }
 
-        fut_printf("[ACCEPT] accept(local_sockfd=%d, type=%s, state=%s, listen_socket_id=%u, addr_request=%s) "
+        accept_printf("[ACCEPT] accept(local_sockfd=%d, type=%s, state=%s, listen_socket_id=%u, addr_request=%s) "
                    "-> %d (accepted_socket_id=%u, peer address returned, actual_len=%u)\n",
                    local_sockfd, socket_type_desc, socket_state_desc, listen_socket->socket_id,
                    addr_request, newfd, accepted_socket->socket_id, actual_len);
     } else {
-        fut_printf("[ACCEPT] accept(local_sockfd=%d, type=%s, state=%s, listen_socket_id=%u, addr_request=%s) "
+        accept_printf("[ACCEPT] accept(local_sockfd=%d, type=%s, state=%s, listen_socket_id=%u, addr_request=%s) "
                    "-> %d (accepted_socket_id=%u, no address requested)\n",
                    local_sockfd, socket_type_desc, socket_state_desc, listen_socket->socket_id,
                    addr_request, newfd, accepted_socket->socket_id);
@@ -669,7 +673,7 @@ long sys_accept4(int sockfd, void *addr, socklen_t *addrlen, int flags) {
             flags_desc = "invalid flags";
         }
 
-        fut_printf("[ACCEPT4] accept4(sockfd=%d, flags=0x%x [%s]) -> EINVAL (invalid flags, only SOCK_NONBLOCK|SOCK_CLOEXEC supported)\n",
+        accept_printf("[ACCEPT4] accept4(sockfd=%d, flags=0x%x [%s]) -> EINVAL (invalid flags, only SOCK_NONBLOCK|SOCK_CLOEXEC supported)\n",
                    local_sockfd, local_flags, flags_desc);
         return -EINVAL;
     }
@@ -705,7 +709,7 @@ long sys_accept4(int sockfd, void *addr, socklen_t *addrlen, int flags) {
         flags_desc = "SOCK_NONBLOCK|SOCK_CLOEXEC";
     }
 
-    fut_printf("[ACCEPT4] accept4(sockfd=%d, flags=%s) -> %ld (Phase 4: atomic flag setting)\n",
+    accept_printf("[ACCEPT4] accept4(sockfd=%d, flags=%s) -> %ld (Phase 4: atomic flag setting)\n",
                local_sockfd, flags_desc, newfd);
 
     return newfd;

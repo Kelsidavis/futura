@@ -206,6 +206,10 @@
 #include <stdint.h>
 
 extern void fut_printf(const char *fmt, ...);
+
+/* Disable verbose BIND debugging for performance */
+#define BIND_DEBUG 0
+#define bind_printf(...) do { if (BIND_DEBUG) fut_printf(__VA_ARGS__); } while(0)
 extern fut_task_t *fut_task_current(void);
 extern fut_socket_t *get_socket_from_fd(int fd);
 
@@ -315,27 +319,27 @@ long sys_bind(int sockfd, const void *addr, socklen_t addrlen) {
 
     fut_task_t *task = fut_task_current();
     if (!task) {
-        fut_printf("[BIND] bind(sockfd=%d) -> ESRCH (no current task)\n", local_sockfd);
+        bind_printf("[BIND] bind(sockfd=%d) -> ESRCH (no current task)\n", local_sockfd);
         return -ESRCH;
     }
 
     /* Phase 2: Validate sockfd early */
     if (local_sockfd < 0) {
-        fut_printf("[BIND] bind(sockfd=%d, addrlen=%u) -> EBADF (negative fd)\n",
+        bind_printf("[BIND] bind(sockfd=%d, addrlen=%u) -> EBADF (negative fd)\n",
                    local_sockfd, (unsigned)local_addrlen);
         return -EBADF;
     }
 
     /* Phase 2: Validate addr pointer */
     if (!local_addr) {
-        fut_printf("[BIND] bind(sockfd=%d, addr=NULL, addrlen=%u) -> EFAULT (NULL addr)\n",
+        bind_printf("[BIND] bind(sockfd=%d, addr=NULL, addrlen=%u) -> EFAULT (NULL addr)\n",
                    local_sockfd, (unsigned)local_addrlen);
         return -EFAULT;
     }
 
     /* Phase 2: Validate minimum address length (family field is 2 bytes) */
     if (local_addrlen < 2) {
-        fut_printf("[BIND] bind(sockfd=%d, addrlen=%u) -> EINVAL (too small, need at least 2 bytes for family)\n",
+        bind_printf("[BIND] bind(sockfd=%d, addrlen=%u) -> EINVAL (too small, need at least 2 bytes for family)\n",
                    local_sockfd, (unsigned)local_addrlen);
         return -EINVAL;
     }
@@ -343,7 +347,7 @@ long sys_bind(int sockfd, const void *addr, socklen_t addrlen) {
     /* Copy address family from userspace */
     uint16_t sa_family;
     if (fut_copy_from_user(&sa_family, local_addr, 2) != 0) {
-        fut_printf("[BIND] bind(sockfd=%d, addrlen=%u) -> EFAULT (failed to copy sa_family)\n",
+        bind_printf("[BIND] bind(sockfd=%d, addrlen=%u) -> EFAULT (failed to copy sa_family)\n",
                    local_sockfd, (unsigned)local_addrlen);
         return -EFAULT;
     }
@@ -377,13 +381,13 @@ long sys_bind(int sockfd, const void *addr, socklen_t addrlen) {
 
     /* Phase 3: Validate address length based on address family */
     if (sa_family == AF_INET && local_addrlen < sizeof(sockaddr_in_t)) {
-        fut_printf("[BIND] bind(sockfd=%d, family=%s, addrlen=%u) -> EINVAL (AF_INET needs at least %zu bytes)\n",
+        bind_printf("[BIND] bind(sockfd=%d, family=%s, addrlen=%u) -> EINVAL (AF_INET needs at least %zu bytes)\n",
                    local_sockfd, family_name, local_addrlen, sizeof(sockaddr_in_t));
         return -EINVAL;
     }
 
     if (sa_family == AF_INET6 && local_addrlen < sizeof(sockaddr_in6_t)) {
-        fut_printf("[BIND] bind(sockfd=%d, family=%s, addrlen=%u) -> EINVAL (AF_INET6 needs at least %zu bytes)\n",
+        bind_printf("[BIND] bind(sockfd=%d, family=%s, addrlen=%u) -> EINVAL (AF_INET6 needs at least %zu bytes)\n",
                    local_sockfd, family_name, local_addrlen, sizeof(sockaddr_in6_t));
         return -EINVAL;
     }
@@ -392,7 +396,7 @@ long sys_bind(int sockfd, const void *addr, socklen_t addrlen) {
     if (sa_family == AF_INET) {
         sockaddr_in_t inet_addr = {0};
         if (fut_copy_from_user(&inet_addr, local_addr, sizeof(inet_addr)) != 0) {
-            fut_printf("[BIND] bind(sockfd=%d, family=%s, addrlen=%u) -> EFAULT (failed to copy AF_INET address)\n",
+            bind_printf("[BIND] bind(sockfd=%d, family=%s, addrlen=%u) -> EFAULT (failed to copy AF_INET address)\n",
                        local_sockfd, family_name, local_addrlen);
             return -EFAULT;
         }
@@ -403,13 +407,13 @@ long sys_bind(int sockfd, const void *addr, socklen_t addrlen) {
 
         /* Phase 5: Enforce CAP_NET_BIND_SERVICE for privileged ports */
         if (port < 1024 && !has_cap_net_bind_service(task)) {
-            fut_printf("[BIND] bind(sockfd=%d, family=%s, port=%u [%s]) -> EACCES "
+            bind_printf("[BIND] bind(sockfd=%d, family=%s, port=%u [%s]) -> EACCES "
                        "(privileged port requires CAP_NET_BIND_SERVICE, uid=%u)\n",
                        local_sockfd, family_name, port, port_cat, task->uid);
             return -EACCES;
         }
 
-        fut_printf("[BIND] bind(sockfd=%d, family=%s, port=%u [%s], addrlen=%u) -> ENOTSUP (AF_INET binding not yet implemented)\n",
+        bind_printf("[BIND] bind(sockfd=%d, family=%s, port=%u [%s], addrlen=%u) -> ENOTSUP (AF_INET binding not yet implemented)\n",
                    local_sockfd, family_name, port, port_cat, local_addrlen);
         return -ENOTSUP;
     }
@@ -418,7 +422,7 @@ long sys_bind(int sockfd, const void *addr, socklen_t addrlen) {
     if (sa_family == AF_INET6) {
         sockaddr_in6_t inet6_addr = {0};
         if (fut_copy_from_user(&inet6_addr, local_addr, sizeof(inet6_addr)) != 0) {
-            fut_printf("[BIND] bind(sockfd=%d, family=%s, addrlen=%u) -> EFAULT (failed to copy AF_INET6 address)\n",
+            bind_printf("[BIND] bind(sockfd=%d, family=%s, addrlen=%u) -> EFAULT (failed to copy AF_INET6 address)\n",
                        local_sockfd, family_name, local_addrlen);
             return -EFAULT;
         }
@@ -429,27 +433,27 @@ long sys_bind(int sockfd, const void *addr, socklen_t addrlen) {
 
         /* Phase 5: Enforce CAP_NET_BIND_SERVICE for privileged ports */
         if (port < 1024 && !has_cap_net_bind_service(task)) {
-            fut_printf("[BIND] bind(sockfd=%d, family=%s, port=%u [%s]) -> EACCES "
+            bind_printf("[BIND] bind(sockfd=%d, family=%s, port=%u [%s]) -> EACCES "
                        "(privileged port requires CAP_NET_BIND_SERVICE, uid=%u)\n",
                        local_sockfd, family_name, port, port_cat, task->uid);
             return -EACCES;
         }
 
-        fut_printf("[BIND] bind(sockfd=%d, family=%s, port=%u [%s], addrlen=%u) -> ENOTSUP (AF_INET6 binding not yet implemented)\n",
+        bind_printf("[BIND] bind(sockfd=%d, family=%s, port=%u [%s], addrlen=%u) -> ENOTSUP (AF_INET6 binding not yet implemented)\n",
                    local_sockfd, family_name, port, port_cat, local_addrlen);
         return -ENOTSUP;
     }
 
     /* Phase 2: Only AF_UNIX supported currently (Phase 3 adds AF_INET/AF_INET6 stubs) */
     if (sa_family != AF_UNIX) {
-        fut_printf("[BIND] bind(sockfd=%d, family=%u [%s, %s], addrlen=%u) -> ENOTSUP (unsupported address family)\n",
+        bind_printf("[BIND] bind(sockfd=%d, family=%u [%s, %s], addrlen=%u) -> ENOTSUP (unsupported address family)\n",
                    local_sockfd, sa_family, family_name, family_desc, local_addrlen);
         return -ENOTSUP;
     }
 
     /* Phase 2: Validate addrlen for Unix domain socket (2 bytes family + path) */
     if (local_addrlen < 3) {
-        fut_printf("[BIND] bind(sockfd=%d, family=%s, addrlen=%u) -> EINVAL (AF_UNIX needs at least 3 bytes: 2 for family + 1 for path)\n",
+        bind_printf("[BIND] bind(sockfd=%d, family=%s, addrlen=%u) -> EINVAL (AF_UNIX needs at least 3 bytes: 2 for family + 1 for path)\n",
                    local_sockfd, family_name, local_addrlen);
         return -EINVAL;
     }
@@ -459,14 +463,14 @@ long sys_bind(int sockfd, const void *addr, socklen_t addrlen) {
     size_t path_len = local_addrlen - 2;  /* Subtract family field */
 
     if (path_len > sizeof(sock_path) - 1) {
-        fut_printf("[BIND] bind(sockfd=%d, family=%s, path_len=%zu) -> ENAMETOOLONG (max %zu bytes)\n",
+        bind_printf("[BIND] bind(sockfd=%d, family=%s, path_len=%zu) -> ENAMETOOLONG (max %zu bytes)\n",
                    local_sockfd, family_name, path_len, sizeof(sock_path) - 1);
         path_len = sizeof(sock_path) - 1;  /* Truncate */
     }
 
     if (path_len > 0) {
         if (fut_copy_from_user(sock_path, (const char *)local_addr + 2, path_len) != 0) {
-            fut_printf("[BIND] bind(sockfd=%d, family=%s, path_len=%zu) -> EFAULT (failed to copy sun_path)\n",
+            bind_printf("[BIND] bind(sockfd=%d, family=%s, path_len=%zu) -> EFAULT (failed to copy sun_path)\n",
                        local_sockfd, family_name, path_len);
             return -EFAULT;
         }
@@ -498,7 +502,7 @@ long sys_bind(int sockfd, const void *addr, socklen_t addrlen) {
     /* Get socket from file descriptor */
     fut_socket_t *socket = get_socket_from_fd(local_sockfd);
     if (!socket) {
-        fut_printf("[BIND] bind(sockfd=%d, family=%s, path='%s' [%s]) -> EBADF (not a socket)\n",
+        bind_printf("[BIND] bind(sockfd=%d, family=%s, path='%s' [%s]) -> EBADF (not a socket)\n",
                    local_sockfd, family_name, sock_path, path_type);
         return -EBADF;
     }
@@ -514,37 +518,37 @@ long sys_bind(int sockfd, const void *addr, socklen_t addrlen) {
             case FUT_SOCK_BOUND:
                 socket_state_desc = "already bound";
                 error_reason = socket->bound_path ? socket->bound_path : "(unknown path)";
-                fut_printf("[BIND] bind(sockfd=%d, family=%s, path='%s', state=%s) -> EINVAL "
+                bind_printf("[BIND] bind(sockfd=%d, family=%s, path='%s', state=%s) -> EINVAL "
                            "(socket already bound to '%s', Phase 5)\n",
                            local_sockfd, family_name, sock_path, socket_state_desc, error_reason);
                 break;
             case FUT_SOCK_LISTENING:
                 socket_state_desc = "listening";
-                fut_printf("[BIND] bind(sockfd=%d, family=%s, path='%s', state=%s) -> EINVAL "
+                bind_printf("[BIND] bind(sockfd=%d, family=%s, path='%s', state=%s) -> EINVAL "
                            "(cannot bind listening socket, Phase 5)\n",
                            local_sockfd, family_name, sock_path, socket_state_desc);
                 break;
             case FUT_SOCK_CONNECTING:
                 socket_state_desc = "connecting";
-                fut_printf("[BIND] bind(sockfd=%d, family=%s, path='%s', state=%s) -> EINVAL "
+                bind_printf("[BIND] bind(sockfd=%d, family=%s, path='%s', state=%s) -> EINVAL "
                            "(cannot bind connecting socket, Phase 5)\n",
                            local_sockfd, family_name, sock_path, socket_state_desc);
                 break;
             case FUT_SOCK_CONNECTED:
                 socket_state_desc = "connected";
-                fut_printf("[BIND] bind(sockfd=%d, family=%s, path='%s', state=%s) -> EINVAL "
+                bind_printf("[BIND] bind(sockfd=%d, family=%s, path='%s', state=%s) -> EINVAL "
                            "(cannot bind connected socket, Phase 5)\n",
                            local_sockfd, family_name, sock_path, socket_state_desc);
                 break;
             case FUT_SOCK_CLOSED:
                 socket_state_desc = "closed";
-                fut_printf("[BIND] bind(sockfd=%d, family=%s, path='%s', state=%s) -> EINVAL "
+                bind_printf("[BIND] bind(sockfd=%d, family=%s, path='%s', state=%s) -> EINVAL "
                            "(cannot bind closed socket, Phase 5)\n",
                            local_sockfd, family_name, sock_path, socket_state_desc);
                 break;
             default:
                 socket_state_desc = "unknown";
-                fut_printf("[BIND] bind(sockfd=%d, family=%s, path='%s', state=%s) -> EINVAL "
+                bind_printf("[BIND] bind(sockfd=%d, family=%s, path='%s', state=%s) -> EINVAL "
                            "(socket in invalid state %d, Phase 5)\n",
                            local_sockfd, family_name, sock_path, socket_state_desc, socket->state);
                 break;
@@ -577,13 +581,13 @@ long sys_bind(int sockfd, const void *addr, socklen_t addrlen) {
                 break;
         }
 
-        fut_printf("[BIND] bind(sockfd=%d, family=%s, path='%s' [%s, %s]) -> %d (%s)\n",
+        bind_printf("[BIND] bind(sockfd=%d, family=%s, path='%s' [%s, %s]) -> %d (%s)\n",
                    local_sockfd, family_name, sock_path, path_type, path_desc, ret, error_desc);
         return ret;
     }
 
     /* Phase 4: Detailed success logging */
-    fut_printf("[BIND] bind(sockfd=%d, family=%s, path='%s' [%s, %s], state=created->bound) -> 0 (Socket %u bound, Phase 5)\n",
+    bind_printf("[BIND] bind(sockfd=%d, family=%s, path='%s' [%s, %s], state=created->bound) -> 0 (Socket %u bound, Phase 5)\n",
                local_sockfd, family_name, sock_path, path_type, path_desc, socket->socket_id);
 
     return 0;

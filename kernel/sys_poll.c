@@ -14,6 +14,10 @@
 #include <string.h>
 
 extern void fut_printf(const char *fmt, ...);
+
+/* Disable verbose POLL debugging for performance */
+#define POLL_DEBUG 0
+#define poll_printf(...) do { if (POLL_DEBUG) fut_printf(__VA_ARGS__); } while(0)
 extern int fut_copy_from_user(void *to, const void *from, size_t size);
 extern int fut_copy_to_user(void *to, const void *from, size_t size);
 extern fut_task_t *fut_task_current(void);
@@ -66,13 +70,13 @@ struct pollfd {
 long sys_poll(struct pollfd *fds, unsigned long nfds, int timeout) {
     /* Phase 2: Enhanced validation */
     if (!fds && nfds > 0) {
-        fut_printf("[POLL] poll(NULL, %lu, %d) -> EFAULT (fds is NULL)\n", nfds, timeout);
+        poll_printf("[POLL] poll(NULL, %lu, %d) -> EFAULT (fds is NULL)\n", nfds, timeout);
         return -EFAULT;
     }
 
     /* nfds == 0 is valid (wait for timeout only) */
     if (nfds == 0) {
-        fut_printf("[POLL] poll(fds, 0, %d) -> 0 (no FDs to monitor, Phase 2: timeout only)\n", timeout);
+        poll_printf("[POLL] poll(fds, 0, %d) -> 0 (no FDs to monitor, Phase 2: timeout only)\n", timeout);
         /* Phase 3+ would sleep for timeout milliseconds */
         return 0;
     }
@@ -85,20 +89,20 @@ long sys_poll(struct pollfd *fds, unsigned long nfds, int timeout) {
     size_t fds_size = nfds * sizeof(struct pollfd);
     extern int fut_access_ok(const void *u_ptr, size_t size, int write);
     if (fut_access_ok(fds, fds_size, 1) != 0) {
-        fut_printf("[POLL] poll(fds=%p, nfds=%lu, timeout=%d) -> EFAULT (fds array not writable for %zu bytes, Phase 5)\n",
+        poll_printf("[POLL] poll(fds=%p, nfds=%lu, timeout=%d) -> EFAULT (fds array not writable for %zu bytes, Phase 5)\n",
                    fds, nfds, timeout, fds_size);
         return -EFAULT;
     }
 
     /* Reasonable limit on number of file descriptors */
     if (nfds > 1024) {
-        fut_printf("[POLL] poll(fds, %lu, %d) -> EINVAL (nfds exceeds limit of 1024)\n", nfds, timeout);
+        poll_printf("[POLL] poll(fds, %lu, %d) -> EINVAL (nfds exceeds limit of 1024)\n", nfds, timeout);
         return -EINVAL;
     }
 
     /* Phase 3: Validate timeout is either non-negative or -1 (infinite) */
     if (timeout < -1) {
-        fut_printf("[POLL] poll(fds, %lu, timeout=%d) -> EINVAL (timeout must be >= -1)\n", nfds, timeout);
+        poll_printf("[POLL] poll(fds, %lu, timeout=%d) -> EINVAL (timeout must be >= -1)\n", nfds, timeout);
         return -EINVAL;
     }
 
@@ -219,7 +223,7 @@ long sys_poll(struct pollfd *fds, unsigned long nfds, int timeout) {
      * - See Linux kernel: fs/select.c do_poll() for reference
      */
     if (nfds > SIZE_MAX / sizeof(struct pollfd)) {
-        fut_printf("[POLL] poll(fds, %lu, %d) -> EINVAL "
+        poll_printf("[POLL] poll(fds, %lu, %d) -> EINVAL "
                    "(nfds exceeds max safe %zu, would cause overflow, Phase 5)\n",
                    nfds, timeout, SIZE_MAX / sizeof(struct pollfd));
         return -EINVAL;
@@ -231,21 +235,21 @@ long sys_poll(struct pollfd *fds, unsigned long nfds, int timeout) {
     /* Allocate kernel buffer for pollfd array */
     struct pollfd *kfds = fut_malloc(size);
     if (!kfds) {
-        fut_printf("[POLL] poll(fds, %lu, %d) -> ENOMEM (allocation failed)\n", nfds, timeout);
+        poll_printf("[POLL] poll(fds, %lu, %d) -> ENOMEM (allocation failed)\n", nfds, timeout);
         return -ENOMEM;
     }
 
     /* Copy pollfd array from userspace */
     if (fut_copy_from_user(kfds, fds, size) != 0) {
         fut_free(kfds);
-        fut_printf("[POLL] poll(fds, %lu, %d) -> EFAULT (copy_from_user failed)\n", nfds, timeout);
+        poll_printf("[POLL] poll(fds, %lu, %d) -> EFAULT (copy_from_user failed)\n", nfds, timeout);
         return -EFAULT;
     }
 
     fut_task_t *task = fut_task_current();
     if (!task || !task->fd_table) {
         fut_free(kfds);
-        fut_printf("[POLL] poll(fds, %lu, %d) -> ESRCH (no task or fd_table)\n", nfds, timeout);
+        poll_printf("[POLL] poll(fds, %lu, %d) -> ESRCH (no task or fd_table)\n", nfds, timeout);
         return -ESRCH;
     }
 
@@ -302,7 +306,7 @@ long sys_poll(struct pollfd *fds, unsigned long nfds, int timeout) {
     /* Copy results back to userspace */
     if (fut_copy_to_user(fds, kfds, size) != 0) {
         fut_free(kfds);
-        fut_printf("[POLL] poll(fds, %lu, %d) -> EFAULT (copy_to_user failed)\n", nfds, timeout);
+        poll_printf("[POLL] poll(fds, %lu, %d) -> EFAULT (copy_to_user failed)\n", nfds, timeout);
         return -EFAULT;
     }
 
@@ -313,12 +317,12 @@ long sys_poll(struct pollfd *fds, unsigned long nfds, int timeout) {
                                (timeout == 0) ? "immediate" : "timed";
 
     if (invalid_count > 0) {
-        fut_printf("[POLL] poll(nfds=%lu, timeout=%d ms [%s]) -> %d ready (%d invalid, "
+        poll_printf("[POLL] poll(nfds=%lu, timeout=%d ms [%s]) -> %d ready (%d invalid, "
                    "requested: %dxIN %dxOUT %dxPRI, Phase 3: FD readiness checking)\n",
                    nfds, timeout, timeout_desc, ready_count, invalid_count,
                    pollin_requested, pollout_requested, pollpri_requested);
     } else {
-        fut_printf("[POLL] poll(nfds=%lu, timeout=%d ms [%s]) -> %d ready "
+        poll_printf("[POLL] poll(nfds=%lu, timeout=%d ms [%s]) -> %d ready "
                    "(requested: %dxIN %dxOUT %dxPRI, Phase 3: FD readiness checking)\n",
                    nfds, timeout, timeout_desc, ready_count,
                    pollin_requested, pollout_requested, pollpri_requested);

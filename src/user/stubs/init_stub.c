@@ -9,6 +9,9 @@ int main(void) {
     // NOTE: The kernel launches futura-wayland compositor when ENABLE_WAYLAND_DEMO=1
     // We just need to wait for the socket and launch wl-term
 
+    // VERY FIRST message - before anything else
+    sys_write(1, "[INIT-STUB] MAIN STARTED\n", 25);
+
     // First, set up our own file descriptors to /dev/console
     int test_fd = sys_open("/dev/console", 2, 0);  // O_RDWR = 2
     if (test_fd >= 0) {

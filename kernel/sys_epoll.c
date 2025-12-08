@@ -254,11 +254,21 @@ extern void fut_free(void *ptr);
 /* Maximum epoll instances */
 #define MAX_EPOLL_INSTANCES 256
 
-/* epoll_event structure (user-visible) */
+/* epoll_event structure (user-visible) - matches Linux ABI
+ *
+ * The data field is a union in Linux for convenience, but for binary
+ * compatibility the key requirement is:
+ *   - sizeof(struct epoll_event) == 12 bytes
+ *   - events at offset 0 (4 bytes)
+ *   - data at offset 4 (8 bytes)
+ *
+ * Linux uses __attribute__((packed)) to achieve this layout.
+ * Without packed, natural alignment would put data at offset 8.
+ */
 struct epoll_event {
     uint32_t events;   /* Requested events bitmask */
     uint64_t data;     /* User data associated with this FD */
-};
+} __attribute__((packed));
 
 /* Internal epoll FD registration */
 struct epoll_fd_entry {

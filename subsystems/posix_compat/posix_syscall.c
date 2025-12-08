@@ -19,6 +19,7 @@
 #include <kernel/fut_socket.h>
 #include <kernel/signal.h>
 #include <kernel/signal_frame.h>
+#include <kernel/chrdev.h>
 
 /* ============================================================
  *   Syscall Numbers
@@ -162,6 +163,61 @@ static uint64_t socket_fd_owner[MAX_SOCKET_FDS] = {0};
 /* Get current thread ID for socket ownership checks */
 #include "../../include/kernel/fut_percpu.h"
 
+/* ============================================================
+ *   Socket File Operations for VFS Integration
+ * ============================================================ */
+
+/**
+ * Socket read operation - called via VFS read() syscall
+ * The socket pointer is stored in private_data
+ */
+static ssize_t socket_read(void *inode, void *private_data, void *u_buf, size_t n, off_t *pos) {
+    (void)inode;
+    (void)pos;
+    fut_socket_t *socket = (fut_socket_t *)private_data;
+    if (!socket) {
+        return -EBADF;
+    }
+    return fut_socket_recv(socket, u_buf, n);
+}
+
+/**
+ * Socket write operation - called via VFS write() syscall
+ * The socket pointer is stored in private_data
+ */
+static ssize_t socket_write(void *inode, void *private_data, const void *u_buf, size_t n, off_t *pos) {
+    (void)inode;
+    (void)pos;
+    fut_socket_t *socket = (fut_socket_t *)private_data;
+    if (!socket) {
+        return -EBADF;
+    }
+    return fut_socket_send(socket, u_buf, n);
+}
+
+/**
+ * Socket release operation - called when FD is closed
+ * The socket pointer is stored in private_data
+ */
+static int socket_release(void *inode, void *private_data) {
+    (void)inode;
+    fut_socket_t *socket = (fut_socket_t *)private_data;
+    if (!socket) {
+        return -EBADF;
+    }
+    return fut_socket_close(socket);
+}
+
+/** Socket file operations for VFS integration */
+static struct fut_file_ops socket_fops = {
+    .open = NULL,
+    .release = socket_release,
+    .read = socket_read,
+    .write = socket_write,
+    .ioctl = NULL,
+    .mmap = NULL
+};
+
 static inline uint64_t get_current_tid(void) {
     fut_percpu_t *percpu = fut_percpu_get();
     if (percpu && percpu->current_thread) {
@@ -204,36 +260,43 @@ static inline int set_socket_for_fd(int fd, fut_socket_t *socket) {
 /**
  * Find next available file descriptor for a socket.
  * Returns FD number (>=0) on success, -1 if no space.
+ *
+ * Uses chrdev_alloc_fd() to register the socket in VFS file table,
+ * enabling VFS read/write/close operations to work on socket FDs.
+ * The socket pointer is stored as private_data and used by socket_fops.
  */
 int allocate_socket_fd(fut_socket_t *socket) {
-    uint64_t tid = get_current_tid();
-    for (int i = 3; i < MAX_SOCKET_FDS; i++) {  /* Skip stdin/stdout/stderr */
-        if (socket_fd_table[i] == NULL) {
-            socket_fd_table[i] = socket;
-            socket_fd_owner[i] = tid;
-            return i;
-        }
+    /* Use chrdev_alloc_fd to register socket in VFS file table */
+    int fd = chrdev_alloc_fd(&socket_fops, NULL, socket);
+    if (fd < 0) {
+        return fd;  /* Return error code from chrdev_alloc_fd */
     }
-    return -1;
+
+    /* Also track in socket_fd_table for get_socket_from_fd() lookups */
+    uint64_t tid = get_current_tid();
+    if (fd < MAX_SOCKET_FDS) {
+        socket_fd_table[fd] = socket;
+        socket_fd_owner[fd] = tid;
+    }
+
+    return fd;
 }
 
 /**
- * Release a socket FD and cleanup the socket object.
+ * Release a socket FD and cleanup the tracking table entry.
+ * NOTE: The actual socket close is handled by VFS via socket_release()
+ * when using chrdev_alloc_fd. This function just clears the tracking table.
  */
 int release_socket_fd(int fd) {
-    fut_socket_t *socket = get_socket_from_fd(fd);
-    if (!socket) {
+    if (fd < 0 || fd >= MAX_SOCKET_FDS) {
         return -EBADF;
     }
 
-    /* Close the socket */
-    int ret = fut_socket_close(socket);
-
-    /* Release the FD slot and clear owner */
+    /* Just clear the tracking table entry - VFS handles actual socket close */
     socket_fd_table[fd] = NULL;
     socket_fd_owner[fd] = 0;
 
-    return ret < 0 ? ret : 0;
+    return 0;
 }
 
 /**

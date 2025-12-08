@@ -466,7 +466,7 @@ int fut_socket_accept(fut_socket_t *listener, fut_socket_t **out_socket) {
     /* Dequeue pending connection */
     fut_socket_connection_entry_t *entry =
         &queue->queue[queue->queue_head];
-    fut_socket_t *peer = entry->peer_socket;
+    fut_socket_t *peer = entry->peer_socket;  /* The connecting (client) socket */
 
     queue->queue_head = (queue->queue_head + 1) % FUT_SOCKET_QUEUE_MAX;
     queue->queue_count--;
@@ -507,12 +507,21 @@ int fut_socket_accept(fut_socket_t *listener, fut_socket_t **out_socket) {
         fut_waitq_init(pair->send_waitq);
         fut_waitq_init(pair->recv_waitq);
         /* pair->lock is already zeroed by memset */
-        pair->peer = NULL;  /* Will be set when accepted socket is used */
         pair->refcount = 2;  /* Shared between listener and peer */
 
         peer->pair = pair;
         peer->state = FUT_SOCK_CONNECTED;
     }
+
+    /* Now the accepted socket becomes connected and shares the pair with peer */
+    listener->pair = peer->pair;
+    listener->state = FUT_SOCK_CONNECTED;
+
+    /* Set peer pointers so both sockets know about each other */
+    peer->pair->peer = listener;
+
+    fut_printf("[SOCKET] Socket %u accepted connection from %u (peer=%p)\n",
+               listener->socket_id, peer->socket_id, peer->pair->peer);
 
     /* Wake up the connecting socket that's waiting in fut_socket_connect() */
     if (peer->connect_waitq) {

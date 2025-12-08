@@ -19,8 +19,11 @@
 
 /* Kernel syscall wrappers for socket operations */
 #define __NR_socket 41
+#define __NR_sendmsg 46
+#define __NR_recvmsg 47
 #define __NR_bind   49
 #define __NR_listen 50
+#define __NR_accept 43
 #define __NR_connect 53
 
 static inline long sys_socket(int domain, int type, int protocol) {
@@ -46,6 +49,33 @@ static inline long sys_listen(int sockfd, int backlog) {
     __asm__ volatile("syscall"
                      : "=a"(ret)
                      : "0"(__NR_listen), "D"((long)sockfd), "S"((long)backlog)
+                     : "rcx", "r11", "memory");
+    return ret;
+}
+
+static inline long sys_accept(int sockfd, void *addr, uint32_t *addrlen) {
+    long ret;
+    __asm__ volatile("syscall"
+                     : "=a"(ret)
+                     : "0"(__NR_accept), "D"((long)sockfd), "S"((long)addr), "d"((long)addrlen)
+                     : "rcx", "r11", "memory");
+    return ret;
+}
+
+static inline long sys_sendmsg(int sockfd, const void *msg, int flags) {
+    long ret;
+    __asm__ volatile("syscall"
+                     : "=a"(ret)
+                     : "0"(__NR_sendmsg), "D"((long)sockfd), "S"((long)msg), "d"((long)flags)
+                     : "rcx", "r11", "memory");
+    return ret;
+}
+
+static inline long sys_recvmsg(int sockfd, void *msg, int flags) {
+    long ret;
+    __asm__ volatile("syscall"
+                     : "=a"(ret)
+                     : "0"(__NR_recvmsg), "D"((long)sockfd), "S"((long)msg), "d"((long)flags)
                      : "rcx", "r11", "memory");
     return ret;
 }
@@ -623,6 +653,24 @@ static int accept_internal(int fd, struct sockaddr *addr, socklen_t *len, bool b
 }
 
 int accept(int fd, struct sockaddr *addr, socklen_t *len) {
+    /* First check if this is a userspace-tracked socket */
+    struct unix_stream *stream = socket_from_fd(fd);
+
+    /* If not in userspace table, use kernel syscall directly */
+    if (!stream) {
+        printf("[SOCKET-LIB] accept(fd=%d) -> kernel syscall\n", fd);
+        uint32_t addrlen = len ? *len : 0;
+        long ret = sys_accept(fd, addr, len ? &addrlen : NULL);
+        if (len) *len = addrlen;
+        printf("[SOCKET-LIB] kernel accept returned %ld\n", ret);
+        if (ret < 0) {
+            extern int *__errno_location(void);
+            *__errno_location() = (int)(-ret);
+            return -1;
+        }
+        return (int)ret;
+    }
+
     return accept_internal(fd, addr, len, true);
 }
 
@@ -744,20 +792,34 @@ static ssize_t socket_stream_recv(struct unix_stream *stream,
 }
 
 ssize_t sendmsg(int fd, const struct msghdr *msg, int flags) {
-    (void)flags;
     struct unix_stream *stream = socket_from_fd(fd);
     if (!stream) {
-        return -1;
+        /* Not in userspace table - use kernel syscall */
+        long ret = sys_sendmsg(fd, msg, flags);
+        if (ret < 0) {
+            extern int *__errno_location(void);
+            *__errno_location() = (int)(-ret);
+            return -1;
+        }
+        return (ssize_t)ret;
     }
+    (void)flags;
     return socket_stream_send(stream, msg);
 }
 
 ssize_t recvmsg(int fd, struct msghdr *msg, int flags) {
-    (void)flags;
     struct unix_stream *stream = socket_from_fd(fd);
     if (!stream) {
-        return -1;
+        /* Not in userspace table - use kernel syscall */
+        long ret = sys_recvmsg(fd, msg, flags);
+        if (ret < 0) {
+            extern int *__errno_location(void);
+            *__errno_location() = (int)(-ret);
+            return -1;
+        }
+        return (ssize_t)ret;
     }
+    (void)flags;
     return socket_stream_recv(stream, msg);
 }
 

@@ -23,10 +23,14 @@ typedef union {
     uint64_t u64;
 } epoll_data_t;
 
+/* Linux ABI: struct epoll_event is packed (12 bytes, not 16)
+ * - events at offset 0 (4 bytes)
+ * - data at offset 4 (8 bytes)
+ */
 struct epoll_event {
     uint32_t events;
     epoll_data_t data;
-};
+} __attribute__((packed));
 
 int epoll_create1(int flags) {
     long ret = sys_epoll_create1_call(flags);

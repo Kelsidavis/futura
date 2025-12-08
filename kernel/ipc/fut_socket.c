@@ -563,6 +563,7 @@ int fut_socket_accept(fut_socket_t *listener, fut_socket_t **out_socket) {
         /* peer->pair_reverse = pair_reverse means: listener sends via pair_reverse, peer receives from pair_reverse */
         peer->pair = pair_forward;    /* peer sends here, listener receives */
         peer->pair_reverse = pair_reverse;  /* peer receives from here, listener sends */
+        peer->is_accepted = false;  /* Client side, not accepted yet */
         peer->state = FUT_SOCK_CONNECTED;
     }
 
@@ -693,31 +694,35 @@ ssize_t fut_socket_send(fut_socket_t *socket, const void *buf, size_t len) {
         return -32;  /* EPIPE - broken pipe */
     }
 
-    /* Select which pair to send on:
-     * For a bidirectional socket, we try pair first (client→server direction).
-     * If pair has no space but pair_reverse does, use pair_reverse (server response).
-     * This allows both sides to send without knowing which pair is theirs.
+    /* Select which pair to send on using smart heuristics:
+     * Generally:
+     * - pair is for client→server (requests)
+     * - pair_reverse is for server→client (responses)
+     *
+     * When both sides use the same socket object, we detect context by checking
+     * if pair (request direction) has pending data from a client request.
+     * If pair has data (client request), server should send to pair_reverse.
+     * Otherwise, use pair (client sends or server continues).
      */
     fut_socket_pair_t *pair = NULL;
-    uint32_t pair_space = socket->pair->recv_size -
-        ((socket->pair->recv_head + socket->pair->recv_size -
-          socket->pair->recv_tail) % socket->pair->recv_size);
 
-    if (pair_space > 0) {
-        /* Use forward pair if it has space */
-        pair = socket->pair;
-    } else if (socket->pair_reverse) {
-        /* Fall back to reverse pair if forward is full */
-        uint32_t pair_rev_space = socket->pair_reverse->recv_size -
+    /* Check if pair (request direction) has pending data */
+    uint32_t pair_data = (socket->pair->recv_head + socket->pair->recv_size -
+                          socket->pair->recv_tail) % socket->pair->recv_size;
+    /* Check if pair_reverse (response direction) has space */
+    uint32_t pair_rev_space = 0;
+    if (socket->pair_reverse) {
+        pair_rev_space = socket->pair_reverse->recv_size -
             ((socket->pair_reverse->recv_head + socket->pair_reverse->recv_size -
               socket->pair_reverse->recv_tail) % socket->pair_reverse->recv_size);
-        if (pair_rev_space > 0) {
-            pair = socket->pair_reverse;
-        }
     }
 
-    if (!pair) {
-        /* Both pairs are full, use pair as default and let it block */
+    /* Heuristic: if pair has pending data AND pair_reverse has space,
+     * we're likely the server responding to a request. Use pair_reverse. */
+    if (pair_data > 0 && pair_rev_space > 0 && socket->pair_reverse) {
+        pair = socket->pair_reverse;
+    } else {
+        /* Default: use pair (client sending or normal operation) */
         pair = socket->pair;
     }
     if (!pair->peer) {
@@ -782,29 +787,32 @@ ssize_t fut_socket_recv(fut_socket_t *socket, void *buf, size_t len) {
         return 0;  /* EOF - no more data */
     }
 
-    /* Select which pair to receive from:
-     * For a bidirectional socket, we try pair first (client→server messages).
-     * If pair has no data but pair_reverse does, read from pair_reverse (responses).
-     * This allows both sides to receive without knowing which pair is theirs.
+    /* Select which pair to receive from using smart heuristics:
+     * Generally:
+     * - pair is for client→server (requests)
+     * - pair_reverse is for server→client (responses)
+     *
+     * When both sides use the same socket object, we try pair first (likely has
+     * requests from client). If pair is empty, try pair_reverse (responses from server).
      */
     fut_socket_pair_t *pair = NULL;
+
+    /* Check data availability in both directions */
     uint32_t pair_avail = (socket->pair->recv_head + socket->pair->recv_size -
                            socket->pair->recv_tail) % socket->pair->recv_size;
-
-    if (pair_avail > 0) {
-        /* Use forward pair if it has data */
-        pair = socket->pair;
-    } else if (socket->pair_reverse) {
-        /* Fall back to reverse pair if forward is empty */
-        uint32_t pair_rev_avail = (socket->pair_reverse->recv_head + socket->pair_reverse->recv_size -
-                                   socket->pair_reverse->recv_tail) % socket->pair_reverse->recv_size;
-        if (pair_rev_avail > 0) {
-            pair = socket->pair_reverse;
-        }
+    uint32_t pair_rev_avail = 0;
+    if (socket->pair_reverse) {
+        pair_rev_avail = (socket->pair_reverse->recv_head + socket->pair_reverse->recv_size -
+                          socket->pair_reverse->recv_tail) % socket->pair_reverse->recv_size;
     }
 
-    if (!pair) {
-        /* No data in either pair, use forward pair and block */
+    /* Use pair if it has data (client requests), else try pair_reverse (responses) */
+    if (pair_avail > 0) {
+        pair = socket->pair;
+    } else if (pair_rev_avail > 0 && socket->pair_reverse) {
+        pair = socket->pair_reverse;
+    } else {
+        /* No data in either direction, default to pair and block */
         pair = socket->pair;
     }
 

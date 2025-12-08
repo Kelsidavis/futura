@@ -139,6 +139,9 @@ typedef struct fut_socket {
     bool shutdown_rd;                       /* Read channel shut down (SHUT_RD) */
     bool shutdown_wr;                       /* Write channel shut down (SHUT_WR) */
 
+    /* Server-side socket flag (set by accept) */
+    bool is_accepted;                       /* TRUE if this socket was returned by accept() */
+
     /* Refcounting and lifecycle */
     uint64_t refcount;                      /* Reference count */
     struct fut_waitq *close_waitq;          /* Wait queue for close completion */

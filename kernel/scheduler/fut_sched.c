@@ -638,6 +638,12 @@ void fut_schedule(void) {
     if (next->stack_base && next->stack_size) {
         uintptr_t stack_top = (uintptr_t)next->stack_base + next->stack_size;
         fut_tss_set_kernel_stack(stack_top);
+        /* Also set percpu syscall_kernel_rsp for the SYSCALL instruction fastpath.
+         * The SYSCALL instruction doesn't use TSS.rsp0 automatically - we must
+         * manually load the kernel stack in the entry code. */
+        if (percpu) {
+            percpu->syscall_kernel_rsp = stack_top;
+        }
     }
 #elif defined(__aarch64__)
     // ARM64: TSS not needed, stack is in SP register

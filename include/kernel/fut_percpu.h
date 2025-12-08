@@ -49,8 +49,31 @@ typedef struct fut_percpu {
     uint64_t work_stolen_count;          /* Number of times this CPU stole work */
     uint64_t last_balance_tick;          /* Tick when last load balance occurred */
 
+    /* SYSCALL scratch space - for saving user RSP during syscall entry
+     * The SYSCALL instruction doesn't switch stacks, so we need a safe place
+     * to store user RSP before loading kernel stack pointer. */
+    uint64_t syscall_user_rsp;           /* Temporary storage for user RSP */
+    uint64_t syscall_kernel_rsp;         /* Kernel RSP to use for syscalls */
+
     /* Padding to 128-byte cache line for alignment */
 } __attribute__((aligned(128))) fut_percpu_t;
+
+/* Offsets for assembly access - MUST match struct layout above */
+#define PERCPU_OFFSET_SELF              0
+#define PERCPU_OFFSET_CPU_ID            8
+#define PERCPU_OFFSET_CPU_INDEX         12
+#define PERCPU_OFFSET_CURRENT_THREAD    16
+#define PERCPU_OFFSET_IDLE_THREAD       24
+#define PERCPU_OFFSET_READY_QUEUE_HEAD  32
+#define PERCPU_OFFSET_READY_QUEUE_TAIL  40
+#define PERCPU_OFFSET_READY_COUNT       48
+#define PERCPU_OFFSET_QUEUE_LOCK        56
+#define PERCPU_OFFSET_QUEUE_DEPTH       64
+#define PERCPU_OFFSET_WORK_STEAL_COUNT  72
+#define PERCPU_OFFSET_WORK_STOLEN_COUNT 80
+#define PERCPU_OFFSET_LAST_BALANCE_TICK 88
+#define PERCPU_OFFSET_SYSCALL_USER_RSP  96
+#define PERCPU_OFFSET_SYSCALL_KERNEL_RSP 104
 
 /* Array of per-CPU data structures (one per CPU) */
 extern fut_percpu_t fut_percpu_data[FUT_MAX_CPUS];

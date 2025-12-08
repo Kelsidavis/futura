@@ -1457,15 +1457,6 @@ int64_t posix_syscall_dispatch(uint64_t syscall_num,
                                 uint64_t arg4, uint64_t arg5, uint64_t arg6) {
     extern void fut_printf(const char *, ...);
 
-    /* Debug: Log mmap syscalls to diagnose fd corruption */
-    if (syscall_num == 9) {  /* SYS_mmap */
-        fut_printf("[DISPATCH-MMAP] nr=%llu a1=0x%llx a2=%llu a3=%llu a4=%llu a5=%llu a6=%llu\n",
-                   (unsigned long long)syscall_num,
-                   (unsigned long long)arg1, (unsigned long long)arg2,
-                   (unsigned long long)arg3, (unsigned long long)arg4,
-                   (unsigned long long)arg5, (unsigned long long)arg6);
-    }
-
     /* Validate syscall number */
     if (syscall_num >= MAX_SYSCALL) {
         fut_printf("[DISPATCHER] ERROR: syscall %lu >= MAX_SYSCALL %d\n", syscall_num, MAX_SYSCALL);

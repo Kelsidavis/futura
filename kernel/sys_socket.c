@@ -21,7 +21,7 @@ extern void fut_printf(const char *fmt, ...);
 extern fut_task_t *fut_task_current(void);
 extern int allocate_socket_fd(fut_socket_t *socket);
 
-/* Disable verbose SOCKET debugging for performance */
+/* Socket debugging (disable for normal operation) */
 #define SOCKET_DEBUG 0
 #define socket_printf(...) do { if (SOCKET_DEBUG) fut_printf(__VA_ARGS__); } while(0)
 

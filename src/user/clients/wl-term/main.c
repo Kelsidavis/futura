@@ -249,14 +249,20 @@ static void registry_global(void *data, struct wl_registry *registry, uint32_t n
                            const char *interface, uint32_t version) {
     struct client_state *state = data;
 
+    printf("[WL-TERM-REGISTRY] Global advertised: name=%u interface=%s version=%u\n",
+           name, interface, version);
+
     if (strcmp(interface, wl_compositor_interface.name) == 0) {
         uint32_t ver = version < 4 ? version : 4;
         state->compositor = wl_registry_bind(registry, name, &wl_compositor_interface, ver);
+        printf("[WL-TERM-REGISTRY] Bound wl_compositor: %p\n", state->compositor);
     } else if (strcmp(interface, wl_shm_interface.name) == 0) {
         state->shm = wl_registry_bind(registry, name, &wl_shm_interface, 1);
+        printf("[WL-TERM-REGISTRY] Bound wl_shm: %p\n", state->shm);
     } else if (strcmp(interface, xdg_wm_base_interface.name) == 0) {
         uint32_t ver = version < 2 ? version : 2;
         state->xdg_wm_base = wl_registry_bind(registry, name, &xdg_wm_base_interface, ver);
+        printf("[WL-TERM-REGISTRY] Bound xdg_wm_base: %p\n", state->xdg_wm_base);
         xdg_wm_base_add_listener(state->xdg_wm_base, &wm_base_listener, state);
     } else if (strcmp(interface, wl_seat_interface.name) == 0) {
         uint32_t ver = version < 7 ? version : 7;
@@ -264,6 +270,9 @@ static void registry_global(void *data, struct wl_registry *registry, uint32_t n
         if (state->seat) {
             wl_seat_add_listener(state->seat, &seat_listener, state);
         }
+        printf("[WL-TERM-REGISTRY] Bound wl_seat: %p\n", state->seat);
+    } else {
+        printf("[WL-TERM-REGISTRY] Unknown global: %s\n", interface);
     }
 }
 
@@ -430,7 +439,12 @@ int main(void) {
     printf("[WL-TERM] Getting registry...\n");
     state.registry = wl_display_get_registry(state.display);
     wl_registry_add_listener(state.registry, &registry_listener, &state);
-    wl_display_roundtrip(state.display);
+
+    printf("[WL-TERM] About to call wl_display_roundtrip()...\n");
+    int roundtrip_result = wl_display_roundtrip(state.display);
+    printf("[WL-TERM] wl_display_roundtrip() returned: %d\n", roundtrip_result);
+    printf("[WL-TERM] After roundtrip: compositor=%p shm=%p xdg_wm_base=%p\n",
+           state.compositor, state.shm, state.xdg_wm_base);
 
     if (!state.compositor || !state.shm || !state.xdg_wm_base) {
         printf("[WL-TERM] Missing required Wayland globals\n");

@@ -79,6 +79,9 @@ int main(void) {
 
     if (shell_pid == 0) {
         // Child process - set up file descriptors and exec into wl-term
+        // Use sys_write to /dev/console before closing FDs
+        sys_write(1, "[INIT-CHILD] ENTERED CHILD PROCESS\n", 36);
+
         // Close any inherited file descriptors first
         sys_close(0);
         sys_close(1);

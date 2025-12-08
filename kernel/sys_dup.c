@@ -18,6 +18,7 @@
 
 extern void fut_printf(const char *fmt, ...);
 extern struct fut_file *vfs_get_file_from_task(struct fut_task *task, int fd);
+extern int propagate_socket_dup(int oldfd, int newfd);
 
 /**
  * dup() - Duplicate file descriptor to lowest available FD
@@ -251,6 +252,9 @@ long sys_dup(int oldfd) {
 
     /* Assign the file to the new FD */
     task->fd_table[newfd] = old_file;
+
+    /* Propagate socket ownership if oldfd is a socket */
+    propagate_socket_dup(local_oldfd, newfd);
 
     /* Phase 5: Detailed success logging */
     fut_printf("[DUP] dup(oldfd=%d [%s]) -> %d [%s] (refcount=%u, "

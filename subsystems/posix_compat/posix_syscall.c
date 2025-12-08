@@ -236,6 +236,35 @@ int release_socket_fd(int fd) {
     return ret < 0 ? ret : 0;
 }
 
+/**
+ * Propagate socket ownership when a file descriptor is duplicated (dup/dup2).
+ * If oldfd refers to a socket, newfd also needs to be tracked as a socket
+ * with the same ownership.
+ *
+ * @param oldfd Source file descriptor
+ * @param newfd Target file descriptor (the duplicate)
+ * @return 0 on success (even if not a socket), negative on error
+ */
+int propagate_socket_dup(int oldfd, int newfd) {
+    if (oldfd < 0 || oldfd >= MAX_SOCKET_FDS || newfd < 0 || newfd >= MAX_SOCKET_FDS) {
+        return 0;  /* Out of range for socket table, not an error */
+    }
+
+    /* Check if oldfd is a socket */
+    if (socket_fd_table[oldfd] == NULL) {
+        return 0;  /* Not a socket, nothing to propagate */
+    }
+
+    /* Propagate socket and ownership to newfd */
+    socket_fd_table[newfd] = socket_fd_table[oldfd];
+    socket_fd_owner[newfd] = socket_fd_owner[oldfd];
+
+    /* Increment socket refcount since we now have two FDs referring to it */
+    fut_socket_ref(socket_fd_table[oldfd]);
+
+    return 0;
+}
+
 /* ============================================================
  *   Syscall Handler Type
  * ============================================================ */

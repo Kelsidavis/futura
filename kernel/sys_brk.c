@@ -27,7 +27,7 @@
 
 extern void fut_printf(const char *fmt, ...);
 
-/* Disable verbose BRK debugging for performance - too many malloc/free calls */
+/* Disable BRK debugging for performance - too many malloc/free calls */
 #define BRK_DEBUG 0
 #define brk_printf(...) do { if (BRK_DEBUG) fut_printf(__VA_ARGS__); } while(0)
 

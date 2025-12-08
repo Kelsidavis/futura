@@ -18,6 +18,7 @@
 #include <kernel/fut_task.h>
 
 extern void fut_printf(const char *fmt, ...);
+extern int propagate_socket_dup(int oldfd, int newfd);
 
 /**
  * dup2() - Duplicate file descriptor to specific number
@@ -262,6 +263,9 @@ long sys_dup2(int oldfd, int newfd) {
         return ret;
     }
 
+    /* Propagate socket ownership if oldfd is a socket */
+    propagate_socket_dup(local_oldfd, local_newfd);
+
     /* Phase 5: Detailed success logging */
     fut_printf("[DUP2] dup2(oldfd=%d, newfd=%d [%s], op=%s, refcount=%u) -> %d (%s, Phase 5: FD bounds validation)\n",
                local_oldfd, local_newfd, newfd_category, operation_type, old_file->refcount, local_newfd,
@@ -381,6 +385,9 @@ long sys_dup3(int oldfd, int newfd, int flags) {
         extern long sys_fcntl(int fd, int cmd, long arg);
         sys_fcntl(local_newfd, 2, 1);  /* F_SETFD, FD_CLOEXEC */
     }
+
+    /* Propagate socket ownership if oldfd is a socket */
+    propagate_socket_dup(local_oldfd, local_newfd);
 
     const char *flags_desc = (local_flags & 0x80000) ? "O_CLOEXEC" : "none";
 

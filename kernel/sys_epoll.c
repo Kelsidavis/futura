@@ -209,6 +209,7 @@
 
 #include <kernel/eventfd.h>
 #include <kernel/fut_vfs.h>
+#include <kernel/fut_socket.h>
 #include <kernel/errno.h>
 #include <kernel/uaccess.h>
 #include <kernel/fut_thread.h>
@@ -216,6 +217,9 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <limits.h>
+
+/* Socket poll support */
+extern fut_socket_t *get_socket_from_fd(int fd);
 
 extern void fut_printf(const char *fmt, ...);
 extern void *fut_malloc(size_t size);
@@ -1487,6 +1491,15 @@ long sys_epoll_wait(int epfd, struct epoll_event *events, int maxevents, int tim
     int max_iterations = (timeout == 0) ? 1 : ((timeout < 0) ? 10000 : (timeout / 10 + 1));
     int iteration = 0;
 
+    static int epoll_wait_call_count = 0;
+    epoll_wait_call_count++;
+    int this_call = epoll_wait_call_count;
+
+    if (this_call <= 3) {
+        fut_printf("[EPOLL_WAIT-DBG] Call #%d: epfd=%d timeout=%d max_iter=%d fds_registered=%d\n",
+                   this_call, epfd, timeout, max_iterations, set->count);
+    }
+
     while (iteration < max_iterations) {
         int ready_count = 0;
         struct epoll_event ready_events[MAX_EPOLL_FDS];
@@ -1510,22 +1523,88 @@ long sys_epoll_wait(int epfd, struct epoll_event *events, int maxevents, int tim
             uint32_t events_ready = 0;
             bool handled = false;
 
+            static int vnode_type_dbg = 0;
+            if (vnode_type_dbg < 10) {
+                vnode_type_dbg++;
+                if (file->vnode) {
+                    fut_printf("[EPOLL-VN-DBG] fd=%d vnode=%p type=%d (0=REG,1=DIR,2=CHR,3=BLK,4=FIFO,5=SOCK)\n",
+                               set->fds[i].fd, file->vnode, file->vnode->type);
+                } else {
+                    fut_printf("[EPOLL-VN-DBG] fd=%d vnode=NULL (no vnode)\n", set->fds[i].fd);
+                }
+            }
+
             if (fut_eventfd_poll(file, set->fds[i].events, &events_ready)) {
                 handled = true;
             }
 
+            /* For sockets: check get_socket_from_fd first (sockets may not have vnodes) */
+            if (!handled) {
+                fut_socket_t *socket = get_socket_from_fd(set->fds[i].fd);
+                static int socket_poll_dbg = 0;
+                if (socket) {
+                    if (socket_poll_dbg < 5) {
+                        socket_poll_dbg++;
+                        fut_printf("[EPOLL-DBG] fd=%d is socket, polling...\n", set->fds[i].fd);
+                    }
+                    /* Convert EPOLL events to poll events and check socket readiness */
+                    int poll_events = 0;
+                    if (set->fds[i].events & (EPOLLIN | EPOLLRDNORM)) {
+                        poll_events |= 0x1;  /* POLLIN */
+                    }
+                    if (set->fds[i].events & (EPOLLOUT | EPOLLWRNORM)) {
+                        poll_events |= 0x4;  /* POLLOUT */
+                    }
+                    int socket_ready = fut_socket_poll(socket, poll_events);
+                    if (socket_poll_dbg <= 5) {
+                        fut_printf("[EPOLL-DBG] fd=%d poll_events=0x%x socket_ready=0x%x state=%d\n",
+                                   set->fds[i].fd, poll_events, socket_ready, socket->state);
+                    }
+                    if (socket_ready & 0x1) {  /* POLLIN */
+                        events_ready |= EPOLLIN | EPOLLRDNORM;
+                    }
+                    if (socket_ready & 0x4) {  /* POLLOUT */
+                        events_ready |= EPOLLOUT | EPOLLWRNORM;
+                    }
+                    handled = true;
+                }
+            }
+
             /* For regular files: always ready for both read and write */
-            if (!handled && file->vnode && file->vnode->type == 1) {  /* VNODE_FILE */
+            if (!handled && file->vnode && file->vnode->type == VN_REG) {
                 if (set->fds[i].events & (EPOLLIN | EPOLLRDNORM)) {
                     events_ready |= EPOLLIN | EPOLLRDNORM;
                 }
                 if (set->fds[i].events & (EPOLLOUT | EPOLLWRNORM)) {
                     events_ready |= EPOLLOUT | EPOLLWRNORM;
                 }
+                handled = true;
             }
-            /* For character devices/sockets: would need more sophisticated checks */
-            /* For now, report as ready if requested */
-            else if (!handled && file->vnode) {
+
+            /* For sockets with vnodes: redundant but keep for VN_SOCK path */
+            if (!handled && file->vnode && file->vnode->type == VN_SOCK) {
+                fut_socket_t *socket = get_socket_from_fd(set->fds[i].fd);
+                if (socket) {
+                    int poll_events = 0;
+                    if (set->fds[i].events & (EPOLLIN | EPOLLRDNORM)) {
+                        poll_events |= 0x1;
+                    }
+                    if (set->fds[i].events & (EPOLLOUT | EPOLLWRNORM)) {
+                        poll_events |= 0x4;
+                    }
+                    int socket_ready = fut_socket_poll(socket, poll_events);
+                    if (socket_ready & 0x1) {
+                        events_ready |= EPOLLIN | EPOLLRDNORM;
+                    }
+                    if (socket_ready & 0x4) {
+                        events_ready |= EPOLLOUT | EPOLLWRNORM;
+                    }
+                }
+                handled = true;
+            }
+
+            /* For character devices and other types: report as ready if requested */
+            if (!handled && file->vnode) {
                 if (set->fds[i].events & (EPOLLIN | EPOLLRDNORM)) {
                     events_ready |= EPOLLIN | EPOLLRDNORM;
                 }
@@ -1649,8 +1728,17 @@ long sys_epoll_wait(int epfd, struct epoll_event *events, int maxevents, int tim
             return 0;
         }
 
-        /* Sleep for 10ms before next iteration */
-        fut_thread_sleep(10);
+        /* For short timeouts (< 100ms), use busy-wait polling to avoid scheduler issues.
+         * For longer timeouts, use proper thread sleep.
+         * This is a workaround for timer-based thread wakeup issues. */
+        if (timeout >= 100) {
+            fut_thread_sleep(10);
+        } else {
+            /* Busy-wait for approximately 1ms (rough estimate based on loop iterations) */
+            for (volatile int delay = 0; delay < 100000; delay++) {
+                __asm__ volatile("" ::: "memory");
+            }
+        }
 
         iteration++;
     }

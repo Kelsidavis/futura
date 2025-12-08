@@ -12,6 +12,7 @@
 #include <kernel/errno.h>
 #include <kernel/fut_mm.h>
 #include <kernel/fut_task.h>
+#include <kernel/fut_memory.h>
 
 #if defined(__x86_64__)
 #include <platform/x86_64/memory/paging.h>

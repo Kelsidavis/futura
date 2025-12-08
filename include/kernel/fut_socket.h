@@ -141,6 +141,7 @@ typedef struct fut_socket {
     /* Refcounting and lifecycle */
     uint64_t refcount;                      /* Reference count */
     struct fut_waitq *close_waitq;          /* Wait queue for close completion */
+    struct fut_waitq *connect_waitq;        /* Wait queue for connect() completion */
 } fut_socket_t;
 
 /* ============================================================

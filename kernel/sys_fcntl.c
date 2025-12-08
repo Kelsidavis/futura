@@ -213,6 +213,7 @@ extern void fut_printf(const char *fmt, ...);
 extern fut_task_t *fut_task_current(void);
 extern struct fut_file *vfs_get_file_from_task(struct fut_task *task, int fd);
 extern int vfs_alloc_specific_fd_for_task(struct fut_task *task, int target_fd, struct fut_file *file);
+extern int propagate_socket_dup(int oldfd, int newfd);
 
 /* fcntl command definitions */
 #ifndef F_DUPFD
@@ -752,6 +753,9 @@ long sys_fcntl(int fd, int cmd, uint64_t arg) {
                 cloexec_status = "FD_CLOEXEC set atomically";
             }
         }
+
+        /* Propagate socket ownership if oldfd is a socket */
+        propagate_socket_dup(local_fd, newfd);
 
         /* Phase 2: Detailed success logging */
         fut_printf("[FCNTL] fcntl(fd=%d [%s], cmd=%s [%s], minfd=%d [%s]) -> %d "

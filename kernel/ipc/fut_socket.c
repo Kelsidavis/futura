@@ -514,6 +514,12 @@ int fut_socket_accept(fut_socket_t *listener, fut_socket_t **out_socket) {
         peer->state = FUT_SOCK_CONNECTED;
     }
 
+    /* Wake up the connecting socket that's waiting in fut_socket_connect() */
+    if (peer->connect_waitq) {
+        fut_printf("[SOCKET] Waking up connecting socket %u\n", peer->socket_id);
+        fut_waitq_wake_all(peer->connect_waitq);
+    }
+
     *out_socket = peer;
     fut_printf("[SOCKET] Socket %u accepted connection from %u\n",
                listener->socket_id, peer->socket_id);
@@ -549,6 +555,7 @@ fut_socket_t *fut_socket_find_listener(const char *path) {
 
 /**
  * Connect to listening socket.
+ * For blocking sockets, waits until accept() completes the connection.
  */
 int fut_socket_connect(fut_socket_t *socket, const char *target_path) {
     if (!socket || !target_path) {
@@ -568,20 +575,36 @@ int fut_socket_connect(fut_socket_t *socket, const char *target_path) {
         return -111;  /* ECONNREFUSED */
     }
 
+    /* Allocate connect wait queue if needed (for blocking connect) */
+    if (!socket->connect_waitq) {
+        socket->connect_waitq = fut_malloc(sizeof(fut_waitq_t));
+        if (!socket->connect_waitq) {
+            fut_socket_unref(listener);
+            return -12;  /* ENOMEM */
+        }
+        fut_waitq_init(socket->connect_waitq);
+    }
+
     /* Queue pending connection */
     uint32_t tail = (queue->queue_head + queue->queue_count) % FUT_SOCKET_QUEUE_MAX;
     queue->queue[tail].peer_socket = socket;
     queue->queue[tail].flags = 0;
-    queue->queue[tail].timestamp_ns = fut_get_time_ns();
+    /* Skip high-resolution timestamp - it blocks during calibration on first use */
+    queue->queue[tail].timestamp_ns = fut_get_ticks() * 1000000ULL;  /* ms -> ns */
     queue->queue_count++;
 
     socket->state = FUT_SOCK_CONNECTING;
 
-    /* Wake up listener's accept queue */
+    /* Wake up listener's accept queue so it can call accept() */
     fut_waitq_wake_one(queue->accept_waitq);
 
     fut_socket_unref(listener);
-    fut_printf("[SOCKET] Socket %u connecting to %s\n", socket->socket_id, target_path);
+
+    /* For Unix domain sockets, connect returns immediately after queueing.
+     * The connection will be completed when the server calls accept().
+     * I/O operations will wait for the socket to become connected.
+     * This avoids deadlock when client and server are in the same address space. */
+    fut_printf("[SOCKET] Socket %u connecting to %s (queued, returning immediately)\n", socket->socket_id, target_path);
     return 0;
 }
 

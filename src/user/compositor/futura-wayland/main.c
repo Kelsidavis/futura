@@ -385,9 +385,12 @@ int main(void) {
         }
     } else {
         /* Normal mode: render initial frame with damage and run compositor */
+        printf("[WAYLAND] Normal mode: about to render initial frame\n");
         comp_damage_add_full(&comp);
         comp_render_frame(&comp);
+        printf("[WAYLAND] Initial frame rendered, entering main loop\n");
         comp_run(&comp);
+        printf("[WAYLAND] comp_run() returned\n");
     }
 
     shm_backend_finish(&comp);

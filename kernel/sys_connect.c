@@ -212,7 +212,7 @@
 
 extern void fut_printf(const char *fmt, ...);
 
-/* Disable verbose CONNECT debugging for performance */
+/* Enable CONNECT debugging temporarily for bringup */
 #define CONNECT_DEBUG 0
 #define connect_printf(...) do { if (CONNECT_DEBUG) fut_printf(__VA_ARGS__); } while(0)
 extern fut_task_t *fut_task_current(void);
@@ -274,6 +274,7 @@ typedef uint32_t socklen_t;
  * Phase 4: Connection timeout, retry logic, TCP Fast Open
  */
 long sys_connect(int sockfd, const void *addr, socklen_t addrlen) {
+    connect_printf("[CONNECT-DBG] sys_connect called: sockfd=%d addr=%p addrlen=%u\n", sockfd, addr, addrlen);
     /* ARM64 FIX: Copy parameters to local variables immediately to ensure they're preserved
      * on the stack across potentially blocking calls. Socket operations may block and corrupt
      * register-passed parameters upon resumption. */
@@ -281,18 +282,22 @@ long sys_connect(int sockfd, const void *addr, socklen_t addrlen) {
     const void *local_addr = addr;
     socklen_t local_addrlen = addrlen;
 
+    connect_printf("[CONNECT-DBG] calling fut_task_current()\n");
     fut_task_t *task = fut_task_current();
+    connect_printf("[CONNECT-DBG] fut_task_current() returned %p\n", task);
     if (!task) {
         connect_printf("[CONNECT] connect(sockfd=%d) -> ESRCH (no current task)\n", local_sockfd);
         return -ESRCH;
     }
 
+    connect_printf("[CONNECT-DBG] validating sockfd\n");
     /* Phase 2: Validate sockfd early */
     if (local_sockfd < 0) {
         connect_printf("[CONNECT] connect(sockfd=%d, addrlen=%u) -> EBADF (negative fd)\n",
                    local_sockfd, local_addrlen);
         return -EBADF;
     }
+    connect_printf("[CONNECT-DBG] sockfd OK, checking addr\n");
 
     /* Phase 2: Validate addr pointer */
     if (!local_addr) {
@@ -300,6 +305,7 @@ long sys_connect(int sockfd, const void *addr, socklen_t addrlen) {
                    local_sockfd, local_addrlen);
         return -EFAULT;
     }
+    connect_printf("[CONNECT-DBG] addr OK, checking addrlen=%u\n", local_addrlen);
 
     /* Phase 5: Validate address length bounds (minimum and maximum) */
     if (local_addrlen < 2) {
@@ -307,6 +313,7 @@ long sys_connect(int sockfd, const void *addr, socklen_t addrlen) {
                    local_sockfd, local_addrlen);
         return -EINVAL;
     }
+    connect_printf("[CONNECT-DBG] addrlen >= 2 OK\n");
 
     /* Phase 5: Maximum bound check to prevent integer overflow and excessive memory operations
      * Standard sockaddr_storage is 128 bytes, so 256 is generous upper limit */
@@ -316,10 +323,14 @@ long sys_connect(int sockfd, const void *addr, socklen_t addrlen) {
                    local_sockfd, local_addrlen, MAX_ADDRLEN);
         return -EINVAL;
     }
+    connect_printf("[CONNECT-DBG] addrlen <= MAX OK, about to copy sa_family\n");
 
     /* Copy address family from userspace */
     uint16_t sa_family;
-    if (fut_copy_from_user(&sa_family, local_addr, 2) != 0) {
+    connect_printf("[CONNECT-DBG] calling fut_copy_from_user for sa_family (addr=%p)\n", local_addr);
+    int copy_rc = fut_copy_from_user(&sa_family, local_addr, 2);
+    connect_printf("[CONNECT-DBG] fut_copy_from_user returned %d, sa_family=%u\n", copy_rc, (unsigned)sa_family);
+    if (copy_rc != 0) {
         connect_printf("[CONNECT] connect(sockfd=%d, addrlen=%u) -> EFAULT (failed to copy sa_family)\n",
                    local_sockfd, local_addrlen);
         return -EFAULT;
@@ -412,12 +423,16 @@ long sys_connect(int sockfd, const void *addr, socklen_t addrlen) {
     }
 
     if (path_len > 0) {
-        if (fut_copy_from_user(sock_path, (const char *)local_addr + 2, path_len) != 0) {
+        connect_printf("[CONNECT-DBG] copying path from addr+2=%p len=%zu\n", (const char *)local_addr + 2, path_len);
+        int path_rc = fut_copy_from_user(sock_path, (const char *)local_addr + 2, path_len);
+        connect_printf("[CONNECT-DBG] path copy returned %d\n", path_rc);
+        if (path_rc != 0) {
             connect_printf("[CONNECT] connect(sockfd=%d, family=%s, path_len=%zu) -> EFAULT (failed to copy sun_path)\n",
                        local_sockfd, family_name, path_len);
             return -EFAULT;
         }
         sock_path[path_len] = '\0';
+        connect_printf("[CONNECT-DBG] sock_path='%s'\n", sock_path);
     } else {
         sock_path[0] = '\0';
     }
@@ -443,7 +458,9 @@ long sys_connect(int sockfd, const void *addr, socklen_t addrlen) {
     }
 
     /* Get socket from file descriptor */
+    connect_printf("[CONNECT-DBG] calling get_socket_from_fd(%d)\n", local_sockfd);
     fut_socket_t *socket = get_socket_from_fd(local_sockfd);
+    connect_printf("[CONNECT-DBG] get_socket_from_fd returned %p\n", socket);
     if (!socket) {
         connect_printf("[CONNECT] connect(sockfd=%d, family=%s, path='%s' [%s]) -> EBADF (not a socket)\n",
                    local_sockfd, family_name, sock_path, path_type);
@@ -504,7 +521,9 @@ long sys_connect(int sockfd, const void *addr, socklen_t addrlen) {
     }
 
     /* Connect socket to peer */
+    connect_printf("[CONNECT-DBG] calling fut_socket_connect(socket=%p, path='%s')\n", socket, sock_path);
     int ret = fut_socket_connect(socket, sock_path);
+    connect_printf("[CONNECT-DBG] fut_socket_connect returned %d\n", ret);
     if (ret < 0) {
         const char *error_desc;
         switch (ret) {

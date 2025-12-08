@@ -19,6 +19,10 @@
 #include <stddef.h>
 
 extern void fut_printf(const char *fmt, ...);
+
+/* Disable verbose OPEN debugging for performance */
+#define OPEN_DEBUG 0
+#define open_printf(...) do { if (OPEN_DEBUG) fut_printf(__VA_ARGS__); } while(0)
 extern fut_task_t *fut_task_current(void);
 
 /* Forward declaration for copy_user_string */
@@ -126,21 +130,21 @@ long sys_open(const char *pathname, int flags, int mode) {
 
     fut_task_t *task = fut_task_current();
     if (!task) {
-        fut_printf("[OPEN] open(pathname=?, flags=0x%x, mode=0%o) -> ESRCH (no current task)\n",
+        open_printf("[OPEN] open(pathname=?, flags=0x%x, mode=0%o) -> ESRCH (no current task)\n",
                    local_flags, local_mode);
         return -ESRCH;
     }
 
     /* Phase 2: Validate pathname pointer */
     if (!local_pathname) {
-        fut_printf("[OPEN] open(pathname=NULL, flags=0x%x, mode=0%o) -> EFAULT (NULL pathname)\n",
+        open_printf("[OPEN] open(pathname=NULL, flags=0x%x, mode=0%o) -> EFAULT (NULL pathname)\n",
                    local_flags, local_mode);
         return -EFAULT;
     }
 
     /* Phase 3: Validate O_EXCL flag - requires O_CREAT */
     if ((local_flags & O_EXCL) && !(local_flags & O_CREAT)) {
-        fut_printf("[OPEN] open(pathname=?, flags=O_EXCL without O_CREAT) -> EINVAL (O_EXCL requires O_CREAT)\n");
+        open_printf("[OPEN] open(pathname=?, flags=O_EXCL without O_CREAT) -> EINVAL (O_EXCL requires O_CREAT)\n");
         return -EINVAL;
     }
 
@@ -185,7 +189,7 @@ long sys_open(const char *pathname, int flags, int mode) {
 
     /* Phase 5: Validate access mode is in valid range (0-2) */
     if (access_mode > O_RDWR) {
-        fut_printf("[OPEN] open(pathname=?, flags=0x%x, mode=0%o) -> EINVAL "
+        open_printf("[OPEN] open(pathname=?, flags=0x%x, mode=0%o) -> EINVAL "
                    "(invalid access mode %d, valid: 0-2, Phase 5)\n",
                    local_flags, local_mode, access_mode);
         return -EINVAL;
@@ -210,7 +214,7 @@ long sys_open(const char *pathname, int flags, int mode) {
 
     /* Phase 3: Validate O_APPEND flag - incompatible with O_RDONLY */
     if ((local_flags & O_APPEND) && access_mode == O_RDONLY) {
-        fut_printf("[OPEN] open(pathname=?, flags=O_APPEND with O_RDONLY) -> EINVAL (O_APPEND requires write access)\n");
+        open_printf("[OPEN] open(pathname=?, flags=O_APPEND with O_RDONLY) -> EINVAL (O_APPEND requires write access)\n");
         return -EINVAL;
     }
 
@@ -308,7 +312,7 @@ long sys_open(const char *pathname, int flags, int mode) {
                 error_desc = "copy failed";
                 break;
         }
-        fut_printf("[OPEN] open(pathname=?, access=%s, creation=%s, status=%s, mode=%s) -> %d (%s)\n",
+        open_printf("[OPEN] open(pathname=?, access=%s, creation=%s, status=%s, mode=%s) -> %d (%s)\n",
                    access_mode_desc, creation_flags_desc, status_flags_desc, mode_desc, rc, error_desc);
         return rc;
     }
@@ -335,7 +339,7 @@ long sys_open(const char *pathname, int flags, int mode) {
             /* O_DIRECTORY flag specified but file is not a directory */
             extern int fut_vfs_close(int fd);
             fut_vfs_close(result);
-            fut_printf("[OPEN] open(path='%s' [%s], O_DIRECTORY) -> ENOTDIR (file is not a directory)\n",
+            open_printf("[OPEN] open(path='%s' [%s], O_DIRECTORY) -> ENOTDIR (file is not a directory)\n",
                        kpath, path_type);
             return -ENOTDIR;
         }
@@ -379,14 +383,14 @@ long sys_open(const char *pathname, int flags, int mode) {
                 error_desc = "unknown error";
                 break;
         }
-        fut_printf("[OPEN] open(path='%s' [%s], access=%s, creation=%s, status=%s, mode=%s) -> %d (%s)\n",
+        open_printf("[OPEN] open(path='%s' [%s], access=%s, creation=%s, status=%s, mode=%s) -> %d (%s)\n",
                    kpath, path_type, access_mode_desc, creation_flags_desc, status_flags_desc,
                    mode_desc, result, error_desc);
         return (long)result;
     }
 
     /* Phase 2: Detailed success logging */
-    fut_printf("[OPEN] open(path='%s' [%s], access=%s, creation=%s, status=%s, mode=%s) -> %d (Phase 3: flag validation and VFS delegation)\n",
+    open_printf("[OPEN] open(path='%s' [%s], access=%s, creation=%s, status=%s, mode=%s) -> %d (Phase 3: flag validation and VFS delegation)\n",
                kpath, path_type, access_mode_desc, creation_flags_desc, status_flags_desc,
                mode_desc, result);
 

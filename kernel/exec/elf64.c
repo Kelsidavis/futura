@@ -38,6 +38,14 @@ extern void fut_do_user_iretq(uint64_t entry, uint64_t stack, uint64_t argc, uin
 /* Debug output for user trampoline serial output (U1234567A characters) */
 /* #define DEBUG_USER_TRAMPOLINE */
 
+/* Disable verbose STACK debugging for performance */
+#define STACK_DEBUG 0
+#define stack_printf(...) do { if (STACK_DEBUG) fut_printf(__VA_ARGS__); } while(0)
+
+/* Disable verbose EXEC-DEBUG (unconditional) for performance */
+#define EXECDBG_VERBOSE 0
+#define execdbg_printf(...) do { if (EXECDBG_VERBOSE) fut_printf(__VA_ARGS__); } while(0)
+
 #define ELF_MAGIC       0x464C457FULL
 #define ELF_CLASS_64    0x02
 #define ELF_DATA_LE     0x01
@@ -374,9 +382,9 @@ static int build_user_stack(fut_mm_t *mm,
             }
         }
 #ifdef DEBUG_EXEC
-        fut_printf("[EXEC-DEBUG] build_user_stack: envc=%zu\n", envc);
+        execdbg_printf("[EXEC-DEBUG] build_user_stack: envc=%zu\n", envc);
         for (size_t i = 0; i < envc; i++) {
-            fut_printf("[EXEC-DEBUG]   envp[%zu]='%s'\n", i, envp[i]);
+            execdbg_printf("[EXEC-DEBUG]   envp[%zu]='%s'\n", i, envp[i]);
         }
 #endif
     }
@@ -391,15 +399,15 @@ static int build_user_stack(fut_mm_t *mm,
 
     /* Copy environment variable strings first (highest addresses) */
     extern void fut_printf(const char *, ...);
-    fut_printf("[STACK-DEBUG] Copying %zu envp strings, envp=%p\n", envc, envp);
+    stack_printf("[STACK-DEBUG] Copying %zu envp strings, envp=%p\n", envc, envp);
     for (size_t i = envc; i-- > 0;) {
         /* Debug: Read the pointer value from the array */
         const char *ptr = envp[i];
         uintptr_t ptr_val = (uintptr_t)ptr;
-        fut_printf("[STACK-DEBUG] envp[%zu]=%p (0x%016lx) kernel=%d\n",
+        stack_printf("[STACK-DEBUG] envp[%zu]=%p (0x%016lx) kernel=%d\n",
                    i, ptr, ptr_val, ptr_val >= 0xFFFF800000000000ULL);
         size_t len = kstrlen(ptr) + 1;
-        fut_printf("[STACK-DEBUG] envp[%zu] len=%zu\n", i, len);
+        stack_printf("[STACK-DEBUG] envp[%zu] len=%zu\n", i, len);
         sp -= len;
         if (exec_copy_to_user(mm, sp, envp[i], len) != 0) {
             fut_free(string_ptrs);
@@ -1287,10 +1295,10 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
     uint64_t user_argv = 0;
     uint64_t user_argc = 0;
     /* Use the kernel copies of argv/envp that we made at the start */
-    fut_printf("[EXEC-DEBUG] About to build_user_stack: argc=%zu envc=%zu kargv=%p kenvp=%p\n",
+    execdbg_printf("[EXEC-DEBUG] About to build_user_stack: argc=%zu envc=%zu kargv=%p kenvp=%p\n",
                argc, envc, kargv, kenvp);
     if (kargv && argc > 0) {
-        fut_printf("[EXEC-DEBUG] kargv[0]=%p (content:'%.20s')\n", kargv[0], kargv[0] ? kargv[0] : "(null)");
+        execdbg_printf("[EXEC-DEBUG] kargv[0]=%p (content:'%.20s')\n", kargv[0], kargv[0] ? kargv[0] : "(null)");
     }
     rc = build_user_stack(mm, (const char *const *)kargv, argc, (const char *const *)kenvp, envc, &user_rsp, &user_argv, &user_argc);
     if (rc != 0) {
@@ -1728,7 +1736,7 @@ static int build_user_stack(fut_mm_t *mm,
         /* Copy environment strings */
         for (size_t i = envc; i-- > 0;) {
             /* Defensive: Check for NULL envp entry */
-            fut_printf("[STACK-DEBUG] envp[%zu]=%p\n", i, envp[i]);
+            stack_printf("[STACK-DEBUG] envp[%zu]=%p\n", i, envp[i]);
             if (!envp[i]) {
                 fut_free(envp_ptrs);
                 fut_free(argv_ptrs);

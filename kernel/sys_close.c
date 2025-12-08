@@ -18,6 +18,10 @@
 #include <kernel/errno.h>
 
 extern void fut_printf(const char *fmt, ...);
+
+/* Disable verbose CLOSE debugging for performance */
+#define CLOSE_DEBUG 0
+#define close_printf(...) do { if (CLOSE_DEBUG) fut_printf(__VA_ARGS__); } while(0)
 extern fut_task_t *fut_task_current(void);
 extern fut_socket_t *get_socket_from_fd(int fd);
 extern int release_socket_fd(int fd);
@@ -97,7 +101,7 @@ long sys_close(int fd) {
 
     fut_task_t *task = fut_task_current();
     if (!task) {
-        fut_printf("[CLOSE] close(fd=%d) -> ESRCH (no current task)\n", local_fd);
+        close_printf("[CLOSE] close(fd=%d) -> ESRCH (no current task)\n", local_fd);
         return -ESRCH;
     }
 
@@ -152,7 +156,7 @@ long sys_close(int fd) {
 
     /* Phase 2: Validate fd early (lower bound only, upper bound in VFS/socket) */
     if (local_fd < 0) {
-        fut_printf("[CLOSE] close(fd=%d) -> EBADF (negative fd)\n", local_fd);
+        close_printf("[CLOSE] close(fd=%d) -> EBADF (negative fd)\n", local_fd);
         return -EBADF;
     }
 
@@ -208,12 +212,12 @@ long sys_close(int fd) {
                     error_desc = "unknown error";
                     break;
             }
-            fut_printf("[CLOSE] close(fd=%d, type=%s [%s], socket_id=%u) -> %d (%s)\n",
+            close_printf("[CLOSE] close(fd=%d, type=%s [%s], socket_id=%u) -> %d (%s)\n",
                        local_fd, fd_type, fd_desc, socket->socket_id, ret, error_desc);
             return (long)ret;
         }
 
-        fut_printf("[CLOSE] close(fd=%d, type=%s [%s], socket_id=%u) -> 0 (Phase 2)\n",
+        close_printf("[CLOSE] close(fd=%d, type=%s [%s], socket_id=%u) -> 0 (Phase 2)\n",
                    local_fd, fd_type, fd_desc, socket->socket_id);
         return 0;
     }
@@ -239,12 +243,12 @@ long sys_close(int fd) {
                 error_desc = "unknown error";
                 break;
         }
-        fut_printf("[CLOSE] close(fd=%d, type=%s [%s]) -> %d (%s)\n",
+        close_printf("[CLOSE] close(fd=%d, type=%s [%s]) -> %d (%s)\n",
                    local_fd, fd_type, fd_desc, ret, error_desc);
         return (long)ret;
     }
 
-    fut_printf("[CLOSE] close(fd=%d, type=%s [%s]) -> 0 (Phase 2)\n",
+    close_printf("[CLOSE] close(fd=%d, type=%s [%s]) -> 0 (Phase 2)\n",
                local_fd, fd_type, fd_desc);
     return 0;
 }

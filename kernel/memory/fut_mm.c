@@ -20,6 +20,10 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+/* Disable verbose MM-CREATE debugging for performance */
+#define MM_CREATE_DEBUG 0
+#define mm_create_printf(...) do { if (MM_CREATE_DEBUG) fut_printf(__VA_ARGS__); } while(0)
+
 /* Architecture-specific pmap header */
 #ifdef __x86_64__
 #include <platform/x86_64/memory/pmap.h>
@@ -138,59 +142,59 @@ fut_mm_t *fut_mm_create(void) {
     uint64_t kernel_cr3 = fut_vmem_get_reload_value(&kernel_mm.ctx);
 
     if (saved_cr3 != kernel_cr3) {
-        fut_printf("[MM-CREATE] Switching to kernel CR3 (0x%llx -> 0x%llx)\n",
+        mm_create_printf("[MM-CREATE] Switching to kernel CR3 (0x%llx -> 0x%llx)\n",
                    (unsigned long long)saved_cr3, (unsigned long long)kernel_cr3);
         fut_write_cr3(kernel_cr3);
     }
 
-    fut_printf("[MM-CREATE] Allocating MM structure...\n");
+    mm_create_printf("[MM-CREATE] Allocating MM structure...\n");
     fut_mm_t *mm = (fut_mm_t *)fut_malloc(sizeof(*mm));
     if (!mm) {
-        fut_printf("[MM-CREATE] FAILED: malloc returned NULL\n");
+        mm_create_printf("[MM-CREATE] FAILED: malloc returned NULL\n");
         goto fail_restore_cr3;
     }
     memset(mm, 0, sizeof(*mm));
 
-    fut_printf("[MM-CREATE] Allocating PML4 page...\n");
+    mm_create_printf("[MM-CREATE] Allocating PML4 page...\n");
     void *pml4_page = fut_pmm_alloc_page();
     if (!pml4_page) {
-        fut_printf("[MM-CREATE] FAILED: pmm_alloc_page returned NULL (out of physical pages)\n");
+        mm_create_printf("[MM-CREATE] FAILED: pmm_alloc_page returned NULL (out of physical pages)\n");
         fut_free(mm);
         goto fail_restore_cr3;
     }
-    fut_printf("[MM-CREATE] PML4 allocated successfully at %p\n", pml4_page);
+    mm_create_printf("[MM-CREATE] PML4 allocated successfully at %p\n", pml4_page);
 
-    fut_printf("[MM-CREATE] About to memset PML4 page at %p\n", pml4_page);
+    mm_create_printf("[MM-CREATE] About to memset PML4 page at %p\n", pml4_page);
     memset(pml4_page, 0, PAGE_SIZE);
-    fut_printf("[MM-CREATE] Memset completed\n");
+    mm_create_printf("[MM-CREATE] Memset completed\n");
 
     pte_t *pml4 = (pte_t *)pml4_page;
-    fut_printf("[MM-CREATE] About to copy kernel half, pml4=%p\n", pml4);
+    mm_create_printf("[MM-CREATE] About to copy kernel half, pml4=%p\n", pml4);
     copy_kernel_half(pml4);
-    fut_printf("[MM-CREATE] Kernel half copied, mm=%p\n", (void*)mm);
+    mm_create_printf("[MM-CREATE] Kernel half copied, mm=%p\n", (void*)mm);
 
     /* Check mm pointer is still valid kernel address */
     if ((uintptr_t)mm < 0xFFFFFFFF80000000ULL) {
-        fut_printf("[MM-CREATE] FATAL: mm=%p is not kernel addr!\n", (void*)mm);
+        mm_create_printf("[MM-CREATE] FATAL: mm=%p is not kernel addr!\n", (void*)mm);
         fut_pmm_free_page(pml4_page);
         goto fail_restore_cr3;
     }
 
     /* Initialize page table root (architecture-neutral) */
-    fut_printf("[MM-CREATE] Line 157: about to call fut_vmem_set_root\n");
+    mm_create_printf("[MM-CREATE] Line 157: about to call fut_vmem_set_root\n");
     fut_vmem_set_root(&mm->ctx, pml4);
-    fut_printf("[MM-CREATE] Line 159: about to call fut_vmem_set_reload_value\n");
+    mm_create_printf("[MM-CREATE] Line 159: about to call fut_vmem_set_reload_value\n");
     /* Direct serial markers to pinpoint hang */
     __asm__ volatile("movw $0x3F8, %%dx; movb $'a', %%al; outb %%al, %%dx" ::: "ax", "dx");
     phys_addr_t pml4_phys = pmap_virt_to_phys((uintptr_t)pml4);
     __asm__ volatile("movw $0x3F8, %%dx; movb $'b', %%al; outb %%al, %%dx" ::: "ax", "dx");
     fut_vmem_set_reload_value(&mm->ctx, pml4_phys);
     __asm__ volatile("movw $0x3F8, %%dx; movb $'c', %%al; outb %%al, %%dx" ::: "ax", "dx");
-    fut_printf("[MM-CREATE] Line 161: about to set ref_count\n");
+    mm_create_printf("[MM-CREATE] Line 161: about to set ref_count\n");
     mm->ctx.ref_count = 1;
-    fut_printf("[MM-CREATE] Line 163: about to set refcnt atomic\n");
+    mm_create_printf("[MM-CREATE] Line 163: about to set refcnt atomic\n");
     atomic_store_explicit(&mm->refcnt, 1, memory_order_relaxed);
-    fut_printf("[MM-CREATE] Line 165: setting flags\n");
+    mm_create_printf("[MM-CREATE] Line 165: setting flags\n");
     mm->flags = FUT_MM_USER;
     mm->brk_start = 0;
     mm->brk_current = 0;
@@ -199,15 +203,15 @@ fut_mm_t *fut_mm_create(void) {
     mm->mmap_base = USER_MMAP_BASE;
     mm->vma_list = NULL;
     mm->locked_vm = 0;  /* Phase 3: Initialize locked pages counter */
-    fut_printf("[MM-CREATE] Line 172: all fields set\n");
+    mm_create_printf("[MM-CREATE] Line 172: all fields set\n");
 
     /* Restore original CR3 before returning */
     if (saved_cr3 != kernel_cr3) {
-        fut_printf("[MM-CREATE] Restoring CR3 (0x%llx)\n", (unsigned long long)saved_cr3);
+        mm_create_printf("[MM-CREATE] Restoring CR3 (0x%llx)\n", (unsigned long long)saved_cr3);
         fut_write_cr3(saved_cr3);
     }
 
-    fut_printf("[MM-CREATE] Returning mm=%p\n", mm);
+    mm_create_printf("[MM-CREATE] Returning mm=%p\n", mm);
     return mm;
 
 fail_restore_cr3:
@@ -951,26 +955,26 @@ fut_mm_t *fut_mm_create(void) {
     extern void fut_printf(const char *, ...);
 
 #ifdef DEBUG_MM
-    fut_printf("[MM-CREATE] ARM64: Allocating MM structure...\n");
+    mm_create_printf("[MM-CREATE] ARM64: Allocating MM structure...\n");
 #endif
     fut_mm_t *mm = (fut_mm_t *)fut_malloc(sizeof(*mm));
     if (!mm) {
-        fut_printf("[MM-CREATE] FAILED: malloc returned NULL\n");
+        mm_create_printf("[MM-CREATE] FAILED: malloc returned NULL\n");
         return NULL;
     }
     memset(mm, 0, sizeof(*mm));
 
 #ifdef DEBUG_MM
-    fut_printf("[MM-CREATE] ARM64: Allocating PGD page...\n");
+    mm_create_printf("[MM-CREATE] ARM64: Allocating PGD page...\n");
 #endif
     void *pgd_page = fut_pmm_alloc_page();
     if (!pgd_page) {
-        fut_printf("[MM-CREATE] FAILED: pmm_alloc_page returned NULL (out of physical pages)\n");
+        mm_create_printf("[MM-CREATE] FAILED: pmm_alloc_page returned NULL (out of physical pages)\n");
         fut_free(mm);
         return NULL;
     }
 #ifdef DEBUG_MM
-    fut_printf("[MM-CREATE] ARM64: PGD allocated successfully at %p\n", pgd_page);
+    mm_create_printf("[MM-CREATE] ARM64: PGD allocated successfully at %p\n", pgd_page);
 #endif
 
     memset(pgd_page, 0, PAGE_SIZE);
@@ -981,12 +985,12 @@ fut_mm_t *fut_mm_create(void) {
     /* ARM64: TTBR0_EL1 must contain PHYSICAL address, not virtual */
     phys_addr_t pgd_phys = pmap_virt_to_phys(pgd);
 #ifdef DEBUG_MM
-    fut_printf("[MM-CREATE] ARM64: PGD virtual=%p physical=0x%llx\n",
+    mm_create_printf("[MM-CREATE] ARM64: PGD virtual=%p physical=0x%llx\n",
                pgd, (unsigned long long)pgd_phys);
 #endif
     mm->ctx.ttbr0_el1 = pgd_phys;
 #ifdef DEBUG_MM
-    fut_printf("[MM-CREATE] ARM64: Stored ttbr0_el1=0x%llx\n",
+    mm_create_printf("[MM-CREATE] ARM64: Stored ttbr0_el1=0x%llx\n",
                (unsigned long long)mm->ctx.ttbr0_el1);
 #endif
     mm->ctx.ref_count = 1;
@@ -1001,7 +1005,7 @@ fut_mm_t *fut_mm_create(void) {
     mm->locked_vm = 0;  /* Phase 3: Initialize locked pages counter */
 
 #ifdef DEBUG_MM
-    fut_printf("[MM-CREATE] ARM64: MM created successfully\n");
+    mm_create_printf("[MM-CREATE] ARM64: MM created successfully\n");
 #endif
     return mm;
 }

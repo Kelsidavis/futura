@@ -471,54 +471,109 @@ int fut_socket_accept(fut_socket_t *listener, fut_socket_t **out_socket) {
     queue->queue_head = (queue->queue_head + 1) % FUT_SOCKET_QUEUE_MAX;
     queue->queue_count--;
 
-    /* Peer becomes connected, create bidirectional pair */
+    /* Peer becomes connected, create TWO bidirectional pairs for proper communication */
     if (!peer->pair) {
-        fut_socket_pair_t *pair = fut_malloc(sizeof(fut_socket_pair_t));
-        if (!pair) {
-            /* Cleanup and return error */
+        /* PAIR 1: peer → listener (peer sends, listener receives) */
+        fut_socket_pair_t *pair_forward = fut_malloc(sizeof(fut_socket_pair_t));
+        if (!pair_forward) {
             fut_socket_unref(peer);
             return -12;  /* ENOMEM */
         }
 
-        memset(pair, 0, sizeof(*pair));
-        pair->send_buf = fut_malloc(FUT_SOCKET_BUFSIZE);
-        pair->recv_buf = fut_malloc(FUT_SOCKET_BUFSIZE);
-        if (!pair->send_buf || !pair->recv_buf) {
-            if (pair->send_buf) fut_free(pair->send_buf);
-            if (pair->recv_buf) fut_free(pair->recv_buf);
-            fut_free(pair);
+        memset(pair_forward, 0, sizeof(*pair_forward));
+        pair_forward->send_buf = fut_malloc(FUT_SOCKET_BUFSIZE);
+        pair_forward->recv_buf = fut_malloc(FUT_SOCKET_BUFSIZE);
+        if (!pair_forward->send_buf || !pair_forward->recv_buf) {
+            if (pair_forward->send_buf) fut_free(pair_forward->send_buf);
+            if (pair_forward->recv_buf) fut_free(pair_forward->recv_buf);
+            fut_free(pair_forward);
             fut_socket_unref(peer);
             return -12;  /* ENOMEM */
         }
 
-        pair->send_size = FUT_SOCKET_BUFSIZE;
-        pair->recv_size = FUT_SOCKET_BUFSIZE;
-        pair->send_waitq = fut_malloc(sizeof(fut_waitq_t));
-        pair->recv_waitq = fut_malloc(sizeof(fut_waitq_t));
-        if (!pair->send_waitq || !pair->recv_waitq) {
-            if (pair->send_waitq) fut_free(pair->send_waitq);
-            if (pair->recv_waitq) fut_free(pair->recv_waitq);
-            if (pair->send_buf) fut_free(pair->send_buf);
-            if (pair->recv_buf) fut_free(pair->recv_buf);
-            fut_free(pair);
+        pair_forward->send_size = FUT_SOCKET_BUFSIZE;
+        pair_forward->recv_size = FUT_SOCKET_BUFSIZE;
+        pair_forward->send_waitq = fut_malloc(sizeof(fut_waitq_t));
+        pair_forward->recv_waitq = fut_malloc(sizeof(fut_waitq_t));
+        if (!pair_forward->send_waitq || !pair_forward->recv_waitq) {
+            if (pair_forward->send_waitq) fut_free(pair_forward->send_waitq);
+            if (pair_forward->recv_waitq) fut_free(pair_forward->recv_waitq);
+            if (pair_forward->send_buf) fut_free(pair_forward->send_buf);
+            if (pair_forward->recv_buf) fut_free(pair_forward->recv_buf);
+            fut_free(pair_forward);
             fut_socket_unref(peer);
             return -12;  /* ENOMEM */
         }
-        fut_waitq_init(pair->send_waitq);
-        fut_waitq_init(pair->recv_waitq);
-        /* pair->lock is already zeroed by memset */
-        pair->refcount = 2;  /* Shared between listener and peer */
+        fut_waitq_init(pair_forward->send_waitq);
+        fut_waitq_init(pair_forward->recv_waitq);
+        pair_forward->refcount = 2;
 
-        peer->pair = pair;
+        /* PAIR 2: listener → peer (listener sends, peer receives) */
+        fut_socket_pair_t *pair_reverse = fut_malloc(sizeof(fut_socket_pair_t));
+        if (!pair_reverse) {
+            if (pair_forward->send_waitq) fut_free(pair_forward->send_waitq);
+            if (pair_forward->recv_waitq) fut_free(pair_forward->recv_waitq);
+            if (pair_forward->send_buf) fut_free(pair_forward->send_buf);
+            if (pair_forward->recv_buf) fut_free(pair_forward->recv_buf);
+            fut_free(pair_forward);
+            fut_socket_unref(peer);
+            return -12;  /* ENOMEM */
+        }
+
+        memset(pair_reverse, 0, sizeof(*pair_reverse));
+        pair_reverse->send_buf = fut_malloc(FUT_SOCKET_BUFSIZE);
+        pair_reverse->recv_buf = fut_malloc(FUT_SOCKET_BUFSIZE);
+        if (!pair_reverse->send_buf || !pair_reverse->recv_buf) {
+            if (pair_reverse->send_buf) fut_free(pair_reverse->send_buf);
+            if (pair_reverse->recv_buf) fut_free(pair_reverse->recv_buf);
+            fut_free(pair_reverse);
+            if (pair_forward->send_waitq) fut_free(pair_forward->send_waitq);
+            if (pair_forward->recv_waitq) fut_free(pair_forward->recv_waitq);
+            if (pair_forward->send_buf) fut_free(pair_forward->send_buf);
+            if (pair_forward->recv_buf) fut_free(pair_forward->recv_buf);
+            fut_free(pair_forward);
+            fut_socket_unref(peer);
+            return -12;  /* ENOMEM */
+        }
+
+        pair_reverse->send_size = FUT_SOCKET_BUFSIZE;
+        pair_reverse->recv_size = FUT_SOCKET_BUFSIZE;
+        pair_reverse->send_waitq = fut_malloc(sizeof(fut_waitq_t));
+        pair_reverse->recv_waitq = fut_malloc(sizeof(fut_waitq_t));
+        if (!pair_reverse->send_waitq || !pair_reverse->recv_waitq) {
+            if (pair_reverse->send_waitq) fut_free(pair_reverse->send_waitq);
+            if (pair_reverse->recv_waitq) fut_free(pair_reverse->recv_waitq);
+            if (pair_reverse->send_buf) fut_free(pair_reverse->send_buf);
+            if (pair_reverse->recv_buf) fut_free(pair_reverse->recv_buf);
+            fut_free(pair_reverse);
+            if (pair_forward->send_waitq) fut_free(pair_forward->send_waitq);
+            if (pair_forward->recv_waitq) fut_free(pair_forward->recv_waitq);
+            if (pair_forward->send_buf) fut_free(pair_forward->send_buf);
+            if (pair_forward->recv_buf) fut_free(pair_forward->recv_buf);
+            fut_free(pair_forward);
+            fut_socket_unref(peer);
+            return -12;  /* ENOMEM */
+        }
+        fut_waitq_init(pair_reverse->send_waitq);
+        fut_waitq_init(pair_reverse->recv_waitq);
+        pair_reverse->refcount = 2;
+
+        /* Set up peer socket: sends via forward pair, receives via reverse pair */
+        peer->pair = pair_forward;
+        peer->pair_reverse = pair_reverse;
         peer->state = FUT_SOCK_CONNECTED;
     }
 
-    /* Now the accepted socket becomes connected and shares the pair with peer */
-    listener->pair = peer->pair;
+    /* Set up listener socket: sends via reverse pair, receives via forward pair */
+    listener->pair = peer->pair_reverse;  /* listener sends via reverse */
+    listener->pair_reverse = peer->pair;  /* listener receives via forward */
     listener->state = FUT_SOCK_CONNECTED;
 
     /* Set peer pointers so both sockets know about each other */
     peer->pair->peer = listener;
+    peer->pair_reverse->peer = listener;
+    listener->pair->peer = peer;
+    listener->pair_reverse->peer = peer;
 
     fut_printf("[SOCKET] Socket %u accepted connection from %u (peer=%p)\n",
                listener->socket_id, peer->socket_id, peer->pair->peer);
@@ -688,7 +743,7 @@ ssize_t fut_socket_send(fut_socket_t *socket, const void *buf, size_t len) {
  * Receive data from connected socket.
  */
 ssize_t fut_socket_recv(fut_socket_t *socket, void *buf, size_t len) {
-    if (!socket || !buf || socket->state != FUT_SOCK_CONNECTED || !socket->pair) {
+    if (!socket || !buf || socket->state != FUT_SOCK_CONNECTED || !socket->pair_reverse) {
         return -1;  /* EINVAL */
     }
 
@@ -699,7 +754,8 @@ ssize_t fut_socket_recv(fut_socket_t *socket, void *buf, size_t len) {
         return 0;  /* EOF - no more data */
     }
 
-    fut_socket_pair_t *pair = socket->pair;
+    /* Use pair_reverse to receive (where peer sends to us) */
+    fut_socket_pair_t *pair = socket->pair_reverse;
 
     fut_spinlock_acquire(&pair->lock);
 
@@ -770,6 +826,14 @@ int fut_socket_close(fut_socket_t *socket) {
             fut_waitq_wake_all(socket->pair->recv_waitq);
         }
     }
+    if (socket->pair_reverse) {
+        if (socket->pair_reverse->send_waitq) {
+            fut_waitq_wake_all(socket->pair_reverse->send_waitq);
+        }
+        if (socket->pair_reverse->recv_waitq) {
+            fut_waitq_wake_all(socket->pair_reverse->recv_waitq);
+        }
+    }
 
     fut_printf("[SOCKET] Socket %u closed\n", socket->socket_id);
     fut_socket_unref(socket);
@@ -794,22 +858,24 @@ int fut_socket_poll(fut_socket_t *socket, int events) {
         if ((events & 0x1) && socket->listener->queue_count > 0) {  /* POLLIN */
             ready |= 0x1;
         }
-    } else if (socket->state == FUT_SOCK_CONNECTED && socket->pair) {
-        if ((events & 0x1)) {  /* POLLIN - readable if data available OR shutdown_rd */
+    } else if (socket->state == FUT_SOCK_CONNECTED && socket->pair && socket->pair_reverse) {
+        if ((events & 0x1)) {  /* POLLIN - readable if data available in pair_reverse OR shutdown_rd */
             /* If shutdown_rd is set, socket is always readable (recv returns EOF) */
             if (socket->shutdown_rd) {
                 ready |= 0x1;
             } else {
-                uint32_t available = (socket->pair->recv_head + socket->pair->recv_size -
-                                     socket->pair->recv_tail) % socket->pair->recv_size;
+                /* Check if data available in the reverse direction pair (where peer sends to us) */
+                uint32_t available = (socket->pair_reverse->recv_head + socket->pair_reverse->recv_size -
+                                     socket->pair_reverse->recv_tail) % socket->pair_reverse->recv_size;
                 if (available > 0) {
                     ready |= 0x1;
                 }
             }
         }
-        if ((events & 0x4)) {  /* POLLOUT - writable if space available AND NOT shutdown_wr */
+        if ((events & 0x4)) {  /* POLLOUT - writable if space available in pair AND NOT shutdown_wr */
             /* If shutdown_wr is set, socket is never writable (send returns EPIPE) */
             if (!socket->shutdown_wr) {
+                /* Check if space available in forward direction pair (where we send) */
                 uint32_t available = socket->pair->recv_size -
                     ((socket->pair->recv_head + socket->pair->recv_size -
                       socket->pair->recv_tail) % socket->pair->recv_size);

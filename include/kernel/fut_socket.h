@@ -127,7 +127,8 @@ typedef struct fut_socket {
     fut_socket_listener_t *listener;        /* Listener queue, NULL if not listening */
 
     /* Connection state (if state == CONNECTED) */
-    fut_socket_pair_t *pair;                /* Shared bidirectional buffers, NULL if not connected */
+    fut_socket_pair_t *pair;                /* Send/receive buffers (THIS socket sends, peer receives) */
+    fut_socket_pair_t *pair_reverse;        /* Return direction (peer sends, THIS socket receives) */
 
     /* Socket options and flags */
     int flags;                              /* O_NONBLOCK, etc */

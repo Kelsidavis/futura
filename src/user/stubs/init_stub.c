@@ -67,11 +67,12 @@ int main(void) {
     if (!socket_found) {
         printf("[INIT-STUB] WARNING: Wayland socket not found after 1000 attempts\n");
     }
-    printf("[INIT-STUB] Done waiting, launching wl-term\n");
+    printf("[INIT-STUB] Done waiting, about to fork\n");
 
     // Fork and exec wl-term
-    printf("[INIT-STUB] Launching wl-term...\n");
+    printf("[INIT-STUB] About to call sys_fork_call()...\n");
     long shell_pid = sys_fork_call();
+    printf("[INIT-STUB] sys_fork_call() returned: %ld\n", shell_pid);
 
     if (shell_pid == 0) {
         // Child process - set up file descriptors and exec into wl-term

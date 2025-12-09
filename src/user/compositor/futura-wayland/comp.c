@@ -17,6 +17,7 @@
 #include <wayland-util.h>
 
 #include <user/sys.h>
+#include <user/libfutura.h>
 
 void *malloc(size_t size);
 void *realloc(void *ptr, size_t size);
@@ -783,6 +784,7 @@ int comp_state_init(struct compositor_state *comp) {
 
     /* Try to open /dev/fb0, but fall back to virtual framebuffer if not available */
     int fd = (int)sys_open("/dev/fb0", O_RDWR, 0);
+    printf("[WAYLAND] /dev/fb0 open returned fd=%d\n", fd);
     struct fut_fb_info info = {0};
     void *map = NULL;
 
@@ -835,7 +837,7 @@ int comp_state_init(struct compositor_state *comp) {
                                MAP_SHARED,
                                fd,
                                0);
-        printf("[WAYLAND] mmap returned 0x%lx\n", (unsigned long)map);
+        printf("[WAYLAND] mmap returned 0x%lx (fd=%d)\n", (unsigned long)map, fd);
         if ((long)map < 0) {
             printf("[WAYLAND] mmap framebuffer failed (fd was %d)\n", fd);
             sys_close(fd);
@@ -941,12 +943,23 @@ static int comp_configure_backbuffers(struct compositor_state *comp) {
     int height = (int)comp->fb_info.height;
     int pitch = (int)comp->fb_info.pitch;
 
-    if (bb_create(&comp->bb[0], width, height, pitch) != 0) {
-        return -1;
-    }
-    if (bb_create(&comp->bb[1], width, height, pitch) != 0) {
+    if (bb_create(&comp->bb[0], width, height, pitch) != 0 ||
+        bb_create(&comp->bb[1], width, height, pitch) != 0) {
         bb_destroy(&comp->bb[0]);
-        return -1;
+        bb_destroy(&comp->bb[1]);
+        printf("[WAYLAND] backbuffer allocation failed, falling back to single buffer\n");
+        comp->backbuffer_enabled = false;
+        comp->bb[0].px = (uint32_t *)comp->fb_map;
+        comp->bb[0].width = (int)comp->fb_info.width;
+        comp->bb[0].height = (int)comp->fb_info.height;
+        comp->bb[0].pitch = (int)comp->fb_info.pitch;
+        comp->bb[0].owns = false;
+        comp->bb[1].px = NULL;
+        comp->bb[1].width = 0;
+        comp->bb[1].height = 0;
+        comp->bb[1].pitch = 0;
+        comp->bb[1].owns = false;
+        return 0;
     }
     return 0;
 }
@@ -1618,7 +1631,7 @@ static int comp_timerfd_cb(int fd, uint32_t mask, void *data) {
     }
 
     uint64_t expirations = 0;
-    long rc = sys_read(fd, &expirations, (long)sizeof(expirations));
+    ssize_t rc = read(fd, &expirations, sizeof(expirations));
     if (rc <= 0) {
         return 0;
     }
@@ -1660,7 +1673,7 @@ int comp_run(struct compositor_state *comp) {
         /* Manually handle timer events since timerfd is not in event loop */
         if (comp->timerfd >= 0 && !comp->timer_source_registered) {
             uint64_t expirations = 0;
-            long read_rc = sys_read(comp->timerfd, &expirations, (long)sizeof(expirations));
+            ssize_t read_rc = read(comp->timerfd, &expirations, sizeof(expirations));
             if (read_rc > 0 && expirations > 0) {
                 comp_handle_timer_tick(comp, expirations);
             }
@@ -1700,7 +1713,7 @@ int comp_scheduler_start(struct compositor_state *comp) {
 #endif
         struct itimerspec disarm = {0};
         timerfd_settime(fd, 0, &disarm, NULL);
-        sys_close(fd);
+        close(fd);
         comp->timerfd = -1;
         comp->next_tick_ms = 0;
         return -1;
@@ -1756,7 +1769,7 @@ void comp_scheduler_stop(struct compositor_state *comp) {
     if (comp->timerfd >= 0) {
         struct itimerspec disarm = {0};
         timerfd_settime(comp->timerfd, 0, &disarm, NULL);
-        sys_close(comp->timerfd);
+        close(comp->timerfd);
         comp->timerfd = -1;
     }
     comp->next_tick_ms = 0;

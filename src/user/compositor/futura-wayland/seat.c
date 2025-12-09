@@ -800,17 +800,15 @@ struct seat_state *seat_init(struct compositor_state *comp) {
 
     printf("[SEAT-DEBUG] kbd_fd=%d, mouse_fd=%d\n", seat->kbd_fd, seat->mouse_fd);
 
-    if (seat->kbd_fd < 0 || seat->mouse_fd < 0) {
-        printf("[SEAT-DEBUG] Device open failed: kbd_fd=%d, mouse_fd=%d\n",
-               seat->kbd_fd, seat->mouse_fd);
-        if (seat->kbd_fd >= 0) {
-            sys_close(seat->kbd_fd);
-        }
-        if (seat->mouse_fd >= 0) {
-            sys_close(seat->mouse_fd);
-        }
-        free(seat);
-        return NULL;
+    if (seat->kbd_fd < 0) {
+        printf("[SEAT-DEBUG] warning: keyboard open failed (err=%d)\n", seat->kbd_fd);
+    }
+    if (seat->mouse_fd < 0) {
+        printf("[SEAT-DEBUG] warning: mouse open failed (err=%d)\n", seat->mouse_fd);
+    }
+
+    if (seat->kbd_fd < 0 && seat->mouse_fd < 0) {
+        printf("[SEAT-DEBUG] No physical input devices available; continuing without hardware input\n");
     }
 
     /* Note: Input device files (/dev/input/kbd0, /dev/input/mouse0) are character

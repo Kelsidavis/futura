@@ -107,7 +107,7 @@ Enabled by Build (comp.h):
   WAYLAND_RESIZE_BUILD=1       - Window resize handling
 
 Runtime Controls (env vars):
-  WAYLAND_BACKBUFFER=0/1       - Use backbuffer (default: 1)
+  WAYLAND_BACKBUFFER=0/1       - Use backbuffer (default: 0; enable to opt in to 6 MiB double buffers)
   WAYLAND_DECO=0/1             - Show decorations (default: 1)
   WAYLAND_SHADOW=0/1           - Draw shadows (default: 1)
   WAYLAND_RESIZE=0/1           - Allow resize (default: 1)

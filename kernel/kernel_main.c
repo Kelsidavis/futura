@@ -1346,7 +1346,8 @@ void fut_kernel_main(void) {
         char xdg_runtime[] = "XDG_RUNTIME_DIR=/tmp";
         char wayland_display_env[] = "WAYLAND_DISPLAY=wayland-0";
         char wayland_multi_env[] = "WAYLAND_MULTI=1";
-        char wayland_backbuffer_env[] = "WAYLAND_BACKBUFFER=1";
+        /* Default to single-buffered mode; allocator cannot recycle double 3 MiB slabs yet */
+        char wayland_backbuffer_env[] = "WAYLAND_BACKBUFFER=0";
         char wayland_deco_env[] = "WAYLAND_DECO=1";
         char wayland_shadow_env[] = "WAYLAND_SHADOW=1";
         char wayland_resize_env[] = "WAYLAND_RESIZE=1";

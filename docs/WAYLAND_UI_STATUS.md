@@ -60,7 +60,7 @@ The compositor consists of modular components:
 ### Configuration Flags (Environment Variables)
 ```
 WAYLAND_MULTI=1        # Multi-window mode (default: enabled)
-WAYLAND_BACKBUFFER=1   # Double-buffering (default: enabled)
+WAYLAND_BACKBUFFER=1   # Double-buffering (default: disabled; set to 1 to opt in)
 WAYLAND_DECO=1         # Window decorations (default: enabled)
 WAYLAND_SHADOW=1       # Window shadows (default: enabled)
 WAYLAND_RESIZE=1       # Resize support (default: enabled)
@@ -267,7 +267,7 @@ Runs compositor + **both demo clients**:
 XDG_RUNTIME_DIR=/tmp
 WAYLAND_DISPLAY=wayland-0
 WAYLAND_MULTI=1
-WAYLAND_BACKBUFFER=1
+WAYLAND_BACKBUFFER=0   # set to 1 to test double-buffer path explicitly
 WAYLAND_DECO=1
 WAYLAND_SHADOW=1
 WAYLAND_RESIZE=1

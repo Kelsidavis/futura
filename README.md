@@ -212,10 +212,10 @@ Client demos (`wl-simple`, `wl-colorwheel`) exercise the server's surface manage
 - **Window decorations & shadows**: With configurable shadow radius
 - **Damage-aware updates**: Only recomposite changed regions (>30% speedup in M2)
 - **Frame throttling**: Smooth rendering at display refresh rates
-- **Backbuffer mode**: Off-screen rendering for advanced effects
+- **Backbuffer mode**: Off-screen rendering for advanced effects (opt-in)
 - **Premultiplied alpha**: Correct blending with transparency
 - **Environment variables** for feature toggle:
-  - `WAYLAND_BACKBUFFER=1` – Enable off-screen rendering
+  - `WAYLAND_BACKBUFFER=1` – Enable off-screen rendering (default disabled; allocator can exhaust with two 3 MiB buffers)
   - `WAYLAND_DECO=1` – Window decorations
   - `WAYLAND_SHADOW=1` – Drop shadow rendering
   - `WAYLAND_RESIZE=1` – Window resize support
@@ -240,8 +240,9 @@ Client demos (`wl-simple`, `wl-colorwheel`) exercise the server's surface manage
 >              WAYLAND_RESIZE=1 WAYLAND_THROTTLE=1 fb-fallback=1"
 > ```
 >
-> Avoid the harness-only `-device isa-debug-exit` flag when running interactively; otherwise QEMU will
-> terminate as soon as the kernel finishes the demo.
+> Backbuffering is disabled by default; drop `WAYLAND_BACKBUFFER=1` from the command line unless you explicitly
+> want double-buffered rendering (and can tolerate the extra 6 MiB virtual allocation). Avoid the harness-only
+> `-device isa-debug-exit` flag when running interactively; otherwise QEMU will terminate as soon as the kernel finishes the demo.
 
 ### Debugging
 

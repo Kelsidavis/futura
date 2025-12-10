@@ -283,15 +283,25 @@ int fut_map_page(fut_vmem_context_t *ctx, uint64_t vaddr, uint64_t paddr, uint64
     (void)pd_idx;
     (void)pt_idx;
 
-    /* Flush TLB for this address */
-    fut_flush_tlb_single(vaddr);
-
-    /* For userspace code pages (0x400000), do a full TLB flush to ensure no stale entries */
-    if (ctx && vaddr == 0x400000) {
-        extern void fut_printf(const char *, ...);
-        fut_printf("[PAGING-DEBUG] Doing full TLB flush for code page\n");
-        fut_flush_tlb_all();
-    }
+    /* IMPORTANT: No TLB flush here! Here's why:
+     *
+     * 1. When mapping NEW pages into the CURRENT process:
+     *    - TLB flush is NOT needed - the CPU will fetch from page tables on TLB miss
+     *    - This is a new mapping, so there's no stale TLB entry to invalidate
+     *
+     * 2. When mapping pages into a DIFFERENT process (fork/execve):
+     *    - TLB flush is HARMFUL - invlpg only affects the currently active CR3
+     *    - Calling invlpg here would invalidate the WRONG process's TLB entries
+     *    - The target process will naturally load mappings when it becomes active (CR3 switch)
+     *
+     * 3. When CHANGING permissions on existing mappings:
+     *    - TLB flush IS needed and is handled explicitly with fut_flush_tlb_all()
+     *    - See lines 204, 262, 268 above where permission changes trigger full TLB flush
+     *
+     * The previous invlpg was causing instruction fetch page faults in the compositor
+     * because fork()/execve() would map pages into child processes, and the invlpg
+     * would incorrectly invalidate the compositor's TLB entries.
+     */
 
     return 0;
 }

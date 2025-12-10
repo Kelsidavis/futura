@@ -29,66 +29,77 @@ typedef struct regs64 {
  * ============================================================ */
 
 static inline long syscall_x86_64_0(long n) {
-    register long rax __asm__("rax") = n;
-    __asm__ volatile("int $0x80" : "+r"(rax) :: "memory", "rcx", "r11");
-    return rax;
+    long ret;
+    __asm__ volatile("int $0x80"
+                     : "=a"(ret)
+                     : "0"(n)
+                     : "memory", "rcx", "r11");
+    return ret;
 }
 
 static inline long syscall_x86_64_1(long n, long a1) {
-    register long rax __asm__("rax") = n;
-    register long rdi __asm__("rdi") = a1;
-    __asm__ volatile("int $0x80" : "+r"(rax) : "r"(rdi) : "memory", "rcx", "r11");
-    return rax;
+    long ret;
+    __asm__ volatile("int $0x80"
+                     : "=a"(ret)
+                     : "0"(n), "D"(a1)
+                     : "memory", "rcx", "r11");
+    return ret;
 }
 
 static inline long syscall_x86_64_2(long n, long a1, long a2) {
-    register long rax __asm__("rax") = n;
-    register long rdi __asm__("rdi") = a1;
-    register long rsi __asm__("rsi") = a2;
-    __asm__ volatile("int $0x80" : "+r"(rax) : "r"(rdi), "r"(rsi) : "memory", "rcx", "r11");
-    return rax;
+    long ret;
+    __asm__ volatile("int $0x80"
+                     : "=a"(ret)
+                     : "0"(n), "D"(a1), "S"(a2)
+                     : "memory", "rcx", "r11");
+    return ret;
 }
 
 static inline long syscall_x86_64_3(long n, long a1, long a2, long a3) {
-    register long rax __asm__("rax") = n;
-    register long rdi __asm__("rdi") = a1;
-    register long rsi __asm__("rsi") = a2;
-    register long rdx __asm__("rdx") = a3;
-    __asm__ volatile("int $0x80" : "+r"(rax) : "r"(rdi), "r"(rsi), "r"(rdx) : "memory", "rcx", "r11");
-    return rax;
+    long ret;
+    __asm__ volatile("int $0x80"
+                     : "=a"(ret)
+                     : "0"(n), "D"(a1), "S"(a2), "d"(a3)
+                     : "memory", "rcx", "r11");
+    return ret;
 }
 
 static inline long syscall_x86_64_4(long n, long a1, long a2, long a3, long a4) {
-    register long rax __asm__("rax") = n;
-    register long rdi __asm__("rdi") = a1;
-    register long rsi __asm__("rsi") = a2;
-    register long rdx __asm__("rdx") = a3;
-    register long r10 __asm__("r10") = a4;
-    __asm__ volatile("int $0x80" : "+r"(rax) : "r"(rdi), "r"(rsi), "r"(rdx), "r"(r10) : "memory", "rcx", "r11");
-    return rax;
+    long ret;
+    __asm__ volatile(
+        "mov %[arg4], %%r10\n\t"
+        "int $0x80"
+        : "=a"(ret)
+        : "0"(n), "D"(a1), "S"(a2), "d"(a3), [arg4] "r"(a4)
+        : "memory", "rcx", "r10", "r11");
+    return ret;
 }
 
 static inline long syscall_x86_64_5(long n, long a1, long a2, long a3, long a4, long a5) {
-    register long rax __asm__("rax") = n;
-    register long rdi __asm__("rdi") = a1;
-    register long rsi __asm__("rsi") = a2;
-    register long rdx __asm__("rdx") = a3;
-    register long r10 __asm__("r10") = a4;
-    register long r8 __asm__("r8") = a5;
-    __asm__ volatile("int $0x80" : "+r"(rax) : "r"(rdi), "r"(rsi), "r"(rdx), "r"(r10), "r"(r8) : "memory", "rcx", "r11");
-    return rax;
+    long ret;
+    __asm__ volatile(
+        "mov %[arg4], %%r10\n\t"
+        "mov %[arg5], %%r8\n\t"
+        "int $0x80"
+        : "=a"(ret)
+        : "0"(n), "D"(a1), "S"(a2), "d"(a3),
+          [arg4] "r"(a4), [arg5] "r"(a5)
+        : "memory", "rcx", "r8", "r10", "r11");
+    return ret;
 }
 
 static inline long syscall_x86_64_6(long n, long a1, long a2, long a3, long a4, long a5, long a6) {
-    register long rax __asm__("rax") = n;
-    register long rdi __asm__("rdi") = a1;
-    register long rsi __asm__("rsi") = a2;
-    register long rdx __asm__("rdx") = a3;
-    register long r10 __asm__("r10") = a4;
-    register long r8 __asm__("r8") = a5;
-    register long r9 __asm__("r9") = a6;
-    __asm__ volatile("int $0x80" : "+r"(rax) : "r"(rdi), "r"(rsi), "r"(rdx), "r"(r10), "r"(r8), "r"(r9) : "memory", "rcx", "r11");
-    return rax;
+    long ret;
+    __asm__ volatile(
+        "mov %[arg4], %%r10\n\t"
+        "mov %[arg5], %%r8\n\t"
+        "mov %[arg6], %%r9\n\t"
+        "int $0x80"
+        : "=a"(ret)
+        : "0"(n), "D"(a1), "S"(a2), "d"(a3),
+          [arg4] "r"(a4), [arg5] "r"(a5), [arg6] "r"(a6)
+        : "memory", "rcx", "r8", "r9", "r10", "r11");
+    return ret;
 }
 
 /* ============================================================

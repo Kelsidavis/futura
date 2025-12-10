@@ -5,6 +5,7 @@
 
 #include <user/futura_posix.h>
 #include <user/sys.h>
+#include "timerfd_internal.h"
 
 static long fcntl_syscall(int fd, int cmd, long arg) {
     return sys_fcntl_call(fd, cmd, arg);
@@ -29,6 +30,39 @@ int fcntl(int fd, int cmd, ...) {
     }
 
     va_end(ap);
+
+    long timerfd_ret = 0;
+    if (__fut_timerfd_is_timer(fd)) {
+        bool handled = false;
+        switch (cmd) {
+        case F_GETFD:
+        case F_GETFL:
+            timerfd_ret = 0;
+            handled = true;
+            break;
+        case F_SETFD:
+        case F_SETFL:
+            timerfd_ret = 0;
+            handled = true;
+            break;
+        case F_DUPFD:
+        case F_DUPFD_CLOEXEC:
+            if (arg < 0 || arg > fd) {
+                errno = EINVAL;
+                return -1;
+            }
+            timerfd_ret = fd;
+            handled = true;
+            break;
+        default:
+            handled = false;
+            break;
+        }
+        if (handled) {
+            errno = 0;
+            return (int)timerfd_ret;
+        }
+    }
 
     long ret = fcntl_syscall(fd, cmd, arg);
     if (ret < 0) {

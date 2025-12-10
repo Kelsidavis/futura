@@ -145,6 +145,11 @@
 #define SYS_time_millis  400
 #endif
 
+#define SYS_msgrcv      70
+#define SYS_msgsnd      69
+#define SYS_msgget      68
+#define SYS_msgctl      71
+
 #define MAX_SYSCALL     512
 
 /* ============================================================
@@ -223,6 +228,34 @@ static struct fut_file_ops socket_fops = {
     .ioctl = NULL,
     .mmap = NULL
 };
+
+static int64_t sys_msgget_handler(uint64_t key, uint64_t msgflg, uint64_t arg3,
+                                  uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)key; (void)msgflg; (void)arg3; (void)arg4; (void)arg5; (void)arg6;
+    fut_printf("[SYSCALL] msgget called but not implemented\n");
+    return -ENOSYS;
+}
+
+static int64_t sys_msgsnd_handler(uint64_t msqid, uint64_t msgp, uint64_t msgsz,
+                                  uint64_t msgflg, uint64_t arg5, uint64_t arg6) {
+    (void)msqid; (void)msgp; (void)msgsz; (void)msgflg; (void)arg5; (void)arg6;
+    fut_printf("[SYSCALL] msgsnd called but not implemented\n");
+    return -ENOSYS;
+}
+
+static int64_t sys_msgrcv_handler(uint64_t msqid, uint64_t msgp, uint64_t msgsz,
+                                  uint64_t msgtyp, uint64_t msgflg, uint64_t arg6) {
+    (void)msqid; (void)msgp; (void)msgsz; (void)msgtyp; (void)msgflg; (void)arg6;
+    fut_printf("[SYSCALL] msgrcv called but not implemented\n");
+    return -ENOSYS;
+}
+
+static int64_t sys_msgctl_handler(uint64_t msqid, uint64_t cmd, uint64_t arg,
+                                  uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)msqid; (void)cmd; (void)arg; (void)arg4; (void)arg5; (void)arg6;
+    fut_printf("[SYSCALL] msgctl called but not implemented\n");
+    return -ENOSYS;
+}
 
 static inline uint64_t get_current_tid(void) {
     fut_percpu_t *percpu = fut_percpu_get();
@@ -1418,6 +1451,14 @@ static int64_t sys_sendto_handler(uint64_t sockfd, uint64_t buf, uint64_t len,
                                   uint64_t flags, uint64_t addr, uint64_t addrlen);
 static int64_t sys_recvfrom_handler(uint64_t sockfd, uint64_t buf, uint64_t len,
                                     uint64_t flags, uint64_t addr, uint64_t addrlen);
+static int64_t sys_msgget_handler(uint64_t key, uint64_t msgflg, uint64_t arg3,
+                                  uint64_t arg4, uint64_t arg5, uint64_t arg6);
+static int64_t sys_msgsnd_handler(uint64_t msqid, uint64_t msgp, uint64_t msgsz,
+                                  uint64_t msgflg, uint64_t arg5, uint64_t arg6);
+static int64_t sys_msgrcv_handler(uint64_t msqid, uint64_t msgp, uint64_t msgsz,
+                                  uint64_t msgtyp, uint64_t msgflg, uint64_t arg6);
+static int64_t sys_msgctl_handler(uint64_t msqid, uint64_t cmd, uint64_t arg,
+                                  uint64_t arg4, uint64_t arg5, uint64_t arg6);
 
 static syscall_handler_t syscall_table[MAX_SYSCALL] = {
     [SYS_read]       = sys_read_handler,
@@ -1536,6 +1577,10 @@ static syscall_handler_t syscall_table[MAX_SYSCALL] = {
     [SYS_setpriority]  = sys_setpriority_handler,
     [SYS_preadv]       = sys_preadv_handler,
     [SYS_pwritev]      = sys_pwritev_handler,
+    [SYS_msgget]       = sys_msgget_handler,
+    [SYS_msgsnd]       = sys_msgsnd_handler,
+    [SYS_msgrcv]       = sys_msgrcv_handler,
+    [SYS_msgctl]       = sys_msgctl_handler,
 };
 
 /* ============================================================

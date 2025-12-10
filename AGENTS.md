@@ -1,25 +1,25 @@
 # Repository Guidelines
 
 ## Project Structure & Module Organization
-Kernel code stays in `kernel/` with platform glue in `platform/x86_64/` and `platform/arm64/`. Userland and compositor sources live in `src/user/`, Rust staticlibs in `drivers/rust/`, tooling/docs in `tools/`, `docs/`, and `tests/`, boot assets in `iso/`, and `third_party/wayland/` vendors the Wayland stack.
+Kernel code resides in `kernel/` with platform helpers under `platform/x86_64/` and `platform/arm64/`. Wayland/compositor sources live in `src/`, host tooling is grouped in `tools/`, `mk/`, and `scripts/`, and regression suites plus perf benchmarks stay under `tests/`. Documentation remains in `docs/`, and boot artifacts (`iso/`, disk images, `boot.bmp`) sit at the repo root for `Makefile` targets.
 
 ## Build, Test, and Development Commands
-- `make rust-drivers` – build driver staticlibs before the kernel link.
-- `make` – compile the kernel into `build/bin/` and refresh `iso/boot/`.
-- `make test` – boot the QEMU harness and capture `*.log` outputs.
-- `make wayland-step2` – build the compositor plus demos; toggle features via `WAYLAND_*`.
-- `make tools` – build host filesystem helpers, then run `build/tools/mkfutfs …` or `fsck.futfs …`.
+- `make clean && make` – rebuild the kernel, initramfs, and ISO into `build/bin/`.
+- `make rust-drivers` – compile Rust static libraries before the link step.
+- `make test` – launch the QEMU harness and emit `*.log` traces at the repository root.
 - `make perf` / `make perf-ci` – run IPC/block/net microbenchmarks and compare with `tests/baselines/perf_baseline.json`.
-- `make futfs-crash-test` – regenerate a scratch image, force panic compaction, and verify recovery.
+- `make futfs-crash-test` – create a scratch image, trigger panic/compaction, and verify the recovery log.
+- `make wayland-step2` plus `make run-headful VNC=1 VNC_DISPLAY=unix:/tmp/futura-vnc AUTOEXIT=1` – build the compositor stack and start headful QEMU via VNC.
+- `make tools` – refresh host helpers (`build/tools/mkfutfs`, `fsck.futfs`, etc.).
 
 ## Coding Style & Naming Conventions
-C code follows 4-space indentation, ≤100-character lines, and K&R braces. Functions use `fut_*` snake_case (e.g., `fut_thread_create`), types end with `_t`, and macros or constants are `FUT_*` SCREAMING_SNAKE_CASE. Enum values keep the prefix (`FUT_THREAD_READY`). Keep files self-documenting with focused comments and retain the MPL header template.
+Follow `CONTRIBUTING.md`: use 4-space indentation, ≤100-character lines, and K&R braces. Functions and helpers take `fut_*` snake_case, types end with `_t`, macros/constants stay `FUT_*`, and enum members keep their prefix. Every source file keeps the MPL v2.0 header plus a short description, and public APIs get Doxygen-style summaries (`@param`, `@return`). Keep comments focused on non-obvious behavior and prefer descriptive names over explanation.
 
 ## Testing Guidelines
-Kernel self-tests in `kernel/tests/` run during boot; expand them whenever you touch scheduler, MMU, or IPC code. Host regressions live under `tests/fipc_*` and `tests/futfs_*`; keep deterministic names such as `*_loopback.c` so the harness emits meaningful `*_test.log` artifacts. Always run `make test` plus a targeted harness (e.g., `make perf` after scheduler edits or `make futfs-crash-test` for filesystem changes).
+`make test` runs the default QEMU harness plus `kernel/tests/` and the suites under `tests/`. Keep regression filenames deterministic (`tests/fipc_*`, `tests/futfs_*`) so `*_test.log` artifacts stay stable, and complement `make test` with targeted commands (`make perf`, `make perf-ci`, `make futfs-crash-test`, compositor runs). Note each command and the resulting log file in the PR description.
 
 ## Commit & Pull Request Guidelines
-Recent history (`git log -5`) shows imperative summaries like “Add is_accepted flag…”; keep first lines under 72 characters, explain the “why,” and reference issues (`Closes #123`). Group related edits into cohesive commits rather than “WIP” dumps. PRs should outline the subsystem touched, list test commands executed, attach essential log snippets, and link supporting design docs when adding daemons or protocols. Call out feature flags reviewers need (for instance `WAYLAND_BACKBUFFER=1`) so CI can replicate behavior.
+Use imperative commit titles ≤72 characters, explain the “why” in the body, and reference issues (`Closes #123`). Avoid mixing unrelated work in one commit, and note verification commands plus log filenames (`headful_boot.log`, etc.) and relevant feature flags (`WAYLAND_BACKBUFFER=1`, `DEBUG_*`) in PR descriptions so reviewers can reproduce your run.
 
 ## Security & Configuration Tips
-Capability handles are the authority boundary: never dump raw pointers or AEAD keys from `host/transport`, and scrub logs before sharing. Run `setup-asahi-external.sh` for Apple Silicon so boot artifacts and signing keys land where the build scripts expect them. Snapshot `futura_disk.img` before risky experiments and gate compositor or kernel tracing tweaks behind `WAYLAND_*` variables or `DEBUG_*` flags to avoid surprising defaults.
+Treat capability handles and transport logs as sensitive—never leak secrets from `host/transport`. Snapshot `futura_disk.img` before risky experiments, gate tracing/Wayland tweaks behind `WAYLAND_*` or `DEBUG_*`, and run `setup-asahi-external.sh` on Apple Silicon so signing keys and disk layout follow build expectations.

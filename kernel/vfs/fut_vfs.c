@@ -1179,6 +1179,17 @@ static int try_open_chrdev(const char *path, int flags) {
         return fd;
     }
 
+    if (task) {
+        fut_printf("[CHR-OPEN] path=%p pid=%llu fd=%d\n",
+                   (const void *)path,
+                   task ? task->pid : 0,
+                   fd);
+    } else {
+        fut_printf("[CHR-OPEN] path=%p pid=0 fd=%d (no task context)\n",
+                   (const void *)path,
+                   fd);
+    }
+
     return fd;
 }
 
@@ -1814,6 +1825,10 @@ void *fut_vfs_mmap(int fd, void *addr, size_t len, int prot, int flags, off_t of
 
     struct fut_file *file = get_file_from_task(task, fd);
     if (!file) {
+        fut_printf("[VFS-MMAP] fd=%d not found in task pid=%llu fd_table (max_fds=%d)\n",
+                   fd,
+                   task ? task->pid : 0,
+                   task ? task->max_fds : 0);
         return (void *)(intptr_t)(-EBADF);
     }
 

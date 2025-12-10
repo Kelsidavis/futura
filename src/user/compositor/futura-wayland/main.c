@@ -107,9 +107,9 @@ int main(void) {
     struct compositor_state comp = {0};
 
     const char *bb_env = getenv("WAYLAND_BACKBUFFER");
-    bool want_backbuffer = true;
-    if (bb_env && bb_env[0] == '0' && bb_env[1] == '\0') {
-        want_backbuffer = false;
+    bool want_backbuffer = false; /* Heap allocator struggles with double 3 MiB buffers */
+    if (bb_env && bb_env[0] == '1' && bb_env[1] == '\0') {
+        want_backbuffer = true;
     }
 
     const char *deco_env = getenv("WAYLAND_DECO");

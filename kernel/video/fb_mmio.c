@@ -257,18 +257,20 @@ void fb_boot_splash(void) {
             g_fb_virt = (volatile uint8_t *)(uintptr_t)(virt_base + offset);
             g_fb_hw.length = map_size;
 
-            /* Write solid GREEN test pattern */
+            /* Initialize framebuffer with black screen - compositor will take over */
             volatile uint32_t *fb = (volatile uint32_t *)g_fb_virt;
-            fut_printf("[FB] Filling virtio framebuffer with solid GREEN\n");
+            fut_printf("[FB] Clearing virtio framebuffer for compositor\n");
 
-            size_t total_pixels = (g_fb_hw.info.width * g_fb_hw.info.height);
-            for (size_t i = 0; i < total_pixels; ++i) {
-                fb[i] = 0xFF00FF00;  /* Green: ARGB format, full green channel */
+            /* Clear screen to black */
+            for (uint32_t y = 0; y < g_fb_hw.info.height; ++y) {
+                for (uint32_t x = 0; x < g_fb_hw.info.width; ++x) {
+                    fb[y * g_fb_hw.info.width + x] = 0xFF000000;  /* Black */
+                }
             }
 
-            fut_printf("[FB] Test pattern written, flushing display...\n");
+            fut_printf("[FB] Framebuffer cleared, flushing display...\n");
             virtio_gpu_flush_display();
-            fut_printf("[FB] Display should now show green screen\n");
+            fut_printf("[FB] Framebuffer ready for compositor\n");
             return;
         } else {
             fut_printf("[FB] VIRTIO GPU init failed, continuing with fallback\n");

@@ -38,6 +38,7 @@ DEBUG            ?= 0
 ASYNC            ?= 0
 AUTOEXIT        ?= 0
 EXTRA_QEMU_FLAGS ?=
+VNC_DISPLAY      ?= :0
 
 # Set QEMU binary based on platform
 ifeq ($(PLATFORM),arm64)
@@ -88,7 +89,7 @@ ifeq ($(HEADFUL),1)
 # Headful mode: use display backend with virtio-gpu
 # GTK is default for native graphics output, falls back to VNC if no display server
 ifeq ($(VNC),1)
-RUN_QEMU_FLAGS += -vnc :0
+    RUN_QEMU_FLAGS += -vnc $(VNC_DISPLAY)
 else ifeq ($(SPICE),1)
 RUN_QEMU_FLAGS += -display spice-app
 else ifeq ($(SDL),1)
@@ -1052,7 +1053,7 @@ run:
 	@echo "==> Running QEMU (headful=$(HEADFUL), mem=$(MEM) MiB, debug=$(DEBUG))"
 ifeq ($(HEADFUL),1)
 ifeq ($(VNC),1)
-	@echo "==> VNC server will be available at localhost:5900"
+	@echo "==> VNC server will be available at $(VNC_DISPLAY)"
 else
 	@echo "==> Display: GTK with virtio-gpu (OpenGL enabled)"
 	@if [ -z "$$DISPLAY" ] && [ -z "$$WAYLAND_DISPLAY" ]; then \

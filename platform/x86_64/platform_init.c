@@ -20,6 +20,7 @@
 #include <kernel/fb.h>
 #include <kernel/trap.h>
 #include <kernel/boot_args.h>
+#include <kernel/build_cmdline.h>
 #include <kernel/fut_percpu.h>
 #include <kernel/platform_hooks.h>
 #include <kernel/fut_sched.h>
@@ -784,6 +785,7 @@ void fut_platform_init(uint32_t multiboot_magic __attribute__((unused)),
 
     fut_boot_args_init(NULL);
     if (multiboot_addr) {
+        bool cmdline_found = false;
         const uint8_t *mb_base = (const uint8_t *)(uintptr_t)multiboot_addr;
         uint32_t total_size = *(const uint32_t *)mb_base;
         fut_printf("[INIT-MB2] multiboot_addr=0x%llx total_size=%u\n",
@@ -804,11 +806,16 @@ void fut_platform_init(uint32_t multiboot_magic __attribute__((unused)),
                 const char *cmdline = (const char *)(tag + 1);
                 fut_printf("[INIT-MB2] CMDLINE tag found: %s\n", cmdline);
                 fut_boot_args_init(cmdline);
+                cmdline_found = true;
                 break;
             }
             tag_ptr += (tag->size + 7u) & ~7u;
         }
         fut_printf("[INIT-MB2] Total tags parsed: %d\n", tag_count);
+        if (!cmdline_found && FUT_BUILD_BOOT_CMDLINE[0]) {
+            fut_printf("[INIT-MB2] CMDLINE tag missing, using build-time fallback\n");
+            fut_boot_args_init(FUT_BUILD_BOOT_CMDLINE);
+        }
     }
 
     /* Probe Multiboot framebuffer if present */

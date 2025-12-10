@@ -1,3 +1,4 @@
+#include <errno.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -92,6 +93,7 @@ static void accrue_pending(struct fut_timerfd *t, uint64_t now) {
 int timerfd_create(int clockid, int flags) {
     (void)flags;
     if (clockid != CLOCK_MONOTONIC) {
+        errno = EINVAL;
         return -1;
     }
 
@@ -104,9 +106,11 @@ int timerfd_create(int clockid, int flags) {
             timerfds[i].interval_ms = 0;
             timerfds[i].pending_expirations = 0;
             timerfds[i].flags = flags;
+            errno = 0;
             return timerfds[i].handle;
         }
     }
+    errno = EMFILE;
     return -1;
 }
 

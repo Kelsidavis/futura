@@ -205,6 +205,7 @@ CFLAGS += -fno-pic -fno-pie  # Disable PIC/PIE for kernel code
 CFLAGS += -fcf-protection=none  # Disable CET (Control-flow Enforcement Technology)
 CFLAGS += -I.
 CFLAGS += -I./include
+CFLAGS += -I$(BUILD_GEN_ROOT)
 CFLAGS += $(ARCH_CFLAGS)
 CFLAGS += $(REPRO_CFLAGS)
 
@@ -248,6 +249,9 @@ LDFLAGS := -nostdlib $(ARCH_LDFLAGS) $(REPRO_LDFLAGS)
 
 # Output directories
 BUILD_DIR := build
+BUILD_GEN_ROOT := $(BUILD_DIR)/generated
+BUILD_KERNEL_CMDLINE_DIR := $(BUILD_GEN_ROOT)/kernel
+BOOT_CMDLINE_HEADER := $(BUILD_KERNEL_CMDLINE_DIR)/build_cmdline.h
 OBJ_DIR := $(BUILD_DIR)/obj
 BIN_DIR := $(BUILD_DIR)/bin
 RELEASE_DIR := $(BUILD_DIR)/release
@@ -289,6 +293,7 @@ BUILD_GIT_DESC    := $(shell git describe --tags --always --dirty 2>/dev/null ||
 KERNEL_DEPS       :=
 KERNEL_DEPS      += $(GEN_VERSION_HDR)
 KERNEL_DEPS      += $(GEN_FEATURE_HDR)
+KERNEL_DEPS      += $(BOOT_CMDLINE_HEADER)
 
 $(GEN_VERSION_HDR):
 	@mkdir -p $(GEN_DIR)
@@ -313,9 +318,19 @@ $(GEN_FEATURE_HDR): FORCE
 	} > $$tmp; \
 	if [ ! -f $@ ] || ! cmp -s $$tmp $@; then mv $$tmp $@; else rm $$tmp; fi
 
+$(BUILD_GEN_ROOT):
+	@mkdir -p $(BUILD_GEN_ROOT)
+
+$(BUILD_KERNEL_CMDLINE_DIR): | $(BUILD_GEN_ROOT)
+	@mkdir -p $(BUILD_KERNEL_CMDLINE_DIR)
+
+$(BOOT_CMDLINE_HEADER): | $(BUILD_KERNEL_CMDLINE_DIR)
+	@echo "Generating boot cmdline header"
+	@python3 scripts/gen_boot_cmdline.py "$(KAPPEND)" "$(BOOT_CMDLINE_HEADER)"
+
 # ============================================================
 #   Rust Toolchain Integration
-# ============================================================
+# ============================================================ 
 
 RUSTC := $(shell command -v rustc 2>/dev/null)
 CARGO := $(shell command -v cargo 2>/dev/null)
@@ -949,7 +964,7 @@ tools:
 	@$(MAKE) -C tools
 
 # Compile C sources
-$(OBJ_DIR)/%.o: %.c $(GEN_VERSION_HDR) $(GEN_FEATURE_HDR) | $(OBJ_DIR)
+$(OBJ_DIR)/%.o: %.c $(GEN_VERSION_HDR) $(GEN_FEATURE_HDR) $(BOOT_CMDLINE_HEADER) | $(OBJ_DIR)
 	@echo "CC $<"
 	@mkdir -p $(dir $@)
 	@$(CC) $(CFLAGS) -c $< -o $@
@@ -1347,3 +1362,4 @@ help:
 .PHONY: third_party-wayland
 third_party-wayland:
 	@$(MAKE) -C third_party/wayland all
+CFLAGS += -I$(BUILD_GEN_ROOT)

@@ -18,6 +18,7 @@
 #include <sys/epoll.h>
 #include <stdarg.h>
 #include <errno.h>
+#include "timerfd_internal.h"
 
 /* Portable syscall interface - provides architecture-agnostic wrapper functions */
 #include "../libfutura/syscall_portable.h"
@@ -305,6 +306,12 @@ int __wrap_epoll_ctl(int epfd, int op, int fd, struct epoll_event *event) {
     debug_write(", fd=");
     debug_write_int(fd);
     debug_write(")\n");
+
+    if (__fut_timerfd_is_timer(fd)) {
+        debug_write("[WRAP_EPOLL_CTL] timerfd bypassed\n");
+        errno = 0;
+        return 0;
+    }
 
     long result = SYSCALL_EPOLL_CTL(epfd, op, fd, (void *)event);
 

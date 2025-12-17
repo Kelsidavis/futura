@@ -1481,6 +1481,20 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
         return -ENOMEM;
     }
 
+    /* CRITICAL: Set fs_base IMMEDIATELY after thread creation.
+     * The thread is already on the scheduler queue, but we must set fs_base
+     * before it can run. Without this, a race condition exists where:
+     * 1. Scheduler switches to new thread with fs_base=0
+     * 2. Timer fires before trampoline can set fs_base
+     * 3. Scheduler saves fs_base=0 back to thread
+     * Setting it here eliminates the race.
+     *
+     * NOTE: Do NOT set context.cs/ss here! The context.rip points to the kernel
+     * trampoline. If we set cs to user mode, the scheduler would construct a
+     * user-mode return to kernel address, causing SMEP violation.
+     * The trampoline sets cs/ss/rip/rsp to user values right before IRETQ. */
+    thread->fs_base = USER_TLS_BASE;
+
     fut_free(phdrs);
     fut_vfs_close(fd);
 

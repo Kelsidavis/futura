@@ -417,18 +417,24 @@ bool fut_trap_handle_page_fault(fut_interrupt_frame_t *frame) {
         uintptr_t rip_page = frame->rip & ~0xFFFUL;
         fut_printf("[#PF] rip_page=0x%016llx (instruction fetch page)\n", (unsigned long long)rip_page);
 
-        /* Check if this might be a stale CR2 issue */
-        if (fault_addr < PAGE_SIZE) {
-            fut_printf("[#PF] NOTE: Fault at very low address - possible stale CR2 or segment issue\n");
-        }
+        /* Decode error code bits for clearer diagnostics */
+        bool is_write = (frame->error_code & 0x2) != 0;     /* Bit 1: write access */
+        bool is_ifetch = (frame->error_code & 0x10) != 0;   /* Bit 4: instruction fetch */
+        (void)is_write; (void)is_ifetch;  /* May be unused in some paths */
 
-        /* Check if fault address and RIP are drastically different */
-        if ((fault_addr < 0x1000 && frame->rip > 0x400000) ||
-            (fault_addr > 0x400000 && fault_addr < 0x800000 && frame->rip > 0x400000)) {
-            fut_printf("[#PF] WARNING: CR2 (0x%llx) and RIP (0x%llx) mismatch - CR2 likely stale!\n",
-                       (unsigned long long)fault_addr,
-                       (unsigned long long)frame->rip);
-            fut_printf("[#PF] This is probably an instruction fetch fault, not a data access fault\n");
+        /* For low address faults, provide helpful diagnostics */
+        if (fault_addr < PAGE_SIZE) {
+            if (is_ifetch) {
+                /* Instruction fetch at low address - likely jumped to NULL */
+                fut_printf("[#PF] NOTE: Instruction fetch at addr 0x%llx - jumped to NULL pointer\n",
+                           (unsigned long long)fault_addr);
+            } else {
+                /* Data access at low address - NULL pointer dereference */
+                fut_printf("[#PF] NOTE: %s access at addr 0x%llx - NULL pointer dereference (+0x%llx offset)\n",
+                           is_write ? "Write" : "Read",
+                           (unsigned long long)fault_addr,
+                           (unsigned long long)fault_addr);
+            }
         }
 
         fut_task_signal_exit(SIGSEGV);

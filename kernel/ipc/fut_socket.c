@@ -740,8 +740,23 @@ int fut_socket_connect(fut_socket_t *socket, const char *target_path) {
  * Send data on connected socket.
  */
 ssize_t fut_socket_send(fut_socket_t *socket, const void *buf, size_t len) {
-    if (!socket || !buf || socket->state != FUT_SOCK_CONNECTED || !socket->pair) {
+    if (!socket || !buf) {
         return -1;  /* EINVAL */
+    }
+
+    /* Wait for connection to complete if socket is still connecting */
+    if (socket->state == FUT_SOCK_CONNECTING) {
+        if (socket->flags & 0x800) {  /* O_NONBLOCK */
+            return -11;  /* EAGAIN */
+        }
+        /* Block until connection completes */
+        if (socket->connect_waitq) {
+            fut_waitq_sleep_locked(socket->connect_waitq, NULL, FUT_THREAD_BLOCKED);
+        }
+    }
+
+    if (socket->state != FUT_SOCK_CONNECTED || !socket->pair) {
+        return -107;  /* ENOTCONN */
     }
 
     /* Phase 4: Enforce shutdown_wr flag */
@@ -808,8 +823,23 @@ ssize_t fut_socket_send(fut_socket_t *socket, const void *buf, size_t len) {
  * Receive data from connected socket.
  */
 ssize_t fut_socket_recv(fut_socket_t *socket, void *buf, size_t len) {
-    if (!socket || !buf || socket->state != FUT_SOCK_CONNECTED || !socket->pair) {
+    if (!socket || !buf) {
         return -1;  /* EINVAL */
+    }
+
+    /* Wait for connection to complete if socket is still connecting */
+    if (socket->state == FUT_SOCK_CONNECTING) {
+        if (socket->flags & 0x800) {  /* O_NONBLOCK */
+            return -11;  /* EAGAIN */
+        }
+        /* Block until connection completes */
+        if (socket->connect_waitq) {
+            fut_waitq_sleep_locked(socket->connect_waitq, NULL, FUT_THREAD_BLOCKED);
+        }
+    }
+
+    if (socket->state != FUT_SOCK_CONNECTED || !socket->pair) {
+        return -107;  /* ENOTCONN */
     }
 
     /* Phase 4: Enforce shutdown_rd flag */

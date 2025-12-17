@@ -14,12 +14,14 @@
 #include <kernel/fut_memory.h>
 #include <kernel/uaccess.h>
 #include <kernel/errno.h>
+#include <kernel/fut_socket.h>
 #include <stddef.h>
 #include <stdint.h>
 
 extern void fut_printf(const char *fmt, ...);
 extern fut_task_t *fut_task_current(void);
 extern struct fut_file *vfs_get_file(int fd);
+extern fut_socket_t *get_socket_from_fd(int fd);
 
 typedef uint32_t socklen_t;
 
@@ -319,7 +321,18 @@ ssize_t sys_recvmsg(int sockfd, struct msghdr *msg, int flags) {
      * Phase 4: Handle ancillary data (SCM_RIGHTS for FD receiving)
      */
 
-    (void)local_flags;  /* Ignore flags in Phase 2 (will implement in Phase 3) */
+    /* Phase 5: Handle MSG_DONTWAIT flag
+     * Temporarily set O_NONBLOCK on socket if MSG_DONTWAIT is specified.
+     * This ensures the socket returns EAGAIN instead of blocking. */
+    bool restore_blocking = false;
+    fut_socket_t *socket = NULL;
+    if (local_flags & MSG_DONTWAIT) {
+        socket = get_socket_from_fd(local_sockfd);
+        if (socket && !(socket->flags & 0x800)) {  /* O_NONBLOCK */
+            socket->flags |= 0x800;  /* Set O_NONBLOCK temporarily */
+            restore_blocking = true;
+        }
+    }
 
     /* Phase 2: Iterate through iovecs and read each buffer */
     ssize_t total_received = 0;
@@ -438,6 +451,11 @@ ssize_t sys_recvmsg(int sockfd, struct msghdr *msg, int flags) {
                    "(%s, %d/%zu iovecs filled, min=%zu max=%zu, Phase 3: scatter-gather I/O with VFS optimization)\n",
                    local_sockfd, kmsg.msg_iovlen, io_pattern, flags_desc, msg_type, total_size, total_received,
                    completion_status, iovecs_filled, kmsg.msg_iovlen, min_iov_len, max_iov_len);
+    }
+
+    /* Restore blocking mode if we temporarily set O_NONBLOCK */
+    if (restore_blocking && socket) {
+        socket->flags &= ~0x800;  /* Clear O_NONBLOCK */
     }
 
     return total_received;

@@ -1180,6 +1180,10 @@ static fut_thread_t *clone_thread(fut_thread_t *parent_thread, fut_task_t *child
     child_thread->context.fs = (uint16_t)user_fs;
     child_thread->context.gs = 0;                  // GS not used in userspace, set to 0
 
+    /* Copy TLS base (MSR_FS_BASE) for stack canary support.
+     * Without this, child will have fs_base=0 and fault at FS:0x28 */
+    child_thread->fs_base = parent_thread->fs_base;
+
     /* Set child's fork() return value to 0 */
     child_thread->context.rax = 0;
 

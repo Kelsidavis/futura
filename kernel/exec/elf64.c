@@ -636,6 +636,12 @@ static int build_user_stack(fut_mm_t *mm,
         cur_thread->context.gs = USER_DATA_SELECTOR;
         cur_thread->context.cs = USER_CODE_SELECTOR;  /* 0x1B */
         cur_thread->context.ss = USER_DATA_SELECTOR;  /* 0x23 */
+        /* Also update RIP and RSP to user values. If irq_frame is cleared and
+         * scheduler constructs a frame from context, it needs valid user addresses.
+         * Without this, context.rip has kernel trampoline addr causing page fault. */
+        cur_thread->context.rip = entry;
+        cur_thread->context.rsp = stack;
+        cur_thread->context.rflags = 0x202;  /* IF=1, reserved bit 1 set */
     }
 
     /* Call the pure assembly function to perform IRETQ to userspace

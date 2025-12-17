@@ -192,19 +192,19 @@ struct posixd_stat_req {
 struct posixd_stat_resp {
     int result;          /* 0 on success, -errno on error */
     struct {
-        uint64_t st_dev;
-        uint64_t st_ino;
-        mode_t st_mode;
-        uint32_t st_nlink;
-        uid_t st_uid;
-        gid_t st_gid;
-        uint64_t st_rdev;
-        off_t st_size;
-        uint32_t st_blksize;
-        uint64_t st_blocks;
-        time_t st_atime;
-        time_t st_mtime;
-        time_t st_ctime;
+        uint64_t dev;
+        uint64_t ino;
+        mode_t mode;
+        uint32_t nlink;
+        uid_t uid;
+        gid_t gid;
+        uint64_t rdev;
+        off_t size;
+        uint32_t blksize;
+        uint64_t blocks;
+        time_t atime;  /* Renamed from st_atime to avoid glibc macro conflicts */
+        time_t mtime;
+        time_t ctime;
     } stat;
 };
 

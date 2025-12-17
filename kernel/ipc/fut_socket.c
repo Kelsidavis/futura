@@ -558,14 +558,71 @@ int fut_socket_accept(fut_socket_t *listener, fut_socket_t **out_socket) {
         fut_waitq_init(pair_reverse->recv_waitq);
         pair_reverse->refcount = 2;
 
-        /* Set up peer socket for proper bidirectional communication */
-        /* peer->pair = pair_forward means: peer sends via pair_forward, listener receives from pair_forward */
-        /* peer->pair_reverse = pair_reverse means: listener sends via pair_reverse, peer receives from pair_reverse */
-        peer->pair = pair_forward;    /* peer sends here, listener receives */
-        peer->pair_reverse = pair_reverse;  /* peer receives from here, listener sends */
-        peer->is_accepted = false;  /* Client side, not accepted yet */
+        /* Set up peer (client) socket for proper bidirectional communication */
+        /* peer->pair = pair_forward means: peer SENDS via pair_forward
+         * peer->pair_reverse = pair_reverse means: peer RECEIVES from pair_reverse */
+        peer->pair = pair_forward;    /* client sends here */
+        peer->pair_reverse = pair_reverse;  /* client receives from here */
+        peer->is_accepted = false;  /* Client side */
         peer->state = FUT_SOCK_CONNECTED;
     }
+
+    /* Create a NEW server-side socket for the accepted connection
+     * This is critical: each side needs its own socket object with
+     * pair/pair_reverse configured in opposite directions */
+    fut_socket_t *accepted = fut_malloc(sizeof(fut_socket_t));
+    if (!accepted) {
+        fut_socket_unref(peer);
+        return -12;  /* ENOMEM */
+    }
+
+    memset(accepted, 0, sizeof(*accepted));
+    accepted->state = FUT_SOCK_CONNECTED;
+    accepted->address_family = listener->address_family;
+    accepted->socket_type = listener->socket_type;
+    accepted->refcount = 1;
+    accepted->socket_id = socket_next_id++;
+    accepted->is_accepted = true;  /* Server side */
+    accepted->shutdown_rd = false;
+    accepted->shutdown_wr = false;
+
+    /* Allocate wait queue for close operations */
+    accepted->close_waitq = fut_malloc(sizeof(fut_waitq_t));
+    if (!accepted->close_waitq) {
+        fut_free(accepted);
+        fut_socket_unref(peer);
+        return -12;  /* ENOMEM */
+    }
+    fut_waitq_init(accepted->close_waitq);
+
+    /* Register in global socket table */
+    fut_spinlock_acquire(&socket_lock);
+    bool registered = false;
+    for (int i = 0; i < FUT_SOCKET_MAX; i++) {
+        if (!socket_registry[i]) {
+            socket_registry[i] = accepted;
+            registered = true;
+            break;
+        }
+    }
+    fut_spinlock_release(&socket_lock);
+
+    if (!registered) {
+        fut_free(accepted->close_waitq);
+        fut_free(accepted);
+        fut_socket_unref(peer);
+        return -12;  /* ENOMEM - socket table full */
+    }
+
+    /* Set up server (accepted) socket with OPPOSITE pair directions:
+     * accepted->pair = pair_reverse means: server SENDS via pair_reverse (client receives)
+     * accepted->pair_reverse = pair_forward means: server RECEIVES from pair_forward (client sends) */
+    accepted->pair = peer->pair_reverse;  /* server sends here, client receives */
+    accepted->pair_reverse = peer->pair;  /* server receives from here, client sends */
+
+    /* Increment refcounts on the pairs since they're now used by both sockets */
+    peer->pair->refcount++;
+    peer->pair_reverse->refcount++;
 
     /* IMPORTANT: Listener socket REMAINS in LISTENING state!
      * Only the accepted peer becomes CONNECTED.
@@ -575,11 +632,11 @@ int fut_socket_accept(fut_socket_t *listener, fut_socket_t **out_socket) {
      */
 
     /* Set peer pointers so both sockets know about each other */
-    peer->pair->peer = listener;
-    peer->pair_reverse->peer = listener;
+    peer->pair->peer = accepted;        /* client's send buffer points to server socket */
+    peer->pair_reverse->peer = peer;    /* client's recv buffer points to client socket */
 
-    fut_printf("[SOCKET] Socket %u accepted connection from %u (peer=%p)\n",
-               listener->socket_id, peer->socket_id, peer->pair->peer);
+    fut_printf("[SOCKET] Socket %u accepted connection from %u, created server socket %u\n",
+               listener->socket_id, peer->socket_id, accepted->socket_id);
 
     /* Wake up the connecting socket that's waiting in fut_socket_connect() */
     if (peer->connect_waitq) {
@@ -587,7 +644,7 @@ int fut_socket_accept(fut_socket_t *listener, fut_socket_t **out_socket) {
         fut_waitq_wake_all(peer->connect_waitq);
     }
 
-    *out_socket = peer;
+    *out_socket = accepted;
     fut_printf("[SOCKET] Socket %u accepted connection from %u\n",
                listener->socket_id, peer->socket_id);
     return 0;
@@ -694,37 +751,12 @@ ssize_t fut_socket_send(fut_socket_t *socket, const void *buf, size_t len) {
         return -32;  /* EPIPE - broken pipe */
     }
 
-    /* Select which pair to send on using smart heuristics:
-     * Generally:
-     * - pair is for client→server (requests)
-     * - pair_reverse is for server→client (responses)
-     *
-     * When both sides use the same socket object, we detect context by checking
-     * if pair (request direction) has pending data from a client request.
-     * If pair has data (client request), server should send to pair_reverse.
-     * Otherwise, use pair (client sends or server continues).
-     */
-    fut_socket_pair_t *pair = NULL;
-
-    /* Check if pair (request direction) has pending data */
-    uint32_t pair_data = (socket->pair->recv_head + socket->pair->recv_size -
-                          socket->pair->recv_tail) % socket->pair->recv_size;
-    /* Check if pair_reverse (response direction) has space */
-    uint32_t pair_rev_space = 0;
-    if (socket->pair_reverse) {
-        pair_rev_space = socket->pair_reverse->recv_size -
-            ((socket->pair_reverse->recv_head + socket->pair_reverse->recv_size -
-              socket->pair_reverse->recv_tail) % socket->pair_reverse->recv_size);
-    }
-
-    /* Heuristic: if pair has pending data AND pair_reverse has space,
-     * we're likely the server responding to a request. Use pair_reverse. */
-    if (pair_data > 0 && pair_rev_space > 0 && socket->pair_reverse) {
-        pair = socket->pair_reverse;
-    } else {
-        /* Default: use pair (client sending or normal operation) */
-        pair = socket->pair;
-    }
+    /* With separate socket objects for client and server, each socket's
+     * pair is configured for the correct send direction:
+     * - Client socket: pair = forward buffer (client→server)
+     * - Server socket: pair = reverse buffer (server→client)
+     * No heuristics needed - just use socket->pair directly */
+    fut_socket_pair_t *pair = socket->pair;
     if (!pair->peer) {
         return 0;  /* Peer closed */
     }
@@ -787,34 +819,15 @@ ssize_t fut_socket_recv(fut_socket_t *socket, void *buf, size_t len) {
         return 0;  /* EOF - no more data */
     }
 
-    /* Select which pair to receive from using smart heuristics:
-     * Generally:
-     * - pair is for client→server (requests)
-     * - pair_reverse is for server→client (responses)
-     *
-     * When both sides use the same socket object, we try pair first (likely has
-     * requests from client). If pair is empty, try pair_reverse (responses from server).
-     */
-    fut_socket_pair_t *pair = NULL;
-
-    /* Check data availability in both directions */
-    uint32_t pair_avail = (socket->pair->recv_head + socket->pair->recv_size -
-                           socket->pair->recv_tail) % socket->pair->recv_size;
-    uint32_t pair_rev_avail = 0;
-    if (socket->pair_reverse) {
-        pair_rev_avail = (socket->pair_reverse->recv_head + socket->pair_reverse->recv_size -
-                          socket->pair_reverse->recv_tail) % socket->pair_reverse->recv_size;
+    /* With separate socket objects for client and server, each socket's
+     * pair_reverse is configured for the correct receive direction:
+     * - Client socket: pair_reverse = reverse buffer (receives server→client)
+     * - Server socket: pair_reverse = forward buffer (receives client→server)
+     * No heuristics needed - just use socket->pair_reverse directly */
+    if (!socket->pair_reverse) {
+        return -1;  /* EINVAL - socket not properly connected */
     }
-
-    /* Use pair if it has data (client requests), else try pair_reverse (responses) */
-    if (pair_avail > 0) {
-        pair = socket->pair;
-    } else if (pair_rev_avail > 0 && socket->pair_reverse) {
-        pair = socket->pair_reverse;
-    } else {
-        /* No data in either direction, default to pair and block */
-        pair = socket->pair;
-    }
+    fut_socket_pair_t *pair = socket->pair_reverse;
 
     fut_spinlock_acquire(&pair->lock);
 
@@ -917,43 +930,28 @@ int fut_socket_poll(fut_socket_t *socket, int events) {
         if ((events & 0x1) && socket->listener->queue_count > 0) {  /* POLLIN */
             ready |= 0x1;
         }
-    } else if (socket->state == FUT_SOCK_CONNECTED && socket->pair) {
-        if ((events & 0x1)) {  /* POLLIN - readable if data available in either pair OR shutdown_rd */
+    } else if (socket->state == FUT_SOCK_CONNECTED && socket->pair && socket->pair_reverse) {
+        if ((events & 0x1)) {  /* POLLIN - readable if data available in pair_reverse (receive buffer) */
             /* If shutdown_rd is set, socket is always readable (recv returns EOF) */
             if (socket->shutdown_rd) {
                 ready |= 0x1;
             } else {
-                /* Check if data available in pair (client→server) */
-                uint32_t pair_available = (socket->pair->recv_head + socket->pair->recv_size -
-                                           socket->pair->recv_tail) % socket->pair->recv_size;
-                /* Check if data available in pair_reverse (server→client) - for responses */
-                uint32_t pair_rev_available = 0;
-                if (socket->pair_reverse) {
-                    pair_rev_available = (socket->pair_reverse->recv_head + socket->pair_reverse->recv_size -
-                                         socket->pair_reverse->recv_tail) % socket->pair_reverse->recv_size;
-                }
-                /* Readable if either direction has data */
-                if (pair_available > 0 || pair_rev_available > 0) {
+                /* With separate sockets, we only check pair_reverse (our receive direction) */
+                uint32_t recv_available = (socket->pair_reverse->recv_head + socket->pair_reverse->recv_size -
+                                           socket->pair_reverse->recv_tail) % socket->pair_reverse->recv_size;
+                if (recv_available > 0) {
                     ready |= 0x1;
                 }
             }
         }
-        if ((events & 0x4)) {  /* POLLOUT - writable if space available to send AND NOT shutdown_wr */
+        if ((events & 0x4)) {  /* POLLOUT - writable if space available in pair (send buffer) */
             /* If shutdown_wr is set, socket is never writable (send returns EPIPE) */
             if (!socket->shutdown_wr) {
-                /* Check if space available in pair (for sending forward) */
-                uint32_t pair_space = socket->pair->recv_size -
+                /* With separate sockets, we only check pair (our send direction) */
+                uint32_t send_space = socket->pair->recv_size -
                     ((socket->pair->recv_head + socket->pair->recv_size -
                       socket->pair->recv_tail) % socket->pair->recv_size);
-                /* Check if space available in pair_reverse (for sending reverse) */
-                uint32_t pair_rev_space = 0;
-                if (socket->pair_reverse) {
-                    pair_rev_space = socket->pair_reverse->recv_size -
-                        ((socket->pair_reverse->recv_head + socket->pair_reverse->recv_size -
-                          socket->pair_reverse->recv_tail) % socket->pair_reverse->recv_size);
-                }
-                /* Writable if either direction has space */
-                if (pair_space > 0 || pair_rev_space > 0) {
+                if (send_space > 0) {
                     ready |= 0x4;
                 }
             }

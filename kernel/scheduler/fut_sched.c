@@ -13,6 +13,8 @@
 #if defined(__x86_64__)
 #include <platform/x86_64/gdt.h>
 #include <platform/x86_64/memory/paging.h>
+#include <arch/x86_64/msr.h>  /* For rdmsr/wrmsr for FS_BASE TLS support */
+#define MSR_FS_BASE 0xC0000100
 #elif defined(__aarch64__)
 #include <platform/arm64/memory/paging.h>
 #endif
@@ -700,6 +702,20 @@ void fut_schedule(void) {
         // - Frame validation (RIP, CS, SS checks)
         // - Constructing frames from context when irq_frame is NULL
         // - Clearing corrupted frames to prevent reuse
+
+#if defined(__x86_64__)
+        /* Save/restore FS_BASE MSR for TLS (Thread Local Storage) support.
+         * User threads use FS:0x28 for stack canary, which requires proper FS_BASE.
+         * Kernel threads typically have fs_base=0, which is fine. */
+        uint64_t saved_fs_base = 0;
+        if (prev) {
+            saved_fs_base = rdmsr(MSR_FS_BASE);
+            prev->fs_base = saved_fs_base;
+        }
+        /* Restore next thread's fs_base - even if 0, restore it to prevent stale values */
+        wrmsr(MSR_FS_BASE, next->fs_base);
+#endif
+
         if (in_irq && prev && fut_current_frame && !idle_involved) {
             // IRQ-safe context switch (uses IRET)
             // This modifies the interrupt frame on the stack so IRET returns to next thread

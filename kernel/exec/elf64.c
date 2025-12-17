@@ -19,10 +19,21 @@
 
 #include <platform/x86_64/memory/paging.h>
 #include <platform/x86_64/memory/pmap.h>
+#include <arch/x86_64/msr.h>
 
 #include <string.h>
 #include <stdint.h>
 #include <stdbool.h>
+
+/* MSR for FS segment base (Thread Local Storage) */
+#define MSR_FS_BASE     0xC0000100
+
+/* TLS block address - placed below stack in user address space */
+#define USER_TLS_BASE   0x00007FFE000000ULL
+#define TLS_SIZE        PAGE_SIZE
+
+/* Stack canary offset in TLS (matches glibc/gcc convention) */
+#define TLS_STACK_CANARY_OFFSET 0x28
 
 /* External assembly function for IRETQ to userspace
  * NOTE: Don't use noreturn attribute - it may cause bad codegen */
@@ -606,6 +617,27 @@ static int build_user_stack(fut_mm_t *mm,
      * pmap_probe_pte(mm_context(mm), entry, &test_pte);  // Check entry mapping
      */
 
+    /* Set FS_BASE for TLS (Thread Local Storage) support
+     * Required for stack canary checking in code compiled with -fstack-protector
+     * The stack canary is read from %fs:0x28 */
+    wrmsr(MSR_FS_BASE, USER_TLS_BASE);
+
+    /* Store fs_base in thread structure so scheduler can restore it after context switch */
+    fut_thread_t *cur_thread = fut_thread_current();
+    if (cur_thread) {
+        cur_thread->fs_base = USER_TLS_BASE;
+        /* Set user segment selectors in context so scheduler can construct valid
+         * IRETQ frames after irq_frame is cleared. Without this, the context has
+         * kernel segments (0x10) from thread creation, causing crashes when the
+         * scheduler constructs a frame from context for a user thread. */
+        cur_thread->context.ds = USER_DATA_SELECTOR;  /* 0x23 */
+        cur_thread->context.es = USER_DATA_SELECTOR;
+        cur_thread->context.fs = USER_DATA_SELECTOR;  /* FS base set via MSR */
+        cur_thread->context.gs = USER_DATA_SELECTOR;
+        cur_thread->context.cs = USER_CODE_SELECTOR;  /* 0x1B */
+        cur_thread->context.ss = USER_DATA_SELECTOR;  /* 0x23 */
+    }
+
     /* Call the pure assembly function to perform IRETQ to userspace
      * This function never returns */
     fut_do_user_iretq(entry, stack, argc, argv_ptr);
@@ -659,6 +691,52 @@ static int stage_stack_pages(fut_mm_t *mm, uint64_t *out_stack_top) {
     }
 
     *out_stack_top = USER_STACK_TOP;
+    return 0;
+}
+
+/**
+ * stage_tls_page - Allocate and map TLS block for userspace
+ *
+ * Sets up Thread Local Storage for stack canary support required by
+ * code compiled with -fstack-protector. The stack canary is read from
+ * %fs:0x28 by gcc-generated code.
+ *
+ * @mm: Memory map for the process
+ * @out_tls_base: Output pointer to receive the TLS base address
+ * @return: 0 on success, negative errno on failure
+ */
+static int stage_tls_page(fut_mm_t *mm, uint64_t *out_tls_base) {
+    /* Allocate a page for TLS */
+    uint8_t *page = fut_pmm_alloc_page();
+    if (!page) {
+        return -ENOMEM;
+    }
+
+    /* Zero the page */
+    memset(page, 0, PAGE_SIZE);
+
+    /* Initialize stack canary at offset 0x28
+     * Use TSC directly for entropy (avoid fut_get_time_ns which may hang) */
+    uint32_t lo, hi;
+    __asm__ volatile("rdtsc" : "=a" (lo), "=d" (hi));
+    uint64_t canary = (((uint64_t)hi << 32) | lo) ^ 0xDEADBEEFCAFEBABEULL ^ (uintptr_t)page;
+    /* Ensure canary has a null byte to help detect string overflows */
+    canary &= ~0xFFULL;
+    *(uint64_t *)(page + TLS_STACK_CANARY_OFFSET) = canary;
+
+    /* Map to userspace */
+    phys_addr_t phys = pmap_virt_to_phys((uintptr_t)page);
+    int rc = pmap_map_user(mm_context(mm),
+                           USER_TLS_BASE,
+                           phys,
+                           PAGE_SIZE,
+                           PTE_PRESENT | PTE_USER | PTE_WRITABLE | PTE_NX);
+    if (rc != 0) {
+        fut_pmm_free_page(page);
+        return rc;
+    }
+
+    *out_tls_base = USER_TLS_BASE;
     return 0;
 }
 
@@ -1122,6 +1200,7 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
         return fd;
     }
 
+    fut_printf("[EXEC-ELF] argc=%zu envc=%zu, about to read ELF header\n", argc, envc);
     fut_vfs_check_root_canary("fut_exec_elf:enter");
 
     /* Helper macro for cleanup - also re-enables interrupts since we
@@ -1278,10 +1357,26 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
     heap_base += PAGE_SIZE;
     fut_mm_set_heap_base(mm, heap_base, 0);
 
+    fut_printf("[EXEC-ELF] About to stage stack pages\n");
     uint64_t stack_top = 0;
     rc = stage_stack_pages(mm, &stack_top);
     if (rc != 0) {
+        fut_printf("[EXEC-ELF] stage_stack_pages failed: %d\n", rc);
         fut_mm_release(mm);  /* mm not attached to task yet */
+        fut_task_destroy(task);
+        fut_free(phdrs);
+        fut_vfs_close(fd);
+        EXEC_CLEANUP_KARGS();
+        return rc;
+    }
+    fut_printf("[EXEC-ELF] Stack pages staged, top=0x%llx\n", (unsigned long long)stack_top);
+
+    /* Set up TLS for stack canary support */
+    uint64_t tls_base = 0;
+    rc = stage_tls_page(mm, &tls_base);
+    if (rc != 0) {
+        fut_printf("[EXEC-ELF] stage_tls_page failed: %d\n", rc);
+        fut_mm_release(mm);
         fut_task_destroy(task);
         fut_free(phdrs);
         fut_vfs_close(fd);

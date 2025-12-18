@@ -114,7 +114,7 @@ fut_do_user_iretq:
     movw $0x23, %ax             /* User data selector (0x20|3) */
     movw %ax, %ds
     movw %ax, %es
-    movw %ax, %fs
+    /* DON'T load FS - it uses MSR_FS_BASE for TLS! Loading clears the MSR! */
     /* DON'T load GS - it uses MSR for per-CPU data! */
 
     /* Debug: Print 'E' before IRETQ */

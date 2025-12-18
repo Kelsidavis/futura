@@ -134,11 +134,11 @@ isr_syscall_int80_stub:
     movw %gs, %ax
     pushq %rax
 
-    /* Load kernel data segment (but DON'T touch GS - it uses MSR base for per-CPU data!) */
+    /* Load kernel data segment (but DON'T touch GS or FS - they use MSR base!) */
     movw $0x10, %ax
     movw %ax, %ds
     movw %ax, %es
-    movw %ax, %fs
+    /* FS intentionally NOT reloaded - must preserve MSR_FS_BASE for TLS support */
     /* GS intentionally NOT reloaded - must preserve GS_BASE MSR setup */
 
     /* Calculate pointer to interrupt frame (for userspace thread state) */
@@ -201,8 +201,8 @@ isr_syscall_int80_stub:
     /* Stack: 0=GS, 8=FS, 16=ES, 24=DS, 32=RDI, 40=RSI, 48=RDX, 56=R10, 64=R8, 72=R9, 80=R15, 88=R14, 96=R13, 104=R12, 112=RBX, 120=RBP, 128=CR3, 136=RAX */
     popq %rax                 /* Discard saved GS value */
     /* GS intentionally NOT restored - must preserve GS_BASE MSR */
-    popq %rax
-    movw %ax, %fs             /* Restore user FS */
+    popq %rax                 /* Discard saved FS value */
+    /* FS intentionally NOT restored - must preserve MSR_FS_BASE for TLS support */
     popq %rax
     movw %ax, %es             /* Restore user ES */
     popq %rax
@@ -334,11 +334,11 @@ isr_syscall_fastpath:
     movw %gs, %ax
     pushq %rax
 
-    /* Load kernel data segments (but DON'T touch GS - preserve GS_BASE MSR!) */
+    /* Load kernel data segments (but DON'T touch FS or GS - preserve MSR bases!) */
     movw $0x10, %ax
     movw %ax, %ds
     movw %ax, %es
-    movw %ax, %fs
+    /* FS intentionally NOT loaded - must preserve MSR_FS_BASE for TLS support */
 
     /* Set up frame pointer for syscall_entry_c */
     /* Stack layout now (offsets from RSP):
@@ -379,10 +379,9 @@ isr_syscall_fastpath:
 
     addq $16, %rsp                /* Remove stack arguments */
 
-    /* Restore segment registers (discard GS - must preserve GS_BASE MSR!) */
+    /* Restore segment registers (discard GS and FS - must preserve MSR bases!) */
     popq %rax                     /* Discard saved GS */
-    popq %rax
-    movw %ax, %fs                 /* Restore FS */
+    popq %rax                     /* Discard saved FS - must preserve MSR_FS_BASE */
     popq %rax
     movw %ax, %es                 /* Restore ES */
     popq %rax
@@ -472,11 +471,11 @@ isr_common_stub:
     movw %gs, %ax
     pushq %rax
 
-    /* Load kernel data segment (but DON'T touch GS - it uses MSR base for per-CPU data!) */
+    /* Load kernel data segment (but DON'T touch GS or FS - they use MSR base!) */
     movw $0x10, %ax
     movw %ax, %ds
     movw %ax, %es
-    movw %ax, %fs
+    /* FS intentionally NOT reloaded - must preserve MSR_FS_BASE for TLS support */
     /* GS intentionally NOT reloaded - must preserve GS_BASE MSR setup */
 
     /* Align stack to 16 bytes for System V ABI */
@@ -490,11 +489,11 @@ isr_common_stub:
     /* Restore stack */
     movq %rbp, %rsp
 
-    /* Pop segment registers (but DON'T restore GS - must preserve per-CPU setup!) */
+    /* Pop segment registers (but DON'T restore GS or FS - must preserve MSR bases!) */
     popq %rax            /* Discard saved GS value */
     /* GS intentionally NOT restored - must preserve GS_BASE MSR */
-    popq %rax
-    movw %ax, %fs
+    popq %rax            /* Discard saved FS value */
+    /* FS intentionally NOT restored - must preserve MSR_FS_BASE for TLS support */
     popq %rax
     movw %ax, %es
     popq %rax
@@ -596,11 +595,11 @@ irq_common_stub:
     movw %gs, %ax
     pushq %rax
 
-    /* Load kernel data segment (but DON'T touch GS - it uses MSR base for per-CPU data!) */
+    /* Load kernel data segment (but DON'T touch GS or FS - they use MSR base!) */
     movw $0x10, %ax
     movw %ax, %ds
     movw %ax, %es
-    movw %ax, %fs
+    /* FS intentionally NOT reloaded - must preserve MSR_FS_BASE for TLS support */
     /* GS intentionally NOT reloaded - must preserve GS_BASE MSR setup */
 
     /* Align stack to 16 bytes for System V ABI */
@@ -614,11 +613,11 @@ irq_common_stub:
     /* Restore stack */
     movq %rbp, %rsp
 
-    /* Pop segment registers (but DON'T restore GS - must preserve per-CPU setup!) */
+    /* Pop segment registers (but DON'T restore GS or FS - must preserve MSR bases!) */
     popq %rax            /* Discard saved GS value */
     /* GS intentionally NOT restored - must preserve GS_BASE MSR */
-    popq %rax
-    movw %ax, %fs
+    popq %rax            /* Discard saved FS value */
+    /* FS intentionally NOT restored - must preserve MSR_FS_BASE for TLS support */
     popq %rax
     movw %ax, %es
     popq %rax
@@ -733,11 +732,11 @@ irq0_timer:
     movw %gs, %ax
     pushq %rax
 
-    /* Load kernel data segment (but DON'T touch GS - it uses MSR base for per-CPU data!) */
+    /* Load kernel data segment (but DON'T touch GS or FS - they use MSR base!) */
     movw $0x10, %ax
     movw %ax, %ds
     movw %ax, %es
-    movw %ax, %fs
+    /* FS intentionally NOT reloaded - must preserve MSR_FS_BASE for TLS support */
     /* GS intentionally NOT reloaded - must preserve GS_BASE MSR setup */
 
     /* Save interrupt frame pointer before stack alignment */
@@ -762,11 +761,11 @@ irq0_timer:
     /* Restore stack */
     movq %rbp, %rsp
 
-    /* Pop segment registers (but DON'T restore GS - must preserve per-CPU setup!) */
+    /* Pop segment registers (but DON'T restore GS or FS - must preserve MSR bases!) */
     popq %rax            /* Discard saved GS value */
     /* GS intentionally NOT restored - must preserve GS_BASE MSR */
-    popq %rax
-    movw %ax, %fs
+    popq %rax            /* Discard saved FS value */
+    /* FS intentionally NOT restored - must preserve MSR_FS_BASE for TLS support */
     popq %rax
     movw %ax, %es
     popq %rax

@@ -883,22 +883,13 @@ fut_switch_context_irq:
      * Just skip the saved GS value entirely. */
     addq $8, %rsp           /* Skip the GS value - never load it */
 
-    /* Validate and load FS */
-    movq 0(%rsp), %rax      /* Peek at FS value without popping */
-    testw %ax, %ax          /* Check if NULL selector (0) */
-    jz .fs_skip             /* NULL is valid, skip loading */
-    cmpw $0x10, %ax         /* Check if valid kernel segment */
-    je .fs_ok
-    cmpw $0x23, %ax         /* Check if valid user segment */
-    je .fs_ok
-    /* FS value is invalid! Skip loading it, use current FS */
-.fs_skip:
-    addq $8, %rsp           /* Skip the FS value */
-    jmp .fs_done
-.fs_ok:
-    popq %rax               /* Pop fs */
-    movw %ax, %fs
-.fs_done:
+    /* CRITICAL: Skip FS segment loading entirely!
+     * In 64-bit mode, loading a segment selector (mov fs, ax) clears MSR_FS_BASE
+     * to the GDT descriptor base (which is 0 for standard data segments).
+     * We manage FS_BASE via MSR in the scheduler (wrmsr MSR_FS_BASE), so loading
+     * the selector would corrupt our TLS base.
+     * Just pop and discard the FS value from the interrupt frame. */
+    addq $8, %rsp           /* Skip the FS value - don't load it */
 
     /* Validate and load ES */
     movq 0(%rsp), %rax      /* Peek at ES value without popping */
@@ -934,6 +925,26 @@ fut_switch_context_irq:
     movw %ax, %ds
 
 .segments_done:
+
+    /* CRITICAL: Write MSR_FS_BASE for TLS support.
+     * This must be done in assembly because the C code writes the MSR
+     * BEFORE the context switch, but loading segment registers can
+     * clear the MSR value. By writing it here (after segment restore,
+     * before GPR restore), we ensure it's correct when the thread runs.
+     * r13 still contains the next thread pointer at this point.
+     * Thread struct layout: fs_base is at offset 728 (after irq_frame at 720). */
+    pushq %rax
+    pushq %rcx
+    pushq %rdx
+    movq 728(%r13), %rax    /* Load fs_base from thread struct (offset 728) */
+    movl $0xC0000100, %ecx  /* MSR_FS_BASE */
+    movq %rax, %rdx
+    shrq $32, %rdx          /* EDX = high 32 bits */
+    /* EAX already has low 32 bits */
+    wrmsr
+    popq %rdx
+    popq %rcx
+    popq %rax
 
     /* Restore general purpose registers */
     popq %rax
@@ -1265,12 +1276,12 @@ fut_enter_usermode:
     xorq %r14, %r14
     xorq %r15, %r15
 
-    /* Set user data segments */
+    /* Set user data segments (but DON'T touch FS or GS - they use MSRs!) */
     movw $(0x20 | 3), %ax
     movw %ax, %ds
     movw %ax, %es
-    movw %ax, %fs
-    movw %ax, %gs
+    /* FS intentionally NOT loaded - must preserve MSR_FS_BASE for TLS support */
+    /* GS intentionally NOT loaded - must preserve GS_BASE MSR for per-CPU data */
 
     /* Zero XMM registers before entering userspace to prevent leaking kernel values.
      * GCC -O2 uses XMM registers to store pointers, and garbage values cause crashes. */

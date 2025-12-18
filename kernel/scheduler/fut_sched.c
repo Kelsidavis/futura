@@ -712,7 +712,6 @@ void fut_schedule(void) {
             saved_fs_base = rdmsr(MSR_FS_BASE);
             prev->fs_base = saved_fs_base;
         }
-        /* Restore next thread's fs_base - even if 0, restore it to prevent stale values */
         wrmsr(MSR_FS_BASE, next->fs_base);
 #endif
 

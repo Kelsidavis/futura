@@ -1460,12 +1460,20 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
     entry->argv_ptr = user_argv;
     entry->task = task;
 
+    /* CRITICAL: Disable interrupts to prevent race condition.
+     * fut_thread_create() adds the thread to the scheduler queue with fs_base=0.
+     * If a timer fires before we set fs_base, the scheduler will save MSR=0
+     * back to the thread, permanently corrupting fs_base.
+     * By disabling interrupts, we ensure fs_base is set before any timer fires. */
+    __asm__ volatile("cli" ::: "memory");
+
     fut_thread_t *thread = fut_thread_create(task,
                                              fut_user_trampoline,
                                              entry,
                                              16 * 1024,
                                              FUT_DEFAULT_PRIORITY);
     if (!thread) {
+        __asm__ volatile("sti" ::: "memory");
         fut_free(entry);
         fut_task_destroy(task);
         fut_free(phdrs);
@@ -1481,20 +1489,16 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
         return -ENOMEM;
     }
 
-    /* CRITICAL: Set fs_base IMMEDIATELY after thread creation.
-     * The thread is already on the scheduler queue, but we must set fs_base
-     * before it can run. Without this, a race condition exists where:
-     * 1. Scheduler switches to new thread with fs_base=0
-     * 2. Timer fires before trampoline can set fs_base
-     * 3. Scheduler saves fs_base=0 back to thread
-     * Setting it here eliminates the race.
+    /* Set fs_base for TLS support BEFORE re-enabling interrupts.
+     * This ensures the scheduler will always see the correct fs_base value.
      *
      * NOTE: Do NOT set context.cs/ss here! The context.rip points to the kernel
      * trampoline. If we set cs to user mode, the scheduler would construct a
      * user-mode return to kernel address, causing SMEP violation.
      * The trampoline sets cs/ss/rip/rsp to user values right before IRETQ. */
     thread->fs_base = USER_TLS_BASE;
-
+    __asm__ volatile("" ::: "memory");  /* Ensure store is visible */
+    __asm__ volatile("sti" ::: "memory");
     fut_free(phdrs);
     fut_vfs_close(fd);
 

@@ -30,37 +30,41 @@ typedef struct regs64 {
 
 static inline long syscall_x86_64_0(long n) {
     long ret;
+    /* r8 added to clobber list due to kernel syscall handler corruption */
     __asm__ volatile("int $0x80"
                      : "=a"(ret)
                      : "0"(n)
-                     : "memory", "rcx", "r11");
+                     : "memory", "rcx", "r8", "r11");
     return ret;
 }
 
 static inline long syscall_x86_64_1(long n, long a1) {
     long ret;
+    /* r8 added to clobber list due to kernel syscall handler corruption */
     __asm__ volatile("int $0x80"
                      : "=a"(ret)
                      : "0"(n), "D"(a1)
-                     : "memory", "rcx", "r11");
+                     : "memory", "rcx", "r8", "r11");
     return ret;
 }
 
 static inline long syscall_x86_64_2(long n, long a1, long a2) {
     long ret;
+    /* r8 added to clobber list due to kernel syscall handler corruption */
     __asm__ volatile("int $0x80"
                      : "=a"(ret)
                      : "0"(n), "D"(a1), "S"(a2)
-                     : "memory", "rcx", "r11");
+                     : "memory", "rcx", "r8", "r11");
     return ret;
 }
 
 static inline long syscall_x86_64_3(long n, long a1, long a2, long a3) {
     long ret;
+    /* r8 added to clobber list due to kernel syscall handler corruption */
     __asm__ volatile("int $0x80"
                      : "=a"(ret)
                      : "0"(n), "D"(a1), "S"(a2), "d"(a3)
-                     : "memory", "rcx", "r11");
+                     : "memory", "rcx", "r8", "r11");
     return ret;
 }
 

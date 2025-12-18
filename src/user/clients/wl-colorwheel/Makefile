@@ -47,7 +47,7 @@ ifeq ($(DEBUG_WAYLAND),1)
 CFLAGS += -DDEBUG_WAYLAND
 endif
 
-LDFLAGS := -nostdlib -T $(LDSCRIPT) $(WAYLAND_LDFLAGS)
+LDFLAGS := -nostdlib -static -T $(LDSCRIPT) $(WAYLAND_LDFLAGS)
 LDLIBS := $(WAYLAND_LIBS) $(LIBFUTURA)
 
 .PHONY: all clean

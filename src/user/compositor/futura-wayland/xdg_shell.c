@@ -238,10 +238,40 @@ static void region_destroy(struct wl_client *client,
     wl_resource_destroy(resource);
 }
 
+static void region_add(struct wl_client *client,
+                       struct wl_resource *resource,
+                       int32_t x,
+                       int32_t y,
+                       int32_t width,
+                       int32_t height) {
+    (void)client;
+    (void)resource;
+    (void)x;
+    (void)y;
+    (void)width;
+    (void)height;
+    /* Stub: regions not fully implemented */
+}
+
+static void region_subtract(struct wl_client *client,
+                            struct wl_resource *resource,
+                            int32_t x,
+                            int32_t y,
+                            int32_t width,
+                            int32_t height) {
+    (void)client;
+    (void)resource;
+    (void)x;
+    (void)y;
+    (void)width;
+    (void)height;
+    /* Stub: regions not fully implemented */
+}
+
 static const struct wl_region_interface region_impl = {
     .destroy = region_destroy,
-    .add = NULL,
-    .subtract = NULL,
+    .add = region_add,
+    .subtract = region_subtract,
 };
 
 static void compositor_create_region(struct wl_client *client,
@@ -628,6 +658,86 @@ static void xdg_toplevel_unset_maximized(struct wl_client *client,
     comp_surface_set_maximized(state->surface, false);
 }
 
+static void xdg_toplevel_set_parent(struct wl_client *client,
+                                    struct wl_resource *resource,
+                                    struct wl_resource *parent) {
+    (void)client;
+    (void)resource;
+    (void)parent;
+    /* Stub: parent windows not implemented */
+}
+
+static void xdg_toplevel_set_app_id(struct wl_client *client,
+                                    struct wl_resource *resource,
+                                    const char *app_id) {
+    (void)client;
+    (void)resource;
+    (void)app_id;
+    /* Stub: app_id not used */
+}
+
+static void xdg_toplevel_show_window_menu(struct wl_client *client,
+                                          struct wl_resource *resource,
+                                          struct wl_resource *seat,
+                                          uint32_t serial,
+                                          int32_t x,
+                                          int32_t y) {
+    (void)client;
+    (void)resource;
+    (void)seat;
+    (void)serial;
+    (void)x;
+    (void)y;
+    /* Stub: window menu not implemented */
+}
+
+static void xdg_toplevel_move(struct wl_client *client,
+                              struct wl_resource *resource,
+                              struct wl_resource *seat,
+                              uint32_t serial) {
+    (void)client;
+    (void)resource;
+    (void)seat;
+    (void)serial;
+    /* Stub: interactive move not implemented */
+}
+
+static void xdg_toplevel_resize(struct wl_client *client,
+                                struct wl_resource *resource,
+                                struct wl_resource *seat,
+                                uint32_t serial,
+                                uint32_t edges) {
+    (void)client;
+    (void)resource;
+    (void)seat;
+    (void)serial;
+    (void)edges;
+    /* Stub: interactive resize not implemented */
+}
+
+static void xdg_toplevel_set_fullscreen(struct wl_client *client,
+                                        struct wl_resource *resource,
+                                        struct wl_resource *output) {
+    (void)client;
+    (void)resource;
+    (void)output;
+    /* Stub: fullscreen not implemented */
+}
+
+static void xdg_toplevel_unset_fullscreen(struct wl_client *client,
+                                          struct wl_resource *resource) {
+    (void)client;
+    (void)resource;
+    /* Stub: fullscreen not implemented */
+}
+
+static void xdg_toplevel_set_minimized(struct wl_client *client,
+                                       struct wl_resource *resource) {
+    (void)client;
+    (void)resource;
+    /* Stub: minimize not implemented */
+}
+
 void xdg_shell_surface_send_configure(struct comp_surface *surface,
                                       int32_t width,
                                       int32_t height,
@@ -644,19 +754,19 @@ void xdg_shell_surface_send_configure(struct comp_surface *surface,
 
 static const struct xdg_toplevel_interface xdg_toplevel_impl = {
     .destroy = xdg_toplevel_destroy,
-    .set_parent = NULL,
+    .set_parent = xdg_toplevel_set_parent,
     .set_title = xdg_toplevel_set_title,
-    .set_app_id = NULL,
-    .show_window_menu = NULL,
-    .move = NULL,
-    .resize = NULL,
+    .set_app_id = xdg_toplevel_set_app_id,
+    .show_window_menu = xdg_toplevel_show_window_menu,
+    .move = xdg_toplevel_move,
+    .resize = xdg_toplevel_resize,
     .set_max_size = xdg_toplevel_set_max_size,
     .set_min_size = xdg_toplevel_set_min_size,
     .set_maximized = xdg_toplevel_set_maximized,
     .unset_maximized = xdg_toplevel_unset_maximized,
-    .set_fullscreen = NULL,
-    .unset_fullscreen = NULL,
-    .set_minimized = NULL,
+    .set_fullscreen = xdg_toplevel_set_fullscreen,
+    .unset_fullscreen = xdg_toplevel_unset_fullscreen,
+    .set_minimized = xdg_toplevel_set_minimized,
 };
 
 static void xdg_wm_base_destroy(struct wl_client *client,
@@ -664,6 +774,108 @@ static void xdg_wm_base_destroy(struct wl_client *client,
     (void)client;
     wl_resource_destroy(resource);
 }
+
+/* xdg_positioner stub implementation */
+static void positioner_destroy(struct wl_client *client,
+                               struct wl_resource *resource) {
+    (void)client;
+    wl_resource_destroy(resource);
+}
+
+static void positioner_set_size(struct wl_client *client,
+                                struct wl_resource *resource,
+                                int32_t width,
+                                int32_t height) {
+    (void)client;
+    (void)resource;
+    (void)width;
+    (void)height;
+}
+
+static void positioner_set_anchor_rect(struct wl_client *client,
+                                       struct wl_resource *resource,
+                                       int32_t x,
+                                       int32_t y,
+                                       int32_t width,
+                                       int32_t height) {
+    (void)client;
+    (void)resource;
+    (void)x;
+    (void)y;
+    (void)width;
+    (void)height;
+}
+
+static void positioner_set_anchor(struct wl_client *client,
+                                  struct wl_resource *resource,
+                                  uint32_t anchor) {
+    (void)client;
+    (void)resource;
+    (void)anchor;
+}
+
+static void positioner_set_gravity(struct wl_client *client,
+                                   struct wl_resource *resource,
+                                   uint32_t gravity) {
+    (void)client;
+    (void)resource;
+    (void)gravity;
+}
+
+static void positioner_set_constraint_adjustment(struct wl_client *client,
+                                                 struct wl_resource *resource,
+                                                 uint32_t constraint_adjustment) {
+    (void)client;
+    (void)resource;
+    (void)constraint_adjustment;
+}
+
+static void positioner_set_offset(struct wl_client *client,
+                                  struct wl_resource *resource,
+                                  int32_t x,
+                                  int32_t y) {
+    (void)client;
+    (void)resource;
+    (void)x;
+    (void)y;
+}
+
+static void positioner_set_reactive(struct wl_client *client,
+                                    struct wl_resource *resource) {
+    (void)client;
+    (void)resource;
+}
+
+static void positioner_set_parent_size(struct wl_client *client,
+                                       struct wl_resource *resource,
+                                       int32_t parent_width,
+                                       int32_t parent_height) {
+    (void)client;
+    (void)resource;
+    (void)parent_width;
+    (void)parent_height;
+}
+
+static void positioner_set_parent_configure(struct wl_client *client,
+                                            struct wl_resource *resource,
+                                            uint32_t serial) {
+    (void)client;
+    (void)resource;
+    (void)serial;
+}
+
+static const struct xdg_positioner_interface xdg_positioner_impl = {
+    .destroy = positioner_destroy,
+    .set_size = positioner_set_size,
+    .set_anchor_rect = positioner_set_anchor_rect,
+    .set_anchor = positioner_set_anchor,
+    .set_gravity = positioner_set_gravity,
+    .set_constraint_adjustment = positioner_set_constraint_adjustment,
+    .set_offset = positioner_set_offset,
+    .set_reactive = positioner_set_reactive,
+    .set_parent_size = positioner_set_parent_size,
+    .set_parent_configure = positioner_set_parent_configure,
+};
 
 static void xdg_wm_base_create_positioner(struct wl_client *client,
                                           struct wl_resource *resource,
@@ -676,7 +888,7 @@ static void xdg_wm_base_create_positioner(struct wl_client *client,
         wl_client_post_no_memory(client);
         return;
     }
-    wl_resource_set_implementation(positioner, NULL, NULL, NULL);
+    wl_resource_set_implementation(positioner, &xdg_positioner_impl, NULL, NULL);
 }
 
 static void xdg_wm_base_get_xdg_surface(struct wl_client *client,

@@ -1253,8 +1253,27 @@ static void present_damage(struct compositor_state *comp, const struct damage_ac
         return;
     }
 
+    int32_t fb_w = (int32_t)comp->fb_info.width;
+    int32_t fb_h = (int32_t)comp->fb_info.height;
+
     for (int i = 0; i < damage->count; ++i) {
         fut_rect_t rect = damage->rects[i];
+
+        /* Bounds check to prevent buffer overflow */
+        if (rect.x < 0 || rect.y < 0 || rect.w <= 0 || rect.h <= 0) {
+            continue;
+        }
+        /* Clamp rect to framebuffer bounds */
+        if (rect.x + rect.w > fb_w) {
+            rect.w = fb_w - rect.x;
+        }
+        if (rect.y + rect.h > fb_h) {
+            rect.h = fb_h - rect.y;
+        }
+        if (rect.w <= 0 || rect.h <= 0) {
+            continue;
+        }
+
         const uint8_t *src_base = (const uint8_t *)src->px + (size_t)rect.y * src->pitch + (size_t)rect.x * 4u;
         uint8_t *dst_base = comp->fb_map + (size_t)rect.y * comp->fb_info.pitch + (size_t)rect.x * 4u;
         blit_argb(src_base, src->pitch, dst_base, comp->fb_info.pitch, rect.w, rect.h);

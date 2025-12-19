@@ -488,6 +488,13 @@ isr_common_stub:
     /* FS intentionally NOT reloaded - must preserve MSR_FS_BASE for TLS support */
     /* GS intentionally NOT reloaded - must preserve GS_BASE MSR setup */
 
+    /* Set interrupt context flag and frame pointer for scheduler.
+     * This is critical for exceptions that may terminate threads (e.g., SIGSEGV from
+     * page fault). Without this, fut_schedule() uses cooperative switch which doesn't
+     * properly handle the exception frame on the stack. */
+    movq %rsp, fut_current_frame(%rip)
+    movb $1, fut_in_interrupt(%rip)
+
     /* Align stack to 16 bytes for System V ABI */
     movq %rsp, %rbp
     andq $-16, %rsp
@@ -495,6 +502,10 @@ isr_common_stub:
     /* Call C exception handler */
     movq %rbp, %rdi                     /* Pass register state pointer */
     call fut_isr_handler
+
+    /* Clear interrupt context flag and frame pointer */
+    movb $0, fut_in_interrupt(%rip)
+    movq $0, fut_current_frame(%rip)
 
     /* Restore stack */
     movq %rbp, %rsp

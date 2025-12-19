@@ -691,12 +691,21 @@ void fut_schedule(void) {
         // rather than hardcoding tid==1 (which is only the BSP's idle thread).
         bool idle_involved = (prev && prev == idle) || (next && next == idle);
 
+        // CRITICAL: Don't save state for terminated threads!
+        // When a thread calls fut_thread_exit(), it marks itself as TERMINATED and then
+        // calls fut_schedule(). We must NOT save state for terminated threads because:
+        // 1. The thread is being cleaned up and its structures may be freed soon
+        // 2. Saving state to a terminated thread's irq_frame can corrupt memory
+        // 3. The terminated thread will never be switched back to anyway
+        bool prev_terminated = (prev && prev->state == FUT_THREAD_TERMINATED);
+
         // IRETQ path for preemptive context switching
         // CRITICAL: Only use IRETQ when:
         // 1. We're in an IRQ context (timer interrupt)
         // 2. prev thread exists and has a valid irq_frame OR we can save its state
         // 3. next thread has a valid context to restore (validated by assembly)
         // 4. Neither thread is the idle thread (idle uses cooperative switching)
+        // 5. prev thread is NOT terminated (don't save state for exiting threads)
         //
         // The assembly code (fut_switch_context_irq) handles:
         // - Frame validation (RIP, CS, SS checks)
@@ -706,27 +715,47 @@ void fut_schedule(void) {
 #if defined(__x86_64__)
         /* Save/restore FS_BASE MSR for TLS (Thread Local Storage) support.
          * User threads use FS:0x28 for stack canary, which requires proper FS_BASE.
-         * Kernel threads typically have fs_base=0, which is fine. */
+         * Kernel threads typically have fs_base=0, which is fine.
+         * Don't save for terminated threads - they won't run again. */
         uint64_t saved_fs_base = 0;
-        if (prev) {
+        if (prev && !prev_terminated) {
             saved_fs_base = rdmsr(MSR_FS_BASE);
             prev->fs_base = saved_fs_base;
         }
         wrmsr(MSR_FS_BASE, next->fs_base);
 #endif
 
-        if (in_irq && prev && fut_current_frame && !idle_involved) {
+        // CRITICAL: IRETQ vs cooperative context switch decision
+        //
+        // The IRETQ path (fut_switch_context_irq) is required when:
+        // 1. The next thread was preempted in user mode - its state is in irq_frame
+        // 2. We're in interrupt context with a valid frame on stack
+        //
+        // The cooperative path (fut_switch_context) only works for threads that:
+        // 1. Were saved via cooperative switch (context structure is valid)
+        // 2. Are kernel-only threads (never ran in user mode)
+        //
+        // When prev is terminated:
+        // - Its kernel stack is still valid (not freed until waitpid reaps the task)
+        // - We can use IRETQ path with fut_current_frame pointing to prev's stack
+        // - Pass NULL for prev so we don't save the terminated thread's state
+        // - The IRETQ will switch to next's RSP, abandoning prev's stack safely
+        //
+        // This is REQUIRED for user threads because their irq_frame contains the
+        // correct user-space RIP/RSP, while their context structure may be stale.
+        if (in_irq && fut_current_frame && !idle_involved) {
             // IRQ-safe context switch (uses IRET)
-            // This modifies the interrupt frame on the stack so IRET returns to next thread
+            // Pass NULL for prev when terminated to skip saving its state
 #if defined(__aarch64__)
             fut_printf("[SCHED] IRQ path: prev=%p next=%p next->pstate=0x%llx next->ttbr0=0x%llx\n",
                        (void*)prev, (void*)next,
                        (unsigned long long)next->context.pstate,
                        (unsigned long long)next->context.ttbr0_el1);
 #endif
-            fut_switch_context_irq(prev, next, fut_current_frame);
+            fut_switch_context_irq(prev_terminated ? NULL : prev, next, fut_current_frame);
         } else {
             // Regular cooperative context switch (uses RET)
+            // For terminated threads, pass NULL to skip saving their state
 #if defined(__aarch64__) && defined(DEBUG_SCHED)
             fut_printf("[SCHED] Coop path: prev=%p next=%p &next->context=%p next->pstate=0x%llx next->ttbr0=0x%llx next->x7=0x%llx\n",
                        (void*)prev, (void*)next, (void*)&next->context,
@@ -734,10 +763,10 @@ void fut_schedule(void) {
                        (unsigned long long)next->context.ttbr0_el1,
                        (unsigned long long)next->context.x7);
 #endif
-            if (prev) {
+            if (prev && !prev_terminated) {
                 fut_switch_context(&prev->context, &next->context);
             } else {
-                // First time - just jump to thread
+                // First time or terminated prev - just jump to thread (don't save prev state)
                 fut_switch_context(NULL, &next->context);
             }
             // Context switch returns when this thread is switched back to (cooperative threading)

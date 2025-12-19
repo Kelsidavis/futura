@@ -763,6 +763,21 @@ void fut_schedule(void) {
                        (unsigned long long)next->context.ttbr0_el1,
                        (unsigned long long)next->context.x7);
 #endif
+            // CRITICAL FIX: When doing cooperative switch from within ISR context
+            // (e.g., when terminating a thread and switching to idle), we must clear
+            // the interrupt context flags BEFORE the switch. Otherwise, fut_in_interrupt
+            // remains 1 and fut_current_frame points to an abandoned frame on the
+            // terminated thread's stack, causing GP faults when later ISRs try to use them.
+            if (in_irq) {
+#if defined(__aarch64__)
+                fut_in_interrupt = false;
+#else
+                atomic_store_explicit(&fut_in_interrupt, false, memory_order_release);
+#endif
+                // Clear fut_current_frame to prevent use of stale frame pointer
+                extern fut_interrupt_frame_t *fut_current_frame;
+                fut_current_frame = NULL;
+            }
             if (prev && !prev_terminated) {
                 fut_switch_context(&prev->context, &next->context);
             } else {

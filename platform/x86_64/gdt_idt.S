@@ -18,13 +18,16 @@ gdt64_table:
     .quad 0x00AF9A000000FFFF            /* P=1, DPL=0, S=1, Type=1010 (code), L=1 */
 
     /* Entry 2: 64-bit kernel data segment (selector 0x10) */
-    .quad 0x00AF92000000FFFF            /* P=1, DPL=0, S=1, Type=0010 (data) */
+    .quad 0x008F92000000FFFF            /* P=1, DPL=0, S=1, Type=0010 (data), L=0 (data segs must have L=0) */
 
-    /* Entry 3: 64-bit user code segment (selector 0x18) */
+    /* Entry 3: 64-bit user data segment (selector 0x18, with RPL=3 -> 0x1B)
+     * IMPORTANT: User data MUST come before user code for SYSRET to work!
+     * SYSRET computes: SS = STAR[63:48] + 8, CS = STAR[63:48] + 16
+     * With STAR[63:48] = 0x10: SS = 0x18 (user data), CS = 0x20 (user code) */
+    .quad 0x008FF2000000FFFF            /* P=1, DPL=3, S=1, Type=0010 (data), L=0 (data segs must have L=0) */
+
+    /* Entry 4: 64-bit user code segment (selector 0x20, with RPL=3 -> 0x23) */
     .quad 0x00AFFA000000FFFF            /* P=1, DPL=3, S=1, Type=1010 (code), L=1 */
-
-    /* Entry 4: 64-bit user data segment (selector 0x20) */
-    .quad 0x00AFF2000000FFFF            /* P=1, DPL=3, S=1, Type=0010 (data) */
 
     /* Entry 5: TSS descriptor (selector 0x28) - will be filled at runtime */
     .quad 0x0000000000000000

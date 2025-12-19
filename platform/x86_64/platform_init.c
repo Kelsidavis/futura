@@ -626,10 +626,25 @@ static void fut_idt_init(void) {
     wrmsr(MSR_LSTAR, lstar_address);
 
     /* IA32_STAR: Segment selectors for SYSCALL/SYSRET
-     * [31:16] = kernel CS (we use 0x08 for kernel code segment)
-     * [47:32] = user CS for SYSRET (CS-16 is DS for 64-bit, so if CS=0x23, then 0x23-16=0x1b is unused but still works)
+     * Bits [47:32] = Kernel CS selector (for SYSCALL entry)
+     * Bits [63:48] = User segment base (for SYSRET return)
+     *
+     * For SYSRET in 64-bit mode:
+     *   CS = STAR[63:48] + 16, with RPL forced to 3
+     *   SS = STAR[63:48] + 8, with RPL forced to 3
+     *
+     * Our GDT layout (CRITICAL: user data before user code for SYSRET!):
+     *   0x08: kernel code     (index 1)
+     *   0x10: kernel data     (index 2)
+     *   0x18: user data       (index 3) - selector 0x1B with RPL 3
+     *   0x20: user code 64    (index 4) - selector 0x23 with RPL 3
+     *   0x28+: TSS            (index 5-6)
+     *
+     * With STAR[63:48] = 0x10:
+     *   SS = 0x10 + 8 = 0x18, with RPL 3 = 0x1B (user data) ✓
+     *   CS = 0x10 + 16 = 0x20, with RPL 3 = 0x23 (user code) ✓
      */
-    uint64_t star = ((0x08ULL) << 32) | ((0x23ULL) << 48);
+    uint64_t star = ((0x08ULL) << 32) | ((0x10ULL) << 48);
     wrmsr(MSR_STAR, star);
 
     /* IA32_FMASK: Flags to clear on SYSCALL entry

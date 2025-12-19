@@ -54,16 +54,18 @@ fut_do_user_iretq:
 
     /* Build IRETQ frame on stack
      * Stack layout (growing down):
-     *   [SS]     = 0x23 (user data selector)
+     *   [SS]     = 0x1b (user data selector at GDT[3], 0x18|3)
      *   [RSP]    = user stack pointer
      *   [RFLAGS] = 0x202 (IF | reserved bit 1)
-     *   [CS]     = 0x1b (user code selector)
+     *   [CS]     = 0x23 (user code selector at GDT[4], 0x20|3)
      *   [RIP]    = entry point
+     *
+     * NOTE: User data MUST be at lower GDT index than user code for SYSRET!
      */
-    pushq $0x23                         /* SS = USER_DATA_SELECTOR (0x20|3) */
+    pushq $0x1b                         /* SS = USER_DATA_SELECTOR (0x18|3) */
     pushq %r10                          /* RSP = user stack */
     pushq $0x202                        /* RFLAGS = IF set, reserved bit 1 */
-    pushq $0x1b                         /* CS = USER_CODE_SELECTOR (0x18|3) */
+    pushq $0x23                         /* CS = USER_CODE_SELECTOR (0x20|3) */
     pushq %r11                          /* RIP = entry point */
 
     /* Zero unused registers for clean userspace entry */
@@ -109,9 +111,9 @@ fut_do_user_iretq:
 
     /* Set user data segments for ring transition
      * IRETQ will validate that all segment registers have DPL >= CPL
-     * User code has CPL=3, so we need user data selectors with DPL=3 (0x23)
+     * User code has CPL=3, so we need user data selectors with DPL=3 (0x1B)
      * Without this, IRETQ will cause a General Protection Fault #13 */
-    movw $0x23, %ax             /* User data selector (0x20|3) */
+    movw $0x1b, %ax             /* User data selector (0x18|3) */
     movw %ax, %ds
     movw %ax, %es
     /* DON'T load FS - it uses MSR_FS_BASE for TLS! Loading clears the MSR! */

@@ -67,8 +67,9 @@ extern void fut_do_user_iretq(uint64_t entry, uint64_t stack, uint64_t argc, uin
 #define PF_W            0x00000002u
 #define PF_R            0x00000004u
 
-#define USER_CODE_SELECTOR  (0x18u | 0x3u)
-#define USER_DATA_SELECTOR  (0x20u | 0x3u)
+/* With GDT layout: user data at 0x18, user code at 0x20 (for SYSRET compatibility) */
+#define USER_CODE_SELECTOR  (0x20u | 0x3u)  /* 0x23 */
+#define USER_DATA_SELECTOR  (0x18u | 0x3u)  /* 0x1B */
 
 #define USER_STACK_TOP      0x00007FFF000000ULL  /* Stack within 39-bit VA space (T0SZ=25) */
 #define USER_STACK_PAGES    16u  /* Increase stack pages from 4 to 16 (64KB) */
@@ -630,12 +631,12 @@ static int build_user_stack(fut_mm_t *mm,
          * IRETQ frames after irq_frame is cleared. Without this, the context has
          * kernel segments (0x10) from thread creation, causing crashes when the
          * scheduler constructs a frame from context for a user thread. */
-        cur_thread->context.ds = USER_DATA_SELECTOR;  /* 0x23 */
+        cur_thread->context.ds = USER_DATA_SELECTOR;  /* 0x1B */
         cur_thread->context.es = USER_DATA_SELECTOR;
         cur_thread->context.fs = USER_DATA_SELECTOR;  /* FS base set via MSR */
         cur_thread->context.gs = USER_DATA_SELECTOR;
-        cur_thread->context.cs = USER_CODE_SELECTOR;  /* 0x1B */
-        cur_thread->context.ss = USER_DATA_SELECTOR;  /* 0x23 */
+        cur_thread->context.cs = USER_CODE_SELECTOR;  /* 0x23 */
+        cur_thread->context.ss = USER_DATA_SELECTOR;  /* 0x1B */
         /* Also update RIP and RSP to user values. If irq_frame is cleared and
          * scheduler constructs a frame from context, it needs valid user addresses.
          * Without this, context.rip has kernel trampoline addr causing page fault. */

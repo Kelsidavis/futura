@@ -297,10 +297,10 @@ isr_syscall_fastpath:
 
     /* Step 3: Build interrupt frame on kernel stack matching fut_interrupt_frame_t */
     /* CPU-pushed values (we build manually since SYSCALL doesn't push them) */
-    pushq $0x23                   /* SS = user data segment (RPL=3) */
+    pushq $0x1b                   /* SS = user data segment (0x18|RPL=3) */
     pushq %gs:96                  /* User RSP (from saved scratch) */
     pushq %r11                    /* User RFLAGS (saved by SYSCALL in R11) */
-    pushq $0x2b                   /* CS = user code segment (RPL=3) */
+    pushq $0x23                   /* CS = user code segment (0x20|RPL=3) */
     pushq %rcx                    /* User RIP (saved by SYSCALL in RCX) */
 
     /* Push dummy vector (128) and error code (0) to match ISR frame layout */

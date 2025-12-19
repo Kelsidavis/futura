@@ -888,7 +888,7 @@ fut_switch_context_irq:
     jz .es_skip             /* NULL is valid, skip loading */
     cmpw $0x10, %ax         /* Check if valid kernel segment */
     je .es_ok
-    cmpw $0x23, %ax         /* Check if valid user segment */
+    cmpw $0x1b, %ax         /* Check if valid user data segment (0x18|RPL=3) */
     je .es_ok
     /* ES value is invalid! Skip loading it, use current ES */
 .es_skip:
@@ -905,7 +905,7 @@ fut_switch_context_irq:
     jz .ds_skip             /* NULL is valid, skip loading */
     cmpw $0x10, %ax         /* Check if valid kernel segment */
     je .ds_ok
-    cmpw $0x23, %ax         /* Check if valid user segment */
+    cmpw $0x1b, %ax         /* Check if valid user data segment (0x18|RPL=3) */
     je .ds_ok
     /* DS value is invalid! Skip loading it and use current DS */
 .ds_skip:
@@ -1067,11 +1067,11 @@ fut_switch_context_irq:
 .rip_not_null:
 
     /* CRITICAL: Validate and fix CS value in IRETQ frame */
-    /* Valid CS values: 0x08 (kernel), 0x1B (user with RPL=3) */
+    /* Valid CS values: 0x08 (kernel), 0x23 (user code with RPL=3) */
     movq 24(%rsp), %rax        /* Get CS from stack */
     cmpq $0x08, %rax          /* Is it kernel CS? */
     je .cs_iretq_ok
-    cmpq $0x1B, %rax          /* Is it user CS (0x18 | 3)? */
+    cmpq $0x23, %rax          /* Is it user CS (0x20 | 3)? */
     je .cs_iretq_ok
 
     /* CS is INVALID! Fix it based on RIP address space */
@@ -1085,7 +1085,7 @@ fut_switch_context_irq:
     testq %rax, %rax
     js .fix_kernel_cs         /* High bit set = kernel address */
     /* User space RIP - set user CS */
-    movq $0x1B, 24(%rsp)      /* CS = user code (0x18 | 3) */
+    movq $0x23, 24(%rsp)      /* CS = user code (0x20 | 3) */
     jmp .cs_iretq_ok
 .fix_kernel_cs:
     movq $0x08, 24(%rsp)      /* CS = kernel code */
@@ -1114,17 +1114,17 @@ fut_switch_context_irq:
 
     /* CRITICAL FIX: Validate SS in IRETQ frame.
      * In x86-64 mode, IRETQ always pops SS from RSP+32.
-     * Invalid SS values cause #GP. Valid values: 0, 0x10 (kernel), 0x23 (user).
+     * Invalid SS values cause #GP. Valid values: 0, 0x10 (kernel), 0x1b (user).
      * Stack layout after our push: [RSP+0]=RAX, [RSP+8]=RDX
      * IRETQ frame starts at RSP+16: RIP(+16), CS(+24), RFLAGS(+32), RSP(+40), SS(+48) */
     movq 48(%rsp), %rax     /* Get SS from IRETQ frame */
 
-    /* Check if SS is a valid selector: 0, 0x10, or 0x23 */
+    /* Check if SS is a valid selector: 0, 0x10, or 0x1b */
     testw %ax, %ax          /* Is SS zero? */
     jz .ss_iretq_ok         /* Zero is valid (kernel can use NULL SS in 64-bit mode) */
     cmpw $0x10, %ax         /* Is SS kernel data segment? */
     je .ss_iretq_ok
-    cmpw $0x23, %ax         /* Is SS user data segment? */
+    cmpw $0x1b, %ax         /* Is SS user data segment (0x18|RPL=3)? */
     je .ss_iretq_ok
 
     /* SS is INVALID - fix it! */
@@ -1135,8 +1135,8 @@ fut_switch_context_irq:
     movq 24(%rsp), %rax     /* Get CS from frame */
     cmpq $0x08, %rax        /* Is it kernel CS? */
     je .fix_kernel_ss
-    /* User CS - set SS to user data segment 0x23 */
-    movq $0x23, %rax
+    /* User CS - set SS to user data segment 0x1b */
+    movq $0x1b, %rax
     jmp .write_fixed_ss
 .fix_kernel_ss:
     /* Kernel CS - set SS to kernel data segment 0x10 */
@@ -1243,11 +1243,12 @@ fut_enter_usermode:
     /* Disable interrupts during transition */
     cli
 
-    /* Set up IRET frame for user mode */
-    pushq $0x20 | 3                     /* User data segment (SS) with RPL=3 */
+    /* Set up IRET frame for user mode
+     * GDT layout: user data at 0x18 (selector 0x1B), user code at 0x20 (selector 0x23) */
+    pushq $0x18 | 3                     /* User data segment (SS) with RPL=3 = 0x1B */
     pushq %rsi                          /* User stack pointer (RSP) */
     pushq $0x200                        /* RFLAGS (IF=1) */
-    pushq $0x18 | 3                     /* User code segment (CS) with RPL=3 */
+    pushq $0x20 | 3                     /* User code segment (CS) with RPL=3 = 0x23 */
     pushq %rdi                          /* User entry point (RIP) */
 
     /* Clear all registers for security */
@@ -1268,7 +1269,7 @@ fut_enter_usermode:
     xorq %r15, %r15
 
     /* Set user data segments (but DON'T touch FS or GS - they use MSRs!) */
-    movw $(0x20 | 3), %ax
+    movw $(0x18 | 3), %ax               /* User data selector = 0x1B */
     movw %ax, %ds
     movw %ax, %es
     /* FS intentionally NOT loaded - must preserve MSR_FS_BASE for TLS support */

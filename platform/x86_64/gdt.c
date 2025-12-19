@@ -11,7 +11,7 @@
 extern uint64_t gdt64_table[];
 
 #define TSS_SELECTOR 0x28
-#define USER_DATA_SELECTOR 0x23
+#define USER_DATA_SELECTOR 0x1b
 
 static tss_t g_kernel_tss __attribute__((aligned(16)));
 

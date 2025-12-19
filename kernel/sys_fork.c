@@ -1138,26 +1138,22 @@ static fut_thread_t *clone_thread(fut_thread_t *parent_thread, fut_task_t *child
 #ifdef __x86_64__
     /*
      * x86_64: Extract registers from interrupt frame
-     * Syscall entry stub layout: fut_current_frame points to CPU-pushed portion (RIP onwards)
-     * frame points to: RIP, CS, RFLAGS, RSP, SS
-     * Before that on stack: RAX, CR3, RBP, RBX, R12, R13, R14, R15
+     * fut_current_frame now points to full fut_interrupt_frame_t structure
      */
-    uint64_t *frame_ptr = (uint64_t *)frame;
-    uint64_t user_rip = frame_ptr[0];
-    uint64_t user_cs = frame_ptr[1];
-    uint64_t user_rflags = frame_ptr[2];
-    uint64_t user_rsp = frame_ptr[3];
-    uint64_t user_ss = frame_ptr[4];
-    uint64_t user_rbp = frame_ptr[-3];
-    uint64_t user_rbx = frame_ptr[-4];
-    uint64_t user_r12 = frame_ptr[-5];
-    uint64_t user_r13 = frame_ptr[-6];
-    uint64_t user_r14 = frame_ptr[-7];
-    uint64_t user_r15 = frame_ptr[-8];
-    /* DS, ES, FS are further back on the stack */
-    uint64_t user_ds = frame_ptr[-15];   /* RSP+24 = frame-120 = frame_ptr[-15] */
-    uint64_t user_es = frame_ptr[-16];   /* RSP+16 = frame-128 = frame_ptr[-16] */
-    uint64_t user_fs = frame_ptr[-17];   /* RSP+8  = frame-136 = frame_ptr[-17] */
+    uint64_t user_rip = frame->rip;
+    uint64_t user_cs = frame->cs;
+    uint64_t user_rflags = frame->rflags;
+    uint64_t user_rsp = frame->rsp;
+    uint64_t user_ss = frame->ss;
+    uint64_t user_rbp = frame->rbp;
+    uint64_t user_rbx = frame->rbx;
+    uint64_t user_r12 = frame->r12;
+    uint64_t user_r13 = frame->r13;
+    uint64_t user_r14 = frame->r14;
+    uint64_t user_r15 = frame->r15;
+    uint64_t user_ds = frame->ds;
+    uint64_t user_es = frame->es;
+    uint64_t user_fs = frame->fs;
 
     fut_printf("[FORK] Parent frame: RIP=0x%llx RSP=0x%llx SS=0x%llx\n", user_rip, user_rsp, user_ss);
 

@@ -1299,46 +1299,15 @@ void fut_kernel_main(void) {
     fut_printf("[INIT] Starting console input thread...\n");
     fut_console_start_input_thread();
 
-    /* Launch init process with environment for Wayland */
-    if (init_stage == 0) {
-        fut_printf("[INIT] Launching init process...\n");
-        char init_name[] = "init";
-        char *init_args[] = { init_name, NULL };
-        /* Pass Wayland environment to init so it can launch wl-term */
-        char xdg_runtime[] = "XDG_RUNTIME_DIR=/tmp";
-        char wayland_display[] = "WAYLAND_DISPLAY=wayland-0";
-        char *init_envp[] = { xdg_runtime, wayland_display, NULL };
-        int init_exec = fut_exec_elf("/sbin/init_stub", init_args, init_envp);
-        if (init_exec != 0) {
-            fut_printf("[WARN] Failed to launch /sbin/init_stub (error %d)\n", init_exec);
-        } else {
-            fut_printf("[INIT] Init process launched successfully\n");
-        }
-    }
-
     /* ========================================
-     *   Launch Interactive Shell
+     *   Launch Wayland Compositor FIRST
      * ======================================== */
-    /* NOTE: Shell launch disabled - init_stub now launches wl-term instead */
-    /* Shell binary is staged as a file in initramfs, not embedded */
-    /* fut_printf("[INIT] Staging shell binary...\n");
-    int shell_stage = fut_stage_shell_binary();
-    if (shell_stage != 0) {
-        fut_printf("[WARN] Failed to stage shell binary (error %d)\n", shell_stage);
-    } else {
-        fut_printf("[INIT] Launching shell...\n");
-        char shell_name[] = "shell";
-        char *shell_args[] = { shell_name, NULL };
-        int shell_exec = fut_exec_elf("/bin/shell", shell_args, NULL);
-        if (shell_exec != 0) {
-            fut_printf("[WARN] Failed to launch /bin/shell (error %d)\n", shell_exec);
-        } else {
-            fut_printf("[INIT] Shell launched successfully\n");
-        }
-    } */
-
+    /* CRITICAL: Compositor must be launched BEFORE init process!
+     * init_stub waits for the Wayland socket, so compositor needs to start first
+     * to create the socket. If init launches first, it will timeout waiting. */
 #if ENABLE_WAYLAND_DEMO
     if (wayland_stage == 0) {
+        fut_printf("[INIT] Launching Wayland compositor...\n");
         char name[] = "futura-wayland";
         char *args[] = { name, NULL };
         /* Environment with LD_PRELOAD and runtime parameters */
@@ -1376,6 +1345,45 @@ void fut_kernel_main(void) {
             fut_printf("[INIT] exec /sbin/futura-wayland -> 0\n");
         }
     }
+#endif
+
+    /* Launch init process with environment for Wayland */
+    if (init_stage == 0) {
+        fut_printf("[INIT] Launching init process...\n");
+        char init_name[] = "init";
+        char *init_args[] = { init_name, NULL };
+        /* Pass Wayland environment to init so it can launch wl-term */
+        char xdg_runtime[] = "XDG_RUNTIME_DIR=/tmp";
+        char wayland_display[] = "WAYLAND_DISPLAY=wayland-0";
+        char *init_envp[] = { xdg_runtime, wayland_display, NULL };
+        int init_exec = fut_exec_elf("/sbin/init_stub", init_args, init_envp);
+        if (init_exec != 0) {
+            fut_printf("[WARN] Failed to launch /sbin/init_stub (error %d)\n", init_exec);
+        } else {
+            fut_printf("[INIT] Init process launched successfully\n");
+        }
+    }
+
+    /* ========================================
+     *   Launch Interactive Shell (DISABLED)
+     * ======================================== */
+    /* NOTE: Shell launch disabled - init_stub now launches wl-term instead */
+    /* Shell binary is staged as a file in initramfs, not embedded */
+    /* fut_printf("[INIT] Staging shell binary...\n");
+    int shell_stage = fut_stage_shell_binary();
+    if (shell_stage != 0) {
+        fut_printf("[WARN] Failed to stage shell binary (error %d)\n", shell_stage);
+    } else {
+        fut_printf("[INIT] Launching shell...\n");
+        char shell_name[] = "shell";
+        char *shell_args[] = { shell_name, NULL };
+        int shell_exec = fut_exec_elf("/bin/shell", shell_args, NULL);
+        if (shell_exec != 0) {
+            fut_printf("[WARN] Failed to launch /bin/shell (error %d)\n", shell_exec);
+        } else {
+            fut_printf("[INIT] Shell launched successfully\n");
+        }
+    } */
 
     /* Multi-client Wayland: Launch wl-simple and optionally wl-colorwheel */
 #if ENABLE_WAYLAND_TEST_CLIENTS
@@ -1464,7 +1472,6 @@ void fut_kernel_main(void) {
         fut_printf("[WARN] Wayland exec: %d, client exec: %d\n", wayland_exec, wayland_client_exec);
         fut_printf("[WARN] Continuing to scheduler anyway\n");
     }
-#endif
 
     /* ========================================
      *   Step 6: Create Test Task and FIPC Channel

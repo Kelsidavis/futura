@@ -165,12 +165,20 @@ void fut_sched_init(void) {
     fut_printf("[SCHED-IDLE] SS after load: 0x%04x\n", (unsigned int)ss_after);
 #endif
 
-    // Set idle thread as current thread so kernel_main has a task context
-    // This allows opening /dev/console and other operations that need a task
-    fut_thread_set_current(idle_thread);
-    idle_thread->state = FUT_THREAD_RUNNING;
+    // CRITICAL: Do NOT set idle thread as current here!
+    // The bootstrap thread is already set as current by fut_thread_init_bootstrap()
+    // and it has a proper task context. If we set idle as current, then kernel_main
+    // (running as bootstrap thread) will be "lost" when the scheduler runs because:
+    // 1. The scheduler thinks idle_thread is current
+    // 2. The check "prev != idle" prevents idle from being added back to queue
+    // 3. kernel_main code path gets abandoned after first context switch
+    //
+    // Instead, leave the bootstrap thread as current. The scheduler will properly
+    // track it as a normal thread that can be preempted and rescheduled.
+    // The idle thread will be used only when no other threads are runnable.
+    idle_thread->state = FUT_THREAD_READY;  // Idle is ready, not running
 
-    fut_printf("[SCHED] Scheduler initialized for CPU %u (current thread set to idle)\n", percpu->cpu_id);
+    fut_printf("[SCHED] Scheduler initialized for CPU %u (bootstrap thread remains current)\n", percpu->cpu_id);
 }
 
 /**

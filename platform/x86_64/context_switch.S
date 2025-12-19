@@ -321,26 +321,17 @@ fut_switch_context_irq:
     popq %rax
 
 1:
-    /* CRITICAL: Never allow idle thread (tid=1) to have saved interrupt frames.
-     * Idle thread should always construct frames from context to avoid corruption.
-     * If prev is idle thread, ensure its irq_frame is NULL. */
-    testq %r12, %r12        /* Check if we have a prev thread */
-    jz .check_next_idle
-    movq 0(%r12), %rax      /* Get prev->tid (first field in struct) */
-    cmpq $1, %rax           /* Is it tid=1 (idle thread)? */
-    jne .check_next_idle
-    /* prev is idle thread - ensure irq_frame is NULL */
-    movq $0, 720(%r12)      /* prev->irq_frame = NULL */
-
-.check_next_idle:
-    /* Similarly, if next is idle thread, ensure its irq_frame is NULL */
-    testq %r13, %r13        /* Check if we have a next thread */
-    jz .get_next_frame
-    movq 0(%r13), %rax      /* Get next->tid */
-    cmpq $1, %rax           /* Is it tid=1 (idle thread)? */
-    jne .get_next_frame
-    /* next is idle thread - clear irq_frame to force construction from context */
-    movq $0, 720(%r13)      /* next->irq_frame = NULL */
+    /* NOTE: We previously had logic here to clear irq_frame for tid=1
+     * assuming it was the idle thread. This was wrong because:
+     * 1. tid=1 is the bootstrap thread (kernel_main), not idle
+     * 2. The idle thread's TID is dynamically assigned (e.g., tid=3)
+     * 3. Clearing irq_frame for the bootstrap thread causes it to
+     *    construct frames from uninitialized context (RIP=0), hanging
+     *
+     * The scheduler (fut_sched.c) now handles idle threads correctly
+     * without needing special assembly support. Idle detection should
+     * be based on percpu->idle_thread, not hardcoded TID checks.
+     */
 
 .get_next_frame:
     /* Step 2: Get next thread's saved frame pointer */

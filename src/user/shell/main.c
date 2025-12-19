@@ -4066,10 +4066,10 @@ int main(int argc, char **argv, char **envp) {
     }
 
     write_str(1, "\n");
-    write_str(1, "╔════════════════════════════════════════╗\n");
-    write_str(1, "║   Futura OS Shell v0.3                 ║\n");
-    write_str(1, "║   Type 'help' for available commands   ║\n");
-    write_str(1, "╚════════════════════════════════════════╝\n");
+    write_str(1, "+------------------------------------------+\n");
+    write_str(1, "|   Futura OS Shell v0.3                   |\n");
+    write_str(1, "|   Type 'help' for available commands     |\n");
+    write_str(1, "+------------------------------------------+\n");
     write_str(1, "\n");
 
     char cmdline[512];

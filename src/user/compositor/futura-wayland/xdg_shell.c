@@ -419,8 +419,7 @@ static void xdg_surface_issue_configure(struct xdg_surface_state *state,
         }
     }
 
-    xdg_toplevel_send_configure(state->xdg_toplevel_res, width, height,
-                                states.size ? &states : NULL);
+    xdg_toplevel_send_configure(state->xdg_toplevel_res, width, height, &states);
     wl_array_release(&states);
     state->configure_serial = serial;
     state->size.width = width;

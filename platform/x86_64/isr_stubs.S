@@ -373,8 +373,14 @@ isr_syscall_fastpath:
      * RSP+200: SS
      */
 
-    /* Set global fut_current_frame to start of frame for C code access */
+    /* Set global fut_current_frame to start of frame for C code access.
+     * CRITICAL: Also set fut_in_interrupt=1 so that if the syscall calls
+     * fut_schedule() (e.g., during exit()), the scheduler uses IRETQ-based
+     * context switching. Without this, the scheduler uses cooperative switch
+     * which loads from thread->context instead of thread->irq_frame, causing
+     * state corruption when the next thread was previously preempted. */
     movq %rsp, fut_current_frame(%rip)
+    movb $1, fut_in_interrupt(%rip)
 
     /* Extract syscall arguments from saved registers */
     movq 32(%rsp), %rdi           /* RDI = syscall number (from saved RAX) */
@@ -395,6 +401,11 @@ isr_syscall_fastpath:
 
     /* Save return value */
     movq %rax, %r15               /* Save syscall return value in R15 (callee-saved) */
+
+    /* Clear interrupt context flags now that syscall is complete.
+     * This must happen before we start restoring registers. */
+    movb $0, fut_in_interrupt(%rip)
+    movq $0, fut_current_frame(%rip)
 
     addq $16, %rsp                /* Remove stack arguments */
 

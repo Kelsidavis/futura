@@ -364,7 +364,9 @@ static int spawn_shell(struct terminal *term) {
     term->shell_stdout_fd = stdout_pipe[0]; /* Read from shell's stdout */
     term->shell_pid = (int)pid;
 
-    printf("[WL-TERM] Shell spawned (pid=%ld)\n", pid);
+    /* Use sys_write instead of printf to avoid potential va_list issues */
+    const char spawn_msg[] = "[WL-TERM] Shell spawned\n";
+    sys_write(1, spawn_msg, sizeof(spawn_msg) - 1);
     return 0;
 }
 

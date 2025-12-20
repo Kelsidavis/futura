@@ -68,6 +68,23 @@ int fut_vprintf_fmt(fut_putc_fn cb, void *ctx, const char *fmt, va_list ap) {
         }
 
         ++fmt; /* Skip '%' */
+
+        /* Parse length modifier */
+        bool is_long = false;
+        bool is_longlong = false;
+        bool is_size = false;
+        while (*fmt == 'l' || *fmt == 'z') {
+            if (*fmt == 'l') {
+                if (is_long) {
+                    is_longlong = true;
+                }
+                is_long = true;
+            } else if (*fmt == 'z') {
+                is_size = true;
+            }
+            fmt++;
+        }
+
         char spec = *fmt ? *fmt++ : '\0';
         switch (spec) {
         case '%':
@@ -94,22 +111,57 @@ int fut_vprintf_fmt(fut_putc_fn cb, void *ctx, const char *fmt, va_list ap) {
         }
         case 'd':
         case 'i': {
-            int val = va_arg(ap, int);
-            if (emit_signed(cb, ctx, (int64_t)val, &total) < 0) {
+            int64_t val;
+            if (is_longlong) {
+                val = va_arg(ap, long long);
+            } else if (is_long || is_size) {
+                val = va_arg(ap, long);
+            } else {
+                val = va_arg(ap, int);
+            }
+            if (emit_signed(cb, ctx, val, &total) < 0) {
                 return -1;
             }
             break;
         }
         case 'u': {
-            unsigned int val = va_arg(ap, unsigned int);
+            uint64_t val;
+            if (is_longlong) {
+                val = va_arg(ap, unsigned long long);
+            } else if (is_long || is_size) {
+                val = va_arg(ap, unsigned long);
+            } else {
+                val = va_arg(ap, unsigned int);
+            }
             if (emit_unsigned(cb, ctx, (uint64_t)val, 10, false, &total) < 0) {
                 return -1;
             }
             break;
         }
         case 'x': {
-            unsigned int val = va_arg(ap, unsigned int);
+            uint64_t val;
+            if (is_longlong) {
+                val = va_arg(ap, unsigned long long);
+            } else if (is_long || is_size) {
+                val = va_arg(ap, unsigned long);
+            } else {
+                val = va_arg(ap, unsigned int);
+            }
             if (emit_unsigned(cb, ctx, (uint64_t)val, 16, false, &total) < 0) {
+                return -1;
+            }
+            break;
+        }
+        case 'X': {
+            uint64_t val;
+            if (is_longlong) {
+                val = va_arg(ap, unsigned long long);
+            } else if (is_long || is_size) {
+                val = va_arg(ap, unsigned long);
+            } else {
+                val = va_arg(ap, unsigned int);
+            }
+            if (emit_unsigned(cb, ctx, (uint64_t)val, 16, true, &total) < 0) {
                 return -1;
             }
             break;

@@ -392,6 +392,25 @@ static void bb_fill_rect(struct backbuffer *bb, fut_rect_t rect, uint32_t argb) 
         return;
     }
 
+    /* Bounds check: clip rect to backbuffer dimensions */
+    if (rect.x < 0) {
+        rect.w += rect.x;
+        rect.x = 0;
+    }
+    if (rect.y < 0) {
+        rect.h += rect.y;
+        rect.y = 0;
+    }
+    if (rect.x + rect.w > bb->width) {
+        rect.w = bb->width - rect.x;
+    }
+    if (rect.y + rect.h > bb->height) {
+        rect.h = bb->height - rect.y;
+    }
+    if (rect.w <= 0 || rect.h <= 0) {
+        return;
+    }
+
     uint8_t *base = (uint8_t *)bb->px;
 
     /* For large rects, use faster 64-bit fill */
@@ -1435,6 +1454,11 @@ void comp_render_frame(struct compositor_state *comp) {
     /* Always present rendered content to framebuffer, whether backbuffer is enabled or not */
     present_damage(comp, damage);
 
+    /* Flush framebuffer to display (required for virtio-GPU) */
+    if (comp->fb_fd >= 0) {
+        sys_ioctl(comp->fb_fd, FBIOFLUSH, 0);
+    }
+
     int frame_cb_count = comp_flush_frame_callbacks(comp, comp_now_msec());
 
 #ifdef DEBUG_WAYLAND
@@ -1591,6 +1615,12 @@ void comp_render_demo_frame(struct compositor_state *comp) {
     printf("[DEMO] Readback GREEN: %08x (expect 00FF00)\n", *p_green);
     printf("[DEMO] Readback BLUE: %08x (expect 0000FF)\n", *p_blue);
     printf("[DEMO] Readback YELLOW: %08x (expect FFFF00)\n", *p_yellow);
+
+    /* Flush framebuffer to display (required for virtio-GPU) */
+    if (comp->fb_fd >= 0) {
+        sys_ioctl(comp->fb_fd, FBIOFLUSH, 0);
+        printf("[DEMO] FBIOFLUSH called\n");
+    }
 }
 
 static void ms_to_timespec(uint64_t ms, struct timespec *ts) {

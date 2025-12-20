@@ -124,7 +124,8 @@ void shadow_draw(struct backbuffer *dst,
     }
 
     for (int y = clip_y1; y < clip_y2; ++y) {
-        uint8_t *row_ptr = (uint8_t *)dst->px + (size_t)y * (size_t)dst->pitch;
+        /* Use char* for byte arithmetic (allowed to alias per C standard) */
+        uint32_t *row = (uint32_t *)((char *)dst->px + (size_t)y * (size_t)dst->pitch);
         for (int x = clip_x1; x < clip_x2; ++x) {
             if (x >= window.x && x < window.x + window.w &&
                 y >= window.y && y < window.y + window.h) {
@@ -155,8 +156,7 @@ void shadow_draw(struct backbuffer *dst,
                 continue;
             }
 
-            uint32_t *pixel = (uint32_t *)(row_ptr + (size_t)x * 4u);
-            shadow_darken_pixel(pixel, (uint8_t)alpha);
+            shadow_darken_pixel(&row[x], (uint8_t)alpha);
         }
     }
 }

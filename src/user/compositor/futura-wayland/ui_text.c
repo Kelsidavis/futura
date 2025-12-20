@@ -66,7 +66,8 @@ void ui_draw_text(uint32_t *dst,
                 continue;
             }
 
-            uint8_t *row_ptr = (uint8_t *)dst + (size_t)gy * (size_t)dpitch_bytes;
+            /* Use char* for byte arithmetic (allowed to alias per C standard) */
+            uint32_t *row = (uint32_t *)((char *)dst + (size_t)gy * (size_t)dpitch_bytes);
             for (int col = 0; col < UI_FONT_WIDTH; ++col) {
                 if ((bits & (uint8_t)(0x80u >> col)) == 0) {
                     continue;
@@ -75,8 +76,7 @@ void ui_draw_text(uint32_t *dst,
                 if (gx < clip_x || gx >= clip_x2) {
                     continue;
                 }
-                uint32_t *pixel = (uint32_t *)(row_ptr + (size_t)gx * 4u);
-                *pixel = argb;
+                row[gx] = argb;
             }
         }
     }

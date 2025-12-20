@@ -411,84 +411,39 @@ static void bb_fill_rect(struct backbuffer *bb, fut_rect_t rect, uint32_t argb) 
         return;
     }
 
-    uint8_t *base = (uint8_t *)bb->px;
+    /* Use char* for byte-level row arithmetic (char* may alias any type per C standard).
+     * Then cast to uint32_t* at row boundary for pixel access. */
+    char *base = (char *)bb->px;
 
-    /* For large rects, use faster 64-bit fill */
-    if (rect.w >= 4) {
-        /* Create a 64-bit pattern: two consecutive 32-bit pixels */
-        uint64_t pattern64 = ((uint64_t)argb << 32) | argb;
+    for (int32_t y = 0; y < rect.h; ++y) {
+        /* Compute row start using char* arithmetic, then cast to uint32_t* */
+        uint32_t *row = (uint32_t *)(base + (size_t)(rect.y + y) * bb->pitch);
+        uint32_t *dst = row + rect.x;
 
-        for (int32_t y = 0; y < rect.h; ++y) {
-            uint8_t *dst = base + (size_t)(rect.y + y) * bb->pitch + (size_t)rect.x * 4u;
-            uint64_t *dst_u64 = (uint64_t *)dst;
-
-            /* Write pairs of pixels with 64-bit stores */
-            int32_t pairs = rect.w / 2;
-            for (int32_t x = 0; x < pairs; ++x) {
-                dst_u64[x] = pattern64;
-            }
-
-            /* Handle odd-width rectangles with final 32-bit write */
-            if (rect.w & 1) {
-                uint32_t *dst_u32 = (uint32_t *)(dst + pairs * 8);
-                *dst_u32 = argb;
-            }
-        }
-    } else {
-        /* For small rectangles, use simple 32-bit writes */
-        for (int32_t y = 0; y < rect.h; ++y) {
-            uint8_t *dst = base + (size_t)(rect.y + y) * bb->pitch + (size_t)rect.x * 4u;
-            uint32_t *dst_px = (uint32_t *)dst;
-            for (int32_t x = 0; x < rect.w; ++x) {
-                dst_px[x] = argb;
-            }
+        for (int32_t x = 0; x < rect.w; ++x) {
+            dst[x] = argb;
         }
     }
 }
 
-/* Optimized pixel blit using 64-bit operations where possible.
- * Significantly faster than memcpy for aligned pixel data.
- * Falls back to memcpy for unaligned or small copies.
+/* Pixel blit using memcpy for each row.
+ * Modern compilers optimize memcpy very well, often using SIMD instructions.
+ * Using char* for byte-level pointer arithmetic (allowed to alias per C standard).
  */
-static void blit_argb(const uint8_t *src_base,
+static void blit_argb(const char *src_base,
                       int src_pitch,
-                      uint8_t *dst_base,
+                      char *dst_base,
                       int dst_pitch,
                       int width,
                       int height) {
     size_t row_bytes = (size_t)width * 4u;
-    const uint8_t *src = src_base;
-    uint8_t *dst = dst_base;
+    const char *src = src_base;
+    char *dst = dst_base;
 
-    /* For wide rectangles (>= 8 pixels), use 64-bit bulk copy */
-    if (width >= 8) {
-        for (int y = 0; y < height; ++y) {
-            const uint64_t *src_u64 = (const uint64_t *)src;
-            uint64_t *dst_u64 = (uint64_t *)dst;
-
-            /* Copy pairs of pixels (8 bytes = 2 pixels) */
-            int pairs = width / 2;
-            for (int x = 0; x < pairs; ++x) {
-                dst_u64[x] = src_u64[x];
-            }
-
-            /* Handle odd-width rows with final pixel copy */
-            if (width & 1) {
-                uint32_t *src_u32 = (uint32_t *)(src + pairs * 8);
-                uint32_t *dst_u32 = (uint32_t *)(dst + pairs * 8);
-                *dst_u32 = *src_u32;
-            }
-
-            src += src_pitch;
-            dst += dst_pitch;
-        }
-    } else {
-        /* For small rectangles or unaligned data, use memcpy */
-        for (int y = 0; y < height; ++y) {
-            memcpy(dst, src, row_bytes);
-            src += src_pitch;
-            dst += dst_pitch;
-        }
+    for (int y = 0; y < height; ++y) {
+        memcpy(dst, src, row_bytes);
+        src += src_pitch;
+        dst += dst_pitch;
     }
 }
 
@@ -516,11 +471,12 @@ static void draw_minimize_button(struct backbuffer *dst,
         base = COLOR_BTN_HOVER;
     }
 
-    uint8_t *base_ptr = (uint8_t *)dst->px;
+    char *base_ptr = (char *)dst->px;
     for (int32_t y = 0; y < clip.h; ++y) {
         int32_t gy = clip.y + y;
-        uint8_t *row = base_ptr + (size_t)gy * dst->pitch + (size_t)clip.x * 4u;
-        uint32_t *px = (uint32_t *)row;
+        /* Use char* for row arithmetic, then cast to uint32_t* for pixel access */
+        uint32_t *row = (uint32_t *)(base_ptr + (size_t)gy * dst->pitch);
+        uint32_t *px = row + clip.x;
         for (int32_t x = 0; x < clip.w; ++x) {
             int32_t gx = clip.x + x;
             int32_t lx = gx - btn.x;
@@ -557,11 +513,12 @@ static void draw_close_button(struct backbuffer *dst,
         base = COLOR_BTN_HOVER;
     }
 
-    uint8_t *base_ptr = (uint8_t *)dst->px;
+    char *base_ptr = (char *)dst->px;
     for (int32_t y = 0; y < clip.h; ++y) {
         int32_t gy = clip.y + y;
-        uint8_t *row = base_ptr + (size_t)gy * dst->pitch + (size_t)clip.x * 4u;
-        uint32_t *px = (uint32_t *)row;
+        /* Use char* for row arithmetic, then cast to uint32_t* for pixel access */
+        uint32_t *row = (uint32_t *)(base_ptr + (size_t)gy * dst->pitch);
+        uint32_t *px = row + clip.x;
         for (int32_t x = 0; x < clip.w; ++x) {
             int32_t gx = clip.x + x;
             int32_t lx = gx - btn.x;
@@ -1293,8 +1250,8 @@ static void present_damage(struct compositor_state *comp, const struct damage_ac
             continue;
         }
 
-        const uint8_t *src_base = (const uint8_t *)src->px + (size_t)rect.y * src->pitch + (size_t)rect.x * 4u;
-        uint8_t *dst_base = comp->fb_map + (size_t)rect.y * comp->fb_info.pitch + (size_t)rect.x * 4u;
+        const char *src_base = (const char *)src->px + (size_t)rect.y * src->pitch + (size_t)rect.x * 4u;
+        char *dst_base = (char *)comp->fb_map + (size_t)rect.y * comp->fb_info.pitch + (size_t)rect.x * 4u;
         blit_argb(src_base, src->pitch, dst_base, comp->fb_info.pitch, rect.w, rect.h);
     }
 }
@@ -1425,10 +1382,10 @@ void comp_render_frame(struct compositor_state *comp) {
             if (!rect_intersection(damage->rects[i], content_rect, &content_clip)) {
                 continue;
             }
-            const uint8_t *src_ptr = surface->backing +
+            const char *src_ptr = (const char *)surface->backing +
                 (size_t)(content_clip.y - content_rect.y) * surface->stride +
                 (size_t)(content_clip.x - content_rect.x) * 4u;
-            uint8_t *dst_ptr = (uint8_t *)dst->px +
+            char *dst_ptr = (char *)dst->px +
                 (size_t)content_clip.y * dst->pitch +
                 (size_t)content_clip.x * 4u;
             blit_argb(src_ptr, surface->stride, dst_ptr, dst->pitch,

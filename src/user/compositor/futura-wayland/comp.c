@@ -1663,15 +1663,7 @@ int comp_run(struct compositor_state *comp) {
         return -1;
     }
 
-    printf("[COMP-RUN] Entering main loop (running=%d)\n", comp->running);
-
-    int loop_count = 0;
     while (comp->running) {
-        if (loop_count < 5 || (loop_count % 60) == 0) {
-            printf("[COMP-RUN] Loop iteration %d\n", loop_count);
-        }
-        loop_count++;
-
         wl_display_flush_clients(comp->display);
 
         /* Calculate timeout to next timer event.
@@ -1681,11 +1673,7 @@ int comp_run(struct compositor_state *comp) {
         int timeout_ms = 16;
 
         int rc = wl_event_loop_dispatch(comp->loop, timeout_ms);
-        if (loop_count < 5) {
-            printf("[COMP-RUN] wl_event_loop_dispatch returned %d (errno=%d)\n", rc, errno);
-        }
         if (rc < 0 && errno != EINTR) {
-            printf("[COMP-RUN] Breaking out of loop: rc=%d errno=%d\n", rc, errno);
             break;
         }
 
@@ -1696,6 +1684,11 @@ int comp_run(struct compositor_state *comp) {
             if (read_rc > 0 && expirations > 0) {
                 comp_handle_timer_tick(comp, expirations);
             }
+        }
+
+        /* Poll input devices for keyboard/mouse events */
+        if (comp->seat) {
+            seat_poll_input(comp->seat);
         }
     }
 

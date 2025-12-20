@@ -557,7 +557,7 @@ static void seat_handle_button(struct seat_state *seat,
     seat_pointer_button(seat, code, pressed, time_msec);
 }
 
-static void __attribute__((unused)) seat_handle_mouse_event(struct seat_state *seat,
+static void seat_handle_mouse_event(struct seat_state *seat,
                                     const struct fut_input_event *ev) {
     if (!seat || !ev) {
         return;
@@ -591,7 +591,7 @@ static void __attribute__((unused)) seat_handle_mouse_event(struct seat_state *s
     }
 }
 
-static void __attribute__((unused)) seat_handle_key_event(struct seat_state *seat,
+static void seat_handle_key_event(struct seat_state *seat,
                                   const struct fut_input_event *ev) {
     if (!seat || !ev) {
         return;
@@ -798,27 +798,9 @@ struct seat_state *seat_init(struct compositor_state *comp) {
     seat->kbd_fd = (int)sys_open("/dev/input/kbd0", O_RDONLY | O_NONBLOCK, 0);
     seat->mouse_fd = (int)sys_open("/dev/input/mouse0", O_RDONLY | O_NONBLOCK, 0);
 
-    printf("[SEAT-DEBUG] kbd_fd=%d, mouse_fd=%d\n", seat->kbd_fd, seat->mouse_fd);
-
-    if (seat->kbd_fd < 0) {
-        printf("[SEAT-DEBUG] warning: keyboard open failed (err=%d)\n", seat->kbd_fd);
-    }
-    if (seat->mouse_fd < 0) {
-        printf("[SEAT-DEBUG] warning: mouse open failed (err=%d)\n", seat->mouse_fd);
-    }
-
-    if (seat->kbd_fd < 0 && seat->mouse_fd < 0) {
-        printf("[SEAT-DEBUG] No physical input devices available; continuing without hardware input\n");
-    }
-
-    /* Note: Input device files (/dev/input/kbd0, /dev/input/mouse0) are character
-       devices that don't support epoll/poll. They cannot be added to the Wayland event
-       loop. For now, we mark this as unsupported and continue without input handling.
-       A proper implementation would use libinput or a separate input thread. */
-
-#ifdef DEBUG_WAYLAND
-    printf("[SEAT-DEBUG] Skipping event loop registration - input devices don't support epoll\n");
-#endif
+    /* Input devices are polled manually in seat_poll_input() since they
+       don't support epoll. The compositor main loop calls seat_poll_input()
+       each iteration to check for keyboard/mouse events. */
 
     /* Mark that we have input devices available, even though they're not in the event loop */
     seat->kbd_source_registered = false;   /* Not registered with event loop */
@@ -836,6 +818,36 @@ struct seat_state *seat_init(struct compositor_state *comp) {
 
     comp->seat = seat;
     return seat;
+}
+
+void seat_poll_input(struct seat_state *seat) {
+    if (!seat) {
+        return;
+    }
+
+    /* Poll keyboard for events (non-blocking) */
+    if (seat->kbd_fd >= 0) {
+        struct fut_input_event events[8];
+        long rc = sys_read(seat->kbd_fd, events, (long)sizeof(events));
+        if (rc > 0) {
+            size_t count = (size_t)rc / sizeof(struct fut_input_event);
+            for (size_t i = 0; i < count; ++i) {
+                seat_handle_key_event(seat, &events[i]);
+            }
+        }
+    }
+
+    /* Poll mouse for events (non-blocking) */
+    if (seat->mouse_fd >= 0) {
+        struct fut_input_event events[16];
+        long rc = sys_read(seat->mouse_fd, events, (long)sizeof(events));
+        if (rc > 0) {
+            size_t count = (size_t)rc / sizeof(struct fut_input_event);
+            for (size_t i = 0; i < count; ++i) {
+                seat_handle_mouse_event(seat, &events[i]);
+            }
+        }
+    }
 }
 
 void seat_finish(struct seat_state *seat) {

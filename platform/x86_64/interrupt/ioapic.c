@@ -8,12 +8,20 @@
 #include <platform/x86_64/memory/paging.h>
 #include <platform/x86_64/memory/pmap.h>
 #include <stddef.h>
+#include <stdbool.h>
 
 extern void fut_printf(const char *fmt, ...);
 
 /* IO-APIC MMIO base address (virtual) */
 static volatile uint32_t *ioapic_base = NULL;
 static uint32_t ioapic_gsi_base = 0;
+
+/**
+ * Check if IO-APIC is initialized and available.
+ */
+bool ioapic_is_available(void) {
+    return ioapic_base != NULL;
+}
 
 /**
  * Read IO-APIC register.

@@ -508,6 +508,16 @@ void fut_irq_send_eoi(uint8_t irq) {
 }
 
 void fut_irq_enable(uint8_t irq) {
+    /* Use IO-APIC if available (APIC mode), otherwise use legacy PIC */
+    extern bool ioapic_is_available(void);
+    extern void ioapic_unmask_irq(uint8_t irq);
+
+    if (ioapic_is_available()) {
+        ioapic_unmask_irq(irq);
+        return;
+    }
+
+    /* Legacy PIC fallback */
     uint16_t port;
     uint8_t value;
 
@@ -523,6 +533,16 @@ void fut_irq_enable(uint8_t irq) {
 }
 
 void fut_irq_disable(uint8_t irq) {
+    /* Use IO-APIC if available (APIC mode), otherwise use legacy PIC */
+    extern bool ioapic_is_available(void);
+    extern void ioapic_mask_irq(uint8_t irq);
+
+    if (ioapic_is_available()) {
+        ioapic_mask_irq(irq);
+        return;
+    }
+
+    /* Legacy PIC fallback */
     uint16_t port;
     uint8_t value;
 

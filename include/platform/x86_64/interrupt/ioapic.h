@@ -119,6 +119,13 @@ void ioapic_set_irq(uint8_t irq, uint8_t vector, uint8_t dest_apic_id,
 void ioapic_mask_irq(uint8_t irq);
 
 /**
+ * Check if IO-APIC is initialized and available.
+ *
+ * @return true if IO-APIC is available, false otherwise
+ */
+bool ioapic_is_available(void);
+
+/**
  * Unmask (enable) an IRQ.
  *
  * @param irq IRQ number to unmask

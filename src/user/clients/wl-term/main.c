@@ -345,12 +345,12 @@ static int spawn_shell(struct terminal *term) {
         sys_close(stdout_pipe[1]);
 
         /* Exec shell */
-        char shell_name[] = "shell";
+        char shell_name[] = "futura-shell";
         char *shell_args[] = { shell_name, NULL };
-        sys_execve_call("/bin/shell", shell_args, NULL);
+        sys_execve_call("/sbin/futura-shell", shell_args, NULL);
 
         /* If we get here, exec failed */
-        const char msg[] = "exec /bin/shell failed\n";
+        const char msg[] = "exec /sbin/futura-shell failed\n";
         sys_write(2, msg, sizeof(msg) - 1);
         sys_exit(1);
     }

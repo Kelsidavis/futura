@@ -504,6 +504,16 @@ void fut_pic_send_eoi(uint8_t irq) {
 }
 
 void fut_irq_send_eoi(uint8_t irq) {
+    /* Use LAPIC EOI if LAPIC is initialized (APIC mode), otherwise use legacy PIC */
+    extern bool lapic_is_initialized(void);
+    extern void lapic_send_eoi(void);
+
+    if (lapic_is_initialized()) {
+        lapic_send_eoi();
+        return;
+    }
+
+    /* Legacy PIC fallback */
     fut_pic_send_eoi(irq);
 }
 

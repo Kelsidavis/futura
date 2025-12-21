@@ -599,6 +599,55 @@ static void virtio_gpu_submit_command(const void *cmd, size_t cmd_size) {
     g_cmd_idx++;
 }
 
+/* Async version that doesn't wait for response - used for display flush */
+static void virtio_gpu_submit_command_async(const void *cmd, size_t cmd_size) {
+    if (!g_desc_table || !g_avail || !g_cmd_buffer || !g_resp_buffer) {
+        return;
+    }
+
+    if (cmd_size > CMD_BUFFER_SIZE) {
+        return;
+    }
+
+    /* Copy command to guest physical buffer */
+    memcpy((void *)g_cmd_buffer, cmd, cmd_size);
+
+    /* Clear response buffer */
+    memset((void *)g_resp_buffer, 0, RESP_BUFFER_SIZE);
+
+    /* Create descriptor chain: command -> response */
+    uint16_t cmd_desc_idx = (g_cmd_idx * 2) % VIRTIO_RING_SIZE;
+    uint16_t resp_desc_idx = (g_cmd_idx * 2 + 1) % VIRTIO_RING_SIZE;
+
+    /* Command descriptor (device reads) */
+    g_desc_table[cmd_desc_idx].addr = g_cmd_buffer_phys;
+    g_desc_table[cmd_desc_idx].len = cmd_size;
+    g_desc_table[cmd_desc_idx].flags = VIRTQ_DESC_F_NEXT;
+    g_desc_table[cmd_desc_idx].next = resp_desc_idx;
+
+    /* Response descriptor (device writes) */
+    g_desc_table[resp_desc_idx].addr = g_resp_buffer_phys;
+    g_desc_table[resp_desc_idx].len = RESP_BUFFER_SIZE;
+    g_desc_table[resp_desc_idx].flags = VIRTQ_DESC_F_WRITE;
+    g_desc_table[resp_desc_idx].next = 0;
+
+    /* Add to available ring (head of chain) */
+    uint16_t avail_idx = g_avail->idx % VIRTIO_RING_SIZE;
+    g_avail->ring[avail_idx] = cmd_desc_idx;
+    __sync_synchronize();
+    g_avail->idx++;
+
+    /* Notify device */
+    if (g_notify_base) {
+        *(volatile uint16_t *)g_notify_base = 0;
+    } else {
+        virtio_write16(VIRTIO_PCI_QUEUE_NOTIFY, 0);
+    }
+
+    /* No waiting - fire and forget */
+    g_cmd_idx++;
+}
+
 static int virtio_gpu_resource_create_2d(uint32_t resource_id, uint32_t width, uint32_t height) {
     struct virtio_gpu_resource_create_2d cmd = {
         .hdr = {
@@ -878,9 +927,40 @@ void virtio_gpu_flush_display(void) {
         return;
     }
 
-    /* Transfer framebuffer data to host and flush */
-    virtio_gpu_transfer_to_host_2d(RESOURCE_ID_FB, g_fb_width, g_fb_height);
-    virtio_gpu_resource_flush(RESOURCE_ID_FB, g_fb_width, g_fb_height);
+    /* Use async submission to avoid blocking the kernel */
+    struct virtio_gpu_transfer_to_host_2d transfer_cmd = {
+        .hdr = {
+            .type = VIRTIO_GPU_CMD_TRANSFER_TO_HOST_2D,
+            .flags = 0,
+            .fence_id = 0,
+            .ctx_id = 0,
+            .ring_idx = 0,
+        },
+        .offset = 0,
+        .width = g_fb_width,
+        .height = g_fb_height,
+        .x = 0,
+        .y = 0,
+        .resource_id = RESOURCE_ID_FB,
+        .padding = 0,
+    };
+    virtio_gpu_submit_command_async(&transfer_cmd, sizeof(transfer_cmd));
+
+    struct virtio_gpu_resource_flush flush_cmd = {
+        .hdr = {
+            .type = VIRTIO_GPU_CMD_RESOURCE_FLUSH,
+            .flags = 0,
+            .fence_id = 0,
+            .ctx_id = 0,
+            .ring_idx = 0,
+        },
+        .resource_id = RESOURCE_ID_FB,
+        .x = 0,
+        .y = 0,
+        .width = g_fb_width,
+        .height = g_fb_height,
+    };
+    virtio_gpu_submit_command_async(&flush_cmd, sizeof(flush_cmd));
 }
 #else /* !__x86_64__ (ARM64) */
 /**
@@ -1069,6 +1149,49 @@ static void arm64_virtio_gpu_submit_command(const void *cmd, size_t cmd_size) {
                    cmd_type);
         fut_printf("[VIRTIO-GPU] ARM64: Debug: notify_base=0x%lx queue_notify_off=%u multiplier=%u\n",
                    (unsigned long)g_notify_base_arm, g_queue_notify_off_arm, g_notify_off_multiplier_arm);
+    }
+
+    g_cmd_idx_arm++;
+}
+
+/* Async version that doesn't wait for response - used for display flush */
+static void arm64_virtio_gpu_submit_command_async(const void *cmd, size_t cmd_size) {
+    if (!g_desc_table_arm || !g_avail_arm || !g_cmd_buffer_arm || !g_resp_buffer_arm) {
+        return;
+    }
+
+    if (cmd_size > CMD_BUFFER_SIZE) {
+        return;
+    }
+
+    memcpy((void *)g_cmd_buffer_arm, cmd, cmd_size);
+    memset((void *)g_resp_buffer_arm, 0, RESP_BUFFER_SIZE);
+
+    uint16_t cmd_desc_idx = (g_cmd_idx_arm * 2) % VIRTIO_RING_SIZE;
+    uint16_t resp_desc_idx = (g_cmd_idx_arm * 2 + 1) % VIRTIO_RING_SIZE;
+
+    g_desc_table_arm[cmd_desc_idx].addr = g_cmd_buffer_phys_arm;
+    g_desc_table_arm[cmd_desc_idx].len = cmd_size;
+    g_desc_table_arm[cmd_desc_idx].flags = VIRTQ_DESC_F_NEXT;
+    g_desc_table_arm[cmd_desc_idx].next = resp_desc_idx;
+
+    g_desc_table_arm[resp_desc_idx].addr = g_resp_buffer_phys_arm;
+    g_desc_table_arm[resp_desc_idx].len = RESP_BUFFER_SIZE;
+    g_desc_table_arm[resp_desc_idx].flags = VIRTQ_DESC_F_WRITE;
+    g_desc_table_arm[resp_desc_idx].next = 0;
+
+    uint16_t avail_idx = g_avail_arm->idx % VIRTIO_RING_SIZE;
+    g_avail_arm->ring[avail_idx] = cmd_desc_idx;
+    __sync_synchronize();
+    g_avail_arm->idx++;
+
+    if (g_notify_base_arm) {
+        volatile uint16_t *notify_addr = (volatile uint16_t *)(
+            g_notify_base_arm + (g_queue_notify_off_arm * g_notify_off_multiplier_arm)
+        );
+        __asm__ volatile("dsb sy" ::: "memory");
+        *notify_addr = 0;
+        __asm__ volatile("dsb sy" ::: "memory");
     }
 
     g_cmd_idx_arm++;
@@ -1444,7 +1567,39 @@ void virtio_gpu_flush_display(void) {
     }
     __asm__ volatile("dsb sy" ::: "memory");  /* Data synchronization barrier */
 
-    arm64_virtio_gpu_transfer_to_host_2d(RESOURCE_ID_FB, g_fb_width_arm, g_fb_height_arm);
-    arm64_virtio_gpu_resource_flush(RESOURCE_ID_FB, g_fb_width_arm, g_fb_height_arm);
+    /* Use async submission to avoid blocking the kernel */
+    struct virtio_gpu_transfer_to_host_2d transfer_cmd = {
+        .hdr = {
+            .type = VIRTIO_GPU_CMD_TRANSFER_TO_HOST_2D,
+            .flags = 0,
+            .fence_id = 0,
+            .ctx_id = 0,
+            .ring_idx = 0,
+        },
+        .offset = 0,
+        .width = g_fb_width_arm,
+        .height = g_fb_height_arm,
+        .x = 0,
+        .y = 0,
+        .resource_id = RESOURCE_ID_FB,
+        .padding = 0,
+    };
+    arm64_virtio_gpu_submit_command_async(&transfer_cmd, sizeof(transfer_cmd));
+
+    struct virtio_gpu_resource_flush flush_cmd = {
+        .hdr = {
+            .type = VIRTIO_GPU_CMD_RESOURCE_FLUSH,
+            .flags = 0,
+            .fence_id = 0,
+            .ctx_id = 0,
+            .ring_idx = 0,
+        },
+        .resource_id = RESOURCE_ID_FB,
+        .x = 0,
+        .y = 0,
+        .width = g_fb_width_arm,
+        .height = g_fb_height_arm,
+    };
+    arm64_virtio_gpu_submit_command_async(&flush_cmd, sizeof(flush_cmd));
 }
 #endif /* __x86_64__ */

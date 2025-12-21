@@ -378,7 +378,8 @@ static int extract_fds_from_control(const struct msghdr *msg,
     size_t total_fds = 0;
 
     while (offset + sizeof(struct cmsghdr) <= ctrl_len) {
-        struct cmsghdr *cmsg = (struct cmsghdr *)((uint8_t *)msg->msg_control + offset);
+        /* Use char* for byte arithmetic (allowed to alias per C standard) */
+        struct cmsghdr *cmsg = (struct cmsghdr *)((char *)msg->msg_control + offset);
         if (cmsg->cmsg_len < sizeof(struct cmsghdr) ||
             offset + cmsg->cmsg_len > ctrl_len) {
             break;
@@ -402,7 +403,8 @@ static int extract_fds_from_control(const struct msghdr *msg,
     offset = 0;
     size_t idx = 0;
     while (offset + sizeof(struct cmsghdr) <= ctrl_len && idx < total_fds) {
-        struct cmsghdr *cmsg = (struct cmsghdr *)((uint8_t *)msg->msg_control + offset);
+        /* Use char* for byte arithmetic (allowed to alias per C standard) */
+        struct cmsghdr *cmsg = (struct cmsghdr *)((char *)msg->msg_control + offset);
         if (cmsg->cmsg_len < sizeof(struct cmsghdr) ||
             offset + cmsg->cmsg_len > ctrl_len) {
             break;
@@ -410,7 +412,7 @@ static int extract_fds_from_control(const struct msghdr *msg,
         if (cmsg->cmsg_level == SOL_SOCKET && cmsg->cmsg_type == SCM_RIGHTS) {
             size_t fd_bytes = cmsg->cmsg_len - sizeof(struct cmsghdr);
             size_t fd_count = fd_bytes / sizeof(int);
-            int *fd_list = (int *)((uint8_t *)cmsg + sizeof(struct cmsghdr));
+            int *fd_list = (int *)((char *)cmsg + sizeof(struct cmsghdr));
             for (size_t i = 0; i < fd_count && idx < total_fds; ++i, ++idx) {
                 char path_buf[128];
                 if (fut_fd_path_lookup(fd_list[i], path_buf, sizeof(path_buf)) != 0 ||
@@ -768,7 +770,7 @@ static ssize_t socket_stream_recv(struct unix_stream *stream,
         cmsg->cmsg_level = SOL_SOCKET;
         cmsg->cmsg_type = SCM_RIGHTS;
         cmsg->cmsg_len = sizeof(struct cmsghdr) + pkt->fd_count * sizeof(int);
-        int *fd_data = (int *)((uint8_t *)cmsg + sizeof(struct cmsghdr));
+        int *fd_data = (int *)((char *)cmsg + sizeof(struct cmsghdr));
         for (size_t i = 0; i < pkt->fd_count; ++i) {
             fd_data[i] = reopen_fd_for_path(pkt->fds[i].path);
         }

@@ -201,6 +201,11 @@ void term_render(struct terminal *term, uint32_t *pixels, int32_t width, int32_t
     (void)width;
     (void)height;
 
+    /* Defensive check: reject NULL or suspiciously low pointer values */
+    if (!term || !pixels || (uintptr_t)pixels < 0x10000) {
+        return;
+    }
+
     /* Clear background */
     for (int y = 0; y < TERM_ROWS * FONT_HEIGHT; y++) {
         uint32_t *line = pixels + y * stride;

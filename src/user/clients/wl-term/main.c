@@ -376,6 +376,11 @@ static void redraw(struct client_state *state) {
         return;
     }
 
+    /* Defensive check: reject suspiciously low pointer values (likely corruption) */
+    if ((uintptr_t)state->shm_data < 0x10000) {
+        return;
+    }
+
     /* Render terminal to pixel buffer */
     uint32_t *pixels = (uint32_t *)state->shm_data;
     term_render(&state->term, pixels, TERM_WIDTH, TERM_HEIGHT, TERM_WIDTH);
@@ -490,12 +495,16 @@ int main(void) {
     state.shm_data = (void *)sys_mmap(NULL, (long)state.shm_size,
                                       PROT_READ | PROT_WRITE, MAP_SHARED,
                                       state.shm_fd, 0);
-    if ((long)state.shm_data < 0) {
-        printf("[WL-TERM] mmap failed\n");
+    printf("[WL-TERM] mmap returned: %p (size=%lu)\n", state.shm_data, (unsigned long)state.shm_size);
+    /* Check for mmap errors: returns negative on error or NULL on failure */
+    if (state.shm_data == NULL || (long)state.shm_data < 0 ||
+        (uintptr_t)state.shm_data < 0x10000) {
+        printf("[WL-TERM] mmap failed: %p\n", state.shm_data);
         sys_close(state.shm_fd);
         wl_display_disconnect(state.display);
         return -1;
     }
+    printf("[WL-TERM] shm_data verified: %p\n", state.shm_data);
 
     struct wl_shm_pool *pool = wl_shm_create_pool(state.shm, state.shm_fd,
                                                    (int32_t)state.shm_size);

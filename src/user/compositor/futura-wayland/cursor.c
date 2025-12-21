@@ -119,6 +119,12 @@ void cursor_draw(const struct cursor_state *cursor,
         return;
     }
 
+    /* Defensive check: reject suspiciously low pointer values (likely corruption) */
+    if ((uintptr_t)cursor < 0x10000 || (uintptr_t)fb_base < 0x10000 ||
+        (uintptr_t)info < 0x10000) {
+        return;
+    }
+
     /* Initialize blend LUT on first call (lazy initialization) */
     cursor_init_blend_lut();
 

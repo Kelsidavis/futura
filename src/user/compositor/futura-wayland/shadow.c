@@ -66,7 +66,11 @@ static inline void shadow_darken_pixel(uint32_t *pixel, uint8_t alpha) {
 void shadow_draw(struct backbuffer *dst,
                  const struct comp_surface *surface,
                  const fut_rect_t *clip) {
-    if (!dst || !dst->px || !surface || !clip) {
+    /* Defensive check: reject NULL or suspiciously low pointer values */
+    if (!dst || (uintptr_t)dst < 0x10000) {
+        return;
+    }
+    if (!dst->px || (uintptr_t)dst->px < 0x10000 || !surface || !clip) {
         return;
     }
 

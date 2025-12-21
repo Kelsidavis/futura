@@ -388,7 +388,11 @@ void comp_surface_update_decorations(struct comp_surface *surface) {
  * Further optimization could use SIMD (NEON/SSE) for 128-bit or wider writes.
  */
 static void bb_fill_rect(struct backbuffer *bb, fut_rect_t rect, uint32_t argb) {
-    if (!bb || !bb->px || rect.w <= 0 || rect.h <= 0) {
+    /* Defensive check: reject NULL or suspiciously low pointer values */
+    if (!bb || (uintptr_t)bb < 0x10000) {
+        return;
+    }
+    if (!bb->px || (uintptr_t)bb->px < 0x10000 || rect.w <= 0 || rect.h <= 0) {
         return;
     }
 
@@ -455,7 +459,11 @@ static void draw_bar_segment(struct backbuffer *dst, fut_rect_t rect, bool focus
 static void draw_minimize_button(struct backbuffer *dst,
                                  const struct comp_surface *surface,
                                  fut_rect_t clip) {
-    if (!dst || !dst->px || clip.w <= 0 || clip.h <= 0) {
+    /* Defensive check: reject NULL or suspiciously low pointer values */
+    if (!dst || (uintptr_t)dst < 0x10000) {
+        return;
+    }
+    if (!dst->px || (uintptr_t)dst->px < 0x10000 || clip.w <= 0 || clip.h <= 0) {
         return;
     }
 
@@ -497,7 +505,11 @@ static void draw_minimize_button(struct backbuffer *dst,
 static void draw_close_button(struct backbuffer *dst,
                               const struct comp_surface *surface,
                               fut_rect_t clip) {
-    if (!dst || !dst->px || clip.w <= 0 || clip.h <= 0) {
+    /* Defensive check: reject NULL or suspiciously low pointer values */
+    if (!dst || (uintptr_t)dst < 0x10000) {
+        return;
+    }
+    if (!dst->px || (uintptr_t)dst->px < 0x10000 || clip.w <= 0 || clip.h <= 0) {
         return;
     }
 
@@ -537,7 +549,11 @@ static void draw_close_button(struct backbuffer *dst,
 static void draw_title_text(struct backbuffer *dst,
                             struct comp_surface *surface,
                             const fut_rect_t *damage_clip) {
-    if (!dst || !surface || !damage_clip) {
+    /* Defensive check: reject NULL or suspiciously low pointer values */
+    if (!dst || (uintptr_t)dst < 0x10000) {
+        return;
+    }
+    if (!dst->px || (uintptr_t)dst->px < 0x10000 || !surface || !damage_clip) {
         return;
     }
     if (!surface->comp || !surface->comp->deco_enabled || surface->bar_height <= 0) {

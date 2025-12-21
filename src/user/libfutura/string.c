@@ -216,7 +216,9 @@ long __isoc23_strtol(const char *nptr, char **endptr, int base) {
  * Copy memory.
  */
 void *memcpy(void *dest, const void *src, size_t n) {
-    if (!dest || !src) return dest;
+    /* Defensive check: reject NULL or suspiciously low pointer values */
+    if (!dest || !src || (uintptr_t)dest < 0x10000 || (uintptr_t)src < 0x10000)
+        return dest;
 
     unsigned char *d = (unsigned char *)dest;
     const unsigned char *s = (const unsigned char *)src;
@@ -237,7 +239,8 @@ void *__memcpy_chk(void *dest, const void *src, size_t len, size_t destlen) {
  * Set memory to value.
  */
 void *memset(void *s, int c, size_t n) {
-    if (!s) return s;
+    /* Defensive check: reject NULL or suspiciously low pointer values */
+    if (!s || (uintptr_t)s < 0x10000) return s;
 
     unsigned char *p = (unsigned char *)s;
     for (size_t i = 0; i < n; i++) {
@@ -269,7 +272,9 @@ int memcmp(const void *s1, const void *s2, size_t n) {
  * Move memory (handles overlapping regions).
  */
 void *memmove(void *dest, const void *src, size_t n) {
-    if (!dest || !src) return dest;
+    /* Defensive check: reject NULL or suspiciously low pointer values */
+    if (!dest || !src || (uintptr_t)dest < 0x10000 || (uintptr_t)src < 0x10000)
+        return dest;
 
     unsigned char *d = (unsigned char *)dest;
     const unsigned char *s = (const unsigned char *)src;

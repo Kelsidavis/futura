@@ -1,0 +1,15 @@
+--- a/src/event-loop.c
++++ b/src/event-loop.c
+@@ -110,6 +110,12 @@ wl_event_source_fd_dispatch(struct wl_event_source *source,
+ 	if (ep->events & EPOLLERR)
+ 		mask |= WL_EVENT_ERROR;
+
++	/* Defensive check: reject corrupted function pointers */
++	if (!fd_source->func || (uintptr_t)fd_source->func < 0x10000) {
++		wl_log("event-loop: corrupted func pointer %p\n", (void*)fd_source->func);
++		return -1;
++	}
++
+ 	return fd_source->func(fd_source->fd, mask, source->data);
+ }
+

@@ -148,7 +148,8 @@ char *strstr(const char *haystack, const char *needle) {
 }
 
 long strtol(const char *nptr, char **endptr, int base) {
-    if (!nptr) {
+    /* Defensive check: reject NULL and corrupted pointers (addresses < 0x10000) */
+    if (!nptr || (uintptr_t)nptr < 0x10000) {
         if (endptr) *endptr = (char *)nptr;
         return 0;
     }

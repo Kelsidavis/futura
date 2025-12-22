@@ -20,7 +20,8 @@ static long get_millis(void) {
  * Both clocks report the same time (system uptime) since we don't have a RTC yet.
  */
 int clock_gettime(int clock_id, struct timespec *tp) {
-    if (!tp) {
+    /* Defensive check: reject NULL and corrupted pointers (addresses < 0x10000) */
+    if (!tp || (uintptr_t)tp < 0x10000) {
         return -EINVAL;
     }
 

@@ -1012,7 +1012,8 @@ struct comp_surface *comp_surface_create(struct compositor_state *comp,
 }
 
 void comp_surface_destroy(struct comp_surface *surface) {
-    if (!surface) {
+    /* Defensive check: reject NULL and corrupted pointers (addresses < 0x10000) */
+    if (!surface || (uintptr_t)surface < 0x10000) {
         return;
     }
 

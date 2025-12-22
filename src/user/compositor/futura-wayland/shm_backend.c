@@ -38,6 +38,27 @@ int shm_buffer_import(struct wl_resource *buffer_resource,
     out->height = wl_shm_buffer_get_height(shm);
     out->stride = wl_shm_buffer_get_stride(shm);
     out->format = format;
+
+    /* Critical: check for NULL data pointer (buffer mapping failure) */
+    if (!out->data) {
+        WLOG("[WAYLAND] failed to get buffer data (mapping failed)\n");
+        wl_shm_buffer_end_access(shm);
+        out->shm = NULL;
+        out->resource = NULL;
+        return -1;
+    }
+
+    /* Validate buffer dimensions */
+    if (out->width <= 0 || out->height <= 0 || out->stride <= 0) {
+        WLOG("[WAYLAND] invalid buffer dimensions: %dx%d stride=%d\n",
+             out->width, out->height, out->stride);
+        wl_shm_buffer_end_access(shm);
+        out->shm = NULL;
+        out->resource = NULL;
+        out->data = NULL;
+        return -1;
+    }
+
     return 0;
 }
 
@@ -46,9 +67,18 @@ void shm_buffer_release(struct comp_buffer *buffer) {
         return;
     }
 
-    wl_shm_buffer_end_access(buffer->shm);
-    wl_buffer_send_release(buffer->resource);
+    /* Save pointers before clearing - prevents use-after-free race */
+    struct wl_shm_buffer *shm = buffer->shm;
+    struct wl_resource *resource = buffer->resource;
+
+    /* Clear buffer pointers BEFORE releasing to prevent race conditions */
+    buffer->data = NULL;
     buffer->shm = NULL;
     buffer->resource = NULL;
-    buffer->data = NULL;
+
+    /* Now safely end access and notify client */
+    wl_shm_buffer_end_access(shm);
+    if (resource) {
+        wl_buffer_send_release(resource);
+    }
 }

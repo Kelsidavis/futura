@@ -9,6 +9,7 @@
  */
 
 #include "font.h"
+#include <stddef.h>
 
 /* Simple 8x16 bitmap font - subset of VGA font
  * Each character is 16 bytes (16 rows x 8 pixels)
@@ -311,11 +312,28 @@ const uint8_t *font_get_glyph(char ch) {
 
 void font_render_char(char ch, uint32_t *pixels, int32_t x, int32_t y,
                      int32_t stride, uint32_t fg_color, uint32_t bg_color) {
+    /* Bounds checking to prevent NULL dereference and buffer overflow */
+    if (!pixels || stride <= 0 || x < 0 || y < 0) {
+        return;
+    }
+
+    /* Prevent integer overflow in offset calculations */
+    if (x > 10000 || y > 10000 || stride > 10000) {
+        return;
+    }
+
     const uint8_t *glyph = font_get_glyph(ch);
 
     for (int row = 0; row < FONT_HEIGHT; row++) {
         uint8_t bitmap = glyph[row];
-        uint32_t *line = pixels + ((y + row) * stride) + x;
+        int32_t line_y = y + row;
+
+        /* Skip if line would be at negative offset */
+        if (line_y < 0) {
+            continue;
+        }
+
+        uint32_t *line = pixels + ((size_t)line_y * (size_t)stride) + x;
 
         for (int col = 0; col < FONT_WIDTH; col++) {
             bool pixel_on = (bitmap & (0x80 >> col)) != 0;

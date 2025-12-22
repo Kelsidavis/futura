@@ -206,9 +206,14 @@ void term_render(struct terminal *term, uint32_t *pixels, int32_t width, int32_t
         return;
     }
 
+    /* Validate stride to prevent buffer overflow */
+    if (stride <= 0 || stride > 10000) {
+        return;
+    }
+
     /* Clear background */
     for (int y = 0; y < TERM_ROWS * FONT_HEIGHT; y++) {
-        uint32_t *line = pixels + y * stride;
+        uint32_t *line = pixels + (size_t)y * (size_t)stride;
         for (int x = 0; x < TERM_COLS * FONT_WIDTH; x++) {
             line[x] = COLOR_BLACK;
         }
@@ -227,12 +232,13 @@ void term_render(struct terminal *term, uint32_t *pixels, int32_t width, int32_t
     }
 
     /* Render cursor (simple block cursor) */
-    if (term->cursor_visible && term->cursor_x < TERM_COLS && term->cursor_y < TERM_ROWS) {
+    if (term->cursor_visible && term->cursor_x >= 0 && term->cursor_x < TERM_COLS &&
+        term->cursor_y >= 0 && term->cursor_y < TERM_ROWS) {
         int cx = term->cursor_x * FONT_WIDTH;
         int cy = term->cursor_y * FONT_HEIGHT;
 
         for (int y = 0; y < FONT_HEIGHT; y++) {
-            uint32_t *line = pixels + (cy + y) * stride + cx;
+            uint32_t *line = pixels + (size_t)(cy + y) * (size_t)stride + cx;
             for (int x = 0; x < FONT_WIDTH; x++) {
                 line[x] = COLOR_GREEN;  /* Green cursor */
             }

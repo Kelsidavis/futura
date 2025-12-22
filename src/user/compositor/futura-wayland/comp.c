@@ -1115,6 +1115,15 @@ void comp_surface_commit(struct comp_surface *surface) {
     if (has_buffer) {
         struct comp_buffer buffer = {0};
         if (shm_buffer_import(surface->pending_buffer_resource, &buffer) == 0) {
+            /* Defense in depth: validate buffer before use */
+            if (!buffer.data || buffer.width <= 0 || buffer.height <= 0 || buffer.stride <= 0) {
+                shm_buffer_release(&buffer);
+                wl_buffer_send_release(surface->pending_buffer_resource);
+                surface->pending_buffer_resource = NULL;
+                surface->has_pending_buffer = false;
+                return;
+            }
+
             size_t required = (size_t)buffer.stride * (size_t)buffer.height;
             if (required == 0) {
                 required = (size_t)buffer.width * 4u;

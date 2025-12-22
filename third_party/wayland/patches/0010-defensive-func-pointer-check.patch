@@ -13,3 +13,25 @@
  	return fd_source->func(fd_source->fd, mask, source->data);
  }
 
+@@ -1107,8 +1113,21 @@ wl_event_loop_dispatch(struct wl_event_loop *loop, int timeout)
+
+ 	for (i = 0; i < count; i++) {
+ 		source = ep[i].data.ptr;
+-		if (source->fd != -1)
++		/* Defensive checks: validate source and interface pointers */
++		if (!source || (uintptr_t)source < 0x10000) {
++			wl_log("event-loop: corrupted source pointer %p\n", (void*)source);
++			continue;
++		}
++		if (!source->interface || (uintptr_t)source->interface < 0x10000) {
++			wl_log("event-loop: corrupted interface pointer %p\n", (void*)source->interface);
++			continue;
++		}
++		if (!source->interface->dispatch || (uintptr_t)source->interface->dispatch < 0x10000) {
++			wl_log("event-loop: corrupted dispatch pointer %p\n", (void*)source->interface->dispatch);
++			continue;
++		}
++		if (source->fd != -1)
+ 			source->interface->dispatch(source, &ep[i]);
+ 	}
+

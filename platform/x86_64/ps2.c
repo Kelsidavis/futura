@@ -159,9 +159,11 @@ int ps2_controller_init(bool enable_keyboard, bool enable_mouse) {
 
     ps2_write_cmd(PS2_CMD_READ_CONFIG);
     uint8_t config = ps2_read_data();
-    config &= ~(PS2_CONFIG_FIRST_IRQ | PS2_CONFIG_SECOND_IRQ | PS2_CONFIG_TRANSLATE);
+    config &= ~(PS2_CONFIG_FIRST_IRQ | PS2_CONFIG_SECOND_IRQ);
     if (enable_keyboard) {
         config |= PS2_CONFIG_FIRST_IRQ;
+        /* Enable hardware translation from Set 2 to Set 1 scancodes */
+        config |= PS2_CONFIG_TRANSLATE;
     }
     if (enable_mouse) {
         config |= PS2_CONFIG_SECOND_IRQ;
@@ -174,6 +176,7 @@ int ps2_controller_init(bool enable_keyboard, bool enable_mouse) {
         ps2_write_cmd(PS2_CMD_ENABLE_FIRST);
         g_ps2_keyboard_enabled = true;
         fut_irq_enable(1);
+        fut_printf("[PS2] Keyboard IRQ 1 enabled\n");
     } else {
         fut_irq_disable(1);
     }

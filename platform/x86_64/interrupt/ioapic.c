@@ -195,9 +195,11 @@ void ioapic_mask_irq(uint8_t irq) {
  * Unmask (enable) an IRQ.
  */
 void ioapic_unmask_irq(uint8_t irq) {
+    extern void fut_printf(const char *, ...);
     uint64_t entry = ioapic_read_redir(irq);
     entry &= ~IOAPIC_REDIR_MASK;
     ioapic_write_redir(irq, entry);
+    fut_printf("[IOAPIC] Unmasked IRQ %u\n", irq);
 }
 
 /* Global storage for MADT interrupt overrides */

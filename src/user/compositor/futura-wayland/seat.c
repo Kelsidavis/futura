@@ -797,6 +797,7 @@ struct seat_state *seat_init(struct compositor_state *comp) {
 
     seat->kbd_fd = (int)sys_open("/dev/input/kbd0", O_RDONLY | O_NONBLOCK, 0);
     seat->mouse_fd = (int)sys_open("/dev/input/mouse0", O_RDONLY | O_NONBLOCK, 0);
+    printf("[SEAT] kbd_fd=%d mouse_fd=%d\n", seat->kbd_fd, seat->mouse_fd);
 
     /* Input devices are polled manually in seat_poll_input() since they
        don't support epoll. The compositor main loop calls seat_poll_input()

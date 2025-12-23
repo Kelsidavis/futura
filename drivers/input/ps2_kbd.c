@@ -73,6 +73,7 @@ static void emit_key_event(struct ps2_kbd_device *dev, uint16_t keycode, bool pr
 
 void ps2_kbd_handle_byte(uint8_t data) {
     struct ps2_kbd_device *dev = &g_ps2_kbd;
+
     if (!dev->active) {
         return;
     }
@@ -92,6 +93,7 @@ void ps2_kbd_handle_byte(uint8_t data) {
     bool released = (data & 0x80u) != 0;
     uint8_t code = data & 0x7Fu;
     uint16_t keycode = translate_scancode(code, extended);
+    INPUT_KDBG("scancode=0x%02X keycode=%u %s\n", code, keycode, released ? "release" : "press");
     emit_key_event(dev, keycode, !released);
 }
 

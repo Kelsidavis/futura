@@ -218,6 +218,9 @@
 #include <stdbool.h>
 #include <limits.h>
 
+/* Debug logging - set to 1 to enable verbose epoll debugging */
+#define EPOLL_DEBUG 0
+
 /* Socket poll support */
 extern fut_socket_t *get_socket_from_fd(int fd);
 
@@ -1483,6 +1486,7 @@ long sys_epoll_wait(int epfd, struct epoll_event *events, int maxevents, int tim
         return -EBADF;
     }
 
+#if EPOLL_DEBUG
     /* Phase 2: Categorize timeout */
     const char *timeout_desc;
     if (timeout < 0) {
@@ -1496,11 +1500,13 @@ long sys_epoll_wait(int epfd, struct epoll_event *events, int maxevents, int tim
     } else {
         timeout_desc = "long (≥1000ms)";
     }
+#endif
 
     /* Poll with timeout support */
     int max_iterations = (timeout == 0) ? 1 : ((timeout < 0) ? 10000 : (timeout / 10 + 1));
     int iteration = 0;
 
+#if EPOLL_DEBUG
     static int epoll_wait_call_count = 0;
     epoll_wait_call_count++;
     int this_call = epoll_wait_call_count;
@@ -1509,6 +1515,7 @@ long sys_epoll_wait(int epfd, struct epoll_event *events, int maxevents, int tim
         fut_printf("[EPOLL_WAIT-DBG] Call #%d: epfd=%d timeout=%d max_iter=%d fds_registered=%d\n",
                    this_call, epfd, timeout, max_iterations, set->count);
     }
+#endif
 
     while (iteration < max_iterations) {
         int ready_count = 0;
@@ -1533,6 +1540,7 @@ long sys_epoll_wait(int epfd, struct epoll_event *events, int maxevents, int tim
             uint32_t events_ready = 0;
             bool handled = false;
 
+#if EPOLL_DEBUG
             static int vnode_type_dbg = 0;
             if (vnode_type_dbg < 10) {
                 vnode_type_dbg++;
@@ -1543,6 +1551,7 @@ long sys_epoll_wait(int epfd, struct epoll_event *events, int maxevents, int tim
                     fut_printf("[EPOLL-VN-DBG] fd=%d vnode=NULL (no vnode)\n", set->fds[i].fd);
                 }
             }
+#endif
 
             if (fut_eventfd_poll(file, set->fds[i].events, &events_ready)) {
                 handled = true;
@@ -1551,12 +1560,7 @@ long sys_epoll_wait(int epfd, struct epoll_event *events, int maxevents, int tim
             /* For sockets: check get_socket_from_fd first (sockets may not have vnodes) */
             if (!handled) {
                 fut_socket_t *socket = get_socket_from_fd(set->fds[i].fd);
-                static int socket_poll_dbg = 0;
                 if (socket) {
-                    if (socket_poll_dbg < 5) {
-                        socket_poll_dbg++;
-                        fut_printf("[EPOLL-DBG] fd=%d is socket, polling...\n", set->fds[i].fd);
-                    }
                     /* Convert EPOLL events to poll events and check socket readiness */
                     int poll_events = 0;
                     if (set->fds[i].events & (EPOLLIN | EPOLLRDNORM)) {
@@ -1566,10 +1570,10 @@ long sys_epoll_wait(int epfd, struct epoll_event *events, int maxevents, int tim
                         poll_events |= 0x4;  /* POLLOUT */
                     }
                     int socket_ready = fut_socket_poll(socket, poll_events);
-                    if (socket_poll_dbg <= 5) {
-                        fut_printf("[EPOLL-DBG] fd=%d poll_events=0x%x socket_ready=0x%x state=%d\n",
-                                   set->fds[i].fd, poll_events, socket_ready, socket->state);
-                    }
+#if EPOLL_DEBUG
+                    fut_printf("[EPOLL-DBG] fd=%d poll_events=0x%x socket_ready=0x%x state=%d\n",
+                               set->fds[i].fd, poll_events, socket_ready, socket->state);
+#endif
                     if (socket_ready & 0x1) {  /* POLLIN */
                         events_ready |= EPOLLIN | EPOLLRDNORM;
                     }
@@ -1668,73 +1672,15 @@ long sys_epoll_wait(int epfd, struct epoll_event *events, int maxevents, int tim
         if (ready_count > 0) {
             if (fut_copy_to_user(events, ready_events,
                                 ready_count * sizeof(struct epoll_event)) != 0) {
-                char msg[128];
-                int pos = 0;
-                const char *text = "[EPOLL_WAIT] epoll_wait() -> EFAULT (copy_to_user failed)\n";
-                while (*text) { msg[pos++] = *text++; }
-                msg[pos] = '\0';
-                fut_printf("%s", msg);
-
+                fut_printf("[EPOLL_WAIT] epoll_wait() -> EFAULT (copy_to_user failed)\n");
                 return -EFAULT;
             }
-
-            /* Phase 2: Success logging with event count */
-            char msg[256];
-            int pos = 0;
-            const char *text = "[EPOLL_WAIT] epoll_wait(epfd=";
-            while (*text) { msg[pos++] = *text++; }
-
-            char num[16]; int num_pos = 0; int val = epfd;
-            if (val == 0) { num[num_pos++] = '0'; }
-            else { char temp[16]; int temp_pos = 0;
-                while (val > 0) { temp[temp_pos++] = '0' + (val % 10); val /= 10; }
-                while (temp_pos > 0) { num[num_pos++] = temp[--temp_pos]; } }
-            num[num_pos] = '\0';
-            for (int i = 0; num[i]; i++) { msg[pos++] = num[i]; }
-
-            text = ", timeout=";
-            while (*text) { msg[pos++] = *text++; }
-            while (*timeout_desc) { msg[pos++] = *timeout_desc++; }
-            text = ") -> ";
-            while (*text) { msg[pos++] = *text++; }
-
-            num_pos = 0; val = ready_count;
-            if (val == 0) { num[num_pos++] = '0'; }
-            else { char temp[16]; int temp_pos = 0;
-                while (val > 0) { temp[temp_pos++] = '0' + (val % 10); val /= 10; }
-                while (temp_pos > 0) { num[num_pos++] = temp[--temp_pos]; } }
-            num[num_pos] = '\0';
-            for (int i = 0; num[i]; i++) { msg[pos++] = num[i]; }
-
-            text = " (events ready, Phase 3: ET/oneshot handling)\n";
-            while (*text) { msg[pos++] = *text++; }
-            msg[pos] = '\0';
-            fut_printf("%s", msg);
-
             return ready_count;
         }
 
         /* Check timeout */
         if (timeout == 0) {
             /* Non-blocking mode - no events ready */
-            char msg[256];
-            int pos = 0;
-            const char *text = "[EPOLL_WAIT] epoll_wait(epfd=";
-            while (*text) { msg[pos++] = *text++; }
-
-            char num[16]; int num_pos = 0; int val = epfd;
-            if (val == 0) { num[num_pos++] = '0'; }
-            else { char temp[16]; int temp_pos = 0;
-                while (val > 0) { temp[temp_pos++] = '0' + (val % 10); val /= 10; }
-                while (temp_pos > 0) { num[num_pos++] = temp[--temp_pos]; } }
-            num[num_pos] = '\0';
-            for (int i = 0; num[i]; i++) { msg[pos++] = num[i]; }
-
-            text = ", timeout=non-blocking) -> 0 (no events ready, Phase 2)\n";
-            while (*text) { msg[pos++] = *text++; }
-            msg[pos] = '\0';
-            fut_printf("%s", msg);
-
             return 0;
         }
 
@@ -1754,6 +1700,7 @@ long sys_epoll_wait(int epfd, struct epoll_event *events, int maxevents, int tim
     }
 
     /* Timeout expired */
+#if EPOLL_DEBUG
     char msg[256];
     int pos = 0;
     const char *text = "[EPOLL_WAIT] epoll_wait(epfd=";
@@ -1774,6 +1721,7 @@ long sys_epoll_wait(int epfd, struct epoll_event *events, int maxevents, int tim
     while (*text) { msg[pos++] = *text++; }
     msg[pos] = '\0';
     fut_printf("%s", msg);
+#endif
 
     return 0;
 }

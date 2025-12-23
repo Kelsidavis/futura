@@ -595,15 +595,16 @@ void fut_schedule(void) {
     fut_thread_t *next = select_next_thread();
 
     // Debug: Log scheduler calls to understand preemption (disabled for perf)
+    (void)0;  // Disabled - uncomment below to enable
+    /*
     static int sched_call_count = 0;
-    if (sched_call_count < 50) {
-        fut_percpu_t *dbg_percpu = fut_percpu_get();
-        fut_printf("[SCHED-DBG] schedule called: prev_tid=%llu next_tid=%llu queue=%llu\n",
+    if (sched_call_count < 10) {
+        fut_printf("[SCHED] prev=%llu next=%llu\n",
                    prev ? (unsigned long long)prev->tid : 0ULL,
-                   next ? (unsigned long long)next->tid : 0ULL,
-                   dbg_percpu ? (unsigned long long)dbg_percpu->ready_count : 0ULL);
+                   next ? (unsigned long long)next->tid : 0ULL);
         sched_call_count++;
     }
+    */
 
     // Get per-CPU data for idle thread check
     fut_percpu_t *percpu = fut_percpu_get();
@@ -634,15 +635,18 @@ void fut_schedule(void) {
     // Mark next thread as running
     next->state = FUT_THREAD_RUNNING;
 
-    // Debug: Log first few context switches (limited for perf)
+    // Debug: Log first few context switches (disabled for perf)
+    (void)0;  // Disabled
+    /*
+    extern void serial_puts(const char *s);
     static int switch_count = 0;
-    if (switch_count < 30 && prev != next) {
-        fut_printf("[SCHED] Switching: tid=%llu -> tid=%llu (queue_count=%llu)\n",
+    if (switch_count < 10 && prev != next) {
+        fut_printf("[SCHED] %llu -> %llu\n",
                    prev ? (unsigned long long)prev->tid : 0ULL,
-                   (unsigned long long)next->tid,
-                   percpu ? (unsigned long long)percpu->ready_count : 0ULL);
+                   (unsigned long long)next->tid);
         switch_count++;
     }
+    */
 
 #if defined(__x86_64__)
     if (next->stack_base && next->stack_size) {
@@ -664,7 +668,6 @@ void fut_schedule(void) {
 
     // Context switch if different thread
     if (prev != next) {
-        extern void serial_puts(const char *s);
 
         // Check if we're in interrupt context
 #if defined(__aarch64__)
@@ -786,6 +789,11 @@ void fut_schedule(void) {
                 extern fut_interrupt_frame_t *fut_current_frame;
                 fut_current_frame = NULL;
             }
+            /* Debug: Log cooperative switch details */
+            fut_printf("[SCHED-COOP] next->context.rip=0x%llx rsp=0x%llx\n",
+                       (unsigned long long)next->context.rip,
+                       (unsigned long long)next->context.rsp);
+
             if (prev && !prev_terminated) {
                 fut_switch_context(&prev->context, &next->context);
             } else {

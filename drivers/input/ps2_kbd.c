@@ -69,6 +69,8 @@ static void emit_key_event(struct ps2_kbd_device *dev, uint16_t keycode, bool pr
         .value = pressed ? 1 : 0,
     };
     fut_input_queue_push(&dev->queue, &ev);
+    fut_printf("[KBD-Q] pushed keycode=%u pressed=%d head=%u tail=%u\n",
+               keycode, pressed ? 1 : 0, dev->queue.head, dev->queue.tail);
 }
 
 void ps2_kbd_handle_byte(uint8_t data) {

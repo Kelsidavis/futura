@@ -1308,12 +1308,13 @@ void fut_kernel_main(void) {
     fut_console_start_input_thread();
 
     /* ========================================
-     *   Launch Wayland Compositor FIRST
+     *   Wayland Compositor Launch (DISABLED)
      * ======================================== */
-    /* CRITICAL: Compositor must be launched BEFORE init process!
-     * init_stub waits for the Wayland socket, so compositor needs to start first
-     * to create the socket. If init launches first, it will timeout waiting. */
-#if ENABLE_WAYLAND_DEMO
+    /* NOTE: Compositor is now launched by init_stub via fork+exec.
+     * This avoids duplicate compositor instances fighting for resources.
+     * The binary is still staged at /sbin/futura-wayland for init_stub to exec. */
+#if 0 && ENABLE_WAYLAND_DEMO
+    /* DISABLED: init_stub handles compositor launch now */
     if (wayland_stage == 0) {
         fut_printf("[INIT] Launching Wayland compositor...\n");
         char name[] = "futura-wayland";

@@ -99,10 +99,10 @@ static inline ssize_t fut_input_queue_read(fut_input_queue_t *q,
         q->head = (q->head + 1u) & FUT_INPUT_QUEUE_MASK;
         fut_spinlock_release(&q->lock);
 
-        int rc = fut_copy_to_user((uint8_t *)u_buf + copied * ev_size, &ev, ev_size);
-        if (rc != 0) {
-            return (copied > 0) ? (ssize_t)(copied * ev_size) : rc;
-        }
+        /* Note: u_buf is a kernel buffer (from sys_read's fut_malloc), not userspace.
+         * The VFS layer handles the final copy to userspace, so we use memcpy here. */
+        void *dest = (uint8_t *)u_buf + copied * ev_size;
+        __builtin_memcpy(dest, &ev, ev_size);
         copied++;
 
         if (fut_input_queue_empty(q)) {

@@ -14,6 +14,9 @@
 #include <stdbool.h>
 #include "../../include/kernel/buddy_allocator.h"
 
+/* Debug logging - set to 1 to enable verbose slab allocator debugging */
+#define SLAB_DEBUG 0
+
 /* ============================================================
  *   Slab Allocator Constants
  * ============================================================ */
@@ -167,7 +170,7 @@ static slab_t *slab_create(slab_cache_t *cache) {
     cache->slabs = slab;
     cache->num_slabs++;
 
-#ifndef __aarch64__
+#if SLAB_DEBUG && !defined(__aarch64__)
     fut_printf("[SLAB-CREATE] cache_size=%llu slab=%p data=%p obj_size=%llu count=%llu\n",
                (unsigned long long)cache->obj_size,
                (void*)slab,
@@ -276,12 +279,14 @@ void *slab_malloc(size_t size) {
             /* Return data pointer (after header) */
             void *result = (void *)(obj + 1);
 
+#if SLAB_DEBUG
             /* Debug: Trace allocations from the problematic slab */
             static int alloc_count = 0;
             if ((uintptr_t)slab == 0xffffffff88149008ULL && alloc_count < 20) {
                 fut_printf("[SLAB-ALLOC-DEBUG] #%d: Allocated %p from slab %p (size=%zu)\n",
                            alloc_count++, result, (void*)slab, size);
             }
+#endif
 
             /* Validate result pointer before returning */
             if ((uintptr_t)result < heap_base || (uintptr_t)result >= heap_limit) {

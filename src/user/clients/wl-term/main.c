@@ -352,13 +352,18 @@ static int spawn_shell(struct terminal *term) {
         sys_close(stdin_pipe[0]);
         sys_close(stdout_pipe[1]);
 
-        /* Exec shell */
+        /* Exec shell - try multiple paths */
         char shell_name[] = "futura-shell";
         char *shell_args[] = { shell_name, NULL };
+
+        /* Try /bin/futura-shell first (same directory as wl-term) */
+        sys_execve_call("/bin/futura-shell", shell_args, NULL);
+
+        /* Fallback to /sbin/futura-shell */
         sys_execve_call("/sbin/futura-shell", shell_args, NULL);
 
         /* If we get here, exec failed */
-        const char msg[] = "exec /sbin/futura-shell failed\n";
+        const char msg[] = "exec futura-shell failed\n";
         sys_write(2, msg, sizeof(msg) - 1);
         sys_exit(1);
     }

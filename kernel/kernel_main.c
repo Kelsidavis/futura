@@ -1182,6 +1182,14 @@ void fut_kernel_main(void) {
         fut_printf("[INIT] wl-term staged at /bin/wl-term\n");
     }
 
+    extern int fut_stage_futura_shell_binary(void);
+    int shell_stage = fut_stage_futura_shell_binary();
+    if (shell_stage != 0) {
+        fut_printf("[WARN] Failed to stage futura-shell binary (error %d)\n", shell_stage);
+    } else {
+        fut_printf("[INIT] futura-shell staged at /bin/futura-shell\n");
+    }
+
 #if ENABLE_WAYLAND_TEST_CLIENTS
     /* ========================================
      *   Stage Test Clients (Optional)

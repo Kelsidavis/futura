@@ -939,6 +939,13 @@ int fut_stage_wl_term_binary(void) {
                       _binary_build_bin_x86_64_user_wl_term_end,
                       "/bin/wl-term");
 }
+
+int fut_stage_futura_shell_binary(void) {
+    (void)fut_vfs_mkdir("/bin", 0755);
+    return stage_blob(_binary_build_bin_x86_64_user_futura_shell_start,
+                      _binary_build_bin_x86_64_user_futura_shell_end,
+                      "/bin/futura-shell");
+}
 #else
 int fut_stage_wayland_compositor_binary(void) {
     return -ENOSYS;  /* Wayland not available on macOS host builds */
@@ -946,6 +953,10 @@ int fut_stage_wayland_compositor_binary(void) {
 
 int fut_stage_wl_term_binary(void) {
     return -ENOSYS;  /* Wayland not available on macOS host builds */
+}
+
+int fut_stage_futura_shell_binary(void) {
+    return -ENOSYS;  /* futura-shell not available on macOS host builds */
 }
 #endif
 

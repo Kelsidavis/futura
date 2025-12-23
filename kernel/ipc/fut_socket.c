@@ -16,6 +16,14 @@
 
 extern void fut_printf(const char *fmt, ...);
 
+/* Set to 1 to enable verbose socket debug logging */
+#define SOCKET_DEBUG 0
+#if SOCKET_DEBUG
+#define SOCKET_LOG(...) fut_printf(__VA_ARGS__)
+#else
+#define SOCKET_LOG(...) ((void)0)
+#endif
+
 /* Inline string functions for freestanding kernel environment */
 static inline size_t socket_strlen(const char *s) {
     size_t len = 0;
@@ -179,7 +187,7 @@ static struct fut_vnode *fut_vfs_create_socket(const char *path) {
 void fut_socket_system_init(void) {
     memset(socket_registry, 0, sizeof(socket_registry));
     fut_spinlock_init(&socket_lock);
-    fut_printf("[SOCKET] Socket subsystem initialized (max %d sockets)\n", FUT_SOCKET_MAX);
+    SOCKET_LOG("[SOCKET] Socket subsystem initialized (max %d sockets)\n", FUT_SOCKET_MAX);
 }
 
 /* ============================================================
@@ -237,7 +245,7 @@ fut_socket_t *fut_socket_create(int family, int type) {
         return NULL;
     }
 
-    fut_printf("[SOCKET] Created socket id=%u family=%d type=%d\n",
+    SOCKET_LOG("[SOCKET] Created socket id=%u family=%d type=%d\n",
                socket->socket_id, family, type);
     return socket;
 }
@@ -272,7 +280,7 @@ void fut_socket_unref(fut_socket_t *socket) {
     socket->refcount--;
     if (socket->refcount == 0) {
         /* Free socket resources */
-        fut_printf("[SOCKET] Freeing socket id=%u\n", socket->socket_id);
+        SOCKET_LOG("[SOCKET] Freeing socket id=%u\n", socket->socket_id);
 
         if (socket->bound_path) {
             fut_free(socket->bound_path);
@@ -392,21 +400,21 @@ int fut_socket_bind(fut_socket_t *socket, const char *path) {
         inode = fut_vfs_create_socket(path);
         if (!inode) {
             /* Binding path creation failed, but socket is still bound for lookup */
-            fut_printf("[SOCKET] Socket %u VFS inode creation failed (non-fatal), path: %s\n",
+            SOCKET_LOG("[SOCKET] Socket %u VFS inode creation failed (non-fatal), path: %s\n",
                        socket->socket_id, path);
         } else {
             socket->path_vnode = inode;
-            fut_printf("[SOCKET] Socket %u created VFS inode, path: %s\n",
+            SOCKET_LOG("[SOCKET] Socket %u created VFS inode, path: %s\n",
                        socket->socket_id, path);
         }
     } else {
         /* Rebinding to existing path - skip VFS inode creation, use old socket's inode */
-        fut_printf("[SOCKET] Socket %u rebinding to existing path (using old socket's inode), path: %s\n",
+        SOCKET_LOG("[SOCKET] Socket %u rebinding to existing path (using old socket's inode), path: %s\n",
                    socket->socket_id, path);
     }
 
     socket->state = FUT_SOCK_BOUND;
-    fut_printf("[SOCKET] Socket %u bound to path: %s\n", socket->socket_id, path);
+    SOCKET_LOG("[SOCKET] Socket %u bound to path: %s\n", socket->socket_id, path);
     return 0;
 }
 
@@ -442,7 +450,7 @@ int fut_socket_listen(fut_socket_t *socket, int backlog) {
 
     socket->listener = listener;
     socket->state = FUT_SOCK_LISTENING;
-    fut_printf("[SOCKET] Socket %u now listening (backlog=%d)\n",
+    SOCKET_LOG("[SOCKET] Socket %u now listening (backlog=%d)\n",
                socket->socket_id, listener->backlog);
     return 0;
 }
@@ -635,17 +643,17 @@ int fut_socket_accept(fut_socket_t *listener, fut_socket_t **out_socket) {
     peer->pair->peer = accepted;        /* client's send buffer points to server socket */
     peer->pair_reverse->peer = peer;    /* client's recv buffer points to client socket */
 
-    fut_printf("[SOCKET] Socket %u accepted connection from %u, created server socket %u\n",
+    SOCKET_LOG("[SOCKET] Socket %u accepted connection from %u, created server socket %u\n",
                listener->socket_id, peer->socket_id, accepted->socket_id);
 
     /* Wake up the connecting socket that's waiting in fut_socket_connect() */
     if (peer->connect_waitq) {
-        fut_printf("[SOCKET] Waking up connecting socket %u\n", peer->socket_id);
+        SOCKET_LOG("[SOCKET] Waking up connecting socket %u\n", peer->socket_id);
         fut_waitq_wake_all(peer->connect_waitq);
     }
 
     *out_socket = accepted;
-    fut_printf("[SOCKET] Socket %u accepted connection from %u\n",
+    SOCKET_LOG("[SOCKET] Socket %u accepted connection from %u\n",
                listener->socket_id, peer->socket_id);
     return 0;
 }
@@ -728,7 +736,7 @@ int fut_socket_connect(fut_socket_t *socket, const char *target_path) {
      * The connection will be completed when the server calls accept().
      * I/O operations will wait for the socket to become connected.
      * This avoids deadlock when client and server are in the same address space. */
-    fut_printf("[SOCKET] Socket %u connecting to %s (queued, returning immediately)\n", socket->socket_id, target_path);
+    SOCKET_LOG("[SOCKET] Socket %u connecting to %s (queued, returning immediately)\n", socket->socket_id, target_path);
     return 0;
 }
 
@@ -761,7 +769,7 @@ ssize_t fut_socket_send(fut_socket_t *socket, const void *buf, size_t len) {
 
     /* Phase 4: Enforce shutdown_wr flag */
     if (socket->shutdown_wr) {
-        fut_printf("[SOCKET] Socket %u send blocked: write channel shutdown (SHUT_WR)\n",
+        SOCKET_LOG("[SOCKET] Socket %u send blocked: write channel shutdown (SHUT_WR)\n",
                    socket->socket_id);
         return -32;  /* EPIPE - broken pipe */
     }
@@ -815,7 +823,7 @@ ssize_t fut_socket_send(fut_socket_t *socket, const void *buf, size_t len) {
 
     fut_spinlock_release(&pair->lock);
 
-    fut_printf("[SOCKET] Socket %u sent %zu bytes\n", socket->socket_id, to_write);
+    SOCKET_LOG("[SOCKET] Socket %u sent %zu bytes\n", socket->socket_id, to_write);
     return (ssize_t)to_write;
 }
 
@@ -844,7 +852,7 @@ ssize_t fut_socket_recv(fut_socket_t *socket, void *buf, size_t len) {
 
     /* Phase 4: Enforce shutdown_rd flag */
     if (socket->shutdown_rd) {
-        fut_printf("[SOCKET] Socket %u recv blocked: read channel shutdown (SHUT_RD)\n",
+        SOCKET_LOG("[SOCKET] Socket %u recv blocked: read channel shutdown (SHUT_RD)\n",
                    socket->socket_id);
         return 0;  /* EOF - no more data */
     }
@@ -898,7 +906,7 @@ ssize_t fut_socket_recv(fut_socket_t *socket, void *buf, size_t len) {
 
     fut_spinlock_release(&pair->lock);
 
-    fut_printf("[SOCKET] Socket %u received %zu bytes\n", socket->socket_id, to_read);
+    SOCKET_LOG("[SOCKET] Socket %u received %zu bytes\n", socket->socket_id, to_read);
     return (ssize_t)to_read;
 }
 
@@ -937,7 +945,7 @@ int fut_socket_close(fut_socket_t *socket) {
         }
     }
 
-    fut_printf("[SOCKET] Socket %u closed\n", socket->socket_id);
+    SOCKET_LOG("[SOCKET] Socket %u closed\n", socket->socket_id);
     fut_socket_unref(socket);
     return 0;
 }

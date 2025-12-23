@@ -130,9 +130,6 @@ static bool load_demand_page(uint64_t page_addr, struct fut_vma *vma, fut_vmem_c
     extern void fut_page_ref_inc(phys_addr_t phys);
     fut_page_ref_inc(phys);
 
-    fut_printf("[DEMAND-PAGING] Loaded page: va=0x%llx phys=0x%llx file_offset=%llu bytes_read=%ld flags=0x%llx refcount=1\n",
-               page_addr, phys, page_offset, bytes_read, pte_flags);
-
     return true;
 }
 
@@ -378,65 +375,7 @@ bool fut_trap_handle_page_fault(fut_interrupt_frame_t *frame) {
     }
 
     if ((frame->cs & 0x3u) != 0) {
-        /* Get current thread for better diagnostics */
-        fut_thread_t *thread = fut_thread_current();
-        int tid = thread ? (int)thread->tid : -1;
-
-        /* Enhanced logging with thread ID and fault type detection */
-        const char *fault_type = (fault_addr < PAGE_SIZE) ? " [NULL+offset]" : "";
-        fut_printf("[#PF] user fault (tid=%d) addr=0x%016llx err=0x%llx rip=0x%016llx%s\n",
-                   tid,
-                   (unsigned long long)fault_addr,
-                   (unsigned long long)frame->error_code,
-                   (unsigned long long)frame->rip,
-                   fault_type);
-        fut_printf("[#PF] rsp=0x%016llx rbp=0x%016llx rax=0x%016llx\n",
-                   (unsigned long long)frame->rsp,
-                   (unsigned long long)frame->rbp,
-                   (unsigned long long)frame->rax);
-        fut_printf("[#PF] rbx=0x%016llx rcx=0x%016llx rdx=0x%016llx\n",
-                   (unsigned long long)frame->rbx,
-                   (unsigned long long)frame->rcx,
-                   (unsigned long long)frame->rdx);
-
-        /* Log segment registers to diagnose segment-related faults */
-        fut_printf("[#PF] cs=0x%04llx ss=0x%04llx ds=0x%04llx es=0x%04llx fs=0x%04llx gs=0x%04llx\n",
-                   (unsigned long long)frame->cs,
-                   (unsigned long long)frame->ss,
-                   (unsigned long long)frame->ds,
-                   (unsigned long long)frame->es,
-                   (unsigned long long)frame->fs,
-                   (unsigned long long)frame->gs);
-
-        /* Log CR3 to check page table base */
-        uint64_t cr3;
-        __asm__ volatile("mov %%cr3, %0" : "=r"(cr3));
-        fut_printf("[#PF] cr3=0x%016llx\n", (unsigned long long)cr3);
-
-        /* Check if RIP page is mapped */
-        uintptr_t rip_page = frame->rip & ~0xFFFUL;
-        fut_printf("[#PF] rip_page=0x%016llx (instruction fetch page)\n", (unsigned long long)rip_page);
-
-        /* Decode error code bits for clearer diagnostics */
-        bool is_write = (frame->error_code & 0x2) != 0;     /* Bit 1: write access */
-        bool is_ifetch = (frame->error_code & 0x10) != 0;   /* Bit 4: instruction fetch */
-        (void)is_write; (void)is_ifetch;  /* May be unused in some paths */
-
-        /* For low address faults, provide helpful diagnostics */
-        if (fault_addr < PAGE_SIZE) {
-            if (is_ifetch) {
-                /* Instruction fetch at low address - likely jumped to NULL */
-                fut_printf("[#PF] NOTE: Instruction fetch at addr 0x%llx - jumped to NULL pointer\n",
-                           (unsigned long long)fault_addr);
-            } else {
-                /* Data access at low address - NULL pointer dereference */
-                fut_printf("[#PF] NOTE: %s access at addr 0x%llx - NULL pointer dereference (+0x%llx offset)\n",
-                           is_write ? "Write" : "Read",
-                           (unsigned long long)fault_addr,
-                           (unsigned long long)fault_addr);
-            }
-        }
-
+        /* Send SIGSEGV to terminate the faulting process */
         fut_task_signal_exit(SIGSEGV);
     }
 

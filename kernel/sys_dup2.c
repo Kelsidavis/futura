@@ -20,6 +20,14 @@
 extern void fut_printf(const char *fmt, ...);
 extern int propagate_socket_dup(int oldfd, int newfd);
 
+/* Set to 1 to enable verbose dup2 debug logging */
+#define DUP2_DEBUG 0
+#if DUP2_DEBUG
+#define DUP2_LOG(...) fut_printf(__VA_ARGS__)
+#else
+#define DUP2_LOG(...) ((void)0)
+#endif
+
 /**
  * dup2() - Duplicate file descriptor to specific number
  *
@@ -101,7 +109,7 @@ long sys_dup2(int oldfd, int newfd) {
     /* Get current task for FD table access */
     fut_task_t *task = fut_task_current();
     if (!task) {
-        fut_printf("[DUP2] dup2(oldfd=%d, newfd=%d) -> ESRCH (no current task)\n",
+        DUP2_LOG("[DUP2] dup2(oldfd=%d, newfd=%d) -> ESRCH (no current task)\n",
                    local_oldfd, local_newfd);
         return -ESRCH;
     }
@@ -157,26 +165,26 @@ long sys_dup2(int oldfd, int newfd) {
      * - sys_dup2 Phase 5: Validates BOTH oldfd and newfd (dual parameters)
      */
     if (local_oldfd < 0) {
-        fut_printf("[DUP2] dup2(oldfd=%d, newfd=%d) -> EBADF (negative oldfd, Phase 5)\n",
+        DUP2_LOG("[DUP2] dup2(oldfd=%d, newfd=%d) -> EBADF (negative oldfd, Phase 5)\n",
                    local_oldfd, local_newfd);
         return -EBADF;
     }
 
     if (local_oldfd >= (int)task->max_fds) {
-        fut_printf("[DUP2] dup2(oldfd=%d, newfd=%d, max_fds=%u) -> EBADF "
+        DUP2_LOG("[DUP2] dup2(oldfd=%d, newfd=%d, max_fds=%u) -> EBADF "
                    "(oldfd exceeds max_fds, Phase 5: FD bounds validation)\n",
                    local_oldfd, local_newfd, task->max_fds);
         return -EBADF;
     }
 
     if (local_newfd < 0) {
-        fut_printf("[DUP2] dup2(oldfd=%d, newfd=%d) -> EINVAL (negative newfd, Phase 5)\n",
+        DUP2_LOG("[DUP2] dup2(oldfd=%d, newfd=%d) -> EINVAL (negative newfd, Phase 5)\n",
                    local_oldfd, local_newfd);
         return -EINVAL;
     }
 
     if (local_newfd >= (int)task->max_fds) {
-        fut_printf("[DUP2] dup2(oldfd=%d, newfd=%d, max_fds=%u) -> EINVAL "
+        DUP2_LOG("[DUP2] dup2(oldfd=%d, newfd=%d, max_fds=%u) -> EINVAL "
                    "(newfd exceeds max_fds, Phase 5: FD bounds validation)\n",
                    local_oldfd, local_newfd, task->max_fds);
         return -EINVAL;
@@ -195,11 +203,12 @@ long sys_dup2(int oldfd, int newfd) {
     } else {
         newfd_category = "very high (unusual)";
     }
+    (void)newfd_category;  /* Used only in debug logging */
 
     /* Get the file structure for oldfd from current task's FD table */
     struct fut_file *old_file = vfs_get_file_from_task(task, local_oldfd);
     if (!old_file) {
-        fut_printf("[DUP2] dup2(oldfd=%d, newfd=%d [%s]) -> EBADF (oldfd not open)\n",
+        DUP2_LOG("[DUP2] dup2(oldfd=%d, newfd=%d [%s]) -> EBADF (oldfd not open)\n",
                    local_oldfd, local_newfd, newfd_category);
         return -EBADF;
     }
@@ -212,7 +221,7 @@ long sys_dup2(int oldfd, int newfd) {
         operation_type = "no-op (same FD)";
         operation_desc = "validates oldfd is open, no duplication";
 
-        fut_printf("[DUP2] dup2(oldfd=%d, newfd=%d [%s], op=%s) -> %d (%s, Phase 5)\n",
+        DUP2_LOG("[DUP2] dup2(oldfd=%d, newfd=%d [%s], op=%s) -> %d (%s, Phase 5)\n",
                    local_oldfd, local_newfd, newfd_category, operation_type, local_newfd, operation_desc);
         return local_newfd;
     }
@@ -226,6 +235,8 @@ long sys_dup2(int oldfd, int newfd) {
         operation_type = "simple dup";
         operation_desc = "newfd unused, direct duplication";
     }
+    (void)operation_type;  /* Used only in debug logging */
+    (void)operation_desc;  /* Used only in debug logging */
 
     /* Increment reference count on the file since we're creating another reference */
     if (old_file) {
@@ -257,8 +268,9 @@ long sys_dup2(int oldfd, int newfd) {
                 error_desc = "unknown error";
                 break;
         }
+        (void)error_desc;  /* Used only in debug logging */
 
-        fut_printf("[DUP2] dup2(oldfd=%d, newfd=%d [%s], op=%s) -> %d (%s)\n",
+        DUP2_LOG("[DUP2] dup2(oldfd=%d, newfd=%d [%s], op=%s) -> %d (%s)\n",
                    local_oldfd, local_newfd, newfd_category, operation_type, ret, error_desc);
         return ret;
     }
@@ -267,7 +279,7 @@ long sys_dup2(int oldfd, int newfd) {
     propagate_socket_dup(local_oldfd, local_newfd);
 
     /* Phase 5: Detailed success logging */
-    fut_printf("[DUP2] dup2(oldfd=%d, newfd=%d [%s], op=%s, refcount=%u) -> %d (%s, Phase 5: FD bounds validation)\n",
+    DUP2_LOG("[DUP2] dup2(oldfd=%d, newfd=%d [%s], op=%s, refcount=%u) -> %d (%s, Phase 5: FD bounds validation)\n",
                local_oldfd, local_newfd, newfd_category, operation_type, old_file->refcount, local_newfd,
                operation_desc);
 

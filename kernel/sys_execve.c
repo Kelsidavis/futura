@@ -30,6 +30,14 @@
 
 extern void fut_printf(const char *fmt, ...);
 extern int fut_exec_elf(const char *path, char *const argv[], char *const envp[]);
+
+/* Set to 1 to enable verbose execve debug logging */
+#define EXECVE_DEBUG 0
+#if EXECVE_DEBUG
+#define EXECVE_LOG(...) fut_printf(__VA_ARGS__)
+#else
+#define EXECVE_LOG(...) ((void)0)
+#endif
 extern void *fut_malloc(size_t size);
 extern void fut_free(void *ptr);
 extern int fut_copy_from_user(void *to, const void *from, size_t size);
@@ -196,13 +204,13 @@ long sys_execve(const char *pathname, char *const argv[], char *const envp[]) {
 
     /* Validate that argv is a valid userspace pointer (readable) */
     if (local_argv && fut_access_ok(local_argv, sizeof(char *), 0) != 0) {
-        fut_printf("[EXECVE] execve(path=%s) -> EFAULT (argv not accessible)\n", kernel_pathname);
+        EXECVE_LOG("[EXECVE] execve(path=%s) -> EFAULT (argv not accessible)\n", kernel_pathname);
         return -EFAULT;
     }
 
     /* Validate that envp is a valid userspace pointer (readable) if provided */
     if (local_envp && fut_access_ok(local_envp, sizeof(char *), 0) != 0) {
-        fut_printf("[EXECVE] execve(path=%s) -> EFAULT (envp not accessible)\n", kernel_pathname);
+        EXECVE_LOG("[EXECVE] execve(path=%s) -> EFAULT (envp not accessible)\n", kernel_pathname);
         return -EFAULT;
     }
 
@@ -377,7 +385,7 @@ long sys_execve(const char *pathname, char *const argv[], char *const envp[]) {
     if (local_argv && argc > 0) {
         kernel_argv = (char **)fut_malloc((argc + 1) * sizeof(char *));
         if (!kernel_argv) {
-            fut_printf("[EXECVE] execve() -> ENOMEM (argv array allocation failed)\n");
+            EXECVE_LOG("[EXECVE] execve() -> ENOMEM (argv array allocation failed)\n");
             return -ENOMEM;
         }
         /* Initialize to NULL for cleanup */
@@ -401,7 +409,7 @@ long sys_execve(const char *pathname, char *const argv[], char *const envp[]) {
                     }
                     fut_free(kernel_argv);
                 }
-                fut_printf("[EXECVE] execve() -> EFAULT (argv[%d] pointer read failed)\n", i);
+                EXECVE_LOG("[EXECVE] execve() -> EFAULT (argv[%d] pointer read failed)\n", i);
                 return -EFAULT;
             }
             if (ptr == NULL) break;
@@ -467,7 +475,7 @@ long sys_execve(const char *pathname, char *const argv[], char *const envp[]) {
                     if (kernel_argv[j]) fut_free(kernel_argv[j]);
                 }
                 fut_free(kernel_argv);
-                fut_printf("[EXECVE] execve() -> ENOMEM (argv[%d] string allocation failed)\n", i);
+                EXECVE_LOG("[EXECVE] execve() -> ENOMEM (argv[%d] string allocation failed)\n", i);
                 return -ENOMEM;
             }
 
@@ -478,7 +486,7 @@ long sys_execve(const char *pathname, char *const argv[], char *const envp[]) {
                     if (kernel_argv[j]) fut_free(kernel_argv[j]);
                 }
                 fut_free(kernel_argv);
-                fut_printf("[EXECVE] execve() -> EFAULT (argv[%d] copy failed)\n", i);
+                EXECVE_LOG("[EXECVE] execve() -> EFAULT (argv[%d] copy failed)\n", i);
                 return -EFAULT;
             }
             /* Ensure null termination (defense in depth) */
@@ -516,7 +524,7 @@ long sys_execve(const char *pathname, char *const argv[], char *const envp[]) {
                 }
                 fut_free(kernel_argv);
             }
-            fut_printf("[EXECVE] execve() -> ENOMEM (envp array allocation failed)\n");
+            EXECVE_LOG("[EXECVE] execve() -> ENOMEM (envp array allocation failed)\n");
             return -ENOMEM;
         }
         /* Initialize to NULL for cleanup */
@@ -544,7 +552,7 @@ long sys_execve(const char *pathname, char *const argv[], char *const envp[]) {
                     }
                     fut_free(kernel_argv);
                 }
-                fut_printf("[EXECVE] execve() -> EFAULT (envp[%d] pointer read failed)\n", i);
+                EXECVE_LOG("[EXECVE] execve() -> EFAULT (envp[%d] pointer read failed)\n", i);
                 return -EFAULT;
             }
             if (ptr == NULL) break;
@@ -627,7 +635,7 @@ long sys_execve(const char *pathname, char *const argv[], char *const envp[]) {
                     }
                     fut_free(kernel_argv);
                 }
-                fut_printf("[EXECVE] execve() -> ENOMEM (envp[%d] string allocation failed)\n", i);
+                EXECVE_LOG("[EXECVE] execve() -> ENOMEM (envp[%d] string allocation failed)\n", i);
                 return -ENOMEM;
             }
 
@@ -644,7 +652,7 @@ long sys_execve(const char *pathname, char *const argv[], char *const envp[]) {
                     }
                     fut_free(kernel_argv);
                 }
-                fut_printf("[EXECVE] execve() -> EFAULT (envp[%d] copy failed)\n", i);
+                EXECVE_LOG("[EXECVE] execve() -> EFAULT (envp[%d] copy failed)\n", i);
                 return -EFAULT;
             }
             /* Ensure null termination (defense in depth) */

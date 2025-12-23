@@ -3,6 +3,16 @@
  * Preserves full kernel thread state including SIMD context.
  */
 
+/* Debug serial output - set to 1 to enable verbose context switch tracing */
+.equ DEBUG_SERIAL, 0
+
+/* Serial port: 0x3F8 for COM1 output, 0x80 for silent (POST debug port) */
+.if DEBUG_SERIAL
+.equ SERIAL_PORT, 0x3F8
+.else
+.equ SERIAL_PORT, 0x80
+.endif
+
 .section .text
 
 /* struct fut_cpu_context layout (see include/arch/x86_64/regs.h)
@@ -218,7 +228,7 @@ fut_switch_context_irq:
     pushq %rdx
 
     /* Debug: Check what CS and RIP values were saved */
-    movw $0x3F8, %dx
+    movw $SERIAL_PORT, %dx
     movb $'[', %al          /* [ = start frame save debug */
     outb %al, %dx
 
@@ -342,7 +352,7 @@ fut_switch_context_irq:
     jz .no_saved_frame
     /* We have a saved frame! Print 'S' */
     pushq %rdx
-    movw $0x3F8, %dx
+    movw $SERIAL_PORT, %dx
     movb $'S', %al
     outb %al, %dx
     popq %rdx
@@ -350,7 +360,7 @@ fut_switch_context_irq:
 .no_saved_frame:
     /* No saved frame, will construct from context. Print 'C' */
     pushq %rdx
-    movw $0x3F8, %dx
+    movw $SERIAL_PORT, %dx
     movb $'C', %al
     outb %al, %dx
     popq %rdx
@@ -425,7 +435,7 @@ fut_switch_context_irq:
     /* Debug: Print '<' and first few nibbles of context RIP for C path */
     pushq %rdx
     pushq %rax
-    movw $0x3F8, %dx
+    movw $SERIAL_PORT, %dx
     movb $'<', %al          /* < = context RIP about to be loaded */
     outb %al, %dx
 
@@ -509,7 +519,7 @@ fut_switch_context_irq:
     jnz .rip_ok
     /* RIP is NULL! Print '!' and halt */
     pushq %rdx
-    movw $0x3F8, %dx
+    movw $SERIAL_PORT, %dx
     movb $'!', %al
     outb %al, %dx
     popq %rdx
@@ -571,7 +581,7 @@ fut_switch_context_irq:
 .restore_frame_invalid:
     /* Invalid RIP in saved frame! Clear irq_frame and construct from context */
     pushq %rdx
-    movw $0x3F8, %dx
+    movw $SERIAL_PORT, %dx
     movb $'X', %al          /* X = frame validation failed! */
     outb %al, %dx
     popq %rdx
@@ -584,7 +594,7 @@ fut_switch_context_irq:
     /* Debug: Check what CS value is in saved frame we're about to restore */
     pushq %rax
     pushq %rdx
-    movw $0x3F8, %dx
+    movw $SERIAL_PORT, %dx
     movb $'{', %al          /* { = start restore frame debug */
     outb %al, %dx
 
@@ -819,7 +829,7 @@ fut_switch_context_irq:
     jnz .r13_ok
     /* R13 is NULL! Print '?' and halt */
     pushq %rdx
-    movw $0x3F8, %dx
+    movw $SERIAL_PORT, %dx
     movb $'?', %al
     outb %al, %dx
     popq %rdx
@@ -833,7 +843,7 @@ fut_switch_context_irq:
     jnz .rax_ok
     /* RAX is NULL after leaq! Print '@' and halt */
     pushq %rdx
-    movw $0x3F8, %dx
+    movw $SERIAL_PORT, %dx
     movb $'@', %al
     outb %al, %dx
     popq %rdx
@@ -844,7 +854,7 @@ fut_switch_context_irq:
 
     /* Debug: FPU restore successful, print '#' */
     pushq %rdx
-    movw $0x3F8, %dx
+    movw $SERIAL_PORT, %dx
     movb $'#', %al
     outb %al, %dx
     popq %rdx
@@ -964,7 +974,7 @@ fut_switch_context_irq:
     /* Debug: About to IRETQ, print '$' */
     pushq %rdx
     pushq %rax
-    movw $0x3F8, %dx
+    movw $SERIAL_PORT, %dx
     movb $'$', %al
     outb %al, %dx
 
@@ -1108,7 +1118,7 @@ fut_switch_context_irq:
     /* Debug: Print '>' immediately before IRETQ */
     pushq %rax
     pushq %rdx
-    movw $0x3F8, %dx
+    movw $SERIAL_PORT, %dx
     movb $'>', %al
     outb %al, %dx
 

@@ -198,14 +198,6 @@ void fut_timer_tick(void) {
     extern fut_thread_t *fut_thread_current(void);
     fut_thread_t *current = fut_thread_current();
 
-    // Debug: Log timer tick to diagnose preemption issues (sparse logging - disabled for perf)
-    static int timer_debug_count = 0;
-    if (ticks % 500 == 0 && timer_debug_count < 20) {
-        fut_printf("[TIMER-DBG] tick: current_tid=%llu ticks=%llu\n",
-                   current ? (unsigned long long)current->tid : 0ULL, ticks);
-        if (timer_debug_count < 20) timer_debug_count++;
-    }
-
     if (current != nullptr) {
         // Trigger preemptive scheduling
         // This will call fut_switch_context_irq() if a thread switch is needed
@@ -304,14 +296,6 @@ uint64_t fut_get_time_us(void) {
 }
 
 void fut_timer_irq(void) {
-    // Debug: Check if timer IRQ is firing at low level
-    static int irq_debug_count = 0;
-    uint64_t ticks = atomic_load(&system_ticks);
-    if (ticks % 100 == 0 && irq_debug_count < 30) {
-        serial_puts("[TIMER-IRQ] ");
-        irq_debug_count++;
-    }
-
     fut_timer_tick();
 
     /* Send EOI to LAPIC - in IOAPIC mode (which we use), only LAPIC EOI is needed.

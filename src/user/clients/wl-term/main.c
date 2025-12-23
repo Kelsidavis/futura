@@ -23,6 +23,14 @@
 #include <wayland-client-protocol.h>
 #include "xdg-shell-client-protocol.h"
 
+/* Set to 1 to enable verbose wl-term debug logging */
+#define WLTERM_DEBUG 0
+#if WLTERM_DEBUG
+#define WLTERM_LOG(...) printf(__VA_ARGS__)
+#else
+#define WLTERM_LOG(...) ((void)0)
+#endif
+
 /* Terminal window size (80x25 chars = 640x400 pixels) */
 #define TERM_WIDTH  (TERM_COLS * FONT_WIDTH)
 #define TERM_HEIGHT (TERM_ROWS * FONT_HEIGHT)
@@ -306,12 +314,12 @@ static int spawn_shell(struct terminal *term) {
 
     /* Create pipes for shell communication */
     if (sys_pipe_call(stdin_pipe) < 0) {
-        printf("[WL-TERM] failed to create stdin pipe\n");
+        WLTERM_LOG("[WL-TERM] failed to create stdin pipe\n");
         return -1;
     }
 
     if (sys_pipe_call(stdout_pipe) < 0) {
-        printf("[WL-TERM] failed to create stdout pipe\n");
+        WLTERM_LOG("[WL-TERM] failed to create stdout pipe\n");
         sys_close(stdin_pipe[0]);
         sys_close(stdin_pipe[1]);
         return -1;
@@ -320,7 +328,7 @@ static int spawn_shell(struct terminal *term) {
     /* Fork shell process */
     long pid = sys_fork_call();
     if (pid < 0) {
-        printf("[WL-TERM] fork failed\n");
+        WLTERM_LOG("[WL-TERM] fork failed\n");
         sys_close(stdin_pipe[0]);
         sys_close(stdin_pipe[1]);
         sys_close(stdout_pipe[0]);
@@ -407,7 +415,7 @@ static bool main_loop_iteration(struct client_state *state) {
         state->needs_redraw = true;
     } else if (n < 0) {
         /* Shell closed */
-        printf("[WL-TERM] Shell exited\n");
+        WLTERM_LOG("[WL-TERM] Shell exited\n");
         return false;
     }
 
@@ -424,37 +432,38 @@ static bool main_loop_iteration(struct client_state *state) {
 }
 
 int main(void) {
-    printf("[WL-TERM] Starting...\n");
+    WLTERM_LOG("[WL-TERM] Starting...\n");
     struct client_state state = {0};
     state.running = true;
     state.frame_done = true;
 
-    printf("[WL-TERM] Initializing terminal...\n");
+    WLTERM_LOG("[WL-TERM] Initializing terminal...\n");
     /* Initialize terminal */
     term_init(&state.term);
 
-    printf("[WL-TERM] Connecting to Wayland display...\n");
+    WLTERM_LOG("[WL-TERM] Connecting to Wayland display...\n");
     /* Connect to Wayland display */
     state.display = wl_display_connect(NULL);
     if (!state.display) {
-        printf("[WL-TERM] Failed to connect to Wayland\n");
+        WLTERM_LOG("[WL-TERM] Failed to connect to Wayland\n");
         return -1;
     }
-    printf("[WL-TERM] Connected to Wayland!\n");
+    WLTERM_LOG("[WL-TERM] Connected to Wayland!\n");
 
     /* Get registry and bind globals */
-    printf("[WL-TERM] Getting registry...\n");
+    WLTERM_LOG("[WL-TERM] Getting registry...\n");
     state.registry = wl_display_get_registry(state.display);
     wl_registry_add_listener(state.registry, &registry_listener, &state);
 
-    printf("[WL-TERM] About to call wl_display_roundtrip()...\n");
+    WLTERM_LOG("[WL-TERM] About to call wl_display_roundtrip()...\n");
     int roundtrip_result = wl_display_roundtrip(state.display);
-    printf("[WL-TERM] wl_display_roundtrip() returned: %d\n", roundtrip_result);
-    printf("[WL-TERM] After roundtrip: compositor=%p shm=%p xdg_wm_base=%p\n",
+    (void)roundtrip_result;  /* Used only in debug logging */
+    WLTERM_LOG("[WL-TERM] wl_display_roundtrip() returned: %d\n", roundtrip_result);
+    WLTERM_LOG("[WL-TERM] After roundtrip: compositor=%p shm=%p xdg_wm_base=%p\n",
            state.compositor, state.shm, state.xdg_wm_base);
 
     if (!state.compositor || !state.shm || !state.xdg_wm_base) {
-        printf("[WL-TERM] Missing required Wayland globals\n");
+        WLTERM_LOG("[WL-TERM] Missing required Wayland globals\n");
         wl_display_disconnect(state.display);
         return -1;
     }
@@ -462,7 +471,7 @@ int main(void) {
     /* Create surface */
     state.surface = wl_compositor_create_surface(state.compositor);
     if (!state.surface) {
-        printf("[WL-TERM] Failed to create surface\n");
+        WLTERM_LOG("[WL-TERM] Failed to create surface\n");
         wl_display_disconnect(state.display);
         return -1;
     }
@@ -487,7 +496,7 @@ int main(void) {
     const char shm_name[] = "/wl-term-shm";
     state.shm_fd = fut_shm_create(shm_name, state.shm_size, O_RDWR | O_CREAT | O_TRUNC, 0600);
     if (state.shm_fd < 0) {
-        printf("[WL-TERM] Failed to create shm\n");
+        WLTERM_LOG("[WL-TERM] Failed to create shm\n");
         wl_display_disconnect(state.display);
         return -1;
     }
@@ -495,16 +504,16 @@ int main(void) {
     state.shm_data = (void *)sys_mmap(NULL, (long)state.shm_size,
                                       PROT_READ | PROT_WRITE, MAP_SHARED,
                                       state.shm_fd, 0);
-    printf("[WL-TERM] mmap returned: %p (size=%lu)\n", state.shm_data, (unsigned long)state.shm_size);
+    WLTERM_LOG("[WL-TERM] mmap returned: %p (size=%lu)\n", state.shm_data, (unsigned long)state.shm_size);
     /* Check for mmap errors: returns negative on error or NULL on failure */
     if (state.shm_data == NULL || (long)state.shm_data < 0 ||
         (uintptr_t)state.shm_data < 0x10000) {
-        printf("[WL-TERM] mmap failed: %p\n", state.shm_data);
+        WLTERM_LOG("[WL-TERM] mmap failed: %p\n", state.shm_data);
         sys_close(state.shm_fd);
         wl_display_disconnect(state.display);
         return -1;
     }
-    printf("[WL-TERM] shm_data verified: %p\n", state.shm_data);
+    WLTERM_LOG("[WL-TERM] shm_data verified: %p\n", state.shm_data);
 
     struct wl_shm_pool *pool = wl_shm_create_pool(state.shm, state.shm_fd,
                                                    (int32_t)state.shm_size);
@@ -514,7 +523,7 @@ int main(void) {
 
     /* Spawn shell process */
     if (spawn_shell(&state.term) < 0) {
-        printf("[WL-TERM] Failed to spawn shell\n");
+        WLTERM_LOG("[WL-TERM] Failed to spawn shell\n");
         sys_munmap_call(state.shm_data, (long)state.shm_size);
         sys_close(state.shm_fd);
         wl_display_disconnect(state.display);
@@ -536,7 +545,7 @@ int main(void) {
     }
 
     /* Cleanup */
-    printf("[WL-TERM] Shutting down\n");
+    WLTERM_LOG("[WL-TERM] Shutting down\n");
 
     if (state.term.shell_stdin_fd >= 0) {
         sys_close(state.term.shell_stdin_fd);

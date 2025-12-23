@@ -21,6 +21,14 @@ extern void fut_printf(const char *fmt, ...);
 extern fut_task_t *fut_task_current(void);
 extern struct fut_file *vfs_get_file(int fd);
 
+/* Set to 1 to enable verbose sendmsg debug logging */
+#define SENDMSG_DEBUG 0
+#if SENDMSG_DEBUG
+#define SENDMSG_LOG(...) fut_printf(__VA_ARGS__)
+#else
+#define SENDMSG_LOG(...) ((void)0)
+#endif
+
 typedef uint32_t socklen_t;
 
 /* struct iovec for scatter-gather I/O */
@@ -128,11 +136,12 @@ ssize_t sys_sendmsg(int sockfd, const struct msghdr *msg, int flags) {
     } else {
         flags_desc = "multiple/unknown flags";
     }
+    (void)flags_desc;  /* Used only in debug logging */
 
     /* Validate socket FD */
     struct fut_file *file = vfs_get_file(local_sockfd);
     if (!file) {
-        fut_printf("[SENDMSG] ERROR: socket fd %d is not valid\n", local_sockfd);
+        SENDMSG_LOG("[SENDMSG] ERROR: socket fd %d is not valid\n", local_sockfd);
         return -EBADF;
     }
 
@@ -225,7 +234,7 @@ ssize_t sys_sendmsg(int sockfd, const struct msghdr *msg, int flags) {
     if (kmsg.msg_controllen > 0) {
         const size_t MAX_CONTROL_LEN = 65536;  /* 64KB */
         if (kmsg.msg_controllen > MAX_CONTROL_LEN) {
-            fut_printf("[SENDMSG] sendmsg(sockfd=%d, controllen=%zu) -> EINVAL "
+            SENDMSG_LOG("[SENDMSG] sendmsg(sockfd=%d, controllen=%zu) -> EINVAL "
                        "(control message too large, max %zu bytes, Phase 5)\n",
                        local_sockfd, kmsg.msg_controllen, MAX_CONTROL_LEN);
             return -EINVAL;
@@ -233,7 +242,7 @@ ssize_t sys_sendmsg(int sockfd, const struct msghdr *msg, int flags) {
 
         /* Validate control buffer pointer is not NULL */
         if (!kmsg.msg_control) {
-            fut_printf("[SENDMSG] sendmsg(sockfd=%d, controllen=%zu) -> EFAULT "
+            SENDMSG_LOG("[SENDMSG] sendmsg(sockfd=%d, controllen=%zu) -> EFAULT "
                        "(msg_control is NULL with non-zero length, Phase 5)\n",
                        local_sockfd, kmsg.msg_controllen);
             return -EFAULT;
@@ -242,11 +251,11 @@ ssize_t sys_sendmsg(int sockfd, const struct msghdr *msg, int flags) {
 
     /* Validate iovlen */
     if (kmsg.msg_iovlen == 0) {
-        fut_printf("[SENDMSG] sendmsg(sockfd=%d, iovlen=0) -> 0 (nothing to send)\n", local_sockfd);
+        SENDMSG_LOG("[SENDMSG] sendmsg(sockfd=%d, iovlen=0) -> 0 (nothing to send)\n", local_sockfd);
         return 0;  /* Nothing to send */
     }
     if (kmsg.msg_iovlen > 1024) {
-        fut_printf("[SENDMSG] sendmsg(sockfd=%d, iovlen=%zu) -> EINVAL (exceeds UIO_MAXIOV=1024)\n",
+        SENDMSG_LOG("[SENDMSG] sendmsg(sockfd=%d, iovlen=%zu) -> EINVAL (exceeds UIO_MAXIOV=1024)\n",
                    local_sockfd, kmsg.msg_iovlen);
         return -EINVAL;
     }
@@ -261,7 +270,7 @@ ssize_t sys_sendmsg(int sockfd, const struct msghdr *msg, int flags) {
     for (size_t i = 0; i < kmsg.msg_iovlen; i++) {
         struct iovec iov;
         if (fut_copy_from_user(&iov, &kmsg.msg_iov[i], sizeof(struct iovec)) != 0) {
-            fut_printf("[SENDMSG] sendmsg(sockfd=%d, iovlen=%zu) -> EFAULT (copy_from_user iovec %zu failed)\n",
+            SENDMSG_LOG("[SENDMSG] sendmsg(sockfd=%d, iovlen=%zu) -> EFAULT (copy_from_user iovec %zu failed)\n",
                        local_sockfd, kmsg.msg_iovlen, i);
             return -EFAULT;
         }
@@ -275,7 +284,7 @@ ssize_t sys_sendmsg(int sockfd, const struct msghdr *msg, int flags) {
          * Defense: Limit each iovec to reasonable size (16MB like preadv/pwritev) */
         const size_t MAX_IOV_SIZE = 16 * 1024 * 1024;  /* 16MB per iovec */
         if (iov.iov_len > MAX_IOV_SIZE) {
-            fut_printf("[SENDMSG] sendmsg(sockfd=%d, iovlen=%zu) -> EINVAL "
+            SENDMSG_LOG("[SENDMSG] sendmsg(sockfd=%d, iovlen=%zu) -> EINVAL "
                        "(iov[%zu].iov_len=%zu exceeds max %zu bytes)\n",
                        local_sockfd, kmsg.msg_iovlen, i, iov.iov_len, MAX_IOV_SIZE);
             return -EINVAL;
@@ -296,7 +305,7 @@ ssize_t sys_sendmsg(int sockfd, const struct msghdr *msg, int flags) {
          * Check BEFORE addition: if (total_size == SIZE_MAX || iov_len > SIZE_MAX - total_size)
          * Prevents wraparound even when approaching SIZE_MAX limit */
         if (total_size == SIZE_MAX || iov.iov_len > SIZE_MAX - total_size) {
-            fut_printf("[SENDMSG] sendmsg(sockfd=%d, iovlen=%zu) -> EINVAL "
+            SENDMSG_LOG("[SENDMSG] sendmsg(sockfd=%d, iovlen=%zu) -> EINVAL "
                        "(size overflow at iovec %zu, total=%zu, iov_len=%zu, Phase 5)\n",
                        local_sockfd, kmsg.msg_iovlen, i, total_size, iov.iov_len);
             return -EINVAL;
@@ -339,6 +348,8 @@ ssize_t sys_sendmsg(int sockfd, const struct msghdr *msg, int flags) {
     } else {
         msg_type = "simple data transfer";
     }
+    (void)io_pattern;  /* Used only in debug logging */
+    (void)msg_type;    /* Used only in debug logging */
 
     /* Phase 2: Iterate through iovecs and write each buffer
      * Phase 3: Proper scatter-gather implementation with VFS support
@@ -363,7 +374,7 @@ ssize_t sys_sendmsg(int sockfd, const struct msghdr *msg, int flags) {
         /* Phase 5: Validate iov_base pointer before allocating memory
          * Prevents memory exhaustion DoS from repeated invalid pointers */
         if (!iov.iov_base) {
-            fut_printf("[SENDMSG] sendmsg(sockfd=%d) -> EFAULT "
+            SENDMSG_LOG("[SENDMSG] sendmsg(sockfd=%d) -> EFAULT "
                        "(iov_base[%zu] is NULL with non-zero length %zu, Phase 5)\n",
                        local_sockfd, i, iov.iov_len);
             return total_sent > 0 ? total_sent : -EFAULT;
@@ -372,7 +383,7 @@ ssize_t sys_sendmsg(int sockfd, const struct msghdr *msg, int flags) {
         /* Phase 5: Validate iov_base is readable before allocating kernel buffer */
         uint8_t test_byte;
         if (fut_copy_from_user(&test_byte, iov.iov_base, 1) != 0) {
-            fut_printf("[SENDMSG] sendmsg(sockfd=%d) -> EFAULT "
+            SENDMSG_LOG("[SENDMSG] sendmsg(sockfd=%d) -> EFAULT "
                        "(iov_base[%zu] not accessible, len=%zu, Phase 5)\n",
                        local_sockfd, i, iov.iov_len);
             return total_sent > 0 ? total_sent : -EFAULT;
@@ -416,16 +427,17 @@ ssize_t sys_sendmsg(int sockfd, const struct msghdr *msg, int flags) {
     } else {
         completion_status = "complete";
     }
+    (void)completion_status;  /* Used only in debug logging */
 
     /* Build detailed log message */
     if (zero_len_count > 0) {
-        fut_printf("[SENDMSG] sendmsg(sockfd=%d, iovlen=%zu [%s], flags=%s, type=%s, total_requested=%zu bytes) -> %ld bytes "
+        SENDMSG_LOG("[SENDMSG] sendmsg(sockfd=%d, iovlen=%zu [%s], flags=%s, type=%s, total_requested=%zu bytes) -> %ld bytes "
                    "(%s, %d/%zu iovecs sent, %d zero-len skipped, min=%zu max=%zu, Phase 3: scatter-gather message send with VFS optimization)\n",
                    local_sockfd, kmsg.msg_iovlen, io_pattern, flags_desc, msg_type, total_size, total_sent,
                    completion_status, iovecs_sent, kmsg.msg_iovlen - zero_len_count, zero_len_count,
                    min_iov_len, max_iov_len);
     } else {
-        fut_printf("[SENDMSG] sendmsg(sockfd=%d, iovlen=%zu [%s], flags=%s, type=%s, total_requested=%zu bytes) -> %ld bytes "
+        SENDMSG_LOG("[SENDMSG] sendmsg(sockfd=%d, iovlen=%zu [%s], flags=%s, type=%s, total_requested=%zu bytes) -> %ld bytes "
                    "(%s, %d/%zu iovecs sent, min=%zu max=%zu, Phase 3: scatter-gather message send with VFS optimization)\n",
                    local_sockfd, kmsg.msg_iovlen, io_pattern, flags_desc, msg_type, total_size, total_sent,
                    completion_status, iovecs_sent, kmsg.msg_iovlen, min_iov_len, max_iov_len);
@@ -433,7 +445,7 @@ ssize_t sys_sendmsg(int sockfd, const struct msghdr *msg, int flags) {
 
     /* Log ancillary data if present (not yet handled in Phase 2, will be Phase 3) */
     if (kmsg.msg_controllen > 0) {
-        fut_printf("[SENDMSG] Note: Ancillary data present (%zu bytes) - will be handled in Phase 3\n",
+        SENDMSG_LOG("[SENDMSG] Note: Ancillary data present (%zu bytes) - will be handled in Phase 3\n",
                    kmsg.msg_controllen);
     }
 

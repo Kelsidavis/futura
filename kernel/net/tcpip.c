@@ -24,10 +24,10 @@
 
 extern void fut_printf(const char *fmt, ...);
 
-/* Debug output - uncomment to enable */
-#define DEBUG_TCPIP 1
+/* Debug output - set to 1 to enable verbose logging */
+#define DEBUG_TCPIP 0
 
-#ifdef DEBUG_TCPIP
+#if DEBUG_TCPIP
 #define TCPIP_DEBUG(...) fut_printf(__VA_ARGS__)
 #else
 #define TCPIP_DEBUG(...) do { } while (0)
@@ -855,7 +855,7 @@ static void tcpip_rx_thread(void *arg) {
 
     uint8_t buffer[ETH_MAX_FRAME];
 
-    fut_printf("[RX-THREAD] Started, entering receive loop...\n");
+    TCPIP_DEBUG("[RX-THREAD] Started, entering receive loop...\n");
 
     int loop_count = 0;
     while (1) {
@@ -863,7 +863,7 @@ static void tcpip_rx_thread(void *arg) {
         int rc = fut_net_recv(g_tcpip.raw_socket, buffer, sizeof(buffer), &received);
 
         if (loop_count < 5) {
-            fut_printf("[RX-THREAD] Loop %d: fut_net_recv returned rc=%d, received=%u\n",
+            TCPIP_DEBUG("[RX-THREAD] Loop %d: fut_net_recv returned rc=%d, received=%u\n",
                 loop_count, rc, received);
             loop_count++;
         }
@@ -871,7 +871,7 @@ static void tcpip_rx_thread(void *arg) {
         if (rc == 0 && received >= ETH_HEADER_LEN) {
             const eth_header_t *eth = (const eth_header_t *)buffer;
 
-            fut_printf("[RX-THREAD] Packet: src=%02x:%02x:%02x:%02x:%02x:%02x dest=%02x:%02x:%02x:%02x:%02x:%02x\n",
+            TCPIP_DEBUG("[RX-THREAD] Packet: src=%02x:%02x:%02x:%02x:%02x:%02x dest=%02x:%02x:%02x:%02x:%02x:%02x\n",
                 eth->src[0], eth->src[1], eth->src[2], eth->src[3], eth->src[4], eth->src[5],
                 eth->dest[0], eth->dest[1], eth->dest[2], eth->dest[3], eth->dest[4], eth->dest[5]);
 
@@ -879,14 +879,14 @@ static void tcpip_rx_thread(void *arg) {
 
             uint16_t ethertype = ntohs(eth->type);
 
-            fut_printf("[RX-THREAD] Received frame: ethertype=0x%04x, len=%u\n",
+            TCPIP_DEBUG("[RX-THREAD] Received frame: ethertype=0x%04x, len=%u\n",
                 ethertype, received);
 
             switch (ethertype) {
                 case ETHERTYPE_ARP:
-                    fut_printf("[RX-THREAD] Calling arp_handle_packet\n");
+                    TCPIP_DEBUG("[RX-THREAD] Calling arp_handle_packet\n");
                     arp_handle_packet(buffer, received);
-                    fut_printf("[RX-THREAD] arp_handle_packet returned\n");
+                    TCPIP_DEBUG("[RX-THREAD] arp_handle_packet returned\n");
                     break;
                 case ETHERTYPE_IP:
                     ip_handle_packet(buffer, received);

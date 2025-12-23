@@ -474,6 +474,14 @@ extern void fut_printf(const char *fmt, ...);
 extern fut_interrupt_frame_t *fut_current_frame;
 extern int fut_task_count_by_uid(uint32_t uid);
 
+/* Set to 1 to enable verbose fork debug logging */
+#define FORK_DEBUG 0
+#if FORK_DEBUG
+#define FORK_LOG(...) fut_printf(__VA_ARGS__)
+#else
+#define FORK_LOG(...) ((void)0)
+#endif
+
 /* Resource limit constants */
 #define RLIMIT_NPROC 6  /* Maximum number of processes for real UID */
 
@@ -613,13 +621,13 @@ static void dummy_entry(void *arg) {
 long sys_fork(void) {
     fut_thread_t *parent_thread = fut_thread_current();
     if (!parent_thread) {
-        fut_printf("[FORK] fork() -> ESRCH (no current thread)\n");
+        FORK_LOG("[FORK] fork() -> ESRCH (no current thread)\n");
         return -ESRCH;
     }
 
     fut_task_t *parent_task = parent_thread->task;
     if (!parent_task) {
-        fut_printf("[FORK] fork() -> ESRCH (no parent task)\n");
+        FORK_LOG("[FORK] fork() -> ESRCH (no parent task)\n");
         return -ESRCH;
     }
 
@@ -641,7 +649,7 @@ long sys_fork(void) {
 
         /* Check if user has reached their process limit */
         if (current_count >= (int)rlim_nproc) {
-            fut_printf("[FORK] fork(parent_pid=%u, uid=%u) -> EAGAIN "
+            FORK_LOG("[FORK] fork(parent_pid=%u, uid=%u) -> EAGAIN "
                        "(RLIMIT_NPROC limit reached: %d >= %llu)\n",
                        parent_task->pid, parent_task->uid, current_count, rlim_nproc);
             return -EAGAIN;
@@ -651,7 +659,7 @@ long sys_fork(void) {
     /* Create new child task */
     fut_task_t *child_task = fut_task_create();
     if (!child_task) {
-        fut_printf("[FORK] fork(parent_pid=%u) -> ENOMEM (child task creation failed)\n",
+        FORK_LOG("[FORK] fork(parent_pid=%u) -> ENOMEM (child task creation failed)\n",
                    parent_task->pid);
         return -ENOMEM;
     }
@@ -686,7 +694,7 @@ long sys_fork(void) {
 
         child_mm = clone_mm(parent_mm);
         if (!child_mm) {
-            fut_printf("[FORK] fork(parent_pid=%u) -> ENOMEM (MM cloning failed, "
+            FORK_LOG("[FORK] fork(parent_pid=%u) -> ENOMEM (MM cloning failed, "
                        "%d VMAs, %d FDs)\n",
                        parent_task->pid, vma_count, fd_count);
             fut_task_destroy(child_task);
@@ -698,7 +706,7 @@ long sys_fork(void) {
     /* Clone the current thread into the child task */
     fut_thread_t *child_thread = clone_thread(parent_thread, child_task);
     if (!child_thread) {
-        fut_printf("[FORK] fork(parent_pid=%u) -> ENOMEM (thread cloning failed, "
+        FORK_LOG("[FORK] fork(parent_pid=%u) -> ENOMEM (thread cloning failed, "
                    "%d VMAs, %d FDs)\n",
                    parent_task->pid, vma_count, fd_count);
         if (child_mm) {
@@ -771,9 +779,13 @@ long sys_fork(void) {
     } else {
         process_size_category = "very large (> 100 MB)";
     }
+    (void)parent_pid_category;    /* Used only in debug logging */
+    (void)child_pid_category;     /* Used only in debug logging */
+    (void)clone_strategy;         /* Used only in debug logging */
+    (void)process_size_category;  /* Used only in debug logging */
 
     /* Phase 3: Detailed success logging with COW efficiency metrics */
-    fut_printf("[FORK] fork(parent_pid=%u [%s], child_pid=%u [%s], "
+    FORK_LOG("[FORK] fork(parent_pid=%u [%s], child_pid=%u [%s], "
                "strategy=%s, vmas=%d, fds=%d, mem=%lu [%s], parent_tid=%llu, child_tid=%llu) -> %u "
                "(COW process cloned, Phase 4: Namespace-aware clone)\n",
                parent_task->pid, parent_pid_category,
@@ -877,7 +889,7 @@ static fut_mm_t *clone_mm(fut_mm_t *parent_mm) {
             return NULL;
         }
     }
-    fut_printf("[FORK] Copied %d code pages from 0x%llx-0x%llx\n",
+    FORK_LOG("[FORK] Copied %d code pages from 0x%llx-0x%llx\n",
                code_pages_copied,
                (unsigned long long)CLONE_SCAN_START,
                (unsigned long long)CLONE_SCAN_END);
@@ -918,7 +930,7 @@ static fut_mm_t *clone_mm(fut_mm_t *parent_mm) {
         }
         stack_pages_copied++;
     }
-    fut_printf("[FORK] Copied %d stack pages from 0x%llx-0x%llx\n",
+    FORK_LOG("[FORK] Copied %d stack pages from 0x%llx-0x%llx\n",
                stack_pages_copied, STACK_SCAN_START, STACK_SCAN_END);
 
     /* If no VMAs are tracked, we're done */
@@ -932,7 +944,8 @@ static fut_mm_t *clone_mm(fut_mm_t *parent_mm) {
         bool is_cow = (vma->flags & VMA_COW) != 0;
         bool is_shared = (vma->flags & MAP_SHARED) != 0;
         const char *mode = is_shared ? "(SHARED)" : (is_cow ? "(COW)" : "(COPY)");
-        fut_printf("[FORK] Cloning VMA: 0x%llx-0x%llx %s\n",
+        (void)mode;  /* Used only in debug logging */
+        FORK_LOG("[FORK] Cloning VMA: 0x%llx-0x%llx %s\n",
                    vma->start, vma->end, mode);
 
         uint64_t page_count = 0;
@@ -1071,7 +1084,8 @@ static fut_mm_t *clone_mm(fut_mm_t *parent_mm) {
         }
 
         const char *action = is_shared ? "Shared" : (is_cow ? "COW-shared" : "Copied");
-        fut_printf("[FORK] %s %llu pages from VMA\n", action, page_count);
+        (void)action;  /* Used only in debug logging */
+        FORK_LOG("[FORK] %s %llu pages from VMA\n", action, page_count);
     }
 
     return child_mm;
@@ -1093,7 +1107,7 @@ static fut_thread_t *clone_thread(fut_thread_t *parent_thread, fut_task_t *child
     fut_interrupt_frame_t *frame = fut_current_frame;
 #pragma GCC diagnostic pop
     if (!frame) {
-        fut_printf("[FORK] ERROR: No interrupt frame available!\n");
+        FORK_LOG("[FORK] ERROR: No interrupt frame available!\n");
         return NULL;
     }
 
@@ -1150,7 +1164,7 @@ static fut_thread_t *clone_thread(fut_thread_t *parent_thread, fut_task_t *child
     uint64_t user_es = frame->es;
     uint64_t user_fs = frame->fs;
 
-    fut_printf("[FORK] Parent frame: RIP=0x%llx RSP=0x%llx SS=0x%llx\n", user_rip, user_rsp, user_ss);
+    FORK_LOG("[FORK] Parent frame: RIP=0x%llx RSP=0x%llx SS=0x%llx\n", user_rip, user_rsp, user_ss);
 
     /* Build child context from syscall frame */
     child_thread->context.rip = user_rip;
@@ -1178,7 +1192,7 @@ static fut_thread_t *clone_thread(fut_thread_t *parent_thread, fut_task_t *child
     /* Set child's fork() return value to 0 */
     child_thread->context.rax = 0;
 
-    fut_printf("[FORK] Child context: RIP=0x%llx RSP=0x%llx RAX=0\n",
+    FORK_LOG("[FORK] Child context: RIP=0x%llx RSP=0x%llx RAX=0\n",
                child_thread->context.rip, child_thread->context.rsp);
 
 #elif defined(__aarch64__)
@@ -1247,19 +1261,19 @@ static fut_thread_t *clone_thread(fut_thread_t *parent_thread, fut_task_t *child
 
     /* ARM64: Set TTBR0_EL1 from child task's page table base for context switch */
     child_thread->context.ttbr0_el1 = child_task->mm->ctx.ttbr0_el1;
-    fut_printf("[FORK] Child context: pstate=0x%llx ttbr0_el1=0x%llx pc=0x%llx sp=0x%llx\n",
+    FORK_LOG("[FORK] Child context: pstate=0x%llx ttbr0_el1=0x%llx pc=0x%llx sp=0x%llx\n",
                (unsigned long long)child_thread->context.pstate,
                (unsigned long long)child_thread->context.ttbr0_el1,
                (unsigned long long)child_thread->context.pc,
                (unsigned long long)child_thread->context.sp_el0);
-    fut_printf("[FORK] Child x19-x24: 0x%llx 0x%llx 0x%llx 0x%llx 0x%llx 0x%llx\n",
+    FORK_LOG("[FORK] Child x19-x24: 0x%llx 0x%llx 0x%llx 0x%llx 0x%llx 0x%llx\n",
                (unsigned long long)child_thread->context.x19,
                (unsigned long long)child_thread->context.x20,
                (unsigned long long)child_thread->context.x21,
                (unsigned long long)child_thread->context.x22,
                (unsigned long long)child_thread->context.x23,
                (unsigned long long)child_thread->context.x24);
-    fut_printf("[FORK] Child x25-x28, fp, lr: 0x%llx 0x%llx 0x%llx 0x%llx 0x%llx 0x%llx\n",
+    FORK_LOG("[FORK] Child x25-x28, fp, lr: 0x%llx 0x%llx 0x%llx 0x%llx 0x%llx 0x%llx\n",
                (unsigned long long)child_thread->context.x25,
                (unsigned long long)child_thread->context.x26,
                (unsigned long long)child_thread->context.x27,
@@ -1278,11 +1292,11 @@ static fut_thread_t *clone_thread(fut_thread_t *parent_thread, fut_task_t *child
      * The child's kernel stack just needs to be valid for context switch machinery.
      */
 
-    fut_printf("[FORK] Child kernel stack: base=%p top=%p sp=%p\n",
+    FORK_LOG("[FORK] Child kernel stack: base=%p top=%p sp=%p\n",
                child_thread->stack_base,
                (void *)((uintptr_t)child_thread->stack_base + child_thread->stack_size),
                (void *)child_thread->context.sp);
-    fut_printf("[FORK] Child will ERET to user mode: pc=0x%llx sp_el0=0x%llx\n",
+    FORK_LOG("[FORK] Child will ERET to user mode: pc=0x%llx sp_el0=0x%llx\n",
                (unsigned long long)child_thread->context.pc,
                (unsigned long long)child_thread->context.sp_el0);
 

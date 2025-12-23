@@ -183,9 +183,7 @@ static ssize_t socket_read(void *inode, void *private_data, void *u_buf, size_t 
     if (!socket) {
         return -EBADF;
     }
-    fut_printf("[SOCKET-READ] Reading up to %zu bytes from socket %u\n", n, socket->socket_id);
     ssize_t result = fut_socket_recv(socket, u_buf, n);
-    fut_printf("[SOCKET-READ] fut_socket_recv returned %ld\n", result);
     return result;
 }
 
@@ -200,9 +198,7 @@ static ssize_t socket_write(void *inode, void *private_data, const void *u_buf, 
     if (!socket) {
         return -EBADF;
     }
-    fut_printf("[SOCKET-WRITE] Writing %zu bytes to socket %u\n", n, socket->socket_id);
     ssize_t result = fut_socket_send(socket, u_buf, n);
-    fut_printf("[SOCKET-WRITE] fut_socket_send returned %ld\n", result);
     return result;
 }
 

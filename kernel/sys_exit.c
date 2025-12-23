@@ -20,6 +20,14 @@
 extern void fut_printf(const char *fmt, ...);
 extern int fut_vfs_close(int fd);
 
+/* Set to 1 to enable verbose exit debug logging */
+#define EXIT_DEBUG 0
+#if EXIT_DEBUG
+#define EXIT_LOG(...) fut_printf(__VA_ARGS__)
+#else
+#define EXIT_LOG(...) ((void)0)
+#endif
+
 /* Phase 3: Exit hook structure for resource cleanup */
 struct exit_hook {
     void (*cleanup_fn)(void *arg);
@@ -134,15 +142,17 @@ long sys_exit(int status) {
         status_category = "unusual (≥192)";
         status_meaning = "non-standard exit code";
     }
+    (void)status_category;  /* Used only in debug logging */
+    (void)status_meaning;   /* Used only in debug logging */
 
     /* Phase 5: Detailed exit logging */
     if (task) {
-        fut_printf("[EXIT] exit(status=%d [%s: %s], pid=%u) "
+        EXIT_LOG("[EXIT] exit(status=%d [%s: %s], pid=%u) "
                    "(terminating process, Phase 5: Resource cleanup documentation)\n",
                    status, status_category, status_meaning,
                    task->pid);
     } else {
-        fut_printf("[EXIT] exit(status=%d [%s: %s], no task context) "
+        EXIT_LOG("[EXIT] exit(status=%d [%s: %s], no task context) "
                    "(terminating, Phase 5: Resource cleanup documentation)\n",
                    status, status_category, status_meaning);
     }
@@ -236,7 +246,7 @@ long sys_exit(int status) {
         }
 
         /* Phase 3: Log resource cleanup statistics */
-        fut_printf("[EXIT] exit(status=%d, pid=%u) resource cleanup: "
+        EXIT_LOG("[EXIT] exit(status=%d, pid=%u) resource cleanup: "
                    "fds_closed=%d, hooks_executed=%d\n",
                    status, task->pid, fds_closed, hooks_executed);
     }

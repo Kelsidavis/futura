@@ -534,29 +534,6 @@ __attribute__((used)) static void fut_thread_trampoline_impl(void (*entry)(void 
  * We manually set up the stack frame and then call the C function. */
 [[noreturn]] __attribute__((naked)) static void fut_thread_trampoline(void (*entry)(void *) __attribute__((unused)), void *arg __attribute__((unused))) {
     __asm__ volatile(
-        /* Print 'T' debug marker immediately */
-        "pushq %%rax\n"
-        "pushq %%rdx\n"
-        "movw $0x3F8, %%dx\n"
-        "movb $'T', %%al\n"
-        "outb %%al, %%dx\n"
-
-        /* Debug: Check if RDI is NULL */
-        "testq %%rdi, %%rdi\n"
-        "jnz .rdi_not_null\n"
-        /* RDI is NULL! Print 'N' for NULL */
-        "movb $'N', %%al\n"
-        "outb %%al, %%dx\n"
-        "jmp .rdi_checked\n"
-        ".rdi_not_null:\n"
-        /* RDI is not NULL, print 'V' for valid */
-        "movb $'V', %%al\n"
-        "outb %%al, %%dx\n"
-        ".rdi_checked:\n"
-
-        "popq %%rdx\n"
-        "popq %%rax\n"
-
         /* Set up stack frame */
         "pushq %%rbp\n"
         "movq %%rsp, %%rbp\n"

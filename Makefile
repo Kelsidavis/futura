@@ -533,6 +533,7 @@ KERNEL_SOURCES := \
     kernel/uaccess.c \
     kernel/vfs/devfs.c \
     kernel/sys_fipc.c \
+    kernel/capability.c \
     kernel/video/virtio_gpu.c \
     drivers/tty/console.c \
     drivers/tty/tty_ldisc.c \

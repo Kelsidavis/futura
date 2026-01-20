@@ -754,7 +754,9 @@ impl VirtQueue {
                 return ETIMEDOUT;
             }
 
-            core::hint::spin_loop();
+            // Yield to scheduler instead of busy-waiting
+            // This allows other threads to run and prevents CPU waste
+            thread_yield();
             waited += 1;
         }
     }

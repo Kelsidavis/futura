@@ -98,6 +98,46 @@ __attribute__((unused)) static void fut_boot_delay_ms(uint32_t delay_ms) {
 #endif
 extern fut_status_t virtio_blk_init(uint64_t pci_addr);
 extern fut_status_t virtio_net_init(void);
+
+/**
+ * Helper: Acquire block device capability handle for filesystem mounting.
+ *
+ * This function acquires a capability handle to a block device with appropriate
+ * rights (READ for read-only mounts, READ+WRITE for read-write mounts).
+ * The handle enforces capability-based security at the block layer.
+ *
+ * @param device_name Block device name (e.g., "blk:vda", "ramdisk0")
+ * @param read_only   True for read-only access, false for read-write
+ * @param handle_out  Pointer to store acquired handle (FUT_INVALID_HANDLE on failure)
+ * @return 0 on success, negative error code on failure
+ */
+static int acquire_block_device_handle(const char *device_name, bool read_only, fut_handle_t *handle_out) {
+    extern void fut_printf(const char *fmt, ...);
+
+    if (!device_name || !handle_out) {
+        return -22;  /* EINVAL */
+    }
+
+    /* Determine required rights based on mount mode */
+    uint32_t rights = FUT_BLK_READ;
+    if (!read_only) {
+        rights |= FUT_BLK_WRITE;
+    }
+
+    /* Acquire capability handle to block device */
+    fut_status_t status = fut_blk_acquire(device_name, rights, handle_out);
+    if (status < 0) {
+        fut_printf("[BLKCAP] Failed to acquire handle for '%s' with rights 0x%x: %d\n",
+                   device_name, rights, status);
+        *handle_out = FUT_INVALID_HANDLE;
+        return status;
+    }
+
+    fut_printf("[BLKCAP] Acquired capability handle %llu for device '%s' (rights: %s)\n",
+               (unsigned long long)*handle_out, device_name,
+               read_only ? "READ" : "READ|WRITE");
+    return 0;
+}
 extern void ahci_init(void);
 extern char boot_ptables_start[];
 extern char boot_ptables_end[];
@@ -453,15 +493,53 @@ static void test_futurafs_operations(void) {
     fut_printf("[FUTURAFS-TEST] ✓ Ramdisk created: %s (%llu blocks, %u bytes/block)\n",
                ramdisk->name, ramdisk->num_blocks, ramdisk->block_size);
 
-    /* Test 2: Register ramdisk */
-    fut_printf("[FUTURAFS-TEST] Test 2: Registering ramdisk\n");
+    /* Test 2: Register ramdisk with legacy blockdev subsystem */
+    fut_printf("[FUTURAFS-TEST] Test 2: Registering ramdisk (legacy blockdev)\n");
     int ret = fut_blockdev_register(ramdisk);
     if (ret < 0) {
-        fut_printf("[FUTURAFS-TEST] ✗ Failed to register: error %d\n", ret);
+        fut_printf("[FUTURAFS-TEST] ✗ Failed to register with blockdev: error %d\n", ret);
         fut_test_fail(FUTURAFS_TEST_ERR_REGISTER);
         return;
     }
-    fut_printf("[FUTURAFS-TEST] ✓ Ramdisk registered\n");
+    fut_printf("[FUTURAFS-TEST] ✓ Ramdisk registered with legacy blockdev\n");
+
+    /* Test 2b: Register ramdisk with blkcore for capability-based I/O */
+    fut_printf("[FUTURAFS-TEST] Test 2b: Registering ramdisk with blkcore\n");
+
+    /* Create blkdev descriptor for blkcore */
+    fut_blkdev_t *blkdev = fut_malloc(sizeof(fut_blkdev_t));
+    if (!blkdev) {
+        fut_printf("[FUTURAFS-TEST] ✗ Failed to allocate blkdev descriptor\n");
+        fut_test_fail(FUTURAFS_TEST_ERR_REGISTER);
+        return;
+    }
+
+    /* Populate blkdev descriptor */
+    blkdev->name = ramdisk->name;
+    blkdev->block_size = ramdisk->block_size;
+    blkdev->block_count = ramdisk->num_blocks;
+    blkdev->allowed_rights = FUT_BLK_READ | FUT_BLK_WRITE | FUT_BLK_ADMIN;
+    blkdev->core = NULL;  /* Will be initialized by fut_blk_register */
+
+    /* Set up backend that bridges to legacy blockdev operations */
+    static fut_blk_backend_t ramdisk_backend;
+    ramdisk_backend.read = (fut_status_t (*)(void*, uint64_t, size_t, void*))ramdisk->ops->read;
+    ramdisk_backend.write = (fut_status_t (*)(void*, uint64_t, size_t, const void*))ramdisk->ops->write;
+    ramdisk_backend.flush = (fut_status_t (*)(void*))ramdisk->ops->flush;
+
+    blkdev->backend = &ramdisk_backend;
+    blkdev->backend_ctx = ramdisk;
+
+    /* Register with blkcore */
+    fut_status_t blk_status = fut_blk_register(blkdev);
+    if (blk_status < 0) {
+        fut_printf("[FUTURAFS-TEST] ✗ Failed to register with blkcore: %d\n", blk_status);
+        fut_printf("[FUTURAFS-TEST] ℹ Capability-based I/O will not be available\n");
+        fut_free(blkdev);
+        /* Don't fail the test - continue with legacy I/O */
+    } else {
+        fut_printf("[FUTURAFS-TEST] ✓ Ramdisk registered with blkcore (capability-based I/O enabled)\n");
+    }
 
     /* Test 3: Register FuturaFS filesystem type */
     fut_printf("[FUTURAFS-TEST] Test 3: Registering FuturaFS filesystem type\n");
@@ -478,8 +556,8 @@ static void test_futurafs_operations(void) {
     }
     fut_printf("[FUTURAFS-TEST] ✓ Ramdisk formatted with FuturaFS (label: FuturaFS, inode_ratio: 4)\n");
 
-    /* Test 5: Mount FuturaFS */
-    fut_printf("[FUTURAFS-TEST] Test 5: Mounting FuturaFS at /mnt\n");
+    /* Test 5: Mount FuturaFS with capability-based block I/O */
+    fut_printf("[FUTURAFS-TEST] Test 5: Mounting FuturaFS at /mnt (capability-aware)\n");
 
     /* Create mount point (if mkdir is available via VFS) */
     extern struct fut_vnode *fut_vfs_get_root(void);
@@ -488,13 +566,27 @@ static void test_futurafs_operations(void) {
         root_vnode->ops->mkdir(root_vnode, "mnt", 0755);
     }
 
-    ret = fut_vfs_mount("futurafs0", "/mnt", "futurafs", 0, NULL, FUT_INVALID_HANDLE);
+    /* Acquire capability handle for block device (read-write access) */
+    fut_handle_t blk_handle = FUT_INVALID_HANDLE;
+    ret = acquire_block_device_handle("futurafs0", false, &blk_handle);
+    if (ret < 0) {
+        fut_printf("[FUTURAFS-TEST] ✗ Failed to acquire block device handle: error %d\n", ret);
+        fut_printf("[FUTURAFS-TEST] ℹ Falling back to legacy I/O path\n");
+        blk_handle = FUT_INVALID_HANDLE;
+    }
+
+    /* Mount FuturaFS with capability handle (or FUT_INVALID_HANDLE for legacy fallback) */
+    ret = fut_vfs_mount("futurafs0", "/mnt", "futurafs", 0, NULL, blk_handle);
     if (ret < 0) {
         fut_printf("[FUTURAFS-TEST] ✗ Mount failed: error %d\n", ret);
+        if (blk_handle != FUT_INVALID_HANDLE) {
+            fut_blk_close(blk_handle);
+        }
         fut_test_fail(FUTURAFS_TEST_ERR_MOUNT);
         return;
     }
-    fut_printf("[FUTURAFS-TEST] ✓ FuturaFS mounted at /mnt\n");
+    fut_printf("[FUTURAFS-TEST] ✓ FuturaFS mounted at /mnt (using %s I/O)\n",
+               blk_handle != FUT_INVALID_HANDLE ? "capability-based" : "legacy");
 
     /* Test 6: Verify mount */
     fut_printf("[FUTURAFS-TEST] Test 6: Verifying mount\n");
@@ -1135,11 +1227,23 @@ void fut_kernel_main(void) {
             fut_printf("[INIT] Block device 'blk:vda' NOT found\n");
         }
 
-        int mount_rc = fut_vfs_mount("blk:vda", "/mnt", "futurafs", 0, NULL, FUT_INVALID_HANDLE);
+        Acquire capability handle for block device (read-write)
+        fut_handle_t blk_handle = FUT_INVALID_HANDLE;
+        int acq_rc = acquire_block_device_handle("blk:vda", false, &blk_handle);
+        if (acq_rc < 0) {
+            fut_printf("[INIT] Warning: Failed to acquire block device handle, using legacy I/O\n");
+            blk_handle = FUT_INVALID_HANDLE;
+        }
+
+        int mount_rc = fut_vfs_mount("blk:vda", "/mnt", "futurafs", 0, NULL, blk_handle);
         if (mount_rc == 0) {
-            fut_printf("[INIT] Mounted FuturaFS from blk:vda at /mnt\n");
+            fut_printf("[INIT] Mounted FuturaFS from blk:vda at /mnt (using %s I/O)\n",
+                       blk_handle != FUT_INVALID_HANDLE ? "capability-based" : "legacy");
         } else {
             fut_printf("[INIT] Failed to mount FuturaFS: error %d\n", mount_rc);
+            if (blk_handle != FUT_INVALID_HANDLE) {
+                fut_blk_close(blk_handle);
+            }
         }
     }
     */

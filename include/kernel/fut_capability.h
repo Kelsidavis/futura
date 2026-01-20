@@ -90,6 +90,25 @@
 #define FUT_CAP_OBJTYPE_BLKDEV        (16ULL << 32)  /* Block devices only */
 
 /* ============================================================
+ *   Capability Expiry Time (Bits 48-63)
+ * ============================================================ */
+
+/**
+ * Extract expiry time from capability (minutes since boot).
+ * Returns 0 if not time-limited.
+ * Max value: 65535 minutes (~45 days)
+ */
+#define FUT_CAP_GET_EXPIRY(cap) \
+    (((cap) >> 48) & 0xFFFFULL)
+
+/**
+ * Set expiry time in capability (minutes since boot).
+ * @param minutes Minutes until expiry (0-65535)
+ */
+#define FUT_CAP_SET_EXPIRY(cap, minutes) \
+    (((cap) & 0x0000FFFFFFFFFFFFULL) | (((uint64_t)(minutes) & 0xFFFFULL) << 48))
+
+/* ============================================================
  *   Capability Validation Macros
  * ============================================================ */
 
@@ -218,6 +237,17 @@ int fut_capability_validate_fd(uint64_t cap, int fd);
  * @return Constructed 64-bit capability value
  */
 uint64_t fut_capability_create(uint32_t ops, uint32_t scopes, uint32_t objtypes);
+
+/**
+ * Create a time-limited capability that expires after specified duration.
+ *
+ * @param ops            Bitmask of operations (FUT_CAP_*)
+ * @param scopes         Bitmask of scope flags (FUT_CAP_SCOPE_*)
+ * @param objtypes       Bitmask of object types (FUT_CAP_OBJTYPE_*)
+ * @param minutes_valid  Minutes until expiry (1-65535, max ~45 days)
+ * @return Constructed 64-bit capability value with TIME_LIMITED scope and expiry set
+ */
+uint64_t fut_capability_create_timed(uint32_t ops, uint32_t scopes, uint32_t objtypes, uint32_t minutes_valid);
 
 /**
  * Check if capability is expired (if time-limited).

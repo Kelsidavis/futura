@@ -195,6 +195,16 @@ int fut_capability_validate_fd(uint64_t cap, int fd) {
     return 0;
 }
 
+/**
+ * Get current time in minutes since boot.
+ * Used for capability expiry checking.
+ */
+static uint64_t get_current_time_minutes(void) {
+    extern uint64_t fut_get_ticks(void);  /* Kernel ticks (milliseconds) */
+    uint64_t ticks_ms = fut_get_ticks();
+    return ticks_ms / (1000ULL * 60ULL);  /* Convert ms to minutes */
+}
+
 uint64_t fut_capability_create(uint32_t ops, uint32_t scopes, uint32_t objtypes) {
     uint64_t cap = 0;
 
@@ -207,7 +217,28 @@ uint64_t fut_capability_create(uint32_t ops, uint32_t scopes, uint32_t objtypes)
     /* Pack object type bits (32-47) */
     cap |= (uint64_t)((objtypes & 0xFFFFULL) << 32);
 
-    /* Bits 48-63 reserved for future use */
+    /* Bits 48-63 reserved (used for expiry time in timed capabilities) */
+
+    return cap;
+}
+
+uint64_t fut_capability_create_timed(uint32_t ops, uint32_t scopes, uint32_t objtypes, uint32_t minutes_valid) {
+    /* Create base capability */
+    uint64_t cap = fut_capability_create(ops, scopes | FUT_CAP_SCOPE_TIME_LIMITED, objtypes);
+
+    /* Get current time in minutes since boot */
+    uint64_t current_minutes = get_current_time_minutes();
+
+    /* Calculate expiry time (current + valid duration) */
+    uint64_t expiry_minutes = current_minutes + (uint64_t)minutes_valid;
+
+    /* Clamp to 16-bit max (65535 minutes ~= 45 days) */
+    if (expiry_minutes > 0xFFFFULL) {
+        expiry_minutes = 0xFFFFULL;
+    }
+
+    /* Set expiry time in bits 48-63 */
+    cap = FUT_CAP_SET_EXPIRY(cap, expiry_minutes);
 
     return cap;
 }
@@ -221,13 +252,23 @@ int fut_capability_check_expiry(uint64_t cap) {
         return 0;
     }
 
-    /* TODO: Implement time-based capability expiry checking.
-     * This requires storing expiry timestamp somewhere accessible
-     * from the capability value or from a capability table.
-     * For now, all time-limited capabilities are considered valid.
-     */
+    /* Extract expiry time from bits 48-63 (minutes since boot) */
+    uint64_t expiry_minutes = FUT_CAP_GET_EXPIRY(cap);
 
-    return 0;
+    /* If expiry is 0, treat as never expires (backward compatibility) */
+    if (expiry_minutes == 0) {
+        return 0;
+    }
+
+    /* Get current time in minutes since boot */
+    uint64_t current_minutes = get_current_time_minutes();
+
+    /* Check if capability has expired */
+    if (current_minutes >= expiry_minutes) {
+        return -ETIMEDOUT;  /* Capability has expired */
+    }
+
+    return 0;  /* Capability is still valid */
 }
 
 void fut_capability_init(void) {

@@ -405,8 +405,31 @@ fut_handle_t fut_cap_handle_dup(fut_handle_t source_handle, fut_rights_t new_rig
 
 void fut_cap_print_stats(struct fut_task *task) {
     if (task) {
-        fut_printf("[CAP] Capability stats for task PID %llu (TODO: implement)\n", task->pid);
+        /* Per-task stats require object ownership tracking (not yet implemented) */
+        fut_printf("[CAP] Capability stats for task PID %llu:\n", task->pid);
+        fut_printf("      Per-task capability tracking not yet implemented.\n");
+        fut_printf("      Use fut_cap_print_stats(NULL) for system-wide stats.\n");
     } else {
-        fut_printf("[CAP] System-wide capability stats (TODO: implement)\n");
+        /* System-wide capability statistics */
+        fut_printf("[CAP] System-wide capability statistics:\n");
+
+        fut_object_stats_t stats;
+        fut_object_get_stats(&stats);
+
+        fut_printf("      Total objects allocated: %llu / %llu\n",
+                   stats.total_objects, stats.max_objects);
+        fut_printf("      Total refcount: %llu\n", stats.total_refcount);
+        fut_printf("      Objects by type:\n");
+
+        const char *type_names[] = {
+            "NONE", "FILE", "SOCKET", "THREAD", "TASK", "MEMORY",
+            "CHANNEL", "EVENT", "DEVICE", "BLKDEV", "NETDEV"
+        };
+
+        for (int i = 0; i < 11; i++) {
+            if (stats.objects_by_type[i] > 0) {
+                fut_printf("        %-10s: %llu\n", type_names[i], stats.objects_by_type[i]);
+            }
+        }
     }
 }

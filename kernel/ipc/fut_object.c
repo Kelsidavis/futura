@@ -180,3 +180,31 @@ int fut_object_wait(fut_handle_t handle, uint64_t timeout_ms) {
     (void)timeout_ms;
     return -1;
 }
+
+/* ============================================================
+ *   Object System Statistics
+ * ============================================================ */
+
+void fut_object_get_stats(fut_object_stats_t *stats) {
+    if (!stats) return;
+
+    /* Clear stats structure */
+    stats->total_objects = 0;
+    stats->total_refcount = 0;
+    stats->max_objects = FUT_MAX_OBJECTS;
+    for (int i = 0; i < 11; i++) {
+        stats->objects_by_type[i] = 0;
+    }
+
+    /* Count objects in table */
+    for (uint64_t i = 1; i < FUT_MAX_OBJECTS; ++i) {
+        fut_object_t *obj = object_table[i];
+        if (obj) {
+            stats->total_objects++;
+            stats->total_refcount += obj->refcount;
+            if (obj->type < 11) {
+                stats->objects_by_type[obj->type]++;
+            }
+        }
+    }
+}

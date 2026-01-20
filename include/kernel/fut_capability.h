@@ -269,5 +269,3 @@ void fut_cap_system_init(void);
  * @param task  Task to print stats for (NULL = system-wide stats)
  */
 void fut_cap_print_stats(struct fut_task *task);
-
-#endif /* FUT_CAPABILITY_H */

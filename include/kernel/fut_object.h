@@ -172,3 +172,24 @@ int fut_object_receive(fut_handle_t handle, void *buf, size_t buf_len);
  * @return 0 on success, -1 on timeout/error
  */
 int fut_object_wait(fut_handle_t handle, uint64_t timeout_ms);
+
+/* ============================================================
+ *   Object System Statistics
+ * ============================================================ */
+
+/**
+ * Object system statistics structure.
+ */
+typedef struct fut_object_stats {
+    uint64_t total_objects;              // Total allocated objects
+    uint64_t total_refcount;             // Sum of all refcounts
+    uint64_t objects_by_type[11];        // Count per object type
+    uint64_t max_objects;                // Maximum object capacity
+} fut_object_stats_t;
+
+/**
+ * Get object system statistics.
+ *
+ * @param stats Output buffer for statistics
+ */
+void fut_object_get_stats(fut_object_stats_t *stats);

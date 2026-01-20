@@ -1,13 +1,15 @@
-/* kernel/capability.c - Capability-based Access Control (C23)
+/* kernel/capability.c - Capability System Implementation
  *
  * Copyright (c) 2025 Kelsi Davis
  * Licensed under the MPL v2.0 — see LICENSE for details.
  *
- * Implements capability validation engine for filesystem operations.
- * Enforces operation types, scope restrictions, and object type checks.
+ * Implements capability-based file operations and handle transfer.
+ * Phase 1 implementation for FSD integration.
  */
 
 #include <kernel/fut_capability.h>
+#include <kernel/fut_object.h>
+#include <kernel/fut_task.h>
 #include <kernel/fut_vfs.h>
 #include <kernel/errno.h>
 #include <string.h>
@@ -15,347 +17,419 @@
 extern void fut_printf(const char *fmt, ...);
 
 /* ============================================================
- *   Path Scope Validation
+ *   System Initialization
  * ============================================================ */
 
-/* Check if a path is within a scope restriction.
- * Returns 0 if path matches scope, -EACCES if not.
- */
-static int check_path_scope(const char *path, uint32_t scopes) {
+void fut_cap_system_init(void) {
+    fut_printf("[CAP] Capability system initialized\n");
+}
+
+/* ============================================================
+ *   Rights Conversion Helpers
+ * ============================================================ */
+
+fut_rights_t fut_cap_flags_to_rights(int flags) {
+    fut_rights_t rights = FUT_RIGHT_DESTROY;  /* Always allow close */
+
+    /* Extract access mode from flags */
+    int access_mode = flags & 0x3;  /* O_RDONLY=0, O_WRONLY=1, O_RDWR=2 */
+
+    switch (access_mode) {
+        case 0:  /* O_RDONLY */
+            rights |= FUT_RIGHT_READ;
+            break;
+        case 1:  /* O_WRONLY */
+            rights |= FUT_RIGHT_WRITE;
+            break;
+        case 2:  /* O_RDWR */
+            rights |= FUT_RIGHT_READ | FUT_RIGHT_WRITE;
+            break;
+    }
+
+    /* O_CREAT, O_TRUNC, O_EXCL require ADMIN rights */
+    if (flags & (0x0040 | 0x0200 | 0x0080)) {  /* O_CREAT | O_TRUNC | O_EXCL */
+        rights |= FUT_RIGHT_ADMIN;
+    }
+
+    return rights;
+}
+
+fut_rights_t fut_cap_get_rights(fut_handle_t handle) {
+    if (handle == FUT_INVALID_HANDLE) {
+        return FUT_RIGHT_NONE;
+    }
+
+    /* Query object system for rights */
+    fut_object_t *obj = fut_object_get(handle, FUT_RIGHT_NONE);
+    if (!obj) {
+        return FUT_RIGHT_NONE;
+    }
+
+    fut_rights_t rights = obj->rights;
+    fut_object_put(obj);
+
+    return rights;
+}
+
+bool fut_cap_validate(fut_handle_t handle, fut_rights_t required_rights) {
+    return fut_object_has_rights(handle, required_rights);
+}
+
+/* ============================================================
+ *   Capability File Operations (Phase 1 Syscalls)
+ * ============================================================ */
+
+fut_handle_t fut_cap_open(const char *path, int flags, int mode) {
     if (!path) {
+        return FUT_INVALID_HANDLE;
+    }
+
+    /* Convert flags to capability rights */
+    fut_rights_t rights = fut_cap_flags_to_rights(flags);
+
+    /* TODO: Integrate with VFS to open file and create capability handle
+     * This requires updating fut_vfs_open() to return capability handles
+     * instead of integer file descriptors.
+     *
+     * Planned implementation:
+     *   1. Call fut_vfs_open(path, flags, mode) -> returns file structure
+     *   2. Create capability object: fut_object_create(FUT_OBJ_FILE, rights, file)
+     *   3. Return capability handle
+     */
+
+    fut_printf("[CAP] fut_cap_open(\"%s\", flags=0x%x, mode=0%o) -> rights=0x%llx (STUB)\n",
+               path, flags, mode, rights);
+
+    return FUT_INVALID_HANDLE;  /* Stub: return invalid until VFS integration */
+}
+
+long fut_cap_read(fut_handle_t handle, void *buffer, size_t count) {
+    if (handle == FUT_INVALID_HANDLE || !buffer) {
         return -EINVAL;
     }
 
-    /* No scope restrictions */
-    if (scopes == 0) {
-        return 0;
+    /* Validate READ rights */
+    if (!fut_cap_validate(handle, FUT_RIGHT_READ)) {
+        fut_printf("[CAP] fut_cap_read: handle lacks READ rights\n");
+        return -EPERM;
     }
 
-    /* Root-only scope */
-    if (scopes & FUT_CAP_SCOPE_ROOT_ONLY) {
-        if (path[0] != '/' || path[1] != '\0') {
-            return -EACCES;
-        }
-    }
-
-    /* Home-only scope (restricts to /home/, tilde, or /root) */
-    if (scopes & FUT_CAP_SCOPE_HOME_ONLY) {
-        if (strncmp(path, "/home/", 6) != 0 &&
-            strcmp(path, "/root") != 0 &&
-            path[0] != '~') {
-            return -EACCES;
-        }
-    }
-
-    /* /tmp-only scope */
-    if (scopes & FUT_CAP_SCOPE_TMP_ONLY) {
-        if (strncmp(path, "/tmp", 4) != 0) {
-            return -EACCES;
-        }
-    }
-
-    /* /sys-only scope */
-    if (scopes & FUT_CAP_SCOPE_SYSTEM_ONLY) {
-        if (strncmp(path, "/sys", 4) != 0) {
-            return -EACCES;
-        }
-    }
-
-    return 0;
-}
-
-/* ============================================================
- *   File Descriptor Validation
- * ============================================================ */
-
-/* Get file type for a file descriptor.
- * Returns file type bits or 0 on error.
- */
-static uint64_t get_fd_type(int fd) {
-    extern struct fut_file *vfs_get_file(int fd);
-    struct fut_file *f = vfs_get_file(fd);
-    if (!f || !f->vnode) {
-        return 0;
-    }
-
-    /* Determine file type from vnode type */
-    switch (f->vnode->type) {
-    case VN_REG:
-        return FUT_CAP_OBJTYPE_REGULAR_FILE;
-    case VN_DIR:
-        return FUT_CAP_OBJTYPE_DIRECTORY;
-    case VN_LNK:
-        return FUT_CAP_OBJTYPE_SYMLINK;
-    case VN_CHR:
-        return FUT_CAP_OBJTYPE_CHRDEV;
-    case VN_BLK:
-        return FUT_CAP_OBJTYPE_BLKDEV;
-    default:
-        return 0;
-    }
-}
-
-/* Check if FD matches object type restrictions.
- * Returns 0 if FD matches, -EACCES if not.
- */
-static int check_fd_objtype(int fd, uint64_t required_types) {
-    uint64_t fd_type = get_fd_type(fd);
-
-    if (!fd_type) {
+    /* Get object */
+    fut_object_t *obj = fut_object_get(handle, FUT_RIGHT_READ);
+    if (!obj) {
         return -EBADF;
     }
 
-    /* No object type restrictions */
-    if (required_types == FUT_CAP_OBJTYPE_ANY) {
-        return 0;
-    }
+    /* TODO: Call VFS read operation with object data
+     * struct fut_file *file = (struct fut_file *)obj->data;
+     * long result = fut_vfs_read(file, buffer, count);
+     */
 
-    /* Check if FD type matches any required type */
-    if (!(fd_type & required_types)) {
-        return -EACCES;
-    }
+    fut_object_put(obj);
 
-    return 0;
+    fut_printf("[CAP] fut_cap_read(handle=%llu, count=%zu) (STUB)\n", handle, count);
+    return -ENOSYS;  /* Stub: not yet implemented */
 }
 
-/* ============================================================
- *   Permission Scope Validation
- * ============================================================ */
-
-/* Permission checks are performed at operation level by calling functions */
-static inline int check_permission_scopes_unused(uint64_t cap, uint32_t scopes) {
-    (void)cap;
-    (void)scopes;
-    return 0;
-}
-#define check_permission_scopes(c, s) check_permission_scopes_unused(c, s)
-
-/* ============================================================
- *   Capability Validation Implementations
- * ============================================================ */
-
-int fut_capability_validate(uint64_t cap, uint32_t required) {
-    /* Null capability is invalid */
-    if (cap == 0) {
-        return -EACCES;
+long fut_cap_write(fut_handle_t handle, const void *buffer, size_t count) {
+    if (handle == FUT_INVALID_HANDLE || !buffer) {
+        return -EINVAL;
     }
 
-    /* Extract operation bits */
-    uint32_t ops = cap & 0xFFFF;
-
-    /* Check if required operation is present */
-    if ((ops & required) == 0) {
-        return -EACCES;
+    /* Validate WRITE rights */
+    if (!fut_cap_validate(handle, FUT_RIGHT_WRITE)) {
+        fut_printf("[CAP] fut_cap_write: handle lacks WRITE rights\n");
+        return -EPERM;
     }
 
-    /* Extract scope flags and check for blocking restrictions */
-    uint32_t scopes = FUT_CAP_GET_SCOPE(cap);
-    if (scopes & FUT_CAP_SCOPE_TIME_LIMITED) {
-        /* Time-based restrictions need additional check */
-        if (fut_capability_check_expiry(cap) != 0) {
-            return -ETIMEDOUT;  /* Use standard error code for expired capability */
-        }
-    }
-
-    return 0;
-}
-
-int fut_capability_validate_path(uint64_t cap, const char *path) {
-    /* Null capability cannot access any path */
-    if (cap == 0) {
-        return -EACCES;
-    }
-
-    /* Extract scope flags */
-    uint32_t scopes = FUT_CAP_GET_SCOPE(cap);
-
-    /* Check path against scope restrictions */
-    return check_path_scope(path, scopes);
-}
-
-int fut_capability_validate_fd(uint64_t cap, int fd) {
-    /* Null capability cannot access any FD */
-    if (cap == 0) {
-        return -EACCES;
-    }
-
-    /* Invalid FD */
-    if (fd < 0) {
+    /* Get object */
+    fut_object_t *obj = fut_object_get(handle, FUT_RIGHT_WRITE);
+    if (!obj) {
         return -EBADF;
     }
 
-    /* Extract object type restrictions (bits 32-47 as uint64_t) */
-    uint64_t objtypes = ((cap >> 32) & 0xFFFFULL);
+    /* TODO: Call VFS write operation with object data
+     * struct fut_file *file = (struct fut_file *)obj->data;
+     * long result = fut_vfs_write(file, buffer, count);
+     */
 
-    /* Check FD against object type restrictions */
-    if (objtypes != 0) {  /* 0 means no restriction */
-        return check_fd_objtype(fd, objtypes);
-    }
+    fut_object_put(obj);
 
-    return 0;
+    fut_printf("[CAP] fut_cap_write(handle=%llu, count=%zu) (STUB)\n", handle, count);
+    return -ENOSYS;  /* Stub: not yet implemented */
 }
 
-/**
- * Get current time in minutes since boot.
- * Used for capability expiry checking.
- */
-static uint64_t get_current_time_minutes(void) {
-    extern uint64_t fut_get_ticks(void);  /* Kernel ticks (milliseconds) */
-    uint64_t ticks_ms = fut_get_ticks();
-    return ticks_ms / (1000ULL * 60ULL);  /* Convert ms to minutes */
-}
-
-uint64_t fut_capability_create(uint32_t ops, uint32_t scopes, uint32_t objtypes) {
-    uint64_t cap = 0;
-
-    /* Pack operation bits (0-15) */
-    cap |= (uint64_t)(ops & 0xFFFFULL);
-
-    /* Pack scope bits (16-31) */
-    cap |= (uint64_t)((scopes & 0xFFFFULL) << 16);
-
-    /* Pack object type bits (32-47) */
-    cap |= (uint64_t)((objtypes & 0xFFFFULL) << 32);
-
-    /* Bits 48-63 reserved (used for expiry time in timed capabilities) */
-
-    return cap;
-}
-
-uint64_t fut_capability_create_timed(uint32_t ops, uint32_t scopes, uint32_t objtypes, uint32_t minutes_valid) {
-    /* Create base capability */
-    uint64_t cap = fut_capability_create(ops, scopes | FUT_CAP_SCOPE_TIME_LIMITED, objtypes);
-
-    /* Get current time in minutes since boot */
-    uint64_t current_minutes = get_current_time_minutes();
-
-    /* Calculate expiry time (current + valid duration) */
-    uint64_t expiry_minutes = current_minutes + (uint64_t)minutes_valid;
-
-    /* Clamp to 16-bit max (65535 minutes ~= 45 days) */
-    if (expiry_minutes > 0xFFFFULL) {
-        expiry_minutes = 0xFFFFULL;
+long fut_cap_lseek(fut_handle_t handle, int64_t offset, int whence) {
+    if (handle == FUT_INVALID_HANDLE) {
+        return -EINVAL;
     }
 
-    /* Set expiry time in bits 48-63 */
-    cap = FUT_CAP_SET_EXPIRY(cap, expiry_minutes);
+    /* Validate handle is valid (no specific rights needed for seek) */
+    fut_object_t *obj = fut_object_get(handle, FUT_RIGHT_NONE);
+    if (!obj) {
+        return -EBADF;
+    }
 
-    return cap;
+    /* TODO: Call VFS lseek operation
+     * struct fut_file *file = (struct fut_file *)obj->data;
+     * long result = fut_vfs_lseek(file, offset, whence);
+     */
+
+    fut_object_put(obj);
+
+    fut_printf("[CAP] fut_cap_lseek(handle=%llu, offset=%lld, whence=%d) (STUB)\n",
+               handle, offset, whence);
+    return -ENOSYS;  /* Stub: not yet implemented */
 }
 
-int fut_capability_check_expiry(uint64_t cap) {
-    /* Check if time-limited flag is set */
-    uint32_t scopes = FUT_CAP_GET_SCOPE(cap);
-
-    if (!(scopes & FUT_CAP_SCOPE_TIME_LIMITED)) {
-        /* Not time-limited, always valid */
-        return 0;
+int fut_cap_fsync(fut_handle_t handle) {
+    if (handle == FUT_INVALID_HANDLE) {
+        return -EINVAL;
     }
 
-    /* Extract expiry time from bits 48-63 (minutes since boot) */
-    uint64_t expiry_minutes = FUT_CAP_GET_EXPIRY(cap);
-
-    /* If expiry is 0, treat as never expires (backward compatibility) */
-    if (expiry_minutes == 0) {
-        return 0;
+    /* Validate WRITE rights (data must be writable to sync) */
+    if (!fut_cap_validate(handle, FUT_RIGHT_WRITE)) {
+        fut_printf("[CAP] fut_cap_fsync: handle lacks WRITE rights\n");
+        return -EPERM;
     }
 
-    /* Get current time in minutes since boot */
-    uint64_t current_minutes = get_current_time_minutes();
-
-    /* Check if capability has expired */
-    if (current_minutes >= expiry_minutes) {
-        return -ETIMEDOUT;  /* Capability has expired */
+    /* Get object */
+    fut_object_t *obj = fut_object_get(handle, FUT_RIGHT_WRITE);
+    if (!obj) {
+        return -EBADF;
     }
 
-    return 0;  /* Capability is still valid */
+    /* TODO: Call VFS fsync operation
+     * struct fut_file *file = (struct fut_file *)obj->data;
+     * int result = fut_vfs_fsync(file);
+     */
+
+    fut_object_put(obj);
+
+    fut_printf("[CAP] fut_cap_fsync(handle=%llu) (STUB)\n", handle);
+    return -ENOSYS;  /* Stub: not yet implemented */
 }
 
-void fut_capability_init(void) {
-    fut_printf("[CAPABILITY] Capability subsystem initialized\n");
+int fut_cap_fstat(fut_handle_t handle, struct stat *statbuf) {
+    if (handle == FUT_INVALID_HANDLE || !statbuf) {
+        return -EINVAL;
+    }
+
+    /* Validate handle is valid (no specific rights needed for metadata) */
+    fut_object_t *obj = fut_object_get(handle, FUT_RIGHT_NONE);
+    if (!obj) {
+        return -EBADF;
+    }
+
+    /* TODO: Call VFS fstat operation
+     * struct fut_file *file = (struct fut_file *)obj->data;
+     * int result = fut_vfs_fstat(file, statbuf);
+     */
+
+    fut_object_put(obj);
+
+    fut_printf("[CAP] fut_cap_fstat(handle=%llu) (STUB)\n", handle);
+    return -ENOSYS;  /* Stub: not yet implemented */
+}
+
+int fut_cap_close(fut_handle_t handle) {
+    if (handle == FUT_INVALID_HANDLE) {
+        return -EINVAL;
+    }
+
+    /* Validate DESTROY rights */
+    if (!fut_cap_validate(handle, FUT_RIGHT_DESTROY)) {
+        fut_printf("[CAP] fut_cap_close: handle lacks DESTROY rights\n");
+        return -EPERM;
+    }
+
+    /* Destroy the capability handle */
+    int result = fut_object_destroy(handle);
+
+    fut_printf("[CAP] fut_cap_close(handle=%llu) -> %d\n", handle, result);
+    return result;
 }
 
 /* ============================================================
- *   Capability Check Helpers for FSD Handlers
+ *   Directory Operations with Capabilities (Phase 1 Syscalls)
  * ============================================================ */
 
-/**
- * Helper for FSD handlers: validate operation capability.
- * Used by all FIPC message handlers for fast-path validation.
- *
- * @param cap        Capability from FIPC message
- * @param required   Required operation (FUT_CAP_*)
- * @return 0 on success, -EACCES on failure
- */
-int fut_cap_check_operation(uint64_t cap, uint32_t required) {
-    return fut_capability_validate(cap, required);
-}
-
-/**
- * Helper for FSD handlers: validate path access.
- * Used by path-based handlers (open, mkdir, unlink, etc).
- *
- * @param cap        Capability from FIPC message
- * @param path       Path to validate
- * @return 0 on success, -EACCES on failure
- */
-int fut_cap_check_path(uint64_t cap, const char *path) {
-    return fut_capability_validate_path(cap, path);
-}
-
-/**
- * Helper for FSD handlers: validate FD access.
- * Used by FD-based handlers (read, write, seek, etc).
- *
- * @param cap        Capability from FIPC message
- * @param fd         File descriptor to validate
- * @return 0 on success, -EACCES on failure
- */
-int fut_cap_check_fd(uint64_t cap, int fd) {
-    return fut_capability_validate_fd(cap, fd);
-}
-
-/**
- * Helper for FSD handlers: check if write operation is allowed.
- * Validates both operation capability and read-only scope.
- *
- * @param cap        Capability from FIPC message
- * @return 0 if write allowed, -EACCES if read-only, -EINVAL if no capability
- */
-int fut_cap_check_write(uint64_t cap) {
-    /* Check write operation capability */
-    if (fut_cap_check_operation(cap, FUT_CAP_WRITE_FILE) != 0) {
-        return -EACCES;
+int fut_cap_mkdirat(fut_handle_t parent_handle, const char *name, int mode) {
+    if (parent_handle == FUT_INVALID_HANDLE || !name) {
+        return -EINVAL;
     }
 
-    /* Check for read-only scope restriction */
-    uint32_t scopes = FUT_CAP_GET_SCOPE(cap);
-    if (scopes & FUT_CAP_SCOPE_READ_ONLY) {
-        return -EACCES;
+    /* Validate parent has WRITE|ADMIN rights */
+    if (!fut_cap_validate(parent_handle, FUT_RIGHT_WRITE | FUT_RIGHT_ADMIN)) {
+        fut_printf("[CAP] fut_cap_mkdirat: parent handle lacks WRITE|ADMIN rights\n");
+        return -EPERM;
     }
 
-    return 0;
+    /* TODO: Implement directory creation via VFS
+     * Get parent directory from handle, create child directory
+     */
+
+    fut_printf("[CAP] fut_cap_mkdirat(parent=%llu, name=\"%s\", mode=0%o) (STUB)\n",
+               parent_handle, name, mode);
+    return -ENOSYS;  /* Stub: not yet implemented */
 }
 
-/**
- * Helper for FSD handlers: check if permission change is allowed.
- * Validates against privilege escalation and permission change restrictions.
- *
- * @param cap        Capability from FIPC message
- * @return 0 if allowed, -EACCES if restricted
- */
-int fut_cap_check_permission_change(uint64_t cap) {
-    uint32_t scopes = FUT_CAP_GET_SCOPE(cap);
-
-    /* Prevent privilege escalation */
-    if (scopes & FUT_CAP_SCOPE_NO_PRIVESC) {
-        return -EACCES;
+int fut_cap_rmdirat(fut_handle_t parent_handle, const char *name) {
+    if (parent_handle == FUT_INVALID_HANDLE || !name) {
+        return -EINVAL;
     }
 
-    /* Prevent any permission changes */
-    if (scopes & FUT_CAP_SCOPE_NO_PERMISSION_CHANGE) {
-        return -EACCES;
+    /* Validate parent has ADMIN rights */
+    if (!fut_cap_validate(parent_handle, FUT_RIGHT_ADMIN)) {
+        fut_printf("[CAP] fut_cap_rmdirat: parent handle lacks ADMIN rights\n");
+        return -EPERM;
     }
 
-    return 0;
+    /* TODO: Implement directory removal via VFS */
+
+    fut_printf("[CAP] fut_cap_rmdirat(parent=%llu, name=\"%s\") (STUB)\n",
+               parent_handle, name);
+    return -ENOSYS;  /* Stub: not yet implemented */
+}
+
+int fut_cap_unlinkat(fut_handle_t parent_handle, const char *name) {
+    if (parent_handle == FUT_INVALID_HANDLE || !name) {
+        return -EINVAL;
+    }
+
+    /* Validate parent has ADMIN rights */
+    if (!fut_cap_validate(parent_handle, FUT_RIGHT_ADMIN)) {
+        fut_printf("[CAP] fut_cap_unlinkat: parent handle lacks ADMIN rights\n");
+        return -EPERM;
+    }
+
+    /* TODO: Implement file removal via VFS */
+
+    fut_printf("[CAP] fut_cap_unlinkat(parent=%llu, name=\"%s\") (STUB)\n",
+               parent_handle, name);
+    return -ENOSYS;  /* Stub: not yet implemented */
+}
+
+int fut_cap_statat(fut_handle_t parent_handle, const char *name, struct stat *statbuf) {
+    if (parent_handle == FUT_INVALID_HANDLE || !name || !statbuf) {
+        return -EINVAL;
+    }
+
+    /* Validate parent has READ rights */
+    if (!fut_cap_validate(parent_handle, FUT_RIGHT_READ)) {
+        fut_printf("[CAP] fut_cap_statat: parent handle lacks READ rights\n");
+        return -EPERM;
+    }
+
+    /* TODO: Implement stat operation via VFS */
+
+    fut_printf("[CAP] fut_cap_statat(parent=%llu, name=\"%s\") (STUB)\n",
+               parent_handle, name);
+    return -ENOSYS;  /* Stub: not yet implemented */
+}
+
+/* ============================================================
+ *   Capability Handle Transfer (Phase 1 IPC Primitives)
+ * ============================================================ */
+
+fut_handle_t fut_cap_handle_send(uint64_t target_pid, fut_handle_t source_handle,
+                                 fut_rights_t shared_rights) {
+    if (target_pid == 0 || source_handle == FUT_INVALID_HANDLE) {
+        return FUT_INVALID_HANDLE;
+    }
+
+    /* Validate source handle has rights to share */
+    if (!fut_cap_validate(source_handle, FUT_RIGHT_SHARE)) {
+        fut_printf("[CAP] fut_cap_handle_send: source handle lacks SHARE rights\n");
+        return FUT_INVALID_HANDLE;
+    }
+
+    /* Share object with target process using reduced rights */
+    fut_handle_t target_handle = fut_object_share(source_handle, target_pid, shared_rights);
+
+    fut_printf("[CAP] fut_cap_handle_send(target_pid=%llu, source=%llu, rights=0x%llx) -> %llu\n",
+               target_pid, source_handle, shared_rights, target_handle);
+
+    return target_handle;
+}
+
+fut_handle_t fut_cap_handle_recv(uint64_t source_pid, fut_rights_t *received_rights) {
+    (void)received_rights;  /* Unused until implementation complete */
+
+    /* TODO: Implement blocking receive of capability handle
+     * This requires adding a handle receive queue to fut_task structure
+     * and integrating with the scheduler for blocking wait.
+     *
+     * Planned implementation:
+     *   1. Check task's handle receive queue
+     *   2. If empty, block on waitq until handle arrives
+     *   3. Pop handle from queue and return
+     */
+
+    fut_printf("[CAP] fut_cap_handle_recv(source_pid=%llu) (STUB)\n", source_pid);
+    return FUT_INVALID_HANDLE;  /* Stub: not yet implemented */
+}
+
+fut_handle_t fut_cap_handle_dup(fut_handle_t source_handle, fut_rights_t new_rights) {
+    if (source_handle == FUT_INVALID_HANDLE) {
+        return FUT_INVALID_HANDLE;
+    }
+
+    /* Get source object */
+    fut_object_t *obj = fut_object_get(source_handle, FUT_RIGHT_NONE);
+    if (!obj) {
+        return FUT_INVALID_HANDLE;
+    }
+
+    /* Validate new rights are subset of original */
+    if ((new_rights & obj->rights) != new_rights) {
+        fut_printf("[CAP] fut_cap_handle_dup: new rights not subset of original\n");
+        fut_object_put(obj);
+        return FUT_INVALID_HANDLE;
+    }
+
+    /* Create new handle with restricted rights */
+    fut_handle_t new_handle = fut_object_create(obj->type, new_rights, obj->data);
+
+    fut_object_put(obj);
+
+    fut_printf("[CAP] fut_cap_handle_dup(source=%llu, new_rights=0x%llx) -> %llu\n",
+               source_handle, new_rights, new_handle);
+
+    return new_handle;
+}
+
+/* ============================================================
+ *   Debug and Statistics
+ * ============================================================ */
+
+void fut_cap_print_stats(struct fut_task *task) {
+    if (task) {
+        /* Per-task stats require object ownership tracking (not yet implemented) */
+        fut_printf("[CAP] Capability stats for task PID %llu:\n", task->pid);
+        fut_printf("      Per-task capability tracking not yet implemented.\n");
+        fut_printf("      Use fut_cap_print_stats(NULL) for system-wide stats.\n");
+    } else {
+        /* System-wide capability statistics */
+        fut_printf("[CAP] System-wide capability statistics:\n");
+
+        fut_object_stats_t stats;
+        fut_object_get_stats(&stats);
+
+        fut_printf("      Total objects allocated: %llu / %llu\n",
+                   stats.total_objects, stats.max_objects);
+        fut_printf("      Total refcount: %llu\n", stats.total_refcount);
+        fut_printf("      Objects by type:\n");
+
+        const char *type_names[] = {
+            "NONE", "FILE", "SOCKET", "THREAD", "TASK", "MEMORY",
+            "CHANNEL", "EVENT", "DEVICE", "BLKDEV", "NETDEV"
+        };
+
+        for (int i = 0; i < 11; i++) {
+            if (stats.objects_by_type[i] > 0) {
+                fut_printf("        %-10s: %llu\n", type_names[i], stats.objects_by_type[i]);
+            }
+        }
+    }
 }

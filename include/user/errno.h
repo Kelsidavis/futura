@@ -44,6 +44,10 @@
 #define ENOTSUP EOPNOTSUPP  /* Alias for EOPNOTSUPP */
 #endif
 
+#ifndef EWOULDBLOCK
+#define EWOULDBLOCK EAGAIN
+#endif
+
 #ifdef __cplusplus
 extern "C" {
 #endif

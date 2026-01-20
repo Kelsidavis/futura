@@ -72,6 +72,7 @@ typedef struct fut_object {
     enum fut_object_type type;      // Object type
     fut_rights_t rights;            // Capability rights
     uint64_t refcount;              // Reference count (64-bit)
+    fut_handle_t handle;            // Handle for this object (for table cleanup)
     void *data;                     // Type-specific data pointer
     struct fut_object *next;        // Next in free list or hash chain
 } fut_object_t;

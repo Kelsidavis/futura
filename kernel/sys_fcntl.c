@@ -805,10 +805,9 @@ long sys_fcntl(int fd, int cmd, uint64_t arg) {
 
         /* Store owner PID in file structure for async signal delivery */
         /* For Phase 3, we just track it - Phase 4 would actually send signals */
-        /* TODO: Add owner_pid field to struct fut_file */
-        /* if (file) {
+        if (file) {
             file->owner_pid = owner_pid;
-        } */
+        }
 
         fut_printf("[FCNTL] fcntl(fd=%d [%s], cmd=%s [%s], owner_pid=%d) -> 0 "
                    "(owner set for async signals, Phase 3)\n",
@@ -818,8 +817,7 @@ long sys_fcntl(int fd, int cmd, uint64_t arg) {
 
     case F_GETOWN: {
         /* Phase 3: Get owner process ID for async I/O signals */
-        /* TODO: Add owner_pid field to struct fut_file */
-        int owner_pid = 0;  /* file ? file->owner_pid : 0; */
+        int owner_pid = file ? file->owner_pid : 0;
 
         fut_printf("[FCNTL] fcntl(fd=%d [%s], cmd=%s [%s]) -> %d "
                    "(owner process retrieved, Phase 3)\n",

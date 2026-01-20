@@ -266,12 +266,11 @@ long sys_chown(const char *pathname, uint32_t uid, uint32_t gid) {
     }
 
     /* Phase 2: Store old ownership for before/after comparison
-     * Note: VFS layer doesn't currently track uid/gid on vnodes,
-     * so we show as 0:0 (root:root) for now. Full implementation
-     * would store actual uid/gid in vnode structure.
+     * VFS layer tracks uid/gid on vnodes, so we can retrieve the
+     * current ownership information directly from the vnode structure.
      */
-    uint32_t old_uid = 0;  // TODO: vnode->uid when implemented
-    uint32_t old_gid = 0;  // TODO: vnode->gid when implemented
+    uint32_t old_uid = vnode->uid;
+    uint32_t old_gid = vnode->gid;
 
     /* Phase 2: Build ownership change description */
     char ownership_change_buf[128];

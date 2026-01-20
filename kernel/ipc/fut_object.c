@@ -49,6 +49,7 @@ fut_handle_t fut_object_create(enum fut_object_type type, fut_rights_t rights, v
             obj->type = type;
             obj->rights = rights;
             obj->refcount = 1;
+            obj->handle = (fut_handle_t)i;
             obj->data = data;
             obj->next = NULL;
 
@@ -116,9 +117,11 @@ void fut_object_put(fut_object_t *obj) {
 
     // Decrement refcount and free if zero
     if (--obj->refcount == 0) {
+        // Clear table entry to prevent use-after-free and handle exhaustion
+        if (obj->handle < FUT_MAX_OBJECTS) {
+            object_table[obj->handle] = NULL;
+        }
         fut_free(obj);
-        // Note: We should also clear the object_table entry, but we don't have the handle here
-        // Future: Use reverse lookup or store handle in object
     }
 }
 

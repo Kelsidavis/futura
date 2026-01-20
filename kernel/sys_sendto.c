@@ -17,12 +17,16 @@
 #include <kernel/fut_memory.h>
 #include <kernel/uaccess.h>
 #include <kernel/errno.h>
+#include <kernel/fut_io_budget.h>
+#include <kernel/fut_timer.h>
 #include <stddef.h>
 #include <stdint.h>
 
 extern void fut_printf(const char *fmt, ...);
 extern fut_task_t *fut_task_current(void);
 extern struct fut_file *vfs_get_file(int fd);
+extern bool fut_io_budget_check_bytes(fut_task_t *task, uint64_t bytes, uint64_t current_ms);
+extern void fut_io_budget_consume_bytes(fut_task_t *task, uint64_t bytes);
 
 typedef uint32_t socklen_t;
 
@@ -443,6 +447,19 @@ ssize_t sys_sendto(int sockfd, const void *buf, size_t len, int flags,
         return -EINVAL;
     }
 
+    /* Phase 4: Check per-process I/O byte budget before allocation
+     * Prevents resource exhaustion DoS via repeated large sendto calls
+     * TODO: Add per-process I/O budget tracking (Phase 4)
+     * Defense: Fail-fast before allocating kernel memory
+     */
+    uint64_t current_time_ms = fut_get_ticks();
+    if (!fut_io_budget_check_bytes(task, local_len, current_time_ms)) {
+        fut_printf("[SENDTO] sendto(sockfd=%d [%s], len=%zu [%s], pid=%u) -> EAGAIN "
+                   "(I/O byte budget exhausted in current second, Phase 4: rate limiting)\n",
+                   local_sockfd, fd_category, local_len, size_category, task->pid);
+        return -EAGAIN;
+    }
+
     /* Allocate kernel buffer */
     void *kbuf = fut_malloc(local_len);
     if (!kbuf) {
@@ -464,6 +481,11 @@ ssize_t sys_sendto(int sockfd, const void *buf, size_t len, int flags,
     /* Write to socket via VFS */
     ssize_t ret = fut_vfs_write(local_sockfd, kbuf, local_len);
     fut_free(kbuf);
+
+    /* Phase 4: Consume bytes from I/O budget if write succeeded */
+    if (ret > 0) {
+        fut_io_budget_consume_bytes(task, (uint64_t)ret);
+    }
 
     if (ret < 0) {
         const char *error_desc;

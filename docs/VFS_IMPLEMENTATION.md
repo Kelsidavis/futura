@@ -604,20 +604,20 @@ if (ret == 0) {
 ✅ VFS initialization
 ✅ RamFS registration
 ✅ Root filesystem mount
-⏳ File creation (O_CREAT implementation needed)
-⏳ File read/write operations
-⏳ Directory creation
+✅ File creation (O_CREAT)
+✅ File read/write operations
+✅ Directory creation
 
 ---
 
 ## Future Enhancements
 
 ### Short-Term (Phase 2)
-- [ ] Implement `O_CREAT` flag in `fut_vfs_open()`
-- [ ] Add `unlink()` and `rmdir()` operations
-- [ ] Implement `readdir()` for directory listing
-- [ ] Add symbolic link support
-- [ ] Implement `rename()` operation
+- [x] Implement `O_CREAT` flag in `fut_vfs_open()`
+- [x] Add `unlink()` and `rmdir()` operations
+- [x] Implement `readdir()` for directory listing
+- [x] Add symbolic link support
+- [x] Implement `rename()` operation
 
 ### Medium-Term (Phase 3)
 - [ ] VFS cache layer for frequently accessed vnodes

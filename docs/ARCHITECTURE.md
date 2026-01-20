@@ -48,7 +48,7 @@ Futura OS supports multiple hardware architectures with platform-specific abstra
 - Exception handling: 16 ARM64 vectors, EL0/EL1 transitions
 - GICv2 interrupts, ARM Generic Timer, PL011 UART
 - Physical memory manager (1 GB)
-- MMU currently disabled (deferred pending QEMU debugging)
+- MMU enabled with identity-mapped L1/L2 tables and per-task contexts
 - Approaching feature parity with x86-64
 
 Platform-specific code lives under `platform/x86_64/` and `platform/arm64/`, while the kernel core remains architecture-agnostic.

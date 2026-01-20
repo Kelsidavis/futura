@@ -499,7 +499,6 @@ long sys_accept(int sockfd, void *addr, socklen_t *addrlen) {
     if (newfd < 0) {
         accept_printf("[ACCEPT] accept(local_sockfd=%d, socket_id=%u) -> EMFILE (failed to allocate FD)\n",
                    local_sockfd, listen_socket->socket_id);
-        // TODO: Clean up accepted socket
         fut_socket_unref(accepted_socket);
         return -EMFILE;
     }

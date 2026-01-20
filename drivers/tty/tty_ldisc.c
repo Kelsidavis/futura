@@ -467,6 +467,9 @@ int tty_ldisc_set_winsize(tty_ldisc_t *ldisc, const struct winsize *ws) {
     memcpy(&ldisc->winsize, ws, sizeof(struct winsize));
     fut_spinlock_release(&ldisc->lock);
 
-    /* TODO: Send SIGWINCH to foreground process group */
+    /* Send SIGWINCH to foreground process group */
+    if (ldisc->signal) {
+        ldisc->signal(SIGWINCH);
+    }
     return 0;
 }

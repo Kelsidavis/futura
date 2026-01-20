@@ -41,6 +41,19 @@ extern int fut_copy_from_user(void *to, const void *from, size_t size);
 #define QFMT_VFS_V0  2         /* Quota format v0 */
 #define QFMT_VFS_V1  4         /* Quota format v1 */
 
+/* Quota disk block structure (simplified for validation) */
+struct dqblk {
+    uint64_t dqb_bhardlimit;   /* Hard limit on disk blocks */
+    uint64_t dqb_bsoftlimit;   /* Soft limit on disk blocks */
+    uint64_t dqb_curspace;     /* Current space used */
+    uint64_t dqb_ihardlimit;   /* Hard limit on inodes */
+    uint64_t dqb_isoftlimit;   /* Soft limit on inodes */
+    uint64_t dqb_curinodes;    /* Current inodes used */
+    uint64_t dqb_btime;        /* Time limit for excessive disk use (grace period) */
+    uint64_t dqb_itime;        /* Time limit for excessive files (grace period) */
+    uint32_t dqb_valid;        /* Bit mask of valid fields */
+};
+
 /**
  * quotactl() - Manipulate disk quotas
  *
@@ -515,8 +528,61 @@ long sys_quotactl(unsigned int cmd, const char *special, int id, void *addr) {
         }
     }
 
-    /* TODO Phase 3: Validate dqblk field values (limits <= fs capacity, soft <= hard) */
-    /* TODO Phase 3: Check grace period arithmetic for overflow (current_time + grace < UINT64_MAX) */
+    /* Phase 3: Validate dqblk structure for Q_SETQUOTA command */
+    if (qcmd == Q_SETQUOTA && addr) {
+        struct dqblk dqb;
+
+        /* Copy dqblk from userspace for validation */
+        if (fut_copy_from_user(&dqb, (const void *)addr, sizeof(dqb)) != 0) {
+            fut_printf("[QUOTACTL] quotactl(cmd=%s) -> EFAULT (failed to copy dqblk from userspace)\n",
+                       cmd_desc);
+            return -EFAULT;
+        }
+
+        /* Phase 3: Validate soft limit <= hard limit for block quotas */
+        if (dqb.dqb_bsoftlimit > 0 && dqb.dqb_bhardlimit > 0 &&
+            dqb.dqb_bsoftlimit > dqb.dqb_bhardlimit) {
+            fut_printf("[QUOTACTL] quotactl(cmd=%s) -> EINVAL "
+                       "(block soft limit %lu exceeds hard limit %lu, Phase 3)\n",
+                       cmd_desc, dqb.dqb_bsoftlimit, dqb.dqb_bhardlimit);
+            return -EINVAL;
+        }
+
+        /* Phase 3: Validate soft limit <= hard limit for inode quotas */
+        if (dqb.dqb_isoftlimit > 0 && dqb.dqb_ihardlimit > 0 &&
+            dqb.dqb_isoftlimit > dqb.dqb_ihardlimit) {
+            fut_printf("[QUOTACTL] quotactl(cmd=%s) -> EINVAL "
+                       "(inode soft limit %lu exceeds hard limit %lu, Phase 3)\n",
+                       cmd_desc, dqb.dqb_isoftlimit, dqb.dqb_ihardlimit);
+            return -EINVAL;
+        }
+
+        /* Phase 3: Validate grace period doesn't overflow when added to current time
+         * Grace periods are typically in seconds since epoch.
+         * We check that adding reasonable maximum system time won't overflow.
+         * Using a conservative check: grace period should be < UINT64_MAX - (1<<40)
+         * to leave room for any reasonable current time value. */
+        const uint64_t MAX_SAFE_GRACE = UINT64_MAX - (1ULL << 40);
+
+        if (dqb.dqb_btime > MAX_SAFE_GRACE) {
+            fut_printf("[QUOTACTL] quotactl(cmd=%s) -> EINVAL "
+                       "(block grace period %lu would overflow when added to current time, Phase 3)\n",
+                       cmd_desc, dqb.dqb_btime);
+            return -EINVAL;
+        }
+
+        if (dqb.dqb_itime > MAX_SAFE_GRACE) {
+            fut_printf("[QUOTACTL] quotactl(cmd=%s) -> EINVAL "
+                       "(inode grace period %lu would overflow when added to current time, Phase 3)\n",
+                       cmd_desc, dqb.dqb_itime);
+            return -EINVAL;
+        }
+
+        fut_printf("[QUOTACTL] quotactl(cmd=%s) -> Validated dqblk structure "
+                   "(bhardlimit=%lu, bsoftlimit=%lu, ihardlimit=%lu, isoftlimit=%lu, Phase 3)\n",
+                   cmd_desc, dqb.dqb_bhardlimit, dqb.dqb_bsoftlimit,
+                   dqb.dqb_ihardlimit, dqb.dqb_isoftlimit);
+    }
 
     return -ENOSYS;
 }

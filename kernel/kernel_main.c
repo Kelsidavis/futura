@@ -772,7 +772,7 @@ void fut_kernel_main(void) {
 
     /* Core Wayland variables (production) */
     int wayland_stage = -1;
-    __attribute__((unused)) int wayland_exec = -1;  /* TODO: Make compositor exec unconditional */
+    int wayland_exec = -1;
 
     /* Detect interactive/headful boot mode from kernel cmdline */
 #ifdef WAYLAND_INTERACTIVE_MODE
@@ -1091,7 +1091,7 @@ void fut_kernel_main(void) {
 #ifdef __aarch64__
     /* On ARM64, initialize VirtIO-MMIO transport layer */
     extern void virtio_mmio_init(uint64_t dtb_ptr);
-    virtio_mmio_init(0);  /* TODO: Pass actual DTB pointer once device tree parsing is implemented */
+    virtio_mmio_init(fut_platform_get_dtb());
 #endif
 
     fut_printf("[INIT] Initializing block device subsystem...\n");

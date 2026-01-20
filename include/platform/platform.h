@@ -398,6 +398,13 @@ const char *fut_platform_get_name(void);
  */
 uint64_t fut_platform_get_features(void);
 
+/**
+ * Get device tree blob pointer (ARM64 only).
+ *
+ * @return DTB pointer or 0 if not available
+ */
+uint64_t fut_platform_get_dtb(void);
+
 /* Platform feature flags */
 #define PLATFORM_FEATURE_MMU        (1ULL << 0)
 #define PLATFORM_FEATURE_FPU        (1ULL << 1)

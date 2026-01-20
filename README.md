@@ -364,7 +364,8 @@ make rust-drivers
 3. ✅ Partial munmap with VMA splitting
 4. ✅ Comprehensive syscall surface (fork, execve, mmap, munmap, brk, nanosleep, waitpid, pipe)
 
-**Phase 4 — Userland Foundations (🚧 In Progress)**
+**Phase 4 – Userland Foundations**
+Status: 🚧 In Progress
 1. ✅ 32+ shell built-in commands with pipes, redirections, job control
 2. ✅ Wayland compositor with advanced compositing features
 3. 🚧 Full TTY input stack (extend `/dev/console` with canonical mode input, line discipline completion)

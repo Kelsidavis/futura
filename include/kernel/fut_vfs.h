@@ -237,6 +237,22 @@ struct fut_vnode_ops {
     int (*sync)(struct fut_vnode *vnode);
 
     /**
+     * Synchronize file data (but not all metadata) to storage (Phase 3).
+     *
+     * Similar to sync(), but only flushes file data and critical metadata
+     * (such as file size) required for data retrieval. Access time and other
+     * non-critical metadata may not be flushed, providing better performance
+     * for applications that only require data durability.
+     *
+     * @param vnode VNode to synchronize
+     * @return 0 on success, negative error code on failure
+     *         -EIO: I/O error during sync
+     *         -EROFS: read-only filesystem
+     *         -EINVAL: vnode doesn't support syncing (e.g., pipes, sockets)
+     */
+    int (*datasync)(struct fut_vnode *vnode);
+
+    /**
      * Truncate file to specified size (Phase 3).
      *
      * Changes the size of the file. If the new size is smaller than the current
@@ -437,6 +453,7 @@ struct fut_file {
     void *chr_inode;                /* Driver-provided inode pointer */
     void *chr_private;              /* Driver private state */
     int fd_flags;                   /* FD-specific flags (e.g., FD_CLOEXEC) */
+    int owner_pid;                  /* Owner PID for async I/O signals (F_SETOWN/F_GETOWN) */
 };
 
 /* ============================================================

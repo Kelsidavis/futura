@@ -3658,6 +3658,8 @@ static void futurafs_init_vnode_ops(void) {
     futurafs_vnode_ops.rmdir = futurafs_vnode_rmdir;
     futurafs_vnode_ops.getattr = NULL;
     futurafs_vnode_ops.setattr = NULL;
+    futurafs_vnode_ops.sync = NULL;
+    futurafs_vnode_ops.datasync = NULL;
 }
 
 /* ============================================================

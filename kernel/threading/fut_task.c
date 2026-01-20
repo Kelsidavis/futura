@@ -135,6 +135,12 @@ fut_task_t *fut_task_create(void) {
         .fd_table = NULL,   /* FD table initialized below */
         .max_fds = 0,
         .next_fd = 0,
+        .io_bytes_per_sec = 0,  /* No I/O rate limit by default (0 = unlimited) */
+        .io_ops_per_sec = 0,  /* No operation rate limit by default */
+        .io_bytes_current = 0,  /* No bytes consumed initially */
+        .io_ops_current = 0,  /* No operations consumed initially */
+        .io_budget_reset_time_ms = 0,  /* Will be set on first budget check */
+        .io_budget_limit_wait_ms = 0,  /* Not waiting initially */
         .next = NULL
     };
     fut_waitq_init(&task->child_waiters);

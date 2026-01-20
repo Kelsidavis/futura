@@ -366,17 +366,30 @@ fut_platform_info_t fut_dtb_parse(uint64_t dtb_ptr) {
         case PLATFORM_APPLE_M1:
             info.name = "Apple M1";
             info.cpu_freq = 24000000;  /* 24 MHz timer frequency */
-            info.uart_base = 0x235200000;  /* Apple s5l-uart (hardcoded - TODO: DT parse) */
+            info.uart_base = 0x235200000;  /* Apple s5l-uart (default fallback) */
             info.gpio_base = 0;  /* GPIO controller varies by device */
-            info.aic_base = 0x23B100000;  /* Apple Interrupt Controller (hardcoded - TODO: DT parse) */
+            info.aic_base = 0x23B100000;  /* Apple Interrupt Controller (default fallback) */
             info.has_gic = false;
             info.has_aic = true;
             info.has_generic_timer = true;  /* ARM Generic Timer present */
 
-            /* Parse Apple-specific device tree nodes for ANS/mailbox */
-            /* Note: These node paths are examples - actual paths vary by device */
-            /* Real implementation would search for compatible="apple,nvme-ans2" */
-            uint64_t ans_mailbox, ans_nvme;
+            /* Parse Apple-specific device tree nodes */
+            /* Note: Paths vary by device - try common locations with fallback to defaults */
+            uint64_t uart_addr, aic_addr, ans_mailbox, ans_nvme;
+
+            /* Try to parse UART address from device tree */
+            if (fut_dtb_get_reg(dtb_ptr, "/soc/serial@235200000", &uart_addr, NULL) ||
+                fut_dtb_get_reg(dtb_ptr, "/arm-io/uart0", &uart_addr, NULL)) {
+                info.uart_base = uart_addr;
+            }
+
+            /* Try to parse AIC address from device tree */
+            if (fut_dtb_get_reg(dtb_ptr, "/soc/aic@23b100000", &aic_addr, NULL) ||
+                fut_dtb_get_reg(dtb_ptr, "/arm-io/aic", &aic_addr, NULL)) {
+                info.aic_base = aic_addr;
+            }
+
+            /* Parse ANS/mailbox nodes */
             if (fut_dtb_get_reg(dtb_ptr, "/arm-io/ans", &ans_nvme, NULL)) {
                 info.ans_nvme_base = ans_nvme;
             }
@@ -388,15 +401,29 @@ fut_platform_info_t fut_dtb_parse(uint64_t dtb_ptr) {
         case PLATFORM_APPLE_M2:
             info.name = "Apple M2";
             info.cpu_freq = 24000000;  /* 24 MHz timer frequency */
-            info.uart_base = 0x235200000;  /* Apple s5l-uart (hardcoded - TODO: DT parse) */
+            info.uart_base = 0x235200000;  /* Apple s5l-uart (default fallback) */
             info.gpio_base = 0;  /* GPIO controller varies by device */
-            info.aic_base = 0x23B100000;  /* Apple Interrupt Controller (hardcoded - TODO: DT parse) */
+            info.aic_base = 0x23B100000;  /* Apple Interrupt Controller (default fallback) */
             info.has_gic = false;
             info.has_aic = true;
             info.has_generic_timer = true;
 
-            /* Parse Apple-specific device tree nodes for ANS/mailbox */
-            uint64_t ans_mailbox_m2, ans_nvme_m2;
+            /* Parse Apple-specific device tree nodes */
+            uint64_t uart_addr_m2, aic_addr_m2, ans_mailbox_m2, ans_nvme_m2;
+
+            /* Try to parse UART address from device tree */
+            if (fut_dtb_get_reg(dtb_ptr, "/soc/serial@235200000", &uart_addr_m2, NULL) ||
+                fut_dtb_get_reg(dtb_ptr, "/arm-io/uart0", &uart_addr_m2, NULL)) {
+                info.uart_base = uart_addr_m2;
+            }
+
+            /* Try to parse AIC address from device tree */
+            if (fut_dtb_get_reg(dtb_ptr, "/soc/aic@23b100000", &aic_addr_m2, NULL) ||
+                fut_dtb_get_reg(dtb_ptr, "/arm-io/aic", &aic_addr_m2, NULL)) {
+                info.aic_base = aic_addr_m2;
+            }
+
+            /* Parse ANS/mailbox nodes */
             if (fut_dtb_get_reg(dtb_ptr, "/arm-io/ans", &ans_nvme_m2, NULL)) {
                 info.ans_nvme_base = ans_nvme_m2;
             }
@@ -408,15 +435,29 @@ fut_platform_info_t fut_dtb_parse(uint64_t dtb_ptr) {
         case PLATFORM_APPLE_M3:
             info.name = "Apple M3";
             info.cpu_freq = 24000000;  /* 24 MHz timer frequency */
-            info.uart_base = 0x235200000;  /* Apple s5l-uart (hardcoded - TODO: DT parse) */
+            info.uart_base = 0x235200000;  /* Apple s5l-uart (default fallback) */
             info.gpio_base = 0;  /* GPIO controller varies by device */
-            info.aic_base = 0x23B100000;  /* Apple Interrupt Controller (hardcoded - TODO: DT parse) */
+            info.aic_base = 0x23B100000;  /* Apple Interrupt Controller (default fallback) */
             info.has_gic = false;
             info.has_aic = true;
             info.has_generic_timer = true;
 
-            /* Parse Apple-specific device tree nodes for ANS/mailbox */
-            uint64_t ans_mailbox_m3, ans_nvme_m3;
+            /* Parse Apple-specific device tree nodes */
+            uint64_t uart_addr_m3, aic_addr_m3, ans_mailbox_m3, ans_nvme_m3;
+
+            /* Try to parse UART address from device tree */
+            if (fut_dtb_get_reg(dtb_ptr, "/soc/serial@235200000", &uart_addr_m3, NULL) ||
+                fut_dtb_get_reg(dtb_ptr, "/arm-io/uart0", &uart_addr_m3, NULL)) {
+                info.uart_base = uart_addr_m3;
+            }
+
+            /* Try to parse AIC address from device tree */
+            if (fut_dtb_get_reg(dtb_ptr, "/soc/aic@23b100000", &aic_addr_m3, NULL) ||
+                fut_dtb_get_reg(dtb_ptr, "/arm-io/aic", &aic_addr_m3, NULL)) {
+                info.aic_base = aic_addr_m3;
+            }
+
+            /* Parse ANS/mailbox nodes */
             if (fut_dtb_get_reg(dtb_ptr, "/arm-io/ans", &ans_nvme_m3, NULL)) {
                 info.ans_nvme_base = ans_nvme_m3;
             }

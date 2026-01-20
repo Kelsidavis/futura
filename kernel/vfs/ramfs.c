@@ -1075,6 +1075,14 @@ static int ramfs_sync(struct fut_vnode *vnode) {
     return 0;
 }
 
+static int ramfs_datasync(struct fut_vnode *vnode) {
+    (void)vnode;  /* Unused - no actual sync needed for in-memory filesystem */
+
+    /* Phase 3: RamFS is already in memory, so datasync is a no-op.
+     * All data is immediately visible to all processes. Same as sync(). */
+    return 0;
+}
+
 /**
  * ramfs_truncate() - Truncate file to specified size (Phase 3)
  *
@@ -1647,6 +1655,7 @@ static void ramfs_init_vnode_ops(void) {
     ramfs_vnode_ops.getattr = ramfs_getattr;
     ramfs_vnode_ops.setattr = ramfs_setattr;
     ramfs_vnode_ops.sync = ramfs_sync;
+    ramfs_vnode_ops.datasync = ramfs_datasync;
     ramfs_vnode_ops.truncate = ramfs_truncate;
     ramfs_vnode_ops.link = ramfs_link;
     ramfs_vnode_ops.symlink = ramfs_symlink;

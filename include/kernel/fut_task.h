@@ -69,7 +69,8 @@ struct fut_task {
 
     /* File system context */
     uint64_t current_dir_ino;          // Current working directory inode (root=1)
-    char *cwd_cache;                   // Cached current working directory path
+    char *cwd_cache;                   // Cached current working directory path (points to cwd_cache_buf)
+    char cwd_cache_buf[256];           // Buffer for caching current working directory path
     uint32_t umask;                    // File creation mask (per-task, not global)
 
     /* I/O priority */
@@ -92,6 +93,14 @@ struct fut_task {
         uint64_t rlim_cur;             // Soft limit
         uint64_t rlim_max;             // Hard limit (ceiling for rlim_cur)
     } rlimits[16];                     // RLIMIT_NLIMITS = 16
+
+    /* I/O Budget Tracking (Phase 4 - Rate Limiting) */
+    uint64_t io_bytes_per_sec;         // Bytes allowed per second (0 = unlimited)
+    uint64_t io_ops_per_sec;           // I/O operations allowed per second (0 = unlimited)
+    uint64_t io_bytes_current;         // Current second's bytes consumed (resets every 1000ms)
+    uint64_t io_ops_current;           // Current second's operations consumed (resets every 1000ms)
+    uint64_t io_budget_reset_time_ms;  // Last time budget counters were reset (milliseconds)
+    uint64_t io_budget_limit_wait_ms;  // Time to wait before allowing next large I/O (0 = not waiting)
 
     fut_task_t *next;                  // Next task in system list
 };

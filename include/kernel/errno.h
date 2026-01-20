@@ -127,6 +127,10 @@
 #define EROFS       30
 #endif
 
+#ifndef EMLINK
+#define EMLINK      31
+#endif
+
 #ifndef ENOSYS
 #define ENOSYS      38
 #endif

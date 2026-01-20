@@ -414,13 +414,22 @@ long sys_getdents64(unsigned int fd, void *dirp, unsigned int count) {
     }
 
     uint64_t cookie = 0;
+    const int max_entries = 10000;
     size_t total_bytes = 0;
     char *buf_ptr = (char *)kbuf;
     int entry_count = 0;
 
     /* Read directory entries using VFS */
     while (total_bytes < count) {
+        if (entry_count >= max_entries) {
+            fut_printf("[GETDENTS64] getdents64(fd=%u) -> EOVERFLOW "
+                       "(entry limit %d reached, Phase 4: directory bomb guard)\n",
+                       fd, max_entries);
+            break;
+        }
+
         struct fut_vdirent vdirent;
+        uint64_t prev_cookie = cookie;
         int rc = fut_vfs_readdir_fd((int)fd, &cookie, &vdirent);
 
         if (rc < 0) {
@@ -449,6 +458,14 @@ long sys_getdents64(unsigned int fd, void *dirp, unsigned int count) {
 
         if (rc == 0) {
             break;  /* End of directory */
+        }
+
+        if (cookie < prev_cookie && prev_cookie > 0) {
+            fut_printf("[GETDENTS64] getdents64(fd=%u) -> EOVERFLOW "
+                       "(directory offset wrapped, Phase 4)\n",
+                       fd);
+            fut_free(kbuf);
+            return total_bytes > 0 ? (long)total_bytes : -EOVERFLOW;
         }
 
         /* Calculate required size for this entry */

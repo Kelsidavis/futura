@@ -386,6 +386,7 @@ KERNEL_SOURCES := \
     kernel/scheduler/fut_waitq.c \
     kernel/percpu/fut_percpu.c \
     kernel/timer/fut_timer.c \
+    kernel/io_budget.c \
     kernel/acpi/acpi.c \
     kernel/ipc/fut_object.c \
     kernel/ipc/fut_fipc.c \
@@ -1033,29 +1034,6 @@ test: iso disk
 		exit $$code; \
 	fi
 
-.PHONY: desktop-step2
-desktop-step2:
-	@$(MAKE) iso disk
-	@echo "Running desktop-step2 scenario under QEMU..."
-	@img=$(QEMU_DISK_IMG); \
-		echo "[DESKTOP] Using disk $$img"; \
-		qemu-system-x86_64 \
-			-serial stdio \
-			-display none \
-			-m $(QEMU_MEM) \
-			$(QEMU_FLAGS) \
-			-cdrom futura.iso \
-			-boot d \
-	; \
-	code=$$?; \
-	if [ $$code -eq 1 ]; then \
-		echo "[DESKTOP] PASS"; \
-		exit 0; \
-	else \
-		echo "[DESKTOP] FAIL (qemu code $$code)"; \
-		exit $$code; \
-	fi
-
 .PHONY: run run-debug run-headful run-clean help-run
 
 run:
@@ -1318,7 +1296,6 @@ help:
 	@echo "  help-run          - Usage information for run targets"
 	@echo "  iso               - Build bootable GRUB ISO (required for testing)"
 	@echo "  test              - Build and test kernel with GRUB (recommended)"
-	@echo "  desktop-step2      - Boot winsrv/winstub demo (feature flag)"
 	@echo "  wayland-step2      - Boot Wayland compositor/client skeleton"
 	@echo "  wayland-step3      - Boot Wayland compositor with dual demo clients"
 	@echo "  clean             - Remove build artifacts"
@@ -1351,7 +1328,6 @@ help:
 	@echo "  make BUILD_MODE=release       - Build optimized release"
 	@echo "  make qemu-x86_64              - Test x86-64 kernel in QEMU"
 	@echo "  make qemu-arm64               - Test ARM64 kernel in QEMU"
-	@echo "  make desktop-step2            - Boot winsrv/winstub demo in QEMU"
 	@echo "  make third_party-wayland      - Build vendored Wayland libs and scanner"
 	@echo "  make clean                    - Clean build artifacts"
 

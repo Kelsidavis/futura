@@ -140,19 +140,14 @@ long sys_ioprio_set(int which, int who, int ioprio) {
     }
 
     /* Phase 3: Store I/O priority in task structure for I/O scheduler integration */
-    /* TODO: I/O priority fields not yet added to fut_task_t struct */
-    /* Unimplemented - these fields would need to be added to the task structure:
-       task->ioprio = ioprio;
-       task->ioprio_class = class;
-       task->ioprio_level = data;
-    */
+    task->ioprio = ioprio;
+    task->ioprio_class = class;
+    task->ioprio_level = data;
 
-    /* Return -ENOSYS for now - I/O priority scheduling not yet implemented */
-    fut_printf("[IOPRIO] ioprio_set(which=%s, who=%d [%s], class=%s, priority=%d, pid=%d) -> ENOSYS "
-               "(I/O priority scheduling not yet implemented)\n",
+    fut_printf("[IOPRIO] ioprio_set(which=%s, who=%d [%s], class=%s, priority=%d, pid=%d) -> success\n",
                which_desc, who, who_desc, class_desc, data, task->pid);
 
-    return -ENOSYS;
+    return 0;
 }
 
 /**
@@ -217,17 +212,21 @@ long sys_ioprio_get(int which, int who) {
     }
 
     /* Phase 3: Retrieve I/O priority from task structure */
-    /* TODO: I/O priority fields not yet added to fut_task_t struct */
-    /* Unimplemented - would retrieve from:
-       int stored_ioprio = task->ioprio;
-       int stored_class = IOPRIO_PRIO_CLASS(stored_ioprio);
-       int stored_level = IOPRIO_PRIO_DATA(stored_ioprio);
-    */
+    int stored_ioprio = task->ioprio;
+    int stored_class = IOPRIO_PRIO_CLASS(stored_ioprio);
+    int stored_level = IOPRIO_PRIO_DATA(stored_ioprio);
 
-    /* Return -ENOSYS for now - I/O priority scheduling not yet implemented */
-    fut_printf("[IOPRIO] ioprio_get(which=%s, who=%d [%s], pid=%d) -> ENOSYS "
-               "(I/O priority scheduling not yet implemented)\n",
-               which_desc, who, who_desc, task->pid);
+    const char *class_desc;
+    switch (stored_class) {
+        case IOPRIO_CLASS_NONE: class_desc = "none"; break;
+        case IOPRIO_CLASS_RT:   class_desc = "realtime"; break;
+        case IOPRIO_CLASS_BE:   class_desc = "best-effort"; break;
+        case IOPRIO_CLASS_IDLE: class_desc = "idle"; break;
+        default:                class_desc = "unknown"; break;
+    }
 
-    return -ENOSYS;
+    fut_printf("[IOPRIO] ioprio_get(which=%s, who=%d [%s], pid=%d) -> class=%s, priority=%d\n",
+               which_desc, who, who_desc, task->pid, class_desc, stored_level);
+
+    return stored_ioprio;
 }

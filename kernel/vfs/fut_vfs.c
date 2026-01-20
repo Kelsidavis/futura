@@ -1152,6 +1152,7 @@ static int try_open_chrdev(const char *path, int flags) {
     file->chr_ops = ops;
     file->chr_inode = inode;
     file->chr_private = NULL;
+    file->owner_pid = 0;
 
     if (ops->open) {
         int rc = ops->open(inode, flags, &file->chr_private);
@@ -1220,6 +1221,7 @@ int chrdev_alloc_fd(const struct fut_file_ops *ops, void *inode, void *priv) {
     file->chr_inode = inode;
     file->chr_private = priv;
     file->fd_flags = 0;  /* No close-on-exec for device files by default */
+    file->owner_pid = 0;
 
     /* Get current task for per-task FD allocation */
     extern fut_task_t *fut_task_current(void);
@@ -1465,6 +1467,7 @@ int fut_vfs_open(const char *path, int flags, int mode) {
     file->chr_ops = NULL;
     file->chr_inode = NULL;
     file->chr_private = NULL;
+    file->owner_pid = 0;
 
     /* Check permissions for write access */
     if ((flags & (O_WRONLY | O_RDWR)) && !created) {

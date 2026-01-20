@@ -1,6 +1,6 @@
-# Project Status (Updated Oct 12 2025)
+# Project Status (Updated Nov 27 2025)
 
-## Current Milestone: Phase 2 – Userland Foundations
+## Current Milestone: Phase 4 – Userland Foundations
 
 - ✅ Async block core with rights-enforced handles.
 - ✅ Virtio-blk and AHCI drivers bridged to the block core.

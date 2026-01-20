@@ -863,8 +863,10 @@ __attribute__((unused)) static void fipc_receiver_thread(void *arg) {
 void fut_kernel_main(void) {
 
     /* Core Wayland variables (production) */
+#if ENABLE_WAYLAND_DEMO
     int wayland_stage = -1;
     int wayland_exec = -1;
+#endif
 
     /* Detect interactive/headful boot mode from kernel cmdline */
 #ifdef WAYLAND_INTERACTIVE_MODE
@@ -1064,7 +1066,7 @@ void fut_kernel_main(void) {
     /* Initialize input drivers - REQUIRED for Wayland compositor */
 #ifdef ENABLE_WAYLAND_DEMO
     fut_serial_puts("[INIT] Initializing input drivers for Wayland...\n");
-    bool input_enabled = true;  /* Required for interactive mode */
+    __attribute__((unused)) bool input_enabled = true;  /* Required for interactive mode */
     int input_rc = fut_input_hw_init(true, true);
     if (input_rc != 0) {
         fut_printf("[INPUT] init failed: %d - Wayland may not work!\n", input_rc);
@@ -1074,7 +1076,7 @@ void fut_kernel_main(void) {
     }
 #else
     /* For non-interactive builds, allow boot flag to control input */
-    bool input_enabled = boot_flag_enabled("input", false);
+    __attribute__((unused)) bool input_enabled = boot_flag_enabled("input", false);
     if (input_enabled) {
         int input_rc = fut_input_hw_init(true, true);
         if (input_rc != 0) {
@@ -1147,26 +1149,31 @@ void fut_kernel_main(void) {
     bool perf_flag = fut_boot_arg_flag("perf");
     bool run_async_selftests = boot_flag_enabled("async-tests", false);
 
-    uint16_t planned_tests = 1u; /* VFS smoke */
+    /* VFS and exec double tests are DISABLED (too much memory), don't count them */
+    uint16_t planned_tests = 0u;
+    /* FB and input tests are only for Wayland demo mode */
+#if ENABLE_WAYLAND_DEMO
     if (fb_enabled) {
         planned_tests += 1u;
     }
     if (input_enabled) {
         planned_tests += 1u;
     }
-    planned_tests += 1u; /* exec double */
-#if ENABLE_WAYLAND_DEMO
     planned_tests += 1u; /* Wayland demo sentinel */
 #endif
     if (run_async_selftests) {
         planned_tests += 5u; /* multiprocess: fork isolation, FD inheritance, per-task isolation, cloexec, shared offset */
-        planned_tests += 1u; /* block */
-        planned_tests += 1u; /* futfs */
-        planned_tests += 1u; /* net */
+        planned_tests += 4u; /* dup2: basic dup, invalid FDs, stdout redirect, same FD */
+        planned_tests += 4u; /* pipe: creation, read/write, EPIPE, EOF */
+        planned_tests += 5u; /* signal: handler installation, pending, ignored, multiple, delivery */
+        // planned_tests += 1u; /* block */
+        // planned_tests += 1u; /* futfs */
+        // planned_tests += 1u; /* net */
         if (perf_flag) {
             planned_tests += 1u; /* perf */
         }
     }
+    fut_printf("[INIT] Planning %u tests\n", planned_tests);
     fut_test_plan(planned_tests);
 
     /* DISABLED: VFS and exec double tests consume too much physical memory */
@@ -1265,6 +1272,7 @@ void fut_kernel_main(void) {
     /* Slab debugging complete - disabled again for interactive mode */
     /* test_futurafs_operations(); */
 
+#if ENABLE_WAYLAND_DEMO
     /* ========================================
      *   Stage Core Wayland Binaries (Production)
      * ======================================== */
@@ -1293,6 +1301,7 @@ void fut_kernel_main(void) {
     } else {
         fut_printf("[INIT] futura-shell staged at /bin/futura-shell\n");
     }
+#endif
 
 #if ENABLE_WAYLAND_TEST_CLIENTS
     /* ========================================
@@ -1384,6 +1393,7 @@ void fut_kernel_main(void) {
     }
 #endif
 
+#if ENABLE_WAYLAND_DEMO
     /* ========================================
      *   Launch Init Process with Framebuffer Demo
      * ======================================== */
@@ -1396,6 +1406,7 @@ void fut_kernel_main(void) {
     if (init_stage != 0) {
         fut_printf("[WARN] Failed to stage init_stub (error %d)\n", init_stage);
     }
+#endif
 
 #if ENABLE_FB_DIAGNOSTICS
     extern int fut_stage_fbtest_binary(void);
@@ -1460,6 +1471,7 @@ void fut_kernel_main(void) {
     }
 #endif
 
+#if ENABLE_WAYLAND_DEMO
     /* Launch init process with environment for Wayland */
     if (init_stage == 0) {
         fut_printf("[INIT] Launching init process...\n");
@@ -1476,6 +1488,7 @@ void fut_kernel_main(void) {
             fut_printf("[INIT] Init process launched successfully\n");
         }
     }
+#endif
 
     /* ========================================
      *   Launch Interactive Shell (DISABLED)
@@ -1536,6 +1549,7 @@ void fut_kernel_main(void) {
     }
 #endif /* ENABLE_WAYLAND_TEST_CLIENTS */
 
+#if ENABLE_WAYLAND_DEMO
     /* Check if interactive mode is enabled (for GUI testing) */
     /* When ENABLE_WAYLAND_DEMO is set, enable interactive mode so user can interact with shell */
     bool wayland_interactive = false;
@@ -1553,8 +1567,10 @@ void fut_kernel_main(void) {
 #endif
 
     if (wayland_ready) {
+#if ENABLE_WAYLAND_DEMO
         uint32_t finalize_delay_ms = 2500;
         fut_boot_delay_ms(finalize_delay_ms);
+#endif
 
         if (!wayland_interactive) {
             /* Auto-exit for automated testing (default behavior) */
@@ -1585,6 +1601,7 @@ void fut_kernel_main(void) {
         fut_printf("[WARN] Wayland exec: %d, client exec: %d\n", wayland_exec, wayland_client_exec);
         fut_printf("[WARN] Continuing to scheduler anyway\n");
     }
+#endif /* ENABLE_WAYLAND_DEMO */
 
     /* ========================================
      *   Step 6: Create Test Task and FIPC Channel

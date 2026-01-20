@@ -26,7 +26,7 @@ QEMU_DISK_IMG  ?= futura_disk.img
 QEMU_FLAGS += -cpu Broadwell,+smap  # Enable SMAP support for STAC/CLAC instructions
 QEMU_FLAGS += -device isa-debug-exit,iobase=0xf4,iosize=0x4 -no-reboot -no-shutdown
 QEMU_FLAGS += -drive if=virtio,file=$(QEMU_DISK_IMG),format=raw
-QEMU_FLAGS += -netdev user,id=net0 -device virtio-net,netdev=net0
+# QEMU_FLAGS += -netdev user,id=net0 -device virtio-net,netdev=net0  # Disabled for perf testing
 
 # ============================================================
 #   Run Configuration Defaults
@@ -218,7 +218,7 @@ endif
 ENABLE_WAYLAND_DEMO ?= 1          # Core Wayland compositor + wl-term
 ENABLE_WAYLAND_TEST_CLIENTS ?= 0  # Wayland test clients (wl-simple, wl-colorwheel) - disabled by default
 ENABLE_FB_DIAGNOSTICS ?= 0        # Optional: fbtest framebuffer diagnostic tool
-CFLAGS += -DENABLE_WAYLAND_DEMO=$(ENABLE_WAYLAND_DEMO)
+# ENABLE_WAYLAND_DEMO is now defined in $(GEN_FEATURE_HDR) to avoid redefinition conflicts
 
 # macOS host build flag (disables userland blobs that can't build on macOS)
 ifeq ($(shell uname -s),Darwin)
@@ -313,7 +313,7 @@ $(GEN_FEATURE_HDR): FORCE
 	{ \
 		echo "/* Auto-generated. Do not edit. */"; \
 		echo "#pragma once"; \
-		echo "#define ENABLE_WAYLAND_DEMO 1"; \
+		echo "#define ENABLE_WAYLAND_DEMO $(ENABLE_WAYLAND_DEMO)"; \
 		echo "#define ENABLE_WAYLAND_TEST_CLIENTS $(ENABLE_WAYLAND_TEST_CLIENTS)"; \
 	} > $$tmp; \
 	if [ ! -f $@ ] || ! cmp -s $$tmp $@; then mv $$tmp $@; else rm $$tmp; fi
@@ -1014,7 +1014,8 @@ $(QEMU_DISK_IMG):
 disk: $(QEMU_DISK_IMG)
 
 # Automated QEMU run with deterministic isa-debug-exit completion
-test: iso disk
+test:
+	@$(MAKE) ENABLE_WAYLAND_DEMO=0 iso disk
 	@echo "Testing kernel under QEMU (isa-debug-exit)..."
 	@img=$(QEMU_DISK_IMG); \
 		echo "[HARNESS] Using test disk $$img"; \

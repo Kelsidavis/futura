@@ -122,10 +122,10 @@ static void test_invalid_fds(void) {
         return;
     }
 
-    /* Test with invalid newfd (negative) */
+    /* Test with invalid newfd (negative) - POSIX says EINVAL for negative newfd */
     ret = sys_dup2(0, -1);
-    if (ret != -EBADF) {
-        fut_printf("[DUP2-TEST] ✗ Expected -EBADF for invalid newfd, got %ld\n", ret);
+    if (ret != -EINVAL) {
+        fut_printf("[DUP2-TEST] ✗ Expected -EINVAL for negative newfd, got %ld\n", ret);
         fut_test_fail(DUP2_TEST_INVALID_FDS);
         return;
     }

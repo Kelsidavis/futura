@@ -8,6 +8,8 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+extern void fut_printf(const char *fmt, ...);
+
 #ifdef DEBUG_PERF
 #define PERFDBG(...) fut_printf(__VA_ARGS__)
 #else
@@ -32,6 +34,7 @@ typedef struct {
 static void fut_perf_ctx_partner(void *arg) {
     fut_perf_ctx_t *ctx = (fut_perf_ctx_t *)arg;
     if (!ctx) {
+        fut_perf_thread_destroyed();
         return;
     }
 
@@ -47,6 +50,7 @@ static void fut_perf_ctx_partner(void *arg) {
     }
 
     ctx->finished = true;
+    fut_perf_thread_destroyed();
 }
 
 static void fut_perf_ctx_ping(fut_perf_ctx_t *ctx) {
@@ -75,6 +79,11 @@ int fut_perf_run_ctx_switch(struct fut_perf_stats *out) {
     fut_thread_t *self = fut_thread_current();
     fut_task_t *task = self ? self->task : NULL;
 
+    if (!fut_perf_can_create_thread()) {
+        fut_printf("[PERF-SCHED] Thread limit reached, cannot create partner\n");
+        return -EAGAIN;
+    }
+
     fut_thread_t *partner = fut_thread_create(task,
                                               fut_perf_ctx_partner,
                                               &ctx,
@@ -83,9 +92,18 @@ int fut_perf_run_ctx_switch(struct fut_perf_stats *out) {
     if (!partner) {
         return -ENOMEM;
     }
+    fut_perf_thread_created();
 
-    while (!ctx.ready) {
+    /* Wait for partner to be ready with timeout */
+    uint32_t wait_iterations = 0;
+    const uint32_t max_wait_iterations = 10000;  /* ~10 seconds at 1ms per iteration */
+    while (!ctx.ready && wait_iterations < max_wait_iterations) {
         fut_thread_sleep(1);
+        wait_iterations++;
+    }
+    if (!ctx.ready) {
+        fut_printf("[PERF-SCHED] Timeout waiting for partner ready\n");
+        return -ETIMEDOUT;
     }
 
     uint64_t *samples = (uint64_t *)fut_malloc(sizeof(uint64_t) * CTX_ITERS);
@@ -108,8 +126,15 @@ int fut_perf_run_ctx_switch(struct fut_perf_stats *out) {
     fut_perf_compute_stats(samples, CTX_ITERS, out);
     fut_free(samples);
 
-    while (!ctx.finished) {
+    /* Wait for partner to finish with timeout */
+    wait_iterations = 0;
+    while (!ctx.finished && wait_iterations < max_wait_iterations) {
         fut_thread_sleep(1);
+        wait_iterations++;
+    }
+    if (!ctx.finished) {
+        fut_printf("[PERF-SCHED] Timeout waiting for partner finish\n");
+        return -ETIMEDOUT;
     }
 
     return 0;

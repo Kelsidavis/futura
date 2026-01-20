@@ -30,6 +30,10 @@ extern void fut_sleep_until(fut_thread_t *thread, uint64_t wake_time);
  * Start allocation at TID 2 to avoid collision. */
 static _Atomic uint64_t next_tid __attribute__((aligned(8))) = 2;  /* 8-byte aligned for ARM64 atomics */
 
+/* Thread count tracking and safety limit to prevent runaway thread creation */
+static _Atomic uint64_t thread_count __attribute__((aligned(8))) = 0;
+#define MAX_THREADS 500   /* Safety limit to prevent infinite thread creation bugs */
+
 /* Current thread pointer is now per-CPU (see fut_percpu_t in fut_percpu.h) */
 
 /* Global thread list (for stats/debugging) */
@@ -106,6 +110,14 @@ fut_thread_t *fut_thread_create(
     int priority
 ) {
     if (!task || !entry || stack_size == 0) {
+        return NULL;
+    }
+
+    /* Safety check: prevent runaway thread creation */
+    uint64_t current_count = atomic_load_explicit(&thread_count, memory_order_acquire);
+    if (current_count >= MAX_THREADS) {
+        fut_printf("[THREAD-LIMIT] Cannot create thread: limit reached (%llu/%d)\n",
+                   (unsigned long long)current_count, MAX_THREADS);
         return NULL;
     }
 
@@ -300,6 +312,10 @@ fut_thread_t *fut_thread_create(
     thread->global_next = fut_thread_list;
     fut_thread_list = thread;
 
+    // Increment global thread count
+    uint64_t new_count = atomic_fetch_add_explicit(&thread_count, 1, memory_order_acq_rel) + 1;
+    (void)new_count;  // Avoid unused variable warning
+
     return thread;
 }
 
@@ -350,6 +366,10 @@ void fut_thread_yield(void) {
         prev = &t->global_next;
     }
     self->wait_next = NULL;
+
+    // Decrement global thread count
+    uint64_t old_count = atomic_fetch_sub_explicit(&thread_count, 1, memory_order_acq_rel);
+    (void)old_count;  // Avoid unused variable warning
 
     // Schedule next thread (this never returns)
     fut_schedule();

@@ -10,6 +10,8 @@
 #include <stdint.h>
 #include <string.h>
 
+extern void fut_printf(const char *fmt, ...);
+
 #ifdef DEBUG_PERF
 #define PERFDBG(...) fut_printf(__VA_ARGS__)
 #else
@@ -32,6 +34,7 @@ typedef struct {
 static void fut_perf_ipc_responder(void *arg) {
     fut_perf_ipc_peer_t *ctx = (fut_perf_ipc_peer_t *)arg;
     if (!ctx) {
+        fut_perf_thread_destroyed();
         return;
     }
 
@@ -51,6 +54,7 @@ static void fut_perf_ipc_responder(void *arg) {
         }
     }
     ctx->finished = true;
+    fut_perf_thread_destroyed();
 }
 
 int fut_perf_run_ipc(struct fut_perf_stats *out) {
@@ -78,6 +82,12 @@ int fut_perf_run_ipc(struct fut_perf_stats *out) {
         .finished = false,
     };
 
+    if (!fut_perf_can_create_thread()) {
+        fut_printf("[PERF-IPC] Thread limit reached, cannot create responder\n");
+        fut_fipc_channel_destroy(channel);
+        return -EAGAIN;
+    }
+
     fut_thread_t *peer = fut_thread_create(task,
                                            fut_perf_ipc_responder,
                                            &ctx,
@@ -87,9 +97,19 @@ int fut_perf_run_ipc(struct fut_perf_stats *out) {
         fut_fipc_channel_destroy(channel);
         return -ENOMEM;
     }
+    fut_perf_thread_created();
 
-    while (!ctx.ready) {
+    /* Wait for responder to be ready with timeout */
+    uint32_t wait_iterations = 0;
+    const uint32_t max_wait_iterations = 10000;  /* ~10 seconds at 1ms per iteration */
+    while (!ctx.ready && wait_iterations < max_wait_iterations) {
         fut_thread_sleep(1);
+        wait_iterations++;
+    }
+    if (!ctx.ready) {
+        fut_printf("[PERF-IPC] Timeout waiting for responder ready\n");
+        fut_fipc_channel_destroy(channel);
+        return -ETIMEDOUT;
     }
 
     uint64_t *samples = (uint64_t *)fut_malloc(sizeof(uint64_t) * measure_iters);
@@ -137,9 +157,19 @@ int fut_perf_run_ipc(struct fut_perf_stats *out) {
     fut_perf_compute_stats(samples, measure_iters, out);
 
     fut_free(samples);
-    while (!ctx.finished) {
+
+    /* Wait for responder to finish with timeout */
+    wait_iterations = 0;
+    while (!ctx.finished && wait_iterations < max_wait_iterations) {
         fut_thread_sleep(1);
+        wait_iterations++;
     }
+    if (!ctx.finished) {
+        fut_printf("[PERF-IPC] Timeout waiting for responder finish\n");
+        fut_fipc_channel_destroy(channel);
+        return -ETIMEDOUT;
+    }
+
     fut_fipc_channel_destroy(channel);
 
     if (ctx.error) {

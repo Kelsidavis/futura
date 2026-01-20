@@ -19,7 +19,6 @@
 #include <string.h>
 #include <errno.h>
 #include <user/sys.h>
-#include <kernel/fut_capability.h>
 
 /* FIPC message header structure (matches kernel definition) */
 struct fsd_fipc_msg {
@@ -70,7 +69,6 @@ struct fsd_client_fd {
     int kernel_fd;      /* FD from kernel syscall */
     int client_fd;      /* FD as seen by client */
     int flags;          /* Open flags (O_RDONLY, O_WRONLY, O_RDWR, etc.) */
-    uint64_t capability;/* Capability used to open this FD */
     bool valid;         /* Whether this entry is in use */
 };
 
@@ -185,21 +183,6 @@ static void fsd_log_num(const char *prefix, long num) {
 }
 
 /**
- * Validate capability and send error response if validation fails.
- * Returns 0 if valid, -1 if invalid (and response already sent).
- */
-static int fsd_validate_capability(uint64_t cap, uint32_t required,
-                                    uint32_t msg_type) {
-    if (fut_capability_validate(cap, required) != 0) {
-        int32_t result = -EACCES;
-        sys_fipc_send(listen_channel_id, msg_type,
-                      (const uint8_t *)&result, sizeof(result));
-        return -1;
-    }
-    return 0;
-}
-
-/**
  * Register a new client with the FSD.
  * Allocates a client slot and initializes the FD table.
  *
@@ -245,8 +228,7 @@ static int fsd_client_find(uint64_t client_id) {
  *
  * @return: Client FD on success, -1 on failure
  */
-static int fsd_client_fd_alloc(int client_idx, int kernel_fd, int flags,
-                               uint64_t capability) {
+static int fsd_client_fd_alloc(int client_idx, int kernel_fd, int flags) {
     if (client_idx < 0 || client_idx >= FSD_MAX_CLIENTS || !clients[client_idx].active) {
         return -1;
     }
@@ -259,7 +241,6 @@ static int fsd_client_fd_alloc(int client_idx, int kernel_fd, int flags,
             client->fds[i].kernel_fd = kernel_fd;
             client->fds[i].client_fd = i;
             client->fds[i].flags = flags;
-            client->fds[i].capability = capability;
             client->fds[i].valid = true;
 
             if (i >= client->next_fd) {
@@ -365,10 +346,6 @@ static void fsd_send_response(uint32_t type, const void *payload, size_t size) {
 static void handle_register(struct fsd_fipc_msg *msg) {
     int32_t result = -EINVAL;
 
-    /* Validate register capability */
-    if (fsd_validate_capability(msg->capability, FUT_CAP_REGISTER, FSD_MSG_REGISTER) != 0)
-        return;
-
     if (msg) {
         int idx = fsd_client_register(msg->src_pid);
         if (idx >= 0) {
@@ -384,10 +361,6 @@ static void handle_register(struct fsd_fipc_msg *msg) {
  */
 static void handle_unregister(struct fsd_fipc_msg *msg) {
     int32_t result = -EINVAL;
-
-    /* Validate unregister capability */
-    if (fsd_validate_capability(msg->capability, FUT_CAP_UNREGISTER, FSD_MSG_UNREGISTER) != 0)
-        return;
 
     if (msg) {
         int idx = fsd_client_find(msg->src_pid);
@@ -417,23 +390,6 @@ static void handle_open(struct fsd_fipc_msg *msg) {
         return;
     }
 
-    /* Validate open capability and path */
-    if (fsd_validate_capability(msg->capability, FUT_CAP_OPEN_FILE, FSD_MSG_OPEN) != 0)
-        return;
-    if (fut_capability_validate_path(msg->capability, req->path) != 0) {
-        result = -EACCES;
-        fsd_send_response(FSD_MSG_OPEN, &result, sizeof(result));
-        return;
-    }
-    /* Validate write capability if opening for write */
-    if ((req->flags & 0x03) != 0) {  /* O_WRONLY or O_RDWR */
-        if (fut_cap_check_write(msg->capability) != 0) {
-            result = -EACCES;
-            fsd_send_response(FSD_MSG_OPEN, &result, sizeof(result));
-            return;
-        }
-    }
-
     /* Find or register client */
     int client_idx = fsd_client_find(msg->src_pid);
     if (client_idx < 0) {
@@ -455,8 +411,7 @@ static void handle_open(struct fsd_fipc_msg *msg) {
     }
 
     /* Allocate client FD */
-    int client_fd = fsd_client_fd_alloc(client_idx, (int)kernel_fd, req->flags,
-                                        msg->capability);
+    int client_fd = fsd_client_fd_alloc(client_idx, (int)kernel_fd, req->flags);
     if (client_fd < 0) {
         sys_close(kernel_fd);
         result = -ENOMEM;
@@ -494,16 +449,6 @@ static void handle_read(struct fsd_fipc_msg *msg) {
     int kernel_fd = fsd_client_fd_get_kernel(client_idx, req->fd);
     if (kernel_fd < 0) {
         resp.bytes_read = -EBADF;
-        fsd_send_response(FSD_MSG_READ, &resp, sizeof(resp.bytes_read));
-        return;
-    }
-
-    /* Validate read capability (message and FD) */
-    if (fsd_validate_capability(msg->capability, FUT_CAP_READ_FILE, FSD_MSG_READ) != 0)
-        return;
-    uint64_t fd_cap = clients[client_idx].fds[req->fd].capability;
-    if (fut_capability_validate(fd_cap, FUT_CAP_READ_FILE) != 0) {
-        resp.bytes_read = -EACCES;
         fsd_send_response(FSD_MSG_READ, &resp, sizeof(resp.bytes_read));
         return;
     }
@@ -554,19 +499,6 @@ static void handle_write(struct fsd_fipc_msg *msg) {
         return;
     }
 
-    /* Validate write capability with read-only check (message and FD) */
-    if (fut_cap_check_write(msg->capability) != 0) {
-        result = -EACCES;
-        fsd_send_response(FSD_MSG_WRITE, &result, sizeof(result));
-        return;
-    }
-    uint64_t fd_cap = clients[client_idx].fds[req->fd].capability;
-    if (fut_cap_check_write(fd_cap) != 0) {
-        result = -EACCES;
-        fsd_send_response(FSD_MSG_WRITE, &result, sizeof(result));
-        return;
-    }
-
     /* Extract write data from message payload (after request header) */
     const uint8_t *write_data = msg->payload + sizeof(struct fsd_write_req);
 
@@ -591,10 +523,6 @@ static void handle_close(struct fsd_fipc_msg *msg) {
         fsd_send_response(FSD_MSG_CLOSE, &result, sizeof(result));
         return;
     }
-
-    /* Validate close capability */
-    if (fsd_validate_capability(msg->capability, FUT_CAP_CLOSE_FILE, FSD_MSG_CLOSE) != 0)
-        return;
 
     const struct fsd_close_req *req = (const struct fsd_close_req *)msg->payload;
 
@@ -629,16 +557,6 @@ static void handle_mkdir(struct fsd_fipc_msg *msg) {
         return;
     }
 
-    /* Validate directory creation capability */
-    if (fsd_validate_capability(msg->capability, FUT_CAP_CREATE_DIR, FSD_MSG_MKDIR) != 0)
-        return;
-    if (fut_capability_validate_path(msg->capability, req->path) != 0 ||
-        fut_cap_check_write(msg->capability) != 0) {
-        result = -EACCES;
-        fsd_send_response(FSD_MSG_MKDIR, &result, sizeof(result));
-        return;
-    }
-
     result = (int32_t)sys_mkdir_call(req->path, req->mode);
     fsd_send_response(FSD_MSG_MKDIR, &result, sizeof(result));
 }
@@ -656,16 +574,6 @@ static void handle_rmdir(struct fsd_fipc_msg *msg) {
 
     const struct fsd_rmdir_req *req = (const struct fsd_rmdir_req *)msg->payload;
     if (!req->path[0]) {
-        fsd_send_response(FSD_MSG_RMDIR, &result, sizeof(result));
-        return;
-    }
-
-    /* Validate directory deletion capability */
-    if (fsd_validate_capability(msg->capability, FUT_CAP_DELETE_DIR, FSD_MSG_RMDIR) != 0)
-        return;
-    if (fut_capability_validate_path(msg->capability, req->path) != 0 ||
-        fut_cap_check_write(msg->capability) != 0) {
-        result = -EACCES;
         fsd_send_response(FSD_MSG_RMDIR, &result, sizeof(result));
         return;
     }
@@ -691,16 +599,6 @@ static void handle_unlink(struct fsd_fipc_msg *msg) {
         return;
     }
 
-    /* Validate file deletion capability */
-    if (fsd_validate_capability(msg->capability, FUT_CAP_DELETE_FILE, FSD_MSG_UNLINK) != 0)
-        return;
-    if (fut_capability_validate_path(msg->capability, req->path) != 0 ||
-        fut_cap_check_write(msg->capability) != 0) {
-        result = -EACCES;
-        fsd_send_response(FSD_MSG_UNLINK, &result, sizeof(result));
-        return;
-    }
-
     result = (int32_t)sys_unlink(req->path);
     fsd_send_response(FSD_MSG_UNLINK, &result, sizeof(result));
 }
@@ -721,15 +619,6 @@ static void handle_stat(struct fsd_fipc_msg *msg) {
 
     const struct fsd_stat_req *req = (const struct fsd_stat_req *)msg->payload;
     if (!req->path[0]) {
-        fsd_send_response(FSD_MSG_STAT, &resp, sizeof(resp.result));
-        return;
-    }
-
-    /* Validate stat capability */
-    if (fsd_validate_capability(msg->capability, FUT_CAP_STAT_FILE, FSD_MSG_STAT) != 0)
-        return;
-    if (fut_capability_validate_path(msg->capability, req->path) != 0) {
-        resp.result = -EACCES;
         fsd_send_response(FSD_MSG_STAT, &resp, sizeof(resp.result));
         return;
     }
@@ -770,16 +659,6 @@ static void handle_lseek(struct fsd_fipc_msg *msg) {
         return;
     }
 
-    /* Validate seek capability (message and FD) */
-    if (fsd_validate_capability(msg->capability, FUT_CAP_SEEK_FILE, FSD_MSG_LSEEK) != 0)
-        return;
-    uint64_t fd_cap = clients[client_idx].fds[req->fd].capability;
-    if (fut_capability_validate(fd_cap, FUT_CAP_SEEK_FILE) != 0) {
-        result = -EACCES;
-        fsd_send_response(FSD_MSG_LSEEK, &result, sizeof(result));
-        return;
-    }
-
     result = sys_lseek_call(kernel_fd, req->offset, req->whence);
     fsd_send_response(FSD_MSG_LSEEK, &result, sizeof(result));
 }
@@ -811,16 +690,6 @@ static void handle_fsync(struct fsd_fipc_msg *msg) {
         return;
     }
 
-    /* Validate fsync capability (message and FD) */
-    if (fsd_validate_capability(msg->capability, FUT_CAP_FSYNC, FSD_MSG_FSYNC) != 0)
-        return;
-    uint64_t fd_cap = clients[client_idx].fds[req->fd].capability;
-    if (fut_capability_validate(fd_cap, FUT_CAP_FSYNC) != 0) {
-        result = -EACCES;
-        fsd_send_response(FSD_MSG_FSYNC, &result, sizeof(result));
-        return;
-    }
-
     result = (int32_t)sys_fsync_call(kernel_fd);
     fsd_send_response(FSD_MSG_FSYNC, &result, sizeof(result));
 }
@@ -842,16 +711,6 @@ static void handle_chmod(struct fsd_fipc_msg *msg) {
         return;
     }
 
-    /* Validate chmod capability with permission change check */
-    if (fsd_validate_capability(msg->capability, FUT_CAP_CHMOD_FILE, FSD_MSG_CHMOD) != 0)
-        return;
-    if (fut_capability_validate_path(msg->capability, req->path) != 0 ||
-        fut_cap_check_permission_change(msg->capability) != 0) {
-        result = -EACCES;
-        fsd_send_response(FSD_MSG_CHMOD, &result, sizeof(result));
-        return;
-    }
-
     result = (int32_t)sys_chmod_call(req->path, req->mode);
     fsd_send_response(FSD_MSG_CHMOD, &result, sizeof(result));
 }
@@ -869,16 +728,6 @@ static void handle_chown(struct fsd_fipc_msg *msg) {
 
     const struct fsd_chown_req *req = (const struct fsd_chown_req *)msg->payload;
     if (!req->path[0]) {
-        fsd_send_response(FSD_MSG_CHOWN, &result, sizeof(result));
-        return;
-    }
-
-    /* Validate chown capability with permission change and privesc check */
-    if (fsd_validate_capability(msg->capability, FUT_CAP_CHOWN_FILE, FSD_MSG_CHOWN) != 0)
-        return;
-    if (fut_capability_validate_path(msg->capability, req->path) != 0 ||
-        fut_cap_check_permission_change(msg->capability) != 0) {
-        result = -EACCES;
         fsd_send_response(FSD_MSG_CHOWN, &result, sizeof(result));
         return;
     }

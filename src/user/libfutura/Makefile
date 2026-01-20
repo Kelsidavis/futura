@@ -55,7 +55,7 @@ endif
 ASFLAGS := $(ARCH_ASFLAGS)
 
 # Source files (platform-specific crt0)
-C_SRCS := abort.c string.c strerror.c env.c fputs.c fwrite.c malloc.c fipc.c fipc_stub.c posix.c fcntl.c mremap.c memory_map.c fstat.c eventfd.c printf.c printf_core.c vsnprintf.c posix_shm.c epoll.c poll.c timerfd.c signalfd.c time.c stack_chk.c pthread_stub.c assert.c signals.c socket_unix.c fd.c errno.c syscall_shim.c stat_stub.c capability.c
+C_SRCS := abort.c string.c strerror.c env.c fputs.c fwrite.c malloc.c fipc.c fipc_stub.c posix.c fcntl.c mremap.c memory_map.c fstat.c eventfd.c printf.c printf_core.c vsnprintf.c posix_shm.c epoll.c poll.c timerfd.c signalfd.c time.c stack_chk.c pthread_stub.c assert.c signals.c socket_unix.c fd.c errno.c syscall_shim.c stat_stub.c
 
 ifeq ($(PLATFORM),arm64)
     ASM_SRCS := crt0_arm64.S

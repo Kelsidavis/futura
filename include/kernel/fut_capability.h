@@ -1,271 +1,311 @@
-/* fut_capability.h - Futura OS Capability System Interface
+/* fut_capability.h - Futura OS Capability Model (C23)
  *
  * Copyright (c) 2025 Kelsi Davis
  * Licensed under the MPL v2.0 — see LICENSE for details.
  *
- * High-level capability syscall interface for capability-based security.
- * Provides file operations, handle transfer, and capability validation.
+ * Capability-based access control for filesystem operations and IPC.
+ * Capabilities are 64-bit values with structured bit layout:
  *
- * This layer builds on top of fut_object.h to provide POSIX-compatible
- * capability syscalls needed for FSD integration (Phase 1).
+ * Bit Layout:
+ *   Bits 0-15:   Operation type (FUT_CAP_*)
+ *   Bits 16-31:  Scope/context flags
+ *   Bits 32-47:  Object type restrictions
+ *   Bits 48-63:  Reserved for future use
  */
 
 #pragma once
 
 #include <stdint.h>
-#include <stddef.h>
 #include <stdbool.h>
-#include <kernel/fut_object.h>
-
-/* Forward declarations */
-struct fut_task;
-struct stat;
 
 /* ============================================================
- *   Capability Rights Helper Macros
+ *   Capability Operation Types (Bits 0-15)
  * ============================================================ */
 
-/* Standard file rights combinations */
-#define FUT_CAP_FILE_READ_ONLY      (FUT_RIGHT_READ | FUT_RIGHT_DESTROY)
-#define FUT_CAP_FILE_WRITE_ONLY     (FUT_RIGHT_WRITE | FUT_RIGHT_DESTROY)
-#define FUT_CAP_FILE_READ_WRITE     (FUT_RIGHT_READ | FUT_RIGHT_WRITE | FUT_RIGHT_DESTROY)
-#define FUT_CAP_FILE_ALL            (FUT_RIGHT_READ | FUT_RIGHT_WRITE | FUT_RIGHT_ADMIN | FUT_RIGHT_DESTROY)
+/* Filesystem Operations */
+#define FUT_CAP_OPEN_FILE       0x0001   /* Open/create files */
+#define FUT_CAP_READ_FILE       0x0002   /* Read file contents */
+#define FUT_CAP_WRITE_FILE      0x0004   /* Write file contents */
+#define FUT_CAP_DELETE_FILE     0x0008   /* Delete/unlink files */
+#define FUT_CAP_STAT_FILE       0x0010   /* Stat/query file metadata */
+#define FUT_CAP_SEEK_FILE       0x0020   /* Seek within files */
+#define FUT_CAP_FSYNC           0x0040   /* Sync file to disk */
+#define FUT_CAP_CLOSE_FILE      0x0080   /* Close file descriptors */
 
-/* Directory rights combinations */
-#define FUT_CAP_DIR_READ            (FUT_RIGHT_READ | FUT_RIGHT_DESTROY)
-#define FUT_CAP_DIR_MODIFY          (FUT_RIGHT_WRITE | FUT_RIGHT_ADMIN | FUT_RIGHT_DESTROY)
-#define FUT_CAP_DIR_ALL             (FUT_RIGHT_READ | FUT_RIGHT_WRITE | FUT_RIGHT_ADMIN | FUT_RIGHT_DESTROY)
+/* Directory Operations */
+#define FUT_CAP_CREATE_DIR      0x0100   /* Create directories */
+#define FUT_CAP_DELETE_DIR      0x0200   /* Delete directories */
+#define FUT_CAP_LIST_DIR        0x0400   /* Enumerate directory contents */
 
-/* Rights validation macros */
-#define FUT_CAP_HAS_RIGHT(rights, required)     (((rights) & (required)) == (required))
-#define FUT_CAP_CAN_READ(rights)                FUT_CAP_HAS_RIGHT(rights, FUT_RIGHT_READ)
-#define FUT_CAP_CAN_WRITE(rights)               FUT_CAP_HAS_RIGHT(rights, FUT_RIGHT_WRITE)
-#define FUT_CAP_CAN_ADMIN(rights)               FUT_CAP_HAS_RIGHT(rights, FUT_RIGHT_ADMIN)
-#define FUT_CAP_CAN_SHARE(rights)               FUT_CAP_HAS_RIGHT(rights, FUT_RIGHT_SHARE)
-#define FUT_CAP_CAN_DESTROY(rights)             FUT_CAP_HAS_RIGHT(rights, FUT_RIGHT_DESTROY)
+/* Permission Operations */
+#define FUT_CAP_CHMOD_FILE      0x0800   /* Change file permissions */
+#define FUT_CAP_CHOWN_FILE      0x1000   /* Change file ownership */
 
-/* Rights restriction (create subset of rights) */
-#define FUT_CAP_RESTRICT(original, allowed)     ((original) & (allowed))
+/* Client Management */
+#define FUT_CAP_REGISTER        0x2000   /* Register as FSD client */
+#define FUT_CAP_UNREGISTER      0x4000   /* Unregister from FSD */
+
+/* Combined Operation Masks */
+#define FUT_CAP_READ_OPS        (FUT_CAP_READ_FILE | FUT_CAP_STAT_FILE | FUT_CAP_LIST_DIR)
+#define FUT_CAP_WRITE_OPS       (FUT_CAP_WRITE_FILE | FUT_CAP_DELETE_FILE | \
+                                FUT_CAP_CHMOD_FILE | FUT_CAP_CHOWN_FILE)
+#define FUT_CAP_ALL_FILE_OPS    (FUT_CAP_OPEN_FILE | FUT_CAP_READ_FILE | \
+                                FUT_CAP_WRITE_FILE | FUT_CAP_DELETE_FILE | \
+                                FUT_CAP_STAT_FILE | FUT_CAP_SEEK_FILE | \
+                                FUT_CAP_FSYNC | FUT_CAP_CLOSE_FILE | \
+                                FUT_CAP_CREATE_DIR | FUT_CAP_DELETE_DIR | \
+                                FUT_CAP_LIST_DIR | FUT_CAP_CHMOD_FILE | \
+                                FUT_CAP_CHOWN_FILE)
 
 /* ============================================================
- *   Capability File Operations (Phase 1 Syscalls)
+ *   Capability Scope Flags (Bits 16-31)
  * ============================================================ */
 
-/**
- * Open a file and return a capability handle.
- *
- * Similar to open(2) but returns a capability handle instead of FD.
- * Rights are determined by flags (O_RDONLY, O_WRONLY, O_RDWR).
- *
- * @param path      File path
- * @param flags     Open flags (O_RDONLY, O_WRONLY, O_RDWR, O_CREAT, etc.)
- * @param mode      File creation mode (if O_CREAT specified)
- * @return Capability handle, or FUT_INVALID_HANDLE on error
- */
-fut_handle_t fut_cap_open(const char *path, int flags, int mode);
+/* Path scope restrictions */
+#define FUT_CAP_SCOPE_ROOT_ONLY       0x00010000  /* Restrict to root mount only */
+#define FUT_CAP_SCOPE_HOME_ONLY       0x00020000  /* Restrict to user home dir */
+#define FUT_CAP_SCOPE_TMP_ONLY        0x00040000  /* Restrict to /tmp only */
+#define FUT_CAP_SCOPE_SYSTEM_ONLY     0x00080000  /* Restrict to /sys only */
 
-/**
- * Read from a capability handle.
- *
- * Validates READ rights before allowing operation.
- *
- * @param handle    File capability handle
- * @param buffer    Buffer to read into
- * @param count     Number of bytes to read
- * @return Number of bytes read, or negative error code
- */
-long fut_cap_read(fut_handle_t handle, void *buffer, size_t count);
+/* Data access restrictions */
+#define FUT_CAP_SCOPE_READ_ONLY       0x00100000  /* Read-only access */
+#define FUT_CAP_SCOPE_EXECUTE_ONLY    0x00200000  /* Execute-only access */
 
-/**
- * Write to a capability handle.
- *
- * Validates WRITE rights before allowing operation.
- *
- * @param handle    File capability handle
- * @param buffer    Buffer to write from
- * @param count     Number of bytes to write
- * @return Number of bytes written, or negative error code
- */
-long fut_cap_write(fut_handle_t handle, const void *buffer, size_t count);
+/* Permission restrictions */
+#define FUT_CAP_SCOPE_NO_PRIVESC      0x00400000  /* Prevent privilege escalation */
+#define FUT_CAP_SCOPE_NO_PERMISSION_CHANGE 0x00800000  /* Prevent chmod/chown */
 
-/**
- * Seek within a capability handle.
- *
- * @param handle    File capability handle
- * @param offset    Offset to seek to
- * @param whence    SEEK_SET, SEEK_CUR, or SEEK_END
- * @return New file position, or negative error code
- */
-long fut_cap_lseek(fut_handle_t handle, int64_t offset, int whence);
-
-/**
- * Sync a capability handle to storage.
- *
- * Validates WRITE rights before allowing operation.
- *
- * @param handle    File capability handle
- * @return 0 on success, or negative error code
- */
-int fut_cap_fsync(fut_handle_t handle);
-
-/**
- * Get file status from capability handle.
- *
- * Validates handle is valid (no specific rights required for metadata).
- *
- * @param handle    File capability handle
- * @param statbuf   Output buffer for file status
- * @return 0 on success, or negative error code
- */
-int fut_cap_fstat(fut_handle_t handle, struct stat *statbuf);
-
-/**
- * Close a capability handle.
- *
- * Validates DESTROY rights before allowing operation.
- * Decrements reference count and frees resources when reaching zero.
- *
- * @param handle    Capability handle to close
- * @return 0 on success, or negative error code
- */
-int fut_cap_close(fut_handle_t handle);
+/* Timing restrictions */
+#define FUT_CAP_SCOPE_TIME_LIMITED    0x01000000  /* Capability expires */
 
 /* ============================================================
- *   Directory Operations with Capabilities (Phase 1 Syscalls)
+ *   Capability Object Type Restrictions (Bits 32-47)
+ * ============================================================ */
+
+#define FUT_CAP_OBJTYPE_ANY           0ULL  /* No restriction */
+#define FUT_CAP_OBJTYPE_REGULAR_FILE  (1ULL << 32)  /* Regular files only */
+#define FUT_CAP_OBJTYPE_DIRECTORY     (2ULL << 32)  /* Directories only */
+#define FUT_CAP_OBJTYPE_SYMLINK       (4ULL << 32)  /* Symlinks only */
+#define FUT_CAP_OBJTYPE_CHRDEV        (8ULL << 32)  /* Character devices only */
+#define FUT_CAP_OBJTYPE_BLKDEV        (16ULL << 32)  /* Block devices only */
+
+/* ============================================================
+ *   Capability Expiry Time (Bits 48-63)
  * ============================================================ */
 
 /**
- * Create directory relative to parent capability handle.
- *
- * Validates parent handle has WRITE|ADMIN rights.
- *
- * @param parent_handle  Parent directory capability handle
- * @param name          Name of new directory (not full path)
- * @param mode          Directory creation mode
- * @return 0 on success, or negative error code
+ * Extract expiry time from capability (minutes since boot).
+ * Returns 0 if not time-limited.
+ * Max value: 65535 minutes (~45 days)
  */
-int fut_cap_mkdirat(fut_handle_t parent_handle, const char *name, int mode);
+#define FUT_CAP_GET_EXPIRY(cap) \
+    (((cap) >> 48) & 0xFFFFULL)
 
 /**
- * Remove directory relative to parent capability handle.
- *
- * Validates parent handle has ADMIN rights.
- *
- * @param parent_handle  Parent directory capability handle
- * @param name          Name of directory to remove
- * @return 0 on success, or negative error code
+ * Set expiry time in capability (minutes since boot).
+ * @param minutes Minutes until expiry (0-65535)
  */
-int fut_cap_rmdirat(fut_handle_t parent_handle, const char *name);
-
-/**
- * Remove file relative to parent capability handle.
- *
- * Validates parent handle has ADMIN rights.
- *
- * @param parent_handle  Parent directory capability handle
- * @param name          Name of file to remove
- * @return 0 on success, or negative error code
- */
-int fut_cap_unlinkat(fut_handle_t parent_handle, const char *name);
-
-/**
- * Get file status relative to parent capability handle.
- *
- * Validates parent handle has READ rights.
- *
- * @param parent_handle  Parent directory capability handle
- * @param name          Name of file to stat
- * @param statbuf       Output buffer for file status
- * @return 0 on success, or negative error code
- */
-int fut_cap_statat(fut_handle_t parent_handle, const char *name, struct stat *statbuf);
+#define FUT_CAP_SET_EXPIRY(cap, minutes) \
+    (((cap) & 0x0000FFFFFFFFFFFFULL) | (((uint64_t)(minutes) & 0xFFFFULL) << 48))
 
 /* ============================================================
- *   Capability Handle Transfer (Phase 1 IPC Primitives)
+ *   Capability Validation Macros
  * ============================================================ */
 
 /**
- * Send a capability handle to another process.
- *
- * Creates a new handle in the target process with specified rights.
- * Source handle rights can be restricted when sharing.
- *
- * @param target_pid    Target process PID
- * @param source_handle Source capability handle
- * @param shared_rights Rights to grant to target (must be subset of source)
- * @return New handle in target process, or FUT_INVALID_HANDLE on error
+ * Check if a capability has a specific operation right.
+ * @param cap Capability to check
+ * @param required Required operation type (FUT_CAP_*)
+ * @return true if capability includes operation, false otherwise
  */
-fut_handle_t fut_cap_handle_send(uint64_t target_pid, fut_handle_t source_handle,
-                                 fut_rights_t shared_rights);
+#define FUT_CAP_HAS_OP(cap, required) \
+    (((cap) & 0xFFFF) & (required))
 
 /**
- * Receive a capability handle from another process.
- *
- * Blocks until a handle is received from the specified process.
- *
- * @param source_pid    Source process PID (0 = any process)
- * @param received_rights Output: rights of received handle
- * @return Received capability handle, or FUT_INVALID_HANDLE on error
+ * Check if a capability has all required operations.
+ * @param cap Capability to check
+ * @param required Bitmask of required operations
+ * @return true if capability includes all operations, false otherwise
  */
-fut_handle_t fut_cap_handle_recv(uint64_t source_pid, fut_rights_t *received_rights);
+#define FUT_CAP_HAS_ALL_OPS(cap, required) \
+    (((cap) & 0xFFFF & (required)) == (required))
 
 /**
- * Duplicate a capability handle with optionally reduced rights.
- *
- * Creates a new handle to the same object with same or reduced rights.
- * Useful for creating restricted handles within the same process.
- *
- * @param source_handle Source capability handle
- * @param new_rights    Rights for new handle (must be subset of source)
- * @return New capability handle, or FUT_INVALID_HANDLE on error
+ * Check if a capability has any of multiple required operations.
+ * @param cap Capability to check
+ * @param required Bitmask of operations (any one satisfies)
+ * @return true if capability includes any operation, false otherwise
  */
-fut_handle_t fut_cap_handle_dup(fut_handle_t source_handle, fut_rights_t new_rights);
+#define FUT_CAP_HAS_ANY_OPS(cap, required) \
+    (((cap) & 0xFFFF & (required)) != 0)
+
+/**
+ * Extract capability scope flags.
+ * @param cap Capability value
+ * @return Scope flags (bits 16-31)
+ */
+#define FUT_CAP_GET_SCOPE(cap) \
+    (((cap) >> 16) & 0xFFFF)
+
+/**
+ * Check if capability has a specific scope restriction.
+ * @param cap Capability to check
+ * @param scope Scope flag (FUT_CAP_SCOPE_*)
+ * @return true if scope flag is set, false otherwise
+ */
+#define FUT_CAP_HAS_SCOPE(cap, scope) \
+    ((FUT_CAP_GET_SCOPE(cap) & (scope)) == (scope))
+
+/**
+ * Extract object type restrictions.
+ * @param cap Capability value
+ * @return Object type mask (bits 32-47)
+ */
+#define FUT_CAP_GET_OBJTYPE(cap) \
+    (((cap) >> 32) & 0xFFFFULL)
+
+/* File mode compatibility definitions for kernel */
+#define VN_INVALID_TYPE  0
+#define VN_REG_TYPE      1
+#define VN_DIR_TYPE      2
+#define VN_CHR_TYPE      3
+#define VN_BLK_TYPE      4
+#define VN_FIFO_TYPE     5
+#define VN_LNK_TYPE      6
+#define VN_SOCK_TYPE     7
+
+/**
+ * Fail-fast capability validation macro for handlers.
+ * @param cap Capability from message
+ * @param required Required operation type
+ * Usage: if (!FUT_CAP_VALIDATE_FAST(msg->capability, FUT_CAP_OPEN_FILE)) return -EACCES;
+ */
+#define FUT_CAP_VALIDATE_FAST(cap, required) \
+    (FUT_CAP_HAS_OP((cap), (required)) != 0)
 
 /* ============================================================
- *   Capability Validation Helpers
+ *   Capability Validation API
  * ============================================================ */
 
 /**
- * Validate that a capability handle has required rights.
+ * Validate if a capability grants a specific operation.
  *
- * @param handle        Capability handle to validate
- * @param required_rights Rights that must be present
- * @return true if handle has all required rights, false otherwise
+ * Performs full validation including:
+ * - Operation type check
+ * - Scope restriction check
+ * - Object type check
+ * - Time-based restrictions (if any)
+ *
+ * @param cap        64-bit capability value
+ * @param required   Required operation type (FUT_CAP_*)
+ * @return 0 if capability is valid, negative error code on failure
+ *         -EACCES if operation not permitted
+ *         -ENOTSUP if scope restriction prevents operation
  */
-bool fut_cap_validate(fut_handle_t handle, fut_rights_t required_rights);
+int fut_capability_validate(uint64_t cap, uint32_t required);
 
 /**
- * Get the rights associated with a capability handle.
+ * Validate if a capability grants access to a specific path.
  *
- * @param handle    Capability handle
- * @return Rights bitfield, or FUT_RIGHT_NONE if invalid handle
+ * Checks scope restrictions (e.g., root-only, home-only) against path.
+ *
+ * @param cap        64-bit capability value
+ * @param path       File path to validate against
+ * @return 0 if path is accessible, -EACCES if restricted
  */
-fut_rights_t fut_cap_get_rights(fut_handle_t handle);
+int fut_capability_validate_path(uint64_t cap, const char *path);
 
 /**
- * Convert open flags to capability rights.
+ * Validate if a capability grants access to a file descriptor.
  *
- * Helper to determine rights from POSIX open() flags.
+ * Checks object type restrictions and operation permissions.
  *
- * @param flags     Open flags (O_RDONLY, O_WRONLY, O_RDWR, etc.)
- * @return Appropriate capability rights
+ * @param cap        64-bit capability value
+ * @param fd         File descriptor to validate
+ * @return 0 if FD is accessible, -EACCES if restricted
  */
-fut_rights_t fut_cap_flags_to_rights(int flags);
+int fut_capability_validate_fd(uint64_t cap, int fd);
+
+/**
+ * Create a new capability with specified operations and scopes.
+ *
+ * Utility function for constructing capabilities programmatically.
+ *
+ * @param ops        Bitmask of operations (FUT_CAP_*)
+ * @param scopes     Bitmask of scope flags (FUT_CAP_SCOPE_*)
+ * @param objtypes   Bitmask of object types (FUT_CAP_OBJTYPE_*)
+ * @return Constructed 64-bit capability value
+ */
+uint64_t fut_capability_create(uint32_t ops, uint32_t scopes, uint32_t objtypes);
+
+/**
+ * Create a time-limited capability that expires after specified duration.
+ *
+ * @param ops            Bitmask of operations (FUT_CAP_*)
+ * @param scopes         Bitmask of scope flags (FUT_CAP_SCOPE_*)
+ * @param objtypes       Bitmask of object types (FUT_CAP_OBJTYPE_*)
+ * @param minutes_valid  Minutes until expiry (1-65535, max ~45 days)
+ * @return Constructed 64-bit capability value with TIME_LIMITED scope and expiry set
+ */
+uint64_t fut_capability_create_timed(uint32_t ops, uint32_t scopes, uint32_t objtypes, uint32_t minutes_valid);
+
+/**
+ * Check if capability is expired (if time-limited).
+ *
+ * @param cap        64-bit capability value
+ * @return 0 if valid, -EEXPIRE if expired
+ */
+int fut_capability_check_expiry(uint64_t cap);
+
+/**
+ * Initialize capability subsystem (called at kernel startup).
+ */
+void fut_capability_init(void);
+
+/**
+ * Check if capability allows write operations.
+ *
+ * Validates that the capability:
+ * 1. Has write operation bits set
+ * 2. Does not have READ_ONLY scope restriction
+ *
+ * @param cap        64-bit capability value
+ * @return 0 if write allowed, -EACCES if read-only or no write permission
+ */
+int fut_cap_check_write(uint64_t cap);
+
+/**
+ * Check if capability allows permission changes (chmod/chown).
+ *
+ * Validates that the capability does not have NO_PERMISSION_CHANGE scope.
+ *
+ * @param cap        64-bit capability value
+ * @return 0 if permission changes allowed, -EACCES if restricted
+ */
+int fut_cap_check_permission_change(uint64_t cap);
 
 /* ============================================================
- *   Capability System Initialization
+ *   Convenience Inline Helpers
  * ============================================================ */
 
 /**
- * Initialize the capability system.
- *
- * Must be called during kernel initialization after fut_object_system_init().
+ * Check if capability is null/uninitialized.
  */
-void fut_cap_system_init(void);
+static inline bool fut_capability_is_null(uint64_t cap) {
+    return cap == 0;
+}
 
 /**
- * Print capability system statistics (debug).
- *
- * @param task  Task to print stats for (NULL = system-wide stats)
+ * Check if capability grants all filesystem operations.
  */
-void fut_cap_print_stats(struct fut_task *task);
+static inline bool fut_capability_is_superuser(uint64_t cap) {
+    return FUT_CAP_HAS_ALL_OPS(cap, FUT_CAP_ALL_FILE_OPS) &&
+           !FUT_CAP_HAS_SCOPE(cap, 0xFFFF);  /* No scope restrictions */
+}
+
+/**
+ * Check if capability is read-only.
+ */
+static inline bool fut_capability_is_readonly(uint64_t cap) {
+    return FUT_CAP_HAS_SCOPE(cap, FUT_CAP_SCOPE_READ_ONLY);
+}

@@ -1165,10 +1165,10 @@ wayland-step3:
 
 .PHONY: perf perf-ci
 
-perf: iso disk
+perf: kernel disk
 	@echo "Running kernel performance harness..."
 	@bash -c 'set -eo pipefail; OUT="$(BUILD_DIR)/perf_latest.txt"; mkdir -p "$(BUILD_DIR)"; rm -f "$$OUT"; \
-	qemu-system-x86_64 -serial stdio -display none -m $(QEMU_MEM) $(QEMU_FLAGS) -cdrom futura.iso -boot d -append "perf=on" | tee "$$OUT"; \
+	qemu-system-x86_64 -kernel $(BIN_DIR)/futura_kernel.elf -nographic -m $(QEMU_MEM) $(QEMU_FLAGS) -append "perf=on" 2>&1 | tee "$$OUT"; \
 	code=$${PIPESTATUS[0]}; \
 	if [ $$code -eq 1 ]; then echo "[PERF] PASS"; exit 0; else echo "[PERF] FAIL (qemu code $$code)"; exit $$code; fi'
 

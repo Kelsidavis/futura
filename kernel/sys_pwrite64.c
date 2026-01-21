@@ -207,21 +207,8 @@ long sys_pwrite64(unsigned int fd, const void *buf, size_t count, int64_t offset
     /* Phase 2: Categorize FD range (Phase 6: use shared helper) */
     const char *fd_category = fut_fd_category(fd);
 
-    /* Phase 2: Categorize count (write size) */
-    const char *count_category;
-    if (count == 0) {
-        count_category = "zero";
-    } else if (count <= 512) {
-        count_category = "tiny (≤512 bytes)";
-    } else if (count <= 4096) {
-        count_category = "small (≤4 KB)";
-    } else if (count <= 65536) {
-        count_category = "medium (≤64 KB)";
-    } else if (count <= 1048576) {
-        count_category = "large (≤1 MB)";
-    } else {
-        count_category = "very large (>1 MB)";
-    }
+    /* Phase 2: Categorize count (write size) - Phase 6: use shared helper */
+    const char *count_category = fut_size_category(count);
 
     /* Phase 2: Validate count doesn't exceed 1MB limit (prevent DoS) */
     if (count > 1048576) {
@@ -231,19 +218,8 @@ long sys_pwrite64(unsigned int fd, const void *buf, size_t count, int64_t offset
         return -EINVAL;
     }
 
-    /* Phase 2: Categorize offset */
-    const char *offset_category;
-    if (offset == 0) {
-        offset_category = "beginning";
-    } else if (offset < 4096) {
-        offset_category = "near start (<4 KB)";
-    } else if (offset < 1048576) {
-        offset_category = "low (<1 MB)";
-    } else if (offset < 1073741824) {
-        offset_category = "medium (<1 GB)";
-    } else {
-        offset_category = "high (≥1 GB)";
-    }
+    /* Phase 2: Categorize offset - Phase 6: use shared helper */
+    const char *offset_category = fut_offset_category(offset);
 
     /* Get file structure from FD */
     struct fut_file *file = vfs_get_file_from_task(task, (int)fd);

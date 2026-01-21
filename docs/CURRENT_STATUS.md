@@ -409,6 +409,27 @@ See `docs/ARM64_STATUS.md` for detailed ARM64 progress.
   - syscall_table.c: Removed local ENOSYS, EINVAL, EBADF defines
   - userland_test.c: Removed local EINVAL, ENOMEM, ESRCH defines
   - Both now use errno.h consistently
+- ✅ **struct msghdr/cmsghdr consolidation**: Added to sys/socket.h:
+  - struct msghdr for sendmsg/recvmsg scatter-gather I/O
+  - struct cmsghdr for ancillary data
+  - SCM_RIGHTS, SCM_CREDENTIALS constants
+  - CMSG_* macros (CMSG_DATA, CMSG_FIRSTHDR, CMSG_NXTHDR, CMSG_SPACE, CMSG_LEN)
+  - MSG_EOR, MSG_MORE, MSG_CTRUNC, MSG_ERRQUEUE, MSG_CMSG_CLOEXEC constants
+- ✅ **sys/un.h**: Created separate Unix domain socket address header:
+  - struct sockaddr_un with proper hosted/freestanding handling
+  - SUN_LEN() macro for address length calculation
+  - Prevents conflicts with system sys/un.h in hosted builds
+- ✅ **typedef consolidation (sys/types.h)**: Updated headers to use centralized types:
+  - sys/wait.h: Now includes sys/types.h instead of defining own pid_t/id_t
+  - sys/stat.h: Uses sys/types.h in freestanding mode for dev_t, ino_t, mode_t, etc.
+  - kernel/chrdev.h, fut_vfs.h: Aligned typedef guards (__ssize_t_defined, __off_t_defined)
+- ✅ **ssize_t standardization**: Unified __ssize_t_defined guard across 14 files:
+  - Kernel headers: syscalls.h, fut_blockdev.h, tty.h, fut_fipc.h, fut_socket.h
+  - System headers: sys/uio.h (fixed incorrect #ifndef ssize_t guard)
+  - Userspace: libfutura.h, syscall_portable.h
+  - Removed duplicate definitions from cat, wc, and shell programs
+  - kernel/sys_splice.c, platform/arm64/userland_test.c
+  - subsystems/posix_compat/posix_shim.h
 
 ## Current Focus
 

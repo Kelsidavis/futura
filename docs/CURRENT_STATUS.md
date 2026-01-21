@@ -382,6 +382,34 @@ See `docs/ARM64_STATUS.md` for detailed ARM64 progress.
 - ✅ **sys/socket.h hosted environment fix**: Added #include_next for hosted environments to prevent conflicts with glibc headers
 - ✅ **O_CLOEXEC redefinition fix**: Fixed kernel/sys_open.c which had incorrect O_CLOEXEC value (0x4000 instead of 0x80000)
 
+### January 21, 2026 Session — Structure Consolidation & Header Reorganization
+- ✅ **shared/fut_sigevent.h**: Created shared header for timer notification types:
+  - timer_t, union sigval, struct sigevent, SIGEV_* constants
+  - Consolidates definitions from syscall_table.c and sys_timer.c
+- ✅ **shared/fut_stat.h**: Created kernel-compatible stat structure header:
+  - struct fut_stat with raw int64_t timestamps (st_atime, st_mtime, st_ctime)
+  - S_IF* file mode constants and S_IS* test macros
+  - Consolidates definitions from syscall_table.c and userland_test.c
+- ✅ **linux/ → sys/ migration**: Moved headers from include/linux/ to include/sys/:
+  - linux/futex.h → sys/futex.h
+  - linux/capability.h → sys/capability.h
+  - Removed include/linux/ directory (Futura should not have Linux-specific paths)
+- ✅ **struct iovec consolidation**: Updated 7 kernel files to use sys/uio.h:
+  - kernel/sys_readv.c, sys_writev.c, sys_preadv.c, sys_pwritev.c
+  - kernel/sys_sendmsg.c, sys_recvmsg.c
+  - platform/arm64/syscall_table.c
+  - Eliminates 70+ lines of duplicated structure and constant definitions
+- ✅ **struct pollfd consolidation**: Updated kernel files to use poll.h:
+  - kernel/sys_poll.c, sys_select.c
+  - Eliminates duplicate struct pollfd and POLL* constants
+- ✅ **struct robust_list consolidation**: Updated kernel files to use sys/futex.h:
+  - kernel/sys_futex.c: Removed local FUTEX_* constants and robust_list
+  - syscall_table.c: Removed local struct robust_list
+- ✅ **errno consolidation**: Removed redundant errno definitions:
+  - syscall_table.c: Removed local ENOSYS, EINVAL, EBADF defines
+  - userland_test.c: Removed local EINVAL, ENOMEM, ESRCH defines
+  - Both now use errno.h consistently
+
 ## Current Focus
 
 ### x86-64 Platform

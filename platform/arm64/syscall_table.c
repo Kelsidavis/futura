@@ -111,16 +111,8 @@ extern long sys_timer_getoverrun(timer_t timerid);
 extern long sys_timer_delete(timer_t timerid);
 extern long sys_nanosleep(const fut_timespec_t *u_req, fut_timespec_t *u_rem);
 
-/* Futex (fast userspace locking) structures and syscalls */
-struct robust_list {
-    struct robust_list *next;
-};
-
-struct robust_list_head {
-    struct robust_list list;
-    long futex_offset;
-    struct robust_list *list_op_pending;
-};
+/* Futex structures provided by linux/futex.h */
+#include <sys/futex.h>
 
 extern long sys_futex(uint32_t *uaddr, int op, uint32_t val, const void *timeout, uint32_t *uaddr2, uint32_t val3);
 extern long sys_set_robust_list(struct robust_list_head *head, size_t len);

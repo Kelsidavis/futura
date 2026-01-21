@@ -15,6 +15,7 @@
 #include <kernel/fut_timer.h>
 #include <kernel/errno.h>
 #include <shared/fut_timespec.h>
+#include <sys/futex.h>  /* For FUTEX_* constants, struct robust_list */
 
 extern void fut_printf(const char *fmt, ...);
 extern fut_task_t *fut_task_current(void);
@@ -64,35 +65,7 @@ static futex_bucket_t *futex_get_bucket(uint32_t *uaddr) {
     return &futex_hash[key];
 }
 
-/* Futex operations */
-#define FUTEX_WAIT              0
-#define FUTEX_WAKE              1
-#define FUTEX_FD                2
-#define FUTEX_REQUEUE           3
-#define FUTEX_CMP_REQUEUE       4
-#define FUTEX_WAKE_OP           5
-#define FUTEX_LOCK_PI           6
-#define FUTEX_UNLOCK_PI         7
-#define FUTEX_TRYLOCK_PI        8
-#define FUTEX_WAIT_BITSET       9
-#define FUTEX_WAKE_BITSET       10
-#define FUTEX_WAIT_REQUEUE_PI   11
-#define FUTEX_CMP_REQUEUE_PI    12
-
-/* Futex flags */
-#define FUTEX_PRIVATE_FLAG      128
-#define FUTEX_CLOCK_REALTIME    256
-
-/* Robust list structures */
-struct robust_list {
-    struct robust_list *next;
-};
-
-struct robust_list_head {
-    struct robust_list list;
-    long futex_offset;
-    struct robust_list *list_op_pending;
-};
+/* FUTEX_* constants and robust list structures provided by linux/futex.h */
 
 /**
  * sys_futex - Fast userspace locking

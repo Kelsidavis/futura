@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 /*
- * linux/capability.h - POSIX capabilities
+ * sys/capability.h - POSIX capabilities
  *
  * Copyright (c) 2025 Kelsi Davis
  * Licensed under the MPL v2.0 — see LICENSE for details.

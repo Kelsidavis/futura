@@ -10,6 +10,7 @@
 #include <kernel/uaccess.h>
 #include <kernel/fut_task.h>
 #include <kernel/fut_vfs.h>
+#include <poll.h>  /* For struct pollfd, POLL* constants */
 #include <stdint.h>
 #include <string.h>
 
@@ -23,25 +24,6 @@ extern int fut_copy_to_user(void *to, const void *from, size_t size);
 extern fut_task_t *fut_task_current(void);
 extern void *fut_malloc(size_t size);
 extern void fut_free(void *ptr);
-
-/* Poll event flags */
-#define POLLIN      0x0001  /* There is data to read */
-#define POLLPRI     0x0002  /* There is urgent data to read */
-#define POLLOUT     0x0004  /* Writing now will not block */
-#define POLLERR     0x0008  /* Error condition */
-#define POLLHUP     0x0010  /* Hung up */
-#define POLLNVAL    0x0020  /* Invalid request: fd not open */
-#define POLLRDNORM  0x0040  /* Normal data may be read */
-#define POLLRDBAND  0x0080  /* Priority data may be read */
-#define POLLWRNORM  0x0100  /* Writing now will not block */
-#define POLLWRBAND  0x0200  /* Priority data may be written */
-
-/* pollfd structure */
-struct pollfd {
-    int fd;         /* File descriptor */
-    short events;   /* Requested events */
-    short revents;  /* Returned events */
-};
 
 /**
  * poll() syscall - Wait for events on file descriptors

@@ -10,6 +10,7 @@
 #include <kernel/errno.h>
 #include <shared/fut_timespec.h>
 #include <shared/fut_timeval.h>
+#include <poll.h>  /* For struct pollfd */
 
 extern void fut_printf(const char *fmt, ...);
 extern fut_task_t *fut_task_current(void);
@@ -327,12 +328,7 @@ long sys_pselect6(int nfds, void *readfds, void *writefds, void *exceptfds,
     return 0;  /* Simulate timeout */
 }
 
-/* pollfd structure (for ppoll) */
-struct pollfd {
-    int fd;         /* File descriptor */
-    short events;   /* Requested events */
-    short revents;  /* Returned events */
-};
+/* struct pollfd is provided by poll.h */
 
 /**
  * sys_ppoll - Poll multiple file descriptors with signal mask

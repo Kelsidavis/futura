@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 /*
- * linux/futex.h - Fast userspace locking
+ * sys/futex.h - Fast userspace locking
  *
  * Copyright (c) 2025 Kelsi Davis
  * Licensed under the MPL v2.0 — see LICENSE for details.

@@ -64,19 +64,40 @@ Directory Operations:
 
 ---
 
+## Resolved P2 Blockers
+
+### ~~1. FSD Handler Updates~~ ✓ RESOLVED
+
+**Status:** RESOLVED (January 21, 2026)
+**Commit:** 907f7ce
+**Location:** `src/user/fsd/main.c`
+
+**Implemented:**
+- Updated FSD client structure to use `fsd_handle_t` capability handles
+- All FSD handlers now use capability syscalls:
+  - `handle_open()` → `sys_open_cap()`
+  - `handle_read()` → `sys_read_cap()`
+  - `handle_write()` → `sys_write_cap()`
+  - `handle_close()` → `sys_close_cap()` (via `fsd_client_fd_free()`)
+  - `handle_lseek()` → `sys_lseek_cap()`
+  - `handle_fsync()` → `sys_fsync_cap()`
+- Added capability syscall wrappers to `include/user/sys.h`
+- Added capability syscall numbers to `include/user/sysnums.h`
+
+---
+
 ## Current Blockers
 
-### 1. FSD Handler Updates (P2)
+### 1. Capability Integration Tests (P3)
 
-**Status:** HIGH
-**Location:** Userspace FSD (FuturaFS Daemon)
-**Impact:** FSD must use capability syscalls instead of integer FDs
+**Status:** PENDING
+**Location:** Test suite
+**Impact:** Need to validate capability system end-to-end
 
 **Required Changes:**
-1. Update FSD message handlers to use capability handles
-2. Replace integer FD operations with capability operations
-3. Propagate capabilities through FSD protocol
-4. Update client library to use capability syscalls
+1. Create integration tests for capability syscalls
+2. Test FSD with capability-aware clients
+3. Verify rights enforcement works correctly
 
 ---
 
@@ -87,7 +108,7 @@ Directory Operations:
 | ~~P0~~ | ~~Fix kernel boot hang~~ | ~~All runtime testing~~ | ✓ RESOLVED |
 | ~~P1~~ | ~~VFS capability integration~~ | ~~Phase 1 syscalls~~ | ✓ RESOLVED |
 | ~~P1~~ | ~~Phase 1 capability syscalls~~ | ~~FSD integration~~ | ✓ RESOLVED |
-| P2 | FSD handler updates | Phase 4 completion | IN PROGRESS |
+| ~~P2~~ | ~~FSD handler updates~~ | ~~Phase 4 completion~~ | ✓ RESOLVED |
 | P3 | Capability integration tests | Validation | PENDING |
 
 ---
@@ -112,20 +133,18 @@ Directory Operations:
 
 ## Immediate Next Steps
 
-1. **Update FSD handlers** (P2 - CURRENT)
-   - Locate FSD message handlers in userspace
-   - Update handlers to use capability syscalls (sys_open_cap, etc.)
-   - Replace integer FD operations with capability operations
-
-2. **Update FSD client library** (P2 - NEXT)
-   - Add capability handle types to client API
-   - Implement wrappers for capability syscalls
-   - Update existing clients to use new API
-
-3. **Run integration tests** (P3)
+1. **Run integration tests** (P3 - CURRENT)
    ```bash
    make test
    ```
+   - Test capability syscall handlers end-to-end
+   - Verify FSD handlers work with capability handles
+   - Test rights enforcement for read/write operations
+
+2. **Create capability test suite** (P3 - NEXT)
+   - Add unit tests for capability creation/validation
+   - Add integration tests for FSD capability propagation
+   - Test capability revocation and cleanup
 
 ---
 

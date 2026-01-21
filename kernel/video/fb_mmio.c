@@ -25,6 +25,22 @@
 #include <stdint.h>
 #include <stdbool.h>
 
+/* ============================================================
+ *   Cross-Platform Constants
+ * ============================================================ */
+
+/* Default framebuffer geometry (shared by x86_64 and ARM64) */
+#define FB_DEFAULT_WIDTH    1024
+#define FB_DEFAULT_HEIGHT   768
+#define FB_DEFAULT_BPP      32
+
+/* Fallback framebuffer physical address - safe position in RAM (64MB) */
+#define FB_PHYS_FALLBACK    0x4000000ULL
+
+/* ============================================================
+ *   x86_64-Specific Code
+ * ============================================================ */
+
 #ifdef __x86_64__
 /* PCI configuration space I/O ports */
 #define PCI_CONFIG_ADDRESS  0xCF8   /* PCI configuration address port */
@@ -38,12 +54,6 @@
 /* Legacy framebuffer physical addresses (fallback when PCI discovery fails) */
 #define FB_PHYS_QEMU_CIRRUS 0xF0000000ULL  /* Standard QEMU Cirrus address */
 #define FB_PHYS_LEGACY      0xE0000000ULL  /* Legacy VGA address */
-#define FB_PHYS_FALLBACK    0x4000000ULL   /* Safe position in RAM (64MB) */
-
-/* Default framebuffer geometry */
-#define FB_DEFAULT_WIDTH    1024
-#define FB_DEFAULT_HEIGHT   768
-#define FB_DEFAULT_BPP      32
 
 /* ARGB color values */
 #define ARGB_BLACK          0xFF000000
@@ -432,11 +442,9 @@ void fb_boot_splash(void) {
 #else
 /* ARM64 - virtio-mmio based graphics initialization */
 
-/* Default framebuffer geometry for ARM64 */
-#define FB_DEFAULT_WIDTH    1024
-#define FB_DEFAULT_HEIGHT   768
-#define FB_DEFAULT_BPP      32
-#define FB_PHYS_FALLBACK    0x4000000ULL
+/* ============================================================
+ *   ARM64-Specific Code
+ * ============================================================ */
 
 void fb_boot_splash(void) {
     fut_printf("[FB] ARM64: Initializing framebuffer via virtio-gpu (MMIO)...\n");

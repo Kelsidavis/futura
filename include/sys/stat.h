@@ -16,29 +16,7 @@
 #else
 /* Freestanding environment: define our own stat structure and types */
 #include <user/time.h>
-
-/* Define types if not already defined */
-#ifndef dev_t
-typedef uint64_t dev_t;
-#endif
-#ifndef ino_t
-typedef uint64_t ino_t;
-#endif
-#ifndef mode_t
-typedef uint32_t mode_t;
-#endif
-#ifndef nlink_t
-typedef uint64_t nlink_t;
-#endif
-#ifndef blksize_t
-typedef uint64_t blksize_t;
-#endif
-#ifndef blkcnt_t
-typedef uint64_t blkcnt_t;
-#endif
-#ifndef off_t
-typedef int64_t off_t;
-#endif
+#include <sys/types.h>
 
 struct stat {
     dev_t st_dev;

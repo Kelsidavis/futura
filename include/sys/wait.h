@@ -12,6 +12,7 @@
 #pragma once
 
 #include <stdint.h>
+#include <sys/types.h>
 
 /* ============================================================
  *   Wait Option Flags (for waitpid/wait4)
@@ -91,13 +92,7 @@
  *   Type Definitions
  * ============================================================ */
 
-#ifndef pid_t
-typedef int32_t pid_t;
-#endif
-
-#ifndef id_t
-typedef uint32_t id_t;
-#endif
+/* pid_t and id_t are provided by sys/types.h */
 
 /* idtype_t for waitid() */
 typedef enum {

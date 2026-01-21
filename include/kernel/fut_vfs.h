@@ -16,13 +16,13 @@
 #define FUT_VFS_NAME_MAX 255
 
 /* Freestanding environment: define ssize_t */
-#ifndef _SSIZE_T_DEFINED
-#define _SSIZE_T_DEFINED
+#ifndef __ssize_t_defined
+#define __ssize_t_defined 1
 typedef long ssize_t;
 #endif
 
-#ifndef _OFF_T_DEFINED
-#define _OFF_T_DEFINED
+#ifndef __off_t_defined
+#define __off_t_defined 1
 typedef long off_t;
 #endif
 

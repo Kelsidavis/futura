@@ -455,6 +455,11 @@ See `docs/ARM64_STATUS.md` for detailed ARM64 progress.
 - ✅ **futura_posix.h socket consolidation**: Replaced 58 lines of local socket
   structure definitions (sockaddr, sockaddr_un, iovec, msghdr, cmsghdr) with
   includes to sys/socket.h, sys/un.h, and sys/uio.h
+- ✅ **Userland linker script RWX fix**: Added PHDRS sections to userland.ld and
+  userland_x86_64.ld to properly separate text (R+X) and data (R+W) segments,
+  eliminating RWX permission warnings for all userland binaries
+- ✅ **Kernel linker noexecstack**: Added -z noexecstack to kernel LDFLAGS to
+  suppress warnings from objcopy-generated blob files lacking .note.GNU-stack
 
 ## Current Focus
 

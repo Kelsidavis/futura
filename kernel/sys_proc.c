@@ -37,6 +37,18 @@ struct rlimit {
 
 #define RLIM_INFINITY     (~0ULL)  /* Unlimited */
 
+/* Default resource limit values - named constants for clarity */
+#define RLIMIT_NOFILE_SOFT_DEFAULT  1024      /* Default soft limit for open files */
+#define RLIMIT_NOFILE_HARD_DEFAULT  65536     /* Default hard limit for open files */
+#define RLIMIT_NPROC_SOFT_DEFAULT   256       /* Default soft limit for processes */
+#define RLIMIT_NPROC_HARD_DEFAULT   512       /* Default hard limit for processes */
+#define RLIMIT_STACK_SOFT_DEFAULT   (8 * 1024 * 1024)  /* 8 MB default stack */
+#define RLIMIT_MEMLOCK_DEFAULT      (64 * 1024)        /* 64 KB default locked memory */
+#define RLIMIT_MSGQUEUE_DEFAULT     819200    /* Default POSIX message queue bytes */
+#define RLIMIT_NICE_DEFAULT         0         /* Default nice priority limit */
+#define RLIMIT_RTPRIO_DEFAULT       0         /* Default real-time priority */
+#define RLIMIT_SIGPENDING_DEFAULT   1024      /* Default pending signals */
+
 /**
  * getpid() - Get process ID
  *
@@ -388,21 +400,21 @@ long sys_getrlimit(int resource, struct rlimit *rlim) {
         case RLIMIT_NOFILE:
             resource_name = "RLIMIT_NOFILE";
             resource_desc = "max open file descriptors";
-            limit.rlim_cur = 1024;      /* Soft limit */
-            limit.rlim_max = 65536;     /* Hard limit */
+            limit.rlim_cur = RLIMIT_NOFILE_SOFT_DEFAULT;
+            limit.rlim_max = RLIMIT_NOFILE_HARD_DEFAULT;
             break;
 
         case RLIMIT_NPROC:
             resource_name = "RLIMIT_NPROC";
             resource_desc = "max number of processes";
-            limit.rlim_cur = 256;       /* Soft limit */
-            limit.rlim_max = 512;       /* Hard limit */
+            limit.rlim_cur = RLIMIT_NPROC_SOFT_DEFAULT;
+            limit.rlim_max = RLIMIT_NPROC_HARD_DEFAULT;
             break;
 
         case RLIMIT_STACK:
             resource_name = "RLIMIT_STACK";
             resource_desc = "max stack size";
-            limit.rlim_cur = 8 * 1024 * 1024;  /* 8MB */
+            limit.rlim_cur = RLIMIT_STACK_SOFT_DEFAULT;
             limit.rlim_max = RLIM_INFINITY;
             break;
 
@@ -451,8 +463,8 @@ long sys_getrlimit(int resource, struct rlimit *rlim) {
         case RLIMIT_MEMLOCK:
             resource_name = "RLIMIT_MEMLOCK";
             resource_desc = "max locked memory";
-            limit.rlim_cur = 64 * 1024;  /* 64KB */
-            limit.rlim_max = 64 * 1024;
+            limit.rlim_cur = RLIMIT_MEMLOCK_DEFAULT;
+            limit.rlim_max = RLIMIT_MEMLOCK_DEFAULT;
             break;
 
         default:

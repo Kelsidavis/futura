@@ -19,6 +19,9 @@
 #include <kernel/errno.h>
 #include <stddef.h>
 
+/* Maximum single write size to prevent excessive kernel buffer allocation */
+#define MAX_WRITE_SIZE  (1024 * 1024)  /* 1 MB */
+
 extern void fut_printf(const char *fmt, ...);
 extern fut_task_t *fut_task_current(void);
 
@@ -208,15 +211,15 @@ ssize_t sys_write(int fd, const void *buf, size_t count) {
         size_category = "typical (≤4 KB)";
     } else if (local_count <= 65536) {
         size_category = "large (≤64 KB)";
-    } else if (local_count <= 1024 * 1024) {
+    } else if (local_count <= MAX_WRITE_SIZE) {
         size_category = "very large (≤1 MB)";
     } else {
         size_category = "excessive (>1 MB)";
     }
 
     /* Phase 2: Sanity check - reject unreasonably large writes */
-    if (local_count > 1024 * 1024) {  /* 1 MB limit */
-        write_printf("[WRITE] write(fd=%d, count=%lu [%s]) -> EINVAL (exceeds 1 MB limit)\n",
+    if (local_count > MAX_WRITE_SIZE) {
+        write_printf("[WRITE] write(fd=%d, count=%lu [%s]) -> EINVAL (exceeds MAX_WRITE_SIZE limit)\n",
                    local_fd, local_count, size_category);
         return -EINVAL;
     }

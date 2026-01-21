@@ -182,12 +182,19 @@ See `docs/ARM64_STATUS.md` for detailed ARM64 progress.
 - ✅ **Thread constants**: Added `FUT_STACK_CANARY` constant in fut_thread.h for stack overflow detection
 - ✅ **Segment selector cleanup**: Updated fut_thread.c to use `GDT_KERNEL_CODE` and `GDT_KERNEL_DATA` instead of magic numbers (0x08, 0x10)
 - ✅ **arm64_irq.c consolidation**: Updated to reference shared GIC address constants from regs.h instead of local duplicates
+- ✅ **x86_64 hardware constants**: Added serial line status register constants in platform_init.c:
+  - `SERIAL_LSR_DATA_READY` (0x01) for data available detection
+  - `SERIAL_LSR_THRE` (0x20) for transmit ready detection
+  - `PIC_CASCADE_MASTER`, `PIC_CASCADE_SLAVE`, `PIC_MASK_ALL` for PIC initialization
+- ✅ **Parameter validation**: Added NULL checks in apple_ans2_program_tcb() to prevent NULL dereference
+- ✅ **Memory safety**: Initialize page_cache array to NULL in fut_mm.c for safe error cleanup
 - ✅ **Total code improvements this session**:
   - Fixed 1 double-free bug (elf64.c)
   - Replaced 50+ generic error returns with proper errno constants
-  - Added 20+ named constants to replace magic numbers
+  - Added 30+ named constants to replace magic numbers
   - Added error logging for silent allocation failures
   - Eliminated code duplication in 2 task exit functions
+  - Added defensive memory initialization
 
 ## Current Focus
 

@@ -14,20 +14,12 @@
 
 #include <kernel/errno.h>
 #include <kernel/uaccess.h>
+#include <sys/utsname.h>
 #include <stdint.h>
 #include <string.h>
 
 extern void fut_printf(const char *fmt, ...);
 extern int fut_copy_to_user(void *to, const void *from, size_t size);
-
-/* utsname structure - system information */
-struct utsname {
-    char sysname[65];    /* Operating system name */
-    char nodename[65];   /* Network node hostname */
-    char release[65];    /* Operating system release */
-    char version[65];    /* Operating system version */
-    char machine[65];    /* Hardware identifier */
-};
 
 /**
  * uname() syscall - Get system information.

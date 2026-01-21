@@ -25,6 +25,8 @@
 #include <shared/fut_stat.h>      /* For struct fut_stat, S_IF* */
 #include <sys/uio.h>              /* For struct iovec */
 #include <sys/resource.h>         /* For struct rlimit, RLIMIT_* */
+#define _GNU_SOURCE               /* Enable domainname in struct utsname */
+#include <sys/utsname.h>          /* For struct utsname */
 
 /* Debug control - set to 0 to disable verbose syscall logging */
 #define DEBUG_SYSCALL 0
@@ -490,15 +492,7 @@ static int64_t sys_nanosleep_wrapper(uint64_t req_ptr, uint64_t rem_ptr,
     return sys_nanosleep((const fut_timespec_t *)req_ptr, (fut_timespec_t *)rem_ptr);
 }
 
-/* utsname structure (for uname syscall) */
-struct utsname {
-    char sysname[65];    /* Operating system name */
-    char nodename[65];   /* Network node hostname */
-    char release[65];    /* Operating system release */
-    char version[65];    /* Operating system version */
-    char machine[65];    /* Hardware identifier */
-    char domainname[65]; /* Domain name */
-};
+/* utsname structure is provided by sys/utsname.h */
 
 /* sys_uname - get system information
  * x0 = utsname*

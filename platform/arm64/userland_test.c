@@ -14,6 +14,8 @@
 #include <platform/arm64/regs.h>  /* For fut_cpu_context_t */
 #include <shared/fut_timespec.h>  /* For struct timespec */
 #include <shared/fut_stat.h>      /* For struct fut_stat */
+#define _GNU_SOURCE               /* Enable domainname in struct utsname */
+#include <sys/utsname.h>          /* For struct utsname */
 
 /* Type definitions */
 #ifndef __ssize_t_defined
@@ -70,17 +72,7 @@ static uint8_t el0_test_stack[4096] __attribute__((aligned(16)));
 #define O_APPEND    0x0400
 
 /* struct timespec is provided by shared/fut_timespec.h */
-
-/* utsname structure (for uname syscall) */
-struct utsname {
-    char sysname[65];
-    char nodename[65];
-    char release[65];
-    char version[65];
-    char machine[65];
-    char domainname[65];
-};
-
+/* struct utsname is provided by sys/utsname.h */
 /* struct fut_stat provided by shared/fut_stat.h */
 
 /* Helper function to do a syscall with 3 arguments */

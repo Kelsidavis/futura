@@ -15,6 +15,7 @@
 #include <kernel/fut_task.h>
 #include <kernel/errno.h>
 #include <kernel/fut_vfs.h>
+#include <kernel/fut_fd_util.h>
 #include <stdint.h>
 
 extern void fut_printf(const char *fmt, ...);
@@ -349,19 +350,8 @@ long sys_getdents64(unsigned int fd, void *dirp, unsigned int count) {
         return -EBADF;
     }
 
-    /* Phase 2: Categorize FD range */
-    const char *fd_category;
-    if (fd <= 2) {
-        fd_category = "stdio (0-2)";
-    } else if (fd < 10) {
-        fd_category = "low (3-9)";
-    } else if (fd < 100) {
-        fd_category = "normal (10-99)";
-    } else if (fd < 1000) {
-        fd_category = "high (100-999)";
-    } else {
-        fd_category = "very high (≥1000)";
-    }
+    /* Phase 2: Categorize FD range (Phase 6: use shared helper) */
+    const char *fd_category = fut_fd_category(fd);
 
     /* Phase 2: Categorize buffer size */
     const char *count_category;

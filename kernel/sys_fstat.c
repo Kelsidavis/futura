@@ -15,6 +15,7 @@
 #include <kernel/fut_task.h>
 #include <kernel/errno.h>
 #include <kernel/fut_vfs.h>
+#include <kernel/fut_fd_util.h>
 #include <stdint.h>
 
 extern void fut_printf(const char *fmt, ...);
@@ -155,19 +156,8 @@ long sys_fstat(int fd, struct fut_stat *statbuf) {
         return -EFAULT;
     }
 
-    /* Phase 2: Categorize FD range for diagnostics */
-    const char *fd_category;
-    if (local_fd <= 2) {
-        fd_category = "stdio (0-2)";
-    } else if (local_fd < 10) {
-        fd_category = "low (3-9)";
-    } else if (local_fd < 100) {
-        fd_category = "normal (10-99)";
-    } else if (local_fd < 1000) {
-        fd_category = "high (100-999)";
-    } else {
-        fd_category = "very high (≥1000)";
-    }
+    /* Phase 2: Categorize FD range for diagnostics (Phase 6: use shared helper) */
+    const char *fd_category = fut_fd_category(local_fd);
 
     /* Get the file structure from the file descriptor */
     struct fut_file *file = fut_vfs_get_file(local_fd);

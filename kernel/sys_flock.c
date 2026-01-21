@@ -173,7 +173,7 @@ long sys_flock(int fd, int operation) {
     }
 
     /* Validate file descriptor */
-    struct fut_file *file = vfs_get_file_from_task(task, fd)
+    struct fut_file *file = vfs_get_file_from_task(task, fd);
     if (!file) {
         char msg[256];
         int pos = 0;

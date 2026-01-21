@@ -37,6 +37,11 @@ tmp/
 temp/
 *.tmp
 
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
 # Codex CLI artifacts
 .codex/
 codex.log

@@ -143,6 +143,14 @@ long sys_syncfs(int fd) {
         return -EBADF;
     }
 
+    /* Phase 5: Validate FD upper bound to prevent OOB array access */
+    if (local_fd >= task->max_fds) {
+        fut_printf("[SYNCFS] syncfs(fd=%d, max_fds=%d) -> EBADF "
+                   "(fd exceeds max_fds, Phase 5: FD bounds validation)\n",
+                   local_fd, task->max_fds);
+        return -EBADF;
+    }
+
     /* Phase 2: Resolve FD to file and get mount point */
     struct fut_file *file = vfs_get_file_from_task(task, local_fd);
     if (!file) {

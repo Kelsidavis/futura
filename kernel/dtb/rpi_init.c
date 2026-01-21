@@ -19,7 +19,7 @@
 /* RPi3 ARM legacy interrupt controller registers
  * Based on BCM2835 ARM Peripherals documentation
  * Base address: 0x3F00B000 for RPi3 (peripheral bus address)
- * This is mapped to 0xFFFFFFFF8xxxxxxxwhen using higher-half kernel addressing
+ * This is mapped to 0xFFFFFFFF8xxxxxxx when using higher-half kernel addressing
  */
 
 #define RPI3_IRQ_BASIC_PENDING      0x00

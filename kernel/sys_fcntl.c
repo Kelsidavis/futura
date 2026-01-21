@@ -78,10 +78,10 @@
  * Impact: Denial of service, application failure, resource exhaustion
  * Root Cause: No per-process limit on F_DUPFD operations
  *
- * Defense (TODO - not yet implemented):
+ * Defense (DONE - lines 593-629):
  * - Check current FD count against RLIMIT_NOFILE before dup
  * - Fail with EMFILE if limit would be exceeded
- * - Rate limit F_DUPFD calls per process
+ * - [TODO] Rate limit F_DUPFD calls per process
  *
  * CVE References:
  * - CVE-2014-0038: Resource exhaustion via syscall abuse
@@ -150,10 +150,10 @@
  *    - Reject negative target FDs with EINVAL
  *    - Prevent fd table corruption
  *
- * 5. [TODO] F_DUPFD resource limit checks
+ * 5. [DONE] F_DUPFD resource limit checks
  *    - Check against RLIMIT_NOFILE before duplication
  *    - Prevent FD exhaustion DoS
- *    - Rate limit F_DUPFD operations
+ *    - [TODO] Rate limit F_DUPFD operations
  *
  * 6. [DONE] Flag bit validation
  *    - F_SETFD: Validated arg against FD_CLOEXEC (line 461)
@@ -196,9 +196,9 @@
  * [DONE] 2. Unknown command rejection (switch default) at lines 230-325
  * [DONE] 3. FD validation (negative, invalid) at lines 135-147
  *
- * TODO (Phase 5 enhancements):
+ * Phase 5 enhancements (all DONE except rate limiting):
  * [DONE] 1. F_DUPFD negative arg validation (lines 577-583)
- * [TODO] 2. F_DUPFD RLIMIT_NOFILE check
+ * [DONE] 2. F_DUPFD RLIMIT_NOFILE check (lines 593-629)
  * [DONE] 3. F_SETFD flag bit validation (line 461 - masks with FD_CLOEXEC)
  * [DONE] 4. F_SETFL flag bit validation (lines 525-531 - validates O_NONBLOCK|O_APPEND)
  * [TODO] 5. Rate limiting for F_DUPFD to prevent DoS
@@ -587,6 +587,49 @@ long sys_fcntl(int fd, int cmd, uint64_t arg) {
                        "(minfd %d >= max_fds %u)\n",
                        local_fd, fd_category, cmd_name, cmd_category, minfd, minfd, task->max_fds);
             return -EINVAL;
+        }
+
+        /* Phase 5: Check RLIMIT_NOFILE before allowing F_DUPFD
+         *
+         * ATTACK SCENARIO: FD Exhaustion via F_DUPFD
+         * Attacker repeatedly calls fcntl(fd, F_DUPFD, 0) to exhaust all available
+         * file descriptors, causing denial of service:
+         * 1. Attacker has one open file descriptor (fd=3)
+         * 2. Repeatedly calls fcntl(3, F_DUPFD, 0) in a loop
+         * 3. Each call duplicates fd, consuming another FD slot
+         * 4. Eventually fills entire FD table (up to max_fds)
+         * 5. Process can no longer open files, sockets, pipes
+         * 6. Application fails with EMFILE on any open() call
+         *
+         * DEFENSE: Check current FD count against RLIMIT_NOFILE soft limit
+         * - Count currently open FDs before allowing duplication
+         * - If at or above soft limit, return -EMFILE immediately
+         * - Prevents FD exhaustion attacks via F_DUPFD
+         */
+        #define RLIMIT_NOFILE 7
+        uint64_t nofile_limit = task->rlimits[RLIMIT_NOFILE].rlim_cur;
+
+        /* Count currently open FDs
+         * Only scan up to min(max_fds, nofile_limit+1) to avoid unnecessary work */
+        uint32_t open_fd_count = 0;
+        int scan_limit = task->max_fds;
+        if ((uint64_t)scan_limit > nofile_limit + 1) {
+            scan_limit = (int)(nofile_limit + 1);
+        }
+        for (int i = 0; i < scan_limit; i++) {
+            struct fut_file *existing = vfs_get_file_from_task(task, i);
+            if (existing) {
+                open_fd_count++;
+            }
+        }
+
+        /* Check if at or above RLIMIT_NOFILE limit */
+        if (open_fd_count >= nofile_limit) {
+            fut_printf("[FCNTL] fcntl(fd=%d [%s], cmd=%s [%s], minfd=%d) -> EMFILE "
+                       "(FD count %u >= RLIMIT_NOFILE %llu, Phase 5: Resource limit enforcement)\n",
+                       local_fd, fd_category, cmd_name, cmd_category, minfd,
+                       open_fd_count, nofile_limit);
+            return -EMFILE;
         }
 
         /* Phase 5: Increment refcount IMMEDIATELY to prevent use-after-free

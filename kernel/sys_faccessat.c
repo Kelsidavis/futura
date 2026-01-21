@@ -9,7 +9,7 @@
  *
  * Phase 1 (Completed): Basic faccessat with directory FD support
  * Phase 2 (Completed): Enhanced validation, directory FD resolution, AT_EACCESS support
- * Phase 3: Full AT_SYMLINK_NOFOLLOW support with lstat-based checking
+ * Phase 3 (Completed): Full AT_SYMLINK_NOFOLLOW support with lstat-based checking
  */
 
 #include <kernel/fut_task.h>
@@ -110,6 +110,7 @@ extern fut_task_t *fut_task_current(void);
  * 5. Symlink control: Can choose to follow or not follow symlinks
  *
  * Phase 1 (Completed): Basic implementation with dirfd support
+ * Phase 3 (Completed): Full AT_SYMLINK_NOFOLLOW with lstat-based permission checking
  */
 long sys_faccessat(int dirfd, const char *pathname, int mode, int flags) {
     /* ARM64 FIX: Copy parameters to local variables */
@@ -303,27 +304,95 @@ long sys_faccessat(int dirfd, const char *pathname, int mode, int flags) {
         check_gid = task->rgid;  /* Real GID */
     }
 
-    /* Perform the access check
-     * For Phase 2, we use the existing access implementation but note
-     * that we've validated dirfd and prepared resolved_path
-     *
-     * TODO Phase 3: Implement AT_SYMLINK_NOFOLLOW by using lstat instead of stat
-     * TODO Phase 3: Implement actual permission checking using check_uid/check_gid
-     */
-    extern long sys_access(const char *pathname, int mode);
-    int ret = (int)sys_access(resolved_path, local_mode);
+    /* Perform the access check */
+    int ret;
 
-    /* Log AT_SYMLINK_NOFOLLOW if requested (not fully implemented yet) */
-    if ((local_flags & AT_SYMLINK_NOFOLLOW) && ret >= 0) {
-        fut_printf("[FACCESSAT] Note: AT_SYMLINK_NOFOLLOW flag set but symlink handling delegated to sys_access (Phase 2)\n");
+    if (local_flags & AT_SYMLINK_NOFOLLOW) {
+        /* Phase 3: AT_SYMLINK_NOFOLLOW - check symlink itself, don't follow it
+         *
+         * When this flag is set, we need to check access permissions on the
+         * symbolic link itself rather than the file it points to. This is
+         * useful for backup utilities and file managers that need to inspect
+         * symlinks without resolving them.
+         *
+         * Implementation: Use fut_vfs_lstat to get file info without following
+         * symlinks, then check permissions based on the returned stat info.
+         */
+        extern int fut_vfs_lstat(const char *path, struct fut_stat *stat);
+        struct fut_stat st;
+
+        ret = fut_vfs_lstat(resolved_path, &st);
+        if (ret < 0) {
+            /* lstat failed - propagate error */
+            goto handle_error;
+        }
+
+        /* F_OK: File existence check passed (lstat succeeded) */
+        if (local_mode == F_OK) {
+            ret = 0;
+            goto success;
+        }
+
+        /* Check permissions using the appropriate uid/gid
+         * Permission bits in st_mode are:
+         *   Owner: bits 8-6 (0700)
+         *   Group: bits 5-3 (0070)
+         *   Other: bits 2-0 (0007)
+         */
+        uint32_t file_mode = st.st_mode & 0777;
+        uint32_t perm_bits;
+
+        if (check_uid == 0) {
+            /* Root can access anything for R_OK and W_OK
+             * For X_OK, at least one execute bit must be set */
+            if (local_mode & X_OK) {
+                if (!(file_mode & 0111)) {
+                    ret = -EACCES;
+                    goto handle_error;
+                }
+            }
+            ret = 0;
+            goto success;
+        } else if (check_uid == st.st_uid) {
+            /* Owner permissions (bits 8-6) */
+            perm_bits = (file_mode >> 6) & 7;
+        } else if (check_gid == st.st_gid) {
+            /* Group permissions (bits 5-3) */
+            perm_bits = (file_mode >> 3) & 7;
+        } else {
+            /* Other permissions (bits 2-0) */
+            perm_bits = file_mode & 7;
+        }
+
+        /* Check requested permissions against available permissions */
+        if ((local_mode & R_OK) && !(perm_bits & 4)) {
+            ret = -EACCES;
+            goto handle_error;
+        }
+        if ((local_mode & W_OK) && !(perm_bits & 2)) {
+            ret = -EACCES;
+            goto handle_error;
+        }
+        if ((local_mode & X_OK) && !(perm_bits & 1)) {
+            ret = -EACCES;
+            goto handle_error;
+        }
+
+        ret = 0;
+        goto success;
+    } else {
+        /* Default behavior: follow symlinks (delegate to sys_access) */
+        extern long sys_access(const char *pathname, int mode);
+        ret = (int)sys_access(resolved_path, local_mode);
     }
 
     /* Log AT_EACCESS if used */
     if ((local_flags & AT_EACCESS) && ret >= 0) {
-        fut_printf("[FACCESSAT] Note: AT_EACCESS flag - using effective UID=%u GID=%u instead of real UID=%u GID=%u (Phase 2)\n",
+        fut_printf("[FACCESSAT] Note: AT_EACCESS flag - using effective UID=%u GID=%u instead of real UID=%u GID=%u (Phase 3)\n",
                    check_uid, check_gid, task->ruid, task->rgid);
     }
 
+handle_error:
     /* Handle errors */
     if (ret < 0) {
         const char *error_desc;
@@ -347,8 +416,10 @@ long sys_faccessat(int dirfd, const char *pathname, int mode, int flags) {
         return ret;
     }
 
+success:
     /* Success */
-    fut_printf("[FACCESSAT] faccessat(dirfd=%d, pathname='%s' [%s, len=%lu], mode=%s, flags=%s) -> 0 (accessible, Phase 2: directory FD resolution + AT_EACCESS support)\n",
+    fut_printf("[FACCESSAT] faccessat(dirfd=%d, pathname='%s' [%s, len=%lu], mode=%s, flags=%s) -> 0 "
+               "(accessible, Phase 3: AT_SYMLINK_NOFOLLOW + AT_EACCESS)\n",
                local_dirfd, path_buf, path_type, (unsigned long)path_len, mode_desc, flags_desc);
 
     return 0;

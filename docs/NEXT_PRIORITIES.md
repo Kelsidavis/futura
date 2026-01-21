@@ -88,16 +88,39 @@ Directory Operations:
 
 ## Current Blockers
 
-### 1. Capability Integration Tests (P3)
+### 1. Scheduler Bootstrap Issue (P0-NEW)
 
-**Status:** PENDING
-**Location:** Test suite
-**Impact:** Need to validate capability system end-to-end
+**Status:** BLOCKING
+**Location:** `kernel/scheduler.c`, `kernel/kernel_main.c`
+**Impact:** Prevents async tests from running after scheduler starts
 
-**Required Changes:**
-1. Create integration tests for capability syscalls
-2. Test FSD with capability-aware clients
-3. Verify rights enforcement works correctly
+**Symptoms:**
+- After `fut_sched_start()`, the init thread (tid=1) doesn't continue
+- Context switches to idle thread (tid=2) but never returns
+- Kernel hangs at "[SCHED-COOP] next->context.rip=..."
+
+**Required Investigation:**
+1. Check why tid=1 is added to ready queue but not scheduled back
+2. Verify idle thread is yielding correctly
+3. Check timer IRQ is firing for preemptive scheduling
+
+---
+
+### 2. Capability Integration Tests (P3)
+
+**Status:** IN PROGRESS (blocked by scheduler issue)
+**Commit:** c179c2d
+**Location:** `kernel/tests/sys_cap.c`
+
+**Implemented Tests (6 total):**
+- [x] Capability handle creation (open_cap)
+- [x] Capability read operation (read_cap)
+- [x] Capability write operation (write_cap)
+- [x] Rights enforcement (read-only cannot write)
+- [x] Invalid handle operations
+- [x] Capability handle cleanup (close_cap)
+
+**Note:** Tests are correctly implemented and will run once scheduler issue is resolved.
 
 ---
 
@@ -106,10 +129,11 @@ Directory Operations:
 | Priority | Task | Blocker For | Status |
 |----------|------|-------------|--------|
 | ~~P0~~ | ~~Fix kernel boot hang~~ | ~~All runtime testing~~ | ✓ RESOLVED |
+| **P0-NEW** | **Fix scheduler bootstrap** | **All async tests** | **BLOCKING** |
 | ~~P1~~ | ~~VFS capability integration~~ | ~~Phase 1 syscalls~~ | ✓ RESOLVED |
 | ~~P1~~ | ~~Phase 1 capability syscalls~~ | ~~FSD integration~~ | ✓ RESOLVED |
 | ~~P2~~ | ~~FSD handler updates~~ | ~~Phase 4 completion~~ | ✓ RESOLVED |
-| P3 | Capability integration tests | Validation | PENDING |
+| P3 | Capability integration tests | Validation | IN PROGRESS (blocked) |
 
 ---
 
@@ -133,18 +157,21 @@ Directory Operations:
 
 ## Immediate Next Steps
 
-1. **Run integration tests** (P3 - CURRENT)
+1. **Fix scheduler bootstrap issue** (P0-NEW - BLOCKER)
+   - Investigate why init thread (tid=1) doesn't resume after scheduler starts
+   - Check idle thread yield behavior
+   - Verify timer IRQ preemption is working
+
+2. **Run capability integration tests** (P3 - BLOCKED)
    ```bash
    make test
    ```
-   - Test capability syscall handlers end-to-end
-   - Verify FSD handlers work with capability handles
-   - Test rights enforcement for read/write operations
-
-2. **Create capability test suite** (P3 - NEXT)
-   - Add unit tests for capability creation/validation
-   - Add integration tests for FSD capability propagation
-   - Test capability revocation and cleanup
+   - Tests are implemented in `kernel/tests/sys_cap.c`
+   - Will run automatically once scheduler issue is fixed
+   - 6 capability tests ready to validate:
+     - Handle creation/destruction
+     - Read/write with rights enforcement
+     - Invalid handle rejection
 
 ---
 

@@ -115,10 +115,7 @@ struct sigevent {
     void *sigev_notify_attributes; /* Thread attributes */
 };
 
-struct itimerspec {
-    struct timespec it_interval;   /* Timer interval */
-    struct timespec it_value;      /* Initial expiration */
-};
+/* struct itimerspec is provided by shared/fut_timespec.h */
 
 extern long sys_timer_create(int clockid, struct sigevent *sevp, timer_t *timerid);
 extern long sys_timer_settime(timer_t timerid, int flags, const struct itimerspec *new_value, struct itimerspec *old_value);

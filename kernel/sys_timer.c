@@ -28,10 +28,7 @@ struct sigevent {
     void *sigev_notify_attributes; /* Thread attributes */
 };
 
-struct itimerspec {
-    fut_timespec_t it_interval;    /* Timer interval */
-    fut_timespec_t it_value;       /* Initial expiration */
-};
+/* struct itimerspec is provided by shared/fut_timespec.h */
 
 /* Notification methods */
 #define SIGEV_NONE   0  /* No notification */

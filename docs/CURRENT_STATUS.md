@@ -430,6 +430,14 @@ See `docs/ARM64_STATUS.md` for detailed ARM64 progress.
   - Removed duplicate definitions from cat, wc, and shell programs
   - kernel/sys_splice.c, platform/arm64/userland_test.c
   - subsystems/posix_compat/posix_shim.h
+- ✅ **pid_t consolidation**: Unified __pid_t_defined guard across userspace:
+  - futura_posix.h: Simplified to use sys/types.h in freestanding mode,
+    eliminating 10 duplicate type definitions (off_t, dev_t, ino_t, etc.)
+  - futura_init.h: Fixed broken __POSIX_TYPES_DEFINED guard (was never defined)
+  - shell/main.c: Fixed incorrect type (was int, now int32_t) with proper guard
+- ✅ **time_t/clockid_t standardization**: Fixed user/time.h to use proper
+  __time_t_defined and __clockid_t_defined guards instead of incorrect
+  #ifndef time_t / #ifndef clockid_t macro checks
 
 ## Current Focus
 

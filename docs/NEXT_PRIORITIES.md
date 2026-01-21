@@ -153,11 +153,12 @@ still servicing the current interrupt.
 
 ### Infrastructure Ready
 - [x] `fut_capability.h` - Capability API defined
-- [x] `kernel/capability.c` - Stub implementations ready
+- [x] `kernel/capability.c` - Implementation complete (including expiry support)
 - [x] `fut_object.h` - Object system operational
 - [x] FuturaFS capability system - Verified working
 - [x] Process group signal delivery - Working
 - [x] TTY SIGWINCH delivery - Implemented
+- [x] Time-based capability expiry - Implemented (commit 32ca359)
 
 ### Documentation Complete
 - [x] `docs/FSD_CAPABILITY_AUDIT.txt` - Security audit
@@ -186,7 +187,10 @@ still servicing the current interrupt.
 3. **Security Hardening**
    - Add capability revocation mechanism
    - Implement capability audit logging
-   - Add time-based capability expiry enforcement in syscalls
+   - ~~Add time-based capability expiry enforcement in syscalls~~ ✓ DONE
+     - `fut_capability_check_expiry()` implemented (commit 32ca359)
+     - `fut_capability_create_timed()` for creating timed capabilities
+     - Time resolution: 1 minute (max ~45 days expiry)
 
 ---
 

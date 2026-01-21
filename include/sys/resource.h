@@ -13,6 +13,7 @@
 
 #include <stdint.h>
 #include <stddef.h>
+#include <sys/time.h>
 
 /* ============================================================
  *   Resource Limit Types
@@ -124,13 +125,7 @@ struct rlimit64 {
 #define RUSAGE_THREAD       1   /* Resource usage by the calling thread */
 #endif
 
-#ifndef _STRUCT_TIMEVAL
-#define _STRUCT_TIMEVAL
-struct timeval {
-    int64_t tv_sec;     /* Seconds */
-    int64_t tv_usec;    /* Microseconds */
-};
-#endif
+/* struct timeval is provided by sys/time.h */
 
 #ifndef _STRUCT_RUSAGE
 #define _STRUCT_RUSAGE

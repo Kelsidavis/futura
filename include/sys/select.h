@@ -87,14 +87,8 @@ typedef struct {
  *   Time Structures
  * ============================================================ */
 
-/* Include sys/time.h for struct timeval if needed */
-#ifndef _STRUCT_TIMEVAL
-#define _STRUCT_TIMEVAL
-struct timeval {
-    long tv_sec;        /* Seconds */
-    long tv_usec;       /* Microseconds */
-};
-#endif
+/* Include sys/time.h for struct timeval */
+#include <sys/time.h>
 
 /* ============================================================
  *   Function Declarations

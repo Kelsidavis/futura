@@ -43,6 +43,32 @@ extern void fut_free(void *ptr);
 extern int fut_copy_from_user(void *to, const void *from, size_t size);
 
 /**
+ * Helper function to free kernel argv array
+ * Used by execve to clean up on error paths (DRY refactoring)
+ */
+static void execve_free_argv(char **kernel_argv, int count) {
+    if (kernel_argv) {
+        for (int i = 0; i < count; i++) {
+            if (kernel_argv[i]) fut_free(kernel_argv[i]);
+        }
+        fut_free(kernel_argv);
+    }
+}
+
+/**
+ * Helper function to free kernel envp array
+ * Used by execve to clean up on error paths (DRY refactoring)
+ */
+static void execve_free_envp(char **kernel_envp, int count) {
+    if (kernel_envp) {
+        for (int i = 0; i < count; i++) {
+            if (kernel_envp[i]) fut_free(kernel_envp[i]);
+        }
+        fut_free(kernel_envp);
+    }
+}
+
+/**
  * execve() syscall - Execute a program
  *
  * Replaces the current process image with a new program loaded from an
@@ -402,13 +428,7 @@ long sys_execve(const char *pathname, char *const argv[], char *const envp[]) {
             /* SMAP FIX: Read argv[i] pointer using safe copy */
             const char *ptr = NULL;
             if (fut_copy_from_user((void *)&ptr, &local_argv[i], sizeof(char *)) != 0) {
-                /* Cleanup on error */
-                if (kernel_argv) {
-                    for (int j = 0; j < i; j++) {
-                        if (kernel_argv[j]) fut_free(kernel_argv[j]);
-                    }
-                    fut_free(kernel_argv);
-                }
+                execve_free_argv(kernel_argv, i);
                 EXECVE_LOG("[EXECVE] execve() -> EFAULT (argv[%d] pointer read failed)\n", i);
                 return -EFAULT;
             }
@@ -433,13 +453,7 @@ long sys_execve(const char *pathname, char *const argv[], char *const envp[]) {
                 arg_len++;
             }
             if (arg_len >= EXEC_ARG_LEN_MAX) {
-                /* Cleanup on error */
-                if (kernel_argv) {
-                    for (int j = 0; j < i; j++) {
-                        if (kernel_argv[j]) fut_free(kernel_argv[j]);
-                    }
-                    fut_free(kernel_argv);
-                }
+                execve_free_argv(kernel_argv, i);
                 char msg[128];
                 int pos = 0;
                 const char *text = "[EXECVE] execve() -> E2BIG (argument too long, >131KB)\\n";
@@ -450,13 +464,7 @@ long sys_execve(const char *pathname, char *const argv[], char *const envp[]) {
             }
             total_argv_size += arg_len + 1;
             if (total_argv_size > EXEC_ARG_MAX) {
-                /* Cleanup on error */
-                if (kernel_argv) {
-                    for (int j = 0; j < i; j++) {
-                        if (kernel_argv[j]) fut_free(kernel_argv[j]);
-                    }
-                    fut_free(kernel_argv);
-                }
+                execve_free_argv(kernel_argv, i);
                 char msg[128];
                 int pos = 0;
                 const char *text = "[EXECVE] execve() -> E2BIG (total arguments exceed 128KB)\\n";
@@ -470,22 +478,14 @@ long sys_execve(const char *pathname, char *const argv[], char *const envp[]) {
              * This prevents TOCTOU: userspace can no longer modify the string after validation */
             kernel_argv[i] = (char *)fut_malloc(arg_len + 1);
             if (!kernel_argv[i]) {
-                /* Cleanup on allocation failure */
-                for (int j = 0; j < i; j++) {
-                    if (kernel_argv[j]) fut_free(kernel_argv[j]);
-                }
-                fut_free(kernel_argv);
+                execve_free_argv(kernel_argv, i);
                 EXECVE_LOG("[EXECVE] execve() -> ENOMEM (argv[%d] string allocation failed)\n", i);
                 return -ENOMEM;
             }
 
             /* Use fut_copy_from_user for safe copy with proper fault handling */
             if (fut_copy_from_user(kernel_argv[i], ptr, arg_len + 1) != 0) {
-                /* Copy failed - cleanup */
-                for (int j = 0; j <= i; j++) {
-                    if (kernel_argv[j]) fut_free(kernel_argv[j]);
-                }
-                fut_free(kernel_argv);
+                execve_free_argv(kernel_argv, i + 1);  /* i+1 to include current allocation */
                 EXECVE_LOG("[EXECVE] execve() -> EFAULT (argv[%d] copy failed)\n", i);
                 return -EFAULT;
             }
@@ -496,13 +496,7 @@ long sys_execve(const char *pathname, char *const argv[], char *const envp[]) {
 
     /* Phase 3: Validate environment variable limits */
     if (argc >= EXEC_ARGC_MAX) {
-        /* Cleanup argv on error */
-        if (kernel_argv) {
-            for (int j = 0; j < argc; j++) {
-                if (kernel_argv[j]) fut_free(kernel_argv[j]);
-            }
-            fut_free(kernel_argv);
-        }
+        execve_free_argv(kernel_argv, argc);
         char msg[128];
         int pos = 0;
         const char *text = "[EXECVE] execve() -> E2BIG (argc exceeds 4096)\\n";
@@ -517,13 +511,7 @@ long sys_execve(const char *pathname, char *const argv[], char *const envp[]) {
     if (local_envp && envc > 0) {
         kernel_envp = (char **)fut_malloc((envc + 1) * sizeof(char *));
         if (!kernel_envp) {
-            /* Cleanup argv on failure */
-            if (kernel_argv) {
-                for (int j = 0; j < argc; j++) {
-                    if (kernel_argv[j]) fut_free(kernel_argv[j]);
-                }
-                fut_free(kernel_argv);
-            }
+            execve_free_argv(kernel_argv, argc);
             EXECVE_LOG("[EXECVE] execve() -> ENOMEM (envp array allocation failed)\n");
             return -ENOMEM;
         }
@@ -539,19 +527,8 @@ long sys_execve(const char *pathname, char *const argv[], char *const envp[]) {
             /* SMAP FIX: Read envp[i] pointer using safe copy */
             const char *ptr = NULL;
             if (fut_copy_from_user((void *)&ptr, &local_envp[i], sizeof(char *)) != 0) {
-                /* Cleanup on error */
-                if (kernel_envp) {
-                    for (int j = 0; j < i; j++) {
-                        if (kernel_envp[j]) fut_free(kernel_envp[j]);
-                    }
-                    fut_free(kernel_envp);
-                }
-                if (kernel_argv) {
-                    for (int j = 0; j < argc; j++) {
-                        if (kernel_argv[j]) fut_free(kernel_argv[j]);
-                    }
-                    fut_free(kernel_argv);
-                }
+                execve_free_envp(kernel_envp, i);
+                execve_free_argv(kernel_argv, argc);
                 EXECVE_LOG("[EXECVE] execve() -> EFAULT (envp[%d] pointer read failed)\n", i);
                 return -EFAULT;
             }
@@ -576,19 +553,8 @@ long sys_execve(const char *pathname, char *const argv[], char *const envp[]) {
                 env_len++;
             }
             if (env_len >= EXEC_ARG_LEN_MAX) {
-                /* Cleanup on error */
-                if (kernel_envp) {
-                    for (int j = 0; j < i; j++) {
-                        if (kernel_envp[j]) fut_free(kernel_envp[j]);
-                    }
-                    fut_free(kernel_envp);
-                }
-                if (kernel_argv) {
-                    for (int j = 0; j < argc; j++) {
-                        if (kernel_argv[j]) fut_free(kernel_argv[j]);
-                    }
-                    fut_free(kernel_argv);
-                }
+                execve_free_envp(kernel_envp, i);
+                execve_free_argv(kernel_argv, argc);
                 char msg[128];
                 int pos = 0;
                 const char *text = "[EXECVE] execve() -> E2BIG (environment variable too long)\\n";
@@ -599,19 +565,8 @@ long sys_execve(const char *pathname, char *const argv[], char *const envp[]) {
             }
             total_envp_size += env_len + 1;
             if (total_envp_size > EXEC_ENV_MAX) {
-                /* Cleanup on error */
-                if (kernel_envp) {
-                    for (int j = 0; j < i; j++) {
-                        if (kernel_envp[j]) fut_free(kernel_envp[j]);
-                    }
-                    fut_free(kernel_envp);
-                }
-                if (kernel_argv) {
-                    for (int j = 0; j < argc; j++) {
-                        if (kernel_argv[j]) fut_free(kernel_argv[j]);
-                    }
-                    fut_free(kernel_argv);
-                }
+                execve_free_envp(kernel_envp, i);
+                execve_free_argv(kernel_argv, argc);
                 char msg[128];
                 int pos = 0;
                 const char *text = "[EXECVE] execve() -> E2BIG (total environment exceeds 128KB)\\n";
@@ -624,34 +579,16 @@ long sys_execve(const char *pathname, char *const argv[], char *const envp[]) {
             /* Phase 5: Copy environment string to kernel memory atomically */
             kernel_envp[i] = (char *)fut_malloc(env_len + 1);
             if (!kernel_envp[i]) {
-                /* Cleanup on allocation failure */
-                for (int j = 0; j < i; j++) {
-                    if (kernel_envp[j]) fut_free(kernel_envp[j]);
-                }
-                fut_free(kernel_envp);
-                if (kernel_argv) {
-                    for (int j = 0; j < argc; j++) {
-                        if (kernel_argv[j]) fut_free(kernel_argv[j]);
-                    }
-                    fut_free(kernel_argv);
-                }
+                execve_free_envp(kernel_envp, i);
+                execve_free_argv(kernel_argv, argc);
                 EXECVE_LOG("[EXECVE] execve() -> ENOMEM (envp[%d] string allocation failed)\n", i);
                 return -ENOMEM;
             }
 
             /* Use fut_copy_from_user for safe copy */
             if (fut_copy_from_user(kernel_envp[i], ptr, env_len + 1) != 0) {
-                /* Copy failed - cleanup */
-                for (int j = 0; j <= i; j++) {
-                    if (kernel_envp[j]) fut_free(kernel_envp[j]);
-                }
-                fut_free(kernel_envp);
-                if (kernel_argv) {
-                    for (int j = 0; j < argc; j++) {
-                        if (kernel_argv[j]) fut_free(kernel_argv[j]);
-                    }
-                    fut_free(kernel_argv);
-                }
+                execve_free_envp(kernel_envp, i + 1);  /* i+1 to include current allocation */
+                execve_free_argv(kernel_argv, argc);
                 EXECVE_LOG("[EXECVE] execve() -> EFAULT (envp[%d] copy failed)\n", i);
                 return -EFAULT;
             }
@@ -661,19 +598,8 @@ long sys_execve(const char *pathname, char *const argv[], char *const envp[]) {
     }
 
     if (envc >= EXEC_ENVC_MAX) {
-        /* Cleanup on error */
-        if (kernel_envp) {
-            for (int j = 0; j < envc; j++) {
-                if (kernel_envp[j]) fut_free(kernel_envp[j]);
-            }
-            fut_free(kernel_envp);
-        }
-        if (kernel_argv) {
-            for (int j = 0; j < argc; j++) {
-                if (kernel_argv[j]) fut_free(kernel_argv[j]);
-            }
-            fut_free(kernel_argv);
-        }
+        execve_free_envp(kernel_envp, envc);
+        execve_free_argv(kernel_argv, argc);
         char msg[128];
         int pos = 0;
         const char *text = "[EXECVE] execve() -> E2BIG (envc exceeds 4096)\\n";
@@ -883,18 +809,8 @@ long sys_execve(const char *pathname, char *const argv[], char *const envp[]) {
      * On success, fut_exec_elf never returns (calls fut_thread_exit),
      * so kernel memory is freed as part of process termination.
      * On failure, we must explicitly free the allocated buffers. */
-    if (kernel_envp) {
-        for (int i = 0; i < envc; i++) {
-            if (kernel_envp[i]) fut_free(kernel_envp[i]);
-        }
-        fut_free(kernel_envp);
-    }
-    if (kernel_argv) {
-        for (int i = 0; i < argc; i++) {
-            if (kernel_argv[i]) fut_free(kernel_argv[i]);
-        }
-        fut_free(kernel_argv);
-    }
+    execve_free_envp(kernel_envp, envc);
+    execve_free_argv(kernel_argv, argc);
 
     return ret;
 }

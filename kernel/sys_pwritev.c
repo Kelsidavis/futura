@@ -472,11 +472,28 @@ ssize_t sys_pwritev(int fd, const struct iovec *iov, int iovcnt, int64_t offset)
         io_pattern = "large scatter-gather";
     }
 
+    /* Phase 5: Validate FD bounds before accessing FD table */
+    if (fd < 0) {
+        fut_printf("[PWRITEV] pwritev(fd=%d, iov=%p, iovcnt=%d, offset=%ld) -> EBADF (negative fd)\n",
+                   fd, iov, iovcnt, offset);
+        fut_free(kernel_iov);
+        return -EBADF;
+    }
+
+    if (fd >= task->max_fds) {
+        fut_printf("[PWRITEV] pwritev(fd=%d, max_fds=%d, iov=%p, iovcnt=%d, offset=%ld) -> EBADF "
+                   "(fd exceeds max_fds, Phase 5: FD bounds validation)\n",
+                   fd, task->max_fds, iov, iovcnt, offset);
+        fut_free(kernel_iov);
+        return -EBADF;
+    }
+
     /* Get file structure from task */
     struct fut_file *file = vfs_get_file_from_task(task, fd);
     if (!file) {
-        fut_printf("[PWRITEV] pwritev(fd=%d, iov=%p, iovcnt=%d, offset=%ld) -> EBADF\n",
+        fut_printf("[PWRITEV] pwritev(fd=%d, iov=%p, iovcnt=%d, offset=%ld) -> EBADF (fd not open)\n",
                    fd, iov, iovcnt, offset);
+        fut_free(kernel_iov);
         return -EBADF;
     }
 

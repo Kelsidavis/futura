@@ -334,10 +334,26 @@ long sys_dup3(int oldfd, int newfd, int flags) {
         return -EBADF;
     }
 
+    /* Phase 5: Validate oldfd upper bound */
+    if (local_oldfd >= (int)task->max_fds) {
+        fut_printf("[DUP3] dup3(oldfd=%d, newfd=%d, max_fds=%u, flags=0x%x) -> EBADF "
+                   "(oldfd exceeds max_fds, Phase 5: FD bounds validation)\n",
+                   local_oldfd, local_newfd, task->max_fds, local_flags);
+        return -EBADF;
+    }
+
     /* Validate newfd */
     if (local_newfd < 0) {
         fut_printf("[DUP3] dup3(oldfd=%d, newfd=%d, flags=0x%x) -> EINVAL (negative newfd)\n",
                    local_oldfd, local_newfd, local_flags);
+        return -EINVAL;
+    }
+
+    /* Phase 5: Validate newfd upper bound */
+    if (local_newfd >= (int)task->max_fds) {
+        fut_printf("[DUP3] dup3(oldfd=%d, newfd=%d, max_fds=%u, flags=0x%x) -> EINVAL "
+                   "(newfd exceeds max_fds, Phase 5: FD bounds validation)\n",
+                   local_oldfd, local_newfd, task->max_fds, local_flags);
         return -EINVAL;
     }
 

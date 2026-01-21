@@ -144,11 +144,23 @@ long sys_flock(int fd, int operation) {
         return -ESRCH;
     }
 
+    /* Phase 5: Validate FD upper bound to prevent OOB array access */
+    if (fd < 0) {
+        fut_printf("[FLOCK] flock(fd=%d, operation=0x%x) -> EBADF (negative fd)\n",
+                   fd, operation);
+        return -EBADF;
+    }
+
+    if (fd >= task->max_fds) {
+        fut_printf("[FLOCK] flock(fd=%d, max_fds=%d, operation=0x%x) -> EBADF "
+                   "(fd exceeds max_fds, Phase 5: FD bounds validation)\n",
+                   fd, task->max_fds, operation);
+        return -EBADF;
+    }
+
     /* Phase 2: Categorize FD range */
     const char *fd_category;
-    if (fd < 0) {
-        fd_category = "invalid (negative)";
-    } else if (fd <= 2) {
+    if (fd <= 2) {
         fd_category = "stdio (0-2)";
     } else if (fd < 16) {
         fd_category = "low (3-15)";
@@ -161,7 +173,7 @@ long sys_flock(int fd, int operation) {
     }
 
     /* Validate file descriptor */
-    struct fut_file *file = vfs_get_file_from_task(task, fd);
+    struct fut_file *file = vfs_get_file_from_task(task, fd)
     if (!file) {
         char msg[256];
         int pos = 0;

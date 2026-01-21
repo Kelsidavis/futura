@@ -165,8 +165,16 @@ long sys_fstatfs(int fd, struct fut_linux_statfs *buf) {
         return -EBADF;
     }
 
+    /* Phase 5: Validate FD upper bound to prevent OOB array access */
+    if (fd >= task->max_fds) {
+        fut_printf("[FSTATFS] fstatfs(fd=%d, max_fds=%d, pid=%d) -> EBADF "
+                   "(fd exceeds max_fds, Phase 5: FD bounds validation)\n",
+                   fd, task->max_fds, task->pid);
+        return -EBADF;
+    }
+
     /* Get file structure */
-    struct fut_file *file = vfs_get_file_from_task(task, fd);
+    struct fut_file *file = vfs_get_file_from_task(task, fd)
     if (!file) {
         fut_printf("[FSTATFS] fstatfs(fd=%d, pid=%d) -> EBADF (fd not open)\n", fd, task->pid);
         return -EBADF;
@@ -248,8 +256,16 @@ long sys_fallocate(int fd, int mode, uint64_t offset, uint64_t len) {
         return -EBADF;
     }
 
+    /* Phase 5: Validate FD upper bound to prevent OOB array access */
+    if (fd >= task->max_fds) {
+        fut_printf("[FALLOCATE] fallocate(fd=%d, max_fds=%d, mode=0x%x, offset=%lu, len=%lu, pid=%d) -> EBADF "
+                   "(fd exceeds max_fds, Phase 5: FD bounds validation)\n",
+                   fd, task->max_fds, mode, offset, len, task->pid);
+        return -EBADF;
+    }
+
     /* Get file structure */
-    struct fut_file *file = vfs_get_file_from_task(task, fd);
+    struct fut_file *file = vfs_get_file_from_task(task, fd)
     if (!file) {
         fut_printf("[FALLOCATE] fallocate(fd=%d, mode=0x%x, offset=%lu, len=%lu, pid=%d) -> EBADF "
                    "(fd not open)\n",

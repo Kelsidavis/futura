@@ -216,6 +216,13 @@ See `docs/ARM64_STATUS.md` for detailed ARM64 progress.
   - `trap.h`: Page fault handling with exception flow documentation
 - ✅ **Typo fixes**: Fixed comment typo in rpi_init.c
 - ✅ **Include guard fixes**: Added `#pragma once` and documentation to `boot_logo.h`, made bitmap array `static const` and used `sizeof()` for length
+- ✅ **Cryptographic function documentation**: Added comprehensive docs to `fut_hmac.h` (SHA-256, HMAC-SHA256)
+- ✅ **Memory allocator documentation**: Added comprehensive docs to:
+  - `buddy_allocator.h`: Buddy algorithm explanation, all functions documented
+  - `slab_allocator.h`: Slab architecture, cache sizes, debug functions
+- ✅ **Framebuffer documentation**: Added comprehensive docs to:
+  - `fb.h`: Framebuffer discovery methods, struct fields, init functions
+  - `fb_console.h`: Console features, font, output functions
 
 ## Current Focus
 

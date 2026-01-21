@@ -34,6 +34,16 @@
 #define SERIAL_MODEM_CTRL(port) (port + 4)
 #define SERIAL_LINE_STATUS(port) (port + 5)
 
+/* Serial line status register bits */
+#define SERIAL_LSR_DATA_READY       0x01    /* Data available to read */
+#define SERIAL_LSR_OVERRUN_ERR      0x02    /* Overrun error */
+#define SERIAL_LSR_PARITY_ERR       0x04    /* Parity error */
+#define SERIAL_LSR_FRAMING_ERR      0x08    /* Framing error */
+#define SERIAL_LSR_BREAK_INT        0x10    /* Break interrupt */
+#define SERIAL_LSR_THRE             0x20    /* Transmit holding register empty */
+#define SERIAL_LSR_TEMT             0x40    /* Transmitter empty */
+#define SERIAL_LSR_FIFO_ERR         0x80    /* Error in FIFO */
+
 /* PIC (Programmable Interrupt Controller) definitions */
 #define PIC1_COMMAND 0x20
 #define PIC1_DATA 0x21
@@ -43,6 +53,13 @@
 #define ICW1_ICW4 0x01      /* ICW4 needed */
 #define ICW1_INIT 0x10      /* Initialization */
 #define ICW4_8086 0x01      /* 8086 mode */
+
+/* ICW3: Cascade identity for master/slave PICs */
+#define PIC_CASCADE_MASTER  0x04    /* Slave PIC attached to IRQ2 */
+#define PIC_CASCADE_SLAVE   0x02    /* Slave identity */
+
+/* Interrupt masks */
+#define PIC_MASK_ALL        0xFF    /* Mask all interrupts */
 
 #define PIC_EOI 0x20        /* End of Interrupt */
 
@@ -205,8 +222,8 @@ static void fut_serial_init(void) {
 }
 
 void fut_serial_putc(char c) {
-    /* Wait for transmit buffer to be empty */
-    while ((inb(SERIAL_LINE_STATUS(SERIAL_PORT_COM1)) & 0x20) == 0)
+    /* Wait for transmit holding register to be empty */
+    while ((inb(SERIAL_LINE_STATUS(SERIAL_PORT_COM1)) & SERIAL_LSR_THRE) == 0)
         ;
     outb(SERIAL_DATA(SERIAL_PORT_COM1), c);
 
@@ -216,8 +233,8 @@ void fut_serial_putc(char c) {
 }
 
 int fut_serial_getc(void) {
-    /* Check if data is available (bit 0 of line status register) */
-    if ((inb(SERIAL_LINE_STATUS(SERIAL_PORT_COM1)) & 0x01) == 0) {
+    /* Check if data is available */
+    if ((inb(SERIAL_LINE_STATUS(SERIAL_PORT_COM1)) & SERIAL_LSR_DATA_READY) == 0) {
         return -1;  /* No data available */
     }
     /* Read and return the character */
@@ -226,7 +243,7 @@ int fut_serial_getc(void) {
 
 int fut_serial_getc_blocking(void) {
     /* Wait for data to be available, yielding to scheduler when idle */
-    while ((inb(SERIAL_LINE_STATUS(SERIAL_PORT_COM1)) & 0x01) == 0) {
+    while ((inb(SERIAL_LINE_STATUS(SERIAL_PORT_COM1)) & SERIAL_LSR_DATA_READY) == 0) {
         /* Yield to let other threads run instead of spinning.
          * Only yield if scheduler is started (avoids issues during early boot). */
         if (fut_sched_is_started()) {
@@ -242,7 +259,7 @@ int fut_serial_getc_blocking(void) {
 
 void fut_serial_flush_input(void) {
     /* Read and discard all pending characters from the serial input buffer */
-    while ((inb(SERIAL_LINE_STATUS(SERIAL_PORT_COM1)) & 0x01) != 0) {
+    while ((inb(SERIAL_LINE_STATUS(SERIAL_PORT_COM1)) & SERIAL_LSR_DATA_READY) != 0) {
         (void)inb(SERIAL_DATA(SERIAL_PORT_COM1));  /* Discard the character */
     }
 }
@@ -470,9 +487,9 @@ static void fut_pic_init(void) {
     io_wait();
 
     /* ICW3: Cascade identity */
-    outb(PIC1_DATA, 0x04);  /* Slave on IRQ2 */
+    outb(PIC1_DATA, PIC_CASCADE_MASTER);  /* Slave on IRQ2 */
     io_wait();
-    outb(PIC2_DATA, 0x02);  /* Cascade identity */
+    outb(PIC2_DATA, PIC_CASCADE_SLAVE);   /* Cascade identity */
     io_wait();
 
     /* ICW4: 8086 mode */
@@ -483,8 +500,8 @@ static void fut_pic_init(void) {
 
     /* Mask all IRQs initially - they will be unmasked individually when ready */
     /* Don't restore firmware masks as they may have interrupts enabled too early */
-    outb(PIC1_DATA, 0xFF);  /* Mask all IRQs on master PIC */
-    outb(PIC2_DATA, 0xFF);  /* Mask all IRQs on slave PIC */
+    outb(PIC1_DATA, PIC_MASK_ALL);  /* Mask all IRQs on master PIC */
+    outb(PIC2_DATA, PIC_MASK_ALL);  /* Mask all IRQs on slave PIC */
 }
 
 /**
@@ -493,8 +510,8 @@ static void fut_pic_init(void) {
  */
 void fut_pic_disable(void) {
     /* Mask all interrupts on both PICs */
-    outb(PIC1_DATA, 0xFF);
-    outb(PIC2_DATA, 0xFF);
+    outb(PIC1_DATA, PIC_MASK_ALL);
+    outb(PIC2_DATA, PIC_MASK_ALL);
 }
 
 void fut_pic_send_eoi(uint8_t irq) {

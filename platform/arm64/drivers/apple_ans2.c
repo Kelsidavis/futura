@@ -104,6 +104,10 @@ void apple_ans2_free_tag(apple_ans2_ctrl_t *ctrl, int tag) {
  * ============================================================ */
 
 void apple_ans2_program_tcb(apple_ans_tcb_t *tcb, const nvme_command_t *cmd, int tag) {
+    if (!tcb || !cmd) {
+        /* Invalid parameters - cannot program TCB */
+        return;
+    }
     memset(tcb, 0, sizeof(apple_ans_tcb_t));
 
     /* Copy command fields to TCB */

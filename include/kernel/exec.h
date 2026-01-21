@@ -1,6 +1,9 @@
-// SPDX-License-Identifier: MPL-2.0
-/*
- * exec.h - User process loading interfaces
+/* include/kernel/exec.h - User process loading interfaces
+ *
+ * Copyright (c) 2025 Kelsi Davis
+ * Licensed under the MPL v2.0 — see LICENSE for details.
+ *
+ * Provides ELF binary execution and binary staging functions for boot-time processes.
  */
 
 #pragma once

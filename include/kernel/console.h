@@ -1,4 +1,10 @@
-// SPDX-License-Identifier: MPL-2.0
+/* include/kernel/console.h - Console interface functions
+ *
+ * Copyright (c) 2025 Kelsi Davis
+ * Licensed under the MPL v2.0 — see LICENSE for details.
+ *
+ * Provides console initialization and input thread management.
+ */
 
 #pragma once
 

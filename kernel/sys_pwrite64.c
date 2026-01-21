@@ -194,6 +194,15 @@ long sys_pwrite64(unsigned int fd, const void *buf, size_t count, int64_t offset
         return -ESRCH;
     }
 
+    /* Phase 5: Validate FD upper bound to prevent OOB array access
+     * Without this check, fd >= max_fds would access beyond fd_table bounds */
+    if (fd >= (unsigned int)task->max_fds) {
+        fut_printf("[PWRITE64] pwrite64(fd=%u, max_fds=%d) -> EBADF "
+                   "(fd exceeds max_fds, Phase 5: FD bounds validation)\n",
+                   fd, task->max_fds);
+        return -EBADF;
+    }
+
     /* Phase 2: Categorize FD range */
     const char *fd_category;
     if (fd <= 2) {

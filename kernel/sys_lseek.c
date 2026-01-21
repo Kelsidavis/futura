@@ -129,6 +129,14 @@ int64_t sys_lseek(int fd, int64_t offset, int whence) {
         return -EBADF;
     }
 
+    /* Phase 5: Validate FD upper bound to prevent OOB array access */
+    if (fd >= task->max_fds) {
+        fut_printf("[LSEEK] lseek(fd=%d, max_fds=%d) -> EBADF "
+                   "(fd exceeds max_fds, Phase 5: FD bounds validation)\n",
+                   fd, task->max_fds);
+        return -EBADF;
+    }
+
     /* Phase 2: Categorize whence parameter */
     const char *whence_desc;
     const char *whence_meaning;

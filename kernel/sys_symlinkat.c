@@ -212,11 +212,25 @@ long sys_symlinkat(const char *target, int newdirfd, const char *linkpath) {
     }
     /* Newdirfd is a real FD - resolve via VFS */
     else {
+        /* Phase 5: Validate newdirfd bounds before accessing FD table */
+        if (local_newdirfd < 0) {
+            fut_printf("[SYMLINKAT] symlinkat(newdirfd=%d) -> EBADF (invalid negative newdirfd)\n",
+                       local_newdirfd);
+            return -EBADF;
+        }
+
+        if (local_newdirfd >= task->max_fds) {
+            fut_printf("[SYMLINKAT] symlinkat(newdirfd=%d, max_fds=%d) -> EBADF "
+                       "(newdirfd exceeds max_fds, Phase 5: FD bounds validation)\n",
+                       local_newdirfd, task->max_fds);
+            return -EBADF;
+        }
+
         /* Get file structure from newdirfd */
         struct fut_file *dir_file = vfs_get_file_from_task(task, local_newdirfd);
 
         if (!dir_file) {
-            fut_printf("[SYMLINKAT] symlinkat(newdirfd=%d) -> EBADF (invalid newdirfd)\n",
+            fut_printf("[SYMLINKAT] symlinkat(newdirfd=%d) -> EBADF (newdirfd not open)\n",
                        local_newdirfd);
             return -EBADF;
         }

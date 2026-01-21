@@ -182,11 +182,26 @@ long sys_futimens(int fd, const fut_timespec_t *times) {
         return -ESRCH;
     }
 
+    /* Phase 5: Validate fd bounds before accessing FD table */
+    if (fd < 0) {
+        fut_printf("[FUTIMENS] futimens(fd=%d [%s], times=%p, op=%s) -> EBADF "
+                   "(invalid negative fd)\n",
+                   fd, fd_desc, times, operation_type);
+        return -EBADF;
+    }
+
+    if (fd >= task->max_fds) {
+        fut_printf("[FUTIMENS] futimens(fd=%d, max_fds=%d, times=%p, op=%s) -> EBADF "
+                   "(fd exceeds max_fds, Phase 5: FD bounds validation)\n",
+                   fd, task->max_fds, times, operation_type);
+        return -EBADF;
+    }
+
     /* Look up file object from fd table */
     struct fut_file *file = vfs_get_file_from_task(task, fd);
     if (!file) {
         fut_printf("[FUTIMENS] futimens(fd=%d [%s], times=%p, op=%s) -> EBADF "
-                   "(fd not found in task fd_table)\n",
+                   "(fd not open)\n",
                    fd, fd_desc, times, operation_type);
         return -EBADF;
     }

@@ -219,12 +219,26 @@ long sys_fchmodat(int dirfd, const char *pathname, uint32_t mode, int flags) {
     }
     /* Dirfd is a real FD - resolve via VFS */
     else {
+        /* Phase 5: Validate dirfd bounds before accessing FD table */
+        if (local_dirfd < 0) {
+            fut_printf("[FCHMODAT] fchmodat(dirfd=%d) -> EBADF (invalid negative dirfd)\n",
+                       local_dirfd);
+            return -EBADF;
+        }
+
+        if (local_dirfd >= task->max_fds) {
+            fut_printf("[FCHMODAT] fchmodat(dirfd=%d, max_fds=%d) -> EBADF "
+                       "(dirfd exceeds max_fds, Phase 5: FD bounds validation)\n",
+                       local_dirfd, task->max_fds);
+            return -EBADF;
+        }
+
         /* Get file structure from dirfd */
         extern struct fut_file *vfs_get_file_from_task(struct fut_task *task, int fd);
         struct fut_file *dir_file = vfs_get_file_from_task(task, local_dirfd);
 
         if (!dir_file) {
-            fut_printf("[FCHMODAT] fchmodat(dirfd=%d) -> EBADF (invalid dirfd)\n",
+            fut_printf("[FCHMODAT] fchmodat(dirfd=%d) -> EBADF (dirfd not open)\n",
                        local_dirfd);
             return -EBADF;
         }

@@ -260,11 +260,24 @@ long sys_utimensat(int dirfd, const char *pathname, const fut_timespec_t *times,
     }
     /* Dirfd is a real FD - resolve via VFS */
     else {
+        /* Phase 5: Validate dirfd bounds before accessing FD table */
+        if (dirfd < 0) {
+            fut_printf("[UTIMENSAT] utimensat(dirfd=%d) -> EBADF (invalid negative dirfd)\n", dirfd);
+            return -EBADF;
+        }
+
+        if (dirfd >= task->max_fds) {
+            fut_printf("[UTIMENSAT] utimensat(dirfd=%d, max_fds=%d) -> EBADF "
+                       "(dirfd exceeds max_fds, Phase 5: FD bounds validation)\n",
+                       dirfd, task->max_fds);
+            return -EBADF;
+        }
+
         /* Get file structure from dirfd */
         struct fut_file *dir_file = vfs_get_file_from_task(task, dirfd);
 
         if (!dir_file) {
-            fut_printf("[UTIMENSAT] utimensat(dirfd=%d) -> EBADF (invalid dirfd)\n", dirfd);
+            fut_printf("[UTIMENSAT] utimensat(dirfd=%d) -> EBADF (dirfd not open)\n", dirfd);
             return -EBADF;
         }
 

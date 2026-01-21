@@ -252,11 +252,25 @@ long sys_linkat(int olddirfd, const char *oldpath, int newdirfd, const char *new
     }
     /* Olddirfd is a real FD - resolve via VFS */
     else {
+        /* Phase 5: Validate olddirfd bounds before accessing FD table */
+        if (local_olddirfd < 0) {
+            fut_printf("[LINKAT] linkat(olddirfd=%d) -> EBADF (invalid negative olddirfd)\n",
+                       local_olddirfd);
+            return -EBADF;
+        }
+
+        if (local_olddirfd >= task->max_fds) {
+            fut_printf("[LINKAT] linkat(olddirfd=%d, max_fds=%d) -> EBADF "
+                       "(olddirfd exceeds max_fds, Phase 5: FD bounds validation)\n",
+                       local_olddirfd, task->max_fds);
+            return -EBADF;
+        }
+
         /* Get file structure from olddirfd */
         struct fut_file *dir_file = vfs_get_file_from_task(task, local_olddirfd);
 
         if (!dir_file) {
-            fut_printf("[LINKAT] linkat(olddirfd=%d) -> EBADF (invalid olddirfd)\n",
+            fut_printf("[LINKAT] linkat(olddirfd=%d) -> EBADF (olddirfd not open)\n",
                        local_olddirfd);
             return -EBADF;
         }
@@ -306,11 +320,25 @@ long sys_linkat(int olddirfd, const char *oldpath, int newdirfd, const char *new
     }
     /* Newdirfd is a real FD - resolve via VFS */
     else {
+        /* Phase 5: Validate newdirfd bounds before accessing FD table */
+        if (local_newdirfd < 0) {
+            fut_printf("[LINKAT] linkat(newdirfd=%d) -> EBADF (invalid negative newdirfd)\n",
+                       local_newdirfd);
+            return -EBADF;
+        }
+
+        if (local_newdirfd >= task->max_fds) {
+            fut_printf("[LINKAT] linkat(newdirfd=%d, max_fds=%d) -> EBADF "
+                       "(newdirfd exceeds max_fds, Phase 5: FD bounds validation)\n",
+                       local_newdirfd, task->max_fds);
+            return -EBADF;
+        }
+
         /* Get file structure from newdirfd */
         struct fut_file *dir_file = vfs_get_file_from_task(task, local_newdirfd);
 
         if (!dir_file) {
-            fut_printf("[LINKAT] linkat(newdirfd=%d) -> EBADF (invalid newdirfd)\n",
+            fut_printf("[LINKAT] linkat(newdirfd=%d) -> EBADF (newdirfd not open)\n",
                        local_newdirfd);
             return -EBADF;
         }

@@ -207,6 +207,13 @@ See `docs/ARM64_STATUS.md` for detailed ARM64 progress.
   - `FB_PHYS_*` for legacy framebuffer addresses
   - `FB_DEFAULT_WIDTH`/`HEIGHT`/`BPP` for geometry defaults
   - `ARGB_BLACK` for color values
+- ✅ **Cross-platform constant consolidation**: Moved shared FB_DEFAULT_* and FB_PHYS_FALLBACK constants before architecture-specific code in fb_mmio.c, eliminating duplicate #defines
+- ✅ **Device registry named constants**: Added `CHRDEV_MAX_ENTRIES` (32) in chrdev.c and `DEVFS_MAX_NODES` (64) in devfs.c
+- ✅ **Additional header documentation**: Added comprehensive API documentation to:
+  - `boot_args.h`: Command line parsing with usage examples
+  - `console.h`: Console initialization and input thread functions
+  - `exec.h`: ELF execution and boot-time binary staging functions
+- ✅ **Typo fixes**: Fixed comment typo in rpi_init.c
 
 ## Current Focus
 

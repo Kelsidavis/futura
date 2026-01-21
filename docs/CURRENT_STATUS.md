@@ -98,7 +98,12 @@ See `docs/ARM64_STATUS.md` for detailed ARM64 progress.
 - ✅ **AT_SYMLINK_NOFOLLOW implementation**: Full implementation in sys_faccessat with lstat-based permission checking.
 - ✅ **F_DUPFD resource limit enforcement**: Added RLIMIT_NOFILE check to prevent FD exhaustion attacks via fcntl.
 - ✅ **Unix domain socket path traversal protection**: Reject ".." path components in sys_bind and sys_connect to prevent directory traversal attacks (CVE-2018-6555 mitigation).
-- ✅ **FD upper bound validation**: Added fd >= task->max_fds checks to pread64, pwrite64, lseek, syncfs, fdatasync, inotify_add_watch, inotify_rm_watch, and getdents64 syscalls. Prevents out-of-bounds FD table access and provides fail-fast error handling.
+- ✅ **FD upper bound validation**: Added fd >= task->max_fds checks to prevent out-of-bounds FD table access across all file descriptor syscalls:
+  - Regular FD syscalls: pread64, pwrite64, preadv, pwritev, lseek, fsync, fdatasync, flock, fstatfs, fallocate, sendfile, futimens
+  - Directory FD syscalls: syncfs, getdents64, inotify_add_watch, inotify_rm_watch
+  - *at syscalls (dirfd validation): faccessat, fchmodat, fstatat, mkdirat, readlinkat, symlinkat, unlinkat, utimensat, linkat, renameat
+  - Dual-FD syscalls: dup3 (both oldfd/newfd), sendfile (both in_fd/out_fd), linkat/renameat (both olddirfd/newdirfd)
+  - All validations properly handle AT_FDCWD (-100) as valid for *at syscalls
 
 ## Current Focus
 

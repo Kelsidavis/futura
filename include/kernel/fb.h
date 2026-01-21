@@ -1,4 +1,11 @@
-// SPDX-License-Identifier: MPL-2.0
+/* include/kernel/fb.h - Framebuffer interface definitions
+ *
+ * Copyright (c) 2025 Kelsi Davis
+ * Licensed under the MPL v2.0 — see LICENSE for details.
+ *
+ * Defines framebuffer structures and initialization functions.
+ */
+
 #pragma once
 
 #include <stdint.h>

@@ -1,6 +1,9 @@
-// SPDX-License-Identifier: MPL-2.0
-/*
- * eventfd.h - Kernel helpers for eventfd integration
+/* include/kernel/eventfd.h - Eventfd integration helpers
+ *
+ * Copyright (c) 2025 Kelsi Davis
+ * Licensed under the MPL v2.0 — see LICENSE for details.
+ *
+ * Provides kernel-side helpers for eventfd file descriptor management.
  */
 
 #pragma once

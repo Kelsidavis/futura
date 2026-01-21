@@ -1,9 +1,10 @@
-// SPDX-License-Identifier: MPL-2.0
-/*
- * fb_console.h - Framebuffer-based console driver for ARM64 and x86_64
+/* include/kernel/fb_console.h - Framebuffer-based console driver
  *
- * Provides text output directly to framebuffer memory without requiring
- * a serial console. Useful for embedded systems and headless QEMU.
+ * Copyright (c) 2025 Kelsi Davis
+ * Licensed under the MPL v2.0 — see LICENSE for details.
+ *
+ * Provides text output directly to framebuffer memory for ARM64 and x86_64,
+ * without requiring a serial console. Useful for embedded systems and headless QEMU.
  */
 
 #ifndef KERNEL_FB_CONSOLE_H

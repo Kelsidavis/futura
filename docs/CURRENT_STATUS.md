@@ -93,6 +93,11 @@ See `docs/ARM64_STATUS.md` for detailed ARM64 progress.
 - ✅ **VMA count limit**: Added MAX_VMA_COUNT (65536) check in sys_mmap to prevent VMA fragmentation DoS attacks.
 - ✅ **Network error handling**: Added return value checks for fut_net_send() in TCP/IP stack (ARP, IP layers).
 - ✅ **Code quality improvements**: Replaced magic numbers with named constants (IO_BUDGET_WINDOW_MS, CPU_BRAND_BUFFER_SIZE, FUT_FD_TABLE_INITIAL_SIZE, O_NONBLOCK, O_CLOEXEC).
+- ✅ **FD categorization refactoring**: Extracted fut_fd_category() helper to eliminate code duplication across 6 syscall files.
+- ✅ **mlockall() hardening**: Added VMA count limit and RLIMIT_MEMLOCK enforcement with CAP_IPC_LOCK bypass.
+- ✅ **AT_SYMLINK_NOFOLLOW implementation**: Full implementation in sys_faccessat with lstat-based permission checking.
+- ✅ **F_DUPFD resource limit enforcement**: Added RLIMIT_NOFILE check to prevent FD exhaustion attacks via fcntl.
+- ✅ **Unix domain socket path traversal protection**: Reject ".." path components in sys_bind and sys_connect to prevent directory traversal attacks (CVE-2018-6555 mitigation).
 
 ## Current Focus
 

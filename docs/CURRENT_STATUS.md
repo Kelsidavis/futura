@@ -237,6 +237,12 @@ See `docs/ARM64_STATUS.md` for detailed ARM64 progress.
   - File type test macros (S_ISREG, S_ISDIR, S_ISCHR, S_ISBLK, S_ISFIFO, S_ISLNK, S_ISSOCK)
   - Special permission bits (S_ISUID, S_ISGID, S_ISVTX)
   - Complete user/group/other permission bits with rwx masks
+- ✅ **POSIX constants**: Added SEEK_SET/SEEK_CUR/SEEK_END and PIPE_BUF to futura_posix.h
+- ✅ **sys/epoll.h**: Created comprehensive epoll header with:
+  - EPOLL_CTL_* operations (ADD, DEL, MOD)
+  - All standard EPOLL event flags (EPOLLIN, EPOLLOUT, EPOLLERR, etc.)
+  - Edge-triggered (EPOLLET) and one-shot (EPOLLONESHOT) modes
+  - epoll_data union and epoll_event structure definitions
 
 ## Current Focus
 

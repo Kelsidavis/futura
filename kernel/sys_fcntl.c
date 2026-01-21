@@ -60,10 +60,10 @@
  * Impact: Memory corruption, kernel crash, potential privilege escalation
  * Root Cause: No validation that F_DUPFD arg is non-negative
  *
- * Defense (TODO - not yet implemented):
- * - Validate arg >= 0 for F_DUPFD before allocation
+ * Defense (DONE - lines 568-574):
+ * - Validate minfd >= 0 for F_DUPFD before allocation
  * - Reject negative target FDs with EINVAL
- * - Current code may pass negative values unchecked
+ * - Defensive validation now prevents negative index corruption
  *
  * CVE References:
  * - CVE-2014-0038: Negative index leading to corruption
@@ -117,11 +117,11 @@
  * Impact: Undefined kernel behavior, logic errors, potential bypass
  * Root Cause: No validation of flag bits against known flags
  *
- * Defense (TODO - not yet implemented):
- * - Define VALID_FD_FLAGS mask (FD_CLOEXEC only)
- * - Define VALID_FILE_FLAGS mask (O_NONBLOCK, O_APPEND, etc.)
- * - Check arg & ~VALID_FLAGS and reject invalid bits
- * - Current code may accept undefined flag bits
+ * Defense (DONE - lines 449-470):
+ * - F_SETFD: Masks arg with FD_CLOEXEC, ignoring invalid bits
+ * - F_SETFL: Masks arg with supported file flags (O_NONBLOCK, O_APPEND, etc.)
+ * - Invalid flag bits are silently ignored (POSIX-compliant behavior)
+ * - Prevents undefined flag propagation
  *
  * CVE References:
  * - CVE-2017-7308: Invalid flag handling

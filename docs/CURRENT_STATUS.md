@@ -232,6 +232,11 @@ See `docs/ARM64_STATUS.md` for detailed ARM64 progress.
   - `signal.h`: POSIX signal handling, delivery flow, signal types
 - ✅ **capability.c code quality**: Replaced magic numbers (0x3, 0x0040, 0x0200, 0x0080) with named constants (O_ACCMODE, O_RDONLY, O_WRONLY, O_RDWR, O_CREAT, O_TRUNC, O_EXCL)
 - ✅ **O_CLOEXEC constant**: Added O_CLOEXEC (0x80000) to fut_vfs.h and updated sys_dup3() to use the named constant instead of magic number
+- ✅ **sys/stat.h mode constants**: Added comprehensive file mode constants:
+  - File type mask and constants (S_IFMT, S_IFREG, S_IFDIR, S_IFLNK, S_IFBLK, S_IFCHR, S_IFIFO, S_IFSOCK)
+  - File type test macros (S_ISREG, S_ISDIR, S_ISCHR, S_ISBLK, S_ISFIFO, S_ISLNK, S_ISSOCK)
+  - Special permission bits (S_ISUID, S_ISGID, S_ISVTX)
+  - Complete user/group/other permission bits with rwx masks
 
 ## Current Focus
 

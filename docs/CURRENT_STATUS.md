@@ -143,6 +143,13 @@ See `docs/ARM64_STATUS.md` for detailed ARM64 progress.
   - `fut_thread_set_affinity()`: -1 → -EINVAL (invalid params)
   - `fut_thread_set_affinity_mask()`: -1 → -EINVAL (empty mask)
 - ✅ **ramfs.c error codes**: Replaced `-1` returns in `validate_ramfs_node()` with -EIO for memory corruption detection
+- ✅ **elf64.c stub error codes**: Replaced `-1` returns in non-x86_64 stub functions with -ENOSYS:
+  - `fut_stage_init_stub_binary()`: -1 → -ENOSYS (not implemented for non-x86_64)
+  - `fut_stage_second_stub_binary()`: -1 → -ENOSYS (not implemented for non-x86_64)
+- ✅ **arm64_irq.c error codes**: Replaced numeric error codes with proper errno constants:
+  - `fut_register_irq_handler()`: -1 → -EINVAL (invalid IRQ), -2 → -EEXIST (already registered)
+  - `fut_unregister_irq_handler()`: -1 → -EINVAL (invalid IRQ)
+  - `fut_irq_acknowledge()`: -1 → -EAGAIN (spurious interrupt)
 
 ## Current Focus
 

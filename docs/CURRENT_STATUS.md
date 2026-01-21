@@ -112,6 +112,15 @@ See `docs/ARM64_STATUS.md` for detailed ARM64 progress.
 - ✅ **New I/O categorization helpers**: Added fut_size_category() and fut_offset_category() to fut_fd_util.h for consistent size and offset categorization in debug logging.
 - ✅ **Applied size/offset helpers**: Updated sys_pread64.c and sys_pwrite64.c to use the new fut_size_category() and fut_offset_category() helpers, eliminating duplicated categorization logic.
 
+### January 21, 2026 Session (Latest) — Code Quality & DRY Refactoring
+- ✅ **sys_execve.c DRY refactoring**: Extracted `execve_free_argv()` and `execve_free_envp()` helper functions, reducing code by 84 lines while eliminating 12 instances of repetitive cleanup code.
+- ✅ **VN_DIR bug fix**: Fixed sys_fchdir.c which had incorrect local #defines (VN_DIR=1, VN_REG=2) shadowing the correct enum values from fut_vfs.h (VN_REG=1, VN_DIR=2). This was a real bug that would have caused incorrect directory validation.
+- ✅ **VN_DIR magic number elimination**: Replaced magic number `2` with `VN_DIR` enum constant in 11 *at syscall files: sys_renameat.c, sys_mkdirat.c, sys_utimensat.c, sys_unlinkat.c, sys_linkat.c, sys_faccessat.c, sys_readlinkat.c, sys_symlinkat.c, sys_fstatat.c, sys_fchmodat.c.
+- ✅ **ENOMEM magic number elimination**: Replaced magic number `-12` with `-ENOMEM` constant in:
+  - futurafs.c (8 instances)
+  - fut_socket.c (16 instances, added errno.h include)
+  - fut_blockdev.c (2 instances, added errno.h include)
+
 ## Current Focus
 
 ### x86-64 Platform

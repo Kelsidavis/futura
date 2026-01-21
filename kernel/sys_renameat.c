@@ -271,8 +271,8 @@ long sys_renameat(int olddirfd, const char *oldpath, int newdirfd, const char *n
             return -EBADF;
         }
 
-        /* Check if vnode is a directory (VN_DIR = 2) */
-        if (dir_file->vnode->type != 2) {  /* VN_DIR */
+        /* Check if vnode is a directory */
+        if (dir_file->vnode->type != VN_DIR) {
             fut_printf("[RENAMEAT] renameat(olddirfd=%d) -> ENOTDIR (olddirfd not a directory)\n",
                        local_olddirfd);
             return -ENOTDIR;
@@ -339,8 +339,8 @@ long sys_renameat(int olddirfd, const char *oldpath, int newdirfd, const char *n
             return -EBADF;
         }
 
-        /* Check if vnode is a directory (VN_DIR = 2) */
-        if (dir_file->vnode->type != 2) {  /* VN_DIR */
+        /* Check if vnode is a directory */
+        if (dir_file->vnode->type != VN_DIR) {
             fut_printf("[RENAMEAT] renameat(newdirfd=%d) -> ENOTDIR (newdirfd not a directory)\n",
                        local_newdirfd);
             return -ENOTDIR;

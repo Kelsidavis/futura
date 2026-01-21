@@ -282,8 +282,8 @@ long sys_linkat(int olddirfd, const char *oldpath, int newdirfd, const char *new
             return -EBADF;
         }
 
-        /* Check if vnode is a directory (VN_DIR = 2) */
-        if (dir_file->vnode->type != 2) {  /* VN_DIR */
+        /* Check if vnode is a directory */
+        if (dir_file->vnode->type != VN_DIR) {
             fut_printf("[LINKAT] linkat(olddirfd=%d) -> ENOTDIR (olddirfd not a directory)\n",
                        local_olddirfd);
             return -ENOTDIR;
@@ -350,8 +350,8 @@ long sys_linkat(int olddirfd, const char *oldpath, int newdirfd, const char *new
             return -EBADF;
         }
 
-        /* Check if vnode is a directory (VN_DIR = 2) */
-        if (dir_file->vnode->type != 2) {  /* VN_DIR */
+        /* Check if vnode is a directory */
+        if (dir_file->vnode->type != VN_DIR) {
             fut_printf("[LINKAT] linkat(newdirfd=%d) -> ENOTDIR (newdirfd not a directory)\n",
                        local_newdirfd);
             return -ENOTDIR;

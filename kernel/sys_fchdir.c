@@ -19,9 +19,10 @@
 
 extern void fut_printf(const char *fmt, ...);
 
-/* Phase 3: Vnode type definitions for directory validation */
-#define VN_DIR 1   /* Directory type from fut_vnode */
-#define VN_REG 2   /* Regular file type */
+/* Phase 3: Vnode type definitions are now in fut_vfs.h (VN_DIR, VN_REG enum values)
+ * Note: Previously had incorrect local #defines (VN_DIR=1, VN_REG=2) which were
+ * swapped from the actual enum values (VN_REG=1, VN_DIR=2). Fixed by removing
+ * the redundant definitions and using the correct enum from fut_vfs.h. */
 
 /**
  * fchdir() - Change working directory via file descriptor

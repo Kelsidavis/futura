@@ -287,8 +287,8 @@ long sys_utimensat(int dirfd, const char *pathname, const fut_timespec_t *times,
             return -EBADF;
         }
 
-        /* Check if vnode is a directory (VN_DIR = 2) */
-        if (dir_file->vnode->type != 2) {  /* VN_DIR */
+        /* Check if vnode is a directory */
+        if (dir_file->vnode->type != VN_DIR) {
             fut_printf("[UTIMENSAT] utimensat(dirfd=%d) -> ENOTDIR (dirfd not a directory)\n", dirfd);
             return -ENOTDIR;
         }

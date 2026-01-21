@@ -220,8 +220,8 @@ long sys_mkdirat(int dirfd, const char *pathname, unsigned int mode) {
             return -EBADF;
         }
 
-        /* Check if vnode is a directory (VN_DIR = 2) */
-        if (dir_file->vnode->type != 2) {  /* VN_DIR */
+        /* Check if vnode is a directory */
+        if (dir_file->vnode->type != VN_DIR) {
             fut_printf("[MKDIRAT] mkdirat(dirfd=%d) -> ENOTDIR (dirfd not a directory)\n",
                        local_dirfd);
             return -ENOTDIR;

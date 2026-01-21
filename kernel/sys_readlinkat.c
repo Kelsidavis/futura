@@ -229,8 +229,8 @@ long sys_readlinkat(int dirfd, const char *pathname, char *buf, size_t bufsiz) {
             return -EBADF;
         }
 
-        /* Check if vnode is a directory (VN_DIR = 2) */
-        if (dir_file->vnode->type != 2) {  /* VN_DIR */
+        /* Check if vnode is a directory */
+        if (dir_file->vnode->type != VN_DIR) {
             fut_printf("[READLINKAT] readlinkat(dirfd=%d) -> ENOTDIR (dirfd not a directory)\n",
                        local_dirfd);
             return -ENOTDIR;

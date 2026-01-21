@@ -341,6 +341,14 @@ long sys_getdents64(unsigned int fd, void *dirp, unsigned int count) {
         return -ESRCH;
     }
 
+    /* Phase 5: Validate FD upper bound to prevent OOB array access */
+    if (fd >= (unsigned int)task->max_fds) {
+        fut_printf("[GETDENTS64] getdents64(fd=%u, max_fds=%d, count=%u) -> EBADF "
+                   "(fd exceeds max_fds, Phase 5: FD bounds validation)\n",
+                   fd, task->max_fds, count);
+        return -EBADF;
+    }
+
     /* Phase 2: Categorize FD range */
     const char *fd_category;
     if (fd <= 2) {

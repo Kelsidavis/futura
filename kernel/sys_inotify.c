@@ -233,6 +233,14 @@ long sys_inotify_add_watch(int fd, const char *pathname, uint32_t mask) {
         return -EBADF;
     }
 
+    /* Phase 5: Validate FD upper bound to prevent OOB array access */
+    if (fd >= task->max_fds) {
+        fut_printf("[INOTIFY] inotify_add_watch(fd=%d, max_fds=%d, pathname=%p, mask=0x%x, pid=%d) "
+                   "-> EBADF (fd exceeds max_fds, Phase 5: FD bounds validation)\n",
+                   fd, task->max_fds, pathname, mask, task->pid);
+        return -EBADF;
+    }
+
     /* Phase 2: Validate pathname pointer */
     if (!pathname) {
         fut_printf("[INOTIFY] inotify_add_watch(fd=%d, pathname=NULL, mask=0x%x, pid=%d) "
@@ -396,6 +404,14 @@ long sys_inotify_rm_watch(int fd, int wd) {
     if (fd < 0) {
         fut_printf("[INOTIFY] inotify_rm_watch(fd=%d [invalid], wd=%d, pid=%d) -> EBADF\n",
                    fd, wd, task->pid);
+        return -EBADF;
+    }
+
+    /* Phase 5: Validate FD upper bound to prevent OOB array access */
+    if (fd >= task->max_fds) {
+        fut_printf("[INOTIFY] inotify_rm_watch(fd=%d, max_fds=%d, wd=%d, pid=%d) "
+                   "-> EBADF (fd exceeds max_fds, Phase 5: FD bounds validation)\n",
+                   fd, task->max_fds, wd, task->pid);
         return -EBADF;
     }
 

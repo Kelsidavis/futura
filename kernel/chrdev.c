@@ -1,6 +1,9 @@
-// SPDX-License-Identifier: MPL-2.0
-/*
- * chrdev.c - Minimal character device registry
+/* kernel/chrdev.c - Character device registry
+ *
+ * Copyright (c) 2025 Kelsi Davis
+ * Licensed under the MPL v2.0 — see LICENSE for details.
+ *
+ * Provides registration and lookup for character device drivers (major/minor numbers).
  */
 
 #include <kernel/chrdev.h>

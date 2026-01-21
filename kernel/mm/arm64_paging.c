@@ -11,6 +11,7 @@
 #include <platform/arm64/regs.h>
 #include <kernel/fut_mm.h>
 #include <kernel/fut_memory.h>
+#include <kernel/errno.h>
 #include <string.h>
 #include <stdatomic.h>
 
@@ -389,11 +390,11 @@ static uint64_t arm64_translate_flags(uint64_t generic_flags) {
  */
 int fut_map_page(fut_vmem_context_t *ctx, uint64_t vaddr, uint64_t paddr, uint64_t flags) {
     if (!IS_PAGE_ALIGNED(vaddr) || !IS_PAGE_ALIGNED(paddr)) {
-        return -1;  /* Invalid alignment */
+        return -EINVAL;  /* Invalid alignment */
     }
 
     if (!fut_is_canonical(vaddr)) {
-        return -2;  /* Invalid address */
+        return -EFAULT;  /* Invalid address */
     }
 
     if (!ctx) {
@@ -402,7 +403,7 @@ int fut_map_page(fut_vmem_context_t *ctx, uint64_t vaddr, uint64_t paddr, uint64
 
     page_table_t *pgd = ctx->pgd;
     if (!pgd) {
-        return -3;  /* No page table */
+        return -EINVAL;  /* No page table */
     }
 
     /* Translate generic flags to ARM64 flags if needed */
@@ -420,7 +421,7 @@ int fut_map_page(fut_vmem_context_t *ctx, uint64_t vaddr, uint64_t paddr, uint64
 
     page_table_t *pmd = get_or_create_table(pgd, pgd_idx, true);
     if (!pmd) {
-        return -4;  /* Failed to allocate L2 (PMD) */
+        return -ENOMEM;  /* Failed to allocate L2 (PMD) */
     }
     PAGING_DEBUG("[MAP-PAGE] Got PMD table at %p\n", pmd);
 
@@ -429,7 +430,7 @@ int fut_map_page(fut_vmem_context_t *ctx, uint64_t vaddr, uint64_t paddr, uint64
 
     page_table_t *pte_table = get_or_create_table(pmd, pmd_idx, true);
     if (!pte_table) {
-        return -5;  /* Failed to allocate L3 (PTE table) */
+        return -ENOMEM;  /* Failed to allocate L3 (PTE table) */
     }
     PAGING_DEBUG("[MAP-PAGE] Got PTE table at %p\n", pte_table);
 
@@ -501,7 +502,7 @@ int fut_map_range(fut_vmem_context_t *ctx, uint64_t vaddr, uint64_t paddr,
  */
 int fut_unmap_page(fut_vmem_context_t *ctx, uint64_t vaddr) {
     if (!IS_PAGE_ALIGNED(vaddr)) {
-        return -1;
+        return -EINVAL;  /* Invalid alignment */
     }
 
     if (!ctx) {
@@ -510,28 +511,28 @@ int fut_unmap_page(fut_vmem_context_t *ctx, uint64_t vaddr) {
 
     page_table_t *pgd = ctx->pgd;
     if (!pgd) {
-        return -2;
+        return -EINVAL;  /* No page table */
     }
 
     /* Walk to page table entry */
     int pgd_idx = PGD_INDEX(vaddr);
     pte_t pgd_entry = pgd->entries[pgd_idx];
     if (!fut_pte_is_present(pgd_entry)) {
-        return -3;  /* Already unmapped */
+        return -ENOENT;  /* Already unmapped - PGD not present */
     }
 
     page_table_t *pmd = (page_table_t *)fut_pte_to_phys(pgd_entry);
     int pmd_idx = PMD_INDEX(vaddr);
     pte_t pmd_entry = pmd->entries[pmd_idx];
     if (!fut_pte_is_present(pmd_entry)) {
-        return -4;
+        return -ENOENT;  /* Already unmapped - PMD not present */
     }
 
     page_table_t *pte_table = (page_table_t *)fut_pte_to_phys(pmd_entry);
     int pte_idx = PTE_INDEX(vaddr);
     pte_t pte_entry = pte_table->entries[pte_idx];
     if (!fut_pte_is_present(pte_entry)) {
-        return -5;
+        return -ENOENT;  /* Already unmapped - PTE not present */
     }
 
     page_table_t *page_table = (page_table_t *)fut_pte_to_phys(pte_entry);
@@ -582,35 +583,35 @@ int fut_virt_to_phys(fut_vmem_context_t *ctx, uint64_t vaddr, uint64_t *paddr) {
 
     page_table_t *pgd = ctx->pgd;
     if (!pgd) {
-        return -1;
+        return -EINVAL;  /* No page table */
     }
 
     /* Walk page tables */
     int pgd_idx = PGD_INDEX(vaddr);
     pte_t pgd_entry = pgd->entries[pgd_idx];
     if (!fut_pte_is_present(pgd_entry)) {
-        return -2;
+        return -EFAULT;  /* PGD entry not present */
     }
 
     page_table_t *pmd = (page_table_t *)fut_pte_to_phys(pgd_entry);
     int pmd_idx = PMD_INDEX(vaddr);
     pte_t pmd_entry = pmd->entries[pmd_idx];
     if (!fut_pte_is_present(pmd_entry)) {
-        return -3;
+        return -EFAULT;  /* PMD entry not present */
     }
 
     page_table_t *pte_table = (page_table_t *)fut_pte_to_phys(pmd_entry);
     int pte_idx = PTE_INDEX(vaddr);
     pte_t pte_entry = pte_table->entries[pte_idx];
     if (!fut_pte_is_present(pte_entry)) {
-        return -4;
+        return -EFAULT;  /* PTE entry not present */
     }
 
     page_table_t *page_table = (page_table_t *)fut_pte_to_phys(pte_entry);
     int page_idx = PAGE_INDEX(vaddr);
     pte_t page_entry = page_table->entries[page_idx];
     if (!fut_pte_is_present(page_entry)) {
-        return -5;
+        return -EFAULT;  /* Page entry not present */
     }
 
     /* Extract physical address */

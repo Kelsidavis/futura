@@ -696,7 +696,10 @@ static int stage_stack_pages(fut_mm_t *mm, uint64_t *out_stack_top) {
                                PTE_PRESENT | PTE_USER | PTE_WRITABLE | PTE_NX);
         if (rc != 0) {
             fut_pmm_free_page(page);
-            for (size_t j = 0; j <= i; ++j) {
+            /* Note: Use j < i (not j <= i) because pages[i] points to the same
+             * memory as 'page' which was already freed above. Using j <= i would
+             * cause a double-free of the current page. */
+            for (size_t j = 0; j < i; ++j) {
                 fut_unmap_range(mm_context(mm), base + (uint64_t)j * PAGE_SIZE, PAGE_SIZE);
                 if (pages[j]) {
                     fut_pmm_free_page(pages[j]);

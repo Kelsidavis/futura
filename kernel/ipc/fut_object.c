@@ -10,6 +10,7 @@
 
 #include "../../include/kernel/fut_object.h"
 #include "../../include/kernel/fut_memory.h"
+#include <kernel/errno.h>
 
 /* ============================================================
  *   Object Table (Phase 1: Simple Linear Array)
@@ -65,17 +66,17 @@ fut_handle_t fut_object_create(enum fut_object_type type, fut_rights_t rights, v
 
 int fut_object_destroy(fut_handle_t handle) {
     if (handle == FUT_INVALID_HANDLE || handle >= FUT_MAX_OBJECTS) {
-        return -1;
+        return -EINVAL;
     }
 
     fut_object_t *obj = object_table[handle];
     if (!obj) {
-        return -1;  // Already destroyed or never existed
+        return -ENOENT;  /* Already destroyed or never existed */
     }
 
-    // Check if caller has DESTROY rights
+    /* Check if caller has DESTROY rights */
     if (!(obj->rights & FUT_RIGHT_DESTROY)) {
-        return -1;  // Permission denied
+        return -EACCES;  /* Permission denied */
     }
 
     // Decrement refcount and free if zero
@@ -156,29 +157,26 @@ fut_handle_t fut_object_share(fut_handle_t handle, uint64_t target_task, fut_rig
  * ============================================================ */
 
 int fut_object_send(fut_handle_t handle, const void *msg, size_t msg_len) {
-    // Phase 1: Stub implementation
-    // Future: Implement async message queues
+    /* Phase 1: Stub implementation - not yet implemented */
     (void)handle;
     (void)msg;
     (void)msg_len;
-    return -1;
+    return -ENOSYS;
 }
 
 int fut_object_receive(fut_handle_t handle, void *buf, size_t buf_len) {
-    // Phase 1: Stub implementation
-    // Future: Implement async message queues
+    /* Phase 1: Stub implementation - not yet implemented */
     (void)handle;
     (void)buf;
     (void)buf_len;
-    return -1;
+    return -ENOSYS;
 }
 
 int fut_object_wait(fut_handle_t handle, uint64_t timeout_ms) {
-    // Phase 1: Stub implementation
-    // Future: Integrate with scheduler for event waiting
+    /* Phase 1: Stub implementation - not yet implemented */
     (void)handle;
     (void)timeout_ms;
-    return -1;
+    return -ENOSYS;
 }
 
 /* ============================================================

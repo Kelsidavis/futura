@@ -11,6 +11,7 @@
 #include "../../include/kernel/fut_memory.h"
 #include "../../include/kernel/fut_task.h"
 #include "../../include/kernel/signal.h"
+#include <kernel/errno.h>
 #include <stdatomic.h>
 
 /* Forward declaration: LAPIC EOI is only used in interrupt handler */
@@ -207,7 +208,7 @@ void fut_timer_tick(void) {
 
 int fut_timer_start(uint64_t ticks_from_now, void (*cb)(void *), void *arg) {
     if (!cb) {
-        return -1;
+        return -EINVAL;
     }
     if (ticks_from_now == 0) {
         cb(arg);
@@ -216,7 +217,7 @@ int fut_timer_start(uint64_t ticks_from_now, void (*cb)(void *), void *arg) {
 
     fut_timer_event_t *ev = (fut_timer_event_t *)fut_malloc(sizeof(fut_timer_event_t));
     if (!ev) {
-        return -1;
+        return -ENOMEM;
     }
     uint64_t current = atomic_load_explicit(&system_ticks, memory_order_relaxed);
     ev->expiry = current + ticks_from_now;
@@ -242,7 +243,7 @@ int fut_timer_start(uint64_t ticks_from_now, void (*cb)(void *), void *arg) {
 
 int fut_timer_cancel(void (*cb)(void *), void *arg) {
     if (!cb) {
-        return -1;
+        return -EINVAL;
     }
     fut_spinlock_acquire(&timer_events_lock);
     fut_timer_event_t *prev = NULL;
@@ -262,7 +263,7 @@ int fut_timer_cancel(void (*cb)(void *), void *arg) {
         curr = curr->next;
     }
     fut_spinlock_release(&timer_events_lock);
-    return -1;
+    return -ENOENT;  /* Timer event not found */
 }
 
 /**

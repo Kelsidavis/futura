@@ -59,17 +59,22 @@ struct fsd_fipc_msg {
 #define FSD_CHANNEL_FILE "/run/fsd.channel"
 
 /* Per-client FD tracking structure
- * Maps client file descriptors to kernel file descriptors.
- * This allows the FSD to maintain separate FD namespaces for each client.
+ * Maps client file descriptors to kernel capability handles.
+ * This allows the FSD to maintain separate FD namespaces for each client
+ * while using capability-based access control.
  */
 #define FSD_MAX_CLIENTS 64
 #define FSD_MAX_FDS_PER_CLIENT 256
 
+/* Capability handle type (matches kernel fut_handle_t) */
+typedef uint64_t fsd_handle_t;
+#define FSD_INVALID_HANDLE ((fsd_handle_t)0)
+
 struct fsd_client_fd {
-    int kernel_fd;      /* FD from kernel syscall */
-    int client_fd;      /* FD as seen by client */
-    int flags;          /* Open flags (O_RDONLY, O_WRONLY, O_RDWR, etc.) */
-    bool valid;         /* Whether this entry is in use */
+    fsd_handle_t kernel_handle;  /* Capability handle from kernel syscall */
+    int client_fd;               /* FD as seen by client */
+    int flags;                   /* Open flags (O_RDONLY, O_WRONLY, O_RDWR, etc.) */
+    bool valid;                  /* Whether this entry is in use */
 };
 
 struct fsd_client {
@@ -196,7 +201,7 @@ static int fsd_client_register(uint64_t client_id) {
             clients[i].next_fd = 3;  /* Start after stdin, stdout, stderr */
             /* Clear FD table */
             for (int j = 0; j < FSD_MAX_FDS_PER_CLIENT; j++) {
-                clients[i].fds[j].kernel_fd = -1;
+                clients[i].fds[j].kernel_handle = FSD_INVALID_HANDLE;
                 clients[i].fds[j].client_fd = -1;
                 clients[i].fds[j].valid = false;
             }
@@ -224,11 +229,14 @@ static int fsd_client_find(uint64_t client_id) {
 
 /**
  * Allocate a new FD for a client.
- * Maps a kernel FD to a client FD.
+ * Maps a kernel capability handle to a client FD.
  *
- * @return: Client FD on success, -1 on failure
+ * @param client_idx   Index of the client in the clients array
+ * @param kernel_handle Capability handle from kernel syscall
+ * @param flags        Open flags (O_RDONLY, O_WRONLY, O_RDWR, etc.)
+ * @return Client FD on success, -1 on failure
  */
-static int fsd_client_fd_alloc(int client_idx, int kernel_fd, int flags) {
+static int fsd_client_fd_alloc(int client_idx, fsd_handle_t kernel_handle, int flags) {
     if (client_idx < 0 || client_idx >= FSD_MAX_CLIENTS || !clients[client_idx].active) {
         return -1;
     }
@@ -238,7 +246,7 @@ static int fsd_client_fd_alloc(int client_idx, int kernel_fd, int flags) {
     /* Find next available FD slot */
     for (int i = client->next_fd; i < FSD_MAX_FDS_PER_CLIENT; i++) {
         if (!client->fds[i].valid) {
-            client->fds[i].kernel_fd = kernel_fd;
+            client->fds[i].kernel_handle = kernel_handle;
             client->fds[i].client_fd = i;
             client->fds[i].flags = flags;
             client->fds[i].valid = true;
@@ -256,32 +264,36 @@ static int fsd_client_fd_alloc(int client_idx, int kernel_fd, int flags) {
 }
 
 /**
- * Get the kernel FD corresponding to a client FD.
+ * Get the kernel capability handle corresponding to a client FD.
  *
- * @return: Kernel FD on success, -1 if not found
+ * @param client_idx Index of the client in the clients array
+ * @param client_fd  Client file descriptor number
+ * @return Kernel capability handle on success, FSD_INVALID_HANDLE if not found
  */
-static int fsd_client_fd_get_kernel(int client_idx, int client_fd) {
+static fsd_handle_t fsd_client_fd_get_handle(int client_idx, int client_fd) {
     if (client_idx < 0 || client_idx >= FSD_MAX_CLIENTS) {
-        return -1;
+        return FSD_INVALID_HANDLE;
     }
 
     struct fsd_client *client = &clients[client_idx];
 
     if (client_fd < 0 || client_fd >= FSD_MAX_FDS_PER_CLIENT) {
-        return -1;
+        return FSD_INVALID_HANDLE;
     }
 
     if (!client->fds[client_fd].valid) {
-        return -1;
+        return FSD_INVALID_HANDLE;
     }
 
-    return client->fds[client_fd].kernel_fd;
+    return client->fds[client_fd].kernel_handle;
 }
 
 /**
- * Free a client FD and close the kernel FD.
+ * Free a client FD and close the kernel capability handle.
  *
- * @return: 0 on success, -1 on failure
+ * @param client_idx Index of the client in the clients array
+ * @param client_fd  Client file descriptor number to free
+ * @return 0 on success, -1 on failure
  */
 static int fsd_client_fd_free(int client_idx, int client_fd) {
     if (client_idx < 0 || client_idx >= FSD_MAX_CLIENTS) {
@@ -298,13 +310,13 @@ static int fsd_client_fd_free(int client_idx, int client_fd) {
         return -1;
     }
 
-    int kernel_fd = client->fds[client_fd].kernel_fd;
+    fsd_handle_t kernel_handle = client->fds[client_fd].kernel_handle;
     client->fds[client_fd].valid = false;
-    client->fds[client_fd].kernel_fd = -1;
+    client->fds[client_fd].kernel_handle = FSD_INVALID_HANDLE;
 
-    /* Close the kernel FD */
-    if (kernel_fd >= 0) {
-        sys_close(kernel_fd);
+    /* Close the kernel capability handle */
+    if (kernel_handle != FSD_INVALID_HANDLE) {
+        sys_close_cap(kernel_handle);
     }
 
     return 0;
@@ -374,7 +386,9 @@ static void handle_unregister(struct fsd_fipc_msg *msg) {
 }
 
 /**
- * Handle file open request via syscall
+ * Handle file open request via capability syscall.
+ * Opens the file using sys_open_cap and returns a capability handle
+ * wrapped in a client FD.
  */
 static void handle_open(struct fsd_fipc_msg *msg) {
     int32_t result = -EINVAL;
@@ -402,18 +416,18 @@ static void handle_open(struct fsd_fipc_msg *msg) {
         return;
     }
 
-    /* Use syscall to open file */
-    long kernel_fd = sys_open(req->path, req->flags, req->mode);
-    if (kernel_fd < 0) {
-        result = (int32_t)kernel_fd;
+    /* Use capability syscall to open file */
+    fsd_handle_t kernel_handle = sys_open_cap(req->path, req->flags, req->mode);
+    if (kernel_handle == FSD_INVALID_HANDLE) {
+        result = -ENOENT;  /* File not found or open failed */
         fsd_send_response(FSD_MSG_OPEN, &result, sizeof(result));
         return;
     }
 
-    /* Allocate client FD */
-    int client_fd = fsd_client_fd_alloc(client_idx, (int)kernel_fd, req->flags);
+    /* Allocate client FD with capability handle */
+    int client_fd = fsd_client_fd_alloc(client_idx, kernel_handle, req->flags);
     if (client_fd < 0) {
-        sys_close(kernel_fd);
+        sys_close_cap(kernel_handle);
         result = -ENOMEM;
         fsd_send_response(FSD_MSG_OPEN, &result, sizeof(result));
         return;
@@ -424,7 +438,8 @@ static void handle_open(struct fsd_fipc_msg *msg) {
 }
 
 /**
- * Handle file read request via syscall
+ * Handle file read request via capability syscall.
+ * Reads from the file using sys_read_cap with rights validation.
  */
 static void handle_read(struct fsd_fipc_msg *msg) {
     struct {
@@ -439,15 +454,15 @@ static void handle_read(struct fsd_fipc_msg *msg) {
 
     const struct fsd_read_req *req = (const struct fsd_read_req *)msg->payload;
 
-    /* Find client and get kernel FD */
+    /* Find client and get kernel capability handle */
     int client_idx = fsd_client_find(msg->src_pid);
     if (client_idx < 0) {
         fsd_send_response(FSD_MSG_READ, &resp, sizeof(resp.bytes_read));
         return;
     }
 
-    int kernel_fd = fsd_client_fd_get_kernel(client_idx, req->fd);
-    if (kernel_fd < 0) {
+    fsd_handle_t kernel_handle = fsd_client_fd_get_handle(client_idx, req->fd);
+    if (kernel_handle == FSD_INVALID_HANDLE) {
         resp.bytes_read = -EBADF;
         fsd_send_response(FSD_MSG_READ, &resp, sizeof(resp.bytes_read));
         return;
@@ -459,8 +474,8 @@ static void handle_read(struct fsd_fipc_msg *msg) {
         read_size = sizeof(resp.data);
     }
 
-    /* Use syscall to read file */
-    long bytes_read = sys_read(kernel_fd, resp.data, read_size);
+    /* Use capability syscall to read file (validates READ rights) */
+    long bytes_read = sys_read_cap(kernel_handle, resp.data, read_size);
     resp.bytes_read = (int32_t)bytes_read;
 
     /* Send response with data */
@@ -473,7 +488,8 @@ static void handle_read(struct fsd_fipc_msg *msg) {
 }
 
 /**
- * Handle file write request via syscall
+ * Handle file write request via capability syscall.
+ * Writes to the file using sys_write_cap with rights validation.
  */
 static void handle_write(struct fsd_fipc_msg *msg) {
     int32_t result = -EINVAL;
@@ -485,15 +501,15 @@ static void handle_write(struct fsd_fipc_msg *msg) {
 
     const struct fsd_write_req *req = (const struct fsd_write_req *)msg->payload;
 
-    /* Find client and get kernel FD */
+    /* Find client and get kernel capability handle */
     int client_idx = fsd_client_find(msg->src_pid);
     if (client_idx < 0) {
         fsd_send_response(FSD_MSG_WRITE, &result, sizeof(result));
         return;
     }
 
-    int kernel_fd = fsd_client_fd_get_kernel(client_idx, req->fd);
-    if (kernel_fd < 0) {
+    fsd_handle_t kernel_handle = fsd_client_fd_get_handle(client_idx, req->fd);
+    if (kernel_handle == FSD_INVALID_HANDLE) {
         result = -EBADF;
         fsd_send_response(FSD_MSG_WRITE, &result, sizeof(result));
         return;
@@ -506,8 +522,8 @@ static void handle_write(struct fsd_fipc_msg *msg) {
     size_t available_data = msg->length - sizeof(struct fsd_write_req);
     size_t write_size = (req->count < available_data) ? req->count : available_data;
 
-    /* Use syscall to write file */
-    long bytes_written = sys_write(kernel_fd, write_data, write_size);
+    /* Use capability syscall to write file (validates WRITE rights) */
+    long bytes_written = sys_write_cap(kernel_handle, write_data, write_size);
     result = (int32_t)bytes_written;
 
     fsd_send_response(FSD_MSG_WRITE, &result, sizeof(result));
@@ -533,7 +549,7 @@ static void handle_close(struct fsd_fipc_msg *msg) {
         return;
     }
 
-    /* Free the client FD (this also closes the kernel FD) */
+    /* Free the client FD (this also closes the kernel capability handle) */
     int ret = fsd_client_fd_free(client_idx, req->fd);
     result = (ret == 0) ? 0 : -EBADF;
 
@@ -633,7 +649,7 @@ static void handle_stat(struct fsd_fipc_msg *msg) {
 }
 
 /**
- * Handle lseek request via syscall
+ * Handle lseek request via capability syscall
  */
 static void handle_lseek(struct fsd_fipc_msg *msg) {
     int64_t result = -EINVAL;
@@ -645,26 +661,26 @@ static void handle_lseek(struct fsd_fipc_msg *msg) {
 
     const struct fsd_lseek_req *req = (const struct fsd_lseek_req *)msg->payload;
 
-    /* Find client and get kernel FD */
+    /* Find client and get kernel capability handle */
     int client_idx = fsd_client_find(msg->src_pid);
     if (client_idx < 0) {
         fsd_send_response(FSD_MSG_LSEEK, &result, sizeof(result));
         return;
     }
 
-    int kernel_fd = fsd_client_fd_get_kernel(client_idx, req->fd);
-    if (kernel_fd < 0) {
+    fsd_handle_t kernel_handle = fsd_client_fd_get_handle(client_idx, req->fd);
+    if (kernel_handle == FSD_INVALID_HANDLE) {
         result = -EBADF;
         fsd_send_response(FSD_MSG_LSEEK, &result, sizeof(result));
         return;
     }
 
-    result = sys_lseek_call(kernel_fd, req->offset, req->whence);
+    result = sys_lseek_cap(kernel_handle, req->offset, req->whence);
     fsd_send_response(FSD_MSG_LSEEK, &result, sizeof(result));
 }
 
 /**
- * Handle fsync request via syscall
+ * Handle fsync request via capability syscall
  */
 static void handle_fsync(struct fsd_fipc_msg *msg) {
     int32_t result = -EINVAL;
@@ -676,21 +692,21 @@ static void handle_fsync(struct fsd_fipc_msg *msg) {
 
     const struct fsd_fsync_req *req = (const struct fsd_fsync_req *)msg->payload;
 
-    /* Find client and get kernel FD */
+    /* Find client and get kernel capability handle */
     int client_idx = fsd_client_find(msg->src_pid);
     if (client_idx < 0) {
         fsd_send_response(FSD_MSG_FSYNC, &result, sizeof(result));
         return;
     }
 
-    int kernel_fd = fsd_client_fd_get_kernel(client_idx, req->fd);
-    if (kernel_fd < 0) {
+    fsd_handle_t kernel_handle = fsd_client_fd_get_handle(client_idx, req->fd);
+    if (kernel_handle == FSD_INVALID_HANDLE) {
         result = -EBADF;
         fsd_send_response(FSD_MSG_FSYNC, &result, sizeof(result));
         return;
     }
 
-    result = (int32_t)sys_fsync_call(kernel_fd);
+    result = (int32_t)sys_fsync_cap(kernel_handle);
     fsd_send_response(FSD_MSG_FSYNC, &result, sizeof(result));
 }
 

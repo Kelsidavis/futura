@@ -321,4 +321,127 @@ static inline long sys_fipc_connect(long channel_id) {
     return sys_call1(SYS_fipc_connect, channel_id);
 }
 
+/* ============================================================
+ *   Capability-based Syscall Veneers
+ * ============================================================ */
+
+/* Capability handle type (matches kernel fut_handle_t) */
+typedef uint64_t fut_handle_t;
+#define FUT_INVALID_HANDLE ((fut_handle_t)0)
+
+/**
+ * Open a file with capability-based access control.
+ * @param path  File path to open
+ * @param flags Open flags (O_RDONLY, O_WRONLY, O_RDWR, O_CREAT, etc.)
+ * @param mode  File mode for creation
+ * @return Capability handle on success, FUT_INVALID_HANDLE on failure
+ */
+static inline fut_handle_t sys_open_cap(const char *path, int flags, int mode) {
+    long ret = sys_call3(SYS_open_cap, (long)path, (long)flags, (long)mode);
+    return (ret > 0) ? (fut_handle_t)ret : FUT_INVALID_HANDLE;
+}
+
+/**
+ * Read from a file using capability handle.
+ * @param handle Capability handle to file
+ * @param buf    Buffer to read into
+ * @param count  Number of bytes to read
+ * @return Number of bytes read, or negative error code
+ */
+static inline long sys_read_cap(fut_handle_t handle, void *buf, size_t count) {
+    return sys_call3(SYS_read_cap, (long)handle, (long)buf, (long)count);
+}
+
+/**
+ * Write to a file using capability handle.
+ * @param handle Capability handle to file
+ * @param buf    Buffer to write from
+ * @param count  Number of bytes to write
+ * @return Number of bytes written, or negative error code
+ */
+static inline long sys_write_cap(fut_handle_t handle, const void *buf, size_t count) {
+    return sys_call3(SYS_write_cap, (long)handle, (long)buf, (long)count);
+}
+
+/**
+ * Close a capability handle.
+ * @param handle Capability handle to close
+ * @return 0 on success, negative error code on failure
+ */
+static inline long sys_close_cap(fut_handle_t handle) {
+    return sys_call1(SYS_close_cap, (long)handle);
+}
+
+/**
+ * Seek within a file using capability handle.
+ * @param handle Capability handle to file
+ * @param offset Seek offset
+ * @param whence Seek mode (SEEK_SET, SEEK_CUR, SEEK_END)
+ * @return New file offset, or negative error code
+ */
+static inline long sys_lseek_cap(fut_handle_t handle, int64_t offset, int whence) {
+    return sys_call3(SYS_lseek_cap, (long)handle, (long)offset, (long)whence);
+}
+
+/**
+ * Get file statistics from capability handle.
+ * @param handle  Capability handle to file
+ * @param statbuf Buffer to receive file statistics
+ * @return 0 on success, negative error code on failure
+ */
+static inline long sys_fstat_cap(fut_handle_t handle, void *statbuf) {
+    return sys_call2(SYS_fstat_cap, (long)handle, (long)statbuf);
+}
+
+/**
+ * Sync file data to storage using capability handle.
+ * @param handle Capability handle to file
+ * @return 0 on success, negative error code on failure
+ */
+static inline long sys_fsync_cap(fut_handle_t handle) {
+    return sys_call1(SYS_fsync_cap, (long)handle);
+}
+
+/**
+ * Create directory relative to parent handle.
+ * @param parent_handle Capability handle to parent directory
+ * @param name          Name of directory to create
+ * @param mode          Directory permissions
+ * @return 0 on success, negative error code on failure
+ */
+static inline long sys_mkdirat_cap(fut_handle_t parent_handle, const char *name, int mode) {
+    return sys_call3(SYS_mkdirat_cap, (long)parent_handle, (long)name, (long)mode);
+}
+
+/**
+ * Unlink file relative to parent handle.
+ * @param parent_handle Capability handle to parent directory
+ * @param name          Name of file to unlink
+ * @return 0 on success, negative error code on failure
+ */
+static inline long sys_unlinkat_cap(fut_handle_t parent_handle, const char *name) {
+    return sys_call2(SYS_unlinkat_cap, (long)parent_handle, (long)name);
+}
+
+/**
+ * Remove directory relative to parent handle.
+ * @param parent_handle Capability handle to parent directory
+ * @param name          Name of directory to remove
+ * @return 0 on success, negative error code on failure
+ */
+static inline long sys_rmdirat_cap(fut_handle_t parent_handle, const char *name) {
+    return sys_call2(SYS_rmdirat_cap, (long)parent_handle, (long)name);
+}
+
+/**
+ * Get file statistics relative to parent handle.
+ * @param parent_handle Capability handle to parent directory
+ * @param name          Name of file to stat
+ * @param statbuf       Buffer to receive statistics
+ * @return 0 on success, negative error code on failure
+ */
+static inline long sys_statat_cap(fut_handle_t parent_handle, const char *name, void *statbuf) {
+    return sys_call3(SYS_statat_cap, (long)parent_handle, (long)name, (long)statbuf);
+}
+
 /* Note: setpgrp and setpgid syscall veneers not provided (syscall numbers conflict) */

@@ -122,3 +122,16 @@
 #define SYS_fipc_close   404
 #define SYS_fipc_poll    405
 #define SYS_fipc_connect 406
+
+/* Capability-based syscalls (Phase 1 - Futura extensions) */
+#define SYS_open_cap     500   /* Open file with capability handle return */
+#define SYS_read_cap     501   /* Read from capability handle */
+#define SYS_write_cap    502   /* Write to capability handle */
+#define SYS_close_cap    503   /* Close capability handle */
+#define SYS_lseek_cap    504   /* Seek within capability handle */
+#define SYS_fstat_cap    505   /* Get file stats from capability handle */
+#define SYS_fsync_cap    506   /* Sync file data from capability handle */
+#define SYS_mkdirat_cap  507   /* Create directory relative to parent handle */
+#define SYS_unlinkat_cap 508   /* Unlink file relative to parent handle */
+#define SYS_rmdirat_cap  509   /* Remove directory relative to parent handle */
+#define SYS_statat_cap   510   /* Get file stats relative to parent handle */

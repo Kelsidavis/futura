@@ -22,61 +22,61 @@ The kernel now boots to scheduler start and enters preemptive scheduling mode.
 
 ---
 
-## Current Blockers
+## Resolved P1 Blockers
 
-### 1. Phase 1 Capability Syscalls (BLOCKING FSD INTEGRATION)
+### ~~1. Phase 1 Capability Syscalls~~ ✓ RESOLVED
 
-**Status:** HIGH
-**Location:** Kernel syscall layer
-**Impact:** FSD cannot propagate capability handles without these syscalls
+**Status:** RESOLVED (January 21, 2026)
+**Commit:** c6951ed
 
-**Required Syscalls:**
+**Implemented Syscalls (500-510):**
 ```
 File Operations:
-  [ ] sys_open_cap(path, flags, mode) → fut_handle_t
-  [ ] sys_read_cap(handle, buffer, count)
-  [ ] sys_write_cap(handle, buffer, count)
-  [ ] sys_lseek_cap(handle, offset, whence)
-  [ ] sys_fsync_cap(handle)
-  [ ] sys_fstat_cap(handle, statbuf)
-  [ ] sys_close_cap(handle)
+  [x] sys_open_cap(path, flags, mode) → fut_handle_t    (500)
+  [x] sys_read_cap(handle, buffer, count)               (501)
+  [x] sys_write_cap(handle, buffer, count)              (502)
+  [x] sys_close_cap(handle)                             (503)
+  [x] sys_lseek_cap(handle, offset, whence)             (504)
+  [x] sys_fstat_cap(handle, statbuf)                    (505)
+  [x] sys_fsync_cap(handle)                             (506)
 
 Directory Operations:
-  [ ] sys_mkdirat_cap(parent_handle, name, mode)
-  [ ] sys_rmdirat_cap(parent_handle, name)
-  [ ] sys_unlinkat_cap(parent_handle, name)
-  [ ] sys_statat_cap(parent_handle, name, statbuf)
-
-Handle Transfer:
-  [ ] sys_handle_send(target_pid, handle, rights)
-  [ ] sys_handle_recv(source_pid, rights_out)
+  [x] sys_mkdirat_cap(parent_handle, name, mode)        (507)
+  [x] sys_unlinkat_cap(parent_handle, name)             (508)
+  [x] sys_rmdirat_cap(parent_handle, name)              (509)
+  [x] sys_statat_cap(parent_handle, name, statbuf)      (510)
 ```
-
-**Dependencies:**
-- VFS must return capability handles instead of integer FDs
-- Syscall table updates for new syscall numbers
-- Userspace libc wrappers
-
-**Reference:** `include/kernel/fut_capability.h` (API defined, stubs implemented)
 
 ---
 
-### 3. VFS Capability Integration (BLOCKING CAPABILITY SYSCALLS)
+### ~~2. VFS Capability Integration~~ ✓ RESOLVED
+
+**Status:** RESOLVED (January 21, 2026)
+**Commit:** bd3c960
+**Location:** `kernel/vfs/fut_vfs_cap.c`
+
+**Implemented:**
+- `fut_vfs_open_cap()` returns `fut_handle_t` capability handles
+- `fut_vfs_read_cap/write_cap()` validate rights before operations
+- `fut_vfs_fstat_cap()` capability-aware file stat
+- All directory operations with parent handle support
+- Rights validation (READ, WRITE, ADMIN, DESTROY) at VFS layer
+
+---
+
+## Current Blockers
+
+### 1. FSD Handler Updates (P2)
 
 **Status:** HIGH
-**Location:** `kernel/vfs/fut_vfs.c`
-**Impact:** Capability syscalls cannot function without VFS support
+**Location:** Userspace FSD (FuturaFS Daemon)
+**Impact:** FSD must use capability syscalls instead of integer FDs
 
 **Required Changes:**
-1. `fut_vfs_open()` must return `fut_handle_t` instead of `int fd`
-2. `fut_vfs_read/write()` must accept `fut_handle_t` and validate rights
-3. Add `fut_vfs_fstat()` capability-aware variant
-4. File structure must store capability object reference
-
-**Current State:**
-- VFS uses integer file descriptors throughout
-- No rights validation at VFS layer
-- File operations bypass capability model
+1. Update FSD message handlers to use capability handles
+2. Replace integer FD operations with capability operations
+3. Propagate capabilities through FSD protocol
+4. Update client library to use capability syscalls
 
 ---
 
@@ -85,9 +85,9 @@ Handle Transfer:
 | Priority | Task | Blocker For | Status |
 |----------|------|-------------|--------|
 | ~~P0~~ | ~~Fix kernel boot hang~~ | ~~All runtime testing~~ | ✓ RESOLVED |
-| P1 | VFS capability integration | Phase 1 syscalls | IN PROGRESS |
-| P1 | Phase 1 capability syscalls | FSD integration | PENDING |
-| P2 | FSD handler updates | Phase 4 completion | PENDING |
+| ~~P1~~ | ~~VFS capability integration~~ | ~~Phase 1 syscalls~~ | ✓ RESOLVED |
+| ~~P1~~ | ~~Phase 1 capability syscalls~~ | ~~FSD integration~~ | ✓ RESOLVED |
+| P2 | FSD handler updates | Phase 4 completion | IN PROGRESS |
 | P3 | Capability integration tests | Validation | PENDING |
 
 ---
@@ -112,17 +112,17 @@ Handle Transfer:
 
 ## Immediate Next Steps
 
-1. **Begin VFS capability integration** (P1 - CURRENT)
-   - Add capability-aware VFS functions (`fut_vfs_open_cap`, `fut_vfs_read_cap`, etc.)
-   - Keep existing integer FD functions for compatibility
-   - Add rights validation to capability paths
+1. **Update FSD handlers** (P2 - CURRENT)
+   - Locate FSD message handlers in userspace
+   - Update handlers to use capability syscalls (sys_open_cap, etc.)
+   - Replace integer FD operations with capability operations
 
-2. **Implement capability syscalls** (P1 - NEXT)
-   - Wire capability VFS functions to syscall table
-   - Syscall numbers: SYS_OPEN_CAP = 400, etc.
-   - Add userspace libc wrappers
+2. **Update FSD client library** (P2 - NEXT)
+   - Add capability handle types to client API
+   - Implement wrappers for capability syscalls
+   - Update existing clients to use new API
 
-3. **Run integration tests**
+3. **Run integration tests** (P3)
    ```bash
    make test
    ```

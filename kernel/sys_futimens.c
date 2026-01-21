@@ -39,9 +39,9 @@ extern uint64_t fut_get_time_ns(void);
  *
  * Returns:
  *   - 0 on success (timestamps updated)
- *   - -ENOSYS (not implemented) - current stub behavior
+ *   - -ENOSYS if filesystem doesn't support setattr operation
  *
- * Future error codes (when implemented):
+ * Error codes:
  *   - -EBADF if fd is not a valid file descriptor
  *   - -EFAULT if times points to inaccessible memory
  *   - -EINVAL if times is present but times[0].tv_nsec or times[1].tv_nsec
@@ -50,8 +50,8 @@ extern uint64_t fut_get_time_ns(void);
  *   - -EROFS if file is on read-only filesystem
  *   - -EIO if I/O error occurred
  *
- * Behavior (when implemented):
- *   - If times is NULL, both atime and mtime set to current time
+ * Behavior:
+ *   - If times is NULL, both atime and mtime set to current time via setattr
  *   - If times[i].tv_nsec == UTIME_NOW, set that time to current time
  *   - If times[i].tv_nsec == UTIME_OMIT, don't change that time
  *   - Otherwise use times[i].tv_sec + times[i].tv_nsec as timestamp

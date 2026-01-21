@@ -1,3 +1,9 @@
+/* kernel/tests/perf_ipc.c - IPC Performance Benchmarking Tests
+ *
+ * Copyright (c) 2025 Kelsi Davis
+ * Licensed under the MPL v2.0 — see LICENSE for details.
+ */
+
 #include "perf.h"
 
 #include <kernel/fut_fipc.h>

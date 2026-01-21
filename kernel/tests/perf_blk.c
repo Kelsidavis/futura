@@ -1,3 +1,9 @@
+/* kernel/tests/perf_blk.c - Block Device Performance Benchmarking Tests
+ *
+ * Copyright (c) 2025 Kelsi Davis
+ * Licensed under the MPL v2.0 — see LICENSE for details.
+ */
+
 #include "perf.h"
 
 #include <futura/blkdev.h>

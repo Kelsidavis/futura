@@ -13,6 +13,7 @@
 #include <kernel/fut_lock.h>
 #include <kernel/vfs_credentials.h>
 #include <kernel/slab_allocator.h>
+#include <kernel/errno.h>
 #include <stddef.h>
 #include <string.h>
 
@@ -107,13 +108,13 @@ static int validate_ramfs_node(struct ramfs_node *node) {
     if (node->magic_guard_before != RAMFS_NODE_MAGIC) {
         fut_printf("[RAMFS-GUARD] ERROR: guard_before corrupted! Expected 0x%llx, got 0x%llx\n",
                    (unsigned long long)RAMFS_NODE_MAGIC, (unsigned long long)node->magic_guard_before);
-        return -1;
+        return -EIO;  /* Memory corruption detected */
     }
 
     if (node->magic_guard_after != RAMFS_NODE_MAGIC) {
         fut_printf("[RAMFS-GUARD] ERROR: guard_after corrupted! Expected 0x%llx, got 0x%llx\n",
                    (unsigned long long)RAMFS_NODE_MAGIC, (unsigned long long)node->magic_guard_after);
-        return -1;
+        return -EIO;  /* Memory corruption detected */
     }
 
     return 0;

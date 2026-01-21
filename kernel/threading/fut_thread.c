@@ -13,6 +13,7 @@
 #include "../../include/kernel/fut_memory.h"
 #include "../../include/kernel/fut_mm.h"
 #include "../../include/kernel/fut_percpu.h"
+#include <kernel/errno.h>
 #if defined(__x86_64__)
 #include <platform/x86_64/gdt.h>
 #endif
@@ -523,7 +524,7 @@ uint64_t fut_thread_get_deadline(void) {
 
 int fut_thread_priority_raise(fut_thread_t *thread, int new_priority) {
     if (!thread) {
-        return -1;
+        return -EINVAL;
     }
     if (new_priority < thread->priority) {
         return 0;
@@ -536,7 +537,7 @@ int fut_thread_priority_raise(fut_thread_t *thread, int new_priority) {
 
 int fut_thread_priority_restore(fut_thread_t *thread) {
     if (!thread) {
-        return -1;
+        return -EINVAL;
     }
     if (!thread->pi_boosted) {
         return 0;
@@ -620,7 +621,7 @@ __attribute__((used)) static void fut_thread_trampoline_impl(void (*entry)(void 
  */
 int fut_thread_set_affinity(fut_thread_t *thread, uint32_t cpu_id) {
     if (!thread || cpu_id >= FUT_MAX_CPUS) {
-        return -1;
+        return -EINVAL;
     }
 
     /* Set single-CPU mask and hard affinity */
@@ -636,7 +637,7 @@ int fut_thread_set_affinity(fut_thread_t *thread, uint32_t cpu_id) {
  */
 int fut_thread_set_affinity_mask(fut_thread_t *thread, uint64_t mask) {
     if (!thread || mask == 0) {
-        return -1;  /* Must have at least one CPU allowed */
+        return -EINVAL;  /* Must have at least one CPU allowed */
     }
 
     thread->cpu_affinity_mask = mask;

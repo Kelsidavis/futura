@@ -68,6 +68,7 @@ extern void fut_multiprocess_selftest_schedule(fut_task_t *task);
 extern void fut_dup2_selftest_schedule(fut_task_t *task);
 extern void fut_pipe_selftest_schedule(fut_task_t *task);
 extern void fut_signal_selftest_schedule(fut_task_t *task);
+extern void fut_cap_selftest_schedule(fut_task_t *task);
 
 #if ENABLE_WAYLAND_DEMO
 #define WAYLAND_TEST_SENTINEL_CODE 0xD0u
@@ -1166,6 +1167,7 @@ void fut_kernel_main(void) {
         planned_tests += 4u; /* dup2: basic dup, invalid FDs, stdout redirect, same FD */
         planned_tests += 4u; /* pipe: creation, read/write, EPIPE, EOF */
         planned_tests += 5u; /* signal: handler installation, pending, ignored, multiple, delivery */
+        planned_tests += 6u; /* capability: open, read, write, rights, invalid, close */
         // planned_tests += 1u; /* block */
         // planned_tests += 1u; /* futfs */
         // planned_tests += 1u; /* net */
@@ -1625,6 +1627,7 @@ void fut_kernel_main(void) {
         fut_dup2_selftest_schedule(test_task);
         fut_pipe_selftest_schedule(test_task);
         fut_signal_selftest_schedule(test_task);
+        fut_cap_selftest_schedule(test_task);
         // fut_blk_async_selftest_schedule(test_task);
         // fut_futfs_selftest_schedule(test_task);
         // fut_net_selftest_schedule(test_task);

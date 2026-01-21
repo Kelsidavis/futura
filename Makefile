@@ -580,6 +580,7 @@ ifeq ($(PLATFORM),x86_64)
         kernel/tests/sys_dup2.c \
         kernel/tests/sys_pipe.c \
         kernel/tests/sys_signal.c \
+        kernel/tests/sys_cap.c \
         kernel/tests/perf.c \
         kernel/tests/perf_ipc.c \
         kernel/tests/perf_sched.c \
@@ -623,6 +624,7 @@ else ifeq ($(PLATFORM),arm64)
         kernel/tests/sys_dup2.c \
         kernel/tests/sys_pipe.c \
         kernel/tests/sys_signal.c \
+        kernel/tests/sys_cap.c \
         tests/test_blkcore.c \
         tests/test_net.c \
         tests/test_futfs.c \

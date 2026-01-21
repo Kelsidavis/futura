@@ -419,6 +419,8 @@ void *fut_mm_map_anonymous(fut_mm_t *mm, uintptr_t hint, size_t len, int prot, i
     if (!page_cache) {
         return (void *)(intptr_t)(-ENOMEM);
     }
+    /* Initialize page cache to NULL for safe cleanup on error paths */
+    memset(page_cache, 0, pages * sizeof(void *));
 
     uint64_t pte_flags = mm_pte_flags(prot);
     size_t mapped = 0;

@@ -33,65 +33,8 @@ struct fut_acl {
     uint32_t max_entries;
 };
 
-// Phase 3: Helper function to parse symbolic permissions (simplified)
-// Currently unused - commenting out to fix compilation warnings
-// static uint32_t parse_symbolic_permissions(const char *mode_str) {
-//     uint32_t result = 0;
-//     if (!mode_str) return 0;
-//
-//     // Phase 3: Parse symbolic permission strings like "u+rwx", "g-w", "o="
-//     const char *p = mode_str;
-//     uint32_t who = 0;         // u=owner, g=group, o=other, a=all
-//     uint32_t op = 0;          // +=add, -=remove, ==set
-//     uint32_t perms = 0;       // r,w,x
-//
-//     while (*p) {
-//         // Phase 3: Parse who (owner/group/other/all)
-//         switch (*p) {
-//             case 'u': who = 0700; p++; break;
-//             case 'g': who = 0070; p++; break;
-//             case 'o': who = 0007; p++; break;
-//             case 'a': who = 0777; p++; break;
-//             default:
-//                 if (*p == '+' || *p == '-' || *p == '=') {
-//                     break;
-//                 }
-//                 p++;
-//         }
-//
-//         // Phase 3: Parse operation
-//         switch (*p) {
-//             case '+': op = 1; p++; break;  // Add permissions
-//             case '-': op = 2; p++; break;  // Remove permissions
-//             case '=': op = 3; p++; break;  // Set permissions
-//             default: break;
-//         }
-//
-//         // Phase 3: Parse permission bits
-//         while (*p && *p != ',' && *p != ';') {
-//             switch (*p) {
-//                 case 'r': perms |= 0444; p++; break;
-//                 case 'w': perms |= 0222; p++; break;
-//                 case 'x': perms |= 0111; p++; break;
-//                 default: p++;
-//             }
-//         }
-//
-//         // Phase 3: Apply operation
-//         if (op == 1) {           // Add
-//             result |= (who & perms);
-//         } else if (op == 2) {    // Remove
-//             result &= ~(who & perms);
-//         } else if (op == 3) {    // Set
-//             result = (result & ~who) | (who & perms);
-//         }
-//
-//         // Phase 3: Skip to next mode specification
-//         if (*p == ',') p++;
-//     }
-//
-//     return result;
-// }
+/* Phase 3: Symbolic permission parsing (e.g., "u+rwx", "g-w") not yet implemented.
+ * When needed, add parse_symbolic_permissions() function here. */
 
 /**
  * chmod() - Change file permissions

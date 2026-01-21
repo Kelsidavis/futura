@@ -16,16 +16,16 @@ Licensed under Mozilla Public License 2.0 — see [LICENSE](LICENSE)
 
 Futura OS is a capability-first nanokernel that keeps the core minimal—time, scheduling, IPC, and hardware mediation live in the kernel while everything else runs as message-passing services over FIPC. The current development focus is on building out a practical userland surface so real applications can execute against the kernel primitives.
 
-### Status Snapshot — Updated Nov 15 2025
+### Status Snapshot — Updated Jan 20 2026
 
-- **Kernel**: Advanced memory management with COW fork, file-backed mmap, and partial munmap; comprehensive syscall surface (`fork`, `execve`, `mmap`, `munmap`, `brk`, `nanosleep`, `waitpid`, `pipe`, `dup2`).
+- **Kernel**: Advanced memory management with COW fork, file-backed mmap, and partial munmap; comprehensive syscall surface (`fork`, `execve`, `mmap`, `munmap`, `brk`, `nanosleep`, `waitpid`, `pipe`, `dup2`); full test suite with 18 automated tests for multiprocess support, dup2, pipes, and signals.
 - **VFS**: Path resolution + RamFS production-ready; file-backed mmap integrated with eager loading; FuturaFS implementation complete with host-side tools.
 - **Shell & Userland**: 32+ built-in commands with pipes, redirections, job control, and history; `libfutura` provides crt0, syscall veneers, heap allocator, and formatted I/O.
 - **Distributed FIPC**: Host transport and registry daemons stable; remote UDP bridge for distributed communication.
 - **Wayland Compositor**: Multi-surface capable with window decorations, drop shadows, damage-aware compositing, and frame throttling.
 - **ARM64 Port**: Full multi-process support with 177 syscalls, MMU enabled with identity-mapped L1/L2 tables, virtio-blk/net/gpu parity via PCI ECAM, and async network + FuturaFS selftests now running. **Apple Silicon M2 support** with boot (AIC, UART, m1n1 payload) and storage (RTKit, ANS2 NVMe) stacks ready for on-hardware testing.
 
-### What's new — Updated Nov 15 2025
+### What's new — Updated Nov 15 2025 (earlier updates)
 
 **ARM64 breakthroughs:**
 - **Fork stability**: Fixed the ARM64 `fork()` return path by flushing TLBs after TTBR0 switches, eliminating ERET faults and making multi-process workloads reliable across all 177 syscalls.
@@ -69,6 +69,13 @@ Futura OS is a capability-first nanokernel that keeps the core minimal—time, s
   - **Build system**: `make m1n1-payload` creates bootable Image.gz (200 KiB compressed) for m1n1 bootloader
   - **Ready for hardware testing** — All drivers implemented, awaiting physical MacBook Pro M2
 - **Userland runtime**: crt0 for ARM64, syscall wrappers, working demo programs.
+
+**Recent quality improvements (Jan 20 2026):**
+- **Code documentation**: Corrected outdated "stub" and "TODO" comments in 15+ syscall implementations to accurately reflect completion status
+- **Test infrastructure**: Fixed test harness with atomic counters, enabling reliable automated testing (18/18 tests passing)
+- **License compliance**: Added MPL-2.0 headers to all performance benchmark test files
+- **Code cleanup**: Removed commented dead code; standardized phase completion markers across syscalls
+- **VFS documentation**: Updated implementation guide to reflect symbolic link support and O_CREAT completion
 
 See `docs/CURRENT_STATUS.md` and `docs/ARM64_STATUS.md` for deeper dives into the latest changes and platform-specific progress.
 

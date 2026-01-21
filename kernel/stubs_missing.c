@@ -1,4 +1,10 @@
-/* Minimal stubs for missing linker symbols */
+/* kernel/stubs_missing.c - Test framework and stub implementations
+ *
+ * Copyright (c) 2025 Kelsi Davis
+ * Licensed under the MPL v2.0 — see LICENSE for details.
+ *
+ * Provides test harness implementation and minimal stubs for linker symbols.
+ */
 
 #include <stdint.h>
 #include <stdbool.h>

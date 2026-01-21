@@ -1,4 +1,10 @@
-// SPDX-License-Identifier: MPL-2.0
+/* kernel/sys_time.c - Time and clock syscall implementations
+ *
+ * Copyright (c) 2025 Kelsi Davis
+ * Licensed under the MPL v2.0 — see LICENSE for details.
+ *
+ * Implements time(), gettimeofday(), clock_gettime(), and clock_getres().
+ */
 
 #include <kernel/fut_timer.h>
 #include <kernel/errno.h>

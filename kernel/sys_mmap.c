@@ -1,4 +1,10 @@
-// SPDX-License-Identifier: MPL-2.0
+/* kernel/sys_mmap.c - Memory mapping syscall implementation
+ *
+ * Copyright (c) 2025 Kelsi Davis
+ * Licensed under the MPL v2.0 — see LICENSE for details.
+ *
+ * Implements mmap, munmap, mprotect, and related memory mapping operations.
+ */
 
 #include <stddef.h>
 #include <stdint.h>

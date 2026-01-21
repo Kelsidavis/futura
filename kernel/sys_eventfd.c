@@ -448,14 +448,14 @@ extern fut_task_t *fut_task_current(void);
 #define CLOCK_REALTIME  0
 #define CLOCK_MONOTONIC 1
 
-/* timerfd structures */
+/* timerfd structures (struct timespec provided by shared/fut_timespec.h) */
+#ifndef _STRUCT_ITIMERSPEC
+#define _STRUCT_ITIMERSPEC
 struct itimerspec {
-    struct timespec {
-        int64_t tv_sec;
-        int64_t tv_nsec;
-    } it_interval;  /* Interval for periodic timer */
-    struct timespec it_value;  /* Initial expiration */
+    struct timespec it_interval;  /* Interval for periodic timer */
+    struct timespec it_value;     /* Initial expiration */
 };
+#endif
 
 struct eventfd_ctx {
     uint64_t counter;

@@ -99,11 +99,7 @@ extern long sys_sigpending(sigset_t *set);
 extern long sys_sigsuspend(const sigset_t *mask);
 extern long sys_sigaltstack(const struct sigaltstack *ss, struct sigaltstack *old_ss);
 
-/* Timespec structure (for clock_gettime, nanosleep, and timers) */
-struct timespec {
-    int64_t tv_sec;      /* Seconds */
-    int64_t tv_nsec;     /* Nanoseconds */
-};
+/* struct timespec is provided by shared/fut_timespec.h */
 
 /* POSIX timer structures and syscalls */
 typedef int timer_t;

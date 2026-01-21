@@ -12,6 +12,7 @@
 #include <stddef.h>
 #include <kernel/fut_percpu.h>
 #include <platform/arm64/regs.h>  /* For fut_cpu_context_t */
+#include <shared/fut_timespec.h>  /* For struct timespec */
 
 /* Type definitions */
 typedef long ssize_t;
@@ -66,11 +67,7 @@ static uint8_t el0_test_stack[4096] __attribute__((aligned(16)));
 #define O_TRUNC     0x0200
 #define O_APPEND    0x0400
 
-/* Timespec structure */
-struct timespec {
-    int64_t tv_sec;
-    int64_t tv_nsec;
-};
+/* struct timespec is provided by shared/fut_timespec.h */
 
 /* utsname structure (for uname syscall) */
 struct utsname {

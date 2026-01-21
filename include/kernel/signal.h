@@ -1,6 +1,29 @@
 // SPDX-License-Identifier: MPL-2.0
 /*
  * signal.h - Signal handling for process control
+ *
+ * Copyright (c) 2025 Kelsi Davis
+ * Licensed under the MPL v2.0 — see LICENSE for details.
+ *
+ * Implements POSIX-compatible signal handling for inter-process
+ * communication and process lifecycle control. Signals are software
+ * interrupts delivered to processes for events like:
+ *   - Terminal input (Ctrl+C → SIGINT, Ctrl+Z → SIGTSTP)
+ *   - Hardware faults (SIGSEGV, SIGBUS, SIGFPE)
+ *   - Process management (SIGKILL, SIGTERM, SIGCHLD)
+ *   - I/O events (SIGPIPE, SIGIO)
+ *
+ * Features:
+ *   - Standard POSIX signals (1-31)
+ *   - Custom signal handlers via sigaction()
+ *   - Signal masking (blocking/unblocking)
+ *   - Alternate signal stacks (sigaltstack)
+ *
+ * Signal delivery:
+ *   1. Signal is queued to target task
+ *   2. When task returns to userspace, pending signals are checked
+ *   3. If signal is not blocked, handler is invoked on task's stack
+ *   4. After handler returns, task continues from interrupted point
  */
 
 #pragma once

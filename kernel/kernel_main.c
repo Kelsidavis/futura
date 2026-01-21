@@ -10,6 +10,7 @@
 #include <stdint.h>
 #include <stddef.h>
 #include <stdbool.h>
+#include <kernel/errno.h>
 #include <generated/feature_flags.h>
 #include <kernel/fut_memory.h>
 #include <kernel/fut_sched.h>
@@ -116,7 +117,7 @@ static int acquire_block_device_handle(const char *device_name, bool read_only, 
     extern void fut_printf(const char *fmt, ...);
 
     if (!device_name || !handle_out) {
-        return -22;  /* EINVAL */
+        return -EINVAL;
     }
 
     /* Determine required rights based on mount mode */

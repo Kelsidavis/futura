@@ -26,6 +26,28 @@
 #include <stdbool.h>
 
 #ifdef __x86_64__
+/* PCI configuration space I/O ports */
+#define PCI_CONFIG_ADDRESS  0xCF8   /* PCI configuration address port */
+#define PCI_CONFIG_DATA     0xCFC   /* PCI configuration data port */
+#define PCI_CONFIG_ENABLE   (1u << 31)  /* Enable bit for config access */
+
+/* PCI vendor IDs for graphics devices */
+#define PCI_VENDOR_VIRTIO   0x1AF4  /* Red Hat / VirtIO */
+#define PCI_VENDOR_CIRRUS   0x1013  /* Cirrus Logic */
+
+/* Legacy framebuffer physical addresses (fallback when PCI discovery fails) */
+#define FB_PHYS_QEMU_CIRRUS 0xF0000000ULL  /* Standard QEMU Cirrus address */
+#define FB_PHYS_LEGACY      0xE0000000ULL  /* Legacy VGA address */
+#define FB_PHYS_FALLBACK    0x4000000ULL   /* Safe position in RAM (64MB) */
+
+/* Default framebuffer geometry */
+#define FB_DEFAULT_WIDTH    1024
+#define FB_DEFAULT_HEIGHT   768
+#define FB_DEFAULT_BPP      32
+
+/* ARGB color values */
+#define ARGB_BLACK          0xFF000000
+
 /* PCI I/O port helpers for vendor detection */
 static inline void outl(uint16_t port, uint32_t value) {
     __asm__ volatile("outl %0, %1" : : "a"(value), "Nd"(port));
@@ -38,13 +60,13 @@ static inline uint32_t inl(uint16_t port) {
 }
 
 static inline uint32_t pci_config_read_bdf(uint8_t bus, uint8_t slot, uint8_t func, uint8_t offset) {
-    uint32_t addr = (1u << 31)
+    uint32_t addr = PCI_CONFIG_ENABLE
                   | ((uint32_t)bus << 16)
                   | ((uint32_t)slot << 11)
                   | ((uint32_t)func << 8)
                   | ((uint32_t)offset & 0xFC);
-    outl(0xCF8, addr);
-    return inl(0xCFC);
+    outl(PCI_CONFIG_ADDRESS, addr);
+    return inl(PCI_CONFIG_DATA);
 }
 #endif
 
@@ -168,27 +190,28 @@ fallback:
     } else {
         /* Fall back to safe address in RAM */
         fut_printf("[FB] PCI discovery failed, using hardcoded fallback address\n");
-        /* Use 0x4000000 (64MB) - safe position in physical RAM
+        /* Use FB_PHYS_FALLBACK (64MB) - safe position in physical RAM
          * Well within 128MB boot mapping, doesn't conflict with kernel/heap/processes */
-        g_fb_hw.phys = 0x4000000ULL;
+        g_fb_hw.phys = FB_PHYS_FALLBACK;
         fut_printf("[FB] Using fallback address 0x%llx\n",
                    (unsigned long long)g_fb_hw.phys);
     }
 #else
     /* ARM64: No PCI discovery yet, use fallback address */
     fut_printf("[FB] ARM64: skipping PCI VGA discovery, using fallback address\n");
-    g_fb_hw.phys = 0x4000000ULL;
+    g_fb_hw.phys = FB_PHYS_FALLBACK;
     fut_printf("[FB] Using fallback address 0x%llx\n",
                (unsigned long long)g_fb_hw.phys);
 #endif
 
-    g_fb_hw.info.width = 1024;
-    g_fb_hw.info.height = 768;
-    g_fb_hw.info.pitch = g_fb_hw.info.width * 4u;
-    g_fb_hw.info.bpp = 32;
+    g_fb_hw.info.width = FB_DEFAULT_WIDTH;
+    g_fb_hw.info.height = FB_DEFAULT_HEIGHT;
+    g_fb_hw.info.pitch = g_fb_hw.info.width * (FB_DEFAULT_BPP / 8);
+    g_fb_hw.info.bpp = FB_DEFAULT_BPP;
     g_fb_hw.info.flags = FB_FLAG_LINEAR;
     g_fb_available = true;
-    fut_printf("[FB] using geometry 1024x768x32 phys=0x%llx\n",
+    fut_printf("[FB] using geometry %ux%ux%u phys=0x%llx\n",
+               FB_DEFAULT_WIDTH, FB_DEFAULT_HEIGHT, FB_DEFAULT_BPP,
                (unsigned long long)g_fb_hw.phys);
     return 0;
 }
@@ -224,7 +247,7 @@ void fb_boot_splash(void) {
     uint32_t vdid_slot3 = pci_config_read_bdf(0, 3, 0, 0x00);
     uint16_t vendor_slot3 = (uint16_t)(vdid_slot3 & 0xFFFF);
 
-    if (vendor_slot3 == 0x1af4) {
+    if (vendor_slot3 == PCI_VENDOR_VIRTIO) {
         /* virtio-gpu detected at slot 3 - initialize with BAR4 */
         fut_printf("[FB] virtio-gpu detected at slot 3, initializing with modern interface\n");
         uint64_t virtio_fb_phys = 0;
@@ -264,7 +287,7 @@ void fb_boot_splash(void) {
             /* Clear screen to black */
             for (uint32_t y = 0; y < g_fb_hw.info.height; ++y) {
                 for (uint32_t x = 0; x < g_fb_hw.info.width; ++x) {
-                    fb[y * g_fb_hw.info.width + x] = 0xFF000000;  /* Black */
+                    fb[y * g_fb_hw.info.width + x] = ARGB_BLACK;
                 }
             }
 
@@ -275,7 +298,7 @@ void fb_boot_splash(void) {
         } else {
             fut_printf("[FB] VIRTIO GPU init failed, continuing with fallback\n");
         }
-    } else if (vendor_slot2 == 0x1013) {
+    } else if (vendor_slot2 == PCI_VENDOR_CIRRUS) {
         /* Cirrus VGA detected at slot 2 - initialize properly */
         if (cirrus_vga_init() != 0) {
             fut_printf("[FB] Cirrus VGA init failed, skipping splash\n");
@@ -291,7 +314,7 @@ void fb_boot_splash(void) {
      * 2. Standard QEMU Cirrus address (fallback)
      * 3. Legacy/fallback addresses
      */
-    uint64_t addresses[] = { g_fb_hw.phys, 0xF0000000ULL, 0xE0000000ULL };
+    uint64_t addresses[] = { g_fb_hw.phys, FB_PHYS_QEMU_CIRRUS, FB_PHYS_LEGACY };
     uint64_t test_addr = 0;
 
     for (int attempt = 0; attempt < 3; attempt++) {
@@ -409,15 +432,21 @@ void fb_boot_splash(void) {
 #else
 /* ARM64 - virtio-mmio based graphics initialization */
 
+/* Default framebuffer geometry for ARM64 */
+#define FB_DEFAULT_WIDTH    1024
+#define FB_DEFAULT_HEIGHT   768
+#define FB_DEFAULT_BPP      32
+#define FB_PHYS_FALLBACK    0x4000000ULL
+
 void fb_boot_splash(void) {
     fut_printf("[FB] ARM64: Initializing framebuffer via virtio-gpu (MMIO)...\n");
 
     /* Try virtio-gpu MMIO driver */
     uint64_t fb_phys = 0;
-    g_fb_hw.info.width = 1024;
-    g_fb_hw.info.height = 768;
-    g_fb_hw.info.pitch = g_fb_hw.info.width * 4u;
-    g_fb_hw.info.bpp = 32;
+    g_fb_hw.info.width = FB_DEFAULT_WIDTH;
+    g_fb_hw.info.height = FB_DEFAULT_HEIGHT;
+    g_fb_hw.info.pitch = g_fb_hw.info.width * (FB_DEFAULT_BPP / 8);
+    g_fb_hw.info.bpp = FB_DEFAULT_BPP;
     g_fb_hw.info.flags = FB_FLAG_LINEAR;
 
     int rc = virtio_gpu_init_mmio(&fb_phys, g_fb_hw.info.width, g_fb_hw.info.height);
@@ -436,10 +465,11 @@ void fb_boot_splash(void) {
     fut_printf("[FB] ARM64: virtio-gpu-mmio initialization failed (rc=%d), using fallback\n", rc);
 
     /* Fall back to hardcoded framebuffer address */
-    g_fb_hw.phys = 0x4000000ULL;
+    g_fb_hw.phys = FB_PHYS_FALLBACK;
     g_fb_hw.length = (size_t)g_fb_hw.info.pitch * (size_t)g_fb_hw.info.height;
     g_fb_available = true;
-    fut_printf("[FB] ARM64: Fallback framebuffer at phys=0x%llx (1024x768x32)\n",
-               (unsigned long long)g_fb_hw.phys);
+    fut_printf("[FB] ARM64: Fallback framebuffer at phys=0x%llx (%ux%ux%u)\n",
+               (unsigned long long)g_fb_hw.phys,
+               FB_DEFAULT_WIDTH, FB_DEFAULT_HEIGHT, FB_DEFAULT_BPP);
 }
 #endif

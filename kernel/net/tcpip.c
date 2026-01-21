@@ -341,8 +341,12 @@ static void arp_handle_packet(const uint8_t *frame, size_t len) {
 
         fut_printf("[ARP-DEBUG] About to send ARP reply\n");
         /* Send reply */
-        fut_net_send(g_tcpip.raw_socket, reply, sizeof(reply));
-        fut_printf("[ARP-DEBUG] ARP reply sent\n");
+        fut_status_t ret = fut_net_send(g_tcpip.raw_socket, reply, sizeof(reply));
+        if (ret != 0) {
+            fut_printf("[ARP] WARNING: Failed to send ARP reply (error %d)\n", ret);
+        } else {
+            fut_printf("[ARP-DEBUG] ARP reply sent\n");
+        }
     } else {
         fut_printf("[ARP-DEBUG] Not a request for us, skipping reply\n");
     }
@@ -394,7 +398,11 @@ int arp_resolve(uint32_t ip, eth_addr_t *mac) {
 
     fut_printf("[ARP] Sending ARP request for 0x%x\n", ip);
     /* Send request */
-    fut_net_send(g_tcpip.raw_socket, request, sizeof(request));
+    fut_status_t send_ret = fut_net_send(g_tcpip.raw_socket, request, sizeof(request));
+    if (send_ret != 0) {
+        fut_printf("[ARP] WARNING: Failed to send ARP request (error %d)\n", send_ret);
+        return -EIO;
+    }
     fut_printf("[ARP] ARP request sent, waiting for reply...\n");
 
     /* Wait for reply (simplified - should use proper async mechanism) */
@@ -475,7 +483,10 @@ static void ip_send_packet(uint32_t dest_ip, uint8_t protocol,
     memcpy(packet + ETH_HEADER_LEN + IP_HEADER_MIN_LEN, payload, payload_len);
 
     /* Send packet */
-    fut_net_send(g_tcpip.raw_socket, packet, total_len);
+    fut_status_t send_ret = fut_net_send(g_tcpip.raw_socket, packet, total_len);
+    if (send_ret != 0) {
+        fut_printf("[IP] WARNING: Failed to send packet (error %d)\n", send_ret);
+    }
     fut_free(packet);
 }
 

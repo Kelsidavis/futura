@@ -192,7 +192,8 @@ Splits `/foo/bar/baz` into `["foo", "bar", "baz"]`:
 - `O_RDONLY` - Read-only
 - `O_WRONLY` - Write-only
 - `O_RDWR` - Read-write
-- `O_CREAT` - Create if doesn't exist (TODO)
+- `O_CREAT` - Create if doesn't exist (fully implemented)
+- `O_EXCL` - With O_CREAT, fail if file exists (atomic create)
 - `O_TRUNC` - Truncate to zero length
 - `O_APPEND` - Append mode
 

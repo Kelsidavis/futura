@@ -109,7 +109,7 @@ extern fut_task_t *fut_task_current(void);
  * 4. Effective IDs: Can check effective UID/GID with AT_EACCESS
  * 5. Symlink control: Can choose to follow or not follow symlinks
  *
- * Phase 1: Basic implementation with dirfd support
+ * Phase 1 (Completed): Basic implementation with dirfd support
  */
 long sys_faccessat(int dirfd, const char *pathname, int mode, int flags) {
     /* ARM64 FIX: Copy parameters to local variables */

@@ -93,7 +93,7 @@ extern fut_task_t *fut_task_current(void);
  * 3. Flexible: Source and dest can be in different directories
  * 4. Symlink control: Can choose to follow or not follow symlinks
  *
- * Phase 1: Basic implementation with olddirfd and newdirfd support
+ * Phase 1 (Completed): Basic implementation with olddirfd and newdirfd support
  */
 long sys_linkat(int olddirfd, const char *oldpath, int newdirfd, const char *newpath, int flags) {
     /* ARM64 FIX: Copy parameters to local variables */

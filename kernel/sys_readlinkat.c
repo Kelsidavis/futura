@@ -94,7 +94,7 @@ extern fut_task_t *fut_task_current(void);
  * 2. Race-free: Directory context locked by FD
  * 3. Flexible: Can use CWD or specific directory
  *
- * Phase 1: Basic implementation with dirfd support
+ * Phase 1 (Completed): Basic implementation with dirfd support
  */
 long sys_readlinkat(int dirfd, const char *pathname, char *buf, size_t bufsiz) {
     /* ARM64 FIX: Copy parameters to local variables */

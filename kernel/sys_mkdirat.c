@@ -86,7 +86,7 @@ extern fut_task_t *fut_task_current(void);
  * 3. Flexible: Can use CWD or specific directory
  * 4. Composable: Can build directory trees safely
  *
- * Phase 1: Basic implementation with dirfd support
+ * Phase 1 (Completed): Basic implementation with dirfd support
  */
 long sys_mkdirat(int dirfd, const char *pathname, unsigned int mode) {
     /* ARM64 FIX: Copy parameters to local variables */

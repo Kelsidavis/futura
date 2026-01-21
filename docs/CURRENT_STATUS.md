@@ -301,6 +301,41 @@ See `docs/ARM64_STATUS.md` for detailed ARM64 progress.
   - Time manipulation macros (timerisset, timerclear, timercmp, timeradd, timersub)
   - Additional function declarations (setitimer, getitimer, utimes, futimes)
 
+### January 21, 2026 Session — Additional Header Consolidation
+- ✅ **limits.h**: Created comprehensive implementation limits header with:
+  - Numeric type limits (CHAR_*, SHRT_*, INT_*, LONG_*, LLONG_*)
+  - POSIX pathname limits (PATH_MAX, NAME_MAX, LINE_MAX)
+  - Process limits (CHILD_MAX, OPEN_MAX, ARG_MAX)
+  - I/O limits (PIPE_BUF, IOV_MAX, LINK_MAX, SYMLOOP_MAX)
+  - Size limits (SIZE_MAX, SSIZE_MAX)
+- ✅ **sys/select.h**: Created select/pselect interface header with:
+  - FD_SETSIZE constant and fd_set type
+  - FD_SET, FD_CLR, FD_ISSET, FD_ZERO, FD_COPY macros
+  - select() and pselect() function declarations
+- ✅ **fcntl.h expanded**: Enhanced file control header with:
+  - AT_* constants for *at() syscalls (AT_FDCWD, AT_SYMLINK_NOFOLLOW, etc.)
+  - Additional O_* flags (O_DSYNC, O_DIRECT, O_NOATIME, O_PATH)
+  - LOCK_* constants for flock()
+  - struct flock and F_RDLCK/F_WRLCK/F_UNLCK lock types
+  - F_DUPFD_CLOEXEC and additional fcntl commands
+  - Consolidates AT_* definitions from 20+ source files
+- ✅ **sys/eventfd.h**: Created event notification header with:
+  - EFD_SEMAPHORE, EFD_CLOEXEC, EFD_NONBLOCK flags
+  - eventfd_t type definition
+  - eventfd(), eventfd_read(), eventfd_write() declarations
+- ✅ **sys/inotify.h**: Created file system monitoring header with:
+  - IN_CLOEXEC, IN_NONBLOCK flags for inotify_init1
+  - All IN_* event mask constants (ACCESS, MODIFY, CREATE, DELETE, etc.)
+  - Watch flags (ONLYDIR, DONT_FOLLOW, EXCL_UNLINK, ONESHOT)
+  - struct inotify_event definition
+  - Function declarations for inotify_init, inotify_add_watch, inotify_rm_watch
+- ✅ **linux/futex.h**: Created fast userspace locking header with:
+  - FUTEX_* operation constants (WAIT, WAKE, REQUEUE, CMP_REQUEUE, etc.)
+  - FUTEX_PRIVATE_FLAG and FUTEX_CLOCK_REALTIME flags
+  - FUTEX_WAKE_OP operation and comparison constants
+  - struct robust_list and robust_list_head
+  - Function declarations for futex, set_robust_list, get_robust_list
+
 ## Current Focus
 
 ### x86-64 Platform

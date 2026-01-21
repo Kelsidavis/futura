@@ -26,6 +26,14 @@ extern void fut_printf(const char *fmt, ...);
 /* Pipe buffer size */
 #define PIPE_BUF_SIZE 4096
 
+/* File flags for pipe2() - must match userspace definitions */
+#ifndef O_NONBLOCK
+#define O_NONBLOCK  0x800      /* Non-blocking I/O */
+#endif
+#ifndef O_CLOEXEC
+#define O_CLOEXEC   0x80000    /* Close-on-exec flag */
+#endif
+
 /* Pipe buffer structure */
 struct pipe_buffer {
     uint8_t *data;          /* Buffer data */
@@ -539,7 +547,7 @@ long sys_pipe2(int pipefd[2], int flags) {
     init_pipe_fops();
 
     /* Validate flags */
-    const int VALID_FLAGS = 0x800 | 0x80000;  /* O_NONBLOCK | O_CLOEXEC */
+    const int VALID_FLAGS = O_NONBLOCK | O_CLOEXEC;
     if (flags & ~VALID_FLAGS) {
         fut_printf("[PIPE2] pipe2(pipefd=%p, flags=0x%x) -> EINVAL (invalid flags)\n",
                    pipefd, flags);
@@ -591,15 +599,15 @@ long sys_pipe2(int pipefd[2], int flags) {
     }
 
     /* Apply O_NONBLOCK flag if requested */
-    if (flags & 0x800) {  /* O_NONBLOCK */
+    if (flags & O_NONBLOCK) {
         /* Set non-blocking mode on both FDs via fcntl */
         extern long sys_fcntl(int fd, int cmd, long arg);
-        sys_fcntl(read_fd, 4, 0x800);   /* F_SETFL, O_NONBLOCK */
-        sys_fcntl(write_fd, 4, 0x800);  /* F_SETFL, O_NONBLOCK */
+        sys_fcntl(read_fd, 4, O_NONBLOCK);   /* F_SETFL, O_NONBLOCK */
+        sys_fcntl(write_fd, 4, O_NONBLOCK);  /* F_SETFL, O_NONBLOCK */
     }
 
     /* Apply O_CLOEXEC flag if requested */
-    if (flags & 0x80000) {  /* O_CLOEXEC */
+    if (flags & O_CLOEXEC) {
         /* Set close-on-exec on both FDs via fcntl */
         extern long sys_fcntl(int fd, int cmd, long arg);
         sys_fcntl(read_fd, 2, 1);   /* F_SETFD, FD_CLOEXEC */
@@ -627,11 +635,11 @@ long sys_pipe2(int pipefd[2], int flags) {
     }
 
     const char *flags_desc = "";
-    if ((flags & 0x800) && (flags & 0x80000)) {
+    if ((flags & O_NONBLOCK) && (flags & O_CLOEXEC)) {
         flags_desc = "O_NONBLOCK|O_CLOEXEC";
-    } else if (flags & 0x800) {
+    } else if (flags & O_NONBLOCK) {
         flags_desc = "O_NONBLOCK";
-    } else if (flags & 0x80000) {
+    } else if (flags & O_CLOEXEC) {
         flags_desc = "O_CLOEXEC";
     } else {
         flags_desc = "none";

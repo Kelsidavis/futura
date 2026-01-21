@@ -25,6 +25,9 @@
 
 extern void fut_printf(const char *fmt, ...);
 
+/* I/O budget time window in milliseconds (1 second) */
+#define IO_BUDGET_WINDOW_MS 1000
+
 /**
  * Check and enforce per-process I/O byte budget.
  *
@@ -45,7 +48,7 @@ bool fut_io_budget_check_bytes(fut_task_t *task, uint64_t bytes, uint64_t curren
 
     /* Check if budget window needs reset (1+ second elapsed) */
     uint64_t time_elapsed_ms = current_ms - task->io_budget_reset_time_ms;
-    if (time_elapsed_ms >= 1000) {
+    if (time_elapsed_ms >= IO_BUDGET_WINDOW_MS) {
         /* Reset budget counters for new second */
         task->io_bytes_current = 0;
         task->io_ops_current = 0;
@@ -81,7 +84,7 @@ bool fut_io_budget_check_ops(fut_task_t *task, uint64_t ops, uint64_t current_ms
 
     /* Check if budget window needs reset (1+ second elapsed) */
     uint64_t time_elapsed_ms = current_ms - task->io_budget_reset_time_ms;
-    if (time_elapsed_ms >= 1000) {
+    if (time_elapsed_ms >= IO_BUDGET_WINDOW_MS) {
         /* Reset budget counters for new second */
         task->io_bytes_current = 0;
         task->io_ops_current = 0;

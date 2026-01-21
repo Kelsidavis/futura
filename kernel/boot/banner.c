@@ -14,6 +14,10 @@
 
 extern void fut_printf(const char *fmt, ...);
 
+/* CPU brand string buffer size (48 chars + null terminator) */
+#define CPU_BRAND_BUFFER_SIZE 49
+#define CPU_BRAND_MAX_LEN     (CPU_BRAND_BUFFER_SIZE - 1)  /* 48 chars */
+
 #ifdef __x86_64__
 
 static inline void cpuid(uint32_t leaf, uint32_t subleaf,
@@ -23,8 +27,8 @@ static inline void cpuid(uint32_t leaf, uint32_t subleaf,
                      : "a"(leaf), "c"(subleaf));
 }
 
-static void get_cpu_brand(char brand[49]) {
-    memset(brand, 0, 49);
+static void get_cpu_brand(char brand[CPU_BRAND_BUFFER_SIZE]) {
+    memset(brand, 0, CPU_BRAND_BUFFER_SIZE);
 
     uint32_t max_ext = 0, ebx = 0, ecx = 0, edx = 0;
     cpuid(0x80000000u, 0, &max_ext, &ebx, &ecx, &edx);
@@ -41,10 +45,10 @@ static void get_cpu_brand(char brand[49]) {
         memcpy(p, &c, sizeof(c)); p += sizeof(c);
         memcpy(p, &d, sizeof(d)); p += sizeof(d);
     }
-    brand[48] = '\0';
+    brand[CPU_BRAND_MAX_LEN] = '\0';
 
     size_t len = 0;
-    while (len < 48 && brand[len] != '\0') {
+    while (len < CPU_BRAND_MAX_LEN && brand[len] != '\0') {
         ++len;
     }
     size_t idx = 0;
@@ -61,7 +65,7 @@ static void get_cpu_brand(char brand[49]) {
 #elif defined(__aarch64__)
 
 /* ARM64 CPU detection via MIDR_EL1 register */
-static void get_cpu_brand(char brand[49]) {
+static void get_cpu_brand(char brand[CPU_BRAND_BUFFER_SIZE]) {
     uint64_t midr;
     __asm__ volatile("mrs %0, midr_el1" : "=r"(midr));
 
@@ -128,7 +132,7 @@ static void get_cpu_brand(char brand[49]) {
 
 #else  /* Other architectures */
 
-static void get_cpu_brand(char brand[49]) {
+static void get_cpu_brand(char brand[CPU_BRAND_BUFFER_SIZE]) {
     brand[0] = '\0';
 }
 
@@ -139,7 +143,7 @@ void fut_boot_banner(void) {
     const fut_cpu_features_t *feat = cpu_features_get();
 #endif
 
-    char cpu_brand[49] = {0};
+    char cpu_brand[CPU_BRAND_BUFFER_SIZE] = {0};
     get_cpu_brand(cpu_brand);
 
     uint64_t total_pages = fut_pmm_total_pages();

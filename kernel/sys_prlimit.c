@@ -41,6 +41,9 @@ extern int fut_access_ok(const void *u_ptr, size_t len, int write);
 /* Special limit value */
 #define RLIM64_INFINITY   ((uint64_t)-1)
 
+/* Capability for overriding resource limits (must match sys_capability.c) */
+#define CAP_SYS_RESOURCE  24
+
 /* Helper to get resource name for logging */
 static const char *get_resource_name(int resource) {
     switch (resource) {
@@ -321,16 +324,24 @@ long sys_prlimit64(int pid, int resource,
             return -EINVAL;
         }
 
-        /* Phase 3: Capability check for raising hard limit
-         * TODO Phase 4: Implement CAP_SYS_RESOURCE capability checking
-         * For now, allow all limit changes (assumes single-user system) */
+        /* Phase 4: Capability check for raising hard limit
+         * Non-privileged processes can only lower the hard limit, not raise it.
+         * Raising the hard limit requires CAP_SYS_RESOURCE capability or root. */
         bool raising_hard_limit = (new_limit->rlim_max > current_limit.rlim_max);
         if (raising_hard_limit) {
-            /* TODO: Check if task has CAP_SYS_RESOURCE capability
-             * For now, log and allow (privileged operation) */
+            fut_task_t *caller = fut_task_current();
+            bool has_cap = (caller->cap_effective & (1ULL << CAP_SYS_RESOURCE)) != 0;
+            bool is_root = (caller->uid == 0);
+
+            if (!has_cap && !is_root) {
+                fut_printf("[PRLIMIT] prlimit64(pid=%d, resource=%s) -> EPERM "
+                           "(raising hard limit requires CAP_SYS_RESOURCE)\n",
+                           pid, resource_name);
+                return -EPERM;
+            }
             fut_printf("[PRLIMIT] prlimit64(pid=%d, resource=%s) -> raising hard limit "
-                       "(would require CAP_SYS_RESOURCE in Phase 4)\n",
-                       pid, resource_name);
+                       "(authorized: %s)\n",
+                       pid, resource_name, is_root ? "root" : "CAP_SYS_RESOURCE");
         }
 
         /* Phase 3: Store validated limits in task structure */
@@ -355,7 +366,7 @@ long sys_prlimit64(int pid, int resource,
     /* Phase 3 (Completed): Validate new_limit values against system maximums per resource type (lines 385-415) */
     /* Phase 3 (Completed): Reject RLIM64_INFINITY for RLIMIT_MEMLOCK and RLIMIT_NPROC (lines 375-383) */
     /* Phase 3 (Completed): Store validated limits in task->rlimits[] array (lines 430-431) */
-    /* TODO Phase 4: Add capability checks (CAP_SYS_RESOURCE for raising hard limit) - logged at line 424 */
+    /* Phase 4 (Completed): Add capability checks (CAP_SYS_RESOURCE for raising hard limit) - enforced at lines 327-342 */
     /* TODO Phase 4: Enforce limits in allocation/fork/open/mlock syscalls (sys_mman.c, sys_fork.c, sys_open.c) */
 
     return 0;

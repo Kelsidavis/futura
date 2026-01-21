@@ -28,7 +28,27 @@
 #define PROT_WRITE      0x2
 #define PROT_EXEC       0x4
 
+/* Maximum number of VMAs per process (DoS protection) */
+#define MAX_VMA_COUNT   65536
+
 extern void fut_printf(const char *fmt, ...);
+
+/**
+ * Count the number of VMAs in a memory map.
+ * Used to enforce VMA count limits against VMA fragmentation attacks.
+ */
+static int fut_mm_vma_count(fut_mm_t *mm) {
+    if (!mm || !mm->vma_list) {
+        return 0;
+    }
+    int count = 0;
+    struct fut_vma *vma = mm->vma_list;
+    while (vma) {
+        count++;
+        vma = vma->next;
+    }
+    return count;
+}
 
 long sys_mmap(void *addr, size_t len, int prot, int flags, int fd, long offset) {
     if (len == 0) {
@@ -126,6 +146,20 @@ long sys_mmap(void *addr, size_t len, int prot, int flags, int fd, long offset) 
 
         fut_mm_t *mm = fut_task_get_mm(task);
         if (!mm) {
+            return -ENOMEM;
+        }
+
+        /* Phase 5: Check VMA count limit to prevent VMA fragmentation attacks.
+         * An attacker could create millions of tiny mappings to:
+         * - Exhaust kernel memory with VMA structures
+         * - Cause O(n) slowdowns in VMA list operations
+         * - Trigger OOM conditions during fork (must clone all VMAs)
+         * Limit to MAX_VMA_COUNT (65536) VMAs per process. */
+        int vma_count = fut_mm_vma_count(mm);
+        if (vma_count >= MAX_VMA_COUNT) {
+            fut_printf("[MMAP] mmap(addr=%p, len=%zu) -> ENOMEM "
+                       "(VMA count %d exceeds maximum %d, Phase 5: DoS prevention)\n",
+                       addr, len, vma_count, MAX_VMA_COUNT);
             return -ENOMEM;
         }
 

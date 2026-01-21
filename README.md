@@ -70,11 +70,12 @@ Futura OS is a capability-first nanokernel that keeps the core minimal—time, s
   - **Ready for hardware testing** — All drivers implemented, awaiting physical MacBook Pro M2
 - **Userland runtime**: crt0 for ARM64, syscall wrappers, working demo programs.
 
-**Recent quality improvements (Jan 20 2026):**
+**Recent quality improvements (Jan 20-21 2026):**
 - **Code documentation**: Corrected outdated "stub" and "TODO" comments in 15+ syscall implementations to accurately reflect completion status
 - **Test infrastructure**: Fixed test harness with atomic counters, enabling reliable automated testing (18/18 tests passing)
-- **License compliance**: Added MPL-2.0 headers to all performance benchmark test files
-- **Code cleanup**: Removed commented dead code; standardized phase completion markers across syscalls
+- **License compliance**: Added MPL-2.0 headers to 22 kernel files (performance tests, core files, syscalls) — 100% coverage achieved
+- **Code cleanup**: Removed commented-out unused code and disabled debug printfs from sys_chmod.c and sys_read.c
+- **Header standardization**: Completed copyright header rollout across all kernel source files and public API headers
 - **VFS documentation**: Updated implementation guide to reflect symbolic link support and O_CREAT completion
 
 See `docs/CURRENT_STATUS.md` and `docs/ARM64_STATUS.md` for deeper dives into the latest changes and platform-specific progress.

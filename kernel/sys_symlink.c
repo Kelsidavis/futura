@@ -7,9 +7,9 @@
  * Symbolic links are special files that contain pathname strings,
  * allowing references to other files and directories.
  *
- * Phase 1: Basic stub
- * Phase 2: Enhanced validation and error handling
- * Phase 3: Full VFS integration with symlink creation
+ * Phase 1 (Completed): Basic stub
+ * Phase 2 (Completed): Enhanced validation and error handling
+ * Phase 3 (Completed): Full VFS integration with symlink creation
  */
 
 #include <kernel/fut_task.h>

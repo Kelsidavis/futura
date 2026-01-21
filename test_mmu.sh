@@ -1,5 +1,9 @@
 #!/bin/bash
 # Test with MMU debugging enabled
+#
+# Copyright (c) 2025 Kelsi Davis
+# Licensed under the MPL v2.0 — see LICENSE for details.
+
 qemu-system-aarch64 -M virt -cpu cortex-a53 \
     -kernel build/bin/futura_kernel.elf \
     -nographic \

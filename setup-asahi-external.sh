@@ -1,5 +1,9 @@
 #!/bin/bash
 # Asahi Linux External Drive Setup Script
+#
+# Copyright (c) 2025 Kelsi Davis
+# Licensed under the MPL v2.0 — see LICENSE for details.
+#
 # WARNING: This will ERASE /dev/disk4 completely!
 
 set -e

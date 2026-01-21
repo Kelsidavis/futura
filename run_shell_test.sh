@@ -1,6 +1,10 @@
 #!/bin/bash
 # Test script for Futura OS shell
-# This uses the CORRECT QEMU flags for serial console
+#
+# Copyright (c) 2025 Kelsi Davis
+# Licensed under the MPL v2.0 — see LICENSE for details.
+#
+# This uses the CORRECT QEMU flags for serial console.
 
 echo "=== Testing Futura OS Shell ==="
 echo ""

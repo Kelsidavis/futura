@@ -1,7 +1,11 @@
 #!/bin/bash
 #
 # Futura OS - Raspberry Pi 5 USB Build & Deployment Script
-# Builds complete system for RPi 5 and creates bootable USB image
+#
+# Copyright (c) 2025 Kelsi Davis
+# Licensed under the MPL v2.0 — see LICENSE for details.
+#
+# Builds complete system for RPi 5 and creates bootable USB image.
 #
 # Usage: ./build-rpi5-usb.sh [--device /dev/sdX] [--size 32G] [--build-only]
 #

@@ -1,5 +1,9 @@
 #!/bin/bash
 # Deploy Futura OS ARM64 kernel to Raspberry Pi 5 USB device
+#
+# Copyright (c) 2025 Kelsi Davis
+# Licensed under the MPL v2.0 — see LICENSE for details.
+#
 # Usage: sudo bash deploy_to_usb.sh /dev/sdd
 
 set -e

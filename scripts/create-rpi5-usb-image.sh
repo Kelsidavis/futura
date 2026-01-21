@@ -1,7 +1,11 @@
 #!/bin/bash
 #
 # Futura OS - Raspberry Pi 5 USB Bootable Image Creator
-# Creates a bootable USB disk image with USB driver support
+#
+# Copyright (c) 2025 Kelsi Davis
+# Licensed under the MPL v2.0 — see LICENSE for details.
+#
+# Creates a bootable USB disk image with USB driver support.
 #
 # Usage: sudo ./create-rpi5-usb-image.sh [options]
 #

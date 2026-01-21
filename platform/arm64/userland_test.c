@@ -18,10 +18,8 @@
 /* Type definitions */
 typedef long ssize_t;
 
-/* Error codes */
-#define EINVAL  22
-#define ENOMEM  12
-#define ESRCH   3
+/* errno values provided by errno.h */
+#include <errno.h>
 
 /* PSTATE mode definitions */
 #define PSTATE_MODE_EL0t    0x00

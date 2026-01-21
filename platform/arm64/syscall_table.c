@@ -310,9 +310,7 @@ extern long sys_quotactl(unsigned int cmd, const char *special, int id, void *ad
 /* Syscall return values */
 #define SYSCALL_SUCCESS     0
 #define SYSCALL_ERROR      -1
-#define ENOSYS             38      /* Function not implemented */
-#define EINVAL             22      /* Invalid argument */
-#define EBADF              9       /* Bad file descriptor */
+/* errno values provided by errno.h */
 
 /* Special value for dirfd parameter */
 #define AT_FDCWD           -100    /* Use current working directory */

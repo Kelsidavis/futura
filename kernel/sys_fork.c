@@ -85,17 +85,18 @@
  *   - Specifies PMM layer must validate refcount < MAX before increment
  *   - Requires fork() to check fut_page_ref_inc() return value
  *
- * [TODO] Implement refcount overflow check in fut_page_ref_inc():
- *   - Add bounds check in memory/fut_pmm.c
- *   - Return error code if refcount >= UINT16_MAX (or configured limit)
- *   - Validate parent_phys is within valid physical memory range
- *   - Log warning when refcount approaches maximum
+ * [DONE] Implement refcount overflow check in fut_page_ref_inc():
+ *   - Added bounds check in memory/fut_mm.c (FUT_PAGE_REF_MAX = 60000)
+ *   - Returns -EOVERFLOW if refcount >= limit
+ *   - Logs warning when limit reached
+ *   - Commit: adfa7bb
  *
- * [TODO] Check fut_page_ref_inc() return value in clone_mm():
- *   - Modify line 582 to: if (fut_page_ref_inc(parent_phys) != 0) { abort fork }
- *   - Return NULL from clone_mm() on refcount failure
- *   - Clean up partially cloned VMAs before aborting
- *   - Return -ENOMEM to userspace (no pages available for COW)
+ * [DONE] Check fut_page_ref_inc() return value in clone_mm():
+ *   - Both COW and shared page paths now check return value
+ *   - Returns NULL from clone_mm() on refcount failure
+ *   - Calls fut_mm_release() to clean up on failure
+ *   - Fork returns -ENOMEM to userspace
+ *   - Commit: adfa7bb
  *
  * [TODO] Add refcount stress test:
  *   - Fork process 1000 times, verify refcount doesn't overflow

@@ -162,11 +162,32 @@ See `docs/ARM64_STATUS.md` for detailed ARM64 progress.
 - ✅ **FuturaFS constants**: Added named constants in fut_futurafs.h:
   - `FUTURAFS_DEFAULT_INODE_RATIO` (16384) for one inode per 16KB
   - `FUTURAFS_MIN_INODES` (16) for minimum inode count
+
+### January 21, 2026 Session (Continued) — DRY Refactoring & Named Constants
+- ✅ **fut_task.c DRY refactoring**: Extracted `task_cleanup_and_exit()` helper to consolidate duplicate exit cleanup code from `fut_task_exit_current()` and `fut_task_signal_exit()`, reducing code duplication by ~20 lines.
+- ✅ **Exit status encoding constants**: Added named constants for POSIX wait status encoding:
+  - `EXIT_CODE_MASK` (0xFF) for exit code extraction
+  - `SIGNAL_MASK` (0x7F) for signal number extraction
+  - `WAIT_STATUS_SHIFT` (8) for exit code position in wait status
+- ✅ **ARM64 device address constants**: Added physical address constants in platform/arm64/regs.h:
+  - `GICD_PHYS_BASE` (0x08000000) for GIC Distributor
+  - `GICC_PHYS_BASE` (0x08010000) for GIC CPU Interface
+  - `UART0_PHYS_BASE` (0x09000000) for PL011 UART
+  - `DEVICE_MAP_REGION_SIZE` (0x10000) for 64KB device mapping
+- ✅ **x86_64 register constants**: Added named constants in platform/x86_64/regs.h:
+  - `RFLAGS_RESERVED` for bit 1 (must always be 1)
+  - `RFLAGS_KERNEL_INIT` for initial kernel thread RFLAGS
+  - `MXCSR_DEFAULT` (0x1F80) for default FPU state
+  - `FXSAVE_MXCSR_OFFSET` (24) for MXCSR position in FXSAVE area
+- ✅ **Thread constants**: Added `FUT_STACK_CANARY` constant in fut_thread.h for stack overflow detection
+- ✅ **Segment selector cleanup**: Updated fut_thread.c to use `GDT_KERNEL_CODE` and `GDT_KERNEL_DATA` instead of magic numbers (0x08, 0x10)
+- ✅ **arm64_irq.c consolidation**: Updated to reference shared GIC address constants from regs.h instead of local duplicates
 - ✅ **Total code improvements this session**:
   - Fixed 1 double-free bug (elf64.c)
   - Replaced 50+ generic error returns with proper errno constants
-  - Added 8 named constants to replace magic numbers
+  - Added 20+ named constants to replace magic numbers
   - Added error logging for silent allocation failures
+  - Eliminated code duplication in 2 task exit functions
 
 ## Current Focus
 

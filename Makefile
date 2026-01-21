@@ -888,10 +888,15 @@ $(WAYLAND_SHELL_BLOB): $(WAYLAND_SHELL_BIN) | $(OBJ_DIR)/kernel/blobs
 	@$(OBJCOPY) -I binary -O $(OBJCOPY_BIN_FMT) -B $(OBJCOPY_BIN_ARCH) $< $@
 
 # ARM64 userland binaries and blobs
+# Note: These cross-compilation rules only apply when building x86_64
+# When PLATFORM=arm64, the generic SHELL_BIN/FBTEST_BIN rules handle
+# the arm64 binaries directly (they expand to the same paths).
 .PHONY: arm64-libfutura
 arm64-libfutura:
 	@$(MAKE) -C src/user/libfutura PLATFORM=arm64 all
 
+ifeq ($(PLATFORM),x86_64)
+# Cross-compilation rules for ARM64 binaries (only when building x86_64 kernel)
 $(ARM64_INIT_BIN): arm64-libfutura
 	@echo "Building ARM64 init..."
 	@$(MAKE) -C src/user/init PLATFORM=arm64 all
@@ -911,6 +916,7 @@ $(ARM64_UIDEMO_BIN): arm64-libfutura
 $(ARM64_FORKTEST_BIN): arm64-libfutura
 	@echo "Building ARM64 forktest..."
 	@$(MAKE) -C src/user/forktest PLATFORM=arm64 all
+endif
 
 $(ARM64_INIT_BLOB): $(ARM64_INIT_BIN) | $(OBJ_DIR)/kernel/blobs
 	@echo "OBJCOPY $@"

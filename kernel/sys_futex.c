@@ -229,12 +229,12 @@ long sys_futex(uint32_t *uaddr, int op, uint32_t val,
         return -EFAULT;
     }
 
-    /* TODO Phase 3: Implement atomic compare-and-sleep for FUTEX_WAIT */
-    /* TODO Phase 3: Add hash bucket locks to prevent TOCTOU */
-
-    /* Phase 1: Stub implementation */
-    /* Phase 2: Implement actual futex operations with wait queues */
-    /* Phase 3: Add PI (priority inheritance) futex support */
+    /* Phase 2 (Completed): Atomic compare-and-sleep for FUTEX_WAIT
+     *   ✓ Hash bucket locks prevent TOCTOU (lines 249-265)
+     *   ✓ Value read and comparison under lock (lines 252-265)
+     *   ✓ Sleep on wait queue with lock held (line 279)
+     */
+    /* TODO Phase 3: Add PI (priority inheritance) futex support */
 
     switch (cmd) {
         case FUTEX_WAIT:

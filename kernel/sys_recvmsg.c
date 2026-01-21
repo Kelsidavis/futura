@@ -15,7 +15,7 @@
 #include <kernel/uaccess.h>
 #include <kernel/errno.h>
 #include <kernel/fut_socket.h>
-#include <sys/uio.h>  /* For struct iovec */
+#include <sys/socket.h>  /* For struct msghdr, cmsghdr, socklen_t */
 #include <stddef.h>
 #include <stdint.h>
 
@@ -31,27 +31,6 @@ extern fut_socket_t *get_socket_from_fd(int fd);
 #else
 #define RECVMSG_LOG(...) ((void)0)
 #endif
-
-typedef uint32_t socklen_t;
-
-/* struct msghdr for sendmsg/recvmsg */
-struct msghdr {
-    void *msg_name;           /* Optional address */
-    socklen_t msg_namelen;    /* Size of address */
-    struct iovec *msg_iov;    /* Scatter/gather array */
-    size_t msg_iovlen;        /* # elements in msg_iov */
-    void *msg_control;        /* Ancillary data */
-    size_t msg_controllen;    /* Ancillary data buffer len */
-    int msg_flags;            /* Flags on received message */
-};
-
-/* Control message header */
-struct cmsghdr {
-    size_t cmsg_len;          /* Data byte count, including header */
-    int cmsg_level;           /* Originating protocol */
-    int cmsg_type;            /* Protocol-specific type */
-    /* followed by unsigned char cmsg_data[] */
-};
 
 /* Ancillary data types */
 #define SOL_SOCKET  1
@@ -103,14 +82,8 @@ ssize_t sys_recvmsg(int sockfd, struct msghdr *msg, int flags) {
     }
 
     /* Phase 2: Identify message flags for logging */
+    /* MSG_* constants provided by sys/socket.h */
     const char *flags_desc;
-
-    /* Common recv flags (placeholder names - actual values may differ) */
-    #define MSG_PEEK      0x02
-    #define MSG_WAITALL   0x100
-    #define MSG_DONTWAIT  0x40
-    #define MSG_TRUNC     0x20
-    #define MSG_CTRUNC    0x08
 
     if (flags == 0) {
         flags_desc = "none";

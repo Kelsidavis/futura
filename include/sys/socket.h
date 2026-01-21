@@ -14,9 +14,13 @@
 #include <stdint.h>
 #include <stddef.h>
 
-/* In hosted environment with system headers available, use them */
-#if __has_include_next(<sys/socket.h>)
+/* In hosted environment with system headers available, use them
+ * Skip for freestanding (kernel) builds where __STDC_HOSTED__ == 0 */
+#if defined(__STDC_HOSTED__) && __STDC_HOSTED__ == 1 && __has_include_next(<sys/socket.h>)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wpedantic"
 #include_next <sys/socket.h>
+#pragma GCC diagnostic pop
 #else
 
 /* ============================================================
@@ -180,6 +184,21 @@
 #ifndef MSG_WAITALL
 #define MSG_WAITALL     0x100   /* Wait for full request or error */
 #endif
+#ifndef MSG_EOR
+#define MSG_EOR         0x80    /* Terminate record */
+#endif
+#ifndef MSG_MORE
+#define MSG_MORE        0x8000  /* More data is coming */
+#endif
+#ifndef MSG_CTRUNC
+#define MSG_CTRUNC      0x08    /* Control data truncated */
+#endif
+#ifndef MSG_ERRQUEUE
+#define MSG_ERRQUEUE    0x2000  /* Fetch message from error queue */
+#endif
+#ifndef MSG_CMSG_CLOEXEC
+#define MSG_CMSG_CLOEXEC 0x40000000  /* Set close-on-exec on received FDs */
+#endif
 
 /* ============================================================
  *   Shutdown How Values
@@ -209,13 +228,7 @@ struct sockaddr {
 #endif
 
 /* Unix domain socket address */
-#ifndef _STRUCT_SOCKADDR_UN
-#define _STRUCT_SOCKADDR_UN
-struct sockaddr_un {
-    uint16_t sun_family;        /* AF_UNIX */
-    char     sun_path[108];     /* Pathname */
-};
-#endif
+/* struct sockaddr_un is provided by sys/un.h */
 
 /* IPv4 socket address */
 #ifndef _STRUCT_SOCKADDR_IN
@@ -247,6 +260,73 @@ typedef uint32_t socklen_t;
 #endif
 
 /* ============================================================
+ *   Message Header Structures (for sendmsg/recvmsg)
+ * ============================================================ */
+
+/* struct iovec is provided by sys/uio.h */
+#include <sys/uio.h>
+
+/* Message header for sendmsg/recvmsg */
+#ifndef _STRUCT_MSGHDR
+#define _STRUCT_MSGHDR
+struct msghdr {
+    void         *msg_name;       /* Optional address */
+    socklen_t     msg_namelen;    /* Size of address */
+    struct iovec *msg_iov;        /* Scatter/gather array */
+    size_t        msg_iovlen;     /* Number of elements in msg_iov */
+    void         *msg_control;    /* Ancillary data */
+    size_t        msg_controllen; /* Ancillary data buffer length */
+    int           msg_flags;      /* Flags on received message */
+};
+#endif
+
+/* Control message header (for ancillary data) */
+#ifndef _STRUCT_CMSGHDR
+#define _STRUCT_CMSGHDR
+struct cmsghdr {
+    size_t cmsg_len;    /* Data byte count, including header */
+    int    cmsg_level;  /* Originating protocol */
+    int    cmsg_type;   /* Protocol-specific type */
+    /* followed by unsigned char cmsg_data[] */
+};
+#endif
+
+/* Ancillary data object type macros */
+#ifndef SCM_RIGHTS
+#define SCM_RIGHTS      1   /* Transfer file descriptors */
+#endif
+#ifndef SCM_CREDENTIALS
+#define SCM_CREDENTIALS 2   /* Transfer credentials */
+#endif
+
+/* CMSG macros for accessing control messages */
+#ifndef CMSG_ALIGN
+#define CMSG_ALIGN(len) (((len) + sizeof(size_t) - 1) & ~(sizeof(size_t) - 1))
+#endif
+#ifndef CMSG_DATA
+#define CMSG_DATA(cmsg) ((unsigned char *)((struct cmsghdr *)(cmsg) + 1))
+#endif
+#ifndef CMSG_SPACE
+#define CMSG_SPACE(len) (CMSG_ALIGN(sizeof(struct cmsghdr)) + CMSG_ALIGN(len))
+#endif
+#ifndef CMSG_LEN
+#define CMSG_LEN(len)   (CMSG_ALIGN(sizeof(struct cmsghdr)) + (len))
+#endif
+#ifndef CMSG_FIRSTHDR
+#define CMSG_FIRSTHDR(mhdr) \
+    ((mhdr)->msg_controllen >= sizeof(struct cmsghdr) ? \
+     (struct cmsghdr *)(mhdr)->msg_control : (struct cmsghdr *)0)
+#endif
+#ifndef CMSG_NXTHDR
+#define CMSG_NXTHDR(mhdr, cmsg) \
+    (((unsigned char *)(cmsg) + CMSG_ALIGN((cmsg)->cmsg_len) + \
+      sizeof(struct cmsghdr) > \
+      (unsigned char *)(mhdr)->msg_control + (mhdr)->msg_controllen) ? \
+     (struct cmsghdr *)0 : \
+     (struct cmsghdr *)((unsigned char *)(cmsg) + CMSG_ALIGN((cmsg)->cmsg_len)))
+#endif
+
+/* ============================================================
  *   Function Declarations
  * ============================================================ */
 
@@ -261,6 +341,8 @@ extern ssize_t sendto(int sockfd, const void *buf, size_t len, int flags,
                       const struct sockaddr *dest_addr, socklen_t addrlen);
 extern ssize_t recvfrom(int sockfd, void *buf, size_t len, int flags,
                         struct sockaddr *src_addr, socklen_t *addrlen);
+extern ssize_t sendmsg(int sockfd, const struct msghdr *msg, int flags);
+extern ssize_t recvmsg(int sockfd, struct msghdr *msg, int flags);
 extern int setsockopt(int sockfd, int level, int optname,
                       const void *optval, socklen_t optlen);
 extern int getsockopt(int sockfd, int level, int optname,

@@ -77,6 +77,9 @@ Futura OS is a capability-first nanokernel that keeps the core minimal—time, s
 - **Code cleanup**: Removed commented-out unused code and disabled debug printfs from sys_chmod.c and sys_read.c
 - **Header standardization**: Completed copyright header rollout across all kernel source files and public API headers
 - **VFS documentation**: Updated implementation guide to reflect symbolic link support and O_CREAT completion
+- **API header documentation**: Added comprehensive docs to device/signal headers (perf_clock.h, chrdev.h, devfs.h, signal.h)
+- **Named constants**: Replaced magic numbers with O_ACCMODE, O_CLOEXEC, and file flags in capability.c and sys_dup2.c
+- **POSIX compliance**: Added comprehensive file mode constants to sys/stat.h (S_IFMT, S_ISDIR, S_ISUID, permission masks)
 
 See `docs/CURRENT_STATUS.md` and `docs/ARM64_STATUS.md` for deeper dives into the latest changes and platform-specific progress.
 

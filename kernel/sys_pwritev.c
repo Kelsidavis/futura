@@ -501,6 +501,7 @@ ssize_t sys_pwritev(int fd, const struct iovec *iov, int iovcnt, int64_t offset)
     if (file->chr_ops) {
         fut_printf("[PWRITEV] pwritev(fd=%d, iov=%p, iovcnt=%d, offset=%ld) -> ESPIPE (chrdev)\n",
                    fd, iov, iovcnt, offset);
+        fut_free(kernel_iov);
         return -ESPIPE;
     }
 
@@ -508,6 +509,7 @@ ssize_t sys_pwritev(int fd, const struct iovec *iov, int iovcnt, int64_t offset)
     if (file->vnode && file->vnode->type == VN_DIR) {
         fut_printf("[PWRITEV] pwritev(fd=%d, iov=%p, iovcnt=%d, offset=%ld) -> EISDIR\n",
                    fd, iov, iovcnt, offset);
+        fut_free(kernel_iov);
         return -EISDIR;
     }
 
@@ -515,6 +517,7 @@ ssize_t sys_pwritev(int fd, const struct iovec *iov, int iovcnt, int64_t offset)
     if (!file->vnode || !file->vnode->ops || !file->vnode->ops->write) {
         fut_printf("[PWRITEV] pwritev(fd=%d, iov=%p, iovcnt=%d, offset=%ld) -> EINVAL (no write op)\n",
                    fd, iov, iovcnt, offset);
+        fut_free(kernel_iov);
         return -EINVAL;
     }
 

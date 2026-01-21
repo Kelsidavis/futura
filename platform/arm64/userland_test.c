@@ -13,6 +13,7 @@
 #include <kernel/fut_percpu.h>
 #include <platform/arm64/regs.h>  /* For fut_cpu_context_t */
 #include <shared/fut_timespec.h>  /* For struct timespec */
+#include <shared/fut_stat.h>      /* For struct fut_stat */
 
 /* Type definitions */
 typedef long ssize_t;
@@ -79,22 +80,7 @@ struct utsname {
     char domainname[65];
 };
 
-/* stat structure (for fstat syscall) */
-struct stat {
-    uint64_t st_dev;
-    uint64_t st_ino;
-    uint32_t st_mode;
-    uint32_t st_nlink;
-    uint32_t st_uid;
-    uint32_t st_gid;
-    uint64_t st_rdev;
-    uint64_t st_size;
-    uint32_t st_blksize;
-    uint64_t st_blocks;
-    int64_t  st_atime;
-    int64_t  st_mtime;
-    int64_t  st_ctime;
-};
+/* struct fut_stat provided by shared/fut_stat.h */
 
 /* Helper function to do a syscall with 3 arguments */
 static inline int64_t syscall3(uint64_t num, uint64_t arg0, uint64_t arg1, uint64_t arg2) {
@@ -519,7 +505,7 @@ void el0_test_function(void) {
         syscall3(__NR_write, 1, (uint64_t)global_msg_buffer, len);
 
         /* Get file status */
-        struct stat st;
+        struct fut_stat st;
         result = syscall2(__NR_fstat, fd, (uint64_t)&st);
         if (result == 0) {
             len = strcpy_local(p, "[EL0] fstat() size: ");

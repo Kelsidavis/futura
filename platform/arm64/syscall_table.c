@@ -22,6 +22,7 @@
 #include <kernel/signal.h>
 #include <kernel/fut_task.h>
 #include <shared/fut_sigevent.h>  /* For struct sigevent, timer_t */
+#include <shared/fut_stat.h>      /* For struct fut_stat, S_IF* */
 
 /* Debug control - set to 0 to disable verbose syscall logging */
 #define DEBUG_SYSCALL 0
@@ -570,26 +571,7 @@ static int64_t sys_chdir_wrapper(uint64_t path_ptr, uint64_t arg1, uint64_t arg2
     return (int64_t)sys_chdir((const char *)path_ptr);
 }
 
-/* stat structure (simplified) */
-struct stat {
-    uint64_t st_dev;        /* Device ID */
-    uint64_t st_ino;        /* Inode number */
-    uint32_t st_mode;       /* File mode */
-    uint32_t st_nlink;      /* Number of hard links */
-    uint32_t st_uid;        /* User ID */
-    uint32_t st_gid;        /* Group ID */
-    uint64_t st_rdev;       /* Device ID (if special file) */
-    uint64_t st_size;       /* Total size in bytes */
-    uint32_t st_blksize;    /* Block size for I/O */
-    uint64_t st_blocks;     /* Number of 512B blocks */
-    int64_t  st_atime;      /* Access time */
-    int64_t  st_mtime;      /* Modification time */
-    int64_t  st_ctime;      /* Status change time */
-};
-
-/* File modes */
-#define S_IFREG  0100000    /* Regular file */
-#define S_IFDIR  0040000    /* Directory */
+/* struct fut_stat and S_IF* constants provided by shared/fut_stat.h */
 
 /* sys_openat_wrapper - open file (ARM64 syscall ABI)
  * x0 = dirfd, x1 = pathname, x2 = flags, x3 = mode

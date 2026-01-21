@@ -446,6 +446,12 @@ See `docs/ARM64_STATUS.md` for detailed ARM64 progress.
   - src/user/libfutura/epoll.c: Now uses sys/epoll.h (removed 26 lines of duplicates)
   - Added proper _STRUCT_EPOLL_EVENT and _EPOLL_DATA_T guards to sys/epoll.h
   - kernel/sys_epoll.c: Added guard and documented kernel's simpler uint64_t data field
+- ✅ **crt0 linker warning fix**: Added .note.GNU-stack section to x86-64 and ARM64
+  crt0.S files to silence "missing .note.GNU-stack section" linker warnings
+- ✅ **struct utsname consolidation**: Updated 3 files to use sys/utsname.h:
+  - kernel/sys_uname.c, syscall_table.c, userland_test.c
+  - Uses _GNU_SOURCE for domainname field support
+  - Removed 22 lines of duplicate struct definitions
 
 ## Current Focus
 

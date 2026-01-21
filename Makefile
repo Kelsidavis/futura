@@ -324,9 +324,20 @@ $(BUILD_GEN_ROOT):
 $(BUILD_KERNEL_CMDLINE_DIR): | $(BUILD_GEN_ROOT)
 	@mkdir -p $(BUILD_KERNEL_CMDLINE_DIR)
 
+# Force regeneration of boot cmdline header when KAPPEND changes
+# We use a marker file to track the last KAPPEND value
+CMDLINE_MARKER := $(BUILD_KERNEL_CMDLINE_DIR)/.cmdline_marker
+CURRENT_CMDLINE_HASH := $(shell echo "$(KAPPEND)" | md5sum | cut -d' ' -f1)
+
+# Check if marker exists and matches current KAPPEND
+ifneq ($(shell cat $(CMDLINE_MARKER) 2>/dev/null),$(CURRENT_CMDLINE_HASH))
+.PHONY: $(BOOT_CMDLINE_HEADER)
+endif
+
 $(BOOT_CMDLINE_HEADER): | $(BUILD_KERNEL_CMDLINE_DIR)
-	@echo "Generating boot cmdline header"
+	@echo "Generating boot cmdline header (KAPPEND=$(KAPPEND))"
 	@python3 scripts/gen_boot_cmdline.py "$(KAPPEND)" "$(BOOT_CMDLINE_HEADER)"
+	@echo "$(CURRENT_CMDLINE_HASH)" > $(CMDLINE_MARKER)
 
 # ============================================================
 #   Rust Toolchain Integration

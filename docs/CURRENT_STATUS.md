@@ -151,6 +151,23 @@ See `docs/ARM64_STATUS.md` for detailed ARM64 progress.
   - `fut_unregister_irq_handler()`: -1 → -EINVAL (invalid IRQ)
   - `fut_irq_acknowledge()`: -1 → -EAGAIN (spurious interrupt)
 
+### January 21, 2026 Session (Final) — Magic Numbers & Error Handling
+- ✅ **TCP/IP stack constants**: Added named constants in tcpip.h:
+  - `IP_DEFAULT_TTL` (64) for Time To Live
+  - `IP_BROADCAST_ADDR` (0xFFFFFFFF) for broadcast address checks
+  - `TCPIP_RX_THREAD_STACK_SIZE` (8192) and `TCPIP_RX_THREAD_PRIORITY` (100)
+- ✅ **TCP/IP error logging**: Added error messages for allocation failures in:
+  - `ip_send_packet()`: Now logs when packet allocation fails
+  - `icmp_handle_packet()`: Now logs when echo reply allocation fails
+- ✅ **FuturaFS constants**: Added named constants in fut_futurafs.h:
+  - `FUTURAFS_DEFAULT_INODE_RATIO` (16384) for one inode per 16KB
+  - `FUTURAFS_MIN_INODES` (16) for minimum inode count
+- ✅ **Total code improvements this session**:
+  - Fixed 1 double-free bug (elf64.c)
+  - Replaced 50+ generic error returns with proper errno constants
+  - Added 8 named constants to replace magic numbers
+  - Added error logging for silent allocation failures
+
 ## Current Focus
 
 ### x86-64 Platform

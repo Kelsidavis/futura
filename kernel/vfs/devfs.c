@@ -14,13 +14,16 @@
 
 extern void fut_printf(const char *fmt, ...);
 
+/* Maximum number of device nodes that can be registered */
+#define DEVFS_MAX_NODES 64
+
 typedef struct {
     char *path;
     unsigned major;
     unsigned minor;
 } dev_node_t;
 
-static dev_node_t g_dev_nodes[64];
+static dev_node_t g_dev_nodes[DEVFS_MAX_NODES];
 static size_t g_dev_count = 0;
 
 static int devfs_path_equal(const char *a, const char *b) {
@@ -38,7 +41,7 @@ int devfs_create_chr(const char *path, unsigned major, unsigned minor) {
     if (!path) {
         return -EINVAL;
     }
-    if (g_dev_count >= (sizeof(g_dev_nodes) / sizeof(g_dev_nodes[0]))) {
+    if (g_dev_count >= DEVFS_MAX_NODES) {
         return -ENOSPC;
     }
 

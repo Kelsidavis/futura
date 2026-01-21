@@ -9,6 +9,9 @@
 #include <kernel/chrdev.h>
 #include <kernel/errno.h>
 
+/* Maximum number of character devices that can be registered */
+#define CHRDEV_MAX_ENTRIES 32
+
 typedef struct {
     unsigned major;
     unsigned minor;
@@ -17,7 +20,7 @@ typedef struct {
     const char *name;
 } chr_entry_t;
 
-static chr_entry_t g_chr_table[32];
+static chr_entry_t g_chr_table[CHRDEV_MAX_ENTRIES];
 static size_t g_chr_count = 0;
 
 int chrdev_register(unsigned major, unsigned minor, const struct fut_file_ops *fops,
@@ -25,7 +28,7 @@ int chrdev_register(unsigned major, unsigned minor, const struct fut_file_ops *f
     if (!fops) {
         return -EINVAL;
     }
-    if (g_chr_count >= (sizeof(g_chr_table) / sizeof(g_chr_table[0]))) {
+    if (g_chr_count >= CHRDEV_MAX_ENTRIES) {
         return -ENOSPC;
     }
 

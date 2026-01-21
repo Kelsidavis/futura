@@ -1,34 +1,30 @@
 # Next Priorities and Blockers
 
-**Date:** January 20, 2026
+**Date:** January 21, 2026
 **Phase:** Phase 2 → Phase 3 Transition
 
 ---
 
-## Critical Blockers
+## Resolved Blockers
 
-### 1. Kernel Boot Hang (BLOCKING ALL RUNTIME TESTS)
+### ~~1. Kernel Boot Hang~~ ✓ RESOLVED
 
-**Status:** CRITICAL
-**Location:** `fut_mm_system_init()` in memory management subsystem
-**Impact:** Prevents `make test` from completing; no runtime validation possible
+**Status:** RESOLVED (January 21, 2026)
+**Previous Location:** `fut_mm_system_init()` in memory management subsystem
+**Resolution:** Boot hang no longer occurs. Kernel successfully boots through:
+- PMM initialization
+- Heap initialization
+- MM subsystem initialization
+- Timer, signal, ACPI subsystems
+- VFS mount and scheduler start
 
-**Symptoms:**
-- Kernel hangs during early boot
-- Memory management initialization does not complete
-- No console output after MM init begins
-
-**Required Actions:**
-1. Add debug output before/after each MM init step
-2. Identify which allocation or mapping causes hang
-3. Check for infinite loops in buddy allocator or page table setup
-4. Verify ARM64 vs x86_64 parity in MM code paths
-
-**Priority:** P0 - Must fix before any other testing can proceed
+The kernel now boots to scheduler start and enters preemptive scheduling mode.
 
 ---
 
-### 2. Phase 1 Capability Syscalls (BLOCKING FSD INTEGRATION)
+## Current Blockers
+
+### 1. Phase 1 Capability Syscalls (BLOCKING FSD INTEGRATION)
 
 **Status:** HIGH
 **Location:** Kernel syscall layer
@@ -86,13 +82,13 @@ Handle Transfer:
 
 ## Priority Order
 
-| Priority | Task | Blocker For | Estimated Effort |
-|----------|------|-------------|------------------|
-| P0 | Fix kernel boot hang | All runtime testing | 1-2 days |
-| P1 | VFS capability integration | Phase 1 syscalls | 1 week |
-| P1 | Phase 1 capability syscalls | FSD integration | 1 week |
-| P2 | FSD handler updates | Phase 4 completion | 1 week |
-| P3 | Capability integration tests | Validation | 3 days |
+| Priority | Task | Blocker For | Status |
+|----------|------|-------------|--------|
+| ~~P0~~ | ~~Fix kernel boot hang~~ | ~~All runtime testing~~ | ✓ RESOLVED |
+| P1 | VFS capability integration | Phase 1 syscalls | IN PROGRESS |
+| P1 | Phase 1 capability syscalls | FSD integration | PENDING |
+| P2 | FSD handler updates | Phase 4 completion | PENDING |
+| P3 | Capability integration tests | Validation | PENDING |
 
 ---
 
@@ -116,22 +112,20 @@ Handle Transfer:
 
 ## Immediate Next Steps
 
-1. **Debug kernel boot hang**
-   ```bash
-   # Add debug output to kernel/memory/fut_mm.c
-   # Run with serial console capture
-   make run 2>&1 | tee boot_debug.log
-   ```
+1. **Begin VFS capability integration** (P1 - CURRENT)
+   - Add capability-aware VFS functions (`fut_vfs_open_cap`, `fut_vfs_read_cap`, etc.)
+   - Keep existing integer FD functions for compatibility
+   - Add rights validation to capability paths
 
-2. **Once boot fixed, run tests**
+2. **Implement capability syscalls** (P1 - NEXT)
+   - Wire capability VFS functions to syscall table
+   - Syscall numbers: SYS_OPEN_CAP = 400, etc.
+   - Add userspace libc wrappers
+
+3. **Run integration tests**
    ```bash
    make test
    ```
-
-3. **Begin VFS capability integration**
-   - Start with `fut_vfs_open()` returning handles
-   - Update file structure with capability reference
-   - Add rights validation to read/write paths
 
 ---
 
@@ -139,8 +133,7 @@ Handle Transfer:
 
 | Risk | Likelihood | Impact | Mitigation |
 |------|------------|--------|------------|
-| Boot hang is deep MM bug | Medium | High | Add extensive debug logging |
-| VFS changes break existing code | Medium | Medium | Incremental changes with tests |
+| VFS changes break existing code | Medium | Medium | Keep old FD functions, add new capability functions |
 | Capability overhead too high | Low | Medium | Profile early, optimize later |
 | FSD integration takes longer | Medium | Low | Stub fallbacks available |
 
@@ -148,11 +141,10 @@ Handle Transfer:
 
 ## Contacts
 
-- **Kernel MM:** Debug boot hang
 - **VFS Team:** Capability integration
 - **Userspace Team:** FSD handler updates
 - **QA:** Integration test development
 
 ---
 
-**Last Updated:** January 20, 2026
+**Last Updated:** January 21, 2026

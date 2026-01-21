@@ -760,3 +760,165 @@ void vfs_close_fd_in_task(struct fut_task *task, int fd);
 #define ENAMETOOLONG 36     /* File name too long */
 #define ENOSYS      38      /* Function not implemented */
 #define ENOTEMPTY   39      /* Directory not empty */
+#define EPERM       1       /* Operation not permitted */
+#define ELOOP       40      /* Too many symbolic links encountered */
+
+/* ============================================================
+ *   Capability-aware VFS Operations (Phase 1)
+ * ============================================================ */
+
+/**
+ * Open a file with capability-based access control.
+ *
+ * @param path  File path to open
+ * @param flags Open flags (O_RDONLY, O_WRONLY, O_RDWR, O_CREAT, etc.)
+ * @param mode  File mode for creation
+ * @return Capability handle on success, FUT_INVALID_HANDLE on failure
+ */
+fut_handle_t fut_vfs_open_cap(const char *path, int flags, int mode);
+
+/**
+ * Read from a file using capability handle.
+ *
+ * @param handle Capability handle to file
+ * @param buffer Buffer to read into
+ * @param count  Number of bytes to read
+ * @return Number of bytes read, or negative error code
+ */
+long fut_vfs_read_cap(fut_handle_t handle, void *buffer, size_t count);
+
+/**
+ * Write to a file using capability handle.
+ *
+ * @param handle Capability handle to file
+ * @param buffer Buffer to write from
+ * @param count  Number of bytes to write
+ * @return Number of bytes written, or negative error code
+ */
+long fut_vfs_write_cap(fut_handle_t handle, const void *buffer, size_t count);
+
+/**
+ * Seek within a file using capability handle.
+ *
+ * @param handle Capability handle to file
+ * @param offset Seek offset
+ * @param whence Seek mode (SEEK_SET, SEEK_CUR, SEEK_END)
+ * @return New file offset, or negative error code
+ */
+long fut_vfs_lseek_cap(fut_handle_t handle, int64_t offset, int whence);
+
+/**
+ * Sync file data to storage using capability handle.
+ *
+ * @param handle Capability handle to file
+ * @return 0 on success, negative error code on failure
+ */
+int fut_vfs_fsync_cap(fut_handle_t handle);
+
+/**
+ * Get file statistics using capability handle.
+ *
+ * @param handle  Capability handle to file
+ * @param statbuf Buffer to receive file statistics
+ * @return 0 on success, negative error code on failure
+ */
+int fut_vfs_fstat_cap(fut_handle_t handle, struct fut_stat *statbuf);
+
+/**
+ * Close a file using capability handle.
+ *
+ * @param handle Capability handle to close
+ * @return 0 on success, negative error code on failure
+ */
+int fut_vfs_close_cap(fut_handle_t handle);
+
+/* ============================================================
+ *   Capability-aware Directory Operations
+ * ============================================================ */
+
+/**
+ * Create a directory relative to a parent handle.
+ *
+ * @param parent_handle Capability handle to parent directory
+ * @param name          Name of directory to create
+ * @param mode          Directory permissions
+ * @return 0 on success, negative error code on failure
+ */
+int fut_vfs_mkdirat_cap(fut_handle_t parent_handle, const char *name, int mode);
+
+/**
+ * Remove a directory relative to a parent handle.
+ *
+ * @param parent_handle Capability handle to parent directory
+ * @param name          Name of directory to remove
+ * @return 0 on success, negative error code on failure
+ */
+int fut_vfs_rmdirat_cap(fut_handle_t parent_handle, const char *name);
+
+/**
+ * Unlink (delete) a file relative to a parent handle.
+ *
+ * @param parent_handle Capability handle to parent directory
+ * @param name          Name of file to unlink
+ * @return 0 on success, negative error code on failure
+ */
+int fut_vfs_unlinkat_cap(fut_handle_t parent_handle, const char *name);
+
+/**
+ * Get file statistics relative to a parent handle.
+ *
+ * @param parent_handle Capability handle to parent directory
+ * @param name          Name of file to stat
+ * @param statbuf       Buffer to receive statistics
+ * @return 0 on success, negative error code on failure
+ */
+int fut_vfs_statat_cap(fut_handle_t parent_handle, const char *name, struct fut_stat *statbuf);
+
+/* ============================================================
+ *   Handle Transfer Operations
+ * ============================================================ */
+
+/**
+ * Duplicate a handle with reduced rights.
+ *
+ * @param handle     Source handle to duplicate
+ * @param new_rights Rights to grant to new handle (must be subset of original)
+ * @return New handle on success, FUT_INVALID_HANDLE on failure
+ */
+fut_handle_t fut_cap_handle_dup(fut_handle_t handle, fut_rights_t new_rights);
+
+/**
+ * Send a handle to another process.
+ *
+ * @param target_pid Process ID to send handle to
+ * @param handle     Handle to send
+ * @param rights     Rights to grant to receiver
+ * @return New handle in target process, or FUT_INVALID_HANDLE on failure
+ */
+fut_handle_t fut_cap_handle_send(uint64_t target_pid, fut_handle_t handle, fut_rights_t rights);
+
+/**
+ * Receive a handle from another process.
+ *
+ * @param source_pid Process ID to receive from
+ * @param rights_out Receives the rights of the received handle
+ * @return Received handle, or FUT_INVALID_HANDLE on failure
+ */
+fut_handle_t fut_cap_handle_recv(uint64_t source_pid, fut_rights_t *rights_out);
+
+/**
+ * Get the rights associated with a handle.
+ *
+ * @param handle Handle to query
+ * @return Rights bitmask, or FUT_RIGHT_NONE if invalid handle
+ */
+fut_rights_t fut_cap_get_rights(fut_handle_t handle);
+
+/**
+ * Validate that a handle has specific rights.
+ *
+ * @param handle   Handle to validate
+ * @param required Required rights bitmask
+ * @return true if handle has all required rights, false otherwise
+ */
+bool fut_cap_validate(fut_handle_t handle, fut_rights_t required);

@@ -399,6 +399,7 @@ KERNEL_SOURCES := \
     kernel/net/dns.c \
     kernel/crypto/fut_hmac.c \
     kernel/vfs/fut_vfs.c \
+    kernel/vfs/fut_vfs_cap.c \
     kernel/vfs/ramfs.c \
     kernel/vfs/vfs_credentials.c \
     kernel/vfs/fut_lock.c \

@@ -320,9 +320,9 @@ long sys_getdents64(unsigned int fd, void *dirp, unsigned int count) {
      * IMPLEMENTATION NOTES:
      * - Phase 3: Added 1MB size cap at lines 198-203 ✓
      * - Phase 5: Added early buffer writability check at lines 245-251 ✓
-     * - Phase 4 TODO: Validate d_reclen from VFS readdir
-     * - Phase 4 TODO: Add iteration limit for directory bombs
-     * - Phase 4 TODO: Add d_off overflow detection
+     * - Phase 5: Validate d_reclen calculation with overflow checks ✓ (lines 485-546)
+     * - Phase 4: Added iteration limit (max_entries=10000) for directory bombs ✓ (lines 425, 432-437)
+     * - Phase 4: Added d_off overflow detection via cookie comparison ✓ (lines 471-477)
      * - See Linux kernel: fs/readdir.c filldir64() for reference
      */
     char test_byte = 0;

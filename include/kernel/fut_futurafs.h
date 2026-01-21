@@ -30,6 +30,10 @@
 #define FUTURAFS_DIRECT_BLOCKS  12
 #define FUTURAFS_INDIRECT_BLOCK 1
 
+/* Formatting defaults */
+#define FUTURAFS_DEFAULT_INODE_RATIO  16384  /* One inode per 16KB of storage */
+#define FUTURAFS_MIN_INODES           16     /* Minimum number of inodes */
+
 /* ============================================================
  *   On-Disk Structures
  * ============================================================ */

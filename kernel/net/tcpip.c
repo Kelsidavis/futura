@@ -362,7 +362,7 @@ static void arp_handle_packet(const uint8_t *frame, size_t len) {
 
 int arp_resolve(uint32_t ip, eth_addr_t *mac) {
     /* Check if it's broadcast */
-    if (ip == 0xFFFFFFFF) {
+    if (ip == IP_BROADCAST_ADDR) {
         memset(*mac, 0xFF, ETH_ADDR_LEN);
         return 0;
     }
@@ -448,7 +448,7 @@ static void ip_send_packet(uint32_t dest_ip, uint8_t protocol,
 
     fut_printf("[IP-SEND] Resolving ARP for next_hop=0x%x\n", next_hop);
     if (arp_resolve(next_hop, &dest_mac) != 0) {
-        TCPIP_DEBUG("[IP] ARP resolution failed\n");
+        fut_printf("[IP] ERROR: ARP resolution failed for 0x%x\n", next_hop);
         return;
     }
     fut_printf("[IP-SEND] ARP resolved successfully\n");
@@ -456,7 +456,10 @@ static void ip_send_packet(uint32_t dest_ip, uint8_t protocol,
     /* Build packet */
     size_t total_len = ETH_HEADER_LEN + IP_HEADER_MIN_LEN + payload_len;
     uint8_t *packet = fut_malloc(total_len);
-    if (!packet) return;
+    if (!packet) {
+        fut_printf("[IP] ERROR: Failed to allocate %zu bytes for packet\n", total_len);
+        return;
+    }
 
     /* Ethernet header */
     eth_header_t *eth = (eth_header_t *)packet;
@@ -472,7 +475,7 @@ static void ip_send_packet(uint32_t dest_ip, uint8_t protocol,
     ip->total_length = htons(IP_HEADER_MIN_LEN + payload_len);
     ip->identification = htons(g_tcpip.ip_id_counter++);
     ip->flags_fragment = htons(IP_FLAG_DF);  /* Don't fragment */
-    ip->ttl = 64;
+    ip->ttl = IP_DEFAULT_TTL;
     ip->protocol = protocol;
     ip->src_addr = htonl(g_tcpip.ip_address);
     ip->dest_addr = htonl(dest_ip);
@@ -508,7 +511,10 @@ static void icmp_handle_packet(const uint8_t *ip_payload, size_t len,
         /* Build echo reply */
         size_t reply_len = len;
         uint8_t *reply = fut_malloc(reply_len);
-        if (!reply) return;
+        if (!reply) {
+            fut_printf("[ICMP] ERROR: Failed to allocate %zu bytes for echo reply\n", reply_len);
+            return;
+        }
 
         memcpy(reply, ip_payload, len);
         icmp_header_t *reply_icmp = (icmp_header_t *)reply;
@@ -826,8 +832,8 @@ static void ip_handle_packet(const uint8_t *frame, size_t len) {
 
     fut_printf("[IP-HANDLE] dest_ip=0x%x our_ip=0x%x\n", dest_ip, g_tcpip.ip_address);
 
-    /* Check if packet is for us */
-    if (dest_ip != g_tcpip.ip_address && dest_ip != 0xFFFFFFFF) {
+    /* Check if packet is for us (or broadcast) */
+    if (dest_ip != g_tcpip.ip_address && dest_ip != IP_BROADCAST_ADDR) {
         fut_printf("[IP-HANDLE] Packet not for us, ignoring\n");
         return;
     }
@@ -1301,7 +1307,9 @@ int tcpip_init(void) {
     }
 
     /* Start receive thread */
-    fut_thread_t *rx_thread = fut_thread_create(kernel_task, tcpip_rx_thread, NULL, 8192, 100);
+    fut_thread_t *rx_thread = fut_thread_create(kernel_task, tcpip_rx_thread, NULL,
+                                                 TCPIP_RX_THREAD_STACK_SIZE,
+                                                 TCPIP_RX_THREAD_PRIORITY);
     if (rx_thread) {
         /* Note: fut_thread_create() already added the thread to the scheduler */
         fut_printf("[TCP/IP] RX thread created and scheduled\n");

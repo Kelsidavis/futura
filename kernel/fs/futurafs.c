@@ -3882,14 +3882,14 @@ int fut_futurafs_format(struct fut_blockdev *dev, const char *label, uint32_t in
 
     /* Use default inode ratio if not specified */
     if (inode_ratio == 0) {
-        inode_ratio = 16384;  /* One inode per 16KB */
+        inode_ratio = FUTURAFS_DEFAULT_INODE_RATIO;
     }
 
     /* Calculate filesystem layout */
     uint64_t total_blocks = dev->num_blocks;
     uint64_t total_inodes = (dev->capacity / inode_ratio);
-    if (total_inodes < 16) {
-        total_inodes = 16;  /* Minimum inodes */
+    if (total_inodes < FUTURAFS_MIN_INODES) {
+        total_inodes = FUTURAFS_MIN_INODES;
     }
 
     uint64_t inode_table_blocks = (total_inodes * FUTURAFS_INODE_SIZE + FUTURAFS_BLOCK_SIZE - 1) / FUTURAFS_BLOCK_SIZE;

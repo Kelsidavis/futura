@@ -96,6 +96,10 @@ typedef struct __attribute__((packed)) {
 #define IP_FLAG_DF 0x4000  /* Don't Fragment */
 #define IP_FLAG_MF 0x2000  /* More Fragments */
 
+/* IP configuration */
+#define IP_DEFAULT_TTL      64          /* Default Time To Live */
+#define IP_BROADCAST_ADDR   0xFFFFFFFFU /* Broadcast address (255.255.255.255) */
+
 /* ============================================================================
  * ICMP (Internet Control Message Protocol)
  * ========================================================================= */
@@ -192,6 +196,10 @@ typedef enum {
 #define TCP_CONNECT_TIMEOUT_MS 30000  /* 30 seconds */
 #define TCP_RETRANSMIT_TIMEOUT_MS 1000  /* 1 second */
 #define TCP_MAX_RETRIES 5
+
+/* RX thread configuration */
+#define TCPIP_RX_THREAD_STACK_SIZE 8192  /* 8KB stack for RX thread */
+#define TCPIP_RX_THREAD_PRIORITY   100   /* RX thread scheduling priority */
 
 /* ============================================================================
  * Socket API Types

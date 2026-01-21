@@ -118,16 +118,12 @@ extern int fut_copy_from_user(void *to, const void *from, size_t size);
  *   - link(): Create hard link
  *   - symlink(): Create symbolic link
  *
- * Note: This is a stub implementation. The VFS layer currently does not
- * support atomic rename operations. A production implementation would
- * require adding a rename() operation to the filesystem interface.
- *
- * TODO Phase 3: Implement atomic rename in VFS:
- *   - Add rename() operation to fut_vnode_ops
- *   - Implement in RamFS (in-memory rename)
- *   - Implement in FuturaFS (log-structured rename)
- *   - Handle cross-directory rename (update parent inodes)
- *   - Ensure atomicity (no partial state visible)
+ * Phase 3 Implementation (Completed):
+ *   ✓ Added rename() operation to fut_vnode_ops
+ *   ✓ Implemented in RamFS (in-memory rename) - see line 367
+ *   ✓ Cross-directory rename with link/unlink fallback (lines 427-509)
+ *   ✓ Rollback protection for atomicity (lines 491-508)
+ *   ✓ Same-directory atomic rename (lines 359-376)
  *
  * TODO Phase 4: Cross-filesystem rename:
  *   - Detect cross-filesystem rename (compare st_dev)

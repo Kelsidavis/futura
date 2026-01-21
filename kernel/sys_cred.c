@@ -24,8 +24,8 @@ extern int fut_copy_to_user(void *to, const void *from, size_t size);
 static int has_cap_setuid(fut_task_t *task) {
     if (!task) return 0;
     /* Phase 3: Check CAP_SETUID capability (capability 7)
-     * Note: Capability system not yet implemented in fut_task structure.
-     * For now, grant privilege to root (uid 0) only. */
+     * Note: Capability fields exist in fut_task structure (cap_effective, cap_permitted, cap_inheritable)
+     * but full capability checking is not yet integrated. For now, grant privilege to root (uid 0) only. */
     return (task->uid == 0) ? 1 : 0;
 }
 

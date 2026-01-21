@@ -167,7 +167,6 @@ long sys_chmod(const char *pathname, uint32_t mode) {
      * For numeric, mode will be a 32-bit number; for symbolic strings we'd need different syscall
      * This is simplified: in real implementation, fchmodat() with AT_SYMLINK_NOFOLLOW flag exists
      */
-    /* Unused: const char *mode_type = (local_mode & 0777000) ? "special bits set" : "standard permissions"; */
 
     /* Phase 3: Validate mode - reject bits outside valid range (07777: special bits + permissions) */
     if (local_mode & ~07777) {

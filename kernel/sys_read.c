@@ -120,14 +120,11 @@ ssize_t sys_read(int fd, void *buf, size_t count) {
 
     fut_task_t *task = fut_task_current();
     if (!task) {
-        /* Temporarily disabled: fut_printf crashes with %zu on ARM64 */
-        /* fut_printf("[READ] read(fd=%d, count=%zu) -> ESRCH (no current task)\n", local_fd, local_count); */
         return -ESRCH;
     }
 
     /* Phase 2: Validate fd early */
     if (local_fd < 0) {
-        /* fut_printf("[READ] read(fd=%d, count=%zu) -> EBADF (negative fd)\n", local_fd, local_count); */
         return -EBADF;
     }
 
@@ -139,7 +136,6 @@ ssize_t sys_read(int fd, void *buf, size_t count) {
 
     /* Phase 2: Validate user buffer */
     if (!local_buf) {
-        /* fut_printf("[READ] read(fd=%d, buf=NULL, count=%zu) -> EFAULT (NULL buffer)\n", local_fd, local_count); */
         return -EFAULT;
     }
 

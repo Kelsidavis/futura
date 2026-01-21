@@ -210,17 +210,19 @@
  * - No protection against exponential fork growth
  *
  * DEFENSE STRATEGY:
- * [TODO] Implement RLIMIT_NPROC enforcement:
- *   - Before line 191, check parent_task->uid process count
- *   - Reject fork if user has >= RLIMIT_NPROC processes (default 4096)
- *   - Maintain per-UID process counter
+ * [DONE] Implement RLIMIT_NPROC enforcement:
+ *   - Check parent_task->uid process count via fut_task_count_by_uid()
+ *   - Reject fork if user has >= RLIMIT_NPROC processes (default 1024/2048)
+ *   - Uses existing per-UID counter from task list
  *   - Exempt root (UID 0) from limit (admin recovery)
+ *   - Implementation at lines 647-660
  *
- * [TODO] Add global PID limit check:
- *   - Check global process count before fut_task_create()
- *   - Reject fork if >= MAX_PIDS (e.g., 30000 of 32768)
- *   - Reserve PIDs for root user (last 1000 PIDs)
+ * [DONE] Add global PID limit check:
+ *   - Check global process count via fut_task_can_fork()
+ *   - Reject fork if >= FUT_MAX_TASKS_GLOBAL (30000)
+ *   - Reserve FUT_RESERVED_FOR_ROOT (1000) PIDs for root
  *   - Return -EAGAIN (resource temporarily unavailable)
+ *   - Implementation at lines 662-670
  *
  * [TODO] Implement fork rate limiting:
  *   - Track forks per second per UID
@@ -657,6 +659,15 @@ long sys_fork(void) {
                        parent_task->pid, parent_task->uid, current_count, rlim_nproc);
             return -EAGAIN;
         }
+    }
+
+    /* Phase 5: Enforce global PID limit (Attack Scenario 3 defense) */
+    /* Reserve some PIDs for root to allow admin recovery during fork bomb */
+    if (!fut_task_can_fork(parent_task->uid == 0)) {
+        FORK_LOG("[FORK] fork(parent_pid=%u, uid=%u) -> EAGAIN "
+                   "(global PID limit reached: %u tasks)\n",
+                   parent_task->pid, parent_task->uid, fut_task_get_global_count());
+        return -EAGAIN;
     }
 
     /* Create new child task */

@@ -23,9 +23,14 @@
 /* Global task list */
 fut_task_t *fut_task_list = NULL;  /* Exposed for stats/debugging */
 static _Atomic uint64_t next_pid __attribute__((aligned(8))) = 1;  /* 64-bit PID counter (8-byte aligned for ARM64 atomics) */
+static _Atomic uint32_t global_task_count = 0;  /* Total number of active tasks */
 
 /* Task list lock */
 static fut_spinlock_t task_list_lock = { .locked = 0 };
+
+/* Global task limits */
+#define FUT_MAX_TASKS_GLOBAL    30000  /* Leave headroom below 32768 PID limit */
+#define FUT_RESERVED_FOR_ROOT   1000   /* Reserve last 1000 PIDs for root */
 
 /* Resource limit constants (matching sys_prlimit.c) */
 #define RLIMIT_CPU        0   /* CPU time in seconds */
@@ -189,6 +194,7 @@ fut_task_t *fut_task_create(void) {
     }
     task->next = fut_task_list;
     fut_task_list = task;
+    atomic_fetch_add_explicit(&global_task_count, 1, memory_order_relaxed);
     fut_spinlock_release(&task_list_lock);
 
     return task;
@@ -299,6 +305,7 @@ void fut_task_destroy(fut_task_t *task) {
             prev->next = task->next;
         }
     }
+    atomic_fetch_sub_explicit(&global_task_count, 1, memory_order_relaxed);
     fut_spinlock_release(&task_list_lock);
 
     if (task->mm) {
@@ -557,4 +564,36 @@ int fut_task_count_by_uid(uint32_t uid) {
     }
     fut_spinlock_release(&task_list_lock);
     return count;
+}
+
+/**
+ * fut_task_get_global_count - Get total number of active tasks
+ *
+ * Returns the current global task count. Used for enforcing system-wide
+ * process limits and reserving PIDs for privileged users.
+ */
+uint32_t fut_task_get_global_count(void) {
+    return atomic_load_explicit(&global_task_count, memory_order_relaxed);
+}
+
+/**
+ * fut_task_can_fork - Check if a new process can be created
+ *
+ * @param is_root Whether the caller is root (UID 0)
+ * @return 1 if fork is allowed, 0 if system is at limit
+ *
+ * Enforces global task limits while reserving capacity for root.
+ * Non-root users are blocked at FUT_MAX_TASKS_GLOBAL - FUT_RESERVED_FOR_ROOT.
+ * Root can use the full capacity up to FUT_MAX_TASKS_GLOBAL.
+ */
+int fut_task_can_fork(int is_root) {
+    uint32_t count = fut_task_get_global_count();
+
+    if (is_root) {
+        /* Root can use full capacity */
+        return count < FUT_MAX_TASKS_GLOBAL;
+    } else {
+        /* Non-root users have lower limit to reserve PIDs for root */
+        return count < (FUT_MAX_TASKS_GLOBAL - FUT_RESERVED_FOR_ROOT);
+    }
 }

@@ -183,6 +183,21 @@ int fut_task_foreach_pgid(uint64_t pgid, void (*callback)(fut_task_t *task, void
 int fut_task_count_by_uid(uint32_t uid);
 
 /**
+ * Get total number of active tasks system-wide.
+ *
+ * @return Current global task count
+ */
+uint32_t fut_task_get_global_count(void);
+
+/**
+ * Check if a new process can be created (global limit check).
+ *
+ * @param is_root Whether the caller is root (UID 0)
+ * @return 1 if fork is allowed, 0 if system is at limit
+ */
+int fut_task_can_fork(int is_root);
+
+/**
  * Get the effective UID of a task.
  *
  * @param task Task (NULL for current task)

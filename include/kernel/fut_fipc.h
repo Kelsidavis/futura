@@ -31,8 +31,8 @@ void fut_fipc_assert_fail(const char *expr, const char *file, int line);
 #endif
 
 /* Freestanding environment: define ssize_t */
-#ifndef _SSIZE_T_DEFINED
-#define _SSIZE_T_DEFINED
+#ifndef __ssize_t_defined
+#define __ssize_t_defined 1
 typedef long ssize_t;
 #endif
 

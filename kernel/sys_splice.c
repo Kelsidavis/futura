@@ -20,7 +20,10 @@
 #include <stddef.h>
 
 /* Signed size type for return values */
+#ifndef __ssize_t_defined
+#define __ssize_t_defined 1
 typedef long ssize_t;
+#endif
 
 extern void fut_printf(const char *fmt, ...);
 

@@ -15,8 +15,8 @@
 #include "fut_object.h"  /* For fut_handle_t capability handles */
 
 /* Freestanding environment: define ssize_t */
-#ifndef _SSIZE_T_DEFINED
-#define _SSIZE_T_DEFINED
+#ifndef __ssize_t_defined
+#define __ssize_t_defined 1
 typedef long ssize_t;
 #endif
 

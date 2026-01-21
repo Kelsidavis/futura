@@ -13,7 +13,10 @@
 #include <stdint.h>
 #include <stddef.h>
 
+#ifndef __ssize_t_defined
+#define __ssize_t_defined 1
 typedef long ssize_t;
+#endif
 
 /* Platform detection */
 #if defined(__x86_64__) || defined(__amd64__)

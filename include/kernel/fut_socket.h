@@ -15,7 +15,10 @@
 #include <kernel/fut_sched.h>
 
 /* Define ssize_t for freestanding environment */
+#ifndef __ssize_t_defined
+#define __ssize_t_defined 1
 typedef int64_t ssize_t;
+#endif
 
 /* ============================================================
  *   Socket States

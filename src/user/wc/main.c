@@ -8,7 +8,7 @@
 #include <stddef.h>
 #include "../libfutura/syscall_portable.h"
 
-typedef long ssize_t;
+/* ssize_t is provided by syscall_portable.h */
 
 static inline ssize_t sys_read(int fd, void *buf, size_t count) {
     return syscall3(__NR_read, fd, (long)buf, count);

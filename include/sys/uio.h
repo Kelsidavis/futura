@@ -45,7 +45,8 @@ struct iovec {
  *   ssize_t type (for return values)
  * ============================================================ */
 
-#ifndef ssize_t
+#ifndef __ssize_t_defined
+#define __ssize_t_defined 1
 #if defined(__LP64__) || defined(__x86_64__) || defined(__aarch64__)
 typedef int64_t ssize_t;
 #else

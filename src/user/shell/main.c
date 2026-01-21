@@ -53,7 +53,7 @@ static struct shell_var shell_vars[MAX_VARS];
 static int last_exit_status = 0;
 
 /* Type definitions */
-typedef long ssize_t;
+/* ssize_t is provided by user/libfutura.h */
 typedef int pid_t;
 
 /* Environment array for passing to execve */

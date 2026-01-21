@@ -14,8 +14,8 @@
 #include <kernel/fut_sched.h>
 #include <shared/termios.h>
 
-#ifndef _SSIZE_T_DEFINED
-#define _SSIZE_T_DEFINED
+#ifndef __ssize_t_defined
+#define __ssize_t_defined 1
 typedef long ssize_t;
 #endif
 

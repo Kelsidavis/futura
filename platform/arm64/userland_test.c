@@ -16,7 +16,10 @@
 #include <shared/fut_stat.h>      /* For struct fut_stat */
 
 /* Type definitions */
+#ifndef __ssize_t_defined
+#define __ssize_t_defined 1
 typedef long ssize_t;
+#endif
 
 /* errno values provided by errno.h */
 #include <errno.h>

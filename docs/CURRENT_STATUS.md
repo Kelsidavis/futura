@@ -244,6 +244,63 @@ See `docs/ARM64_STATUS.md` for detailed ARM64 progress.
   - Edge-triggered (EPOLLET) and one-shot (EPOLLONESHOT) modes
   - epoll_data union and epoll_event structure definitions
 
+### January 21, 2026 Session — POSIX Header Consolidation
+- ✅ **sys/socket.h**: Created comprehensive BSD socket interface header with:
+  - Address families (AF_UNSPEC, AF_UNIX, AF_LOCAL, AF_INET, AF_INET6, AF_NETLINK, AF_PACKET)
+  - Socket types (SOCK_STREAM, SOCK_DGRAM, SOCK_RAW, SOCK_SEQPACKET)
+  - Socket options (SOL_SOCKET level: SO_REUSEADDR, SO_KEEPALIVE, SO_RCVBUF, etc.)
+  - Message flags (MSG_OOB, MSG_PEEK, MSG_DONTWAIT, MSG_NOSIGNAL, etc.)
+  - Shutdown constants (SHUT_RD, SHUT_WR, SHUT_RDWR)
+  - Address structures (sockaddr, sockaddr_un, sockaddr_in, sockaddr_storage)
+  - All standard socket function declarations
+- ✅ **sys/wait.h**: Created comprehensive wait interface header with:
+  - Wait option flags (WNOHANG, WUNTRACED, WCONTINUED, WEXITED, WNOWAIT)
+  - Status evaluation macros (WIFEXITED, WEXITSTATUS, WIFSIGNALED, WTERMSIG, etc.)
+  - Type definitions (pid_t, id_t, idtype_t for waitid)
+  - Function declarations (wait, waitpid, wait3, wait4)
+- ✅ **sys/mman.h**: Created comprehensive memory management header with:
+  - Protection flags (PROT_NONE, PROT_READ, PROT_WRITE, PROT_EXEC)
+  - Mapping flags (MAP_SHARED, MAP_PRIVATE, MAP_FIXED, MAP_ANONYMOUS, MAP_STACK, etc.)
+  - Remap flags (MREMAP_MAYMOVE, MREMAP_FIXED, MREMAP_DONTUNMAP)
+  - Sync flags (MS_ASYNC, MS_SYNC, MS_INVALIDATE)
+  - Madvise flags (MADV_NORMAL through MADV_DODUMP)
+  - Mlock flags (MCL_CURRENT, MCL_FUTURE, MCL_ONFAULT)
+  - Consolidates definitions from 14+ source files
+- ✅ **sys/resource.h**: Created comprehensive resource limits header with:
+  - RLIMIT_* constants (CPU, FSIZE, DATA, STACK, NOFILE, MEMLOCK, AS, etc.)
+  - rlim_t type and RLIM_INFINITY constant
+  - struct rlimit and struct rlimit64
+  - RUSAGE_* constants and struct rusage
+  - PRIO_* constants for process priority
+  - Consolidates definitions from 4+ kernel files
+- ✅ **sched.h**: Created comprehensive scheduling header with:
+  - SCHED_* policies (OTHER, FIFO, RR, BATCH, IDLE, DEADLINE)
+  - SCHED_FLAG_* scheduling flags
+  - CLONE_* flags for clone/clone3 syscalls (21 flags total)
+  - struct sched_param and struct sched_attr
+  - cpu_set_t and CPU_* macros for CPU affinity
+- ✅ **sys/mount.h**: Created comprehensive mount operations header with:
+  - MS_* mount flags (RDONLY, NOSUID, NODEV, NOEXEC, BIND, MOVE, etc.)
+  - Mount propagation flags (PRIVATE, SLAVE, SHARED, UNBINDABLE)
+  - MNT_* and UMOUNT_* unmount flags
+- ✅ **sys/uio.h**: Created vectored I/O header with:
+  - struct iovec for scatter-gather operations
+  - UIO_MAXIOV and IOV_MAX constants
+  - readv, writev, preadv, pwritev function declarations
+  - preadv2, pwritev2 with RWF_* flags
+  - process_vm_readv, process_vm_writev declarations
+  - Consolidates struct iovec from 8+ source files
+- ✅ **poll.h expanded**: Enhanced poll header with:
+  - Proper copyright header and documentation
+  - Additional event flags (POLLRDNORM, POLLRDBAND, POLLWRNORM, POLLWRBAND)
+  - ppoll() function declaration
+  - Header guards for compatibility
+- ✅ **sys/time.h expanded**: Enhanced time header with:
+  - ITIMER_* constants (REAL, VIRTUAL, PROF)
+  - struct itimerval for interval timers
+  - Time manipulation macros (timerisset, timerclear, timercmp, timeradd, timersub)
+  - Additional function declarations (setitimer, getitimer, utimes, futimes)
+
 ## Current Focus
 
 ### x86-64 Platform

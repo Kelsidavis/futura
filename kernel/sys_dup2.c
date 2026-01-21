@@ -16,6 +16,7 @@
 #include <kernel/errno.h>
 #include <kernel/fut_vfs.h>
 #include <kernel/fut_task.h>
+#include <kernel/fut_fd_util.h>
 
 extern void fut_printf(const char *fmt, ...);
 extern int propagate_socket_dup(int oldfd, int newfd);
@@ -191,18 +192,7 @@ long sys_dup2(int oldfd, int newfd) {
     }
 
     /* Phase 2: Categorize FD range */
-    const char *newfd_category;
-    if (local_newfd <= 2) {
-        newfd_category = "standard (stdin/stdout/stderr)";
-    } else if (local_newfd < 10) {
-        newfd_category = "low (common user FDs)";
-    } else if (local_newfd < 100) {
-        newfd_category = "typical (normal range)";
-    } else if (local_newfd < 1024) {
-        newfd_category = "high (many open files)";
-    } else {
-        newfd_category = "very high (unusual)";
-    }
+    const char *newfd_category = fut_fd_category(local_newfd);
     (void)newfd_category;  /* Used only in debug logging */
 
     /* Get the file structure for oldfd from current task's FD table */

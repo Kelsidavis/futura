@@ -15,6 +15,7 @@
 #include <kernel/errno.h>
 #include <kernel/fut_vfs.h>
 #include <kernel/fut_task.h>
+#include <kernel/fut_fd_util.h>
 
 extern void fut_printf(const char *fmt, ...);
 extern struct fut_file *vfs_get_file_from_task(struct fut_task *task, int fd);
@@ -188,18 +189,7 @@ long sys_dup(int oldfd) {
     }
 
     /* Phase 2: Categorize oldfd range */
-    const char *oldfd_category;
-    if (local_oldfd <= 2) {
-        oldfd_category = "standard (stdin/stdout/stderr)";
-    } else if (local_oldfd < 10) {
-        oldfd_category = "low (common user FDs)";
-    } else if (local_oldfd < 100) {
-        oldfd_category = "typical (normal range)";
-    } else if (local_oldfd < 1024) {
-        oldfd_category = "high (many open files)";
-    } else {
-        oldfd_category = "very high (unusual)";
-    }
+    const char *oldfd_category = fut_fd_category(local_oldfd);
 
     /* Validate FD table exists */
     if (!task->fd_table) {

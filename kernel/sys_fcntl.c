@@ -207,6 +207,7 @@
 #include <kernel/fut_task.h>
 #include <kernel/errno.h>
 #include <kernel/fut_vfs.h>
+#include <kernel/fut_fd_util.h>
 #include <stdint.h>
 
 extern void fut_printf(const char *fmt, ...);
@@ -369,18 +370,7 @@ long sys_fcntl(int fd, int cmd, uint64_t arg) {
     }
 
     /* Phase 2: Categorize FD range */
-    const char *fd_category;
-    if (local_fd <= 2) {
-        fd_category = "standard (stdin/stdout/stderr)";
-    } else if (local_fd < 10) {
-        fd_category = "low (common user FDs)";
-    } else if (local_fd < 100) {
-        fd_category = "typical (normal range)";
-    } else if (local_fd < 1024) {
-        fd_category = "high (many open files)";
-    } else {
-        fd_category = "very high (unusual)";
-    }
+    const char *fd_category = fut_fd_category(local_fd);
 
     /* Get file structure for this fd from task's FD table */
     struct fut_file *file = vfs_get_file_from_task(task, local_fd);
@@ -668,18 +658,7 @@ long sys_fcntl(int fd, int cmd, uint64_t arg) {
         file->refcount++;
 
         /* Phase 2: Categorize minfd range */
-        const char *minfd_category;
-        if (minfd <= 2) {
-            minfd_category = "standard (stdin/stdout/stderr)";
-        } else if (minfd < 10) {
-            minfd_category = "low (common user FDs)";
-        } else if (minfd < 100) {
-            minfd_category = "typical (normal range)";
-        } else if (minfd < 1024) {
-            minfd_category = "high (many open files)";
-        } else {
-            minfd_category = "very high (unusual)";
-        }
+        const char *minfd_category = fut_fd_category(minfd);
 
         /* Find first available fd >= minfd */
         int newfd = minfd;
@@ -701,18 +680,7 @@ long sys_fcntl(int fd, int cmd, uint64_t arg) {
         }
 
         /* Phase 2: Categorize newfd range */
-        const char *newfd_category;
-        if (newfd <= 2) {
-            newfd_category = "standard (stdin/stdout/stderr)";
-        } else if (newfd < 10) {
-            newfd_category = "low (common user FDs)";
-        } else if (newfd < 100) {
-            newfd_category = "typical (normal range)";
-        } else if (newfd < 1024) {
-            newfd_category = "high (many open files)";
-        } else {
-            newfd_category = "very high (unusual)";
-        }
+        const char *newfd_category = fut_fd_category(newfd);
 
         /* Allocate newfd pointing to same file in task's FD table */
         int ret = vfs_alloc_specific_fd_for_task(task, newfd, file);

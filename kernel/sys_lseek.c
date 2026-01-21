@@ -16,6 +16,7 @@
 #include <kernel/fut_vfs.h>
 #include <kernel/fut_task.h>
 #include <kernel/errno.h>
+#include <kernel/fut_fd_util.h>
 #include <stdint.h>
 
 extern void fut_printf(const char *fmt, ...);
@@ -184,18 +185,7 @@ int64_t sys_lseek(int fd, int64_t offset, int whence) {
     }
 
     /* Phase 2: Categorize FD range */
-    const char *fd_category;
-    if (fd <= 2) {
-        fd_category = "standard (stdin/stdout/stderr)";
-    } else if (fd < 10) {
-        fd_category = "low (common user FDs)";
-    } else if (fd < 100) {
-        fd_category = "typical (normal range)";
-    } else if (fd < 1024) {
-        fd_category = "high (many open files)";
-    } else {
-        fd_category = "very high (unusual)";
-    }
+    const char *fd_category = fut_fd_category(fd);
 
     /* Phase 2: Get old position before seek (for diagnostics) */
     int64_t old_pos = fut_vfs_lseek(fd, 0, SEEK_CUR);

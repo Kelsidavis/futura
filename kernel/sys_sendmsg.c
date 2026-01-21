@@ -14,6 +14,7 @@
 #include <kernel/fut_memory.h>
 #include <kernel/uaccess.h>
 #include <kernel/errno.h>
+#include <sys/uio.h>  /* For struct iovec */
 #include <stddef.h>
 #include <stdint.h>
 
@@ -30,12 +31,6 @@ extern struct fut_file *vfs_get_file(int fd);
 #endif
 
 typedef uint32_t socklen_t;
-
-/* struct iovec for scatter-gather I/O */
-struct iovec {
-    void *iov_base;           /* Starting address */
-    size_t iov_len;           /* Number of bytes */
-};
 
 /* struct msghdr for sendmsg/recvmsg */
 struct msghdr {

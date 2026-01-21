@@ -10,12 +10,8 @@
 #include <kernel/fut_task.h>
 #include <kernel/errno.h>
 #include <kernel/fut_vfs.h>
+#include <sys/uio.h>  /* For struct iovec, UIO_MAXIOV, ssize_t */
 #include <stdint.h>
-
-#ifndef _SSIZE_T_DEFINED
-#define _SSIZE_T_DEFINED
-typedef long ssize_t;
-#endif
 
 extern void fut_printf(const char *fmt, ...);
 extern fut_task_t *fut_task_current(void);
@@ -24,15 +20,6 @@ extern int fut_copy_to_user(void *to, const void *from, size_t size);
 extern void *fut_malloc(size_t size);
 extern void fut_free(void *ptr);
 extern struct fut_file *vfs_get_file_from_task(struct fut_task *task, int fd);
-
-/* iovec structure for scatter-gather I/O */
-struct iovec {
-    void *iov_base;   /* Starting address of buffer */
-    size_t iov_len;   /* Size of buffer */
-};
-
-/* Maximum number of iovecs (for safety) */
-#define UIO_MAXIOV 1024
 
 /**
  * preadv() - Read data into multiple buffers from specific offset

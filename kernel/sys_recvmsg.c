@@ -15,6 +15,7 @@
 #include <kernel/uaccess.h>
 #include <kernel/errno.h>
 #include <kernel/fut_socket.h>
+#include <sys/uio.h>  /* For struct iovec */
 #include <stddef.h>
 #include <stdint.h>
 
@@ -32,12 +33,6 @@ extern fut_socket_t *get_socket_from_fd(int fd);
 #endif
 
 typedef uint32_t socklen_t;
-
-/* struct iovec for scatter-gather I/O */
-struct iovec {
-    void *iov_base;           /* Starting address */
-    size_t iov_len;           /* Number of bytes */
-};
 
 /* struct msghdr for sendmsg/recvmsg */
 struct msghdr {

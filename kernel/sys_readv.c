@@ -9,12 +9,8 @@
 
 #include <kernel/fut_task.h>
 #include <kernel/errno.h>
+#include <sys/uio.h>  /* For struct iovec, UIO_MAXIOV, ssize_t */
 #include <stdint.h>
-
-#ifndef _SSIZE_T_DEFINED
-#define _SSIZE_T_DEFINED
-typedef long ssize_t;
-#endif
 
 extern void fut_printf(const char *fmt, ...);
 extern fut_task_t *fut_task_current(void);
@@ -22,15 +18,6 @@ extern int fut_copy_from_user(void *to, const void *from, size_t size);
 extern ssize_t fut_vfs_read(int fd, void *buf, size_t count);
 extern void *fut_malloc(size_t size);
 extern void fut_free(void *ptr);
-
-/* iovec structure for scatter-gather I/O */
-struct iovec {
-    void *iov_base;   /* Starting address of buffer */
-    size_t iov_len;   /* Size of buffer */
-};
-
-/* Maximum number of iovecs (for safety) */
-#define UIO_MAXIOV 1024
 
 /* ============================================================================
  * PHASE 5 SECURITY HARDENING: readv() - Scatter-Gather I/O Vector Validation

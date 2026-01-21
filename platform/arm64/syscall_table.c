@@ -23,6 +23,7 @@
 #include <kernel/fut_task.h>
 #include <shared/fut_sigevent.h>  /* For struct sigevent, timer_t */
 #include <shared/fut_stat.h>      /* For struct fut_stat, S_IF* */
+#include <sys/uio.h>              /* For struct iovec */
 
 /* Debug control - set to 0 to disable verbose syscall logging */
 #define DEBUG_SYSCALL 0
@@ -80,11 +81,7 @@ extern long sys_getcwd(char *buf, size_t size);
 extern long sys_chdir(const char *pathname);
 extern long sys_echo(const char *u_in, char *u_out, size_t n);
 
-/* iovec structure for vectored I/O */
-struct iovec {
-    void *iov_base;  /* Starting address */
-    size_t iov_len;  /* Number of bytes */
-};
+/* struct iovec provided by sys/uio.h */
 
 extern long sys_readv(int fd, const struct iovec *iov, int iovcnt);
 extern long sys_writev(int fd, const struct iovec *iov, int iovcnt);

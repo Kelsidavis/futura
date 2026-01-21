@@ -1,12 +1,13 @@
-// SPDX-License-Identifier: MPL-2.0
-/*
- * fut_mm.c - Per-task memory context management
+/* kernel/memory/fut_mm.c - Per-task memory context management
+ *
+ * Copyright (c) 2025 Kelsi Davis
+ * Licensed under the MPL v2.0 — see LICENSE for details.
  *
  * Establishes a minimal MM container around fut_vmem_context_t so the kernel
- * can track process address spaces, switch CR3 during scheduling, and expose
- * the active page tables to uaccess helpers.
+ * can track process address spaces, switch page tables during scheduling, and
+ * expose the active page tables to uaccess helpers.
  *
- * NOTE: This supports both x86_64 and ARM64 architectures.
+ * Supports both x86_64 (CR3) and ARM64 (TTBR0) architectures.
  */
 
 /* Common includes for all architectures */

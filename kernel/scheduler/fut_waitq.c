@@ -1,6 +1,9 @@
-// SPDX-License-Identifier: MPL-2.0
-/*
- * fut_waitq.c - Wait queue primitives
+/* kernel/scheduler/fut_waitq.c - Wait queue primitives
+ *
+ * Copyright (c) 2025 Kelsi Davis
+ * Licensed under the MPL v2.0 — see LICENSE for details.
+ *
+ * Implements wait queues for blocking thread operations (waitpid, futex, timers, I/O).
  */
 
 #include "../../include/kernel/fut_waitq.h"

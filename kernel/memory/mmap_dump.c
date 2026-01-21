@@ -1,4 +1,10 @@
-// SPDX-License-Identifier: MPL-2.0
+/* kernel/memory/mmap_dump.c - Memory map debugging utilities
+ *
+ * Copyright (c) 2025 Kelsi Davis
+ * Licensed under the MPL v2.0 — see LICENSE for details.
+ *
+ * Provides utilities for tracking and dumping memory map entries for debugging.
+ */
 
 #include <kernel/fut_memory.h>
 

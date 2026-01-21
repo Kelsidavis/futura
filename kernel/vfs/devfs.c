@@ -1,6 +1,9 @@
-// SPDX-License-Identifier: MPL-2.0
-/*
- * devfs.c - Minimal character device registry
+/* kernel/vfs/devfs.c - Minimal character device registry
+ *
+ * Copyright (c) 2025 Kelsi Davis
+ * Licensed under the MPL v2.0 — see LICENSE for details.
+ *
+ * Provides minimal character device node registration and lookup for /dev.
  */
 
 #include <kernel/devfs.h>

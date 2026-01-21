@@ -438,6 +438,14 @@ See `docs/ARM64_STATUS.md` for detailed ARM64 progress.
 - ✅ **time_t/clockid_t standardization**: Fixed user/time.h to use proper
   __time_t_defined and __clockid_t_defined guards instead of incorrect
   #ifndef time_t / #ifndef clockid_t macro checks
+- ✅ **struct rlimit consolidation**: Updated kernel files to use sys/resource.h:
+  - kernel/sys_proc.c: Removed 20 lines of local struct rlimit and RLIMIT_* definitions
+  - platform/arm64/syscall_table.c: Removed 10 lines of local struct rlimit/rlimit64
+- ✅ **fcntl.h mode_t**: Updated to use sys/types.h instead of local typedef
+- ✅ **epoll_event consolidation**:
+  - src/user/libfutura/epoll.c: Now uses sys/epoll.h (removed 26 lines of duplicates)
+  - Added proper _STRUCT_EPOLL_EVENT and _EPOLL_DATA_T guards to sys/epoll.h
+  - kernel/sys_epoll.c: Added guard and documented kernel's simpler uint64_t data field
 
 ## Current Focus
 

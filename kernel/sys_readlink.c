@@ -33,10 +33,10 @@ extern int fut_copy_to_user(void *to, const void *from, size_t size);
  * @param bufsiz  Size of the buffer
  *
  * Returns:
- *   - Number of bytes placed in buffer on success (when implemented)
- *   - -ENOSYS (not implemented) - current stub behavior
+ *   - Number of bytes placed in buffer on success
+ *   - -ENOSYS if filesystem doesn't support readlink operation
  *
- * Future error codes (when implemented):
+ * Error codes:
  *   - -EFAULT if path or buf is inaccessible
  *   - -EINVAL if path is empty, NULL, or bufsiz <= 0
  *   - -ENOENT if symbolic link doesn't exist
@@ -46,8 +46,8 @@ extern int fut_copy_to_user(void *to, const void *from, size_t size);
  *   - -ENAMETOOLONG if pathname too long
  *   - -EACCES if search permission denied on path component
  *
- * Behavior (when implemented):
- *   - Reads symbolic link target into buffer
+ * Behavior:
+ *   - Reads symbolic link target into buffer via VFS readlink operation
  *   - Does not null-terminate the buffer
  *   - Returns number of bytes placed in buffer
  *   - If link target is longer than bufsiz, it is truncated

@@ -182,6 +182,31 @@
 #define EHOSTUNREACH 113
 #endif
 
+/* Network socket error codes */
+#ifndef EAFNOSUPPORT
+#define EAFNOSUPPORT 97
+#endif
+
+#ifndef EADDRINUSE
+#define EADDRINUSE  98
+#endif
+
+#ifndef ECONNABORTED
+#define ECONNABORTED 103
+#endif
+
+#ifndef ECONNREFUSED
+#define ECONNREFUSED 111
+#endif
+
+#ifndef EALREADY
+#define EALREADY    114
+#endif
+
+#ifndef EINPROGRESS
+#define EINPROGRESS 115
+#endif
+
 #ifndef phys_addr_t
 #include <stdint.h>
 typedef uint64_t phys_addr_t;

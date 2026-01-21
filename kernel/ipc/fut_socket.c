@@ -342,12 +342,12 @@ void fut_socket_unref(fut_socket_t *socket) {
  */
 int fut_socket_bind(fut_socket_t *socket, const char *path) {
     if (!socket || !path || socket->state != FUT_SOCK_CREATED) {
-        return -1;  /* EINVAL */
+        return -EINVAL;
     }
 
     size_t path_len = strlen(path);
     if (path_len == 0 || path_len > 108) {
-        return -1;  /* EINVAL */
+        return -EINVAL;
     }
 
     /* Check if path already bound (allow SO_REUSEADDR-like behavior for unix sockets)
@@ -370,7 +370,7 @@ int fut_socket_bind(fut_socket_t *socket, const char *path) {
                 fut_printf("[SOCKET-BIND-CHECK] Socket %u has active peers (refcount=%d), blocking bind\n",
                            socket_registry[i]->socket_id, socket_registry[i]->refcount);
                 fut_spinlock_release(&socket_lock);
-                return -48;  /* EADDRINUSE */
+                return -EADDRINUSE;
             }
             /* Socket has no active peers - allow rebinding (SO_REUSEADDR semantics) */
             fut_printf("[SOCKET-BIND-CHECK] Socket %u has no active peers, allowing rebinding\n",
@@ -428,7 +428,7 @@ int fut_socket_bind(fut_socket_t *socket, const char *path) {
  */
 int fut_socket_listen(fut_socket_t *socket, int backlog) {
     if (!socket || socket->state != FUT_SOCK_BOUND || socket->listener) {
-        return -1;  /* EINVAL */
+        return -EINVAL;
     }
 
     fut_socket_listener_t *listener = fut_malloc(sizeof(fut_socket_listener_t));
@@ -461,7 +461,7 @@ int fut_socket_listen(fut_socket_t *socket, int backlog) {
  */
 int fut_socket_accept(fut_socket_t *listener, fut_socket_t **out_socket) {
     if (!listener || !out_socket || !listener->listener) {
-        return -1;  /* EINVAL */
+        return -EINVAL;
     }
 
     fut_socket_listener_t *queue = listener->listener;
@@ -469,7 +469,7 @@ int fut_socket_accept(fut_socket_t *listener, fut_socket_t **out_socket) {
     /* Try to get pending connection */
     if (queue->queue_count == 0) {
         /* No pending connections */
-        return -11;  /* EAGAIN - caller must retry or use blocking I/O */
+        return -EAGAIN;  /* Caller must retry or use blocking I/O */
     }
 
     /* Dequeue pending connection */
@@ -692,20 +692,20 @@ fut_socket_t *fut_socket_find_listener(const char *path) {
  */
 int fut_socket_connect(fut_socket_t *socket, const char *target_path) {
     if (!socket || !target_path) {
-        return -1;  /* EINVAL */
+        return -EINVAL;
     }
 
     /* Find listening socket */
     fut_socket_t *listener = fut_socket_find_listener(target_path);
     if (!listener) {
-        return -111;  /* ECONNREFUSED */
+        return -ECONNREFUSED;
     }
 
     /* Check if listener has space in backlog */
     fut_socket_listener_t *queue = listener->listener;
     if ((int)queue->queue_count >= queue->backlog) {
         fut_socket_unref(listener);
-        return -111;  /* ECONNREFUSED */
+        return -ECONNREFUSED;
     }
 
     /* Allocate connect wait queue if needed (for blocking connect) */
@@ -750,13 +750,13 @@ int fut_socket_connect(fut_socket_t *socket, const char *target_path) {
  */
 ssize_t fut_socket_send(fut_socket_t *socket, const void *buf, size_t len) {
     if (!socket || !buf) {
-        return -1;  /* EINVAL */
+        return -EINVAL;
     }
 
     /* Wait for connection to complete if socket is still connecting */
     if (socket->state == FUT_SOCK_CONNECTING) {
         if (socket->flags & 0x800) {  /* O_NONBLOCK */
-            return -11;  /* EAGAIN */
+            return -EAGAIN;
         }
         /* Block until connection completes */
         if (socket->connect_waitq) {
@@ -765,14 +765,14 @@ ssize_t fut_socket_send(fut_socket_t *socket, const void *buf, size_t len) {
     }
 
     if (socket->state != FUT_SOCK_CONNECTED || !socket->pair) {
-        return -107;  /* ENOTCONN */
+        return -ENOTCONN;
     }
 
     /* Phase 4: Enforce shutdown_wr flag */
     if (socket->shutdown_wr) {
         SOCKET_LOG("[SOCKET] Socket %u send blocked: write channel shutdown (SHUT_WR)\n",
                    socket->socket_id);
-        return -32;  /* EPIPE - broken pipe */
+        return -EPIPE;  /* Broken pipe */
     }
 
     /* With separate socket objects for client and server, each socket's
@@ -794,7 +794,7 @@ ssize_t fut_socket_send(fut_socket_t *socket, const void *buf, size_t len) {
     while (available == 0) {
         if (socket->flags & 0x800) {  /* O_NONBLOCK */
             fut_spinlock_release(&pair->lock);
-            return -11;  /* EAGAIN */
+            return -EAGAIN;
         }
         /* Blocking socket: wait for receiver to read data */
         fut_waitq_sleep_locked(pair->send_waitq, &pair->lock, FUT_THREAD_BLOCKED);
@@ -833,13 +833,13 @@ ssize_t fut_socket_send(fut_socket_t *socket, const void *buf, size_t len) {
  */
 ssize_t fut_socket_recv(fut_socket_t *socket, void *buf, size_t len) {
     if (!socket || !buf) {
-        return -1;  /* EINVAL */
+        return -EINVAL;
     }
 
     /* Wait for connection to complete if socket is still connecting */
     if (socket->state == FUT_SOCK_CONNECTING) {
         if (socket->flags & 0x800) {  /* O_NONBLOCK */
-            return -11;  /* EAGAIN */
+            return -EAGAIN;
         }
         /* Block until connection completes */
         if (socket->connect_waitq) {
@@ -848,7 +848,7 @@ ssize_t fut_socket_recv(fut_socket_t *socket, void *buf, size_t len) {
     }
 
     if (socket->state != FUT_SOCK_CONNECTED || !socket->pair) {
-        return -107;  /* ENOTCONN */
+        return -ENOTCONN;
     }
 
     /* Phase 4: Enforce shutdown_rd flag */
@@ -864,7 +864,7 @@ ssize_t fut_socket_recv(fut_socket_t *socket, void *buf, size_t len) {
      * - Server socket: pair_reverse = forward buffer (receives client→server)
      * No heuristics needed - just use socket->pair_reverse directly */
     if (!socket->pair_reverse) {
-        return -1;  /* EINVAL - socket not properly connected */
+        return -EINVAL;  /* Socket not properly connected */
     }
     fut_socket_pair_t *pair = socket->pair_reverse;
 
@@ -877,7 +877,7 @@ ssize_t fut_socket_recv(fut_socket_t *socket, void *buf, size_t len) {
     while (available == 0) {
         if (socket->flags & 0x800) {  /* O_NONBLOCK */
             fut_spinlock_release(&pair->lock);
-            return -11;  /* EAGAIN */
+            return -EAGAIN;
         }
         /* Blocking socket: wait for sender to write data */
         fut_waitq_sleep_locked(pair->recv_waitq, &pair->lock, FUT_THREAD_BLOCKED);
@@ -920,7 +920,7 @@ ssize_t fut_socket_recv(fut_socket_t *socket, void *buf, size_t len) {
  */
 int fut_socket_close(fut_socket_t *socket) {
     if (!socket) {
-        return -1;  /* EINVAL */
+        return -EINVAL;
     }
 
     socket->state = FUT_SOCK_CLOSED;

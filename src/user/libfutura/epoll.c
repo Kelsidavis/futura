@@ -3,34 +3,9 @@
 #include <errno.h>
 #include <stdint.h>
 #include <stddef.h>
+#include <sys/epoll.h>
 
 #include <user/sys.h>
-
-#ifndef EPOLL_CTL_ADD
-#define EPOLL_CTL_ADD 1
-#endif
-#ifndef EPOLL_CTL_DEL
-#define EPOLL_CTL_DEL 2
-#endif
-#ifndef EPOLL_CTL_MOD
-#define EPOLL_CTL_MOD 3
-#endif
-
-typedef union {
-    void    *ptr;
-    int      fd;
-    uint32_t u32;
-    uint64_t u64;
-} epoll_data_t;
-
-/* Linux ABI: struct epoll_event is packed (12 bytes, not 16)
- * - events at offset 0 (4 bytes)
- * - data at offset 4 (8 bytes)
- */
-struct epoll_event {
-    uint32_t events;
-    epoll_data_t data;
-} __attribute__((packed));
 
 int epoll_create1(int flags) {
     long ret = sys_epoll_create1_call(flags);

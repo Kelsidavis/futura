@@ -72,17 +72,23 @@
 #endif
 
 /* epoll event structure */
+#ifndef _EPOLL_DATA_T
+#define _EPOLL_DATA_T
 typedef union epoll_data {
     void    *ptr;
     int      fd;
     uint32_t u32;
     uint64_t u64;
 } epoll_data_t;
+#endif
 
+#ifndef _STRUCT_EPOLL_EVENT
+#define _STRUCT_EPOLL_EVENT
 struct epoll_event {
     uint32_t     events;    /* Epoll events */
     epoll_data_t data;      /* User data variable */
 } __attribute__((packed));
+#endif
 
 /* Function declarations */
 extern int epoll_create(int size);

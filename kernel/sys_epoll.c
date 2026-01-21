@@ -268,11 +268,17 @@ extern void fut_free(void *ptr);
  *
  * Linux uses __attribute__((packed)) to achieve this layout.
  * Without packed, natural alignment would put data at offset 8.
+ *
+ * Note: Kernel uses uint64_t data directly instead of the union for
+ * simplicity. This maintains binary compatibility with userspace.
  */
+#ifndef _STRUCT_EPOLL_EVENT
+#define _STRUCT_EPOLL_EVENT
 struct epoll_event {
     uint32_t events;   /* Requested events bitmask */
     uint64_t data;     /* User data associated with this FD */
 } __attribute__((packed));
+#endif
 
 /* Internal epoll FD registration */
 struct epoll_fd_entry {

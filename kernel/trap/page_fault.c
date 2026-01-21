@@ -127,8 +127,13 @@ static bool load_demand_page(uint64_t page_addr, struct fut_vma *vma, fut_vmem_c
      * determine if the page can be made writable in-place (refcount=1) or
      * requires copying (refcount>1 from shared mappings).
      */
-    extern void fut_page_ref_inc(phys_addr_t phys);
-    fut_page_ref_inc(phys);
+    extern int fut_page_ref_inc(phys_addr_t phys);
+    if (fut_page_ref_inc(phys) != 0) {
+        /* Refcount tracking failed - unmap and free the page */
+        fut_unmap_range(ctx, page_addr, PAGE_SIZE);
+        fut_pmm_free_page(page);
+        return false;
+    }
 
     return true;
 }
@@ -298,8 +303,13 @@ static bool handle_cow_fault_generic(uint64_t fault_addr, bool is_write, bool is
         }
 
         /* Initialize refcount for the new page (now owned by this process) */
-        extern void fut_page_ref_inc(phys_addr_t phys);
-        fut_page_ref_inc(new_phys);
+        extern int fut_page_ref_inc(phys_addr_t phys);
+        if (fut_page_ref_inc(new_phys) != 0) {
+            /* Refcount tracking failed - unmap and free the new page */
+            fut_unmap_range(ctx, page_addr, PAGE_SIZE);
+            fut_pmm_free_page(new_page);
+            return false;
+        }
 
         /* Decrement old page refcount */
         int new_refcount = fut_page_ref_dec(old_phys);

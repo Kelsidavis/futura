@@ -806,7 +806,7 @@ long sys_fork(void) {
  */
 static fut_mm_t *clone_mm(fut_mm_t *parent_mm) {
     extern void fut_thread_yield(void);  /* For yielding during long operations */
-    extern void fut_page_ref_inc(phys_addr_t phys);
+    extern int fut_page_ref_inc(phys_addr_t phys);  /* Returns 0 on success, -EOVERFLOW if limit reached */
     extern int pmap_set_page_ro(fut_vmem_context_t *, uintptr_t);
 
     if (!parent_mm) {
@@ -975,8 +975,13 @@ static fut_mm_t *clone_mm(fut_mm_t *parent_mm) {
                     return NULL;
                 }
 
-                /* Increment refcount for shared page */
-                fut_page_ref_inc(parent_phys);
+                /* Increment refcount for shared page (with overflow protection) */
+                if (fut_page_ref_inc(parent_phys) != 0) {
+                    fut_printf("[FORK] Page refcount overflow at VA 0x%llx - aborting fork\n",
+                               (unsigned long long)page);
+                    fut_mm_release(child_mm);
+                    return NULL;
+                }
 
                 page_count++;
             } else if (is_cow) {
@@ -1048,8 +1053,15 @@ static fut_mm_t *clone_mm(fut_mm_t *parent_mm) {
                  * - uint8_t: 255 processes (too low)
                  * - uint16_t: 65535 processes (common, reasonable)
                  * - uint32_t: 4+ billion processes (excessive but safe)
+                 *
+                 * [IMPLEMENTED] Overflow protection added - see fut_page_ref_inc()
                  */
-                fut_page_ref_inc(parent_phys);
+                if (fut_page_ref_inc(parent_phys) != 0) {
+                    fut_printf("[FORK] COW page refcount overflow at VA 0x%llx - aborting fork\n",
+                               (unsigned long long)page);
+                    fut_mm_release(child_mm);
+                    return NULL;
+                }
 
                 page_count++;
             } else {

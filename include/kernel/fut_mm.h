@@ -98,6 +98,9 @@ int fut_mm_clone_vmas(fut_mm_t *dest_mm, fut_mm_t *src_mm);
 
 /* Page reference counting for COW */
 void fut_page_ref_init(void);
-void fut_page_ref_inc(phys_addr_t phys);
+int fut_page_ref_inc(phys_addr_t phys);  /* Returns 0 on success, -EOVERFLOW if refcount limit reached */
 int fut_page_ref_dec(phys_addr_t phys);  /* Returns new refcount */
 int fut_page_ref_get(phys_addr_t phys);  /* Returns current refcount */
+
+/* Maximum page refcount to prevent overflow attacks (CVE-2016-0728 style) */
+#define FUT_PAGE_REF_MAX 60000  /* Leave headroom below UINT16_MAX */

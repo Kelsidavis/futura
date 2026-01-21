@@ -1676,18 +1676,29 @@ static struct page_refcount_entry *page_ref_find(phys_addr_t phys) {
     return NULL;
 }
 
-void fut_page_ref_inc(phys_addr_t phys) {
+int fut_page_ref_inc(phys_addr_t phys) {
     int bucket = PAGE_REFCOUNT_HASH(phys);
     struct page_refcount_entry *entry = page_ref_find(phys);
 
     if (entry) {
+        /* SECURITY: Check for refcount overflow before incrementing.
+         * This prevents CVE-2016-0728 style attacks where mass forking
+         * can overflow the refcount, causing use-after-free when the
+         * count wraps to zero and pages are prematurely freed. */
+        if (entry->refcount >= FUT_PAGE_REF_MAX) {
+            fut_printf("[PMM] WARN: Page refcount limit reached for phys 0x%llx (count=%u)\n",
+                       (unsigned long long)phys, entry->refcount);
+            return -EOVERFLOW;
+        }
         entry->refcount++;
     } else {
         /* Allocate new entry */
         entry = fut_malloc(sizeof(*entry));
         if (!entry) {
-            /* Out of memory - this is bad, but we can't do much */
-            return;
+            /* Out of memory - cannot track refcount */
+            fut_printf("[PMM] ERROR: Failed to allocate refcount entry for phys 0x%llx\n",
+                       (unsigned long long)phys);
+            return -ENOMEM;
         }
 
         entry->phys = phys;
@@ -1695,6 +1706,8 @@ void fut_page_ref_inc(phys_addr_t phys) {
         entry->next = page_refcount_table[bucket];
         page_refcount_table[bucket] = entry;
     }
+
+    return 0;
 }
 
 int fut_page_ref_dec(phys_addr_t phys) {

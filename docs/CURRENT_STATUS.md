@@ -452,6 +452,9 @@ See `docs/ARM64_STATUS.md` for detailed ARM64 progress.
   - kernel/sys_uname.c, syscall_table.c, userland_test.c
   - Uses _GNU_SOURCE for domainname field support
   - Removed 22 lines of duplicate struct definitions
+- ✅ **futura_posix.h socket consolidation**: Replaced 58 lines of local socket
+  structure definitions (sockaddr, sockaddr_un, iovec, msghdr, cmsghdr) with
+  includes to sys/socket.h, sys/un.h, and sys/uio.h
 
 ## Current Focus
 

@@ -15,7 +15,7 @@
 
 #include "tests/test_api.h"
 
-extern void fut_printf(const char *fmt, ...);
+#include <kernel/kprintf.h>
 
 #ifdef DEBUG_PERF
 #define PERFDBG(...) fut_printf(__VA_ARGS__)

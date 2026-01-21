@@ -23,7 +23,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #else
-extern void fut_printf(const char *fmt, ...);
+#include <kernel/kprintf.h>
 __attribute__((noreturn)) void fut_platform_panic(const char *message);
 #endif
 #endif

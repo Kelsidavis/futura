@@ -10,7 +10,7 @@
 #include <stddef.h>
 #include <string.h>
 
-extern void fut_printf(const char *fmt, ...);
+#include <kernel/kprintf.h>
 
 /* ACPI state */
 static acpi_rsdp_v2_t *rsdp = NULL;

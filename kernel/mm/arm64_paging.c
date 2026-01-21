@@ -10,8 +10,11 @@
 #include <platform/arm64/memory/pmap.h>
 #include <platform/arm64/regs.h>
 #include <kernel/fut_mm.h>
+#include <kernel/kprintf.h>
 #include <kernel/fut_memory.h>
+#include <kernel/kprintf.h>
 #include <kernel/errno.h>
+#include <kernel/kprintf.h>
 #include <string.h>
 #include <stdatomic.h>
 
@@ -164,7 +167,6 @@ static void free_page_table(page_table_t *pt) {
  * @return Page table at child level, or NULL
  */
 static page_table_t *get_or_create_table(page_table_t *parent_table, int index, bool allocate) {
-    extern void fut_printf(const char *, ...);
 
     /* Temporarily switch to kernel page table for page table operations
      * to ensure we can access all physical memory. Save/restore user TTBR0.
@@ -295,7 +297,6 @@ static page_table_t *get_or_create_table(page_table_t *parent_table, int index, 
  * @return ARM64 PTE flags with proper AP bits and attributes
  */
 static uint64_t arm64_translate_flags(uint64_t generic_flags) {
-    extern void fut_printf(const char *, ...);
 
     uint64_t arm64_flags = 0;
     bool is_user = true;  /* Default to user pages */
@@ -441,7 +442,6 @@ int fut_map_page(fut_vmem_context_t *ctx, uint64_t vaddr, uint64_t paddr, uint64
      * This means we need PTE_VALID (bit 0) | PTE_TABLE (bit 1) = 0b11 */
     pte_t pte = fut_make_pte(paddr, arm64_flags | PTE_TABLE);
 
-    extern void fut_printf(const char *, ...);
     PAGING_DEBUG("[MAP-PAGE] VA=0x%llx PA=0x%llx flags_in=0x%llx arm64_flags=0x%llx PTE=0x%llx (AP[7:6]=0x%llx)\n",
                (unsigned long long)vaddr, (unsigned long long)paddr,
                (unsigned long long)flags, (unsigned long long)arm64_flags,
@@ -691,7 +691,6 @@ fut_vmem_context_t *fut_vmem_create(void) {
     memcpy(ctx->pgd->entries, boot_l1_table.entries, 512 * sizeof(pte_t));
 
     /* Debug: Verify critical entries were copied */
-    extern void fut_printf(const char *, ...);
     fut_printf("[VMEM-CREATE] boot_l1_table @ %p, new pgd @ %p\n",
                (void*)&boot_l1_table, (void*)ctx->pgd);
     fut_printf("[VMEM-CREATE] boot L1[0] = 0x%llx (peripherals)\n",
@@ -900,7 +899,6 @@ void fut_paging_init(void) {
     tcr |= (1 << 24);
 
     /* Debug: Print TCR value before writing */
-    extern void fut_printf(const char *, ...);
     fut_printf("[PAGING-INIT] Setting TCR_EL1 = 0x%llx, T0SZ=%llu, TG0=%llu\n",
                (unsigned long long)tcr,
                (unsigned long long)(tcr & 0x3F),
@@ -931,7 +929,6 @@ void fut_paging_init(void) {
  * Walks the 4-level page table hierarchy and prints entries.
  */
 void fut_dump_page_tables(fut_vmem_context_t *ctx, uint64_t vaddr) {
-    extern void fut_printf(const char *fmt, ...);
 
     if (!ctx || !ctx->pgd) {
         fut_printf("[PT-DUMP] Invalid context\n");
@@ -995,7 +992,6 @@ void fut_dump_page_tables(fut_vmem_context_t *ctx, uint64_t vaddr) {
  * Shows PGD address and reference count.
  */
 void fut_vmem_print_stats(fut_vmem_context_t *ctx) {
-    extern void fut_printf(const char *fmt, ...);
 
     if (!ctx) {
         fut_printf("[VMEM-STATS] Invalid context\n");
@@ -1013,7 +1009,6 @@ void fut_vmem_print_stats(fut_vmem_context_t *ctx) {
  * Checks that PGD is valid and aligned.
  */
 bool fut_vmem_verify(fut_vmem_context_t *ctx) {
-    extern void fut_printf(const char *fmt, ...);
 
     if (!ctx) {
         fut_printf("[VMEM-VERIFY] NULL context\n");

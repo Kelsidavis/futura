@@ -16,7 +16,7 @@
 #include <kernel/errno.h>
 #include <stdint.h>
 
-extern void fut_printf(const char *fmt, ...);
+#include <kernel/kprintf.h>
 
 /* I/O priority classes */
 #define IOPRIO_CLASS_NONE       0  /* No specific I/O class */

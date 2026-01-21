@@ -12,7 +12,7 @@
 
 #include <tests/test_api.h>
 
-extern void fut_printf(const char *fmt, ...);
+#include <kernel/kprintf.h>
 
 #define SAMPLE_MS 500u
 #define STEP_MS   25u

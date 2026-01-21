@@ -16,7 +16,7 @@
 #include <kernel/errno.h>
 #include <stddef.h>
 
-extern void fut_printf(const char *fmt, ...);
+#include <kernel/kprintf.h>
 
 /* Unmount flags */
 #define MNT_FORCE       1       /* Force unmount even if busy */

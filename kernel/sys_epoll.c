@@ -225,7 +225,7 @@
 /* Socket poll support */
 extern fut_socket_t *get_socket_from_fd(int fd);
 
-extern void fut_printf(const char *fmt, ...);
+#include <kernel/kprintf.h>
 extern void *fut_malloc(size_t size);
 extern void fut_free(void *ptr);
 

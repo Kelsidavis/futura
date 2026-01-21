@@ -10,7 +10,7 @@
 #include "../../include/kernel/fut_task.h"
 
 /* External dependencies */
-extern void fut_printf(const char *fmt, ...);
+#include <kernel/kprintf.h>
 extern fut_thread_t *fut_thread_current(void);
 
 /* Global statistics */

@@ -20,7 +20,7 @@
 #include <kernel/uaccess.h>
 #include <stdint.h>
 
-extern void fut_printf(const char *fmt, ...);
+#include <kernel/kprintf.h>
 
 /* Disable verbose ACCEPT debugging for performance */
 #define ACCEPT_DEBUG 0

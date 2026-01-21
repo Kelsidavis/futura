@@ -19,7 +19,7 @@
 #include <kernel/fut_fd_util.h>
 #include <stdint.h>
 
-extern void fut_printf(const char *fmt, ...);
+#include <kernel/kprintf.h>
 
 /**
  * lseek() - Change file position

@@ -11,6 +11,7 @@
 #include <stdint.h>
 #include <string.h>
 #include <stdbool.h>
+#include <kernel/kprintf.h>
 
 /* ============================================================
  *   Buddy Allocator Constants and Data Structures
@@ -18,7 +19,6 @@
 
 /* Debug verbosity control - disabled by default for performance */
 #ifdef BUDDY_VERBOSE_DEBUG
-extern void fut_printf(const char *, ...);
 #define BUDDY_DEBUG_PRINTF(...) fut_printf(__VA_ARGS__)
 #else
 #define BUDDY_DEBUG_PRINTF(...) do {} while(0)
@@ -113,7 +113,6 @@ void buddy_heap_init(uintptr_t start, uintptr_t end) {
     heap_end = end;
     total_allocated = 0;
 
-    extern void fut_printf(const char *, ...);
     BUDDY_DEBUG_PRINTF("[BUDDY-INIT] Initializing buddy allocator: start=%p end=%p (size=%llu KB)\n",
                (void*)start, (void*)end, (unsigned long long)((end - start) / 1024));
 
@@ -283,7 +282,6 @@ void *buddy_malloc(size_t size) {
     size_t needed = size + sizeof(block_hdr_t);
     int order = size_to_order(needed);
 
-    extern void fut_printf(const char *, ...);
 
     if (order > MAX_ORDER) {
         BUDDY_DEBUG_PRINTF("[BUDDY-MALLOC] FAILED: size=%llu needed=%llu order=%d MAX=%d\n",
@@ -408,7 +406,6 @@ void *buddy_malloc(size_t size) {
              * This prevents overwriting adjacent allocations
              * For large allocations (order 20+, >1MB), DON'T clear to preserve file performance
              * Callers of large allocations MUST initialize their data appropriately */
-            extern void fut_printf(const char *, ...);
             BUDDY_DEBUG_PRINTF("[BUDDY-MALLOC-CLEAR] order=%d alloc_size=%llu requested_size=%llu data=%p\n",
                        hdr->order, (unsigned long long)alloc_size, (unsigned long long)size, result);
             if (hdr->order <= 19) {  /* Only clear small blocks (up to 512KB) */
@@ -472,7 +469,6 @@ void *buddy_malloc(size_t size) {
 void buddy_free(void *ptr) {
     if (ptr == NULL) return;
 
-    extern void fut_printf(const char *, ...);
 
     BUDDY_DEBUG_PRINTF("[BUDDY-FREE-START] Freeing ptr=%p\n", ptr);
 

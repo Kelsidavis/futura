@@ -18,7 +18,7 @@
 #include <kernel/signal.h>
 #include "tests/test_api.h"
 
-extern void fut_printf(const char *fmt, ...);
+#include <kernel/kprintf.h>
 extern int fut_signal_set_handler(fut_task_t *task, int signum, sighandler_t handler);
 extern sighandler_t fut_signal_get_handler(fut_task_t *task, int signum);
 extern int fut_signal_send(fut_task_t *target, int signum);

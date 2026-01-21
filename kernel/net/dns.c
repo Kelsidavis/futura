@@ -7,6 +7,7 @@
 #include <futura/tcpip.h>
 #include <kernel/fut_memory.h>
 #include <kernel/fut_timer.h>
+#include <kernel/kprintf.h>
 #include <kernel/errno.h>
 #include <platform/platform.h>
 

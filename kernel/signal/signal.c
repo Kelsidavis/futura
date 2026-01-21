@@ -11,7 +11,7 @@
 #include <string.h>
 #include <stddef.h>
 
-extern void fut_printf(const char *fmt, ...);
+#include <kernel/kprintf.h>
 
 /**
  * Default signal actions

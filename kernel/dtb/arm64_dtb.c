@@ -7,6 +7,7 @@
  */
 
 #include <platform/arm64/dtb.h>
+#include <kernel/kprintf.h>
 #include <string.h>
 #include <platform/platform.h>
 

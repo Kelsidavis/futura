@@ -7,10 +7,15 @@
  */
 
 #include <kernel/fut_blockdev.h>
+#include <kernel/kprintf.h>
 #include <kernel/fut_memory.h>
+#include <kernel/kprintf.h>
 #include <kernel/fut_thread.h>
+#include <kernel/kprintf.h>
 #include <kernel/fut_waitq.h>
+#include <kernel/kprintf.h>
 #include <kernel/errno.h>
+#include <kernel/kprintf.h>
 #include <stddef.h>
 
 /* ============================================================
@@ -472,7 +477,6 @@ ssize_t fut_blockdev_write_bytes(struct fut_blockdev *dev, uint64_t offset, size
 
 /* Helper: Get block device from capability handle */
 static struct fut_blockdev *get_device_from_handle(fut_handle_t blk_handle) {
-    extern void fut_printf(const char *fmt, ...);
     extern fut_object_t *fut_object_get(fut_handle_t handle, fut_rights_t required_rights);
     extern void fut_object_put(fut_object_t *obj);
 

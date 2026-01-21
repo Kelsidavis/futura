@@ -11,7 +11,7 @@
 #include <kernel/fut_task.h>
 #include <kernel/errno.h>
 
-extern void fut_printf(const char *fmt, ...);
+#include <kernel/kprintf.h>
 
 /* Lock type constants */
 #define FUT_LOCK_NONE       0

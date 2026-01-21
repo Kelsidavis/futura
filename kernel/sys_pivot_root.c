@@ -16,7 +16,7 @@
 #include <kernel/errno.h>
 #include <stddef.h>
 
-extern void fut_printf(const char *fmt, ...);
+#include <kernel/kprintf.h>
 extern int fut_copy_from_user(void *to, const void *from, size_t size);
 
 /**

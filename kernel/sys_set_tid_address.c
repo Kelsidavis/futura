@@ -16,7 +16,7 @@
 #include <kernel/errno.h>
 #include <stdint.h>
 
-extern void fut_printf(const char *fmt, ...);
+#include <kernel/kprintf.h>
 
 /**
  * set_tid_address() - Set pointer to thread ID for signal delivery

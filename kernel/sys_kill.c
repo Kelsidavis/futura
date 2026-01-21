@@ -15,7 +15,7 @@
 #include <kernel/signal.h>
 #include <kernel/errno.h>
 
-extern void fut_printf(const char *fmt, ...);
+#include <kernel/kprintf.h>
 extern fut_task_t *fut_task_current(void);
 extern fut_task_t *fut_task_by_pid(uint64_t pid);
 extern int fut_task_foreach_pgid(uint64_t pgid, void (*callback)(fut_task_t *task, void *data), void *data);

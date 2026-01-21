@@ -15,7 +15,7 @@
 #include <kernel/syscalls.h>
 #include "tests/test_api.h"
 
-extern void fut_printf(const char *fmt, ...);
+#include <kernel/kprintf.h>
 
 /* Test constants */
 #define DUP2_TEST_STDOUT_REDIRECT 1

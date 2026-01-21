@@ -10,6 +10,7 @@
 #include <stdint.h>
 #include <stddef.h>
 #include <stdbool.h>
+#include <kernel/kprintf.h>
 #include <kernel/errno.h>
 #include <generated/feature_flags.h>
 #include <kernel/fut_memory.h>
@@ -114,7 +115,6 @@ extern fut_status_t virtio_net_init(void);
  * @return 0 on success, negative error code on failure
  */
 static int acquire_block_device_handle(const char *device_name, bool read_only, fut_handle_t *handle_out) {
-    extern void fut_printf(const char *fmt, ...);
 
     if (!device_name || !handle_out) {
         return -EINVAL;
@@ -729,7 +729,6 @@ static void test_futurafs_operations(void) {
  * (Currently unused - kept for testing purposes)
  */
 __attribute__((unused)) static void demo_thread_a(void *arg) {
-    extern void fut_printf(const char *, ...);
     int thread_id = (int)(uintptr_t)arg;
 
     for (int i = 0; i < 3; i++) {
@@ -742,7 +741,6 @@ __attribute__((unused)) static void demo_thread_a(void *arg) {
 }
 
 __attribute__((unused)) static void demo_thread_b(void *arg) {
-    extern void fut_printf(const char *, ...);
     int thread_id = (int)(uintptr_t)arg;
 
     for (int i = 0; i < 3; i++) {

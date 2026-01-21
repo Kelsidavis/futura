@@ -475,7 +475,7 @@
 #include <platform/arm64/regs.h>
 #endif
 
-extern void fut_printf(const char *fmt, ...);
+#include <kernel/kprintf.h>
 extern fut_interrupt_frame_t *fut_current_frame;
 extern int fut_task_count_by_uid(uint32_t uid);
 

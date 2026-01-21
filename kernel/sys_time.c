@@ -13,7 +13,7 @@
 #include <stdint.h>
 
 extern int fut_copy_to_user(void *to, const void *from, size_t size);
-extern void fut_printf(const char *fmt, ...);
+#include <kernel/kprintf.h>
 
 /* Clock IDs for clock_gettime */
 #define CLOCK_REALTIME           0

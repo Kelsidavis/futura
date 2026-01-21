@@ -7,6 +7,7 @@
  */
 
 #include <stdint.h>
+#include <kernel/kprintf.h>
 #include <platform/platform.h>
 
 /* Called from context_switch.S to trace execution path */

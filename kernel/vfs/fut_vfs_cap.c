@@ -18,7 +18,7 @@
 #include <stddef.h>
 #include <stdbool.h>
 
-extern void fut_printf(const char *fmt, ...);
+#include <kernel/kprintf.h>
 
 /* ============================================================
  *   Helper Functions

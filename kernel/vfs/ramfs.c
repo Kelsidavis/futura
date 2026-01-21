@@ -8,12 +8,19 @@
  */
 
 #include <kernel/fut_vfs.h>
+#include <kernel/kprintf.h>
 #include <kernel/fut_memory.h>
+#include <kernel/kprintf.h>
 #include <kernel/fut_timer.h>
+#include <kernel/kprintf.h>
 #include <kernel/fut_lock.h>
+#include <kernel/kprintf.h>
 #include <kernel/vfs_credentials.h>
+#include <kernel/kprintf.h>
 #include <kernel/slab_allocator.h>
+#include <kernel/kprintf.h>
 #include <kernel/errno.h>
+#include <kernel/kprintf.h>
 #include <stddef.h>
 #include <string.h>
 
@@ -78,7 +85,6 @@ static int str_cmp(const char *a, const char *b) {
 #ifdef DEBUG_RAMFS
 /* Log complete state of a ramfs_node for debugging */
 static void log_ramfs_node_state(const char *context, struct ramfs_node *node, struct fut_vnode *vnode) {
-    extern void fut_printf(const char *, ...);
 
     if (!node) {
         fut_printf("[RAMFS-STATE] %s: node is NULL\n", context);
@@ -99,7 +105,6 @@ static void log_ramfs_node_state(const char *context, struct ramfs_node *node, s
 
 /* Validate that ramfs_node guards haven't been corrupted */
 static int validate_ramfs_node(struct ramfs_node *node) {
-    extern void fut_printf(const char *, ...);
 
     if (!node) {
         return 0;  /* NULL is OK, caller checks this */
@@ -151,7 +156,6 @@ static int ramfs_open(struct fut_vnode *vnode, int flags) {
 }
 
 static int ramfs_close(struct fut_vnode *vnode) {
-    extern void fut_printf(const char *, ...);
 
     if (!vnode) {
         return 0;
@@ -182,7 +186,6 @@ static int ramfs_close(struct fut_vnode *vnode) {
 }
 
 static ssize_t ramfs_read(struct fut_vnode *vnode, void *buf, size_t size, uint64_t offset) {
-    extern void fut_printf(const char *, ...);
 
     if (!vnode || !buf) {
         return -EINVAL;
@@ -255,7 +258,6 @@ static ssize_t ramfs_read(struct fut_vnode *vnode, void *buf, size_t size, uint6
 }
 
 static ssize_t ramfs_write(struct fut_vnode *vnode, const void *buf, size_t size, uint64_t offset) {
-    extern void fut_printf(const char *, ...);
 
     if (!vnode || !buf) {
         return -EINVAL;
@@ -286,7 +288,6 @@ static ssize_t ramfs_write(struct fut_vnode *vnode, const void *buf, size_t size
 
     /* Expand buffer if needed */
     if (required > node->file.capacity) {
-        extern void fut_printf(const char *, ...);
 
         /* Allocation strategy optimized for buddy allocator efficiency:
          * Allocate in power-of-2 aligned chunks to minimize fragmentation.
@@ -427,7 +428,6 @@ static ssize_t ramfs_write(struct fut_vnode *vnode, const void *buf, size_t size
     }
 
     /* Write data - use manual copy to avoid SIMD instructions */
-    extern void fut_printf(const char *, ...);
 
     const uint8_t *src = (const uint8_t *)buf;
 
@@ -514,7 +514,6 @@ static ssize_t ramfs_write(struct fut_vnode *vnode, const void *buf, size_t size
 }
 
 static int ramfs_lookup(struct fut_vnode *dir, const char *name, struct fut_vnode **result) {
-    extern void fut_printf(const char *, ...);
 
     if (!dir || !name || !result) {
         return -EINVAL;
@@ -592,7 +591,6 @@ static int ramfs_lookup(struct fut_vnode *dir, const char *name, struct fut_vnod
 }
 
 static int ramfs_create(struct fut_vnode *dir, const char *name, uint32_t mode, struct fut_vnode **result) {
-    extern void fut_printf(const char *, ...);
 
 #ifdef DEBUG_RAMFS
     fut_printf("[RAMFS-CREATE-ENTRY] dir=%p name=%s mode=0%o result=%p\n", (void*)dir, name ? name : "(null)", mode, (void*)result);
@@ -783,7 +781,6 @@ static int ramfs_mkdir(struct fut_vnode *dir, const char *name, uint32_t mode) {
  * Returns: 0 on success, negative error code on failure
  */
 static int ramfs_unlink(struct fut_vnode *dir, const char *name) {
-    extern void fut_printf(const char *, ...);
 
     if (!dir || !name) {
         return -EINVAL;
@@ -937,7 +934,6 @@ static int ramfs_rmdir(struct fut_vnode *dir, const char *name) {
  * Returns: 1 if entry found, 0 if end of directory, negative error code on failure
  */
 static int ramfs_readdir(struct fut_vnode *dir, uint64_t *cookie, struct fut_vdirent *dirent) {
-    extern void fut_printf(const char *, ...);
 
     if (!dir || !cookie || !dirent) {
         return -EINVAL;
@@ -1261,7 +1257,6 @@ static struct fut_vnode_ops ramfs_vnode_ops;
  * Returns: 0 on success, negative error code on failure
  */
 static int ramfs_link(struct fut_vnode *old_vnode, const char *oldpath, const char *newpath) {
-    extern void fut_printf(const char *, ...);
 
     (void)oldpath;  /* Not needed for in-memory link */
 
@@ -1344,7 +1339,6 @@ static int ramfs_link(struct fut_vnode *old_vnode, const char *oldpath, const ch
  * Returns: 0 on success, negative error code on failure
  */
 static int ramfs_symlink(struct fut_vnode *parent, const char *linkpath, const char *target) {
-    extern void fut_printf(const char *, ...);
 
     if (!parent || !linkpath || !target) {
         return -EINVAL;
@@ -1454,7 +1448,6 @@ static int ramfs_symlink(struct fut_vnode *parent, const char *linkpath, const c
  *          or negative error code on failure
  */
 static ssize_t ramfs_readlink(struct fut_vnode *vnode, char *buf, size_t size) {
-    extern void fut_printf(const char *, ...);
 
     if (!vnode || !buf || size == 0) {
         return -EINVAL;
@@ -1500,7 +1493,6 @@ static ssize_t ramfs_readlink(struct fut_vnode *vnode, char *buf, size_t size) {
  * Returns: 0 on success, negative error code on failure
  */
 static int ramfs_rename(struct fut_vnode *parent, const char *oldname, const char *newname) {
-    extern void fut_printf(const char *, ...);
 
     if (!parent || !oldname || !newname) {
         return -EINVAL;

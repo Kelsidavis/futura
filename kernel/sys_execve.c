@@ -28,7 +28,7 @@
 #define EXEC_ENVC_MAX 4096     /* Max environment variable count */
 #define EXEC_ARG_LEN_MAX 131072 /* Max single argument length */
 
-extern void fut_printf(const char *fmt, ...);
+#include <kernel/kprintf.h>
 extern int fut_exec_elf(const char *path, char *const argv[], char *const envp[]);
 
 /* Set to 1 to enable verbose execve debug logging */

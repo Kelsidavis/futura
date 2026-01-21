@@ -9,6 +9,7 @@
 #include <platform/arm64/interrupt/irq.h>
 #include <platform/arm64/regs.h>
 #include <platform/arm64/process.h>
+#include <kernel/kprintf.h>
 #include <platform/platform.h>
 #include <kernel/errno.h>
 #include <stddef.h>

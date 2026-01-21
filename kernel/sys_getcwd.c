@@ -16,7 +16,7 @@
 #include <kernel/fut_task.h>
 #include <stdint.h>
 
-extern void fut_printf(const char *fmt, ...);
+#include <kernel/kprintf.h>
 extern int fut_copy_to_user(void *to, const void *from, size_t size);
 
 /**

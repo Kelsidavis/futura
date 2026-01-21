@@ -17,7 +17,7 @@
 #include <kernel/fut_socket.h>
 #include <kernel/errno.h>
 
-extern void fut_printf(const char *fmt, ...);
+#include <kernel/kprintf.h>
 
 /* Disable verbose CLOSE debugging for performance */
 #define CLOSE_DEBUG 0

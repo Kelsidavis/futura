@@ -25,7 +25,7 @@
 
 #include <string.h>
 
-extern void fut_printf(const char *fmt, ...);
+#include <kernel/kprintf.h>
 
 /* Disable BRK debugging for performance - too many malloc/free calls */
 #define BRK_DEBUG 0

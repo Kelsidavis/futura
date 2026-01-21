@@ -14,7 +14,7 @@
 #include <platform/arm64/drivers/virtio_mmio.h>
 #include <kernel/errno.h>
 
-extern void fut_printf(const char *fmt, ...);
+#include <kernel/kprintf.h>
 extern void *fut_malloc_pages(size_t num_pages);
 extern void *memset(void *, int, size_t);
 extern int fut_virt_to_phys(void *ctx, const void *virt, uint64_t *phys);

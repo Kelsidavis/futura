@@ -17,7 +17,7 @@
 #include <kernel/fut_socket.h>
 #include <kernel/errno.h>
 
-extern void fut_printf(const char *fmt, ...);
+#include <kernel/kprintf.h>
 extern fut_task_t *fut_task_current(void);
 extern int allocate_socket_fd(fut_socket_t *socket);
 

@@ -20,7 +20,7 @@
 #include <string.h>
 #include <stdint.h>
 
-extern void fut_printf(const char *fmt, ...);
+#include <kernel/kprintf.h>
 
 /* madvise() advice codes */
 #define MADV_NORMAL       0  /* No special treatment */

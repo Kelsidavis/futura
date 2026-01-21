@@ -16,7 +16,7 @@
 #include <kernel/errno.h>
 #include <stdint.h>
 
-extern void fut_printf(const char *fmt, ...);
+#include <kernel/kprintf.h>
 extern fut_task_t *fut_task_current(void);
 extern struct fut_file *vfs_get_file_from_task(struct fut_task *task, int fd);
 extern int fut_vfs_sync_fs(struct fut_mount *mount);

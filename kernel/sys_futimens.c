@@ -18,7 +18,7 @@
 #include <stdint.h>
 #include <shared/fut_timespec.h>
 
-extern void fut_printf(const char *fmt, ...);
+#include <kernel/kprintf.h>
 extern int fut_copy_from_user(void *to, const void *from, size_t size);
 extern uint64_t fut_get_time_ns(void);
 

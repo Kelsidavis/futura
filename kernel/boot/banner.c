@@ -12,7 +12,7 @@
 #include <platform/x86_64/cpu.h>
 #endif
 
-extern void fut_printf(const char *fmt, ...);
+#include <kernel/kprintf.h>
 
 /* CPU brand string buffer size (48 chars + null terminator) */
 #define CPU_BRAND_BUFFER_SIZE 49

@@ -18,7 +18,7 @@
 #error "qemu_exit not implemented for this architecture"
 #endif
 
-extern void fut_printf(const char *fmt, ...);
+#include <kernel/kprintf.h>
 
 /* Test framework implementation */
 static _Atomic bool g_tests_completed = false;

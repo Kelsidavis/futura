@@ -15,7 +15,7 @@
 #include <platform/x86_64/memory/pmap.h>
 #endif
 
-extern void fut_printf(const char *fmt, ...);
+#include <kernel/kprintf.h>
 
 /* mmap/munmap flags */
 #define PROT_READ       0x1

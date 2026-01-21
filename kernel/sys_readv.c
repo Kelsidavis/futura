@@ -12,7 +12,7 @@
 #include <sys/uio.h>  /* For struct iovec, UIO_MAXIOV, ssize_t */
 #include <stdint.h>
 
-extern void fut_printf(const char *fmt, ...);
+#include <kernel/kprintf.h>
 extern fut_task_t *fut_task_current(void);
 extern int fut_copy_from_user(void *to, const void *from, size_t size);
 extern ssize_t fut_vfs_read(int fd, void *buf, size_t count);

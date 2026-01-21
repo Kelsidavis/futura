@@ -18,7 +18,7 @@
 #include <kernel/fut_vfs.h>
 #include <kernel/uaccess.h>
 
-extern void fut_printf(const char *fmt, ...);
+#include <kernel/kprintf.h>
 
 /**
  * chdir() - Change current working directory

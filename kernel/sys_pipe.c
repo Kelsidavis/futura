@@ -21,7 +21,7 @@
 #include <string.h>
 #include <stdint.h>
 
-extern void fut_printf(const char *fmt, ...);
+#include <kernel/kprintf.h>
 
 /* Pipe buffer size */
 #define PIPE_BUF_SIZE 4096

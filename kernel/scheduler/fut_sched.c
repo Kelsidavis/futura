@@ -27,7 +27,7 @@ extern void fut_switch_context(fut_cpu_context_t *old, fut_cpu_context_t *new);
 extern void fut_switch_context_irq(fut_thread_t *prev, fut_thread_t *next, fut_interrupt_frame_t *prev_frame);
 
 /* External printf for debugging */
-extern void fut_printf(const char *fmt, ...);
+#include <kernel/kprintf.h>
 
 /* Per-CPU data access */
 #include "../../include/kernel/fut_percpu.h"

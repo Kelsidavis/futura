@@ -12,7 +12,7 @@
 #include <kernel/errno.h>
 #include <stdint.h>
 
-extern void fut_printf(const char *fmt, ...);
+#include <kernel/kprintf.h>
 
 /**
  * Get the current process's effective UID.

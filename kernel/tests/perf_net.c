@@ -21,7 +21,7 @@
 #define PERFDBG(...) do { } while (0)
 #endif
 
-extern void fut_printf(const char *fmt, ...);
+#include <kernel/kprintf.h>
 
 #define NET_WARMUP_SMALL 32u
 #define NET_ITERS_SMALL  256u

@@ -14,7 +14,7 @@
 #include <kernel/fut_timer.h>
 #include <kernel/errno.h>
 
-extern void fut_printf(const char *fmt, ...);
+#include <kernel/kprintf.h>
 
 /* ============================================================
  *   Time-Based Expiry Support

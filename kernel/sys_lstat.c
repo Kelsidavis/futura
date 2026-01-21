@@ -12,7 +12,7 @@
 #include <kernel/fut_vfs.h>
 #include <stdint.h>
 
-extern void fut_printf(const char *fmt, ...);
+#include <kernel/kprintf.h>
 extern int fut_copy_from_user(void *to, const void *from, size_t size);
 extern int fut_copy_to_user(void *to, const void *from, size_t size);
 

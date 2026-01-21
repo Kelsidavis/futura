@@ -20,7 +20,7 @@
 
 #include <stddef.h>
 
-extern void fut_printf(const char *fmt, ...);
+#include <kernel/kprintf.h>
 
 /* Wait options (for Phase 3+) */
 #define WNOHANG    0x00000001  /* Don't block if no child has exited */

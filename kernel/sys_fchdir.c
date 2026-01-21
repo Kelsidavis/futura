@@ -18,7 +18,7 @@
 #include <kernel/fut_fd_util.h>
 #include <stdint.h>
 
-extern void fut_printf(const char *fmt, ...);
+#include <kernel/kprintf.h>
 
 /* Phase 3: Vnode type definitions are now in fut_vfs.h (VN_DIR, VN_REG enum values)
  * Note: Previously had incorrect local #defines (VN_DIR=1, VN_REG=2) which were

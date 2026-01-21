@@ -7,11 +7,17 @@
  */
 
 #include <kernel/fut_futurafs.h>
+#include <kernel/kprintf.h>
 #include <kernel/fut_memory.h>
+#include <kernel/kprintf.h>
 #include <kernel/fut_vfs.h>
+#include <kernel/kprintf.h>
 #include <kernel/fut_blockdev.h>
+#include <kernel/kprintf.h>
 #include <kernel/fut_timer.h>
+#include <kernel/kprintf.h>
 #include <kernel/errno.h>
+#include <kernel/kprintf.h>
 
 /* FuturaFS vnode operations - initialized at runtime to avoid ARM64 relocation issues */
 static struct fut_vnode_ops futurafs_vnode_ops;
@@ -186,7 +192,6 @@ static int futurafs_free_block(struct futurafs_mount *mount, uint64_t block_num)
  * Read superblock from device.
  */
 static int futurafs_read_superblock(struct futurafs_mount *mount, struct futurafs_superblock *sb) {
-    extern void fut_printf(const char *, ...);
 
     int ret = futurafs_blk_read(mount, 0, 1, sb);
     if (ret < 0) {
@@ -225,7 +230,6 @@ static int futurafs_write_superblock(struct futurafs_mount *mount, struct futura
  * Called when async superblock read completes.
  */
 static void futurafs_sb_read_callback(int result, void *ctx) {
-    extern void fut_printf(const char *, ...);
     struct futurafs_sb_read_ctx *sb_ctx = (struct futurafs_sb_read_ctx *)ctx;
 
     if (result >= 0) {

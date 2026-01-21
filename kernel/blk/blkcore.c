@@ -60,7 +60,7 @@ static fut_blkcore_state_t *g_devices = NULL;
 static fut_task_t *g_blk_task = NULL;
 static bool g_core_ready = false;
 
-extern void fut_printf(const char *fmt, ...);
+#include <kernel/kprintf.h>
 
 static inline fut_rights_t blk_rights_to_object(uint32_t rights) {
     fut_rights_t obj = FUT_RIGHT_DESTROY;

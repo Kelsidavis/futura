@@ -13,7 +13,7 @@
 
 /* Serial logging */
 extern void serial_puts(const char *s);
-extern void fut_printf(const char *fmt, ...);
+#include <kernel/kprintf.h>
 
 /* IDT table: 256 entries with guard patterns */
 #define IDT_ENTRIES 256

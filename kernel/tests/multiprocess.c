@@ -17,7 +17,7 @@
 #include <kernel/errno.h>
 #include "tests/test_api.h"
 
-extern void fut_printf(const char *fmt, ...);
+#include <kernel/kprintf.h>
 
 /* Test file descriptor isolation and inheritance */
 

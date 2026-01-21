@@ -22,7 +22,7 @@
 #include <string.h>
 #include <stdbool.h>
 
-extern void fut_printf(const char *fmt, ...);
+#include <kernel/kprintf.h>
 
 /* Debug output - set to 1 to enable verbose logging */
 #define DEBUG_TCPIP 0

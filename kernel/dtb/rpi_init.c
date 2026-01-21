@@ -9,6 +9,7 @@
 #include <platform/arm64/rpi_init.h>
 #include <platform/arm64/dtb.h>
 #include <platform/arm64/interrupt/irq.h>
+#include <kernel/kprintf.h>
 #include <platform/platform.h>
 #include <string.h>
 

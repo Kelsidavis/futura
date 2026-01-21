@@ -10,7 +10,7 @@
 
 #include <stddef.h>
 
-extern void fut_printf(const char *fmt, ...);
+#include <kernel/kprintf.h>
 
 #define FUT_MMAP_MAX_ENTRIES 32
 

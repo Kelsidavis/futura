@@ -5,7 +5,7 @@
 
 #include <kernel/hal/halt.h>
 
-extern void fut_printf(const char *fmt, ...);
+#include <kernel/kprintf.h>
 
 /**
  * Halt the CPU unconditionally.

@@ -20,7 +20,7 @@
 #include <kernel/fut_thread.h>
 #include <kernel/fut_timer.h>
 
-extern void fut_printf(const char *fmt, ...);
+#include <kernel/kprintf.h>
 
 /**
  * nanosleep() syscall - High-resolution sleep

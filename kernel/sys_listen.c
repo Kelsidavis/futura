@@ -15,7 +15,7 @@
 #include <kernel/fut_socket.h>
 #include <kernel/errno.h>
 
-extern void fut_printf(const char *fmt, ...);
+#include <kernel/kprintf.h>
 
 /* Disable verbose LISTEN debugging for performance */
 #define LISTEN_DEBUG 0

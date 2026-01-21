@@ -19,7 +19,7 @@
 #include <kernel/syscalls.h>
 #include "tests/test_api.h"
 
-extern void fut_printf(const char *fmt, ...);
+#include <kernel/kprintf.h>
 
 /* VFS capability functions */
 extern fut_handle_t fut_vfs_open_cap(const char *path, int flags, int mode);

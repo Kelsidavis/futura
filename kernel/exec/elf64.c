@@ -6,16 +6,25 @@
 #ifdef __x86_64__
 
 #include <kernel/exec.h>
+#include <kernel/kprintf.h>
 #include <generated/feature_flags.h>
 
 #include <kernel/errno.h>
+#include <kernel/kprintf.h>
 #include <kernel/fut_task.h>
+#include <kernel/kprintf.h>
 #include <kernel/fut_thread.h>
+#include <kernel/kprintf.h>
 #include <kernel/fut_memory.h>
+#include <kernel/kprintf.h>
 #include <kernel/fut_mm.h>
+#include <kernel/kprintf.h>
 #include <kernel/fut_sched.h>
+#include <kernel/kprintf.h>
 #include <kernel/fut_vfs.h>
+#include <kernel/kprintf.h>
 #include <kernel/uaccess.h>
+#include <kernel/kprintf.h>
 
 #include <platform/x86_64/memory/paging.h>
 #include <platform/x86_64/memory/pmap.h>
@@ -30,7 +39,6 @@
 
 /* Set to 1 to enable verbose ELF exec debug logging */
 #define ELF_DEBUG 0
-extern void fut_printf(const char *, ...);
 #if ELF_DEBUG
 #define ELF_LOG(...) fut_printf(__VA_ARGS__)
 #else
@@ -201,7 +209,6 @@ static int map_segment(fut_mm_t *mm, int fd, const elf64_phdr_t *phdr) {
     uint64_t seg_end = (phdr->p_vaddr + phdr->p_memsz + PAGE_SIZE - 1ULL) & ~(PAGE_SIZE - 1ULL);
     size_t page_count = (size_t)((seg_end - seg_start) / PAGE_SIZE);
 
-    extern void fut_printf(const char *, ...);
     EXEC_DEBUG("[EXEC][MAP-SEGMENT] vaddr=0x%llx memsz=0x%llx filesz=0x%llx page_count=%llu\n",
                (unsigned long long)phdr->p_vaddr,
                (unsigned long long)phdr->p_memsz,
@@ -419,7 +426,6 @@ static int build_user_stack(fut_mm_t *mm,
     uint64_t sp = USER_STACK_TOP;
 
     /* Copy environment variable strings first (highest addresses) */
-    extern void fut_printf(const char *, ...);
     stack_printf("[STACK-DEBUG] Copying %zu envp strings, envp=%p\n", envc, envp);
     for (size_t i = envc; i-- > 0;) {
         /* Debug: Read the pointer value from the array */
@@ -910,6 +916,7 @@ int fut_stage_second_stub_binary(void) {
 }
 #else /* !__x86_64__ */
 #include <kernel/errno.h>
+#include <kernel/kprintf.h>
 
 int fut_stage_init_stub_binary(void) {
     return -ENOSYS;  /* Not implemented for non-x86_64 platforms */
@@ -923,7 +930,6 @@ int fut_stage_second_stub_binary(void) {
 /* Core Wayland binaries (production - always built) */
 #ifndef FUTURA_MACOS_HOST_BUILD
 int fut_stage_wayland_compositor_binary(void) {
-    extern void fut_printf(const char *, ...);
     (void)fut_vfs_mkdir("/sbin", 0755);
 
     size_t wayland_size = (size_t)(_binary_build_bin_x86_64_user_futura_wayland_end - _binary_build_bin_x86_64_user_futura_wayland_start);
@@ -991,7 +997,6 @@ int fut_stage_wayland_color_client_binary(void) {
 #endif
 
 int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
-    extern void fut_printf(const char *, ...);
     ELF_LOG("[EXEC-ELF] ENTER: path=%s argv=%p envp=%p\n", path ? path : "(null)", argv, envp);
 
     if (!path) {
@@ -1549,14 +1554,23 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
 /* ARM64 ELF64 loader implementation */
 
 #include <kernel/exec.h>
+#include <kernel/kprintf.h>
 #include <kernel/errno.h>
+#include <kernel/kprintf.h>
 #include <kernel/fut_task.h>
+#include <kernel/kprintf.h>
 #include <kernel/fut_thread.h>
+#include <kernel/kprintf.h>
 #include <kernel/fut_memory.h>
+#include <kernel/kprintf.h>
 #include <kernel/fut_mm.h>
+#include <kernel/kprintf.h>
 #include <kernel/fut_sched.h>
+#include <kernel/kprintf.h>
 #include <kernel/fut_vfs.h>
+#include <kernel/kprintf.h>
 #include <kernel/uaccess.h>
+#include <kernel/kprintf.h>
 #include <platform/arm64/regs.h>
 #include <platform/arm64/context.h>
 #include <platform/arm64/memory/pmap.h>
@@ -1672,7 +1686,6 @@ static int exec_copy_to_user(fut_mm_t *mm, uint64_t dest, const void *src, size_
 
 /* Map a single LOAD segment from file */
 static int map_segment(fut_mm_t *mm, int fd, const elf64_phdr_t *phdr) {
-    extern void fut_printf(const char *, ...);
 
     if (phdr->p_memsz == 0) return 0;
     if (phdr->p_vaddr == 0) return -EINVAL;
@@ -1974,7 +1987,6 @@ static int build_user_stack(fut_mm_t *mm,
     uint64_t sp = info->stack;
     fut_task_t *task = info->task;
 
-    extern void fut_printf(const char *, ...);
     fut_printf("[TRAMPOLINE] Received: arg=%p info=%p entry=0x%llx sp=0x%llx task=%p\n",
                arg, info,
                (unsigned long long)entry,
@@ -2070,7 +2082,6 @@ static int build_user_stack(fut_mm_t *mm,
 
 /* Map a single LOAD segment from memory buffer */
 static int map_segment_from_memory(fut_mm_t *mm, const void *elf_data, const elf64_phdr_t *phdr) {
-    extern void fut_printf(const char *, ...);
 
     if (phdr->p_memsz == 0) return 0;
     if (phdr->p_vaddr == 0) return -EINVAL;
@@ -2318,7 +2329,6 @@ int fut_exec_elf_memory(const void *elf_data, size_t elf_size, char *const argv[
 }
 
 int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
-    extern void fut_printf(const char *, ...);
 #ifdef DEBUG_ELF
     ELF_LOG("[EXEC-ELF] ENTER: path=%s\n", path ? path : "(null)");
 #endif
@@ -2549,7 +2559,6 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
     entry->task = task;
 
 #ifdef DEBUG_ELF
-    extern void fut_printf(const char *, ...);
     fut_printf("[EXEC-ARM64] Set entry structure: entry=0x%llx stack=0x%llx argc=%llu\n",
                (unsigned long long)entry->entry,
                (unsigned long long)entry->stack,
@@ -2570,14 +2579,12 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
     current->task = saved_task;
 
     if (stdio_fd0 != 0 || stdio_fd1 != 1 || stdio_fd2 != 2) {
-        extern void fut_printf(const char *, ...);
         fut_printf("[EXEC-ARM64] WARNING: Failed to open stdio (got %d/%d/%d)\n",
                    stdio_fd0, stdio_fd1, stdio_fd2);
     }
 
     /* Create thread with trampoline */
 #ifdef DEBUG_ELF
-    extern void fut_printf(const char *, ...);
     fut_printf("[EXEC-ARM64] About to create thread: trampoline=%p entry_struct=%p user_entry=0x%llx\n",
                (void*)fut_user_trampoline_arm64, (void*)entry, (unsigned long long)entry->entry);
 #endif
@@ -2605,6 +2612,7 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
 #else  /* Other architectures */
 
 #include <kernel/errno.h>
+#include <kernel/kprintf.h>
 
 int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
     (void)path;

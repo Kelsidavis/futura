@@ -13,6 +13,7 @@
 #include "../../include/kernel/fut_memory.h"
 #include "../../include/kernel/fut_vfs.h"
 #include "../../include/kernel/errno.h"
+#include <kernel/kprintf.h>
 #include <stdatomic.h>
 #include <string.h>
 
@@ -93,7 +94,6 @@ fut_task_t *fut_task_create(void) {
     memset(task, 0, sizeof(fut_task_t));
 
 #ifdef DEBUG_TASK
-    extern void fut_printf(const char *, ...);
     fut_printf("[TASK-CREATE-DBG] After memset: task=%p task->threads=%p\n", task, task->threads);
 #endif
 
@@ -210,7 +210,6 @@ fut_task_t *fut_task_create(void) {
  */
 void fut_task_add_thread(fut_task_t *task, fut_thread_t *thread) {
 #ifdef DEBUG_TASK
-    extern void fut_printf(const char *, ...);
 #endif
 
     if (!task || !thread) {

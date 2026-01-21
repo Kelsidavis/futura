@@ -17,7 +17,7 @@
 #include <kernel/errno.h>
 #include <stdint.h>
 
-extern void fut_printf(const char *fmt, ...);
+#include <kernel/kprintf.h>
 
 /* Execution domain personalities */
 #define PER_LINUX       0x0000  /* Linux personality (default) */

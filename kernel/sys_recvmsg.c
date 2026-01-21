@@ -19,7 +19,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-extern void fut_printf(const char *fmt, ...);
+#include <kernel/kprintf.h>
 extern fut_task_t *fut_task_current(void);
 extern struct fut_file *vfs_get_file(int fd);
 extern fut_socket_t *get_socket_from_fd(int fd);

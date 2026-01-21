@@ -6,7 +6,7 @@
 #include "../../include/kernel/fut_percpu.h"
 #include <string.h>
 
-extern void fut_printf(const char *fmt, ...);
+#include <kernel/kprintf.h>
 
 /* Array of per-CPU data structures */
 fut_percpu_t fut_percpu_data[FUT_MAX_CPUS] __attribute__((aligned(64)));

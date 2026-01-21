@@ -18,7 +18,7 @@
 #include <stdint.h>
 #include <stddef.h>
 
-extern void fut_printf(const char *fmt, ...);
+#include <kernel/kprintf.h>
 
 /* idtype for waitid */
 #define P_ALL    0  /* Wait for any child */

@@ -18,7 +18,7 @@
 #include <kernel/fut_fd_util.h>
 #include <stdint.h>
 
-extern void fut_printf(const char *fmt, ...);
+#include <kernel/kprintf.h>
 extern struct fut_file *fut_vfs_get_file(int fd);
 extern int fut_copy_to_user(void *to, const void *from, size_t size);
 extern uint64_t fut_get_time_ns(void);

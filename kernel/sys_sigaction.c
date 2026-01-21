@@ -18,7 +18,7 @@
 #include <kernel/errno.h>
 #include <kernel/uaccess.h>
 
-extern void fut_printf(const char *fmt, ...);
+#include <kernel/kprintf.h>
 extern fut_task_t *fut_task_current(void);
 
 /**

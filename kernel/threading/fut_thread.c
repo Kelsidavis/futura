@@ -23,7 +23,7 @@
 [[noreturn]] static void fut_thread_trampoline(void (*entry)(void *), void *arg) __attribute__((used));
 
 /* External declarations */
-extern void fut_printf(const char *fmt, ...);
+#include <kernel/kprintf.h>
 extern void fut_sleep_until(fut_thread_t *thread, uint64_t wake_time);
 
 /* Thread ID counter (64-bit) */
@@ -276,12 +276,10 @@ fut_thread_t *fut_thread_create(
     ctx->x1 = (uint64_t)arg;
 
     // Debug: log the trampoline address
-    extern void fut_printf(const char *, ...);
     fut_printf("[THREAD-CTX] PC set to fut_thread_trampoline=%p x0=%p x1=%p\n",
                (void*)(uintptr_t)ctx->pc, (void*)ctx->x0, (void*)ctx->x1);
 
 #ifdef DEBUG_THREAD
-    extern void fut_printf(const char *, ...);
     fut_printf("[THREAD-CREATE] ARM64 thread %llu: entry=%p arg=%p\n",
                (unsigned long long)thread->tid, (void*)entry, arg);
 #endif
@@ -290,7 +288,6 @@ fut_thread_t *fut_thread_create(
     if (task->mm) {
         ctx->ttbr0_el1 = task->mm->ctx.ttbr0_el1;
 #ifdef DEBUG_THREAD
-        extern void fut_printf(const char *, ...);
         fut_printf("[THREAD-CREATE] Set ttbr0_el1=%llx from task mm\n",
                    (unsigned long long)ctx->ttbr0_el1);
 #endif

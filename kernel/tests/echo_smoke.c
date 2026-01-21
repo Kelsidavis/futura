@@ -14,7 +14,7 @@
 
 #include <string.h>
 
-extern void fut_printf(const char *fmt, ...);
+#include <kernel/kprintf.h>
 
 void fut_echo_selftest(void) {
     static int already_ran = 0;

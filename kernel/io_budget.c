@@ -23,7 +23,7 @@
 #include <kernel/fut_timer.h>
 #include <stdint.h>
 
-extern void fut_printf(const char *fmt, ...);
+#include <kernel/kprintf.h>
 
 /* I/O budget time window in milliseconds (1 second) */
 #define IO_BUDGET_WINDOW_MS 1000

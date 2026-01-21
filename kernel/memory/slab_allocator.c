@@ -12,6 +12,7 @@
 #include <stdint.h>
 #include <string.h>
 #include <stdbool.h>
+#include <kernel/kprintf.h>
 #include "../../include/kernel/buddy_allocator.h"
 
 /* Debug logging - set to 1 to enable verbose slab allocator debugging */
@@ -122,7 +123,6 @@ void slab_init(void) {
 
 /* Allocate a new slab and add it to cache */
 static slab_t *slab_create(slab_cache_t *cache) {
-    extern void fut_printf(const char *, ...);
 
     /* Allocate slab metadata + data from buddy allocator */
     uint8_t *slab_mem = (uint8_t *)buddy_malloc(SLAB_SIZE);
@@ -184,7 +184,6 @@ static slab_t *slab_create(slab_cache_t *cache) {
 
 /* Validate slab integrity before using it */
 static int slab_is_valid(slab_t *slab) {
-    extern void fut_printf(const char *, ...);
 
     if (!slab) return 0;
 
@@ -218,7 +217,6 @@ static int slab_is_valid(slab_t *slab) {
 void *slab_malloc(size_t size) {
     if (size == 0) return NULL;
 
-    extern void fut_printf(const char *, ...);
     extern uintptr_t fut_heap_get_base(void);
     extern uintptr_t fut_heap_get_limit(void);
 
@@ -348,7 +346,6 @@ void *slab_malloc(size_t size) {
 void slab_free(void *ptr) {
     if (!ptr) return;
 
-    extern void fut_printf(const char *, ...);
     extern uintptr_t fut_heap_get_base(void);
     extern uintptr_t fut_heap_get_limit(void);
 
@@ -477,7 +474,6 @@ void slab_print_stats(void) {
 }
 
 void slab_debug_validate_all(const char *context) {
-    extern void fut_printf(const char *, ...);
 
     for (size_t i = 0; i < NUM_SLAB_SIZES; i++) {
         slab_cache_t *cache = &slab_caches[i];

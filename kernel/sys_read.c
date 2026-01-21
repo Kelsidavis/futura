@@ -23,7 +23,7 @@
 /* Maximum single read size to prevent excessive kernel buffer allocation */
 #define MAX_READ_SIZE  (1024 * 1024)  /* 1 MB */
 
-extern void fut_printf(const char *fmt, ...);
+#include <kernel/kprintf.h>
 extern fut_task_t *fut_task_current(void);
 
 /**

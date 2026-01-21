@@ -17,7 +17,7 @@
 #include <kernel/errno.h>
 #include <stdint.h>
 
-extern void fut_printf(const char *fmt, ...);
+#include <kernel/kprintf.h>
 
 /* unshare() flags (from Linux clone.h) */
 #define CLONE_VM             0x00000100  /* Share memory space */

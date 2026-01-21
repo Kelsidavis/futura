@@ -27,7 +27,7 @@
 
 #include <tests/test_api.h>
 
-extern void fut_printf(const char *fmt, ...);
+#include <kernel/kprintf.h>
 extern uintptr_t g_user_lo;
 
 #define O_RDWR          0x0002

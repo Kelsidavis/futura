@@ -16,7 +16,7 @@
 #include <kernel/errno.h>
 #include <stddef.h>
 
-extern void fut_printf(const char *fmt, ...);
+#include <kernel/kprintf.h>
 
 /**
  * acct() - Enable or disable process accounting

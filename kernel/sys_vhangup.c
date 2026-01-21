@@ -15,7 +15,7 @@
 #include <kernel/fut_task.h>
 #include <kernel/errno.h>
 
-extern void fut_printf(const char *fmt, ...);
+#include <kernel/kprintf.h>
 
 /**
  * vhangup() - Hang up controlling terminal

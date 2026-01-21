@@ -5,6 +5,7 @@
 
 #include "../../include/kernel/trap.h"
 
+#include <kernel/kprintf.h>
 #include "../../include/kernel/uaccess.h"
 #include "../../include/kernel/errno.h"
 #include "../../include/kernel/fut_task.h"
@@ -29,7 +30,6 @@
 #include <stdint.h>
 #include <string.h>
 
-extern void fut_printf(const char *fmt, ...);
 
 /* ============================================================
  *   Architecture-Generic Demand Paging & COW Handling
@@ -60,7 +60,6 @@ extern void fut_printf(const char *fmt, ...);
  * @return true on success, false on error
  */
 static bool load_demand_page(uint64_t page_addr, struct fut_vma *vma, fut_vmem_context_t *ctx) {
-    extern void fut_printf(const char *, ...);
 
     if (!vma || !ctx) {
         return false;
@@ -143,7 +142,6 @@ static bool load_demand_page(uint64_t page_addr, struct fut_vma *vma, fut_vmem_c
  * Detects sequential access patterns and preloads nearby pages.
  */
 static void readahead_prefetch(uint64_t fault_addr, struct fut_vma *vma, fut_vmem_context_t *ctx) {
-    extern void fut_printf(const char *, ...);
 
     if (!vma || !ctx) {
         return;
@@ -172,7 +170,6 @@ static void readahead_prefetch(uint64_t fault_addr, struct fut_vma *vma, fut_vme
 }
 
 static bool handle_demand_paging_fault(uint64_t fault_addr, fut_mm_t *mm) {
-    extern void fut_printf(const char *, ...);
     extern void fut_vnode_ref(struct fut_vnode *);
 
     if (!mm) {
@@ -404,7 +401,6 @@ bool fut_trap_handle_page_fault(fut_interrupt_frame_t *frame) {
  * Supports demand paging and copy-on-write.
  */
 bool fut_trap_handle_page_fault(fut_interrupt_frame_t *frame) {
-    extern void fut_printf(const char *fmt, ...);
 
     if (!frame) {
         return false;

@@ -17,7 +17,7 @@
 #include <shared/fut_timespec.h>
 #include <sys/futex.h>  /* For FUTEX_* constants, struct robust_list */
 
-extern void fut_printf(const char *fmt, ...);
+#include <kernel/kprintf.h>
 extern fut_task_t *fut_task_current(void);
 extern fut_thread_t *fut_thread_current(void);
 extern int fut_access_ok(const void *u_ptr, size_t len, int write);

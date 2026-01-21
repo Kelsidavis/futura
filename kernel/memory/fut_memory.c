@@ -10,6 +10,7 @@
 #include "../../include/kernel/fut_memory.h"
 #include <platform/platform.h>
 #include <kernel/errno.h>
+#include <kernel/kprintf.h>
 
 #if defined(__x86_64__)
 #include <platform/x86_64/memory/pmap.h>
@@ -158,7 +159,6 @@ uintptr_t fut_pmm_bitmap_end_virt(void) {
 }
 
 void fut_pmm_reserve_range(uintptr_t phys_addr, size_t size_bytes) {
-    extern void fut_printf(const char *, ...);
 
     if (size_bytes == 0) {
         return;

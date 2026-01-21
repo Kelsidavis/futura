@@ -11,7 +11,7 @@
 #include <shared/fut_timespec.h>
 #include <shared/fut_sigevent.h>  /* For struct sigevent, timer_t, SIGEV_* */
 
-extern void fut_printf(const char *fmt, ...);
+#include <kernel/kprintf.h>
 extern fut_task_t *fut_task_current(void);
 
 /**

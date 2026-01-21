@@ -5,7 +5,7 @@
 #include <platform/platform.h>
 #include <tests/test_api.h>
 
-extern void fut_printf(const char *fmt, ...);
+#include <kernel/kprintf.h>
 
 void fut_exec_double_smoke(void) {
     static int already_run = 0;

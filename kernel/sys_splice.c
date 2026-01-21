@@ -25,7 +25,7 @@
 typedef long ssize_t;
 #endif
 
-extern void fut_printf(const char *fmt, ...);
+#include <kernel/kprintf.h>
 
 /* splice flags */
 #define SPLICE_F_MOVE     0x01  /* Move pages instead of copying */

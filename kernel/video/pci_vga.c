@@ -8,6 +8,7 @@
 
 #include <kernel/fb.h>
 #include <kernel/console.h>
+#include <kernel/kprintf.h>
 #include <platform/platform.h>
 #include <stddef.h>
 #include <stdint.h>

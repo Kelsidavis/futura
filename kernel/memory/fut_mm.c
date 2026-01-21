@@ -17,6 +17,7 @@
 #include "../../include/kernel/fut_thread.h"
 #include "../../include/kernel/fut_vfs.h"
 #include <kernel/errno.h>
+#include <kernel/kprintf.h>
 #include <string.h>
 #include <stdbool.h>
 #include <stdint.h>
@@ -131,7 +132,6 @@ static void copy_kernel_half(pte_t *dst) {
 }
 
 fut_mm_t *fut_mm_create(void) {
-    extern void fut_printf(const char *, ...);
 
     /* CRITICAL: When called from a user process context (e.g., fork), the current
      * CR3 might have stale kernel page table mappings. The kernel heap can expand
@@ -266,7 +266,6 @@ void fut_mm_release(fut_mm_t *mm) {
 }
 
 void fut_mm_switch(fut_mm_t *mm) {
-    extern void fut_printf(const char *, ...);
     extern uint64_t fut_read_cr3(void);
     extern void fut_write_cr3(uint64_t);
 
@@ -488,7 +487,6 @@ fail:
  * @return 0 on success, -errno on error
  */
 static int vma_writeback_pages(fut_vma_t *vma) {
-    extern void fut_printf(const char *, ...);
 
     if (!vma || !vma->vnode) {
         return 0;  /* Nothing to writeback for anonymous mappings */
@@ -650,7 +648,6 @@ int fut_mm_unmap(fut_mm_t *mm, uintptr_t addr, size_t len) {
  */
 void *fut_mm_map_file(fut_mm_t *mm, struct fut_vnode *vnode, uintptr_t hint,
                        size_t len, int prot, int flags, uint64_t file_offset) {
-    extern void fut_printf(const char *, ...);
     extern void fut_vnode_ref(struct fut_vnode *);
 
 
@@ -753,7 +750,6 @@ static void mm_unmap_and_free(fut_mm_t *mm, uintptr_t start, uintptr_t end) {
 }
 
 void fut_mm_system_init(void) {
-    extern void fut_printf(const char *, ...);
     fut_printf("[MM] ARM64 memory management initialization\n");
 
     memset(&kernel_mm, 0, sizeof(kernel_mm));
@@ -782,7 +778,6 @@ fut_mm_t *fut_mm_kernel(void) {
 
 /* Helper to get or create an L2 table in the L1 PGD */
 static page_table_t *get_or_create_l2(page_table_t *pgd, uint64_t l1_idx) {
-    extern void fut_printf(const char *, ...);
 
     /* Check if L1 entry already exists as a table descriptor
      * Table descriptor: bits [1:0] = 11 (Valid + Table)
@@ -821,7 +816,6 @@ static page_table_t *get_or_create_l2(page_table_t *pgd, uint64_t l1_idx) {
 
 /* Helper to get or create an L3 table in an L2 table */
 static page_table_t *get_or_create_l3(page_table_t *l2, uint64_t l2_idx) {
-    extern void fut_printf(const char *, ...);
 
     /* Check if L2 entry already exists as a table descriptor
      * Table descriptor: bits [1:0] = 11 (Valid + Table)
@@ -860,7 +854,6 @@ static page_table_t *get_or_create_l3(page_table_t *l2, uint64_t l2_idx) {
 
 /* Helper to map a device page (UART, GIC, etc.) with Device-nGnRnE attributes */
 static void map_device_page(page_table_t *pgd, uint64_t vaddr, uint64_t paddr) {
-    extern void fut_printf(const char *, ...);
 
     uint64_t l1_idx = (vaddr >> 30) & 0x1FF;
     uint64_t l2_idx = (vaddr >> 21) & 0x1FF;
@@ -886,7 +879,6 @@ static void map_device_page(page_table_t *pgd, uint64_t vaddr, uint64_t paddr) {
 }
 
 static void copy_kernel_half(page_table_t *dst) {
-    extern void fut_printf(const char *, ...);
     extern page_table_t boot_l1_table;  /* From boot.S */
 
     /* ARM64: Copy ONLY the DRAM mapping from boot L1 table.
@@ -956,7 +948,6 @@ static void copy_kernel_half(page_table_t *dst) {
 }
 
 fut_mm_t *fut_mm_create(void) {
-    extern void fut_printf(const char *, ...);
 
 #ifdef DEBUG_MM
     mm_create_printf("[MM-CREATE] ARM64: Allocating MM structure...\n");
@@ -1055,7 +1046,6 @@ void fut_mm_release(fut_mm_t *mm) {
 }
 
 void fut_mm_switch(fut_mm_t *mm) {
-    extern void fut_printf(const char *, ...);
 
     mm = mm_fallback(mm);
     if (active_mm == mm) {
@@ -1144,7 +1134,6 @@ void fut_mm_set_brk_current(fut_mm_t *mm, uintptr_t current) {
 }
 
 void *fut_mm_map_anonymous(fut_mm_t *mm, uintptr_t hint, size_t len, int prot, int flags) {
-    extern void fut_printf(const char *, ...);
 
     if (!mm || len == 0) {
         return (void *)(intptr_t)(-EINVAL);
@@ -1211,7 +1200,6 @@ void *fut_mm_map_anonymous(fut_mm_t *mm, uintptr_t hint, size_t len, int prot, i
  * @return 0 on success, -errno on error
  */
 static int vma_writeback_pages(fut_vma_t *vma) {
-    extern void fut_printf(const char *, ...);
 
     if (!vma || !vma->vnode) {
         return 0;  /* Nothing to writeback for anonymous mappings */
@@ -1375,7 +1363,6 @@ int fut_mm_unmap(fut_mm_t *mm, uintptr_t addr, size_t len) {
  */
 void *fut_mm_map_file(fut_mm_t *mm, struct fut_vnode *vnode, uintptr_t hint,
                        size_t len, int prot, int flags, uint64_t file_offset) {
-    extern void fut_printf(const char *, ...);
     extern void fut_vnode_ref(struct fut_vnode *);
 
     if (!mm || !vnode || len == 0) {
@@ -1756,7 +1743,6 @@ int fut_page_ref_get(phys_addr_t phys) {
 uint64_t fut_task_alloc_mmap_addr(size_t len) {
     extern fut_task_t *fut_task_current(void);
     extern fut_mm_t *fut_task_get_mm(const fut_task_t *);
-    extern void fut_printf(const char *, ...);
 
     fut_task_t *task = fut_task_current();
     if (!task) {

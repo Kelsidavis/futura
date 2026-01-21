@@ -9,7 +9,7 @@
 
 int memcmp(const void *lhs, const void *rhs, size_t n);
 
-extern void fut_printf(const char *fmt, ...);
+#include <kernel/kprintf.h>
 
 void fut_log(const char *msg) {
     if (!msg) {

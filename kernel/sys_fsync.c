@@ -18,7 +18,7 @@
 #include <kernel/fut_task.h>
 #include <kernel/fut_fd_util.h>
 
-extern void fut_printf(const char *fmt, ...);
+#include <kernel/kprintf.h>
 extern struct fut_file *vfs_get_file_from_task(struct fut_task *task, int fd);
 
 /**

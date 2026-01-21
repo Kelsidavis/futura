@@ -7,14 +7,17 @@
 #include "perf.h"
 
 #include <kernel/fut_memory.h>
+#include <kernel/kprintf.h>
 #include <kernel/fut_thread.h>
+#include <kernel/kprintf.h>
 #include <kernel/fut_waitq.h>
+#include <kernel/kprintf.h>
 #include <kernel/errno.h>
+#include <kernel/kprintf.h>
 
 #include <stdbool.h>
 #include <stdint.h>
 
-extern void fut_printf(const char *fmt, ...);
 
 #ifdef DEBUG_PERF
 #define PERFDBG(...) fut_printf(__VA_ARGS__)
@@ -22,7 +25,6 @@ extern void fut_printf(const char *fmt, ...);
 #define PERFDBG(...) do { } while (0)
 #endif
 
-extern void fut_printf(const char *fmt, ...);
 
 #define CTX_WARMUP  1000u
 #define CTX_ITERS   10000u

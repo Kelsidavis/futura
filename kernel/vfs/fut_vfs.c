@@ -19,7 +19,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 
-extern void fut_printf(const char *fmt, ...);
+#include <kernel/kprintf.h>
 
 /* Permission checking functions from vfs_credentials.c */
 extern int vfs_check_read_perm(struct fut_vnode *vnode);

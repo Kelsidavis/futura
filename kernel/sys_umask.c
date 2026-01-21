@@ -14,9 +14,8 @@
 
 #include <kernel/errno.h>
 #include <kernel/fut_task.h>
+#include <kernel/kprintf.h>
 #include <stdint.h>
-
-extern void fut_printf(const char *fmt, ...);
 
 /* Note: umask is now per-task in fut_task_t structure, initialized to 0022 at task creation.
  * This is no longer global - each task has its own umask value for proper multi-process isolation.

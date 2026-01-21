@@ -26,7 +26,7 @@ static inline void outb(uint16_t port, uint8_t val) { hal_outb(port, val); }
 static inline uint8_t inb(uint16_t port) { return hal_inb(port); }
 
 /* External declarations */
-extern void fut_printf(const char *fmt, ...);
+#include <kernel/kprintf.h>
 extern void fut_schedule(void);
 extern void serial_puts(const char *s);
 extern void fut_irq_send_eoi(uint8_t irq);
@@ -170,7 +170,6 @@ void fut_timer_tick(void) {
 
     // Debug: Log first few timer ticks to confirm IRQs are firing
     if (ticks < 5) {
-        extern void fut_printf(const char *fmt, ...);
         fut_printf("[TIMER] Tick %llu\n", (unsigned long long)ticks);
     }
 

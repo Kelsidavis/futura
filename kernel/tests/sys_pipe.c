@@ -18,7 +18,7 @@
 #include <kernel/uaccess.h>
 #include "tests/test_api.h"
 
-extern void fut_printf(const char *fmt, ...);
+#include <kernel/kprintf.h>
 extern long sys_pipe(int pipefd[2]);
 
 /* Test constants */

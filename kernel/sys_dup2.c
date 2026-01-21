@@ -18,7 +18,7 @@
 #include <kernel/fut_task.h>
 #include <kernel/fut_fd_util.h>
 
-extern void fut_printf(const char *fmt, ...);
+#include <kernel/kprintf.h>
 extern int propagate_socket_dup(int oldfd, int newfd);
 
 /* Set to 1 to enable verbose dup2 debug logging */

@@ -15,7 +15,7 @@
 #include "../../include/kernel/fut_timer.h"
 #include <kernel/errno.h>
 
-extern void fut_printf(const char *fmt, ...);
+#include <kernel/kprintf.h>
 
 /* Set to 1 to enable verbose socket debug logging */
 #define SOCKET_DEBUG 0

@@ -22,7 +22,7 @@
 #define PERFDBG(...) do { } while (0)
 #endif
 
-extern void fut_printf(const char *fmt, ...);
+#include <kernel/kprintf.h>
 
 #define BLK_WARMUP       32u
 #define BLK_ITERS        128u

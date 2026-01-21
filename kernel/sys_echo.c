@@ -20,7 +20,7 @@
 
 #include <stddef.h>
 
-extern void fut_printf(const char *fmt, ...);
+#include <kernel/kprintf.h>
 
 #define SYS_ECHO_MAX (4096u)
 

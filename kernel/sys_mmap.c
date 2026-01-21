@@ -31,7 +31,7 @@
 /* Maximum number of VMAs per process (DoS protection) */
 #define MAX_VMA_COUNT   65536
 
-extern void fut_printf(const char *fmt, ...);
+#include <kernel/kprintf.h>
 
 /**
  * Count the number of VMAs in a memory map.

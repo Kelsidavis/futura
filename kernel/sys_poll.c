@@ -14,7 +14,7 @@
 #include <stdint.h>
 #include <string.h>
 
-extern void fut_printf(const char *fmt, ...);
+#include <kernel/kprintf.h>
 
 /* Disable verbose POLL debugging for performance */
 #define POLL_DEBUG 0

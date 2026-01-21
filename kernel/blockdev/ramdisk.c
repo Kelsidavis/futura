@@ -9,6 +9,7 @@
 
 #include <kernel/fut_blockdev.h>
 #include <kernel/fut_memory.h>
+#include <kernel/kprintf.h>
 #include <stddef.h>
 
 /* ============================================================

@@ -17,7 +17,7 @@
 #include <kernel/fut_task.h>
 #include <kernel/errno.h>
 
-extern void fut_printf(const char *fmt, ...);
+#include <kernel/kprintf.h>
 extern int fut_vfs_close(int fd);
 
 /* Set to 1 to enable verbose exit debug logging */

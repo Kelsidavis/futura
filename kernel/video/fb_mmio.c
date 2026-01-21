@@ -14,6 +14,7 @@
 
 #include <kernel/fb.h>
 #include <kernel/boot_args.h>
+#include <kernel/kprintf.h>
 #include <kernel/video/pci_vga.h>
 #include <kernel/video/cirrus_vga.h>
 #include <kernel/video/virtio_gpu.h>

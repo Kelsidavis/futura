@@ -18,7 +18,7 @@
 #include <kernel/errno.h>
 #include <stddef.h>
 
-extern void fut_printf(const char *fmt, ...);
+#include <kernel/kprintf.h>
 
 /* Disable verbose OPEN debugging for performance */
 #define OPEN_DEBUG 0

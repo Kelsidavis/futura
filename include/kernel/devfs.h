@@ -1,6 +1,9 @@
-// SPDX-License-Identifier: MPL-2.0
-/*
- * devfs.h - Minimal device filesystem registry
+/* include/kernel/devfs.h - Device filesystem registry interface
+ *
+ * Copyright (c) 2025 Kelsi Davis
+ * Licensed under the MPL v2.0 — see LICENSE for details.
+ *
+ * Provides device node registration and lookup for /dev filesystem.
  */
 
 #pragma once

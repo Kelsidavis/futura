@@ -1,6 +1,9 @@
-// SPDX-License-Identifier: MPL-2.0
-/*
- * chrdev.h - Character device registration interface
+/* include/kernel/chrdev.h - Character device registration interface
+ *
+ * Copyright (c) 2025 Kelsi Davis
+ * Licensed under the MPL v2.0 — see LICENSE for details.
+ *
+ * Defines the character device driver interface and registration functions.
  */
 
 #pragma once

@@ -1,12 +1,15 @@
-// SPDX-License-Identifier: MPL-2.0
-/*
- * errno.h - Kernel error code definitions
+/* include/kernel/errno.h - Kernel error code definitions
  *
- * Centralizes the minimal errno-style constants used across the kernel.  The
- * values mirror the traditional POSIX assignments so that subsystems sharing
- * codes (VFS, IPC, drivers) can agree on return values without having to pull
- * in unrelated headers.  Guard each definition to avoid double-definition
- * when legacy headers provide the same constant.
+ * Copyright (c) 2025 Kelsi Davis
+ * Licensed under the MPL v2.0 — see LICENSE for details.
+ *
+ * Centralizes errno-style constants used across the kernel. Values mirror
+ * traditional POSIX assignments so subsystems (VFS, IPC, drivers) can agree
+ * on return values. Each definition is guarded to avoid conflicts with legacy
+ * headers that provide the same constants.
+ *
+ * Error codes follow the Linux/POSIX convention where syscalls return negative
+ * error numbers (e.g., -EINVAL, -ENOENT) and userspace sees positive errno values.
  */
 
 #pragma once

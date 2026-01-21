@@ -1,4 +1,20 @@
-unsigned char boot_bmp[] = {
+// SPDX-License-Identifier: MPL-2.0
+/*
+ * boot_logo.h - Boot splash screen bitmap data
+ *
+ * Copyright (c) 2025 Kelsi Davis
+ * Licensed under the MPL v2.0 — see LICENSE for details.
+ *
+ * Contains the BMP image data for the boot splash screen.
+ * This is a 100x100 pixel 24-bit BMP image.
+ *
+ * Note: This file should only be included once in the codebase
+ * (typically in the framebuffer initialization code).
+ */
+
+#pragma once
+
+static const unsigned char boot_bmp[] = {
   0x42, 0x4d, 0x66, 0x75, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x36, 0x00,
   0x00, 0x00, 0x28, 0x00, 0x00, 0x00, 0x64, 0x00, 0x00, 0x00, 0x64, 0x00,
   0x00, 0x00, 0x01, 0x00, 0x18, 0x00, 0x00, 0x00, 0x00, 0x00, 0x30, 0x75,
@@ -2505,4 +2521,6 @@ unsigned char boot_bmp[] = {
   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
   0x00, 0x00, 0x00, 0x00, 0x00, 0x00
 };
-__attribute__((unused)) static unsigned int boot_bmp_len = 30054;
+
+/* Size of the boot_bmp array in bytes */
+static const unsigned int boot_bmp_len = sizeof(boot_bmp);

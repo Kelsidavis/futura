@@ -191,6 +191,18 @@ still servicing the current interrupt.
      - `fut_capability_check_expiry()` implemented (commit 32ca359)
      - `fut_capability_create_timed()` for creating timed capabilities
      - Time resolution: 1 minute (max ~45 days expiry)
+   - ~~Add page refcount overflow protection~~ ✓ DONE (commit adfa7bb)
+     - `FUT_PAGE_REF_MAX` (60000) prevents CVE-2016-0728 style attacks
+     - `fut_page_ref_inc()` returns error if limit reached
+   - ~~Add file refcount overflow protection~~ ✓ DONE (commit 8342941)
+     - `FUT_FILE_REF_MAX` prevents overflow via mass forking
+     - Proper cleanup of already-inherited FDs on failure
+   - ~~Add global PID limit for fork bomb mitigation~~ ✓ DONE (commit eb1b1d3)
+     - `FUT_MAX_TASKS_GLOBAL` (30000) system-wide limit
+     - `FUT_RESERVED_FOR_ROOT` (1000) PIDs reserved for admin recovery
+   - ~~Enforce CAP_SYS_RESOURCE for raising hard limits~~ ✓ DONE (commit adda195)
+   - ~~Add VMA count limit~~ ✓ DONE (commit adda195)
+     - `MAX_VMA_COUNT` (65536) prevents VMA fragmentation DoS
 
 ---
 

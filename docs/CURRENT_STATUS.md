@@ -1,6 +1,6 @@
-# Current Status — November 2025
+# Current Status — January 2026
 
-**Last Updated**: 2025-11-27
+**Last Updated**: 2026-01-21
 
 ## Overview
 
@@ -83,6 +83,16 @@ See `docs/ARM64_STATUS.md` for detailed ARM64 progress.
 - ✅ **Per-task umask isolation**: Migrated umask from global state to per-task field in fut_task_t structure. Each process now has independent file creation mask; child processes inherit parent's umask on fork. Proper POSIX process isolation.
 - ✅ **Atomic rename operation**: Implemented full rename() syscall with VFS integration. Added rename() operation to fut_vnode_ops interface, implemented ramfs_rename() for in-memory atomicity, and integrated sys_rename() with comprehensive error handling. Supports same-directory renaming with atomic replacement of existing files. Foundation for cross-directory moves in future phase.
 - ✅ **Verified symlink/readlink**: Discovered sys_symlink() and sys_readlink() already fully implemented with complete VFS integration and error handling. Both syscalls ready for production use.
+
+### January 21, 2026 Session — Security Hardening & Code Quality
+- ✅ **Page refcount overflow protection**: Added FUT_PAGE_REF_MAX (60000) limit in fut_page_ref_inc() to prevent CVE-2016-0728 style refcount overflow attacks. Fork now checks return value and aborts if limit reached.
+- ✅ **File refcount overflow protection**: Added FUT_FILE_REF_MAX limit in sys_fork.c with proper cleanup of already-inherited FDs on failure. Prevents use-after-free via mass forking with many open FDs.
+- ✅ **Global PID limit**: Implemented FUT_MAX_TASKS_GLOBAL (30000) with FUT_RESERVED_FOR_ROOT (1000) PIDs reserved for admin recovery during fork bomb attacks.
+- ✅ **Time-based capability expiry**: Added fut_capability_check_expiry() and fut_capability_create_timed() for capabilities that expire after a specified duration.
+- ✅ **CAP_SYS_RESOURCE enforcement**: Non-privileged processes can no longer raise resource hard limits without CAP_SYS_RESOURCE capability.
+- ✅ **VMA count limit**: Added MAX_VMA_COUNT (65536) check in sys_mmap to prevent VMA fragmentation DoS attacks.
+- ✅ **Network error handling**: Added return value checks for fut_net_send() in TCP/IP stack (ARP, IP layers).
+- ✅ **Code quality improvements**: Replaced magic numbers with named constants (IO_BUDGET_WINDOW_MS, CPU_BRAND_BUFFER_SIZE, FUT_FD_TABLE_INITIAL_SIZE, O_NONBLOCK, O_CLOEXEC).
 
 ## Current Focus
 

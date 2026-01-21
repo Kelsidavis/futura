@@ -245,7 +245,8 @@ export RUSTFLAGS
 ASFLAGS := $(ARCH_ASFLAGS)
 
 # Linker flags
-LDFLAGS := -nostdlib $(ARCH_LDFLAGS) $(REPRO_LDFLAGS)
+# -z noexecstack: Suppress warnings about missing .note.GNU-stack in blob files
+LDFLAGS := -nostdlib -z noexecstack $(ARCH_LDFLAGS) $(REPRO_LDFLAGS)
 
 # Output directories
 BUILD_DIR := build

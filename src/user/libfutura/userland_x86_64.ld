@@ -8,32 +8,42 @@ OUTPUT_FORMAT("elf64-x86-64")
 OUTPUT_ARCH(i386:x86-64)
 ENTRY(_start)
 
+/* Program headers with proper permissions to avoid RWX warnings */
+PHDRS
+{
+    text PT_LOAD FLAGS(5);   /* Read + Execute (no write) */
+    data PT_LOAD FLAGS(6);   /* Read + Write (no execute) */
+}
+
 SECTIONS
 {
     /* User programs typically start at 0x400000 (4MB) */
     . = 0x400000;
 
-    /* Text (code) section */
+    /* Text (code) section - read-only executable */
     .text : {
         *(.text._start)
         *(.text .text.*)
-    }
+    } :text
 
-    /* Read-only data */
+    /* Read-only data - also in text segment */
     .rodata : {
         *(.rodata .rodata.*)
-    }
+    } :text
 
-    /* Initialized data */
+    /* Align to page boundary before data section */
+    . = ALIGN(4096);
+
+    /* Initialized data - read-write */
     .data : {
         *(.data .data.*)
-    }
+    } :data
 
-    /* Uninitialized data (BSS) */
+    /* Uninitialized data (BSS) - also in data segment */
     .bss : {
         *(.bss .bss.*)
         *(COMMON)
-    }
+    } :data
 
     /* Heap starts after BSS */
     . = ALIGN(16);

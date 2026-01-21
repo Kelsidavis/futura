@@ -125,6 +125,25 @@ See `docs/ARM64_STATUS.md` for detailed ARM64 progress.
 - ✅ **Size categorization DRY**: Applied `fut_size_category()` helper to sys_read.c and sys_write.c, eliminating ~30 lines of duplicated categorization logic
 - ✅ **Extended FD categorization**: Applied `fut_fd_category()` helper to 6 more files: sys_fchdir.c, sys_flock.c, sys_fdatasync.c, sys_fchmod.c, sys_fchown.c, sys_epoll.c - reducing ~70 lines total
 
+### January 21, 2026 Session (Continued) — Bug Fixes & Error Code Standardization
+- ✅ **Double-free bug fix**: Fixed memory corruption bug in elf64.c stage_stack_pages() where error cleanup loop used `j <= i` instead of `j < i`, causing double-free of current page after allocation failure.
+- ✅ **fut_timer.c error codes**: Replaced `-1` returns with proper errno constants:
+  - `fut_timer_start()`: -1 → -EINVAL (null callback), -ENOMEM (allocation failure)
+  - `fut_timer_cancel()`: -1 → -EINVAL (null callback), -ENOENT (timer not found)
+- ✅ **fut_object.c error codes**: Replaced `-1` returns with proper errno constants:
+  - `fut_object_destroy()`: -1 → -EINVAL (invalid handle), -ENOENT (not found), -EACCES (permission denied)
+  - Stub functions: -1 → -ENOSYS (not implemented)
+- ✅ **arm64_paging.c error codes**: Replaced numeric error codes (-1 through -5) with proper errno constants across 15 instances:
+  - `fut_map_page()`: alignment errors → -EINVAL, invalid address → -EFAULT, allocation failures → -ENOMEM
+  - `fut_unmap_page()`: alignment errors → -EINVAL, page not present → -ENOENT
+  - Virtual-to-physical translation: page table errors → -EFAULT
+- ✅ **fut_thread.c error codes**: Replaced `-1` returns with proper errno constants:
+  - `fut_thread_priority_raise()`: -1 → -EINVAL (null thread)
+  - `fut_thread_priority_restore()`: -1 → -EINVAL (null thread)
+  - `fut_thread_set_affinity()`: -1 → -EINVAL (invalid params)
+  - `fut_thread_set_affinity_mask()`: -1 → -EINVAL (empty mask)
+- ✅ **ramfs.c error codes**: Replaced `-1` returns in `validate_ramfs_node()` with -EIO for memory corruption detection
+
 ## Current Focus
 
 ### x86-64 Platform

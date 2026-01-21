@@ -13,7 +13,6 @@
 #include <kernel/fut_vfs.h>
 #include <kernel/fut_timer.h>
 #include <kernel/errno.h>
-#include <string.h>
 
 extern void fut_printf(const char *fmt, ...);
 

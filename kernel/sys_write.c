@@ -17,6 +17,7 @@
 #include <kernel/fut_memory.h>
 #include <kernel/uaccess.h>
 #include <kernel/errno.h>
+#include <kernel/fut_fd_util.h>
 #include <stddef.h>
 
 /* Maximum single write size to prevent excessive kernel buffer allocation */
@@ -201,21 +202,9 @@ ssize_t sys_write(int fd, const void *buf, size_t count) {
         return -EFAULT;
     }
 
-    /* Phase 2: Categorize write size */
-    const char *size_category;
-    if (local_count <= 16) {
-        size_category = "tiny (≤16 bytes)";
-    } else if (local_count <= 512) {
-        size_category = "small (≤512 bytes)";
-    } else if (local_count <= 4096) {
-        size_category = "typical (≤4 KB)";
-    } else if (local_count <= 65536) {
-        size_category = "large (≤64 KB)";
-    } else if (local_count <= MAX_WRITE_SIZE) {
-        size_category = "very large (≤1 MB)";
-    } else {
-        size_category = "excessive (>1 MB)";
-    }
+    /* Phase 2: Categorize write size - use shared helper for consistency */
+    const char *size_category = fut_size_category(local_count);
+    (void)size_category;  /* Unused when verbose logging disabled */
 
     /* Phase 2: Sanity check - reject unreasonably large writes */
     if (local_count > MAX_WRITE_SIZE) {

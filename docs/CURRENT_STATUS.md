@@ -224,6 +224,15 @@ See `docs/ARM64_STATUS.md` for detailed ARM64 progress.
   - `fb.h`: Framebuffer discovery methods, struct fields, init functions
   - `fb_console.h`: Console features, font, output functions
 
+### January 21, 2026 Session — Device Interface & Signal Documentation
+- ✅ **Device and signal header documentation**: Added comprehensive API docs to:
+  - `perf_clock.h`: TSC-based performance measurement, calibration, percentile stats
+  - `chrdev.h`: Character device driver interface, fut_file_ops callbacks, registration
+  - `devfs.h`: Device filesystem architecture, typical workflow, common paths
+  - `signal.h`: POSIX signal handling, delivery flow, signal types
+- ✅ **capability.c code quality**: Replaced magic numbers (0x3, 0x0040, 0x0200, 0x0080) with named constants (O_ACCMODE, O_RDONLY, O_WRONLY, O_RDWR, O_CREAT, O_TRUNC, O_EXCL)
+- ✅ **O_CLOEXEC constant**: Added O_CLOEXEC (0x80000) to fut_vfs.h and updated sys_dup3() to use the named constant instead of magic number
+
 ## Current Focus
 
 ### x86-64 Platform

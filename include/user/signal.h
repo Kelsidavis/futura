@@ -209,6 +209,13 @@ struct sigaction {
 #endif
 
 /* ============================================================
+ *   Timer-related Types (sigevent, timer_t, sigval)
+ *   Provided by shared/fut_sigevent.h
+ * ============================================================ */
+
+#include <shared/fut_sigevent.h>
+
+/* ============================================================
  *   Function Declarations
  * ============================================================ */
 

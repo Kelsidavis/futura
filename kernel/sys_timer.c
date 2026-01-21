@@ -9,31 +9,10 @@
 #include <kernel/fut_task.h>
 #include <kernel/errno.h>
 #include <shared/fut_timespec.h>
+#include <shared/fut_sigevent.h>  /* For struct sigevent, timer_t, SIGEV_* */
 
 extern void fut_printf(const char *fmt, ...);
 extern fut_task_t *fut_task_current(void);
-
-/* Timer ID type */
-typedef int timer_t;
-
-/* POSIX timer structures */
-struct sigevent {
-    int sigev_notify;              /* Notification method */
-    int sigev_signo;               /* Signal number */
-    union {
-        int sival_int;             /* Integer value */
-        void *sival_ptr;           /* Pointer value */
-    } sigev_value;
-    void (*sigev_notify_function)(union {int sival_int; void *sival_ptr;});
-    void *sigev_notify_attributes; /* Thread attributes */
-};
-
-/* struct itimerspec is provided by shared/fut_timespec.h */
-
-/* Notification methods */
-#define SIGEV_NONE   0  /* No notification */
-#define SIGEV_SIGNAL 1  /* Notify via signal */
-#define SIGEV_THREAD 2  /* Notify via thread */
 
 /**
  * sys_timer_create - Create a POSIX per-process timer

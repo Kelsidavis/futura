@@ -21,6 +21,7 @@
 #include <kernel/signal_frame.h>
 #include <kernel/signal.h>
 #include <kernel/fut_task.h>
+#include <shared/fut_sigevent.h>  /* For struct sigevent, timer_t */
 
 /* Debug control - set to 0 to disable verbose syscall logging */
 #define DEBUG_SYSCALL 0
@@ -100,21 +101,7 @@ extern long sys_sigsuspend(const sigset_t *mask);
 extern long sys_sigaltstack(const struct sigaltstack *ss, struct sigaltstack *old_ss);
 
 /* struct timespec is provided by shared/fut_timespec.h */
-
-/* POSIX timer structures and syscalls */
-typedef int timer_t;
-
-struct sigevent {
-    int sigev_notify;              /* Notification method */
-    int sigev_signo;               /* Signal number */
-    union {
-        int sival_int;             /* Integer value */
-        void *sival_ptr;           /* Pointer value */
-    } sigev_value;
-    void (*sigev_notify_function)(union {int sival_int; void *sival_ptr;});
-    void *sigev_notify_attributes; /* Thread attributes */
-};
-
+/* struct sigevent, timer_t provided by user/signal.h */
 /* struct itimerspec is provided by shared/fut_timespec.h */
 
 extern long sys_timer_create(int clockid, struct sigevent *sevp, timer_t *timerid);

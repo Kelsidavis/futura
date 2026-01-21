@@ -111,22 +111,22 @@ fut_rights_t fut_cap_flags_to_rights(int flags) {
     fut_rights_t rights = FUT_RIGHT_DESTROY;  /* Always allow close */
 
     /* Extract access mode from flags */
-    int access_mode = flags & 0x3;  /* O_RDONLY=0, O_WRONLY=1, O_RDWR=2 */
+    int access_mode = flags & O_ACCMODE;
 
     switch (access_mode) {
-        case 0:  /* O_RDONLY */
+        case O_RDONLY:
             rights |= FUT_RIGHT_READ;
             break;
-        case 1:  /* O_WRONLY */
+        case O_WRONLY:
             rights |= FUT_RIGHT_WRITE;
             break;
-        case 2:  /* O_RDWR */
+        case O_RDWR:
             rights |= FUT_RIGHT_READ | FUT_RIGHT_WRITE;
             break;
     }
 
     /* O_CREAT, O_TRUNC, O_EXCL require ADMIN rights */
-    if (flags & (0x0040 | 0x0200 | 0x0080)) {  /* O_CREAT | O_TRUNC | O_EXCL */
+    if (flags & (O_CREAT | O_TRUNC | O_EXCL)) {
         rights |= FUT_RIGHT_ADMIN;
     }
 

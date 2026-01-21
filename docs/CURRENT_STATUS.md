@@ -105,6 +105,12 @@ See `docs/ARM64_STATUS.md` for detailed ARM64 progress.
   - Dual-FD syscalls: dup3 (both oldfd/newfd), sendfile (both in_fd/out_fd), linkat/renameat (both olddirfd/newdirfd)
   - All validations properly handle AT_FDCWD (-100) as valid for *at syscalls
 
+### January 21, 2026 Session (Continued) — Code Refactoring & Bug Fixes
+- ✅ **Bug fixes**: Fixed missing semicolons in sys_flock.c and sys_faccessat.c that prevented compilation.
+- ✅ **Extended FD categorization refactoring**: Applied fut_fd_category() helper to additional syscall files (sys_pread64.c, sys_pwrite64.c, sys_fstat.c, sys_getdents64.c), reducing code duplication by ~40 lines.
+- ✅ **New I/O categorization helpers**: Added fut_size_category() and fut_offset_category() to fut_fd_util.h for consistent size and offset categorization in debug logging.
+- ✅ **Applied size/offset helpers**: Updated sys_pread64.c and sys_pwrite64.c to use the new fut_size_category() and fut_offset_category() helpers, eliminating duplicated categorization logic.
+
 ## Current Focus
 
 ### x86-64 Platform

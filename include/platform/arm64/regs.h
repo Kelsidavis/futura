@@ -185,6 +185,12 @@ typedef struct fut_interrupt_frame {
  * Physical addresses: 0x08000000 (GICD), 0x08010000 (GICC)
  * High VA mappings: 0xFFFFFF8008000000, 0xFFFFFF8008010000 (kernel TTBR1 space)
  */
+
+/* Physical base addresses (used for identity mapping in user page tables) */
+#define GICD_PHYS_BASE          0x08000000ULL   /* GIC Distributor physical */
+#define GICC_PHYS_BASE          0x08010000ULL   /* GIC CPU Interface physical */
+
+/* High VA mappings (kernel TTBR1 space) */
 #define GICD_BASE               0xFFFFFF8008000000UL  /* Distributor base */
 #define GICC_BASE               0xFFFFFF8008010000UL  /* CPU interface base */
 
@@ -211,7 +217,15 @@ typedef struct fut_interrupt_frame {
  * Physical address: 0x09000000
  * High VA mapping: 0xFFFFFF8009000000 (kernel TTBR1 space)
  */
+
+/* Physical base address (used for identity mapping in user page tables) */
+#define UART0_PHYS_BASE         0x09000000ULL   /* UART physical */
+
+/* High VA mapping (kernel TTBR1 space) */
 #define UART0_BASE              0xFFFFFF8009000000UL
+
+/* Device mapping region size for peripheral initialization (64KB = 16 pages) */
+#define DEVICE_MAP_REGION_SIZE  0x10000ULL      /* 64KB device mapping region */
 
 #define UART_DR                 0x000       /* Data register */
 #define UART_FR                 0x018       /* Flag register */

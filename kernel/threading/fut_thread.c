@@ -83,13 +83,12 @@ static void init_clean_fpu_state(void) {
         : "memory"                  /* Clobbers memory */
     );
 
-    /* Verify MXCSR was set to default 0x1F80 by fxsave64.
-     * MXCSR is at offset 24 in the FXSAVE area. */
-    uint32_t *mxcsr_ptr = (uint32_t *)(clean_fpu_state + 24);
+    /* Verify MXCSR was set to default value by fxsave64. */
+    uint32_t *mxcsr_ptr = (uint32_t *)(clean_fpu_state + FXSAVE_MXCSR_OFFSET);
 
     /* Ensure MXCSR is set to default value */
     if (*mxcsr_ptr == 0) {
-        *mxcsr_ptr = 0x1F80;
+        *mxcsr_ptr = MXCSR_DEFAULT;
     }
 
     clean_fpu_state_initialized = true;
@@ -159,7 +158,7 @@ fut_thread_t *fut_thread_create(
 
     // Place guard canary at bottom of stack (lowest address)
     // This helps detect stack overflow during debugging
-    *(uint64_t *)stack = 0xCAFEBABEDEADBEEFULL;  // FUT_STACK_CANARY
+    *(uint64_t *)stack = FUT_STACK_CANARY;
 
     // Get new TID (ARM64 workaround for atomic intrinsics)
 #if defined(__aarch64__)
@@ -233,25 +232,24 @@ fut_thread_t *fut_thread_create(
                (unsigned long long)(uintptr_t)&fut_thread_trampoline,
                (unsigned long long)(uintptr_t)entry);
 
-    /* RFLAGS bit 1 must be 1 (reserved), bit 9 is interrupt enable.
-     * CRITICAL: Start with IF=0 (interrupts DISABLED) to prevent the timer
-     * from interrupting before the trampoline executes its first instruction.
+    /* RFLAGS: reserved bit 1 must be 1. Start with interrupts DISABLED (IF=0)
+     * to prevent the timer from interrupting before the trampoline executes.
      * The trampoline will enable interrupts after critical setup is complete. */
-    ctx->rflags = 0x002;  // Bit 1 (reserved=1) | Bit 9 (IF=0) - interrupts disabled
+    ctx->rflags = RFLAGS_KERNEL_INIT;
 
     /* ALL threads (kernel and user) start in kernel mode (ring 0).
      * For user threads, the entry point is fut_user_trampoline (a kernel function)
      * which executes in kernel mode and then uses IRETQ to switch to user mode.
      * The trampoline itself handles the transition to ring 3. */
-    ctx->cs = 0x08; // Kernel code segment
-    ctx->ss = 0x10; // Kernel stack segment
+    ctx->cs = GDT_KERNEL_CODE;
+    ctx->ss = GDT_KERNEL_DATA;
     /* In 64-bit mode, DS/ES/FS/GS should be set to valid kernel selectors.
      * While NULL selectors (0) are valid to load, we set them to kernel data
-     * segment (0x10) for consistency with the ISR and to avoid potential issues. */
-    ctx->ds = 0x10;
-    ctx->es = 0x10;
-    ctx->fs = 0x10;
-    ctx->gs = 0x10;
+     * segment for consistency with the ISR and to avoid potential issues. */
+    ctx->ds = GDT_KERNEL_DATA;
+    ctx->es = GDT_KERNEL_DATA;
+    ctx->fs = GDT_KERNEL_DATA;
+    ctx->gs = GDT_KERNEL_DATA;
 
     ctx->rdi = (uint64_t)entry;
     ctx->rsi = (uint64_t)arg;
@@ -263,7 +261,7 @@ fut_thread_t *fut_thread_create(
      * This is critical: fxrstor64 requires a properly formatted FXSAVE area.
      * Using memset(0) creates an invalid FPU state (FCW=0, MXCSR=0) which
      * causes undefined behavior when restored. Instead, we copy a clean state
-     * captured from finit (FCW=0x037F, MXCSR=0x1F80). */
+     * captured from finit (FCW=0x037F, MXCSR=MXCSR_DEFAULT). */
     memcpy(ctx->fx_area, clean_fpu_state, sizeof(ctx->fx_area));
 #elif defined(__aarch64__)
     // ARM64 stack grows downward - point to the end of the stack

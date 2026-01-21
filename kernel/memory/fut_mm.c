@@ -30,6 +30,7 @@
 #include <platform/x86_64/memory/pmap.h>
 #elif defined(__aarch64__)
 #include <platform/arm64/memory/pmap.h>
+#include <platform/arm64/regs.h>  /* For device physical address constants */
 #else
 #error "Unsupported architecture"
 #endif
@@ -927,19 +928,19 @@ static void copy_kernel_half(page_table_t *dst) {
     fut_printf("[COPY-KERNEL] Mapping critical peripherals with 4KB pages...\n");
 #endif
 
-    /* UART at 0x09000000 (map 64KB = 16 pages for safety) */
-    for (uint64_t offset = 0; offset < 0x10000; offset += PAGE_SIZE) {
-        map_device_page(dst, 0x09000000 + offset, 0x09000000 + offset);
+    /* UART (map 64KB = 16 pages for safety) */
+    for (uint64_t offset = 0; offset < DEVICE_MAP_REGION_SIZE; offset += PAGE_SIZE) {
+        map_device_page(dst, UART0_PHYS_BASE + offset, UART0_PHYS_BASE + offset);
     }
 
-    /* GIC Distributor at 0x08000000 (map 64KB = 16 pages) */
-    for (uint64_t offset = 0; offset < 0x10000; offset += PAGE_SIZE) {
-        map_device_page(dst, 0x08000000 + offset, 0x08000000 + offset);
+    /* GIC Distributor (map 64KB = 16 pages) */
+    for (uint64_t offset = 0; offset < DEVICE_MAP_REGION_SIZE; offset += PAGE_SIZE) {
+        map_device_page(dst, GICD_PHYS_BASE + offset, GICD_PHYS_BASE + offset);
     }
 
-    /* GIC CPU Interface at 0x08010000 (map 64KB = 16 pages) */
-    for (uint64_t offset = 0; offset < 0x10000; offset += PAGE_SIZE) {
-        map_device_page(dst, 0x08010000 + offset, 0x08010000 + offset);
+    /* GIC CPU Interface (map 64KB = 16 pages) */
+    for (uint64_t offset = 0; offset < DEVICE_MAP_REGION_SIZE; offset += PAGE_SIZE) {
+        map_device_page(dst, GICC_PHYS_BASE + offset, GICC_PHYS_BASE + offset);
     }
 
 #ifdef DEBUG_MM

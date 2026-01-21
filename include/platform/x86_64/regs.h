@@ -194,6 +194,7 @@ static inline void fut_write_msr(uint32_t msr, uint64_t value) {
  *   RFLAGS Definitions
  * ============================================================ */
 
+#define RFLAGS_RESERVED (1 << 1)    /* Reserved bit (must always be 1) */
 #define RFLAGS_CF       (1 << 0)    /* Carry Flag */
 #define RFLAGS_PF       (1 << 2)    /* Parity Flag */
 #define RFLAGS_AF       (1 << 4)    /* Auxiliary Carry Flag */
@@ -211,6 +212,19 @@ static inline void fut_write_msr(uint32_t msr, uint64_t value) {
 #define RFLAGS_VIF      (1 << 19)   /* Virtual Interrupt Flag */
 #define RFLAGS_VIP      (1 << 20)   /* Virtual Interrupt Pending */
 #define RFLAGS_ID       (1 << 21)   /* ID Flag */
+
+/* Initial RFLAGS for new kernel threads (reserved bit set, interrupts disabled) */
+#define RFLAGS_KERNEL_INIT  RFLAGS_RESERVED
+
+/* ============================================================
+ *   FPU/SSE State Defaults
+ * ============================================================ */
+
+/* MXCSR default value (all exceptions masked, round-to-nearest) */
+#define MXCSR_DEFAULT       0x1F80
+
+/* MXCSR field offsets in FXSAVE area */
+#define FXSAVE_MXCSR_OFFSET 24
 
 /* ============================================================
  *   CPU Feature Detection

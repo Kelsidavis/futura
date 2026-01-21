@@ -38,6 +38,13 @@ typedef struct fut_thread fut_thread_t;
  */
 
 /* ============================================================
+ *   Thread Constants
+ * ============================================================ */
+
+/* Stack guard canary value (placed at bottom of stack to detect overflow) */
+#define FUT_STACK_CANARY    0xCAFEBABEDEADBEEFULL
+
+/* ============================================================
  *   Thread States
  * ============================================================ */
 

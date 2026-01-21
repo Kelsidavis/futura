@@ -52,6 +52,11 @@ static fut_spinlock_t task_list_lock = { .locked = 0 };
 
 #define RLIM64_INFINITY   ((uint64_t)-1)
 
+/* Exit status encoding masks (POSIX waitpid() format) */
+#define EXIT_CODE_MASK      0xFF    /* Low 8 bits: exit code (0-255) */
+#define SIGNAL_MASK         0x7F    /* Low 7 bits: signal number (1-127) */
+#define WAIT_STATUS_SHIFT   8       /* Exit code shifted left 8 bits in wait status */
+
 static void task_attach_child(fut_task_t *parent, fut_task_t *child) {
     if (!parent || !child) {
         return;
@@ -360,8 +365,8 @@ static void task_mark_exit(fut_task_t *task, int status, int signal) {
 
     fut_spinlock_acquire(&task_list_lock);
     task->state = FUT_TASK_ZOMBIE;
-    task->exit_code = status & 0xFF;
-    task->term_signal = signal & 0x7F;
+    task->exit_code = status & EXIT_CODE_MASK;
+    task->term_signal = signal & SIGNAL_MASK;
     fut_spinlock_release(&task_list_lock);
 
     if (parent) {
@@ -369,14 +374,18 @@ static void task_mark_exit(fut_task_t *task, int status, int signal) {
     }
 }
 
-void fut_task_exit_current(int status) {
-    fut_task_t *task = fut_task_current();
+/**
+ * Internal helper: Clean up task memory and exit thread.
+ * Consolidates common exit cleanup to avoid code duplication.
+ */
+static void task_cleanup_and_exit(fut_task_t *task, int status, int signal) {
     if (!task) {
         fut_thread_exit();
     }
 
-    task_mark_exit(task, status, 0);
+    task_mark_exit(task, status, signal);
 
+    /* Release user-space memory manager before exiting */
     if (task->mm) {
         fut_mm_switch(fut_mm_kernel());
         fut_mm_release(task->mm);
@@ -386,28 +395,19 @@ void fut_task_exit_current(int status) {
     fut_thread_exit();
 }
 
+void fut_task_exit_current(int status) {
+    task_cleanup_and_exit(fut_task_current(), status, 0);
+}
+
 void fut_task_signal_exit(int signal) {
-    fut_task_t *task = fut_task_current();
-    if (!task) {
-        fut_thread_exit();
-    }
-
-    task_mark_exit(task, 0, signal);
-
-    if (task->mm) {
-        fut_mm_switch(fut_mm_kernel());
-        fut_mm_release(task->mm);
-        task->mm = NULL;
-    }
-
-    fut_thread_exit();
+    task_cleanup_and_exit(fut_task_current(), 0, signal);
 }
 
 static int encode_wait_status(const fut_task_t *task) {
     if (task->term_signal) {
-        return task->term_signal & 0x7F;
+        return task->term_signal & SIGNAL_MASK;
     }
-    return (task->exit_code & 0xFF) << 8;
+    return (task->exit_code & EXIT_CODE_MASK) << WAIT_STATUS_SHIFT;
 }
 
 int fut_task_waitpid(int pid, int *status_out) {

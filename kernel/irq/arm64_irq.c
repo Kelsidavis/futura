@@ -69,9 +69,9 @@ int fut_unregister_irq_handler(int irq) {
  *   GICv2 Interface (Generic Interrupt Controller v2)
  * ============================================================ */
 
-/* GICv2 Memory-mapped register addresses (typical QEMU virt machine) */
-#define GIC_DIST_BASE   0x08000000ULL   /* Distributor */
-#define GIC_CPU_BASE    0x08010000ULL   /* CPU interface */
+/* GICv2 Memory-mapped register addresses (from regs.h) */
+#define GIC_DIST_BASE   GICD_PHYS_BASE  /* Distributor */
+#define GIC_CPU_BASE    GICC_PHYS_BASE  /* CPU interface */
 
 /* GIC Distributor registers */
 #define GIC_DIST_CTRL           0x000

@@ -175,15 +175,15 @@ fut_task_t *fut_task_create(void) {
     task->rlimits[RLIMIT_RTPRIO] = (struct rlimit64){0, 0};
     task->rlimits[RLIMIT_RTTIME] = (struct rlimit64){RLIM64_INFINITY, RLIM64_INFINITY};
 
-    /* Initialize per-task file descriptor table (initially 64 FDs) */
-    task->max_fds = 64;
-    task->fd_table = (struct fut_file **)fut_malloc(64 * sizeof(struct fut_file *));
+    /* Initialize per-task file descriptor table */
+    task->max_fds = FUT_FD_TABLE_INITIAL_SIZE;
+    task->fd_table = (struct fut_file **)fut_malloc(FUT_FD_TABLE_INITIAL_SIZE * sizeof(struct fut_file *));
     if (!task->fd_table) {
         fut_free(task);
         return NULL;
     }
     /* Zero out the FD table */
-    for (int i = 0; i < 64; i++) {
+    for (int i = 0; i < FUT_FD_TABLE_INITIAL_SIZE; i++) {
         task->fd_table[i] = NULL;
     }
     task->next_fd = 0;

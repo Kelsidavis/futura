@@ -465,7 +465,7 @@ void fut_thread_init_bootstrap(void) {
         bootstrap_task.current_dir_ino = 1;  /* Root */
         bootstrap_task.uid = 0;
         bootstrap_task.gid = 0;
-        bootstrap_task.max_fds = 64;
+        bootstrap_task.max_fds = FUT_FD_TABLE_INITIAL_SIZE;
         bootstrap_task.fd_table = fut_malloc(sizeof(struct fut_file *) * bootstrap_task.max_fds);
         if (!bootstrap_task.fd_table) {
             fut_printf("[THREAD] bootstrap init failed: no fd table\n");

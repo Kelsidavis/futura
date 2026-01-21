@@ -21,6 +21,13 @@ struct fut_mm;
 typedef struct fut_task fut_task_t;
 
 /* ============================================================
+ *   Task Configuration Constants
+ * ============================================================ */
+
+/* Initial file descriptor table size for new tasks */
+#define FUT_FD_TABLE_INITIAL_SIZE 64
+
+/* ============================================================
  *   Task Structure (Process Container)
  * ============================================================ */
 

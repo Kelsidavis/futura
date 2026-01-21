@@ -20,7 +20,7 @@ static fut_thread_t *arm64_boot_thread = NULL;
 #define STATIC_STACK_SIZE (8192)  /* 8KB per thread */
 static fut_task_t static_tasks[MAX_STATIC_TASKS] __attribute__((aligned(16)));
 static fut_thread_t static_threads[MAX_STATIC_TASKS] __attribute__((aligned(16)));
-static void *static_fd_tables[MAX_STATIC_TASKS][64] __attribute__((aligned(16)));  /* FD tables for each task */
+static void *static_fd_tables[MAX_STATIC_TASKS][FUT_FD_TABLE_INITIAL_SIZE] __attribute__((aligned(16)));  /* FD tables for each task */
 static uint8_t static_stacks[MAX_STATIC_TASKS][STATIC_STACK_SIZE] __attribute__((aligned(16)));  /* Thread stacks */
 static uint8_t static_heap[16384] __attribute__((aligned(16)));  /* 16KB for misc allocations */
 static size_t static_heap_used = 0;
@@ -52,15 +52,15 @@ void arm64_init_boot_thread(void) {
     boot_task->pid = 1;  /* Boot process is PID 1 */
     boot_task->state = FUT_TASK_RUNNING;
 
-    /* Initialize FD table - allocate 64 FD slots (matches fut_task_create pattern) */
-    boot_task->max_fds = 64;
-    boot_task->fd_table = (struct fut_file **)fut_malloc(64 * sizeof(struct fut_file *));
+    /* Initialize FD table - allocate FD slots (matches fut_task_create pattern) */
+    boot_task->max_fds = FUT_FD_TABLE_INITIAL_SIZE;
+    boot_task->fd_table = (struct fut_file **)fut_malloc(FUT_FD_TABLE_INITIAL_SIZE * sizeof(struct fut_file *));
     if (!boot_task->fd_table) {
         fut_serial_puts("[ARM64_THREAD] ERROR: failed to allocate FD table for boot task\n");
         return;
     }
     /* Zero out FD table entries */
-    for (int i = 0; i < 64; i++) {
+    for (int i = 0; i < FUT_FD_TABLE_INITIAL_SIZE; i++) {
         boot_task->fd_table[i] = NULL;
     }
     boot_task->next_fd = 0;
@@ -116,8 +116,8 @@ void *arm64_static_malloc(size_t size) {
         return NULL;
     }
 
-    /* Check if this is an FD table allocation (64 * 8 = 512 bytes) */
-    if (size == 512 || size == 64 * sizeof(void*)) {
+    /* Check if this is an FD table allocation (FUT_FD_TABLE_INITIAL_SIZE * 8 = 512 bytes) */
+    if (size == (FUT_FD_TABLE_INITIAL_SIZE * sizeof(void*))) {
         if (next_static_task > 0 && next_static_task <= MAX_STATIC_TASKS) {
             return static_fd_tables[next_static_task - 1];
         }

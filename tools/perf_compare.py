@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Compare performance harness output against a stored baseline."""
+"""Compare performance harness output against a stored baseline.
+
+Copyright (c) 2025 Kelsi Davis
+Licensed under the MPL v2.0 — see LICENSE for details.
+"""
 
 import json
 import math

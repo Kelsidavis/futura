@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 """
 Generate a C header that exposes the current boot command line requested by the build.
+
+Copyright (c) 2025 Kelsi Davis
+Licensed under the MPL v2.0 — see LICENSE for details.
+
 The Makefile passes $(KAPPEND) so the kernel can fall back to that string when the
 bootloader omits a CMDLINE tag.
 """

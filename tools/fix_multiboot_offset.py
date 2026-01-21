@@ -2,6 +2,9 @@
 """
 Fix Multiboot2 Header Offset in ELF File
 
+Copyright (c) 2025 Kelsi Davis
+Licensed under the MPL v2.0 — see LICENSE for details.
+
 This script reorganizes ELF segments to ensure the boot segment (containing
 the multiboot header) is placed within the first 32KB of the file.
 

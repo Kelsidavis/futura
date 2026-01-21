@@ -1,3 +1,8 @@
+# Makefile - Build tools and utilities
+#
+# Copyright (c) 2025 Kelsi Davis
+# Licensed under the MPL v2.0 — see LICENSE for details.
+
 ROOT := ..
 BUILD_DIR ?= build
 ABS_BUILD_DIR := $(ROOT)/$(BUILD_DIR)

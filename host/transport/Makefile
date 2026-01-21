@@ -1,5 +1,7 @@
 # Makefile - Host-side FIPC transport support library
-# SPDX-License-Identifier: MPL-2.0
+#
+# Copyright (c) 2025 Kelsi Davis
+# Licensed under the MPL v2.0 — see LICENSE for details.
 #
 # Builds libfipc_host.a which reuses the kernel FIPC core with
 # freestanding stubs backed by libc so that host tools/tests can

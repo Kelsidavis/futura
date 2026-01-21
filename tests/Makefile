@@ -1,5 +1,7 @@
 # Makefile - Host test suite
-# SPDX-License-Identifier: MPL-2.0
+#
+# Copyright (c) 2025 Kelsi Davis
+# Licensed under the MPL v2.0 — see LICENSE for details.
 
 CC := gcc
 

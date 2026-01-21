@@ -1,5 +1,7 @@
 # Vendor build harness for upstream Wayland
-# SPDX-License-Identifier: MPL-2.0
+#
+# Copyright (c) 2025 Kelsi Davis
+# Licensed under the MPL v2.0 — see LICENSE for details.
 
 .POSIX:
 

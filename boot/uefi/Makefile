@@ -1,4 +1,7 @@
 # Futura OS UEFI Bootloader Makefile
+#
+# Copyright (c) 2025 Kelsi Davis
+# Licensed under the MPL v2.0 — see LICENSE for details.
 
 BUILD_DIR := ../../build
 UEFI_EFI := $(BUILD_DIR)/BOOTX64.EFI

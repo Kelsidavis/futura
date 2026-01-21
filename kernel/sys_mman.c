@@ -25,6 +25,15 @@ extern fut_task_t *fut_task_current(void);
 #define MCL_FUTURE       2  /* Lock future mappings */
 #define MCL_ONFAULT      4  /* Lock pages only on fault */
 
+/* Resource limits (must match fut_task.c definitions) */
+#define RLIMIT_MEMLOCK   8   /* Max locked-in-memory address space */
+
+/* Maximum VMA count to prevent DoS (Phase 2 security hardening) */
+#define MLOCKALL_MAX_VMAS  65536
+
+/* CAP_IPC_LOCK capability for bypassing RLIMIT_MEMLOCK (must match sys_capability.c) */
+#define CAP_IPC_LOCK       14
+
 /**
  * sys_mlock - Lock memory pages in RAM
  *
@@ -421,15 +430,71 @@ long sys_mlockall(int flags) {
      * - See Linux kernel: mm/mlock.c do_mlockall() for reference
      */
 
-    /* Phase 1: Stub - accept flags */
-    /* Phase 2: Walk VMAs, lock if MCL_CURRENT, set task flag for MCL_FUTURE */
-    /* Phase 3: Implement MCL_ONFAULT lazy locking */
-    /* TODO Phase 2: Add VMA count check (limit to 65536 VMAs) */
-    /* TODO Phase 2: Calculate total lockable bytes with overflow protection */
-    /* TODO Phase 2: Check total <= RLIMIT_MEMLOCK before locking */
-    /* TODO Phase 2: Require CAP_IPC_LOCK if exceeding limit */
+    /* Phase 2: VMA count and RLIMIT_MEMLOCK validation */
+    fut_mm_t *mm = fut_task_get_mm(task);
+    if (!mm) {
+        fut_printf("[MLOCKALL] mlockall(flags=0x%x) -> ENOMEM (no mm)\n", flags);
+        return -ENOMEM;
+    }
 
-    fut_printf("[MLOCKALL] Stub implementation - all pages marked locked\n");
+    /* Count VMAs and calculate total bytes to lock */
+    int vma_count = 0;
+    uint64_t total_bytes = 0;
+    struct fut_vma *vma = mm->vma_list;
+
+    while (vma) {
+        vma_count++;
+
+        /* Check VMA count limit to prevent DoS */
+        if (vma_count > MLOCKALL_MAX_VMAS) {
+            fut_printf("[MLOCKALL] mlockall(flags=0x%x) -> ENOMEM "
+                       "(VMA count %d exceeds maximum %d, Phase 2: DoS prevention)\n",
+                       flags, vma_count, MLOCKALL_MAX_VMAS);
+            return -ENOMEM;
+        }
+
+        /* Calculate VMA size with overflow protection */
+        uint64_t vma_size = vma->end - vma->start;
+        if (total_bytes > UINT64_MAX - vma_size) {
+            fut_printf("[MLOCKALL] mlockall(flags=0x%x) -> ENOMEM "
+                       "(total bytes would overflow, Phase 2: overflow protection)\n", flags);
+            return -ENOMEM;
+        }
+        total_bytes += vma_size;
+
+        vma = vma->next;
+    }
+
+    /* Check against RLIMIT_MEMLOCK */
+    uint64_t memlock_limit = task->rlimits[RLIMIT_MEMLOCK].rlim_cur;
+    if (total_bytes > memlock_limit) {
+        /* Check for CAP_IPC_LOCK to bypass limit */
+        bool has_cap = (task->cap_effective & (1ULL << CAP_IPC_LOCK)) != 0;
+        bool is_root = (task->uid == 0);
+
+        if (!has_cap && !is_root) {
+            fut_printf("[MLOCKALL] mlockall(flags=0x%x) -> ENOMEM "
+                       "(total %llu bytes exceeds RLIMIT_MEMLOCK %llu, "
+                       "need CAP_IPC_LOCK, Phase 2: resource limit enforcement)\n",
+                       flags, (unsigned long long)total_bytes,
+                       (unsigned long long)memlock_limit);
+            return -ENOMEM;
+        }
+
+        fut_printf("[MLOCKALL] mlockall(flags=0x%x) -> Bypassing RLIMIT_MEMLOCK "
+                   "(%llu > %llu) via %s\n",
+                   flags, (unsigned long long)total_bytes,
+                   (unsigned long long)memlock_limit,
+                   is_root ? "root" : "CAP_IPC_LOCK");
+    }
+
+    /* Phase 2 validation complete - stub the actual locking */
+    /* Phase 3: Implement MCL_ONFAULT lazy locking */
+
+    fut_printf("[MLOCKALL] mlockall(flags=0x%x) -> 0 "
+               "(validated: %d VMAs, %llu bytes, limit=%llu)\n",
+               flags, vma_count, (unsigned long long)total_bytes,
+               (unsigned long long)memlock_limit);
     return 0;
 }
 

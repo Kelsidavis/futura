@@ -13,6 +13,7 @@
 #include "../../include/kernel/fut_waitq.h"
 #include "../../include/kernel/fut_sched.h"
 #include "../../include/kernel/fut_timer.h"
+#include <kernel/errno.h>
 
 extern void fut_printf(const char *fmt, ...);
 
@@ -387,7 +388,7 @@ int fut_socket_bind(fut_socket_t *socket, const char *path) {
     /* Allocate and store bound path */
     socket->bound_path = fut_malloc(path_len + 1);
     if (!socket->bound_path) {
-        return -12;  /* ENOMEM */
+        return -ENOMEM;
     }
     strcpy(socket->bound_path, path);
 
@@ -432,7 +433,7 @@ int fut_socket_listen(fut_socket_t *socket, int backlog) {
 
     fut_socket_listener_t *listener = fut_malloc(sizeof(fut_socket_listener_t));
     if (!listener) {
-        return -12;  /* ENOMEM */
+        return -ENOMEM;
     }
 
     memset(listener, 0, sizeof(*listener));
@@ -444,7 +445,7 @@ int fut_socket_listen(fut_socket_t *socket, int backlog) {
     listener->accept_waitq = fut_malloc(sizeof(fut_waitq_t));
     if (!listener->accept_waitq) {
         fut_free(listener);
-        return -12;  /* ENOMEM */
+        return -ENOMEM;
     }
     fut_waitq_init(listener->accept_waitq);
 
@@ -485,7 +486,7 @@ int fut_socket_accept(fut_socket_t *listener, fut_socket_t **out_socket) {
         fut_socket_pair_t *pair_forward = fut_malloc(sizeof(fut_socket_pair_t));
         if (!pair_forward) {
             fut_socket_unref(peer);
-            return -12;  /* ENOMEM */
+            return -ENOMEM;
         }
 
         memset(pair_forward, 0, sizeof(*pair_forward));
@@ -496,7 +497,7 @@ int fut_socket_accept(fut_socket_t *listener, fut_socket_t **out_socket) {
             if (pair_forward->recv_buf) fut_free(pair_forward->recv_buf);
             fut_free(pair_forward);
             fut_socket_unref(peer);
-            return -12;  /* ENOMEM */
+            return -ENOMEM;
         }
 
         pair_forward->send_size = FUT_SOCKET_BUFSIZE;
@@ -510,7 +511,7 @@ int fut_socket_accept(fut_socket_t *listener, fut_socket_t **out_socket) {
             if (pair_forward->recv_buf) fut_free(pair_forward->recv_buf);
             fut_free(pair_forward);
             fut_socket_unref(peer);
-            return -12;  /* ENOMEM */
+            return -ENOMEM;
         }
         fut_waitq_init(pair_forward->send_waitq);
         fut_waitq_init(pair_forward->recv_waitq);
@@ -525,7 +526,7 @@ int fut_socket_accept(fut_socket_t *listener, fut_socket_t **out_socket) {
             if (pair_forward->recv_buf) fut_free(pair_forward->recv_buf);
             fut_free(pair_forward);
             fut_socket_unref(peer);
-            return -12;  /* ENOMEM */
+            return -ENOMEM;
         }
 
         memset(pair_reverse, 0, sizeof(*pair_reverse));
@@ -541,7 +542,7 @@ int fut_socket_accept(fut_socket_t *listener, fut_socket_t **out_socket) {
             if (pair_forward->recv_buf) fut_free(pair_forward->recv_buf);
             fut_free(pair_forward);
             fut_socket_unref(peer);
-            return -12;  /* ENOMEM */
+            return -ENOMEM;
         }
 
         pair_reverse->send_size = FUT_SOCKET_BUFSIZE;
@@ -560,7 +561,7 @@ int fut_socket_accept(fut_socket_t *listener, fut_socket_t **out_socket) {
             if (pair_forward->recv_buf) fut_free(pair_forward->recv_buf);
             fut_free(pair_forward);
             fut_socket_unref(peer);
-            return -12;  /* ENOMEM */
+            return -ENOMEM;
         }
         fut_waitq_init(pair_reverse->send_waitq);
         fut_waitq_init(pair_reverse->recv_waitq);
@@ -581,7 +582,7 @@ int fut_socket_accept(fut_socket_t *listener, fut_socket_t **out_socket) {
     fut_socket_t *accepted = fut_malloc(sizeof(fut_socket_t));
     if (!accepted) {
         fut_socket_unref(peer);
-        return -12;  /* ENOMEM */
+        return -ENOMEM;
     }
 
     memset(accepted, 0, sizeof(*accepted));
@@ -599,7 +600,7 @@ int fut_socket_accept(fut_socket_t *listener, fut_socket_t **out_socket) {
     if (!accepted->close_waitq) {
         fut_free(accepted);
         fut_socket_unref(peer);
-        return -12;  /* ENOMEM */
+        return -ENOMEM;
     }
     fut_waitq_init(accepted->close_waitq);
 
@@ -619,7 +620,7 @@ int fut_socket_accept(fut_socket_t *listener, fut_socket_t **out_socket) {
         fut_free(accepted->close_waitq);
         fut_free(accepted);
         fut_socket_unref(peer);
-        return -12;  /* ENOMEM - socket table full */
+        return -ENOMEM;  /* Socket table full */
     }
 
     /* Set up server (accepted) socket with OPPOSITE pair directions:
@@ -712,7 +713,7 @@ int fut_socket_connect(fut_socket_t *socket, const char *target_path) {
         socket->connect_waitq = fut_malloc(sizeof(fut_waitq_t));
         if (!socket->connect_waitq) {
             fut_socket_unref(listener);
-            return -12;  /* ENOMEM */
+            return -ENOMEM;
         }
         fut_waitq_init(socket->connect_waitq);
     }

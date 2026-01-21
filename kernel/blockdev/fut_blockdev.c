@@ -10,6 +10,7 @@
 #include <kernel/fut_memory.h>
 #include <kernel/fut_thread.h>
 #include <kernel/fut_waitq.h>
+#include <kernel/errno.h>
 #include <stddef.h>
 
 /* ============================================================
@@ -307,7 +308,7 @@ ssize_t fut_blockdev_read_bytes(struct fut_blockdev *dev, uint64_t offset, size_
     /* Allocate temporary buffer for aligned I/O */
     void *temp_buffer = fut_malloc(num_blocks * block_size);
     if (!temp_buffer) {
-        return -12;  /* ENOMEM */
+        return -ENOMEM;
     }
 
     /* Read blocks */
@@ -365,7 +366,7 @@ ssize_t fut_blockdev_write_bytes(struct fut_blockdev *dev, uint64_t offset, size
     size_t total_alloc = CANARY_SIZE + buffer_size + CANARY_SIZE;
     uint8_t *alloc_buffer = (uint8_t *)fut_malloc(total_alloc);
     if (!alloc_buffer) {
-        return -12;  /* ENOMEM */
+        return -ENOMEM;
     }
 
     /* Set up canaries */

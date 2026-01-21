@@ -78,7 +78,7 @@ static inline ssize_t futurafs_blk_read_bytes(struct futurafs_mount *mnt,
         /* Allocate temporary buffer for aligned I/O */
         void *temp_buffer = fut_malloc(num_blocks * block_size);
         if (!temp_buffer) {
-            return -12;  /* ENOMEM */
+            return -ENOMEM;
         }
 
         /* Read blocks using capability-based API */
@@ -138,7 +138,7 @@ static inline ssize_t futurafs_blk_write_bytes(struct futurafs_mount *mnt,
         /* Allocate temporary buffer for aligned I/O */
         void *temp_buffer = fut_malloc(num_blocks * block_size);
         if (!temp_buffer) {
-            return -12;  /* ENOMEM */
+            return -ENOMEM;
         }
 
         /* Read-modify-write: read existing blocks first */
@@ -265,7 +265,7 @@ int futurafs_read_superblock_async(struct futurafs_mount *mount,
     /* Allocate async context */
     struct futurafs_sb_read_ctx *sb_ctx = fut_malloc(sizeof(*sb_ctx));
     if (!sb_ctx) {
-        return -12;  /* ENOMEM */
+        return -ENOMEM;
     }
 
     /* Initialize context */
@@ -315,7 +315,7 @@ int futurafs_write_superblock_async(struct futurafs_mount *mount,
     /* Allocate async context */
     struct futurafs_sb_write_ctx *sb_ctx = fut_malloc(sizeof(*sb_ctx));
     if (!sb_ctx) {
-        return -12;  /* ENOMEM */
+        return -ENOMEM;
     }
 
     /* Initialize context */
@@ -379,7 +379,7 @@ int futurafs_read_inode_async(struct futurafs_mount *mount,
     /* Allocate async context */
     struct futurafs_inode_read_ctx *inode_ctx = fut_malloc(sizeof(*inode_ctx));
     if (!inode_ctx) {
-        return -12;  /* ENOMEM */
+        return -ENOMEM;
     }
 
     /* Initialize context */
@@ -496,7 +496,7 @@ int futurafs_write_inode_async(struct futurafs_mount *mount,
     /* Allocate async context */
     struct futurafs_inode_write_ctx *inode_ctx = fut_malloc(sizeof(*inode_ctx));
     if (!inode_ctx) {
-        return -12;  /* ENOMEM */
+        return -ENOMEM;
     }
 
     /* Initialize context */
@@ -572,7 +572,7 @@ int futurafs_read_block_async(struct futurafs_mount *mount,
     /* Allocate async context */
     struct futurafs_block_read_ctx *block_ctx = fut_malloc(sizeof(*block_ctx));
     if (!block_ctx) {
-        return -12;  /* ENOMEM */
+        return -ENOMEM;
     }
 
     /* Initialize context */
@@ -629,7 +629,7 @@ int futurafs_write_block_async(struct futurafs_mount *mount,
     /* Allocate async context */
     struct futurafs_block_write_ctx *block_ctx = fut_malloc(sizeof(*block_ctx));
     if (!block_ctx) {
-        return -12;  /* ENOMEM */
+        return -ENOMEM;
     }
 
     /* Initialize context */

@@ -74,3 +74,6 @@ exit:
     mov x8, #93                 /* exit syscall number (Linux ARM64) */
     svc #0x80                   /* Make syscall */
     .inst 0xd4200000            /* unreachable */
+
+/* Mark stack as non-executable to silence linker warnings */
+.section .note.GNU-stack, "", %progbits

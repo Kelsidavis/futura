@@ -73,3 +73,6 @@ exit:
     mov $60, %rax           /* exit syscall (fallback) */
     int $0x80               /* Use int 0x80, not syscall instruction */
     ud2                     /* unreachable */
+
+/* Mark stack as non-executable to silence linker warnings */
+.section .note.GNU-stack, "", @progbits

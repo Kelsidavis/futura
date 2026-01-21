@@ -8,19 +8,13 @@
  */
 
 #include <kernel/fut_vfs.h>
-#include <kernel/kprintf.h>
 #include <kernel/fut_memory.h>
-#include <kernel/kprintf.h>
 #include <kernel/fut_timer.h>
-#include <kernel/kprintf.h>
 #include <kernel/fut_lock.h>
-#include <kernel/kprintf.h>
 #include <kernel/vfs_credentials.h>
-#include <kernel/kprintf.h>
 #include <kernel/slab_allocator.h>
 #include <kernel/kprintf.h>
 #include <kernel/errno.h>
-#include <kernel/kprintf.h>
 #include <stddef.h>
 #include <string.h>
 

@@ -7,13 +7,10 @@
 #include "perf.h"
 
 #include <kernel/fut_memory.h>
-#include <kernel/kprintf.h>
 #include <kernel/fut_thread.h>
-#include <kernel/kprintf.h>
 #include <kernel/fut_waitq.h>
 #include <kernel/kprintf.h>
 #include <kernel/errno.h>
-#include <kernel/kprintf.h>
 
 #include <stdbool.h>
 #include <stdint.h>

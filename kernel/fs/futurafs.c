@@ -7,17 +7,12 @@
  */
 
 #include <kernel/fut_futurafs.h>
-#include <kernel/kprintf.h>
 #include <kernel/fut_memory.h>
-#include <kernel/kprintf.h>
 #include <kernel/fut_vfs.h>
-#include <kernel/kprintf.h>
 #include <kernel/fut_blockdev.h>
-#include <kernel/kprintf.h>
 #include <kernel/fut_timer.h>
 #include <kernel/kprintf.h>
 #include <kernel/errno.h>
-#include <kernel/kprintf.h>
 
 /* FuturaFS vnode operations - initialized at runtime to avoid ARM64 relocation issues */
 static struct fut_vnode_ops futurafs_vnode_ops;

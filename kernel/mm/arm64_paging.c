@@ -10,11 +10,9 @@
 #include <platform/arm64/memory/pmap.h>
 #include <platform/arm64/regs.h>
 #include <kernel/fut_mm.h>
-#include <kernel/kprintf.h>
 #include <kernel/fut_memory.h>
 #include <kernel/kprintf.h>
 #include <kernel/errno.h>
-#include <kernel/kprintf.h>
 #include <string.h>
 #include <stdatomic.h>
 

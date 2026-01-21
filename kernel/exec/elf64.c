@@ -6,23 +6,15 @@
 #ifdef __x86_64__
 
 #include <kernel/exec.h>
-#include <kernel/kprintf.h>
 #include <generated/feature_flags.h>
 
 #include <kernel/errno.h>
-#include <kernel/kprintf.h>
 #include <kernel/fut_task.h>
-#include <kernel/kprintf.h>
 #include <kernel/fut_thread.h>
-#include <kernel/kprintf.h>
 #include <kernel/fut_memory.h>
-#include <kernel/kprintf.h>
 #include <kernel/fut_mm.h>
-#include <kernel/kprintf.h>
 #include <kernel/fut_sched.h>
-#include <kernel/kprintf.h>
 #include <kernel/fut_vfs.h>
-#include <kernel/kprintf.h>
 #include <kernel/uaccess.h>
 #include <kernel/kprintf.h>
 
@@ -916,7 +908,6 @@ int fut_stage_second_stub_binary(void) {
 }
 #else /* !__x86_64__ */
 #include <kernel/errno.h>
-#include <kernel/kprintf.h>
 
 int fut_stage_init_stub_binary(void) {
     return -ENOSYS;  /* Not implemented for non-x86_64 platforms */
@@ -1554,21 +1545,13 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
 /* ARM64 ELF64 loader implementation */
 
 #include <kernel/exec.h>
-#include <kernel/kprintf.h>
 #include <kernel/errno.h>
-#include <kernel/kprintf.h>
 #include <kernel/fut_task.h>
-#include <kernel/kprintf.h>
 #include <kernel/fut_thread.h>
-#include <kernel/kprintf.h>
 #include <kernel/fut_memory.h>
-#include <kernel/kprintf.h>
 #include <kernel/fut_mm.h>
-#include <kernel/kprintf.h>
 #include <kernel/fut_sched.h>
-#include <kernel/kprintf.h>
 #include <kernel/fut_vfs.h>
-#include <kernel/kprintf.h>
 #include <kernel/uaccess.h>
 #include <kernel/kprintf.h>
 #include <platform/arm64/regs.h>
@@ -2612,7 +2595,6 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
 #else  /* Other architectures */
 
 #include <kernel/errno.h>
-#include <kernel/kprintf.h>
 
 int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
     (void)path;

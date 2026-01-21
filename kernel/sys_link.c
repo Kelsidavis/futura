@@ -58,9 +58,9 @@ extern int fut_copy_from_user(void *to, const void *from, size_t size);
  *
  * Returns:
  *   - 0 on success (link count incremented)
- *   - -ENOSYS (not implemented) - current Phase 2 behavior
+ *   - -ENOSYS if filesystem doesn't support hard links
  *
- * Future error codes (Phase 3):
+ * Error codes:
  *   - -EFAULT if oldpath or newpath points to inaccessible memory
  *   - -EINVAL if oldpath or newpath is NULL or empty
  *   - -EEXIST if newpath already exists

@@ -213,7 +213,9 @@ See `docs/ARM64_STATUS.md` for detailed ARM64 progress.
   - `boot_args.h`: Command line parsing with usage examples
   - `console.h`: Console initialization and input thread functions
   - `exec.h`: ELF execution and boot-time binary staging functions
+  - `trap.h`: Page fault handling with exception flow documentation
 - ✅ **Typo fixes**: Fixed comment typo in rpi_init.c
+- ✅ **Include guard fixes**: Added `#pragma once` and documentation to `boot_logo.h`, made bitmap array `static const` and used `sizeof()` for length
 
 ## Current Focus
 

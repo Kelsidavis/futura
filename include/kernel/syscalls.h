@@ -63,6 +63,19 @@ typedef long ssize_t;
 /* Note: SYS_setpgrp would be 109 but conflicts with SYS_seteuid */
 #define SYS_time_millis 400u
 
+/* Capability-based syscalls (Phase 1) */
+#define SYS_open_cap    500u  /* Open file with capability handle return */
+#define SYS_read_cap    501u  /* Read from capability handle */
+#define SYS_write_cap   502u  /* Write to capability handle */
+#define SYS_close_cap   503u  /* Close capability handle */
+#define SYS_lseek_cap   504u  /* Seek within capability handle */
+#define SYS_fstat_cap   505u  /* Get file stats from capability handle */
+#define SYS_fsync_cap   506u  /* Sync file data from capability handle */
+#define SYS_mkdirat_cap 507u  /* Create directory relative to parent handle */
+#define SYS_unlinkat_cap 508u /* Unlink file relative to parent handle */
+#define SYS_rmdirat_cap 509u  /* Remove directory relative to parent handle */
+#define SYS_statat_cap  510u  /* Get file stats relative to parent handle */
+
 ssize_t sys_echo(const char *u_in, char *u_out, size_t n);
 long sys_brk(uintptr_t new_break);
 long sys_mmap(void *addr, size_t len, int prot, int flags, int fd, long offset);

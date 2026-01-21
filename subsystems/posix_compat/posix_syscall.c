@@ -13,6 +13,7 @@
 #include <kernel/syscalls.h>
 #include <kernel/uaccess.h>
 #include <kernel/fut_vfs.h>
+#include <kernel/fut_object.h>
 #include <kernel/fut_memory.h>
 #include <kernel/fut_task.h>
 #include <kernel/errno.h>
@@ -149,6 +150,9 @@
 #define SYS_msgsnd      69
 #define SYS_msgget      68
 #define SYS_msgctl      71
+
+/* Capability-based syscall numbers (SYS_open_cap, etc.) are defined in
+ * kernel/syscalls.h to avoid duplication */
 
 #define MAX_SYSCALL     512
 
@@ -1437,6 +1441,177 @@ static int64_t sys_clock_gettime_handler(uint64_t clock_id, uint64_t tp, uint64_
 }
 
 /* ============================================================
+ *   Capability-based Syscall Handlers (Phase 1)
+ * ============================================================ */
+
+/**
+ * sys_open_cap - Open a file with capability handle return.
+ *
+ * @param pathname Path to file
+ * @param flags    Open flags (O_RDONLY, O_WRONLY, O_RDWR, etc.)
+ * @param mode     File mode for creation
+ * @return Capability handle on success, negative error on failure
+ */
+static int64_t sys_open_cap_handler(uint64_t pathname, uint64_t flags, uint64_t mode,
+                                    uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg4; (void)arg5; (void)arg6;
+    extern fut_handle_t fut_vfs_open_cap(const char *path, int flags, int mode);
+    fut_handle_t handle = fut_vfs_open_cap((const char *)(uintptr_t)pathname,
+                                            (int)flags, (int)mode);
+    if (handle == FUT_INVALID_HANDLE) {
+        return -EBADF;  /* Return error if open failed */
+    }
+    return (int64_t)handle;
+}
+
+/**
+ * sys_read_cap - Read from a capability handle.
+ *
+ * @param handle Capability handle
+ * @param buf    Buffer to read into
+ * @param count  Number of bytes to read
+ * @return Number of bytes read, or negative error
+ */
+static int64_t sys_read_cap_handler(uint64_t handle, uint64_t buf, uint64_t count,
+                                    uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg4; (void)arg5; (void)arg6;
+    extern long fut_vfs_read_cap(fut_handle_t handle, void *buffer, size_t count);
+    return fut_vfs_read_cap((fut_handle_t)handle, (void *)(uintptr_t)buf, (size_t)count);
+}
+
+/**
+ * sys_write_cap - Write to a capability handle.
+ *
+ * @param handle Capability handle
+ * @param buf    Buffer to write from
+ * @param count  Number of bytes to write
+ * @return Number of bytes written, or negative error
+ */
+static int64_t sys_write_cap_handler(uint64_t handle, uint64_t buf, uint64_t count,
+                                     uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg4; (void)arg5; (void)arg6;
+    extern long fut_vfs_write_cap(fut_handle_t handle, const void *buffer, size_t count);
+    return fut_vfs_write_cap((fut_handle_t)handle, (const void *)(uintptr_t)buf, (size_t)count);
+}
+
+/**
+ * sys_close_cap - Close a capability handle.
+ *
+ * @param handle Capability handle to close
+ * @return 0 on success, negative error on failure
+ */
+static int64_t sys_close_cap_handler(uint64_t handle, uint64_t arg2, uint64_t arg3,
+                                     uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg2; (void)arg3; (void)arg4; (void)arg5; (void)arg6;
+    extern int fut_vfs_close_cap(fut_handle_t handle);
+    return fut_vfs_close_cap((fut_handle_t)handle);
+}
+
+/**
+ * sys_lseek_cap - Seek within a capability handle.
+ *
+ * @param handle Capability handle
+ * @param offset Seek offset
+ * @param whence Seek mode (SEEK_SET, SEEK_CUR, SEEK_END)
+ * @return New file offset, or negative error
+ */
+static int64_t sys_lseek_cap_handler(uint64_t handle, uint64_t offset, uint64_t whence,
+                                     uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg4; (void)arg5; (void)arg6;
+    extern long fut_vfs_lseek_cap(fut_handle_t handle, int64_t offset, int whence);
+    return fut_vfs_lseek_cap((fut_handle_t)handle, (int64_t)offset, (int)whence);
+}
+
+/**
+ * sys_fstat_cap - Get file statistics from capability handle.
+ *
+ * @param handle  Capability handle
+ * @param statbuf Buffer to receive statistics
+ * @return 0 on success, negative error on failure
+ */
+static int64_t sys_fstat_cap_handler(uint64_t handle, uint64_t statbuf, uint64_t arg3,
+                                     uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg3; (void)arg4; (void)arg5; (void)arg6;
+    extern int fut_vfs_fstat_cap(fut_handle_t handle, struct fut_stat *statbuf);
+    return fut_vfs_fstat_cap((fut_handle_t)handle, (struct fut_stat *)(uintptr_t)statbuf);
+}
+
+/**
+ * sys_fsync_cap - Sync file data to storage from capability handle.
+ *
+ * @param handle Capability handle
+ * @return 0 on success, negative error on failure
+ */
+static int64_t sys_fsync_cap_handler(uint64_t handle, uint64_t arg2, uint64_t arg3,
+                                     uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg2; (void)arg3; (void)arg4; (void)arg5; (void)arg6;
+    extern int fut_vfs_fsync_cap(fut_handle_t handle);
+    return fut_vfs_fsync_cap((fut_handle_t)handle);
+}
+
+/**
+ * sys_mkdirat_cap - Create directory relative to parent handle.
+ *
+ * @param parent_handle Capability handle to parent directory
+ * @param name          Name of directory to create
+ * @param mode          Directory permissions
+ * @return 0 on success, negative error on failure
+ */
+static int64_t sys_mkdirat_cap_handler(uint64_t parent_handle, uint64_t name, uint64_t mode,
+                                       uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg4; (void)arg5; (void)arg6;
+    extern int fut_vfs_mkdirat_cap(fut_handle_t parent_handle, const char *name, int mode);
+    return fut_vfs_mkdirat_cap((fut_handle_t)parent_handle,
+                               (const char *)(uintptr_t)name, (int)mode);
+}
+
+/**
+ * sys_unlinkat_cap - Unlink file relative to parent handle.
+ *
+ * @param parent_handle Capability handle to parent directory
+ * @param name          Name of file to unlink
+ * @return 0 on success, negative error on failure
+ */
+static int64_t sys_unlinkat_cap_handler(uint64_t parent_handle, uint64_t name, uint64_t arg3,
+                                        uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg3; (void)arg4; (void)arg5; (void)arg6;
+    extern int fut_vfs_unlinkat_cap(fut_handle_t parent_handle, const char *name);
+    return fut_vfs_unlinkat_cap((fut_handle_t)parent_handle, (const char *)(uintptr_t)name);
+}
+
+/**
+ * sys_rmdirat_cap - Remove directory relative to parent handle.
+ *
+ * @param parent_handle Capability handle to parent directory
+ * @param name          Name of directory to remove
+ * @return 0 on success, negative error on failure
+ */
+static int64_t sys_rmdirat_cap_handler(uint64_t parent_handle, uint64_t name, uint64_t arg3,
+                                       uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg3; (void)arg4; (void)arg5; (void)arg6;
+    extern int fut_vfs_rmdirat_cap(fut_handle_t parent_handle, const char *name);
+    return fut_vfs_rmdirat_cap((fut_handle_t)parent_handle, (const char *)(uintptr_t)name);
+}
+
+/**
+ * sys_statat_cap - Get file statistics relative to parent handle.
+ *
+ * @param parent_handle Capability handle to parent directory
+ * @param name          Name of file to stat
+ * @param statbuf       Buffer to receive statistics
+ * @return 0 on success, negative error on failure
+ */
+static int64_t sys_statat_cap_handler(uint64_t parent_handle, uint64_t name, uint64_t statbuf,
+                                      uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg4; (void)arg5; (void)arg6;
+    extern int fut_vfs_statat_cap(fut_handle_t parent_handle, const char *name,
+                                  struct fut_stat *statbuf);
+    return fut_vfs_statat_cap((fut_handle_t)parent_handle,
+                              (const char *)(uintptr_t)name,
+                              (struct fut_stat *)(uintptr_t)statbuf);
+}
+
+/* ============================================================
  *   Syscall Table
  * ============================================================ */
 
@@ -1577,6 +1752,18 @@ static syscall_handler_t syscall_table[MAX_SYSCALL] = {
     [SYS_msgsnd]       = sys_msgsnd_handler,
     [SYS_msgrcv]       = sys_msgrcv_handler,
     [SYS_msgctl]       = sys_msgctl_handler,
+    /* Capability-based syscalls (Phase 1) */
+    [SYS_open_cap]     = sys_open_cap_handler,
+    [SYS_read_cap]     = sys_read_cap_handler,
+    [SYS_write_cap]    = sys_write_cap_handler,
+    [SYS_close_cap]    = sys_close_cap_handler,
+    [SYS_lseek_cap]    = sys_lseek_cap_handler,
+    [SYS_fstat_cap]    = sys_fstat_cap_handler,
+    [SYS_fsync_cap]    = sys_fsync_cap_handler,
+    [SYS_mkdirat_cap]  = sys_mkdirat_cap_handler,
+    [SYS_unlinkat_cap] = sys_unlinkat_cap_handler,
+    [SYS_rmdirat_cap]  = sys_rmdirat_cap_handler,
+    [SYS_statat_cap]   = sys_statat_cap_handler,
 };
 
 /* ============================================================

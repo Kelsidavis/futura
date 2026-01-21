@@ -775,24 +775,34 @@ void fut_schedule(void) {
                        (unsigned long long)next->context.x7);
 #endif
             // CRITICAL FIX: When doing cooperative switch from within ISR context
-            // (e.g., when terminating a thread and switching to idle), we must clear
-            // the interrupt context flags BEFORE the switch. Otherwise, fut_in_interrupt
-            // remains 1 and fut_current_frame points to an abandoned frame on the
-            // terminated thread's stack, causing GP faults when later ISRs try to use them.
+            // (e.g., when terminating a thread and switching to idle), we must:
+            // 1. Send EOI to LAPIC to acknowledge the interrupt - otherwise future
+            //    timer interrupts are blocked because the LAPIC thinks we're still
+            //    servicing the current one
+            // 2. Clear the interrupt context flags BEFORE the switch. Otherwise,
+            //    fut_in_interrupt remains 1 and fut_current_frame points to an
+            //    abandoned frame on the terminated thread's stack, causing GP faults
+            //    when later ISRs try to use them.
             if (in_irq) {
-#if defined(__aarch64__)
-                fut_in_interrupt = false;
-#else
+#if defined(__x86_64__)
+                // Send EOI to LAPIC before abandoning this ISR's stack frame
+                extern void lapic_send_eoi(void);
+                lapic_send_eoi();
                 atomic_store_explicit(&fut_in_interrupt, false, memory_order_release);
+#elif defined(__aarch64__)
+                // Send EOI to GIC
+                extern void fut_irq_send_eoi(uint8_t irq);
+                fut_irq_send_eoi(0);  // Timer IRQ
+                fut_in_interrupt = false;
 #endif
                 // Clear fut_current_frame to prevent use of stale frame pointer
                 extern fut_interrupt_frame_t *fut_current_frame;
                 fut_current_frame = NULL;
             }
-            /* Debug: Log cooperative switch details */
-            fut_printf("[SCHED-COOP] next->context.rip=0x%llx rsp=0x%llx\n",
+            /* Debug: Log cooperative switch details (disabled - too verbose) */
+            /* fut_printf("[SCHED-COOP] next->context.rip=0x%llx rsp=0x%llx\n",
                        (unsigned long long)next->context.rip,
-                       (unsigned long long)next->context.rsp);
+                       (unsigned long long)next->context.rsp); */
 
             if (prev && !prev_terminated) {
                 fut_switch_context(&prev->context, &next->context);

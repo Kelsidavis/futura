@@ -1,10 +1,10 @@
-/* kernel/sys_readlink.c - Symbolic link reading syscall (stub)
+/* kernel/sys_readlink.c - Symbolic link reading syscall
  *
  * Copyright (c) 2025 Kelsi Davis
  * Licensed under the MPL v2.0 — see LICENSE for details.
  *
- * Implements the readlink() syscall stub. Full symbolic link support
- * is not yet implemented in the VFS layer, so this returns -ENOSYS.
+ * Implements the readlink() syscall with full VFS integration.
+ * Reads the value of a symbolic link and returns it in a user-provided buffer.
  *
  * Phase 1 (Completed): Basic stub returning ENOSYS
  * Phase 2 (Completed): Enhanced validation, parameter categorization, and detailed logging

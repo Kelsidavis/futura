@@ -461,6 +461,16 @@ See `docs/ARM64_STATUS.md` for detailed ARM64 progress.
 - ✅ **Kernel linker noexecstack**: Added -z noexecstack to kernel LDFLAGS to
   suppress warnings from objcopy-generated blob files lacking .note.GNU-stack
 
+### January 21, 2026 Session — Header Consolidation & Code Cleanup
+- ✅ **kprintf.h header creation**: Created `include/kernel/kprintf.h` to centralize
+  the `fut_printf()` declaration that was scattered across 180+ kernel files
+- ✅ **kprintf.h migration**: Updated all kernel files to use `#include <kernel/kprintf.h>`
+  instead of `extern void fut_printf(...)` declarations, eliminating 250+ lines
+  of duplicate declarations
+- ✅ **Duplicate include cleanup**: Fixed sed-induced duplicate `#include <kernel/kprintf.h>`
+  lines in 7 files (ramfs.c, elf64.c, fut_blockdev.c, futurafs.c, arm64_paging.c,
+  perf_ipc.c, perf_sched.c), removing 42 redundant lines
+
 ## Current Focus
 
 ### x86-64 Platform

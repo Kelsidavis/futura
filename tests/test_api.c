@@ -37,12 +37,16 @@ static void try_finish(void) {
         return;
     }
     uint16_t passed = atomic_load_explicit(&g_tests_passed, memory_order_acquire);
+
+    /* Debug: Show test progress */
+    fut_printf("[TEST-DEBUG] Tests passed: %u / %u\n", passed, planned);
+
     if (passed < planned) {
         return;
     }
 
     mark_done();
-    fut_printf("[TEST] ALL TESTS PASSED\n");
+    fut_printf("[TEST] ALL TESTS PASSED (%u/%u)\n", passed, planned);
     qemu_exit(0);
 }
 

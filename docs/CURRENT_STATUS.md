@@ -120,6 +120,10 @@ See `docs/ARM64_STATUS.md` for detailed ARM64 progress.
   - futurafs.c (8 instances)
   - fut_socket.c (16 instances, added errno.h include)
   - fut_blockdev.c (2 instances, added errno.h include)
+- ✅ **Network error codes**: Added EAFNOSUPPORT, EADDRINUSE, ECONNABORTED, ECONNREFUSED, EALREADY, EINPROGRESS to errno.h
+- ✅ **Socket error constants**: Replaced 23 magic number returns in fut_socket.c (-EINVAL, -EAGAIN, -EPIPE, -ENOTCONN, -EADDRINUSE, -ECONNREFUSED)
+- ✅ **Size categorization DRY**: Applied `fut_size_category()` helper to sys_read.c and sys_write.c, eliminating ~30 lines of duplicated categorization logic
+- ✅ **Extended FD categorization**: Applied `fut_fd_category()` helper to 6 more files: sys_fchdir.c, sys_flock.c, sys_fdatasync.c, sys_fchmod.c, sys_fchown.c, sys_epoll.c - reducing ~70 lines total
 
 ## Current Focus
 

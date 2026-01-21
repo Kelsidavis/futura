@@ -909,12 +909,14 @@ int fut_stage_second_stub_binary(void) {
                       "/sbin/second");
 }
 #else /* !__x86_64__ */
+#include <kernel/errno.h>
+
 int fut_stage_init_stub_binary(void) {
-    return -1;
+    return -ENOSYS;  /* Not implemented for non-x86_64 platforms */
 }
 
 int fut_stage_second_stub_binary(void) {
-    return -1;
+    return -ENOSYS;  /* Not implemented for non-x86_64 platforms */
 }
 #endif /* __x86_64__ */
 

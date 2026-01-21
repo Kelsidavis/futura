@@ -10,6 +10,7 @@
 #include <platform/arm64/regs.h>
 #include <platform/arm64/process.h>
 #include <platform/platform.h>
+#include <kernel/errno.h>
 #include <stddef.h>
 #include <stdatomic.h>
 
@@ -44,11 +45,11 @@ void fut_clear_reschedule(void) {
 
 int fut_register_irq_handler(int irq, fut_irq_handler_t handler) {
     if (irq < 0 || irq >= FUT_MAX_IRQS) {
-        return -1;  /* Invalid IRQ */
+        return -EINVAL;  /* Invalid IRQ number */
     }
 
     if (irq_handlers[irq] != NULL) {
-        return -2;  /* Already registered */
+        return -EEXIST;  /* Handler already registered */
     }
 
     irq_handlers[irq] = handler;
@@ -57,7 +58,7 @@ int fut_register_irq_handler(int irq, fut_irq_handler_t handler) {
 
 int fut_unregister_irq_handler(int irq) {
     if (irq < 0 || irq >= FUT_MAX_IRQS) {
-        return -1;  /* Invalid IRQ */
+        return -EINVAL;  /* Invalid IRQ number */
     }
 
     irq_handlers[irq] = NULL;
@@ -138,9 +139,9 @@ int fut_irq_acknowledge(void) {
     uint32_t intack = gic_read(GIC_CPU_BASE, GIC_CPU_INTACK);
     int irq = intack & 0x3FF;
 
-    /* Check for spurious interrupt */
+    /* Check for spurious interrupt (GICv2 uses 1023 as spurious ID) */
     if (irq == 1023) {
-        return -1;  /* Spurious interrupt */
+        return -EAGAIN;  /* Spurious interrupt - no real IRQ pending */
     }
 
     return irq;

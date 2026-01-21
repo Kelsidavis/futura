@@ -15,6 +15,7 @@
 #include <kernel/fut_task.h>
 #include <kernel/errno.h>
 #include <kernel/fut_vfs.h>
+#include <kernel/fut_fd_util.h>
 #include <stdint.h>
 
 extern void fut_printf(const char *fmt, ...);
@@ -79,21 +80,8 @@ long sys_fchmod(int fd, uint32_t mode) {
         return -EINVAL;
     }
 
-    /* Phase 2: Categorize FD type */
-    const char *fd_category;
-    if (fd == 0) {
-        fd_category = "stdin";
-    } else if (fd == 1) {
-        fd_category = "stdout";
-    } else if (fd == 2) {
-        fd_category = "stderr";
-    } else if (fd < 10) {
-        fd_category = "low";
-    } else if (fd < 100) {
-        fd_category = "mid";
-    } else {
-        fd_category = "high";
-    }
+    /* Phase 2: Categorize FD type - use shared helper */
+    const char *fd_category = fut_fd_category(fd);
 
     /* Get the file structure from the file descriptor */
     struct fut_file *file = fut_vfs_get_file(fd);

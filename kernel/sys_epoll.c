@@ -213,6 +213,7 @@
 #include <kernel/errno.h>
 #include <kernel/uaccess.h>
 #include <kernel/fut_thread.h>
+#include <kernel/fut_fd_util.h>
 #include <string.h>
 #include <stdint.h>
 #include <stdbool.h>
@@ -644,19 +645,8 @@ long sys_epoll_ctl(int epfd, int op, int fd, struct epoll_event *event) {
         epfd_category = "invalid range (<4000)";
     }
 
-    /* Phase 2: Categorize target FD */
-    const char *fd_category;
-    if (fd <= 2) {
-        fd_category = "stdio (0-2)";
-    } else if (fd < 16) {
-        fd_category = "low (3-15)";
-    } else if (fd < 256) {
-        fd_category = "mid (16-255)";
-    } else if (fd < 1024) {
-        fd_category = "high (256-1023)";
-    } else {
-        fd_category = "very high (≥1024)";
-    }
+    /* Phase 2: Categorize target FD - use shared helper */
+    const char *fd_category = fut_fd_category(fd);
 
     /* Phase 2: Categorize operation */
     const char *op_name;

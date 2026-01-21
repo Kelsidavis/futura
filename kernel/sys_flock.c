@@ -15,6 +15,7 @@
 #include <kernel/errno.h>
 #include <kernel/fut_vfs.h>
 #include <kernel/fut_lock.h>
+#include <kernel/fut_fd_util.h>
 #include <stdint.h>
 
 extern void fut_printf(const char *fmt, ...);
@@ -158,19 +159,8 @@ long sys_flock(int fd, int operation) {
         return -EBADF;
     }
 
-    /* Phase 2: Categorize FD range */
-    const char *fd_category;
-    if (fd <= 2) {
-        fd_category = "stdio (0-2)";
-    } else if (fd < 16) {
-        fd_category = "low (3-15)";
-    } else if (fd < 256) {
-        fd_category = "mid (16-255)";
-    } else if (fd < 1024) {
-        fd_category = "high (256-1023)";
-    } else {
-        fd_category = "very high (≥1024)";
-    }
+    /* Phase 2: Categorize FD range - use shared helper */
+    const char *fd_category = fut_fd_category(fd);
 
     /* Validate file descriptor */
     struct fut_file *file = vfs_get_file_from_task(task, fd);

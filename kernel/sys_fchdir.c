@@ -15,6 +15,7 @@
 #include <kernel/fut_task.h>
 #include <kernel/fut_vfs.h>
 #include <kernel/errno.h>
+#include <kernel/fut_fd_util.h>
 #include <stdint.h>
 
 extern void fut_printf(const char *fmt, ...);
@@ -152,19 +153,8 @@ long sys_fchdir(int fd) {
         return -EBADF;
     }
 
-    /* Phase 2: Categorize fd for enhanced error reporting */
-    const char *fd_category;
-    if (fd <= 2) {
-        fd_category = "stdio (0-2, usually not a directory)";
-    } else if (fd < 16) {
-        fd_category = "low range (3-15)";
-    } else if (fd < 256) {
-        fd_category = "mid range (16-255)";
-    } else if (fd < 1024) {
-        fd_category = "high range (256-1023)";
-    } else {
-        fd_category = "very high (≥1024)";
-    }
+    /* Phase 2: Categorize fd for enhanced error reporting - use shared helper */
+    const char *fd_category = fut_fd_category(fd);
 
     /* Phase 3: Validate fd is within valid range */
     if (fd >= task->max_fds || fd >= 1024) {

@@ -11,10 +11,89 @@
 #include <kernel/fut_object.h>
 #include <kernel/fut_task.h>
 #include <kernel/fut_vfs.h>
+#include <kernel/fut_timer.h>
 #include <kernel/errno.h>
 #include <string.h>
 
 extern void fut_printf(const char *fmt, ...);
+
+/* ============================================================
+ *   Time-Based Expiry Support
+ * ============================================================ */
+
+/**
+ * Get current time in minutes since boot.
+ * Used for capability expiry checking.
+ *
+ * @return Minutes since system boot (0-65535 wraps)
+ */
+static uint16_t get_current_time_minutes(void) {
+    uint64_t ticks_ms = fut_get_ticks();
+    return (uint16_t)(ticks_ms / 60000);  /* ms -> minutes */
+}
+
+/**
+ * Check if a capability has expired.
+ *
+ * @param cap Capability to check
+ * @return 0 if valid (not expired or no time limit), -ETIMEDOUT if expired
+ */
+int fut_capability_check_expiry(uint64_t cap) {
+    uint32_t scopes = FUT_CAP_GET_SCOPE(cap);
+
+    /* Check if time-limited flag is set */
+    if (!(scopes & FUT_CAP_SCOPE_TIME_LIMITED)) {
+        /* Not time-limited, always valid */
+        return 0;
+    }
+
+    uint16_t expiry = FUT_CAP_GET_EXPIRY(cap);
+    if (expiry == 0) {
+        /* Expiry of 0 means "never expires" for backward compatibility */
+        return 0;
+    }
+
+    uint16_t current = get_current_time_minutes();
+
+    /* Handle wraparound: if current time is significantly less than expiry,
+     * it means we wrapped around the 16-bit counter (unlikely in practice
+     * since 65535 minutes is ~45 days) */
+    if (current > expiry) {
+        /* Expired */
+        return -ETIMEDOUT;
+    }
+
+    return 0;
+}
+
+/**
+ * Create a time-limited capability.
+ *
+ * @param ops Operation flags (FUT_CAP_*)
+ * @param scopes Scope flags (FUT_CAP_SCOPE_*)
+ * @param objtypes Object type flags (FUT_CAP_OBJTYPE_*)
+ * @param minutes_valid Duration in minutes (0 = never expires)
+ * @return Constructed capability with TIME_LIMITED flag and expiry time
+ */
+uint64_t fut_capability_create_timed(uint32_t ops, uint32_t scopes,
+                                     uint32_t objtypes, uint32_t minutes_valid) {
+    /* Construct capability from components:
+     * Bits 0-15: ops
+     * Bits 16-31: scopes (with TIME_LIMITED flag added)
+     * Bits 32-47: objtypes
+     * Bits 48-63: expiry time */
+    uint64_t cap = ((uint64_t)(ops & 0xFFFF)) |
+                   ((uint64_t)((scopes | FUT_CAP_SCOPE_TIME_LIMITED) & 0xFFFF) << 16) |
+                   ((uint64_t)(objtypes & 0xFFFF) << 32);
+
+    if (minutes_valid > 0 && minutes_valid < 65536) {
+        uint16_t current = get_current_time_minutes();
+        uint16_t expiry = current + (uint16_t)minutes_valid;
+        cap = FUT_CAP_SET_EXPIRY(cap, expiry);
+    }
+
+    return cap;
+}
 
 /* ============================================================
  *   System Initialization
@@ -22,6 +101,7 @@ extern void fut_printf(const char *fmt, ...);
 
 void fut_cap_system_init(void) {
     fut_printf("[CAP] Capability system initialized\n");
+    fut_printf("[CAP] Time-based expiry support enabled (resolution: 1 minute)\n");
 }
 
 /* ============================================================

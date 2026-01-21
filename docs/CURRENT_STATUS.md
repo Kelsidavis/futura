@@ -336,6 +336,52 @@ See `docs/ARM64_STATUS.md` for detailed ARM64 progress.
   - struct robust_list and robust_list_head
   - Function declarations for futex, set_robust_list, get_robust_list
 
+### January 21, 2026 Session — Continued POSIX Header Development
+- ✅ **sys/types.h**: Created comprehensive POSIX data types header with:
+  - Process/user/group ID types (pid_t, uid_t, gid_t, id_t)
+  - File system types (mode_t, dev_t, ino_t, nlink_t, off_t, loff_t)
+  - Size types (blksize_t, blkcnt_t, fsblkcnt_t, fsfilcnt_t, ssize_t)
+  - Socket/IPC types (socklen_t, sa_family_t, in_port_t, in_addr_t, key_t)
+  - Time types (useconds_t, suseconds_t)
+  - Device number macros (major, minor, makedev)
+  - Consolidates type definitions from 10+ source files
+- ✅ **dirent.h**: Created directory entry header with:
+  - DT_* file type constants (DT_REG, DT_DIR, DT_LNK, DT_CHR, DT_BLK, etc.)
+  - IFTODT/DTTOIF conversion macros for stat mode ↔ d_type
+  - struct linux_dirent64 for getdents64() syscall
+  - struct linux_dirent for legacy getdents() syscall
+  - struct dirent for POSIX readdir() interface
+  - Function declarations for getdents/getdents64
+- ✅ **sys/utsname.h**: Created system identification header with:
+  - _UTSNAME_LENGTH and SYS_NMLN constants
+  - struct utsname with sysname, nodename, release, version, machine fields
+  - GNU extension domainname field (when _GNU_SOURCE defined)
+  - uname() function declaration
+- ✅ **sys/statfs.h**: Created filesystem statistics header with:
+  - Filesystem type magic numbers (TMPFS, RAMFS, EXT2-4, PROC, SYSFS, etc.)
+  - ST_* mount flags (ST_RDONLY, ST_NOSUID, ST_NOEXEC, etc.)
+  - fsid_t type definition
+  - struct statfs and struct statfs64
+  - Function declarations: statfs, fstatfs, statfs64, fstatfs64
+- ✅ **sys/sysinfo.h**: Created system information header with:
+  - struct sysinfo for system statistics (uptime, loads, memory, processes)
+  - SI_LOAD_SHIFT constant for load average scaling
+  - Function declarations: sysinfo, get_nprocs, get_nprocs_conf
+  - get_phys_pages, get_avphys_pages declarations
+- ✅ **unistd.h**: Created comprehensive POSIX header with:
+  - Access mode constants (F_OK, R_OK, W_OK, X_OK)
+  - Standard file descriptors (STDIN/STDOUT/STDERR_FILENO)
+  - Seek constants (SEEK_SET/CUR/END/DATA/HOLE)
+  - sysconf constants (_SC_PAGESIZE, _SC_NPROCESSORS_*, etc.)
+  - pathconf constants (_PC_NAME_MAX, _PC_PATH_MAX, etc.)
+  - lockf constants (F_ULOCK, F_LOCK, F_TLOCK, F_TEST)
+  - 70+ function declarations for process, file, directory, and misc operations
+  - Consolidates constants previously scattered across syscall files
+
+### January 21, 2026 Session — Bug Fixes
+- ✅ **sys/socket.h hosted environment fix**: Added #include_next for hosted environments to prevent conflicts with glibc headers
+- ✅ **O_CLOEXEC redefinition fix**: Fixed kernel/sys_open.c which had incorrect O_CLOEXEC value (0x4000 instead of 0x80000)
+
 ## Current Focus
 
 ### x86-64 Platform

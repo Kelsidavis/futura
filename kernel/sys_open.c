@@ -29,12 +29,18 @@ extern fut_task_t *fut_task_current(void);
 extern int copy_user_string(const char *user_str, char *kernel_buf, size_t max_len);
 
 /* Access mode mask (from fcntl.h) */
+#ifndef O_ACCMODE
 #define O_ACCMODE   0x0003  /* Mask for access mode */
+#endif
 
 /* Additional flags not yet in fut_vfs.h (Phase 3+) */
+#ifndef O_DIRECTORY
 #define O_DIRECTORY 0x2000  /* Fail if not a directory */
-#define O_CLOEXEC   0x4000  /* Close on exec */
+#endif
+#ifndef O_SYNC
 #define O_SYNC      0x8000  /* Synchronous writes */
+#endif
+/* O_CLOEXEC is defined in fut_vfs.h */
 
 /**
  * open() - Open file and return file descriptor

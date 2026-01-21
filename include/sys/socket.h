@@ -14,6 +14,11 @@
 #include <stdint.h>
 #include <stddef.h>
 
+/* In hosted environment with system headers available, use them */
+#if __has_include_next(<sys/socket.h>)
+#include_next <sys/socket.h>
+#else
+
 /* ============================================================
  *   Address Families (Protocol Families)
  * ============================================================ */
@@ -264,3 +269,5 @@ extern int shutdown(int sockfd, int how);
 extern int getsockname(int sockfd, struct sockaddr *addr, socklen_t *addrlen);
 extern int getpeername(int sockfd, struct sockaddr *addr, socklen_t *addrlen);
 extern int socketpair(int domain, int type, int protocol, int sv[2]);
+
+#endif /* !has_include_next */

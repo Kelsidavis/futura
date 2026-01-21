@@ -9,6 +9,7 @@
 
 #include <kernel/fut_task.h>
 #include <kernel/errno.h>
+#include <sys/resource.h>
 #include <stdint.h>
 
 extern void fut_printf(const char *fmt, ...);
@@ -16,26 +17,6 @@ extern fut_task_t *fut_task_current(void);
 extern fut_task_t *fut_task_by_pid(uint64_t pid);
 extern int fut_copy_to_user(void *to, const void *from, size_t size);
 extern int fut_copy_from_user(void *to, const void *from, size_t size);
-
-/* Resource limit structure */
-struct rlimit {
-    uint64_t rlim_cur;  /* Soft limit (current) */
-    uint64_t rlim_max;  /* Hard limit (maximum) */
-};
-
-/* Resource limit constants */
-#define RLIMIT_CPU        0   /* CPU time in seconds */
-#define RLIMIT_FSIZE      1   /* Maximum file size */
-#define RLIMIT_DATA       2   /* Maximum data segment size */
-#define RLIMIT_STACK      3   /* Maximum stack size */
-#define RLIMIT_CORE       4   /* Maximum core file size */
-#define RLIMIT_RSS        5   /* Maximum resident set size */
-#define RLIMIT_NPROC      6   /* Maximum number of processes */
-#define RLIMIT_NOFILE     7   /* Maximum number of open files */
-#define RLIMIT_MEMLOCK    8   /* Maximum locked memory */
-#define RLIMIT_AS         9   /* Address space limit */
-
-#define RLIM_INFINITY     (~0ULL)  /* Unlimited */
 
 /* Default resource limit values - named constants for clarity */
 #define RLIMIT_NOFILE_SOFT_DEFAULT  1024      /* Default soft limit for open files */

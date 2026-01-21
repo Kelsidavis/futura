@@ -12,14 +12,7 @@
 #pragma once
 
 #include <stdint.h>
-
-/* ============================================================
- *   Type Definitions
- * ============================================================ */
-
-#ifndef mode_t
-typedef uint32_t mode_t;
-#endif
+#include <sys/types.h>  /* For mode_t */
 
 /* ============================================================
  *   File Access Modes (mutually exclusive)

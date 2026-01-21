@@ -24,6 +24,7 @@
 #include <shared/fut_sigevent.h>  /* For struct sigevent, timer_t */
 #include <shared/fut_stat.h>      /* For struct fut_stat, S_IF* */
 #include <sys/uio.h>              /* For struct iovec */
+#include <sys/resource.h>         /* For struct rlimit, RLIMIT_* */
 
 /* Debug control - set to 0 to disable verbose syscall logging */
 #define DEBUG_SYSCALL 0
@@ -148,16 +149,7 @@ extern long sys_getresuid(uint32_t *ruid, uint32_t *euid, uint32_t *suid);
 extern long sys_setresgid(uint32_t rgid, uint32_t egid, uint32_t sgid);
 extern long sys_getresgid(uint32_t *rgid, uint32_t *egid, uint32_t *sgid);
 
-/* Resource limit structures */
-struct rlimit {
-    uint64_t rlim_cur;  /* Soft limit */
-    uint64_t rlim_max;  /* Hard limit */
-};
-
-struct rlimit64 {
-    uint64_t rlim_cur;  /* Soft limit */
-    uint64_t rlim_max;  /* Hard limit */
-};
+/* Resource limit structures are provided by sys/resource.h */
 
 /* Resource limit syscalls */
 extern long sys_getrlimit(int resource, struct rlimit *rlim);

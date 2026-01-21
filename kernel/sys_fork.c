@@ -146,11 +146,13 @@
  * - Inherited from parent without per-fork validation
  *
  * DEFENSE STRATEGY:
- * [TODO] Add refcount overflow check in FD inheritance (line 204):
- *   - Check parent_file->refcount < UINT32_MAX before increment
+ * [DONE] Add refcount overflow check in FD inheritance:
+ *   - Check parent_file->refcount < FUT_FILE_REF_MAX (0xFFFFFFF0) before increment
  *   - Return -ENOMEM from sys_fork() if overflow would occur
- *   - Log warning when file refcount approaches maximum
- *   - Clean up child_task on failure (release allocated resources)
+ *   - Log warning when file refcount limit reached
+ *   - Clean up already-inherited FDs on failure (decrement refcounts)
+ *   - Destroy child_task on failure
+ *   - Commit: (see below)
  *
  * [TODO] Use atomic refcount operations:
  *   - Replace parent_file->refcount++ with atomic_inc_check_overflow()
@@ -666,10 +668,29 @@ long sys_fork(void) {
     }
 
     /* Copy parent's file descriptor table to child */
+    #define FUT_FILE_REF_MAX 0xFFFFFFF0u  /* Leave headroom below UINT32_MAX */
     if (parent_task->fd_table) {
         for (int i = 0; i < parent_task->max_fds; i++) {
             if (parent_task->fd_table[i] != NULL) {
                 struct fut_file *parent_file = parent_task->fd_table[i];
+
+                /* SECURITY: Check for refcount overflow before incrementing.
+                 * This prevents attacks where mass forking with many open FDs
+                 * overflows file refcounts, causing files to be prematurely
+                 * closed and freed while still in use. */
+                if (parent_file->refcount >= FUT_FILE_REF_MAX) {
+                    fut_printf("[FORK] File refcount overflow for fd=%d (count=%u) - aborting fork\n",
+                               i, parent_file->refcount);
+                    /* Clean up: decrement refcounts of already-inherited files */
+                    for (int j = 0; j < i; j++) {
+                        if (child_task->fd_table[j] != NULL) {
+                            child_task->fd_table[j]->refcount--;
+                            child_task->fd_table[j] = NULL;
+                        }
+                    }
+                    fut_task_destroy(child_task);
+                    return -ENOMEM;
+                }
 
                 /* Increment refcount (file is now referenced by parent and child) */
                 parent_file->refcount++;
@@ -679,6 +700,7 @@ long sys_fork(void) {
             }
         }
     }
+    #undef FUT_FILE_REF_MAX
 
     /* Clone address space (COW implementation) */
     fut_mm_t *parent_mm = fut_task_get_mm(parent_task);

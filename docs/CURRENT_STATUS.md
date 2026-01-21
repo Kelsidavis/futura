@@ -196,6 +196,18 @@ See `docs/ARM64_STATUS.md` for detailed ARM64 progress.
   - Eliminated code duplication in 2 task exit functions
   - Added defensive memory initialization
 
+### January 21, 2026 Session — Documentation & Code Quality (Continued)
+- ✅ **Header documentation**: Added comprehensive API documentation to 3 kernel headers:
+  - `fut_waitq.h`: Wait queue primitives with usage patterns, thread safety notes, and examples
+  - `uaccess.h`: User memory access helpers with security model documentation and common patterns
+  - `fut_percpu.h`: Per-CPU data structures with architecture-specific implementation details
+- ✅ **fb_mmio.c named constants**: Replaced magic numbers with descriptive constants:
+  - `PCI_CONFIG_ADDRESS`/`PCI_CONFIG_DATA` for PCI configuration ports
+  - `PCI_VENDOR_VIRTIO`/`PCI_VENDOR_CIRRUS` for device detection
+  - `FB_PHYS_*` for legacy framebuffer addresses
+  - `FB_DEFAULT_WIDTH`/`HEIGHT`/`BPP` for geometry defaults
+  - `ARGB_BLACK` for color values
+
 ## Current Focus
 
 ### x86-64 Platform

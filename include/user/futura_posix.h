@@ -31,46 +31,28 @@
 
 /* When compiling in hosted environment (with system headers like Wayland),
  * prefer system type definitions. These guards ensure we only define types
- * when they're not already available from system headers. */
+ * when they're not already available from system headers.
+ *
+ * Note: ssize_t is defined in fut_fipc.h, don't redefine it here.
+ */
 
-/* Only define types that aren't provided by sys/types.h or other system headers */
-/* Note: ssize_t is defined in fut_fipc.h, don't redefine it here */
-
-#ifndef off_t
-typedef int64_t off_t;
+/* Include sys/types.h for standard type definitions in freestanding mode */
+#if !defined(__STDC_HOSTED__) || __STDC_HOSTED__ == 0
+#include <sys/types.h>
 #endif
 
-#ifndef dev_t
-typedef uint64_t dev_t;
-#endif
-
-#ifndef ino_t
-typedef uint64_t ino_t;
-#endif
-
-#ifndef mode_t
-typedef uint32_t mode_t;
-#endif
-
-#ifndef uid_t
-typedef uint32_t uid_t;
-#endif
-
-#ifndef gid_t
-typedef uint32_t gid_t;
-#endif
-
-#ifndef time_t
+/* Types not covered by sys/types.h */
+#ifndef __time_t_defined
+#define __time_t_defined 1
 typedef int64_t time_t;
 #endif
 
-#ifndef pid_t
-typedef int32_t pid_t;
-#endif
-
 /* socklen_t definition - prefer system version if available */
-#if !defined(socklen_t) && !(defined(__STDC_HOSTED__) && __STDC_HOSTED__ == 1)
+#ifndef __socklen_t_defined
+#if !defined(__STDC_HOSTED__) || __STDC_HOSTED__ == 0
+#define __socklen_t_defined 1
 typedef uint32_t socklen_t;
+#endif
 #endif
 
 /* ============================================================

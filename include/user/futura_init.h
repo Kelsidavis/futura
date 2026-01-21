@@ -14,8 +14,9 @@
 #include <stdbool.h>
 #include <kernel/fut_fipc.h>
 
-/* Forward declare pid_t (defined in futura_posix.h) */
-#ifndef __POSIX_TYPES_DEFINED
+/* pid_t is provided by sys/types.h */
+#ifndef __pid_t_defined
+#define __pid_t_defined 1
 typedef int32_t pid_t;
 #endif
 

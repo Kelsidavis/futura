@@ -54,7 +54,11 @@ static int last_exit_status = 0;
 
 /* Type definitions */
 /* ssize_t is provided by user/libfutura.h */
-typedef int pid_t;
+/* pid_t with proper guard for sys/types.h compatibility */
+#ifndef __pid_t_defined
+#define __pid_t_defined 1
+typedef int32_t pid_t;
+#endif
 
 /* Environment array for passing to execve */
 static char *envp[MAX_VARS + 1];  /* +1 for NULL terminator */

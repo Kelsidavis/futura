@@ -742,6 +742,9 @@ void vfs_close_fd_in_task(struct fut_task *task, int fd);
 #ifndef O_NONBLOCK
 #define O_NONBLOCK  0x0800
 #endif
+#ifndef O_CLOEXEC
+#define O_CLOEXEC   0x80000  /* Close on exec */
+#endif
 
 /* Error codes */
 #define ENOENT      2       /* No such file or directory */

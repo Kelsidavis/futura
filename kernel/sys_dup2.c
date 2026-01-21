@@ -284,7 +284,7 @@ long sys_dup2(int oldfd, int newfd) {
  *
  * @param oldfd Source file descriptor to duplicate
  * @param newfd Target file descriptor number
- * @param flags Must be O_CLOEXEC (0x80000) or 0
+ * @param flags Must be O_CLOEXEC or 0
  *
  * Returns:
  *   - newfd on success
@@ -306,7 +306,7 @@ long sys_dup3(int oldfd, int newfd, int flags) {
     int local_flags = flags;
 
     /* Validate flags - only O_CLOEXEC is supported */
-    if (local_flags & ~0x80000) {  /* Only O_CLOEXEC */
+    if (local_flags & ~O_CLOEXEC) {
         fut_printf("[DUP3] dup3(oldfd=%d, newfd=%d, flags=0x%x) -> EINVAL (invalid flags)\n",
                    local_oldfd, local_newfd, local_flags);
         return -EINVAL;
@@ -399,7 +399,7 @@ long sys_dup3(int oldfd, int newfd, int flags) {
     }
 
     /* Apply O_CLOEXEC if requested */
-    if (local_flags & 0x80000) {  /* O_CLOEXEC */
+    if (local_flags & O_CLOEXEC) {
         extern long sys_fcntl(int fd, int cmd, long arg);
         sys_fcntl(local_newfd, 2, 1);  /* F_SETFD, FD_CLOEXEC */
     }
@@ -407,7 +407,7 @@ long sys_dup3(int oldfd, int newfd, int flags) {
     /* Propagate socket ownership if oldfd is a socket */
     propagate_socket_dup(local_oldfd, local_newfd);
 
-    const char *flags_desc = (local_flags & 0x80000) ? "O_CLOEXEC" : "none";
+    const char *flags_desc = (local_flags & O_CLOEXEC) ? "O_CLOEXEC" : "none";
 
     fut_printf("[DUP3] dup3(oldfd=%d, newfd=%d, flags=0x%x [%s]) -> %d (Phase 4: atomic dup with flags)\n",
                local_oldfd, local_newfd, local_flags, flags_desc, local_newfd);

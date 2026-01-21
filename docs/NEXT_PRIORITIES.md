@@ -1,7 +1,7 @@
 # Next Priorities and Blockers
 
 **Date:** January 21, 2026
-**Phase:** Phase 2 → Phase 3 Transition
+**Phase:** Phase 3 Complete
 
 ---
 
@@ -86,41 +86,53 @@ Directory Operations:
 
 ---
 
-## Current Blockers
+## Resolved P0 Blockers
 
-### 1. Scheduler Bootstrap Issue (P0-NEW)
+### ~~1. Scheduler Bootstrap Issue~~ ✓ RESOLVED
 
-**Status:** BLOCKING
-**Location:** `kernel/scheduler.c`, `kernel/kernel_main.c`
-**Impact:** Prevents async tests from running after scheduler starts
+**Status:** RESOLVED (January 21, 2026)
+**Commit:** 3c5d051
+**Location:** `kernel/scheduler/fut_sched.c`
 
-**Symptoms:**
-- After `fut_sched_start()`, the init thread (tid=1) doesn't continue
-- Context switches to idle thread (tid=2) but never returns
-- Kernel hangs at "[SCHED-COOP] next->context.rip=..."
+**Root Cause:**
+When doing a cooperative context switch from within an ISR (e.g., when a thread
+terminates and switches to idle), the kernel was not sending EOI to the LAPIC.
+This blocked all future timer interrupts because the LAPIC believed we were
+still servicing the current interrupt.
 
-**Required Investigation:**
-1. Check why tid=1 is added to ready queue but not scheduled back
-2. Verify idle thread is yielding correctly
-3. Check timer IRQ is firing for preemptive scheduling
+**Resolution:**
+- Added `lapic_send_eoi()` (x86_64) or `fut_irq_send_eoi()` (ARM64) before
+  clearing interrupt flags and switching context
+- This allows the scheduler to receive future timer ticks and properly schedule threads
+- Disabled verbose SCHED-COOP debug output that was flooding serial console
 
 ---
 
-### 2. Capability Integration Tests (P3)
+## Resolved P3 Work
 
-**Status:** IN PROGRESS (blocked by scheduler issue)
-**Commit:** c179c2d
+### ~~1. Capability Integration Tests~~ ✓ RESOLVED
+
+**Status:** RESOLVED (January 21, 2026)
+**Commits:** c179c2d (tests), 3c5d051 (scheduler fix)
 **Location:** `kernel/tests/sys_cap.c`
 
-**Implemented Tests (6 total):**
-- [x] Capability handle creation (open_cap)
-- [x] Capability read operation (read_cap)
-- [x] Capability write operation (write_cap)
-- [x] Rights enforcement (read-only cannot write)
-- [x] Invalid handle operations
-- [x] Capability handle cleanup (close_cap)
+**All 6 Tests Passing:**
+- [x] Test 1: Capability handle creation (open_cap) ✓
+- [x] Test 2: Capability read operation (read_cap) ✓
+- [x] Test 3: Capability write operation (write_cap) ✓
+- [x] Test 4: Rights enforcement (read-only cannot write) ✓
+- [x] Test 5: Invalid handle operations ✓
+- [x] Test 6: Capability handle cleanup (close_cap) ✓
 
-**Note:** Tests are correctly implemented and will run once scheduler issue is resolved.
+**Test Results:**
+```
+[CAP-TEST] ✓ Capability handle created: 0x3
+[CAP-TEST] ✓ Read 23 bytes via capability: 'Hello Capability World!'
+[CAP-TEST] ✓ Wrote 22 bytes via capability, verified: 'Capability Write Test!'
+[CAP-TEST] ✓ Write on read-only handle correctly denied: -1
+[CAP-TEST] ✓ Invalid handle operations correctly rejected
+[CAP-TEST] ✓ Capability handle closed, subsequent ops rejected
+```
 
 ---
 
@@ -129,11 +141,11 @@ Directory Operations:
 | Priority | Task | Blocker For | Status |
 |----------|------|-------------|--------|
 | ~~P0~~ | ~~Fix kernel boot hang~~ | ~~All runtime testing~~ | ✓ RESOLVED |
-| **P0-NEW** | **Fix scheduler bootstrap** | **All async tests** | **BLOCKING** |
+| ~~P0~~ | ~~Fix scheduler bootstrap~~ | ~~All async tests~~ | ✓ RESOLVED |
 | ~~P1~~ | ~~VFS capability integration~~ | ~~Phase 1 syscalls~~ | ✓ RESOLVED |
 | ~~P1~~ | ~~Phase 1 capability syscalls~~ | ~~FSD integration~~ | ✓ RESOLVED |
 | ~~P2~~ | ~~FSD handler updates~~ | ~~Phase 4 completion~~ | ✓ RESOLVED |
-| P3 | Capability integration tests | Validation | IN PROGRESS (blocked) |
+| ~~P3~~ | ~~Capability integration tests~~ | ~~Validation~~ | ✓ RESOLVED |
 
 ---
 
@@ -157,21 +169,24 @@ Directory Operations:
 
 ## Immediate Next Steps
 
-1. **Fix scheduler bootstrap issue** (P0-NEW - BLOCKER)
-   - Investigate why init thread (tid=1) doesn't resume after scheduler starts
-   - Check idle thread yield behavior
-   - Verify timer IRQ preemption is working
+**Phase 3 capability work is complete.** All capability syscalls are implemented, tested, and verified working.
 
-2. **Run capability integration tests** (P3 - BLOCKED)
-   ```bash
-   make test
-   ```
-   - Tests are implemented in `kernel/tests/sys_cap.c`
-   - Will run automatically once scheduler issue is fixed
-   - 6 capability tests ready to validate:
-     - Handle creation/destruction
-     - Read/write with rights enforcement
-     - Invalid handle rejection
+### Suggested Future Work
+
+1. **Phase 4: IPC Capability Integration**
+   - Extend capability model to IPC channels
+   - Implement capability-based message passing
+   - Add capability delegation between processes
+
+2. **Performance Optimization**
+   - Profile capability lookup overhead
+   - Consider caching frequently-used handles
+   - Benchmark capability vs traditional FD performance
+
+3. **Security Hardening**
+   - Add capability revocation mechanism
+   - Implement capability audit logging
+   - Add time-based capability expiry enforcement in syscalls
 
 ---
 

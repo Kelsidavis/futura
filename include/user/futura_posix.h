@@ -430,65 +430,10 @@ int futura_munmap(void *addr, size_t length);
  *   Minimal Socket Types / APIs (AF_UNIX only)
  * ============================================================ */
 
-/* Only include socket definitions in freestanding mode.
- * Hosted environments (like Wayland) get these from system headers. */
-#ifndef __GLIBC__
-
-#define AF_UNIX        1
-#define SOCK_STREAM    1
-
-struct sockaddr {
-    unsigned short sa_family;
-    char sa_data[14];
-};
-
-struct sockaddr_un {
-    unsigned short sun_family;
-    char sun_path[108];
-};
-
-struct iovec {
-    void *iov_base;
-    size_t iov_len;
-};
-
-struct msghdr {
-    void *msg_name;
-    socklen_t msg_namelen;
-    struct iovec *msg_iov;
-    size_t msg_iovlen;
-    void *msg_control;
-    size_t msg_controllen;
-    int msg_flags;
-};
-
-struct cmsghdr {
-    size_t cmsg_len;
-    int cmsg_level;
-    int cmsg_type;
-};
-
-#define SOL_SOCKET     1
-#define SCM_RIGHTS     1
-
-int    socket(int domain, int type, int protocol);
-int    bind(int fd, const struct sockaddr *addr, socklen_t len);
-int    listen(int fd, int backlog);
-int    accept(int fd, struct sockaddr *addr, socklen_t *len);
-int    connect(int fd, const struct sockaddr *addr, socklen_t len);
-ssize_t sendmsg(int fd, const struct msghdr *msg, int flags);
-ssize_t recvmsg(int fd, struct msghdr *msg, int flags);
-int    getsockopt(int fd, int level, int optname, void *optval, socklen_t *optlen);
-int    setsockopt(int fd, int level, int optname, const void *optval, socklen_t optlen);
-int    shutdown(int fd, int how);
-
-#else /* __GLIBC__ - when glibc is available */
-
-/* Get socket types from system headers */
-#include <sys/un.h>
+/* Socket definitions - use standard headers for both glibc and freestanding */
 #include <sys/socket.h>
-
-#endif /* Socket definitions */
+#include <sys/un.h>
+#include <sys/uio.h>
 
 /* These defines should always be available */
 #ifndef FD_CLOEXEC

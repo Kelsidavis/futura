@@ -22,12 +22,11 @@ extern int fut_copy_from_user(void *to, const void *from, size_t size);
 extern int fut_copy_to_user(void *to, const void *from, size_t size);
 
 /**
- * readlink() - Read value of a symbolic link (stub implementation)
+ * readlink() - Read value of a symbolic link
  *
  * Reads the target path of a symbolic link into a buffer. This is essential
  * for resolving symbolic links and understanding filesystem structure.
- * This is currently a stub implementation that returns -ENOSYS because the
- * VFS layer does not yet have full symbolic link support.
+ * Fully implemented with VFS integration for RamFS symbolic links.
  *
  * @param path    Path to the symbolic link
  * @param buf     Buffer to store the link target

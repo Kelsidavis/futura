@@ -17,11 +17,13 @@
  *   Type Definitions
  * ============================================================ */
 
-#ifndef time_t
+#ifndef __time_t_defined
+#define __time_t_defined 1
 typedef int64_t time_t;
 #endif
 
-#ifndef clockid_t
+#ifndef __clockid_t_defined
+#define __clockid_t_defined 1
 typedef int clockid_t;
 #endif
 

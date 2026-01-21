@@ -130,6 +130,22 @@ typedef uint32_t socklen_t;
 #define SFD_NONBLOCK 0x0800
 #endif
 
+/* lseek() whence values */
+#ifndef SEEK_SET
+#define SEEK_SET    0   /* Seek from beginning of file */
+#endif
+#ifndef SEEK_CUR
+#define SEEK_CUR    1   /* Seek from current position */
+#endif
+#ifndef SEEK_END
+#define SEEK_END    2   /* Seek from end of file */
+#endif
+
+/* Pipe and I/O limits */
+#ifndef PIPE_BUF
+#define PIPE_BUF    4096    /* Maximum bytes for atomic pipe write */
+#endif
+
 #define POSIX_PATH_MAX 4096
 #define POSIX_NAME_MAX 255
 

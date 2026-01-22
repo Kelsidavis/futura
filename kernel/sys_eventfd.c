@@ -428,7 +428,7 @@
 
 #include <kernel/kprintf.h>
 
-/* eventfd flags */
+/* eventfd flags (kernel-internal definitions to avoid userspace header conflicts) */
 #define EFD_CLOEXEC     02000000
 #define EFD_NONBLOCK    00004000
 #define EFD_SEMAPHORE   00000001
@@ -446,7 +446,6 @@
 #define TFD_TIMER_ABSTIME 1
 
 /* CLOCK_* constants provided by time.h */
-
 /* struct timespec and struct itimerspec provided by shared/fut_timespec.h */
 
 struct eventfd_ctx {

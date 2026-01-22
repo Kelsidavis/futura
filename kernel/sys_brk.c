@@ -124,21 +124,11 @@ long sys_brk(uintptr_t new_break) {
     uintptr_t current = fut_mm_brk_current(mm);
 
     /* Phase 2: Validate break address is within userspace (prevent kernel space corruption) */
-    #if defined(__x86_64__)
-    /* x86-64: Kernel space starts at 0xFFFFFFFF80000000 */
-    if (new_break >= 0xFFFFFFFF80000000UL) {
-        brk_printf("[BRK] brk(new_break=0x%lx) -> EINVAL (address in kernel space)\n",
+    if (new_break > USER_SPACE_END) {
+        brk_printf("[BRK] brk(new_break=0x%lx) -> EINVAL (address exceeds user space)\n",
                    new_break);
         return -EINVAL;
     }
-    #elif defined(__aarch64__)
-    /* ARM64: Kernel space starts at 0xFFFFFF8000000000 */
-    if (new_break >= 0xFFFFFF8000000000UL) {
-        brk_printf("[BRK] brk(new_break=0x%lx) -> EINVAL (address in kernel space, ARM64)\n",
-                   new_break);
-        return -EINVAL;
-    }
-    #endif
 
     /* Security hardening: Validate new_break doesn't cause wraparound with brk_start
      * Prevent heap allocation into kernel space via integer overflow */
@@ -156,23 +146,14 @@ long sys_brk(uintptr_t new_break) {
             return -EINVAL;
         }
 
-        /* Validate brk_start + heap_size doesn't exceed kernel space boundary
-         * This catches cases where wraparound protection above passes but result still in kernel */
-        #if defined(__x86_64__)
-        if (brk_start + heap_size >= 0xFFFFFFFF80000000UL) {
+        /* Validate brk_start + heap_size doesn't exceed user space boundary
+         * This catches cases where wraparound protection above passes but result still out of range */
+        if (brk_start + heap_size > USER_SPACE_END) {
             brk_printf("[BRK] brk(new_break=0x%lx, brk_start=0x%lx, heap_size=0x%lx) -> EINVAL "
-                       "(heap would extend into kernel space)\n",
+                       "(heap would extend beyond user space)\n",
                        new_break, brk_start, heap_size);
             return -EINVAL;
         }
-        #elif defined(__aarch64__)
-        if (brk_start + heap_size >= 0xFFFFFF8000000000UL) {
-            brk_printf("[BRK] brk(new_break=0x%lx, brk_start=0x%lx, heap_size=0x%lx) -> EINVAL "
-                       "(heap would extend into kernel space, ARM64)\n",
-                       new_break, brk_start, heap_size);
-            return -EINVAL;
-        }
-        #endif
     }
 
     /* Phase 2: Categorize requested change */
@@ -390,9 +371,8 @@ long sys_brk(uintptr_t new_break) {
     uintptr_t current = fut_mm_brk_current(mm);
 
     /* Phase 2: Validate break address is within userspace (prevent kernel space corruption) */
-    /* ARM64: Kernel space starts at 0xFFFFFF8000000000 */
-    if (local_new_break >= 0xFFFFFF8000000000UL) {
-        brk_printf("[BRK] brk(new_break=0x%lx) -> EINVAL (address in kernel space, ARM64)\n",
+    if (local_new_break > USER_SPACE_END) {
+        brk_printf("[BRK] brk(new_break=0x%lx) -> EINVAL (address exceeds user space, ARM64)\n",
                    local_new_break);
         return -EINVAL;
     }

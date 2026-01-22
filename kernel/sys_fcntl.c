@@ -210,50 +210,12 @@
 #include <kernel/fut_fd_util.h>
 #include <stdint.h>
 #include <sys/resource.h>
+#include <fcntl.h>
 
 #include <kernel/kprintf.h>
 extern int propagate_socket_dup(int oldfd, int newfd);
 
-/* fcntl command definitions */
-#ifndef F_DUPFD
-#define F_DUPFD            0
-#endif
-#ifndef F_GETFD
-#define F_GETFD            1
-#endif
-#ifndef F_SETFD
-#define F_SETFD            2
-#endif
-#ifndef F_GETFL
-#define F_GETFL            3
-#endif
-#ifndef F_SETFL
-#define F_SETFL            4
-#endif
-#ifndef F_DUPFD_CLOEXEC
-#define F_DUPFD_CLOEXEC    1030
-#endif
-#ifndef F_GET_SEALS
-#define F_GET_SEALS        1034
-#endif
-#ifndef F_SETLK
-#define F_SETLK            6
-#endif
-#ifndef F_GETLK
-#define F_GETLK            5
-#endif
-#ifndef F_SETOWN
-#define F_SETOWN           8
-#endif
-#ifndef F_GETOWN
-#define F_GETOWN           9
-#endif
-
-/* Flag definitions */
-#ifndef FD_CLOEXEC
-#define FD_CLOEXEC         1
-#endif
-/* O_NONBLOCK, O_APPEND, O_ACCMODE already defined in fut_vfs.h */
+/* F_*, FD_CLOEXEC, O_* flags provided by fcntl.h */
 
 /* Maximum file descriptor number for F_DUPFD validation */
 #define MAX_FD_NUMBER 65536

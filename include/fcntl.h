@@ -159,6 +159,32 @@
 #ifndef F_DUPFD_CLOEXEC
 #define F_DUPFD_CLOEXEC 1030 /* Duplicate FD with close-on-exec */
 #endif
+#ifndef F_ADD_SEALS
+#define F_ADD_SEALS     1033 /* Add sealing flags to file */
+#endif
+#ifndef F_GET_SEALS
+#define F_GET_SEALS     1034 /* Get sealing flags from file */
+#endif
+
+/* ============================================================
+ *   File Sealing Flags (for memfd_create)
+ * ============================================================ */
+
+#ifndef F_SEAL_SEAL
+#define F_SEAL_SEAL     0x0001  /* Prevent further sealing */
+#endif
+#ifndef F_SEAL_SHRINK
+#define F_SEAL_SHRINK   0x0002  /* Prevent file from shrinking */
+#endif
+#ifndef F_SEAL_GROW
+#define F_SEAL_GROW     0x0004  /* Prevent file from growing */
+#endif
+#ifndef F_SEAL_WRITE
+#define F_SEAL_WRITE    0x0008  /* Prevent writes */
+#endif
+#ifndef F_SEAL_FUTURE_WRITE
+#define F_SEAL_FUTURE_WRITE 0x0010 /* Prevent future writes while mapped */
+#endif
 
 /* ============================================================
  *   File Descriptor Flags

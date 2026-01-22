@@ -161,7 +161,7 @@ Wayland requires Linux-specific system calls that don't exist on macOS:
 
 **Workarounds:**
 1. **Skip Wayland** (recommended for kernel-only development):
-   - Set `ENABLE_WAYLAND_DEMO=0` when building
+   - Set `ENABLE_WAYLAND=0` when building
    - This should skip Wayland-dependent components
 
 2. **Use Docker/Linux container**:

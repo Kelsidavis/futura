@@ -2,37 +2,37 @@
 
 ## Executive Summary
 
-This plan eliminates the `ENABLE_WAYLAND_DEMO` flag and makes Wayland + wl-term the standard, production-quality user interface for Futura OS. The current architecture treats Wayland as an optional "demo" feature wrapped in conditional compilation, creating a messy split between demo and production code paths. This refactoring moves to a clean, unified architecture where `make run` and `make run-headful` build a fully-featured OS.
+**UPDATE**: The flag has been renamed from `ENABLE_WAYLAND` to `ENABLE_WAYLAND` to reflect that Wayland is the production UI, not a demo. This plan proposes further eliminating the flag entirely and making Wayland + wl-term the standard, always-enabled user interface for Futura OS. The current architecture treats Wayland as an optional feature wrapped in conditional compilation, creating a messy split between different code paths. This refactoring moves to a clean, unified architecture where `make run` and `make run-headful` build a fully-featured OS.
 
 ## Current State Analysis
 
 ### Problems with Current Architecture
 
-1. **Conditional Compilation Mess**: ENABLE_WAYLAND_DEMO (Makefile:203) creates two completely different builds:
-   - When ENABLE_WAYLAND_DEMO=0: Only fbtest and shell binaries are embedded
-   - When ENABLE_WAYLAND_DEMO=1: Wayland compositor + clients are embedded
+1. **Conditional Compilation Mess**: ENABLE_WAYLAND (Makefile:203) creates two completely different builds:
+   - When ENABLE_WAYLAND=0: Only fbtest and shell binaries are embedded
+   - When ENABLE_WAYLAND=1: Wayland compositor + clients are embedded
    - This creates 12+ conditional compilation blocks across kernel_main.c and elf64.c
 
 2. **Build System Inconsistency**:
    - `make kernel` does NOT build Wayland userland binaries
-   - `make run` sets ENABLE_WAYLAND_DEMO=1 and builds everything
+   - `make run` sets ENABLE_WAYLAND=1 and builds everything
    - `make test` and `make iso` build without Wayland, creating non-functional system
    - Developers must remember to use specific targets to get a working system
 
 3. **Binary Embedding Chaos**:
    - 5 Wayland binaries (compositor, wl-simple, wl-colorwheel, futura-shell, wl-term) wrapped in #if blocks
-   - Staging functions in elf64.c:655-823 wrapped in ENABLE_WAYLAND_DEMO
-   - kernel_main.c has 11 separate #if ENABLE_WAYLAND_DEMO blocks (lines 72, 79, 779, 962, 1055, 1171, 1356, 1366, 1388, 1413, 1427)
+   - Staging functions in elf64.c:655-823 wrapped in ENABLE_WAYLAND
+   - kernel_main.c has 11 separate #if ENABLE_WAYLAND blocks (lines 72, 79, 779, 962, 1055, 1171, 1356, 1366, 1388, 1413, 1427)
 
 4. **Init Process Confusion**:
    - init_stub.c is designed to launch wl-term (lines 35-68)
-   - But wl-term is only staged when ENABLE_WAYLAND_DEMO=1
-   - When ENABLE_WAYLAND_DEMO=0, init attempts to exec a binary that doesn't exist
+   - But wl-term is only staged when ENABLE_WAYLAND=1
+   - When ENABLE_WAYLAND=0, init attempts to exec a binary that doesn't exist
    - Currently masked by the fact that init_stub.c was recently modified to launch wl-term but no binaries are staged without the flag
 
 5. **Feature Flag Semantics**:
    - ENABLE_WINSRV_DEMO (line 202) - legacy window server demo (should be removed entirely)
-   - ENABLE_WAYLAND_DEMO (line 203) - Wayland is NOT a demo, it's the production UI
+   - ENABLE_WAYLAND (line 203) - Wayland is NOT a demo, it's the production UI
    - These flags suggest the OS is in a "demo" state rather than production-ready
 
 ## Target Architecture
@@ -81,8 +81,8 @@ run-headful: kernel disk
 - init_stub → /sbin/init
 
 **Conditionally Embed (Testing/Debug)**:
-- wl-simple → only if ENABLE_WAYLAND_DEMOS=1 (testing, not required)
-- wl-colorwheel → only if ENABLE_WAYLAND_DEMOS=1 (testing, not required)
+- wl-simple → only if ENABLE_WAYLANDS=1 (testing, not required)
+- wl-colorwheel → only if ENABLE_WAYLANDS=1 (testing, not required)
 - fbtest → only if ENABLE_FB_DIAGNOSTICS=1 (diagnostics)
 
 **Remove Entirely**:
@@ -101,7 +101,7 @@ run-headful: kernel disk
    - Remove binary build rules for winsrv/winstub (lines 742-748, 794-800)
 
 2. kernel_main.c (line 79)
-   - Remove #if ENABLE_WINSRV_DEMO || ENABLE_WAYLAND_DEMO
+   - Remove #if ENABLE_WINSRV_DEMO || ENABLE_WAYLAND
    - Keep only WAYLAND includes
 
 3. kernel/exec/elf64.c
@@ -121,22 +121,22 @@ run-headful: kernel disk
 
 **Files to Modify**:
 1. Makefile
-   - Move futura-wayland, wl-term, futura-shell definitions outside #if ENABLE_WAYLAND_DEMO (lines 617-622)
+   - Move futura-wayland, wl-term, futura-shell definitions outside #if ENABLE_WAYLAND (lines 617-622)
    - Move blob objects to unconditional OBJECTS list (remove from line 643 conditional)
    - Move build rules outside conditional (lines 760-772, 807-822)
-   - Keep ENABLE_WAYLAND_DEMO for optional clients only (wl-simple, wl-colorwheel)
+   - Keep ENABLE_WAYLAND for optional clients only (wl-simple, wl-colorwheel)
 
 2. kernel/exec/elf64.c
-   - Move extern declarations outside #if ENABLE_WAYLAND_DEMO (lines 655-667)
-   - Move staging functions outside #if ENABLE_WAYLAND_DEMO (lines 771-842)
-   - Keep only test clients (wl-simple, wl-colorwheel) inside #if ENABLE_WAYLAND_DEMOS (renamed)
+   - Move extern declarations outside #if ENABLE_WAYLAND (lines 655-667)
+   - Move staging functions outside #if ENABLE_WAYLAND (lines 771-842)
+   - Keep only test clients (wl-simple, wl-colorwheel) inside #if ENABLE_WAYLANDS (renamed)
 
 3. kernel/kernel_main.c
-   - Remove #if ENABLE_WAYLAND_DEMO from core staging (line 1171)
+   - Remove #if ENABLE_WAYLAND from core staging (line 1171)
    - Always call fut_stage_wayland_compositor_binary()
    - Always call fut_stage_wl_term_binary()
    - Always call fut_stage_wayland_shell_binary()
-   - Keep #if ENABLE_WAYLAND_DEMOS for test clients
+   - Keep #if ENABLE_WAYLANDS for test clients
 
 4. include/kernel/exec.h
    - No changes needed (declarations already unconditional)
@@ -174,20 +174,20 @@ run-headful: kernel disk
 
 2. src/user/Makefile
    - Ensure `all` target builds compositor, wl-term, futura-shell
-   - Remove any ENABLE_WAYLAND_DEMO conditionals
+   - Remove any ENABLE_WAYLAND conditionals
 
 **Verification**:
 - `make clean && make kernel` should build all Wayland binaries automatically
-- No need to set ENABLE_WAYLAND_DEMO=1
+- No need to set ENABLE_WAYLAND=1
 - Binary embedding should work without manual intervention
 
 ### Phase 4: Simplify Build Targets (Low Risk)
 
-**Goal**: Clean up run/run-headful to remove ENABLE_WAYLAND_DEMO=1 overrides
+**Goal**: Clean up run/run-headful to remove ENABLE_WAYLAND=1 overrides
 
 **Files to Modify**:
 1. Makefile (lines 1019-1058)
-   - Remove ENABLE_WAYLAND_DEMO=1 from run target (lines 1020-1025)
+   - Remove ENABLE_WAYLAND=1 from run target (lines 1020-1025)
    - Simplify to:
      ```makefile
      run:
@@ -200,17 +200,17 @@ run-headful: kernel disk
    - Update help-run documentation (lines 1066-1093) to reflect production build
 
 2. README.md
-   - Update "Build Commands" section to remove ENABLE_WAYLAND_DEMO mentions
+   - Update "Build Commands" section to remove ENABLE_WAYLAND mentions
    - Document that Wayland is the standard UI, not a demo
 
 **Verification**:
-- `make run` should work identically to current `make ENABLE_WAYLAND_DEMO=1 run`
+- `make run` should work identically to current `make ENABLE_WAYLAND=1 run`
 - `make test` should boot a fully-functional system
 - Documentation should no longer reference "demo mode"
 
 ### Phase 5: Rename Remaining Demo Flag (Low Risk)
 
-**Goal**: Rename ENABLE_WAYLAND_DEMO → ENABLE_WAYLAND_TEST_CLIENTS for clarity
+**Goal**: Rename ENABLE_WAYLAND → ENABLE_WAYLAND_TEST_CLIENTS for clarity
 
 **Files to Modify**:
 1. Makefile (line 203)
@@ -219,16 +219,16 @@ run-headful: kernel disk
    ```
 
 2. kernel/kernel_main.c
-   - Replace `#if ENABLE_WAYLAND_DEMO` with `#if ENABLE_WAYLAND_TEST_CLIENTS` for wl-simple/wl-colorwheel only
+   - Replace `#if ENABLE_WAYLAND` with `#if ENABLE_WAYLAND_TEST_CLIENTS` for wl-simple/wl-colorwheel only
 
 3. kernel/exec/elf64.c
-   - Replace `#if ENABLE_WAYLAND_DEMO` with `#if ENABLE_WAYLAND_TEST_CLIENTS` for test clients only
+   - Replace `#if ENABLE_WAYLAND` with `#if ENABLE_WAYLAND_TEST_CLIENTS` for test clients only
 
 4. README.md
    - Document ENABLE_WAYLAND_TEST_CLIENTS as optional testing flag
 
 **Verification**:
-- `git grep ENABLE_WAYLAND_DEMO` should return 0 results
+- `git grep ENABLE_WAYLAND` should return 0 results
 - `git grep ENABLE_WAYLAND_TEST_CLIENTS` should only show test client code
 
 ### Phase 6: Remove fbtest Embedding (Optional, Low Priority)
@@ -258,7 +258,7 @@ run-headful: kernel disk
 - Phase 2: Making Wayland binaries unconditional
   - **Risk**: Build failures if Wayland dependencies (libwayland-client, etc.) are missing
   - **Mitigation**: Check for pkg-config/wayland in configure step, provide clear error message
-  - **Rollback**: Revert Makefile changes, re-enable ENABLE_WAYLAND_DEMO=1 for CI
+  - **Rollback**: Revert Makefile changes, re-enable ENABLE_WAYLAND=1 for CI
 
 - Phase 3: Making kernel depend on userland
   - **Risk**: Circular dependencies or build order issues
@@ -298,7 +298,7 @@ run-headful: kernel disk
    - `make test` boots and runs smoke tests successfully
 
 2. **Code Cleanliness**:
-   - Zero `#if ENABLE_WAYLAND_DEMO` blocks in kernel_main.c
+   - Zero `#if ENABLE_WAYLAND` blocks in kernel_main.c
    - Clear separation between production (always) and test (optional) binaries
    - No dead code references to winsrv/winstub
 

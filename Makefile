@@ -215,10 +215,10 @@ CFLAGS += -DWAYLAND_INTERACTIVE_MODE=1
 endif
 
 # Feature toggles
-ENABLE_WAYLAND_DEMO ?= 1          # Core Wayland compositor + wl-term
+ENABLE_WAYLAND ?= 1               # Wayland compositor + wl-term (production UI)
 ENABLE_WAYLAND_TEST_CLIENTS ?= 0  # Wayland test clients (wl-simple, wl-colorwheel) - disabled by default
 ENABLE_FB_DIAGNOSTICS ?= 0        # Optional: fbtest framebuffer diagnostic tool
-# ENABLE_WAYLAND_DEMO is now defined in $(GEN_FEATURE_HDR) to avoid redefinition conflicts
+# ENABLE_WAYLAND is defined in $(GEN_FEATURE_HDR) to avoid redefinition conflicts
 
 # macOS host build flag (disables userland blobs that can't build on macOS)
 ifeq ($(shell uname -s),Darwin)
@@ -314,7 +314,7 @@ $(GEN_FEATURE_HDR): FORCE
 	{ \
 		echo "/* Auto-generated. Do not edit. */"; \
 		echo "#pragma once"; \
-		echo "#define ENABLE_WAYLAND_DEMO $(ENABLE_WAYLAND_DEMO)"; \
+		echo "#define ENABLE_WAYLAND $(ENABLE_WAYLAND)"; \
 		echo "#define ENABLE_WAYLAND_TEST_CLIENTS $(ENABLE_WAYLAND_TEST_CLIENTS)"; \
 	} > $$tmp; \
 	if [ ! -f $@ ] || ! cmp -s $$tmp $@; then mv $$tmp $@; else rm $$tmp; fi
@@ -1036,7 +1036,7 @@ disk: $(QEMU_DISK_IMG)
 
 # Automated QEMU run with deterministic isa-debug-exit completion
 test:
-	@$(MAKE) ENABLE_WAYLAND_DEMO=0 iso disk
+	@$(MAKE) ENABLE_WAYLAND=0 iso disk
 	@echo "Testing kernel under QEMU (isa-debug-exit)..."
 	@img=$(QEMU_DISK_IMG); \
 		echo "[HARNESS] Using test disk $$img"; \
@@ -1139,7 +1139,7 @@ help-run:
 .PHONY: wayland-step2
 wayland-step2:
 	@$(MAKE) third_party-wayland
-	@$(MAKE) DEBUG_WAYLAND=1 ENABLE_WAYLAND_DEMO=1 iso disk
+	@$(MAKE) DEBUG_WAYLAND=1 ENABLE_WAYLAND=1 iso disk
 	@echo "Running wayland-step2 scenario under QEMU..."
 	@img=$(QEMU_DISK_IMG); \
 		echo "[WAYLAND] Using disk $$img"; \
@@ -1164,7 +1164,7 @@ wayland-step2:
 wayland-step3:
 	@$(MAKE) third_party-wayland
 	@$(MAKE) sym-audit
-	@$(MAKE) DEBUG_WAYLAND=1 ENABLE_WAYLAND_DEMO=1 iso disk
+	@$(MAKE) DEBUG_WAYLAND=1 ENABLE_WAYLAND=1 iso disk
 	@echo "Running wayland-step3 scenario under QEMU..."
 	@img=$(QEMU_DISK_IMG); \
 		echo "[WAYLAND] Using disk $$img"; \

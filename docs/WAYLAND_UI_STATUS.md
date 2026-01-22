@@ -201,7 +201,7 @@ wl-simple &
 wl-colorwheel &
 
 # Or directly in init
-ENABLE_WAYLAND_DEMO=1 make wayland-step2
+ENABLE_WAYLAND=1 make wayland-step2
 ```
 
 ---
@@ -345,7 +345,7 @@ kernel starts
   → ps2_kbd_init() - register /dev/input/kbd0
   → ps2_mouse_init() - register /dev/input/mouse0
   → init (PID 1)
-    → ENABLE_WAYLAND_DEMO=1 spawns futura-wayland
+    → ENABLE_WAYLAND=1 spawns futura-wayland
       → comp_state_init() - open /dev/fb0, get display info
       → wl_display_create() - create Wayland server
       → compositor_global_init() - register wl_compositor

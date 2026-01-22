@@ -61,14 +61,14 @@
 
 /* Test and selftest function declarations provided by kernel/tests/test_main.h */
 
-#if ENABLE_WAYLAND_DEMO
+#if ENABLE_WAYLAND
 #define WAYLAND_TEST_SENTINEL_CODE 0xD0u
 #define WAYLAND_TEST_STAGE_FAIL    0xD1u
 #define WAYLAND_TEST_EXEC_FAIL     0xD2u
 #define WAYLAND_TEST_CLIENT_FAIL   0xD3u
 #endif
 
-#if ENABLE_WAYLAND_DEMO
+#if ENABLE_WAYLAND
 __attribute__((unused)) static void fut_boot_delay_ms(uint32_t delay_ms) {
     if (delay_ms == 0) {
         return;
@@ -852,7 +852,7 @@ __attribute__((unused)) static void fipc_receiver_thread(void *arg) {
 void fut_kernel_main(void) {
 
     /* Core Wayland variables (production) */
-#if ENABLE_WAYLAND_DEMO
+#if ENABLE_WAYLAND
     int wayland_stage = -1;
     /* Note: wayland_exec removed - compositor is now launched by init_stub */
 #endif
@@ -1004,7 +1004,7 @@ void fut_kernel_main(void) {
     /* Enable framebuffer by default when Wayland demo is enabled, since the
      * compositor needs /dev/fb0 for hardware-accelerated rendering.
      * Can be disabled via boot flag fb=0 if needed. */
-    #if ENABLE_WAYLAND_DEMO
+    #if ENABLE_WAYLAND
     bool fb_enabled = boot_flag_enabled("fb", true);  /* Enabled by default for Wayland */
     #else
     bool fb_enabled = boot_flag_enabled("fb", false);  /* Disabled when no GUI */
@@ -1053,7 +1053,7 @@ void fut_kernel_main(void) {
 #endif
 
     /* Initialize input drivers - REQUIRED for Wayland compositor */
-#ifdef ENABLE_WAYLAND_DEMO
+#ifdef ENABLE_WAYLAND
     fut_serial_puts("[INIT] Initializing input drivers for Wayland...\n");
     __attribute__((unused)) bool input_enabled = true;  /* Required for interactive mode */
     int input_rc = fut_input_hw_init(true, true);
@@ -1141,7 +1141,7 @@ void fut_kernel_main(void) {
     /* VFS and exec double tests are DISABLED (too much memory), don't count them */
     uint16_t planned_tests = 0u;
     /* FB and input tests are only for Wayland demo mode */
-#if ENABLE_WAYLAND_DEMO
+#if ENABLE_WAYLAND
     if (fb_enabled) {
         planned_tests += 1u;
     }
@@ -1262,7 +1262,7 @@ void fut_kernel_main(void) {
     /* Slab debugging complete - disabled again for interactive mode */
     /* test_futurafs_operations(); */
 
-#if ENABLE_WAYLAND_DEMO
+#if ENABLE_WAYLAND
     /* ========================================
      *   Stage Core Wayland Binaries (Production)
      * ======================================== */
@@ -1383,7 +1383,7 @@ void fut_kernel_main(void) {
     }
 #endif
 
-#if ENABLE_WAYLAND_DEMO
+#if ENABLE_WAYLAND
     /* ========================================
      *   Launch Init Process with Framebuffer Demo
      * ======================================== */
@@ -1418,7 +1418,7 @@ void fut_kernel_main(void) {
     /* NOTE: Compositor is now launched by init_stub via fork+exec.
      * This avoids duplicate compositor instances fighting for resources.
      * The binary is still staged at /sbin/futura-wayland for init_stub to exec. */
-#if 0 && ENABLE_WAYLAND_DEMO
+#if 0 && ENABLE_WAYLAND
     /* DISABLED: init_stub handles compositor launch now */
     if (wayland_stage == 0) {
         fut_printf("[INIT] Launching Wayland compositor...\n");
@@ -1452,7 +1452,7 @@ void fut_kernel_main(void) {
         wayland_exec = fut_exec_elf("/sbin/futura-wayland", args, envp);
         if (wayland_exec != 0) {
             fut_printf("[WARN] Failed to launch /sbin/futura-wayland (error %d)\n", wayland_exec);
-#if ENABLE_WAYLAND_DEMO
+#if ENABLE_WAYLAND
             fut_test_fail(WAYLAND_TEST_EXEC_FAIL);
 #endif
         } else {
@@ -1461,7 +1461,7 @@ void fut_kernel_main(void) {
     }
 #endif
 
-#if ENABLE_WAYLAND_DEMO
+#if ENABLE_WAYLAND
     /* Launch init process with environment for Wayland.
      * init_stub will fork and exec the compositor, then launch wl-term.
      * This replaces the old direct kernel compositor launch. */
@@ -1542,11 +1542,11 @@ void fut_kernel_main(void) {
     }
 #endif /* ENABLE_WAYLAND_TEST_CLIENTS */
 
-#if ENABLE_WAYLAND_DEMO
+#if ENABLE_WAYLAND
     /* Check if interactive mode is enabled (for GUI testing) */
-    /* When ENABLE_WAYLAND_DEMO is set, enable interactive mode so user can interact with shell */
+    /* When ENABLE_WAYLAND is set, enable interactive mode so user can interact with shell */
     bool wayland_interactive = false;
-#ifdef ENABLE_WAYLAND_DEMO
+#ifdef ENABLE_WAYLAND
     /* For wayland demo, keep system interactive for user interaction */
     wayland_interactive = true;
 #endif
@@ -1562,7 +1562,7 @@ void fut_kernel_main(void) {
 #endif
 
     if (wayland_ready) {
-#if ENABLE_WAYLAND_DEMO
+#if ENABLE_WAYLAND
         uint32_t finalize_delay_ms = 2500;
         fut_boot_delay_ms(finalize_delay_ms);
 #endif
@@ -1572,7 +1572,7 @@ void fut_kernel_main(void) {
 #ifdef __x86_64__
             hal_outb(0xf4u, 0u);  /* x86-64 debug port exit */
 #endif
-#if ENABLE_WAYLAND_DEMO
+#if ENABLE_WAYLAND
             fut_test_pass();
 #endif
         } else if (wayland_autoclose) {
@@ -1580,7 +1580,7 @@ void fut_kernel_main(void) {
 #ifdef __x86_64__
             hal_outb(0xf4u, 0u);
 #endif
-#if ENABLE_WAYLAND_DEMO
+#if ENABLE_WAYLAND
             fut_test_pass();
 #endif
         } else {
@@ -1596,7 +1596,7 @@ void fut_kernel_main(void) {
         fut_printf("[WARN] init_exec: %d, client exec: %d\n", init_exec, wayland_client_exec);
         fut_printf("[WARN] Continuing to scheduler anyway\n");
     }
-#endif /* ENABLE_WAYLAND_DEMO */
+#endif /* ENABLE_WAYLAND */
 
     /* ========================================
      *   Step 6: Create Test Task and FIPC Channel

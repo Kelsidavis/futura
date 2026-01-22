@@ -1983,8 +1983,8 @@ static bool posix_deliver_signal(fut_task_t *current, int signum,
 
     /* Apply the handler's sa_mask during delivery:
      * Block additional signals specified in the handler's sa_mask */
-    if (signum < _NSIG) {
-        uint64_t handler_mask = current->signal_handler_masks[signum];
+    if (signum > 0 && signum < _NSIG) {
+        uint64_t handler_mask = current->signal_handler_masks[signum - 1];
         uint64_t saved_mask = current->signal_mask;
         current->signal_mask |= handler_mask;  /* Block these signals during handler */
 

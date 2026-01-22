@@ -734,6 +734,12 @@ struct fut_file *vfs_get_file_from_task(struct fut_task *task, int fd);
 int vfs_alloc_specific_fd_for_task(struct fut_task *task, int target_fd, struct fut_file *file);
 void vfs_close_fd_in_task(struct fut_task *task, int fd);
 
+/* Permission checking */
+int vfs_check_read_perm(struct fut_vnode *vnode);
+int vfs_check_write_perm(struct fut_vnode *vnode);
+int vfs_check_exec_perm(struct fut_vnode *vnode);
+int vfs_check_modify_perm(struct fut_vnode *vnode);
+
 /* Seek modes */
 #define SEEK_SET    0
 #define SEEK_CUR    1

@@ -21,9 +21,6 @@
 #include <kernel/uaccess.h>
 
 /* VFS permission checking functions */
-extern int vfs_check_read_perm(struct fut_vnode *vnode);
-extern int vfs_check_write_perm(struct fut_vnode *vnode);
-extern int vfs_check_exec_perm(struct fut_vnode *vnode);
 
 /* access() mode bits */
 #define F_OK 0  /* File exists */

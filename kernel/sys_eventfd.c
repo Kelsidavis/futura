@@ -424,6 +424,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <sys/epoll.h>
+#include <time.h>
 
 #include <kernel/kprintf.h>
 
@@ -444,9 +445,7 @@
 #define TFD_NONBLOCK    00004000
 #define TFD_TIMER_ABSTIME 1
 
-/* Clock types for timerfd */
-#define CLOCK_REALTIME  0
-#define CLOCK_MONOTONIC 1
+/* CLOCK_* constants provided by time.h */
 
 /* timerfd structures (struct timespec provided by shared/fut_timespec.h) */
 #ifndef _STRUCT_ITIMERSPEC

@@ -14,16 +14,9 @@
 
 #include <kernel/kprintf.h>
 #include <kernel/uaccess.h>
+#include <time.h>
 
-/* Clock IDs for clock_gettime */
-#define CLOCK_REALTIME           0
-#define CLOCK_MONOTONIC          1
-#define CLOCK_PROCESS_CPUTIME_ID 2
-#define CLOCK_THREAD_CPUTIME_ID  3
-#define CLOCK_MONOTONIC_RAW      4
-#define CLOCK_REALTIME_COARSE    5
-#define CLOCK_MONOTONIC_COARSE   6
-#define CLOCK_BOOTTIME           7
+/* CLOCK_* constants provided by time.h */
 
 long sys_time_millis(void) {
     return (long)fut_get_ticks();

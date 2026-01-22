@@ -62,6 +62,62 @@ static futex_bucket_t *futex_get_bucket(uint32_t *uaddr) {
     return &futex_hash[key];
 }
 
+/**
+ * futex_wake_one - Internal kernel function to wake one futex waiter
+ *
+ * Used by kernel code (e.g., clear_child_tid on thread exit) to wake
+ * threads waiting on a futex without going through the full syscall path.
+ *
+ * @param uaddr  Futex address to wake
+ * @return Number of threads woken (0 or 1)
+ */
+int futex_wake_one(uint32_t *uaddr) {
+    if (!uaddr) {
+        return 0;
+    }
+
+    futex_bucket_t *bucket = futex_get_bucket(uaddr);
+    fut_spinlock_acquire(&bucket->lock);
+
+    int woken = 0;
+    fut_waitq_t *wq = &bucket->waiters;
+    fut_thread_t *thread = wq->head;
+    fut_thread_t *prev = NULL;
+
+    while (thread && woken < 1) {
+        fut_thread_t *next = thread->wq_next;
+
+        /* Check if this thread is waiting on our specific futex address */
+        if (thread->futex_addr == uaddr) {
+            /* Remove from wait queue */
+            if (prev) {
+                prev->wq_next = next;
+            } else {
+                wq->head = next;
+            }
+            if (wq->tail == thread) {
+                wq->tail = prev;
+            }
+            thread->wq_next = NULL;
+
+            /* Wake up the thread - set state to READY and add to run queue */
+            thread->state = FUT_THREAD_READY;
+            fut_sched_add_thread(thread);
+            woken++;
+
+            fut_printf("[FUTEX] futex_wake_one(%p) - woke thread %p (clear_child_tid)\n",
+                       (void*)uaddr, (void*)thread);
+        } else {
+            prev = thread;
+        }
+
+        thread = next;
+    }
+
+    fut_spinlock_release(&bucket->lock);
+    return woken;
+}
+
 /* FUTEX_* constants and robust list structures provided by linux/futex.h */
 
 /**

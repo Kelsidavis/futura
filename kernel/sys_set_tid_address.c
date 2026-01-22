@@ -9,7 +9,7 @@
  * Phase 1 (Completed): Validation and stub implementation
  * Phase 2 (Completed): Enhanced validation and parameter categorization with detailed logging
  * Phase 3 (Completed): Store tid address in task structure
- * Phase 4: Implement clear_child_tid on thread exit
+ * Phase 4 (Completed): Implement clear_child_tid on thread exit
  */
 
 #include <kernel/fut_task.h>
@@ -75,7 +75,7 @@
  * Phase 1 (Completed): Accept tidptr and return current TID
  * Phase 2 (Completed): Enhanced validation and categorization with detailed logging
  * Phase 3 (Completed): Store tidptr in task structure
- * Phase 4: Clear TID and wake futex on thread exit
+ * Phase 4 (Completed): Clear TID and wake futex on thread exit
  */
 long sys_set_tid_address(int *tidptr) {
     fut_task_t *task = fut_task_current();
@@ -98,9 +98,9 @@ long sys_set_tid_address(int *tidptr) {
     /* Phase 3: Store tidptr in task structure for clear_child_tid behavior */
     task->clear_child_tid = tidptr;
 
-    /* Phase 3: Enhanced logging with operation categorization */
+    /* Phase 4: Enhanced logging with operation categorization */
     fut_printf("[SET_TID_ADDR] set_tid_address(tidptr=%p [%s], pid=%d) -> %d "
-               "(Phase 3: tidptr stored in task->clear_child_tid)\n",
+               "(Phase 4: tidptr stored, will clear and wake futex on exit)\n",
                tidptr, op_type, task->pid, current_tid);
 
     return current_tid;

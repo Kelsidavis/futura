@@ -13,9 +13,13 @@
 #include "../../include/kernel/fut_memory.h"
 #include "../../include/kernel/fut_vfs.h"
 #include "../../include/kernel/errno.h"
+#include "../../include/kernel/uaccess.h"
 #include <kernel/kprintf.h>
 #include <stdatomic.h>
 #include <string.h>
+
+/* Kernel-internal futex wake function (defined in kernel/sys_futex.c) */
+extern int futex_wake_one(uint32_t *uaddr);
 
 /* ============================================================
  *   Task Management
@@ -381,6 +385,36 @@ static void task_mark_exit(fut_task_t *task, int status, int signal) {
 static void task_cleanup_and_exit(fut_task_t *task, int status, int signal) {
     if (!task) {
         fut_thread_exit();
+    }
+
+    /* Phase 4: Implement clear_child_tid for NPTL/pthread support
+     *
+     * When a thread exits and clear_child_tid is set (via set_tid_address syscall):
+     * 1. Write 0 to the address pointed to by clear_child_tid
+     * 2. Wake one futex waiter on that address
+     *
+     * This is essential for pthread_join() to work correctly:
+     * - Thread library calls set_tid_address(&thread_struct->tid) at thread creation
+     * - When thread exits, kernel writes 0 to clear tid
+     * - Kernel wakes futex waiter (pthread_join waiting on tid)
+     * - Joining thread sees tid==0 and knows thread has exited
+     *
+     * Must be done BEFORE releasing mm since we need to write to userspace memory.
+     */
+    if (task->clear_child_tid != NULL) {
+        /* Write 0 to the tid address */
+        int zero = 0;
+        if (fut_copy_to_user(task->clear_child_tid, &zero, sizeof(int)) == 0) {
+            /* Successfully wrote 0, now wake futex waiter */
+            futex_wake_one((uint32_t *)task->clear_child_tid);
+            fut_printf("[TASK] clear_child_tid: wrote 0 to %p and woke futex (Phase 4)\n",
+                       (void *)task->clear_child_tid);
+        } else {
+            /* Failed to write - userspace address may be invalid, just log and continue */
+            fut_printf("[TASK] clear_child_tid: failed to write to %p (invalid address?)\n",
+                       (void *)task->clear_child_tid);
+        }
+        task->clear_child_tid = NULL;  /* Clear the address so we don't do this twice */
     }
 
     task_mark_exit(task, status, signal);

@@ -33,6 +33,11 @@ bool fut_apple_uart_init(const fut_platform_info_t *info, uint32_t baudrate) {
         return false;
     }
 
+    if (baudrate == 0) {
+        fut_printf("[UART] Error: Invalid baud rate (cannot be zero)\n");
+        return false;
+    }
+
     /* Map UART base address */
     uart_base = (volatile uint8_t *)info->uart_base;
 

@@ -105,7 +105,7 @@ void fut_vfs_check_root_canary(const char *where) {
  * @param file  File structure to allocate
  * @return FD number on success, negative error code on failure
  */
-static __attribute__((unused)) int alloc_fd_for_task(fut_task_t *task, struct fut_file *file) {
+static int alloc_fd_for_task(fut_task_t *task, struct fut_file *file) {
     if (!task || !task->fd_table || !file) {
         return -EINVAL;
     }
@@ -181,7 +181,7 @@ static __attribute__((unused)) void free_fd_in_task(fut_task_t *task, int fd) {
  * @param file      File to allocate
  * @return target_fd on success, negative error code on failure
  */
-static __attribute__((unused)) int alloc_specific_fd_for_task(fut_task_t *task, int target_fd, struct fut_file *file) {
+static int alloc_specific_fd_for_task(fut_task_t *task, int target_fd, struct fut_file *file) {
     if (!task || !task->fd_table || !file) {
         return -EINVAL;
     }

@@ -14,7 +14,7 @@ Captured in `qemu.log`:
 - x86-64 boot reached idle loop; PMM/heap/MM/timer/ACPI/VFS/init completed.
 - virtio-gpu probe failed in QEMU; framebuffer fallback used (1024x768).
 - init staged `futura-wayland` and `wl-term`; compositor exec started.
-- init stub waited for Wayland socket (1000 attempts) and warned the socket was not found; `wl-term` exec attempted anyway.
+- init waited for Wayland socket (1000 attempts) and warned the socket was not found; `wl-term` exec attempted anyway.
 - `make run AUTOEXIT=1` did not exit within 120s; QEMU remained in the Wayland socket wait path.
 
 **Implication:** The Wayland compositor is present and launches, but the socket handshake did not complete in this run.
@@ -196,7 +196,7 @@ See `docs/ARM64_STATUS.md` for the historical snapshot and `docs/ARM64_REFACTORI
   - `fut_thread_set_affinity_mask()`: -1 → -EINVAL (empty mask)
 - ✅ **ramfs.c error codes**: Replaced `-1` returns in `validate_ramfs_node()` with -EIO for memory corruption detection
 - ✅ **elf64.c stub error codes**: Replaced `-1` returns in non-x86_64 stub functions with -ENOSYS:
-  - `fut_stage_init_stub_binary()`: -1 → -ENOSYS (not implemented for non-x86_64)
+  - `fut_stage_init_binary()`: -1 → -ENOSYS (not implemented for non-x86_64)
   - `fut_stage_second_stub_binary()`: -1 → -ENOSYS (not implemented for non-x86_64)
 - ✅ **arm64_irq.c error codes**: Replaced numeric error codes with proper errno constants:
   - `fut_register_irq_handler()`: -1 → -EINVAL (invalid IRQ), -2 → -EEXIST (already registered)

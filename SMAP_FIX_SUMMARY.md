@@ -118,7 +118,7 @@ p = kernel_pathname;
 
 Timer interrupts stop firing after tick 4, preventing `nanosleep()` from waking sleeping threads.
 
-**Workaround**: init_stub.c uses busy-wait loop instead of nanosleep for compositor startup delay.
+**Workaround**: init.c uses busy-wait loop instead of nanosleep for compositor startup delay.
 
 **Impact**: Minimal - system operates normally with busy-wait.
 

@@ -25,10 +25,10 @@
    - kernel_main.c has 11 separate #if ENABLE_WAYLAND blocks (lines 72, 79, 779, 962, 1055, 1171, 1356, 1366, 1388, 1413, 1427)
 
 4. **Init Process Confusion**:
-   - init_stub.c is designed to launch wl-term (lines 35-68)
+   - init.c is designed to launch wl-term (lines 35-68)
    - But wl-term is only staged when ENABLE_WAYLAND=1
    - When ENABLE_WAYLAND=0, init attempts to exec a binary that doesn't exist
-   - Currently masked by the fact that init_stub.c was recently modified to launch wl-term but no binaries are staged without the flag
+   - Currently masked by the fact that init.c was recently modified to launch wl-term but no binaries are staged without the flag
 
 5. **Feature Flag Semantics**:
    - ENABLE_WINSRV_DEMO (line 202) - legacy window server demo (should be removed entirely)
@@ -57,7 +57,7 @@ all (default)
   │   │   ├─ wl-simple
   │   │   ├─ wl-colorwheel
   │   │   ├─ futura-shell
-  │   │   ├─ init_stub
+  │   │   ├─ init
   │   │   └─ fbtest (legacy, for diagnostics)
   │   └─ link kernel.elf
   └─ userland (already exists)
@@ -78,7 +78,7 @@ run-headful: kernel disk
 - futura-wayland (compositor) → /sbin/futura-wayland
 - wl-term (terminal client) → /bin/wl-term
 - futura-shell (shell) → /sbin/futura-shell
-- init_stub → /sbin/init
+- init → /sbin/init
 
 **Conditionally Embed (Testing/Debug)**:
 - wl-simple → only if ENABLE_WAYLANDS=1 (testing, not required)
@@ -117,7 +117,7 @@ run-headful: kernel disk
 
 ### Phase 2: Make Core Wayland Binaries Unconditional (Medium Risk)
 
-**Goal**: futura-wayland, wl-term, futura-shell, and init_stub are ALWAYS built and embedded
+**Goal**: futura-wayland, wl-term, futura-shell, and init are ALWAYS built and embedded
 
 **Files to Modify**:
 1. Makefile
@@ -149,7 +149,7 @@ run-headful: kernel disk
   [INIT] wl-term staged at /bin/wl-term
   [INIT] futura-shell staged at /sbin/futura-shell
   ```
-- Verify init_stub can exec /bin/wl-term successfully
+- Verify init can exec /bin/wl-term successfully
 
 ### Phase 3: Refactor userland Build Target (Medium Risk)
 

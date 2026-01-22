@@ -407,7 +407,7 @@ Added macOS cross-compiler detection to:
 
 Added stub functions for Wayland/shell binaries in `platform/arm64/interrupt/arm64_stubs.c`:
 - `fut_stage_wl_term_binary()`
-- `fut_stage_init_stub_binary()`
+- `fut_stage_init_binary()`
 - `fut_stage_second_stub_binary()`
 - `fut_stage_shell_binary()`
 - `fut_stage_fbtest_binary()`

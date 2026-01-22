@@ -16,19 +16,11 @@
 #endif
 
 #include <kernel/kprintf.h>
+#include <fcntl.h>
+#include <sys/mman.h>
 
-/* mmap/munmap flags */
-#define PROT_READ       0x1
-#define PROT_WRITE      0x2
-#define PROT_EXEC       0x4
-#define MAP_SHARED      0x1
-#define MAP_PRIVATE     0x2
-
-/* VFS flags */
-#define O_RDONLY        0x0000
-#define O_WRONLY        0x0001
-#define O_RDWR          0x0002
-#define O_CREAT         0x0040
+/* O_* flags provided by fcntl.h */
+/* PROT_*, MAP_* flags provided by sys/mman.h */
 
 /* Test result tracking */
 static int tests_run = 0;

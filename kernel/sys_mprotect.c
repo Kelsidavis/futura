@@ -19,16 +19,17 @@
 
 #include <kernel/kprintf.h>
 
+#if defined(__x86_64__)
+#include <platform/x86_64/memory/paging.h>
+#elif defined(__aarch64__)
+#include <platform/arm64/memory/paging.h>
+#endif
+
 /* Memory protection flags (standard POSIX values) */
 #define PROT_NONE  0x0  /* Page cannot be accessed */
 #define PROT_READ  0x1  /* Page can be read */
 #define PROT_WRITE 0x2  /* Page can be written */
 #define PROT_EXEC  0x4  /* Page can be executed */
-
-/* Architecture-specific page size */
-#ifndef PAGE_SIZE
-#define PAGE_SIZE 4096
-#endif
 
 /**
  * mprotect() - Set protection on a region of memory

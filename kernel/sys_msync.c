@@ -20,15 +20,16 @@
 
 #include <kernel/kprintf.h>
 
+#if defined(__x86_64__)
+#include <platform/x86_64/memory/paging.h>
+#elif defined(__aarch64__)
+#include <platform/arm64/memory/paging.h>
+#endif
+
 /* msync flags */
 #define MS_ASYNC      1   /* Schedule sync but return immediately */
 #define MS_SYNC       4   /* Wait for sync to complete */
 #define MS_INVALIDATE 2   /* Invalidate cached data */
-
-/* Architecture-specific page size */
-#ifndef PAGE_SIZE
-#define PAGE_SIZE 4096
-#endif
 
 /**
  * msync() - Synchronize a file with a memory map

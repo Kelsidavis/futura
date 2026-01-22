@@ -20,15 +20,16 @@
 
 #include <kernel/kprintf.h>
 
+#if defined(__x86_64__)
+#include <platform/x86_64/memory/paging.h>
+#elif defined(__aarch64__)
+#include <platform/arm64/memory/paging.h>
+#endif
+
 /* mremap flags */
 #define MREMAP_MAYMOVE    1   /* Allow moving to new virtual address */
 #define MREMAP_FIXED      2   /* Place mapping at exact address (requires MREMAP_MAYMOVE) */
 #define MREMAP_DONTUNMAP  4   /* Don't unmap old mapping (Linux 5.7+) */
-
-/* Architecture-specific page size */
-#ifndef PAGE_SIZE
-#define PAGE_SIZE 4096
-#endif
 
 /**
  * mremap() - Remap a virtual memory address

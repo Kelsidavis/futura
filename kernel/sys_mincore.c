@@ -18,9 +18,10 @@
 #include <kernel/kprintf.h>
 #include <kernel/uaccess.h>
 
-/* Architecture-specific page size */
-#ifndef PAGE_SIZE
-#define PAGE_SIZE 4096
+#if defined(__x86_64__)
+#include <platform/x86_64/memory/paging.h>
+#elif defined(__aarch64__)
+#include <platform/arm64/memory/paging.h>
 #endif
 
 /* ============================================================================

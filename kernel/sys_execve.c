@@ -29,6 +29,7 @@
 #define EXEC_ARG_LEN_MAX 131072 /* Max single argument length */
 
 #include <kernel/kprintf.h>
+#include <kernel/fut_memory.h>
 extern int fut_exec_elf(const char *path, char *const argv[], char *const envp[]);
 
 /* Set to 1 to enable verbose execve debug logging */
@@ -38,8 +39,6 @@ extern int fut_exec_elf(const char *path, char *const argv[], char *const envp[]
 #else
 #define EXECVE_LOG(...) ((void)0)
 #endif
-extern void *fut_malloc(size_t size);
-extern void fut_free(void *ptr);
 
 /**
  * Helper function to free kernel argv array

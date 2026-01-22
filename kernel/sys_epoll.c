@@ -226,8 +226,7 @@
 extern fut_socket_t *get_socket_from_fd(int fd);
 
 #include <kernel/kprintf.h>
-extern void *fut_malloc(size_t size);
-extern void fut_free(void *ptr);
+#include <kernel/fut_memory.h>
 
 /* epoll event flag definitions */
 #define EPOLLIN      0x00000001  /* Data available for reading */

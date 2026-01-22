@@ -267,7 +267,6 @@ long sys_faccessat(int dirfd, const char *pathname, int mode, int flags) {
         }
 
         /* Get file structure from dirfd */
-        extern struct fut_file *vfs_get_file_from_task(struct fut_task *task, int fd);
         struct fut_file *dir_file = vfs_get_file_from_task(task, local_dirfd);
 
         if (!dir_file) {

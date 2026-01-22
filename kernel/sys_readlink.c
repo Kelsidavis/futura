@@ -19,6 +19,7 @@
 
 #include <kernel/kprintf.h>
 #include <kernel/uaccess.h>
+#include <kernel/fut_memory.h>
 
 /**
  * readlink() - Read value of a symbolic link
@@ -280,8 +281,6 @@ long sys_readlink(const char *path, char *buf, size_t bufsiz) {
     }
 
     /* Allocate kernel buffer for readlink result */
-    extern void *fut_malloc(size_t size);
-    extern void fut_free(void *ptr);
 
     char *target_buf = fut_malloc(local_bufsiz);
     if (!target_buf) {

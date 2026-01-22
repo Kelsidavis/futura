@@ -19,7 +19,6 @@
 #include <kernel/fut_fd_util.h>
 
 #include <kernel/kprintf.h>
-extern struct fut_file *vfs_get_file_from_task(struct fut_task *task, int fd);
 
 /**
  * fsync() - Synchronize file's in-core state with storage

@@ -174,7 +174,6 @@ long sys_futimens(int fd, const fut_timespec_t *times) {
      */
 
     /* Get current task to access fd table */
-    extern struct fut_file *vfs_get_file_from_task(struct fut_task *task, int fd);
 
     fut_task_t *task = fut_task_current();
     if (!task) {

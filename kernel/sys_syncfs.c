@@ -17,7 +17,6 @@
 #include <stdint.h>
 
 #include <kernel/kprintf.h>
-extern struct fut_file *vfs_get_file_from_task(struct fut_task *task, int fd);
 extern int fut_vfs_sync_fs(struct fut_mount *mount);
 
 /**

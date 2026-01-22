@@ -32,6 +32,7 @@
 #include <kernel/fut_memory.h>
 #include <kernel/fut_sched.h>
 #include <kernel/fut_thread.h>
+#include <kernel/kprintf.h>
 
 #include <platform/x86_64/memory/pmap.h>
 
@@ -39,16 +40,6 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <string.h>
-
-extern void fut_printf(const char *fmt, ...);
-
-#ifndef ETIMEDOUT
-#define ETIMEDOUT 110
-#endif
-
-#ifndef ENOTSUP
-#define ENOTSUP 95
-#endif
 
 /* -------------------------------------------------------------
  *   PCI helpers (legacy config mechanism)

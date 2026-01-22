@@ -7,10 +7,11 @@
 #include <platform/x86_64/interrupt/ioapic.h>
 #include <platform/x86_64/memory/paging.h>
 #include <platform/x86_64/memory/pmap.h>
+#include <kernel/errno.h>
 #include <stddef.h>
 #include <stdbool.h>
 
-extern void fut_printf(const char *fmt, ...);
+#include <kernel/kprintf.h>
 
 /* IO-APIC MMIO base address (virtual) */
 static volatile uint32_t *ioapic_base = NULL;
@@ -81,7 +82,7 @@ int ioapic_init(uint64_t ioapic_phys_base, uint32_t gsi_base) {
     ioapic_base = (volatile uint32_t *)ioapic_map_mmio(ioapic_phys_base);
     if (!ioapic_base) {
         fut_printf("[IOAPIC] ERROR: Failed to map IO-APIC MMIO region\n");
-        return -1;
+        return -EFAULT;
     }
 
     ioapic_gsi_base = gsi_base;

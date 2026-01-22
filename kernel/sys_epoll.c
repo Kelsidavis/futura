@@ -224,29 +224,14 @@
 
 #include <kernel/kprintf.h>
 #include <kernel/fut_memory.h>
+#include <sys/epoll.h>
 
-/* epoll event flag definitions */
-#define EPOLLIN      0x00000001  /* Data available for reading */
-#define EPOLLOUT     0x00000004  /* Ready for writing */
-#define EPOLLERR     0x00000008  /* Error condition */
-#define EPOLLHUP     0x00000010  /* Hang-up condition */
-#define EPOLLRDNORM  0x00000040  /* Data available (same as EPOLLIN) */
-#define EPOLLRDBAND  0x00000080  /* OOB data available */
-#define EPOLLWRNORM  0x00000100  /* Ready for writing (same as EPOLLOUT) */
-#define EPOLLWRBAND  0x00000200  /* OOB write ready */
+/* Internal helper macros */
 #define EPOLLMASK_IOCTLS  (EPOLLERR | EPOLLHUP)
 
-/* epoll_ctl operation codes */
-#define EPOLL_CTL_ADD 1  /* Register a file descriptor with epoll instance */
-#define EPOLL_CTL_MOD 2  /* Modify the interest mask for a file descriptor */
-#define EPOLL_CTL_DEL 3  /* Deregister a file descriptor from epoll instance */
-
-/* epoll_create1 flags */
-#define EPOLL_CLOEXEC 0x80000  /* Set close-on-exec flag */
-
-/* Phase 3: epoll event modifier flags */
-#define EPOLL_ET       0x80000000  /* Edge-triggered mode (report only on transitions) */
-#define EPOLL_ONESHOT  0x40000000  /* Oneshot mode (disable after one event) */
+/* Phase 3: epoll event modifier flags - internal naming for code clarity */
+#define EPOLL_ET       EPOLLET     /* Edge-triggered mode (report only on transitions) */
+#define EPOLL_ONESHOT  EPOLLONESHOT /* Oneshot mode (disable after one event) */
 
 /* Maximum file descriptors per epoll instance */
 #define MAX_EPOLL_FDS 64
@@ -254,27 +239,17 @@
 /* Maximum epoll instances */
 #define MAX_EPOLL_INSTANCES 256
 
-/* epoll_event structure (user-visible) - matches Linux ABI
+/* epoll_event structure provided by sys/epoll.h - matches Linux ABI
  *
- * The data field is a union in Linux for convenience, but for binary
+ * The data field is a union for convenience, but for binary
  * compatibility the key requirement is:
  *   - sizeof(struct epoll_event) == 12 bytes
  *   - events at offset 0 (4 bytes)
  *   - data at offset 4 (8 bytes)
  *
  * Linux uses __attribute__((packed)) to achieve this layout.
- * Without packed, natural alignment would put data at offset 8.
- *
- * Note: Kernel uses uint64_t data directly instead of the union for
- * simplicity. This maintains binary compatibility with userspace.
+ * Internally we store just the u64 member for simplicity.
  */
-#ifndef _STRUCT_EPOLL_EVENT
-#define _STRUCT_EPOLL_EVENT
-struct epoll_event {
-    uint32_t events;   /* Requested events bitmask */
-    uint64_t data;     /* User data associated with this FD */
-} __attribute__((packed));
-#endif
 
 /* Internal epoll FD registration */
 struct epoll_fd_entry {
@@ -997,7 +972,7 @@ long sys_epoll_ctl(int epfd, int op, int fd, struct epoll_event *event) {
         /* Register the FD */
         set->fds[slot].fd = fd;
         set->fds[slot].events = ev.events;
-        set->fds[slot].data = ev.data;
+        set->fds[slot].data = ev.data.u64;
         set->fds[slot].registered = true;
 
         /* Phase 3: Extract and store edge-triggered and oneshot flags */
@@ -1100,7 +1075,7 @@ long sys_epoll_ctl(int epfd, int op, int fd, struct epoll_event *event) {
         for (int i = 0; i < MAX_EPOLL_FDS; i++) {
             if (set->fds[i].registered && set->fds[i].fd == fd) {
                 set->fds[i].events = ev.events;
-                set->fds[i].data = ev.data;
+                set->fds[i].data = ev.data.u64;
 
                 /* Phase 2: Categorize events */
                 char events_desc[128];
@@ -1523,7 +1498,7 @@ long sys_epoll_wait(int epfd, struct epoll_event *events, int maxevents, int tim
             if (!file) {
                 /* FD closed - report error event */
                 ready_events[ready_count].events = EPOLLERR | EPOLLHUP;
-                ready_events[ready_count].data = set->fds[i].data;
+                ready_events[ready_count].data.u64 = set->fds[i].data;
                 ready_count++;
                 continue;
             }
@@ -1649,7 +1624,7 @@ long sys_epoll_wait(int epfd, struct epoll_event *events, int maxevents, int tim
             /* Report events if appropriate */
             if (should_report) {
                 ready_events[ready_count].events = events_ready;
-                ready_events[ready_count].data = set->fds[i].data;
+                ready_events[ready_count].data.u64 = set->fds[i].data;
                 ready_count++;
 
                 /* Phase 3: Handle oneshot mode - auto-unregister after reporting */

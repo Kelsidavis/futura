@@ -423,6 +423,7 @@
 #include <shared/fut_timespec.h>
 #include <stdbool.h>
 #include <stdint.h>
+#include <sys/epoll.h>
 
 #include <kernel/kprintf.h>
 
@@ -469,11 +470,7 @@ struct eventfd_file {
     struct fut_file *file;
 };
 
-/* epoll event masks (mirrors kernel/sys_epoll.c) */
-#define EPOLLIN      0x00000001
-#define EPOLLOUT     0x00000004
-#define EPOLLRDNORM  0x00000040
-#define EPOLLWRNORM  0x00000100
+/* epoll event masks provided by sys/epoll.h */
 
 static ssize_t eventfd_read(void *inode, void *priv, void *u_buf, size_t len, off_t *pos);
 static ssize_t eventfd_write(void *inode, void *priv, const void *u_buf, size_t len, off_t *pos);

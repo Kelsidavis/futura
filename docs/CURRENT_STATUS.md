@@ -84,7 +84,19 @@ See `docs/ARM64_STATUS.md` for detailed ARM64 progress.
 - ✅ **Atomic rename operation**: Implemented full rename() syscall with VFS integration. Added rename() operation to fut_vnode_ops interface, implemented ramfs_rename() for in-memory atomicity, and integrated sys_rename() with comprehensive error handling. Supports same-directory renaming with atomic replacement of existing files. Foundation for cross-directory moves in future phase.
 - ✅ **Verified symlink/readlink**: Discovered sys_symlink() and sys_readlink() already fully implemented with complete VFS integration and error handling. Both syscalls ready for production use.
 
-### January 21, 2026 Session — Code Quality Improvements (Latest)
+### January 21, 2026 Session — Latest Improvements
+- ✅ **VFS validation macros**: Added vnode operation validation macros to fut_vfs.h:
+  - `FUT_FILE_CAN_READ`, `FUT_FILE_CAN_WRITE`, `FUT_FILE_CAN_READDIR`, `FUT_FILE_CAN_FSYNC`
+  - `FUT_FILE_HAS_VNODE_OPS`, `FUT_FILE_IS_REG`, `FUT_FILE_IS_DIR`, `FUT_FILE_IS_CHR`
+  - Provides consistent null-checking chains for file operations
+- ✅ **Socket cleanup helper**: Extracted `socket_pair_cleanup()` in fut_socket.c to eliminate duplicated cleanup code across 6 error paths during socket pair allocation
+- ✅ **Incorrect unused attributes**: Removed `__attribute__((unused))` from functions that are actually used:
+  - `get_file_from_task()` and `close_fd_in_task()` in fut_vfs.c
+  - `alloc_fd_for_task()` and `alloc_specific_fd_for_task()` in fut_vfs.c
+- ✅ **Apple UART baudrate validation**: Added division-by-zero protection in apple_uart.c by validating baudrate is non-zero before divisor calculation
+- ✅ **futimens implementation**: Implemented Phase 4 of sys_utimensat - futimens mode (pathname=NULL) now operates on the open file descriptor directly, enabling efficient timestamp updates on already-open files
+
+### January 21, 2026 Session — Code Quality Improvements
 - ✅ **Magic number elimination in signal handling**: Replaced hardcoded `31` with `_NSIG` constant in:
   - `fut_task.h`: Signal handler, mask, and flags arrays
   - `fut_task.c`: Signal handler initialization loop

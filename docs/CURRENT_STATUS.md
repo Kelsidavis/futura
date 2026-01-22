@@ -471,6 +471,22 @@ See `docs/ARM64_STATUS.md` for detailed ARM64 progress.
   lines in 7 files (ramfs.c, elf64.c, fut_blockdev.c, futurafs.c, arm64_paging.c,
   perf_ipc.c, perf_sched.c), removing 42 redundant lines
 
+### January 21, 2026 Session — Header Consolidation (Continued)
+- ✅ **uaccess.h consolidation**: Replaced scattered `extern int fut_copy_from_user()` and
+  `extern int fut_copy_to_user()` declarations with proper `#include <kernel/uaccess.h>`
+  across 59 syscall files, removing ~70 lines of duplicate declarations
+- ✅ **fut_task.h cleanup**: Removed 71 redundant `extern fut_task_t *fut_task_current()`
+  declarations from syscall files (already declared in fut_task.h)
+- ✅ **fut_vfs.h cleanup**: Removed redundant `vfs_get_file_from_task()` and
+  `fut_vfs_get_file()` externs from syscall files; added missing fut_vfs.h includes
+  where needed (sys_exit.c, sys_readv.c, sys_writev.c)
+- ✅ **fut_memory.h consolidation**: Replaced `extern void *fut_malloc()`/`fut_free()`
+  declarations with proper header includes in 11 syscall files
+- ✅ **Additional cleanups**: Replaced externs for fut_task_by_pid (fut_task.h),
+  fut_exec_elf (exec.h), fut_access_ok (uaccess.h), fut_thread_current (fut_thread.h)
+  with proper header includes
+- **Total impact**: Removed ~200+ lines of scattered extern declarations across 100+ files
+
 ## Current Focus
 
 ### x86-64 Platform

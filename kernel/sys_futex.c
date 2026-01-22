@@ -16,6 +16,8 @@
 #include <kernel/errno.h>
 #include <shared/fut_timespec.h>
 #include <sys/futex.h>  /* For FUTEX_* constants, struct robust_list */
+#include <stdbool.h>
+#include <stdint.h>
 
 #include <kernel/kprintf.h>
 #include <kernel/uaccess.h>
@@ -137,9 +139,9 @@ int futex_wake_one(uint32_t *uaddr) {
  * - FUTEX_CMP_REQUEUE: Conditional requeue with value check
  * - FUTEX_WAKE_OP: Wake and perform operation atomically
  *
- * Phase 1: Stub - returns success/failure without actual implementation
- * Phase 2: Implement FUTEX_WAIT/FUTEX_WAKE with wait queues
- * Phase 3: Add timeout support and advanced operations
+ * Phase 1 (Complete): Basic FUTEX_WAIT/FUTEX_WAKE with wait queues
+ * Phase 2 (Complete): FUTEX_REQUEUE, FUTEX_CMP_REQUEUE, FUTEX_WAKE_OP
+ * Phase 3 (TODO): Add timeout support for FUTEX_WAIT
  *
  * Returns:
  *   - FUTEX_WAIT: 0 on success, -EAGAIN if value mismatch, -ETIMEDOUT on timeout
@@ -364,25 +366,420 @@ long sys_futex(uint32_t *uaddr, int op, uint32_t val,
             return woken;
         }
 
-        case FUTEX_REQUEUE:
-            /* Should requeue threads from uaddr to uaddr2 */
-            fut_printf("[FUTEX] FUTEX_REQUEUE - stub (returning 0)\n");
-            (void)uaddr2;
-            return 0;
+        case FUTEX_REQUEUE: {
+            /* FUTEX_REQUEUE: Wake up to 'val' threads waiting on uaddr,
+             * then requeue remaining threads to uaddr2.
+             *
+             * Parameters:
+             *   val   = max threads to wake at uaddr
+             *   val3  = max threads to requeue to uaddr2 (passed via timeout ptr in Linux)
+             *   uaddr2 = destination futex address
+             *
+             * Note: In Linux, val3 is passed via the timeout parameter cast to int.
+             * We use the val3 parameter directly for clarity.
+             */
+            if (!uaddr2) {
+                fut_printf("[FUTEX] FUTEX_REQUEUE - uaddr2 is NULL\n");
+                return -EINVAL;
+            }
 
-        case FUTEX_CMP_REQUEUE:
-            /* Should conditionally requeue based on value check */
-            fut_printf("[FUTEX] FUTEX_CMP_REQUEUE - stub (returning 0)\n");
-            (void)uaddr2;
-            (void)val3;
-            return 0;
+            /* Get both futex buckets - lock in address order to avoid deadlock */
+            futex_bucket_t *bucket1 = futex_get_bucket(uaddr);
+            futex_bucket_t *bucket2 = futex_get_bucket(uaddr2);
 
-        case FUTEX_WAKE_OP:
-            /* Should wake and perform atomic operation */
-            fut_printf("[FUTEX] FUTEX_WAKE_OP - stub (returning 0)\n");
-            (void)uaddr2;
-            (void)val3;
-            return 0;
+            /* Lock in consistent order to prevent deadlock */
+            if (bucket1 < bucket2) {
+                fut_spinlock_acquire(&bucket1->lock);
+                fut_spinlock_acquire(&bucket2->lock);
+            } else if (bucket1 > bucket2) {
+                fut_spinlock_acquire(&bucket2->lock);
+                fut_spinlock_acquire(&bucket1->lock);
+            } else {
+                /* Same bucket - only lock once */
+                fut_spinlock_acquire(&bucket1->lock);
+            }
+
+            int woken = 0;
+            int requeued = 0;
+            uint32_t max_wake = val;
+            uint32_t max_requeue = val3 > 0 ? val3 : INT32_MAX;
+
+            /* Walk the wait queue at uaddr */
+            fut_waitq_t *wq1 = &bucket1->waiters;
+            fut_thread_t *thread = wq1->head;
+            fut_thread_t *prev = NULL;
+
+            while (thread) {
+                fut_thread_t *next = thread->wq_next;
+
+                /* Check if this thread is waiting on uaddr */
+                if (thread->futex_addr == uaddr) {
+                    /* Remove from source wait queue */
+                    if (prev) {
+                        prev->wq_next = next;
+                    } else {
+                        wq1->head = next;
+                    }
+                    if (wq1->tail == thread) {
+                        wq1->tail = prev;
+                    }
+                    thread->wq_next = NULL;
+
+                    if (woken < (int)max_wake) {
+                        /* Wake this thread */
+                        thread->state = FUT_THREAD_READY;
+                        fut_sched_add_thread(thread);
+                        woken++;
+                        fut_printf("[FUTEX] FUTEX_REQUEUE - woke thread %p\n", (void*)thread);
+                    } else if (requeued < (int)max_requeue) {
+                        /* Requeue to uaddr2 */
+                        thread->futex_addr = uaddr2;
+                        fut_waitq_t *wq2 = &bucket2->waiters;
+                        thread->wq_next = NULL;
+                        if (wq2->tail) {
+                            wq2->tail->wq_next = thread;
+                        } else {
+                            wq2->head = thread;
+                        }
+                        wq2->tail = thread;
+                        requeued++;
+                        fut_printf("[FUTEX] FUTEX_REQUEUE - requeued thread %p to %p\n",
+                                   (void*)thread, (void*)uaddr2);
+                    } else {
+                        /* Already at max wake and requeue - re-add to source queue */
+                        if (wq1->tail) {
+                            wq1->tail->wq_next = thread;
+                        } else {
+                            wq1->head = thread;
+                        }
+                        wq1->tail = thread;
+                        prev = thread;
+                    }
+                } else {
+                    prev = thread;
+                }
+
+                thread = next;
+            }
+
+            /* Unlock in reverse order */
+            if (bucket1 < bucket2) {
+                fut_spinlock_release(&bucket2->lock);
+                fut_spinlock_release(&bucket1->lock);
+            } else if (bucket1 > bucket2) {
+                fut_spinlock_release(&bucket1->lock);
+                fut_spinlock_release(&bucket2->lock);
+            } else {
+                fut_spinlock_release(&bucket1->lock);
+            }
+
+            fut_printf("[FUTEX] FUTEX_REQUEUE - woke %d, requeued %d threads\n", woken, requeued);
+            return woken + requeued;
+        }
+
+        case FUTEX_CMP_REQUEUE: {
+            /* FUTEX_CMP_REQUEUE: Same as FUTEX_REQUEUE but first check *uaddr == val3.
+             *
+             * Parameters:
+             *   val   = max threads to wake at uaddr
+             *   val3  = expected value at *uaddr (comparison value)
+             *   uaddr2 = destination futex address
+             *   timeout = reinterpreted as max_requeue count (via pointer cast)
+             *
+             * This prevents the "thundering herd" problem by atomically checking
+             * the futex value before performing the requeue operation.
+             */
+            if (!uaddr2) {
+                fut_printf("[FUTEX] FUTEX_CMP_REQUEUE - uaddr2 is NULL\n");
+                return -EINVAL;
+            }
+
+            /* Get both futex buckets - lock in address order to avoid deadlock */
+            futex_bucket_t *bucket1 = futex_get_bucket(uaddr);
+            futex_bucket_t *bucket2 = futex_get_bucket(uaddr2);
+
+            /* Lock in consistent order to prevent deadlock */
+            if (bucket1 < bucket2) {
+                fut_spinlock_acquire(&bucket1->lock);
+                fut_spinlock_acquire(&bucket2->lock);
+            } else if (bucket1 > bucket2) {
+                fut_spinlock_acquire(&bucket2->lock);
+                fut_spinlock_acquire(&bucket1->lock);
+            } else {
+                fut_spinlock_acquire(&bucket1->lock);
+            }
+
+            /* Read current value at uaddr and compare with val3 */
+            uint32_t current_val;
+            if (fut_copy_from_user(&current_val, uaddr, sizeof(current_val)) != 0) {
+                if (bucket1 != bucket2) {
+                    fut_spinlock_release(&bucket2->lock);
+                }
+                fut_spinlock_release(&bucket1->lock);
+                return -EFAULT;
+            }
+
+            if (current_val != val3) {
+                /* Value mismatch - abort requeue */
+                if (bucket1 < bucket2) {
+                    fut_spinlock_release(&bucket2->lock);
+                    fut_spinlock_release(&bucket1->lock);
+                } else if (bucket1 > bucket2) {
+                    fut_spinlock_release(&bucket1->lock);
+                    fut_spinlock_release(&bucket2->lock);
+                } else {
+                    fut_spinlock_release(&bucket1->lock);
+                }
+                fut_printf("[FUTEX] FUTEX_CMP_REQUEUE - value mismatch (*uaddr=%u, expected=%u)\n",
+                           current_val, val3);
+                return -EAGAIN;
+            }
+
+            /* Value matches - proceed with requeue operation */
+            int woken = 0;
+            int requeued = 0;
+            uint32_t max_wake = val;
+            /* max_requeue comes from timeout pointer, cast to integer */
+            uint32_t max_requeue = timeout ? (uint32_t)(uintptr_t)timeout : INT32_MAX;
+
+            fut_waitq_t *wq1 = &bucket1->waiters;
+            fut_thread_t *thread = wq1->head;
+            fut_thread_t *prev = NULL;
+
+            while (thread) {
+                fut_thread_t *next = thread->wq_next;
+
+                if (thread->futex_addr == uaddr) {
+                    /* Remove from source wait queue */
+                    if (prev) {
+                        prev->wq_next = next;
+                    } else {
+                        wq1->head = next;
+                    }
+                    if (wq1->tail == thread) {
+                        wq1->tail = prev;
+                    }
+                    thread->wq_next = NULL;
+
+                    if (woken < (int)max_wake) {
+                        /* Wake this thread */
+                        thread->state = FUT_THREAD_READY;
+                        fut_sched_add_thread(thread);
+                        woken++;
+                    } else if (requeued < (int)max_requeue) {
+                        /* Requeue to uaddr2 */
+                        thread->futex_addr = uaddr2;
+                        fut_waitq_t *wq2 = &bucket2->waiters;
+                        thread->wq_next = NULL;
+                        if (wq2->tail) {
+                            wq2->tail->wq_next = thread;
+                        } else {
+                            wq2->head = thread;
+                        }
+                        wq2->tail = thread;
+                        requeued++;
+                    } else {
+                        /* Re-add to source queue */
+                        if (wq1->tail) {
+                            wq1->tail->wq_next = thread;
+                        } else {
+                            wq1->head = thread;
+                        }
+                        wq1->tail = thread;
+                        prev = thread;
+                    }
+                } else {
+                    prev = thread;
+                }
+
+                thread = next;
+            }
+
+            /* Unlock in reverse order */
+            if (bucket1 < bucket2) {
+                fut_spinlock_release(&bucket2->lock);
+                fut_spinlock_release(&bucket1->lock);
+            } else if (bucket1 > bucket2) {
+                fut_spinlock_release(&bucket1->lock);
+                fut_spinlock_release(&bucket2->lock);
+            } else {
+                fut_spinlock_release(&bucket1->lock);
+            }
+
+            fut_printf("[FUTEX] FUTEX_CMP_REQUEUE - woke %d, requeued %d threads\n", woken, requeued);
+            return woken + requeued;
+        }
+
+        case FUTEX_WAKE_OP: {
+            /* FUTEX_WAKE_OP: Atomically perform operation on uaddr2, then conditionally wake.
+             *
+             * 1. Atomically: oldval = *uaddr2; *uaddr2 = op(oldval, oparg)
+             * 2. Wake up to 'val' threads at uaddr
+             * 3. If (oldval CMP cmparg) is true, wake up to 'val2' threads at uaddr2
+             *
+             * Parameters:
+             *   val   = max threads to wake at uaddr
+             *   val2  = max threads to wake at uaddr2 (passed via timeout ptr)
+             *   val3  = encoded operation: FUTEX_OP(op, oparg, cmp, cmparg)
+             *   uaddr2 = address for atomic operation and second wake
+             *
+             * val3 encoding:
+             *   bits 0-3:   op (FUTEX_OP_SET/ADD/OR/ANDN/XOR)
+             *   bits 4-7:   cmp (FUTEX_OP_CMP_EQ/NE/LT/LE/GT/GE)
+             *   bits 8-19:  oparg (12 bits)
+             *   bits 20-31: cmparg (12 bits)
+             */
+            if (!uaddr2) {
+                fut_printf("[FUTEX] FUTEX_WAKE_OP - uaddr2 is NULL\n");
+                return -EINVAL;
+            }
+
+            /* Decode val3 */
+            int op_type = val3 & 0xf;
+            int cmp_type = (val3 >> 4) & 0xf;
+            uint32_t oparg = (val3 >> 8) & 0xfff;
+            uint32_t cmparg = (val3 >> 20) & 0xfff;
+            uint32_t val2 = timeout ? (uint32_t)(uintptr_t)timeout : 0;
+
+            /* Get both futex buckets */
+            futex_bucket_t *bucket1 = futex_get_bucket(uaddr);
+            futex_bucket_t *bucket2 = futex_get_bucket(uaddr2);
+
+            /* Lock in consistent order */
+            if (bucket1 < bucket2) {
+                fut_spinlock_acquire(&bucket1->lock);
+                fut_spinlock_acquire(&bucket2->lock);
+            } else if (bucket1 > bucket2) {
+                fut_spinlock_acquire(&bucket2->lock);
+                fut_spinlock_acquire(&bucket1->lock);
+            } else {
+                fut_spinlock_acquire(&bucket1->lock);
+            }
+
+            /* Read old value at uaddr2 */
+            uint32_t oldval;
+            if (fut_copy_from_user(&oldval, uaddr2, sizeof(oldval)) != 0) {
+                if (bucket1 != bucket2) {
+                    fut_spinlock_release(&bucket2->lock);
+                }
+                fut_spinlock_release(&bucket1->lock);
+                return -EFAULT;
+            }
+
+            /* Compute new value based on operation */
+            uint32_t newval;
+            switch (op_type) {
+                case FUTEX_OP_SET:  newval = oparg; break;
+                case FUTEX_OP_ADD:  newval = oldval + oparg; break;
+                case FUTEX_OP_OR:   newval = oldval | oparg; break;
+                case FUTEX_OP_ANDN: newval = oldval & ~oparg; break;
+                case FUTEX_OP_XOR:  newval = oldval ^ oparg; break;
+                default:
+                    if (bucket1 < bucket2) {
+                        fut_spinlock_release(&bucket2->lock);
+                        fut_spinlock_release(&bucket1->lock);
+                    } else if (bucket1 > bucket2) {
+                        fut_spinlock_release(&bucket1->lock);
+                        fut_spinlock_release(&bucket2->lock);
+                    } else {
+                        fut_spinlock_release(&bucket1->lock);
+                    }
+                    fut_printf("[FUTEX] FUTEX_WAKE_OP - invalid op %d\n", op_type);
+                    return -EINVAL;
+            }
+
+            /* Write new value to uaddr2 */
+            if (fut_copy_to_user(uaddr2, &newval, sizeof(newval)) != 0) {
+                if (bucket1 != bucket2) {
+                    fut_spinlock_release(&bucket2->lock);
+                }
+                fut_spinlock_release(&bucket1->lock);
+                return -EFAULT;
+            }
+
+            /* Wake threads at uaddr */
+            int woken1 = 0;
+            fut_waitq_t *wq1 = &bucket1->waiters;
+            fut_thread_t *thread = wq1->head;
+            fut_thread_t *prev = NULL;
+
+            while (thread && woken1 < (int)val) {
+                fut_thread_t *next = thread->wq_next;
+                if (thread->futex_addr == uaddr) {
+                    if (prev) {
+                        prev->wq_next = next;
+                    } else {
+                        wq1->head = next;
+                    }
+                    if (wq1->tail == thread) {
+                        wq1->tail = prev;
+                    }
+                    thread->wq_next = NULL;
+                    thread->state = FUT_THREAD_READY;
+                    fut_sched_add_thread(thread);
+                    woken1++;
+                } else {
+                    prev = thread;
+                }
+                thread = next;
+            }
+
+            /* Evaluate comparison */
+            bool cmp_result;
+            switch (cmp_type) {
+                case FUTEX_OP_CMP_EQ: cmp_result = (oldval == cmparg); break;
+                case FUTEX_OP_CMP_NE: cmp_result = (oldval != cmparg); break;
+                case FUTEX_OP_CMP_LT: cmp_result = (oldval < cmparg); break;
+                case FUTEX_OP_CMP_LE: cmp_result = (oldval <= cmparg); break;
+                case FUTEX_OP_CMP_GT: cmp_result = (oldval > cmparg); break;
+                case FUTEX_OP_CMP_GE: cmp_result = (oldval >= cmparg); break;
+                default: cmp_result = false; break;
+            }
+
+            /* If comparison succeeded, wake threads at uaddr2 */
+            int woken2 = 0;
+            if (cmp_result && val2 > 0) {
+                fut_waitq_t *wq2 = &bucket2->waiters;
+                thread = wq2->head;
+                prev = NULL;
+
+                while (thread && woken2 < (int)val2) {
+                    fut_thread_t *next = thread->wq_next;
+                    if (thread->futex_addr == uaddr2) {
+                        if (prev) {
+                            prev->wq_next = next;
+                        } else {
+                            wq2->head = next;
+                        }
+                        if (wq2->tail == thread) {
+                            wq2->tail = prev;
+                        }
+                        thread->wq_next = NULL;
+                        thread->state = FUT_THREAD_READY;
+                        fut_sched_add_thread(thread);
+                        woken2++;
+                    } else {
+                        prev = thread;
+                    }
+                    thread = next;
+                }
+            }
+
+            /* Unlock */
+            if (bucket1 < bucket2) {
+                fut_spinlock_release(&bucket2->lock);
+                fut_spinlock_release(&bucket1->lock);
+            } else if (bucket1 > bucket2) {
+                fut_spinlock_release(&bucket1->lock);
+                fut_spinlock_release(&bucket2->lock);
+            } else {
+                fut_spinlock_release(&bucket1->lock);
+            }
+
+            fut_printf("[FUTEX] FUTEX_WAKE_OP - woke %d at uaddr, %d at uaddr2 (cmp=%d)\n",
+                       woken1, woken2, cmp_result ? 1 : 0);
+            return woken1 + woken2;
+        }
 
         default:
             fut_printf("[FUTEX] Unsupported futex operation: %d\n", cmd);

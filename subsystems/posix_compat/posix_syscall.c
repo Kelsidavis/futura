@@ -2069,11 +2069,35 @@ static int check_and_deliver_pending_signals(fut_task_t *current,
     return 0;
 }
 
+/* Syscall tracing for debugging userspace bring-up issues.
+ * Traces the first SYSCALL_TRACE_COUNT syscalls to serial output.
+ * Disable by setting SYSCALL_TRACE_COUNT to 0. */
+#define SYSCALL_TRACE_COUNT 50
+static volatile int syscall_trace_remaining = SYSCALL_TRACE_COUNT;
+
 long syscall_entry_c(uint64_t nr,
                      uint64_t a1, uint64_t a2, uint64_t a3,
                      uint64_t a4, uint64_t a5, uint64_t a6,
                      uint64_t *frame_ptr) {
+    /* Trace first N syscalls to help debug userspace bring-up */
+    int do_trace = 0;
+    if (SYSCALL_TRACE_COUNT > 0 && syscall_trace_remaining > 0) {
+        syscall_trace_remaining--;
+        do_trace = 1;
+        /* Direct serial output to avoid any console/VFS dependencies */
+        fut_printf("[SYSCALL-TRACE] nr=%llu a1=0x%llx a2=0x%llx a3=0x%llx\n",
+                   (unsigned long long)nr,
+                   (unsigned long long)a1,
+                   (unsigned long long)a2,
+                   (unsigned long long)a3);
+    }
+
     long ret = (long)posix_syscall_dispatch(nr, a1, a2, a3, a4, a5, a6);
+
+    if (do_trace) {
+        fut_printf("[SYSCALL-TRACE] nr=%llu -> ret=%ld\n",
+                   (unsigned long long)nr, ret);
+    }
 
     /* Check for pending signals and deliver them before returning to user */
     extern fut_task_t *fut_task_current(void);

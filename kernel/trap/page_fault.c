@@ -382,6 +382,12 @@ bool fut_trap_handle_page_fault(fut_interrupt_frame_t *frame) {
     }
 
     if ((frame->cs & 0x3u) != 0) {
+        /* Log the unhandled user page fault before terminating */
+        uint64_t cr2 = fut_read_cr2();
+        fut_printf("[#PF-USER] Unhandled user page fault: addr=0x%llx rip=0x%llx err=0x%llx\n",
+                   (unsigned long long)cr2,
+                   (unsigned long long)frame->rip,
+                   (unsigned long long)frame->error_code);
         /* Send SIGSEGV to terminate the faulting process */
         fut_task_signal_exit(SIGSEGV);
     }

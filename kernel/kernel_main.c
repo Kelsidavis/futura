@@ -854,7 +854,7 @@ void fut_kernel_main(void) {
     /* Core Wayland variables (production) */
 #if ENABLE_WAYLAND_DEMO
     int wayland_stage = -1;
-    int wayland_exec = -1;
+    /* Note: wayland_exec removed - compositor is now launched by init_stub */
 #endif
 
     /* Detect interactive/headful boot mode from kernel cmdline */
@@ -1462,7 +1462,10 @@ void fut_kernel_main(void) {
 #endif
 
 #if ENABLE_WAYLAND_DEMO
-    /* Launch init process with environment for Wayland */
+    /* Launch init process with environment for Wayland.
+     * init_stub will fork and exec the compositor, then launch wl-term.
+     * This replaces the old direct kernel compositor launch. */
+    int init_exec = -1;  /* Track init_stub launch result for wayland_ready check */
     if (init_stage == 0) {
         fut_printf("[INIT] Launching init process...\n");
         char init_name[] = "init";
@@ -1471,7 +1474,7 @@ void fut_kernel_main(void) {
         char xdg_runtime[] = "XDG_RUNTIME_DIR=/tmp";
         char wayland_display[] = "WAYLAND_DISPLAY=wayland-0";
         char *init_envp[] = { xdg_runtime, wayland_display, NULL };
-        int init_exec = fut_exec_elf("/sbin/init_stub", init_args, init_envp);
+        init_exec = fut_exec_elf("/sbin/init_stub", init_args, init_envp);
         if (init_exec != 0) {
             fut_printf("[WARN] Failed to launch /sbin/init_stub (error %d)\n", init_exec);
         } else {
@@ -1551,7 +1554,9 @@ void fut_kernel_main(void) {
         wayland_interactive = true;
     }
 
-    bool wayland_ready = (wayland_exec == 0);
+    /* Compositor is now launched by init_stub (which forks and execs it).
+     * Check init_exec instead of the old wayland_exec variable. */
+    bool wayland_ready = (init_exec == 0);
 #if ENABLE_WAYLAND_TEST_CLIENTS
     wayland_ready = wayland_ready && (wayland_client_exec == 0);
 #endif
@@ -1586,9 +1591,9 @@ void fut_kernel_main(void) {
             /* Removed HLT loop - scheduler must start to run processes */
         }
     } else if (wayland_interactive) {
-        /* Interactive mode requested but processes failed to launch - still start scheduler */
-        fut_printf("[WARN] Interactive mode requested but compositor/clients failed to launch\n");
-        fut_printf("[WARN] Wayland exec: %d, client exec: %d\n", wayland_exec, wayland_client_exec);
+        /* Interactive mode requested but init_stub failed to launch - still start scheduler */
+        fut_printf("[WARN] Interactive mode requested but init_stub failed to launch\n");
+        fut_printf("[WARN] init_exec: %d, client exec: %d\n", init_exec, wayland_client_exec);
         fut_printf("[WARN] Continuing to scheduler anyway\n");
     }
 #endif /* ENABLE_WAYLAND_DEMO */

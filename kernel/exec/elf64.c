@@ -57,7 +57,7 @@ extern void fut_do_user_iretq(uint64_t entry, uint64_t stack, uint64_t argc, uin
 #endif
 
 /* Debug output for user trampoline serial output (U1234567A characters) */
-/* #define DEBUG_USER_TRAMPOLINE */
+#define DEBUG_USER_TRAMPOLINE
 
 /* Stack debugging (controlled via debug_config.h) */
 #define stack_printf(...) do { if (STACK_DEBUG) fut_printf(__VA_ARGS__); } while(0)

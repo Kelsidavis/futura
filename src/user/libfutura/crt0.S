@@ -11,6 +11,15 @@
 .global _start
 
 _start:
+    /* EARLY DEBUG: Write marker to fd=1 to confirm _start reached (userspace)
+     * Uses int 0x80 syscall - this is the earliest possible userspace output.
+     * This should appear after BCDE markers in kernel logs if syscalls work. */
+    mov $1, %rax            /* SYS_write = 1 */
+    mov $1, %rdi            /* fd = stdout */
+    lea crt0_early_msg(%rip), %rsi  /* buf = message */
+    mov $crt0_early_msg_len, %rdx   /* count */
+    int $0x80
+
     /* Clear frame pointer for stack unwinding */
     xor %rbp, %rbp
 
@@ -62,7 +71,7 @@ _start:
 
     /* Find envp (skip past argv array until we hit NULL) */
     mov %rsi, %rdx          /* Start with argv */
-    mov %rdi, %rcx          /* argc counter */
+    mov %rbx, %rcx          /* argc counter (rbx has saved argc from line 45) */
     inc %rcx                /* +1 for the NULL terminator */
     shl $3, %rcx            /* multiply by 8 (pointer size) */
     add %rcx, %rdx          /* rdx now points to envp */
@@ -104,6 +113,9 @@ exit:
 
 /* Debug strings */
 .section .rodata
+crt0_early_msg:
+    .asciz "[CRT0] _start reached\n"
+    .equ crt0_early_msg_len, . - crt0_early_msg - 1
 fw_path:
     .asciz "/sbin/futura-wayland"
 fw_msg:

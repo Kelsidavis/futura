@@ -421,7 +421,13 @@ void fut_task_exit_current(int status) {
 }
 
 void fut_task_signal_exit(int signal) {
-    task_cleanup_and_exit(fut_task_current(), 0, signal);
+    fut_task_t *task = fut_task_current();
+    if (task) {
+        fut_printf("[TASK-EXIT] Task PID=%d killed by signal %d\n", task->pid, signal);
+    } else {
+        fut_printf("[TASK-EXIT] Unknown task killed by signal %d\n", signal);
+    }
+    task_cleanup_and_exit(task, 0, signal);
 }
 
 static int encode_wait_status(const fut_task_t *task) {

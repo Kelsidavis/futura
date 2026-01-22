@@ -15,8 +15,10 @@
 #include <platform/platform.h>
 #include <stdatomic.h>
 
-/* Forward declaration: LAPIC EOI is only used in interrupt handler */
-extern void lapic_send_eoi(void);
+#if defined(__x86_64__)
+#include <platform/x86_64/interrupt/lapic.h>
+#endif
+/* lapic_send_eoi provided by lapic.h for x86_64 */
 
 /* hal_outb, hal_inb provided by platform/platform.h */
 

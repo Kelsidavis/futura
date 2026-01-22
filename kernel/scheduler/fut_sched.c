@@ -13,6 +13,7 @@
 #if defined(__x86_64__)
 #include <platform/x86_64/gdt.h>
 #include <platform/x86_64/memory/paging.h>
+#include <platform/x86_64/interrupt/lapic.h>
 #include <arch/x86_64/msr.h>  /* For rdmsr/wrmsr for FS_BASE TLS support */
 #define MSR_FS_BASE 0xC0000100
 #elif defined(__aarch64__)
@@ -786,7 +787,7 @@ void fut_schedule(void) {
             if (in_irq) {
 #if defined(__x86_64__)
                 // Send EOI to LAPIC before abandoning this ISR's stack frame
-                extern void lapic_send_eoi(void);
+                /* lapic_send_eoi provided by lapic.h */
                 lapic_send_eoi();
                 atomic_store_explicit(&fut_in_interrupt, false, memory_order_release);
 #elif defined(__aarch64__)

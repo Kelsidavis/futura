@@ -24,6 +24,7 @@
 #include <kernel/fut_percpu.h>
 #include <kernel/platform_hooks.h>
 #include <kernel/fut_sched.h>
+#include <platform/x86_64/interrupt/lapic.h>
 
 /* Serial port definitions for debugging */
 #define SERIAL_PORT_COM1 0x3F8
@@ -522,8 +523,7 @@ void fut_pic_send_eoi(uint8_t irq) {
 
 void fut_irq_send_eoi(uint8_t irq) {
     /* Use LAPIC EOI if LAPIC is initialized (APIC mode), otherwise use legacy PIC */
-    extern bool lapic_is_initialized(void);
-    extern void lapic_send_eoi(void);
+    /* lapic_is_initialized, lapic_send_eoi provided by lapic.h */
 
     if (lapic_is_initialized()) {
         lapic_send_eoi();

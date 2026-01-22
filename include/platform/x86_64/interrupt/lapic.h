@@ -196,3 +196,10 @@ void lapic_timer_disable(void);
  * @return true if LAPIC is enabled
  */
 bool lapic_is_enabled(void);
+
+/**
+ * Check if LAPIC subsystem is initialized and safe to use.
+ *
+ * @return true if LAPIC has been initialized
+ */
+bool lapic_is_initialized(void);

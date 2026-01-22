@@ -561,6 +561,18 @@ See `docs/ARM64_STATUS.md` for detailed ARM64 progress.
   have been signal_handler_masks[signum - 1] (signals are 1-indexed, arrays 0-indexed).
   Also added lower bounds check for signum > 0.
 
+### January 21, 2026 Session — Final Code Cleanup
+- ✅ **Redundant errno definitions removed**: Cleaned up local ENOTSUP/ENOTEMPTY/EISDIR
+  fallback definitions from files that already include errno.h:
+  - kernel/vfs/fut_vfs.c (ENOTSUP)
+  - subsystems/futura_fs/futfs.c (ENOTSUP, ENOTEMPTY, EISDIR)
+  - tests/test_blkcore.c (ETIMEDOUT, ENOTSUP)
+- ✅ **Platform kprintf.h migration**: Updated remaining platform and test files to use
+  `#include <kernel/kprintf.h>` instead of `extern void fut_printf()`:
+  - x86_64: paging.c, pmap.c
+  - arm64: pci_ecam.c, arm64_exceptions.c, pmap.c, exception_handlers.c, debug_context_switch.c
+  - tests: test_api.c, test_net.c, test_blkcore.c, test_futfs.c
+
 ### January 21, 2026 Session — Security Hardening (Continued)
 - ✅ **Timer syscall userspace access**: Fixed sys_timer.c to use proper userspace
   access validation (fut_access_ok + fut_copy_to_user/fut_copy_from_user) instead

@@ -11,9 +11,8 @@
 #include <kernel/fut_memory.h>
 #include <kernel/errno.h>
 #include <kernel/signal.h>
+#include <kernel/kprintf.h>
 #include <string.h>
-
-extern void fut_printf(const char *fmt, ...);
 
 /**
  * Initialize a TTY line discipline.

@@ -11,8 +11,8 @@
 #include <stdbool.h>
 #include <futura/input_event.h>
 #include <kernel/tty.h>
+#include <kernel/kprintf.h>
 
-extern void fut_printf(const char *fmt, ...);
 extern tty_ldisc_t *kbd_console_get_ldisc(void);
 
 /* Modifier key state */

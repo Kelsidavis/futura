@@ -11,6 +11,7 @@
 #include <kernel/fut_task.h>
 #include <kernel/fut_thread.h>
 #include <kernel/signal.h>
+#include <kernel/kprintf.h>
 #include <platform/platform.h>
 #include <shared/termios.h>
 
@@ -19,9 +20,6 @@
 
 /* Global line discipline for the console */
 static tty_ldisc_t console_ldisc;
-
-extern void fut_printf(const char *fmt, ...);
-extern void fut_task_signal_exit(int sig);
 
 /**
  * Echo callback - outputs a character to the serial port.

@@ -151,9 +151,16 @@ long sys_close(int fd) {
      * NOTE: This Phase 5 documents the contract. Actual upper bound
      * validation is delegated to socket and VFS layers. */
 
-    /* Phase 2: Validate fd early (lower bound only, upper bound in VFS/socket) */
+    /* Phase 2/5: Validate fd early
+     * Lower bound: reject negative fd values
+     * Upper bound: reject fd >= max_fds (defense in depth - also checked in lower layers) */
     if (local_fd < 0) {
         close_printf("[CLOSE] close(fd=%d) -> EBADF (negative fd)\n", local_fd);
+        return -EBADF;
+    }
+    if (local_fd >= task->max_fds) {
+        close_printf("[CLOSE] close(fd=%d) -> EBADF (fd >= max_fds %d, Phase 5)\n",
+                     local_fd, task->max_fds);
         return -EBADF;
     }
 

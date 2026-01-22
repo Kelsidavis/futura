@@ -20,6 +20,7 @@
 #include <kernel/syscalls.h>
 #include <subsystems/posix_syscall.h>
 #include <fcntl.h>
+#include <stdint.h>
 
 #include <kernel/kprintf.h>
 /* propagate_socket_dup provided by subsystems/posix_syscall.h */
@@ -231,8 +232,18 @@ long sys_dup2(int oldfd, int newfd) {
     (void)operation_type;  /* Used only in debug logging */
     (void)operation_desc;  /* Used only in debug logging */
 
-    /* Increment reference count on the file since we're creating another reference */
+    /* Increment reference count on the file since we're creating another reference
+     * Phase 5: Check for refcount overflow before incrementing
+     * A refcount reaching UINT32_MAX would wrap to 0 on next increment,
+     * causing use-after-free when all references are released but one remains */
     if (old_file) {
+        if (old_file->refcount >= UINT32_MAX) {
+            /* Refcount would overflow - this should never happen in practice
+             * (would require billions of dup calls) but check defensively */
+            fut_printf("[DUP2] dup2(oldfd=%d, newfd=%d) -> EMFILE (refcount overflow)\n",
+                       local_oldfd, local_newfd);
+            return -EMFILE;
+        }
         old_file->refcount++;
     }
 
@@ -240,9 +251,14 @@ long sys_dup2(int oldfd, int newfd) {
     /* alloc_specific_fd_for_task handles closing existing FD if needed */
     int ret = vfs_alloc_specific_fd_for_task(task, local_newfd, old_file);
     if (ret < 0) {
-        /* Failed to allocate, decrement ref count */
-        if (old_file && old_file->refcount > 0) {
-            old_file->refcount--;
+        /* Failed to allocate, decrement ref count
+         * Phase 5: Validate refcount > 0 before decrementing to prevent underflow */
+        if (old_file) {
+            if (old_file->refcount == 0) {
+                fut_printf("[DUP2] BUG: refcount already zero during error cleanup!\n");
+            } else {
+                old_file->refcount--;
+            }
         }
 
         /* Phase 2: Detailed error logging */
@@ -368,17 +384,28 @@ long sys_dup3(int oldfd, int newfd, int flags) {
         return -EBADF;
     }
 
-    /* Increment reference count since we're creating another reference */
+    /* Increment reference count since we're creating another reference
+     * Phase 5: Check for refcount overflow before incrementing */
     if (old_file) {
+        if (old_file->refcount >= UINT32_MAX) {
+            fut_printf("[DUP3] dup3(oldfd=%d, newfd=%d, flags=0x%x) -> EMFILE (refcount overflow)\n",
+                       local_oldfd, local_newfd, local_flags);
+            return -EMFILE;
+        }
         old_file->refcount++;
     }
 
     /* Allocate newfd pointing to the same file */
     int ret = vfs_alloc_specific_fd_for_task(task, local_newfd, old_file);
     if (ret < 0) {
-        /* Failed to allocate, decrement ref count */
-        if (old_file && old_file->refcount > 0) {
-            old_file->refcount--;
+        /* Failed to allocate, decrement ref count
+         * Phase 5: Validate refcount > 0 before decrementing to prevent underflow */
+        if (old_file) {
+            if (old_file->refcount == 0) {
+                fut_printf("[DUP3] BUG: refcount already zero during error cleanup!\n");
+            } else {
+                old_file->refcount--;
+            }
         }
 
         const char *error_desc;

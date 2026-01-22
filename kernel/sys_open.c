@@ -181,10 +181,13 @@ long sys_open(const char *pathname, int flags, int mode) {
     /* Phase 2: Categorize access mode */
     int access_mode = local_flags & O_ACCMODE;
 
-    /* Phase 5: Validate access mode is in valid range (0-2) */
-    if (access_mode > O_RDWR) {
+    /* Phase 5: Validate access mode is one of the three valid values
+     * O_RDONLY (0), O_WRONLY (1), or O_RDWR (2)
+     * Value 3 (O_ACCMODE) is explicitly invalid - accessing with both O_WRONLY
+     * and O_RDWR bits set is undefined behavior in POSIX */
+    if (access_mode != O_RDONLY && access_mode != O_WRONLY && access_mode != O_RDWR) {
         open_printf("[OPEN] open(pathname=?, flags=0x%x, mode=0%o) -> EINVAL "
-                   "(invalid access mode %d, valid: 0-2, Phase 5)\n",
+                   "(invalid access mode %d, must be O_RDONLY/O_WRONLY/O_RDWR, Phase 5)\n",
                    local_flags, local_mode, access_mode);
         return -EINVAL;
     }

@@ -209,6 +209,7 @@
 #include <kernel/fut_vfs.h>
 #include <kernel/fut_fd_util.h>
 #include <stdint.h>
+#include <sys/resource.h>
 
 #include <kernel/kprintf.h>
 extern int propagate_socket_dup(int oldfd, int newfd);
@@ -605,8 +606,8 @@ long sys_fcntl(int fd, int cmd, uint64_t arg) {
          * - Count currently open FDs before allowing duplication
          * - If at or above soft limit, return -EMFILE immediately
          * - Prevents FD exhaustion attacks via F_DUPFD
+         * RLIMIT_NOFILE provided by sys/resource.h
          */
-        #define RLIMIT_NOFILE 7
         uint64_t nofile_limit = task->rlimits[RLIMIT_NOFILE].rlim_cur;
 
         /* Count currently open FDs

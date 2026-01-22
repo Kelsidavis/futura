@@ -477,6 +477,7 @@
 
 #include <kernel/kprintf.h>
 #include <sys/mman.h>
+#include <sys/resource.h>
 extern fut_interrupt_frame_t *fut_current_frame;
 
 /* Set to 1 to enable verbose fork debug logging */
@@ -487,9 +488,7 @@ extern fut_interrupt_frame_t *fut_current_frame;
 #define FORK_LOG(...) ((void)0)
 #endif
 
-/* Resource limit constants */
-#define RLIMIT_NPROC 6  /* Maximum number of processes for real UID */
-
+/* RLIMIT_* provided by sys/resource.h */
 /* MAP_SHARED provided by sys/mman.h */
 
 /* Forward declarations */

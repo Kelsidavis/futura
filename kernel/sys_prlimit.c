@@ -17,25 +17,9 @@
 
 #include <kernel/kprintf.h>
 #include <kernel/uaccess.h>
+#include <sys/resource.h>
 
-/* Resource types */
-#define RLIMIT_CPU        0   /* CPU time in seconds */
-#define RLIMIT_FSIZE      1   /* Maximum file size */
-#define RLIMIT_DATA       2   /* Max data size */
-#define RLIMIT_STACK      3   /* Max stack size */
-#define RLIMIT_CORE       4   /* Max core file size */
-#define RLIMIT_RSS        5   /* Max resident set size */
-#define RLIMIT_NPROC      6   /* Max number of processes */
-#define RLIMIT_NOFILE     7   /* Max number of open files */
-#define RLIMIT_MEMLOCK    8   /* Max locked-in-memory address space */
-#define RLIMIT_AS         9   /* Address space limit */
-#define RLIMIT_LOCKS      10  /* Max file locks */
-#define RLIMIT_SIGPENDING 11  /* Max pending signals */
-#define RLIMIT_MSGQUEUE   12  /* Max bytes in POSIX message queues */
-#define RLIMIT_NICE       13  /* Max nice priority */
-#define RLIMIT_RTPRIO     14  /* Max realtime priority */
-#define RLIMIT_RTTIME     15  /* Timeout for RT tasks (microseconds) */
-#define RLIMIT_NLIMITS    16  /* Number of limit types */
+/* RLIMIT_* constants provided by sys/resource.h */
 
 /* Special limit value */
 #define RLIM64_INFINITY   ((uint64_t)-1)

@@ -30,7 +30,6 @@ static inline uint8_t inb(uint16_t port) { return hal_inb(port); }
 extern void fut_schedule(void);
 extern void serial_puts(const char *s);
 extern void fut_irq_send_eoi(uint8_t irq);
-extern int fut_signal_send(struct fut_task *task, int signum);
 
 /* Forward declarations */
 struct fut_task;

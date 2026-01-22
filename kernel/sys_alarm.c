@@ -17,10 +17,11 @@
 
 #include <kernel/kprintf.h>
 #include <kernel/fut_timer.h>
-extern int fut_signal_deliver(fut_task_t *task, int sig);
 
-/* SIGALRM signal number */
+/* SIGALRM is already defined in signal.h, but define here for clarity */
+#ifndef SIGALRM
 #define SIGALRM 14
+#endif
 
 
 /**
@@ -146,8 +147,8 @@ long sys_alarm(unsigned int seconds) {
         /* Phase 3: Attempt immediate SIGALRM delivery if condition met
          * Check if alarm has already expired (clock adjustment scenario) */
         if (task->alarm_expires_ms <= current_ms) {
-            fut_signal_deliver(task, SIGALRM);
-            fut_printf("[ALARM] Signal delivery: SIGALRM delivered immediately (alarm expired during setup)\n");
+            fut_signal_send(task, SIGALRM);
+            fut_printf("[ALARM] Signal delivery: SIGALRM queued immediately (alarm expired during setup)\n");
         }
     } else {
         /* Cancel pending alarm for this task */

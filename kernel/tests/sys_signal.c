@@ -19,11 +19,6 @@
 #include "tests/test_api.h"
 
 #include <kernel/kprintf.h>
-extern int fut_signal_set_handler(fut_task_t *task, int signum, sighandler_t handler);
-extern sighandler_t fut_signal_get_handler(fut_task_t *task, int signum);
-extern int fut_signal_send(fut_task_t *target, int signum);
-extern int fut_signal_is_pending(fut_task_t *task, int signum);
-extern int fut_signal_procmask(fut_task_t *task, int how, const sigset_t *set, sigset_t *oldset);
 
 /* Test constants */
 #define SIG_TEST_INSTALL        1

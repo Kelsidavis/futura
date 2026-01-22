@@ -14,9 +14,9 @@
 #include <string.h>
 
 #include <kernel/kprintf.h>
+#include <kernel/uaccess.h>
 extern fut_task_t *fut_task_current(void);
 extern struct fut_file *vfs_get_file_from_task(struct fut_task *task, int fd);
-extern int fut_copy_from_user(void *to, const void *from, size_t size);
 
 /**
  * sys_chroot - Change root directory

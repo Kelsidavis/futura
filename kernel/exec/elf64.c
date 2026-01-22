@@ -1650,7 +1650,6 @@ static int exec_copy_to_user(fut_mm_t *mm, uint64_t dest, const void *src, size_
 
     extern fut_mm_t *fut_mm_current(void);
     extern void fut_mm_switch(fut_mm_t *mm);
-    extern int fut_copy_to_user(void *u_dst, const void *k_src, size_t n);
 
     /* Save current MM context */
     fut_mm_t *saved_mm = fut_mm_current();

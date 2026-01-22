@@ -534,7 +534,6 @@ long sys_getsockopt(int sockfd, int level, int optname, void *optval, socklen_t 
      * This check prevents kernel page fault when writing to read-only memory
      */
     if (optval != NULL) {
-        extern int fut_copy_to_user(void *to, const void *from, size_t size);
         char test_byte = 0;
         if (fut_copy_to_user(optval, &test_byte, 1) != 0) {
             fut_printf("[GETSOCKOPT] getsockopt(sockfd=%d, level=%d, optname=%d, optval=%p) -> EFAULT "

@@ -19,7 +19,7 @@
 #include <stddef.h>
 
 #include <kernel/kprintf.h>
-extern int fut_copy_from_user(void *to, const void *from, size_t size);
+#include <kernel/uaccess.h>
 
 /* File type constants from sys/stat.h */
 #define S_IFMT   0170000  /* File type mask */

@@ -19,7 +19,7 @@
 #include <string.h>
 
 #include <kernel/kprintf.h>
-extern int fut_copy_from_user(void *to, const void *from, size_t size);
+#include <kernel/uaccess.h>
 
 /**
  * rename() - Rename or move a file/directory

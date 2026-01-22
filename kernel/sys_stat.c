@@ -18,8 +18,7 @@
 #include <stdint.h>
 
 #include <kernel/kprintf.h>
-extern int fut_copy_from_user(void *to, const void *from, size_t size);
-extern int fut_copy_to_user(void *to, const void *from, size_t size);
+#include <kernel/uaccess.h>
 
 /* Manual string length calculation */
 static size_t manual_strlen(const char *s) {

@@ -19,8 +19,8 @@
 #include <stddef.h>
 
 #include <kernel/kprintf.h>
+#include <kernel/uaccess.h>
 extern fut_task_t *fut_task_current(void);
-extern int fut_copy_to_user(void *to, const void *from, size_t size);
 
 /* Capability version */
 #define _LINUX_CAPABILITY_VERSION_1  0x19980330
@@ -133,7 +133,6 @@ struct __user_cap_data_struct {
  */
 long sys_capget(struct __user_cap_header_struct *hdrp,
                 struct __user_cap_data_struct *datap) {
-    extern int fut_copy_from_user(void *to, const void *from, size_t size);
 
     fut_task_t *task = fut_task_current();
     if (!task) {
@@ -275,7 +274,6 @@ long sys_capget(struct __user_cap_header_struct *hdrp,
  */
 long sys_capset(struct __user_cap_header_struct *hdrp,
                 const struct __user_cap_data_struct *datap) {
-    extern int fut_copy_from_user(void *to, const void *from, size_t size);
 
     fut_task_t *task = fut_task_current();
     if (!task) {

@@ -18,7 +18,7 @@
 #include <stddef.h>
 
 #include <kernel/kprintf.h>
-extern int fut_copy_from_user(void *to, const void *from, size_t size);
+#include <kernel/uaccess.h>
 
 /* Quota commands (high-level operations) */
 #define Q_SYNC       0x800001  /* Sync disk copy of quota */

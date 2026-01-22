@@ -187,7 +187,6 @@ ssize_t sys_read(int fd, void *buf, size_t count) {
      * - CVE-2016-10229: Linux udp.c recvmsg write to readonly
      * - CVE-2018-5953: Linux kernel swiotlb map_sg write to readonly
      */
-    extern int fut_copy_to_user(void *to, const void *from, size_t size);
     char test_byte = 0;
     if (fut_copy_to_user(local_buf, &test_byte, 1) != 0) {
         /* fut_printf("[READ] read(fd=%d, buf=%p, count=%zu) -> EFAULT "

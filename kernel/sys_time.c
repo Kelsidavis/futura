@@ -12,8 +12,8 @@
 #include <shared/fut_timespec.h>
 #include <stdint.h>
 
-extern int fut_copy_to_user(void *to, const void *from, size_t size);
 #include <kernel/kprintf.h>
+#include <kernel/uaccess.h>
 
 /* Clock IDs for clock_gettime */
 #define CLOCK_REALTIME           0

@@ -19,8 +19,8 @@
 #include <stdint.h>
 
 #include <kernel/kprintf.h>
+#include <kernel/uaccess.h>
 extern struct fut_file *fut_vfs_get_file(int fd);
-extern int fut_copy_to_user(void *to, const void *from, size_t size);
 extern uint64_t fut_get_time_ns(void);
 
 /**

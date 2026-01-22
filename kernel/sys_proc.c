@@ -13,10 +13,9 @@
 #include <stdint.h>
 
 #include <kernel/kprintf.h>
+#include <kernel/uaccess.h>
 extern fut_task_t *fut_task_current(void);
 extern fut_task_t *fut_task_by_pid(uint64_t pid);
-extern int fut_copy_to_user(void *to, const void *from, size_t size);
-extern int fut_copy_from_user(void *to, const void *from, size_t size);
 
 /* Default resource limit values - named constants for clarity */
 #define RLIMIT_NOFILE_SOFT_DEFAULT  1024      /* Default soft limit for open files */

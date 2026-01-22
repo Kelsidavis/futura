@@ -12,6 +12,7 @@
 #include <kernel/errno.h>
 
 #include <kernel/kprintf.h>
+#include <kernel/uaccess.h>
 extern fut_task_t *fut_task_current(void);
 
 /* Common ioctl commands */
@@ -498,7 +499,6 @@ long sys_ioctl(int fd, unsigned long request, void *argp) {
                 /* Test write by attempting to write a dummy byte
                  * This triggers page fault if memory is read-only, returning error
                  * instead of crashing kernel during device handler execution */
-                extern int fut_copy_to_user(void *to, const void *from, size_t size);
                 char test_byte = 0;
                 if (fut_copy_to_user(argp, &test_byte, 1) != 0) {
                     fut_printf("[IOCTL] ioctl(fd=%d, request=0x%lx [%s], argp=%p) -> EFAULT "

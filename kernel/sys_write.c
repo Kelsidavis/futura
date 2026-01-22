@@ -194,7 +194,6 @@ ssize_t sys_write(int fd, const void *buf, size_t count) {
      * - CVE-2019-11477: Linux TCP SACK panic via invalid memory access
      * - CVE-2016-8655: Linux packet socket race with invalid buffer
      */
-    extern int fut_copy_from_user(void *to, const void *from, size_t size);
     char test_byte = 0;
     if (fut_copy_from_user(&test_byte, local_buf, 1) != 0) {
         write_printf("[WRITE] write(fd=%d, buf=%p, count=%lu) -> EFAULT "

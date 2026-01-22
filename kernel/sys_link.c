@@ -20,7 +20,7 @@
 #include <string.h>
 
 #include <kernel/kprintf.h>
-extern int fut_copy_from_user(void *to, const void *from, size_t size);
+#include <kernel/uaccess.h>
 
 /**
  * link() - Create a hard link to an existing file

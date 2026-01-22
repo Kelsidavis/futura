@@ -15,9 +15,8 @@
 #include <string.h>
 
 #include <kernel/kprintf.h>
+#include <kernel/uaccess.h>
 extern fut_task_t *fut_task_current(void);
-extern int fut_copy_to_user(void *to, const void *from, size_t size);
-extern int fut_copy_from_user(void *to, const void *from, size_t size);
 extern uint64_t fut_get_ticks(void);
 
 /* Clock IDs */

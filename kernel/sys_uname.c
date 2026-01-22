@@ -19,7 +19,6 @@
 #include <string.h>
 
 #include <kernel/kprintf.h>
-extern int fut_copy_to_user(void *to, const void *from, size_t size);
 
 /**
  * uname() syscall - Get system information.

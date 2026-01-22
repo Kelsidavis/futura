@@ -40,7 +40,6 @@ extern int fut_exec_elf(const char *path, char *const argv[], char *const envp[]
 #endif
 extern void *fut_malloc(size_t size);
 extern void fut_free(void *ptr);
-extern int fut_copy_from_user(void *to, const void *from, size_t size);
 
 /**
  * Helper function to free kernel argv array

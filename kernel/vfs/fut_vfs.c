@@ -1221,7 +1221,6 @@ int chrdev_alloc_fd(const struct fut_file_ops *ops, void *inode, void *priv) {
     file->owner_pid = 0;
 
     /* Get current task for per-task FD allocation */
-    extern fut_task_t *fut_task_current(void);
     fut_task_t *task = fut_task_current();
 
     int fd;
@@ -1267,7 +1266,6 @@ static int check_file_permission(struct fut_vnode *vnode, fut_task_t *task, bool
 
     /* Get task credentials if not provided */
     if (!task) {
-        extern fut_task_t *fut_task_current(void);
         task = fut_task_current();
     }
 

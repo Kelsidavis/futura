@@ -1741,9 +1741,6 @@ int fut_page_ref_get(phys_addr_t phys) {
  * @return Virtual address on success, negative error code on failure
  */
 uint64_t fut_task_alloc_mmap_addr(size_t len) {
-    extern fut_task_t *fut_task_current(void);
-    extern fut_mm_t *fut_task_get_mm(const fut_task_t *);
-
     fut_task_t *task = fut_task_current();
     if (!task) {
         fut_printf("[MM-MMAP] fut_task_alloc_mmap_addr: no current task\n");

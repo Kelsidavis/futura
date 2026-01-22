@@ -207,8 +207,6 @@ int fut_copy_from_user(void *k_dst, const void *u_src, size_t n) {
 #elif defined(__aarch64__)
     /* ARM64: Save current TTBR0, load the user's TTBR0, then restore after copy.
      * During syscalls, TTBR0 may have been switched to kernel page table by page table operations. */
-    extern struct fut_task *fut_task_current(void);
-    extern struct fut_mm *fut_mm_current(void);
     __asm__ volatile("mrs %0, ttbr0_el1" : "=r"(saved_ttbr0));
 
     mm = fut_mm_current();

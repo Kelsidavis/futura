@@ -492,6 +492,36 @@ See `docs/ARM64_STATUS.md` for detailed ARM64 progress.
   vfs_check_*_perm() function declarations to header, enabling removal of externs
 - ✅ **Continued cleanup**: Removed redundant vfs_alloc_specific_fd_for_task externs
 
+### January 21, 2026 Session — Type & Constant Consolidation (Continued)
+- ✅ **socklen_t consolidation**: Added socklen_t typedef to fut_socket.h with proper
+  __socklen_t_defined guard, removing duplicates from 9 syscall files (sys_connect.c,
+  sys_sendto.c, sys_bind.c, sys_getsockopt.c, sys_setsockopt.c, sys_accept.c,
+  sys_recvfrom.c, sys_getsockname.c, sys_getpeername.c)
+- ✅ **AF_*/SOCK_* consolidation**: Added address family and socket type constants to
+  fut_socket.h, removing duplicates from sys_socket.c, sys_bind.c, sys_connect.c,
+  sys_getsockname.c, sys_getpeername.c
+- ✅ **Socket option consolidation**: Added SOL_SOCKET, IPPROTO_*, and SO_* constants
+  to fut_socket.h, removing duplicates from sys_setsockopt.c, sys_getsockopt.c, sys_recvmsg.c
+- ✅ **MSG_* flags consolidation**: Added message flags to fut_socket.h, removing
+  duplicates from sys_sendto.c and sys_recvfrom.c
+- ✅ **sockaddr_un consolidation**: Updated sys_getsockname.c and sys_getpeername.c
+  to use sys/un.h instead of local struct definitions
+- ✅ **S_IF* consolidation**: Updated kernel/vfs/fut_vfs.c and kernel/sys_mknodat.c
+  to use sys/stat.h instead of local S_IF*/S_IS* definitions. Fixed sys/stat.h to
+  properly detect freestanding environments using __STDC_HOSTED__ to avoid
+  #include_next warnings in kernel builds.
+- ✅ **AT_*/O_* consolidation**: Updated 13 syscall files to use fcntl.h for AT_FDCWD,
+  AT_SYMLINK_NOFOLLOW, AT_REMOVEDIR, AT_EACCESS, AT_EMPTY_PATH, AT_SYMLINK_FOLLOW,
+  and O_* flags: sys_faccessat.c, sys_fchmodat.c, sys_fchownat.c, sys_fstatat.c,
+  sys_linkat.c, sys_mkdirat.c, sys_mknodat.c, sys_openat.c, sys_readlinkat.c,
+  sys_renameat.c, sys_symlinkat.c, sys_unlinkat.c, sys_utimensat.c
+- ✅ **mm_tests.c cleanup**: Updated kernel/tests/mm_tests.c to use fcntl.h and
+  sys/mman.h instead of local O_*/PROT_*/MAP_* definitions
+- ✅ **Signal mask indexing bug fix**: Fixed off-by-one array indexing bug in
+  subsystems/posix_compat/posix_syscall.c where signal_handler_masks[signum] should
+  have been signal_handler_masks[signum - 1] (signals are 1-indexed, arrays 0-indexed).
+  Also added lower bounds check for signum > 0.
+
 ## Current Focus
 
 ### x86-64 Platform

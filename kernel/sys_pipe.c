@@ -23,6 +23,13 @@
 #include <string.h>
 #include <stdint.h>
 
+/* Architecture-specific paging headers for KERNEL_VIRTUAL_BASE */
+#ifdef __x86_64__
+#include <platform/x86_64/memory/paging.h>
+#elif defined(__aarch64__)
+#include <platform/arm64/memory/paging.h>
+#endif
+
 #include <kernel/kprintf.h>
 
 /* Pipe buffer size */
@@ -400,7 +407,7 @@ long sys_pipe(int pipefd[2]) {
     /* Validate that pipefd is a valid userspace pointer (writable)
      * Skip check for kernel pointers (used by kernel tests) */
     uintptr_t ptr_val = (uintptr_t)pipefd;
-    bool is_kernel_ptr = (ptr_val >= 0xffff800000000000ULL);  /* x86_64 kernel space */
+    bool is_kernel_ptr = (ptr_val >= KERNEL_VIRTUAL_BASE);  /* Architecture-specific */
     if (!is_kernel_ptr && fut_access_ok(pipefd, sizeof(int) * 2, 1) != 0) {
         fut_printf("[PIPE] pipe(pipefd=?) -> EFAULT (pipefd not accessible)\n");
         return -EFAULT;
@@ -556,7 +563,7 @@ long sys_pipe2(int pipefd[2], int flags) {
     /* Validate that pipefd is a valid userspace pointer (writable)
      * Skip check for kernel pointers (used by kernel tests) */
     uintptr_t ptr_val2 = (uintptr_t)pipefd;
-    bool is_kernel_ptr2 = (ptr_val2 >= 0xffff800000000000ULL);  /* x86_64 kernel space */
+    bool is_kernel_ptr2 = (ptr_val2 >= KERNEL_VIRTUAL_BASE);  /* Architecture-specific */
     if (!is_kernel_ptr2 && fut_access_ok(pipefd, sizeof(int) * 2, 1) != 0) {
         fut_printf("[PIPE2] pipe2(pipefd=?, flags=0x%x) -> EFAULT (pipefd not accessible)\n",
                    flags);

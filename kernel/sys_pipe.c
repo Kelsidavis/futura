@@ -457,7 +457,6 @@ long sys_pipe(int pipefd[2]) {
         fut_printf("[PIPE] pipe(read_fd=%d) -> %d (%s, write_fd allocation)\n",
                    read_fd, write_fd, error_desc);
         /* Close read fd to clean up */
-        extern int fut_vfs_close(int fd);
         fut_vfs_close(read_fd);
         return write_fd;
     }
@@ -504,7 +503,6 @@ long sys_pipe(int pipefd[2]) {
                        "(failed to copy FDs to userspace, Phase 5 write pointer validation)\n",
                        read_fd, write_fd);
             /* Clean up both FDs - pipe creation failed */
-            extern int fut_vfs_close(int fd);
             fut_vfs_close(read_fd);
             fut_vfs_close(write_fd);
             return -EFAULT;
@@ -593,7 +591,6 @@ long sys_pipe2(int pipefd[2], int flags) {
     if (write_fd < 0) {
         fut_printf("[PIPE2] pipe2(flags=0x%x, read_fd=%d) -> %d (write_fd allocation failed)\n",
                    flags, read_fd, write_fd);
-        extern int fut_vfs_close(int fd);
         fut_vfs_close(read_fd);
         return write_fd;
     }
@@ -627,7 +624,6 @@ long sys_pipe2(int pipefd[2], int flags) {
             fut_printf("[PIPE2] pipe2(flags=0x%x, read_fd=%d, write_fd=%d) -> EFAULT "
                        "(failed to copy FDs to userspace)\n",
                        flags, read_fd, write_fd);
-            extern int fut_vfs_close(int fd);
             fut_vfs_close(read_fd);
             fut_vfs_close(write_fd);
             return -EFAULT;

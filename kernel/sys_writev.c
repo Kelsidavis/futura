@@ -15,7 +15,7 @@
 #include <kernel/kprintf.h>
 #include <kernel/uaccess.h>
 #include <kernel/fut_memory.h>
-extern ssize_t fut_vfs_write(int fd, const void *buf, size_t count);
+#include <kernel/fut_vfs.h>
 
 /* ============================================================================
  * PHASE 5 SECURITY HARDENING: writev() - Scatter-Gather Write Vector Validation

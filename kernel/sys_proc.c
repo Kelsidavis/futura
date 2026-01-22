@@ -14,7 +14,7 @@
 
 #include <kernel/kprintf.h>
 #include <kernel/uaccess.h>
-extern fut_task_t *fut_task_by_pid(uint64_t pid);
+#include <kernel/fut_thread.h>
 
 /* Default resource limit values - named constants for clarity */
 #define RLIMIT_NOFILE_SOFT_DEFAULT  1024      /* Default soft limit for open files */
@@ -38,7 +38,6 @@ extern fut_task_t *fut_task_by_pid(uint64_t pid);
  *   - Process ID of the calling process (always succeeds)
  */
 long sys_getpid(void) {
-    extern fut_thread_t *fut_thread_current(void);
     fut_thread_t *thread = fut_thread_current();
     fut_task_t *task = fut_task_current();
 

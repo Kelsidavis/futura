@@ -19,7 +19,6 @@
 
 #include <kernel/kprintf.h>
 #include <kernel/uaccess.h>
-extern fut_thread_t *fut_thread_current(void);
 
 /* ============================================================
  *   Futex Hash Table

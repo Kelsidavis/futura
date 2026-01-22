@@ -25,7 +25,7 @@ BIN_DIR := $(BUILD_ROOT)/bin/$(PLATFORM)/user
 include $(ROOT)/mk/wayland.mk
 
 TARGET := $(BIN_DIR)/futura-wayland
-SRCS := main.c comp.c shm_backend.c xdg_shell.c output.c seat.c cursor.c ui_text.c shadow.c data_device.c syscall_wrappers.c
+SRCS := main.c bootstrap.c comp.c shm_backend.c xdg_shell.c output.c seat.c cursor.c ui_text.c shadow.c data_device.c syscall_wrappers.c
 
 OUT ?= $(BUILD_ROOT)/generated/wayland
 $(eval $(call wayland_proto_server,$(ROOT)/protocols/xdg-shell.xml,compositor))

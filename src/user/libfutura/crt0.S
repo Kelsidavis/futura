@@ -35,6 +35,31 @@ _start:
     /* Save argc in a callee-saved register (rbx) for use after __libc_init_environ */
     mov %rdi, %rbx
 
+    /* Debug: emit marker if argv[0] matches /sbin/futura-wayland */
+    mov %rsi, %r12          /* Save argv pointer */
+    mov (%r12), %rdi        /* argv[0] */
+    test %rdi, %rdi
+    je 1f
+    lea fw_path(%rip), %rsi
+0:
+    movzbq (%rdi), %rcx
+    movzbq (%rsi), %rdx
+    cmp %rcx, %rdx
+    jne 1f
+    test %rcx, %rcx
+    je 2f
+    inc %rdi
+    inc %rsi
+    jmp 0b
+2:
+    mov $1, %rax            /* SYS_write */
+    mov $1, %rdi            /* fd=stdout */
+    lea fw_msg(%rip), %rsi
+    mov $fw_msg_len, %rdx
+    int $0x80
+1:
+    mov %r12, %rsi          /* Restore argv pointer */
+
     /* Find envp (skip past argv array until we hit NULL) */
     mov %rsi, %rdx          /* Start with argv */
     mov %rdi, %rcx          /* argc counter */
@@ -76,3 +101,11 @@ exit:
 
 /* Mark stack as non-executable to silence linker warnings */
 .section .note.GNU-stack, "", @progbits
+
+/* Debug strings */
+.section .rodata
+fw_path:
+    .asciz "/sbin/futura-wayland"
+fw_msg:
+    .asciz "[COMPOSITOR-BOOT] _start reached\n"
+    .equ fw_msg_len, . - fw_msg - 1

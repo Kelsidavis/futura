@@ -20,6 +20,12 @@ SECTIONS
     /* User programs typically start at 0x400000 (4MB) */
     . = 0x400000;
 
+    /* Build ID / note sections - keep in text segment to avoid PT_LOAD overlap */
+    .note : {
+        *(.note.gnu.build-id)
+        *(.note.*)
+    } :text
+
     /* Text (code) section - read-only executable */
     .text : {
         *(.text._start)

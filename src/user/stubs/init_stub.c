@@ -3,6 +3,7 @@
 #include <user/sys.h>
 #include <user/stdio.h>
 #include <shared/fut_timespec.h>
+#include <shared/fut_stat.h>
 
 int main(void) {
     // Init process - launch compositor, wait for socket, then start wl-term
@@ -10,10 +11,21 @@ int main(void) {
     // VERY FIRST message - before anything else
     sys_write(1, "[INIT-STUB] MAIN STARTED\n", 25);
 
-    // First, set up our own file descriptors to /dev/console
-    int test_fd = sys_open("/dev/console", 2, 0);  // O_RDWR = 2
-    if (test_fd >= 0) {
-        sys_close(test_fd);
+    // Ensure stdin/stdout/stderr are bound to /dev/console
+    int console_fd = sys_open("/dev/console", 2, 0);  // O_RDWR = 2
+    if (console_fd >= 0) {
+        if (console_fd != 0) {
+            sys_dup2_call(console_fd, 0);
+        }
+        if (console_fd != 1) {
+            sys_dup2_call(console_fd, 1);
+        }
+        if (console_fd != 2) {
+            sys_dup2_call(console_fd, 2);
+        }
+        if (console_fd > 2) {
+            sys_close(console_fd);
+        }
     }
 
     printf("[INIT-STUB] Started, launching compositor...\n");
@@ -51,37 +63,40 @@ int main(void) {
         printf("[INIT-STUB] Compositor forked, pid=%ld\n", compositor_pid);
     }
 
-    // Wait for compositor to create Wayland socket
+    // Wait for compositor to create Wayland socket or readiness marker
     int socket_found = 0;
 
-    // Initial delay to let compositor initialize (about 2 seconds worth of cycles)
-    for (volatile unsigned long i = 0; i < 500000000UL; i++) {
-        // Empty loop - burn cycles to give compositor time to start
-    }
+    fut_timespec_t initial_delay = { .tv_sec = 0, .tv_nsec = 200000000 };
+    sys_nanosleep_call(&initial_delay, 0);
+
+    const char *ready_paths[] = {
+        "/tmp/wayland-ready",
+        "/tmp/wayland-0",
+        0
+    };
 
     for (int attempt = 0; attempt < 1000; attempt++) {
-        // Busy-wait between checks
-        for (volatile unsigned long i = 0; i < 5000000UL; i++) {
-            // Empty loop
+        struct fut_stat st;
+        for (int i = 0; ready_paths[i]; i++) {
+            long stat_rc = sys_stat_call(ready_paths[i], &st);
+            if (stat_rc == 0) {
+                printf("[INIT-STUB] Wayland ready marker found at %s (attempt %d)\n",
+                       ready_paths[i], attempt + 1);
+                socket_found = 1;
+                break;
+            }
         }
 
-        // Try to open the socket file
-        int fd = sys_open("/tmp/wayland-0", 0, 0);  // O_RDONLY
-        if (fd >= 0) {
-            sys_close(fd);
-            printf("[INIT-STUB] Wayland socket found on attempt %d!\n", attempt + 1);
-            socket_found = 1;
-
-            // Extra wait for compositor to finish listening setup
-            for (volatile unsigned long i = 0; i < 100000000UL; i++) {
-                // Empty loop
-            }
+        if (socket_found) {
             break;
         }
 
         if (attempt % 200 == 199) {
             printf("[INIT-STUB] Still waiting for socket... (attempt %d)\n", attempt + 1);
         }
+
+        fut_timespec_t retry_delay = { .tv_sec = 0, .tv_nsec = 20000000 };
+        sys_nanosleep_call(&retry_delay, 0);
     }
 
     if (!socket_found) {

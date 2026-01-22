@@ -424,8 +424,7 @@ long __wrap_syscall(long number, ...) {
         if (dirfd == -100) { /* AT_FDCWD */
             result = SYSCALL_OPEN(pathname, flags, mode);
         } else {
-            errno = EBADF;
-            result = -1;
+            result = -EBADF;
         }
         break;
     }
@@ -518,9 +517,16 @@ long __wrap_syscall(long number, ...) {
         break;
     }
     default:
-        /* For other syscalls, return ENOSYS */
-        errno = ENOSYS;
-        result = -1;
+        /* Fall back to raw syscall with up to 6 args */
+        {
+            long a1 = va_arg(ap, long);
+            long a2 = va_arg(ap, long);
+            long a3 = va_arg(ap, long);
+            long a4 = va_arg(ap, long);
+            long a5 = va_arg(ap, long);
+            long a6 = va_arg(ap, long);
+            result = syscall6(number, a1, a2, a3, a4, a5, a6);
+        }
         break;
     }
 

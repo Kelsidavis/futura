@@ -10,6 +10,7 @@
 #include <stdbool.h>
 #include <errno.h>
 #include <string.h>
+#include <fcntl.h>
 #include <user/stdio.h>
 #include <user/stdlib.h>
 
@@ -91,6 +92,28 @@ static const char *find_working_runtime_dir(void) {
     /* Last resort */
     printf("[WAYLAND-DEBUG] WARNING: No ideal dir found, using /tmp\n");
     return "/tmp";
+}
+
+static void write_ready_marker(const char *runtime_dir, const char *socket) {
+    if (!runtime_dir || !socket || socket[0] == '\0' || strcmp(socket, "none") == 0) {
+        return;
+    }
+
+    char ready_path[256];
+    snprintf(ready_path, sizeof(ready_path), "%s/wayland-ready", runtime_dir);
+
+    int fd = sys_open(ready_path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (fd < 0) {
+        printf("[WAYLAND-DEBUG] WARNING: failed to create ready marker at %s\n", ready_path);
+        return;
+    }
+
+    char buf[128];
+    int len = snprintf(buf, sizeof(buf), "socket=%s\n", socket);
+    if (len > 0) {
+        sys_write(fd, buf, (size_t)len);
+    }
+    sys_close(fd);
 }
 
 int main(void) {
@@ -357,6 +380,8 @@ int main(void) {
             }
         }
     }
+
+    write_ready_marker(runtime_dir, socket);
 
     printf("[WAYLAND] compositor ready %ux%u bpp=%u socket=%s\n",
            comp.fb_info.width,

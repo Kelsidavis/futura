@@ -45,7 +45,6 @@ static void test_signal_handler(int signum) {
 static void test_signal_install(void) {
     fut_printf("[SIGNAL-TEST] Test 1: Signal installation\n");
 
-    extern fut_task_t *fut_task_current(void);
     fut_task_t *task = fut_task_current();
     if (!task) {
         fut_printf("[SIGNAL-TEST] ✗ No current task\n");
@@ -78,7 +77,6 @@ static void test_signal_install(void) {
 static void test_signal_pending(void) {
     fut_printf("[SIGNAL-TEST] Test 2: Signal pending queueing\n");
 
-    extern fut_task_t *fut_task_current(void);
     fut_task_t *task = fut_task_current();
     if (!task) {
         fut_printf("[SIGNAL-TEST] ✗ No current task\n");
@@ -112,7 +110,6 @@ static void test_signal_pending(void) {
 static void test_signal_mask(void) {
     fut_printf("[SIGNAL-TEST] Test 3: Signal mask blocking and unblocking\n");
 
-    extern fut_task_t *fut_task_current(void);
     fut_task_t *task = fut_task_current();
     if (!task) {
         fut_printf("[SIGNAL-TEST] ✗ No current task\n");
@@ -169,7 +166,6 @@ static void test_signal_mask(void) {
 static void test_signal_multiple(void) {
     fut_printf("[SIGNAL-TEST] Test 4: Multiple signal queueing\n");
 
-    extern fut_task_t *fut_task_current(void);
     fut_task_t *task = fut_task_current();
     if (!task) {
         fut_printf("[SIGNAL-TEST] ✗ No current task\n");
@@ -219,7 +215,6 @@ static void test_signal_multiple(void) {
 static void test_signal_delivery(void) {
     fut_printf("[SIGNAL-TEST] Test 5: Signal delivery (end-to-end)\n");
 
-    extern fut_task_t *fut_task_current(void);
     fut_task_t *task = fut_task_current();
     if (!task) {
         fut_printf("[SIGNAL-TEST] ✗ No current task\n");

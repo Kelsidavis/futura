@@ -16,18 +16,14 @@
 #include <kernel/fut_socket.h>
 #include <kernel/errno.h>
 #include <kernel/uaccess.h>
+#include <sys/un.h>
 #include <stdint.h>
 #include <string.h>
 
 #include <kernel/kprintf.h>
 
 /* Address family constants (AF_*) provided by fut_socket.h */
-
-/* Unix domain socket address structure */
-struct sockaddr_un {
-    uint16_t sun_family;    /* AF_UNIX */
-    char sun_path[108];     /* Pathname */
-};
+/* struct sockaddr_un provided by sys/un.h */
 
 /**
  * getpeername() - Get address of connected peer

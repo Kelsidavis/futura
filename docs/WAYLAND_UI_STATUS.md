@@ -9,8 +9,8 @@ Futura OS has a **functional Wayland compositor and client infrastructure** with
 ## 1. Wayland Compositor Implementation
 
 ### Location & Status
-- **Path**: `/home/k/futura/src/user/compositor/futura-wayland/`
-- **Binary**: `futura-wayland` (runs as PID 1 daemon)
+- **Path**: `src/user/compositor/futura-wayland/`
+- **Binary**: `futura-wayland` (started by init when Wayland demos are enabled)
 - **Status**: FUNCTIONAL - boots and handles clients
 
 ### Architecture
@@ -81,7 +81,7 @@ DEBUG_WAYLAND=1        # Debug logging (off by default)
 ## 2. Graphics/Display Drivers
 
 ### Framebuffer Driver (`/dev/fb0`)
-**Location**: `/home/k/futura/drivers/video/fb.c`
+**Location**: `drivers/video/fb.c`
 **Status**: ✓ FUNCTIONAL
 
 Features:
@@ -94,7 +94,7 @@ Features:
 - Proper page alignment and size validation
 
 ### Virtio GPU Driver
-**Location**: `/home/k/futura/kernel/video/virtio_gpu.c`
+**Location**: `kernel/video/virtio_gpu.c`
 **Status**: ✓ IMPLEMENTED (not actively used by compositor)
 
 Capabilities:
@@ -106,7 +106,7 @@ Capabilities:
 - Can initialize virtual displays in QEMU (-device virtio-gpu-pci)
 
 ### MMIO Framebuffer
-**Location**: `/home/k/futura/kernel/video/fb_mmio.c`
+**Location**: `kernel/video/fb_mmio.c`
 **Status**: ✓ IMPLEMENTED
 
 Supports:
@@ -124,7 +124,7 @@ Supports:
 ## 3. Input Handling
 
 ### Keyboard Driver
-**Location**: `/home/k/futura/drivers/input/ps2_kbd.c`
+**Location**: `drivers/input/ps2_kbd.c`
 **Device**: `/dev/input/kbd0` (major 30, minor 0)
 **Status**: ✓ FUNCTIONAL
 
@@ -135,7 +135,7 @@ Supports:
 - Integration with Wayland seat
 
 ### Mouse Driver  
-**Location**: `/home/k/futura/drivers/input/ps2_mouse.c`
+**Location**: `drivers/input/ps2_mouse.c`
 **Device**: `/dev/input/mouse0` (major 31, minor 0)
 **Status**: ✓ FUNCTIONAL
 
@@ -160,7 +160,7 @@ Supports:
 ## 4. Demo Clients
 
 ### wl-simple
-**Location**: `/home/k/futura/src/user/clients/wl-simple/`
+**Location**: `src/user/clients/wl-simple/`
 **Binary**: `wl-simple`
 **Status**: ✓ FUNCTIONAL
 
@@ -179,7 +179,7 @@ Features:
 - Clipboard integration (data_device, data_source)
 
 ### wl-colorwheel
-**Location**: `/home/k/futura/src/user/clients/wl-colorwheel/`
+**Location**: `src/user/clients/wl-colorwheel/`
 **Binary**: `wl-colorwheel`
 **Status**: ✓ FUNCTIONAL
 
@@ -212,8 +212,8 @@ ENABLE_WAYLAND_DEMO=1 make wayland-step2
 The system **lacks traditional "applications"** - only demo clients exist.
 
 ### Existing App Framework
-**Location**: `/home/k/futura/src/user/apps/`
-- Only contains `winstub/` (legacy Windows subsystem remnant)
+**Location**: `src/user/apps/`
+- Contains `src/user/apps/winstub/` (legacy window server demo client)
 - No Wayland-native applications beyond demo clients
 
 ### Window Decorations
@@ -240,7 +240,7 @@ The system **lacks traditional "applications"** - only demo clients exist.
 ## 6. Test Harness & Testing
 
 ### Build Integration
-**File**: `/home/k/futura/Makefile` (targets: `wayland-step*`)
+**File**: `Makefile` (targets: `wayland-step*`)
 
 Three test scenarios:
 

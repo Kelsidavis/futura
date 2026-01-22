@@ -1,5 +1,7 @@
 # Bluetooth Driver for Broadcom BCM43438/BCM43455/BCM43456
 
+> **Status (Jan 22 2026)**: Design/roadmap doc. The corresponding drivers are not integrated into the kernel. See `docs/DRIVERS_MANIFEST.md` for the current in-tree driver inventory.
+
 ## Overview
 
 This document describes the Bluetooth wireless personal area network (WPAN) driver for Raspberry Pi 3/4/5, supporting Broadcom Bluetooth/WiFi combo SoCs with dual-mode (Classic + BLE) capabilities.

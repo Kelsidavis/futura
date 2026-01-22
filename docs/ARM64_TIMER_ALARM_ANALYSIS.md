@@ -1,5 +1,7 @@
 # ARM64 Timer Interrupt and alarm() Syscall Implementation Status
 
+> **Note**: This document contains historical path/line references from the original author environment; adjust paths for the current tree.
+
 **Generated**: 2025-11-12
 **Analysis Focus**: Timer interrupt routing, alarm() syscall, and SIGALRM delivery on ARM64
 
@@ -538,6 +540,5 @@ write_sysreg(cntp_ctl_el0, CNTP_CTL_ENABLE);  /* No IMASK bit - interrupts enabl
 - `/Users/kelsi/futura/docs/ARM64_SIGNAL_WORK.md` (Section 5: Alarm & Timer Signal Delivery)
 
 ### ARM64 Architecture
-- ARM Generic Timer control registers in `include/arch/arm64/regs.h:220-234`
+- ARM Generic Timer control registers in `include/platform/arm64/regs.h:220-234`
 - GICv2 configuration in `platform/arm64/platform_init.c:532-603`
-

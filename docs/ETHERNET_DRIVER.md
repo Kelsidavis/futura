@@ -1,5 +1,7 @@
 # Ethernet Driver for Raspberry Pi
 
+> **Status (Jan 22 2026)**: Design/roadmap doc. The corresponding drivers are not integrated into the kernel. See `docs/DRIVERS_MANIFEST.md` for the current in-tree driver inventory.
+
 ## Overview
 
 This document describes the Ethernet driver implementation for Futura OS on Raspberry Pi 3/4/5 platforms. The driver provides complete networking support for wired connectivity via Ethernet.

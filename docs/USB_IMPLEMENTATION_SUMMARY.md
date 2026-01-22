@@ -1,5 +1,7 @@
 # USB Driver Implementation Summary
 
+> **Status (Jan 22 2026)**: Design/roadmap doc. The corresponding drivers are not integrated into the kernel. See `docs/DRIVERS_MANIFEST.md` for the current in-tree driver inventory.
+
 **Status:** ✅ **COMPLETE**
 **Date:** October 23, 2025
 **Platform:** Raspberry Pi 3, 4, 5 (ARM64)
@@ -268,19 +270,19 @@ cargo build --lib  # ✅ Success (0.27s)
 ## Build & Deployment Files Created
 
 ### Source Code
-- ✅ `/home/k/futura/drivers/src/usb.rs` (630 LOC)
+- ✅ `drivers/src/usb.rs` (630 LOC)
 
 ### Documentation
-- ✅ `/home/k/futura/docs/USB_DRIVER.md` (16 KB)
-- ✅ `/home/k/futura/docs/RPI5_USB_DEPLOYMENT.md` (12 KB)
-- ✅ `/home/k/futura/docs/USB_IMPLEMENTATION_SUMMARY.md` (this file)
+- ✅ `docs/USB_DRIVER.md` (16 KB)
+- ✅ `docs/RPI5_USB_DEPLOYMENT.md` (12 KB)
+- ✅ `docs/USB_IMPLEMENTATION_SUMMARY.md` (this file)
 
 ### Scripts
-- ✅ `/home/k/futura/scripts/create-rpi5-usb-image.sh` (6.5 KB, executable)
+- ✅ `scripts/create-rpi5-usb-image.sh` (6.5 KB, executable)
 
 ### Manifest Updates
-- ✅ `/home/k/futura/docs/DRIVERS_MANIFEST.md` (updated)
-- ✅ `/home/k/futura/drivers/src/lib.rs` (updated with exports)
+- ✅ `docs/DRIVERS_MANIFEST.md` (updated)
+- ✅ `drivers/src/lib.rs` (updated with exports)
 
 ---
 

@@ -1,7 +1,18 @@
-# ARM64 Port Status
+# ARM64 Port Status (Historical Snapshot)
 
-**Last Updated**: 2025-11-15
-**Status**: ✅ **FORK WORKING - MULTI-PROCESS SUPPORT FUNCTIONAL**
+**Last Updated**: 2025-11-15  
+**Snapshot Status**: ✅ **FORK WORKING - MULTI-PROCESS SUPPORT FUNCTIONAL** (not revalidated in this audit)
+
+**Audit Note (2026-01-22)**: This document reflects a 2025-11-15 snapshot. The audit below verifies code presence in the current tree, but runtime behavior has not been re-tested.
+
+## Audit Summary (2026-01-22)
+- Syscall table registers **183 handlers** in `platform/arm64/syscall_table.c` (some handlers may still be stubs).
+- Exception vectors are installed in `platform/arm64/arm64_vectors.S`.
+- MMU identity mapping is enabled in `platform/arm64/boot.S` (1GB @ 0x40000000).
+- PCI ECAM helpers exist in `platform/arm64/pci_ecam.c` and are used by `kernel/video/virtio_gpu.c`.
+- Apple Silicon drivers live under `platform/arm64/drivers/` (UART, RTKit, ANS2, DCP scaffolding).
+
+## Historical Snapshot (2025-11-15)
 
 ## Overview
 
@@ -433,7 +444,7 @@ The MMU enabled successfully on first try.
 
 **Conclusion**: ARM64 MMU fully operational with identity mapping. Multi-process support works with proper address space isolation.
 
-See docs/ARM64_BOOT_DEBUG.md for earlier investigation (250+ lines).
+See the ARM64 session notes under `docs/SESSION_2025_11_06*` for earlier investigation details.
 
 ## 2025-11-05 Session: Scheduler and Userland Bring-Up 🚀
 

@@ -99,7 +99,7 @@ You *could* keep kernel at low VA in TTBR0, but then:
 ### Required Changes
 
 #### 1. Change Kernel Link Address
-**File**: `platform/arm64/linker.ld` (or equivalent)
+**File**: `platform/arm64/link.ld` (or equivalent)
 ```
 OLD: . = 0x40000000;
 NEW: . = 0xFFFF000040000000;

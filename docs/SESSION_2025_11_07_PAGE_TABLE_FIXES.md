@@ -1,5 +1,7 @@
 # ARM64 Page Table Bugs Fixed - Session 2025-11-07
 
+> **Note**: Historical session log. Paths and line references reflect the author's environment at the time and may not match the current tree.
+
 ## Summary
 
 Fixed **two critical ARM64 page table bugs** that were preventing user-space execution. The system now successfully loads ELF binaries, maps pages, and attempts ERET to user mode.

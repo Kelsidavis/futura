@@ -199,7 +199,7 @@ run-headful: kernel disk
      ```
    - Update help-run documentation (lines 1066-1093) to reflect production build
 
-2. docs/CLAUDE.md
+2. README.md
    - Update "Build Commands" section to remove ENABLE_WAYLAND_DEMO mentions
    - Document that Wayland is the standard UI, not a demo
 
@@ -224,7 +224,7 @@ run-headful: kernel disk
 3. kernel/exec/elf64.c
    - Replace `#if ENABLE_WAYLAND_DEMO` with `#if ENABLE_WAYLAND_TEST_CLIENTS` for test clients only
 
-4. docs/CLAUDE.md
+4. README.md
    - Document ENABLE_WAYLAND_TEST_CLIENTS as optional testing flag
 
 **Verification**:
@@ -308,7 +308,7 @@ run-headful: kernel disk
    - No need to set obscure build flags to get a working system
 
 4. **Documentation**:
-   - CLAUDE.md reflects production architecture
+   - README.md reflects production architecture and build flow
    - No references to "demo mode"
    - Clear documentation of optional test client flags
 

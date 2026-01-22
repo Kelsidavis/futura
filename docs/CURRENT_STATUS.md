@@ -1,45 +1,58 @@
 # Current Status — January 2026
 
-**Last Updated**: 2026-01-21
+**Last Updated**: 2026-01-22
+
+**Audit Note (2026-01-22)**: The sections below were audited against the current tree. Code presence and build wiring were verified where possible; **runtime/perf claims were not re-run** unless explicitly stated.
 
 ## Overview
 
-Futura OS has reached a significant milestone with a fully functional x86-64 kernel and rapidly maturing ARM64 port. The system now provides comprehensive memory management, a rich userland environment, and multi-platform support.
+Futura OS has a complete x86-64 implementation in-tree and a substantial ARM64 port. The repository includes kernel, userland services, host tooling, and tests; runtime validation depends on the latest test logs in the repo root (for example, `qemu.log`).
+
+## Runtime Validation (2026-01-22, `make run`)
+
+Captured in `qemu.log`:
+- x86-64 boot reached idle loop; PMM/heap/MM/timer/ACPI/VFS/init completed.
+- virtio-gpu probe failed in QEMU; framebuffer fallback used (1024x768).
+- init staged `futura-wayland` and `wl-term`; compositor exec started.
+- init stub waited for Wayland socket (1000 attempts) and warned the socket was not found; `wl-term` exec attempted anyway.
+- `make run AUTOEXIT=1` did not exit within 120s; QEMU remained in the Wayland socket wait path.
+
+**Implication:** The Wayland compositor is present and launches, but the socket handshake did not complete in this run.
 
 ## Recent Achievements
 
-### x86-64 Platform (Primary) — Production Ready
+### x86-64 Platform (Primary) — Reference Build (Implementation Complete In-Tree)
 
 **Advanced Memory Management (Phase 3 Complete)**
-- **Copy-on-write fork**: Hash table-based reference counting with optimizations for sole-owner pages. Dramatically reduces memory overhead for fork-exec patterns.
-- **File-backed mmap**: VFS integration via `fut_vfs_mmap()` with eager loading and vnode tracking. Foundation for demand paging.
+- **Copy-on-write fork**: Hash table-based reference counting with optimizations for sole-owner pages.
+- **File-backed mmap**: VFS integration via `fut_vfs_mmap()` with eager loading and vnode tracking.
 - **Partial munmap**: VMA splitting handles edge shrinking and middle-section removal while preserving file backing.
 - **Comprehensive syscalls**: `fork`, `execve`, `mmap`, `munmap`, `brk`, `nanosleep`, `waitpid`, `pipe`, `dup2`, and more.
 
 **Rich Userland Environment (Phase 4 In Progress)**
-- **Interactive shell**: 32+ built-in commands (cat, grep, wc, find, ls, cp, mv, etc.) with full pipe, redirection, and job control support.
-- **Wayland compositor**: Multi-surface rendering with window decorations, drop shadows, damage-aware compositing (>30% speedup), and frame throttling.
+- **Interactive shell**: Built-in commands with pipes, redirection, and job control (see `src/user/shell/`).
+- **Wayland compositor**: Multi-surface rendering, decorations/shadows, damage-aware compositing, and frame throttling (see `src/user/compositor/futura-wayland/`).
 - **libfutura runtime**: crt0, syscall veneers, malloc (brk-backed), printf/vprintf, string utilities.
 - **System services**: init (PID 1), fsd (filesystem daemon), posixd (POSIX compat), netd (UDP bridge), registryd (service discovery).
 
 **Filesystem & Storage**
-- **RamFS**: Production-ready root filesystem with full VFS integration.
-- **FuturaFS**: Log-structured filesystem with host-side tools (`mkfutfs`, `fsck.futfs`) and crash consistency validation.
+- **RamFS**: Root filesystem with full VFS integration.
+- **FuturaFS**: Log-structured filesystem code + host tools (`build/tools/mkfutfs`, `build/tools/fsck.futfs`) and crash-test scripts (`tests/scripts/futfs_crash_gc.sh`).
 - **DevFS**: Device node access (`/dev/console`, etc.).
 - **File-backed mmap**: Integrated with VFS for memory-mapped I/O.
 
 **Distributed FIPC**
-- Host transport library for remote communication.
-- UDP bridge daemon (netd) for distributed IPC.
-- Service registry with HMAC-SHA256 capability protection.
-- Regression test suite (loopback, capability, AEAD, metrics).
+- Host transport library for remote communication (`host/transport` → `build/lib/libfipc_host.a`).
+- UDP bridge daemon (`src/user/netd`).
+- Service registry (`src/user/svc_registryd`, HMAC helpers in `kernel/crypto/`).
+- Regression tests under `tests/` (loopback, capability, metrics, etc.).
 
-### ARM64 Platform — Multi-Process Support Working! 🎉
+### ARM64 Platform — Substantial Port (Implementation In-Tree)
 
-**Status**: Full process lifecycle (fork → exec → wait → exit) operational!
+**Status**: Syscall table registers 183 handlers in `platform/arm64/syscall_table.c`. Runtime status is based on historical logs and has not been revalidated in this audit.
 
 **Working Components**
-- **177 syscalls**: Linux-compatible ABI (x8=syscall, x0-x7=args) covering:
+- **183 syscall handlers wired**: Linux-compatible ABI (x8=syscall, x0-x7=args) covering:
   - Process management: fork (clone), exec, wait, exit
   - File I/O: openat, close, read, write, fstat, lseek, readv, writev
   - Filesystem: mkdirat, unlinkat, renameat, faccessat, fchmodat
@@ -51,18 +64,18 @@ Futura OS has reached a significant milestone with a fully functional x86-64 ker
   - Advanced I/O: splice, vmsplice, sendfile, sync_file_range
   - And more: futex, eventfd, signalfd, inotify, capabilities, quotactl, mount
 
-- **Exception handling**: All 16 ARM64 exception vectors installed and working.
-- **EL0/EL1 transitions**: Context switching between kernel and userspace fully operational.
-- **Platform initialization**: GICv2 interrupts, ARM Generic Timer, PL011 UART, physical memory manager (1 GB).
-- **Userland runtime**: ARM64-specific crt0, syscall wrappers, working demo programs.
+- **Exception handling**: ARM64 exception vectors are installed in `platform/arm64/arm64_vectors.S`.
+- **EL0/EL1 transitions**: Context switching and SVC entry paths exist in `platform/arm64/`.
+- **Platform initialization**: GICv2, ARM Generic Timer, PL011 UART, and PMM code present in `platform/arm64/`.
+- **Userland runtime**: ARM64 crt0 + syscall wrappers under `src/user/libfutura/`.
 
 **MMU Status**
-- ✅ **Enabled and working** with identity mapping (1GB @ 0x40000000).
-- Full virtual memory support operational.
+- ✅ **Enabled** with identity mapping (1GB @ 0x40000000 in `platform/arm64/boot.S`).
+- Per-task MMU and VMA code exists in `kernel/memory/` (runtime validation not re-run).
 - Page tables: L1/L2 hierarchy with 2MB block entries.
-- Multi-process support fully functional (fork/exec/wait/exit all working).
+See `docs/ARM64_STATUS.md` for the historical snapshot and `docs/ARM64_REFACTORING_STATUS.md` for current refactor notes.
 
-See `docs/ARM64_STATUS.md` for detailed ARM64 progress.
+## Historical Session Notes (Not Revalidated in This Audit)
 
 ## Recent Completions (November 27, 2025)
 
@@ -473,7 +486,7 @@ See `docs/ARM64_STATUS.md` for detailed ARM64 progress.
   - futura_posix.h: Simplified to use sys/types.h in freestanding mode,
     eliminating 10 duplicate type definitions (off_t, dev_t, ino_t, etc.)
   - futura_init.h: Fixed broken __POSIX_TYPES_DEFINED guard (was never defined)
-  - shell/main.c: Fixed incorrect type (was int, now int32_t) with proper guard
+  - src/user/shell/main.c: Fixed incorrect type (was int, now int32_t) with proper guard
 - ✅ **time_t/clockid_t standardization**: Fixed user/time.h to use proper
   __time_t_defined and __clockid_t_defined guards instead of incorrect
   #ifndef time_t / #ifndef clockid_t macro checks
@@ -693,6 +706,7 @@ Recent performance highlights (x86-64):
 - `CONTRIBUTING.md` — Coding standards, commit conventions, workflow.
 - `docs/ARM64_STATUS.md` — Detailed ARM64 platform progress.
 - `docs/ARCHITECTURE.md` — System architecture and design principles.
+- `docs/DESKTOP_ROADMAP.md` — Roadmap to a functional desktop environment.
 - `docs/RELEASE.md` — Reproducible build and signing pipeline.
 - `docs/TESTING.md` — Test infrastructure and coverage.
 

@@ -53,7 +53,7 @@ Phase 2 successfully established a **unified multi-architecture foundation** for
 
 **Components:**
 
-#### **Headers** (`include/arch/arm64/regs.h`)
+#### **Headers** (`include/platform/arm64/regs.h`)
 - CPU context structures for cooperative and preemptive switching
 - System register definitions (EL0-EL3, PSTATE, SCTLR)
 - Exception vector table offsets

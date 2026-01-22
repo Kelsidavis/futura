@@ -1,66 +1,68 @@
 # Futura OS Userland
 
-This directory contains all user-space services and applications for Futura OS Phase 3.
+This directory contains user-space services, utilities, and demos. Most components communicate over FIPC and link against `libfutura`.
 
 ## Directory Structure
 
 ```
 src/user/
-├── init/               # Init system (PID 1)
-├── futurawayd/         # FuturaWay display compositor
-├── posixd/             # POSIX runtime daemon
-├── fsd/                # Filesystem daemon
-│   └── backends/       # Filesystem backend drivers
-├── libfutura/          # User-space library
-├── futura_ui/          # UI widget toolkit
-└── demo/               # Demo applications
+├── libfutura/            # C runtime, syscall veneers, printf/malloc
+├── init/                 # PID 1 / service bootstrap
+├── fsd/                  # Filesystem daemon
+├── posixd/               # POSIX compatibility daemon
+├── netd/                 # UDP bridge for distributed FIPC
+├── svc_registryd/        # Service registry + capability auth
+├── shell/                # Interactive shell (pipes, redirects, job control)
+├── fbtest/               # Framebuffer demo
+├── futurawayd/           # Legacy display server
+├── compositor/           # Wayland compositor (futura-wayland)
+├── services/winsrv/      # Legacy window server
+├── apps/winstub/         # Legacy window client
+├── clients/              # Wayland demo clients (wl-simple, wl-colorwheel, wl-term)
+├── apps/                 # Additional app stubs
+├── sys/                  # Generated FIPC glue + syscall shims
+├── stubs/                # Init/ELF stub binaries
+├── cat/ echo/ wc/         # Basic utilities
+├── arm64_gfxtest/        # ARM64 graphics test
+└── arm64_uidemo/         # ARM64 UI demo
 ```
 
 ## Service Architecture
 
-All userland services communicate via **FIPC** (Futura Inter-Process Communication):
+Core daemons:
+- **init** — PID 1; starts the service graph
+- **fsd** — filesystem daemon
+- **posixd** — POSIX compatibility layer over FIPC
+- **netd** — UDP bridge for distributed IPC
+- **svc_registryd** — service discovery with capability authentication
 
-- **init** (PID 1) - Service orchestration and management
-- **fsd** - Virtual filesystem management
-- **posixd** - POSIX syscall bridge
-- **futurawayd** - Display server and compositor
-
-## Protocol Headers
-
-Protocol headers are in `include/user/`:
-
-- `futura_init.h` - Init system API
-- `futura_way.h` - FuturaWay compositor protocol
-- `futura_posix.h` - POSIX daemon protocol
-- `futura_ui.h` - UI widget toolkit API
+Display stacks:
+- **Legacy**: `services/winsrv` + `apps/winstub`
+- **Wayland**: `compositor/futura-wayland` with clients in `clients/`
 
 ## Building
 
-Userland services are built separately from the kernel:
+From the repo root:
 
 ```bash
-make userland              # Build all userland services
-make userland-init         # Build init only
-make userland-futurawayd   # Build compositor only
-make userland-posixd       # Build POSIX daemon only
+make userland
 ```
 
-## Implementation Status
-
-- [ ] Init system
-- [ ] Filesystem daemon (fsd)
-- [ ] POSIX daemon (posixd)
-- [ ] FuturaWay compositor
-- [ ] FuturaUI toolkit
-- [ ] Demo applications
-
-## Testing
+Or directly from this directory:
 
 ```bash
-make qemu-x86_64-userland  # Test x86-64 with userland
-make qemu-arm64-userland   # Test ARM64 with userland
+make -C src/user            # build all userland services
+make -C src/user init        # build init only
+make -C src/user shell       # build shell only
+make -C src/user futurawayd  # build legacy display server
 ```
 
-## Documentation
+Notes:
+- On macOS, the userland Makefile builds a minimal subset (libfutura + init + stubs).
+- Set `PLATFORM=x86_64` or `PLATFORM=arm64` to control the target.
 
-See [Phase 3 Plan](../../docs/PHASE3_PLAN.md) for detailed specifications.
+## Related Docs
+
+- `docs/ARCHITECTURE.md`
+- `docs/CURRENT_STATUS.md`
+- `docs/WAYLAND_UI_STATUS.md`

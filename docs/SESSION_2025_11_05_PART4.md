@@ -1,4 +1,6 @@
 # ARM64 Bring-Up Session - Part 4
+
+> **Note**: Historical session log. Paths and line references reflect the author's environment at the time and may not match the current tree.
 ## Date: 2025-11-05
 
 ### Issue Investigated Today

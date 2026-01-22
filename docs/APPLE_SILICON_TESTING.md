@@ -445,7 +445,7 @@ Once tethered boot is working:
    - Interrupt latency
 
 4. **Document findings**:
-   - Update `docs/APPLE_SILICON_STATUS.md`
+   - Update `docs/APPLE_SILICON_IMPLEMENTATION.md`
    - Record any hardware quirks discovered
    - Note differences from documentation
 

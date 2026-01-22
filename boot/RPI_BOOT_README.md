@@ -31,7 +31,7 @@ The kernel receives control at `kernel_main` with:
 
 ### Stage 3: Kernel Initialization
 
-1. **Early boot** (`arch/arm64/boot.S`):
+1. **Early boot** (`platform/arm64/boot.S`):
    - Set up exception handlers (exception vectors)
    - Initialize CPU state (MAIR, TTBR registers)
    - Create page tables and enable MMU

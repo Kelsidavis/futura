@@ -1,4 +1,4 @@
-# Futura OS Porting Guide (Updated Oct 12 2025)
+# Futura OS Porting Guide (Updated Jan 22 2026)
 
 This guide captures the minimum checklist for bringing Futura OS to a new
 platform or firmware environment.

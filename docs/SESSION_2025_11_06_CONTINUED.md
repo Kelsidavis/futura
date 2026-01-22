@@ -1,5 +1,7 @@
 # ARM64 User-Space Execution - Session 2025-11-06 Continued
 
+> **Note**: Historical session log. Paths and line references reflect the author's environment at the time and may not match the current tree.
+
 ## Objective
 Fix user-space execution by providing identity mappings in user page tables.
 

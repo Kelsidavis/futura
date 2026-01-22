@@ -7,9 +7,11 @@
 
 ---
 
+> **Status (Jan 22 2026)**: Legacy design spec. The active Wayland compositor is `src/user/compositor/futura-wayland/`. `src/user/futurawayd/` is the legacy display server.
+
 ## 🪟 Overview
 **FuturaWay** is the graphical subsystem and window compositor for Futura OS.  
-It operates as a **user-space daemon (`futurawayd`)** built entirely on the FIPC protocol.  
+It operates as a **user-space daemon (`futura-wayland`)** built on the FIPC protocol.  
 FuturaWay is *Wayland-compatible* yet streamlined for Futura’s zero-copy, async event model.
 
 ---
@@ -89,10 +91,10 @@ All messages are transmitted via FIPC channels.
 ## 🧰 Components
 | Component | Role |
 |------------|------|
-| `futurawayd` | Main compositor daemon; controls display and input. |
-| `futuraui` | Toolkit providing widgets, layout, and event dispatch. |
+| `futura-wayland` | Main compositor daemon; controls display and input. |
+| `futuraui` | Toolkit providing widgets, layout, and event dispatch (planned). |
 | `fipc` | Underlying IPC channel layer for all communication. |
-| `drivers/gpu` | Backend for hardware acceleration. |
+| `kernel/video` + `drivers/video` | Backend for framebuffer + GPU integration. |
 
 ---
 

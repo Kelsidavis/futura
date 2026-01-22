@@ -40,7 +40,7 @@ rustup target add aarch64-unknown-linux-gnu
 ### Step 1: Prepare Build Environment
 
 ```bash
-cd /home/k/futura
+cd /path/to/futura
 export CROSS_COMPILE=aarch64-linux-gnu-
 export ARCH=arm64
 export BUILD_MODE=release
@@ -453,7 +453,7 @@ if let Ok(addr) = controller.enumerate_device(device) {
 - **Raspberry Pi 5 Datasheet**: https://datasheets.raspberrypi.com/rpi5/raspberry-pi-5-datasheet.pdf
 - **USB 2.0 Specification**: https://www.usb.org/document-library/usb-20-specification
 - **Linux USB Subsystem**: https://www.kernel.org/doc/html/latest/driver-api/usb/
-- **Futura OS Docs**: /home/k/futura/docs/USB_DRIVER.md
+- **Futura OS Docs**: docs/USB_DRIVER.md
 
 ## Support
 

@@ -1,5 +1,7 @@
 # ARM64 Fork X7 Register Corruption Mystery
 
+> **Note**: This document contains historical path/line references from the original author environment; adjust paths for the current tree.
+
 ## Status
 **UNRESOLVED** - Extensive investigation conducted, critical exception handler bugs fixed, root cause still unknown
 

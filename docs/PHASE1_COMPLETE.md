@@ -91,7 +91,7 @@ Phase 1 of Futura OS is complete. The nanokernel foundation is fully operational
 - **ELF Post-Processing:** Multiboot2 header placement tool
 - **ISO Generation:** GRUB2 bootable ISO creation
 - **Status:** Clean builds, no warnings
-- **Files:** `Makefile`, `tools/fix_multiboot_header.c`
+- **Files:** `Makefile`, `tools/fix_multiboot_offset.py`
 
 ### ✅ Test Harness
 - **FIPC Test:** Sender/receiver threads with message validation

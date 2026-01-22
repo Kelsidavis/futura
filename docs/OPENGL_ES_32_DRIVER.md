@@ -1,5 +1,7 @@
 # OpenGL ES 3.2 Driver for Raspberry Pi 3/4/5
 
+> **Status (Jan 22 2026)**: Design/roadmap doc. The corresponding drivers are not integrated into the kernel. See `docs/DRIVERS_MANIFEST.md` for the current in-tree driver inventory.
+
 ## Overview
 
 This document describes the OpenGL ES 3.2 graphics API driver for Futura OS, providing a modern graphics interface for Raspberry Pi 3/4/5 platforms. The driver wraps the underlying GPU capabilities (V3D 3D acceleration on RPi4/5, VideoCore IV on RPi3) with a standardized OpenGL ES 3.2 API.

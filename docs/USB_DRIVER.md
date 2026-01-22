@@ -1,5 +1,7 @@
 # USB Driver for Futura OS
 
+> **Status (Jan 22 2026)**: Design/roadmap doc. The corresponding drivers are not integrated into the kernel. See `docs/DRIVERS_MANIFEST.md` for the current in-tree driver inventory.
+
 ## Overview
 
 The Futura OS USB driver provides comprehensive USB Host Controller support for Raspberry Pi 3, 4, and 5 platforms. This driver implements the USB 2.0/3.0 protocol stack with support for device enumeration, classification, and power management.

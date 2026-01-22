@@ -1,6 +1,6 @@
 # Futura OS
 
-**A Modern Capability-Based Nanokernel Operating System**
+**A capability-first nanokernel OS with message-passing userland**
 
 <div align="center">
   <img src="Rory the Ouroboros.png" alt="Rory the Ouroboros - Futura OS Mascot" width="280" />
@@ -14,76 +14,25 @@ Licensed under Mozilla Public License 2.0 — see [LICENSE](LICENSE)
 
 ## 🚀 Overview
 
-Futura OS is a capability-first nanokernel that keeps the core minimal—time, scheduling, IPC, and hardware mediation live in the kernel while everything else runs as message-passing services over FIPC. The current development focus is on building out a practical userland surface so real applications can execute against the kernel primitives.
+Futura OS is a capability-based nanokernel that keeps the core minimal (time, scheduling, IPC, and hardware mediation) and pushes policy into userland services connected via FIPC (Futura Inter-Process Communication). The repository includes the kernel, userland services, host tooling, and test harnesses used to validate the end-to-end stack.
 
-### Status Snapshot — Updated Jan 21 2026
+### Status Snapshot — Updated Jan 22 2026
 
-- **Kernel**: Advanced memory management with COW fork, file-backed mmap, and partial munmap; comprehensive syscall surface (`fork`, `execve`, `mmap`, `munmap`, `brk`, `nanosleep`, `waitpid`, `pipe`, `dup2`); full test suite with 18 automated tests for multiprocess support, dup2, pipes, and signals.
-- **VFS**: Path resolution + RamFS production-ready; file-backed mmap integrated with eager loading; FuturaFS implementation complete with host-side tools.
-- **Shell & Userland**: 32+ built-in commands with pipes, redirections, job control, and history; `libfutura` provides crt0, syscall veneers, heap allocator, and formatted I/O.
-- **Distributed FIPC**: Host transport and registry daemons stable; remote UDP bridge for distributed communication.
-- **Wayland Compositor**: Multi-surface capable with window decorations, drop shadows, damage-aware compositing, and frame throttling.
-- **ARM64 Port**: Full multi-process support with 177 syscalls, MMU enabled with identity-mapped L1/L2 tables, virtio-blk/net/gpu parity via PCI ECAM, and async network + FuturaFS selftests now running. **Apple Silicon M2 support** with boot (AIC, UART, m1n1 payload) and storage (RTKit, ANS2 NVMe) stacks ready for on-hardware testing.
+- **Kernel core**: Capability-backed object model, scheduler + wait queues, per-task MMU contexts, COW fork, file-backed mmap, and a broad Linux-like syscall surface in `kernel/`.
+- **Storage + VFS**: RamFS + devfs in the kernel; FuturaFS tooling and log-structured experiments in `tools/` and `subsystems/`.
+- **Userland**: `init`, `fsd`, `posixd`, `netd`, `svc_registryd`, and `libfutura` under `src/user/`, plus a Unix-like shell with pipes, redirection, and job control.
+- **Graphics**: Legacy window server (`services/winsrv` + `apps/winstub`) and a Wayland compositor (`src/user/compositor/futura-wayland`) with demo clients in `src/user/clients/`.
+- **Platforms**: x86-64 is the reference build; ARM64 port and Apple Silicon bring-up live under `platform/arm64/`.
 
-### What's new — Updated Nov 15 2025 (earlier updates)
-
-**ARM64 breakthroughs:**
-- **Fork stability**: Fixed the ARM64 `fork()` return path by flushing TLBs after TTBR0 switches, eliminating ERET faults and making multi-process workloads reliable across all 177 syscalls.
-- **MMU enabled**: Identity-mapped L1/L2 page tables now stay active at runtime, bringing per-task virtual memory semantics and copy-on-write behavior to the ARM64 port.
-
-**Parity + coverage improvements:**
-- **Virtio driver parity**: virtio-blk, virtio-net, and virtio-gpu all run through the PCI ECAM path on ARM64, giving the graphics, networking, and block stacks the same coverage as x86-64.
-- **Async selftests**: Network and FuturaFS async boot tests now run on ARM64 (no more stubs), so the platform exercises the same crash-consistency and socket harnesses at boot.
-
-**Phase 3 memory management recap:**
-- **Copy-on-write (COW) fork**: Process creation shares pages between parent and child, copying only on write via page fault handler. Hash table-based reference counting tracks shared pages with optimizations for sole-owner cases. Dramatically reduces fork() memory overhead and enables efficient fork-exec patterns.
-- **File-backed mmap**: VFS-backed memory mappings through `fut_vfs_mmap()`. Files are eagerly loaded with vnode reference counting. VMAs track file backing for future demand paging.
-- **Partial munmap with VMA splitting**: `munmap()` handles shrinking VMAs from edges or splitting middle sections while preserving file backing.
-
-**Userland focus (Shell & utilities):**
-- **32+ shell built-in commands**: Comprehensive Unix-like shell with full support for pipes (`|`), input/output redirection (`<`, `>`, `>>`), job control (`&`, `fg`, `bg`), and command history with arrow keys + tab completion.
-  - **File operations**: `cat`, `cp` (multi-file), `mv` (atomic rename), `rm` (with `-f`), `touch`, `mkdir` (recursive `-p`), `rmdir`, `ls` (with `-a`, `-l` flags)
-  - **Text processing**: `grep`, `wc`, `head`, `tail`, `cut`, `tr`, `sort`, `uniq`, `paste`, `diff`, `tee`
-  - **Utilities**: `find`, `echo`, `test`, `[`, `pwd`, `cd`, `clear`, `help`, and more
-  - **Stdin support across all tools**: Proper pipeline integration for Unix-style data flow.
-
-**Advanced compositor & tooling:**
-- **Wayland compositor** with multi-surface support, window decorations, drop shadows, damage-aware partial compositing (>30% speedup), and frame throttling for smooth rendering.
-- **FuturaFS host tools**: `mkfutfs` (formats images with configurable segments), `fsck.futfs` (offline integrity checker with repair).
-
-**Kernel & runtime stability:**
-- **Scheduler wait queues**: `fut_waitq` delivers blocking semantics for `waitpid`, timers, and future I/O without spinning.
-- **Console character device**: `/dev/console` via TTY driver with automatic newline normalization.
-- **libfutura**: crt0, syscall veneers, heap allocator backed by `sys_brk`, lightweight `printf` on `write(2)`, and string utilities.
-
-**ARM64 platform bring-up:**
-- **177 working syscalls**: Full Linux-compatible ABI (x8=syscall, x0-x7=args) including fork, exec, wait, networking, filesystem, I/O multiplexing, signals, timers, futex, and more.
-- **Multi-process support**: Complete fork → exec → wait → exit cycle working with EL0/EL1 context switching.
-- **MMU enabled**: Identity-mapped L1/L2 tables stay active with TLB invalidation on every TTBR0 switch, so per-task virtual memory and copy-on-write behavior now match the x86-64 build.
-- **Virtio driver parity**: virtio-blk, virtio-net, and virtio-gpu all use the PCI ECAM implementation, providing shared coverage across storage, networking, and graphics stacks.
-- **Async selftests**: Network and FuturaFS async boot harnesses now execute on ARM64 just like x86-64 when the `async-tests` flag is set.
-- **QEMU virt platform**: Exception vectors, GICv2 interrupts, ARM Generic Timer, PL011 UART, physical memory manager (1 GB).
-- **Apple Silicon M2 support** (MacBook Pro A2338):
-  - **Phase 1 (Boot): ✅ Complete** — Device tree (M1/M2/M3 detection), Apple AIC interrupt controller, Apple UART (s5l-uart), m1n1 payload (Linux ARM64 image format)
-  - **Phase 2 (Storage): ✅ Complete** — RTKit IPC mailbox protocol, ANS2 NVMe driver with TCB programming, device tree hardware address parsing
-  - **Build system**: `make m1n1-payload` creates bootable Image.gz (200 KiB compressed) for m1n1 bootloader
-  - **Ready for hardware testing** — All drivers implemented, awaiting physical MacBook Pro M2
-- **Userland runtime**: crt0 for ARM64, syscall wrappers, working demo programs.
-
-**Recent quality improvements (Jan 20-21 2026):**
-- **Code documentation**: Corrected outdated "stub" and "TODO" comments in 15+ syscall implementations to accurately reflect completion status
-- **Test infrastructure**: Fixed test harness with atomic counters, enabling reliable automated testing (18/18 tests passing)
-- **License compliance**: Added MPL-2.0 headers to 22 kernel files (performance tests, core files, syscalls) — 100% coverage achieved
-- **Code cleanup**: Removed commented-out unused code and disabled debug printfs from sys_chmod.c and sys_read.c
-- **Header standardization**: Completed copyright header rollout across all kernel source files and public API headers
-- **VFS documentation**: Updated implementation guide to reflect symbolic link support and O_CREAT completion
-- **API header documentation**: Added comprehensive docs to device/signal headers (perf_clock.h, chrdev.h, devfs.h, signal.h)
-- **Named constants**: Replaced magic numbers with O_ACCMODE, O_CLOEXEC, and file flags in capability.c and sys_dup2.c
-- **POSIX compliance**: Added comprehensive file mode constants to sys/stat.h (S_IFMT, S_ISDIR, S_ISUID, permission masks)
-
-See `docs/CURRENT_STATUS.md` and `docs/ARM64_STATUS.md` for deeper dives into the latest changes and platform-specific progress.
+For deeper status notes see `docs/CURRENT_STATUS.md` and `docs/ARM64_STATUS.md`.
 
 **Website**: [https://futuraos.com/](https://futuraos.com/)
+
+---
+
+## 🗺️ Current Milestone: Phase 4 – Userland Foundations
+
+Status: 🚧 In progress (see `docs/STATUS.md` for milestone tracking and OKRs).
 
 ---
 
@@ -91,354 +40,96 @@ See `docs/CURRENT_STATUS.md` and `docs/ARM64_STATUS.md` for deeper dives into th
 
 ```
 futura/
-├── drivers/
-│   ├── rust/                # Rust staticlib drivers (virtio-blk, virtio-net, common FFI)
-│   ├── tty/                 # Console character device → serial with line discipline
-│   ├── video/               # Framebuffer MMIO, PCI VGA, virtio-gpu drivers
-│   └── input/               # PS/2 keyboard and mouse drivers
-├── docs/                    # Architecture, status, testing, release documentation
-├── include/
-│   ├── kernel/              # Kernel-facing headers
-│   ├── shared/              # Shared ABI types (e.g., fut_timespec)
-│   └── user/                # Userland syscall shims & libc-lite headers
-├── kernel/
-│   ├── memory/              # fut_mm (per-task MMU contexts, COW, mmap)
-│   ├── scheduler/           # Runqueue, wait queues, stats
-│   ├── ipc/                 # FIPC core, object table, registry
-│   ├── vfs/                 # Path resolution, RamFS, devfs, FuturaFS
-│   ├── fs/                  # FuturaFS kernel integration
-│   ├── blockdev/            # Block core, virtio-blk bridge
-│   ├── net/                 # FuturaNet, loopback device
-│   ├── video/               # Framebuffer management, graphics
-│   ├── sys_*.c              # System call implementations
-│   └── tests/               # Kernel self-tests (run at boot)
-├── platform/
-│   ├── x86_64/              # Primary hardware target (QEMU/KVM reference)
-│   │   └── drivers/         # x86-specific: AHCI, PCI, APIC
-│   └── arm64/               # ARM64 port: QEMU virt + Apple Silicon M2 (complete boot & storage infrastructure)
-├── src/user/
-│   ├── libfutura/           # Minimal C runtime (crt0, malloc, printf, syscalls)
-│   ├── shell/               # 32+ built-in commands, pipes, redirects, job control
-│   ├── fsd/                 # Filesystem daemon
-│   ├── posixd/              # POSIX compatibility daemon
-│   ├── init/                # Process 1, service bootstrap
-│   ├── svc_registryd/       # Service discovery with HMAC protection
-│   ├── netd/                # UDP bridge for distributed FIPC
-│   ├── compositor/          # Wayland server (multi-surface, decorations, shadows)
-│   ├── clients/             # Wayland client demos (wl-simple, wl-colorwheel)
-│   ├── fbtest/              # Framebuffer sample app exercising syscalls
-│   ├── services/winsrv/     # Legacy window server (pre-Wayland)
-│   └── ...                  # Various utilities and demos
-├── subsystems/
-│   ├── posix_compat/        # int80 dispatcher bridging POSIX ABIs to Futura
-│   └── futura_fs/           # Log-structured FuturaFS (host-side tools, kernel skeleton)
-├── tests/                   # Host-side FIPC regression and filesystem tests
-├── tools/                   # Build utilities (mkfutfs, fsck.futfs)
-├── third_party/wayland/     # Vendored Wayland 1.23.0 libraries
-├── host/                    # Host-side transport library for remote FIPC
-└── iso/                     # GRUB boot configuration and staging
+├── kernel/              # Nanokernel core (mm, ipc, scheduler, vfs, syscalls)
+├── platform/            # Platform HAL + arch-specific drivers (x86_64, arm64)
+├── drivers/             # Rust/C driver sources (virtio, input, video, tty)
+├── src/user/            # Userland services, shell, compositor, demos
+├── include/             # Kernel + userland headers
+├── subsystems/          # Optional subsystems (posix_compat, futura_fs)
+├── host/                # Host-side FIPC transport + tooling
+├── tools/               # mkfutfs, fsck.futfs, release helpers
+├── tests/               # Host regression + perf suites
+├── docs/                # Architecture, status, porting, testing
+├── iso/                 # GRUB boot artifacts
+├── mk/ scripts/         # Build helpers
+└── build/               # Build output (kernel, initramfs, tools)
 ```
-
-Futura currently targets x86-64 as the primary architecture (QEMU/KVM reference builds). The ARM64 port under `platform/arm64/` has achieved full multi-process support with 177 working syscalls and is rapidly approaching parity with x86-64.
 
 ---
 
-## 🔧 Building
+## 🔧 Building & Running
 
-### Prerequisites
-
-- GCC/Clang with C23 support
-- GNU Make & Binutils
-- Rust toolchain (`rustc` + `cargo`) for kernel drivers (`make rust-drivers`)
-- QEMU (optional, for kernel ISO boot tests)
-- Optional: OpenSSL (`-lcrypto`) if you want to run remote FIPC AEAD tests (auto-skip otherwise)
-
-### Quick Start (host-side libraries & tests)
+### Common targets
 
 ```bash
-# Build host transport library + userland runtime
-make -C host/transport
-make -C src/user/libfutura
-make -C tests
+# Full rebuild (kernel + userland + ISO staging)
+make clean && make
 
-# Run the remote FIPC regression suite (examples)
-./build/tests/fipc_remote_loopback
-./build/tests/fipc_remote_capability
-./build/tests/fipc_remote_aead_toy
-./build/tests/fipc_remote_metrics
-```
-
-### Kernel (QEMU ISO)
-
-```bash
-# Build Rust drivers + kernel + ISO
+# Build Rust drivers (virtio-blk/net/gpu)
 make rust-drivers
-make
-cp build/bin/futura_kernel.elf iso/boot/
-grub-mkrescue -o futura.iso iso/
 
-# Boot with serial output
-qemu-system-x86_64 -cdrom futura.iso -serial stdio -display none -m 128M
+# Build host tools (mkfutfs, fsck.futfs, etc.)
+make tools
 ```
 
-On boot you should see RAM/VMM init, device registration (including `/dev/console`), FIPC bring-up, and bootstrap threads that exercise VFS and the framebuffer user smoke test.
-
-### Desktop Step 2 demo
+### Run under QEMU (direct kernel + initramfs)
 
 ```bash
-# Build + boot the winsrv/winstub loop (enable logs with DEBUG_WINSRV=1)
-make DEBUG_WINSRV=1 desktop-step2
+# Headless run (serial in terminal)
+make run
+
+# Headful run with GTK display
+make run-headful
+
+# Headful with VNC
+make VNC=1 VNC_DISPLAY=unix:/tmp/futura-vnc run-headful
 ```
 
-The QEMU console will show the window server announcing readiness and the stub client drawing its three test rectangles:
-
-```
-[WINSRV] ready 800x600 bpp=32
-[WINSRV] create 320x200 -> id=1
-[WINSRV] damage id=1 rect x=0 y=0 w=320 h=200
-[WINSTUB] connected; created surface 1 (320x200)
-[WINSTUB] drew 3 rects; bye
-```
-
-The stub throttles updates with short sleeps so the damage passes remain visible on hardware-backed framebuffers.
-
-### Wayland compositor demo
-
-Futura includes a mature Wayland server implementation with advanced compositor features:
+### ISO + harnessed test run
 
 ```bash
-# One-time setup: vendor Wayland libraries
-make third_party-wayland
+# Build GRUB ISO
+make iso
 
-# Build and run the Wayland demo
+# Automated QEMU harness (isa-debug-exit)
+make test
+```
+
+### Wayland demo
+
+```bash
 make wayland-step2
+# Optional headful run with auto-exit
+make run-headful VNC=1 VNC_DISPLAY=unix:/tmp/futura-vnc AUTOEXIT=1
 ```
 
-This builds the full Wayland server (`futura-wayland`) with multi-surface support, window decorations,
-drop shadows (configurable radius), damage-aware partial compositing (>30% speedup), and frame throttling.
-Client demos (`wl-simple`, `wl-colorwheel`) exercise the server's surface management and rendering.
-
-**Features**:
-- **Multi-surface compositing**: Layered surfaces with z-ordering
-- **Window decorations & shadows**: With configurable shadow radius
-- **Damage-aware updates**: Only recomposite changed regions (>30% speedup in M2)
-- **Frame throttling**: Smooth rendering at display refresh rates
-- **Backbuffer mode**: Off-screen rendering for advanced effects (opt-in)
-- **Premultiplied alpha**: Correct blending with transparency
-- **Environment variables** for feature toggle:
-  - `WAYLAND_BACKBUFFER=1` – Enable off-screen rendering (default disabled; allocator can exhaust with two 3 MiB buffers)
-  - `WAYLAND_DECO=1` – Window decorations
-  - `WAYLAND_SHADOW=1` – Drop shadow rendering
-  - `WAYLAND_RESIZE=1` – Window resize support
-  - `WAYLAND_THROTTLE=1` – Frame throttling
-
-> **Tip (headful runs)**  
-> The Wayland demo expects a linear framebuffer. When launching QEMU manually use either Bochs or
-> virtio GPU output, e.g.
->
-> ```bash
-> qemu-system-x86_64 \
->     -m 512 \
->     -serial stdio \
->     -drive if=virtio,file=futura_disk.img,format=raw \
->     -display gtk \
->     -vga none \
->     -device bochs-display \
->     -kernel build/bin/futura_kernel.elf \
->     -initrd build/initramfs.cpio \
->     -append "XDG_RUNTIME_DIR=/tmp WAYLAND_DISPLAY=wayland-0 WAYLAND_MULTI=1 \
->              WAYLAND_BACKBUFFER=1 WAYLAND_DECO=1 WAYLAND_SHADOW=1 \
->              WAYLAND_RESIZE=1 WAYLAND_THROTTLE=1 fb-fallback=1"
-> ```
->
-> Backbuffering is disabled by default; drop `WAYLAND_BACKBUFFER=1` from the command line unless you explicitly
-> want double-buffered rendering (and can tolerate the extra 6 MiB virtual allocation). Avoid the harness-only
-> `-device isa-debug-exit` flag when running interactively; otherwise QEMU will terminate as soon as the kernel finishes the demo.
-
-### Debugging
-
-Enable targeted tracing at build time by defining the relevant flag, for example:
+### Perf & crash tests
 
 ```bash
-make CFLAGS+=-DDEBUG_VFS   # verbose VFS path-walker logs
-make CFLAGS+=-DDEBUG_VM    # paging / large-page split diagnostics
-make CFLAGS+=-DDEBUG_BLK   # block stack + virtio-blk traces
-make CFLAGS+=-DDEBUG_NET   # FuturaNet + virtio-net driver traces
+make perf
+make perf-ci
+make futfs-crash-test
 ```
 
-`DEBUG_BLK` automatically propagates to the Rust virtio-blk driver (`--cfg debug_blk`) so the BAR/capability dumps only reappear when you opt in.
-
-### Rust driver builds
-
-### Filesystem utilities
-
-Run `make tools` to build the host-side helpers under `build/tools/`:
-
-- `mkfutfs` — formats a FuturaFS image. Useful flags:
-  - `--segments <N>` control total log segments
-  - `--segment-sectors <N>` set sectors per segment
-  - `--block-size <bytes>` select on-disk block granularity (default 512)
-  - `--inodes <N>` seed the inode high-water mark
-  - `--label <text>` stamp the volume label
-  Example: `build/tools/mkfutfs futfs.img --segments 64 --segment-sectors 16 --block-size 4096 --label Demo`
-
-- `fsck.futfs` — offline integrity checker/repair tool:
-  - `fsck.futfs --device futfs.img --dry-run` reports structural issues without touching the image
-  - `fsck.futfs --device futfs.img --repair` rewrites malformed directory streams and refreshes superblock counters
-  - Add `--gc` to opportunistically compact directories with heavy tombstone churn
-
-### Crash-consistency harness
-
-`make futfs-crash-test` regenerates a scratch image, forces a compaction panic (`futurafs.test_crash_compact=1`) to simulate power loss, reboots without the flag, then runs `fsck.futfs` in dry-run and repair modes. A `futfs_crash_gc: PASS` banner indicates the loop survived and post-crash metadata is clean.
-
-### Performance harness
-
-- `make perf` boots the kernel with `perf=on`, runs the deterministic IPC/scheduler/block/net microbenchmarks, and saves the summary lines to `build/perf_latest.txt` while streaming console output to the terminal.
-- `make perf-ci` reruns the harness and compares the latest results against `tests/baselines/perf_baseline.json`, failing the build if any percentile drifts beyond ±5 %.
-- To refresh the baseline after intentional optimisations, inspect `build/perf_latest.txt`, update the JSON with the new steady-state values, and commit both files together.
-
-### Release pipeline
-
-See `docs/RELEASE.md` for the reproducible build + signing workflow (`make repro`, `make release`, `make sbom`, `make sign`, `make metadata`, `make verify`) and integration notes for Cosign/SBOM tooling.
-
-Rust drivers live under `drivers/rust/` and compile to `staticlib` artifacts that the kernel links directly. You can rebuild them without touching the C pieces via:
-
-```bash
-make rust-drivers
-```
-
-`make clean` tears down both the C objects and the Cargo `target/` directories.
+See `docs/TESTING.md` for detailed test flows and troubleshooting.
 
 ---
 
-## 🧠 Architecture Highlights
+## 📚 Documentation Map
 
-- **Nanokernel core**: Deterministic cooperative scheduler, per-task MMU contexts with COW support, comprehensive syscall surface (fork, execve, mmap, munmap, brk, nanosleep, waitpid, pipe, dup2), and unified FIPC transport.
-
-- **FIPC everywhere**: Same capability-backed message path serves syscalls, GUI surfaces, distributed communication, and remote transports. Host tooling reuses kernel framing logic for testing without hardware.
-
-- **Capability security**: Tokens (handles) accompany every inter-process operation. Rights bitmaps enforce read/write/admin permissions on all kernel objects. Remote transports bind capabilities into HMAC-SHA256 headers to reject mismatches early.
-
-- **Advanced memory management**:
-  - Copy-on-write fork() with hash table-based page reference counting and optimizations for sole owners
-  - File-backed mmap with vnode tracking (supports future demand paging)
-  - Partial munmap with VMA splitting for fine-grained memory control
-  - Per-task MMU contexts owning page tables and driving CR3 switches
-  - Executable inheritance of clean address spaces with kernel half pre-mapped
-
-- **Scheduler & synchronization**: Cooperative scheduling with wait queues for `waitpid`, timers, and future I/O—no busy-waiting, no preemption overhead.
-
-- **Console + VFS**: `/dev/console` routes to serial with line discipline; RamFS powers the root filesystem; file-backed mmap enables memory-mapped I/O; devfs provides device access.
-
-- **Wayland compositor**: Multi-surface capable with window decorations, drop shadows, damage-aware partial compositing, frame throttling, and premultiplied-alpha blending.
-
-- **Comprehensive shell**: 32+ built-in commands with pipes, I/O redirection, job control, command history, and tab completion—enabling interactive scripting and workflow automation.
-
-- **Userland runtime**: crt0, syscall veneers, malloc backed by kernel heap growth, printf/vprintf stack, FIPC client library, and POSIX compatibility stubs for legacy code.
-
----
-
-## 🧪 Test & Demo Catalog
-
-**Kernel & IPC:**
-- `tests/fipc_*` — Host transport & security regression coverage (loopback, capability, header v1, AEAD, metrics, admin ops).
-- `kernel/tests/` — VFS smoke tests, framebuffer surface checks, syscall exercises (run at boot via serial log).
-
-**Storage & Filesystem:**
-- `tests/futfs_*` — FuturaFS host-mode unit tests and crash consistency validation.
-- `make futfs-crash-test` — Simulates power loss with panic injection, validates fsck recovery.
-- `tools/mkfutfs` — Image formatter with configurable segments/block size.
-- `tools/fsck.futfs` — Offline integrity checker with repair mode.
-
-**Wayland & Graphics:**
-- `tests/futuraway_*` — Compositor smoke & benchmark harnesses with deterministic framebuffer hashing for CI.
-- `src/user/compositor/futura-wayland/` — Full Wayland server with multi-surface support.
-- `src/user/clients/wl-simple`, `wl-colorwheel` — Client demos exercising compositor.
-- `src/user/fbtest` — Framebuffer demo using `mmap`, `nanosleep`, printf stack.
-
-**Shell & Utilities:**
-- `src/user/shell/` — 32+ built-in commands with pipes, redirections, job control, history, tab completion.
-- `make test` — Full system boot test with shell initialization.
-
-**Performance & Metrics:**
-- `make perf` — Deterministic IPC/scheduler/block/net microbenchmarks with percentile tracking.
-- `make perf-ci` — Compare against baseline, fail on >5% drift.
-- `build/perf_latest.txt` — Latest benchmark results.
-
----
-
-## 🗺️ Roadmap (Next Steps)
-
-**Phase 3 — Memory Management (✅ Complete)**
-1. ✅ Copy-on-write fork with reference counting
-2. ✅ File-backed mmap with eager loading
-3. ✅ Partial munmap with VMA splitting
-4. ✅ Comprehensive syscall surface (fork, execve, mmap, munmap, brk, nanosleep, waitpid, pipe)
-
-**Phase 4 – Userland Foundations**
-Status: 🚧 In Progress
-1. ✅ 32+ shell built-in commands with pipes, redirections, job control
-2. ✅ Wayland compositor with advanced compositing features
-3. 🚧 Full TTY input stack (extend `/dev/console` with canonical mode input, line discipline completion)
-4. 🚧 FuturaFS kernel integration via fsd FIPC bridge
-5. 🚧 Demand paging for file-backed mmap (page fault handler for unmapped pages)
-6. 🚧 Comprehensive test coverage for memory management edge cases
-
-**Phase 5 — Advanced Features (🚧 In Progress)**
-1. Distributed FIPC boot integration (automatic netd + registry startup)
-2. Enrich `libfutura` with formatted scanning, errno handling, threading helpers
-3. Signal handling support
-4. Additional subsystems (futex, semaphores, advanced IPC primitives)
-5. ✅ ARM64 multi-process support (177 syscalls working)
-6. ✅ ARM64 Apple Silicon M2 support — Phase 1 (boot) & Phase 2 (storage) complete
-7. ✅ ARM64 MMU enablement (identity-mapped L1/L2 tables live with TLB flushes on context switch)
-8. 🚧 ARM64 Apple Silicon M2 — Phase 3 (display/input), Phase 4 (networking)
-9. 🚧 ARM64 platform parity with x86-64 (drivers, networking, graphics on QEMU virt)
-10. Additional drivers (AHCI/SATA, Ethernet/WiFi, USB)
-
-**Future Enhancements (Planned)**
-- Multi-user support and permission model
-- Secure Boot integration
-- Audio/sound subsystem
-- Bluetooth and advanced wireless
-- GPU driver improvements and CUDA-like compute support
+- **Architecture**: `docs/ARCHITECTURE.md`
+- **Current status**: `docs/CURRENT_STATUS.md`
+- **ARM64 progress**: `docs/ARM64_STATUS.md`
+- **Desktop roadmap**: `docs/DESKTOP_ROADMAP.md`
+- **API surface**: `docs/API_REFERENCE.md`
+- **Testing guide**: `docs/TESTING.md`
+- **Porting**: `docs/PORTING_GUIDE.md`
 
 ---
 
 ## 🤝 Contributing
 
-We favour focused, well-tested patches. The project values quality kernel implementations and practical userland features. Good entry points:
-
-**Memory Management & Kernel:**
-- Add comprehensive tests for memory management (COW fork edge cases, file-backed mmap stress tests, munmap scenarios).
-- Implement demand paging for file-backed mmap (optimize from eager loading to lazy page-fault handler).
-- Extend signals support (currently scaffolding only).
-- Build advanced IPC primitives (futex, semaphores).
-
-**Userland & Shell:**
-- Expand `/dev/console` with full TTY input stack (canonical mode, input buffering, control characters).
-- Enhance shell scripting features (functions, arrays, advanced expansions).
-- Build additional userland utilities and tools using the syscall layer.
-- Polish `libfutura` with formatted scanning (scanf, strtol), proper errno handling, threading helpers.
-
-**Filesystem & Storage:**
-- Complete FuturaFS kernel integration via fsd FIPC bridge.
-- Build tools for filesystem analysis and debugging.
-- Add crash-recovery tests and validation.
-
-**Drivers & Platforms:**
-- Contribute memory-safe drivers in Rust (AHCI/SATA, Ethernet, USB).
-- ARM64 development: Stress-test the MMU path, extend virtio/display/input drivers, and keep the port aligned with x86-64 feature parity.
-- Apple Silicon M2: Test on MacBook Pro A2338 hardware, implement Phase 3 (DCP display driver), Phase 4 (WiFi/Ethernet).
-- Improve virtio-net driver integration.
-- Test ARM64 on real hardware (Raspberry Pi, Apple Silicon).
-
-**Testing & CI:**
-- Expand performance microbenchmark coverage.
-- Build integration tests for shell + filesystem workflows.
-- Add fuzzing harnesses for parser/protocol components.
-
-See [CONTRIBUTING.md](CONTRIBUTING.md) for coding style, commit conventions, and workflow details.
+We favor focused, well-tested patches. See [CONTRIBUTING.md](CONTRIBUTING.md) for coding style, commit conventions, and workflow details.
 
 ---
 
@@ -458,6 +149,3 @@ Rory is Futura's beloved mascot — a self-contained serpent embodying the etern
 
 - **Author**: Kelsi Davis
 - **Email**: [dumbandroid@gmail.com](mailto:dumbandroid@gmail.com)
-- **Issues/Discussions**: GitHub
-
-Built with ❤️ and Rory's wisdom for the future of operating systems.

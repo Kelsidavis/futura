@@ -1,12 +1,12 @@
 # Wayland Stack Bring-Up — Weeks 1–2
 
 ## Audit Snapshot (Jan 2026)
-- `third_party/wayland/` currently holds hand-written stub headers and C files; nothing usable ships in builds.
+- `third_party/wayland/` vendors Wayland 1.23.0 and builds static libs + `wayland-scanner` via `make third_party-wayland`.
 - `include/futura/compat/posix_shm.h` / `src/user/libfutura/posix_shm.c` expose placeholder APIs that do not interoperate with upstream libwayland expectations (no name unlink, zero-fill only).
-- Build system has no knowledge of Wayland artifacts; winsrv/winstub are still the default desktop payload.
+- Makefile ships a `third_party-wayland` target; winsrv/winstub remain the default desktop payload unless Wayland demos are enabled.
 
 ## Vendor Strategy Decision
-- **Approach**: vendor the official Wayland 1.23.x release tarball under `third_party/wayland/upstream/`, build static `libwayland-client.a`, `libwayland-server.a`, and the `wayland-scanner` tool using Meson/Ninja.
+- **Approach**: vendor the official Wayland 1.23.x release under `third_party/wayland/`, build static `libwayland-client.a`, `libwayland-server.a`, and the `wayland-scanner` tool using Meson/Ninja.
 - **Rationale**: keeps protocol compatibility with the wider ecosystem, avoids maintaining a divergent fork, and lets us cherry-pick upstream security fixes.
 - **Toolchain**: host `gcc` + Meson cross file tuned for freestanding build flags (no `dlopen`, `memfd_create`, signalfd, or libffi). We will statically link and disable optional deps (`wayland-drm`, `wayland-egl`).
 - **Artifacts**: copy the generated headers and static libs into `build/third_party/wayland/` for userland consumption; ship `wayland-scanner` into `build/tools/`.

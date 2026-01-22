@@ -215,7 +215,7 @@ Client receives: capability with restricted rights
 | Read operation | `futfs.c` | 1168-1195 | Rights-checked read |
 | Write operation | `futfs.c` | 1197-1242 | Rights-checked write |
 | Rights conversion | `futfs.c` | 625-637 | FS rights -> kernel rights |
-| FSD daemon | `fsd/main.c` | 1-925 | IPC relay (needs update) |
+| FSD daemon | `src/user/fsd/main.c` | 1-925 | IPC relay (needs update) |
 | Object system | `fut_object.c` | - | Kernel capability system |
 
 ## Next Actions (Priority Order)
@@ -230,7 +230,7 @@ Client receives: capability with restricted rights
 2. **Implement kernel capability syscalls**
    - `sys_read_cap`, `sys_write_cap`, `sys_fsync_cap`, `sys_lseek_cap`
    - `sys_handle_send`, `sys_handle_recv`
-   - Location: `kernel/syscalls/`
+   - Location: `kernel/` (`sys_*.c`)
    - Owner: Syscall team
 
 ### HIGH (Phase 2 - FSD Integration)
@@ -253,7 +253,7 @@ Client receives: capability with restricted rights
 5. **Performance benchmarking**
    - Compare cap-based vs FD-based
    - Document overhead
-   - Location: `tests/perf/`
+   - Location: `tests/baselines/` (baseline) and `build/perf_latest.txt` (latest)
    - Owner: Performance team
 
 ## Milestone Status

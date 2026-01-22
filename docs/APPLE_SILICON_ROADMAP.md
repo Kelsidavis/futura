@@ -1,8 +1,9 @@
 # Apple Silicon M2 Support Roadmap
 
 **Target Device**: MacBook Pro A2338 (M2)  
-**Status**: 🚧 **PLANNING PHASE**  
-**Started**: 2025-11-05
+**Status**: 🚧 **PHASE 3 IN PROGRESS**  
+**Started**: 2025-11-05  
+**Last Updated**: 2026-01-22
 
 ## Overview
 
@@ -56,7 +57,7 @@ Continue kernel init
 - [ ] **ARM Generic Timer**: Already have, verify compatibility
 
 ### Priority 2: Essential I/O
-- [x] **Apple NVMe (ANS2)**: Block storage access ✅ (driver structure complete, RTKit TBD)
+- [x] **Apple NVMe (ANS2)**: Block storage access ✅ (driver + RTKit scaffolding present)
 - [ ] **Apple GPIO**: Pin muxing and control
 - [ ] **USB-C PD**: Power delivery and serial console
 - [ ] **PCIe Controller**: For NVMe and other devices
@@ -74,7 +75,7 @@ Continue kernel init
 
 ## Implementation Plan
 
-### Phase 1: Boot Infrastructure (Week 1-2) 🚧 **IN PROGRESS**
+### Phase 1: Boot Infrastructure (Week 1-2) ✅ **COMPLETE**
 **Goal**: Get console output working
 
 1. ✅ **Add Apple platform detection** (COMPLETE)
@@ -109,7 +110,7 @@ Continue kernel init
    - Command submission queues with TCBs
    - Completion queues with phase bit tracking
    - Namespace management via IDENTIFY commands
-   - **RTKit integration complete** ⭐
+   - **RTKit IPC scaffolding complete** (protocol coverage WIP)
 
 2. **PCIe controller support** (NOT NEEDED)
    - ANS2 is not PCIe-attached (embedded in SoC)

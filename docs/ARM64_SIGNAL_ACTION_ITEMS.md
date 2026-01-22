@@ -1,5 +1,7 @@
 # ARM64 Signal Work — Action Items by Priority
 
+> **Note**: This document contains historical path/line references from the original author environment; adjust paths for the current tree.
+
 **Generated**: 2025-11-12
 **Status**: Ready to implement
 

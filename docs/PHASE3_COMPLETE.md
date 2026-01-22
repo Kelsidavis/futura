@@ -22,7 +22,7 @@ Phase 3 delivered comprehensive memory management infrastructure for Futura OS, 
 
 **Files**:
 - `kernel/memory/fut_mm.c` — Page reference counting, COW fault handler
-- `kernel/memory/page_fault.c` — Page fault dispatcher and COW path
+- `kernel/trap/page_fault.c` — Page fault dispatcher and COW path
 - `include/kernel/fut_mm.h` — MMU context and VMA structures
 
 ### File-Backed mmap
@@ -53,7 +53,7 @@ Phase 3 delivered comprehensive memory management infrastructure for Futura OS, 
 - Integrated with COW reference counting for proper cleanup
 
 **Files**:
-- `kernel/sys_munmap.c` — munmap syscall with VMA splitting logic
+- `kernel/sys_mmap.c` — munmap syscall with VMA splitting logic
 - `kernel/memory/fut_mm.c` — VMA manipulation helpers
 
 ### Comprehensive Syscall Surface
@@ -157,7 +157,7 @@ Phase 3 delivered comprehensive memory management infrastructure for Futura OS, 
 
 ## Documentation
 
-- `kernel/memory/README.md` — Memory subsystem overview
+- `docs/ARCHITECTURE.md` — Memory subsystem overview
 - `docs/CURRENT_STATUS.md` — Current development status
 - `include/kernel/fut_mm.h` — API documentation
 - `include/kernel/syscalls.h` — Syscall documentation

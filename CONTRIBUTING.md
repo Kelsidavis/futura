@@ -61,11 +61,14 @@ Follow the [Coding Standards](#coding-standards) below.
 # Build the kernel
 make clean && make
 
-# Run in QEMU (when test harness is available)
+# Run the ISO harness (deterministic pass/fail)
 make test
 
-# Run static analysis (future)
-make lint
+# Fast dev loop (direct kernel + initramfs)
+make run
+
+# Optional perf suite
+make perf
 ```
 
 ### 5. Commit Your Changes
@@ -190,7 +193,7 @@ int fut_example_function(int param1, void *param2) {
  * Brief description of what this file implements.
  */
 
-#include "../../include/kernel/fut_component.h"
+#include <kernel/fut_task.h>
 ```
 
 ### Assembly Code Style

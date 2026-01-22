@@ -1,5 +1,7 @@
 # ARM64 Signal Handling & Related Syscalls — Priority Work Items
 
+> **Note**: This document contains historical path/line references from the original author environment; adjust paths for the current tree.
+
 **Generated**: 2025-11-12
 **Focus**: Signal delivery, timers, and process control features for ARM64
 

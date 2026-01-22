@@ -1,186 +1,84 @@
 # Futura OS Testing Guide
 
-## ⚠️ IMPORTANT: Use GRUB, Not Direct Kernel Boot
+This guide covers the two supported boot/test flows:
 
-**The Futura kernel MUST be booted via GRUB**, not QEMU's direct `-kernel` option.
+1. **Direct kernel + initramfs** (used by `make run` / `make run-headful`)
+2. **GRUB ISO + harness** (used by `make iso` / `make test`)
 
-### ❌ WRONG - Will Triple-Fault
+Choose the path that matches what you're validating.
+
+---
+
+## 1) Direct kernel + initramfs (fast iteration)
+
+This is the default developer loop. It builds the kernel, stages userland into an initramfs, and boots via QEMU `-kernel`.
+
 ```bash
-qemu-system-x86_64 -kernel build/bin/futura_kernel.elf -serial stdio -m 256M
+# Headless run (serial output to terminal)
+make run
+
+# Headful run with GTK display
+make run-headful
+
+# Headful via VNC (headless-friendly)
+make VNC=1 VNC_DISPLAY=unix:/tmp/futura-vnc run-headful
 ```
 
-### ✅ CORRECT - Build and Boot ISO
+Artifacts:
+- `build/bin/futura_kernel.elf`
+- `build/initramfs.cpio`
+- `qemu.log` (captured output from `make run`)
+
+---
+
+## 2) GRUB ISO + automated harness (CI-style)
+
+Use this for deterministic pass/fail runs and when validating the GRUB boot path.
+
 ```bash
-# 1. Build kernel
-make clean && make kernel
+# Build a bootable ISO
+make iso
 
-# 2. Copy to ISO directory
-cp build/bin/futura_kernel.elf iso/boot/
-
-# 3. Build bootable ISO with GRUB
-grub-mkrescue -o futura.iso iso/
-
-# 4. Boot with QEMU
-qemu-system-x86_64 -cdrom futura.iso -serial stdio -display none -m 256M
+# Run the automated harness (isa-debug-exit)
+make test
 ```
 
-## Why GRUB is Required
+`make test` boots the ISO under QEMU with `isa-debug-exit` enabled; the exit code signals pass/fail.
 
-The Futura kernel uses:
-- **Higher-half addressing** (0xFFFFFFFF80000000+)
-- **Multiboot2 protocol** with specific header placement requirements
-- **64-bit long mode** with proper page table setup
+Artifacts:
+- `futura.iso`
+- `futura_disk.img` (scratch disk image)
 
-QEMU's direct `-kernel` boot doesn't properly set up the Multiboot2 environment for higher-half kernels. GRUB handles:
-- Multiboot2 header parsing and validation
-- Memory map setup
-- Proper loading of higher-half ELF sections
-- Correct handoff to 64-bit long mode entry point
+---
 
-## Boot Sequence Markers
+## Expected Output Hints (x86-64)
 
-When booting correctly via GRUB, you'll see these serial debug markers:
+The early boot path emits short serial markers from the platform init code. If you need to confirm boot flow, look in `qemu.log` or the serial output from the harness run. For deeper traces, enable debug toggles:
 
-```
-SPAEGJFHKSCIN
+```bash
+make DEBUG=1 run
 ```
 
-- **S** = Boot started (32-bit protected mode)
-- **P** = CR3 loaded (page tables installed)
-- **A** = PAE enabled
-- **E** = EFER set (long mode enabled)
-- **G** = Paging enabled
-- **J** = Far jump to 64-bit code
-- **F** = 64-bit long mode active
-- **H** = Higher-half jump successful
-- **K** = Before stack operations
-- **S** = Stack ready
-- **C** = Calling platform init
-- **I** = Inside fut_platform_init
-- **N** = After serial init
-
-If you see **repeating "SPAEGJFHKSC"** without 'I' or 'N', you're using direct kernel boot (wrong method).
-
-## Expected Test Output
-
-### FIPC Tests (dcac1ee)
-```
-[FIPC-SENDER] Starting sender thread
-[FIPC-RECEIVER] Starting receiver thread
-[FIPC-SENDER] Sending message 0
-[FIPC-RECEIVER] Received message: type=0x1000, len=5, payload='MSG0'
-[FIPC-SENDER] Sending message 1
-[FIPC-RECEIVER] Received message: type=0x1000, len=5, payload='MSG1'
-[FIPC-SENDER] Sending message 2
-[FIPC-RECEIVER] Received message: type=0x1000, len=5, payload='MSG2'
-[FIPC-SENDER] All messages sent, exiting
-```
-
-### VFS Tests (current HEAD)
-```
-[VFS-TEST] ✓ Root accessible (inode 1, mode 0...)
-[VFS-TEST] ✓ Directory created: /testdir
-[VFS-TEST] ✓ File created: /test.txt
-[VFS-TEST] ✓ Wrote 28 bytes
-[VFS-TEST] ✓ Read 28 bytes: 'Hello, VFS! This is a test.'
-[VFS-TEST] ✓ Data verification PASSED
-```
-
-### Block Device Tests (current HEAD)
-```
-[BLOCKDEV-TEST] ✓ Ramdisk created: ramdisk0
-[BLOCKDEV-TEST] ✓ Wrote 1 block (512 bytes)
-[BLOCKDEV-TEST] ✓ Read 1 block (512 bytes)
-[BLOCKDEV-TEST] ✓ Data verification PASSED
-```
+---
 
 ## Common Issues
 
-### Issue: Triple-fault loop (repeating SPAEGJFHKSC)
-**Cause**: Using `-kernel` direct boot instead of GRUB ISO
-**Solution**: Follow the correct ISO build process above
+### QEMU exits immediately
+- Ensure you built for the intended platform (`PLATFORM=x86_64` or `PLATFORM=arm64`).
+- For ISO runs, verify `grub-mkrescue` is installed.
 
-### Issue: GRUB menu doesn't appear
-**Cause**: grub-mkrescue not installed or ISO corrupted
-**Solution**: `sudo apt install grub-pc-bin xorriso`
+### Headful run shows no window
+- Set `DISPLAY` (X11) or `WAYLAND_DISPLAY` (Wayland).
+- Alternatively use VNC: `make VNC=1 run-headful`.
 
-### Issue: Kernel doesn't load
-**Cause**: Kernel not copied to iso/boot/ or wrong path in grub.cfg
-**Solution**: Verify `iso/boot/futura_kernel.elf` exists
+### No disk image available
+- Run `make disk` or `make test`, which will create `futura_disk.img`.
 
-## Quick Test Script
+---
 
-```bash
-#!/bin/bash
-# test-kernel.sh - One-command kernel test
+## Related Docs
 
-set -e
-
-echo "Building kernel..."
-make clean && make kernel
-
-echo "Creating bootable ISO..."
-cp build/bin/futura_kernel.elf iso/boot/
-grub-mkrescue -o futura.iso iso/ 2>&1 | grep "completed"
-
-echo "Booting kernel (Ctrl+C to exit)..."
-qemu-system-x86_64 \
-    -cdrom futura.iso \
-    -serial stdio \
-    -display none \
-    -m 256M
-```
-
-## CI/CD Integration
-
-For automated testing:
-```bash
-# Build ISO
-make kernel
-cp build/bin/futura_kernel.elf iso/boot/
-grub-mkrescue -o futura.iso iso/
-
-# Run with timeout and capture output
-timeout 30 qemu-system-x86_64 \
-    -cdrom futura.iso \
-    -serial file:test-output.txt \
-    -display none \
-    -m 256M || true
-
-# Verify expected markers in output
-grep "SPAEGJFHKSCIN" test-output.txt && \
-grep "VFS-TEST.*PASSED" test-output.txt && \
-echo "✓ Tests passed"
-```
-
-## Additional QEMU Options
-
-### Enable KVM (faster on Linux)
-```bash
-qemu-system-x86_64 -cdrom futura.iso -enable-kvm -cpu host -m 256M
-```
-
-### Add virtual disk for filesystem testing
-```bash
-qemu-img create -f raw disk.img 100M
-qemu-system-x86_64 -cdrom futura.iso -drive file=disk.img,format=raw -m 256M
-```
-
-### Debugging with GDB
-```bash
-# Terminal 1: Start QEMU with GDB server
-qemu-system-x86_64 -cdrom futura.iso -s -S -m 256M
-
-# Terminal 2: Connect GDB
-gdb build/bin/futura_kernel.elf
-(gdb) target remote :1234
-(gdb) break fut_kernel_main
-(gdb) continue
-```
-
-## See Also
-
-- `docs/FIPC_SPEC.md` - FIPC subsystem specification
-- `docs/ARCHITECTURE.md` - Overall system architecture
-- `platform/x86_64/boot.S` - Boot sequence implementation
-- `iso/boot/grub/grub.cfg` - GRUB configuration
+- `docs/ARCHITECTURE.md`
+- `docs/CURRENT_STATUS.md`
+- `docs/ARM64_STATUS.md`
+- `docs/PORTING_GUIDE.md`

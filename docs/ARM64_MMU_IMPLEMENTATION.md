@@ -108,9 +108,9 @@ The kernel should boot normally. If it does, MMU is working correctly:
 
 Run with MMU debugging:
 ```bash
-qemu-system-aarch64 -M virt -cpu cortex-a57 \
-    -kernel futura_arm64.elf \
-    -nographic \
+qemu-system-aarch64 -M virt-10.0 -cpu cortex-a53 -m 512M \
+    -kernel build/bin/futura_kernel.bin \
+    -serial stdio -nographic \
     -d int,mmu,cpu_reset \
     -D qemu.log
 ```
@@ -162,7 +162,7 @@ Check `qemu.log` for:
 
 ### Build ARM64 Kernel
 ```bash
-cd /Users/kelsi/futura
+cd /path/to/futura
 make PLATFORM=arm64
 ```
 

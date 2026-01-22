@@ -1,5 +1,7 @@
 # WiFi Driver for Raspberry Pi
 
+> **Status (Jan 22 2026)**: Design/roadmap doc. The corresponding drivers are not integrated into the kernel. See `docs/DRIVERS_MANIFEST.md` for the current in-tree driver inventory.
+
 ## Overview
 
 This document describes the IEEE 802.11 wireless networking driver implementation for Futura OS on Raspberry Pi 3/4/5 platforms. The driver provides complete WiFi support including network scanning, authentication, connection management, and packet transmission/reception.

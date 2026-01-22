@@ -1,7 +1,7 @@
 # Next Priorities and Blockers
 
 **Date:** January 21, 2026
-**Phase:** Phase 3 Complete
+**Phase:** Phase 4 In Progress
 
 ---
 
@@ -161,7 +161,7 @@ still servicing the current interrupt.
 - [x] Time-based capability expiry - Implemented (commit 32ca359)
 
 ### Documentation Complete
-- [x] `docs/FSD_CAPABILITY_AUDIT.txt` - Security audit
+- [x] `docs/FSD_CAPABILITY_AUDIT.md` - Security audit
 - [x] `docs/FSD_INTEGRATION_AUDIT.md` - Technical gaps
 - [x] `docs/CAPABILITY_VERIFICATION_GUIDE.md` - Test procedures
 - [x] `PHASE_2_COMPLETION_REPORT.md` - Milestone status

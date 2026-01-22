@@ -1,4 +1,4 @@
-# Futura OS API Reference (Updated Oct 12 2025)
+# Futura OS API Reference (Updated Jan 22 2026)
 
 This document indexes the public headers and categorises their stability. The
 focus is on surfaces consumed by userland services, host tooling, and external
@@ -28,7 +28,7 @@ contributors.
 | Header | Area | Status | Notes |
 | --- | --- | --- | --- |
 | `include/futura/blkdev.h` | Async block core user API | **Beta** | Rights enforced; submit/flush/close available. |
-| `subsystems/futura_fs/logfs.h` | Log-structured FS skeleton | **Experimental** | Minimal create/write/read/rename; expect expanded directory metadata. |
+| `subsystems/futura_fs/futfs.h` | Log-structured FS skeleton | **Experimental** | Minimal create/write/read/rename; expect expanded directory metadata. |
 | `include/kernel/fut_futurafs.h` | Legacy kernel FS | **Stable** | Bitmap allocator; kept for compatibility until fsd migrates. |
 
 ## Userland Runtime
@@ -44,17 +44,16 @@ contributors.
 
 | Artifact | Status | Notes |
 | --- | --- | --- |
-| `host/transport/libfipc_host.a` | **Stable** | Deterministic FIPC harness for tests. |
-| `tools/mkfutfs` | **Experimental** | Formats images for the log-structured FS; interface will grow options. |
-| `tools/syswatch` | **Beta** | Observability helper; evolving with metrics schema. |
+| `build/lib/libfipc_host.a` | **Stable** | Deterministic FIPC harness for tests (built by `host/transport`). |
+| `build/tools/mkfutfs` | **Experimental** | Formats images for the log-structured FS; interface will grow options. |
+| `build/tools/syswatch` | **Beta** | Observability helper; evolving with metrics schema. |
 
 ## Subsystem Libraries
 
 | Path | Status | Notes |
 | --- | --- | --- |
 | `subsystems/futura_fs/` | **Experimental** | Log FS skeleton + tests; targeting eventual fsd integration. |
-| `subsystems/futura_gui/` | **Experimental** | Future display stack components (placeholder). |
-| `subsystems/futura_net/` | **Experimental** | Networking prototypes (placeholder). |
+| `subsystems/posix_compat/` | **Beta** | int80 dispatcher and POSIX bridge helpers. |
 
 ## Consuming Guidance
 

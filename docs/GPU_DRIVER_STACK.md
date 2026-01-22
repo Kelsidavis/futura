@@ -1,5 +1,7 @@
 # Raspberry Pi GPU Driver Stack
 
+> **Status (Jan 22 2026)**: Design/roadmap doc. The corresponding drivers are not integrated into the kernel. See `docs/DRIVERS_MANIFEST.md` for the current in-tree driver inventory.
+
 ## Overview
 
 This document describes the comprehensive GPU driver stack implemented for Futura OS on Raspberry Pi 3/4/5 platforms. The stack includes support for display output, 3D graphics acceleration, and software rendering fallback.

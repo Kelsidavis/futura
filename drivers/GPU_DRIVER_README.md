@@ -1,6 +1,8 @@
-# Raspberry Pi GPU Driver Implementation
+# Raspberry Pi GPU Driver Implementation (Design Doc)
 
-This document describes the VideoCore GPU driver implementation for Futura OS on Raspberry Pi platforms.
+> **Status (Jan 22 2026)**: Design/roadmap only. The Raspberry Pi GPU stack is **not integrated** into the kernel. Code under `drivers/src/` is scaffolding and does not yet drive hardware.
+
+This document describes the intended VideoCore GPU driver architecture for Futura OS on Raspberry Pi platforms.
 
 ## Overview
 
@@ -10,7 +12,7 @@ The Raspberry Pi platforms use a VideoCore GPU that handles:
 - Video encoding/decoding
 - General-purpose compute
 
-This driver is a port of the Linux `vc4` DRM driver adapted for Futura OS.
+The long-term goal is to port the Linux `vc4` DRM driver to Futura OS.
 
 ## Architecture
 

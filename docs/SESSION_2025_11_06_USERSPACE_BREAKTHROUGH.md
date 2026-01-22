@@ -1,5 +1,7 @@
 # ARM64 User-Space Execution Breakthrough - Session 2025-11-06
 
+> **Note**: Historical session log. Paths and line references reflect the author's environment at the time and may not match the current tree.
+
 ## Summary
 
 **MAJOR MILESTONE ACHIEVED**: ARM64 kernel successfully transitions to EL0 (user mode) and executes user-space code! 🎉

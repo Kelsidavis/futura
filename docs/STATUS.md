@@ -1,4 +1,4 @@
-# Project Status (Updated Nov 27 2025)
+# Project Status (Updated Jan 22 2026)
 
 ## Current Milestone: Phase 4 – Userland Foundations
 
@@ -44,6 +44,6 @@
 - **API Surface** – `docs/API_REFERENCE.md`
 - **Porting** – `docs/PORTING_GUIDE.md`
 - **Testing** – `tests/` (host suite) and `kernel/tests/`
-- **Tooling** – `tools/mkfutfs`, `tools/syswatch`, `tools/ctltool`
+- **Tooling** – `build/tools/mkfutfs`, `build/tools/syswatch`, `build/tools/ctltool`
 
 Keep this status page updated with every milestone and major subsystem landing.

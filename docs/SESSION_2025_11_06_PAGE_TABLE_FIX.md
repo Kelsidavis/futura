@@ -1,5 +1,7 @@
 # ARM64 Page Table Bug - Session 2025-11-06
 
+> **Note**: Historical session log. Paths and line references reflect the author's environment at the time and may not match the current tree.
+
 ## Problem Summary
 
 User-space syscalls don't work because the kernel crashes with Prefetch Abort exceptions **before** reaching user mode. The system fails immediately after context switch loads TTBR0 with user page tables.

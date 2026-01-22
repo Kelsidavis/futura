@@ -1,5 +1,7 @@
 # GPU Audio Driver for Raspberry Pi
 
+> **Status (Jan 22 2026)**: Design/roadmap doc. The corresponding drivers are not integrated into the kernel. See `docs/DRIVERS_MANIFEST.md` for the current in-tree driver inventory.
+
 ## Overview
 
 This document describes the GPU-based audio driver implementation for Futura OS on Raspberry Pi 3/4/5 platforms. The driver provides complete audio output support via HDMI (with PCM audio) and analog 3.5mm jack connections.

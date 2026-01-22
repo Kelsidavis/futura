@@ -93,7 +93,7 @@ void fut_mm_system_init(void) {
 
 **Run Test:**
 ```bash
-cd /home/k/futura
+cd /path/to/futura
 make clean
 make all
 make run 2>&1 | tee boot_debug.log

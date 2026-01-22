@@ -1,16 +1,17 @@
-# Futura OS Architecture (Updated Nov 4 2025)
+# Futura OS Architecture (Updated Jan 22 2026)
 
 ## Layered View
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
-│                         User Dials                           │
-│  Applications, tests, host tooling, mkfutfs                  │
+│                     Userland + Tooling                       │
+│  Applications, tests, host tools, mkfutfs, fsck.futfs        │
 └───────────────▲───────────────────────┬──────────────────────┘
                 │ FIPC channels & handles│
 ┌───────────────┴──────────────────────┐ │
 │        Userland Services             │ │
-│  init · fsd · posixd · futurawayd    │ │
+│  init · fsd · posixd · netd          │ │
+│  svc_registryd · shell · compositor  │ │
 │  libfutura runtime + subsystem libs  │ │
 └───────────────▲────────┬─────────────┘ │
                 │        │               │
@@ -20,7 +21,7 @@
 │  - Object table & rights (fut_object.c)                     │
 │  - Scheduler + wait queues                                  │
 │  - Virtual memory (fut_mm)                                  │
-│  - Syscall bridge (int 0x80)                                │
+│  - Syscall/trap entry + ABI glue                            │
 │  - FIPC core & transport                                    │
 │  - VFS + block core (virtio-blk, AHCI, log FS bridge)       │
 └───────────────▲──────────────────────────────────────────────┘
@@ -40,7 +41,7 @@ Futura OS supports multiple hardware architectures with platform-specific abstra
 - MMU with 4-level paging, COW fork, file-backed mmap
 - Virtio drivers (virtio-blk, virtio-net) in Rust
 - AHCI/SATA support
-- Wayland compositor with GPU acceleration
+- Wayland compositor stack (futura-wayland + demo clients)
 
 **ARM64 (Rapid Development)**
 - 177 working syscalls with Linux-compatible ABI
@@ -125,7 +126,7 @@ mechanism, ensuring services such as fsd can multiplex work without busy loops.
 
 - **libfutura** – crt0, syscall veneers, heap allocator (brk-backed), printf/vprintf, string utilities. Provides minimal C runtime for userland programs.
 - **shell** – Interactive shell with 32+ built-in commands (cat, grep, wc, find, ls, cp, mv, etc.), full pipe support, I/O redirection, job control, command history, and tab completion.
-- **Wayland compositor** – Production-quality compositor with multi-surface rendering, window decorations, drop shadows, damage-aware partial compositing (>30% speedup), and frame throttling.
+- **Wayland compositor** – Multi-surface rendering, decorations/shadows, damage-aware compositing, and frame throttling (see `docs/WAYLAND_UI_STATUS.md`).
 - **System daemons**:
   - **init** – PID 1, service bootstrap
   - **fsd** – Filesystem daemon (adopting log-structured backend via capability handles)

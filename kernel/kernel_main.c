@@ -48,6 +48,7 @@
 #include <platform/platform.h>
 #include "tests/test_api.h"
 #include "tests/perf.h"
+#include <kernel/tests/test_main.h>
 #if defined(__x86_64__)
 #include <platform/x86_64/memory/paging.h>
 #include <platform/x86_64/memory/pmap.h>
@@ -58,20 +59,7 @@
 #include <platform/arm64/process.h>
 #endif
 
-extern void fut_echo_selftest(void);
-extern void fut_fb_smoke(void);
-extern void fut_input_smoke(void);
-extern void fut_exec_double_smoke(void);
-extern void fut_mm_tests_run(void);
-extern void fut_blk_async_selftest_schedule(fut_task_t *task);
-extern void fut_futfs_selftest_schedule(fut_task_t *task);
-extern void fut_net_selftest_schedule(fut_task_t *task);
-extern void fut_perf_selftest_schedule(fut_task_t *task);
-extern void fut_multiprocess_selftest_schedule(fut_task_t *task);
-extern void fut_dup2_selftest_schedule(fut_task_t *task);
-extern void fut_pipe_selftest_schedule(fut_task_t *task);
-extern void fut_signal_selftest_schedule(fut_task_t *task);
-extern void fut_cap_selftest_schedule(fut_task_t *task);
+/* Test and selftest function declarations provided by kernel/tests/test_main.h */
 
 #if ENABLE_WAYLAND_DEMO
 #define WAYLAND_TEST_SENTINEL_CODE 0xD0u

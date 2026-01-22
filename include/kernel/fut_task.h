@@ -74,6 +74,9 @@ struct fut_task {
     /* Alarm timer */
     uint64_t alarm_expires_ms;         // Alarm expiration time in milliseconds (0 = no alarm)
 
+    /* Thread cleanup (for NPTL/pthread support) */
+    int *clear_child_tid;              // Address to clear and wake on thread exit (set_tid_address)
+
     /* File system context */
     uint64_t current_dir_ino;          // Current working directory inode (root=1)
     char *cwd_cache;                   // Cached current working directory path (points to cwd_cache_buf)

@@ -95,9 +95,12 @@ long sys_set_tid_address(int *tidptr) {
     /* Get current TID (in our system, TID == PID for main thread) */
     int current_tid = task->pid;
 
+    /* Phase 3: Store tidptr in task structure for clear_child_tid behavior */
+    task->clear_child_tid = tidptr;
+
     /* Phase 3: Enhanced logging with operation categorization */
     fut_printf("[SET_TID_ADDR] set_tid_address(tidptr=%p [%s], pid=%d) -> %d "
-               "(Phase 3: Store tidptr in task structure for clear_child_tid)\n",
+               "(Phase 3: tidptr stored in task->clear_child_tid)\n",
                tidptr, op_type, task->pid, current_tid);
 
     return current_tid;

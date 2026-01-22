@@ -522,6 +522,21 @@ See `docs/ARM64_STATUS.md` for detailed ARM64 progress.
   have been signal_handler_masks[signum - 1] (signals are 1-indexed, arrays 0-indexed).
   Also added lower bounds check for signum > 0.
 
+### January 21, 2026 Session — Security Hardening (Continued)
+- ✅ **Timer syscall userspace access**: Fixed sys_timer.c to use proper userspace
+  access validation (fut_access_ok + fut_copy_to_user/fut_copy_from_user) instead
+  of direct pointer dereferences:
+  - sys_timer_create: Validate timerid pointer, use fut_copy_to_user
+  - sys_timer_settime: Validate new_value/old_value, use fut_copy_from_user/to_user
+  - sys_timer_gettime: Validate curr_value pointer, use fut_copy_to_user
+- ✅ **Futex syscall userspace access**: Fixed sys_get_robust_list to use
+  fut_copy_to_user instead of direct *head_ptr and *len_ptr writes
+- ✅ **set_tid_address Phase 3**: Actually implemented Phase 3 (was incorrectly
+  marked as complete):
+  - Added clear_child_tid field to fut_task_t structure
+  - sys_set_tid_address now stores tidptr in task->clear_child_tid
+  - Initialized clear_child_tid to NULL in fut_task_create
+
 ## Current Focus
 
 ### x86-64 Platform

@@ -29,9 +29,7 @@
 #define RECVMSG_LOG(...) ((void)0)
 #endif
 
-/* Ancillary data types */
-#define SOL_SOCKET  1
-#define SCM_RIGHTS  1         /* File descriptor passing */
+/* Socket constants (SOL_SOCKET, SCM_RIGHTS) provided by fut_socket.h and sys/socket.h */
 
 /**
  * recvmsg() - Receive message from socket

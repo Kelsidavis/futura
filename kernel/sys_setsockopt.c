@@ -20,30 +20,12 @@
 
 #include <kernel/kprintf.h>
 
-/* Socket level options */
-#define SOL_SOCKET    1
-#define IPPROTO_TCP   6
-#define IPPROTO_IP    0
-#define IPPROTO_IPV6  41
+/* Socket option constants (SOL_*, SO_*, IPPROTO_*) provided by fut_socket.h */
 
-/* Common socket options (SOL_SOCKET level) */
-#define SO_DEBUG      1    /* Enable debugging */
-#define SO_REUSEADDR  2    /* Allow reuse of local addresses */
-#define SO_TYPE       3    /* Get socket type (read-only) */
-#define SO_ERROR      4    /* Get and clear error status (read-only) */
-#define SO_DONTROUTE  5    /* Don't use routing */
-#define SO_BROADCAST  6    /* Allow broadcast */
-#define SO_SNDBUF     7    /* Send buffer size */
-#define SO_RCVBUF     8    /* Receive buffer size */
-#define SO_KEEPALIVE  9    /* Keep connections alive */
-#define SO_OOBINLINE  10   /* Leave received OOB data inline */
-#define SO_LINGER     13   /* Linger on close */
-#define SO_REUSEPORT  15   /* Allow reuse of local port */
-#define SO_RCVLOWAT   18   /* Receive low-water mark */
-#define SO_SNDLOWAT   19   /* Send low-water mark */
-#define SO_RCVTIMEO   20   /* Receive timeout */
-#define SO_SNDTIMEO   21   /* Send timeout */
+/* Additional options not in fut_socket.h */
+#ifndef SO_TIMESTAMP
 #define SO_TIMESTAMP  29   /* Timestamp received messages */
+#endif
 
 /**
  * setsockopt() - Set socket options

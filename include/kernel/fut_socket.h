@@ -72,6 +72,79 @@ typedef uint32_t socklen_t;
 #endif
 
 /* ============================================================
+ *   Socket Option Levels
+ * ============================================================ */
+
+#ifndef SOL_SOCKET
+#define SOL_SOCKET      1   /* Socket level options */
+#endif
+#ifndef IPPROTO_IP
+#define IPPROTO_IP      0   /* IP protocol options */
+#endif
+#ifndef IPPROTO_TCP
+#define IPPROTO_TCP     6   /* TCP protocol options */
+#endif
+#ifndef IPPROTO_UDP
+#define IPPROTO_UDP     17  /* UDP protocol options */
+#endif
+#ifndef IPPROTO_IPV6
+#define IPPROTO_IPV6    41  /* IPv6 protocol options */
+#endif
+
+/* ============================================================
+ *   Common Socket Options (SOL_SOCKET level)
+ * ============================================================ */
+
+#ifndef SO_DEBUG
+#define SO_DEBUG        1   /* Enable debugging */
+#endif
+#ifndef SO_REUSEADDR
+#define SO_REUSEADDR    2   /* Allow address reuse */
+#endif
+#ifndef SO_TYPE
+#define SO_TYPE         3   /* Get socket type */
+#endif
+#ifndef SO_ERROR
+#define SO_ERROR        4   /* Get/clear error status */
+#endif
+#ifndef SO_DONTROUTE
+#define SO_DONTROUTE    5   /* Bypass routing */
+#endif
+#ifndef SO_BROADCAST
+#define SO_BROADCAST    6   /* Allow broadcast */
+#endif
+#ifndef SO_SNDBUF
+#define SO_SNDBUF       7   /* Send buffer size */
+#endif
+#ifndef SO_RCVBUF
+#define SO_RCVBUF       8   /* Receive buffer size */
+#endif
+#ifndef SO_KEEPALIVE
+#define SO_KEEPALIVE    9   /* Keep connections alive */
+#endif
+#ifndef SO_OOBINLINE
+#define SO_OOBINLINE    10  /* Leave OOB data inline */
+#endif
+#ifndef SO_LINGER
+#define SO_LINGER       13  /* Linger on close */
+#endif
+#ifndef SO_REUSEPORT
+#define SO_REUSEPORT    15  /* Allow port reuse */
+#endif
+#ifndef SO_RCVLOWAT
+#define SO_RCVLOWAT     18  /* Receive low-water mark */
+#endif
+#ifndef SO_SNDLOWAT
+#define SO_SNDLOWAT     19  /* Send low-water mark */
+#endif
+#ifndef SO_RCVTIMEO
+#define SO_RCVTIMEO     20  /* Receive timeout */
+#endif
+#ifndef SO_SNDTIMEO
+#define SO_SNDTIMEO     21  /* Send timeout */
+#endif
+
+/* ============================================================
  *   Socket States
  * ============================================================ */
 

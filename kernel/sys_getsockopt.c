@@ -20,29 +20,7 @@
 
 #include <kernel/kprintf.h>
 
-/* Socket level options */
-#define SOL_SOCKET    1
-#define IPPROTO_TCP   6
-#define IPPROTO_IP    0
-#define IPPROTO_IPV6  41
-
-/* Common socket options (SOL_SOCKET level) */
-#define SO_DEBUG      1    /* Get debugging state */
-#define SO_REUSEADDR  2    /* Get address reuse state */
-#define SO_TYPE       3    /* Get socket type */
-#define SO_ERROR      4    /* Get and clear error status */
-#define SO_DONTROUTE  5    /* Get routing bypass state */
-#define SO_BROADCAST  6    /* Get broadcast state */
-#define SO_SNDBUF     7    /* Get send buffer size */
-#define SO_RCVBUF     8    /* Get receive buffer size */
-#define SO_KEEPALIVE  9    /* Get keepalive state */
-#define SO_OOBINLINE  10   /* Get OOB inline state */
-#define SO_LINGER     13   /* Get linger settings */
-#define SO_REUSEPORT  15   /* Get port reuse state */
-#define SO_RCVLOWAT   18   /* Get receive low-water mark */
-#define SO_SNDLOWAT   19   /* Get send low-water mark */
-#define SO_RCVTIMEO   20   /* Get receive timeout */
-#define SO_SNDTIMEO   21   /* Get send timeout */
+/* Socket option constants (SOL_*, SO_*, IPPROTO_*) provided by fut_socket.h */
 
 /**
  * getsockopt() - Get socket options

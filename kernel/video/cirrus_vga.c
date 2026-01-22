@@ -9,6 +9,7 @@
 #include <kernel/fb.h>
 #include <kernel/console.h>
 #include <kernel/kprintf.h>
+#include <kernel/errno.h>
 #include <platform/platform.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -216,7 +217,7 @@ int cirrus_vga_init(void) {
 
     if (vendor != 0x1013 || device != 0x00B8) {
         fut_printf("[CIRRUS] ERROR: Cirrus device not found at 0:2.0\n");
-        return -1;
+        return -ENODEV;
     }
 
     /* Enable PCI memory space via PCI command register */
@@ -370,6 +371,6 @@ int cirrus_vga_init(void) {
  * ARM64 stub - Cirrus VGA driver not supported
  */
 int cirrus_vga_init(void) {
-    return -1;
+    return -ENOSYS;
 }
 #endif /* __x86_64__ */

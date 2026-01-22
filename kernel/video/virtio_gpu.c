@@ -8,6 +8,7 @@
 #include <kernel/fb.h>
 #include <kernel/console.h>
 #include <kernel/kprintf.h>
+#include <kernel/errno.h>
 #include <platform/platform.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -326,7 +327,7 @@ static int virtio_scan_capabilities(void) {
 
     if (cap_ptr == 0) {
         fut_printf("[VIRTIO-GPU] No PCI capabilities found\n");
-        return -1;
+        return -ENODEV;
     }
 
     fut_printf("[VIRTIO-GPU] Scanning PCI capabilities starting at offset 0x%02x\n", cap_ptr);
@@ -438,7 +439,7 @@ static int virtio_scan_capabilities(void) {
     /* Verify we found the essential structures */
     if (!g_common_cfg) {
         fut_printf("[VIRTIO-GPU] ERROR: Common configuration not found\n");
-        return -1;
+        return -ENODEV;
     }
 
     fut_printf("[VIRTIO-GPU] Successfully mapped virtio 1.0 structures\n");
@@ -459,7 +460,7 @@ static int virtio_gpu_alloc_queues(void) {
 
     if (!queue_virt) {
         fut_printf("[VIRTIO-GPU] Failed to map queue memory\n");
-        return -1;
+        return -ENOMEM;
     }
 
     g_desc_table = (struct virtio_desc *)queue_virt;
@@ -519,7 +520,7 @@ static int virtio_gpu_alloc_framebuffer(uint32_t width, uint32_t height) {
 
     if (!fb_virt) {
         fut_printf("[VIRTIO-GPU] Failed to map framebuffer memory\n");
-        return -1;
+        return -ENOMEM;
     }
 
     g_framebuffer_guest = (volatile uint8_t *)fb_virt;
@@ -788,7 +789,7 @@ int virtio_gpu_init(uint64_t *out_fb_phys, uint32_t width, uint32_t height) {
 
     if (!found) {
         fut_printf("[VIRTIO-GPU] Device not found on PCI bus\n");
-        return -1;
+        return -ENODEV;
     }
 
     /* Enable PCI device - set bus master and memory space */
@@ -797,18 +798,21 @@ int virtio_gpu_init(uint64_t *out_fb_phys, uint32_t width, uint32_t height) {
     pci_config_write(g_bus, g_slot, g_func, 0x04, cmd_reg);
 
     /* Scan PCI capabilities to locate virtio 1.0 structures */
-    if (virtio_scan_capabilities() != 0) {
+    int ret = virtio_scan_capabilities();
+    if (ret != 0) {
         fut_printf("[VIRTIO-GPU] Failed to scan capabilities\n");
-        return -1;
+        return ret;
     }
 
     /* Allocate our guest framebuffer and control structures */
-    if (virtio_gpu_alloc_framebuffer(width, height) != 0) {
-        return -1;
+    ret = virtio_gpu_alloc_framebuffer(width, height);
+    if (ret != 0) {
+        return ret;
     }
 
-    if (virtio_gpu_alloc_queues() != 0) {
-        return -1;
+    ret = virtio_gpu_alloc_queues();
+    if (ret != 0) {
+        return ret;
     }
 
     /* Map command buffer for VIRTIO command submission */
@@ -816,7 +820,7 @@ int virtio_gpu_init(uint64_t *out_fb_phys, uint32_t width, uint32_t height) {
     uintptr_t cmd_virt = (uintptr_t)pmap_phys_to_virt(CMD_BUFFER_PHYS);
     if (!cmd_virt) {
         fut_printf("[VIRTIO-GPU] Failed to map command buffer\n");
-        return -1;
+        return -ENOMEM;
     }
     g_cmd_buffer = (volatile uint8_t *)cmd_virt;
     memset((void *)g_cmd_buffer, 0, CMD_BUFFER_SIZE);
@@ -828,7 +832,7 @@ int virtio_gpu_init(uint64_t *out_fb_phys, uint32_t width, uint32_t height) {
     uintptr_t resp_virt = (uintptr_t)pmap_phys_to_virt(RESP_BUFFER_PHYS);
     if (!resp_virt) {
         fut_printf("[VIRTIO-GPU] Failed to map response buffer\n");
-        return -1;
+        return -ENOMEM;
     }
     g_resp_buffer = (volatile uint8_t *)resp_virt;
     memset((void *)g_resp_buffer, 0, RESP_BUFFER_SIZE);
@@ -871,7 +875,7 @@ int virtio_gpu_init(uint64_t *out_fb_phys, uint32_t width, uint32_t height) {
     status = virtio_common_read8(VIRTIO_PCI_COMMON_STATUS);
     if (!(status & VIRTIO_CONFIG_S_FEATURES_OK)) {
         fut_printf("[VIRTIO-GPU] ERROR: Device rejected our feature set\n");
-        return -1;
+        return -EIO;
     }
     fut_printf("[VIRTIO-GPU] Status: FEATURES_OK (status=0x%x)\n", status);
 
@@ -1344,7 +1348,7 @@ int virtio_gpu_init_arm64_pci(uint8_t bus, uint8_t dev, uint8_t func, uint64_t *
 
     if (!g_common_cfg_arm) {
         fut_printf("[VIRTIO-GPU] ARM64: Common config not found\n");
-        return -1;
+        return -ENODEV;
     }
 
     /* Verify PCI command register before MMIO access */
@@ -1392,7 +1396,7 @@ int virtio_gpu_init_arm64_pci(uint8_t bus, uint8_t dev, uint8_t func, uint64_t *
     if (test_features == 0xFFFFFFFF || test_queue_size == 0xFFFF || test_status == 0xFF) {
         fut_printf("[VIRTIO-GPU] ARM64: ERROR: MMIO region not accessible - all reads return 0xFF\n");
         fut_printf("[VIRTIO-GPU] ARM64: This indicates the PCI BAR is not properly mapped\n");
-        return -1;
+        return -EIO;
     }
 
     fut_printf("[VIRTIO-GPU] ARM64: MMIO accessibility verified - proceeding with initialization\n");
@@ -1456,7 +1460,7 @@ int virtio_gpu_init_arm64_pci(uint8_t bus, uint8_t dev, uint8_t func, uint64_t *
     uint8_t status = arm64_virtio_common_read8(VIRTIO_PCI_COMMON_STATUS);
     if (!(status & VIRTIO_CONFIG_S_FEATURES_OK)) {
         fut_printf("[VIRTIO-GPU] ARM64: ERROR: Device rejected feature negotiation (status=0x%x)\n", status);
-        return -1;
+        return -EIO;
     }
     fut_printf("[VIRTIO-GPU] ARM64: Feature negotiation accepted, status=0x%x\n", status);
 

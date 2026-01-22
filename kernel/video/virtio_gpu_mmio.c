@@ -126,20 +126,20 @@ static uint32_t resource_id = 1;
 
 /**
  * Submit a command to the VirtIO GPU device.
- * Returns 0 on success, -1 on error.
+ * Returns 0 on success, negative errno on error.
  */
 static int submit_gpu_command(const void *cmd, size_t cmd_size, void *resp, size_t resp_size) {
     if (!gpu_dev) {
-        return -1;
+        return -ENODEV;
     }
 
     /* Get physical addresses for command and response buffers */
     uint64_t cmd_phys, resp_phys;
     if (fut_virt_to_phys(NULL, cmd, &cmd_phys) != 0) {
-        return -1;
+        return -EFAULT;
     }
     if (fut_virt_to_phys(NULL, resp, &resp_phys) != 0) {
-        return -1;
+        return -EFAULT;
     }
 
     /* Setup descriptor chain:
@@ -173,7 +173,7 @@ static int submit_gpu_command(const void *cmd, size_t cmd_size, void *resp, size
 
     if (timeout <= 0) {
         fut_printf("[virtio-gpu-mmio] Command timeout\n");
-        return -1;
+        return -ETIMEDOUT;
     }
 
     /* Update last used index */

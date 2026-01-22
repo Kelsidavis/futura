@@ -9,6 +9,7 @@
 #include <kernel/fb.h>
 #include <kernel/console.h>
 #include <kernel/kprintf.h>
+#include <kernel/errno.h>
 #include <platform/platform.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -167,7 +168,7 @@ int fb_probe_pci_vga(void) {
 
     if (framebuffer == 0) {
         fut_printf("[FB] PCI VGA probe failed, no device found\n");
-        return -1;
+        return -ENODEV;
     }
 
     fut_printf("[FB] Using PCI-discovered framebuffer at 0x%llx\n",
@@ -178,6 +179,6 @@ int fb_probe_pci_vga(void) {
 /* ARM64 stub - PCI VGA discovery not yet implemented */
 int fb_probe_pci_vga(void) {
     fut_printf("[FB] ARM64: PCI VGA probe not yet implemented\n");
-    return -1;
+    return -ENOSYS;
 }
 #endif

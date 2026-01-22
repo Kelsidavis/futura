@@ -15,6 +15,7 @@
 #include <kernel/fb.h>
 #include <kernel/boot_args.h>
 #include <kernel/kprintf.h>
+#include <kernel/errno.h>
 #include <kernel/video/pci_vga.h>
 #include <kernel/video/cirrus_vga.h>
 #include <kernel/video/virtio_gpu.h>
@@ -184,7 +185,7 @@ fallback:
     fut_printf("[FB] fb-fallback flag: %d\n", fb_fallback ? 1 : 0);
     if (!fb_fallback) {
         fut_printf("[FB] fallback disabled, returning\n");
-        return -1;
+        return -ENODEV;
     }
     fut_printf("[FB] enabling fallback geometry (fb-fallback=1)\n");
 
@@ -228,8 +229,11 @@ fallback:
 }
 
 int fb_get_info(struct fut_fb_hwinfo *out) {
-    if (!out || !g_fb_available) {
-        return -1;
+    if (!out) {
+        return -EINVAL;
+    }
+    if (!g_fb_available) {
+        return -ENODEV;
     }
     *out = g_fb_hw;
     return 0;

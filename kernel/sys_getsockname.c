@@ -21,9 +21,6 @@
 
 #include <kernel/kprintf.h>
 
-/* socklen_t for address length */
-typedef uint32_t socklen_t;
-
 /* Socket address family constants */
 #define AF_UNIX 1
 

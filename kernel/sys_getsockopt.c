@@ -20,9 +20,6 @@
 
 #include <kernel/kprintf.h>
 
-/* socklen_t for option length */
-typedef uint32_t socklen_t;
-
 /* Socket level options */
 #define SOL_SOCKET    1
 #define IPPROTO_TCP   6

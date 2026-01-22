@@ -20,6 +20,12 @@
 typedef int64_t ssize_t;
 #endif
 
+/* Define socklen_t for socket address lengths */
+#ifndef __socklen_t_defined
+#define __socklen_t_defined 1
+typedef uint32_t socklen_t;
+#endif
+
 /* ============================================================
  *   Socket States
  * ============================================================ */

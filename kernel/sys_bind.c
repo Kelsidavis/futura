@@ -210,8 +210,6 @@
 #define BIND_DEBUG 0
 #define bind_printf(...) do { if (BIND_DEBUG) fut_printf(__VA_ARGS__); } while(0)
 
-typedef uint32_t socklen_t;
-
 /* Address family constants */
 #define AF_UNSPEC 0
 #define AF_UNIX   1
@@ -328,8 +326,8 @@ long sys_bind(int sockfd, const void *addr, socklen_t addrlen) {
     }
 
     /* Phase 5: Validate fd upper bounds to prevent out-of-bounds access */
-    if ((unsigned int)local_sockfd >= task->max_fds) {
-        bind_printf("[BIND] bind(sockfd=%d) -> EBADF (fd exceeds max_fds %u)\n",
+    if (local_sockfd >= task->max_fds) {
+        bind_printf("[BIND] bind(sockfd=%d) -> EBADF (fd exceeds max_fds %d)\n",
                    local_sockfd, task->max_fds);
         return -EBADF;
     }

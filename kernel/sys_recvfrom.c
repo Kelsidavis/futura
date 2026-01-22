@@ -24,8 +24,6 @@
 
 #include <kernel/kprintf.h>
 
-typedef uint32_t socklen_t;
-
 /* Common MSG flags (for reference) */
 #define MSG_DONTWAIT  0x40   /* Non-blocking operation */
 #define MSG_PEEK      0x02   /* Peek at incoming data */

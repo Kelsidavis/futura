@@ -216,8 +216,6 @@
 #define CONNECT_DEBUG 0
 #define connect_printf(...) do { if (CONNECT_DEBUG) fut_printf(__VA_ARGS__); } while(0)
 
-typedef uint32_t socklen_t;
-
 /* Address family constants */
 #define AF_UNSPEC 0
 #define AF_UNIX   1
@@ -297,8 +295,8 @@ long sys_connect(int sockfd, const void *addr, socklen_t addrlen) {
     }
 
     /* Phase 5: Validate fd upper bounds to prevent out-of-bounds access */
-    if ((unsigned int)local_sockfd >= task->max_fds) {
-        connect_printf("[CONNECT] connect(sockfd=%d) -> EBADF (fd exceeds max_fds %u)\n",
+    if (local_sockfd >= task->max_fds) {
+        connect_printf("[CONNECT] connect(sockfd=%d) -> EBADF (fd exceeds max_fds %d)\n",
                    local_sockfd, task->max_fds);
         return -EBADF;
     }

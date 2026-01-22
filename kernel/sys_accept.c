@@ -26,9 +26,6 @@
 #define ACCEPT_DEBUG 0
 #define accept_printf(...) do { if (ACCEPT_DEBUG) fut_printf(__VA_ARGS__); } while(0)
 
-/* socklen_t for address length */
-typedef uint32_t socklen_t;
-
 /**
  * accept() - Accept incoming connection on listening socket
  *
@@ -159,8 +156,8 @@ long sys_accept(int sockfd, void *addr, socklen_t *addrlen) {
     }
 
     /* Phase 5: Validate fd upper bounds to prevent out-of-bounds access */
-    if ((unsigned int)local_sockfd >= task->max_fds) {
-        accept_printf("[ACCEPT] accept(local_sockfd=%d) -> EBADF (fd exceeds max_fds %u)\n",
+    if (local_sockfd >= task->max_fds) {
+        accept_printf("[ACCEPT] accept(local_sockfd=%d) -> EBADF (fd exceeds max_fds %d)\n",
                    local_sockfd, task->max_fds);
         return -EBADF;
     }

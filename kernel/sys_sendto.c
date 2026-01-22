@@ -14,6 +14,7 @@
 
 #include <kernel/fut_task.h>
 #include <kernel/fut_vfs.h>
+#include <kernel/fut_socket.h>
 #include <kernel/fut_memory.h>
 #include <kernel/uaccess.h>
 #include <kernel/errno.h>
@@ -25,8 +26,6 @@
 #include <kernel/kprintf.h>
 extern bool fut_io_budget_check_bytes(fut_task_t *task, uint64_t bytes, uint64_t current_ms);
 extern void fut_io_budget_consume_bytes(fut_task_t *task, uint64_t bytes);
-
-typedef uint32_t socklen_t;
 
 /* Common MSG flags (for reference) */
 #define MSG_DONTWAIT  0x40   /* Non-blocking operation */

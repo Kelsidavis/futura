@@ -17,6 +17,7 @@
 #include <kernel/fut_socket.h>
 #include <kernel/syscalls.h>
 #include <kernel/errno.h>
+#include <fcntl.h>
 
 #include <kernel/kprintf.h>
 
@@ -257,12 +258,12 @@ long sys_socket(int domain, int type, int protocol) {
 
     /* Phase 4: Apply SOCK_NONBLOCK flag if requested */
     if (type_flags & SOCK_NONBLOCK) {
-        sys_fcntl(sockfd, 4, 0x800);  /* F_SETFL, O_NONBLOCK */
+        sys_fcntl(sockfd, F_SETFL, O_NONBLOCK);
     }
 
     /* Phase 4: Apply SOCK_CLOEXEC flag if requested */
     if (type_flags & SOCK_CLOEXEC) {
-        sys_fcntl(sockfd, 2, 1);  /* F_SETFD, FD_CLOEXEC */
+        sys_fcntl(sockfd, F_SETFD, FD_CLOEXEC);
     }
 
     /* Phase 4: Detailed success logging */

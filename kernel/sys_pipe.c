@@ -19,6 +19,7 @@
 #include <kernel/uaccess.h>
 #include <kernel/fut_waitq.h>
 #include <kernel/syscalls.h>
+#include <fcntl.h>
 #include <string.h>
 #include <stdint.h>
 
@@ -26,14 +27,6 @@
 
 /* Pipe buffer size */
 #define PIPE_BUF_SIZE 4096
-
-/* File flags for pipe2() - must match userspace definitions */
-#ifndef O_NONBLOCK
-#define O_NONBLOCK  0x800      /* Non-blocking I/O */
-#endif
-#ifndef O_CLOEXEC
-#define O_CLOEXEC   0x80000    /* Close-on-exec flag */
-#endif
 
 /* Pipe buffer structure */
 struct pipe_buffer {
@@ -599,15 +592,15 @@ long sys_pipe2(int pipefd[2], int flags) {
     /* Apply O_NONBLOCK flag if requested */
     if (flags & O_NONBLOCK) {
         /* Set non-blocking mode on both FDs via fcntl */
-        sys_fcntl(read_fd, 4, O_NONBLOCK);   /* F_SETFL, O_NONBLOCK */
-        sys_fcntl(write_fd, 4, O_NONBLOCK);  /* F_SETFL, O_NONBLOCK */
+        sys_fcntl(read_fd, F_SETFL, O_NONBLOCK);
+        sys_fcntl(write_fd, F_SETFL, O_NONBLOCK);
     }
 
     /* Apply O_CLOEXEC flag if requested */
     if (flags & O_CLOEXEC) {
         /* Set close-on-exec on both FDs via fcntl */
-        sys_fcntl(read_fd, 2, 1);   /* F_SETFD, FD_CLOEXEC */
-        sys_fcntl(write_fd, 2, 1);  /* F_SETFD, FD_CLOEXEC */
+        sys_fcntl(read_fd, F_SETFD, FD_CLOEXEC);
+        sys_fcntl(write_fd, F_SETFD, FD_CLOEXEC);
     }
 
     /* Copy file descriptors to userspace */

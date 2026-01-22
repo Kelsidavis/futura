@@ -22,6 +22,7 @@
 #include <kernel/signal_frame.h>
 #include <kernel/chrdev.h>
 #include <kernel/kprintf.h>
+#include <fcntl.h>
 
 /* ============================================================
  *   Syscall Numbers
@@ -33,7 +34,7 @@
 #define SYS_open        2
 #define SYS_close       3
 #define SYS_openat      257
-#define AT_FDCWD        -100
+/* AT_FDCWD provided by fcntl.h */
 #define SYS_stat        4
 #define SYS_fstat       5
 #define SYS_lstat       6

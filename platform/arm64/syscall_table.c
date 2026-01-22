@@ -26,6 +26,7 @@
 #include <shared/fut_stat.h>      /* For struct fut_stat, S_IF* */
 #include <sys/uio.h>              /* For struct iovec */
 #include <sys/resource.h>         /* For struct rlimit, RLIMIT_* */
+#include <fcntl.h>                /* For AT_FDCWD and file control flags */
 #define _GNU_SOURCE               /* Enable domainname in struct utsname */
 #include <sys/utsname.h>          /* For struct utsname */
 
@@ -307,8 +308,7 @@ extern long sys_quotactl(unsigned int cmd, const char *special, int id, void *ad
 #define SYSCALL_ERROR      -1
 /* errno values provided by errno.h */
 
-/* Special value for dirfd parameter */
-#define AT_FDCWD           -100    /* Use current working directory */
+/* AT_FDCWD provided by fcntl.h */
 
 /* ============================================================
  *   System Call Implementations

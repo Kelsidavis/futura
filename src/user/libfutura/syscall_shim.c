@@ -16,10 +16,7 @@
 #error "Unsupported architecture"
 #endif
 
-/* AT_FDCWD: Use current working directory for path */
-#ifndef AT_FDCWD
-#define AT_FDCWD -100
-#endif
+/* AT_FDCWD provided by fcntl.h */
 
 /* x86-64 syscall numbers */
 #define SYS_open 2

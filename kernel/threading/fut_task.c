@@ -163,7 +163,7 @@ fut_task_t *fut_task_create(void) {
     fut_waitq_init(&task->child_waiters);
 
     /* Initialize signal handlers array - all default actions */
-    for (int i = 0; i < 31; i++) {
+    for (int i = 0; i < _NSIG; i++) {
         task->signal_handlers[i] = NULL;  /* NULL = use default action */
         task->signal_handler_masks[i] = 0;  /* No additional signals blocked during handler */
         task->signal_handler_flags[i] = 0;  /* No SA_* flags set initially */

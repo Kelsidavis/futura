@@ -259,7 +259,7 @@ int fut_signal_deliver(struct fut_task *task, void *frame) {
 
     /* Find first pending, unblocked signal */
     int signum = 0;
-    for (int i = 1; i < 31; i++) {
+    for (int i = 1; i < _NSIG; i++) {
         uint64_t signal_bit = (1ULL << (i - 1));
         if ((task->pending_signals & signal_bit) &&
             !(task->signal_mask & signal_bit)) {

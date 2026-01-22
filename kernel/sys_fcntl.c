@@ -252,7 +252,10 @@ extern int propagate_socket_dup(int oldfd, int newfd);
 #ifndef FD_CLOEXEC
 #define FD_CLOEXEC         1
 #endif
-/* O_NONBLOCK, O_APPEND already defined in fut_vfs.h */
+/* O_NONBLOCK, O_APPEND, O_ACCMODE already defined in fut_vfs.h */
+
+/* Maximum file descriptor number for F_DUPFD validation */
+#define MAX_FD_NUMBER 65536
 
 /**
  * fcntl() - File control operations
@@ -473,7 +476,7 @@ long sys_fcntl(int fd, int cmd, uint64_t arg) {
         char *p = flags_buf;
 
         /* Access mode (not a bitmask, use exact match) */
-        int access_mode = file->flags & 0x3;  /* O_ACCMODE */
+        int access_mode = file->flags & O_ACCMODE;
         if (access_mode == 0) {
             const char *s = "O_RDONLY";
             while (*s) *p++ = *s++;
@@ -570,8 +573,8 @@ long sys_fcntl(int fd, int cmd, uint64_t arg) {
             return -EINVAL;
         }
 
-        /* Phase 2: Validate minfd doesn't exceed reasonable limit (65536) */
-        if (minfd >= 65536) {
+        /* Phase 2: Validate minfd doesn't exceed reasonable limit */
+        if (minfd >= MAX_FD_NUMBER) {
             fut_printf("[FCNTL] fcntl(fd=%d [%s], cmd=%s [%s], minfd=%d) -> EINVAL "
                        "(minfd exceeds maximum limit)\n",
                        local_fd, fd_category, cmd_name, cmd_category, minfd);

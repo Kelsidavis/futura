@@ -486,6 +486,11 @@ See `docs/ARM64_STATUS.md` for detailed ARM64 progress.
   fut_exec_elf (exec.h), fut_access_ok (uaccess.h), fut_thread_current (fut_thread.h)
   with proper header includes
 - **Total impact**: Removed ~200+ lines of scattered extern declarations across 100+ files
+- ✅ **fut_timer.h consolidation**: Replaced fut_get_ticks/fut_get_time_ns externs with
+  proper header includes in 7 syscall files
+- ✅ **fut_vfs.h API additions**: Added fut_vfs_sync_fs(), fut_vfs_sync_all(), and
+  vfs_check_*_perm() function declarations to header, enabling removal of externs
+- ✅ **Continued cleanup**: Removed redundant vfs_alloc_specific_fd_for_task externs
 
 ## Current Focus
 

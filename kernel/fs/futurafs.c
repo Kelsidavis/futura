@@ -261,6 +261,11 @@ int futurafs_read_superblock_async(struct futurafs_mount *mount,
                                    struct futurafs_superblock *sb,
                                    futurafs_completion_t callback,
                                    void *ctx) {
+    /* Validate callback (required for async operation completion) */
+    if (!callback) {
+        return FUTURAFS_EINVAL;
+    }
+
     /* Allocate async context */
     struct futurafs_sb_read_ctx *sb_ctx = fut_malloc(sizeof(*sb_ctx));
     if (!sb_ctx) {
@@ -311,6 +316,11 @@ int futurafs_write_superblock_async(struct futurafs_mount *mount,
                                     const struct futurafs_superblock *sb,
                                     futurafs_completion_t callback,
                                     void *ctx) {
+    /* Validate callback (required for async operation completion) */
+    if (!callback) {
+        return FUTURAFS_EINVAL;
+    }
+
     /* Allocate async context */
     struct futurafs_sb_write_ctx *sb_ctx = fut_malloc(sizeof(*sb_ctx));
     if (!sb_ctx) {
@@ -370,6 +380,11 @@ int futurafs_read_inode_async(struct futurafs_mount *mount,
                               struct futurafs_inode *inode,
                               futurafs_completion_t callback,
                               void *ctx) {
+    /* Validate callback (required for async operation completion) */
+    if (!callback) {
+        return FUTURAFS_EINVAL;
+    }
+
     /* Validate inode number */
     if (ino == 0 || ino > mount->sb->total_inodes) {
         return FUTURAFS_EINVAL;
@@ -487,6 +502,11 @@ int futurafs_write_inode_async(struct futurafs_mount *mount,
                                const struct futurafs_inode *inode,
                                futurafs_completion_t callback,
                                void *ctx) {
+    /* Validate callback (required for async operation completion) */
+    if (!callback) {
+        return FUTURAFS_EINVAL;
+    }
+
     /* Validate inode number */
     if (ino == 0 || ino > mount->sb->total_inodes) {
         return FUTURAFS_EINVAL;
@@ -563,6 +583,11 @@ int futurafs_read_block_async(struct futurafs_mount *mount,
                               void *buffer,
                               futurafs_completion_t callback,
                               void *ctx) {
+    /* Validate callback (required for async operation completion) */
+    if (!callback) {
+        return FUTURAFS_EINVAL;
+    }
+
     /* Validate block number */
     if (block_num >= mount->sb->total_blocks) {
         return FUTURAFS_EINVAL;
@@ -620,6 +645,11 @@ int futurafs_write_block_async(struct futurafs_mount *mount,
                                const void *buffer,
                                futurafs_completion_t callback,
                                void *ctx) {
+    /* Validate callback (required for async operation completion) */
+    if (!callback) {
+        return FUTURAFS_EINVAL;
+    }
+
     /* Validate block number */
     if (block_num >= mount->sb->total_blocks) {
         return FUTURAFS_EINVAL;
@@ -752,6 +782,11 @@ int futurafs_dir_lookup_entry_async(struct futurafs_inode_info *dir_info,
                                     struct futurafs_dirent *entry_out,
                                     futurafs_completion_t callback,
                                     void *ctx) {
+    /* Validate callback (required for async operation completion) */
+    if (!callback) {
+        return FUTURAFS_EINVAL;
+    }
+
     /* Allocate context for state machine */
     struct futurafs_dir_lookup_ctx *lookup_ctx =
         fut_malloc(sizeof(struct futurafs_dir_lookup_ctx));
@@ -1004,8 +1039,8 @@ int futurafs_dir_add_entry_async(struct fut_vnode *dir_vnode,
                                  uint8_t file_type,
                                  futurafs_completion_t callback,
                                  void *ctx) {
-    /* Validate parameters */
-    if (!dir_info || !name || name_len == 0 || name_len > FUTURAFS_NAME_MAX || ino == 0) {
+    /* Validate parameters (including callback for async completion) */
+    if (!dir_info || !name || name_len == 0 || name_len > FUTURAFS_NAME_MAX || ino == 0 || !callback) {
         return FUTURAFS_EINVAL;
     }
 
@@ -1364,6 +1399,11 @@ int futurafs_file_read_async(struct futurafs_inode_info *inode_info,
                               uint64_t offset,
                               futurafs_completion_t callback,
                               void *ctx) {
+    /* Validate callback (required for async operation completion) */
+    if (!callback) {
+        return FUTURAFS_EINVAL;
+    }
+
     /* EOF check */
     if (offset >= inode_info->disk_inode.size) {
         callback(0, ctx);  /* Return 0 bytes read */
@@ -2024,6 +2064,11 @@ int futurafs_file_write_async(struct futurafs_inode_info *inode_info,
                                uint64_t offset,
                                futurafs_completion_t callback,
                                void *ctx) {
+    /* Validate callback (required for async operation completion) */
+    if (!callback) {
+        return FUTURAFS_EINVAL;
+    }
+
     /* Allocate context */
     struct futurafs_file_write_ctx *write_ctx = fut_malloc(sizeof(*write_ctx));
     if (!write_ctx) {

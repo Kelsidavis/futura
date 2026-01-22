@@ -19,6 +19,7 @@
 
 #include <kernel/kprintf.h>
 #include <kernel/uaccess.h>
+#include <kernel/syscalls.h>
 #include <fcntl.h>
 
 /* AT_* constants provided by fcntl.h */
@@ -392,7 +393,6 @@ long sys_faccessat(int dirfd, const char *pathname, int mode, int flags) {
         goto success;
     } else {
         /* Default behavior: follow symlinks (delegate to sys_access) */
-        extern long sys_access(const char *pathname, int mode);
         ret = (int)sys_access(resolved_path, local_mode);
     }
 

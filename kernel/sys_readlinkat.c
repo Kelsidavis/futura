@@ -19,6 +19,7 @@
 
 #include <kernel/kprintf.h>
 #include <kernel/uaccess.h>
+#include <kernel/syscalls.h>
 #include <fcntl.h>
 
 /* AT_* constants provided by fcntl.h */
@@ -244,7 +245,6 @@ long sys_readlinkat(int dirfd, const char *pathname, char *buf, size_t bufsiz) {
     }
 
     /* Perform the readlink via existing sys_readlink implementation */
-    extern long sys_readlink(const char *path, char *buf, size_t bufsiz);
     long ret = sys_readlink(resolved_path, local_buf, local_bufsiz);
 
     /* Handle errors */

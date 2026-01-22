@@ -19,7 +19,6 @@
 #include "tests/test_api.h"
 
 #include <kernel/kprintf.h>
-extern long sys_pipe(int pipefd[2]);
 
 /* Test constants */
 #define PIPE_TEST_BASIC_CREATE 1

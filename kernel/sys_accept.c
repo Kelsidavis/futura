@@ -18,7 +18,9 @@
 #include <kernel/fut_socket.h>
 #include <kernel/errno.h>
 #include <kernel/uaccess.h>
+#include <kernel/syscalls.h>
 #include <stdint.h>
+#include <fcntl.h>
 
 #include <kernel/kprintf.h>
 
@@ -686,14 +688,12 @@ long sys_accept4(int sockfd, void *addr, socklen_t *addrlen, int flags) {
 
     /* Phase 4: Apply SOCK_NONBLOCK flag if requested */
     if (local_flags & SOCK_NONBLOCK) {
-        extern long sys_fcntl(int fd, int cmd, long arg);
-        sys_fcntl((int)newfd, 4, 0x800);  /* F_SETFL, O_NONBLOCK */
+        sys_fcntl((int)newfd, F_SETFL, O_NONBLOCK);
     }
 
     /* Phase 4: Apply SOCK_CLOEXEC flag if requested */
     if (local_flags & SOCK_CLOEXEC) {
-        extern long sys_fcntl(int fd, int cmd, long arg);
-        sys_fcntl((int)newfd, 2, 1);  /* F_SETFD, FD_CLOEXEC */
+        sys_fcntl((int)newfd, F_SETFD, FD_CLOEXEC);
     }
 
     /* Determine flags description for logging */

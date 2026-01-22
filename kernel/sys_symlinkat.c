@@ -18,6 +18,7 @@
 
 #include <kernel/kprintf.h>
 #include <kernel/uaccess.h>
+#include <kernel/syscalls.h>
 #include <fcntl.h>
 
 /* AT_* constants provided by fcntl.h */
@@ -257,7 +258,6 @@ long sys_symlinkat(const char *target, int newdirfd, const char *linkpath) {
     }
 
     /* Perform the symlink via existing sys_symlink implementation */
-    extern long sys_symlink(const char *target, const char *linkpath);
     int ret = (int)sys_symlink(target_buf, resolved_linkpath);
 
     /* Handle errors */

@@ -19,6 +19,7 @@
 
 #include <kernel/kprintf.h>
 #include <kernel/uaccess.h>
+#include <kernel/syscalls.h>
 #include <fcntl.h>
 
 /* AT_* constants provided by fcntl.h */
@@ -276,7 +277,6 @@ long sys_fchmodat(int dirfd, const char *pathname, uint32_t mode, int flags) {
     }
 
     /* Perform the chmod via existing sys_chmod implementation */
-    extern long sys_chmod(const char *pathname, uint32_t mode);
     int ret = (int)sys_chmod(resolved_path, local_mode);
 
     /* Handle errors */

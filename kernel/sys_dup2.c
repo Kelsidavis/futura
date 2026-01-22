@@ -17,6 +17,8 @@
 #include <kernel/fut_vfs.h>
 #include <kernel/fut_task.h>
 #include <kernel/fut_fd_util.h>
+#include <kernel/syscalls.h>
+#include <fcntl.h>
 
 #include <kernel/kprintf.h>
 extern int propagate_socket_dup(int oldfd, int newfd);
@@ -400,8 +402,7 @@ long sys_dup3(int oldfd, int newfd, int flags) {
 
     /* Apply O_CLOEXEC if requested */
     if (local_flags & O_CLOEXEC) {
-        extern long sys_fcntl(int fd, int cmd, long arg);
-        sys_fcntl(local_newfd, 2, 1);  /* F_SETFD, FD_CLOEXEC */
+        sys_fcntl(local_newfd, F_SETFD, FD_CLOEXEC);
     }
 
     /* Propagate socket ownership if oldfd is a socket */

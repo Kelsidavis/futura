@@ -24,8 +24,7 @@
 #include <stdint.h>
 
 #include <kernel/kprintf.h>
-extern bool fut_io_budget_check_bytes(fut_task_t *task, uint64_t bytes, uint64_t current_ms);
-extern void fut_io_budget_consume_bytes(fut_task_t *task, uint64_t bytes);
+/* fut_io_budget_check_bytes and fut_io_budget_consume_bytes provided by fut_io_budget.h */
 
 /* Message flags (MSG_*) provided by fut_socket.h */
 

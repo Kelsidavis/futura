@@ -22,10 +22,7 @@
 
 #include <kernel/kprintf.h>
 
-/* Permission checking functions from vfs_credentials.c */
-extern int vfs_check_read_perm(struct fut_vnode *vnode);
-extern int vfs_check_write_perm(struct fut_vnode *vnode);
-extern int vfs_check_exec_perm(struct fut_vnode *vnode);
+/* Permission checking functions (vfs_check_*_perm) provided by fut_vfs.h */
 
 /* Forward declarations for sync functions */
 int fut_vfs_sync_all(void);

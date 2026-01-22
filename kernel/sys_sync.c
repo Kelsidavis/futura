@@ -16,7 +16,7 @@
 #include <stdint.h>
 
 #include <kernel/kprintf.h>
-extern int fut_vfs_sync_all(void);
+#include <kernel/fut_vfs.h>
 
 /**
  * sync() - Synchronize all filesystem data to disk

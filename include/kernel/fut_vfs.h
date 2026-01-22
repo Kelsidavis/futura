@@ -714,6 +714,21 @@ int fut_vfs_rmdir(const char *path);
  */
 int fut_vfs_mkdir(const char *path, uint32_t mode);
 
+/**
+ * Sync all cached data for a specific filesystem.
+ *
+ * @param mount Mount point to sync
+ * @return 0 on success or negative error code on failure
+ */
+int fut_vfs_sync_fs(struct fut_mount *mount);
+
+/**
+ * Sync all cached data for all mounted filesystems.
+ *
+ * @return 0 on success or negative error code on failure
+ */
+int fut_vfs_sync_all(void);
+
 /* Per-task FD management (for multi-process isolation) */
 struct fut_file *vfs_get_file_from_task(struct fut_task *task, int fd);
 int vfs_alloc_specific_fd_for_task(struct fut_task *task, int target_fd, struct fut_file *file);

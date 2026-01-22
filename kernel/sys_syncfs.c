@@ -17,7 +17,6 @@
 #include <stdint.h>
 
 #include <kernel/kprintf.h>
-extern int fut_vfs_sync_fs(struct fut_mount *mount);
 
 /**
  * syncfs() - Synchronize a specific filesystem to disk

@@ -217,13 +217,13 @@ long sys_mprotect(void *addr, size_t len, int prot) {
     }
 
     /* Phase 5: Validate end address is within userspace limits
-     * Prevent modifying kernel memory protection */
+     * Prevent modifying kernel memory protection
+     * USER_SPACE_END is defined in platform paging headers */
     uintptr_t end = start + aligned_len;
-    const uintptr_t USERSPACE_MAX = 0x800000000000UL;  /* 128TB on x86-64 */
-    if (end > USERSPACE_MAX) {
+    if (end > USER_SPACE_END) {
         fut_printf("[MPROTECT] mprotect(%p, %zu) -> EINVAL "
                    "(end address 0x%lx exceeds userspace limit 0x%lx, Phase 5)\n",
-                   addr, aligned_len, end, USERSPACE_MAX);
+                   addr, aligned_len, end, USER_SPACE_END);
         return -EINVAL;
     }
     size_t num_pages = aligned_len / PAGE_SIZE;

@@ -235,26 +235,12 @@ long sys_msync(void *addr, size_t length, int flags) {
 
     /* Phase 5: Validate end address is within userspace limits
      * Prevent syncing kernel memory regions
-     * Architecture-specific userspace boundaries:
-     * - x86-64: Canonical addressing splits at 0x800000000000 (128TB)
-     *   Kernel space starts at 0xFFFF800000000000 (higher half)
-     * - ARM64: TTBR0_EL1 (user) vs TTBR1_EL1 (kernel) split
-     *   48-bit userspace limited to 0x0001000000000000 (256TB)
-     *   Kernel addresses start at 0xFFFF000000000000 */
+     * USER_SPACE_END is defined in platform paging headers */
     uintptr_t end = start + aligned_len;
-
-    #if defined(__x86_64__)
-    const uintptr_t USERSPACE_MAX = 0x800000000000UL;  /* x86-64: 128TB */
-    #elif defined(__aarch64__)
-    const uintptr_t USERSPACE_MAX = 0x0001000000000000UL;  /* ARM64: 256TB (48-bit) */
-    #else
-    #error "Unsupported architecture for USERSPACE_MAX"
-    #endif
-
-    if (end > USERSPACE_MAX) {
+    if (end > USER_SPACE_END) {
         fut_printf("[MSYNC] msync(%p, %zu) -> EINVAL "
                    "(end address 0x%lx exceeds userspace limit 0x%lx, Phase 5)\n",
-                   addr, aligned_len, end, USERSPACE_MAX);
+                   addr, aligned_len, end, USER_SPACE_END);
         return -EINVAL;
     }
 

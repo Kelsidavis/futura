@@ -74,7 +74,7 @@ int fut_stage_wl_term_binary(void) {
     return -ENODEV;  /* Wayland not available for ARM64 */
 }
 
-int fut_stage_init_stub_binary(void) {
+int fut_stage_init_binary(void) {
     return -ENODEV;  /* Not implemented for ARM64 */
 }
 

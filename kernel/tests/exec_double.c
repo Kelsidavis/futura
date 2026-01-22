@@ -16,9 +16,9 @@ void fut_exec_double_smoke(void) {
 
     fut_vfs_check_root_canary("exec-double:start");
 
-    int rc = fut_stage_init_stub_binary();
+    int rc = fut_stage_init_binary();
     if (rc != 0) {
-        fut_printf("[EXEC-DOUBLE] staging init_stub failed: %d\n", rc);
+        fut_printf("[EXEC-DOUBLE] staging init failed: %d\n", rc);
         return;
     }
 

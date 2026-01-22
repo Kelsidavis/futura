@@ -52,7 +52,7 @@ int fut_stage_fbtest_binary(void);
 int fut_stage_shell_binary(void);
 
 /** Stage the init process (PID 1) */
-int fut_stage_init_stub_binary(void);
+int fut_stage_init_binary(void);
 
 /** Stage secondary init helper */
 int fut_stage_second_stub_binary(void);

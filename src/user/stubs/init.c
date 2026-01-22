@@ -9,7 +9,7 @@ int main(void) {
     // Init process - launch compositor, wait for socket, then start wl-term
 
     // VERY FIRST message - before anything else
-    sys_write(1, "[INIT-STUB] MAIN STARTED\n", 25);
+    sys_write(1, "[INIT] MAIN STARTED\n", 20);
 
     // Ensure stdin/stdout/stderr are bound to /dev/console
     int console_fd = sys_open("/dev/console", 2, 0);  // O_RDWR = 2
@@ -28,7 +28,7 @@ int main(void) {
         }
     }
 
-    printf("[INIT-STUB] Started, launching compositor...\n");
+    printf("[INIT] Started, launching compositor...\n");
 
     // Create /tmp directory for Wayland socket (should already exist but be safe)
     sys_mkdir_call("/tmp", 0755);
@@ -37,7 +37,7 @@ int main(void) {
     long compositor_pid = sys_fork_call();
     if (compositor_pid == 0) {
         // Child - exec compositor
-        sys_write(1, "[INIT-STUB] Child: execing compositor\n", 38);
+        sys_write(1, "[INIT] Child: execing compositor\n", 38);
 
         // Set up stdio
         sys_close(0);
@@ -55,12 +55,12 @@ int main(void) {
         };
         sys_execve_call("/sbin/futura-wayland", (char * const *)argv, (char * const *)envp);
         // If exec fails
-        sys_write(1, "[INIT-STUB] Failed to exec compositor!\n", 39);
+        sys_write(1, "[INIT] Failed to exec compositor!\n", 39);
         sys_exit(1);
     } else if (compositor_pid < 0) {
-        printf("[INIT-STUB] Failed to fork for compositor: %ld\n", compositor_pid);
+        printf("[INIT] Failed to fork for compositor: %ld\n", compositor_pid);
     } else {
-        printf("[INIT-STUB] Compositor forked, pid=%ld\n", compositor_pid);
+        printf("[INIT] Compositor forked, pid=%ld\n", compositor_pid);
     }
 
     // Wait for compositor to create Wayland socket or readiness marker
@@ -80,7 +80,7 @@ int main(void) {
         for (int i = 0; ready_paths[i]; i++) {
             long stat_rc = sys_stat_call(ready_paths[i], &st);
             if (stat_rc == 0) {
-                printf("[INIT-STUB] Wayland ready marker found at %s (attempt %d)\n",
+                printf("[INIT] Wayland ready marker found at %s (attempt %d)\n",
                        ready_paths[i], attempt + 1);
                 socket_found = 1;
                 break;
@@ -92,7 +92,7 @@ int main(void) {
         }
 
         if (attempt % 200 == 199) {
-            printf("[INIT-STUB] Still waiting for socket... (attempt %d)\n", attempt + 1);
+            printf("[INIT] Still waiting for socket... (attempt %d)\n", attempt + 1);
         }
 
         fut_timespec_t retry_delay = { .tv_sec = 0, .tv_nsec = 20000000 };
@@ -100,19 +100,19 @@ int main(void) {
     }
 
     if (!socket_found) {
-        printf("[INIT-STUB] WARNING: Wayland socket not found after 1000 attempts\n");
+        printf("[INIT] WARNING: Wayland socket not found after 1000 attempts\n");
     }
-    printf("[INIT-STUB] Done waiting, about to fork wl-term\n");
+    printf("[INIT] Done waiting, about to fork wl-term\n");
 
     // Fork and exec wl-term
-    printf("[INIT-STUB] About to call sys_fork_call()...\n");
+    printf("[INIT] About to call sys_fork_call()...\n");
     long shell_pid = sys_fork_call();
-    printf("[INIT-STUB] sys_fork_call() returned: %ld\n", shell_pid);
+    printf("[INIT] sys_fork_call() returned: %ld\n", shell_pid);
 
     if (shell_pid == 0) {
         // Child process - set up file descriptors and exec into wl-term
         // Use sys_write to /dev/console before closing FDs
-        sys_write(1, "[INIT-CHILD] ENTERED CHILD PROCESS\n", 36);
+        sys_write(1, "[INIT] ENTERED CHILD PROCESS\n", 36);
 
         // Close any inherited file descriptors first
         sys_close(0);
@@ -125,14 +125,14 @@ int main(void) {
         int fd2 = sys_open("/dev/console", 2, 0);
 
         // Now we can print debug output since stdout is open
-        printf("[INIT-CHILD] FDs: fd0=%d fd1=%d fd2=%d\n", fd0, fd1, fd2);
+        printf("[INIT] FDs: fd0=%d fd1=%d fd2=%d\n", fd0, fd1, fd2);
 
         if (fd0 != 0 || fd1 != 1 || fd2 != 2) {
             // File descriptors aren't in expected order - this is a problem
-            printf("[INIT-CHILD] WARNING: FDs not in expected order!\n");
+            printf("[INIT] WARNING: FDs not in expected order!\n");
         }
 
-        printf("[INIT-CHILD] About to exec /bin/wl-term\n");
+        printf("[INIT] About to exec /bin/wl-term\n");
         const char *argv[] = { "/bin/wl-term", 0 };
         const char *envp[] = {
             "WAYLAND_DISPLAY=wayland-0",
@@ -141,7 +141,7 @@ int main(void) {
         };
         sys_execve_call("/bin/wl-term", (char * const *)argv, (char * const *)envp);
         // If execve fails, print error and exit
-        printf("[INIT-CHILD] Failed to exec /bin/wl-term\n");
+        printf("[INIT] Failed to exec /bin/wl-term\n");
         sys_exit(1);
     } else if (shell_pid > 0) {
         // Parent waits for wl-term to complete (when user exits)

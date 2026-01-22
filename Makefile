@@ -672,8 +672,8 @@ SHELL_BIN := $(BIN_DIR)/$(PLATFORM)/user/shell
 SHELL_BLOB := $(OBJ_DIR)/kernel/blobs/shell_blob.o
 FBTEST_BIN := $(BIN_DIR)/$(PLATFORM)/user/fbtest
 FBTEST_BLOB := $(OBJ_DIR)/kernel/blobs/fbtest_blob.o
-INIT_STUB_BIN := $(BIN_DIR)/$(PLATFORM)/user/init_stub
-INIT_STUB_BLOB := $(OBJ_DIR)/kernel/blobs/init_stub_blob.o
+INIT_BIN := $(BIN_DIR)/$(PLATFORM)/user/init
+INIT_BLOB := $(OBJ_DIR)/kernel/blobs/init_blob.o
 SECOND_STUB_BIN := $(BIN_DIR)/$(PLATFORM)/user/second
 SECOND_STUB_BLOB := $(OBJ_DIR)/kernel/blobs/second_stub_blob.o
 WAYLAND_COMPOSITOR_BIN := $(BIN_DIR)/$(PLATFORM)/user/futura-wayland
@@ -704,7 +704,7 @@ ifeq ($(PLATFORM),x86_64)
 ifneq ($(shell uname -s),Darwin)
 OBJECTS += $(SHELL_BLOB)
 endif
-OBJECTS += $(INIT_STUB_BLOB) $(SECOND_STUB_BLOB)
+OBJECTS += $(INIT_BLOB) $(SECOND_STUB_BLOB)
 # Diagnostics (optional)
 ifeq ($(ENABLE_FB_DIAGNOSTICS),1)
 OBJECTS += $(FBTEST_BLOB)
@@ -826,7 +826,7 @@ endif
 $(FBTEST_BIN):
 	@$(MAKE) -C src/user fbtest
 
-$(INIT_STUB_BIN) $(SECOND_STUB_BIN):
+$(INIT_BIN) $(SECOND_STUB_BIN):
 	@$(MAKE) -C src/user stubs
 
 $(WAYLAND_COMPOSITOR_BIN):
@@ -859,7 +859,7 @@ $(FBTEST_BLOB): $(FBTEST_BIN) | $(OBJ_DIR)/kernel/blobs
 	@echo "OBJCOPY $@"
 	@$(OBJCOPY) -I binary -O $(OBJCOPY_BIN_FMT) -B $(OBJCOPY_BIN_ARCH) $< $@
 
-$(INIT_STUB_BLOB): $(INIT_STUB_BIN) | $(OBJ_DIR)/kernel/blobs
+$(INIT_BLOB): $(INIT_BIN) | $(OBJ_DIR)/kernel/blobs
 	@echo "OBJCOPY $@"
 	@$(OBJCOPY) -I binary -O $(OBJCOPY_BIN_FMT) -B $(OBJCOPY_BIN_ARCH) $< $@
 
@@ -973,7 +973,7 @@ stage: userland
 	@install -m 0755 $(WAYLAND_SHELL_BIN) $(INITROOT)/bin/futura-shell
 	@install -m 0755 src/user/shell/futura-shell/launch_shell.sh $(INITROOT)/sbin/launch-shell
 	@if [ -f $(BUILD_DIR)/lib/libopen_wrapper.so ]; then install -m 0755 $(BUILD_DIR)/lib/libopen_wrapper.so $(INITROOT)/lib/libopen_wrapper.so; fi
-	@if [ -f $(INIT_STUB_BIN) ]; then install -m 0755 $(INIT_STUB_BIN) $(INITROOT)/sbin/init; fi
+	@if [ -f $(INIT_BIN) ]; then install -m 0755 $(INIT_BIN) $(INITROOT)/sbin/init; fi
 	@if [ -f $(SECOND_STUB_BIN) ]; then install -m 0755 $(SECOND_STUB_BIN) $(INITROOT)/sbin/second; fi
 	@mkdir -p $(dir $(INITRAMFS))
 	@cd $(INITROOT) && find . -print0 | cpio --null -ov --format=newc --quiet > $(abspath $(INITRAMFS))

@@ -764,8 +764,8 @@ extern const uint8_t _binary_build_bin_x86_64_user_fbtest_end[];
 #endif
 extern const uint8_t _binary_build_bin_x86_64_user_shell_start[];
 extern const uint8_t _binary_build_bin_x86_64_user_shell_end[];
-extern const uint8_t _binary_build_bin_x86_64_user_init_stub_start[];
-extern const uint8_t _binary_build_bin_x86_64_user_init_stub_end[];
+extern const uint8_t _binary_build_bin_x86_64_user_init_start[];
+extern const uint8_t _binary_build_bin_x86_64_user_init_end[];
 extern const uint8_t _binary_build_bin_x86_64_user_second_start[];
 extern const uint8_t _binary_build_bin_x86_64_user_second_end[];
 /* Core Wayland binaries (production) */
@@ -893,11 +893,11 @@ int fut_stage_shell_binary(void) {
 #endif
 
 #ifdef __x86_64__
-int fut_stage_init_stub_binary(void) {
+int fut_stage_init_binary(void) {
     (void)fut_vfs_mkdir("/sbin", 0755);
-    return stage_blob(_binary_build_bin_x86_64_user_init_stub_start,
-                      _binary_build_bin_x86_64_user_init_stub_end,
-                      "/sbin/init_stub");
+    return stage_blob(_binary_build_bin_x86_64_user_init_start,
+                      _binary_build_bin_x86_64_user_init_end,
+                      "/sbin/init");
 }
 
 int fut_stage_second_stub_binary(void) {
@@ -909,7 +909,7 @@ int fut_stage_second_stub_binary(void) {
 #else /* !__x86_64__ */
 #include <kernel/errno.h>
 
-int fut_stage_init_stub_binary(void) {
+int fut_stage_init_binary(void) {
     return -ENOSYS;  /* Not implemented for non-x86_64 platforms */
 }
 

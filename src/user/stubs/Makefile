@@ -52,25 +52,25 @@ endif
 CRT0 := $(LIB_DIR)/crt0.o
 LIBFUTURA := $(LIB_DIR)/libfutura.a
 
-TARGETS := $(BIN_DIR)/init_stub $(BIN_DIR)/second
+TARGETS := $(BIN_DIR)/init $(BIN_DIR)/second
 
 OBJS := \
-	$(OBJ_DIR)/init_stub.o \
+	$(OBJ_DIR)/init.o \
 	$(OBJ_DIR)/second.o
 
 .PHONY: all clean
 
 all: $(TARGETS)
 
-$(BIN_DIR)/init_stub: $(OBJ_DIR)/init_stub.o $(CRT0) $(LIBFUTURA) | $(BIN_DIR)
+$(BIN_DIR)/init: $(OBJ_DIR)/init.o $(CRT0) $(LIBFUTURA) | $(BIN_DIR)
 	@echo "LD $@"
-	@$(LD) $(LDFLAGS) --unresolved-symbols=ignore-all -o $@ $(CRT0) $(OBJ_DIR)/init_stub.o $(LIBFUTURA) $(LIBGCC)
+	@$(LD) $(LDFLAGS) --unresolved-symbols=ignore-all -o $@ $(CRT0) $(OBJ_DIR)/init.o $(LIBFUTURA) $(LIBGCC)
 
 $(BIN_DIR)/second: $(OBJ_DIR)/second.o $(CRT0) $(LIBFUTURA) | $(BIN_DIR)
 	@echo "LD $@"
 	@$(LD) $(LDFLAGS) --unresolved-symbols=ignore-all -o $@ $(CRT0) $(OBJ_DIR)/second.o $(LIBFUTURA) $(LIBGCC)
 
-$(OBJ_DIR)/init_stub.o: init_stub.c | $(OBJ_DIR)
+$(OBJ_DIR)/init.o: init.c | $(OBJ_DIR)
 	@echo "CC $<"
 	@$(CC) $(CFLAGS) -c $< -o $@
 

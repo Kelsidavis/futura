@@ -84,6 +84,22 @@ See `docs/ARM64_STATUS.md` for detailed ARM64 progress.
 - ✅ **Atomic rename operation**: Implemented full rename() syscall with VFS integration. Added rename() operation to fut_vnode_ops interface, implemented ramfs_rename() for in-memory atomicity, and integrated sys_rename() with comprehensive error handling. Supports same-directory renaming with atomic replacement of existing files. Foundation for cross-directory moves in future phase.
 - ✅ **Verified symlink/readlink**: Discovered sys_symlink() and sys_readlink() already fully implemented with complete VFS integration and error handling. Both syscalls ready for production use.
 
+### January 21, 2026 Session — Code Quality Improvements (Latest)
+- ✅ **Magic number elimination in signal handling**: Replaced hardcoded `31` with `_NSIG` constant in:
+  - `fut_task.h`: Signal handler, mask, and flags arrays
+  - `fut_task.c`: Signal handler initialization loop
+  - `signal.c`: Pending signal iteration loop
+- ✅ **fcntl named constants**: Replaced magic numbers in sys_fcntl.c:
+  - Use `O_ACCMODE` instead of `0x3` for access mode extraction
+  - Added `MAX_FD_NUMBER` (65536) constant for FD limit validation
+- ✅ **Video driver errno standardization**: Fixed 5 video driver files to use proper errno return values:
+  - `cirrus_vga.c`: -ENODEV (device not found), -ENOSYS (ARM64 not supported)
+  - `pci_vga.c`: -ENODEV (device not found), -ENOSYS (ARM64 not implemented)
+  - `fb_mmio.c`: -ENODEV (fallback disabled), -EINVAL (NULL pointer)
+  - `virtio_gpu.c`: -ENODEV (device/config not found), -ENOMEM (allocation failed), -EIO (device rejected features)
+  - `virtio_gpu_mmio.c`: -ENODEV (device not ready), -EFAULT (address translation failed), -ETIMEDOUT (command timeout)
+- ✅ **Total this session**: Replaced 25+ generic `-1` returns with specific errno codes, added 3 named constants
+
 ### January 21, 2026 Session — Security Hardening & Code Quality
 - ✅ **Page refcount overflow protection**: Added FUT_PAGE_REF_MAX (60000) limit in fut_page_ref_inc() to prevent CVE-2016-0728 style refcount overflow attacks. Fork now checks return value and aborts if limit reached.
 - ✅ **File refcount overflow protection**: Added FUT_FILE_REF_MAX limit in sys_fork.c with proper cleanup of already-inherited FDs on failure. Prevents use-after-free via mass forking with many open FDs.

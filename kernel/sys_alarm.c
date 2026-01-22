@@ -18,11 +18,7 @@
 #include <kernel/kprintf.h>
 #include <kernel/fut_timer.h>
 
-/* SIGALRM is already defined in signal.h, but define here for clarity */
-#ifndef SIGALRM
-#define SIGALRM 14
-#endif
-
+/* SIGALRM provided by kernel/signal.h */
 
 /**
  * alarm() - Set an alarm clock for delivery of a signal

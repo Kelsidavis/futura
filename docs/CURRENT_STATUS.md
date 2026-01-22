@@ -549,6 +549,12 @@ See `docs/ARM64_STATUS.md` for detailed ARM64 progress.
   - task_cleanup_and_exit() now writes 0 to clear_child_tid address
   - Wakes one futex waiter to notify pthread_join()
   - Enables efficient thread joining via futex-based waiting
+- ✅ **xattr syscall DRY refactoring**: Extracted common patterns from 12 xattr
+  syscall variants into reusable helper functions:
+  - xattr_copy_path_and_name(), xattr_copy_name(), xattr_copy_path()
+  - xattr_validate_setxattr_flags(), xattr_get_flags_desc(), xattr_get_size_desc()
+  - Eliminates significant code duplication across set/lset/fset, get/lget/fget,
+    list/llist/flist, and remove/lremove/fremove xattr variants
 
 ## Current Focus
 

@@ -14,6 +14,7 @@
 #include <kernel/fut_task.h>
 #include <kernel/errno.h>
 #include <kernel/fut_vfs.h>
+#include <kernel/syscalls.h>
 #include <stdint.h>
 
 #include <kernel/kprintf.h>
@@ -354,7 +355,6 @@ long sys_renameat(int olddirfd, const char *oldpath, int newdirfd, const char *n
     }
 
     /* Perform the rename via existing sys_rename implementation */
-    extern long sys_rename(const char *oldpath, const char *newpath);
     int ret = (int)sys_rename(resolved_oldpath, resolved_newpath);
 
     /* Handle errors */

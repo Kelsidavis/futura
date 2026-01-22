@@ -18,6 +18,7 @@
 #include <kernel/fut_vfs.h>
 #include <kernel/uaccess.h>
 #include <kernel/fut_waitq.h>
+#include <kernel/syscalls.h>
 #include <string.h>
 #include <stdint.h>
 
@@ -598,7 +599,6 @@ long sys_pipe2(int pipefd[2], int flags) {
     /* Apply O_NONBLOCK flag if requested */
     if (flags & O_NONBLOCK) {
         /* Set non-blocking mode on both FDs via fcntl */
-        extern long sys_fcntl(int fd, int cmd, long arg);
         sys_fcntl(read_fd, 4, O_NONBLOCK);   /* F_SETFL, O_NONBLOCK */
         sys_fcntl(write_fd, 4, O_NONBLOCK);  /* F_SETFL, O_NONBLOCK */
     }
@@ -606,7 +606,6 @@ long sys_pipe2(int pipefd[2], int flags) {
     /* Apply O_CLOEXEC flag if requested */
     if (flags & O_CLOEXEC) {
         /* Set close-on-exec on both FDs via fcntl */
-        extern long sys_fcntl(int fd, int cmd, long arg);
         sys_fcntl(read_fd, 2, 1);   /* F_SETFD, FD_CLOEXEC */
         sys_fcntl(write_fd, 2, 1);  /* F_SETFD, FD_CLOEXEC */
     }

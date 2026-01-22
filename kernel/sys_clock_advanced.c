@@ -9,6 +9,7 @@
 
 #include <kernel/fut_task.h>
 #include <kernel/errno.h>
+#include <kernel/syscalls.h>
 #include <shared/fut_timespec.h>
 #include <shared/fut_timeval.h>
 #include <stdint.h>
@@ -283,8 +284,6 @@ long sys_clock_nanosleep(int clock_id, int flags,
 
     /* Phase 1: Delegate to regular nanosleep for relative sleep */
     /* Phase 2: Implement absolute time sleep */
-    extern long sys_nanosleep(const fut_timespec_t *u_req, fut_timespec_t *u_rem);
-
     fut_printf("[CLOCK_NANOSLEEP] clock_nanosleep(clock_id=%s, mode=%s, sec=%lld, nsec=%lld) "
                "(delegating to nanosleep, Phase 1 stub)\n",
                clock_name, mode, request.tv_sec, request.tv_nsec);

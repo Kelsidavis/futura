@@ -325,7 +325,7 @@ static int map_segment(fut_mm_t *mm, int fd, const elf64_phdr_t *phdr) {
             uint8_t *dest = pages[page_index];
             EXEC_DEBUG("[MAP-SEG] Loop: idx=%zu dest=%p chunk=%zu\n",
                        page_index, (void*)dest, chunk);
-            if ((uintptr_t)dest < 0xFFFFFFFF80000000ULL) {
+            if ((uintptr_t)dest < KERNEL_VIRTUAL_BASE) {
                 fut_printf("[MAP-SEG] FATAL: pages[%zu]=%p is USER addr, not kernel!\n",
                            page_index, (void*)dest);
                 fut_printf("[MAP-SEG] page_count=%zu seg_start=0x%llx\n",

@@ -176,7 +176,7 @@ fut_mm_t *fut_mm_create(void) {
     mm_create_printf("[MM-CREATE] Kernel half copied, mm=%p\n", (void*)mm);
 
     /* Check mm pointer is still valid kernel address */
-    if ((uintptr_t)mm < 0xFFFFFFFF80000000ULL) {
+    if ((uintptr_t)mm < KERNEL_VIRTUAL_BASE) {
         mm_create_printf("[MM-CREATE] FATAL: mm=%p is not kernel addr!\n", (void*)mm);
         fut_pmm_free_page(pml4_page);
         goto fail_restore_cr3;

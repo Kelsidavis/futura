@@ -77,3 +77,45 @@ static inline const char *fut_offset_category(long long offset) {
         return "high (>=1 GB)";
     }
 }
+
+/**
+ * Get a human-readable description for a common errno value.
+ * Used for debug logging to provide meaningful error messages.
+ *
+ * @param err Negative errno value (e.g., -ENOENT, -EPERM)
+ * @return Constant string describing the error, or "unknown error" for unrecognized values
+ */
+static inline const char *fut_errno_desc(int err) {
+    switch (err) {
+        case 0:        return "success";
+        case -1:       return "generic error";
+        case -2:       return "file or directory not found";     /* ENOENT */
+        case -3:       return "no such process";                 /* ESRCH */
+        case -4:       return "interrupted system call";         /* EINTR */
+        case -5:       return "I/O error";                       /* EIO */
+        case -9:       return "bad file descriptor";             /* EBADF */
+        case -11:      return "resource temporarily unavailable";/* EAGAIN */
+        case -12:      return "out of memory";                   /* ENOMEM */
+        case -13:      return "permission denied";               /* EACCES */
+        case -14:      return "bad address";                     /* EFAULT */
+        case -17:      return "file already exists";             /* EEXIST */
+        case -19:      return "no such device";                  /* ENODEV */
+        case -20:      return "not a directory";                 /* ENOTDIR */
+        case -21:      return "is a directory";                  /* EISDIR */
+        case -22:      return "invalid argument";                /* EINVAL */
+        case -28:      return "no space left on device";         /* ENOSPC */
+        case -29:      return "illegal seek";                    /* ESPIPE */
+        case -30:      return "read-only filesystem";            /* EROFS */
+        case -32:      return "broken pipe";                     /* EPIPE */
+        case -36:      return "filename too long";               /* ENAMETOOLONG */
+        case -38:      return "function not implemented";        /* ENOSYS */
+        case -39:      return "directory not empty";             /* ENOTEMPTY */
+        case -61:      return "no data available";               /* ENODATA */
+        case -95:      return "operation not supported";         /* EOPNOTSUPP */
+        case -107:     return "socket not connected";            /* ENOTCONN */
+        case -110:     return "connection timed out";            /* ETIMEDOUT */
+        case -111:     return "connection refused";              /* ECONNREFUSED */
+        case -125:     return "operation canceled";              /* ECANCELED */
+        default:       return "unknown error";
+    }
+}

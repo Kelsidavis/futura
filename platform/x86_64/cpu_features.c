@@ -10,7 +10,8 @@
 #include <stdint.h>
 #include <stdatomic.h>
 
-extern void fut_printf(const char *fmt, ...);
+#include <kernel/kprintf.h>
+
 extern bool fut_serial_ready(void);
 
 static inline void cpuid(uint32_t leaf, uint32_t subleaf,

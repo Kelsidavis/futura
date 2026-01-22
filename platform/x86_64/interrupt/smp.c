@@ -11,7 +11,7 @@
 #include <stdatomic.h>
 #include <string.h>
 
-extern void fut_printf(const char *fmt, ...);
+#include <kernel/kprintf.h>
 
 /* Trampoline code symbols from ap_trampoline.S */
 extern uint8_t ap_trampoline_start[];

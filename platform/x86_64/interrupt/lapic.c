@@ -10,7 +10,7 @@
 #include <platform/x86_64/memory/pmap.h>
 #include <stddef.h>
 
-extern void fut_printf(const char *fmt, ...);
+#include <kernel/kprintf.h>
 
 /* MSR for LAPIC base address */
 #define MSR_APIC_BASE   0x1B

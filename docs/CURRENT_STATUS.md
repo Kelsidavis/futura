@@ -572,6 +572,17 @@ See `docs/ARM64_STATUS.md` for detailed ARM64 progress.
   - x86_64: paging.c, pmap.c
   - arm64: pci_ecam.c, arm64_exceptions.c, pmap.c, exception_handlers.c, debug_context_switch.c
   - tests: test_api.c, test_net.c, test_blkcore.c, test_futfs.c
+- ✅ **FUT_UMASK_DEFAULT constant**: Added named constant (0022) for default file creation
+  mask in fut_task.h and updated all usages:
+  - kernel/threading/fut_task.c (task initialization)
+  - kernel/sys_umask.c (fallback return)
+  - kernel/vfs/vfs_credentials.c (fallback return)
+- ✅ **Redundant extern cleanup**: Removed redundant function-local extern declarations
+  for fut_task_current(), fut_mm_current(), and fut_task_get_mm() in:
+  - kernel/tests/sys_signal.c (5 instances)
+  - kernel/uaccess.c (ARM64 copy functions)
+  - kernel/memory/fut_mm.c (mmap allocation)
+  - kernel/vfs/fut_vfs.c (FD allocation, permission checking)
 
 ### January 21, 2026 Session — Security Hardening (Continued)
 - ✅ **Timer syscall userspace access**: Fixed sys_timer.c to use proper userspace

@@ -555,6 +555,12 @@ See `docs/ARM64_STATUS.md` for detailed ARM64 progress.
   - xattr_validate_setxattr_flags(), xattr_get_flags_desc(), xattr_get_size_desc()
   - Eliminates significant code duplication across set/lset/fset, get/lget/fget,
     list/llist/flist, and remove/lremove/fremove xattr variants
+- ✅ **Credential syscalls Phase 2**: Implemented setreuid, setregid, setresuid,
+  and setresgid with proper POSIX privilege checking:
+  - Added saved UID/GID (suid/sgid) fields to fut_task_t structure
+  - Privileged (root): Can set any UID/GID to any value
+  - Unprivileged: Can only set to current real, effective, or saved UID/GID
+  - Enables proper privilege dropping and temporary privilege escalation
 
 ## Current Focus
 

@@ -212,6 +212,15 @@ ssize_t sys_recvfrom(int sockfd, void *buf, size_t len, int flags,
         return 0;
     }
 
+    /* Phase 5: src_addr/addrlen consistency validation
+     * If src_addr is provided, addrlen must also be provided (and non-NULL)
+     * to know how much buffer space is available for the address */
+    if (local_src_addr != NULL && local_addrlen == NULL) {
+        fut_printf("[RECVFROM] recvfrom(sockfd=%d) -> EFAULT "
+                   "(src_addr provided but addrlen is NULL, Phase 5)\n", local_sockfd);
+        return -EFAULT;
+    }
+
     /* Phase 5: COMPREHENSIVE SECURITY HARDENING
      * VULNERABILITY: Multiple Attack Vectors in Socket Receive Operation
      *
@@ -387,9 +396,9 @@ ssize_t sys_recvfrom(int sockfd, void *buf, size_t len, int flags,
      * IMPLEMENTATION NOTES:
      * - Phase 5: Added buffer size limit (16MB) at line 230-236 ✓
      * - Phase 5 (Completed): Added buf write permission check at line 417-423
+     * - Phase 5 (Completed): Added src_addr/addrlen consistency check at line 214-220
      * - Phase 4 TODO: Implement actual src_addr return (currently stub)
      * - Phase 4 TODO: Add addrlen TOCTOU protection
-     * - Phase 4 TODO: Add src_addr/addrlen consistency validation
      * - Phase 4 TODO: Add per-process I/O budget tracking
      * - Phase 4 TODO: Add rate limiting for large receive operations
      * - See Linux kernel: net/socket.c __sys_recvfrom() for reference

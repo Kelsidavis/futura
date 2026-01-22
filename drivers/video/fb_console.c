@@ -11,6 +11,7 @@
 
 #include <kernel/fb_console.h>
 #include <kernel/fb.h>
+#include <kernel/errno.h>
 #include <platform/platform.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -233,12 +234,12 @@ int fb_console_init(void) {
 
     if (fb_get_info(&hw_info) != 0) {
         fut_printf("[FB_CONSOLE] No framebuffer available\n");
-        return -1;
+        return -ENODEV;
     }
 
     if (hw_info.info.width == 0 || hw_info.info.height == 0) {
         fut_printf("[FB_CONSOLE] Invalid framebuffer dimensions\n");
-        return -1;
+        return -EINVAL;
     }
 
     cons->width = hw_info.info.width;
@@ -252,7 +253,7 @@ int fb_console_init(void) {
     cons->fb_mem = (volatile uint8_t *)fb_get_virt_addr();
     if (!cons->fb_mem) {
         fut_printf("[FB_CONSOLE] Failed to get framebuffer virtual address\n");
-        return -1;
+        return -EFAULT;
     }
 #else
     cons->fb_mem = (volatile uint8_t *)hw_info.phys;

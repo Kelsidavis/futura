@@ -139,7 +139,6 @@ long sys_fstatat(int dirfd, const char *pathname, void *statbuf, int flags) {
      * ATTACK: Attacker provides read-only or unmapped statbuf buffer
      * IMPACT: Kernel page fault when writing stat structure
      * DEFENSE: Check write permission before path resolution and VFS operations */
-    extern int fut_access_ok(const void *u_ptr, size_t size, int write);
     if (fut_access_ok(local_statbuf, sizeof(struct fut_stat), 1) != 0) {
         fut_printf("[FSTATAT] fstatat(dirfd=%d, statbuf=%p) -> EFAULT (statbuf not writable for %zu bytes, Phase 5)\n",
                    local_dirfd, local_statbuf, sizeof(struct fut_stat));

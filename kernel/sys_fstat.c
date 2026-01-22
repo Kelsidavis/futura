@@ -20,7 +20,6 @@
 
 #include <kernel/kprintf.h>
 #include <kernel/uaccess.h>
-extern struct fut_file *fut_vfs_get_file(int fd);
 extern uint64_t fut_get_time_ns(void);
 
 /**
@@ -149,7 +148,6 @@ long sys_fstat(int fd, struct fut_stat *statbuf) {
      * ATTACK: Attacker provides read-only or unmapped statbuf buffer
      * IMPACT: Kernel page fault when writing stat structure at line 258
      * DEFENSE: Check write permission before fd lookup and file operations */
-    extern int fut_access_ok(const void *u_ptr, size_t size, int write);
     if (fut_access_ok(local_statbuf, sizeof(struct fut_stat), 1) != 0) {
         fut_printf("[FSTAT] fstat(fd=%d, statbuf=%p) -> EFAULT (statbuf not writable for %zu bytes, Phase 5)\n",
                    local_fd, (void*)local_statbuf, sizeof(struct fut_stat));

@@ -78,7 +78,6 @@ long sys_getrusage(int who, struct rusage *usage) {
      * ATTACK: Attacker provides read-only or unmapped usage buffer
      * IMPACT: Kernel page fault when writing resource usage statistics
      * DEFENSE: Check write permission before processing */
-    extern int fut_access_ok(const void *u_ptr, size_t size, int write);
     if (fut_access_ok(usage, sizeof(struct rusage), 1) != 0) {
         fut_printf("[RUSAGE] getrusage(who=%d, usage=%p) -> EFAULT (buffer not writable for %zu bytes, Phase 5)\n",
                    who, usage, sizeof(struct rusage));

@@ -13,7 +13,7 @@
 #include <poll.h>  /* For struct pollfd */
 
 #include <kernel/kprintf.h>
-extern int fut_access_ok(const void *u_ptr, size_t len, int write);
+#include <kernel/uaccess.h>
 
 /* fd_set helpers */
 #define FD_SETSIZE 1024

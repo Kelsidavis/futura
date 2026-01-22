@@ -521,7 +521,6 @@ long sys_getsockopt(int sockfd, int level, int optname, void *optval, socklen_t 
     }
 
     /* Phase 5: Validate optlen write permission early (kernel writes back actual size) */
-    extern int fut_access_ok(const void *u_ptr, size_t size, int write);
     if (optlen && fut_access_ok(optlen, sizeof(socklen_t), 1) != 0) {
         fut_printf("[GETSOCKOPT] getsockopt(sockfd=%d) -> EFAULT (optlen not writable)\n",
                    sockfd);

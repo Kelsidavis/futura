@@ -102,7 +102,6 @@ long sys_sigpending(sigset_t *set) {
      * ATTACK: Attacker provides read-only or unmapped set buffer
      * IMPACT: Kernel page fault when writing pending signal set
      * DEFENSE: Check write permission before processing */
-    extern int fut_access_ok(const void *u_ptr, size_t size, int write);
     if (fut_access_ok(set, sizeof(sigset_t), 1) != 0) {
         fut_printf("[SIGPENDING] sigpending(set=%p) -> EFAULT (buffer not writable for %zu bytes, Phase 5)\n",
                    set, sizeof(sigset_t));

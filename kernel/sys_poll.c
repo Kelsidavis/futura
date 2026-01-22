@@ -65,7 +65,6 @@ long sys_poll(struct pollfd *fds, unsigned long nfds, int timeout) {
      * IMPACT: Kernel page fault when writing revents to pollfd structures
      * DEFENSE: Check write permission for entire array before processing */
     size_t fds_size = nfds * sizeof(struct pollfd);
-    extern int fut_access_ok(const void *u_ptr, size_t size, int write);
     if (fut_access_ok(fds, fds_size, 1) != 0) {
         poll_printf("[POLL] poll(fds=%p, nfds=%lu, timeout=%d) -> EFAULT (fds array not writable for %zu bytes, Phase 5)\n",
                    fds, nfds, timeout, fds_size);

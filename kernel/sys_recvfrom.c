@@ -415,7 +415,6 @@ ssize_t sys_recvfrom(int sockfd, void *buf, size_t len, int flags,
     }
 
     /* Phase 5: Validate buf write permission early (kernel writes received data) */
-    extern int fut_access_ok(const void *u_ptr, size_t size, int write);
     if (local_buf && local_len > 0 && fut_access_ok(local_buf, local_len, 1) != 0) {
         fut_printf("[RECVFROM] recvfrom(sockfd=%d, len=%zu) -> EFAULT (buf not writable)\n",
                    local_sockfd, local_len);

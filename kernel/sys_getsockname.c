@@ -303,7 +303,6 @@ long sys_getsockname(int sockfd, void *addr, socklen_t *addrlen) {
      * ATTACK: Attacker provides read-only or unmapped addrlen pointer
      * IMPACT: Kernel page fault when writing actual address length
      * DEFENSE: Check write permission before socket operations */
-    extern int fut_access_ok(const void *u_ptr, size_t size, int write);
     if (fut_access_ok(addrlen, sizeof(socklen_t), 1) != 0) {
         fut_printf("[GETSOCKNAME] getsockname(sockfd=%d) -> EFAULT (addrlen not writable, Phase 5)\n",
                    sockfd);

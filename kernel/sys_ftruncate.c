@@ -19,7 +19,6 @@
 #include <stdint.h>
 
 #include <kernel/kprintf.h>
-extern struct fut_file *fut_vfs_get_file(int fd);
 
 /**
  * ftruncate() - Truncate file to specified length (fd-based)

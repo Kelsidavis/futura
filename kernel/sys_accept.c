@@ -379,7 +379,6 @@ long sys_accept(int sockfd, void *addr, socklen_t *addrlen) {
         }
 
         /* Phase 5: Validate addr write permission early (before accepting connection) */
-        extern int fut_access_ok(const void *u_ptr, size_t size, int write);
         if (local_addr && fut_access_ok(local_addr, len, 1) != 0) {
             accept_printf("[ACCEPT] accept(local_sockfd=%d) -> EFAULT (addr not writable for %u bytes)\n",
                        local_sockfd, len);

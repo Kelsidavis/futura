@@ -127,7 +127,6 @@ long sys_nanosleep(const fut_timespec_t *u_req, fut_timespec_t *u_rem) {
      * ATTACK: Attacker provides read-only or unmapped u_rem buffer
      * IMPACT: Kernel page fault when writing remaining time after sleep
      * DEFENSE: Check write permission before potentially blocking sleep operation */
-    extern int fut_access_ok(const void *u_ptr, size_t size, int write);
     if (u_rem && fut_access_ok(u_rem, sizeof(fut_timespec_t), 1) != 0) {
         fut_printf("[NANOSLEEP] nanosleep(u_rem=%p) -> EFAULT (u_rem not writable for %zu bytes, Phase 5)\n",
                    u_rem, sizeof(fut_timespec_t));

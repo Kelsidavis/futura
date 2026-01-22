@@ -472,7 +472,6 @@ long sys_mincore(void *addr, size_t length, unsigned char *vec) {
      * ATTACK: Attacker provides read-only or unmapped vec buffer
      * IMPACT: Kernel page fault when writing residency bits after VMA validation
      * DEFENSE: Check write permission before VMA traversal to fail fast */
-    extern int fut_access_ok(const void *u_ptr, size_t size, int write);
     if (fut_access_ok(vec, num_pages, 1) != 0) {
         fut_printf("[MINCORE] mincore(%p, %zu, %p) -> EFAULT (vec not writable for %zu bytes, Phase 5)\n",
                    addr, length, vec, num_pages);

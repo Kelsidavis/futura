@@ -157,7 +157,6 @@ long sys_capget(struct __user_cap_header_struct *hdrp,
      * ATTACK: Attacker provides read-only or unmapped datap buffer
      * IMPACT: Kernel page fault when writing capability data
      * DEFENSE: Check write permission before processing */
-    extern int fut_access_ok(const void *u_ptr, size_t size, int write);
     if (fut_access_ok(datap, sizeof(struct __user_cap_data_struct), 1) != 0) {
         fut_printf("[CAPABILITY] capget(hdrp=%p, datap=%p) -> EFAULT (datap not writable for %zu bytes, Phase 5)\n",
                    hdrp, datap, sizeof(struct __user_cap_data_struct));

@@ -20,7 +20,6 @@
 #include <kernel/kprintf.h>
 #include <kernel/uaccess.h>
 extern fut_thread_t *fut_thread_current(void);
-extern int fut_access_ok(const void *u_ptr, size_t len, int write);
 
 /* ============================================================
  *   Futex Hash Table

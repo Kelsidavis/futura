@@ -16,7 +16,7 @@
 #include <stdbool.h>
 
 #include <kernel/kprintf.h>
-extern int fut_access_ok(const void *u_ptr, size_t len, int write);
+#include <kernel/uaccess.h>
 
 /* Resource types */
 #define RLIMIT_CPU        0   /* CPU time in seconds */

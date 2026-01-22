@@ -20,7 +20,6 @@
 #include <string.h>
 
 #include <kernel/kprintf.h>
-extern struct fut_file *fut_vfs_get_file(int fd);
 
 /**
  * fchown() - Change file ownership (fd-based)

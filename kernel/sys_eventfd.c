@@ -447,14 +447,7 @@
 
 /* CLOCK_* constants provided by time.h */
 
-/* timerfd structures (struct timespec provided by shared/fut_timespec.h) */
-#ifndef _STRUCT_ITIMERSPEC
-#define _STRUCT_ITIMERSPEC
-struct itimerspec {
-    struct timespec it_interval;  /* Interval for periodic timer */
-    struct timespec it_value;     /* Initial expiration */
-};
-#endif
+/* struct timespec and struct itimerspec provided by shared/fut_timespec.h */
 
 struct eventfd_ctx {
     uint64_t counter;

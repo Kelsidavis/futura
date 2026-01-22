@@ -16,14 +16,11 @@
 #include <kernel/fut_task.h>
 #include <kernel/errno.h>
 #include <kernel/uaccess.h>
+#include <kernel/syscalls.h>
 #include <stdint.h>
 #include <stddef.h>
 
-/* Signed size type for return values */
-#ifndef __ssize_t_defined
-#define __ssize_t_defined 1
-typedef long ssize_t;
-#endif
+/* ssize_t provided by kernel/syscalls.h */
 
 #include <kernel/kprintf.h>
 

@@ -11,23 +11,13 @@
 #include <kernel/fut_task.h>
 #include <kernel/fut_sched.h>
 #include <kernel/errno.h>
+#include <sched.h>
 #include <stdint.h>
 #include <string.h>
 
 #include <kernel/kprintf.h>
 
-/* Scheduling policies */
-#define SCHED_OTHER    0  /* Standard round-robin time-sharing */
-#define SCHED_FIFO     1  /* First in, first out real-time */
-#define SCHED_RR       2  /* Round-robin real-time */
-#define SCHED_BATCH    3  /* Batch style execution */
-#define SCHED_IDLE     5  /* Very low priority background tasks */
-#define SCHED_DEADLINE 6  /* Deadline scheduling */
-
-/* sched_param structure for scheduler parameters */
-struct sched_param {
-    int sched_priority;  /* Scheduling priority (1-99 for RT) */
-};
+/* SCHED_* constants and struct sched_param provided by sched.h */
 
 /**
  * sys_sched_setparam - Set scheduling parameters

@@ -12,6 +12,7 @@
 #include <kernel/syscalls.h>
 #include <shared/fut_timespec.h>
 #include <shared/fut_timeval.h>
+#include <sys/time.h>
 #include <stdint.h>
 #include <string.h>
 
@@ -21,11 +22,7 @@
 #include <time.h>
 
 /* CLOCK_* constants provided by time.h */
-
-/* Timer types for getitimer/setitimer */
-#define ITIMER_REAL    0  /* Real time timer */
-#define ITIMER_VIRTUAL 1  /* User time timer */
-#define ITIMER_PROF    2  /* User + system time timer */
+/* ITIMER_* constants provided by sys/time.h */
 
 /* Interval timer structure */
 struct itimerval {

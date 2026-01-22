@@ -9,21 +9,13 @@
 #include <kernel/fut_task.h>
 #include <kernel/errno.h>
 #include <string.h>
+#include <sys/times.h>
 
 #include <kernel/kprintf.h>
 #include <kernel/uaccess.h>
 #include <kernel/fut_timer.h>
 
-/* clock_t is typically long for clock ticks */
-typedef long clock_t;
-
-/* tms structure - process times in clock ticks */
-struct tms {
-    clock_t tms_utime;   /* User CPU time */
-    clock_t tms_stime;   /* System CPU time */
-    clock_t tms_cutime;  /* User CPU time of terminated children */
-    clock_t tms_cstime;  /* System CPU time of terminated children */
-};
+/* clock_t and struct tms provided by sys/times.h */
 
 /* Clock ticks per second (user hertz) - typically 100 */
 #define USER_HZ 100

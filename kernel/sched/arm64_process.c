@@ -8,6 +8,7 @@
 
 #include <platform/arm64/process.h>
 #include <kernel/fut_mm.h>
+#include <kernel/fut_sched.h>
 #include <string.h>
 #include <stdatomic.h>
 
@@ -208,7 +209,7 @@ void fut_thread_sleep(uint32_t milliseconds) {
      * The scheduler will check wake_time when selecting next thread.
      * When timer interrupt fires and wake_time has passed, scheduler
      * will transition thread back to READY state. */
-    extern void fut_schedule(void);
+    /* fut_schedule provided by kernel/fut_sched.h */
     fut_schedule();
 }
 

@@ -28,7 +28,7 @@ static inline uint8_t inb(uint16_t port) { return hal_inb(port); }
 
 /* External declarations */
 #include <kernel/kprintf.h>
-extern void fut_schedule(void);
+/* fut_schedule provided by kernel/fut_sched.h */
 /* serial_puts provided by platform/platform.h */
 extern void fut_irq_send_eoi(uint8_t irq);
 

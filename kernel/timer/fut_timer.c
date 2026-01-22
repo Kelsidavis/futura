@@ -12,14 +12,13 @@
 #include "../../include/kernel/fut_task.h"
 #include "../../include/kernel/signal.h"
 #include <kernel/errno.h>
+#include <platform/platform.h>
 #include <stdatomic.h>
 
 /* Forward declaration: LAPIC EOI is only used in interrupt handler */
 extern void lapic_send_eoi(void);
 
-/* I/O port access from platform layer */
-extern void hal_outb(uint16_t port, uint8_t value);
-extern uint8_t hal_inb(uint16_t port);
+/* hal_outb, hal_inb provided by platform/platform.h */
 
 /* Convenience wrappers to match expected names */
 static inline void outb(uint16_t port, uint8_t val) { hal_outb(port, val); }

@@ -380,11 +380,7 @@ void acpi_parse_madt(void) {
 }
 #endif  /* __x86_64__ */
 
-/* I/O port operations */
-extern void hal_outb(uint16_t port, uint8_t value);
-extern uint8_t hal_inb(uint16_t port);
-extern void hal_outw(uint16_t port, uint16_t value);
-extern uint16_t hal_inw(uint16_t port);
+/* hal_outb, hal_inb, hal_outw, hal_inw provided by platform/platform.h */
 
 /**
  * Shutdown system via ACPI.

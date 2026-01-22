@@ -4,15 +4,20 @@
 #include <stddef.h>
 #include <stdint.h>
 
-/* Try to use system headers if they're available (in hosted or when glibc is used) */
+/* Try to use system headers if they're available (in hosted environment) */
 #if __has_include(<time.h>)
 #include <time.h>
 #endif
 
-#if __has_include_next(<sys/stat.h>)
-/* System headers are available - use them */
+/* In freestanding environments (kernel), use our own definitions.
+ * __STDC_HOSTED__ is 0 when compiled with -ffreestanding. */
+#if __STDC_HOSTED__ && __has_include_next(<sys/stat.h>)
+/* Hosted environment: system headers are available - use them */
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wpedantic"
 #include_next <sys/stat.h>
 #include_next <sys/types.h>
+#pragma GCC diagnostic pop
 #else
 /* Freestanding environment: define our own stat structure and types */
 #include <user/time.h>

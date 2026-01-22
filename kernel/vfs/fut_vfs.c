@@ -18,6 +18,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <stdbool.h>
+#include <sys/stat.h>
 
 #include <kernel/kprintf.h>
 
@@ -1248,19 +1249,8 @@ int chrdev_alloc_fd(const struct fut_file_ops *ops, void *inode, void *priv) {
  *   Permission Checking
  * ============================================================ */
 
-/* POSIX file mode permission bits (owner permissions) */
-#define S_IRUSR  0400  /* Owner read */
-#define S_IWUSR  0200  /* Owner write */
-#define S_IXUSR  0100  /* Owner execute */
-#define S_IRGRP  0040  /* Group read */
-#define S_IWGRP  0020  /* Group write */
-#define S_IXGRP  0010  /* Group execute */
-#define S_IROTH  0004  /* Others read */
-#define S_IWOTH  0002  /* Others write */
-#define S_IXOTH  0001  /* Others execute */
-#define S_IFMT   0170000  /* File type mask */
-#define S_ISREG(m) (((m) & S_IFMT) == 0100000)  /* Regular file */
-#define S_ISDIR(m) (((m) & S_IFMT) == 0040000)  /* Directory */
+/* POSIX file mode permission bits (S_I*) and file type macros (S_IS*)
+ * are provided by sys/stat.h */
 
 /**
  * Check if a file operation is allowed based on file mode (POSIX permissions).

@@ -15,22 +15,19 @@
 #include <kernel/fut_task.h>
 #include <kernel/fut_vfs.h>
 #include <kernel/errno.h>
+#include <sys/stat.h>
 #include <stdint.h>
 #include <stddef.h>
 
 #include <kernel/kprintf.h>
 #include <kernel/uaccess.h>
 
-/* File type constants from sys/stat.h */
-#define S_IFMT   0170000  /* File type mask */
-#define S_IFREG  0100000  /* Regular file */
-#define S_IFCHR  0020000  /* Character device */
-#define S_IFBLK  0060000  /* Block device */
-#define S_IFIFO  0010000  /* FIFO (named pipe) */
-#define S_IFSOCK 0140000  /* Socket */
+/* File type constants (S_IF*) provided by sys/stat.h */
 
 /* Special value for dirfd */
+#ifndef AT_FDCWD
 #define AT_FDCWD -100     /* Use current working directory */
+#endif
 
 /**
  * mknodat() - Create special file or device node

@@ -27,6 +27,12 @@ typedef struct fut_task fut_task_t;
 /* Initial file descriptor table size for new tasks */
 #define FUT_FD_TABLE_INITIAL_SIZE 64
 
+/* Default file creation mask (umask) for new tasks.
+ * 0022 = owner read/write, group/others read-only.
+ * Files created with mode 0666 become 0644 (rw-r--r--)
+ * Directories created with mode 0777 become 0755 (rwxr-xr-x) */
+#define FUT_UMASK_DEFAULT 0022
+
 /* ============================================================
  *   Task Structure (Process Container)
  * ============================================================ */

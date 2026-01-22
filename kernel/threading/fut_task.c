@@ -147,7 +147,7 @@ fut_task_t *fut_task_create(void) {
         .pending_signals = 0,  /* No pending signals */
         .current_dir_ino = (parent ? parent->current_dir_ino : 1),  /* Inherit parent's cwd, default to root (inode 1) */
         .cwd_cache = NULL,  /* No cached path initially */
-        .umask = 0022,  /* Default umask: owner read/write, group/others read only */
+        .umask = FUT_UMASK_DEFAULT,  /* Default umask: owner read/write, group/others read only */
         .clear_child_tid = NULL,  /* No tid address set initially (set via set_tid_address) */
         .fd_table = NULL,   /* FD table initialized below */
         .max_fds = 0,

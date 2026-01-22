@@ -45,7 +45,7 @@ uint32_t vfs_get_current_gid(void) {
 uint32_t vfs_get_current_umask(void) {
     fut_task_t *task = fut_task_current();
     if (!task) {
-        return 0022;  /* Default umask */
+        return FUT_UMASK_DEFAULT;  /* Default umask */
     }
     return task->umask;
 }

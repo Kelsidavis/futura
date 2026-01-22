@@ -254,7 +254,7 @@ uint32_t fut_get_umask(void) {
     fut_task_t *task = fut_task_current();
     if (!task) {
         /* Fallback to default if no task context */
-        return 0022;
+        return FUT_UMASK_DEFAULT;
     }
     return task->umask;
 }

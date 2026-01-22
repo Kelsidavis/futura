@@ -14,9 +14,9 @@
 #include <stdbool.h>
 #include <kernel/kprintf.h>
 #include "../../include/kernel/buddy_allocator.h"
+#include <kernel/debug_config.h>
 
-/* Debug logging - set to 1 to enable verbose slab allocator debugging */
-#define SLAB_DEBUG 0
+/* Slab debugging (controlled via debug_config.h) */
 
 /* ============================================================
  *   Slab Allocator Constants

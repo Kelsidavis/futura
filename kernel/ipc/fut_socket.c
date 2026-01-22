@@ -16,9 +16,9 @@
 #include <kernel/errno.h>
 
 #include <kernel/kprintf.h>
+#include <kernel/debug_config.h>
 
-/* Set to 1 to enable verbose socket debug logging */
-#define SOCKET_DEBUG 0
+/* Socket debugging (controlled via debug_config.h) */
 #if SOCKET_DEBUG
 #define SOCKET_LOG(...) fut_printf(__VA_ARGS__)
 #else

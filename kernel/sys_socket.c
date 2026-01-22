@@ -20,9 +20,9 @@
 #include <fcntl.h>
 
 #include <kernel/kprintf.h>
+#include <kernel/debug_config.h>
 
-/* Socket debugging (disable for normal operation) */
-#define SOCKET_DEBUG 0
+/* Socket debugging (controlled via debug_config.h) */
 #define socket_printf(...) do { if (SOCKET_DEBUG) fut_printf(__VA_ARGS__); } while(0)
 
 /* Socket constants (AF_*, SOCK_*) provided by fut_socket.h */

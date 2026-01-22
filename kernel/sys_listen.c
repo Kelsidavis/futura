@@ -16,9 +16,9 @@
 #include <kernel/errno.h>
 
 #include <kernel/kprintf.h>
+#include <kernel/debug_config.h>
 
-/* Disable verbose LISTEN debugging for performance */
-#define LISTEN_DEBUG 0
+/* Listen debugging (controlled via debug_config.h) */
 #define listen_printf(...) do { if (LISTEN_DEBUG) fut_printf(__VA_ARGS__); } while(0)
 
 /* Common backlog values */

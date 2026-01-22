@@ -29,8 +29,9 @@
 /* MSR for FS segment base (Thread Local Storage) */
 #define MSR_FS_BASE     0xC0000100
 
-/* Set to 1 to enable verbose ELF exec debug logging */
-#define ELF_DEBUG 0
+#include <kernel/debug_config.h>
+
+/* ELF debugging (controlled via debug_config.h) */
 #if ELF_DEBUG
 #define ELF_LOG(...) fut_printf(__VA_ARGS__)
 #else
@@ -58,8 +59,7 @@ extern void fut_do_user_iretq(uint64_t entry, uint64_t stack, uint64_t argc, uin
 /* Debug output for user trampoline serial output (U1234567A characters) */
 /* #define DEBUG_USER_TRAMPOLINE */
 
-/* Disable verbose STACK debugging for performance */
-#define STACK_DEBUG 0
+/* Stack debugging (controlled via debug_config.h) */
 #define stack_printf(...) do { if (STACK_DEBUG) fut_printf(__VA_ARGS__); } while(0)
 
 /* Disable verbose EXEC-DEBUG (unconditional) for performance */

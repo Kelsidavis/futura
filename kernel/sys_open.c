@@ -21,9 +21,9 @@
 #include <stddef.h>
 
 #include <kernel/kprintf.h>
+#include <kernel/debug_config.h>
 
-/* Disable verbose OPEN debugging for performance */
-#define OPEN_DEBUG 0
+/* Open debugging (controlled via debug_config.h) */
 #define open_printf(...) do { if (OPEN_DEBUG) fut_printf(__VA_ARGS__); } while(0)
 
 /* copy_user_string provided by subsystems/posix_syscall.h */

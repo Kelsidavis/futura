@@ -478,10 +478,10 @@
 #include <kernel/kprintf.h>
 #include <sys/mman.h>
 #include <sys/resource.h>
+#include <kernel/debug_config.h>
 extern fut_interrupt_frame_t *fut_current_frame;
 
-/* Set to 1 to enable verbose fork debug logging */
-#define FORK_DEBUG 0
+/* Fork debugging (controlled via debug_config.h) */
 #if FORK_DEBUG
 #define FORK_LOG(...) fut_printf(__VA_ARGS__)
 #else

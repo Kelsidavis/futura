@@ -24,9 +24,9 @@
 #define MAX_WRITE_SIZE  (1024 * 1024)  /* 1 MB */
 
 #include <kernel/kprintf.h>
+#include <kernel/debug_config.h>
 
-/* Disable verbose WRITE debugging for performance */
-#define WRITE_DEBUG 0
+/* Write debugging (controlled via debug_config.h) */
 #define write_printf(...) do { if (WRITE_DEBUG) fut_printf(__VA_ARGS__); } while(0)
 
 /**

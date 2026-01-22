@@ -19,9 +19,9 @@
 
 #include <kernel/kprintf.h>
 #include <kernel/fut_vfs.h>
+#include <kernel/debug_config.h>
 
-/* Set to 1 to enable verbose exit debug logging */
-#define EXIT_DEBUG 0
+/* Exit debugging (controlled via debug_config.h) */
 #if EXIT_DEBUG
 #define EXIT_LOG(...) fut_printf(__VA_ARGS__)
 #else

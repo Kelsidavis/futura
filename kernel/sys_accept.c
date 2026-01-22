@@ -24,9 +24,9 @@
 #include <sys/socket.h>
 
 #include <kernel/kprintf.h>
+#include <kernel/debug_config.h>
 
-/* Disable verbose ACCEPT debugging for performance */
-#define ACCEPT_DEBUG 0
+/* Accept debugging (controlled via debug_config.h) */
 #define accept_printf(...) do { if (ACCEPT_DEBUG) fut_printf(__VA_ARGS__); } while(0)
 
 /**

@@ -21,9 +21,9 @@
 #include <string.h>
 #include <stdbool.h>
 #include <stdint.h>
+#include <kernel/debug_config.h>
 
-/* Disable verbose MM-CREATE debugging for performance */
-#define MM_CREATE_DEBUG 0
+/* MM-CREATE debugging (controlled via debug_config.h) */
 #define mm_create_printf(...) do { if (MM_CREATE_DEBUG) fut_printf(__VA_ARGS__); } while(0)
 
 /* Architecture-specific pmap header */

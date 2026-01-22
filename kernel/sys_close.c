@@ -18,9 +18,9 @@
 #include <kernel/errno.h>
 
 #include <kernel/kprintf.h>
+#include <kernel/debug_config.h>
 
-/* Disable verbose CLOSE debugging for performance */
-#define CLOSE_DEBUG 0
+/* Close debugging (controlled via debug_config.h) */
 #define close_printf(...) do { if (CLOSE_DEBUG) fut_printf(__VA_ARGS__); } while(0)
 
 /**

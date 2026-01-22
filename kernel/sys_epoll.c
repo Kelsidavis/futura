@@ -219,10 +219,10 @@
 #include <stdbool.h>
 #include <limits.h>
 
-/* Debug logging - set to 1 to enable verbose epoll debugging */
-#define EPOLL_DEBUG 0
-
 #include <kernel/kprintf.h>
+#include <kernel/debug_config.h>
+
+/* Epoll debugging (controlled via debug_config.h) */
 #include <kernel/fut_memory.h>
 #include <sys/epoll.h>
 

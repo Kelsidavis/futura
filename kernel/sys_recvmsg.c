@@ -20,9 +20,9 @@
 #include <stdint.h>
 
 #include <kernel/kprintf.h>
+#include <kernel/debug_config.h>
 
-/* Set to 1 to enable verbose recvmsg debug logging */
-#define RECVMSG_DEBUG 0
+/* Recvmsg debugging (controlled via debug_config.h) */
 #if RECVMSG_DEBUG
 #define RECVMSG_LOG(...) fut_printf(__VA_ARGS__)
 #else

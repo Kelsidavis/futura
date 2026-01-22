@@ -211,9 +211,9 @@
 #include <stdint.h>
 
 #include <kernel/kprintf.h>
+#include <kernel/debug_config.h>
 
-/* Enable CONNECT debugging temporarily for bringup */
-#define CONNECT_DEBUG 0
+/* Connect debugging (controlled via debug_config.h) */
 #define connect_printf(...) do { if (CONNECT_DEBUG) fut_printf(__VA_ARGS__); } while(0)
 
 /* Address family constants (AF_*) provided by fut_socket.h */

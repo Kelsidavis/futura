@@ -26,9 +26,9 @@
 #include <string.h>
 
 #include <kernel/kprintf.h>
+#include <kernel/debug_config.h>
 
-/* Disable BRK debugging for performance - too many malloc/free calls */
-#define BRK_DEBUG 0
+/* BRK debugging (controlled via debug_config.h) */
 #define brk_printf(...) do { if (BRK_DEBUG) fut_printf(__VA_ARGS__); } while(0)
 
 #if defined(__x86_64__)

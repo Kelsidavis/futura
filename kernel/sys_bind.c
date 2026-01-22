@@ -205,9 +205,9 @@
 #include <stdint.h>
 
 #include <kernel/kprintf.h>
+#include <kernel/debug_config.h>
 
-/* Disable verbose BIND debugging for performance */
-#define BIND_DEBUG 0
+/* Bind debugging (controlled via debug_config.h) */
 #define bind_printf(...) do { if (BIND_DEBUG) fut_printf(__VA_ARGS__); } while(0)
 
 /* Address family constants (AF_*) provided by fut_socket.h */

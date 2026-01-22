@@ -16,9 +16,9 @@
 
 #include <kernel/kprintf.h>
 #include <kernel/fut_memory.h>
+#include <kernel/debug_config.h>
 
-/* Disable verbose POLL debugging for performance */
-#define POLL_DEBUG 0
+/* Poll debugging (controlled via debug_config.h) */
 #define poll_printf(...) do { if (POLL_DEBUG) fut_printf(__VA_ARGS__); } while(0)
 
 /**

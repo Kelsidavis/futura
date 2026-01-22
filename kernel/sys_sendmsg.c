@@ -19,9 +19,9 @@
 #include <stdint.h>
 
 #include <kernel/kprintf.h>
+#include <kernel/debug_config.h>
 
-/* Set to 1 to enable verbose sendmsg debug logging */
-#define SENDMSG_DEBUG 0
+/* Sendmsg debugging (controlled via debug_config.h) */
 #if SENDMSG_DEBUG
 #define SENDMSG_LOG(...) fut_printf(__VA_ARGS__)
 #else

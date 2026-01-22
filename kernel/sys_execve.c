@@ -31,9 +31,9 @@
 #include <kernel/kprintf.h>
 #include <kernel/fut_memory.h>
 #include <kernel/exec.h>
+#include <kernel/debug_config.h>
 
-/* Set to 1 to enable verbose execve debug logging */
-#define EXECVE_DEBUG 0
+/* Execve debugging (controlled via debug_config.h) */
 #if EXECVE_DEBUG
 #define EXECVE_LOG(...) fut_printf(__VA_ARGS__)
 #else

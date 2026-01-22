@@ -477,7 +477,6 @@
 
 #include <kernel/kprintf.h>
 extern fut_interrupt_frame_t *fut_current_frame;
-extern int fut_task_count_by_uid(uint32_t uid);
 
 /* Set to 1 to enable verbose fork debug logging */
 #define FORK_DEBUG 0

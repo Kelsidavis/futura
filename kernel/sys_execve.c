@@ -30,7 +30,7 @@
 
 #include <kernel/kprintf.h>
 #include <kernel/fut_memory.h>
-extern int fut_exec_elf(const char *path, char *const argv[], char *const envp[]);
+#include <kernel/exec.h>
 
 /* Set to 1 to enable verbose execve debug logging */
 #define EXECVE_DEBUG 0

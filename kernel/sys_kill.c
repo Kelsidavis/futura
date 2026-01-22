@@ -16,7 +16,6 @@
 #include <kernel/errno.h>
 
 #include <kernel/kprintf.h>
-extern int fut_task_foreach_pgid(uint64_t pgid, void (*callback)(fut_task_t *task, void *data), void *data);
 
 /* Callback data for process group signaling */
 struct pgrp_signal_data {

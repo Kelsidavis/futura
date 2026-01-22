@@ -18,10 +18,11 @@
 #include <kernel/fut_task.h>
 #include <kernel/fut_fd_util.h>
 #include <kernel/syscalls.h>
+#include <subsystems/posix_syscall.h>
 #include <fcntl.h>
 
 #include <kernel/kprintf.h>
-extern int propagate_socket_dup(int oldfd, int newfd);
+/* propagate_socket_dup provided by subsystems/posix_syscall.h */
 
 /* Set to 1 to enable verbose dup2 debug logging */
 #define DUP2_DEBUG 0

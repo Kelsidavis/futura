@@ -208,12 +208,13 @@
 #include <kernel/errno.h>
 #include <kernel/fut_vfs.h>
 #include <kernel/fut_fd_util.h>
+#include <subsystems/posix_syscall.h>
 #include <stdint.h>
 #include <sys/resource.h>
 #include <fcntl.h>
 
 #include <kernel/kprintf.h>
-extern int propagate_socket_dup(int oldfd, int newfd);
+/* propagate_socket_dup provided by subsystems/posix_syscall.h */
 
 /* F_*, FD_CLOEXEC, O_* flags provided by fcntl.h */
 

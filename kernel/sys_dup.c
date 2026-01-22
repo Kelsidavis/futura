@@ -16,9 +16,10 @@
 #include <kernel/fut_vfs.h>
 #include <kernel/fut_task.h>
 #include <kernel/fut_fd_util.h>
+#include <subsystems/posix_syscall.h>
 
 #include <kernel/kprintf.h>
-extern int propagate_socket_dup(int oldfd, int newfd);
+/* propagate_socket_dup provided by subsystems/posix_syscall.h */
 
 /**
  * dup() - Duplicate file descriptor to lowest available FD

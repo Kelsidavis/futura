@@ -16,6 +16,8 @@
 #include <kernel/fut_vfs.h>
 #include <kernel/uaccess.h>
 #include <kernel/errno.h>
+#include <subsystems/posix_syscall.h>
+#include <fcntl.h>
 #include <stddef.h>
 
 #include <kernel/kprintf.h>
@@ -24,21 +26,8 @@
 #define OPEN_DEBUG 0
 #define open_printf(...) do { if (OPEN_DEBUG) fut_printf(__VA_ARGS__); } while(0)
 
-/* Forward declaration for copy_user_string */
-extern int copy_user_string(const char *user_str, char *kernel_buf, size_t max_len);
-
-/* Access mode mask (from fcntl.h) */
-#ifndef O_ACCMODE
-#define O_ACCMODE   0x0003  /* Mask for access mode */
-#endif
-
-/* Additional flags not yet in fut_vfs.h (Phase 3+) */
-#ifndef O_DIRECTORY
-#define O_DIRECTORY 0x2000  /* Fail if not a directory */
-#endif
-#ifndef O_SYNC
-#define O_SYNC      0x8000  /* Synchronous writes */
-#endif
+/* copy_user_string provided by subsystems/posix_syscall.h */
+/* O_ACCMODE, O_DIRECTORY, O_SYNC provided by fcntl.h */
 /* O_CLOEXEC is defined in fut_vfs.h */
 
 /**

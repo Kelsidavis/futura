@@ -11,13 +11,13 @@
 #include <kernel/fut_vfs.h>
 #include <kernel/uaccess.h>
 #include <kernel/errno.h>
+#include <subsystems/posix_syscall.h>
 #include <stddef.h>
 
 #include <kernel/kprintf.h>
 #include <fcntl.h>
 
-extern int copy_user_string(const char *user_str, char *kernel_buf, size_t max_len);
-
+/* copy_user_string provided by subsystems/posix_syscall.h */
 /* AT_* and O_* constants provided by fcntl.h */
 
 /**

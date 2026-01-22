@@ -23,7 +23,6 @@
 #include <stdint.h>
 
 #include <kernel/kprintf.h>
-extern struct fut_file *vfs_get_file(int fd);
 
 typedef uint32_t socklen_t;
 

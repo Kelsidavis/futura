@@ -19,7 +19,6 @@
 #include <stdint.h>
 
 #include <kernel/kprintf.h>
-extern struct fut_file *vfs_get_file(int fd);
 
 /* Set to 1 to enable verbose sendmsg debug logging */
 #define SENDMSG_DEBUG 0

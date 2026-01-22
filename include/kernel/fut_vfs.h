@@ -657,6 +657,21 @@ int fut_vfs_close(int fd);
 struct fut_file *fut_vfs_get_file(int fd);
 
 /**
+ * Get file structure from file descriptor (exported for syscalls).
+ *
+ * @param fd File descriptor
+ * @return File structure pointer, or NULL if invalid
+ */
+struct fut_file *vfs_get_file(int fd);
+
+/**
+ * Free a file descriptor slot (exported for syscalls).
+ *
+ * @param fd File descriptor to free
+ */
+void vfs_free_fd(int fd);
+
+/**
  * Seek within a file.
  *
  * @param fd     File descriptor

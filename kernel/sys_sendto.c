@@ -23,7 +23,6 @@
 #include <stdint.h>
 
 #include <kernel/kprintf.h>
-extern struct fut_file *vfs_get_file(int fd);
 extern bool fut_io_budget_check_bytes(fut_task_t *task, uint64_t bytes, uint64_t current_ms);
 extern void fut_io_budget_consume_bytes(fut_task_t *task, uint64_t bytes);
 

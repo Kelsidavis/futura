@@ -27,10 +27,7 @@
 extern bool fut_io_budget_check_bytes(fut_task_t *task, uint64_t bytes, uint64_t current_ms);
 extern void fut_io_budget_consume_bytes(fut_task_t *task, uint64_t bytes);
 
-/* Common MSG flags (for reference) */
-#define MSG_DONTWAIT  0x40   /* Non-blocking operation */
-#define MSG_NOSIGNAL  0x4000 /* Don't raise SIGPIPE */
-#define MSG_OOB       0x01   /* Out-of-band data */
+/* Message flags (MSG_*) provided by fut_socket.h */
 
 /**
  * sendto() - Send message on socket

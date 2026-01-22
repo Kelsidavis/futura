@@ -24,11 +24,7 @@
 
 #include <kernel/kprintf.h>
 
-/* Common MSG flags (for reference) */
-#define MSG_DONTWAIT  0x40   /* Non-blocking operation */
-#define MSG_PEEK      0x02   /* Peek at incoming data */
-#define MSG_WAITALL   0x100  /* Wait for full request */
-#define MSG_TRUNC     0x20   /* Data was truncated */
+/* Message flags (MSG_*) provided by fut_socket.h */
 
 /**
  * recvfrom() - Receive message from socket

@@ -145,6 +145,32 @@ typedef uint32_t socklen_t;
 #endif
 
 /* ============================================================
+ *   Message Flags (for send/recv)
+ * ============================================================ */
+
+#ifndef MSG_OOB
+#define MSG_OOB         0x01    /* Out-of-band data */
+#endif
+#ifndef MSG_PEEK
+#define MSG_PEEK        0x02    /* Peek at incoming message */
+#endif
+#ifndef MSG_DONTROUTE
+#define MSG_DONTROUTE   0x04    /* Don't use routing */
+#endif
+#ifndef MSG_DONTWAIT
+#define MSG_DONTWAIT    0x40    /* Non-blocking operation */
+#endif
+#ifndef MSG_WAITALL
+#define MSG_WAITALL     0x100   /* Wait for full request */
+#endif
+#ifndef MSG_TRUNC
+#define MSG_TRUNC       0x20    /* Data was truncated */
+#endif
+#ifndef MSG_NOSIGNAL
+#define MSG_NOSIGNAL    0x4000  /* Don't raise SIGPIPE */
+#endif
+
+/* ============================================================
  *   Socket States
  * ============================================================ */
 

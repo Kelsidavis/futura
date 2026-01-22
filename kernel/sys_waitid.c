@@ -15,24 +15,19 @@
 
 #include <kernel/fut_task.h>
 #include <kernel/errno.h>
+#include <sys/wait.h>
 #include <stdint.h>
 #include <stddef.h>
 
 #include <kernel/kprintf.h>
 
-/* idtype for waitid */
-#define P_ALL    0  /* Wait for any child */
-#define P_PID    1  /* Wait for specific PID */
-#define P_PGID   2  /* Wait for any child in process group */
-#define P_PIDFD  3  /* Wait for child via PID file descriptor */
+/* P_ALL, P_PID, P_PGID (idtype_t) and wait options (WNOHANG, WUNTRACED,
+ * WSTOPPED, WEXITED, WCONTINUED, WNOWAIT) are provided by sys/wait.h */
 
-/* waitid options (subset of wait4 options) */
-#define WNOHANG    0x00000001  /* Don't block if no child has exited */
-#define WUNTRACED  0x00000002  /* Report stopped children */
-#define WSTOPPED   WUNTRACED   /* Same as WUNTRACED */
-#define WEXITED    0x00000004  /* Report terminated children */
-#define WCONTINUED 0x00000008  /* Report continued children */
-#define WNOWAIT    0x01000000  /* Don't reap, just poll status */
+/* P_PIDFD: Linux extension for PID file descriptor (not in POSIX) */
+#ifndef P_PIDFD
+#define P_PIDFD  3  /* Wait for child via PID file descriptor */
+#endif
 
 /* siginfo_t structure (simplified for Phase 1) */
 struct siginfo {

@@ -17,23 +17,15 @@
 #include <kernel/fut_task.h>
 #include <kernel/uaccess.h>
 #include <kernel/errno.h>
+#include <sys/wait.h>
 
 #include <stddef.h>
 
 #include <kernel/kprintf.h>
 
-/* Wait options (for Phase 3+) */
-#define WNOHANG    0x00000001  /* Don't block if no child has exited */
-#define WUNTRACED  0x00000002  /* Report stopped children */
-#define WCONTINUED 0x00000008  /* Report continued children */
-
-/* Status macros (for documentation) */
-#define WIFEXITED(status)    (((status) & 0x7f) == 0)
-#define WEXITSTATUS(status)  (((status) >> 8) & 0xff)
-#define WIFSIGNALED(status)  (((status) & 0x7f) != 0 && ((status) & 0x7f) != 0x7f)
-#define WTERMSIG(status)     ((status) & 0x7f)
-#define WIFSTOPPED(status)   (((status) & 0xff) == 0x7f)
-#define WSTOPSIG(status)     (((status) >> 8) & 0xff)
+/* Wait options (WNOHANG, WUNTRACED, WCONTINUED) and status macros
+ * (WIFEXITED, WEXITSTATUS, WIFSIGNALED, WTERMSIG, WIFSTOPPED, WSTOPSIG)
+ * are provided by sys/wait.h */
 
 /**
  * waitpid() syscall - Wait for child process to change state

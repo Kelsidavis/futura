@@ -360,9 +360,9 @@ long sys_accept(int sockfd, void *addr, socklen_t *addrlen) {
      * - Phase 5: Added atomic addrlen copy with TOCTOU protection (line 201-207) ✓
      * - Phase 5: Added addrlen bounds validation (line 212-217) ✓
      * - Phase 5: Added addr/addrlen consistency check (line 164-170) ✓
-     * - Phase 5 (Completed): Added addr write permission check at line 378-384
+     * - Phase 5 (Completed): Added addr write permission check at line 386-391
+     * - Phase 5 (Completed): Added addrlen=0 rejection when addr != NULL at line 386-392
      * - Phase 4 TODO: Implement actual peer address return (AF_INET, AF_INET6, AF_UNIX)
-     * - Phase 4 TODO: Consider rejecting addrlen=0 when addr != NULL
      * - See Linux kernel: net/socket.c __sys_accept4() for reference
      */
     socklen_t len = 0;
@@ -380,6 +380,15 @@ long sys_accept(int sockfd, void *addr, socklen_t *addrlen) {
             accept_printf("[ACCEPT] accept(local_sockfd=%d, local_addrlen=%u) -> EINVAL "
                        "(excessive address length, max 1024 bytes, Phase 5 TOCTOU protection)\n",
                        local_sockfd, len);
+            return -EINVAL;
+        }
+
+        /* Phase 5: Reject addrlen=0 when addr is provided
+         * If caller provides an address buffer but says it's zero bytes, that's
+         * inconsistent - they can't receive any address data. Fail early. */
+        if (local_addr != NULL && len == 0) {
+            accept_printf("[ACCEPT] accept(local_sockfd=%d) -> EINVAL "
+                       "(addr provided but addrlen=0, Phase 5)\n", local_sockfd);
             return -EINVAL;
         }
 

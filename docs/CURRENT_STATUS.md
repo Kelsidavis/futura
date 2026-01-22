@@ -536,6 +536,19 @@ See `docs/ARM64_STATUS.md` for detailed ARM64 progress.
   - Added clear_child_tid field to fut_task_t structure
   - sys_set_tid_address now stores tidptr in task->clear_child_tid
   - Initialized clear_child_tid to NULL in fut_task_create
+- ✅ **Automatic ioctl direction detection**: Added _IOC_DIR extraction macros to
+  sys_ioctl.c for comprehensive security validation:
+  - Implements Linux-compatible _IOC_* extraction macros
+  - Automatically detects output ioctls (_IOC_WRITE) and validates write permission
+  - Automatically detects input ioctls (_IOC_READ) and validates read permission
+  - Eliminates need for hardcoded requires_write lists
+  - Retains legacy handling for non-encoded ioctls (TCGETS, TCSETS, etc.)
+- ✅ **set_tid_address Phase 4**: Complete NPTL/pthread support by implementing
+  clear_child_tid behavior on thread exit:
+  - Added futex_wake_one() kernel-internal function in sys_futex.c
+  - task_cleanup_and_exit() now writes 0 to clear_child_tid address
+  - Wakes one futex waiter to notify pthread_join()
+  - Enables efficient thread joining via futex-based waiting
 
 ## Current Focus
 

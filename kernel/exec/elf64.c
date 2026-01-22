@@ -1562,6 +1562,7 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
 #include <string.h>
 #include <stdint.h>
 #include <stdbool.h>
+#include <sys/mman.h>
 
 /* Debug output macro for verbose exec/staging logs */
 #ifdef DEBUG_EXEC
@@ -1570,10 +1571,7 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
 #define EXEC_DEBUG(...) do {} while (0)
 #endif
 
-/* PROT flags for ARM64 */
-#define PROT_READ   0x1
-#define PROT_WRITE  0x2
-#define PROT_EXEC   0x4
+/* PROT_* flags provided by sys/mman.h */
 
 #define ELF_MAGIC       0x464C457FULL
 #define ELF_CLASS_64    0x02

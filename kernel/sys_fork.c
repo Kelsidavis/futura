@@ -476,6 +476,7 @@
 #endif
 
 #include <kernel/kprintf.h>
+#include <sys/mman.h>
 extern fut_interrupt_frame_t *fut_current_frame;
 
 /* Set to 1 to enable verbose fork debug logging */
@@ -489,8 +490,7 @@ extern fut_interrupt_frame_t *fut_current_frame;
 /* Resource limit constants */
 #define RLIMIT_NPROC 6  /* Maximum number of processes for real UID */
 
-/* Mmap flags - must match userspace definitions */
-#define MAP_SHARED  0x01  /* Userspace MAP_SHARED flag */
+/* MAP_SHARED provided by sys/mman.h */
 
 /* Forward declarations */
 static fut_mm_t *clone_mm(fut_mm_t *parent_mm);

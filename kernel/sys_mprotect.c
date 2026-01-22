@@ -25,11 +25,9 @@
 #include <platform/arm64/memory/paging.h>
 #endif
 
-/* Memory protection flags (standard POSIX values) */
-#define PROT_NONE  0x0  /* Page cannot be accessed */
-#define PROT_READ  0x1  /* Page can be read */
-#define PROT_WRITE 0x2  /* Page can be written */
-#define PROT_EXEC  0x4  /* Page can be executed */
+#include <sys/mman.h>
+
+/* PROT_* flags provided by sys/mman.h */
 
 /**
  * mprotect() - Set protection on a region of memory

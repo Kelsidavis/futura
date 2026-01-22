@@ -26,10 +26,9 @@
 #include <platform/arm64/memory/paging.h>
 #endif
 
-/* mremap flags */
-#define MREMAP_MAYMOVE    1   /* Allow moving to new virtual address */
-#define MREMAP_FIXED      2   /* Place mapping at exact address (requires MREMAP_MAYMOVE) */
-#define MREMAP_DONTUNMAP  4   /* Don't unmap old mapping (Linux 5.7+) */
+#include <sys/mman.h>
+
+/* MREMAP_* flags provided by sys/mman.h */
 
 /**
  * mremap() - Remap a virtual memory address

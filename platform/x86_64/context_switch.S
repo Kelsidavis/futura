@@ -797,18 +797,25 @@ fut_switch_context_irq:
     cld
     rep movsq
 
-    /* CRITICAL FIX: Clear IF in RFLAGS to give the thread time to execute!
-     * The saved frame has IF=1 (from when the thread was interrupted). If we
-     * restore this with IRETQ, the pending timer interrupt fires immediately
-     * and the thread never executes even one instruction.
+    /* IMPORTANT: Do NOT clear IF in RFLAGS for kernel threads!
      *
-     * By clearing IF, the thread runs with interrupts disabled for its first
-     * instruction. When it next gets interrupted, the new frame will have
-     * whatever IF value was current at that time.
+     * Previously, we cleared IF unconditionally to "give the thread time to
+     * execute before getting immediately re-interrupted". However, this breaks
+     * kernel threads because:
+     * 1. Kernel threads don't explicitly re-enable interrupts (sti)
+     * 2. With IF=0, timer interrupts never fire
+     * 3. Any kernel thread in a loop (like fut_boot_delay_ms) hangs forever
      *
-     * RFLAGS is at offset 184 in the interrupt frame. r14 still points to
-     * the frame base (rep movsq only modifies rdi, not r14). */
-    andq $~0x200, 184(%r14)  /* Clear IF (bit 9) in RFLAGS at offset 184 */
+     * For USER threads, clearing IF could be useful as a brief grace period.
+     * But for KERNEL threads, we MUST preserve IF=1 so timer preemption works.
+     *
+     * Check CS at offset 176 - if 0x08 (kernel), preserve IF. */
+    movq 176(%r14), %rax    /* Get CS from copied frame */
+    cmpq $0x08, %rax        /* Is it kernel CS? */
+    je .skip_clear_if       /* YES - don't clear IF for kernel threads! */
+    /* User thread - can safely clear IF for brief grace period */
+    andq $~0x200, 184(%r14) /* Clear IF (bit 9) in RFLAGS */
+.skip_clear_if:
 
     /* CRITICAL FIX: Clear next->irq_frame after copying to prevent reusing stale frames.
      * When this thread gets preempted next time, we want to save the ACTUAL interrupt

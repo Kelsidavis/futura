@@ -15,6 +15,7 @@
 
 #include <kernel/fut_task.h>
 #include <kernel/errno.h>
+#include <kernel/signal_frame.h>
 #include <sys/wait.h>
 #include <stdint.h>
 #include <stddef.h>
@@ -23,23 +24,12 @@
 
 /* P_ALL, P_PID, P_PGID (idtype_t) and wait options (WNOHANG, WUNTRACED,
  * WSTOPPED, WEXITED, WCONTINUED, WNOWAIT) are provided by sys/wait.h */
+/* siginfo_t provided by kernel/signal_frame.h */
 
 /* P_PIDFD: Linux extension for PID file descriptor (not in POSIX) */
 #ifndef P_PIDFD
 #define P_PIDFD  3  /* Wait for child via PID file descriptor */
 #endif
-
-/* siginfo_t structure (simplified for Phase 1) */
-struct siginfo {
-    int si_signo;     /* Signal number */
-    int si_errno;     /* Error number */
-    int si_code;      /* Signal code */
-    int si_pid;       /* Sending process ID */
-    int si_uid;       /* Sending process UID */
-    int si_status;    /* Exit value or signal */
-    uint64_t si_utime; /* User time consumed */
-    uint64_t si_stime; /* System time consumed */
-};
 
 /**
  * waitid() - Wait for child process state change (advanced)
@@ -62,7 +52,7 @@ struct siginfo {
  *   - -EINTR if interrupted by signal
  *
  * Usage:
- *   struct siginfo info;
+ *   siginfo_t info;
  *
  *   // Wait for any child to exit
  *   waitid(P_ALL, 0, &info, WEXITED);
@@ -102,7 +92,7 @@ struct siginfo {
  * Phase 2 (Completed): Implement wait queue integration and child polling
  * Phase 3: Support all idtypes, options, and populate siginfo_t
  */
-long sys_waitid(int idtype, int id, struct siginfo *infop, int options,
+long sys_waitid(int idtype, int id, siginfo_t *infop, int options,
                 void *rusage) {
     fut_task_t *task = fut_task_current();
     if (!task) {

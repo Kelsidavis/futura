@@ -98,7 +98,12 @@ See `docs/ARM64_STATUS.md` for detailed ARM64 progress.
   - `fb_mmio.c`: -ENODEV (fallback disabled), -EINVAL (NULL pointer)
   - `virtio_gpu.c`: -ENODEV (device/config not found), -ENOMEM (allocation failed), -EIO (device rejected features)
   - `virtio_gpu_mmio.c`: -ENODEV (device not ready), -EFAULT (address translation failed), -ETIMEDOUT (command timeout)
-- ✅ **Total this session**: Replaced 25+ generic `-1` returns with specific errno codes, added 3 named constants
+- ✅ **Futex Phase 2 complete**: Implemented advanced futex requeue operations in sys_futex.c:
+  - `FUTEX_REQUEUE`: Wake + requeue threads from uaddr to uaddr2
+  - `FUTEX_CMP_REQUEUE`: Conditional requeue with atomic value check (prevents thundering herd)
+  - `FUTEX_WAKE_OP`: Atomic operation + conditional wake (SET/ADD/OR/ANDN/XOR operations with EQ/NE/LT/LE/GT/GE comparisons)
+  - Proper two-bucket deadlock prevention via ordered locking
+- ✅ **Total this session**: Replaced 25+ generic `-1` returns with specific errno codes, added 3 named constants, implemented 3 futex operations (~400 lines)
 
 ### January 21, 2026 Session — Security Hardening & Code Quality
 - ✅ **Page refcount overflow protection**: Added FUT_PAGE_REF_MAX (60000) limit in fut_page_ref_inc() to prevent CVE-2016-0728 style refcount overflow attacks. Fork now checks return value and aborts if limit reached.

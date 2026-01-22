@@ -481,6 +481,11 @@ void fut_thread_init_bootstrap(void) {
         bootstrap_thread.stack_base = bootstrap_stack;
         bootstrap_thread.stack_size = sizeof(bootstrap_stack);
 
+        /* Initialize context with proper RFLAGS (IF=1 for timer preemption) */
+        bootstrap_thread.context.rflags = RFLAGS_KERNEL_INIT;
+        bootstrap_thread.context.cs = 0x08;  /* Kernel code segment */
+        bootstrap_thread.context.ss = 0x10;  /* Kernel data segment */
+
         bootstrap_task.threads = &bootstrap_thread;
         bootstrap_task.thread_count = 1;
 

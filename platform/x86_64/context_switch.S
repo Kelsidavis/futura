@@ -245,9 +245,13 @@ fut_switch_context_irq:
 
     /* IMPORTANT: Clear prev->irq_frame to prevent restoring stale zero-RIP frame */
     testq %r12, %r12        /* Check if we have a prev thread */
-    jz 1f                   /* No prev thread, skip to restore next */
+    jz .skip_rip_zero_clear /* No prev thread, skip to restore next */
     movq $0, 720(%r12)      /* prev->irq_frame = NULL (offset 720) */
 
+.skip_rip_zero_clear:
+    /* CRITICAL: Must pop rdx/rax before jumping - they were pushed at line 227-228 */
+    popq %rdx
+    popq %rax
     jmp 1f                  /* Skip to step 2: restore next thread */
 
 .save_rip_nonzero:
@@ -317,9 +321,13 @@ fut_switch_context_irq:
 
     /* Clear prev->irq_frame to prevent using stale frame */
     testq %r12, %r12
-    jz 1f
+    jz .skip_corrupted_clear
     movq $0, 720(%r12)      /* prev->irq_frame = NULL */
 
+.skip_corrupted_clear:
+    /* CRITICAL: Must pop rdx/rax before jumping - they were pushed at line 227-228 */
+    popq %rdx
+    popq %rax
     jmp 1f                  /* Skip to restore next thread */
 
 .skip_all_fixups:
@@ -530,6 +538,16 @@ fut_switch_context_irq:
     movq 72(%rsi), %rax     /* context.cs */
     movq %rax, 176(%rdi)    /* frame->cs */
     movq 64(%rsi), %rax     /* context.rflags */
+
+    /* IMPORTANT: For kernel threads, ensure IF=1 so timer preemption works.
+     * The thread context may have IF=0 (to avoid being interrupted during
+     * initial setup), but once we're context switching TO this thread,
+     * we need interrupts enabled so the scheduler can preempt it later. */
+    movq 72(%rsi), %rcx     /* Get CS from context */
+    cmpq $0x08, %rcx        /* Is it kernel CS? */
+    jne .ctx_rflags_ok      /* Not kernel - use as-is */
+    orq $0x200, %rax        /* Kernel thread - set IF=1 */
+.ctx_rflags_ok:
     movq %rax, 184(%rdi)    /* frame->rflags */
 
     /* ALWAYS initialize RSP/SS in frame, even for kernel mode.
@@ -797,25 +815,16 @@ fut_switch_context_irq:
     cld
     rep movsq
 
-    /* IMPORTANT: Do NOT clear IF in RFLAGS for kernel threads!
+    /* IMPORTANT: Do NOT clear IF in RFLAGS!
      *
-     * Previously, we cleared IF unconditionally to "give the thread time to
-     * execute before getting immediately re-interrupted". However, this breaks
-     * kernel threads because:
-     * 1. Kernel threads don't explicitly re-enable interrupts (sti)
-     * 2. With IF=0, timer interrupts never fire
-     * 3. Any kernel thread in a loop (like fut_boot_delay_ms) hangs forever
+     * Previously, we cleared IF to "give the thread time to execute before
+     * getting immediately re-interrupted". However, this breaks preemption:
+     * - If IF=0, timer interrupts don't fire
+     * - The thread runs without being preempted
+     * - Other threads starve, including sleeping threads that should wake up
      *
-     * For USER threads, clearing IF could be useful as a brief grace period.
-     * But for KERNEL threads, we MUST preserve IF=1 so timer preemption works.
-     *
-     * Check CS at offset 176 - if 0x08 (kernel), preserve IF. */
-    movq 176(%r14), %rax    /* Get CS from copied frame */
-    cmpq $0x08, %rax        /* Is it kernel CS? */
-    je .skip_clear_if       /* YES - don't clear IF for kernel threads! */
-    /* User thread - can safely clear IF for brief grace period */
-    andq $~0x200, 184(%r14) /* Clear IF (bit 9) in RFLAGS */
-.skip_clear_if:
+     * The saved frame already has IF=1 (set by the CPU when the interrupt fired).
+     * We preserve that so the thread can be preempted again. */
 
     /* CRITICAL FIX: Clear next->irq_frame after copying to prevent reusing stale frames.
      * When this thread gets preempted next time, we want to save the ACTUAL interrupt

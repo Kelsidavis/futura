@@ -213,8 +213,10 @@ static inline void fut_write_msr(uint32_t msr, uint64_t value) {
 #define RFLAGS_VIP      (1 << 20)   /* Virtual Interrupt Pending */
 #define RFLAGS_ID       (1 << 21)   /* ID Flag */
 
-/* Initial RFLAGS for new kernel threads (reserved bit set, interrupts disabled) */
-#define RFLAGS_KERNEL_INIT  RFLAGS_RESERVED
+/* Initial RFLAGS for new kernel threads (reserved bit set, interrupts ENABLED)
+ * Kernel threads need IF=1 so timer preemption works. If a kernel thread enters
+ * a busy-wait loop, it will never be preempted if interrupts are disabled. */
+#define RFLAGS_KERNEL_INIT  (RFLAGS_RESERVED | RFLAGS_IF)
 
 /* ============================================================
  *   FPU/SSE State Defaults

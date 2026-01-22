@@ -791,8 +791,7 @@ void fut_schedule(void) {
                 lapic_send_eoi();
                 atomic_store_explicit(&fut_in_interrupt, false, memory_order_release);
 #elif defined(__aarch64__)
-                // Send EOI to GIC
-                extern void fut_irq_send_eoi(uint8_t irq);
+                // Send EOI to GIC (fut_irq_send_eoi provided by platform/platform.h)
                 fut_irq_send_eoi(0);  // Timer IRQ
                 fut_in_interrupt = false;
 #endif

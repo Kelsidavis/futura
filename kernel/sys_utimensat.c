@@ -21,7 +21,7 @@
 
 #include <kernel/kprintf.h>
 #include <kernel/uaccess.h>
-extern uint64_t fut_get_time_ns(void);
+#include <kernel/fut_timer.h>
 
 /* Special values */
 #define AT_FDCWD            -100

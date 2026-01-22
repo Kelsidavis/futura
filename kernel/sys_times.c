@@ -12,7 +12,7 @@
 
 #include <kernel/kprintf.h>
 #include <kernel/uaccess.h>
-extern uint64_t fut_get_ticks(void);
+#include <kernel/fut_timer.h>
 
 /* clock_t is typically long for clock ticks */
 typedef long clock_t;

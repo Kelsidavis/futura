@@ -16,7 +16,7 @@
 
 #include <kernel/kprintf.h>
 #include <kernel/uaccess.h>
-extern uint64_t fut_get_ticks(void);
+#include <kernel/fut_timer.h>
 
 /* Clock IDs */
 #define CLOCK_REALTIME           0

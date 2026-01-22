@@ -16,7 +16,7 @@
 #include <kernel/errno.h>
 
 #include <kernel/kprintf.h>
-extern uint64_t fut_get_ticks(void);
+#include <kernel/fut_timer.h>
 extern int fut_signal_deliver(fut_task_t *task, int sig);
 
 /* SIGALRM signal number */

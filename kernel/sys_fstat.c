@@ -20,7 +20,7 @@
 
 #include <kernel/kprintf.h>
 #include <kernel/uaccess.h>
-extern uint64_t fut_get_time_ns(void);
+#include <kernel/fut_timer.h>
 
 /**
  * fstat() - Get file status (fd-based)

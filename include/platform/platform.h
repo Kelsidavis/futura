@@ -67,6 +67,14 @@ void fut_serial_putc(char c);
 void fut_serial_puts(const char *str);
 
 /**
+ * Write a null-terminated string to serial console.
+ * Alias for fut_serial_puts, used by kernel code.
+ *
+ * @param str String to write
+ */
+void serial_puts(const char *str);
+
+/**
  * Read a character from the serial console (non-blocking).
  *
  * @return Character read (0-255), or -1 if no data available

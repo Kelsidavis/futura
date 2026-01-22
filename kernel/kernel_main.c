@@ -30,6 +30,7 @@
 #include <kernel/console.h>
 #include <kernel/boot_banner.h>
 #include <kernel/boot_args.h>
+#include <platform/platform.h>
 
 /* Platform-specific memory mapping */
 #if defined(__x86_64__)
@@ -766,7 +767,7 @@ __attribute__((unused)) static void simple_test_thread(void *arg) {
     );
 #endif
 
-    extern void serial_puts(const char *);
+    /* serial_puts provided by platform/platform.h */
     serial_puts("[SIMPLE-TEST] Thread running!\n");
     (void)arg;
     serial_puts("[SIMPLE-TEST] About to exit\n");
@@ -774,7 +775,7 @@ __attribute__((unused)) static void simple_test_thread(void *arg) {
 }
 
 __attribute__((unused)) static void fipc_sender_thread(void *arg) {
-    extern void serial_puts(const char *);
+    /* serial_puts provided by platform/platform.h */
     serial_puts("[FIPC-SENDER-ENTRY] Entered function\n");
     (void)arg;
     fut_printf("[FIPC-SENDER] Starting sender thread\n");

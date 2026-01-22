@@ -10,9 +10,9 @@
 
 #include "../../include/kernel/fut_idt.h"
 #include <stddef.h>
+#include <platform/platform.h>
 
-/* Serial logging */
-extern void serial_puts(const char *s);
+/* serial_puts provided by platform/platform.h */
 #include <kernel/kprintf.h>
 
 /* IDT table: 256 entries with guard patterns */

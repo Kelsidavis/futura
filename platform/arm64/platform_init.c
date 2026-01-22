@@ -1213,7 +1213,7 @@ static int stage_arm64_blob(const uint8_t *start, const uint8_t *end, const char
 /* Kernel thread to stage binaries and spawn init */
 #if 1  /* Re-enabled for UI testing */
 static void arm64_init_spawner_thread(void *arg) {
-    extern void serial_puts(const char *);
+    /* serial_puts defined in this file and declared in platform/platform.h */
     serial_puts("[SPAWNER] *** ENTERED ARM64 SPAWNER FUNCTION ***\n");
 
     (void)arg;

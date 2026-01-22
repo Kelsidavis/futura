@@ -209,7 +209,6 @@
 /* Disable verbose BIND debugging for performance */
 #define BIND_DEBUG 0
 #define bind_printf(...) do { if (BIND_DEBUG) fut_printf(__VA_ARGS__); } while(0)
-extern fut_socket_t *get_socket_from_fd(int fd);
 
 typedef uint32_t socklen_t;
 

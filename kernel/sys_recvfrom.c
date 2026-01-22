@@ -24,7 +24,6 @@
 
 #include <kernel/kprintf.h>
 extern struct fut_file *vfs_get_file(int fd);
-extern fut_socket_t *get_socket_from_fd(int fd);
 
 typedef uint32_t socklen_t;
 

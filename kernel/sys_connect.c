@@ -215,7 +215,6 @@
 /* Enable CONNECT debugging temporarily for bringup */
 #define CONNECT_DEBUG 0
 #define connect_printf(...) do { if (CONNECT_DEBUG) fut_printf(__VA_ARGS__); } while(0)
-extern fut_socket_t *get_socket_from_fd(int fd);
 
 typedef uint32_t socklen_t;
 

@@ -20,7 +20,6 @@
 #include <string.h>
 
 #include <kernel/kprintf.h>
-extern fut_socket_t *get_socket_from_fd(int fd);
 
 /* socklen_t for address length */
 typedef uint32_t socklen_t;

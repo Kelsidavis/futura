@@ -22,8 +22,6 @@
 /* Disable verbose CLOSE debugging for performance */
 #define CLOSE_DEBUG 0
 #define close_printf(...) do { if (CLOSE_DEBUG) fut_printf(__VA_ARGS__); } while(0)
-extern fut_socket_t *get_socket_from_fd(int fd);
-extern int release_socket_fd(int fd);
 
 /**
  * close() - Close file descriptor

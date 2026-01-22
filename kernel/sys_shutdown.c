@@ -19,7 +19,6 @@
 #include <stdint.h>
 
 #include <kernel/kprintf.h>
-extern fut_socket_t *get_socket_from_fd(int fd);
 
 /* Shutdown modes */
 #define SHUT_RD   0  /* Further receives will be disallowed */

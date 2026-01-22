@@ -273,3 +273,34 @@ fut_socket_t *fut_socket_find_listener(const char *path);
  * @return Bitmask of ready events
  */
 int fut_socket_poll(fut_socket_t *socket, int events);
+
+/* ============================================================
+ *   File Descriptor / Socket Mapping (POSIX compatibility)
+ * ============================================================ */
+
+/**
+ * Get socket structure from file descriptor.
+ * Used by syscalls to translate FD to socket object.
+ *
+ * @param fd File descriptor
+ * @return Socket pointer if fd is a socket, NULL otherwise
+ */
+fut_socket_t *get_socket_from_fd(int fd);
+
+/**
+ * Allocate a file descriptor for a socket.
+ * Creates FD-to-socket mapping for POSIX syscall interface.
+ *
+ * @param socket Socket to allocate FD for
+ * @return Non-negative FD on success, negative error code on failure
+ */
+int allocate_socket_fd(fut_socket_t *socket);
+
+/**
+ * Release a socket file descriptor.
+ * Removes FD-to-socket mapping and cleans up resources.
+ *
+ * @param fd File descriptor to release
+ * @return 0 on success, negative error code on failure
+ */
+int release_socket_fd(int fd);

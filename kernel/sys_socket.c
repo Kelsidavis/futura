@@ -18,7 +18,6 @@
 #include <kernel/errno.h>
 
 #include <kernel/kprintf.h>
-extern int allocate_socket_fd(fut_socket_t *socket);
 
 /* Socket debugging (disable for normal operation) */
 #define SOCKET_DEBUG 0

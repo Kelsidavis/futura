@@ -222,9 +222,6 @@
 /* Debug logging - set to 1 to enable verbose epoll debugging */
 #define EPOLL_DEBUG 0
 
-/* Socket poll support */
-extern fut_socket_t *get_socket_from_fd(int fd);
-
 #include <kernel/kprintf.h>
 #include <kernel/fut_memory.h>
 

@@ -21,7 +21,6 @@
 
 #include <kernel/kprintf.h>
 extern struct fut_file *vfs_get_file(int fd);
-extern fut_socket_t *get_socket_from_fd(int fd);
 
 /* Set to 1 to enable verbose recvmsg debug logging */
 #define RECVMSG_DEBUG 0

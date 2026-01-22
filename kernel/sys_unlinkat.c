@@ -18,11 +18,9 @@
 
 #include <kernel/kprintf.h>
 #include <kernel/uaccess.h>
+#include <fcntl.h>
 
-/* AT_* flags */
-#define AT_FDCWD            -100  /* Use current working directory */
-#define AT_REMOVEDIR        0x200 /* Remove directory instead of file */
-#define AT_SYMLINK_NOFOLLOW 0x100 /* Don't follow symbolic links */
+/* AT_* flags provided by fcntl.h */
 
 /* Manual string length calculation */
 static size_t manual_strlen(const char *s) {

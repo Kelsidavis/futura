@@ -18,10 +18,9 @@
 
 #include <kernel/kprintf.h>
 #include <kernel/uaccess.h>
+#include <fcntl.h>
 
-/* AT_* constants */
-#define AT_FDCWD            -100  /* Use current working directory */
-#define AT_SYMLINK_FOLLOW   0x400 /* Follow symbolic links */
+/* AT_* constants provided by fcntl.h */
 
 /**
  * linkat() - Create hard link relative to directory FDs

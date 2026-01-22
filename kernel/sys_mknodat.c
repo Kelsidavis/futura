@@ -21,13 +21,10 @@
 
 #include <kernel/kprintf.h>
 #include <kernel/uaccess.h>
+#include <fcntl.h>
 
 /* File type constants (S_IF*) provided by sys/stat.h */
-
-/* Special value for dirfd */
-#ifndef AT_FDCWD
-#define AT_FDCWD -100     /* Use current working directory */
-#endif
+/* AT_* constants provided by fcntl.h */
 
 /**
  * mknodat() - Create special file or device node

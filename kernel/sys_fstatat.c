@@ -19,11 +19,9 @@
 
 #include <kernel/kprintf.h>
 #include <kernel/uaccess.h>
+#include <fcntl.h>
 
-/* AT_* constants */
-#define AT_FDCWD            -100  /* Use current working directory */
-#define AT_SYMLINK_NOFOLLOW 0x100 /* Don't follow symbolic links */
-#define AT_EMPTY_PATH       0x1000 /* Allow empty pathname (fstat via dirfd) */
+/* AT_* constants provided by fcntl.h */
 
 /**
  * fstatat() - Get file status relative to directory FD

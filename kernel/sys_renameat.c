@@ -18,9 +18,9 @@
 
 #include <kernel/kprintf.h>
 #include <kernel/uaccess.h>
+#include <fcntl.h>
 
-/* AT_* constants */
-#define AT_FDCWD -100  /* Use current working directory */
+/* AT_* constants provided by fcntl.h */
 
 /**
  * renameat() - Rename/move file relative to directory FDs

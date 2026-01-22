@@ -19,12 +19,12 @@
 
 #include <kernel/kprintf.h>
 #include <kernel/uaccess.h>
+#include <fcntl.h>
 
-/* Special values */
+/* Special value for unchanged uid/gid */
 #define CHOWN_UNCHANGED ((uint32_t)-1)
-#define AT_FDCWD        -100
-#define AT_SYMLINK_NOFOLLOW 0x100
-#define AT_EMPTY_PATH       0x1000
+
+/* AT_* constants provided by fcntl.h */
 
 /**
  * fchownat() - Change file ownership with dirfd

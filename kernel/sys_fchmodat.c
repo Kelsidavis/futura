@@ -19,10 +19,9 @@
 
 #include <kernel/kprintf.h>
 #include <kernel/uaccess.h>
+#include <fcntl.h>
 
-/* AT_* constants */
-#define AT_FDCWD            -100  /* Use current working directory */
-#define AT_SYMLINK_NOFOLLOW 0x100 /* Don't follow symbolic links */
+/* AT_* constants provided by fcntl.h */
 
 /**
  * fchmodat() - Change file permissions relative to directory FD

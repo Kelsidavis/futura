@@ -22,10 +22,9 @@
 #include <kernel/kprintf.h>
 #include <kernel/uaccess.h>
 #include <kernel/fut_timer.h>
+#include <fcntl.h>
 
-/* Special values */
-#define AT_FDCWD            -100
-#define AT_SYMLINK_NOFOLLOW 0x100
+/* AT_* constants provided by fcntl.h */
 
 /* Special timespec values */
 #define UTIME_NOW    ((1l << 30) - 1l)

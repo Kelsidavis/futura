@@ -95,6 +95,12 @@ See `docs/ARM64_STATUS.md` for detailed ARM64 progress.
   - `alloc_fd_for_task()` and `alloc_specific_fd_for_task()` in fut_vfs.c
 - ✅ **Apple UART baudrate validation**: Added division-by-zero protection in apple_uart.c by validating baudrate is non-zero before divisor calculation
 - ✅ **futimens implementation**: Implemented Phase 4 of sys_utimensat - futimens mode (pathname=NULL) now operates on the open file descriptor directly, enabling efficient timestamp updates on already-open files
+- ✅ **fut_errno_desc() helper**: Added errno description helper to fut_fd_util.h for consistent error message generation across syscalls
+- ✅ **fb_console error codes**: Fixed fb_console.c to use proper errno constants (-ENODEV, -EINVAL, -EFAULT) instead of generic -1
+- ✅ **IOAPIC error code**: Fixed ioapic_init() to return -EFAULT for MMIO mapping failure instead of -1
+- ✅ **Extern declaration cleanup**: Replaced scattered `extern void fut_printf()` declarations with `#include <kernel/kprintf.h>` in 7 files:
+  - Platform: ioapic.c, lapic.c, smp.c, cpu_features.c
+  - Drivers: console.c, tty_ldisc.c, kbd_console.c
 
 ### January 21, 2026 Session — Code Quality Improvements
 - ✅ **Magic number elimination in signal handling**: Replaced hardcoded `31` with `_NSIG` constant in:

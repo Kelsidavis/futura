@@ -756,7 +756,7 @@ int futurafs_dir_lookup_entry_async(struct futurafs_inode_info *dir_info,
     struct futurafs_dir_lookup_ctx *lookup_ctx =
         fut_malloc(sizeof(struct futurafs_dir_lookup_ctx));
     if (!lookup_ctx) {
-        return FUTURAFS_EINVAL;
+        return FUTURAFS_ENOMEM;
     }
 
     /* Initialize context */
@@ -1013,7 +1013,7 @@ int futurafs_dir_add_entry_async(struct fut_vnode *dir_vnode,
     struct futurafs_dir_add_ctx *add_ctx =
         fut_malloc(sizeof(struct futurafs_dir_add_ctx));
     if (!add_ctx) {
-        return FUTURAFS_EINVAL;
+        return FUTURAFS_ENOMEM;
     }
 
     /* Initialize context */

@@ -589,3 +589,4 @@ int futurafs_file_write_async(struct futurafs_inode_info *inode_info,
 #define FUTURAFS_ENOTDIR  -20    /* Not a directory */
 #define FUTURAFS_EISDIR   -21    /* Is a directory */
 #define FUTURAFS_ENOTEMPTY -39   /* Directory not empty */
+#define FUTURAFS_ENOMEM   -12    /* Out of memory */

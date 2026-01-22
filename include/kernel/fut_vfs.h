@@ -15,6 +15,14 @@
 
 #define FUT_VFS_NAME_MAX 255
 
+/* Maximum path buffer size for kernel syscall buffers.
+ * Intentionally smaller than PATH_MAX (4096) to:
+ * - Conserve kernel stack space (syscalls use stack-allocated buffers)
+ * - Limit copy size from userspace for DoS protection
+ * - Cover typical practical path lengths
+ */
+#define FUT_VFS_PATH_BUFFER_SIZE 256
+
 /* Freestanding environment: define ssize_t */
 #ifndef __ssize_t_defined
 #define __ssize_t_defined 1

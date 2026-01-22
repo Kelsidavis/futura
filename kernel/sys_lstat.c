@@ -122,7 +122,7 @@ long sys_lstat(const char *path, struct fut_stat *statbuf) {
 
     /* Phase 5: Validate path fits in our buffer before copying
      * Prevents silent truncation that could cause path confusion */
-    char path_buf[256];
+    char path_buf[FUT_VFS_PATH_BUFFER_SIZE];
     if (orig_path_len >= sizeof(path_buf)) {
         fut_printf("[LSTAT] lstat(path_len=%zu) -> ENAMETOOLONG "
                    "(exceeds kernel buffer %zu bytes, Phase 5 truncation prevention)\n",

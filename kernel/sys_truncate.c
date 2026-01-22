@@ -87,7 +87,7 @@ long sys_truncate(const char *path, uint64_t length) {
      * Detect truncation by checking if path_buf[255] != '\0' after copy
      * Return -ENAMETOOLONG if truncation detected
      * Matches sys_openat pattern (commit f68ce63) */
-    char path_buf[256];
+    char path_buf[FUT_VFS_PATH_BUFFER_SIZE];
     if (fut_copy_from_user(path_buf, local_path, sizeof(path_buf)) != 0) {
         fut_printf("[TRUNCATE] truncate(path=?, length=%llu) -> EFAULT (copy_from_user failed)\n",
                    (unsigned long long)local_length);

@@ -13,6 +13,7 @@
  */
 
 #include <kernel/fut_task.h>
+#include <kernel/fut_vfs.h>
 #include <kernel/errno.h>
 #include <stddef.h>
 
@@ -88,7 +89,7 @@ long sys_acct(const char *filename) {
 
     /* Phase 2: Copy filename from userspace to validate it */
     extern int fut_copy_from_user(void *to, const void *from, size_t size);
-    char path_buf[256];
+    char path_buf[FUT_VFS_PATH_BUFFER_SIZE];
     if (fut_copy_from_user(path_buf, filename, sizeof(path_buf) - 1) != 0) {
         fut_printf("[ACCT] acct(filename=?, pid=%d) -> EFAULT "
                    "(filename copy_from_user failed)\n", task->pid);

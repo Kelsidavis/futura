@@ -214,7 +214,7 @@ long sys_access(const char *pathname, int mode) {
      * - CVE-2018-14618: curl path truncation bypass
      * - CVE-2019-9500: Android path truncation privilege escalation
      */
-    char path_buf[256];
+    char path_buf[FUT_VFS_PATH_BUFFER_SIZE];
     if (fut_copy_from_user(path_buf, local_pathname, sizeof(path_buf)) != 0) {
         fut_printf("[ACCESS] access(pathname=?, mode=%s) -> EFAULT "
                    "(copy_from_user failed)\n", mode_desc);

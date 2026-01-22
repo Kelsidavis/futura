@@ -14,6 +14,7 @@
  */
 
 #include <kernel/fut_task.h>
+#include <kernel/fut_vfs.h>
 #include <kernel/errno.h>
 #include <stdint.h>
 
@@ -287,7 +288,7 @@ long sys_inotify_add_watch(int fd, const char *pathname, uint32_t mask) {
      * - CVE-2018-14633: Linux chdir path truncation
      * - CVE-2017-7889: Linux mount path truncation
      */
-    char path_buf[256];
+    char path_buf[FUT_VFS_PATH_BUFFER_SIZE];
     if (fut_copy_from_user(path_buf, pathname, sizeof(path_buf)) != 0) {
         fut_printf("[INOTIFY] inotify_add_watch(fd=%d, pathname=?, mask=0x%x, pid=%d) "
                    "-> EFAULT (pathname copy_from_user failed, Phase 5)\n",

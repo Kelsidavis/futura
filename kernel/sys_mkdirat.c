@@ -109,7 +109,7 @@ long sys_mkdirat(int dirfd, const char *pathname, unsigned int mode) {
     }
 
     /* Copy pathname from userspace */
-    char path_buf[256];
+    char path_buf[FUT_VFS_PATH_BUFFER_SIZE];
     if (fut_copy_from_user(path_buf, local_pathname, sizeof(path_buf) - 1) != 0) {
         fut_printf("[MKDIRAT] mkdirat(dirfd=%d, mode=0%o) -> EFAULT (copy_from_user failed)\n",
                    local_dirfd, local_mode);

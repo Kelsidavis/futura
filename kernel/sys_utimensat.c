@@ -193,7 +193,7 @@ long sys_utimensat(int dirfd, const char *pathname, const fut_timespec_t *times,
     }
 
     /* Copy pathname from userspace to kernel space */
-    char path_buf[256];
+    char path_buf[FUT_VFS_PATH_BUFFER_SIZE];
     if (fut_copy_from_user(path_buf, pathname, sizeof(path_buf) - 1) != 0) {
         fut_printf("[UTIMENSAT] utimensat(dirfd=%d [%s], pathname=? [bad addr], times=%s, "
                    "flags=%s, pid=%d) -> EFAULT (pathname copy_from_user failed)\n",

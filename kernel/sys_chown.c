@@ -198,7 +198,7 @@ long sys_chown(const char *pathname, uint32_t uid, uint32_t gid) {
     }
 
     /* Copy pathname from userspace to kernel space */
-    char path_buf[256];
+    char path_buf[FUT_VFS_PATH_BUFFER_SIZE];
     if (fut_copy_from_user(path_buf, local_pathname, sizeof(path_buf) - 1) != 0) {
         fut_printf("[CHOWN] chown(pathname=?, uid=%s, gid=%s, op=%s) -> EFAULT "
                    "(copy_from_user failed)\n", uid_desc, gid_desc, operation_type);

@@ -126,7 +126,7 @@ long sys_unlinkat(int dirfd, const char *pathname, int flags) {
     }
 
     /* Copy pathname from userspace */
-    char path_buf[256];
+    char path_buf[FUT_VFS_PATH_BUFFER_SIZE];
     if (fut_copy_from_user(path_buf, local_pathname, sizeof(path_buf) - 1) != 0) {
         fut_printf("[UNLINKAT] unlinkat(dirfd=%d) -> EFAULT (copy_from_user failed)\n",
                    local_dirfd);

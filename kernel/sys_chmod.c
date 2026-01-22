@@ -230,7 +230,7 @@ long sys_chmod(const char *pathname, uint32_t mode) {
     const char *special_bits_desc = special_count > 0 ? special_bits_buf : "none";
 
     /* Copy pathname from userspace to kernel space */
-    char path_buf[256];
+    char path_buf[FUT_VFS_PATH_BUFFER_SIZE];
     if (fut_copy_from_user(path_buf, local_pathname, sizeof(path_buf) - 1) != 0) {
         fut_printf("[CHMOD] chmod(pathname=?, mode=%s, special=%s) -> EFAULT "
                    "(copy_from_user failed)\n", mode_desc, special_bits_desc);

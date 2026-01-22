@@ -188,7 +188,7 @@ long sys_readlink(const char *path, char *buf, size_t bufsiz) {
     }
 
     /* Phase 2: Copy path from userspace to validate it */
-    char path_buf[256];
+    char path_buf[FUT_VFS_PATH_BUFFER_SIZE];
     if (fut_copy_from_user(path_buf, local_path, sizeof(path_buf) - 1) != 0) {
         fut_printf("[READLINK] readlink(path=?, buf=?, bufsiz=%zu [%s]) -> EFAULT "
                    "(path copy_from_user failed)\n", local_bufsiz, bufsiz_category);

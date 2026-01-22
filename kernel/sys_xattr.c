@@ -97,7 +97,7 @@ long sys_setxattr(const char *path, const char *name, const void *value,
     }
 
     /* Copy path from userspace */
-    char path_buf[256];
+    char path_buf[FUT_VFS_PATH_BUFFER_SIZE];
     if (fut_copy_from_user(path_buf, path, sizeof(path_buf) - 1) != 0) {
         fut_printf("[XATTR] setxattr(path=? [bad addr], name=%p, size=%zu, pid=%d) "
                    "-> EFAULT\n", name, size, task->pid);
@@ -167,7 +167,7 @@ long sys_lsetxattr(const char *path, const char *name, const void *value,
         return -E2BIG;
     }
 
-    char path_buf[256];
+    char path_buf[FUT_VFS_PATH_BUFFER_SIZE];
     if (fut_copy_from_user(path_buf, path, sizeof(path_buf) - 1) != 0) {
         return -EFAULT;
     }
@@ -270,7 +270,7 @@ long sys_getxattr(const char *path, const char *name, void *value, size_t size) 
         return -EINVAL;
     }
 
-    char path_buf[256];
+    char path_buf[FUT_VFS_PATH_BUFFER_SIZE];
     if (fut_copy_from_user(path_buf, path, sizeof(path_buf) - 1) != 0) {
         return -EFAULT;
     }
@@ -310,7 +310,7 @@ long sys_lgetxattr(const char *path, const char *name, void *value, size_t size)
         return -EINVAL;
     }
 
-    char path_buf[256];
+    char path_buf[FUT_VFS_PATH_BUFFER_SIZE];
     if (fut_copy_from_user(path_buf, path, sizeof(path_buf) - 1) != 0) {
         return -EFAULT;
     }
@@ -398,7 +398,7 @@ long sys_listxattr(const char *path, char *list, size_t size) {
         return -EINVAL;
     }
 
-    char path_buf[256];
+    char path_buf[FUT_VFS_PATH_BUFFER_SIZE];
     if (fut_copy_from_user(path_buf, path, sizeof(path_buf) - 1) != 0) {
         return -EFAULT;
     }
@@ -428,7 +428,7 @@ long sys_llistxattr(const char *path, char *list, size_t size) {
         return -EINVAL;
     }
 
-    char path_buf[256];
+    char path_buf[FUT_VFS_PATH_BUFFER_SIZE];
     if (fut_copy_from_user(path_buf, path, sizeof(path_buf) - 1) != 0) {
         return -EFAULT;
     }
@@ -486,7 +486,7 @@ long sys_removexattr(const char *path, const char *name) {
         return -EINVAL;
     }
 
-    char path_buf[256];
+    char path_buf[FUT_VFS_PATH_BUFFER_SIZE];
     if (fut_copy_from_user(path_buf, path, sizeof(path_buf) - 1) != 0) {
         return -EFAULT;
     }
@@ -523,7 +523,7 @@ long sys_lremovexattr(const char *path, const char *name) {
         return -EINVAL;
     }
 
-    char path_buf[256];
+    char path_buf[FUT_VFS_PATH_BUFFER_SIZE];
     if (fut_copy_from_user(path_buf, path, sizeof(path_buf) - 1) != 0) {
         return -EFAULT;
     }

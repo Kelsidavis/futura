@@ -167,7 +167,7 @@ long sys_fchownat(int dirfd, const char *pathname, uint32_t uid, uint32_t gid, i
     }
 
     /* Copy pathname from userspace to kernel space */
-    char path_buf[256];
+    char path_buf[FUT_VFS_PATH_BUFFER_SIZE];
     if (fut_copy_from_user(path_buf, pathname, sizeof(path_buf) - 1) != 0) {
         fut_printf("[FCHOWNAT] fchownat(dirfd=%d [%s], pathname=?, uid=%s, gid=%s, "
                    "op=%s, flags=%s) -> EFAULT (copy_from_user failed)\n",

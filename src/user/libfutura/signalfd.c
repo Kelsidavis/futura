@@ -6,12 +6,9 @@
 #include <errno.h>
 #include <string.h>
 #include <sys/signalfd.h>
+#include <sys/epoll.h>
 #include "fd.h"
 #include "signalfd_internal.h"
-
-#ifndef EPOLLIN
-#define EPOLLIN 0x001u
-#endif
 
 struct fut_signalfd_entry {
     bool in_use;

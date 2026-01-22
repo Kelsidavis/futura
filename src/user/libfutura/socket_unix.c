@@ -9,13 +9,7 @@
 
 #include "fd.h"
 #include <user/stdio.h>
-
-#ifndef EPOLLIN
-#define EPOLLIN 0x001u
-#endif
-#ifndef EPOLLOUT
-#define EPOLLOUT 0x004u
-#endif
+#include <sys/epoll.h>
 
 /* Kernel syscall wrappers for socket operations */
 #define __NR_socket 41

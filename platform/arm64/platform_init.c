@@ -1221,7 +1221,7 @@ static void arm64_init_spawner_thread(void *arg) {
     extern int fut_vfs_mkdir(const char *, int);
     extern int fut_exec_elf(const char *, char *const[], char *const[]);
 
-    #define EEXIST 17
+    /* EEXIST provided by kernel/errno.h */
 
     fut_printf("[ARM64-SPAWNER] Init spawner thread running!\n");
 

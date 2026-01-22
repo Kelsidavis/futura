@@ -8,12 +8,9 @@
 #include <shared/fut_timespec.h>
 #include <user/sys.h>
 #include <sys/timerfd.h>
+#include <sys/epoll.h>
 #include <user/time.h>
 #include "timerfd_internal.h"
-
-#ifndef EPOLLIN
-#define EPOLLIN 0x001u
-#endif
 
 struct fut_timerfd {
     bool in_use;

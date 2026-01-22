@@ -4,6 +4,7 @@
 #include <poll.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <sys/epoll.h>
 
 #include <shared/fut_timespec.h>
 #include <user/sys.h>
@@ -13,37 +14,8 @@
 #include "socket_unix.h"
 #include "timerfd_internal.h"
 
-#ifndef POLLIN
-#define POLLIN      0x0001
-#endif
-#ifndef POLLOUT
-#define POLLOUT     0x0004
-#endif
-#ifndef POLLERR
-#define POLLERR     0x0008
-#endif
-#ifndef POLLHUP
-#define POLLHUP     0x0010
-#endif
-#ifndef POLLNVAL
-#define POLLNVAL    0x0020
-#endif
-#ifndef POLLPRI
-#define POLLPRI     0x0002
-#endif
-#ifndef POLLRDNORM
-#define POLLRDNORM  0x0040
-#endif
-#ifndef POLLWRNORM
-#define POLLWRNORM  0x0100
-#endif
-
-#ifndef EPOLLIN
-#define EPOLLIN 0x001u
-#endif
-#ifndef EPOLLOUT
-#define EPOLLOUT 0x004u
-#endif
+/* POLLIN, POLLOUT, etc. provided by poll.h */
+/* EPOLLIN, EPOLLOUT, etc. provided by sys/epoll.h */
 
 static void sleep_millis(int millis) {
     if (millis <= 0) {

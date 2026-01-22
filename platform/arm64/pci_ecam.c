@@ -9,6 +9,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <stdbool.h>
+#include <kernel/kprintf.h>
 
 /* QEMU virt machine PCIe ECAM base address (from device tree) */
 #define PCIE_ECAM_BASE  0x4010000000ULL   /* 256GB + 256MB */
@@ -23,8 +24,6 @@ static volatile uint8_t *g_pcie_ecam_base = NULL;
 
 /* Current BAR allocation pointer */
 static uint64_t g_bar_alloc_next = PCIE_MMIO_BASE;
-
-extern void fut_printf(const char *fmt, ...);
 
 /**
  * Calculate ECAM offset for a given PCI address

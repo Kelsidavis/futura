@@ -171,8 +171,7 @@
 #include "../../include/kernel/trap.h"
 #include "../../include/kernel/signal.h"
 #include "../../include/kernel/fut_task.h"
-
-extern void fut_printf(const char *fmt, ...);
+#include <kernel/kprintf.h>
 
 /* ============================================================
  *   Exception Dispatch Router

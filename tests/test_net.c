@@ -12,8 +12,7 @@
 #include <string.h>
 
 #include "tests/test_api.h"
-
-extern void fut_printf(const char *fmt, ...);
+#include <kernel/kprintf.h>
 
 static const uint8_t k_dst_broadcast[6] = {0xff, 0xff, 0xff, 0xff, 0xff, 0xff};
 static const uint8_t k_src_local[6] = {0x02, 0x00, 0x00, 0x00, 0x00, 0x01};

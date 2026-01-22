@@ -3,8 +3,7 @@
 #include "tests/test_api.h"
 
 #include <stdatomic.h>
-
-extern void fut_printf(const char *fmt, ...);
+#include <kernel/kprintf.h>
 
 #if defined(__x86_64__)
 #include <platform/x86_64/qemu_exit.h>

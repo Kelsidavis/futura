@@ -11,8 +11,7 @@
 #include <subsystems/futura_fs/futfs.h>
 
 #include "tests/test_api.h"
-
-extern void fut_printf(const char *fmt, ...);
+#include <kernel/kprintf.h>
 
 #define FUTFS_TEST_PATH "/hello.txt"
 

@@ -12,8 +12,7 @@
 
 #include <kernel/errno.h>
 #include <kernel/fut_memory.h>
-
-extern void fut_printf(const char *fmt, ...);
+#include <kernel/kprintf.h>
 
 static inline pte_t *pmap_context_pml4(fut_vmem_context_t *ctx) {
     if (!ctx || !ctx->pml4) {

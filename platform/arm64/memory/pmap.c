@@ -10,8 +10,7 @@
 #include <platform/arm64/memory/paging.h>
 #include <kernel/errno.h>
 #include <kernel/fut_memory.h>
-
-extern void fut_printf(const char *fmt, ...);
+#include <kernel/kprintf.h>
 
 /* Get the PGD from context, using kernel PGD if context is NULL or invalid */
 static inline page_table_t *pmap_context_pgd(fut_vmem_context_t *ctx) {

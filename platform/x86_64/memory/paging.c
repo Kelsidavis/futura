@@ -15,8 +15,7 @@
 #include <stddef.h>
 #include <stdbool.h>
 #include <string.h>
-
-extern void fut_printf(const char *fmt, ...);
+#include <kernel/kprintf.h>
 
 /* #define DEBUG_VM 1 */
 

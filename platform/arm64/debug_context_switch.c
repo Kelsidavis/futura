@@ -5,8 +5,7 @@
  */
 
 #include <stdint.h>
-
-extern void fut_printf(const char *fmt, ...);
+#include <kernel/kprintf.h>
 
 /* Called from context_switch.S right before setting ELR_EL1
  * Arguments:

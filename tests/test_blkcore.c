@@ -18,16 +18,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <string.h>
-
-extern void fut_printf(const char *fmt, ...);
-
-#ifndef ETIMEDOUT
-#define ETIMEDOUT 110
-#endif
-
-#ifndef ENOTSUP
-#define ENOTSUP 95
-#endif
+#include <kernel/kprintf.h>
 
 #define TEST_BLOCKS      32u
 #define TEST_BLOCK_SIZE  512u

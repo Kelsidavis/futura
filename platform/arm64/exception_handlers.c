@@ -9,6 +9,7 @@
 #include <stdint.h>
 #include <stddef.h>
 #include <kernel/signal.h>
+#include <kernel/kprintf.h>
 
 /* Forward declarations */
 extern void fut_serial_puts(const char *str);
@@ -18,7 +19,6 @@ extern int64_t arm64_syscall_dispatch(uint64_t syscall_num,
                                       uint64_t arg2, uint64_t arg3,
                                       uint64_t arg4, uint64_t arg5);
 extern int fut_signal_deliver(void *task, void *frame);
-extern void fut_printf(const char *fmt, ...);
 extern int fut_trap_handle_page_fault(void *frame);
 extern void fut_task_signal_exit(int signal);
 

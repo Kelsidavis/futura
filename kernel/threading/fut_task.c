@@ -135,10 +135,12 @@ fut_task_t *fut_task_create(void) {
         .term_signal = 0,
         .threads = NULL,
         .thread_count = 0,
-        .uid = 0,          /* Default to root UID */
-        .gid = 0,          /* Default to root GID */
-        .ruid = 0,         /* Real UID (for future use) */
-        .rgid = 0,         /* Real GID (for future use) */
+        .uid = 0,          /* Default to root effective UID */
+        .gid = 0,          /* Default to root effective GID */
+        .ruid = 0,         /* Default to root real UID */
+        .rgid = 0,         /* Default to root real GID */
+        .suid = 0,         /* Default to root saved UID */
+        .sgid = 0,         /* Default to root saved GID */
         .pgid = (parent ? parent->pgid : new_pid),  /* Inherit parent's PGID, or self if init */
         .sid = (parent ? parent->sid : new_pid),    /* Inherit parent's SID, or self if init */
         .signal_mask = 0,  /* No signals blocked initially */

@@ -52,11 +52,22 @@ struct fut_task {
     fut_thread_t *threads;             // Linked list of threads
     uint64_t thread_count;             // Number of threads in task
 
-    /* Process credentials */
-    uint32_t uid;                      // User ID (effective UID)
-    uint32_t gid;                      // Group ID (effective GID)
-    uint32_t ruid;                     // Real UID (for future use)
-    uint32_t rgid;                     // Real GID (for future use)
+    /* Process credentials (POSIX three-tier UID/GID model)
+     *
+     * Real UID/GID: Original process owner, used for accounting
+     * Effective UID/GID: Used for permission checks (file access, signals, etc.)
+     * Saved UID/GID: Backup of previous effective UID/GID for privilege swapping
+     *
+     * Privilege model:
+     * - Superuser (uid 0): Can set any UID/GID values
+     * - Regular user: Can only set to current real, effective, or saved UID/GID
+     */
+    uint32_t uid;                      // Effective UID (used for permission checks)
+    uint32_t gid;                      // Effective GID (used for permission checks)
+    uint32_t ruid;                     // Real UID (original process owner)
+    uint32_t rgid;                     // Real GID (original process group)
+    uint32_t suid;                     // Saved UID (backup for privilege swapping)
+    uint32_t sgid;                     // Saved GID (backup for privilege swapping)
 
     /* Process group and session (job control) */
     uint64_t pgid;                     // Process group ID (for job control)

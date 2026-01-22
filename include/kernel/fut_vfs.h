@@ -465,6 +465,45 @@ struct fut_file {
 };
 
 /* ============================================================
+ *   VNode Operation Validation Macros
+ *
+ *   These macros provide consistent validation of vnode operation
+ *   chains, reducing code duplication in syscall implementations.
+ * ============================================================ */
+
+/** Check if file has a valid vnode with read capability */
+#define FUT_FILE_CAN_READ(file) \
+    ((file) && (file)->vnode && (file)->vnode->ops && (file)->vnode->ops->read)
+
+/** Check if file has a valid vnode with write capability */
+#define FUT_FILE_CAN_WRITE(file) \
+    ((file) && (file)->vnode && (file)->vnode->ops && (file)->vnode->ops->write)
+
+/** Check if file has a valid vnode with readdir capability (directories) */
+#define FUT_FILE_CAN_READDIR(file) \
+    ((file) && (file)->vnode && (file)->vnode->ops && (file)->vnode->ops->readdir)
+
+/** Check if file has a valid vnode with fsync capability */
+#define FUT_FILE_CAN_FSYNC(file) \
+    ((file) && (file)->vnode && (file)->vnode->ops && (file)->vnode->ops->fsync)
+
+/** Check if file has a valid vnode with any operations */
+#define FUT_FILE_HAS_VNODE_OPS(file) \
+    ((file) && (file)->vnode && (file)->vnode->ops)
+
+/** Check if file is a regular file */
+#define FUT_FILE_IS_REG(file) \
+    ((file) && (file)->vnode && (file)->vnode->type == VN_REG)
+
+/** Check if file is a directory */
+#define FUT_FILE_IS_DIR(file) \
+    ((file) && (file)->vnode && (file)->vnode->type == VN_DIR)
+
+/** Check if file is a character device */
+#define FUT_FILE_IS_CHR(file) \
+    ((file) && (file)->vnode && (file)->vnode->type == VN_CHR)
+
+/* ============================================================
  *   File Statistics
  * ============================================================ */
 

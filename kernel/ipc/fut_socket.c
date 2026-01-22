@@ -66,6 +66,23 @@ static inline void *socket_memcpy(void *s1, const void *s2, size_t n) {
 #define memset(s,c,n)   socket_memset(s, c, n)
 #define memcpy(s1,s2,n) socket_memcpy(s1, s2, n)
 
+/**
+ * socket_pair_cleanup - Free all resources allocated for a socket pair
+ *
+ * Safely frees all buffers and wait queues associated with a socket pair.
+ * Handles partial initialization (NULL-safe for all fields).
+ *
+ * @param pair Socket pair to clean up (may be NULL)
+ */
+static inline void socket_pair_cleanup(fut_socket_pair_t *pair) {
+    if (!pair) return;
+    if (pair->send_waitq) fut_free(pair->send_waitq);
+    if (pair->recv_waitq) fut_free(pair->recv_waitq);
+    if (pair->send_buf) fut_free(pair->send_buf);
+    if (pair->recv_buf) fut_free(pair->recv_buf);
+    fut_free(pair);
+}
+
 /* ============================================================
  *   Socket Registry (global)
  * ============================================================ */
@@ -493,9 +510,7 @@ int fut_socket_accept(fut_socket_t *listener, fut_socket_t **out_socket) {
         pair_forward->send_buf = fut_malloc(FUT_SOCKET_BUFSIZE);
         pair_forward->recv_buf = fut_malloc(FUT_SOCKET_BUFSIZE);
         if (!pair_forward->send_buf || !pair_forward->recv_buf) {
-            if (pair_forward->send_buf) fut_free(pair_forward->send_buf);
-            if (pair_forward->recv_buf) fut_free(pair_forward->recv_buf);
-            fut_free(pair_forward);
+            socket_pair_cleanup(pair_forward);
             fut_socket_unref(peer);
             return -ENOMEM;
         }
@@ -505,11 +520,7 @@ int fut_socket_accept(fut_socket_t *listener, fut_socket_t **out_socket) {
         pair_forward->send_waitq = fut_malloc(sizeof(fut_waitq_t));
         pair_forward->recv_waitq = fut_malloc(sizeof(fut_waitq_t));
         if (!pair_forward->send_waitq || !pair_forward->recv_waitq) {
-            if (pair_forward->send_waitq) fut_free(pair_forward->send_waitq);
-            if (pair_forward->recv_waitq) fut_free(pair_forward->recv_waitq);
-            if (pair_forward->send_buf) fut_free(pair_forward->send_buf);
-            if (pair_forward->recv_buf) fut_free(pair_forward->recv_buf);
-            fut_free(pair_forward);
+            socket_pair_cleanup(pair_forward);
             fut_socket_unref(peer);
             return -ENOMEM;
         }
@@ -520,11 +531,7 @@ int fut_socket_accept(fut_socket_t *listener, fut_socket_t **out_socket) {
         /* PAIR 2: listener → peer (listener sends, peer receives) */
         fut_socket_pair_t *pair_reverse = fut_malloc(sizeof(fut_socket_pair_t));
         if (!pair_reverse) {
-            if (pair_forward->send_waitq) fut_free(pair_forward->send_waitq);
-            if (pair_forward->recv_waitq) fut_free(pair_forward->recv_waitq);
-            if (pair_forward->send_buf) fut_free(pair_forward->send_buf);
-            if (pair_forward->recv_buf) fut_free(pair_forward->recv_buf);
-            fut_free(pair_forward);
+            socket_pair_cleanup(pair_forward);
             fut_socket_unref(peer);
             return -ENOMEM;
         }
@@ -533,14 +540,8 @@ int fut_socket_accept(fut_socket_t *listener, fut_socket_t **out_socket) {
         pair_reverse->send_buf = fut_malloc(FUT_SOCKET_BUFSIZE);
         pair_reverse->recv_buf = fut_malloc(FUT_SOCKET_BUFSIZE);
         if (!pair_reverse->send_buf || !pair_reverse->recv_buf) {
-            if (pair_reverse->send_buf) fut_free(pair_reverse->send_buf);
-            if (pair_reverse->recv_buf) fut_free(pair_reverse->recv_buf);
-            fut_free(pair_reverse);
-            if (pair_forward->send_waitq) fut_free(pair_forward->send_waitq);
-            if (pair_forward->recv_waitq) fut_free(pair_forward->recv_waitq);
-            if (pair_forward->send_buf) fut_free(pair_forward->send_buf);
-            if (pair_forward->recv_buf) fut_free(pair_forward->recv_buf);
-            fut_free(pair_forward);
+            socket_pair_cleanup(pair_reverse);
+            socket_pair_cleanup(pair_forward);
             fut_socket_unref(peer);
             return -ENOMEM;
         }
@@ -550,16 +551,8 @@ int fut_socket_accept(fut_socket_t *listener, fut_socket_t **out_socket) {
         pair_reverse->send_waitq = fut_malloc(sizeof(fut_waitq_t));
         pair_reverse->recv_waitq = fut_malloc(sizeof(fut_waitq_t));
         if (!pair_reverse->send_waitq || !pair_reverse->recv_waitq) {
-            if (pair_reverse->send_waitq) fut_free(pair_reverse->send_waitq);
-            if (pair_reverse->recv_waitq) fut_free(pair_reverse->recv_waitq);
-            if (pair_reverse->send_buf) fut_free(pair_reverse->send_buf);
-            if (pair_reverse->recv_buf) fut_free(pair_reverse->recv_buf);
-            fut_free(pair_reverse);
-            if (pair_forward->send_waitq) fut_free(pair_forward->send_waitq);
-            if (pair_forward->recv_waitq) fut_free(pair_forward->recv_waitq);
-            if (pair_forward->send_buf) fut_free(pair_forward->send_buf);
-            if (pair_forward->recv_buf) fut_free(pair_forward->recv_buf);
-            fut_free(pair_forward);
+            socket_pair_cleanup(pair_reverse);
+            socket_pair_cleanup(pair_forward);
             fut_socket_unref(peer);
             return -ENOMEM;
         }

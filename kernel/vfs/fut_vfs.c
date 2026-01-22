@@ -129,7 +129,7 @@ static __attribute__((unused)) int alloc_fd_for_task(fut_task_t *task, struct fu
  * @param fd    File descriptor number
  * @return File structure, or NULL if invalid/not open
  */
-static __attribute__((unused)) struct fut_file *get_file_from_task(fut_task_t *task, int fd) {
+static struct fut_file *get_file_from_task(fut_task_t *task, int fd) {
     if (!task || !task->fd_table || fd < 0 || fd >= task->max_fds) {
         return NULL;
     }
@@ -142,7 +142,7 @@ static __attribute__((unused)) struct fut_file *get_file_from_task(fut_task_t *t
  * @param task  Task whose FD to close
  * @param fd    File descriptor to close
  */
-static __attribute__((unused)) void close_fd_in_task(fut_task_t *task, int fd) {
+static void close_fd_in_task(fut_task_t *task, int fd) {
     if (!task || !task->fd_table || fd < 0 || fd >= task->max_fds) {
         return;
     }

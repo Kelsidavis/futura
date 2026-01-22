@@ -16,18 +16,6 @@
 #include <stddef.h>
 #include <string.h>
 
-#ifndef ENOTSUP
-#define ENOTSUP 95
-#endif
-
-#ifndef ENOTEMPTY
-#define ENOTEMPTY 39
-#endif
-
-#ifndef EISDIR
-#define EISDIR 21
-#endif
-
 struct futfs_handle {
     struct futfs_inode_mem *inode;
     uint32_t rights;

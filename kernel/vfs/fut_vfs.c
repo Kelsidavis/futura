@@ -416,10 +416,6 @@ int fut_vfs_statfs(const char *mountpoint, struct fut_statfs *out) {
         return -EINVAL;
     }
 
-#ifndef ENOTSUP
-#define ENOTSUP 95
-#endif
-
     struct fut_mount *mount = mount_list;
     while (mount) {
         if (mount->mountpoint && str_equals(mount->mountpoint, mountpoint)) {

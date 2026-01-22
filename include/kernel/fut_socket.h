@@ -27,6 +27,51 @@ typedef uint32_t socklen_t;
 #endif
 
 /* ============================================================
+ *   Socket Address Families (Domains)
+ * ============================================================ */
+
+#ifndef AF_UNSPEC
+#define AF_UNSPEC   0   /* Unspecified */
+#endif
+#ifndef AF_UNIX
+#define AF_UNIX     1   /* Unix domain sockets (local IPC) */
+#endif
+#ifndef AF_LOCAL
+#define AF_LOCAL    AF_UNIX  /* POSIX alias for AF_UNIX */
+#endif
+#ifndef AF_INET
+#define AF_INET     2   /* IPv4 Internet protocols */
+#endif
+#ifndef AF_INET6
+#define AF_INET6    10  /* IPv6 Internet protocols */
+#endif
+
+/* ============================================================
+ *   Socket Types
+ * ============================================================ */
+
+#ifndef SOCK_STREAM
+#define SOCK_STREAM     1   /* Connection-based byte streams */
+#endif
+#ifndef SOCK_DGRAM
+#define SOCK_DGRAM      2   /* Connectionless datagrams */
+#endif
+#ifndef SOCK_RAW
+#define SOCK_RAW        3   /* Raw network protocol access */
+#endif
+#ifndef SOCK_SEQPACKET
+#define SOCK_SEQPACKET  5   /* Connection-based packets */
+#endif
+
+/* Socket type flags (OR'd with socket type) */
+#ifndef SOCK_NONBLOCK
+#define SOCK_NONBLOCK   0x800   /* Set O_NONBLOCK on new fd */
+#endif
+#ifndef SOCK_CLOEXEC
+#define SOCK_CLOEXEC    0x80000 /* Set FD_CLOEXEC on new fd */
+#endif
+
+/* ============================================================
  *   Socket States
  * ============================================================ */
 

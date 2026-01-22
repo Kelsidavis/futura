@@ -210,11 +210,7 @@
 #define BIND_DEBUG 0
 #define bind_printf(...) do { if (BIND_DEBUG) fut_printf(__VA_ARGS__); } while(0)
 
-/* Address family constants */
-#define AF_UNSPEC 0
-#define AF_UNIX   1
-#define AF_INET   2
-#define AF_INET6  10
+/* Address family constants (AF_*) provided by fut_socket.h */
 
 /* Internet address structures */
 typedef struct {

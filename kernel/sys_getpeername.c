@@ -21,8 +21,7 @@
 
 #include <kernel/kprintf.h>
 
-/* Socket address family constants */
-#define AF_UNIX 1
+/* Address family constants (AF_*) provided by fut_socket.h */
 
 /* Unix domain socket address structure */
 struct sockaddr_un {

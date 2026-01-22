@@ -23,21 +23,7 @@
 #define SOCKET_DEBUG 0
 #define socket_printf(...) do { if (SOCKET_DEBUG) fut_printf(__VA_ARGS__); } while(0)
 
-/* Socket address families (domains) */
-#define AF_UNSPEC 0   /* Unspecified */
-#define AF_UNIX   1   /* Unix domain sockets (local IPC) */
-#define AF_INET   2   /* IPv4 Internet protocols */
-#define AF_INET6  10  /* IPv6 Internet protocols */
-
-/* Socket types */
-#define SOCK_STREAM    1  /* Sequenced, reliable, two-way connection-based byte streams */
-#define SOCK_DGRAM     2  /* Connectionless, unreliable datagrams */
-#define SOCK_SEQPACKET 5  /* Sequenced, reliable, two-way connection-based packet streams */
-#define SOCK_RAW       3  /* Raw network protocol access */
-
-/* Socket type flags (ORed with type in Linux) */
-#define SOCK_NONBLOCK  0x800   /* Non-blocking mode */
-#define SOCK_CLOEXEC   0x80000 /* Close-on-exec flag */
+/* Socket constants (AF_*, SOCK_*) provided by fut_socket.h */
 
 /**
  * socket() - Create communication endpoint

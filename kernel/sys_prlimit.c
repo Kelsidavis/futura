@@ -16,7 +16,6 @@
 #include <stdbool.h>
 
 #include <kernel/kprintf.h>
-extern fut_task_t *fut_task_current(void);
 extern int fut_access_ok(const void *u_ptr, size_t len, int write);
 
 /* Resource types */

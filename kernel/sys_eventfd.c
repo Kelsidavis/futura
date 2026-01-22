@@ -425,7 +425,6 @@
 #include <stdint.h>
 
 #include <kernel/kprintf.h>
-extern fut_task_t *fut_task_current(void);
 
 /* eventfd flags */
 #define EFD_CLOEXEC     02000000

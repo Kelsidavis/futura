@@ -14,7 +14,6 @@
 
 #include <kernel/kprintf.h>
 #include <kernel/uaccess.h>
-extern fut_task_t *fut_task_current(void);
 extern fut_task_t *fut_task_by_pid(uint64_t pid);
 
 /* Default resource limit values - named constants for clarity */

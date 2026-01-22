@@ -17,7 +17,6 @@
 #include <kernel/errno.h>
 
 #include <kernel/kprintf.h>
-extern fut_task_t *fut_task_current(void);
 
 /* Helper function to count set bits in signal mask */
 static int count_signals_in_mask(uint64_t mask) {

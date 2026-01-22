@@ -18,7 +18,6 @@
 
 #include <kernel/kprintf.h>
 #include <kernel/uaccess.h>
-extern fut_task_t *fut_task_current(void);
 
 /* Phase 3: Helper to check capability-based privilege */
 static int has_cap_setuid(fut_task_t *task) {

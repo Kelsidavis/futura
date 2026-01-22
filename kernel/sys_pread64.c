@@ -22,7 +22,6 @@
 #include <kernel/uaccess.h>
 extern void *fut_malloc(size_t size);
 extern void fut_free(void *ptr);
-extern fut_task_t *fut_task_current(void);
 extern struct fut_file *vfs_get_file_from_task(struct fut_task *task, int fd);
 
 /**

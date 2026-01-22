@@ -15,7 +15,6 @@
 #include <kernel/errno.h>
 
 #include <kernel/kprintf.h>
-extern fut_task_t *fut_task_current(void);
 
 /* Special value indicating "don't change" */
 #define UID_NO_CHANGE ((uint32_t)-1)

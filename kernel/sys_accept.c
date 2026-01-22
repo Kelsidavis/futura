@@ -25,7 +25,6 @@
 /* Disable verbose ACCEPT debugging for performance */
 #define ACCEPT_DEBUG 0
 #define accept_printf(...) do { if (ACCEPT_DEBUG) fut_printf(__VA_ARGS__); } while(0)
-extern fut_task_t *fut_task_current(void);
 extern fut_socket_t *get_socket_from_fd(int fd);
 extern int allocate_socket_fd(fut_socket_t *socket);
 

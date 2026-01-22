@@ -19,7 +19,6 @@
 /* Disable verbose POLL debugging for performance */
 #define POLL_DEBUG 0
 #define poll_printf(...) do { if (POLL_DEBUG) fut_printf(__VA_ARGS__); } while(0)
-extern fut_task_t *fut_task_current(void);
 extern void *fut_malloc(size_t size);
 extern void fut_free(void *ptr);
 

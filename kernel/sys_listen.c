@@ -20,7 +20,6 @@
 /* Disable verbose LISTEN debugging for performance */
 #define LISTEN_DEBUG 0
 #define listen_printf(...) do { if (LISTEN_DEBUG) fut_printf(__VA_ARGS__); } while(0)
-extern fut_task_t *fut_task_current(void);
 extern fut_socket_t *get_socket_from_fd(int fd);
 
 /* Common backlog values */

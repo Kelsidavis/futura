@@ -19,7 +19,6 @@
 #include <kernel/uaccess.h>
 
 #include <kernel/kprintf.h>
-extern fut_task_t *fut_task_current(void);
 
 /**
  * sigaction() - Examine and change a signal action

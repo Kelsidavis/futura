@@ -24,7 +24,6 @@
 #define MAX_WRITE_SIZE  (1024 * 1024)  /* 1 MB */
 
 #include <kernel/kprintf.h>
-extern fut_task_t *fut_task_current(void);
 
 /* Disable verbose WRITE debugging for performance */
 #define WRITE_DEBUG 0

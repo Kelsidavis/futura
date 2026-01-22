@@ -13,7 +13,6 @@
 
 #include <kernel/kprintf.h>
 #include <kernel/uaccess.h>
-extern fut_task_t *fut_task_current(void);
 
 /* Common ioctl commands */
 #define TCGETS      0x5401

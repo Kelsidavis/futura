@@ -15,7 +15,6 @@
 #include <string.h>
 
 #include <kernel/kprintf.h>
-extern fut_task_t *fut_task_current(void);
 
 /* Scheduling policies */
 #define SCHED_OTHER    0  /* Standard round-robin time-sharing */

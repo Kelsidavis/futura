@@ -14,7 +14,6 @@
 #include <stddef.h>
 
 #include <kernel/kprintf.h>
-extern fut_task_t *fut_task_current(void);
 extern int copy_user_string(const char *user_str, char *kernel_buf, size_t max_len);
 
 /* AT_FDCWD - special value for current working directory */

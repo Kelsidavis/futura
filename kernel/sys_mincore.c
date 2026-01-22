@@ -17,7 +17,6 @@
 
 #include <kernel/kprintf.h>
 #include <kernel/uaccess.h>
-extern fut_task_t *fut_task_current(void);
 
 /* Architecture-specific page size */
 #ifndef PAGE_SIZE

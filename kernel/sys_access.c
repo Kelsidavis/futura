@@ -19,7 +19,6 @@
 
 #include <kernel/kprintf.h>
 #include <kernel/uaccess.h>
-extern fut_task_t *fut_task_current(void);
 
 /* VFS permission checking functions */
 extern int vfs_check_read_perm(struct fut_vnode *vnode);

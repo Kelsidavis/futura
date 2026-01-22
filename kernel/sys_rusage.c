@@ -13,7 +13,6 @@
 
 #include <kernel/kprintf.h>
 #include <kernel/uaccess.h>
-extern fut_task_t *fut_task_current(void);
 extern uint64_t fut_get_ticks(void);
 
 /* rusage structure - resource usage statistics */

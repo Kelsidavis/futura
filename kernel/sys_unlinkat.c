@@ -18,7 +18,6 @@
 
 #include <kernel/kprintf.h>
 #include <kernel/uaccess.h>
-extern fut_task_t *fut_task_current(void);
 
 /* AT_* flags */
 #define AT_FDCWD            -100  /* Use current working directory */

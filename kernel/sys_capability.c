@@ -20,7 +20,6 @@
 
 #include <kernel/kprintf.h>
 #include <kernel/uaccess.h>
-extern fut_task_t *fut_task_current(void);
 
 /* Capability version */
 #define _LINUX_CAPABILITY_VERSION_1  0x19980330

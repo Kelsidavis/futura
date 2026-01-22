@@ -13,7 +13,6 @@
 #include <kernel/uaccess.h>
 
 #include <kernel/kprintf.h>
-extern fut_task_t *fut_task_current(void);
 
 /**
  * sigaltstack() - Set/get signal handler alternate stack

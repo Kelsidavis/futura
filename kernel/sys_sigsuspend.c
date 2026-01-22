@@ -13,7 +13,6 @@
 #include <kernel/uaccess.h>
 
 #include <kernel/kprintf.h>
-extern fut_task_t *fut_task_current(void);
 
 /**
  * sigsuspend() - Atomically change signal mask and suspend

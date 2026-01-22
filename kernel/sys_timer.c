@@ -12,7 +12,6 @@
 #include <shared/fut_sigevent.h>  /* For struct sigevent, timer_t, SIGEV_* */
 
 #include <kernel/kprintf.h>
-extern fut_task_t *fut_task_current(void);
 
 /**
  * sys_timer_create - Create a POSIX per-process timer

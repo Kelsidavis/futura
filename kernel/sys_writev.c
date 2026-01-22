@@ -14,7 +14,6 @@
 
 #include <kernel/kprintf.h>
 #include <kernel/uaccess.h>
-extern fut_task_t *fut_task_current(void);
 extern ssize_t fut_vfs_write(int fd, const void *buf, size_t count);
 extern void *fut_malloc(size_t size);
 extern void fut_free(void *ptr);

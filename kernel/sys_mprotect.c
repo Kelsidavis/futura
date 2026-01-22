@@ -18,7 +18,6 @@
 #include <stdint.h>
 
 #include <kernel/kprintf.h>
-extern fut_task_t *fut_task_current(void);
 
 /* Memory protection flags (standard POSIX values) */
 #define PROT_NONE  0x0  /* Page cannot be accessed */

@@ -16,7 +16,6 @@
 #include <kernel/errno.h>
 
 #include <kernel/kprintf.h>
-extern fut_task_t *fut_task_current(void);
 extern uint64_t fut_get_ticks(void);
 extern int fut_signal_deliver(fut_task_t *task, int sig);
 

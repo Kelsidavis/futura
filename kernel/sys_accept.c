@@ -160,6 +160,13 @@ long sys_accept(int sockfd, void *addr, socklen_t *addrlen) {
         return -EBADF;
     }
 
+    /* Phase 5: Validate fd upper bounds to prevent out-of-bounds access */
+    if ((unsigned int)local_sockfd >= task->max_fds) {
+        accept_printf("[ACCEPT] accept(local_sockfd=%d) -> EBADF (fd exceeds max_fds %u)\n",
+                   local_sockfd, task->max_fds);
+        return -EBADF;
+    }
+
     /* Phase 2: Categorize address request */
     const char *addr_request;
     if (local_addr == NULL && local_addrlen == NULL) {

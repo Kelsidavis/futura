@@ -81,6 +81,13 @@ long sys_listen(int sockfd, int backlog) {
         return -EBADF;
     }
 
+    /* Phase 5: Validate fd upper bounds to prevent out-of-bounds access */
+    if ((unsigned int)local_sockfd >= task->max_fds) {
+        listen_printf("[LISTEN] listen(sockfd=%d, backlog=%d) -> EBADF (fd exceeds max_fds %u)\n",
+                   local_sockfd, local_backlog, task->max_fds);
+        return -EBADF;
+    }
+
     /* Phase 2: Categorize backlog for diagnostics */
     const char *backlog_desc;
     int original_backlog = local_backlog;

@@ -296,6 +296,13 @@ long sys_connect(int sockfd, const void *addr, socklen_t addrlen) {
                    local_sockfd, local_addrlen);
         return -EBADF;
     }
+
+    /* Phase 5: Validate fd upper bounds to prevent out-of-bounds access */
+    if ((unsigned int)local_sockfd >= task->max_fds) {
+        connect_printf("[CONNECT] connect(sockfd=%d) -> EBADF (fd exceeds max_fds %u)\n",
+                   local_sockfd, task->max_fds);
+        return -EBADF;
+    }
     connect_printf("[CONNECT-DBG] sockfd OK, checking addr\n");
 
     /* Phase 2: Validate addr pointer */

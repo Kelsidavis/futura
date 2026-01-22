@@ -328,6 +328,13 @@ long sys_bind(int sockfd, const void *addr, socklen_t addrlen) {
         return -EBADF;
     }
 
+    /* Phase 5: Validate fd upper bounds to prevent out-of-bounds access */
+    if ((unsigned int)local_sockfd >= task->max_fds) {
+        bind_printf("[BIND] bind(sockfd=%d) -> EBADF (fd exceeds max_fds %u)\n",
+                   local_sockfd, task->max_fds);
+        return -EBADF;
+    }
+
     /* Phase 2: Validate addr pointer */
     if (!local_addr) {
         bind_printf("[BIND] bind(sockfd=%d, addr=NULL, addrlen=%u) -> EFAULT (NULL addr)\n",

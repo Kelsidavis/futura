@@ -9,7 +9,8 @@
  * Phase 1 (Completed): Basic timestamp validation and stub
  * Phase 2 (Completed): Implement actual timestamp updates via vnode->ops->setattr
  * Phase 3 (Completed): Directory FD resolution via VFS with proper validation
- * Phase 4: AT_SYMLINK_NOFOLLOW support with lstat and performance optimization
+ * Phase 4 (Completed): futimens mode (pathname=NULL) operating on open FD
+ * Phase 5: AT_SYMLINK_NOFOLLOW support with lstat and performance optimization
  */
 
 #include <kernel/fut_task.h>
@@ -97,7 +98,8 @@
  * Phase 1 (Completed): Basic timestamp validation and stub
  * Phase 2 (Completed): Implement actual timestamp updates via vnode->ops->setattr
  * Phase 3 (Completed): Directory FD resolution via VFS with proper validation
- * Phase 4: AT_SYMLINK_NOFOLLOW support with lstat and performance optimization
+ * Phase 4 (Completed): futimens mode (pathname=NULL) operating on open FD
+ * Phase 5: AT_SYMLINK_NOFOLLOW support with lstat and performance optimization
  */
 long sys_utimensat(int dirfd, const char *pathname, const fut_timespec_t *times, int flags) {
     fut_task_t *task = fut_task_current();
@@ -184,11 +186,102 @@ long sys_utimensat(int dirfd, const char *pathname, const fut_timespec_t *times,
 
     /* Handle pathname=NULL case (futimens behavior - operate on dirfd) */
     if (pathname == NULL) {
-        fut_printf("[UTIMENSAT] utimensat(dirfd=%d [%s], pathname=NULL [futimens mode], "
-                   "times=%s, flags=%s, pid=%d) -> ENOSYS "
-                   "(futimens mode not implemented yet, Phase 2)\n",
-                   dirfd, dirfd_desc, time_spec_desc, flags_desc, task->pid);
-        return -ENOSYS;
+        /* Validate dirfd - must be a valid open FD, not AT_FDCWD */
+        if (dirfd == AT_FDCWD) {
+            fut_printf("[UTIMENSAT] utimensat(dirfd=AT_FDCWD, pathname=NULL) -> EFAULT "
+                       "(futimens requires valid FD when pathname is NULL)\n");
+            return -EFAULT;
+        }
+
+        if (dirfd < 0) {
+            fut_printf("[UTIMENSAT] utimensat(dirfd=%d, pathname=NULL) -> EBADF "
+                       "(invalid negative dirfd for futimens)\n", dirfd);
+            return -EBADF;
+        }
+
+        if (dirfd >= task->max_fds) {
+            fut_printf("[UTIMENSAT] utimensat(dirfd=%d, pathname=NULL, max_fds=%d) -> EBADF "
+                       "(dirfd exceeds max_fds)\n", dirfd, task->max_fds);
+            return -EBADF;
+        }
+
+        /* Get file structure from dirfd */
+        struct fut_file *file = vfs_get_file_from_task(task, dirfd);
+        if (!file) {
+            fut_printf("[UTIMENSAT] utimensat(dirfd=%d, pathname=NULL) -> EBADF "
+                       "(fd not open)\n", dirfd);
+            return -EBADF;
+        }
+
+        if (!file->vnode) {
+            fut_printf("[UTIMENSAT] utimensat(dirfd=%d, pathname=NULL) -> EBADF "
+                       "(file has no vnode)\n", dirfd);
+            return -EBADF;
+        }
+
+        struct fut_vnode *vnode = file->vnode;
+
+        /* Check if filesystem supports setattr operation */
+        if (!vnode->ops || !vnode->ops->setattr) {
+            fut_printf("[UTIMENSAT] utimensat(dirfd=%d [futimens], vnode_ino=%lu) -> ENOSYS "
+                       "(filesystem doesn't support setattr)\n", dirfd, vnode->ino);
+            return -ENOSYS;
+        }
+
+        /* Build stat structure with new timestamps */
+        struct fut_stat stat = {0};
+
+        /* Get current time if needed */
+        uint64_t now_ns = 0;
+        if (times == NULL ||
+            (time_buf[0].tv_nsec == UTIME_NOW || time_buf[1].tv_nsec == UTIME_NOW)) {
+            now_ns = fut_get_time_ns();
+        }
+
+        /* Set access time */
+        if (times == NULL) {
+            stat.st_atime = now_ns / 1000000000;
+            stat.st_atime_nsec = now_ns % 1000000000;
+        } else if (time_buf[0].tv_nsec == UTIME_NOW) {
+            stat.st_atime = now_ns / 1000000000;
+            stat.st_atime_nsec = now_ns % 1000000000;
+        } else if (time_buf[0].tv_nsec == UTIME_OMIT) {
+            stat.st_atime = (uint64_t)-1;
+            stat.st_atime_nsec = 0;
+        } else {
+            stat.st_atime = time_buf[0].tv_sec;
+            stat.st_atime_nsec = time_buf[0].tv_nsec;
+        }
+
+        /* Set modification time */
+        if (times == NULL) {
+            stat.st_mtime = now_ns / 1000000000;
+            stat.st_mtime_nsec = now_ns % 1000000000;
+        } else if (time_buf[1].tv_nsec == UTIME_NOW) {
+            stat.st_mtime = now_ns / 1000000000;
+            stat.st_mtime_nsec = now_ns % 1000000000;
+        } else if (time_buf[1].tv_nsec == UTIME_OMIT) {
+            stat.st_mtime = (uint64_t)-1;
+            stat.st_mtime_nsec = 0;
+        } else {
+            stat.st_mtime = time_buf[1].tv_sec;
+            stat.st_mtime_nsec = time_buf[1].tv_nsec;
+        }
+
+        /* Call the filesystem's setattr operation */
+        int ret = vnode->ops->setattr(vnode, &stat);
+
+        if (ret < 0) {
+            fut_printf("[UTIMENSAT] utimensat(dirfd=%d [futimens], vnode_ino=%lu, times=%s, "
+                       "pid=%d) -> %d (setattr failed)\n",
+                       dirfd, vnode->ino, time_spec_desc, task->pid, ret);
+            return ret;
+        }
+
+        fut_printf("[UTIMENSAT] utimensat(dirfd=%d [futimens], vnode_ino=%lu, times=%s, "
+                   "flags=%s, pid=%d) -> 0 (success)\n",
+                   dirfd, vnode->ino, time_spec_desc, flags_desc, task->pid);
+        return 0;
     }
 
     /* Copy pathname from userspace to kernel space */

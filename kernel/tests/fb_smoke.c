@@ -28,12 +28,10 @@
 #include <tests/test_api.h>
 
 #include <kernel/kprintf.h>
-extern uintptr_t g_user_lo;
+#include <fcntl.h>
+#include <sys/mman.h>
 
-#define O_RDWR          0x0002
-#define PROT_WRITE      0x2
-#define PROT_READ       0x1
-#define MAP_SHARED      0x1
+extern uintptr_t g_user_lo;
 
 /* Syscall numbers (POSIX subset) */
 #ifndef SYS_read

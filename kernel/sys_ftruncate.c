@@ -17,6 +17,7 @@
 #include <kernel/fut_vfs.h>
 #include <kernel/fut_fd_util.h>
 #include <stdint.h>
+#include <fcntl.h>
 
 #include <kernel/kprintf.h>
 
@@ -193,8 +194,7 @@ long sys_ftruncate(int fd, uint64_t length) {
      * - CVE-2016-7097: Linux posix_acl_create permission bypass
      * - CVE-2015-5706: FreeBSD capability rights violation in ftruncate
      */
-    #define O_WRONLY 0x0001
-    #define O_RDWR   0x0002
+    /* O_WRONLY, O_RDWR provided by fcntl.h */
     if (!(file->flags & (O_WRONLY | O_RDWR))) {
         fut_printf("[FTRUNCATE] ftruncate(fd=%d [%s], length=%llu [%s], flags=0x%x) -> EBADF "
                    "(file not opened for writing, Phase 5 write permission check)\n",

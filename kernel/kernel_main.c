@@ -1022,7 +1022,7 @@ void fut_kernel_main(void) {
         bool should_init_fb = wayland_interactive_boot || fb_available;
         if (should_init_fb) {
 #ifndef __aarch64__
-            /* On ARM64, fb_boot_splash() was already called above */
+            /* x86_64: Show boot splash now that framebuffer is ready */
             fb_boot_splash();
 #endif
             fb_char_init();
@@ -1196,7 +1196,7 @@ void fut_kernel_main(void) {
     fut_printf("[INIT] Block device subsystem initialized\n");
 
     /* ========================================
-     *   Step 5: Initialize FuturaFS and Mount Block Device
+     *   Initialize FuturaFS
      * ======================================== */
 
     extern void fut_futurafs_init(void);
@@ -1385,7 +1385,7 @@ void fut_kernel_main(void) {
 
 #if ENABLE_WAYLAND
     /* ========================================
-     *   Launch Init Process with Framebuffer Demo
+     *   Launch Init Process (Wayland Desktop)
      * ======================================== */
     extern int fut_stage_init_binary(void);
 
@@ -1504,10 +1504,16 @@ void fut_kernel_main(void) {
         }
     } */
 
-    /* Multi-client Wayland: Launch wl-simple and optionally wl-colorwheel */
-#if ENABLE_WAYLAND_TEST_CLIENTS
-    wayland_client_exec = 0;  /* Will be set by actual exec below */
-    if (wayland_exec == 0 && wayland_client_stage == 0) {
+    /* Multi-client Wayland test clients (DISABLED)
+     * NOTE: Test client launch is now handled by init, not the kernel.
+     * The compositor is launched by init via fork+exec, and test clients
+     * would need to be launched after the compositor is ready.
+     * This direct kernel launch approach is obsolete. */
+#if 0 && ENABLE_WAYLAND_TEST_CLIENTS
+    /* DISABLED: Direct kernel launch of test clients no longer works.
+     * Test clients should be launched by init or the compositor. */
+    wayland_client_exec = 0;
+    if (wayland_client_stage == 0) {
         fut_boot_delay_ms(100);
 
         /* Launch first client: wl-simple */
@@ -1520,9 +1526,7 @@ void fut_kernel_main(void) {
         wayland_client_exec = fut_exec_elf("/bin/wl-simple", args1, envp);
         if (wayland_client_exec != 0) {
             fut_printf("[WARN] Failed to launch /bin/wl-simple (error %d)\n", wayland_client_exec);
-#if ENABLE_WAYLAND_TEST_CLIENTS
             fut_test_fail(WAYLAND_TEST_CLIENT_FAIL);
-#endif
         } else {
             fut_printf("[INIT] exec /bin/wl-simple -> 0\n");
         }
@@ -1540,60 +1544,34 @@ void fut_kernel_main(void) {
             }
         }
     }
-#endif /* ENABLE_WAYLAND_TEST_CLIENTS */
+#endif
 
 #if ENABLE_WAYLAND
-    /* Check if interactive mode is enabled (for GUI testing) */
-    /* When ENABLE_WAYLAND is set, enable interactive mode so user can interact with shell */
-    bool wayland_interactive = false;
-#ifdef ENABLE_WAYLAND
-    /* For wayland demo, keep system interactive for user interaction */
-    wayland_interactive = true;
-#endif
-    if (wayland_autoclose) {
-        wayland_interactive = true;
-    }
-
     /* Compositor is now launched by init (which forks and execs it).
      * Check init_exec instead of the old wayland_exec variable. */
     bool wayland_ready = (init_exec == 0);
-#if ENABLE_WAYLAND_TEST_CLIENTS
-    wayland_ready = wayland_ready && (wayland_client_exec == 0);
-#endif
 
     if (wayland_ready) {
-#if ENABLE_WAYLAND
+        /* Allow time for compositor and clients to initialize */
         uint32_t finalize_delay_ms = 2500;
         fut_boot_delay_ms(finalize_delay_ms);
-#endif
 
-        if (!wayland_interactive) {
-            /* Auto-exit for automated testing (default behavior) */
+        if (wayland_autoclose) {
+            /* Auto-exit for automated testing when wayland-autoclose boot flag is set */
+            fut_printf("[INIT] Wayland autoclose flag set - exiting demo after bring-up\n");
 #ifdef __x86_64__
             hal_outb(0xf4u, 0u);  /* x86-64 debug port exit */
 #endif
-#if ENABLE_WAYLAND
             fut_test_pass();
-#endif
-        } else if (wayland_autoclose) {
-            fut_printf("[INIT] Wayland autoclose flag set - exiting demo after bring-up\n");
-#ifdef __x86_64__
-            hal_outb(0xf4u, 0u);
-#endif
-#if ENABLE_WAYLAND
-            fut_test_pass();
-#endif
         } else {
             /* Interactive mode: Scheduler will start and switch to processes */
             fut_printf("[INIT] ========================================\n");
             fut_printf("[INIT] Wayland Interactive Mode - Scheduler Starting\n");
             fut_printf("[INIT] ========================================\n");
-            /* Removed HLT loop - scheduler must start to run processes */
         }
-    } else if (wayland_interactive) {
-        /* Interactive mode requested but init failed to launch - still start scheduler */
-        fut_printf("[WARN] Interactive mode requested but init failed to launch\n");
-        fut_printf("[WARN] init_exec: %d, client exec: %d\n", init_exec, wayland_client_exec);
+    } else {
+        /* Init failed to launch - still start scheduler for debugging */
+        fut_printf("[WARN] Init failed to launch (init_exec: %d)\n", init_exec);
         fut_printf("[WARN] Continuing to scheduler anyway\n");
     }
 #endif /* ENABLE_WAYLAND */

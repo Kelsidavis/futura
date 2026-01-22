@@ -21,6 +21,7 @@
 #include <kernel/syscalls.h>
 #include <stdint.h>
 #include <fcntl.h>
+#include <sys/socket.h>
 
 #include <kernel/kprintf.h>
 
@@ -574,9 +575,7 @@ long sys_accept(int sockfd, void *addr, socklen_t *addrlen) {
     return newfd;
 }
 
-/* Socket type flags (same as socket()) */
-#define SOCK_NONBLOCK  0x800   /* Non-blocking mode */
-#define SOCK_CLOEXEC   0x80000 /* Close-on-exec flag */
+/* SOCK_NONBLOCK and SOCK_CLOEXEC provided by sys/socket.h */
 
 /**
  * accept4() - Accept incoming connection with flags

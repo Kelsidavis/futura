@@ -12,6 +12,10 @@
 
 #include <kernel/kprintf.h>
 
+#if defined(__x86_64__)
+#include <platform/x86_64/memory/paging.h>
+#endif
+
 /* ACPI state */
 static acpi_rsdp_v2_t *rsdp = NULL;
 static acpi_rsdt_t *rsdt = NULL;
@@ -51,7 +55,7 @@ static acpi_rsdp_v2_t *acpi_find_rsdp(void) {
     /* Map BIOS area to higher-half kernel space */
     const uintptr_t bios_start = 0xE0000;
     const uintptr_t bios_end = 0x100000;
-    const uintptr_t kernel_offset = 0xFFFFFFFF80000000ULL;
+    const uintptr_t kernel_offset = KERNEL_VIRTUAL_BASE;
 
     for (uintptr_t addr = bios_start; addr < bios_end; addr += 16) {
         acpi_rsdp_t *candidate = (acpi_rsdp_t *)(addr + kernel_offset);
@@ -96,7 +100,7 @@ static acpi_rsdp_v2_t *acpi_find_rsdp(void) {
  * For now, assumes identity mapping in higher half.
  */
 static void *acpi_map_table(uint64_t phys_addr) {
-    const uintptr_t kernel_offset = 0xFFFFFFFF80000000ULL;
+    const uintptr_t kernel_offset = KERNEL_VIRTUAL_BASE;
     return (void *)(phys_addr + kernel_offset);
 }
 

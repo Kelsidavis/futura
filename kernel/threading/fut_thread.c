@@ -16,6 +16,9 @@
 #include <kernel/errno.h>
 #if defined(__x86_64__)
 #include <platform/x86_64/gdt.h>
+#include <platform/x86_64/memory/paging.h>
+#elif defined(__aarch64__)
+#include <platform/arm64/memory/paging.h>
 #endif
 #include <string.h>
 #include <stdatomic.h>
@@ -590,13 +593,7 @@ __attribute__((used)) static void fut_thread_trampoline_impl(void (*entry)(void 
     }
 
     /* Check if entry is in kernel space */
-#if defined(__x86_64__)
-    const uintptr_t kernel_base = 0xFFFFFFFF80000000ULL;
-#elif defined(__aarch64__)
-    const uintptr_t kernel_base = 0xFFFFFF8000000000ULL;
-#endif
-
-    if ((uintptr_t)entry < kernel_base) {
+    if ((uintptr_t)entry < KERNEL_VIRTUAL_BASE) {
         fut_thread_exit();
     }
 

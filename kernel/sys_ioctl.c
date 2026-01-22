@@ -27,6 +27,57 @@
 #define FIONREAD    0x541B
 
 /* ============================================================================
+ * IOCTL Direction and Size Extraction Macros
+ * ============================================================================
+ *
+ * Linux ioctl encoding (from <asm/ioctl.h>):
+ * - bits 30-31: direction (_IOC_DIR)
+ *   - 0 (_IOC_NONE):  No data transfer
+ *   - 1 (_IOC_WRITE): Kernel writes to userspace (output)
+ *   - 2 (_IOC_READ):  Kernel reads from userspace (input)
+ *   - 3 (_IOC_READ|_IOC_WRITE): Bidirectional
+ * - bits 16-29: size of argument structure (_IOC_SIZE) - 14 bits
+ * - bits 8-15:  type/magic number (_IOC_TYPE) - 8 bits
+ * - bits 0-7:   command number (_IOC_NR) - 8 bits
+ *
+ * SECURITY APPLICATION:
+ * By extracting direction bits, we can automatically determine:
+ * 1. If argp is an output buffer (IOC_WRITE), validate write permission
+ * 2. If argp is an input buffer (IOC_READ), validate read permission
+ * 3. Size of data transfer for bounds checking
+ *
+ * This eliminates the need for hardcoded requires_write lists, providing
+ * comprehensive coverage for all properly-encoded ioctls.
+ */
+#define _IOC_NRBITS     8
+#define _IOC_TYPEBITS   8
+#define _IOC_SIZEBITS   14
+#define _IOC_DIRBITS    2
+
+#define _IOC_NRSHIFT    0
+#define _IOC_TYPESHIFT  (_IOC_NRSHIFT + _IOC_NRBITS)
+#define _IOC_SIZESHIFT  (_IOC_TYPESHIFT + _IOC_TYPEBITS)
+#define _IOC_DIRSHIFT   (_IOC_SIZESHIFT + _IOC_SIZEBITS)
+
+#define _IOC_NRMASK     ((1 << _IOC_NRBITS) - 1)
+#define _IOC_TYPEMASK   ((1 << _IOC_TYPEBITS) - 1)
+#define _IOC_SIZEMASK   ((1 << _IOC_SIZEBITS) - 1)
+#define _IOC_DIRMASK    ((1 << _IOC_DIRBITS) - 1)
+
+#define _IOC_DIR(nr)    (((nr) >> _IOC_DIRSHIFT) & _IOC_DIRMASK)
+#define _IOC_TYPE(nr)   (((nr) >> _IOC_TYPESHIFT) & _IOC_TYPEMASK)
+#define _IOC_NR(nr)     (((nr) >> _IOC_NRSHIFT) & _IOC_NRMASK)
+#define _IOC_SIZE(nr)   (((nr) >> _IOC_SIZESHIFT) & _IOC_SIZEMASK)
+
+/* Direction values */
+#define _IOC_NONE   0U
+#define _IOC_WRITE  1U  /* Kernel writes to userspace (output) */
+#define _IOC_READ   2U  /* Kernel reads from userspace (input) */
+
+/* Check if ioctl uses new-style encoding (has direction bits set) */
+#define _IOC_IS_ENCODED(nr) (_IOC_DIR(nr) != _IOC_NONE || _IOC_SIZE(nr) > 0)
+
+/* ============================================================================
  * PHASE 5 SECURITY HARDENING: ioctl() - Device Control Argument Validation
  * ============================================================================
  *
@@ -457,19 +508,38 @@ long sys_ioctl(int fd, unsigned long request, void *argp) {
              * - CVE-2016-10229: Linux udp.c recvmsg write to readonly (similar pattern)
              */
 
-            /* Determine if ioctl requires write permission (kernel writes to userspace) */
+            /* Determine if ioctl requires write permission (kernel writes to userspace)
+             * Uses _IOC_DIR extraction for automatic direction detection.
+             *
+             * Phase 5 Enhancement: Automatic direction detection from ioctl encoding
+             * This provides comprehensive coverage for all properly-encoded ioctls,
+             * not just hardcoded known commands. */
             int requires_write = 0;
+            int requires_read = 0;
+
+            /* First check for known legacy ioctls that don't use _IOC encoding */
             switch (request) {
                 case TCGETS:      /* Get terminal settings - writes termios to argp */
                 case TIOCGWINSZ:  /* Get window size - writes winsize to argp */
                 case FIONREAD:    /* Get bytes available - writes int to argp */
                     requires_write = 1;
                     break;
+                case TCSETS:      /* Set terminal settings - reads termios from argp */
+                    requires_read = 1;
+                    break;
                 default:
-                    /* For unknown ioctls dispatched to chr_ops, we cannot determine
-                     * direction without parsing _IOC bits. Conservative approach:
-                     * Allow dispatch and let device handler handle faults.
-                     * Future enhancement: Extract _IOC_DIR(request) and validate. */
+                    /* Extract direction from _IOC encoding for new-style ioctls
+                     * _IOC_WRITE means kernel writes to userspace (output buffer)
+                     * _IOC_READ means kernel reads from userspace (input buffer) */
+                    if (_IOC_IS_ENCODED(request)) {
+                        unsigned int dir = _IOC_DIR(request);
+                        if (dir & _IOC_WRITE) {
+                            requires_write = 1;
+                        }
+                        if (dir & _IOC_READ) {
+                            requires_read = 1;
+                        }
+                    }
                     break;
             }
 
@@ -482,6 +552,18 @@ long sys_ioctl(int fd, unsigned long request, void *argp) {
                 if (fut_copy_to_user(argp, &test_byte, 1) != 0) {
                     fut_printf("[IOCTL] ioctl(fd=%d, request=0x%lx [%s], argp=%p) -> EFAULT "
                                "(argp not writable for output ioctl, Phase 5)\n",
+                               fd, request, request_name, argp);
+                    return -EFAULT;
+                }
+            }
+
+            /* Validate read permission for input ioctls
+             * Phase 5 Enhancement: Test that kernel can read from userspace buffer */
+            if (requires_read && argp != NULL) {
+                char test_byte;
+                if (fut_copy_from_user(&test_byte, argp, 1) != 0) {
+                    fut_printf("[IOCTL] ioctl(fd=%d, request=0x%lx [%s], argp=%p) -> EFAULT "
+                               "(argp not readable for input ioctl, Phase 5)\n",
                                fd, request, request_name, argp);
                     return -EFAULT;
                 }

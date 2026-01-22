@@ -21,10 +21,7 @@
 #include <kernel/kprintf.h>
 #include <kernel/uaccess.h>
 
-/* Error code for missing xattr */
-#ifndef ENODATA
-#define ENODATA 61  /* No data available */
-#endif
+/* ENODATA (61) provided by errno.h for missing xattr */
 
 /* Extended attribute flags */
 #define XATTR_CREATE  0x1  /* Create new attribute (fail if exists) */

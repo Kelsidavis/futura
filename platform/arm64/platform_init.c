@@ -140,6 +140,7 @@
 #include <config/futura_config.h>
 #include <kernel/fut_waitq.h>
 #include <kernel/fut_task.h>
+#include <kernel/kprintf.h>
 #include <platform/arm64/memory/pmap.h>
 
 /* Note: IRQ handler types and functions (fut_register_irq_handler, fut_irq_enable, etc.)
@@ -1169,7 +1170,6 @@ static int stage_arm64_blob(const uint8_t *start, const uint8_t *end, const char
     extern int fut_vfs_open(const char *, int, int);
     extern long fut_vfs_write(int, const void *, size_t);
     extern int fut_vfs_close(int);
-    extern void fut_printf(const char *, ...);
 
     #define O_WRONLY 0x001
     #define O_CREAT  0x040
@@ -1218,7 +1218,6 @@ static void arm64_init_spawner_thread(void *arg) {
 
     (void)arg;
 
-    extern void fut_printf(const char *, ...);
     extern int fut_vfs_mkdir(const char *, int);
     extern int fut_exec_elf(const char *, char *const[], char *const[]);
 
@@ -1363,7 +1362,6 @@ static void arm64_init_spawner_thread(void *arg) {
 #endif  /* End of disabled userland spawner */
 
 void arch_late_init(void) {
-    extern void fut_printf(const char *, ...);
 
     fut_printf("\n[ARM64] Late initialization\n");
     fut_printf("[ARM64] Userland spawner enabled - testing init process\n");

@@ -207,6 +207,10 @@
 #define EINPROGRESS 115
 #endif
 
+#ifndef ENODATA
+#define ENODATA     61   /* No data available (for xattr) */
+#endif
+
 #ifndef phys_addr_t
 #include <stdint.h>
 typedef uint64_t phys_addr_t;

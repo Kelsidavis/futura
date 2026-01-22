@@ -21,6 +21,7 @@
 #include <kernel/signal.h>
 #include <kernel/signal_frame.h>
 #include <kernel/chrdev.h>
+#include <kernel/kprintf.h>
 
 /* ============================================================
  *   Syscall Numbers
@@ -541,7 +542,6 @@ static int64_t sys_ioctl_handler(uint64_t fd, uint64_t req, uint64_t argp,
 
 static int64_t sys_mmap_handler(uint64_t addr, uint64_t len, uint64_t prot,
                                 uint64_t flags, uint64_t fd, uint64_t off) {
-    extern void fut_printf(const char *, ...);
     fut_printf("[MMAP-HANDLER] addr=0x%llx len=%llu prot=%llu flags=%llu fd=%llu off=%llu\n",
                (unsigned long long)addr, (unsigned long long)len,
                (unsigned long long)prot, (unsigned long long)flags,
@@ -882,8 +882,7 @@ static int64_t sys_sigreturn_handler(uint64_t frame_ptr, uint64_t arg2, uint64_t
     extern fut_task_t *fut_task_current(void);
     extern int fut_copy_from_user(void *k_dst, const void *u_src, size_t n);
     extern fut_interrupt_frame_t *fut_current_frame;
-    extern void fut_printf(const char *fmt, ...);
-
+    
     fut_task_t *current = fut_task_current();
     if (!current || !user_frame) {
         return -EINVAL;
@@ -1781,7 +1780,6 @@ static syscall_handler_t syscall_table[MAX_SYSCALL] = {
 int64_t posix_syscall_dispatch(uint64_t syscall_num,
                                 uint64_t arg1, uint64_t arg2, uint64_t arg3,
                                 uint64_t arg4, uint64_t arg5, uint64_t arg6) {
-    extern void fut_printf(const char *, ...);
 
     /* Validate syscall number */
     if (syscall_num >= MAX_SYSCALL) {
@@ -1838,7 +1836,6 @@ void posix_syscall_init(void) {
  */
 static bool posix_deliver_signal(fut_task_t *current, int signum,
                                  fut_interrupt_frame_t *frame) {
-    extern void fut_printf(const char *, ...);
 
     if (!current || !frame) {
         return false;
@@ -2079,7 +2076,6 @@ long syscall_entry_c(uint64_t nr,
 
     /* Check for pending signals and deliver them before returning to user */
     extern fut_task_t *fut_task_current(void);
-    extern void fut_printf(const char *, ...);
 
     fut_task_t *current = fut_task_current();
     if (current && current->pending_signals != 0 && frame_ptr) {

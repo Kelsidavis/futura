@@ -21,6 +21,7 @@
 #include <kernel/signal_frame.h>
 #include <kernel/signal.h>
 #include <kernel/fut_task.h>
+#include <kernel/kprintf.h>
 #include <shared/fut_sigevent.h>  /* For struct sigevent, timer_t */
 #include <shared/fut_stat.h>      /* For struct fut_stat, S_IF* */
 #include <sys/uio.h>              /* For struct iovec */
@@ -3057,7 +3058,6 @@ int64_t arm64_syscall_dispatch(uint64_t syscall_num,
     struct syscall_entry *entry = &syscall_table[syscall_num];
 
     if (entry->handler == NULL) {
-        extern void fut_printf(const char *, ...);
         fut_printf("[SYSCALL] Unimplemented syscall %llu (%s)\n",
                    (unsigned long long)syscall_num,
                    entry->name ? entry->name : "unknown");

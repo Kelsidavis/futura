@@ -86,7 +86,6 @@ pte_t *fut_get_kernel_pml4(void) {
  */
 static page_table_t *alloc_page_table(void) {
     extern void *fut_pmm_alloc_page(void);
-    extern void fut_printf(const char *, ...);
 
     /* Allocate a properly aligned 4KB page from PMM.
      * IMPORTANT: fut_pmm_alloc_page() returns a VIRTUAL address
@@ -115,7 +114,6 @@ static page_table_t *alloc_page_table(void) {
  * @return 0 on success, negative on error
  */
 int fut_map_page(fut_vmem_context_t *ctx, uint64_t vaddr, uint64_t paddr, uint64_t flags) {
-    extern void fut_printf(const char *, ...);
 
     /* Use kernel PML4 if no context provided */
     pte_t *pml4 = ctx ? ctx->pml4 : kernel_pml4;
@@ -316,7 +314,6 @@ int fut_map_page(fut_vmem_context_t *ctx, uint64_t vaddr, uint64_t paddr, uint64
  * @return 0 on success, negative on error
  */
 int fut_map_large_page(fut_vmem_context_t *ctx, uint64_t vaddr, uint64_t paddr, uint64_t flags) {
-    extern void fut_printf(const char *, ...);
 
     /* Use kernel PML4 if no context provided */
     pte_t *pml4 = ctx ? ctx->pml4 : kernel_pml4;
@@ -402,7 +399,6 @@ int fut_map_large_page(fut_vmem_context_t *ctx, uint64_t vaddr, uint64_t paddr, 
  * @return 0 on success, negative on error
  */
 int fut_map_huge_page(fut_vmem_context_t *ctx, uint64_t vaddr, uint64_t paddr, uint64_t flags) {
-    extern void fut_printf(const char *, ...);
 
     /* Use kernel PML4 if no context provided */
     pte_t *pml4 = ctx ? ctx->pml4 : kernel_pml4;
@@ -623,7 +619,6 @@ int fut_unmap_range(fut_vmem_context_t *ctx, uint64_t vaddr, uint64_t size) {
 }
 
 void *fut_kernel_map_physical(uint64_t paddr, uint64_t size, uint64_t flags) {
-    extern void fut_printf(const char *, ...);
 
     if (size == 0) {
         return NULL;
@@ -723,7 +718,6 @@ int fut_virt_to_phys(fut_vmem_context_t *ctx, uint64_t vaddr, uint64_t *paddr) {
  * @param ctx Virtual memory context containing the CR3 value to load.
  */
 void fut_vmem_switch(fut_vmem_context_t *ctx) {
-    extern void fut_printf(const char *, ...);
 
     if (!ctx) {
         fut_printf("[MM-SWITCH] CR3 switch called with NULL ctx!\n");

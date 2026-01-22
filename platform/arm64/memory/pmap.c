@@ -97,7 +97,6 @@ void pmap_dump(uint64_t vaddr, size_t len) {
  */
 
 int pmap_probe_pte(fut_vmem_context_t *ctx, uint64_t vaddr, uint64_t *pte_out) {
-    extern void fut_printf(const char *, ...);
     if (!pte_out) {
         return -EINVAL;
     }

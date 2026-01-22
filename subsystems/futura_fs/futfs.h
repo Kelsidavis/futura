@@ -14,13 +14,13 @@
 
 #include <futura/blkdev.h>
 #include <kernel/fut_vfs.h>
+#include <kernel/kprintf.h>
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
 #ifdef DEBUG_FUTFS
-extern void fut_printf(const char *fmt, ...);
 #define FSDBG(...) fut_printf(__VA_ARGS__)
 #else
 #define FSDBG(...) do { } while (0)

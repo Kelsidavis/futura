@@ -41,6 +41,172 @@
 #define XATTR_SIZE_MAX  65536  /* Maximum attribute value size (64KB) */
 #define XATTR_LIST_MAX  65536  /* Maximum size for list operations */
 
+/* ============================================================================
+ * Internal Helper Functions
+ * ============================================================================
+ *
+ * These helpers reduce code duplication across the 12 xattr syscall variants
+ * (setxattr/lsetxattr/fsetxattr, getxattr/lgetxattr/fgetxattr, etc.)
+ */
+
+/**
+ * xattr_copy_path_and_name - Copy path and attribute name from userspace
+ *
+ * @param path      Userspace path pointer
+ * @param name      Userspace attribute name pointer
+ * @param path_buf  Buffer to receive path (FUT_VFS_PATH_BUFFER_SIZE bytes)
+ * @param name_buf  Buffer to receive name (XATTR_NAME_MAX + 1 bytes)
+ * @param syscall   Syscall name for logging (e.g., "setxattr", "getxattr")
+ *
+ * Returns: 0 on success, negative errno on failure
+ */
+static inline long xattr_copy_path_and_name(const char *path, const char *name,
+                                            char *path_buf, char *name_buf,
+                                            const char *syscall) {
+    fut_task_t *task = fut_task_current();
+    int64_t pid = task ? (int64_t)task->pid : -1;
+
+    /* Copy path from userspace */
+    if (fut_copy_from_user(path_buf, path, FUT_VFS_PATH_BUFFER_SIZE - 1) != 0) {
+        fut_printf("[XATTR] %s(path=? [bad addr], name=%p, pid=%d) -> EFAULT\n",
+                   syscall, name, pid);
+        return -EFAULT;
+    }
+    path_buf[FUT_VFS_PATH_BUFFER_SIZE - 1] = '\0';
+
+    /* Copy name from userspace */
+    if (fut_copy_from_user(name_buf, name, XATTR_NAME_MAX) != 0) {
+        fut_printf("[XATTR] %s(path='%s', name=? [bad addr], pid=%d) -> EFAULT\n",
+                   syscall, path_buf, pid);
+        return -EFAULT;
+    }
+    name_buf[XATTR_NAME_MAX] = '\0';
+
+    /* Validate name is not empty */
+    if (name_buf[0] == '\0') {
+        fut_printf("[XATTR] %s(path='%s', name='' [empty], pid=%d) -> EINVAL\n",
+                   syscall, path_buf, pid);
+        return -EINVAL;
+    }
+
+    return 0;
+}
+
+/**
+ * xattr_copy_name - Copy attribute name from userspace (for fsetxattr/fgetxattr)
+ *
+ * @param name      Userspace attribute name pointer
+ * @param name_buf  Buffer to receive name (XATTR_NAME_MAX + 1 bytes)
+ * @param syscall   Syscall name for logging
+ * @param fd        File descriptor for logging
+ *
+ * Returns: 0 on success, negative errno on failure
+ */
+static inline long xattr_copy_name(const char *name, char *name_buf,
+                                   const char *syscall, int fd) {
+    fut_task_t *task = fut_task_current();
+    int64_t pid = task ? (int64_t)task->pid : -1;
+
+    if (fut_copy_from_user(name_buf, name, XATTR_NAME_MAX) != 0) {
+        fut_printf("[XATTR] %s(fd=%d, name=? [bad addr], pid=%d) -> EFAULT\n",
+                   syscall, fd, pid);
+        return -EFAULT;
+    }
+    name_buf[XATTR_NAME_MAX] = '\0';
+
+    if (name_buf[0] == '\0') {
+        fut_printf("[XATTR] %s(fd=%d, name='' [empty], pid=%d) -> EINVAL\n",
+                   syscall, fd, pid);
+        return -EINVAL;
+    }
+
+    return 0;
+}
+
+/**
+ * xattr_validate_setxattr_flags - Validate setxattr flags and size
+ *
+ * @param flags     XATTR_CREATE | XATTR_REPLACE flags
+ * @param size      Attribute value size
+ * @param value     Attribute value pointer
+ * @param syscall   Syscall name for logging
+ *
+ * Returns: 0 on success, negative errno on failure
+ */
+static inline long xattr_validate_setxattr_flags(int flags, size_t size,
+                                                  const void *value,
+                                                  const char *syscall) {
+    fut_task_t *task = fut_task_current();
+    int64_t pid = task ? (int64_t)task->pid : -1;
+
+    /* Validate: value must be non-NULL if size > 0 */
+    if (!value && size > 0) {
+        fut_printf("[XATTR] %s(...) -> EINVAL (NULL value with size > 0, pid=%d)\n",
+                   syscall, pid);
+        return -EINVAL;
+    }
+
+    /* Validate flags */
+    if (flags & ~(XATTR_CREATE | XATTR_REPLACE)) {
+        fut_printf("[XATTR] %s(...) -> EINVAL (invalid flags=0x%x, pid=%d)\n",
+                   syscall, flags, pid);
+        return -EINVAL;
+    }
+
+    /* Validate size */
+    if (size > XATTR_SIZE_MAX) {
+        fut_printf("[XATTR] %s(...) -> E2BIG (size=%zu too large, pid=%d)\n",
+                   syscall, size, pid);
+        return -E2BIG;
+    }
+
+    return 0;
+}
+
+/**
+ * xattr_get_flags_desc - Get human-readable description of xattr flags
+ */
+static inline const char *xattr_get_flags_desc(int flags) {
+    return (flags == 0) ? "none (create or replace)" :
+           (flags == XATTR_CREATE) ? "XATTR_CREATE" :
+           (flags == XATTR_REPLACE) ? "XATTR_REPLACE" :
+           "XATTR_CREATE|XATTR_REPLACE";
+}
+
+/**
+ * xattr_get_size_desc - Get human-readable description of size category
+ */
+static inline const char *xattr_get_size_desc(size_t size) {
+    return (size == 0) ? "empty" :
+           (size < 256) ? "small (<256)" :
+           (size < 4096) ? "medium (<4KB)" :
+           "large (≥4KB)";
+}
+
+/**
+ * xattr_copy_path - Copy path from userspace (for listxattr operations)
+ *
+ * @param path      Userspace path pointer
+ * @param path_buf  Buffer to receive path (FUT_VFS_PATH_BUFFER_SIZE bytes)
+ * @param syscall   Syscall name for logging
+ *
+ * Returns: 0 on success, negative errno on failure
+ */
+static inline long xattr_copy_path(const char *path, char *path_buf,
+                                   const char *syscall) {
+    fut_task_t *task = fut_task_current();
+    int64_t pid = task ? (int64_t)task->pid : -1;
+
+    if (fut_copy_from_user(path_buf, path, FUT_VFS_PATH_BUFFER_SIZE - 1) != 0) {
+        fut_printf("[XATTR] %s(path=? [bad addr], pid=%d) -> EFAULT\n",
+                   syscall, pid);
+        return -EFAULT;
+    }
+    path_buf[FUT_VFS_PATH_BUFFER_SIZE - 1] = '\0';
+
+    return 0;
+}
+
 /**
  * setxattr() - Set extended attribute value
  *
@@ -69,73 +235,35 @@ long sys_setxattr(const char *path, const char *name, const void *value,
                   size_t size, int flags) {
     fut_task_t *task = fut_task_current();
     if (!task) {
-        fut_printf("[XATTR] setxattr(path=%p, name=%p, value=%p, size=%zu, flags=0x%x) "
-                   "-> ESRCH (no current task)\n", path, name, value, size, flags);
+        fut_printf("[XATTR] setxattr(...) -> ESRCH (no current task)\n");
         return -ESRCH;
     }
 
-    /* Validate parameters */
-    if (!path || !name || (!value && size > 0)) {
-        fut_printf("[XATTR] setxattr(path=%p, name=%p, value=%p, size=%zu, flags=0x%x, pid=%d) "
-                   "-> EINVAL (NULL pointer)\n", path, name, value, size, flags, task->pid);
+    if (!path || !name) {
+        fut_printf("[XATTR] setxattr(path=%p, name=%p, pid=%d) -> EINVAL (NULL pointer)\n",
+                   path, name, task->pid);
         return -EINVAL;
     }
 
-    /* Validate flags */
-    if (flags & ~(XATTR_CREATE | XATTR_REPLACE)) {
-        fut_printf("[XATTR] setxattr(path=%p, name=%p, size=%zu, flags=0x%x, pid=%d) "
-                   "-> EINVAL (invalid flags)\n", path, name, size, flags, task->pid);
-        return -EINVAL;
+    /* Validate flags and size using helper */
+    long ret = xattr_validate_setxattr_flags(flags, size, value, "setxattr");
+    if (ret < 0) {
+        return ret;
     }
 
-    /* Validate size */
-    if (size > XATTR_SIZE_MAX) {
-        fut_printf("[XATTR] setxattr(path=%p, name=%p, size=%zu [too large], flags=0x%x, pid=%d) "
-                   "-> E2BIG (value too large)\n", path, name, size, flags, task->pid);
-        return -E2BIG;
-    }
-
-    /* Copy path from userspace */
+    /* Copy path and name from userspace using helper */
     char path_buf[FUT_VFS_PATH_BUFFER_SIZE];
-    if (fut_copy_from_user(path_buf, path, sizeof(path_buf) - 1) != 0) {
-        fut_printf("[XATTR] setxattr(path=? [bad addr], name=%p, size=%zu, pid=%d) "
-                   "-> EFAULT\n", name, size, task->pid);
-        return -EFAULT;
-    }
-    path_buf[sizeof(path_buf) - 1] = '\0';
-
-    /* Copy name from userspace */
     char name_buf[XATTR_NAME_MAX + 1];
-    if (fut_copy_from_user(name_buf, name, sizeof(name_buf) - 1) != 0) {
-        fut_printf("[XATTR] setxattr(path='%s', name=? [bad addr], size=%zu, pid=%d) "
-                   "-> EFAULT\n", path_buf, size, task->pid);
-        return -EFAULT;
+    ret = xattr_copy_path_and_name(path, name, path_buf, name_buf, "setxattr");
+    if (ret < 0) {
+        return ret;
     }
-    name_buf[sizeof(name_buf) - 1] = '\0';
-
-    /* Validate name is not empty */
-    if (name_buf[0] == '\0') {
-        fut_printf("[XATTR] setxattr(path='%s', name='' [empty], size=%zu, pid=%d) "
-                   "-> EINVAL\n", path_buf, size, task->pid);
-        return -EINVAL;
-    }
-
-    /* Categorize flags */
-    const char *flags_desc = (flags == 0) ? "none (create or replace)" :
-                            (flags == XATTR_CREATE) ? "XATTR_CREATE" :
-                            (flags == XATTR_REPLACE) ? "XATTR_REPLACE" :
-                            "XATTR_CREATE|XATTR_REPLACE";
-
-    /* Categorize size */
-    const char *size_desc = (size == 0) ? "empty" :
-                           (size < 256) ? "small (<256)" :
-                           (size < 4096) ? "medium (<4KB)" :
-                           "large (≥4KB)";
 
     /* Phase 1: Stub - accept and log */
     fut_printf("[XATTR] setxattr(path='%s', name='%s', size=%zu [%s], flags=%s, pid=%d) "
                "-> 0 (Phase 1 stub - not actually stored yet)\n",
-               path_buf, name_buf, size, size_desc, flags_desc, task->pid);
+               path_buf, name_buf, size, xattr_get_size_desc(size),
+               xattr_get_flags_desc(flags), task->pid);
 
     return 0;
 }
@@ -153,38 +281,26 @@ long sys_lsetxattr(const char *path, const char *name, const void *value,
         return -ESRCH;
     }
 
-    /* Phase 1: Same validation as setxattr */
-    if (!path || !name || (!value && size > 0)) {
+    if (!path || !name) {
         return -EINVAL;
     }
 
-    if (flags & ~(XATTR_CREATE | XATTR_REPLACE)) {
-        return -EINVAL;
-    }
-
-    if (size > XATTR_SIZE_MAX) {
-        return -E2BIG;
+    long ret = xattr_validate_setxattr_flags(flags, size, value, "lsetxattr");
+    if (ret < 0) {
+        return ret;
     }
 
     char path_buf[FUT_VFS_PATH_BUFFER_SIZE];
-    if (fut_copy_from_user(path_buf, path, sizeof(path_buf) - 1) != 0) {
-        return -EFAULT;
-    }
-    path_buf[sizeof(path_buf) - 1] = '\0';
-
     char name_buf[XATTR_NAME_MAX + 1];
-    if (fut_copy_from_user(name_buf, name, sizeof(name_buf) - 1) != 0) {
-        return -EFAULT;
-    }
-    name_buf[sizeof(name_buf) - 1] = '\0';
-
-    if (name_buf[0] == '\0') {
-        return -EINVAL;
+    ret = xattr_copy_path_and_name(path, name, path_buf, name_buf, "lsetxattr");
+    if (ret < 0) {
+        return ret;
     }
 
-    fut_printf("[XATTR] lsetxattr(path='%s', name='%s', size=%zu, flags=0x%x, pid=%d) "
+    fut_printf("[XATTR] lsetxattr(path='%s', name='%s', size=%zu [%s], flags=%s, pid=%d) "
                "-> 0 (Phase 1 stub - symlink variant)\n",
-               path_buf, name_buf, size, flags, task->pid);
+               path_buf, name_buf, size, xattr_get_size_desc(size),
+               xattr_get_flags_desc(flags), task->pid);
 
     return 0;
 }
@@ -201,38 +317,30 @@ long sys_fsetxattr(int fd, const char *name, const void *value,
         return -ESRCH;
     }
 
-    /* Validate fd */
     if (fd < 0) {
-        fut_printf("[XATTR] fsetxattr(fd=%d [invalid], name=%p, size=%zu, pid=%d) "
-                   "-> EBADF\n", fd, name, size, task->pid);
+        fut_printf("[XATTR] fsetxattr(fd=%d [invalid], pid=%d) -> EBADF\n",
+                   fd, task->pid);
         return -EBADF;
     }
 
-    /* Phase 1: Same validation as setxattr */
-    if (!name || (!value && size > 0)) {
+    if (!name) {
         return -EINVAL;
     }
 
-    if (flags & ~(XATTR_CREATE | XATTR_REPLACE)) {
-        return -EINVAL;
-    }
-
-    if (size > XATTR_SIZE_MAX) {
-        return -E2BIG;
+    long ret = xattr_validate_setxattr_flags(flags, size, value, "fsetxattr");
+    if (ret < 0) {
+        return ret;
     }
 
     char name_buf[XATTR_NAME_MAX + 1];
-    if (fut_copy_from_user(name_buf, name, sizeof(name_buf) - 1) != 0) {
-        return -EFAULT;
-    }
-    name_buf[sizeof(name_buf) - 1] = '\0';
-
-    if (name_buf[0] == '\0') {
-        return -EINVAL;
+    ret = xattr_copy_name(name, name_buf, "fsetxattr", fd);
+    if (ret < 0) {
+        return ret;
     }
 
-    fut_printf("[XATTR] fsetxattr(fd=%d, name='%s', size=%zu, flags=0x%x, pid=%d) "
-               "-> 0 (Phase 1 stub)\n", fd, name_buf, size, flags, task->pid);
+    fut_printf("[XATTR] fsetxattr(fd=%d, name='%s', size=%zu [%s], flags=%s, pid=%d) "
+               "-> 0 (Phase 1 stub)\n", fd, name_buf, size, xattr_get_size_desc(size),
+               xattr_get_flags_desc(flags), task->pid);
 
     return 0;
 }
@@ -262,30 +370,19 @@ long sys_getxattr(const char *path, const char *name, void *value, size_t size) 
         return -ESRCH;
     }
 
-    /* Suppress unused warnings for Phase 1 stub */
-    (void)value;
+    (void)value;  /* Suppress unused warning for Phase 1 stub */
 
     if (!path || !name) {
         return -EINVAL;
     }
 
     char path_buf[FUT_VFS_PATH_BUFFER_SIZE];
-    if (fut_copy_from_user(path_buf, path, sizeof(path_buf) - 1) != 0) {
-        return -EFAULT;
-    }
-    path_buf[sizeof(path_buf) - 1] = '\0';
-
     char name_buf[XATTR_NAME_MAX + 1];
-    if (fut_copy_from_user(name_buf, name, sizeof(name_buf) - 1) != 0) {
-        return -EFAULT;
-    }
-    name_buf[sizeof(name_buf) - 1] = '\0';
-
-    if (name_buf[0] == '\0') {
-        return -EINVAL;
+    long ret = xattr_copy_path_and_name(path, name, path_buf, name_buf, "getxattr");
+    if (ret < 0) {
+        return ret;
     }
 
-    /* Phase 1: Return ENODATA (attribute doesn't exist) */
     fut_printf("[XATTR] getxattr(path='%s', name='%s', size=%zu, pid=%d) "
                "-> ENODATA (Phase 1 stub - no storage yet)\n",
                path_buf, name_buf, size, task->pid);
@@ -302,7 +399,6 @@ long sys_lgetxattr(const char *path, const char *name, void *value, size_t size)
         return -ESRCH;
     }
 
-    /* Suppress unused warnings for Phase 1 stub */
     (void)value;
 
     if (!path || !name) {
@@ -310,19 +406,10 @@ long sys_lgetxattr(const char *path, const char *name, void *value, size_t size)
     }
 
     char path_buf[FUT_VFS_PATH_BUFFER_SIZE];
-    if (fut_copy_from_user(path_buf, path, sizeof(path_buf) - 1) != 0) {
-        return -EFAULT;
-    }
-    path_buf[sizeof(path_buf) - 1] = '\0';
-
     char name_buf[XATTR_NAME_MAX + 1];
-    if (fut_copy_from_user(name_buf, name, sizeof(name_buf) - 1) != 0) {
-        return -EFAULT;
-    }
-    name_buf[sizeof(name_buf) - 1] = '\0';
-
-    if (name_buf[0] == '\0') {
-        return -EINVAL;
+    long ret = xattr_copy_path_and_name(path, name, path_buf, name_buf, "lgetxattr");
+    if (ret < 0) {
+        return ret;
     }
 
     fut_printf("[XATTR] lgetxattr(path='%s', name='%s', size=%zu, pid=%d) "
@@ -341,7 +428,6 @@ long sys_fgetxattr(int fd, const char *name, void *value, size_t size) {
         return -ESRCH;
     }
 
-    /* Suppress unused warnings for Phase 1 stub */
     (void)value;
 
     if (fd < 0) {
@@ -353,13 +439,9 @@ long sys_fgetxattr(int fd, const char *name, void *value, size_t size) {
     }
 
     char name_buf[XATTR_NAME_MAX + 1];
-    if (fut_copy_from_user(name_buf, name, sizeof(name_buf) - 1) != 0) {
-        return -EFAULT;
-    }
-    name_buf[sizeof(name_buf) - 1] = '\0';
-
-    if (name_buf[0] == '\0') {
-        return -EINVAL;
+    long ret = xattr_copy_name(name, name_buf, "fgetxattr", fd);
+    if (ret < 0) {
+        return ret;
     }
 
     fut_printf("[XATTR] fgetxattr(fd=%d, name='%s', size=%zu, pid=%d) "
@@ -390,7 +472,6 @@ long sys_listxattr(const char *path, char *list, size_t size) {
         return -ESRCH;
     }
 
-    /* Suppress unused warnings for Phase 1 stub */
     (void)list;
 
     if (!path) {
@@ -398,12 +479,11 @@ long sys_listxattr(const char *path, char *list, size_t size) {
     }
 
     char path_buf[FUT_VFS_PATH_BUFFER_SIZE];
-    if (fut_copy_from_user(path_buf, path, sizeof(path_buf) - 1) != 0) {
-        return -EFAULT;
+    long ret = xattr_copy_path(path, path_buf, "listxattr");
+    if (ret < 0) {
+        return ret;
     }
-    path_buf[sizeof(path_buf) - 1] = '\0';
 
-    /* Phase 1: Return 0 (no attributes) */
     fut_printf("[XATTR] listxattr(path='%s', size=%zu, pid=%d) "
                "-> 0 (Phase 1 stub - no attributes yet)\n",
                path_buf, size, task->pid);
@@ -420,7 +500,6 @@ long sys_llistxattr(const char *path, char *list, size_t size) {
         return -ESRCH;
     }
 
-    /* Suppress unused warnings for Phase 1 stub */
     (void)list;
 
     if (!path) {
@@ -428,10 +507,10 @@ long sys_llistxattr(const char *path, char *list, size_t size) {
     }
 
     char path_buf[FUT_VFS_PATH_BUFFER_SIZE];
-    if (fut_copy_from_user(path_buf, path, sizeof(path_buf) - 1) != 0) {
-        return -EFAULT;
+    long ret = xattr_copy_path(path, path_buf, "llistxattr");
+    if (ret < 0) {
+        return ret;
     }
-    path_buf[sizeof(path_buf) - 1] = '\0';
 
     fut_printf("[XATTR] llistxattr(path='%s', size=%zu, pid=%d) "
                "-> 0 (Phase 1 stub - symlink variant)\n",
@@ -486,22 +565,12 @@ long sys_removexattr(const char *path, const char *name) {
     }
 
     char path_buf[FUT_VFS_PATH_BUFFER_SIZE];
-    if (fut_copy_from_user(path_buf, path, sizeof(path_buf) - 1) != 0) {
-        return -EFAULT;
-    }
-    path_buf[sizeof(path_buf) - 1] = '\0';
-
     char name_buf[XATTR_NAME_MAX + 1];
-    if (fut_copy_from_user(name_buf, name, sizeof(name_buf) - 1) != 0) {
-        return -EFAULT;
-    }
-    name_buf[sizeof(name_buf) - 1] = '\0';
-
-    if (name_buf[0] == '\0') {
-        return -EINVAL;
+    long ret = xattr_copy_path_and_name(path, name, path_buf, name_buf, "removexattr");
+    if (ret < 0) {
+        return ret;
     }
 
-    /* Phase 1: Return ENODATA (attribute doesn't exist) */
     fut_printf("[XATTR] removexattr(path='%s', name='%s', pid=%d) "
                "-> ENODATA (Phase 1 stub - no storage yet)\n",
                path_buf, name_buf, task->pid);
@@ -523,19 +592,10 @@ long sys_lremovexattr(const char *path, const char *name) {
     }
 
     char path_buf[FUT_VFS_PATH_BUFFER_SIZE];
-    if (fut_copy_from_user(path_buf, path, sizeof(path_buf) - 1) != 0) {
-        return -EFAULT;
-    }
-    path_buf[sizeof(path_buf) - 1] = '\0';
-
     char name_buf[XATTR_NAME_MAX + 1];
-    if (fut_copy_from_user(name_buf, name, sizeof(name_buf) - 1) != 0) {
-        return -EFAULT;
-    }
-    name_buf[sizeof(name_buf) - 1] = '\0';
-
-    if (name_buf[0] == '\0') {
-        return -EINVAL;
+    long ret = xattr_copy_path_and_name(path, name, path_buf, name_buf, "lremovexattr");
+    if (ret < 0) {
+        return ret;
     }
 
     fut_printf("[XATTR] lremovexattr(path='%s', name='%s', pid=%d) "
@@ -563,13 +623,9 @@ long sys_fremovexattr(int fd, const char *name) {
     }
 
     char name_buf[XATTR_NAME_MAX + 1];
-    if (fut_copy_from_user(name_buf, name, sizeof(name_buf) - 1) != 0) {
-        return -EFAULT;
-    }
-    name_buf[sizeof(name_buf) - 1] = '\0';
-
-    if (name_buf[0] == '\0') {
-        return -EINVAL;
+    long ret = xattr_copy_name(name, name_buf, "fremovexattr", fd);
+    if (ret < 0) {
+        return ret;
     }
 
     fut_printf("[XATTR] fremovexattr(fd=%d, name='%s', pid=%d) "

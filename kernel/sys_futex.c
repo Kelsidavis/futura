@@ -502,8 +502,17 @@ long sys_get_robust_list(int pid, struct robust_list_head **head_ptr,
     /* Phase 2: Retrieve robust list head from task structure */
     /* Phase 3: Add permission checks for querying other tasks */
 
-    *head_ptr = NULL;
-    *len_ptr = 0;
+    struct robust_list_head *null_head = NULL;
+    size_t zero_len = 0;
+
+    if (fut_copy_to_user(head_ptr, &null_head, sizeof(struct robust_list_head *)) != 0) {
+        fut_printf("[GET_ROBUST_LIST] EFAULT: failed to write head_ptr to userspace\n");
+        return -EFAULT;
+    }
+    if (fut_copy_to_user(len_ptr, &zero_len, sizeof(size_t)) != 0) {
+        fut_printf("[GET_ROBUST_LIST] EFAULT: failed to write len_ptr to userspace\n");
+        return -EFAULT;
+    }
 
     fut_printf("[GET_ROBUST_LIST] Stub implementation - returning null\n");
     return 0;

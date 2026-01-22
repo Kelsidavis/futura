@@ -8,6 +8,7 @@
 
 #include <kernel/fut_task.h>
 #include <kernel/errno.h>
+#include <kernel/uaccess.h>
 #include <shared/fut_timespec.h>
 #include <shared/fut_sigevent.h>  /* For struct sigevent, timer_t, SIGEV_* */
 
@@ -43,11 +44,21 @@ long sys_timer_create(int clockid, struct sigevent *sevp, timer_t *timerid) {
         return -EINVAL;
     }
 
+    /* Validate userspace pointer is writable */
+    if (fut_access_ok(timerid, sizeof(timer_t), 1) != 0) {
+        fut_printf("[TIMER_CREATE] EFAULT: timerid pointer not writable\n");
+        return -EFAULT;
+    }
+
     /* Phase 1: Stub - return dummy timer ID */
     /* Phase 2: Allocate timer structure, link to task */
     /* Phase 3: Configure signal delivery mechanism */
 
-    *timerid = 1;  /* Dummy timer ID */
+    timer_t dummy_id = 1;
+    if (fut_copy_to_user(timerid, &dummy_id, sizeof(timer_t)) != 0) {
+        fut_printf("[TIMER_CREATE] EFAULT: failed to copy timer ID to userspace\n");
+        return -EFAULT;
+    }
 
     fut_printf("[TIMER_CREATE] Stub implementation - returning timer ID 1\n");
     return 0;
@@ -90,12 +101,43 @@ long sys_timer_settime(timer_t timerid, int flags,
         return -EINVAL;
     }
 
+    /* Validate new_value is readable from userspace */
+    if (fut_access_ok(new_value, sizeof(struct itimerspec), 0) != 0) {
+        fut_printf("[TIMER_SETTIME] EFAULT: new_value pointer not readable\n");
+        return -EFAULT;
+    }
+
+    /* Copy new_value from userspace (for future use when timer is implemented) */
+    struct itimerspec new_timer;
+    if (fut_copy_from_user(&new_timer, new_value, sizeof(struct itimerspec)) != 0) {
+        fut_printf("[TIMER_SETTIME] EFAULT: failed to copy new_value from userspace\n");
+        return -EFAULT;
+    }
+
+    /* Validate old_value is writable if provided */
+    if (old_value) {
+        if (fut_access_ok(old_value, sizeof(struct itimerspec), 1) != 0) {
+            fut_printf("[TIMER_SETTIME] EFAULT: old_value pointer not writable\n");
+            return -EFAULT;
+        }
+
+        /* Return previous timer state (stub: zero = disarmed) */
+        struct itimerspec zero_timer = {
+            .it_interval = { .tv_sec = 0, .tv_nsec = 0 },
+            .it_value = { .tv_sec = 0, .tv_nsec = 0 }
+        };
+        if (fut_copy_to_user(old_value, &zero_timer, sizeof(struct itimerspec)) != 0) {
+            fut_printf("[TIMER_SETTIME] EFAULT: failed to copy old_value to userspace\n");
+            return -EFAULT;
+        }
+    }
+
     /* Phase 1: Stub - accept parameters */
     /* Phase 2: Arm timer with specified interval/value */
     /* Phase 3: Implement absolute vs relative time handling */
 
     (void)flags;
-    (void)old_value;
+    (void)new_timer;  /* Will be used when timer is implemented */
 
     fut_printf("[TIMER_SETTIME] Stub implementation - returning success\n");
     return 0;
@@ -132,13 +174,24 @@ long sys_timer_gettime(timer_t timerid, struct itimerspec *curr_value) {
         return -EINVAL;
     }
 
+    /* Validate userspace pointer is writable */
+    if (fut_access_ok(curr_value, sizeof(struct itimerspec), 1) != 0) {
+        fut_printf("[TIMER_GETTIME] EFAULT: curr_value pointer not writable\n");
+        return -EFAULT;
+    }
+
     /* Phase 1: Stub - return zero (timer disarmed) */
     /* Phase 2: Return actual timer state */
 
-    curr_value->it_interval.tv_sec = 0;
-    curr_value->it_interval.tv_nsec = 0;
-    curr_value->it_value.tv_sec = 0;
-    curr_value->it_value.tv_nsec = 0;
+    struct itimerspec zero_timer = {
+        .it_interval = { .tv_sec = 0, .tv_nsec = 0 },
+        .it_value = { .tv_sec = 0, .tv_nsec = 0 }
+    };
+
+    if (fut_copy_to_user(curr_value, &zero_timer, sizeof(struct itimerspec)) != 0) {
+        fut_printf("[TIMER_GETTIME] EFAULT: failed to copy timer state to userspace\n");
+        return -EFAULT;
+    }
 
     fut_printf("[TIMER_GETTIME] Stub implementation - returning zero interval/value\n");
     return 0;

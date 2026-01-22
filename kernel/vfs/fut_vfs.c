@@ -1802,9 +1802,6 @@ int fut_vfs_ioctl(int fd, unsigned long req, unsigned long arg) {
 }
 
 void *fut_vfs_mmap(int fd, void *addr, size_t len, int prot, int flags, off_t off) {
-    extern void *fut_mm_map_file(fut_mm_t *, struct fut_vnode *, uintptr_t, size_t, int, int, uint64_t);
-    extern fut_mm_t *fut_mm_current(void);
-
     fut_task_t *task = fut_task_current();
     if (!task) {
         return (void *)(intptr_t)(-EPERM);

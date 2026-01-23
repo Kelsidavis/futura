@@ -520,6 +520,12 @@ int main(void) {
     }
     WLTERM_LOG("[WL-TERM] shm_data verified: %p\n", state.shm_data);
 
+    /* Initialize buffer to black */
+    uint32_t *pixels = (uint32_t *)state.shm_data;
+    for (size_t i = 0; i < state.shm_size / 4; i++) {
+        pixels[i] = 0xFF000000;
+    }
+
     struct wl_shm_pool *pool = wl_shm_create_pool(state.shm, state.shm_fd,
                                                    (int32_t)state.shm_size);
     state.buffer = wl_shm_pool_create_buffer(pool, 0, TERM_WIDTH, TERM_HEIGHT,

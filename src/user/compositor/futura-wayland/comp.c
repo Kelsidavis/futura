@@ -444,6 +444,12 @@ static void blit_argb(const char *src_base,
     const char *src = src_base;
     char *dst = dst_base;
 
+    /* Debug: print first pixel color */
+    if (width > 0 && height > 0) {
+        uint32_t first_pixel = *(const uint32_t *)src_base;
+        printf("[BLIT] first_pixel=0x%08X size=%dx%d\n", first_pixel, width, height);
+    }
+
     for (int y = 0; y < height; ++y) {
         memcpy(dst, src, row_bytes);
         src += src_pitch;
@@ -776,34 +782,25 @@ int comp_state_init(struct compositor_state *comp) {
 
     /* Try to open /dev/fb0, but fall back to virtual framebuffer if not available */
     int fd = (int)sys_open("/dev/fb0", O_RDWR, 0);
-    printf("[WAYLAND] /dev/fb0 open returned fd=%d\n", fd);
     struct fut_fb_info info = {0};
     void *map = NULL;
 
     if (fd < 0) {
         /* Framebuffer device not available - create a virtual framebuffer */
-        printf("[WAYLAND] /dev/fb0 not available (err=%d), using virtual framebuffer\n", fd);
-
-        /* Use a default 1024x768 32-bpp framebuffer */
         info.width = 1024;
         info.height = 768;
-        info.pitch = 1024 * 4;  /* 4 bytes per pixel */
+        info.pitch = 1024 * 4;
         info.bpp = 32;
 
-        /* Allocate virtual framebuffer in memory */
         size_t map_size = (size_t)info.pitch * info.height;
         map = (void *)malloc(map_size);
         if (!map) {
-            printf("[WAYLAND] failed to allocate virtual framebuffer (%zu bytes)\n", map_size);
+            printf("[WAYLAND] failed to allocate virtual framebuffer\n");
             return -1;
         }
 
-        /* Clear to black */
         memset(map, 0, map_size);
-        printf("[WAYLAND] virtual framebuffer allocated: %ux%u pitch=%u bpp=%u\n",
-               info.width, info.height, info.pitch, info.bpp);
-
-        comp->fb_fd = -1;  /* No real fd */
+        comp->fb_fd = -1;
         comp->fb_map = (uint8_t *)map;
         comp->fb_map_size = map_size;
         comp->fb_info = info;
@@ -816,22 +813,15 @@ int comp_state_init(struct compositor_state *comp) {
         }
 
         if (info.bpp != 32) {
-            printf("[WAYLAND] unsupported framebuffer format (bpp=%u)\n", info.bpp);
+            printf("[WAYLAND] unsupported bpp=%u\n", info.bpp);
             sys_close(fd);
             return -1;
         }
 
         size_t map_size = (size_t)info.pitch * info.height;
-        printf("[WAYLAND] About to mmap: fd=%d map_size=%lu\n", fd, (unsigned long)map_size);
-        map = (void *)sys_mmap(NULL,
-                               (long)map_size,
-                               PROT_READ | PROT_WRITE,
-                               MAP_SHARED,
-                               fd,
-                               0);
-        printf("[WAYLAND] mmap returned 0x%lx (fd=%d)\n", (unsigned long)map, fd);
+        map = (void *)sys_mmap(NULL, (long)map_size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
         if ((long)map < 0) {
-            printf("[WAYLAND] mmap framebuffer failed (fd was %d)\n", fd);
+            printf("[WAYLAND] mmap failed\n");
             sys_close(fd);
             return -1;
         }
@@ -840,36 +830,44 @@ int comp_state_init(struct compositor_state *comp) {
         comp->fb_map = (uint8_t *)map;
         comp->fb_map_size = map_size;
         comp->fb_info = info;
-        printf("[WAYLAND] fb setup complete: fd=%d map=%p size=%lu\n", fd, map, (unsigned long)map_size);
+
+        /* Clear framebuffer to opaque black on startup */
+        uint32_t *fb32 = (uint32_t *)map;
+        size_t pixel_count = map_size / 4;
+        for (size_t i = 0; i < pixel_count; i++) {
+            fb32[i] = 0xFF000000;
+        }
+        printf("[WAYLAND] Cleared framebuffer to black (%zu pixels)\n", pixel_count);
+
+        /* Flush to ensure clear is visible */
+        sys_ioctl(fd, FBIOFLUSH, 0);
     }
+
     comp->running = true;
     comp->last_present_ns = 0;
     comp->frame_damage.count = 0;
     comp->bb_index = 0;
     comp->pointer_x = (int32_t)info.width / 2;
     comp->pointer_y = (int32_t)info.height / 2;
-    printf("[WAYLAND] creating cursor...\n");
+
     comp->cursor = cursor_create();
     if (!comp->cursor) {
-        printf("[WAYLAND] failed to create cursor state\n");
+        printf("[WAYLAND] cursor create failed\n");
         comp_state_finish(comp);
         return -1;
     }
-    printf("[WAYLAND] cursor created, configuring backbuffers...\n");
     cursor_set_position(comp->cursor, comp->pointer_x, comp->pointer_y);
+
     if (comp_configure_backbuffers(comp) != 0) {
-        printf("[WAYLAND] failed to allocate backbuffer\n");
+        printf("[WAYLAND] backbuffer failed\n");
         comp_state_finish(comp);
         return -1;
     }
-    printf("[WAYLAND] comp_state_init success\n");
-    printf("[WAYLAND] calling sys_ioctl for vsync...\n");
+
     uint32_t hint = comp->vsync_hint_ms;
     (void)sys_ioctl(comp->fb_fd, FBIOSET_VSYNC_MS, (long)&hint);
     comp->vsync_hint_ms = hint;
-    printf("[WAYLAND] calling comp_now_ns()...\n");
     comp->last_present_ns = comp_now_ns() - (uint64_t)comp->target_ms * 1000000ULL;
-    printf("[WAYLAND] comp_state_init returning 0\n");
     return 0;
 }
 
@@ -1116,6 +1114,8 @@ void comp_surface_commit(struct comp_surface *surface) {
     if (has_buffer) {
         struct comp_buffer buffer = {0};
         if (shm_buffer_import(surface->pending_buffer_resource, &buffer) == 0) {
+            printf("[DEBUG] Buffer import OK: %dx%d stride=%d data=%p\n",
+                   buffer.width, buffer.height, buffer.stride, buffer.data);
             /* Defense in depth: validate buffer before use */
             if (!buffer.data || buffer.width <= 0 || buffer.height <= 0 || buffer.stride <= 0) {
                 shm_buffer_release(&buffer);
@@ -1351,10 +1351,15 @@ void comp_render_frame(struct compositor_state *comp) {
         bb_fill_rect(dst, damage->rects[i], COLOR_CLEAR);
     }
 
+    int surface_count = 0;
     wl_list_for_each(surface, &comp->surfaces, link) {
+        surface_count++;
         if (!surface->has_backing || surface->minimized) {
             continue;
         }
+        printf("[WAYLAND] Drawing surface %d: pos=(%d,%d) size=%dx%d bar=%d\n",
+               surface_count, surface->x, surface->y,
+               surface->width, surface->height, surface->bar_height);
 
         fut_rect_t frame_rect = comp_frame_rect(surface);
         fut_rect_t window_rect = comp_window_rect(surface);
@@ -1402,10 +1407,16 @@ void comp_render_frame(struct compositor_state *comp) {
 
             fut_rect_t content_rect = comp_content_rect(surface);
             if (content_rect.h <= 0) {
+                printf("[WAYLAND] Skipping content: h=%d\n", content_rect.h);
                 continue;
             }
             fut_rect_t content_clip;
             if (!rect_intersection(damage->rects[i], content_rect, &content_clip)) {
+                continue;
+            }
+            if (!surface->backing || surface->stride <= 0) {
+                printf("[WAYLAND] No backing buffer: backing=%p stride=%d\n",
+                       surface->backing, surface->stride);
                 continue;
             }
             const char *src_ptr = (const char *)surface->backing +
@@ -1414,6 +1425,9 @@ void comp_render_frame(struct compositor_state *comp) {
             char *dst_ptr = (char *)dst->px +
                 (size_t)content_clip.y * dst->pitch +
                 (size_t)content_clip.x * 4u;
+            printf("[DEBUG] Blitting content: clip=(%d,%d %dx%d) src=%p stride=%d\n",
+                   content_clip.x, content_clip.y, content_clip.w, content_clip.h,
+                   (void*)src_ptr, surface->stride);
             blit_argb(src_ptr, surface->stride, dst_ptr, dst->pitch,
                       content_clip.w, content_clip.h);
             touched = true;
@@ -1615,15 +1629,26 @@ static void ms_to_timespec(uint64_t ms, struct timespec *ts) {
 }
 
 static int comp_timer_arm(struct compositor_state *comp) {
+    printf("[SCHEDULER] comp_timer_arm called\n");
+    fflush(stdout);
     if (!comp || comp->timerfd < 0) {
+        printf("[SCHEDULER] comp_timer_arm failed: comp=%p timerfd=%d\n",
+               (void*)comp, comp ? comp->timerfd : -999);
+        fflush(stdout);
         return -1;
     }
     if (comp->next_tick_ms == 0) {
         comp->next_tick_ms = (uint64_t)comp_now_msec() + comp->target_ms;
     }
+    printf("[SCHEDULER] arming timerfd=%d next_tick_ms=%llu\n",
+           comp->timerfd, (unsigned long long)comp->next_tick_ms);
+    fflush(stdout);
     struct itimerspec its = {0};
     ms_to_timespec(comp->next_tick_ms, &its.it_value);
-    return timerfd_settime(comp->timerfd, TFD_TIMER_ABSTIME, &its, NULL);
+    int ret = timerfd_settime(comp->timerfd, TFD_TIMER_ABSTIME, &its, NULL);
+    printf("[SCHEDULER] timerfd_settime returned %d (errno=%d)\n", ret, errno);
+    fflush(stdout);
+    return ret;
 }
 
 static void comp_handle_timer_tick(struct compositor_state *comp, uint64_t expirations) {

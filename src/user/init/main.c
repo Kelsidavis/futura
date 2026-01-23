@@ -916,6 +916,9 @@ int main(int argc, char **argv) {
         /* Non-fatal - continue with defaults */
     }
 
+    /* Create /tmp directory for Wayland socket */
+    sys_mkdir_call("/tmp", 0755);
+
     /* Start all configured services */
     if (init_service_start_all() < 0) {
         /* Some services failed - but continue */

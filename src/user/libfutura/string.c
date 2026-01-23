@@ -154,17 +154,32 @@ long strtol(const char *nptr, char **endptr, int base) {
         return 0;
     }
 
-    while (*nptr == ' ' || *nptr == '\t' || *nptr == '\n' ||
-           *nptr == '\r' || *nptr == '\f' || *nptr == '\v') {
+    /* Skip whitespace with bounds check to prevent pointer corruption issues */
+    int max_whitespace = 1024;  /* Sanity limit */
+    while (max_whitespace-- > 0 && (*nptr == ' ' || *nptr == '\t' || *nptr == '\n' ||
+           *nptr == '\r' || *nptr == '\f' || *nptr == '\v')) {
         ++nptr;
+        /* Re-check pointer validity after each increment */
+        if ((uintptr_t)nptr < 0x10000) {
+            if (endptr) *endptr = (char *)nptr;
+            return 0;
+        }
     }
 
     int sign = 1;
     if (*nptr == '+') {
         ++nptr;
+        if ((uintptr_t)nptr < 0x10000) {
+            if (endptr) *endptr = (char *)nptr;
+            return 0;
+        }
     } else if (*nptr == '-') {
         sign = -1;
         ++nptr;
+        if ((uintptr_t)nptr < 0x10000) {
+            if (endptr) *endptr = (char *)nptr;
+            return 0;
+        }
     }
 
     if (base == 0) {

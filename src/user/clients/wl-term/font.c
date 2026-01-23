@@ -311,7 +311,8 @@ const uint8_t *font_get_glyph(char ch) {
 }
 
 void font_render_char(char ch, uint32_t *pixels, int32_t x, int32_t y,
-                     int32_t stride, uint32_t fg_color, uint32_t bg_color) {
+                     int32_t stride, int32_t buf_width, int32_t buf_height,
+                     uint32_t fg_color, uint32_t bg_color) {
     /* Bounds checking to prevent NULL dereference and buffer overflow */
     if (!pixels || stride <= 0 || x < 0 || y < 0) {
         return;
@@ -322,20 +323,31 @@ void font_render_char(char ch, uint32_t *pixels, int32_t x, int32_t y,
         return;
     }
 
+    /* Skip if character is completely outside buffer */
+    if (x >= buf_width || y >= buf_height) {
+        return;
+    }
+
     const uint8_t *glyph = font_get_glyph(ch);
 
     for (int row = 0; row < FONT_HEIGHT; row++) {
-        uint8_t bitmap = glyph[row];
         int32_t line_y = y + row;
 
-        /* Skip if line would be at negative offset */
-        if (line_y < 0) {
+        /* Skip if line would be at negative offset or past buffer height */
+        if (line_y < 0 || line_y >= buf_height) {
             continue;
         }
 
+        uint8_t bitmap = glyph[row];
         uint32_t *line = pixels + ((size_t)line_y * (size_t)stride) + x;
 
-        for (int col = 0; col < FONT_WIDTH; col++) {
+        /* Calculate how many columns we can safely write */
+        int32_t max_cols = FONT_WIDTH;
+        if (x + max_cols > buf_width) {
+            max_cols = buf_width - x;
+        }
+
+        for (int col = 0; col < max_cols; col++) {
             bool pixel_on = (bitmap & (0x80 >> col)) != 0;
             line[col] = pixel_on ? fg_color : bg_color;
         }

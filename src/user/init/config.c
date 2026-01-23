@@ -15,6 +15,26 @@
 #define MAX_CONFIG_SIZE (64 * 1024)
 #define MAX_LINE_LENGTH 1024
 
+/* External registration function from service.c */
+extern int init_service_register(struct fui_service *service);
+
+/* Static service structures (so they persist after function returns) */
+static struct fui_service compositor_service;
+static struct fui_service wlterm_service;
+
+/* Static environment arrays for services */
+static char *compositor_env[] = {
+    "XDG_RUNTIME_DIR=/tmp",
+    "WAYLAND_DISPLAY=wayland-0",
+    NULL
+};
+
+static char *wlterm_env[] = {
+    "XDG_RUNTIME_DIR=/tmp",
+    "WAYLAND_DISPLAY=wayland-0",
+    NULL
+};
+
 /* Global configuration */
 static struct {
     char hostname[256];
@@ -139,49 +159,49 @@ int init_config_parse(const char *path) {
      * 5. Validate dependencies
      */
 
-    /* For now, hard-code basic services matching init.conf */
+    /* Register core services - futura-wayland compositor and wl-term */
 
-    /* Service: fsd (priority 1) */
-    struct fui_service fsd = {
-        .name = "fsd",
-        .exec_path = "/sbin/fsd",
-        .args = NULL,
-        .pid = 0,
-        .priority = 1,
-        .respawn = true,
-        .depends = NULL,
-        .state = SERVICE_STOPPED,
-        .channel = NULL,
-    };
-    (void)fsd;  /* Suppress warning - would be registered */
+    /* Service: futura-wayland compositor (priority 1 - starts first) */
+    compositor_service.name = "futura-wayland";
+    compositor_service.exec_path = "/sbin/futura-wayland";
+    compositor_service.args = NULL;
+    compositor_service.env = compositor_env;
+    compositor_service.pid = 0;
+    compositor_service.priority = 1;
+    compositor_service.respawn = true;
+    compositor_service.respawn_limit = 5;
+    compositor_service.respawn_count = 0;
+    compositor_service.depends = NULL;
+    compositor_service.num_depends = 0;
+    compositor_service.state = SERVICE_STOPPED;
+    compositor_service.exit_code = 0;
+    compositor_service.start_time = 0;
+    compositor_service.channel = NULL;
 
-    /* Service: posixd (priority 2, depends on fsd) */
-    struct fui_service posixd = {
-        .name = "posixd",
-        .exec_path = "/sbin/posixd",
-        .args = NULL,
-        .pid = 0,
-        .priority = 2,
-        .respawn = true,
-        .depends = NULL,  /* Would be ["fsd"] */
-        .state = SERVICE_STOPPED,
-        .channel = NULL,
-    };
-    (void)posixd;
+    if (init_service_register(&compositor_service) < 0) {
+        return -1;
+    }
 
-    /* Service: futurawayd (priority 3, depends on fsd) */
-    struct fui_service futurawayd = {
-        .name = "futurawayd",
-        .exec_path = "/sbin/futurawayd",
-        .args = NULL,  /* Would be ["--display=:0", "--software-render"] */
-        .pid = 0,
-        .priority = 3,
-        .respawn = true,
-        .depends = NULL,  /* Would be ["fsd"] */
-        .state = SERVICE_STOPPED,
-        .channel = NULL,
-    };
-    (void)futurawayd;
+    /* Service: wl-term terminal (priority 2 - starts after compositor) */
+    wlterm_service.name = "wl-term";
+    wlterm_service.exec_path = "/bin/wl-term";
+    wlterm_service.args = NULL;
+    wlterm_service.env = wlterm_env;
+    wlterm_service.pid = 0;
+    wlterm_service.priority = 2;
+    wlterm_service.respawn = true;
+    wlterm_service.respawn_limit = 5;
+    wlterm_service.respawn_count = 0;
+    wlterm_service.depends = NULL;  /* Could depend on futura-wayland */
+    wlterm_service.num_depends = 0;
+    wlterm_service.state = SERVICE_STOPPED;
+    wlterm_service.exit_code = 0;
+    wlterm_service.start_time = 0;
+    wlterm_service.channel = NULL;
+
+    if (init_service_register(&wlterm_service) < 0) {
+        return -1;
+    }
 
     return 0;
 }

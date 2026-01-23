@@ -198,23 +198,26 @@ void term_send_key(struct terminal *term, char ch) {
 }
 
 void term_render(struct terminal *term, uint32_t *pixels, int32_t width, int32_t height, int32_t stride) {
-    (void)width;
-    (void)height;
 
     /* Defensive check: reject NULL or suspiciously low pointer values */
     if (!term || !pixels || (uintptr_t)pixels < 0x10000) {
         return;
     }
 
-    /* Validate stride to prevent buffer overflow */
-    if (stride <= 0 || stride > 10000) {
+    /* Validate stride and dimensions to prevent buffer overflow */
+    if (stride <= 0 || stride > 10000 || width <= 0 || height <= 0) {
         return;
     }
 
-    /* Clear background */
-    for (int y = 0; y < TERM_ROWS * FONT_HEIGHT; y++) {
+    /* Clear background - use min of expected size and actual buffer size */
+    int32_t clear_height = TERM_ROWS * FONT_HEIGHT;
+    int32_t clear_width = TERM_COLS * FONT_WIDTH;
+    if (clear_height > height) clear_height = height;
+    if (clear_width > width) clear_width = width;
+
+    for (int y = 0; y < clear_height; y++) {
         uint32_t *line = pixels + (size_t)y * (size_t)stride;
-        for (int x = 0; x < TERM_COLS * FONT_WIDTH; x++) {
+        for (int x = 0; x < clear_width; x++) {
             line[x] = COLOR_BLACK;
         }
     }
@@ -226,7 +229,7 @@ void term_render(struct terminal *term, uint32_t *pixels, int32_t width, int32_t
             int px = col * FONT_WIDTH;
             int py = row * FONT_HEIGHT;
 
-            font_render_char(cell->ch, pixels, px, py, stride,
+            font_render_char(cell->ch, pixels, px, py, stride, width, height,
                            cell->fg_color, cell->bg_color);
         }
     }
@@ -238,8 +241,14 @@ void term_render(struct terminal *term, uint32_t *pixels, int32_t width, int32_t
         int cy = term->cursor_y * FONT_HEIGHT;
 
         for (int y = 0; y < FONT_HEIGHT; y++) {
-            uint32_t *line = pixels + (size_t)(cy + y) * (size_t)stride + cx;
-            for (int x = 0; x < FONT_WIDTH; x++) {
+            int32_t line_y = cy + y;
+            if (line_y >= height) break;  /* Bounds check */
+
+            uint32_t *line = pixels + (size_t)line_y * (size_t)stride + cx;
+            int32_t max_x = FONT_WIDTH;
+            if (cx + max_x > width) max_x = width - cx;
+
+            for (int x = 0; x < max_x; x++) {
                 line[x] = COLOR_GREEN;  /* Green cursor */
             }
         }

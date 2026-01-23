@@ -246,22 +246,42 @@ long sys_getcwd(char *buf, size_t size) {
      * For root directory, return "/" directly.
      * For other directories, would call fut_vfs_get_path(cwd_inode, buf, size)
      * For now, we support root and return cached path if available.
+     *
+     * CRITICAL: Use fut_copy_to_user for all writes to user space to avoid
+     * SMAP (Supervisor Mode Access Prevention) violations. Direct writes to
+     * user space addresses will cause a page fault when SMAP is enabled.
      */
+    char root_path[] = "/";  /* Build path in kernel buffer first */
+
     if (cwd_inode == 1) {
         /* At root directory */
-        local_buf[0] = '/';
-        local_buf[1] = '\0';
+        if (fut_copy_to_user(local_buf, root_path, 2) != 0) {
+            fut_printf("[GETCWD] getcwd(buf=%p, size=%zu) -> EFAULT "
+                       "(copy_to_user failed for root path)\n",
+                       (void *)local_buf, local_size);
+            return -EFAULT;
+        }
     } else {
         /* Phase 3: Track non-root path
          * If cached, use it; otherwise, would need VFS tree traversal
+         * For now, return "/" as placeholder
          */
-        local_buf[0] = '/';
-        local_buf[1] = '\0';
+        if (fut_copy_to_user(local_buf, root_path, 2) != 0) {
+            fut_printf("[GETCWD] getcwd(buf=%p, size=%zu) -> EFAULT "
+                       "(copy_to_user failed for path)\n",
+                       (void *)local_buf, local_size);
+            return -EFAULT;
+        }
     }
 
     /* Phase 5: Always ensure null termination within buffer bounds
-     * Critical when VFS path resolution is implemented to prevent overflow */
-    local_buf[local_size - 1] = '\0';
+     * Critical when VFS path resolution is implemented to prevent overflow
+     * Use fut_copy_to_user to write the null terminator safely */
+    char null_term = '\0';
+    if (fut_copy_to_user(local_buf + local_size - 1, &null_term, 1) != 0) {
+        /* Non-fatal: path already written, just log warning */
+        fut_printf("[GETCWD] warning: could not write null terminator at end of buffer\n");
+    }
 
     /* Phase 3: Categorize path length */
     const size_t path_len = 1;  /* Length of "/" without null terminator */

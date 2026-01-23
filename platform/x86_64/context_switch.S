@@ -539,15 +539,17 @@ fut_switch_context_irq:
     movq %rax, 176(%rdi)    /* frame->cs */
     movq 64(%rsi), %rax     /* context.rflags */
 
-    /* IMPORTANT: For kernel threads, ensure IF=1 so timer preemption works.
-     * The thread context may have IF=0 (to avoid being interrupted during
-     * initial setup), but once we're context switching TO this thread,
-     * we need interrupts enabled so the scheduler can preempt it later. */
-    movq 72(%rsi), %rcx     /* Get CS from context */
-    cmpq $0x08, %rcx        /* Is it kernel CS? */
-    jne .ctx_rflags_ok      /* Not kernel - use as-is */
-    orq $0x200, %rax        /* Kernel thread - set IF=1 */
-.ctx_rflags_ok:
+    /* IMPORTANT: Do NOT override IF here for new threads!
+     * New threads start with IF=0 (configured in context) so they can execute
+     * their trampoline without being immediately preempted. The trampoline
+     * (or the thread's entry function) is responsible for enabling interrupts
+     * when it's ready to be preempted.
+     *
+     * For RESUMED threads (via .restore_saved_frame path), the saved frame
+     * already has the correct RFLAGS from when the thread was preempted.
+     *
+     * However, we must ensure reserved bit 1 is always set in RFLAGS. */
+    orq $0x2, %rax          /* Ensure bit 1 is set (required by x86-64) */
     movq %rax, 184(%rdi)    /* frame->rflags */
 
     /* ALWAYS initialize RSP/SS in frame, even for kernel mode.

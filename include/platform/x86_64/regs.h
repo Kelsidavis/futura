@@ -213,10 +213,14 @@ static inline void fut_write_msr(uint32_t msr, uint64_t value) {
 #define RFLAGS_VIP      (1 << 20)   /* Virtual Interrupt Pending */
 #define RFLAGS_ID       (1 << 21)   /* ID Flag */
 
-/* Initial RFLAGS for new kernel threads (reserved bit set, interrupts ENABLED)
- * Kernel threads need IF=1 so timer preemption works. If a kernel thread enters
- * a busy-wait loop, it will never be preempted if interrupts are disabled. */
-#define RFLAGS_KERNEL_INIT  (RFLAGS_RESERVED | RFLAGS_IF)
+/* Initial RFLAGS for new kernel threads (reserved bit set, interrupts DISABLED)
+ * New threads start with IF=0 to allow their trampoline code to execute without
+ * being immediately preempted. The trampoline or entry function must enable
+ * interrupts (via sti or by returning via IRETQ with IF=1) when ready.
+ *
+ * This fixes a bug where threads were preempted before executing a single
+ * instruction, causing scheduler loops where no thread made progress. */
+#define RFLAGS_KERNEL_INIT  (RFLAGS_RESERVED)
 
 /* ============================================================
  *   FPU/SSE State Defaults

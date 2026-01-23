@@ -236,8 +236,9 @@ fut_thread_t *fut_thread_create(
                (unsigned long long)(uintptr_t)entry);
 
     /* RFLAGS: reserved bit 1 must be 1. Start with interrupts DISABLED (IF=0)
-     * to prevent the timer from interrupting before the trampoline executes.
-     * The trampoline will enable interrupts after critical setup is complete. */
+     * to allow the trampoline to execute without being immediately preempted.
+     * The thread's entry function is responsible for enabling interrupts (e.g.,
+     * idle threads do 'sti; hlt', user threads return via IRETQ with IF=1). */
     ctx->rflags = RFLAGS_KERNEL_INIT;
 
     /* ALL threads (kernel and user) start in kernel mode (ring 0).
@@ -481,7 +482,9 @@ void fut_thread_init_bootstrap(void) {
         bootstrap_thread.stack_base = bootstrap_stack;
         bootstrap_thread.stack_size = sizeof(bootstrap_stack);
 
-        /* Initialize context with proper RFLAGS (IF=1 for timer preemption) */
+        /* Initialize context structure (only used as fallback - bootstrap thread
+         * is already running, so its actual state comes from the interrupt frame
+         * saved when it gets preempted, not from this context). */
         bootstrap_thread.context.rflags = RFLAGS_KERNEL_INIT;
         bootstrap_thread.context.cs = 0x08;  /* Kernel code segment */
         bootstrap_thread.context.ss = 0x10;  /* Kernel data segment */

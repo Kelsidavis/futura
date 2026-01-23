@@ -66,8 +66,12 @@ int main(void) {
     // Wait for compositor to create Wayland socket or readiness marker
     int socket_found = 0;
 
+    printf("[INIT] Waiting 200ms for compositor startup...\n");
+    fflush(stdout);
     fut_timespec_t initial_delay = { .tv_sec = 0, .tv_nsec = 200000000 };
     sys_nanosleep_call(&initial_delay, 0);
+    printf("[INIT] Initial delay done, looking for socket...\n");
+    fflush(stdout);
 
     const char *ready_paths[] = {
         "/tmp/wayland-ready",
@@ -75,13 +79,28 @@ int main(void) {
         0
     };
 
+    printf("[INIT] About to enter stat loop...\n");
+    fflush(stdout);
     for (int attempt = 0; attempt < 1000; attempt++) {
+        if (attempt == 0) {
+            printf("[INIT] First stat attempt starting...\n");
+            fflush(stdout);
+        }
         struct fut_stat st;
         for (int i = 0; ready_paths[i]; i++) {
+            if (attempt == 0) {
+                printf("[INIT] Calling stat(%s)...\n", ready_paths[i]);
+                fflush(stdout);
+            }
             long stat_rc = sys_stat_call(ready_paths[i], &st);
+            if (attempt == 0) {
+                printf("[INIT] stat(%s) returned %ld\n", ready_paths[i], stat_rc);
+                fflush(stdout);
+            }
             if (stat_rc == 0) {
                 printf("[INIT] Wayland ready marker found at %s (attempt %d)\n",
                        ready_paths[i], attempt + 1);
+                fflush(stdout);
                 socket_found = 1;
                 break;
             }
@@ -91,8 +110,9 @@ int main(void) {
             break;
         }
 
-        if (attempt % 200 == 199) {
+        if (attempt % 50 == 49) {
             printf("[INIT] Still waiting for socket... (attempt %d)\n", attempt + 1);
+            fflush(stdout);
         }
 
         fut_timespec_t retry_delay = { .tv_sec = 0, .tv_nsec = 20000000 };

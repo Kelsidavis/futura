@@ -1703,8 +1703,10 @@ int fut_vfs_stat(const char *path, struct fut_stat *stat) {
 
         /* Set timestamps - atime is current time (file access time),
          * mtime and ctime would ideally come from filesystem metadata.
-         * Using current time as default for basic compliance. */
-        uint64_t now_ns = fut_get_time_ns();
+         * Using tick-based time to avoid calibration deadlock. */
+        extern uint64_t fut_get_ticks(void);
+        uint64_t now_ms = fut_get_ticks();        /* Milliseconds since boot */
+        uint64_t now_ns = now_ms * 1000000ULL;    /* Convert to nanoseconds */
         stat->st_atime = now_ns;  /* Access time (now) */
         stat->st_mtime = now_ns;  /* Modification time (default) */
         stat->st_ctime = now_ns;  /* Change time (default) */

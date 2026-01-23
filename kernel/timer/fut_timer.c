@@ -41,6 +41,11 @@ struct fut_task;
 /* Global tick counter (milliseconds) */
 static _Atomic uint64_t system_ticks = 0;
 
+/* Public getter for system tick count */
+uint64_t fut_timer_get_ticks(void) {
+    return atomic_load_explicit(&system_ticks, memory_order_relaxed);
+}
+
 /* Sleep queue (sorted by wake_time) */
 static fut_thread_t *sleep_queue_head = nullptr;
 
@@ -73,6 +78,7 @@ void fut_sleep_until(fut_thread_t *thread, uint64_t millis) {
     uint64_t current = atomic_load_explicit(&system_ticks, memory_order_relaxed);
     thread->wake_time = current + millis;
     thread->state = FUT_THREAD_SLEEPING;
+
 
     // Insert into sleep queue (sorted by wake_time)
     fut_spinlock_acquire(&sleep_lock);
@@ -111,6 +117,7 @@ static void wake_sleeping_threads(void) {
     uint64_t current = atomic_load_explicit(&system_ticks, memory_order_relaxed);
 
     fut_spinlock_acquire(&sleep_lock);
+
 
     // Check sleep queue head
     while (sleep_queue_head && sleep_queue_head->wake_time <= current) {
@@ -167,9 +174,11 @@ void fut_timer_tick(void) {
     // Increment tick counter
     uint64_t ticks = atomic_fetch_add_explicit(&system_ticks, 1, memory_order_relaxed);
 
-    // Debug: Log first few timer ticks to confirm IRQs are firing
+    // Debug: Log first few timer ticks and then periodically to confirm IRQs are firing
     if (ticks < 5) {
         fut_printf("[TIMER] Tick %llu\n", (unsigned long long)ticks);
+    } else if (ticks == 10 || ticks == 50 || ticks == 100 || ticks == 200 || ticks == 500 || ticks == 1000) {
+        fut_printf("[TIMER] Tick %llu (checkpoint)\n", (unsigned long long)ticks);
     }
 
     // Wake any threads whose sleep time has expired

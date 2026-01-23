@@ -437,25 +437,29 @@ isr_syscall_fastpath:
     /* Remove vector and error_code */
     addq $16, %rsp
 
-    /* Now stack has: RIP, CS, RFLAGS, RSP, SS */
-    /* But we already have RIP in RCX and RFLAGS in R11 from the pops above */
-    /* Skip the CPU-pushed frame */
-    addq $40, %rsp                /* Skip RIP, CS, RFLAGS, RSP, SS */
+    /* Now stack has: RIP, CS, RFLAGS, RSP, SS
+     * This is the exact frame layout IRETQ expects.
+     *
+     * CRITICAL FIX: Use IRETQ instead of SYSRET to avoid TOCTOU bug.
+     * The user RSP was saved to percpu at entry (line 293) but if this thread
+     * is preempted during the syscall and another thread runs a syscall,
+     * that percpu value gets overwritten. IRETQ reads RSP from the frame
+     * we pushed at entry (line 301), which is preserved across preemption.
+     */
 
     /* CRITICAL: Ensure IF (bit 9) is set in RFLAGS before returning to userspace!
-     * Without this, timer interrupts won't fire for this thread. */
-    orq $0x200, %r11
-
-    /* Restore user RSP from per-CPU scratch */
-    movq %gs:96, %rsp
+     * Without this, timer interrupts won't fire for this thread.
+     * For IRETQ, RFLAGS is at RSP+16 (after RIP and CS). */
+    orq $0x200, 16(%rsp)
 
     /* Move return value to RAX */
     movq %r15, %rax
 
-    /* Use SYSRET to return to user mode
-     * RCX = return address, R11 = RFLAGS, RSP = user stack, RAX = return value
+    /* Use IRETQ to return to user mode
+     * IRETQ pops: RIP, CS, RFLAGS, RSP, SS from stack
+     * This is immune to the percpu RSP corruption bug that affects SYSRET.
      */
-    sysretq
+    iretq
 .size isr_syscall_fastpath, . - isr_syscall_fastpath
 
 /* Common ISR stub - saves all registers */

@@ -595,17 +595,8 @@ void fut_schedule(void) {
     fut_thread_t *prev = fut_thread_current();
     fut_thread_t *next = select_next_thread();
 
-    // Debug: Log scheduler calls to understand preemption (disabled for perf)
-    (void)0;  // Disabled - uncomment below to enable
-    /*
-    static int sched_call_count = 0;
-    if (sched_call_count < 10) {
-        fut_printf("[SCHED] prev=%llu next=%llu\n",
-                   prev ? (unsigned long long)prev->tid : 0ULL,
-                   next ? (unsigned long long)next->tid : 0ULL);
-        sched_call_count++;
-    }
-    */
+    // Debug: Log scheduler calls (disabled for perf)
+    (void)0;
 
     // Get per-CPU data for idle thread check
     fut_percpu_t *percpu = fut_percpu_get();
@@ -696,12 +687,14 @@ void fut_schedule(void) {
         // Only set current_thread if we're actually going to context switch
         fut_thread_set_current(next);
 
-        // CRITICAL: Idle threads must NEVER use IRETQ-based switching!
-        // Their context structures contain stale bootstrap values. Once they start running,
-        // we can't construct valid interrupt frames from them. Force cooperative switching.
-        // Note: Each CPU has its own idle thread, so we must check against percpu->idle_thread
-        // rather than hardcoding tid==1 (which is only the BSP's idle thread).
-        bool idle_involved = (prev && prev == idle) || (next && next == idle);
+        // NOTE: Previous comment said "idle threads must NEVER use IRETQ-based switching"
+        // but this was incorrect. Idle threads ARE properly initialized via fut_thread_create()
+        // with valid context structures. The issue was confusion with the bootstrap thread.
+        //
+        // CRITICAL FIX: When in IRQ context, we MUST use IRETQ-based switching for ALL threads
+        // including idle. Cooperative switching in IRQ context saves the ISR's stack pointer
+        // instead of the preempted thread's actual RSP, causing corruption.
+        bool idle_involved = false;  // Allow IRQ-based switching for idle
 
         // CRITICAL: Don't save state for terminated threads!
         // When a thread calls fut_thread_exit(), it marks itself as TERMINATED and then
@@ -800,9 +793,6 @@ void fut_schedule(void) {
                 fut_current_frame = NULL;
             }
             /* Debug: Log cooperative switch details (disabled - too verbose) */
-            /* fut_printf("[SCHED-COOP] next->context.rip=0x%llx rsp=0x%llx\n",
-                       (unsigned long long)next->context.rip,
-                       (unsigned long long)next->context.rsp); */
 
             if (prev && !prev_terminated) {
                 fut_switch_context(&prev->context, &next->context);

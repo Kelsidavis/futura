@@ -1036,8 +1036,13 @@ static int ramfs_getattr(struct fut_vnode *vnode, struct fut_stat *stat) {
     stat->st_blksize = 4096;        /* Filesystem block size */
     stat->st_blocks = (stat->st_size + 511) / 512;  /* Number of 512-byte blocks */
 
-    /* Timestamps - using current time as default since ramfs is in-memory */
-    uint64_t now_ns = fut_get_time_ns();
+    /* Timestamps - using tick-based time to avoid calibration deadlock.
+     * fut_get_time_ns() requires TSC calibration which busy-waits for timer ticks.
+     * If called during a syscall, timer IRQs may not be delivered (due to scheduler
+     * state), causing a deadlock. Use simple tick-based milliseconds instead. */
+    extern uint64_t fut_get_ticks(void);
+    uint64_t now_ms = fut_get_ticks();        /* Milliseconds since boot */
+    uint64_t now_ns = now_ms * 1000000ULL;    /* Convert to nanoseconds */
     stat->st_atime = now_ns / 1000000000;        /* Access time (seconds) */
     stat->st_atime_nsec = now_ns % 1000000000;   /* Access time nanoseconds */
     stat->st_mtime = now_ns / 1000000000;        /* Modification time (seconds) */

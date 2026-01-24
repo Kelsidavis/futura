@@ -308,77 +308,27 @@ static const struct wl_callback_listener frame_listener = {
     .done = frame_done,
 };
 
-/* Spawn shell process */
+/* Spawn shell process - DISABLED due to fork/exec issues
+ * No CLI shell is currently available (futura-shell is a graphical desktop shell).
+ * This function just displays a message in the terminal instead. */
 static int spawn_shell(struct terminal *term) {
-    int stdin_pipe[2], stdout_pipe[2];
+    /* Mark shell FDs as invalid */
+    term->shell_stdin_fd = -1;
+    term->shell_stdout_fd = -1;
+    term->shell_pid = -1;
 
-    /* Create pipes for shell communication */
-    if (sys_pipe_call(stdin_pipe) < 0) {
-        WLTERM_LOG("[WL-TERM] failed to create stdin pipe\n");
-        return -1;
+    /* Display a welcome message in the terminal */
+    const char *msg = "Welcome to Futura OS Terminal\n"
+                      "No CLI shell available yet.\n"
+                      "Terminal is ready for display.\n";
+
+    /* Feed the message character by character into the terminal */
+    while (*msg) {
+        term_putchar(term, (unsigned char)*msg);
+        msg++;
     }
 
-    if (sys_pipe_call(stdout_pipe) < 0) {
-        WLTERM_LOG("[WL-TERM] failed to create stdout pipe\n");
-        sys_close(stdin_pipe[0]);
-        sys_close(stdin_pipe[1]);
-        return -1;
-    }
-
-    /* Fork shell process */
-    long pid = sys_fork_call();
-    if (pid < 0) {
-        WLTERM_LOG("[WL-TERM] fork failed\n");
-        sys_close(stdin_pipe[0]);
-        sys_close(stdin_pipe[1]);
-        sys_close(stdout_pipe[0]);
-        sys_close(stdout_pipe[1]);
-        return -1;
-    }
-
-    if (pid == 0) {
-        /* Child process - exec shell */
-
-        /* Close unused pipe ends */
-        sys_close(stdin_pipe[1]);   /* Close write end of stdin pipe */
-        sys_close(stdout_pipe[0]);  /* Close read end of stdout pipe */
-
-        /* Redirect stdin/stdout to pipes */
-        sys_dup2_call(stdin_pipe[0], 0);   /* stdin = read end of stdin pipe */
-        sys_dup2_call(stdout_pipe[1], 1);  /* stdout = write end of stdout pipe */
-        sys_dup2_call(stdout_pipe[1], 2);  /* stderr = write end of stdout pipe */
-
-        /* Close original pipe fds */
-        sys_close(stdin_pipe[0]);
-        sys_close(stdout_pipe[1]);
-
-        /* Exec shell - try multiple paths */
-        char shell_name[] = "futura-shell";
-        char *shell_args[] = { shell_name, NULL };
-
-        /* Try /bin/futura-shell first (same directory as wl-term) */
-        sys_execve_call("/bin/futura-shell", shell_args, NULL);
-
-        /* Fallback to /sbin/futura-shell */
-        sys_execve_call("/sbin/futura-shell", shell_args, NULL);
-
-        /* If we get here, exec failed */
-        const char msg[] = "exec futura-shell failed\n";
-        sys_write(2, msg, sizeof(msg) - 1);
-        sys_exit(1);
-    }
-
-    /* Parent process */
-    sys_close(stdin_pipe[0]);   /* Close read end of stdin pipe */
-    sys_close(stdout_pipe[1]);  /* Close write end of stdout pipe */
-
-    /* Save pipe FDs in terminal state */
-    term->shell_stdin_fd = stdin_pipe[1];   /* Write to shell's stdin */
-    term->shell_stdout_fd = stdout_pipe[0]; /* Read from shell's stdout */
-    term->shell_pid = (int)pid;
-
-    /* Use sys_write instead of printf to avoid potential va_list issues */
-    const char spawn_msg[] = "[WL-TERM] Shell spawned\n";
+    const char spawn_msg[] = "[WL-TERM] Terminal ready (no shell)\n";
     sys_write(1, spawn_msg, sizeof(spawn_msg) - 1);
     return 0;
 }

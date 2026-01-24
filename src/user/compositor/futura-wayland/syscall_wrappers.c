@@ -201,9 +201,11 @@ int __wrap_bind(int sockfd, const struct sockaddr *addr, socklen_t addrlen) {
     return 0;
 }
 
-/* Helper: convert number to string for debug output */
+/* Helper: convert number to string for debug output
+ * NOTE: Using static buffers to avoid stack allocation - debugging a stack crash */
 static void debug_write_int(long num) {
-    char buf[32];
+    static char buf[32];
+    static char temp[32];
     int len = 0;
 
     if (num < 0) {
@@ -212,7 +214,6 @@ static void debug_write_int(long num) {
     }
 
     /* Convert to string */
-    char temp[32];
     int tlen = 0;
     long val = num;
     do {

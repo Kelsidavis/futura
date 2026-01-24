@@ -41,7 +41,8 @@ void *memset(void *dest, int c, size_t n);
 #define MAP_SHARED  0x0001
 #endif
 
-#define COLOR_CLEAR          0xFF000000u
+/* Colors in ARGB format (0xAARRGGBB) - works with BGRA framebuffers on little-endian */
+#define COLOR_CLEAR          0xFF000000u  /* Opaque black */
 #define COLOR_BAR_FOCUSED    0xFF2F6DB5u
 #define COLOR_BAR_UNFOCUSED  0xFF303030u
 #define COLOR_BTN_BASE       0xFF444444u
@@ -315,7 +316,11 @@ static int bb_create(struct backbuffer *bb, int width, int height, int pitch) {
     bb->height = height;
     bb->pitch = pitch;
     bb->owns = true;
-    memset(mem, 0, size);
+    /* Initialize to opaque black (0xFF000000) instead of transparent (0x00000000) */
+    size_t pixel_count = size / 4;
+    for (size_t i = 0; i < pixel_count; i++) {
+        mem[i] = 0xFF000000;
+    }
     return 0;
 }
 

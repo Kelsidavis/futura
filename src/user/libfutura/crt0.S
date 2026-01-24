@@ -79,14 +79,17 @@ _start:
     /* Align stack to 16 bytes (required by x86-64 ABI) */
     and $-16, %rsp
 
+    /* Save argv to a callee-saved register before calling __libc_init_environ */
+    mov %rsi, %r13          /* r13 = argv (callee-saved, preserved across calls) */
+
     /* Call __libc_init_environ(envp) to initialize the environ global */
     /* envp is in %rdx, so move it to %rdi (first argument) */
     mov %rdx, %rdi
     call __libc_init_environ
 
-    /* Restore argc from rbx and argv from rsi for main call */
-    mov %rbx, %rdi          /* argc back in rdi */
-    /* argv is still in rsi */
+    /* Restore argc and argv for main call */
+    mov %rbx, %rdi          /* argc (from rbx, saved earlier) */
+    mov %r13, %rsi          /* argv (from r13, saved above) */
 
     /* Call main(argc, argv) */
     call main

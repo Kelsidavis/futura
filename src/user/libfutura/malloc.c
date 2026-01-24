@@ -81,6 +81,13 @@ void *malloc(size_t size) {
         return NULL;
     }
 
+    /* Sanity check: heap should start well above low memory (> 0x10000) */
+    if ((uintptr_t)current < 0x10000) {
+        malloc_lock_release();
+        malloc_debug("[MALLOC] brk(NULL) returned suspicious low addr=", (size_t)current, 0);
+        return NULL;
+    }
+
     /* Expand break */
     long requested = current + (long)total;
     if (size > 100000) {

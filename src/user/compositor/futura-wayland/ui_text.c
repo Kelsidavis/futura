@@ -55,19 +55,19 @@ void ui_draw_text(uint32_t *dst,
             continue;
         }
 
-        for (int row = 0; row < UI_FONT_HEIGHT; ++row) {
-            int gy = glyph_y + row;
+        for (int glyph_row = 0; glyph_row < UI_FONT_HEIGHT; ++glyph_row) {
+            int gy = glyph_y + glyph_row;
             if (gy < clip_y || gy >= clip_y2) {
                 continue;
             }
 
-            uint8_t bits = glyph[row];
+            uint8_t bits = glyph[glyph_row];
             if (bits == 0) {
                 continue;
             }
 
             /* Use char* for byte arithmetic (allowed to alias per C standard) */
-            uint32_t *row = (uint32_t *)((char *)dst + (size_t)gy * (size_t)dpitch_bytes);
+            uint32_t *row_ptr = (uint32_t *)((char *)dst + (size_t)gy * (size_t)dpitch_bytes);
             for (int col = 0; col < UI_FONT_WIDTH; ++col) {
                 if ((bits & (uint8_t)(0x80u >> col)) == 0) {
                     continue;
@@ -76,7 +76,7 @@ void ui_draw_text(uint32_t *dst,
                 if (gx < clip_x || gx >= clip_x2) {
                     continue;
                 }
-                row[gx] = argb;
+                row_ptr[gx] = argb;
             }
         }
     }

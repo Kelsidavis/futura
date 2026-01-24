@@ -33,13 +33,14 @@ typedef long ssize_t;
 
 #ifdef PLATFORM_X86_64
 
+/* Note: r8 added to clobber list - kernel syscall handler corrupts it */
 static inline long syscall0(long nr) {
     long ret;
     __asm__ __volatile__(
         "int $0x80"
         : "=a"(ret)
         : "a"(nr)
-        : "rcx", "r11", "memory"
+        : "rcx", "r8", "r11", "memory"
     );
     return ret;
 }
@@ -50,7 +51,7 @@ static inline long syscall1(long nr, long arg1) {
         "int $0x80\n"
         : "=a"(ret)
         : "a"(nr), "D"(arg1)
-        : "rcx", "r11", "memory"
+        : "rcx", "r8", "r11", "memory"
     );
     return ret;
 }
@@ -61,7 +62,7 @@ static inline long syscall2(long nr, long arg1, long arg2) {
         "int $0x80\n"
         : "=a"(ret)
         : "a"(nr), "D"(arg1), "S"(arg2)
-        : "rcx", "r11", "memory"
+        : "rcx", "r8", "r11", "memory"
     );
     return ret;
 }
@@ -72,7 +73,7 @@ static inline long syscall3(long nr, long arg1, long arg2, long arg3) {
         "int $0x80\n"
         : "=a"(ret)
         : "a"(nr), "D"(arg1), "S"(arg2), "d"(arg3)
-        : "rcx", "r11", "memory"
+        : "rcx", "r8", "r11", "memory"
     );
     return ret;
 }
@@ -84,7 +85,7 @@ static inline long syscall4(long nr, long arg1, long arg2, long arg3, long arg4)
         "int $0x80\n"
         : "=a"(ret)
         : "a"(nr), "D"(arg1), "S"(arg2), "d"(arg3), "r"(r10)
-        : "rcx", "r11", "memory"
+        : "rcx", "r8", "r11", "memory"
     );
     return ret;
 }

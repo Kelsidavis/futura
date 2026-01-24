@@ -14,6 +14,8 @@
 #include <wayland-server-protocol.h>
 
 #define O_RDONLY 0x0000
+#define O_RDWR   0x0002
+#define O_CREAT  0x0040
 #define O_NONBLOCK 0x0800
 #define DOUBLE_CLICK_MS 300
 
@@ -708,10 +710,23 @@ static void seat_get_keyboard(struct wl_client *client,
 
     wl_resource_set_implementation(keyboard, &keyboard_impl, seat_client, keyboard_resource_destroy);
     seat_client->keyboard_resource = keyboard;
+
+    /* libwayland requires a valid fd for keymap even with NO_KEYMAP format.
+     * Create a minimal dummy file that can be dup'd successfully. */
+    int keymap_fd = (int)sys_open("/tmp/.keymap_dummy", O_RDWR | O_CREAT, 0600);
+    if (keymap_fd < 0) {
+        /* Fallback: try /dev/null */
+        keymap_fd = (int)sys_open("/dev/null", O_RDONLY, 0);
+    }
+
     wl_keyboard_send_keymap(keyboard,
                             WL_KEYBOARD_KEYMAP_FORMAT_NO_KEYMAP,
-                            -1,
+                            keymap_fd >= 0 ? keymap_fd : 0,
                             0);
+
+    if (keymap_fd >= 0) {
+        sys_close(keymap_fd);
+    }
 }
 
 static void seat_release(struct wl_client *client, struct wl_resource *resource) {

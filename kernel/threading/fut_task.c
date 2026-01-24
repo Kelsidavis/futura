@@ -143,6 +143,9 @@ fut_task_t *fut_task_create(void) {
         .io_ops_current = 0,  /* No operations consumed initially */
         .io_budget_reset_time_ms = 0,  /* Will be set on first budget check */
         .io_budget_limit_wait_ms = 0,  /* Not waiting initially */
+        .dupfd_ops_per_sec = 1000,  /* Phase 5: Limit to 1000 F_DUPFD ops/sec by default */
+        .dupfd_ops_current = 0,  /* No F_DUPFD operations consumed initially */
+        .dupfd_reset_time_ms = 0,  /* Will be set on first F_DUPFD call */
         .next = NULL
     };
     fut_waitq_init(&task->child_waiters);

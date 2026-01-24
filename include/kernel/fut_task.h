@@ -129,6 +129,11 @@ struct fut_task {
     uint64_t io_budget_reset_time_ms;  // Last time budget counters were reset (milliseconds)
     uint64_t io_budget_limit_wait_ms;  // Time to wait before allowing next large I/O (0 = not waiting)
 
+    /* F_DUPFD Rate Limiting (Phase 5 - Security Hardening) */
+    uint64_t dupfd_ops_per_sec;        // F_DUPFD operations allowed per second (0 = unlimited, default 1000)
+    uint64_t dupfd_ops_current;        // Current second's F_DUPFD operations consumed (resets every 1000ms)
+    uint64_t dupfd_reset_time_ms;      // Last time F_DUPFD counter was reset (milliseconds)
+
     fut_task_t *next;                  // Next task in system list
 };
 

@@ -81,7 +81,7 @@
  * Defense (DONE - lines 593-629):
  * - Check current FD count against RLIMIT_NOFILE before dup
  * - Fail with EMFILE if limit would be exceeded
- * - [TODO] Rate limit F_DUPFD calls per process
+ * - [DONE] Rate limit F_DUPFD calls per process (1000 ops/sec default)
  *
  * CVE References:
  * - CVE-2014-0038: Resource exhaustion via syscall abuse
@@ -153,7 +153,7 @@
  * 5. [DONE] F_DUPFD resource limit checks
  *    - Check against RLIMIT_NOFILE before duplication
  *    - Prevent FD exhaustion DoS
- *    - [TODO] Rate limit F_DUPFD operations
+ *    - [DONE] Rate limit F_DUPFD operations (1000 ops/sec)
  *
  * 6. [DONE] Flag bit validation
  *    - F_SETFD: Validated arg against FD_CLOEXEC (line 461)
@@ -196,18 +196,19 @@
  * [DONE] 2. Unknown command rejection (switch default) at lines 230-325
  * [DONE] 3. FD validation (negative, invalid) at lines 135-147
  *
- * Phase 5 enhancements (all DONE except rate limiting):
+ * Phase 5 enhancements (all DONE):
  * [DONE] 1. F_DUPFD negative arg validation (lines 577-583)
  * [DONE] 2. F_DUPFD RLIMIT_NOFILE check (lines 593-629)
  * [DONE] 3. F_SETFD flag bit validation (line 461 - masks with FD_CLOEXEC)
  * [DONE] 4. F_SETFL flag bit validation (lines 525-531 - validates O_NONBLOCK|O_APPEND)
- * [TODO] 5. Rate limiting for F_DUPFD to prevent DoS
+ * [DONE] 5. Rate limiting for F_DUPFD to prevent DoS (1000 ops/sec, lines 599-648)
  */
 
 #include <kernel/fut_task.h>
 #include <kernel/errno.h>
 #include <kernel/fut_vfs.h>
 #include <kernel/fut_fd_util.h>
+#include <kernel/fut_timer.h>
 #include <subsystems/posix_syscall.h>
 #include <stdint.h>
 #include <sys/resource.h>
@@ -594,6 +595,52 @@ long sys_fcntl(int fd, int cmd, uint64_t arg) {
                        local_fd, fd_category, cmd_name, cmd_category, minfd,
                        open_fd_count, nofile_limit);
             return -EMFILE;
+        }
+
+        /* Phase 5: F_DUPFD Rate Limiting
+         *
+         * ATTACK SCENARIO: F_DUPFD DoS via Rapid Calls
+         * Even with RLIMIT_NOFILE checks, an attacker can cause DoS by rapidly
+         * calling F_DUPFD in a tight loop:
+         * 1. Attacker calls fcntl(fd, F_DUPFD, 0) in loop
+         * 2. Each call scans entire FD table (lines 583-588 above)
+         * 3. FD table scan is O(n) where n = max_fds (up to 4096)
+         * 4. Without rate limiting, attacker can consume 100% CPU
+         * 5. Kernel becomes unresponsive to other processes
+         * 6. System-wide denial of service
+         *
+         * DEFENSE: Rate limit F_DUPFD operations per process
+         * - Limit to dupfd_ops_per_sec operations per second (default: 1000)
+         * - Track operations in rolling 1-second window
+         * - Reset counter every 1000ms
+         * - Return -EAGAIN if limit exceeded (standard POSIX rate limit error)
+         *
+         * This prevents:
+         * - CPU exhaustion via tight F_DUPFD loops
+         * - FD table thrashing (repeated O(n) scans)
+         * - Process monopolizing syscall handler time
+         */
+        if (task->dupfd_ops_per_sec > 0) {  /* 0 = unlimited (disabled) */
+            uint64_t now_ms = fut_get_ticks();
+
+            /* Reset counter if 1 second has passed since last reset */
+            if (now_ms - task->dupfd_reset_time_ms >= 1000) {
+                task->dupfd_ops_current = 0;
+                task->dupfd_reset_time_ms = now_ms;
+            }
+
+            /* Check if rate limit exceeded */
+            if (task->dupfd_ops_current >= task->dupfd_ops_per_sec) {
+                fut_printf("[FCNTL] fcntl(fd=%d [%s], cmd=%s [%s], minfd=%d) -> EAGAIN "
+                           "(F_DUPFD rate limit exceeded: %llu ops >= %llu limit, "
+                           "Phase 5: DoS prevention)\n",
+                           local_fd, fd_category, cmd_name, cmd_category, minfd,
+                           task->dupfd_ops_current, task->dupfd_ops_per_sec);
+                return -EAGAIN;
+            }
+
+            /* Increment operation counter */
+            task->dupfd_ops_current++;
         }
 
         /* Phase 5: Increment refcount IMMEDIATELY to prevent use-after-free

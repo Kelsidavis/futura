@@ -598,10 +598,90 @@ long sys_ioctl(int fd, unsigned long request, void *argp) {
                        fd, request, request_name, argp, impl);
             return 0;
         }
-        case FIONREAD:
-            fut_printf("[IOCTL] ioctl(fd=%d, request=0x%lx [%s], argp=%p) -> 0 (category: %s, Phase 2: stubbed)\n",
-                       fd, request, request_name, argp, request_category);
+        case FIONREAD: {
+            /* FIONREAD - Return number of bytes available for reading
+             * Phase 4: Full implementation for pipes, sockets, and regular files
+             *
+             * Behavior by file type:
+             * - Pipes (VN_FIFO): Return bytes in pipe buffer
+             * - Sockets (VN_SOCK): Return bytes in socket receive buffer
+             * - Regular files (VN_REG): Return bytes from current offset to end of file
+             * - Other types: Return ENOTTY (not supported)
+             */
+
+            if (!argp) {
+                fut_printf("[IOCTL] ioctl(fd=%d, FIONREAD) -> EFAULT (NULL argp)\n", fd);
+                return -EFAULT;
+            }
+
+            int bytes_available = 0;
+
+            /* Check file type and calculate available bytes */
+            if (file->vnode) {
+                switch (file->vnode->type) {
+                    case VN_FIFO: {
+                        /* Pipe: get bytes from pipe buffer */
+                        struct pipe_buffer {
+                            uint8_t *data;
+                            size_t size;
+                            size_t read_pos;
+                            size_t write_pos;
+                            size_t count;  /* Bytes available */
+                            /* ... other fields ... */
+                        };
+                        struct pipe_buffer *pipe = (struct pipe_buffer *)file->chr_private;
+                        if (pipe) {
+                            bytes_available = (int)pipe->count;
+                        }
+                        break;
+                    }
+
+                    case VN_SOCK: {
+                        /* Socket: get bytes from receive buffer
+                         * For sockets, we need to check the socket pair's recv buffer */
+                        extern int fut_socket_bytes_available(int sockfd);
+                        int sock_bytes = fut_socket_bytes_available(fd);
+                        if (sock_bytes >= 0) {
+                            bytes_available = sock_bytes;
+                        }
+                        break;
+                    }
+
+                    case VN_REG: {
+                        /* Regular file: bytes from current offset to end of file */
+                        if (file->offset < file->vnode->size) {
+                            bytes_available = (int)(file->vnode->size - file->offset);
+                        } else {
+                            bytes_available = 0;
+                        }
+                        break;
+                    }
+
+                    default:
+                        /* Not supported for this file type */
+                        fut_printf("[IOCTL] ioctl(fd=%d, FIONREAD) -> ENOTTY (unsupported file type %d)\n",
+                                   fd, file->vnode->type);
+                        return -ENOTTY;
+                }
+            } else if (file->chr_ops) {
+                /* Character device - not implemented yet */
+                fut_printf("[IOCTL] ioctl(fd=%d, FIONREAD) -> ENOTTY (char device not supported)\n", fd);
+                return -ENOTTY;
+            } else {
+                fut_printf("[IOCTL] ioctl(fd=%d, FIONREAD) -> EBADF (no vnode or ops)\n", fd);
+                return -EBADF;
+            }
+
+            /* Copy result to userspace */
+            if (fut_copy_to_user(argp, &bytes_available, sizeof(int)) != 0) {
+                fut_printf("[IOCTL] ioctl(fd=%d, FIONREAD) -> EFAULT (copy_to_user failed)\n", fd);
+                return -EFAULT;
+            }
+
+            fut_printf("[IOCTL] ioctl(fd=%d, FIONREAD) -> 0 (available: %d bytes, Phase 4)\n",
+                       fd, bytes_available);
             return 0;
+        }
         default:
             fut_printf("[IOCTL] ioctl(fd=%d, request=0x%lx [%s], argp=%p) -> ENOTTY (no ioctl op)\n",
                        fd, request, request_name, argp);

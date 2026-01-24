@@ -992,3 +992,32 @@ int fut_socket_poll(fut_socket_t *socket, int events) {
 
     return ready;
 }
+
+/**
+ * Get number of bytes available for reading from socket (for FIONREAD ioctl).
+ *
+ * @param sockfd Socket file descriptor
+ * @return Number of bytes available, or -1 on error
+ */
+int fut_socket_bytes_available(int sockfd) {
+    /* Get socket from file descriptor */
+    extern fut_socket_t *get_socket_from_fd(int fd);
+    fut_socket_t *socket = get_socket_from_fd(sockfd);
+
+    if (!socket) {
+        return -1;
+    }
+
+    /* Only connected sockets have data to read */
+    if (socket->state != FUT_SOCK_CONNECTED || !socket->pair_reverse) {
+        return 0;
+    }
+
+    /* Calculate bytes available in receive buffer
+     * pair_reverse points to the socket pair that represents our receive direction */
+    fut_socket_pair_t *recv_pair = socket->pair_reverse;
+    uint32_t bytes_available = (recv_pair->recv_head + recv_pair->recv_size -
+                                recv_pair->recv_tail) % recv_pair->recv_size;
+
+    return (int)bytes_available;
+}

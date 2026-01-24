@@ -540,17 +540,26 @@ static int64_t sys_uname(uint64_t buf_ptr, uint64_t arg1, uint64_t arg2,
 static int64_t sys_getcwd_wrapper(uint64_t buf_ptr, uint64_t size, uint64_t arg2,
                                   uint64_t arg3, uint64_t arg4, uint64_t arg5) {
     (void)arg2; (void)arg3; (void)arg4; (void)arg5;
-    return (int64_t)sys_getcwd((char *)buf_ptr, (size_t)size);
+    /* ARM64: Stabilize parameters */
+    char * const buf_stable = (char *)(uintptr_t)buf_ptr;
+    const size_t size_stable = (size_t)size;
+    return (int64_t)sys_getcwd(buf_stable, size_stable);
 }
 
 /* sys_chdir_wrapper - change current working directory (ARM64 syscall ABI)
  * x0 = path
  * Wraps kernel sys_chdir() for ARM64 calling convention
+ *
+ * ARM64 FIX: Stabilize register-passed parameters immediately to prevent
+ * corruption when blocking operations occur. Register parameters may be
+ * clobbered upon scheduler resumption if not copied to stack-based locals.
  */
 static int64_t sys_chdir_wrapper(uint64_t path_ptr, uint64_t arg1, uint64_t arg2,
                                  uint64_t arg3, uint64_t arg4, uint64_t arg5) {
     (void)arg1; (void)arg2; (void)arg3; (void)arg4; (void)arg5;
-    return (int64_t)sys_chdir((const char *)path_ptr);
+    /* Stabilize pointer parameter to prevent register aliasing corruption */
+    const char * const path_stable = (const char *)(uintptr_t)path_ptr;
+    return (int64_t)sys_chdir(path_stable);
 }
 
 /* struct fut_stat and S_IF* constants provided by shared/fut_stat.h */
@@ -562,7 +571,12 @@ static int64_t sys_chdir_wrapper(uint64_t path_ptr, uint64_t arg1, uint64_t arg2
 static int64_t sys_openat_wrapper(uint64_t dirfd, uint64_t path_ptr, uint64_t flags,
                                   uint64_t mode, uint64_t arg4, uint64_t arg5) {
     (void)arg4; (void)arg5;
-    return (int64_t)sys_openat((int)dirfd, (const char *)path_ptr, (int)flags, (int)mode);
+    /* ARM64: Stabilize parameters */
+    const int dirfd_stable = (int)dirfd;
+    const char * const path_stable = (const char *)(uintptr_t)path_ptr;
+    const int flags_stable = (int)flags;
+    const int mode_stable = (int)mode;
+    return (int64_t)sys_openat(dirfd_stable, path_stable, flags_stable, mode_stable);
 }
 
 /* sys_close_wrapper - close file descriptor
@@ -601,7 +615,11 @@ static int64_t sys_fork_wrapper(uint64_t arg0, uint64_t arg1, uint64_t arg2,
 static int64_t sys_execve_wrapper(uint64_t pathname, uint64_t argv, uint64_t envp,
                                   uint64_t arg3, uint64_t arg4, uint64_t arg5) {
     (void)arg3; (void)arg4; (void)arg5;
-    return sys_execve((const char *)pathname, (char *const *)argv, (char *const *)envp);
+    /* ARM64: Stabilize parameters - critical for exec */
+    const char * const pathname_stable = (const char *)(uintptr_t)pathname;
+    char * const * const argv_stable = (char * const *)(uintptr_t)argv;
+    char * const * const envp_stable = (char * const *)(uintptr_t)envp;
+    return sys_execve(pathname_stable, argv_stable, envp_stable);
 }
 
 /* sys_waitpid_wrapper - wait for process to change state
@@ -775,7 +793,10 @@ static int64_t sys_getsockopt_wrapper(uint64_t sockfd, uint64_t level, uint64_t 
 static int64_t sys_mkdir_wrapper(uint64_t pathname, uint64_t mode, uint64_t arg2,
                                   uint64_t arg3, uint64_t arg4, uint64_t arg5) {
     (void)arg2; (void)arg3; (void)arg4; (void)arg5;
-    return sys_mkdir((const char *)pathname, (uint32_t)mode);
+    /* ARM64: Stabilize parameters */
+    const char * const pathname_stable = (const char *)(uintptr_t)pathname;
+    const uint32_t mode_stable = (uint32_t)mode;
+    return sys_mkdir(pathname_stable, mode_stable);
 }
 
 /* sys_rmdir_wrapper - remove directory (Futura 1-arg version)
@@ -785,7 +806,9 @@ static int64_t sys_mkdir_wrapper(uint64_t pathname, uint64_t mode, uint64_t arg2
 static int64_t sys_rmdir_wrapper(uint64_t pathname, uint64_t arg1, uint64_t arg2,
                                   uint64_t arg3, uint64_t arg4, uint64_t arg5) {
     (void)arg1; (void)arg2; (void)arg3; (void)arg4; (void)arg5;
-    return sys_rmdir((const char *)pathname);
+    /* ARM64: Stabilize pathname parameter */
+    const char * const pathname_stable = (const char *)(uintptr_t)pathname;
+    return sys_rmdir(pathname_stable);
 }
 
 /* sys_unlink_wrapper - delete file (Futura 1-arg version)
@@ -795,7 +818,9 @@ static int64_t sys_rmdir_wrapper(uint64_t pathname, uint64_t arg1, uint64_t arg2
 static int64_t sys_unlink_wrapper(uint64_t pathname, uint64_t arg1, uint64_t arg2,
                                    uint64_t arg3, uint64_t arg4, uint64_t arg5) {
     (void)arg1; (void)arg2; (void)arg3; (void)arg4; (void)arg5;
-    return sys_unlink((const char *)pathname);
+    /* ARM64: Stabilize pathname parameter */
+    const char * const pathname_stable = (const char *)(uintptr_t)pathname;
+    return sys_unlink(pathname_stable);
 }
 
 /* sys_mkdirat_wrapper - create directory (POSIX 3-arg version)

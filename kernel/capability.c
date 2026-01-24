@@ -163,23 +163,8 @@ fut_handle_t fut_cap_open(const char *path, int flags, int mode) {
         return FUT_INVALID_HANDLE;
     }
 
-    /* Convert flags to capability rights */
-    fut_rights_t rights = fut_cap_flags_to_rights(flags);
-
-    /* TODO: Integrate with VFS to open file and create capability handle
-     * This requires updating fut_vfs_open() to return capability handles
-     * instead of integer file descriptors.
-     *
-     * Planned implementation:
-     *   1. Call fut_vfs_open(path, flags, mode) -> returns file structure
-     *   2. Create capability object: fut_object_create(FUT_OBJ_FILE, rights, file)
-     *   3. Return capability handle
-     */
-
-    fut_printf("[CAP] fut_cap_open(\"%s\", flags=0x%x, mode=0%o) -> rights=0x%llx (STUB)\n",
-               path, flags, mode, rights);
-
-    return FUT_INVALID_HANDLE;  /* Stub: return invalid until VFS integration */
+    /* Use VFS capability-aware open function */
+    return fut_vfs_open_cap(path, flags, mode);
 }
 
 long fut_cap_read(fut_handle_t handle, void *buffer, size_t count) {
@@ -187,27 +172,8 @@ long fut_cap_read(fut_handle_t handle, void *buffer, size_t count) {
         return -EINVAL;
     }
 
-    /* Validate READ rights */
-    if (!fut_cap_validate(handle, FUT_RIGHT_READ)) {
-        fut_printf("[CAP] fut_cap_read: handle lacks READ rights\n");
-        return -EPERM;
-    }
-
-    /* Get object */
-    fut_object_t *obj = fut_object_get(handle, FUT_RIGHT_READ);
-    if (!obj) {
-        return -EBADF;
-    }
-
-    /* TODO: Call VFS read operation with object data
-     * struct fut_file *file = (struct fut_file *)obj->data;
-     * long result = fut_vfs_read(file, buffer, count);
-     */
-
-    fut_object_put(obj);
-
-    fut_printf("[CAP] fut_cap_read(handle=%llu, count=%zu) (STUB)\n", handle, count);
-    return -ENOSYS;  /* Stub: not yet implemented */
+    /* Use VFS capability-aware read function */
+    return fut_vfs_read_cap(handle, buffer, count);
 }
 
 long fut_cap_write(fut_handle_t handle, const void *buffer, size_t count) {
@@ -215,27 +181,8 @@ long fut_cap_write(fut_handle_t handle, const void *buffer, size_t count) {
         return -EINVAL;
     }
 
-    /* Validate WRITE rights */
-    if (!fut_cap_validate(handle, FUT_RIGHT_WRITE)) {
-        fut_printf("[CAP] fut_cap_write: handle lacks WRITE rights\n");
-        return -EPERM;
-    }
-
-    /* Get object */
-    fut_object_t *obj = fut_object_get(handle, FUT_RIGHT_WRITE);
-    if (!obj) {
-        return -EBADF;
-    }
-
-    /* TODO: Call VFS write operation with object data
-     * struct fut_file *file = (struct fut_file *)obj->data;
-     * long result = fut_vfs_write(file, buffer, count);
-     */
-
-    fut_object_put(obj);
-
-    fut_printf("[CAP] fut_cap_write(handle=%llu, count=%zu) (STUB)\n", handle, count);
-    return -ENOSYS;  /* Stub: not yet implemented */
+    /* Use VFS capability-aware write function */
+    return fut_vfs_write_cap(handle, buffer, count);
 }
 
 long fut_cap_lseek(fut_handle_t handle, int64_t offset, int whence) {
@@ -243,22 +190,8 @@ long fut_cap_lseek(fut_handle_t handle, int64_t offset, int whence) {
         return -EINVAL;
     }
 
-    /* Validate handle is valid (no specific rights needed for seek) */
-    fut_object_t *obj = fut_object_get(handle, FUT_RIGHT_NONE);
-    if (!obj) {
-        return -EBADF;
-    }
-
-    /* TODO: Call VFS lseek operation
-     * struct fut_file *file = (struct fut_file *)obj->data;
-     * long result = fut_vfs_lseek(file, offset, whence);
-     */
-
-    fut_object_put(obj);
-
-    fut_printf("[CAP] fut_cap_lseek(handle=%llu, offset=%lld, whence=%d) (STUB)\n",
-               handle, offset, whence);
-    return -ENOSYS;  /* Stub: not yet implemented */
+    /* Use VFS capability-aware lseek function */
+    return fut_vfs_lseek_cap(handle, offset, whence);
 }
 
 int fut_cap_fsync(fut_handle_t handle) {
@@ -266,27 +199,8 @@ int fut_cap_fsync(fut_handle_t handle) {
         return -EINVAL;
     }
 
-    /* Validate WRITE rights (data must be writable to sync) */
-    if (!fut_cap_validate(handle, FUT_RIGHT_WRITE)) {
-        fut_printf("[CAP] fut_cap_fsync: handle lacks WRITE rights\n");
-        return -EPERM;
-    }
-
-    /* Get object */
-    fut_object_t *obj = fut_object_get(handle, FUT_RIGHT_WRITE);
-    if (!obj) {
-        return -EBADF;
-    }
-
-    /* TODO: Call VFS fsync operation
-     * struct fut_file *file = (struct fut_file *)obj->data;
-     * int result = fut_vfs_fsync(file);
-     */
-
-    fut_object_put(obj);
-
-    fut_printf("[CAP] fut_cap_fsync(handle=%llu) (STUB)\n", handle);
-    return -ENOSYS;  /* Stub: not yet implemented */
+    /* Use VFS capability-aware fsync function */
+    return fut_vfs_fsync_cap(handle);
 }
 
 int fut_cap_fstat(fut_handle_t handle, struct stat *statbuf) {
@@ -294,21 +208,8 @@ int fut_cap_fstat(fut_handle_t handle, struct stat *statbuf) {
         return -EINVAL;
     }
 
-    /* Validate handle is valid (no specific rights needed for metadata) */
-    fut_object_t *obj = fut_object_get(handle, FUT_RIGHT_NONE);
-    if (!obj) {
-        return -EBADF;
-    }
-
-    /* TODO: Call VFS fstat operation
-     * struct fut_file *file = (struct fut_file *)obj->data;
-     * int result = fut_vfs_fstat(file, statbuf);
-     */
-
-    fut_object_put(obj);
-
-    fut_printf("[CAP] fut_cap_fstat(handle=%llu) (STUB)\n", handle);
-    return -ENOSYS;  /* Stub: not yet implemented */
+    /* Use VFS capability-aware fstat function */
+    return fut_vfs_fstat_cap(handle, (struct fut_stat *)statbuf);
 }
 
 int fut_cap_close(fut_handle_t handle) {
@@ -338,19 +239,8 @@ int fut_cap_mkdirat(fut_handle_t parent_handle, const char *name, int mode) {
         return -EINVAL;
     }
 
-    /* Validate parent has WRITE|ADMIN rights */
-    if (!fut_cap_validate(parent_handle, FUT_RIGHT_WRITE | FUT_RIGHT_ADMIN)) {
-        fut_printf("[CAP] fut_cap_mkdirat: parent handle lacks WRITE|ADMIN rights\n");
-        return -EPERM;
-    }
-
-    /* TODO: Implement directory creation via VFS
-     * Get parent directory from handle, create child directory
-     */
-
-    fut_printf("[CAP] fut_cap_mkdirat(parent=%llu, name=\"%s\", mode=0%o) (STUB)\n",
-               parent_handle, name, mode);
-    return -ENOSYS;  /* Stub: not yet implemented */
+    /* Use VFS capability-aware mkdirat function */
+    return fut_vfs_mkdirat_cap(parent_handle, name, mode);
 }
 
 int fut_cap_rmdirat(fut_handle_t parent_handle, const char *name) {
@@ -358,17 +248,8 @@ int fut_cap_rmdirat(fut_handle_t parent_handle, const char *name) {
         return -EINVAL;
     }
 
-    /* Validate parent has ADMIN rights */
-    if (!fut_cap_validate(parent_handle, FUT_RIGHT_ADMIN)) {
-        fut_printf("[CAP] fut_cap_rmdirat: parent handle lacks ADMIN rights\n");
-        return -EPERM;
-    }
-
-    /* TODO: Implement directory removal via VFS */
-
-    fut_printf("[CAP] fut_cap_rmdirat(parent=%llu, name=\"%s\") (STUB)\n",
-               parent_handle, name);
-    return -ENOSYS;  /* Stub: not yet implemented */
+    /* Use VFS capability-aware rmdirat function */
+    return fut_vfs_rmdirat_cap(parent_handle, name);
 }
 
 int fut_cap_unlinkat(fut_handle_t parent_handle, const char *name) {
@@ -376,17 +257,8 @@ int fut_cap_unlinkat(fut_handle_t parent_handle, const char *name) {
         return -EINVAL;
     }
 
-    /* Validate parent has ADMIN rights */
-    if (!fut_cap_validate(parent_handle, FUT_RIGHT_ADMIN)) {
-        fut_printf("[CAP] fut_cap_unlinkat: parent handle lacks ADMIN rights\n");
-        return -EPERM;
-    }
-
-    /* TODO: Implement file removal via VFS */
-
-    fut_printf("[CAP] fut_cap_unlinkat(parent=%llu, name=\"%s\") (STUB)\n",
-               parent_handle, name);
-    return -ENOSYS;  /* Stub: not yet implemented */
+    /* Use VFS capability-aware unlinkat function */
+    return fut_vfs_unlinkat_cap(parent_handle, name);
 }
 
 int fut_cap_statat(fut_handle_t parent_handle, const char *name, struct stat *statbuf) {
@@ -394,17 +266,8 @@ int fut_cap_statat(fut_handle_t parent_handle, const char *name, struct stat *st
         return -EINVAL;
     }
 
-    /* Validate parent has READ rights */
-    if (!fut_cap_validate(parent_handle, FUT_RIGHT_READ)) {
-        fut_printf("[CAP] fut_cap_statat: parent handle lacks READ rights\n");
-        return -EPERM;
-    }
-
-    /* TODO: Implement stat operation via VFS */
-
-    fut_printf("[CAP] fut_cap_statat(parent=%llu, name=\"%s\") (STUB)\n",
-               parent_handle, name);
-    return -ENOSYS;  /* Stub: not yet implemented */
+    /* Use VFS capability-aware statat function */
+    return fut_vfs_statat_cap(parent_handle, name, (struct fut_stat *)statbuf);
 }
 
 /* ============================================================

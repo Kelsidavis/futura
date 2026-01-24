@@ -393,28 +393,22 @@ long sys_ioctl(int fd, unsigned long request, void *argp) {
 
     /* Identify request type for logging */
     const char *request_name = "UNKNOWN";
-    const char *request_category = "unknown";
 
     switch (request) {
         case TCGETS:
             request_name = "TCGETS";
-            request_category = "terminal";
             break;
         case TCSETS:
             request_name = "TCSETS";
-            request_category = "terminal";
             break;
         case TIOCGWINSZ:
             request_name = "TIOCGWINSZ";
-            request_category = "terminal";
             break;
         case FIONREAD:
             request_name = "FIONREAD";
-            request_category = "file";
             break;
         default:
             request_name = "UNKNOWN";
-            request_category = "unknown";
             break;
     }
 

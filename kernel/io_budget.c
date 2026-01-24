@@ -173,3 +173,39 @@ void fut_io_budget_reset(fut_task_t *task) {
     task->io_ops_current = 0;
     task->io_budget_reset_time_ms = fut_get_ticks();
 }
+
+/**
+ * Check I/O rate limit and consume one operation (convenience wrapper).
+ *
+ * This is a convenience function that checks the rate limit and automatically
+ * consumes one operation if allowed. Returns standard errno values.
+ *
+ * @param syscall_name Name of syscall for logging (e.g., "read", "write")
+ * @return 0 if operation allowed (and consumed), -EAGAIN if rate limited
+ *
+ * Usage:
+ *   int ret = fut_io_check_and_consume(task, "read");
+ *   if (ret < 0) return ret;  // Rate limited
+ *   // ... perform I/O operation ...
+ */
+int fut_io_check_and_consume(fut_task_t *task, const char *syscall_name) {
+    if (!task) {
+        return 0;  /* No task = no limit (boot/kernel context) */
+    }
+
+    uint64_t now_ms = fut_get_ticks();
+
+    /* Check if operation is allowed */
+    if (!fut_io_budget_check_ops(task, 1, now_ms)) {
+        /* Rate limit exceeded */
+        fut_printf("[IO-RATE-LIMIT] %s() rate limit exceeded for pid %llu: "
+                   "%llu ops >= %llu limit (Phase 5: DoS prevention)\n",
+                   syscall_name, task->pid, task->io_ops_current, task->io_ops_per_sec);
+        return -11;  /* -EAGAIN */
+    }
+
+    /* Consume the operation */
+    fut_io_budget_consume_ops(task, 1);
+
+    return 0;
+}

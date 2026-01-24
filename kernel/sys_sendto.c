@@ -132,6 +132,14 @@ ssize_t sys_sendto(int sockfd, const void *buf, size_t len, int flags,
         return -ESRCH;
     }
 
+    /* Phase 5: I/O Rate Limiting (DoS Prevention)
+     * Check per-process I/O operation rate limit before performing network I/O.
+     * This prevents CPU exhaustion via tight sendto() loops. */
+    int rate_limit_result = fut_io_check_and_consume(task, "sendto");
+    if (rate_limit_result < 0) {
+        return rate_limit_result;  /* -EAGAIN if rate limit exceeded */
+    }
+
     /* Phase 2: Validate sockfd */
     if (local_sockfd < 0) {
         fut_printf("[SENDTO] sendto(sockfd=%d) -> EBADF (negative fd)\n", local_sockfd);

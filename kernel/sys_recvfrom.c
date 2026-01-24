@@ -16,6 +16,7 @@
 #include <kernel/fut_task.h>
 #include <kernel/fut_vfs.h>
 #include <kernel/fut_memory.h>
+#include <kernel/fut_io_budget.h>
 #include <kernel/uaccess.h>
 #include <kernel/errno.h>
 #include <kernel/fut_socket.h>
@@ -118,6 +119,14 @@ ssize_t sys_recvfrom(int sockfd, void *buf, size_t len, int flags,
     if (!task) {
         fut_printf("[RECVFROM] recvfrom(sockfd=%d) -> ESRCH (no current task)\n", local_sockfd);
         return -ESRCH;
+    }
+
+    /* Phase 5: I/O Rate Limiting (DoS Prevention)
+     * Check per-process I/O operation rate limit before performing network I/O.
+     * This prevents CPU exhaustion via tight recvfrom() loops. */
+    int rate_limit_result = fut_io_check_and_consume(task, "recvfrom");
+    if (rate_limit_result < 0) {
+        return rate_limit_result;  /* -EAGAIN if rate limit exceeded */
     }
 
     /* Phase 2: Validate sockfd */

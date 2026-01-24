@@ -102,3 +102,15 @@ void fut_io_budget_set_ops_limit(fut_task_t *task, uint64_t ops);
  * @param task Task to reset budget for
  */
 void fut_io_budget_reset(fut_task_t *task);
+
+/**
+ * Check I/O rate limit and consume one operation (convenience wrapper).
+ *
+ * Combines check and consume into a single call, returning standard errno values.
+ * This is the recommended function to call from I/O syscalls for rate limiting.
+ *
+ * @param task         Task to check and consume budget for
+ * @param syscall_name Name of syscall for logging (e.g., "read", "write", "sendto")
+ * @return 0 if operation allowed (and consumed), -EAGAIN if rate limited
+ */
+int fut_io_check_and_consume(fut_task_t *task, const char *syscall_name);

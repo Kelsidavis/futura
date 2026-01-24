@@ -26,6 +26,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <stdbool.h>
+#include <string.h>
 
 /* ============================================================
  *   Cross-Platform Constants
@@ -52,6 +53,7 @@
 /* PCI vendor IDs for graphics devices */
 #define PCI_VENDOR_VIRTIO   0x1AF4  /* Red Hat / VirtIO */
 #define PCI_VENDOR_CIRRUS   0x1013  /* Cirrus Logic */
+#define PCI_VENDOR_BOCHS    0x1234  /* Bochs / QEMU stdvga */
 
 /* Legacy framebuffer physical addresses (fallback when PCI discovery fails) */
 #define FB_PHYS_QEMU_CIRRUS 0xF0000000ULL  /* Standard QEMU Cirrus address */
@@ -121,32 +123,19 @@ static const void *mb2_next_tag(const struct multiboot_tag *tag) {
 }
 
 int fb_probe_from_multiboot(const void *mb_info) {
-    fut_printf("[FB] fb_probe_from_multiboot called, mb_info=%p\n", mb_info);
     if (!mb_info) {
-        fut_printf("[FB] No multiboot info provided, skipping tag parsing and using fallback\n");
         goto fallback;
     }
 
     const struct multiboot_tag *tag =
         (const struct multiboot_tag *)((const uint8_t *)mb_info + 8);
 
-    int tag_count = 0;
     while (tag && tag->type != 0) {
-        tag_count++;
-        fut_printf("[FB] tag #%d: type=%u size=%u\n",
-                   tag_count, (unsigned)tag->type, (unsigned)tag->size);
         if (tag->type == MB2_TAG_FRAMEBUFFER &&
             tag->size >= sizeof(struct multiboot_tag_framebuffer)) {
             const struct multiboot_tag_framebuffer *fbtag =
                 (const struct multiboot_tag_framebuffer *)tag;
 
-            fut_printf("[FB] fb tag found: addr=0x%llx %ux%u bpp=%u pitch=%u type=%u\n",
-                       (unsigned long long)fbtag->framebuffer_addr,
-                       fbtag->framebuffer_width,
-                       fbtag->framebuffer_height,
-                       fbtag->framebuffer_bpp,
-                       fbtag->framebuffer_pitch,
-                       (unsigned)fbtag->framebuffer_type);
             g_fb_hw.phys = fbtag->framebuffer_addr;
             g_fb_hw.info.width = fbtag->framebuffer_width;
             g_fb_hw.info.height = fbtag->framebuffer_height;
@@ -154,66 +143,24 @@ int fb_probe_from_multiboot(const void *mb_info) {
             g_fb_hw.info.bpp = fbtag->framebuffer_bpp;
             g_fb_hw.info.flags = FB_FLAG_LINEAR;
             g_fb_available = true;
+            fut_printf("[FB] Multiboot: %ux%u @ 0x%llx\n",
+                       fbtag->framebuffer_width, fbtag->framebuffer_height,
+                       (unsigned long long)fbtag->framebuffer_addr);
             return 0;
         }
 
         tag = (const struct multiboot_tag *)mb2_next_tag(tag);
     }
-    fut_printf("[FB] parsed %d tags, no framebuffer tag found\n", tag_count);
 
 fallback:
-    /* Fallback for boot loaders that did not supply a framebuffer tag.
-     *
-     * With direct kernel boot (-kernel flag), QEMU doesn't provide multiboot info.
-     * We fall back to PCI discovery + hardcoded address.
-     */
-#if defined(WAYLAND_INTERACTIVE_MODE) || defined(__aarch64__)
-    bool fb_fallback = true;
-#ifdef WAYLAND_INTERACTIVE_MODE
-    fut_printf("[FB] Auto-enabling fallback for interactive/direct boot (WAYLAND_INTERACTIVE_MODE=%d)\n",
-               WAYLAND_INTERACTIVE_MODE);
-#else
-    fut_printf("[FB] Auto-enabling fallback for ARM64 direct boot\n");
-#endif
-#else
-    /* Boot arguments may not be parsed yet when this runs. Direct kernel boot
-     * (without a Multiboot framebuffer) therefore defaults to the fallback,
-     * but users can opt-out later via the fb=0 boot flag. */
-    bool fb_fallback = true;
-#endif
-
-    fut_printf("[FB] fb-fallback flag: %d\n", fb_fallback ? 1 : 0);
-    if (!fb_fallback) {
-        fut_printf("[FB] fallback disabled, returning\n");
-        return -ENODEV;
-    }
-    fut_printf("[FB] enabling fallback geometry (fb-fallback=1)\n");
-
+    /* Fallback for direct kernel boot (-kernel flag) without Multiboot info */
 #ifdef __x86_64__
     /* Try to discover VGA device via PCI */
-    fut_printf("[FB] Attempting PCI VGA device discovery...\n");
     uint64_t pci_framebuffer = pci_find_vga_framebuffer();
-
-    if (pci_framebuffer != 0) {
-        /* Successfully discovered via PCI */
-        g_fb_hw.phys = pci_framebuffer;
-        fut_printf("[FB] Using PCI-discovered framebuffer at 0x%llx\n",
-                   (unsigned long long)g_fb_hw.phys);
-    } else {
-        /* Fall back to safe address in RAM */
-        fut_printf("[FB] PCI discovery failed, using hardcoded fallback address\n");
-        /* Use FB_PHYS_FALLBACK (64MB) - safe position in physical RAM
-         * Well within 128MB boot mapping, doesn't conflict with kernel/heap/processes */
-        g_fb_hw.phys = FB_PHYS_FALLBACK;
-        fut_printf("[FB] Using fallback address 0x%llx\n",
-                   (unsigned long long)g_fb_hw.phys);
-    }
+    g_fb_hw.phys = pci_framebuffer ? pci_framebuffer : FB_PHYS_FALLBACK;
 #else
-    /* ARM64: No PCI discovery yet, use fallback address */
-    fut_printf("[FB] ARM64: skipping PCI VGA discovery, using fallback address\n");
+    /* ARM64: use fallback address */
     g_fb_hw.phys = FB_PHYS_FALLBACK;
-    fut_printf("[FB] Using fallback address 0x%llx\n",
-               (unsigned long long)g_fb_hw.phys);
 #endif
 
     g_fb_hw.info.width = FB_DEFAULT_WIDTH;
@@ -263,102 +210,69 @@ void fb_boot_splash(void) {
     uint16_t vendor_slot3 = (uint16_t)(vdid_slot3 & 0xFFFF);
 
     if (vendor_slot3 == PCI_VENDOR_VIRTIO) {
-        /* virtio-gpu detected at slot 3 - initialize with BAR4 */
-        fut_printf("[FB] virtio-gpu detected at slot 3, initializing with modern interface\n");
+        /* virtio-gpu detected at slot 3 */
         uint64_t virtio_fb_phys = 0;
         if (virtio_gpu_init(&virtio_fb_phys, g_fb_hw.info.width, g_fb_hw.info.height) == 0) {
-            fut_printf("[FB] VIRTIO GPU initialized successfully\n");
-            /* Update the framebuffer address to the virtio guest framebuffer */
             g_fb_hw.phys = virtio_fb_phys;
-            fut_printf("[FB] Updated framebuffer address to virtio guest FB: 0x%llx\n",
-                       (unsigned long long)g_fb_hw.phys);
 
-            /* Map the virtio guest framebuffer and write test pattern */
+            /* Map the virtio guest framebuffer */
             uint64_t phys_base = PAGE_ALIGN_DOWN(virtio_fb_phys);
             uint64_t offset = virtio_fb_phys - phys_base;
             uint64_t fb_size = (size_t)g_fb_hw.info.pitch * (size_t)g_fb_hw.info.height;
             uint64_t map_size = fb_size + offset;
             uintptr_t virt_base = (uintptr_t)pmap_phys_to_virt(phys_base);
 
-            fut_printf("[FB] Mapping virtio guest FB: phys=0x%llx size=0x%llx\n",
-                       (unsigned long long)phys_base,
-                       (unsigned long long)map_size);
-
             if (pmap_map((uint64_t)virt_base,
                          phys_base,
                          map_size,
                          PTE_KERNEL_RW | PTE_WRITE_THROUGH | PTE_CACHE_DISABLE) != 0) {
-                fut_printf("[FB] Failed to map virtio guest framebuffer\n");
+                fut_printf("[FB] virtio-gpu map failed\n");
                 return;
             }
 
             g_fb_virt = (volatile uint8_t *)(uintptr_t)(virt_base + offset);
             g_fb_hw.length = map_size;
 
-            /* Initialize framebuffer with black screen - compositor will take over */
-            volatile uint32_t *fb = (volatile uint32_t *)g_fb_virt;
-            fut_printf("[FB] Clearing virtio framebuffer for compositor\n");
-
-            /* Clear screen to black */
-            for (uint32_t y = 0; y < g_fb_hw.info.height; ++y) {
-                for (uint32_t x = 0; x < g_fb_hw.info.width; ++x) {
-                    fb[y * g_fb_hw.info.width + x] = ARGB_BLACK;
-                }
-            }
-
-            fut_printf("[FB] Framebuffer cleared, flushing display...\n");
+            /* Clear screen to black using memset */
+            memset((void *)g_fb_virt, 0, fb_size);
             virtio_gpu_flush_display();
-            fut_printf("[FB] Framebuffer ready for compositor\n");
+            fut_printf("[FB] virtio-gpu ready\n");
             return;
-        } else {
-            fut_printf("[FB] VIRTIO GPU init failed, continuing with fallback\n");
         }
     } else if (vendor_slot2 == PCI_VENDOR_CIRRUS) {
-        /* Cirrus VGA detected at slot 2 - initialize properly */
         if (cirrus_vga_init() != 0) {
-            fut_printf("[FB] Cirrus VGA init failed, skipping splash\n");
             return;
         }
+    } else if (vendor_slot2 == PCI_VENDOR_BOCHS) {
+        /* Bochs/QEMU stdvga - initialize VBE mode */
+        bochs_vga_init(g_fb_hw.info.width, g_fb_hw.info.height, g_fb_hw.info.bpp);
     } else {
-        fut_printf("[FB] Slot 2 vendor 0x%04x, Slot 3 vendor 0x%04x, proceeding\n",
-                   vendor_slot2, vendor_slot3);
+        /* Check all PCI slots for bochs VGA */
+        for (uint8_t slot = 0; slot < 32; slot++) {
+            uint32_t vdid = pci_config_read_bdf(0, slot, 0, 0x00);
+            uint16_t vendor = (uint16_t)(vdid & 0xFFFF);
+            if (vendor == PCI_VENDOR_BOCHS) {
+                bochs_vga_init(g_fb_hw.info.width, g_fb_hw.info.height, g_fb_hw.info.bpp);
+                break;
+            }
+        }
     }
 
-    /* Try multiple addresses in order:
-     * 1. Discovered BAR address (most reliable - what PCI config says)
-     * 2. Standard QEMU Cirrus address (fallback)
-     * 3. Legacy/fallback addresses
-     */
+    /* Try to map framebuffer at discovered address, with fallbacks */
     uint64_t addresses[] = { g_fb_hw.phys, FB_PHYS_QEMU_CIRRUS, FB_PHYS_LEGACY };
-    uint64_t test_addr = 0;
 
     for (int attempt = 0; attempt < 3; attempt++) {
-        test_addr = addresses[attempt];
-        if (attempt == 0) {
-            fut_printf("[FB] Primary attempt: standard QEMU address 0x%llx\n",
-                       (unsigned long long)test_addr);
-        } else {
-            fut_printf("[FB] Fallback attempt %d: 0x%llx\n",
-                       attempt,
-                       (unsigned long long)test_addr);
-        }
-
+        uint64_t test_addr = addresses[attempt];
         uint64_t phys_base = PAGE_ALIGN_DOWN(test_addr);
         uint64_t offset = test_addr - phys_base;
         uint64_t fb_size = (size_t)g_fb_hw.info.pitch * (size_t)g_fb_hw.info.height;
         uint64_t map_size = fb_size + offset;
         uintptr_t virt_base = (uintptr_t)pmap_phys_to_virt(phys_base);
 
-        fut_printf("[FB] Map attempt %d: phys=0x%llx size=0x%llx\n",
-                   attempt + 1,
-                   (unsigned long long)phys_base,
-                   (unsigned long long)map_size);
-
         if (pmap_map((uint64_t)virt_base,
                      phys_base,
                      map_size,
                      PTE_KERNEL_RW | PTE_WRITE_THROUGH | PTE_CACHE_DISABLE) != 0) {
-            fut_printf("[FB] Mapping failed\n");
             continue;
         }
 
@@ -366,12 +280,9 @@ void fb_boot_splash(void) {
         g_fb_hw.length = map_size;
         g_fb_available = true;
 
-        /* Green screen fill disabled - init will launch fbtest GUI instead */
-
         /* Initialize framebuffer console for text output */
         extern int fb_console_init(void);
         fb_console_init();
-        fut_printf("[FB] Framebuffer console initialized\n");
 
         /* Display Futura banner on framebuffer */
         fut_printf("\n");

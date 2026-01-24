@@ -20,4 +20,15 @@ uint64_t pci_find_vga_framebuffer(void);
  */
 int fb_probe_pci_vga(void);
 
+/**
+ * Initialize bochs VGA device to specified resolution and bit depth
+ * This is needed for QEMU's stdvga (bochs VGA) to properly display output
+ *
+ * @param width Display width in pixels
+ * @param height Display height in pixels
+ * @param bpp Bits per pixel (typically 32)
+ * @return 0 on success, -1 on failure
+ */
+int bochs_vga_init(uint16_t width, uint16_t height, uint16_t bpp);
+
 #endif /* KERNEL_VIDEO_PCI_VGA_H */

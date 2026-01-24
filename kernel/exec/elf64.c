@@ -31,12 +31,8 @@
 
 #include <kernel/debug_config.h>
 
-/* ELF debugging (controlled via debug_config.h) */
-#if ELF_DEBUG
+/* ELF debugging - temporarily enabled for debugging */
 #define ELF_LOG(...) fut_printf(__VA_ARGS__)
-#else
-#define ELF_LOG(...) ((void)0)
-#endif
 
 /* TLS block address - placed below stack in user address space */
 #define USER_TLS_BASE   0x00007FFE000000ULL
@@ -654,6 +650,9 @@ static int build_user_stack(fut_mm_t *mm,
 
     /* Call the pure assembly function to perform IRETQ to userspace
      * This function never returns */
+    fut_printf("[EXEC-IRETQ] entry=0x%llx stack=0x%llx argc=%llu argv=0x%llx\n",
+               (unsigned long long)entry, (unsigned long long)stack,
+               (unsigned long long)argc, (unsigned long long)argv_ptr);
     fut_do_user_iretq(entry, stack, argc, argv_ptr);
 
     /* Should NEVER reach here */

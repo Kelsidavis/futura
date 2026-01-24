@@ -35,6 +35,26 @@
 #define PCI_BAR0_OFFSET          0x10
 #define PCI_BAR1_OFFSET          0x14
 
+/* Bochs VBE DISPI Interface */
+#define VBE_DISPI_INDEX_PORT     0x01CE
+#define VBE_DISPI_DATA_PORT      0x01CF
+
+#define VBE_DISPI_INDEX_ID       0x0
+#define VBE_DISPI_INDEX_XRES     0x1
+#define VBE_DISPI_INDEX_YRES     0x2
+#define VBE_DISPI_INDEX_BPP      0x3
+#define VBE_DISPI_INDEX_ENABLE   0x4
+#define VBE_DISPI_INDEX_BANK     0x5
+#define VBE_DISPI_INDEX_VIRT_WIDTH  0x6
+#define VBE_DISPI_INDEX_VIRT_HEIGHT 0x7
+#define VBE_DISPI_INDEX_X_OFFSET 0x8
+#define VBE_DISPI_INDEX_Y_OFFSET 0x9
+
+#define VBE_DISPI_DISABLED       0x00
+#define VBE_DISPI_ENABLED        0x01
+#define VBE_DISPI_LFB_ENABLED    0x40
+#define VBE_DISPI_NOCLEARMEM     0x80
+
 #ifdef __x86_64__
 /* I/O Port access macros */
 static inline uint32_t inl(uint16_t port) {
@@ -45,6 +65,83 @@ static inline uint32_t inl(uint16_t port) {
 
 static inline void outl(uint16_t port, uint32_t value) {
     __asm__ volatile("outl %0, %1" : : "a"(value), "Nd"(port));
+}
+
+static inline uint16_t inw(uint16_t port) {
+    uint16_t result;
+    __asm__ volatile("inw %1, %0" : "=a"(result) : "Nd"(port));
+    return result;
+}
+
+static inline void outw(uint16_t port, uint16_t value) {
+    __asm__ volatile("outw %0, %1" : : "a"(value), "Nd"(port));
+}
+
+/**
+ * Write to bochs VBE DISPI register
+ */
+static void bochs_dispi_write(uint16_t index, uint16_t value) {
+    outw(VBE_DISPI_INDEX_PORT, index);
+    outw(VBE_DISPI_DATA_PORT, value);
+}
+
+/**
+ * Read from bochs VBE DISPI register
+ */
+static uint16_t bochs_dispi_read(uint16_t index) {
+    outw(VBE_DISPI_INDEX_PORT, index);
+    return inw(VBE_DISPI_DATA_PORT);
+}
+
+/**
+ * Initialize bochs VGA to specified resolution and bit depth
+ *
+ * @param width Display width in pixels
+ * @param height Display height in pixels
+ * @param bpp Bits per pixel (typically 32)
+ * @return 0 on success, -1 on failure
+ */
+int bochs_vga_init(uint16_t width, uint16_t height, uint16_t bpp) {
+    /* Check if this is a bochs VGA by reading ID register */
+    uint16_t id = bochs_dispi_read(VBE_DISPI_INDEX_ID);
+
+    /* ID should be 0xB0C0 - 0xB0C5 for bochs VGA */
+    if ((id & 0xFFF0) != 0xB0C0) {
+        return -1;
+    }
+
+    /* Disable VBE first */
+    bochs_dispi_write(VBE_DISPI_INDEX_ENABLE, VBE_DISPI_DISABLED);
+
+    /* Set resolution */
+    bochs_dispi_write(VBE_DISPI_INDEX_XRES, width);
+    bochs_dispi_write(VBE_DISPI_INDEX_YRES, height);
+    bochs_dispi_write(VBE_DISPI_INDEX_BPP, bpp);
+
+    /* Set virtual width/height to match physical */
+    bochs_dispi_write(VBE_DISPI_INDEX_VIRT_WIDTH, width);
+    bochs_dispi_write(VBE_DISPI_INDEX_VIRT_HEIGHT, height);
+
+    /* Set offsets to 0 */
+    bochs_dispi_write(VBE_DISPI_INDEX_X_OFFSET, 0);
+    bochs_dispi_write(VBE_DISPI_INDEX_Y_OFFSET, 0);
+
+    /* Set bank to 0 (for LFB mode) */
+    bochs_dispi_write(VBE_DISPI_INDEX_BANK, 0);
+
+    /* Enable VBE with linear framebuffer, clear video memory to ensure clean start */
+    bochs_dispi_write(VBE_DISPI_INDEX_ENABLE,
+                      VBE_DISPI_ENABLED | VBE_DISPI_LFB_ENABLED);
+
+    /* Verify VBE is enabled */
+    uint16_t enable = bochs_dispi_read(VBE_DISPI_INDEX_ENABLE);
+    if (!(enable & VBE_DISPI_ENABLED)) {
+        fut_printf("[BOCHS] ERROR: VBE not enabled!\n");
+        return -1;
+    }
+
+    fut_printf("[BOCHS] VGA %dx%d @ %dbpp\n", width, height, bpp);
+    return 0;
 }
 #endif
 
@@ -91,7 +188,6 @@ uint64_t pci_find_vga_framebuffer(void) {
         /* Check if device exists */
         uint32_t vendor_device = pci_read_config(0, slot, 0, PCI_VENDOR_ID_OFFSET);
         uint16_t vendor_id = vendor_device & 0xFFFF;
-        uint16_t device_id = (vendor_device >> 16) & 0xFFFF;
 
         /* Skip empty slots */
         if (vendor_id == 0xFFFF || vendor_id == 0x0000) {
@@ -102,21 +198,13 @@ uint64_t pci_find_vga_framebuffer(void) {
         uint32_t class_code = pci_read_config(0, slot, 0, PCI_CLASS_CODE_OFFSET);
         uint32_t class_id = (class_code >> 8) & 0xFFFFFF;
 
-        fut_printf("[PCI] Slot %d: Vendor 0x%04x Device 0x%04x Class 0x%06x\n",
-                   slot, vendor_id, device_id, class_id);
-
         /* Look for VGA devices */
         if ((class_id & PCI_CLASS_VGA_MASK) == PCI_CLASS_VGA) {
-            fut_printf("[PCI] Found VGA device at slot %d (vendor 0x%04x)\n", slot, vendor_id);
-
             /* Read BAR0 (framebuffer base address) */
             uint32_t bar0 = pci_read_config(0, slot, 0, PCI_BAR0_OFFSET);
-            fut_printf("[PCI] BAR0 raw value: 0x%08x\n", bar0);
 
             if (bar0 == 0xFFFFFFFFu || bar0 == 0) {
-                fut_printf("[PCI] BAR0 is invalid, trying BAR1\n");
                 bar0 = pci_read_config(0, slot, 0, PCI_BAR1_OFFSET);
-                fut_printf("[PCI] BAR1 raw value: 0x%08x\n", bar0);
             }
 
             if (bar0 != 0 && bar0 != 0xFFFFFFFFu) {
@@ -127,18 +215,14 @@ uint64_t pci_find_vga_framebuffer(void) {
                     /* 64-bit BAR: need to read BAR0 and BAR1 */
                     uint32_t bar1 = pci_read_config(0, slot, 0, PCI_BAR1_OFFSET);
                     framebuffer_addr = ((uint64_t)bar1 << 32) | (bar0 & ~0x0FuLL);
-                    fut_printf("[PCI] 64-bit BAR: BAR0=0x%08x BAR1=0x%08x -> 0x%llx\n",
-                               bar0, bar1, (unsigned long long)framebuffer_addr);
                 } else {
                     /* 32-bit BAR */
                     framebuffer_addr = bar0 & ~0x0FuLL;
-                    fut_printf("[PCI] 32-bit BAR: 0x%08x -> 0x%llx\n",
-                               bar0, (unsigned long long)framebuffer_addr);
                 }
 
                 if (framebuffer_addr != 0) {
-                    fut_printf("[PCI] VGA Framebuffer at 0x%llx\n",
-                               (unsigned long long)framebuffer_addr);
+                    fut_printf("[PCI] VGA at slot %d, FB 0x%llx\n",
+                               slot, (unsigned long long)framebuffer_addr);
                     found_bar_addr = framebuffer_addr;
                     break;
                 }
@@ -146,15 +230,7 @@ uint64_t pci_find_vga_framebuffer(void) {
         }
     }
 
-    /* Use discovered BAR address */
-    if (found_bar_addr != 0) {
-        fut_printf("[PCI] Using BAR-discovered address 0x%llx\n",
-                   (unsigned long long)found_bar_addr);
-        return found_bar_addr;
-    }
-
-    fut_printf("[PCI] No VGA device found on bus 0\n");
-    return 0;
+    return found_bar_addr;
 }
 #endif
 

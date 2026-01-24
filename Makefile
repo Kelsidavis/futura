@@ -86,7 +86,7 @@ RUN_QEMU_FLAGS += -cpu IvyBridge,+smep,+smap -smp 1
 endif
 
 ifeq ($(HEADFUL),1)
-# Headful mode: use display backend with virtio-gpu
+# Headful mode: use bochs VGA (QEMU stdvga) for display
 # GTK is default for native graphics output, falls back to VNC if no display server
 ifeq ($(VNC),1)
     RUN_QEMU_FLAGS += -vnc $(VNC_DISPLAY)
@@ -95,13 +95,12 @@ RUN_QEMU_FLAGS += -display spice-app
 else ifeq ($(SDL),1)
 RUN_QEMU_FLAGS += -display sdl
 else
-# GTK provides native graphics window via virtio-gpu
+# GTK provides native graphics window
 # Requires X11 (DISPLAY) or Wayland (WAYLAND_DISPLAY) to be set
-# NOTE: gl=off for 2D framebuffer operations (gl=on requires virgl 3D)
 RUN_QEMU_FLAGS += -display gtk,gl=off
 endif
-RUN_QEMU_FLAGS += -device virtio-gpu-pci
-RUN_QEMU_FLAGS += -vga none
+# Use bochs VGA (stdvga) - requires VBE DISPI initialization in kernel
+RUN_QEMU_FLAGS += -vga std
 else
 RUN_QEMU_FLAGS += -display none
 RUN_QEMU_FLAGS += -vga none

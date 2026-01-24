@@ -139,6 +139,7 @@ struct fb_console_state {
     int protected_x_start;           /* Start column of protected region (logo area) */
     int protected_y_end;             /* End row of protected region (logo area) */
     int initialized;                 /* Has been initialized */
+    int disabled;                    /* Disabled for GUI mode */
 };
 
 static struct fb_console_state g_fb_console = {0};
@@ -159,6 +160,12 @@ static void fb_console_draw_pixel(int x, int y, uint32_t color) {
     }
 
     uint8_t *fb = (uint8_t *)cons->fb_mem;
+
+    /* Sanity check: fb_mem should be a valid kernel virtual address */
+    if ((uintptr_t)fb < 0xFFFFFFFF80000000ULL) {
+        return;  /* Skip draw - fb_mem corrupted */
+    }
+
     uint32_t offset = (y * cons->pitch) + (x * 4);
     if (cons->bpp == 32) {
         *(volatile uint32_t *)(fb + offset) = color;
@@ -193,6 +200,11 @@ static void fb_console_scroll(void) {
     struct fb_console_state *cons = &g_fb_console;
 
     uint8_t *fb = (uint8_t *)cons->fb_mem;
+
+    /* Sanity check: fb_mem should be a valid kernel virtual address (>= 0xFFFFFFFF80000000) */
+    if ((uintptr_t)fb < 0xFFFFFFFF80000000ULL) {
+        return;  /* Skip scroll to avoid crash - corruption detected */
+    }
 
     /* Calculate protected region pixel boundaries */
     int protected_x_pixels = cons->protected_x_start * cons->char_width * 4; /* In bytes */
@@ -281,6 +293,7 @@ int fb_console_init(void) {
                cons->width, cons->height, cons->cols, cons->rows);
 
     fb_console_clear();
+
     return 0;
 }
 
@@ -291,18 +304,13 @@ void fb_console_clear(void) {
         return;
     }
 
-    uint8_t *fb = (uint8_t *)cons->fb_mem;
-    uint32_t bg_color = make_color(0, 0, 0, 255);
-
-    if (cons->bpp == 32) {
-        uint32_t *fb_word = (uint32_t *)fb;
-        for (uint32_t i = 0; i < (cons->width * cons->height); i++) {
-            fb_word[i] = bg_color;
-        }
-    } else if (cons->bpp == 24) {
-        for (uint32_t i = 0; i < cons->pitch * cons->height; i++) {
-            fb[i] = 0;
-        }
+    /* Fill with opaque black (0xFF000000 in ARGB) - don't use memset(0)
+     * because 0x00000000 may not display as black on all hardware */
+    uint32_t *fb32 = (uint32_t *)cons->fb_mem;
+    size_t pixel_count = (cons->pitch * cons->height) / 4;
+    uint32_t black = 0xFF000000;  /* Opaque black */
+    for (size_t i = 0; i < pixel_count; i++) {
+        fb32[i] = black;
     }
 
     cons->cursor_x = 0;
@@ -312,7 +320,7 @@ void fb_console_clear(void) {
 void fb_console_putc(char c) {
     struct fb_console_state *cons = &g_fb_console;
 
-    if (!cons->initialized) {
+    if (!cons->initialized || cons->disabled) {
         return;
     }
 
@@ -379,4 +387,8 @@ void fb_console_get_dimensions(int *width, int *height) {
     if (height) {
         *height = cons->initialized ? cons->rows : 0;
     }
+}
+
+void fb_console_disable(void) {
+    g_fb_console.disabled = 1;
 }

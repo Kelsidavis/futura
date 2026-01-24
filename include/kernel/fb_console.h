@@ -80,4 +80,12 @@ void fb_console_clear(void);
  */
 void fb_console_get_dimensions(int *width, int *height);
 
+/**
+ * Disable the framebuffer console.
+ *
+ * Called when GUI takes over the framebuffer. All subsequent
+ * fb_console_putc() calls will be ignored.
+ */
+void fb_console_disable(void);
+
 #endif /* KERNEL_FB_CONSOLE_H */

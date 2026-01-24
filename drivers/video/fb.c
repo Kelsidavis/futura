@@ -8,6 +8,7 @@
 #include <kernel/uaccess.h>
 #include <kernel/errno.h>
 #include <kernel/fb.h>
+#include <kernel/fb_console.h>
 #include <kernel/fut_mm.h>
 #include <platform/platform.h>
 #include <futura/fb_ioctl.h>
@@ -82,7 +83,12 @@ static int fb_open(void *inode, int flags, void **private_data) {
     }
     fb->open_count++;
     FB_DBG("fb_open: count=%u\n", fb->open_count);
-    fut_printf("[FB-CHAR] fb_open called, count=%u\n", fb->open_count);
+
+    /* Disable kernel console when GUI takes over framebuffer */
+    if (fb->open_count == 1) {
+        fb_console_disable();
+    }
+
     if (private_data) {
         *private_data = fb;
     }
@@ -99,7 +105,6 @@ static int fb_ioctl(void *inode, void *private_data,
 
     switch (req) {
     case FBIOGET_INFO: {
-        fut_printf("[FB-CHAR] fb_ioctl FBIOGET_INFO called\n");
         struct fut_fb_info info = fb->hw.info;
         return fut_copy_to_user((void *)arg, &info, sizeof(info));
     }
@@ -110,12 +115,9 @@ static int fb_ioctl(void *inode, void *private_data,
             return rc;
         }
         fb->vsync_ms = value;
-        FB_DBG("set vsync hint=%u ms\n", value);
-        fut_printf("[FB-CHAR] fb_ioctl FBIOSET_VSYNC_MS: %u ms\n", value);
         return 0;
     }
     case FBIOFLUSH: {
-        fut_printf("[FB-CHAR] fb_ioctl FBIOFLUSH called\n");
 
 #ifdef __aarch64__
         /* ARM64: Flush CPU cache for framebuffer region to ensure GPU sees writes */
@@ -203,6 +205,7 @@ static ssize_t fb_write(void *inode, void *private_data,
 static void *fb_mmap(void *inode, void *private_data, void *u_addr, size_t len,
                      off_t off, int prot, int flags) {
     (void)inode;
+    (void)flags;
 
     struct fb_device *fb = private_data ? (struct fb_device *)private_data
                                         : (struct fb_device *)inode;
@@ -210,10 +213,7 @@ static void *fb_mmap(void *inode, void *private_data, void *u_addr, size_t len,
         return (void *)(intptr_t)(-ENODEV);
     }
 
-    fut_printf("[FB-CHAR] fb_mmap called: u_addr=%p len=%zu off=%ld prot=0x%x flags=0x%x\n",
-               u_addr, len, (long)off, prot, flags);
-    fut_printf("[FB-CHAR]   PROT_READ=%d PROT_WRITE=%d MAP_SHARED=%d\n",
-               (prot & 0x1) ? 1 : 0, (prot & 0x2) ? 1 : 0, (flags & 0x1) ? 1 : 0);
+    FB_DBG("mmap: len=%zu off=%ld\n", len, (long)off);
 
     size_t fb_size = (size_t)fb->hw.info.pitch * fb->hw.info.height;
     if ((off & (PAGE_SIZE - 1)) != 0) {
@@ -236,18 +236,8 @@ static void *fb_mmap(void *inode, void *private_data, void *u_addr, size_t len,
         if ((int64_t)user_addr < 0) {
             return (void *)(intptr_t)user_addr;
         }
-        fut_printf("[FB-CHAR] allocated vaddr=0x%llx for framebuffer mapping\n",
-                   (unsigned long long)user_addr);
     } else {
-        /* MAP_FIXED or hint provided */
         user_addr = (uint64_t)u_addr;
-        if ((flags & 0x10)) { /* MAP_FIXED */
-            fut_printf("[FB-CHAR] using fixed address vaddr=0x%llx\n",
-                       (unsigned long long)user_addr);
-        } else {
-            fut_printf("[FB-CHAR] using hint address vaddr=0x%llx\n",
-                       (unsigned long long)user_addr);
-        }
     }
 
     uint64_t phys_addr = (fb->hw.phys + (uint64_t)off) & ~(uint64_t)(PAGE_SIZE - 1);
@@ -256,29 +246,17 @@ static void *fb_mmap(void *inode, void *private_data, void *u_addr, size_t len,
 #ifdef __x86_64__
     uint64_t prot_flags = PTE_PRESENT | PTE_USER | pat_choose_page_attr_wc();
 #else
-    /* ARM64: Use normal cached memory for framebuffer in RAM (GPU will read coherently) */
     uint64_t prot_flags = PTE_VALID | PTE_AF_BIT | PTE_AP_RW_ALL | PTE_ATTR_NORMAL | PTE_SH_OUTER;
 #endif
-    if (prot & 0x2) { /* PROT_WRITE */
+    if (prot & 0x2) {
         prot_flags |= PTE_WRITABLE;
-    }
-    /* Always enable read for framebuffer mappings even if only PROT_WRITE was requested */
-    if (prot & 0x1) { /* PROT_READ */
-        /* Read is always allowed on ARM64 (no separate read bit in PTE) */
-        /* On x86_64, PTE_USER already grants read access */
     }
 
     fut_vmem_context_t *ctx = fut_mm_context(fut_mm_current());
     int rc = pmap_map_user(ctx, user_addr, phys_addr, map_len, prot_flags);
     if (rc != 0) {
-        fut_printf("[FB-CHAR] pmap_map_user failed: rc=%d\n", rc);
         return (void *)(intptr_t)rc;
     }
-
-    fut_printf("[FB-CHAR] mapped framebuffer: vaddr=0x%llx -> phys=0x%llx len=0x%zx\n",
-               (unsigned long long)user_addr,
-               (unsigned long long)phys_addr,
-               map_len);
 
     return (void *)(uintptr_t)user_addr;
 }
@@ -287,7 +265,6 @@ static void *fb_mmap(void *inode, void *private_data, void *u_addr, size_t len,
 static struct fut_file_ops fb_fops;
 
 void fb_char_init(void) {
-    /* Initialize framebuffer file operations at runtime */
     fb_fops.open = fb_open;
     fb_fops.release = NULL;
     fb_fops.read = NULL;
@@ -295,28 +272,15 @@ void fb_char_init(void) {
     fb_fops.ioctl = fb_ioctl;
     fb_fops.mmap = fb_mmap;
 
-    fut_printf("[FB-CHAR] fb_char_init called\n");
     if (fb_get_info(&g_fb_dev.hw) != 0) {
-        fut_printf("[FB-CHAR] fb_get_info failed, aborting\n");
         return;
     }
-
-    fut_printf("[FB-CHAR] probe %ux%u pitch=%u bpp=%u phys=0x%llx\n",
-           g_fb_dev.hw.info.width,
-           g_fb_dev.hw.info.height,
-           g_fb_dev.hw.info.pitch,
-           g_fb_dev.hw.info.bpp,
-           (unsigned long long)g_fb_dev.hw.phys);
 
     g_fb_dev.kva = NULL;
     g_fb_dev.mapped = 0;
     g_fb_dev.vsync_ms = 0;
     g_fb_dev.open_count = 0;
 
-    int rc1 = chrdev_register(FB_MAJOR, FB_MINOR, &fb_fops, "fb0", &g_fb_dev);
-    fut_printf("[FB-CHAR] chrdev_register returned %d\n", rc1);
-
-    int rc2 = devfs_create_chr("/dev/fb0", FB_MAJOR, FB_MINOR);
-    fut_printf("[FB-CHAR] devfs_create_chr returned %d\n", rc2);
-    fut_printf("[FB-CHAR] /dev/fb0 device registered\n");
+    chrdev_register(FB_MAJOR, FB_MINOR, &fb_fops, "fb0", &g_fb_dev);
+    devfs_create_chr("/dev/fb0", FB_MAJOR, FB_MINOR);
 }

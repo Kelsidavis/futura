@@ -391,6 +391,18 @@ void fut_printf(const char *fmt, ...) {
                     print_num(val, 10, 0, 0, width);
                     break;
                 }
+                case 'o': {
+                    uint64_t val;
+                    if (is_longlong) {
+                        val = va_arg(args, uint64_t);
+                    } else if (is_long || is_size_t) {
+                        val = va_arg(args, unsigned long);
+                    } else {
+                        val = va_arg(args, unsigned int);
+                    }
+                    print_num(val, 8, 0, 0, width);
+                    break;
+                }
                 case 'x': {
                     uint64_t val;
                     if (is_longlong) {

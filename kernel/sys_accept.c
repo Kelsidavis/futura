@@ -264,7 +264,7 @@ long sys_accept(int sockfd, void *addr, socklen_t *addrlen) {
      *    - Attacker learns address family and size without buffer
      *    - Information disclosure: Reveals socket type and address structure
      * 4. Note: Current Phase 3 implementation safe (actual_len = 0 always)
-     *    - Phase 4 TODO: Consider rejecting addrlen = 0 when addr != NULL
+     *    - Phase 5 (COMPLETED at lines 389-393): Rejects addrlen = 0 when addr != NULL
      *
      * ATTACK SCENARIO 5: Read-Only addr Buffer Permission Bypass
      * Attacker provides read-only memory as addr to trigger kernel fault
@@ -278,7 +278,7 @@ long sys_accept(int sockfd, void *addr, socklen_t *addrlen) {
      *    - Line 238-297: Expensive socket lookup and blocking accept
      *    - Line 342: fut_copy_to_user attempts write to readonly → fault
      *    - Result: Crash AFTER doing all the work (fail-slow pattern)
-     * 4. Defense (Phase 5 TODO):
+     * 4. Defense (Phase 5 - COMPLETED at lines 396-400):
      *    - Test write permission on addr buffer BEFORE blocking operations
      *    - Similar to sys_read pattern (fail-fast validation)
      *    - Prevents wasted resources on invalid output buffer
@@ -318,7 +318,7 @@ long sys_accept(int sockfd, void *addr, socklen_t *addrlen) {
      *    - Allow: addr == NULL && addrlen != NULL (unusual but valid)
      *    - Allow: addr == NULL && addrlen == NULL (no address requested)
      *    - Prevents NULL pointer dereference
-     * 4. addr Write Permission Check (Phase 5 TODO):
+     * 4. addr Write Permission Check (Phase 5 - COMPLETED at lines 396-400):
      *    - Test write to addr buffer BEFORE blocking operations
      *    - Fail fast before expensive socket accept
      *    - Similar to sys_read/sys_getdents64 pattern

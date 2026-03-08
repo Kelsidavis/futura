@@ -1105,6 +1105,14 @@ struct fut_file *vfs_get_file_from_task(struct fut_task *task, int fd) {
 }
 
 /**
+ * Allocate lowest available FD in a task's FD table.
+ * Public wrapper for per-task FD allocation (used by SCM_RIGHTS).
+ */
+int vfs_alloc_fd_for_task(struct fut_task *task, struct fut_file *file) {
+    return alloc_fd_for_task((fut_task_t *)task, file);
+}
+
+/**
  * Allocate a specific FD in a task's FD table (for dup2).
  * Public wrapper for per-task FD allocation.
  */

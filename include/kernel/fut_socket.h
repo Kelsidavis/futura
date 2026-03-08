@@ -222,11 +222,18 @@ typedef struct fut_socket_listener {
     uint32_t queue_count;                   /* Number of pending connections */
     struct fut_waitq *accept_waitq;         /* Wait queue for accept() */
     int backlog;                            /* Maximum pending connections */
+    struct fut_waitq *epoll_notify;         /* Epoll wakeup on new connection */
 } fut_socket_listener_t;
 
 /* ============================================================
  *   Socket Pair (for connected sockets)
  * ============================================================ */
+
+/**
+ * Maximum number of in-flight file descriptors per socket pair direction.
+ * Used for SCM_RIGHTS FD passing over Unix domain sockets.
+ */
+#define FUT_SOCKET_FD_QUEUE_MAX 16
 
 /**
  * Socket pair for connected sockets.
@@ -248,6 +255,14 @@ typedef struct fut_socket_pair {
     struct fut_socket *peer;                /* Connected peer socket */
     uint64_t refcount;                      /* Shared refcount */
     fut_spinlock_t lock;                    /* Spinlock for buffer synchronization */
+
+    /* SCM_RIGHTS FD passing queue - stores file pointers in transit */
+    struct fut_file *fd_queue[FUT_SOCKET_FD_QUEUE_MAX];
+    uint32_t fd_queue_head;                 /* Dequeue position */
+    uint32_t fd_queue_tail;                 /* Enqueue position */
+    uint32_t fd_queue_count;                /* Number of FDs in queue */
+
+    struct fut_waitq *epoll_notify;         /* Epoll wakeup on data arrival */
 } fut_socket_pair_t;
 
 #define FUT_SOCKET_BUFSIZE 4096  /* Per-direction buffer size */

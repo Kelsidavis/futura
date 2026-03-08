@@ -177,7 +177,7 @@ void term_write(struct terminal *term, const char *data, size_t len) {
 
 int term_read_shell(struct terminal *term) {
     if (term->shell_stdout_fd < 0) {
-        return -1;
+        return 0;  /* No shell - return 0 (no data) instead of -1 (closed) */
     }
 
     char buf[256];

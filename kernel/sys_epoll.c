@@ -213,6 +213,8 @@
 #include <kernel/errno.h>
 #include <kernel/uaccess.h>
 #include <kernel/fut_thread.h>
+#include <kernel/fut_waitq.h>
+#include <kernel/fut_timer.h>
 #include <kernel/fut_fd_util.h>
 #include <string.h>
 #include <stdint.h>
@@ -270,6 +272,7 @@ struct epoll_set {
     struct epoll_fd_entry fds[MAX_EPOLL_FDS];  /* Registered FDs */
     int count;                                   /* Number of registered FDs */
     bool active;                                 /* Whether this epoll set is in use */
+    fut_waitq_t epoll_waitq;                     /* Wait queue for event-driven wakeup */
 };
 
 /* Global epoll instance table */
@@ -358,6 +361,7 @@ static struct epoll_set *epoll_allocate_set(void) {
             epoll_instances[i].active = true;
             epoll_instances[i].epfd = next_epoll_fd++;
             epoll_instances[i].count = 0;
+            fut_waitq_init(&epoll_instances[i].epoll_waitq);
             return &epoll_instances[i];
         }
     }
@@ -987,6 +991,19 @@ long sys_epoll_ctl(int epfd, int op, int fd, struct epoll_event *event) {
 
         set->count++;
 
+        /* Wire up epoll notification on socket pairs/listeners */
+        {
+            fut_socket_t *sock = get_socket_from_fd(fd);
+            if (sock) {
+                if (sock->pair_reverse) {
+                    sock->pair_reverse->epoll_notify = &set->epoll_waitq;
+                }
+                if (sock->listener) {
+                    sock->listener->epoll_notify = &set->epoll_waitq;
+                }
+            }
+        }
+
         /* Phase 2: Categorize events */
         char events_desc[128];
         int desc_pos = 0;
@@ -1469,8 +1486,15 @@ long sys_epoll_wait(int epfd, struct epoll_event *events, int maxevents, int tim
     }
 #endif
 
-    /* Poll with timeout support */
-    int max_iterations = (timeout == 0) ? 1 : ((timeout < 0) ? 10000 : (timeout / 10 + 1));
+    /* Poll with event-driven wakeup support.
+     * For infinite timeout (-1): loop until events found (woken by socket activity).
+     * For zero timeout: single poll pass.
+     * For positive timeout: use tick-based deadline. */
+    uint64_t deadline_ticks = 0;
+    if (timeout > 0) {
+        deadline_ticks = fut_get_ticks() + (uint64_t)timeout;
+    }
+    int max_iterations = (timeout == 0) ? 1 : ((timeout < 0) ? 0x7FFFFFFF : 0x7FFFFFFF);
     int iteration = 0;
 
 #if EPOLL_DEBUG
@@ -1651,17 +1675,13 @@ long sys_epoll_wait(int epfd, struct epoll_event *events, int maxevents, int tim
             return 0;
         }
 
-        /* For short timeouts (< 100ms), use busy-wait polling to avoid scheduler issues.
-         * For longer timeouts, use proper thread sleep.
-         * This is a workaround for timer-based thread wakeup issues. */
-        if (timeout >= 100) {
-            fut_thread_sleep(10);
-        } else {
-            /* Busy-wait for approximately 1ms (rough estimate based on loop iterations) */
-            for (volatile int delay = 0; delay < 100000; delay++) {
-                __asm__ volatile("" ::: "memory");
-            }
+        /* Check positive timeout before sleeping */
+        if (timeout > 0 && fut_get_ticks() >= deadline_ticks) {
+            return 0;  /* Timeout expired */
         }
+
+        /* Sleep on epoll waitqueue - socket sends and new connections will wake us */
+        fut_waitq_sleep_locked(&set->epoll_waitq, NULL, FUT_THREAD_BLOCKED);
 
         iteration++;
     }

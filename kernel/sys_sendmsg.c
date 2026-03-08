@@ -12,6 +12,7 @@
 #include <kernel/fut_task.h>
 #include <kernel/fut_vfs.h>
 #include <kernel/fut_memory.h>
+#include <kernel/fut_socket.h>
 #include <kernel/uaccess.h>
 #include <kernel/errno.h>
 #include <sys/socket.h>  /* For struct msghdr, cmsghdr, socklen_t, SCM_* */
@@ -405,10 +406,56 @@ ssize_t sys_sendmsg(int sockfd, const struct msghdr *msg, int flags) {
                    completion_status, iovecs_sent, kmsg.msg_iovlen, min_iov_len, max_iov_len);
     }
 
-    /* Log ancillary data if present (not yet handled in Phase 2, will be Phase 3) */
-    if (kmsg.msg_controllen > 0) {
-        SENDMSG_LOG("[SENDMSG] Note: Ancillary data present (%zu bytes) - will be handled in Phase 3\n",
-                   kmsg.msg_controllen);
+    /* Phase 4: SCM_RIGHTS - extract FDs from control messages and queue on socket pair */
+    if (kmsg.msg_controllen > 0 && kmsg.msg_control) {
+        /* Get the socket for this FD to access the pair's FD queue */
+        extern fut_socket_t *get_socket_from_fd(int fd);
+        fut_socket_t *sock = get_socket_from_fd(local_sockfd);
+        if (sock && sock->pair) {
+            /* Copy control data from userspace */
+            void *kcontrol = fut_malloc(kmsg.msg_controllen);
+            if (kcontrol) {
+                if (fut_copy_from_user(kcontrol, kmsg.msg_control, kmsg.msg_controllen) == 0) {
+                    /* Parse control messages */
+                    struct msghdr ctrl_msg;
+                    ctrl_msg.msg_control = kcontrol;
+                    ctrl_msg.msg_controllen = kmsg.msg_controllen;
+
+                    struct cmsghdr *cmsg = CMSG_FIRSTHDR(&ctrl_msg);
+                    while (cmsg) {
+                        if (cmsg->cmsg_level == SOL_SOCKET && cmsg->cmsg_type == SCM_RIGHTS) {
+                            /* Extract file descriptors from this control message */
+                            size_t payload_len = cmsg->cmsg_len - CMSG_ALIGN(sizeof(struct cmsghdr));
+                            int nfds = (int)(payload_len / sizeof(int));
+                            int *fds = (int *)CMSG_DATA(cmsg);
+
+                            fut_spinlock_acquire(&sock->pair->lock);
+                            for (int fi = 0; fi < nfds; fi++) {
+                                if (sock->pair->fd_queue_count >= FUT_SOCKET_FD_QUEUE_MAX) {
+                                    break;  /* Queue full */
+                                }
+                                /* Look up the file in the sender's FD table */
+                                struct fut_file *file = vfs_get_file_from_task(
+                                    (struct fut_task *)task, fds[fi]);
+                                if (file) {
+                                    vfs_file_ref(file);  /* Increment refcount for in-flight reference */
+                                    uint32_t tail = sock->pair->fd_queue_tail;
+                                    sock->pair->fd_queue[tail] = file;
+                                    sock->pair->fd_queue_tail =
+                                        (tail + 1) % FUT_SOCKET_FD_QUEUE_MAX;
+                                    sock->pair->fd_queue_count++;
+                                    SENDMSG_LOG("[SENDMSG] SCM_RIGHTS: queued fd=%d (file=%p) on socket pair\n",
+                                               fds[fi], file);
+                                }
+                            }
+                            fut_spinlock_release(&sock->pair->lock);
+                        }
+                        cmsg = CMSG_NXTHDR(&ctrl_msg, cmsg);
+                    }
+                }
+                fut_free(kcontrol);
+            }
+        }
     }
 
     return total_sent;

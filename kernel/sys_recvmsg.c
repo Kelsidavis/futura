@@ -15,9 +15,10 @@
 #include <kernel/uaccess.h>
 #include <kernel/errno.h>
 #include <kernel/fut_socket.h>
-#include <sys/socket.h>  /* For struct msghdr, cmsghdr, socklen_t */
+#include <sys/socket.h>  /* For struct msghdr, cmsghdr, socklen_t, SCM_RIGHTS */
 #include <stddef.h>
 #include <stdint.h>
+#include <stdbool.h>
 
 #include <kernel/kprintf.h>
 #include <kernel/debug_config.h>
@@ -395,8 +396,85 @@ ssize_t sys_recvmsg(int sockfd, struct msghdr *msg, int flags) {
     /* Set msg_flags to 0 for now */
     kmsg.msg_flags = 0;
 
-    /* Set msg_controllen to 0 (no ancillary data yet) */
-    kmsg.msg_controllen = 0;
+    /* Phase 4: SCM_RIGHTS - dequeue FDs from socket pair and deliver to receiver */
+    kmsg.msg_controllen = 0;  /* Default: no ancillary data */
+
+    if (total_received > 0) {
+        extern fut_socket_t *get_socket_from_fd(int fd);
+        fut_socket_t *sock = get_socket_from_fd(local_sockfd);
+
+        /* Check the receive-direction pair (pair_reverse) for queued FDs */
+        fut_socket_pair_t *recv_pair = sock ? sock->pair_reverse : NULL;
+        if (recv_pair && recv_pair->fd_queue_count > 0 &&
+            kmsg.msg_control != NULL) {
+            /* Dequeue FDs and install in receiver's FD table */
+            int new_fds[FUT_SOCKET_FD_QUEUE_MAX];
+            int nfds = 0;
+
+            fut_spinlock_acquire(&recv_pair->lock);
+            while (recv_pair->fd_queue_count > 0 && nfds < FUT_SOCKET_FD_QUEUE_MAX) {
+                uint32_t head = recv_pair->fd_queue_head;
+                struct fut_file *file = recv_pair->fd_queue[head];
+                recv_pair->fd_queue[head] = NULL;
+                recv_pair->fd_queue_head = (head + 1) % FUT_SOCKET_FD_QUEUE_MAX;
+                recv_pair->fd_queue_count--;
+
+                if (file) {
+                    /* Install file in receiver's FD table */
+                    int newfd = vfs_alloc_fd_for_task((struct fut_task *)task, file);
+                    if (newfd >= 0) {
+                        new_fds[nfds++] = newfd;
+                        RECVMSG_LOG("[RECVMSG] SCM_RIGHTS: installed file=%p as fd=%d in receiver\n",
+                                   file, newfd);
+                    } else {
+                        /* Failed to allocate FD - drop the file ref */
+                        if (file->refcount > 0) file->refcount--;
+                    }
+                }
+            }
+            fut_spinlock_release(&recv_pair->lock);
+
+            /* Build SCM_RIGHTS control message for userspace */
+            if (nfds > 0) {
+                size_t cmsg_size = CMSG_SPACE(nfds * sizeof(int));
+                /* Check if caller's buffer is big enough; read original controllen */
+                size_t orig_controllen = 0;
+                struct msghdr user_msg;
+                if (fut_copy_from_user(&user_msg, local_msg, sizeof(struct msghdr)) == 0) {
+                    orig_controllen = user_msg.msg_controllen;
+                }
+
+                if (orig_controllen >= cmsg_size) {
+                    /* Build the control message in kernel memory */
+                    void *kcontrol = fut_malloc(cmsg_size);
+                    if (kcontrol) {
+                        /* Zero-fill for alignment padding */
+                        for (size_t z = 0; z < cmsg_size; z++)
+                            ((uint8_t *)kcontrol)[z] = 0;
+
+                        struct cmsghdr *cmsg = (struct cmsghdr *)kcontrol;
+                        cmsg->cmsg_len = CMSG_LEN(nfds * sizeof(int));
+                        cmsg->cmsg_level = SOL_SOCKET;
+                        cmsg->cmsg_type = SCM_RIGHTS;
+
+                        int *fd_data = (int *)CMSG_DATA(cmsg);
+                        for (int fi = 0; fi < nfds; fi++) {
+                            fd_data[fi] = new_fds[fi];
+                        }
+
+                        /* Copy to userspace control buffer */
+                        if (fut_copy_to_user(kmsg.msg_control, kcontrol, cmsg_size) == 0) {
+                            kmsg.msg_controllen = cmsg_size;
+                        }
+                        fut_free(kcontrol);
+                    }
+                } else {
+                    /* Buffer too small - set MSG_CTRUNC */
+                    kmsg.msg_flags |= 0x8;  /* MSG_CTRUNC */
+                }
+            }
+        }
+    }
 
     /* Write updated msghdr back to userspace */
     if (fut_copy_to_user(local_msg, &kmsg, sizeof(struct msghdr)) != 0) {

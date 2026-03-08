@@ -317,6 +317,15 @@ void fut_socket_unref(fut_socket_t *socket) {
             fut_free(socket->listener);
         }
         if (socket->pair) {
+            /* Drop references on any in-flight FDs in the FD queue */
+            while (socket->pair->fd_queue_count > 0) {
+                uint32_t head = socket->pair->fd_queue_head;
+                struct fut_file *f = socket->pair->fd_queue[head];
+                socket->pair->fd_queue[head] = NULL;
+                socket->pair->fd_queue_head = (head + 1) % FUT_SOCKET_FD_QUEUE_MAX;
+                socket->pair->fd_queue_count--;
+                if (f && f->refcount > 0) f->refcount--;
+            }
             if (socket->pair->send_buf) {
                 fut_free(socket->pair->send_buf);
             }
@@ -724,6 +733,11 @@ int fut_socket_connect(fut_socket_t *socket, const char *target_path) {
     /* Wake up listener's accept queue so it can call accept() */
     fut_waitq_wake_one(queue->accept_waitq);
 
+    /* Wake any epoll instance monitoring the listening socket */
+    if (queue->epoll_notify) {
+        fut_waitq_wake_one(queue->epoll_notify);
+    }
+
     fut_socket_unref(listener);
 
     /* For Unix domain sockets, connect returns immediately after queueing.
@@ -814,6 +828,11 @@ ssize_t fut_socket_send(fut_socket_t *socket, const void *buf, size_t len) {
 
     /* Wake receiver */
     fut_waitq_wake_one(pair->recv_waitq);
+
+    /* Wake any epoll instance monitoring the receiving socket */
+    if (pair->epoll_notify) {
+        fut_waitq_wake_one(pair->epoll_notify);
+    }
 
     fut_spinlock_release(&pair->lock);
 

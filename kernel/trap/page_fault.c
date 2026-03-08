@@ -388,6 +388,15 @@ bool fut_trap_handle_page_fault(fut_interrupt_frame_t *frame) {
                    (unsigned long long)cr2,
                    (unsigned long long)frame->rip,
                    (unsigned long long)frame->error_code);
+        fut_printf("[#PF-USER] RAX=0x%llx RBX=0x%llx RCX=0x%llx RDX=0x%llx\n",
+                   (unsigned long long)frame->rax, (unsigned long long)frame->rbx,
+                   (unsigned long long)frame->rcx, (unsigned long long)frame->rdx);
+        fut_printf("[#PF-USER] RSP=0x%llx RBP=0x%llx RSI=0x%llx RDI=0x%llx\n",
+                   (unsigned long long)frame->rsp, (unsigned long long)frame->rbp,
+                   (unsigned long long)frame->rsi, (unsigned long long)frame->rdi);
+        fut_printf("[#PF-USER] R12=0x%llx R13=0x%llx R14=0x%llx R15=0x%llx\n",
+                   (unsigned long long)frame->r12, (unsigned long long)frame->r13,
+                   (unsigned long long)frame->r14, (unsigned long long)frame->r15);
         /* Send SIGSEGV to terminate the faulting process */
         fut_task_signal_exit(SIGSEGV);
     }

@@ -170,6 +170,10 @@ fut_switch_context:
  *   +48:  context (672 bytes)
  *   +720: irq_frame (8 bytes pointer to saved interrupt frame)
  */
+.extern fut_in_interrupt
+.extern fut_current_frame
+.extern lapic_base
+
 .global fut_switch_context_irq
 .type fut_switch_context_irq, @function
 fut_switch_context_irq:
@@ -339,17 +343,54 @@ fut_switch_context_irq:
     popq %rax
 
 1:
-    /* NOTE: We previously had logic here to clear irq_frame for tid=1
-     * assuming it was the idle thread. This was wrong because:
-     * 1. tid=1 is the bootstrap thread (kernel_main), not idle
-     * 2. The idle thread's TID is dynamically assigned (e.g., tid=3)
-     * 3. Clearing irq_frame for the bootstrap thread causes it to
-     *    construct frames from uninitialized context (RIP=0), hanging
+    /* CRITICAL: Also save prev's cooperative context (kernel-mode register
+     * state at this point in fut_schedule). This ensures that prev can be
+     * cooperatively restored by fut_switch_context if the scheduler later
+     * uses the cooperative path.
      *
-     * The scheduler (fut_sched.c) now handles idle threads correctly
-     * without needing special assembly support. Idle detection should
-     * be based on percpu->idle_thread, not hardcoded TID checks.
-     */
+     * Without this, threads that have ONLY been IRETQ-saved (like the idle
+     * thread) have stale initial cooperative context values (trampoline RIP,
+     * RFLAGS=0x2 with IF=0), causing system hangs when cooperatively restored.
+     *
+     * The saved context represents the "return from fut_switch_context_irq"
+     * point. On cooperative restore, the thread returns from this function
+     * as if it returned normally, then unwinds through the timer ISR call
+     * chain: fut_schedule() -> fut_timer_tick() -> fut_timer_irq() -> ISR
+     * stub -> IRETQ back to the original preemption point. */
+    testq %r12, %r12
+    jz .get_next_frame          /* Skip if no prev thread */
+
+    /* prev->context starts at offset 48 from thread pointer (%r12).
+     * Stack layout: [R15]+0 [R14]+8 [R13]+16 [R12]+24 [RBX]+32 [retaddr]+40 */
+    movq 0(%rsp), %rax
+    movq %rax, (48 + 0)(%r12)     /* context.r15 */
+    movq 8(%rsp), %rax
+    movq %rax, (48 + 8)(%r12)     /* context.r14 */
+    movq 16(%rsp), %rax
+    movq %rax, (48 + 16)(%r12)    /* context.r13 */
+    movq 24(%rsp), %rax
+    movq %rax, (48 + 24)(%r12)    /* context.r12 */
+    movq 32(%rsp), %rax
+    movq %rax, (48 + 32)(%r12)    /* context.rbx */
+    movq %rbp, (48 + 40)(%r12)    /* context.rbp (not pushed, still original) */
+
+    movq 40(%rsp), %rax
+    movq %rax, (48 + 48)(%r12)    /* context.rip = return addr in fut_schedule */
+
+    leaq 48(%rsp), %rax
+    movq %rax, (48 + 56)(%r12)    /* context.rsp = caller's RSP before call */
+
+    pushfq
+    popq %rax
+    movq %rax, (48 + 64)(%r12)    /* context.rflags (IF=0 from ISR is correct;
+                                    * ISR IRETQ restores IF=1 from hw frame) */
+
+    movq $0x08, (48 + 72)(%r12)   /* context.cs = kernel CS */
+    movq $0x10, (48 + 80)(%r12)   /* context.ss = kernel SS */
+
+    /* Save FX state so FPU registers are preserved on cooperative restore */
+    leaq (48 + 160)(%r12), %rax
+    fxsave64 (%rax)
 
 .get_next_frame:
     /* Step 2: Get next thread's saved frame pointer */
@@ -391,7 +432,19 @@ fut_switch_context_irq:
      *                 rdi(120), rsi(128), rdx(136), rcx(144), rax(152) */
 
     leaq 48(%r13), %rsi     /* rsi = &next->context */
-    movq %r14, %rdi         /* rdi = interrupt frame on stack */
+
+    /* CRITICAL: Place the constructed IRETQ frame on NEXT's kernel stack,
+     * NOT on prev's stack (where the original interrupt frame is).
+     * If we overwrite prev's interrupt frame, the ISR return path (used
+     * when prev is cooperatively restored) finds corrupted data and crashes
+     * with a GPF loading invalid segment registers.
+     *
+     * Place the frame BELOW next's saved RSP (context.rsp). This avoids
+     * corrupting the thread's initial stack setup (return address at the top).
+     * After IRETQ restores RSP to context.rsp, this frame is dead stack space. */
+    movq 56(%rsi), %rdi     /* next's context.rsp (CTX_RSP offset within context) */
+    subq $208, %rdi         /* room for 208-byte interrupt frame below RSP */
+    movq %rdi, %r14         /* update R14 (used by movq %r14, %rsp later) */
 
     /* Copy segment registers (gs, fs, es, ds) */
     movq 112(%rsi), %rax    /* context.gs */
@@ -810,8 +863,14 @@ fut_switch_context_irq:
     popq %rdx
     popq %rax
 
-    /* Step 3: Copy saved frame to current interrupt frame location */
-    movq %r14, %rdi         /* dest = current frame on stack */
+    /* Step 3: Copy saved frame to next thread's kernel stack.
+     * CRITICAL: Do NOT overwrite prev's interrupt frame on the stack!
+     * If prev is later cooperatively restored, it returns through the ISR
+     * stub which pops the interrupt frame. Overwriting it causes GPF. */
+    movq 16(%r13), %rdi     /* next->stack_base */
+    addq 24(%r13), %rdi     /* + stack_size -> top of stack */
+    subq $208, %rdi         /* room for 208-byte interrupt frame */
+    movq %rdi, %r14         /* update R14 (used by movq %r14, %rsp later) */
     movq %r11, %rsi         /* src = next->irq_frame */
     movq $26, %rcx          /* 208 bytes / 8 = 26 qwords */
     cld
@@ -1200,6 +1259,25 @@ fut_switch_context_irq:
 .skip_eoi:
     popq %rcx
     popq %rax
+
+    /* CRITICAL: Clear fut_in_interrupt and fut_current_frame before IRETQ.
+     *
+     * fut_switch_context_irq is called from fut_schedule() inside the timer
+     * ISR. Since we IRETQ directly to the next thread (never returning to
+     * the timer ISR), the timer ISR's cleanup code (which normally clears
+     * these globals) is never reached. If left stale:
+     *
+     * - fut_in_interrupt = 1 causes the scheduler to incorrectly use the
+     *   IRETQ path for threads that were saved cooperatively (e.g., INT 0x80
+     *   syscalls that sleep). This saves the INT 0x80 frame (RAX=syscall
+     *   number) as irq_frame, and when restored via IRETQ, the syscall
+     *   number is returned to userspace instead of the actual result.
+     *
+     * - fut_current_frame pointing to the old timer frame (on the previous
+     *   thread's stack) would be used by the next fut_schedule() call as
+     *   the frame to save, even though it belongs to a different thread. */
+    movb $0, fut_in_interrupt(%rip)
+    movq $0, fut_current_frame(%rip)
 
     iretq
 

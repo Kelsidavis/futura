@@ -495,12 +495,70 @@ extern fut_interrupt_frame_t *fut_current_frame;
 static fut_mm_t *clone_mm(fut_mm_t *parent_mm);
 static fut_thread_t *clone_thread(fut_thread_t *parent_thread, fut_task_t *child_task);
 
-/* Dummy entry point for cloned threads - should never be called */
+/* Dummy entry point for cloned threads (ARM64 only) - should never be called */
+#if defined(__aarch64__)
 static void dummy_entry(void *arg) {
     (void)arg;
-    /* This should never be called since we override the context */
     for (;;);
 }
+#endif
+
+/**
+ * Fork child entry point — runs in kernel mode via the trampoline, then
+ * does IRETQ to return to user space with the parent's saved registers.
+ *
+ * This is necessary because:
+ * - The child may be first scheduled via the cooperative path (in_irq=false)
+ * - Cooperative context switch only restores callee-saved regs and RIP/RSP
+ * - It CANNOT change privilege level (CPL) — only IRETQ can do that
+ * - So we enter kernel mode normally and manually IRETQ to user space
+ *
+ * arg = pointer to a heap-allocated fut_interrupt_frame_t with the
+ * parent's user-mode registers (rax already set to 0 for child return).
+ */
+#ifdef __x86_64__
+static __attribute__((noreturn)) void fork_child_return(void *arg) {
+    fut_interrupt_frame_t *saved = (fut_interrupt_frame_t *)arg;
+    if (!saved) {
+        fut_thread_exit();
+    }
+
+    /* Enable interrupts — trampoline starts with IF=0. */
+    __asm__ volatile("sti");
+
+    /* Ensure IF is set in the saved RFLAGS so user mode gets preempted. */
+    saved->rflags |= 0x200;
+
+    /* Set RSP to point at the saved frame and pop registers + IRETQ.
+     * This is the same register restore sequence used by the ISR return path.
+     * After IRETQ, RSP is replaced by the user RSP from the frame. */
+    __asm__ volatile(
+        "movq %0, %%rsp\n"
+        "addq $32, %%rsp\n"        /* skip GS, FS, ES, DS */
+        "popq %%rax\n"
+        "popq %%rbx\n"
+        "popq %%rcx\n"
+        "popq %%rdx\n"
+        "popq %%rsi\n"
+        "popq %%rdi\n"
+        "popq %%rbp\n"
+        "popq %%r8\n"
+        "popq %%r9\n"
+        "popq %%r10\n"
+        "popq %%r11\n"
+        "popq %%r12\n"
+        "popq %%r13\n"
+        "popq %%r14\n"
+        "popq %%r15\n"
+        "addq $16, %%rsp\n"        /* skip vector, error_code */
+        "iretq\n"
+        :
+        : "r" ((uint64_t)saved)
+        : "memory"
+    );
+    __builtin_unreachable();
+}
+#endif
 
 /**
  * fork() syscall - Create a new process by duplicating the calling process.
@@ -1156,88 +1214,70 @@ static fut_thread_t *clone_thread(fut_thread_t *parent_thread, fut_task_t *child
     }
 
     /*
+     * x86_64: Allocate a copy of the parent's interrupt frame for the child.
+     * The child will use fork_child_return() as its entry function, which
+     * does IRETQ to user space using this saved frame.
+     *
+     * This approach works correctly regardless of whether the scheduler
+     * uses the cooperative or IRETQ path for the child's first run:
+     * - Cooperative: trampoline → fork_child_return → manual IRETQ to user
+     * - IRETQ: trampoline → fork_child_return → manual IRETQ to user
+     * Both paths properly transition from kernel to user mode.
+     */
+#ifdef __x86_64__
+    fut_interrupt_frame_t *child_frame = (fut_interrupt_frame_t *)fut_malloc(sizeof(fut_interrupt_frame_t));
+    if (!child_frame) {
+        return NULL;
+    }
+    memcpy(child_frame, frame, sizeof(fut_interrupt_frame_t));
+    child_frame->rax = 0;  /* Fork returns 0 in the child */
+
+    FORK_LOG("[FORK] Parent frame: RIP=0x%llx RSP=0x%llx SS=0x%llx\n",
+             (unsigned long long)frame->rip, (unsigned long long)frame->rsp,
+             (unsigned long long)frame->ss);
+#endif
+
+    /*
      * Create a new thread in the child task.
-     * Use a dummy entry point - we'll override the context below.
+     * Entry point is fork_child_return which does IRETQ to user mode.
+     * The saved frame is passed as the arg pointer.
      */
     fut_thread_t *child_thread = fut_thread_create(
         child_task,
+#ifdef __x86_64__
+        fork_child_return,
+        child_frame,
+#else
         dummy_entry,
         NULL,
+#endif
         parent_thread->stack_size,
         parent_thread->priority
     );
 
     if (!child_thread) {
+#ifdef __x86_64__
+        fut_free(child_frame);
+#endif
         return NULL;
     }
 
     /*
-     * NOTE: Child's kernel stack does NOT need to be mapped into child's TTBR0.
-     *
-     * The kernel stack is allocated from kernel heap (fut_malloc) which gives
-     * kernel virtual addresses (0xffffff80...). These are already mapped in TTBR1
-     * (kernel page table) which is shared by all tasks.
-     *
-     * Attempting to map kernel VAs into TTBR0 (user page table) is incorrect:
-     * - TTBR0 handles user VA space (< 0x0001000000000000)
-     * - TTBR1 handles kernel VA space (>= 0xffff000000000000)
-     * - Kernel addresses must only be in TTBR1
-     *
-     * The previous code caused Translation fault L0 errors because fut_map_range()
-     * tried to create L0 page table entries for kernel VAs in TTBR0, which is
-     * fundamentally incompatible with ARM64's split address space model.
+     * NOTE: On x86_64, we do NOT overwrite context.rip/rsp with user values.
+     * The thread's context remains pointing to the kernel trampoline, which
+     * is correct for both cooperative and IRETQ scheduling paths.
+     * The user-mode register state is saved in child_frame and restored
+     * by fork_child_return via manual IRETQ.
      */
 
 #ifdef __x86_64__
-    /*
-     * x86_64: Extract registers from interrupt frame
-     * fut_current_frame now points to full fut_interrupt_frame_t structure
-     */
-    uint64_t user_rip = frame->rip;
-    uint64_t user_cs = frame->cs;
-    uint64_t user_rflags = frame->rflags;
-    uint64_t user_rsp = frame->rsp;
-    uint64_t user_ss = frame->ss;
-    uint64_t user_rbp = frame->rbp;
-    uint64_t user_rbx = frame->rbx;
-    uint64_t user_r12 = frame->r12;
-    uint64_t user_r13 = frame->r13;
-    uint64_t user_r14 = frame->r14;
-    uint64_t user_r15 = frame->r15;
-    uint64_t user_ds = frame->ds;
-    uint64_t user_es = frame->es;
-    uint64_t user_fs = frame->fs;
-
-    FORK_LOG("[FORK] Parent frame: RIP=0x%llx RSP=0x%llx SS=0x%llx\n", user_rip, user_rsp, user_ss);
-
-    /* Build child context from syscall frame */
-    child_thread->context.rip = user_rip;
-    child_thread->context.rsp = user_rsp;
-    child_thread->context.rbp = user_rbp;
-    child_thread->context.rbx = user_rbx;
-    child_thread->context.r12 = user_r12;
-    child_thread->context.r13 = user_r13;
-    child_thread->context.r14 = user_r14;
-    child_thread->context.r15 = user_r15;
-    child_thread->context.rflags = user_rflags;
-    child_thread->context.cs = user_cs;
-    child_thread->context.ss = user_ss;
-
-    /* Set segment registers to user data segment (0x20 | 3 = 0x23 with RPL=3) */
-    child_thread->context.ds = (uint16_t)user_ds;  // Copy from parent
-    child_thread->context.es = (uint16_t)user_es;
-    child_thread->context.fs = (uint16_t)user_fs;
-    child_thread->context.gs = 0;                  // GS not used in userspace, set to 0
-
     /* Copy TLS base (MSR_FS_BASE) for stack canary support.
      * Without this, child will have fs_base=0 and fault at FS:0x28 */
     child_thread->fs_base = parent_thread->fs_base;
 
-    /* Set child's fork() return value to 0 */
-    child_thread->context.rax = 0;
-
-    FORK_LOG("[FORK] Child context: RIP=0x%llx RSP=0x%llx RAX=0\n",
-               child_thread->context.rip, child_thread->context.rsp);
+    FORK_LOG("[FORK] Child thread tid=%llu entry=fork_child_return frame_rip=0x%llx\n",
+             (unsigned long long)child_thread->tid,
+             (unsigned long long)child_frame->rip);
 
 #elif defined(__aarch64__)
     /*

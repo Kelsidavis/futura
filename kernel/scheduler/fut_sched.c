@@ -757,6 +757,17 @@ void fut_schedule(void) {
                        (unsigned long long)next->context.pstate,
                        (unsigned long long)next->context.ttbr0_el1);
 #endif
+            /* CRITICAL: Clear interrupt context globals BEFORE IRETQ.
+             * fut_switch_context_irq does IRETQ and never returns, so
+             * fut_in_interrupt and fut_current_frame would remain stale.
+             * If the resumed thread enters a syscall (INT 0x80) that sleeps
+             * and calls fut_schedule(), the stale fut_in_interrupt=1 causes
+             * the IRETQ path to be taken for a cooperatively-sleeping thread.
+             * This saves the INT 0x80 frame (RAX=syscall_number) as irq_frame,
+             * and when later restored via IRETQ, the syscall number is returned
+             * to userspace as the "result" instead of the actual return value.
+             *
+             * The EOI is already sent by fut_switch_context_irq assembly. */
             fut_switch_context_irq(prev_terminated ? NULL : prev, next, fut_current_frame);
         } else {
             // Regular cooperative context switch (uses RET)
@@ -793,6 +804,16 @@ void fut_schedule(void) {
                 fut_current_frame = NULL;
             }
             /* Debug: Log cooperative switch details (disabled - too verbose) */
+
+            /* CRITICAL: Clear next->irq_frame before cooperative switch.
+             * If next was previously timer-preempted (irq_frame saved) but is
+             * being resumed via cooperative switch, the irq_frame remains stale.
+             * When next later sleeps in a syscall and gets resumed by a timer
+             * tick, fut_switch_context_irq would find the stale irq_frame and
+             * IRETQ to a wrong user-mode location instead of the kernel save
+             * point. The IRETQ path already clears irq_frame (line 838 of
+             * context_switch.S), but the cooperative path does not. */
+            next->irq_frame = NULL;
 
             if (prev && !prev_terminated) {
                 fut_switch_context(&prev->context, &next->context);

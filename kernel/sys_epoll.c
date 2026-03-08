@@ -1341,6 +1341,14 @@ long sys_epoll_ctl(int epfd, int op, int fd, struct epoll_event *event) {
  * Phase 3 (Completed): Edge-triggered mode, oneshot events
  * Phase 4 (Completed): Performance optimization with memory pooling
  */
+/* Timer callback to wake epoll waitqueue on timeout expiry */
+static void epoll_timeout_wakeup(void *arg) {
+    fut_waitq_t *wq = (fut_waitq_t *)arg;
+    if (wq) {
+        fut_waitq_wake_all(wq);
+    }
+}
+
 long sys_epoll_wait(int epfd, struct epoll_event *events, int maxevents, int timeout) {
     /* Phase 2: Categorize epoll FD */
     const char *epfd_category;
@@ -1661,6 +1669,14 @@ long sys_epoll_wait(int epfd, struct epoll_event *events, int maxevents, int tim
 
         /* If we have events, copy to user and return */
         if (ready_count > 0) {
+            fut_printf("[EPOLL_WAIT] returning count=%d events_ptr=%p size=%zu\n",
+                       ready_count, events,
+                       (size_t)(ready_count * sizeof(struct epoll_event)));
+            for (int dbg = 0; dbg < ready_count && dbg < 4; dbg++) {
+                fut_printf("[EPOLL_WAIT]   ep[%d] events=0x%x data=0x%lx\n",
+                           dbg, ready_events[dbg].events,
+                           (unsigned long)ready_events[dbg].data.u64);
+            }
             if (fut_copy_to_user(events, ready_events,
                                 ready_count * sizeof(struct epoll_event)) != 0) {
                 fut_printf("[EPOLL_WAIT] epoll_wait() -> EFAULT (copy_to_user failed)\n");
@@ -1680,8 +1696,19 @@ long sys_epoll_wait(int epfd, struct epoll_event *events, int maxevents, int tim
             return 0;  /* Timeout expired */
         }
 
-        /* Sleep on epoll waitqueue - socket sends and new connections will wake us */
+        /* Sleep on epoll waitqueue - socket sends and new connections will wake us.
+         * For positive timeouts, start a timer to wake us if no events arrive. */
+        if (timeout > 0) {
+            uint64_t remaining = deadline_ticks - fut_get_ticks();
+            if (remaining > 0) {
+                fut_timer_start(remaining, epoll_timeout_wakeup, &set->epoll_waitq);
+            }
+        }
         fut_waitq_sleep_locked(&set->epoll_waitq, NULL, FUT_THREAD_BLOCKED);
+        /* Cancel any outstanding timeout timer (harmless if already fired) */
+        if (timeout > 0) {
+            fut_timer_cancel(epoll_timeout_wakeup, &set->epoll_waitq);
+        }
 
         iteration++;
     }

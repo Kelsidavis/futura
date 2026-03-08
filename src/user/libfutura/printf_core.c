@@ -23,8 +23,17 @@ static int emit_string(fut_putc_fn cb, void *ctx, const char *str, int *total) {
     return 0;
 }
 
+static int emit_pad(fut_putc_fn cb, void *ctx, char pad_char, int count, int *total) {
+    for (int i = 0; i < count; i++) {
+        if (emit_char(cb, ctx, pad_char, total) < 0) {
+            return -1;
+        }
+    }
+    return 0;
+}
+
 static int emit_unsigned(fut_putc_fn cb, void *ctx, uint64_t value, unsigned base,
-                         bool upper, int *total) {
+                         bool upper, int width, char pad, int *total) {
     char tmp[32];
     size_t pos = 0;
     const char *digits = upper ? "0123456789ABCDEF" : "0123456789abcdef";
@@ -38,6 +47,13 @@ static int emit_unsigned(fut_putc_fn cb, void *ctx, uint64_t value, unsigned bas
         }
     }
 
+    /* Pad to requested width */
+    if (width > 0 && (int)pos < width) {
+        if (emit_pad(cb, ctx, pad, width - (int)pos, total) < 0) {
+            return -1;
+        }
+    }
+
     while (pos > 0) {
         if (emit_char(cb, ctx, tmp[--pos], total) < 0) {
             return -1;
@@ -46,14 +62,24 @@ static int emit_unsigned(fut_putc_fn cb, void *ctx, uint64_t value, unsigned bas
     return 0;
 }
 
-static int emit_signed(fut_putc_fn cb, void *ctx, int64_t value, int *total) {
+static int emit_signed(fut_putc_fn cb, void *ctx, int64_t value,
+                        int width, char pad, int *total) {
     if (value < 0) {
+        if (pad == '0' && width > 0) {
+            /* Emit sign before zero padding */
+            if (emit_char(cb, ctx, '-', total) < 0) {
+                return -1;
+            }
+            return emit_unsigned(cb, ctx, (uint64_t)(-value), 10, false,
+                                 width - 1, pad, total);
+        }
         if (emit_char(cb, ctx, '-', total) < 0) {
             return -1;
         }
-        return emit_unsigned(cb, ctx, (uint64_t)(-value), 10, false, total);
+        return emit_unsigned(cb, ctx, (uint64_t)(-value), 10, false,
+                             width > 0 ? width - 1 : 0, pad, total);
     }
-    return emit_unsigned(cb, ctx, (uint64_t)value, 10, false, total);
+    return emit_unsigned(cb, ctx, (uint64_t)value, 10, false, width, pad, total);
 }
 
 int fut_vprintf_fmt(fut_putc_fn cb, void *ctx, const char *fmt, va_list ap) {
@@ -69,11 +95,43 @@ int fut_vprintf_fmt(fut_putc_fn cb, void *ctx, const char *fmt, va_list ap) {
 
         ++fmt; /* Skip '%' */
 
+        /* Parse flags */
+        char pad_char = ' ';
+        bool left_align = false;
+        bool hash_flag = false;
+        while (*fmt == '0' || *fmt == '-' || *fmt == '+' || *fmt == ' ' || *fmt == '#') {
+            if (*fmt == '0') {
+                pad_char = '0';
+            } else if (*fmt == '-') {
+                left_align = true;
+            } else if (*fmt == '#') {
+                hash_flag = true;
+            }
+            fmt++;
+        }
+        (void)left_align;  /* Not yet used */
+        (void)hash_flag;
+
+        /* Parse width */
+        int width = 0;
+        while (*fmt >= '0' && *fmt <= '9') {
+            width = width * 10 + (*fmt - '0');
+            fmt++;
+        }
+
+        /* Parse precision (skip for now) */
+        if (*fmt == '.') {
+            fmt++;
+            while (*fmt >= '0' && *fmt <= '9') {
+                fmt++;
+            }
+        }
+
         /* Parse length modifier */
         bool is_long = false;
         bool is_longlong = false;
         bool is_size = false;
-        while (*fmt == 'l' || *fmt == 'z') {
+        while (*fmt == 'l' || *fmt == 'z' || *fmt == 'h') {
             if (*fmt == 'l') {
                 if (is_long) {
                     is_longlong = true;
@@ -82,6 +140,7 @@ int fut_vprintf_fmt(fut_putc_fn cb, void *ctx, const char *fmt, va_list ap) {
             } else if (*fmt == 'z') {
                 is_size = true;
             }
+            /* Skip 'h' and 'hh' - int promotion handles it */
             fmt++;
         }
 
@@ -119,7 +178,7 @@ int fut_vprintf_fmt(fut_putc_fn cb, void *ctx, const char *fmt, va_list ap) {
             } else {
                 val = va_arg(ap, int);
             }
-            if (emit_signed(cb, ctx, val, &total) < 0) {
+            if (emit_signed(cb, ctx, val, width, pad_char, &total) < 0) {
                 return -1;
             }
             break;
@@ -133,7 +192,8 @@ int fut_vprintf_fmt(fut_putc_fn cb, void *ctx, const char *fmt, va_list ap) {
             } else {
                 val = va_arg(ap, unsigned int);
             }
-            if (emit_unsigned(cb, ctx, (uint64_t)val, 10, false, &total) < 0) {
+            if (emit_unsigned(cb, ctx, (uint64_t)val, 10, false,
+                              width, pad_char, &total) < 0) {
                 return -1;
             }
             break;
@@ -147,7 +207,8 @@ int fut_vprintf_fmt(fut_putc_fn cb, void *ctx, const char *fmt, va_list ap) {
             } else {
                 val = va_arg(ap, unsigned int);
             }
-            if (emit_unsigned(cb, ctx, (uint64_t)val, 16, false, &total) < 0) {
+            if (emit_unsigned(cb, ctx, (uint64_t)val, 16, false,
+                              width, pad_char, &total) < 0) {
                 return -1;
             }
             break;
@@ -161,7 +222,8 @@ int fut_vprintf_fmt(fut_putc_fn cb, void *ctx, const char *fmt, va_list ap) {
             } else {
                 val = va_arg(ap, unsigned int);
             }
-            if (emit_unsigned(cb, ctx, (uint64_t)val, 16, true, &total) < 0) {
+            if (emit_unsigned(cb, ctx, (uint64_t)val, 16, true,
+                              width, pad_char, &total) < 0) {
                 return -1;
             }
             break;
@@ -171,7 +233,8 @@ int fut_vprintf_fmt(fut_putc_fn cb, void *ctx, const char *fmt, va_list ap) {
             if (emit_string(cb, ctx, "0x", &total) < 0) {
                 return -1;
             }
-            if (emit_unsigned(cb, ctx, (uint64_t)val, 16, false, &total) < 0) {
+            if (emit_unsigned(cb, ctx, (uint64_t)val, 16, false,
+                              0, ' ', &total) < 0) {
                 return -1;
             }
             break;

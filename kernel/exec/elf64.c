@@ -77,7 +77,7 @@ extern void fut_do_user_iretq(uint64_t entry, uint64_t stack, uint64_t argc, uin
 #define USER_DATA_SELECTOR  (0x18u | 0x3u)  /* 0x1B */
 
 #define USER_STACK_TOP      0x00007FFF000000ULL  /* Stack within 39-bit VA space (T0SZ=25) */
-#define USER_STACK_PAGES    16u  /* Increase stack pages from 4 to 16 (64KB) */
+#define USER_STACK_PAGES    64u  /* 256KB stack for deep call chains */
 
 typedef struct __attribute__((packed)) {
     uint8_t  e_ident[16];

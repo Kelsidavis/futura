@@ -182,7 +182,24 @@ isr_syscall_int80_stub:
      * RSP+200: SS
      */
 
-    /* Set global fut_current_frame to start of frame for C code access */
+    /* Set global fut_current_frame to start of frame for C code access.
+     * NOTE: Do NOT set fut_in_interrupt here! INT 0x80 syscalls must use
+     * cooperative context switching (fut_switch_context), NOT IRETQ-based
+     * switching. The INT 0x80 frame has RAX = syscall number, but the ISR
+     * stub's return path overwrites RAX with the actual return value via R11.
+     * If we used IRETQ-based switching, the frame (with RAX=syscall_number)
+     * would be saved and later restored directly to userspace, bypassing
+     * the ISR return path and returning the syscall number instead of the
+     * actual result. Cooperative switching returns through the C call chain
+     * and ISR stub, producing the correct RAX value.
+     *
+     * CRITICAL: Explicitly clear fut_in_interrupt to 0. After a timer-driven
+     * IRETQ context switch (fut_switch_context_irq), fut_in_interrupt remains
+     * stale at 1 because IRETQ never returns to the timer ISR cleanup code.
+     * If we don't clear it here, any syscall that sleeps (e.g., epoll_wait)
+     * will see in_irq=true in fut_schedule() and incorrectly use the IRETQ
+     * path, saving this INT 0x80 frame (RAX=syscall_number) as irq_frame.
+     * When later restored via IRETQ, RAX=syscall_number goes to userspace. */
     movq %rsp, fut_current_frame(%rip)
 
     /* Extract syscall arguments from saved registers
@@ -208,6 +225,11 @@ isr_syscall_int80_stub:
 
     /* Save return value */
     movq %rax, %r11           /* Save syscall return value in R11 */
+
+    /* Clear fut_current_frame to prevent stale pointer usage.
+     * fut_in_interrupt was NOT set for INT 0x80 (see entry comment), so
+     * no need to clear it here. */
+    movq $0, fut_current_frame(%rip)
 
     addq $16, %rsp            /* Remove stack arguments */
 

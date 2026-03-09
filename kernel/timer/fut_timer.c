@@ -65,6 +65,15 @@ typedef struct fut_timer_event {
 static fut_timer_event_t *timer_events_head = nullptr;
 static fut_spinlock_t timer_events_lock = { .locked = 0 };
 
+/* Deferred free list: timer events freed from IRQ context are queued here
+ * and actually freed later in non-interrupt context.  Calling fut_free()
+ * directly from an IRQ while the interrupted thread is mid-allocation
+ * corrupts heap metadata. */
+static fut_timer_event_t *deferred_free_head = nullptr;
+static fut_spinlock_t deferred_free_lock = { .locked = 0 };
+
+static void drain_deferred_frees(void);
+
 /* ============================================================
  *   Sleep Queue Management
  * ============================================================ */
@@ -76,6 +85,9 @@ void fut_sleep_until(fut_thread_t *thread, uint64_t millis) {
     if (!thread) {
         return;
     }
+
+    /* Drain deferred frees from previous IRQ-context timer expirations */
+    drain_deferred_frees();
 
     // Calculate absolute wake time
     uint64_t current = atomic_load_explicit(&system_ticks, memory_order_relaxed);
@@ -146,6 +158,21 @@ static void wake_sleeping_threads(void) {
     fut_spinlock_release(&sleep_lock);
 }
 
+/* Drain the deferred-free list.  Must be called from non-IRQ context
+ * (interrupts may be enabled; fut_free disables them internally). */
+static void drain_deferred_frees(void) {
+    fut_spinlock_acquire(&deferred_free_lock);
+    fut_timer_event_t *list = deferred_free_head;
+    deferred_free_head = nullptr;
+    fut_spinlock_release(&deferred_free_lock);
+
+    while (list) {
+        fut_timer_event_t *next = list->next;
+        fut_free(list);
+        list = next;
+    }
+}
+
 static void process_timer_events(void) {
     uint64_t current = atomic_load_explicit(&system_ticks, memory_order_relaxed);
 
@@ -158,7 +185,13 @@ static void process_timer_events(void) {
         if (ev->cb) {
             ev->cb(ev->arg);
         }
-        fut_free(ev);
+        /* Defer the free — we are in IRQ context and calling fut_free()
+         * here can corrupt heap metadata if the interrupted thread was
+         * mid-allocation. */
+        fut_spinlock_acquire(&deferred_free_lock);
+        ev->next = deferred_free_head;
+        deferred_free_head = ev;
+        fut_spinlock_release(&deferred_free_lock);
         fut_spinlock_acquire(&timer_events_lock);
     }
     fut_spinlock_release(&timer_events_lock);
@@ -251,6 +284,10 @@ int fut_timer_start(uint64_t ticks_from_now, void (*cb)(void *), void *arg) {
     if (!cb) {
         return -EINVAL;
     }
+
+    /* Drain deferred frees from previous IRQ-context timer expirations */
+    drain_deferred_frees();
+
     if (ticks_from_now == 0) {
         cb(arg);
         return 0;
@@ -286,6 +323,9 @@ int fut_timer_cancel(void (*cb)(void *), void *arg) {
     if (!cb) {
         return -EINVAL;
     }
+
+    /* Drain deferred frees from previous IRQ-context timer expirations */
+    drain_deferred_frees();
     fut_spinlock_acquire(&timer_events_lock);
     fut_timer_event_t *prev = NULL;
     fut_timer_event_t *curr = timer_events_head;
@@ -395,6 +435,8 @@ void fut_timer_subsystem_init(void) {
     fut_spinlock_init(&sleep_lock);
     timer_events_head = nullptr;
     fut_spinlock_init(&timer_events_lock);
+    deferred_free_head = nullptr;
+    fut_spinlock_init(&deferred_free_lock);
 
     // Program PIT hardware (x86-64 only)
 #if defined(__x86_64__)

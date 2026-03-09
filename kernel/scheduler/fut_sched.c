@@ -680,6 +680,17 @@ void fut_schedule(void) {
         // not just IRQ-based switches. Cooperative switches (e.g., when a sleeping
         // thread wakes up via timer callback and gets scheduled by fut_schedule())
         // also need the correct CR3 before returning to userspace.
+        //
+        // Validate mm pointer is in kernel virtual address space.
+        // Heap corruption (e.g., from fut_free in IRQ context) can leave
+        // task->mm pointing to non-canonical addresses, causing #GP.
+#if defined(__x86_64__)
+        if (next_mm && (uintptr_t)next_mm < 0xFFFFFFFF80000000ULL) {
+            fut_printf("[SCHED] WARNING: Corrupt mm pointer %p for tid=%llu, ignoring\n",
+                       (void *)next_mm, (unsigned long long)next->tid);
+            next_mm = NULL;
+        }
+#endif
         if (prev_mm != next_mm && next_mm) {
             fut_mm_switch(next_mm);
         }

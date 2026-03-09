@@ -97,7 +97,7 @@ long sys_inotify_init1(int flags) {
         return -ESRCH;
     }
 
-    /* Phase 5: Validate flags early to fail fast
+    /* Validate flags early to fail fast
      * VULNERABILITY: Invalid Flags Bypass
      *
      * ATTACK SCENARIO:
@@ -113,12 +113,12 @@ long sys_inotify_init1(int flags) {
      */
     const int VALID_FLAGS = IN_CLOEXEC | IN_NONBLOCK;
     if (flags & ~VALID_FLAGS) {
-        fut_printf("[INOTIFY] inotify_init1(flags=0x%x, pid=%d) -> EINVAL (invalid flags, Phase 5)\n",
+        fut_printf("[INOTIFY] inotify_init1(flags=0x%x, pid=%d) -> EINVAL (invalid flags)\n",
                    flags, task->pid);
         return -EINVAL;
     }
 
-    /* Phase 5: Check per-process inotify fd limit
+    /* Check per-process inotify fd limit
      * VULNERABILITY: File Descriptor Exhaustion DoS
      *
      * ATTACK SCENARIO:
@@ -139,7 +139,7 @@ long sys_inotify_init1(int flags) {
      * Line 121 (old): Returns dummy_fd without checking limits
      * No validation of how many inotify fds already exist
      *
-     * DEFENSE (Phase 5):
+     * DEFENSE:
      * Check per-process fd limit before allocating inotify instance
      * - Linux default: /proc/sys/fs/inotify/max_user_instances (128)
      * - Per-process limit: RLIMIT_NOFILE (typically 1024)
@@ -156,7 +156,7 @@ long sys_inotify_init1(int flags) {
      * - CVE-2006-5751: Linux inotify event queue exhaustion
      */
 
-    /* Phase 5: Placeholder for fd limit check (will be implemented in Phase 4)
+    /* Placeholder for fd limit check (will be implemented in Phase 4)
      * When fd_table is integrated, add:
      *   if (task->fd_count >= task->fd_limit) { return -EMFILE; }
      *   if (task->inotify_instance_count >= 128) { return -EMFILE; }
@@ -231,10 +231,10 @@ long sys_inotify_add_watch(int fd, const char *pathname, uint32_t mask) {
         return -EBADF;
     }
 
-    /* Phase 5: Validate FD upper bound to prevent OOB array access */
+    /* Validate FD upper bound to prevent OOB array access */
     if (fd >= task->max_fds) {
         fut_printf("[INOTIFY] inotify_add_watch(fd=%d, max_fds=%d, pathname=%p, mask=0x%x, pid=%d) "
-                   "-> EBADF (fd exceeds max_fds, Phase 5: FD bounds validation)\n",
+                   "-> EBADF (fd exceeds max_fds, FD bounds validation)\n",
                    fd, task->max_fds, pathname, mask, task->pid);
         return -EBADF;
     }
@@ -246,7 +246,7 @@ long sys_inotify_add_watch(int fd, const char *pathname, uint32_t mask) {
         return -EFAULT;
     }
 
-    /* Phase 5: Copy full pathname to detect truncation
+    /* Copy full pathname to detect truncation
      * VULNERABILITY: Path Truncation Attack
      *
      * ATTACK SCENARIO:
@@ -274,7 +274,7 @@ long sys_inotify_add_watch(int fd, const char *pathname, uint32_t mask) {
      * - No detection that full path didn't fit
      * - Application assumes watch is on full path
      *
-     * DEFENSE (Phase 5):
+     * DEFENSE:
      * Copy full buffer size (256 bytes) and check for truncation
      * - Copy 256 bytes instead of 255
      * - Search for null terminator with memchr in copied buffer
@@ -288,15 +288,15 @@ long sys_inotify_add_watch(int fd, const char *pathname, uint32_t mask) {
     char path_buf[FUT_VFS_PATH_BUFFER_SIZE];
     if (fut_copy_from_user(path_buf, pathname, sizeof(path_buf)) != 0) {
         fut_printf("[INOTIFY] inotify_add_watch(fd=%d, pathname=?, mask=0x%x, pid=%d) "
-                   "-> EFAULT (pathname copy_from_user failed, Phase 5)\n",
+                   "-> EFAULT (pathname copy_from_user failed)\n",
                    fd, mask, task->pid);
         return -EFAULT;
     }
 
-    /* Phase 5: Verify path was not truncated */
+    /* Verify path was not truncated */
     if (memchr(path_buf, '\0', sizeof(path_buf)) == NULL) {
         fut_printf("[INOTIFY] inotify_add_watch(fd=%d, pathname=<truncated>, mask=0x%x, pid=%d) "
-                   "-> ENAMETOOLONG (path exceeds %zu bytes, truncation detected, Phase 5)\n",
+                   "-> ENAMETOOLONG (path exceeds %zu bytes, truncation detected)\n",
                    fd, mask, task->pid, sizeof(path_buf) - 1);
         return -ENAMETOOLONG;
     }
@@ -358,10 +358,10 @@ long sys_inotify_rm_watch(int fd, int wd) {
         return -EBADF;
     }
 
-    /* Phase 5: Validate FD upper bound to prevent OOB array access */
+    /* Validate FD upper bound to prevent OOB array access */
     if (fd >= task->max_fds) {
         fut_printf("[INOTIFY] inotify_rm_watch(fd=%d, max_fds=%d, wd=%d, pid=%d) "
-                   "-> EBADF (fd exceeds max_fds, Phase 5: FD bounds validation)\n",
+                   "-> EBADF (fd exceeds max_fds, FD bounds validation)\n",
                    fd, task->max_fds, wd, task->pid);
         return -EBADF;
     }

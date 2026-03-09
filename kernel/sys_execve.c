@@ -399,7 +399,7 @@ long sys_execve(const char *pathname, char *const argv[], char *const envp[]) {
         }
     }
 
-    /* Phase 5: TOCTOU FIX - Allocate kernel buffers for argv/envp
+    /* TOCTOU FIX - Allocate kernel buffers for argv/envp
      * Copy arguments to kernel memory during validation to prevent race conditions.
      * This eliminates the window between validation and use where userspace could
      * modify argv/envp pointers or strings. */
@@ -472,7 +472,7 @@ long sys_execve(const char *pathname, char *const argv[], char *const envp[]) {
                 return -E2BIG;
             }
 
-            /* Phase 5: Copy argument string to kernel memory atomically
+            /* Copy argument string to kernel memory atomically
              * This prevents TOCTOU: userspace can no longer modify the string after validation */
             kernel_argv[i] = (char *)fut_malloc(arg_len + 1);
             if (!kernel_argv[i]) {
@@ -574,7 +574,7 @@ long sys_execve(const char *pathname, char *const argv[], char *const envp[]) {
                 return -E2BIG;
             }
 
-            /* Phase 5: Copy environment string to kernel memory atomically */
+            /* Copy environment string to kernel memory atomically */
             kernel_envp[i] = (char *)fut_malloc(env_len + 1);
             if (!kernel_envp[i]) {
                 execve_free_envp(kernel_envp, i);
@@ -756,7 +756,7 @@ long sys_execve(const char *pathname, char *const argv[], char *const envp[]) {
     msg[pos] = '\0';
     fut_printf("%s", msg);
 
-    /* Phase 5: Call ELF loader with kernel-space argv/envp
+    /* Call ELF loader with kernel-space argv/envp
      * This prevents TOCTOU race: userspace can no longer modify arguments after validation.
      * kernel_argv, kernel_envp, and kernel_pathname are immutable kernel copies. */
     int ret = fut_exec_elf(kernel_pathname,
@@ -823,7 +823,7 @@ long sys_execve(const char *pathname, char *const argv[], char *const envp[]) {
     msg[pos] = '\0';
     fut_printf("%s", msg);
 
-    /* Phase 5: Cleanup kernel buffers on exec failure
+    /* Cleanup kernel buffers on exec failure
      * On success, fut_exec_elf never returns (calls fut_thread_exit),
      * so kernel memory is freed as part of process termination.
      * On failure, we must explicitly free the allocated buffers. */

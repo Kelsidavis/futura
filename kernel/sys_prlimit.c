@@ -91,7 +91,7 @@ long sys_prlimit64(int pid, int resource,
 
     const char *resource_name = get_resource_name(resource);
 
-    /* Phase 5: Document pointer and limit validation requirements
+    /* Document pointer and limit validation requirements
      * VULNERABILITY: Resource Limit Bypass and Denial of Service
      *
      * ATTACK SCENARIO 1: NULL Pointer Dereference in Limit Copy
@@ -157,7 +157,7 @@ long sys_prlimit64(int pid, int resource,
      * - No enforcement of minimum/maximum reasonable values per resource
      * - Assumes Phase 2 will add enforcement (not documented)
      *
-     * DEFENSE (Phase 5 Requirements for Phase 2):
+     * DEFENSE (Requirements for Phase 2):
      * 1. Pointer Validation:
      *    - fut_access_ok(new_limit, sizeof(*new_limit), READ) before dereference
      *    - fut_access_ok(old_limit, sizeof(*old_limit), WRITE) before copy_to_user

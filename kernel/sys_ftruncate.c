@@ -146,7 +146,7 @@ long sys_ftruncate(int fd, uint64_t length) {
         return -EISDIR;
     }
 
-    /* Phase 5: Verify file was opened with write permission
+    /* Verify file was opened with write permission
      * VULNERABILITY: Unauthorized File Truncation via Read-Only FD
      *
      * ATTACK SCENARIO:
@@ -154,7 +154,7 @@ long sys_ftruncate(int fd, uint64_t length) {
      * 1. Attacker lacks write permission on /important/data.db (mode 0444)
      * 2. Attacker opens: fd = open("/important/data.db", O_RDONLY)
      *    - open() succeeds (read permission granted)
-     * 3. WITHOUT Phase 5 check:
+     * 3. WITHOUT check:
      *    - Attacker calls ftruncate(fd, 0) to clear file
      *    - Line 230: vnode->ops->truncate(vnode, 0) executes
      *    - File contents destroyed despite read-only open
@@ -170,7 +170,7 @@ long sys_ftruncate(int fd, uint64_t length) {
      * - Zero-fills when extending (data modification)
      * BUT old code didn't verify file->flags before allowing modification
      *
-     * DEFENSE (Phase 5):
+     * DEFENSE:
      * Reject ftruncate() on files not opened for writing
      * - Check file->flags for O_WRONLY (0x0001) or O_RDWR (0x0002)
      * - Return -EBADF if file opened O_RDONLY (0x0000)
@@ -197,7 +197,7 @@ long sys_ftruncate(int fd, uint64_t length) {
     /* O_WRONLY, O_RDWR provided by fcntl.h */
     if (!(file->flags & (O_WRONLY | O_RDWR))) {
         fut_printf("[FTRUNCATE] ftruncate(fd=%d [%s], length=%llu [%s], flags=0x%x) -> EBADF "
-                   "(file not opened for writing, Phase 5 write permission check)\n",
+                   "(file not opened for writing write permission check)\n",
                    fd, fd_category, length, length_category, file->flags);
         return -EBADF;
     }

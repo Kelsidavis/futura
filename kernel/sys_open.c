@@ -142,7 +142,7 @@ long sys_open(const char *pathname, int flags, int mode) {
         return -EINVAL;
     }
 
-    /* Phase 5: Validate access mode BEFORE use
+    /* Validate access mode BEFORE use
      * VULNERABILITY: Invalid Access Mode Causing Undefined Behavior
      *
      * ATTACK SCENARIO:
@@ -164,7 +164,7 @@ long sys_open(const char *pathname, int flags, int mode) {
      * - Switch default case doesn't reject, just logs
      * - VFS receives unchecked value
      *
-     * DEFENSE (Phase 5):
+     * DEFENSE:
      * Validate access_mode is 0, 1, or 2 BEFORE proceeding
      * - Reject with -EINVAL if value is 3 (0x0003)
      * - Prevents undefined behavior in VFS layer
@@ -181,13 +181,13 @@ long sys_open(const char *pathname, int flags, int mode) {
     /* Phase 2: Categorize access mode */
     int access_mode = local_flags & O_ACCMODE;
 
-    /* Phase 5: Validate access mode is one of the three valid values
+    /* Validate access mode is one of the three valid values
      * O_RDONLY (0), O_WRONLY (1), or O_RDWR (2)
      * Value 3 (O_ACCMODE) is explicitly invalid - accessing with both O_WRONLY
      * and O_RDWR bits set is undefined behavior in POSIX */
     if (access_mode != O_RDONLY && access_mode != O_WRONLY && access_mode != O_RDWR) {
         open_printf("[OPEN] open(pathname=?, flags=0x%x, mode=0%o) -> EINVAL "
-                   "(invalid access mode %d, must be O_RDONLY/O_WRONLY/O_RDWR, Phase 5)\n",
+                   "(invalid access mode %d, must be O_RDONLY/O_WRONLY/O_RDWR)\n",
                    local_flags, local_mode, access_mode);
         return -EINVAL;
     }
@@ -204,7 +204,7 @@ long sys_open(const char *pathname, int flags, int mode) {
             access_mode_desc = "O_RDWR (read-write)";
             break;
         default:
-            /* Phase 5: This case now unreachable due to validation above */
+            /* This case now unreachable due to validation above */
             access_mode_desc = "invalid access mode";
             break;
     }

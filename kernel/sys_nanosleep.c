@@ -126,13 +126,13 @@ long sys_nanosleep(const fut_timespec_t *u_req, fut_timespec_t *u_rem) {
         return -EINVAL;
     }
 
-    /* Phase 5: Validate u_rem write permission early (kernel writes remaining time if interrupted)
+    /* Validate u_rem write permission early (kernel writes remaining time if interrupted)
      * VULNERABILITY: Invalid Output Buffer Pointer
      * ATTACK: Attacker provides read-only or unmapped u_rem buffer
      * IMPACT: Kernel page fault when writing remaining time after sleep
      * DEFENSE: Check write permission before potentially blocking sleep operation */
     if (u_rem && fut_access_ok(u_rem, sizeof(fut_timespec_t), 1) != 0) {
-        nanosleep_printf("[NANOSLEEP] nanosleep(u_rem=%p) -> EFAULT (u_rem not writable for %zu bytes, Phase 5)\n",
+        nanosleep_printf("[NANOSLEEP] nanosleep(u_rem=%p) -> EFAULT (u_rem not writable for %zu bytes)\n",
                    u_rem, sizeof(fut_timespec_t));
         return -EFAULT;
     }

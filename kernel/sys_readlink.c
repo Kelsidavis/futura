@@ -195,7 +195,7 @@ long sys_readlink(const char *path, char *buf, size_t bufsiz) {
                    "(path copy_from_user failed)\n", local_bufsiz, bufsiz_category);
         return -EFAULT;
     }
-    /* Phase 5: Verify path was not truncated */
+    /* Verify path was not truncated */
     if (memchr(path_buf, '\0', sizeof(path_buf)) == NULL) {
         fut_printf("[READLINK] readlink(path exceeds %zu bytes) -> ENAMETOOLONG\n", sizeof(path_buf) - 1);
         return -ENAMETOOLONG;
@@ -315,7 +315,7 @@ long sys_readlink(const char *path, char *buf, size_t bufsiz) {
         return len;
     }
 
-    /* Phase 5: Validate VFS return length BEFORE using it
+    /* Validate VFS return length BEFORE using it
      * VULNERABILITY: Buffer Overrun via Untrusted VFS Return Value
      *
      * ATTACK SCENARIO:
@@ -323,7 +323,7 @@ long sys_readlink(const char *path, char *buf, size_t bufsiz) {
      * 1. Line 288: Kernel allocates target_buf with size = local_bufsiz (e.g., 256 bytes)
      * 2. Line 294: vnode->ops->readlink(vnode, target_buf, 256) called
      * 3. Malicious VFS returns len = 512 (claims to have read 512 bytes)
-     * 4. WITHOUT Phase 5 check:
+     * 4. WITHOUT check:
      *    - Line 334: fut_copy_to_user(local_buf, target_buf, 512)
      *    - Copies 512 bytes from 256-byte buffer
      *    - Result: Information disclosure (kernel heap leak beyond buffer)
@@ -334,27 +334,27 @@ long sys_readlink(const char *path, char *buf, size_t bufsiz) {
      * - Network filesystems: Remote attacker could craft responses
      * - Kernel must validate ALL VFS return values
      *
-     * DEFENSE LAYER 1 (Phase 5): Validate len <= bufsiz
+     * DEFENSE LAYER 1: Validate len <= bufsiz
      * Check returned length doesn't exceed allocated buffer size
      * Prevents reading beyond kernel buffer (information disclosure)
      * Critical for FUSE and network filesystems */
     if (len > (ssize_t)local_bufsiz) {
         fut_printf("[READLINK] readlink(path='%s', ino=%lu, bufsiz=%zu) -> ENAMETOOLONG "
-                   "(returned length %zd exceeds buffer size, Phase 5)\n",
+                   "(returned length %zd exceeds buffer size)\n",
                    path_buf, vnode->ino, local_bufsiz, len);
         fut_free(target_buf);
         fut_vnode_unref(vnode);
         return -ENAMETOOLONG;
     }
 
-    /* DEFENSE LAYER 2 (Phase 5): Validate len <= PATH_MAX
+    /* DEFENSE LAYER 2: Validate len <= PATH_MAX
      * Symlinks with targets exceeding PATH_MAX (4096 bytes) are invalid
      * Prevents pathologically long symlink targets
      * Secondary defense if bufsiz > PATH_MAX */
     #define PATH_MAX 4096
     if (len > PATH_MAX) {
         fut_printf("[READLINK] readlink(path='%s', ino=%lu) -> ENAMETOOLONG "
-                   "(symlink target length %zd exceeds PATH_MAX %d, Phase 5)\n",
+                   "(symlink target length %zd exceeds PATH_MAX %d)\n",
                    path_buf, vnode->ino, len, PATH_MAX);
         fut_free(target_buf);
         fut_vnode_unref(vnode);

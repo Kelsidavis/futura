@@ -169,7 +169,7 @@ long sys_kill(int pid, int sig) {
             break;
     }
 
-    /* Phase 5: Validate signal number early with detailed error
+    /* Validate signal number early with detailed error
      * VULNERABILITY: Signal Number Out-of-Bounds Access
      *
      * ATTACK SCENARIO:
@@ -192,7 +192,7 @@ long sys_kill(int pid, int sig) {
      * - Negative signals could wrap around in unsigned arithmetic
      * - Out-of-range signals access beyond allocated signal tables
      *
-     * DEFENSE (Phase 5):
+     * DEFENSE:
      * Validate signal number BEFORE any switch/case or array indexing
      * - Check sig >= 0 (reject negative signals)
      * - Check sig < _NSIG (reject signals beyond table size)
@@ -210,7 +210,7 @@ long sys_kill(int pid, int sig) {
      */
     if (sig < 0 || sig >= _NSIG) {
         fut_printf("[KILL] kill(pid=%d, sig=%d [%s]) -> EINVAL "
-                   "(invalid signal number, valid range: 0-%d, Phase 5)\n",
+                   "(invalid signal number, valid range: 0-%d)\n",
                    pid, sig, signal_name, _NSIG - 1);
         return -EINVAL;
     }

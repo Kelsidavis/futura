@@ -165,7 +165,7 @@ uint32_t tcpip_parse_ip(const char *str) {
     while (*str && shift >= 0) {
         if (*str >= '0' && *str <= '9') {
             octet = octet * 10 + (*str - '0');
-            if (octet > 255) octet = 255;  /* Phase 5: clamp invalid octets */
+            if (octet > 255) octet = 255;  /* clamp invalid octets */
         } else if (*str == '.') {
             result |= ((octet & 0xFF) << shift);
             octet = 0;
@@ -229,7 +229,7 @@ void tcpip_format_mac(const eth_addr_t mac, char *buf, size_t len) {
     buf[written] = '\0';
 }
 
-/* Phase 5: Generate a pseudo-random TCP initial sequence number.
+/* Generate a pseudo-random TCP initial sequence number.
  * Uses TSC for entropy -- not cryptographically strong, but far better
  * than the previous hardcoded value of 1000.  A real implementation
  * should use RFC 6528 (SipHash over connection tuple + secret). */
@@ -325,7 +325,7 @@ static void arp_handle_packet(const uint8_t *frame, size_t len) {
 
     fut_printf("[ARP-DEBUG] sender_ip=0x%x target_ip=0x%x\n", sender_ip, target_ip);
 
-    /* Phase 5: Only update ARP cache if (a) the ARP is targeted at us, or
+    /* Only update ARP cache if (a) the ARP is targeted at us, or
      * (b) we already have an entry for this sender IP.  This mitigates
      * unsolicited ARP cache poisoning from arbitrary hosts. */
     if (target_ip == g_tcpip.ip_address) {
@@ -463,7 +463,7 @@ int arp_resolve(uint32_t ip, eth_addr_t *mac) {
 
 static void ip_send_packet(uint32_t dest_ip, uint8_t protocol,
                            const void *payload, size_t payload_len) {
-    /* Phase 5: Validate payload_len fits in IP total_length (uint16_t) and
+    /* Validate payload_len fits in IP total_length (uint16_t) and
      * in an Ethernet frame.  Also prevents integer overflow in total_len calc. */
     if (payload_len > IP_MAX_PACKET - IP_HEADER_MIN_LEN ||
         payload_len > (ETH_MAX_FRAME - ETH_HEADER_LEN - IP_HEADER_MIN_LEN)) {
@@ -567,7 +567,7 @@ static void icmp_handle_packet(const uint8_t *ip_payload, size_t len,
 }
 
 int icmp_ping(uint32_t dest_ip, uint16_t id, uint16_t seq, void *data, size_t len) {
-    /* Phase 5: Check for integer overflow in length calculation */
+    /* Check for integer overflow in length calculation */
     if (len > IP_MAX_PACKET - sizeof(icmp_header_t)) return -EINVAL;
     size_t total_len = sizeof(icmp_header_t) + len;
     uint8_t *packet = fut_malloc(total_len);
@@ -688,7 +688,7 @@ static tcp_connection_t *tcp_alloc_connection(void) {
 
 static void tcp_send_packet(tcp_connection_t *conn, uint8_t flags,
                             const void *data, size_t data_len) {
-    /* Phase 5: Check for integer overflow in length calculation */
+    /* Check for integer overflow in length calculation */
     if (data_len > IP_MAX_PACKET - IP_HEADER_MIN_LEN - TCP_HEADER_MIN_LEN) return;
     size_t total_len = TCP_HEADER_MIN_LEN + data_len;
     uint8_t *packet = fut_malloc(total_len);
@@ -857,7 +857,7 @@ static void ip_handle_packet(const uint8_t *frame, size_t len) {
         return;
     }
 
-    /* Phase 5: Validate IHL doesn't extend beyond received data */
+    /* Validate IHL doesn't extend beyond received data */
     size_t ip_data_len = len - ETH_HEADER_LEN;
     if (ihl > ip_data_len) {
         fut_printf("[IP-HANDLE] IHL (%u) exceeds received data (%u)\n",
@@ -883,13 +883,13 @@ static void ip_handle_packet(const uint8_t *frame, size_t len) {
     uint16_t total_len = ntohs(ip->total_length);
     uint8_t protocol = ip->protocol;
 
-    /* Phase 5: Validate total_length against IHL (prevents underflow) */
+    /* Validate total_length against IHL (prevents underflow) */
     if (total_len < ihl) {
         fut_printf("[IP-HANDLE] total_length (%u) < IHL (%u)\n", total_len, ihl);
         return;
     }
 
-    /* Phase 5: Validate total_length against actual received data.
+    /* Validate total_length against actual received data.
      * A crafted packet could claim a larger total_length than what
      * was actually received, causing out-of-bounds reads in protocol handlers. */
     if (total_len > ip_data_len) {
@@ -1167,7 +1167,7 @@ int tcpip_sendto(tcpip_socket_t *sock, const void *data, size_t len,
         return -EINVAL;
     }
 
-    /* Phase 5: Check for integer overflow and max UDP payload size.
+    /* Check for integer overflow and max UDP payload size.
      * UDP length field is 16-bit, so total (header + data) must fit in uint16_t. */
     if (len > 65535 - UDP_HEADER_LEN) return -EINVAL;
     size_t total_len = UDP_HEADER_LEN + len;

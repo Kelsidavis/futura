@@ -1700,7 +1700,7 @@ int64_t fut_vfs_lseek(int fd, int64_t offset, int whence) {
     /* Validate resulting offset is non-negative and representable in off_t.
      * Catches: negative SEEK_SET offset, SEEK_CUR/SEEK_END arithmetic underflow
      * (negative result wraps to large uint64_t), and overflow past INT64_MAX.
-     * This fulfills the contract documented in sys_lseek.c Phase 5. */
+     * This fulfills the contract documented in sys_lseek.c . */
     if (new_offset > (uint64_t)INT64_MAX) {
         return -EOVERFLOW;
     }

@@ -10,7 +10,7 @@
  * Phase 2 (Completed): Enhanced validation, operation categorization, and detailed logging
  * Phase 3 (Completed): Atomic close-and-dup with proper error handling
  * Phase 4 (Completed): dup3() with O_CLOEXEC flag support
- * Phase 5: Advanced features (F_DUPFD_CLOEXEC in fcntl)
+ * Advanced features (F_DUPFD_CLOEXEC in fcntl)
  */
 
 #include <kernel/errno.h>
@@ -119,7 +119,7 @@ long sys_dup2(int oldfd, int newfd) {
         return -ESRCH;
     }
 
-    /* Phase 5: Validate oldfd and newfd bounds to prevent FD table out-of-bounds access
+    /* Validate oldfd and newfd bounds to prevent FD table out-of-bounds access
      * VULNERABILITY: Out-of-Bounds FD Table Access (Dual FD Parameters)
      *
      * ATTACK SCENARIO:
@@ -146,7 +146,7 @@ long sys_dup2(int oldfd, int newfd) {
      * - Either parameter OOB causes vulnerability
      * - More attack surface than single-FD syscalls
      *
-     * DEFENSE (Phase 5):
+     * DEFENSE:
      * Validate both FD parameters before any FD table access
      * - Check oldfd >= 0 and oldfd < task->max_fds
      * - Check newfd >= 0 and newfd < task->max_fds
@@ -165,32 +165,32 @@ long sys_dup2(int oldfd, int newfd) {
      * greater than or equal to OPEN_MAX"
      *
      * PRECEDENT:
-     * - sys_close Phase 5: FD bounds validation for single parameter
-     * - sys_dup Phase 5: FD bounds validation for oldfd only
-     * - sys_dup2 Phase 5: Validates BOTH oldfd and newfd (dual parameters)
+     * - sys_close FD bounds validation for single parameter
+     * - sys_dup FD bounds validation for oldfd only
+     * - sys_dup2 Validates BOTH oldfd and newfd (dual parameters)
      */
     if (local_oldfd < 0) {
-        DUP2_LOG("[DUP2] dup2(oldfd=%d, newfd=%d) -> EBADF (negative oldfd, Phase 5)\n",
+        DUP2_LOG("[DUP2] dup2(oldfd=%d, newfd=%d) -> EBADF (negative oldfd)\n",
                    local_oldfd, local_newfd);
         return -EBADF;
     }
 
     if (local_oldfd >= (int)task->max_fds) {
         DUP2_LOG("[DUP2] dup2(oldfd=%d, newfd=%d, max_fds=%u) -> EBADF "
-                   "(oldfd exceeds max_fds, Phase 5: FD bounds validation)\n",
+                   "(oldfd exceeds max_fds, FD bounds validation)\n",
                    local_oldfd, local_newfd, task->max_fds);
         return -EBADF;
     }
 
     if (local_newfd < 0) {
-        DUP2_LOG("[DUP2] dup2(oldfd=%d, newfd=%d) -> EINVAL (negative newfd, Phase 5)\n",
+        DUP2_LOG("[DUP2] dup2(oldfd=%d, newfd=%d) -> EINVAL (negative newfd)\n",
                    local_oldfd, local_newfd);
         return -EINVAL;
     }
 
     if (local_newfd >= (int)task->max_fds) {
         DUP2_LOG("[DUP2] dup2(oldfd=%d, newfd=%d, max_fds=%u) -> EINVAL "
-                   "(newfd exceeds max_fds, Phase 5: FD bounds validation)\n",
+                   "(newfd exceeds max_fds, FD bounds validation)\n",
                    local_oldfd, local_newfd, task->max_fds);
         return -EINVAL;
     }
@@ -215,7 +215,7 @@ long sys_dup2(int oldfd, int newfd) {
         operation_type = "no-op (same FD)";
         operation_desc = "validates oldfd is open, no duplication";
 
-        DUP2_LOG("[DUP2] dup2(oldfd=%d, newfd=%d [%s], op=%s) -> %d (%s, Phase 5)\n",
+        DUP2_LOG("[DUP2] dup2(oldfd=%d, newfd=%d [%s], op=%s) -> %d (%s)\n",
                    local_oldfd, local_newfd, newfd_category, operation_type, local_newfd, operation_desc);
         return local_newfd;
     }
@@ -233,7 +233,7 @@ long sys_dup2(int oldfd, int newfd) {
     (void)operation_desc;  /* Used only in debug logging */
 
     /* Increment reference count on the file since we're creating another reference
-     * Phase 5: Check for refcount overflow before incrementing
+     * Check for refcount overflow before incrementing
      * A refcount reaching UINT32_MAX would wrap to 0 on next increment,
      * causing use-after-free when all references are released but one remains */
     if (old_file) {
@@ -252,7 +252,7 @@ long sys_dup2(int oldfd, int newfd) {
     int ret = vfs_alloc_specific_fd_for_task(task, local_newfd, old_file);
     if (ret < 0) {
         /* Failed to allocate, decrement ref count
-         * Phase 5: Validate refcount > 0 before decrementing to prevent underflow */
+         * Validate refcount > 0 before decrementing to prevent underflow */
         if (old_file) {
             __atomic_sub_fetch(&old_file->refcount, 1, __ATOMIC_ACQ_REL);
         }
@@ -283,8 +283,8 @@ long sys_dup2(int oldfd, int newfd) {
     /* Propagate socket ownership if oldfd is a socket */
     propagate_socket_dup(local_oldfd, local_newfd);
 
-    /* Phase 5: Detailed success logging */
-    DUP2_LOG("[DUP2] dup2(oldfd=%d, newfd=%d [%s], op=%s, refcount=%u) -> %d (%s, Phase 5: FD bounds validation)\n",
+    /* Detailed success logging */
+    DUP2_LOG("[DUP2] dup2(oldfd=%d, newfd=%d [%s], op=%s, refcount=%u) -> %d (%s, FD bounds validation)\n",
                local_oldfd, local_newfd, newfd_category, operation_type, old_file->refcount, local_newfd,
                operation_desc);
 
@@ -349,10 +349,10 @@ long sys_dup3(int oldfd, int newfd, int flags) {
         return -EBADF;
     }
 
-    /* Phase 5: Validate oldfd upper bound */
+    /* Validate oldfd upper bound */
     if (local_oldfd >= (int)task->max_fds) {
         fut_printf("[DUP3] dup3(oldfd=%d, newfd=%d, max_fds=%u, flags=0x%x) -> EBADF "
-                   "(oldfd exceeds max_fds, Phase 5: FD bounds validation)\n",
+                   "(oldfd exceeds max_fds, FD bounds validation)\n",
                    local_oldfd, local_newfd, task->max_fds, local_flags);
         return -EBADF;
     }
@@ -364,10 +364,10 @@ long sys_dup3(int oldfd, int newfd, int flags) {
         return -EINVAL;
     }
 
-    /* Phase 5: Validate newfd upper bound */
+    /* Validate newfd upper bound */
     if (local_newfd >= (int)task->max_fds) {
         fut_printf("[DUP3] dup3(oldfd=%d, newfd=%d, max_fds=%u, flags=0x%x) -> EINVAL "
-                   "(newfd exceeds max_fds, Phase 5: FD bounds validation)\n",
+                   "(newfd exceeds max_fds, FD bounds validation)\n",
                    local_oldfd, local_newfd, task->max_fds, local_flags);
         return -EINVAL;
     }
@@ -381,7 +381,7 @@ long sys_dup3(int oldfd, int newfd, int flags) {
     }
 
     /* Increment reference count since we're creating another reference
-     * Phase 5: Check for refcount overflow before incrementing */
+     * Check for refcount overflow before incrementing */
     if (old_file) {
         if (old_file->refcount >= UINT32_MAX) {
             fut_printf("[DUP3] dup3(oldfd=%d, newfd=%d, flags=0x%x) -> EMFILE (refcount overflow)\n",
@@ -395,7 +395,7 @@ long sys_dup3(int oldfd, int newfd, int flags) {
     int ret = vfs_alloc_specific_fd_for_task(task, local_newfd, old_file);
     if (ret < 0) {
         /* Failed to allocate, decrement ref count
-         * Phase 5: Validate refcount > 0 before decrementing to prevent underflow */
+         * Validate refcount > 0 before decrementing to prevent underflow */
         if (old_file) {
             __atomic_sub_fetch(&old_file->refcount, 1, __ATOMIC_ACQ_REL);
         }

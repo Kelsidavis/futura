@@ -155,17 +155,17 @@ long sys_sendfile(int out_fd, int in_fd, uint64_t *offset, size_t count) {
         return -EBADF;
     }
 
-    /* Phase 5: Validate FD upper bounds to prevent OOB array access */
+    /* Validate FD upper bounds to prevent OOB array access */
     if (out_fd >= task->max_fds) {
         fut_printf("[SENDFILE] sendfile(out_fd=%d, in_fd=%d, max_fds=%d, count=%zu, pid=%d) -> EBADF "
-                   "(out_fd exceeds max_fds, Phase 5: FD bounds validation)\n",
+                   "(out_fd exceeds max_fds, FD bounds validation)\n",
                    out_fd, in_fd, task->max_fds, count, task->pid);
         return -EBADF;
     }
 
     if (in_fd >= task->max_fds) {
         fut_printf("[SENDFILE] sendfile(out_fd=%d, in_fd=%d, max_fds=%d, count=%zu, pid=%d) -> EBADF "
-                   "(in_fd exceeds max_fds, Phase 5: FD bounds validation)\n",
+                   "(in_fd exceeds max_fds, FD bounds validation)\n",
                    out_fd, in_fd, task->max_fds, count, task->pid);
         return -EBADF;
     }

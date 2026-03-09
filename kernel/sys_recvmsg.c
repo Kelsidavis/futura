@@ -120,7 +120,7 @@ ssize_t sys_recvmsg(int sockfd, struct msghdr *msg, int flags) {
         return -EFAULT;
     }
 
-    /* Phase 5: Validate control message length to prevent DoS and buffer overflows
+    /* Validate control message length to prevent DoS and buffer overflows
      * VULNERABILITY: Unbounded Ancillary Data Size and Control Message Parsing
      *
      * ATTACK SCENARIO 1: Excessive Control Message Length (DoS)
@@ -161,7 +161,7 @@ ssize_t sys_recvmsg(int sockfd, struct msghdr *msg, int flags) {
      * - Parser iterates via CMSG_NEXT macro using pointer arithmetic
      * - No validation that total lengths don't overflow or exceed limits
      *
-     * DEFENSE (Phase 5):
+     * DEFENSE:
      * 1. Limit maximum control message length (line 151-157):
      *    - MAX_CONTROL_LEN = 64KB (generous for most use cases)
      *    - Prevents memory exhaustion attacks
@@ -199,7 +199,7 @@ ssize_t sys_recvmsg(int sockfd, struct msghdr *msg, int flags) {
         const size_t MAX_CONTROL_LEN = 65536;  /* 64KB */
         if (kmsg.msg_controllen > MAX_CONTROL_LEN) {
             RECVMSG_LOG("[RECVMSG] recvmsg(sockfd=%d, controllen=%zu) -> EINVAL "
-                       "(control message too large, max %zu bytes, Phase 5)\n",
+                       "(control message too large, max %zu bytes)\n",
                        local_sockfd, kmsg.msg_controllen, MAX_CONTROL_LEN);
             return -EINVAL;
         }
@@ -207,7 +207,7 @@ ssize_t sys_recvmsg(int sockfd, struct msghdr *msg, int flags) {
         /* Validate control buffer pointer is not NULL */
         if (!kmsg.msg_control) {
             RECVMSG_LOG("[RECVMSG] recvmsg(sockfd=%d, controllen=%zu) -> EFAULT "
-                       "(msg_control is NULL with non-zero length, Phase 5)\n",
+                       "(msg_control is NULL with non-zero length)\n",
                        local_sockfd, kmsg.msg_controllen);
             return -EFAULT;
         }
@@ -239,14 +239,14 @@ ssize_t sys_recvmsg(int sockfd, struct msghdr *msg, int flags) {
             return -EFAULT;
         }
 
-        /* Phase 5: Prevent integer overflow in total_size accumulation
+        /* Prevent integer overflow in total_size accumulation
          * Check BEFORE addition to handle SIZE_MAX edge case correctly
          * Previous vulnerable pattern: if (total_size + iov_len < total_size)
          *   - When total_size == SIZE_MAX, any addition wraps but check may pass
          *   - Need explicit SIZE_MAX check before arithmetic */
         if (total_size == SIZE_MAX || iov.iov_len > SIZE_MAX - total_size) {
             RECVMSG_LOG("[RECVMSG] recvmsg(sockfd=%d, iovlen=%zu) -> EINVAL "
-                       "(size overflow at iovec %zu, total=%zu, iov_len=%zu, Phase 5)\n",
+                       "(size overflow at iovec %zu, total=%zu, iov_len=%zu)\n",
                        local_sockfd, kmsg.msg_iovlen, i, total_size, iov.iov_len);
             return -EINVAL;
         }
@@ -296,7 +296,7 @@ ssize_t sys_recvmsg(int sockfd, struct msghdr *msg, int flags) {
      * Phase 4: Handle ancillary data (SCM_RIGHTS for FD receiving)
      */
 
-    /* Phase 5: Handle MSG_DONTWAIT flag
+    /* Handle MSG_DONTWAIT flag
      * Temporarily set O_NONBLOCK on socket if MSG_DONTWAIT is specified.
      * This ensures the socket returns EAGAIN instead of blocking. */
     bool restore_blocking = false;
@@ -322,7 +322,7 @@ ssize_t sys_recvmsg(int sockfd, struct msghdr *msg, int flags) {
             continue;
         }
 
-        /* Phase 5: Validate iov_base write permission BEFORE allocation
+        /* Validate iov_base write permission BEFORE allocation
          * VULNERABILITY: Missing Write Permission Validation on Receive Buffer
          *
          * ATTACK SCENARIO:
@@ -337,22 +337,22 @@ ssize_t sys_recvmsg(int sockfd, struct msghdr *msg, int flags) {
          * 6. Kernel buffer leaked, socket data lost
          * 7. Repeated attacks exhaust kernel memory (DoS)
          *
-         * DEFENSE (Phase 5):
+         * DEFENSE:
          * Validate buffer is writable BEFORE allocating kernel memory
          */
         if (!iov.iov_base) {
             RECVMSG_LOG("[RECVMSG] recvmsg(sockfd=%d) -> EFAULT "
-                       "(iov_base[%zu] is NULL with non-zero length %zu, Phase 5)\n",
+                       "(iov_base[%zu] is NULL with non-zero length %zu)\n",
                        local_sockfd, i, iov.iov_len);
             return total_received > 0 ? total_received : -EFAULT;
         }
 
-        /* Phase 5: Probe write permission with 1-byte test */
+        /* Probe write permission with 1-byte test */
         uint8_t test_byte;
         if (fut_copy_from_user(&test_byte, iov.iov_base, 1) != 0 ||
             fut_copy_to_user(iov.iov_base, &test_byte, 1) != 0) {
             RECVMSG_LOG("[RECVMSG] recvmsg(sockfd=%d) -> EFAULT "
-                       "(iov_base[%zu] not writable, len=%zu, Phase 5)\n",
+                       "(iov_base[%zu] not writable, len=%zu)\n",
                        local_sockfd, i, iov.iov_len);
             return total_received > 0 ? total_received : -EFAULT;
         }

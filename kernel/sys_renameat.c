@@ -228,7 +228,7 @@ long sys_renameat(int olddirfd, const char *oldpath, int newdirfd, const char *n
     }
     /* Olddirfd is a real FD - resolve via VFS */
     else {
-        /* Phase 5: Validate olddirfd bounds before accessing FD table */
+        /* Validate olddirfd bounds before accessing FD table */
         if (local_olddirfd < 0) {
             fut_printf("[RENAMEAT] renameat(olddirfd=%d) -> EBADF (invalid negative olddirfd)\n",
                        local_olddirfd);
@@ -237,7 +237,7 @@ long sys_renameat(int olddirfd, const char *oldpath, int newdirfd, const char *n
 
         if (local_olddirfd >= task->max_fds) {
             fut_printf("[RENAMEAT] renameat(olddirfd=%d, max_fds=%d) -> EBADF "
-                       "(olddirfd exceeds max_fds, Phase 5: FD bounds validation)\n",
+                       "(olddirfd exceeds max_fds, FD bounds validation)\n",
                        local_olddirfd, task->max_fds);
             return -EBADF;
         }
@@ -296,7 +296,7 @@ long sys_renameat(int olddirfd, const char *oldpath, int newdirfd, const char *n
     }
     /* Newdirfd is a real FD - resolve via VFS */
     else {
-        /* Phase 5: Validate newdirfd bounds before accessing FD table */
+        /* Validate newdirfd bounds before accessing FD table */
         if (local_newdirfd < 0) {
             fut_printf("[RENAMEAT] renameat(newdirfd=%d) -> EBADF (invalid negative newdirfd)\n",
                        local_newdirfd);
@@ -305,7 +305,7 @@ long sys_renameat(int olddirfd, const char *oldpath, int newdirfd, const char *n
 
         if (local_newdirfd >= task->max_fds) {
             fut_printf("[RENAMEAT] renameat(newdirfd=%d, max_fds=%d) -> EBADF "
-                       "(newdirfd exceeds max_fds, Phase 5: FD bounds validation)\n",
+                       "(newdirfd exceeds max_fds, FD bounds validation)\n",
                        local_newdirfd, task->max_fds);
             return -EBADF;
         }

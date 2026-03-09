@@ -51,13 +51,13 @@ long sys_time_millis(void) {
  * Note: This is simpler than gettimeofday(), returning only seconds without microseconds.
  */
 long sys_time(uint64_t *tloc) {
-    /* Phase 5: Validate tloc write permission early (kernel writes time value)
+    /* Validate tloc write permission early (kernel writes time value)
      * VULNERABILITY: Invalid Output Buffer Pointer
      * ATTACK: Attacker provides read-only or unmapped tloc buffer
      * IMPACT: Kernel page fault when writing time value
      * DEFENSE: Check write permission before processing */
     if (tloc && fut_access_ok(tloc, sizeof(uint64_t), 1) != 0) {
-        fut_printf("[TIME] time(tloc=%p) -> EFAULT (tloc not writable for %zu bytes, Phase 5)\n",
+        fut_printf("[TIME] time(tloc=%p) -> EFAULT (tloc not writable for %zu bytes)\n",
                    tloc, sizeof(uint64_t));
         return -EFAULT;
     }
@@ -85,13 +85,13 @@ long sys_gettimeofday(fut_timeval_t *tv, void *tz) {
         return -EFAULT;
     }
 
-    /* Phase 5: Validate tv write permission early (kernel writes timeval)
+    /* Validate tv write permission early (kernel writes timeval)
      * VULNERABILITY: Invalid Output Buffer Pointer
      * ATTACK: Attacker provides read-only or unmapped tv buffer
      * IMPACT: Kernel page fault when writing timeval structure
      * DEFENSE: Check write permission before processing */
     if (fut_access_ok(tv, sizeof(fut_timeval_t), 1) != 0) {
-        fut_printf("[TIME] gettimeofday(tv=%p) -> EFAULT (tv not writable for %zu bytes, Phase 5)\n",
+        fut_printf("[TIME] gettimeofday(tv=%p) -> EFAULT (tv not writable for %zu bytes)\n",
                    tv, sizeof(fut_timeval_t));
         return -EFAULT;
     }
@@ -151,13 +151,13 @@ long sys_clock_gettime(int clock_id, fut_timespec_t *tp) {
         return -EFAULT;
     }
 
-    /* Phase 5: Validate tp write permission early (kernel writes timespec)
+    /* Validate tp write permission early (kernel writes timespec)
      * VULNERABILITY: Invalid Output Buffer Pointer
      * ATTACK: Attacker provides read-only or unmapped tp buffer
      * IMPACT: Kernel page fault when writing timespec structure
      * DEFENSE: Check write permission before processing */
     if (fut_access_ok(tp, sizeof(fut_timespec_t), 1) != 0) {
-        fut_printf("[TIME] clock_gettime(clock_id=%d, tp=%p) -> EFAULT (tp not writable for %zu bytes, Phase 5)\n",
+        fut_printf("[TIME] clock_gettime(clock_id=%d, tp=%p) -> EFAULT (tp not writable for %zu bytes)\n",
                    clock_id, tp, sizeof(fut_timespec_t));
         return -EFAULT;
     }

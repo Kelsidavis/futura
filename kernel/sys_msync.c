@@ -10,7 +10,7 @@
  * Phase 2 (Completed): Enhanced validation with detailed flag reporting
  * Phase 3 (Completed): VMA validation and file-backed mapping identification
  * Phase 4: I/O completion with MS_SYNC wait
- * Phase 5: Page cache invalidation (MS_INVALIDATE)
+ * Page cache invalidation (MS_INVALIDATE)
  */
 
 #include <kernel/fut_task.h>
@@ -87,7 +87,7 @@
  * Phase 2 (Completed): Enhanced validation with detailed flag reporting
  * Phase 3 (Completed): File-backed VMA identification and validation
  * Phase 4: I/O completion with MS_SYNC wait
- * Phase 5: Page cache invalidation (MS_INVALIDATE)
+ * Page cache invalidation (MS_INVALIDATE)
  *
  * Common use cases:
  *
@@ -211,11 +211,11 @@ long sys_msync(void *addr, size_t length, int flags) {
         return -EINVAL;
     }
 
-    /* Phase 5: Validate length + PAGE_SIZE won't overflow before alignment
+    /* Validate length + PAGE_SIZE won't overflow before alignment
      * Prevent integer overflow in alignment calculation */
     if (length > SIZE_MAX - PAGE_SIZE + 1) {
         fut_printf("[MSYNC] msync(%p, %zu) -> EINVAL "
-                   "(length too large for page alignment, would overflow, Phase 5)\n",
+                   "(length too large for page alignment, would overflow)\n",
                    addr, length);
         return -EINVAL;
     }
@@ -223,23 +223,23 @@ long sys_msync(void *addr, size_t length, int flags) {
     /* Round length up to page boundary */
     size_t aligned_len = (length + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1);
 
-    /* Phase 5: Validate addr + aligned_len doesn't wrap around
+    /* Validate addr + aligned_len doesn't wrap around
      * Prevent address range wraparound attacks */
     uintptr_t start = (uintptr_t)addr;
     if (start > UINTPTR_MAX - aligned_len) {
         fut_printf("[MSYNC] msync(%p, %zu) -> EINVAL "
-                   "(address range wraps around, Phase 5)\n",
+                   "(address range wraps around)\n",
                    addr, aligned_len);
         return -EINVAL;
     }
 
-    /* Phase 5: Validate end address is within userspace limits
+    /* Validate end address is within userspace limits
      * Prevent syncing kernel memory regions
      * USER_SPACE_END is defined in platform paging headers */
     uintptr_t end = start + aligned_len;
     if (end > USER_SPACE_END) {
         fut_printf("[MSYNC] msync(%p, %zu) -> EINVAL "
-                   "(end address 0x%lx exceeds userspace limit 0x%lx, Phase 5)\n",
+                   "(end address 0x%lx exceeds userspace limit 0x%lx)\n",
                    addr, aligned_len, end, USER_SPACE_END);
         return -EINVAL;
     }

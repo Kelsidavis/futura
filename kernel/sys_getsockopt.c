@@ -306,7 +306,7 @@ long sys_getsockopt(int sockfd, int level, int optname, void *optval, socklen_t 
         return -EFAULT;
     }
 
-    /* Phase 5: COMPREHENSIVE SECURITY HARDENING
+    /* COMPREHENSIVE SECURITY HARDENING
      * VULNERABILITY: Multiple Attack Vectors in Socket Option Retrieval
      *
      * The getsockopt() syscall is particularly vulnerable due to:
@@ -320,13 +320,13 @@ long sys_getsockopt(int sockfd, int level, int optname, void *optval, socklen_t 
      * Attacker provides enormous optlen value to trigger kernel resource consumption
      * 1. Attacker calls getsockopt(sockfd, SOL_SOCKET, SO_TYPE, optval, &optlen)
      *    with optlen = UINT32_MAX (4GB)
-     * 2. WITHOUT Phase 5 check (line 337-341):
+     * 2. WITHOUT check (line 337-341):
      *    - No validation of reasonable optlen upper bound
      *    - Line 393: get_socket_from_fd performs expensive socket lookup
      *    - Line 407-423: SO_TYPE handler allocates/processes data
      *    - Line 412: fut_copy_to_user attempts 4GB write
      *    - Result: Kernel memory exhaustion, CPU waste, DoS
-     * 3. WITH Phase 5 check (line 337-341):
+     * 3. WITH check (line 337-341):
      *    - Line 337: if (len > 1024) rejects excessive size
      *    - Syscall fails before socket lookup, minimal CPU waste
      *    - 1024 byte limit sufficient for largest socket options (struct linger, timeval)
@@ -339,13 +339,13 @@ long sys_getsockopt(int sockfd, int level, int optname, void *optval, socklen_t 
      * Attacker provides optlen=0 to probe kernel behavior and extract metadata
      * 1. Attacker calls getsockopt(sockfd, SOL_SOCKET, SO_TYPE, optval, &optlen)
      *    with optlen = 0
-     * 2. WITHOUT Phase 5 check (line 337-341):
+     * 2. WITHOUT check (line 337-341):
      *    - Line 411: copy_len = min(0, sizeof(int)) = 0
      *    - Line 412: fut_copy_to_user copies 0 bytes (no-op)
      *    - Line 417: fut_copy_to_user writes value_len = sizeof(int) to optlen
      *    - Attacker reads optlen = 4, learns sizeof(int) for socket type
      *    - Result: Information disclosure about kernel option sizes
-     * 3. WITH Phase 5 check (line 337-341):
+     * 3. WITH check (line 337-341):
      *    - Line 337: if (len == 0) rejects zero size
      *    - Syscall fails immediately, no metadata disclosure
      * 4. Impact:
@@ -377,13 +377,13 @@ long sys_getsockopt(int sockfd, int level, int optname, void *optval, socklen_t 
      *    socklen_t len = sizeof(int);
      * 2. Attacker calls getsockopt:
      *    getsockopt(sockfd, SOL_SOCKET, SO_TYPE, readonly, &len);
-     * 3. WITHOUT Phase 5 check (line 381-390):
+     * 3. WITHOUT check (line 381-390):
      *    - Line 337-341: len validation passes (len=4, valid range)
      *    - Line 393: get_socket_from_fd performs expensive socket lookup
      *    - Line 407: Retrieves socket type value
      *    - Line 412: fut_copy_to_user attempts write to readonly
      *    - Result: Page fault → kernel panic/DoS
-     * 4. WITH Phase 5 check (line 381-390):
+     * 4. WITH check (line 381-390):
      *    - Line 384: Test write with dummy byte before socket lookup
      *    - Syscall fails fast with EFAULT, no socket lookup
      * 5. Impact:
@@ -410,7 +410,7 @@ long sys_getsockopt(int sockfd, int level, int optname, void *optval, socklen_t 
      * 4. Impact:
      *    - DoS: Late failure after expensive operations
      *    - Resource waste: Socket lookup, option retrieval before fault
-     *    - No current check for optlen write permission (Phase 5 TODO)
+     *    - No current check for optlen write permission (TODO)
      *
      * IMPACT:
      * - Resource exhaustion DoS: Kernel memory/CPU depletion via huge optlen
@@ -420,14 +420,14 @@ long sys_getsockopt(int sockfd, int level, int optname, void *optval, socklen_t 
      * - Fail-slow waste: Expensive operations before discovering invalid buffers
      *
      * ROOT CAUSE:
-     * Pre-Phase 5 code lacked comprehensive validation:
+     * Pre-code lacked comprehensive validation:
      * - No upper bound on optlen (allows UINT32_MAX = 4GB requests)
      * - No lower bound on optlen (allows 0-byte probing attacks)
      * - No fail-fast write permission check on optval
      * - No write permission check on optlen (value-result parameter)
      * - Value-result optlen semantics allow information disclosure
      *
-     * DEFENSE (Phase 5 Requirements):
+     * DEFENSE (Requirements):
      * 1. optlen Range Validation (line 337-341):
      *    - Check: len > 0 && len <= 1024
      *    - BEFORE socket lookup
@@ -437,7 +437,7 @@ long sys_getsockopt(int sockfd, int level, int optname, void *optval, socklen_t 
      *    - Test write with dummy byte BEFORE socket lookup
      *    - Fail fast before expensive socket operations
      *    - Matches sys_read pattern (validate output buffer permission)
-     * 3. optlen Write Permission Check (Phase 5 TODO):
+     * 3. optlen Write Permission Check (TODO):
      *    - Test write to optlen pointer before socket lookup
      *    - Prevent fail-slow pattern (fault after all work done)
      *    - Value-result parameter requires write access
@@ -479,9 +479,9 @@ long sys_getsockopt(int sockfd, int level, int optname, void *optval, socklen_t 
      * - Maximum option size is protocol-specific (1024 reasonable upper bound)
      *
      * IMPLEMENTATION NOTES:
-     * - Phase 5: Added optlen range validation (line 337-341) ✓
-     * - Phase 5: Added optval write permission check (line 381-390) ✓
-     * - Phase 5 (Completed): Added optlen write permission check at line 524-530
+     * - Added optlen range validation (line 337-341) ✓
+     * - Added optval write permission check (line 381-390) ✓
+     * - (Completed): Added optlen write permission check at line 524-530
      * - Phase 4 TODO: Implement remaining SOL_SOCKET options (SO_LINGER, etc.)
      * - Phase 4 TODO: Add protocol-specific options (IPPROTO_TCP, IPPROTO_IP)
      * - See Linux kernel: net/core/sock.c sock_getsockopt() for reference
@@ -494,22 +494,22 @@ long sys_getsockopt(int sockfd, int level, int optname, void *optval, socklen_t 
         return -EINVAL;
     }
 
-    /* Phase 5: Validate optlen write permission early (kernel writes back actual size) */
+    /* Validate optlen write permission early (kernel writes back actual size) */
     if (optlen && fut_access_ok(optlen, sizeof(socklen_t), 1) != 0) {
         fut_printf("[GETSOCKOPT] getsockopt(sockfd=%d) -> EFAULT (optlen not writable)\n",
                    sockfd);
         return -EFAULT;
     }
 
-    /* Phase 5: Validate optval buffer write permission BEFORE socket processing
-     * See ATTACK SCENARIO 4 in comprehensive Phase 5 documentation (lines 400-419)
+    /* Validate optval buffer write permission BEFORE socket processing
+     * See ATTACK SCENARIO 4 in comprehensive documentation (lines 400-419)
      * This check prevents kernel page fault when writing to read-only memory
      */
     if (optval != NULL) {
         char test_byte = 0;
         if (fut_copy_to_user(optval, &test_byte, 1) != 0) {
             fut_printf("[GETSOCKOPT] getsockopt(sockfd=%d, level=%d, optname=%d, optval=%p) -> EFAULT "
-                       "(buffer not writable, Phase 5)\n",
+                       "(buffer not writable)\n",
                        sockfd, level, optname, optval);
             return -EFAULT;
         }

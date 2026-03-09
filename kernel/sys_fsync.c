@@ -113,10 +113,10 @@ long sys_fsync(int fd) {
         return -EBADF;
     }
 
-    /* Phase 5: Validate FD upper bound to prevent OOB array access */
+    /* Validate FD upper bound to prevent OOB array access */
     if (fd >= task->max_fds) {
         fut_printf("[FSYNC] fsync(fd=%d, max_fds=%d) -> EBADF "
-                   "(fd exceeds max_fds, Phase 5: FD bounds validation)\n",
+                   "(fd exceeds max_fds, FD bounds validation)\n",
                    fd, task->max_fds);
         return -EBADF;
     }

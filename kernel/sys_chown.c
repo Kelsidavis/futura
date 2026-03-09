@@ -142,7 +142,7 @@ long sys_chown(const char *pathname, uint32_t uid, uint32_t gid) {
         return -EINVAL;
     }
 
-    /* Phase 5: Validate uid/gid are within valid ranges
+    /* Validate uid/gid are within valid ranges
      * Allow -1 (0xFFFFFFFF) as special "unchanged" value
      * Reject other extremely large values that could indicate corruption
      * Standard systems limit uid/gid to 60000 or less */
@@ -150,14 +150,14 @@ long sys_chown(const char *pathname, uint32_t uid, uint32_t gid) {
 
     if (local_uid != CHOWN_UNCHANGED && local_uid > MAX_VALID_ID) {
         fut_printf("[CHOWN] chown(pathname=?, uid=%u, gid=%u) -> EINVAL "
-                   "(uid %u exceeds maximum valid ID %u, Phase 5)\n",
+                   "(uid %u exceeds maximum valid ID %u)\n",
                    local_uid, local_gid, local_uid, MAX_VALID_ID);
         return -EINVAL;
     }
 
     if (local_gid != CHOWN_UNCHANGED && local_gid > MAX_VALID_ID) {
         fut_printf("[CHOWN] chown(pathname=?, uid=%u, gid=%u) -> EINVAL "
-                   "(gid %u exceeds maximum valid ID %u, Phase 5)\n",
+                   "(gid %u exceeds maximum valid ID %u)\n",
                    local_uid, local_gid, local_gid, MAX_VALID_ID);
         return -EINVAL;
     }
@@ -205,7 +205,7 @@ long sys_chown(const char *pathname, uint32_t uid, uint32_t gid) {
                    "(copy_from_user failed)\n", uid_desc, gid_desc, operation_type);
         return -EFAULT;
     }
-    /* Phase 5: Verify path was not truncated */
+    /* Verify path was not truncated */
     if (memchr(path_buf, '\0', sizeof(path_buf)) == NULL) {
         fut_printf("[CHOWN] chown(path exceeds %zu bytes) -> ENAMETOOLONG\n",
                    sizeof(path_buf) - 1);

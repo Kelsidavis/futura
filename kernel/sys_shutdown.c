@@ -10,7 +10,7 @@
  * Phase 2 (Completed): Enhanced validation, state identification, and detailed logging
  * Phase 3 (Completed): Implement actual shutdown with buffer management and enforcement
  * Phase 4 (Completed): Set shutdown_rd/shutdown_wr flags for enforcement in send/recv
- * Phase 5: TCP state machine integration, FIN handling, and peer notification
+ * TCP state machine integration, FIN handling, and peer notification
  */
 
 #include <kernel/fut_task.h>

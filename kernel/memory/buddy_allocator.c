@@ -279,7 +279,7 @@ void *buddy_malloc(size_t size) {
     if (size == 0) return NULL;
 
     /* Account for block header, with overflow check.
-     * Phase 5: Without this check, a near-SIZE_MAX size wraps around to a small
+     * Without this check, a near-SIZE_MAX size wraps around to a small
      * value, causing size_to_order() to return a small order. The caller gets
      * back a tiny allocation but believes it has 'size' bytes, enabling a
      * heap buffer overflow that can overwrite adjacent allocations. */

@@ -142,7 +142,7 @@ ssize_t sys_read(int fd, void *buf, size_t count) {
         return -EFAULT;
     }
 
-    /* Phase 5: Validate buffer has write permission
+    /* Validate buffer has write permission
      * VULNERABILITY: Missing Write Permission Validation on Output Buffer
      *
      * ATTACK SCENARIO:
@@ -151,7 +151,7 @@ ssize_t sys_read(int fd, void *buf, size_t count) {
      *    void *readonly = mmap(NULL, 4096, PROT_READ, MAP_PRIVATE|MAP_ANONYMOUS, -1, 0);
      * 2. Attacker calls read:
      *    read(fd, readonly, 4096);
-     * 3. OLD code (before Phase 5):
+     * 3. OLD code (before ):
      *    - Line 141-144: NULL check passes
      *    - Line 171: fut_malloc allocates kernel buffer (4096 bytes)
      *    - Line 179: fut_vfs_read successfully reads data into kernel buffer
@@ -171,7 +171,7 @@ ssize_t sys_read(int fd, void *buf, size_t count) {
      * - fut_copy_to_user at line 220 discovers problem too late
      * - Resources wasted: malloc at line 171, vfs_read at line 179
      *
-     * DEFENSE (Phase 5):
+     * DEFENSE:
      * Test write permission BEFORE allocating kernel buffer
      * - Use fut_copy_to_user with dummy byte to test writeability
      * - Fail fast before wasting resources on malloc/read
@@ -189,7 +189,7 @@ ssize_t sys_read(int fd, void *buf, size_t count) {
     char test_byte = 0;
     if (fut_copy_to_user(local_buf, &test_byte, 1) != 0) {
         /* fut_printf("[READ] read(fd=%d, buf=%p, count=%zu) -> EFAULT "
-                   "(buffer not writable, Phase 5)\n", local_fd, local_buf, local_count); */
+                   "(buffer not writable)\n", local_fd, local_buf, local_count); */
         return -EFAULT;
     }
 

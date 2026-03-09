@@ -96,7 +96,7 @@ long sys_acct(const char *filename) {
                    "(filename copy_from_user failed)\n", task->pid);
         return -EFAULT;
     }
-    /* Phase 5: Verify path was not truncated */
+    /* Verify path was not truncated */
     if (memchr(path_buf, '\0', sizeof(path_buf)) == NULL) {
         fut_printf("[ACCT] acct(path exceeds %zu bytes, pid=%d) -> ENAMETOOLONG\n",
                    sizeof(path_buf) - 1, task->pid);

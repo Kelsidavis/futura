@@ -10,7 +10,7 @@
  * Phase 2 (Completed): Implement actual timestamp updates via vnode->ops->setattr
  * Phase 3 (Completed): Directory FD resolution via VFS with proper validation
  * Phase 4 (Completed): futimens mode (pathname=NULL) operating on open FD
- * Phase 5: AT_SYMLINK_NOFOLLOW support with lstat and performance optimization
+ * AT_SYMLINK_NOFOLLOW support with lstat and performance optimization
  */
 
 #include <kernel/fut_task.h>
@@ -99,7 +99,7 @@
  * Phase 2 (Completed): Implement actual timestamp updates via vnode->ops->setattr
  * Phase 3 (Completed): Directory FD resolution via VFS with proper validation
  * Phase 4 (Completed): futimens mode (pathname=NULL) operating on open FD
- * Phase 5: AT_SYMLINK_NOFOLLOW support with lstat and performance optimization
+ * AT_SYMLINK_NOFOLLOW support with lstat and performance optimization
  */
 long sys_utimensat(int dirfd, const char *pathname, const fut_timespec_t *times, int flags) {
     fut_task_t *task = fut_task_current();
@@ -352,7 +352,7 @@ long sys_utimensat(int dirfd, const char *pathname, const fut_timespec_t *times,
     }
     /* Dirfd is a real FD - resolve via VFS */
     else {
-        /* Phase 5: Validate dirfd bounds before accessing FD table */
+        /* Validate dirfd bounds before accessing FD table */
         if (dirfd < 0) {
             fut_printf("[UTIMENSAT] utimensat(dirfd=%d) -> EBADF (invalid negative dirfd)\n", dirfd);
             return -EBADF;
@@ -360,7 +360,7 @@ long sys_utimensat(int dirfd, const char *pathname, const fut_timespec_t *times,
 
         if (dirfd >= task->max_fds) {
             fut_printf("[UTIMENSAT] utimensat(dirfd=%d, max_fds=%d) -> EBADF "
-                       "(dirfd exceeds max_fds, Phase 5: FD bounds validation)\n",
+                       "(dirfd exceeds max_fds, FD bounds validation)\n",
                        dirfd, task->max_fds);
             return -EBADF;
         }

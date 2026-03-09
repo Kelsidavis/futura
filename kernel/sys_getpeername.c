@@ -230,13 +230,13 @@ long sys_getpeername(int sockfd, void *addr, socklen_t *addrlen) {
         return -EFAULT;
     }
 
-    /* Phase 5: Validate addrlen write permission early (kernel writes back actual size)
+    /* Validate addrlen write permission early (kernel writes back actual size)
      * VULNERABILITY: Invalid Output Pointer
      * ATTACK: Attacker provides read-only or unmapped addrlen pointer
      * IMPACT: Kernel page fault when writing actual address length
      * DEFENSE: Check write permission before socket operations */
     if (fut_access_ok(addrlen, sizeof(socklen_t), 1) != 0) {
-        fut_printf("[GETPEERNAME] getpeername(sockfd=%d) -> EFAULT (addrlen not writable, Phase 5)\n",
+        fut_printf("[GETPEERNAME] getpeername(sockfd=%d) -> EFAULT (addrlen not writable)\n",
                    sockfd);
         return -EFAULT;
     }
@@ -249,13 +249,13 @@ long sys_getpeername(int sockfd, void *addr, socklen_t *addrlen) {
         return -EFAULT;
     }
 
-    /* Phase 5: Validate addr write permission early (kernel writes peer address)
+    /* Validate addr write permission early (kernel writes peer address)
      * VULNERABILITY: Invalid Output Buffer
      * ATTACK: Attacker provides read-only or unmapped addr buffer
      * IMPACT: Kernel page fault when writing peer address
      * DEFENSE: Check write permission for addr buffer size */
     if (len > 0 && fut_access_ok(addr, len, 1) != 0) {
-        fut_printf("[GETPEERNAME] getpeername(sockfd=%d, addrlen=%u) -> EFAULT (addr not writable for %u bytes, Phase 5)\n",
+        fut_printf("[GETPEERNAME] getpeername(sockfd=%d, addrlen=%u) -> EFAULT (addr not writable for %u bytes)\n",
                    sockfd, len, len);
         return -EFAULT;
     }

@@ -97,7 +97,7 @@ long sys_splice(int fd_in, int64_t *off_in, int fd_out, int64_t *off_out,
         return -EINVAL;
     }
 
-    /* Phase 5: Validate offset pointers are readable/writable if non-NULL
+    /* Validate offset pointers are readable/writable if non-NULL
      * VULNERABILITY: TOCTOU Race in Read-Write Validation
      *
      * ATTACK SCENARIO:
@@ -114,7 +114,7 @@ long sys_splice(int fd_in, int64_t *off_in, int fd_out, int64_t *off_out,
      * - Race condition allows mixed permissions during single syscall
      * - Cannot atomically check both read AND write permissions
      *
-     * DEFENSE (Phase 5):
+     * DEFENSE:
      * Best-effort validation with documented TOCTOU limitation
      * - Separate read and write probes catch most invalid pointers
      * - TOCTOU window is narrow (microseconds between checks)
@@ -128,7 +128,7 @@ long sys_splice(int fd_in, int64_t *off_in, int fd_out, int64_t *off_out,
         /* Test readability - kernel needs to read current offset */
         if (fut_copy_from_user(&test_offset, off_in, sizeof(int64_t)) != 0) {
             fut_printf("[SPLICE] splice(fd_in=%d, off_in=%p) -> EFAULT "
-                       "(off_in not readable, Phase 5)\n",
+                       "(off_in not readable)\n",
                        fd_in, off_in);
             return -EFAULT;
         }
@@ -137,18 +137,18 @@ long sys_splice(int fd_in, int64_t *off_in, int fd_out, int64_t *off_out,
          * Narrow window but not atomic - documented limitation */
         if (fut_copy_to_user(off_in, &test_offset, sizeof(int64_t)) != 0) {
             fut_printf("[SPLICE] splice(fd_in=%d, off_in=%p) -> EFAULT "
-                       "(off_in not writable, Phase 5)\n",
+                       "(off_in not writable)\n",
                        fd_in, off_in);
             return -EFAULT;
         }
-        /* Phase 5: Validate offset value is non-negative */
+        /* Validate offset value is non-negative */
         if (test_offset < 0) {
             fut_printf("[SPLICE] splice(fd_in=%d, off_in=%p, offset=%ld) -> EINVAL "
-                       "(negative offset, Phase 5)\n",
+                       "(negative offset)\n",
                        fd_in, off_in, test_offset);
             return -EINVAL;
         }
-        /* Phase 5: Validate offset+len doesn't overflow
+        /* Validate offset+len doesn't overflow
          * Without this check, attacker can cause integer overflow:
          *   - splice(fd, &offset, pipe, NULL, len, 0)
          *   - offset=LLONG_MAX, len=SIZE_MAX
@@ -157,7 +157,7 @@ long sys_splice(int fd_in, int64_t *off_in, int fd_out, int64_t *off_out,
          * Defense: Detect overflow before arithmetic */
         if ((uint64_t)test_offset > (uint64_t)(INT64_MAX - len)) {
             fut_printf("[SPLICE] splice(fd_in=%d, off_in=%ld, len=%zu) -> EOVERFLOW "
-                       "(offset+len would overflow, max_valid_offset=%ld, Phase 5)\n",
+                       "(offset+len would overflow, max_valid_offset=%ld)\n",
                        fd_in, test_offset, len, (int64_t)(INT64_MAX - len));
             return -EOVERFLOW;
         }
@@ -168,7 +168,7 @@ long sys_splice(int fd_in, int64_t *off_in, int fd_out, int64_t *off_out,
         /* Test readability - kernel needs to read current offset */
         if (fut_copy_from_user(&test_offset, off_out, sizeof(int64_t)) != 0) {
             fut_printf("[SPLICE] splice(fd_out=%d, off_out=%p) -> EFAULT "
-                       "(off_out not readable, Phase 5)\n",
+                       "(off_out not readable)\n",
                        fd_out, off_out);
             return -EFAULT;
         }
@@ -177,21 +177,21 @@ long sys_splice(int fd_in, int64_t *off_in, int fd_out, int64_t *off_out,
          * Narrow window but not atomic - documented limitation */
         if (fut_copy_to_user(off_out, &test_offset, sizeof(int64_t)) != 0) {
             fut_printf("[SPLICE] splice(fd_out=%d, off_out=%p) -> EFAULT "
-                       "(off_out not writable, Phase 5)\n",
+                       "(off_out not writable)\n",
                        fd_out, off_out);
             return -EFAULT;
         }
-        /* Phase 5: Validate offset value is non-negative */
+        /* Validate offset value is non-negative */
         if (test_offset < 0) {
             fut_printf("[SPLICE] splice(fd_out=%d, off_out=%p, offset=%ld) -> EINVAL "
-                       "(negative offset, Phase 5)\n",
+                       "(negative offset)\n",
                        fd_out, off_out, test_offset);
             return -EINVAL;
         }
-        /* Phase 5: Validate offset+len doesn't overflow */
+        /* Validate offset+len doesn't overflow */
         if ((uint64_t)test_offset > (uint64_t)(INT64_MAX - len)) {
             fut_printf("[SPLICE] splice(fd_out=%d, off_out=%ld, len=%zu) -> EOVERFLOW "
-                       "(offset+len would overflow, max_valid_offset=%ld, Phase 5)\n",
+                       "(offset+len would overflow, max_valid_offset=%ld)\n",
                        fd_out, test_offset, len, (int64_t)(INT64_MAX - len));
             return -EOVERFLOW;
         }

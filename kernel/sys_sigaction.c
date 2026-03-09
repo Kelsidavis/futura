@@ -51,7 +51,7 @@ long sys_sigaction(int signum, const struct sigaction *act, struct sigaction *ol
         return -ESRCH;
     }
 
-    /* Phase 5: Validate signal number to prevent out-of-bounds array access
+    /* Validate signal number to prevent out-of-bounds array access
      * VULNERABILITY: Out-of-Bounds Signal Handler Array Access
      *
      * ATTACK SCENARIO:
@@ -79,7 +79,7 @@ long sys_sigaction(int signum, const struct sigaction *act, struct sigaction *ol
      * - Lines 70-72, 93-95: Access arrays without prior validation
      * - Must validate signum BEFORE using as array index
      *
-     * DEFENSE (Phase 5):
+     * DEFENSE:
      * Validate signal number is within valid range BEFORE array access
      * - Check signum >= 1 (signals are 1-indexed in POSIX)
      * - Check signum < _NSIG (maximum signal number)
@@ -103,15 +103,15 @@ long sys_sigaction(int signum, const struct sigaction *act, struct sigaction *ol
      */
     if (signum < 1 || signum >= _NSIG) {
         fut_printf("[SIGACTION] sigaction(signum=%d) -> EINVAL "
-                   "(signal number out of range [1, %d), Phase 5: bounds validation)\n",
+                   "(signal number out of range [1, %d), bounds validation)\n",
                    signum, _NSIG);
         return -EINVAL;
     }
 
-    /* Phase 5: Reject uncatchable signals (POSIX requirement) */
+    /* Reject uncatchable signals (POSIX requirement) */
     if (signum == SIGKILL || signum == SIGSTOP) {
         fut_printf("[SIGACTION] sigaction(signum=%d) -> EINVAL "
-                   "(SIGKILL/SIGSTOP cannot be caught, Phase 5)\n", signum);
+                   "(SIGKILL/SIGSTOP cannot be caught)\n", signum);
         return -EINVAL;
     }
 
@@ -130,7 +130,7 @@ long sys_sigaction(int signum, const struct sigaction *act, struct sigaction *ol
         }
 
         fut_printf("[SIGACTION] Retrieved old action for signal %d: handler=%p mask=0x%llx flags=0x%x "
-                   "(Phase 5: bounds validation)\n",
+                   "(bounds validation)\n",
                    signum, old.sa_handler, old.sa_mask, old.sa_flags);
     }
 
@@ -149,7 +149,7 @@ long sys_sigaction(int signum, const struct sigaction *act, struct sigaction *ol
         current->signal_handler_flags[signum - 1] = new_act.sa_flags;
 
         fut_printf("[SIGACTION] Installed new action for signal %d: handler=%p mask=0x%llx flags=0x%x "
-                   "(Phase 5: bounds validation)\n",
+                   "(bounds validation)\n",
                    signum, new_act.sa_handler, new_act.sa_mask, new_act.sa_flags);
     }
 

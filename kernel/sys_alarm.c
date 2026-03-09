@@ -48,7 +48,7 @@ long sys_alarm(unsigned int seconds) {
         return -ESRCH;
     }
 
-    /* Phase 5: Validate seconds parameter to prevent overflow
+    /* Validate seconds parameter to prevent overflow
      * VULNERABILITY: Integer Overflow in Alarm Expiration Calculation
      *
      * ATTACK SCENARIO:
@@ -75,7 +75,7 @@ long sys_alarm(unsigned int seconds) {
      * - No check for overflow before addition
      * - Assumption that userspace provides sane values
      *
-     * DEFENSE (Phase 5):
+     * DEFENSE:
      * Validate seconds is within reasonable range
      * - Maximum reasonable alarm: 24 hours = 86,400 seconds
      * - Reject seconds > 86,400 (1 day)
@@ -99,7 +99,7 @@ long sys_alarm(unsigned int seconds) {
      */
     if (seconds > 86400) {
         fut_printf("[ALARM] alarm(%u) -> EINVAL (seconds exceeds maximum 86400 = 24 hours, "
-                   "Phase 5: overflow prevention)\n", seconds);
+                   "overflow prevention)\n", seconds);
         return -EINVAL;
     }
 
@@ -119,7 +119,7 @@ long sys_alarm(unsigned int seconds) {
     }
 
     if (seconds > 0) {
-        /* Phase 5: Schedule new alarm (safe after validation) */
+        /* Schedule new alarm (safe after validation) */
         task->alarm_expires_ms = current_ms + ((uint64_t)seconds * 1000);
 
         /* Phase 3: Categorize alarm duration for logging */
@@ -137,7 +137,7 @@ long sys_alarm(unsigned int seconds) {
         }
 
         fut_printf("[ALARM] alarm(%u [%s]) set by task %llu, expires at %llu ms (previous remaining: %u s, "
-                   "Phase 5: overflow prevention)\n",
+                   "overflow prevention)\n",
                    seconds, duration_category, task->pid, task->alarm_expires_ms, remaining_seconds);
 
         /* Phase 3: Attempt immediate SIGALRM delivery if condition met

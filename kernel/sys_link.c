@@ -186,7 +186,7 @@ long sys_link(const char *oldpath, const char *newpath) {
         return -EINVAL;
     }
 
-    /* Phase 5: Copy oldpath with truncation detection
+    /* Copy oldpath with truncation detection
      * VULNERABILITY: Path Truncation Attack
      *
      * ATTACK SCENARIO:
@@ -212,29 +212,29 @@ long sys_link(const char *oldpath, const char *newpath) {
     char old_buf[256];
     if (fut_copy_from_user(old_buf, local_oldpath, sizeof(old_buf)) != 0) {
         fut_printf("[LINK] link(oldpath=?, newpath=?) -> EFAULT "
-                   "(copy_from_user failed for oldpath, Phase 5)\n");
+                   "(copy_from_user failed for oldpath)\n");
         return -EFAULT;
     }
 
-    /* Phase 5: Verify oldpath was not truncated */
+    /* Verify oldpath was not truncated */
     if (memchr(old_buf, '\0', sizeof(old_buf)) == NULL) {
         fut_printf("[LINK] link(oldpath=<truncated>, newpath=?) -> ENAMETOOLONG "
-                   "(oldpath exceeds %zu bytes, Phase 5)\n", sizeof(old_buf) - 1);
+                   "(oldpath exceeds %zu bytes)\n", sizeof(old_buf) - 1);
         return -ENAMETOOLONG;
     }
 
-    /* Phase 5: Copy newpath with truncation detection */
+    /* Copy newpath with truncation detection */
     char new_buf[256];
     if (fut_copy_from_user(new_buf, local_newpath, sizeof(new_buf)) != 0) {
         fut_printf("[LINK] link(oldpath='%s', newpath=?) -> EFAULT "
-                   "(copy_from_user failed for newpath, Phase 5)\n", old_buf);
+                   "(copy_from_user failed for newpath)\n", old_buf);
         return -EFAULT;
     }
 
-    /* Phase 5: Verify newpath was not truncated */
+    /* Verify newpath was not truncated */
     if (memchr(new_buf, '\0', sizeof(new_buf)) == NULL) {
         fut_printf("[LINK] link(oldpath='%s', newpath=<truncated>) -> ENAMETOOLONG "
-                   "(newpath exceeds %zu bytes, Phase 5)\n", old_buf, sizeof(new_buf) - 1);
+                   "(newpath exceeds %zu bytes)\n", old_buf, sizeof(new_buf) - 1);
         return -ENAMETOOLONG;
     }
 
@@ -252,11 +252,11 @@ long sys_link(const char *oldpath, const char *newpath) {
         return -EINVAL;
     }
 
-    /* Phase 5: Validate oldpath and newpath are not identical
+    /* Validate oldpath and newpath are not identical
      * Linking a file to itself is invalid and could cause filesystem corruption */
     if (strcmp(old_buf, new_buf) == 0) {
         fut_printf("[LINK] link(oldpath='%s', newpath='%s') -> EINVAL "
-                   "(oldpath and newpath are identical, Phase 5)\n", old_buf, new_buf);
+                   "(oldpath and newpath are identical)\n", old_buf, new_buf);
         return -EINVAL;
     }
 
@@ -284,7 +284,7 @@ long sys_link(const char *oldpath, const char *newpath) {
         new_path_type = "relative";
     }
 
-    /* Phase 5: Security hardening WARNING: TOCTOU Race Condition in link()
+    /* Security hardening WARNING: TOCTOU Race Condition in link()
      * VULNERABILITY: Time-of-Check-Time-of-Use Race in Path Resolution
      *
      * link() has inherent time-of-check-time-of-use vulnerabilities between VFS

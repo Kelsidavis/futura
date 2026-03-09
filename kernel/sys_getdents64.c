@@ -200,14 +200,14 @@ long sys_getdents64(unsigned int fd, void *dirp, unsigned int count) {
         return -EINVAL;
     }
 
-    /* Phase 5: Validate buffer is writable BEFORE expensive operations
+    /* Validate buffer is writable BEFORE expensive operations
      * VULNERABILITY: Resource Exhaustion and Directory Traversal Attacks
      *
      * ATTACK SCENARIO 1: Resource Exhaustion via Read-Only Buffer
      * Attacker provides read-only buffer to waste kernel resources
      * 1. Attacker mmaps read-only page: mprotect(buf, 4096, PROT_READ)
      * 2. Calls getdents64(fd, buf, 4096) with read-only buffer
-     * 3. WITHOUT Phase 5 check: Kernel allocates 4KB buffer (expensive)
+     * 3. WITHOUT check: Kernel allocates 4KB buffer (expensive)
      * 4. Kernel performs expensive VFS readdir operations filling buffer
      * 5. copy_to_user fails with -EFAULT (buffer read-only)
      * 6. Kernel frees buffer, wasted allocation + I/O
@@ -263,7 +263,7 @@ long sys_getdents64(unsigned int fd, void *dirp, unsigned int count) {
      * - OOB read: d_reclen exceeds buffer bounds
      *
      * ROOT CAUSE:
-     * Pre-Phase 5 code lacks comprehensive validation:
+     * Pre-code lacks comprehensive validation:
      * - copy_to_user happens AFTER allocation and I/O (lines 415+)
      * - No early buffer writability check (fail-slow design)
      * - 1MB cap prevents SIZE_MAX but still allows large allocations
@@ -271,7 +271,7 @@ long sys_getdents64(unsigned int fd, void *dirp, unsigned int count) {
      * - No d_reclen validation from VFS (trusts filesystem)
      * - No d_off overflow protection in stateful traversal
      *
-     * DEFENSE (Phase 5 Requirements):
+     * DEFENSE (Requirements):
      * 1. Early Buffer Validation (lines 245-251):
      *    - Test write permission on first byte BEFORE allocation/I/O
      *    - Minimal overhead: single byte test
@@ -317,8 +317,8 @@ long sys_getdents64(unsigned int fd, void *dirp, unsigned int count) {
      *
      * IMPLEMENTATION NOTES:
      * - Phase 3: Added 1MB size cap at lines 198-203 ✓
-     * - Phase 5: Added early buffer writability check at lines 245-251 ✓
-     * - Phase 5: Validate d_reclen calculation with overflow checks ✓ (lines 485-546)
+     * - Added early buffer writability check at lines 245-251 ✓
+     * - Validate d_reclen calculation with overflow checks ✓ (lines 485-546)
      * - Phase 4: Added iteration limit (max_entries=10000) for directory bombs ✓ (lines 425, 432-437)
      * - Phase 4: Added d_off overflow detection via cookie comparison ✓ (lines 471-477)
      * - See Linux kernel: fs/readdir.c filldir64() for reference
@@ -326,7 +326,7 @@ long sys_getdents64(unsigned int fd, void *dirp, unsigned int count) {
     char test_byte = 0;
     if (fut_copy_to_user(dirp, &test_byte, 1) != 0) {
         fut_printf("[GETDENTS64] getdents64(fd=%u, dirp=%p, count=%u) -> EFAULT "
-                   "(buffer not writable, Phase 5: fail-fast permission check)\n",
+                   "(buffer not writable, fail-fast permission check)\n",
                    fd, dirp, count);
         return -EFAULT;
     }
@@ -339,10 +339,10 @@ long sys_getdents64(unsigned int fd, void *dirp, unsigned int count) {
         return -ESRCH;
     }
 
-    /* Phase 5: Validate FD upper bound to prevent OOB array access */
+    /* Validate FD upper bound to prevent OOB array access */
     if (fd >= (unsigned int)task->max_fds) {
         fut_printf("[GETDENTS64] getdents64(fd=%u, max_fds=%d, count=%u) -> EBADF "
-                   "(fd exceeds max_fds, Phase 5: FD bounds validation)\n",
+                   "(fd exceeds max_fds, FD bounds validation)\n",
                    fd, task->max_fds, count);
         return -EBADF;
     }
@@ -469,11 +469,11 @@ long sys_getdents64(unsigned int fd, void *dirp, unsigned int count) {
             name_len++;
         }
 
-        /* Phase 5: Validate reclen calculation won't overflow
+        /* Validate reclen calculation won't overflow
          * Prevent integer overflow when calculating entry size */
         if (name_len > SIZE_MAX - sizeof(struct linux_dirent64) - 1) {
             fut_printf("[GETDENTS64] getdents64(fd=%u) -> EINVAL "
-                       "(name_len %zu would overflow reclen calculation, Phase 5)\n",
+                       "(name_len %zu would overflow reclen calculation)\n",
                        fd, name_len);
             fut_free(kbuf);
             return total_bytes > 0 ? (long)total_bytes : -EINVAL;
@@ -482,18 +482,18 @@ long sys_getdents64(unsigned int fd, void *dirp, unsigned int count) {
         /* Align to 8-byte boundary for next entry */
         size_t reclen = sizeof(struct linux_dirent64) + name_len + 1;
 
-        /* Phase 5: Validate aligned reclen won't overflow or exceed bounds
+        /* Validate aligned reclen won't overflow or exceed bounds
          * Ensure rounding up to 8-byte alignment doesn't overflow */
         if (reclen > SIZE_MAX - 7) {
             fut_printf("[GETDENTS64] getdents64(fd=%u) -> EINVAL "
-                       "(reclen %zu too large for 8-byte alignment, Phase 5)\n",
+                       "(reclen %zu too large for 8-byte alignment)\n",
                        fd, reclen);
             fut_free(kbuf);
             return total_bytes > 0 ? (long)total_bytes : -EINVAL;
         }
         reclen = (reclen + 7) & ~7;
 
-        /* Phase 5: Validate reclen fits in uint16_t BEFORE truncation
+        /* Validate reclen fits in uint16_t BEFORE truncation
          * VULNERABILITY: d_reclen Truncation Causing Buffer Overrun
          *
          * ATTACK SCENARIO:
@@ -512,7 +512,7 @@ long sys_getdents64(unsigned int fd, void *dirp, unsigned int count) {
          * 4. Line 396: dent->d_reclen = (uint16_t)0 = 0
          * 5. Userspace parser reads reclen=0 → infinite loop or buffer overrun
          *
-         * DEFENSE (Phase 5):
+         * DEFENSE:
          * Check reclen > 65535 BEFORE line 396 cast
          * - Catches SIZE_MAX wraparound case (would be > 65535 before alignment)
          * - Catches pathological name_len values
@@ -526,7 +526,7 @@ long sys_getdents64(unsigned int fd, void *dirp, unsigned int count) {
          * CRITICAL: Check happens AFTER alignment to catch wraparound */
         if (reclen > 65535) {
             fut_printf("[GETDENTS64] getdents64(fd=%u, entry='%s') -> EINVAL "
-                       "(aligned reclen %zu exceeds uint16_t max 65535, Phase 5)\n",
+                       "(aligned reclen %zu exceeds uint16_t max 65535)\n",
                        fd, vdirent.d_name, reclen);
             fut_free(kbuf);
             return total_bytes > 0 ? (long)total_bytes : -EINVAL;

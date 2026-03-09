@@ -10,7 +10,7 @@
  * Phase 2 (Completed): Enhanced validation with detailed operation reporting
  * Phase 3 (Completed): Implement shrinking (unmap tail) and same-size no-op
  * Phase 4: Implement in-place expansion
- * Phase 5: Implement MREMAP_MAYMOVE (relocate and copy)
+ * Implement MREMAP_MAYMOVE (relocate and copy)
  */
 
 #include <kernel/fut_task.h>
@@ -92,7 +92,7 @@
  * Phase 2 (Completed): Enhanced validation with detailed operation reporting
  * Phase 3 (Completed): Implement shrinking (unmap tail) and same-size no-op
  * Phase 4: Implement in-place expansion
- * Phase 5: Implement MREMAP_MAYMOVE (relocate and copy)
+ * Implement MREMAP_MAYMOVE (relocate and copy)
  * Phase 6: Implement MREMAP_FIXED and MREMAP_DONTUNMAP
  *
  * Performance notes:
@@ -172,7 +172,7 @@ long sys_mremap(void *old_address, size_t old_size, size_t new_size,
         return -EINVAL;
     }
 
-    /* Phase 5: Security hardening - Validate size + PAGE_SIZE won't overflow before alignment
+    /* Security hardening - Validate size + PAGE_SIZE won't overflow before alignment
      * Prevent integer wraparound attacks where huge size wraps to tiny aligned value.
      *
      * ATTACK SCENARIO:
@@ -192,14 +192,14 @@ long sys_mremap(void *old_address, size_t old_size, size_t new_size,
      */
     if (old_size > SIZE_MAX - PAGE_SIZE + 1) {
         fut_printf("[MREMAP] mremap(%p, %zu, %zu, 0x%x, %p) -> EINVAL "
-                   "(old_size too large for page alignment, would overflow, Phase 5)\n",
+                   "(old_size too large for page alignment, would overflow)\n",
                    old_address, old_size, new_size, flags, new_address);
         return -EINVAL;
     }
 
     if (new_size > SIZE_MAX - PAGE_SIZE + 1) {
         fut_printf("[MREMAP] mremap(%p, %zu, %zu, 0x%x, %p) -> EINVAL "
-                   "(new_size too large for page alignment, would overflow, Phase 5)\n",
+                   "(new_size too large for page alignment, would overflow)\n",
                    old_address, old_size, new_size, flags, new_address);
         return -EINVAL;
     }

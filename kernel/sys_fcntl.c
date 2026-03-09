@@ -32,7 +32,7 @@
  * Step 1: Attacker calls fcntl(oldfd, F_DUPFD, newfd)
  * Step 2: Kernel retrieves file struct for oldfd
  * Step 3: Allocates new FD (newfd) in fd table
- * Step 4: OLD vulnerable code (before Phase 5):
+ * Step 4: OLD vulnerable code (before ):
  *         - Allocation can block/sleep
  *         - Another thread closes oldfd during allocation
  *         - file struct freed but newfd still points to it
@@ -191,12 +191,12 @@
  * ============================================================================
  * IMPLEMENTATION NOTES:
  * ============================================================================
- * Current Phase 5 validations implemented:
+ * Current validations implemented:
  * [DONE] 1. F_DUPFD refcount race fix at lines 410-465
  * [DONE] 2. Unknown command rejection (switch default) at lines 230-325
  * [DONE] 3. FD validation (negative, invalid) at lines 135-147
  *
- * Phase 5 enhancements (all DONE):
+ * enhancements (all DONE):
  * [DONE] 1. F_DUPFD negative arg validation (lines 577-583)
  * [DONE] 2. F_DUPFD RLIMIT_NOFILE check (lines 593-629)
  * [DONE] 3. F_SETFD flag bit validation (line 461 - masks with FD_CLOEXEC)
@@ -576,7 +576,7 @@ long sys_fcntl(int fd, int cmd, uint64_t arg) {
             return -EINVAL;
         }
 
-        /* Phase 5: Check RLIMIT_NOFILE before allowing F_DUPFD
+        /* Check RLIMIT_NOFILE before allowing F_DUPFD
          *
          * ATTACK SCENARIO: FD Exhaustion via F_DUPFD
          * Attacker repeatedly calls fcntl(fd, F_DUPFD, 0) to exhaust all available
@@ -613,13 +613,13 @@ long sys_fcntl(int fd, int cmd, uint64_t arg) {
         /* Check if at or above RLIMIT_NOFILE limit */
         if (open_fd_count >= nofile_limit) {
             fut_printf("[FCNTL] fcntl(fd=%d [%s], cmd=%s [%s], minfd=%d) -> EMFILE "
-                       "(FD count %u >= RLIMIT_NOFILE %llu, Phase 5: Resource limit enforcement)\n",
+                       "(FD count %u >= RLIMIT_NOFILE %llu, Resource limit enforcement)\n",
                        local_fd, fd_category, cmd_name, cmd_category, minfd,
                        open_fd_count, nofile_limit);
             return -EMFILE;
         }
 
-        /* Phase 5: F_DUPFD Rate Limiting
+        /* F_DUPFD Rate Limiting
          *
          * ATTACK SCENARIO: F_DUPFD DoS via Rapid Calls
          * Even with RLIMIT_NOFILE checks, an attacker can cause DoS by rapidly
@@ -655,7 +655,7 @@ long sys_fcntl(int fd, int cmd, uint64_t arg) {
             if (task->dupfd_ops_current >= task->dupfd_ops_per_sec) {
                 fut_printf("[FCNTL] fcntl(fd=%d [%s], cmd=%s [%s], minfd=%d) -> EAGAIN "
                            "(F_DUPFD rate limit exceeded: %llu ops >= %llu limit, "
-                           "Phase 5: DoS prevention)\n",
+                           "DoS prevention)\n",
                            local_fd, fd_category, cmd_name, cmd_category, minfd,
                            task->dupfd_ops_current, task->dupfd_ops_per_sec);
                 return -EAGAIN;
@@ -665,7 +665,7 @@ long sys_fcntl(int fd, int cmd, uint64_t arg) {
             task->dupfd_ops_current++;
         }
 
-        /* Phase 5: Increment refcount IMMEDIATELY to prevent use-after-free
+        /* Increment refcount IMMEDIATELY to prevent use-after-free
          * VULNERABILITY: TOCTOU Race in F_DUPFD Refcount Management
          *
          * ATTACK SCENARIO:
@@ -676,7 +676,7 @@ long sys_fcntl(int fd, int cmd, uint64_t arg) {
          * 3. Thread B (concurrent): close(fd)
          *    - Decrements refcount: refcount=0
          *    - Frees file structure
-         * 4. WITHOUT Phase 5 fix (OLD code had increment at line 412):
+         * 4. WITHOUT fix (OLD code had increment at line 412):
          *    - Thread A continues with freed file pointer
          *    - Lines 429-435: for loop iterates over FD table
          *    - 218-line race window between retrieval and refcount++
@@ -699,7 +699,7 @@ long sys_fcntl(int fd, int cmd, uint64_t arg) {
          * - Information disclosure: Read freed memory contents
          * - Kernel panic: Freed memory reused for other structures
          *
-         * DEFENSE (Phase 5):
+         * DEFENSE:
          * Move refcount increment to IMMEDIATELY after file retrieval
          * - Line 194: file = vfs_get_file_from_task(task, fd)
          * - Line 412: file->refcount++ (THIS LINE - no delay!)
@@ -720,7 +720,7 @@ long sys_fcntl(int fd, int cmd, uint64_t arg) {
          *   find_available_fd(...);        // Lines 429-435
          *   file->refcount++;              // Line 412 (OLD) - 218-line window!
          *
-         * NEW (Phase 5):
+         * NEW:
          *   file = get_file(fd);           // Line 194
          *   file->refcount++;              // Line 412 (NEW) - immediate!
          *   validate_minfd(...);           // Lines 402-408

@@ -68,7 +68,7 @@ long sys_truncate(const char *path, uint64_t length) {
         return -EINVAL;
     }
 
-    /* Phase 5: Copy path from userspace with truncation detection
+    /* Copy path from userspace with truncation detection
      * VULNERABILITY: Silent Path Truncation Leading to Wrong File Truncation
      *
      * ATTACK SCENARIO:
@@ -84,7 +84,7 @@ long sys_truncate(const char *path, uint64_t length) {
      * - Privilege escalation: Truncate system files via path manipulation
      * - DoS: Clear critical configuration files
      *
-     * DEFENSE (Phase 5):
+     * DEFENSE:
      * Detect truncation by searching for null terminator with memchr after copy
      * Return -ENAMETOOLONG if truncation detected
      * Matches sys_openat pattern (commit f68ce63) */
@@ -95,11 +95,11 @@ long sys_truncate(const char *path, uint64_t length) {
         return -EFAULT;
     }
 
-    /* Phase 5: Verify path was not truncated (NULL terminator must exist somewhere in buffer)
+    /* Verify path was not truncated (NULL terminator must exist somewhere in buffer)
      * If no '\0' found in buffer, the path was truncated and full path exceeds buffer size */
     if (memchr(path_buf, '\0', sizeof(path_buf)) == NULL) {
         fut_printf("[TRUNCATE] truncate(path=<truncated>, length=%llu) -> ENAMETOOLONG "
-                   "(path exceeds %zu bytes, truncation detected, Phase 5)\n",
+                   "(path exceeds %zu bytes, truncation detected)\n",
                    (unsigned long long)local_length, sizeof(path_buf) - 1);
         return -ENAMETOOLONG;
     }
@@ -190,18 +190,18 @@ long sys_truncate(const char *path, uint64_t length) {
         return -ENOENT;
     }
 
-    /* Phase 5: Validate file type - truncate only works on regular files
+    /* Validate file type - truncate only works on regular files
      * POSIX requires -EISDIR for directories, -EINVAL for other non-regular files */
     if (vnode->type == VN_DIR) {
         fut_printf("[TRUNCATE] truncate(path='%s' [%s, len=%lu], vnode_ino=%lu, "
-                   "length=%llu [%s]) -> EISDIR (cannot truncate directory, Phase 5)\n",
+                   "length=%llu [%s]) -> EISDIR (cannot truncate directory)\n",
                    path_buf, path_type, (unsigned long)path_len, vnode->ino,
                    (unsigned long long)local_length, length_category);
         fut_vnode_unref(vnode);
         return -EISDIR;
     }
 
-    /* Phase 5: Validate vnode is a regular file - reject symlinks, devices, FIFOs, sockets */
+    /* Validate vnode is a regular file - reject symlinks, devices, FIFOs, sockets */
     if (vnode->type != VN_REG) {
         const char *type_desc;
         switch (vnode->type) {
@@ -225,7 +225,7 @@ long sys_truncate(const char *path, uint64_t length) {
                 break;
         }
         fut_printf("[TRUNCATE] truncate(path='%s' [%s, len=%lu], vnode_ino=%lu, type=%s, "
-                   "length=%llu [%s]) -> EINVAL (cannot truncate %s, Phase 5)\n",
+                   "length=%llu [%s]) -> EINVAL (cannot truncate %s)\n",
                    path_buf, path_type, (unsigned long)path_len, vnode->ino, type_desc,
                    (unsigned long long)local_length, length_category, type_desc);
         fut_vnode_unref(vnode);

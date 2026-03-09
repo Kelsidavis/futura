@@ -270,10 +270,10 @@ long sys_madvise(void *addr, size_t length, int advice) {
             break;
     }
 
-    /* Phase 5: Ensure address is properly aligned with overflow protection */
+    /* Ensure address is properly aligned with overflow protection */
     uintptr_t addr_aligned = PAGE_ALIGN_DOWN((uintptr_t)addr);
 
-    /* Phase 5: Calculate offset for alignment before checking overflow
+    /* Calculate offset for alignment before checking overflow
      * Vulnerable pattern: PAGE_ALIGN_UP(length + offset) overflows internally
      * Defense: Check overflow BEFORE alignment calculation */
     size_t offset = (uintptr_t)addr - addr_aligned;
@@ -282,7 +282,7 @@ long sys_madvise(void *addr, size_t length, int advice) {
     if (length > SIZE_MAX - offset) {
         fut_printf("[MADVISE] madvise(addr=%p [%s], length=%zu [%s], "
                    "advice=%d [%s: %s]) -> EINVAL "
-                   "(length + offset would overflow, Phase 5)\n",
+                   "(length + offset would overflow)\n",
                    addr, addr_category, length, length_category,
                    advice, advice_category, advice_description);
         return -EINVAL;
@@ -291,12 +291,12 @@ long sys_madvise(void *addr, size_t length, int advice) {
     size_t length_with_offset = length + offset;
     size_t length_aligned = PAGE_ALIGN_UP(length_with_offset);
 
-    /* Phase 5: Check for overflow in final address calculation
+    /* Check for overflow in final address calculation
      * Without this, addr_aligned + length_aligned could wrap to low address */
     if (addr_aligned > SIZE_MAX - length_aligned) {
         fut_printf("[MADVISE] madvise(addr=%p [%s], length=%zu [%s], "
                    "advice=%d [%s: %s]) -> EINVAL "
-                   "(addr_aligned + length_aligned would overflow, Phase 5)\n",
+                   "(addr_aligned + length_aligned would overflow)\n",
                    addr, addr_category, length, length_category,
                    advice, advice_category, advice_description);
         return -EINVAL;

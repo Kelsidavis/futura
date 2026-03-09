@@ -109,7 +109,7 @@
  *   struct termios *kernel_addr = (struct termios *)0xFFFFFFFF80100000;
  *   ioctl(tty_fd, TCSETS, kernel_addr);  // Set terminal attributes from kernel memory
  *
- * Step 2: OLD code (before Phase 5 lines 117-163):
+ * Step 2: OLD code (before lines 117-163):
  *   - No validation of argp address range
  *   - Dispatches directly to chr_ops->ioctl (line 255)
  *   - Device handler calls copy_from_user(kernel_buf, argp, sizeof(struct termios))
@@ -135,7 +135,7 @@
  *   unsigned long huge_request = 0xFFFFFFFFFFFFFFFF;  // ULONG_MAX
  *   ioctl(fd, huge_request, NULL);
  *
- * Step 2: OLD code (before Phase 5 lines 67-76):
+ * Step 2: OLD code (before lines 67-76):
  *   - No upper bound validation on request code
  *   - Switch statement at line 82 checks only known codes
  *   - Default case (line 99) sets request_name = "UNKNOWN"
@@ -163,7 +163,7 @@
  *   int tty_fd = open("/dev/console", O_RDWR);
  *   ioctl(tty_fd, TIOCGWINSZ, readonly);  // Get terminal window size
  *
- * Step 2: OLD code (before Phase 5 lines 165-250):
+ * Step 2: OLD code (before lines 165-250):
  *   - Lines 117-163: Validates argp not in kernel address space (PASSES)
  *   - No validation of memory permissions (read vs write)
  *   - Dispatches to chr_ops->ioctl (line 255)
@@ -241,7 +241,7 @@
  * 1. **Request Code Bounds Validation** (PRIORITY 1):
  *    - Limit request to reasonable maximum (0x10000 = 64K)
  *    - Prevents integer overflow in device handler arithmetic
- *    - Implemented at lines 67-76 (Phase 5)
+ *    - Implemented at lines 67-76
  *
  *    #define MAX_IOCTL_REQUEST 0x10000
  *    if (request > MAX_IOCTL_REQUEST) {
@@ -252,7 +252,7 @@
  *    - Reject argp pointing to kernel address space
  *    - Prevents kernel memory disclosure via copy_from_user
  *    - Architecture-specific (x86-64: 0xFFFFFFFF80000000+, ARM64: 0xFFFF000000000000+)
- *    - Implemented at lines 117-163 (Phase 5)
+ *    - Implemented at lines 117-163
  *
  *    #if defined(__x86_64__)
  *    const uintptr_t KERNEL_START = 0xFFFFFFFF80000000UL;
@@ -266,7 +266,7 @@
  *    - Prevents wraparound attacks and invalid address probing
  *    - x86-64: 128TB limit (0x800000000000UL)
  *    - ARM64: 48-bit limit (0x0001000000000000UL)
- *    - Implemented at lines 134-139, 156-161 (Phase 5)
+ *    - Implemented at lines 134-139, 156-161
  *    - Validates argp_val < USERSPACE_MAX before dispatch
  *
  * 4. **Output Buffer Write Permission Check** (PRIORITY 1):
@@ -274,7 +274,7 @@
  *    - Prevents kernel panic on write to read-only memory
  *    - Uses fut_copy_to_user with dummy byte test
  *    - Only checks ioctls known to write to argp (TCGETS, TIOCGWINSZ, FIONREAD)
- *    - Implemented at lines 221-250 (Phase 5)
+ *    - Implemented at lines 221-250
  *    - Tests write permission early (fail-fast before device handler dispatch)
  *
  * 5. **Small Integer vs Pointer Disambiguation** (PRIORITY 2):
@@ -320,14 +320,14 @@
  *
  * IMPLEMENTATION NOTES:
  * ---------------------
- * Current Phase 5 implementation validates:
+ * Current implementation validates:
  * [DONE] Request code upper bound (request <= 0x10000) at lines 67-76
  * [DONE] Kernel address space rejection (x86-64 and ARM64) at lines 117-163
  * [DONE] Userspace address limit enforcement at lines 134-139, 156-161
  * [DONE] Output buffer write permission (TCGETS, TIOCGWINSZ, FIONREAD) at lines 221-250
  * [DONE] Small integer vs pointer disambiguation (argp < 0x1000) at line 127
  *
- * Phase 5 TODO (Priority Order):
+ * TODO (Priority Order):
  * 1. Extract IOC_DIR bits from request code for automatic direction detection
  * 2. Add input buffer read permission check for IOC_READ ioctls (similar to write check)
  * 3. Add per-device ioctl request code whitelisting (defense in depth)
@@ -357,7 +357,7 @@
  * Phase 2 (Completed): Enhanced validation and request type reporting
  * Phase 3 (Completed): Terminal ioctl implementations (TCGETS, TCSETS, TIOCGWINSZ)
  * Phase 4: Implement file ioctls (FIONREAD)
- * Phase 5: Device-specific ioctls
+ * Device-specific ioctls
  */
 long sys_ioctl(int fd, unsigned long request, void *argp) {
     fut_task_t *task = fut_task_current();
@@ -380,13 +380,13 @@ long sys_ioctl(int fd, unsigned long request, void *argp) {
         return -EBADF;
     }
 
-    /* Phase 5: Validate request code is in reasonable range
+    /* Validate request code is in reasonable range
      * Prevents malformed requests from reaching device handlers
      * Standard ioctl codes use _IO/_IOR/_IOW macros with reasonable values */
     #define MAX_IOCTL_REQUEST 0x10000  /* 64K - reasonable upper bound */
     if (request > MAX_IOCTL_REQUEST) {
         fut_printf("[IOCTL] ioctl(fd=%d, request=0x%lx, argp=%p) -> EINVAL "
-                   "(request code out of range, max 0x%x, Phase 5)\n",
+                   "(request code out of range, max 0x%x)\n",
                    fd, request, argp, MAX_IOCTL_REQUEST);
         return -EINVAL;
     }
@@ -427,26 +427,26 @@ long sys_ioctl(int fd, unsigned long request, void *argp) {
         if (argp != NULL) {
             uintptr_t argp_val = (uintptr_t)argp;
 
-            /* Phase 5: Check if argp looks like a pointer (high bit set on kernel addrs)
+            /* Check if argp looks like a pointer (high bit set on kernel addrs)
              * Values < 0x1000 are likely integers, not pointers
              * Critical: Prevent userspace from passing kernel addresses to device handlers
              * Uses platform-defined KERNEL_VIRTUAL_BASE and USER_SPACE_END constants */
             if (argp_val >= 0x1000) {  /* Looks like pointer, not small integer */
                 if (argp_val >= KERNEL_VIRTUAL_BASE) {
                     fut_printf("[IOCTL] ioctl(fd=%d, request=0x%lx [%s], argp=%p) -> EFAULT "
-                               "(argp in kernel address space, Phase 5)\n",
+                               "(argp in kernel address space)\n",
                                fd, request, request_name, argp);
                     return -EFAULT;
                 }
                 if (argp_val > USER_SPACE_END) {
                     fut_printf("[IOCTL] ioctl(fd=%d, request=0x%lx [%s], argp=%p) -> EFAULT "
-                               "(argp exceeds userspace limit, Phase 5)\n",
+                               "(argp exceeds userspace limit)\n",
                                fd, request, request_name, argp);
                     return -EFAULT;
                 }
             }
 
-            /* Phase 5: Validate write permission for output ioctls
+            /* Validate write permission for output ioctls
              * VULNERABILITY: Missing Write Permission Validation on Output Parameters
              *
              * ATTACK SCENARIO:
@@ -456,7 +456,7 @@ long sys_ioctl(int fd, unsigned long request, void *argp) {
              * 2. Attacker calls output ioctl:
              *    struct winsize ws;
              *    ioctl(tty_fd, TIOCGWINSZ, readonly);
-             * 3. OLD code (before Phase 5):
+             * 3. OLD code (before ):
              *    - Lines 117-163: Validates argp not kernel address (PASSES)
              *    - Line 168: Dispatches to chr_ops->ioctl
              *    - Device handler writes window size to readonly memory
@@ -478,7 +478,7 @@ long sys_ioctl(int fd, unsigned long request, void *argp) {
              * - Information disclosure: Error messages reveal kernel state
              * - Resource exhaustion: Kernel allocates structures before fault
              *
-             * DEFENSE (Phase 5):
+             * DEFENSE:
              * Extract ioctl direction from request code and validate permissions
              * - IOCTL direction bits: _IOC_WRITE (userspace reads kernel data)
              * - Check write permission for _IOC_WRITE ioctls using test write
@@ -505,7 +505,7 @@ long sys_ioctl(int fd, unsigned long request, void *argp) {
             /* Determine if ioctl requires write permission (kernel writes to userspace)
              * Uses _IOC_DIR extraction for automatic direction detection.
              *
-             * Phase 5 Enhancement: Automatic direction detection from ioctl encoding
+             * Enhancement: Automatic direction detection from ioctl encoding
              * This provides comprehensive coverage for all properly-encoded ioctls,
              * not just hardcoded known commands. */
             int requires_write = 0;
@@ -545,19 +545,19 @@ long sys_ioctl(int fd, unsigned long request, void *argp) {
                 char test_byte = 0;
                 if (fut_copy_to_user(argp, &test_byte, 1) != 0) {
                     fut_printf("[IOCTL] ioctl(fd=%d, request=0x%lx [%s], argp=%p) -> EFAULT "
-                               "(argp not writable for output ioctl, Phase 5)\n",
+                               "(argp not writable for output ioctl)\n",
                                fd, request, request_name, argp);
                     return -EFAULT;
                 }
             }
 
             /* Validate read permission for input ioctls
-             * Phase 5 Enhancement: Test that kernel can read from userspace buffer */
+             * Enhancement: Test that kernel can read from userspace buffer */
             if (requires_read && argp != NULL) {
                 char test_byte;
                 if (fut_copy_from_user(&test_byte, argp, 1) != 0) {
                     fut_printf("[IOCTL] ioctl(fd=%d, request=0x%lx [%s], argp=%p) -> EFAULT "
-                               "(argp not readable for input ioctl, Phase 5)\n",
+                               "(argp not readable for input ioctl)\n",
                                fd, request, request_name, argp);
                     return -EFAULT;
                 }

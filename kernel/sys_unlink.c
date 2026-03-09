@@ -100,7 +100,7 @@ long sys_unlink(const char *path) {
         fut_printf("[UNLINK] unlink(path=?) -> EFAULT (copy_from_user failed)\n");
         return -EFAULT;
     }
-    /* Phase 5: Verify path was not truncated */
+    /* Verify path was not truncated */
     if (memchr(path_buf, '\0', sizeof(path_buf)) == NULL) {
         fut_printf("[UNLINK] unlink(path exceeds %zu bytes) -> ENAMETOOLONG\n",
                    sizeof(path_buf) - 1);

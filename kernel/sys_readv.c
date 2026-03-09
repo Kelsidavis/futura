@@ -43,7 +43,7 @@
  *   iov[1].iov_len = SIZE_MAX / 2 + 1;
  *   readv(fd, iov, 2);  // total = SIZE_MAX + 2, wraps to 1
  *
- * Step 2: OLD code (before Phase 5 lines 271-296):
+ * Step 2: OLD code (before lines 271-296):
  *   - Calculates total_size = iov[0].iov_len + iov[1].iov_len
  *   - Result: total_size = 1 (wrapped around from SIZE_MAX + 2)
  *   - Kernel allocates 1-byte buffer thinking only 1 byte needed
@@ -69,7 +69,7 @@
  *   }
  *   readv(fd, iov, UIO_MAXIOV);  // 1024 iovecs
  *
- * Step 2: OLD code (before Phase 5 lines 197-213):
+ * Step 2: OLD code (before lines 197-213):
  *   - Uses alloca or VLA to allocate iovec array on kernel stack
  *   - Allocation size: 1024 * 16 bytes = 16KB
  *   - Kernel stack typically only 8KB on x86-64
@@ -93,7 +93,7 @@
  *   iov[0].iov_len = 4096;  // Request 4KB read into NULL address
  *   readv(fd, iov, 1);
  *
- * Step 2: OLD code (before Phase 5 lines 222-232):
+ * Step 2: OLD code (before lines 222-232):
  *   - No validation of iov_base being NULL
  *   - Passes NULL to fut_vfs_read (line 334)
  *   - VFS layer attempts to write to NULL address
@@ -119,7 +119,7 @@
  *       readv(fd, iov, UIO_MAXIOV);  // 1024 * 16MB = 16GB per call
  *   }
  *
- * Step 2: OLD code (before Phase 5 lines 275, 289-296):
+ * Step 2: OLD code (before lines 275, 289-296):
  *   - No limit on total_size across all iovecs
  *   - Kernel allocates/processes 16GB per syscall
  *   - Multiple concurrent threads exhaust memory
@@ -162,7 +162,7 @@
  *   - All subsequent operations use kernel_iov (not user's iov)
  *   - Race is harmless because kernel operates on immutable copy
  *
- * Impact: None (Phase 5 defense already prevents this attack by copying
+ * Impact: None (defense already prevents this attack by copying
  *         iovec to kernel memory before validation)
  *
  * DEFENSE STRATEGY:
@@ -170,36 +170,36 @@
  * 1. **iovcnt Bounds Validation** (PRIORITY 1):
  *    - Reject iovcnt < 0 or > UIO_MAXIOV (1024)
  *    - Prevents excessive allocation and iteration
- *    - Implemented at lines 172-182 (Phase 5)
+ *    - Implemented at lines 172-182
  *
  * 2. **Heap Allocation Instead of Stack** (PRIORITY 1):
  *    - Use fut_malloc instead of alloca/VLA for iovec array
  *    - Prevents kernel stack overflow with large iovcnt
  *    - Check for integer overflow in allocation size
- *    - Implemented at lines 197-213 (Phase 5)
+ *    - Implemented at lines 197-213
  *
  * 3. **NULL iov_base Validation** (PRIORITY 1):
  *    - Check each iov_base is not NULL if iov_len > 0
  *    - Prevents NULL pointer dereference in VFS layer
- *    - Implemented at lines 222-232 (Phase 5)
+ *    - Implemented at lines 222-232
  *
  * 4. **Integer Overflow Protection in Total Size** (PRIORITY 1):
  *    - Validate BEFORE each addition: iov_len <= SIZE_MAX - total_size
  *    - Prevents wraparound when summing iov_len values
  *    - Ensures total_size never overflows
- *    - Implemented at lines 277-286 (Phase 5)
+ *    - Implemented at lines 277-286
  *
  * 5. **Total Size Limit for DoS Prevention** (PRIORITY 1):
  *    - Enforce 16MB maximum total across all iovecs
  *    - Prevents memory exhaustion attacks
  *    - Still allows reasonable scatter-gather I/O
- *    - Implemented at lines 289-296 (Phase 5)
+ *    - Implemented at lines 289-296
  *
  * 6. **TOCTOU Protection via Kernel Copy** (PRIORITY 1):
  *    - Copy iovec array to kernel memory immediately (line 215)
  *    - All validation and use operates on kernel copy
  *    - Userspace cannot modify after validation
- *    - Implemented at lines 208-220 (Phase 5)
+ *    - Implemented at lines 208-220
  *
  * CVE REFERENCES:
  * ---------------
@@ -231,7 +231,7 @@
  *
  * IMPLEMENTATION NOTES:
  * ---------------------
- * Current Phase 5 implementation validates:
+ * Current implementation validates:
  * [DONE] iovcnt bounds (0 < iovcnt <= UIO_MAXIOV) at lines 172-182
  * [DONE] Heap allocation for iovec array at lines 197-213
  * [DONE] Allocation size overflow check at lines 199-205
@@ -240,7 +240,7 @@
  * [DONE] Total size limit (16MB) at lines 289-296
  * [DONE] TOCTOU protection via kernel copy at lines 208-220
  *
- * Phase 5 TODO (Priority Order):
+ * TODO (Priority Order):
  * 1. Add early buffer writability check before starting reads (fail-fast)
  * 2. Implement per-iovec size limit in addition to total limit
  * 3. Add VFS-level scatter-gather optimization for performance
@@ -287,7 +287,7 @@
  * Phase 2 (Completed): Enhanced validation and detailed I/O statistics
  * Phase 3 (Completed): Scatter-gather optimization with direct VFS support
  * Phase 4: Support non-blocking I/O and partial reads
- * Phase 5: Zero-copy optimization for page-aligned buffers
+ * Zero-copy optimization for page-aligned buffers
  *
  * Example: Reading network packet (header + payload)
  *
@@ -410,12 +410,12 @@ ssize_t sys_readv(int fd, const struct iovec *iov, int iovcnt) {
         return -EFAULT;
     }
 
-    /* Phase 5: Prevent stack overflow DoS - use malloc instead of alloca
+    /* Prevent stack overflow DoS - use malloc instead of alloca
      * Check for integer overflow in allocation size */
     size_t iov_alloc_size = (size_t)iovcnt * sizeof(struct iovec);
     if (iov_alloc_size / sizeof(struct iovec) != (size_t)iovcnt) {
         fut_printf("[READV] readv(fd=%d, iov=%p, iovcnt=%d) -> EINVAL "
-                   "(allocation size would overflow, Phase 5)\n",
+                   "(allocation size would overflow)\n",
                    fd, iov, iovcnt);
         return -EINVAL;
     }
@@ -435,7 +435,7 @@ ssize_t sys_readv(int fd, const struct iovec *iov, int iovcnt) {
         return -EFAULT;
     }
 
-    /* Phase 5: Validate iov_base pointers before using them
+    /* Validate iov_base pointers before using them
      * Ensure each iov_base is not NULL and appears to be valid userspace address */
     for (int i = 0; i < iovcnt; i++) {
         if (!kernel_iov[i].iov_base && kernel_iov[i].iov_len > 0) {
@@ -447,7 +447,7 @@ ssize_t sys_readv(int fd, const struct iovec *iov, int iovcnt) {
         }
     }
 
-    /* Phase 5: Calculate total size with integer overflow protection
+    /* Calculate total size with integer overflow protection
      * VULNERABILITY: Integer Overflow in IOVec Total Size Calculation
      *
      * ATTACK SCENARIO:
@@ -472,7 +472,7 @@ ssize_t sys_readv(int fd, const struct iovec *iov, int iovcnt) {
      * Simple addition (total_size += iov_len) wraps on overflow
      * No validation that sum stays within size_t bounds
      *
-     * DEFENSE (Phase 5):
+     * DEFENSE:
      * Check for overflow BEFORE each addition:
      * - Validate total_size != SIZE_MAX (boundary case)
      * - Check kernel_iov[i].iov_len <= SIZE_MAX - total_size
@@ -491,21 +491,21 @@ ssize_t sys_readv(int fd, const struct iovec *iov, int iovcnt) {
     const size_t MAX_TOTAL_SIZE = 16 * 1024 * 1024;  /* 16 MB limit per readv */
 
     for (int i = 0; i < iovcnt; i++) {
-        /* Phase 5: Integer overflow check - validate BEFORE addition */
+        /* Integer overflow check - validate BEFORE addition */
         if (total_size == SIZE_MAX ||
             kernel_iov[i].iov_len > SIZE_MAX - total_size) {
             fut_printf("[READV] readv(fd=%d, iov=%p, iovcnt=%d) -> EINVAL "
-                       "(size overflow at iovec %d, total=%zu, iov_len=%zu, Phase 5: integer overflow protection)\n",
+                       "(size overflow at iovec %d, total=%zu, iov_len=%zu, integer overflow protection)\n",
                        fd, iov, iovcnt, i, total_size, kernel_iov[i].iov_len);
             fut_free(kernel_iov);
             return -EINVAL;
         }
         total_size += kernel_iov[i].iov_len;
 
-        /* Phase 5: DoS protection - enforce reasonable size limit */
+        /* DoS protection - enforce reasonable size limit */
         if (total_size > MAX_TOTAL_SIZE) {
             fut_printf("[READV] readv(fd=%d, iov=%p, iovcnt=%d) -> EINVAL "
-                       "(total size %zu exceeds limit %zu MB, Phase 5: DoS protection)\n",
+                       "(total size %zu exceeds limit %zu MB, DoS protection)\n",
                        fd, iov, iovcnt, total_size, MAX_TOTAL_SIZE / (1024 * 1024));
             fut_free(kernel_iov);
             return -EINVAL;
@@ -585,13 +585,13 @@ ssize_t sys_readv(int fd, const struct iovec *iov, int iovcnt) {
 
     if (zero_len_count > 0) {
         fut_printf("[READV] readv(fd=%d, iovcnt=%d [%s], total_requested=%zu bytes) -> %ld bytes "
-                   "(%s, %d/%d iovecs filled, %d zero-len skipped, min=%zu max=%zu, Phase 5: validation & malloc)\n",
+                   "(%s, %d/%d iovecs filled, %d zero-len skipped, min=%zu max=%zu, validation & malloc)\n",
                    fd, iovcnt, io_pattern, total_size, total_read,
                    completion_status, iovecs_read, iovcnt - zero_len_count, zero_len_count,
                    min_iov_len, max_iov_len);
     } else {
         fut_printf("[READV] readv(fd=%d, iovcnt=%d [%s], total_requested=%zu bytes) -> %ld bytes "
-                   "(%s, %d/%d iovecs filled, min=%zu max=%zu, Phase 5: validation & malloc)\n",
+                   "(%s, %d/%d iovecs filled, min=%zu max=%zu, validation & malloc)\n",
                    fd, iovcnt, io_pattern, total_size, total_read,
                    completion_status, iovecs_read, iovcnt, min_iov_len, max_iov_len);
     }
@@ -617,7 +617,7 @@ ssize_t sys_readv(int fd, const struct iovec *iov, int iovcnt) {
      * - Better performance for small buffers
      *
      * Phase 4: Add non-blocking I/O support and proper partial read handling
-     * Phase 5: Zero-copy optimization for page-aligned buffers
+     * Zero-copy optimization for page-aligned buffers
      */
 
     return total_read;

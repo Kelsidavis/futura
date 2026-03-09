@@ -180,7 +180,7 @@ long sys_futimens(int fd, const fut_timespec_t *times) {
         return -ESRCH;
     }
 
-    /* Phase 5: Validate fd bounds before accessing FD table */
+    /* Validate fd bounds before accessing FD table */
     if (fd < 0) {
         fut_printf("[FUTIMENS] futimens(fd=%d [%s], times=%p, op=%s) -> EBADF "
                    "(invalid negative fd)\n",
@@ -190,7 +190,7 @@ long sys_futimens(int fd, const fut_timespec_t *times) {
 
     if (fd >= task->max_fds) {
         fut_printf("[FUTIMENS] futimens(fd=%d, max_fds=%d, times=%p, op=%s) -> EBADF "
-                   "(fd exceeds max_fds, Phase 5: FD bounds validation)\n",
+                   "(fd exceeds max_fds, FD bounds validation)\n",
                    fd, task->max_fds, times, operation_type);
         return -EBADF;
     }

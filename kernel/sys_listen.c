@@ -80,7 +80,7 @@ long sys_listen(int sockfd, int backlog) {
         return -EBADF;
     }
 
-    /* Phase 5: Validate fd upper bounds to prevent out-of-bounds access */
+    /* Validate fd upper bounds to prevent out-of-bounds access */
     if (local_sockfd >= task->max_fds) {
         listen_printf("[LISTEN] listen(sockfd=%d, backlog=%d) -> EBADF (fd exceeds max_fds %d)\n",
                    local_sockfd, local_backlog, task->max_fds);

@@ -133,13 +133,13 @@ long sys_fstatat(int dirfd, const char *pathname, void *statbuf, int flags) {
         return -EINVAL;
     }
 
-    /* Phase 5: Validate statbuf write permission early (kernel writes stat structure)
+    /* Validate statbuf write permission early (kernel writes stat structure)
      * VULNERABILITY: Invalid Output Buffer Pointer
      * ATTACK: Attacker provides read-only or unmapped statbuf buffer
      * IMPACT: Kernel page fault when writing stat structure
      * DEFENSE: Check write permission before path resolution and VFS operations */
     if (fut_access_ok(local_statbuf, sizeof(struct fut_stat), 1) != 0) {
-        fut_printf("[FSTATAT] fstatat(dirfd=%d, statbuf=%p) -> EFAULT (statbuf not writable for %zu bytes, Phase 5)\n",
+        fut_printf("[FSTATAT] fstatat(dirfd=%d, statbuf=%p) -> EFAULT (statbuf not writable for %zu bytes)\n",
                    local_dirfd, local_statbuf, sizeof(struct fut_stat));
         return -EFAULT;
     }
@@ -158,7 +158,7 @@ long sys_fstatat(int dirfd, const char *pathname, void *statbuf, int flags) {
                    local_dirfd);
         return -EFAULT;
     }
-    /* Phase 5: Verify path was not truncated */
+    /* Verify path was not truncated */
     if (memchr(path_buf, '\0', sizeof(path_buf)) == NULL) {
         fut_printf("[FSTATAT] fstatat(dirfd=%d, path exceeds %zu bytes) -> ENAMETOOLONG\n",
                    local_dirfd, sizeof(path_buf) - 1);
@@ -178,7 +178,7 @@ long sys_fstatat(int dirfd, const char *pathname, void *statbuf, int flags) {
                 return -EINVAL;
             }
 
-            /* Phase 5: Validate dirfd bounds before accessing FD table */
+            /* Validate dirfd bounds before accessing FD table */
             if (local_dirfd < 0) {
                 fut_printf("[FSTATAT] fstatat(dirfd=%d, pathname=\"\" [empty], flags=AT_EMPTY_PATH) -> EBADF "
                            "(invalid negative dirfd)\n", local_dirfd);
@@ -187,7 +187,7 @@ long sys_fstatat(int dirfd, const char *pathname, void *statbuf, int flags) {
 
             if (local_dirfd >= task->max_fds) {
                 fut_printf("[FSTATAT] fstatat(dirfd=%d, max_fds=%d, pathname=\"\" [empty], flags=AT_EMPTY_PATH) -> EBADF "
-                           "(dirfd exceeds max_fds, Phase 5: FD bounds validation)\n",
+                           "(dirfd exceeds max_fds, FD bounds validation)\n",
                            local_dirfd, task->max_fds);
                 return -EBADF;
             }
@@ -298,7 +298,7 @@ long sys_fstatat(int dirfd, const char *pathname, void *statbuf, int flags) {
     }
     /* Dirfd is a real FD - resolve via VFS */
     else {
-        /* Phase 5: Validate dirfd bounds before accessing FD table */
+        /* Validate dirfd bounds before accessing FD table */
         if (local_dirfd < 0) {
             fut_printf("[FSTATAT] fstatat(dirfd=%d) -> EBADF (invalid negative dirfd)\n",
                        local_dirfd);
@@ -307,7 +307,7 @@ long sys_fstatat(int dirfd, const char *pathname, void *statbuf, int flags) {
 
         if (local_dirfd >= task->max_fds) {
             fut_printf("[FSTATAT] fstatat(dirfd=%d, max_fds=%d) -> EBADF "
-                       "(dirfd exceeds max_fds, Phase 5: FD bounds validation)\n",
+                       "(dirfd exceeds max_fds, FD bounds validation)\n",
                        local_dirfd, task->max_fds);
             return -EBADF;
         }

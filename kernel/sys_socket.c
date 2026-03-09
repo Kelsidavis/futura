@@ -10,7 +10,7 @@
  * Phase 2 (Completed): Enhanced validation, domain/type/protocol identification, and detailed logging
  * Phase 3 (Completed): Support for multiple address families (AF_INET, AF_INET6) and socket types (SOCK_DGRAM)
  * Phase 4 (Completed): SOCK_NONBLOCK and SOCK_CLOEXEC flag support
- * Phase 5: Advanced features (protocol selection, additional socket families)
+ * Advanced features (protocol selection, additional socket families)
  */
 
 #include <kernel/fut_task.h>

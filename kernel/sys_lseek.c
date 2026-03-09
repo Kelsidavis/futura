@@ -129,10 +129,10 @@ int64_t sys_lseek(int fd, int64_t offset, int whence) {
         return -EBADF;
     }
 
-    /* Phase 5: Validate FD upper bound to prevent OOB array access */
+    /* Validate FD upper bound to prevent OOB array access */
     if (fd >= task->max_fds) {
         fut_printf("[LSEEK] lseek(fd=%d, max_fds=%d) -> EBADF "
-                   "(fd exceeds max_fds, Phase 5: FD bounds validation)\n",
+                   "(fd exceeds max_fds, FD bounds validation)\n",
                    fd, task->max_fds);
         return -EBADF;
     }
@@ -218,7 +218,7 @@ int64_t sys_lseek(int fd, int64_t offset, int whence) {
         return old_pos;
     }
 
-    /* Phase 5: Document offset arithmetic overflow responsibility
+    /* Document offset arithmetic overflow responsibility
      * VULNERABILITY: Integer Overflow in Offset Arithmetic (SEEK_CUR/SEEK_END)
      *
      * ATTACK SCENARIO:
@@ -248,7 +248,7 @@ int64_t sys_lseek(int fd, int64_t offset, int whence) {
      * - VFS layer (fut_vfs_lseek) is responsible for validation
      * - If VFS doesn't validate, overflow passes silently
      *
-     * DEFENSE (Phase 5):
+     * DEFENSE:
      * VFS layer (fut_vfs_lseek) MUST validate offset arithmetic:
      * - SEEK_CUR: Check if (current_pos > INT64_MAX - offset) before addition
      * - SEEK_END: Check if (file_size > INT64_MAX - offset) before addition
@@ -269,7 +269,7 @@ int64_t sys_lseek(int fd, int64_t offset, int whence) {
      * - Returns -EOVERFLOW if new position would overflow INT64_MAX
      * - Returns -EINVAL if new position would be negative
      *
-     * NOTE: This Phase 5 documents the contract between syscall and VFS layers.
+     * NOTE: This documents the contract between syscall and VFS layers.
      * Actual overflow validation is VFS responsibility. */
 
     /* Use VFS to perform the seek (VFS MUST validate offset arithmetic overflow) */

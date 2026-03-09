@@ -145,19 +145,19 @@ long sys_exit(int status) {
     (void)status_category;  /* Used only in debug logging */
     (void)status_meaning;   /* Used only in debug logging */
 
-    /* Phase 5: Detailed exit logging */
+    /* Detailed exit logging */
     if (task) {
         EXIT_LOG("[EXIT] exit(status=%d [%s: %s], pid=%u) "
-                   "(terminating process, Phase 5: Resource cleanup documentation)\n",
+                   "(terminating process, Resource cleanup documentation)\n",
                    status, status_category, status_meaning,
                    task->pid);
     } else {
         EXIT_LOG("[EXIT] exit(status=%d [%s: %s], no task context) "
-                   "(terminating, Phase 5: Resource cleanup documentation)\n",
+                   "(terminating, Resource cleanup documentation)\n",
                    status, status_category, status_meaning);
     }
 
-    /* Phase 5: Document resource cleanup responsibility to prevent leaks
+    /* Document resource cleanup responsibility to prevent leaks
      * VULNERABILITY: Incomplete Resource Cleanup on Process Exit
      *
      * ATTACK SCENARIO:
@@ -186,7 +186,7 @@ long sys_exit(int status) {
      * - Network connections not closed (sockets)
      * - Kernel objects not dereferenced (capabilities, handles)
      *
-     * DEFENSE (Phase 5):
+     * DEFENSE:
      * Comprehensive resource cleanup on every exit path
      * - Close all file descriptors in fd_table (lines 158-163)
      * - Execute exit hooks for subsystem cleanup (lines 166-171)
@@ -227,7 +227,7 @@ long sys_exit(int status) {
     int hooks_executed = 0;
 
     if (task) {
-        /* Phase 5: Close all open file descriptors to prevent resource leaks */
+        /* Close all open file descriptors to prevent resource leaks */
         if (task->fd_table) {
             for (int i = 0; i < task->max_fds; i++) {
                 if (task->fd_table[i] != NULL) {

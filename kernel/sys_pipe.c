@@ -10,7 +10,7 @@
  * Phase 2 (Completed): Enhanced validation, FD categorization, and detailed logging
  * Phase 3 (Completed): FD allocation and buffer management with wait queues
  * Phase 4 (Completed): pipe2() with O_NONBLOCK and O_CLOEXEC flags
- * Phase 5: Advanced features (splice support, pipe capacity control)
+ * Advanced features (splice support, pipe capacity control)
  */
 
 #include <kernel/errno.h>
@@ -542,7 +542,7 @@ long sys_pipe(int pipefd[2]) {
         write_fd_category = "very high (≥1000)";
     }
 
-    /* Phase 5: Copy file descriptors to userspace safely
+    /* Copy file descriptors to userspace safely
      * Validate write access IMMEDIATELY before use to prevent TOCTOU */
     int fds[2];
     fds[0] = read_fd;
@@ -554,7 +554,7 @@ long sys_pipe(int pipefd[2]) {
     } else {
         if (fut_copy_to_user(pipefd, fds, sizeof(int) * 2) != 0) {
             fut_printf("[PIPE] pipe(read_fd=%d, write_fd=%d) -> EFAULT "
-                       "(failed to copy FDs to userspace, Phase 5 write pointer validation)\n",
+                       "(failed to copy FDs to userspace write pointer validation)\n",
                        read_fd, write_fd);
             /* Clean up both FDs - pipe creation failed */
             fut_vfs_close(read_fd);

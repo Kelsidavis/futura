@@ -10,7 +10,7 @@
  * Phase 2 (Completed): Enhanced validation, FD/buffer/flags categorization, detailed logging
  * Phase 3 (Completed): MSG flags implementation with source address tracking
  * Phase 4 (Completed): Peer address return for AF_UNIX connected sockets
- * Phase 5: Zero-copy receive, scatter-gather I/O
+ * Zero-copy receive, scatter-gather I/O
  */
 
 #include <kernel/fut_task.h>
@@ -101,7 +101,7 @@
  * Phase 2 (Completed): Enhanced validation, parameter categorization, detailed logging
  * Phase 3 (Completed): MSG flags implementation with source address tracking
  * Phase 4 (Completed): Peer address return for AF_UNIX connected sockets
- * Phase 5: Zero-copy receive, scatter-gather I/O
+ * Zero-copy receive, scatter-gather I/O
  */
 ssize_t sys_recvfrom(int sockfd, void *buf, size_t len, int flags,
                      void *src_addr, socklen_t *addrlen) {
@@ -121,7 +121,7 @@ ssize_t sys_recvfrom(int sockfd, void *buf, size_t len, int flags,
         return -ESRCH;
     }
 
-    /* Phase 5: I/O Rate Limiting (DoS Prevention)
+    /* I/O Rate Limiting (DoS Prevention)
      * Check per-process I/O operation rate limit before performing network I/O.
      * This prevents CPU exhaustion via tight recvfrom() loops. */
     int rate_limit_result = fut_io_check_and_consume(task, "recvfrom");
@@ -221,16 +221,16 @@ ssize_t sys_recvfrom(int sockfd, void *buf, size_t len, int flags,
         return 0;
     }
 
-    /* Phase 5: src_addr/addrlen consistency validation
+    /* src_addr/addrlen consistency validation
      * If src_addr is provided, addrlen must also be provided (and non-NULL)
      * to know how much buffer space is available for the address */
     if (local_src_addr != NULL && local_addrlen == NULL) {
         fut_printf("[RECVFROM] recvfrom(sockfd=%d) -> EFAULT "
-                   "(src_addr provided but addrlen is NULL, Phase 5)\n", local_sockfd);
+                   "(src_addr provided but addrlen is NULL)\n", local_sockfd);
         return -EFAULT;
     }
 
-    /* Phase 5: COMPREHENSIVE SECURITY HARDENING
+    /* COMPREHENSIVE SECURITY HARDENING
      * VULNERABILITY: Multiple Attack Vectors in Socket Receive Operation
      *
      * The recvfrom() syscall is particularly vulnerable due to:
@@ -244,12 +244,12 @@ ssize_t sys_recvfrom(int sockfd, void *buf, size_t len, int flags,
      * Attacker requests enormous receive buffer to exhaust kernel memory
      * 1. Attacker calls recvfrom(sockfd, buf, SIZE_MAX, 0, NULL, NULL)
      *    - SIZE_MAX = 18 exabytes (18,446,744,073,709,551,615 bytes)
-     * 2. WITHOUT Phase 5 check (line 230-236):
+     * 2. WITHOUT check (line 230-236):
      *    - Line 247: fut_malloc(SIZE_MAX) attempts allocation
      *    - Kernel heap exhausted instantly
      *    - OOM killer terminates random processes
      *    - System-wide DoS: All processes affected
-     * 3. WITH Phase 5 check (line 230-236):
+     * 3. WITH check (line 230-236):
      *    - Line 231: if (local_len > MAX_RECV_SIZE) rejects request
      *    - Syscall fails before allocation
      *    - 16MB limit balances functionality vs DoS prevention
@@ -269,7 +269,7 @@ ssize_t sys_recvfrom(int sockfd, void *buf, size_t len, int flags,
      * 6. Blocking operation (line 256) holds buffer during wait
      * 7. Kernel heap fragmented with many 16MB allocations
      * 8. System runs out of memory (DoS)
-     * 9. Defense (Phase 5): MAX_RECV_SIZE limit (line 230) provides partial protection
+     * 9. Defense: MAX_RECV_SIZE limit (line 230) provides partial protection
      *    - Limits damage per call but doesn't prevent repeated calls
      *    - Phase 4 TODO: Add per-process I/O budget tracking
      *    - Phase 4 TODO: Add rate limiting for large receive operations
@@ -286,7 +286,7 @@ ssize_t sys_recvfrom(int sockfd, void *buf, size_t len, int flags,
      *    - Line 256: fut_vfs_read potentially blocks waiting for data
      *    - Line 279: fut_copy_to_user attempts write to readonly → fault
      *    - Result: Crash AFTER doing all the work (fail-slow pattern)
-     * 4. Defense (Phase 5 TODO):
+     * 4. Defense (TODO):
      *    - Test write permission on buf BEFORE allocation and blocking
      *    - Fail fast before expensive operations
      *    - Similar to sys_read/sys_getdents64 pattern
@@ -346,20 +346,20 @@ ssize_t sys_recvfrom(int sockfd, void *buf, size_t len, int flags,
      * - TOCTOU race: (Phase 4) addrlen race leads to application corruption
      *
      * ROOT CAUSE:
-     * Pre-Phase 5 code lacked comprehensive validation:
+     * Pre-code lacked comprehensive validation:
      * - No upper bound on buffer size (allows SIZE_MAX requests)
      * - No early write permission check on buf
      * - No addrlen TOCTOU protection (Phase 4 will need this)
      * - No src_addr/addrlen consistency validation
      * - Blocking operations before validation waste resources
      *
-     * DEFENSE (Phase 5 Requirements):
+     * DEFENSE (Requirements):
      * 1. Buffer Size Limit (line 230-236):
      *    - Check: len <= MAX_RECV_SIZE (16MB)
      *    - BEFORE allocation and blocking operations
      *    - Prevents single-call memory exhaustion
      *    - Balances functionality vs DoS prevention
-     * 2. buf Write Permission Check (Phase 5 TODO):
+     * 2. buf Write Permission Check (TODO):
      *    - Test write to buf BEFORE allocation and blocking
      *    - Fail fast before expensive operations
      *    - Similar to sys_read pattern
@@ -403,9 +403,9 @@ ssize_t sys_recvfrom(int sockfd, void *buf, size_t len, int flags,
      * - src_addr and addrlen must be consistent
      *
      * IMPLEMENTATION NOTES:
-     * - Phase 5: Added buffer size limit (16MB) at line 230-236 ✓
-     * - Phase 5 (Completed): Added buf write permission check at line 417-423
-     * - Phase 5 (Completed): Added src_addr/addrlen consistency check at line 214-220
+     * - Added buffer size limit (16MB) at line 230-236 ✓
+     * - (Completed): Added buf write permission check at line 417-423
+     * - (Completed): Added src_addr/addrlen consistency check at line 214-220
      * - Phase 4 TODO: Implement actual src_addr return (currently stub)
      * - Phase 4 TODO: Add addrlen TOCTOU protection
      * - Phase 4 TODO: Add per-process I/O budget tracking
@@ -414,17 +414,17 @@ ssize_t sys_recvfrom(int sockfd, void *buf, size_t len, int flags,
      */
 
     /* Security hardening: Limit buffer size to prevent memory exhaustion DoS
-     * See ATTACK SCENARIO 1-2 in comprehensive Phase 5 documentation above
+     * See ATTACK SCENARIO 1-2 in comprehensive documentation above
      * Defense: Limit to reasonable maximum (16MB, matching sendmsg/preadv/pwritev) */
     const size_t MAX_RECV_SIZE = 16 * 1024 * 1024;  /* 16MB per recv */
     if (local_len > MAX_RECV_SIZE) {
         fut_printf("[RECVFROM] recvfrom(sockfd=%d [%s], len=%zu [%s]) -> EINVAL "
-                   "(length exceeds max %zu bytes, Phase 5: memory exhaustion prevention)\n",
+                   "(length exceeds max %zu bytes, memory exhaustion prevention)\n",
                    local_sockfd, fd_category, local_len, size_category, MAX_RECV_SIZE);
         return -EINVAL;
     }
 
-    /* Phase 5: Validate buf write permission early (kernel writes received data) */
+    /* Validate buf write permission early (kernel writes received data) */
     if (local_buf && local_len > 0 && fut_access_ok(local_buf, local_len, 1) != 0) {
         fut_printf("[RECVFROM] recvfrom(sockfd=%d, len=%zu) -> EFAULT (buf not writable)\n",
                    local_sockfd, local_len);

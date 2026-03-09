@@ -116,13 +116,13 @@ long sys_uname(struct utsname *buf) {
         return -EFAULT;
     }
 
-    /* Phase 5: Validate buf write permission early (kernel writes system info)
+    /* Validate buf write permission early (kernel writes system info)
      * VULNERABILITY: Invalid Output Buffer Pointer
      * ATTACK: Attacker provides unmapped or read-only buffer
      * IMPACT: Kernel page fault when writing system info
      * DEFENSE: Check write permission before processing */
     if (fut_access_ok(buf, sizeof(struct utsname), 1) != 0) {
-        fut_printf("[UNAME] uname(buf=%p) -> EFAULT (buffer not writable for %zu bytes, Phase 5)\n",
+        fut_printf("[UNAME] uname(buf=%p) -> EFAULT (buffer not writable for %zu bytes)\n",
                    (void*)buf, sizeof(struct utsname));
         return -EFAULT;
     }

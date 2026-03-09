@@ -168,7 +168,7 @@ long sys_access(const char *pathname, int mode) {
         return -EINVAL;
     }
 
-    /* Phase 5: Copy pathname and detect truncation
+    /* Copy pathname and detect truncation
      * VULNERABILITY: Silent Path Truncation Allows Wrong File Access
      *
      * ATTACK SCENARIO:
@@ -176,7 +176,7 @@ long sys_access(const char *pathname, int mode) {
      * 1. Attacker wants to check /etc/shadow but lacks permission
      * 2. Attacker provides 300-byte path starting with /etc/shadow:
      *    access("/etc/shadow" + 243 bytes of padding + "/attacker_file", R_OK)
-     * 3. OLD code (before Phase 5):
+     * 3. OLD code (before ):
      *    - Line 171: fut_copy_from_user copies first 255 bytes
      *    - Line 176: Manual null termination at path_buf[255]
      *    - Result: Path silently truncated to "/etc/shadow..."
@@ -194,7 +194,7 @@ long sys_access(const char *pathname, int mode) {
      * - Manual null termination MASKS truncation (always creates valid string)
      * - Kernel proceeds with truncated path as if it were complete
      *
-     * DEFENSE (Phase 5):
+     * DEFENSE:
      * Copy full buffer (256 bytes) and search for null terminator
      * - If no '\0' found anywhere in buffer, original path exceeded buffer size
      * - Return -ENAMETOOLONG immediately (fail fast)
@@ -218,10 +218,10 @@ long sys_access(const char *pathname, int mode) {
         return -EFAULT;
     }
 
-    /* Phase 5: Verify path was not truncated */
+    /* Verify path was not truncated */
     if (memchr(path_buf, '\0', sizeof(path_buf)) == NULL) {
         fut_printf("[ACCESS] access(pathname=<truncated>, mode=%s) -> ENAMETOOLONG "
-                   "(path exceeds %zu bytes, truncation detected, Phase 5)\n",
+                   "(path exceeds %zu bytes, truncation detected)\n",
                    mode_desc, sizeof(path_buf) - 1);
         return -ENAMETOOLONG;
     }

@@ -11,7 +11,7 @@
  * Phase 2 (Completed): Enhanced validation, socket state identification, and detailed logging
  * Phase 3 (Completed): Non-blocking accept, EAGAIN handling, and connection queue management
  * Phase 4 (Completed): accept4() with SOCK_NONBLOCK and SOCK_CLOEXEC flags
- * Phase 5: Address family specific peer address return (AF_INET, AF_INET6, AF_UNIX)
+ * Address family specific peer address return (AF_INET, AF_INET6, AF_UNIX)
  */
 
 #include <kernel/fut_task.h>
@@ -136,7 +136,7 @@
  * Phase 2 (Completed): Enhanced validation, state identification, detailed logging
  * Phase 3 (Completed): Non-blocking support and connection queue management
  * Phase 4 (Completed): accept4() with SOCK_NONBLOCK and SOCK_CLOEXEC flags
- * Phase 5: Address family specific peer address return
+ * Address family specific peer address return
  */
 long sys_accept(int sockfd, void *addr, socklen_t *addrlen) {
     /* ARM64 FIX: Copy parameters to local variables immediately to ensure they're preserved
@@ -158,7 +158,7 @@ long sys_accept(int sockfd, void *addr, socklen_t *addrlen) {
         return -EBADF;
     }
 
-    /* Phase 5: Validate fd upper bounds to prevent out-of-bounds access */
+    /* Validate fd upper bounds to prevent out-of-bounds access */
     if (local_sockfd >= task->max_fds) {
         accept_printf("[ACCEPT] accept(local_sockfd=%d) -> EBADF (fd exceeds max_fds %d)\n",
                    local_sockfd, task->max_fds);
@@ -179,7 +179,7 @@ long sys_accept(int sockfd, void *addr, socklen_t *addrlen) {
         addr_request = "local_addrlen without local_addr (unusual)";
     }
 
-    /* Phase 5: COMPREHENSIVE SECURITY HARDENING
+    /* COMPREHENSIVE SECURITY HARDENING
      * VULNERABILITY: Multiple Attack Vectors in Accept Connection Address Handling
      *
      * The accept() syscall is particularly vulnerable due to:
@@ -204,7 +204,7 @@ long sys_accept(int sockfd, void *addr, socklen_t *addrlen) {
      *    - Application reads corrupted addrlen value (thinks address is 4GB)
      *    - Buffer overflow when parsing address structure
      *    - Result: Information disclosure, memory corruption, potential RCE
-     * 4. WITH Phase 5 defense (lines 201-217):
+     * 4. WITH defense (lines 201-217):
      *    - Copy addrlen once to kernel memory (line 203)
      *    - Validate immediately (line 212-217)
      *    - Use kernel copy for ALL subsequent operations
@@ -218,13 +218,13 @@ long sys_accept(int sockfd, void *addr, socklen_t *addrlen) {
      * ATTACK SCENARIO 2: Excessive addrlen Resource Exhaustion
      * Attacker provides enormous addrlen value to trigger kernel operations
      * 1. Attacker calls accept(sockfd, addr, &addrlen) with addrlen = UINT32_MAX
-     * 2. WITHOUT Phase 5 check (line 212-217):
+     * 2. WITHOUT check (line 212-217):
      *    - No validation of reasonable addrlen upper bound
      *    - Line 238: get_socket_from_fd performs socket lookup
      *    - Line 297: fut_socket_accept potentially blocks waiting for connection
      *    - Line 342: Attempts to write back to huge addrlen
      *    - Result: Wasted resources, potential integer overflow
-     * 3. WITH Phase 5 check (line 212-217):
+     * 3. WITH check (line 212-217):
      *    - Line 212: if (len > 1024) rejects excessive size
      *    - Syscall fails before socket lookup and blocking operations
      *    - 1024 byte limit covers largest sockaddr (sockaddr_storage = 128 bytes)
@@ -264,7 +264,7 @@ long sys_accept(int sockfd, void *addr, socklen_t *addrlen) {
      *    - Attacker learns address family and size without buffer
      *    - Information disclosure: Reveals socket type and address structure
      * 4. Note: Current Phase 3 implementation safe (actual_len = 0 always)
-     *    - Phase 5 (COMPLETED at lines 389-393): Rejects addrlen = 0 when addr != NULL
+     *    - (COMPLETED at lines 389-393): Rejects addrlen = 0 when addr != NULL
      *
      * ATTACK SCENARIO 5: Read-Only addr Buffer Permission Bypass
      * Attacker provides read-only memory as addr to trigger kernel fault
@@ -278,7 +278,7 @@ long sys_accept(int sockfd, void *addr, socklen_t *addrlen) {
      *    - Line 238-297: Expensive socket lookup and blocking accept
      *    - Line 342: fut_copy_to_user attempts write to readonly → fault
      *    - Result: Crash AFTER doing all the work (fail-slow pattern)
-     * 4. Defense (Phase 5 - COMPLETED at lines 396-400):
+     * 4. Defense (- COMPLETED at lines 396-400):
      *    - Test write permission on addr buffer BEFORE blocking operations
      *    - Similar to sys_read pattern (fail-fast validation)
      *    - Prevents wasted resources on invalid output buffer
@@ -295,14 +295,14 @@ long sys_accept(int sockfd, void *addr, socklen_t *addrlen) {
      * - Fail-slow waste: Late failure after expensive blocking operations
      *
      * ROOT CAUSE:
-     * Pre-Phase 5 code lacked comprehensive validation:
+     * Pre-code lacked comprehensive validation:
      * - No atomic addrlen copy preventing TOCTOU races
      * - No upper bound on addrlen (allows UINT32_MAX)
      * - No early write permission check on addr buffer
      * - Value-result parameter semantics create race window
      * - Blocking operations before validation waste resources
      *
-     * DEFENSE (Phase 5 Requirements):
+     * DEFENSE (Requirements):
      * 1. Atomic addrlen Copy (line 201-207):
      *    - Copy addrlen ONCE to kernel memory
      *    - Use kernel copy for ALL subsequent operations
@@ -318,7 +318,7 @@ long sys_accept(int sockfd, void *addr, socklen_t *addrlen) {
      *    - Allow: addr == NULL && addrlen != NULL (unusual but valid)
      *    - Allow: addr == NULL && addrlen == NULL (no address requested)
      *    - Prevents NULL pointer dereference
-     * 4. addr Write Permission Check (Phase 5 - COMPLETED at lines 396-400):
+     * 4. addr Write Permission Check (- COMPLETED at lines 396-400):
      *    - Test write to addr buffer BEFORE blocking operations
      *    - Fail fast before expensive socket accept
      *    - Similar to sys_read/sys_getdents64 pattern
@@ -357,11 +357,11 @@ long sys_accept(int sockfd, void *addr, socklen_t *addrlen) {
      * - Maximum address size varies by family (sockaddr_un = 110, sockaddr_in = 16)
      *
      * IMPLEMENTATION NOTES:
-     * - Phase 5: Added atomic addrlen copy with TOCTOU protection (line 201-207) ✓
-     * - Phase 5: Added addrlen bounds validation (line 212-217) ✓
-     * - Phase 5: Added addr/addrlen consistency check (line 164-170) ✓
-     * - Phase 5 (Completed): Added addr write permission check at line 386-391
-     * - Phase 5 (Completed): Added addrlen=0 rejection when addr != NULL at line 386-392
+     * - Added atomic addrlen copy with TOCTOU protection (line 201-207) ✓
+     * - Added addrlen bounds validation (line 212-217) ✓
+     * - Added addr/addrlen consistency check (line 164-170) ✓
+     * - (Completed): Added addr write permission check at line 386-391
+     * - (Completed): Added addrlen=0 rejection when addr != NULL at line 386-392
      * - Phase 4 TODO: Implement actual peer address return (AF_INET, AF_INET6, AF_UNIX)
      * - See Linux kernel: net/socket.c __sys_accept4() for reference
      */
@@ -373,26 +373,26 @@ long sys_accept(int sockfd, void *addr, socklen_t *addrlen) {
             return -EFAULT;
         }
 
-        /* Phase 5: IMMEDIATE bounds validation after copy to prevent TOCTOU
+        /* IMMEDIATE bounds validation after copy to prevent TOCTOU
          * Validate BEFORE any categorization or other operations
          * Standard sockaddr_storage is 128 bytes, 1024 is generous upper bound */
         if (len > 1024) {
             accept_printf("[ACCEPT] accept(local_sockfd=%d, local_addrlen=%u) -> EINVAL "
-                       "(excessive address length, max 1024 bytes, Phase 5 TOCTOU protection)\n",
+                       "(excessive address length, max 1024 bytes TOCTOU protection)\n",
                        local_sockfd, len);
             return -EINVAL;
         }
 
-        /* Phase 5: Reject addrlen=0 when addr is provided
+        /* Reject addrlen=0 when addr is provided
          * If caller provides an address buffer but says it's zero bytes, that's
          * inconsistent - they can't receive any address data. Fail early. */
         if (local_addr != NULL && len == 0) {
             accept_printf("[ACCEPT] accept(local_sockfd=%d) -> EINVAL "
-                       "(addr provided but addrlen=0, Phase 5)\n", local_sockfd);
+                       "(addr provided but addrlen=0)\n", local_sockfd);
             return -EINVAL;
         }
 
-        /* Phase 5: Validate addr write permission early (before accepting connection) */
+        /* Validate addr write permission early (before accepting connection) */
         if (local_addr && fut_access_ok(local_addr, len, 1) != 0) {
             accept_printf("[ACCEPT] accept(local_sockfd=%d) -> EFAULT (addr not writable for %u bytes)\n",
                        local_sockfd, len);
@@ -515,7 +515,7 @@ long sys_accept(int sockfd, void *addr, socklen_t *addrlen) {
         return -EMFILE;
     }
 
-    /* Phase 5: Handle peer address return if requested */
+    /* Handle peer address return if requested */
     if (local_addr != NULL && local_addrlen != NULL) {
         /* Build peer address based on address family */
         socklen_t actual_len = 0;
@@ -657,7 +657,7 @@ long sys_accept(int sockfd, void *addr, socklen_t *addrlen) {
  *   // If handle_request() calls exec(), connfd won't leak
  *
  * Phase 4: SOCK_NONBLOCK and SOCK_CLOEXEC flag support
- * Phase 5: Address family specific peer address return
+ * Address family specific peer address return
  */
 long sys_accept4(int sockfd, void *addr, socklen_t *addrlen, int flags) {
     /* ARM64 FIX: Copy parameters to local variables immediately */

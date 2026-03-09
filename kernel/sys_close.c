@@ -102,7 +102,7 @@ long sys_close(int fd) {
         return -ESRCH;
     }
 
-    /* Phase 5: Document FD bounds validation responsibility
+    /* Document FD bounds validation responsibility
      * VULNERABILITY: Out-of-Bounds FD Table Access
      *
      * ATTACK SCENARIO:
@@ -126,7 +126,7 @@ long sys_close(int fd) {
      * - Delegates to get_socket_from_fd without bounds validation
      * - Delegates to fut_vfs_close without bounds validation
      *
-     * DEFENSE (Phase 5):
+     * DEFENSE:
      * Documents that FD table and socket table implementations MUST:
      * - Validate fd < max_fds before array access
      * - get_socket_from_fd MUST check bounds internally
@@ -148,7 +148,7 @@ long sys_close(int fd) {
      * - VFS layer (fut_vfs_close): MUST validate fd < task->max_fds
      * - Both layers return -EBADF if out of bounds
      *
-     * NOTE: This Phase 5 documents the contract. Actual upper bound
+     * NOTE: This documents the contract. Actual upper bound
      * validation is delegated to socket and VFS layers. */
 
     /* Phase 2/5: Validate fd early
@@ -159,7 +159,7 @@ long sys_close(int fd) {
         return -EBADF;
     }
     if (local_fd >= task->max_fds) {
-        close_printf("[CLOSE] close(fd=%d) -> EBADF (fd >= max_fds %d, Phase 5)\n",
+        close_printf("[CLOSE] close(fd=%d) -> EBADF (fd >= max_fds %d)\n",
                      local_fd, task->max_fds);
         return -EBADF;
     }

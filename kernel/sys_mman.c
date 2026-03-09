@@ -61,7 +61,7 @@ long sys_mlock(const void *addr, size_t len) {
 
     fut_printf("[MLOCK] mlock(addr=%p, len=%zu)\n", addr, len);
 
-    /* Phase 5: Document validation and security requirements
+    /* Document validation and security requirements
      * VULNERABILITY: Memory Exhaustion and RLIMIT_MEMLOCK Bypass
      *
      * ATTACK SCENARIO 1: Size Overflow in Page Count Calculation
@@ -106,7 +106,7 @@ long sys_mlock(const void *addr, size_t len) {
      * - No cumulative RLIMIT_MEMLOCK accounting
      * - Assumes Phase 2 will add checks (not documented)
      *
-     * DEFENSE (Phase 5 Requirements for Phase 2):
+     * DEFENSE (Requirements for Phase 2):
      * 1. Size Overflow Prevention:
      *    - Check len doesn't cause overflow: SIZE_MAX - addr >= len
      *    - Validate len < SIZE_MAX / 2 (reasonable upper bound)
@@ -315,7 +315,7 @@ long sys_mlockall(int flags) {
         return -EINVAL;
     }
 
-    /* Phase 5: Document VMA iteration and RLIMIT_MEMLOCK requirements
+    /* Document VMA iteration and RLIMIT_MEMLOCK requirements
      * VULNERABILITY: Unbounded VMA Iteration and Memory Exhaustion
      *
      * ATTACK SCENARIO 1: Unbounded VMA Walk with Crafted Mappings
@@ -374,7 +374,7 @@ long sys_mlockall(int flags) {
      * - No overflow protection in total locked page calculation
      * - No consideration of MCL_FUTURE inheritance across fork
      *
-     * DEFENSE (Phase 5 Requirements for Phase 2):
+     * DEFENSE (Requirements for Phase 2):
      * 1. VMA Iteration Bounds:
      *    - Limit maximum VMAs to walk (e.g., 65536 VMAs)
      *    - Return -ENOMEM if VMA count exceeds limit

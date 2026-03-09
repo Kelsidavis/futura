@@ -184,14 +184,14 @@
  * ============================================================================
  * IMPLEMENTATION NOTES:
  * ============================================================================
- * Current Phase 5 validations implemented:
+ * Current validations implemented:
  * [DONE] 1. Address length upper bound (128 bytes) at lines 178-185
  * [DONE] 2. Socket state validation (BOUND/LISTENING/etc.) at lines 286-329
  * [DONE] 3. Per-family size validation (AF_INET/AF_INET6/AF_UNIX) at lines 233-277
  * [DONE] 4. NULL pointer validation at lines 126-130
  * [DONE] 5. Early sockfd validation at lines 119-123
  *
- * Phase 5 enhancements:
+ * enhancements:
  * [DONE] 1. CAP_NET_BIND_SERVICE capability check for ports < 1024 (lines 408-414, 434-440)
  * [DONE] 2. Path traversal protection - reject ".." components (lines 502-540)
  * [TODO] 3. Add parent directory write permission checks
@@ -242,7 +242,7 @@ static const char *categorize_port(uint16_t port) {
     }
 }
 
-/* Phase 5: Helper to check if task has CAP_NET_BIND_SERVICE capability */
+/* Helper to check if task has CAP_NET_BIND_SERVICE capability */
 static int has_cap_net_bind_service(fut_task_t *task) {
     if (!task) return 0;
 
@@ -321,7 +321,7 @@ long sys_bind(int sockfd, const void *addr, socklen_t addrlen) {
         return -EBADF;
     }
 
-    /* Phase 5: Validate fd upper bounds to prevent out-of-bounds access */
+    /* Validate fd upper bounds to prevent out-of-bounds access */
     if (local_sockfd >= task->max_fds) {
         bind_printf("[BIND] bind(sockfd=%d) -> EBADF (fd exceeds max_fds %d)\n",
                    local_sockfd, task->max_fds);
@@ -403,7 +403,7 @@ long sys_bind(int sockfd, const void *addr, socklen_t addrlen) {
         uint16_t port = (inet_addr.sin_port >> 8) | ((inet_addr.sin_port & 0xFF) << 8);  /* Network to host byte order */
         const char *port_cat = categorize_port(port);
 
-        /* Phase 5: Enforce CAP_NET_BIND_SERVICE for privileged ports */
+        /* Enforce CAP_NET_BIND_SERVICE for privileged ports */
         if (port < 1024 && !has_cap_net_bind_service(task)) {
             bind_printf("[BIND] bind(sockfd=%d, family=%s, port=%u [%s]) -> EACCES "
                        "(privileged port requires CAP_NET_BIND_SERVICE, uid=%u)\n",
@@ -429,7 +429,7 @@ long sys_bind(int sockfd, const void *addr, socklen_t addrlen) {
         uint16_t port = (inet6_addr.sin6_port >> 8) | ((inet6_addr.sin6_port & 0xFF) << 8);  /* Network to host byte order */
         const char *port_cat = categorize_port(port);
 
-        /* Phase 5: Enforce CAP_NET_BIND_SERVICE for privileged ports */
+        /* Enforce CAP_NET_BIND_SERVICE for privileged ports */
         if (port < 1024 && !has_cap_net_bind_service(task)) {
             bind_printf("[BIND] bind(sockfd=%d, family=%s, port=%u [%s]) -> EACCES "
                        "(privileged port requires CAP_NET_BIND_SERVICE, uid=%u)\n",
@@ -497,7 +497,7 @@ long sys_bind(int sockfd, const void *addr, socklen_t addrlen) {
         path_desc = "filesystem path (relative)";
     }
 
-    /* Phase 5: Reject ".." path components to prevent directory traversal attacks
+    /* Reject ".." path components to prevent directory traversal attacks
      *
      * ATTACK SCENARIO: Directory Traversal via Unix Domain Socket Paths
      * 1. Attacker calls bind(sockfd, "/tmp/../../../etc/socket", ...)
@@ -528,7 +528,7 @@ long sys_bind(int sockfd, const void *addr, socklen_t addrlen) {
 
                 if ((at_start || after_slash) && (before_slash || at_end)) {
                     bind_printf("[BIND] bind(sockfd=%d, family=%s, path='%s') -> EINVAL "
-                               "(path contains '..' component - directory traversal blocked, Phase 5)\n",
+                               "(path contains '..' component - directory traversal blocked)\n",
                                local_sockfd, family_name, sock_path);
                     return -EINVAL;
                 }
@@ -545,7 +545,7 @@ long sys_bind(int sockfd, const void *addr, socklen_t addrlen) {
         return -EBADF;
     }
 
-    /* Phase 5: Validate socket state IMMEDIATELY after retrieval
+    /* Validate socket state IMMEDIATELY after retrieval
      * Socket must be in CREATED state only - reject all other states to prevent
      * race conditions and invalid state transitions */
     if (socket->state != FUT_SOCK_CREATED) {
@@ -557,37 +557,37 @@ long sys_bind(int sockfd, const void *addr, socklen_t addrlen) {
                 socket_state_desc = "already bound";
                 error_reason = socket->bound_path ? socket->bound_path : "(unknown path)";
                 bind_printf("[BIND] bind(sockfd=%d, family=%s, path='%s', state=%s) -> EINVAL "
-                           "(socket already bound to '%s', Phase 5)\n",
+                           "(socket already bound to '%s')\n",
                            local_sockfd, family_name, sock_path, socket_state_desc, error_reason);
                 break;
             case FUT_SOCK_LISTENING:
                 socket_state_desc = "listening";
                 bind_printf("[BIND] bind(sockfd=%d, family=%s, path='%s', state=%s) -> EINVAL "
-                           "(cannot bind listening socket, Phase 5)\n",
+                           "(cannot bind listening socket)\n",
                            local_sockfd, family_name, sock_path, socket_state_desc);
                 break;
             case FUT_SOCK_CONNECTING:
                 socket_state_desc = "connecting";
                 bind_printf("[BIND] bind(sockfd=%d, family=%s, path='%s', state=%s) -> EINVAL "
-                           "(cannot bind connecting socket, Phase 5)\n",
+                           "(cannot bind connecting socket)\n",
                            local_sockfd, family_name, sock_path, socket_state_desc);
                 break;
             case FUT_SOCK_CONNECTED:
                 socket_state_desc = "connected";
                 bind_printf("[BIND] bind(sockfd=%d, family=%s, path='%s', state=%s) -> EINVAL "
-                           "(cannot bind connected socket, Phase 5)\n",
+                           "(cannot bind connected socket)\n",
                            local_sockfd, family_name, sock_path, socket_state_desc);
                 break;
             case FUT_SOCK_CLOSED:
                 socket_state_desc = "closed";
                 bind_printf("[BIND] bind(sockfd=%d, family=%s, path='%s', state=%s) -> EINVAL "
-                           "(cannot bind closed socket, Phase 5)\n",
+                           "(cannot bind closed socket)\n",
                            local_sockfd, family_name, sock_path, socket_state_desc);
                 break;
             default:
                 socket_state_desc = "unknown";
                 bind_printf("[BIND] bind(sockfd=%d, family=%s, path='%s', state=%s) -> EINVAL "
-                           "(socket in invalid state %d, Phase 5)\n",
+                           "(socket in invalid state %d)\n",
                            local_sockfd, family_name, sock_path, socket_state_desc, socket->state);
                 break;
         }
@@ -625,7 +625,7 @@ long sys_bind(int sockfd, const void *addr, socklen_t addrlen) {
     }
 
     /* Phase 4: Detailed success logging */
-    bind_printf("[BIND] bind(sockfd=%d, family=%s, path='%s' [%s, %s], state=created->bound) -> 0 (Socket %u bound, Phase 5)\n",
+    bind_printf("[BIND] bind(sockfd=%d, family=%s, path='%s' [%s, %s], state=created->bound) -> 0 (Socket %u bound)\n",
                local_sockfd, family_name, sock_path, path_type, path_desc, socket->socket_id);
 
     return 0;

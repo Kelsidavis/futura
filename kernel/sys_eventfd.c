@@ -39,7 +39,7 @@
  *    - Returns fd 3 with counter = 0
  * 2. Attacker writes 8-byte value UINT64_MAX (0xFFFFFFFFFFFFFFFF)
  *    - write(fd, &value, 8) where value = UINT64_MAX
- * 3. Without Phase 5: counter += UINT64_MAX
+ * 3. Without counter += UINT64_MAX
  *    - Counter wraps: 0 + UINT64_MAX = UINT64_MAX
  * 4. Second write attempt: counter + 1 would overflow
  *    - UINT64_MAX + 1 = 0 (wraps to zero via unsigned overflow)
@@ -408,7 +408,7 @@
  * - Phase 2: File operations (read/write/release) with blocking semantics
  * - Phase 3: initval validation, flag validation for eventfd2
  * - Phase 4: Flag validation for signalfd4/timerfd_create with diagnostic output
- * - Phase 5: Comprehensive overflow/underflow/race protection with CVE references
+ * - Comprehensive overflow/underflow/race protection with CVE references
  */
 
 #include <kernel/chrdev.h>
@@ -521,7 +521,7 @@ static ssize_t eventfd_read(void *inode, void *priv, void *u_buf, size_t len, of
 
     uint64_t value = 0;
 
-    /* Phase 5: Counter underflow protection via blocking reads
+    /* Counter underflow protection via blocking reads
      * VULNERABILITY: Integer Underflow in Eventfd Counter Decrement
      *
      * ATTACK SCENARIO:
@@ -546,7 +546,7 @@ static ssize_t eventfd_read(void *inode, void *priv, void *u_buf, size_t len, of
      * - No intrinsic check prevents counter < 0
      * - Unsigned arithmetic wraps on underflow (C standard)
      *
-     * DEFENSE (Phase 5):
+     * DEFENSE:
      * Atomic check-and-decrement under spinlock
      * - Line 135: Check ctx->counter > 0 BEFORE decrement
      * - Lines 137-141: Decrement only if counter > 0
@@ -576,7 +576,7 @@ static ssize_t eventfd_read(void *inode, void *priv, void *u_buf, size_t len, of
      */
     while (true) {
         fut_spinlock_acquire(&ctx->lock);
-        /* Phase 5: Check counter > 0 to prevent underflow (critical security check) */
+        /* Check counter > 0 to prevent underflow (critical security check) */
         if (ctx->counter > 0) {
             if (ctx->semaphore) {
                 value = 1;
@@ -598,7 +598,7 @@ static ssize_t eventfd_read(void *inode, void *priv, void *u_buf, size_t len, of
         /* Lock released by fut_waitq_sleep_locked; loop to reacquire */
     }
 
-    /* Phase 5: Restore counter on copy failure to maintain consistency */
+    /* Restore counter on copy failure to maintain consistency */
     if (fut_copy_to_user(u_buf, &value, sizeof(value)) != 0) {
         /* Restore counter on copy failure */
         fut_spinlock_acquire(&ctx->lock);
@@ -633,7 +633,7 @@ static ssize_t eventfd_write(void *inode, void *priv, const void *u_buf, size_t 
         return -EFAULT;
     }
 
-    /* Phase 5: Validate value to prevent counter overflow and semaphore underflow
+    /* Validate value to prevent counter overflow and semaphore underflow
      * VULNERABILITY: Integer Overflow in Eventfd Counter Arithmetic
      *
      * ATTACK SCENARIO:
@@ -661,7 +661,7 @@ static ssize_t eventfd_write(void *inode, void *priv, const void *u_buf, size_t 
      * - Multiple concurrent writers could race to overflow
      * - Spinlock protects atomic update but not overflow check
      *
-     * DEFENSE (Phase 5):
+     * DEFENSE:
      * Two-layer overflow protection:
      * 1. Reject UINT64_MAX value (line 189-191):
      *    - UINT64_MAX is invalid per eventfd(2) specification
@@ -701,7 +701,7 @@ static ssize_t eventfd_write(void *inode, void *priv, const void *u_buf, size_t 
 
     while (true) {
         fut_spinlock_acquire(&ctx->lock);
-        /* Phase 5: Check for overflow before addition (critical security check) */
+        /* Check for overflow before addition (critical security check) */
         if (UINT64_MAX - ctx->counter > value) {
             ctx->counter += value;
             fut_spinlock_release(&ctx->lock);
@@ -828,7 +828,7 @@ long sys_eventfd2(unsigned int initval, int flags) {
     }
     if (!file) {
         fut_printf("[EVENTFD2] BUG: newly created fd %d missing file\n", fd);
-        /* Phase 5: fut_vfs_close calls eventfd_release which frees ctx and efile.
+        /* fut_vfs_close calls eventfd_release which frees ctx and efile.
          * Do NOT free them again here to avoid double-free. */
         fut_vfs_close(fd);
         return -EFAULT;
@@ -957,7 +957,7 @@ static void timerfd_timer_cb(void *arg) {
     if (!ctx) return;
 
     fut_spinlock_acquire(&ctx->lock);
-    /* Phase 5: Cap counter at UINT64_MAX to prevent overflow/wraparound */
+    /* Cap counter at UINT64_MAX to prevent overflow/wraparound */
     if (ctx->counter < UINT64_MAX) {
         ctx->counter++;
     }
@@ -1110,7 +1110,7 @@ long sys_timerfd_create(int clockid, int flags) {
         file = task->fd_table[fd];
     }
     if (!file) {
-        /* Phase 5: fut_vfs_close calls timerfd_release which frees ctx and tfile.
+        /* fut_vfs_close calls timerfd_release which frees ctx and tfile.
          * Do NOT free them again here to avoid double-free. */
         fut_vfs_close(fd);
         return -EFAULT;
@@ -1171,7 +1171,7 @@ long sys_timerfd_settime(int ufd, int flags,
             old_its.it_value.tv_sec = (long)(remain / 1000);
             old_its.it_value.tv_nsec = (long)((remain % 1000) * 1000000);
         }
-        /* Phase 5: Check copy_to_user return to avoid silently ignoring EFAULT */
+        /* Check copy_to_user return to avoid silently ignoring EFAULT */
         if (fut_copy_to_user(old_value, &old_its, sizeof(old_its)) != 0) {
             return -EFAULT;
         }

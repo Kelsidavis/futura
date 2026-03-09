@@ -63,7 +63,7 @@ long sys_openat(int dirfd, const char *pathname, int flags, int mode) {
         return -EFAULT;
     }
 
-    /* Phase 5: Security hardening - Path truncation detection
+    /* Security hardening - Path truncation detection
      * VULNERABILITY: Silent Path Truncation Leading to Unauthorized File Access
      *
      * ATTACK SCENARIO:
@@ -83,7 +83,7 @@ long sys_openat(int dirfd, const char *pathname, int flags, int mode) {
      * - Create files in protected directories (truncate suffix)
      * - Symlink confusion via truncated target paths
      *
-     * DEFENSE (Phase 5):
+     * DEFENSE:
      * Verify path was not truncated during copy
      * - copy_user_string returns 0 on success with NULL termination
      * - Validate that kpath is properly NULL-terminated
@@ -98,11 +98,11 @@ long sys_openat(int dirfd, const char *pathname, int flags, int mode) {
         return rc;
     }
 
-    /* Phase 5: Verify path was not truncated (NULL terminator must exist somewhere in buffer)
+    /* Verify path was not truncated (NULL terminator must exist somewhere in buffer)
      * If no '\0' found in buffer, the path was truncated and full path exceeds buffer size */
     if (memchr(kpath, '\0', sizeof(kpath)) == NULL) {
         fut_printf("[OPENAT] openat(dirfd=%d, pathname=<truncated>, flags=0x%x, mode=0%o) -> ENAMETOOLONG "
-                   "(path exceeds %zu bytes, truncation detected, Phase 5)\n",
+                   "(path exceeds %zu bytes, truncation detected)\n",
                    local_dirfd, local_flags, local_mode, sizeof(kpath) - 1);
         return -ENAMETOOLONG;
     }

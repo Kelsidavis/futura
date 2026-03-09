@@ -190,7 +190,7 @@ long sys_mknodat(int dirfd, const char *pathname, uint32_t mode, uint32_t dev) {
                    "(pathname copy_from_user failed)\n", local_dirfd, local_mode, local_dev, task->pid);
         return -EFAULT;
     }
-    /* Phase 5: Verify path was not truncated */
+    /* Verify path was not truncated */
     if (memchr(path_buf, '\0', sizeof(path_buf)) == NULL) {
         fut_printf("[MKNODAT] mknodat(path exceeds %zu bytes) -> ENAMETOOLONG\n", sizeof(path_buf) - 1);
         return -ENAMETOOLONG;
@@ -210,10 +210,10 @@ long sys_mknodat(int dirfd, const char *pathname, uint32_t mode, uint32_t dev) {
         return -EBADF;
     }
 
-    /* Phase 5: Validate dirfd upper bounds before accessing FD table */
+    /* Validate dirfd upper bounds before accessing FD table */
     if (local_dirfd != AT_FDCWD && path_buf[0] != '/' && local_dirfd >= task->max_fds) {
         fut_printf("[MKNODAT] mknodat(dirfd=%d, max_fds=%d) -> EBADF "
-                   "(dirfd exceeds max_fds, Phase 5: FD bounds validation)\n",
+                   "(dirfd exceeds max_fds, FD bounds validation)\n",
                    local_dirfd, task->max_fds);
         return -EBADF;
     }

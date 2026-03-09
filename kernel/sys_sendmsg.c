@@ -119,7 +119,7 @@ ssize_t sys_sendmsg(int sockfd, const struct msghdr *msg, int flags) {
         return -EFAULT;
     }
 
-    /* Phase 5: Validate control message length to prevent DoS and resource exhaustion
+    /* Validate control message length to prevent DoS and resource exhaustion
      * VULNERABILITY: Unbounded Ancillary Data Size and Memory Exhaustion
      *
      * ATTACK SCENARIO 1: Excessive Control Message Length (DoS)
@@ -160,7 +160,7 @@ ssize_t sys_sendmsg(int sockfd, const struct msghdr *msg, int flags) {
      * - No validation that size doesn't exceed reasonable limits
      * - Kernel must allocate memory to process control messages
      *
-     * DEFENSE (Phase 5):
+     * DEFENSE:
      * 1. Limit maximum control message length (line 154-159):
      *    - MAX_CONTROL_LEN = 64KB (reasonable for most use cases)
      *    - Prevents memory exhaustion attacks
@@ -198,7 +198,7 @@ ssize_t sys_sendmsg(int sockfd, const struct msghdr *msg, int flags) {
         const size_t MAX_CONTROL_LEN = 65536;  /* 64KB */
         if (kmsg.msg_controllen > MAX_CONTROL_LEN) {
             SENDMSG_LOG("[SENDMSG] sendmsg(sockfd=%d, controllen=%zu) -> EINVAL "
-                       "(control message too large, max %zu bytes, Phase 5)\n",
+                       "(control message too large, max %zu bytes)\n",
                        local_sockfd, kmsg.msg_controllen, MAX_CONTROL_LEN);
             return -EINVAL;
         }
@@ -206,7 +206,7 @@ ssize_t sys_sendmsg(int sockfd, const struct msghdr *msg, int flags) {
         /* Validate control buffer pointer is not NULL */
         if (!kmsg.msg_control) {
             SENDMSG_LOG("[SENDMSG] sendmsg(sockfd=%d, controllen=%zu) -> EFAULT "
-                       "(msg_control is NULL with non-zero length, Phase 5)\n",
+                       "(msg_control is NULL with non-zero length)\n",
                        local_sockfd, kmsg.msg_controllen);
             return -EFAULT;
         }
@@ -253,7 +253,7 @@ ssize_t sys_sendmsg(int sockfd, const struct msghdr *msg, int flags) {
             return -EINVAL;
         }
 
-        /* Phase 5: Prevent integer overflow in total_size accumulation
+        /* Prevent integer overflow in total_size accumulation
          * Check BEFORE addition to handle SIZE_MAX edge case correctly
          * Previous vulnerable pattern: if (total_size + iov_len < total_size)
          *   - When total_size == SIZE_MAX, any addition wraps but check may pass
@@ -269,7 +269,7 @@ ssize_t sys_sendmsg(int sockfd, const struct msghdr *msg, int flags) {
          * Prevents wraparound even when approaching SIZE_MAX limit */
         if (total_size == SIZE_MAX || iov.iov_len > SIZE_MAX - total_size) {
             SENDMSG_LOG("[SENDMSG] sendmsg(sockfd=%d, iovlen=%zu) -> EINVAL "
-                       "(size overflow at iovec %zu, total=%zu, iov_len=%zu, Phase 5)\n",
+                       "(size overflow at iovec %zu, total=%zu, iov_len=%zu)\n",
                        local_sockfd, kmsg.msg_iovlen, i, total_size, iov.iov_len);
             return -EINVAL;
         }
@@ -334,20 +334,20 @@ ssize_t sys_sendmsg(int sockfd, const struct msghdr *msg, int flags) {
             continue;
         }
 
-        /* Phase 5: Validate iov_base pointer before allocating memory
+        /* Validate iov_base pointer before allocating memory
          * Prevents memory exhaustion DoS from repeated invalid pointers */
         if (!iov.iov_base) {
             SENDMSG_LOG("[SENDMSG] sendmsg(sockfd=%d) -> EFAULT "
-                       "(iov_base[%zu] is NULL with non-zero length %zu, Phase 5)\n",
+                       "(iov_base[%zu] is NULL with non-zero length %zu)\n",
                        local_sockfd, i, iov.iov_len);
             return total_sent > 0 ? total_sent : -EFAULT;
         }
 
-        /* Phase 5: Validate iov_base is readable before allocating kernel buffer */
+        /* Validate iov_base is readable before allocating kernel buffer */
         uint8_t test_byte;
         if (fut_copy_from_user(&test_byte, iov.iov_base, 1) != 0) {
             SENDMSG_LOG("[SENDMSG] sendmsg(sockfd=%d) -> EFAULT "
-                       "(iov_base[%zu] not accessible, len=%zu, Phase 5)\n",
+                       "(iov_base[%zu] not accessible, len=%zu)\n",
                        local_sockfd, i, iov.iov_len);
             return total_sent > 0 ? total_sent : -EFAULT;
         }

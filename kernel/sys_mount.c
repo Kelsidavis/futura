@@ -181,7 +181,7 @@ long sys_mount(const char *source, const char *target, const char *filesystemtyp
         return -ESRCH;
     }
 
-    /* Phase 5: Validate data parameter with DoS protection
+    /* Validate data parameter with DoS protection
      * VULNERABILITY: Unbounded Byte-by-Byte Scanning Leading to CPU Exhaustion
      *
      * ATTACK SCENARIO:
@@ -200,7 +200,7 @@ long sys_mount(const char *source, const char *target, const char *filesystemtyp
      * 8. Total operations: 100 * 4096 = 409,600 expensive copies
      * 9. CPU saturated, system unresponsive (DoS)
      *
-     * DEFENSE (Phase 5):
+     * DEFENSE:
      * Bulk copy entire data buffer, then scan in kernel memory
      * - Single fut_copy_from_user() call (not 4096 calls)
      * - Scan NULL terminator in kernel buffer (fast)
@@ -210,7 +210,7 @@ long sys_mount(const char *source, const char *target, const char *filesystemtyp
         /* Mount options should be reasonable size (< 4KB per POSIX) */
         const size_t MAX_MOUNT_DATA_SIZE = 4096;
 
-        /* Phase 5: Allocate kernel buffer for bulk copy (stack-allocated for speed) */
+        /* Allocate kernel buffer for bulk copy (stack-allocated for speed) */
         char data_buf[MAX_MOUNT_DATA_SIZE];
 
         /* Bulk copy entire data buffer in ONE operation (not 4096 operations)
@@ -219,12 +219,12 @@ long sys_mount(const char *source, const char *target, const char *filesystemtyp
             /* Copy failed - data pointer invalid or shorter than MAX size
              * This is expected for valid short strings, try smaller copy */
             fut_printf("[MOUNT] mount(source=%p, data=%p) -> EFAULT "
-                       "(data not fully readable, Phase 5 bulk validation)\n",
+                       "(data not fully readable bulk validation)\n",
                        source, data);
             return -EFAULT;
         }
 
-        /* Phase 5: Scan for NULL terminator in kernel buffer (fast, no syscall overhead)
+        /* Scan for NULL terminator in kernel buffer (fast, no syscall overhead)
          * Force NULL at buffer end to ensure termination */
         data_buf[MAX_MOUNT_DATA_SIZE - 1] = '\0';
 
@@ -240,7 +240,7 @@ long sys_mount(const char *source, const char *target, const char *filesystemtyp
 
         if (!found_null) {
             fut_printf("[MOUNT] mount(source=%p, data=%p) -> EINVAL "
-                       "(data exceeds maximum size %zu bytes without null terminator, Phase 5)\n",
+                       "(data exceeds maximum size %zu bytes without null terminator)\n",
                        source, data, MAX_MOUNT_DATA_SIZE - 1);
             return -EINVAL;
         }
@@ -256,7 +256,7 @@ long sys_mount(const char *source, const char *target, const char *filesystemtyp
         return -EFAULT;
     }
 
-    /* Phase 5: Copy and validate target path with truncation detection
+    /* Copy and validate target path with truncation detection
      * VULNERABILITY: Path Truncation Attack
      *
      * ATTACK SCENARIO:
@@ -281,7 +281,7 @@ long sys_mount(const char *source, const char *target, const char *filesystemtyp
      * Line 260 (old): fut_copy_from_user(target_buf, target, sizeof(target_buf) - 1)
      * Copies only 255 bytes, silently truncating longer paths.
      *
-     * DEFENSE (Phase 5):
+     * DEFENSE:
      * Copy full buffer size (256 bytes) and check for truncation.
      *
      * CVE REFERENCES:
@@ -291,15 +291,15 @@ long sys_mount(const char *source, const char *target, const char *filesystemtyp
     char target_buf[256];
     if (fut_copy_from_user(target_buf, target, sizeof(target_buf)) != 0) {
         fut_printf("[MOUNT] mount(source=%p, target=?, fstype=%p, flags=0x%lx, pid=%d) -> EFAULT "
-                   "(target copy_from_user failed, Phase 5)\n",
+                   "(target copy_from_user failed)\n",
                    source, filesystemtype, mountflags, task->pid);
         return -EFAULT;
     }
 
-    /* Phase 5: Verify target path was not truncated */
+    /* Verify target path was not truncated */
     if (memchr(target_buf, '\0', sizeof(target_buf)) == NULL) {
         fut_printf("[MOUNT] mount(source=%p, target=<truncated>, fstype=%p, flags=0x%lx, pid=%d) "
-                   "-> ENAMETOOLONG (target path exceeds %zu bytes, Phase 5)\n",
+                   "-> ENAMETOOLONG (target path exceeds %zu bytes)\n",
                    source, filesystemtype, mountflags, task->pid, sizeof(target_buf) - 1);
         return -ENAMETOOLONG;
     }
@@ -311,7 +311,7 @@ long sys_mount(const char *source, const char *target, const char *filesystemtyp
         return -EINVAL;
     }
 
-    /* Phase 5: Copy and validate filesystemtype with truncation detection
+    /* Copy and validate filesystemtype with truncation detection
      * VULNERABILITY: Filesystem Type Validation Bypass
      *
      * ATTACK SCENARIO:
@@ -322,7 +322,7 @@ long sys_mount(const char *source, const char *target, const char *filesystemtyp
      * 3. Module loading may trigger arbitrary code execution
      * 4. Alternatively, long fstype string causes truncation confusion
      *
-     * DEFENSE (Phase 5):
+     * DEFENSE:
      * Whitelist known filesystem types and detect truncation.
      *
      * CVE REFERENCES:
@@ -332,15 +332,15 @@ long sys_mount(const char *source, const char *target, const char *filesystemtyp
     if (filesystemtype) {
         if (fut_copy_from_user(fstype_buf, filesystemtype, sizeof(fstype_buf)) != 0) {
             fut_printf("[MOUNT] mount(source=%p, target='%s', fstype=?, flags=0x%lx, pid=%d) -> EFAULT "
-                       "(fstype copy_from_user failed, Phase 5)\n",
+                       "(fstype copy_from_user failed)\n",
                    source, target_buf, mountflags, task->pid);
             return -EFAULT;
         }
 
-        /* Phase 5: Verify fstype was not truncated */
+        /* Verify fstype was not truncated */
         if (memchr(fstype_buf, '\0', sizeof(fstype_buf)) == NULL) {
             fut_printf("[MOUNT] mount(source=%p, target='%s', fstype=<truncated>, flags=0x%lx, pid=%d) "
-                       "-> ENAMETOOLONG (fstype exceeds %zu bytes, Phase 5)\n",
+                       "-> ENAMETOOLONG (fstype exceeds %zu bytes)\n",
                        source, target_buf, mountflags, task->pid, sizeof(fstype_buf) - 1);
             return -ENAMETOOLONG;
         }

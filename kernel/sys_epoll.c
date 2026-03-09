@@ -192,14 +192,14 @@
  * ============================================================================
  * IMPLEMENTATION NOTES:
  * ============================================================================
- * Current Phase 5 validations implemented:
+ * Current validations implemented:
  * [DONE] 1. epoll instance limit (MAX_EPOLL_INSTANCES=256) at lines 100-113
  * [DONE] 2. Per-instance FD limit (MAX_EPOLL_FDS=64) at lines 52-53, 414-440
  * [DONE] 3. epoll FD overflow check (INT_MAX) at lines 160-167
  * [DONE] 4. Event mask validation at lines 700-711
  * [DONE] 5. FD validation (negative check) at lines 418-422
  *
- * TODO (Phase 5 enhancements):
+ * TODO (enhancements):
  * [TODO] 1. Add VFS close hook for auto-remove on FD close
  * [TODO] 2. Add per-task epoll instance quotas
  * [TODO] 3. Add file struct refcounting to prevent premature free
@@ -291,7 +291,7 @@ static struct epoll_set *epoll_get_set(int epfd) {
 
 /* Helper to allocate a new epoll set */
 static struct epoll_set *epoll_allocate_set(void) {
-    /* Phase 5: Document epoll FD counter overflow protection requirement
+    /* Document epoll FD counter overflow protection requirement
      * VULNERABILITY: Integer Overflow in Epoll File Descriptor Counter
      *
      * ATTACK SCENARIO:
@@ -320,7 +320,7 @@ static struct epoll_set *epoll_allocate_set(void) {
      * - No mechanism to prevent FD collision with regular FDs
      * - Relies on assumption that counter won't reach INT_MAX
      *
-     * DEFENSE (Phase 5):
+     * DEFENSE:
      * Validate next_epoll_fd won't overflow before incrementing
      * - Check next_epoll_fd < INT_MAX before assignment
      * - Return NULL (ENOMEM) if counter would overflow
@@ -346,14 +346,14 @@ static struct epoll_set *epoll_allocate_set(void) {
      * - If counter reaches INT_MAX (2,147,483,647):
      *   - Requires ~2.1 billion epoll_create1() calls
      *   - At 1000 create/destroy per second: ~24 days continuous operation
-     * - Phase 5 documents requirement for overflow check before increment
+     * - documents requirement for overflow check before increment
      */
     for (int i = 0; i < MAX_EPOLL_INSTANCES; i++) {
         if (!epoll_instances[i].active) {
-            /* Phase 5: Check for FD counter overflow before allocation */
+            /* Check for FD counter overflow before allocation */
             if (next_epoll_fd >= INT_MAX) {
                 fut_printf("[EPOLL_ALLOCATE] epoll_allocate_set() -> NULL "
-                           "(epoll FD counter would overflow INT_MAX, Phase 5)\n");
+                           "(epoll FD counter would overflow INT_MAX)\n");
                 return NULL;
             }
 
@@ -609,9 +609,9 @@ long sys_epoll_create1(int flags) {
  * Phase 4 (Completed): Performance optimization with memory pooling
  */
 long sys_epoll_ctl(int epfd, int op, int fd, struct epoll_event *event) {
-    /* Phase 5: Validate fd is non-negative early */
+    /* Validate fd is non-negative early */
     if (fd < 0) {
-        fut_printf("[EPOLL_CTL] epoll_ctl(epfd=%d, op=%d, fd=%d) -> EBADF (fd is negative, Phase 5)\n",
+        fut_printf("[EPOLL_CTL] epoll_ctl(epfd=%d, op=%d, fd=%d) -> EBADF (fd is negative)\n",
                    epfd, op, fd);
         return -EBADF;
     }
@@ -880,14 +880,14 @@ long sys_epoll_ctl(int epfd, int op, int fd, struct epoll_event *event) {
             return -EFAULT;
         }
 
-        /* Phase 5: Validate event mask doesn't contain invalid bits */
+        /* Validate event mask doesn't contain invalid bits */
         uint32_t valid_events = EPOLLIN | EPOLLOUT | EPOLLERR | EPOLLHUP |
                                EPOLLRDNORM | EPOLLRDBAND | EPOLLWRNORM | EPOLLWRBAND |
                                EPOLL_ET | EPOLL_ONESHOT;
         if (ev.events & ~valid_events) {
             uint32_t invalid_bits = ev.events & ~valid_events;
             fut_printf("[EPOLL_CTL] epoll_ctl(epfd=%d, op=%s, fd=%d, events=0x%x) -> EINVAL "
-                       "(invalid event bits 0x%x detected, valid=0x%x, Phase 5)\n",
+                       "(invalid event bits 0x%x detected, valid=0x%x)\n",
                        epfd, op_name, fd, ev.events, invalid_bits, valid_events);
             return -EINVAL;
         }
@@ -1093,7 +1093,7 @@ long sys_epoll_ctl(int epfd, int op, int fd, struct epoll_event *event) {
             if (set->fds[i].registered && set->fds[i].fd == fd) {
                 set->fds[i].data = ev.data.u64;
 
-                /* Phase 5: Update edge-triggered and oneshot flags on MOD
+                /* Update edge-triggered and oneshot flags on MOD
                  * (must mirror EPOLL_CTL_ADD logic to avoid stale modifier state) */
                 set->fds[i].edge_triggered = (ev.events & EPOLL_ET) != 0;
                 set->fds[i].oneshot = (ev.events & EPOLL_ONESHOT) != 0;
@@ -1710,7 +1710,7 @@ long sys_epoll_wait(int epfd, struct epoll_event *events, int maxevents, int tim
          * For positive timeouts, start a timer to wake us if no events arrive. */
         if (timeout > 0) {
             uint64_t now = fut_get_ticks();
-            /* Phase 5: Guard against underflow if ticks raced past deadline */
+            /* Guard against underflow if ticks raced past deadline */
             if (now >= deadline_ticks) {
                 return 0;  /* Timeout already expired */
             }

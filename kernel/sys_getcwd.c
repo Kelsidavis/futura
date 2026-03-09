@@ -147,7 +147,7 @@ long sys_getcwd(char *buf, size_t size) {
         return -EINVAL;
     }
 
-    /* Phase 5: Validate buffer write permission BEFORE any operations
+    /* Validate buffer write permission BEFORE any operations
      * VULNERABILITY: Missing Write Permission Validation
      *
      * ATTACK SCENARIO:
@@ -170,7 +170,7 @@ long sys_getcwd(char *buf, size_t size) {
      * - Shared memory with read-only permissions
      * - Stack guard pages (no write permission)
      *
-     * DEFENSE (Phase 5):
+     * DEFENSE:
      * Probe write permission BEFORE any path operations
      * - Attempt 1-byte write to first byte of buffer
      * - If fails: return -EFAULT immediately
@@ -185,7 +185,7 @@ long sys_getcwd(char *buf, size_t size) {
         char probe = '\0';
         if (fut_copy_to_user(local_buf, &probe, 1) != 0) {
             fut_printf("[GETCWD] getcwd(buf=%p, size=%zu) -> EFAULT "
-                       "(buffer not writable, Phase 5 write permission validation)\n",
+                       "(buffer not writable write permission validation)\n",
                        (void *)local_buf, local_size);
             return -EFAULT;
         }
@@ -232,12 +232,12 @@ long sys_getcwd(char *buf, size_t size) {
      */
     uint64_t cwd_inode = task->current_dir_ino;
 
-    /* Phase 5: Pre-emptive validation for future path resolution
+    /* Pre-emptive validation for future path resolution
      * Ensure buffer is large enough for at least "/" + null terminator
      * Prevents buffer overflow when VFS path resolution is added */
     if (local_size < 2) {  /* Minimum: "/" + '\0' */
         fut_printf("[GETCWD] getcwd(buf=%p, size=%zu) -> ERANGE "
-                   "(buffer too small for minimum path, Phase 5)\n",
+                   "(buffer too small for minimum path)\n",
                    (void *)local_buf, local_size);
         return -ERANGE;
     }

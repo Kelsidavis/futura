@@ -58,7 +58,7 @@ struct rusage {
  * Phase 2 (Completed): Enhanced validation and detailed reporting
  * Phase 3 (Completed): Zeroed statistics with who parameter categorization
  * Phase 4: Track CPU time (user/system) per task
- * Phase 5: Track memory usage (maxrss, page faults)
+ * Track memory usage (maxrss, page faults)
  * Phase 6: Track I/O statistics (inblock, oublock)
  */
 long sys_getrusage(int who, struct rusage *usage) {
@@ -73,13 +73,13 @@ long sys_getrusage(int who, struct rusage *usage) {
         return -EFAULT;
     }
 
-    /* Phase 5: Validate usage write permission early (kernel writes statistics)
+    /* Validate usage write permission early (kernel writes statistics)
      * VULNERABILITY: Invalid Output Buffer Pointer
      * ATTACK: Attacker provides read-only or unmapped usage buffer
      * IMPACT: Kernel page fault when writing resource usage statistics
      * DEFENSE: Check write permission before processing */
     if (fut_access_ok(usage, sizeof(struct rusage), 1) != 0) {
-        fut_printf("[RUSAGE] getrusage(who=%d, usage=%p) -> EFAULT (buffer not writable for %zu bytes, Phase 5)\n",
+        fut_printf("[RUSAGE] getrusage(who=%d, usage=%p) -> EFAULT (buffer not writable for %zu bytes)\n",
                    who, usage, sizeof(struct rusage));
         return -EFAULT;
     }
@@ -123,7 +123,7 @@ long sys_getrusage(int who, struct rusage *usage) {
      * - ru_minflt: task->mm->page_faults_minor (soft page faults)
      * - ru_majflt: task->mm->page_faults_major (hard page faults)
      *
-     * Phase 5: I/O statistics tracking
+     * I/O statistics tracking
      * - ru_inblock: task->io_stats->blocks_read (from VFS/block layer)
      * - ru_oublock: task->io_stats->blocks_written (from VFS/block layer)
      *

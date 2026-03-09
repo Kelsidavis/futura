@@ -139,13 +139,13 @@ long sys_waitpid(int pid, int *u_status, int flags) {
     int *local_u_status = u_status;
     int local_flags = flags;
 
-    /* Phase 5: Validate u_status write permission early (kernel writes exit status)
+    /* Validate u_status write permission early (kernel writes exit status)
      * VULNERABILITY: Invalid Output Buffer Pointer
      * ATTACK: Attacker provides read-only or unmapped u_status buffer
      * IMPACT: Kernel page fault when writing exit status after potentially blocking wait
      * DEFENSE: Check write permission before blocking on fut_task_waitpid */
     if (local_u_status && fut_access_ok(local_u_status, sizeof(int), 1) != 0) {
-        fut_printf("[WAITPID] waitpid(pid=%d, u_status=%p) -> EFAULT (u_status not writable for %zu bytes, Phase 5)\n",
+        fut_printf("[WAITPID] waitpid(pid=%d, u_status=%p) -> EFAULT (u_status not writable for %zu bytes)\n",
                    local_pid, local_u_status, sizeof(int));
         return -EFAULT;
     }
@@ -221,7 +221,7 @@ long sys_waitpid(int pid, int *u_status, int flags) {
         }
     }
 
-    /* Phase 5: Document status encoding validation to prevent invalid signal/exit code extraction
+    /* Document status encoding validation to prevent invalid signal/exit code extraction
      * VULNERABILITY: Invalid Status Encoding Leading to Undefined Behavior
      *
      * ATTACK SCENARIO:
@@ -249,7 +249,7 @@ long sys_waitpid(int pid, int *u_status, int flags) {
      * - Signal numbers should be [1, _NSIG), not [0, 127]
      * - Exit codes should be [0, 255] (already enforced by & 0xff)
      *
-     * DEFENSE (Phase 5):
+     * DEFENSE:
      * Document that fut_task_waitpid MUST encode status correctly
      * - Exit status encoding: (exit_code & 0xff) << 8
      * - Signal encoding: (signal & 0x7f) | core_dump_flag
@@ -295,7 +295,7 @@ long sys_waitpid(int pid, int *u_status, int flags) {
     int term_signal = -1;
 
     if (WIFEXITED(status)) {
-        /* Phase 5: Extract exit code (masked to [0, 255] by macro) */
+        /* Extract exit code (masked to [0, 255] by macro) */
         exit_code = WEXITSTATUS(status);
         if (exit_code == 0) {
             status_category = "exited successfully (code 0)";
@@ -303,7 +303,7 @@ long sys_waitpid(int pid, int *u_status, int flags) {
             status_category = "exited with error";
         }
     } else if (WIFSIGNALED(status)) {
-        /* Phase 5: Extract signal number (masked to [0, 127] by macro) */
+        /* Extract signal number (masked to [0, 127] by macro) */
         term_signal = WTERMSIG(status);
         status_category = "killed by signal";
     } else if (WIFSTOPPED(status)) {
@@ -312,20 +312,20 @@ long sys_waitpid(int pid, int *u_status, int flags) {
         status_category = "unknown status";
     }
 
-    /* Phase 5: Detailed success logging with status encoding validation */
+    /* Detailed success logging with status encoding validation */
     if (WIFEXITED(status)) {
         fut_printf("[WAITPID] waitpid(pid=%d [%s: %s], flags=0x%x [%s]) -> %d "
-                   "(child pid, %s, exit_code=%d, Phase 5: status encoding validation)\n",
+                   "(child pid, %s, exit_code=%d, status encoding validation)\n",
                    local_pid, pid_category, pid_meaning, local_flags, flags_desc, rc,
                    status_category, exit_code);
     } else if (WIFSIGNALED(status)) {
         fut_printf("[WAITPID] waitpid(pid=%d [%s: %s], flags=0x%x [%s]) -> %d "
-                   "(child pid, %s, signal=%d, Phase 5: status encoding validation)\n",
+                   "(child pid, %s, signal=%d, status encoding validation)\n",
                    local_pid, pid_category, pid_meaning, local_flags, flags_desc, rc,
                    status_category, term_signal);
     } else {
         fut_printf("[WAITPID] waitpid(pid=%d [%s: %s], flags=0x%x [%s]) -> %d "
-                   "(child pid, %s, Phase 5: status encoding validation)\n",
+                   "(child pid, %s, status encoding validation)\n",
                    local_pid, pid_category, pid_meaning, local_flags, flags_desc, rc,
                    status_category);
     }

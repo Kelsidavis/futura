@@ -143,7 +143,7 @@ long sys_flock(int fd, int operation) {
         return -ESRCH;
     }
 
-    /* Phase 5: Validate FD upper bound to prevent OOB array access */
+    /* Validate FD upper bound to prevent OOB array access */
     if (fd < 0) {
         fut_printf("[FLOCK] flock(fd=%d, operation=0x%x) -> EBADF (negative fd)\n",
                    fd, operation);
@@ -152,7 +152,7 @@ long sys_flock(int fd, int operation) {
 
     if (fd >= task->max_fds) {
         fut_printf("[FLOCK] flock(fd=%d, max_fds=%d, operation=0x%x) -> EBADF "
-                   "(fd exceeds max_fds, Phase 5: FD bounds validation)\n",
+                   "(fd exceeds max_fds, FD bounds validation)\n",
                    fd, task->max_fds, operation);
         return -EBADF;
     }

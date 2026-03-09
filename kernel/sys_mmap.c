@@ -47,44 +47,44 @@ long sys_mmap(void *addr, size_t len, int prot, int flags, int fd, long offset) 
         return -EINVAL;
     }
 
-    /* Phase 5: Validate length is within reasonable bounds before overflow arithmetic
+    /* Validate length is within reasonable bounds before overflow arithmetic
      * Limit to half of address space to prevent integer overflow in subsequent checks.
      * This ensures len can be safely used in offset+len calculations. */
     const size_t MAX_MMAP_LEN = (SIZE_MAX / 2);
     if (len > MAX_MMAP_LEN) {
         fut_printf("[MMAP] mmap(addr=%p, len=%zu) -> EINVAL "
-                   "(length exceeds maximum %zu, Phase 5)\n",
+                   "(length exceeds maximum %zu)\n",
                    addr, len, MAX_MMAP_LEN);
         return -EINVAL;
     }
 
-    /* Phase 5: Validate prot flags don't contain unsupported bits */
+    /* Validate prot flags don't contain unsupported bits */
     int valid_prot = PROT_NONE | PROT_READ | PROT_WRITE | PROT_EXEC;
     if (prot & ~valid_prot) {
         int invalid_bits = prot & ~valid_prot;
         fut_printf("[MMAP] mmap(addr=%p, len=%zu, prot=0x%x) -> EINVAL "
-                   "(invalid prot bits 0x%x detected, valid=0x%x, Phase 5)\n",
+                   "(invalid prot bits 0x%x detected, valid=0x%x)\n",
                    addr, len, prot, invalid_bits, valid_prot);
         return -EINVAL;
     }
 
-    /* Phase 5: Validate flags don't mix MAP_SHARED and MAP_PRIVATE */
+    /* Validate flags don't mix MAP_SHARED and MAP_PRIVATE */
     if ((flags & MAP_SHARED) && (flags & MAP_PRIVATE)) {
         fut_printf("[MMAP] mmap(addr=%p, len=%zu, flags=0x%x) -> EINVAL "
-                   "(MAP_SHARED and MAP_PRIVATE are mutually exclusive, Phase 5)\n",
+                   "(MAP_SHARED and MAP_PRIVATE are mutually exclusive)\n",
                    addr, len, flags);
         return -EINVAL;
     }
 
-    /* Phase 5: Validate offset is non-negative and won't overflow */
+    /* Validate offset is non-negative and won't overflow */
     if (offset < 0) {
         fut_printf("[MMAP] mmap(addr=%p, len=%zu, offset=%ld) -> EINVAL "
-                   "(offset is negative, Phase 5)\n",
+                   "(offset is negative)\n",
                    addr, len, offset);
         return -EINVAL;
     }
 
-    /* Phase 5: Check for offset + len overflow with proper SIZE_MAX validation
+    /* Check for offset + len overflow with proper SIZE_MAX validation
      * VULNERABILITY: LONG_MAX vs SIZE_MAX Mismatch in Overflow Detection
      *
      * ATTACK SCENARIO:
@@ -92,7 +92,7 @@ long sys_mmap(void *addr, size_t len, int prot, int flags, int fd, long offset) 
      * 1. On 64-bit system: LONG_MAX = 2^63-1, SIZE_MAX = 2^64-1
      * 2. Attacker calls sys_mmap(addr, len=2^63, PROT_READ|PROT_WRITE, MAP_ANONYMOUS, -1, offset=2^62)
      * 3. Line 35: len (2^63) passes MAX_MMAP_LEN check (SIZE_MAX/2 = 2^63-1) - PASSES
-     * 4. WITHOUT Phase 5 fix:
+     * 4. WITHOUT fix:
      *    - Old line 69: Cast (long)len = (long)(2^63) = -2^63 (signed overflow!)
      *    - Old check: offset > LONG_MAX - (-2^63)
      *                 2^62 > 2^63-1 - (-2^63) = 2^63-1 + 2^63 (wraps!)
@@ -108,7 +108,7 @@ long sys_mmap(void *addr, size_t len, int prot, int flags, int fd, long offset) 
      * - Cast to `long` causes signed overflow for large len
      * - LONG_MAX is half of SIZE_MAX on 64-bit systems
      *
-     * DEFENSE (Phase 5):
+     * DEFENSE:
      * Check offset + len against SIZE_MAX using unsigned arithmetic ONLY
      * - No cast to `long` (avoids signed overflow)
      * - Check: (size_t)offset > SIZE_MAX - len (both operands unsigned)
@@ -125,7 +125,7 @@ long sys_mmap(void *addr, size_t len, int prot, int flags, int fd, long offset) 
      */
     if ((size_t)offset > SIZE_MAX - len) {
         fut_printf("[MMAP] mmap(addr=%p, len=%zu, offset=%ld) -> EINVAL "
-                   "(offset + len would overflow SIZE_MAX, Phase 5)\n",
+                   "(offset + len would overflow SIZE_MAX)\n",
                    addr, len, offset);
         return -EINVAL;
     }
@@ -141,7 +141,7 @@ long sys_mmap(void *addr, size_t len, int prot, int flags, int fd, long offset) 
             return -ENOMEM;
         }
 
-        /* Phase 5: Check VMA count limit to prevent VMA fragmentation attacks.
+        /* Check VMA count limit to prevent VMA fragmentation attacks.
          * An attacker could create millions of tiny mappings to:
          * - Exhaust kernel memory with VMA structures
          * - Cause O(n) slowdowns in VMA list operations
@@ -150,7 +150,7 @@ long sys_mmap(void *addr, size_t len, int prot, int flags, int fd, long offset) 
         int vma_count = fut_mm_vma_count(mm);
         if (vma_count >= MAX_VMA_COUNT) {
             fut_printf("[MMAP] mmap(addr=%p, len=%zu) -> ENOMEM "
-                       "(VMA count %d exceeds maximum %d, Phase 5: DoS prevention)\n",
+                       "(VMA count %d exceeds maximum %d, DoS prevention)\n",
                        addr, len, vma_count, MAX_VMA_COUNT);
             return -ENOMEM;
         }
@@ -172,7 +172,7 @@ long sys_munmap(void *addr, size_t len) {
         return -EINVAL;
     }
 
-    /* Phase 5: Validate length is within reasonable bounds (matching mmap)
+    /* Validate length is within reasonable bounds (matching mmap)
      * Without size limits, attacker can request unbounded unmap operations:
      *   - munmap(addr, SIZE_MAX)
      *   - Causes fut_mm_unmap to iterate over entire address space
@@ -182,7 +182,7 @@ long sys_munmap(void *addr, size_t len) {
     const size_t MAX_MUNMAP_LEN = (SIZE_MAX / 2);
     if (len > MAX_MUNMAP_LEN) {
         fut_printf("[MUNMAP] munmap(addr=%p, len=%zu) -> EINVAL "
-                   "(length exceeds maximum %zu, Phase 5: DoS prevention)\n",
+                   "(length exceeds maximum %zu, DoS prevention)\n",
                    addr, len, MAX_MUNMAP_LEN);
         return -EINVAL;
     }

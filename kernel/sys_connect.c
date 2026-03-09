@@ -189,14 +189,14 @@
  * ============================================================================
  * IMPLEMENTATION NOTES:
  * ============================================================================
- * Current Phase 5 validations implemented:
+ * Current validations implemented:
  * [DONE] 1. Address length bounds (min 2, max 256) at lines 107-121
  * [DONE] 2. Socket state validation (CONNECTED/CONNECTING/etc.) at lines 239-268
  * [DONE] 3. Per-family size validation (AF_INET/AF_INET6/AF_UNIX) at lines 172-209
  * [DONE] 4. NULL pointer validation at lines 100-105
  * [DONE] 5. Early sockfd validation at lines 94-98
  *
- * Phase 5 enhancements:
+ * enhancements:
  * [TODO] 1. Add per-task connection rate limiting
  * [TODO] 2. Add connection timeout enforcement
  * [DONE] 3. Unix domain socket path traversal protection (lines 459-497)
@@ -290,7 +290,7 @@ long sys_connect(int sockfd, const void *addr, socklen_t addrlen) {
         return -EBADF;
     }
 
-    /* Phase 5: Validate fd upper bounds to prevent out-of-bounds access */
+    /* Validate fd upper bounds to prevent out-of-bounds access */
     if (local_sockfd >= task->max_fds) {
         connect_printf("[CONNECT] connect(sockfd=%d) -> EBADF (fd exceeds max_fds %d)\n",
                    local_sockfd, task->max_fds);
@@ -306,19 +306,19 @@ long sys_connect(int sockfd, const void *addr, socklen_t addrlen) {
     }
     connect_printf("[CONNECT-DBG] addr OK, checking addrlen=%u\n", local_addrlen);
 
-    /* Phase 5: Validate address length bounds (minimum and maximum) */
+    /* Validate address length bounds (minimum and maximum) */
     if (local_addrlen < 2) {
-        connect_printf("[CONNECT] connect(sockfd=%d, addrlen=%u) -> EINVAL (too small, need at least 2 bytes for family, Phase 5)\n",
+        connect_printf("[CONNECT] connect(sockfd=%d, addrlen=%u) -> EINVAL (too small, need at least 2 bytes for family)\n",
                    local_sockfd, local_addrlen);
         return -EINVAL;
     }
     connect_printf("[CONNECT-DBG] addrlen >= 2 OK\n");
 
-    /* Phase 5: Maximum bound check to prevent integer overflow and excessive memory operations
+    /* Maximum bound check to prevent integer overflow and excessive memory operations
      * Standard sockaddr_storage is 128 bytes, so 256 is generous upper limit */
     const socklen_t MAX_ADDRLEN = 256;
     if (local_addrlen > MAX_ADDRLEN) {
-        connect_printf("[CONNECT] connect(sockfd=%d, addrlen=%u) -> EINVAL (exceeds maximum %u, Phase 5)\n",
+        connect_printf("[CONNECT] connect(sockfd=%d, addrlen=%u) -> EINVAL (exceeds maximum %u)\n",
                    local_sockfd, local_addrlen, MAX_ADDRLEN);
         return -EINVAL;
     }
@@ -376,7 +376,7 @@ long sys_connect(int sockfd, const void *addr, socklen_t addrlen) {
         return -EINVAL;
     }
 
-    /* Phase 5: Security hardening - Validate path length BEFORE copying to prevent truncation attacks
+    /* Security hardening - Validate path length BEFORE copying to prevent truncation attacks
      * VULNERABILITY: Silent Path Truncation Leading to Unintended Socket Connection
      *
      * ATTACK SCENARIO:
@@ -406,7 +406,7 @@ long sys_connect(int sockfd, const void *addr, socklen_t addrlen) {
     #define UNIX_PATH_MAX 108
     if (path_len > UNIX_PATH_MAX) {
         connect_printf("[CONNECT] connect(sockfd=%d, family=%s, path_len=%zu) -> ENAMETOOLONG "
-                   "(exceeds UNIX_PATH_MAX %d bytes, Phase 5)\n",
+                   "(exceeds UNIX_PATH_MAX %d bytes)\n",
                    local_sockfd, family_name, path_len, UNIX_PATH_MAX);
         return -ENAMETOOLONG;
     }
@@ -456,7 +456,7 @@ long sys_connect(int sockfd, const void *addr, socklen_t addrlen) {
         path_desc = "filesystem path (relative)";
     }
 
-    /* Phase 5: Reject ".." path components to prevent directory traversal attacks
+    /* Reject ".." path components to prevent directory traversal attacks
      *
      * ATTACK SCENARIO: Directory Traversal via Unix Domain Socket Paths
      * 1. Attacker calls connect(sockfd, "/tmp/../../../etc/socket", ...)
@@ -486,7 +486,7 @@ long sys_connect(int sockfd, const void *addr, socklen_t addrlen) {
 
                 if ((at_start || after_slash) && (before_slash || at_end)) {
                     connect_printf("[CONNECT] connect(sockfd=%d, family=%s, path='%s') -> EINVAL "
-                               "(path contains '..' component - directory traversal blocked, Phase 5)\n",
+                               "(path contains '..' component - directory traversal blocked)\n",
                                local_sockfd, family_name, sock_path);
                     return -EINVAL;
                 }

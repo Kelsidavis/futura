@@ -173,7 +173,7 @@ int fut_access_ok(const void *u_ptr, size_t len, int write) {
      * userspace program can pass a kernel-space address and the kernel will
      * happily read/write it since kernel addresses are mapped and accessible
      * in kernel mode.
-     * Phase 5: Security hardening - validate user pointer bounds on ARM64. */
+     * Security hardening - validate user pointer bounds on ARM64. */
     uintptr_t u = (uintptr_t)u_ptr;
 
     if (!__range_user_ok(u, len)) {
@@ -300,7 +300,7 @@ int fut_copy_to_user(void *u_dst, const void *k_src, size_t n) {
 #if defined(__x86_64__)
     smap_stac();
 #elif defined(__aarch64__)
-    /* Phase 5: ARM64 must ensure the user's TTBR0 is loaded before writing to
+    /* ARM64 must ensure the user's TTBR0 is loaded before writing to
      * user memory, matching the pattern in fut_copy_from_user.  During syscalls,
      * TTBR0 may have been switched to the kernel page table by page table
      * operations, causing writes to user addresses to fault or silently corrupt

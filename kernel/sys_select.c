@@ -61,21 +61,21 @@ long sys_select(int nfds, fd_set *readfds, fd_set *writefds,
     fut_printf("[SELECT] nfds=%d readfds=0x%p writefds=0x%p exceptfds=0x%p timeout=0x%p\n",
                local_nfds, local_readfds, local_writefds, local_exceptfds, local_timeout);
 
-    /* Phase 5: Validate nfds against both static limit and task's actual FD table limit */
+    /* Validate nfds against both static limit and task's actual FD table limit */
     if (local_nfds < 0) {
-        fut_printf("[SELECT] select(nfds=%d, ...) -> EINVAL (negative nfds, Phase 5)\n",
+        fut_printf("[SELECT] select(nfds=%d, ...) -> EINVAL (negative nfds)\n",
                    local_nfds);
         return -EINVAL;
     }
 
     /* Check against static FD_SETSIZE limit */
     if (local_nfds > FD_SETSIZE) {
-        fut_printf("[SELECT] select(nfds=%d, ...) -> EINVAL (nfds exceeds FD_SETSIZE=%d, Phase 5)\n",
+        fut_printf("[SELECT] select(nfds=%d, ...) -> EINVAL (nfds exceeds FD_SETSIZE=%d)\n",
                    local_nfds, FD_SETSIZE);
         return -EINVAL;
     }
 
-    /* Phase 5: Validate nfds against task FD table size
+    /* Validate nfds against task FD table size
      * VULNERABILITY: Out-of-Bounds FD Array Access and CPU Exhaustion
      *
      * ATTACK SCENARIO 1: Out-of-Bounds FD Table Access
@@ -83,7 +83,7 @@ long sys_select(int nfds, fd_set *readfds, fd_set *writefds,
      * 1. Task has max_fds=256 (FD table allocated for 256 entries)
      * 2. Attacker calls select(1024, &readfds, NULL, NULL, &timeout)
      * 3. Validation: nfds <= FD_SETSIZE (1024) ✓ passes (line 71-75)
-     * 4. WITHOUT Phase 5 check (line 113-117): Kernel iterates FDs 0-1023
+     * 4. WITHOUT check (line 113-117): Kernel iterates FDs 0-1023
      * 5. Phase 2 implementation: for (fd = 0; fd < nfds; fd++)
      * 6. Iteration accesses task->fd_table[1023] (OOB: table only has 256)
      * 7. Information disclosure: Read uninitialized kernel memory
@@ -138,9 +138,9 @@ long sys_select(int nfds, fd_set *readfds, fd_set *writefds,
      * - No validation of fd_set pointers before dereference (NULL check missing)
      * - No upper bound on CPU work (nfds can be FD_SETSIZE causing 3072 checks)
      * - No protection against timing side-channels (OOB accesses observable)
-     * - Assumes Phase 2 will add checks (not documented until Phase 5)
+     * - Assumes Phase 2 will add checks (not documented until )
      *
-     * DEFENSE (Phase 5 Requirements for Phase 2):
+     * DEFENSE (Requirements for Phase 2):
      * 1. FD Table Bounds Validation:
      *    - Check nfds <= task->max_fds BEFORE any iteration
      *    - Line 113-117: Enforces this check (CRITICAL)
@@ -193,7 +193,7 @@ long sys_select(int nfds, fd_set *readfds, fd_set *writefds,
      * - See Linux kernel: fs/select.c do_select() for reference
      */
     if (task->max_fds > 0 && local_nfds > (int)task->max_fds) {
-        fut_printf("[SELECT] select(nfds=%d, ...) -> EINVAL (nfds=%d exceeds task max_fds=%u, Phase 5)\n",
+        fut_printf("[SELECT] select(nfds=%d, ...) -> EINVAL (nfds=%d exceeds task max_fds=%u)\n",
                    local_nfds, local_nfds, task->max_fds);
         return -EINVAL;
     }
@@ -297,22 +297,22 @@ long sys_pselect6(int nfds, void *readfds, void *writefds, void *exceptfds,
         return -ESRCH;
     }
 
-    /* Phase 5: Validate nfds against both static limit and task's actual FD table limit */
+    /* Validate nfds against both static limit and task's actual FD table limit */
     if (local_nfds < 0) {
-        fut_printf("[PSELECT6] pselect6(nfds=%d, ...) -> EINVAL (negative nfds, Phase 5)\n",
+        fut_printf("[PSELECT6] pselect6(nfds=%d, ...) -> EINVAL (negative nfds)\n",
                    local_nfds);
         return -EINVAL;
     }
 
     /* Check against static FD_SETSIZE limit */
     if (local_nfds > FD_SETSIZE) {
-        fut_printf("[PSELECT6] pselect6(nfds=%d, ...) -> EINVAL (nfds exceeds FD_SETSIZE=%d, Phase 5)\n",
+        fut_printf("[PSELECT6] pselect6(nfds=%d, ...) -> EINVAL (nfds exceeds FD_SETSIZE=%d)\n",
                    local_nfds, FD_SETSIZE);
         return -EINVAL;
     }
 
-    /* Phase 5: Validate nfds against task FD table size (same protection as select)
-     * See sys_select Phase 5 documentation (lines 77-112) for detailed attack scenario
+    /* Validate nfds against task FD table size (same protection as select)
+     * See sys_select documentation (lines 77-112) for detailed attack scenario
      *
      * Key points for pselect6:
      * - ARM64 primary interface (select doesn't exist on ARM64)
@@ -321,7 +321,7 @@ long sys_pselect6(int nfds, void *readfds, void *writefds, void *exceptfds,
      * - Must check task->max_fds before any fd_set iteration
      */
     if (task->max_fds > 0 && local_nfds > (int)task->max_fds) {
-        fut_printf("[PSELECT6] pselect6(nfds=%d, ...) -> EINVAL (nfds=%d exceeds task max_fds=%u, Phase 5)\n",
+        fut_printf("[PSELECT6] pselect6(nfds=%d, ...) -> EINVAL (nfds=%d exceeds task max_fds=%u)\n",
                    local_nfds, local_nfds, task->max_fds);
         return -EINVAL;
     }
@@ -369,11 +369,11 @@ long sys_ppoll(void *fds, unsigned int nfds, void *tmo_p, const void *sigmask) {
         return -EINVAL;
     }
 
-    /* Phase 5: Validate nfds against reasonable limit to prevent DoS
+    /* Validate nfds against reasonable limit to prevent DoS
      * Match sys_poll's limit of 1024 for consistency */
     if (local_nfds > 1024) {
         fut_printf("[PPOLL] ppoll(fds=%p, nfds=%u) -> EINVAL "
-                   "(nfds exceeds limit of 1024, Phase 5)\n",
+                   "(nfds exceeds limit of 1024)\n",
                    local_fds, local_nfds);
         return -EINVAL;
     }

@@ -58,7 +58,7 @@
  * Phase 2 (Completed): Enhanced validation with detailed protection flag reporting
  * Phase 3 (Completed): Modify page table entries via fut_mm_mprotect() with TLB flush
  * Phase 4: Enforce SELinux/capability-based protection policies
- * Phase 5: Support PROT_GROWSDOWN/PROT_GROWSUP for stack guards
+ * Support PROT_GROWSDOWN/PROT_GROWSUP for stack guards
  *
  * Common use cases:
  * - JIT compilers: Map as PROT_WRITE, generate code, switch to PROT_EXEC
@@ -111,7 +111,7 @@ long sys_mprotect(void *addr, size_t len, int prot) {
         return -EINVAL;
     }
 
-    /* Phase 5: Prevent DoS via unbounded length causing excessive page table iteration
+    /* Prevent DoS via unbounded length causing excessive page table iteration
      * VULNERABILITY: Denial of Service via Excessive mprotect() Length
      *
      * ATTACK SCENARIO:
@@ -139,7 +139,7 @@ long sys_mprotect(void *addr, size_t len, int prot) {
      * - Attacker can request protection change on arbitrary-size range
      * - Even if range isn't fully mapped, kernel still iterates
      *
-     * DEFENSE (Phase 5):
+     * DEFENSE:
      * Limit len to reasonable maximum (SIZE_MAX / 2) like mmap/munmap
      * - Prevents excessive iteration over billions of pages
      * - Matches mmap() limit at kernel/sys_mmap.c:34 (MAX_MMAP_LEN)
@@ -172,7 +172,7 @@ long sys_mprotect(void *addr, size_t len, int prot) {
     const size_t MAX_MPROTECT_LEN = (SIZE_MAX / 2);
     if (len > MAX_MPROTECT_LEN) {
         fut_printf("[MPROTECT] mprotect(%p, %zu, 0x%x) -> EINVAL "
-                   "(length exceeds maximum %zu, DoS prevention, Phase 5)\n",
+                   "(length exceeds maximum %zu, DoS prevention)\n",
                    addr, len, prot, MAX_MPROTECT_LEN);
         return -EINVAL;
     }
@@ -192,11 +192,11 @@ long sys_mprotect(void *addr, size_t len, int prot) {
         return -EINVAL;
     }
 
-    /* Phase 5: Validate len + PAGE_SIZE won't overflow before alignment
+    /* Validate len + PAGE_SIZE won't overflow before alignment
      * Prevent integer overflow in alignment calculation */
     if (len > SIZE_MAX - PAGE_SIZE + 1) {
         fut_printf("[MPROTECT] mprotect(%p, %zu) -> EINVAL "
-                   "(length too large for page alignment, would overflow, Phase 5)\n",
+                   "(length too large for page alignment, would overflow)\n",
                    addr, len);
         return -EINVAL;
     }
@@ -204,23 +204,23 @@ long sys_mprotect(void *addr, size_t len, int prot) {
     /* Round length up to page boundary */
     size_t aligned_len = (len + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1);
 
-    /* Phase 5: Validate addr + aligned_len doesn't wrap around
+    /* Validate addr + aligned_len doesn't wrap around
      * Prevent address range wraparound attacks */
     uintptr_t start = (uintptr_t)addr;
     if (start > UINTPTR_MAX - aligned_len) {
         fut_printf("[MPROTECT] mprotect(%p, %zu) -> EINVAL "
-                   "(address range wraps around, Phase 5)\n",
+                   "(address range wraps around)\n",
                    addr, aligned_len);
         return -EINVAL;
     }
 
-    /* Phase 5: Validate end address is within userspace limits
+    /* Validate end address is within userspace limits
      * Prevent modifying kernel memory protection
      * USER_SPACE_END is defined in platform paging headers */
     uintptr_t end = start + aligned_len;
     if (end > USER_SPACE_END) {
         fut_printf("[MPROTECT] mprotect(%p, %zu) -> EINVAL "
-                   "(end address 0x%lx exceeds userspace limit 0x%lx, Phase 5)\n",
+                   "(end address 0x%lx exceeds userspace limit 0x%lx)\n",
                    addr, aligned_len, end, USER_SPACE_END);
         return -EINVAL;
     }

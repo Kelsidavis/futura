@@ -435,7 +435,7 @@ long sys_rename(const char *oldpath, const char *newpath) {
         return -ENOSYS;
     }
 
-    /* Phase 5: Cross-directory rename atomicity protection
+    /* Cross-directory rename atomicity protection
      * VULNERABILITY: Non-Atomic Cross-Directory Rename Leading to File Duplication
      *
      * ATTACK SCENARIO:
@@ -463,7 +463,7 @@ long sys_rename(const char *oldpath, const char *newpath) {
      * - Backup inconsistency (duplicate in snapshot)
      * - Application logic errors (expected one copy, got two)
      *
-     * DEFENSE (Phase 5):
+     * DEFENSE:
      * Rollback link() if unlink() fails to maintain atomicity
      */
 
@@ -480,7 +480,7 @@ long sys_rename(const char *oldpath, const char *newpath) {
     /* Unlink from old parent - CRITICAL: If this fails, must rollback link to maintain atomicity */
     ret = old_parent->ops->unlink(old_parent, old_name);
     if (ret < 0) {
-        /* Phase 5: ROLLBACK - Unlink the newly created link to restore original state
+        /* ROLLBACK - Unlink the newly created link to restore original state
          * Without rollback: File exists at both old and new paths (duplicate)
          * With rollback: Unlink new path, file remains only at old path (atomic failure)
          */
@@ -489,12 +489,12 @@ long sys_rename(const char *oldpath, const char *newpath) {
             /* Double fault: Both unlink operations failed
              * File duplication is unavoidable - system in inconsistent state */
             fut_printf("[RENAME] rename(old='%s' [%s], new='%s' [%s], op=%s) -> %d "
-                       "(CRITICAL: unlink failed AND rollback failed, file duplicated at both paths, Phase 5)\n",
+                       "(CRITICAL: unlink failed AND rollback failed, file duplicated at both paths)\n",
                        old_buf, old_path_type, new_buf, new_path_type, operation_type, ret);
         } else {
             /* Rollback succeeded: File remains only at old path, rename failed cleanly */
             fut_printf("[RENAME] rename(old='%s' [%s], new='%s' [%s], op=%s) -> %d "
-                       "(unlink failed, rollback succeeded, file remains at old path only, Phase 5)\n",
+                       "(unlink failed, rollback succeeded, file remains at old path only)\n",
                        old_buf, old_path_type, new_buf, new_path_type, operation_type, ret);
         }
         fut_vnode_unref(old_parent);

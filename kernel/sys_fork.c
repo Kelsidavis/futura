@@ -453,7 +453,7 @@
  * - Phase 2: Enhanced validation and detailed logging
  * - Phase 3: COW performance optimization for large processes
  * - Phase 4: Advanced features (vfork, clone, namespaces)
- * - Phase 5: Security hardening (refcount limits, resource quotas, race protection)
+ * - Security hardening (refcount limits, resource quotas, race protection)
  */
 
 #include <kernel/fut_task.h>
@@ -708,7 +708,7 @@ long sys_fork(void) {
         }
     }
 
-    /* Phase 5: Enforce RLIMIT_NPROC to prevent fork bombs (Attack Scenario 3) */
+    /* Enforce RLIMIT_NPROC to prevent fork bombs (Attack Scenario 3) */
     /* Root (UID 0) is exempt from the limit to allow admin recovery */
     if (parent_task->uid != 0) {
         uint64_t rlim_nproc = parent_task->rlimits[RLIMIT_NPROC].rlim_cur;
@@ -723,7 +723,7 @@ long sys_fork(void) {
         }
     }
 
-    /* Phase 5: Enforce global PID limit (Attack Scenario 3 defense) */
+    /* Enforce global PID limit (Attack Scenario 3 defense) */
     /* Reserve some PIDs for root to allow admin recovery during fork bomb */
     if (!fut_task_can_fork(parent_task->uid == 0)) {
         FORK_LOG("[FORK] fork(parent_pid=%u, uid=%u) -> EAGAIN "
@@ -1137,7 +1137,7 @@ static fut_mm_t *clone_mm(fut_mm_t *parent_mm) {
                 /* Mark parent page as read-only too */
                 pmap_set_page_ro(parent_ctx, page);
 
-                /* Phase 5: Document page refcount overflow protection requirement
+                /* Document page refcount overflow protection requirement
                  * VULNERABILITY: Page Reference Count Overflow in Copy-on-Write (COW)
                  *
                  * ATTACK SCENARIO:
@@ -1166,7 +1166,7 @@ static fut_mm_t *clone_mm(fut_mm_t *parent_mm) {
                  * - No check that parent_phys is within valid PMM range
                  * - Assumption that fork won't be called excessively
                  *
-                 * DEFENSE (Phase 5):
+                 * DEFENSE:
                  * fut_page_ref_inc MUST validate refcount won't overflow
                  * - Check refcount < MAX before increment
                  * - Return error if overflow would occur

@@ -121,28 +121,28 @@
  * -----------------
  * 1. **iovcnt Bounds Validation** (PRIORITY 1):
  *    - Same as writev
- *    - Implemented at lines 172-182 (Phase 5)
+ *    - Implemented at lines 172-182
  *
  * 2. **Heap Allocation** (PRIORITY 1):
  *    - Same as writev
- *    - Implemented at lines 197-213 (Phase 5)
+ *    - Implemented at lines 197-213
  *
  * 3. **NULL iov_base Validation** (PRIORITY 1):
  *    - Same as writev
- *    - Implemented at lines 222-232 (Phase 5)
+ *    - Implemented at lines 222-232
  *
  * 4. **Integer Overflow in Total Size** (PRIORITY 1):
  *    - Same as writev
- *    - Implemented at lines 245-270 (Phase 5)
+ *    - Implemented at lines 245-270
  *
  * 5. **Offset Validation** (PRIORITY 1):
  *    - Reject negative offsets (offset < 0)
  *    - Check offset + total_size doesn't overflow INT64_MAX
- *    - Implemented at lines 383-395 (Phase 5)
+ *    - Implemented at lines 383-395
  *
  * 6. **TOCTOU Protection** (PRIORITY 1):
  *    - Copy iovec to kernel immediately
- *    - Implemented at lines 208-220 (Phase 5)
+ *    - Implemented at lines 208-220
  *
  * CVE REFERENCES:
  * ---------------
@@ -175,7 +175,7 @@
  *
  * IMPLEMENTATION NOTES:
  * ---------------------
- * Current Phase 5 implementation validates:
+ * Current implementation validates:
  * [DONE] iovcnt bounds at lines 172-182
  * [DONE] Heap allocation at lines 197-213
  * [DONE] Allocation overflow at lines 199-205
@@ -184,7 +184,7 @@
  * [DONE] Offset overflow check at lines 383-395
  * [DONE] TOCTOU protection at lines 208-220
  *
- * Phase 5 TODO:
+ * TODO:
  * 1. Add explicit negative offset check before line 380
  * 2. Implement per-iovec size limit
  * 3. Add VFS scatter-gather optimization
@@ -234,7 +234,7 @@
  * Phase 2 (Completed): Enhanced validation and detailed I/O statistics
  * Phase 3 (Completed): Optimize with direct VFS scatter-gather support
  * Phase 4: Support non-blocking I/O and partial writes
- * Phase 5: Zero-copy optimization for page-aligned buffers
+ * Zero-copy optimization for page-aligned buffers
  *
  * Example: Thread-safe database record update
  *
@@ -363,12 +363,12 @@ ssize_t sys_pwritev(int fd, const struct iovec *iov, int iovcnt, int64_t offset)
         return -EFAULT;
     }
 
-    /* Phase 5: Prevent stack overflow DoS - use malloc instead of alloca
+    /* Prevent stack overflow DoS - use malloc instead of alloca
      * Check for integer overflow in allocation size */
     size_t iov_alloc_size = (size_t)iovcnt * sizeof(struct iovec);
     if (iov_alloc_size / sizeof(struct iovec) != (size_t)iovcnt) {
         fut_printf("[PWRITEV] pwritev(fd=%d, iov=%p, iovcnt=%d, offset=%ld) -> EINVAL "
-                   "(allocation size would overflow, Phase 5)\n",
+                   "(allocation size would overflow)\n",
                    fd, iov, iovcnt, offset);
         return -EINVAL;
     }
@@ -388,7 +388,7 @@ ssize_t sys_pwritev(int fd, const struct iovec *iov, int iovcnt, int64_t offset)
         return -EFAULT;
     }
 
-    /* Phase 5: Validate iov_base pointers before using them
+    /* Validate iov_base pointers before using them
      * Ensure each iov_base is not NULL and appears to be valid userspace address */
     for (int i = 0; i < iovcnt; i++) {
         if (!kernel_iov[i].iov_base && kernel_iov[i].iov_len > 0) {
@@ -400,7 +400,7 @@ ssize_t sys_pwritev(int fd, const struct iovec *iov, int iovcnt, int64_t offset)
         }
     }
 
-    /* Phase 5: Calculate total size, validate iovecs, and gather statistics
+    /* Calculate total size, validate iovecs, and gather statistics
      * Prevent DoS via huge total buffer allocations */
     size_t total_size = 0;
     int zero_len_count = 0;
@@ -412,17 +412,17 @@ ssize_t sys_pwritev(int fd, const struct iovec *iov, int iovcnt, int64_t offset)
         /* Check for overflow */
         if (total_size + kernel_iov[i].iov_len < total_size) {
             fut_printf("[PWRITEV] pwritev(fd=%d, iov=%p, iovcnt=%d, offset=%ld) -> EINVAL "
-                       "(size overflow at iovec %d, Phase 5)\n",
+                       "(size overflow at iovec %d)\n",
                        fd, iov, iovcnt, offset, i);
             fut_free(kernel_iov);
             return -EINVAL;
         }
         total_size += kernel_iov[i].iov_len;
 
-        /* Phase 5: Prevent DoS via excessively large total size */
+        /* Prevent DoS via excessively large total size */
         if (total_size > MAX_TOTAL_SIZE) {
             fut_printf("[PWRITEV] pwritev(fd=%d, iov=%p, iovcnt=%d, offset=%ld) -> EINVAL "
-                       "(total size %zu exceeds limit %zu MB, Phase 5)\n",
+                       "(total size %zu exceeds limit %zu MB)\n",
                        fd, iov, iovcnt, offset, total_size, MAX_TOTAL_SIZE / (1024 * 1024));
             fut_free(kernel_iov);
             return -EINVAL;
@@ -455,7 +455,7 @@ ssize_t sys_pwritev(int fd, const struct iovec *iov, int iovcnt, int64_t offset)
         io_pattern = "large scatter-gather";
     }
 
-    /* Phase 5: Validate FD bounds before accessing FD table */
+    /* Validate FD bounds before accessing FD table */
     if (fd < 0) {
         fut_printf("[PWRITEV] pwritev(fd=%d, iov=%p, iovcnt=%d, offset=%ld) -> EBADF (negative fd)\n",
                    fd, iov, iovcnt, offset);
@@ -465,7 +465,7 @@ ssize_t sys_pwritev(int fd, const struct iovec *iov, int iovcnt, int64_t offset)
 
     if (fd >= task->max_fds) {
         fut_printf("[PWRITEV] pwritev(fd=%d, max_fds=%d, iov=%p, iovcnt=%d, offset=%ld) -> EBADF "
-                   "(fd exceeds max_fds, Phase 5: FD bounds validation)\n",
+                   "(fd exceeds max_fds, FD bounds validation)\n",
                    fd, task->max_fds, iov, iovcnt, offset);
         fut_free(kernel_iov);
         return -EBADF;
@@ -558,7 +558,7 @@ ssize_t sys_pwritev(int fd, const struct iovec *iov, int iovcnt, int64_t offset)
 
         total_written += n;
 
-        /* Phase 5: Check for offset overflow before incrementing
+        /* Check for offset overflow before incrementing
          * If current_offset + n would overflow INT64_MAX, stop writing to prevent
          * wraparound to negative values which could cause data corruption */
         if (n > 0 && current_offset > INT64_MAX - n) {
@@ -568,7 +568,7 @@ ssize_t sys_pwritev(int fd, const struct iovec *iov, int iovcnt, int64_t offset)
                 break;
             }
             fut_printf("[PWRITEV] pwritev(fd=%d, iov=%p, iovcnt=%d, offset=%ld) -> EOVERFLOW "
-                       "(offset would overflow INT64_MAX after writing %zd bytes, Phase 5)\n",
+                       "(offset would overflow INT64_MAX after writing %zd bytes)\n",
                        fd, iov, iovcnt, offset, n);
             return -EOVERFLOW;
         }
@@ -594,13 +594,13 @@ ssize_t sys_pwritev(int fd, const struct iovec *iov, int iovcnt, int64_t offset)
 
     if (zero_len_count > 0) {
         fut_printf("[PWRITEV] pwritev(fd=%d, iovcnt=%d [%s], offset=%ld, total_requested=%zu bytes) -> %ld bytes "
-                   "(%s, %d/%d iovecs written, %d zero-len skipped, min=%zu max=%zu, Phase 5: validation & malloc)\n",
+                   "(%s, %d/%d iovecs written, %d zero-len skipped, min=%zu max=%zu, validation & malloc)\n",
                    fd, iovcnt, io_pattern, offset, total_size, total_written,
                    completion_status, iovecs_written, iovcnt - zero_len_count, zero_len_count,
                    min_iov_len, max_iov_len);
     } else {
         fut_printf("[PWRITEV] pwritev(fd=%d, iovcnt=%d [%s], offset=%ld, total_requested=%zu bytes) -> %ld bytes "
-                   "(%s, %d/%d iovecs written, min=%zu max=%zu, Phase 5: validation & malloc)\n",
+                   "(%s, %d/%d iovecs written, min=%zu max=%zu, validation & malloc)\n",
                    fd, iovcnt, io_pattern, offset, total_size, total_written,
                    completion_status, iovecs_written, iovcnt, min_iov_len, max_iov_len);
     }
@@ -627,7 +627,7 @@ ssize_t sys_pwritev(int fd, const struct iovec *iov, int iovcnt, int64_t offset)
      * - Thread-safe (no file position modification)
      *
      * Phase 4: Add non-blocking I/O support and proper partial write handling
-     * Phase 5: Zero-copy optimization for page-aligned buffers
+     * Zero-copy optimization for page-aligned buffers
      */
 
     return total_written;

@@ -257,7 +257,7 @@ long sys_setsockopt(int sockfd, int level, int optname, const void *optval, sock
         return -EFAULT;
     }
 
-    /* Phase 5: COMPREHENSIVE SECURITY HARDENING
+    /* COMPREHENSIVE SECURITY HARDENING
      * VULNERABILITY: Multiple Attack Vectors in Socket Option Setting
      *
      * The setsockopt() syscall is particularly vulnerable due to:
@@ -271,12 +271,12 @@ long sys_setsockopt(int sockfd, int level, int optname, const void *optval, sock
      * Attacker provides enormous optlen value to trigger kernel resource consumption
      * 1. Attacker calls setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, optval, UINT32_MAX)
      *    with optlen = UINT32_MAX (4GB)
-     * 2. WITHOUT Phase 5 check (line 284-288):
+     * 2. WITHOUT check (line 284-288):
      *    - No validation of reasonable optlen upper bound
      *    - Line 291: get_socket_from_fd performs expensive socket lookup
      *    - Line 326: fut_copy_from_user attempts 4GB read from userspace
      *    - Result: Kernel memory exhaustion, CPU waste, DoS
-     * 3. WITH Phase 5 check (line 284-288):
+     * 3. WITH check (line 284-288):
      *    - Line 284: if (optlen > 1024) rejects excessive size
      *    - Syscall fails before socket lookup, minimal CPU waste
      *    - 1024 byte limit sufficient for largest socket options (struct linger, timeval)
@@ -288,11 +288,11 @@ long sys_setsockopt(int sockfd, int level, int optname, const void *optval, sock
      * ATTACK SCENARIO 2: Zero optlen Buffer Underrun
      * Attacker provides optlen=0 to trigger unexpected behavior in option handlers
      * 1. Attacker calls setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, optval, 0)
-     * 2. WITHOUT Phase 5 check (line 284-288):
+     * 2. WITHOUT check (line 284-288):
      *    - Line 319: if (optlen != sizeof(int)) validation catches this
      *    - But earlier generic validation would allow proceeding to option-specific code
      *    - Risk: Option handlers may not expect zero-length input
-     * 3. WITH Phase 5 check (line 284-288):
+     * 3. WITH check (line 284-288):
      *    - Line 284: if (optlen == 0) rejects zero size
      *    - Syscall fails immediately at generic validation layer
      * 4. Impact:
@@ -360,14 +360,14 @@ long sys_setsockopt(int sockfd, int level, int optname, const void *optval, sock
      * - Type confusion: Incorrect option processing from size mismatch
      *
      * ROOT CAUSE:
-     * Pre-Phase 5 code lacked comprehensive validation:
+     * Pre-code lacked comprehensive validation:
      * - No upper bound on optlen (allows UINT32_MAX = 4GB requests)
      * - No lower bound on optlen (allows 0-byte inputs)
      * - No per-option optlen validation (allows size mismatches)
      * - Generic validation insufficient for type-specific options
      * - Stack variables vulnerable to overflow from oversized copy
      *
-     * DEFENSE (Phase 5 Requirements):
+     * DEFENSE (Requirements):
      * 1. Generic optlen Range Validation (line 284-288):
      *    - Check: optlen > 0 && optlen <= 1024
      *    - BEFORE socket lookup
@@ -421,9 +421,9 @@ long sys_setsockopt(int sockfd, int level, int optname, const void *optval, sock
      * - Maximum option size is protocol-specific (1024 reasonable upper bound)
      *
      * IMPLEMENTATION NOTES:
-     * - Phase 5: Added generic optlen range validation (line 284-288) ✓
-     * - Phase 5: Added per-option exact optlen validation (all handlers) ✓
-     * - Phase 5: All copy_from_user use exact sizeof(), not user optlen ✓
+     * - Added generic optlen range validation (line 284-288) ✓
+     * - Added per-option exact optlen validation (all handlers) ✓
+     * - All copy_from_user use exact sizeof(), not user optlen ✓
      * - Phase 4 TODO: Implement enforcement of option values (currently accepted but not enforced)
      * - Phase 4 TODO: Add protocol-specific options (IPPROTO_TCP, IPPROTO_IP)
      * - See Linux kernel: net/core/sock.c sock_setsockopt() for reference
@@ -457,7 +457,7 @@ long sys_setsockopt(int sockfd, int level, int optname, const void *optval, sock
             case SO_REUSEPORT:
                 /* Address/port reuse options
                  * Phase 2: Validate and accept, but not enforced (Unix sockets don't have port conflicts)
-                 * Phase 5: Enforce strict optlen validation */
+                 * Enforce strict optlen validation */
                 {
                     /* Security hardening: Validate optlen exactly matches sizeof(int)
                      * Without strict validation, attacker can pass oversized optlen:
@@ -467,7 +467,7 @@ long sys_setsockopt(int sockfd, int level, int optname, const void *optval, sock
                      *   - Defense: Reject optlen that doesn't match expected size */
                     if (optlen != sizeof(int)) {
                         fut_printf("[SETSOCKOPT] setsockopt(sockfd=%d, SOL_SOCKET, optname=%d, optlen=%u) -> EINVAL "
-                                   "(expected exactly %zu bytes, got %u, Phase 5)\n",
+                                   "(expected exactly %zu bytes, got %u)\n",
                                    sockfd, optname, sizeof(int), optlen);
                         return -EINVAL;
                     }
@@ -486,12 +486,12 @@ long sys_setsockopt(int sockfd, int level, int optname, const void *optval, sock
             case SO_DONTROUTE:
             case SO_DEBUG:
                 /* Boolean options - accept but not enforced
-                 * Phase 5: Enforce strict optlen validation */
+                 * Enforce strict optlen validation */
                 {
                     /* Security hardening: Validate optlen exactly matches sizeof(int) */
                     if (optlen != sizeof(int)) {
                         fut_printf("[SETSOCKOPT] setsockopt(sockfd=%d, SOL_SOCKET, optname=%d, optlen=%u) -> EINVAL "
-                                   "(expected exactly %zu bytes, got %u, Phase 5)\n",
+                                   "(expected exactly %zu bytes, got %u)\n",
                                    sockfd, optname, sizeof(int), optlen);
                         return -EINVAL;
                     }
@@ -508,12 +508,12 @@ long sys_setsockopt(int sockfd, int level, int optname, const void *optval, sock
             case SO_RCVBUF:
                 /* Buffer size options
                  * Phase 2: Validate value, but buffer sizes are fixed at FUT_SOCKET_BUFSIZE
-                 * Phase 5: Enforce strict optlen validation */
+                 * Enforce strict optlen validation */
                 {
                     /* Security hardening: Validate optlen exactly matches sizeof(int) */
                     if (optlen != sizeof(int)) {
                         fut_printf("[SETSOCKOPT] setsockopt(sockfd=%d, SOL_SOCKET, optname=%d, optlen=%u) -> EINVAL "
-                                   "(expected exactly %zu bytes, got %u, Phase 5)\n",
+                                   "(expected exactly %zu bytes, got %u)\n",
                                    sockfd, optname, sizeof(int), optlen);
                         return -EINVAL;
                     }
@@ -532,11 +532,11 @@ long sys_setsockopt(int sockfd, int level, int optname, const void *optval, sock
             case SO_RCVLOWAT:
             case SO_SNDLOWAT:
                 /* Low-water mark options - require int value
-                 * Phase 5: Validate optlen matches expected size exactly */
+                 * Validate optlen matches expected size exactly */
                 {
                     if (optlen != sizeof(int)) {
                         fut_printf("[SETSOCKOPT] setsockopt(sockfd=%d, SOL_SOCKET, optname=%d, optlen=%u) -> EINVAL "
-                                   "(expected exactly %zu bytes, got %u, Phase 5)\n",
+                                   "(expected exactly %zu bytes, got %u)\n",
                                    sockfd, optname, sizeof(int), optlen);
                         return -EINVAL;
                     }
@@ -552,7 +552,7 @@ long sys_setsockopt(int sockfd, int level, int optname, const void *optval, sock
             case SO_RCVTIMEO:
             case SO_SNDTIMEO:
                 /* Timeout options - require struct timeval
-                 * Phase 5: Validate optlen matches struct timeval size exactly */
+                 * Validate optlen matches struct timeval size exactly */
                 {
                     struct timeval {
                         long tv_sec;
@@ -560,7 +560,7 @@ long sys_setsockopt(int sockfd, int level, int optname, const void *optval, sock
                     };
                     if (optlen != sizeof(struct timeval)) {
                         fut_printf("[SETSOCKOPT] setsockopt(sockfd=%d, SOL_SOCKET, optname=%d, optlen=%u) -> EINVAL "
-                                   "(expected exactly %zu bytes, got %u, Phase 5)\n",
+                                   "(expected exactly %zu bytes, got %u)\n",
                                    sockfd, optname, sizeof(struct timeval), optlen);
                         return -EINVAL;
                     }
@@ -575,7 +575,7 @@ long sys_setsockopt(int sockfd, int level, int optname, const void *optval, sock
 
             case SO_LINGER:
                 /* Linger option - requires struct linger
-                 * Phase 5: Validate optlen matches struct linger size exactly */
+                 * Validate optlen matches struct linger size exactly */
                 {
                     struct linger {
                         int l_onoff;
@@ -583,7 +583,7 @@ long sys_setsockopt(int sockfd, int level, int optname, const void *optval, sock
                     };
                     if (optlen != sizeof(struct linger)) {
                         fut_printf("[SETSOCKOPT] setsockopt(sockfd=%d, SOL_SOCKET, SO_LINGER, optlen=%u) -> EINVAL "
-                                   "(expected exactly %zu bytes, got %u, Phase 5)\n",
+                                   "(expected exactly %zu bytes, got %u)\n",
                                    sockfd, sizeof(struct linger), optlen);
                         return -EINVAL;
                     }
@@ -598,11 +598,11 @@ long sys_setsockopt(int sockfd, int level, int optname, const void *optval, sock
 
             case SO_TIMESTAMP:
                 /* Timestamp option - requires int value
-                 * Phase 5: Validate optlen matches expected size exactly */
+                 * Validate optlen matches expected size exactly */
                 {
                     if (optlen != sizeof(int)) {
                         fut_printf("[SETSOCKOPT] setsockopt(sockfd=%d, SOL_SOCKET, SO_TIMESTAMP, optlen=%u) -> EINVAL "
-                                   "(expected exactly %zu bytes, got %u, Phase 5)\n",
+                                   "(expected exactly %zu bytes, got %u)\n",
                                    sockfd, sizeof(int), optlen);
                         return -EINVAL;
                     }

@@ -59,7 +59,7 @@
  * Phase 2 (Completed): Enhanced validation and detailed I/O statistics
  * Phase 3 (Completed): Optimize with direct VFS scatter-gather support
  * Phase 4: Support non-blocking I/O and partial reads
- * Phase 5: Zero-copy optimization for page-aligned buffers
+ * Zero-copy optimization for page-aligned buffers
  *
  * Example: Thread-safe database record read
  *
@@ -187,7 +187,7 @@ ssize_t sys_preadv(int fd, const struct iovec *iov, int iovcnt, int64_t offset) 
         return -EFAULT;
     }
 
-    /* Phase 5: COMPREHENSIVE SECURITY HARDENING
+    /* COMPREHENSIVE SECURITY HARDENING
      * VULNERABILITY: Multiple Attack Vectors in Scatter-Gather I/O
      *
      * The preadv() syscall is particularly vulnerable due to its complexity:
@@ -201,7 +201,7 @@ ssize_t sys_preadv(int fd, const struct iovec *iov, int iovcnt, int64_t offset) 
      * Attacker exploits multiplication overflow in iovec array size calculation
      * 1. sizeof(struct iovec) = 16 bytes (iov_base=8, iov_len=8)
      * 2. Attacker calls preadv(fd, iov, iovcnt=SIZE_MAX/16 + 1, offset=0)
-     * 3. WITHOUT Phase 5 check (line 209-215):
+     * 3. WITHOUT check (line 209-215):
      *    - Line 209: iov_alloc_size = (SIZE_MAX/16 + 1) * 16
      *    - Multiplication wraps: (SIZE_MAX/16 + 1) * 16 = SIZE_MAX + 16 → wraps to 15
      *    - Line 218: fut_malloc(15) succeeds (tiny allocation)
@@ -210,7 +210,7 @@ ssize_t sys_preadv(int fd, const struct iovec *iov, int iovcnt, int64_t offset) 
      *    - Line 234: for (i = 0; i < iovcnt; i++) iterates SIZE_MAX/16 + 1 times
      *    - Accesses kernel_iov[0] through kernel_iov[SIZE_MAX/16] but buffer only 15 bytes
      *    - Result: Massive buffer overrun, kernel memory corruption
-     * 4. WITH Phase 5 check (line 209-215):
+     * 4. WITH check (line 209-215):
      *    - Line 210: iov_alloc_size / sizeof(struct iovec) != iovcnt
      *    - Division: 15 / 16 = 0 ≠ SIZE_MAX/16 + 1 → EINVAL
      *    - Syscall fails before allocation, no corruption
@@ -221,13 +221,13 @@ ssize_t sys_preadv(int fd, const struct iovec *iov, int iovcnt, int64_t offset) 
      *    - iov[0].iov_len = SIZE_MAX - 1000
      *    - iov[1].iov_len = 2000
      *    - Total: (SIZE_MAX - 1000) + 2000 = SIZE_MAX + 1000 → wraps to 999
-     * 2. WITHOUT Phase 5 check (line 252-260):
+     * 2. WITHOUT check (line 252-260):
      *    - Line 254: total_size + kernel_iov[i].iov_len wraps undetected
      *    - Line 261: total_size = 999 (appears small and safe)
      *    - Line 264: 999 < MAX_TOTAL_SIZE check passes
      *    - Line 368: fut_malloc(SIZE_MAX - 1000) for first iovec → ENOMEM or huge alloc
      *    - Result: Memory exhaustion DoS or kernel heap corruption
-     * 3. WITH Phase 5 check (line 252-260):
+     * 3. WITH check (line 252-260):
      *    - Line 254: if (total_size + kernel_iov[i].iov_len < total_size)
      *    - Detects overflow: 999 < SIZE_MAX - 1000 → EINVAL at iovec 1
      *    - Syscall fails before allocation, no DoS
@@ -242,7 +242,7 @@ ssize_t sys_preadv(int fd, const struct iovec *iov, int iovcnt, int64_t offset) 
      * 5. Multiple concurrent attackers: 10 threads = 16 GB/sec
      * 6. Memory not freed until syscall returns (line 409)
      * 7. Kernel heap exhausted, system becomes unresponsive (DoS)
-     * 8. Defense (Phase 5): MAX_TOTAL_SIZE limit (line 263-270) provides partial protection
+     * 8. Defense: MAX_TOTAL_SIZE limit (line 263-270) provides partial protection
      *    - Limits damage per call but doesn't prevent repeated calls
      *    - Phase 4 TODO: Add per-process I/O budget tracking
      *    - Phase 4 TODO: Add rate limiting for large I/O operations
@@ -251,12 +251,12 @@ ssize_t sys_preadv(int fd, const struct iovec *iov, int iovcnt, int64_t offset) 
      * Attacker exploits offset arithmetic overflow to read from wrong file location
      * 1. Attacker calls preadv(fd, iov, iovcnt=2, offset=INT64_MAX - 1000)
      * 2. iov[0].iov_len = 2000, iov[1].iov_len = 1000
-     * 3. WITHOUT Phase 5 check (line 355-365):
+     * 3. WITHOUT check (line 355-365):
      *    - Line 380: Reads at offset INT64_MAX - 1000 (valid positive offset)
      *    - Line 413: current_offset += 2000 wraps to negative value
      *    - Next iteration reads from NEGATIVE offset (wrong file location)
      *    - Result: Information disclosure (reading from unintended offset)
-     * 4. WITH Phase 5 check (line 355-365):
+     * 4. WITH check (line 355-365):
      *    - Line 355: current_offset > INT64_MAX - iov_len detects overflow
      *    - Syscall stops and returns bytes read so far (2000 bytes from valid offset)
      *    - No read from negative/wrapped offset
@@ -266,12 +266,12 @@ ssize_t sys_preadv(int fd, const struct iovec *iov, int iovcnt, int64_t offset) 
      * 1. Attacker prepares malicious iovec array:
      *    - iov[0].iov_base = NULL
      *    - iov[0].iov_len = 4096
-     * 2. WITHOUT Phase 5 check (line 234-242):
+     * 2. WITHOUT check (line 234-242):
      *    - Line 368: fut_malloc(4096) succeeds
      *    - Line 380: file->vnode->ops->read(..., kbuf, 4096, ...) succeeds
      *    - Line 398: fut_copy_to_user(NULL, kbuf, 4096) dereferences NULL
      *    - Result: Kernel NULL pointer dereference, possible privilege escalation
-     * 3. WITH Phase 5 check (line 234-242):
+     * 3. WITH check (line 234-242):
      *    - Line 235: if (!kernel_iov[i].iov_base && kernel_iov[i].iov_len > 0)
      *    - Detects NULL with non-zero length → EFAULT
      *    - Syscall fails before read, no dereference
@@ -284,14 +284,14 @@ ssize_t sys_preadv(int fd, const struct iovec *iov, int iovcnt, int64_t offset) 
      * - Privilege escalation: Overwritten kernel function pointers via overflow
      *
      * ROOT CAUSE:
-     * Pre-Phase 5 code lacked comprehensive validation:
+     * Pre-code lacked comprehensive validation:
      * - No pre-multiplication overflow check for iovec array allocation
      * - No overflow detection in total size accumulation
      * - No per-call total size limit (DoS prevention)
      * - No offset overflow check in file position tracking
      * - No NULL iov_base validation with non-zero length
      *
-     * DEFENSE (Phase 5 Requirements):
+     * DEFENSE (Requirements):
      * 1. Pre-Multiplication Overflow Check (line 209-215):
      *    - Check: iov_alloc_size / sizeof(struct iovec) == iovcnt
      *    - BEFORE any allocation
@@ -339,23 +339,23 @@ ssize_t sys_preadv(int fd, const struct iovec *iov, int iovcnt, int64_t offset) 
      * - Must check for integer overflow in size calculations
      *
      * IMPLEMENTATION NOTES:
-     * - Phase 5: Added pre-multiplication check (line 209-215) ✓
-     * - Phase 5: Added total size overflow detection (line 252-260) ✓
-     * - Phase 5: Added MAX_TOTAL_SIZE limit (16 MB) at line 250/263-270 ✓
-     * - Phase 5: Added offset overflow check at line 355-365 ✓
-     * - Phase 5: Added NULL iov_base validation at line 234-242 ✓
+     * - Added pre-multiplication check (line 209-215) ✓
+     * - Added total size overflow detection (line 252-260) ✓
+     * - Added MAX_TOTAL_SIZE limit (16 MB) at line 250/263-270 ✓
+     * - Added offset overflow check at line 355-365 ✓
+     * - Added NULL iov_base validation at line 234-242 ✓
      * - Phase 4 TODO: Add per-process I/O budget tracking
      * - Phase 4 TODO: Add rate limiting for large I/O operations
      * - Phase 4 TODO: Add preemption points in iovec iteration loop
      * - See Linux kernel: fs/read_write.c do_preadv() for reference
      */
 
-    /* Phase 5: Prevent stack overflow DoS - use malloc instead of alloca
+    /* Prevent stack overflow DoS - use malloc instead of alloca
      * Check for integer overflow in allocation size */
     size_t iov_alloc_size = (size_t)iovcnt * sizeof(struct iovec);
     if (iov_alloc_size / sizeof(struct iovec) != (size_t)iovcnt) {
         fut_printf("[PREADV] preadv(fd=%d, iov=%p, iovcnt=%d, offset=%ld) -> EINVAL "
-                   "(allocation size would overflow, Phase 5)\n",
+                   "(allocation size would overflow)\n",
                    fd, iov, iovcnt, offset);
         return -EINVAL;
     }
@@ -375,7 +375,7 @@ ssize_t sys_preadv(int fd, const struct iovec *iov, int iovcnt, int64_t offset) 
         return -EFAULT;
     }
 
-    /* Phase 5: Validate iov_base pointers before using them
+    /* Validate iov_base pointers before using them
      * Ensure each iov_base is not NULL and appears to be valid userspace address */
     for (int i = 0; i < iovcnt; i++) {
         if (!kernel_iov[i].iov_base && kernel_iov[i].iov_len > 0) {
@@ -387,7 +387,7 @@ ssize_t sys_preadv(int fd, const struct iovec *iov, int iovcnt, int64_t offset) 
         }
     }
 
-    /* Phase 5: Calculate total size, validate iovecs, and gather statistics
+    /* Calculate total size, validate iovecs, and gather statistics
      * Prevent DoS via huge total buffer allocations */
     size_t total_size = 0;
     int zero_len_count = 0;
@@ -399,17 +399,17 @@ ssize_t sys_preadv(int fd, const struct iovec *iov, int iovcnt, int64_t offset) 
         /* Check for overflow */
         if (total_size + kernel_iov[i].iov_len < total_size) {
             fut_printf("[PREADV] preadv(fd=%d, iov=%p, iovcnt=%d, offset=%ld) -> EINVAL "
-                       "(size overflow at iovec %d, Phase 5)\n",
+                       "(size overflow at iovec %d)\n",
                        fd, iov, iovcnt, offset, i);
             fut_free(kernel_iov);
             return -EINVAL;
         }
         total_size += kernel_iov[i].iov_len;
 
-        /* Phase 5: Prevent DoS via excessively large total size */
+        /* Prevent DoS via excessively large total size */
         if (total_size > MAX_TOTAL_SIZE) {
             fut_printf("[PREADV] preadv(fd=%d, iov=%p, iovcnt=%d, offset=%ld) -> EINVAL "
-                       "(total size %zu exceeds limit %zu MB, Phase 5)\n",
+                       "(total size %zu exceeds limit %zu MB)\n",
                        fd, iov, iovcnt, offset, total_size, MAX_TOTAL_SIZE / (1024 * 1024));
             fut_free(kernel_iov);
             return -EINVAL;
@@ -442,7 +442,7 @@ ssize_t sys_preadv(int fd, const struct iovec *iov, int iovcnt, int64_t offset) 
         io_pattern = "large scatter-gather";
     }
 
-    /* Phase 5: Validate FD bounds before accessing FD table */
+    /* Validate FD bounds before accessing FD table */
     if (fd < 0) {
         fut_printf("[PREADV] preadv(fd=%d, iov=%p, iovcnt=%d, offset=%ld) -> EBADF (negative fd)\n",
                    fd, iov, iovcnt, offset);
@@ -452,7 +452,7 @@ ssize_t sys_preadv(int fd, const struct iovec *iov, int iovcnt, int64_t offset) 
 
     if (fd >= task->max_fds) {
         fut_printf("[PREADV] preadv(fd=%d, max_fds=%d, iov=%p, iovcnt=%d, offset=%ld) -> EBADF "
-                   "(fd exceeds max_fds, Phase 5: FD bounds validation)\n",
+                   "(fd exceeds max_fds, FD bounds validation)\n",
                    fd, task->max_fds, iov, iovcnt, offset);
         fut_free(kernel_iov);
         return -EBADF;
@@ -502,8 +502,8 @@ ssize_t sys_preadv(int fd, const struct iovec *iov, int iovcnt, int64_t offset) 
             continue;  /* Skip zero-length buffers */
         }
 
-        /* Phase 5: Check for offset overflow BEFORE read operation
-         * See ATTACK SCENARIO 4 in comprehensive Phase 5 documentation (lines 267-279)
+        /* Check for offset overflow BEFORE read operation
+         * See ATTACK SCENARIO 4 in comprehensive documentation (lines 267-279)
          * This check prevents reading from negative/wrapped offsets
          */
         if (kernel_iov[i].iov_len > 0 && current_offset > INT64_MAX - (int64_t)kernel_iov[i].iov_len) {
@@ -513,7 +513,7 @@ ssize_t sys_preadv(int fd, const struct iovec *iov, int iovcnt, int64_t offset) 
                 break;
             }
             fut_printf("[PREADV] preadv(fd=%d, iov=%p, iovcnt=%d, offset=%ld) -> EOVERFLOW "
-                       "(offset would overflow INT64_MAX for iovec %d, current_offset=%ld, iov_len=%zu, Phase 5)\n",
+                       "(offset would overflow INT64_MAX for iovec %d, current_offset=%ld, iov_len=%zu)\n",
                        fd, iov, iovcnt, i, current_offset, kernel_iov[i].iov_len);
             return -EOVERFLOW;
         }
@@ -563,7 +563,7 @@ ssize_t sys_preadv(int fd, const struct iovec *iov, int iovcnt, int64_t offset) 
         fut_free(kbuf);
         total_read += n;
 
-        /* Phase 5: Update offset (overflow already checked before read at line 355) */
+        /* Update offset (overflow already checked before read at line 355) */
         current_offset += n;
         iovecs_read++;
 
@@ -586,13 +586,13 @@ ssize_t sys_preadv(int fd, const struct iovec *iov, int iovcnt, int64_t offset) 
 
     if (zero_len_count > 0) {
         fut_printf("[PREADV] preadv(fd=%d, iovcnt=%d [%s], offset=%ld, total_requested=%zu bytes) -> %ld bytes "
-                   "(%s, %d/%d iovecs filled, %d zero-len skipped, min=%zu max=%zu, Phase 5: validation & malloc)\n",
+                   "(%s, %d/%d iovecs filled, %d zero-len skipped, min=%zu max=%zu, validation & malloc)\n",
                    fd, iovcnt, io_pattern, offset, total_size, total_read,
                    completion_status, iovecs_read, iovcnt - zero_len_count, zero_len_count,
                    min_iov_len, max_iov_len);
     } else {
         fut_printf("[PREADV] preadv(fd=%d, iovcnt=%d [%s], offset=%ld, total_requested=%zu bytes) -> %ld bytes "
-                   "(%s, %d/%d iovecs filled, min=%zu max=%zu, Phase 5: validation & malloc)\n",
+                   "(%s, %d/%d iovecs filled, min=%zu max=%zu, validation & malloc)\n",
                    fd, iovcnt, io_pattern, offset, total_size, total_read,
                    completion_status, iovecs_read, iovcnt, min_iov_len, max_iov_len);
     }
@@ -619,7 +619,7 @@ ssize_t sys_preadv(int fd, const struct iovec *iov, int iovcnt, int64_t offset) 
      * - Thread-safe (no file position modification)
      *
      * Phase 4: Add non-blocking I/O support and proper partial read handling
-     * Phase 5: Zero-copy optimization for page-aligned buffers
+     * Zero-copy optimization for page-aligned buffers
      */
 
     return total_read;

@@ -143,13 +143,13 @@ long sys_fstat(int fd, struct fut_stat *statbuf) {
         return -EINVAL;
     }
 
-    /* Phase 5: Validate statbuf write permission early (kernel writes stat structure)
+    /* Validate statbuf write permission early (kernel writes stat structure)
      * VULNERABILITY: Invalid Output Buffer Pointer
      * ATTACK: Attacker provides read-only or unmapped statbuf buffer
      * IMPACT: Kernel page fault when writing stat structure at line 258
      * DEFENSE: Check write permission before fd lookup and file operations */
     if (fut_access_ok(local_statbuf, sizeof(struct fut_stat), 1) != 0) {
-        fut_printf("[FSTAT] fstat(fd=%d, statbuf=%p) -> EFAULT (statbuf not writable for %zu bytes, Phase 5)\n",
+        fut_printf("[FSTAT] fstat(fd=%d, statbuf=%p) -> EFAULT (statbuf not writable for %zu bytes)\n",
                    local_fd, (void*)local_statbuf, sizeof(struct fut_stat));
         return -EFAULT;
     }

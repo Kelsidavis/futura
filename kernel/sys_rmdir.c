@@ -138,7 +138,7 @@ long sys_rmdir(const char *path) {
         fut_printf("[RMDIR] rmdir(path=?) -> EFAULT (copy_from_user failed)\n");
         return -EFAULT;
     }
-    /* Phase 5: Verify path was not truncated */
+    /* Verify path was not truncated */
     if (memchr(path_buf, '\0', sizeof(path_buf)) == NULL) {
         fut_printf("[RMDIR] rmdir(path exceeds %zu bytes) -> ENAMETOOLONG\n",
                    sizeof(path_buf) - 1);

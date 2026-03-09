@@ -62,7 +62,7 @@ long sys_pause(void) {
      * the check and the sleep.
      */
 
-    /* Phase 5: Check if any signal is already pending (not blocked)
+    /* Check if any signal is already pending (not blocked)
      * VULNERABILITY: TOCTOU Race in Signal Check vs Block
      *
      * ATTACK SCENARIO:
@@ -85,7 +85,7 @@ long sys_pause(void) {
      * - Line 81: Sleep on wait queue (Time of Use)
      * - Signal delivered between check and sleep → lost wakeup
      *
-     * DEFENSE (Phase 5):
+     * DEFENSE:
      * Use fut_waitq_sleep_locked() which takes NULL lock parameter
      * - NULL lock tells waitq: "I don't have a lock, use atomic check-and-sleep"
      * - Waitq implementation must atomically check condition and sleep
@@ -112,17 +112,17 @@ long sys_pause(void) {
     if (unblocked_pending > 0) {
         /* Signal already pending, return immediately and let exception
          * handler deliver it. */
-        fut_printf("[PAUSE] pause() by task %llu -> EINTR (signal already pending, not blocking, Phase 5)\n",
+        fut_printf("[PAUSE] pause() by task %llu -> EINTR (signal already pending, not blocking)\n",
                    task->pid);
         return -EINTR;
     }
 
     /* No pending signals, block until one arrives */
-    fut_printf("[PAUSE] pause() by task %llu -> blocking on signal_waitq (Phase 5: TOCTOU via atomic sleep)\n",
+    fut_printf("[PAUSE] pause() by task %llu -> blocking on signal_waitq (TOCTOU via atomic sleep)\n",
                task->pid);
 
     /* Block on wait queue (this is a simple blocking sleep, signal delivery will wake us)
-     * Phase 5: NULL lock parameter relies on waitq atomic check-and-sleep */
+     * NULL lock parameter relies on waitq atomic check-and-sleep */
     fut_waitq_sleep_locked(&task->signal_waitq, NULL, FUT_THREAD_BLOCKED);
 
     /* When we wake up, a signal has been delivered. Return -EINTR to let

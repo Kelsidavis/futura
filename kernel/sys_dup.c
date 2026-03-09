@@ -130,7 +130,7 @@ long sys_dup(int oldfd) {
         return -ESRCH;
     }
 
-    /* Phase 5: Validate oldfd bounds to prevent FD table out-of-bounds access
+    /* Validate oldfd bounds to prevent FD table out-of-bounds access
      * VULNERABILITY: Out-of-Bounds FD Table Access
      *
      * ATTACK SCENARIO:
@@ -156,7 +156,7 @@ long sys_dup(int oldfd) {
      * - vfs_get_file_from_task may not validate bounds internally
      * - Syscall layer must ensure oldfd is within valid range
      *
-     * DEFENSE (Phase 5):
+     * DEFENSE:
      * Validate oldfd < task->max_fds before any FD table access
      * - Check upper bound immediately after lower bound check
      * - Return -EBADF if oldfd >= max_fds
@@ -172,7 +172,7 @@ long sys_dup(int oldfd) {
      * not a valid file descriptor" - Requires bounds validation
      *
      * PRECEDENT:
-     * - sys_close Phase 5: Documents FD bounds validation responsibility
+     * - sys_close Documents FD bounds validation responsibility
      * - sys_dup2 will need same validation for both oldfd and newfd
      */
     if (local_oldfd < 0) {
@@ -180,10 +180,10 @@ long sys_dup(int oldfd) {
         return -EBADF;
     }
 
-    /* Phase 5: Validate oldfd upper bound */
+    /* Validate oldfd upper bound */
     if (local_oldfd >= task->max_fds) {
         fut_printf("[DUP] dup(oldfd=%d, max_fds=%d) -> EBADF "
-                   "(oldfd exceeds max_fds, Phase 5: FD bounds validation)\n",
+                   "(oldfd exceeds max_fds, FD bounds validation)\n",
                    local_oldfd, task->max_fds);
         return -EBADF;
     }
@@ -246,9 +246,9 @@ long sys_dup(int oldfd) {
     /* Propagate socket ownership if oldfd is a socket */
     propagate_socket_dup(local_oldfd, newfd);
 
-    /* Phase 5: Detailed success logging */
+    /* Detailed success logging */
     fut_printf("[DUP] dup(oldfd=%d [%s]) -> %d [%s] (refcount=%u, "
-               "lowest available FD, Phase 5: FD bounds validation)\n",
+               "lowest available FD, FD bounds validation)\n",
                local_oldfd, oldfd_category, newfd, newfd_category, old_file->refcount);
 
     return newfd;

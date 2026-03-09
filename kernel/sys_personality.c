@@ -90,7 +90,7 @@ long sys_personality(unsigned long persona) {
         return default_persona;
     }
 
-    /* Phase 5: Validate persona parameter bounds
+    /* Validate persona parameter bounds
      * VULNERABILITY: Invalid Personality Flags
      *
      * ATTACK SCENARIO:
@@ -116,7 +116,7 @@ long sys_personality(unsigned long persona) {
      * No check that flags contain only known valid bits
      * Unknown flags propagate through personality checks
      *
-     * DEFENSE (Phase 5):
+     * DEFENSE:
      * Validate flags contain only known personality bits
      * - Define ALL_VALID_FLAGS bitmask
      * - Check (flags & ~ALL_VALID_FLAGS) == 0
@@ -136,18 +136,18 @@ long sys_personality(unsigned long persona) {
     unsigned long base_persona = persona & 0xFF;
     unsigned long flags = persona & ~0xFF;
 
-    /* Phase 5: Validate base personality is known */
+    /* Validate base personality is known */
     if (base_persona != PER_LINUX &&
         base_persona != PER_LINUX_32BIT &&
         base_persona != PER_SVR4 &&
         base_persona != PER_BSD) {
         fut_printf("[PERSONALITY] personality(persona=0x%lx [unknown base 0x%lx], pid=%d) "
-                   "-> EINVAL (unknown personality, valid: 0x00/0x08/0x01/0x06, Phase 5)\n",
+                   "-> EINVAL (unknown personality, valid: 0x00/0x08/0x01/0x06)\n",
                    persona, base_persona, task->pid);
         return -EINVAL;
     }
 
-    /* Phase 5: Validate flags contain only known bits */
+    /* Validate flags contain only known bits */
     const unsigned long ALL_VALID_FLAGS = ADDR_NO_RANDOMIZE | ADDR_COMPAT_LAYOUT |
                                           READ_IMPLIES_EXEC | ADDR_LIMIT_32BIT |
                                           SHORT_INODE | WHOLE_SECONDS |
@@ -155,7 +155,7 @@ long sys_personality(unsigned long persona) {
 
     if (flags & ~ALL_VALID_FLAGS) {
         fut_printf("[PERSONALITY] personality(persona=0x%lx [invalid flags 0x%lx], pid=%d) "
-                   "-> EINVAL (unknown flags present, valid mask: 0x%lx, Phase 5)\n",
+                   "-> EINVAL (unknown flags present, valid mask: 0x%lx)\n",
                    persona, flags & ~ALL_VALID_FLAGS, task->pid, ALL_VALID_FLAGS);
         return -EINVAL;
     }

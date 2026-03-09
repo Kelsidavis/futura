@@ -27,7 +27,7 @@ enum {
 
 /* Default action for each signal (indexed by signal number, 0 is unused placeholder)
  *
- * Phase 5 security: Array is indexed by signum directly (1-based), so element [0]
+ * security: Array is indexed by signum directly (1-based), so element [0]
  * is a placeholder to avoid off-by-one. Array has _NSIG (31) elements so that
  * signum values 1..30 are all valid indices. */
 static const int signal_default_action[_NSIG] = {
@@ -104,7 +104,7 @@ int fut_signal_is_pending(struct fut_task *task, int signum) {
 
     uint64_t signal_bit = (1ULL << (signum - 1));
 
-    /* Phase 5 security: Use atomic load for pending_signals since it can be
+    /* security: Use atomic load for pending_signals since it can be
      * modified by fut_signal_send() on another CPU (SMP race condition). */
     uint64_t pending = __atomic_load_n(&task->pending_signals, __ATOMIC_ACQUIRE);
 
@@ -133,7 +133,7 @@ int fut_signal_send(struct fut_task *task, int signum) {
 
     uint64_t signal_bit = (1ULL << (signum - 1));
 
-    /* Phase 5 security: Use atomic OR to queue the signal. pending_signals
+    /* security: Use atomic OR to queue the signal. pending_signals
      * can be read/cleared by the target task on another CPU during signal
      * delivery. Non-atomic |= is a read-modify-write race on SMP. */
     __atomic_or_fetch(&task->pending_signals, signal_bit, __ATOMIC_RELEASE);
@@ -210,7 +210,7 @@ int fut_signal_procmask(struct fut_task *task, int how,
         oldset->__mask = task->signal_mask;
     }
 
-    /* Phase 5 security: SIGKILL and SIGSTOP cannot be blocked (POSIX requirement).
+    /* security: SIGKILL and SIGSTOP cannot be blocked (POSIX requirement).
      * Strip these bits from the requested set to prevent userspace from making
      * a process unkillable or unstoppable. */
     uint64_t unblockable = (1ULL << (SIGKILL - 1)) | (1ULL << (SIGSTOP - 1));
@@ -303,14 +303,14 @@ int fut_signal_deliver(struct fut_task *task, void *frame) {
     }
 
     /* Allocate rt_sigframe on user stack with 16-byte alignment.
-     * Phase 5 security: Subtract first, then align, to ensure the entire
+     * security: Subtract first, then align, to ensure the entire
      * frame fits below the original SP. Aligning before subtracting could
      * leave the frame partially overlapping with the interrupted context. */
     uint64_t sp = f->sp;
     sp -= sizeof(struct rt_sigframe);
     sp &= ~0xFULL;  /* Align to 16 bytes */
 
-    /* Phase 5 security: Check for stack pointer underflow/wraparound.
+    /* security: Check for stack pointer underflow/wraparound.
      * If sp wrapped past zero or is above the original stack pointer,
      * the subtraction overflowed. Also validate sp is in user space
      * using the platform-defined USER_SPACE_END constant. */
@@ -376,7 +376,7 @@ int fut_signal_deliver(struct fut_task *task, void *frame) {
     f->x[1] = sp + offsetof(struct rt_sigframe, info);
     f->x[2] = sp + offsetof(struct rt_sigframe, uc);
 
-    /* Phase 5 security: Block the delivered signal while handler is running.
+    /* security: Block the delivered signal while handler is running.
      * This prevents recursive signal delivery which could overflow the user
      * stack. Matches x86-64 behavior. The mask is restored by sigreturn(). */
     task->signal_mask |= signal_bit;
@@ -476,7 +476,7 @@ int fut_signal_deliver(struct fut_task *task, void *frame) {
     sp -= sizeof(struct rt_sigframe);
     sp &= ~0xFULL;  /* Align to 16 bytes */
 
-    /* Phase 5 security: Check for stack pointer underflow/wraparound.
+    /* security: Check for stack pointer underflow/wraparound.
      * If sp wrapped past zero or is above the original stack pointer,
      * the subtraction overflowed. Also validate sp is in user space. */
     if (sp > f->rsp || sp < 0x1000 || sp >= USER_SPACE_END) {

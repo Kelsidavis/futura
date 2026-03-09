@@ -255,7 +255,7 @@ long sys_quotactl(unsigned int cmd, const char *special, int id, void *addr) {
         return -ESRCH;
     }
 
-    /* Phase 5: Validate command parameter bounds early
+    /* Validate command parameter bounds early
      * VULNERABILITY: Command Parameter Out-of-Bounds Access
      *
      * ATTACK SCENARIO:
@@ -276,7 +276,7 @@ long sys_quotactl(unsigned int cmd, const char *special, int id, void *addr) {
      * Line 269-270 (old): Extracts qtype and qcmd without validation
      * No bounds check before using in switch or further processing
      *
-     * DEFENSE (Phase 5):
+     * DEFENSE:
      * Validate qtype and qcmd against known valid ranges
      * - qtype must be USRQUOTA (0), GRPQUOTA (1), or PRJQUOTA (2)
      * - qcmd must be one of Q_SYNC, Q_QUOTAON, Q_QUOTAOFF, etc. (0x800001-0x800009)
@@ -291,18 +291,18 @@ long sys_quotactl(unsigned int cmd, const char *special, int id, void *addr) {
     unsigned int qtype = cmd & 0xFF;
     unsigned int qcmd = cmd & ~0xFF;  /* Full command with type bits masked */
 
-    /* Phase 5: Validate quota type bounds */
+    /* Validate quota type bounds */
     if (qtype > PRJQUOTA) {
         fut_printf("[QUOTACTL] quotactl(cmd=0x%x [invalid type %u], special=%p, id=%d, addr=%p, pid=%d) "
-                   "-> EINVAL (quota type out of range, valid: 0-2, Phase 5)\n",
+                   "-> EINVAL (quota type out of range, valid: 0-2)\n",
                    cmd, qtype, (const void *)special, id, addr, task->pid);
         return -EINVAL;
     }
 
-    /* Phase 5: Validate quota command bounds */
+    /* Validate quota command bounds */
     if (qcmd < Q_SYNC || qcmd > Q_GETNEXTQUOTA) {
         fut_printf("[QUOTACTL] quotactl(cmd=0x%x [invalid cmd 0x%x], type=%u, special=%p, id=%d, addr=%p, pid=%d) "
-                   "-> EINVAL (quota command out of range, valid: 0x800001-0x800009, Phase 5)\n",
+                   "-> EINVAL (quota command out of range, valid: 0x800001-0x800009)\n",
                    cmd, qcmd, qtype, (const void *)special, id, addr, task->pid);
         return -EINVAL;
     }
@@ -314,7 +314,7 @@ long sys_quotactl(unsigned int cmd, const char *special, int id, void *addr) {
         return -EFAULT;
     }
 
-    /* Phase 5: Copy full path to detect truncation
+    /* Copy full path to detect truncation
      * VULNERABILITY: Path Truncation Attack
      *
      * ATTACK SCENARIO:
@@ -338,7 +338,7 @@ long sys_quotactl(unsigned int cmd, const char *special, int id, void *addr) {
      * Line 253 (old): fut_copy_from_user(special_buf, special, sizeof(special_buf) - 1)
      * Copied only 255 bytes, silently truncating longer paths.
      *
-     * DEFENSE (Phase 5):
+     * DEFENSE:
      * Copy full buffer size (256 bytes) and check for truncation.
      *
      * CVE REFERENCES:
@@ -348,15 +348,15 @@ long sys_quotactl(unsigned int cmd, const char *special, int id, void *addr) {
     char special_buf[256];
     if (fut_copy_from_user(special_buf, special, sizeof(special_buf)) != 0) {
         fut_printf("[QUOTACTL] quotactl(cmd=0x%x, special=?, id=%d, addr=%p, pid=%d) -> EFAULT "
-                   "(special copy_from_user failed, Phase 5)\n",
+                   "(special copy_from_user failed)\n",
                    cmd, id, addr, task->pid);
         return -EFAULT;
     }
 
-    /* Phase 5: Verify path was not truncated */
+    /* Verify path was not truncated */
     if (memchr(special_buf, '\0', sizeof(special_buf)) == NULL) {
         fut_printf("[QUOTACTL] quotactl(cmd=0x%x, special=<truncated>, id=%d, addr=%p, pid=%d) "
-                   "-> ENAMETOOLONG (path exceeds %zu bytes, truncation detected, Phase 5)\n",
+                   "-> ENAMETOOLONG (path exceeds %zu bytes, truncation detected)\n",
                    cmd, id, addr, task->pid, sizeof(special_buf) - 1);
         return -ENAMETOOLONG;
     }
@@ -420,7 +420,7 @@ long sys_quotactl(unsigned int cmd, const char *special, int id, void *addr) {
             break;
     }
 
-    /* Phase 5: Document addr parameter validation requirements for Phase 2 implementation
+    /* Document addr parameter validation requirements for Phase 2 implementation
      * VULNERABILITY: Unbounded Structure Copy and NULL Pointer Dereference
      *
      * ATTACK SCENARIO 1: NULL Pointer Dereference in Q_GETQUOTA/Q_SETQUOTA
@@ -461,7 +461,7 @@ long sys_quotactl(unsigned int cmd, const char *special, int id, void *addr) {
      * - No size overflow checks in grace period calculations
      * - Assumes userspace provides valid, realistic quota values
      *
-     * DEFENSE (Phase 5 Requirements for Phase 2):
+     * DEFENSE (Requirements for Phase 2):
      * 1. NULL Pointer Validation:
      *    - Q_GETQUOTA/Q_SETQUOTA: Require addr != NULL (dqblk structure)
      *    - Q_GETINFO/Q_SETINFO: Require addr != NULL (dqinfo structure)

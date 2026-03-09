@@ -150,7 +150,7 @@ long sys_chdir(const char *pathname) {
         return -EPERM;
     }
 
-    /* Phase 5: Detect path truncation BEFORE VFS lookup
+    /* Detect path truncation BEFORE VFS lookup
      * VULNERABILITY: Silent Path Truncation Attack
      *
      * ATTACK SCENARIO:
@@ -176,7 +176,7 @@ long sys_chdir(const char *pathname) {
      * 2. Detecting if copy was truncated
      * 3. Failing with -ENAMETOOLONG if truncation occurred
      *
-     * DEFENSE (Phase 5):
+     * DEFENSE:
      * Copy path to kernel buffer and validate null termination
      * - Allocate 256-byte kernel buffer
      * - Copy pathname with copy_from_user (stops at 256 bytes)
@@ -194,9 +194,9 @@ long sys_chdir(const char *pathname) {
      * pathname length exceeds PATH_MAX" - Requires explicit length validation
      *
      * PRECEDENT:
-     * - sys_truncate Phase 5 (lines 99-104): path truncation detection
-     * - sys_unlink Phase 5 (lines 108-113): path truncation detection
-     * - sys_lstat Phase 5 (lines 77-108): path truncation detection
+     * - sys_truncate (lines 99-104): path truncation detection
+     * - sys_unlink (lines 108-113): path truncation detection
+     * - sys_lstat (lines 77-108): path truncation detection
      */
     char kpath[256];
     if (fut_copy_from_user(kpath, local_pathname, sizeof(kpath)) != 0) {
@@ -213,7 +213,7 @@ long sys_chdir(const char *pathname) {
     }
     if (!has_null) {
         fut_printf("[CHDIR] chdir(pathname=<truncated>) -> ENAMETOOLONG "
-                   "(path exceeds %zu bytes, Phase 5: path truncation detection)\n",
+                   "(path exceeds %zu bytes, path truncation detection)\n",
                    sizeof(kpath));
         return -ENAMETOOLONG;
     }
@@ -318,9 +318,9 @@ long sys_chdir(const char *pathname) {
     /* Update the task's current working directory */
     task->current_dir_ino = vnode->ino;
 
-    /* Phase 5: Detailed success logging */
+    /* Detailed success logging */
     fut_printf("[CHDIR] chdir(path='%s' [%s], old_dir_ino=%lu, new_dir_ino=%lu) "
-               "-> 0 (cwd changed, Phase 5: path truncation detection)\n",
+               "-> 0 (cwd changed, path truncation detection)\n",
                kpath, path_type, old_dir_ino, vnode->ino);
 
     /* Phase 3: Cache the directory path in task structure for faster lookup */

@@ -43,7 +43,7 @@
  * Phase 2 (Completed): Enhanced validation and detailed event reporting
  * Phase 3 (Completed): Check actual FD readiness via VFS layer
  * Phase 4: Add blocking support with wait queues
- * Phase 5: Integrate with epoll for efficient event notification
+ * Integrate with epoll for efficient event notification
  */
 long sys_poll(struct pollfd *fds, unsigned long nfds, int timeout) {
     /* Phase 2: Enhanced validation */
@@ -59,14 +59,14 @@ long sys_poll(struct pollfd *fds, unsigned long nfds, int timeout) {
         return 0;
     }
 
-    /* Phase 5: Validate fds array write permission early (kernel writes revents)
+    /* Validate fds array write permission early (kernel writes revents)
      * VULNERABILITY: Invalid Output Buffer Array
      * ATTACK: Attacker provides read-only or unmapped fds array
      * IMPACT: Kernel page fault when writing revents to pollfd structures
      * DEFENSE: Check write permission for entire array before processing */
     size_t fds_size = nfds * sizeof(struct pollfd);
     if (fut_access_ok(fds, fds_size, 1) != 0) {
-        poll_printf("[POLL] poll(fds=%p, nfds=%lu, timeout=%d) -> EFAULT (fds array not writable for %zu bytes, Phase 5)\n",
+        poll_printf("[POLL] poll(fds=%p, nfds=%lu, timeout=%d) -> EFAULT (fds array not writable for %zu bytes)\n",
                    fds, nfds, timeout, fds_size);
         return -EFAULT;
     }
@@ -83,14 +83,14 @@ long sys_poll(struct pollfd *fds, unsigned long nfds, int timeout) {
         return -EINVAL;
     }
 
-    /* Phase 5: Validate nfds BEFORE multiplication to prevent overflow
+    /* Validate nfds BEFORE multiplication to prevent overflow
      * VULNERABILITY: Integer Overflow and Resource Exhaustion
      *
      * ATTACK SCENARIO 1: Integer Overflow in Size Calculation
      * Attacker provides nfds value causing multiplication wraparound
      * 1. sizeof(struct pollfd) = 8 bytes (fd=4, events=2, revents=2)
      * 2. Attacker calls poll(fds, nfds=SIZE_MAX/8 + 1, timeout)
-     * 3. WITHOUT Phase 5 check (line 131-136):
+     * 3. WITHOUT check (line 131-136):
      *    - Line 139: size = (SIZE_MAX/8 + 1) * 8
      *    - Multiplication wraps: (SIZE_MAX/8 + 1) * 8 = SIZE_MAX + 8 → wraps to 7
      *    - Line 142: fut_malloc(7) succeeds (tiny allocation)
@@ -144,14 +144,14 @@ long sys_poll(struct pollfd *fds, unsigned long nfds, int timeout) {
      * - Privilege escalation: Overwritten function pointers via overflow
      *
      * ROOT CAUSE:
-     * Pre-Phase 5 code lacked comprehensive validation:
+     * Pre-code lacked comprehensive validation:
      * - No pre-multiplication overflow check (added line 131-136)
      * - No protection against repeated large allocations
      * - No CPU work budget for FD iteration
      * - Timeout validation incomplete (fixed line 87-90)
      * - Post-multiplication validation insufficient (see scenario 5)
      *
-     * DEFENSE (Phase 5 Requirements):
+     * DEFENSE (Requirements):
      * 1. Pre-Multiplication Overflow Check:
      *    - Check: nfds <= SIZE_MAX / sizeof(struct pollfd)
      *    - BEFORE any multiplication (line 131-136)
@@ -201,7 +201,7 @@ long sys_poll(struct pollfd *fds, unsigned long nfds, int timeout) {
      */
     if (nfds > SIZE_MAX / sizeof(struct pollfd)) {
         poll_printf("[POLL] poll(fds, %lu, %d) -> EINVAL "
-                   "(nfds exceeds max safe %zu, would cause overflow, Phase 5)\n",
+                   "(nfds exceeds max safe %zu, would cause overflow)\n",
                    nfds, timeout, SIZE_MAX / sizeof(struct pollfd));
         return -EINVAL;
     }

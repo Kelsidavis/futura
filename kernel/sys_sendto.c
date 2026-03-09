@@ -132,7 +132,7 @@ ssize_t sys_sendto(int sockfd, const void *buf, size_t len, int flags,
         return -ESRCH;
     }
 
-    /* Phase 5: I/O Rate Limiting (DoS Prevention)
+    /* I/O Rate Limiting (DoS Prevention)
      * Check per-process I/O operation rate limit before performing network I/O.
      * This prevents CPU exhaustion via tight sendto() loops. */
     int rate_limit_result = fut_io_check_and_consume(task, "sendto");
@@ -230,7 +230,7 @@ ssize_t sys_sendto(int sockfd, const void *buf, size_t len, int flags,
         return 0;
     }
 
-    /* Phase 5: COMPREHENSIVE SECURITY HARDENING
+    /* COMPREHENSIVE SECURITY HARDENING
      * VULNERABILITY: Multiple Attack Vectors in Socket Send Operation
      *
      * The sendto() syscall is particularly vulnerable due to:
@@ -244,12 +244,12 @@ ssize_t sys_sendto(int sockfd, const void *buf, size_t len, int flags,
      * Attacker requests enormous send buffer to exhaust kernel memory
      * 1. Attacker calls sendto(sockfd, buf, SIZE_MAX, 0, NULL, 0)
      *    - SIZE_MAX = 18 exabytes (18,446,744,073,709,551,615 bytes)
-     * 2. WITHOUT Phase 5 check (line 263-269):
+     * 2. WITHOUT check (line 263-269):
      *    - Line 280: fut_malloc(SIZE_MAX) attempts allocation
      *    - Kernel heap exhausted instantly
      *    - OOM killer terminates random processes
      *    - System-wide DoS: All processes affected
-     * 3. WITH Phase 5 check (line 263-269):
+     * 3. WITH check (line 263-269):
      *    - Line 264: if (local_len > MAX_SEND_SIZE) rejects request
      *    - Syscall fails before allocation
      *    - 16MB limit balances functionality vs DoS prevention
@@ -269,7 +269,7 @@ ssize_t sys_sendto(int sockfd, const void *buf, size_t len, int flags,
      * 6. Blocking operation (line 298) holds buffer during write
      * 7. Kernel heap fragmented with many 16MB allocations
      * 8. System runs out of memory (DoS)
-     * 9. Defense (Phase 5): MAX_SEND_SIZE limit (line 263) provides partial protection
+     * 9. Defense: MAX_SEND_SIZE limit (line 263) provides partial protection
      *    - Limits damage per call but doesn't prevent repeated calls
      *    - Phase 4 TODO: Add per-process I/O budget tracking
      *    - Phase 4 TODO: Add rate limiting for large send operations
@@ -277,11 +277,11 @@ ssize_t sys_sendto(int sockfd, const void *buf, size_t len, int flags,
      * ATTACK SCENARIO 3: Excessive Destination Address Length
      * Attacker provides huge addrlen to probe or corrupt kernel
      * 1. Attacker calls sendto(sockfd, buf, 1024, 0, &addr, UINT32_MAX)
-     * 2. WITHOUT Phase 5 check (line 237-242):
+     * 2. WITHOUT check (line 237-242):
      *    - No validation of reasonable addrlen upper bound
      *    - Future address parsing code may use addrlen unsafely
      *    - Potential buffer overrun when processing address
-     * 3. WITH Phase 5 check (line 237-242):
+     * 3. WITH check (line 237-242):
      *    - Line 237: if (local_addrlen > 128) rejects excessive size
      *    - 128 byte limit covers sockaddr_storage (standard maximum)
      *    - Prevents future vulnerabilities in address handling
@@ -311,11 +311,11 @@ ssize_t sys_sendto(int sockfd, const void *buf, size_t len, int flags,
      * Attacker provides invalid dest_addr pointer to trigger kernel fault
      * 1. Attacker provides unmapped memory as dest_addr:
      *    sendto(sockfd, buf, 1024, 0, (void*)0xDEADBEEF, sizeof(sockaddr_un));
-     * 2. WITHOUT Phase 5 check (line 244-254):
+     * 2. WITHOUT check (line 244-254):
      *    - Current Phase 3: Address not used (stub implementation)
      *    - Phase 4 will copy address: fut_copy_from_user would fault
      *    - Result: Crash when implementing address handling
-     * 3. WITH Phase 5 check (line 244-254):
+     * 3. WITH check (line 244-254):
      *    - Line 248: Test read with dummy byte before any processing
      *    - Syscall fails with EFAULT immediately
      *    - Prevents future faults when address handling implemented
@@ -332,14 +332,14 @@ ssize_t sys_sendto(int sockfd, const void *buf, size_t len, int flags,
      * - Kernel fault: Invalid dest_addr pointer causes page fault
      *
      * ROOT CAUSE:
-     * Pre-Phase 5 code lacked comprehensive validation:
+     * Pre-code lacked comprehensive validation:
      * - No upper bound on buffer size (allows SIZE_MAX requests)
      * - No upper bound on addrlen (allows UINT32_MAX)
      * - No dest_addr/addrlen consistency check
      * - No early dest_addr readability check
      * - Blocking operations before validation waste resources
      *
-     * DEFENSE (Phase 5 Requirements):
+     * DEFENSE (Requirements):
      * 1. dest_addr/addrlen Consistency Check (line 229-234):
      *    - Reject: dest_addr != NULL && addrlen == 0 (EINVAL)
      *    - Prevents zero-length address with valid pointer
@@ -386,10 +386,10 @@ ssize_t sys_sendto(int sockfd, const void *buf, size_t len, int flags,
      * - addrlen must not exceed maximum address size
      *
      * IMPLEMENTATION NOTES:
-     * - Phase 5: Added dest_addr/addrlen consistency check (line 229-234) ✓
-     * - Phase 5: Added addrlen bounds validation (line 237-242) ✓
-     * - Phase 5: Added dest_addr readability check (line 244-254) ✓
-     * - Phase 5: Added buffer size limit (16MB) at line 263-269 ✓
+     * - Added dest_addr/addrlen consistency check (line 229-234) ✓
+     * - Added addrlen bounds validation (line 237-242) ✓
+     * - Added dest_addr readability check (line 244-254) ✓
+     * - Added buffer size limit (16MB) at line 263-269 ✓
      * - Phase 4 TODO: Implement actual dest_addr handling (currently stub)
      * - Phase 4 TODO: Add per-process I/O budget tracking
      * - Phase 4 TODO: Add rate limiting for large send operations
@@ -397,7 +397,7 @@ ssize_t sys_sendto(int sockfd, const void *buf, size_t len, int flags,
      */
 
     /* Phase 2: Validate address length when destination is specified
-     * See ATTACK SCENARIO 4 in comprehensive Phase 5 documentation above */
+     * See ATTACK SCENARIO 4 in comprehensive documentation above */
     if (local_dest_addr && local_addrlen == 0) {
         fut_printf("[SENDTO] sendto(sockfd=%d [%s], dest_addr=%p, addrlen=0) -> EINVAL "
                    "(destination specified but addrlen is zero, pid=%u)\n",
@@ -413,13 +413,13 @@ ssize_t sys_sendto(int sockfd, const void *buf, size_t len, int flags,
         return -EINVAL;
     }
 
-    /* Phase 5: Validate dest_addr buffer is readable before using it
+    /* Validate dest_addr buffer is readable before using it
      * Prevents kernel page fault from invalid userspace pointer */
     if (local_dest_addr && local_addrlen > 0) {
         uint8_t addr_test_byte;
         if (fut_copy_from_user(&addr_test_byte, local_dest_addr, 1) != 0) {
             fut_printf("[SENDTO] sendto(sockfd=%d [%s], dest_addr=%p, addrlen=%u) -> EFAULT "
-                       "(destination address not readable, Phase 5)\n",
+                       "(destination address not readable)\n",
                        local_sockfd, fd_category, local_dest_addr, local_addrlen);
             return -EFAULT;
         }
@@ -435,7 +435,7 @@ ssize_t sys_sendto(int sockfd, const void *buf, size_t len, int flags,
     const size_t MAX_SEND_SIZE = 16 * 1024 * 1024;  /* 16MB per send */
     if (local_len > MAX_SEND_SIZE) {
         fut_printf("[SENDTO] sendto(sockfd=%d [%s], len=%zu [%s]) -> EINVAL "
-                   "(length exceeds max %zu bytes, Phase 5: memory exhaustion prevention)\n",
+                   "(length exceeds max %zu bytes, memory exhaustion prevention)\n",
                    local_sockfd, fd_category, local_len, size_category, MAX_SEND_SIZE);
         return -EINVAL;
     }

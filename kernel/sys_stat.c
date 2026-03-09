@@ -114,7 +114,7 @@ long sys_stat(const char *path, struct fut_stat *statbuf) {
                    (void *)local_statbuf);
         return -EFAULT;
     }
-    /* Phase 5: Verify path was not truncated */
+    /* Verify path was not truncated */
     if (memchr(path_buf, '\0', sizeof(path_buf)) == NULL) {
         fut_printf("[STAT] stat(path exceeds %zu bytes) -> ENAMETOOLONG\n",
                    sizeof(path_buf) - 1);
@@ -143,17 +143,17 @@ long sys_stat(const char *path, struct fut_stat *statbuf) {
     /* Phase 2: Calculate path length */
     size_t path_len = manual_strlen(path_buf);
 
-    /* Phase 5: Validate buffer alignment before expensive VFS operation
+    /* Validate buffer alignment before expensive VFS operation
      * struct fut_stat requires 8-byte alignment for uint64_t fields (st_size, st_ino, etc.)
      * Unaligned access can cause performance degradation or crashes on some architectures */
     if (((uintptr_t)local_statbuf & 7) != 0) {
         fut_printf("[STAT] stat(path='%s' [%s, len=%lu], statbuf=%p) -> EINVAL "
-                   "(buffer not 8-byte aligned, Phase 5)\n",
+                   "(buffer not 8-byte aligned)\n",
                    path_buf, path_type, (unsigned long)path_len, (void *)local_statbuf);
         return -EINVAL;
     }
 
-    /* Phase 5: Early buffer writability test before expensive VFS operation
+    /* Early buffer writability test before expensive VFS operation
      * Test if we can write to statbuf before calling fut_vfs_stat(), which
      * requires path lookup and inode access. This optimization fails fast if
      * the buffer is in inaccessible memory. Use actual write test with first byte. */
@@ -161,7 +161,7 @@ long sys_stat(const char *path, struct fut_stat *statbuf) {
     if (fut_copy_from_user(&test_byte, (const char *)local_statbuf, 1) != 0 ||
         fut_copy_to_user((char *)local_statbuf, &test_byte, 1) != 0) {
         fut_printf("[STAT] stat(path='%s' [%s, len=%lu], statbuf=%p) -> EFAULT "
-                   "(buffer not accessible, Phase 5)\n",
+                   "(buffer not accessible)\n",
                    path_buf, path_type, (unsigned long)path_len, (void *)local_statbuf);
         return -EFAULT;
     }
@@ -259,7 +259,7 @@ long sys_stat(const char *path, struct fut_stat *statbuf) {
         xattr_capable = "yes";
     }
 
-    /* Phase 5: Security hardening WARNING: TOCTOU Race Condition in stat()
+    /* Security hardening WARNING: TOCTOU Race Condition in stat()
      * VULNERABILITY: Time-of-Check-Time-of-Use Race in Path Resolution
      *
      * ATTACK SCENARIO:
@@ -312,7 +312,7 @@ long sys_stat(const char *path, struct fut_stat *statbuf) {
      *    if (st.st_mode & 0200) { open(path, O_WRONLY); }
      *    → Permissions could change between check and open
      *
-     * DEFENSE (Phase 5):
+     * DEFENSE:
      * This implementation CANNOT fix the fundamental TOCTOU race in stat().
      * Applications MUST use TOCTOU-resistant patterns:
      *
@@ -350,7 +350,7 @@ long sys_stat(const char *path, struct fut_stat *statbuf) {
 
     /* Phase 4: Detailed success logging with filesystem and xattr metadata */
     fut_printf("[STAT] stat(path='%s' [%s, len=%lu], type=%s, size=%llu [%s], "
-               "mode=%o, ino=%llu, fs=%s, xattr=%s) -> 0 (cached metadata, Phase 5: TOCTOU warning - use fstat() instead)\n",
+               "mode=%o, ino=%llu, fs=%s, xattr=%s) -> 0 (cached metadata, TOCTOU warning - use fstat() instead)\n",
                path_buf, path_type, (unsigned long)path_len, file_type_desc,
                (unsigned long long)kernel_stat.st_size, size_category,
                kernel_stat.st_mode & 0777, (unsigned long long)kernel_stat.st_ino,

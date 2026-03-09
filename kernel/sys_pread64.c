@@ -132,7 +132,7 @@ long sys_pread64(unsigned int fd, void *buf, size_t count, int64_t offset) {
         return -EINVAL;
     }
 
-    /* Phase 5: Validate buffer is writable BEFORE expensive operations
+    /* Validate buffer is writable BEFORE expensive operations
      * VULNERABILITY: Resource Exhaustion via Permission Check Ordering
      *
      * ATTACK SCENARIO:
@@ -158,11 +158,11 @@ long sys_pread64(unsigned int fd, void *buf, size_t count, int64_t offset) {
      * - Expensive operations happen before permission check
      * - Fail-slow instead of fail-fast design
      *
-     * DEFENSE (Phase 5):
+     * DEFENSE:
      * Test write permission on first byte of buffer BEFORE any allocation or I/O
      * - Minimal overhead: single byte test
      * - Fail-fast: reject invalid buffer immediately
-     * - Precedent: sys_read Phase 5 lines 191-196, sys_getdents64 Phase 5 lines 245-250
+     * - Precedent: sys_read lines 191-196, sys_getdents64 lines 245-250
      *
      * CVE REFERENCES:
      * - CVE-2016-9588: Permission check after allocation in kernel I/O path
@@ -175,7 +175,7 @@ long sys_pread64(unsigned int fd, void *buf, size_t count, int64_t offset) {
     char test_byte = 0;
     if (fut_copy_to_user(buf, &test_byte, 1) != 0) {
         fut_printf("[PREAD64] pread64(fd=%u, buf=%p, count=%zu, offset=%ld) -> EFAULT "
-                   "(buffer not writable, Phase 5: fail-fast permission check)\n",
+                   "(buffer not writable, fail-fast permission check)\n",
                    fd, buf, count, offset);
         return -EFAULT;
     }
@@ -188,11 +188,11 @@ long sys_pread64(unsigned int fd, void *buf, size_t count, int64_t offset) {
         return -ESRCH;
     }
 
-    /* Phase 5: Validate FD upper bound to prevent OOB array access
+    /* Validate FD upper bound to prevent OOB array access
      * Without this check, fd >= max_fds would access beyond fd_table bounds */
     if (fd >= (unsigned int)task->max_fds) {
         fut_printf("[PREAD64] pread64(fd=%u, max_fds=%d) -> EBADF "
-                   "(fd exceeds max_fds, Phase 5: FD bounds validation)\n",
+                   "(fd exceeds max_fds, FD bounds validation)\n",
                    fd, task->max_fds);
         return -EBADF;
     }

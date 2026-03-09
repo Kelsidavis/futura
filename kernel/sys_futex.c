@@ -161,7 +161,7 @@ long sys_futex(uint32_t *uaddr, int op, uint32_t val,
     fut_printf("[FUTEX] futex(uaddr=%p, op=%d, val=%u, timeout=%p, uaddr2=%p, val3=%u)\n",
                uaddr, op, val, timeout, uaddr2, val3);
 
-    /* Phase 5: Document pointer validation requirement for Phase 2 implementation
+    /* Document pointer validation requirement for Phase 2 implementation
      * VULNERABILITY: Time-of-Check-Time-of-Use (TOCTOU) and Invalid Pointer Access
      *
      * ATTACK SCENARIO 1: TOCTOU Race in FUTEX_WAIT
@@ -204,7 +204,7 @@ long sys_futex(uint32_t *uaddr, int op, uint32_t val,
      * - No protection against concurrent page unmapping
      * - Assumes *uaddr remains valid throughout operation
      *
-     * DEFENSE (Phase 5 Requirements for Phase 2):
+     * DEFENSE (Requirements for Phase 2):
      * 1. Pointer Validation (BEFORE any dereference):
      *    - fut_access_ok(uaddr, sizeof(uint32_t), WRITE)
      *    - Verify uaddr is in valid userspace range
@@ -817,7 +817,7 @@ long sys_set_robust_list(struct robust_list_head *head, size_t len) {
         return -EINVAL;
     }
 
-    /* Phase 5: Document pointer validation requirement for Phase 2/3 implementation
+    /* Document pointer validation requirement for Phase 2/3 implementation
      * VULNERABILITY: Unbounded List Traversal and Invalid Pointer Access
      *
      * ATTACK SCENARIO 1: Circular Robust List Causing Infinite Loop
@@ -859,7 +859,7 @@ long sys_set_robust_list(struct robust_list_head *head, size_t len) {
      * - No cycle detection in list walk
      * - Assumes userspace provides valid, acyclic list
      *
-     * DEFENSE (Phase 5 Requirements for Phase 2/3):
+     * DEFENSE (Requirements for Phase 2/3):
      * 1. Pointer Validation (Phase 2):
      *    - fut_access_ok(head, sizeof(*head), READ)
      *    - Verify head is in valid userspace range

@@ -57,7 +57,7 @@ bool fut_io_budget_check_bytes(fut_task_t *task, uint64_t bytes, uint64_t curren
     }
 
     /* Check if adding these bytes would exceed budget for current second.
-     * Phase 5: Use subtraction form to prevent uint64_t overflow when
+     * Use subtraction form to prevent uint64_t overflow when
      * io_bytes_current + bytes would wrap past UINT64_MAX. */
     if (bytes > task->io_bytes_per_sec - task->io_bytes_current) {
         fut_printf("[IO_BUDGET] PID %u: Byte budget exhausted in current second "
@@ -95,7 +95,7 @@ bool fut_io_budget_check_ops(fut_task_t *task, uint64_t ops, uint64_t current_ms
     }
 
     /* Check if adding these operations would exceed budget for current second.
-     * Phase 5: Use subtraction form to prevent uint64_t overflow. */
+     * Use subtraction form to prevent uint64_t overflow. */
     if (ops > task->io_ops_per_sec - task->io_ops_current) {
         fut_printf("[IO_BUDGET] PID %u: Operation budget exhausted in current second "
                    "(current=%llu, requested=%llu, limit=%llu)\n",
@@ -202,7 +202,7 @@ int fut_io_check_and_consume(fut_task_t *task, const char *syscall_name) {
     if (!fut_io_budget_check_ops(task, 1, now_ms)) {
         /* Rate limit exceeded */
         fut_printf("[IO-RATE-LIMIT] %s() rate limit exceeded for pid %llu: "
-                   "%llu ops >= %llu limit (Phase 5: DoS prevention)\n",
+                   "%llu ops >= %llu limit (DoS prevention)\n",
                    syscall_name, task->pid, task->io_ops_current, task->io_ops_per_sec);
         return -11;  /* -EAGAIN */
     }

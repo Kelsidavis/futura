@@ -57,13 +57,13 @@ long sys_times(struct tms *buf) {
         return -EFAULT;
     }
 
-    /* Phase 5: Validate buf write permission early (kernel writes process times)
+    /* Validate buf write permission early (kernel writes process times)
      * VULNERABILITY: Invalid Output Buffer Pointer
      * ATTACK: Attacker provides unmapped or read-only buffer
      * IMPACT: Kernel page fault when writing time statistics
      * DEFENSE: Check write permission before processing */
     if (fut_access_ok(buf, sizeof(struct tms), 1) != 0) {
-        fut_printf("[TIMES] times(buf=%p) -> EFAULT (buffer not writable for %zu bytes, Phase 5)\n",
+        fut_printf("[TIMES] times(buf=%p) -> EFAULT (buffer not writable for %zu bytes)\n",
                    buf, sizeof(struct tms));
         return -EFAULT;
     }

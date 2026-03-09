@@ -97,13 +97,13 @@ long sys_sigpending(sigset_t *set) {
         return -EINVAL;
     }
 
-    /* Phase 5: Validate set write permission early (kernel writes signal mask)
+    /* Validate set write permission early (kernel writes signal mask)
      * VULNERABILITY: Invalid Output Buffer Pointer
      * ATTACK: Attacker provides read-only or unmapped set buffer
      * IMPACT: Kernel page fault when writing pending signal set
      * DEFENSE: Check write permission before processing */
     if (fut_access_ok(set, sizeof(sigset_t), 1) != 0) {
-        fut_printf("[SIGPENDING] sigpending(set=%p) -> EFAULT (buffer not writable for %zu bytes, Phase 5)\n",
+        fut_printf("[SIGPENDING] sigpending(set=%p) -> EFAULT (buffer not writable for %zu bytes)\n",
                    set, sizeof(sigset_t));
         return -EFAULT;
     }

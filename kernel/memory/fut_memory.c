@@ -298,7 +298,7 @@ void *fut_realloc(void *ptr, size_t new_size) {
         return nullptr;
     }
 
-    /* Phase 5: Disable interrupts during realloc to prevent re-entrancy issues.
+    /* Disable interrupts during realloc to prevent re-entrancy issues.
      * fut_malloc and fut_free both disable interrupts, but fut_realloc was missing
      * this protection. slab_realloc internally calls slab_malloc/slab_free (the raw
      * functions that don't disable interrupts), so an IRQ arriving mid-realloc

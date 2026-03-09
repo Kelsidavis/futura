@@ -120,7 +120,7 @@ long sys_symlinkat(const char *target, int newdirfd, const char *linkpath) {
                    local_newdirfd);
         return -EFAULT;
     }
-    /* Phase 5: Verify target was not truncated */
+    /* Verify target was not truncated */
     if (memchr(target_buf, '\0', sizeof(target_buf)) == NULL) {
         fut_printf("[SYMLINKAT] symlinkat(target exceeds %zu bytes, newdirfd=%d) -> ENAMETOOLONG\n",
                    sizeof(target_buf) - 1, local_newdirfd);
@@ -134,7 +134,7 @@ long sys_symlinkat(const char *target, int newdirfd, const char *linkpath) {
                    local_newdirfd);
         return -EFAULT;
     }
-    /* Phase 5: Verify linkpath was not truncated */
+    /* Verify linkpath was not truncated */
     if (memchr(linkpath_buf, '\0', sizeof(linkpath_buf)) == NULL) {
         fut_printf("[SYMLINKAT] symlinkat(newdirfd=%d, linkpath exceeds %zu bytes) -> ENAMETOOLONG\n",
                    local_newdirfd, sizeof(linkpath_buf) - 1);
@@ -201,7 +201,7 @@ long sys_symlinkat(const char *target, int newdirfd, const char *linkpath) {
     }
     /* Newdirfd is a real FD - resolve via VFS */
     else {
-        /* Phase 5: Validate newdirfd bounds before accessing FD table */
+        /* Validate newdirfd bounds before accessing FD table */
         if (local_newdirfd < 0) {
             fut_printf("[SYMLINKAT] symlinkat(newdirfd=%d) -> EBADF (invalid negative newdirfd)\n",
                        local_newdirfd);
@@ -210,7 +210,7 @@ long sys_symlinkat(const char *target, int newdirfd, const char *linkpath) {
 
         if (local_newdirfd >= task->max_fds) {
             fut_printf("[SYMLINKAT] symlinkat(newdirfd=%d, max_fds=%d) -> EBADF "
-                       "(newdirfd exceeds max_fds, Phase 5: FD bounds validation)\n",
+                       "(newdirfd exceeds max_fds, FD bounds validation)\n",
                        local_newdirfd, task->max_fds);
             return -EBADF;
         }

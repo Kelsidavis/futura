@@ -7,6 +7,9 @@
  */
 
 #include <kernel/fut_timer.h>
+#include <kernel/fut_task.h>
+#include <kernel/fut_thread.h>
+#include <kernel/fut_stats.h>
 #include <kernel/errno.h>
 #include <shared/fut_timeval.h>
 #include <shared/fut_timespec.h>
@@ -15,8 +18,31 @@
 #include <kernel/kprintf.h>
 #include <kernel/uaccess.h>
 #include <time.h>
+#ifdef __x86_64__
+#include <platform/x86_64/memory/paging.h>
+#elif defined(__aarch64__)
+#include <platform/arm64/memory/paging.h>
+#endif
 
 /* CLOCK_* constants provided by time.h */
+
+/*
+ * Wall clock offset: seconds to add to uptime to get CLOCK_REALTIME.
+ * Initialized to 0 (January 1, 1970 at boot). Updated by sys_clock_settime
+ * and sys_settimeofday to provide real calendar time.
+ */
+volatile int64_t g_realtime_offset_sec = 0;
+
+/* Kernel-pointer-safe copy helpers */
+static inline int time_copy_to_user(void *dst, const void *src, size_t n) {
+#ifdef KERNEL_VIRTUAL_BASE
+    if ((uintptr_t)dst >= KERNEL_VIRTUAL_BASE) {
+        __builtin_memcpy(dst, src, n);
+        return 0;
+    }
+#endif
+    return fut_copy_to_user(dst, src, n);
+}
 
 long sys_time_millis(void) {
     return (long)fut_get_ticks();
@@ -62,20 +88,18 @@ long sys_time(uint64_t *tloc) {
         return -EFAULT;
     }
 
-    /* Get current time in milliseconds */
+    /* Get current time in milliseconds, add realtime offset */
     uint64_t ms = fut_get_ticks();
-
-    /* Convert to seconds */
-    uint64_t seconds = ms / 1000;
+    int64_t seconds = (int64_t)(ms / 1000) + g_realtime_offset_sec;
 
     /* If tloc is provided, store the result there */
     if (tloc != NULL) {
-        if (fut_copy_to_user(tloc, &seconds, sizeof(uint64_t)) != 0) {
+        if (time_copy_to_user(tloc, &seconds, sizeof(int64_t)) != 0) {
             return -EFAULT;
         }
     }
 
-    fut_printf("[TIME] time() -> %llu seconds\n", seconds);
+    fut_printf("[TIME] time() -> %lld seconds\n", (long long)seconds);
 
     return (long)seconds;
 }
@@ -104,13 +128,13 @@ long sys_gettimeofday(fut_timeval_t *tv, void *tz) {
     /* Get current time in milliseconds */
     uint64_t ms = fut_get_ticks();
 
-    /* Convert to timeval (seconds + microseconds) */
+    /* Convert to timeval (seconds + microseconds), add realtime offset */
     fut_timeval_t kernel_tv;
-    kernel_tv.tv_sec = ms / 1000;
-    kernel_tv.tv_usec = (ms % 1000) * 1000;
+    kernel_tv.tv_sec  = (int64_t)(ms / 1000) + g_realtime_offset_sec;
+    kernel_tv.tv_usec = (int64_t)((ms % 1000) * 1000);
 
-    /* Copy to userspace */
-    if (fut_copy_to_user(tv, &kernel_tv, sizeof(fut_timeval_t)) != 0) {
+    /* Copy to userspace (or kernel buffer for internal callers) */
+    if (time_copy_to_user(tv, &kernel_tv, sizeof(fut_timeval_t)) != 0) {
         return -EFAULT;
     }
 
@@ -209,14 +233,12 @@ long sys_clock_gettime(int clock_id, fut_timespec_t *tp) {
             clock_name = "CLOCK_PROCESS_CPUTIME_ID";
             clock_desc = "per-process CPU time clock";
             clock_characteristics = "measures CPU time consumed by process";
-            is_supported = 0;
             break;
 
         case CLOCK_THREAD_CPUTIME_ID:
             clock_name = "CLOCK_THREAD_CPUTIME_ID";
             clock_desc = "per-thread CPU time clock";
             clock_characteristics = "measures CPU time consumed by thread";
-            is_supported = 0;
             break;
 
         default:
@@ -233,26 +255,46 @@ long sys_clock_gettime(int clock_id, fut_timespec_t *tp) {
         return -EINVAL;
     }
 
-    /* Get current time in milliseconds from timer */
-    uint64_t ms = fut_get_ticks();
-
-    /* Convert to timespec (seconds + nanoseconds) */
     fut_timespec_t kernel_tp;
-    kernel_tp.tv_sec = ms / 1000;
-    kernel_tp.tv_nsec = (ms % 1000) * 1000000;  /* Convert ms to ns */
 
-    /* Copy to userspace */
-    if (fut_copy_to_user(tp, &kernel_tp, sizeof(fut_timespec_t)) != 0) {
+    if (clock_id == CLOCK_PROCESS_CPUTIME_ID) {
+        /* Sum cpu_ticks across all task threads; each tick = 1000000000/FUT_TIMER_HZ ns */
+        fut_task_t *task = fut_task_current();
+        uint64_t total_ticks = 0;
+        if (task) {
+            for (fut_thread_t *t = task->threads; t != nullptr; t = t->global_next)
+                total_ticks += t->stats.cpu_ticks;
+        }
+        uint64_t ns_total = total_ticks * (1000000000UL / FUT_TIMER_HZ);
+        kernel_tp.tv_sec  = (int64_t)(ns_total / 1000000000UL);
+        kernel_tp.tv_nsec = (int64_t)(ns_total % 1000000000UL);
+    } else if (clock_id == CLOCK_THREAD_CPUTIME_ID) {
+        fut_thread_t *thread = fut_thread_current();
+        uint64_t ticks = thread ? thread->stats.cpu_ticks : 0;
+        uint64_t ns_total = ticks * (1000000000UL / FUT_TIMER_HZ);
+        kernel_tp.tv_sec  = (int64_t)(ns_total / 1000000000UL);
+        kernel_tp.tv_nsec = (int64_t)(ns_total % 1000000000UL);
+    } else {
+        /* All wall / monotonic clocks: get time in milliseconds from timer */
+        uint64_t ms = fut_get_ticks();
+        kernel_tp.tv_sec  = (int64_t)(ms / 1000);
+        kernel_tp.tv_nsec = (int64_t)((ms % 1000) * 1000000);
+
+        /* CLOCK_REALTIME and CLOCK_REALTIME_COARSE add the wall clock offset */
+        if (clock_id == CLOCK_REALTIME || clock_id == CLOCK_REALTIME_COARSE) {
+            kernel_tp.tv_sec += g_realtime_offset_sec;
+        }
+    }
+
+    /* Copy to userspace (or kernel buffer for internal callers) */
+    if (time_copy_to_user(tp, &kernel_tp, sizeof(fut_timespec_t)) != 0) {
         fut_printf("[TIME] clock_gettime(clock_id=%s [%s], tp=%p) -> EFAULT (copy_to_user failed)\n",
                    clock_name, clock_desc, tp);
         return -EFAULT;
     }
 
-    /* Phase 2: Detailed logging with clock identification and characteristics */
-    fut_printf("[TIME] clock_gettime(clock_id=%s [%s], tp=%p) -> 0 "
-               "(%lld.%09lld s, %s, Phase 3: Enhanced clock identification with support for multiple clock types)\n",
-               clock_name, clock_desc, tp, kernel_tp.tv_sec, kernel_tp.tv_nsec,
-               clock_characteristics);
+    fut_printf("[TIME] clock_gettime(clock_id=%s, tp=%p) -> 0 (%lld.%09lld s)\n",
+               clock_name, tp, kernel_tp.tv_sec, kernel_tp.tv_nsec);
 
     return 0;
 }

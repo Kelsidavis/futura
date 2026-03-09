@@ -55,6 +55,9 @@ static inline int clock_copy_from_user(void *dst, const void *src, size_t n) {
 /* CLOCK_* constants provided by time.h */
 /* ITIMER_* constants provided by sys/time.h */
 
+/* Wall clock offset maintained by sys_time.c */
+extern volatile int64_t g_realtime_offset_sec;
+
 /* Interval timer structure — may already be provided by sys/time.h */
 #ifndef _STRUCT_ITIMERVAL
 #define _STRUCT_ITIMERVAL
@@ -160,13 +163,17 @@ long sys_clock_settime(int clock_id, const fut_timespec_t *tp) {
         return -EINVAL;
     }
 
-    /* Phase 1: Accept time but don't actually set it */
-    /* Phase 2: Store offset to adjust CLOCK_REALTIME */
-    /* Phase 3: Add CAP_SYS_TIME capability check */
+    /*
+     * Compute and store realtime offset: the difference between the requested
+     * wall-clock time and the current uptime. CLOCK_REALTIME = uptime + offset.
+     */
+    uint64_t now_ms = fut_get_ticks();
+    int64_t now_sec = (int64_t)(now_ms / 1000);
+    g_realtime_offset_sec = time.tv_sec - now_sec;
 
     fut_printf("[CLOCK_SETTIME] clock_settime(clock_id=%s, sec=%lld, nsec=%lld) -> 0 "
-               "(accepted, Phase 1 stub)\n",
-               clock_name, time.tv_sec, time.tv_nsec);
+               "(offset=%lld s)\n",
+               clock_name, time.tv_sec, time.tv_nsec, (long long)g_realtime_offset_sec);
 
     return 0;
 }
@@ -618,12 +625,13 @@ long sys_settimeofday(const fut_timeval_t *tv, const void *tz) {
         return -EINVAL;
     }
 
-    /* Phase 1: Accept time but don't actually set it */
-    /* Phase 2: Store offset to adjust system time */
-    /* Phase 3: Add CAP_SYS_TIME capability check */
+    /* Store wall clock offset (seconds precision) */
+    uint64_t now_ms = fut_get_ticks();
+    int64_t now_sec = (int64_t)(now_ms / 1000);
+    g_realtime_offset_sec = (int64_t)time.tv_sec - now_sec;
 
-    fut_printf("[SETTIMEOFDAY] settimeofday(sec=%lld, usec=%lld) -> 0 (accepted, Phase 1 stub)\n",
-               time.tv_sec, time.tv_usec);
+    fut_printf("[SETTIMEOFDAY] settimeofday(sec=%lld, usec=%lld) -> 0 (offset=%lld s)\n",
+               time.tv_sec, time.tv_usec, (long long)g_realtime_offset_sec);
 
     return 0;
 }

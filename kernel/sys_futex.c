@@ -997,12 +997,17 @@ long sys_set_robust_list(struct robust_list_head *head, size_t len) {
     /* Phase 2: Store head pointer in task->robust_list after validation */
     /* Phase 3: Walk list on thread exit via exit_robust_list() */
 
-    /* Phase 2: Validate robust_list head pointer before accessing */
+    /* Phase 2: Validate robust_list head pointer before storing */
     if (head && fut_access_ok(head, sizeof(struct robust_list_head), 0) != 0) {
         return -EFAULT;
     }
 
-    fut_printf("[SET_ROBUST_LIST] Stub implementation - returning success\n");
+    /* Phase 2: Store head pointer in per-thread robust_list field */
+    fut_thread_t *thread = fut_thread_current();
+    if (thread) {
+        thread->robust_list = (void *)head;
+    }
+
     return 0;
 }
 
@@ -1047,22 +1052,35 @@ long sys_get_robust_list(int pid, struct robust_list_head **head_ptr,
         return -EFAULT;
     }
 
-    /* Phase 1: Stub - return null pointer */
-    /* Phase 2: Retrieve robust list head from task structure */
-    /* Phase 3: Add permission checks for querying other tasks */
+    /* Phase 2: Retrieve robust list head from thread structure.
+     * pid==0 means current thread; querying other pids requires PTRACE_MODE_READ. */
+    fut_thread_t *thread;
+    if (pid == 0) {
+        thread = fut_thread_current();
+    } else {
+        /* Look up the task by PID and get its primary thread */
+        fut_task_t *target_task = fut_task_by_pid((uint64_t)pid);
+        if (!target_task) {
+            return -ESRCH;
+        }
+        /* Permission check: only root or same-UID may query another task */
+        if (task->uid != 0 && task->uid != target_task->uid) {
+            return -EPERM;
+        }
+        thread = target_task->threads;
+    }
 
-    struct robust_list_head *null_head = NULL;
-    size_t zero_len = 0;
+    struct robust_list_head *stored_head = thread ? (struct robust_list_head *)thread->robust_list : NULL;
+    size_t list_len = sizeof(struct robust_list_head);
 
-    if (fut_copy_to_user(head_ptr, &null_head, sizeof(struct robust_list_head *)) != 0) {
+    if (fut_copy_to_user(head_ptr, &stored_head, sizeof(struct robust_list_head *)) != 0) {
         fut_printf("[GET_ROBUST_LIST] EFAULT: failed to write head_ptr to userspace\n");
         return -EFAULT;
     }
-    if (fut_copy_to_user(len_ptr, &zero_len, sizeof(size_t)) != 0) {
+    if (fut_copy_to_user(len_ptr, &list_len, sizeof(size_t)) != 0) {
         fut_printf("[GET_ROBUST_LIST] EFAULT: failed to write len_ptr to userspace\n");
         return -EFAULT;
     }
 
-    fut_printf("[GET_ROBUST_LIST] Stub implementation - returning null\n");
     return 0;
 }

@@ -95,6 +95,7 @@ struct fut_thread {
 
     /* Futex support */
     void *futex_addr;                     // Address of futex we're waiting on (NULL if not waiting)
+    void *robust_list;                    // Userspace robust futex list head (set_robust_list)
 };
 
 /* ============================================================

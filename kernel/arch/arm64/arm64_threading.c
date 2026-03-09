@@ -135,9 +135,11 @@ void *arm64_static_malloc(size_t size) {
     }
 
     /* For small misc allocations, use static heap */
-    if (size <= sizeof(static_heap) - static_heap_used) {
+    size_t aligned = (size + 15) & ~(size_t)15;  /* 16-byte align */
+    if (static_heap_used <= sizeof(static_heap) &&
+        aligned <= sizeof(static_heap) - static_heap_used) {
         void *ptr = &static_heap[static_heap_used];
-        static_heap_used += (size + 15) & ~15;  /* 16-byte align */
+        static_heap_used += aligned;
         return ptr;
     }
 

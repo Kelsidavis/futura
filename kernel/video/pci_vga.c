@@ -209,12 +209,15 @@ uint64_t pci_find_vga_framebuffer(void) {
 
             if (bar0 != 0 && bar0 != 0xFFFFFFFFu) {
                 uint64_t framebuffer_addr;
+                /* Determine which BAR index we're using */
+                uint8_t bar_idx = (bar0 == pci_read_config(0, slot, 0, PCI_BAR0_OFFSET)) ? 0 : 1;
 
-                /* Check if it's a 64-bit BAR (bit 2 set) */
-                if ((bar0 & 0x04) == 0x04) {
-                    /* 64-bit BAR: need to read BAR0 and BAR1 */
-                    uint32_t bar1 = pci_read_config(0, slot, 0, PCI_BAR1_OFFSET);
-                    framebuffer_addr = ((uint64_t)bar1 << 32) | (bar0 & ~0x0FuLL);
+                /* Check if it's a 64-bit BAR (type field bits [2:1] == 0x2) */
+                if ((bar0 & 0x06) == 0x04) {
+                    /* 64-bit BAR: upper 32 bits are in next BAR */
+                    uint8_t next_bar_offset = PCI_BAR0_OFFSET + (bar_idx + 1) * 4;
+                    uint32_t bar_hi = pci_read_config(0, slot, 0, next_bar_offset);
+                    framebuffer_addr = ((uint64_t)bar_hi << 32) | (bar0 & ~0x0FuLL);
                 } else {
                     /* 32-bit BAR */
                     framebuffer_addr = bar0 & ~0x0FuLL;

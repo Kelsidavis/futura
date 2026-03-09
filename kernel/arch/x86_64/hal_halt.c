@@ -29,7 +29,9 @@ void hal_cpu_panic_halt(const char *msg) {
     if (msg) {
         fut_printf("PANIC: %s\n", msg);
     }
-    /* Disable interrupts before halting */
+    /* Disable interrupts and halt in a loop (NMI can wake hlt) */
     __asm__ volatile("cli");
-    hal_cpu_halt();
+    for (;;) {
+        hal_cpu_halt();
+    }
 }

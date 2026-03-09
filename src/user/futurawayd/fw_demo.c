@@ -68,7 +68,7 @@ static void draw_checkerboard(uint32_t *pixels,
         uint32_t ty = y / tile;
         for (uint32_t x = 0; x < width; ++x) {
             uint32_t tx = x / tile;
-            uint32_t idx = y * width + x;
+            size_t idx = (size_t)y * width + x;
             pixels[idx] = ((tx + ty) & 1u) ? c0 : c1;
         }
     }

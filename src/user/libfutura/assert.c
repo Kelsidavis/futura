@@ -3,6 +3,7 @@
 #include <user/stdio.h>
 #include <user/sys.h>
 
+__attribute__((noreturn))
 void __assert_fail(const char *expr, const char *file,
                    unsigned int line, const char *func) {
     printf("[ASSERT] %s:%u %s: %s\n",

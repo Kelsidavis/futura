@@ -979,6 +979,9 @@ void seat_surface_destroyed(struct seat_state *seat, struct comp_surface *surfac
     if (seat->hover_btn_surface == surface) {
         seat_clear_button_hover(seat);
     }
+    if (seat->hover_min_btn_surface == surface) {
+        seat_clear_min_button_hover(seat);
+    }
     if (seat->pressed_surface == surface) {
         seat->pressed_surface = NULL;
         seat->pressed_role = HIT_NONE;

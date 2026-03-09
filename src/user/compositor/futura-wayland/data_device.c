@@ -418,17 +418,13 @@ static void manager_get_data_device(struct wl_client *client,
         return;
     }
 
-    struct seat_state *seat = wl_resource_get_user_data(seat_resource);
-    if (!seat) {
+    /* seat_resource user_data is a seat_client*, not seat_state* */
+    struct seat_client *seat_client = wl_resource_get_user_data(seat_resource);
+    if (!seat_client || !seat_client->seat) {
         wl_client_post_no_memory(client);
         return;
     }
-
-    struct seat_client *seat_client = seat_client_lookup(seat, client);
-    if (!seat_client) {
-        wl_client_post_no_memory(client);
-        return;
-    }
+    struct seat_state *seat = seat_client->seat;
 
     int version = wl_resource_get_version(resource);
     struct wl_resource *dev = wl_resource_create(client,

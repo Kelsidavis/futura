@@ -120,11 +120,19 @@ int strerror_r(int errnum, char *buf, size_t buflen) {
     const char *msg = lookup_error(errnum);
     if (msg) {
         copy_message(buf, buflen, msg);
-        return 0;
+        /* Return ERANGE if message was truncated */
+        for (size_t i = 0; i < buflen; i++) {
+            if (msg[i] == '\0') return 0;
+        }
+        return ERANGE;
     }
 
-    if (snprintf(buf, buflen, "Unknown error %d", errnum) < 0) {
+    int n = snprintf(buf, buflen, "Unknown error %d", errnum);
+    if (n < 0) {
         return EINVAL;
+    }
+    if ((size_t)n >= buflen) {
+        return ERANGE;
     }
 
     return 0;

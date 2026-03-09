@@ -251,26 +251,32 @@ static uint64_t g_resp_buffer_phys = 0;
 #ifdef __x86_64__
 /* MMIO access functions for virtio device registers (via BAR1) */
 static inline uint8_t virtio_read8(uint16_t offset) {
+    if (!g_mmio_base) return 0;
     return *(volatile uint8_t *)(g_mmio_base + offset);
 }
 
 static inline void virtio_write8(uint16_t offset, uint8_t value) {
+    if (!g_mmio_base) return;
     *(volatile uint8_t *)(g_mmio_base + offset) = value;
 }
 
 static inline uint16_t virtio_read16(uint16_t offset) {
+    if (!g_mmio_base) return 0;
     return *(volatile uint16_t *)(g_mmio_base + offset);
 }
 
 static inline void virtio_write16(uint16_t offset, uint16_t value) {
+    if (!g_mmio_base) return;
     *(volatile uint16_t *)(g_mmio_base + offset) = value;
 }
 
 static inline uint32_t virtio_read32(uint16_t offset) {
+    if (!g_mmio_base) return 0;
     return *(volatile uint32_t *)(g_mmio_base + offset);
 }
 
 static inline void virtio_write32(uint16_t offset, uint32_t value) {
+    if (!g_mmio_base) return;
     *(volatile uint32_t *)(g_mmio_base + offset) = value;
 }
 
@@ -1294,7 +1300,8 @@ int virtio_gpu_init_arm64_pci(uint8_t bus, uint8_t dev, uint8_t func, uint64_t *
     uint8_t cap_ptr = arm64_pci_read8(g_virtio_bus, g_virtio_slot, 0, 0x34);
     fut_printf("[VIRTIO-GPU] ARM64: Scanning capabilities from offset 0x%02x\n", cap_ptr);
 
-    while (cap_ptr != 0) {
+    int cap_limit = 32; /* prevent infinite loop on corrupted cap list */
+    while (cap_ptr != 0 && cap_limit-- > 0) {
         uint8_t cap_id = arm64_pci_read8(g_virtio_bus, g_virtio_slot, 0, cap_ptr);
         uint8_t cap_next = arm64_pci_read8(g_virtio_bus, g_virtio_slot, 0, cap_ptr + 1);
 

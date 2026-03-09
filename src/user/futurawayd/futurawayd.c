@@ -671,20 +671,24 @@ static void handle_message(struct futuraway_state *state,
                            const struct fut_fipc_msg *msg) {
     switch (msg->type) {
     case FW_OP_SURFACE_CREATE:
-        (void)handle_surface_create(state,
-                                    (const struct fw_surface_create_req *)msg->payload);
+        if (msg->length >= sizeof(struct fw_surface_create_req))
+            (void)handle_surface_create(state,
+                                        (const struct fw_surface_create_req *)msg->payload);
         break;
     case FW_OP_SURFACE_CREATE2:
-        (void)handle_surface_create2(state,
-                                     (const struct fw_surface_create2_req *)msg->payload);
+        if (msg->length >= sizeof(struct fw_surface_create2_req))
+            (void)handle_surface_create2(state,
+                                         (const struct fw_surface_create2_req *)msg->payload);
         break;
     case FW_OP_SURFACE_SET_Z:
-        (void)handle_surface_set_z(state,
-                                   (const struct fw_surface_set_z_req *)msg->payload);
+        if (msg->length >= sizeof(struct fw_surface_set_z_req))
+            (void)handle_surface_set_z(state,
+                                       (const struct fw_surface_set_z_req *)msg->payload);
         break;
     case FW_OP_SURFACE_DAMAGE:
-        (void)handle_surface_damage(state,
-                                    (const struct fw_surface_damage_req *)msg->payload);
+        if (msg->length >= sizeof(struct fw_surface_damage_req))
+            (void)handle_surface_damage(state,
+                                        (const struct fw_surface_damage_req *)msg->payload);
         break;
     case FW_OP_SURFACE_COMMIT:
         (void)handle_surface_commit(state, msg);

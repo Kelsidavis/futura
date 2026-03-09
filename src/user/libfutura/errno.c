@@ -2,7 +2,7 @@
 
 #include <user/errno.h>
 
-static int __fut_errno_storage;
+static __thread int __fut_errno_storage;
 
 int *__errno_location(void) {
     return &__fut_errno_storage;

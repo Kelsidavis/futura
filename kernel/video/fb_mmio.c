@@ -118,7 +118,9 @@ struct multiboot_tag_framebuffer {
 
 static const void *mb2_next_tag(const struct multiboot_tag *tag) {
     uintptr_t addr = (uintptr_t)tag;
-    addr += (tag->size + 7u) & ~7u;
+    uint32_t advance = (tag->size + 7u) & ~7u;
+    if (advance < 8) advance = 8; /* prevent infinite loop on zero-size tag */
+    addr += advance;
     return (const void *)addr;
 }
 

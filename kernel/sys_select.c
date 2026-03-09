@@ -8,9 +8,11 @@
 
 #include <kernel/fut_task.h>
 #include <kernel/errno.h>
+#include <kernel/fut_vfs.h>
 #include <shared/fut_timespec.h>
 #include <shared/fut_timeval.h>
 #include <poll.h>  /* For struct pollfd */
+#include <string.h>
 
 #include <kernel/kprintf.h>
 #include <kernel/uaccess.h>
@@ -22,6 +24,18 @@
 typedef struct {
     unsigned long fds_bits[FD_SETSIZE / NFDBITS];
 } fd_set;
+
+static inline int fd_isset(int fd, const fd_set *set) {
+    return (set->fds_bits[fd / NFDBITS] >> (fd % NFDBITS)) & 1;
+}
+
+static inline void fd_setbit(int fd, fd_set *set) {
+    set->fds_bits[fd / NFDBITS] |= (1UL << (fd % NFDBITS));
+}
+
+static inline void fd_clrbit(int fd, fd_set *set) {
+    set->fds_bits[fd / NFDBITS] &= ~(1UL << (fd % NFDBITS));
+}
 
 /**
  * select() - Synchronous I/O multiplexing
@@ -241,19 +255,85 @@ long sys_select(int nfds, fd_set *readfds, fd_set *writefds,
         return -EINVAL;
     }
 
-    /* Phase 1: Stub - return immediately indicating all FDs ready */
-    /* Phase 2: Implement actual FD monitoring with poll backend */
-    /* Phase 3: Implement timeout support */
-    /* Phase 4: Optimize with epoll backend */
-    /* Phase 2 (Completed): Added fut_access_ok() validation for readfds, writefds, exceptfds, timeout pointers */
-    /* Phase 2 (Completed): Added FD validation against task->max_fds and CPU work budget */
-    /* TODO Phase 3: Consider constant-time FD validation (timing side-channel mitigation) */
+    /*
+     * Phase 3: Actual FD readiness checking.
+     * For each FD in the sets, check if it's valid and report readiness.
+     * Current behavior matches sys_poll: all valid FDs report as ready.
+     * Phase 4 would add blocking with wait queues and timeout support.
+     */
 
-    /* Return -ENOSYS until properly implemented.
-     * Returning 0 immediately (without honoring the timeout) causes
-     * programs to busy-loop burning CPU. -ENOSYS lets callers handle the error. */
-    fut_printf("[SELECT] select not implemented - returning ENOSYS\n");
-    return -ENOSYS;
+    /* Copy fd_sets from userspace so we can modify them for output */
+    fd_set k_readfds, k_writefds, k_exceptfds;
+    fd_set r_readfds, r_writefds, r_exceptfds;
+
+    if (local_readfds) {
+        if (fut_copy_from_user(&k_readfds, local_readfds, sizeof(fd_set)) != 0) {
+            return -EFAULT;
+        }
+    }
+    if (local_writefds) {
+        if (fut_copy_from_user(&k_writefds, local_writefds, sizeof(fd_set)) != 0) {
+            return -EFAULT;
+        }
+    }
+    if (local_exceptfds) {
+        if (fut_copy_from_user(&k_exceptfds, local_exceptfds, sizeof(fd_set)) != 0) {
+            return -EFAULT;
+        }
+    }
+
+    /* Initialize result sets to zero */
+    memset(&r_readfds, 0, sizeof(fd_set));
+    memset(&r_writefds, 0, sizeof(fd_set));
+    memset(&r_exceptfds, 0, sizeof(fd_set));
+
+    int ready_count = 0;
+
+    for (int fd = 0; fd < local_nfds; fd++) {
+        int check_read  = local_readfds  && fd_isset(fd, &k_readfds);
+        int check_write = local_writefds && fd_isset(fd, &k_writefds);
+        int check_except = local_exceptfds && fd_isset(fd, &k_exceptfds);
+
+        if (!check_read && !check_write && !check_except)
+            continue;
+
+        /* Validate FD */
+        if (fd >= (int)task->max_fds || !task->fd_table || !task->fd_table[fd]) {
+            return -EBADF;
+        }
+
+        /* All valid FDs report as ready (consistent with sys_poll Phase 2) */
+        int counted = 0;
+        if (check_read) {
+            fd_setbit(fd, &r_readfds);
+            counted = 1;
+        }
+        if (check_write) {
+            fd_setbit(fd, &r_writefds);
+            counted = 1;
+        }
+        /* Exceptions: not reported for regular files (no OOB data) */
+
+        if (counted)
+            ready_count++;
+    }
+
+    /* Copy result sets back to userspace */
+    if (local_readfds) {
+        if (fut_copy_to_user(local_readfds, &r_readfds, sizeof(fd_set)) != 0)
+            return -EFAULT;
+    }
+    if (local_writefds) {
+        if (fut_copy_to_user(local_writefds, &r_writefds, sizeof(fd_set)) != 0)
+            return -EFAULT;
+    }
+    if (local_exceptfds) {
+        if (fut_copy_to_user(local_exceptfds, &r_exceptfds, sizeof(fd_set)) != 0)
+            return -EFAULT;
+    }
+
+    fut_printf("[SELECT] select(nfds=%d) -> %d ready\n", local_nfds, ready_count);
+    return ready_count;
 }
 
 /**
@@ -326,9 +406,76 @@ long sys_pselect6(int nfds, void *readfds, void *writefds, void *exceptfds,
         return -EINVAL;
     }
 
-    /* Return -ENOSYS until properly implemented */
-    fut_printf("[PSELECT6] pselect6 not implemented - returning ENOSYS\n");
-    return -ENOSYS;
+    /*
+     * Phase 3: Delegate to select logic.
+     * pselect6 differs from select only in timeout format (timespec vs timeval)
+     * and signal mask support. For now, ignore sigmask and implement FD checking.
+     */
+
+    /* Copy fd_sets from userspace */
+    fd_set k_readfds, k_writefds, k_exceptfds;
+    fd_set r_readfds, r_writefds, r_exceptfds;
+
+    if (local_readfds) {
+        if (fut_copy_from_user(&k_readfds, local_readfds, sizeof(fd_set)) != 0)
+            return -EFAULT;
+    }
+    if (local_writefds) {
+        if (fut_copy_from_user(&k_writefds, local_writefds, sizeof(fd_set)) != 0)
+            return -EFAULT;
+    }
+    if (local_exceptfds) {
+        if (fut_copy_from_user(&k_exceptfds, local_exceptfds, sizeof(fd_set)) != 0)
+            return -EFAULT;
+    }
+
+    memset(&r_readfds, 0, sizeof(fd_set));
+    memset(&r_writefds, 0, sizeof(fd_set));
+    memset(&r_exceptfds, 0, sizeof(fd_set));
+
+    int ready_count = 0;
+
+    for (int fd = 0; fd < local_nfds; fd++) {
+        int check_read  = local_readfds  && fd_isset(fd, &k_readfds);
+        int check_write = local_writefds && fd_isset(fd, &k_writefds);
+        int check_except = local_exceptfds && fd_isset(fd, &k_exceptfds);
+
+        if (!check_read && !check_write && !check_except)
+            continue;
+
+        if (fd >= (int)task->max_fds || !task->fd_table || !task->fd_table[fd]) {
+            return -EBADF;
+        }
+
+        int counted = 0;
+        if (check_read) {
+            fd_setbit(fd, &r_readfds);
+            counted = 1;
+        }
+        if (check_write) {
+            fd_setbit(fd, &r_writefds);
+            counted = 1;
+        }
+
+        if (counted)
+            ready_count++;
+    }
+
+    if (local_readfds) {
+        if (fut_copy_to_user(local_readfds, &r_readfds, sizeof(fd_set)) != 0)
+            return -EFAULT;
+    }
+    if (local_writefds) {
+        if (fut_copy_to_user(local_writefds, &r_writefds, sizeof(fd_set)) != 0)
+            return -EFAULT;
+    }
+    if (local_exceptfds) {
+        if (fut_copy_to_user(local_exceptfds, &r_exceptfds, sizeof(fd_set)) != 0)
+            return -EFAULT;
+    }
+
+    fut_printf("[PSELECT6] pselect6(nfds=%d) -> %d ready\n", local_nfds, ready_count);
+    return ready_count;
 }
 
 /* struct pollfd is provided by poll.h */

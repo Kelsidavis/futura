@@ -377,6 +377,31 @@ long sys_brk(uintptr_t new_break) {
         return -EINVAL;
     }
 
+    /* Security hardening: Validate new_break doesn't cause wraparound with brk_start
+     * Prevent heap allocation into kernel space via integer overflow */
+    if (local_new_break < brk_start) {
+        /* Valid case: shrinking below start gets clamped, not an overflow */
+    } else {
+        /* Expanding: validate heap_size = new_break - brk_start won't wrap */
+        uintptr_t heap_size = local_new_break - brk_start;
+
+        /* Validate brk_start + heap_size doesn't wrap around UINTPTR_MAX */
+        if (brk_start > UINTPTR_MAX - heap_size) {
+            brk_printf("[BRK] brk(new_break=0x%lx, brk_start=0x%lx) -> EINVAL "
+                       "(heap size calculation wraps around address space, ARM64)\n",
+                       local_new_break, brk_start);
+            return -EINVAL;
+        }
+
+        /* Validate brk_start + heap_size doesn't exceed user space boundary */
+        if (brk_start + heap_size > USER_SPACE_END) {
+            brk_printf("[BRK] brk(new_break=0x%lx, brk_start=0x%lx, heap_size=0x%lx) -> EINVAL "
+                       "(heap would extend beyond user space, ARM64)\n",
+                       local_new_break, brk_start, heap_size);
+            return -EINVAL;
+        }
+    }
+
     /* Categorize requested change */
     long change = (long)local_new_break - (long)current;
     const char *change_category;

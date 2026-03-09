@@ -256,12 +256,13 @@ static int pipe_release_read(void *inode, void *priv) {
     fut_spinlock_acquire(&pipe->lock);
     pipe->read_closed = true;
     pipe->refcount--;
+    uint32_t remaining = pipe->refcount;
     fut_spinlock_release(&pipe->lock);
 
     /* Wake any writers - they'll see read_closed and return EPIPE */
     fut_waitq_wake_all(&pipe->write_waitq);
 
-    if (pipe->refcount == 0) {
+    if (remaining == 0) {
         pipe_buffer_destroy(pipe);
     }
 
@@ -282,12 +283,13 @@ static int pipe_release_write(void *inode, void *priv) {
     fut_spinlock_acquire(&pipe->lock);
     pipe->write_closed = true;
     pipe->refcount--;
+    uint32_t remaining = pipe->refcount;
     fut_spinlock_release(&pipe->lock);
 
     /* Wake any readers - they'll see write_closed and return EOF */
     fut_waitq_wake_all(&pipe->read_waitq);
 
-    if (pipe->refcount == 0) {
+    if (remaining == 0) {
         pipe_buffer_destroy(pipe);
     }
 

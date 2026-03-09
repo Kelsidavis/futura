@@ -549,10 +549,14 @@ apple_rtkit_ctx_t *apple_rtkit_init(uint64_t mailbox_base) {
         return NULL;
     }
 
-    /* Allocate RTKit context */
-    apple_rtkit_ctx_t *ctx = (apple_rtkit_ctx_t *)fut_pmm_alloc_page();
+    /* Allocate RTKit context - struct exceeds FUT_PAGE_SIZE due to endpoints[256]
+     * array (~6KB total), so allocate enough contiguous pages */
+    _Static_assert(sizeof(apple_rtkit_ctx_t) > FUT_PAGE_SIZE,
+                   "apple_rtkit_ctx_t exceeds single page - verify allocation");
+    size_t num_pages = (sizeof(apple_rtkit_ctx_t) + FUT_PAGE_SIZE - 1) / FUT_PAGE_SIZE;
+    apple_rtkit_ctx_t *ctx = (apple_rtkit_ctx_t *)fut_pmm_alloc_pages(num_pages);
     if (!ctx) {
-        fut_printf("[RTKit] Error: Failed to allocate context\n");
+        fut_printf("[RTKit] Error: Failed to allocate context (%zu pages)\n", num_pages);
         return NULL;
     }
     memset(ctx, 0, sizeof(apple_rtkit_ctx_t));
@@ -576,8 +580,9 @@ void apple_rtkit_shutdown(apple_rtkit_ctx_t *ctx) {
     apple_rtkit_set_iop_power_state(ctx, APPLE_RTKIT_PWR_STATE_OFF);
     apple_rtkit_set_ap_power_state(ctx, APPLE_RTKIT_PWR_STATE_OFF);
 
-    /* Free context */
-    fut_pmm_free_page(ctx);
+    /* Free context - must match allocation size in apple_rtkit_init */
+    size_t num_pages = (sizeof(apple_rtkit_ctx_t) + FUT_PAGE_SIZE - 1) / FUT_PAGE_SIZE;
+    fut_pmm_free_pages(ctx, num_pages);
 
     fut_printf("[RTKit] Shutdown complete\n");
 }

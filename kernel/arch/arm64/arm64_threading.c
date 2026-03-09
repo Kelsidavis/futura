@@ -99,7 +99,9 @@ void *arm64_static_malloc(size_t size) {
     /* Check if this is a task allocation */
     if (size == sizeof(fut_task_t)) {
         if (next_static_task < MAX_STATIC_TASKS) {
-            return &static_tasks[next_static_task];
+            int idx = next_static_task;
+            next_static_task++;  /* Increment counter for task allocation */
+            return &static_tasks[idx];
         }
         fut_serial_puts("[ARM64_MALLOC] Out of static tasks\n");
         return NULL;
@@ -107,10 +109,11 @@ void *arm64_static_malloc(size_t size) {
 
     /* Check if this is a thread allocation (may include extra for alignment) */
     if (size >= sizeof(fut_thread_t) && size <= sizeof(fut_thread_t) + 32) {
-        if (next_static_task < MAX_STATIC_TASKS) {
-            void *thread = &static_threads[next_static_task];
-            next_static_task++;  /* Increment after thread alloc (task+thread pair) */
-            return thread;
+        /* Use (next_static_task - 1) since task was already allocated above and
+         * incremented the counter; thread pairs with the most recently allocated task. */
+        int idx = next_static_task - 1;
+        if (idx >= 0 && idx < MAX_STATIC_TASKS) {
+            return &static_threads[idx];
         }
         fut_serial_puts("[ARM64_MALLOC] Out of static threads\n");
         return NULL;

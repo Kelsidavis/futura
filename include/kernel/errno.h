@@ -42,6 +42,10 @@
 #define E2BIG       7
 #endif
 
+#ifndef ENOEXEC
+#define ENOEXEC     8
+#endif
+
 #ifndef EBADF
 #define EBADF       9
 #endif

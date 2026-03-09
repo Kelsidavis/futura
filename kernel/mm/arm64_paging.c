@@ -512,7 +512,11 @@ int fut_unmap_page(fut_vmem_context_t *ctx, uint64_t vaddr) {
         return -EINVAL;  /* No page table */
     }
 
-    /* Walk to page table entry */
+    /* Walk 3-level page table (T0SZ=25, 39-bit VA):
+     * L1 (PGD): bits [38:30] -> L2 table
+     * L2 (PMD): bits [29:21] -> L3 table
+     * L3 (PTE): bits [20:12] -> physical page (FINAL level)
+     */
     int pgd_idx = PGD_INDEX(vaddr);
     pte_t pgd_entry = pgd->entries[pgd_idx];
     if (!fut_pte_is_present(pgd_entry)) {
@@ -528,16 +532,12 @@ int fut_unmap_page(fut_vmem_context_t *ctx, uint64_t vaddr) {
 
     page_table_t *pte_table = (page_table_t *)pmap_phys_to_virt(fut_pte_to_phys(pmd_entry));
     int pte_idx = PTE_INDEX(vaddr);
-    pte_t pte_entry = pte_table->entries[pte_idx];
-    if (!fut_pte_is_present(pte_entry)) {
+    if (!fut_pte_is_present(pte_table->entries[pte_idx])) {
         return -ENOENT;  /* Already unmapped - PTE not present */
     }
 
-    page_table_t *page_table = (page_table_t *)pmap_phys_to_virt(fut_pte_to_phys(pte_entry));
-    int page_idx = PAGE_INDEX(vaddr);
-
-    /* Clear the entry */
-    page_table->entries[page_idx] = 0;
+    /* L3 is the final level - clear the page descriptor here */
+    pte_table->entries[pte_idx] = 0;
 
     /* Invalidate TLB */
     fut_flush_tlb_single(vaddr);
@@ -584,7 +584,11 @@ int fut_virt_to_phys(fut_vmem_context_t *ctx, uint64_t vaddr, uint64_t *paddr) {
         return -EINVAL;  /* No page table */
     }
 
-    /* Walk page tables */
+    /* Walk 3-level page table (T0SZ=25, 39-bit VA):
+     * L1 (PGD): bits [38:30] -> L2 table
+     * L2 (PMD): bits [29:21] -> L3 table
+     * L3 (PTE): bits [20:12] -> physical page (FINAL level)
+     */
     int pgd_idx = PGD_INDEX(vaddr);
     pte_t pgd_entry = pgd->entries[pgd_idx];
     if (!fut_pte_is_present(pgd_entry)) {
@@ -605,15 +609,8 @@ int fut_virt_to_phys(fut_vmem_context_t *ctx, uint64_t vaddr, uint64_t *paddr) {
         return -EFAULT;  /* PTE entry not present */
     }
 
-    page_table_t *page_table = (page_table_t *)pmap_phys_to_virt(fut_pte_to_phys(pte_entry));
-    int page_idx = PAGE_INDEX(vaddr);
-    pte_t page_entry = page_table->entries[page_idx];
-    if (!fut_pte_is_present(page_entry)) {
-        return -EFAULT;  /* Page entry not present */
-    }
-
-    /* Extract physical address */
-    uint64_t phys = fut_pte_to_phys(page_entry);
+    /* L3 is the final level - extract physical address from PTE */
+    uint64_t phys = fut_pte_to_phys(pte_entry);
     uint64_t offset = PAGE_OFFSET(vaddr);
     *paddr = phys + offset;
 
@@ -622,25 +619,67 @@ int fut_virt_to_phys(fut_vmem_context_t *ctx, uint64_t vaddr, uint64_t *paddr) {
 
 /**
  * Update page flags without changing physical mapping.
+ * Performs an in-place PTE modification to avoid a window where the page
+ * is unmapped (which could cause faults on concurrent accesses).
  * @param ctx Virtual memory context (NULL for kernel)
  * @param vaddr Virtual address
  * @param flags New page flags
  * @return 0 on success, negative on error
  */
 int fut_update_page_flags(fut_vmem_context_t *ctx, uint64_t vaddr, uint64_t flags) {
-    uint64_t paddr;
-    int ret = fut_virt_to_phys(ctx, vaddr, &paddr);
-    if (ret < 0) {
-        return ret;
+    if (!IS_PAGE_ALIGNED(vaddr)) {
+        return -EINVAL;
     }
 
-    /* Unmap and remap with new flags */
-    ret = fut_unmap_page(ctx, vaddr);
-    if (ret < 0) {
-        return ret;
+    if (!ctx) {
+        ctx = &kernel_vmem_context;
     }
 
-    return fut_map_page(ctx, vaddr, PAGE_ALIGN_DOWN(paddr), flags);
+    page_table_t *pgd = ctx->pgd;
+    if (!pgd) {
+        return -EINVAL;
+    }
+
+    /* Walk 3-level page table to find the L3 PTE */
+    int pgd_idx = PGD_INDEX(vaddr);
+    pte_t pgd_entry = pgd->entries[pgd_idx];
+    if (!fut_pte_is_present(pgd_entry)) {
+        return -EFAULT;
+    }
+
+    page_table_t *pmd = (page_table_t *)pmap_phys_to_virt(fut_pte_to_phys(pgd_entry));
+    int pmd_idx = PMD_INDEX(vaddr);
+    pte_t pmd_entry = pmd->entries[pmd_idx];
+    if (!fut_pte_is_present(pmd_entry)) {
+        return -EFAULT;
+    }
+
+    page_table_t *pte_table = (page_table_t *)pmap_phys_to_virt(fut_pte_to_phys(pmd_entry));
+    int pte_idx = PTE_INDEX(vaddr);
+    pte_t old_pte = pte_table->entries[pte_idx];
+    if (!fut_pte_is_present(old_pte)) {
+        return -EFAULT;
+    }
+
+    /* Translate generic flags to ARM64 flags */
+    uint64_t arm64_flags = arm64_translate_flags(flags);
+
+    /* Preserve physical address, apply new flags atomically.
+     * For L3 page descriptors, bits [1:0] must be 0b11 (PTE_TYPE_PAGE). */
+    uint64_t paddr = fut_pte_to_phys(old_pte);
+    pte_t new_pte = fut_make_pte(paddr, arm64_flags | PTE_TABLE);
+
+    /* Write the updated PTE in place */
+    pte_table->entries[pte_idx] = new_pte;
+
+    /* Clean to Point of Coherency so MMU walker sees the update */
+    __asm__ volatile("dc cvac, %0" :: "r"(&pte_table->entries[pte_idx]) : "memory");
+    __asm__ volatile("dsb ish" ::: "memory");
+
+    /* Invalidate TLB for this address to pick up new flags */
+    fut_flush_tlb_single(vaddr);
+
+    return 0;
 }
 
 /**
@@ -722,22 +761,40 @@ fut_vmem_context_t *fut_vmem_create(void) {
  * Walks the table hierarchy and frees intermediate tables,
  * but does not free individual memory pages (they're tracked separately).
  *
+ * IMPORTANT: At L1 (PGD, level 0), only process user-space entries.
+ * Kernel entries (copied from boot_l1_table during fut_vmem_create) point to
+ * shared kernel page tables that must NOT be freed. With 39-bit VA (T0SZ=25),
+ * the user-space DRAM region uses L1 indices 0-1 (0x00000000-0x7FFFFFFF).
+ * Entries at index 2+ (including 256 for PCIe ECAM) are shared kernel mappings.
+ *
  * @param table Page table to recursively free
- * @param level Current table level (0=PGD, 1=PMD, 2=PTE, 3=pages)
+ * @param level Current table level (0=L1/PGD, 1=L2/PMD, 2=L3/PTE)
  */
 static void free_page_tables_recursive(page_table_t *table, int level) {
     if (!table) {
         return;
     }
 
-    /* At level 3, entries point to actual pages (not tables), so just free the table */
+    /* At L3 (level 2), entries point to actual pages (not tables), so just free the table */
     if (level >= 2) {
         free_page_table(table);
         return;
     }
 
-    /* For levels 0-2, recursively free child tables */
-    for (int i = 0; i < 512; i++) {
+    /* Determine iteration range: at L1 (level 0), only free user-space entries
+     * to avoid freeing shared kernel page tables (peripherals at L1[0],
+     * DRAM at L1[1] may have user-allocated sub-tables, but L1[256+] are
+     * shared kernel mappings that must be preserved). */
+    int start = 0;
+    int end = 512;
+    if (level == 0) {
+        /* Only recurse into user-space L1 entries (indices 0-1 for 39-bit VA).
+         * Skip kernel entries (index 2+) which are shared from boot_l1_table. */
+        end = 2;
+    }
+
+    /* For levels 0-1, recursively free child tables */
+    for (int i = start; i < end; i++) {
         pte_t pte = table->entries[i];
 
         /* Check if entry is valid and points to a table (not a block descriptor) */
@@ -924,7 +981,7 @@ void fut_paging_init(void) {
 
 /**
  * Dump page table entries for a virtual address.
- * Walks the 4-level page table hierarchy and prints entries.
+ * Walks the 3-level page table hierarchy (T0SZ=25, 39-bit VA) and prints entries.
  */
 void fut_dump_page_tables(fut_vmem_context_t *ctx, uint64_t vaddr) {
 
@@ -935,7 +992,7 @@ void fut_dump_page_tables(fut_vmem_context_t *ctx, uint64_t vaddr) {
 
     fut_printf("[PT-DUMP] Walking page tables for vaddr=0x%llx\n", vaddr);
 
-    /* Level 0: PGD */
+    /* L1: PGD - bits [38:30] */
     int pgd_idx = PGD_INDEX(vaddr);
     pte_t pgd_entry = ctx->pgd->entries[pgd_idx];
     fut_printf("[PT-DUMP] PGD[%d] = 0x%llx %s\n", pgd_idx, pgd_entry,
@@ -945,7 +1002,7 @@ void fut_dump_page_tables(fut_vmem_context_t *ctx, uint64_t vaddr) {
         return;
     }
 
-    /* Level 1: PMD - convert PA to VA for kernel access */
+    /* L2: PMD - bits [29:21] */
     phys_addr_t pmd_phys = pgd_entry & PTE_PHYS_ADDR_MASK;
     page_table_t *pmd = (page_table_t *)pmap_phys_to_virt(pmd_phys);
     int pmd_idx = PMD_INDEX(vaddr);
@@ -957,7 +1014,7 @@ void fut_dump_page_tables(fut_vmem_context_t *ctx, uint64_t vaddr) {
         return;
     }
 
-    /* Level 2: PTE - convert PA to VA for kernel access */
+    /* L3: PTE - bits [20:12] (FINAL level for 3-level walk) */
     phys_addr_t pte_phys = pmd_entry & PTE_PHYS_ADDR_MASK;
     page_table_t *pte_table = (page_table_t *)pmap_phys_to_virt(pte_phys);
     int pte_idx = PTE_INDEX(vaddr);
@@ -965,23 +1022,11 @@ void fut_dump_page_tables(fut_vmem_context_t *ctx, uint64_t vaddr) {
     fut_printf("[PT-DUMP]   PTE[%d] = 0x%llx %s\n", pte_idx, pte_entry,
                (pte_entry & PTE_VALID) ? "(valid)" : "(invalid)");
 
-    if (!(pte_entry & PTE_VALID)) {
-        return;
-    }
-
-    /* Level 3: Page - convert PA to VA for kernel access */
-    phys_addr_t page_phys = pte_entry & PTE_PHYS_ADDR_MASK;
-    page_table_t *page_table = (page_table_t *)pmap_phys_to_virt(page_phys);
-    int page_idx = PAGE_INDEX(vaddr);
-    pte_t page_entry = page_table->entries[page_idx];
-    fut_printf("[PT-DUMP]    Page[%d] = 0x%llx %s\n", page_idx, page_entry,
-               (page_entry & PTE_VALID) ? "(valid)" : "(invalid)");
-
-    if (page_entry & PTE_VALID) {
-        phys_addr_t final_phys = page_entry & PTE_PHYS_ADDR_MASK;
+    if (pte_entry & PTE_VALID) {
+        phys_addr_t final_phys = pte_entry & PTE_PHYS_ADDR_MASK;
         uint64_t page_offset = vaddr & 0xFFF;
         phys_addr_t final_addr = final_phys + page_offset;
-        fut_printf("[PT-DUMP]    Physical address: 0x%llx\n", final_addr);
+        fut_printf("[PT-DUMP]   Physical address: 0x%llx\n", final_addr);
     }
 }
 

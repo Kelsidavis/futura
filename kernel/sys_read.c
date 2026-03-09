@@ -238,7 +238,7 @@ ssize_t sys_read(int fd, void *buf, size_t count) {
         }
         (void)error_desc;  /* Unused when verbose logging disabled */
         /* fut_printf("[READ] read(fd=%d, count=%zu [%s]) -> %ld (%s)\n",
-                   fd, count, size_category, ret, error_desc); */
+                   local_fd, local_count, size_category, ret, error_desc); */
         fut_free(kbuf);
         return ret;
     }
@@ -246,7 +246,7 @@ ssize_t sys_read(int fd, void *buf, size_t count) {
     /* Phase 2: Handle EOF */
     if (ret == 0) {
         /* fut_printf("[READ] read(fd=%d, count=%zu [%s]) -> 0 (EOF)\n",
-                   fd, count, size_category); */
+                   local_fd, local_count, size_category); */
         fut_free(kbuf);
         return 0;
     }
@@ -263,8 +263,8 @@ ssize_t sys_read(int fd, void *buf, size_t count) {
 
     /* Phase 2: Categorize read completion status */
     const char *completion_status;
-    if ((size_t)ret < count) {
-        size_t percent = ((size_t)ret * 100) / count;
+    if ((size_t)ret < local_count) {
+        size_t percent = ((size_t)ret * 100) / local_count;
         if (percent < 25) {
             completion_status = "partial (< 25%)";
         } else if (percent < 50) {
@@ -282,12 +282,12 @@ ssize_t sys_read(int fd, void *buf, size_t count) {
     /* Phase 2: Detailed success logging */
     /* Temporarily disabled: fut_printf crashes with %zu on ARM64 */
     /*
-    if ((size_t)ret < count) {
+    if ((size_t)ret < local_count) {
         fut_printf("[READ] read(fd=%d, count=%zu [%s]) -> %ld (%s, short read: got %zu of %zu bytes, Phase 2)\n",
-                   fd, count, size_category, ret, completion_status, (size_t)ret, count);
+                   local_fd, local_count, size_category, ret, completion_status, (size_t)ret, local_count);
     } else {
         fut_printf("[READ] read(fd=%d, count=%zu [%s]) -> %ld (%s, Phase 2)\n",
-                   fd, count, size_category, ret, completion_status);
+                   local_fd, local_count, size_category, ret, completion_status);
     }
     */
 

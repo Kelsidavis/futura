@@ -203,6 +203,11 @@ static int map_segment(fut_mm_t *mm, int fd, const elf64_phdr_t *phdr) {
         return -EINVAL;
     }
 
+    /* p_filesz must not exceed p_memsz (file content cannot exceed segment size) */
+    if (phdr->p_filesz > phdr->p_memsz) {
+        return -EINVAL;
+    }
+
     uint64_t seg_start = phdr->p_vaddr & ~(PAGE_SIZE - 1ULL);
     uint64_t seg_offset = phdr->p_vaddr - seg_start;
     uint64_t seg_end = (phdr->p_vaddr + phdr->p_memsz + PAGE_SIZE - 1ULL) & ~(PAGE_SIZE - 1ULL);
@@ -1295,6 +1300,24 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
         return -EINVAL;
     }
 
+    /* Validate ELF type: must be ET_EXEC (2) or ET_DYN (3) */
+    if (ehdr.e_type != 2 && ehdr.e_type != 3) {
+        EXEC_DEBUG("[EXEC] FAIL: Bad ELF type %d (expected ET_EXEC=2 or ET_DYN=3)\n",
+                   ehdr.e_type);
+        fut_vfs_close(fd);
+        EXEC_CLEANUP_KARGS();
+        return -ENOEXEC;
+    }
+
+    /* Validate machine type: must be EM_X86_64 (0x3E) */
+    if (ehdr.e_machine != 0x3E) {
+        EXEC_DEBUG("[EXEC] FAIL: Bad ELF machine 0x%x (expected EM_X86_64=0x3E)\n",
+                   ehdr.e_machine);
+        fut_vfs_close(fd);
+        EXEC_CLEANUP_KARGS();
+        return -ENOEXEC;
+    }
+
     if (ehdr.e_phentsize != sizeof(elf64_phdr_t)) {
         EXEC_DEBUG("[EXEC] FAIL: Bad phentsize %d (expected %zu)\n",
                    ehdr.e_phentsize, sizeof(elf64_phdr_t));
@@ -1305,6 +1328,15 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
 
     if (ehdr.e_phnum == 0) {
         EXEC_DEBUG("[EXEC] FAIL: No program headers (phnum=0)\n");
+        fut_vfs_close(fd);
+        EXEC_CLEANUP_KARGS();
+        return -EINVAL;
+    }
+
+    /* Reject unreasonable e_phnum to prevent excessive allocation */
+    if (ehdr.e_phnum > 256) {
+        EXEC_DEBUG("[EXEC] FAIL: Too many program headers (phnum=%d, max=256)\n",
+                   ehdr.e_phnum);
         fut_vfs_close(fd);
         EXEC_CLEANUP_KARGS();
         return -EINVAL;
@@ -1705,6 +1737,11 @@ static int map_segment(fut_mm_t *mm, int fd, const elf64_phdr_t *phdr) {
 
     /* Overflow check: p_vaddr + p_memsz must not wrap around 64-bit address space */
     if (phdr->p_memsz > UINT64_MAX - phdr->p_vaddr) {
+        return -EINVAL;
+    }
+
+    /* p_filesz must not exceed p_memsz (file content cannot exceed segment size) */
+    if (phdr->p_filesz > phdr->p_memsz) {
         return -EINVAL;
     }
 
@@ -2109,6 +2146,11 @@ static int map_segment_from_memory(fut_mm_t *mm, const void *elf_data, const elf
         return -EINVAL;
     }
 
+    /* p_filesz must not exceed p_memsz (file content cannot exceed segment size) */
+    if (phdr->p_filesz > phdr->p_memsz) {
+        return -EINVAL;
+    }
+
     int prot = 0;
     if (phdr->p_flags & PF_R) prot |= PROT_READ;
     if (phdr->p_flags & PF_W) prot |= PROT_WRITE;
@@ -2234,8 +2276,15 @@ int fut_exec_elf_memory(const void *elf_data, size_t elf_size, char *const argv[
     if (*(uint32_t *)ehdr->e_ident != ELF_MAGIC ||
         ehdr->e_ident[4] != ELF_CLASS_64 ||
         ehdr->e_ident[5] != ELF_DATA_LE ||
-        ehdr->e_machine != 0xB7) {  /* EM_AARCH64 = 0xB7 */
+        ehdr->e_machine != 0xB7 ||  /* EM_AARCH64 = 0xB7 */
+        (ehdr->e_type != 2 && ehdr->e_type != 3)) {  /* ET_EXEC or ET_DYN */
         fut_serial_puts("[EXEC-MEM] ERROR: Invalid ELF or not ARM64\n");
+        return -EINVAL;
+    }
+
+    /* Reject unreasonable e_phnum to prevent excessive allocation */
+    if (ehdr->e_phnum > 256) {
+        fut_serial_puts("[EXEC-MEM] ERROR: Too many program headers\n");
         return -EINVAL;
     }
 
@@ -2384,7 +2433,8 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
     if (*(uint32_t *)ehdr.e_ident != ELF_MAGIC ||
         ehdr.e_ident[4] != ELF_CLASS_64 ||
         ehdr.e_ident[5] != ELF_DATA_LE ||
-        ehdr.e_machine != 0xB7) {  /* EM_AARCH64 = 0xB7 */
+        ehdr.e_machine != 0xB7 ||  /* EM_AARCH64 = 0xB7 */
+        (ehdr.e_type != 2 && ehdr.e_type != 3)) {  /* ET_EXEC or ET_DYN */
 #ifdef DEBUG_ELF
         ELF_LOG("[EXEC-ELF] ELF header invalid\n");
 #endif
@@ -2395,6 +2445,16 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
 #ifdef DEBUG_ELF
     ELF_LOG("[EXEC-ELF] ELF header valid, phnum=%d\n", ehdr.e_phnum);
 #endif
+
+    /* Reject unreasonable e_phnum to prevent excessive allocation */
+    if (ehdr.e_phnum > 256) {
+#ifdef DEBUG_ELF
+        ELF_LOG("[EXEC-ELF] Too many program headers (phnum=%d, max=256)\n", ehdr.e_phnum);
+#endif
+        fut_vfs_close(fd);
+        return -EINVAL;
+    }
+
     size_t ph_size = (size_t)ehdr.e_phnum * sizeof(elf64_phdr_t);
 #ifdef DEBUG_ELF
     ELF_LOG("[EXEC-ELF] About to allocate %llu bytes for program headers\n", (unsigned long long)ph_size);

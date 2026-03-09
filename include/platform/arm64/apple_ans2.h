@@ -203,7 +203,7 @@ typedef struct {
     char serial[20];
     char model[40];
     char firmware[8];
-    uint32_t max_lba;
+    uint64_t max_lba;
     uint32_t sector_size;
 } apple_ans2_ctrl_t;
 

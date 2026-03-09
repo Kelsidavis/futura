@@ -581,11 +581,16 @@ bool fut_apple_ans2_identify_namespace(apple_ans2_ctrl_t *ctrl, uint32_t nsid) {
                 uint8_t *lbaf = (uint8_t *)identify_buf + 128;  /* LBA format 0 */
                 uint8_t lbads = lbaf[0] & 0xFF;  /* LBA data size (power of 2) */
 
-                ctrl->max_lba = (uint32_t)nsze;
-                ctrl->sector_size = 1 << lbads;
+                ctrl->max_lba = nsze;
+                if (lbads < 9 || lbads > 16) {
+                    fut_printf("[ANS2] Error: Invalid LBA data size power %u\n", lbads);
+                    fut_pmm_free_page(identify_buf);
+                    return false;
+                }
+                ctrl->sector_size = 1u << lbads;
 
                 fut_printf("[ANS2] Namespace identified\n");
-                fut_printf("[ANS2]   Max LBA: %u\n", ctrl->max_lba);
+                fut_printf("[ANS2]   Max LBA: %llu\n", (unsigned long long)ctrl->max_lba);
                 fut_printf("[ANS2]   Sector size: %u bytes\n", ctrl->sector_size);
 
                 fut_pmm_free_page(identify_buf);
@@ -610,8 +615,8 @@ int fut_apple_ans2_read(apple_ans2_ctrl_t *ctrl, uint64_t lba, uint32_t count, v
     }
 
     /* Calculate total transfer size in bytes (count * sector_size) */
-    uint32_t total_bytes = count * ctrl->sector_size;
-    uint32_t num_pages = (total_bytes + FUT_PAGE_SIZE - 1) / FUT_PAGE_SIZE;
+    uint64_t total_bytes = (uint64_t)count * ctrl->sector_size;
+    uint32_t num_pages = (uint32_t)((total_bytes + FUT_PAGE_SIZE - 1) / FUT_PAGE_SIZE);
 
     /* For now, limit to 2 pages (8KB) to avoid PRP list complexity */
     if (num_pages > 2) {
@@ -667,8 +672,8 @@ int fut_apple_ans2_write(apple_ans2_ctrl_t *ctrl, uint64_t lba, uint32_t count, 
     }
 
     /* Calculate total transfer size in bytes (count * sector_size) */
-    uint32_t total_bytes = count * ctrl->sector_size;
-    uint32_t num_pages = (total_bytes + FUT_PAGE_SIZE - 1) / FUT_PAGE_SIZE;
+    uint64_t total_bytes = (uint64_t)count * ctrl->sector_size;
+    uint32_t num_pages = (uint32_t)((total_bytes + FUT_PAGE_SIZE - 1) / FUT_PAGE_SIZE);
 
     /* For now, limit to 2 pages (8KB) to avoid PRP list complexity */
     if (num_pages > 2) {

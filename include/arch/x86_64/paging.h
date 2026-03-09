@@ -420,10 +420,10 @@ static inline void fut_vmem_set_reload_value(fut_vmem_context_t *ctx, uint64_t v
  * Assumes the PML4 pointer is a virtual kernel address.
  */
 static inline uint64_t fut_vmem_root_to_phys(void *root) {
-    /* For x86_64, strip the high bits to get physical address */
+    /* Subtract HHDM base to recover physical address */
     uintptr_t virt = (uintptr_t)root;
     if (virt >= KERNEL_VIRTUAL_BASE) {
-        return (uint64_t)(virt & ~KERNEL_VIRTUAL_BASE);
+        return (uint64_t)(virt - KERNEL_VIRTUAL_BASE);
     }
     return (uint64_t)virt;
 }

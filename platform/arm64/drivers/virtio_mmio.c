@@ -197,6 +197,9 @@ static int virtio_mmio_init_queue(virtio_mmio_device_t *dev, uint32_t queue_idx,
     if (queue_size > max_size) {
         queue_size = max_size;
     }
+    if (queue_size == 0) {
+        return -1;  /* Queue size must be at least 1 */
+    }
 
     /* Allocate queue memory (descriptor, available, and used rings) */
     size_t desc_size = sizeof(struct virtq_desc) * queue_size;

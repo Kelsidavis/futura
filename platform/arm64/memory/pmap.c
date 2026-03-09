@@ -48,6 +48,8 @@ int pmap_unmap(uint64_t vaddr, size_t len) {
 }
 
 int pmap_protect(uint64_t vaddr, size_t len, uint64_t prot) {
+    if (len == 0) return 0;
+    if (vaddr + len < vaddr) return -EINVAL;  /* Overflow check */
     const uint64_t start = PAGE_ALIGN_DOWN(vaddr);
     const uint64_t end = PAGE_ALIGN_UP(vaddr + len);
 
@@ -66,6 +68,8 @@ int pmap_protect(uint64_t vaddr, size_t len, uint64_t prot) {
 }
 
 void pmap_dump(uint64_t vaddr, size_t len) {
+    if (len == 0) return;
+    if (vaddr + len < vaddr) return;  /* Overflow check */
     const uint64_t start = PAGE_ALIGN_DOWN(vaddr);
     const uint64_t end = PAGE_ALIGN_UP(vaddr + len);
 
@@ -86,14 +90,13 @@ void pmap_dump(uint64_t vaddr, size_t len) {
 }
 
 /* ============================================================
- *   ARM64 Page Table Walking (4-Level Hierarchy)
+ *   ARM64 Page Table Walking (3-Level, 39-bit VA)
  * ============================================================
  *
- * ARM64 page table hierarchy (for 48-bit VA, 4KB granule):
- * L0 (PGD): Indexed by bits 39-47
- * L1 (PMD): Indexed by bits 30-38
- * L2 (PTE): Indexed by bits 21-29 (block pages at this level)
- * L3 (PAGE): Indexed by bits 12-20 (leaf page entries)
+ * ARM64 page table hierarchy (T0SZ=25, 39-bit VA, 4KB granule):
+ * L1 (PGD): Indexed by bits [38:30]
+ * L2 (PMD): Indexed by bits [29:21] (2MB block pages at this level)
+ * L3 (PTE): Indexed by bits [20:12] (4KB leaf page entries)
  */
 
 int pmap_probe_pte(fut_vmem_context_t *ctx, uint64_t vaddr, uint64_t *pte_out) {
@@ -259,56 +262,49 @@ int pmap_set_page_ro(fut_vmem_context_t *ctx, uint64_t vaddr) {
         return -EINVAL;
     }
 
-    /* Compute indices */
+    /* Compute indices for 3-level walk (L1/L2/L3, 39-bit VA with 4KB granule) */
     uint64_t pgd_idx = PGD_INDEX(vaddr);
     uint64_t pmd_idx = PMD_INDEX(vaddr);
     uint64_t pte_idx = PTE_INDEX(vaddr);
-    uint64_t page_idx = PAGE_INDEX(vaddr);
 
-    /* Level 0: PGD walk */
+    /* L1 (PGD) walk */
     pte_t pgde = pgd->entries[pgd_idx];
     if (!fut_pte_is_present(pgde)) {
         return -EFAULT;
     }
 
-    /* Level 1: PMD walk */
+    /* L2 (PMD) walk */
     page_table_t *pmd = pmap_table_from_phys(fut_pte_to_phys(pgde));
     pte_t pmde = pmd->entries[pmd_idx];
     if (!fut_pte_is_present(pmde)) {
         return -EFAULT;
     }
 
-    /* Level 2: PTE walk */
+    /* Check if this is a block descriptor (2MB page at L2) */
+    if (fut_pte_is_block(pmde)) {
+        /* Block page (2MB) - clear AP bits to make read-only
+         * Change AP from RW to RO by setting AP[1] = 1 (and keeping AP[0] as-is) */
+        uint64_t ap = (pmde & PTE_AP_MASK) >> PTE_AP_SHIFT;
+        if (ap == 0 || ap == 1) {  /* Currently writable */
+            /* Set to read-only: change AP[1:0] from 0x to 2x */
+            pmd->entries[pmd_idx] = (pmde & ~PTE_AP_MASK) | (((ap | 2) & 3) << PTE_AP_SHIFT);
+        }
+        fut_flush_tlb_single(vaddr);
+        return 0;
+    }
+
+    /* L3 (PTE) walk - final level, leaf page descriptor */
     page_table_t *pte = pmap_table_from_phys(fut_pte_to_phys(pmde));
     pte_t pte_entry = pte->entries[pte_idx];
     if (!fut_pte_is_present(pte_entry)) {
         return -EFAULT;
     }
 
-    /* Check if this is a block descriptor (2MB page at L2) */
-    if (fut_pte_is_block(pte_entry)) {
-        /* Block page (2MB) - clear AP bits to make read-only
-         * Change AP from RW to RO by setting AP[1] = 1 (and keeping AP[0] as-is) */
-        uint64_t ap = (pte_entry & PTE_AP_MASK) >> PTE_AP_SHIFT;
-        if (ap == 0 || ap == 1) {  /* Currently writable */
-            /* Set to read-only: change AP[1:0] from 0x to 2x */
-            pte->entries[pte_idx] = (pte_entry & ~PTE_AP_MASK) | (((ap | 2) & 3) << PTE_AP_SHIFT);
-        }
-        return 0;
-    }
-
-    /* Level 3: PAGE walk (final level) */
-    page_table_t *page_tbl = pmap_table_from_phys(fut_pte_to_phys(pte_entry));
-    pte_t page_entry = page_tbl->entries[page_idx];
-    if (!fut_pte_is_present(page_entry)) {
-        return -EFAULT;
-    }
-
     /* Clear writable bit on 4KB page - change AP bits to read-only */
-    uint64_t ap = (page_entry & PTE_AP_MASK) >> PTE_AP_SHIFT;
+    uint64_t ap = (pte_entry & PTE_AP_MASK) >> PTE_AP_SHIFT;
     if (ap == 0 || ap == 1) {  /* Currently writable */
         /* Set to read-only: change AP[1:0] from 0x to 2x */
-        page_tbl->entries[page_idx] = (page_entry & ~PTE_AP_MASK) | (((ap | 2) & 3) << PTE_AP_SHIFT);
+        pte->entries[pte_idx] = (pte_entry & ~PTE_AP_MASK) | (((ap | 2) & 3) << PTE_AP_SHIFT);
     }
 
     /* Flush TLB entry for this page */

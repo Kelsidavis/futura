@@ -135,8 +135,8 @@ static void pci_config_write16(uint8_t bus, uint8_t device, uint8_t func, uint8_
 
 #define AHCI_PORT_SSTS_DET_MASK      0x0F
 #define AHCI_PORT_SSTS_DET_PRESENT   0x03
-#define AHCI_PORT_SSTS_IPM_MASK      0xF0
-#define AHCI_PORT_SSTS_IPM_ACTIVE    0x10
+#define AHCI_PORT_SSTS_IPM_MASK      0xF00
+#define AHCI_PORT_SSTS_IPM_ACTIVE    0x100
 
 #define AHCI_PORT_TFD_ERR            0x01
 #define AHCI_PORT_TFD_DRQ            0x08
@@ -274,11 +274,13 @@ static bool ahci_port_ready(volatile hba_port_t *port) {
 }
 
 static bool ahci_wait_port_idle(volatile hba_port_t *port) {
-    uint32_t tries = 100000;
-    while ((port->tfd & (AHCI_PORT_TFD_BSY | AHCI_PORT_TFD_DRQ)) != 0 && tries--) {
+    for (uint32_t tries = 0; tries < 100000; tries++) {
+        if ((port->tfd & (AHCI_PORT_TFD_BSY | AHCI_PORT_TFD_DRQ)) == 0) {
+            return true;
+        }
         fut_thread_yield();
     }
-    return tries != 0;
+    return false;
 }
 
 static void ahci_clear_interrupts(volatile hba_port_t *port) {
@@ -482,7 +484,7 @@ static int ahci_io_common(ahci_device_t *dev, bool write, uint64_t lba, size_t s
     if (!dev->port) {
         return -ENODEV;
     }
-    if (lba + sectors > dev->capacity_lba) {
+    if (sectors > dev->capacity_lba || lba > dev->capacity_lba - sectors) {
         return -EINVAL;
     }
 
@@ -551,10 +553,11 @@ static int ahci_backend_write(void *ctx, uint64_t lba, size_t nsectors, const vo
 
 static int ahci_backend_flush(void *ctx) {
     ahci_device_t *dev = (ahci_device_t *)ctx;
-    if (!dev->lba48) {
-        return ahci_issue_command(dev, 0xE7, 0, 0, NULL, 0, false);
-    }
-    return ahci_issue_command(dev, 0xEA, 0, 0, NULL, 0, false);
+    uint8_t command = dev->lba48 ? 0xEA : 0xE7;
+    fut_spinlock_acquire(&dev->lock);
+    int rc = ahci_issue_command(dev, command, 0, 0, NULL, 0, false);
+    fut_spinlock_release(&dev->lock);
+    return rc;
 }
 
 static const fut_blk_backend_t g_ahci_backend = {

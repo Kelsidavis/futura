@@ -27,7 +27,7 @@ bool ioapic_is_available(void) {
 /**
  * Read IO-APIC register.
  */
-static uint32_t ioapic_read(uint8_t reg) {
+static uint32_t ioapic_read(uint32_t reg) {
     if (!ioapic_base) return 0;
 
     /* Write register index to IOREGSEL */
@@ -40,7 +40,7 @@ static uint32_t ioapic_read(uint8_t reg) {
 /**
  * Write IO-APIC register.
  */
-static void ioapic_write(uint8_t reg, uint32_t value) {
+static void ioapic_write(uint32_t reg, uint32_t value) {
     if (!ioapic_base) return;
 
     /* Write register index to IOREGSEL */
@@ -127,7 +127,7 @@ uint32_t ioapic_get_version(uint32_t *max_entries) {
  * Read redirection table entry.
  */
 uint64_t ioapic_read_redir(uint8_t irq) {
-    uint8_t reg = IOAPIC_REG_REDTBL_BASE + (irq * 2);
+    uint32_t reg = IOAPIC_REG_REDTBL_BASE + ((uint32_t)irq * 2);
     uint32_t low = ioapic_read(reg);
     uint32_t high = ioapic_read(reg + 1);
     return ((uint64_t)high << 32) | low;
@@ -137,7 +137,7 @@ uint64_t ioapic_read_redir(uint8_t irq) {
  * Write redirection table entry.
  */
 void ioapic_write_redir(uint8_t irq, uint64_t value) {
-    uint8_t reg = IOAPIC_REG_REDTBL_BASE + (irq * 2);
+    uint32_t reg = IOAPIC_REG_REDTBL_BASE + ((uint32_t)irq * 2);
     ioapic_write(reg, (uint32_t)(value & 0xFFFFFFFF));
     ioapic_write(reg + 1, (uint32_t)(value >> 32));
 }
@@ -343,14 +343,16 @@ uint8_t ioapic_allocate_vector(void) {
         ioapic_vector_allocator_init();
     }
 
-    /* Search for the first available vector (bit = 0) */
+    /* Search for the first available vector (bit = 0).
+     * Vector 255 (0xFF) is reserved as the error sentinel. */
     for (int byte_idx = 4; byte_idx < 32; byte_idx++) {
         uint8_t byte_val = vector_bitmap[byte_idx];
 
         /* If byte is not 0xFF, there's at least one available vector */
         if (byte_val != 0xFF) {
             /* Find the first clear bit in this byte */
-            for (int bit = 0; bit < 8; bit++) {
+            int max_bit = (byte_idx == 31) ? 7 : 8;  /* Skip vector 255 */
+            for (int bit = 0; bit < max_bit; bit++) {
                 if ((byte_val & (1 << bit)) == 0) {
                     /* Found an available vector */
                     uint8_t vector = (byte_idx * 8) + bit;

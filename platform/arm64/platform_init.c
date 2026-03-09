@@ -577,7 +577,8 @@ static void print_num(uint64_t num, int base, int uppercase, int sign, int width
         buf[i++] = '-';
     }
 
-    /* Pad with spaces if needed */
+    /* Pad with spaces if needed (clamp to buffer size) */
+    if (width > (int)sizeof(buf)) width = (int)sizeof(buf);
     while (i < width) {
         buf[i++] = ' ';
     }
@@ -737,7 +738,7 @@ void fut_gic_init(void) {
     }
 
     /* Set all interrupts to lowest priority */
-    for (uint32_t i = 0; i < num_irqs; i++) {
+    for (uint32_t i = 0; i < num_irqs / 4; i++) {
         mmio_write32(&gicd[(GICD_IPRIORITYR + i * 4) / 4], 0xA0A0A0A0);
     }
 
@@ -853,7 +854,7 @@ void fut_disable_interrupts(void) {
 }
 
 uint64_t fut_save_and_disable_interrupts(void) {
-    uint64_t pstate = read_sysreg(CurrentEL);
+    uint64_t pstate = read_sysreg(daif);
     fut_disable_interrupts();
     return pstate;
 }

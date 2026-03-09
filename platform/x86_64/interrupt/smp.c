@@ -68,8 +68,18 @@ void ap_main(uint32_t apic_id) {
     extern void lapic_init(uint64_t lapic_base);
     lapic_init(0xFEE00000);  /* Standard LAPIC address */
 
+    /* Validate APIC ID is within bounds */
+    if (apic_id >= MAX_CPUS) {
+        fut_printf("[SMP] ERROR: APIC ID %u exceeds MAX_CPUS (%u), halting AP\n", apic_id, MAX_CPUS);
+        for (;;) __asm__ volatile("hlt");
+    }
+
     /* Get unique CPU index atomically */
     uint32_t cpu_index = atomic_fetch_add_explicit(&cpu_count, 1, memory_order_seq_cst);
+    if (cpu_index >= FUT_MAX_CPUS) {
+        fut_printf("[SMP] ERROR: CPU index %u exceeds FUT_MAX_CPUS, halting AP\n", cpu_index);
+        for (;;) __asm__ volatile("hlt");
+    }
 
     /* Initialize per-CPU data for this AP */
     fut_percpu_init(apic_id, cpu_index);
@@ -195,6 +205,10 @@ static bool smp_start_ap(uint32_t apic_id) {
     udelay(200);
 
     /* Wait for AP to come online (timeout after 100ms instead of 1s for faster boot) */
+    if (apic_id >= MAX_CPUS) {
+        fut_printf("[SMP] ERROR: APIC ID %u out of range\n", apic_id);
+        return false;
+    }
     for (int i = 0; i < 100; i++) {
         if (cpu_online[apic_id]) {
             fut_printf("[SMP] AP CPU %u is online\n", apic_id);

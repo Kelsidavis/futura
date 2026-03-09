@@ -308,7 +308,8 @@ static void print_num(uint64_t num, int base, int uppercase, int sign, int width
         buf[i++] = '-';
     }
 
-    /* Pad with spaces if needed */
+    /* Pad with spaces if needed (clamp to buffer size) */
+    if (width > (int)sizeof(buf)) width = (int)sizeof(buf);
     while (i < width) {
         buf[i++] = ' ';
     }

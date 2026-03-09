@@ -471,10 +471,14 @@ static int64_t sys_clock_gettime(uint64_t clockid, uint64_t ts_ptr,
     uint64_t cycles = fut_rdtsc();
     uint64_t ns = fut_cycles_to_ns(cycles);
 
-    /* Convert to seconds and nanoseconds */
-    struct timespec *ts = (struct timespec *)ts_ptr;
-    ts->tv_sec = ns / 1000000000ULL;
-    ts->tv_nsec = ns % 1000000000ULL;
+    /* Build result on kernel stack, then copy to userspace safely */
+    struct timespec kts;
+    kts.tv_sec = ns / 1000000000ULL;
+    kts.tv_nsec = ns % 1000000000ULL;
+
+    if (fut_copy_to_user((void *)ts_ptr, &kts, sizeof(kts)) != 0) {
+        return -EFAULT;
+    }
 
     (void)clockid;  /* Ignore clockid for now */
     return 0;
@@ -506,11 +510,12 @@ static int64_t sys_uname(uint64_t buf_ptr, uint64_t arg1, uint64_t arg2,
         return -EINVAL;
     }
 
-    struct utsname *buf = (struct utsname *)buf_ptr;
+    /* Build utsname on kernel stack, then copy to userspace safely */
+    struct utsname kbuf;
 
     /* Clear the structure */
     for (int i = 0; i < (int)sizeof(struct utsname); i++) {
-        ((char *)buf)[i] = 0;
+        ((char *)&kbuf)[i] = 0;
     }
 
     /* Fill in system information */
@@ -523,12 +528,16 @@ static int64_t sys_uname(uint64_t buf_ptr, uint64_t arg1, uint64_t arg2,
 
     /* Copy strings with bounds checking */
     int i;
-    for (i = 0; sysname[i] && i < 64; i++) buf->sysname[i] = sysname[i];
-    for (i = 0; nodename[i] && i < 64; i++) buf->nodename[i] = nodename[i];
-    for (i = 0; release[i] && i < 64; i++) buf->release[i] = release[i];
-    for (i = 0; version[i] && i < 64; i++) buf->version[i] = version[i];
-    for (i = 0; machine[i] && i < 64; i++) buf->machine[i] = machine[i];
-    for (i = 0; domainname[i] && i < 64; i++) buf->domainname[i] = domainname[i];
+    for (i = 0; sysname[i] && i < 64; i++) kbuf.sysname[i] = sysname[i];
+    for (i = 0; nodename[i] && i < 64; i++) kbuf.nodename[i] = nodename[i];
+    for (i = 0; release[i] && i < 64; i++) kbuf.release[i] = release[i];
+    for (i = 0; version[i] && i < 64; i++) kbuf.version[i] = version[i];
+    for (i = 0; machine[i] && i < 64; i++) kbuf.machine[i] = machine[i];
+    for (i = 0; domainname[i] && i < 64; i++) kbuf.domainname[i] = domainname[i];
+
+    if (fut_copy_to_user((void *)buf_ptr, &kbuf, sizeof(kbuf)) != 0) {
+        return -EFAULT;
+    }
 
     return 0;
 }

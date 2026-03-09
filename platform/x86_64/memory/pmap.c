@@ -48,6 +48,8 @@ int pmap_unmap(uint64_t vaddr, size_t len) {
 }
 
 int pmap_protect(uint64_t vaddr, size_t len, uint64_t prot) {
+    if (len == 0) return 0;
+    if (vaddr + len < vaddr) return -EINVAL;  /* Overflow check */
     const uint64_t start = PAGE_ALIGN_DOWN(vaddr);
     const uint64_t end = PAGE_ALIGN_UP(vaddr + len);
 
@@ -66,6 +68,8 @@ int pmap_protect(uint64_t vaddr, size_t len, uint64_t prot) {
 }
 
 void pmap_dump(uint64_t vaddr, size_t len) {
+    if (len == 0) return;
+    if (vaddr + len < vaddr) return;  /* Overflow check */
     const uint64_t start = PAGE_ALIGN_DOWN(vaddr);
     const uint64_t end = PAGE_ALIGN_UP(vaddr + len);
 
@@ -109,6 +113,12 @@ int pmap_probe_pte(fut_vmem_context_t *ctx, uint64_t vaddr, uint64_t *pte_out) {
     pte_t pdpte = pdpt->entries[pdpt_idx];
     if (!fut_pte_is_present(pdpte)) {
         return -EFAULT;
+    }
+
+    /* Check for 1GB huge page at PDPT level */
+    if (fut_pte_is_large(pdpte)) {
+        *pte_out = pdpte;
+        return 0;
     }
 
     page_table_t *pd = pmap_table_from_phys(fut_pte_to_phys(pdpte));
@@ -202,8 +212,24 @@ void pmap_free_tables(fut_vmem_context_t *ctx) {
         return;
     }
 
-    /* Start recursive freeing from PML4 (level 0) */
-    pmap_free_table_recursive((page_table_t *)pml4, 0);
+    /*
+     * Only free user-space page tables (PML4 entries 0-255).
+     * Entries 256-511 are kernel space, shared across all processes;
+     * freeing them would corrupt the kernel's page tables.
+     */
+    for (int i = 0; i < 256; i++) {
+        pte_t entry = pml4[i];
+        if (!fut_pte_is_present(entry)) {
+            continue;
+        }
+
+        phys_addr_t phys = fut_pte_to_phys(entry);
+        page_table_t *pdpt = pmap_table_from_phys(phys);
+        pmap_free_table_recursive(pdpt, 1);
+    }
+
+    /* Free the PML4 table itself */
+    fut_pmm_free_page((void *)pml4);
 
     /* Clear the context */
     fut_vmem_set_root(ctx, NULL);
@@ -240,6 +266,13 @@ int pmap_set_page_ro(fut_vmem_context_t *ctx, uint64_t vaddr) {
         return -EFAULT;
     }
 
+    /* Check for 1GB huge page at PDPT level */
+    if (fut_pte_is_large(pdpte)) {
+        pdpt->entries[pdpt_idx] &= ~PTE_WRITABLE;
+        __asm__ volatile("invlpg (%0)" :: "r"(vaddr) : "memory");
+        return 0;
+    }
+
     page_table_t *pd = pmap_table_from_phys(fut_pte_to_phys(pdpte));
     pte_t pde = pd->entries[pd_idx];
     if (!fut_pte_is_present(pde)) {
@@ -249,6 +282,7 @@ int pmap_set_page_ro(fut_vmem_context_t *ctx, uint64_t vaddr) {
     if (fut_pte_is_large(pde)) {
         /* Large page - clear writable bit */
         pd->entries[pd_idx] &= ~PTE_WRITABLE;
+        __asm__ volatile("invlpg (%0)" :: "r"(vaddr) : "memory");
         return 0;
     }
 

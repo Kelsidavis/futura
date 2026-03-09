@@ -465,6 +465,10 @@ int fut_map_huge_page(fut_vmem_context_t *ctx, uint64_t vaddr, uint64_t paddr, u
  */
 int fut_map_range(fut_vmem_context_t *ctx, uint64_t vaddr, uint64_t paddr,
                   uint64_t size, uint64_t flags) {
+    /* Validate inputs for overflow */
+    if (size == 0) return 0;
+    if (vaddr + size < vaddr) return -1;
+
     /* Align addresses and size to page boundaries */
     uint64_t start_vaddr = PAGE_ALIGN_DOWN(vaddr);
     uint64_t start_paddr = PAGE_ALIGN_DOWN(paddr);
@@ -608,6 +612,8 @@ int fut_unmap_page(fut_vmem_context_t *ctx, uint64_t vaddr) {
  * Unmap a range of pages.
  */
 int fut_unmap_range(fut_vmem_context_t *ctx, uint64_t vaddr, uint64_t size) {
+    if (size == 0) return 0;
+    if (vaddr + size < vaddr) return -1;
     uint64_t start = PAGE_ALIGN_DOWN(vaddr);
     uint64_t end = PAGE_ALIGN_UP(vaddr + size);
 
@@ -626,6 +632,7 @@ void *fut_kernel_map_physical(uint64_t paddr, uint64_t size, uint64_t flags) {
 
     uint64_t aligned_phys = PAGE_ALIGN_DOWN(paddr);
     uint64_t offset = paddr - aligned_phys;
+    if (size + offset < size) return NULL;  /* Overflow check */
     uint64_t map_len = PAGE_ALIGN_UP(size + offset);
 
     /* Use direct mapping - all physical memory maps to virt = phys + KERNEL_VIRTUAL_BASE */

@@ -129,10 +129,16 @@ int fut_apple_dcp_alloc_surface(apple_dcp_ctrl_t *dcp, uint32_t width, uint32_t 
         return -1;
     }
 
-    /* Calculate surface size */
+    /* Calculate surface size with overflow checks */
     uint32_t bpp = (format == APPLE_DCP_FMT_RGB565) ? 2 : 4;
-    uint32_t stride = width * bpp;
-    size_t size = (size_t)stride * height;
+    uint64_t stride64 = (uint64_t)width * bpp;
+    uint64_t size64 = stride64 * height;
+    if (stride64 > UINT32_MAX || size64 > (256ULL * 1024 * 1024)) {
+        fut_printf("[DCP] Surface dimensions too large (%ux%u)\n", width, height);
+        return -1;
+    }
+    uint32_t stride = (uint32_t)stride64;
+    size_t size = (size_t)size64;
 
     /* Align to page boundary */
     size_t num_pages = (size + 4095) / 4096;

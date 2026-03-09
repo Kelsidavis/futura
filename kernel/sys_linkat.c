@@ -205,15 +205,8 @@ long sys_linkat(int olddirfd, const char *oldpath, int newdirfd, const char *new
     }
 
     /* Calculate path lengths */
-    size_t old_path_len = 0;
-    while (oldpath_buf[old_path_len] != '\0' && old_path_len < 255) {
-        old_path_len++;
-    }
-
-    size_t new_path_len = 0;
-    while (newpath_buf[new_path_len] != '\0' && new_path_len < 255) {
-        new_path_len++;
-    }
+    size_t old_path_len = strlen(oldpath_buf);
+    size_t new_path_len = strlen(newpath_buf);
 
     /* Phase 2: Implement proper directory FD resolution via VFS */
 

@@ -268,10 +268,7 @@ long sys_fstatat(int dirfd, const char *pathname, void *statbuf, int flags) {
     }
 
     /* Calculate path length */
-    size_t path_len = 0;
-    while (path_buf[path_len] != '\0' && path_len < 255) {
-        path_len++;
-    }
+    size_t path_len = strlen(path_buf);
 
     /* Phase 2: Implement proper directory FD resolution via VFS */
 

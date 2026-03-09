@@ -160,10 +160,7 @@ long sys_readlinkat(int dirfd, const char *pathname, char *buf, size_t bufsiz) {
     }
 
     /* Calculate path length */
-    size_t path_len = 0;
-    while (path_buf[path_len] != '\0' && path_len < 255) {
-        path_len++;
-    }
+    size_t path_len = strlen(path_buf);
 
     /* Resolve the full path based on dirfd */
     char resolved_path[256];

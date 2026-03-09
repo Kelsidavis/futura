@@ -127,10 +127,7 @@ long sys_acct(const char *filename) {
     }
 
     /* Phase 2: Calculate path length */
-    size_t path_len = 0;
-    while (path_buf[path_len] != '\0' && path_len < 256) {
-        path_len++;
-    }
+    size_t path_len = strlen(path_buf);
 
     /* Phase 2: Categorize path length */
     const char *length_category;

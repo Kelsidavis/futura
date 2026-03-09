@@ -166,15 +166,8 @@ long sys_symlinkat(const char *target, int newdirfd, const char *linkpath) {
     }
 
     /* Calculate path lengths */
-    size_t target_len = 0;
-    while (target_buf[target_len] != '\0' && target_len < 255) {
-        target_len++;
-    }
-
-    size_t link_len = 0;
-    while (linkpath_buf[link_len] != '\0' && link_len < 255) {
-        link_len++;
-    }
+    size_t target_len = strlen(target_buf);
+    size_t link_len = strlen(linkpath_buf);
 
     /* Phase 2: Implement proper directory FD resolution via VFS */
 

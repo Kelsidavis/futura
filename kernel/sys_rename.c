@@ -212,14 +212,8 @@ long sys_rename(const char *oldpath, const char *newpath) {
     }
 
     /* Phase 2: Calculate path lengths */
-    size_t old_len = 0;
-    while (old_buf[old_len] != '\0' && old_len < 256) {
-        old_len++;
-    }
-    size_t new_len = 0;
-    while (new_buf[new_len] != '\0' && new_len < 256) {
-        new_len++;
-    }
+    size_t old_len = strlen(old_buf);
+    size_t new_len = strlen(new_buf);
 
     /* Phase 2: Determine operation type based on paths */
     const char *operation_type;

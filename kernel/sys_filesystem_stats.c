@@ -9,12 +9,33 @@
 
 #include <kernel/fut_task.h>
 #include <kernel/fut_vfs.h>
+#include <kernel/fut_memory.h>
 #include <kernel/errno.h>
 #include <stdint.h>
 #include <string.h>
 
 #include <kernel/kprintf.h>
 #include <kernel/uaccess.h>
+
+/* Build a statfs struct from physical memory stats (shared by statfs and fstatfs) */
+static void fill_statfs_from_pmm(struct fut_linux_statfs *s) {
+    uint64_t total_pages = fut_pmm_total_pages();
+    uint64_t free_pages  = fut_pmm_free_pages();
+    const uint64_t PAGE_SIZE = 4096;
+
+    s->f_type    = FUT_RAMFS_MAGIC;
+    s->f_bsize   = PAGE_SIZE;
+    s->f_blocks  = total_pages;
+    s->f_bfree   = free_pages;
+    s->f_bavail  = free_pages;       /* No reservation for root on ramfs */
+    s->f_files   = 65536;            /* Nominal inode pool */
+    s->f_ffree   = 32768;            /* Best-effort estimate */
+    s->f_fsid[0] = 0x46555452;       /* "FUTR" */
+    s->f_fsid[1] = 0x41464653;       /* "AFS " */
+    s->f_namelen = 255;
+    s->f_frsize  = PAGE_SIZE;
+    s->f_flags   = 0;
+}
 
 /* Filesystem type constants */
 #define FUT_TMPFS_MAGIC   0x01021994
@@ -96,36 +117,23 @@ long sys_statfs(const char *path, struct fut_linux_statfs *buf) {
     }
     path_preview[preview_len] = '\0';
 
-    /* Phase 1: Return stub filesystem statistics
-     * Phase 2: Resolve path to vnode, get mount point, call fs-specific statfs
-     * Phase 3: Support all filesystem types (tmpfs, ramfs, ext4)
-     */
-
-    /* Stub data: 1GB filesystem with 512MB free */
-    struct fut_linux_statfs stub_stats = {
-        .f_type = FUT_TMPFS_MAGIC,       /* tmpfs filesystem */
-        .f_bsize = 4096,                 /* 4KB blocks */
-        .f_blocks = 262144,              /* 1GB total (262144 * 4KB) */
-        .f_bfree = 131072,               /* 512MB free */
-        .f_bavail = 131072,              /* 512MB available to user */
-        .f_files = 65536,                /* 64K inodes total */
-        .f_ffree = 32768,                /* 32K inodes free */
-        .f_fsid = {0x12345678, 0x9ABCDEF0},
-        .f_namelen = 255,                /* Max filename length */
-        .f_frsize = 4096,                /* Fragment size */
-        .f_flags = 0,                    /* No special flags */
-    };
+    /* Phase 2: Return real physical memory stats as filesystem space.
+     * Futura uses ramfs backed by the physical page allocator. */
+    struct fut_linux_statfs real_stats = {0};
+    fill_statfs_from_pmm(&real_stats);
 
     /* Copy to userspace buffer */
-    if (fut_copy_to_user(buf, &stub_stats, sizeof(struct fut_linux_statfs)) != 0) {
+    if (fut_copy_to_user(buf, &real_stats, sizeof(struct fut_linux_statfs)) != 0) {
         fut_printf("[STATFS] statfs(path='%s%s', pid=%d) -> EFAULT (copy_to_user failed)\n",
                    path_preview, (path_len > 64) ? "..." : "", task->pid);
         return -EFAULT;
     }
 
     fut_printf("[STATFS] statfs(path='%s%s', len=%zu, pid=%d) -> 0 "
-               "(type=tmpfs, blocks=262144, free=131072, Phase 1 stub)\n",
-               path_preview, (path_len > 64) ? "..." : "", path_len, task->pid);
+               "(blocks=%llu, free=%llu, Phase 2)\n",
+               path_preview, (path_len > 64) ? "..." : "", path_len, task->pid,
+               (unsigned long long)real_stats.f_blocks,
+               (unsigned long long)real_stats.f_bfree);
 
     return 0;
 }
@@ -183,35 +191,24 @@ long sys_fstatfs(int fd, struct fut_linux_statfs *buf) {
         return -EBADF;
     }
 
-    /* Phase 1: Return stub filesystem statistics
-     * Phase 2: Get vnode from file, get mount point, call fs-specific statfs
+    /* Phase 2: Return real physical memory statistics
+     * Phase 3: Get vnode from file, get mount point, call fs-specific statfs
      */
-
-    /* Stub data: same as statfs */
-    struct fut_linux_statfs stub_stats = {
-        .f_type = FUT_TMPFS_MAGIC,
-        .f_bsize = 4096,
-        .f_blocks = 262144,
-        .f_bfree = 131072,
-        .f_bavail = 131072,
-        .f_files = 65536,
-        .f_ffree = 32768,
-        .f_fsid = {0x12345678, 0x9ABCDEF0},
-        .f_namelen = 255,
-        .f_frsize = 4096,
-        .f_flags = 0,
-    };
+    struct fut_linux_statfs stats;
+    fill_statfs_from_pmm(&stats);
 
     /* Copy to userspace buffer */
-    if (fut_copy_to_user(buf, &stub_stats, sizeof(struct fut_linux_statfs)) != 0) {
+    if (fut_copy_to_user(buf, &stats, sizeof(struct fut_linux_statfs)) != 0) {
         fut_printf("[FSTATFS] fstatfs(fd=%d, pid=%d) -> EFAULT (copy_to_user failed)\n",
                    fd, task->pid);
         return -EFAULT;
     }
 
     fut_printf("[FSTATFS] fstatfs(fd=%d, pid=%d) -> 0 "
-               "(type=tmpfs, blocks=262144, free=131072, Phase 1 stub)\n",
-               fd, task->pid);
+               "(type=ramfs, blocks=%llu, free=%llu)\n",
+               fd, task->pid,
+               (unsigned long long)stats.f_blocks,
+               (unsigned long long)stats.f_bfree);
 
     return 0;
 }

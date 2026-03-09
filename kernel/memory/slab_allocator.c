@@ -247,7 +247,14 @@ void *slab_malloc(size_t size) {
     slab_cache_t *cache = &slab_caches[idx];
 
     /* Try to find free object in existing slabs */
+    unsigned int slab_walk_count = 0;
     for (slab_t *slab = cache->slabs; slab; slab = slab->next) {
+        /* Detect corrupted circular slab list to prevent infinite loop */
+        if (++slab_walk_count > 4096) {
+            fut_printf("[SLAB-MALLOC] ERROR: slab list cycle detected (>4096 slabs for size %zu)\n",
+                       cache->obj_size);
+            return NULL;
+        }
         /* CRITICAL: Validate slab integrity before accessing it */
         if (!slab_is_valid(slab)) {
             fut_printf("[SLAB-MALLOC] WARNING: Skipping corrupted slab %p\n", (void*)slab);
@@ -375,7 +382,14 @@ void slab_free(void *ptr) {
         slab_cache_t *cache = &slab_caches[i];
 
         /* Safely iterate through slabs with bounds checking */
+        unsigned int free_walk_count = 0;
         for (slab_t *slab = cache->slabs; slab; slab = slab->next) {
+            /* Detect corrupted circular slab list */
+            if (++free_walk_count > 4096) {
+                fut_printf("[SLAB-FREE] ERROR: slab list cycle detected (>4096 slabs for size %zu)\n",
+                           SLAB_SIZES[i]);
+                goto check_buddy;
+            }
             /* CRITICAL: Validate slab pointer before dereferencing using actual heap bounds */
             if ((uintptr_t)slab < heap_base || (uintptr_t)slab >= heap_limit) {
                 fut_printf("[SLAB-FREE] WARNING: Corrupted slab pointer %p (outside heap [%p-%p]), skipping\n",

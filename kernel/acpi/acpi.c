@@ -397,7 +397,7 @@ void acpi_parse_madt(void) {
 }
 #endif  /* __x86_64__ */
 
-/* hal_outb, hal_inb, hal_outw, hal_inw provided by platform/platform.h */
+/* hal_outb, hal_inb, hal_outw, hal_inw provided by platform/platform.h (x86_64 only) */
 
 /**
  * Shutdown system via ACPI.
@@ -442,11 +442,11 @@ void acpi_shutdown(void) {
 void acpi_reboot(void) {
     fut_printf("[ACPI] Reboot via keyboard controller (port 0x64)\n");
 
-    /* Try keyboard controller reset (8042) */
+    /* Try keyboard controller reset (8042) - x86_64 only */
+#ifdef __x86_64__
     hal_outb(0x64, 0xFE);
 
-    /* If that didn't work, try architecture-specific methods */
-#ifdef __x86_64__
+    /* If that didn't work, try triple fault */
     fut_printf("[ACPI] Keyboard reset failed, attempting triple fault\n");
 
     /* Disable interrupts and load invalid IDT to cause triple fault */

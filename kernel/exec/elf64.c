@@ -29,6 +29,12 @@
 /* MSR for FS segment base (Thread Local Storage) */
 #define MSR_FS_BASE     0xC0000100
 
+/* FD_CLOEXEC - close-on-exec flag for file descriptors.
+ * Cannot include <fcntl.h> here because it conflicts with fut_vfs.h O_* defines. */
+#ifndef FD_CLOEXEC
+#define FD_CLOEXEC      1
+#endif
+
 #include <kernel/debug_config.h>
 
 /* ELF debugging - temporarily enabled for debugging */
@@ -1447,27 +1453,45 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
     /* NOW it's safe to attach mm to task - all user pages are mapped */
     fut_task_set_mm(task, mm);
 
-    /* Open stdin/stdout/stderr for the new task (x86_64 path).
-     * Temporarily make the new task current so fut_vfs_open attaches to it. */
+    /* Inherit non-CLOEXEC file descriptors from the calling task, then fill
+     * any missing stdio fds (0, 1, 2) with /dev/console.  POSIX requires
+     * execve to preserve open file descriptors (minus those with FD_CLOEXEC).
+     * The calling task's CLOEXEC fds were already closed by sys_execve. */
 #if defined(__x86_64__)
-    fut_thread_t *cur = fut_thread_current();
-    fut_task_t *saved_task = NULL;
-    if (cur) {
-        saved_task = cur->task;
-        cur->task = task;
-    }
+    {
+        fut_thread_t *cur = fut_thread_current();
+        fut_task_t *caller_task = cur ? cur->task : NULL;
 
-    int stdio_fd0 = fut_vfs_open("/dev/console", O_RDWR, 0);
-    int stdio_fd1 = fut_vfs_open("/dev/console", O_RDWR, 0);
-    int stdio_fd2 = fut_vfs_open("/dev/console", O_RDWR, 0);
+        /* Copy non-CLOEXEC fds from caller to new task */
+        if (caller_task && caller_task->fd_table && task->fd_table) {
+            int max = caller_task->max_fds;
+            if (max > (int)task->max_fds) max = (int)task->max_fds;
+            int inherited = 0;
+            for (int i = 0; i < max; i++) {
+                struct fut_file *f = caller_task->fd_table[i];
+                if (f && !(f->fd_flags & FD_CLOEXEC)) {
+                    vfs_file_ref(f);
+                    task->fd_table[i] = f;
+                    inherited++;
+                }
+            }
+        }
 
-    if (cur) {
-        cur->task = saved_task;
-    }
+        /* Open /dev/console only for stdio fds that are still unset */
+        fut_task_t *saved_task = cur ? cur->task : NULL;
+        if (cur) cur->task = task;
 
-    if (stdio_fd0 != 0 || stdio_fd1 != 1 || stdio_fd2 != 2) {
-        fut_printf("[EXEC-X86] WARNING: Failed to open stdio (got %d/%d/%d)\n",
-                   stdio_fd0, stdio_fd1, stdio_fd2);
+        for (int stdio_fd = 0; stdio_fd < 3; stdio_fd++) {
+            if (!task->fd_table || !task->fd_table[stdio_fd]) {
+                int got = fut_vfs_open("/dev/console", O_RDWR, 0);
+                if (got >= 0 && got != stdio_fd) {
+                    fut_printf("[EXEC-X86] WARNING: stdio fd %d opened as %d\n",
+                               stdio_fd, got);
+                }
+            }
+        }
+
+        if (cur) cur->task = saved_task;
     }
 #endif
 
@@ -1567,6 +1591,11 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
 #include <stdint.h>
 #include <stdbool.h>
 #include <sys/mman.h>
+
+/* FD_CLOEXEC - close-on-exec flag for file descriptors. */
+#ifndef FD_CLOEXEC
+#define FD_CLOEXEC      1
+#endif
 
 /* Debug output macro for verbose exec/staging logs */
 #ifdef DEBUG_EXEC
@@ -2559,22 +2588,37 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
                (unsigned long long)entry->argc);
 #endif
 
-    /* Open stdin/stdout/stderr for the new task.
-     * We temporarily switch the current thread's task pointer so that
-     * fut_vfs_open operates on the new task's fd table. */
-    fut_thread_t *current = fut_thread_current();
-    fut_task_t *saved_task = current->task;
-    current->task = task;
+    /* Inherit non-CLOEXEC fds from caller, fill missing stdio with /dev/console */
+    {
+        fut_thread_t *current = fut_thread_current();
+        fut_task_t *caller_task = current ? current->task : NULL;
 
-    int stdio_fd0 = fut_vfs_open("/dev/console", O_RDWR, 0);
-    int stdio_fd1 = fut_vfs_open("/dev/console", O_RDWR, 0);
-    int stdio_fd2 = fut_vfs_open("/dev/console", O_RDWR, 0);
+        if (caller_task && caller_task->fd_table && task->fd_table) {
+            int max = caller_task->max_fds;
+            if (max > (int)task->max_fds) max = (int)task->max_fds;
+            for (int i = 0; i < max; i++) {
+                struct fut_file *f = caller_task->fd_table[i];
+                if (f && !(f->fd_flags & FD_CLOEXEC)) {
+                    vfs_file_ref(f);
+                    task->fd_table[i] = f;
+                }
+            }
+        }
 
-    current->task = saved_task;
+        fut_task_t *saved_task = current ? current->task : NULL;
+        if (current) current->task = task;
 
-    if (stdio_fd0 != 0 || stdio_fd1 != 1 || stdio_fd2 != 2) {
-        fut_printf("[EXEC-ARM64] WARNING: Failed to open stdio (got %d/%d/%d)\n",
-                   stdio_fd0, stdio_fd1, stdio_fd2);
+        for (int stdio_fd = 0; stdio_fd < 3; stdio_fd++) {
+            if (!task->fd_table || !task->fd_table[stdio_fd]) {
+                int got = fut_vfs_open("/dev/console", O_RDWR, 0);
+                if (got >= 0 && got != stdio_fd) {
+                    fut_printf("[EXEC-ARM64] WARNING: stdio fd %d opened as %d\n",
+                               stdio_fd, got);
+                }
+            }
+        }
+
+        if (current) current->task = saved_task;
     }
 
     /* Create thread with trampoline */

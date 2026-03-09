@@ -4050,27 +4050,27 @@ int main(int argc, char **argv, char **envp) {
         }
     }
 
-    /* Initialize standard file descriptors if not already open */
-    /* Open /dev/console and use dup2 to set up stdin (fd 0), stdout (fd 1), stderr (fd 2) */
-    int console_fd = sys_open("/dev/console", O_RDWR, 0);
-    if (console_fd < 0) {
-        /* /dev/console open failed - try to continue anyway */
-        /* Shell may have inherited fds from parent process */
-    } else {
-        /* Successfully opened /dev/console - use dup2 to set up standard streams */
-        /* dup2 will close the target fd if it's already open, then duplicate */
-        if (console_fd != 0) {
-            sys_dup2(console_fd, 0);  /* stdin */
-        }
-        if (console_fd != 1) {
-            sys_dup2(console_fd, 1);  /* stdout */
-        }
-        if (console_fd != 2) {
-            sys_dup2(console_fd, 2);  /* stderr */
-        }
-        /* Close original fd if it's not one of the standard streams */
-        if (console_fd > 2) {
-            sys_close(console_fd);
+    /* Initialize standard file descriptors if not already open.
+     * If stdin (fd 0) is already valid (e.g., redirected to a pipe by a parent
+     * like wl-term), skip the /dev/console setup to preserve the redirection. */
+    long stdin_flags = sys_fcntl_call(0, 3 /* F_GETFL */, 0);
+    long stdout_flags = sys_fcntl_call(1, 3 /* F_GETFL */, 0);
+    if (stdin_flags < 0 || stdout_flags < 0) {
+        /* stdin/stdout not open — set up /dev/console for interactive use */
+        int console_fd = sys_open("/dev/console", O_RDWR, 0);
+        if (console_fd >= 0) {
+            if (console_fd != 0) {
+                sys_dup2(console_fd, 0);  /* stdin */
+            }
+            if (console_fd != 1) {
+                sys_dup2(console_fd, 1);  /* stdout */
+            }
+            if (console_fd != 2) {
+                sys_dup2(console_fd, 2);  /* stderr */
+            }
+            if (console_fd > 2) {
+                sys_close(console_fd);
+            }
         }
     }
 

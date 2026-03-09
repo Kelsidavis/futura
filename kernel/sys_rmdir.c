@@ -134,7 +134,7 @@ long sys_rmdir(const char *path) {
 
     /* Copy path from userspace to kernel space */
     char path_buf[FUT_VFS_PATH_BUFFER_SIZE];
-    if (fut_copy_from_user(path_buf, local_path, sizeof(path_buf) - 1) != 0) {
+    if (fut_copy_from_user(path_buf, local_path, sizeof(path_buf)) != 0) {
         fut_printf("[RMDIR] rmdir(path=?) -> EFAULT (copy_from_user failed)\n");
         return -EFAULT;
     }
@@ -182,10 +182,7 @@ long sys_rmdir(const char *path) {
     }
 
     /* Phase 3: Normalize path by stripping trailing "/" (if not root, if not . or ..) */
-    size_t actual_len = 0;
-    while (path_buf[actual_len] != '\0' && actual_len < sizeof(path_buf) - 1) {
-        actual_len++;
-    }
+    size_t actual_len = strlen(path_buf);
     if (actual_len > 1 && path_buf[actual_len - 1] == '/') {
         /* Don't strip "/" from paths like "/" or "./" */
         if (!(path_buf[0] == '/' && actual_len == 1) &&

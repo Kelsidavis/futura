@@ -2072,7 +2072,7 @@ static int check_and_deliver_pending_signals(fut_task_t *current,
 /* Syscall tracing for debugging userspace bring-up issues.
  * Traces the first SYSCALL_TRACE_COUNT syscalls to serial output.
  * Disable by setting SYSCALL_TRACE_COUNT to 0. */
-#define SYSCALL_TRACE_COUNT 50
+#define SYSCALL_TRACE_COUNT 0
 static volatile int syscall_trace_remaining = SYSCALL_TRACE_COUNT;
 
 long syscall_entry_c(uint64_t nr,

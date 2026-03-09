@@ -337,16 +337,18 @@ void arm64_exception_dispatch(fut_interrupt_frame_t *frame) {
             else if (ec == ESR_EC_ILL_STATE) fut_serial_puts("Illegal Execution State");
             fut_serial_puts(")\n");
 
-            /* Try to read the instruction word at PC */
-            fut_serial_puts("[EXCEPTION] Instruction at PC: ");
-            uint32_t *instr_ptr = (uint32_t *)(frame->pc);
-            uint32_t instr = *instr_ptr;
-            for (int i = 28; i >= 0; i -= 4) {
-                uint8_t nibble = (instr >> i) & 0xF;
-                char c = nibble < 10 ? '0' + nibble : 'a' + (nibble - 10);
-                fut_serial_putc(c);
+            /* Try to read the instruction word at PC (only if valid kernel address) */
+            if (frame->pc >= 0xFFFF000000000000ULL && ((frame->pc & 3) == 0)) {
+                uint32_t *instr_ptr = (uint32_t *)(frame->pc);
+                fut_serial_puts("[EXCEPTION] Instruction at PC: ");
+                uint32_t instr = *instr_ptr;
+                for (int i = 28; i >= 0; i -= 4) {
+                    uint8_t nibble = (instr >> i) & 0xF;
+                    char c = nibble < 10 ? '0' + nibble : 'a' + (nibble - 10);
+                    fut_serial_putc(c);
+                }
+                fut_serial_putc('\n');
             }
-            fut_serial_putc('\n');
 
             handle_unknown(frame);
             break;

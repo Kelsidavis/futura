@@ -41,6 +41,9 @@ uint32_t arm64_pci_read32(uint8_t bus, uint8_t dev, uint8_t fn, uint16_t reg) {
     }
 
     uint32_t offset = pcie_ecam_offset(bus, dev, fn, reg);
+    if (offset >= PCIE_ECAM_SIZE) {
+        return 0xFFFFFFFF;
+    }
     volatile uint32_t *addr = (volatile uint32_t *)(g_pcie_ecam_base + offset);
 
     /* ARM64 memory barrier before read */
@@ -60,6 +63,9 @@ void arm64_pci_write32(uint8_t bus, uint8_t dev, uint8_t fn, uint16_t reg, uint3
     }
 
     uint32_t offset = pcie_ecam_offset(bus, dev, fn, reg);
+    if (offset >= PCIE_ECAM_SIZE) {
+        return;
+    }
     volatile uint32_t *addr = (volatile uint32_t *)(g_pcie_ecam_base + offset);
 
     __asm__ volatile("dsb sy" ::: "memory");

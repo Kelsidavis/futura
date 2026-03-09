@@ -403,22 +403,27 @@
  * - Always use sysconf(_SC_PAGESIZE) in portable code
  */
 long sys_mincore(void *addr, size_t length, unsigned char *vec) {
+    /* ARM64 FIX: Copy parameters to local variables */
+    void *local_addr = addr;
+    size_t local_length = length;
+    unsigned char *local_vec = vec;
+
     fut_task_t *task = fut_task_current();
     if (!task) {
         return -ESRCH;
     }
 
     /* Validate address alignment (must be page-aligned) */
-    if ((uintptr_t)addr % PAGE_SIZE != 0) {
+    if ((uintptr_t)local_addr % PAGE_SIZE != 0) {
         fut_printf("[MINCORE] mincore(%p, %zu, %p) -> EINVAL (addr not page-aligned)\n",
-                   addr, length, vec);
+                   local_addr, local_length, local_vec);
         return -EINVAL;
     }
 
     /* Validate vec pointer */
-    if (!vec) {
+    if (!local_vec) {
         fut_printf("[MINCORE] mincore(%p, %zu, %p) -> EFAULT (vec is NULL)\n",
-                   addr, length, vec);
+                   local_addr, local_length, local_vec);
         return -EFAULT;
     }
 
@@ -428,14 +433,14 @@ long sys_mincore(void *addr, size_t length, unsigned char *vec) {
      * IMPACT: Integer overflow in num_pages calculation, excessive CPU/memory use
      * DEFENSE: Limit length to 1GB (prevents overflow and DoS) */
     #define MINCORE_MAX_LENGTH (1UL << 30)  /* 1 GB */
-    if (length == 0) {
+    if (local_length == 0) {
         fut_printf("[MINCORE] mincore(%p, %zu, %p) -> EINVAL (length is zero)\n",
-                   addr, length, vec);
+                   local_addr, local_length, local_vec);
         return -EINVAL;
     }
-    if (length > MINCORE_MAX_LENGTH) {
+    if (local_length > MINCORE_MAX_LENGTH) {
         fut_printf("[MINCORE] mincore(%p, %zu, %p) -> ENOMEM (length %zu exceeds max %lu)\n",
-                   addr, length, vec, length, MINCORE_MAX_LENGTH);
+                   local_addr, local_length, local_vec, local_length, MINCORE_MAX_LENGTH);
         return -ENOMEM;
     }
 
@@ -445,14 +450,14 @@ long sys_mincore(void *addr, size_t length, unsigned char *vec) {
      * IMPACT: (length + PAGE_SIZE - 1) wraps to small value, num_pages becomes 0 or 1
      *         causing vec buffer overflow when writing residency bits
      * DEFENSE: Detect overflow by checking if result would wrap around */
-    if (length > SIZE_MAX - (PAGE_SIZE - 1)) {
+    if (local_length > SIZE_MAX - (PAGE_SIZE - 1)) {
         fut_printf("[MINCORE] mincore(%p, %zu, %p) -> EINVAL (length causes overflow in page calculation)\n",
-                   addr, length, vec);
+                   local_addr, local_length, local_vec);
         return -EINVAL;
     }
 
     /* Calculate number of pages and round length */
-    size_t num_pages = (length + PAGE_SIZE - 1) / PAGE_SIZE;
+    size_t num_pages = (local_length + PAGE_SIZE - 1) / PAGE_SIZE;
     size_t aligned_len = num_pages * PAGE_SIZE;
 
     /* Priority 3: Add num_pages bounds check (num_pages <= 65536)
@@ -464,7 +469,7 @@ long sys_mincore(void *addr, size_t length, unsigned char *vec) {
     #define MINCORE_MAX_PAGES 65536  /* 256 MB at 4KB pages */
     if (num_pages > MINCORE_MAX_PAGES) {
         fut_printf("[MINCORE] mincore(%p, %zu, %p) -> ENOMEM (num_pages %zu exceeds max %u)\n",
-                   addr, length, vec, num_pages, MINCORE_MAX_PAGES);
+                   local_addr, local_length, local_vec, num_pages, MINCORE_MAX_PAGES);
         return -ENOMEM;
     }
 
@@ -473,9 +478,9 @@ long sys_mincore(void *addr, size_t length, unsigned char *vec) {
      * ATTACK: Attacker provides read-only or unmapped vec buffer
      * IMPACT: Kernel page fault when writing residency bits after VMA validation
      * DEFENSE: Check write permission before VMA traversal to fail fast */
-    if (fut_access_ok(vec, num_pages, 1) != 0) {
+    if (fut_access_ok(local_vec, num_pages, 1) != 0) {
         fut_printf("[MINCORE] mincore(%p, %zu, %p) -> EFAULT (vec not writable for %zu bytes)\n",
-                   addr, length, vec, num_pages);
+                   local_addr, local_length, local_vec, num_pages);
         return -EFAULT;
     }
 
@@ -483,12 +488,12 @@ long sys_mincore(void *addr, size_t length, unsigned char *vec) {
     fut_mm_t *mm = fut_task_get_mm(task);
     if (!mm) {
         fut_printf("[MINCORE] mincore(%p, %zu, %p) -> ENOMEM (no MM context)\n",
-                   addr, length, vec);
+                   local_addr, local_length, local_vec);
         return -ENOMEM;
     }
 
     /* Check if address range is covered by VMAs */
-    uintptr_t start = (uintptr_t)addr;
+    uintptr_t start = (uintptr_t)local_addr;
     uintptr_t end = start + aligned_len;
     size_t mapped_pages = 0;
 
@@ -506,7 +511,7 @@ long sys_mincore(void *addr, size_t length, unsigned char *vec) {
         /* Check iteration limit */
         if (++vma_iters > MINCORE_MAX_VMA_ITERS) {
             fut_printf("[MINCORE] mincore(%p, %zu, %p) -> ELOOP (VMA iteration limit %u exceeded)\n",
-                       addr, length, vec, MINCORE_MAX_VMA_ITERS);
+                       local_addr, local_length, local_vec, MINCORE_MAX_VMA_ITERS);
             return -ELOOP;
         }
 
@@ -524,7 +529,7 @@ long sys_mincore(void *addr, size_t length, unsigned char *vec) {
     /* Check if entire range is mapped */
     if (mapped_pages < num_pages) {
         fut_printf("[MINCORE] mincore(%p, %zu, %p) -> ENOMEM (range not fully mapped: %zu/%zu pages)\n",
-                   addr, aligned_len, vec, mapped_pages, num_pages);
+                   local_addr, aligned_len, local_vec, mapped_pages, num_pages);
         return -ENOMEM;
     }
 
@@ -546,7 +551,7 @@ long sys_mincore(void *addr, size_t length, unsigned char *vec) {
         kernel_vec = (unsigned char *)slab_malloc(num_pages);
         if (!kernel_vec) {
             fut_printf("[MINCORE] mincore(%p, %zu, %p) -> ENOMEM (slab_malloc failed for %zu bytes)\n",
-                       addr, length, vec, num_pages);
+                       local_addr, local_length, local_vec, num_pages);
             return -ENOMEM;
         }
         heap_allocated = true;
@@ -568,7 +573,7 @@ long sys_mincore(void *addr, size_t length, unsigned char *vec) {
             /* Check iteration limit (Priority 5) */
             if (++page_vma_iters > MINCORE_MAX_VMA_ITERS) {
                 fut_printf("[MINCORE] mincore(%p, %zu, %p) -> ELOOP (VMA iteration limit %u exceeded at page %zu)\n",
-                           addr, length, vec, MINCORE_MAX_VMA_ITERS, i);
+                           local_addr, local_length, local_vec, MINCORE_MAX_VMA_ITERS, i);
                 /* Priority 6: Free heap-allocated buffer before returning */
                 if (heap_allocated) {
                     slab_free(kernel_vec);
@@ -588,9 +593,9 @@ long sys_mincore(void *addr, size_t length, unsigned char *vec) {
     }
 
     /* Copy result to userspace */
-    if (fut_copy_to_user(vec, kernel_vec, num_pages) != 0) {
+    if (fut_copy_to_user(local_vec, kernel_vec, num_pages) != 0) {
         fut_printf("[MINCORE] mincore(%p, %zu, %p) -> EFAULT (copy_to_user failed)\n",
-                   addr, aligned_len, vec);
+                   local_addr, aligned_len, local_vec);
         /* Priority 6: Free heap-allocated buffer before returning */
         if (heap_allocated) {
             slab_free(kernel_vec);
@@ -604,7 +609,7 @@ long sys_mincore(void *addr, size_t length, unsigned char *vec) {
     }
 
     fut_printf("[MINCORE] mincore(%p, %zu, %p) -> 0 (%zu pages complete: all validations + heap safety)\n",
-               addr, aligned_len, vec, num_pages);
+               local_addr, aligned_len, local_vec, num_pages);
 
     /* Phase 3-5 future implementation (check actual page table entries):
      *

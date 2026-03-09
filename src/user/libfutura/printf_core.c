@@ -65,18 +65,20 @@ static int emit_unsigned(fut_putc_fn cb, void *ctx, uint64_t value, unsigned bas
 static int emit_signed(fut_putc_fn cb, void *ctx, int64_t value,
                         int width, char pad, int *total) {
     if (value < 0) {
+        /* Use -(uint64_t)value to avoid UB when value == INT64_MIN */
+        uint64_t magnitude = -(uint64_t)value;
         if (pad == '0' && width > 0) {
             /* Emit sign before zero padding */
             if (emit_char(cb, ctx, '-', total) < 0) {
                 return -1;
             }
-            return emit_unsigned(cb, ctx, (uint64_t)(-value), 10, false,
+            return emit_unsigned(cb, ctx, magnitude, 10, false,
                                  width - 1, pad, total);
         }
         if (emit_char(cb, ctx, '-', total) < 0) {
             return -1;
         }
-        return emit_unsigned(cb, ctx, (uint64_t)(-value), 10, false,
+        return emit_unsigned(cb, ctx, magnitude, 10, false,
                              width > 0 ? width - 1 : 0, pad, total);
     }
     return emit_unsigned(cb, ctx, (uint64_t)value, 10, false, width, pad, total);
@@ -112,10 +114,12 @@ int fut_vprintf_fmt(fut_putc_fn cb, void *ctx, const char *fmt, va_list ap) {
         (void)left_align;  /* Not yet used */
         (void)hash_flag;
 
-        /* Parse width */
+        /* Parse width (capped to prevent int overflow) */
         int width = 0;
         while (*fmt >= '0' && *fmt <= '9') {
-            width = width * 10 + (*fmt - '0');
+            if (width <= 9999) {
+                width = width * 10 + (*fmt - '0');
+            }
             fmt++;
         }
 

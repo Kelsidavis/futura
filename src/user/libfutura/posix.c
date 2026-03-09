@@ -77,7 +77,7 @@ int open(const char *path, int flags, ...) {
     /* Receive response */
     uint8_t resp_buffer[256];
     ssize_t recv_ret = fut_fipc_recv(posixd_channel, resp_buffer, sizeof(resp_buffer));
-    if (recv_ret < 0) {
+    if (recv_ret < (ssize_t)(sizeof(struct fut_fipc_msg) + sizeof(struct posixd_open_resp))) {
         return -1;
     }
 
@@ -194,18 +194,26 @@ ssize_t read(int fd, void *buf, size_t count) {
     /* Receive response */
     uint8_t resp_buffer[4096];
     ssize_t recv_ret = fut_fipc_recv(posixd_channel, resp_buffer, sizeof(resp_buffer));
-    if (recv_ret < 0) {
+    if (recv_ret < (ssize_t)(sizeof(struct fut_fipc_msg) + sizeof(struct posixd_read_resp))) {
         return -1;
     }
 
     struct fut_fipc_msg *resp_msg = (struct fut_fipc_msg *)resp_buffer;
     struct posixd_read_resp *resp = (struct posixd_read_resp *)resp_msg->payload;
 
-    /* Copy data */
+    /* Copy data with bounds checks against both user buffer and received bytes */
     if (resp->bytes_read > 0 && (size_t)resp->bytes_read <= count) {
-        for (ssize_t i = 0; i < resp->bytes_read; i++) {
+        /* Verify the inline data fits within what we actually received */
+        size_t available_data = (size_t)recv_ret
+            - sizeof(struct fut_fipc_msg) - sizeof(struct posixd_read_resp);
+        size_t safe_copy = (size_t)resp->bytes_read;
+        if (safe_copy > available_data) {
+            safe_copy = available_data;
+        }
+        for (size_t i = 0; i < safe_copy; i++) {
             ((char *)buf)[i] = ((char *)(resp + 1))[i];
         }
+        return (ssize_t)safe_copy;
     }
 
     return resp->bytes_read;
@@ -256,7 +264,7 @@ ssize_t write(int fd, const void *buf, size_t count) {
     /* Receive response */
     uint8_t resp_buffer[256];
     ssize_t recv_ret = fut_fipc_recv(posixd_channel, resp_buffer, sizeof(resp_buffer));
-    if (recv_ret < 0) {
+    if (recv_ret < (ssize_t)(sizeof(struct fut_fipc_msg) + sizeof(struct posixd_write_resp))) {
         return -1;
     }
 
@@ -320,8 +328,8 @@ int unlink(const char *path) {
 
     uint8_t resp_buffer[256];
     ssize_t recv_ret = fut_fipc_recv(posixd_channel, resp_buffer, sizeof(resp_buffer));
-    if (recv_ret < 0) {
-        return (int)recv_ret;
+    if (recv_ret < (ssize_t)(sizeof(struct fut_fipc_msg) + sizeof(struct posixd_unlink_resp))) {
+        return -1;
     }
 
     struct fut_fipc_msg *resp_msg = (struct fut_fipc_msg *)resp_buffer;
@@ -349,8 +357,8 @@ int mkdir(const char *path, mode_t mode) {
 
     uint8_t resp_buffer[256];
     ssize_t recv_ret = fut_fipc_recv(posixd_channel, resp_buffer, sizeof(resp_buffer));
-    if (recv_ret < 0) {
-        return (int)recv_ret;
+    if (recv_ret < (ssize_t)(sizeof(struct fut_fipc_msg) + sizeof(struct posixd_mkdir_resp))) {
+        return -1;
     }
 
     struct fut_fipc_msg *resp_msg = (struct fut_fipc_msg *)resp_buffer;
@@ -377,8 +385,8 @@ int rmdir(const char *path) {
 
     uint8_t resp_buffer[256];
     ssize_t recv_ret = fut_fipc_recv(posixd_channel, resp_buffer, sizeof(resp_buffer));
-    if (recv_ret < 0) {
-        return (int)recv_ret;
+    if (recv_ret < (ssize_t)(sizeof(struct fut_fipc_msg) + sizeof(struct posixd_unlink_resp))) {
+        return -1;
     }
 
     struct fut_fipc_msg *resp_msg = (struct fut_fipc_msg *)resp_buffer;
@@ -405,7 +413,7 @@ fut_dir_t *opendir(const char *path) {
 
     uint8_t resp_buffer[256];
     ssize_t recv_ret = fut_fipc_recv(posixd_channel, resp_buffer, sizeof(resp_buffer));
-    if (recv_ret < 0) {
+    if (recv_ret < (ssize_t)(sizeof(struct fut_fipc_msg) + sizeof(struct posixd_opendir_resp))) {
         return NULL;
     }
 
@@ -439,9 +447,9 @@ int closedir(fut_dir_t *dir) {
 
     uint8_t resp_buffer[256];
     ssize_t recv_ret = fut_fipc_recv(posixd_channel, resp_buffer, sizeof(resp_buffer));
-    if (recv_ret < 0) {
+    if (recv_ret < (ssize_t)(sizeof(struct fut_fipc_msg) + sizeof(struct posixd_closedir_resp))) {
         free(dir);
-        return (int)recv_ret;
+        return -1;
     }
 
     struct fut_fipc_msg *resp_msg = (struct fut_fipc_msg *)resp_buffer;
@@ -465,8 +473,8 @@ int readdir(fut_dir_t *dir, struct fut_dirent *entry) {
 
     uint8_t resp_buffer[sizeof(struct fut_fipc_msg) + sizeof(struct posixd_readdir_resp)] = {0};
     ssize_t recv_ret = fut_fipc_recv(posixd_channel, resp_buffer, sizeof(resp_buffer));
-    if (recv_ret < 0) {
-        return (int)recv_ret;
+    if (recv_ret < (ssize_t)(sizeof(struct fut_fipc_msg) + sizeof(struct posixd_readdir_resp))) {
+        return -1;
     }
 
     struct fut_fipc_msg *resp_msg = (struct fut_fipc_msg *)resp_buffer;
@@ -513,7 +521,7 @@ int fork(void) {
     /* Receive response */
     uint8_t resp_buffer[256];
     ssize_t recv_ret = fut_fipc_recv(posixd_channel, resp_buffer, sizeof(resp_buffer));
-    if (recv_ret < 0) {
+    if (recv_ret < (ssize_t)(sizeof(struct fut_fipc_msg) + sizeof(struct posixd_fork_resp))) {
         return -1;
     }
 
@@ -578,7 +586,7 @@ int waitpid(int pid, int *status, int options) {
     /* Receive response */
     uint8_t resp_buffer[256];
     ssize_t recv_ret = fut_fipc_recv(posixd_channel, resp_buffer, sizeof(resp_buffer));
-    if (recv_ret < 0) {
+    if (recv_ret < (ssize_t)(sizeof(struct fut_fipc_msg) + sizeof(struct posixd_wait_resp))) {
         return -1;
     }
 

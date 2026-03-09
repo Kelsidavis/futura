@@ -109,17 +109,23 @@
  * Phase 4: Advanced features (async I/O, write-behind hints)
  */
 long sys_pwrite64(unsigned int fd, const void *buf, size_t count, int64_t offset) {
-    /* Phase 2: Validate buffer pointer */
-    if (!buf) {
+    /* ARM64 FIX: Copy register params to local stack vars before blocking calls */
+    unsigned int local_fd = fd;
+    const void *local_buf = buf;
+    size_t local_count = count;
+    int64_t local_offset = offset;
+
+    /* Validate buffer pointer */
+    if (!local_buf) {
         fut_printf("[PWRITE64] pwrite64(fd=%u, buf=NULL, count=%zu, offset=%ld) -> EFAULT "
-                   "(NULL buffer)\n", fd, count, offset);
+                   "(NULL buffer)\n", local_fd, local_count, local_offset);
         return -EFAULT;
     }
 
-    /* Phase 2: Validate offset is non-negative */
-    if (offset < 0) {
+    /* Validate offset is non-negative */
+    if (local_offset < 0) {
         fut_printf("[PWRITE64] pwrite64(fd=%u, count=%zu, offset=%ld) -> EINVAL "
-                   "(negative offset)\n", fd, count, offset);
+                   "(negative offset)\n", local_fd, local_count, local_offset);
         return -EINVAL;
     }
 
@@ -129,100 +135,64 @@ long sys_pwrite64(unsigned int fd, const void *buf, size_t count, int64_t offset
      *   - offset + count wraps around to negative value
      *   - Could bypass file size checks and corrupt kernel memory
      * Defense: Detect overflow before arithmetic (matching pread64 validation) */
-    if (offset > INT64_MAX - (int64_t)count) {
+    if (local_offset > INT64_MAX - (int64_t)local_count) {
         fut_printf("[PWRITE64] pwrite64(fd=%u, count=%zu, offset=%ld) -> EOVERFLOW "
                    "(offset+count would overflow, max_valid_offset=%ld)\n",
-                   fd, count, offset, (int64_t)(INT64_MAX - count));
+                   local_fd, local_count, local_offset, (int64_t)(INT64_MAX - local_count));
         return -EOVERFLOW;
     }
 
-    /* Validate buffer is readable BEFORE expensive operations
-     * VULNERABILITY: Resource Exhaustion via Permission Check Ordering
-     *
-     * ATTACK SCENARIO:
-     * Attacker provides write-only or inaccessible buffer to exhaust kernel resources
-     * 1. Attacker mmaps write-only page: mprotect(buf, 1048576, PROT_WRITE)
-     * 2. Calls pwrite64(fd, buf, 1048576, offset) with write-only buffer
-     * 3. Kernel allocates 1MB at line 237 (before permission check)
-     * 4. Line 247: copy_from_user fails with -EFAULT (buffer not readable)
-     * 5. Kernel frees buffer, wasted allocation
-     * 6. Attacker loops: while(1) { pwrite64(fd, wo_buf, 1MB, 0); }
-     * 7. Each iteration wastes 1MB allocation
-     *
-     * IMPACT:
-     * - Kernel memory thrashing from repeated 1MB alloc/free cycles
-     * - CPU cycles wasted on allocation/free that serves no purpose
-     * - DoS via resource exhaustion: hundreds of 1MB allocations per second
-     *
-     * ROOT CAUSE:
-     * Line 247 copy_from_user is AFTER line 237 allocation
-     * - No early validation that buf is readable
-     * - Expensive allocation happens before permission check
-     * - Fail-slow instead of fail-fast design
-     *
-     * DEFENSE:
-     * Test read permission on first byte of buffer BEFORE any allocation
-     * - Minimal overhead: single byte test
-     * - Fail-fast: reject invalid buffer immediately
-     * - Inverse of sys_pread64: tests read permission instead of write
-     * - Precedent: sys_read tests write, this tests read (symmetric)
-     *
-     * CVE REFERENCES:
-     * - CVE-2016-9588: Permission check after allocation in kernel I/O path
-     * - CVE-2017-7472: Resource exhaustion via delayed validation
-     *
-     * POSIX REQUIREMENT:
-     * IEEE Std 1003.1-2017 pwrite(): "shall fail with EFAULT if buf invalid"
-     * - Does not require expensive operations before validation
-     * - Early detection improves performance and security */
+    /* Validate buffer is readable BEFORE expensive operations.
+     * Test read permission on first byte of buffer before any allocation
+     * to fail fast and avoid resource exhaustion from repeated alloc/free cycles. */
     char test_byte;
-    if (fut_copy_from_user(&test_byte, buf, 1) != 0) {
+    if (fut_copy_from_user(&test_byte, local_buf, 1) != 0) {
         fut_printf("[PWRITE64] pwrite64(fd=%u, buf=%p, count=%zu, offset=%ld) -> EFAULT "
                    "(buffer not readable, fail-fast permission check)\n",
-                   fd, buf, count, offset);
+                   local_fd, local_buf, local_count, local_offset);
         return -EFAULT;
     }
 
-    /* Phase 2: Get current task for FD table access */
+    /* Get current task for FD table access */
     fut_task_t *task = fut_task_current();
     if (!task) {
         fut_printf("[PWRITE64] pwrite64(fd=%u, count=%zu, offset=%ld) -> ESRCH "
-                   "(no current task)\n", fd, count, offset);
+                   "(no current task)\n", local_fd, local_count, local_offset);
         return -ESRCH;
     }
 
     /* Validate FD upper bound to prevent OOB array access
      * Without this check, fd >= max_fds would access beyond fd_table bounds */
-    if (fd >= (unsigned int)task->max_fds) {
+    if (local_fd >= (unsigned int)task->max_fds) {
         fut_printf("[PWRITE64] pwrite64(fd=%u, max_fds=%d) -> EBADF "
                    "(fd exceeds max_fds, FD bounds validation)\n",
-                   fd, task->max_fds);
+                   local_fd, task->max_fds);
         return -EBADF;
     }
 
-    /* Phase 2: Categorize FD range (Phase 6: use shared helper) */
-    const char *fd_category = fut_fd_category(fd);
+    /* Categorize FD range */
+    const char *fd_category = fut_fd_category(local_fd);
 
-    /* Phase 2: Categorize count (write size) - Phase 6: use shared helper */
-    const char *count_category = fut_size_category(count);
+    /* Categorize count (write size) */
+    const char *count_category = fut_size_category(local_count);
 
-    /* Phase 2: Validate count doesn't exceed 1MB limit (prevent DoS) */
-    if (count > 1048576) {
+    /* Validate count doesn't exceed 1MB limit (prevent DoS) */
+    if (local_count > 1048576) {
         fut_printf("[PWRITE64] pwrite64(fd=%u, count=%zu [%s], offset=%ld) -> EINVAL "
                    "(count exceeds maximum 1MB limit)\n",
-                   fd, count, count_category, offset);
+                   local_fd, local_count, count_category, local_offset);
         return -EINVAL;
     }
 
-    /* Phase 2: Categorize offset - Phase 6: use shared helper */
-    const char *offset_category = fut_offset_category(offset);
+    /* Categorize offset */
+    const char *offset_category = fut_offset_category(local_offset);
 
     /* Get file structure from FD */
-    struct fut_file *file = vfs_get_file_from_task(task, (int)fd);
+    struct fut_file *file = vfs_get_file_from_task(task, (int)local_fd);
     if (!file) {
         fut_printf("[PWRITE64] pwrite64(fd=%u [%s], count=%zu [%s], offset=%ld [%s]) -> EBADF "
                    "(fd not open, pid=%d)\n",
-                   fd, fd_category, count, count_category, offset, offset_category, task->pid);
+                   local_fd, fd_category, local_count, count_category, local_offset, offset_category, task->pid);
         return -EBADF;
     }
 
@@ -230,7 +200,7 @@ long sys_pwrite64(unsigned int fd, const void *buf, size_t count, int64_t offset
     if (file->chr_ops) {
         fut_printf("[PWRITE64] pwrite64(fd=%u [%s], type=character device, count=%zu [%s], "
                    "offset=%ld [%s]) -> ESPIPE (not seekable, pid=%d)\n",
-                   fd, fd_category, count, count_category, offset, offset_category, task->pid);
+                   local_fd, fd_category, local_count, count_category, local_offset, offset_category, task->pid);
         return -ESPIPE;
     }
 
@@ -238,43 +208,43 @@ long sys_pwrite64(unsigned int fd, const void *buf, size_t count, int64_t offset
     if (file->vnode && file->vnode->type == VN_DIR) {
         fut_printf("[PWRITE64] pwrite64(fd=%u [%s], type=directory, ino=%lu, count=%zu [%s], "
                    "offset=%ld [%s]) -> EISDIR (is directory, pid=%d)\n",
-                   fd, fd_category, file->vnode->ino, count, count_category,
-                   offset, offset_category, task->pid);
+                   local_fd, fd_category, file->vnode->ino, local_count, count_category,
+                   local_offset, offset_category, task->pid);
         return -EISDIR;
     }
 
-    /* Phase 2: Validate vnode and write operation */
+    /* Validate vnode and write operation */
     if (!file->vnode || !file->vnode->ops || !file->vnode->ops->write) {
         fut_printf("[PWRITE64] pwrite64(fd=%u [%s], count=%zu [%s], offset=%ld [%s]) -> EINVAL "
                    "(no write operation, pid=%d)\n",
-                   fd, fd_category, count, count_category, offset, offset_category, task->pid);
+                   local_fd, fd_category, local_count, count_category, local_offset, offset_category, task->pid);
         return -EINVAL;
     }
 
     /* Allocate kernel buffer */
-    void *kbuf = fut_malloc(count);
+    void *kbuf = fut_malloc(local_count);
     if (!kbuf) {
         fut_printf("[PWRITE64] pwrite64(fd=%u [%s], ino=%lu, count=%zu [%s], offset=%ld [%s]) -> ENOMEM "
                    "(kernel buffer allocation failed, pid=%d)\n",
-                   fd, fd_category, file->vnode->ino, count, count_category,
-                   offset, offset_category, task->pid);
+                   local_fd, fd_category, file->vnode->ino, local_count, count_category,
+                   local_offset, offset_category, task->pid);
         return -ENOMEM;
     }
 
     /* Copy from userspace */
-    if (fut_copy_from_user(kbuf, buf, count) != 0) {
+    if (fut_copy_from_user(kbuf, local_buf, local_count) != 0) {
         fut_printf("[PWRITE64] pwrite64(fd=%u [%s], ino=%lu, count=%zu [%s], offset=%ld [%s]) -> EFAULT "
                    "(copy_from_user failed, pid=%d)\n",
-                   fd, fd_category, file->vnode->ino, count, count_category,
-                   offset, offset_category, task->pid);
+                   local_fd, fd_category, file->vnode->ino, local_count, count_category,
+                   local_offset, offset_category, task->pid);
         fut_free(kbuf);
         return -EFAULT;
     }
 
     /* Write to file at the specified offset without changing file->offset */
-    ssize_t ret = file->vnode->ops->write(file->vnode, kbuf, count, (uint64_t)offset);
+    ssize_t ret = file->vnode->ops->write(file->vnode, kbuf, local_count, (uint64_t)local_offset);
 
-    /* Phase 2: Handle write errors with detailed logging */
+    /* Handle write errors with detailed logging */
     if (ret < 0) {
         const char *error_desc;
         switch (ret) {
@@ -293,18 +263,18 @@ long sys_pwrite64(unsigned int fd, const void *buf, size_t count, int64_t offset
         }
         fut_printf("[PWRITE64] pwrite64(fd=%u [%s], ino=%lu, count=%zu [%s], offset=%ld [%s]) -> %d "
                    "(%s, pid=%d)\n",
-                   fd, fd_category, file->vnode->ino, count, count_category,
-                   offset, offset_category, (int)ret, error_desc, task->pid);
+                   local_fd, fd_category, file->vnode->ino, local_count, count_category,
+                   local_offset, offset_category, (int)ret, error_desc, task->pid);
         fut_free(kbuf);
         return ret;
     }
 
     fut_free(kbuf);
 
-    /* Phase 3: Detailed success logging */
+    /* Detailed success logging */
     fut_printf("[PWRITE64] pwrite64(fd=%u [%s], ino=%lu, count=%zu [%s], offset=%ld [%s], "
-               "bytes_written=%zd) -> %zd (Phase 3: VFS write operation delegation)\n",
-               fd, fd_category, file->vnode->ino, count, count_category,
-               offset, offset_category, ret, ret);
+               "bytes_written=%zd) -> %zd (VFS write operation delegation)\n",
+               local_fd, fd_category, file->vnode->ino, local_count, count_category,
+               local_offset, offset_category, ret, ret);
     return ret;
 }

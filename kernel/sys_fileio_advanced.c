@@ -37,43 +37,41 @@
  *   - -ESRCH if no current task
  */
 long sys_chroot(const char *path) {
+    /* ARM64 FIX: Copy register params to local stack vars before blocking calls */
+    const char *local_path = path;
+
     fut_task_t *task = fut_task_current();
     if (!task) {
-        fut_printf("[CHROOT] chroot(path=%p) -> ESRCH (no current task)\n", path);
+        fut_printf("[CHROOT] chroot(path=%p) -> ESRCH (no current task)\n", local_path);
         return -ESRCH;
     }
 
     /* Validate path pointer */
-    if (!path) {
+    if (!local_path) {
         fut_printf("[CHROOT] chroot(path=NULL) -> EFAULT (null path)\n");
         return -EFAULT;
     }
 
-    /* Phase 1: Validate path string (basic safety check)
-     * In Phase 2, we would:
-     * - Resolve path to vnode
-     * - Verify it's a directory
-     * - Check CAP_SYS_CHROOT capability
-     * - Store in task->chroot_vnode
-     */
+    /* Copy path from userspace instead of direct dereference */
+    char path_buf[FUT_VFS_PATH_BUFFER_SIZE];
+    if (fut_copy_from_user(path_buf, local_path, sizeof(path_buf)) != 0) {
+        fut_printf("[CHROOT] chroot -> EFAULT (copy_from_user failed, pid=%d)\n", task->pid);
+        return -EFAULT;
+    }
+    if (memchr(path_buf, '\0', sizeof(path_buf)) == NULL) {
+        fut_printf("[CHROOT] chroot -> ENAMETOOLONG (path >%zu, pid=%d)\n",
+                   sizeof(path_buf), task->pid);
+        return -ENAMETOOLONG;
+    }
 
-    /* Estimate path length for categorization */
     size_t path_len = 0;
-    const char *p = path;
-    while (path_len < 4096 && *p != '\0') {
+    while (path_buf[path_len] != '\0') {
         path_len++;
-        p++;
     }
 
     if (path_len == 0) {
         fut_printf("[CHROOT] chroot(path='') -> ENOENT (empty path, pid=%d)\n", task->pid);
         return -ENOENT;
-    }
-
-    if (path_len >= 4096) {
-        fut_printf("[CHROOT] chroot(path=<too long>) -> ENAMETOOLONG (path >4096, pid=%d)\n",
-                   task->pid);
-        return -ENAMETOOLONG;
     }
 
     /* Categorize path length */
@@ -92,16 +90,16 @@ long sys_chroot(const char *path) {
     char path_preview[65];
     size_t preview_len = (path_len < 64) ? path_len : 64;
     for (size_t i = 0; i < preview_len; i++) {
-        path_preview[i] = path[i];
+        path_preview[i] = path_buf[i];
     }
     path_preview[preview_len] = '\0';
 
-    /* Phase 1: Accept but don't change root */
-    /* Phase 2: Resolve path, check it's a directory, store in task */
-    /* Phase 3: Check CAP_SYS_CHROOT capability */
+    /* Stub: accept but don't change root.
+     * Future: resolve path to vnode, check it's a directory, check CAP_SYS_CHROOT,
+     * store in task->chroot_vnode. */
 
     fut_printf("[CHROOT] chroot(path='%s%s', len=%zu [%s], pid=%d) -> 0 "
-               "(accepted, Phase 1 stub)\n",
+               "(accepted, stub)\n",
                path_preview, (path_len > 64) ? "..." : "", path_len, path_category, task->pid);
 
     return 0;
@@ -132,93 +130,99 @@ long sys_chroot(const char *path) {
  *   - -ESRCH if no current task
  */
 long sys_sendfile(int out_fd, int in_fd, uint64_t *offset, size_t count) {
+    /* ARM64 FIX: Copy register params to local stack vars before blocking calls */
+    int local_out_fd = out_fd;
+    int local_in_fd = in_fd;
+    uint64_t *local_offset = offset;
+    size_t local_count = count;
+
     fut_task_t *task = fut_task_current();
     if (!task) {
         fut_printf("[SENDFILE] sendfile(out_fd=%d, in_fd=%d, offset=%p, count=%zu) -> ESRCH "
                    "(no current task)\n",
-                   out_fd, in_fd, offset, count);
+                   local_out_fd, local_in_fd, local_offset, local_count);
         return -ESRCH;
     }
 
     /* Validate file descriptors */
-    if (out_fd < 0) {
+    if (local_out_fd < 0) {
         fut_printf("[SENDFILE] sendfile(out_fd=%d, in_fd=%d, count=%zu, pid=%d) -> EBADF "
                    "(invalid out_fd)\n",
-                   out_fd, in_fd, count, task->pid);
+                   local_out_fd, local_in_fd, local_count, task->pid);
         return -EBADF;
     }
 
-    if (in_fd < 0) {
+    if (local_in_fd < 0) {
         fut_printf("[SENDFILE] sendfile(out_fd=%d, in_fd=%d, count=%zu, pid=%d) -> EBADF "
                    "(invalid in_fd)\n",
-                   out_fd, in_fd, count, task->pid);
+                   local_out_fd, local_in_fd, local_count, task->pid);
         return -EBADF;
     }
 
     /* Validate FD upper bounds to prevent OOB array access */
-    if (out_fd >= task->max_fds) {
+    if (local_out_fd >= task->max_fds) {
         fut_printf("[SENDFILE] sendfile(out_fd=%d, in_fd=%d, max_fds=%d, count=%zu, pid=%d) -> EBADF "
                    "(out_fd exceeds max_fds, FD bounds validation)\n",
-                   out_fd, in_fd, task->max_fds, count, task->pid);
+                   local_out_fd, local_in_fd, task->max_fds, local_count, task->pid);
         return -EBADF;
     }
 
-    if (in_fd >= task->max_fds) {
+    if (local_in_fd >= task->max_fds) {
         fut_printf("[SENDFILE] sendfile(out_fd=%d, in_fd=%d, max_fds=%d, count=%zu, pid=%d) -> EBADF "
                    "(in_fd exceeds max_fds, FD bounds validation)\n",
-                   out_fd, in_fd, task->max_fds, count, task->pid);
+                   local_out_fd, local_in_fd, task->max_fds, local_count, task->pid);
         return -EBADF;
     }
 
     /* Get file structures */
-    struct fut_file *in_file = vfs_get_file_from_task(task, in_fd);
+    struct fut_file *in_file = vfs_get_file_from_task(task, local_in_fd);
     if (!in_file) {
         fut_printf("[SENDFILE] sendfile(out_fd=%d, in_fd=%d, count=%zu, pid=%d) -> EBADF "
                    "(in_fd not open)\n",
-                   out_fd, in_fd, count, task->pid);
+                   local_out_fd, local_in_fd, local_count, task->pid);
         return -EBADF;
     }
 
-    struct fut_file *out_file = vfs_get_file_from_task(task, out_fd);
+    struct fut_file *out_file = vfs_get_file_from_task(task, local_out_fd);
     if (!out_file) {
         fut_printf("[SENDFILE] sendfile(out_fd=%d, in_fd=%d, count=%zu, pid=%d) -> EBADF "
                    "(out_fd not open)\n",
-                   out_fd, in_fd, count, task->pid);
+                   local_out_fd, local_in_fd, local_count, task->pid);
         return -EBADF;
     }
 
     /* Categorize transfer size */
     const char *size_category;
     const char *size_desc;
-    if (count == 0) {
+    if (local_count == 0) {
         size_category = "zero";
         size_desc = "no-op";
-    } else if (count < 4096) {
+    } else if (local_count < 4096) {
         size_category = "tiny (<4KB)";
         size_desc = "less than a page";
-    } else if (count < 65536) {
+    } else if (local_count < 65536) {
         size_category = "small (4KB-64KB)";
         size_desc = "few pages";
-    } else if (count < 1048576) {
+    } else if (local_count < 1048576) {
         size_category = "medium (64KB-1MB)";
         size_desc = "moderate transfer";
-    } else if (count < 104857600) {
+    } else if (local_count < 104857600) {
         size_category = "large (1MB-100MB)";
         size_desc = "significant transfer";
     } else {
-        size_category = "huge (≥100MB)";
+        size_category = "huge (>=100MB)";
         size_desc = "very large transfer";
     }
 
     /* Handle offset parameter */
     const char *offset_mode;
     uint64_t start_offset = 0;
-    if (offset) {
-        /* Phase 2: Copy offset from userspace */
-        if (fut_copy_from_user(&start_offset, offset, sizeof(uint64_t)) != 0) {
+    if (local_offset) {
+        /* Copy offset from userspace */
+        if (fut_copy_from_user(&start_offset, local_offset, sizeof(uint64_t)) != 0) {
             fut_printf("[SENDFILE] sendfile(out_fd=%d, in_fd=%d, count=%zu, pid=%d) -> EFAULT "
                        "(invalid offset pointer)\n",
-                       out_fd, in_fd, count, task->pid);
+                       local_out_fd, local_in_fd, local_count, task->pid);
             return -EFAULT;
         }
         offset_mode = "explicit offset";
@@ -248,8 +252,8 @@ long sys_sendfile(int out_fd, int in_fd, uint64_t *offset, size_t count) {
     size_t total = 0;
     uint64_t read_offset = start_offset;
 
-    while (total < count) {
-        size_t chunk = count - total;
+    while (total < local_count) {
+        size_t chunk = local_count - total;
         if (chunk > SENDFILE_BUF_SIZE)
             chunk = SENDFILE_BUF_SIZE;
 
@@ -288,9 +292,11 @@ long sys_sendfile(int out_fd, int in_fd, uint64_t *offset, size_t count) {
         total += nwritten;
     }
 
-    /* Update offset for caller */
-    if (offset) {
-        fut_copy_to_user(offset, &read_offset, sizeof(uint64_t));
+    /* Update offset for caller; propagate write-back failure */
+    if (local_offset) {
+        if (fut_copy_to_user(local_offset, &read_offset, sizeof(uint64_t)) != 0) {
+            return -EFAULT;
+        }
     } else {
         /* No explicit offset: update in_file's position */
         in_file->offset = read_offset;

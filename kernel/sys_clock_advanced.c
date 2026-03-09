@@ -69,22 +69,26 @@ struct timex {
  *   - -EPERM if insufficient privileges (Phase 3)
  */
 long sys_clock_settime(int clock_id, const fut_timespec_t *tp) {
+    /* ARM64 FIX: Copy register params to local stack vars before blocking calls */
+    int local_clock_id = clock_id;
+    const fut_timespec_t *local_tp = tp;
+
     fut_task_t *task = fut_task_current();
     if (!task) {
         return -ESRCH;
     }
 
-    if (!tp) {
+    if (!local_tp) {
         fut_printf("[CLOCK_SETTIME] clock_settime(clock_id=%d, tp=%p) -> EFAULT (tp is NULL)\n",
-                   clock_id, tp);
+                   local_clock_id, local_tp);
         return -EFAULT;
     }
 
     /* Copy time from user */
     fut_timespec_t time;
-    if (fut_copy_from_user(&time, tp, sizeof(fut_timespec_t)) != 0) {
+    if (fut_copy_from_user(&time, local_tp, sizeof(fut_timespec_t)) != 0) {
         fut_printf("[CLOCK_SETTIME] clock_settime(clock_id=%d) -> EFAULT (copy_from_user failed)\n",
-                   clock_id);
+                   local_clock_id);
         return -EFAULT;
     }
 
@@ -92,14 +96,14 @@ long sys_clock_settime(int clock_id, const fut_timespec_t *tp) {
     if (time.tv_sec < 0 || time.tv_nsec < 0 || time.tv_nsec >= 1000000000LL) {
         fut_printf("[CLOCK_SETTIME] clock_settime(clock_id=%d, sec=%lld, nsec=%lld) -> EINVAL "
                    "(invalid timespec)\n",
-                   clock_id, time.tv_sec, time.tv_nsec);
+                   local_clock_id, time.tv_sec, time.tv_nsec);
         return -EINVAL;
     }
 
     const char *clock_name;
     int is_settable = 0;
 
-    switch (clock_id) {
+    switch (local_clock_id) {
         case CLOCK_REALTIME:
             clock_name = "CLOCK_REALTIME";
             is_settable = 1;
@@ -112,7 +116,7 @@ long sys_clock_settime(int clock_id, const fut_timespec_t *tp) {
             break;
         default:
             fut_printf("[CLOCK_SETTIME] clock_settime(clock_id=%d) -> EINVAL (unknown clock_id)\n",
-                       clock_id);
+                       local_clock_id);
             return -EINVAL;
     }
 
@@ -151,6 +155,10 @@ long sys_clock_settime(int clock_id, const fut_timespec_t *tp) {
  *   - -EFAULT if res invalid
  */
 long sys_clock_getres(int clock_id, fut_timespec_t *res) {
+    /* ARM64 FIX: Copy register params to local stack vars before blocking calls */
+    int local_clock_id = clock_id;
+    fut_timespec_t *local_res = res;
+
     fut_task_t *task = fut_task_current();
     if (!task) {
         return -ESRCH;
@@ -158,7 +166,7 @@ long sys_clock_getres(int clock_id, fut_timespec_t *res) {
 
     const char *clock_name;
 
-    switch (clock_id) {
+    switch (local_clock_id) {
         case CLOCK_REALTIME:
             clock_name = "CLOCK_REALTIME";
             break;
@@ -176,18 +184,17 @@ long sys_clock_getres(int clock_id, fut_timespec_t *res) {
             break;
         default:
             fut_printf("[CLOCK_GETRES] clock_getres(clock_id=%d) -> EINVAL (unknown clock_id)\n",
-                       clock_id);
+                       local_clock_id);
             return -EINVAL;
     }
 
-    /* Phase 1: Return 1 millisecond resolution for all clocks */
-    /* Phase 2: Return actual resolution (e.g., nanoseconds for high-res clocks) */
+    /* Return 1 millisecond resolution for all clocks */
     fut_timespec_t resolution;
     resolution.tv_sec = 0;
     resolution.tv_nsec = 1000000;  /* 1 millisecond */
 
-    if (res) {
-        if (fut_copy_to_user(res, &resolution, sizeof(fut_timespec_t)) != 0) {
+    if (local_res) {
+        if (fut_copy_to_user(local_res, &resolution, sizeof(fut_timespec_t)) != 0) {
             fut_printf("[CLOCK_GETRES] clock_getres(clock_id=%s) -> EFAULT (copy_to_user failed)\n",
                        clock_name);
             return -EFAULT;
@@ -223,22 +230,28 @@ long sys_clock_getres(int clock_id, fut_timespec_t *res) {
  */
 long sys_clock_nanosleep(int clock_id, int flags,
                           const fut_timespec_t *req, fut_timespec_t *rem) {
+    /* ARM64 FIX: Copy register params to local stack vars before blocking calls */
+    int local_clock_id = clock_id;
+    int local_flags = flags;
+    const fut_timespec_t *local_req = req;
+    fut_timespec_t *local_rem = rem;
+
     fut_task_t *task = fut_task_current();
     if (!task) {
         return -ESRCH;
     }
 
-    if (!req) {
+    if (!local_req) {
         clock_nanosleep_printf("[CLOCK_NANOSLEEP] clock_nanosleep(clock_id=%d) -> EINVAL (req is NULL)\n",
-                   clock_id);
+                   local_clock_id);
         return -EINVAL;
     }
 
     /* Copy request from user */
     fut_timespec_t request;
-    if (fut_copy_from_user(&request, req, sizeof(fut_timespec_t)) != 0) {
+    if (fut_copy_from_user(&request, local_req, sizeof(fut_timespec_t)) != 0) {
         clock_nanosleep_printf("[CLOCK_NANOSLEEP] clock_nanosleep(clock_id=%d) -> EFAULT (copy_from_user failed)\n",
-                   clock_id);
+                   local_clock_id);
         return -EFAULT;
     }
 
@@ -246,13 +259,13 @@ long sys_clock_nanosleep(int clock_id, int flags,
     if (request.tv_sec < 0 || request.tv_nsec < 0 || request.tv_nsec >= 1000000000LL) {
         clock_nanosleep_printf("[CLOCK_NANOSLEEP] clock_nanosleep(clock_id=%d, sec=%lld, nsec=%lld) -> EINVAL "
                    "(invalid timespec)\n",
-                   clock_id, request.tv_sec, request.tv_nsec);
+                   local_clock_id, request.tv_sec, request.tv_nsec);
         return -EINVAL;
     }
 
     const char *clock_name;
 
-    switch (clock_id) {
+    switch (local_clock_id) {
         case CLOCK_REALTIME:
             clock_name = "CLOCK_REALTIME";
             break;
@@ -261,28 +274,27 @@ long sys_clock_nanosleep(int clock_id, int flags,
             break;
         default:
             clock_nanosleep_printf("[CLOCK_NANOSLEEP] clock_nanosleep(clock_id=%d) -> EINVAL (unsupported clock)\n",
-                       clock_id);
+                       local_clock_id);
             return -EINVAL;
     }
 
     #define TIMER_ABSTIME 1
-    const char *mode = (flags & TIMER_ABSTIME) ? "absolute" : "relative";
+    const char *mode = (local_flags & TIMER_ABSTIME) ? "absolute" : "relative";
 
-    /* Phase 1: Only support relative time sleep */
-    if (flags & TIMER_ABSTIME) {
+    /* Only support relative time sleep */
+    if (local_flags & TIMER_ABSTIME) {
         clock_nanosleep_printf("[CLOCK_NANOSLEEP] clock_nanosleep(clock_id=%s, mode=%s, sec=%lld, nsec=%lld) -> EINVAL "
-                   "(absolute time not yet supported, Phase 1)\n",
+                   "(absolute time not yet supported)\n",
                    clock_name, mode, request.tv_sec, request.tv_nsec);
         return -EINVAL;
     }
 
-    /* Phase 1: Delegate to regular nanosleep for relative sleep */
-    /* Phase 2: Implement absolute time sleep */
+    /* Delegate to regular nanosleep for relative sleep */
     clock_nanosleep_printf("[CLOCK_NANOSLEEP] clock_nanosleep(clock_id=%s, mode=%s, sec=%lld, nsec=%lld) "
-               "(delegating to nanosleep, Phase 1 stub)\n",
+               "(delegating to nanosleep)\n",
                clock_name, mode, request.tv_sec, request.tv_nsec);
 
-    return sys_nanosleep(req, rem);
+    return sys_nanosleep(local_req, local_rem);
 }
 
 /**
@@ -302,18 +314,22 @@ long sys_clock_nanosleep(int clock_id, int flags,
  *   - -EFAULT if value invalid
  */
 long sys_getitimer(int which, struct itimerval *value) {
+    /* ARM64 FIX: Copy register params to local stack vars before blocking calls */
+    int local_which = which;
+    struct itimerval *local_value = value;
+
     fut_task_t *task = fut_task_current();
     if (!task) {
         return -ESRCH;
     }
 
-    if (!value) {
-        fut_printf("[GETITIMER] getitimer(which=%d) -> EFAULT (value is NULL)\n", which);
+    if (!local_value) {
+        fut_printf("[GETITIMER] getitimer(which=%d) -> EFAULT (value is NULL)\n", local_which);
         return -EFAULT;
     }
 
     const char *timer_name;
-    switch (which) {
+    switch (local_which) {
         case ITIMER_REAL:
             timer_name = "ITIMER_REAL";
             break;
@@ -324,15 +340,15 @@ long sys_getitimer(int which, struct itimerval *value) {
             timer_name = "ITIMER_PROF";
             break;
         default:
-            fut_printf("[GETITIMER] getitimer(which=%d) -> EINVAL (invalid timer type)\n", which);
+            fut_printf("[GETITIMER] getitimer(which=%d) -> EINVAL (invalid timer type)\n", local_which);
             return -EINVAL;
     }
 
-    /* Phase 1: Return zero (timer disarmed) */
+    /* Return zero (timer disarmed) */
     struct itimerval timer;
     memset(&timer, 0, sizeof(timer));
 
-    if (fut_copy_to_user(value, &timer, sizeof(struct itimerval)) != 0) {
+    if (fut_copy_to_user(local_value, &timer, sizeof(struct itimerval)) != 0) {
         fut_printf("[GETITIMER] getitimer(which=%s) -> EFAULT (copy_to_user failed)\n",
                    timer_name);
         return -EFAULT;
@@ -365,20 +381,25 @@ long sys_getitimer(int which, struct itimerval *value) {
  *   - -EFAULT if pointers invalid
  */
 long sys_setitimer(int which, const struct itimerval *value, struct itimerval *ovalue) {
+    /* ARM64 FIX: Copy register params to local stack vars before blocking calls */
+    int local_which = which;
+    const struct itimerval *local_value = value;
+    struct itimerval *local_ovalue = ovalue;
+
     fut_task_t *task = fut_task_current();
     if (!task) {
         return -ESRCH;
     }
 
-    if (!value) {
-        fut_printf("[SETITIMER] setitimer(which=%d) -> EFAULT (value is NULL)\n", which);
+    if (!local_value) {
+        fut_printf("[SETITIMER] setitimer(which=%d) -> EFAULT (value is NULL)\n", local_which);
         return -EFAULT;
     }
 
     const char *timer_name;
     const char *signal_name;
 
-    switch (which) {
+    switch (local_which) {
         case ITIMER_REAL:
             timer_name = "ITIMER_REAL";
             signal_name = "SIGALRM";
@@ -392,13 +413,13 @@ long sys_setitimer(int which, const struct itimerval *value, struct itimerval *o
             signal_name = "SIGPROF";
             break;
         default:
-            fut_printf("[SETITIMER] setitimer(which=%d) -> EINVAL (invalid timer type)\n", which);
+            fut_printf("[SETITIMER] setitimer(which=%d) -> EINVAL (invalid timer type)\n", local_which);
             return -EINVAL;
     }
 
     /* Copy timer value from user */
     struct itimerval new_timer;
-    if (fut_copy_from_user(&new_timer, value, sizeof(struct itimerval)) != 0) {
+    if (fut_copy_from_user(&new_timer, local_value, sizeof(struct itimerval)) != 0) {
         fut_printf("[SETITIMER] setitimer(which=%s) -> EFAULT (copy_from_user failed)\n",
                    timer_name);
         return -EFAULT;
@@ -412,10 +433,10 @@ long sys_setitimer(int which, const struct itimerval *value, struct itimerval *o
     }
 
     /* Return old timer value if requested */
-    if (ovalue) {
+    if (local_ovalue) {
         struct itimerval old_timer;
         memset(&old_timer, 0, sizeof(old_timer));
-        if (fut_copy_to_user(ovalue, &old_timer, sizeof(struct itimerval)) != 0) {
+        if (fut_copy_to_user(local_ovalue, &old_timer, sizeof(struct itimerval)) != 0) {
             fut_printf("[SETITIMER] setitimer(which=%s) -> EFAULT (copy_to_user for ovalue failed)\n",
                        timer_name);
             /* Continue anyway - old value is optional */
@@ -456,24 +477,28 @@ long sys_setitimer(int which, const struct itimerval *value, struct itimerval *o
  *   - -EPERM if insufficient privileges (Phase 3)
  */
 long sys_settimeofday(const fut_timeval_t *tv, const void *tz) {
+    /* ARM64 FIX: Copy register params to local stack vars before blocking calls */
+    const fut_timeval_t *local_tv = tv;
+    const void *local_tz = tz;
+
     fut_task_t *task = fut_task_current();
     if (!task) {
         return -ESRCH;
     }
 
-    if (tz != NULL) {
+    if (local_tz != NULL) {
         fut_printf("[SETTIMEOFDAY] settimeofday: timezone parameter not supported\n");
         return -EINVAL;
     }
 
-    if (!tv) {
-        fut_printf("[SETTIMEOFDAY] settimeofday(tv=%p) -> EFAULT (tv is NULL)\n", tv);
+    if (!local_tv) {
+        fut_printf("[SETTIMEOFDAY] settimeofday(tv=%p) -> EFAULT (tv is NULL)\n", local_tv);
         return -EFAULT;
     }
 
     /* Copy time from user */
     fut_timeval_t time;
-    if (fut_copy_from_user(&time, tv, sizeof(fut_timeval_t)) != 0) {
+    if (fut_copy_from_user(&time, local_tv, sizeof(fut_timeval_t)) != 0) {
         fut_printf("[SETTIMEOFDAY] settimeofday -> EFAULT (copy_from_user failed)\n");
         return -EFAULT;
     }
@@ -513,19 +538,22 @@ long sys_settimeofday(const fut_timeval_t *tv, const void *tz) {
  *   - -EPERM if insufficient privileges (Phase 3)
  */
 long sys_adjtimex(struct timex *txc) {
+    /* ARM64 FIX: Copy register params to local stack vars before blocking calls */
+    struct timex *local_txc = txc;
+
     fut_task_t *task = fut_task_current();
     if (!task) {
         return -ESRCH;
     }
 
-    if (!txc) {
-        fut_printf("[ADJTIMEX] adjtimex(txc=%p) -> EFAULT (txc is NULL)\n", txc);
+    if (!local_txc) {
+        fut_printf("[ADJTIMEX] adjtimex(txc=%p) -> EFAULT (txc is NULL)\n", local_txc);
         return -EFAULT;
     }
 
     /* Copy from user */
     struct timex tx;
-    if (fut_copy_from_user(&tx, txc, sizeof(struct timex)) != 0) {
+    if (fut_copy_from_user(&tx, local_txc, sizeof(struct timex)) != 0) {
         fut_printf("[ADJTIMEX] adjtimex -> EFAULT (copy_from_user failed)\n");
         return -EFAULT;
     }
@@ -547,7 +575,7 @@ long sys_adjtimex(struct timex *txc) {
     tx.time.tv_usec = (ms % 1000) * 1000;
 
     /* Copy back to user */
-    if (fut_copy_to_user(txc, &tx, sizeof(struct timex)) != 0) {
+    if (fut_copy_to_user(local_txc, &tx, sizeof(struct timex)) != 0) {
         fut_printf("[ADJTIMEX] adjtimex -> EFAULT (copy_to_user failed)\n");
         return -EFAULT;
     }

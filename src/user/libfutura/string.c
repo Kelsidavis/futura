@@ -8,6 +8,7 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include <limits.h>
 
 
 extern void *malloc(size_t);
@@ -198,7 +199,26 @@ long strtol(const char *nptr, char **endptr, int base) {
         nptr += 2;
     }
 
-    long result = 0;
+    /* Use unsigned accumulator for overflow detection */
+    unsigned long cutoff;
+    int cutlim;
+    if (sign == 1) {
+        cutoff = (unsigned long)LONG_MAX / (unsigned long)base;
+        cutlim = (int)((unsigned long)LONG_MAX % (unsigned long)base);
+    } else {
+        /* LONG_MIN magnitude as unsigned */
+        cutoff = (unsigned long)-(LONG_MIN + 1) / (unsigned long)base;
+        cutlim = (int)((unsigned long)-(LONG_MIN + 1) % (unsigned long)base);
+        /* Adjust for the +1 used above to avoid UB */
+        cutlim += 1;
+        if (cutlim >= base) {
+            cutoff += 1;
+            cutlim -= base;
+        }
+    }
+
+    unsigned long acc = 0;
+    int overflow = 0;
     const char *start = nptr;
     while (*nptr) {
         int digit;
@@ -214,14 +234,21 @@ long strtol(const char *nptr, char **endptr, int base) {
         if (digit >= base) {
             break;
         }
-        result = result * base + digit;
+        if (acc > cutoff || (acc == cutoff && digit > cutlim)) {
+            overflow = 1;
+        }
+        acc = acc * (unsigned long)base + (unsigned long)digit;
         ++nptr;
     }
 
     if (endptr) {
         *endptr = (char *)(nptr != start ? nptr : (const char *)start);
     }
-    return sign * result;
+
+    if (overflow) {
+        return (sign == 1) ? LONG_MAX : LONG_MIN;
+    }
+    return sign * (long)acc;
 }
 
 long __isoc23_strtol(const char *nptr, char **endptr, int base) {

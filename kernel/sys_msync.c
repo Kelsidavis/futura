@@ -177,59 +177,64 @@
  * - MS_INVALIDATE can cause performance issues if abused
  */
 long sys_msync(void *addr, size_t length, int flags) {
+    /* ARM64 FIX: Copy parameters to local variables */
+    void *local_addr = addr;
+    size_t local_length = length;
+    int local_flags = flags;
+
     fut_task_t *task = fut_task_current();
     if (!task) {
         return -ESRCH;
     }
 
     /* Validate address alignment (must be page-aligned) */
-    if ((uintptr_t)addr % PAGE_SIZE != 0) {
+    if ((uintptr_t)local_addr % PAGE_SIZE != 0) {
         fut_printf("[MSYNC] msync(%p, %zu, 0x%x) -> EINVAL (addr not page-aligned)\n",
-                   addr, length, flags);
+                   local_addr, local_length, local_flags);
         return -EINVAL;
     }
 
     /* Validate flags */
     const int valid_flags = MS_ASYNC | MS_SYNC | MS_INVALIDATE;
-    if ((flags & ~valid_flags) != 0) {
+    if ((local_flags & ~valid_flags) != 0) {
         fut_printf("[MSYNC] msync(%p, %zu, 0x%x) -> EINVAL (invalid flags)\n",
-                   addr, length, flags);
+                   local_addr, local_length, local_flags);
         return -EINVAL;
     }
 
     /* MS_ASYNC and MS_SYNC are mutually exclusive */
-    if ((flags & MS_ASYNC) && (flags & MS_SYNC)) {
+    if ((local_flags & MS_ASYNC) && (local_flags & MS_SYNC)) {
         fut_printf("[MSYNC] msync(%p, %zu, 0x%x) -> EINVAL (MS_ASYNC and MS_SYNC both set)\n",
-                   addr, length, flags);
+                   local_addr, local_length, local_flags);
         return -EINVAL;
     }
 
     /* Must specify either MS_ASYNC or MS_SYNC */
-    if (!(flags & (MS_ASYNC | MS_SYNC))) {
+    if (!(local_flags & (MS_ASYNC | MS_SYNC))) {
         fut_printf("[MSYNC] msync(%p, %zu, 0x%x) -> EINVAL (neither MS_ASYNC nor MS_SYNC)\n",
-                   addr, length, flags);
+                   local_addr, local_length, local_flags);
         return -EINVAL;
     }
 
     /* Validate length + PAGE_SIZE won't overflow before alignment
      * Prevent integer overflow in alignment calculation */
-    if (length > SIZE_MAX - PAGE_SIZE + 1) {
+    if (local_length > SIZE_MAX - PAGE_SIZE + 1) {
         fut_printf("[MSYNC] msync(%p, %zu) -> EINVAL "
                    "(length too large for page alignment, would overflow)\n",
-                   addr, length);
+                   local_addr, local_length);
         return -EINVAL;
     }
 
     /* Round length up to page boundary */
-    size_t aligned_len = (length + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1);
+    size_t aligned_len = (local_length + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1);
 
     /* Validate addr + aligned_len doesn't wrap around
      * Prevent address range wraparound attacks */
-    uintptr_t start = (uintptr_t)addr;
+    uintptr_t start = (uintptr_t)local_addr;
     if (start > UINTPTR_MAX - aligned_len) {
         fut_printf("[MSYNC] msync(%p, %zu) -> EINVAL "
                    "(address range wraps around)\n",
-                   addr, aligned_len);
+                   local_addr, aligned_len);
         return -EINVAL;
     }
 
@@ -240,7 +245,7 @@ long sys_msync(void *addr, size_t length, int flags) {
     if (end > USER_SPACE_END) {
         fut_printf("[MSYNC] msync(%p, %zu) -> EINVAL "
                    "(end address 0x%lx exceeds userspace limit 0x%lx)\n",
-                   addr, aligned_len, end, USER_SPACE_END);
+                   local_addr, aligned_len, end, USER_SPACE_END);
         return -EINVAL;
     }
 
@@ -250,25 +255,25 @@ long sys_msync(void *addr, size_t length, int flags) {
     char flags_str[64];
     int flags_idx = 0;
 
-    if (flags & MS_SYNC) {
+    if (local_flags & MS_SYNC) {
         const char *sync = "MS_SYNC";
         while (*sync) flags_str[flags_idx++] = *sync++;
-    } else if (flags & MS_ASYNC) {
+    } else if (local_flags & MS_ASYNC) {
         const char *async = "MS_ASYNC";
         while (*async) flags_str[flags_idx++] = *async++;
     }
 
-    if (flags & MS_INVALIDATE) {
+    if (local_flags & MS_INVALIDATE) {
         flags_str[flags_idx++] = '|';
         const char *inv = "MS_INVALIDATE";
         while (*inv) flags_str[flags_idx++] = *inv++;
     }
     flags_str[flags_idx] = '\0';
 
-    const char *mode_desc = (flags & MS_SYNC) ? "synchronous" : "asynchronous";
+    const char *mode_desc = (local_flags & MS_SYNC) ? "synchronous" : "asynchronous";
 
     fut_printf("[MSYNC] msync(%p, %zu bytes, %s) -> 0 (%zu pages, %s, Phase 3: VMA validation, file-backed checks)\n",
-               addr, aligned_len, flags_str, num_pages, mode_desc);
+               local_addr, aligned_len, flags_str, num_pages, mode_desc);
 
     /* Phase 2: Parameters validated and logged
      * Phase 3-5 implementation:

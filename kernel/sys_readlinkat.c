@@ -16,6 +16,7 @@
 #include <kernel/errno.h>
 #include <kernel/fut_vfs.h>
 #include <stdint.h>
+#include <string.h>
 
 #include <kernel/kprintf.h>
 #include <kernel/uaccess.h>
@@ -133,29 +134,22 @@ long sys_readlinkat(int dirfd, const char *pathname, char *buf, size_t bufsiz) {
 
     /* Copy pathname from userspace */
     char path_buf[FUT_VFS_PATH_BUFFER_SIZE];
-    if (fut_copy_from_user(path_buf, local_pathname, sizeof(path_buf) - 1) != 0) {
+    if (fut_copy_from_user(path_buf, local_pathname, sizeof(path_buf)) != 0) {
         fut_printf("[READLINKAT] readlinkat(dirfd=%d) -> EFAULT (copy_from_user failed)\n",
                    local_dirfd);
         return -EFAULT;
     }
-    path_buf[sizeof(path_buf) - 1] = '\0';
+    if (memchr(path_buf, '\0', sizeof(path_buf)) == NULL) {
+        fut_printf("[READLINKAT] readlinkat(dirfd=%d) -> ENAMETOOLONG\n",
+                   local_dirfd);
+        return -ENAMETOOLONG;
+    }
 
     /* Validate pathname is not empty */
     if (path_buf[0] == '\0') {
         fut_printf("[READLINKAT] readlinkat(dirfd=%d, pathname=\"\" [empty]) -> EINVAL (empty pathname)\n",
                    local_dirfd);
         return -EINVAL;
-    }
-
-    /* Check for path truncation */
-    size_t truncation_check = 0;
-    while (path_buf[truncation_check] != '\0' && truncation_check < sizeof(path_buf) - 1) {
-        truncation_check++;
-    }
-    if (path_buf[truncation_check] != '\0') {
-        fut_printf("[READLINKAT] readlinkat(dirfd=%d, pathname_len>255) -> ENAMETOOLONG (pathname truncated)\n",
-                   local_dirfd);
-        return -ENAMETOOLONG;
     }
 
     /* Categorize pathname */

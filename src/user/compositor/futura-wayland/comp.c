@@ -1634,26 +1634,15 @@ static void ms_to_timespec(uint64_t ms, struct timespec *ts) {
 }
 
 static int comp_timer_arm(struct compositor_state *comp) {
-    printf("[SCHEDULER] comp_timer_arm called\n");
-    fflush(stdout);
     if (!comp || comp->timerfd < 0) {
-        printf("[SCHEDULER] comp_timer_arm failed: comp=%p timerfd=%d\n",
-               (void*)comp, comp ? comp->timerfd : -999);
-        fflush(stdout);
         return -1;
     }
     if (comp->next_tick_ms == 0) {
         comp->next_tick_ms = (uint64_t)comp_now_msec() + comp->target_ms;
     }
-    printf("[SCHEDULER] arming timerfd=%d next_tick_ms=%llu\n",
-           comp->timerfd, (unsigned long long)comp->next_tick_ms);
-    fflush(stdout);
     struct itimerspec its = {0};
     ms_to_timespec(comp->next_tick_ms, &its.it_value);
-    int ret = timerfd_settime(comp->timerfd, TFD_TIMER_ABSTIME, &its, NULL);
-    printf("[SCHEDULER] timerfd_settime returned %d (errno=%d)\n", ret, errno);
-    fflush(stdout);
-    return ret;
+    return timerfd_settime(comp->timerfd, TFD_TIMER_ABSTIME, &its, NULL);
 }
 
 static void comp_handle_timer_tick(struct compositor_state *comp, uint64_t expirations) {
@@ -1742,21 +1731,15 @@ int comp_run(struct compositor_state *comp) {
 }
 
 int comp_scheduler_start(struct compositor_state *comp) {
-    printf("[SCHEDULER] comp_scheduler_start called\n");
     if (!comp || !comp->loop) {
-        printf("[SCHEDULER] comp or loop is NULL (comp=%p loop=%p)\n", comp, comp ? comp->loop : NULL);
         return -1;
     }
     if (comp->timerfd >= 0) {
-        printf("[SCHEDULER] timerfd already created\n");
         return 0;
     }
 
-    printf("[SCHEDULER] calling timerfd_create...\n");
     int fd = timerfd_create(CLOCK_MONOTONIC, TFD_NONBLOCK);
-    printf("[SCHEDULER] timerfd_create returned fd=%d errno=%d\n", fd, errno);
     if (fd < 0) {
-        printf("[SCHEDULER] timerfd_create FAILED!\n");
         return -1;
     }
 #ifdef DEBUG_WAYLAND

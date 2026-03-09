@@ -156,40 +156,22 @@ long sys_rename(const char *oldpath, const char *newpath) {
     char old_buf[256];
     char new_buf[256];
 
-    if (fut_copy_from_user(old_buf, local_oldpath, sizeof(old_buf) - 1) != 0) {
+    if (fut_copy_from_user(old_buf, local_oldpath, sizeof(old_buf)) != 0) {
         fut_printf("[RENAME] rename(oldpath=?, newpath=?) -> EFAULT (oldpath copy_from_user failed)\n");
         return -EFAULT;
     }
-    old_buf[sizeof(old_buf) - 1] = '\0';
-
-    /* Security hardening: Detect path truncation BEFORE proceeding
-     * Silent truncation could allow renaming unintended files */
-    size_t old_path_len = 0;
-    while (old_buf[old_path_len] != '\0' && old_path_len < sizeof(old_buf) - 1) {
-        old_path_len++;
-    }
-    if (old_buf[old_path_len] != '\0') {
-        /* Path was truncated - null terminator not found before buffer end */
-        fut_printf("[RENAME] rename(oldpath=<truncated>, newpath=?) -> ENAMETOOLONG "
-                   "(oldpath exceeds %zu bytes)\n", sizeof(old_buf) - 1);
+    if (memchr(old_buf, '\0', sizeof(old_buf)) == NULL) {
+        fut_printf("[RENAME] rename(oldpath=<truncated>, newpath=?) -> ENAMETOOLONG\n");
         return -ENAMETOOLONG;
     }
 
-    if (fut_copy_from_user(new_buf, local_newpath, sizeof(new_buf) - 1) != 0) {
+    if (fut_copy_from_user(new_buf, local_newpath, sizeof(new_buf)) != 0) {
         fut_printf("[RENAME] rename(oldpath='%s', newpath=?) -> EFAULT (newpath copy_from_user failed)\n",
                    old_buf);
         return -EFAULT;
     }
-    new_buf[sizeof(new_buf) - 1] = '\0';
-
-    /* Security hardening: Detect newpath truncation */
-    size_t new_path_len = 0;
-    while (new_buf[new_path_len] != '\0' && new_path_len < sizeof(new_buf) - 1) {
-        new_path_len++;
-    }
-    if (new_buf[new_path_len] != '\0') {
-        fut_printf("[RENAME] rename(oldpath='%s', newpath=<truncated>) -> ENAMETOOLONG "
-                   "(newpath exceeds %zu bytes)\n", old_buf, sizeof(new_buf) - 1);
+    if (memchr(new_buf, '\0', sizeof(new_buf)) == NULL) {
+        fut_printf("[RENAME] rename(oldpath='%s', newpath=<truncated>) -> ENAMETOOLONG\n", old_buf);
         return -ENAMETOOLONG;
     }
 

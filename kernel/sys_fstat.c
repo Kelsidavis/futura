@@ -204,16 +204,19 @@ long sys_fstat(int fd, struct fut_stat *statbuf) {
         kernel_stat.st_nlink = vnode->nlinks;
         kernel_stat.st_size = vnode->size;
         kernel_stat.st_dev = vnode->mount ? vnode->mount->st_dev : 0;
-        kernel_stat.st_uid = 0;
-        kernel_stat.st_gid = 0;
+        kernel_stat.st_uid = vnode->uid;
+        kernel_stat.st_gid = vnode->gid;
         kernel_stat.st_blksize = 4096;
         kernel_stat.st_blocks = (vnode->size + 4095) / 4096;
 
         /* Set timestamps */
         uint64_t now_ns = fut_get_time_ns();
         kernel_stat.st_atime = now_ns;
+        kernel_stat.st_atime_nsec = 0;
         kernel_stat.st_mtime = now_ns;
+        kernel_stat.st_mtime_nsec = 0;
         kernel_stat.st_ctime = now_ns;
+        kernel_stat.st_ctime_nsec = 0;
     }
 
     /* Phase 2: Identify file type from mode */

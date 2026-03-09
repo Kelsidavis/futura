@@ -1747,20 +1747,21 @@ int fut_vfs_stat(const char *path, struct fut_stat *stat) {
         stat->st_nlink = vnode->nlinks;
         stat->st_size = vnode->size;
         stat->st_dev = vnode->mount ? vnode->mount->st_dev : 0;
-        stat->st_uid = 0;
-        stat->st_gid = 0;
+        stat->st_uid = vnode->uid;
+        stat->st_gid = vnode->gid;
         stat->st_blksize = 4096;
         stat->st_blocks = vnode->size / 4096 + (vnode->size % 4096 ? 1 : 0);
 
-        /* Set timestamps - atime is current time (file access time),
-         * mtime and ctime would ideally come from filesystem metadata.
-         * Using tick-based time to avoid calibration deadlock. */
+        /* Set timestamps using tick-based time to avoid calibration deadlock */
         extern uint64_t fut_get_ticks(void);
-        uint64_t now_ms = fut_get_ticks();        /* Milliseconds since boot */
-        uint64_t now_ns = now_ms * 1000000ULL;    /* Convert to nanoseconds */
-        stat->st_atime = now_ns;  /* Access time (now) */
-        stat->st_mtime = now_ns;  /* Modification time (default) */
-        stat->st_ctime = now_ns;  /* Change time (default) */
+        uint64_t now_ms = fut_get_ticks();
+        uint64_t now_ns = now_ms * 1000000ULL;
+        stat->st_atime = now_ns;
+        stat->st_atime_nsec = 0;
+        stat->st_mtime = now_ns;
+        stat->st_mtime_nsec = 0;
+        stat->st_ctime = now_ns;
+        stat->st_ctime_nsec = 0;
         ret = 0;
     }
 
@@ -1818,8 +1819,8 @@ int fut_vfs_lstat(const char *path, struct fut_stat *stat) {
         stat->st_nlink = vnode->nlinks;
         stat->st_size = vnode->size;
         stat->st_dev = vnode->mount ? vnode->mount->st_dev : 0;
-        stat->st_uid = 0;
-        stat->st_gid = 0;
+        stat->st_uid = vnode->uid;
+        stat->st_gid = vnode->gid;
         stat->st_blksize = 4096;
         stat->st_blocks = vnode->size / 4096 + (vnode->size % 4096 ? 1 : 0);
 

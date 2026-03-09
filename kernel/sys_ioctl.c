@@ -564,8 +564,6 @@ long sys_ioctl(int fd, unsigned long request, void *argp) {
             }
         }
 
-        fut_printf("[IOCTL] ioctl(fd=%d, request=0x%lx [%s], argp=%p) -> dispatching to chr device\n",
-                   fd, request, request_name, argp);
         return file->chr_ops->ioctl(file->chr_inode, file->chr_private, request, (unsigned long)argp);
     }
 

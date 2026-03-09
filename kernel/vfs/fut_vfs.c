@@ -1196,17 +1196,6 @@ static int try_open_chrdev(const char *path, int flags) {
         return fd;
     }
 
-    if (task) {
-        fut_printf("[CHR-OPEN] path=%p pid=%llu fd=%d\n",
-                   (const void *)path,
-                   task ? task->pid : 0,
-                   fd);
-    } else {
-        fut_printf("[CHR-OPEN] path=%p pid=0 fd=%d (no task context)\n",
-                   (const void *)path,
-                   fd);
-    }
-
     return fd;
 }
 

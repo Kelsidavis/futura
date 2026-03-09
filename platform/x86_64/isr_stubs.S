@@ -875,15 +875,6 @@ irq0_timer:
 .global irq1_keyboard
 .type irq1_keyboard, @function
 irq1_keyboard:
-    /* Output 'K' to serial to verify interrupt fires */
-    pushq %rax
-    pushq %rdx
-    mov $0x3F8, %dx
-    mov $'K', %al
-    out %al, %dx
-    popq %rdx
-    popq %rax
-
     pushq $0                            /* Dummy error code */
     pushq $33                           /* IRQ1 vector */
 

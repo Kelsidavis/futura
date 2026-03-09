@@ -192,6 +192,11 @@ static int map_segment(fut_mm_t *mm, int fd, const elf64_phdr_t *phdr) {
         return 0;
     }
 
+    /* Overflow check: p_vaddr + p_memsz must not wrap around 64-bit address space */
+    if (phdr->p_memsz > UINT64_MAX - phdr->p_vaddr) {
+        return -EINVAL;
+    }
+
     uint64_t seg_start = phdr->p_vaddr & ~(PAGE_SIZE - 1ULL);
     uint64_t seg_offset = phdr->p_vaddr - seg_start;
     uint64_t seg_end = (phdr->p_vaddr + phdr->p_memsz + PAGE_SIZE - 1ULL) & ~(PAGE_SIZE - 1ULL);
@@ -1669,6 +1674,11 @@ static int map_segment(fut_mm_t *mm, int fd, const elf64_phdr_t *phdr) {
     if (phdr->p_memsz == 0) return 0;
     if (phdr->p_vaddr == 0) return -EINVAL;
 
+    /* Overflow check: p_vaddr + p_memsz must not wrap around 64-bit address space */
+    if (phdr->p_memsz > UINT64_MAX - phdr->p_vaddr) {
+        return -EINVAL;
+    }
+
     int prot = 0;
     if (phdr->p_flags & PF_R) prot |= PROT_READ;
     if (phdr->p_flags & PF_W) prot |= PROT_WRITE;
@@ -2065,6 +2075,11 @@ static int map_segment_from_memory(fut_mm_t *mm, const void *elf_data, const elf
     if (phdr->p_memsz == 0) return 0;
     if (phdr->p_vaddr == 0) return -EINVAL;
 
+    /* Overflow check: p_vaddr + p_memsz must not wrap around 64-bit address space */
+    if (phdr->p_memsz > UINT64_MAX - phdr->p_vaddr) {
+        return -EINVAL;
+    }
+
     int prot = 0;
     if (phdr->p_flags & PF_R) prot |= PROT_READ;
     if (phdr->p_flags & PF_W) prot |= PROT_WRITE;
@@ -2195,9 +2210,9 @@ int fut_exec_elf_memory(const void *elf_data, size_t elf_size, char *const argv[
         return -EINVAL;
     }
 
-    /* Verify program headers are within bounds */
+    /* Verify program headers are within bounds (overflow-safe check) */
     size_t ph_size = (size_t)ehdr->e_phnum * sizeof(elf64_phdr_t);
-    if (ehdr->e_phoff + ph_size > elf_size) {
+    if (ehdr->e_phoff > elf_size || ph_size > elf_size - ehdr->e_phoff) {
         fut_serial_puts("[EXEC-MEM] ERROR: Program headers out of bounds\n");
         return -EINVAL;
     }
@@ -2224,8 +2239,8 @@ int fut_exec_elf_memory(const void *elf_data, size_t elf_size, char *const argv[
     for (uint16_t i = 0; i < ehdr->e_phnum; i++) {
         if (phdrs[i].p_type != PT_LOAD) continue;
 
-        /* Verify segment is within bounds */
-        if (phdrs[i].p_offset + phdrs[i].p_filesz > elf_size) {
+        /* Verify segment is within bounds (overflow-safe check) */
+        if (phdrs[i].p_offset > elf_size || phdrs[i].p_filesz > elf_size - phdrs[i].p_offset) {
             fut_serial_puts("[EXEC-MEM] ERROR: Segment out of bounds\n");
             /* Memory manager will be cleaned up by task destroy */
             return -EINVAL;

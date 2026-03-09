@@ -81,7 +81,17 @@ long sys_chroot(const char *path) {
         return -ENOTDIR;
     }
 
-    /* TODO: check CAP_SYS_CHROOT capability */
+    /* Check CAP_SYS_CHROOT capability - only privileged processes may chroot */
+    #define CAP_SYS_CHROOT 18
+    bool has_cap = (task->cap_effective & (1ULL << CAP_SYS_CHROOT)) != 0;
+    bool is_root = (task->uid == 0);
+    if (!has_cap && !is_root) {
+        fut_vnode_unref(vnode);
+        fut_printf("[CHROOT] chroot('%s') -> EPERM (need CAP_SYS_CHROOT, pid=%d)\n",
+                   path_buf, task->pid);
+        return -EPERM;
+    }
+
     /* TODO: store vnode in task->chroot_vnode and integrate with VFS path resolution */
 
     fut_vnode_unref(vnode);

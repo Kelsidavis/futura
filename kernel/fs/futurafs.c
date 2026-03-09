@@ -2709,7 +2709,10 @@ static int futurafs_write_inode(struct futurafs_mount *mount, uint64_t ino,
  * Allocate a new inode.
  */
 static int futurafs_alloc_inode(struct futurafs_mount *mount, uint64_t *ino_out) {
+    fut_spinlock_acquire(&mount->alloc_lock);
+
     if (mount->sb->free_inodes == 0) {
+        fut_spinlock_release(&mount->alloc_lock);
         return FUTURAFS_ENOSPC;
     }
 
@@ -2725,10 +2728,12 @@ static int futurafs_alloc_inode(struct futurafs_mount *mount, uint64_t *ino_out)
             mount->dirty = true;
 
             *ino_out = i + 1;  /* Inode numbers start at 1 */
+            fut_spinlock_release(&mount->alloc_lock);
             return 0;
         }
     }
 
+    fut_spinlock_release(&mount->alloc_lock);
     return FUTURAFS_ENOSPC;
 }
 
@@ -2744,9 +2749,11 @@ static int futurafs_free_inode(struct futurafs_mount *mount, uint64_t ino) {
     uint64_t byte_index = inode_index / 8;
     uint64_t bit_index = inode_index % 8;
 
+    fut_spinlock_acquire(&mount->alloc_lock);
     mount->inode_bitmap[byte_index] &= ~(1 << bit_index);
     mount->sb->free_inodes++;
     mount->dirty = true;
+    fut_spinlock_release(&mount->alloc_lock);
 
     return 0;
 }
@@ -2755,7 +2762,10 @@ static int futurafs_free_inode(struct futurafs_mount *mount, uint64_t ino) {
  * Allocate a data block.
  */
 static int futurafs_alloc_block(struct futurafs_mount *mount, uint64_t *block_out) {
+    fut_spinlock_acquire(&mount->alloc_lock);
+
     if (mount->sb->free_blocks == 0) {
+        fut_spinlock_release(&mount->alloc_lock);
         return FUTURAFS_ENOSPC;
     }
 
@@ -2773,10 +2783,12 @@ static int futurafs_alloc_block(struct futurafs_mount *mount, uint64_t *block_ou
             mount->dirty = true;
 
             *block_out = mount->sb->data_blocks_start + i;
+            fut_spinlock_release(&mount->alloc_lock);
             return 0;
         }
     }
 
+    fut_spinlock_release(&mount->alloc_lock);
     return FUTURAFS_ENOSPC;
 }
 
@@ -2792,14 +2804,18 @@ static int futurafs_free_block(struct futurafs_mount *mount, uint64_t block_num)
     uint64_t byte_index = block_index / 8;
     uint64_t bit_index = block_index % 8;
 
+    fut_spinlock_acquire(&mount->alloc_lock);
+
     /* Check if block is actually allocated before freeing */
     if ((mount->data_bitmap[byte_index] & (1 << bit_index)) == 0) {
+        fut_spinlock_release(&mount->alloc_lock);
         return FUTURAFS_EINVAL;  /* Double-free detected */
     }
 
     mount->data_bitmap[byte_index] &= ~(1 << bit_index);
     mount->sb->free_blocks++;
     mount->dirty = true;
+    fut_spinlock_release(&mount->alloc_lock);
 
     return 0;
 }
@@ -3796,6 +3812,7 @@ static int futurafs_mount_impl(const char *device, int flags, void *data, fut_ha
     }
     fs_mount->inodes_per_block = FUTURAFS_BLOCK_SIZE / FUTURAFS_INODE_SIZE;
     fs_mount->dirty = false;
+    fut_spinlock_init(&fs_mount->alloc_lock);
 
     /* Allocate and read inode bitmap */
     size_t inode_bitmap_size = (fs_mount->sb->total_inodes + 7) / 8;

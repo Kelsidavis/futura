@@ -11,6 +11,7 @@
 
 #include <kernel/fut_vfs.h>
 #include <kernel/fut_blockdev.h>
+#include <kernel/fut_sched.h>
 #include <stdint.h>
 #include <stddef.h>
 #include <stdbool.h>
@@ -143,6 +144,8 @@ struct futurafs_mount {
 
     uint32_t inodes_per_block;          /* Inodes per block */
     bool dirty;                         /* Filesystem needs sync */
+
+    fut_spinlock_t alloc_lock;          /* Protects bitmap and superblock free counters */
 };
 
 /**

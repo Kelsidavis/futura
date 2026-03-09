@@ -6,9 +6,7 @@
  * Implements the renameat() syscall for renaming/moving files relative to directory FDs.
  * Essential for thread-safe atomic file operations and avoiding race conditions.
  *
- * Phase 1 (Completed): Basic renameat with source and dest directory FD support
- * Phase 2 (Completed): Directory FD resolution via VFS with proper validation
- * Phase 3: Enhanced validation and cross-directory atomic operations
+ * Supports directory FD resolution via VFS with proper validation.
  */
 
 #include <kernel/fut_task.h>
@@ -102,7 +100,6 @@
  * 3. Flexible: Source and dest can be in different directories
  * 4. Atomic: Still provides atomic replacement guarantee
  *
- * Phase 1 (Completed): Basic implementation with olddirfd and newdirfd support
  */
 long sys_renameat(int olddirfd, const char *oldpath, int newdirfd, const char *newpath) {
     /* ARM64 FIX: Copy parameters to local variables */
@@ -133,7 +130,7 @@ long sys_renameat(int olddirfd, const char *oldpath, int newdirfd, const char *n
     }
 
     /* Copy oldpath from userspace */
-    char oldpath_buf[256];
+    char oldpath_buf[FUT_VFS_PATH_BUFFER_SIZE];
     if (fut_copy_from_user(oldpath_buf, local_oldpath, sizeof(oldpath_buf)) != 0) {
         fut_printf("[RENAMEAT] renameat(olddirfd=%d) -> EFAULT (copy_from_user oldpath failed)\n",
                    local_olddirfd);
@@ -146,7 +143,7 @@ long sys_renameat(int olddirfd, const char *oldpath, int newdirfd, const char *n
     }
 
     /* Copy newpath from userspace */
-    char newpath_buf[256];
+    char newpath_buf[FUT_VFS_PATH_BUFFER_SIZE];
     if (fut_copy_from_user(newpath_buf, local_newpath, sizeof(newpath_buf)) != 0) {
         fut_printf("[RENAMEAT] renameat(newdirfd=%d) -> EFAULT (copy_from_user newpath failed)\n",
                    local_newdirfd);
@@ -202,8 +199,6 @@ long sys_renameat(int olddirfd, const char *oldpath, int newdirfd, const char *n
     while (newpath_buf[new_path_len] != '\0' && new_path_len < 255) {
         new_path_len++;
     }
-
-    /* Phase 2: Implement proper directory FD resolution via VFS */
 
     /* Resolve oldpath based on olddirfd */
     char resolved_oldpath[256];
@@ -265,7 +260,7 @@ long sys_renameat(int olddirfd, const char *oldpath, int newdirfd, const char *n
             return -ENOTDIR;
         }
 
-        /* Phase 2: Construct path relative to directory */
+        /* Construct path relative to directory */
         size_t i;
         for (i = 0; i < sizeof(resolved_oldpath) - 1 && oldpath_buf[i] != '\0'; i++) {
             resolved_oldpath[i] = oldpath_buf[i];
@@ -333,7 +328,7 @@ long sys_renameat(int olddirfd, const char *oldpath, int newdirfd, const char *n
             return -ENOTDIR;
         }
 
-        /* Phase 2: Construct path relative to directory */
+        /* Construct path relative to directory */
         size_t i;
         for (i = 0; i < sizeof(resolved_newpath) - 1 && newpath_buf[i] != '\0'; i++) {
             resolved_newpath[i] = newpath_buf[i];
@@ -388,7 +383,7 @@ long sys_renameat(int olddirfd, const char *oldpath, int newdirfd, const char *n
     }
 
     /* Success */
-    fut_printf("[RENAMEAT] renameat(olddirfd=%d, oldpath='%s' [%s, len=%lu], newdirfd=%d, newpath='%s' [%s, len=%lu]) -> 0 (Phase 2: directory FD resolution)\n",
+    fut_printf("[RENAMEAT] renameat(olddirfd=%d, oldpath='%s' [%s, len=%lu], newdirfd=%d, newpath='%s' [%s, len=%lu]) -> 0\n",
                local_olddirfd, oldpath_buf, old_path_type, (unsigned long)old_path_len,
                local_newdirfd, newpath_buf, new_path_type, (unsigned long)new_path_len);
 

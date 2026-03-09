@@ -7,8 +7,7 @@
  * to persistent storage. More efficient than sync() when only one filesystem
  * needs to be synchronized.
  *
- * Phase 1 (Completed): Basic syncfs implementation with FD validation
- * Phase 2: VFS integration with per-filesystem sync operations
+ * Supports VFS integration with per-filesystem sync operations.
  */
 
 #include <kernel/fut_task.h>
@@ -122,7 +121,6 @@
  *   }
  *   close(fd);
  *
- * Phase 1: Basic implementation with FD validation
  */
 long sys_syncfs(int fd) {
     /* ARM64 FIX: Copy parameter to local variable */
@@ -148,7 +146,7 @@ long sys_syncfs(int fd) {
         return -EBADF;
     }
 
-    /* Phase 2: Resolve FD to file and get mount point */
+    /* Resolve FD to file and get mount point */
     struct fut_file *file = vfs_get_file_from_task(task, local_fd);
     if (!file) {
         fut_printf("[SYNCFS] syncfs(fd=%d) -> EBADF (fd not open)\n", local_fd);
@@ -168,15 +166,15 @@ long sys_syncfs(int fd) {
         return -EINVAL;
     }
 
-    /* Phase 2: Sync the specific filesystem */
+    /* Sync the specific filesystem */
     int ret = fut_vfs_sync_fs(mount);
     if (ret < 0) {
-        fut_printf("[SYNCFS] syncfs(fd=%d) -> %d (Phase 2: filesystem sync failed)\n",
+        fut_printf("[SYNCFS] syncfs(fd=%d) -> %d (filesystem sync failed)\n",
                    local_fd, ret);
         return ret;
     }
 
-    fut_printf("[SYNCFS] syncfs(fd=%d) -> 0 (Phase 2: filesystem synced successfully)\n",
+    fut_printf("[SYNCFS] syncfs(fd=%d) -> 0 (filesystem synced)\n",
                local_fd);
     return 0;
 }

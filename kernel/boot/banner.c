@@ -117,13 +117,23 @@ static void get_cpu_brand(char brand[CPU_BRAND_BUFFER_SIZE]) {
         len++;
     }
 
-    /* Append variant and revision manually */
-    if (len < 45) {
+    /* Append variant and revision (both are 4-bit, so 0-15) */
+    if (len < 43) {
         brand[len++] = ' ';
         brand[len++] = 'r';
-        brand[len++] = '0' + variant;
+        if (variant >= 10) {
+            brand[len++] = '1';
+            brand[len++] = '0' + (variant - 10);
+        } else {
+            brand[len++] = '0' + variant;
+        }
         brand[len++] = 'p';
-        brand[len++] = '0' + revision;
+        if (revision >= 10) {
+            brand[len++] = '1';
+            brand[len++] = '0' + (revision - 10);
+        } else {
+            brand[len++] = '0' + revision;
+        }
         brand[len] = '\0';
     } else {
         brand[len] = '\0';

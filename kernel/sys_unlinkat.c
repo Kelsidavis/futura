@@ -6,9 +6,7 @@
  * Implements the unlinkat() syscall for deleting files relative to a directory FD.
  * Essential for thread-safe file operations and avoiding race conditions.
  *
- * Phase 1 (Completed): Basic unlinkat with directory FD and AT_REMOVEDIR support
- * Phase 2 (Completed): Directory FD resolution via VFS with proper validation
- * Phase 3: Enhanced error handling and AT_SYMLINK_NOFOLLOW support
+ * Supports directory FD resolution via VFS with proper validation.
  */
 
 #include <kernel/fut_task.h>
@@ -93,7 +91,6 @@ static size_t manual_strlen(const char *s) {
  * 3. Unified: One syscall for files and directories (with flag)
  * 4. Flexible: Can use CWD or specific directory
  *
- * Phase 1: Basic implementation with dirfd and AT_REMOVEDIR support
  */
 long sys_unlinkat(int dirfd, const char *pathname, int flags) {
     /* ARM64 FIX: Copy parameters to local variables */
@@ -108,7 +105,7 @@ long sys_unlinkat(int dirfd, const char *pathname, int flags) {
         return -ESRCH;
     }
 
-    /* Phase 1: Validate flags - only AT_REMOVEDIR and AT_SYMLINK_NOFOLLOW are valid */
+    /* Validate flags - only AT_REMOVEDIR and AT_SYMLINK_NOFOLLOW are valid */
     const int VALID_FLAGS = AT_REMOVEDIR | AT_SYMLINK_NOFOLLOW;
     if (local_flags & ~VALID_FLAGS) {
         fut_printf("[UNLINKAT] unlinkat(dirfd=%d, flags=0x%x) -> EINVAL (invalid flags)\n",
@@ -162,8 +159,6 @@ long sys_unlinkat(int dirfd, const char *pathname, int flags) {
     }
 
     size_t path_len = manual_strlen(path_buf);
-
-    /* Phase 2: Implement proper directory FD resolution via VFS */
 
     /* Resolve the full path based on dirfd */
     char resolved_path[256];
@@ -225,7 +220,7 @@ long sys_unlinkat(int dirfd, const char *pathname, int flags) {
             return -ENOTDIR;
         }
 
-        /* Phase 2: Construct path relative to directory */
+        /* Construct path relative to directory */
         size_t i;
         for (i = 0; i < sizeof(resolved_path) - 1 && path_buf[i] != '\0'; i++) {
             resolved_path[i] = path_buf[i];
@@ -278,7 +273,7 @@ long sys_unlinkat(int dirfd, const char *pathname, int flags) {
     }
 
     /* Success */
-    fut_printf("[UNLINKAT] unlinkat(dirfd=%d, pathname='%s' [%s, len=%lu], operation=%s, flags=0x%x) -> 0 (Phase 2: directory FD resolution)\n",
+    fut_printf("[UNLINKAT] unlinkat(dirfd=%d, pathname='%s' [%s, len=%lu], operation=%s, flags=0x%x) -> 0\n",
                local_dirfd, path_buf, path_type, (unsigned long)path_len, operation, local_flags);
 
     return 0;

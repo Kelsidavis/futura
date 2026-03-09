@@ -7,25 +7,22 @@
 #include <stdint.h>
 
 /**
- * Disable interrupts and return the previous state (DAIF.I bit).
+ * Disable interrupts and return the previous state.
  * ARM64 DAIF register: bits [7:4] = {D, A, I, F}
- * D = Debug exceptions (bit 7)
- * A = SError/Async abort (bit 6)
- * I = IRQ (bit 5)
- * F = FIQ (bit 4)
+ * I bit: 0 = IRQ enabled, 1 = IRQ masked (disabled)
+ * Returns non-zero if interrupts WERE enabled (matches x86_64 semantics).
  */
 unsigned long hal_intr_disable(void) {
-    uint64_t daif, old_daif;
+    uint64_t daif;
 
     /* Read DAIF register */
     __asm__ volatile("mrs %0, daif" : "=r"(daif));
-    old_daif = daif;
 
     /* Disable IRQ (set I bit) */
     __asm__ volatile("msr daifset, #2");  /* #2 = IRQ bit */
 
-    /* Return previous I bit state (bit 5 or shifted bit 1) */
-    return (old_daif >> 5) & 1;  /* Isolate I bit (bit 5 in DAIF) */
+    /* Return non-zero if IRQs were enabled (I bit was clear) */
+    return !((daif >> 5) & 1);
 }
 
 /**
@@ -48,11 +45,12 @@ void hal_intr_restore(unsigned long state) {
 
 /**
  * Get current interrupt state.
+ * Returns non-zero if interrupts are enabled (matches x86_64 semantics).
  */
 unsigned long hal_intr_state(void) {
     uint64_t daif;
     __asm__ volatile("mrs %0, daif" : "=r"(daif));
-    return (daif >> 5) & 1;  /* Isolate I bit (bit 5 in DAIF) */
+    return !((daif >> 5) & 1);  /* Non-zero when I bit is clear (IRQs enabled) */
 }
 
 /**

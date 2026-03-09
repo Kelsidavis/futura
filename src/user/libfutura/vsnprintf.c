@@ -27,6 +27,10 @@ static int buffer_putc(void *ctx, char ch) {
 }
 
 int vsnprintf(char *buf, size_t size, const char *fmt, va_list args) {
+    /* If buf is NULL, treat as size-query mode (size must be 0) */
+    if (!buf) {
+        size = 0;
+    }
     struct buf_sink sink = {
         .buf = buf,
         .cap = size,

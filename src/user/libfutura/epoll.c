@@ -28,6 +28,10 @@ int epoll_ctl(int epfd, int op, int fd, struct epoll_event *event) {
 }
 
 int epoll_wait(int epfd, struct epoll_event *events, int maxevents, int timeout) {
+    if (!events || maxevents <= 0) {
+        errno = EINVAL;
+        return -1;
+    }
     long ret = sys_epoll_wait_call(epfd, events, maxevents, timeout);
     if (ret < 0) {
         errno = (int)-ret;
@@ -38,6 +42,9 @@ int epoll_wait(int epfd, struct epoll_event *events, int maxevents, int timeout)
 }
 
 int epoll_create(int size) {
-    (void)size;
+    if (size <= 0) {
+        errno = EINVAL;
+        return -1;
+    }
     return epoll_create1(0);
 }

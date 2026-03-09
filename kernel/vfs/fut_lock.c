@@ -1,4 +1,4 @@
-/* kernel/vfs/fut_lock.c - Advisory file locking (Phase 3)
+/* kernel/vfs/fut_lock.c - Advisory file locking
  *
  * Copyright (c) 2025 Kelsi Davis
  * Licensed under the MPL v2.0 — see LICENSE for details.
@@ -37,9 +37,9 @@ int fut_vnode_lock_shared(struct fut_vnode *vnode, uint32_t pid, int nonblock) {
     /* Check if exclusive lock is held by another process */
     if (vnode->lock_type == FUT_LOCK_EXCLUSIVE && vnode->lock_owner_pid != pid) {
         if (nonblock) {
-            return -EAGAIN;  /* Would block, but non-blocking requested */
+            return -EAGAIN;
         }
-        /* Phase 3: Blocking not yet implemented - return EAGAIN for now */
+        /* Blocking not yet implemented */
         return -EAGAIN;
     }
 
@@ -47,9 +47,11 @@ int fut_vnode_lock_shared(struct fut_vnode *vnode, uint32_t pid, int nonblock) {
     if (vnode->lock_type == FUT_LOCK_NONE) {
         vnode->lock_type = FUT_LOCK_SHARED;
         vnode->lock_count = 1;
-        vnode->lock_owner_pid = 0;  /* Shared locks have no single owner */
+        vnode->lock_owner_pid = 0;
     } else if (vnode->lock_type == FUT_LOCK_SHARED) {
-        /* Already shared, just increment count */
+        if (vnode->lock_count == UINT32_MAX) {
+            return -EOVERFLOW;
+        }
         vnode->lock_count++;
     } else if (vnode->lock_type == FUT_LOCK_EXCLUSIVE && vnode->lock_owner_pid == pid) {
         /* Same process downgrading from exclusive to shared */
@@ -80,17 +82,17 @@ int fut_vnode_lock_exclusive(struct fut_vnode *vnode, uint32_t pid, int nonblock
     /* Check if any locks are held by other processes */
     if (vnode->lock_type == FUT_LOCK_SHARED) {
         if (nonblock) {
-            return -EAGAIN;  /* Would block, but non-blocking requested */
+            return -EAGAIN;
         }
-        /* Phase 3: Blocking not yet implemented - return EAGAIN for now */
+        /* Blocking not yet implemented */
         return -EAGAIN;
     }
 
     if (vnode->lock_type == FUT_LOCK_EXCLUSIVE && vnode->lock_owner_pid != pid) {
         if (nonblock) {
-            return -EAGAIN;  /* Would block, but non-blocking requested */
+            return -EAGAIN;
         }
-        /* Phase 3: Blocking not yet implemented - return EAGAIN for now */
+        /* Blocking not yet implemented */
         return -EAGAIN;
     }
 

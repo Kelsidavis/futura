@@ -27,6 +27,7 @@ static inline int valid_signal(int signum) {
 }
 
 int sigemptyset(sigset_t *set) {
+    if (!set) return -1;
     unsigned long *words = sigset_words(set);
     for (size_t i = 0; i < sigset_word_count(); ++i) {
         words[i] = 0;
@@ -35,6 +36,7 @@ int sigemptyset(sigset_t *set) {
 }
 
 int sigfillset(sigset_t *set) {
+    if (!set) return -1;
     unsigned long *words = sigset_words(set);
     for (size_t i = 0; i < sigset_word_count(); ++i) {
         words[i] = ~0UL;
@@ -43,7 +45,7 @@ int sigfillset(sigset_t *set) {
 }
 
 int sigaddset(sigset_t *set, int signum) {
-    if (!valid_signal(signum)) {
+    if (!set || !valid_signal(signum)) {
         return -1;
     }
     unsigned long *words = sigset_words(set);
@@ -54,7 +56,7 @@ int sigaddset(sigset_t *set, int signum) {
 }
 
 int sigdelset(sigset_t *set, int signum) {
-    if (!valid_signal(signum)) {
+    if (!set || !valid_signal(signum)) {
         return -1;
     }
     unsigned long *words = sigset_words(set);
@@ -65,8 +67,8 @@ int sigdelset(sigset_t *set, int signum) {
 }
 
 int sigismember(const sigset_t *set, int signum) {
-    if (!valid_signal(signum)) {
-        return 0;
+    if (!set || !valid_signal(signum)) {
+        return -1;
     }
     const unsigned long *words = sigset_cwords(set);
     size_t idx = (size_t)(signum - 1) / (sizeof(unsigned long) * 8u);
@@ -133,8 +135,14 @@ int sigaction(int signum, const struct sigaction *act, struct sigaction *oldact)
         return -1;
     }
 
-    if (oldact && stored_valid[signum]) {
-        *oldact = stored_actions[signum];
+    if (oldact) {
+        if (stored_valid[signum]) {
+            *oldact = stored_actions[signum];
+        } else {
+            /* No prior action stored; zero-initialize to avoid returning garbage */
+            __builtin_memset(oldact, 0, sizeof(*oldact));
+            oldact->sa_handler = SIG_DFL;
+        }
     }
 
     if (act) {
@@ -159,7 +167,9 @@ int raise(int sig) {
         act->sa_sigaction(sig, NULL, NULL);
         return 0;
     }
-    if (act->sa_handler) {
+    /* Skip SIG_DFL and SIG_IGN -- they are sentinel values, not callable */
+    if (act->sa_handler && act->sa_handler != SIG_IGN &&
+        act->sa_handler != SIG_DFL) {
         act->sa_handler(sig);
     }
     return 0;

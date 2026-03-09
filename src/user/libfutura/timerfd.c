@@ -96,6 +96,10 @@ int timerfd_create(int clockid, int flags) {
 
     for (int i = 0; i < MAX_TIMERFDS; ++i) {
         if (!timerfds[i].in_use) {
+            if (next_timerfd_handle < 0) {
+                /* Handle counter wrapped; reset to safe range */
+                next_timerfd_handle = 64;
+            }
             timerfds[i].in_use = true;
             timerfds[i].handle = next_timerfd_handle++;
             timerfds[i].armed = false;
@@ -233,8 +237,8 @@ int __fut_timerfd_next_timeout_ms(void) {
     if (!have_timer) {
         return -1;
     }
-    if (min_ms > (uint64_t)INT32_MAX) {
-        return INT32_MAX;
+    if (min_ms > (uint64_t)INT_MAX) {
+        return INT_MAX;
     }
     return (int)min_ms;
 }

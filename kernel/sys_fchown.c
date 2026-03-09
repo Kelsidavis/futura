@@ -5,11 +5,7 @@
  *
  * Implements the fchown() syscall for changing file ownership via fd.
  * Essential for file ownership management on open files.
- *
- * Phase 1 (Completed): Basic ownership changing with FD lookup
- * Phase 2 (Completed): Enhanced validation, uid/gid categorization, and detailed logging
- * Phase 3 (Completed): Advanced features (capability checks, quota updates)
- * Phase 4 (Completed): Performance optimization (batched ownership updates)
+ * Supports capability checks and detailed validation.
  */
 
 #include <kernel/fut_task.h>
@@ -29,11 +25,6 @@
  * - (uid_t)-1 means "don't change uid"
  * - (gid_t)-1 means "don't change gid"
  *
- * This is the fd-based complement to chown().
- *
- * In a simplified single-user OS, this is primarily a metadata operation
- * that updates the file's ownership fields without complex permission checks.
- *
  * @param fd    File descriptor of the open file
  * @param uid   New user ID (or -1 to leave unchanged)
  * @param gid   New group ID (or -1 to leave unchanged)
@@ -44,28 +35,42 @@
  *   - -ENOSYS if filesystem doesn't support ownership changes
  *   - -EPERM if not permitted
  *   - -EROFS if filesystem is read-only
- *
- * Phase 1 (Completed): Basic ownership changing with FD lookup
- * Phase 2 (Completed): Enhanced validation, uid/gid categorization, detailed logging
- * Phase 3 (Completed): Advanced features (capability checks, quota updates)
- * Phase 4 (Completed): Performance optimization (batched ownership updates)
  */
 long sys_fchown(int fd, uint32_t uid, uint32_t gid) {
-    /* Phase 2: Validate FD number */
-    if (fd < 0) {
-        fut_printf("[FCHOWN] fchown(fd=%d [invalid], uid=%u, gid=%u) -> EBADF (negative FD)\n",
-                   fd, uid, gid);
+    /* ARM64 FIX: Copy register parameters to local stack variables */
+    int local_fd = fd;
+    uint32_t local_uid = uid;
+    uint32_t local_gid = gid;
+
+    fut_task_t *task = fut_task_current();
+    if (!task) {
+        fut_printf("[FCHOWN] fchown(fd=%d, uid=%u, gid=%u) -> ESRCH (no current task)\n",
+                   local_fd, local_uid, local_gid);
+        return -ESRCH;
+    }
+
+    /* Validate FD bounds */
+    if (local_fd < 0) {
+        fut_printf("[FCHOWN] fchown(fd=%d, uid=%u, gid=%u) -> EBADF (negative FD)\n",
+                   local_fd, local_uid, local_gid);
         return -EBADF;
     }
 
-    /* Phase 2: Categorize FD - use shared helper */
-    const char *fd_category = fut_fd_category(fd);
+    if (local_fd >= task->max_fds) {
+        fut_printf("[FCHOWN] fchown(fd=%d, max_fds=%d, uid=%u, gid=%u) -> EBADF "
+                   "(fd exceeds max_fds)\n",
+                   local_fd, task->max_fds, local_uid, local_gid);
+        return -EBADF;
+    }
+
+    /* Categorize FD */
+    const char *fd_category = fut_fd_category(local_fd);
 
     /* Get the file structure from the file descriptor */
-    struct fut_file *file = fut_vfs_get_file(fd);
+    struct fut_file *file = vfs_get_file_from_task(task, local_fd);
     if (!file) {
         fut_printf("[FCHOWN] fchown(fd=%d [%s], uid=%u, gid=%u) -> EBADF (file not found)\n",
-                   fd, fd_category, uid, gid);
+                   local_fd, fd_category, local_uid, local_gid);
         return -EBADF;
     }
 
@@ -73,45 +78,37 @@ long sys_fchown(int fd, uint32_t uid, uint32_t gid) {
     struct fut_vnode *vnode = file->vnode;
     if (!vnode) {
         fut_printf("[FCHOWN] fchown(fd=%d [%s], uid=%u, gid=%u) -> EBADF (no vnode)\n",
-                   fd, fd_category, uid, gid);
+                   local_fd, fd_category, local_uid, local_gid);
         return -EBADF;
     }
 
-    /* Phase 3: Get current task for capability checks */
-    fut_task_t *task = fut_task_current();
-    if (!task) {
-        fut_printf("[FCHOWN] fchown(fd=%d [%s], uid=%u, gid=%u) -> ESRCH (no current task)\n",
-                   fd, fd_category, uid, gid);
-        return -ESRCH;
-    }
+    /* Categorize uid/gid */
+    const char *uid_desc = (local_uid == (uint32_t)-1) ? "unchanged" :
+                          (local_uid == 0) ? "root" : "user";
+    const char *gid_desc = (local_gid == (uint32_t)-1) ? "unchanged" :
+                          (local_gid == 0) ? "root" : "group";
 
-    /* Phase 2: Categorize uid/gid */
-    const char *uid_desc = (uid == (uint32_t)-1) ? "unchanged" :
-                          (uid == 0) ? "root" : "user";
-    const char *gid_desc = (gid == (uint32_t)-1) ? "unchanged" :
-                          (gid == 0) ? "root" : "group";
-
-    /* Phase 3: Capability checks for ownership transfer */
+    /* Capability checks for ownership transfer */
     const char *capability_status = "none required";
-    if (uid != (uint32_t)-1 && uid != vnode->uid) {
+    if (local_uid != (uint32_t)-1 && local_uid != vnode->uid) {
         /* Changing owner requires CAP_CHOWN or owner matches */
         if (task->uid != 0 && task->uid != vnode->uid) {
             fut_printf("[FCHOWN] fchown(fd=%d [%s], vnode_ino=%lu, uid=%u [%s], gid=%u [%s]) "
                        "-> EPERM (user %u cannot change owner from %u to %u without CAP_CHOWN)\n",
-                       fd, fd_category, vnode->ino, uid, uid_desc, gid, gid_desc,
-                       task->uid, vnode->uid, uid);
+                       local_fd, fd_category, vnode->ino, local_uid, uid_desc, local_gid, gid_desc,
+                       task->uid, vnode->uid, local_uid);
             return -EPERM;
         }
         capability_status = "CAP_CHOWN (owner transfer)";
     }
 
-    if (gid != (uint32_t)-1 && gid != vnode->gid) {
+    if (local_gid != (uint32_t)-1 && local_gid != vnode->gid) {
         /* Changing group requires CAP_CHOWN or special conditions */
         if (task->uid != 0) {
             fut_printf("[FCHOWN] fchown(fd=%d [%s], vnode_ino=%lu, uid=%u [%s], gid=%u [%s]) "
                        "-> EPERM (user %u cannot change group from %u to %u without capability)\n",
-                       fd, fd_category, vnode->ino, uid, uid_desc, gid, gid_desc,
-                       task->uid, vnode->gid, gid);
+                       local_fd, fd_category, vnode->ino, local_uid, uid_desc, local_gid, gid_desc,
+                       task->uid, vnode->gid, local_gid);
             return -EPERM;
         }
         if (strcmp(capability_status, "none required") == 0) {
@@ -123,19 +120,18 @@ long sys_fchown(int fd, uint32_t uid, uint32_t gid) {
     if (!vnode->ops || !vnode->ops->setattr) {
         fut_printf("[FCHOWN] fchown(fd=%d [%s], vnode_ino=%lu, uid=%u [%s], gid=%u [%s]) "
                    "-> ENOSYS (filesystem doesn't support setattr)\n",
-                   fd, fd_category, vnode->ino, uid, uid_desc, gid, gid_desc);
+                   local_fd, fd_category, vnode->ino, local_uid, uid_desc, local_gid, gid_desc);
         return -ENOSYS;
     }
 
     /* Create a stat structure with the new ownership */
     struct fut_stat stat = {0};
-    stat.st_uid = uid;
-    stat.st_gid = gid;
+    stat.st_uid = local_uid;
+    stat.st_gid = local_gid;
 
     /* Call the filesystem's setattr operation */
     int ret = vnode->ops->setattr(vnode, &stat);
 
-    /* Phase 2: Handle setattr errors with detailed logging */
     if (ret < 0) {
         const char *error_desc;
         switch (ret) {
@@ -155,15 +151,14 @@ long sys_fchown(int fd, uint32_t uid, uint32_t gid) {
 
         fut_printf("[FCHOWN] fchown(fd=%d [%s], vnode_ino=%lu, uid=%u [%s], gid=%u [%s]) "
                    "-> %d (%s)\n",
-                   fd, fd_category, vnode->ino, uid, uid_desc, gid, gid_desc,
+                   local_fd, fd_category, vnode->ino, local_uid, uid_desc, local_gid, gid_desc,
                    ret, error_desc);
         return ret;
     }
 
-    /* Phase 3: Detailed success logging with capability status */
     fut_printf("[FCHOWN] fchown(fd=%d [%s], vnode_ino=%lu, uid=%u [%s], gid=%u [%s], "
-               "cap=%s, caller_uid=%u) -> 0 (ownership changed, Phase 4: Batched ownership updates)\n",
-               fd, fd_category, vnode->ino, uid, uid_desc, gid, gid_desc,
+               "cap=%s, caller_uid=%u) -> 0 (ownership changed)\n",
+               local_fd, fd_category, vnode->ino, local_uid, uid_desc, local_gid, gid_desc,
                capability_status, task->uid);
 
     return 0;

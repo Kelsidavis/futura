@@ -99,7 +99,7 @@ static inline void pci_config_write(uint8_t bus, uint8_t slot, uint8_t func, uin
 #define VIRTIO_GPU_CMD_RESOURCE_ATTACH_BACKING 0x0106
 #define VIRTIO_GPU_CMD_SET_SCANOUT 0x0103
 #define VIRTIO_GPU_CMD_TRANSFER_TO_HOST_2D 0x0105
-#define VIRTIO_GPU_CMD_RESOURCE_FLUSH 0x0110
+#define VIRTIO_GPU_CMD_RESOURCE_FLUSH 0x0104
 #define VIRTIO_GPU_CMD_GET_DISPLAY_INFO 0x0100
 
 #define VIRTIO_GPU_FORMAT_B8G8R8X8_UNORM 2
@@ -512,7 +512,7 @@ static int virtio_gpu_alloc_queues(void) {
 }
 
 static int virtio_gpu_alloc_framebuffer(uint32_t width, uint32_t height) {
-    g_fb_size = width * height * 4;  /* 32-bit BGRA format */
+    g_fb_size = (size_t)width * height * 4;  /* 32-bit BGRA format */
 
     /* Allocate at a safe physical address */
     uint64_t fb_phys = 0x2100000ULL;  /* After the queue structures */
@@ -1277,7 +1277,7 @@ int virtio_gpu_init_arm64_pci(uint8_t bus, uint8_t dev, uint8_t func, uint64_t *
 
     g_fb_width_arm = width;
     g_fb_height_arm = height;
-    g_fb_size_arm = width * height * 4;
+    g_fb_size_arm = (size_t)width * height * 4;
 
     /* Use provided PCI device location */
     g_virtio_bus = bus;

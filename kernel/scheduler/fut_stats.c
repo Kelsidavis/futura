@@ -89,12 +89,17 @@ static uint64_t div64(uint64_t dividend, uint64_t divisor) {
     uint64_t quotient = 0;
     uint64_t remainder = dividend;
 
-    /* Find highest set bit in divisor */
+    /* Find highest shift where (divisor << shift) <= remainder
+     * Guard against left-shift overflow: stop if high bit is set */
     int shift = 0;
     uint64_t temp = divisor;
-    while (temp < remainder) {
+    while (temp <= remainder && !(temp & ((uint64_t)1 << 63))) {
         temp <<= 1;
         shift++;
+    }
+    /* Back off one if we overshot */
+    if (temp > remainder) {
+        shift--;
     }
 
     /* Perform division by repeated subtraction */
@@ -123,9 +128,31 @@ static const char *get_thread_name(fut_thread_t *thread) {
     if (thread->tid == 3) return "B";
     if (thread->tid == 4) return "C";
 
-    /* Fallback: TID_N */
+    /* Fallback: format TID_N into static buffer.
+     * Note: static buffer means this is not reentrant, but it is only
+     * called from the single-threaded debug dump path. */
     static char tid_buf[16];
-    fut_printf("TID_%u", thread->tid);
+    unsigned int tid = thread->tid;
+    /* Manual integer-to-string since snprintf may not be available */
+    int pos = 0;
+    tid_buf[pos++] = 'T';
+    tid_buf[pos++] = 'I';
+    tid_buf[pos++] = 'D';
+    tid_buf[pos++] = '_';
+    if (tid == 0) {
+        tid_buf[pos++] = '0';
+    } else {
+        char digits[10];
+        int ndigits = 0;
+        while (tid > 0 && ndigits < 10) {
+            digits[ndigits++] = '0' + (tid % 10);
+            tid /= 10;
+        }
+        for (int i = ndigits - 1; i >= 0 && pos < 15; i--) {
+            tid_buf[pos++] = digits[i];
+        }
+    }
+    tid_buf[pos] = '\0';
     return tid_buf;
 }
 
@@ -165,12 +192,19 @@ void fut_debug_dump_stats(void) {
         uint64_t switches = t->stats.context_switches;
         uint64_t ticks = t->stats.cpu_ticks;
 
-        /* Calculate CPU percentage (with 2 decimal places) */
+        /* Calculate CPU percentage (with 2 decimal places).
+         * Guard against multiply overflow for very large tick counts. */
         uint32_t cpu_pct_int = 0;
         uint32_t cpu_pct_frac = 0;
         if (total_ticks > 0) {
-            cpu_pct_int = (uint32_t)div64(ticks * 100, total_ticks);
-            cpu_pct_frac = (uint32_t)div64(ticks * 10000, total_ticks) % 100;
+            if (ticks <= UINT64_MAX / 10000) {
+                cpu_pct_int = (uint32_t)div64(ticks * 100, total_ticks);
+                cpu_pct_frac = (uint32_t)div64(ticks * 10000, total_ticks) % 100;
+            } else {
+                /* Avoid overflow: divide first, lose some precision */
+                cpu_pct_int = (uint32_t)div64(ticks, div64(total_ticks, 100));
+                cpu_pct_frac = 0;
+            }
         }
 
         /* Calculate average quantum duration */

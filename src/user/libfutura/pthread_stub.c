@@ -16,6 +16,9 @@ struct pthread_key_slot {
 static struct pthread_key_slot key_table[MAX_PTHREAD_KEYS];
 
 int pthread_once(pthread_once_t *once_control, void (*init_routine)(void)) {
+    if (!once_control || !init_routine) {
+        return -1;
+    }
     if (*once_control != PTHREAD_ONCE_INIT_COMPLETED) {
         *once_control = PTHREAD_ONCE_INIT_COMPLETED;
         init_routine();
@@ -24,6 +27,9 @@ int pthread_once(pthread_once_t *once_control, void (*init_routine)(void)) {
 }
 
 int pthread_key_create(pthread_key_t *key, void (*destructor)(void *)) {
+    if (!key) {
+        return -1;
+    }
     for (pthread_key_t i = 0; i < MAX_PTHREAD_KEYS; ++i) {
         if (!key_table[i].in_use) {
             key_table[i].in_use = true;

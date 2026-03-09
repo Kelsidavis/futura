@@ -48,6 +48,10 @@ int clock_gettime(int clock_id, struct timespec *tp) {
 int gettimeofday(struct timeval *tv, void *tz) {
     (void)tz;  /* Timezone is not supported */
 
+    if (!tv) {
+        return -EINVAL;
+    }
+
     long ms = get_millis();
     tv->tv_sec = ms / 1000;
     tv->tv_usec = (ms % 1000) * 1000L;

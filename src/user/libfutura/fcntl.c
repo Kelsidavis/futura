@@ -47,10 +47,11 @@ int fcntl(int fd, int cmd, ...) {
             break;
         case F_DUPFD:
         case F_DUPFD_CLOEXEC:
-            if (arg < 0 || arg > fd) {
+            if (arg < 0) {
                 errno = EINVAL;
                 return -1;
             }
+            /* For timerfd stubs, return the same fd as the dup result */
             timerfd_ret = fd;
             handled = true;
             break;

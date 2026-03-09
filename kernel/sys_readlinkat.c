@@ -7,9 +7,7 @@
  * relative to a directory FD. Essential for thread-safe symlink operations
  * and avoiding race conditions.
  *
- * Phase 1 (Completed): Basic readlinkat with directory FD support
- * Phase 2 (Completed): Directory FD resolution via VFS with proper validation
- * Phase 3: Enhanced error handling and buffer management
+ * Supports directory FD resolution via VFS with proper validation.
  */
 
 #include <kernel/fut_task.h>
@@ -95,7 +93,6 @@
  * 2. Race-free: Directory context locked by FD
  * 3. Flexible: Can use CWD or specific directory
  *
- * Phase 1 (Completed): Basic implementation with dirfd support
  */
 long sys_readlinkat(int dirfd, const char *pathname, char *buf, size_t bufsiz) {
     /* ARM64 FIX: Copy parameters to local variables */
@@ -168,8 +165,6 @@ long sys_readlinkat(int dirfd, const char *pathname, char *buf, size_t bufsiz) {
         path_len++;
     }
 
-    /* Phase 2: Implement proper directory FD resolution via VFS */
-
     /* Resolve the full path based on dirfd */
     char resolved_path[256];
 
@@ -230,7 +225,7 @@ long sys_readlinkat(int dirfd, const char *pathname, char *buf, size_t bufsiz) {
             return -ENOTDIR;
         }
 
-        /* Phase 2: Construct path relative to directory */
+        /* Construct path relative to directory */
         size_t i;
         for (i = 0; i < sizeof(resolved_path) - 1 && path_buf[i] != '\0'; i++) {
             resolved_path[i] = path_buf[i];
@@ -269,7 +264,7 @@ long sys_readlinkat(int dirfd, const char *pathname, char *buf, size_t bufsiz) {
     }
 
     /* Success - ret is the number of bytes placed in buffer */
-    fut_printf("[READLINKAT] readlinkat(dirfd=%d, pathname='%s' [%s, len=%lu], bufsiz=%lu) -> %ld bytes (Phase 2: directory FD resolution)\n",
+    fut_printf("[READLINKAT] readlinkat(dirfd=%d, pathname='%s' [%s, len=%lu], bufsiz=%lu) -> %ld bytes\n",
                local_dirfd, path_buf, path_type, (unsigned long)path_len,
                (unsigned long)local_bufsiz, ret);
 

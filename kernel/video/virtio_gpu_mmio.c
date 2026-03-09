@@ -251,7 +251,7 @@ int virtio_gpu_init_mmio(uint64_t *out_fb_phys, uint32_t width, uint32_t height)
     }
 
     /* Allocate framebuffer (identity mapped on ARM64) */
-    size_t fb_size = fb_width * fb_height * 4;  /* 32bpp */
+    size_t fb_size = (size_t)fb_width * fb_height * 4;  /* 32bpp */
     size_t fb_pages = (fb_size + 4095) / 4096;
 
     framebuffer_virt = fut_malloc_pages(fb_pages);

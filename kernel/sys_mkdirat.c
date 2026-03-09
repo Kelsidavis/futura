@@ -6,9 +6,7 @@
  * Implements the mkdirat() syscall for creating directories relative to a directory FD.
  * Essential for thread-safe directory operations and avoiding race conditions.
  *
- * Phase 1 (Completed): Basic mkdirat with directory FD support
- * Phase 2 (Completed): Directory FD resolution via VFS with proper validation
- * Phase 3: Enhanced error handling and cross-filesystem operations
+ * Supports directory FD resolution via VFS with proper validation.
  */
 
 #include <kernel/fut_task.h>
@@ -86,7 +84,6 @@
  * 3. Flexible: Can use CWD or specific directory
  * 4. Composable: Can build directory trees safely
  *
- * Phase 1 (Completed): Basic implementation with dirfd support
  */
 long sys_mkdirat(int dirfd, const char *pathname, unsigned int mode) {
     /* ARM64 FIX: Copy parameters to local variables */
@@ -158,8 +155,6 @@ long sys_mkdirat(int dirfd, const char *pathname, unsigned int mode) {
         path_len++;
     }
 
-    /* Phase 2: Implement proper directory FD resolution via VFS */
-
     /* Resolve the full path based on dirfd */
     char resolved_path[256];
 
@@ -220,7 +215,7 @@ long sys_mkdirat(int dirfd, const char *pathname, unsigned int mode) {
             return -ENOTDIR;
         }
 
-        /* Phase 2: Construct path relative to directory */
+        /* Construct path relative to directory */
         size_t i;
         for (i = 0; i < sizeof(resolved_path) - 1 && path_buf[i] != '\0'; i++) {
             resolved_path[i] = path_buf[i];
@@ -264,7 +259,7 @@ long sys_mkdirat(int dirfd, const char *pathname, unsigned int mode) {
     }
 
     /* Success */
-    fut_printf("[MKDIRAT] mkdirat(dirfd=%d, pathname='%s' [%s, len=%lu], mode=0%o [%s]) -> 0 (Phase 2: directory FD resolution)\n",
+    fut_printf("[MKDIRAT] mkdirat(dirfd=%d, pathname='%s' [%s, len=%lu], mode=0%o [%s]) -> 0\n",
                local_dirfd, path_buf, path_type, (unsigned long)path_len, local_mode, mode_desc);
 
     return 0;

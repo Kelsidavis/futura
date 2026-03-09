@@ -65,6 +65,7 @@ void fut_mmap_dump(void) {
     for (size_t i = 0; i < count; ++i) {
         const fut_mmap_entry_t *e = &entries[i];
         uint64_t end = e->base + e->length;
+        if (end < e->base) end = UINT64_MAX; /* overflow clamp */
         unsigned long long size_mib = (unsigned long long)(e->length >> 20);
         fut_printf("  [0x%016llx - 0x%016llx)  %s  (%llu MiB)\n",
                    (unsigned long long)e->base,

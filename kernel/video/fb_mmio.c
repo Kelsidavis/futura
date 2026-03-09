@@ -301,8 +301,13 @@ void fb_boot_splash(void) {
         uint32_t w = g_fb_hw.info.width;
         uint32_t h = g_fb_hw.info.height;
 
-        /* Parse BMP header */
+        /* Parse BMP header - validate minimum BMP header size */
         const unsigned char *bmp = boot_bmp;
+        const uint32_t bmp_data_len = sizeof(boot_bmp);
+        if (bmp_data_len < 30) {
+            fut_printf("[FB] BMP logo too small for header\n");
+            return;
+        }
         uint32_t pixel_offset = bmp[10] | (bmp[11] << 8) | (bmp[12] << 16) | (bmp[13] << 24);
         uint32_t bmp_width = bmp[18] | (bmp[19] << 8) | (bmp[20] << 16) | (bmp[21] << 24);
         uint32_t bmp_height = bmp[22] | (bmp[23] << 8) | (bmp[24] << 16) | (bmp[25] << 24);
@@ -310,6 +315,11 @@ void fb_boot_splash(void) {
 
         if (bpp != 24) {
             fut_printf("[FB] BMP logo must be 24-bit color\n");
+            return;
+        }
+
+        if (bmp_width == 0 || bmp_height == 0 || bmp_width > 4096 || bmp_height > 4096) {
+            fut_printf("[FB] BMP logo dimensions out of range\n");
             return;
         }
 
@@ -327,6 +337,11 @@ void fb_boot_splash(void) {
                 /* BMP is bottom-to-top, so invert y */
                 uint32_t bmp_y = bmp_height - 1 - y;
                 uint32_t pixel_idx = pixel_offset + (bmp_y * row_size) + (x * 3);
+
+                /* Bounds-check BMP pixel access */
+                if (pixel_idx + 2 >= bmp_data_len) {
+                    continue;
+                }
 
                 /* Read BGR pixel */
                 uint8_t b = bmp[pixel_idx + 0];

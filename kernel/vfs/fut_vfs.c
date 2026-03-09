@@ -1068,7 +1068,7 @@ int fut_vfs_mknod(const char *path, uint32_t mode) {
     }
 
     struct fut_vnode *new_node = NULL;
-    int create_ret = parent->ops->create(parent, leaf, mode, &new_node);
+    int create_ret = parent->ops->create(parent, leaf, mode & 0777, &new_node);
     release_lookup_ref(parent);
     fut_free(leaf);
 
@@ -1076,8 +1076,16 @@ int fut_vfs_mknod(const char *path, uint32_t mode) {
         return create_ret;
     }
 
-    /* Release the caller's reference - the directory entry holds its own reference */
+    /* Fix up the vnode type based on S_IFMT bits in mode.
+     * ramfs_create always creates VN_REG; we patch the type here for special nodes. */
     if (new_node) {
+        uint32_t file_type = mode & S_IFMT;
+        if (file_type == S_IFIFO) {
+            new_node->type = VN_FIFO;
+        } else if (file_type == S_IFSOCK) {
+            new_node->type = VN_SOCK;
+        }
+        /* Release the caller's reference - the directory entry holds its own reference */
         fut_vnode_unref(new_node);
     }
 

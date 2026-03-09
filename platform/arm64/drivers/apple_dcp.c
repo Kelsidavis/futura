@@ -145,7 +145,7 @@ int fut_apple_dcp_alloc_surface(apple_dcp_ctrl_t *dcp, uint32_t width, uint32_t 
     size = num_pages * 4096;
 
     /* Allocate physical memory */
-    uint64_t phys = (uint64_t)fut_pmm_alloc_pages(num_pages);
+    uint64_t phys = (uint64_t)fut_malloc_pages(num_pages);
     if (phys == 0) {
         fut_printf("[DCP] Failed to allocate surface memory (%lu pages)\n",
                    (unsigned long)num_pages);
@@ -189,7 +189,7 @@ void fut_apple_dcp_free_surface(apple_dcp_ctrl_t *dcp, int surface_idx) {
     if (surf->phys_addr) {
         size_t size = (size_t)surf->stride * surf->height;
         size_t num_pages = (size + 4095) / 4096;
-        fut_pmm_free_pages((void *)surf->phys_addr, num_pages);
+        fut_free_pages((void *)surf->phys_addr, num_pages);
     }
 
     /* Clear surface descriptor */
@@ -335,7 +335,7 @@ bool fut_apple_dcp_swap_wait(apple_dcp_ctrl_t *dcp, uint32_t timeout_ms) {
     uint32_t elapsed = 0;
     while (dcp->swap_pending && (timeout_ms == 0 || elapsed < timeout_ms)) {
         /* Poll RTKit for messages */
-        apple_rtkit_poll(dcp->rtkit);
+        apple_rtkit_process_messages(dcp->rtkit);
 
         /* Small delay */
         for (volatile int i = 0; i < 1000; i++) {

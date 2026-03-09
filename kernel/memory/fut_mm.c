@@ -413,6 +413,11 @@ void *fut_mm_map_anonymous(fut_mm_t *mm, uintptr_t hint, size_t len, int prot, i
         return (void *)(intptr_t)(-ENOMEM);
     }
 
+    /* MAP_FIXED: unmap any existing mappings in the target range first */
+    if ((flags & 0x10) && hint) {
+        fut_mm_unmap(mm, base, aligned);
+    }
+
     size_t pages = aligned / PAGE_SIZE;
     void **page_cache = fut_malloc(pages * sizeof(void *));
     if (!page_cache) {
@@ -684,6 +689,11 @@ void *fut_mm_map_file(fut_mm_t *mm, struct fut_vnode *vnode, uintptr_t hint,
     uintptr_t end = base + aligned;
     if (end < base || end > USER_VMA_MAX) {
         return (void *)(intptr_t)(-ENOMEM);
+    }
+
+    /* MAP_FIXED: unmap any existing mappings in the target range first */
+    if ((flags & 0x10) && hint) {
+        fut_mm_unmap(mm, base, aligned);
     }
 
     /* Create VMA to track this mapping without allocating physical pages yet */
@@ -1168,6 +1178,11 @@ void *fut_mm_map_anonymous(fut_mm_t *mm, uintptr_t hint, size_t len, int prot, i
         return (void *)(intptr_t)(-ENOMEM);
     }
 
+    /* MAP_FIXED: unmap any existing mappings in the target range first */
+    if ((flags & 0x10) && hint) {
+        fut_mm_unmap(mm, base, aligned);
+    }
+
     /* Create VMA to track this mapping */
     fut_vma_t *vma = fut_malloc(sizeof(*vma));
     if (!vma) {
@@ -1398,6 +1413,11 @@ void *fut_mm_map_file(fut_mm_t *mm, struct fut_vnode *vnode, uintptr_t hint,
     uintptr_t end = base + aligned;
     if (end < base || end > USER_VMA_MAX) {
         return (void *)(intptr_t)(-ENOMEM);
+    }
+
+    /* MAP_FIXED: unmap any existing mappings in the target range first */
+    if ((flags & 0x10) && hint) {
+        fut_mm_unmap(mm, base, aligned);
     }
 
     /* Create VMA to track this mapping without allocating physical pages yet */
@@ -1645,10 +1665,12 @@ struct page_refcount_entry {
 };
 
 static struct page_refcount_entry *page_refcount_table[PAGE_REFCOUNT_BUCKETS];
+static fut_spinlock_t page_ref_locks[PAGE_REFCOUNT_BUCKETS];
 
 void fut_page_ref_init(void) {
     for (int i = 0; i < PAGE_REFCOUNT_BUCKETS; i++) {
         page_refcount_table[i] = NULL;
+        fut_spinlock_init(&page_ref_locks[i]);
     }
 }
 
@@ -1668,6 +1690,8 @@ static struct page_refcount_entry *page_ref_find(phys_addr_t phys) {
 
 int fut_page_ref_inc(phys_addr_t phys) {
     int bucket = PAGE_REFCOUNT_HASH(phys);
+
+    fut_spinlock_acquire(&page_ref_locks[bucket]);
     struct page_refcount_entry *entry = page_ref_find(phys);
 
     if (entry) {
@@ -1676,6 +1700,7 @@ int fut_page_ref_inc(phys_addr_t phys) {
          * can overflow the refcount, causing use-after-free when the
          * count wraps to zero and pages are prematurely freed. */
         if (entry->refcount >= FUT_PAGE_REF_MAX) {
+            fut_spinlock_release(&page_ref_locks[bucket]);
             fut_printf("[PMM] WARN: Page refcount limit reached for phys 0x%llx (count=%u)\n",
                        (unsigned long long)phys, entry->refcount);
             return -EOVERFLOW;
@@ -1685,6 +1710,7 @@ int fut_page_ref_inc(phys_addr_t phys) {
         /* Allocate new entry */
         entry = fut_malloc(sizeof(*entry));
         if (!entry) {
+            fut_spinlock_release(&page_ref_locks[bucket]);
             /* Out of memory - cannot track refcount */
             fut_printf("[PMM] ERROR: Failed to allocate refcount entry for phys 0x%llx\n",
                        (unsigned long long)phys);
@@ -1697,11 +1723,14 @@ int fut_page_ref_inc(phys_addr_t phys) {
         page_refcount_table[bucket] = entry;
     }
 
+    fut_spinlock_release(&page_ref_locks[bucket]);
     return 0;
 }
 
 int fut_page_ref_dec(phys_addr_t phys) {
     int bucket = PAGE_REFCOUNT_HASH(phys);
+
+    fut_spinlock_acquire(&page_ref_locks[bucket]);
     struct page_refcount_entry **link = &page_refcount_table[bucket];
     struct page_refcount_entry *entry = page_refcount_table[bucket];
 
@@ -1713,10 +1742,12 @@ int fut_page_ref_dec(phys_addr_t phys) {
                 /* Remove from hash table */
                 *link = entry->next;
                 int final_count = entry->refcount;
+                fut_spinlock_release(&page_ref_locks[bucket]);
                 fut_free(entry);
                 return final_count;
             }
 
+            fut_spinlock_release(&page_ref_locks[bucket]);
             return entry->refcount;
         }
 
@@ -1724,13 +1755,19 @@ int fut_page_ref_dec(phys_addr_t phys) {
         entry = entry->next;
     }
 
+    fut_spinlock_release(&page_ref_locks[bucket]);
     /* Not found - assume refcount is 1 */
     return 1;
 }
 
 int fut_page_ref_get(phys_addr_t phys) {
+    int bucket = PAGE_REFCOUNT_HASH(phys);
+
+    fut_spinlock_acquire(&page_ref_locks[bucket]);
     struct page_refcount_entry *entry = page_ref_find(phys);
-    return entry ? entry->refcount : 1;
+    int count = entry ? entry->refcount : 1;
+    fut_spinlock_release(&page_ref_locks[bucket]);
+    return count;
 }
 
 /**

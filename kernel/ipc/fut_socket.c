@@ -788,11 +788,13 @@ ssize_t fut_socket_send(fut_socket_t *socket, const void *buf, size_t len) {
      * - Server socket: pair = reverse buffer (server→client)
      * No heuristics needed - just use socket->pair directly */
     fut_socket_pair_t *pair = socket->pair;
-    if (!pair->peer) {
-        return 0;  /* Peer closed */
-    }
 
     fut_spinlock_acquire(&pair->lock);
+
+    if (!pair->peer) {
+        fut_spinlock_release(&pair->lock);
+        return 0;  /* Peer closed */
+    }
 
     /* Block until send buffer has space (or socket is non-blocking) */
     uint32_t available = pair->recv_size -
@@ -882,6 +884,12 @@ ssize_t fut_socket_recv(fut_socket_t *socket, void *buf, size_t len) {
 
     fut_spinlock_acquire(&pair->lock);
 
+    /* Check peer under lock to avoid TOCTOU race with close */
+    if (!pair->peer) {
+        fut_spinlock_release(&pair->lock);
+        return 0;  /* EOF - peer closed */
+    }
+
     /* Block until data is available (or socket is non-blocking) */
     uint32_t available = (pair->recv_head + pair->recv_size - pair->recv_tail) %
                          pair->recv_size;
@@ -936,6 +944,18 @@ int fut_socket_close(fut_socket_t *socket) {
     }
 
     socket->state = FUT_SOCK_CLOSED;
+
+    /* Nullify peer pointers under lock so send/recv see the close atomically */
+    if (socket->pair) {
+        fut_spinlock_acquire(&socket->pair->lock);
+        socket->pair->peer = NULL;
+        fut_spinlock_release(&socket->pair->lock);
+    }
+    if (socket->pair_reverse) {
+        fut_spinlock_acquire(&socket->pair_reverse->lock);
+        socket->pair_reverse->peer = NULL;
+        fut_spinlock_release(&socket->pair_reverse->lock);
+    }
 
     /* Wake any waiters */
     if (socket->listener && socket->listener->accept_waitq) {

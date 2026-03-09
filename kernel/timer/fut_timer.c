@@ -200,6 +200,37 @@ void fut_timer_tick(void) {
             // Clear alarm (only one alarm per task)
             task->alarm_expires_ms = 0;
         }
+
+        // Check POSIX per-process timers
+        for (int i = 0; i < FUT_POSIX_TIMER_MAX; i++) {
+            fut_posix_timer_t *pt = &task->posix_timers[i];
+            if (!pt->active || !pt->armed || pt->expiry_ms == 0)
+                continue;
+            if (current_ms < pt->expiry_ms)
+                continue;
+
+            // Timer expired
+            if (pt->notify == 1 /* SIGEV_SIGNAL */) {
+                uint64_t sig_bit = (1ULL << (pt->signo - 1));
+                uint64_t pending = __atomic_load_n(&task->pending_signals, __ATOMIC_ACQUIRE);
+                if (pending & sig_bit) {
+                    // Signal still pending - count overrun
+                    pt->overrun++;
+                } else {
+                    pt->overrun = 0;
+                    fut_signal_send(task, pt->signo);
+                }
+            }
+
+            if (pt->interval_ms > 0) {
+                // Periodic: re-arm
+                pt->expiry_ms = current_ms + pt->interval_ms;
+            } else {
+                // One-shot: disarm
+                pt->armed = 0;
+                pt->expiry_ms = 0;
+            }
+        }
     }
 
     // Only trigger preemptive scheduling if the scheduler has been started

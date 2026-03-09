@@ -17,6 +17,21 @@
 
 struct fut_mm;
 
+/* Maximum POSIX timers per process */
+#define FUT_POSIX_TIMER_MAX 8
+
+/* Per-process POSIX timer */
+typedef struct fut_posix_timer {
+    int active;             /* Slot in use */
+    int armed;              /* Timer is armed (counting down) */
+    int clockid;            /* CLOCK_REALTIME, CLOCK_MONOTONIC */
+    int signo;              /* Signal to deliver */
+    int notify;             /* SIGEV_NONE or SIGEV_SIGNAL */
+    int overrun;            /* Overrun count since last signal delivery */
+    uint64_t expiry_ms;     /* Absolute expiration time in ms (0 = disarmed) */
+    uint64_t interval_ms;   /* Repeat interval in ms (0 = one-shot) */
+} fut_posix_timer_t;
+
 /* Forward declaration */
 typedef struct fut_task fut_task_t;
 
@@ -90,6 +105,9 @@ struct fut_task {
 
     /* Alarm timer */
     uint64_t alarm_expires_ms;         // Alarm expiration time in milliseconds (0 = no alarm)
+
+    /* POSIX per-process timers (timer_create/timer_settime/timer_delete) */
+    fut_posix_timer_t posix_timers[FUT_POSIX_TIMER_MAX];
 
     /* Thread cleanup (for NPTL/pthread support) */
     int *clear_child_tid;              // Address to clear and wake on thread exit (set_tid_address)

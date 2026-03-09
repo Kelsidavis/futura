@@ -4,237 +4,278 @@
  * Licensed under the MPL v2.0 — see LICENSE for details.
  *
  * Implements POSIX interval timer syscalls for per-process timers.
+ * Timers are stored per-task and checked in fut_timer_tick().
  */
 
 #include <kernel/fut_task.h>
+#include <kernel/fut_timer.h>
 #include <kernel/errno.h>
 #include <kernel/uaccess.h>
 #include <shared/fut_timespec.h>
-#include <shared/fut_sigevent.h>  /* For struct sigevent, timer_t, SIGEV_* */
+#include <shared/fut_sigevent.h>
+#include <kernel/signal.h>
+#include <time.h>
 
 #include <kernel/kprintf.h>
 
+/* Convert timespec to milliseconds (clamped to 0 for negative values) */
+static uint64_t timespec_to_ms(const struct timespec *ts) {
+    if (ts->tv_sec < 0)
+        return 0;
+    uint64_t ms = (uint64_t)ts->tv_sec * 1000;
+    ms += (uint64_t)ts->tv_nsec / 1000000;
+    return ms;
+}
+
+/* Convert milliseconds to timespec */
+static void ms_to_timespec(uint64_t ms, struct timespec *ts) {
+    ts->tv_sec = (long)(ms / 1000);
+    ts->tv_nsec = (long)((ms % 1000) * 1000000);
+}
+
+/* Validate a timespec: tv_nsec must be in [0, 999999999] */
+static int timespec_valid(const struct timespec *ts) {
+    return ts->tv_nsec >= 0 && ts->tv_nsec < 1000000000L;
+}
+
+/* Validate timer ID and return pointer, or NULL */
+static fut_posix_timer_t *get_timer(fut_task_t *task, timer_t id) {
+    int idx = id - 1;  /* IDs are 1-based */
+    if (idx < 0 || idx >= FUT_POSIX_TIMER_MAX)
+        return NULL;
+    fut_posix_timer_t *pt = &task->posix_timers[idx];
+    if (!pt->active)
+        return NULL;
+    return pt;
+}
+
 /**
  * sys_timer_create - Create a POSIX per-process timer
- *
- * @param clockid:  Clock to use (CLOCK_REALTIME, CLOCK_MONOTONIC, etc.)
- * @param sevp:     Signal event structure (how to notify on expiration)
- * @param timerid:  Output parameter for timer ID
- *
- * Phase 1: Stub - accepts parameters, returns dummy timer ID
- * Phase 2: Implement timer creation with kernel timer infrastructure
- * Phase 3: Add signal delivery on timer expiration
- *
- * Returns:
- *   - 0 on success, timer ID written to *timerid
- *   - -EINVAL if parameters invalid
- *   - -ENOMEM if unable to allocate timer
  */
 long sys_timer_create(int clockid, struct sigevent *sevp, timer_t *timerid) {
+    /* ARM64 FIX: Copy register params to local stack vars before blocking calls */
+    int local_clockid = clockid;
+    struct sigevent *local_sevp = sevp;
+    timer_t *local_timerid = timerid;
+
     fut_task_t *task = fut_task_current();
-    if (!task) {
+    if (!task)
         return -ESRCH;
-    }
 
-    fut_printf("[TIMER_CREATE] clockid=%d sevp=%p timerid=%p\n",
-               clockid, sevp, timerid);
-
-    /* Validate parameters */
-    if (!timerid) {
+    if (!local_timerid)
         return -EINVAL;
+
+    /* Validate clock ID */
+    if (local_clockid != CLOCK_REALTIME && local_clockid != CLOCK_MONOTONIC)
+        return -EINVAL;
+
+    /* Validate userspace pointer */
+    if (fut_access_ok(local_timerid, sizeof(timer_t), 1) != 0)
+        return -EFAULT;
+
+    /* Parse sigevent if provided */
+    int signo = SIGALRM;  /* Default signal */
+    int notify = SIGEV_SIGNAL;
+    if (local_sevp) {
+        struct sigevent sev;
+        if (fut_copy_from_user(&sev, local_sevp, sizeof(struct sigevent)) != 0)
+            return -EFAULT;
+
+        if (sev.sigev_notify != SIGEV_NONE && sev.sigev_notify != SIGEV_SIGNAL)
+            return -EINVAL;
+
+        notify = sev.sigev_notify;
+        if (notify == SIGEV_SIGNAL) {
+            if (sev.sigev_signo < 1 || sev.sigev_signo >= _NSIG)
+                return -EINVAL;
+            signo = sev.sigev_signo;
+        }
     }
 
-    /* Validate userspace pointer is writable */
-    if (fut_access_ok(timerid, sizeof(timer_t), 1) != 0) {
-        fut_printf("[TIMER_CREATE] EFAULT: timerid pointer not writable\n");
+    /* Find a free timer slot */
+    int slot = -1;
+    for (int i = 0; i < FUT_POSIX_TIMER_MAX; i++) {
+        if (!task->posix_timers[i].active) {
+            slot = i;
+            break;
+        }
+    }
+    if (slot < 0)
+        return -EAGAIN;  /* No free timer slots */
+
+    /* Initialize timer */
+    fut_posix_timer_t *pt = &task->posix_timers[slot];
+    pt->active = 1;
+    pt->armed = 0;
+    pt->clockid = local_clockid;
+    pt->signo = signo;
+    pt->notify = notify;
+    pt->overrun = 0;
+    pt->expiry_ms = 0;
+    pt->interval_ms = 0;
+
+    /* Write timer ID back to userspace (1-based) */
+    timer_t id = slot + 1;
+    if (fut_copy_to_user(local_timerid, &id, sizeof(timer_t)) != 0) {
+        pt->active = 0;
         return -EFAULT;
     }
 
-    /* Return -ENOSYS until properly implemented.
-     * Returning a dummy timer ID would make callers think the timer is
-     * active, leading to hangs when timer_settime never fires. */
-
-    fut_printf("[TIMER_CREATE] timer_create not implemented - returning ENOSYS\n");
-    return -ENOSYS;
+    return 0;
 }
 
 /**
  * sys_timer_settime - Arm/disarm a POSIX per-process timer
- *
- * @param timerid:   Timer ID (from timer_create)
- * @param flags:     0 = relative time, TIMER_ABSTIME = absolute time
- * @param new_value: New timer settings (interval + initial expiration)
- * @param old_value: Optional output for previous timer settings
- *
- * Phase 1: Stub - accepts parameters, returns success
- * Phase 2: Implement timer arming with kernel timer infrastructure
- * Phase 3: Support one-shot and periodic timers
- *
- * Returns:
- *   - 0 on success
- *   - -EINVAL if timer ID invalid or time values invalid
- *   - -EFAULT if pointers invalid
  */
 long sys_timer_settime(timer_t timerid, int flags,
                         const struct itimerspec *new_value,
                         struct itimerspec *old_value) {
+    /* ARM64 FIX */
+    timer_t local_timerid = timerid;
+    int local_flags = flags;
+    const struct itimerspec *local_new_value = new_value;
+    struct itimerspec *local_old_value = old_value;
+
     fut_task_t *task = fut_task_current();
-    if (!task) {
+    if (!task)
         return -ESRCH;
-    }
 
-    fut_printf("[TIMER_SETTIME] timerid=%d flags=%d new_value=%p old_value=%p\n",
-               timerid, flags, new_value, old_value);
-
-    /* Validate parameters */
-    if (!new_value) {
+    if (!local_new_value)
         return -EINVAL;
-    }
 
-    if (timerid <= 0) {
+    fut_posix_timer_t *pt = get_timer(task, local_timerid);
+    if (!pt)
         return -EINVAL;
-    }
 
-    /* Validate new_value is readable from userspace */
-    if (fut_access_ok(new_value, sizeof(struct itimerspec), 0) != 0) {
-        fut_printf("[TIMER_SETTIME] EFAULT: new_value pointer not readable\n");
-        return -EFAULT;
-    }
-
-    /* Copy new_value from userspace (for future use when timer is implemented) */
+    /* Copy new value from userspace */
     struct itimerspec new_timer;
-    if (fut_copy_from_user(&new_timer, new_value, sizeof(struct itimerspec)) != 0) {
-        fut_printf("[TIMER_SETTIME] EFAULT: failed to copy new_value from userspace\n");
+    if (fut_copy_from_user(&new_timer, local_new_value, sizeof(struct itimerspec)) != 0)
         return -EFAULT;
+
+    /* Validate timespec values */
+    if (!timespec_valid(&new_timer.it_value) || !timespec_valid(&new_timer.it_interval))
+        return -EINVAL;
+
+    /* Return old timer state if requested */
+    if (local_old_value) {
+        if (fut_access_ok(local_old_value, sizeof(struct itimerspec), 1) != 0)
+            return -EFAULT;
+
+        struct itimerspec old_timer;
+        if (pt->armed && pt->expiry_ms > 0) {
+            uint64_t now = fut_get_ticks();
+            uint64_t remaining = (pt->expiry_ms > now) ? (pt->expiry_ms - now) : 0;
+            ms_to_timespec(remaining, &old_timer.it_value);
+        } else {
+            old_timer.it_value.tv_sec = 0;
+            old_timer.it_value.tv_nsec = 0;
+        }
+        ms_to_timespec(pt->interval_ms, &old_timer.it_interval);
+
+        if (fut_copy_to_user(local_old_value, &old_timer, sizeof(struct itimerspec)) != 0)
+            return -EFAULT;
     }
 
-    /* Validate old_value is writable if provided */
-    if (old_value) {
-        if (fut_access_ok(old_value, sizeof(struct itimerspec), 1) != 0) {
-            fut_printf("[TIMER_SETTIME] EFAULT: old_value pointer not writable\n");
-            return -EFAULT;
-        }
-
-        /* Return previous timer state (stub: zero = disarmed) */
-        struct itimerspec zero_timer = {
-            .it_interval = { .tv_sec = 0, .tv_nsec = 0 },
-            .it_value = { .tv_sec = 0, .tv_nsec = 0 }
-        };
-        if (fut_copy_to_user(old_value, &zero_timer, sizeof(struct itimerspec)) != 0) {
-            fut_printf("[TIMER_SETTIME] EFAULT: failed to copy old_value to userspace\n");
-            return -EFAULT;
-        }
+    /* Disarm if it_value is zero */
+    uint64_t value_ms = timespec_to_ms(&new_timer.it_value);
+    if (value_ms == 0) {
+        pt->armed = 0;
+        pt->expiry_ms = 0;
+        pt->interval_ms = 0;
+        return 0;
     }
 
-    /* Return -ENOSYS until properly implemented (timer_create also returns -ENOSYS) */
-    (void)flags;
-    (void)new_timer;
+    /* Set interval */
+    pt->interval_ms = timespec_to_ms(&new_timer.it_interval);
 
-    fut_printf("[TIMER_SETTIME] timer_settime not implemented - returning ENOSYS\n");
-    return -ENOSYS;
+    /* Arm timer */
+    uint64_t now = fut_get_ticks();
+    if (local_flags & 1 /* TIMER_ABSTIME */) {
+        pt->expiry_ms = value_ms;
+    } else {
+        pt->expiry_ms = now + value_ms;
+    }
+    pt->armed = 1;
+    pt->overrun = 0;
+
+    return 0;
 }
 
 /**
  * sys_timer_gettime - Get current setting of a timer
- *
- * @param timerid: Timer ID (from timer_create)
- * @param curr_value: Output parameter for current timer settings
- *
- * Phase 1: Stub - returns zero interval/value (timer disarmed)
- * Phase 2: Return actual timer state
- *
- * Returns:
- *   - 0 on success
- *   - -EINVAL if timer ID invalid
- *   - -EFAULT if pointer invalid
  */
 long sys_timer_gettime(timer_t timerid, struct itimerspec *curr_value) {
+    timer_t local_timerid = timerid;
+    struct itimerspec *local_curr_value = curr_value;
+
     fut_task_t *task = fut_task_current();
-    if (!task) {
+    if (!task)
         return -ESRCH;
-    }
 
-    fut_printf("[TIMER_GETTIME] timerid=%d curr_value=%p\n", timerid, curr_value);
-
-    /* Validate parameters */
-    if (!curr_value) {
+    if (!local_curr_value)
         return -EINVAL;
-    }
 
-    if (timerid <= 0) {
+    fut_posix_timer_t *pt = get_timer(task, local_timerid);
+    if (!pt)
         return -EINVAL;
-    }
 
-    /* Validate userspace pointer is writable */
-    if (fut_access_ok(curr_value, sizeof(struct itimerspec), 1) != 0) {
-        fut_printf("[TIMER_GETTIME] EFAULT: curr_value pointer not writable\n");
+    if (fut_access_ok(local_curr_value, sizeof(struct itimerspec), 1) != 0)
         return -EFAULT;
+
+    struct itimerspec result;
+    ms_to_timespec(pt->interval_ms, &result.it_interval);
+
+    if (pt->armed && pt->expiry_ms > 0) {
+        uint64_t now = fut_get_ticks();
+        uint64_t remaining = (pt->expiry_ms > now) ? (pt->expiry_ms - now) : 0;
+        ms_to_timespec(remaining, &result.it_value);
+    } else {
+        result.it_value.tv_sec = 0;
+        result.it_value.tv_nsec = 0;
     }
 
-    /* Return -ENOSYS until properly implemented */
-    fut_printf("[TIMER_GETTIME] timer_gettime not implemented - returning ENOSYS\n");
-    return -ENOSYS;
+    if (fut_copy_to_user(local_curr_value, &result, sizeof(struct itimerspec)) != 0)
+        return -EFAULT;
+
+    return 0;
 }
 
 /**
  * sys_timer_getoverrun - Get overrun count for a timer
- *
- * @param timerid: Timer ID (from timer_create)
- *
- * Overrun count tracks how many timer expirations occurred before
- * the signal was delivered (for periodic timers).
- *
- * Phase 1: Stub - returns 0 (no overruns)
- * Phase 2: Track and return actual overrun count
- *
- * Returns:
- *   - Overrun count on success (>= 0)
- *   - -EINVAL if timer ID invalid
  */
 long sys_timer_getoverrun(timer_t timerid) {
+    timer_t local_timerid = timerid;
+
     fut_task_t *task = fut_task_current();
-    if (!task) {
+    if (!task)
         return -ESRCH;
-    }
 
-    fut_printf("[TIMER_GETOVERRUN] timerid=%d\n", timerid);
-
-    /* Validate timer ID */
-    if (timerid <= 0) {
+    fut_posix_timer_t *pt = get_timer(task, local_timerid);
+    if (!pt)
         return -EINVAL;
-    }
 
-    /* Return -ENOSYS until properly implemented */
-    fut_printf("[TIMER_GETOVERRUN] timer_getoverrun not implemented - returning ENOSYS\n");
-    return -ENOSYS;
+    return (long)pt->overrun;
 }
 
 /**
  * sys_timer_delete - Delete a POSIX per-process timer
- *
- * @param timerid: Timer ID (from timer_create)
- *
- * Phase 1: Stub - accepts timer ID, returns success
- * Phase 2: Disarm timer and free timer structure
- *
- * Returns:
- *   - 0 on success
- *   - -EINVAL if timer ID invalid
  */
 long sys_timer_delete(timer_t timerid) {
+    timer_t local_timerid = timerid;
+
     fut_task_t *task = fut_task_current();
-    if (!task) {
+    if (!task)
         return -ESRCH;
-    }
 
-    fut_printf("[TIMER_DELETE] timerid=%d\n", timerid);
-
-    /* Validate timer ID */
-    if (timerid <= 0) {
+    fut_posix_timer_t *pt = get_timer(task, local_timerid);
+    if (!pt)
         return -EINVAL;
-    }
 
-    /* Return -ENOSYS until properly implemented */
-    fut_printf("[TIMER_DELETE] timer_delete not implemented - returning ENOSYS\n");
-    return -ENOSYS;
+    /* Disarm and free the slot */
+    pt->armed = 0;
+    pt->expiry_ms = 0;
+    pt->interval_ms = 0;
+    pt->active = 0;
+
+    return 0;
 }

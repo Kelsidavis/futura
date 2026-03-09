@@ -410,7 +410,7 @@ long sys_getsockopt(int sockfd, int level, int optname, void *optval, socklen_t 
      * 4. Impact:
      *    - DoS: Late failure after expensive operations
      *    - Resource waste: Socket lookup, option retrieval before fault
-     *    - No current check for optlen write permission (TODO)
+     *    - optlen write permission check (IMPLEMENTED at lines 497-502)
      *
      * IMPACT:
      * - Resource exhaustion DoS: Kernel memory/CPU depletion via huge optlen
@@ -437,7 +437,7 @@ long sys_getsockopt(int sockfd, int level, int optname, void *optval, socklen_t 
      *    - Test write with dummy byte BEFORE socket lookup
      *    - Fail fast before expensive socket operations
      *    - Matches sys_read pattern (validate output buffer permission)
-     * 3. optlen Write Permission Check (TODO):
+     * 3. optlen Write Permission Check (IMPLEMENTED at lines 497-502):
      *    - Test write to optlen pointer before socket lookup
      *    - Prevent fail-slow pattern (fault after all work done)
      *    - Value-result parameter requires write access

@@ -185,11 +185,11 @@
  * [DONE] TOCTOU protection at lines 208-220
  *
  * TODO:
- * 1. Add explicit negative offset check before line 380
+ * 1. [DONE] Add explicit negative offset check - implemented at line 335
  * 2. Implement per-iovec size limit
- * 3. Add VFS scatter-gather optimization
- * 4. Consider advisory locking for concurrent writes
- * 5. Add quota check before writing
+ * 3. Add VFS scatter-gather optimization (Phase 4)
+ * 4. Consider advisory locking for concurrent writes (Phase 4)
+ * 5. Add quota check before writing (needs quota infrastructure)
  */
 
 /**
@@ -389,14 +389,25 @@ ssize_t sys_pwritev(int fd, const struct iovec *iov, int iovcnt, int64_t offset)
     }
 
     /* Validate iov_base pointers before using them
-     * Ensure each iov_base is not NULL and appears to be valid userspace address */
+     * Ensure each iov_base is not NULL and appears to be valid userspace address
+     * Also check read permission early (fail-fast before starting any I/O) */
     for (int i = 0; i < iovcnt; i++) {
-        if (!kernel_iov[i].iov_base && kernel_iov[i].iov_len > 0) {
-            fut_printf("[PWRITEV] pwritev(fd=%d, iov=%p, iovcnt=%d, offset=%ld) -> EFAULT "
-                       "(iov_base[%d] is NULL with non-zero length)\n",
-                       fd, iov, iovcnt, offset, i);
-            fut_free(kernel_iov);
-            return -EFAULT;
+        if (kernel_iov[i].iov_len > 0) {
+            if (!kernel_iov[i].iov_base) {
+                fut_printf("[PWRITEV] pwritev(fd=%d, iov=%p, iovcnt=%d, offset=%ld) -> EFAULT "
+                           "(iov_base[%d] is NULL with non-zero length)\n",
+                           fd, iov, iovcnt, offset, i);
+                fut_free(kernel_iov);
+                return -EFAULT;
+            }
+            /* Verify buffer is readable before doing any I/O */
+            if (fut_access_ok(kernel_iov[i].iov_base, kernel_iov[i].iov_len, 0) != 0) {
+                fut_printf("[PWRITEV] pwritev(fd=%d, iov=%p, iovcnt=%d, offset=%ld) -> EFAULT "
+                           "(iov_base[%d] not readable, fail-fast)\n",
+                           fd, iov, iovcnt, offset, i);
+                fut_free(kernel_iov);
+                return -EFAULT;
+            }
         }
     }
 

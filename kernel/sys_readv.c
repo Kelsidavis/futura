@@ -241,7 +241,7 @@
  * [DONE] TOCTOU protection via kernel copy at lines 208-220
  *
  * TODO (Priority Order):
- * 1. Add early buffer writability check before starting reads (fail-fast)
+ * 1. [DONE] Add early buffer writability check before starting reads (fail-fast)
  * 2. Implement per-iovec size limit in addition to total limit
  * 3. Add VFS-level scatter-gather optimization for performance
  * 4. Consider zero-copy for page-aligned buffers
@@ -436,14 +436,25 @@ ssize_t sys_readv(int fd, const struct iovec *iov, int iovcnt) {
     }
 
     /* Validate iov_base pointers before using them
-     * Ensure each iov_base is not NULL and appears to be valid userspace address */
+     * Ensure each iov_base is not NULL and appears to be valid userspace address
+     * Also check write permission early (fail-fast before starting any I/O) */
     for (int i = 0; i < iovcnt; i++) {
-        if (!kernel_iov[i].iov_base && kernel_iov[i].iov_len > 0) {
-            fut_printf("[READV] readv(fd=%d, iov=%p, iovcnt=%d) -> EFAULT "
-                       "(iov_base[%d] is NULL with non-zero length)\n",
-                       fd, iov, iovcnt, i);
-            fut_free(kernel_iov);
-            return -EFAULT;
+        if (kernel_iov[i].iov_len > 0) {
+            if (!kernel_iov[i].iov_base) {
+                fut_printf("[READV] readv(fd=%d, iov=%p, iovcnt=%d) -> EFAULT "
+                           "(iov_base[%d] is NULL with non-zero length)\n",
+                           fd, iov, iovcnt, i);
+                fut_free(kernel_iov);
+                return -EFAULT;
+            }
+            /* Verify buffer is writable before doing any I/O */
+            if (fut_access_ok(kernel_iov[i].iov_base, kernel_iov[i].iov_len, 1) != 0) {
+                fut_printf("[READV] readv(fd=%d, iov=%p, iovcnt=%d) -> EFAULT "
+                           "(iov_base[%d] not writable, fail-fast)\n",
+                           fd, iov, iovcnt, i);
+                fut_free(kernel_iov);
+                return -EFAULT;
+            }
         }
     }
 

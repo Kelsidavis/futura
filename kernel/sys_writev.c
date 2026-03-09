@@ -211,7 +211,7 @@
  * [DONE] TOCTOU protection at lines 208-220
  *
  * TODO:
- * 1. Add early buffer readability check (fail-fast)
+ * 1. [DONE] Add early buffer readability check (fail-fast)
  * 2. Implement per-iovec size limit
  * 3. Add VFS scatter-gather optimization
  * 4. Consider zero-copy for page-aligned buffers
@@ -409,14 +409,25 @@ ssize_t sys_writev(int fd, const struct iovec *iov, int iovcnt) {
     }
 
     /* Validate iov_base pointers before using them
-     * Ensure each iov_base is not NULL and appears to be valid userspace address */
+     * Ensure each iov_base is not NULL and appears to be valid userspace address
+     * Also check read permission early (fail-fast before starting any I/O) */
     for (int i = 0; i < iovcnt; i++) {
-        if (!kernel_iov[i].iov_base && kernel_iov[i].iov_len > 0) {
-            fut_printf("[WRITEV] writev(fd=%d, iov=%p, iovcnt=%d) -> EFAULT "
-                       "(iov_base[%d] is NULL with non-zero length)\n",
-                       fd, iov, iovcnt, i);
-            fut_free(kernel_iov);
-            return -EFAULT;
+        if (kernel_iov[i].iov_len > 0) {
+            if (!kernel_iov[i].iov_base) {
+                fut_printf("[WRITEV] writev(fd=%d, iov=%p, iovcnt=%d) -> EFAULT "
+                           "(iov_base[%d] is NULL with non-zero length)\n",
+                           fd, iov, iovcnt, i);
+                fut_free(kernel_iov);
+                return -EFAULT;
+            }
+            /* Verify buffer is readable before doing any I/O */
+            if (fut_access_ok(kernel_iov[i].iov_base, kernel_iov[i].iov_len, 0) != 0) {
+                fut_printf("[WRITEV] writev(fd=%d, iov=%p, iovcnt=%d) -> EFAULT "
+                           "(iov_base[%d] not readable, fail-fast)\n",
+                           fd, iov, iovcnt, i);
+                fut_free(kernel_iov);
+                return -EFAULT;
+            }
         }
     }
 

@@ -126,9 +126,9 @@
  *   ✓ Same-directory atomic rename (lines 359-376)
  *
  * TODO Phase 4: Cross-filesystem rename:
- *   - Detect cross-filesystem rename (compare st_dev)
- *   - Return EXDEV for cross-filesystem rename
- *   - Or implement copy-then-unlink with transaction support
+ *   - [DONE] Detect cross-filesystem rename (compare mount pointers) - line 390
+ *   - [DONE] Return EXDEV for cross-filesystem rename - line 395
+ *   - Implement copy-then-unlink with transaction support (optional)
  *
  * Phase 1 (Completed): Basic rename validation and stub
  * Phase 2 (Completed): Enhanced validation, path categorization, operation type identification, detailed logging

@@ -3708,9 +3708,14 @@ static void exec_external_command(int argc, char *argv[]) {
         sys_execve(cmd, argv, envp);
     } else {
         /* Try to find in /bin/user/ */
-        strcpy_simple(path_buf, "/bin/user/");
-        strcat_simple(path_buf, cmd);
-        sys_execve(path_buf, argv, envp);
+        const char *prefix = "/bin/user/";
+        size_t prefix_len = 10;  /* strlen("/bin/user/") */
+        size_t cmd_len = strlen_simple(cmd);
+        if (prefix_len + cmd_len < sizeof(path_buf)) {
+            strcpy_simple(path_buf, prefix);
+            strcat_simple(path_buf, cmd);
+            sys_execve(path_buf, argv, envp);
+        }
     }
 
     /* If execve returns, it failed */

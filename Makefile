@@ -935,6 +935,18 @@ $(ARM64_FORKTEST_BIN): arm64-libfutura
 	@$(MAKE) -C src/user/forktest PLATFORM=arm64 all
 endif
 
+ifeq ($(PLATFORM),arm64)
+# Native ARM64 build rules for ARM64-specific binaries
+# (init, shell, fbtest are handled by generic rules that expand to the same paths)
+$(ARM64_UIDEMO_BIN): arm64-libfutura
+	@echo "Building ARM64 uidemo..."
+	@$(MAKE) -C src/user/arm64_uidemo PLATFORM=arm64 all
+
+$(ARM64_FORKTEST_BIN): arm64-libfutura
+	@echo "Building ARM64 forktest..."
+	@$(MAKE) -C src/user/forktest PLATFORM=arm64 all
+endif
+
 $(ARM64_INIT_BLOB): $(ARM64_INIT_BIN) | $(OBJ_DIR)/kernel/blobs
 	@echo "OBJCOPY $@"
 	@$(OBJCOPY) -I binary -O $(OBJCOPY_BIN_FMT) -B $(OBJCOPY_BIN_ARCH) $< $@

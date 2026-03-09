@@ -1655,37 +1655,10 @@ void fut_kernel_main(void) {
 
     fut_printf("[INIT] Test task created (PID %llu)\n", test_task->pid);
 
-    if (run_async_selftests) {
-        /* Run all test suites sequentially in a single thread to prevent
-         * concurrent access to shared kernel state (ramfs directories,
-         * task signal fields, etc.) from corrupting data structures. */
-        fut_thread_t *test_thread = fut_thread_create(
-            test_task,
-            selftest_sequential_runner,
-            NULL,
-            16 * 1024,  /* 16 KB stack (enough for all test suites) */
-            180         /* Priority */
-        );
-        if (test_thread) {
-            fut_printf("[INIT] Created sequential test thread (tid=%llu)\n", test_thread->tid);
-        }
-    }
-
-    /* Disable watchdog for now - it exits immediately due to fut_tests_completed() stub */
-    /*
-    fut_thread_t *watchdog_thread = fut_thread_create(
-        test_task,
-        fut_test_watchdog_thread,
-        NULL,
-        8 * 1024,
-        60
-    );
-    if (!watchdog_thread) {
-        fut_printf("[WARN] Failed to create test watchdog thread\n");
-    }
-    */
-
-    /* Create FIPC channel for inter-thread communication */
+    /* Create FIPC channel BEFORE starting test thread to avoid concurrent
+     * heap allocation races between the boot thread and test thread.
+     * The allocator is not fully thread-safe, so all init-time allocations
+     * must complete before the test thread begins its work. */
     fut_printf("[INIT] Creating FIPC test channel...\n");
     int ret = fut_fipc_channel_create(
         test_task,              /* Sender task */
@@ -1701,6 +1674,22 @@ void fut_kernel_main(void) {
     }
 
     fut_printf("[INIT] FIPC channel created (ID %llu)\n", g_test_channel->id);
+
+    if (run_async_selftests) {
+        /* Run all test suites sequentially in a single thread to prevent
+         * concurrent access to shared kernel state (ramfs directories,
+         * task signal fields, etc.) from corrupting data structures. */
+        fut_thread_t *test_thread = fut_thread_create(
+            test_task,
+            selftest_sequential_runner,
+            NULL,
+            16 * 1024,  /* 16 KB stack (enough for all test suites) */
+            180         /* Priority */
+        );
+        if (test_thread) {
+            fut_printf("[INIT] Created sequential test thread (tid=%llu)\n", test_thread->tid);
+        }
+    }
 
     /* ========================================
      *   Step 7: Create FIPC Test Threads

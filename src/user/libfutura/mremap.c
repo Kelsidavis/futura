@@ -15,6 +15,10 @@ static size_t page_round_up(size_t len) {
     if (len == 0) {
         return 0;
     }
+    /* Overflow check: reject sizes that would wrap when rounding up */
+    if (len > (size_t)-1 - (FUT_PAGE_SIZE - 1ULL)) {
+        return 0;
+    }
     return (len + FUT_PAGE_SIZE - 1ULL) & ~(FUT_PAGE_SIZE - 1ULL);
 }
 

@@ -297,7 +297,7 @@ static void __attribute__((unused)) test_vfs_operations(void) {
                     char read_buf[64];
 
                     if (file_vnode->ops && file_vnode->ops->read) {
-                        ssize_t bytes_read = file_vnode->ops->read(file_vnode, read_buf, sizeof(read_buf), 0);
+                        ssize_t bytes_read = file_vnode->ops->read(file_vnode, read_buf, sizeof(read_buf) - 1, 0);
                         if (bytes_read > 0) {
                             read_buf[bytes_read] = '\0';
                             fut_printf("[VFS-TEST] ✓ Read %lld bytes: '%s'\n", (long long)bytes_read, read_buf);

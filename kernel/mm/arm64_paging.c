@@ -519,21 +519,21 @@ int fut_unmap_page(fut_vmem_context_t *ctx, uint64_t vaddr) {
         return -ENOENT;  /* Already unmapped - PGD not present */
     }
 
-    page_table_t *pmd = (page_table_t *)fut_pte_to_phys(pgd_entry);
+    page_table_t *pmd = (page_table_t *)pmap_phys_to_virt(fut_pte_to_phys(pgd_entry));
     int pmd_idx = PMD_INDEX(vaddr);
     pte_t pmd_entry = pmd->entries[pmd_idx];
     if (!fut_pte_is_present(pmd_entry)) {
         return -ENOENT;  /* Already unmapped - PMD not present */
     }
 
-    page_table_t *pte_table = (page_table_t *)fut_pte_to_phys(pmd_entry);
+    page_table_t *pte_table = (page_table_t *)pmap_phys_to_virt(fut_pte_to_phys(pmd_entry));
     int pte_idx = PTE_INDEX(vaddr);
     pte_t pte_entry = pte_table->entries[pte_idx];
     if (!fut_pte_is_present(pte_entry)) {
         return -ENOENT;  /* Already unmapped - PTE not present */
     }
 
-    page_table_t *page_table = (page_table_t *)fut_pte_to_phys(pte_entry);
+    page_table_t *page_table = (page_table_t *)pmap_phys_to_virt(fut_pte_to_phys(pte_entry));
     int page_idx = PAGE_INDEX(vaddr);
 
     /* Clear the entry */
@@ -591,21 +591,21 @@ int fut_virt_to_phys(fut_vmem_context_t *ctx, uint64_t vaddr, uint64_t *paddr) {
         return -EFAULT;  /* PGD entry not present */
     }
 
-    page_table_t *pmd = (page_table_t *)fut_pte_to_phys(pgd_entry);
+    page_table_t *pmd = (page_table_t *)pmap_phys_to_virt(fut_pte_to_phys(pgd_entry));
     int pmd_idx = PMD_INDEX(vaddr);
     pte_t pmd_entry = pmd->entries[pmd_idx];
     if (!fut_pte_is_present(pmd_entry)) {
         return -EFAULT;  /* PMD entry not present */
     }
 
-    page_table_t *pte_table = (page_table_t *)fut_pte_to_phys(pmd_entry);
+    page_table_t *pte_table = (page_table_t *)pmap_phys_to_virt(fut_pte_to_phys(pmd_entry));
     int pte_idx = PTE_INDEX(vaddr);
     pte_t pte_entry = pte_table->entries[pte_idx];
     if (!fut_pte_is_present(pte_entry)) {
         return -EFAULT;  /* PTE entry not present */
     }
 
-    page_table_t *page_table = (page_table_t *)fut_pte_to_phys(pte_entry);
+    page_table_t *page_table = (page_table_t *)pmap_phys_to_virt(fut_pte_to_phys(pte_entry));
     int page_idx = PAGE_INDEX(vaddr);
     pte_t page_entry = page_table->entries[page_idx];
     if (!fut_pte_is_present(page_entry)) {

@@ -72,6 +72,11 @@ typedef struct {
  */
 static void fut_rpi_uart_calc_divisors(uint32_t uart_clock, uint32_t baudrate,
                                        uint32_t *ibrd, uint32_t *fbrd) {
+    if (baudrate == 0) {
+        *ibrd = 0;
+        *fbrd = 0;
+        return;
+    }
     uint32_t divisor = uart_clock / (16 * baudrate);
     uint32_t remainder = uart_clock % (16 * baudrate);
 

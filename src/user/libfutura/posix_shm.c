@@ -1,5 +1,6 @@
 #include <futura/compat/posix_shm.h>
 
+#include <limits.h>
 #include <user/sys.h>
 #include "fd.h"
 
@@ -38,6 +39,11 @@ static int fut_build_shm_path(const char *name, char *out, size_t out_len) {
 
     const size_t prefix_len = sizeof(FUT_SHM_PREFIX) - 1;
     const size_t suffix_len = sizeof(FUT_SHM_SUFFIX) - 1;
+
+    /* Guard against overflow in total_len calculation */
+    if (base_len > out_len || prefix_len + suffix_len > out_len - base_len) {
+        return -1;
+    }
     const size_t total_len = prefix_len + base_len + suffix_len;
 
     if (total_len + 1 > out_len) {
@@ -98,6 +104,13 @@ int fut_shm_create(const char *name, size_t size, int oflag, int mode) {
     }
     fut_fd_path_register(fd, path);
 
+    /* Reject sizes that would go negative when cast to long */
+    if (size > (size_t)LONG_MAX) {
+        sys_close(fd);
+        fut_fd_path_forget(fd);
+        return -1;
+    }
+
     /* Use ftruncate for efficient allocation instead of write-zeros loop */
     long ret = sys_ftruncate(fd, (long)size);
     if (ret < 0) {
@@ -121,6 +134,9 @@ int fut_shm_unlink(const char *name) {
 }
 
 int fut_shm_resize(int fd, size_t size) {
+    if (size > (size_t)LONG_MAX) {
+        return -1;
+    }
     /* Use ftruncate syscall for efficient allocation */
     long ret = sys_ftruncate(fd, (long)size);
     if (ret < 0) {

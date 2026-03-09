@@ -105,6 +105,9 @@ static int ensure_capacity(size_t required) {
 
     size_t new_cap = g_env_capacity ? g_env_capacity : 8;
     while (new_cap < required) {
+        if (new_cap > SIZE_MAX / 2) {
+            return -1;  /* overflow */
+        }
         new_cap *= 2;
     }
 
@@ -140,6 +143,11 @@ static int set_pair(const char *name, const char *value, int overwrite, char *ow
 
     char *kv = owned;
     if (!kv) {
+        /* Guard against name_len + value_len + 2 overflow */
+        if (name_len > SIZE_MAX - value_len - 2) {
+            errno = ENOMEM;
+            return -1;
+        }
         kv = (char *)malloc(name_len + 1 + value_len + 1);
         if (!kv) {
             errno = ENOMEM;

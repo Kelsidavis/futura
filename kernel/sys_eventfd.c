@@ -189,10 +189,9 @@
  *   - Prevents memory leak on fd exhaustion
  *   - Returns error code to userspace
  *
- * [TODO] Add global eventfd counter with system-wide limit:
- *   - static atomic_t global_eventfd_count
- *   - Reject creation if count >= MAX_EVENTFDS (e.g., 4096)
- *   - Decrement on eventfd_release()
+ * [DONE] Global eventfd counter with system-wide limit (MAX_EVENTFDS=4096):
+ *   - g_eventfd_count atomic counter incremented on create, decremented on release
+ *   - Reject creation with -EMFILE if count >= MAX_EVENTFDS
  *   - Prevents global kernel heap exhaustion
  *
  * [TODO] Add per-user eventfd quota:
@@ -423,11 +422,16 @@
 #include <kernel/uaccess.h>
 #include <shared/fut_timespec.h>
 #include <stdbool.h>
+#include <stdatomic.h>
 #include <stdint.h>
 #include <sys/epoll.h>
 #include <time.h>
 
 #include <kernel/kprintf.h>
+
+/* System-wide eventfd limit (prevents kernel heap exhaustion via mass creation) */
+#define MAX_EVENTFDS        4096
+static _Atomic uint32_t g_eventfd_count __attribute__((aligned(4))) = 0;
 
 /* eventfd flags (kernel-internal definitions to avoid userspace header conflicts) */
 #define EFD_CLOEXEC     02000000
@@ -735,6 +739,7 @@ static int eventfd_release(void *inode, void *priv) {
     if (last_fd) {
         eventfd_ctx_destroy(efile->ctx);
         fut_free(efile);
+        atomic_fetch_sub_explicit(&g_eventfd_count, 1, memory_order_relaxed);
     }
 
     return 0;
@@ -802,14 +807,26 @@ long sys_eventfd2(unsigned int initval, int flags) {
         return -EINVAL;
     }
 
+    /* System-wide quota: prevent heap exhaustion via mass eventfd creation */
+    uint32_t current_count = atomic_fetch_add_explicit(&g_eventfd_count, 1, memory_order_acq_rel);
+    if (current_count >= MAX_EVENTFDS) {
+        atomic_fetch_sub_explicit(&g_eventfd_count, 1, memory_order_relaxed);
+        fut_printf("[EVENTFD2] sys_eventfd2(initval=%u, flags=0x%x) -> EMFILE "
+                   "(system-wide limit %d reached, count=%u)\n",
+                   initval, flags, MAX_EVENTFDS, current_count);
+        return -EMFILE;
+    }
+
     struct eventfd_ctx *ctx = eventfd_ctx_create(initval, (flags & EFD_SEMAPHORE) != 0);
     if (!ctx) {
+        atomic_fetch_sub_explicit(&g_eventfd_count, 1, memory_order_relaxed);
         return -ENOMEM;
     }
 
     struct eventfd_file *efile = fut_malloc(sizeof(struct eventfd_file));
     if (!efile) {
         eventfd_ctx_destroy(ctx);
+        atomic_fetch_sub_explicit(&g_eventfd_count, 1, memory_order_relaxed);
         return -ENOMEM;
     }
     efile->ctx = ctx;
@@ -819,6 +836,7 @@ long sys_eventfd2(unsigned int initval, int flags) {
     if (fd < 0) {
         fut_free(efile);
         eventfd_ctx_destroy(ctx);
+        atomic_fetch_sub_explicit(&g_eventfd_count, 1, memory_order_relaxed);
         return fd;
     }
 

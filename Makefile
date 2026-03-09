@@ -168,7 +168,7 @@ else ifeq ($(PLATFORM),arm64)
         OBJCOPY := $(CROSS_COMPILE)objcopy
         EXTRA_LDLIBS := $(shell $(CROSS_COMPILE)gcc-14 -print-libgcc-file-name 2>/dev/null)
     endif
-    ARCH_CFLAGS := -march=armv8-a -mtune=cortex-a53 -Wno-pedantic
+    ARCH_CFLAGS := -march=armv8-a -mtune=cortex-a53 -Wno-pedantic -mno-outline-atomics
     ARCH_ASFLAGS :=
     ARCH_LDFLAGS := -T platform/arm64/link.ld
     # Binary format for embedding blobs

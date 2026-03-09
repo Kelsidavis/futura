@@ -14,7 +14,7 @@ ifeq ($(PLATFORM),arm64)
     endif
     LD := $(CROSS_COMPILE)ld
     AR := $(CROSS_COMPILE)ar
-    ARCH_CFLAGS := -march=armv8-a -mtune=cortex-a53
+    ARCH_CFLAGS := -march=armv8-a -mtune=cortex-a53 -mno-outline-atomics
 else
     CC := gcc
     LD := ld

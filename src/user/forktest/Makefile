@@ -21,7 +21,7 @@ ifeq ($(PLATFORM),arm64)
              -fno-stack-protector \
              -fno-pic -fno-pie \
              -mcmodel=large \
-             -march=armv8-a
+             -march=armv8-a -mno-outline-atomics
     LDFLAGS = -nostdlib -static --build-id=none -T ../libfutura/userland_arm64.ld
     LIBFUTURA = ../../../build/lib/arm64/libfutura.a
     CRT0 = ../../../build/lib/arm64/crt0.o

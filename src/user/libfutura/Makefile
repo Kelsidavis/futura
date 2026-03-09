@@ -16,7 +16,7 @@ ifeq ($(PLATFORM),arm64)
     endif
     AS := $(CROSS_COMPILE)as
     AR := $(CROSS_COMPILE)ar
-    ARCH_CFLAGS := -march=armv8-a -mtune=cortex-a53
+    ARCH_CFLAGS := -march=armv8-a -mtune=cortex-a53 -mno-outline-atomics
     ARCH_ASFLAGS :=
 else
     # x86_64 platform - use cross-compiler on macOS
@@ -65,6 +65,11 @@ C_SRCS := abort.c string.c strerror.c env.c fputs.c fwrite.c malloc.c fipc.c fip
 # socket_unix.c uses x86_64 inline asm (syscall instruction)
 ifneq ($(PLATFORM),arm64)
 C_SRCS += socket_unix.c
+endif
+
+# ARM64 libgcc requires __getauxval for LSE atomics detection
+ifeq ($(PLATFORM),arm64)
+C_SRCS += getauxval_stub.c
 endif
 
 ifeq ($(PLATFORM),arm64)

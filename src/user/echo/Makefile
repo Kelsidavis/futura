@@ -13,7 +13,7 @@ ifeq ($(PLATFORM),arm64)
         CC := $(CROSS_COMPILE)gcc-14
         LD := $(CROSS_COMPILE)gcc-14
     endif
-    ARCH_CFLAGS := -march=armv8-a -mtune=cortex-a53
+    ARCH_CFLAGS := -march=armv8-a -mtune=cortex-a53 -mno-outline-atomics
     LINKER_SCRIPT := ../libfutura/userland_arm64.ld
 else
     CC := gcc

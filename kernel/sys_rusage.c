@@ -7,6 +7,8 @@
  */
 
 #include <kernel/fut_task.h>
+#include <kernel/fut_thread.h>
+#include <kernel/fut_stats.h>
 #include <kernel/errno.h>
 #include <shared/fut_timeval.h>
 #include <string.h>
@@ -107,33 +109,41 @@ long sys_getrusage(int who, struct rusage *usage) {
             return -EINVAL;
     }
 
-    /* Phase 2: Return zeroed statistics with detailed reporting
-     * Phase 3+: Will populate from task structure and scheduler stats */
+    /*
+     * Phase 3: Populate CPU time and context switch counts from scheduler stats.
+     * cpu_ticks is in timer ticks (FUT_TIMER_HZ = 100 Hz, so each tick = 10ms).
+     * Since user/kernel time is not tracked separately, all attributed to ru_utime.
+     * context_switches is used for ru_nvcsw (voluntary not separated from involuntary).
+     */
     struct rusage ru;
     memset(&ru, 0, sizeof(ru));
 
-    /* Future phases will populate from task statistics:
-     *
-     * Phase 3: CPU time tracking
-     * - ru_utime: task->cpu_time_user (from scheduler)
-     * - ru_stime: task->cpu_time_system (from scheduler)
-     *
-     * Phase 4: Memory usage tracking
-     * - ru_maxrss: task->mm->max_rss (from memory manager)
-     * - ru_minflt: task->mm->page_faults_minor (soft page faults)
-     * - ru_majflt: task->mm->page_faults_major (hard page faults)
-     *
-     * I/O statistics tracking
-     * - ru_inblock: task->io_stats->blocks_read (from VFS/block layer)
-     * - ru_oublock: task->io_stats->blocks_written (from VFS/block layer)
-     *
-     * Phase 6: Context switch tracking
-     * - ru_nvcsw: task->sched_stats->voluntary_switches (from scheduler)
-     * - ru_nivcsw: task->sched_stats->involuntary_switches (from scheduler)
-     *
-     * For RUSAGE_CHILDREN: Aggregate stats from all waited-for children
-     * For RUSAGE_THREAD: Use thread-specific counters instead of process-wide
-     */
+    if (who == RUSAGE_SELF || who == RUSAGE_THREAD) {
+        uint64_t total_ticks = 0;
+        uint64_t total_switches = 0;
+
+        if (who == RUSAGE_THREAD) {
+            /* Single calling thread */
+            fut_thread_t *t = fut_thread_current();
+            if (t) {
+                total_ticks   = t->stats.cpu_ticks;
+                total_switches = t->stats.context_switches;
+            }
+        } else {
+            /* All threads of the task */
+            for (fut_thread_t *t = task->threads; t != nullptr; t = t->global_next) {
+                total_ticks   += t->stats.cpu_ticks;
+                total_switches += t->stats.context_switches;
+            }
+        }
+
+        /* Convert ticks to timeval (10ms per tick at 100Hz) */
+        uint64_t usec_total = total_ticks * (1000000UL / FUT_TIMER_HZ);
+        ru.ru_utime.tv_sec  = (long)(usec_total / 1000000UL);
+        ru.ru_utime.tv_usec = (long)(usec_total % 1000000UL);
+        ru.ru_nvcsw = (long)total_switches;
+    }
+    /* RUSAGE_CHILDREN: zeroed until wait4()/waitpid() accumulates child stats */
 
     /* Copy to userspace */
     if (fut_copy_to_user(usage, &ru, sizeof(struct rusage)) != 0) {
@@ -142,10 +152,10 @@ long sys_getrusage(int who, struct rusage *usage) {
         return -EFAULT;
     }
 
-    /* Phase 3: Detailed logging with zeroed statistics report */
     fut_printf("[RUSAGE] getrusage(who=%s [%s], usage=%p) -> 0 "
-               "(Phase 3: Zeroed statistics with who parameter categorization)\n",
-               who_desc, target_desc, usage);
+               "(utime=%ld.%06lds nvcsw=%ld)\n",
+               who_desc, target_desc, usage,
+               ru.ru_utime.tv_sec, ru.ru_utime.tv_usec, ru.ru_nvcsw);
 
     return 0;
 }

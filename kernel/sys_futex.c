@@ -1029,6 +1029,112 @@ long sys_set_robust_list(struct robust_list_head *head, size_t len) {
  *   - -ESRCH if process not found
  *   - -EPERM if permission denied
  */
+/* Futex word bit layout for robust mutexes */
+#define ROBUST_FUTEX_OWNER_DIED  0x40000000U  /* Set when owner dies holding lock */
+#define ROBUST_FUTEX_WAITERS     0x80000000U  /* Set when threads are waiting */
+#define ROBUST_FUTEX_TID_MASK    0x3FFFFFFFU  /* Lower 30 bits = owner TID */
+#define ROBUST_LIST_LIMIT        2048         /* Max entries to walk (prevent infinite loop) */
+
+/**
+ * exit_robust_list - Walk the robust list on thread exit and release locks.
+ *
+ * Called from fut_thread_exit() before the thread is removed from the
+ * scheduler.  For each futex on the robust list:
+ *   1. Set ROBUST_FUTEX_OWNER_DIED to signal waiting threads.
+ *   2. Clear the TID bits (owner is gone).
+ *   3. Wake at most one waiter so it can detect the dead-owner condition.
+ *
+ * Security:
+ *   - Every userspace pointer is validated before dereference.
+ *   - Iteration is capped at ROBUST_LIST_LIMIT to prevent infinite loops.
+ *   - Pointer equality check detects list termination (entry == &head->list).
+ *
+ * @param thread  Exiting thread whose robust_list should be cleaned up.
+ */
+void exit_robust_list(fut_thread_t *thread) {
+    if (!thread || !thread->robust_list) {
+        return;
+    }
+
+    struct robust_list_head *head = (struct robust_list_head *)thread->robust_list;
+
+    /* Validate and copy the list head from userspace */
+    if (fut_access_ok(head, sizeof(*head), 0) != 0) {
+        fut_printf("[FUTEX] exit_robust_list: head %p not accessible\n", (void *)head);
+        return;
+    }
+
+    struct robust_list_head head_copy;
+    if (fut_copy_from_user(&head_copy, head, sizeof(head_copy)) != 0) {
+        fut_printf("[FUTEX] exit_robust_list: failed to read head\n");
+        return;
+    }
+
+    long futex_offset = head_copy.futex_offset;
+    struct robust_list *pending = head_copy.list_op_pending;
+    struct robust_list *entry   = head_copy.list.next;
+
+    /* Helper lambda-like logic: mark a futex word as owner-died and wake. */
+#define ROBUST_RELEASE_ENTRY(e) do {                                    \
+    struct robust_list *_e = (e);                                       \
+    if (!_e || _e == (struct robust_list *)head) break;                 \
+    /* Mask flag bits (bit 0 is the "lock being modified" bit) */       \
+    _e = (struct robust_list *)((uintptr_t)_e & ~(uintptr_t)1);        \
+    uint32_t *futex_uaddr = (uint32_t *)((char *)_e + futex_offset);   \
+    if (fut_access_ok(futex_uaddr, sizeof(uint32_t), 1) != 0) break;   \
+    uint32_t val;                                                        \
+    if (fut_copy_from_user(&val, futex_uaddr, sizeof(val)) != 0) break; \
+    uint32_t new_val = (val & ROBUST_FUTEX_WAITERS) | ROBUST_FUTEX_OWNER_DIED; \
+    if (fut_copy_to_user(futex_uaddr, &new_val, sizeof(new_val)) != 0) break;  \
+    futex_wake_one(futex_uaddr);                                        \
+    fut_printf("[FUTEX] exit_robust_list: released futex @%p (val 0x%x -> 0x%x)\n", \
+               (void *)futex_uaddr, val, new_val);                      \
+} while (0)
+
+    /* Walk the list; list terminates when entry == &head->list */
+    int count = 0;
+    while (entry != (struct robust_list *)head && entry != NULL &&
+           count < ROBUST_LIST_LIMIT) {
+
+        /* Validate and read next pointer before processing current entry */
+        if (fut_access_ok(entry, sizeof(*entry), 0) != 0) {
+            fut_printf("[FUTEX] exit_robust_list: entry %p not accessible, stopping\n",
+                       (void *)entry);
+            break;
+        }
+
+        struct robust_list entry_copy;
+        if (fut_copy_from_user(&entry_copy, entry, sizeof(entry_copy)) != 0) {
+            fut_printf("[FUTEX] exit_robust_list: failed to read entry %p\n", (void *)entry);
+            break;
+        }
+
+        struct robust_list *next = entry_copy.next;
+
+        /* Skip the pending entry here — it is handled separately below */
+        if (entry != (struct robust_list *)((uintptr_t)pending & ~(uintptr_t)1)) {
+            ROBUST_RELEASE_ENTRY(entry);
+        }
+
+        entry = next;
+        count++;
+    }
+
+    /* Handle the pending entry (partially-completed lock operation) */
+    if (pending && pending != (struct robust_list *)head) {
+        ROBUST_RELEASE_ENTRY(pending);
+    }
+
+#undef ROBUST_RELEASE_ENTRY
+
+    if (count > 0) {
+        fut_printf("[FUTEX] exit_robust_list: cleaned up %d robust futex(es)\n", count);
+    }
+
+    /* Clear the robust list pointer so it is not processed twice */
+    thread->robust_list = NULL;
+}
+
 long sys_get_robust_list(int pid, struct robust_list_head **head_ptr,
                          size_t *len_ptr) {
     fut_task_t *task = fut_task_current();

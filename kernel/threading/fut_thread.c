@@ -345,6 +345,9 @@ void fut_thread_yield(void) {
 /**
  * Exit current thread (does not return).
  */
+/* Phase 3: Walk robust futex list on thread exit */
+extern void exit_robust_list(fut_thread_t *thread);
+
 [[noreturn]] void fut_thread_exit(void) {
     fut_thread_t *self = fut_thread_current();
     if (!self) {
@@ -358,6 +361,10 @@ void fut_thread_yield(void) {
 #endif
         }  // Should never happen
     }
+
+    /* Phase 3: Release any held robust futexes before the thread disappears.
+     * Must happen while userspace memory is still accessible (before mm teardown). */
+    exit_robust_list(self);
 
     // Mark as terminated
     self->state = FUT_THREAD_TERMINATED;

@@ -15,6 +15,7 @@
 #include <kernel/errno.h>
 #include <kernel/fut_task.h>
 #include <stdint.h>
+#include <string.h>
 
 #include <kernel/kprintf.h>
 #include <kernel/uaccess.h>
@@ -260,10 +261,7 @@ long sys_getcwd(char *buf, size_t size) {
     if (cwd_inode != 1 && task->cwd_cache && task->cwd_cache[0] != '\0') {
         /* Use cached path from chdir() */
         path_str = task->cwd_cache;
-        path_len = 0;
-        while (path_str[path_len] != '\0' && path_len < 255) {
-            path_len++;
-        }
+        path_len = strnlen(path_str, 255);
     }
 
     /* Check buffer is large enough */

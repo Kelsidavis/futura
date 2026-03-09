@@ -17,6 +17,7 @@
 #include <kernel/fut_vfs.h>
 #include <kernel/fut_fd_util.h>
 #include <stdint.h>
+#include <string.h>
 
 #include <kernel/kprintf.h>
 #include <kernel/uaccess.h>
@@ -464,10 +465,7 @@ long sys_getdents64(unsigned int fd, void *dirp, unsigned int count) {
         }
 
         /* Calculate required size for this entry */
-        size_t name_len = 0;
-        while (vdirent.d_name[name_len] != '\0' && name_len < 256) {
-            name_len++;
-        }
+        size_t name_len = strnlen(vdirent.d_name, 256);
 
         /* Validate reclen calculation won't overflow
          * Prevent integer overflow when calculating entry size */

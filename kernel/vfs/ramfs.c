@@ -1199,10 +1199,7 @@ static const char *path_extract_basename(const char *path, char *dirname_out, si
         return NULL;
     }
 
-    size_t path_len = 0;
-    while (path[path_len] != '\0' && path_len < 256) {
-        path_len++;
-    }
+    size_t path_len = strnlen(path, 256);
 
     /* Find the last '/' */
     int last_slash = -1;
@@ -1377,10 +1374,7 @@ static int ramfs_symlink(struct fut_vnode *parent, const char *linkpath, const c
     }
 
     /* Calculate target length */
-    size_t target_len = 0;
-    while (target[target_len] != '\0' && target_len < 4096) {
-        target_len++;
-    }
+    size_t target_len = strnlen(target, 4096);
 
     if (target_len == 0) {
         return -EINVAL;  /* Empty target not allowed */
@@ -1484,10 +1478,7 @@ static ssize_t ramfs_readlink(struct fut_vnode *vnode, char *buf, size_t size) {
     }
 
     /* Calculate target length */
-    size_t target_len = 0;
-    while (node->link.target[target_len] != '\0' && target_len < 4096) {
-        target_len++;
-    }
+    size_t target_len = strnlen(node->link.target, 4096);
 
     /* Copy target to buffer, limiting to size */
     size_t bytes_to_copy = (target_len < size) ? target_len : size;
@@ -1594,10 +1585,7 @@ static int ramfs_rename(struct fut_vnode *parent, const char *oldname, const cha
     }
 
     /* Now rename oldname to newname by updating the entry name */
-    size_t newname_len = 0;
-    while (newname[newname_len] != '\0' && newname_len < FUT_VFS_NAME_MAX) {
-        newname_len++;
-    }
+    size_t newname_len = strnlen(newname, FUT_VFS_NAME_MAX);
 
     if (newname_len >= FUT_VFS_NAME_MAX) {
         return -ENAMETOOLONG;

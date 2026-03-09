@@ -9,21 +9,7 @@
 static char s_cmdline[BOOT_CMDSZ];
 static int s_initialized = 0;
 
-static size_t boot_strnlen(const char *s, size_t max_len) {
-    size_t len = 0;
-    while (len < max_len && s[len] != '\0') {
-        ++len;
-    }
-    return len;
-}
 
-static size_t boot_strlen(const char *s) {
-    size_t len = 0;
-    while (s[len] != '\0') {
-        ++len;
-    }
-    return len;
-}
 
 static int boot_strncmp(const char *a, const char *b, size_t n) {
     for (size_t i = 0; i < n; ++i) {
@@ -53,7 +39,7 @@ void fut_boot_args_init(const char *cmdline) {
         s_initialized = 1;
         return;
     }
-    size_t len = boot_strnlen(cmdline, BOOT_CMDSZ - 1);
+    size_t len = strnlen(cmdline, BOOT_CMDSZ - 1);
     memcpy(s_cmdline, cmdline, len);
     s_cmdline[len] = '\0';
     s_initialized = 1;
@@ -63,7 +49,7 @@ static const char *find_key(const char *key) {
     if (!s_initialized) {
         return NULL;
     }
-    size_t key_len = boot_strlen(key);
+    size_t key_len = strlen(key);
     const char *cursor = s_cmdline;
     while (*cursor) {
         while (*cursor == ' ') {

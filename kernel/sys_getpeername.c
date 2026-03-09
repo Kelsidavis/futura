@@ -306,11 +306,7 @@ long sys_getpeername(int sockfd, void *addr, socklen_t *addrlen) {
 
     /* Copy peer's bound path if available */
     if (peer->bound_path) {
-        /* Calculate string length manually */
-        size_t path_len = 0;
-        while (peer->bound_path[path_len] != '\0' && path_len < sizeof(peer_addr.sun_path) - 1) {
-            path_len++;
-        }
+        size_t path_len = strnlen(peer->bound_path, sizeof(peer_addr.sun_path) - 1);
 
         memcpy(peer_addr.sun_path, peer->bound_path, path_len);
         peer_addr.sun_path[path_len] = '\0';

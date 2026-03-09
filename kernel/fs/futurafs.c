@@ -13,6 +13,7 @@
 #include <kernel/fut_timer.h>
 #include <kernel/kprintf.h>
 #include <kernel/errno.h>
+#include <string.h>
 
 /* FuturaFS vnode operations - initialized at runtime to avoid ARM64 relocation issues */
 static struct fut_vnode_ops futurafs_vnode_ops;
@@ -2853,13 +2854,6 @@ static uint8_t futurafs_mode_to_filetype(uint32_t mode) {
     }
 }
 
-static size_t futurafs_strnlen(const char *name, size_t max) {
-    size_t len = 0;
-    while (len < max && name[len]) {
-        len++;
-    }
-    return len;
-}
 
 static bool futurafs_name_equals(const struct futurafs_dirent *dent, const char *name, size_t name_len) {
     if (dent->name_len != name_len) {
@@ -3354,7 +3348,7 @@ static int futurafs_vnode_lookup(struct fut_vnode *dir, const char *name, struct
         return FUTURAFS_ENOTDIR;
     }
 
-    size_t name_len = futurafs_strnlen(name, FUTURAFS_NAME_MAX);
+    size_t name_len = strnlen(name, FUTURAFS_NAME_MAX);
     if (name_len == 0 || name_len > FUTURAFS_NAME_MAX) {
         return FUTURAFS_EINVAL;
     }
@@ -3399,7 +3393,7 @@ static int futurafs_vnode_create(struct fut_vnode *dir, const char *name, uint32
         return FUTURAFS_ENOTDIR;
     }
 
-    size_t name_len = futurafs_strnlen(name, FUTURAFS_NAME_MAX);
+    size_t name_len = strnlen(name, FUTURAFS_NAME_MAX);
     if (name_len == 0 || name_len > FUTURAFS_NAME_MAX) {
         return FUTURAFS_EINVAL;
     }
@@ -3466,7 +3460,7 @@ static int futurafs_vnode_mkdir(struct fut_vnode *dir, const char *name, uint32_
         return FUTURAFS_ENOTDIR;
     }
 
-    size_t name_len = futurafs_strnlen(name, FUTURAFS_NAME_MAX);
+    size_t name_len = strnlen(name, FUTURAFS_NAME_MAX);
     if (name_len == 0 || name_len > FUTURAFS_NAME_MAX) {
         return FUTURAFS_EINVAL;
     }
@@ -3570,7 +3564,7 @@ static int futurafs_vnode_unlink(struct fut_vnode *dir, const char *name) {
         return FUTURAFS_ENOTDIR;
     }
 
-    size_t name_len = futurafs_strnlen(name, FUTURAFS_NAME_MAX);
+    size_t name_len = strnlen(name, FUTURAFS_NAME_MAX);
     if (name_len == 0 || name_len > FUTURAFS_NAME_MAX) {
         return FUTURAFS_EINVAL;
     }
@@ -3669,7 +3663,7 @@ static int futurafs_vnode_rmdir(struct fut_vnode *dir, const char *name) {
         return FUTURAFS_ENOTDIR;
     }
 
-    size_t name_len = futurafs_strnlen(name, FUTURAFS_NAME_MAX);
+    size_t name_len = strnlen(name, FUTURAFS_NAME_MAX);
     if (name_len == 0 || name_len > FUTURAFS_NAME_MAX) {
         return FUTURAFS_EINVAL;
     }

@@ -347,11 +347,7 @@ long sys_getsockname(int sockfd, void *addr, socklen_t *addrlen) {
 
     /* Copy bound path if socket is bound */
     if (socket->bound_path) {
-        /* Calculate string length manually */
-        size_t path_len = 0;
-        while (socket->bound_path[path_len] != '\0' && path_len < sizeof(sock_addr.sun_path) - 1) {
-            path_len++;
-        }
+        size_t path_len = strnlen(socket->bound_path, sizeof(sock_addr.sun_path) - 1);
 
         memcpy(sock_addr.sun_path, socket->bound_path, path_len);
         sock_addr.sun_path[path_len] = '\0';

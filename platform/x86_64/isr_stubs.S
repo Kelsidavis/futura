@@ -547,15 +547,33 @@ isr_common_stub:
     /* Restore stack */
     movq %rbp, %rsp
 
-    /* Pop segment registers (but DON'T restore GS or FS - must preserve MSR bases!) */
-    popq %rax            /* Discard saved GS value */
-    /* GS intentionally NOT restored - must preserve GS_BASE MSR */
-    popq %rax            /* Discard saved FS value */
-    /* FS intentionally NOT restored - must preserve MSR_FS_BASE for TLS support */
+    /* Pop segment registers with validation (reject corrupted selectors) */
+    addq $8, %rsp        /* Discard saved GS (never load - preserves GS_BASE MSR) */
+    addq $8, %rsp        /* Discard saved FS (never load - preserves MSR_FS_BASE) */
+
     popq %rax
+    cmpw $0x10, %ax
+    je .exc_es_load
+    cmpw $0x1b, %ax
+    je .exc_es_load
+    testw %ax, %ax
+    jz .exc_es_done
+    movw $0x10, %ax
+.exc_es_load:
     movw %ax, %es
+.exc_es_done:
+
     popq %rax
+    cmpw $0x10, %ax
+    je .exc_ds_load
+    cmpw $0x1b, %ax
+    je .exc_ds_load
+    testw %ax, %ax
+    jz .exc_ds_done
+    movw $0x10, %ax
+.exc_ds_load:
     movw %ax, %ds
+.exc_ds_done:
 
     /* Pop general purpose registers */
     popq %rax
@@ -581,24 +599,31 @@ isr_common_stub:
      * Zeroing was causing crashes where GCC temporarily moved pointers to XMM regs.
      * Proper fix would be FXSAVE/FXRSTOR on interrupt entry/exit. */
 
-    /* CRITICAL FIX: In 64-bit mode, CPU pushes SS unconditionally, but kernel may
-     * run with SS=0 (which works normally but IRETQ may fault when loading it).
-     * Fix SS to kernel data segment before IRETQ if returning to kernel mode.
-     * Note: CPU-pushed RSP is correct and must NOT be modified. */
-    testb $3, 8(%rsp)           /* Test RPL of saved CS (at RIP+8) */
-    jnz .isr_common_iretq_user  /* If RPL != 0, returning to user */
+    /* Validate CS in IRETQ frame - corrupted CS causes #GP on IRETQ */
+    movq 8(%rsp), %rax
+    cmpw $0x08, %ax
+    je .exc_cs_ok
+    cmpw $0x23, %ax
+    je .exc_cs_ok
+    btq $63, (%rsp)
+    jc .exc_fix_kcs
+    movq $0x23, 8(%rsp)
+    jmp .exc_cs_ok
+.exc_fix_kcs:
+    movq $0x08, 8(%rsp)
+.exc_cs_ok:
 
-    /* Returning to kernel mode - fix up SS only (RSP is correct as pushed by CPU) */
-    movq $0x10, 32(%rsp)        /* Store kernel SS (0x10) at SS slot */
+    testb $3, 8(%rsp)
+    jnz .isr_common_iretq_user
+
+    movq $0x10, 32(%rsp)
     jmp .isr_common_iretq
 
 .isr_common_iretq_user:
-    /* Returning to userspace - ensure IF is set so timer can preempt
-     * RFLAGS is at RSP+16 in the IRETQ frame */
-    orq $0x200, 16(%rsp)        /* Set IF (bit 9) in RFLAGS */
+    movq $0x1b, 32(%rsp)
+    orq $0x200, 16(%rsp)
 
 .isr_common_iretq:
-    /* Return from interrupt */
     iretq
 
 .size isr_common_stub, . - isr_common_stub
@@ -655,15 +680,33 @@ irq_common_stub:
     /* Restore stack */
     movq %rbp, %rsp
 
-    /* Pop segment registers (but DON'T restore GS or FS - must preserve MSR bases!) */
-    popq %rax            /* Discard saved GS value */
-    /* GS intentionally NOT restored - must preserve GS_BASE MSR */
-    popq %rax            /* Discard saved FS value */
-    /* FS intentionally NOT restored - must preserve MSR_FS_BASE for TLS support */
+    /* Pop segment registers with validation (reject corrupted selectors) */
+    addq $8, %rsp        /* Discard saved GS (never load - preserves GS_BASE MSR) */
+    addq $8, %rsp        /* Discard saved FS (never load - preserves MSR_FS_BASE) */
+
     popq %rax
+    cmpw $0x10, %ax
+    je .girq_es_load
+    cmpw $0x1b, %ax
+    je .girq_es_load
+    testw %ax, %ax
+    jz .girq_es_done
+    movw $0x10, %ax
+.girq_es_load:
     movw %ax, %es
+.girq_es_done:
+
     popq %rax
+    cmpw $0x10, %ax
+    je .girq_ds_load
+    cmpw $0x1b, %ax
+    je .girq_ds_load
+    testw %ax, %ax
+    jz .girq_ds_done
+    movw $0x10, %ax
+.girq_ds_load:
     movw %ax, %ds
+.girq_ds_done:
 
     /* Pop general purpose registers */
     popq %rax
@@ -689,24 +732,31 @@ irq_common_stub:
      * Zeroing was causing crashes where GCC temporarily moved pointers to XMM regs.
      * Proper fix would be FXSAVE/FXRSTOR on interrupt entry/exit. */
 
-    /* CRITICAL FIX: In 64-bit mode, CPU pushes SS unconditionally, but kernel may
-     * run with SS=0 (which works normally but IRETQ may fault when loading it).
-     * Fix SS to kernel data segment before IRETQ if returning to kernel mode.
-     * Note: CPU-pushed RSP is correct and must NOT be modified. */
-    testb $3, 8(%rsp)           /* Test RPL of saved CS (at RIP+8) */
-    jnz .irq_common_iretq_user  /* If RPL != 0, returning to user */
+    /* Validate CS in IRETQ frame - corrupted CS causes #GP on IRETQ */
+    movq 8(%rsp), %rax
+    cmpw $0x08, %ax
+    je .girq_cs_ok
+    cmpw $0x23, %ax
+    je .girq_cs_ok
+    btq $63, (%rsp)
+    jc .girq_fix_kcs
+    movq $0x23, 8(%rsp)
+    jmp .girq_cs_ok
+.girq_fix_kcs:
+    movq $0x08, 8(%rsp)
+.girq_cs_ok:
 
-    /* Returning to kernel mode - fix up SS only (RSP is correct as pushed by CPU) */
-    movq $0x10, 32(%rsp)        /* Store kernel SS (0x10) at SS slot */
+    testb $3, 8(%rsp)
+    jnz .irq_common_iretq_user
+
+    movq $0x10, 32(%rsp)
     jmp .irq_common_iretq
 
 .irq_common_iretq_user:
-    /* Returning to userspace - ensure IF is set so timer can preempt
-     * RFLAGS is at RSP+16 in the IRETQ frame */
-    orq $0x200, 16(%rsp)        /* Set IF (bit 9) in RFLAGS */
+    movq $0x1b, 32(%rsp)
+    orq $0x200, 16(%rsp)
 
 .irq_common_iretq:
-    /* Return from interrupt */
     iretq
 
 .size irq_common_stub, . - irq_common_stub
@@ -778,15 +828,37 @@ irq0_timer:
     /* Restore stack */
     movq %rbp, %rsp
 
-    /* Pop segment registers (but DON'T restore GS or FS - must preserve MSR bases!) */
-    popq %rax            /* Discard saved GS value */
-    /* GS intentionally NOT restored - must preserve GS_BASE MSR */
-    popq %rax            /* Discard saved FS value */
-    /* FS intentionally NOT restored - must preserve MSR_FS_BASE for TLS support */
+    /* Pop segment registers with validation.
+     * Corrupted selectors (e.g., RPL bits flipped) would cause #GP on load.
+     * Validate before loading and force kernel data segment if invalid. */
+    addq $8, %rsp        /* Discard saved GS (never load - preserves GS_BASE MSR) */
+    addq $8, %rsp        /* Discard saved FS (never load - preserves MSR_FS_BASE) */
+
+    /* Validate and load ES */
     popq %rax
+    cmpw $0x10, %ax
+    je .irq0_es_load
+    cmpw $0x1b, %ax
+    je .irq0_es_load
+    testw %ax, %ax
+    jz .irq0_es_done
+    movw $0x10, %ax      /* Invalid selector - force kernel DS */
+.irq0_es_load:
     movw %ax, %es
+.irq0_es_done:
+
+    /* Validate and load DS */
     popq %rax
+    cmpw $0x10, %ax
+    je .irq0_ds_load
+    cmpw $0x1b, %ax
+    je .irq0_ds_load
+    testw %ax, %ax
+    jz .irq0_ds_done
+    movw $0x10, %ax      /* Invalid selector - force kernel DS */
+.irq0_ds_load:
     movw %ax, %ds
+.irq0_ds_done:
 
     /* Pop general purpose registers */
     popq %rax
@@ -818,24 +890,36 @@ irq0_timer:
      *
      * Zeroing was causing wl-term crashes where pixels pointer in XMM got zeroed. */
 
-    /* CRITICAL FIX: In 64-bit mode, CPU pushes SS unconditionally, but kernel may
-     * run with SS=0 (which works normally but IRETQ may fault when loading it).
-     * Fix SS to kernel data segment before IRETQ if returning to kernel mode.
-     * Note: CPU-pushed RSP is correct and must NOT be modified. */
-    testb $3, 8(%rsp)           /* Test RPL of saved CS (at RIP+8) */
-    jnz .irq0_iretq_user        /* If RPL != 0, returning to user */
+    /* Validate CS in IRETQ frame - corrupted CS causes #GP on IRETQ.
+     * Thread preempted mid-context-switch can corrupt the saved frame. */
+    movq 8(%rsp), %rax
+    cmpw $0x08, %ax
+    je .irq0_cs_ok
+    cmpw $0x23, %ax
+    je .irq0_cs_ok
+    /* CS corrupted - determine correct value from RIP address space */
+    btq $63, (%rsp)
+    jc .irq0_fix_kcs
+    movq $0x23, 8(%rsp)
+    jmp .irq0_cs_ok
+.irq0_fix_kcs:
+    movq $0x08, 8(%rsp)
+.irq0_cs_ok:
 
-    /* Returning to kernel mode - fix up SS only (RSP is correct as pushed by CPU) */
-    movq $0x10, 32(%rsp)        /* Store kernel SS (0x10) at SS slot */
+    /* Fix SS and RFLAGS based on return privilege level */
+    testb $3, 8(%rsp)
+    jnz .irq0_iretq_user
+
+    /* Kernel mode: force SS = kernel data segment */
+    movq $0x10, 32(%rsp)
     jmp .irq0_iretq
 
 .irq0_iretq_user:
-    /* Returning to userspace - ensure IF is set so timer can preempt
-     * RFLAGS is at RSP+16 in the IRETQ frame */
-    orq $0x200, 16(%rsp)        /* Set IF (bit 9) in RFLAGS */
+    /* User mode: force correct SS and ensure IF is set */
+    movq $0x1b, 32(%rsp)
+    orq $0x200, 16(%rsp)
 
 .irq0_iretq:
-    /* Return from interrupt */
     iretq
 
 .size irq0_timer, . - irq0_timer
@@ -936,13 +1020,33 @@ irq1_keyboard:
     /* Restore stack */
     movq %rbp, %rsp
 
-    /* Pop segment registers (but DON'T restore GS or FS - must preserve MSR bases!) */
-    popq %rax            /* Discard saved GS value */
-    popq %rax            /* Discard saved FS value */
+    /* Pop segment registers with validation (reject corrupted selectors) */
+    addq $8, %rsp        /* Discard saved GS (never load - preserves GS_BASE MSR) */
+    addq $8, %rsp        /* Discard saved FS (never load - preserves MSR_FS_BASE) */
+
     popq %rax
+    cmpw $0x10, %ax
+    je .kbd_es_load
+    cmpw $0x1b, %ax
+    je .kbd_es_load
+    testw %ax, %ax
+    jz .kbd_es_done
+    movw $0x10, %ax
+.kbd_es_load:
     movw %ax, %es
+.kbd_es_done:
+
     popq %rax
+    cmpw $0x10, %ax
+    je .kbd_ds_load
+    cmpw $0x1b, %ax
+    je .kbd_ds_load
+    testw %ax, %ax
+    jz .kbd_ds_done
+    movw $0x10, %ax
+.kbd_ds_load:
     movw %ax, %ds
+.kbd_ds_done:
 
     /* Pop general purpose registers */
     popq %rax
@@ -966,6 +1070,20 @@ irq1_keyboard:
 
     /* Do NOT zero XMM registers - userspace may hold values in them */
 
+    /* Validate CS in IRETQ frame */
+    movq 8(%rsp), %rax
+    cmpw $0x08, %ax
+    je .kbd_cs_ok
+    cmpw $0x23, %ax
+    je .kbd_cs_ok
+    btq $63, (%rsp)
+    jc .kbd_fix_kcs
+    movq $0x23, 8(%rsp)
+    jmp .kbd_cs_ok
+.kbd_fix_kcs:
+    movq $0x08, 8(%rsp)
+.kbd_cs_ok:
+
     testb $3, 8(%rsp)
     jnz .irq1_iretq_user
 
@@ -973,6 +1091,7 @@ irq1_keyboard:
     jmp .irq1_iretq
 
 .irq1_iretq_user:
+    movq $0x1b, 32(%rsp)
     orq $0x200, 16(%rsp)
 
 .irq1_iretq:
@@ -1045,13 +1164,33 @@ irq12_mouse:
     /* Restore stack */
     movq %rbp, %rsp
 
-    /* Pop segment registers (but DON'T restore GS or FS - must preserve MSR bases!) */
-    popq %rax            /* Discard saved GS value */
-    popq %rax            /* Discard saved FS value */
+    /* Pop segment registers with validation (reject corrupted selectors) */
+    addq $8, %rsp        /* Discard saved GS (never load - preserves GS_BASE MSR) */
+    addq $8, %rsp        /* Discard saved FS (never load - preserves MSR_FS_BASE) */
+
     popq %rax
+    cmpw $0x10, %ax
+    je .mse_es_load
+    cmpw $0x1b, %ax
+    je .mse_es_load
+    testw %ax, %ax
+    jz .mse_es_done
+    movw $0x10, %ax
+.mse_es_load:
     movw %ax, %es
+.mse_es_done:
+
     popq %rax
+    cmpw $0x10, %ax
+    je .mse_ds_load
+    cmpw $0x1b, %ax
+    je .mse_ds_load
+    testw %ax, %ax
+    jz .mse_ds_done
+    movw $0x10, %ax
+.mse_ds_load:
     movw %ax, %ds
+.mse_ds_done:
 
     /* Pop general purpose registers */
     popq %rax
@@ -1075,6 +1214,20 @@ irq12_mouse:
 
     /* Do NOT zero XMM registers - userspace may hold values in them */
 
+    /* Validate CS in IRETQ frame */
+    movq 8(%rsp), %rax
+    cmpw $0x08, %ax
+    je .mse_cs_ok
+    cmpw $0x23, %ax
+    je .mse_cs_ok
+    btq $63, (%rsp)
+    jc .mse_fix_kcs
+    movq $0x23, 8(%rsp)
+    jmp .mse_cs_ok
+.mse_fix_kcs:
+    movq $0x08, 8(%rsp)
+.mse_cs_ok:
+
     testb $3, 8(%rsp)
     jnz .irq12_iretq_user
 
@@ -1082,6 +1235,7 @@ irq12_mouse:
     jmp .irq12_iretq
 
 .irq12_iretq_user:
+    movq $0x1b, 32(%rsp)
     orq $0x200, 16(%rsp)
 
 .irq12_iretq:

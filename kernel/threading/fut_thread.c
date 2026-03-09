@@ -482,12 +482,20 @@ void fut_thread_init_bootstrap(void) {
         bootstrap_thread.stack_base = bootstrap_stack;
         bootstrap_thread.stack_size = sizeof(bootstrap_stack);
 
-        /* Initialize context structure (only used as fallback - bootstrap thread
-         * is already running, so its actual state comes from the interrupt frame
-         * saved when it gets preempted, not from this context). */
+        /* Initialize context structure. The bootstrap thread is already running,
+         * so its actual state comes from the interrupt frame saved when it gets
+         * preempted. But context.rip MUST be non-zero: if the cooperative path
+         * restores this context before the IRETQ path saves it, a zero rip
+         * would jump to address 0. Set rip to fut_thread_exit as a safe
+         * fallback — if the initial context is ever restored, the thread exits. */
+        extern void fut_thread_exit(void);
+        bootstrap_thread.context.rip = (uint64_t)(uintptr_t)&fut_thread_exit;
+        bootstrap_thread.context.rsp = (uint64_t)(uintptr_t)(bootstrap_stack + sizeof(bootstrap_stack));
         bootstrap_thread.context.rflags = RFLAGS_KERNEL_INIT;
         bootstrap_thread.context.cs = 0x08;  /* Kernel code segment */
         bootstrap_thread.context.ss = 0x10;  /* Kernel data segment */
+        bootstrap_thread.context.ds = 0x10;  /* Kernel data segment */
+        bootstrap_thread.context.es = 0x10;  /* Kernel data segment */
 
         bootstrap_task.threads = &bootstrap_thread;
         bootstrap_task.thread_count = 1;

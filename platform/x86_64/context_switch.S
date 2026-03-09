@@ -95,6 +95,7 @@ fut_switch_context:
     fxrstor64 (%rax)
 
     movq CTX_RFLAGS(%r11), %rax
+    andq $~0x200, %rax          /* Clear IF - prevent preemption during restore */
     pushq %rax
     popfq
 
@@ -122,7 +123,22 @@ fut_switch_context:
 
     /* Jump to saved RIP using ret for proper stack alignment */
     movq CTX_RIP(%r11), %r10
+    testq %r10, %r10
+    jnz .coop_rip_ok
+
+    /* NULL RIP in cooperative context! Print diagnostic and halt.
+     * This catches corruption where a thread's context.rip was zeroed
+     * after being saved, preventing a jump to address 0. */
+    movw $0x3F8, %dx
+    movb $'Z', %al          /* Z = zero RIP in cooperative switch */
+    outb %al, %dx
+    cli
+    hlt
+    jmp .                   /* Infinite loop if NMI wakes hlt */
+
+.coop_rip_ok:
     pushq %r10
+    sti                         /* Re-enable interrupts - shadow covers ret */
     ret
 
 .size fut_switch_context, . - fut_switch_context

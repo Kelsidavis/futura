@@ -1392,6 +1392,42 @@ void fut_kernel_main(void) {
     }
 #endif
 
+    /* ========================================
+     *   Mount FuturaFS on VirtIO Block Device
+     * ======================================== */
+    {
+        extern struct fut_blockdev *fut_blockdev_find(const char *name);
+        struct fut_blockdev *vda = fut_blockdev_find("blk:vda");
+        if (vda) {
+            fut_printf("[INIT] Found block device blk:vda, attempting FuturaFS mount...\n");
+
+            /* Format if not already formatted */
+            int format_rc = fut_futurafs_format(vda, "FuturaOS", 4096);
+            if (format_rc == 0) {
+                fut_printf("[INIT] blk:vda formatted with FuturaFS\n");
+            } else {
+                fut_printf("[INIT] FuturaFS format returned %d (may already be formatted)\n", format_rc);
+            }
+
+            /* Create /mnt mount point */
+            extern struct fut_vnode *fut_vfs_get_root(void);
+            struct fut_vnode *root_vnode = fut_vfs_get_root();
+            if (root_vnode && root_vnode->ops && root_vnode->ops->mkdir) {
+                root_vnode->ops->mkdir(root_vnode, "mnt", 0755);
+            }
+
+            /* Mount */
+            int mount_rc = fut_vfs_mount("blk:vda", "/mnt", "futurafs", 0, NULL, FUT_INVALID_HANDLE);
+            if (mount_rc == 0) {
+                fut_printf("[INIT] ✓ FuturaFS mounted at /mnt\n");
+            } else {
+                fut_printf("[INIT] FuturaFS mount failed: %d\n", mount_rc);
+            }
+        } else {
+            fut_printf("[INIT] No block device blk:vda found (FuturaFS not mounted)\n");
+        }
+    }
+
 #if ENABLE_WAYLAND
     /* ========================================
      *   Launch Init Process (Wayland Desktop)

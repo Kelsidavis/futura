@@ -1411,13 +1411,18 @@ static int ramfs_symlink(struct fut_vnode *parent, const char *linkpath, const c
     /* Initialize link_vnode */
     link_vnode->type = VN_LNK;
     link_vnode->ino = 0;  /* Will be set by VFS layer if needed */
-    link_vnode->mode = 0777;  /* Symlinks are typically world-readable */
+    link_vnode->mode = 0;  /* Will be set by vfs_init_vnode_ownership */
     link_vnode->size = target_len;  /* Size is length of target string */
     link_vnode->nlinks = 1;
     link_vnode->mount = parent->mount;
     link_vnode->fs_data = link_node;
     link_vnode->refcount = 1;
+    link_vnode->uid = 0;  /* Will be set by vfs_init_vnode_ownership */
+    link_vnode->gid = 0;  /* Will be set by vfs_init_vnode_ownership */
     link_vnode->ops = &ramfs_vnode_ops;
+    vfs_init_vnode_ownership(link_vnode, parent, 0777);
+    /* Initialize lock fields to prevent garbage from uninitialized memory */
+    fut_vnode_lock_init(link_vnode);
 
     /* Create directory entry */
     struct ramfs_dirent *new_entry = fut_malloc(sizeof(struct ramfs_dirent));

@@ -21,15 +21,6 @@
 
 /* AT_* flags provided by fcntl.h */
 
-/* Manual string length calculation */
-static size_t manual_strlen(const char *s) {
-    size_t len = 0;
-    while (s[len] != '\0' && len < 255) {
-        len++;
-    }
-    return len;
-}
-
 /**
  * unlinkat() - Delete file or directory relative to directory FD
  *
@@ -158,7 +149,7 @@ long sys_unlinkat(int dirfd, const char *pathname, int flags) {
         path_type = "relative to dirfd";
     }
 
-    size_t path_len = manual_strlen(path_buf);
+    size_t path_len = strlen(path_buf);
 
     /* Resolve the full path based on dirfd */
     char resolved_path[256];

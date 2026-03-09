@@ -192,13 +192,8 @@ long sys_rmdir(const char *path) {
         }
     }
 
-    /* Phase 2: Calculate path length for categorization */
-    size_t path_len = 0;
-    while (path_buf[path_len] != '\0' && path_len < 256) {
-        path_len++;
-    }
-
     /* Phase 2: Categorize path length */
+    size_t path_len = actual_len;
     const char *length_category;
     if (path_len == 1 && path_buf[0] == '/') {
         length_category = "root (/)";

@@ -21,14 +21,6 @@
 #include <kernel/uaccess.h>
 #include <string.h>
 
-/* Manual string length calculation */
-static size_t manual_strlen(const char *s) {
-    size_t len = 0;
-    while (s[len] != '\0' && len < 255) {
-        len++;
-    }
-    return len;
-}
 
 /**
  * unlink() - Delete a file or symbolic link
@@ -126,7 +118,7 @@ long sys_unlink(const char *path) {
     }
 
     /* Phase 2: Calculate path length */
-    size_t path_len = manual_strlen(path_buf);
+    size_t path_len = strlen(path_buf);
 
     /* Phase 3: Check if path ends with "/" - directories must use rmdir, not unlink */
     if (path_len > 0 && path_buf[path_len - 1] == '/') {

@@ -220,13 +220,8 @@ long sys_readlink(const char *path, char *buf, size_t bufsiz) {
         path_type = "relative";
     }
 
-    /* Phase 2: Calculate path length */
-    size_t path_len = 0;
-    while (path_buf[path_len] != '\0' && path_len < 256) {
-        path_len++;
-    }
-
     /* Phase 2: Categorize path length */
+    size_t path_len = strlen(path_buf);
     const char *length_category;
     if (path_len <= 16) {
         length_category = "short (≤16 chars)";

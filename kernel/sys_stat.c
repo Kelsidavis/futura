@@ -21,14 +21,6 @@
 #include <kernel/uaccess.h>
 #include <string.h>
 
-/* Manual string length calculation */
-static size_t manual_strlen(const char *s) {
-    size_t len = 0;
-    while (s[len] != '\0' && len < 255) {
-        len++;
-    }
-    return len;
-}
 
 /**
  * stat() - Get file status
@@ -141,7 +133,7 @@ long sys_stat(const char *path, struct fut_stat *statbuf) {
     }
 
     /* Phase 2: Calculate path length */
-    size_t path_len = manual_strlen(path_buf);
+    size_t path_len = strlen(path_buf);
 
     /* Validate buffer alignment before expensive VFS operation
      * struct fut_stat requires 8-byte alignment for uint64_t fields (st_size, st_ino, etc.)

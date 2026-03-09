@@ -21,14 +21,6 @@
 #include <kernel/kprintf.h>
 #include <kernel/uaccess.h>
 
-/* Manual string length calculation */
-static size_t manual_strlen(const char *s) {
-    size_t len = 0;
-    while (s[len] != '\0' && len < 255) {
-        len++;
-    }
-    return len;
-}
 
 /**
  * truncate() - Truncate file to specified length (path-based)
@@ -124,7 +116,7 @@ long sys_truncate(const char *path, uint64_t length) {
     }
 
     /* Phase 2: Calculate path length */
-    size_t path_len = manual_strlen(path_buf);
+    size_t path_len = strlen(path_buf);
 
     /* Phase 2: Categorize length */
     const char *length_category;

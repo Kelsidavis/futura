@@ -186,6 +186,13 @@ int term_read_shell(struct terminal *term) {
         term_write(term, buf, (size_t)n);
         return (int)n;
     }
+    /* EAGAIN (-11) means no data available on non-blocking pipe, not an error */
+    if (n == -11 /* EAGAIN */ || n == -4 /* EINTR */) {
+        return 0;
+    }
+    if (n != 0) {
+        /* Unexpected read error from shell pipe */
+    }
     return (int)n;
 }
 

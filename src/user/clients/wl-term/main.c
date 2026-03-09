@@ -439,9 +439,15 @@ static bool main_loop_iteration(struct client_state *state) {
         redraw(state);
     }
 
-    /* Process Wayland events (reads from socket + dispatches) */
+    /* Process Wayland events (non-blocking: Futura poll() is a stub,
+     * so blocking wl_display_dispatch may not wake up reliably).
+     * wl_display_read_events handles EAGAIN gracefully (returns 0). */
     wl_display_flush(state->display);
-    wl_display_dispatch(state->display);
+    while (wl_display_prepare_read(state->display) != 0) {
+        wl_display_dispatch_pending(state->display);
+    }
+    wl_display_read_events(state->display);
+    wl_display_dispatch_pending(state->display);
 
     return state->running;
 }
@@ -549,6 +555,17 @@ int main(void) {
 
     /* Initial draw */
     redraw(&state);
+
+    /* Set Wayland socket to non-blocking for the main loop.
+     * Futura's poll() is a stub that always returns POLLIN,
+     * so blocking wl_display_dispatch doesn't work reliably.
+     * We use non-blocking dispatch + 10ms sleep instead. */
+    {
+        int wl_fd = wl_display_get_fd(state.display);
+        if (wl_fd >= 0) {
+            sys_fcntl_call(wl_fd, 4 /*F_SETFL*/, 0x0800 /*O_NONBLOCK*/);
+        }
+    }
 
     /* Main event loop */
     while (state.running) {

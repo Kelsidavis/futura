@@ -241,9 +241,6 @@ static void seat_pointer_motion(struct seat_state *seat,
         wl_pointer_send_motion(client->pointer_resource, time_msec, sx, sy);
         wl_pointer_send_frame(client->pointer_resource);
     }
-    WLOG("[WAYLAND] seat: pointer x=%d y=%d\n",
-         wl_fixed_to_int(sx),
-         wl_fixed_to_int(sy));
     seat->pointer_sx = wl_fixed_to_int(sx);
     seat->pointer_sy = wl_fixed_to_int(sy);
 }
@@ -334,17 +331,45 @@ static void seat_send_key(struct seat_state *seat,
                           uint32_t keycode,
                           bool pressed,
                           uint32_t time_msec) {
-    if (!seat || !seat->keyboard_focus) {
+    if (!seat) {
+        printf("[KEY] seat=NULL\n");
+        return;
+    }
+    if (!seat->keyboard_focus) {
+        printf("[KEY] code=%u focus=NULL\n", keycode);
         return;
     }
 
     struct wl_client *target = wl_resource_get_client(seat->keyboard_focus->surface_resource);
+
+    /* Ensure at least one client has keyboard_entered for the focused surface.
+     * Due to Wayland protocol ordering, the keyboard enter event may not have
+     * been sent yet (e.g. get_keyboard processed before create_surface). */
+    bool any_entered = false;
+    int n_clients = 0;
+    int n_kbd = 0;
+    struct seat_client *client;
+    wl_list_for_each(client, &seat->clients, link) {
+        n_clients++;
+        if (client->keyboard_resource) {
+            n_kbd++;
+            if (client->keyboard_entered &&
+                wl_resource_get_client(client->keyboard_resource) == target) {
+                any_entered = true;
+            }
+        }
+    }
+    if (!any_entered) {
+        printf("[KEY] force-enter: clients=%d kbd=%d\n", n_clients, n_kbd);
+        seat_keyboard_enter(seat, seat->keyboard_focus);
+    }
+
     uint32_t serial = wl_display_next_serial(seat->comp->display);
     enum wl_keyboard_key_state state = pressed
         ? WL_KEYBOARD_KEY_STATE_PRESSED
         : WL_KEYBOARD_KEY_STATE_RELEASED;
 
-    struct seat_client *client;
+    int sent = 0;
     wl_list_for_each(client, &seat->clients, link) {
         if (!client->keyboard_resource || !client->keyboard_entered) {
             continue;
@@ -353,8 +378,9 @@ static void seat_send_key(struct seat_state *seat,
             continue;
         }
         wl_keyboard_send_key(client->keyboard_resource, serial, time_msec, keycode, state);
+        sent++;
     }
-    WLOG("[WAYLAND] seat: key code=%u down=%u\n", keycode, pressed ? 1u : 0u);
+    printf("[KEY] code=%u down=%u sent=%d\n", keycode, pressed ? 1u : 0u, sent);
 }
 
 void seat_focus_surface(struct seat_state *seat, struct comp_surface *surface) {

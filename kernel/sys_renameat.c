@@ -199,20 +199,16 @@ long sys_renameat(int olddirfd, const char *oldpath, int newdirfd, const char *n
     /* If oldpath is absolute, use it directly */
     if (oldpath_buf[0] == '/') {
         /* Copy absolute path */
-        size_t i;
-        for (i = 0; i < sizeof(resolved_oldpath) - 1 && oldpath_buf[i] != '\0'; i++) {
-            resolved_oldpath[i] = oldpath_buf[i];
-        }
-        resolved_oldpath[i] = '\0';
+        size_t len = strnlen(oldpath_buf, sizeof(resolved_oldpath) - 1);
+        memcpy(resolved_oldpath, oldpath_buf, len);
+        resolved_oldpath[len] = '\0';
     }
     /* If olddirfd is AT_FDCWD, use current working directory */
     else if (local_olddirfd == AT_FDCWD) {
         /* For now, use relative path as-is (CWD resolution happens in VFS) */
-        size_t i;
-        for (i = 0; i < sizeof(resolved_oldpath) - 1 && oldpath_buf[i] != '\0'; i++) {
-            resolved_oldpath[i] = oldpath_buf[i];
-        }
-        resolved_oldpath[i] = '\0';
+        size_t len = strnlen(oldpath_buf, sizeof(resolved_oldpath) - 1);
+        memcpy(resolved_oldpath, oldpath_buf, len);
+        resolved_oldpath[len] = '\0';
     }
     /* Olddirfd is a real FD - resolve via VFS */
     else {
@@ -254,11 +250,9 @@ long sys_renameat(int olddirfd, const char *oldpath, int newdirfd, const char *n
         }
 
         /* Construct path relative to directory */
-        size_t i;
-        for (i = 0; i < sizeof(resolved_oldpath) - 1 && oldpath_buf[i] != '\0'; i++) {
-            resolved_oldpath[i] = oldpath_buf[i];
-        }
-        resolved_oldpath[i] = '\0';
+        size_t len = strnlen(oldpath_buf, sizeof(resolved_oldpath) - 1);
+        memcpy(resolved_oldpath, oldpath_buf, len);
+        resolved_oldpath[len] = '\0';
     }
 
     /* Resolve newpath based on newdirfd */
@@ -267,20 +261,16 @@ long sys_renameat(int olddirfd, const char *oldpath, int newdirfd, const char *n
     /* If newpath is absolute, use it directly */
     if (newpath_buf[0] == '/') {
         /* Copy absolute path */
-        size_t i;
-        for (i = 0; i < sizeof(resolved_newpath) - 1 && newpath_buf[i] != '\0'; i++) {
-            resolved_newpath[i] = newpath_buf[i];
-        }
-        resolved_newpath[i] = '\0';
+        size_t len = strnlen(newpath_buf, sizeof(resolved_newpath) - 1);
+        memcpy(resolved_newpath, newpath_buf, len);
+        resolved_newpath[len] = '\0';
     }
     /* If newdirfd is AT_FDCWD, use current working directory */
     else if (local_newdirfd == AT_FDCWD) {
         /* For now, use relative path as-is (CWD resolution happens in VFS) */
-        size_t i;
-        for (i = 0; i < sizeof(resolved_newpath) - 1 && newpath_buf[i] != '\0'; i++) {
-            resolved_newpath[i] = newpath_buf[i];
-        }
-        resolved_newpath[i] = '\0';
+        size_t len = strnlen(newpath_buf, sizeof(resolved_newpath) - 1);
+        memcpy(resolved_newpath, newpath_buf, len);
+        resolved_newpath[len] = '\0';
     }
     /* Newdirfd is a real FD - resolve via VFS */
     else {
@@ -322,11 +312,9 @@ long sys_renameat(int olddirfd, const char *oldpath, int newdirfd, const char *n
         }
 
         /* Construct path relative to directory */
-        size_t i;
-        for (i = 0; i < sizeof(resolved_newpath) - 1 && newpath_buf[i] != '\0'; i++) {
-            resolved_newpath[i] = newpath_buf[i];
-        }
-        resolved_newpath[i] = '\0';
+        size_t len = strnlen(newpath_buf, sizeof(resolved_newpath) - 1);
+        memcpy(resolved_newpath, newpath_buf, len);
+        resolved_newpath[len] = '\0';
     }
 
     /* Perform the rename via existing sys_rename implementation */

@@ -177,20 +177,16 @@ long sys_symlinkat(const char *target, int newdirfd, const char *linkpath) {
     /* If linkpath is absolute, use it directly */
     if (linkpath_buf[0] == '/') {
         /* Copy absolute path */
-        size_t i;
-        for (i = 0; i < sizeof(resolved_linkpath) - 1 && linkpath_buf[i] != '\0'; i++) {
-            resolved_linkpath[i] = linkpath_buf[i];
-        }
-        resolved_linkpath[i] = '\0';
+        size_t len = strnlen(linkpath_buf, sizeof(resolved_linkpath) - 1);
+        memcpy(resolved_linkpath, linkpath_buf, len);
+        resolved_linkpath[len] = '\0';
     }
     /* If newdirfd is AT_FDCWD, use current working directory */
     else if (local_newdirfd == AT_FDCWD) {
         /* For now, use relative path as-is (CWD resolution happens in VFS) */
-        size_t i;
-        for (i = 0; i < sizeof(resolved_linkpath) - 1 && linkpath_buf[i] != '\0'; i++) {
-            resolved_linkpath[i] = linkpath_buf[i];
-        }
-        resolved_linkpath[i] = '\0';
+        size_t len = strnlen(linkpath_buf, sizeof(resolved_linkpath) - 1);
+        memcpy(resolved_linkpath, linkpath_buf, len);
+        resolved_linkpath[len] = '\0';
     }
     /* Newdirfd is a real FD - resolve via VFS */
     else {
@@ -232,11 +228,9 @@ long sys_symlinkat(const char *target, int newdirfd, const char *linkpath) {
         }
 
         /* Phase 2: Construct path relative to directory */
-        size_t i;
-        for (i = 0; i < sizeof(resolved_linkpath) - 1 && linkpath_buf[i] != '\0'; i++) {
-            resolved_linkpath[i] = linkpath_buf[i];
-        }
-        resolved_linkpath[i] = '\0';
+        size_t len = strnlen(linkpath_buf, sizeof(resolved_linkpath) - 1);
+        memcpy(resolved_linkpath, linkpath_buf, len);
+        resolved_linkpath[len] = '\0';
     }
 
     /* Perform the symlink via existing sys_symlink implementation */

@@ -246,6 +246,12 @@ static phys_addr_t virt_to_phys(uintptr_t addr) {
     if (addr >= PMAP_DIRECT_VIRT_BASE) {
         return pmap_virt_to_phys(addr);
     }
+    /* Address not in HHDM — use page table walk if available */
+    uint64_t phys = 0;
+    if (fut_virt_to_phys(NULL, addr, &phys) == 0) {
+        return (phys_addr_t)phys;
+    }
+    /* Last resort: assume identity-mapped (only valid for boot-time low addresses) */
     return (phys_addr_t)addr;
 }
 
@@ -254,8 +260,8 @@ static void ahci_port_stop(volatile hba_port_t *port) {
     cmd &= ~(AHCI_PORT_CMD_ST | AHCI_PORT_CMD_FRE);
     port->cmd = cmd;
 
-    /* Wait until FR and CR clear */
-    while (port->cmd & (AHCI_PORT_CMD_FR | AHCI_PORT_CMD_CR)) {
+    /* Wait until FR and CR clear (with timeout) */
+    for (uint32_t i = 0; i < 100000 && (port->cmd & (AHCI_PORT_CMD_FR | AHCI_PORT_CMD_CR)); i++) {
         fut_thread_yield();
     }
 }

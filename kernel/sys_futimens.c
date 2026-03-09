@@ -285,12 +285,12 @@ long sys_futimens(int fd, const fut_timespec_t *times) {
                 break;
         }
         fut_printf("[FUTIMENS] futimens(fd=%d [%s], times=%p, op=%s, ino=%lu) -> %d (%s)\n",
-                   fd, fd_desc, times, operation_type, file->vnode->ino, ret, error_desc);
+                   local_fd, fd_desc, local_times, operation_type, file->vnode->ino, ret, error_desc);
         return ret;
     }
 
     /* Success */
     fut_printf("[FUTIMENS] futimens(fd=%d [%s], times=%p, op=%s, ino=%lu) -> 0 (success)\n",
-               fd, fd_desc, times, operation_type, file->vnode->ino);
+               local_fd, fd_desc, local_times, operation_type, file->vnode->ino);
     return 0;
 }

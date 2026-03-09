@@ -54,12 +54,16 @@
  *   - -EPERM if insufficient privileges
  */
 long sys_mlock(const void *addr, size_t len) {
+    /* ARM64 FIX: Copy parameters to local variables */
+    const void *local_addr = addr;
+    size_t local_len = len;
+
     fut_task_t *task = fut_task_current();
     if (!task) {
         return -ESRCH;
     }
 
-    fut_printf("[MLOCK] mlock(addr=%p, len=%zu)\n", addr, len);
+    fut_printf("[MLOCK] mlock(addr=%p, len=%zu)\n", local_addr, local_len);
 
     /* Document validation and security requirements
      * VULNERABILITY: Memory Exhaustion and RLIMIT_MEMLOCK Bypass
@@ -159,28 +163,28 @@ long sys_mlock(const void *addr, size_t len) {
      */
 
     /* Validate address alignment */
-    if ((uintptr_t)addr & 0xFFF) {
+    if ((uintptr_t)local_addr & 0xFFF) {
         return -EINVAL;
     }
 
     /* Phase 2: Zero-length handling (POSIX compliant no-op) */
-    if (len == 0) {
+    if (local_len == 0) {
         return 0;
     }
 
     /* Phase 2: Overflow check - prevent SIZE_MAX values causing wraparound */
-    uintptr_t addr_val = (uintptr_t)addr;
-    if (SIZE_MAX - addr_val < len) {
+    uintptr_t addr_val = (uintptr_t)local_addr;
+    if (SIZE_MAX - addr_val < local_len) {
         fut_printf("[MLOCK] mlock(addr=%p, len=%zu) -> ENOMEM (overflow: SIZE_MAX - addr < len)\n",
-                   addr, len);
+                   local_addr, local_len);
         return -ENOMEM;
     }
 
     /* Phase 2: Wraparound check - validate addr + len doesn't wrap */
-    uintptr_t end_addr = addr_val + len;
+    uintptr_t end_addr = addr_val + local_len;
     if (end_addr <= addr_val) {
         fut_printf("[MLOCK] mlock(addr=%p, len=%zu) -> ENOMEM (wraparound: addr + len <= addr)\n",
-                   addr, len);
+                   local_addr, local_len);
         return -ENOMEM;
     }
 
@@ -188,12 +192,12 @@ long sys_mlock(const void *addr, size_t len) {
     fut_mm_t *mm = fut_task_get_mm(task);
     if (!mm) {
         fut_printf("[MLOCK] mlock(addr=%p, len=%zu) -> ENOMEM (no MM context)\n",
-                   addr, len);
+                   local_addr, local_len);
         return -ENOMEM;
     }
 
     /* Calculate number of pages to lock (round up to page boundary) */
-    size_t new_pages = (len + PAGE_SIZE - 1) / PAGE_SIZE;
+    size_t new_pages = (local_len + PAGE_SIZE - 1) / PAGE_SIZE;
 
     /* Get RLIMIT_MEMLOCK from task (in bytes) */
     uint64_t rlimit_memlock = task->rlimits[8].rlim_cur;  /* RLIMIT_MEMLOCK = 8 */
@@ -207,7 +211,7 @@ long sys_mlock(const void *addr, size_t len) {
         if (mm->locked_vm + new_pages > limit_pages) {
             fut_printf("[MLOCK] mlock(addr=%p, len=%zu) -> ENOMEM "
                        "(locked_vm %zu + new_pages %zu > limit %zu pages, Phase 3 Full)\n",
-                       addr, len, mm->locked_vm, new_pages, limit_pages);
+                       local_addr, local_len, mm->locked_vm, new_pages, limit_pages);
             return -ENOMEM;
         }
     }
@@ -222,7 +226,7 @@ long sys_mlock(const void *addr, size_t len) {
 
     fut_printf("[MLOCK] mlock(addr=%p, len=%zu, new_pages=%zu) -> 0 "
                "(Phase 3 Full: cumulative locked_vm now %zu pages)\n",
-               addr, len, new_pages, mm->locked_vm);
+               local_addr, local_len, new_pages, mm->locked_vm);
     return 0;
 }
 
@@ -242,44 +246,60 @@ long sys_mlock(const void *addr, size_t len) {
  *   - -EINVAL if addr not aligned
  */
 long sys_munlock(const void *addr, size_t len) {
+    /* ARM64 FIX: Copy parameters to local variables */
+    const void *local_addr = addr;
+    size_t local_len = len;
+
     fut_task_t *task = fut_task_current();
     if (!task) {
         return -ESRCH;
     }
 
-    fut_printf("[MUNLOCK] munlock(addr=%p, len=%zu)\n", addr, len);
+    fut_printf("[MUNLOCK] munlock(addr=%p, len=%zu)\n", local_addr, local_len);
 
     /* Validate address alignment */
-    if ((uintptr_t)addr & 0xFFF) {
+    if ((uintptr_t)local_addr & 0xFFF) {
         return -EINVAL;
     }
 
     /* Phase 2: Zero-length handling (POSIX compliant no-op) */
-    if (len == 0) {
+    if (local_len == 0) {
         return 0;
     }
 
     /* Phase 2: Overflow check - prevent SIZE_MAX values causing wraparound */
-    uintptr_t addr_val = (uintptr_t)addr;
-    if (SIZE_MAX - addr_val < len) {
+    uintptr_t addr_val = (uintptr_t)local_addr;
+    if (SIZE_MAX - addr_val < local_len) {
         fut_printf("[MUNLOCK] munlock(addr=%p, len=%zu) -> ENOMEM (overflow: SIZE_MAX - addr < len)\n",
-                   addr, len);
+                   local_addr, local_len);
         return -ENOMEM;
     }
 
     /* Phase 2: Wraparound check - validate addr + len doesn't wrap */
-    uintptr_t end_addr = addr_val + len;
+    uintptr_t end_addr = addr_val + local_len;
     if (end_addr <= addr_val) {
         fut_printf("[MUNLOCK] munlock(addr=%p, len=%zu) -> ENOMEM (wraparound: addr + len <= addr)\n",
-                   addr, len);
+                   local_addr, local_len);
         return -ENOMEM;
+    }
+
+    /* Decrement cumulative locked pages counter to match mlock() accounting */
+    fut_mm_t *mm = fut_task_get_mm(task);
+    if (mm) {
+        size_t unlock_pages = (local_len + PAGE_SIZE - 1) / PAGE_SIZE;
+        if (mm->locked_vm >= unlock_pages) {
+            mm->locked_vm -= unlock_pages;
+        } else {
+            mm->locked_vm = 0;
+        }
     }
 
     /* Phase 1: Stub - accept parameters */
     /* Phase 2: Clear VM_LOCKED flag from VMAs */
     /* Phase 2 (Completed): Added overflow and wraparound checks */
 
-    fut_printf("[MUNLOCK] Stub implementation - pages unlocked\n");
+    fut_printf("[MUNLOCK] munlock(addr=%p, len=%zu) -> 0 (pages unlocked)\n",
+               local_addr, local_len);
     return 0;
 }
 
@@ -302,16 +322,19 @@ long sys_munlock(const void *addr, size_t len) {
  *   - -EPERM if insufficient privileges
  */
 long sys_mlockall(int flags) {
+    /* ARM64 FIX: Copy parameter to local variable */
+    int local_flags = flags;
+
     fut_task_t *task = fut_task_current();
     if (!task) {
         return -ESRCH;
     }
 
-    fut_printf("[MLOCKALL] mlockall(flags=0x%x)\n", flags);
+    fut_printf("[MLOCKALL] mlockall(flags=0x%x)\n", local_flags);
 
     /* Validate flags */
     int valid_flags = MCL_CURRENT | MCL_FUTURE | MCL_ONFAULT;
-    if (flags & ~valid_flags) {
+    if (local_flags & ~valid_flags) {
         return -EINVAL;
     }
 
@@ -433,7 +456,7 @@ long sys_mlockall(int flags) {
     /* Phase 2: VMA count and RLIMIT_MEMLOCK validation */
     fut_mm_t *mm = fut_task_get_mm(task);
     if (!mm) {
-        fut_printf("[MLOCKALL] mlockall(flags=0x%x) -> ENOMEM (no mm)\n", flags);
+        fut_printf("[MLOCKALL] mlockall(flags=0x%x) -> ENOMEM (no mm)\n", local_flags);
         return -ENOMEM;
     }
 
@@ -449,7 +472,7 @@ long sys_mlockall(int flags) {
         if (vma_count > MLOCKALL_MAX_VMAS) {
             fut_printf("[MLOCKALL] mlockall(flags=0x%x) -> ENOMEM "
                        "(VMA count %d exceeds maximum %d, Phase 2: DoS prevention)\n",
-                       flags, vma_count, MLOCKALL_MAX_VMAS);
+                       local_flags, vma_count, MLOCKALL_MAX_VMAS);
             return -ENOMEM;
         }
 
@@ -457,7 +480,7 @@ long sys_mlockall(int flags) {
         uint64_t vma_size = vma->end - vma->start;
         if (total_bytes > UINT64_MAX - vma_size) {
             fut_printf("[MLOCKALL] mlockall(flags=0x%x) -> ENOMEM "
-                       "(total bytes would overflow, Phase 2: overflow protection)\n", flags);
+                       "(total bytes would overflow, Phase 2: overflow protection)\n", local_flags);
             return -ENOMEM;
         }
         total_bytes += vma_size;
@@ -476,14 +499,14 @@ long sys_mlockall(int flags) {
             fut_printf("[MLOCKALL] mlockall(flags=0x%x) -> ENOMEM "
                        "(total %llu bytes exceeds RLIMIT_MEMLOCK %llu, "
                        "need CAP_IPC_LOCK, Phase 2: resource limit enforcement)\n",
-                       flags, (unsigned long long)total_bytes,
+                       local_flags, (unsigned long long)total_bytes,
                        (unsigned long long)memlock_limit);
             return -ENOMEM;
         }
 
         fut_printf("[MLOCKALL] mlockall(flags=0x%x) -> Bypassing RLIMIT_MEMLOCK "
                    "(%llu > %llu) via %s\n",
-                   flags, (unsigned long long)total_bytes,
+                   local_flags, (unsigned long long)total_bytes,
                    (unsigned long long)memlock_limit,
                    is_root ? "root" : "CAP_IPC_LOCK");
     }

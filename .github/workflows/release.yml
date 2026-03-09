@@ -1,0 +1,55 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  build-release:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            gcc-14 binutils nasm grub-pc-bin xorriso mtools \
+            qemu-system-x86 qemu-utils \
+            gcc-14-aarch64-linux-gnu binutils-aarch64-linux-gnu
+
+      - name: Build x86_64 kernel
+        run: make all ENABLE_WAYLAND=0
+
+      - name: Run kernel tests
+        run: make test ENABLE_WAYLAND=0
+
+      - name: Build x86_64 ISO
+        run: |
+          make iso ENABLE_WAYLAND=0
+          mv futura.iso futura-x86_64.iso
+
+      - name: Build ARM64 kernel
+        run: make kernel PLATFORM=arm64 ENABLE_WAYLAND=0
+
+      - name: Collect release artifacts
+        run: |
+          mkdir -p release
+          cp futura-x86_64.iso release/
+          cp build/bin/futura_kernel.elf release/futura-x86_64.elf
+          cp build/bin/arm64/futura_kernel.elf release/futura-arm64.elf 2>/dev/null || true
+          sha256sum release/* > release/SHA256SUMS
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            release/futura-x86_64.iso
+            release/futura-x86_64.elf
+            release/futura-arm64.elf
+            release/SHA256SUMS

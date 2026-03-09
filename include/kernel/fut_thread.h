@@ -93,6 +93,10 @@ struct fut_thread {
     fut_thread_t *wait_next;              // Next in wait queue (also used by futex)
     fut_thread_t *global_next;            // Next in global thread list
 
+    /* POSIX scheduling policy and RT priority */
+    int sched_policy;                     // SCHED_OTHER/SCHED_FIFO/SCHED_RR/etc.
+    int rt_priority;                      // RT priority: 0 for SCHED_OTHER, 1-99 for RT
+
     /* Futex support */
     void *futex_addr;                     // Address of futex we're waiting on (NULL if not waiting)
     void *robust_list;                    // Userspace robust futex list head (set_robust_list)

@@ -10,6 +10,7 @@
 
 #include <kernel/fut_task.h>
 #include <kernel/fut_sched.h>
+#include <kernel/fut_thread.h>
 #include <kernel/errno.h>
 #include <sched.h>
 #include <stdint.h>
@@ -74,9 +75,13 @@ long sys_sched_setparam(int pid, const struct sched_param *param) {
         return -EINVAL;
     }
 
-    /* Accept parameters but don't store yet */
-    fut_printf("[SCHED] sched_setparam(pid=%d, priority=%d) -> 0 "
-               "(accepted, stub)\n",
+    /* Store RT priority in current thread */
+    fut_thread_t *thread = fut_thread_current();
+    if (thread) {
+        thread->rt_priority = kparam.sched_priority;
+    }
+
+    fut_printf("[SCHED] sched_setparam(pid=%d, priority=%d) -> 0\n",
                pid, kparam.sched_priority);
 
     return 0;
@@ -117,9 +122,10 @@ long sys_sched_getparam(int pid, struct sched_param *param) {
         return -ESRCH;
     }
 
-    /* Return default priority (0 for SCHED_OTHER) */
+    /* Return RT priority from thread structure */
+    fut_thread_t *thread = fut_thread_current();
     struct sched_param kparam;
-    kparam.sched_priority = 0;
+    kparam.sched_priority = thread ? thread->rt_priority : 0;
 
     /* Copy result to userspace */
     if (fut_copy_to_user(param, &kparam, sizeof(kparam)) != 0) {
@@ -127,7 +133,7 @@ long sys_sched_getparam(int pid, struct sched_param *param) {
         return -EFAULT;
     }
 
-    fut_printf("[SCHED] sched_getparam(pid=%d) -> priority=%d (stub)\n",
+    fut_printf("[SCHED] sched_getparam(pid=%d) -> priority=%d\n",
                pid, kparam.sched_priority);
 
     return 0;
@@ -213,11 +219,15 @@ long sys_sched_setscheduler(int pid, int policy, const struct sched_param *param
         return -EINVAL;
     }
 
-    /* Accept parameters, return previous policy (SCHED_OTHER) */
-    int old_policy = SCHED_OTHER;
+    /* Store policy and RT priority, return previous policy */
+    fut_thread_t *thread = fut_thread_current();
+    int old_policy = thread ? thread->sched_policy : SCHED_OTHER;
+    if (thread) {
+        thread->sched_policy = policy;
+        thread->rt_priority  = kparam.sched_priority;
+    }
 
-    fut_printf("[SCHED] sched_setscheduler(pid=%d, policy=%s, priority=%d) -> %d "
-               "(accepted, stub)\n",
+    fut_printf("[SCHED] sched_setscheduler(pid=%d, policy=%s, priority=%d) -> %d\n",
                pid, policy_name, kparam.sched_priority, old_policy);
 
     return old_policy;
@@ -250,12 +260,11 @@ long sys_sched_getscheduler(int pid) {
         return -ESRCH;
     }
 
-    /* Phase 1: Return SCHED_OTHER (default time-sharing policy) */
-    /* Phase 2: Return task->sched_policy */
-    int policy = SCHED_OTHER;
+    /* Return actual scheduling policy from thread structure */
+    fut_thread_t *thread = fut_thread_current();
+    int policy = thread ? thread->sched_policy : SCHED_OTHER;
 
-    fut_printf("[SCHED] sched_getscheduler(pid=%d) -> %d (SCHED_OTHER, Phase 1 stub)\n",
-               pid, policy);
+    fut_printf("[SCHED] sched_getscheduler(pid=%d) -> %d\n", pid, policy);
 
     return policy;
 }

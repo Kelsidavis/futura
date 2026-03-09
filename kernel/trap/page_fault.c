@@ -12,6 +12,7 @@
 #include "../../include/kernel/fut_mm.h"
 #include "../../include/kernel/fut_memory.h"
 #include "../../include/kernel/fut_vfs.h"
+#include "../../include/kernel/fut_sched.h"
 #include "../../include/kernel/signal.h"
 
 #ifdef __x86_64__
@@ -30,6 +31,79 @@
 #include <stdint.h>
 #include <string.h>
 
+
+/* ============================================================
+ *   Shared Page Cache for MAP_SHARED
+ *
+ *   When multiple processes mmap the same file with MAP_SHARED,
+ *   they must share the same physical pages so writes by one
+ *   process are immediately visible to others.
+ * ============================================================ */
+
+#define SHARED_PAGE_CACHE_BUCKETS 256
+#define SHARED_PAGE_CACHE_HASH(vnode, off) \
+    ((((uintptr_t)(vnode) >> 4) ^ ((off) >> 12)) % SHARED_PAGE_CACHE_BUCKETS)
+
+struct shared_page_entry {
+    struct fut_vnode *vnode;
+    uint64_t offset;           /* Page-aligned file offset */
+    phys_addr_t phys;          /* Physical page address */
+    struct shared_page_entry *next;
+};
+
+static struct shared_page_entry *shared_page_cache[SHARED_PAGE_CACHE_BUCKETS];
+static fut_spinlock_t shared_page_locks[SHARED_PAGE_CACHE_BUCKETS];
+static bool shared_page_cache_inited = false;
+
+static void shared_page_cache_init(void) {
+    if (shared_page_cache_inited) return;
+    for (int i = 0; i < SHARED_PAGE_CACHE_BUCKETS; i++) {
+        shared_page_cache[i] = NULL;
+        fut_spinlock_init(&shared_page_locks[i]);
+    }
+    shared_page_cache_inited = true;
+}
+
+static phys_addr_t shared_page_lookup(struct fut_vnode *vnode, uint64_t offset) {
+    shared_page_cache_init();
+    int bucket = SHARED_PAGE_CACHE_HASH(vnode, offset);
+    fut_spinlock_acquire(&shared_page_locks[bucket]);
+    struct shared_page_entry *e = shared_page_cache[bucket];
+    while (e) {
+        if (e->vnode == vnode && e->offset == offset) {
+            phys_addr_t phys = e->phys;
+            fut_spinlock_release(&shared_page_locks[bucket]);
+            return phys;
+        }
+        e = e->next;
+    }
+    fut_spinlock_release(&shared_page_locks[bucket]);
+    return 0;
+}
+
+static void shared_page_insert(struct fut_vnode *vnode, uint64_t offset, phys_addr_t phys) {
+    shared_page_cache_init();
+    int bucket = SHARED_PAGE_CACHE_HASH(vnode, offset);
+    fut_spinlock_acquire(&shared_page_locks[bucket]);
+    /* Check for duplicate */
+    struct shared_page_entry *e = shared_page_cache[bucket];
+    while (e) {
+        if (e->vnode == vnode && e->offset == offset) {
+            fut_spinlock_release(&shared_page_locks[bucket]);
+            return; /* Already cached */
+        }
+        e = e->next;
+    }
+    e = fut_malloc(sizeof(*e));
+    if (e) {
+        e->vnode = vnode;
+        e->offset = offset;
+        e->phys = phys;
+        e->next = shared_page_cache[bucket];
+        shared_page_cache[bucket] = e;
+    }
+    fut_spinlock_release(&shared_page_locks[bucket]);
+}
 
 /* ============================================================
  *   Architecture-Generic Demand Paging & COW Handling
@@ -71,14 +145,42 @@ static bool load_demand_page(uint64_t page_addr, struct fut_vma *vma, fut_vmem_c
         return false;  /* Already loaded */
     }
 
+    /* Calculate file offset for this page */
+    uint64_t page_offset = (page_addr - vma->start) + vma->file_offset;
+    bool is_shared = (vma->flags & 0x01) != 0;  /* MAP_SHARED */
+
+    /* Calculate PTE flags from VMA protection */
+    uint64_t pte_flags = PTE_PRESENT | PTE_USER;
+    if (vma->prot & 0x2) {
+        pte_flags |= PTE_WRITABLE;  /* PROT_WRITE requested */
+    }
+    if ((vma->prot & 0x4) == 0) {
+        pte_flags |= PTE_NX;  /* Execute not allowed */
+    }
+
+    extern int fut_page_ref_inc(phys_addr_t phys);
+
+    /* MAP_SHARED: check shared page cache first.
+     * Multiple processes mapping the same file with MAP_SHARED must
+     * share the same physical pages so writes are immediately visible.
+     */
+    if (is_shared && vma->vnode) {
+        phys_addr_t cached_phys = shared_page_lookup(vma->vnode, page_offset);
+        if (cached_phys != 0) {
+            /* Found in cache - map the same physical page */
+            if (pmap_map_user(ctx, page_addr, cached_phys, PAGE_SIZE, pte_flags) != 0) {
+                return false;
+            }
+            fut_page_ref_inc(cached_phys);
+            return true;
+        }
+    }
+
     /* Allocate a physical page */
     void *page = fut_pmm_alloc_page();
     if (!page) {
         return false;
     }
-
-    /* Calculate file offset for this page */
-    uint64_t page_offset = (page_addr - vma->start) + vma->file_offset;
 
     /* Zero-fill the page first */
     memset(page, 0, PAGE_SIZE);
@@ -94,20 +196,11 @@ static bool load_demand_page(uint64_t page_addr, struct fut_vma *vma, fut_vmem_c
         /* Partial reads are OK - rest of page remains zero (EOF handling) */
     }
 
-    /* Calculate PTE flags from VMA protection */
-    uint64_t pte_flags = PTE_PRESENT | PTE_USER;
-    if (vma->prot & 0x2) {
-        pte_flags |= PTE_WRITABLE;  /* PROT_WRITE requested */
-    }
-    if ((vma->prot & 0x4) == 0) {
-        pte_flags |= PTE_NX;  /* Execute not allowed */
-    }
-
     /* For MAP_PRIVATE with write permission, map as read-only initially.
      * Copy-on-write will handle the page when written to.
      * For MAP_SHARED, map with requested permissions.
      */
-    if ((vma->prot & 0x2) && !(vma->flags & 0x01)) {  /* PROT_WRITE && !MAP_SHARED */
+    if ((vma->prot & 0x2) && !is_shared) {  /* PROT_WRITE && !MAP_SHARED */
         /* MAP_PRIVATE + writable: Mark VMA as COW and map read-only */
         vma->flags |= VMA_COW;
         pte_flags &= ~PTE_WRITABLE;  /* Map read-only for COW */
@@ -120,13 +213,18 @@ static bool load_demand_page(uint64_t page_addr, struct fut_vma *vma, fut_vmem_c
         return false;
     }
 
+    /* Register in shared page cache for MAP_SHARED so other processes
+     * mapping the same file get the same physical page */
+    if (is_shared && vma->vnode) {
+        shared_page_insert(vma->vnode, page_offset, phys);
+    }
+
     /* Initialize page reference count for COW tracking.
      * When a page is first allocated and mapped, it has exactly one reference.
      * If the mapping is MAP_PRIVATE, COW handling will use this refcount to
      * determine if the page can be made writable in-place (refcount=1) or
      * requires copying (refcount>1 from shared mappings).
      */
-    extern int fut_page_ref_inc(phys_addr_t phys);
     if (fut_page_ref_inc(phys) != 0) {
         /* Refcount tracking failed - unmap and free the page */
         fut_unmap_range(ctx, page_addr, PAGE_SIZE);

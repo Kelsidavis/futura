@@ -417,6 +417,7 @@
 #include <kernel/fut_memory.h>
 #include <kernel/fut_sched.h>
 #include <kernel/fut_task.h>
+#include <kernel/fut_timer.h>
 #include <kernel/fut_vfs.h>
 #include <kernel/fut_waitq.h>
 #include <kernel/uaccess.h>
@@ -914,14 +915,153 @@ long sys_signalfd4(int ufd, const void *mask, size_t sizemask, int flags) {
  *   - -EINVAL if clockid or flags invalid
  *   - -EMFILE if too many open files
  */
+/* ============================================================
+ *   timerfd implementation
+ * ============================================================ */
+
+struct timerfd_ctx {
+    uint64_t counter;          /* Number of expirations since last read */
+    int clockid;               /* CLOCK_MONOTONIC or CLOCK_REALTIME */
+    uint64_t interval_ms;      /* Repeat interval in ms (0 = one-shot) */
+    uint64_t next_expiry_ms;   /* Next absolute expiry in system ticks */
+    bool armed;                /* Whether timer is currently armed */
+    fut_spinlock_t lock;
+    fut_waitq_t read_waitq;    /* Threads blocked on read() */
+};
+
+struct timerfd_file {
+    struct timerfd_ctx *ctx;
+    struct fut_file *file;
+};
+
+static ssize_t timerfd_read_op(void *inode, void *priv, void *u_buf, size_t len, off_t *pos);
+static int timerfd_release(void *inode, void *priv);
+
+static const struct fut_file_ops timerfd_fops = {
+    .open = NULL,
+    .release = timerfd_release,
+    .read = timerfd_read_op,
+    .write = NULL,
+    .ioctl = NULL,
+    .mmap = NULL,
+};
+
+/* Convert timespec to milliseconds */
+static uint64_t timespec_to_ms(const struct timespec *ts) {
+    return (uint64_t)ts->tv_sec * 1000ULL + (uint64_t)ts->tv_nsec / 1000000ULL;
+}
+
+/* Timer callback - called from timer tick interrupt context */
+static void timerfd_timer_cb(void *arg) {
+    struct timerfd_ctx *ctx = (struct timerfd_ctx *)arg;
+    if (!ctx) return;
+
+    fut_spinlock_acquire(&ctx->lock);
+    ctx->counter++;
+
+    /* Re-arm if interval is set */
+    if (ctx->interval_ms > 0) {
+        ctx->next_expiry_ms += ctx->interval_ms;
+        ctx->armed = true;
+        uint64_t now = fut_get_ticks();
+        uint64_t delay = 0;
+        if (ctx->next_expiry_ms > now) {
+            delay = ctx->next_expiry_ms - now;
+        } else {
+            delay = 1; /* Fire ASAP if we're behind */
+        }
+        fut_spinlock_release(&ctx->lock);
+        fut_timer_start(delay, timerfd_timer_cb, ctx);
+    } else {
+        ctx->armed = false;
+        fut_spinlock_release(&ctx->lock);
+    }
+
+    /* Wake any threads blocked on read() */
+    fut_waitq_wake_all(&ctx->read_waitq);
+}
+
+static ssize_t timerfd_read_op(void *inode, void *priv, void *u_buf, size_t len, off_t *pos) {
+    (void)inode;
+    (void)pos;
+    if (!priv || !u_buf || len < sizeof(uint64_t)) {
+        return -EINVAL;
+    }
+
+    struct timerfd_file *tfile = (struct timerfd_file *)priv;
+    struct timerfd_ctx *ctx = tfile->ctx;
+    if (!ctx) return -EINVAL;
+
+    uint64_t value = 0;
+    bool nonblock = tfile->file && (tfile->file->flags & O_NONBLOCK);
+
+    while (true) {
+        fut_spinlock_acquire(&ctx->lock);
+        if (ctx->counter > 0) {
+            value = ctx->counter;
+            ctx->counter = 0;
+            fut_spinlock_release(&ctx->lock);
+            break;
+        }
+        if (nonblock) {
+            fut_spinlock_release(&ctx->lock);
+            return -EAGAIN;
+        }
+        fut_waitq_sleep_locked(&ctx->read_waitq, &ctx->lock, FUT_THREAD_BLOCKED);
+    }
+
+    if (fut_copy_to_user(u_buf, &value, sizeof(value)) != 0) {
+        /* Restore counter on copy failure */
+        fut_spinlock_acquire(&ctx->lock);
+        ctx->counter += value;
+        fut_spinlock_release(&ctx->lock);
+        return -EFAULT;
+    }
+
+    return (ssize_t)sizeof(value);
+}
+
+static int timerfd_release(void *inode, void *priv) {
+    (void)inode;
+    struct timerfd_file *tfile = (struct timerfd_file *)priv;
+    if (!tfile) return 0;
+
+    struct timerfd_ctx *ctx = tfile->ctx;
+    if (ctx) {
+        /* Cancel any pending timer */
+        fut_timer_cancel(timerfd_timer_cb, ctx);
+        fut_waitq_wake_all(&ctx->read_waitq);
+        fut_free(ctx);
+    }
+    fut_free(tfile);
+    return 0;
+}
+
+/* Check if a file is a timerfd for epoll polling */
+bool fut_timerfd_poll(struct fut_file *file, uint32_t requested, uint32_t *ready_out) {
+    if (!file || file->chr_private == NULL || file->chr_ops != &timerfd_fops) {
+        return false;
+    }
+    struct timerfd_file *tfile = (struct timerfd_file *)file->chr_private;
+    struct timerfd_ctx *ctx = tfile->ctx;
+    if (!ctx) return false;
+
+    uint32_t ready = 0;
+    fut_spinlock_acquire(&ctx->lock);
+    if (ctx->counter > 0 && (requested & (EPOLLIN | EPOLLRDNORM))) {
+        ready |= (EPOLLIN | EPOLLRDNORM);
+    }
+    fut_spinlock_release(&ctx->lock);
+
+    if (ready_out) *ready_out = ready;
+    return true;
+}
+
 long sys_timerfd_create(int clockid, int flags) {
     fut_task_t *task = fut_task_current();
     if (!task) {
         return -ESRCH;
     }
-
-    fut_printf("[TIMERFD_CREATE] timerfd_create(clockid=%d, flags=0x%x)\n",
-               clockid, flags);
 
     /* Validate clockid */
     if (clockid != CLOCK_REALTIME && clockid != CLOCK_MONOTONIC) {
@@ -934,110 +1074,175 @@ long sys_timerfd_create(int clockid, int flags) {
         return -EINVAL;
     }
 
-    /* Phase 1: Stub - return dummy fd */
-    /* Phase 2: Allocate timerfd structure with clockid */
-    /* Phase 3: Create file descriptor with timer operations */
+    /* Allocate timerfd context */
+    struct timerfd_ctx *ctx = fut_malloc(sizeof(struct timerfd_ctx));
+    if (!ctx) return -ENOMEM;
 
-    fut_printf("[TIMERFD_CREATE] Stub implementation - returning fd 12\n");
-    return 12;  /* Dummy file descriptor */
+    ctx->counter = 0;
+    ctx->clockid = clockid;
+    ctx->interval_ms = 0;
+    ctx->next_expiry_ms = 0;
+    ctx->armed = false;
+    fut_spinlock_init(&ctx->lock);
+    fut_waitq_init(&ctx->read_waitq);
+
+    struct timerfd_file *tfile = fut_malloc(sizeof(struct timerfd_file));
+    if (!tfile) {
+        fut_free(ctx);
+        return -ENOMEM;
+    }
+    tfile->ctx = ctx;
+    tfile->file = NULL;
+
+    int fd = chrdev_alloc_fd(&timerfd_fops, NULL, tfile);
+    if (fd < 0) {
+        fut_free(tfile);
+        fut_free(ctx);
+        return fd;
+    }
+
+    /* Get the file struct to set flags */
+    struct fut_file *file = NULL;
+    if (task->fd_table && fd >= 0 && fd < task->max_fds) {
+        file = task->fd_table[fd];
+    }
+    if (!file) {
+        fut_vfs_close(fd);
+        fut_free(tfile);
+        fut_free(ctx);
+        return -EFAULT;
+    }
+    tfile->file = file;
+
+    if (flags & TFD_NONBLOCK) {
+        file->flags |= O_NONBLOCK;
+    }
+    if (flags & TFD_CLOEXEC) {
+        file->fd_flags |= FD_CLOEXEC;
+    }
+
+    fut_printf("[TIMERFD_CREATE] timerfd_create(clockid=%d, flags=0x%x) -> fd=%d\n",
+               clockid, flags, fd);
+    return fd;
 }
 
-/**
- * sys_timerfd_settime - Arm/disarm a timer file descriptor
- *
- * @param ufd:       File descriptor from timerfd_create
- * @param flags:     TFD_TIMER_ABSTIME for absolute time
- * @param new_value: New timer settings (interval + initial expiration)
- * @param old_value: Optional output for previous settings
- *
- * Arms the timer with specified interval and expiration time.
- * Timer becomes readable when it expires.
- *
- * Phase 1: Stub - accepts parameters, returns success
- * Phase 2: Implement timer arming with kernel timer infrastructure
- * Phase 3: Support absolute and relative timeouts
- *
- * Returns:
- *   - 0 on success
- *   - -EBADF if ufd is not a timerfd
- *   - -EINVAL if new_value invalid
- */
 long sys_timerfd_settime(int ufd, int flags,
                          const struct itimerspec *new_value,
                          struct itimerspec *old_value) {
     fut_task_t *task = fut_task_current();
-    if (!task) {
-        return -ESRCH;
+    if (!task) return -ESRCH;
+
+    if (!new_value) return -EINVAL;
+    if (ufd < 0) return -EBADF;
+    if (flags & ~TFD_TIMER_ABSTIME) return -EINVAL;
+
+    /* Copy itimerspec from user space */
+    struct itimerspec kits;
+    if (fut_copy_from_user(&kits, new_value, sizeof(kits)) != 0) {
+        return -EFAULT;
     }
 
-    fut_printf("[TIMERFD_SETTIME] timerfd_settime(ufd=%d, flags=0x%x, new_value=%p, old_value=%p)\n",
-               ufd, flags, new_value, old_value);
-
-    /* Validate parameters */
-    if (!new_value) {
-        return -EINVAL;
-    }
-
-    if (ufd < 0) {
+    /* Look up the fd and get the timerfd context */
+    if (!task->fd_table || ufd >= task->max_fds) return -EBADF;
+    struct fut_file *file = task->fd_table[ufd];
+    if (!file || file->chr_ops != &timerfd_fops || !file->chr_private) {
         return -EBADF;
     }
+    struct timerfd_file *tfile = (struct timerfd_file *)file->chr_private;
+    struct timerfd_ctx *ctx = tfile->ctx;
+    if (!ctx) return -EBADF;
 
-    /* Validate flags */
-    if (flags & ~TFD_TIMER_ABSTIME) {
-        return -EINVAL;
+    /* Cancel any existing timer */
+    if (ctx->armed) {
+        fut_timer_cancel(timerfd_timer_cb, ctx);
     }
 
-    /* Phase 1: Stub - accept parameters */
-    /* Phase 2: Arm kernel timer with specified interval/expiration */
-    /* Phase 3: Make fd readable on expiration, support read() to consume */
+    /* Return old value if requested */
+    if (old_value) {
+        struct itimerspec old_its = {0};
+        old_its.it_interval.tv_sec = (long)(ctx->interval_ms / 1000);
+        old_its.it_interval.tv_nsec = (long)((ctx->interval_ms % 1000) * 1000000);
+        if (ctx->armed) {
+            uint64_t now = fut_get_ticks();
+            uint64_t remain = (ctx->next_expiry_ms > now) ? (ctx->next_expiry_ms - now) : 0;
+            old_its.it_value.tv_sec = (long)(remain / 1000);
+            old_its.it_value.tv_nsec = (long)((remain % 1000) * 1000000);
+        }
+        fut_copy_to_user(old_value, &old_its, sizeof(old_its));
+    }
 
-    (void)old_value;
-    fut_printf("[TIMERFD_SETTIME] Stub implementation - returning success\n");
+    uint64_t value_ms = timespec_to_ms(&kits.it_value);
+    uint64_t interval_ms = timespec_to_ms(&kits.it_interval);
+
+    fut_spinlock_acquire(&ctx->lock);
+    ctx->counter = 0;
+    ctx->interval_ms = interval_ms;
+
+    if (value_ms == 0 && kits.it_value.tv_sec == 0 && kits.it_value.tv_nsec == 0) {
+        /* Disarm the timer */
+        ctx->armed = false;
+        ctx->next_expiry_ms = 0;
+        fut_spinlock_release(&ctx->lock);
+        fut_printf("[TIMERFD_SETTIME] timerfd_settime(ufd=%d) -> disarmed\n", ufd);
+        return 0;
+    }
+
+    uint64_t now = fut_get_ticks();
+    uint64_t delay;
+
+    if (flags & TFD_TIMER_ABSTIME) {
+        /* value_ms is absolute time in ms */
+        if (value_ms > now) {
+            delay = value_ms - now;
+        } else {
+            delay = 1; /* Already expired, fire ASAP */
+        }
+        ctx->next_expiry_ms = value_ms;
+    } else {
+        /* Relative time */
+        delay = value_ms;
+        ctx->next_expiry_ms = now + value_ms;
+    }
+
+    ctx->armed = true;
+    fut_spinlock_release(&ctx->lock);
+
+    fut_timer_start(delay, timerfd_timer_cb, ctx);
+
+    fut_printf("[TIMERFD_SETTIME] timerfd_settime(ufd=%d, delay=%llu, interval=%llu) -> armed\n",
+               ufd, (unsigned long long)delay, (unsigned long long)interval_ms);
     return 0;
 }
 
-/**
- * sys_timerfd_gettime - Get current setting of timer file descriptor
- *
- * @param ufd:        File descriptor from timerfd_create
- * @param curr_value: Output parameter for current timer settings
- *
- * Retrieves the current timer settings including time until next expiration.
- *
- * Phase 1: Stub - returns zero interval/value (timer disarmed)
- * Phase 2: Return actual timer state
- *
- * Returns:
- *   - 0 on success
- *   - -EBADF if ufd is not a timerfd
- *   - -EINVAL if curr_value is null
- */
 long sys_timerfd_gettime(int ufd, struct itimerspec *curr_value) {
     fut_task_t *task = fut_task_current();
-    if (!task) {
-        return -ESRCH;
-    }
+    if (!task) return -ESRCH;
+    if (!curr_value) return -EINVAL;
+    if (ufd < 0) return -EBADF;
 
-    fut_printf("[TIMERFD_GETTIME] timerfd_gettime(ufd=%d, curr_value=%p)\n",
-               ufd, curr_value);
-
-    /* Validate parameters */
-    if (!curr_value) {
-        return -EINVAL;
-    }
-
-    if (ufd < 0) {
+    if (!task->fd_table || ufd >= task->max_fds) return -EBADF;
+    struct fut_file *file = task->fd_table[ufd];
+    if (!file || file->chr_ops != &timerfd_fops || !file->chr_private) {
         return -EBADF;
     }
+    struct timerfd_file *tfile = (struct timerfd_file *)file->chr_private;
+    struct timerfd_ctx *ctx = tfile->ctx;
+    if (!ctx) return -EBADF;
 
-    /* Phase 1: Stub - return zero (timer disarmed) */
-    /* Phase 2: Return actual timer state from timerfd structure */
+    struct itimerspec kits = {0};
+    fut_spinlock_acquire(&ctx->lock);
+    kits.it_interval.tv_sec = (long)(ctx->interval_ms / 1000);
+    kits.it_interval.tv_nsec = (long)((ctx->interval_ms % 1000) * 1000000);
+    if (ctx->armed) {
+        uint64_t now = fut_get_ticks();
+        uint64_t remain = (ctx->next_expiry_ms > now) ? (ctx->next_expiry_ms - now) : 0;
+        kits.it_value.tv_sec = (long)(remain / 1000);
+        kits.it_value.tv_nsec = (long)((remain % 1000) * 1000000);
+    }
+    fut_spinlock_release(&ctx->lock);
 
-    curr_value->it_interval.tv_sec = 0;
-    curr_value->it_interval.tv_nsec = 0;
-    curr_value->it_value.tv_sec = 0;
-    curr_value->it_value.tv_nsec = 0;
-
-    fut_printf("[TIMERFD_GETTIME] Stub implementation - returning zero interval/value\n");
+    if (fut_copy_to_user(curr_value, &kits, sizeof(kits)) != 0) {
+        return -EFAULT;
+    }
     return 0;
 }

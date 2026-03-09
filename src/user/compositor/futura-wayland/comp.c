@@ -1720,8 +1720,11 @@ int comp_run(struct compositor_state *comp) {
             break;
         }
 
-        /* Manually handle timer events since timerfd is not in event loop */
-        if (comp->timerfd >= 0 && !comp->timer_source_registered) {
+        /* Manually handle timer events.
+         * The user-space timerfd is not a real kernel fd, so even when
+         * wl_event_loop_add_fd succeeds (due to bypassed epoll_ctl),
+         * the event loop won't deliver timer events. Always poll manually. */
+        if (comp->timerfd >= 0) {
             uint64_t expirations = 0;
             ssize_t read_rc = read(comp->timerfd, &expirations, sizeof(expirations));
             if (read_rc > 0 && expirations > 0) {

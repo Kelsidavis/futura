@@ -379,9 +379,9 @@ static bool main_loop_iteration(struct client_state *state) {
         redraw(state);
     }
 
-    /* Process Wayland events (non-blocking with short timeout) */
-    wl_display_dispatch_pending(state->display);
+    /* Process Wayland events (reads from socket + dispatches) */
     wl_display_flush(state->display);
+    wl_display_dispatch(state->display);
 
     return state->running;
 }

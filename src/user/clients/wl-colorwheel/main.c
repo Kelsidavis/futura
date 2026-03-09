@@ -557,7 +557,7 @@ int main(void) {
         wl_surface_commit(state.surface);
 
         wl_display_flush(state.display);
-        wl_display_dispatch_pending(state.display);
+        wl_display_dispatch(state.display);
 
         nanosleep_ms(frame_delay_ms);
         ++frames;

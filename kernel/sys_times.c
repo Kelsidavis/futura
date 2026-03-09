@@ -16,6 +16,21 @@
 #include <kernel/kprintf.h>
 #include <kernel/uaccess.h>
 #include <kernel/fut_timer.h>
+#ifdef __x86_64__
+#include <platform/x86_64/memory/paging.h>
+#elif defined(__aarch64__)
+#include <platform/arm64/memory/paging.h>
+#endif
+
+static inline int times_copy_to_user(void *dst, const void *src, size_t n) {
+#ifdef KERNEL_VIRTUAL_BASE
+    if ((uintptr_t)dst >= KERNEL_VIRTUAL_BASE) {
+        __builtin_memcpy(dst, src, n);
+        return 0;
+    }
+#endif
+    return fut_copy_to_user(dst, src, n);
+}
 
 /* clock_t and struct tms provided by sys/times.h */
 
@@ -87,7 +102,7 @@ long sys_times(struct tms *buf) {
     times.tms_utime = (clock_t)total_cpu_ticks;  /* cpu_ticks already in USER_HZ units */
 
     /* Copy to userspace */
-    if (fut_copy_to_user(buf, &times, sizeof(struct tms)) != 0) {
+    if (times_copy_to_user(buf, &times, sizeof(struct tms)) != 0) {
         fut_printf("[TIMES] times(buf=%p) -> EFAULT (copy_to_user failed)\n", buf);
         return -EFAULT;
     }

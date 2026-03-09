@@ -16,6 +16,21 @@
 #include <kernel/kprintf.h>
 #include <kernel/uaccess.h>
 #include <kernel/fut_timer.h>
+#ifdef __x86_64__
+#include <platform/x86_64/memory/paging.h>
+#elif defined(__aarch64__)
+#include <platform/arm64/memory/paging.h>
+#endif
+
+static inline int rusage_copy_to_user(void *dst, const void *src, size_t n) {
+#ifdef KERNEL_VIRTUAL_BASE
+    if ((uintptr_t)dst >= KERNEL_VIRTUAL_BASE) {
+        __builtin_memcpy(dst, src, n);
+        return 0;
+    }
+#endif
+    return fut_copy_to_user(dst, src, n);
+}
 
 /* rusage structure - resource usage statistics */
 struct rusage {
@@ -146,7 +161,7 @@ long sys_getrusage(int who, struct rusage *usage) {
     /* RUSAGE_CHILDREN: zeroed until wait4()/waitpid() accumulates child stats */
 
     /* Copy to userspace */
-    if (fut_copy_to_user(usage, &ru, sizeof(struct rusage)) != 0) {
+    if (rusage_copy_to_user(usage, &ru, sizeof(struct rusage)) != 0) {
         fut_printf("[RUSAGE] getrusage(who=%s, usage=%p) -> EFAULT (copy_to_user failed)\n",
                    who_desc, usage);
         return -EFAULT;

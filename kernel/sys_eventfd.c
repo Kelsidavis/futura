@@ -194,9 +194,9 @@
  *   - Reject creation with -EMFILE if count >= MAX_EVENTFDS
  *   - Prevents global kernel heap exhaustion
  *
- * [TODO] Add per-user eventfd quota:
- *   - Track eventfds per UID (requires user accounting)
- *   - Limit each user to MAX_EVENTFDS_PER_USER (e.g., 512)
+ * [DONE] Per-user eventfd quota (MAX_EVENTFDS_PER_USER=512):
+ *   - uid_table open-addressed hash tracks per-UID eventfd counts
+ *   - owner_uid stored in struct eventfd_file for release-time decrement
  *   - Prevents unprivileged user from DoS via mass eventfd creation
  *
  * ATTACK SCENARIO 4: Invalid Flag Bits Bypass Leading to Undefined Behavior
@@ -430,8 +430,87 @@
 #include <kernel/kprintf.h>
 
 /* System-wide eventfd limit (prevents kernel heap exhaustion via mass creation) */
-#define MAX_EVENTFDS        4096
+#define MAX_EVENTFDS            4096
+/* Per-user eventfd limit (prevents single user from monopolising slots) */
+#define MAX_EVENTFDS_PER_USER   512
 static _Atomic uint32_t g_eventfd_count __attribute__((aligned(4))) = 0;
+
+/* Per-user eventfd accounting (simple open-addressed hash table) */
+#define EVENTFD_UID_SLOTS  32
+struct eventfd_uid_entry {
+    uint32_t uid;
+    uint32_t count;
+    bool     active;
+};
+static struct eventfd_uid_entry uid_table[EVENTFD_UID_SLOTS];
+static fut_spinlock_t uid_table_lock;
+
+/* Initialise the UID table (called lazily; safe to call multiple times) */
+static void eventfd_uid_table_init(void) {
+    static bool initialised = false;
+    if (initialised) return;
+    initialised = true;
+    fut_spinlock_init(&uid_table_lock);
+    for (int i = 0; i < EVENTFD_UID_SLOTS; i++) {
+        uid_table[i].active = false;
+        uid_table[i].uid    = 0;
+        uid_table[i].count  = 0;
+    }
+}
+
+/* Atomically check and increment per-UID count.
+ * Returns 0 on success, -EMFILE if the per-user limit is reached. */
+static int eventfd_uid_inc(uint32_t uid) {
+    eventfd_uid_table_init();
+    fut_spinlock_acquire(&uid_table_lock);
+
+    /* Find existing slot or first free slot */
+    int slot = (int)(uid % EVENTFD_UID_SLOTS);
+    int first_free = -1;
+    for (int i = 0; i < EVENTFD_UID_SLOTS; i++) {
+        int idx = (slot + i) % EVENTFD_UID_SLOTS;
+        if (uid_table[idx].active && uid_table[idx].uid == uid) {
+            if (uid_table[idx].count >= MAX_EVENTFDS_PER_USER) {
+                fut_spinlock_release(&uid_table_lock);
+                return -EMFILE;
+            }
+            uid_table[idx].count++;
+            fut_spinlock_release(&uid_table_lock);
+            return 0;
+        }
+        if (!uid_table[idx].active && first_free < 0)
+            first_free = idx;
+    }
+
+    /* First eventfd for this UID */
+    if (first_free < 0) {
+        /* Table full — allow creation but don't track (best-effort) */
+        fut_spinlock_release(&uid_table_lock);
+        return 0;
+    }
+    uid_table[first_free].active = true;
+    uid_table[first_free].uid    = uid;
+    uid_table[first_free].count  = 1;
+    fut_spinlock_release(&uid_table_lock);
+    return 0;
+}
+
+/* Decrement per-UID count on eventfd close. */
+static void eventfd_uid_dec(uint32_t uid) {
+    fut_spinlock_acquire(&uid_table_lock);
+    int slot = (int)(uid % EVENTFD_UID_SLOTS);
+    for (int i = 0; i < EVENTFD_UID_SLOTS; i++) {
+        int idx = (slot + i) % EVENTFD_UID_SLOTS;
+        if (uid_table[idx].active && uid_table[idx].uid == uid) {
+            if (uid_table[idx].count > 0)
+                uid_table[idx].count--;
+            if (uid_table[idx].count == 0)
+                uid_table[idx].active = false;
+            break;
+        }
+    }
+    fut_spinlock_release(&uid_table_lock);
+}
 
 /* eventfd flags (kernel-internal definitions to avoid userspace header conflicts) */
 #define EFD_CLOEXEC     02000000
@@ -464,6 +543,7 @@ struct eventfd_ctx {
 struct eventfd_file {
     struct eventfd_ctx *ctx;
     struct fut_file *file;
+    uint32_t owner_uid;     /* UID of creator (for per-user quota decrement) */
 };
 
 /* epoll event masks provided by sys/epoll.h */
@@ -737,8 +817,10 @@ static int eventfd_release(void *inode, void *priv) {
     }
 
     if (last_fd) {
+        uint32_t uid = efile->owner_uid;
         eventfd_ctx_destroy(efile->ctx);
         fut_free(efile);
+        eventfd_uid_dec(uid);
         atomic_fetch_sub_explicit(&g_eventfd_count, 1, memory_order_relaxed);
     }
 
@@ -817,8 +899,19 @@ long sys_eventfd2(unsigned int initval, int flags) {
         return -EMFILE;
     }
 
+    /* Per-user quota: prevent single user from monopolising eventfd slots */
+    int uid_rc = eventfd_uid_inc(task->uid);
+    if (uid_rc < 0) {
+        atomic_fetch_sub_explicit(&g_eventfd_count, 1, memory_order_relaxed);
+        fut_printf("[EVENTFD2] sys_eventfd2(initval=%u, flags=0x%x, uid=%u) -> EMFILE "
+                   "(per-user limit %d reached)\n",
+                   initval, flags, task->uid, MAX_EVENTFDS_PER_USER);
+        return -EMFILE;
+    }
+
     struct eventfd_ctx *ctx = eventfd_ctx_create(initval, (flags & EFD_SEMAPHORE) != 0);
     if (!ctx) {
+        eventfd_uid_dec(task->uid);
         atomic_fetch_sub_explicit(&g_eventfd_count, 1, memory_order_relaxed);
         return -ENOMEM;
     }
@@ -826,14 +919,17 @@ long sys_eventfd2(unsigned int initval, int flags) {
     struct eventfd_file *efile = fut_malloc(sizeof(struct eventfd_file));
     if (!efile) {
         eventfd_ctx_destroy(ctx);
+        eventfd_uid_dec(task->uid);
         atomic_fetch_sub_explicit(&g_eventfd_count, 1, memory_order_relaxed);
         return -ENOMEM;
     }
     efile->ctx = ctx;
     efile->file = NULL;
+    efile->owner_uid = task->uid;
 
     int fd = chrdev_alloc_fd(&eventfd_fops, NULL, efile);
     if (fd < 0) {
+        eventfd_uid_dec(efile->owner_uid);
         fut_free(efile);
         eventfd_ctx_destroy(ctx);
         atomic_fetch_sub_explicit(&g_eventfd_count, 1, memory_order_relaxed);

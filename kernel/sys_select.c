@@ -525,6 +525,24 @@ long sys_ppoll(void *fds, unsigned int nfds, void *tmo_p, const void *sigmask) {
         return -EINVAL;
     }
 
-    fut_printf("[PPOLL] Stub implementation - returning 0 (timeout)\n");
-    return 0;  /* Simulate timeout */
+    /*
+     * Delegate to sys_poll with timeout converted from timespec to ms.
+     * ppoll differs from poll only in timeout format and signal mask.
+     * Signal mask is ignored for now (Phase 3).
+     */
+    int timeout_ms = -1;  /* Default: block indefinitely */
+    if (local_tmo_p) {
+        struct fut_timespec kts;
+        if (fut_copy_from_user(&kts, local_tmo_p, sizeof(kts)) != 0)
+            return -EFAULT;
+        if (kts.tv_sec < 0 || kts.tv_nsec < 0 || kts.tv_nsec >= 1000000000L)
+            return -EINVAL;
+        /* Convert to ms, cap at INT_MAX */
+        uint64_t ms = (uint64_t)kts.tv_sec * 1000ULL + (uint64_t)kts.tv_nsec / 1000000ULL;
+        timeout_ms = (ms > (uint64_t)2147483647) ? 2147483647 : (int)ms;
+    }
+
+    /* Reuse sys_poll which already handles FD validation and readiness checking */
+    extern long sys_poll(struct pollfd *fds, unsigned long nfds, int timeout);
+    return sys_poll((struct pollfd *)local_fds, (unsigned long)local_nfds, timeout_ms);
 }

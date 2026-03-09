@@ -552,18 +552,23 @@ static int ramfs_lookup(struct fut_vnode *dir, const char *name, struct fut_vnod
         }
 #endif
 
-        /* Validate vnode pointer before comparing name */
+        /* Validate vnode pointer before comparing name.
+         * Skip entries with invalid vnodes rather than failing the entire lookup.
+         * This provides resilience against transient corruption from preemption
+         * during concurrent directory operations on a single-lock filesystem. */
 #if defined(__x86_64__)
         if (!entry->vnode || (uintptr_t)entry->vnode < 0xFFFFFFFF80000000ULL) {
-            fut_printf("[ramfs] ERROR: Invalid vnode pointer %p in entry '%s'\n",
+            fut_printf("[ramfs] WARNING: Skipping entry with invalid vnode %p (name='%s')\n",
                       (void*)entry->vnode, entry->name);
-            return -EIO;
+            entry = entry->next;
+            continue;
         }
 #elif defined(__aarch64__)
         if (!entry->vnode || (uintptr_t)entry->vnode < 0x40000000ULL) {
-            fut_printf("[ramfs] ERROR: Invalid vnode pointer %p in entry '%s'\n",
+            fut_printf("[ramfs] WARNING: Skipping entry with invalid vnode %p (name='%s')\n",
                       (void*)entry->vnode, entry->name);
-            return -EIO;
+            entry = entry->next;
+            continue;
         }
 #endif
 

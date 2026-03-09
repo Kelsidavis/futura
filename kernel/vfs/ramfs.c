@@ -1706,18 +1706,23 @@ static int ramfs_mount(const char *device, int flags, void *data, fut_handle_t b
     /* Initialize root vnode */
     root->type = VN_DIR;
     root->ino = 1;  /* Root always has inode 1 */
-    root->mode = 0755;
+    root->mode = 0;  /* Will be set by vfs_init_vnode_ownership */
     root->size = 0;
     root->nlinks = 2;
     root->mount = mount;
     root->fs_data = root_node;
     root->refcount = 1;
+    root->uid = 0;
+    root->gid = 0;
     root->ops = &ramfs_vnode_ops;
+    vfs_init_vnode_ownership(root, NULL, 0755);
+    fut_vnode_lock_init(root);
 
     fut_vfs_register_root_canary(&guard->before, &guard->after);
 
     /* Initialize guard values to detect buffer overflows */
     root_node->magic_guard_before = RAMFS_NODE_MAGIC;
+    root_node->open_count = 0;
     root_node->magic_guard_after = RAMFS_NODE_MAGIC;
 
     /* Initialize root directory */

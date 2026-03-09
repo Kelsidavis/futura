@@ -227,16 +227,74 @@ long sys_sendfile(int out_fd, int in_fd, uint64_t *offset, size_t count) {
         start_offset = in_file->offset;
     }
 
-    /* Phase 1: Return 0 bytes transferred (stub)
-     * Phase 2: Implement via kernel buffer read()+write() loop
-     * Phase 3: Zero-copy transfer using splice/pipe or direct buffer sharing
-     */
+    /* Validate in_file supports reading */
+    if (!in_file->vnode || !in_file->vnode->ops || !in_file->vnode->ops->read) {
+        /* Check chr_ops path too */
+        if (!in_file->chr_ops || !in_file->chr_ops->read) {
+            return -EINVAL;
+        }
+    }
 
-    fut_printf("[SENDFILE] sendfile(out_fd=%d, in_fd=%d, offset=%s [%lu], count=%zu [%s], "
-               "pid=%d) -> 0 (%s, Phase 2: offset validated)\n",
-               out_fd, in_fd, offset_mode, start_offset, count, size_category,
-               task->pid, size_desc);
+    /* Validate out_file supports writing */
+    if (!out_file->vnode || !out_file->vnode->ops || !out_file->vnode->ops->write) {
+        if (!out_file->chr_ops || !out_file->chr_ops->write) {
+            return -EINVAL;
+        }
+    }
 
-    /* Phase 2: Return 0 bytes transferred (offset validated, transfer not implemented) */
-    return 0;
+    /* Transfer data via kernel buffer */
+    #define SENDFILE_BUF_SIZE 4096
+    char kbuf[SENDFILE_BUF_SIZE];
+    size_t total = 0;
+    uint64_t read_offset = start_offset;
+
+    while (total < count) {
+        size_t chunk = count - total;
+        if (chunk > SENDFILE_BUF_SIZE)
+            chunk = SENDFILE_BUF_SIZE;
+
+        /* Read from input file at specified offset */
+        ssize_t nread;
+        if (in_file->chr_ops && in_file->chr_ops->read) {
+            off_t pos = (off_t)read_offset;
+            nread = in_file->chr_ops->read(in_file->chr_inode, in_file->chr_private,
+                                           kbuf, chunk, &pos);
+        } else {
+            nread = in_file->vnode->ops->read(in_file->vnode, kbuf, chunk, read_offset);
+        }
+
+        if (nread <= 0)
+            break;
+
+        /* Write to output file at its current offset */
+        ssize_t nwritten;
+        if (out_file->chr_ops && out_file->chr_ops->write) {
+            off_t pos = (off_t)out_file->offset;
+            nwritten = out_file->chr_ops->write(out_file->chr_inode, out_file->chr_private,
+                                                kbuf, (size_t)nread, &pos);
+            if (nwritten > 0)
+                out_file->offset = (uint64_t)pos;
+        } else {
+            nwritten = out_file->vnode->ops->write(out_file->vnode, kbuf, (size_t)nread,
+                                                   out_file->offset);
+            if (nwritten > 0)
+                out_file->offset += nwritten;
+        }
+
+        if (nwritten <= 0)
+            break;
+
+        read_offset += nwritten;
+        total += nwritten;
+    }
+
+    /* Update offset for caller */
+    if (offset) {
+        fut_copy_to_user(offset, &read_offset, sizeof(uint64_t));
+    } else {
+        /* No explicit offset: update in_file's position */
+        in_file->offset = read_offset;
+    }
+
+    return (long)total;
 }

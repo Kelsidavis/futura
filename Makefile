@@ -295,6 +295,10 @@ KERNEL_DEPS      += $(GEN_VERSION_HDR)
 KERNEL_DEPS      += $(GEN_FEATURE_HDR)
 KERNEL_DEPS      += $(BOOT_CMDLINE_HEADER)
 
+# Ensure 'all' is the default target even though generated-header rules
+# appear before the 'all:' line.
+.DEFAULT_GOAL := all
+
 $(GEN_VERSION_HDR):
 	@mkdir -p $(GEN_DIR)
 	@echo "/* Auto-generated. Do not edit. */"                     >  $(GEN_VERSION_HDR)
@@ -990,7 +994,7 @@ tools:
 $(OBJ_DIR)/%.o: %.c $(GEN_VERSION_HDR) $(GEN_FEATURE_HDR) $(BOOT_CMDLINE_HEADER) | $(OBJ_DIR)
 	@echo "CC $<"
 	@mkdir -p $(dir $@)
-	@$(CC) $(CFLAGS) -c $< -o $@
+	@$(CC) $(CFLAGS) -MMD -MP -c $< -o $@
 
 # Assemble assembly sources
 $(OBJ_DIR)/%.o: %.S | $(OBJ_DIR)
@@ -1354,10 +1358,14 @@ help:
 	@echo "  make clean                    - Clean build artifacts"
 
 # ============================================================
-#   Dependency Generation (Future)
+#   Automatic Dependency Generation
 # ============================================================
 
-# Automatic dependency generation will be added in Phase 2
+# GCC generates .d files alongside .o files via -MMD -MP.
+# -MMD: Write user-header dependencies to .d (not system headers)
+# -MP:  Add phony targets for each header so deleted headers don't break make
+DEPFILES := $(OBJECTS:.o=.d)
+-include $(DEPFILES)
 .PHONY: third_party-wayland
 third_party-wayland:
 	@$(MAKE) -C third_party/wayland all

@@ -319,6 +319,13 @@ long sys_futex(uint32_t *uaddr, int op, uint32_t val,
      */
     /* TODO Phase 3: Add PI (priority inheritance) futex support */
 
+    /* Strip modifier flags before dispatch — FUTEX_PRIVATE_FLAG (128) indicates
+     * process-private futex (skip global hash table, use per-process structure);
+     * we don't distinguish private vs shared yet so treat them identically.
+     * FUTEX_CLOCK_REALTIME (256) selects the clock for timeouts; we default
+     * to monotonic, so strip it silently for now. */
+    cmd &= ~(FUTEX_PRIVATE_FLAG | FUTEX_CLOCK_REALTIME);
+
     switch (cmd) {
         case FUTEX_WAIT:
         case FUTEX_WAIT_BITSET: {

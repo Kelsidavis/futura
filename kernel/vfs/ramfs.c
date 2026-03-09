@@ -33,6 +33,10 @@ struct ramfs_dirent {
 struct ramfs_node {
     uint64_t magic_guard_before;    /* Guard value to detect overflow into structure */
     uint32_t open_count;            /* Reference count: number of open file descriptors */
+    /* Timestamps in milliseconds since boot (from fut_get_ticks()) */
+    uint64_t atime_ms;              /* Last access time */
+    uint64_t mtime_ms;              /* Last modification time */
+    uint64_t ctime_ms;              /* Last status change time */
     union {
         /* For regular files: data buffer */
         struct {
@@ -492,6 +496,10 @@ static ssize_t ramfs_write(struct fut_vnode *vnode, const void *buf, size_t size
         vnode->size = offset + size;
     }
 
+    /* Update modification and status change timestamps */
+    node->mtime_ms = fut_get_ticks();
+    node->ctime_ms = node->mtime_ms;
+
     /* Validate guards after writing - catch overflow corruption immediately */
     if (validate_ramfs_node(node) != 0) {
         fut_printf("[RAMFS-WRITE] CRITICAL: write operation corrupted node guards!\n");
@@ -676,6 +684,11 @@ static int ramfs_create(struct fut_vnode *dir, const char *name, uint32_t mode, 
     /* Initialize open reference count */
     node->open_count = 0;
 
+    /* Initialize timestamps to current time */
+    node->atime_ms = fut_get_ticks();
+    node->mtime_ms = node->atime_ms;
+    node->ctime_ms = node->atime_ms;
+
     /* Initialize file data */
     node->file.data = NULL;
     node->file.capacity = 0;
@@ -761,6 +774,11 @@ static int ramfs_mkdir(struct fut_vnode *dir, const char *name, uint32_t mode) {
 
     /* Initialize open reference count */
     node->open_count = 0;
+
+    /* Initialize timestamps to current time */
+    node->atime_ms = fut_get_ticks();
+    node->mtime_ms = node->atime_ms;
+    node->ctime_ms = node->atime_ms;
 
     /* Initialize directory */
     node->dir.entries = NULL;
@@ -1046,19 +1064,17 @@ static int ramfs_getattr(struct fut_vnode *vnode, struct fut_stat *stat) {
     stat->st_blksize = 4096;        /* Filesystem block size */
     stat->st_blocks = (stat->st_size + 511) / 512;  /* Number of 512-byte blocks */
 
-    /* Timestamps - using tick-based time to avoid calibration deadlock.
-     * fut_get_time_ns() requires TSC calibration which busy-waits for timer ticks.
-     * If called during a syscall, timer IRQs may not be delivered (due to scheduler
-     * state), causing a deadlock. Use simple tick-based milliseconds instead. */
-    extern uint64_t fut_get_ticks(void);
-    uint64_t now_ms = fut_get_ticks();        /* Milliseconds since boot */
-    uint64_t now_ns = now_ms * 1000000ULL;    /* Convert to nanoseconds */
-    stat->st_atime = now_ns / 1000000000;        /* Access time (seconds) */
-    stat->st_atime_nsec = now_ns % 1000000000;   /* Access time nanoseconds */
-    stat->st_mtime = now_ns / 1000000000;        /* Modification time (seconds) */
-    stat->st_mtime_nsec = now_ns % 1000000000;   /* Modification time nanoseconds */
-    stat->st_ctime = now_ns / 1000000000;        /* Change time (seconds) */
-    stat->st_ctime_nsec = now_ns % 1000000000;   /* Change time nanoseconds */
+    /* Timestamps - stored in ramfs_node as milliseconds since boot.
+     * Using tick-based time to avoid TSC calibration deadlock. */
+    uint64_t atime_ns = node->atime_ms * 1000000ULL;
+    uint64_t mtime_ns = node->mtime_ms * 1000000ULL;
+    uint64_t ctime_ns = node->ctime_ms * 1000000ULL;
+    stat->st_atime = atime_ns / 1000000000;
+    stat->st_atime_nsec = (uint32_t)(atime_ns % 1000000000);
+    stat->st_mtime = mtime_ns / 1000000000;
+    stat->st_mtime_nsec = (uint32_t)(mtime_ns % 1000000000);
+    stat->st_ctime = ctime_ns / 1000000000;
+    stat->st_ctime_nsec = (uint32_t)(ctime_ns % 1000000000);
 
     return 0;
 }
@@ -1404,6 +1420,9 @@ static int ramfs_symlink(struct fut_vnode *parent, const char *linkpath, const c
     /* Initialize link_node */
     link_node->magic_guard_before = RAMFS_NODE_MAGIC;
     link_node->open_count = 0;
+    link_node->atime_ms = fut_get_ticks();
+    link_node->mtime_ms = link_node->atime_ms;
+    link_node->ctime_ms = link_node->atime_ms;
     link_node->link.target = target_buf;
     link_node->magic_guard_after = RAMFS_NODE_MAGIC;
 
@@ -1620,16 +1639,34 @@ static int ramfs_setattr(struct fut_vnode *vnode, const struct fut_stat *stat) {
         return -EIO;
     }
 
-    /* Update mode (permissions + special bits) */
+    /* Update mode: preserve only permission and special bits (not file type) */
     if (stat->st_mode != 0) {
-        vnode->mode = stat->st_mode;
+        vnode->mode = stat->st_mode & 07777;
         fut_printf("[RAMFS-SETATTR] Changed mode for ino=%lu to 0%o\n",
                    vnode->ino, vnode->mode);
     }
 
-    /* Note: atime, mtime, uid, gid are stored in filesystem-specific data (ramfs_node)
-     * The current fut_vnode structure does not include these fields.
-     * For now, we skip updating these to maintain compatibility with the VFS interface. */
+    /* Update uid/gid: sentinel (uint32_t)-1 means "don't change" */
+    if (stat->st_uid != (uint32_t)-1) {
+        vnode->uid = stat->st_uid;
+        fut_printf("[RAMFS-SETATTR] Changed uid for ino=%lu to %u\n",
+                   vnode->ino, vnode->uid);
+    }
+    if (stat->st_gid != (uint32_t)-1) {
+        vnode->gid = stat->st_gid;
+        fut_printf("[RAMFS-SETATTR] Changed gid for ino=%lu to %u\n",
+                   vnode->ino, vnode->gid);
+    }
+
+    /* Update timestamps: sentinel (uint64_t)-1 means "don't change" */
+    if (stat->st_atime != (uint64_t)-1) {
+        /* Convert seconds+nanoseconds to milliseconds for internal storage */
+        node->atime_ms = stat->st_atime * 1000ULL + stat->st_atime_nsec / 1000000ULL;
+    }
+    if (stat->st_mtime != (uint64_t)-1) {
+        node->mtime_ms = stat->st_mtime * 1000ULL + stat->st_mtime_nsec / 1000000ULL;
+        node->ctime_ms = fut_get_ticks();  /* ctime always updates on metadata change */
+    }
 
     return 0;
 }
@@ -1715,6 +1752,9 @@ static int ramfs_mount(const char *device, int flags, void *data, fut_handle_t b
     /* Initialize guard values to detect buffer overflows */
     root_node->magic_guard_before = RAMFS_NODE_MAGIC;
     root_node->open_count = 0;
+    root_node->atime_ms = fut_get_ticks();
+    root_node->mtime_ms = root_node->atime_ms;
+    root_node->ctime_ms = root_node->atime_ms;
     root_node->magic_guard_after = RAMFS_NODE_MAGIC;
 
     /* Initialize root directory */

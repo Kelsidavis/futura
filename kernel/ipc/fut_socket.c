@@ -89,7 +89,7 @@ static inline void socket_pair_cleanup(fut_socket_pair_t *pair) {
 
 #define FUT_SOCKET_MAX 256
 static fut_socket_t *socket_registry[FUT_SOCKET_MAX];
-static uint32_t socket_next_id = 1;
+static volatile uint32_t socket_next_id = 1;
 static fut_spinlock_t socket_lock;
 
 /* ============================================================
@@ -233,7 +233,7 @@ fut_socket_t *fut_socket_create(int family, int type) {
     socket->address_family = family;
     socket->socket_type = type;
     socket->refcount = 1;
-    socket->socket_id = socket_next_id++;
+    socket->socket_id = __atomic_fetch_add(&socket_next_id, 1, __ATOMIC_RELAXED);
     socket->shutdown_rd = false;
     socket->shutdown_wr = false;
 
@@ -592,7 +592,7 @@ int fut_socket_accept(fut_socket_t *listener, fut_socket_t **out_socket) {
     accepted->address_family = listener->address_family;
     accepted->socket_type = listener->socket_type;
     accepted->refcount = 1;
-    accepted->socket_id = socket_next_id++;
+    accepted->socket_id = __atomic_fetch_add(&socket_next_id, 1, __ATOMIC_RELAXED);
     accepted->is_accepted = true;  /* Server side */
     accepted->shutdown_rd = false;
     accepted->shutdown_wr = false;

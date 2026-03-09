@@ -1736,6 +1736,12 @@ int fut_page_ref_dec(phys_addr_t phys) {
 
     while (entry) {
         if (entry->phys == phys) {
+            if (entry->refcount <= 0) {
+                /* Underflow protection: refcount already at 0 or negative */
+                fut_spinlock_release(&page_ref_locks[bucket]);
+                return 0;
+            }
+
             entry->refcount--;
 
             if (entry->refcount <= 1) {

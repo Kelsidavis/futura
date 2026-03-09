@@ -1734,7 +1734,7 @@ int fut_vfs_stat(const char *path, struct fut_stat *stat) {
         stat->st_uid = 0;
         stat->st_gid = 0;
         stat->st_blksize = 4096;
-        stat->st_blocks = (vnode->size + 4095) / 4096;
+        stat->st_blocks = vnode->size / 4096 + (vnode->size % 4096 ? 1 : 0);
 
         /* Set timestamps - atime is current time (file access time),
          * mtime and ctime would ideally come from filesystem metadata.
@@ -1805,7 +1805,7 @@ int fut_vfs_lstat(const char *path, struct fut_stat *stat) {
         stat->st_uid = 0;
         stat->st_gid = 0;
         stat->st_blksize = 4096;
-        stat->st_blocks = (vnode->size + 4095) / 4096;
+        stat->st_blocks = vnode->size / 4096 + (vnode->size % 4096 ? 1 : 0);
 
         /* Set timestamps */
         uint64_t now_ns = fut_get_time_ns();

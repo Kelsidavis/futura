@@ -224,7 +224,7 @@ static void test_pipe_eof(void) {
 }
 
 /* Main test harness thread */
-static void fut_pipe_test_thread(void *arg) {
+void fut_pipe_test_thread(void *arg) {
     (void)arg;
 
     fut_printf("[PIPE-TEST] ========================================\n");

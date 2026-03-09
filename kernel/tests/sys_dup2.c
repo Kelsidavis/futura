@@ -253,7 +253,7 @@ static void test_same_fd(void) {
 }
 
 /* Main test harness thread */
-static void fut_dup2_test_thread(void *arg) {
+void fut_dup2_test_thread(void *arg) {
     (void)arg;
 
     fut_printf("[DUP2-TEST] ========================================\n");

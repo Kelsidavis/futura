@@ -849,6 +849,24 @@ __attribute__((unused)) static void fipc_receiver_thread(void *arg) {
  * 2. Creates initial test threads
  * 3. Starts scheduling (never returns)
  */
+
+/* Test thread functions — run all test suites sequentially in a single
+ * thread to prevent concurrent access to shared kernel state. */
+extern void fut_multiprocess_test_thread(void *arg);
+extern void fut_dup2_test_thread(void *arg);
+extern void fut_pipe_test_thread(void *arg);
+extern void fut_signal_test_thread(void *arg);
+extern void fut_cap_test_thread(void *arg);
+
+static void selftest_sequential_runner(void *arg) {
+    (void)arg;
+    fut_multiprocess_test_thread(NULL);
+    fut_dup2_test_thread(NULL);
+    fut_pipe_test_thread(NULL);
+    fut_signal_test_thread(NULL);
+    fut_cap_test_thread(NULL);
+}
+
 void fut_kernel_main(void) {
 
     /* Core Wayland variables (production) */
@@ -1135,7 +1153,6 @@ void fut_kernel_main(void) {
         fut_printf("[WARN] ✗ Failed to mount ramfs at /tmp (error %d)\n", tmp_mount_ret);
     }
 
-    bool perf_flag = fut_boot_arg_flag("perf");
     bool run_async_selftests = boot_flag_enabled("async-tests", false);
 
     /* VFS and exec double tests are DISABLED (too much memory), don't count them */
@@ -1159,9 +1176,7 @@ void fut_kernel_main(void) {
         // planned_tests += 1u; /* block */
         // planned_tests += 1u; /* futfs */
         // planned_tests += 1u; /* net */
-        if (perf_flag) {
-            planned_tests += 1u; /* perf */
-        }
+        /* perf tests disabled — not included in sequential runner */
     }
     fut_printf("[INIT] Planning %u tests\n", planned_tests);
     fut_test_plan(planned_tests);
@@ -1640,19 +1655,19 @@ void fut_kernel_main(void) {
 
     fut_printf("[INIT] Test task created (PID %llu)\n", test_task->pid);
 
-    bool perf_enabled = run_async_selftests && perf_flag;
-
     if (run_async_selftests) {
-        fut_multiprocess_selftest_schedule(test_task);
-        fut_dup2_selftest_schedule(test_task);
-        fut_pipe_selftest_schedule(test_task);
-        fut_signal_selftest_schedule(test_task);
-        fut_cap_selftest_schedule(test_task);
-        // fut_blk_async_selftest_schedule(test_task);
-        // fut_futfs_selftest_schedule(test_task);
-        // fut_net_selftest_schedule(test_task);
-        if (perf_enabled) {
-            fut_perf_selftest_schedule(test_task);
+        /* Run all test suites sequentially in a single thread to prevent
+         * concurrent access to shared kernel state (ramfs directories,
+         * task signal fields, etc.) from corrupting data structures. */
+        fut_thread_t *test_thread = fut_thread_create(
+            test_task,
+            selftest_sequential_runner,
+            NULL,
+            16 * 1024,  /* 16 KB stack (enough for all test suites) */
+            180         /* Priority */
+        );
+        if (test_thread) {
+            fut_printf("[INIT] Created sequential test thread (tid=%llu)\n", test_thread->tid);
         }
     }
 

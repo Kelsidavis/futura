@@ -267,7 +267,7 @@ static void test_signal_delivery(void) {
 }
 
 /* Main test harness thread */
-static void fut_signal_test_thread(void *arg) {
+void fut_signal_test_thread(void *arg) {
     (void)arg;
 
     fut_printf("[SIGNAL-TEST] ========================================\n");

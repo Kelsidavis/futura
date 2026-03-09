@@ -286,7 +286,7 @@ static void test_shared_file_offset(void) {
 }
 
 /* Main test harness thread */
-static void fut_multiprocess_test_thread(void *arg) {
+void fut_multiprocess_test_thread(void *arg) {
     (void)arg;
 
     fut_printf("[MULTIPROCESS-TEST] ========================================\n");

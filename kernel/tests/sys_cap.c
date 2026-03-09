@@ -318,7 +318,7 @@ static void test_cap_close(void) {
  * Thread entry point for capability tests.
  * This runs the tests in a proper thread context after the scheduler starts.
  */
-static void fut_cap_test_thread(void *arg) {
+void fut_cap_test_thread(void *arg) {
     (void)arg;
 
     fut_printf("[CAP-TEST] ========================================\n");

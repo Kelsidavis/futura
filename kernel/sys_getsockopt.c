@@ -609,15 +609,85 @@ long sys_getsockopt(int sockfd, int level, int optname, void *optval, socklen_t 
             case SO_BROADCAST:
             case SO_OOBINLINE:
             case SO_DONTROUTE:
-            case SO_LINGER:
+                /* Boolean options - return 0 (default: disabled)
+                 * setsockopt accepts these but doesn't enforce them */
+                int_value = 0;
+                value_len = sizeof(int);
+
+                copy_len = (len < value_len) ? len : value_len;
+                if (fut_copy_to_user(optval, &int_value, copy_len) != 0) {
+                    return -EFAULT;
+                }
+                if (fut_copy_to_user(optlen, &value_len, sizeof(socklen_t)) != 0) {
+                    return -EFAULT;
+                }
+
+                fut_printf("[GETSOCKOPT] getsockopt(sockfd=%d, SOL_SOCKET, optname=%d) -> %d (default)\n",
+                           sockfd, optname, int_value);
+                return 0;
+
             case SO_RCVLOWAT:
             case SO_SNDLOWAT:
+                /* Low-water mark - return 1 (POSIX default) */
+                int_value = 1;
+                value_len = sizeof(int);
+
+                copy_len = (len < value_len) ? len : value_len;
+                if (fut_copy_to_user(optval, &int_value, copy_len) != 0) {
+                    return -EFAULT;
+                }
+                if (fut_copy_to_user(optlen, &value_len, sizeof(socklen_t)) != 0) {
+                    return -EFAULT;
+                }
+
+                fut_printf("[GETSOCKOPT] getsockopt(sockfd=%d, SOL_SOCKET, optname=%d) -> %d (default)\n",
+                           sockfd, optname, int_value);
+                return 0;
+
             case SO_RCVTIMEO:
             case SO_SNDTIMEO:
-                /* Phase 2: Not yet implemented */
-                fut_printf("[GETSOCKOPT] getsockopt(sockfd=%d, SOL_SOCKET, optname=%d) -> ENOPROTOOPT (not yet implemented)\n",
-                           sockfd, optname);
-                return -ENOPROTOOPT;
+                /* Timeout - return {0, 0} (no timeout, default) */
+                {
+                    struct {
+                        long tv_sec;
+                        long tv_usec;
+                    } tv_zero = {0, 0};
+                    value_len = sizeof(tv_zero);
+
+                    copy_len = (len < value_len) ? len : value_len;
+                    if (fut_copy_to_user(optval, &tv_zero, copy_len) != 0) {
+                        return -EFAULT;
+                    }
+                    if (fut_copy_to_user(optlen, &value_len, sizeof(socklen_t)) != 0) {
+                        return -EFAULT;
+                    }
+
+                    fut_printf("[GETSOCKOPT] getsockopt(sockfd=%d, SOL_SOCKET, optname=%d) -> {0,0} (no timeout)\n",
+                               sockfd, optname);
+                    return 0;
+                }
+
+            case SO_LINGER:
+                /* Linger - return l_onoff=0, l_linger=0 (no linger, default) */
+                {
+                    struct {
+                        int l_onoff;
+                        int l_linger;
+                    } ling_zero = {0, 0};
+                    value_len = sizeof(ling_zero);
+
+                    copy_len = (len < value_len) ? len : value_len;
+                    if (fut_copy_to_user(optval, &ling_zero, copy_len) != 0) {
+                        return -EFAULT;
+                    }
+                    if (fut_copy_to_user(optlen, &value_len, sizeof(socklen_t)) != 0) {
+                        return -EFAULT;
+                    }
+
+                    fut_printf("[GETSOCKOPT] getsockopt(sockfd=%d, SOL_SOCKET, SO_LINGER) -> {0,0} (no linger)\n",
+                               sockfd);
+                    return 0;
+                }
 
             default:
                 /* Unknown option */

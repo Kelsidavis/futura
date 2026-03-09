@@ -532,7 +532,7 @@ long sys_setsockopt(int sockfd, int level, int optname, const void *optval, sock
             case SO_RCVLOWAT:
             case SO_SNDLOWAT:
                 /* Low-water mark options - require int value
-                 * Validate optlen matches expected size exactly */
+                 * Accept but not enforced (always uses default of 1) */
                 {
                     if (optlen != sizeof(int)) {
                         fut_printf("[SETSOCKOPT] setsockopt(sockfd=%d, SOL_SOCKET, optname=%d, optlen=%u) -> EINVAL "
@@ -544,15 +544,15 @@ long sys_setsockopt(int sockfd, int level, int optname, const void *optval, sock
                     if (fut_copy_from_user(&value, optval, sizeof(int)) != 0) {
                         return -EFAULT;
                     }
-                    fut_printf("[SETSOCKOPT] setsockopt(sockfd=%d, SOL_SOCKET, optname=%d, value=%d) -> ENOPROTOOPT (not yet implemented)\n",
+                    fut_printf("[SETSOCKOPT] setsockopt(sockfd=%d, SOL_SOCKET, optname=%d, value=%d) -> 0 (accepted, not enforced)\n",
                                sockfd, optname, value);
-                    return -ENOPROTOOPT;
+                    return 0;
                 }
 
             case SO_RCVTIMEO:
             case SO_SNDTIMEO:
                 /* Timeout options - require struct timeval
-                 * Validate optlen matches struct timeval size exactly */
+                 * Accept but not enforced (sockets have no timeout) */
                 {
                     struct timeval {
                         long tv_sec;
@@ -568,14 +568,14 @@ long sys_setsockopt(int sockfd, int level, int optname, const void *optval, sock
                     if (fut_copy_from_user(&tv, optval, sizeof(struct timeval)) != 0) {
                         return -EFAULT;
                     }
-                    fut_printf("[SETSOCKOPT] setsockopt(sockfd=%d, SOL_SOCKET, optname=%d, tv_sec=%ld, tv_usec=%ld) -> ENOPROTOOPT (not yet implemented)\n",
+                    fut_printf("[SETSOCKOPT] setsockopt(sockfd=%d, SOL_SOCKET, optname=%d, tv_sec=%ld, tv_usec=%ld) -> 0 (accepted, not enforced)\n",
                                sockfd, optname, tv.tv_sec, tv.tv_usec);
-                    return -ENOPROTOOPT;
+                    return 0;
                 }
 
             case SO_LINGER:
                 /* Linger option - requires struct linger
-                 * Validate optlen matches struct linger size exactly */
+                 * Accept but not enforced (close is always immediate) */
                 {
                     struct linger {
                         int l_onoff;
@@ -591,14 +591,14 @@ long sys_setsockopt(int sockfd, int level, int optname, const void *optval, sock
                     if (fut_copy_from_user(&ling, optval, sizeof(struct linger)) != 0) {
                         return -EFAULT;
                     }
-                    fut_printf("[SETSOCKOPT] setsockopt(sockfd=%d, SOL_SOCKET, SO_LINGER, l_onoff=%d, l_linger=%d) -> ENOPROTOOPT (not yet implemented)\n",
+                    fut_printf("[SETSOCKOPT] setsockopt(sockfd=%d, SOL_SOCKET, SO_LINGER, l_onoff=%d, l_linger=%d) -> 0 (accepted, not enforced)\n",
                                sockfd, ling.l_onoff, ling.l_linger);
-                    return -ENOPROTOOPT;
+                    return 0;
                 }
 
             case SO_TIMESTAMP:
                 /* Timestamp option - requires int value
-                 * Validate optlen matches expected size exactly */
+                 * Accept but not enforced (no timestamp support) */
                 {
                     if (optlen != sizeof(int)) {
                         fut_printf("[SETSOCKOPT] setsockopt(sockfd=%d, SOL_SOCKET, SO_TIMESTAMP, optlen=%u) -> EINVAL "
@@ -610,9 +610,9 @@ long sys_setsockopt(int sockfd, int level, int optname, const void *optval, sock
                     if (fut_copy_from_user(&value, optval, sizeof(int)) != 0) {
                         return -EFAULT;
                     }
-                    fut_printf("[SETSOCKOPT] setsockopt(sockfd=%d, SOL_SOCKET, SO_TIMESTAMP, value=%d) -> ENOPROTOOPT (not yet implemented)\n",
+                    fut_printf("[SETSOCKOPT] setsockopt(sockfd=%d, SOL_SOCKET, SO_TIMESTAMP, value=%d) -> 0 (accepted, not enforced)\n",
                                sockfd, value);
-                    return -ENOPROTOOPT;
+                    return 0;
                 }
 
             default:

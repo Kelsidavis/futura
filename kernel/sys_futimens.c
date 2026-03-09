@@ -228,12 +228,12 @@ long sys_futimens(int fd, const fut_timespec_t *times) {
 
     /* Get current time if needed */
     uint64_t now_ns = 0;
-    if (!times || time_buf[0].tv_nsec == UTIME_NOW || time_buf[1].tv_nsec == UTIME_NOW) {
+    if (!local_times || time_buf[0].tv_nsec == UTIME_NOW || time_buf[1].tv_nsec == UTIME_NOW) {
         now_ns = fut_get_time_ns();
     }
 
     /* Set atime */
-    if (!times || time_buf[0].tv_nsec == UTIME_NOW) {
+    if (!local_times || time_buf[0].tv_nsec == UTIME_NOW) {
         stat_buf.st_atime = now_ns / 1000000000;
         stat_buf.st_atime_nsec = now_ns % 1000000000;
     } else if (time_buf[0].tv_nsec == UTIME_OMIT) {
@@ -246,7 +246,7 @@ long sys_futimens(int fd, const fut_timespec_t *times) {
     }
 
     /* Set mtime */
-    if (!times || time_buf[1].tv_nsec == UTIME_NOW) {
+    if (!local_times || time_buf[1].tv_nsec == UTIME_NOW) {
         stat_buf.st_mtime = now_ns / 1000000000;
         stat_buf.st_mtime_nsec = now_ns % 1000000000;
     } else if (time_buf[1].tv_nsec == UTIME_OMIT) {
@@ -262,7 +262,7 @@ long sys_futimens(int fd, const fut_timespec_t *times) {
     if (!file->vnode->ops || !file->vnode->ops->setattr) {
         fut_printf("[FUTIMENS] futimens(fd=%d [%s], times=%p, op=%s, ino=%lu) -> ENOSYS "
                    "(filesystem doesn't support setattr)\n",
-                   fd, fd_desc, times, operation_type, file->vnode->ino);
+                   local_fd, fd_desc, local_times, operation_type, file->vnode->ino);
         return -ENOSYS;
     }
 

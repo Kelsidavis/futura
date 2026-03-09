@@ -106,3 +106,10 @@ void fut_signal_selftest_schedule(fut_task_t *task);
  * Tests capability-based security enforcement.
  */
 void fut_cap_selftest_schedule(fut_task_t *task);
+
+/**
+ * epoll syscall selftest.
+ * Tests epoll create/close, epoll_ctl ADD/DEL, per-task quota,
+ * and error handling (EBADF, EEXIST, EMFILE).
+ */
+void fut_epoll_selftest_schedule(fut_task_t *task);

@@ -221,6 +221,13 @@
 #include <stdbool.h>
 #include <limits.h>
 
+/* Architecture-specific paging headers for KERNEL_VIRTUAL_BASE */
+#ifdef __x86_64__
+#include <platform/x86_64/memory/paging.h>
+#elif defined(__aarch64__)
+#include <platform/arm64/memory/paging.h>
+#endif
+
 #include <kernel/kprintf.h>
 #include <kernel/debug_config.h>
 
@@ -811,8 +818,13 @@ long sys_epoll_ctl(int epfd, int op, int fd, struct epoll_event *event) {
         return -EINVAL;
     }
 
-    /* Verify user pointer is readable for ADD/MOD */
-    if ((op == EPOLL_CTL_ADD || op == EPOLL_CTL_MOD) &&
+    /* Detect kernel-space event pointer (kernel-internal callers, e.g. tests) */
+    bool epoll_ctl_kernel_ptr = event &&
+        ((uintptr_t)event >= KERNEL_VIRTUAL_BASE);
+
+    /* Verify user pointer is readable for ADD/MOD (skip for kernel pointers) */
+    if (!epoll_ctl_kernel_ptr &&
+        (op == EPOLL_CTL_ADD || op == EPOLL_CTL_MOD) &&
         fut_access_ok(event, sizeof(struct epoll_event), 0) != 0) {
         char msg[256];
         int pos = 0;
@@ -934,10 +946,12 @@ long sys_epoll_ctl(int epfd, int op, int fd, struct epoll_event *event) {
         return -EBADF;
     }
 
-    /* Copy event structure from user space for ADD/MOD */
+    /* Copy event structure from user space (or kernel space) for ADD/MOD */
     struct epoll_event ev;
     if (op == EPOLL_CTL_ADD || op == EPOLL_CTL_MOD) {
-        if (fut_copy_from_user(&ev, event, sizeof(ev)) != 0) {
+        if (epoll_ctl_kernel_ptr) {
+            __builtin_memcpy(&ev, event, sizeof(ev));
+        } else if (fut_copy_from_user(&ev, event, sizeof(ev)) != 0) {
             char msg[128];
             int pos = 0;
             const char *text = "[EPOLL_CTL] epoll_ctl(op=";

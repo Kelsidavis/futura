@@ -857,6 +857,7 @@ extern void fut_dup2_test_thread(void *arg);
 extern void fut_pipe_test_thread(void *arg);
 extern void fut_signal_test_thread(void *arg);
 extern void fut_cap_test_thread(void *arg);
+extern void fut_epoll_test_thread(void *arg);
 
 /* Set by boot thread after all initialization is complete.
  * Test thread waits for this before starting to avoid races with init. */
@@ -878,6 +879,7 @@ static void selftest_sequential_runner(void *arg) {
     fut_pipe_test_thread(NULL);
     fut_signal_test_thread(NULL);
     fut_cap_test_thread(NULL);
+    fut_epoll_test_thread(NULL);
 }
 
 void fut_kernel_main(void) {
@@ -1186,6 +1188,7 @@ void fut_kernel_main(void) {
         planned_tests += 4u; /* pipe: creation, read/write, EPIPE, EOF */
         planned_tests += 5u; /* signal: handler installation, pending, ignored, multiple, delivery */
         planned_tests += 6u; /* capability: open, read, write, rights, invalid, close */
+        planned_tests += 6u; /* epoll: create, close, ctl add/del, quota, EBADF, EEXIST */
         // planned_tests += 1u; /* block */
         // planned_tests += 1u; /* futfs */
         // planned_tests += 1u; /* net */

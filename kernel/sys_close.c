@@ -163,6 +163,14 @@ long sys_close(int fd) {
         close_printf("[CLOSE] close(fd=%d) -> EBADF (negative fd)\n", local_fd);
         return -EBADF;
     }
+
+    /* Check epoll FDs first: they live in a separate namespace (4000-4999)
+     * above task->max_fds, so they must be handled before the bounds check. */
+    if (epoll_try_close(local_fd)) {
+        close_printf("[CLOSE] close(fd=%d) -> 0 (epoll instance deallocated)\n", local_fd);
+        return 0;
+    }
+
     if (local_fd >= task->max_fds) {
         close_printf("[CLOSE] close(fd=%d) -> EBADF (fd >= max_fds %d)\n",
                      local_fd, task->max_fds);
@@ -172,12 +180,6 @@ long sys_close(int fd) {
     /* Auto-remove this FD from all epoll instances before closing.
      * Prevents use-after-free when the FD number is reused later. */
     epoll_notify_fd_close(local_fd);
-
-    /* If this FD is an epoll instance itself, deallocate it */
-    if (epoll_try_close(local_fd)) {
-        close_printf("[CLOSE] close(fd=%d) -> 0 (epoll instance deallocated)\n", local_fd);
-        return 0;
-    }
 
     /* Phase 2: Identify FD type (socket vs file) */
     const char *fd_type;

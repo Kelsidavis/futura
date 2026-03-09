@@ -406,11 +406,10 @@ ssize_t sys_recvfrom(int sockfd, void *buf, size_t len, int flags,
      * - Added buffer size limit (16MB) at line 230-236 ✓
      * - (Completed): Added buf write permission check at line 417-423
      * - (Completed): Added src_addr/addrlen consistency check at line 214-220
-     * - Phase 4 TODO: Implement actual src_addr return (currently stub)
-     * - Phase 4 TODO: Add addrlen TOCTOU protection
-     * - Phase 4 TODO: Add per-process I/O budget tracking
-     * - Phase 4 TODO: Add rate limiting for large receive operations
-     * - See Linux kernel: net/socket.c __sys_recvfrom() for reference
+     * - (Completed): Actual src_addr return for AF_UNIX (lines 500-540)
+     * - Remaining: Add addrlen TOCTOU protection
+     * - Remaining: Add per-process I/O budget tracking
+     * - Remaining: Add rate limiting for large receive operations
      */
 
     /* Security hardening: Limit buffer size to prevent memory exhaustion DoS
@@ -505,7 +504,7 @@ ssize_t sys_recvfrom(int sockfd, void *buf, size_t len, int flags,
                 struct {
                     unsigned short sun_family;
                     char sun_path[108];
-                } peer_addr;
+                } peer_addr = {0};  /* Zero-init to prevent kernel stack info leak */
 
                 peer_addr.sun_family = 1;  /* AF_UNIX */
 

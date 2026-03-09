@@ -362,8 +362,7 @@ long sys_accept(int sockfd, void *addr, socklen_t *addrlen) {
      * - Added addr/addrlen consistency check (line 164-170) ✓
      * - (Completed): Added addr write permission check at line 386-391
      * - (Completed): Added addrlen=0 rejection when addr != NULL at line 386-392
-     * - Phase 4 TODO: Implement actual peer address return (AF_INET, AF_INET6, AF_UNIX)
-     * - See Linux kernel: net/socket.c __sys_accept4() for reference
+     * - (Completed): Peer address return for AF_UNIX (lines 518-584)
      */
     socklen_t len = 0;
     if (local_addrlen != NULL) {
@@ -525,7 +524,7 @@ long sys_accept(int sockfd, void *addr, socklen_t *addrlen) {
             struct {
                 unsigned short sun_family;
                 char sun_path[108];
-            } peer_addr;
+            } peer_addr = {0};  /* Zero-init to prevent kernel stack info leak */
 
             peer_addr.sun_family = 1;  /* AF_UNIX */
 

@@ -197,11 +197,9 @@ ssize_t sys_read(int fd, void *buf, size_t count) {
     const char *size_category = fut_size_category(local_count);
     (void)size_category;  /* Unused when verbose logging disabled */
 
-    /* Phase 2: Sanity check - reject unreasonably large reads */
+    /* Phase 2: Clamp oversized reads to MAX_READ_SIZE (POSIX: short read) */
     if (local_count > MAX_READ_SIZE) {
-        /* fut_printf("[READ] read(fd=%d, count=%zu [%s]) -> EINVAL (exceeds MAX_READ_SIZE limit)\n",
-                   local_fd, local_count, size_category); */
-        return -EINVAL;
+        local_count = MAX_READ_SIZE;
     }
 
     /* Allocate kernel buffer */

@@ -204,11 +204,9 @@ ssize_t sys_write(int fd, const void *buf, size_t count) {
     const char *size_category = fut_size_category(local_count);
     (void)size_category;  /* Unused when verbose logging disabled */
 
-    /* Phase 2: Sanity check - reject unreasonably large writes */
+    /* Phase 2: Clamp oversized writes to MAX_WRITE_SIZE (POSIX: short write) */
     if (local_count > MAX_WRITE_SIZE) {
-        write_printf("[WRITE] write(fd=%d, count=%lu [%s]) -> EINVAL (exceeds MAX_WRITE_SIZE limit)\n",
-                   local_fd, local_count, size_category);
-        return -EINVAL;
+        local_count = MAX_WRITE_SIZE;
     }
 
     /* Allocate kernel buffer */

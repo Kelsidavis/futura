@@ -463,7 +463,7 @@ long sys_bind(int sockfd, const void *addr, socklen_t addrlen) {
     if (path_len > sizeof(sock_path) - 1) {
         bind_printf("[BIND] bind(sockfd=%d, family=%s, path_len=%zu) -> ENAMETOOLONG (max %zu bytes)\n",
                    local_sockfd, family_name, path_len, sizeof(sock_path) - 1);
-        path_len = sizeof(sock_path) - 1;  /* Truncate */
+        return -ENAMETOOLONG;
     }
 
     if (path_len > 0) {

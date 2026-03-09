@@ -2792,6 +2792,11 @@ static int futurafs_free_block(struct futurafs_mount *mount, uint64_t block_num)
     uint64_t byte_index = block_index / 8;
     uint64_t bit_index = block_index % 8;
 
+    /* Check if block is actually allocated before freeing */
+    if ((mount->data_bitmap[byte_index] & (1 << bit_index)) == 0) {
+        return FUTURAFS_EINVAL;  /* Double-free detected */
+    }
+
     mount->data_bitmap[byte_index] &= ~(1 << bit_index);
     mount->sb->free_blocks++;
     mount->dirty = true;

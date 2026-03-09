@@ -336,12 +336,32 @@ long sys_clock_nanosleep(int clock_id, int flags,
     #define TIMER_ABSTIME 1
     const char *mode = (local_flags & TIMER_ABSTIME) ? "absolute" : "relative";
 
-    /* Only support relative time sleep */
+    /* Phase 2: Implement absolute time sleep */
     if (local_flags & TIMER_ABSTIME) {
-        clock_nanosleep_printf("[CLOCK_NANOSLEEP] clock_nanosleep(clock_id=%s, mode=%s, sec=%lld, nsec=%lld) -> EINVAL "
-                   "(absolute time not yet supported)\n",
-                   clock_name, mode, request.tv_sec, request.tv_nsec);
-        return -EINVAL;
+        uint64_t now_ns = fut_get_time_ns();
+        uint64_t target_ns = (uint64_t)request.tv_sec * 1000000000ULL
+                           + (uint64_t)request.tv_nsec;
+
+        if (now_ns >= target_ns) {
+            clock_nanosleep_printf("[CLOCK_NANOSLEEP] clock_nanosleep(clock_id=%s, mode=%s, "
+                       "target=%lld.%09lld) -> 0 (time already passed)\n",
+                       clock_name, mode, request.tv_sec, request.tv_nsec);
+            return 0;
+        }
+
+        uint64_t remain_ns = target_ns - now_ns;
+        fut_timespec_t rel = {
+            .tv_sec  = (long long)(remain_ns / 1000000000ULL),
+            .tv_nsec = (long long)(remain_ns % 1000000000ULL),
+        };
+
+        clock_nanosleep_printf("[CLOCK_NANOSLEEP] clock_nanosleep(clock_id=%s, mode=%s, "
+                   "target=%lld.%09lld, remain=%lld.%09lld) -> sleeping\n",
+                   clock_name, mode, request.tv_sec, request.tv_nsec,
+                   rel.tv_sec, rel.tv_nsec);
+
+        /* For absolute sleep, rem is not returned (POSIX) */
+        return sys_nanosleep(&rel, NULL);
     }
 
     /* Delegate to regular nanosleep for relative sleep */

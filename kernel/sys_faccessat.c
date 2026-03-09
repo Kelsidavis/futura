@@ -225,20 +225,16 @@ long sys_faccessat(int dirfd, const char *pathname, int mode, int flags) {
     /* If pathname is absolute, use it directly */
     if (path_buf[0] == '/') {
         /* Copy absolute path */
-        size_t i;
-        for (i = 0; i < sizeof(resolved_path) - 1 && path_buf[i] != '\0'; i++) {
-            resolved_path[i] = path_buf[i];
-        }
-        resolved_path[i] = '\0';
+        size_t len = strnlen(path_buf, sizeof(resolved_path) - 1);
+        memcpy(resolved_path, path_buf, len);
+        resolved_path[len] = '\0';
     }
     /* If dirfd is AT_FDCWD, use current working directory */
     else if (local_dirfd == AT_FDCWD) {
         /* For now, use relative path as-is (CWD resolution happens in VFS) */
-        size_t i;
-        for (i = 0; i < sizeof(resolved_path) - 1 && path_buf[i] != '\0'; i++) {
-            resolved_path[i] = path_buf[i];
-        }
-        resolved_path[i] = '\0';
+        size_t len = strnlen(path_buf, sizeof(resolved_path) - 1);
+        memcpy(resolved_path, path_buf, len);
+        resolved_path[len] = '\0';
     }
     /* Dirfd is a real FD - resolve via VFS */
     else {
@@ -285,11 +281,9 @@ long sys_faccessat(int dirfd, const char *pathname, int mode, int flags) {
 
         /* For Phase 2, use the pathname relative to the directory vnode
          * The VFS layer will handle the lookup from this vnode */
-        size_t i;
-        for (i = 0; i < sizeof(resolved_path) - 1 && path_buf[i] != '\0'; i++) {
-            resolved_path[i] = path_buf[i];
-        }
-        resolved_path[i] = '\0';
+        size_t len = strnlen(path_buf, sizeof(resolved_path) - 1);
+        memcpy(resolved_path, path_buf, len);
+        resolved_path[len] = '\0';
     }
 
     /* Determine which IDs to use for access check */

@@ -9,9 +9,13 @@
 
 #include <kernel/fut_vfs.h>
 #include <kernel/fut_task.h>
+#include <kernel/fut_waitq.h>
 #include <kernel/errno.h>
 
 #include <kernel/kprintf.h>
+
+/* Maximum blocking retries to prevent infinite loops */
+#define FUT_LOCK_MAX_WAIT_ITERATIONS 1000
 
 /* Lock type constants */
 #define FUT_LOCK_NONE       0
@@ -39,8 +43,13 @@ int fut_vnode_lock_shared(struct fut_vnode *vnode, uint32_t pid, int nonblock) {
         if (nonblock) {
             return -EAGAIN;
         }
-        /* Blocking not yet implemented */
-        return -EAGAIN;
+        /* Block until exclusive lock is released */
+        int iters = 0;
+        while (vnode->lock_type == FUT_LOCK_EXCLUSIVE && vnode->lock_owner_pid != pid) {
+            if (iters++ >= FUT_LOCK_MAX_WAIT_ITERATIONS)
+                return -EBUSY;
+            fut_waitq_sleep_locked(&vnode->lock_waitq, NULL, FUT_THREAD_BLOCKED);
+        }
     }
 
     /* Acquire shared lock */
@@ -80,20 +89,19 @@ int fut_vnode_lock_exclusive(struct fut_vnode *vnode, uint32_t pid, int nonblock
     }
 
     /* Check if any locks are held by other processes */
-    if (vnode->lock_type == FUT_LOCK_SHARED) {
+    if (vnode->lock_type == FUT_LOCK_SHARED ||
+        (vnode->lock_type == FUT_LOCK_EXCLUSIVE && vnode->lock_owner_pid != pid)) {
         if (nonblock) {
             return -EAGAIN;
         }
-        /* Blocking not yet implemented */
-        return -EAGAIN;
-    }
-
-    if (vnode->lock_type == FUT_LOCK_EXCLUSIVE && vnode->lock_owner_pid != pid) {
-        if (nonblock) {
-            return -EAGAIN;
+        /* Block until all conflicting locks are released */
+        int iters = 0;
+        while (vnode->lock_type == FUT_LOCK_SHARED ||
+               (vnode->lock_type == FUT_LOCK_EXCLUSIVE && vnode->lock_owner_pid != pid)) {
+            if (iters++ >= FUT_LOCK_MAX_WAIT_ITERATIONS)
+                return -EBUSY;
+            fut_waitq_sleep_locked(&vnode->lock_waitq, NULL, FUT_THREAD_BLOCKED);
         }
-        /* Blocking not yet implemented */
-        return -EAGAIN;
     }
 
     /* Acquire exclusive lock */
@@ -131,6 +139,7 @@ int fut_vnode_unlock(struct fut_vnode *vnode, uint32_t pid) {
             vnode->lock_type = FUT_LOCK_NONE;
             vnode->lock_count = 0;
             vnode->lock_owner_pid = 0;
+            fut_waitq_wake_all(&vnode->lock_waitq);
         }
         return 0;
     }
@@ -142,6 +151,7 @@ int fut_vnode_unlock(struct fut_vnode *vnode, uint32_t pid) {
             if (vnode->lock_count == 0) {
                 vnode->lock_type = FUT_LOCK_NONE;
                 vnode->lock_owner_pid = 0;
+                fut_waitq_wake_all(&vnode->lock_waitq);
             }
         }
         return 0;
@@ -165,6 +175,7 @@ void fut_vnode_lock_init(struct fut_vnode *vnode) {
     vnode->lock_type = FUT_LOCK_NONE;
     vnode->lock_count = 0;
     vnode->lock_owner_pid = 0;
+    fut_waitq_init(&vnode->lock_waitq);
 }
 
 /**

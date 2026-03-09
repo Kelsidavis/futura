@@ -9,6 +9,7 @@
 #include <kernel/fut_futurafs.h>
 #include <kernel/fut_memory.h>
 #include <kernel/fut_vfs.h>
+#include <kernel/fut_lock.h>
 #include <kernel/fut_blockdev.h>
 #include <kernel/fut_timer.h>
 #include <kernel/kprintf.h>
@@ -2936,9 +2937,7 @@ static int futurafs_create_vnode(struct fut_mount *vfs_mount,
     vnode->gid = info->disk_inode.gid;
     vnode->parent = NULL;
     vnode->name = NULL;
-    vnode->lock_type = 0;
-    vnode->lock_count = 0;
-    vnode->lock_owner_pid = 0;
+    fut_vnode_lock_init(vnode);
     vnode->ops = &futurafs_vnode_ops;
 
     *out = vnode;
@@ -3921,9 +3920,7 @@ static int futurafs_mount_impl(const char *device, int flags, void *data, fut_ha
     root_vnode->gid = root_info->disk_inode.gid;
     root_vnode->parent = NULL;
     root_vnode->name = NULL;
-    root_vnode->lock_type = 0;
-    root_vnode->lock_count = 0;
-    root_vnode->lock_owner_pid = 0;
+    fut_vnode_lock_init(root_vnode);
     root_vnode->ops = &futurafs_vnode_ops;
 
     vfs_mount->root = root_vnode;

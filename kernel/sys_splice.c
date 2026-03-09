@@ -17,6 +17,9 @@
 #include <kernel/errno.h>
 #include <kernel/uaccess.h>
 #include <kernel/syscalls.h>
+#include <kernel/fut_vfs.h>
+#include <kernel/fut_memory.h>
+#include <kernel/chrdev.h>
 #include <stdint.h>
 #include <stddef.h>
 
@@ -174,13 +177,125 @@ long sys_splice(int fd_in, int64_t *off_in, int fd_out, int64_t *off_out,
         }
     }
 
-    /* Return -ENOSYS until properly implemented.
-     * Returning a fake byte count is dangerous: callers believe data was
-     * transferred when nothing happened, causing silent data loss. */
-    fut_printf("[SPLICE] splice(fd_in=%d, fd_out=%d, len=%zu, pid=%d) -> ENOSYS (not implemented)\n",
-               local_fd_in, local_fd_out, local_len, task->pid);
+    /* Get source and destination file structures */
+    if (local_fd_in >= task->max_fds || local_fd_out >= task->max_fds) {
+        return -EBADF;
+    }
 
-    return -ENOSYS;
+    struct fut_file *file_in  = vfs_get_file_from_task(task, local_fd_in);
+    struct fut_file *file_out = vfs_get_file_from_task(task, local_fd_out);
+
+    if (!file_in || !file_out) {
+        fut_printf("[SPLICE] splice(fd_in=%d, fd_out=%d) -> EBADF (fd not open)\n",
+                   local_fd_in, local_fd_out);
+        return -EBADF;
+    }
+
+    bool in_is_pipe  = (file_in->chr_ops  != NULL && file_in->chr_ops->read  != NULL);
+    bool out_is_pipe = (file_out->chr_ops != NULL && file_out->chr_ops->write != NULL);
+
+    /* POSIX: at least one fd must be a pipe */
+    if (!in_is_pipe && !out_is_pipe) {
+        fut_printf("[SPLICE] splice(fd_in=%d, fd_out=%d) -> EINVAL (neither fd is a pipe)\n",
+                   local_fd_in, local_fd_out);
+        return -EINVAL;
+    }
+
+    /* ESPIPE: offset not allowed for pipes */
+    if (local_off_in  && in_is_pipe)  return -ESPIPE;
+    if (local_off_out && out_is_pipe) return -ESPIPE;
+
+    /* Zero-length transfer is a valid no-op */
+    if (local_len == 0)
+        return 0;
+
+    /* Determine effective read offset */
+    int64_t read_off  = 0;
+    int64_t write_off = 0;
+    if (local_off_in) {
+        if (fut_copy_from_user(&read_off,  local_off_in,  sizeof(int64_t)) != 0) return -EFAULT;
+    } else {
+        read_off = (int64_t)file_in->offset;
+    }
+    if (local_off_out) {
+        if (fut_copy_from_user(&write_off, local_off_out, sizeof(int64_t)) != 0) return -EFAULT;
+    } else {
+        write_off = (int64_t)file_out->offset;
+    }
+
+    /* Transfer via a temporary kernel buffer (PIPE_BUF_SIZE chunks) */
+    const size_t CHUNK = 4096;
+    uint8_t *kbuf = (uint8_t *)fut_malloc(CHUNK);
+    if (!kbuf) return -ENOMEM;
+
+    size_t transferred = 0;
+
+    while (transferred < local_len) {
+        size_t want = local_len - transferred;
+        if (want > CHUNK) want = CHUNK;
+
+        /* Read from source */
+        ssize_t nread;
+        if (in_is_pipe) {
+            off_t pos = (off_t)read_off;
+            nread = file_in->chr_ops->read(file_in->chr_inode,
+                                           file_in->chr_private,
+                                           kbuf, want, &pos);
+            read_off = (int64_t)pos;
+        } else {
+            /* Regular file read at current offset */
+            nread = file_in->vnode->ops->read(file_in->vnode, kbuf, want,
+                                               (uint64_t)read_off);
+            if (nread > 0) read_off += nread;
+        }
+
+        if (nread < 0) {
+            if (transferred > 0) break;  /* Return partial on error */
+            fut_free(kbuf);
+            return (long)nread;
+        }
+        if (nread == 0) break;  /* EOF or pipe empty (non-blocking) */
+
+        /* Write to destination */
+        ssize_t nwritten;
+        if (out_is_pipe) {
+            off_t pos = (off_t)write_off;
+            nwritten = file_out->chr_ops->write(file_out->chr_inode,
+                                                file_out->chr_private,
+                                                kbuf, (size_t)nread, &pos);
+            write_off = (int64_t)pos;
+        } else {
+            nwritten = file_out->vnode->ops->write(file_out->vnode, kbuf,
+                                                    (size_t)nread,
+                                                    (uint64_t)write_off);
+            if (nwritten > 0) write_off += nwritten;
+        }
+
+        if (nwritten < 0) {
+            if (transferred > 0) break;
+            fut_free(kbuf);
+            return (long)nwritten;
+        }
+
+        transferred += (size_t)nwritten;
+    }
+
+    fut_free(kbuf);
+
+    /* Update file offsets */
+    if (!local_off_in)  file_in->offset  = (uint64_t)read_off;
+    if (!local_off_out) file_out->offset = (uint64_t)write_off;
+
+    /* Write back updated offsets to userspace if caller provided pointers */
+    if (local_off_in  && fut_copy_to_user(local_off_in,  &read_off,  sizeof(int64_t)) != 0)
+        return -EFAULT;
+    if (local_off_out && fut_copy_to_user(local_off_out, &write_off, sizeof(int64_t)) != 0)
+        return -EFAULT;
+
+    fut_printf("[SPLICE] splice(fd_in=%d, fd_out=%d, len=%zu, pid=%d) -> %zu bytes transferred\n",
+               local_fd_in, local_fd_out, local_len, task->pid, transferred);
+
+    return (long)transferred;
 }
 
 /**

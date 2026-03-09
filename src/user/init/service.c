@@ -325,37 +325,47 @@ int init_service_start_all(void) {
 }
 
 /**
- * Monitor running services and respawn if needed.
+ * Monitor running services — reap exited children and respawn if needed.
  */
 void init_service_monitor(void) {
-    /* Phase 3: Would check for dead processes:
-     * 1. Use waitpid(-1, WNOHANG) to check for exited children
-     * 2. Find corresponding service by PID
-     * 3. If service has respawn=true, respawn it
-     * 4. Track respawn count to prevent restart loops
-     */
+    /* Reap any exited children with WNOHANG */
+    int wstatus = 0;
+    long exited_pid = sys_wait4_call(-1, &wstatus, 1 /* WNOHANG */, 0);
 
+    if (exited_pid <= 0) {
+        return;  /* No exited children */
+    }
+
+    /* Find which service this PID belongs to */
     for (int i = 0; i < num_services; i++) {
         struct fui_service *service = services[i];
-        if (!service) continue;
+        if (!service || service->pid != (int)exited_pid) continue;
 
-        /* Check if service died unexpectedly */
-        if (service->state == SERVICE_RUNNING && service->pid == 0) {
-            /* Process died */
-            if (service->respawn) {
-                /* Check respawn limit */
-                struct respawn_tracker *tracker = &respawn_trackers[i];
-                /* Phase 3: Would check time window and respawn count */
-                tracker->count++;
+        int exit_code = (wstatus >> 8) & 0xFF;
+        printf("[SERVICE] %s (pid %d) exited with status %d\n",
+               service->name, service->pid, exit_code);
 
-                /* Respawn the service */
+        service->exit_code = exit_code;
+        service->pid = 0;
+
+        if (service->respawn) {
+            struct respawn_tracker *tracker = &respawn_trackers[i];
+            tracker->count++;
+
+            if (tracker->count > service->respawn_limit) {
+                printf("[SERVICE] %s exceeded respawn limit (%d), marking failed\n",
+                       service->name, service->respawn_limit);
+                service->state = SERVICE_FAILED;
+            } else {
+                printf("[SERVICE] Respawning %s (attempt %d/%d)\n",
+                       service->name, tracker->count, service->respawn_limit);
                 service->state = SERVICE_STOPPED;
                 init_service_start(service->name);
-            } else {
-                /* Don't respawn - mark as failed */
-                service->state = SERVICE_FAILED;
             }
+        } else {
+            service->state = SERVICE_STOPPED;
         }
+        break;
     }
 }
 

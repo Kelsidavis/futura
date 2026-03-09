@@ -672,6 +672,26 @@ long sys_execve(const char *pathname, char *const argv[], char *const envp[]) {
         }
     }
 
+    /* POSIX: Reset caught signal handlers to SIG_DFL on exec.
+     * Signals set to SIG_IGN remain ignored. Signals set to custom
+     * handlers are reset to default since the handler code no longer
+     * exists in the new address space. Signal mask is preserved. */
+    for (int i = 0; i < _NSIG; i++) {
+        if (task->signal_handlers[i] != SIG_DFL &&
+            task->signal_handlers[i] != SIG_IGN) {
+            task->signal_handlers[i] = SIG_DFL;
+            task->signal_handler_masks[i] = 0;
+            task->signal_handler_flags[i] = 0;
+        }
+    }
+    /* Clear pending signals and alternate signal stack on exec */
+    task->pending_signals = 0;
+    task->sig_altstack.ss_sp = NULL;
+    task->sig_altstack.ss_flags = SS_DISABLE;
+    task->sig_altstack.ss_size = 0;
+    /* Clear set_tid_address (child thread tracking is per-address-space) */
+    task->clear_child_tid = NULL;
+
     /* Phase 2: Detailed pre-exec logging (use kernel_pathname for SMAP safety) */
     char msg[256];
     int pos = 0;

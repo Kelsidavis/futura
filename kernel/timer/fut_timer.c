@@ -42,11 +42,12 @@ struct fut_task;
 static _Atomic uint64_t system_ticks = 0;
 
 /* Public getter for system tick count.
- * Weak: platforms (e.g., ARM64) may override with their own timer source. */
-__attribute__((weak))
+ * Only compiled for x86_64 — ARM64 provides its own in platform_init.c. */
+#if !defined(__aarch64__)
 uint64_t fut_timer_get_ticks(void) {
     return atomic_load_explicit(&system_ticks, memory_order_relaxed);
 }
+#endif
 
 /* Sleep queue (sorted by wake_time) */
 static fut_thread_t *sleep_queue_head = nullptr;

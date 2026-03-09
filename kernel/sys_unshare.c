@@ -155,10 +155,12 @@ long sys_unshare(unsigned long flags) {
         operation_desc = "mixed resources";
     }
 
-    /* Phase 1: Accept unshare request */
-    fut_printf("[UNSHARE] unshare(flags=%s (0x%lx), pid=%d) -> 0 "
-               "(Phase 3: Namespace creation with operation categorization)\n",
+    /* Return -ENOSYS: namespace isolation is not yet implemented.
+     * Returning 0 here would be a security issue — callers would
+     * believe they are isolated when they are not. */
+    fut_printf("[UNSHARE] unshare(flags=%s (0x%lx), pid=%d) -> ENOSYS "
+               "(namespace creation not yet implemented)\n",
                operation_desc, flags, task->pid);
 
-    return 0;
+    return -ENOSYS;
 }

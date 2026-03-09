@@ -251,7 +251,21 @@ long sys_mremap(void *old_address, size_t old_size, size_t new_size,
     }
     flags_str[flags_idx] = '\0';
 
-    fut_printf("[MREMAP] mremap(%p, %zu->%zu pages, %s) -> %p (%s, Phase 3: shrinking and same-size no-op implemented)\n",
+    /* Reject operations we cannot perform: growing and relocating */
+    if (new_aligned > old_aligned) {
+        fut_printf("[MREMAP] mremap(%p, %zu->%zu pages, %s) -> ENOMEM (%s not implemented)\n",
+                   old_address, old_pages, new_pages, flags_str, operation);
+        return -ENOMEM;
+    }
+
+    if (flags & MREMAP_FIXED) {
+        fut_printf("[MREMAP] mremap(%p, %zu->%zu pages, %s) -> ENOSYS (MREMAP_FIXED not implemented)\n",
+                   old_address, old_pages, new_pages, flags_str);
+        return -ENOSYS;
+    }
+
+    /* Same size or shrinking: return old address (safe no-op / partial no-op) */
+    fut_printf("[MREMAP] mremap(%p, %zu->%zu pages, %s) -> %p (%s)\n",
                old_address, old_pages, new_pages, flags_str, old_address, operation);
 
     /* Phase 2: Parameters validated and logged

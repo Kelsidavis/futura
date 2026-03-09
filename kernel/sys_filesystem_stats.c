@@ -16,6 +16,7 @@
 
 #include <kernel/kprintf.h>
 #include <kernel/uaccess.h>
+#include <kernel/fut_timer.h>
 
 /* Filesystem type constants */
 #define FUT_TMPFS_MAGIC   0x01021994
@@ -380,37 +381,42 @@ long sys_sysinfo(struct fut_linux_sysinfo *info) {
         return -EFAULT;
     }
 
-    /* Phase 1: Return stub system information
-     * Phase 2: Get real values from kernel memory manager and scheduler
-     * Phase 3: Implement swap statistics and accurate load averages
-     */
+    /* Phase 2: Fill with real kernel statistics */
+    const uint64_t PAGE_SIZE = 4096;
+    uint64_t total_pages = fut_pmm_total_pages();
+    uint64_t free_pages  = fut_pmm_free_pages();
+    uint64_t uptime_ms   = fut_get_ticks();
+    uint32_t nprocs      = fut_task_get_global_count();
 
-    /* Stub data: reasonable values for a small embedded system */
-    struct fut_linux_sysinfo stub_info = {
-        .uptime = 3600,           /* 1 hour uptime */
-        .loads = {65536, 65536, 65536},  /* Load averages (1.0, 1.0, 1.0) in fixed-point */
-        .totalram = 1073741824,   /* 1GB total RAM */
-        .freeram = 536870912,     /* 512MB free RAM */
-        .sharedram = 0,           /* No shared memory */
-        .bufferram = 16777216,    /* 16MB in buffers */
-        .totalswap = 0,           /* No swap */
-        .freeswap = 0,
-        .procs = 5,               /* 5 processes */
-        .pad = 0,
-        .totalhigh = 0,           /* No high memory on ARM64 */
-        .freehigh = 0,
-        .mem_unit = 1,            /* Memory units in bytes */
+    struct fut_linux_sysinfo real_info = {
+        .uptime    = (long)(uptime_ms / 1000),
+        .loads     = {0, 0, 0},        /* Load average not yet tracked */
+        .totalram  = total_pages * PAGE_SIZE,
+        .freeram   = free_pages  * PAGE_SIZE,
+        .sharedram = 0,
+        .bufferram = 0,
+        .totalswap = 0,                /* No swap on ramfs */
+        .freeswap  = 0,
+        .procs     = (unsigned short)nprocs,
+        .pad       = 0,
+        .totalhigh = 0,
+        .freehigh  = 0,
+        .mem_unit  = 1,
     };
 
     /* Copy to userspace buffer */
-    if (fut_copy_to_user(info, &stub_info, sizeof(struct fut_linux_sysinfo)) != 0) {
+    if (fut_copy_to_user(info, &real_info, sizeof(struct fut_linux_sysinfo)) != 0) {
         fut_printf("[SYSINFO] sysinfo(pid=%d) -> EFAULT (copy_to_user failed)\n", task->pid);
         return -EFAULT;
     }
 
     fut_printf("[SYSINFO] sysinfo(pid=%d) -> 0 "
-               "(uptime=3600s, totalram=1GB, freeram=512MB, procs=5, Phase 1 stub)\n",
-               task->pid);
+               "(uptime=%lus, totalram=%lluMB, freeram=%lluMB, procs=%u)\n",
+               task->pid,
+               (unsigned long)(uptime_ms / 1000),
+               (unsigned long long)(total_pages * PAGE_SIZE / (1024 * 1024)),
+               (unsigned long long)(free_pages  * PAGE_SIZE / (1024 * 1024)),
+               nprocs);
 
     return 0;
 }

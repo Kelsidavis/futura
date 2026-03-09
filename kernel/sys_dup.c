@@ -238,7 +238,7 @@ long sys_dup(int oldfd) {
     }
 
     /* Increment reference count on the file since we're creating another reference */
-    old_file->refcount++;
+    vfs_file_ref(old_file);
 
     /* Assign the file to the new FD */
     task->fd_table[newfd] = old_file;

@@ -291,9 +291,9 @@ void fut_task_destroy(fut_task_t *task) {
         for (int i = 0; i < task->max_fds; i++) {
             if (task->fd_table[i] != NULL) {
                 struct fut_file *file = task->fd_table[i];
-                /* Decrement refcount - VFS layer manages actual cleanup */
+                /* Atomically decrement refcount - VFS layer manages actual cleanup */
                 if (file->refcount > 0) {
-                    file->refcount--;
+                    __atomic_sub_fetch(&file->refcount, 1, __ATOMIC_ACQ_REL);
                 }
                 task->fd_table[i] = NULL;
             }

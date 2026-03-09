@@ -324,7 +324,7 @@ void fut_socket_unref(fut_socket_t *socket) {
                 socket->pair->fd_queue[head] = NULL;
                 socket->pair->fd_queue_head = (head + 1) % FUT_SOCKET_FD_QUEUE_MAX;
                 socket->pair->fd_queue_count--;
-                if (f && f->refcount > 0) f->refcount--;
+                if (f && f->refcount > 0) __atomic_sub_fetch(&f->refcount, 1, __ATOMIC_ACQ_REL);
             }
             if (socket->pair->send_buf) {
                 fut_free(socket->pair->send_buf);

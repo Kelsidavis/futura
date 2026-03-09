@@ -709,7 +709,7 @@ long sys_fcntl(int fd, int cmd, uint64_t arg) {
          * - CVE-2016-0728: Linux keyring use-after-free via refcount race
          * - CVE-2017-6074: Linux DCCP use-after-free via early free
          */
-        file->refcount++;
+        vfs_file_ref(file);
 
         /* Phase 2: Categorize minfd range */
         const char *minfd_category = fut_fd_category(minfd);
@@ -726,7 +726,7 @@ long sys_fcntl(int fd, int cmd, uint64_t arg) {
         /* Check against task's actual max_fds */
         if (newfd >= (int)task->max_fds) {
             /* Decrement refcount on failure path */
-            file->refcount--;
+            __atomic_sub_fetch(&file->refcount, 1, __ATOMIC_ACQ_REL);
             fut_printf("[FCNTL] fcntl(fd=%d [%s], cmd=%s [%s], minfd=%d [%s]) -> EMFILE "
                        "(no FDs available >= minfd (reached task max_fds=%u))\n",
                        local_fd, fd_category, cmd_name, cmd_category, minfd, minfd_category, task->max_fds);
@@ -740,7 +740,7 @@ long sys_fcntl(int fd, int cmd, uint64_t arg) {
         int ret = vfs_alloc_specific_fd_for_task(task, newfd, file);
         if (ret < 0) {
             /* Failed to allocate, decrement ref count */
-            file->refcount--;
+            __atomic_sub_fetch(&file->refcount, 1, __ATOMIC_ACQ_REL);
 
             /* Phase 2: Detailed error logging */
             const char *error_desc;

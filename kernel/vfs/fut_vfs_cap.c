@@ -107,7 +107,7 @@ fut_handle_t fut_vfs_open_cap(const char *path, int flags, int mode) {
     }
 
     /* Increment file refcount since object now holds a reference */
-    file->refcount++;
+    vfs_file_ref(file);
 
     return handle;
 }
@@ -412,10 +412,10 @@ int fut_vfs_close_cap(fut_handle_t handle) {
 
     /* Decrement our reference to the file */
     if (file && file->refcount > 0) {
-        file->refcount--;
+        uint32_t remaining = __atomic_sub_fetch(&file->refcount, 1, __ATOMIC_ACQ_REL);
 
         /* If this was the last reference, close the file properly */
-        if (file->refcount == 0) {
+        if (remaining == 0) {
             if (file->chr_ops && file->chr_ops->release) {
                 file->chr_ops->release(file->chr_inode, file->chr_private);
             } else if (file->vnode) {

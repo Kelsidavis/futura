@@ -151,14 +151,11 @@ static void close_fd_in_task(fut_task_t *task, int fd) {
 
     task->fd_table[fd] = NULL;
 
-    /* Decrement refcount and clean up on last reference */
-    if (file->refcount > 1) {
-        file->refcount--;
+    /* Atomically decrement refcount and clean up on last reference */
+    uint32_t remaining = __atomic_sub_fetch(&file->refcount, 1, __ATOMIC_ACQ_REL);
+    if (remaining > 0) {
         return;
     }
-
-    /* Last reference — release resources and free file struct */
-    file->refcount = 0;
 
     if (file->chr_ops) {
         if (file->chr_ops->release) {
@@ -1090,7 +1087,7 @@ int fut_vfs_readdir_fd(int fd, uint64_t *cookie, struct fut_vdirent *dirent) {
 
 void vfs_file_ref(struct fut_file *file) {
     if (file) {
-        file->refcount++;
+        __atomic_add_fetch(&file->refcount, 1, __ATOMIC_ACQ_REL);
     }
 }
 
@@ -1635,18 +1632,17 @@ int fut_vfs_close(int fd) {
         task->fd_table[fd] = NULL;
     }
 
-    /* Decrement refcount. Only perform resource cleanup (vnode release,
+    /* Atomically decrement refcount. Only perform resource cleanup (vnode release,
      * chr_ops release, file struct free) on the LAST reference.
      * Without this guard, dup'd FDs would double-close vnodes and
-     * cause use-after-free when the second FD is closed. */
-    if (file->refcount > 1) {
-        file->refcount--;
-        VFSDBG("[vfs-close] refcount decremented to %u, skipping cleanup\n", file->refcount);
+     * cause use-after-free when the second FD is closed.
+     * Uses atomic decrement to prevent races when two threads close
+     * dup'd FDs concurrently — avoids both resource leaks and double-frees. */
+    uint32_t old_ref = __atomic_sub_fetch(&file->refcount, 1, __ATOMIC_ACQ_REL);
+    if (old_ref > 0) {
+        VFSDBG("[vfs-close] refcount decremented to %u, skipping cleanup\n", old_ref);
         return 0;
     }
-
-    /* Last reference — perform full cleanup */
-    file->refcount = 0;
 
     if (file->chr_ops) {
         VFSDBG("[vfs-close] chr_ops path\n");
@@ -1710,6 +1706,14 @@ int64_t fut_vfs_lseek(int fd, int64_t offset, int whence) {
         break;
     default:
         return -EINVAL;
+    }
+
+    /* Validate resulting offset is non-negative and representable in off_t.
+     * Catches: negative SEEK_SET offset, SEEK_CUR/SEEK_END arithmetic underflow
+     * (negative result wraps to large uint64_t), and overflow past INT64_MAX.
+     * This fulfills the contract documented in sys_lseek.c Phase 5. */
+    if (new_offset > (uint64_t)INT64_MAX) {
+        return -EOVERFLOW;
     }
 
     file->offset = new_offset;
@@ -1891,7 +1895,7 @@ void fut_vnode_ref(struct fut_vnode *vnode) {
         return;
     }
 
-    vnode->refcount++;
+    __atomic_add_fetch(&vnode->refcount, 1, __ATOMIC_ACQ_REL);
     VFSDBG("[vnode-ref] vnode=%p ino=%llu refcount now %u\n",
            (void*)vnode, vnode->ino, vnode->refcount);
 }
@@ -1908,12 +1912,12 @@ void fut_vnode_unref(struct fut_vnode *vnode) {
         return;
     }
 
-    vnode->refcount--;
+    uint32_t remaining = __atomic_sub_fetch(&vnode->refcount, 1, __ATOMIC_ACQ_REL);
     VFSDBG("[vnode-unref] vnode=%p ino=%llu refcount now %u\n",
-           (void*)vnode, vnode->ino, vnode->refcount);
+           (void*)vnode, vnode->ino, remaining);
 
     /* Free vnode when refcount reaches 0 */
-    if (vnode->refcount == 0) {
+    if (remaining == 0) {
         VFSDBG("[vnode-unref] freeing vnode ino=%llu type=%d\n", vnode->ino, vnode->type);
 
         /* Clean up parent reference and basename */

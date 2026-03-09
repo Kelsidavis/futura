@@ -787,7 +787,7 @@ long sys_fork(void) {
                     /* Clean up: decrement refcounts of already-inherited files */
                     for (int j = 0; j < i; j++) {
                         if (child_task->fd_table[j] != NULL) {
-                            child_task->fd_table[j]->refcount--;
+                            __atomic_sub_fetch(&child_task->fd_table[j]->refcount, 1, __ATOMIC_ACQ_REL);
                             child_task->fd_table[j] = NULL;
                         }
                     }
@@ -796,7 +796,7 @@ long sys_fork(void) {
                 }
 
                 /* Increment refcount (file is now referenced by parent and child) */
-                parent_file->refcount++;
+                vfs_file_ref(parent_file);
 
                 /* Child inherits the same file object at the same FD */
                 child_task->fd_table[i] = parent_file;

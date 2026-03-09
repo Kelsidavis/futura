@@ -428,7 +428,7 @@ ssize_t sys_recvmsg(int sockfd, struct msghdr *msg, int flags) {
                                    file, newfd);
                     } else {
                         /* Failed to allocate FD - drop the file ref */
-                        if (file->refcount > 0) file->refcount--;
+                        if (file->refcount > 0) __atomic_sub_fetch(&file->refcount, 1, __ATOMIC_ACQ_REL);
                     }
                 }
             }

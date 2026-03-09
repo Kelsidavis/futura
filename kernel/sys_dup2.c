@@ -244,7 +244,7 @@ long sys_dup2(int oldfd, int newfd) {
                        local_oldfd, local_newfd);
             return -EMFILE;
         }
-        old_file->refcount++;
+        vfs_file_ref(old_file);
     }
 
     /* Allocate newfd pointing to the same file in task's FD table */
@@ -254,11 +254,7 @@ long sys_dup2(int oldfd, int newfd) {
         /* Failed to allocate, decrement ref count
          * Phase 5: Validate refcount > 0 before decrementing to prevent underflow */
         if (old_file) {
-            if (old_file->refcount == 0) {
-                fut_printf("[DUP2] BUG: refcount already zero during error cleanup!\n");
-            } else {
-                old_file->refcount--;
-            }
+            __atomic_sub_fetch(&old_file->refcount, 1, __ATOMIC_ACQ_REL);
         }
 
         /* Phase 2: Detailed error logging */
@@ -392,7 +388,7 @@ long sys_dup3(int oldfd, int newfd, int flags) {
                        local_oldfd, local_newfd, local_flags);
             return -EMFILE;
         }
-        old_file->refcount++;
+        vfs_file_ref(old_file);
     }
 
     /* Allocate newfd pointing to the same file */
@@ -401,11 +397,7 @@ long sys_dup3(int oldfd, int newfd, int flags) {
         /* Failed to allocate, decrement ref count
          * Phase 5: Validate refcount > 0 before decrementing to prevent underflow */
         if (old_file) {
-            if (old_file->refcount == 0) {
-                fut_printf("[DUP3] BUG: refcount already zero during error cleanup!\n");
-            } else {
-                old_file->refcount--;
-            }
+            __atomic_sub_fetch(&old_file->refcount, 1, __ATOMIC_ACQ_REL);
         }
 
         const char *error_desc;

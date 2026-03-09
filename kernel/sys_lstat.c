@@ -108,7 +108,7 @@ long sys_lstat(const char *path, struct fut_stat *statbuf) {
     /* Phase 3: Call fut_vfs_lstat() which doesn't follow the final symlink
      * This returns metadata about the symlink itself, not its target.
      */
-    struct fut_stat kernel_stat;
+    struct fut_stat kernel_stat = {0};
     int ret = fut_vfs_lstat(path_buf, &kernel_stat);
     if (ret < 0) {
         const char *err_desc = (ret == -ENOENT) ? "not found" :

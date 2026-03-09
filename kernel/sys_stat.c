@@ -158,8 +158,10 @@ long sys_stat(const char *path, struct fut_stat *statbuf) {
         return -EFAULT;
     }
 
-    /* Get file metadata via VFS */
-    struct fut_stat kernel_stat;
+    /* Get file metadata via VFS
+     * Zero-initialize to prevent leaking uninitialized kernel stack data
+     * to userspace if VFS doesn't fill all fields (e.g. nsec, padding) */
+    struct fut_stat kernel_stat = {0};
     int ret = fut_vfs_stat(path_buf, &kernel_stat);
 
     /* Phase 2: Handle VFS errors with detailed logging */

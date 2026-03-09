@@ -317,12 +317,17 @@ void fut_fipc_region_destroy(struct fut_fipc_region *region) {
         return;
     }
 
-    /* Decrement reference count */
+    /* Atomically decrement reference count */
     if (region->refcount > 0) {
-        region->refcount--;
+        uint32_t remaining = __atomic_sub_fetch(&region->refcount, 1, __ATOMIC_ACQ_REL);
+        if (remaining > 0) {
+            return;
+        }
+    } else {
+        return;
     }
 
-    if (region->refcount == 0) {
+    {
         /* Remove from region list */
         struct fut_fipc_region **prev = &region_list;
         struct fut_fipc_region *curr = region_list;
@@ -357,7 +362,7 @@ void *fut_fipc_region_map(struct fut_task *task, struct fut_fipc_region *region,
     (void)addr;
 
     if (region) {
-        region->refcount++;
+        __atomic_add_fetch(&region->refcount, 1, __ATOMIC_ACQ_REL);
         return region->base;  /* Return kernel virtual address */
     }
 
@@ -374,7 +379,7 @@ void fut_fipc_region_unmap(struct fut_task *task, struct fut_fipc_region *region
     (void)task;
 
     if (region && region->refcount > 0) {
-        region->refcount--;
+        __atomic_sub_fetch(&region->refcount, 1, __ATOMIC_ACQ_REL);
     }
 }
 

@@ -17,6 +17,18 @@
 #include <kernel/kprintf.h>
 #include <kernel/uaccess.h>
 
+/* Filesystem type constants */
+#define FUT_TMPFS_MAGIC   0x01021994
+#define FUT_RAMFS_MAGIC   0x858458F6
+#define FUT_EXT2_MAGIC    0xEF53
+#define FUT_EXT4_MAGIC    0xEF53
+
+/* Mount flags */
+#define FUT_ST_RDONLY     0x0001  /* Read-only filesystem */
+#define FUT_ST_NOSUID     0x0002  /* Ignore suid and sgid bits */
+#define FUT_ST_NODEV      0x0004  /* Disallow access to device special files */
+#define FUT_ST_NOEXEC     0x0008  /* Disallow program execution */
+
 /* Build a statfs struct from physical memory stats (shared by statfs and fstatfs) */
 static void fill_statfs_from_pmm(struct fut_linux_statfs *s) {
     uint64_t total_pages = fut_pmm_total_pages();
@@ -36,18 +48,6 @@ static void fill_statfs_from_pmm(struct fut_linux_statfs *s) {
     s->f_frsize  = PAGE_SIZE;
     s->f_flags   = 0;
 }
-
-/* Filesystem type constants */
-#define FUT_TMPFS_MAGIC   0x01021994
-#define FUT_RAMFS_MAGIC   0x858458F6
-#define FUT_EXT2_MAGIC    0xEF53
-#define FUT_EXT4_MAGIC    0xEF53
-
-/* Mount flags */
-#define FUT_ST_RDONLY     0x0001  /* Read-only filesystem */
-#define FUT_ST_NOSUID     0x0002  /* Ignore suid and sgid bits */
-#define FUT_ST_NODEV      0x0004  /* Disallow access to device special files */
-#define FUT_ST_NOEXEC     0x0008  /* Disallow program execution */
 
 /**
  * sys_statfs - Get filesystem statistics by path

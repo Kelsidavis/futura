@@ -339,13 +339,36 @@ long sys_fallocate(int fd, int mode, uint64_t offset, uint64_t len) {
         op_type = "allocate (extend)";
     }
 
-    /* Phase 1: Accept but don't actually allocate
-     * Phase 2: Implement basic allocation by extending file size
-     * Phase 3: Implement hole punching and advanced modes
+    /* Phase 2: Extend file size for default mode (no KEEP_SIZE).
+     * For ramfs, preallocation means ensuring the vnode size covers offset+len.
+     * PUNCH_HOLE and advanced modes are deferred to Phase 3.
      */
+    struct fut_vnode *vnode = file->vnode;
 
-    fut_printf("[FALLOCATE] fallocate(fd=%d, mode=0x%x [%s], offset=%lu, len=%lu [%s], pid=%d) -> 0 "
-               "(accepted, Phase 1 stub)\n",
+    /* Handle modes that need actual vnode operations */
+    if (mode == 0) {
+        /* Default: allocate space, possibly extending size */
+        if (vnode && vnode->ops && vnode->ops->truncate) {
+            uint64_t new_size = offset + len;
+            /* Only extend; never shrink via fallocate */
+            if (new_size > vnode->size) {
+                int ret = vnode->ops->truncate(vnode, new_size);
+                if (ret < 0) {
+                    fut_printf("[FALLOCATE] fallocate(fd=%d, mode=0, offset=%lu, len=%lu, pid=%d) "
+                               "-> %d (truncate failed)\n",
+                               fd, offset, len, task->pid, ret);
+                    return ret;
+                }
+                fut_printf("[FALLOCATE] fallocate(fd=%d, mode=0, offset=%lu, len=%lu, pid=%d) -> 0 "
+                           "(extended to %llu bytes)\n",
+                           fd, offset, len, task->pid, (unsigned long long)new_size);
+                return 0;
+            }
+        }
+    }
+    /* KEEP_SIZE, PUNCH_HOLE, COLLAPSE_RANGE, ZERO_RANGE: accept as no-op on ramfs */
+
+    fut_printf("[FALLOCATE] fallocate(fd=%d, mode=0x%x [%s], offset=%lu, len=%lu [%s], pid=%d) -> 0\n",
                fd, mode, op_type, offset, len, size_category, task->pid);
 
     return 0;

@@ -547,9 +547,16 @@ long sys_munlockall(void) {
 
     fut_printf("[MUNLOCKALL] munlockall()\n");
 
-    /* Phase 1: Stub - accept call */
-    /* Phase 2: Walk VMAs, clear VM_LOCKED, clear task mlockall flags */
+    /* Reset cumulative locked-page counter so future mlock() calls start from zero */
+    fut_mm_t *mm = fut_task_get_mm(task);
+    if (mm && mm->locked_vm > 0) {
+        fut_printf("[MUNLOCKALL] munlockall(pid=%d) -> cleared locked_vm (%zu pages)\n",
+                   task->pid, mm->locked_vm);
+        mm->locked_vm = 0;
+    }
 
-    fut_printf("[MUNLOCKALL] Stub implementation - all pages unlocked\n");
+    /* Phase 3: Walk VMAs and clear VM_LOCKED flag from each */
+
+    fut_printf("[MUNLOCKALL] munlockall(pid=%d) -> 0\n", task->pid);
     return 0;
 }

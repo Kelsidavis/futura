@@ -121,6 +121,10 @@
  *   ELF Loader Debug Flags
  * ============================================================================ */
 
+#ifndef NANOSLEEP_DEBUG
+#define NANOSLEEP_DEBUG KERNEL_DEBUG_ALL
+#endif
+
 #ifndef ELF_DEBUG
 #define ELF_DEBUG       KERNEL_DEBUG_ALL
 #endif

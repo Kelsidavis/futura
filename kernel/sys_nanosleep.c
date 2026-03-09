@@ -21,6 +21,10 @@
 #include <kernel/fut_timer.h>
 
 #include <kernel/kprintf.h>
+#include <kernel/debug_config.h>
+
+/* Nanosleep debugging (controlled via debug_config.h) */
+#define nanosleep_printf(...) do { if (NANOSLEEP_DEBUG) fut_printf(__VA_ARGS__); } while(0)
 
 /**
  * nanosleep() syscall - High-resolution sleep
@@ -118,7 +122,7 @@
 long sys_nanosleep(const fut_timespec_t *u_req, fut_timespec_t *u_rem) {
     /* Phase 2: Validate request pointer */
     if (!u_req) {
-        fut_printf("[NANOSLEEP] nanosleep(u_req=NULL) -> EINVAL (NULL request pointer)\n");
+        nanosleep_printf("[NANOSLEEP] nanosleep(u_req=NULL) -> EINVAL (NULL request pointer)\n");
         return -EINVAL;
     }
 
@@ -128,7 +132,7 @@ long sys_nanosleep(const fut_timespec_t *u_req, fut_timespec_t *u_rem) {
      * IMPACT: Kernel page fault when writing remaining time after sleep
      * DEFENSE: Check write permission before potentially blocking sleep operation */
     if (u_rem && fut_access_ok(u_rem, sizeof(fut_timespec_t), 1) != 0) {
-        fut_printf("[NANOSLEEP] nanosleep(u_rem=%p) -> EFAULT (u_rem not writable for %zu bytes, Phase 5)\n",
+        nanosleep_printf("[NANOSLEEP] nanosleep(u_rem=%p) -> EFAULT (u_rem not writable for %zu bytes, Phase 5)\n",
                    u_rem, sizeof(fut_timespec_t));
         return -EFAULT;
     }
@@ -136,14 +140,14 @@ long sys_nanosleep(const fut_timespec_t *u_req, fut_timespec_t *u_rem) {
     /* Copy request from user */
     fut_timespec_t req;
     if (fut_copy_from_user(&req, u_req, sizeof(req)) != 0) {
-        fut_printf("[NANOSLEEP] nanosleep(u_req=%p) -> EFAULT "
+        nanosleep_printf("[NANOSLEEP] nanosleep(u_req=%p) -> EFAULT "
                    "(copy_from_user failed for request)\n", (void*)u_req);
         return -EFAULT;
     }
 
     /* Phase 2: Validate timespec values */
     if (req.tv_sec < 0 || req.tv_nsec < 0 || req.tv_nsec >= 1000000000LL) {
-        fut_printf("[NANOSLEEP] nanosleep(sec=%lld, nsec=%lld) -> EINVAL "
+        nanosleep_printf("[NANOSLEEP] nanosleep(sec=%lld, nsec=%lld) -> EINVAL "
                    "(invalid timespec: sec must be ≥0, nsec must be 0-999999999)\n",
                    req.tv_sec, req.tv_nsec);
         return -EINVAL;
@@ -184,14 +188,14 @@ long sys_nanosleep(const fut_timespec_t *u_req, fut_timespec_t *u_rem) {
 
     /* Handle zero-length sleep */
     if (total_ns == 0) {
-        fut_printf("[NANOSLEEP] nanosleep(sec=0, nsec=0 [%s: %s]) -> 0 "
+        nanosleep_printf("[NANOSLEEP] nanosleep(sec=0, nsec=0 [%s: %s]) -> 0 "
                    "(no-op, Phase 3)\n",
                    duration_category, duration_desc);
         return 0;
     }
 
     /* Phase 2: Log sleep start */
-    fut_printf("[NANOSLEEP] nanosleep(sec=%lld, nsec=%lld [%s: %s], total_ns=%llu, "
+    nanosleep_printf("[NANOSLEEP] nanosleep(sec=%lld, nsec=%lld [%s: %s], total_ns=%llu, "
                "millis=%llu) (sleeping, Phase 3: duration categorization)\n",
                req.tv_sec, req.tv_nsec, duration_category, duration_desc,
                total_ns, millis);
@@ -204,14 +208,14 @@ long sys_nanosleep(const fut_timespec_t *u_req, fut_timespec_t *u_rem) {
         fut_timespec_t rem = {0, 0};
         int copy_ret = fut_copy_to_user(u_rem, &rem, sizeof(rem));
         if (copy_ret != 0) {
-            fut_printf("[NANOSLEEP] nanosleep(u_rem=%p) -> EFAULT "
+            nanosleep_printf("[NANOSLEEP] nanosleep(u_rem=%p) -> EFAULT "
                        "(copy_to_user failed for remaining time)\n", (void*)u_rem);
             /* Sleep succeeded but can't report remaining time */
         }
     }
 
     /* Phase 2: Detailed success logging */
-    fut_printf("[NANOSLEEP] nanosleep(sec=%lld, nsec=%lld [%s: %s], slept_ms=%llu) -> 0 "
+    nanosleep_printf("[NANOSLEEP] nanosleep(sec=%lld, nsec=%lld [%s: %s], slept_ms=%llu) -> 0 "
                "(completed, Phase 3: timer queue)\n",
                req.tv_sec, req.tv_nsec, duration_category, duration_desc, millis);
 

@@ -18,6 +18,10 @@
 
 #include <kernel/kprintf.h>
 #include <kernel/uaccess.h>
+#include <kernel/debug_config.h>
+
+/* Clock nanosleep debugging (controlled via debug_config.h) */
+#define clock_nanosleep_printf(...) do { if (NANOSLEEP_DEBUG) fut_printf(__VA_ARGS__); } while(0)
 #include <kernel/fut_timer.h>
 #include <time.h>
 
@@ -225,7 +229,7 @@ long sys_clock_nanosleep(int clock_id, int flags,
     }
 
     if (!req) {
-        fut_printf("[CLOCK_NANOSLEEP] clock_nanosleep(clock_id=%d) -> EINVAL (req is NULL)\n",
+        clock_nanosleep_printf("[CLOCK_NANOSLEEP] clock_nanosleep(clock_id=%d) -> EINVAL (req is NULL)\n",
                    clock_id);
         return -EINVAL;
     }
@@ -233,14 +237,14 @@ long sys_clock_nanosleep(int clock_id, int flags,
     /* Copy request from user */
     fut_timespec_t request;
     if (fut_copy_from_user(&request, req, sizeof(fut_timespec_t)) != 0) {
-        fut_printf("[CLOCK_NANOSLEEP] clock_nanosleep(clock_id=%d) -> EFAULT (copy_from_user failed)\n",
+        clock_nanosleep_printf("[CLOCK_NANOSLEEP] clock_nanosleep(clock_id=%d) -> EFAULT (copy_from_user failed)\n",
                    clock_id);
         return -EFAULT;
     }
 
     /* Validate timespec */
     if (request.tv_sec < 0 || request.tv_nsec < 0 || request.tv_nsec >= 1000000000LL) {
-        fut_printf("[CLOCK_NANOSLEEP] clock_nanosleep(clock_id=%d, sec=%lld, nsec=%lld) -> EINVAL "
+        clock_nanosleep_printf("[CLOCK_NANOSLEEP] clock_nanosleep(clock_id=%d, sec=%lld, nsec=%lld) -> EINVAL "
                    "(invalid timespec)\n",
                    clock_id, request.tv_sec, request.tv_nsec);
         return -EINVAL;
@@ -256,7 +260,7 @@ long sys_clock_nanosleep(int clock_id, int flags,
             clock_name = "CLOCK_MONOTONIC";
             break;
         default:
-            fut_printf("[CLOCK_NANOSLEEP] clock_nanosleep(clock_id=%d) -> EINVAL (unsupported clock)\n",
+            clock_nanosleep_printf("[CLOCK_NANOSLEEP] clock_nanosleep(clock_id=%d) -> EINVAL (unsupported clock)\n",
                        clock_id);
             return -EINVAL;
     }
@@ -266,7 +270,7 @@ long sys_clock_nanosleep(int clock_id, int flags,
 
     /* Phase 1: Only support relative time sleep */
     if (flags & TIMER_ABSTIME) {
-        fut_printf("[CLOCK_NANOSLEEP] clock_nanosleep(clock_id=%s, mode=%s, sec=%lld, nsec=%lld) -> EINVAL "
+        clock_nanosleep_printf("[CLOCK_NANOSLEEP] clock_nanosleep(clock_id=%s, mode=%s, sec=%lld, nsec=%lld) -> EINVAL "
                    "(absolute time not yet supported, Phase 1)\n",
                    clock_name, mode, request.tv_sec, request.tv_nsec);
         return -EINVAL;
@@ -274,7 +278,7 @@ long sys_clock_nanosleep(int clock_id, int flags,
 
     /* Phase 1: Delegate to regular nanosleep for relative sleep */
     /* Phase 2: Implement absolute time sleep */
-    fut_printf("[CLOCK_NANOSLEEP] clock_nanosleep(clock_id=%s, mode=%s, sec=%lld, nsec=%lld) "
+    clock_nanosleep_printf("[CLOCK_NANOSLEEP] clock_nanosleep(clock_id=%s, mode=%s, sec=%lld, nsec=%lld) "
                "(delegating to nanosleep, Phase 1 stub)\n",
                clock_name, mode, request.tv_sec, request.tv_nsec);
 

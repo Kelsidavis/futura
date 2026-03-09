@@ -45,6 +45,8 @@ struct pipe_buffer {
     uint32_t refcount;      /* Reference count (read_end + write_end) */
     bool write_closed;      /* Write end closed */
     bool read_closed;       /* Read end closed */
+    bool read_nonblock;     /* Read end O_NONBLOCK */
+    bool write_nonblock;    /* Write end O_NONBLOCK */
     fut_waitq_t read_waitq;  /* Readers waiting for data */
     fut_waitq_t write_waitq; /* Writers waiting for space */
     fut_spinlock_t lock;     /* Protects pipe state */
@@ -60,11 +62,16 @@ struct fut_file_ops {
     void *(*mmap)(void *inode, void *priv, void *addr, size_t len, int prot, int flags, off_t off);
 };
 
+/* Private ioctl to propagate file flags (O_NONBLOCK) from fcntl */
+#define PIPE_IOC_SETFLAGS  0xFE01
+
 /* Forward declarations */
 static ssize_t pipe_read(void *inode, void *priv, void *buf, size_t len, off_t *pos);
 static ssize_t pipe_write(void *inode, void *priv, const void *buf, size_t len, off_t *pos);
 static int pipe_release_read(void *inode, void *priv);
 static int pipe_release_write(void *inode, void *priv);
+static int pipe_ioctl_read(void *inode, void *priv, unsigned long req, unsigned long arg);
+static int pipe_ioctl_write(void *inode, void *priv, unsigned long req, unsigned long arg);
 
 /* Pipe file operations - initialized at runtime to avoid ARM64 relocation issues */
 static struct fut_file_ops pipe_read_fops;
@@ -81,14 +88,14 @@ static void init_pipe_fops(void) {
     pipe_read_fops.release = pipe_release_read;
     pipe_read_fops.read = pipe_read;
     pipe_read_fops.write = NULL;
-    pipe_read_fops.ioctl = NULL;
+    pipe_read_fops.ioctl = pipe_ioctl_read;
     pipe_read_fops.mmap = NULL;
 
     pipe_write_fops.open = NULL;
     pipe_write_fops.release = pipe_release_write;
     pipe_write_fops.read = NULL;
     pipe_write_fops.write = pipe_write;
-    pipe_write_fops.ioctl = NULL;
+    pipe_write_fops.ioctl = pipe_ioctl_write;
     pipe_write_fops.mmap = NULL;
 
     pipe_fops_initialized = true;
@@ -116,6 +123,8 @@ static struct pipe_buffer *pipe_buffer_create(void) {
     pipe->refcount = 2;  /* Read end + write end */
     pipe->write_closed = false;
     pipe->read_closed = false;
+    pipe->read_nonblock = false;
+    pipe->write_nonblock = false;
 
     /* Initialize wait queues and lock */
     fut_waitq_init(&pipe->read_waitq);
@@ -150,6 +159,12 @@ static ssize_t pipe_read(void *inode, void *priv, void *buf, size_t len, off_t *
     }
 
     fut_spinlock_acquire(&pipe->lock);
+
+    /* Return EAGAIN if non-blocking and no data available */
+    if (pipe->count == 0 && !pipe->write_closed && pipe->read_nonblock) {
+        fut_spinlock_release(&pipe->lock);
+        return -EAGAIN;
+    }
 
     /* Block until data is available */
     while (pipe->count == 0 && !pipe->write_closed) {
@@ -204,6 +219,12 @@ static ssize_t pipe_write(void *inode, void *priv, const void *buf, size_t len, 
     if (pipe->read_closed) {
         fut_spinlock_release(&pipe->lock);
         return -EPIPE;
+    }
+
+    /* Return EAGAIN if non-blocking and no space available */
+    if (pipe->count >= pipe->size && !pipe->read_closed && pipe->write_nonblock) {
+        fut_spinlock_release(&pipe->lock);
+        return -EAGAIN;
     }
 
     /* Block until space is available */
@@ -294,6 +315,36 @@ static int pipe_release_write(void *inode, void *priv) {
     }
 
     return 0;
+}
+
+/**
+ * Ioctl handler for pipe read end - propagates O_NONBLOCK from fcntl.
+ */
+static int pipe_ioctl_read(void *inode, void *priv, unsigned long req, unsigned long arg) {
+    (void)inode;
+    if (req == PIPE_IOC_SETFLAGS) {
+        struct pipe_buffer *pipe = (struct pipe_buffer *)priv;
+        if (pipe) {
+            pipe->read_nonblock = ((int)arg & 0x800 /* O_NONBLOCK */) != 0;
+        }
+        return 0;
+    }
+    return -EINVAL;
+}
+
+/**
+ * Ioctl handler for pipe write end - propagates O_NONBLOCK from fcntl.
+ */
+static int pipe_ioctl_write(void *inode, void *priv, unsigned long req, unsigned long arg) {
+    (void)inode;
+    if (req == PIPE_IOC_SETFLAGS) {
+        struct pipe_buffer *pipe = (struct pipe_buffer *)priv;
+        if (pipe) {
+            pipe->write_nonblock = ((int)arg & 0x800 /* O_NONBLOCK */) != 0;
+        }
+        return 0;
+    }
+    return -EINVAL;
 }
 
 /**

@@ -221,13 +221,32 @@ static int socket_release(void *inode, void *private_data) {
     return fut_socket_close(socket);
 }
 
+/**
+ * Socket ioctl handler - propagates file flags from fcntl.
+ */
+static int socket_ioctl(void *inode, void *private_data, unsigned long req, unsigned long arg) {
+    (void)inode;
+    if (req == 0xFE01 /* IOC_SETFLAGS */) {
+        fut_socket_t *socket = (fut_socket_t *)private_data;
+        if (socket) {
+            if ((int)arg & 0x800 /* O_NONBLOCK */) {
+                socket->flags |= 0x800;
+            } else {
+                socket->flags &= ~0x800;
+            }
+        }
+        return 0;
+    }
+    return -EINVAL;
+}
+
 /** Socket file operations for VFS integration */
 static struct fut_file_ops socket_fops = {
     .open = NULL,
     .release = socket_release,
     .read = socket_read,
     .write = socket_write,
-    .ioctl = NULL,
+    .ioctl = socket_ioctl,
     .mmap = NULL
 };
 

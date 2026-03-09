@@ -207,8 +207,10 @@
 #include <kernel/fut_task.h>
 #include <kernel/errno.h>
 #include <kernel/fut_vfs.h>
+#include <kernel/chrdev.h>
 #include <kernel/fut_fd_util.h>
 #include <kernel/fut_timer.h>
+#include <kernel/fut_socket.h>
 #include <subsystems/posix_syscall.h>
 #include <stdint.h>
 #include <sys/resource.h>
@@ -491,6 +493,26 @@ long sys_fcntl(int fd, int cmd, uint64_t arg) {
         new_flags |= ((int)local_arg & (O_NONBLOCK | O_APPEND));
 
         file->flags = new_flags;
+
+        /* Propagate flags to device drivers (pipes, sockets, etc.)
+         * via private ioctl so they can update internal state (e.g., O_NONBLOCK). */
+        if (file->chr_ops && file->chr_ops->ioctl) {
+            file->chr_ops->ioctl(file->chr_inode, file->chr_private,
+                                 0xFE01 /* IOC_SETFLAGS */, (unsigned long)new_flags);
+        }
+
+        /* Propagate O_NONBLOCK to kernel socket object if this FD is a socket */
+        {
+            extern fut_socket_t *get_socket_from_fd(int fd);
+            fut_socket_t *sock = get_socket_from_fd(local_fd);
+            if (sock) {
+                if (new_flags & O_NONBLOCK) {
+                    sock->flags |= 0x800;
+                } else {
+                    sock->flags &= ~0x800;
+                }
+            }
+        }
 
         /* Phase 2: Identify flag changes */
         char change_buf[256];

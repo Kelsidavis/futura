@@ -405,8 +405,18 @@ ssize_t sys_preadv(int fd, const struct iovec *iov, int iovcnt, int64_t offset) 
     size_t min_iov_len = (size_t)-1;
     size_t max_iov_len = 0;
     const size_t MAX_TOTAL_SIZE = 16 * 1024 * 1024;  /* 16 MB limit per preadv */
+    const size_t MAX_IOVEC_SIZE = 2 * 1024 * 1024;   /* 2 MB per individual iovec */
 
     for (int i = 0; i < iovcnt; i++) {
+        /* Per-iovec size limit - prevent a single buffer from being too large */
+        if (kernel_iov[i].iov_len > MAX_IOVEC_SIZE) {
+            fut_printf("[PREADV] preadv(fd=%d, iovcnt=%d) -> EINVAL "
+                       "(iovec %d: iov_len %zu exceeds per-iovec limit %zu)\n",
+                       fd, iovcnt, i, kernel_iov[i].iov_len, MAX_IOVEC_SIZE);
+            fut_free(kernel_iov);
+            return -EINVAL;
+        }
+
         /* Check for overflow */
         if (total_size + kernel_iov[i].iov_len < total_size) {
             fut_printf("[PREADV] preadv(fd=%d, iov=%p, iovcnt=%d, offset=%ld) -> EINVAL "

@@ -859,6 +859,7 @@ extern void fut_signal_test_thread(void *arg);
 extern void fut_cap_test_thread(void *arg);
 extern void fut_epoll_test_thread(void *arg);
 extern void fut_splice_test_thread(void *arg);
+extern void fut_clock_sched_test_thread(void *arg);
 
 /* Set by boot thread after all initialization is complete.
  * Test thread waits for this before starting to avoid races with init. */
@@ -882,6 +883,7 @@ static void selftest_sequential_runner(void *arg) {
     fut_cap_test_thread(NULL);
     fut_epoll_test_thread(NULL);
     fut_splice_test_thread(NULL);
+    fut_clock_sched_test_thread(NULL);
 }
 
 void fut_kernel_main(void) {
@@ -1192,6 +1194,7 @@ void fut_kernel_main(void) {
         planned_tests += 6u; /* capability: open, read, write, rights, invalid, close */
         planned_tests += 6u; /* epoll: create, close, ctl add/del, quota, EBADF, EEXIST */
         planned_tests += 6u; /* splice: statfs, sysinfo, pipe→file, file→pipe, EINVAL, vmsplice */
+        planned_tests += 6u; /* clock_sched: getres, sched_param, sched_policy, itimer, rusage, times */
         // planned_tests += 1u; /* block */
         // planned_tests += 1u; /* futfs */
         // planned_tests += 1u; /* net */

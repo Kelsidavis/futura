@@ -565,6 +565,9 @@ KERNEL_SOURCES := \
     kernel/uaccess.c \
     kernel/vfs/devfs.c \
     kernel/sys_fipc.c \
+    kernel/sys_sched_advanced.c \
+    kernel/sys_clock_advanced.c \
+    kernel/sys_fileio_advanced.c \
     kernel/video/virtio_gpu.c \
     drivers/tty/console.c \
     drivers/tty/tty_ldisc.c \
@@ -613,6 +616,7 @@ ifeq ($(PLATFORM),x86_64)
         kernel/tests/sys_cap.c \
         kernel/tests/sys_epoll.c \
         kernel/tests/sys_splice.c \
+        kernel/tests/sys_clock_sched.c \
         kernel/tests/perf.c \
         kernel/tests/perf_ipc.c \
         kernel/tests/perf_sched.c \
@@ -659,6 +663,7 @@ else ifeq ($(PLATFORM),arm64)
         kernel/tests/sys_cap.c \
         kernel/tests/sys_epoll.c \
         kernel/tests/sys_splice.c \
+        kernel/tests/sys_clock_sched.c \
         tests/test_blkcore.c \
         tests/test_net.c \
         tests/test_futfs.c \
@@ -667,9 +672,6 @@ else ifeq ($(PLATFORM),arm64)
         kernel/sys_mman.c \
         kernel/sys_cred_advanced.c \
         kernel/sys_prlimit.c \
-        kernel/sys_sched_advanced.c \
-        kernel/sys_clock_advanced.c \
-        kernel/sys_fileio_advanced.c \
         kernel/kernel_main.c \
         kernel/video/fb_mmio.c \
         kernel/video/virtio_gpu_mmio.c \

@@ -119,3 +119,10 @@ void fut_epoll_selftest_schedule(fut_task_t *task);
  * Tests splice(2), vmsplice(2), statfs(2), and sysinfo(2).
  */
 void fut_splice_test_thread(void *arg);
+
+/**
+ * clock / sched / timer / rusage selftest.
+ * Tests clock_getres, sched_setparam/getparam, setitimer/getitimer,
+ * getrusage, and times.
+ */
+void fut_clock_sched_test_thread(void *arg);

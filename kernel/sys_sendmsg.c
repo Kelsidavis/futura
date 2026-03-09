@@ -424,6 +424,13 @@ ssize_t sys_sendmsg(int sockfd, const struct msghdr *msg, int flags) {
                     struct cmsghdr *cmsg = CMSG_FIRSTHDR(&ctrl_msg);
                     while (cmsg) {
                         if (cmsg->cmsg_level == SOL_SOCKET && cmsg->cmsg_type == SCM_RIGHTS) {
+                            /* Validate cmsg_len is large enough to contain the header.
+                             * Without this check, the subtraction underflows to SIZE_MAX,
+                             * producing a massive nfds that reads beyond the control buffer. */
+                            if (cmsg->cmsg_len < CMSG_ALIGN(sizeof(struct cmsghdr))) {
+                                cmsg = CMSG_NXTHDR(&ctrl_msg, cmsg);
+                                continue;
+                            }
                             /* Extract file descriptors from this control message */
                             size_t payload_len = cmsg->cmsg_len - CMSG_ALIGN(sizeof(struct cmsghdr));
                             int nfds = (int)(payload_len / sizeof(int));

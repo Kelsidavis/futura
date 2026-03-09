@@ -280,7 +280,7 @@ void fut_socket_ref(fut_socket_t *socket) {
                    socket->socket_id, socket->refcount);
         return;
     }
-    socket->refcount++;
+    __atomic_add_fetch(&socket->refcount, 1, __ATOMIC_ACQ_REL);
 }
 
 /**
@@ -295,8 +295,8 @@ void fut_socket_unref(fut_socket_t *socket) {
         return;
     }
 
-    socket->refcount--;
-    if (socket->refcount == 0) {
+    uint64_t remaining = __atomic_sub_fetch(&socket->refcount, 1, __ATOMIC_ACQ_REL);
+    if (remaining == 0) {
         /* Free socket resources */
         SOCKET_LOG("[SOCKET] Freeing socket id=%u\n", socket->socket_id);
 
@@ -632,8 +632,8 @@ int fut_socket_accept(fut_socket_t *listener, fut_socket_t **out_socket) {
     accepted->pair_reverse = peer->pair;  /* server receives from here, client sends */
 
     /* Increment refcounts on the pairs since they're now used by both sockets */
-    peer->pair->refcount++;
-    peer->pair_reverse->refcount++;
+    __atomic_add_fetch(&peer->pair->refcount, 1, __ATOMIC_ACQ_REL);
+    __atomic_add_fetch(&peer->pair_reverse->refcount, 1, __ATOMIC_ACQ_REL);
 
     /* IMPORTANT: Listener socket REMAINS in LISTENING state!
      * Only the accepted peer becomes CONNECTED.

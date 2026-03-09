@@ -47,21 +47,21 @@ void __libc_init_environ(char **envp) {
         return;
     }
 
-    /* Copy environment variable strings */
+    /* Copy environment variable strings, skipping failed allocations
+     * to avoid NULL holes in the middle of the environ array */
+    size_t copied = 0;
     for (size_t i = 0; i < count; i++) {
         size_t len = strlen(envp[i]) + 1;
         char *copy = (char *)malloc(len);
         if (copy) {
             memcpy(copy, envp[i], len);
-            g_environ[i] = copy;
-        } else {
-            g_environ[i] = NULL;
+            g_environ[copied++] = copy;
         }
     }
-    g_environ[count] = NULL;
+    g_environ[copied] = NULL;
 
     environ = g_environ;
-    g_env_count = count;
+    g_env_count = copied;
     g_env_capacity = count + 1;
 }
 

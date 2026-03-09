@@ -559,9 +559,37 @@ static void release_lookup_ref(struct fut_vnode *vnode) {
 }
 
 /**
+ * Resolve a potentially relative path to absolute using the current task's cwd.
+ * Returns either the original path pointer (if already absolute) or abs_buf
+ * filled with the resolved path.  abs_buf must be FUT_VFS_PATH_BUFFER_SIZE bytes.
+ */
+static const char *resolve_path_to_abs(const char *path, char *abs_buf) {
+    if (!path || path[0] == '/') {
+        return path;
+    }
+    fut_task_t *task = fut_task_current();
+    const char *cwd = (task && task->cwd_cache && task->cwd_cache[0]) ? task->cwd_cache : "/";
+    size_t cwd_len = 0;
+    while (cwd[cwd_len]) cwd_len++;
+    size_t path_len = 0;
+    while (path[path_len]) path_len++;
+    bool has_trail = (cwd_len > 0 && cwd[cwd_len - 1] == '/');
+    size_t total = cwd_len + (has_trail ? 0 : 1) + path_len;
+    if (total >= FUT_VFS_PATH_BUFFER_SIZE) {
+        return path; /* Too long — caller will get ENAMETOOLONG later */
+    }
+    size_t i = 0;
+    for (size_t j = 0; j < cwd_len; j++) abs_buf[i++] = cwd[j];
+    if (!has_trail) abs_buf[i++] = '/';
+    for (size_t j = 0; j < path_len; j++) abs_buf[i++] = path[j];
+    abs_buf[i] = '\0';
+    return abs_buf;
+}
+
+/**
  * Lookup vnode by path.
  *
- * @param path   Path to lookup
+ * @param path   Path to lookup (absolute or relative to cwd)
  * @param vnode  Pointer to store result vnode
  * @return 0 on success, negative error code on failure
  */
@@ -569,6 +597,10 @@ static int lookup_vnode(const char *path, struct fut_vnode **vnode) {
     if (!path || !vnode) {
         return -EINVAL;
     }
+
+    /* Resolve relative paths against current task's cwd */
+    char abs_buf[FUT_VFS_PATH_BUFFER_SIZE];
+    path = resolve_path_to_abs(path, abs_buf);
 
     /* Handle root directory */
     if (path[0] == '/' && path[1] == '\0') {
@@ -805,6 +837,10 @@ static int lookup_parent_and_name(const char *path,
     if (!path || !parent_out || !name_out) {
         return -EINVAL;
     }
+
+    /* Resolve relative paths against current task's cwd */
+    char abs_buf[FUT_VFS_PATH_BUFFER_SIZE];
+    path = resolve_path_to_abs(path, abs_buf);
 
     vfs_debug_stage = 2;  /* Before malloc */
     /* Use heap allocation to avoid stack overflow */

@@ -7,6 +7,8 @@
  */
 
 #include <kernel/fut_task.h>
+#include <kernel/fut_thread.h>
+#include <kernel/fut_stats.h>
 #include <kernel/errno.h>
 #include <string.h>
 #include <sys/times.h>
@@ -68,20 +70,21 @@ long sys_times(struct tms *buf) {
         return -EFAULT;
     }
 
-    /* Phase 2: Return zeroed times with enhanced reporting
-     * Phase 3: Will populate from task->cpu_time_user, task->cpu_time_system
-     * Phase 4: Will track child times and populate cutime/cstime */
+    /*
+     * Phase 3: Sum cpu_ticks across all threads of this task.
+     * cpu_ticks is incremented every timer tick while the thread runs.
+     * Since user/kernel time is not tracked separately, attribute all to
+     * utime (stime = 0); this matches common kernel stubs for early-stage OSes.
+     * Phase 4: Accumulate child times from wait4()/waitpid() when available.
+     */
+    uint64_t total_cpu_ticks = 0;
+    for (fut_thread_t *t = task->threads; t != nullptr; t = t->global_next) {
+        total_cpu_ticks += t->stats.cpu_ticks;
+    }
+
     struct tms times;
     memset(&times, 0, sizeof(times));
-
-    /* Future Phase 3 implementation will convert from milliseconds to clock ticks:
-     * times.tms_utime = (task->cpu_time_user_ms * USER_HZ) / 1000;
-     * times.tms_stime = (task->cpu_time_system_ms * USER_HZ) / 1000;
-     *
-     * Future Phase 4 implementation will accumulate child times:
-     * times.tms_cutime = (task->child_cpu_time_user_ms * USER_HZ) / 1000;
-     * times.tms_cstime = (task->child_cpu_time_system_ms * USER_HZ) / 1000;
-     */
+    times.tms_utime = (clock_t)total_cpu_ticks;  /* cpu_ticks already in USER_HZ units */
 
     /* Copy to userspace */
     if (fut_copy_to_user(buf, &times, sizeof(struct tms)) != 0) {
@@ -117,16 +120,19 @@ long sys_times(struct tms *buf) {
 
     if (hours > 0) {
         fut_printf("[TIMES] times(buf=%p) -> %ld ticks "
-                   "(%luh %lum %lus elapsed [%s], utime=0, stime=0, cutime=0, cstime=0, Phase 2: zeroed)\n",
-                   buf, elapsed_ticks, hours, minutes, seconds, elapsed_category);
+                   "(%luh %lum %lus elapsed [%s], utime=%ld stime=0)\n",
+                   buf, elapsed_ticks, hours, minutes, seconds, elapsed_category,
+                   (long)times.tms_utime);
     } else if (minutes > 0) {
         fut_printf("[TIMES] times(buf=%p) -> %ld ticks "
-                   "(%lum %lus elapsed [%s], utime=0, stime=0, cutime=0, cstime=0, Phase 2: zeroed)\n",
-                   buf, elapsed_ticks, minutes, seconds, elapsed_category);
+                   "(%lum %lus elapsed [%s], utime=%ld stime=0)\n",
+                   buf, elapsed_ticks, minutes, seconds, elapsed_category,
+                   (long)times.tms_utime);
     } else {
         fut_printf("[TIMES] times(buf=%p) -> %ld ticks "
-                   "(%lus elapsed [%s], utime=0, stime=0, cutime=0, cstime=0, Phase 2: zeroed)\n",
-                   buf, elapsed_ticks, seconds, elapsed_category);
+                   "(%lus elapsed [%s], utime=%ld stime=0)\n",
+                   buf, elapsed_ticks, seconds, elapsed_category,
+                   (long)times.tms_utime);
     }
 
     return elapsed_ticks;

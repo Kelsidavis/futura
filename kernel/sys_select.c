@@ -249,8 +249,11 @@ long sys_select(int nfds, fd_set *readfds, fd_set *writefds,
     /* Phase 2 (Completed): Added FD validation against task->max_fds and CPU work budget */
     /* TODO Phase 3: Consider constant-time FD validation (timing side-channel mitigation) */
 
-    fut_printf("[SELECT] Stub implementation - returning 0 (timeout)\n");
-    return 0;  /* Simulate timeout */
+    /* Return -ENOSYS until properly implemented.
+     * Returning 0 immediately (without honoring the timeout) causes
+     * programs to busy-loop burning CPU. -ENOSYS lets callers handle the error. */
+    fut_printf("[SELECT] select not implemented - returning ENOSYS\n");
+    return -ENOSYS;
 }
 
 /**
@@ -323,8 +326,9 @@ long sys_pselect6(int nfds, void *readfds, void *writefds, void *exceptfds,
         return -EINVAL;
     }
 
-    fut_printf("[PSELECT6] Stub implementation - returning 0 (timeout)\n");
-    return 0;  /* Simulate timeout */
+    /* Return -ENOSYS until properly implemented */
+    fut_printf("[PSELECT6] pselect6 not implemented - returning ENOSYS\n");
+    return -ENOSYS;
 }
 
 /* struct pollfd is provided by poll.h */

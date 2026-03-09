@@ -887,13 +887,13 @@ long sys_signalfd4(int ufd, const void *mask, size_t sizemask, int flags) {
         return -EINVAL;
     }
 
-    /* Phase 1: Stub - return dummy fd */
-    /* Phase 2: Allocate signalfd structure, store signal mask */
-    /* Phase 3: Redirect signals to signalfd instead of handler */
+    /* Phase 1: Return -ENOSYS until properly implemented.
+     * Returning a hardcoded dummy fd (e.g. 11) is dangerous because it can
+     * collide with real file descriptors, causing silent corruption. */
 
     (void)ufd;
-    fut_printf("[SIGNALFD4] Stub implementation - returning fd 11\n");
-    return 11;  /* Dummy file descriptor */
+    fut_printf("[SIGNALFD4] signalfd4 not implemented - returning ENOSYS\n");
+    return -ENOSYS;
 }
 
 /**

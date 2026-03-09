@@ -176,19 +176,15 @@ long sys_inotify_init1(int flags) {
         flags_desc = "combination";
     }
 
-    /* Phase 3: Create inotify instance with event queue framework
-     * Phase 5: TODO - Add fd limit check before allocation */
-    int dummy_fd = 42;  /* Placeholder fd - Phase 3: will integrate with fd_table */
+    /* Return -ENOSYS until properly implemented.
+     * Returning a hardcoded dummy fd (42) is dangerous because it can collide
+     * with real file descriptors, causing silent corruption when callers try
+     * to read inotify events from an unrelated fd. */
 
-    /* Phase 3: Event queue infrastructure */
-    const char *blocking_mode = (flags & IN_NONBLOCK) ? "non-blocking" : "blocking";
-    const char *exec_flags = (flags & IN_CLOEXEC) ? "close-on-exec" : "inherit";
+    fut_printf("[INOTIFY] inotify_init1(flags=%s, pid=%d) -> ENOSYS (not implemented)\n",
+               flags_desc, task->pid);
 
-    fut_printf("[INOTIFY] inotify_init1(flags=%s [%s, %s], pid=%d) -> %d "
-               "(Phase 3: event queue framework, watch mgmt ready)\n",
-               flags_desc, blocking_mode, exec_flags, task->pid, dummy_fd);
-
-    return dummy_fd;
+    return -ENOSYS;
 }
 
 /**
@@ -319,61 +315,14 @@ long sys_inotify_add_watch(int fd, const char *pathname, uint32_t mask) {
         return -EINVAL;
     }
 
-    /* Phase 2: Categorize fd range */
-    const char *fd_desc;
-    if (fd < 3) {
-        fd_desc = "stdio (0-2)";
-    } else if (fd < 256) {
-        fd_desc = "normal fd";
-    } else {
-        fd_desc = "high fd (>= 256)";
-    }
+    /* Return -ENOSYS until properly implemented.
+     * Returning a hardcoded watch descriptor (1) would make callers think
+     * the watch was registered when no monitoring is actually happening. */
 
-    /* Phase 2: Categorize pathname type */
-    const char *path_type;
-    if (path_buf[0] == '/') {
-        path_type = "absolute";
-    } else if (path_buf[0] == '.' && path_buf[1] == '/') {
-        path_type = "relative (explicit)";
-    } else if (path_buf[0] == '.') {
-        path_type = "relative (current/parent)";
-    } else {
-        path_type = "relative";
-    }
+    fut_printf("[INOTIFY] inotify_add_watch(fd=%d, path='%s', pid=%d) -> ENOSYS (not implemented)\n",
+               fd, path_buf, task->pid);
 
-    /* Phase 2: Categorize event mask */
-    const char *mask_desc;
-    if (mask & IN_ALL_EVENTS) {
-        if ((mask & IN_ALL_EVENTS) == IN_ALL_EVENTS) {
-            mask_desc = "ALL_EVENTS";
-        } else if (mask & (IN_MODIFY | IN_CREATE | IN_DELETE)) {
-            mask_desc = "file changes (modify/create/delete)";
-        } else if (mask & (IN_ACCESS | IN_OPEN | IN_CLOSE)) {
-            mask_desc = "access events (access/open/close)";
-        } else if (mask & (IN_MOVED_FROM | IN_MOVED_TO)) {
-            mask_desc = "move events";
-        } else {
-            mask_desc = "custom event set";
-        }
-    } else {
-        mask_desc = "flags only (ONLYDIR/DONT_FOLLOW/etc)";
-    }
-
-    /* Phase 3: Create watch descriptor and register with event queue */
-    int dummy_wd = 1;  /* Placeholder watch descriptor - Phase 3: manages watch lifecycle */
-
-    /* Phase 3: Watch management infrastructure */
-    size_t path_len = 0;
-    while (path_buf[path_len] != '\0') path_len++;
-    const char *watch_scope = (mask & IN_ONLYDIR) ? "directory-only" : "all";
-    const char *link_handling = (mask & IN_DONT_FOLLOW) ? "no-symlinks" : "follow";
-
-    fut_printf("[INOTIFY] inotify_add_watch(fd=%d [%s], path='%s' [%s, %lu bytes], mask=%s, "
-               "scope=%s, links=%s, pid=%d) -> %d (Phase 3: watch queue mgmt)\n",
-               fd, fd_desc, path_buf, path_type, (unsigned long)path_len, mask_desc,
-               watch_scope, link_handling, task->pid, dummy_wd);
-
-    return dummy_wd;
+    return -ENOSYS;
 }
 
 /**
@@ -424,9 +373,9 @@ long sys_inotify_rm_watch(int fd, int wd) {
         return -EINVAL;
     }
 
-    /* Phase 1: Accept removal */
-    fut_printf("[INOTIFY] inotify_rm_watch(fd=%d, wd=%d, pid=%d) -> 0 "
-               "(Phase 1 stub - no actual watch removed)\n", fd, wd, task->pid);
+    /* Return -ENOSYS until properly implemented */
+    fut_printf("[INOTIFY] inotify_rm_watch(fd=%d, wd=%d, pid=%d) -> ENOSYS (not implemented)\n",
+               fd, wd, task->pid);
 
-    return 0;
+    return -ENOSYS;
 }

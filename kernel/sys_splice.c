@@ -197,44 +197,13 @@ long sys_splice(int fd_in, int64_t *off_in, int fd_out, int64_t *off_out,
         }
     }
 
-    /* Categorize operation */
-    const char *op_desc;
-    if (off_in == NULL && off_out == NULL) {
-        op_desc = "pipe-to-pipe";
-    } else if (off_in == NULL) {
-        op_desc = "pipe-to-file";
-    } else if (off_out == NULL) {
-        op_desc = "file-to-pipe";
-    } else {
-        op_desc = "file-to-file [invalid]";
-    }
+    /* Return -ENOSYS until properly implemented.
+     * Returning a fake byte count is dangerous: callers believe data was
+     * transferred when nothing happened, causing silent data loss. */
+    fut_printf("[SPLICE] splice(fd_in=%d, fd_out=%d, len=%zu, pid=%d) -> ENOSYS (not implemented)\n",
+               fd_in, fd_out, len, task->pid);
 
-    /* Categorize flags */
-    const char *flags_desc;
-    if (flags == 0) {
-        flags_desc = "none";
-    } else if (flags == SPLICE_F_MOVE) {
-        flags_desc = "MOVE";
-    } else if (flags == (SPLICE_F_MOVE | SPLICE_F_MORE)) {
-        flags_desc = "MOVE|MORE";
-    } else if (flags == SPLICE_F_NONBLOCK) {
-        flags_desc = "NONBLOCK";
-    } else {
-        flags_desc = "combination";
-    }
-
-    /* Categorize size */
-    const char *size_desc = (len < 4096) ? "small (<4KB)" :
-                           (len < 65536) ? "medium (<64KB)" :
-                           (len < 1048576) ? "large (<1MB)" : "very large (≥1MB)";
-
-    /* Phase 3: Return dummy byte count */
-    ssize_t dummy_bytes = (ssize_t)len;
-    fut_printf("[SPLICE] splice(%s: fd_in=%d, fd_out=%d, len=%zu [%s], flags=%s, pid=%d) -> %zd "
-               "(Phase 3: Zero-copy pipe transfer implementation)\n",
-               op_desc, fd_in, fd_out, len, size_desc, flags_desc, task->pid, dummy_bytes);
-
-    return dummy_bytes;
+    return -ENOSYS;
 }
 
 /**
@@ -297,18 +266,12 @@ long sys_vmsplice(int fd, const void *iov, size_t nr_segs, unsigned int flags) {
         return -EINVAL;
     }
 
-    /* Categorize segment count */
-    const char *segs_desc = (nr_segs == 1) ? "single" :
-                           (nr_segs < 8) ? "few (<8)" :
-                           (nr_segs < 64) ? "many (<64)" : "very many (≥64)";
+    /* Return -ENOSYS until properly implemented.
+     * Returning a fake byte count causes silent data loss. */
+    fut_printf("[VMSPLICE] vmsplice(fd=%d, nr_segs=%zu, pid=%d) -> ENOSYS (not implemented)\n",
+               fd, nr_segs, task->pid);
 
-    /* Phase 3: Return dummy byte count */
-    ssize_t dummy_bytes = (ssize_t)(nr_segs * 4096);  /* Assume ~4KB per segment */
-    fut_printf("[VMSPLICE] vmsplice(fd=%d, nr_segs=%zu [%s], flags=0x%x, pid=%d) -> %zd "
-               "(Phase 3: User memory splice to pipe)\n",
-               fd, nr_segs, segs_desc, flags, task->pid, dummy_bytes);
-
-    return dummy_bytes;
+    return -ENOSYS;
 }
 
 /**
@@ -366,13 +329,12 @@ long sys_tee(int fd_in, int fd_out, size_t len, unsigned int flags) {
         return -EINVAL;
     }
 
-    /* Phase 3: Return dummy byte count */
-    ssize_t dummy_bytes = (ssize_t)len;
-    fut_printf("[TEE] tee(fd_in=%d, fd_out=%d, len=%zu, flags=0x%x, pid=%d) -> %zd "
-               "(Phase 3: Pipe content duplication)\n",
-               fd_in, fd_out, len, flags, task->pid, dummy_bytes);
+    /* Return -ENOSYS until properly implemented.
+     * Returning a fake byte count causes silent data loss. */
+    fut_printf("[TEE] tee(fd_in=%d, fd_out=%d, len=%zu, pid=%d) -> ENOSYS (not implemented)\n",
+               fd_in, fd_out, len, task->pid);
 
-    return dummy_bytes;
+    return -ENOSYS;
 }
 
 /**

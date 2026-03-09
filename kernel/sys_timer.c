@@ -50,18 +50,12 @@ long sys_timer_create(int clockid, struct sigevent *sevp, timer_t *timerid) {
         return -EFAULT;
     }
 
-    /* Phase 1: Stub - return dummy timer ID */
-    /* Phase 2: Allocate timer structure, link to task */
-    /* Phase 3: Configure signal delivery mechanism */
+    /* Return -ENOSYS until properly implemented.
+     * Returning a dummy timer ID would make callers think the timer is
+     * active, leading to hangs when timer_settime never fires. */
 
-    timer_t dummy_id = 1;
-    if (fut_copy_to_user(timerid, &dummy_id, sizeof(timer_t)) != 0) {
-        fut_printf("[TIMER_CREATE] EFAULT: failed to copy timer ID to userspace\n");
-        return -EFAULT;
-    }
-
-    fut_printf("[TIMER_CREATE] Stub implementation - returning timer ID 1\n");
-    return 0;
+    fut_printf("[TIMER_CREATE] timer_create not implemented - returning ENOSYS\n");
+    return -ENOSYS;
 }
 
 /**
@@ -132,15 +126,12 @@ long sys_timer_settime(timer_t timerid, int flags,
         }
     }
 
-    /* Phase 1: Stub - accept parameters */
-    /* Phase 2: Arm timer with specified interval/value */
-    /* Phase 3: Implement absolute vs relative time handling */
-
+    /* Return -ENOSYS until properly implemented (timer_create also returns -ENOSYS) */
     (void)flags;
-    (void)new_timer;  /* Will be used when timer is implemented */
+    (void)new_timer;
 
-    fut_printf("[TIMER_SETTIME] Stub implementation - returning success\n");
-    return 0;
+    fut_printf("[TIMER_SETTIME] timer_settime not implemented - returning ENOSYS\n");
+    return -ENOSYS;
 }
 
 /**
@@ -180,21 +171,9 @@ long sys_timer_gettime(timer_t timerid, struct itimerspec *curr_value) {
         return -EFAULT;
     }
 
-    /* Phase 1: Stub - return zero (timer disarmed) */
-    /* Phase 2: Return actual timer state */
-
-    struct itimerspec zero_timer = {
-        .it_interval = { .tv_sec = 0, .tv_nsec = 0 },
-        .it_value = { .tv_sec = 0, .tv_nsec = 0 }
-    };
-
-    if (fut_copy_to_user(curr_value, &zero_timer, sizeof(struct itimerspec)) != 0) {
-        fut_printf("[TIMER_GETTIME] EFAULT: failed to copy timer state to userspace\n");
-        return -EFAULT;
-    }
-
-    fut_printf("[TIMER_GETTIME] Stub implementation - returning zero interval/value\n");
-    return 0;
+    /* Return -ENOSYS until properly implemented */
+    fut_printf("[TIMER_GETTIME] timer_gettime not implemented - returning ENOSYS\n");
+    return -ENOSYS;
 }
 
 /**
@@ -225,11 +204,9 @@ long sys_timer_getoverrun(timer_t timerid) {
         return -EINVAL;
     }
 
-    /* Phase 1: Stub - return 0 (no overruns) */
-    /* Phase 2: Return actual overrun count from timer structure */
-
-    fut_printf("[TIMER_GETOVERRUN] Stub implementation - returning 0\n");
-    return 0;
+    /* Return -ENOSYS until properly implemented */
+    fut_printf("[TIMER_GETOVERRUN] timer_getoverrun not implemented - returning ENOSYS\n");
+    return -ENOSYS;
 }
 
 /**
@@ -257,9 +234,7 @@ long sys_timer_delete(timer_t timerid) {
         return -EINVAL;
     }
 
-    /* Phase 1: Stub - accept timer ID */
-    /* Phase 2: Disarm timer, unlink from task, free structure */
-
-    fut_printf("[TIMER_DELETE] Stub implementation - returning success\n");
-    return 0;
+    /* Return -ENOSYS until properly implemented */
+    fut_printf("[TIMER_DELETE] timer_delete not implemented - returning ENOSYS\n");
+    return -ENOSYS;
 }

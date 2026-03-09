@@ -341,11 +341,11 @@ void acpi_parse_madt(void) {
         extern uint8_t ioapic_get_polarity(uint32_t gsi);
         extern uint8_t ioapic_get_trigger_mode(uint32_t gsi);
 
-        /* Configure IRQs 0, 1, 3, 4 with dynamic GSI lookup and MADT settings */
-        uint8_t isa_irqs[] = { 0, 1, 3, 4 };
-        uint8_t vectors[] = { 32, 33, 35, 36 };  /* Interrupt vectors for each IRQ */
+        /* Configure IRQs 0, 1, 3, 4, 12 with dynamic GSI lookup and MADT settings */
+        uint8_t isa_irqs[] = { 0, 1, 3, 4, 12 };
+        uint8_t vectors[] = { 32, 33, 35, 36, 44 };  /* Interrupt vectors for each IRQ */
 
-        for (int i = 0; i < 4; i++) {
+        for (int i = 0; i < 5; i++) {
             uint8_t isa_irq = isa_irqs[i];
             uint8_t vector = vectors[i];
 

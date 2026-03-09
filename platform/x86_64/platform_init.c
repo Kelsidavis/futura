@@ -187,6 +187,8 @@ extern void irq14(void);
 extern void irq15(void);
 
 extern void irq0_timer(void);
+extern void irq1_keyboard(void);
+extern void irq12_mouse(void);
 extern void isr_syscall_int80_stub(void);
 
 /* Kernel main function */
@@ -648,8 +650,8 @@ static void fut_idt_init(void) {
     fut_idt_set_entry(31, (uint64_t)isr31, 0x08, flags);
 
     /* Install IRQ handlers (32-47) */
-    fut_idt_set_entry(32, (uint64_t)irq0_timer, 0x08, flags);  /* Timer uses special handler */
-    fut_idt_set_entry(33, (uint64_t)irq1, 0x08, flags);
+    fut_idt_set_entry(32, (uint64_t)irq0_timer, 0x08, flags);      /* Timer uses dedicated handler */
+    fut_idt_set_entry(33, (uint64_t)irq1_keyboard, 0x08, flags);  /* Keyboard uses dedicated handler */
     fut_idt_set_entry(34, (uint64_t)irq2, 0x08, flags);
     fut_idt_set_entry(35, (uint64_t)irq3, 0x08, flags);
     fut_idt_set_entry(36, (uint64_t)irq4, 0x08, flags);
@@ -660,7 +662,7 @@ static void fut_idt_init(void) {
     fut_idt_set_entry(41, (uint64_t)irq9, 0x08, flags);
     fut_idt_set_entry(42, (uint64_t)irq10, 0x08, flags);
     fut_idt_set_entry(43, (uint64_t)irq11, 0x08, flags);
-    fut_idt_set_entry(44, (uint64_t)irq12, 0x08, flags);
+    fut_idt_set_entry(44, (uint64_t)irq12_mouse, 0x08, flags);  /* Mouse uses dedicated handler */
     fut_idt_set_entry(45, (uint64_t)irq13, 0x08, flags);
     fut_idt_set_entry(46, (uint64_t)irq14, 0x08, flags);
     fut_idt_set_entry(47, (uint64_t)irq15, 0x08, flags);

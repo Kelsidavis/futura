@@ -101,7 +101,7 @@ static int ps2_expect_ack(void) {
     return -EIO;
 }
 
-static void ps2_irq_keyboard(void) {
+void ps2_irq_keyboard(void) {
     if (!g_ps2_keyboard_enabled) {
         fut_irq_send_eoi(1);
         return;
@@ -123,7 +123,7 @@ static void ps2_irq_keyboard(void) {
     fut_irq_send_eoi(1);
 }
 
-static void ps2_irq_mouse(void) {
+void ps2_irq_mouse(void) {
     if (!g_ps2_mouse_enabled) {
         fut_irq_send_eoi(12);
         return;

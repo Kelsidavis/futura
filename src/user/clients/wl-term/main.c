@@ -200,6 +200,7 @@ static void keyboard_key(void *data, struct wl_keyboard *keyboard, uint32_t seri
     char ch = keycode_to_ascii(key, false);
     if (ch != 0) {
         term_send_key(&state->term, ch);
+        state->needs_redraw = true;
     }
 }
 

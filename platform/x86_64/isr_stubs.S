@@ -577,25 +577,9 @@ isr_common_stub:
     /* Remove error code and vector number */
     addq $16, %rsp
 
-    /* Zero XMM registers before returning to prevent leaking kernel values to userspace.
-     * Kernel code (compiled with -O2) may use XMM registers, and per System V ABI they
-     * are caller-saved, so we must clean them when returning to userspace. */
-    pxor %xmm0, %xmm0
-    pxor %xmm1, %xmm1
-    pxor %xmm2, %xmm2
-    pxor %xmm3, %xmm3
-    pxor %xmm4, %xmm4
-    pxor %xmm5, %xmm5
-    pxor %xmm6, %xmm6
-    pxor %xmm7, %xmm7
-    pxor %xmm8, %xmm8
-    pxor %xmm9, %xmm9
-    pxor %xmm10, %xmm10
-    pxor %xmm11, %xmm11
-    pxor %xmm12, %xmm12
-    pxor %xmm13, %xmm13
-    pxor %xmm14, %xmm14
-    pxor %xmm15, %xmm15
+    /* Do NOT zero XMM registers - userspace may hold values in them.
+     * Zeroing was causing crashes where GCC temporarily moved pointers to XMM regs.
+     * Proper fix would be FXSAVE/FXRSTOR on interrupt entry/exit. */
 
     /* CRITICAL FIX: In 64-bit mode, CPU pushes SS unconditionally, but kernel may
      * run with SS=0 (which works normally but IRETQ may fault when loading it).
@@ -701,25 +685,9 @@ irq_common_stub:
     /* Remove error code and vector number */
     addq $16, %rsp
 
-    /* Zero XMM registers before returning to prevent leaking kernel values to userspace.
-     * Kernel code (compiled with -O2) may use XMM registers, and per System V ABI they
-     * are caller-saved, so we must clean them when returning to userspace. */
-    pxor %xmm0, %xmm0
-    pxor %xmm1, %xmm1
-    pxor %xmm2, %xmm2
-    pxor %xmm3, %xmm3
-    pxor %xmm4, %xmm4
-    pxor %xmm5, %xmm5
-    pxor %xmm6, %xmm6
-    pxor %xmm7, %xmm7
-    pxor %xmm8, %xmm8
-    pxor %xmm9, %xmm9
-    pxor %xmm10, %xmm10
-    pxor %xmm11, %xmm11
-    pxor %xmm12, %xmm12
-    pxor %xmm13, %xmm13
-    pxor %xmm14, %xmm14
-    pxor %xmm15, %xmm15
+    /* Do NOT zero XMM registers - userspace may hold values in them.
+     * Zeroing was causing crashes where GCC temporarily moved pointers to XMM regs.
+     * Proper fix would be FXSAVE/FXRSTOR on interrupt entry/exit. */
 
     /* CRITICAL FIX: In 64-bit mode, CPU pushes SS unconditionally, but kernel may
      * run with SS=0 (which works normally but IRETQ may fault when loading it).
@@ -902,6 +870,224 @@ irq0_timer:
  * 192    | RSP
  * 200    | SS
  */
+
+/* Special IRQ1 (keyboard) handler - matches irq0_timer structure */
+.global irq1_keyboard
+.type irq1_keyboard, @function
+irq1_keyboard:
+    pushq $0                            /* Dummy error code */
+    pushq $33                           /* IRQ1 vector */
+
+    /* Push all general purpose registers */
+    pushq %r15
+    pushq %r14
+    pushq %r13
+    pushq %r12
+    pushq %r11
+    pushq %r10
+    pushq %r9
+    pushq %r8
+    pushq %rbp
+    pushq %rdi
+    pushq %rsi
+    pushq %rdx
+    pushq %rcx
+    pushq %rbx
+    pushq %rax
+
+    /* Push segment registers (zero RAX first to avoid garbage in upper bits) */
+    xorq %rax, %rax
+    movw %ds, %ax
+    pushq %rax
+    xorq %rax, %rax
+    movw %es, %ax
+    pushq %rax
+    xorq %rax, %rax
+    movw %fs, %ax
+    pushq %rax
+    xorq %rax, %rax
+    movw %gs, %ax
+    pushq %rax
+
+    /* Load kernel data segment (but DON'T touch GS or FS - they use MSR base!) */
+    movw $0x10, %ax
+    movw %ax, %ds
+    movw %ax, %es
+
+    /* Save interrupt frame pointer */
+    movq %rsp, fut_current_frame(%rip)
+
+    /* Align stack to 16 bytes for System V ABI */
+    movq %rsp, %rbp
+    andq $-16, %rsp
+
+    /* Set interrupt context flag */
+    movb $1, fut_in_interrupt(%rip)
+
+    /* Call keyboard IRQ handler */
+    call ps2_irq_keyboard
+
+    /* Clear interrupt context flag */
+    movb $0, fut_in_interrupt(%rip)
+
+    /* Clear frame pointer */
+    movq $0, fut_current_frame(%rip)
+
+    /* Restore stack */
+    movq %rbp, %rsp
+
+    /* Pop segment registers (but DON'T restore GS or FS - must preserve MSR bases!) */
+    popq %rax            /* Discard saved GS value */
+    popq %rax            /* Discard saved FS value */
+    popq %rax
+    movw %ax, %es
+    popq %rax
+    movw %ax, %ds
+
+    /* Pop general purpose registers */
+    popq %rax
+    popq %rbx
+    popq %rcx
+    popq %rdx
+    popq %rsi
+    popq %rdi
+    popq %rbp
+    popq %r8
+    popq %r9
+    popq %r10
+    popq %r11
+    popq %r12
+    popq %r13
+    popq %r14
+    popq %r15
+
+    /* Remove error code and vector number */
+    addq $16, %rsp
+
+    /* Do NOT zero XMM registers - userspace may hold values in them */
+
+    testb $3, 8(%rsp)
+    jnz .irq1_iretq_user
+
+    movq $0x10, 32(%rsp)
+    jmp .irq1_iretq
+
+.irq1_iretq_user:
+    orq $0x200, 16(%rsp)
+
+.irq1_iretq:
+    iretq
+
+.size irq1_keyboard, . - irq1_keyboard
+
+/* Special IRQ12 (mouse) handler - matches irq0_timer structure */
+.global irq12_mouse
+.type irq12_mouse, @function
+irq12_mouse:
+    pushq $0                            /* Dummy error code */
+    pushq $44                           /* IRQ12 vector */
+
+    /* Push all general purpose registers */
+    pushq %r15
+    pushq %r14
+    pushq %r13
+    pushq %r12
+    pushq %r11
+    pushq %r10
+    pushq %r9
+    pushq %r8
+    pushq %rbp
+    pushq %rdi
+    pushq %rsi
+    pushq %rdx
+    pushq %rcx
+    pushq %rbx
+    pushq %rax
+
+    /* Push segment registers (zero RAX first to avoid garbage in upper bits) */
+    xorq %rax, %rax
+    movw %ds, %ax
+    pushq %rax
+    xorq %rax, %rax
+    movw %es, %ax
+    pushq %rax
+    xorq %rax, %rax
+    movw %fs, %ax
+    pushq %rax
+    xorq %rax, %rax
+    movw %gs, %ax
+    pushq %rax
+
+    /* Load kernel data segment (but DON'T touch GS or FS - they use MSR base!) */
+    movw $0x10, %ax
+    movw %ax, %ds
+    movw %ax, %es
+
+    /* Save interrupt frame pointer */
+    movq %rsp, fut_current_frame(%rip)
+
+    /* Align stack to 16 bytes for System V ABI */
+    movq %rsp, %rbp
+    andq $-16, %rsp
+
+    /* Set interrupt context flag */
+    movb $1, fut_in_interrupt(%rip)
+
+    /* Call mouse IRQ handler */
+    call ps2_irq_mouse
+
+    /* Clear interrupt context flag */
+    movb $0, fut_in_interrupt(%rip)
+
+    /* Clear frame pointer */
+    movq $0, fut_current_frame(%rip)
+
+    /* Restore stack */
+    movq %rbp, %rsp
+
+    /* Pop segment registers (but DON'T restore GS or FS - must preserve MSR bases!) */
+    popq %rax            /* Discard saved GS value */
+    popq %rax            /* Discard saved FS value */
+    popq %rax
+    movw %ax, %es
+    popq %rax
+    movw %ax, %ds
+
+    /* Pop general purpose registers */
+    popq %rax
+    popq %rbx
+    popq %rcx
+    popq %rdx
+    popq %rsi
+    popq %rdi
+    popq %rbp
+    popq %r8
+    popq %r9
+    popq %r10
+    popq %r11
+    popq %r12
+    popq %r13
+    popq %r14
+    popq %r15
+
+    /* Remove error code and vector number */
+    addq $16, %rsp
+
+    /* Do NOT zero XMM registers - userspace may hold values in them */
+
+    testb $3, 8(%rsp)
+    jnz .irq12_iretq_user
+
+    movq $0x10, 32(%rsp)
+    jmp .irq12_iretq
+
+.irq12_iretq_user:
+    orq $0x200, 16(%rsp)
+
+.irq12_iretq:
+    iretq
+
+.size irq12_mouse, . - irq12_mouse
 
 /* Mark stack as non-executable */
 .section .note.GNU-stack,"",@progbits

@@ -474,18 +474,18 @@ void fut_printf(const char *fmt, ...) {
  *   Deferred Reschedule Tracking (for IRQ context)
  * ============================================================ */
 
-static _Bool reschedule_pending = 0;
+static volatile _Atomic _Bool reschedule_pending = 0;
 
 _Bool fut_reschedule_pending(void) {
-    return reschedule_pending;
+    return __atomic_load_n(&reschedule_pending, __ATOMIC_ACQUIRE);
 }
 
 void fut_clear_reschedule(void) {
-    reschedule_pending = 0;
+    __atomic_store_n(&reschedule_pending, 0, __ATOMIC_RELEASE);
 }
 
 void fut_request_reschedule(void) {
-    reschedule_pending = 1;
+    __atomic_store_n(&reschedule_pending, 1, __ATOMIC_RELEASE);
 }
 
 /* PIC initialization */
@@ -570,7 +570,7 @@ void fut_irq_enable(uint8_t irq) {
         irq -= 8;
     }
 
-    value = inb(port) & ~(1 << irq);
+    value = inb(port) & ~(1u << irq);
     outb(port, value);
 }
 
@@ -595,7 +595,7 @@ void fut_irq_disable(uint8_t irq) {
         irq -= 8;
     }
 
-    value = inb(port) | (1 << irq);
+    value = inb(port) | (1u << irq);
     outb(port, value);
 }
 

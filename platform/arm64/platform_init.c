@@ -218,8 +218,9 @@ static void uart_handle_tx(void) {
             break;
         }
 
-        /* Write next character from buffer */
+        /* Read character before advancing tail (acquire fence ensures data is read first) */
         char c = uart_tx_buffer[uart_tx_tail];
+        __atomic_thread_fence(__ATOMIC_ACQUIRE);
         uart_tx_tail = (uart_tx_tail + 1) % UART_TX_BUFFER_SIZE;
         mmio_write32((volatile void *)(uart + UART_DR), (uint32_t)c);
     }
@@ -245,10 +246,11 @@ static void uart_handle_rx(void) {
         uint32_t data = mmio_read32((volatile void *)(uart + UART_DR));
         uint8_t c = (uint8_t)(data & 0xFF);
 
-        /* Add to RX buffer */
+        /* Add to RX buffer (release fence ensures data is written before head advances) */
         uint32_t next_head = (uart_rx_head + 1) % UART_RX_BUFFER_SIZE;
         if (next_head != uart_rx_tail) {
             uart_rx_buffer[uart_rx_head] = c;
+            __atomic_thread_fence(__ATOMIC_RELEASE);
             uart_rx_head = next_head;
             had_data = true;
         }
@@ -303,7 +305,7 @@ static void uart_irq_handler(int irq_num, void *frame) {
 
     /* Debug: Log that handler was invoked */
     if (mis) {
-        static int handler_call_count = 0;
+        static uint32_t handler_call_count = 0;
         handler_call_count++;
         if (handler_call_count % 100 == 0) {
             /* Only log every 100 calls to avoid spam */
@@ -461,8 +463,9 @@ void fut_serial_putc(char c) {
         }
 
         if (timeout > 0) {
-            /* Add character to ring buffer */
+            /* Add character to ring buffer (release fence ensures data before head update) */
             uart_tx_buffer[uart_tx_head] = c;
+            __atomic_thread_fence(__ATOMIC_RELEASE);
             uart_tx_head = next_head;
 
             /* Enable TX interrupt to start draining buffer */
@@ -980,18 +983,18 @@ void fut_platform_stack_trace(int max_frames) {
  *   Deferred Reschedule Tracking
  * ============================================================ */
 
-static _Bool reschedule_pending = 0;
+static volatile _Atomic _Bool reschedule_pending = 0;
 
 _Bool fut_reschedule_pending(void) {
-    return reschedule_pending;
+    return __atomic_load_n(&reschedule_pending, __ATOMIC_ACQUIRE);
 }
 
 void fut_clear_reschedule(void) {
-    reschedule_pending = 0;
+    __atomic_store_n(&reschedule_pending, 0, __ATOMIC_RELEASE);
 }
 
 void fut_request_reschedule(void) {
-    reschedule_pending = 1;
+    __atomic_store_n(&reschedule_pending, 1, __ATOMIC_RELEASE);
 }
 
 /* ============================================================

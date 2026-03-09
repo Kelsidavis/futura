@@ -378,8 +378,12 @@ int fut_object_wait(fut_handle_t handle, uint64_t timeout_ms) {
             if (has_msg) { result = 0; break; }
             if (timeout_ms != 0 && spins >= MAX_SPINS) { result = -ETIMEDOUT; break; }
             spins++;
-            /* Yield CPU to avoid burning cycles while spinning */
+            /* Yield CPU to reduce bus contention while spinning */
+#if defined(__x86_64__)
             __asm__ volatile("pause" ::: "memory");
+#elif defined(__aarch64__)
+            __asm__ volatile("yield" ::: "memory");
+#endif
         }
         break;
     }

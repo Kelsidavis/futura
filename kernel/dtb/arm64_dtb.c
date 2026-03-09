@@ -12,6 +12,20 @@
 #include <platform/platform.h>
 
 /* ============================================================
+ *   Helper Functions for DTB Traversal
+ * ============================================================ */
+
+/**
+ * Read big-endian 32-bit value.
+ */
+static inline uint32_t be32_to_cpu(uint32_t value) {
+    return ((value & 0xFF000000) >> 24) |
+           ((value & 0x00FF0000) >> 8) |
+           ((value & 0x0000FF00) << 8) |
+           ((value & 0x000000FF) << 24);
+}
+
+/* ============================================================
  *   DTB Validation
  * ============================================================ */
 
@@ -49,20 +63,6 @@ bool fut_dtb_validate(uint64_t dtb_ptr) {
     }
 
     return true;
-}
-
-/* ============================================================
- *   Helper Functions for DTB Traversal
- * ============================================================ */
-
-/**
- * Read big-endian 32-bit value.
- */
-static inline uint32_t be32_to_cpu(uint32_t value) {
-    return ((value & 0xFF000000) >> 24) |
-           ((value & 0x00FF0000) >> 8) |
-           ((value & 0x0000FF00) << 8) |
-           ((value & 0x000000FF) << 24);
 }
 
 /**

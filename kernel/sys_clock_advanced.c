@@ -28,13 +28,18 @@
 /* CLOCK_* constants provided by time.h */
 /* ITIMER_* constants provided by sys/time.h */
 
-/* Interval timer structure */
+/* Interval timer structure — may already be provided by sys/time.h */
+#ifndef _STRUCT_ITIMERVAL
+#define _STRUCT_ITIMERVAL
 struct itimerval {
     fut_timeval_t it_interval;  /* Timer interval */
     fut_timeval_t it_value;     /* Current value */
 };
+#endif
 
 /* Time adjustment structure for adjtimex */
+#ifndef _STRUCT_TIMEX
+#define _STRUCT_TIMEX
 struct timex {
     unsigned int modes;      /* Mode selector */
     long offset;             /* Time offset (microseconds) */
@@ -48,6 +53,7 @@ struct timex {
     fut_timeval_t time;      /* Current time */
     long tick;               /* Microseconds per tick */
 };
+#endif
 
 /**
  * sys_clock_settime - Set clock time

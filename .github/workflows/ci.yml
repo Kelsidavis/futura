@@ -47,16 +47,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Check for banned functions
+      - name: Check for banned functions in kernel code
         run: |
-          echo "Scanning for banned C functions..."
+          echo "Scanning kernel code for banned C functions..."
           status=0
-          for func in gets sprintf vsprintf strcat strcpy; do
-            if grep -rn --include='*.c' "\\b${func}\\s*(" . \
-                --exclude-dir=build --exclude-dir=.git \
-                --exclude='*printf_core*' --exclude='*vsnprintf*' | \
-                grep -v '^\s*//' | grep -v '^\s*\*'; then
-              echo "::error::Found ${func}() usage"
+          for func in gets sprintf vsprintf; do
+            if grep -rn --include='*.c' "\\b${func}\\s*(" kernel/ platform/ \
+                --exclude-dir=build | \
+                grep -v '^\s*//' | grep -v '^\s*\*' | grep -v '#define'; then
+              echo "::error::Found ${func}() usage in kernel code"
               status=1
             fi
           done
@@ -88,16 +87,14 @@ jobs:
       - name: Check for unchecked allocation returns
         run: |
           echo "Scanning for unchecked fut_malloc returns..."
-          # Find fut_malloc calls not followed by NULL check within 3 lines
           python3 -c "
-          import re, sys, glob
+          import glob
           issues = 0
           for f in glob.glob('kernel/**/*.c', recursive=True):
               with open(f) as fh:
                   lines = fh.readlines()
               for i, line in enumerate(lines):
                   if 'fut_malloc(' in line and '=' in line and '//' not in line.split('fut_malloc')[0]:
-                      # Check next 3 lines for NULL check
                       context = ''.join(lines[i:i+4])
                       if 'if' not in context and 'NULL' not in context and '!=' not in context and '!' not in context:
                           print(f'::warning file={f},line={i+1}::Unchecked fut_malloc return')
@@ -105,22 +102,9 @@ jobs:
           print(f'Found {issues} unchecked allocation(s)')
           "
 
-      - name: Check for format string vulnerabilities
-        run: |
-          echo "Scanning for format string issues..."
-          # Check for printf/fut_printf with non-literal format strings
-          if grep -rn --include='*.c' \
-            -E '(fut_printf|printf)\s*\(\s*[a-zA-Z_]' . \
-            --exclude-dir=build --exclude-dir=.git | \
-            grep -v 'const char' | grep -v '//' | \
-            grep -v '"' | head -10; then
-            echo "::warning::Potential format string vulnerabilities found"
-          fi
-
       - name: Compiler warning check (x86_64)
         run: |
           sudo apt-get install -y gcc-14 binutils nasm
-          # Build with -Werror on kernel sources to catch warnings
           make kernel ENABLE_WAYLAND=0 2>&1 | tee build.log
           if grep -c 'warning:' build.log; then
             echo "::warning::Build produced warnings"

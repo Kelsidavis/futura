@@ -1049,6 +1049,8 @@ test-iso: kernel
 # Automated QEMU run with deterministic isa-debug-exit completion
 test:
 	@$(MAKE) ENABLE_WAYLAND=0 test-iso disk
+	@# Kill any stale QEMU holding the disk image lock
+	@fuser -k $(QEMU_DISK_IMG) 2>/dev/null || true
 	@echo "Testing kernel under QEMU (isa-debug-exit)..."
 	@img=$(QEMU_DISK_IMG); \
 		echo "[HARNESS] Using test disk $$img"; \

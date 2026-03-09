@@ -64,6 +64,61 @@ static futex_bucket_t *futex_get_bucket(uint32_t *uaddr) {
     return &futex_hash[key];
 }
 
+/* ============================================================
+ *   Futex Timeout Support
+ * ============================================================ */
+
+/* Context passed to futex timeout callback */
+typedef struct futex_timeout_ctx {
+    fut_thread_t *thread;
+    futex_bucket_t *bucket;
+} futex_timeout_ctx_t;
+
+/* Timer callback for FUTEX_WAIT timeout.
+ * Removes the thread from the futex wait queue and wakes it.
+ * Clears futex_addr to signal timeout to the waiting thread. */
+static void futex_timeout_callback(void *arg) {
+    futex_timeout_ctx_t *ctx = (futex_timeout_ctx_t *)arg;
+    fut_thread_t *thread = ctx->thread;
+    futex_bucket_t *bucket = ctx->bucket;
+
+    fut_spinlock_acquire(&bucket->lock);
+
+    /* Only act if thread is still on the wait queue (not already woken by FUTEX_WAKE) */
+    fut_waitq_t *wq = &bucket->waiters;
+    fut_thread_t *cur = wq->head;
+    fut_thread_t *prev = NULL;
+    bool found = false;
+
+    while (cur) {
+        if (cur == thread) {
+            if (prev) {
+                prev->wait_next = cur->wait_next;
+            } else {
+                wq->head = cur->wait_next;
+            }
+            if (wq->tail == cur) {
+                wq->tail = prev;
+            }
+            cur->wait_next = NULL;
+            found = true;
+            break;
+        }
+        prev = cur;
+        cur = cur->wait_next;
+    }
+
+    if (found) {
+        /* Thread was still waiting - wake it with timeout indication */
+        thread->futex_addr = NULL;
+        thread->state = FUT_THREAD_READY;
+        fut_sched_add_thread(thread);
+        fut_printf("[FUTEX] timeout - woke thread %p\n", (void*)thread);
+    }
+
+    fut_spinlock_release(&bucket->lock);
+}
+
 /**
  * futex_wake_one - Internal kernel function to wake one futex waiter
  *
@@ -87,20 +142,20 @@ int futex_wake_one(uint32_t *uaddr) {
     fut_thread_t *prev = NULL;
 
     while (thread && woken < 1) {
-        fut_thread_t *next = thread->wq_next;
+        fut_thread_t *next = thread->wait_next;
 
         /* Check if this thread is waiting on our specific futex address */
         if (thread->futex_addr == uaddr) {
             /* Remove from wait queue */
             if (prev) {
-                prev->wq_next = next;
+                prev->wait_next = next;
             } else {
                 wq->head = next;
             }
             if (wq->tail == thread) {
                 wq->tail = prev;
             }
-            thread->wq_next = NULL;
+            thread->wait_next = NULL;
 
             /* Wake up the thread - set state to READY and add to run queue */
             thread->state = FUT_THREAD_READY;
@@ -141,7 +196,7 @@ int futex_wake_one(uint32_t *uaddr) {
  *
  * Phase 1 (Complete): Basic FUTEX_WAIT/FUTEX_WAKE with wait queues
  * Phase 2 (Complete): FUTEX_REQUEUE, FUTEX_CMP_REQUEUE, FUTEX_WAKE_OP
- * Phase 3 (TODO): Add timeout support for FUTEX_WAIT
+ * Phase 3 (Complete): Timeout support for FUTEX_WAIT
  *
  * Returns:
  *   - FUTEX_WAIT: 0 on success, -EAGAIN if value mismatch, -ETIMEDOUT on timeout
@@ -270,6 +325,24 @@ long sys_futex(uint32_t *uaddr, int op, uint32_t val,
             /* FUTEX_WAIT: Atomically check *uaddr == val, then sleep
              * This is the core primitive for userspace mutexes/condvars */
 
+            /* Parse and validate timeout if specified */
+            bool has_timeout = false;
+            uint64_t timeout_ms = 0;
+            if (timeout) {
+                fut_timespec_t ts;
+                if (fut_copy_from_user(&ts, timeout, sizeof(ts)) != 0) {
+                    return -EFAULT;
+                }
+                if (ts.tv_sec < 0 || ts.tv_nsec < 0 || ts.tv_nsec >= 1000000000) {
+                    return -EINVAL;
+                }
+                timeout_ms = (uint64_t)ts.tv_sec * 1000 + (uint64_t)ts.tv_nsec / 1000000;
+                if (timeout_ms == 0 && ts.tv_nsec > 0) {
+                    timeout_ms = 1; /* Round up sub-millisecond to 1ms */
+                }
+                has_timeout = true;
+            }
+
             /* Get the hash bucket for this futex address */
             futex_bucket_t *bucket = futex_get_bucket(uaddr);
 
@@ -292,6 +365,12 @@ long sys_futex(uint32_t *uaddr, int op, uint32_t val,
                 return -EAGAIN;
             }
 
+            /* Zero timeout: value matched but don't block */
+            if (has_timeout && timeout_ms == 0) {
+                fut_spinlock_release(&bucket->lock);
+                return -ETIMEDOUT;
+            }
+
             /* Value matches - add to wait queue and sleep */
             fut_thread_t *thread = fut_thread_current();
             if (!thread) {
@@ -302,15 +381,32 @@ long sys_futex(uint32_t *uaddr, int op, uint32_t val,
             /* Store futex address in thread for later matching during wake */
             thread->futex_addr = uaddr;
 
+            /* Register timeout timer if specified */
+            futex_timeout_ctx_t timeout_ctx;
+            if (has_timeout) {
+                timeout_ctx.thread = thread;
+                timeout_ctx.bucket = bucket;
+                fut_timer_start(timeout_ms, futex_timeout_callback, &timeout_ctx);
+            }
+
             /* Sleep on wait queue (releases bucket lock) */
-            fut_printf("[FUTEX] FUTEX_WAIT - sleeping on futex at %p\n", uaddr);
+            fut_printf("[FUTEX] FUTEX_WAIT - sleeping on futex at %p (timeout=%s)\n",
+                       uaddr, has_timeout ? "yes" : "infinite");
             fut_waitq_sleep_locked(&bucket->waiters, &bucket->lock, FUT_THREAD_BLOCKED);
 
-            /* Woken up - clear futex address */
+            /* Cancel timeout timer if set (harmless if already fired) */
+            if (has_timeout) {
+                fut_timer_cancel(futex_timeout_callback, &timeout_ctx);
+            }
+
+            /* Check if we were timed out (timeout callback clears futex_addr) */
+            bool timed_out = (thread->futex_addr == NULL);
             thread->futex_addr = NULL;
 
-            /* TODO: Handle timeout if specified */
-            (void)timeout;
+            if (timed_out) {
+                fut_printf("[FUTEX] FUTEX_WAIT - timed out\n");
+                return -ETIMEDOUT;
+            }
 
             fut_printf("[FUTEX] FUTEX_WAIT - woken up\n");
             return 0;
@@ -332,20 +428,20 @@ long sys_futex(uint32_t *uaddr, int op, uint32_t val,
             fut_thread_t *prev = NULL;
 
             while (thread && woken < (int)max_wake) {
-                fut_thread_t *next = thread->wq_next;
+                fut_thread_t *next = thread->wait_next;
 
                 /* Check if this thread is waiting on our specific futex address */
                 if (thread->futex_addr == uaddr) {
                     /* Remove from wait queue */
                     if (prev) {
-                        prev->wq_next = next;
+                        prev->wait_next = next;
                     } else {
                         wq->head = next;
                     }
                     if (wq->tail == thread) {
                         wq->tail = prev;
                     }
-                    thread->wq_next = NULL;
+                    thread->wait_next = NULL;
 
                     /* Wake up the thread - set state to READY and add to run queue */
                     thread->state = FUT_THREAD_READY;
@@ -410,20 +506,20 @@ long sys_futex(uint32_t *uaddr, int op, uint32_t val,
             fut_thread_t *prev = NULL;
 
             while (thread) {
-                fut_thread_t *next = thread->wq_next;
+                fut_thread_t *next = thread->wait_next;
 
                 /* Check if this thread is waiting on uaddr */
                 if (thread->futex_addr == uaddr) {
                     /* Remove from source wait queue */
                     if (prev) {
-                        prev->wq_next = next;
+                        prev->wait_next = next;
                     } else {
                         wq1->head = next;
                     }
                     if (wq1->tail == thread) {
                         wq1->tail = prev;
                     }
-                    thread->wq_next = NULL;
+                    thread->wait_next = NULL;
 
                     if (woken < (int)max_wake) {
                         /* Wake this thread */
@@ -435,9 +531,9 @@ long sys_futex(uint32_t *uaddr, int op, uint32_t val,
                         /* Requeue to uaddr2 */
                         thread->futex_addr = uaddr2;
                         fut_waitq_t *wq2 = &bucket2->waiters;
-                        thread->wq_next = NULL;
+                        thread->wait_next = NULL;
                         if (wq2->tail) {
-                            wq2->tail->wq_next = thread;
+                            wq2->tail->wait_next = thread;
                         } else {
                             wq2->head = thread;
                         }
@@ -448,7 +544,7 @@ long sys_futex(uint32_t *uaddr, int op, uint32_t val,
                     } else {
                         /* Already at max wake and requeue - re-add to source queue */
                         if (wq1->tail) {
-                            wq1->tail->wq_next = thread;
+                            wq1->tail->wait_next = thread;
                         } else {
                             wq1->head = thread;
                         }
@@ -547,19 +643,19 @@ long sys_futex(uint32_t *uaddr, int op, uint32_t val,
             fut_thread_t *prev = NULL;
 
             while (thread) {
-                fut_thread_t *next = thread->wq_next;
+                fut_thread_t *next = thread->wait_next;
 
                 if (thread->futex_addr == uaddr) {
                     /* Remove from source wait queue */
                     if (prev) {
-                        prev->wq_next = next;
+                        prev->wait_next = next;
                     } else {
                         wq1->head = next;
                     }
                     if (wq1->tail == thread) {
                         wq1->tail = prev;
                     }
-                    thread->wq_next = NULL;
+                    thread->wait_next = NULL;
 
                     if (woken < (int)max_wake) {
                         /* Wake this thread */
@@ -570,9 +666,9 @@ long sys_futex(uint32_t *uaddr, int op, uint32_t val,
                         /* Requeue to uaddr2 */
                         thread->futex_addr = uaddr2;
                         fut_waitq_t *wq2 = &bucket2->waiters;
-                        thread->wq_next = NULL;
+                        thread->wait_next = NULL;
                         if (wq2->tail) {
-                            wq2->tail->wq_next = thread;
+                            wq2->tail->wait_next = thread;
                         } else {
                             wq2->head = thread;
                         }
@@ -581,7 +677,7 @@ long sys_futex(uint32_t *uaddr, int op, uint32_t val,
                     } else {
                         /* Re-add to source queue */
                         if (wq1->tail) {
-                            wq1->tail->wq_next = thread;
+                            wq1->tail->wait_next = thread;
                         } else {
                             wq1->head = thread;
                         }
@@ -704,17 +800,17 @@ long sys_futex(uint32_t *uaddr, int op, uint32_t val,
             fut_thread_t *prev = NULL;
 
             while (thread && woken1 < (int)val) {
-                fut_thread_t *next = thread->wq_next;
+                fut_thread_t *next = thread->wait_next;
                 if (thread->futex_addr == uaddr) {
                     if (prev) {
-                        prev->wq_next = next;
+                        prev->wait_next = next;
                     } else {
                         wq1->head = next;
                     }
                     if (wq1->tail == thread) {
                         wq1->tail = prev;
                     }
-                    thread->wq_next = NULL;
+                    thread->wait_next = NULL;
                     thread->state = FUT_THREAD_READY;
                     fut_sched_add_thread(thread);
                     woken1++;
@@ -744,17 +840,17 @@ long sys_futex(uint32_t *uaddr, int op, uint32_t val,
                 prev = NULL;
 
                 while (thread && woken2 < (int)val2) {
-                    fut_thread_t *next = thread->wq_next;
+                    fut_thread_t *next = thread->wait_next;
                     if (thread->futex_addr == uaddr2) {
                         if (prev) {
-                            prev->wq_next = next;
+                            prev->wait_next = next;
                         } else {
                             wq2->head = next;
                         }
                         if (wq2->tail == thread) {
                             wq2->tail = prev;
                         }
-                        thread->wq_next = NULL;
+                        thread->wait_next = NULL;
                         thread->state = FUT_THREAD_READY;
                         fut_sched_add_thread(thread);
                         woken2++;

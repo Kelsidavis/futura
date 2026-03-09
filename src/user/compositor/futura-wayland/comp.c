@@ -1010,6 +1010,10 @@ struct comp_surface *comp_surface_create(struct compositor_state *comp,
     comp_surface_link_tail(comp, surface);
     if (!comp->active_surface) {
         comp->active_surface = surface;
+        /* Auto-focus the first surface so keyboard input works immediately */
+        if (comp->seat) {
+            seat_focus_surface(comp->seat, surface);
+        }
     }
     return surface;
 }

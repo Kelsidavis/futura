@@ -109,7 +109,7 @@ static void seat_update_hover(struct seat_state *seat) {
 }
 
 static void seat_update_pointer_focus(struct seat_state *seat, uint32_t time_msec);
-static void seat_focus_surface(struct seat_state *seat, struct comp_surface *surface);
+/* seat_focus_surface declared in seat.h */
 
 static struct seat_client *seat_client_from_resource(struct wl_resource *resource) {
     return resource ? wl_resource_get_user_data(resource) : NULL;
@@ -357,7 +357,7 @@ static void seat_send_key(struct seat_state *seat,
     WLOG("[WAYLAND] seat: key code=%u down=%u\n", keycode, pressed ? 1u : 0u);
 }
 
-static void seat_focus_surface(struct seat_state *seat, struct comp_surface *surface) {
+void seat_focus_surface(struct seat_state *seat, struct comp_surface *surface) {
     if (!seat) {
         return;
     }
@@ -571,15 +571,22 @@ static void seat_handle_mouse_event(struct seat_state *seat,
     bool moved = false;
 
     switch (ev->type) {
-    case FUT_EV_MOUSE_MOVE:
+    case FUT_EV_MOUSE_MOVE: {
+        /* Apply simple mouse acceleration: small movements get 2x,
+         * larger movements get 3x to make the cursor feel responsive */
+        int32_t delta = ev->value;
+        int32_t abs_delta = delta < 0 ? -delta : delta;
+        int32_t factor = abs_delta > 5 ? 3 : 2;
+        delta *= factor;
         if (ev->code == FUT_REL_X) {
-            target_x += ev->value;
+            target_x += delta;
             moved = true;
         } else if (ev->code == FUT_REL_Y) {
-            target_y += ev->value;
+            target_y += delta;
             moved = true;
         }
         break;
+    }
     case FUT_EV_MOUSE_BTN:
         seat_handle_button(seat, (uint16_t)ev->code, ev->value != 0, time_msec);
         break;

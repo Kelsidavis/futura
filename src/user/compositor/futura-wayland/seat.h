@@ -56,5 +56,6 @@ struct seat_state {
 struct seat_state *seat_init(struct compositor_state *comp);
 void seat_finish(struct seat_state *seat);
 void seat_poll_input(struct seat_state *seat);
+void seat_focus_surface(struct seat_state *seat, struct comp_surface *surface);
 void seat_surface_destroyed(struct seat_state *seat, struct comp_surface *surface);
 struct seat_client *seat_client_lookup(struct seat_state *seat, struct wl_client *client);

@@ -23,7 +23,7 @@
 #include <kernel/fut_task.h>
 #include <kernel/kprintf.h>
 #include <shared/fut_sigevent.h>  /* For struct sigevent, timer_t */
-#include <shared/fut_stat.h>      /* For struct fut_stat, S_IF* */
+/* struct fut_stat is provided by kernel/fut_vfs.h (included above) */
 #include <sys/uio.h>              /* For struct iovec */
 #include <sys/resource.h>         /* For struct rlimit, RLIMIT_* */
 #include <fcntl.h>                /* For AT_FDCWD and file control flags */
@@ -183,13 +183,19 @@ extern long sys_sched_get_priority_min(int policy);
 extern long sys_getpriority(int which, int who);
 extern long sys_setpriority(int which, int who, int prio);
 
-/* Interval timer structure for getitimer/setitimer */
+/* Interval timer structure for getitimer/setitimer
+ * May already be provided by sys/time.h (pulled in via sys/resource.h) */
+#ifndef _STRUCT_ITIMERVAL
+#define _STRUCT_ITIMERVAL
 struct itimerval {
     fut_timeval_t it_interval;
     fut_timeval_t it_value;
 };
+#endif
 
 /* Time adjustment structure for adjtimex */
+#ifndef _STRUCT_TIMEX
+#define _STRUCT_TIMEX
 struct timex {
     unsigned int modes;
     long offset;
@@ -203,6 +209,7 @@ struct timex {
     fut_timeval_t time;
     long tick;
 };
+#endif
 
 /* Time and clock syscalls */
 extern long sys_gettimeofday(fut_timeval_t *tv, void *tz);

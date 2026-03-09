@@ -96,7 +96,7 @@
  * Defense (PARTIALLY IMPLEMENTED - see lines 502-540):
  * - [DONE] Reject paths containing ".." components
  * - [DONE] Validate path doesn't escape allowed directories
- * - [TODO] Check write permission on parent directory
+ * - [DONE] Check write permission on parent directory
  *
  * CVE References:
  * - CVE-2014-0196: Linux TTY layer race condition
@@ -152,7 +152,7 @@
  *
  * 6. [PARTIAL] Unix domain socket path validation
  *    - [DONE] Reject ".." path components (lines 502-540)
- *    - [TODO] Validate parent directory write permissions
+ *    - [DONE] Validate parent directory write permissions
  *    - [DONE] Prevent directory traversal attacks (lines 502-540)
  *
  * ============================================================================
@@ -193,15 +193,17 @@
  * enhancements:
  * [DONE] 1. CAP_NET_BIND_SERVICE capability check for ports < 1024 (lines 408-414, 434-440)
  * [DONE] 2. Path traversal protection - reject ".." components (lines 502-540)
- * [TODO] 3. Add parent directory write permission checks
+ * [DONE] 3. Add parent directory write permission checks
  * [TODO] 4. Add rate limiting for bind failures (DoS prevention)
  */
 
 #include <kernel/fut_task.h>
 #include <kernel/fut_socket.h>
+#include <kernel/fut_vfs.h>
 #include <kernel/uaccess.h>
 #include <kernel/errno.h>
 #include <stdint.h>
+#include <string.h>
 
 #include <kernel/kprintf.h>
 #include <kernel/debug_config.h>
@@ -533,6 +535,44 @@ long sys_bind(int sockfd, const void *addr, socklen_t addrlen) {
                 }
             }
             i++;
+        }
+    }
+
+    /* Check parent directory write permission for filesystem paths.
+     * Creating a socket file requires write access to the parent directory. */
+    if (sock_path[0] != '\0') {
+        /* Extract parent directory path */
+        char parent_path[256];
+        int last_slash = -1;
+        size_t sock_path_len = strnlen(sock_path, sizeof(sock_path) - 1);
+        for (size_t i = 0; i < sock_path_len; i++) {
+            if (sock_path[i] == '/') last_slash = (int)i;
+        }
+
+        if (last_slash >= 0) {
+            if (last_slash == 0) {
+                parent_path[0] = '/';
+                parent_path[1] = '\0';
+            } else {
+                size_t plen = (size_t)last_slash < sizeof(parent_path) - 1
+                              ? (size_t)last_slash : sizeof(parent_path) - 1;
+                memcpy(parent_path, sock_path, plen);
+                parent_path[plen] = '\0';
+            }
+
+            struct fut_vnode *parent_vnode = NULL;
+            int lookup_ret = fut_vfs_lookup(parent_path, &parent_vnode);
+            if (lookup_ret == 0 && parent_vnode) {
+                if (vfs_check_write_perm(parent_vnode) != 0) {
+                    bind_printf("[BIND] bind(sockfd=%d, path='%s') -> EACCES "
+                               "(no write permission on parent directory '%s')\n",
+                               local_sockfd, sock_path, parent_path);
+                    fut_vnode_unref(parent_vnode);
+                    return -EACCES;
+                }
+                fut_vnode_unref(parent_vnode);
+            }
+            /* If parent lookup fails, let fut_socket_bind handle the error */
         }
     }
 

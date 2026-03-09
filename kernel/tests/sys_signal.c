@@ -85,7 +85,7 @@ static void test_signal_pending(void) {
     }
 
     /* Clear any existing pending signals */
-    task->pending_signals = 0;
+    __atomic_store_n(&task->pending_signals, (uint64_t)0, __ATOMIC_RELEASE);
 
     /* Send signal to self */
     int ret = fut_signal_send(task, SIGUSR2);
@@ -137,7 +137,7 @@ static void test_signal_mask(void) {
     }
 
     /* Verify signal is blocked */
-    if (!(task->signal_mask & (1ULL << (SIGUSR1 - 1)))) {
+    if (!(__atomic_load_n(&task->signal_mask, __ATOMIC_ACQUIRE) & (1ULL << (SIGUSR1 - 1)))) {
         fut_printf("[SIGNAL-TEST] ✗ Signal SIGUSR1 not blocked in mask\n");
         fut_test_fail(SIG_TEST_MASK);
         return;
@@ -152,7 +152,7 @@ static void test_signal_mask(void) {
     }
 
     /* Verify signal is unblocked */
-    if (task->signal_mask & (1ULL << (SIGUSR1 - 1))) {
+    if (__atomic_load_n(&task->signal_mask, __ATOMIC_ACQUIRE) & (1ULL << (SIGUSR1 - 1))) {
         fut_printf("[SIGNAL-TEST] ✗ Signal SIGUSR1 still blocked after unblock\n");
         fut_test_fail(SIG_TEST_MASK);
         return;
@@ -174,7 +174,7 @@ static void test_signal_multiple(void) {
     }
 
     /* Clear pending signals */
-    task->pending_signals = 0;
+    __atomic_store_n(&task->pending_signals, (uint64_t)0, __ATOMIC_RELEASE);
 
     /* Send multiple different signals */
     int signals[] = {SIGUSR1, SIGUSR2, SIGTERM};
@@ -200,9 +200,10 @@ static void test_signal_multiple(void) {
     uint64_t expected_mask = (1ULL << (SIGUSR1 - 1)) |
                              (1ULL << (SIGUSR2 - 1)) |
                              (1ULL << (SIGTERM - 1));
-    if ((task->pending_signals & expected_mask) != expected_mask) {
+    uint64_t cur_pending = __atomic_load_n(&task->pending_signals, __ATOMIC_ACQUIRE);
+    if ((cur_pending & expected_mask) != expected_mask) {
         fut_printf("[SIGNAL-TEST] ✗ Pending signals bitmask incorrect (got %llx, expected %llx)\n",
-                  task->pending_signals & expected_mask, expected_mask);
+                  cur_pending & expected_mask, expected_mask);
         fut_test_fail(SIG_TEST_MULTIPLE);
         return;
     }
@@ -236,7 +237,7 @@ static void test_signal_delivery(void) {
     }
 
     /* Clear any existing pending signals */
-    task->pending_signals = 0;
+    __atomic_store_n(&task->pending_signals, (uint64_t)0, __ATOMIC_RELEASE);
 
     /* Send signal to self */
     ret = fut_signal_send(task, SIGUSR1);

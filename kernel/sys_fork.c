@@ -754,7 +754,7 @@ long sys_fork(void) {
         child_task->signal_handler_masks[i] = parent_task->signal_handler_masks[i];
         child_task->signal_handler_flags[i] = parent_task->signal_handler_flags[i];
     }
-    child_task->signal_mask = parent_task->signal_mask;
+    child_task->signal_mask = __atomic_load_n(&parent_task->signal_mask, __ATOMIC_ACQUIRE);
 
     /* Inherit parent's umask, resource limits, and capabilities */
     child_task->umask = parent_task->umask;

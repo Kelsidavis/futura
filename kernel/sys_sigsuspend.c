@@ -116,10 +116,10 @@ long sys_sigsuspend(const sigset_t *mask) {
     }
 
     /* Save current mask for restoration */
-    oldmask.__mask = current->signal_mask;
+    oldmask.__mask = __atomic_load_n(&current->signal_mask, __ATOMIC_ACQUIRE);
 
-    /* Atomically install new mask */
-    current->signal_mask = newmask.__mask;
+    /* Install new mask */
+    __atomic_store_n(&current->signal_mask, newmask.__mask, __ATOMIC_RELEASE);
 
     /* Phase 1: Stub - just return -EINTR immediately
      * Phase 2: Block on wait queue until signal delivery
@@ -130,7 +130,7 @@ long sys_sigsuspend(const sigset_t *mask) {
                mask, current->pid, oldmask.__mask, newmask.__mask);
 
     /* Restore original mask before returning */
-    current->signal_mask = oldmask.__mask;
+    __atomic_store_n(&current->signal_mask, oldmask.__mask, __ATOMIC_RELEASE);
 
     /* Always return -EINTR (interrupted by signal) */
     return -EINTR;

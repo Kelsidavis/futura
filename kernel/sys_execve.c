@@ -685,7 +685,7 @@ long sys_execve(const char *pathname, char *const argv[], char *const envp[]) {
         }
     }
     /* Clear pending signals and alternate signal stack on exec */
-    task->pending_signals = 0;
+    __atomic_store_n(&task->pending_signals, (uint64_t)0, __ATOMIC_RELEASE);
     task->sig_altstack.ss_sp = NULL;
     task->sig_altstack.ss_flags = SS_DISABLE;
     task->sig_altstack.ss_size = 0;

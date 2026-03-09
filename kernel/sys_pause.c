@@ -107,7 +107,8 @@ long sys_pause(void) {
      * - CVE-2016-7117: Linux recvmmsg timeout TOCTOU (similar pattern)
      * - CVE-2017-15265: Linux use-after-free via signal delivery race
      */
-    uint64_t unblocked_pending = task->pending_signals & ~task->signal_mask;
+    uint64_t unblocked_pending = __atomic_load_n(&task->pending_signals, __ATOMIC_ACQUIRE)
+                                & ~__atomic_load_n(&task->signal_mask, __ATOMIC_ACQUIRE);
 
     if (unblocked_pending > 0) {
         /* Signal already pending, return immediately and let exception

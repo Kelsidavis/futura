@@ -109,8 +109,9 @@ int fut_signal_is_pending(struct fut_task *task, int signum) {
     uint64_t pending = __atomic_load_n(&task->pending_signals, __ATOMIC_ACQUIRE);
 
     /* Check if signal is pending and not blocked */
+    uint64_t mask = __atomic_load_n(&task->signal_mask, __ATOMIC_ACQUIRE);
     if ((pending & signal_bit) &&
-        !(task->signal_mask & signal_bit)) {
+        !(mask & signal_bit)) {
         return 1;
     }
 
@@ -207,7 +208,7 @@ int fut_signal_procmask(struct fut_task *task, int how,
 
     /* Save old mask if requested */
     if (oldset) {
-        oldset->__mask = task->signal_mask;
+        oldset->__mask = __atomic_load_n(&task->signal_mask, __ATOMIC_ACQUIRE);
     }
 
     /* security: SIGKILL and SIGSTOP cannot be blocked (POSIX requirement).
@@ -215,18 +216,19 @@ int fut_signal_procmask(struct fut_task *task, int how,
      * a process unkillable or unstoppable. */
     uint64_t unblockable = (1ULL << (SIGKILL - 1)) | (1ULL << (SIGSTOP - 1));
 
-    /* Modify mask according to 'how' */
+    /* Modify mask according to 'how' — use atomic operations since signal
+     * delivery and other threads may read/write signal_mask concurrently. */
     if (set) {
         uint64_t sanitized = set->__mask & ~unblockable;
         switch (how) {
             case SIGPROCMASK_BLOCK:
-                task->signal_mask |= sanitized;
+                __atomic_or_fetch(&task->signal_mask, sanitized, __ATOMIC_ACQ_REL);
                 break;
             case SIGPROCMASK_UNBLOCK:
-                task->signal_mask &= ~(sanitized);
+                __atomic_and_fetch(&task->signal_mask, ~sanitized, __ATOMIC_ACQ_REL);
                 break;
             case SIGPROCMASK_SETMASK:
-                task->signal_mask = sanitized;
+                __atomic_store_n(&task->signal_mask, sanitized, __ATOMIC_RELEASE);
                 break;
             default:
                 return -EINVAL;
@@ -274,12 +276,15 @@ int fut_signal_deliver(struct fut_task *task, void *frame) {
 
     arm64_frame_t *f = (arm64_frame_t *)frame;
 
-    /* Find first pending, unblocked signal */
+    /* Find first pending, unblocked signal — use atomic loads since
+     * signals can be queued from other threads/IRQ context concurrently. */
     int signum = 0;
+    uint64_t cur_pending = __atomic_load_n(&task->pending_signals, __ATOMIC_ACQUIRE);
+    uint64_t cur_mask = __atomic_load_n(&task->signal_mask, __ATOMIC_ACQUIRE);
     for (int i = 1; i < _NSIG; i++) {
         uint64_t signal_bit = (1ULL << (i - 1));
-        if ((task->pending_signals & signal_bit) &&
-            !(task->signal_mask & signal_bit)) {
+        if ((cur_pending & signal_bit) &&
+            !(cur_mask & signal_bit)) {
             signum = i;
             break;
         }
@@ -295,7 +300,7 @@ int fut_signal_deliver(struct fut_task *task, void *frame) {
 
     /* Clear pending signal bit first */
     uint64_t signal_bit = (1ULL << (signum - 1));
-    task->pending_signals &= ~signal_bit;
+    __atomic_and_fetch(&task->pending_signals, ~signal_bit, __ATOMIC_ACQ_REL);
 
     /* If handler is SIG_DFL or SIG_IGN, don't deliver frame */
     if (handler == SIG_DFL || handler == SIG_IGN) {
@@ -356,7 +361,7 @@ int fut_signal_deliver(struct fut_task *task, void *frame) {
     sframe.uc.uc_mcontext.gregs.fpcr = f->fpcr;
 
     /* Signal mask for restoration */
-    sframe.uc.uc_sigmask.__mask = task->signal_mask;
+    sframe.uc.uc_sigmask.__mask = __atomic_load_n(&task->signal_mask, __ATOMIC_ACQUIRE);
 
     /* Copy rt_sigframe to user stack */
     if (fut_copy_to_user((void *)sp, &sframe, sizeof(sframe)) != 0) {
@@ -379,7 +384,7 @@ int fut_signal_deliver(struct fut_task *task, void *frame) {
     /* security: Block the delivered signal while handler is running.
      * This prevents recursive signal delivery which could overflow the user
      * stack. Matches x86-64 behavior. The mask is restored by sigreturn(). */
-    task->signal_mask |= signal_bit;
+    __atomic_or_fetch(&task->signal_mask, signal_bit, __ATOMIC_ACQ_REL);
 
     fut_printf("[SIGNAL] Delivered signal %d to task %llu (handler=%p, sp=%llx)\n",
                signum, task->pid, handler, sp);
@@ -421,12 +426,15 @@ int fut_signal_deliver(struct fut_task *task, void *frame) {
         return 0;  /* Returning to kernel mode, don't deliver */
     }
 
-    /* Find first pending, unblocked signal */
+    /* Find first pending, unblocked signal — use atomic loads since
+     * signals can be queued from other threads/IRQ context concurrently. */
     int signum = 0;
+    uint64_t cur_pending = __atomic_load_n(&task->pending_signals, __ATOMIC_ACQUIRE);
+    uint64_t cur_mask = __atomic_load_n(&task->signal_mask, __ATOMIC_ACQUIRE);
     for (int i = 1; i < _NSIG; i++) {
         uint64_t signal_bit = (1ULL << (i - 1));
-        if ((task->pending_signals & signal_bit) &&
-            !(task->signal_mask & signal_bit)) {
+        if ((cur_pending & signal_bit) &&
+            !(cur_mask & signal_bit)) {
             signum = i;
             break;
         }
@@ -442,7 +450,7 @@ int fut_signal_deliver(struct fut_task *task, void *frame) {
 
     /* Clear pending signal bit first */
     uint64_t signal_bit = (1ULL << (signum - 1));
-    task->pending_signals &= ~signal_bit;
+    __atomic_and_fetch(&task->pending_signals, ~signal_bit, __ATOMIC_ACQ_REL);
 
     /* Handle SIG_IGN - just ignore the signal */
     if (handler == SIG_IGN) {
@@ -530,7 +538,7 @@ int fut_signal_deliver(struct fut_task *task, void *frame) {
     sframe.uc.uc_mcontext.gregs.trapno = f->vector;
 
     /* Signal mask for restoration */
-    sframe.uc.uc_sigmask.__mask = task->signal_mask;
+    sframe.uc.uc_sigmask.__mask = __atomic_load_n(&task->signal_mask, __ATOMIC_ACQUIRE);
 
     /* Set return address to NULL - handler should call sigreturn explicitly */
     sframe.return_address = NULL;
@@ -556,7 +564,7 @@ int fut_signal_deliver(struct fut_task *task, void *frame) {
     f->rdx = sp + offsetof(struct rt_sigframe, uc);
 
     /* Block the signal while handler is running */
-    task->signal_mask |= signal_bit;
+    __atomic_or_fetch(&task->signal_mask, signal_bit, __ATOMIC_ACQ_REL);
 
     fut_printf("[SIGNAL] Delivered signal %d to task %llu (handler=%p, sp=%llx)\n",
                signum, task->pid, handler, sp);

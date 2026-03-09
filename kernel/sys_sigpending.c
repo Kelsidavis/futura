@@ -110,7 +110,9 @@ long sys_sigpending(sigset_t *set) {
 
     /* Get pending signals that are unblocked (deliverable) */
     sigset_t pending;
-    pending.__mask = current->pending_signals & ~current->signal_mask;
+    uint64_t cur_pending = __atomic_load_n(&current->pending_signals, __ATOMIC_ACQUIRE);
+    uint64_t cur_mask = __atomic_load_n(&current->signal_mask, __ATOMIC_ACQUIRE);
+    pending.__mask = cur_pending & ~cur_mask;
 
     /* Copy result to user space */
     if (fut_copy_to_user(set, &pending, sizeof(sigset_t)) != 0) {
@@ -120,7 +122,7 @@ long sys_sigpending(sigset_t *set) {
 
     fut_printf("[SIGPENDING] sigpending(set=%p) -> 0 (pending=0x%llx, mask=0x%llx, "
                "deliverable=0x%llx, pid=%u)\n",
-               set, current->pending_signals, current->signal_mask,
+               set, cur_pending, cur_mask,
                pending.__mask, current->pid);
 
     return 0;

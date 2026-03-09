@@ -162,7 +162,7 @@ long sys_sigprocmask(int how, const sigset_t *set, sigset_t *oldset) {
     }
 
     /* Phase 2: Get old mask for logging before modification */
-    uint64_t old_mask_value = current->signal_mask;
+    uint64_t old_mask_value = __atomic_load_n(&current->signal_mask, __ATOMIC_ACQUIRE);
     int old_signal_count = count_signals_in_mask(old_mask_value);
 
     /* Phase 2: Log new mask if provided */
@@ -200,7 +200,7 @@ long sys_sigprocmask(int how, const sigset_t *set, sigset_t *oldset) {
     }
 
     /* Phase 2: Get final mask after modification for logging */
-    uint64_t final_mask_value = current->signal_mask;
+    uint64_t final_mask_value = __atomic_load_n(&current->signal_mask, __ATOMIC_ACQUIRE);
     int final_signal_count = count_signals_in_mask(final_mask_value);
 
     /* Phase 2: Detailed success logging */

@@ -8,6 +8,7 @@
  */
 
 #include <kernel/fut_task.h>
+#include <kernel/fut_waitq.h>
 #include <kernel/signal.h>
 #include <kernel/errno.h>
 #include <kernel/uaccess.h>
@@ -86,9 +87,9 @@
  *   6. Application continues with original signal mask
  *
  * Implementation notes:
- *   - Phase 1: This stub returns -EINTR immediately (no actual blocking)
- *   - Phase 2: Add wait queue blocking until signal delivery
- *   - Phase 3: Implement with proper signal handling integration
+ *   - Phase 1: Stub returns -EINTR immediately (no actual blocking)
+ *   - Phase 2 (Completed): Block on task->signal_waitq until unmasked signal arrives
+ *   - Phase 3: Full signal delivery integration (signal handler invocation)
  *   - Atomicity is critical: mask change and blocking must be atomic
  *
  * Atomicity guarantee:
@@ -121,17 +122,25 @@ long sys_sigsuspend(const sigset_t *mask) {
     /* Install new mask */
     __atomic_store_n(&current->signal_mask, newmask.__mask, __ATOMIC_RELEASE);
 
-    /* Phase 1: Stub - just return -EINTR immediately
-     * Phase 2: Block on wait queue until signal delivery
-     * Phase 3: Full signal synchronization with proper mask restoration
+    /* Phase 2: Block on signal_waitq until an unmasked signal is pending.
+     * If a signal is already pending and unmasked by newmask, return immediately.
      */
+    uint64_t unblocked = __atomic_load_n(&current->pending_signals, __ATOMIC_ACQUIRE)
+                         & ~newmask.__mask;
 
-    fut_printf("[SIGSUSPEND] sigsuspend(mask=%p) -> EINTR (pid=%u, old_mask=0x%llx, new_mask=0x%llx)\n",
-               mask, current->pid, oldmask.__mask, newmask.__mask);
+    if (unblocked == 0) {
+        fut_printf("[SIGSUSPEND] sigsuspend(pid=%u, old_mask=0x%llx, new_mask=0x%llx) -> blocking\n",
+                   current->pid, oldmask.__mask, newmask.__mask);
+        fut_waitq_sleep_locked(&current->signal_waitq, NULL, FUT_THREAD_BLOCKED);
+        fut_printf("[SIGSUSPEND] sigsuspend(pid=%u) -> woke up (signal delivered)\n", current->pid);
+    } else {
+        fut_printf("[SIGSUSPEND] sigsuspend(pid=%u) -> signal already pending (0x%llx), not blocking\n",
+                   current->pid, unblocked);
+    }
 
-    /* Restore original mask before returning */
+    /* Restore original signal mask before returning */
     __atomic_store_n(&current->signal_mask, oldmask.__mask, __ATOMIC_RELEASE);
 
-    /* Always return -EINTR (interrupted by signal) */
+    /* sigsuspend always returns -EINTR */
     return -EINTR;
 }

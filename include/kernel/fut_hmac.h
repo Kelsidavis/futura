@@ -94,3 +94,26 @@ void fut_hmac_sha256(const uint8_t *key,
                      const uint8_t *data,
                      size_t data_len,
                      uint8_t out[FUT_SHA256_DIGEST_LEN]);
+
+/**
+ * Constant-time HMAC-SHA256 verification.
+ *
+ * Compares two byte strings in constant time to prevent timing
+ * side-channel attacks when verifying HMAC digests. Always examines
+ * every byte regardless of where a difference occurs.
+ *
+ * @param expected  Expected digest value
+ * @param actual    Actual digest to verify
+ * @param len       Length of both buffers (typically FUT_SHA256_DIGEST_LEN)
+ * @return 0 if equal, non-zero otherwise
+ *
+ * Example:
+ *   uint8_t expected[FUT_SHA256_DIGEST_LEN];
+ *   fut_hmac_sha256(key, key_len, msg, msg_len, expected);
+ *   if (fut_hmac_sha256_verify(expected, received_mac, FUT_SHA256_DIGEST_LEN) != 0) {
+ *       // Authentication failed
+ *   }
+ */
+int fut_hmac_sha256_verify(const uint8_t *expected,
+                           const uint8_t *actual,
+                           size_t len);

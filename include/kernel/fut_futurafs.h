@@ -23,7 +23,7 @@
 #define FUTURAFS_VERSION        1
 #define FUTURAFS_BLOCK_SIZE     4096
 #define FUTURAFS_NAME_MAX       255
-#define FUTURAFS_INODE_SIZE     128
+#define FUTURAFS_INODE_SIZE     192
 #define FUTURAFS_ROOT_INO       1
 
 /* Direct block pointers in inode */
@@ -96,7 +96,7 @@ struct futurafs_inode {
     uint64_t double_indirect;    /* Double indirect block pointer */
     uint64_t triple_indirect;    /* Triple indirect block pointer */
 
-    uint8_t  reserved[8];        /* Pad to 128 bytes */
+    uint8_t  reserved[16];       /* Pad to 192 bytes */
 } __attribute__((packed));
 
 /**

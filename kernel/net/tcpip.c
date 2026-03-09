@@ -312,6 +312,14 @@ static void arp_handle_packet(const uint8_t *frame, size_t len) {
         return;
     }
 
+    /* Validate hardware/protocol address lengths match expected sizes.
+     * The packed arp_packet_t struct layout assumes ETH_ADDR_LEN and 4-byte IP. */
+    if (arp->hardware_len != ETH_ADDR_LEN || arp->protocol_len != 4) {
+        fut_printf("[ARP-DEBUG] Unexpected address lengths: hw=%u proto=%u\n",
+                   arp->hardware_len, arp->protocol_len);
+        return;
+    }
+
     uint32_t sender_ip = ntohl(arp->sender_ip);
     uint32_t target_ip = ntohl(arp->target_ip);
 
@@ -693,7 +701,9 @@ static void tcp_send_packet(tcp_connection_t *conn, uint8_t flags,
     tcp->ack_num = htonl(conn->recv_next);
     tcp->data_offset_rsvd = (TCP_HEADER_MIN_LEN / 4) << 4;
     tcp->flags = flags;
-    tcp->window = htons(TCPIP_RX_BUFFER_SIZE - conn->rx_len);
+    /* Guard against underflow if rx_len somehow exceeds buffer size */
+    tcp->window = (conn->rx_len < TCPIP_RX_BUFFER_SIZE) ?
+                  htons(TCPIP_RX_BUFFER_SIZE - conn->rx_len) : 0;
     tcp->urgent_ptr = 0;
 
     /* Copy data */
@@ -753,7 +763,7 @@ static void tcp_handle_packet(const uint8_t *ip_payload, size_t len,
             conn->local_port = dest_port;
             conn->remote_port = src_port;
             conn->recv_next = seq + 1;
-            conn->send_next = 1000;  /* Initial sequence number */
+            conn->send_next = tcp_generate_isn();
             conn->send_window = window;
 
             /* Send SYN-ACK */
@@ -987,13 +997,21 @@ tcpip_socket_t *tcpip_socket(socket_type_t type) {
 
     /* Add to socket list */
     fut_spinlock_acquire(&socket_lock);
+    bool added = false;
     for (int i = 0; i < TCPIP_MAX_SOCKETS; i++) {
         if (!sockets[i]) {
             sockets[i] = sock;
+            added = true;
             break;
         }
     }
     fut_spinlock_release(&socket_lock);
+
+    /* If no slot was available, free and return NULL to prevent leak */
+    if (!added) {
+        fut_free(sock);
+        return NULL;
+    }
 
     return sock;
 }
@@ -1040,9 +1058,15 @@ int tcpip_connect(tcpip_socket_t *sock, uint32_t ip, uint16_t port) {
     if (sock->type == SOCK_TYPE_UDP) {
         /* Auto-bind to ephemeral port if not already bound */
         if (!sock->bound) {
+            /* Use atomic increment for the shared ephemeral port counter
+             * to avoid races when multiple sockets auto-bind concurrently. */
             static uint16_t next_ephemeral_port = 50000;
-            sock->local_port = next_ephemeral_port++;
-            if (next_ephemeral_port > 60000) next_ephemeral_port = 50000;
+            uint16_t port = (uint16_t)__atomic_fetch_add(&next_ephemeral_port, 1, __ATOMIC_RELAXED);
+            if (port > 60000) {
+                __atomic_store_n(&next_ephemeral_port, 50000, __ATOMIC_RELAXED);
+                port = 50000;
+            }
+            sock->local_port = port;
             sock->bound = true;
         }
 
@@ -1076,7 +1100,7 @@ int tcpip_connect(tcpip_socket_t *sock, uint32_t ip, uint16_t port) {
     conn->remote_ip = ip;
     conn->local_port = sock->local_port ? sock->local_port : 50000;  /* Ephemeral port */
     conn->remote_port = port;
-    conn->send_next = 1000;  /* Initial sequence number */
+    conn->send_next = tcp_generate_isn();
     conn->recv_next = 0;
     conn->state = TCP_STATE_SYN_SENT;
     sock->tcp_conn = conn;

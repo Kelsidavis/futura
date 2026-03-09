@@ -410,8 +410,11 @@ int fut_vfs_close_cap(fut_handle_t handle) {
 
     struct fut_file *file = (struct fut_file *)obj->data;
 
-    /* Decrement our reference to the file */
-    if (file && file->refcount > 0) {
+    /* Decrement our reference to the file atomically.
+     * The previous non-atomic read of refcount > 0 was a TOCTOU race:
+     * two threads could both see refcount > 0 and both decrement,
+     * causing a double-free. Use only the atomic result to decide. */
+    if (file) {
         uint32_t remaining = __atomic_sub_fetch(&file->refcount, 1, __ATOMIC_ACQ_REL);
 
         /* If this was the last reference, close the file properly */

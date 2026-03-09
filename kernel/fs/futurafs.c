@@ -73,8 +73,14 @@ static inline ssize_t futurafs_blk_read_bytes(struct futurafs_mount *mnt,
         }
 
         uint64_t start_block = offset / block_size;
-        uint64_t end_block = (offset + size + block_size - 1) / block_size;
+        uint64_t end_offset = offset + size;  /* Already bounds-checked above */
+        uint64_t end_block = (end_offset + block_size - 1) / block_size;
         uint64_t num_blocks = end_block - start_block;
+
+        /* Guard against multiplication overflow in allocation size */
+        if (num_blocks > SIZE_MAX / block_size) {
+            return FUTURAFS_EINVAL;
+        }
 
         /* Allocate temporary buffer for aligned I/O */
         void *temp_buffer = fut_malloc(num_blocks * block_size);
@@ -133,8 +139,14 @@ static inline ssize_t futurafs_blk_write_bytes(struct futurafs_mount *mnt,
         }
 
         uint64_t start_block = offset / block_size;
-        uint64_t end_block = (offset + size + block_size - 1) / block_size;
+        uint64_t end_offset = offset + size;  /* Already bounds-checked above */
+        uint64_t end_block = (end_offset + block_size - 1) / block_size;
         uint64_t num_blocks = end_block - start_block;
+
+        /* Guard against multiplication overflow in allocation size */
+        if (num_blocks > SIZE_MAX / block_size) {
+            return FUTURAFS_EINVAL;
+        }
 
         /* Allocate temporary buffer for aligned I/O */
         void *temp_buffer = fut_malloc(num_blocks * block_size);
@@ -203,6 +215,35 @@ static int futurafs_read_superblock(struct futurafs_mount *mount, struct futuraf
     /* Validate version */
     if (sb->version != FUTURAFS_VERSION) {
         fut_printf("[FUTURAFS] version=%u (expected %u)\n", sb->version, FUTURAFS_VERSION);
+        return FUTURAFS_EINVAL;
+    }
+
+    /* Validate superblock fields to prevent integer underflow in bitmap size
+     * calculations and out-of-bounds block access. A corrupted or malicious
+     * disk image could set data_blocks_start > total_blocks, causing
+     * (total_blocks - data_blocks_start) to wrap to a huge value. */
+    if (sb->data_blocks_start > sb->total_blocks) {
+        fut_printf("[FUTURAFS] corrupt superblock: data_blocks_start > total_blocks\n");
+        return FUTURAFS_EINVAL;
+    }
+    if (sb->inode_table_block == 0 || sb->inode_table_block >= sb->total_blocks) {
+        fut_printf("[FUTURAFS] corrupt superblock: invalid inode_table_block\n");
+        return FUTURAFS_EINVAL;
+    }
+    if (sb->inode_bitmap_block >= sb->total_blocks) {
+        fut_printf("[FUTURAFS] corrupt superblock: invalid inode_bitmap_block\n");
+        return FUTURAFS_EINVAL;
+    }
+    if (sb->data_bitmap_block >= sb->total_blocks) {
+        fut_printf("[FUTURAFS] corrupt superblock: invalid data_bitmap_block\n");
+        return FUTURAFS_EINVAL;
+    }
+    if (sb->total_inodes == 0) {
+        fut_printf("[FUTURAFS] corrupt superblock: total_inodes is 0\n");
+        return FUTURAFS_EINVAL;
+    }
+    if (sb->block_size != FUTURAFS_BLOCK_SIZE) {
+        fut_printf("[FUTURAFS] block_size=%u (expected %u)\n", sb->block_size, FUTURAFS_BLOCK_SIZE);
         return FUTURAFS_EINVAL;
     }
 
@@ -1009,8 +1050,12 @@ static void futurafs_dir_add_callback(int result, void *ctx) {
     }
 
     case DIR_ADD_COMPLETE:
-        /* Write completed successfully - update directory metadata */
-        add_ctx->dir_info->disk_inode.nlinks++;
+        /* Write completed successfully - update directory metadata.
+         * Only increment nlinks for subdirectory entries (they add a '..'
+         * back-link to the parent). Regular file entries don't affect nlinks. */
+        if (add_ctx->file_type == FUTURAFS_FT_DIR) {
+            add_ctx->dir_info->disk_inode.nlinks++;
+        }
         add_ctx->dir_info->disk_inode.mtime = fut_get_time_ns();
         add_ctx->dir_info->disk_inode.ctime = fut_get_time_ns();
         add_ctx->dir_info->dirty = true;
@@ -3860,12 +3905,18 @@ static int futurafs_mount_impl(const char *device, int flags, void *data, fut_ha
 static int futurafs_unmount_impl(struct fut_mount *mount) {
     struct futurafs_mount *fs_mount = (struct futurafs_mount *)mount->fs_data;
 
-    /* Sync if dirty */
-    if (fs_mount->dirty) {
-        futurafs_write_superblock(fs_mount, fs_mount->sb);
+    /* Sync all dirty metadata (superblock + bitmaps) before unmount */
+    futurafs_sync_metadata(fs_mount);
+
+    /* Free root vnode and its fs_data to prevent memory leaks */
+    if (mount->root) {
+        if (mount->root->fs_data) {
+            fut_free(mount->root->fs_data);
+        }
+        fut_free(mount->root);
     }
 
-    /* Free resources */
+    /* Free filesystem resources */
     if (fs_mount->data_bitmap) {
         fut_free(fs_mount->data_bitmap);
     }

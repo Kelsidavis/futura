@@ -272,8 +272,15 @@ void vfs_init_vnode_ownership(struct fut_vnode *vnode,
     /* Apply umask to requested mode */
     vnode->mode = (requested_mode & 0777) & ~vfs_get_current_umask();
 
-    /* Preserve special bits from requested mode */
-    vnode->mode |= (requested_mode & 07000);
+    /* Preserve special bits from requested mode, but only allow
+     * root (uid 0) to set setuid/setgid bits. Non-root users
+     * could otherwise create setuid executables to escalate privileges. */
+    if (uid == 0) {
+        vnode->mode |= (requested_mode & 07000);
+    } else {
+        /* Non-root: allow sticky bit (01000), strip setuid/setgid */
+        vnode->mode |= (requested_mode & 01000);
+    }
 
     fut_printf("[VFS-CRED] Initialized vnode ownership: uid=%u, gid=%u, mode=0%o\n",
                vnode->uid, vnode->gid, vnode->mode);

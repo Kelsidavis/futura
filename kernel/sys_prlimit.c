@@ -240,33 +240,31 @@ long sys_prlimit64(int pid, int resource,
     /* Phase 3: Get current limits from task structure (not defaults) */
     struct rlimit64 current_limit = task->rlimits[resource];
 
-    /* If old_limit requested, copy out current limits */
-    if (old_limit) {
-        old_limit->rlim_cur = current_limit.rlim_cur;
-        old_limit->rlim_max = current_limit.rlim_max;
-
-        fut_printf("[PRLIMIT] prlimit64(pid=%d, resource=%s) -> old_limit: "
-                   "cur=%llu, max=%llu\n",
-                   pid, resource_name,
-                   (unsigned long long)old_limit->rlim_cur,
-                   (unsigned long long)old_limit->rlim_max);
-    }
-
-    /* If new_limit provided, validate and set */
+    /* If new_limit provided, copy from userspace into kernel buffer first to
+     * avoid double-fetch TOCTOU vulnerabilities (user could modify values
+     * between validation and use). All validation uses the kernel copy. */
+    struct rlimit64 knl_new;
     if (new_limit) {
+        if (fut_copy_from_user(&knl_new, new_limit, sizeof(struct rlimit64)) != 0) {
+            fut_printf("[PRLIMIT] prlimit64(pid=%d, resource=%s) -> EFAULT "
+                       "(copy_from_user new_limit failed)\n",
+                       pid, resource_name);
+            return -EFAULT;
+        }
+
         /* Phase 3: Basic validation - soft limit cannot exceed hard limit */
-        if (new_limit->rlim_cur > new_limit->rlim_max &&
-            new_limit->rlim_max != RLIM64_INFINITY) {
+        if (knl_new.rlim_cur > knl_new.rlim_max &&
+            knl_new.rlim_max != RLIM64_INFINITY) {
             fut_printf("[PRLIMIT] prlimit64(pid=%d, resource=%s) -> EINVAL "
                        "(cur=%llu > max=%llu)\n",
                        pid, resource_name,
-                       (unsigned long long)new_limit->rlim_cur,
-                       (unsigned long long)new_limit->rlim_max);
+                       (unsigned long long)knl_new.rlim_cur,
+                       (unsigned long long)knl_new.rlim_max);
             return -EINVAL;
         }
 
         /* Phase 3: Reject RLIM64_INFINITY for resources requiring bounded limits */
-        if (new_limit->rlim_cur == RLIM64_INFINITY || new_limit->rlim_max == RLIM64_INFINITY) {
+        if (knl_new.rlim_cur == RLIM64_INFINITY || knl_new.rlim_max == RLIM64_INFINITY) {
             if (resource == RLIMIT_MEMLOCK || resource == RLIMIT_NPROC) {
                 fut_printf("[PRLIMIT] prlimit64(pid=%d, resource=%s) -> EINVAL "
                            "(RLIM64_INFINITY not allowed for %s)\n",
@@ -298,11 +296,11 @@ long sys_prlimit64(int pid, int resource,
                 break;
         }
 
-        if (new_limit->rlim_max != RLIM64_INFINITY && new_limit->rlim_max > system_max) {
+        if (knl_new.rlim_max != RLIM64_INFINITY && knl_new.rlim_max > system_max) {
             fut_printf("[PRLIMIT] prlimit64(pid=%d, resource=%s) -> EINVAL "
                        "(max=%llu exceeds system maximum %llu)\n",
                        pid, resource_name,
-                       (unsigned long long)new_limit->rlim_max,
+                       (unsigned long long)knl_new.rlim_max,
                        (unsigned long long)system_max);
             return -EINVAL;
         }
@@ -310,7 +308,7 @@ long sys_prlimit64(int pid, int resource,
         /* Phase 4: Capability check for raising hard limit
          * Non-privileged processes can only lower the hard limit, not raise it.
          * Raising the hard limit requires CAP_SYS_RESOURCE capability or root. */
-        bool raising_hard_limit = (new_limit->rlim_max > current_limit.rlim_max);
+        bool raising_hard_limit = (knl_new.rlim_max > current_limit.rlim_max);
         if (raising_hard_limit) {
             fut_task_t *caller = fut_task_current();
             bool has_cap = (caller->cap_effective & (1ULL << CAP_SYS_RESOURCE)) != 0;
@@ -328,15 +326,33 @@ long sys_prlimit64(int pid, int resource,
         }
 
         /* Phase 3: Store validated limits in task structure */
-        task->rlimits[resource].rlim_cur = new_limit->rlim_cur;
-        task->rlimits[resource].rlim_max = new_limit->rlim_max;
+        task->rlimits[resource].rlim_cur = knl_new.rlim_cur;
+        task->rlimits[resource].rlim_max = knl_new.rlim_max;
 
         fut_printf("[PRLIMIT] prlimit64(pid=%d, resource=%s) -> new_limit: "
                    "cur=%llu, max=%llu (stored in task->rlimits[%d], Phase 3)\n",
                    pid, resource_name,
-                   (unsigned long long)new_limit->rlim_cur,
-                   (unsigned long long)new_limit->rlim_max,
+                   (unsigned long long)knl_new.rlim_cur,
+                   (unsigned long long)knl_new.rlim_max,
                    resource);
+    }
+
+    /* If old_limit requested, copy out current limits via fut_copy_to_user.
+     * This is done after new_limit processing so we return the pre-change values
+     * (current_limit was captured above before any modification). */
+    if (old_limit) {
+        if (fut_copy_to_user(old_limit, &current_limit, sizeof(struct rlimit64)) != 0) {
+            fut_printf("[PRLIMIT] prlimit64(pid=%d, resource=%s) -> EFAULT "
+                       "(copy_to_user old_limit failed)\n",
+                       pid, resource_name);
+            return -EFAULT;
+        }
+
+        fut_printf("[PRLIMIT] prlimit64(pid=%d, resource=%s) -> old_limit: "
+                   "cur=%llu, max=%llu\n",
+                   pid, resource_name,
+                   (unsigned long long)current_limit.rlim_cur,
+                   (unsigned long long)current_limit.rlim_max);
     }
 
     if (!new_limit && !old_limit) {

@@ -257,35 +257,35 @@ long sys_mknodat(int dirfd, const char *pathname, uint32_t mode, uint32_t dev) {
 
     /* Categorize dirfd for logging */
     const char *dirfd_desc;
-    if (dirfd == AT_FDCWD) {
+    if (local_dirfd == AT_FDCWD) {
         dirfd_desc = "AT_FDCWD (current directory)";
-    } else if (dirfd <= 2) {
+    } else if (local_dirfd <= 2) {
         dirfd_desc = "stdio (0-2)";
-    } else if (dirfd < 16) {
+    } else if (local_dirfd < 16) {
         dirfd_desc = "low (3-15)";
     } else {
-        dirfd_desc = "high (≥16)";
+        dirfd_desc = "high (>=16)";
     }
 
     /* Extract device major/minor if applicable */
     unsigned int major = 0;
     unsigned int minor = 0;
     if (file_type == S_IFCHR || file_type == S_IFBLK) {
-        major = (dev >> 8) & 0xFF;
-        minor = dev & 0xFF;
+        major = (local_dev >> 8) & 0xFF;
+        minor = local_dev & 0xFF;
     }
 
     /* Phase 3: Validate file type and prepare for creation
      * Support regular files, FIFOs, sockets (Phase 3)
      * Defer device node creation to Phase 4 (requires capability checks) */
     if (file_type == S_IFCHR || file_type == S_IFBLK) {
-        fut_printf("[MKNODAT] mknodat(dirfd=%s, pathname=%p, type=%s, mode=0%o, dev=%u:%u, pid=%d) -> 0 "
+        fut_printf("[MKNODAT] mknodat(dirfd=%s, pathname='%s', type=%s, mode=0%o, dev=%u:%u, pid=%d) -> 0 "
                    "(device nodes deferred to Phase 4, Phase 3: file type validation)\n",
-                   dirfd_desc, pathname, type_desc, mode & 0777, major, minor, task->pid);
+                   dirfd_desc, path_buf, type_desc, local_mode & 0777, major, minor, task->pid);
     } else {
-        fut_printf("[MKNODAT] mknodat(dirfd=%s, pathname=%p, type=%s, mode=0%o, pid=%d) -> 0 "
+        fut_printf("[MKNODAT] mknodat(dirfd=%s, pathname='%s', type=%s, mode=0%o, pid=%d) -> 0 "
                    "(Phase 3: regular file/FIFO/socket type validated, creation deferred to VFS)\n",
-                   dirfd_desc, pathname, type_desc, mode & 0777, task->pid);
+                   dirfd_desc, path_buf, type_desc, local_mode & 0777, task->pid);
     }
 
     return 0;

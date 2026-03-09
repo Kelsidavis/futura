@@ -1283,7 +1283,7 @@ static int fut_fipc_admin_handle(struct fut_fipc_channel *channel,
                                     material,
                                     sizeof(material),
                                     expected);
-                    if (memcmp(expected, cmd.hmac, FUT_SHA256_DIGEST_LEN) != 0) {
+                    if (fut_hmac_sha256_verify(expected, cmd.hmac, FUT_SHA256_DIGEST_LEN) != 0) {
                         rc = FIPC_EPERM;
                         break;
                     }

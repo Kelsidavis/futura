@@ -79,13 +79,13 @@ static bool registryd_check_hmac(struct registryd *rd,
 
     uint8_t digest[SRG_HMAC_LEN];
     fut_hmac_sha256(rd->key_current, SRG_KEY_LEN, material, material_len, digest);
-    if (memcmp(digest, candidate, SRG_HMAC_LEN) == 0) {
+    if (fut_hmac_sha256_verify(digest, candidate, SRG_HMAC_LEN) == 0) {
         return true;
     }
 
     if (rd->prev_valid_until_ms != 0 && now <= rd->prev_valid_until_ms) {
         fut_hmac_sha256(rd->key_previous, SRG_KEY_LEN, material, material_len, digest);
-        if (memcmp(digest, candidate, SRG_HMAC_LEN) == 0) {
+        if (fut_hmac_sha256_verify(digest, candidate, SRG_HMAC_LEN) == 0) {
             return true;
         }
     }

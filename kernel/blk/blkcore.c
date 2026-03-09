@@ -149,7 +149,11 @@ static fut_status_t blk_validate_bio(const fut_blkdev_t *dev, const fut_bio_t *b
     if (bio->lba >= dev->block_count) {
         return -EINVAL;
     }
-    if (bio->lba + bio->nsectors > dev->block_count) {
+    /* Overflow-safe bounds check: rewrite (lba + nsectors > block_count) as
+     * (nsectors > block_count - lba) to avoid uint64_t wrap-around when
+     * lba is near UINT64_MAX. The subtraction is safe because we already
+     * checked lba < block_count above. */
+    if (bio->nsectors > dev->block_count - bio->lba) {
         return -EINVAL;
     }
     return 0;
@@ -499,6 +503,11 @@ fut_status_t fut_blk_flush(fut_handle_t cap) {
 fut_status_t fut_blk_close(fut_handle_t cap) {
     fut_object_t *obj = fut_object_get(cap, FUT_RIGHT_DESTROY);
     if (!obj) {
+        return -EPERM;
+    }
+
+    if (obj->type != FUT_OBJ_BLKDEV) {
+        fut_object_put(obj);
         return -EPERM;
     }
 

@@ -2,6 +2,29 @@
 #include <kernel/fut_hmac.h>
 #include <string.h>
 
+/*
+ * Compiler-barrier scrub: prevent the optimizer from eliding memset
+ * on buffers that are about to go out of scope.  The volatile function-
+ * pointer cast forces the compiler to emit the call.
+ */
+typedef void *(*volatile memset_fn_t)(void *, int, size_t);
+static memset_fn_t const secure_wipe = memset;
+
+/*
+ * Constant-time comparison: always examines every byte so that the
+ * execution time does not depend on which byte position differs.
+ * Returns 0 when equal, non-zero otherwise.
+ */
+int fut_hmac_sha256_verify(const uint8_t *expected,
+                           const uint8_t *actual,
+                           size_t len) {
+    volatile uint8_t diff = 0;
+    for (size_t i = 0; i < len; ++i) {
+        diff |= expected[i] ^ actual[i];
+    }
+    return diff;
+}
+
 #define ROTR(x, n) (((x) >> (n)) | ((x) << (32 - (n))))
 #define CH(x, y, z) (((x) & (y)) ^ (~(x) & (z)))
 #define MAJ(x, y, z) (((x) & (y)) ^ ((x) & (z)) ^ ((y) & (z)))
@@ -142,7 +165,7 @@ void fut_sha256_final(fut_sha256_ctx *ctx, uint8_t out[FUT_SHA256_DIGEST_LEN]) {
         out[i * 4 + 3] = (uint8_t)(ctx->state[i]);
     }
 
-    memset(ctx, 0, sizeof(*ctx));
+    secure_wipe(ctx, 0, sizeof(*ctx));
 }
 
 void fut_hmac_sha256(const uint8_t *key,
@@ -182,8 +205,10 @@ void fut_hmac_sha256(const uint8_t *key,
     fut_sha256_update(&ctx, inner, sizeof(inner));
     fut_sha256_final(&ctx, out);
 
-    memset(inner, 0, sizeof(inner));
-    memset(key_block, 0, sizeof(key_block));
+    secure_wipe(k_ipad, 0, sizeof(k_ipad));
+    secure_wipe(k_opad, 0, sizeof(k_opad));
+    secure_wipe(inner, 0, sizeof(inner));
+    secure_wipe(key_block, 0, sizeof(key_block));
 }
 
 #undef ROTR

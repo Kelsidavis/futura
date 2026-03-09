@@ -42,6 +42,9 @@ struct fut_obj_msgq {
 static fut_object_t *object_table[FUT_MAX_OBJECTS];
 static uint64_t next_handle = 1;
 
+/* Protects object_table slot allocation/deallocation */
+static fut_spinlock_t obj_table_lock;
+
 /* ============================================================
  *   Object System Initialization
  * ============================================================ */
@@ -51,6 +54,7 @@ void fut_object_system_init(void) {
         object_table[i] = NULL;
     }
     next_handle = 1;
+    fut_spinlock_init(&obj_table_lock);
 }
 
 /* ============================================================
@@ -58,31 +62,31 @@ void fut_object_system_init(void) {
  * ============================================================ */
 
 fut_handle_t fut_object_create(enum fut_object_type type, fut_rights_t rights, void *data) {
-    // Find free slot in object table
+    /* Allocate outside the lock to avoid holding it across malloc */
+    fut_object_t *obj = (fut_object_t *)fut_malloc(sizeof(fut_object_t));
+    if (!obj)
+        return FUT_INVALID_HANDLE;
+
+    obj->type     = type;
+    obj->rights   = rights;
+    obj->refcount = 1;
+    obj->handle   = FUT_INVALID_HANDLE;
+    obj->data     = data;
+    obj->next     = NULL;
+
+    fut_spinlock_acquire(&obj_table_lock);
     for (uint64_t i = 1; i < FUT_MAX_OBJECTS; ++i) {
         if (object_table[i] == NULL) {
-            // Allocate object structure
-            fut_object_t *obj = (fut_object_t *)fut_malloc(sizeof(fut_object_t));
-            if (!obj) {
-                return FUT_INVALID_HANDLE;
-            }
-
-            // Initialize object
-            obj->type = type;
-            obj->rights = rights;
-            obj->refcount = 1;
             obj->handle = (fut_handle_t)i;
-            obj->data = data;
-            obj->next = NULL;
-
-            // Store in table
             object_table[i] = obj;
-
+            fut_spinlock_release(&obj_table_lock);
             return (fut_handle_t)i;
         }
     }
+    fut_spinlock_release(&obj_table_lock);
 
-    return FUT_INVALID_HANDLE;  // Object table full
+    fut_free(obj);
+    return FUT_INVALID_HANDLE;  /* Object table full */
 }
 
 int fut_object_destroy(fut_handle_t handle) {
@@ -100,10 +104,12 @@ int fut_object_destroy(fut_handle_t handle) {
         return -EACCES;  /* Permission denied */
     }
 
-    /* Decrement refcount atomically and free if zero */
+    /* Decrement refcount atomically; clear table slot and free when it hits zero */
     uint64_t remaining = __atomic_sub_fetch(&obj->refcount, 1, __ATOMIC_ACQ_REL);
     if (remaining == 0) {
+        fut_spinlock_acquire(&obj_table_lock);
         object_table[handle] = NULL;
+        fut_spinlock_release(&obj_table_lock);
         fut_free(obj);
     }
 
@@ -138,12 +144,13 @@ fut_object_t *fut_object_get(fut_handle_t handle, fut_rights_t required_rights) 
 void fut_object_put(fut_object_t *obj) {
     if (!obj) return;
 
-    /* Decrement refcount atomically and free if zero */
+    /* Decrement refcount atomically; clear table slot and free when it hits zero */
     uint64_t remaining = __atomic_sub_fetch(&obj->refcount, 1, __ATOMIC_ACQ_REL);
     if (remaining == 0) {
-        /* Clear table entry to prevent use-after-free and handle exhaustion */
         if (obj->handle < FUT_MAX_OBJECTS) {
+            fut_spinlock_acquire(&obj_table_lock);
             object_table[obj->handle] = NULL;
+            fut_spinlock_release(&obj_table_lock);
         }
         fut_free(obj);
     }
@@ -190,29 +197,35 @@ fut_handle_t fut_object_share(fut_handle_t handle, uint64_t target_task, fut_rig
     if (new_rights == FUT_RIGHT_NONE)
         return FUT_INVALID_HANDLE;
 
-    /* Bump refcount on the underlying object and create an alias handle */
+    /* Allocate alias outside the lock */
+    fut_object_t *alias = (fut_object_t *)fut_malloc(sizeof(fut_object_t));
+    if (!alias)
+        return FUT_INVALID_HANDLE;
+
+    /* Bump refcount on the underlying object */
     __atomic_add_fetch(&obj->refcount, 1, __ATOMIC_ACQ_REL);
 
+    alias->type     = obj->type;
+    alias->rights   = new_rights;
+    alias->refcount = 1;
+    alias->handle   = FUT_INVALID_HANDLE;
+    alias->data     = obj->data;  /* Shared data pointer */
+    alias->next     = NULL;
+
+    fut_spinlock_acquire(&obj_table_lock);
     for (uint64_t i = 1; i < FUT_MAX_OBJECTS; ++i) {
         if (object_table[i] == NULL) {
-            fut_object_t *alias = (fut_object_t *)fut_malloc(sizeof(fut_object_t));
-            if (!alias) {
-                __atomic_sub_fetch(&obj->refcount, 1, __ATOMIC_ACQ_REL);
-                return FUT_INVALID_HANDLE;
-            }
-            alias->type   = obj->type;
-            alias->rights = new_rights;
-            alias->refcount = 1;
             alias->handle = (fut_handle_t)i;
-            alias->data   = obj->data;  /* Shared data pointer */
-            alias->next   = NULL;
             object_table[i] = alias;
+            fut_spinlock_release(&obj_table_lock);
             return (fut_handle_t)i;
         }
     }
+    fut_spinlock_release(&obj_table_lock);
 
     /* Table full */
     __atomic_sub_fetch(&obj->refcount, 1, __ATOMIC_ACQ_REL);
+    fut_free(alias);
     return FUT_INVALID_HANDLE;
 }
 

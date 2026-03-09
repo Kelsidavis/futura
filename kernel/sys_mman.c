@@ -516,7 +516,7 @@ long sys_mlockall(int flags) {
 
     fut_printf("[MLOCKALL] mlockall(flags=0x%x) -> 0 "
                "(validated: %d VMAs, %llu bytes, limit=%llu)\n",
-               flags, vma_count, (unsigned long long)total_bytes,
+               local_flags, vma_count, (unsigned long long)total_bytes,
                (unsigned long long)memlock_limit);
     return 0;
 }

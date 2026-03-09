@@ -2,6 +2,7 @@
 
 #include <stdarg.h>
 #include <stddef.h>
+#include <stdint.h>
 /* stdlib.h not available in freestanding */
 /* Forward declarations for malloc/free from malloc.c */
 extern void *malloc(size_t size);
@@ -73,11 +74,19 @@ static int append_mem(FILE *stream, const char *data, size_t len) {
         return 0;
     }
 
+    /* Overflow check: mem_length + len + 1 must not wrap */
+    if (len > SIZE_MAX - stream->mem_length - 1) {
+        return -1;
+    }
     size_t needed = stream->mem_length + len + 1;
     if (needed > stream->mem_capacity) {
         size_t new_cap = stream->mem_capacity ? stream->mem_capacity : 64;
         while (new_cap < needed) {
-            new_cap *= 2;
+            size_t doubled = new_cap * 2;
+            if (doubled <= new_cap) {  /* overflow guard */
+                return -1;
+            }
+            new_cap = doubled;
         }
         char *new_data = realloc(stream->mem_data, new_cap);
         if (!new_data) {

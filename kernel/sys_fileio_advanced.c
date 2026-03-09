@@ -9,6 +9,7 @@
 
 #include <kernel/fut_task.h>
 #include <kernel/fut_vfs.h>
+#include <kernel/chrdev.h>
 #include <kernel/errno.h>
 #include <stdint.h>
 #include <string.h>
@@ -191,31 +192,7 @@ long sys_sendfile(int out_fd, int in_fd, uint64_t *offset, size_t count) {
         return -EBADF;
     }
 
-    /* Categorize transfer size */
-    const char *size_category;
-    const char *size_desc;
-    if (local_count == 0) {
-        size_category = "zero";
-        size_desc = "no-op";
-    } else if (local_count < 4096) {
-        size_category = "tiny (<4KB)";
-        size_desc = "less than a page";
-    } else if (local_count < 65536) {
-        size_category = "small (4KB-64KB)";
-        size_desc = "few pages";
-    } else if (local_count < 1048576) {
-        size_category = "medium (64KB-1MB)";
-        size_desc = "moderate transfer";
-    } else if (local_count < 104857600) {
-        size_category = "large (1MB-100MB)";
-        size_desc = "significant transfer";
-    } else {
-        size_category = "huge (>=100MB)";
-        size_desc = "very large transfer";
-    }
-
     /* Handle offset parameter */
-    const char *offset_mode;
     uint64_t start_offset = 0;
     if (local_offset) {
         /* Copy offset from userspace */
@@ -225,9 +202,7 @@ long sys_sendfile(int out_fd, int in_fd, uint64_t *offset, size_t count) {
                        local_out_fd, local_in_fd, local_count, task->pid);
             return -EFAULT;
         }
-        offset_mode = "explicit offset";
     } else {
-        offset_mode = "current position";
         start_offset = in_file->offset;
     }
 

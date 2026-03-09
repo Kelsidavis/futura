@@ -179,7 +179,7 @@ static page_table_t *get_or_create_table(page_table_t *parent_table, int index, 
 
     uint64_t user_ttbr0;
     __asm__ volatile("mrs %0, ttbr0_el1" : "=r"(user_ttbr0));
-    __asm__ volatile("msr ttbr0_el1, %0; isb" :: "r"(pmap_virt_to_phys(&boot_l1_table)));
+    __asm__ volatile("msr ttbr0_el1, %0; isb" :: "r"(pmap_virt_to_phys((uintptr_t)&boot_l1_table)));
 
     pte_t entry = parent_table->entries[index];
 
@@ -201,7 +201,7 @@ static page_table_t *get_or_create_table(page_table_t *parent_table, int index, 
 
         /* Create table descriptor pointing to new table
          * CRITICAL: PTEs must contain physical addresses, not virtual */
-        uint64_t phys_addr = pmap_virt_to_phys(new_table);
+        uint64_t phys_addr = pmap_virt_to_phys((uintptr_t)new_table);
         pte_t table_desc = fut_make_pte(phys_addr, PTE_VALID | PTE_TABLE);
         parent_table->entries[index] = table_desc;
 
@@ -268,7 +268,7 @@ static page_table_t *get_or_create_table(page_table_t *parent_table, int index, 
         }
 
         /* Replace L2 block descriptor with table descriptor pointing to new L3 table */
-        uint64_t l3_table_phys = pmap_virt_to_phys(new_l3_table);
+        uint64_t l3_table_phys = pmap_virt_to_phys((uintptr_t)new_l3_table);
         pte_t table_desc = fut_make_pte(l3_table_phys, PTE_VALID | PTE_TABLE);
         parent_table->entries[index] = table_desc;
 
@@ -759,7 +759,7 @@ fut_vmem_context_t *fut_vmem_create(void) {
 
     /* CRITICAL: TTBR0_EL1 must contain physical address, not virtual
      * ctx->pgd is a kernel VA (0xFFFFFF80...), convert to PA */
-    ctx->ttbr0_el1 = pmap_virt_to_phys(ctx->pgd);
+    ctx->ttbr0_el1 = pmap_virt_to_phys((uintptr_t)ctx->pgd);
     ctx->ref_count = 1;
 
     fut_printf("[VMEM-CREATE] PGD VA=0x%llx PA=0x%llx, TTBR0=0x%llx\n",
@@ -939,7 +939,7 @@ void fut_paging_init(void) {
     /* Initialize kernel VMem context
      * CRITICAL: TTBR0_EL1 must contain physical address */
     kernel_vmem_context.pgd = &kernel_pgd;
-    kernel_vmem_context.ttbr0_el1 = pmap_virt_to_phys(&kernel_pgd);
+    kernel_vmem_context.ttbr0_el1 = pmap_virt_to_phys((uintptr_t)&kernel_pgd);
     kernel_vmem_context.ref_count = 1;
 
     /* Set up memory attributes */
@@ -982,7 +982,7 @@ void fut_paging_init(void) {
 
     /* Load kernel TTBR1_EL1
      * CRITICAL: TTBR1_EL1 must contain physical address */
-    write_ttbr1_el1(pmap_virt_to_phys(&kernel_pgd));
+    write_ttbr1_el1(pmap_virt_to_phys((uintptr_t)&kernel_pgd));
 
     /* Enable MMU by setting SCTLR_EL1.M bit */
     uint64_t sctlr = read_sctlr_el1();

@@ -766,7 +766,7 @@ void fut_mm_system_init(void) {
 
     /* Initialize kernel page table root (architecture-neutral) */
     fut_vmem_set_root(&kernel_mm.ctx, fut_get_kernel_pgd());
-    fut_vmem_set_reload_value(&kernel_mm.ctx, pmap_virt_to_phys(fut_vmem_get_root(&kernel_mm.ctx)));
+    fut_vmem_set_reload_value(&kernel_mm.ctx, pmap_virt_to_phys((uintptr_t)fut_vmem_get_root(&kernel_mm.ctx)));
     kernel_mm.ctx.ref_count = 1;
     atomic_store_explicit(&kernel_mm.refcnt, 1, memory_order_relaxed);
     kernel_mm.flags = FUT_MM_KERNEL;
@@ -818,7 +818,7 @@ static page_table_t *get_or_create_l2(page_table_t *pgd, uint64_t l1_idx) {
     memset(l2, 0, PAGE_SIZE);
 
     /* Create L1 table descriptor pointing to new L2 */
-    uint64_t l2_phys = pmap_virt_to_phys(l2);
+    uint64_t l2_phys = pmap_virt_to_phys((uintptr_t)l2);
     pgd->entries[l1_idx] = (l2_phys & 0x0000FFFFFFFFF000ULL) | 0x3;  /* Valid + Table */
 
     return l2;
@@ -856,7 +856,7 @@ static page_table_t *get_or_create_l3(page_table_t *l2, uint64_t l2_idx) {
     memset(l3, 0, PAGE_SIZE);
 
     /* Create L2 table descriptor pointing to new L3 */
-    uint64_t l3_phys = pmap_virt_to_phys(l3);
+    uint64_t l3_phys = pmap_virt_to_phys((uintptr_t)l3);
     l2->entries[l2_idx] = (l3_phys & 0x0000FFFFFFFFF000ULL) | 0x3;  /* Valid + Table */
 
     return l3;
@@ -988,7 +988,7 @@ fut_mm_t *fut_mm_create(void) {
 
     mm->ctx.pgd = pgd;
     /* ARM64: TTBR0_EL1 must contain PHYSICAL address, not virtual */
-    phys_addr_t pgd_phys = pmap_virt_to_phys(pgd);
+    phys_addr_t pgd_phys = pmap_virt_to_phys((uintptr_t)pgd);
 #ifdef DEBUG_MM
     mm_create_printf("[MM-CREATE] ARM64: PGD virtual=%p physical=0x%llx\n",
                pgd, (unsigned long long)pgd_phys);

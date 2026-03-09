@@ -183,7 +183,7 @@ static void virtio_mmio_set_status(virtio_mmio_device_t *dev, uint8_t status) {
 static int virtio_mmio_init_queue(virtio_mmio_device_t *dev, uint32_t queue_idx, uint32_t queue_size) {
     extern void *fut_malloc_pages(size_t num_pages);
     extern void fut_free_pages(void *ptr, size_t num_pages);
-    extern phys_addr_t pmap_virt_to_phys(const void *virt);
+    extern phys_addr_t pmap_virt_to_phys(uintptr_t virt);
     extern void *memset(void *, int, size_t);
 
     /* Select queue */
@@ -219,7 +219,7 @@ static int virtio_mmio_init_queue(virtio_mmio_device_t *dev, uint32_t queue_idx,
     memset(desc_virt, 0, total_pages * 4096);
 
     /* Convert virtual addresses to physical addresses for device */
-    phys_addr_t desc_phys = pmap_virt_to_phys(desc_virt);
+    phys_addr_t desc_phys = pmap_virt_to_phys((uintptr_t)desc_virt);
     phys_addr_t avail_phys = desc_phys + desc_size;
     phys_addr_t used_phys = desc_phys + desc_size + avail_size;
 

@@ -42,7 +42,7 @@ static inline void *pmap_phys_to_virt(uint64_t pa) {
 }
 
 /* Convert kernel virtual address to physical address */
-static inline uint64_t pmap_virt_to_phys(const void *va) {
+static inline uint64_t pmap_virt_to_phys(uintptr_t va) {
     return (uint64_t)va - KERNEL_VIRT_OFFSET;
 }
 

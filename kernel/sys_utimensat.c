@@ -18,6 +18,7 @@
 #include <kernel/fut_vfs.h>
 #include <shared/fut_timespec.h>
 #include <stdint.h>
+#include <string.h>
 #include <time.h>
 
 #include <kernel/kprintf.h>
@@ -286,13 +287,17 @@ long sys_utimensat(int dirfd, const char *pathname, const fut_timespec_t *times,
 
     /* Copy pathname from userspace to kernel space */
     char path_buf[FUT_VFS_PATH_BUFFER_SIZE];
-    if (fut_copy_from_user(path_buf, pathname, sizeof(path_buf) - 1) != 0) {
+    if (fut_copy_from_user(path_buf, pathname, sizeof(path_buf)) != 0) {
         fut_printf("[UTIMENSAT] utimensat(dirfd=%d [%s], pathname=? [bad addr], times=%s, "
                    "flags=%s, pid=%d) -> EFAULT (pathname copy_from_user failed)\n",
                    dirfd, dirfd_desc, time_spec_desc, flags_desc, task->pid);
         return -EFAULT;
     }
-    path_buf[sizeof(path_buf) - 1] = '\0';
+    if (memchr(path_buf, '\0', sizeof(path_buf)) == NULL) {
+        fut_printf("[UTIMENSAT] utimensat(dirfd=%d [%s], pathname=<too long>) -> ENAMETOOLONG\n",
+                   dirfd, dirfd_desc);
+        return -ENAMETOOLONG;
+    }
 
     /* Validate pathname is not empty */
     if (path_buf[0] == '\0') {

@@ -16,6 +16,7 @@
 #include <kernel/errno.h>
 #include <kernel/fut_vfs.h>
 #include <stdint.h>
+#include <string.h>
 
 #include <kernel/kprintf.h>
 #include <kernel/uaccess.h>
@@ -168,13 +169,17 @@ long sys_fchownat(int dirfd, const char *pathname, uint32_t uid, uint32_t gid, i
 
     /* Copy pathname from userspace to kernel space */
     char path_buf[FUT_VFS_PATH_BUFFER_SIZE];
-    if (fut_copy_from_user(path_buf, pathname, sizeof(path_buf) - 1) != 0) {
+    if (fut_copy_from_user(path_buf, pathname, sizeof(path_buf)) != 0) {
         fut_printf("[FCHOWNAT] fchownat(dirfd=%d [%s], pathname=?, uid=%s, gid=%s, "
                    "op=%s, flags=%s) -> EFAULT (copy_from_user failed)\n",
                    dirfd, dirfd_desc, uid_desc, gid_desc, operation_type, flags_desc);
         return -EFAULT;
     }
-    path_buf[sizeof(path_buf) - 1] = '\0';
+    if (memchr(path_buf, '\0', sizeof(path_buf)) == NULL) {
+        fut_printf("[FCHOWNAT] fchownat(dirfd=%d [%s], pathname=<too long>) -> ENAMETOOLONG\n",
+                   dirfd, dirfd_desc);
+        return -ENAMETOOLONG;
+    }
 
     /* Phase 3: Handle AT_EMPTY_PATH - change ownership of dirfd itself */
     if ((flags & AT_EMPTY_PATH) && path_buf[0] == '\0') {

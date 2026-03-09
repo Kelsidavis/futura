@@ -2940,6 +2940,8 @@ static int futurafs_create_vnode(struct fut_mount *vfs_mount,
     vnode->refcount = 1;
     vnode->uid = info->disk_inode.uid;
     vnode->gid = info->disk_inode.gid;
+    vnode->parent = NULL;
+    vnode->name = NULL;
     vnode->lock_type = 0;
     vnode->lock_count = 0;
     vnode->lock_owner_pid = 0;
@@ -3923,6 +3925,8 @@ static int futurafs_mount_impl(const char *device, int flags, void *data, fut_ha
     root_vnode->refcount = 1;
     root_vnode->uid = root_info->disk_inode.uid;
     root_vnode->gid = root_info->disk_inode.gid;
+    root_vnode->parent = NULL;
+    root_vnode->name = NULL;
     root_vnode->lock_type = 0;
     root_vnode->lock_count = 0;
     root_vnode->lock_owner_pid = 0;

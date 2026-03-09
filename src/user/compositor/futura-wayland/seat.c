@@ -734,6 +734,24 @@ static void seat_get_keyboard(struct wl_client *client,
     if (keymap_fd >= 0) {
         sys_close(keymap_fd);
     }
+
+    /* If a surface is already focused and belongs to this client,
+     * send keyboard enter immediately so keys are delivered */
+    struct seat_state *seat = seat_client->seat;
+    if (seat && seat->keyboard_focus) {
+        struct wl_client *focus_client =
+            wl_resource_get_client(seat->keyboard_focus->surface_resource);
+        if (focus_client == client) {
+            uint32_t serial = wl_display_next_serial(seat->comp->display);
+            struct wl_array empty;
+            wl_array_init(&empty);
+            wl_keyboard_send_enter(keyboard, serial,
+                                   seat->keyboard_focus->surface_resource, &empty);
+            wl_array_release(&empty);
+            wl_keyboard_send_modifiers(keyboard, serial, 0, 0, 0, 0);
+            seat_client->keyboard_entered = true;
+        }
+    }
 }
 
 static void seat_release(struct wl_client *client, struct wl_resource *resource) {

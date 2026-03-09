@@ -134,3 +134,6 @@ fut_do_user_iretq:
 
     /* Illegal instruction to halt */
     ud2
+
+/* Mark stack as non-executable */
+.section .note.GNU-stack,"",@progbits

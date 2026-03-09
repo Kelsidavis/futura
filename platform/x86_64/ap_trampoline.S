@@ -233,3 +233,6 @@ ap_trampoline_cpu_id:
     .quad   0                       /* APIC ID of this CPU */
 
 ap_trampoline_end:
+
+/* Mark stack as non-executable */
+.section .note.GNU-stack,"",@progbits

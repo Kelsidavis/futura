@@ -1,0 +1,71 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            gcc-14 binutils nasm grub-pc-bin xorriso mtools \
+            qemu-system-x86 qemu-utils
+
+      - name: Build kernel
+        run: make all ENABLE_WAYLAND=0
+
+      - name: Run kernel tests
+        run: make test ENABLE_WAYLAND=0
+
+  security-audit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check for secrets in source
+        run: |
+          echo "Scanning for potential secrets..."
+          if grep -rn --include='*.c' --include='*.h' --include='*.S' \
+            -E '(password|secret|api_key|private_key)\s*=' \
+            --exclude-dir=.git --exclude-dir=build . ; then
+            echo "::warning::Potential secrets found in source code"
+          fi
+
+      - name: Check for unsafe patterns
+        run: |
+          echo "Scanning for unsafe C patterns..."
+          issues=0
+          # Check for gets() usage (buffer overflow)
+          if grep -rn --include='*.c' '\bgets\s*(' . --exclude-dir=build; then
+            echo "::error::Found gets() usage - use fgets() instead"
+            issues=$((issues + 1))
+          fi
+          # Check for sprintf without bounds (use snprintf)
+          if grep -rn --include='*.c' '\bsprintf\s*(' . --exclude-dir=build --exclude-dir=third_party; then
+            echo "::warning::Found sprintf() usage - consider snprintf()"
+          fi
+          if [ $issues -gt 0 ]; then
+            exit 1
+          fi
+
+      - name: Verify no executable stack
+        run: |
+          echo "Checking for .note.GNU-stack sections..."
+          missing=0
+          for f in $(find platform/x86_64 -name '*.S' ! -name 'boot.S'); do
+            if ! grep -q 'GNU-stack' "$f" 2>/dev/null; then
+              echo "::warning::Missing .note.GNU-stack in $f"
+              missing=$((missing + 1))
+            fi
+          done
+          echo "Files missing GNU-stack marker: $missing"

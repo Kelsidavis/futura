@@ -225,9 +225,12 @@ CFLAGS += -DWAYLAND_INTERACTIVE_MODE=1
 endif
 
 # Feature toggles
-ENABLE_WAYLAND ?= 1               # Wayland compositor + wl-term (production UI)
-ENABLE_WAYLAND_TEST_CLIENTS ?= 0  # Wayland test clients (wl-simple, wl-colorwheel) - disabled by default
-ENABLE_FB_DIAGNOSTICS ?= 0        # Optional: fbtest framebuffer diagnostic tool
+# Wayland compositor + wl-term (production UI)
+ENABLE_WAYLAND ?= 1
+# Wayland test clients (wl-simple, wl-colorwheel) - disabled by default
+ENABLE_WAYLAND_TEST_CLIENTS ?= 0
+# Optional: fbtest framebuffer diagnostic tool
+ENABLE_FB_DIAGNOSTICS ?= 0
 # ENABLE_WAYLAND is defined in $(GEN_FEATURE_HDR) to avoid redefinition conflicts
 
 # macOS host build flag (disables userland blobs that can't build on macOS)

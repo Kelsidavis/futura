@@ -112,13 +112,16 @@ static int spawn_service(struct fui_service *service) {
     if (pid == 0) {
         /* Child process - set up stdio and exec the service */
 
-        /* Close inherited FDs and reopen console */
+        /* Close inherited FDs and reopen console for stdio */
         sys_close(0);
         sys_close(1);
         sys_close(2);
-        sys_open("/dev/console", 2, 0);  /* stdin */
-        sys_open("/dev/console", 2, 0);  /* stdout */
-        sys_open("/dev/console", 2, 0);  /* stderr */
+        long fd0 = sys_open("/dev/console", 2, 0);  /* stdin */
+        long fd1 = sys_open("/dev/console", 2, 0);  /* stdout */
+        long fd2 = sys_open("/dev/console", 2, 0);  /* stderr */
+        if (fd0 < 0 || fd1 < 0 || fd2 < 0) {
+            sys_write(2, "[SERVICE] Failed to open /dev/console for stdio\n", 49);
+        }
 
         /* Build argv - use service name as argv[0] */
         const char *argv[16];

@@ -11,6 +11,7 @@
 #include <kernel/errno.h>
 #include <kernel/fut_vfs.h>
 #include <stdint.h>
+#include <string.h>
 
 #include <kernel/kprintf.h>
 #include <kernel/uaccess.h>
@@ -84,60 +85,25 @@ long sys_lstat(const char *path, struct fut_stat *statbuf) {
         return -EFAULT;
     }
 
-    /* Validate path length BEFORE copying to prevent truncation attacks
-     * Check original path is null-terminated within reasonable length */
-    const size_t MAX_PATH = 4096;  /* PATH_MAX */
-    size_t orig_path_len = 0;
-    bool found_null = false;
-
-    for (size_t i = 0; i < MAX_PATH; i++) {
-        char c;
-        if (fut_copy_from_user(&c, (const char *)local_path + i, 1) != 0) {
-            fut_printf("[LSTAT] lstat(%p) -> EFAULT "
-                       "(path not accessible at offset %zu)\n",
-                       local_path, i);
-            return -EFAULT;
-        }
-        if (c == '\0') {
-            found_null = true;
-            orig_path_len = i;
-            break;
-        }
-    }
-
-    if (!found_null) {
-        fut_printf("[LSTAT] lstat(%p) -> ENAMETOOLONG "
-                   "(path exceeds PATH_MAX %zu bytes without null terminator)\n",
-                   local_path, MAX_PATH);
-        return -ENAMETOOLONG;
-    }
-
-    /* Validate path is not empty */
-    if (orig_path_len == 0) {
-        fut_printf("[LSTAT] lstat(\"\") -> EINVAL (empty path)\n");
-        return -EINVAL;
-    }
-
-    /* Validate path fits in our buffer before copying
-     * Prevents silent truncation that could cause path confusion */
+    /* Copy path from userspace to kernel space */
     char path_buf[FUT_VFS_PATH_BUFFER_SIZE];
-    if (orig_path_len >= sizeof(path_buf)) {
-        fut_printf("[LSTAT] lstat(path_len=%zu) -> ENAMETOOLONG "
-                   "(exceeds kernel buffer %zu bytes truncation prevention)\n",
-                   orig_path_len, sizeof(path_buf) - 1);
-        return -ENAMETOOLONG;
-    }
-
-    /* Safe to copy - we know the exact length and it fits */
-    if (fut_copy_from_user(path_buf, local_path, orig_path_len + 1) != 0) {
+    if (fut_copy_from_user(path_buf, local_path, sizeof(path_buf)) != 0) {
         fut_printf("[LSTAT] lstat(%p, %p) -> EFAULT (path copy failed)\n",
                    local_path, local_statbuf);
         return -EFAULT;
     }
-    path_buf[orig_path_len] = '\0';  /* Ensure null termination */
+    if (memchr(path_buf, '\0', sizeof(path_buf)) == NULL) {
+        fut_printf("[LSTAT] lstat(%p) -> ENAMETOOLONG "
+                   "(path exceeds %zu bytes)\n",
+                   local_path, sizeof(path_buf) - 1);
+        return -ENAMETOOLONG;
+    }
 
-    /* Path length already validated above - complete */
-    (void)orig_path_len;  /* Used for validation and copy, now done */
+    /* Validate path is not empty */
+    if (path_buf[0] == '\0') {
+        fut_printf("[LSTAT] lstat(\"\") -> EINVAL (empty path)\n");
+        return -EINVAL;
+    }
 
     /* Phase 3: Call fut_vfs_lstat() which doesn't follow the final symlink
      * This returns metadata about the symlink itself, not its target.

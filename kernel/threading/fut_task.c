@@ -131,7 +131,7 @@ fut_task_t *fut_task_create(void) {
         .signal_mask = 0,  /* No signals blocked initially */
         .pending_signals = 0,  /* No pending signals */
         .current_dir_ino = (parent ? parent->current_dir_ino : 1),  /* Inherit parent's cwd, default to root (inode 1) */
-        .cwd_cache = NULL,  /* No cached path initially */
+        .cwd_cache = NULL,  /* Set to cwd_cache_buf below */
         .umask = FUT_UMASK_DEFAULT,  /* Default umask: owner read/write, group/others read only */
         .clear_child_tid = NULL,  /* No tid address set initially (set via set_tid_address) */
         .fd_table = NULL,   /* FD table initialized below */
@@ -149,6 +149,19 @@ fut_task_t *fut_task_create(void) {
         .next = NULL
     };
     fut_waitq_init(&task->child_waiters);
+
+    /* Initialize cwd_cache to parent's path or "/" */
+    if (parent && parent->cwd_cache) {
+        size_t len = 0;
+        while (parent->cwd_cache[len] && len < 255) len++;
+        for (size_t i = 0; i <= len; i++) {
+            task->cwd_cache_buf[i] = parent->cwd_cache[i];
+        }
+    } else {
+        task->cwd_cache_buf[0] = '/';
+        task->cwd_cache_buf[1] = '\0';
+    }
+    task->cwd_cache = task->cwd_cache_buf;
 
     /* Initialize signal handlers array - all default actions */
     for (int i = 0; i < _NSIG; i++) {

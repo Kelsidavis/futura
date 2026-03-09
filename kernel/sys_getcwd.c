@@ -253,38 +253,36 @@ long sys_getcwd(char *buf, size_t size) {
      */
     char root_path[] = "/";  /* Build path in kernel buffer first */
 
-    if (cwd_inode == 1) {
-        /* At root directory */
-        if (fut_copy_to_user(local_buf, root_path, 2) != 0) {
-            fut_printf("[GETCWD] getcwd(buf=%p, size=%zu) -> EFAULT "
-                       "(copy_to_user failed for root path)\n",
-                       (void *)local_buf, local_size);
-            return -EFAULT;
-        }
-    } else {
-        /* Phase 3: Track non-root path
-         * If cached, use it; otherwise, would need VFS tree traversal
-         * For now, return "/" as placeholder
-         */
-        if (fut_copy_to_user(local_buf, root_path, 2) != 0) {
-            fut_printf("[GETCWD] getcwd(buf=%p, size=%zu) -> EFAULT "
-                       "(copy_to_user failed for path)\n",
-                       (void *)local_buf, local_size);
-            return -EFAULT;
+    /* Determine the path string to return */
+    const char *path_str = root_path;
+    size_t path_len = 1;
+
+    if (cwd_inode != 1 && task->cwd_cache && task->cwd_cache[0] != '\0') {
+        /* Use cached path from chdir() */
+        path_str = task->cwd_cache;
+        path_len = 0;
+        while (path_str[path_len] != '\0' && path_len < 255) {
+            path_len++;
         }
     }
 
-    /* Phase 5: Always ensure null termination within buffer bounds
-     * Critical when VFS path resolution is implemented to prevent overflow
-     * Use fut_copy_to_user to write the null terminator safely */
-    char null_term = '\0';
-    if (fut_copy_to_user(local_buf + local_size - 1, &null_term, 1) != 0) {
-        /* Non-fatal: path already written, just log warning */
-        fut_printf("[GETCWD] warning: could not write null terminator at end of buffer\n");
+    /* Check buffer is large enough */
+    if (path_len + 1 > local_size) {
+        fut_printf("[GETCWD] getcwd(buf=%p, size=%zu) -> ERANGE "
+                   "(path '%s' len=%zu exceeds buffer)\n",
+                   (void *)local_buf, local_size, path_str, path_len);
+        return -ERANGE;
+    }
+
+    /* Copy path to user buffer (including null terminator) */
+    if (fut_copy_to_user(local_buf, path_str, path_len + 1) != 0) {
+        fut_printf("[GETCWD] getcwd(buf=%p, size=%zu) -> EFAULT "
+                   "(copy_to_user failed)\n",
+                   (void *)local_buf, local_size);
+        return -EFAULT;
     }
 
     /* Phase 3: Categorize path length */
-    const size_t path_len = 1;  /* Length of "/" without null terminator */
     const char *path_category;
     if (path_len == 1) {
         path_category = "root (1 char)";
@@ -313,9 +311,10 @@ long sys_getcwd(char *buf, size_t size) {
 
     /* Phase 2: Detailed success logging */
     fut_printf("[GETCWD] getcwd(buf=%p, size=%zu [%s], cwd_inode=%lu) -> %p "
-               "(path='/', len=%zu [%s], util=%zu%% [%s], Phase 2 stub)\n",
+               "(path='%s', len=%zu [%s], util=%zu%% [%s])\n",
                (void *)local_buf, local_size, size_category, (unsigned long)cwd_inode,
-               (void *)local_buf, path_len, path_category, utilization_pct, utilization_desc);
+               (void *)local_buf, path_str, path_len, path_category,
+               utilization_pct, utilization_desc);
 
     return (long)(uintptr_t)local_buf;
 }

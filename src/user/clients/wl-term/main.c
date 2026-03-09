@@ -308,27 +308,86 @@ static const struct wl_callback_listener frame_listener = {
     .done = frame_done,
 };
 
-/* Spawn shell process - DISABLED due to fork/exec issues
- * No CLI shell is currently available (futura-shell is a graphical desktop shell).
- * This function just displays a message in the terminal instead. */
+/* Spawn shell process connected to terminal via pipes */
 static int spawn_shell(struct terminal *term) {
-    /* Mark shell FDs as invalid */
     term->shell_stdin_fd = -1;
     term->shell_stdout_fd = -1;
     term->shell_pid = -1;
 
-    /* Display a welcome message in the terminal */
-    const char *msg = "Welcome to Futura OS Terminal\n"
-                      "No CLI shell available yet.\n"
-                      "Terminal is ready for display.\n";
+    /* Create pipes: stdin_pipe[0]=shell reads, stdin_pipe[1]=term writes
+     *               stdout_pipe[0]=term reads, stdout_pipe[1]=shell writes */
+    int stdin_pipe[2];
+    int stdout_pipe[2];
 
-    /* Feed the message character by character into the terminal */
-    while (*msg) {
-        term_putchar(term, (unsigned char)*msg);
-        msg++;
+    if (sys_pipe_call(stdin_pipe) < 0 || sys_pipe_call(stdout_pipe) < 0) {
+        const char *msg = "Welcome to Futura OS Terminal\n"
+                          "Failed to create pipes for shell.\n";
+        while (*msg) { term_putchar(term, (unsigned char)*msg); msg++; }
+        const char spawn_msg[] = "[WL-TERM] Terminal ready (no shell - pipe failed)\n";
+        sys_write(1, spawn_msg, sizeof(spawn_msg) - 1);
+        return -1;
     }
 
-    const char spawn_msg[] = "[WL-TERM] Terminal ready (no shell)\n";
+    long pid = sys_fork_call();
+    if (pid < 0) {
+        sys_close(stdin_pipe[0]); sys_close(stdin_pipe[1]);
+        sys_close(stdout_pipe[0]); sys_close(stdout_pipe[1]);
+        const char *msg = "Welcome to Futura OS Terminal\n"
+                          "Failed to fork shell process.\n";
+        while (*msg) { term_putchar(term, (unsigned char)*msg); msg++; }
+        char spawn_msg[80];
+        int len = 0;
+        const char prefix[] = "[WL-TERM] fork failed (rc=";
+        for (int i = 0; prefix[i]; i++) spawn_msg[len++] = prefix[i];
+        /* Convert pid to string */
+        long v = -pid;
+        spawn_msg[len++] = '-';
+        if (v >= 100) spawn_msg[len++] = '0' + (char)(v / 100 % 10);
+        if (v >= 10)  spawn_msg[len++] = '0' + (char)(v / 10 % 10);
+        spawn_msg[len++] = '0' + (char)(v % 10);
+        spawn_msg[len++] = ')'; spawn_msg[len++] = '\n';
+        sys_write(1, spawn_msg, len);
+        return -1;
+    }
+
+    if (pid == 0) {
+        /* Child: set up stdio and exec shell */
+        sys_close(stdin_pipe[1]);   /* Close write end of stdin pipe */
+        sys_close(stdout_pipe[0]);  /* Close read end of stdout pipe */
+
+        /* Redirect stdin/stdout/stderr */
+        sys_close(0);
+        sys_close(1);
+        sys_close(2);
+        sys_dup2_call(stdin_pipe[0], 0);    /* stdin from pipe */
+        sys_dup2_call(stdout_pipe[1], 1);   /* stdout to pipe */
+        sys_dup2_call(stdout_pipe[1], 2);   /* stderr to pipe */
+        sys_close(stdin_pipe[0]);
+        sys_close(stdout_pipe[1]);
+
+        /* Exec the CLI shell */
+        char shell_name[] = "/bin/shell";
+        char *argv[] = { shell_name, NULL };
+        char *envp[] = { NULL };
+        sys_execve_call("/bin/shell", argv, envp);
+
+        /* If exec fails, exit child */
+        sys_exit(127);
+    }
+
+    /* Parent: save pipe fds for communication */
+    sys_close(stdin_pipe[0]);   /* Close read end (shell's side) */
+    sys_close(stdout_pipe[1]);  /* Close write end (shell's side) */
+
+    term->shell_stdin_fd = stdin_pipe[1];   /* We write to shell's stdin */
+    term->shell_stdout_fd = stdout_pipe[0]; /* We read from shell's stdout */
+
+    /* Set stdout pipe to non-blocking so term_read_shell doesn't block
+     * the Wayland event loop */
+    sys_fcntl_call(stdout_pipe[0], 4 /*F_SETFL*/, 0x0800 /*O_NONBLOCK*/);
+    term->shell_pid = (int)pid;
+
+    const char spawn_msg[] = "[WL-TERM] Shell spawned\n";
     sys_write(1, spawn_msg, sizeof(spawn_msg) - 1);
     return 0;
 }
@@ -482,13 +541,9 @@ int main(void) {
                                              TERM_WIDTH * 4, WL_SHM_FORMAT_ARGB8888);
     wl_shm_pool_destroy(pool);
 
-    /* Spawn shell process */
+    /* Spawn shell process (non-fatal if fork fails) */
     if (spawn_shell(&state.term) < 0) {
-        WLTERM_LOG("[WL-TERM] Failed to spawn shell\n");
-        sys_munmap_call(state.shm_data, (long)state.shm_size);
-        sys_close(state.shm_fd);
-        wl_display_disconnect(state.display);
-        return -1;
+        WLTERM_LOG("[WL-TERM] Shell spawn failed, continuing as display-only terminal\n");
     }
 
     /* Initial draw */

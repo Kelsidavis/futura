@@ -306,16 +306,21 @@ void arm64_exception_dispatch(fut_interrupt_frame_t *frame) {
                        (unsigned long long)frame->sp, (unsigned long long)frame->x[30]);
             fut_printf("[DATA-ABORT-DEBUG] X0=0x%016llx X1=0x%016llx\n",
                        (unsigned long long)frame->x[0], (unsigned long long)frame->x[1]);
+            if (ec == ESR_EC_DABT_EL1) {
+                /* Kernel data abort is unrecoverable — panic */
+                fut_serial_puts("[PANIC] Unhandled kernel data abort\n");
+                handle_unknown(frame);
+            }
             fut_task_signal_exit(SIGSEGV);
             break;
 
         case ESR_EC_IABT_EL0:
+            fut_serial_puts("[EXCEPTION] Instruction abort from lower EL (userspace)\n");
+            fut_task_signal_exit(SIGSEGV);
+            break;
+
         case ESR_EC_IABT_EL1:
-            if (ec == ESR_EC_IABT_EL0) {
-                fut_serial_puts("[EXCEPTION] Instruction abort from lower EL (userspace)\n");
-            } else {
-                fut_serial_puts("[EXCEPTION] Instruction abort from same EL (kernel)\n");
-            }
+            fut_serial_puts("[EXCEPTION] Instruction abort from same EL (kernel)\n");
             handle_unknown(frame);
             break;
 
@@ -350,7 +355,12 @@ void arm64_exception_dispatch(fut_interrupt_frame_t *frame) {
                 fut_serial_putc('\n');
             }
 
-            handle_unknown(frame);
+            /* If exception came from EL0, signal the process instead of hanging */
+            if ((frame->pstate & 0xF) == 0) {
+                fut_task_signal_exit(SIGILL);
+            } else {
+                handle_unknown(frame);
+            }
             break;
 
         default:

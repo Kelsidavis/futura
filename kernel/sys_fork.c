@@ -154,9 +154,9 @@
  *   - Destroy child_task on failure
  *   - Commit: (see below)
  *
- * [TODO] Use atomic refcount operations:
- *   - Replace parent_file->refcount++ with atomic_inc_check_overflow()
- *   - Atomic operation returns error if overflow detected
+ * [DONE] Atomic refcount operations:
+ *   - vfs_file_ref() uses __atomic_add_fetch for increment (line 799)
+ *   - Cleanup uses __atomic_sub_fetch for decrement (line 790)
  *   - Prevents race condition where concurrent forks overflow refcount
  *
  * [TODO] Implement per-process file descriptor limit:

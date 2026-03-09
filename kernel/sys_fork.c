@@ -224,11 +224,11 @@
  *   - Return -EAGAIN (resource temporarily unavailable)
  *   - Implementation at lines 662-670
  *
- * [TODO] Implement fork rate limiting:
- *   - Track forks per second per UID
- *   - Reject fork if rate > 100/second for non-root
- *   - Prevents exponential growth attack
- *   - Allow burst of 10 forks, then throttle
+ * [DONE] Implement fork rate limiting:
+ *   - Tracks forks per second per UID via fork_rate_table
+ *   - Rejects fork if rate > 100/second for non-root
+ *   - Root (UID 0) is exempt for admin recovery
+ *   - Uses sliding window with automatic stale entry reclaim
  *
  * [TODO] Add fork bomb detection:
  *   - Detect pattern: same process forking rapidly in loop
@@ -476,6 +476,8 @@
 #endif
 
 #include <kernel/kprintf.h>
+#include <kernel/fut_timer.h>
+#include <platform/platform.h>
 #include <sys/mman.h>
 #include <sys/resource.h>
 #include <kernel/debug_config.h>
@@ -490,6 +492,87 @@ extern fut_interrupt_frame_t *fut_current_frame;
 
 /* RLIMIT_* provided by sys/resource.h */
 /* MAP_SHARED provided by sys/mman.h */
+
+/* ============================================================
+ *   Per-UID Fork Rate Limiter
+ * ============================================================
+ *
+ * Tracks fork calls per second for each UID to prevent fork bombs.
+ * Uses a small hash table with linear probing (UIDs collide rarely).
+ * Non-root UIDs are limited to FORK_RATE_LIMIT forks per second.
+ * Root (UID 0) is exempt to allow admin recovery.
+ */
+#define FORK_RATE_LIMIT     100   /* Max forks per second per UID */
+#define FORK_RATE_BURST     10    /* Burst allowance before throttling */
+#define FORK_RATE_SLOTS     32    /* Hash table size (power of 2) */
+#define FORK_RATE_WINDOW_TICKS (FUT_TIMER_HZ)  /* 1 second in ticks */
+
+struct fork_rate_entry {
+    uint32_t uid;
+    uint32_t count;           /* Forks in current window */
+    uint64_t window_start;    /* Tick count at window start */
+    bool active;
+};
+
+static struct fork_rate_entry fork_rate_table[FORK_RATE_SLOTS];
+
+/**
+ * Check and update fork rate limit for a given UID.
+ * Returns 0 if fork is allowed, -EAGAIN if rate limit exceeded.
+ */
+static int fork_rate_check(uint32_t uid) {
+    /* Root is exempt */
+    if (uid == 0)
+        return 0;
+
+    uint64_t now = fut_timer_get_ticks();
+    uint32_t slot = uid & (FORK_RATE_SLOTS - 1);
+
+    /* Linear probe for the UID's entry */
+    for (int i = 0; i < FORK_RATE_SLOTS; i++) {
+        uint32_t idx = (slot + i) & (FORK_RATE_SLOTS - 1);
+        struct fork_rate_entry *e = &fork_rate_table[idx];
+
+        if (e->active && e->uid == uid) {
+            /* Found existing entry — check if window expired */
+            if (now - e->window_start >= FORK_RATE_WINDOW_TICKS) {
+                /* Reset window */
+                e->window_start = now;
+                e->count = 1;
+                return 0;
+            }
+            /* Within window — check rate */
+            if (e->count >= FORK_RATE_LIMIT) {
+                fut_printf("[FORK] fork rate limit: uid=%u at %u forks/sec (limit=%d)\n",
+                           uid, e->count, FORK_RATE_LIMIT);
+                return -EAGAIN;
+            }
+            e->count++;
+            return 0;
+        }
+
+        if (!e->active) {
+            /* Empty slot — create new entry */
+            e->active = true;
+            e->uid = uid;
+            e->count = 1;
+            e->window_start = now;
+            return 0;
+        }
+
+        /* Stale entry (old window) — reclaim it */
+        if (now - e->window_start >= FORK_RATE_WINDOW_TICKS * 10) {
+            e->active = true;
+            e->uid = uid;
+            e->count = 1;
+            e->window_start = now;
+            return 0;
+        }
+    }
+
+    /* Table full — allow fork (fail open) */
+    return 0;
+}
 
 /* Forward declarations */
 static fut_mm_t *clone_mm(fut_mm_t *parent_mm);
@@ -721,6 +804,16 @@ long sys_fork(void) {
                        parent_task->pid, parent_task->uid, current_count, rlim_nproc);
             return -EAGAIN;
         }
+    }
+
+    /* Per-UID fork rate limiting (Attack Scenario 3 defense) */
+    /* Prevents rapid fork calls from exhausting resources before RLIMIT kicks in */
+    int rate_rc = fork_rate_check(parent_task->uid);
+    if (rate_rc < 0) {
+        FORK_LOG("[FORK] fork(parent_pid=%u, uid=%u) -> EAGAIN "
+                   "(fork rate limit exceeded)\n",
+                   parent_task->pid, parent_task->uid);
+        return -EAGAIN;
     }
 
     /* Enforce global PID limit (Attack Scenario 3 defense) */

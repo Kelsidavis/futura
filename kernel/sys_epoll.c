@@ -411,13 +411,28 @@ static struct epoll_set *epoll_allocate_set(uint64_t owner_pid) {
 }
 
 /* Helper to deallocate an epoll set */
-__attribute__((unused))
 static void epoll_deallocate_set(struct epoll_set *set) {
     if (set) {
         set->active = false;
         set->count = 0;
+        set->owner_pid = 0;
         memset(set->fds, 0, sizeof(set->fds));
     }
+}
+
+/**
+ * Check if an FD is an epoll instance and deallocate it on close.
+ * Called from sys_close() (via epoll_notify_fd_close) to reclaim
+ * epoll resources when the epoll FD itself is closed.
+ * Returns true if the FD was an epoll instance.
+ */
+bool epoll_try_close(int fd) {
+    struct epoll_set *set = epoll_get_set(fd);
+    if (set) {
+        epoll_deallocate_set(set);
+        return true;
+    }
+    return false;
 }
 
 /**

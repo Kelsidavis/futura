@@ -34,14 +34,20 @@ jobs:
           make iso ENABLE_WAYLAND=0
           mv futura.iso futura-x86_64.iso
 
+      - name: Save x86_64 artifacts
+        run: |
+          mkdir -p release
+          cp futura-x86_64.iso release/
+          cp build/bin/futura_kernel.elf release/futura-x86_64.elf
+
+      - name: Clean before ARM64 build
+        run: make clean
+
       - name: Build ARM64 kernel
         run: make kernel PLATFORM=arm64 ENABLE_WAYLAND=0
 
       - name: Collect release artifacts
         run: |
-          mkdir -p release
-          cp futura-x86_64.iso release/
-          cp build/bin/futura_kernel.elf release/futura-x86_64.elf
           cp build/bin/arm64/futura_kernel.elf release/futura-arm64.elf 2>/dev/null || true
           sha256sum release/* > release/SHA256SUMS
 

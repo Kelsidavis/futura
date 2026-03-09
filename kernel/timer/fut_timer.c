@@ -41,7 +41,9 @@ struct fut_task;
 /* Global tick counter (milliseconds) */
 static _Atomic uint64_t system_ticks = 0;
 
-/* Public getter for system tick count */
+/* Public getter for system tick count.
+ * Weak: platforms (e.g., ARM64) may override with their own timer source. */
+__attribute__((weak))
 uint64_t fut_timer_get_ticks(void) {
     return atomic_load_explicit(&system_ticks, memory_order_relaxed);
 }

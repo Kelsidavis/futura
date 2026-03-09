@@ -124,6 +124,7 @@ struct fut_task {
     char *cwd_cache;                   // Cached current working directory path (points to cwd_cache_buf)
     char cwd_cache_buf[256];           // Buffer for caching current working directory path
     uint32_t umask;                    // File creation mask (per-task, not global)
+    unsigned long personality;         // Execution personality (PER_LINUX etc.)
 
     /* I/O priority */
     int ioprio;                        // I/O priority (class + level encoded)

@@ -18,25 +18,7 @@
 #include <stdint.h>
 
 #include <kernel/kprintf.h>
-
-/* Execution domain personalities */
-#define PER_LINUX       0x0000  /* Linux personality (default) */
-#define PER_LINUX_32BIT 0x0008  /* 32-bit Linux */
-#define PER_SVR4        0x0001  /* SVR4 personality */
-#define PER_BSD         0x0006  /* BSD personality */
-
-/* Personality flags */
-#define ADDR_NO_RANDOMIZE   0x0040000  /* Disable address space randomization */
-#define ADDR_COMPAT_LAYOUT  0x0200000  /* Compatibility address layout */
-#define READ_IMPLIES_EXEC   0x0400000  /* READ implies EXEC for mappings */
-#define ADDR_LIMIT_32BIT    0x0800000  /* Limit address space to 32 bits */
-#define SHORT_INODE         0x1000000  /* Use 16-bit inode numbers */
-#define WHOLE_SECONDS       0x2000000  /* Timestamps in whole seconds */
-#define STICKY_TIMEOUTS     0x4000000  /* Select/poll timeouts sticky */
-#define ADDR_LIMIT_3GB      0x8000000  /* Limit address space to 3GB */
-
-/* Magic value to query current personality without changing it */
-#define PER_QUERY           0xFFFFFFFF
+#include <kernel/fut_personality.h>
 
 /**
  * personality() - Get/set process execution domain
@@ -81,13 +63,13 @@ long sys_personality(unsigned long persona) {
         return -ESRCH;
     }
 
-    /* Phase 2: Check if this is a query operation */
+    /* Phase 3: Check if this is a query operation — return stored personality */
     if (persona == PER_QUERY) {
-        unsigned long default_persona = PER_LINUX;
+        unsigned long current_persona = task->personality;
         fut_printf("[PERSONALITY] personality(PER_QUERY [query], pid=%d) -> 0x%lx "
-                   "(Phase 3: personality storage in task structure)\n",
-                   task->pid, default_persona);
-        return default_persona;
+                   "(Phase 3: task->personality)\n",
+                   task->pid, current_persona);
+        return (long)current_persona;
     }
 
     /* Validate persona parameter bounds
@@ -191,12 +173,13 @@ long sys_personality(unsigned long persona) {
     /* Phase 2: Categorize operation type */
     const char *operation_type = "set";
 
-    /* Phase 2: Accept personality change and return old personality */
-    unsigned long old_persona = PER_LINUX;
+    /* Phase 3: Save old personality, store new one in task structure */
+    unsigned long old_persona = task->personality;
+    task->personality = persona;
 
     fut_printf("[PERSONALITY] personality(persona=%s, flags=%s, op=%s, pid=%d) -> 0x%lx "
-               "(Phase 3: personality storage in task structure)\n",
+               "(Phase 3: stored in task->personality)\n",
                persona_desc, flags_desc, operation_type, task->pid, old_persona);
 
-    return old_persona;
+    return (long)old_persona;
 }

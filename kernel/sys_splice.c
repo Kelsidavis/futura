@@ -20,6 +20,7 @@
 #include <kernel/fut_vfs.h>
 #include <kernel/fut_memory.h>
 #include <kernel/chrdev.h>
+#include <sys/uio.h>
 #include <stdint.h>
 #include <stddef.h>
 
@@ -376,12 +377,55 @@ long sys_vmsplice(int fd, const void *iov, size_t nr_segs, unsigned int flags) {
         return -EINVAL;
     }
 
-    /* Return -ENOSYS until properly implemented.
-     * Returning a fake byte count causes silent data loss. */
-    fut_printf("[VMSPLICE] vmsplice(fd=%d, nr_segs=%zu, pid=%d) -> ENOSYS (not implemented)\n",
-               local_fd, local_nr_segs, task->pid);
+    /* Get file structure for the pipe fd */
+    if (local_fd >= task->max_fds) return -EBADF;
+    struct fut_file *file = vfs_get_file_from_task(task, local_fd);
+    if (!file) return -EBADF;
 
-    return -ENOSYS;
+    /* vmsplice requires the fd to be a pipe (write end) */
+    if (!file->chr_ops || !file->chr_ops->write) {
+        fut_printf("[VMSPLICE] vmsplice(fd=%d) -> EBADF (not a writable pipe)\n", local_fd);
+        return -EBADF;
+    }
+
+    /* Per-segment I/O limit matching sys_preadv/pwritev (2MB) */
+    const size_t MAX_IOV_LEN = 2u * 1024u * 1024u;
+
+    /* Process each iovec segment */
+    ssize_t total = 0;
+    const struct iovec *user_iov = (const struct iovec *)local_iov;
+
+    for (size_t i = 0; i < local_nr_segs; i++) {
+        struct iovec seg;
+        if (fut_copy_from_user(&seg, &user_iov[i], sizeof(seg)) != 0)
+            return (total > 0) ? total : -EFAULT;
+
+        if (seg.iov_len == 0) continue;
+        if (seg.iov_len > MAX_IOV_LEN) return (total > 0) ? total : -EINVAL;
+        if (!seg.iov_base) return (total > 0) ? total : -EFAULT;
+
+        /* Copy user data into a kernel buffer then write to pipe */
+        uint8_t *kbuf = (uint8_t *)fut_malloc(seg.iov_len);
+        if (!kbuf) return (total > 0) ? total : -ENOMEM;
+
+        if (fut_copy_from_user(kbuf, seg.iov_base, seg.iov_len) != 0) {
+            fut_free(kbuf);
+            return (total > 0) ? total : -EFAULT;
+        }
+
+        off_t pos = 0;
+        ssize_t nwritten = file->chr_ops->write(file->chr_inode, file->chr_private,
+                                                 kbuf, seg.iov_len, &pos);
+        fut_free(kbuf);
+
+        if (nwritten < 0) return (total > 0) ? total : (long)nwritten;
+        total += nwritten;
+        if ((size_t)nwritten < seg.iov_len) break;  /* Pipe full */
+    }
+
+    fut_printf("[VMSPLICE] vmsplice(fd=%d, nr_segs=%zu, pid=%d) -> %zd bytes\n",
+               local_fd, local_nr_segs, task->pid, total);
+    return total;
 }
 
 /**

@@ -79,10 +79,11 @@ int fut_object_destroy(fut_handle_t handle) {
         return -EACCES;  /* Permission denied */
     }
 
-    // Decrement refcount and free if zero
-    if (--obj->refcount == 0) {
-        fut_free(obj);
+    /* Decrement refcount atomically and free if zero */
+    uint64_t remaining = __atomic_sub_fetch(&obj->refcount, 1, __ATOMIC_ACQ_REL);
+    if (remaining == 0) {
         object_table[handle] = NULL;
+        fut_free(obj);
     }
 
     return 0;
@@ -107,8 +108,8 @@ fut_object_t *fut_object_get(fut_handle_t handle, fut_rights_t required_rights) 
         return NULL;  // Insufficient rights
     }
 
-    // Increment refcount
-    ++obj->refcount;
+    /* Increment refcount atomically */
+    __atomic_add_fetch(&obj->refcount, 1, __ATOMIC_ACQ_REL);
 
     return obj;
 }
@@ -116,9 +117,10 @@ fut_object_t *fut_object_get(fut_handle_t handle, fut_rights_t required_rights) 
 void fut_object_put(fut_object_t *obj) {
     if (!obj) return;
 
-    // Decrement refcount and free if zero
-    if (--obj->refcount == 0) {
-        // Clear table entry to prevent use-after-free and handle exhaustion
+    /* Decrement refcount atomically and free if zero */
+    uint64_t remaining = __atomic_sub_fetch(&obj->refcount, 1, __ATOMIC_ACQ_REL);
+    if (remaining == 0) {
+        /* Clear table entry to prevent use-after-free and handle exhaustion */
         if (obj->handle < FUT_MAX_OBJECTS) {
             object_table[obj->handle] = NULL;
         }

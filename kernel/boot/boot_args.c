@@ -46,13 +46,6 @@ static const char *boot_strchr(const char *s, char ch) {
     return NULL;
 }
 
-static int boot_strcmp(const char *a, const char *b) {
-    while (*a && *b && *a == *b) {
-        ++a;
-        ++b;
-    }
-    return (int)(unsigned char)*a - (int)(unsigned char)*b;
-}
 
 void fut_boot_args_init(const char *cmdline) {
     if (!cmdline) {
@@ -105,6 +98,22 @@ const char *fut_boot_arg_value(const char *key) {
     return equals + 1;
 }
 
+static int boot_strcmp_token(const char *token_value, const char *expected) {
+    /* Compare token_value against expected, treating space and '\0' as end of token */
+    while (*expected) {
+        if (*token_value != *expected) {
+            return (int)(unsigned char)*token_value - (int)(unsigned char)*expected;
+        }
+        token_value++;
+        expected++;
+    }
+    /* expected exhausted; token_value must also be at end (space or null) */
+    if (*token_value == '\0' || *token_value == ' ') {
+        return 0;
+    }
+    return (int)(unsigned char)*token_value;
+}
+
 bool fut_boot_arg_flag(const char *key) {
     const char *token = find_key(key);
     if (!token) {
@@ -115,12 +124,12 @@ bool fut_boot_arg_flag(const char *key) {
         return true;
     }
     value++; /* skip '=' */
-    if (*value == '\0') {
+    if (*value == '\0' || *value == ' ') {
         return true;
     }
-    if (boot_strcmp(value, "1") == 0 ||
-        boot_strcmp(value, "true") == 0 ||
-        boot_strcmp(value, "on") == 0) {
+    if (boot_strcmp_token(value, "1") == 0 ||
+        boot_strcmp_token(value, "true") == 0 ||
+        boot_strcmp_token(value, "on") == 0) {
         return true;
     }
     return false;

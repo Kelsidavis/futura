@@ -35,14 +35,24 @@ static int ramdisk_read(struct fut_blockdev *dev, uint64_t block_num, uint64_t n
         return BLOCKDEV_EIO;
     }
 
-    /* Calculate byte offset and size */
+    /* Calculate byte offset and size with overflow checks */
     uint64_t offset = block_num * dev->block_size;
-    size_t size = num_blocks * dev->block_size;
+    uint64_t size64 = num_blocks * (uint64_t)dev->block_size;
 
-    /* Bounds check */
-    if (offset + size > data->size) {
+    /* Check for multiplication overflow */
+    if (dev->block_size != 0 && offset / dev->block_size != block_num) {
         return BLOCKDEV_EINVAL;
     }
+    if (dev->block_size != 0 && size64 / dev->block_size != num_blocks) {
+        return BLOCKDEV_EINVAL;
+    }
+
+    /* Bounds check (addition overflow safe: both values <= data->size individually
+     * if this check passes, so offset + size64 <= 2 * data->size which fits uint64_t) */
+    if (offset > data->size || size64 > data->size - offset) {
+        return BLOCKDEV_EINVAL;
+    }
+    size_t size = (size_t)size64;
 
     /* Copy data from ramdisk to buffer */
     uint8_t *src = data->storage + offset;
@@ -65,14 +75,23 @@ static int ramdisk_write(struct fut_blockdev *dev, uint64_t block_num, uint64_t 
         return BLOCKDEV_EIO;
     }
 
-    /* Calculate byte offset and size */
+    /* Calculate byte offset and size with overflow checks */
     uint64_t offset = block_num * dev->block_size;
-    size_t size = num_blocks * dev->block_size;
+    uint64_t size64 = num_blocks * (uint64_t)dev->block_size;
 
-    /* Bounds check */
-    if (offset + size > data->size) {
+    /* Check for multiplication overflow */
+    if (dev->block_size != 0 && offset / dev->block_size != block_num) {
         return BLOCKDEV_EINVAL;
     }
+    if (dev->block_size != 0 && size64 / dev->block_size != num_blocks) {
+        return BLOCKDEV_EINVAL;
+    }
+
+    /* Bounds check */
+    if (offset > data->size || size64 > data->size - offset) {
+        return BLOCKDEV_EINVAL;
+    }
+    size_t size = (size_t)size64;
 
     /* Copy data from buffer to ramdisk */
     uint8_t *dst = data->storage + offset;

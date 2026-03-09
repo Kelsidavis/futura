@@ -507,7 +507,6 @@ ssize_t sys_preadv(int fd, const struct iovec *iov, int iovcnt, int64_t offset) 
          * This check prevents reading from negative/wrapped offsets
          */
         if (kernel_iov[i].iov_len > 0 && current_offset > INT64_MAX - (int64_t)kernel_iov[i].iov_len) {
-            fut_free(kernel_iov);
             if (total_read > 0) {
                 /* Return bytes successfully read before overflow would occur */
                 break;
@@ -515,18 +514,19 @@ ssize_t sys_preadv(int fd, const struct iovec *iov, int iovcnt, int64_t offset) 
             fut_printf("[PREADV] preadv(fd=%d, iov=%p, iovcnt=%d, offset=%ld) -> EOVERFLOW "
                        "(offset would overflow INT64_MAX for iovec %d, current_offset=%ld, iov_len=%zu)\n",
                        fd, iov, iovcnt, i, current_offset, kernel_iov[i].iov_len);
+            fut_free(kernel_iov);
             return -EOVERFLOW;
         }
 
         /* Allocate kernel buffer for this iovec */
         void *kbuf = fut_malloc(kernel_iov[i].iov_len);
         if (!kbuf) {
-            fut_free(kernel_iov);
             if (total_read > 0) {
                 break;  /* Return bytes read so far */
             }
             fut_printf("[PREADV] preadv(fd=%d, iov=%p, iovcnt=%d, offset=%ld) -> ENOMEM (malloc failed at iovec %d)\n",
                        fd, iov, iovcnt, offset, i);
+            fut_free(kernel_iov);
             return -ENOMEM;
         }
 
@@ -543,6 +543,7 @@ ssize_t sys_preadv(int fd, const struct iovec *iov, int iovcnt, int64_t offset) 
                 /* No bytes read yet, return error */
                 fut_printf("[PREADV] preadv(fd=%d, iov=%p, iovcnt=%d, offset=%ld) -> %ld (read error on iovec %d)\n",
                            fd, iov, iovcnt, offset, n, i);
+                fut_free(kernel_iov);
                 return n;
             }
         }
@@ -556,6 +557,7 @@ ssize_t sys_preadv(int fd, const struct iovec *iov, int iovcnt, int64_t offset) 
                 }
                 fut_printf("[PREADV] preadv(fd=%d, iov=%p, iovcnt=%d, offset=%ld) -> EFAULT (copy_to_user failed at iovec %d)\n",
                            fd, iov, iovcnt, offset, i);
+                fut_free(kernel_iov);
                 return -EFAULT;
             }
         }

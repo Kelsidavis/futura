@@ -368,8 +368,10 @@ void fut_irq_dispatch(fut_interrupt_frame_t *frame) {
         irq_handlers[irq](irq, frame);
     }
 
-    /* Send EOI to acknowledge interrupt */
-    fut_irq_send_eoi(irq);
+    /* Send EOI to acknowledge interrupt.
+     * GIC interrupt IDs are 10-bit (0-1019). Write full ID to EOIR register
+     * via MMIO directly to avoid truncation through the uint8_t API. */
+    gic_write(GIC_CPU_BASE, GIC_CPU_EOI, (uint32_t)irq & 0x3FF);
 }
 
 void fut_exception_dispatch(fut_interrupt_frame_t *frame, uint64_t esr) {

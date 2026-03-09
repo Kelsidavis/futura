@@ -132,7 +132,10 @@ bool acpi_init(void) {
             return false;
         }
 
-        uint32_t num_entries = (xsdt->header.length - sizeof(acpi_sdt_header_t)) / 8;
+        uint32_t num_entries = 0;
+        if (xsdt->header.length > sizeof(acpi_sdt_header_t)) {
+            num_entries = (xsdt->header.length - sizeof(acpi_sdt_header_t)) / 8;
+        }
         fut_printf("[ACPI] XSDT at 0x%llx, %u tables\n", rsdp->xsdt_address, num_entries);
 
     } else {
@@ -143,7 +146,10 @@ bool acpi_init(void) {
             return false;
         }
 
-        uint32_t num_entries = (rsdt->header.length - sizeof(acpi_sdt_header_t)) / 4;
+        uint32_t num_entries = 0;
+        if (rsdt->header.length > sizeof(acpi_sdt_header_t)) {
+            num_entries = (rsdt->header.length - sizeof(acpi_sdt_header_t)) / 4;
+        }
         fut_printf("[ACPI] RSDT at 0x%x, %u tables\n", rsdp->v1.rsdt_address, num_entries);
     }
 
@@ -161,7 +167,10 @@ acpi_sdt_header_t *acpi_find_table(const char *signature) {
 
     if (xsdt) {
         /* Search XSDT (64-bit pointers) */
-        uint32_t num_entries = (xsdt->header.length - sizeof(acpi_sdt_header_t)) / 8;
+        uint32_t num_entries = 0;
+        if (xsdt->header.length > sizeof(acpi_sdt_header_t)) {
+            num_entries = (xsdt->header.length - sizeof(acpi_sdt_header_t)) / 8;
+        }
 
         for (uint32_t i = 0; i < num_entries; i++) {
             acpi_sdt_header_t *header = (acpi_sdt_header_t *)acpi_map_table(xsdt->entries[i]);
@@ -174,7 +183,10 @@ acpi_sdt_header_t *acpi_find_table(const char *signature) {
         }
     } else if (rsdt) {
         /* Search RSDT (32-bit pointers) */
-        uint32_t num_entries = (rsdt->header.length - sizeof(acpi_sdt_header_t)) / 4;
+        uint32_t num_entries = 0;
+        if (rsdt->header.length > sizeof(acpi_sdt_header_t)) {
+            num_entries = (rsdt->header.length - sizeof(acpi_sdt_header_t)) / 4;
+        }
 
         for (uint32_t i = 0; i < num_entries; i++) {
             acpi_sdt_header_t *header = (acpi_sdt_header_t *)acpi_map_table(rsdt->entries[i]);
@@ -242,11 +254,16 @@ void acpi_parse_madt(void) {
     uint8_t *entry_ptr = (uint8_t *)(madt + 1);  /* Start after header */
     uint8_t *end = (uint8_t *)madt + madt->header.length;
 
-    while (entry_ptr < end) {
+    while (entry_ptr + sizeof(acpi_madt_entry_header_t) <= end) {
         acpi_madt_entry_header_t *header = (acpi_madt_entry_header_t *)entry_ptr;
 
-        if (header->length == 0) {
-            fut_printf("[ACPI] Invalid MADT entry with length 0\n");
+        if (header->length < sizeof(acpi_madt_entry_header_t)) {
+            fut_printf("[ACPI] Invalid MADT entry with length %u\n", header->length);
+            break;
+        }
+
+        if (entry_ptr + header->length > end) {
+            fut_printf("[ACPI] MADT entry extends past table end\n");
             break;
         }
 

@@ -50,7 +50,8 @@ static dns_state_t g_dns = {0};
  * DNS Domain Name Encoding (RFC 1035 Section 4.1.4)
  * Converts "google.com" to "\x06google\x03com\x00"
  */
-static size_t dns_encode_domain(const char *domain, uint8_t *buffer) {
+static size_t dns_encode_domain(const char *domain, uint8_t *buffer,
+                                size_t buffer_len) {
     size_t pos = 0;
     size_t label_start = 0;
     size_t domain_len = dns_strlen(domain);
@@ -65,6 +66,11 @@ static size_t dns_encode_domain(const char *domain, uint8_t *buffer) {
                 return 0;  /* Label too long */
             }
 
+            /* Bounds check: need 1 byte for length + label_len bytes */
+            if (pos + 1 + label_len >= buffer_len) {
+                return 0;  /* Would overflow buffer */
+            }
+
             buffer[pos++] = (uint8_t)label_len;
             dns_memcpy(&buffer[pos], &domain[label_start], label_len);
             pos += label_len;
@@ -72,6 +78,9 @@ static size_t dns_encode_domain(const char *domain, uint8_t *buffer) {
         }
     }
 
+    if (pos >= buffer_len) {
+        return 0;  /* No room for null terminator */
+    }
     buffer[pos++] = 0;  /* Null terminator */
     return pos;
 }
@@ -82,11 +91,16 @@ static size_t dns_encode_domain(const char *domain, uint8_t *buffer) {
  */
 static size_t dns_decode_domain(const uint8_t *packet, size_t packet_len,
                                 size_t offset, char *domain, size_t domain_max) {
+    if (domain_max == 0) {
+        return 0;  /* No space for output */
+    }
+
     size_t pos = offset;
     size_t domain_pos = 0;
     size_t jumps = 0;
     size_t ret_offset = 0;
     bool jumped = false;
+    bool found_end = false;
 
     while (pos < packet_len && jumps < 20) {  /* Prevent infinite loops */
         uint8_t len = packet[pos];
@@ -96,6 +110,7 @@ static size_t dns_decode_domain(const uint8_t *packet, size_t packet_len,
             if (!jumped) {
                 ret_offset = pos + 1;
             }
+            found_end = true;
             break;
         }
 
@@ -106,6 +121,9 @@ static size_t dns_decode_domain(const uint8_t *packet, size_t packet_len,
             }
 
             uint16_t pointer = ((len & 0x3F) << 8) | packet[pos + 1];
+            if (pointer >= packet_len) {
+                return 0;  /* Pointer beyond packet */
+            }
             if (!jumped) {
                 ret_offset = pos + 2;
                 jumped = true;
@@ -125,16 +143,26 @@ static size_t dns_decode_domain(const uint8_t *packet, size_t packet_len,
             return 0;  /* Label extends past packet */
         }
 
-        if (domain_pos > 0 && domain_pos < domain_max) {
+        if (domain_pos > 0 && domain_pos < domain_max - 1) {
             domain[domain_pos++] = '.';
         }
 
-        for (size_t i = 0; i < len && domain_pos < domain_max - 1; i++) {
-            domain[domain_pos++] = packet[pos++];
+        /* Copy label bytes to output, advance pos by full label length
+         * even if output buffer is full (to keep parsing correct) */
+        for (size_t i = 0; i < len; i++) {
+            if (domain_pos < domain_max - 1) {
+                domain[domain_pos++] = packet[pos];
+            }
+            pos++;
         }
     }
 
     domain[domain_pos] = '\0';
+
+    if (!found_end) {
+        return 0;  /* Malformed: never found null terminator */
+    }
+
     return jumped ? ret_offset : pos;
 }
 
@@ -159,7 +187,8 @@ static size_t dns_build_query(const char *domain, uint8_t *buffer, size_t buffer
     header->arcount = 0;
 
     /* Encode domain name */
-    size_t name_len = dns_encode_domain(domain, buffer + sizeof(dns_header_t));
+    size_t name_len = dns_encode_domain(domain, buffer + sizeof(dns_header_t),
+                                        buffer_len - sizeof(dns_header_t));
     if (name_len == 0) {
         return 0;
     }
@@ -266,7 +295,7 @@ void dns_cache_add(const char *domain, uint32_t ip, uint32_t ttl) {
     }
 
     uint64_t now = fut_get_ticks();
-    uint64_t expires = now + (ttl * 100);  /* Convert seconds to ticks (100Hz) */
+    uint64_t expires = now + ((uint64_t)ttl * 100);  /* Convert seconds to ticks (100Hz) */
 
     /* Find an empty slot or the oldest entry */
     int slot = -1;

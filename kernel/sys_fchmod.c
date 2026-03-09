@@ -65,28 +65,32 @@
  * Phase 4 (Completed): Performance optimization (batched permission updates)
  */
 long sys_fchmod(int fd, uint32_t mode) {
+    /* ARM64 FIX: Copy parameters to local variables */
+    int local_fd = fd;
+    uint32_t local_mode = mode;
+
     /* Phase 2: Validate FD number */
-    if (fd < 0) {
+    if (local_fd < 0) {
         fut_printf("[FCHMOD] fchmod(fd=%d [invalid], mode=0%o) -> EBADF (negative FD)\n",
-                   fd, mode);
+                   local_fd, local_mode);
         return -EBADF;
     }
 
     /* Phase 2: Validate mode parameter has only valid permission bits */
-    if (mode & ~07777) {
+    if (local_mode & ~07777) {
         fut_printf("[FCHMOD] fchmod(fd=%d, mode=0%o) -> EINVAL (invalid mode bits 0x%x)\n",
-                   fd, mode, mode & ~07777);
+                   local_fd, local_mode, local_mode & ~07777);
         return -EINVAL;
     }
 
     /* Phase 2: Categorize FD type - use shared helper */
-    const char *fd_category = fut_fd_category(fd);
+    const char *fd_category = fut_fd_category(local_fd);
 
     /* Get the file structure from the file descriptor */
-    struct fut_file *file = fut_vfs_get_file(fd);
+    struct fut_file *file = fut_vfs_get_file(local_fd);
     if (!file) {
         fut_printf("[FCHMOD] fchmod(fd=%d [%s], mode=0%o) -> EBADF (file not found)\n",
-                   fd, fd_category, mode);
+                   local_fd, fd_category, local_mode);
         return -EBADF;
     }
 
@@ -94,13 +98,13 @@ long sys_fchmod(int fd, uint32_t mode) {
     struct fut_vnode *vnode = file->vnode;
     if (!vnode) {
         fut_printf("[FCHMOD] fchmod(fd=%d [%s], mode=0%o) -> EBADF (no vnode)\n",
-                   fd, fd_category, mode);
+                   local_fd, fd_category, local_mode);
         return -EBADF;
     }
 
     /* Phase 2: Categorize permission mode */
     const char *mode_desc;
-    uint32_t perm_bits = mode & 0777;
+    uint32_t perm_bits = local_mode & 0777;
 
     if (perm_bits == 0644) {
         mode_desc = "0644 (rw-r--r--, typical file)";
@@ -127,21 +131,21 @@ long sys_fchmod(int fd, uint32_t mode) {
     char *p = special_bits_buf;
     int special_count = 0;
 
-    if (mode & 04000) {
+    if (local_mode & 04000) {
         if (special_count++ > 0) {
             *p++ = '|';
         }
         const char *s = "setuid";
         while (*s) *p++ = *s++;
     }
-    if (mode & 02000) {
+    if (local_mode & 02000) {
         if (special_count++ > 0) {
             *p++ = '|';
         }
         const char *s = "setgid";
         while (*s) *p++ = *s++;
     }
-    if (mode & 01000) {
+    if (local_mode & 01000) {
         if (special_count++ > 0) {
             *p++ = '|';
         }
@@ -157,19 +161,19 @@ long sys_fchmod(int fd, uint32_t mode) {
     if (!task) {
         fut_printf("[FCHMOD] fchmod(fd=%d [%s], vnode_ino=%lu, mode=%s, special=%s) "
                    "-> ESRCH (no current task for capability check)\n",
-                   fd, fd_category, vnode->ino, mode_desc, special_bits_desc);
+                   local_fd, fd_category, vnode->ino, mode_desc, special_bits_desc);
         return -ESRCH;
     }
 
     /* Phase 3: Capability check for special bits (CAP_SETFCAP equivalent) */
     const char *capability_status = "none required";
-    if (mode & (04000 | 02000 | 01000)) {
+    if (local_mode & (04000 | 02000 | 01000)) {
         /* Setting special bits requires elevated privileges */
         if (task->uid != 0) {
             /* Phase 3: Regular user cannot set setuid/setgid/sticky bits */
             fut_printf("[FCHMOD] fchmod(fd=%d [%s], vnode_ino=%lu, mode=%s, special=%s) "
                        "-> EPERM (user %u cannot set special bits without capability)\n",
-                       fd, fd_category, vnode->ino, mode_desc, special_bits_desc,
+                       local_fd, fd_category, vnode->ino, mode_desc, special_bits_desc,
                        task->uid);
             return -EPERM;
         }
@@ -180,7 +184,7 @@ long sys_fchmod(int fd, uint32_t mode) {
     if (!vnode->ops || !vnode->ops->setattr) {
         fut_printf("[FCHMOD] fchmod(fd=%d [%s], vnode_ino=%lu, mode=%s, special=%s) "
                    "-> ENOSYS (filesystem doesn't support setattr)\n",
-                   fd, fd_category, vnode->ino, mode_desc, special_bits_desc);
+                   local_fd, fd_category, vnode->ino, mode_desc, special_bits_desc);
         return -ENOSYS;
     }
 
@@ -190,7 +194,7 @@ long sys_fchmod(int fd, uint32_t mode) {
 
     /* Create a stat structure with the new mode */
     struct fut_stat stat = {0};
-    stat.st_mode = mode;
+    stat.st_mode = local_mode;
 
     /* Call the filesystem's setattr operation */
     int ret = vnode->ops->setattr(vnode, &stat);
@@ -215,7 +219,7 @@ long sys_fchmod(int fd, uint32_t mode) {
 
         fut_printf("[FCHMOD] fchmod(fd=%d [%s], vnode_ino=%lu, mode=%s, special=%s) "
                    "-> %d (%s)\n",
-                   fd, fd_category, vnode->ino, mode_desc, special_bits_desc,
+                   local_fd, fd_category, vnode->ino, mode_desc, special_bits_desc,
                    ret, error_desc);
         return ret;
     }
@@ -244,7 +248,7 @@ long sys_fchmod(int fd, uint32_t mode) {
     /* Phase 3: Detailed success logging with capability status */
     fut_printf("[FCHMOD] fchmod(fd=%d [%s], vnode_ino=%lu, perms=%s, mode=%s, "
                "special=%s, cap=%s, uid=%u) -> 0 (permissions changed, Phase 4: Batched permission updates)\n",
-               fd, fd_category, vnode->ino, perms_change_buf, mode_desc,
+               local_fd, fd_category, vnode->ino, perms_change_buf, mode_desc,
                special_bits_desc, capability_status, task->uid);
 
     return 0;

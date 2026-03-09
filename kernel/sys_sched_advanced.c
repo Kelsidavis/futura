@@ -16,6 +16,7 @@
 #include <string.h>
 
 #include <kernel/kprintf.h>
+#include <kernel/uaccess.h>
 
 /* SCHED_* constants and struct sched_param provided by sched.h */
 
@@ -50,27 +51,33 @@ long sys_sched_setparam(int pid, const struct sched_param *param) {
         return -EINVAL;
     }
 
-    /* Phase 1: Only support pid=0 (self) for now */
+    /* Copy sched_param from userspace before accessing fields */
+    struct sched_param kparam;
+    if (fut_copy_from_user(&kparam, param, sizeof(kparam)) != 0) {
+        fut_printf("[SCHED] sched_setparam(pid=%d) -> EFAULT (copy_from_user failed)\n", pid);
+        return -EFAULT;
+    }
+
+    /* Only support pid=0 (self) for now */
     if (pid != 0) {
         fut_printf("[SCHED] sched_setparam(pid=%d, priority=%d) -> ESRCH "
                    "(setting other processes not yet supported)\n",
-                   pid, param->sched_priority);
+                   pid, kparam.sched_priority);
         return -ESRCH;
     }
 
     /* Validate priority range (1-99 for RT, 0 for SCHED_OTHER) */
-    if (param->sched_priority < 0 || param->sched_priority > 99) {
+    if (kparam.sched_priority < 0 || kparam.sched_priority > 99) {
         fut_printf("[SCHED] sched_setparam(pid=%d, priority=%d) -> EINVAL "
                    "(priority out of range 0-99)\n",
-                   pid, param->sched_priority);
+                   pid, kparam.sched_priority);
         return -EINVAL;
     }
 
-    /* Phase 1: Accept parameters but don't store */
-    /* Phase 2: Store task->sched_priority, validate against task->sched_policy */
+    /* Accept parameters but don't store yet */
     fut_printf("[SCHED] sched_setparam(pid=%d, priority=%d) -> 0 "
-               "(accepted, Phase 1 stub)\n",
-               pid, param->sched_priority);
+               "(accepted, stub)\n",
+               pid, kparam.sched_priority);
 
     return 0;
 }
@@ -110,12 +117,18 @@ long sys_sched_getparam(int pid, struct sched_param *param) {
         return -ESRCH;
     }
 
-    /* Phase 1: Return default priority (0 for SCHED_OTHER) */
-    /* Phase 2: Return task->sched_priority */
-    param->sched_priority = 0;
+    /* Return default priority (0 for SCHED_OTHER) */
+    struct sched_param kparam;
+    kparam.sched_priority = 0;
 
-    fut_printf("[SCHED] sched_getparam(pid=%d) -> priority=%d (Phase 1 stub)\n",
-               pid, param->sched_priority);
+    /* Copy result to userspace */
+    if (fut_copy_to_user(param, &kparam, sizeof(kparam)) != 0) {
+        fut_printf("[SCHED] sched_getparam(pid=%d) -> EFAULT (copy_to_user failed)\n", pid);
+        return -EFAULT;
+    }
+
+    fut_printf("[SCHED] sched_getparam(pid=%d) -> priority=%d (stub)\n",
+               pid, kparam.sched_priority);
 
     return 0;
 }
@@ -153,6 +166,14 @@ long sys_sched_setscheduler(int pid, int policy, const struct sched_param *param
         return -EINVAL;
     }
 
+    /* Copy sched_param from userspace before accessing fields */
+    struct sched_param kparam;
+    if (fut_copy_from_user(&kparam, param, sizeof(kparam)) != 0) {
+        fut_printf("[SCHED] sched_setscheduler(pid=%d, policy=%d) -> EFAULT (copy_from_user failed)\n",
+                   pid, policy);
+        return -EFAULT;
+    }
+
     /* Validate policy */
     const char *policy_name;
     switch (policy) {
@@ -168,37 +189,36 @@ long sys_sched_setscheduler(int pid, int policy, const struct sched_param *param
             return -EINVAL;
     }
 
-    /* Phase 1: Only support pid=0 (self) for now */
+    /* Only support pid=0 (self) for now */
     if (pid != 0) {
         fut_printf("[SCHED] sched_setscheduler(pid=%d, policy=%s, priority=%d) -> ESRCH "
                    "(setting other processes not yet supported)\n",
-                   pid, policy_name, param->sched_priority);
+                   pid, policy_name, kparam.sched_priority);
         return -ESRCH;
     }
 
     /* Validate priority for policy */
     if ((policy == SCHED_FIFO || policy == SCHED_RR) &&
-        (param->sched_priority < 1 || param->sched_priority > 99)) {
+        (kparam.sched_priority < 1 || kparam.sched_priority > 99)) {
         fut_printf("[SCHED] sched_setscheduler(pid=%d, policy=%s, priority=%d) -> EINVAL "
                    "(RT priority must be 1-99)\n",
-                   pid, policy_name, param->sched_priority);
+                   pid, policy_name, kparam.sched_priority);
         return -EINVAL;
     }
 
-    if (policy == SCHED_OTHER && param->sched_priority != 0) {
+    if (policy == SCHED_OTHER && kparam.sched_priority != 0) {
         fut_printf("[SCHED] sched_setscheduler(pid=%d, policy=%s, priority=%d) -> EINVAL "
                    "(SCHED_OTHER priority must be 0)\n",
-                   pid, policy_name, param->sched_priority);
+                   pid, policy_name, kparam.sched_priority);
         return -EINVAL;
     }
 
-    /* Phase 1: Accept parameters, return previous policy (SCHED_OTHER) */
-    /* Phase 2: Store task->sched_policy and task->sched_priority */
+    /* Accept parameters, return previous policy (SCHED_OTHER) */
     int old_policy = SCHED_OTHER;
 
     fut_printf("[SCHED] sched_setscheduler(pid=%d, policy=%s, priority=%d) -> %d "
-               "(accepted, Phase 1 stub)\n",
-               pid, policy_name, param->sched_priority, old_policy);
+               "(accepted, stub)\n",
+               pid, policy_name, kparam.sched_priority, old_policy);
 
     return old_policy;
 }

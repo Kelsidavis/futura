@@ -14,6 +14,7 @@
 #include <string.h>
 
 #include <kernel/kprintf.h>
+#include <kernel/uaccess.h>
 
 /* Filesystem type constants */
 #define FUT_TMPFS_MAGIC   0x01021994
@@ -115,8 +116,12 @@ long sys_statfs(const char *path, struct fut_linux_statfs *buf) {
         .f_flags = 0,                    /* No special flags */
     };
 
-    /* Copy to userspace buffer (Phase 1: direct copy, Phase 2: copy_to_user) */
-    memcpy(buf, &stub_stats, sizeof(struct fut_linux_statfs));
+    /* Copy to userspace buffer */
+    if (fut_copy_to_user(buf, &stub_stats, sizeof(struct fut_linux_statfs)) != 0) {
+        fut_printf("[STATFS] statfs(path='%s%s', pid=%d) -> EFAULT (copy_to_user failed)\n",
+                   path_preview, (path_len > 64) ? "..." : "", task->pid);
+        return -EFAULT;
+    }
 
     fut_printf("[STATFS] statfs(path='%s%s', len=%zu, pid=%d) -> 0 "
                "(type=tmpfs, blocks=262144, free=131072, Phase 1 stub)\n",
@@ -198,7 +203,11 @@ long sys_fstatfs(int fd, struct fut_linux_statfs *buf) {
     };
 
     /* Copy to userspace buffer */
-    memcpy(buf, &stub_stats, sizeof(struct fut_linux_statfs));
+    if (fut_copy_to_user(buf, &stub_stats, sizeof(struct fut_linux_statfs)) != 0) {
+        fut_printf("[FSTATFS] fstatfs(fd=%d, pid=%d) -> EFAULT (copy_to_user failed)\n",
+                   fd, task->pid);
+        return -EFAULT;
+    }
 
     fut_printf("[FSTATFS] fstatfs(fd=%d, pid=%d) -> 0 "
                "(type=tmpfs, blocks=262144, free=131072, Phase 1 stub)\n",
@@ -397,7 +406,10 @@ long sys_sysinfo(struct fut_linux_sysinfo *info) {
     };
 
     /* Copy to userspace buffer */
-    memcpy(info, &stub_info, sizeof(struct fut_linux_sysinfo));
+    if (fut_copy_to_user(info, &stub_info, sizeof(struct fut_linux_sysinfo)) != 0) {
+        fut_printf("[SYSINFO] sysinfo(pid=%d) -> EFAULT (copy_to_user failed)\n", task->pid);
+        return -EFAULT;
+    }
 
     fut_printf("[SYSINFO] sysinfo(pid=%d) -> 0 "
                "(uptime=3600s, totalram=1GB, freeram=512MB, procs=5, Phase 1 stub)\n",

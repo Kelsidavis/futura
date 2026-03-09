@@ -75,124 +75,101 @@
  */
 long sys_splice(int fd_in, int64_t *off_in, int fd_out, int64_t *off_out,
                 size_t len, unsigned int flags) {
+    /* ARM64 FIX: Copy register-passed parameters to local stack variables so they
+     * survive across potentially blocking calls (fut_copy_from_user/fut_copy_to_user
+     * may context-switch on ARM64, corrupting register values on resumption). */
+    int local_fd_in = fd_in;
+    int64_t *local_off_in = off_in;
+    int local_fd_out = fd_out;
+    int64_t *local_off_out = off_out;
+    size_t local_len = len;
+    unsigned int local_flags = flags;
+
     fut_task_t *task = fut_task_current();
     if (!task) {
         fut_printf("[SPLICE] splice(fd_in=%d, off_in=%p, fd_out=%d, off_out=%p, len=%zu, flags=0x%x) "
-                   "-> ESRCH (no current task)\n", fd_in, off_in, fd_out, off_out, len, flags);
+                   "-> ESRCH (no current task)\n", local_fd_in, local_off_in, local_fd_out, local_off_out, local_len, local_flags);
         return -ESRCH;
     }
 
     /* Validate fds */
-    if (fd_in < 0 || fd_out < 0) {
+    if (local_fd_in < 0 || local_fd_out < 0) {
         fut_printf("[SPLICE] splice(fd_in=%d, fd_out=%d, len=%zu, flags=0x%x, pid=%d) "
-                   "-> EBADF (invalid fd)\n", fd_in, fd_out, len, flags, task->pid);
+                   "-> EBADF (invalid fd)\n", local_fd_in, local_fd_out, local_len, local_flags, task->pid);
         return -EBADF;
     }
 
     /* Validate flags */
     const unsigned int VALID_FLAGS = SPLICE_F_MOVE | SPLICE_F_NONBLOCK | SPLICE_F_MORE | SPLICE_F_GIFT;
-    if (flags & ~VALID_FLAGS) {
+    if (local_flags & ~VALID_FLAGS) {
         fut_printf("[SPLICE] splice(fd_in=%d, fd_out=%d, len=%zu, flags=0x%x [invalid], pid=%d) "
-                   "-> EINVAL\n", fd_in, fd_out, len, flags, task->pid);
+                   "-> EINVAL\n", local_fd_in, local_fd_out, local_len, local_flags, task->pid);
         return -EINVAL;
     }
 
-    /* Validate offset pointers are readable/writable if non-NULL
-     * VULNERABILITY: TOCTOU Race in Read-Write Validation
-     *
-     * ATTACK SCENARIO:
-     * Attacker passes off_in pointer to read-only memory, then remaps it
-     * 1. Attacker maps page at address 0x1000 as read-only (.rodata section)
-     * 2. Calls splice(fd, 0x1000, pipe, NULL, len, 0)
-     * 3. Line 105: Kernel reads offset successfully (page is readable)
-     * 4. **TOCTOU WINDOW**: Attacker remaps 0x1000 to writable in another thread
-     * 5. Line 112: Kernel writes offset successfully (page now writable)
-     * 6. Validation passes, but memory protection changed during syscall
-     *
-     * IMPACT:
-     * - Bypass of write permission checks
-     * - Race condition allows mixed permissions during single syscall
-     * - Cannot atomically check both read AND write permissions
-     *
-     * DEFENSE:
-     * Best-effort validation with documented TOCTOU limitation
-     * - Separate read and write probes catch most invalid pointers
-     * - TOCTOU window is narrow (microseconds between checks)
-     * - Proper fix requires atomic read-write probe (not available in current API)
-     *
-     * LIMITATION:
-     * Inherent TOCTOU race - userspace can remap page between checks
-     * Future improvement: Use single atomic read-modify-write probe */
-    if (off_in != NULL) {
+    /* Validate offset pointers are readable/writable if non-NULL.
+     * Inherent TOCTOU limitation: userspace can remap pages between the read
+     * and write probes. Best-effort validation catches most invalid pointers. */
+    if (local_off_in != NULL) {
         int64_t test_offset;
         /* Test readability - kernel needs to read current offset */
-        if (fut_copy_from_user(&test_offset, off_in, sizeof(int64_t)) != 0) {
+        if (fut_copy_from_user(&test_offset, local_off_in, sizeof(int64_t)) != 0) {
             fut_printf("[SPLICE] splice(fd_in=%d, off_in=%p) -> EFAULT "
                        "(off_in not readable)\n",
-                       fd_in, off_in);
+                       local_fd_in, local_off_in);
             return -EFAULT;
         }
-        /* Test writability - kernel needs to write updated offset
-         * TOCTOU RISK: Page could be remapped between line 105 and here
-         * Narrow window but not atomic - documented limitation */
-        if (fut_copy_to_user(off_in, &test_offset, sizeof(int64_t)) != 0) {
+        /* Test writability - kernel needs to write updated offset */
+        if (fut_copy_to_user(local_off_in, &test_offset, sizeof(int64_t)) != 0) {
             fut_printf("[SPLICE] splice(fd_in=%d, off_in=%p) -> EFAULT "
                        "(off_in not writable)\n",
-                       fd_in, off_in);
+                       local_fd_in, local_off_in);
             return -EFAULT;
         }
         /* Validate offset value is non-negative */
         if (test_offset < 0) {
             fut_printf("[SPLICE] splice(fd_in=%d, off_in=%p, offset=%ld) -> EINVAL "
                        "(negative offset)\n",
-                       fd_in, off_in, test_offset);
+                       local_fd_in, local_off_in, test_offset);
             return -EINVAL;
         }
-        /* Validate offset+len doesn't overflow
-         * Without this check, attacker can cause integer overflow:
-         *   - splice(fd, &offset, pipe, NULL, len, 0)
-         *   - offset=LLONG_MAX, len=SIZE_MAX
-         *   - offset + len wraps around to negative value
-         *   - Could bypass file size checks and corrupt kernel memory
-         * Defense: Detect overflow before arithmetic */
-        if ((uint64_t)test_offset > (uint64_t)(INT64_MAX - len)) {
+        /* Validate offset+len doesn't overflow */
+        if ((uint64_t)test_offset > (uint64_t)(INT64_MAX - local_len)) {
             fut_printf("[SPLICE] splice(fd_in=%d, off_in=%ld, len=%zu) -> EOVERFLOW "
                        "(offset+len would overflow, max_valid_offset=%ld)\n",
-                       fd_in, test_offset, len, (int64_t)(INT64_MAX - len));
+                       local_fd_in, test_offset, local_len, (int64_t)(INT64_MAX - local_len));
             return -EOVERFLOW;
         }
     }
 
-    if (off_out != NULL) {
+    if (local_off_out != NULL) {
         int64_t test_offset;
         /* Test readability - kernel needs to read current offset */
-        if (fut_copy_from_user(&test_offset, off_out, sizeof(int64_t)) != 0) {
+        if (fut_copy_from_user(&test_offset, local_off_out, sizeof(int64_t)) != 0) {
             fut_printf("[SPLICE] splice(fd_out=%d, off_out=%p) -> EFAULT "
                        "(off_out not readable)\n",
-                       fd_out, off_out);
+                       local_fd_out, local_off_out);
             return -EFAULT;
         }
-        /* Test writability - kernel needs to write updated offset
-         * TOCTOU RISK: Same race as off_in (see line 136 documentation)
-         * Narrow window but not atomic - documented limitation */
-        if (fut_copy_to_user(off_out, &test_offset, sizeof(int64_t)) != 0) {
+        /* Test writability - kernel needs to write updated offset */
+        if (fut_copy_to_user(local_off_out, &test_offset, sizeof(int64_t)) != 0) {
             fut_printf("[SPLICE] splice(fd_out=%d, off_out=%p) -> EFAULT "
                        "(off_out not writable)\n",
-                       fd_out, off_out);
+                       local_fd_out, local_off_out);
             return -EFAULT;
         }
         /* Validate offset value is non-negative */
         if (test_offset < 0) {
             fut_printf("[SPLICE] splice(fd_out=%d, off_out=%p, offset=%ld) -> EINVAL "
                        "(negative offset)\n",
-                       fd_out, off_out, test_offset);
+                       local_fd_out, local_off_out, test_offset);
             return -EINVAL;
         }
         /* Validate offset+len doesn't overflow */
-        if ((uint64_t)test_offset > (uint64_t)(INT64_MAX - len)) {
+        if ((uint64_t)test_offset > (uint64_t)(INT64_MAX - local_len)) {
             fut_printf("[SPLICE] splice(fd_out=%d, off_out=%ld, len=%zu) -> EOVERFLOW "
                        "(offset+len would overflow, max_valid_offset=%ld)\n",
-                       fd_out, test_offset, len, (int64_t)(INT64_MAX - len));
+                       local_fd_out, test_offset, local_len, (int64_t)(INT64_MAX - local_len));
             return -EOVERFLOW;
         }
     }
@@ -201,7 +178,7 @@ long sys_splice(int fd_in, int64_t *off_in, int fd_out, int64_t *off_out,
      * Returning a fake byte count is dangerous: callers believe data was
      * transferred when nothing happened, causing silent data loss. */
     fut_printf("[SPLICE] splice(fd_in=%d, fd_out=%d, len=%zu, pid=%d) -> ENOSYS (not implemented)\n",
-               fd_in, fd_out, len, task->pid);
+               local_fd_in, local_fd_out, local_len, task->pid);
 
     return -ENOSYS;
 }
@@ -236,40 +213,58 @@ long sys_splice(int fd_in, int64_t *off_in, int fd_out, int64_t *off_out,
  * Phase 3 (Completed): Map user pages and add to pipe buffer
  */
 long sys_vmsplice(int fd, const void *iov, size_t nr_segs, unsigned int flags) {
+    /* ARM64 FIX: Copy register-passed parameters to local stack variables so they
+     * survive across potentially blocking calls. */
+    int local_fd = fd;
+    const void *local_iov = iov;
+    size_t local_nr_segs = nr_segs;
+    unsigned int local_flags = flags;
+
     fut_task_t *task = fut_task_current();
     if (!task) {
         return -ESRCH;
     }
 
-    /* Suppress unused warning for Phase 1 */
-    (void)iov;
-
     /* Validate fd */
-    if (fd < 0) {
+    if (local_fd < 0) {
         fut_printf("[VMSPLICE] vmsplice(fd=%d [invalid], nr_segs=%zu, flags=0x%x, pid=%d) "
-                   "-> EBADF\n", fd, nr_segs, flags, task->pid);
+                   "-> EBADF\n", local_fd, local_nr_segs, local_flags, task->pid);
         return -EBADF;
     }
 
+    /* Validate iov pointer */
+    if (!local_iov) {
+        fut_printf("[VMSPLICE] vmsplice(fd=%d, iov=NULL, nr_segs=%zu, pid=%d) "
+                   "-> EFAULT\n", local_fd, local_nr_segs, task->pid);
+        return -EFAULT;
+    }
+
     /* Validate nr_segs */
-    if (nr_segs == 0) {
+    if (local_nr_segs == 0) {
         fut_printf("[VMSPLICE] vmsplice(fd=%d, nr_segs=0 [invalid], flags=0x%x, pid=%d) "
-                   "-> EINVAL\n", fd, flags, task->pid);
+                   "-> EINVAL\n", local_fd, local_flags, task->pid);
+        return -EINVAL;
+    }
+
+    /* Cap nr_segs to prevent excessive iteration (matches Linux UIO_MAXIOV) */
+    if (local_nr_segs > 1024) {
+        fut_printf("[VMSPLICE] vmsplice(fd=%d, nr_segs=%zu [exceeds 1024], pid=%d) "
+                   "-> EINVAL\n", local_fd, local_nr_segs, task->pid);
         return -EINVAL;
     }
 
     /* Validate flags */
     const unsigned int VALID_FLAGS = SPLICE_F_MOVE | SPLICE_F_NONBLOCK | SPLICE_F_MORE | SPLICE_F_GIFT;
-    if (flags & ~VALID_FLAGS) {
+    if (local_flags & ~VALID_FLAGS) {
         fut_printf("[VMSPLICE] vmsplice(fd=%d, nr_segs=%zu, flags=0x%x [invalid], pid=%d) "
-                   "-> EINVAL\n", fd, nr_segs, flags, task->pid);
+                   "-> EINVAL\n", local_fd, local_nr_segs, local_flags, task->pid);
         return -EINVAL;
     }
 
     /* Return -ENOSYS until properly implemented.
      * Returning a fake byte count causes silent data loss. */
     fut_printf("[VMSPLICE] vmsplice(fd=%d, nr_segs=%zu, pid=%d) -> ENOSYS (not implemented)\n",
-               fd, nr_segs, task->pid);
+               local_fd, local_nr_segs, task->pid);
 
     return -ENOSYS;
 }
@@ -302,37 +297,44 @@ long sys_vmsplice(int fd, const void *iov, size_t nr_segs, unsigned int flags) {
  * Phase 3 (Completed): Duplicate pipe buffer pages
  */
 long sys_tee(int fd_in, int fd_out, size_t len, unsigned int flags) {
+    /* ARM64 FIX: Copy register-passed parameters to local stack variables so they
+     * survive across potentially blocking calls. */
+    int local_fd_in = fd_in;
+    int local_fd_out = fd_out;
+    size_t local_len = len;
+    unsigned int local_flags = flags;
+
     fut_task_t *task = fut_task_current();
     if (!task) {
         return -ESRCH;
     }
 
     /* Validate fds */
-    if (fd_in < 0 || fd_out < 0) {
+    if (local_fd_in < 0 || local_fd_out < 0) {
         fut_printf("[TEE] tee(fd_in=%d, fd_out=%d, len=%zu, flags=0x%x, pid=%d) "
-                   "-> EBADF (invalid fd)\n", fd_in, fd_out, len, flags, task->pid);
+                   "-> EBADF (invalid fd)\n", local_fd_in, local_fd_out, local_len, local_flags, task->pid);
         return -EBADF;
     }
 
     /* Check if same fd */
-    if (fd_in == fd_out) {
+    if (local_fd_in == local_fd_out) {
         fut_printf("[TEE] tee(fd_in=%d, fd_out=%d [same], len=%zu, flags=0x%x, pid=%d) "
-                   "-> EINVAL\n", fd_in, fd_out, len, flags, task->pid);
+                   "-> EINVAL\n", local_fd_in, local_fd_out, local_len, local_flags, task->pid);
         return -EINVAL;
     }
 
     /* Validate flags */
     const unsigned int VALID_FLAGS = SPLICE_F_NONBLOCK | SPLICE_F_MORE;
-    if (flags & ~VALID_FLAGS) {
+    if (local_flags & ~VALID_FLAGS) {
         fut_printf("[TEE] tee(fd_in=%d, fd_out=%d, len=%zu, flags=0x%x [invalid], pid=%d) "
-                   "-> EINVAL\n", fd_in, fd_out, len, flags, task->pid);
+                   "-> EINVAL\n", local_fd_in, local_fd_out, local_len, local_flags, task->pid);
         return -EINVAL;
     }
 
     /* Return -ENOSYS until properly implemented.
      * Returning a fake byte count causes silent data loss. */
     fut_printf("[TEE] tee(fd_in=%d, fd_out=%d, len=%zu, pid=%d) -> ENOSYS (not implemented)\n",
-               fd_in, fd_out, len, task->pid);
+               local_fd_in, local_fd_out, local_len, task->pid);
 
     return -ENOSYS;
 }
@@ -374,64 +376,70 @@ long sys_tee(int fd_in, int fd_out, size_t len, unsigned int flags) {
  * Phase 3 (Completed): Integrate with page cache writeback
  */
 long sys_sync_file_range(int fd, int64_t offset, int64_t nbytes, unsigned int flags) {
+    /* ARM64 FIX: Copy register-passed parameters to local stack variables so they
+     * survive across potentially blocking calls. */
+    int local_fd = fd;
+    int64_t local_offset = offset;
+    int64_t local_nbytes = nbytes;
+    unsigned int local_flags = flags;
+
     fut_task_t *task = fut_task_current();
     if (!task) {
         return -ESRCH;
     }
 
     /* Validate fd */
-    if (fd < 0) {
+    if (local_fd < 0) {
         fut_printf("[SYNC_FILE_RANGE] sync_file_range(fd=%d [invalid], offset=%ld, nbytes=%ld, flags=0x%x, pid=%d) "
-                   "-> EBADF\n", fd, offset, nbytes, flags, task->pid);
+                   "-> EBADF\n", local_fd, local_offset, local_nbytes, local_flags, task->pid);
         return -EBADF;
     }
 
     /* Validate offset */
-    if (offset < 0) {
+    if (local_offset < 0) {
         fut_printf("[SYNC_FILE_RANGE] sync_file_range(fd=%d, offset=%ld [negative], nbytes=%ld, flags=0x%x, pid=%d) "
-                   "-> EINVAL\n", fd, offset, nbytes, flags, task->pid);
+                   "-> EINVAL\n", local_fd, local_offset, local_nbytes, local_flags, task->pid);
         return -EINVAL;
     }
 
     /* Validate nbytes */
-    if (nbytes < 0) {
+    if (local_nbytes < 0) {
         fut_printf("[SYNC_FILE_RANGE] sync_file_range(fd=%d, offset=%ld, nbytes=%ld [negative], flags=0x%x, pid=%d) "
-                   "-> EINVAL\n", fd, offset, nbytes, flags, task->pid);
+                   "-> EINVAL\n", local_fd, local_offset, local_nbytes, local_flags, task->pid);
         return -EINVAL;
     }
 
     /* Validate flags */
     const unsigned int VALID_FLAGS = SYNC_FILE_RANGE_WAIT_BEFORE | SYNC_FILE_RANGE_WRITE | SYNC_FILE_RANGE_WAIT_AFTER;
-    if (flags & ~VALID_FLAGS) {
+    if (local_flags & ~VALID_FLAGS) {
         fut_printf("[SYNC_FILE_RANGE] sync_file_range(fd=%d, offset=%ld, nbytes=%ld, flags=0x%x [invalid], pid=%d) "
-                   "-> EINVAL\n", fd, offset, nbytes, flags, task->pid);
+                   "-> EINVAL\n", local_fd, local_offset, local_nbytes, local_flags, task->pid);
         return -EINVAL;
     }
 
     /* Categorize sync type */
     const char *sync_desc;
-    if (flags == (SYNC_FILE_RANGE_WAIT_BEFORE | SYNC_FILE_RANGE_WRITE | SYNC_FILE_RANGE_WAIT_AFTER)) {
+    if (local_flags == (SYNC_FILE_RANGE_WAIT_BEFORE | SYNC_FILE_RANGE_WRITE | SYNC_FILE_RANGE_WAIT_AFTER)) {
         sync_desc = "full sync (WAIT_BEFORE|WRITE|WAIT_AFTER)";
-    } else if (flags == SYNC_FILE_RANGE_WRITE) {
+    } else if (local_flags == SYNC_FILE_RANGE_WRITE) {
         sync_desc = "async writeback (WRITE only)";
-    } else if (flags == (SYNC_FILE_RANGE_WAIT_BEFORE | SYNC_FILE_RANGE_WRITE)) {
+    } else if (local_flags == (SYNC_FILE_RANGE_WAIT_BEFORE | SYNC_FILE_RANGE_WRITE)) {
         sync_desc = "sync prev + start new (WAIT_BEFORE|WRITE)";
-    } else if (flags == 0) {
+    } else if (local_flags == 0) {
         sync_desc = "no-op (no flags)";
     } else {
         sync_desc = "custom combination";
     }
 
     /* Categorize range size */
-    const char *size_desc = (nbytes == 0) ? "to EOF" :
-                           (nbytes < 4096) ? "small (<4KB)" :
-                           (nbytes < 1048576) ? "medium (<1MB)" :
-                           (nbytes < 1073741824) ? "large (<1GB)" : "very large (≥1GB)";
+    const char *size_desc = (local_nbytes == 0) ? "to EOF" :
+                           (local_nbytes < 4096) ? "small (<4KB)" :
+                           (local_nbytes < 1048576) ? "medium (<1MB)" :
+                           (local_nbytes < 1073741824) ? "large (<1GB)" : "very large (>=1GB)";
 
-    /* Phase 3: Accept sync request */
-    fut_printf("[SYNC_FILE_RANGE] sync_file_range(fd=%d, offset=%ld, nbytes=%ld [%s], sync=%s, pid=%d) -> 0 "
-               "(Phase 3: File range synchronization with page cache)\n",
-               fd, offset, nbytes, size_desc, sync_desc, task->pid);
+    /* Sync request accepted */
+    fut_printf("[SYNC_FILE_RANGE] sync_file_range(fd=%d, offset=%ld, nbytes=%ld [%s], sync=%s, pid=%d) -> 0\n",
+               local_fd, local_offset, local_nbytes, size_desc, sync_desc, task->pid);
 
     return 0;
 }

@@ -518,12 +518,12 @@ ssize_t sys_pwritev(int fd, const struct iovec *iov, int iovcnt, int64_t offset)
         /* Allocate kernel buffer for this iovec */
         void *kbuf = fut_malloc(kernel_iov[i].iov_len);
         if (!kbuf) {
-            fut_free(kernel_iov);
             if (total_written > 0) {
                 break;  /* Return bytes written so far */
             }
             fut_printf("[PWRITEV] pwritev(fd=%d, iov=%p, iovcnt=%d, offset=%ld) -> ENOMEM (malloc failed at iovec %d)\n",
                        fd, iov, iovcnt, offset, i);
+            fut_free(kernel_iov);
             return -ENOMEM;
         }
 
@@ -535,6 +535,7 @@ ssize_t sys_pwritev(int fd, const struct iovec *iov, int iovcnt, int64_t offset)
             }
             fut_printf("[PWRITEV] pwritev(fd=%d, iov=%p, iovcnt=%d, offset=%ld) -> EFAULT (copy_from_user data failed at iovec %d)\n",
                        fd, iov, iovcnt, offset, i);
+            fut_free(kernel_iov);
             return -EFAULT;
         }
 
@@ -552,6 +553,7 @@ ssize_t sys_pwritev(int fd, const struct iovec *iov, int iovcnt, int64_t offset)
                 /* No bytes written yet, return error */
                 fut_printf("[PWRITEV] pwritev(fd=%d, iov=%p, iovcnt=%d, offset=%ld) -> %ld (write error on iovec %d)\n",
                            fd, iov, iovcnt, offset, n, i);
+                fut_free(kernel_iov);
                 return n;
             }
         }
@@ -562,7 +564,6 @@ ssize_t sys_pwritev(int fd, const struct iovec *iov, int iovcnt, int64_t offset)
          * If current_offset + n would overflow INT64_MAX, stop writing to prevent
          * wraparound to negative values which could cause data corruption */
         if (n > 0 && current_offset > INT64_MAX - n) {
-            fut_free(kernel_iov);
             if (total_written > 0) {
                 /* Return bytes successfully written before overflow would occur */
                 break;
@@ -570,6 +571,7 @@ ssize_t sys_pwritev(int fd, const struct iovec *iov, int iovcnt, int64_t offset)
             fut_printf("[PWRITEV] pwritev(fd=%d, iov=%p, iovcnt=%d, offset=%ld) -> EOVERFLOW "
                        "(offset would overflow INT64_MAX after writing %zd bytes)\n",
                        fd, iov, iovcnt, offset, n);
+            fut_free(kernel_iov);
             return -EOVERFLOW;
         }
         current_offset += n;

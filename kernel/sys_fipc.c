@@ -109,9 +109,12 @@ long sys_fipc_send(uint64_t channel_id, uint32_t type, const void *u_data, size_
         return -ESRCH;
     }
 
-    /* Validate size */
+    /* Validate size and data pointer */
     if (size > 65536) {  /* 64KB max message size */
         return -EINVAL;
+    }
+    if (size > 0 && !u_data) {
+        return -EFAULT;
     }
 
     /* Look up the channel */
@@ -164,8 +167,8 @@ long sys_fipc_recv(uint64_t channel_id, void *u_buf, size_t buf_size)
         return -ESRCH;
     }
 
-    /* Validate buffer */
-    if (!u_buf || buf_size < sizeof(struct fut_fipc_msg)) {
+    /* Validate buffer size bounds */
+    if (!u_buf || buf_size < sizeof(struct fut_fipc_msg) || buf_size > 65536) {
         return -EINVAL;
     }
 

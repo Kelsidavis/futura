@@ -123,18 +123,22 @@
  * Phase 4: Performance optimization
  */
 long sys_futimens(int fd, const fut_timespec_t *times) {
+    /* ARM64 FIX: Copy parameters to local variables */
+    int local_fd = fd;
+    const fut_timespec_t *local_times = times;
+
     /* Phase 2: Validate fd */
-    if (fd < 0) {
+    if (local_fd < 0) {
         fut_printf("[FUTIMENS] futimens(fd=%d, times=%p) -> EBADF (fd < 0)\n",
-                   fd, times);
+                   local_fd, local_times);
         return -EBADF;
     }
 
     /* Categorize fd type */
     const char *fd_desc;
-    if (fd < 3) {
+    if (local_fd < 3) {
         fd_desc = "std stream (0-2)";
-    } else if (fd < 256) {
+    } else if (local_fd < 256) {
         fd_desc = "normal fd";
     } else {
         fd_desc = "fd >= 256";
@@ -142,18 +146,18 @@ long sys_futimens(int fd, const fut_timespec_t *times) {
 
     /* Phase 2: Validate times parameter if provided */
     fut_timespec_t time_buf[2] = {0};
-    if (times) {
-        if (fut_copy_from_user(time_buf, times, sizeof(time_buf)) != 0) {
+    if (local_times) {
+        if (fut_copy_from_user(time_buf, local_times, sizeof(time_buf)) != 0) {
             fut_printf("[FUTIMENS] futimens(fd=%d [%s], times=%p) -> EFAULT "
                        "(times copy_from_user failed)\n",
-                       fd, fd_desc, times);
+                       local_fd, fd_desc, local_times);
             return -EFAULT;
         }
     }
 
     /* Phase 2: Categorize operation type */
     const char *operation_type;
-    if (!times) {
+    if (!local_times) {
         operation_type = "set both times to now (NULL)";
     } else if (time_buf[0].tv_nsec == UTIME_NOW && time_buf[1].tv_nsec == UTIME_NOW) {
         operation_type = "set both times to now (explicit UTIME_NOW)";
@@ -165,6 +169,20 @@ long sys_futimens(int fd, const fut_timespec_t *times) {
         operation_type = "no change (both UTIME_OMIT)";
     } else {
         operation_type = "set specific times";
+    }
+
+    /* Validate nanosecond fields when specific times are provided */
+    if (local_times) {
+        for (int i = 0; i < 2; i++) {
+            if (time_buf[i].tv_nsec != UTIME_NOW &&
+                time_buf[i].tv_nsec != UTIME_OMIT &&
+                time_buf[i].tv_nsec >= 1000000000L) {
+                fut_printf("[FUTIMENS] futimens(fd=%d [%s], times=%p) -> EINVAL "
+                           "(times[%d].tv_nsec=%ld out of range [0, 999999999])\n",
+                           local_fd, fd_desc, local_times, i, time_buf[i].tv_nsec);
+                return -EINVAL;
+            }
+        }
     }
 
     /*
@@ -180,27 +198,20 @@ long sys_futimens(int fd, const fut_timespec_t *times) {
         return -ESRCH;
     }
 
-    /* Validate fd bounds before accessing FD table */
-    if (fd < 0) {
-        fut_printf("[FUTIMENS] futimens(fd=%d [%s], times=%p, op=%s) -> EBADF "
-                   "(invalid negative fd)\n",
-                   fd, fd_desc, times, operation_type);
-        return -EBADF;
-    }
-
-    if (fd >= task->max_fds) {
+    /* Validate fd upper bound to prevent OOB array access */
+    if (local_fd >= task->max_fds) {
         fut_printf("[FUTIMENS] futimens(fd=%d, max_fds=%d, times=%p, op=%s) -> EBADF "
                    "(fd exceeds max_fds, FD bounds validation)\n",
-                   fd, task->max_fds, times, operation_type);
+                   local_fd, task->max_fds, local_times, operation_type);
         return -EBADF;
     }
 
     /* Look up file object from fd table */
-    struct fut_file *file = vfs_get_file_from_task(task, fd);
+    struct fut_file *file = vfs_get_file_from_task(task, local_fd);
     if (!file) {
         fut_printf("[FUTIMENS] futimens(fd=%d [%s], times=%p, op=%s) -> EBADF "
                    "(fd not open)\n",
-                   fd, fd_desc, times, operation_type);
+                   local_fd, fd_desc, local_times, operation_type);
         return -EBADF;
     }
 
@@ -208,7 +219,7 @@ long sys_futimens(int fd, const fut_timespec_t *times) {
     if (!file->vnode) {
         fut_printf("[FUTIMENS] futimens(fd=%d [%s], times=%p, op=%s) -> EINVAL "
                    "(file vnode is NULL)\n",
-                   fd, fd_desc, times, operation_type);
+                   local_fd, fd_desc, local_times, operation_type);
         return -EINVAL;
     }
 

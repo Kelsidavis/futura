@@ -100,42 +100,45 @@
  * Phase 4 (Completed): Per-filesystem sync strategies, writeback cache flushing
  */
 long sys_fsync(int fd) {
+    /* ARM64 FIX: Copy parameter to local variable */
+    int local_fd = fd;
+
     /* Get current task for FD table access */
     fut_task_t *task = fut_task_current();
     if (!task) {
-        fut_printf("[FSYNC] fsync(fd=%d) -> ESRCH (no current task)\n", fd);
+        fut_printf("[FSYNC] fsync(fd=%d) -> ESRCH (no current task)\n", local_fd);
         return -ESRCH;
     }
 
     /* Phase 2: Validate fd early */
-    if (fd < 0) {
-        fut_printf("[FSYNC] fsync(fd=%d) -> EBADF (negative fd)\n", fd);
+    if (local_fd < 0) {
+        fut_printf("[FSYNC] fsync(fd=%d) -> EBADF (negative fd)\n", local_fd);
         return -EBADF;
     }
 
     /* Validate FD upper bound to prevent OOB array access */
-    if (fd >= task->max_fds) {
+    if (local_fd >= task->max_fds) {
         fut_printf("[FSYNC] fsync(fd=%d, max_fds=%d) -> EBADF "
                    "(fd exceeds max_fds, FD bounds validation)\n",
-                   fd, task->max_fds);
+                   local_fd, task->max_fds);
         return -EBADF;
     }
 
     /* Phase 2: Categorize FD range */
-    const char *fd_category = fut_fd_category(fd);
+    const char *fd_category = fut_fd_category(local_fd);
 
     /* Validate FD table exists */
     if (!task->fd_table) {
         fut_printf("[FSYNC] fsync(fd=%d [%s]) -> EBADF (no FD table, pid=%d)\n",
-                   fd, fd_category, task->pid);
+                   local_fd, fd_category, task->pid);
         return -EBADF;
     }
 
     /* Get file structure from FD */
-    struct fut_file *file = vfs_get_file_from_task(task, fd);
+    struct fut_file *file = vfs_get_file_from_task(task, local_fd);
     if (!file) {
         fut_printf("[FSYNC] fsync(fd=%d [%s]) -> EBADF (fd not open, pid=%d)\n",
-                   fd, fd_category, task->pid);
+                   local_fd, fd_category, task->pid);
         return -EBADF;
     }
 
@@ -148,7 +151,7 @@ long sys_fsync(int fd) {
         sync_scope = "not syncable";
 
         fut_printf("[FSYNC] fsync(fd=%d [%s], type=%s) -> EINVAL (%s, pid=%d)\n",
-                   fd, fd_category, file_type, sync_scope, task->pid);
+                   local_fd, fd_category, file_type, sync_scope, task->pid);
         return -EINVAL;
     }
 
@@ -176,7 +179,7 @@ long sys_fsync(int fd) {
 
                 fut_printf("[FSYNC] fsync(fd=%d [%s], type=%s) -> EINVAL "
                            "(%s, pid=%d)\n",
-                           fd, fd_category, file_type, sync_scope, task->pid);
+                           local_fd, fd_category, file_type, sync_scope, task->pid);
                 return -EINVAL;
             case VN_FIFO:
                 file_type = "FIFO/pipe";
@@ -184,7 +187,7 @@ long sys_fsync(int fd) {
 
                 fut_printf("[FSYNC] fsync(fd=%d [%s], type=%s) -> EINVAL "
                            "(%s, pid=%d)\n",
-                           fd, fd_category, file_type, sync_scope, task->pid);
+                           local_fd, fd_category, file_type, sync_scope, task->pid);
                 return -EINVAL;
             case VN_SOCK:
                 file_type = "socket";
@@ -192,7 +195,7 @@ long sys_fsync(int fd) {
 
                 fut_printf("[FSYNC] fsync(fd=%d [%s], type=%s) -> EINVAL "
                            "(%s, pid=%d)\n",
-                           fd, fd_category, file_type, sync_scope, task->pid);
+                           local_fd, fd_category, file_type, sync_scope, task->pid);
                 return -EINVAL;
             default:
                 file_type = "unknown";
@@ -200,7 +203,7 @@ long sys_fsync(int fd) {
 
                 fut_printf("[FSYNC] fsync(fd=%d [%s], type=%s) -> EINVAL "
                            "(%s, pid=%d)\n",
-                           fd, fd_category, file_type, sync_scope, task->pid);
+                           local_fd, fd_category, file_type, sync_scope, task->pid);
                 return -EINVAL;
         }
     } else {
@@ -233,14 +236,14 @@ long sys_fsync(int fd) {
             }
             fut_printf("[FSYNC] fsync(fd=%d [%s], type=%s, scope=%s, pid=%d) -> %d "
                        "(%s, Phase 3)\n",
-                       fd, fd_category, file_type, sync_scope, task->pid, ret, error_desc);
+                       local_fd, fd_category, file_type, sync_scope, task->pid, ret, error_desc);
             return ret;
         }
 
         /* Phase 3: Success - sync completed */
         fut_printf("[FSYNC] fsync(fd=%d [%s], type=%s, scope=%s, pid=%d) -> 0 "
                    "(sync completed, Phase 4: Writeback cache flushing, ino=%lu)\n",
-                   fd, fd_category, file_type, sync_scope, task->pid,
+                   local_fd, fd_category, file_type, sync_scope, task->pid,
                    file->vnode ? file->vnode->ino : 0);
         return 0;
     }
@@ -270,7 +273,7 @@ long sys_fsync(int fd) {
 
     fut_printf("[FSYNC] fsync(fd=%d [%s], type=%s, scope=%s, pid=%d) -> 0 "
                "(no sync operation - %s, Phase 4: Per-filesystem strategies)\n",
-               fd, fd_category, file_type, sync_scope, task->pid, fallback_reason);
+               local_fd, fd_category, file_type, sync_scope, task->pid, fallback_reason);
 
     return 0;
 }

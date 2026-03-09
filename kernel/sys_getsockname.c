@@ -266,70 +266,76 @@
  *   }
  */
 long sys_getsockname(int sockfd, void *addr, socklen_t *addrlen) {
+    /* ARM64 FIX: Copy register-passed parameters to local stack variables so they
+     * survive across potentially blocking calls (fut_copy_from_user/fut_copy_to_user
+     * may context-switch on ARM64, corrupting register values on resumption). */
+    int local_sockfd = sockfd;
+    void *local_addr = addr;
+    socklen_t *local_addrlen = addrlen;
+
     fut_task_t *task = fut_task_current();
     if (!task) {
         return -ESRCH;
     }
 
     /* Validate sockfd */
-    if (sockfd < 0) {
-        fut_printf("[GETSOCKNAME] getsockname(sockfd=%d) -> EBADF\n", sockfd);
+    if (local_sockfd < 0) {
+        fut_printf("[GETSOCKNAME] getsockname(sockfd=%d) -> EBADF\n", local_sockfd);
+        return -EBADF;
+    }
+
+    /* Validate fd upper bounds to prevent out-of-bounds access */
+    if (local_sockfd >= task->max_fds) {
+        fut_printf("[GETSOCKNAME] getsockname(sockfd=%d) -> EBADF (fd exceeds max_fds %d)\n",
+                   local_sockfd, task->max_fds);
         return -EBADF;
     }
 
     /* Validate addr pointer */
-    if (!addr) {
-        fut_printf("[GETSOCKNAME] getsockname(sockfd=%d) -> EFAULT (addr is NULL)\n", sockfd);
+    if (!local_addr) {
+        fut_printf("[GETSOCKNAME] getsockname(sockfd=%d) -> EFAULT (addr is NULL)\n", local_sockfd);
         return -EFAULT;
     }
 
     /* Validate addrlen pointer */
-    if (!addrlen) {
-        fut_printf("[GETSOCKNAME] getsockname(sockfd=%d) -> EFAULT (addrlen is NULL)\n", sockfd);
+    if (!local_addrlen) {
+        fut_printf("[GETSOCKNAME] getsockname(sockfd=%d) -> EFAULT (addrlen is NULL)\n", local_sockfd);
         return -EFAULT;
     }
 
-    /* Validate addrlen write permission early (kernel writes back actual size)
-     * VULNERABILITY: Invalid Output Pointer
-     * ATTACK: Attacker provides read-only or unmapped addrlen pointer
-     * IMPACT: Kernel page fault when writing actual address length
-     * DEFENSE: Check write permission before socket operations */
-    if (fut_access_ok(addrlen, sizeof(socklen_t), 1) != 0) {
+    /* Validate addrlen write permission early (kernel writes back actual size) */
+    if (fut_access_ok(local_addrlen, sizeof(socklen_t), 1) != 0) {
         fut_printf("[GETSOCKNAME] getsockname(sockfd=%d) -> EFAULT (addrlen not writable)\n",
-                   sockfd);
+                   local_sockfd);
         return -EFAULT;
     }
 
     /* Read addrlen from userspace */
     socklen_t len;
-    if (fut_copy_from_user(&len, addrlen, sizeof(socklen_t)) != 0) {
+    if (fut_copy_from_user(&len, local_addrlen, sizeof(socklen_t)) != 0) {
         fut_printf("[GETSOCKNAME] getsockname(sockfd=%d) -> EFAULT (copy_from_user addrlen failed)\n",
-                   sockfd);
+                   local_sockfd);
         return -EFAULT;
     }
 
-    /* Validate addr write permission early (kernel writes socket address)
-     * VULNERABILITY: Invalid Output Buffer
-     * ATTACK: Attacker provides read-only or unmapped addr buffer
-     * IMPACT: Kernel page fault when writing socket address
-     * DEFENSE: Check write permission for addr buffer size */
-    if (len > 0 && fut_access_ok(addr, len, 1) != 0) {
+    /* Validate addr write permission early (kernel writes socket address) */
+    if (len > 0 && fut_access_ok(local_addr, len, 1) != 0) {
         fut_printf("[GETSOCKNAME] getsockname(sockfd=%d, addrlen=%u) -> EFAULT (addr not writable for %u bytes)\n",
-                   sockfd, len, len);
+                   local_sockfd, len, len);
         return -EFAULT;
     }
 
     /* Validate addrlen value */
     if (len == 0) {
         fut_printf("[GETSOCKNAME] getsockname(sockfd=%d, addrlen=%u) -> EINVAL\n",
-                   sockfd, len);
+                   local_sockfd, len);
         return -EINVAL;
     }
 
     /* Get socket from FD */
-    fut_socket_t *socket = get_socket_from_fd(sockfd);
+    fut_socket_t *socket = get_socket_from_fd(local_sockfd);
     if (!socket) {
-        fut_printf("[GETSOCKNAME] getsockname(sockfd=%d) -> EBADF (not a socket)\n", sockfd);
+        fut_printf("[GETSOCKNAME] getsockname(sockfd=%d) -> EBADF (not a socket)\n", local_sockfd);
         return -EBADF;
     }
 
@@ -351,12 +357,12 @@ long sys_getsockname(int sockfd, void *addr, socklen_t *addrlen) {
         sock_addr.sun_path[path_len] = '\0';
 
         fut_printf("[GETSOCKNAME] getsockname(sockfd=%d) -> path='%s'\n",
-                   sockfd, socket->bound_path);
+                   local_sockfd, socket->bound_path);
     } else {
         /* Unbound socket - return empty path */
         sock_addr.sun_path[0] = '\0';
         fut_printf("[GETSOCKNAME] getsockname(sockfd=%d) -> unbound (empty path)\n",
-                   sockfd);
+                   local_sockfd);
     }
 
     /* Calculate actual address size */
@@ -364,22 +370,22 @@ long sys_getsockname(int sockfd, void *addr, socklen_t *addrlen) {
 
     /* Copy as much as fits in user buffer */
     socklen_t copy_len = (len < actual_len) ? len : actual_len;
-    if (fut_copy_to_user(addr, &sock_addr, copy_len) != 0) {
+    if (fut_copy_to_user(local_addr, &sock_addr, copy_len) != 0) {
         fut_printf("[GETSOCKNAME] getsockname(sockfd=%d) -> EFAULT (copy_to_user failed)\n",
-                   sockfd);
+                   local_sockfd);
         return -EFAULT;
     }
 
     /* Update addrlen with actual size (may be larger than buffer) */
-    if (fut_copy_to_user(addrlen, &actual_len, sizeof(socklen_t)) != 0) {
+    if (fut_copy_to_user(local_addrlen, &actual_len, sizeof(socklen_t)) != 0) {
         fut_printf("[GETSOCKNAME] getsockname(sockfd=%d) -> EFAULT (copy addrlen failed)\n",
-                   sockfd);
+                   local_sockfd);
         return -EFAULT;
     }
 
     if (len < actual_len) {
         fut_printf("[GETSOCKNAME] getsockname(sockfd=%d) -> 0 (truncated: %u < %u)\n",
-                   sockfd, len, actual_len);
+                   local_sockfd, len, actual_len);
     }
 
     return 0;

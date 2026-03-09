@@ -116,6 +116,10 @@
  * Phase 4: Deadlock detection, lock performance optimization
  */
 long sys_flock(int fd, int operation) {
+    /* ARM64 FIX: Copy parameters to local variables */
+    int local_fd = fd;
+    int local_operation = operation;
+
     /* Get current task */
     fut_task_t *task = fut_task_current();
     if (!task) {
@@ -124,7 +128,7 @@ long sys_flock(int fd, int operation) {
         const char *text = "[FLOCK] flock(fd=";
         while (*text) { msg[pos++] = *text++; }
 
-        char num[16]; int num_pos = 0; int val = fd;
+        char num[16]; int num_pos = 0; int val = local_fd;
         if (val == 0) { num[num_pos++] = '0'; }
         else { char temp[16]; int temp_pos = 0;
             int is_neg = 0;
@@ -144,31 +148,31 @@ long sys_flock(int fd, int operation) {
     }
 
     /* Validate FD upper bound to prevent OOB array access */
-    if (fd < 0) {
+    if (local_fd < 0) {
         fut_printf("[FLOCK] flock(fd=%d, operation=0x%x) -> EBADF (negative fd)\n",
-                   fd, operation);
+                   local_fd, local_operation);
         return -EBADF;
     }
 
-    if (fd >= task->max_fds) {
+    if (local_fd >= task->max_fds) {
         fut_printf("[FLOCK] flock(fd=%d, max_fds=%d, operation=0x%x) -> EBADF "
                    "(fd exceeds max_fds, FD bounds validation)\n",
-                   fd, task->max_fds, operation);
+                   local_fd, task->max_fds, local_operation);
         return -EBADF;
     }
 
     /* Phase 2: Categorize FD range - use shared helper */
-    const char *fd_category = fut_fd_category(fd);
+    const char *fd_category = fut_fd_category(local_fd);
 
     /* Validate file descriptor */
-    struct fut_file *file = vfs_get_file_from_task(task, fd);
+    struct fut_file *file = vfs_get_file_from_task(task, local_fd);
     if (!file) {
         char msg[256];
         int pos = 0;
         const char *text = "[FLOCK] flock(fd=";
         while (*text) { msg[pos++] = *text++; }
 
-        char num[16]; int num_pos = 0; int val = fd;
+        char num[16]; int num_pos = 0; int val = local_fd;
         if (val == 0) { num[num_pos++] = '0'; }
         else { char temp[16]; int temp_pos = 0;
             int is_neg = 0;
@@ -202,8 +206,8 @@ long sys_flock(int fd, int operation) {
     }
 
     /* Phase 2: Categorize operation */
-    int op = operation & ~LOCK_NB;
-    int is_nonblock = (operation & LOCK_NB) != 0;
+    int op = local_operation & ~LOCK_NB;
+    int is_nonblock = (local_operation & LOCK_NB) != 0;
 
     const char *op_name;
 
@@ -224,7 +228,7 @@ long sys_flock(int fd, int operation) {
         const char *text = "[FLOCK] flock(fd=";
         while (*text) { msg[pos++] = *text++; }
 
-        char num[16]; int num_pos = 0; int val = fd;
+        char num[16]; int num_pos = 0; int val = local_fd;
         if (val == 0) { num[num_pos++] = '0'; }
         else { char temp[16]; int temp_pos = 0;
             while (val > 0) { temp[temp_pos++] = '0' + (val % 10); val /= 10; }
@@ -237,7 +241,7 @@ long sys_flock(int fd, int operation) {
 
         /* Convert operation to hex */
         char hex[16]; int hex_pos = 0;
-        unsigned int hex_val = (unsigned int)operation;
+        unsigned int hex_val = (unsigned int)local_operation;
         if (hex_val == 0) { hex[hex_pos++] = '0'; }
         else {
             char temp[16]; int temp_pos = 0;
@@ -263,7 +267,7 @@ long sys_flock(int fd, int operation) {
     struct fut_vnode *vnode = file->vnode;
     if (!vnode) {
         fut_printf("[FLOCK] flock(fd=%d, operation=%s%s) -> EBADF (no vnode)\n",
-                   fd, op_name, is_nonblock ? "|LOCK_NB" : "");
+                   local_fd, op_name, is_nonblock ? "|LOCK_NB" : "");
         return -EBADF;
     }
 
@@ -277,7 +281,7 @@ long sys_flock(int fd, int operation) {
         if (ret < 0) {
             const char *error_desc = (ret == -EAGAIN) ? "would block" : "lock failed";
             fut_printf("[FLOCK] flock(fd=%d [%s], operation=%s%s, pid=%u) -> %d (%s, Phase 3)\n",
-                       fd, fd_category, op_name, is_nonblock ? "|LOCK_NB" : "",
+                       local_fd, fd_category, op_name, is_nonblock ? "|LOCK_NB" : "",
                        pid, ret, error_desc);
             return ret;
         }
@@ -287,7 +291,7 @@ long sys_flock(int fd, int operation) {
         if (ret < 0) {
             const char *error_desc = (ret == -EAGAIN) ? "would block" : "lock failed";
             fut_printf("[FLOCK] flock(fd=%d [%s], operation=%s%s, pid=%u) -> %d (%s, Phase 3)\n",
-                       fd, fd_category, op_name, is_nonblock ? "|LOCK_NB" : "",
+                       local_fd, fd_category, op_name, is_nonblock ? "|LOCK_NB" : "",
                        pid, ret, error_desc);
             return ret;
         }
@@ -296,7 +300,7 @@ long sys_flock(int fd, int operation) {
         ret = fut_vnode_unlock(vnode, pid);
         if (ret < 0) {
             fut_printf("[FLOCK] flock(fd=%d [%s], operation=%s, pid=%u) -> %d (unlock failed, Phase 3)\n",
-                       fd, fd_category, op_name, pid, ret);
+                       local_fd, fd_category, op_name, pid, ret);
             return ret;
         }
     }
@@ -316,7 +320,7 @@ long sys_flock(int fd, int operation) {
 
     fut_printf("[FLOCK] flock(fd=%d [%s], operation=%s%s, pid=%u) -> 0 "
                "(lock_state=%s, count=%u, owner=%u, Phase 3)\n",
-               fd, fd_category, op_name, is_nonblock ? "|LOCK_NB" : "",
+               local_fd, fd_category, op_name, is_nonblock ? "|LOCK_NB" : "",
                pid, lock_state, lock_count, lock_owner);
 
     return 0;

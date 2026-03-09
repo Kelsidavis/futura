@@ -22,19 +22,29 @@ bool fut_dtb_validate(uint64_t dtb_ptr) {
 
     dtb_header_t *header = (dtb_header_t *)dtb_ptr;
 
-    /* Validate magic number (big-endian) */
+    /* Validate magic number (big-endian: 0xd00dfeed in memory) */
     if (header->magic != 0xd00dfeed) {
         return false;
     }
 
+    /* All DTB header fields are big-endian; byte-swap for comparison */
+    uint32_t totalsize = be32_to_cpu(header->totalsize);
+    uint32_t version = be32_to_cpu(header->version);
+    uint32_t off_struct = be32_to_cpu(header->off_dt_struct);
+    uint32_t off_strings = be32_to_cpu(header->off_dt_strings);
+
     /* Validate version is reasonable */
-    if (header->version < 1 || header->version > 17) {
+    if (version < 1 || version > 17) {
+        return false;
+    }
+
+    /* Sanity check: totalsize must be large enough for the header */
+    if (totalsize < sizeof(dtb_header_t)) {
         return false;
     }
 
     /* Validate offsets are within bounds */
-    if (header->off_dt_struct >= header->totalsize ||
-        header->off_dt_strings >= header->totalsize) {
+    if (off_struct >= totalsize || off_strings >= totalsize) {
         return false;
     }
 
@@ -93,19 +103,33 @@ fut_platform_type_t fut_dtb_detect_platform(uint64_t dtb_ptr) {
     if (len == 0) {
         /* Try root node compatible */
         dtb_header_t *header = (dtb_header_t *)dtb_ptr;
-        uint32_t *struct_ptr = (uint32_t *)(dtb_ptr + be32_to_cpu(header->off_dt_struct));
+        uint32_t totalsize = be32_to_cpu(header->totalsize);
+        uint32_t off_struct = be32_to_cpu(header->off_dt_struct);
+        uint32_t off_strings = be32_to_cpu(header->off_dt_strings);
+
+        if (off_struct >= totalsize || off_strings >= totalsize) {
+            return PLATFORM_UNKNOWN;
+        }
+
+        uint32_t *struct_ptr = (uint32_t *)(dtb_ptr + off_struct);
+        uint32_t *struct_end = (uint32_t *)(dtb_ptr + totalsize);
+        char *strings_base = (char *)(dtb_ptr + off_strings);
+        uint32_t strings_size = totalsize - off_strings;
 
         /* Skip to first property of root node */
-        if (be32_to_cpu(struct_ptr[0]) == FDT_BEGIN_NODE) {
+        if (struct_ptr < struct_end && be32_to_cpu(struct_ptr[0]) == FDT_BEGIN_NODE) {
             /* Look for compatible in root */
             uint32_t *prop_ptr = struct_ptr + 2; /* Skip token and node name length */
 
-            while (be32_to_cpu(prop_ptr[0]) == FDT_PROP) {
+            while (prop_ptr < struct_end && be32_to_cpu(prop_ptr[0]) == FDT_PROP) {
                 dtb_prop_t *prop = (dtb_prop_t *)&prop_ptr[1];
                 uint32_t prop_len = be32_to_cpu(prop->len);
                 uint32_t name_off = be32_to_cpu(prop->nameoff);
 
-                char *strings_base = (char *)(dtb_ptr + be32_to_cpu(header->off_dt_strings));
+                /* Validate string offset is within strings block */
+                if (name_off >= strings_size) {
+                    break;
+                }
                 const char *prop_name = strings_base + name_off;
 
                 if (strcmp(prop_name, "compatible") == 0 && prop_len < sizeof(compatible)) {
@@ -165,13 +189,23 @@ size_t fut_dtb_get_property(uint64_t dtb_ptr, const char *node_name __attribute_
 
     /* Simplified implementation: search through all nodes */
     dtb_header_t *header = (dtb_header_t *)dtb_ptr;
-    char *strings_base = (char *)(dtb_ptr + be32_to_cpu(header->off_dt_strings));
-    uint32_t *struct_ptr = (uint32_t *)(dtb_ptr + be32_to_cpu(header->off_dt_struct));
+    uint32_t totalsize = be32_to_cpu(header->totalsize);
+    uint32_t off_struct = be32_to_cpu(header->off_dt_struct);
+    uint32_t off_strings = be32_to_cpu(header->off_dt_strings);
+
+    /* Validate offsets are within the DTB blob */
+    if (off_struct >= totalsize || off_strings >= totalsize) {
+        return 0;
+    }
+
+    char *strings_base = (char *)(dtb_ptr + off_strings);
+    uint32_t *struct_ptr = (uint32_t *)(dtb_ptr + off_struct);
+    uint32_t *struct_end = (uint32_t *)(dtb_ptr + totalsize);
 
     /* Skip to end of root node and look for properties */
     uint32_t *p = struct_ptr;
 
-    while (be32_to_cpu(p[0]) != FDT_END) {
+    while (p < struct_end && be32_to_cpu(p[0]) != FDT_END) {
         uint32_t token = be32_to_cpu(p[0]);
 
         if (token == FDT_PROP) {
@@ -519,8 +553,18 @@ int fut_dtb_find_compatible_nodes(uint64_t dtb_ptr, const char *compatible,
     }
 
     dtb_header_t *header = (dtb_header_t *)dtb_ptr;
-    char *strings_base = (char *)(dtb_ptr + be32_to_cpu(header->off_dt_strings));
-    uint32_t *struct_ptr = (uint32_t *)(dtb_ptr + be32_to_cpu(header->off_dt_struct));
+    uint32_t totalsize = be32_to_cpu(header->totalsize);
+    uint32_t off_struct = be32_to_cpu(header->off_dt_struct);
+    uint32_t off_strings = be32_to_cpu(header->off_dt_strings);
+
+    if (off_struct >= totalsize || off_strings >= totalsize) {
+        return 0;
+    }
+
+    char *strings_base = (char *)(dtb_ptr + off_strings);
+    uint32_t strings_size = totalsize - off_strings;
+    uint32_t *struct_ptr = (uint32_t *)(dtb_ptr + off_struct);
+    uint32_t *struct_end = (uint32_t *)(dtb_ptr + totalsize);
     uint32_t *p = struct_ptr;
 
     int found_count = 0;
@@ -531,13 +575,18 @@ int fut_dtb_find_compatible_nodes(uint64_t dtb_ptr, const char *compatible,
     uint32_t current_irq = 0;
 
     /* Iterate through device tree structure */
-    while (be32_to_cpu(p[0]) != FDT_END) {
+    while (p < struct_end && be32_to_cpu(p[0]) != FDT_END) {
         uint32_t token = be32_to_cpu(p[0]);
 
         if (token == FDT_BEGIN_NODE) {
             /* Extract node name (null-terminated string after token) */
             const char *node_name_ptr = (const char *)&p[1];
-            size_t name_len = strlen(node_name_ptr);
+            /* Bound the strlen to remaining DTB size to avoid reading past end */
+            size_t max_name = (size_t)((char *)struct_end - node_name_ptr);
+            size_t name_len = 0;
+            while (name_len < max_name && node_name_ptr[name_len] != '\0') {
+                name_len++;
+            }
 
             /* Copy node name for tracking */
             if (name_len > 0 && name_len < sizeof(current_node_name)) {
@@ -561,6 +610,11 @@ int fut_dtb_find_compatible_nodes(uint64_t dtb_ptr, const char *compatible,
             dtb_prop_t *prop = (dtb_prop_t *)&p[1];
             uint32_t prop_len = be32_to_cpu(prop->len);
             uint32_t name_off = be32_to_cpu(prop->nameoff);
+
+            /* Validate string offset is within strings block */
+            if (name_off >= strings_size) {
+                break;
+            }
             const char *prop_name = strings_base + name_off;
             void *prop_value = (void *)&prop[1];
 

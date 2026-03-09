@@ -1035,17 +1035,12 @@ static int ramfs_getattr(struct fut_vnode *vnode, struct fut_stat *stat) {
     stat->st_ino = vnode->ino;      /* Inode number */
     stat->st_mode = vnode->mode;    /* File mode and permissions */
     stat->st_nlink = vnode->nlinks; /* Number of hard links */
-    stat->st_uid = 0;               /* User ID (root) */
-    stat->st_gid = 0;               /* Group ID (root) */
+    stat->st_uid = vnode->uid;      /* User ID */
+    stat->st_gid = vnode->gid;      /* Group ID */
 
-    /* Calculate file size based on type */
-    if (vnode->type == VN_REG) {
-        stat->st_size = node->file.capacity;  /* File size */
-    } else if (vnode->type == VN_DIR) {
-        stat->st_size = 0;  /* Directories don't have size */
-    } else {
-        stat->st_size = 0;
-    }
+    /* Use vnode->size which tracks the logical file size
+     * (node->file.capacity is the allocated buffer size, which may be larger) */
+    stat->st_size = vnode->size;
 
     stat->st_blksize = 4096;        /* Filesystem block size */
     stat->st_blocks = (stat->st_size + 511) / 512;  /* Number of 512-byte blocks */

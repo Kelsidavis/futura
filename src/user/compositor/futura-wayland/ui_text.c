@@ -35,11 +35,15 @@ void ui_draw_text(uint32_t *dst,
                   int clip_y,
                   int clip_w,
                   int clip_h) {
-    if (!dst || !text || clip_w <= 0 || clip_h <= 0) {
+    if (!dst || !text || clip_w <= 0 || clip_h <= 0 ||
+        dpitch_bytes <= 0 || clip_x < 0 || clip_y < 0) {
         return;
     }
 
     const size_t max_len = safe_strlen(text, 512);
+    if (clip_x > __INT_MAX__ - clip_w || clip_y > __INT_MAX__ - clip_h) {
+        return;
+    }
     const int clip_x2 = clip_x + clip_w;
     const int clip_y2 = clip_y + clip_h;
 

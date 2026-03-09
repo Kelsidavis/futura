@@ -210,6 +210,13 @@ static void debug_write_int(long num) {
 
     if (num < 0) {
         buf[len++] = '-';
+        /* Avoid undefined behavior for LONG_MIN: -(LONG_MIN) overflows */
+        if (num == (-9223372036854775807L - 1L)) {
+            const char *lmin = "9223372036854775808";
+            debug_write(buf);
+            debug_write(lmin);
+            return;
+        }
         num = -num;
     }
 

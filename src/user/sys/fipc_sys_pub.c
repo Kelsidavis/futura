@@ -56,7 +56,7 @@ bool fipc_sys_publish_metrics(struct netd *nd) {
 
 #define FIPC_SYS_EMIT(tag, value) \
     do { \
-        if (cursor >= end) { \
+        if ((size_t)(end - cursor) < 11) { \
             return false; \
         } \
         *cursor++ = (uint8_t)(tag); \

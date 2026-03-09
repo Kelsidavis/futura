@@ -18,7 +18,14 @@ static const uint8_t *fipc_sys_varint_decode(const uint8_t *cursor,
 
     while (cursor < end) {
         uint8_t byte = *cursor++;
-        value |= (uint64_t)(byte & 0x7Fu) << shift;
+        if (shift >= 63) {
+            if (shift > 63 || (byte & 0x7Eu) != 0) {
+                break;
+            }
+            value |= (uint64_t)(byte & 0x01u) << 63;
+        } else {
+            value |= (uint64_t)(byte & 0x7Fu) << shift;
+        }
         if ((byte & 0x80u) == 0) {
             if (out_value) {
                 *out_value = value;
@@ -26,9 +33,6 @@ static const uint8_t *fipc_sys_varint_decode(const uint8_t *cursor,
             return cursor;
         }
         shift += 7;
-        if (shift >= 64) {
-            break;
-        }
     }
 
     return NULL;

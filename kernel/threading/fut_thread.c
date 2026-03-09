@@ -188,7 +188,7 @@ fut_thread_t *fut_thread_create(
         .alloc_base = raw_thread,     // Save original pointer for proper free
         ._padding = 0,                // Explicit padding for 16-byte alignment
         .context = {0},               // Will be initialized below
-        .irq_frame = NULL,            // No saved interrupt frame initially
+        .irq_frame = NULL,            // Pre-allocated below
         .state = FUT_THREAD_READY,
         .priority = priority,
         .base_priority = priority,
@@ -201,6 +201,18 @@ fut_thread_t *fut_thread_create(
         .prev = NULL,
         .wait_next = NULL
     };
+
+#if defined(__x86_64__)
+    /* Pre-allocate IRQ frame storage so fut_switch_context_irq never calls
+     * fut_malloc from interrupt context. Calling the allocator from an IRQ
+     * while the interrupted thread is mid-allocation corrupts heap metadata. */
+    thread->irq_frame = fut_malloc(sizeof(fut_interrupt_frame_t));
+    if (!thread->irq_frame) {
+        fut_free(stack);
+        fut_free(raw_thread);
+        return NULL;
+    }
+#endif
 
 #if defined(__aarch64__)
     fut_printf("[THREAD-CREATE] tid=%llu priority=%d entry=%p thread=%p\n",

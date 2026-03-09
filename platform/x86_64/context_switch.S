@@ -205,31 +205,16 @@ fut_switch_context_irq:
     movq %rsi, %r13         /* r13 = next */
     movq %rdx, %r14         /* r14 = frame */
 
-    /* Step 1: Save/allocate interrupt frame for prev thread */
+    /* Step 1: Save interrupt frame for prev thread.
+     * irq_frame is pre-allocated in fut_thread_create() — never call
+     * fut_malloc from interrupt context (corrupts heap if interrupted
+     * thread was mid-allocation). */
     testq %r12, %r12
     jz 1f                   /* Skip if prev is NULL */
 
-    /* Check if prev->irq_frame is NULL (needs allocation) */
-    movq 720(%r12), %r15
+    movq 720(%r12), %r15    /* r15 = prev->irq_frame (pre-allocated) */
     testq %r15, %r15
-    jnz .save_frame         /* Already allocated, just save */
-
-    /* Allocate frame storage (208 bytes) - call fut_malloc */
-    /* Save frame pointer first */
-    pushq %r14
-    movq $208, %rdi
-    call fut_malloc
-    popq %r14
-    movq %rax, %r15         /* r15 = allocated frame */
-
-    /* Check allocation success */
-    testq %r15, %r15
-    jz 1f                   /* Skip if allocation failed */
-
-    /* Save pointer */
-    movq %r15, 720(%r12)    /* prev->irq_frame = allocated_frame */
-
-.save_frame:
+    jz 1f                   /* Skip if NULL (should never happen) */
     /* Copy current frame to prev->irq_frame */
     movq %r15, %rdi         /* dest = prev->irq_frame */
     movq %r14, %rsi         /* src = current frame on stack */

@@ -65,44 +65,30 @@ long sys_chroot(const char *path) {
         return -ENAMETOOLONG;
     }
 
-    size_t path_len = 0;
-    while (path_buf[path_len] != '\0') {
-        path_len++;
-    }
-
-    if (path_len == 0) {
-        fut_printf("[CHROOT] chroot(path='') -> ENOENT (empty path, pid=%d)\n", task->pid);
+    if (path_buf[0] == '\0') {
         return -ENOENT;
     }
 
-    /* Categorize path length */
-    const char *path_category;
-    if (path_len <= 16) {
-        path_category = "short";
-    } else if (path_len <= 128) {
-        path_category = "medium";
-    } else if (path_len <= 512) {
-        path_category = "long";
-    } else {
-        path_category = "very long";
+    /* Resolve path to vnode and verify it's a directory */
+    struct fut_vnode *vnode = NULL;
+    int ret = fut_vfs_lookup(path_buf, &vnode);
+    if (ret < 0) {
+        return -ENOENT;
     }
 
-    /* Log first 64 characters of path for debugging */
-    char path_preview[65];
-    size_t preview_len = (path_len < 64) ? path_len : 64;
-    for (size_t i = 0; i < preview_len; i++) {
-        path_preview[i] = path_buf[i];
+    if (vnode->type != VN_DIR) {
+        fut_vnode_unref(vnode);
+        return -ENOTDIR;
     }
-    path_preview[preview_len] = '\0';
 
-    /* Stub: accept but don't change root.
-     * Future: resolve path to vnode, check it's a directory, check CAP_SYS_CHROOT,
-     * store in task->chroot_vnode. */
+    /* TODO: check CAP_SYS_CHROOT capability */
+    /* TODO: store vnode in task->chroot_vnode and integrate with VFS path resolution */
 
-    fut_printf("[CHROOT] chroot(path='%s%s', len=%zu [%s], pid=%d) -> 0 "
-               "(accepted, stub)\n",
-               path_preview, (path_len > 64) ? "..." : "", path_len, path_category, task->pid);
+    fut_vnode_unref(vnode);
 
+    /* Stub: validated path exists and is a directory, but don't actually change root.
+     * Full implementation requires adding chroot_vnode to fut_task_t and updating
+     * VFS path resolution to use it as the root for this task. */
     return 0;
 }
 

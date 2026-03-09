@@ -16,6 +16,7 @@
 #include <kernel/errno.h>
 #include <kernel/fut_vfs.h>
 #include <stdint.h>
+#include <string.h>
 
 #include <kernel/kprintf.h>
 #include <kernel/uaccess.h>
@@ -145,12 +146,16 @@ long sys_mkdir(const char *path, uint32_t mode) {
 
     /* Copy path from userspace to kernel space */
     char path_buf[FUT_VFS_PATH_BUFFER_SIZE];
-    if (fut_copy_from_user(path_buf, local_path, sizeof(path_buf) - 1) != 0) {
+    if (fut_copy_from_user(path_buf, local_path, sizeof(path_buf)) != 0) {
         fut_printf("[MKDIR] mkdir(path=?, mode=%s) -> EFAULT (copy_from_user failed)\n",
                    mode_desc);
         return -EFAULT;
     }
-    path_buf[sizeof(path_buf) - 1] = '\0';
+    if (memchr(path_buf, '\0', sizeof(path_buf)) == NULL) {
+        fut_printf("[MKDIR] mkdir(path_len>255, mode=%s) -> ENAMETOOLONG (path was truncated)\n",
+                   mode_desc);
+        return -ENAMETOOLONG;
+    }
 
     /* Validate path is not empty */
     if (path_buf[0] == '\0') {
@@ -159,17 +164,7 @@ long sys_mkdir(const char *path, uint32_t mode) {
         return -EINVAL;
     }
 
-    /* Phase 3: Validate path length - check if it was truncated */
-    size_t actual_path_len = 0;
-    while (path_buf[actual_path_len] != '\0' && actual_path_len < sizeof(path_buf) - 1) {
-        actual_path_len++;
-    }
-    if (path_buf[actual_path_len] != '\0' || (actual_path_len > 0 && path_buf[actual_path_len - 1] != '\0')) {
-        /* Path was truncated during copy_from_user */
-        fut_printf("[MKDIR] mkdir(path_len>255, mode=%s) -> ENAMETOOLONG (path was truncated)\n",
-                   mode_desc);
-        return -ENAMETOOLONG;
-    }
+    size_t actual_path_len = strlen(path_buf);
 
     /* Phase 3: Normalize path by stripping trailing "/" (if not root) */
     if (actual_path_len > 1 && path_buf[actual_path_len - 1] == '/') {

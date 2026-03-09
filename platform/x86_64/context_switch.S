@@ -382,8 +382,15 @@ fut_switch_context_irq:
 
     pushfq
     popq %rax
-    movq %rax, (48 + 64)(%r12)    /* context.rflags (IF=0 from ISR is correct;
-                                    * ISR IRETQ restores IF=1 from hw frame) */
+    orq $0x200, %rax              /* CRITICAL FIX: Set IF=1 in saved RFLAGS.
+                                    * We're inside an ISR so IF=0 (CPU clears IF on
+                                    * interrupt entry). But the thread was running with
+                                    * IF=1 when it was preempted. If this cooperative
+                                    * context is later used to construct an IRETQ frame
+                                    * (via .no_saved_frame path), IF=0 would cause the
+                                    * thread to resume with interrupts disabled, leading
+                                    * to hangs and deadlocks. */
+    movq %rax, (48 + 64)(%r12)    /* context.rflags (IF=1 for resumed threads) */
 
     movq $0x08, (48 + 72)(%r12)   /* context.cs = kernel CS */
     movq $0x10, (48 + 80)(%r12)   /* context.ss = kernel SS */

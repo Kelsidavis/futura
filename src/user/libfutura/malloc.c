@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: MPL-2.0
-// Simple bump allocator - no free list, no splitting
-// This wastes memory but is simple and correct
+// Free-list allocator with brk-based backing store
+//
+// Freed blocks are returned to a free list for reuse. New allocations
+// check the free list first, falling back to brk expansion. No block
+// splitting or coalescing — keeps the implementation simple.
 
 #include <stddef.h>
 #include <stdint.h>
@@ -22,41 +25,28 @@ static inline void malloc_lock_release(void) {
     __atomic_clear(&malloc_lock, __ATOMIC_RELEASE);
 }
 
-/* Simple header to track allocation size (needed for realloc) */
+/* Block header — sits immediately before the user-visible pointer.
+ * On free, the user area is repurposed as a free_next pointer. */
 typedef struct {
-    size_t size;
+    size_t size;  /* Aligned user-area size (not including header) */
 } alloc_header_t;
 
 #define HEADER_SIZE sizeof(alloc_header_t)
 
+/* Minimum user-area size must fit a pointer (for the free list link) */
+#define MIN_ALLOC_SIZE 16u
+
 static size_t align_size(size_t size) {
-    return (size + 15u) & ~15u;
+    size = (size + 15u) & ~15u;
+    return size < MIN_ALLOC_SIZE ? MIN_ALLOC_SIZE : size;
 }
 
-/* Debug print - only for large allocations to avoid spam */
-static void malloc_debug(const char *msg, size_t val1, size_t val2) {
-    /* Simple syscall-based debug - use write to stderr */
-    char buf[128];
-    int len = 0;
-    const char *p = msg;
-    while (*p && len < 80) buf[len++] = *p++;
-    buf[len++] = ' ';
-    /* Print val1 as hex */
-    buf[len++] = '0'; buf[len++] = 'x';
-    for (int i = 60; i >= 0; i -= 4) {
-        int d = (val1 >> i) & 0xf;
-        if (d || i == 0 || len > 4) buf[len++] = d < 10 ? '0' + d : 'a' + d - 10;
-    }
-    buf[len++] = ' ';
-    /* Print val2 as hex */
-    buf[len++] = '0'; buf[len++] = 'x';
-    for (int i = 60; i >= 0; i -= 4) {
-        int d = (val2 >> i) & 0xf;
-        if (d || i == 0 || len > 4) buf[len++] = d < 10 ? '0' + d : 'a' + d - 10;
-    }
-    buf[len++] = '\n';
-    sys_write(2, buf, len);
-}
+/* Free list — singly-linked list through the user area of freed blocks */
+typedef struct free_node {
+    struct free_node *next;
+} free_node_t;
+
+static free_node_t *free_list = NULL;
 
 void *malloc(size_t size) {
     if (size == 0) {
@@ -66,37 +56,34 @@ void *malloc(size_t size) {
     size_t aligned = align_size(size);
     size_t total = HEADER_SIZE + aligned;
 
-    /* Debug large allocations */
-    if (size > 100000) {
-        malloc_debug("[MALLOC] large alloc size=", size, total);
-    }
-
     malloc_lock_acquire();
 
-    /* Get current break */
+    /* First-fit search of the free list */
+    free_node_t **prev = &free_list;
+    free_node_t *node = free_list;
+    while (node) {
+        alloc_header_t *hdr = (alloc_header_t *)((uint8_t *)node - HEADER_SIZE);
+        if (hdr->size >= aligned) {
+            /* Remove from free list and return this block */
+            *prev = node->next;
+            malloc_lock_release();
+            return (void *)node;
+        }
+        prev = &node->next;
+        node = node->next;
+    }
+
+    /* Nothing suitable on the free list — expand the heap via brk */
     long current = sys_brk_call(NULL);
-    if (current < 0) {
+    if (current < 0 || (uintptr_t)current < 0x10000) {
         malloc_lock_release();
-        if (size > 100000) malloc_debug("[MALLOC] brk(NULL) failed rc=", (size_t)current, 0);
         return NULL;
     }
 
-    /* Sanity check: heap should start well above low memory (> 0x10000) */
-    if ((uintptr_t)current < 0x10000) {
-        malloc_lock_release();
-        malloc_debug("[MALLOC] brk(NULL) returned suspicious low addr=", (size_t)current, 0);
-        return NULL;
-    }
-
-    /* Expand break */
     long requested = current + (long)total;
-    if (size > 100000) {
-        malloc_debug("[MALLOC] current brk=", (size_t)current, (size_t)requested);
-    }
     long rc = sys_brk_call((void *)(uintptr_t)requested);
     if (rc < 0 || rc < requested) {
         malloc_lock_release();
-        if (size > 100000) malloc_debug("[MALLOC] brk expand failed rc=", (size_t)rc, (size_t)requested);
         return NULL;
     }
 
@@ -106,16 +93,27 @@ void *malloc(size_t size) {
     alloc_header_t *header = (alloc_header_t *)(uintptr_t)current;
     header->size = aligned;
 
-    void *result = (void *)((uint8_t *)header + HEADER_SIZE);
-    if (size > 100000) {
-        malloc_debug("[MALLOC] success ptr=", (size_t)result, size);
-    }
-    return result;
+    return (void *)((uint8_t *)header + HEADER_SIZE);
 }
 
 void free(void *ptr) {
-    /* Bump allocator doesn't actually free - memory is leaked */
-    (void)ptr;
+    if (!ptr) {
+        return;
+    }
+
+    /* Sanity: reject obviously-bad pointers */
+    if ((uintptr_t)ptr < 0x10000) {
+        return;
+    }
+
+    malloc_lock_acquire();
+
+    /* Push onto the free list — the user area becomes a free_node_t */
+    free_node_t *node = (free_node_t *)ptr;
+    node->next = free_list;
+    free_list = node;
+
+    malloc_lock_release();
 }
 
 void *calloc(size_t nmemb, size_t size) {
@@ -123,10 +121,10 @@ void *calloc(size_t nmemb, size_t size) {
     if (nmemb != 0 && size > __SIZE_MAX__ / nmemb) {
         return NULL;
     }
-    size_t total = nmemb * size;
-    void *ptr = malloc(total);
+    size_t total_size = nmemb * size;
+    void *ptr = malloc(total_size);
     if (ptr) {
-        memset(ptr, 0, total);
+        memset(ptr, 0, total_size);
     }
     return ptr;
 }
@@ -145,7 +143,7 @@ void *realloc(void *ptr, size_t size) {
     size_t old_size = header->size;
 
     if (old_size >= size) {
-        return ptr;
+        return ptr;  /* Already big enough */
     }
 
     void *new_ptr = malloc(size);

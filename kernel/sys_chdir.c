@@ -204,8 +204,14 @@ long sys_chdir(const char *pathname) {
         return -EFAULT;
     }
 
-    /* Check if path was truncated during copy */
-    if (kpath[sizeof(kpath) - 1] != '\0') {
+    /* Check if path was truncated during copy.
+     * fut_copy_from_user copies raw bytes (not null-terminated), so we must
+     * search for a null terminator anywhere in the buffer, not just at [255]. */
+    bool has_null = false;
+    for (size_t i = 0; i < sizeof(kpath); i++) {
+        if (kpath[i] == '\0') { has_null = true; break; }
+    }
+    if (!has_null) {
         fut_printf("[CHDIR] chdir(pathname=<truncated>) -> ENAMETOOLONG "
                    "(path exceeds %zu bytes, Phase 5: path truncation detection)\n",
                    sizeof(kpath));

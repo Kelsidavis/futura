@@ -16,6 +16,7 @@
 #include <kernel/errno.h>
 #include <kernel/fut_vfs.h>
 #include <stdint.h>
+#include <string.h>
 
 #include <kernel/kprintf.h>
 #include <kernel/uaccess.h>
@@ -236,7 +237,11 @@ long sys_chmod(const char *pathname, uint32_t mode) {
                    "(copy_from_user failed)\n", mode_desc, special_bits_desc);
         return -EFAULT;
     }
-    path_buf[sizeof(path_buf) - 1] = '\0';
+    /* Phase 5: Verify path was not truncated */
+    if (memchr(path_buf, '\0', sizeof(path_buf)) == NULL) {
+        fut_printf("[CHMOD] chmod(path exceeds %zu bytes) -> ENAMETOOLONG\n", sizeof(path_buf) - 1);
+        return -ENAMETOOLONG;
+    }
 
     /* Phase 2: Validate pathname is not empty */
     if (path_buf[0] == '\0') {

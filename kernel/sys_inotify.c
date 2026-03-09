@@ -17,6 +17,7 @@
 #include <kernel/fut_vfs.h>
 #include <kernel/errno.h>
 #include <stdint.h>
+#include <string.h>
 
 #include <kernel/kprintf.h>
 #include <kernel/uaccess.h>
@@ -280,7 +281,7 @@ long sys_inotify_add_watch(int fd, const char *pathname, uint32_t mask) {
      * DEFENSE (Phase 5):
      * Copy full buffer size (256 bytes) and check for truncation
      * - Copy 256 bytes instead of 255
-     * - Check if path_buf[255] != '\0' after copy
+     * - Search for null terminator with memchr in copied buffer
      * - Return -ENAMETOOLONG if truncation detected
      * - Fail explicitly instead of silent truncation
      *
@@ -297,7 +298,7 @@ long sys_inotify_add_watch(int fd, const char *pathname, uint32_t mask) {
     }
 
     /* Phase 5: Verify path was not truncated */
-    if (path_buf[sizeof(path_buf) - 1] != '\0') {
+    if (memchr(path_buf, '\0', sizeof(path_buf)) == NULL) {
         fut_printf("[INOTIFY] inotify_add_watch(fd=%d, pathname=<truncated>, mask=0x%x, pid=%d) "
                    "-> ENAMETOOLONG (path exceeds %zu bytes, truncation detected, Phase 5)\n",
                    fd, mask, task->pid, sizeof(path_buf) - 1);

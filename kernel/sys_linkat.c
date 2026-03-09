@@ -16,6 +16,7 @@
 #include <kernel/fut_vfs.h>
 #include <kernel/syscalls.h>
 #include <stdint.h>
+#include <string.h>
 
 #include <kernel/kprintf.h>
 #include <kernel/uaccess.h>
@@ -138,7 +139,12 @@ long sys_linkat(int olddirfd, const char *oldpath, int newdirfd, const char *new
                    local_olddirfd);
         return -EFAULT;
     }
-    oldpath_buf[sizeof(oldpath_buf) - 1] = '\0';
+    /* Phase 5: Verify oldpath was not truncated */
+    if (memchr(oldpath_buf, '\0', sizeof(oldpath_buf)) == NULL) {
+        fut_printf("[LINKAT] linkat(olddirfd=%d, oldpath exceeds %zu bytes) -> ENAMETOOLONG\n",
+                   local_olddirfd, sizeof(oldpath_buf) - 1);
+        return -ENAMETOOLONG;
+    }
 
     /* Copy newpath from userspace */
     char newpath_buf[256];
@@ -147,7 +153,12 @@ long sys_linkat(int olddirfd, const char *oldpath, int newdirfd, const char *new
                    local_newdirfd);
         return -EFAULT;
     }
-    newpath_buf[sizeof(newpath_buf) - 1] = '\0';
+    /* Phase 5: Verify newpath was not truncated */
+    if (memchr(newpath_buf, '\0', sizeof(newpath_buf)) == NULL) {
+        fut_printf("[LINKAT] linkat(newdirfd=%d, newpath exceeds %zu bytes) -> ENAMETOOLONG\n",
+                   local_newdirfd, sizeof(newpath_buf) - 1);
+        return -ENAMETOOLONG;
+    }
 
     /* Validate oldpath is not empty */
     if (oldpath_buf[0] == '\0') {
@@ -161,28 +172,6 @@ long sys_linkat(int olddirfd, const char *oldpath, int newdirfd, const char *new
         fut_printf("[LINKAT] linkat(newdirfd=%d, newpath=\"\" [empty]) -> EINVAL (empty newpath)\n",
                    local_newdirfd);
         return -EINVAL;
-    }
-
-    /* Check for oldpath truncation */
-    size_t old_trunc_check = 0;
-    while (oldpath_buf[old_trunc_check] != '\0' && old_trunc_check < sizeof(oldpath_buf) - 1) {
-        old_trunc_check++;
-    }
-    if (oldpath_buf[old_trunc_check] != '\0') {
-        fut_printf("[LINKAT] linkat(olddirfd=%d, oldpath_len>255) -> ENAMETOOLONG (oldpath truncated)\n",
-                   local_olddirfd);
-        return -ENAMETOOLONG;
-    }
-
-    /* Check for newpath truncation */
-    size_t new_trunc_check = 0;
-    while (newpath_buf[new_trunc_check] != '\0' && new_trunc_check < sizeof(newpath_buf) - 1) {
-        new_trunc_check++;
-    }
-    if (newpath_buf[new_trunc_check] != '\0') {
-        fut_printf("[LINKAT] linkat(newdirfd=%d, newpath_len>255) -> ENAMETOOLONG (newpath truncated)\n",
-                   local_newdirfd);
-        return -ENAMETOOLONG;
     }
 
     /* Categorize oldpath */

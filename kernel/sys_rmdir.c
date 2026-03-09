@@ -19,6 +19,7 @@
 
 #include <kernel/kprintf.h>
 #include <kernel/uaccess.h>
+#include <string.h>
 
 /**
  * rmdir() - Remove empty directory
@@ -137,7 +138,12 @@ long sys_rmdir(const char *path) {
         fut_printf("[RMDIR] rmdir(path=?) -> EFAULT (copy_from_user failed)\n");
         return -EFAULT;
     }
-    path_buf[sizeof(path_buf) - 1] = '\0';
+    /* Phase 5: Verify path was not truncated */
+    if (memchr(path_buf, '\0', sizeof(path_buf)) == NULL) {
+        fut_printf("[RMDIR] rmdir(path exceeds %zu bytes) -> ENAMETOOLONG\n",
+                   sizeof(path_buf) - 1);
+        return -ENAMETOOLONG;
+    }
 
     /* Phase 2: Validate path is not empty */
     if (path_buf[0] == '\0') {
@@ -175,18 +181,11 @@ long sys_rmdir(const char *path) {
         return -EPERM;
     }
 
-    /* Phase 3: Validate path length - check if it was truncated */
-    size_t truncation_check = 0;
-    while (path_buf[truncation_check] != '\0' && truncation_check < sizeof(path_buf) - 1) {
-        truncation_check++;
-    }
-    if (path_buf[truncation_check] != '\0') {
-        fut_printf("[RMDIR] rmdir(path_len>255) -> ENAMETOOLONG (path was truncated)\n");
-        return -ENAMETOOLONG;
-    }
-
     /* Phase 3: Normalize path by stripping trailing "/" (if not root, if not . or ..) */
-    size_t actual_len = truncation_check;
+    size_t actual_len = 0;
+    while (path_buf[actual_len] != '\0' && actual_len < sizeof(path_buf) - 1) {
+        actual_len++;
+    }
     if (actual_len > 1 && path_buf[actual_len - 1] == '/') {
         /* Don't strip "/" from paths like "/" or "./" */
         if (!(path_buf[0] == '/' && actual_len == 1) &&

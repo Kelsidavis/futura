@@ -16,6 +16,7 @@
 #include <kernel/errno.h>
 #include <stdint.h>
 #include <stddef.h>
+#include <string.h>
 
 #include <kernel/kprintf.h>
 #include <kernel/uaccess.h>
@@ -353,7 +354,7 @@ long sys_quotactl(unsigned int cmd, const char *special, int id, void *addr) {
     }
 
     /* Phase 5: Verify path was not truncated */
-    if (special_buf[sizeof(special_buf) - 1] != '\0') {
+    if (memchr(special_buf, '\0', sizeof(special_buf)) == NULL) {
         fut_printf("[QUOTACTL] quotactl(cmd=0x%x, special=<truncated>, id=%d, addr=%p, pid=%d) "
                    "-> ENAMETOOLONG (path exceeds %zu bytes, truncation detected, Phase 5)\n",
                    cmd, id, addr, task->pid, sizeof(special_buf) - 1);

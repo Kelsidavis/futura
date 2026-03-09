@@ -19,6 +19,7 @@
 
 #include <kernel/kprintf.h>
 #include <kernel/uaccess.h>
+#include <string.h>
 #include <fcntl.h>
 
 /* AT_* constants provided by fcntl.h */
@@ -157,7 +158,12 @@ long sys_fstatat(int dirfd, const char *pathname, void *statbuf, int flags) {
                    local_dirfd);
         return -EFAULT;
     }
-    path_buf[sizeof(path_buf) - 1] = '\0';
+    /* Phase 5: Verify path was not truncated */
+    if (memchr(path_buf, '\0', sizeof(path_buf)) == NULL) {
+        fut_printf("[FSTATAT] fstatat(dirfd=%d, path exceeds %zu bytes) -> ENAMETOOLONG\n",
+                   local_dirfd, sizeof(path_buf) - 1);
+        return -ENAMETOOLONG;
+    }
 
     /* Check for empty pathname with AT_EMPTY_PATH */
     if (path_buf[0] == '\0') {
@@ -237,17 +243,6 @@ long sys_fstatat(int dirfd, const char *pathname, void *statbuf, int flags) {
                        local_dirfd);
             return -EINVAL;
         }
-    }
-
-    /* Check for path truncation */
-    size_t truncation_check = 0;
-    while (path_buf[truncation_check] != '\0' && truncation_check < sizeof(path_buf) - 1) {
-        truncation_check++;
-    }
-    if (path_buf[truncation_check] != '\0') {
-        fut_printf("[FSTATAT] fstatat(dirfd=%d, pathname_len>255) -> ENAMETOOLONG (pathname truncated)\n",
-                   local_dirfd);
-        return -ENAMETOOLONG;
     }
 
     /* Categorize pathname */

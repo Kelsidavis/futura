@@ -19,6 +19,7 @@
 
 #include <kernel/kprintf.h>
 #include <kernel/uaccess.h>
+#include <string.h>
 
 /* Special value indicating "don't change" */
 #define CHOWN_UNCHANGED ((uint32_t)-1)
@@ -204,7 +205,12 @@ long sys_chown(const char *pathname, uint32_t uid, uint32_t gid) {
                    "(copy_from_user failed)\n", uid_desc, gid_desc, operation_type);
         return -EFAULT;
     }
-    path_buf[sizeof(path_buf) - 1] = '\0';
+    /* Phase 5: Verify path was not truncated */
+    if (memchr(path_buf, '\0', sizeof(path_buf)) == NULL) {
+        fut_printf("[CHOWN] chown(path exceeds %zu bytes) -> ENAMETOOLONG\n",
+                   sizeof(path_buf) - 1);
+        return -ENAMETOOLONG;
+    }
 
     /* Phase 2: Validate pathname is not empty */
     if (path_buf[0] == '\0') {

@@ -19,6 +19,7 @@
 
 #include <kernel/kprintf.h>
 #include <kernel/uaccess.h>
+#include <string.h>
 
 /* Manual string length calculation */
 static size_t manual_strlen(const char *s) {
@@ -113,7 +114,12 @@ long sys_stat(const char *path, struct fut_stat *statbuf) {
                    (void *)local_statbuf);
         return -EFAULT;
     }
-    path_buf[sizeof(path_buf) - 1] = '\0';
+    /* Phase 5: Verify path was not truncated */
+    if (memchr(path_buf, '\0', sizeof(path_buf)) == NULL) {
+        fut_printf("[STAT] stat(path exceeds %zu bytes) -> ENAMETOOLONG\n",
+                   sizeof(path_buf) - 1);
+        return -ENAMETOOLONG;
+    }
 
     /* Phase 2: Validate path is not empty */
     if (path_buf[0] == '\0') {

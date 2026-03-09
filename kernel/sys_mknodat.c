@@ -17,6 +17,7 @@
 #include <kernel/errno.h>
 #include <sys/stat.h>
 #include <stdint.h>
+#include <string.h>
 #include <stddef.h>
 
 #include <kernel/kprintf.h>
@@ -183,7 +184,11 @@ long sys_mknodat(int dirfd, const char *pathname, uint32_t mode, uint32_t dev) {
                    "(pathname copy_from_user failed)\n", dirfd, mode, dev, task->pid);
         return -EFAULT;
     }
-    path_buf[sizeof(path_buf) - 1] = '\0';
+    /* Phase 5: Verify path was not truncated */
+    if (memchr(path_buf, '\0', sizeof(path_buf)) == NULL) {
+        fut_printf("[MKNODAT] mknodat(path exceeds %zu bytes) -> ENAMETOOLONG\n", sizeof(path_buf) - 1);
+        return -ENAMETOOLONG;
+    }
 
     /* Phase 2: Validate pathname is not empty */
     if (path_buf[0] == '\0') {

@@ -15,6 +15,7 @@
 #include <kernel/fut_task.h>
 #include <kernel/errno.h>
 #include <stddef.h>
+#include <string.h>
 
 #include <kernel/kprintf.h>
 #include <kernel/uaccess.h>
@@ -194,7 +195,12 @@ long sys_pivot_root(const char *new_root, const char *put_old) {
                    put_old, task->pid);
         return -EFAULT;
     }
-    new_root_buf[sizeof(new_root_buf) - 1] = '\0';
+    /* Phase 5: Verify new_root was not truncated */
+    if (memchr(new_root_buf, '\0', sizeof(new_root_buf)) == NULL) {
+        fut_printf("[PIVOT_ROOT] pivot_root(new_root exceeds %zu bytes, pid=%d) -> ENAMETOOLONG\n",
+                   sizeof(new_root_buf) - 1, task->pid);
+        return -ENAMETOOLONG;
+    }
 
     /* Phase 2: Validate new_root is not empty */
     if (new_root_buf[0] == '\0') {
@@ -218,7 +224,12 @@ long sys_pivot_root(const char *new_root, const char *put_old) {
                    new_root_buf, task->pid);
         return -EFAULT;
     }
-    put_old_buf[sizeof(put_old_buf) - 1] = '\0';
+    /* Phase 5: Verify put_old was not truncated */
+    if (memchr(put_old_buf, '\0', sizeof(put_old_buf)) == NULL) {
+        fut_printf("[PIVOT_ROOT] pivot_root(put_old exceeds %zu bytes, pid=%d) -> ENAMETOOLONG\n",
+                   sizeof(put_old_buf) - 1, task->pid);
+        return -ENAMETOOLONG;
+    }
 
     /* Phase 2: Validate put_old is not empty */
     if (put_old_buf[0] == '\0') {

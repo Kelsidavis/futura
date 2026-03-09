@@ -217,7 +217,7 @@ long sys_link(const char *oldpath, const char *newpath) {
     }
 
     /* Phase 5: Verify oldpath was not truncated */
-    if (old_buf[sizeof(old_buf) - 1] != '\0') {
+    if (memchr(old_buf, '\0', sizeof(old_buf)) == NULL) {
         fut_printf("[LINK] link(oldpath=<truncated>, newpath=?) -> ENAMETOOLONG "
                    "(oldpath exceeds %zu bytes, Phase 5)\n", sizeof(old_buf) - 1);
         return -ENAMETOOLONG;
@@ -232,7 +232,7 @@ long sys_link(const char *oldpath, const char *newpath) {
     }
 
     /* Phase 5: Verify newpath was not truncated */
-    if (new_buf[sizeof(new_buf) - 1] != '\0') {
+    if (memchr(new_buf, '\0', sizeof(new_buf)) == NULL) {
         fut_printf("[LINK] link(oldpath='%s', newpath=<truncated>) -> ENAMETOOLONG "
                    "(newpath exceeds %zu bytes, Phase 5)\n", old_buf, sizeof(new_buf) - 1);
         return -ENAMETOOLONG;

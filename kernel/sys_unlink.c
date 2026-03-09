@@ -19,6 +19,7 @@
 
 #include <kernel/kprintf.h>
 #include <kernel/uaccess.h>
+#include <string.h>
 
 /* Manual string length calculation */
 static size_t manual_strlen(const char *s) {
@@ -99,22 +100,17 @@ long sys_unlink(const char *path) {
         fut_printf("[UNLINK] unlink(path=?) -> EFAULT (copy_from_user failed)\n");
         return -EFAULT;
     }
-    path_buf[sizeof(path_buf) - 1] = '\0';
+    /* Phase 5: Verify path was not truncated */
+    if (memchr(path_buf, '\0', sizeof(path_buf)) == NULL) {
+        fut_printf("[UNLINK] unlink(path exceeds %zu bytes) -> ENAMETOOLONG\n",
+                   sizeof(path_buf) - 1);
+        return -ENAMETOOLONG;
+    }
 
     /* Phase 2: Validate path is not empty */
     if (path_buf[0] == '\0') {
         fut_printf("[UNLINK] unlink(path=\"\" [empty]) -> EINVAL (empty path)\n");
         return -EINVAL;
-    }
-
-    /* Phase 3: Validate path length - check if it was truncated */
-    size_t truncation_check = 0;
-    while (path_buf[truncation_check] != '\0' && truncation_check < sizeof(path_buf) - 1) {
-        truncation_check++;
-    }
-    if (path_buf[truncation_check] != '\0') {
-        fut_printf("[UNLINK] unlink(path_len>255) -> ENAMETOOLONG (path was truncated)\n");
-        return -ENAMETOOLONG;
     }
 
     /* Phase 2: Categorize path type */

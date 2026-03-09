@@ -16,6 +16,7 @@
 #include <kernel/errno.h>
 #include <kernel/fut_vfs.h>
 #include <stdint.h>
+#include <string.h>
 
 #include <kernel/kprintf.h>
 #include <kernel/uaccess.h>
@@ -84,7 +85,7 @@ long sys_truncate(const char *path, uint64_t length) {
      * - DoS: Clear critical configuration files
      *
      * DEFENSE (Phase 5):
-     * Detect truncation by checking if path_buf[255] != '\0' after copy
+     * Detect truncation by searching for null terminator with memchr after copy
      * Return -ENAMETOOLONG if truncation detected
      * Matches sys_openat pattern (commit f68ce63) */
     char path_buf[FUT_VFS_PATH_BUFFER_SIZE];
@@ -94,9 +95,9 @@ long sys_truncate(const char *path, uint64_t length) {
         return -EFAULT;
     }
 
-    /* Phase 5: Verify path was not truncated (NULL terminator must exist before buffer end)
-     * If path_buf[255] != '\0', the path was truncated and full path exceeds 255 chars */
-    if (path_buf[sizeof(path_buf) - 1] != '\0') {
+    /* Phase 5: Verify path was not truncated (NULL terminator must exist somewhere in buffer)
+     * If no '\0' found in buffer, the path was truncated and full path exceeds buffer size */
+    if (memchr(path_buf, '\0', sizeof(path_buf)) == NULL) {
         fut_printf("[TRUNCATE] truncate(path=<truncated>, length=%llu) -> ENAMETOOLONG "
                    "(path exceeds %zu bytes, truncation detected, Phase 5)\n",
                    (unsigned long long)local_length, sizeof(path_buf) - 1);

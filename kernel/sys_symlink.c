@@ -87,7 +87,7 @@ long sys_symlink(const char *target, const char *linkpath) {
      * - Application resolves symlink, gets wrong file
      *
      * DEFENSE (Phase 5):
-     * Detect truncation by copying full buffer, check if target_buf[255] != '\0'
+     * Detect truncation by copying full buffer, search for null terminator with memchr
      * Return -ENAMETOOLONG if truncation detected
      * Matches sys_openat/sys_truncate pattern (commits f68ce63, cc20d22)
      */
@@ -98,7 +98,7 @@ long sys_symlink(const char *target, const char *linkpath) {
     }
 
     /* Phase 5: Verify target path was not truncated */
-    if (target_buf[sizeof(target_buf) - 1] != '\0') {
+    if (memchr(target_buf, '\0', sizeof(target_buf)) == NULL) {
         fut_printf("[SYMLINK] symlink(target=<truncated>, linkpath=?) -> ENAMETOOLONG "
                    "(target path exceeds %zu bytes, truncation detected, Phase 5)\n",
                    sizeof(target_buf) - 1);
@@ -115,7 +115,7 @@ long sys_symlink(const char *target, const char *linkpath) {
     }
 
     /* Phase 5: Verify linkpath was not truncated */
-    if (linkpath_buf[sizeof(linkpath_buf) - 1] != '\0') {
+    if (memchr(linkpath_buf, '\0', sizeof(linkpath_buf)) == NULL) {
         fut_printf("[SYMLINK] symlink(target='%s', linkpath=<truncated>) -> ENAMETOOLONG "
                    "(linkpath exceeds %zu bytes, truncation detected, Phase 5)\n",
                    target_buf, sizeof(linkpath_buf) - 1);

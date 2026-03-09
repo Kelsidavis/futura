@@ -16,6 +16,7 @@
 #include <kernel/errno.h>
 #include <kernel/fut_vfs.h>
 #include <stdint.h>
+#include <string.h>
 
 #include <kernel/kprintf.h>
 #include <kernel/uaccess.h>
@@ -194,8 +195,8 @@ long sys_access(const char *pathname, int mode) {
      * - Kernel proceeds with truncated path as if it were complete
      *
      * DEFENSE (Phase 5):
-     * Copy full buffer (256 bytes) and verify last byte is null
-     * - If path_buf[255] != '\0', original path exceeded 255 bytes
+     * Copy full buffer (256 bytes) and search for null terminator
+     * - If no '\0' found anywhere in buffer, original path exceeded buffer size
      * - Return -ENAMETOOLONG immediately (fail fast)
      * - Prevents vfs_lookup from resolving truncated path
      * - Matches pattern: sys_truncate (lines 91-104), sys_openat
@@ -218,7 +219,7 @@ long sys_access(const char *pathname, int mode) {
     }
 
     /* Phase 5: Verify path was not truncated */
-    if (path_buf[sizeof(path_buf) - 1] != '\0') {
+    if (memchr(path_buf, '\0', sizeof(path_buf)) == NULL) {
         fut_printf("[ACCESS] access(pathname=<truncated>, mode=%s) -> ENAMETOOLONG "
                    "(path exceeds %zu bytes, truncation detected, Phase 5)\n",
                    mode_desc, sizeof(path_buf) - 1);

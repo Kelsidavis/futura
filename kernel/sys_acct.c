@@ -19,6 +19,7 @@
 
 #include <kernel/kprintf.h>
 #include <kernel/uaccess.h>
+#include <string.h>
 
 /**
  * acct() - Enable or disable process accounting
@@ -95,7 +96,12 @@ long sys_acct(const char *filename) {
                    "(filename copy_from_user failed)\n", task->pid);
         return -EFAULT;
     }
-    path_buf[sizeof(path_buf) - 1] = '\0';
+    /* Phase 5: Verify path was not truncated */
+    if (memchr(path_buf, '\0', sizeof(path_buf)) == NULL) {
+        fut_printf("[ACCT] acct(path exceeds %zu bytes, pid=%d) -> ENAMETOOLONG\n",
+                   sizeof(path_buf) - 1, task->pid);
+        return -ENAMETOOLONG;
+    }
 
     /* Phase 2: Validate filename is not empty */
     if (path_buf[0] == '\0') {

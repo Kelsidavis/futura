@@ -16,6 +16,7 @@
 #include <kernel/errno.h>
 #include <kernel/fut_vfs.h>
 #include <stdint.h>
+#include <string.h>
 
 #include <kernel/kprintf.h>
 #include <kernel/uaccess.h>
@@ -194,7 +195,11 @@ long sys_readlink(const char *path, char *buf, size_t bufsiz) {
                    "(path copy_from_user failed)\n", local_bufsiz, bufsiz_category);
         return -EFAULT;
     }
-    path_buf[sizeof(path_buf) - 1] = '\0';
+    /* Phase 5: Verify path was not truncated */
+    if (memchr(path_buf, '\0', sizeof(path_buf)) == NULL) {
+        fut_printf("[READLINK] readlink(path exceeds %zu bytes) -> ENAMETOOLONG\n", sizeof(path_buf) - 1);
+        return -ENAMETOOLONG;
+    }
 
     /* Phase 2: Validate path is not empty */
     if (path_buf[0] == '\0') {

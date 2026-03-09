@@ -13,6 +13,7 @@
 #include <kernel/errno.h>
 #include <subsystems/posix_syscall.h>
 #include <stddef.h>
+#include <string.h>
 
 #include <kernel/kprintf.h>
 #include <fcntl.h>
@@ -91,9 +92,9 @@ long sys_openat(int dirfd, const char *pathname, int flags, int mode) {
         return rc;
     }
 
-    /* Phase 5: Verify path was not truncated (NULL terminator must exist before buffer end)
-     * If kpath[255] != '\0', the path was truncated and full path exceeds 255 chars */
-    if (kpath[sizeof(kpath) - 1] != '\0') {
+    /* Phase 5: Verify path was not truncated (NULL terminator must exist somewhere in buffer)
+     * If no '\0' found in buffer, the path was truncated and full path exceeds buffer size */
+    if (memchr(kpath, '\0', sizeof(kpath)) == NULL) {
         fut_printf("[OPENAT] openat(dirfd=%d, pathname=<truncated>, flags=0x%x, mode=0%o) -> ENAMETOOLONG "
                    "(path exceeds %zu bytes, truncation detected, Phase 5)\n",
                    dirfd, flags, mode, sizeof(kpath) - 1);

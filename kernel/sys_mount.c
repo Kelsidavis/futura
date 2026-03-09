@@ -16,6 +16,7 @@
 #include <kernel/errno.h>
 #include <stdint.h>
 #include <stddef.h>
+#include <string.h>
 
 #include <kernel/kprintf.h>
 #include <kernel/uaccess.h>
@@ -296,7 +297,7 @@ long sys_mount(const char *source, const char *target, const char *filesystemtyp
     }
 
     /* Phase 5: Verify target path was not truncated */
-    if (target_buf[sizeof(target_buf) - 1] != '\0') {
+    if (memchr(target_buf, '\0', sizeof(target_buf)) == NULL) {
         fut_printf("[MOUNT] mount(source=%p, target=<truncated>, fstype=%p, flags=0x%lx, pid=%d) "
                    "-> ENAMETOOLONG (target path exceeds %zu bytes, Phase 5)\n",
                    source, filesystemtype, mountflags, task->pid, sizeof(target_buf) - 1);
@@ -337,7 +338,7 @@ long sys_mount(const char *source, const char *target, const char *filesystemtyp
         }
 
         /* Phase 5: Verify fstype was not truncated */
-        if (fstype_buf[sizeof(fstype_buf) - 1] != '\0') {
+        if (memchr(fstype_buf, '\0', sizeof(fstype_buf)) == NULL) {
             fut_printf("[MOUNT] mount(source=%p, target='%s', fstype=<truncated>, flags=0x%lx, pid=%d) "
                        "-> ENAMETOOLONG (fstype exceeds %zu bytes, Phase 5)\n",
                        source, target_buf, mountflags, task->pid, sizeof(fstype_buf) - 1);

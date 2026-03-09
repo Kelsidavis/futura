@@ -15,6 +15,7 @@
 #include <kernel/errno.h>
 #include <kernel/fut_vfs.h>
 #include <stdint.h>
+#include <string.h>
 
 #include <kernel/kprintf.h>
 #include <kernel/uaccess.h>
@@ -119,7 +120,12 @@ long sys_symlinkat(const char *target, int newdirfd, const char *linkpath) {
                    local_newdirfd);
         return -EFAULT;
     }
-    target_buf[sizeof(target_buf) - 1] = '\0';
+    /* Phase 5: Verify target was not truncated */
+    if (memchr(target_buf, '\0', sizeof(target_buf)) == NULL) {
+        fut_printf("[SYMLINKAT] symlinkat(target exceeds %zu bytes, newdirfd=%d) -> ENAMETOOLONG\n",
+                   sizeof(target_buf) - 1, local_newdirfd);
+        return -ENAMETOOLONG;
+    }
 
     /* Copy linkpath from userspace */
     char linkpath_buf[256];
@@ -128,7 +134,12 @@ long sys_symlinkat(const char *target, int newdirfd, const char *linkpath) {
                    local_newdirfd);
         return -EFAULT;
     }
-    linkpath_buf[sizeof(linkpath_buf) - 1] = '\0';
+    /* Phase 5: Verify linkpath was not truncated */
+    if (memchr(linkpath_buf, '\0', sizeof(linkpath_buf)) == NULL) {
+        fut_printf("[SYMLINKAT] symlinkat(newdirfd=%d, linkpath exceeds %zu bytes) -> ENAMETOOLONG\n",
+                   local_newdirfd, sizeof(linkpath_buf) - 1);
+        return -ENAMETOOLONG;
+    }
 
     /* Validate target is not empty */
     if (target_buf[0] == '\0') {
@@ -142,28 +153,6 @@ long sys_symlinkat(const char *target, int newdirfd, const char *linkpath) {
         fut_printf("[SYMLINKAT] symlinkat(newdirfd=%d, linkpath=\"\" [empty]) -> EINVAL (empty linkpath)\n",
                    local_newdirfd);
         return -EINVAL;
-    }
-
-    /* Check for target truncation */
-    size_t target_trunc_check = 0;
-    while (target_buf[target_trunc_check] != '\0' && target_trunc_check < sizeof(target_buf) - 1) {
-        target_trunc_check++;
-    }
-    if (target_buf[target_trunc_check] != '\0') {
-        fut_printf("[SYMLINKAT] symlinkat(target_len>255, newdirfd=%d) -> ENAMETOOLONG (target truncated)\n",
-                   local_newdirfd);
-        return -ENAMETOOLONG;
-    }
-
-    /* Check for linkpath truncation */
-    size_t link_trunc_check = 0;
-    while (linkpath_buf[link_trunc_check] != '\0' && link_trunc_check < sizeof(linkpath_buf) - 1) {
-        link_trunc_check++;
-    }
-    if (linkpath_buf[link_trunc_check] != '\0') {
-        fut_printf("[SYMLINKAT] symlinkat(newdirfd=%d, linkpath_len>255) -> ENAMETOOLONG (linkpath truncated)\n",
-                   local_newdirfd);
-        return -ENAMETOOLONG;
     }
 
     /* Categorize linkpath */

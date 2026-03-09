@@ -114,11 +114,10 @@
  * Impact: Information disclosure, data corruption, logic errors
  * Root Cause: epoll doesn't receive notification when registered FD closes
  *
- * Defense (TODO - not yet implemented):
- * - Hook VFS close() to notify epoll instances
- * - Auto-remove FD from all epoll sets on close
- * - Add refcount to file struct to prevent premature free
- * - Current code at lines 418-422 validates FD but doesn't prevent UAF
+ * Defense (IMPLEMENTED):
+ * - sys_close() calls epoll_notify_fd_close() before closing FD
+ * - Auto-removes FD from all epoll sets on close
+ * - Prevents stale FD entries from matching reused FD numbers
  *
  * CVE References:
  * - CVE-2017-7308: Use-after-free in packet sockets
@@ -151,9 +150,9 @@
  *    - Reject negative FDs early
  *    - Fail with EBADF for invalid FDs
  *
- * 6. [TODO] Close notification and auto-remove
- *    - Need VFS close hook to notify epoll
- *    - Auto-remove closed FDs from all epoll sets
+ * 6. [DONE] Close notification and auto-remove
+ *    - sys_close() calls epoll_notify_fd_close() before closing
+ *    - Auto-removes closed FDs from all epoll sets
  *    - Prevents use-after-free on FD reuse
  *
  * 7. [TODO] Per-task epoll instance quotas
@@ -200,7 +199,7 @@
  * [DONE] 5. FD validation (negative check) at lines 418-422
  *
  * TODO (enhancements):
- * [TODO] 1. Add VFS close hook for auto-remove on FD close
+ * [DONE] 1. VFS close hook: epoll_notify_fd_close() called from sys_close()
  * [TODO] 2. Add per-task epoll instance quotas
  * [TODO] 3. Add file struct refcounting to prevent premature free
  * [TODO] 4. Add rate limiting for epoll_create1 to prevent DoS
@@ -278,6 +277,32 @@ struct epoll_set {
 /* Global epoll instance table */
 static struct epoll_set epoll_instances[MAX_EPOLL_INSTANCES];
 static int next_epoll_fd = 4000;  /* Start epoll FDs at 4000 to avoid collision with regular FDs */
+
+/**
+ * Notify all epoll instances that a file descriptor is being closed.
+ * Automatically removes the FD from any epoll set it's registered in.
+ * Called from sys_close() before actually closing the FD to prevent
+ * use-after-free when the FD number is later reused.
+ *
+ * This addresses ATTACK SCENARIO 5 (Use-After-Free on Registered FD Close)
+ * documented in the Phase 5 security hardening notes above.
+ */
+void epoll_notify_fd_close(int fd) {
+    for (int i = 0; i < MAX_EPOLL_INSTANCES; i++) {
+        if (!epoll_instances[i].active) {
+            continue;
+        }
+        for (int j = 0; j < MAX_EPOLL_FDS; j++) {
+            if (epoll_instances[i].fds[j].registered &&
+                epoll_instances[i].fds[j].fd == fd) {
+                epoll_instances[i].fds[j].registered = false;
+                epoll_instances[i].count--;
+                memset(&epoll_instances[i].fds[j], 0,
+                       sizeof(epoll_instances[i].fds[j]));
+            }
+        }
+    }
+}
 
 /* Helper to find epoll set by epoll FD */
 static struct epoll_set *epoll_get_set(int epfd) {

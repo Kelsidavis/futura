@@ -20,6 +20,9 @@
 #include <kernel/kprintf.h>
 #include <kernel/debug_config.h>
 
+/* epoll close notification — auto-removes FD from all epoll instances */
+extern void epoll_notify_fd_close(int fd);
+
 /* Close debugging (controlled via debug_config.h) */
 #define close_printf(...) do { if (CLOSE_DEBUG) fut_printf(__VA_ARGS__); } while(0)
 
@@ -163,6 +166,10 @@ long sys_close(int fd) {
                      local_fd, task->max_fds);
         return -EBADF;
     }
+
+    /* Auto-remove this FD from all epoll instances before closing.
+     * Prevents use-after-free when the FD number is reused later. */
+    epoll_notify_fd_close(local_fd);
 
     /* Phase 2: Identify FD type (socket vs file) */
     const char *fd_type;

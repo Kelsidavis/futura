@@ -420,6 +420,39 @@ static void task_cleanup_and_exit(fut_task_t *task, int status, int signal) {
         task->clear_child_tid = NULL;  /* Clear the address so we don't do this twice */
     }
 
+    /* Reparent orphaned children to init (pid 1) before marking zombie.
+     * Without this, children of dying processes become permanently
+     * unreapable zombies since no parent can wait4() on them. */
+    fut_spinlock_acquire(&task_list_lock);
+    if (task->first_child) {
+        fut_task_t *init_task = NULL;
+        /* Find init (pid 1) by walking the task list */
+        fut_task_t *t = fut_task_list;
+        while (t) {
+            if (t->pid == 1) {
+                init_task = t;
+                break;
+            }
+            t = t->next;
+        }
+
+        if (init_task && init_task != task) {
+            /* Move all children to init */
+            fut_task_t *child = task->first_child;
+            while (child) {
+                fut_task_t *next = child->sibling;
+                child->parent = init_task;
+                child->sibling = init_task->first_child;
+                init_task->first_child = child;
+                child = next;
+            }
+            task->first_child = NULL;
+            /* Wake init in case any reparented children are zombies */
+            fut_waitq_wake_all(&init_task->child_waiters);
+        }
+    }
+    fut_spinlock_release(&task_list_lock);
+
     task_mark_exit(task, status, signal);
 
     /* Release user-space memory manager before exiting */
@@ -453,7 +486,7 @@ static int encode_wait_status(const fut_task_t *task) {
     return (task->exit_code & EXIT_CODE_MASK) << WAIT_STATUS_SHIFT;
 }
 
-int fut_task_waitpid(int pid, int *status_out) {
+int fut_task_waitpid(int pid, int *status_out, int flags) {
     fut_task_t *parent = fut_task_current();
     if (!parent) {
         return -ECHILD;
@@ -493,6 +526,12 @@ int fut_task_waitpid(int pid, int *status_out) {
 
             fut_task_destroy(match);
             return (int)child_pid;
+        }
+
+        /* WNOHANG: return 0 immediately if no child has exited */
+        if (flags & 1) {  /* WNOHANG = 1 */
+            fut_spinlock_release(&task_list_lock);
+            return 0;
         }
 
         fut_waitq_sleep_locked(&parent->child_waiters, &task_list_lock, FUT_THREAD_BLOCKED);

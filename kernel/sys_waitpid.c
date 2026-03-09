@@ -184,7 +184,7 @@ long sys_waitpid(int pid, int *u_status, int flags) {
 
     /* Call kernel waitpid implementation */
     int status = 0;
-    int rc = fut_task_waitpid(local_pid, &status);
+    int rc = fut_task_waitpid(local_pid, &status, local_flags);
 
     /* Phase 2: Handle error cases with detailed logging */
     if (rc < 0) {

@@ -183,7 +183,7 @@ struct fut_mm *fut_task_get_mm(const fut_task_t *task);
 
 fut_task_t *fut_task_current(void);
 void fut_task_exit_current(int status);
-int fut_task_waitpid(int pid, int *status_out);
+int fut_task_waitpid(int pid, int *status_out, int flags);
 void fut_task_signal_exit(int signal);
 
 /**

@@ -723,11 +723,14 @@ OBJECTS += $(INIT_BLOB) $(SECOND_STUB_BLOB)
 ifeq ($(ENABLE_FB_DIAGNOSTICS),1)
 OBJECTS += $(FBTEST_BLOB)
 endif
-# Core Wayland binaries (production) - skip on macOS
+# Core Wayland binaries (production) - only when ENABLE_WAYLAND=1 on Linux
+ifeq ($(ENABLE_WAYLAND),1)
 ifneq ($(shell uname -s),Darwin)
 OBJECTS += $(WAYLAND_COMPOSITOR_BLOB) $(WAYLAND_SHELL_BLOB) $(WL_TERM_BLOB)
-# Test clients - always enabled
+ifeq ($(ENABLE_WAYLAND_TEST_CLIENTS),1)
 OBJECTS += $(WAYLAND_CLIENT_BLOB) $(WAYLAND_COLOR_BLOB)
+endif
+endif
 endif
 else ifeq ($(PLATFORM),arm64)
 # Re-enabled for UI testing

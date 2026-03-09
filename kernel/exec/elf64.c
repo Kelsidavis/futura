@@ -784,12 +784,14 @@ extern const uint8_t _binary_build_bin_x86_64_user_init_end[];
 extern const uint8_t _binary_build_bin_x86_64_user_second_start[];
 extern const uint8_t _binary_build_bin_x86_64_user_second_end[];
 /* Core Wayland binaries (production) */
+#if ENABLE_WAYLAND
 extern const uint8_t _binary_build_bin_x86_64_user_futura_wayland_start[];
 extern const uint8_t _binary_build_bin_x86_64_user_futura_wayland_end[];
 extern const uint8_t _binary_build_bin_x86_64_user_futura_shell_start[];
 extern const uint8_t _binary_build_bin_x86_64_user_futura_shell_end[];
 extern const uint8_t _binary_build_bin_x86_64_user_wl_term_start[];
 extern const uint8_t _binary_build_bin_x86_64_user_wl_term_end[];
+#endif
 /* Test clients (optional) */
 #if ENABLE_WAYLAND_TEST_CLIENTS
 extern const uint8_t _binary_build_bin_x86_64_user_wl_simple_start[];
@@ -933,8 +935,8 @@ int fut_stage_second_stub_binary(void) {
 }
 #endif /* __x86_64__ */
 
-/* Core Wayland binaries (production - always built) */
-#ifndef FUTURA_MACOS_HOST_BUILD
+/* Core Wayland binaries (production - only when ENABLE_WAYLAND=1) */
+#if ENABLE_WAYLAND && !defined(FUTURA_MACOS_HOST_BUILD)
 int fut_stage_wayland_compositor_binary(void) {
     (void)fut_vfs_mkdir("/sbin", 0755);
 
@@ -965,15 +967,15 @@ int fut_stage_futura_shell_binary(void) {
 }
 #else
 int fut_stage_wayland_compositor_binary(void) {
-    return -ENOSYS;  /* Wayland not available on macOS host builds */
+    return -ENOSYS;  /* Wayland not available */
 }
 
 int fut_stage_wl_term_binary(void) {
-    return -ENOSYS;  /* Wayland not available on macOS host builds */
+    return -ENOSYS;  /* Wayland not available */
 }
 
 int fut_stage_futura_shell_binary(void) {
-    return -ENOSYS;  /* futura-shell not available on macOS host builds */
+    return -ENOSYS;  /* Wayland not available */
 }
 #endif
 

@@ -231,8 +231,12 @@ void fut_timer_tick(void) {
         if (task->alarm_expires_ms > 0 && current_ms >= task->alarm_expires_ms) {
             // Alarm has expired - queue SIGALRM for this task
             fut_signal_send(task, SIGALRM);
-            // Clear alarm (only one alarm per task)
-            task->alarm_expires_ms = 0;
+            // Reload for ITIMER_REAL interval, or disarm
+            if (task->itimer_real_interval_ms > 0) {
+                task->alarm_expires_ms = current_ms + task->itimer_real_interval_ms;
+            } else {
+                task->alarm_expires_ms = 0;
+            }
         }
 
         // Check POSIX per-process timers

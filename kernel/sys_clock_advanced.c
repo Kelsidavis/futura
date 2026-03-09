@@ -383,18 +383,46 @@ long sys_getitimer(int which, struct itimerval *value) {
             return -EINVAL;
     }
 
-    /* Return zero (timer disarmed) */
     struct itimerval timer;
     memset(&timer, 0, sizeof(timer));
 
-    if (fut_copy_to_user(local_value, &timer, sizeof(struct itimerval)) != 0) {
+    if (local_which == ITIMER_REAL) {
+        /* Compute remaining value from alarm_expires_ms */
+        uint64_t now_ms = fut_get_ticks();
+        if (task->alarm_expires_ms > 0 && task->alarm_expires_ms > now_ms) {
+            uint64_t rem_ms = task->alarm_expires_ms - now_ms;
+            timer.it_value.tv_sec  = (long)(rem_ms / 1000);
+            timer.it_value.tv_usec = (long)((rem_ms % 1000) * 1000);
+        }
+        uint64_t intv = task->itimer_real_interval_ms;
+        timer.it_interval.tv_sec  = (long)(intv / 1000);
+        timer.it_interval.tv_usec = (long)((intv % 1000) * 1000);
+    } else if (local_which == ITIMER_VIRTUAL) {
+        uint64_t val = task->itimer_virt_value_ms;
+        timer.it_value.tv_sec  = (long)(val / 1000);
+        timer.it_value.tv_usec = (long)((val % 1000) * 1000);
+        uint64_t intv = task->itimer_virt_interval_ms;
+        timer.it_interval.tv_sec  = (long)(intv / 1000);
+        timer.it_interval.tv_usec = (long)((intv % 1000) * 1000);
+    } else { /* ITIMER_PROF */
+        uint64_t val = task->itimer_prof_value_ms;
+        timer.it_value.tv_sec  = (long)(val / 1000);
+        timer.it_value.tv_usec = (long)((val % 1000) * 1000);
+        uint64_t intv = task->itimer_prof_interval_ms;
+        timer.it_interval.tv_sec  = (long)(intv / 1000);
+        timer.it_interval.tv_usec = (long)((intv % 1000) * 1000);
+    }
+
+    if (clock_copy_to_user(local_value, &timer, sizeof(struct itimerval)) != 0) {
         fut_printf("[GETITIMER] getitimer(which=%s) -> EFAULT (copy_to_user failed)\n",
                    timer_name);
         return -EFAULT;
     }
 
-    fut_printf("[GETITIMER] getitimer(which=%s) -> 0 (timer disarmed, Phase 1 stub)\n",
-               timer_name);
+    fut_printf("[GETITIMER] getitimer(which=%s) -> 0 (value=%lld.%06llds interval=%lld.%06llds)\n",
+               timer_name,
+               (long long)timer.it_value.tv_sec, (long long)timer.it_value.tv_usec,
+               (long long)timer.it_interval.tv_sec, (long long)timer.it_interval.tv_usec);
 
     return 0;
 }
@@ -471,28 +499,69 @@ long sys_setitimer(int which, const struct itimerval *value, struct itimerval *o
         return -EINVAL;
     }
 
-    /* Return old timer value if requested */
+    uint64_t now_ms = fut_get_ticks();
+
+    /* Capture old timer value before modifying */
     if (local_ovalue) {
         struct itimerval old_timer;
         memset(&old_timer, 0, sizeof(old_timer));
-        if (fut_copy_to_user(local_ovalue, &old_timer, sizeof(struct itimerval)) != 0) {
-            fut_printf("[SETITIMER] setitimer(which=%s) -> EFAULT (copy_to_user for ovalue failed)\n",
+        if (local_which == ITIMER_REAL) {
+            if (task->alarm_expires_ms > 0 && task->alarm_expires_ms > now_ms) {
+                uint64_t rem = task->alarm_expires_ms - now_ms;
+                old_timer.it_value.tv_sec  = (long)(rem / 1000);
+                old_timer.it_value.tv_usec = (long)((rem % 1000) * 1000);
+            }
+            uint64_t intv = task->itimer_real_interval_ms;
+            old_timer.it_interval.tv_sec  = (long)(intv / 1000);
+            old_timer.it_interval.tv_usec = (long)((intv % 1000) * 1000);
+        } else if (local_which == ITIMER_VIRTUAL) {
+            old_timer.it_value.tv_sec  = (long)(task->itimer_virt_value_ms / 1000);
+            old_timer.it_value.tv_usec = (long)((task->itimer_virt_value_ms % 1000) * 1000);
+            old_timer.it_interval.tv_sec  = (long)(task->itimer_virt_interval_ms / 1000);
+            old_timer.it_interval.tv_usec = (long)((task->itimer_virt_interval_ms % 1000) * 1000);
+        } else {
+            old_timer.it_value.tv_sec  = (long)(task->itimer_prof_value_ms / 1000);
+            old_timer.it_value.tv_usec = (long)((task->itimer_prof_value_ms % 1000) * 1000);
+            old_timer.it_interval.tv_sec  = (long)(task->itimer_prof_interval_ms / 1000);
+            old_timer.it_interval.tv_usec = (long)((task->itimer_prof_interval_ms % 1000) * 1000);
+        }
+        if (clock_copy_to_user(local_ovalue, &old_timer, sizeof(struct itimerval)) != 0) {
+            fut_printf("[SETITIMER] setitimer(which=%s) -> EFAULT (ovalue copy failed)\n",
                        timer_name);
-            /* Continue anyway - old value is optional */
+            /* Continue anyway - old value write failure is not fatal per POSIX */
         }
     }
 
-    /* Phase 1: Accept timer parameters but don't arm */
-    /* Phase 2: Arm timer and schedule signal delivery */
+    /* Arm / disarm the timer */
+    uint64_t value_ms = (uint64_t)new_timer.it_value.tv_sec * 1000 +
+                        (uint64_t)new_timer.it_value.tv_usec / 1000;
+    uint64_t intv_ms  = (uint64_t)new_timer.it_interval.tv_sec * 1000 +
+                        (uint64_t)new_timer.it_interval.tv_usec / 1000;
 
-    int is_oneshot = (new_timer.it_interval.tv_sec == 0 && new_timer.it_interval.tv_usec == 0);
+    if (local_which == ITIMER_REAL) {
+        task->itimer_real_interval_ms = intv_ms;
+        if (value_ms > 0) {
+            task->alarm_expires_ms = now_ms + value_ms;
+        } else {
+            task->alarm_expires_ms     = 0;
+            task->itimer_real_interval_ms = 0;
+        }
+    } else if (local_which == ITIMER_VIRTUAL) {
+        task->itimer_virt_value_ms    = value_ms;
+        task->itimer_virt_interval_ms = intv_ms;
+    } else { /* ITIMER_PROF */
+        task->itimer_prof_value_ms    = value_ms;
+        task->itimer_prof_interval_ms = intv_ms;
+    }
+
+    int is_oneshot = (intv_ms == 0);
     const char *timer_type = is_oneshot ? "one-shot" : "periodic";
 
-    fut_printf("[SETITIMER] setitimer(which=%s, type=%s, signal=%s, value=%lld.%06llds, interval=%lld.%06llds) -> 0 "
-               "(accepted, Phase 1 stub)\n",
+    fut_printf("[SETITIMER] setitimer(which=%s, type=%s, signal=%s, "
+               "value=%lld.%06llds, interval=%lld.%06llds) -> 0\n",
                timer_name, timer_type, signal_name,
-               new_timer.it_value.tv_sec, new_timer.it_value.tv_usec,
-               new_timer.it_interval.tv_sec, new_timer.it_interval.tv_usec);
+               (long long)new_timer.it_value.tv_sec, (long long)new_timer.it_value.tv_usec,
+               (long long)new_timer.it_interval.tv_sec, (long long)new_timer.it_interval.tv_usec);
 
     return 0;
 }

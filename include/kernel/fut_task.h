@@ -103,8 +103,15 @@ struct fut_task {
     fut_waitq_t signal_waitq;          // Wait queue for pause() blocking until signal
     struct sigaltstack sig_altstack;   // Alternate signal stack configuration
 
-    /* Alarm timer */
+    /* Alarm timer (also used as ITIMER_REAL one-shot backing store) */
     uint64_t alarm_expires_ms;         // Alarm expiration time in milliseconds (0 = no alarm)
+
+    /* Interval timers (setitimer/getitimer) */
+    uint64_t itimer_real_interval_ms;  // ITIMER_REAL repeat interval (0 = one-shot)
+    uint64_t itimer_virt_value_ms;     // ITIMER_VIRTUAL remaining value (ms)
+    uint64_t itimer_virt_interval_ms;  // ITIMER_VIRTUAL repeat interval (ms)
+    uint64_t itimer_prof_value_ms;     // ITIMER_PROF remaining value (ms)
+    uint64_t itimer_prof_interval_ms;  // ITIMER_PROF repeat interval (ms)
 
     /* POSIX per-process timers (timer_create/timer_settime/timer_delete) */
     fut_posix_timer_t posix_timers[FUT_POSIX_TIMER_MAX];

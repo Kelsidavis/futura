@@ -150,16 +150,27 @@ ifeq ($(PLATFORM),x86_64)
     OBJCOPY_BIN_ARCH := i386:x86-64
 else ifeq ($(PLATFORM),arm64)
     # ARM64 cross-compilation toolchain
-    CROSS_COMPILE ?= /opt/homebrew/bin/aarch64-elf-
-    CC := $(CROSS_COMPILE)gcc
-    AS := $(CROSS_COMPILE)as
-    LD := $(CROSS_COMPILE)ld
-    AR := $(CROSS_COMPILE)ar
-    OBJCOPY := $(CROSS_COMPILE)objcopy
+    # On macOS, use the Homebrew cross-compiler; on Linux, use distro packages
+    ifeq ($(shell uname -s),Darwin)
+        CROSS_COMPILE ?= /opt/homebrew/bin/aarch64-elf-
+        CC := $(CROSS_COMPILE)gcc
+        AS := $(CROSS_COMPILE)as
+        LD := $(CROSS_COMPILE)ld
+        AR := $(CROSS_COMPILE)ar
+        OBJCOPY := $(CROSS_COMPILE)objcopy
+        EXTRA_LDLIBS := /opt/homebrew/Cellar/aarch64-elf-gcc/15.2.0/lib/gcc/aarch64-elf/15.2.0/libgcc.a
+    else
+        CROSS_COMPILE ?= aarch64-linux-gnu-
+        CC := $(CROSS_COMPILE)gcc-14
+        AS := $(CROSS_COMPILE)as
+        LD := $(CROSS_COMPILE)ld
+        AR := $(CROSS_COMPILE)ar
+        OBJCOPY := $(CROSS_COMPILE)objcopy
+        EXTRA_LDLIBS := $(shell $(CROSS_COMPILE)gcc-14 -print-libgcc-file-name 2>/dev/null)
+    endif
     ARCH_CFLAGS := -march=armv8-a -mtune=cortex-a53 -Wno-pedantic
     ARCH_ASFLAGS :=
     ARCH_LDFLAGS := -T platform/arm64/link.ld
-    EXTRA_LDLIBS := /opt/homebrew/Cellar/aarch64-elf-gcc/15.2.0/lib/gcc/aarch64-elf/15.2.0/libgcc.a
     # Binary format for embedding blobs
     OBJCOPY_BIN_FMT := elf64-littleaarch64
     OBJCOPY_BIN_ARCH := aarch64
@@ -948,10 +959,13 @@ userland: libfutura vendor
 
 .PHONY: vendor libfutura open_wrapper stage
 
-# On macOS, skip Wayland (requires Linux-specific syscalls)
+# Skip Wayland on macOS or when ENABLE_WAYLAND=0
 ifeq ($(shell uname -s),Darwin)
 vendor:
 	@echo "Skipping Wayland on macOS (requires Linux-specific syscalls)"
+else ifeq ($(ENABLE_WAYLAND),0)
+vendor:
+	@echo "Skipping Wayland (ENABLE_WAYLAND=0)"
 else
 vendor: third_party-wayland
 endif

@@ -7,8 +7,13 @@ PLATFORM ?= x86_64
 
 # Toolchain (can be overridden by parent Makefile or command line)
 ifeq ($(PLATFORM),arm64)
-    CROSS_COMPILE ?= /opt/homebrew/bin/aarch64-elf-
-    CC := $(CROSS_COMPILE)gcc
+    ifeq ($(shell uname -s),Darwin)
+        CROSS_COMPILE ?= /opt/homebrew/bin/aarch64-elf-
+        CC := $(CROSS_COMPILE)gcc
+    else
+        CROSS_COMPILE ?= aarch64-linux-gnu-
+        CC := $(CROSS_COMPILE)gcc-14
+    endif
     AS := $(CROSS_COMPILE)as
     AR := $(CROSS_COMPILE)ar
     ARCH_CFLAGS := -march=armv8-a -mtune=cortex-a53

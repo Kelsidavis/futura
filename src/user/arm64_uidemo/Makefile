@@ -6,8 +6,13 @@ SRCS := main.c
 OBJS := $(SRCS:.c=.o)
 
 # ARM64 toolchain
-CROSS_COMPILE ?= /opt/homebrew/bin/aarch64-elf-
-CC := $(CROSS_COMPILE)gcc
+ifeq ($(shell uname -s),Darwin)
+    CROSS_COMPILE ?= /opt/homebrew/bin/aarch64-elf-
+    CC := $(CROSS_COMPILE)gcc
+else
+    CROSS_COMPILE ?= aarch64-linux-gnu-
+    CC := $(CROSS_COMPILE)gcc-14
+endif
 LD := $(CROSS_COMPILE)ld
 OBJDUMP := $(CROSS_COMPILE)objdump
 

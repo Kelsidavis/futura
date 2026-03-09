@@ -4,9 +4,15 @@
 PLATFORM ?= x86_64
 
 ifeq ($(PLATFORM),arm64)
-    CROSS_COMPILE ?= /opt/homebrew/bin/aarch64-elf-
-    CC := $(CROSS_COMPILE)gcc
-    LD := $(CROSS_COMPILE)gcc
+    ifeq ($(shell uname -s),Darwin)
+        CROSS_COMPILE ?= /opt/homebrew/bin/aarch64-elf-
+        CC := $(CROSS_COMPILE)gcc
+        LD := $(CROSS_COMPILE)gcc
+    else
+        CROSS_COMPILE ?= aarch64-linux-gnu-
+        CC := $(CROSS_COMPILE)gcc-14
+        LD := $(CROSS_COMPILE)gcc-14
+    endif
     ARCH_CFLAGS := -march=armv8-a -mtune=cortex-a53
     LINKER_SCRIPT := ../libfutura/userland_arm64.ld
 else

@@ -10,9 +10,10 @@ ifeq ($(PLATFORM),arm64)
         LD = $(CROSS_COMPILE_ARM64)ld
         OBJCOPY = $(CROSS_COMPILE_ARM64)objcopy
     else
-        CC = aarch64-elf-gcc
-        LD = aarch64-elf-ld
-        OBJCOPY = aarch64-elf-objcopy
+        CROSS_COMPILE_ARM64 ?= aarch64-linux-gnu-
+        CC = $(CROSS_COMPILE_ARM64)gcc-14
+        LD = $(CROSS_COMPILE_ARM64)ld
+        OBJCOPY = $(CROSS_COMPILE_ARM64)objcopy
     endif
     CFLAGS = -std=c23 -ffreestanding -nostdlib -fno-builtin \
              -Wall -Wextra -O2 -g \

@@ -218,6 +218,11 @@ static ssize_t ramfs_read(struct fut_vnode *vnode, void *buf, size_t size, uint6
         return 0;  /* EOF */
     }
 
+    /* Defensive check: file data must exist if size > 0 */
+    if (!node->file.data) {
+        return 0;  /* Treat as empty file */
+    }
+
     /* Calculate bytes to read - safe since offset < vnode->size */
     uint64_t remaining = vnode->size - offset;
     /* Cap to SIZE_MAX to avoid overflow in pointer arithmetic */

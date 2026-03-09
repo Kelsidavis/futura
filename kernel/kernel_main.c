@@ -858,8 +858,21 @@ extern void fut_pipe_test_thread(void *arg);
 extern void fut_signal_test_thread(void *arg);
 extern void fut_cap_test_thread(void *arg);
 
+/* Set by boot thread after all initialization is complete.
+ * Test thread waits for this before starting to avoid races with init. */
+static volatile int g_init_complete = 0;
+
 static void selftest_sequential_runner(void *arg) {
     (void)arg;
+
+    /* Wait for boot thread to finish all initialization.
+     * Without this, the test thread can run while ramfs directories
+     * are still being created, seeing half-initialized entries. */
+    while (!g_init_complete) {
+        extern void fut_schedule(void);
+        fut_schedule();
+    }
+
     fut_multiprocess_test_thread(NULL);
     fut_dup2_test_thread(NULL);
     fut_pipe_test_thread(NULL);
@@ -1763,6 +1776,9 @@ void fut_kernel_main(void) {
      * ======================================== */
 
     fut_printf("[INIT] Kernel init complete. Entering idle loop.\n");
+
+    /* Signal test thread that init is done — safe to access VFS now */
+    g_init_complete = 1;
 
 #if defined(__x86_64__)
     /* Exit the boot thread to let the idle thread take over.

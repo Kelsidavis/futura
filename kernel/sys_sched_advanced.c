@@ -18,8 +18,34 @@
 
 #include <kernel/kprintf.h>
 #include <kernel/uaccess.h>
+#ifdef __x86_64__
+#include <platform/x86_64/memory/paging.h>
+#elif defined(__aarch64__)
+#include <platform/arm64/memory/paging.h>
+#endif
 
 /* SCHED_* constants and struct sched_param provided by sched.h */
+
+/* Kernel-pointer-safe copy helpers: if the pointer is a kernel virtual
+ * address, bypass fut_copy_from/to_user (which assume user pages).     */
+static inline int sched_copy_from_user(void *dst, const void *src, size_t n) {
+#ifdef KERNEL_VIRTUAL_BASE
+    if ((uintptr_t)src >= KERNEL_VIRTUAL_BASE) {
+        __builtin_memcpy(dst, src, n);
+        return 0;
+    }
+#endif
+    return fut_copy_from_user(dst, src, n);
+}
+static inline int sched_copy_to_user(void *dst, const void *src, size_t n) {
+#ifdef KERNEL_VIRTUAL_BASE
+    if ((uintptr_t)dst >= KERNEL_VIRTUAL_BASE) {
+        __builtin_memcpy(dst, src, n);
+        return 0;
+    }
+#endif
+    return fut_copy_to_user(dst, src, n);
+}
 
 /**
  * sys_sched_setparam - Set scheduling parameters
@@ -54,7 +80,7 @@ long sys_sched_setparam(int pid, const struct sched_param *param) {
 
     /* Copy sched_param from userspace before accessing fields */
     struct sched_param kparam;
-    if (fut_copy_from_user(&kparam, param, sizeof(kparam)) != 0) {
+    if (sched_copy_from_user(&kparam, param, sizeof(kparam)) != 0) {
         fut_printf("[SCHED] sched_setparam(pid=%d) -> EFAULT (copy_from_user failed)\n", pid);
         return -EFAULT;
     }
@@ -128,7 +154,7 @@ long sys_sched_getparam(int pid, struct sched_param *param) {
     kparam.sched_priority = thread ? thread->rt_priority : 0;
 
     /* Copy result to userspace */
-    if (fut_copy_to_user(param, &kparam, sizeof(kparam)) != 0) {
+    if (sched_copy_to_user(param, &kparam, sizeof(kparam)) != 0) {
         fut_printf("[SCHED] sched_getparam(pid=%d) -> EFAULT (copy_to_user failed)\n", pid);
         return -EFAULT;
     }
@@ -174,7 +200,7 @@ long sys_sched_setscheduler(int pid, int policy, const struct sched_param *param
 
     /* Copy sched_param from userspace before accessing fields */
     struct sched_param kparam;
-    if (fut_copy_from_user(&kparam, param, sizeof(kparam)) != 0) {
+    if (sched_copy_from_user(&kparam, param, sizeof(kparam)) != 0) {
         fut_printf("[SCHED] sched_setscheduler(pid=%d, policy=%d) -> EFAULT (copy_from_user failed)\n",
                    pid, policy);
         return -EFAULT;

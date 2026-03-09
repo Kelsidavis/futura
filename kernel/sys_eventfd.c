@@ -961,53 +961,230 @@ long sys_eventfd2(unsigned int initval, int flags) {
     return fd;
 }
 
+/* ============================================================
+ * signalfd implementation
+ * ============================================================ */
+
+/* POSIX signalfd_siginfo — 128 bytes exactly as on Linux x86-64 */
+struct signalfd_siginfo {
+    uint32_t ssi_signo;
+    int32_t  ssi_errno;
+    int32_t  ssi_code;
+    uint32_t ssi_pid;
+    uint32_t ssi_uid;
+    int32_t  ssi_fd;
+    uint32_t ssi_tid;
+    uint32_t ssi_band;
+    uint32_t ssi_overrun;
+    uint32_t ssi_trapno;
+    int32_t  ssi_status;
+    int32_t  ssi_int;
+    uint64_t ssi_ptr;
+    uint64_t ssi_utime;
+    uint64_t ssi_stime;
+    uint64_t ssi_addr;
+    uint16_t ssi_addr_lsb;
+    uint16_t __pad2;
+    int32_t  ssi_syscall;
+    uint64_t ssi_call_addr;
+    uint32_t ssi_arch;
+    uint8_t  __pad[28];
+};
+
+struct signalfd_ctx {
+    uint64_t sigmask;           /* Signals this fd will dequeue */
+    fut_task_t *task;           /* Owning task */
+    fut_waitq_t read_waitq;     /* Threads blocked in read() */
+    fut_spinlock_t lock;
+};
+
+struct signalfd_file {
+    struct signalfd_ctx *ctx;
+    struct fut_file *file;
+};
+
+static ssize_t signalfd_read_op(void *inode, void *priv,
+                                void *u_buf, size_t len, off_t *pos);
+static int signalfd_release(void *inode, void *priv);
+
+static const struct fut_file_ops signalfd_fops = {
+    .open    = NULL,
+    .release = signalfd_release,
+    .read    = signalfd_read_op,
+    .write   = NULL,
+    .ioctl   = NULL,
+    .mmap    = NULL,
+};
+
+/* Read pending signals matching ctx->sigmask from task->pending_signals.
+ * Returns one struct signalfd_siginfo (128 bytes) per consumed signal.
+ * Blocks if no matching signals are pending (unless O_NONBLOCK). */
+static ssize_t signalfd_read_op(void *inode, void *priv,
+                                void *u_buf, size_t len, off_t *pos) {
+    (void)inode; (void)pos;
+    struct signalfd_file *sfile = (struct signalfd_file *)priv;
+    if (!sfile || !sfile->ctx) return -EBADF;
+    struct signalfd_ctx *ctx = sfile->ctx;
+    fut_task_t *task = ctx->task;
+    if (!task) return -ESRCH;
+
+    if (len < sizeof(struct signalfd_siginfo)) return -EINVAL;
+
+    ssize_t total = 0;
+    uint8_t *out = (uint8_t *)u_buf;
+    size_t remain = len;
+
+    while (remain >= sizeof(struct signalfd_siginfo)) {
+        /* Find lowest-numbered pending signal in our mask */
+        uint64_t pending;
+        fut_spinlock_acquire(&ctx->lock);
+        pending = task->pending_signals & ctx->sigmask;
+        fut_spinlock_release(&ctx->lock);
+
+        if (!pending) {
+            /* No matching signals */
+            if (total > 0) break;  /* Already returned some - don't block */
+            if (sfile->file && (sfile->file->flags & O_NONBLOCK))
+                return -EAGAIN;
+            /* Block until a matching signal arrives */
+            fut_spinlock_acquire(&ctx->lock);
+            fut_waitq_sleep_locked(&ctx->read_waitq, &ctx->lock, FUT_THREAD_BLOCKED);
+            continue;
+        }
+
+        /* Take lowest set bit */
+        int signo = __builtin_ctzll(pending) + 1;  /* signals are 1-based */
+        uint64_t bit = 1ULL << (signo - 1);
+
+        /* Atomically consume the signal from task->pending_signals */
+        fut_spinlock_acquire(&ctx->lock);
+        /* Re-check: another reader may have taken it */
+        if (!(task->pending_signals & bit)) {
+            fut_spinlock_release(&ctx->lock);
+            continue;
+        }
+        task->pending_signals &= ~bit;
+        fut_spinlock_release(&ctx->lock);
+
+        /* Fill in signalfd_siginfo */
+        struct signalfd_siginfo info;
+        __builtin_memset(&info, 0, sizeof(info));
+        info.ssi_signo = (uint32_t)signo;
+        info.ssi_pid   = (uint32_t)task->pid;
+        info.ssi_uid   = 0;  /* UID not tracked per-task yet */
+
+        if (fut_copy_to_user(out, &info, sizeof(info)) != 0)
+            return total > 0 ? total : -EFAULT;
+
+        out    += sizeof(info);
+        remain -= sizeof(info);
+        total  += (ssize_t)sizeof(info);
+    }
+
+    return total;
+}
+
+static int signalfd_release(void *inode, void *priv) {
+    (void)inode;
+    struct signalfd_file *sfile = (struct signalfd_file *)priv;
+    if (!sfile) return 0;
+    if (sfile->ctx) fut_free(sfile->ctx);
+    fut_free(sfile);
+    return 0;
+}
+
 /**
  * sys_signalfd4 - Create a file descriptor for signal notification
  *
- * @param ufd:     File descriptor to modify (-1 to create new)
- * @param mask:    Signal mask (which signals to receive)
- * @param sizemask: Size of signal mask
- * @param flags:   SFD_CLOEXEC, SFD_NONBLOCK
+ * @param ufd:      -1 to create new fd, or existing signalfd to update its mask
+ * @param mask:     Pointer to signal mask (uint64_t bitmask, sizemask bytes)
+ * @param sizemask: Size of mask in bytes (must be >= 4)
+ * @param flags:    SFD_CLOEXEC, SFD_NONBLOCK
  *
  * signalfd allows receiving signals via read() instead of signal handlers.
  * Useful for integrating signal handling with event loops (epoll).
  *
- * Phase 1: Stub - returns dummy file descriptor
- * Phase 2: Implement signal mask and file operations
- * Phase 3: Integrate with signal delivery mechanism
+ * Phase 1: Stub returning -ENOSYS
+ * Phase 2: Full implementation with signal mask and file operations
  *
  * Returns:
  *   - File descriptor on success
  *   - -EINVAL if flags or mask invalid
- *   - -EMFILE if too many open files
+ *   - -EBADF if ufd does not refer to a signalfd
  */
 long sys_signalfd4(int ufd, const void *mask, size_t sizemask, int flags) {
     fut_task_t *task = fut_task_current();
-    if (!task) {
-        return -ESRCH;
-    }
-
-    fut_printf("[SIGNALFD4] signalfd4(ufd=%d, mask=%p, sizemask=%zu, flags=0x%x)\n",
-               ufd, mask, sizemask, flags);
+    if (!task) return -ESRCH;
 
     /* Validate flags */
     int valid_flags = SFD_CLOEXEC | SFD_NONBLOCK;
-    if (flags & ~valid_flags) {
-        return -EINVAL;
+    if (flags & ~valid_flags) return -EINVAL;
+
+    /* Validate and copy signal mask */
+    if (!mask || sizemask < 4) return -EINVAL;
+    uint64_t sigmask = 0;
+    size_t copy_bytes = (sizemask >= 8) ? 8 : 4;
+    if (fut_copy_from_user(&sigmask, mask, copy_bytes) != 0) return -EFAULT;
+    if (copy_bytes == 4) sigmask &= 0xFFFFFFFFULL;
+
+    /* SIGKILL and SIGSTOP cannot be caught via signalfd */
+    sigmask &= ~((1ULL << (9  - 1)) |   /* SIGKILL */
+                 (1ULL << (19 - 1)));    /* SIGSTOP */
+
+    /* Update-mask case: ufd refers to an existing signalfd */
+    if (ufd != -1) {
+        if (!task->fd_table || ufd < 0 || ufd >= task->max_fds) return -EBADF;
+        struct fut_file *file = task->fd_table[ufd];
+        if (!file || file->chr_ops != &signalfd_fops || !file->chr_private)
+            return -EBADF;
+        struct signalfd_file *sfile = (struct signalfd_file *)file->chr_private;
+        if (!sfile->ctx) return -EBADF;
+        fut_spinlock_acquire(&sfile->ctx->lock);
+        sfile->ctx->sigmask = sigmask;
+        fut_spinlock_release(&sfile->ctx->lock);
+        fut_printf("[SIGNALFD4] signalfd4(ufd=%d, mask=0x%llx) -> mask updated\n",
+                   ufd, (unsigned long long)sigmask);
+        return ufd;
     }
 
-    /* Validate mask */
-    if (!mask && sizemask > 0) {
-        return -EINVAL;
+    /* Create new signalfd */
+    struct signalfd_ctx *ctx = fut_malloc(sizeof(struct signalfd_ctx));
+    if (!ctx) return -ENOMEM;
+    ctx->sigmask = sigmask;
+    ctx->task    = task;
+    fut_spinlock_init(&ctx->lock);
+    fut_waitq_init(&ctx->read_waitq);
+
+    struct signalfd_file *sfile = fut_malloc(sizeof(struct signalfd_file));
+    if (!sfile) {
+        fut_free(ctx);
+        return -ENOMEM;
+    }
+    sfile->ctx  = ctx;
+    sfile->file = NULL;
+
+    int fd = chrdev_alloc_fd(&signalfd_fops, NULL, sfile);
+    if (fd < 0) {
+        fut_free(ctx);
+        fut_free(sfile);
+        return fd;
     }
 
-    /* Phase 1: Return -ENOSYS until properly implemented.
-     * Returning a hardcoded dummy fd (e.g. 11) is dangerous because it can
-     * collide with real file descriptors, causing silent corruption. */
+    /* Attach fut_file pointer back into context */
+    if (task->fd_table && fd >= 0 && fd < task->max_fds)
+        sfile->file = task->fd_table[fd];
 
-    (void)ufd;
-    fut_printf("[SIGNALFD4] signalfd4 not implemented - returning ENOSYS\n");
-    return -ENOSYS;
+    if (!sfile->file) {
+        fut_vfs_close(fd);
+        return -EFAULT;
+    }
+
+    if (flags & SFD_NONBLOCK) sfile->file->flags    |= O_NONBLOCK;
+    if (flags & SFD_CLOEXEC)  sfile->file->fd_flags |= FD_CLOEXEC;
+
+    fut_printf("[SIGNALFD4] signalfd4(mask=0x%llx, flags=0x%x) -> fd=%d\n",
+               (unsigned long long)sigmask, flags, fd);
+    return fd;
 }
 
 /**

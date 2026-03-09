@@ -60,7 +60,7 @@ static void init_main_loop(void) {
         /* Check for messages on control channel */
         if (control_channel) {
             ssize_t received = fut_fipc_recv(control_channel, msg_buffer, sizeof(msg_buffer));
-            if (received > 0) {
+            if (received >= (ssize_t)sizeof(struct fut_fipc_msg)) {
                 struct fut_fipc_msg *msg = (struct fut_fipc_msg *)msg_buffer;
                 init_handle_message(msg);
             }

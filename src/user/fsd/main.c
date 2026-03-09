@@ -767,7 +767,7 @@ static void fsd_main_loop(void) {
         /* Receive message via FIPC syscall */
         long received = sys_fipc_recv(listen_channel_id, msg_buffer, FSD_MSG_BUFFER_SIZE);
 
-        if (received > 0) {
+        if (received >= (long)sizeof(struct fsd_fipc_msg)) {
             struct fsd_fipc_msg *msg = (struct fsd_fipc_msg *)msg_buffer;
 
             /* Route to appropriate handler */

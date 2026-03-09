@@ -94,16 +94,22 @@ static void send_response(uint32_t type, const void *payload, size_t size) {
 /**
  * Handle file operation requests.
  */
-static void handle_file_request(struct fut_fipc_msg *msg) {
+static void handle_file_request(struct fut_fipc_msg *msg, size_t payload_len) {
     if (!msg) return;
 
     switch (msg->type) {
     case POSIXD_MSG_OPEN: {
         /* Open a file */
-        struct posixd_open_req *req = (struct posixd_open_req *)msg->payload;
         struct posixd_open_resp resp = {0};
 
-        if (!req || !req->path[0]) {
+        if (payload_len < sizeof(struct posixd_open_req)) {
+            resp.fd = -EINVAL;
+            send_response(POSIXD_MSG_OPEN, &resp, sizeof(resp));
+            break;
+        }
+        struct posixd_open_req *req = (struct posixd_open_req *)msg->payload;
+
+        if (!req->path[0]) {
             resp.fd = -EINVAL;
         } else {
             /* Call VFS to open the file */
@@ -117,12 +123,12 @@ static void handle_file_request(struct fut_fipc_msg *msg) {
 
     case POSIXD_MSG_CLOSE: {
         /* Close a file descriptor */
-        struct posixd_close_req *req = (struct posixd_close_req *)msg->payload;
         struct posixd_close_resp resp = {0};
 
-        if (!req) {
+        if (payload_len < sizeof(struct posixd_close_req)) {
             resp.result = -EINVAL;
         } else {
+            struct posixd_close_req *req = (struct posixd_close_req *)msg->payload;
             /* Call VFS to close the file */
             resp.result = fut_vfs_close(req->fd);
         }
@@ -133,10 +139,16 @@ static void handle_file_request(struct fut_fipc_msg *msg) {
 
     case POSIXD_MSG_READ: {
         /* Read from file descriptor with optional shared buffer support */
-        struct posixd_read_req *req = (struct posixd_read_req *)msg->payload;
         struct posixd_read_resp resp = {0};
 
-        if (!req || req->count == 0) {
+        if (payload_len < sizeof(struct posixd_read_req)) {
+            resp.bytes_read = -EINVAL;
+            send_response(POSIXD_MSG_READ, &resp, sizeof(resp));
+            break;
+        }
+        struct posixd_read_req *req = (struct posixd_read_req *)msg->payload;
+
+        if (req->count == 0) {
             resp.bytes_read = -EINVAL;
         } else {
             /* Allocate temporary buffer for read data (support up to 64KB) */
@@ -189,10 +201,16 @@ static void handle_file_request(struct fut_fipc_msg *msg) {
 
     case POSIXD_MSG_WRITE: {
         /* Write to file descriptor with optional shared buffer support */
-        struct posixd_write_req *req = (struct posixd_write_req *)msg->payload;
         struct posixd_write_resp resp = {0};
 
-        if (!req || req->count == 0) {
+        if (payload_len < sizeof(struct posixd_write_req)) {
+            resp.bytes_written = -EINVAL;
+            send_response(POSIXD_MSG_WRITE, &resp, sizeof(resp));
+            break;
+        }
+        struct posixd_write_req *req = (struct posixd_write_req *)msg->payload;
+
+        if (req->count == 0) {
             resp.bytes_written = -EINVAL;
         } else {
             uint8_t *data = NULL;
@@ -216,6 +234,13 @@ static void handle_file_request(struct fut_fipc_msg *msg) {
                  * Message payload = [posixd_write_req] [data bytes...]
                  */
                 size_t data_offset = sizeof(struct posixd_write_req);
+
+                /* Validate inline data fits within received message */
+                if (payload_len < data_offset + req->count) {
+                    resp.bytes_written = -EINVAL;
+                    send_response(POSIXD_MSG_WRITE, &resp, sizeof(resp));
+                    return;
+                }
                 data = (uint8_t *)msg->payload + data_offset;
 
                 /* Call VFS to write the file */
@@ -237,17 +262,23 @@ static void handle_file_request(struct fut_fipc_msg *msg) {
 /**
  * Handle directory operation requests.
  */
-static void handle_directory_request(struct fut_fipc_msg *msg) {
+static void handle_directory_request(struct fut_fipc_msg *msg, size_t payload_len) {
     if (!msg) {
         return;
     }
 
     switch (msg->type) {
     case POSIXD_MSG_OPENDIR: {
-        const struct posixd_opendir_req *req = (const struct posixd_opendir_req *)msg->payload;
         struct posixd_opendir_resp resp = { .result = 0, .dir_handle = -1 };
 
-        if (!req || req->path[0] == '\0') {
+        if (payload_len < sizeof(struct posixd_opendir_req)) {
+            resp.result = -EINVAL;
+            send_response(POSIXD_MSG_OPENDIR, &resp, sizeof(resp));
+            break;
+        }
+        const struct posixd_opendir_req *req = (const struct posixd_opendir_req *)msg->payload;
+
+        if (req->path[0] == '\0') {
             resp.result = -EINVAL;
             send_response(POSIXD_MSG_OPENDIR, &resp, sizeof(resp));
             break;
@@ -272,18 +303,18 @@ static void handle_directory_request(struct fut_fipc_msg *msg) {
     }
 
     case POSIXD_MSG_READDIR: {
-        const struct posixd_readdir_req *req = (const struct posixd_readdir_req *)msg->payload;
         struct posixd_readdir_resp resp = {
             .result = 0,
             .has_entry = false,
         };
 
-        if (!req) {
+        if (payload_len < sizeof(struct posixd_readdir_req)) {
             resp.result = -EINVAL;
             send_response(POSIXD_MSG_READDIR, &resp, sizeof(resp));
             break;
         }
 
+        const struct posixd_readdir_req *req = (const struct posixd_readdir_req *)msg->payload;
         struct posixd_dir_handle *dir = dir_find(req->dir_handle);
         if (!dir) {
             resp.result = -ENOENT;
@@ -322,12 +353,12 @@ static void handle_directory_request(struct fut_fipc_msg *msg) {
     }
 
     case POSIXD_MSG_CLOSEDIR: {
-        const struct posixd_closedir_req *req = (const struct posixd_closedir_req *)msg->payload;
         struct posixd_closedir_resp resp = { .result = 0 };
 
-        if (!req) {
+        if (payload_len < sizeof(struct posixd_closedir_req)) {
             resp.result = -EINVAL;
         } else {
+            const struct posixd_closedir_req *req = (const struct posixd_closedir_req *)msg->payload;
             struct posixd_dir_handle *dir = dir_find(req->dir_handle);
             if (!dir) {
                 resp.result = -ENOENT;
@@ -341,12 +372,12 @@ static void handle_directory_request(struct fut_fipc_msg *msg) {
     }
 
     case POSIXD_MSG_MKDIR: {
-        const struct posixd_mkdir_req *req = (const struct posixd_mkdir_req *)msg->payload;
         struct posixd_mkdir_resp resp = { .result = 0 };
 
-        if (!req) {
+        if (payload_len < sizeof(struct posixd_mkdir_req)) {
             resp.result = -EINVAL;
         } else {
+            const struct posixd_mkdir_req *req = (const struct posixd_mkdir_req *)msg->payload;
             resp.result = fut_vfs_mkdir(req->path, req->mode);
         }
 
@@ -355,12 +386,12 @@ static void handle_directory_request(struct fut_fipc_msg *msg) {
     }
 
     case POSIXD_MSG_RMDIR: {
-        const struct posixd_unlink_req *req = (const struct posixd_unlink_req *)msg->payload;
         struct posixd_unlink_resp resp = { .result = 0 };
 
-        if (!req) {
+        if (payload_len < sizeof(struct posixd_unlink_req)) {
             resp.result = -EINVAL;
         } else {
+            const struct posixd_unlink_req *req = (const struct posixd_unlink_req *)msg->payload;
             resp.result = fut_vfs_rmdir(req->path);
         }
 
@@ -369,12 +400,12 @@ static void handle_directory_request(struct fut_fipc_msg *msg) {
     }
 
     case POSIXD_MSG_UNLINK: {
-        const struct posixd_unlink_req *req = (const struct posixd_unlink_req *)msg->payload;
         struct posixd_unlink_resp resp = { .result = 0 };
 
-        if (!req) {
+        if (payload_len < sizeof(struct posixd_unlink_req)) {
             resp.result = -EINVAL;
         } else {
+            const struct posixd_unlink_req *req = (const struct posixd_unlink_req *)msg->payload;
             resp.result = fut_vfs_unlink(req->path);
         }
 
@@ -390,7 +421,7 @@ static void handle_directory_request(struct fut_fipc_msg *msg) {
 /**
  * Handle process management requests.
  */
-static void handle_process_request(struct fut_fipc_msg *msg) {
+static void handle_process_request(struct fut_fipc_msg *msg, size_t payload_len) {
     if (!msg) return;
 
     switch (msg->type) {
@@ -416,26 +447,22 @@ static void handle_process_request(struct fut_fipc_msg *msg) {
 
     case POSIXD_MSG_EXEC: {
         /* Handle exec request: Load executable from filesystem with arguments */
-        struct posixd_exec_req *req = (struct posixd_exec_req *)msg->payload;
         struct posixd_exec_resp resp = {0};
 
-        if (!req || !req->path[0]) {
+        if (payload_len < sizeof(struct posixd_exec_req)) {
+            resp.result = -EINVAL;
+            send_response(POSIXD_MSG_EXEC, &resp, sizeof(resp));
+            break;
+        }
+        struct posixd_exec_req *req = (struct posixd_exec_req *)msg->payload;
+
+        if (!req->path[0]) {
             resp.result = -EINVAL;
             send_response(POSIXD_MSG_EXEC, &resp, sizeof(resp));
             break;
         }
 
-        /* Parse argv and envp from message payload
-         * Message layout:
-         *   [posixd_exec_req] (contains argc, envc)
-         *   [argv string 0, argv string 1, ..., argv string argc-1]
-         *   [envp string 0, envp string 1, ..., envp string envc-1]
-         *
-         * Each string is null-terminated, and we build arrays of pointers to them.
-         */
-
-        /* Allocate arrays on stack (safe for modest argc/envc)
-         * Add 1 for NULL terminator in each array */
+        /* Allocate arrays on stack (safe for modest argc/envc) */
         #define MAX_ARGS 256
         char *argv_ptrs[MAX_ARGS] = {0};
         char *envp_ptrs[MAX_ARGS] = {0};
@@ -447,36 +474,56 @@ static void handle_process_request(struct fut_fipc_msg *msg) {
             break;
         }
 
-        /* Calculate where strings start in the message payload.
-         * Strings start right after the posixd_exec_req structure.
-         * Note: We can't use sizeof(posixd_exec_req) directly due to padding,
-         * so we calculate based on known offsets.
-         */
+        /* Strings start after the exec_req header in the payload */
         size_t req_header_size = sizeof(char) * POSIX_PATH_MAX + sizeof(int) * 2;
+        if (payload_len < req_header_size) {
+            resp.result = -EINVAL;
+            send_response(POSIXD_MSG_EXEC, &resp, sizeof(resp));
+            break;
+        }
         char *strings_start = (char *)msg->payload + req_header_size;
+        char *strings_end = (char *)msg->payload + payload_len;
         char *current_str = strings_start;
 
-        /* Parse argv strings */
+        /* Parse argv strings with bounds checking */
         for (int i = 0; i < req->argc; i++) {
+            if (current_str >= strings_end) {
+                resp.result = -EINVAL;
+                send_response(POSIXD_MSG_EXEC, &resp, sizeof(resp));
+                goto exec_done;
+            }
             argv_ptrs[i] = current_str;
-            /* Find next null terminator */
-            while (*current_str != '\0') {
+            while (current_str < strings_end && *current_str != '\0') {
                 current_str++;
             }
-            current_str++;  /* Skip the null terminator */
+            if (current_str >= strings_end) {
+                resp.result = -EINVAL;
+                send_response(POSIXD_MSG_EXEC, &resp, sizeof(resp));
+                goto exec_done;
+            }
+            current_str++;  /* Skip null terminator */
         }
-        argv_ptrs[req->argc] = NULL;  /* NULL terminate argv array */
+        argv_ptrs[req->argc] = NULL;
 
-        /* Parse envp strings */
+        /* Parse envp strings with bounds checking */
         for (int i = 0; i < req->envc; i++) {
+            if (current_str >= strings_end) {
+                resp.result = -EINVAL;
+                send_response(POSIXD_MSG_EXEC, &resp, sizeof(resp));
+                goto exec_done;
+            }
             envp_ptrs[i] = current_str;
-            /* Find next null terminator */
-            while (*current_str != '\0') {
+            while (current_str < strings_end && *current_str != '\0') {
                 current_str++;
             }
-            current_str++;  /* Skip the null terminator */
+            if (current_str >= strings_end) {
+                resp.result = -EINVAL;
+                send_response(POSIXD_MSG_EXEC, &resp, sizeof(resp));
+                goto exec_done;
+            }
+            current_str++;  /* Skip null terminator */
         }
-        envp_ptrs[req->envc] = NULL;  /* NULL terminate envp array */
+        envp_ptrs[req->envc] = NULL;
 
         /* Call kernel execve with parsed arguments and environment */
         extern long sys_execve_call(const char *pathname, char *const *argv, char *const *envp);
@@ -489,23 +536,23 @@ static void handle_process_request(struct fut_fipc_msg *msg) {
         /* execve doesn't return on success; only on error */
         resp.result = (int)exec_result;
         send_response(POSIXD_MSG_EXEC, &resp, sizeof(resp));
+    exec_done:
         break;
     }
 
     case POSIXD_MSG_WAIT: {
         /* Handle wait request: Block until child exits */
-        struct posixd_wait_req *req = (struct posixd_wait_req *)msg->payload;
         struct posixd_wait_resp resp = {0};
 
-        if (!req) {
+        if (payload_len < sizeof(struct posixd_wait_req)) {
             resp.pid = -EINVAL;
             send_response(POSIXD_MSG_WAIT, &resp, sizeof(resp));
             break;
         }
 
-        /* Call kernel wait4 syscall via syscall wrapper
-         * wait4(pid, &status, options, NULL)
-         */
+        struct posixd_wait_req *req = (struct posixd_wait_req *)msg->payload;
+
+        /* Call kernel wait4 syscall via syscall wrapper */
         extern long sys_wait4_call(long pid, int *wstatus, long options, void *rusage);
         int status = 0;
         long wait_result = sys_wait4_call((long)req->pid, &status, (long)req->options, NULL);
@@ -524,14 +571,13 @@ static void handle_process_request(struct fut_fipc_msg *msg) {
 
     case POSIXD_MSG_EXIT: {
         /* Handle exit request: Terminate current process */
-        struct posixd_exit_req *req = (struct posixd_exit_req *)msg->payload;
-
-        if (!req) {
+        if (payload_len < sizeof(struct posixd_exit_req)) {
             extern long sys_exit(long code);
             sys_exit(-EINVAL);
             return;  /* Never reached */
         }
 
+        struct posixd_exit_req *req = (struct posixd_exit_req *)msg->payload;
         /* Call kernel exit syscall - this terminates the process */
         extern long sys_exit(long code);
         sys_exit((long)req->status);
@@ -555,16 +601,17 @@ static void posixd_main_loop(void) {
         /* Wait for incoming requests */
         if (listen_channel) {
             ssize_t received = fut_fipc_recv(listen_channel, msg_buffer, sizeof(msg_buffer));
-            if (received > 0) {
+            if (received >= (ssize_t)sizeof(struct fut_fipc_msg)) {
                 struct fut_fipc_msg *msg = (struct fut_fipc_msg *)msg_buffer;
+                size_t payload_len = (size_t)received - sizeof(struct fut_fipc_msg);
 
                 /* Route based on message type */
                 if (msg->type >= POSIXD_MSG_OPEN && msg->type <= POSIXD_MSG_LSEEK) {
-                    handle_file_request(msg);
+                    handle_file_request(msg, payload_len);
                 } else if (msg->type >= POSIXD_MSG_OPENDIR && msg->type <= POSIXD_MSG_UNLINK) {
-                    handle_directory_request(msg);
+                    handle_directory_request(msg, payload_len);
                 } else if (msg->type >= POSIXD_MSG_FORK && msg->type <= POSIXD_MSG_GETPID) {
-                    handle_process_request(msg);
+                    handle_process_request(msg, payload_len);
                 }
             }
         }

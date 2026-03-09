@@ -20,11 +20,11 @@
 #endif
 /* lapic_send_eoi provided by lapic.h for x86_64 */
 
-/* hal_outb, hal_inb provided by platform/platform.h */
-
-/* Convenience wrappers to match expected names */
+#if defined(__x86_64__)
+/* hal_outb, hal_inb provided by platform/platform.h (x86_64 I/O ports only) */
 static inline void outb(uint16_t port, uint8_t val) { hal_outb(port, val); }
 static inline uint8_t inb(uint16_t port) { return hal_inb(port); }
+#endif
 
 /* External declarations */
 #include <kernel/kprintf.h>

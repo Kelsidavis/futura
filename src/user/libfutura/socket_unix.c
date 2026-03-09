@@ -25,7 +25,7 @@ static inline long sys_socket(int domain, int type, int protocol) {
     __asm__ volatile("syscall"
                      : "=a"(ret)
                      : "0"(__NR_socket), "D"((long)domain), "S"((long)type), "d"((long)protocol)
-                     : "rcx", "r11", "memory");
+                     : "rcx", "r11", "r15", "memory");
     return ret;
 }
 
@@ -34,7 +34,7 @@ static inline long sys_bind(int sockfd, const void *addr, uint32_t addrlen) {
     __asm__ volatile("syscall"
                      : "=a"(ret)
                      : "0"(__NR_bind), "D"((long)sockfd), "S"((long)addr), "d"((long)addrlen)
-                     : "rcx", "r11", "memory");
+                     : "rcx", "r11", "r15", "memory");
     return ret;
 }
 
@@ -43,7 +43,7 @@ static inline long sys_listen(int sockfd, int backlog) {
     __asm__ volatile("syscall"
                      : "=a"(ret)
                      : "0"(__NR_listen), "D"((long)sockfd), "S"((long)backlog)
-                     : "rcx", "r11", "memory");
+                     : "rcx", "r11", "r15", "memory");
     return ret;
 }
 
@@ -52,7 +52,7 @@ static inline long sys_accept(int sockfd, void *addr, uint32_t *addrlen) {
     __asm__ volatile("syscall"
                      : "=a"(ret)
                      : "0"(__NR_accept), "D"((long)sockfd), "S"((long)addr), "d"((long)addrlen)
-                     : "rcx", "r11", "memory");
+                     : "rcx", "r11", "r15", "memory");
     return ret;
 }
 
@@ -61,7 +61,7 @@ static inline long sys_sendmsg(int sockfd, const void *msg, int flags) {
     __asm__ volatile("syscall"
                      : "=a"(ret)
                      : "0"(__NR_sendmsg), "D"((long)sockfd), "S"((long)msg), "d"((long)flags)
-                     : "rcx", "r11", "memory");
+                     : "rcx", "r11", "r15", "memory");
     return ret;
 }
 
@@ -70,7 +70,7 @@ static inline long sys_recvmsg(int sockfd, void *msg, int flags) {
     __asm__ volatile("syscall"
                      : "=a"(ret)
                      : "0"(__NR_recvmsg), "D"((long)sockfd), "S"((long)msg), "d"((long)flags)
-                     : "rcx", "r11", "memory");
+                     : "rcx", "r11", "r15", "memory");
     return ret;
 }
 
@@ -79,7 +79,7 @@ static inline long sys_connect(int sockfd, const void *addr, uint32_t addrlen) {
     __asm__ volatile("syscall"
                      : "=a"(ret)
                      : "0"(__NR_connect), "D"((long)sockfd), "S"((long)addr), "d"((long)addrlen)
-                     : "rcx", "r11", "memory");
+                     : "rcx", "r11", "r15", "memory");
     return ret;
 }
 

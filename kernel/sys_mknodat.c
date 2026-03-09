@@ -294,16 +294,15 @@ long sys_mknodat(int dirfd, const char *pathname, uint32_t mode, uint32_t dev) {
 
     int ret = 0;
 
-    /* Regular file (S_IFREG or type 0): create via VFS open with O_CREAT|O_EXCL */
+    /* Regular file (S_IFREG or type 0): create directly via VFS without fd allocation */
     if (file_type == S_IFREG || file_type == 0) {
-        int fd = fut_vfs_open(path_buf, O_CREAT | O_EXCL | O_WRONLY, (int)(local_mode & 0777));
-        if (fd < 0) {
+        int ret = fut_vfs_create_file(path_buf, local_mode & 0777);
+        if (ret < 0) {
             fut_printf("[MKNODAT] mknodat(dirfd=%s, pathname='%s', type=%s, mode=0%o, pid=%d) -> %d "
-                       "(VFS open failed)\n",
-                       dirfd_desc, path_buf, type_desc, local_mode & 0777, task->pid, fd);
-            return (long)fd;
+                       "(VFS create failed)\n",
+                       dirfd_desc, path_buf, type_desc, local_mode & 0777, task->pid, ret);
+            return (long)ret;
         }
-        fut_vfs_close(fd);
         fut_printf("[MKNODAT] mknodat(dirfd=%s, pathname='%s', type=%s, mode=0%o, pid=%d) -> 0 "
                    "(regular file created)\n",
                    dirfd_desc, path_buf, type_desc, local_mode & 0777, task->pid);

@@ -770,6 +770,7 @@ int fut_vfs_rmdir(const char *path);
  * @return 0 on success or negative error code on failure
  */
 int fut_vfs_mkdir(const char *path, uint32_t mode);
+int fut_vfs_create_file(const char *path, uint32_t mode);
 
 /**
  * Sync all cached data for a specific filesystem.

@@ -991,6 +991,52 @@ int fut_vfs_mkdir(const char *path, uint32_t mode) {
     return ret;
 }
 
+/**
+ * fut_vfs_create_file() - Create a regular file without opening it
+ *
+ * Creates a regular file in the VFS without allocating a file descriptor.
+ * Used by sys_mknodat to create files without fd table side effects.
+ *
+ * @param path  Absolute path for the new file
+ * @param mode  File permission bits (will be masked with umask)
+ * @return 0 on success, negative error code on failure
+ */
+int fut_vfs_create_file(const char *path, uint32_t mode) {
+    struct fut_vnode *parent = NULL;
+    char *leaf = fut_malloc(FUT_VFS_NAME_MAX + 1);
+    if (!leaf) {
+        return -ENOMEM;
+    }
+
+    int ret = lookup_parent_and_name(path, &parent, leaf);
+    if (ret < 0) {
+        fut_free(leaf);
+        return ret;
+    }
+
+    if (!parent->ops || !parent->ops->create) {
+        release_lookup_ref(parent);
+        fut_free(leaf);
+        return -ENOSYS;
+    }
+
+    struct fut_vnode *new_node = NULL;
+    int create_ret = parent->ops->create(parent, leaf, mode, &new_node);
+    release_lookup_ref(parent);
+    fut_free(leaf);
+
+    if (create_ret < 0) {
+        return create_ret;
+    }
+
+    /* Release the caller's reference - the directory entry holds its own reference */
+    if (new_node) {
+        fut_vnode_unref(new_node);
+    }
+
+    return 0;
+}
+
 /* ============================================================
  *   File Descriptor Management
  * ============================================================ */

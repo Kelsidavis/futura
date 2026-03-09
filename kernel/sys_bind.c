@@ -74,10 +74,10 @@
  * Impact: Denial of service, service impersonation, privilege escalation
  * Root Cause: Missing capability check for ports < 1024
  *
- * Defense (TODO - not yet implemented):
+ * Defense (IMPLEMENTED - see lines 408-414, 434-440):
  * - Check task capabilities for port < 1024
  * - Require CAP_NET_BIND_SERVICE for privileged ports
- * - Current code at lines 48-57 categorizes ports but doesn't enforce
+ * - Returns -EACCES if capability not present
  *
  * CVE References:
  * - CVE-2020-8835: Linux privilege escalation via capability bypass
@@ -93,11 +93,10 @@
  * Impact: Arbitrary file creation/overwrite, privilege escalation
  * Root Cause: No path canonicalization or directory traversal checks
  *
- * Defense (TODO - not yet implemented):
- * - Canonicalize Unix domain socket paths
- * - Reject paths containing ".." components
- * - Validate path doesn't escape allowed directories
- * - Check write permission on parent directory
+ * Defense (PARTIALLY IMPLEMENTED - see lines 502-540):
+ * - [DONE] Reject paths containing ".." components
+ * - [DONE] Validate path doesn't escape allowed directories
+ * - [TODO] Check write permission on parent directory
  *
  * CVE References:
  * - CVE-2014-0196: Linux TTY layer race condition

@@ -95,11 +95,10 @@
  * Impact: Unauthorized access, privilege escalation, information disclosure
  * Root Cause: No path canonicalization or bounds checking
  *
- * Defense (TODO - not yet implemented):
- * - Canonicalize Unix domain socket paths
- * - Reject paths containing ".." components
- * - Validate path is within allowed directories
- * - Sandbox path resolution
+ * Defense (IMPLEMENTED - see lines 459-497):
+ * - [DONE] Reject paths containing ".." components
+ * - [DONE] Validate path is within allowed directories
+ * - [TODO] Full path canonicalization and sandboxing
  *
  * CVE References:
  * - CVE-2018-6555: Path traversal in Unix sockets

@@ -115,7 +115,7 @@ long sys_symlinkat(const char *target, int newdirfd, const char *linkpath) {
 
     /* Copy target from userspace */
     char target_buf[256];
-    if (fut_copy_from_user(target_buf, local_target, sizeof(target_buf) - 1) != 0) {
+    if (fut_copy_from_user(target_buf, local_target, sizeof(target_buf)) != 0) {
         fut_printf("[SYMLINKAT] symlinkat(newdirfd=%d) -> EFAULT (copy_from_user target failed)\n",
                    local_newdirfd);
         return -EFAULT;
@@ -129,7 +129,7 @@ long sys_symlinkat(const char *target, int newdirfd, const char *linkpath) {
 
     /* Copy linkpath from userspace */
     char linkpath_buf[256];
-    if (fut_copy_from_user(linkpath_buf, local_linkpath, sizeof(linkpath_buf) - 1) != 0) {
+    if (fut_copy_from_user(linkpath_buf, local_linkpath, sizeof(linkpath_buf)) != 0) {
         fut_printf("[SYMLINKAT] symlinkat(newdirfd=%d) -> EFAULT (copy_from_user linkpath failed)\n",
                    local_newdirfd);
         return -EFAULT;

@@ -45,15 +45,21 @@
  * Phase 4: Advanced flags (O_TMPFILE, O_DIRECT, etc.)
  */
 long sys_openat(int dirfd, const char *pathname, int flags, int mode) {
+    /* ARM64 FIX: Copy parameters to local variables to survive blocking calls */
+    int local_dirfd = dirfd;
+    const char *local_pathname = pathname;
+    int local_flags = flags;
+    int local_mode = mode;
+
     fut_task_t *task = fut_task_current();
     if (!task) {
         return -ESRCH;
     }
 
     /* Phase 2: Validate pathname pointer */
-    if (!pathname) {
+    if (!local_pathname) {
         fut_printf("[OPENAT] openat(dirfd=%d, pathname=NULL, flags=0x%x, mode=0%o) -> EFAULT\n",
-                   dirfd, flags, mode);
+                   local_dirfd, local_flags, local_mode);
         return -EFAULT;
     }
 
@@ -85,10 +91,10 @@ long sys_openat(int dirfd, const char *pathname, int flags, int mode) {
      * - Return -ENAMETOOLONG if truncation detected
      */
     char kpath[256];
-    int rc = copy_user_string(pathname, kpath, sizeof(kpath));
+    int rc = copy_user_string(local_pathname, kpath, sizeof(kpath));
     if (rc != 0) {
         fut_printf("[OPENAT] openat(dirfd=%d, pathname=?, flags=0x%x, mode=0%o) -> %d (copy failed)\n",
-                   dirfd, flags, mode, rc);
+                   local_dirfd, local_flags, local_mode, rc);
         return rc;
     }
 
@@ -97,7 +103,7 @@ long sys_openat(int dirfd, const char *pathname, int flags, int mode) {
     if (memchr(kpath, '\0', sizeof(kpath)) == NULL) {
         fut_printf("[OPENAT] openat(dirfd=%d, pathname=<truncated>, flags=0x%x, mode=0%o) -> ENAMETOOLONG "
                    "(path exceeds %zu bytes, truncation detected, Phase 5)\n",
-                   dirfd, flags, mode, sizeof(kpath) - 1);
+                   local_dirfd, local_flags, local_mode, sizeof(kpath) - 1);
         return -ENAMETOOLONG;
     }
 
@@ -105,9 +111,9 @@ long sys_openat(int dirfd, const char *pathname, int flags, int mode) {
     const char *dirfd_desc;
     const char *path_type;
 
-    if (dirfd == AT_FDCWD) {
+    if (local_dirfd == AT_FDCWD) {
         dirfd_desc = "AT_FDCWD (current directory)";
-    } else if (dirfd >= 0) {
+    } else if (local_dirfd >= 0) {
         dirfd_desc = "real fd";
     } else {
         dirfd_desc = "invalid fd";
@@ -120,7 +126,7 @@ long sys_openat(int dirfd, const char *pathname, int flags, int mode) {
     }
 
     /* Phase 2: Analyze access mode */
-    int access_mode = flags & O_ACCMODE;
+    int access_mode = local_flags & O_ACCMODE;
     const char *access_desc;
 
     switch (access_mode) {
@@ -141,8 +147,8 @@ long sys_openat(int dirfd, const char *pathname, int flags, int mode) {
     /* Phase 2: Categorize creation flags */
     const char *creation_desc;
 
-    if (flags & O_CREAT) {
-        if (flags & O_EXCL) {
+    if (local_flags & O_CREAT) {
+        if (local_flags & O_EXCL) {
             creation_desc = "create exclusive (fail if exists)";
         } else {
             creation_desc = "create if missing";
@@ -155,51 +161,51 @@ long sys_openat(int dirfd, const char *pathname, int flags, int mode) {
     const char *behavior_desc;
 
     /* Identify primary behavior flags for diagnostic purposes */
-    if ((flags & (O_TRUNC | O_APPEND | O_NONBLOCK | O_SYNC | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC | O_PATH)) == 0) {
+    if ((local_flags & (O_TRUNC | O_APPEND | O_NONBLOCK | O_SYNC | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC | O_PATH)) == 0) {
         behavior_desc = "none";
-    } else if (flags & O_TRUNC) {
+    } else if (local_flags & O_TRUNC) {
         behavior_desc = "truncate";
-    } else if (flags & O_APPEND) {
+    } else if (local_flags & O_APPEND) {
         behavior_desc = "append";
-    } else if (flags & O_DIRECTORY) {
+    } else if (local_flags & O_DIRECTORY) {
         behavior_desc = "directory";
-    } else if (flags & O_CLOEXEC) {
+    } else if (local_flags & O_CLOEXEC) {
         behavior_desc = "cloexec";
-    } else if (flags & O_NONBLOCK) {
+    } else if (local_flags & O_NONBLOCK) {
         behavior_desc = "nonblock";
-    } else if (flags & O_SYNC) {
+    } else if (local_flags & O_SYNC) {
         behavior_desc = "sync";
-    } else if (flags & O_NOFOLLOW) {
+    } else if (local_flags & O_NOFOLLOW) {
         behavior_desc = "nofollow";
-    } else if (flags & O_PATH) {
+    } else if (local_flags & O_PATH) {
         behavior_desc = "path";
     } else {
         behavior_desc = "multiple";
     }
 
     /* Phase 2: Validate dirfd for relative paths */
-    if (dirfd != AT_FDCWD && kpath[0] != '/') {
+    if (local_dirfd != AT_FDCWD && kpath[0] != '/') {
         /* Relative path with real dirfd not yet supported in Phase 2 */
         fut_printf("[OPENAT] openat(dirfd=%d [%s], path='%s' [%s], flags=0x%x [%s, %s], mode=0%o) "
                    "-> ENOTSUP (real dirfd not yet supported, Phase 3: dirfd validation)\n",
-                   dirfd, dirfd_desc, kpath, path_type, flags, access_desc, creation_desc, mode);
+                   local_dirfd, dirfd_desc, kpath, path_type, local_flags, access_desc, creation_desc, local_mode);
         return -ENOTSUP;
     }
 
     /* Open via VFS */
-    int result = fut_vfs_open(kpath, flags, mode);
+    int result = fut_vfs_open(kpath, local_flags, local_mode);
 
     /* Phase 2: Detailed logging with flag categorization */
     if (result >= 0) {
         fut_printf("[OPENAT] openat(dirfd=%d [%s], path='%s' [%s], flags=0x%x [%s, %s, behavior: %s], mode=0%o) "
                    "-> %d (Phase 3: dirfd validation, AT_FDCWD)\n",
-                   dirfd, dirfd_desc, kpath, path_type, flags, access_desc, creation_desc,
-                   behavior_desc, mode, result);
+                   local_dirfd, dirfd_desc, kpath, path_type, local_flags, access_desc, creation_desc,
+                   behavior_desc, local_mode, result);
     } else {
         fut_printf("[OPENAT] openat(dirfd=%d [%s], path='%s' [%s], flags=0x%x [%s, %s, behavior: %s], mode=0%o) "
                    "-> %d (%s, Phase 3: dirfd validation)\n",
-                   dirfd, dirfd_desc, kpath, path_type, flags, access_desc, creation_desc,
-                   behavior_desc, mode, result,
+                   local_dirfd, dirfd_desc, kpath, path_type, local_flags, access_desc, creation_desc,
+                   behavior_desc, local_mode, result,
                    (result == -ENOENT) ? "not found" :
                    (result == -EACCES) ? "access denied" :
                    (result == -EEXIST) ? "already exists" :

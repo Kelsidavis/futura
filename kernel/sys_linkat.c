@@ -134,7 +134,7 @@ long sys_linkat(int olddirfd, const char *oldpath, int newdirfd, const char *new
 
     /* Copy oldpath from userspace */
     char oldpath_buf[256];
-    if (fut_copy_from_user(oldpath_buf, local_oldpath, sizeof(oldpath_buf) - 1) != 0) {
+    if (fut_copy_from_user(oldpath_buf, local_oldpath, sizeof(oldpath_buf)) != 0) {
         fut_printf("[LINKAT] linkat(olddirfd=%d) -> EFAULT (copy_from_user oldpath failed)\n",
                    local_olddirfd);
         return -EFAULT;
@@ -148,7 +148,7 @@ long sys_linkat(int olddirfd, const char *oldpath, int newdirfd, const char *new
 
     /* Copy newpath from userspace */
     char newpath_buf[256];
-    if (fut_copy_from_user(newpath_buf, local_newpath, sizeof(newpath_buf) - 1) != 0) {
+    if (fut_copy_from_user(newpath_buf, local_newpath, sizeof(newpath_buf)) != 0) {
         fut_printf("[LINKAT] linkat(newdirfd=%d) -> EFAULT (copy_from_user newpath failed)\n",
                    local_newdirfd);
         return -EFAULT;

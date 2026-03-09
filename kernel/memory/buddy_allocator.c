@@ -278,7 +278,16 @@ void buddy_heap_init(uintptr_t start, uintptr_t end) {
 void *buddy_malloc(size_t size) {
     if (size == 0) return NULL;
 
-    /* Account for block header */
+    /* Account for block header, with overflow check.
+     * Phase 5: Without this check, a near-SIZE_MAX size wraps around to a small
+     * value, causing size_to_order() to return a small order. The caller gets
+     * back a tiny allocation but believes it has 'size' bytes, enabling a
+     * heap buffer overflow that can overwrite adjacent allocations. */
+    if (size > SIZE_MAX - sizeof(block_hdr_t)) {
+        BUDDY_DEBUG_PRINTF("[BUDDY-MALLOC] FAILED: size=%llu would overflow with header\n",
+                   (unsigned long long)size);
+        return NULL;
+    }
     size_t needed = size + sizeof(block_hdr_t);
     int order = size_to_order(needed);
 
@@ -306,7 +315,8 @@ void *buddy_malloc(size_t size) {
             candidate = NULL;
         }
 
-        /* Debug: list all blocks in this free list */
+        /* Debug: list all blocks in this free list (only when verbose debug enabled) */
+#ifdef BUDDY_VERBOSE_DEBUG
         int block_count = 0;
         free_block_t *tmp = candidate;
         while (tmp) {
@@ -322,6 +332,7 @@ void *buddy_malloc(size_t size) {
         if (block_count > 0) {
             BUDDY_DEBUG_PRINTF("[BUDDY-MALLOC] Order %d has %d free blocks\n", search_order, block_count);
         }
+#endif
 
         if (candidate != NULL) {
             BUDDY_DEBUG_PRINTF("[BUDDY-MALLOC] Found free block at order %d (size %llu) candidate=%p\n",

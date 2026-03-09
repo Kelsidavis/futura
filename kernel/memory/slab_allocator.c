@@ -390,6 +390,10 @@ void slab_free(void *ptr) {
                 /* Found the slab - NOW it's safe to access the header */
                 /* Validate object */
                 if (!obj->is_allocated) {
+                    /* Phase 5: Log double-free attempts to aid debugging.
+                     * Silent double-frees can mask use-after-free bugs. */
+                    fut_printf("[SLAB-FREE] WARNING: Double-free detected for ptr=%p in slab %p (cache_size=%zu)\n",
+                               ptr, (void*)slab, SLAB_SIZES[i]);
                     return;  /* Double free */
                 }
 
@@ -423,6 +427,12 @@ void *slab_realloc(void *ptr, size_t new_size) {
     for (size_t i = 0; i < NUM_SLAB_SIZES; i++) {
         slab_cache_t *cache = &slab_caches[i];
         for (slab_t *slab = cache->slabs; slab; slab = slab->next) {
+            /* Phase 5: Validate slab integrity before accessing data pointer.
+             * Without this check, a corrupted slab->data could cause an
+             * out-of-bounds read when computing slab_end. */
+            if (!slab_is_valid(slab)) {
+                continue;
+            }
             uint8_t *slab_start = slab->data;
             uint8_t *slab_end = slab->data + (slab->obj_count * slab->obj_size);
             if ((uint8_t *)obj >= slab_start && (uint8_t *)obj < slab_end) {

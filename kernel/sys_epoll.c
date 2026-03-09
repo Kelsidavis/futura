@@ -1091,8 +1091,18 @@ long sys_epoll_ctl(int epfd, int op, int fd, struct epoll_event *event) {
         /* Find and modify the entry */
         for (int i = 0; i < MAX_EPOLL_FDS; i++) {
             if (set->fds[i].registered && set->fds[i].fd == fd) {
-                set->fds[i].events = ev.events;
                 set->fds[i].data = ev.data.u64;
+
+                /* Phase 5: Update edge-triggered and oneshot flags on MOD
+                 * (must mirror EPOLL_CTL_ADD logic to avoid stale modifier state) */
+                set->fds[i].edge_triggered = (ev.events & EPOLL_ET) != 0;
+                set->fds[i].oneshot = (ev.events & EPOLL_ONESHOT) != 0;
+                set->fds[i].last_was_readable = false;
+                set->fds[i].last_was_writable = false;
+
+                /* Strip modifier flags from events for actual event checking */
+                uint32_t base_events = ev.events & ~(EPOLL_ET | EPOLL_ONESHOT);
+                set->fds[i].events = base_events;
 
                 /* Phase 2: Categorize events */
                 char events_desc[128];
@@ -1699,10 +1709,13 @@ long sys_epoll_wait(int epfd, struct epoll_event *events, int maxevents, int tim
         /* Sleep on epoll waitqueue - socket sends and new connections will wake us.
          * For positive timeouts, start a timer to wake us if no events arrive. */
         if (timeout > 0) {
-            uint64_t remaining = deadline_ticks - fut_get_ticks();
-            if (remaining > 0) {
-                fut_timer_start(remaining, epoll_timeout_wakeup, &set->epoll_waitq);
+            uint64_t now = fut_get_ticks();
+            /* Phase 5: Guard against underflow if ticks raced past deadline */
+            if (now >= deadline_ticks) {
+                return 0;  /* Timeout already expired */
             }
+            uint64_t remaining = deadline_ticks - now;
+            fut_timer_start(remaining, epoll_timeout_wakeup, &set->epoll_waitq);
         }
         fut_waitq_sleep_locked(&set->epoll_waitq, NULL, FUT_THREAD_BLOCKED);
         /* Cancel any outstanding timeout timer (harmless if already fired) */

@@ -828,9 +828,9 @@ long sys_eventfd2(unsigned int initval, int flags) {
     }
     if (!file) {
         fut_printf("[EVENTFD2] BUG: newly created fd %d missing file\n", fd);
+        /* Phase 5: fut_vfs_close calls eventfd_release which frees ctx and efile.
+         * Do NOT free them again here to avoid double-free. */
         fut_vfs_close(fd);
-        eventfd_ctx_destroy(ctx);
-        fut_free(efile);
         return -EFAULT;
     }
     efile->file = file;
@@ -957,7 +957,10 @@ static void timerfd_timer_cb(void *arg) {
     if (!ctx) return;
 
     fut_spinlock_acquire(&ctx->lock);
-    ctx->counter++;
+    /* Phase 5: Cap counter at UINT64_MAX to prevent overflow/wraparound */
+    if (ctx->counter < UINT64_MAX) {
+        ctx->counter++;
+    }
 
     /* Re-arm if interval is set */
     if (ctx->interval_ms > 0) {
@@ -1107,9 +1110,9 @@ long sys_timerfd_create(int clockid, int flags) {
         file = task->fd_table[fd];
     }
     if (!file) {
+        /* Phase 5: fut_vfs_close calls timerfd_release which frees ctx and tfile.
+         * Do NOT free them again here to avoid double-free. */
         fut_vfs_close(fd);
-        fut_free(tfile);
-        fut_free(ctx);
         return -EFAULT;
     }
     tfile->file = file;
@@ -1168,7 +1171,10 @@ long sys_timerfd_settime(int ufd, int flags,
             old_its.it_value.tv_sec = (long)(remain / 1000);
             old_its.it_value.tv_nsec = (long)((remain % 1000) * 1000000);
         }
-        fut_copy_to_user(old_value, &old_its, sizeof(old_its));
+        /* Phase 5: Check copy_to_user return to avoid silently ignoring EFAULT */
+        if (fut_copy_to_user(old_value, &old_its, sizeof(old_its)) != 0) {
+            return -EFAULT;
+        }
     }
 
     uint64_t value_ms = timespec_to_ms(&kits.it_value);

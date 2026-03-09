@@ -165,23 +165,29 @@
  * Phase 3: Device node creation deferred (requires capability checks)
  */
 long sys_mknodat(int dirfd, const char *pathname, uint32_t mode, uint32_t dev) {
+    /* ARM64 FIX: Copy parameters to local variables to survive blocking calls */
+    int local_dirfd = dirfd;
+    const char *local_pathname = pathname;
+    uint32_t local_mode = mode;
+    uint32_t local_dev = dev;
+
     fut_task_t *task = fut_task_current();
     if (!task) {
         return -ESRCH;
     }
 
     /* Phase 2: Validate pathname pointer */
-    if (!pathname) {
+    if (!local_pathname) {
         fut_printf("[MKNODAT] mknodat(dirfd=%d, pathname=NULL, mode=0%o, dev=0x%x, pid=%d) -> EFAULT\n",
-                   dirfd, mode, dev, task->pid);
+                   local_dirfd, local_mode, local_dev, task->pid);
         return -EFAULT;
     }
 
     /* Phase 2: Copy pathname from userspace to kernel space */
     char path_buf[FUT_VFS_PATH_BUFFER_SIZE];
-    if (fut_copy_from_user(path_buf, pathname, sizeof(path_buf) - 1) != 0) {
+    if (fut_copy_from_user(path_buf, local_pathname, sizeof(path_buf)) != 0) {
         fut_printf("[MKNODAT] mknodat(dirfd=%d, pathname=?, mode=0%o, dev=0x%x, pid=%d) -> EFAULT "
-                   "(pathname copy_from_user failed)\n", dirfd, mode, dev, task->pid);
+                   "(pathname copy_from_user failed)\n", local_dirfd, local_mode, local_dev, task->pid);
         return -EFAULT;
     }
     /* Phase 5: Verify path was not truncated */
@@ -192,26 +198,34 @@ long sys_mknodat(int dirfd, const char *pathname, uint32_t mode, uint32_t dev) {
 
     /* Phase 2: Validate pathname is not empty */
     if (path_buf[0] == '\0') {
-        fut_printf("[MKNODAT] mknodat(dirfd=%d, pathname=\\\"\\\" [empty], mode=0%o, dev=0x%x, pid=%d) -> EINVAL\n",
-                   dirfd, mode, dev, task->pid);
+        fut_printf("[MKNODAT] mknodat(dirfd=%d, pathname=\"\" [empty], mode=0%o, dev=0x%x, pid=%d) -> EINVAL\n",
+                   local_dirfd, local_mode, local_dev, task->pid);
         return -EINVAL;
     }
 
     /* Phase 2: Validate dirfd */
-    if (dirfd != AT_FDCWD && dirfd < 0) {
+    if (local_dirfd != AT_FDCWD && local_dirfd < 0) {
         fut_printf("[MKNODAT] mknodat(dirfd=%d [invalid], pathname='%s', mode=0%o, dev=0x%x, pid=%d) -> EBADF\n",
-                   dirfd, path_buf, mode, dev, task->pid);
+                   local_dirfd, path_buf, local_mode, local_dev, task->pid);
+        return -EBADF;
+    }
+
+    /* Phase 5: Validate dirfd upper bounds before accessing FD table */
+    if (local_dirfd != AT_FDCWD && path_buf[0] != '/' && local_dirfd >= task->max_fds) {
+        fut_printf("[MKNODAT] mknodat(dirfd=%d, max_fds=%d) -> EBADF "
+                   "(dirfd exceeds max_fds, Phase 5: FD bounds validation)\n",
+                   local_dirfd, task->max_fds);
         return -EBADF;
     }
 
     /* Extract file type from mode */
-    uint32_t file_type = mode & S_IFMT;
+    uint32_t file_type = local_mode & S_IFMT;
 
     /* Validate file type */
     if (file_type != S_IFREG && file_type != S_IFCHR && file_type != S_IFBLK &&
         file_type != S_IFIFO && file_type != S_IFSOCK && file_type != 0) {
-        fut_printf("[MKNODAT] mknodat(dirfd=%d, pathname=%p, mode=0%o [invalid type 0%o], dev=0x%x, pid=%d) -> EINVAL\n",
-                   dirfd, pathname, mode, file_type, dev, task->pid);
+        fut_printf("[MKNODAT] mknodat(dirfd=%d, pathname='%s', mode=0%o [invalid type 0%o], dev=0x%x, pid=%d) -> EINVAL\n",
+                   local_dirfd, path_buf, local_mode, file_type, local_dev, task->pid);
         return -EINVAL;
     }
 

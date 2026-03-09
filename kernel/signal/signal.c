@@ -25,39 +25,43 @@ enum {
     SIG_ACTION_IGN,         /* Ignore signal */
 };
 
-/* Default action for each signal */
-static const int signal_default_action[] = {
-    /* Index 0 is unused */
-    SIG_ACTION_TERM,        /* 1:  SIGHUP */
-    SIG_ACTION_TERM,        /* 2:  SIGINT */
-    SIG_ACTION_CORE,        /* 3:  SIGQUIT */
-    SIG_ACTION_CORE,        /* 4:  SIGILL */
-    SIG_ACTION_CORE,        /* 5:  SIGTRAP */
-    SIG_ACTION_CORE,        /* 6:  SIGABRT */
-    SIG_ACTION_CORE,        /* 7:  SIGBUS */
-    SIG_ACTION_CORE,        /* 8:  SIGFPE */
-    SIG_ACTION_TERM,        /* 9:  SIGKILL (cannot be caught) */
-    SIG_ACTION_TERM,        /* 10: SIGUSR1 */
-    SIG_ACTION_CORE,        /* 11: SIGSEGV */
-    SIG_ACTION_TERM,        /* 12: SIGUSR2 */
-    SIG_ACTION_TERM,        /* 13: SIGPIPE */
-    SIG_ACTION_TERM,        /* 14: SIGALRM */
-    SIG_ACTION_TERM,        /* 15: SIGTERM */
-    SIG_ACTION_IGN,         /* 16: (unused) */
-    SIG_ACTION_IGN,         /* 17: SIGCHLD */
-    SIG_ACTION_CONT,        /* 18: SIGCONT */
-    SIG_ACTION_STOP,        /* 19: SIGSTOP (cannot be caught) */
-    SIG_ACTION_STOP,        /* 20: SIGTSTP */
-    SIG_ACTION_STOP,        /* 21: SIGTTIN */
-    SIG_ACTION_STOP,        /* 22: SIGTTOU */
-    SIG_ACTION_IGN,         /* 23: SIGURG */
-    SIG_ACTION_TERM,        /* 24: SIGXCPU */
-    SIG_ACTION_CORE,        /* 25: SIGXFSZ */
-    SIG_ACTION_TERM,        /* 26: SIGVTALRM */
-    SIG_ACTION_TERM,        /* 27: SIGPROF */
-    SIG_ACTION_IGN,         /* 28: SIGWINCH */
-    SIG_ACTION_IGN,         /* 29: SIGIO */
-    SIG_ACTION_TERM,        /* 30: SIGPWR */
+/* Default action for each signal (indexed by signal number, 0 is unused placeholder)
+ *
+ * Phase 5 security: Array is indexed by signum directly (1-based), so element [0]
+ * is a placeholder to avoid off-by-one. Array has _NSIG (31) elements so that
+ * signum values 1..30 are all valid indices. */
+static const int signal_default_action[_NSIG] = {
+    [0]  = SIG_ACTION_TERM,  /* placeholder - never accessed (signum >= 1) */
+    [1]  = SIG_ACTION_TERM,  /* SIGHUP */
+    [2]  = SIG_ACTION_TERM,  /* SIGINT */
+    [3]  = SIG_ACTION_CORE,  /* SIGQUIT */
+    [4]  = SIG_ACTION_CORE,  /* SIGILL */
+    [5]  = SIG_ACTION_CORE,  /* SIGTRAP */
+    [6]  = SIG_ACTION_CORE,  /* SIGABRT */
+    [7]  = SIG_ACTION_CORE,  /* SIGBUS */
+    [8]  = SIG_ACTION_CORE,  /* SIGFPE */
+    [9]  = SIG_ACTION_TERM,  /* SIGKILL (cannot be caught) */
+    [10] = SIG_ACTION_TERM,  /* SIGUSR1 */
+    [11] = SIG_ACTION_CORE,  /* SIGSEGV */
+    [12] = SIG_ACTION_TERM,  /* SIGUSR2 */
+    [13] = SIG_ACTION_TERM,  /* SIGPIPE */
+    [14] = SIG_ACTION_TERM,  /* SIGALRM */
+    [15] = SIG_ACTION_TERM,  /* SIGTERM */
+    [16] = SIG_ACTION_IGN,   /* (unused) */
+    [17] = SIG_ACTION_IGN,   /* SIGCHLD */
+    [18] = SIG_ACTION_CONT,  /* SIGCONT */
+    [19] = SIG_ACTION_STOP,  /* SIGSTOP (cannot be caught) */
+    [20] = SIG_ACTION_STOP,  /* SIGTSTP */
+    [21] = SIG_ACTION_STOP,  /* SIGTTIN */
+    [22] = SIG_ACTION_STOP,  /* SIGTTOU */
+    [23] = SIG_ACTION_IGN,   /* SIGURG */
+    [24] = SIG_ACTION_TERM,  /* SIGXCPU */
+    [25] = SIG_ACTION_CORE,  /* SIGXFSZ */
+    [26] = SIG_ACTION_TERM,  /* SIGVTALRM */
+    [27] = SIG_ACTION_TERM,  /* SIGPROF */
+    [28] = SIG_ACTION_IGN,   /* SIGWINCH */
+    [29] = SIG_ACTION_IGN,   /* SIGIO */
+    [30] = SIG_ACTION_TERM,  /* SIGPWR */
 };
 
 /**
@@ -100,8 +104,12 @@ int fut_signal_is_pending(struct fut_task *task, int signum) {
 
     uint64_t signal_bit = (1ULL << (signum - 1));
 
+    /* Phase 5 security: Use atomic load for pending_signals since it can be
+     * modified by fut_signal_send() on another CPU (SMP race condition). */
+    uint64_t pending = __atomic_load_n(&task->pending_signals, __ATOMIC_ACQUIRE);
+
     /* Check if signal is pending and not blocked */
-    if ((task->pending_signals & signal_bit) &&
+    if ((pending & signal_bit) &&
         !(task->signal_mask & signal_bit)) {
         return 1;
     }
@@ -125,8 +133,10 @@ int fut_signal_send(struct fut_task *task, int signum) {
 
     uint64_t signal_bit = (1ULL << (signum - 1));
 
-    /* Queue the signal */
-    task->pending_signals |= signal_bit;
+    /* Phase 5 security: Use atomic OR to queue the signal. pending_signals
+     * can be read/cleared by the target task on another CPU during signal
+     * delivery. Non-atomic |= is a read-modify-write race on SMP. */
+    __atomic_or_fetch(&task->pending_signals, signal_bit, __ATOMIC_RELEASE);
 
     /* Wake task if it's blocked on pause() syscall.
      * When the task wakes, sys_pause() will check pending_signals
@@ -200,17 +210,23 @@ int fut_signal_procmask(struct fut_task *task, int how,
         oldset->__mask = task->signal_mask;
     }
 
+    /* Phase 5 security: SIGKILL and SIGSTOP cannot be blocked (POSIX requirement).
+     * Strip these bits from the requested set to prevent userspace from making
+     * a process unkillable or unstoppable. */
+    uint64_t unblockable = (1ULL << (SIGKILL - 1)) | (1ULL << (SIGSTOP - 1));
+
     /* Modify mask according to 'how' */
     if (set) {
+        uint64_t sanitized = set->__mask & ~unblockable;
         switch (how) {
             case SIGPROCMASK_BLOCK:
-                task->signal_mask |= set->__mask;
+                task->signal_mask |= sanitized;
                 break;
             case SIGPROCMASK_UNBLOCK:
-                task->signal_mask &= ~(set->__mask);
+                task->signal_mask &= ~(sanitized);
                 break;
             case SIGPROCMASK_SETMASK:
-                task->signal_mask = set->__mask;
+                task->signal_mask = sanitized;
                 break;
             default:
                 return -EINVAL;
@@ -236,6 +252,7 @@ int fut_signal_procmask(struct fut_task *task, int how,
 
 #include <kernel/signal_frame.h>
 #include <kernel/uaccess.h>
+#include <platform/arm64/memory/paging.h>
 
 int fut_signal_deliver(struct fut_task *task, void *frame) {
     if (!task || !frame) {
@@ -276,20 +293,28 @@ int fut_signal_deliver(struct fut_task *task, void *frame) {
     /* Get handler for this signal */
     sighandler_t handler = fut_signal_get_handler(task, signum);
 
+    /* Clear pending signal bit first */
+    uint64_t signal_bit = (1ULL << (signum - 1));
+    task->pending_signals &= ~signal_bit;
+
     /* If handler is SIG_DFL or SIG_IGN, don't deliver frame */
     if (handler == SIG_DFL || handler == SIG_IGN) {
-        uint64_t signal_bit = (1ULL << (signum - 1));
-        task->pending_signals &= ~signal_bit;
         return signum;  /* Caller will handle default action */
     }
 
-    /* Allocate rt_sigframe on user stack with 16-byte alignment */
+    /* Allocate rt_sigframe on user stack with 16-byte alignment.
+     * Phase 5 security: Subtract first, then align, to ensure the entire
+     * frame fits below the original SP. Aligning before subtracting could
+     * leave the frame partially overlapping with the interrupted context. */
     uint64_t sp = f->sp;
-    sp &= ~0xFULL;  /* Align to 16 bytes */
     sp -= sizeof(struct rt_sigframe);
+    sp &= ~0xFULL;  /* Align to 16 bytes */
 
-    /* Validate stack pointer is in user space */
-    if (sp < 0x1000 || sp >= 0x400000000ULL) {
+    /* Phase 5 security: Check for stack pointer underflow/wraparound.
+     * If sp wrapped past zero or is above the original stack pointer,
+     * the subtraction overflowed. Also validate sp is in user space
+     * using the platform-defined USER_SPACE_END constant. */
+    if (sp > f->sp || sp < 0x1000 || sp >= USER_SPACE_END) {
         return -EFAULT;
     }
 
@@ -351,9 +376,10 @@ int fut_signal_deliver(struct fut_task *task, void *frame) {
     f->x[1] = sp + offsetof(struct rt_sigframe, info);
     f->x[2] = sp + offsetof(struct rt_sigframe, uc);
 
-    /* Clear pending signal bit */
-    uint64_t signal_bit = (1ULL << (signum - 1));
-    task->pending_signals &= ~signal_bit;
+    /* Phase 5 security: Block the delivered signal while handler is running.
+     * This prevents recursive signal delivery which could overflow the user
+     * stack. Matches x86-64 behavior. The mask is restored by sigreturn(). */
+    task->signal_mask |= signal_bit;
 
     fut_printf("[SIGNAL] Delivered signal %d to task %llu (handler=%p, sp=%llx)\n",
                signum, task->pid, handler, sp);
@@ -450,8 +476,10 @@ int fut_signal_deliver(struct fut_task *task, void *frame) {
     sp -= sizeof(struct rt_sigframe);
     sp &= ~0xFULL;  /* Align to 16 bytes */
 
-    /* Validate stack pointer is in user space */
-    if (sp < 0x1000 || sp >= USER_SPACE_END) {
+    /* Phase 5 security: Check for stack pointer underflow/wraparound.
+     * If sp wrapped past zero or is above the original stack pointer,
+     * the subtraction overflowed. Also validate sp is in user space. */
+    if (sp > f->rsp || sp < 0x1000 || sp >= USER_SPACE_END) {
         fut_printf("[SIGNAL] Invalid user stack pointer %llx for task %llu\n",
                    sp, task->pid);
         return -EFAULT;

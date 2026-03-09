@@ -262,17 +262,14 @@ long sys_rename(const char *oldpath, const char *newpath) {
         old_parent_len = 1;
     } else if (old_last_slash > 0) {
         /* Copy path up to last slash */
-        for (int i = 0; i < old_last_slash && i < 255; i++) {
-            old_parent_path[i] = old_buf[i];
-            old_parent_len++;
-        }
+        old_parent_len = ((size_t)old_last_slash < 255) ? (size_t)old_last_slash : 255;
+        memcpy(old_parent_path, old_buf, old_parent_len);
     }
     old_parent_path[old_parent_len] = '\0';
 
     /* Extract filename after last slash */
-    for (size_t i = old_last_slash + 1; old_buf[i] != '\0' && old_name_len < 255; i++) {
-        old_name[old_name_len++] = old_buf[i];
-    }
+    old_name_len = strnlen(&old_buf[old_last_slash + 1], 255);
+    memcpy(old_name, &old_buf[old_last_slash + 1], old_name_len);
     old_name[old_name_len] = '\0';
 
     /* Lookup old parent directory */
@@ -310,9 +307,8 @@ long sys_rename(const char *oldpath, const char *newpath) {
     size_t new_parent_len = 0;
 
     /* Extract newname (filename after last slash) */
-    for (size_t i = new_last_slash + 1; new_buf[i] != '\0' && new_name_len < 255; i++) {
-        new_name[new_name_len++] = new_buf[i];
-    }
+    new_name_len = strnlen(&new_buf[new_last_slash + 1], 255);
+    memcpy(new_name, &new_buf[new_last_slash + 1], new_name_len);
     new_name[new_name_len] = '\0';
 
     if (new_last_slash == 0) {
@@ -321,10 +317,8 @@ long sys_rename(const char *oldpath, const char *newpath) {
         new_parent_len = 1;
     } else if (new_last_slash > 0) {
         /* Copy path up to last slash */
-        for (int i = 0; i < new_last_slash && i < 255; i++) {
-            new_parent_path[i] = new_buf[i];
-            new_parent_len++;
-        }
+        new_parent_len = ((size_t)new_last_slash < 255) ? (size_t)new_last_slash : 255;
+        memcpy(new_parent_path, new_buf, new_parent_len);
     }
     new_parent_path[new_parent_len] = '\0';
 

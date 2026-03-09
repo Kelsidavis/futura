@@ -56,8 +56,10 @@ bool fut_io_budget_check_bytes(fut_task_t *task, uint64_t bytes, uint64_t curren
         time_elapsed_ms = 0;
     }
 
-    /* Check if adding these bytes would exceed budget for current second */
-    if (task->io_bytes_current + bytes > task->io_bytes_per_sec) {
+    /* Check if adding these bytes would exceed budget for current second.
+     * Phase 5: Use subtraction form to prevent uint64_t overflow when
+     * io_bytes_current + bytes would wrap past UINT64_MAX. */
+    if (bytes > task->io_bytes_per_sec - task->io_bytes_current) {
         fut_printf("[IO_BUDGET] PID %u: Byte budget exhausted in current second "
                    "(current=%llu, requested=%llu, limit=%llu)\n",
                    task->pid, task->io_bytes_current, bytes, task->io_bytes_per_sec);
@@ -92,8 +94,9 @@ bool fut_io_budget_check_ops(fut_task_t *task, uint64_t ops, uint64_t current_ms
         time_elapsed_ms = 0;
     }
 
-    /* Check if adding these operations would exceed budget for current second */
-    if (task->io_ops_current + ops > task->io_ops_per_sec) {
+    /* Check if adding these operations would exceed budget for current second.
+     * Phase 5: Use subtraction form to prevent uint64_t overflow. */
+    if (ops > task->io_ops_per_sec - task->io_ops_current) {
         fut_printf("[IO_BUDGET] PID %u: Operation budget exhausted in current second "
                    "(current=%llu, requested=%llu, limit=%llu)\n",
                    task->pid, task->io_ops_current, ops, task->io_ops_per_sec);

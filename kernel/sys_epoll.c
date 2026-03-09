@@ -216,6 +216,7 @@
 #include <kernel/fut_waitq.h>
 #include <kernel/fut_timer.h>
 #include <kernel/fut_fd_util.h>
+#include <kernel/signal.h>
 #include <string.h>
 #include <stdint.h>
 #include <stdbool.h>
@@ -1880,17 +1881,42 @@ long sys_epoll_create(int size) {
  * On ARM64, epoll_pwait is the primary interface (epoll_wait doesn't exist).
  * For now, we ignore the sigmask parameter and delegate to sys_epoll_wait.
  *
- * Phase 1: Simple wrapper that ignores sigmask
- * Phase 2: Implement signal mask handling
+ * Phase 1 (Completed): Simple wrapper that ignores sigmask
+ * Phase 2 (Completed): Atomically install signal mask, call epoll_wait, restore mask
  */
 long sys_epoll_pwait(int epfd, struct epoll_event *events, int maxevents,
                      int timeout, const void *sigmask) {
-    (void)sigmask;  /* Ignore signal mask for now */
+    fut_task_t *task = fut_task_current();
+    uint64_t saved_mask = 0;
+    bool mask_installed = false;
 
-    fut_printf("[EPOLL_PWAIT] epoll_pwait(epfd=%d, events=%p, maxevents=%d, "
-               "timeout=%d, sigmask=%p) -> delegating to epoll_wait\n",
-               epfd, events, maxevents, timeout, sigmask);
+    /* Atomically install the provided signal mask before waiting */
+    if (sigmask && task) {
+        sigset_t newmask;
+        if (fut_copy_from_user(&newmask, sigmask, sizeof(sigset_t)) != 0) {
+            return -EFAULT;
+        }
+        saved_mask = __atomic_load_n(&task->signal_mask, __ATOMIC_ACQUIRE);
+        __atomic_store_n(&task->signal_mask, newmask.__mask, __ATOMIC_RELEASE);
+        mask_installed = true;
 
-    /* Delegate to epoll_wait (signal mask handling deferred to Phase 2) */
-    return sys_epoll_wait(epfd, events, maxevents, timeout);
+        fut_printf("[EPOLL_PWAIT] epoll_pwait(epfd=%d, maxevents=%d, timeout=%d, "
+                   "sigmask=0x%llx) old_mask=0x%llx\n",
+                   epfd, maxevents, timeout,
+                   (unsigned long long)newmask.__mask,
+                   (unsigned long long)saved_mask);
+    } else {
+        fut_printf("[EPOLL_PWAIT] epoll_pwait(epfd=%d, maxevents=%d, timeout=%d, "
+                   "sigmask=NULL) -> no mask change\n",
+                   epfd, maxevents, timeout);
+    }
+
+    long ret = sys_epoll_wait(epfd, events, maxevents, timeout);
+
+    /* Restore original signal mask */
+    if (mask_installed && task) {
+        __atomic_store_n(&task->signal_mask, saved_mask, __ATOMIC_RELEASE);
+    }
+
+    return ret;
 }

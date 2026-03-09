@@ -211,12 +211,39 @@
 #include <kernel/fut_fd_util.h>
 #include <kernel/fut_timer.h>
 #include <kernel/fut_socket.h>
+#include <kernel/fut_lock.h>
 #include <subsystems/posix_syscall.h>
 #include <stdint.h>
 #include <sys/resource.h>
 #include <fcntl.h>
 
 #include <kernel/kprintf.h>
+#include <kernel/uaccess.h>
+#ifdef __x86_64__
+#include <platform/x86_64/memory/paging.h>
+#elif defined(__aarch64__)
+#include <platform/arm64/memory/paging.h>
+#endif
+
+static inline int fcntl_copy_from_user(void *dst, const void *src, size_t n) {
+#ifdef KERNEL_VIRTUAL_BASE
+    if ((uintptr_t)src >= KERNEL_VIRTUAL_BASE) {
+        __builtin_memcpy(dst, src, n);
+        return 0;
+    }
+#endif
+    return fut_copy_from_user(dst, src, n);
+}
+
+static inline int fcntl_copy_to_user(void *dst, const void *src, size_t n) {
+#ifdef KERNEL_VIRTUAL_BASE
+    if ((uintptr_t)dst >= KERNEL_VIRTUAL_BASE) {
+        __builtin_memcpy(dst, src, n);
+        return 0;
+    }
+#endif
+    return fut_copy_to_user(dst, src, n);
+}
 /* propagate_socket_dup provided by subsystems/posix_syscall.h */
 
 /* F_*, FD_CLOEXEC, O_* flags provided by fcntl.h */
@@ -386,6 +413,10 @@ long sys_fcntl(int fd, int cmd, uint64_t arg) {
         case F_SETLK:
             cmd_name = "F_SETLK";
             cmd_category = "set file lock (non-blocking)";
+            break;
+        case F_SETLKW:
+            cmd_name = "F_SETLKW";
+            cmd_category = "set file lock (blocking)";
             break;
         case F_GETLK:
             cmd_name = "F_GETLK";
@@ -844,23 +875,106 @@ long sys_fcntl(int fd, int cmd, uint64_t arg) {
         return 0;
     }
 
-    case F_SETLK: {
-        /* Phase 3: Set file lock (non-blocking advisory lock) */
-        /* For now, always succeed as per POSIX advisory locking semantics */
-        /* Full implementation would track lock regions and check conflicts */
-        fut_printf("[FCNTL] fcntl(fd=%d [%s], cmd=%s [%s], arg=%llu) -> 0 "
-                   "(advisory lock set, Phase 3)\n",
-                   local_fd, fd_category, cmd_name, cmd_category, local_arg);
-        return 0;
+    case F_SETLK:
+    case F_SETLKW: {
+        /* F_SETLK: Set POSIX record lock (non-blocking).
+         * F_SETLKW: Set POSIX record lock (blocking - wait if conflict). */
+        struct flock lk;
+        if (fcntl_copy_from_user(&lk, (const void *)(uintptr_t)local_arg, sizeof(lk)) != 0) {
+            fut_printf("[FCNTL] fcntl(fd=%d, cmd=%s) -> EFAULT (copy flock failed)\n",
+                       local_fd, cmd_name);
+            return -EFAULT;
+        }
+
+        struct fut_vnode *vnode = file ? file->vnode : NULL;
+        if (!vnode) {
+            fut_printf("[FCNTL] fcntl(fd=%d, cmd=%s) -> EBADF (no vnode)\n",
+                       local_fd, cmd_name);
+            return -EBADF;
+        }
+
+        int nonblock = (local_cmd == F_SETLK) ? 1 : 0;
+        int ret;
+
+        switch (lk.l_type) {
+        case F_RDLCK:
+            ret = fut_vnode_lock_shared(vnode, (uint32_t)task->pid, nonblock);
+            break;
+        case F_WRLCK:
+            ret = fut_vnode_lock_exclusive(vnode, (uint32_t)task->pid, nonblock);
+            break;
+        case F_UNLCK:
+            ret = fut_vnode_unlock(vnode, (uint32_t)task->pid);
+            break;
+        default:
+            fut_printf("[FCNTL] fcntl(fd=%d, cmd=%s) -> EINVAL (invalid l_type=%d)\n",
+                       local_fd, cmd_name, lk.l_type);
+            return -EINVAL;
+        }
+
+        if (ret == -EAGAIN || ret == -EBUSY) {
+            /* F_SETLK: lock blocked -> EAGAIN (POSIX: EACCES or EAGAIN) */
+            fut_printf("[FCNTL] fcntl(fd=%d, cmd=%s, l_type=%d) -> EAGAIN (lock held by other)\n",
+                       local_fd, cmd_name, lk.l_type);
+            return -EAGAIN;
+        }
+
+        fut_printf("[FCNTL] fcntl(fd=%d [%s], cmd=%s [%s], l_type=%d) -> %d\n",
+                   local_fd, fd_category, cmd_name, cmd_category, lk.l_type, ret);
+        return ret;
     }
 
     case F_GETLK: {
-        /* Phase 3: Get file lock information */
-        /* Returns lock info structure address in arg */
-        /* For now, indicate no conflicting lock (lock would be available) */
-        fut_printf("[FCNTL] fcntl(fd=%d [%s], cmd=%s [%s], arg=%llu) -> 0 "
-                   "(no conflicting lock, Phase 3)\n",
-                   local_fd, fd_category, cmd_name, cmd_category, local_arg);
+        /* F_GETLK: Check if a lock would be blocked; if not, set l_type=F_UNLCK. */
+        struct flock lk;
+        if (fcntl_copy_from_user(&lk, (const void *)(uintptr_t)local_arg, sizeof(lk)) != 0) {
+            fut_printf("[FCNTL] fcntl(fd=%d, cmd=F_GETLK) -> EFAULT (copy flock failed)\n",
+                       local_fd);
+            return -EFAULT;
+        }
+
+        struct fut_vnode *vnode = file ? file->vnode : NULL;
+        if (!vnode) {
+            fut_printf("[FCNTL] fcntl(fd=%d, cmd=F_GETLK) -> EBADF (no vnode)\n", local_fd);
+            return -EBADF;
+        }
+
+        /* Try to acquire non-blocking; if it succeeds, immediately release and
+         * report F_UNLCK (no conflicting lock). */
+        int conflict = 0;
+        if (lk.l_type == F_RDLCK) {
+            int r = fut_vnode_lock_shared(vnode, (uint32_t)task->pid, 1);
+            if (r == 0) {
+                fut_vnode_unlock(vnode, (uint32_t)task->pid);
+            } else {
+                conflict = 1;
+            }
+        } else if (lk.l_type == F_WRLCK) {
+            int r = fut_vnode_lock_exclusive(vnode, (uint32_t)task->pid, 1);
+            if (r == 0) {
+                fut_vnode_unlock(vnode, (uint32_t)task->pid);
+            } else {
+                conflict = 1;
+            }
+        }
+
+        if (conflict) {
+            /* Report the conflicting lock type and owner */
+            uint32_t lock_type, lock_count, owner_pid;
+            fut_vnode_lock_get_info(vnode, &lock_type, &lock_count, &owner_pid);
+            lk.l_type = (lock_type == 1) ? F_RDLCK : F_WRLCK;
+            lk.l_pid = (int)owner_pid;
+            fut_printf("[FCNTL] fcntl(fd=%d, cmd=F_GETLK) -> conflicting lock (type=%d, owner=%u)\n",
+                       local_fd, lk.l_type, owner_pid);
+        } else {
+            lk.l_type = F_UNLCK;
+            lk.l_pid = 0;
+            fut_printf("[FCNTL] fcntl(fd=%d, cmd=F_GETLK) -> no conflict (F_UNLCK)\n", local_fd);
+        }
+
+        if (fcntl_copy_to_user((void *)(uintptr_t)local_arg, &lk, sizeof(lk)) != 0) {
+            return -EFAULT;
+        }
         return 0;
     }
 

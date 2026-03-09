@@ -155,9 +155,9 @@
  *    - Auto-removes closed FDs from all epoll sets
  *    - Prevents use-after-free on FD reuse
  *
- * 7. [TODO] Per-task epoll instance quotas
- *    - Current limit is global (256 total)
- *    - Need per-task limit to prevent single-task DoS
+ * 7. [DONE] Per-task epoll instance quotas
+ *    - Per-task limit of MAX_EPOLL_PER_TASK (16) instances
+ *    - Returns EMFILE when a single task exceeds its quota
  *
  * ============================================================================
  * CVE REFERENCES (Similar Vulnerabilities):
@@ -200,7 +200,7 @@
  *
  * TODO (enhancements):
  * [DONE] 1. VFS close hook: epoll_notify_fd_close() called from sys_close()
- * [TODO] 2. Add per-task epoll instance quotas
+ * [DONE] 2. Per-task epoll instance quotas (MAX_EPOLL_PER_TASK=16)
  * [TODO] 3. Add file struct refcounting to prevent premature free
  * [TODO] 4. Add rate limiting for epoll_create1 to prevent DoS
  * [TODO] 5. Add epoll_wait timeout validation (prevent indefinite block)
@@ -211,6 +211,7 @@
 #include <kernel/fut_socket.h>
 #include <kernel/errno.h>
 #include <kernel/uaccess.h>
+#include <kernel/fut_task.h>
 #include <kernel/fut_thread.h>
 #include <kernel/fut_waitq.h>
 #include <kernel/fut_timer.h>
@@ -237,8 +238,11 @@
 /* Maximum file descriptors per epoll instance */
 #define MAX_EPOLL_FDS 64
 
-/* Maximum epoll instances */
+/* Maximum epoll instances (system-wide) */
 #define MAX_EPOLL_INSTANCES 256
+
+/* Maximum epoll instances per task (prevents single-task resource exhaustion) */
+#define MAX_EPOLL_PER_TASK 16
 
 /* epoll_event structure provided by sys/epoll.h - matches Linux ABI
  *
@@ -271,6 +275,7 @@ struct epoll_set {
     struct epoll_fd_entry fds[MAX_EPOLL_FDS];  /* Registered FDs */
     int count;                                   /* Number of registered FDs */
     bool active;                                 /* Whether this epoll set is in use */
+    uint64_t owner_pid;                          /* PID of task that created this instance */
     fut_waitq_t epoll_waitq;                     /* Wait queue for event-driven wakeup */
 };
 
@@ -304,6 +309,17 @@ void epoll_notify_fd_close(int fd) {
     }
 }
 
+/* Count active epoll instances owned by a given PID */
+static int epoll_count_by_pid(uint64_t pid) {
+    int count = 0;
+    for (int i = 0; i < MAX_EPOLL_INSTANCES; i++) {
+        if (epoll_instances[i].active && epoll_instances[i].owner_pid == pid) {
+            count++;
+        }
+    }
+    return count;
+}
+
 /* Helper to find epoll set by epoll FD */
 static struct epoll_set *epoll_get_set(int epfd) {
     for (int i = 0; i < MAX_EPOLL_INSTANCES; i++) {
@@ -314,8 +330,8 @@ static struct epoll_set *epoll_get_set(int epfd) {
     return NULL;
 }
 
-/* Helper to allocate a new epoll set */
-static struct epoll_set *epoll_allocate_set(void) {
+/* Helper to allocate a new epoll set for a given task */
+static struct epoll_set *epoll_allocate_set(uint64_t owner_pid) {
     /* Document epoll FD counter overflow protection requirement
      * VULNERABILITY: Integer Overflow in Epoll File Descriptor Counter
      *
@@ -386,6 +402,7 @@ static struct epoll_set *epoll_allocate_set(void) {
             epoll_instances[i].active = true;
             epoll_instances[i].epfd = next_epoll_fd++;
             epoll_instances[i].count = 0;
+            epoll_instances[i].owner_pid = owner_pid;
             fut_waitq_init(&epoll_instances[i].epoll_waitq);
             return &epoll_instances[i];
         }
@@ -506,8 +523,22 @@ long sys_epoll_create1(int flags) {
         flags_desc = "unknown";
     }
 
+    /* Per-task epoll instance quota check */
+    fut_task_t *task = fut_task_current();
+    uint64_t pid = task ? task->pid : 0;
+    if (task) {
+        int task_count = epoll_count_by_pid(pid);
+        if (task_count >= MAX_EPOLL_PER_TASK) {
+            fut_printf("[EPOLL_CREATE1] epoll_create1(flags=%s, pid=%llu) -> EMFILE "
+                       "(per-task limit reached: %d/%d)\n",
+                       flags_desc, (unsigned long long)pid,
+                       task_count, MAX_EPOLL_PER_TASK);
+            return -EMFILE;
+        }
+    }
+
     /* Allocate new epoll instance */
-    struct epoll_set *set = epoll_allocate_set();
+    struct epoll_set *set = epoll_allocate_set(pid);
     if (!set) {
         char msg[128];
         int pos = 0;

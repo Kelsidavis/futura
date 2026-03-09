@@ -493,6 +493,7 @@ KERNEL_SOURCES := \
     kernel/sys_xattr.c \
     kernel/sys_inotify.c \
     kernel/sys_splice.c \
+    kernel/sys_filesystem_stats.c \
     kernel/sys_ioprio.c \
     kernel/sys_capability.c \
     kernel/sys_personality.c \
@@ -611,6 +612,7 @@ ifeq ($(PLATFORM),x86_64)
         kernel/tests/sys_signal.c \
         kernel/tests/sys_cap.c \
         kernel/tests/sys_epoll.c \
+        kernel/tests/sys_splice.c \
         kernel/tests/perf.c \
         kernel/tests/perf_ipc.c \
         kernel/tests/perf_sched.c \
@@ -656,6 +658,7 @@ else ifeq ($(PLATFORM),arm64)
         kernel/tests/sys_signal.c \
         kernel/tests/sys_cap.c \
         kernel/tests/sys_epoll.c \
+        kernel/tests/sys_splice.c \
         tests/test_blkcore.c \
         tests/test_net.c \
         tests/test_futfs.c \
@@ -667,7 +670,6 @@ else ifeq ($(PLATFORM),arm64)
         kernel/sys_sched_advanced.c \
         kernel/sys_clock_advanced.c \
         kernel/sys_fileio_advanced.c \
-        kernel/sys_filesystem_stats.c \
         kernel/kernel_main.c \
         kernel/video/fb_mmio.c \
         kernel/video/virtio_gpu_mmio.c \

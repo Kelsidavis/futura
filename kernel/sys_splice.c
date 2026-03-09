@@ -28,6 +28,24 @@
 
 #include <kernel/kprintf.h>
 
+/* Architecture-specific paging headers for KERNEL_VIRTUAL_BASE (kernel pointer detection) */
+#ifdef __x86_64__
+#include <platform/x86_64/memory/paging.h>
+#elif defined(__aarch64__)
+#include <platform/arm64/memory/paging.h>
+#endif
+
+/* Copy from user or kernel buffer transparently */
+static inline int splice_copy_from(void *dst, const void *src, size_t n) {
+#ifdef KERNEL_VIRTUAL_BASE
+    if ((uintptr_t)src >= KERNEL_VIRTUAL_BASE) {
+        __builtin_memcpy(dst, src, n);
+        return 0;
+    }
+#endif
+    return fut_copy_from_user(dst, src, n);
+}
+
 /* splice flags */
 #define SPLICE_F_MOVE     0x01  /* Move pages instead of copying */
 #define SPLICE_F_NONBLOCK 0x02  /* Non-blocking operation */
@@ -397,7 +415,7 @@ long sys_vmsplice(int fd, const void *iov, size_t nr_segs, unsigned int flags) {
 
     for (size_t i = 0; i < local_nr_segs; i++) {
         struct iovec seg;
-        if (fut_copy_from_user(&seg, &user_iov[i], sizeof(seg)) != 0)
+        if (splice_copy_from(&seg, &user_iov[i], sizeof(seg)) != 0)
             return (total > 0) ? total : -EFAULT;
 
         if (seg.iov_len == 0) continue;
@@ -408,7 +426,7 @@ long sys_vmsplice(int fd, const void *iov, size_t nr_segs, unsigned int flags) {
         uint8_t *kbuf = (uint8_t *)fut_malloc(seg.iov_len);
         if (!kbuf) return (total > 0) ? total : -ENOMEM;
 
-        if (fut_copy_from_user(kbuf, seg.iov_base, seg.iov_len) != 0) {
+        if (splice_copy_from(kbuf, seg.iov_base, seg.iov_len) != 0) {
             fut_free(kbuf);
             return (total > 0) ? total : -EFAULT;
         }

@@ -113,3 +113,9 @@ void fut_cap_selftest_schedule(fut_task_t *task);
  * and error handling (EBADF, EEXIST, EMFILE).
  */
 void fut_epoll_selftest_schedule(fut_task_t *task);
+
+/**
+ * splice / statfs / sysinfo selftest.
+ * Tests splice(2), vmsplice(2), statfs(2), and sysinfo(2).
+ */
+void fut_splice_test_thread(void *arg);

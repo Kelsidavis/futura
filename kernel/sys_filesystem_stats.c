@@ -18,6 +18,24 @@
 #include <kernel/uaccess.h>
 #include <kernel/fut_timer.h>
 
+/* Architecture-specific paging headers for KERNEL_VIRTUAL_BASE (kernel pointer detection) */
+#ifdef __x86_64__
+#include <platform/x86_64/memory/paging.h>
+#elif defined(__aarch64__)
+#include <platform/arm64/memory/paging.h>
+#endif
+
+/* Copy to user or kernel buffer depending on pointer address */
+static inline int statfs_copy_to_buf(void *dst, const void *src, size_t n) {
+#ifdef KERNEL_VIRTUAL_BASE
+    if ((uintptr_t)dst >= KERNEL_VIRTUAL_BASE) {
+        __builtin_memcpy(dst, src, n);
+        return 0;
+    }
+#endif
+    return fut_copy_to_user(dst, src, n);
+}
+
 /* Filesystem type constants */
 #define FUT_TMPFS_MAGIC   0x01021994
 #define FUT_RAMFS_MAGIC   0x858458F6
@@ -34,10 +52,10 @@
 static void fill_statfs_from_pmm(struct fut_linux_statfs *s) {
     uint64_t total_pages = fut_pmm_total_pages();
     uint64_t free_pages  = fut_pmm_free_pages();
-    const uint64_t PAGE_SIZE = 4096;
+    const uint64_t fs_page_size = 4096;
 
     s->f_type    = FUT_RAMFS_MAGIC;
-    s->f_bsize   = PAGE_SIZE;
+    s->f_bsize   = fs_page_size;
     s->f_blocks  = total_pages;
     s->f_bfree   = free_pages;
     s->f_bavail  = free_pages;       /* No reservation for root on ramfs */
@@ -46,7 +64,7 @@ static void fill_statfs_from_pmm(struct fut_linux_statfs *s) {
     s->f_fsid[0] = 0x46555452;       /* "FUTR" */
     s->f_fsid[1] = 0x41464653;       /* "AFS " */
     s->f_namelen = 255;
-    s->f_frsize  = PAGE_SIZE;
+    s->f_frsize  = fs_page_size;
     s->f_flags   = 0;
 }
 
@@ -123,8 +141,8 @@ long sys_statfs(const char *path, struct fut_linux_statfs *buf) {
     struct fut_linux_statfs real_stats = {0};
     fill_statfs_from_pmm(&real_stats);
 
-    /* Copy to userspace buffer */
-    if (fut_copy_to_user(buf, &real_stats, sizeof(struct fut_linux_statfs)) != 0) {
+    /* Copy to user or kernel buffer */
+    if (statfs_copy_to_buf(buf, &real_stats, sizeof(struct fut_linux_statfs)) != 0) {
         fut_printf("[STATFS] statfs(path='%s%s', pid=%d) -> EFAULT (copy_to_user failed)\n",
                    path_preview, (path_len > 64) ? "..." : "", task->pid);
         return -EFAULT;
@@ -199,7 +217,7 @@ long sys_fstatfs(int fd, struct fut_linux_statfs *buf) {
     fill_statfs_from_pmm(&stats);
 
     /* Copy to userspace buffer */
-    if (fut_copy_to_user(buf, &stats, sizeof(struct fut_linux_statfs)) != 0) {
+    if (statfs_copy_to_buf(buf, &stats, sizeof(struct fut_linux_statfs)) != 0) {
         fut_printf("[FSTATFS] fstatfs(fd=%d, pid=%d) -> EFAULT (copy_to_user failed)\n",
                    fd, task->pid);
         return -EFAULT;
@@ -405,7 +423,7 @@ long sys_sysinfo(struct fut_linux_sysinfo *info) {
     }
 
     /* Phase 2: Fill with real kernel statistics */
-    const uint64_t PAGE_SIZE = 4096;
+    const uint64_t fs_page_size = 4096;
     uint64_t total_pages = fut_pmm_total_pages();
     uint64_t free_pages  = fut_pmm_free_pages();
     uint64_t uptime_ms   = fut_get_ticks();
@@ -414,8 +432,8 @@ long sys_sysinfo(struct fut_linux_sysinfo *info) {
     struct fut_linux_sysinfo real_info = {
         .uptime    = (long)(uptime_ms / 1000),
         .loads     = {0, 0, 0},        /* Load average not yet tracked */
-        .totalram  = total_pages * PAGE_SIZE,
-        .freeram   = free_pages  * PAGE_SIZE,
+        .totalram  = total_pages * fs_page_size,
+        .freeram   = free_pages  * fs_page_size,
         .sharedram = 0,
         .bufferram = 0,
         .totalswap = 0,                /* No swap on ramfs */
@@ -428,7 +446,7 @@ long sys_sysinfo(struct fut_linux_sysinfo *info) {
     };
 
     /* Copy to userspace buffer */
-    if (fut_copy_to_user(info, &real_info, sizeof(struct fut_linux_sysinfo)) != 0) {
+    if (statfs_copy_to_buf(info, &real_info, sizeof(struct fut_linux_sysinfo)) != 0) {
         fut_printf("[SYSINFO] sysinfo(pid=%d) -> EFAULT (copy_to_user failed)\n", task->pid);
         return -EFAULT;
     }
@@ -437,8 +455,8 @@ long sys_sysinfo(struct fut_linux_sysinfo *info) {
                "(uptime=%lus, totalram=%lluMB, freeram=%lluMB, procs=%u)\n",
                task->pid,
                (unsigned long)(uptime_ms / 1000),
-               (unsigned long long)(total_pages * PAGE_SIZE / (1024 * 1024)),
-               (unsigned long long)(free_pages  * PAGE_SIZE / (1024 * 1024)),
+               (unsigned long long)(total_pages * fs_page_size / (1024 * 1024)),
+               (unsigned long long)(free_pages  * fs_page_size / (1024 * 1024)),
                nprocs);
 
     return 0;

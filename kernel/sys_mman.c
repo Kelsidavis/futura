@@ -209,20 +209,27 @@ long sys_mlock(const void *addr, size_t len) {
 
         /* Check if adding new_pages would exceed limit */
         if (mm->locked_vm + new_pages > limit_pages) {
-            fut_printf("[MLOCK] mlock(addr=%p, len=%zu) -> ENOMEM "
-                       "(locked_vm %zu + new_pages %zu > limit %zu pages, Phase 3 Full)\n",
-                       local_addr, local_len, mm->locked_vm, new_pages, limit_pages);
-            return -ENOMEM;
+            /* Phase 4: Allow CAP_IPC_LOCK or root to bypass limit */
+            bool has_cap = (task->cap_effective & (1ULL << CAP_IPC_LOCK)) != 0;
+            bool is_root = (task->uid == 0);
+
+            if (!has_cap && !is_root) {
+                fut_printf("[MLOCK] mlock(addr=%p, len=%zu) -> ENOMEM "
+                           "(locked_vm %zu + new_pages %zu > limit %zu pages, "
+                           "need CAP_IPC_LOCK)\n",
+                           local_addr, local_len, mm->locked_vm, new_pages, limit_pages);
+                return -ENOMEM;
+            }
+
+            fut_printf("[MLOCK] mlock(addr=%p, len=%zu) -> Bypassing RLIMIT_MEMLOCK "
+                       "(%zu + %zu > %zu pages) via %s\n",
+                       local_addr, local_len, mm->locked_vm, new_pages, limit_pages,
+                       is_root ? "root" : "CAP_IPC_LOCK");
         }
     }
 
     /* Phase 3 Full: Update cumulative locked pages counter */
     mm->locked_vm += new_pages;
-
-    /* Phase 1: Stub - accept parameters */
-    /* Phase 2 (Completed): Mark VMA as VM_LOCKED, prefault pages, added overflow checks */
-    /* Phase 3 Full (Completed): Cumulative RLIMIT_MEMLOCK enforcement with locked_vm tracking */
-    /* TODO Phase 4: Require CAP_IPC_LOCK if exceeding RLIMIT_MEMLOCK */
 
     fut_printf("[MLOCK] mlock(addr=%p, len=%zu, new_pages=%zu) -> 0 "
                "(Phase 3 Full: cumulative locked_vm now %zu pages)\n",

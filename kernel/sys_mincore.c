@@ -241,13 +241,13 @@
  * ✓ VMA coverage of entire range (lines 209-233)
  * ✓ Basic copy_to_user permission check (line 263)
  *
- * TODO (Priority Order):
- * 1. Add length bounds validation (0 < length <= 1GB) before line 197
- * 2. Add integer overflow check for (length + PAGE_SIZE - 1) before line 198
- * 3. Add num_pages bounds check (num_pages <= 65536) after line 198
- * 4. Add early vec buffer writability check before line 202
- * 5. Add VMA iteration counter with abort threshold in loops at lines 215-226, 245-260
- * 6. Replace __builtin_alloca with conditional kmalloc for large num_pages
+ * All hardening items completed:
+ * 1. Length bounds validation (0 < length <= 1GB) - lines 436-445
+ * 2. Integer overflow check for (length + PAGE_SIZE - 1) - lines 453-457
+ * 3. num_pages bounds check (num_pages <= 65536) - lines 470-474
+ * 4. Early vec buffer writability check - lines 481-485
+ * 5. VMA iteration counter with abort threshold - lines 506-516, 568-582
+ * 6. Conditional heap allocation for large num_pages - lines 542-558
  */
 
 /**

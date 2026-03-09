@@ -204,6 +204,7 @@ long sys_symlink(const char *target, const char *linkpath) {
         fut_printf("[SYMLINK] symlink(target='%s' [%s], linkpath='%s' [%s]) -> ENOTDIR "
                    "(parent is not a directory)\n",
                    target_buf, target_type, linkpath_buf, linkpath_type);
+        fut_vnode_unref(parent);
         return -ENOTDIR;
     }
 
@@ -212,6 +213,7 @@ long sys_symlink(const char *target, const char *linkpath) {
         fut_printf("[SYMLINK] symlink(target='%s' [%s], linkpath='%s' [%s]) -> ENOSYS "
                    "(filesystem doesn't support symlink)\n",
                    target_buf, target_type, linkpath_buf, linkpath_type);
+        fut_vnode_unref(parent);
         return -ENOSYS;
     }
 
@@ -242,6 +244,7 @@ long sys_symlink(const char *target, const char *linkpath) {
                    "parent_ino=%lu) -> %d (%s)\n",
                    target_buf, target_type, linkpath_buf, linkpath_type,
                    parent->ino, ret, error_desc);
+        fut_vnode_unref(parent);
         return ret;
     }
 
@@ -250,5 +253,6 @@ long sys_symlink(const char *target, const char *linkpath) {
                "parent_ino=%lu) -> 0 (success, symlink created)\n",
                target_buf, target_type, linkpath_buf, linkpath_type, parent->ino);
 
+    fut_vnode_unref(parent);
     return 0;
 }

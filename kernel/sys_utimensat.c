@@ -446,6 +446,7 @@ long sys_utimensat(int dirfd, const char *pathname, const fut_timespec_t *times,
                    "(filesystem doesn't support setattr)\n",
                    dirfd, dirfd_desc, path_buf, path_type, path_len_cat, path_len,
                    vnode->ino, time_spec_desc, flags_desc, task->pid);
+        fut_vnode_unref(vnode);
         return -ENOSYS;
     }
 
@@ -520,6 +521,7 @@ long sys_utimensat(int dirfd, const char *pathname, const fut_timespec_t *times,
                    "vnode_ino=%lu, times=%s, flags=%s, pid=%d) -> %d (%s)\n",
                    dirfd, dirfd_desc, path_buf, path_type, path_len_cat, path_len,
                    vnode->ino, time_spec_desc, flags_desc, task->pid, ret, error_desc);
+        fut_vnode_unref(vnode);
         return ret;
     }
 
@@ -529,5 +531,6 @@ long sys_utimensat(int dirfd, const char *pathname, const fut_timespec_t *times,
                dirfd, dirfd_desc, path_buf, path_type, path_len_cat, path_len,
                vnode->ino, time_spec_desc, flags_desc, task->pid);
 
+    fut_vnode_unref(vnode);
     return 0;
 }

@@ -252,28 +252,6 @@ long sys_link(const char *oldpath, const char *newpath) {
         return -EINVAL;
     }
 
-    /* Phase 2: Check for path truncation in oldpath */
-    size_t old_len = 0;
-    while (old_buf[old_len] != '\0' && old_len < sizeof(old_buf) - 1) {
-        old_len++;
-    }
-    if (old_buf[old_len] != '\0') {
-        fut_printf("[LINK] link(oldpath_len>255, newpath='%s') -> ENAMETOOLONG "
-                   "(oldpath truncated, Phase 2)\n", new_buf);
-        return -ENAMETOOLONG;
-    }
-
-    /* Phase 2: Check for path truncation in newpath */
-    size_t new_len = 0;
-    while (new_buf[new_len] != '\0' && new_len < sizeof(new_buf) - 1) {
-        new_len++;
-    }
-    if (new_buf[new_len] != '\0') {
-        fut_printf("[LINK] link(oldpath='%s', newpath_len>255) -> ENAMETOOLONG "
-                   "(newpath truncated, Phase 2)\n", old_buf);
-        return -ENAMETOOLONG;
-    }
-
     /* Phase 5: Validate oldpath and newpath are not identical
      * Linking a file to itself is invalid and could cause filesystem corruption */
     if (strcmp(old_buf, new_buf) == 0) {
@@ -479,6 +457,7 @@ long sys_link(const char *oldpath, const char *newpath) {
         fut_printf("[LINK] link(oldpath='%s' [%s], newpath='%s' [%s]) -> EINVAL "
                    "(oldpath vnode is NULL, Phase 3)\n",
                    old_buf, old_path_type, new_buf, new_path_type);
+        /* old_vnode is NULL, nothing to unref */
         return -EINVAL;
     }
 
@@ -542,6 +521,7 @@ long sys_link(const char *oldpath, const char *newpath) {
                    "(cannot hard link %s, Phase 3)\n",
                    old_buf, old_path_type, file_type_desc, current_nlinks,
                    link_count_category, new_buf, new_path_type, type_error, file_type_desc);
+        fut_vnode_unref(old_vnode);
         return type_error;
     }
 
@@ -587,6 +567,7 @@ long sys_link(const char *oldpath, const char *newpath) {
                    "(%s)\n",
                    old_buf, old_path_type, new_buf, new_path_type,
                    new_parent_lookup_ret, error_desc);
+        fut_vnode_unref(old_vnode);
         return new_parent_lookup_ret;
     }
 
@@ -594,6 +575,7 @@ long sys_link(const char *oldpath, const char *newpath) {
         fut_printf("[LINK] link(old='%s' [%s], new='%s' [%s]) -> EINVAL "
                    "(newpath parent vnode is NULL)\n",
                    old_buf, old_path_type, new_buf, new_path_type);
+        fut_vnode_unref(old_vnode);
         return -EINVAL;
     }
 
@@ -602,6 +584,8 @@ long sys_link(const char *oldpath, const char *newpath) {
         fut_printf("[LINK] link(old='%s' [%s, %s], new='%s' [%s]) -> EXDEV "
                    "(different filesystems)\n",
                    old_buf, old_path_type, file_type_desc, new_buf, new_path_type);
+        fut_vnode_unref(old_vnode);
+        fut_vnode_unref(new_parent);
         return -EXDEV;
     }
 
@@ -615,6 +599,9 @@ long sys_link(const char *oldpath, const char *newpath) {
                    "(newpath already exists, Phase 3)\n",
                    old_buf, old_path_type, file_type_desc, current_nlinks,
                    link_count_category, new_buf, new_path_type);
+        fut_vnode_unref(old_vnode);
+        fut_vnode_unref(new_parent);
+        fut_vnode_unref(new_vnode);
         return -EEXIST;
     }
 
@@ -663,6 +650,8 @@ long sys_link(const char *oldpath, const char *newpath) {
                        "old_ino=%lu, old_nlinks=%u) -> %d (%s)\n",
                        old_buf, old_path_type, new_buf, new_path_type,
                        file_type_desc, old_vnode->ino, current_nlinks, ret, error_desc);
+            fut_vnode_unref(old_vnode);
+            fut_vnode_unref(new_parent);
             return ret;
         }
 
@@ -671,6 +660,8 @@ long sys_link(const char *oldpath, const char *newpath) {
                    "old_ino=%lu, old_nlinks=%u->%u) -> 0 (success)\n",
                    old_buf, old_path_type, new_buf, new_path_type,
                    file_type_desc, old_vnode->ino, current_nlinks, would_be_nlinks);
+        fut_vnode_unref(old_vnode);
+        fut_vnode_unref(new_parent);
         return 0;
     }
 
@@ -679,5 +670,7 @@ long sys_link(const char *oldpath, const char *newpath) {
                "old_ino=%lu) -> ENOSYS (filesystem doesn't support link)\n",
                old_buf, old_path_type, new_buf, new_path_type,
                file_type_desc, old_vnode->ino);
+    fut_vnode_unref(old_vnode);
+    fut_vnode_unref(new_parent);
     return -ENOSYS;
 }

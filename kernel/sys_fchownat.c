@@ -313,6 +313,7 @@ long sys_fchownat(int dirfd, const char *pathname, uint32_t uid, uint32_t gid, i
                    "uid=%s, gid=%s, op=%s, flags=%s) -> ENOSYS (filesystem doesn't support setattr)\n",
                    dirfd, dirfd_desc, path_buf, path_type, vnode->ino,
                    uid_desc, gid_desc, operation_type, flags_desc);
+        fut_vnode_unref(vnode);
         return -ENOSYS;
     }
 
@@ -346,6 +347,7 @@ long sys_fchownat(int dirfd, const char *pathname, uint32_t uid, uint32_t gid, i
                    "uid=%s, gid=%s, op=%s, flags=%s) -> %d (%s)\n",
                    dirfd, dirfd_desc, path_buf, path_type, vnode->ino,
                    uid_desc, gid_desc, operation_type, flags_desc, ret, error_desc);
+        fut_vnode_unref(vnode);
         return ret;
     }
 
@@ -355,5 +357,6 @@ long sys_fchownat(int dirfd, const char *pathname, uint32_t uid, uint32_t gid, i
                dirfd, dirfd_desc, path_buf, path_type, vnode->ino,
                uid_desc, gid_desc, operation_type, flags_desc, symlink_handling);
 
+    fut_vnode_unref(vnode);
     return 0;
 }

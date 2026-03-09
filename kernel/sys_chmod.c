@@ -318,6 +318,7 @@ long sys_chmod(const char *pathname, uint32_t mode) {
         fut_printf("[CHMOD] chmod(path='%s' [%s], vnode_ino=%lu, type=symlink, mode=%s, "
                    "special=%s) -> ENOTSUP (cannot change permissions on symbolic link)\n",
                    path_buf, path_type, vnode->ino, mode_desc, special_bits_desc);
+        fut_vnode_unref(vnode);
         return -ENOTSUP;
     }
 
@@ -354,6 +355,7 @@ long sys_chmod(const char *pathname, uint32_t mode) {
                    "special=%s) -> EINVAL (sticky bit on %s, Phase 5)\n",
                    path_buf, path_type, vnode->ino, type_desc, mode_desc,
                    special_bits_desc, type_desc);
+        fut_vnode_unref(vnode);
         return -EINVAL;
     }
 
@@ -395,6 +397,7 @@ long sys_chmod(const char *pathname, uint32_t mode) {
                    "special=%s) -> EINVAL (%s on %s, Phase 5)\n",
                    path_buf, path_type, vnode->ino, type_desc, mode_desc,
                    special_bits_desc, which_bit, type_desc);
+        fut_vnode_unref(vnode);
         return -EINVAL;
     }
 
@@ -433,6 +436,7 @@ long sys_chmod(const char *pathname, uint32_t mode) {
                    "special=%s) -> ENOSYS (filesystem doesn't support setattr)\n",
                    path_buf, path_type, vnode->ino, perms_change_buf, mode_desc,
                    special_bits_desc);
+        fut_vnode_unref(vnode);
         return -ENOSYS;
     }
 
@@ -465,6 +469,7 @@ long sys_chmod(const char *pathname, uint32_t mode) {
                    "special=%s) -> %d (%s)\n",
                    path_buf, path_type, vnode->ino, perms_change_buf, mode_desc,
                    special_bits_desc, ret, error_desc);
+        fut_vnode_unref(vnode);
         return ret;
     }
 
@@ -494,5 +499,6 @@ long sys_chmod(const char *pathname, uint32_t mode) {
     }
     */
 
+    fut_vnode_unref(vnode);
     return 0;
 }

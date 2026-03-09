@@ -197,6 +197,7 @@ long sys_truncate(const char *path, uint64_t length) {
                    "length=%llu [%s]) -> EISDIR (cannot truncate directory, Phase 5)\n",
                    path_buf, path_type, (unsigned long)path_len, vnode->ino,
                    (unsigned long long)local_length, length_category);
+        fut_vnode_unref(vnode);
         return -EISDIR;
     }
 
@@ -227,6 +228,7 @@ long sys_truncate(const char *path, uint64_t length) {
                    "length=%llu [%s]) -> EINVAL (cannot truncate %s, Phase 5)\n",
                    path_buf, path_type, (unsigned long)path_len, vnode->ino, type_desc,
                    (unsigned long long)local_length, length_category, type_desc);
+        fut_vnode_unref(vnode);
         return -EINVAL;
     }
 
@@ -237,6 +239,7 @@ long sys_truncate(const char *path, uint64_t length) {
     if (!task) {
         fut_printf("[TRUNCATE] truncate(path='%s', vnode_ino=%lu) -> ESRCH (no current task)\n",
                    path_buf, vnode->ino);
+        fut_vnode_unref(vnode);
         return -ESRCH;
     }
 
@@ -277,6 +280,7 @@ long sys_truncate(const char *path, uint64_t length) {
                    "task_uid=%u, vnode_uid=%u, task_gid=%u, vnode_gid=%u) -> EACCES (%s)\n",
                    path_buf, path_type, vnode->ino, vnode->mode,
                    task_uid, vnode->uid, task_gid, vnode->gid, denial_reason);
+        fut_vnode_unref(vnode);
         return -EACCES;
     }
 
@@ -327,6 +331,7 @@ long sys_truncate(const char *path, uint64_t length) {
                        path_buf, path_type, (unsigned long)path_len, vnode->ino,
                        (unsigned long long)local_length, length_category, operation,
                        ret, error_desc);
+            fut_vnode_unref(vnode);
             return ret;
         }
 
@@ -337,6 +342,7 @@ long sys_truncate(const char *path, uint64_t length) {
                    path_buf, path_type, (unsigned long)path_len, vnode->ino,
                    (unsigned long long)local_length, length_category, operation,
                    (unsigned long long)current_size, (unsigned long long)local_length);
+        fut_vnode_unref(vnode);
         return 0;
     }
 
@@ -356,5 +362,6 @@ long sys_truncate(const char *path, uint64_t length) {
                (unsigned long long)local_length, length_category, operation,
                (unsigned long long)current_size, (unsigned long long)local_length);
 
+    fut_vnode_unref(vnode);
     return 0;
 }

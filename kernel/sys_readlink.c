@@ -274,6 +274,7 @@ long sys_readlink(const char *path, char *buf, size_t bufsiz) {
         fut_printf("[READLINK] readlink(path='%s' [%s, %s], ino=%lu, bufsiz=%zu [%s]) -> EINVAL "
                    "(not a symbolic link)\n",
                    path_buf, path_type, length_category, vnode->ino, local_bufsiz, bufsiz_category);
+        fut_vnode_unref(vnode);
         return -EINVAL;
     }
 
@@ -282,6 +283,7 @@ long sys_readlink(const char *path, char *buf, size_t bufsiz) {
         fut_printf("[READLINK] readlink(path='%s' [%s, %s], ino=%lu, bufsiz=%zu [%s]) -> ENOSYS "
                    "(filesystem doesn't support readlink)\n",
                    path_buf, path_type, length_category, vnode->ino, local_bufsiz, bufsiz_category);
+        fut_vnode_unref(vnode);
         return -ENOSYS;
     }
 
@@ -289,6 +291,7 @@ long sys_readlink(const char *path, char *buf, size_t bufsiz) {
 
     char *target_buf = fut_malloc(local_bufsiz);
     if (!target_buf) {
+        fut_vnode_unref(vnode);
         return -ENOMEM;
     }
 
@@ -308,6 +311,7 @@ long sys_readlink(const char *path, char *buf, size_t bufsiz) {
                    path_buf, path_type, length_category, vnode->ino, local_bufsiz, bufsiz_category,
                    (int)len, error_desc);
         fut_free(target_buf);
+        fut_vnode_unref(vnode);
         return len;
     }
 
@@ -339,6 +343,7 @@ long sys_readlink(const char *path, char *buf, size_t bufsiz) {
                    "(returned length %zd exceeds buffer size, Phase 5)\n",
                    path_buf, vnode->ino, local_bufsiz, len);
         fut_free(target_buf);
+        fut_vnode_unref(vnode);
         return -ENAMETOOLONG;
     }
 
@@ -352,12 +357,14 @@ long sys_readlink(const char *path, char *buf, size_t bufsiz) {
                    "(symlink target length %zd exceeds PATH_MAX %d, Phase 5)\n",
                    path_buf, vnode->ino, len, PATH_MAX);
         fut_free(target_buf);
+        fut_vnode_unref(vnode);
         return -ENAMETOOLONG;
     }
 
     /* Copy result to userspace buffer */
     if (fut_copy_to_user(local_buf, target_buf, len) != 0) {
         fut_free(target_buf);
+        fut_vnode_unref(vnode);
         return -EFAULT;
     }
 
@@ -368,5 +375,6 @@ long sys_readlink(const char *path, char *buf, size_t bufsiz) {
                "target_len=%zd) -> %zd (Phase 3: VFS readlink operation)\n",
                path_buf, path_type, length_category, vnode->ino, local_bufsiz, bufsiz_category,
                len, len);
+    fut_vnode_unref(vnode);
     return len;
 }

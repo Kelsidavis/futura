@@ -305,6 +305,7 @@ long sys_rename(const char *oldpath, const char *newpath) {
     if (old_parent->type != VN_DIR) {
         fut_printf("[RENAME] rename(old='%s' [%s], new='%s' [%s], op=%s) -> ENOTDIR (parent not directory)\n",
                    old_buf, old_path_type, new_buf, new_path_type, operation_type);
+        fut_vnode_unref(old_parent);
         return -ENOTDIR;
     }
 
@@ -339,6 +340,7 @@ long sys_rename(const char *oldpath, const char *newpath) {
         if (!old_parent->ops || !old_parent->ops->rename) {
             fut_printf("[RENAME] rename(old='%s' [%s], new='%s' [%s], op=%s) -> ENOSYS (no rename operation)\n",
                        old_buf, old_path_type, new_buf, new_path_type, operation_type);
+            fut_vnode_unref(old_parent);
             return -ENOSYS;
         }
 
@@ -350,6 +352,7 @@ long sys_rename(const char *oldpath, const char *newpath) {
             fut_printf("[RENAME] rename(old='%s' [%s], new='%s' [%s], op=%s) -> %d (error)\n",
                        old_buf, old_path_type, new_buf, new_path_type, operation_type, ret);
         }
+        fut_vnode_unref(old_parent);
         return ret;
     }
 
@@ -371,12 +374,15 @@ long sys_rename(const char *oldpath, const char *newpath) {
         }
         fut_printf("[RENAME] rename(old='%s' [%s], new='%s' [%s], op=%s) -> %d (%s, cross-dir)\n",
                    old_buf, old_path_type, new_buf, new_path_type, operation_type, ret, error_desc);
+        fut_vnode_unref(old_parent);
         return ret;
     }
 
     if (new_parent->type != VN_DIR) {
         fut_printf("[RENAME] rename(old='%s' [%s], new='%s' [%s], op=%s) -> ENOTDIR (new parent not directory)\n",
                    old_buf, old_path_type, new_buf, new_path_type, operation_type);
+        fut_vnode_unref(old_parent);
+        fut_vnode_unref(new_parent);
         return -ENOTDIR;
     }
 
@@ -384,6 +390,8 @@ long sys_rename(const char *oldpath, const char *newpath) {
     if (old_parent->mount != new_parent->mount) {
         fut_printf("[RENAME] rename(old='%s' [%s], new='%s' [%s], op=%s) -> EXDEV (different filesystems)\n",
                    old_buf, old_path_type, new_buf, new_path_type, operation_type);
+        fut_vnode_unref(old_parent);
+        fut_vnode_unref(new_parent);
         return -EXDEV;
     }
 
@@ -414,12 +422,16 @@ long sys_rename(const char *oldpath, const char *newpath) {
     if (!old_parent->ops || !old_parent->ops->unlink) {
         fut_printf("[RENAME] rename(old='%s' [%s], new='%s' [%s], op=%s) -> ENOSYS (no unlink operation)\n",
                    old_buf, old_path_type, new_buf, new_path_type, operation_type);
+        fut_vnode_unref(old_parent);
+        fut_vnode_unref(new_parent);
         return -ENOSYS;
     }
 
     if (!new_parent->ops || !new_parent->ops->link) {
         fut_printf("[RENAME] rename(old='%s' [%s], new='%s' [%s], op=%s) -> ENOSYS (no link operation)\n",
                    old_buf, old_path_type, new_buf, new_path_type, operation_type);
+        fut_vnode_unref(old_parent);
+        fut_vnode_unref(new_parent);
         return -ENOSYS;
     }
 
@@ -460,6 +472,8 @@ long sys_rename(const char *oldpath, const char *newpath) {
     if (ret < 0) {
         fut_printf("[RENAME] rename(old='%s' [%s], new='%s' [%s], op=%s) -> %d (link failed, cross-dir)\n",
                    old_buf, old_path_type, new_buf, new_path_type, operation_type, ret);
+        fut_vnode_unref(old_parent);
+        fut_vnode_unref(new_parent);
         return ret;
     }
 
@@ -483,10 +497,14 @@ long sys_rename(const char *oldpath, const char *newpath) {
                        "(unlink failed, rollback succeeded, file remains at old path only, Phase 5)\n",
                        old_buf, old_path_type, new_buf, new_path_type, operation_type, ret);
         }
+        fut_vnode_unref(old_parent);
+        fut_vnode_unref(new_parent);
         return ret;
     }
 
     fut_printf("[RENAME] rename(old='%s' [%s], new='%s' [%s], op=%s) -> 0 (success, cross-dir)\n",
                old_buf, old_path_type, new_buf, new_path_type, operation_type);
+    fut_vnode_unref(old_parent);
+    fut_vnode_unref(new_parent);
     return 0;
 }

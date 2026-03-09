@@ -365,6 +365,7 @@ long sys_chown(const char *pathname, uint32_t uid, uint32_t gid) {
                    "uid=%s, gid=%s, op=%s) -> ENOSYS (filesystem doesn't support setattr)\n",
                    path_buf, path_type, vnode->ino, ownership_change_buf,
                    uid_desc, gid_desc, operation_type);
+        fut_vnode_unref(vnode);
         return -ENOSYS;
     }
 
@@ -398,6 +399,7 @@ long sys_chown(const char *pathname, uint32_t uid, uint32_t gid) {
                    "uid=%s, gid=%s, op=%s) -> %d (%s)\n",
                    path_buf, path_type, vnode->ino, ownership_change_buf,
                    uid_desc, gid_desc, operation_type, ret, error_desc);
+        fut_vnode_unref(vnode);
         return ret;
     }
 
@@ -407,5 +409,6 @@ long sys_chown(const char *pathname, uint32_t uid, uint32_t gid) {
                path_buf, path_type, vnode->ino, ownership_change_buf,
                uid_desc, gid_desc, operation_type);
 
+    fut_vnode_unref(vnode);
     return 0;
 }

@@ -285,6 +285,7 @@ long sys_access(const char *pathname, int mode) {
     if (local_mode == F_OK) {
         fut_printf("[ACCESS] access(path='%s' [%s], mode=%s) -> 0 "
                    "(file exists, Phase 4: uid/gid checking and ACLs)\n", path_buf, path_type, mode_desc);
+        fut_vnode_unref(vnode);
         return 0;
     }
 
@@ -327,6 +328,7 @@ long sys_access(const char *pathname, int mode) {
             fut_printf("[ACCESS] access(path='%s' [%s], mode=%s, file_mode=0%o, uid=%u, gid=%u, "
                        "checking=%s) -> EACCES (read permission denied)\n",
                        path_buf, path_type, mode_desc, file_mode, vnode->uid, vnode->gid, perm_check_buf);
+            fut_vnode_unref(vnode);
             return -EACCES;
         }
     }
@@ -337,6 +339,7 @@ long sys_access(const char *pathname, int mode) {
             fut_printf("[ACCESS] access(path='%s' [%s], mode=%s, file_mode=0%o, uid=%u, gid=%u, "
                        "checking=%s) -> EACCES (write permission denied)\n",
                        path_buf, path_type, mode_desc, file_mode, vnode->uid, vnode->gid, perm_check_buf);
+            fut_vnode_unref(vnode);
             return -EACCES;
         }
     }
@@ -347,6 +350,7 @@ long sys_access(const char *pathname, int mode) {
             fut_printf("[ACCESS] access(path='%s' [%s], mode=%s, file_mode=0%o, uid=%u, gid=%u, "
                        "checking=%s) -> EACCES (execute permission denied)\n",
                        path_buf, path_type, mode_desc, file_mode, vnode->uid, vnode->gid, perm_check_buf);
+            fut_vnode_unref(vnode);
             return -EACCES;
         }
     }
@@ -389,5 +393,6 @@ long sys_access(const char *pathname, int mode) {
                "WARNING: access() is vulnerable to TOCTOU - use open() directly instead\n",
                path_buf, path_type, mode_desc, file_mode, vnode->uid, vnode->gid, perm_check_buf);
 
+    fut_vnode_unref(vnode);
     return 0;
 }

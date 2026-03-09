@@ -486,7 +486,7 @@ long sys_setitimer(int which, const struct itimerval *value, struct itimerval *o
 
     /* Copy timer value from user */
     struct itimerval new_timer;
-    if (fut_copy_from_user(&new_timer, local_value, sizeof(struct itimerval)) != 0) {
+    if (clock_copy_from_user(&new_timer, local_value, sizeof(struct itimerval)) != 0) {
         fut_printf("[SETITIMER] setitimer(which=%s) -> EFAULT (copy_from_user failed)\n",
                    timer_name);
         return -EFAULT;
@@ -606,7 +606,7 @@ long sys_settimeofday(const fut_timeval_t *tv, const void *tz) {
 
     /* Copy time from user */
     fut_timeval_t time;
-    if (fut_copy_from_user(&time, local_tv, sizeof(fut_timeval_t)) != 0) {
+    if (clock_copy_from_user(&time, local_tv, sizeof(fut_timeval_t)) != 0) {
         fut_printf("[SETTIMEOFDAY] settimeofday -> EFAULT (copy_from_user failed)\n");
         return -EFAULT;
     }
@@ -661,7 +661,7 @@ long sys_adjtimex(struct timex *txc) {
 
     /* Copy from user */
     struct timex tx;
-    if (fut_copy_from_user(&tx, local_txc, sizeof(struct timex)) != 0) {
+    if (clock_copy_from_user(&tx, local_txc, sizeof(struct timex)) != 0) {
         fut_printf("[ADJTIMEX] adjtimex -> EFAULT (copy_from_user failed)\n");
         return -EFAULT;
     }
@@ -683,7 +683,7 @@ long sys_adjtimex(struct timex *txc) {
     tx.time.tv_usec = (ms % 1000) * 1000;
 
     /* Copy back to user */
-    if (fut_copy_to_user(local_txc, &tx, sizeof(struct timex)) != 0) {
+    if (clock_copy_to_user(local_txc, &tx, sizeof(struct timex)) != 0) {
         fut_printf("[ADJTIMEX] adjtimex -> EFAULT (copy_to_user failed)\n");
         return -EFAULT;
     }

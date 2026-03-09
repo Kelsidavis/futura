@@ -129,6 +129,11 @@ long sys_ftruncate(int fd, uint64_t length) {
         return -EBADF;
     }
 
+    /* Enforce file seals */
+    if (file->seals & 0x0008 /* F_SEAL_WRITE */) {
+        return -EPERM;
+    }
+
     /* Get the vnode from the file */
     struct fut_vnode *vnode = file->vnode;
     if (!vnode) {
@@ -136,6 +141,14 @@ long sys_ftruncate(int fd, uint64_t length) {
                    "(no vnode)\n",
                    fd, fd_category, length, length_category);
         return -EBADF;
+    }
+
+    /* Enforce seal-based size constraints */
+    if (vnode->size > 0) {
+        if ((file->seals & 0x0002 /* F_SEAL_SHRINK */) && length < vnode->size)
+            return -EPERM;
+        if ((file->seals & 0x0004 /* F_SEAL_GROW */) && length > vnode->size)
+            return -EPERM;
     }
 
     /* Cannot truncate a directory */

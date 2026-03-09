@@ -462,6 +462,7 @@ struct fut_file {
     void *chr_private;              /* Driver private state */
     int fd_flags;                   /* FD-specific flags (e.g., FD_CLOEXEC) */
     int owner_pid;                  /* Owner PID for async I/O signals (F_SETOWN/F_GETOWN) */
+    uint32_t seals;                 /* File sealing flags (F_SEAL_*) */
 };
 
 /* ============================================================

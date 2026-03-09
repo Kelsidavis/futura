@@ -1564,6 +1564,11 @@ ssize_t fut_vfs_write(int fd, const void *buf, size_t size) {
         return -EBADF;
     }
 
+    /* Enforce file seals: F_SEAL_WRITE prevents all writes */
+    if (file->seals & 0x0008 /* F_SEAL_WRITE */) {
+        return -EPERM;
+    }
+
     if (file->chr_ops) {
         VFSDBG("[vfs-write] chr_ops path\n");
         if (!file->chr_ops->write) {
@@ -1589,6 +1594,12 @@ ssize_t fut_vfs_write(int fd, const void *buf, size_t size) {
     if (perm_ret < 0) {
         VFSDBG("[vfs-write] Write permission denied (mode=0%o)\n", file->vnode->mode);
         return perm_ret;
+    }
+
+    /* Enforce F_SEAL_GROW: reject writes that would extend the file */
+    if ((file->seals & 0x0004 /* F_SEAL_GROW */) &&
+        file->offset + size > file->vnode->size) {
+        return -EPERM;
     }
 
     VFSDBG("[vfs-write] calling vnode->ops->write\n");

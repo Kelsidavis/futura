@@ -379,6 +379,10 @@ long sys_fcntl(int fd, int cmd, uint64_t arg) {
             cmd_name = "F_GET_SEALS";
             cmd_category = "get sealing flags";
             break;
+        case F_ADD_SEALS:
+            cmd_name = "F_ADD_SEALS";
+            cmd_category = "add sealing flags";
+            break;
         case F_SETLK:
             cmd_name = "F_SETLK";
             cmd_category = "set file lock (non-blocking)";
@@ -810,10 +814,35 @@ long sys_fcntl(int fd, int cmd, uint64_t arg) {
     }
 
     case F_GET_SEALS:
-        /* Stub: return no seals set (Phase 4 will implement actual sealing) */
-        fut_printf("[FCNTL] fcntl(fd=%d [%s], cmd=%s [%s]) -> 0 (stub, no seals, Phase 2)\n",
-                   local_fd, fd_category, cmd_name, cmd_category);
+        fut_printf("[FCNTL] fcntl(fd=%d [%s], cmd=%s [%s]) -> 0x%x\n",
+                   local_fd, fd_category, cmd_name, cmd_category, file->seals);
+        return (long)file->seals;
+
+    case F_ADD_SEALS: {
+        uint32_t new_seals = (uint32_t)local_arg;
+        uint32_t valid_mask = F_SEAL_SEAL | F_SEAL_SHRINK | F_SEAL_GROW |
+                              F_SEAL_WRITE | F_SEAL_FUTURE_WRITE;
+
+        /* Reject unknown seal bits */
+        if (new_seals & ~valid_mask) {
+            fut_printf("[FCNTL] fcntl(fd=%d, F_ADD_SEALS, 0x%x) -> EINVAL (unknown bits)\n",
+                       local_fd, new_seals);
+            return -EINVAL;
+        }
+
+        /* Cannot add seals if F_SEAL_SEAL is already set */
+        if (file->seals & F_SEAL_SEAL) {
+            fut_printf("[FCNTL] fcntl(fd=%d, F_ADD_SEALS, 0x%x) -> EPERM (sealed)\n",
+                       local_fd, new_seals);
+            return -EPERM;
+        }
+
+        /* Add new seals (seals can only be added, never removed) */
+        file->seals |= new_seals;
+        fut_printf("[FCNTL] fcntl(fd=%d [%s], cmd=%s [%s], seals=0x%x) -> 0\n",
+                   local_fd, fd_category, cmd_name, cmd_category, file->seals);
         return 0;
+    }
 
     case F_SETLK: {
         /* Phase 3: Set file lock (non-blocking advisory lock) */

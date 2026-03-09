@@ -64,6 +64,10 @@ int win_proto_recv(struct fut_fipc_channel *channel,
 
         const struct fut_fipc_msg *msg = (const struct fut_fipc_msg *)buffer;
         const size_t payload_size = msg->length;
+        /* Validate length fits within received data */
+        if (payload_size > (size_t)got - sizeof(struct fut_fipc_msg)) {
+            return -EMSGSIZE;
+        }
         if (payload_size < sizeof(struct win_msg_hdr)) {
             return -EMSGSIZE;
         }

@@ -11,6 +11,10 @@ struct ui_surface *compositor_surface_create(uint32_t width, uint32_t height) {
     if (width == 0 || height == 0) {
         return NULL;
     }
+    /* Prevent integer overflow in pitch and total size calculations */
+    if (width > (uint32_t)0xFFFFFFFFu / sizeof(uint32_t)) {
+        return NULL;
+    }
 
     struct ui_surface *surface = malloc(sizeof(*surface));
     if (!surface) {
@@ -21,6 +25,10 @@ struct ui_surface *compositor_surface_create(uint32_t width, uint32_t height) {
     surface->height = height;
     surface->pitch = width * sizeof(uint32_t);
     size_t bytes = (size_t)surface->pitch * surface->height;
+    if (bytes / surface->height != surface->pitch) {
+        free(surface);
+        return NULL;
+    }
     surface->pixels = malloc(bytes);
     if (!surface->pixels) {
         free(surface);

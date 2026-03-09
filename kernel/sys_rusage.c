@@ -22,6 +22,14 @@
 #include <platform/arm64/memory/paging.h>
 #endif
 
+static inline int rusage_access_ok_write(const void *ptr, size_t n) {
+#ifdef KERNEL_VIRTUAL_BASE
+    if ((uintptr_t)ptr >= KERNEL_VIRTUAL_BASE)
+        return 0;  /* Kernel pointer: always accessible */
+#endif
+    return fut_access_ok(ptr, n, 1);
+}
+
 static inline int rusage_copy_to_user(void *dst, const void *src, size_t n) {
 #ifdef KERNEL_VIRTUAL_BASE
     if ((uintptr_t)dst >= KERNEL_VIRTUAL_BASE) {
@@ -95,7 +103,7 @@ long sys_getrusage(int who, struct rusage *usage) {
      * ATTACK: Attacker provides read-only or unmapped usage buffer
      * IMPACT: Kernel page fault when writing resource usage statistics
      * DEFENSE: Check write permission before processing */
-    if (fut_access_ok(usage, sizeof(struct rusage), 1) != 0) {
+    if (rusage_access_ok_write(usage, sizeof(struct rusage)) != 0) {
         fut_printf("[RUSAGE] getrusage(who=%d, usage=%p) -> EFAULT (buffer not writable for %zu bytes)\n",
                    who, usage, sizeof(struct rusage));
         return -EFAULT;

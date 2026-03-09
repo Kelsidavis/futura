@@ -327,13 +327,14 @@
  * [DONE] Output buffer write permission (TCGETS, TIOCGWINSZ, FIONREAD) at lines 221-250
  * [DONE] Small integer vs pointer disambiguation (argp < 0x1000) at line 127
  *
- * TODO (Priority Order):
- * 1. Extract IOC_DIR bits from request code for automatic direction detection
- * 2. Add input buffer read permission check for IOC_READ ioctls (similar to write check)
- * 3. Add per-device ioctl request code whitelisting (defense in depth)
- * 4. Implement size validation using IOC_SIZE(request) to prevent buffer overflows
+ * Completed hardening:
+ * 1. [DONE] Extract IOC_DIR bits from request code for automatic direction detection
+ * 2. [DONE] Add input buffer read permission check for IOC_READ ioctls
+ * 3. [DONE] Implement size validation using IOC_SIZE(request) to prevent buffer overflows
+ *
+ * Remaining (lower priority):
+ * 4. Add per-device ioctl request code whitelisting (defense in depth)
  * 5. Add rate limiting on unknown ioctl codes to prevent DoS via rapid invalid requests
- * 6. Consider memory tagging/checksumming to detect use-after-free in device handlers
  */
 
 /**
@@ -535,6 +536,32 @@ long sys_ioctl(int fd, unsigned long request, void *argp) {
                         }
                     }
                     break;
+            }
+
+            /* Validate buffer size for _IOC-encoded ioctls
+             * Uses _IOC_SIZE to check that argp buffer covers the encoded size.
+             * Prevents buffer overflows when device handlers copy full struct. */
+            if ((requires_write || requires_read) && argp != NULL && _IOC_IS_ENCODED(request)) {
+                unsigned int ioc_size = _IOC_SIZE(request);
+                if (ioc_size > 0 && ioc_size <= 16384) {
+                    /* Validate full buffer accessibility */
+                    if (requires_write) {
+                        if (fut_access_ok(argp, ioc_size, 1) != 0) {
+                            fut_printf("[IOCTL] ioctl(fd=%d, request=0x%lx [%s], argp=%p) -> EFAULT "
+                                       "(argp buffer too small for IOC_SIZE=%u)\n",
+                                       fd, request, request_name, argp, ioc_size);
+                            return -EFAULT;
+                        }
+                    }
+                    if (requires_read) {
+                        if (fut_access_ok(argp, ioc_size, 0) != 0) {
+                            fut_printf("[IOCTL] ioctl(fd=%d, request=0x%lx [%s], argp=%p) -> EFAULT "
+                                       "(argp buffer not readable for IOC_SIZE=%u)\n",
+                                       fd, request, request_name, argp, ioc_size);
+                            return -EFAULT;
+                        }
+                    }
+                }
             }
 
             /* Validate write permission for output ioctls */

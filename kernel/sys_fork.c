@@ -740,6 +740,36 @@ long sys_fork(void) {
         return -ENOMEM;
     }
 
+    /* Inherit parent's credentials (POSIX: child inherits all UID/GID values) */
+    child_task->uid  = parent_task->uid;
+    child_task->gid  = parent_task->gid;
+    child_task->ruid = parent_task->ruid;
+    child_task->rgid = parent_task->rgid;
+    child_task->suid = parent_task->suid;
+    child_task->sgid = parent_task->sgid;
+
+    /* Inherit parent's signal handlers and mask (POSIX requirement) */
+    for (int i = 0; i < _NSIG; i++) {
+        child_task->signal_handlers[i]      = parent_task->signal_handlers[i];
+        child_task->signal_handler_masks[i] = parent_task->signal_handler_masks[i];
+        child_task->signal_handler_flags[i] = parent_task->signal_handler_flags[i];
+    }
+    child_task->signal_mask = parent_task->signal_mask;
+
+    /* Inherit parent's umask, resource limits, and capabilities */
+    child_task->umask = parent_task->umask;
+    for (int i = 0; i < 16; i++) {
+        child_task->rlimits[i] = parent_task->rlimits[i];
+    }
+    child_task->cap_effective   = parent_task->cap_effective;
+    child_task->cap_permitted   = parent_task->cap_permitted;
+    child_task->cap_inheritable = parent_task->cap_inheritable;
+
+    /* Inherit I/O priority */
+    child_task->ioprio       = parent_task->ioprio;
+    child_task->ioprio_class = parent_task->ioprio_class;
+    child_task->ioprio_level = parent_task->ioprio_level;
+
     /* Copy parent's file descriptor table to child */
     #define FUT_FILE_REF_MAX 0xFFFFFFF0u  /* Leave headroom below UINT32_MAX */
     if (parent_task->fd_table) {

@@ -101,6 +101,9 @@ static const char *get_history(int index);
 /* Forward declaration for tab completion */
 static void complete_command(char *buf, size_t *pos, size_t max_len);
 
+/* Forward declaration for prompt */
+static void print_prompt(void);
+
 /* Architecture-agnostic syscall wrappers using libfutura */
 static inline long syscall1(long nr, long arg1) {
     return sys_call1(nr, arg1);
@@ -509,7 +512,7 @@ static void complete_command(char *buf, size_t *pos, size_t max_len) {
             }
 
             /* Reprint prompt and current input */
-            write_str(1, "futura> ");
+            print_prompt();
             for (size_t i = 0; i < *pos; i++) {
                 write_char(1, buf[i]);
             }
@@ -899,6 +902,19 @@ static void cmd_clear(int argc, char *argv[]) {
     (void)argv;
     write_str(1, "\033[2J");  /* Clear screen */
     write_str(1, "\033[H");   /* Move cursor to home */
+}
+
+/* Print shell prompt showing current directory: "futura:/path$ " */
+static void print_prompt(void) {
+    char cwd[256] = {0};
+    long ret = sys_getcwd(cwd, sizeof(cwd));
+    write_str(1, "futura:");
+    if (ret > 0) {
+        write_str(1, cwd);
+    } else {
+        write_str(1, "?");
+    }
+    write_str(1, "$ ");
 }
 
 /* Built-in: pwd */
@@ -3548,7 +3564,27 @@ static int is_builtin(const char *cmd) {
             strcmp_simple(cmd, "clear") == 0 ||
             strcmp_simple(cmd, "uname") == 0 ||
             strcmp_simple(cmd, "whoami") == 0 ||
+            strcmp_simple(cmd, "env") == 0 ||
             strcmp_simple(cmd, "export") == 0 ||
+            strcmp_simple(cmd, "cat") == 0 ||
+            strcmp_simple(cmd, "wc") == 0 ||
+            strcmp_simple(cmd, "head") == 0 ||
+            strcmp_simple(cmd, "tail") == 0 ||
+            strcmp_simple(cmd, "grep") == 0 ||
+            strcmp_simple(cmd, "sort") == 0 ||
+            strcmp_simple(cmd, "uniq") == 0 ||
+            strcmp_simple(cmd, "cut") == 0 ||
+            strcmp_simple(cmd, "tr") == 0 ||
+            strcmp_simple(cmd, "tee") == 0 ||
+            strcmp_simple(cmd, "paste") == 0 ||
+            strcmp_simple(cmd, "diff") == 0 ||
+            strcmp_simple(cmd, "find") == 0 ||
+            strcmp_simple(cmd, "mkdir") == 0 ||
+            strcmp_simple(cmd, "rmdir") == 0 ||
+            strcmp_simple(cmd, "rm") == 0 ||
+            strcmp_simple(cmd, "touch") == 0 ||
+            strcmp_simple(cmd, "cp") == 0 ||
+            strcmp_simple(cmd, "mv") == 0 ||
             strcmp_simple(cmd, "test") == 0 ||
             strcmp_simple(cmd, "[") == 0 ||
             strcmp_simple(cmd, "jobs") == 0 ||
@@ -4089,7 +4125,7 @@ int main(int argc, char **argv, char **envp) {
         update_jobs();
 
         /* Print prompt with current directory */
-        write_str(1, "futura> ");
+        print_prompt();
 
         /* Read command line with interactive editing */
         nread = read_line(0, cmdline, sizeof(cmdline));

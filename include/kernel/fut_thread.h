@@ -90,8 +90,7 @@ struct fut_thread {
 
     fut_thread_t *next;                   // Next in scheduler ready queue
     fut_thread_t *prev;                   // Previous in scheduler ready queue
-    fut_thread_t *wait_next;              // Next in wait queue
-    fut_thread_t *wq_next;                // Next in wait queue (for futex)
+    fut_thread_t *wait_next;              // Next in wait queue (also used by futex)
     fut_thread_t *global_next;            // Next in global thread list
 
     /* Futex support */

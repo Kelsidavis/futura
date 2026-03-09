@@ -222,6 +222,15 @@ long sys_clock_getres(int clock_id, fut_timespec_t *res) {
         case CLOCK_MONOTONIC_COARSE:
             clock_name = "CLOCK_MONOTONIC_COARSE";
             break;
+        case CLOCK_MONOTONIC_RAW:
+            clock_name = "CLOCK_MONOTONIC_RAW";
+            break;
+        case CLOCK_PROCESS_CPUTIME_ID:
+            clock_name = "CLOCK_PROCESS_CPUTIME_ID";
+            break;
+        case CLOCK_THREAD_CPUTIME_ID:
+            clock_name = "CLOCK_THREAD_CPUTIME_ID";
+            break;
         default:
             fut_printf("[CLOCK_GETRES] clock_getres(clock_id=%d) -> EINVAL (unknown clock_id)\n",
                        local_clock_id);

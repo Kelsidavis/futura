@@ -89,9 +89,13 @@ long sys_acct(const char *filename) {
         return -ENOSYS;
     }
 
-    /* Phase 2: Copy filename from userspace to validate it */
+    /* Copy filename from userspace (full buffer to detect truncation)
+     * VULNERABILITY: Uninitialized Byte in Truncation Check
+     * Previously copied sizeof(buf)-1 bytes but checked memchr over sizeof(buf),
+     * leaving the last byte uninitialized and making truncation detection unreliable.
+     * DEFENSE: Copy full buffer size so all bytes are initialized for memchr check. */
     char path_buf[FUT_VFS_PATH_BUFFER_SIZE];
-    if (fut_copy_from_user(path_buf, filename, sizeof(path_buf) - 1) != 0) {
+    if (fut_copy_from_user(path_buf, filename, sizeof(path_buf)) != 0) {
         fut_printf("[ACCT] acct(filename=?, pid=%d) -> EFAULT "
                    "(filename copy_from_user failed)\n", task->pid);
         return -EFAULT;

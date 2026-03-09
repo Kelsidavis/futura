@@ -17,6 +17,7 @@
 #include <kernel/fut_vfs.h>
 #include <stdint.h>
 #include <stddef.h>
+#include <string.h>
 
 #include <kernel/kprintf.h>
 #include <kernel/uaccess.h>
@@ -63,21 +64,33 @@ static inline long xattr_copy_path_and_name(const char *path, const char *name,
     fut_task_t *task = fut_task_current();
     int64_t pid = task ? (int64_t)task->pid : -1;
 
-    /* Copy path from userspace */
-    if (fut_copy_from_user(path_buf, path, FUT_VFS_PATH_BUFFER_SIZE - 1) != 0) {
+    /* Copy path from userspace (full buffer to detect truncation)
+     * VULNERABILITY: Path Truncation Attack
+     * DEFENSE: Copy full buffer and check for null terminator presence */
+    if (fut_copy_from_user(path_buf, path, FUT_VFS_PATH_BUFFER_SIZE) != 0) {
         fut_printf("[XATTR] %s(path=? [bad addr], name=%p, pid=%d) -> EFAULT\n",
                    syscall, name, pid);
         return -EFAULT;
     }
-    path_buf[FUT_VFS_PATH_BUFFER_SIZE - 1] = '\0';
+    if (memchr(path_buf, '\0', FUT_VFS_PATH_BUFFER_SIZE) == NULL) {
+        fut_printf("[XATTR] %s(path=<truncated>, pid=%d) -> ENAMETOOLONG "
+                   "(path exceeds %d bytes)\n",
+                   syscall, pid, FUT_VFS_PATH_BUFFER_SIZE - 1);
+        return -ENAMETOOLONG;
+    }
 
-    /* Copy name from userspace */
-    if (fut_copy_from_user(name_buf, name, XATTR_NAME_MAX) != 0) {
+    /* Copy name from userspace (full buffer to detect truncation) */
+    if (fut_copy_from_user(name_buf, name, XATTR_NAME_MAX + 1) != 0) {
         fut_printf("[XATTR] %s(path='%s', name=? [bad addr], pid=%d) -> EFAULT\n",
                    syscall, path_buf, pid);
         return -EFAULT;
     }
-    name_buf[XATTR_NAME_MAX] = '\0';
+    if (memchr(name_buf, '\0', XATTR_NAME_MAX + 1) == NULL) {
+        fut_printf("[XATTR] %s(path='%s', name=<truncated>, pid=%d) -> ERANGE "
+                   "(name exceeds %d bytes)\n",
+                   syscall, path_buf, pid, XATTR_NAME_MAX);
+        return -ERANGE;
+    }
 
     /* Validate name is not empty */
     if (name_buf[0] == '\0') {
@@ -104,12 +117,17 @@ static inline long xattr_copy_name(const char *name, char *name_buf,
     fut_task_t *task = fut_task_current();
     int64_t pid = task ? (int64_t)task->pid : -1;
 
-    if (fut_copy_from_user(name_buf, name, XATTR_NAME_MAX) != 0) {
+    if (fut_copy_from_user(name_buf, name, XATTR_NAME_MAX + 1) != 0) {
         fut_printf("[XATTR] %s(fd=%d, name=? [bad addr], pid=%d) -> EFAULT\n",
                    syscall, fd, pid);
         return -EFAULT;
     }
-    name_buf[XATTR_NAME_MAX] = '\0';
+    if (memchr(name_buf, '\0', XATTR_NAME_MAX + 1) == NULL) {
+        fut_printf("[XATTR] %s(fd=%d, name=<truncated>, pid=%d) -> ERANGE "
+                   "(name exceeds %d bytes)\n",
+                   syscall, fd, pid, XATTR_NAME_MAX);
+        return -ERANGE;
+    }
 
     if (name_buf[0] == '\0') {
         fut_printf("[XATTR] %s(fd=%d, name='' [empty], pid=%d) -> EINVAL\n",
@@ -194,12 +212,17 @@ static inline long xattr_copy_path(const char *path, char *path_buf,
     fut_task_t *task = fut_task_current();
     int64_t pid = task ? (int64_t)task->pid : -1;
 
-    if (fut_copy_from_user(path_buf, path, FUT_VFS_PATH_BUFFER_SIZE - 1) != 0) {
+    if (fut_copy_from_user(path_buf, path, FUT_VFS_PATH_BUFFER_SIZE) != 0) {
         fut_printf("[XATTR] %s(path=? [bad addr], pid=%d) -> EFAULT\n",
                    syscall, pid);
         return -EFAULT;
     }
-    path_buf[FUT_VFS_PATH_BUFFER_SIZE - 1] = '\0';
+    if (memchr(path_buf, '\0', FUT_VFS_PATH_BUFFER_SIZE) == NULL) {
+        fut_printf("[XATTR] %s(path=<truncated>, pid=%d) -> ENAMETOOLONG "
+                   "(path exceeds %d bytes)\n",
+                   syscall, pid, FUT_VFS_PATH_BUFFER_SIZE - 1);
+        return -ENAMETOOLONG;
+    }
 
     return 0;
 }

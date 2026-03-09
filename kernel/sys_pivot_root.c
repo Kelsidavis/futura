@@ -187,9 +187,13 @@ long sys_pivot_root(const char *new_root, const char *put_old) {
         return -EFAULT;
     }
 
-    /* Phase 2: Copy new_root from userspace */
+    /* Copy new_root from userspace (full buffer to detect truncation)
+     * VULNERABILITY: Uninitialized Byte in Truncation Check
+     * Previously copied sizeof(buf)-1 bytes but checked memchr over sizeof(buf),
+     * leaving the last byte uninitialized and making truncation detection unreliable.
+     * DEFENSE: Copy full buffer size so all bytes are initialized for memchr check. */
     char new_root_buf[256];
-    if (fut_copy_from_user(new_root_buf, new_root, sizeof(new_root_buf) - 1) != 0) {
+    if (fut_copy_from_user(new_root_buf, new_root, sizeof(new_root_buf)) != 0) {
         fut_printf("[PIVOT_ROOT] pivot_root(new_root=?, put_old=%p, pid=%d) -> EFAULT "
                    "(new_root copy_from_user failed)\n",
                    put_old, task->pid);
@@ -216,9 +220,9 @@ long sys_pivot_root(const char *new_root, const char *put_old) {
         return -EFAULT;
     }
 
-    /* Phase 2: Copy put_old from userspace */
+    /* Copy put_old from userspace (full buffer to detect truncation) */
     char put_old_buf[256];
-    if (fut_copy_from_user(put_old_buf, put_old, sizeof(put_old_buf) - 1) != 0) {
+    if (fut_copy_from_user(put_old_buf, put_old, sizeof(put_old_buf)) != 0) {
         fut_printf("[PIVOT_ROOT] pivot_root(new_root='%s', put_old=?, pid=%d) -> EFAULT "
                    "(put_old copy_from_user failed)\n",
                    new_root_buf, task->pid);

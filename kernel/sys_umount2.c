@@ -15,8 +15,10 @@
 #include <kernel/fut_task.h>
 #include <kernel/errno.h>
 #include <stddef.h>
+#include <string.h>
 
 #include <kernel/kprintf.h>
+#include <kernel/uaccess.h>
 
 /* Unmount flags */
 #define MNT_FORCE       1       /* Force unmount even if busy */
@@ -195,6 +197,30 @@ long sys_umount2(const char *target, int flags) {
         return -EINVAL;
     }
 
+    /* Copy target path from userspace
+     * VULNERABILITY: Missing User Pointer Validation
+     * ATTACK: Raw user pointer passed to kernel string functions
+     * IMPACT: Kernel reads arbitrary user memory without validation
+     * DEFENSE: Copy path with fut_copy_from_user and detect truncation */
+    char target_buf[256];
+    if (fut_copy_from_user(target_buf, target, sizeof(target_buf)) != 0) {
+        fut_printf("[UMOUNT2] umount2(target=?, flags=0x%x, pid=%d) -> EFAULT "
+                   "(target copy_from_user failed)\n", flags, task->pid);
+        return -EFAULT;
+    }
+    if (memchr(target_buf, '\0', sizeof(target_buf)) == NULL) {
+        fut_printf("[UMOUNT2] umount2(target=<truncated>, flags=0x%x, pid=%d) -> ENAMETOOLONG "
+                   "(path exceeds %zu bytes)\n", flags, task->pid, sizeof(target_buf) - 1);
+        return -ENAMETOOLONG;
+    }
+
+    /* Validate target is not empty */
+    if (target_buf[0] == '\0') {
+        fut_printf("[UMOUNT2] umount2(target=\"\", flags=0x%x, pid=%d) -> EINVAL\n",
+                   flags, task->pid);
+        return -EINVAL;
+    }
+
     /* Categorize unmount type */
     const char *umount_type;
     if ((flags & (MNT_FORCE | MNT_DETACH)) == (MNT_FORCE | MNT_DETACH)) {
@@ -236,10 +262,10 @@ long sys_umount2(const char *target, int flags) {
     }
     *p = '\0';
 
-    /* Phase 2: Accept validated unmount requests */
-    fut_printf("[UMOUNT2] umount2(target=%p, type=%s, flags=%s, pid=%d) -> 0 "
-               "(Phase 3: Force and detach unmount modes with filesystem state checking)\n",
-               target, umount_type, flags_buf, task->pid);
+    /* Accept validated unmount requests */
+    fut_printf("[UMOUNT2] umount2(target='%s', type=%s, flags=%s, pid=%d) -> 0 "
+               "(unmount request accepted)\n",
+               target_buf, umount_type, flags_buf, task->pid);
 
     return 0;  /* Phase 2: Accept all validated unmount requests */
 }

@@ -16,6 +16,7 @@
 #include <kernel/fut_task.h>
 #include <kernel/errno.h>
 #include <kernel/signal_frame.h>
+#include <kernel/uaccess.h>
 #include <sys/wait.h>
 #include <stdint.h>
 #include <stddef.h>
@@ -110,6 +111,16 @@ long sys_waitid(int idtype, int id, siginfo_t *infop, int options,
     if (!infop) {
         fut_printf("[WAITID] waitid(idtype=%d, id=%d, infop=NULL, options=0x%x, pid=%d) "
                    "-> EFAULT\n", idtype, id, options, task->pid);
+        return -EFAULT;
+    }
+
+    /* Validate infop write permission early (kernel writes siginfo_t)
+     * VULNERABILITY: Invalid Output Buffer Pointer
+     * DEFENSE: Check write permission before processing */
+    if (fut_access_ok(infop, sizeof(siginfo_t), 1) != 0) {
+        fut_printf("[WAITID] waitid(idtype=%d, id=%d, infop=%p, options=0x%x, pid=%d) "
+                   "-> EFAULT (infop buffer not writable for %zu bytes)\n",
+                   idtype, id, infop, options, task->pid, sizeof(siginfo_t));
         return -EFAULT;
     }
 

@@ -275,18 +275,46 @@ long sys_mknodat(int dirfd, const char *pathname, uint32_t mode, uint32_t dev) {
         minor = local_dev & 0xFF;
     }
 
-    /* Phase 3: Validate file type and prepare for creation
-     * Support regular files, FIFOs, sockets (Phase 3)
-     * Defer device node creation to Phase 4 (requires capability checks) */
+    /* Device nodes require CAP_MKNOD and are not yet supported */
     if (file_type == S_IFCHR || file_type == S_IFBLK) {
-        fut_printf("[MKNODAT] mknodat(dirfd=%s, pathname='%s', type=%s, mode=0%o, dev=%u:%u, pid=%d) -> 0 "
-                   "(device nodes deferred to Phase 4, Phase 3: file type validation)\n",
+        fut_printf("[MKNODAT] mknodat(dirfd=%s, pathname='%s', type=%s, mode=0%o, dev=%u:%u, pid=%d) -> EPERM "
+                   "(device nodes require CAP_MKNOD, not yet implemented)\n",
                    dirfd_desc, path_buf, type_desc, local_mode & 0777, major, minor, task->pid);
-    } else {
-        fut_printf("[MKNODAT] mknodat(dirfd=%s, pathname='%s', type=%s, mode=0%o, pid=%d) -> 0 "
-                   "(Phase 3: regular file/FIFO/socket type validated, creation deferred to VFS)\n",
-                   dirfd_desc, path_buf, type_desc, local_mode & 0777, task->pid);
+        return -EPERM;
     }
 
-    return 0;
+    /* For relative paths with a real dirfd, we'd need directory-relative VFS support.
+     * Only AT_FDCWD and absolute paths are supported for now. */
+    if (local_dirfd != AT_FDCWD && path_buf[0] != '/') {
+        fut_printf("[MKNODAT] mknodat(dirfd=%d, pathname='%s' [relative], pid=%d) -> ENOTSUP "
+                   "(relative dirfd not yet implemented)\n",
+                   local_dirfd, path_buf, task->pid);
+        return -ENOTSUP;
+    }
+
+    int ret = 0;
+
+    /* Regular file (S_IFREG or type 0): create via VFS open with O_CREAT|O_EXCL */
+    if (file_type == S_IFREG || file_type == 0) {
+        int fd = fut_vfs_open(path_buf, O_CREAT | O_EXCL | O_WRONLY, (int)(local_mode & 0777));
+        if (fd < 0) {
+            fut_printf("[MKNODAT] mknodat(dirfd=%s, pathname='%s', type=%s, mode=0%o, pid=%d) -> %d "
+                       "(VFS open failed)\n",
+                       dirfd_desc, path_buf, type_desc, local_mode & 0777, task->pid, fd);
+            return (long)fd;
+        }
+        fut_vfs_close(fd);
+        fut_printf("[MKNODAT] mknodat(dirfd=%s, pathname='%s', type=%s, mode=0%o, pid=%d) -> 0 "
+                   "(regular file created)\n",
+                   dirfd_desc, path_buf, type_desc, local_mode & 0777, task->pid);
+        return 0;
+    }
+
+    /* FIFO and socket nodes: log and return ENOTSUP until VFS gains mknod support */
+    fut_printf("[MKNODAT] mknodat(dirfd=%s, pathname='%s', type=%s, mode=0%o, pid=%d) -> ENOTSUP "
+               "(FIFO/socket mknod not yet implemented)\n",
+               dirfd_desc, path_buf, type_desc, local_mode & 0777, task->pid);
+    ret = -ENOTSUP;
+
+    return ret;
 }

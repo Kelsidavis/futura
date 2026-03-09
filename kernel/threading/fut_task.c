@@ -495,12 +495,28 @@ int fut_task_waitpid(int pid, int *status_out, int flags) {
     for (;;) {
         fut_spinlock_acquire(&task_list_lock);
 
-        bool has_children = parent->first_child != NULL;
         fut_task_t *child = parent->first_child;
         fut_task_t *match = NULL;
+        bool has_matching_children = false;
 
         while (child) {
-            if ((pid <= 0) || ((int)child->pid == pid)) {
+            bool matches = false;
+            if (pid > 0) {
+                /* Wait for specific child PID */
+                matches = ((int)child->pid == pid);
+            } else if (pid == -1) {
+                /* Wait for any child */
+                matches = true;
+            } else if (pid == 0) {
+                /* Wait for any child in same process group */
+                matches = (child->pgid == parent->pgid);
+            } else {
+                /* pid < -1: Wait for any child in process group |pid| */
+                matches = (child->pgid == (uint64_t)(-pid));
+            }
+
+            if (matches) {
+                has_matching_children = true;
                 if (child->state == FUT_TASK_ZOMBIE) {
                     match = child;
                     break;
@@ -509,7 +525,7 @@ int fut_task_waitpid(int pid, int *status_out, int flags) {
             child = child->sibling;
         }
 
-        if (!has_children) {
+        if (!has_matching_children) {
             fut_spinlock_release(&task_list_lock);
             return -ECHILD;
         }

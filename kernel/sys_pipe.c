@@ -699,3 +699,42 @@ long sys_pipe2(int pipefd[2], int flags) {
 
     return 0;
 }
+
+/**
+ * pipe_peek - Copy up to `len` bytes from a readable pipe without consuming them.
+ *
+ * Used by sys_tee() to duplicate data from one pipe to another while keeping
+ * the source pipe's data available for subsequent reads.
+ *
+ * @param read_priv   chr_private of the pipe read-end (struct pipe_buffer *)
+ * @param buf         Kernel buffer to copy data into
+ * @param len         Maximum bytes to peek
+ *
+ * Returns the number of bytes copied (>= 0), or a negative error code.
+ */
+ssize_t pipe_peek(void *read_priv, void *buf, size_t len) {
+    struct pipe_buffer *pipe = (struct pipe_buffer *)read_priv;
+    if (!pipe || !buf || len == 0)
+        return -EINVAL;
+
+    fut_spinlock_acquire(&pipe->lock);
+
+    if (pipe->count == 0) {
+        fut_spinlock_release(&pipe->lock);
+        /* Non-blocking peek: return 0 if empty */
+        return 0;
+    }
+
+    size_t to_copy = (len < pipe->count) ? len : pipe->count;
+    uint8_t *dst = (uint8_t *)buf;
+    size_t rpos = pipe->read_pos;
+
+    for (size_t i = 0; i < to_copy; i++) {
+        dst[i] = pipe->data[rpos];
+        rpos = (rpos + 1) % pipe->size;
+        /* read_pos is NOT updated — data stays in the buffer */
+    }
+
+    fut_spinlock_release(&pipe->lock);
+    return (ssize_t)to_copy;
+}

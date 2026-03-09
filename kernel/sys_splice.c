@@ -508,12 +508,62 @@ long sys_tee(int fd_in, int fd_out, size_t len, unsigned int flags) {
         return -EINVAL;
     }
 
-    /* Return -ENOSYS until properly implemented.
-     * Returning a fake byte count causes silent data loss. */
-    fut_printf("[TEE] tee(fd_in=%d, fd_out=%d, len=%zu, pid=%d) -> ENOSYS (not implemented)\n",
-               local_fd_in, local_fd_out, local_len, task->pid);
+    /* Resolve file structures */
+    if (local_fd_in >= task->max_fds || local_fd_out >= task->max_fds)
+        return -EBADF;
 
-    return -ENOSYS;
+    struct fut_file *file_in  = vfs_get_file_from_task(task, local_fd_in);
+    struct fut_file *file_out = vfs_get_file_from_task(task, local_fd_out);
+    if (!file_in || !file_out) {
+        fut_printf("[TEE] tee(fd_in=%d, fd_out=%d) -> EBADF (fd not open)\n",
+                   local_fd_in, local_fd_out);
+        return -EBADF;
+    }
+
+    /* Both fds must be pipes */
+    if (!file_in->chr_ops || !file_in->chr_ops->read) {
+        fut_printf("[TEE] tee(fd_in=%d) -> EINVAL (not a readable pipe)\n", local_fd_in);
+        return -EINVAL;
+    }
+    if (!file_out->chr_ops || !file_out->chr_ops->write) {
+        fut_printf("[TEE] tee(fd_out=%d) -> EINVAL (not a writable pipe)\n", local_fd_out);
+        return -EINVAL;
+    }
+
+    if (local_len == 0)
+        return 0;
+
+    /* Peek data from source pipe without consuming it */
+    const size_t CHUNK = 4096;
+    size_t remaining = local_len;
+    ssize_t total = 0;
+
+    uint8_t *kbuf = (uint8_t *)fut_malloc(CHUNK);
+    if (!kbuf) return -ENOMEM;
+
+    extern ssize_t pipe_peek(void *read_priv, void *buf, size_t len);
+
+    while (remaining > 0) {
+        size_t want = (remaining < CHUNK) ? remaining : CHUNK;
+        ssize_t got = pipe_peek(file_in->chr_private, kbuf, want);
+        if (got < 0) { total = (total > 0) ? total : got; break; }
+        if (got == 0) break;  /* Source pipe empty */
+
+        off_t pos = 0;
+        ssize_t nwritten = file_out->chr_ops->write(
+            file_out->chr_inode, file_out->chr_private, kbuf, (size_t)got, &pos);
+        if (nwritten < 0) { total = (total > 0) ? total : nwritten; break; }
+
+        total += nwritten;
+        remaining -= (size_t)nwritten;
+        if (nwritten < got) break;  /* Dest pipe full */
+    }
+
+    fut_free(kbuf);
+
+    fut_printf("[TEE] tee(fd_in=%d, fd_out=%d, len=%zu, pid=%d) -> %zd bytes\n",
+               local_fd_in, local_fd_out, local_len, task->pid, total);
+    return total;
 }
 
 /**

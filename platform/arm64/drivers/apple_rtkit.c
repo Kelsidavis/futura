@@ -131,7 +131,9 @@ bool apple_rtkit_send_message(apple_rtkit_ctx_t *ctx, uint8_t endpoint, uint64_t
     uint64_t full_msg = ((uint64_t)endpoint << 56) | (msg & 0x00FFFFFFFFFFFFFFULL);
 
     /* Write message to mailbox TX register to submit command */
+    __asm__ volatile("dsb st" ::: "memory");  /* Ensure prior stores visible */
     MBOX_WRITE64(ctx, APPLE_MBOX_TX_DATA, full_msg);
+    __asm__ volatile("dsb sy" ::: "memory");  /* Ensure write completes */
 
     return true;
 }
@@ -145,10 +147,12 @@ bool apple_rtkit_recv_message(apple_rtkit_ctx_t *ctx, uint8_t *endpoint_out, uin
      * Status register bit 0 = RX_FULL (response available from co-processor)
      * Non-blocking check: returns false if no message waiting (caller can poll later)
      */
+    __asm__ volatile("dsb sy" ::: "memory");  /* Ensure status read is current */
     if (!(MBOX_READ32(ctx, APPLE_MBOX_RX_STATUS) & APPLE_MBOX_RX_FULL)) {
         return false;  /* No message available yet */
     }
 
+    __asm__ volatile("dsb ld" ::: "memory");  /* Barrier between status check and data read */
     /* Read 64-bit message from mailbox RX register
      * This dequeues one message from co-processor's response queue
      * Message format: endpoint in upper 8 bits, payload in lower 56 bits

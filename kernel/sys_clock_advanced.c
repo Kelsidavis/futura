@@ -19,9 +19,36 @@
 #include <kernel/kprintf.h>
 #include <kernel/uaccess.h>
 #include <kernel/debug_config.h>
+#ifdef __x86_64__
+#include <platform/x86_64/memory/paging.h>
+#elif defined(__aarch64__)
+#include <platform/arm64/memory/paging.h>
+#endif
 
 /* Clock nanosleep debugging (controlled via debug_config.h) */
 #define clock_nanosleep_printf(...) do { if (NANOSLEEP_DEBUG) fut_printf(__VA_ARGS__); } while(0)
+
+/* Copy timespec to user or kernel buffer (bypass fut_copy_to_user for kernel pointers) */
+static inline int clock_copy_to_user(void *dst, const void *src, size_t n) {
+#ifdef KERNEL_VIRTUAL_BASE
+    if ((uintptr_t)dst >= KERNEL_VIRTUAL_BASE) {
+        __builtin_memcpy(dst, src, n);
+        return 0;
+    }
+#endif
+    return fut_copy_to_user(dst, src, n);
+}
+
+/* Copy timespec from user or kernel buffer */
+static inline int clock_copy_from_user(void *dst, const void *src, size_t n) {
+#ifdef KERNEL_VIRTUAL_BASE
+    if ((uintptr_t)src >= KERNEL_VIRTUAL_BASE) {
+        __builtin_memcpy(dst, src, n);
+        return 0;
+    }
+#endif
+    return fut_copy_from_user(dst, src, n);
+}
 #include <kernel/fut_timer.h>
 #include <time.h>
 
@@ -92,7 +119,7 @@ long sys_clock_settime(int clock_id, const fut_timespec_t *tp) {
 
     /* Copy time from user */
     fut_timespec_t time;
-    if (fut_copy_from_user(&time, local_tp, sizeof(fut_timespec_t)) != 0) {
+    if (clock_copy_from_user(&time, local_tp, sizeof(fut_timespec_t)) != 0) {
         fut_printf("[CLOCK_SETTIME] clock_settime(clock_id=%d) -> EFAULT (copy_from_user failed)\n",
                    local_clock_id);
         return -EFAULT;
@@ -194,21 +221,27 @@ long sys_clock_getres(int clock_id, fut_timespec_t *res) {
             return -EINVAL;
     }
 
-    /* Return 1 millisecond resolution for all clocks */
+    /*
+     * Return accurate resolution based on timer tick rate (FUT_TIMER_HZ).
+     * All clocks are driven by the same periodic interrupt, so their
+     * resolution equals one tick period: 1,000,000,000 / FUT_TIMER_HZ ns.
+     * CLOCK_PROCESS_CPUTIME_ID / CLOCK_THREAD_CPUTIME_ID report per-tick
+     * accounting granularity, same tick period.
+     */
     fut_timespec_t resolution;
-    resolution.tv_sec = 0;
-    resolution.tv_nsec = 1000000;  /* 1 millisecond */
+    resolution.tv_sec  = 0;
+    resolution.tv_nsec = (long)(1000000000UL / FUT_TIMER_HZ);
 
     if (local_res) {
-        if (fut_copy_to_user(local_res, &resolution, sizeof(fut_timespec_t)) != 0) {
+        if (clock_copy_to_user(local_res, &resolution, sizeof(fut_timespec_t)) != 0) {
             fut_printf("[CLOCK_GETRES] clock_getres(clock_id=%s) -> EFAULT (copy_to_user failed)\n",
                        clock_name);
             return -EFAULT;
         }
     }
 
-    fut_printf("[CLOCK_GETRES] clock_getres(clock_id=%s) -> 0 (resolution=1ms, Phase 1 stub)\n",
-               clock_name);
+    fut_printf("[CLOCK_GETRES] clock_getres(clock_id=%s) -> 0 (resolution=%lu ns)\n",
+               clock_name, (unsigned long)resolution.tv_nsec);
 
     return 0;
 }
@@ -255,7 +288,7 @@ long sys_clock_nanosleep(int clock_id, int flags,
 
     /* Copy request from user */
     fut_timespec_t request;
-    if (fut_copy_from_user(&request, local_req, sizeof(fut_timespec_t)) != 0) {
+    if (clock_copy_from_user(&request, local_req, sizeof(fut_timespec_t)) != 0) {
         clock_nanosleep_printf("[CLOCK_NANOSLEEP] clock_nanosleep(clock_id=%d) -> EFAULT (copy_from_user failed)\n",
                    local_clock_id);
         return -EFAULT;

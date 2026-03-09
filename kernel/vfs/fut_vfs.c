@@ -149,12 +149,29 @@ static void close_fd_in_task(fut_task_t *task, int fd) {
         return;
     }
 
-    /* Decrement refcount - VFS layer manages actual cleanup */
-    if (file->refcount > 0) {
+    task->fd_table[fd] = NULL;
+
+    /* Decrement refcount and clean up on last reference */
+    if (file->refcount > 1) {
         file->refcount--;
+        return;
     }
 
-    task->fd_table[fd] = NULL;
+    /* Last reference — release resources and free file struct */
+    file->refcount = 0;
+
+    if (file->chr_ops) {
+        if (file->chr_ops->release) {
+            file->chr_ops->release(file->chr_inode, file->chr_private);
+        }
+    } else if (file->vnode) {
+        if (file->vnode->ops && file->vnode->ops->close) {
+            file->vnode->ops->close(file->vnode);
+        }
+        fut_vnode_unref(file->vnode);
+    }
+
+    fut_free(file);
 }
 
 /**
@@ -1612,12 +1629,31 @@ int fut_vfs_close(int fd) {
         return -EBADF;
     }
 
+    /* Remove FD from task table first, then handle refcount.
+     * This prevents other threads from accessing the FD during cleanup. */
+    if (task->fd_table && fd >= 0 && fd < task->max_fds) {
+        task->fd_table[fd] = NULL;
+    }
+
+    /* Decrement refcount. Only perform resource cleanup (vnode release,
+     * chr_ops release, file struct free) on the LAST reference.
+     * Without this guard, dup'd FDs would double-close vnodes and
+     * cause use-after-free when the second FD is closed. */
+    if (file->refcount > 1) {
+        file->refcount--;
+        VFSDBG("[vfs-close] refcount decremented to %u, skipping cleanup\n", file->refcount);
+        return 0;
+    }
+
+    /* Last reference — perform full cleanup */
+    file->refcount = 0;
+
     if (file->chr_ops) {
         VFSDBG("[vfs-close] chr_ops path\n");
         if (file->chr_ops->release) {
             file->chr_ops->release(file->chr_inode, file->chr_private);
         }
-        close_fd_in_task(task, fd);
+        fut_free(file);
         return 0;
     }
 
@@ -1629,7 +1665,7 @@ int fut_vfs_close(int fd) {
         VFSDBG("[vfs-close] vnode->ops->close returned\n");
     }
 
-    /* Release vnode reference - CRITICAL! */
+    /* Release vnode reference */
     if (file->vnode) {
         VFSDBG("[vfs-close] calling fut_vnode_unref(vnode=%p)\n", (void*)file->vnode);
         fut_vnode_unref(file->vnode);
@@ -1637,10 +1673,8 @@ int fut_vfs_close(int fd) {
     }
 
     /* Free file structure */
-    VFSDBG("[vfs-close] calling close_fd_in_task\n");
-    close_fd_in_task(task, fd);
-    /* File is now removed from task's FD table, refcount handled by close_fd_in_task */
-    VFSDBG("[vfs-close] fut_free returned\n");
+    VFSDBG("[vfs-close] freeing file struct %p\n", (void*)file);
+    fut_free(file);
 
     return 0;
 }

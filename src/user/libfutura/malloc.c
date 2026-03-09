@@ -119,6 +119,10 @@ void free(void *ptr) {
 }
 
 void *calloc(size_t nmemb, size_t size) {
+    /* Check for multiplication overflow */
+    if (nmemb != 0 && size > __SIZE_MAX__ / nmemb) {
+        return NULL;
+    }
     size_t total = nmemb * size;
     void *ptr = malloc(total);
     if (ptr) {

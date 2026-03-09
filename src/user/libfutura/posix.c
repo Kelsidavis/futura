@@ -433,19 +433,22 @@ int closedir(fut_dir_t *dir) {
     struct posixd_closedir_req req = { .dir_handle = dir->handle };
     int ret = fut_fipc_send(posixd_channel, POSIXD_MSG_CLOSEDIR, &req, sizeof(req));
     if (ret < 0) {
+        free(dir);
         return ret;
     }
 
     uint8_t resp_buffer[256];
     ssize_t recv_ret = fut_fipc_recv(posixd_channel, resp_buffer, sizeof(resp_buffer));
     if (recv_ret < 0) {
+        free(dir);
         return (int)recv_ret;
     }
 
     struct fut_fipc_msg *resp_msg = (struct fut_fipc_msg *)resp_buffer;
     struct posixd_closedir_resp *resp = (struct posixd_closedir_resp *)resp_msg->payload;
+    int result = resp->result;
     free(dir);
-    return resp->result;
+    return result;
 }
 
 int readdir(fut_dir_t *dir, struct fut_dirent *entry) {

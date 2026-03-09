@@ -323,7 +323,7 @@ static void free_packet(struct unix_packet *pkt) {
     free(pkt);
 }
 
-static int copy_iov_data(uint8_t *dst, const struct iovec *iov, size_t iovlen) {
+static size_t copy_iov_data(uint8_t *dst, const struct iovec *iov, size_t iovlen) {
     size_t offset = 0;
     for (size_t i = 0; i < iovlen; ++i) {
         if (!iov[i].iov_base || iov[i].iov_len == 0) {
@@ -332,7 +332,7 @@ static int copy_iov_data(uint8_t *dst, const struct iovec *iov, size_t iovlen) {
         memcpy(dst + offset, iov[i].iov_base, iov[i].iov_len);
         offset += iov[i].iov_len;
     }
-    return (int)offset;
+    return offset;
 }
 
 static size_t iov_total_length(const struct iovec *iov, size_t iovlen) {

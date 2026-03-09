@@ -17,6 +17,7 @@
 #include <kernel/errno.h>
 #include <stddef.h>
 #include <string.h>
+#include <sys/stat.h>
 
 /* ============================================================
  *   RamFS Structures
@@ -644,8 +645,17 @@ static int ramfs_create(struct fut_vnode *dir, const char *name, uint32_t mode, 
               name, (void*)vnode, (void*)node);
 #endif
 
+    /* Determine vnode type from mode's file type bits */
+    uint32_t file_type_bits = mode & S_IFMT;
+    enum fut_vnode_type vtype;
+    switch (file_type_bits) {
+        case S_IFIFO:   vtype = VN_FIFO; break;
+        case S_IFSOCK:  vtype = VN_SOCK; break;
+        default:        vtype = VN_REG;  break;
+    }
+
     /* Initialize vnode */
-    vnode->type = VN_REG;
+    vnode->type = vtype;
     vnode->ino = (uint64_t)vnode;  /* Use pointer as inode number */
     vnode->mode = 0;  /* Will be set by vfs_init_vnode_ownership */
     vnode->size = 0;
@@ -812,12 +822,13 @@ static int ramfs_unlink(struct fut_vnode *dir, const char *name) {
             /* Found the entry */
             struct fut_vnode *vnode = entry->vnode;
 
-            /* Can unlink regular files and symlinks, but not directories */
+            /* Can unlink regular files, symlinks, FIFOs, and sockets, but not directories */
             if (vnode->type == VN_DIR) {
                 return -EISDIR;  /* Must use rmdir for directories */
             }
-            if (vnode->type != VN_REG && vnode->type != VN_LNK) {
-                return -EACCES;  /* Cannot unlink other types (devices, sockets, FIFOs) */
+            if (vnode->type != VN_REG && vnode->type != VN_LNK &&
+                vnode->type != VN_FIFO && vnode->type != VN_SOCK) {
+                return -EACCES;  /* Cannot unlink device nodes */
             }
 
             /* Check if file is still open */

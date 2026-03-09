@@ -771,6 +771,7 @@ int fut_vfs_rmdir(const char *path);
  */
 int fut_vfs_mkdir(const char *path, uint32_t mode);
 int fut_vfs_create_file(const char *path, uint32_t mode);
+int fut_vfs_mknod(const char *path, uint32_t mode);
 
 /**
  * Sync all cached data for a specific filesystem.

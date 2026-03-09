@@ -8,7 +8,7 @@
  *
  * Phase 1 (Completed): Validation and stub implementation
  * Phase 2 (Completed): Enhanced validation, user-space data handling, parameter categorization
- * Phase 3 (Completed): Regular file and FIFO creation with type validation
+ * Phase 3 (Completed): Regular file and FIFO/socket creation with type validation
  * Phase 4: Add device node creation with capabilities checks
  */
 
@@ -309,11 +309,21 @@ long sys_mknodat(int dirfd, const char *pathname, uint32_t mode, uint32_t dev) {
         return 0;
     }
 
-    /* FIFO and socket nodes: log and return ENOTSUP until VFS gains mknod support */
-    fut_printf("[MKNODAT] mknodat(dirfd=%s, pathname='%s', type=%s, mode=0%o, pid=%d) -> ENOTSUP "
-               "(FIFO/socket mknod not yet implemented)\n",
-               dirfd_desc, path_buf, type_desc, local_mode & 0777, task->pid);
-    ret = -ENOTSUP;
+    /* FIFO and socket nodes: create via VFS mknod with full type bits */
+    if (file_type == S_IFIFO || file_type == S_IFSOCK) {
+        uint32_t full_mode = file_type | (local_mode & 0777);
+        ret = fut_vfs_mknod(path_buf, full_mode);
+        if (ret < 0) {
+            fut_printf("[MKNODAT] mknodat(dirfd=%s, pathname='%s', type=%s, mode=0%o, pid=%d) -> %d "
+                       "(VFS mknod failed)\n",
+                       dirfd_desc, path_buf, type_desc, local_mode & 0777, task->pid, ret);
+            return (long)ret;
+        }
+        fut_printf("[MKNODAT] mknodat(dirfd=%s, pathname='%s', type=%s, mode=0%o, pid=%d) -> 0 "
+                   "(special file created)\n",
+                   dirfd_desc, path_buf, type_desc, local_mode & 0777, task->pid);
+        return 0;
+    }
 
-    return ret;
+    return -EINVAL;
 }

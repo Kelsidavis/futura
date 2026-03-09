@@ -13,6 +13,7 @@
 #include <kernel/fut_memory.h>
 #include <kernel/kprintf.h>
 #include <kernel/errno.h>
+#include <kernel/fut_sched.h>
 #include <string.h>
 #include <stdatomic.h>
 
@@ -168,8 +169,14 @@ static page_table_t *get_or_create_table(page_table_t *parent_table, int index, 
 
     /* Temporarily switch to kernel page table for page table operations
      * to ensure we can access all physical memory. Save/restore user TTBR0.
+     * Disable interrupts to prevent preemptive context switch while TTBR0
+     * points to the kernel page table instead of the user process's table.
      */
     extern page_table_t boot_l1_table;
+    uint64_t saved_daif;
+    __asm__ volatile("mrs %0, daif" : "=r"(saved_daif));
+    __asm__ volatile("msr daifset, #0xf" ::: "memory");  /* Disable all interrupts */
+
     uint64_t user_ttbr0;
     __asm__ volatile("mrs %0, ttbr0_el1" : "=r"(user_ttbr0));
     __asm__ volatile("msr ttbr0_el1, %0; isb" :: "r"(pmap_virt_to_phys(&boot_l1_table)));
@@ -178,15 +185,17 @@ static page_table_t *get_or_create_table(page_table_t *parent_table, int index, 
 
     if (!fut_pte_is_present(entry)) {
         if (!allocate) {
-            /* Restore user page table before returning */
+            /* Restore user page table and interrupts before returning */
             __asm__ volatile("msr ttbr0_el1, %0; isb" :: "r"(user_ttbr0));
+            __asm__ volatile("msr daif, %0" :: "r"(saved_daif) : "memory");
             return NULL;
         }
 
         page_table_t *new_table = alloc_page_table();
         if (!new_table) {
-            /* Restore user page table before returning */
+            /* Restore user page table and interrupts before returning */
             __asm__ volatile("msr ttbr0_el1, %0; isb" :: "r"(user_ttbr0));
+            __asm__ volatile("msr daif, %0" :: "r"(saved_daif) : "memory");
             return NULL;
         }
 
@@ -203,8 +212,9 @@ static page_table_t *get_or_create_table(page_table_t *parent_table, int index, 
         PAGING_DEBUG("[PT] Created table: parent=%p idx=%d new=%p desc=0x%llx\n",
                    parent_table, index, new_table, (unsigned long long)table_desc);
 
-        /* Restore user page table before returning */
+        /* Restore user page table and interrupts before returning */
         __asm__ volatile("msr ttbr0_el1, %0; isb" :: "r"(user_ttbr0));
+        __asm__ volatile("msr daif, %0" :: "r"(saved_daif) : "memory");
         return new_table;
     }
 
@@ -216,8 +226,9 @@ static page_table_t *get_or_create_table(page_table_t *parent_table, int index, 
 
         page_table_t *result = (page_table_t *)pmap_phys_to_virt(phys);
 
-        /* Restore user page table before returning */
+        /* Restore user page table and interrupts before returning */
         __asm__ volatile("msr ttbr0_el1, %0; isb" :: "r"(user_ttbr0));
+        __asm__ volatile("msr daif, %0" :: "r"(saved_daif) : "memory");
         return result;
     }
 
@@ -234,8 +245,9 @@ static page_table_t *get_or_create_table(page_table_t *parent_table, int index, 
         /* Allocate new L3 page table */
         page_table_t *new_l3_table = alloc_page_table();
         if (!new_l3_table) {
-            /* Restore user page table before returning */
+            /* Restore user page table and interrupts before returning */
             __asm__ volatile("msr ttbr0_el1, %0; isb" :: "r"(user_ttbr0));
+            __asm__ volatile("msr daif, %0" :: "r"(saved_daif) : "memory");
             return NULL;
         }
 
@@ -268,15 +280,17 @@ static page_table_t *get_or_create_table(page_table_t *parent_table, int index, 
         extern void fut_flush_tlb_all(void);
         fut_flush_tlb_all();
 
-        /* Restore user page table before returning */
+        /* Restore user page table and interrupts before returning */
         __asm__ volatile("msr ttbr0_el1, %0; isb" :: "r"(user_ttbr0));
+        __asm__ volatile("msr daif, %0" :: "r"(saved_daif) : "memory");
         return new_l3_table;
     }
 
     PAGING_DEBUG("[PT] ERROR: Unknown entry type at idx=%d entry=0x%llx\n",
                index, (unsigned long long)entry);
-    /* Restore user page table before returning */
+    /* Restore user page table and interrupts before returning */
     __asm__ volatile("msr ttbr0_el1, %0; isb" :: "r"(user_ttbr0));
+    __asm__ volatile("msr daif, %0" :: "r"(saved_daif) : "memory");
     return NULL;
 }
 
@@ -882,14 +896,19 @@ void *fut_kernel_map_physical(uint64_t paddr, uint64_t size, uint64_t flags) {
         return (void *)paddr;
     }
 
-    /* Map to kernel heap region */
+    /* Map to kernel heap region — protect bump allocator with spinlock */
     static uint64_t kernel_map_ptr = KERNEL_HEAP_BASE;
+    static fut_spinlock_t kernel_map_lock = {0};
+
+    fut_spinlock_acquire(&kernel_map_lock);
     uint64_t vaddr = kernel_map_ptr;
     kernel_map_ptr += PAGE_ALIGN_UP(size);
 
     if (kernel_map_ptr > KERNEL_STACK_BASE) {
+        fut_spinlock_release(&kernel_map_lock);
         return NULL;  /* Out of kernel virtual space */
     }
+    fut_spinlock_release(&kernel_map_lock);
 
     int ret = fut_map_range(NULL, vaddr, paddr, size, flags);
     if (ret < 0) {

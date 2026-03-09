@@ -15,7 +15,7 @@ ifeq ($(shell uname -s),Darwin)
 USERLAND_DIRS := $(USERLAND_CORE)
 else ifeq ($(ENABLE_WAYLAND),0)
 # ENABLE_WAYLAND=0: build core + non-Wayland programs
-USERLAND_DIRS := $(USERLAND_CORE) shell cat echo wc fsd posixd fbtest
+USERLAND_DIRS := $(USERLAND_CORE) cat echo wc fsd posixd fbtest
 else
 # Full Linux build with Wayland
 USERLAND_DIRS := $(USERLAND_CORE) shell cat echo wc fsd posixd futurawayd fbtest services/winsrv apps/winstub clients/wl-simple clients/wl-colorwheel clients/wl-term

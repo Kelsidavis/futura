@@ -26,10 +26,14 @@ static volatile uint8_t *g_pcie_ecam_base = NULL;
 static uint64_t g_bar_alloc_next = PCIE_MMIO_BASE;
 
 /**
- * Calculate ECAM offset for a given PCI address
+ * Calculate ECAM offset for a given PCI address.
+ * Returns (uint32_t)-1 on invalid parameters.
  */
 static inline uint32_t pcie_ecam_offset(uint8_t bus, uint8_t dev, uint8_t fn, uint16_t reg) {
-    return (bus << 20) | (dev << 15) | (fn << 12) | (reg & 0xffc);
+    if (dev > 31 || fn > 7) {
+        return (uint32_t)-1;
+    }
+    return ((uint32_t)bus << 20) | ((uint32_t)dev << 15) | ((uint32_t)fn << 12) | (reg & 0xffc);
 }
 
 /**
@@ -242,6 +246,11 @@ uint64_t arm64_pci_assign_bar(uint8_t bus, uint8_t dev, uint8_t fn, uint8_t bar_
     /* Calculate size: size = ~(size_mask & ~0xF) + 1 */
     uint32_t size_bits = size_mask & ~0xFUL;
     uint32_t size = (~size_bits + 1) & 0xFFFFFFFF;
+
+    /* Reject zero-size or impossibly large BARs */
+    if (size == 0 || size_bits == 0) {
+        return 0;
+    }
 
 #ifdef DEBUG_PCI
     fut_printf("[PCI] BAR%d size: %u bytes (%s)\n",

@@ -98,9 +98,20 @@ static int find_slab_index(size_t size) {
 
 /* Calculate how many objects fit in a slab */
 static size_t calc_objects_per_slab(size_t obj_size) {
-    /* Allocate slab from buddy allocator */
     size_t usable_size = SLAB_SIZE - sizeof(slab_t);
-    return usable_size / (obj_size + SLAB_OBJ_HDR_SIZE);
+    size_t total_obj_size = obj_size + SLAB_OBJ_HDR_SIZE;
+
+    /* Check for addition overflow */
+    if (total_obj_size < obj_size) {
+        return 0;
+    }
+
+    /* Prevent division by zero */
+    if (total_obj_size == 0) {
+        return 0;
+    }
+
+    return usable_size / total_obj_size;
 }
 
 /* ============================================================
@@ -137,6 +148,10 @@ static slab_t *slab_create(slab_cache_t *cache) {
     slab->prev = NULL;
     slab->obj_size = cache->obj_size + SLAB_OBJ_HDR_SIZE;
     slab->obj_count = calc_objects_per_slab(cache->obj_size);
+    if (slab->obj_count == 0) {
+        buddy_free(slab_mem);
+        return NULL;
+    }
     slab->free_count = slab->obj_count;
     slab->data = slab_mem + sizeof(slab_t);
 

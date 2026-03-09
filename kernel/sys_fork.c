@@ -493,7 +493,7 @@ extern fut_interrupt_frame_t *fut_current_frame;
 
 /* Forward declarations */
 static fut_mm_t *clone_mm(fut_mm_t *parent_mm);
-static fut_thread_t *clone_thread(fut_thread_t *parent_thread, fut_task_t *child_task);
+static fut_thread_t *clone_thread(fut_thread_t *parent_thread, fut_task_t *child_task, fut_interrupt_frame_t *saved_frame);
 
 /* Dummy entry point for cloned threads (ARM64 only) - should never be called */
 #if defined(__aarch64__)
@@ -680,6 +680,12 @@ static __attribute__((noreturn)) void fork_child_return(void *arg) {
  * Phase 4 (Completed): Advanced features (vfork, clone with flags, namespace support)
  */
 long sys_fork(void) {
+    /* Save the interrupt frame pointer NOW, before any context switches
+     * can clear the global. clone_mm may yield during VMA cloning,
+     * which triggers context switches that overwrite fut_current_frame. */
+    extern fut_interrupt_frame_t *fut_current_frame;
+    fut_interrupt_frame_t *saved_frame = fut_current_frame;
+
     fut_thread_t *parent_thread = fut_thread_current();
     if (!parent_thread) {
         FORK_LOG("[FORK] fork() -> ESRCH (no current thread)\n");
@@ -794,7 +800,7 @@ long sys_fork(void) {
     }
 
     /* Clone the current thread into the child task */
-    fut_thread_t *child_thread = clone_thread(parent_thread, child_task);
+    fut_thread_t *child_thread = clone_thread(parent_thread, child_task, saved_frame);
     if (!child_thread) {
         FORK_LOG("[FORK] fork(parent_pid=%u) -> ENOMEM (thread cloning failed, "
                    "%d VMAs, %d FDs)\n",
@@ -939,14 +945,16 @@ static fut_mm_t *clone_mm(fut_mm_t *parent_mm) {
         parent_vma = parent_vma->next;
     }
 
-    /* ALWAYS scan and copy code and stack regions - these aren't tracked as VMAs
-     * but are essential for fork to work correctly. The ELF loader maps these
-     * directly without creating VMAs, so we must copy them explicitly. */
+    /* Share read-only code pages between parent and child instead of copying.
+     * Read-only pages (.text) are safely shared since neither process writes them.
+     * Writable pages (.data, .bss) must still be copied since they lack VMAs
+     * and the COW fault handler requires VMA tracking. */
 
     /* Scan the program region (typically 0x400000-0x500000) */
     #define CLONE_SCAN_START 0x400000ULL
     #define CLONE_SCAN_END   0x500000ULL
 
+    int code_pages_shared = 0;
     int code_pages_copied = 0;
     for (uint64_t page = CLONE_SCAN_START; page < CLONE_SCAN_END; page += FUT_PAGE_SIZE) {
         uint64_t pte = 0;
@@ -959,30 +967,40 @@ static fut_mm_t *clone_mm(fut_mm_t *parent_mm) {
             continue;
         }
 
-        code_pages_copied++;
-        void *child_page = fut_pmm_alloc_page();
-        if (!child_page) {
-            fut_mm_release(child_mm);
-            return NULL;
-        }
-
         phys_addr_t parent_phys = pte & PTE_PHYS_ADDR_MASK;
-        void *parent_page = (void *)pmap_phys_to_virt(parent_phys);
-        memcpy(child_page, parent_page, FUT_PAGE_SIZE);
-
-        phys_addr_t child_phys = pmap_virt_to_phys((uintptr_t)child_page);
         uint64_t flags = pte_extract_flags(pte);
 
-        if (pmap_map_user(child_ctx, page, child_phys, FUT_PAGE_SIZE, flags) != 0) {
-            fut_pmm_free_page(child_page);
-            fut_mm_release(child_mm);
-            return NULL;
+        if (!(flags & PTE_WRITABLE)) {
+            /* Read-only page (code): share physical page directly */
+            if (fut_page_ref_inc(parent_phys) != 0) {
+                fut_mm_release(child_mm);
+                return NULL;
+            }
+            if (pmap_map_user(child_ctx, page, parent_phys, FUT_PAGE_SIZE, flags) != 0) {
+                fut_mm_release(child_mm);
+                return NULL;
+            }
+            code_pages_shared++;
+        } else {
+            /* Writable page (data/BSS): must copy since no VMA for COW */
+            void *child_page = fut_pmm_alloc_page();
+            if (!child_page) {
+                fut_mm_release(child_mm);
+                return NULL;
+            }
+            void *parent_page = (void *)pmap_phys_to_virt(parent_phys);
+            memcpy(child_page, parent_page, FUT_PAGE_SIZE);
+            phys_addr_t child_phys = pmap_virt_to_phys((uintptr_t)child_page);
+            if (pmap_map_user(child_ctx, page, child_phys, FUT_PAGE_SIZE, flags) != 0) {
+                fut_pmm_free_page(child_page);
+                fut_mm_release(child_mm);
+                return NULL;
+            }
+            code_pages_copied++;
         }
     }
-    FORK_LOG("[FORK] Copied %d code pages from 0x%llx-0x%llx\n",
-               code_pages_copied,
-               (unsigned long long)CLONE_SCAN_START,
-               (unsigned long long)CLONE_SCAN_END);
+    FORK_LOG("[FORK] Program region: shared %d RO pages, copied %d RW pages\n",
+               code_pages_shared, code_pages_copied);
 
     /* Scan the stack region - must match USER_STACK_TOP in kernel/exec/elf64.c:981 (0x7FFF000000) */
     #define STACK_SCAN_START 0x7FFEFE0000ULL  /* USER_STACK_TOP - (32 pages * 4KB) */
@@ -1198,18 +1216,17 @@ static fut_mm_t *clone_mm(fut_mm_t *parent_mm) {
  * Creates a new thread in the child task that will return from the syscall.
  * Architecture-specific implementation.
  */
-static fut_thread_t *clone_thread(fut_thread_t *parent_thread, fut_task_t *child_task) {
+static fut_thread_t *clone_thread(fut_thread_t *parent_thread, fut_task_t *child_task, fut_interrupt_frame_t *saved_frame) {
     if (!parent_thread || !child_task) {
         return NULL;
     }
 
-    /* Get the syscall frame pointer */
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Waddress-of-packed-member"
-    fut_interrupt_frame_t *frame = fut_current_frame;
-#pragma GCC diagnostic pop
+    /* Use the frame saved at sys_fork entry (before any context switches).
+     * The global fut_current_frame can be cleared by context switches
+     * during clone_mm's VMA cloning yield. */
+    fut_interrupt_frame_t *frame = saved_frame;
     if (!frame) {
-        FORK_LOG("[FORK] ERROR: No interrupt frame available!\n");
+        fut_printf("[FORK] clone_thread: no interrupt frame (saved_frame was NULL)\n");
         return NULL;
     }
 

@@ -273,6 +273,10 @@ long fut_vfs_lseek_cap(fut_handle_t handle, int64_t offset, int whence) {
             new_offset = (int64_t)file->offset + offset;
             break;
         case SEEK_END:
+            if (file_size > (uint64_t)INT64_MAX) {
+                fut_object_put(obj);
+                return -EOVERFLOW;
+            }
             new_offset = (int64_t)file_size + offset;
             break;
         default:

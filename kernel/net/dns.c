@@ -295,6 +295,10 @@ void dns_cache_add(const char *domain, uint32_t ip, uint32_t ttl) {
     }
 
     uint64_t now = fut_get_ticks();
+    /* Cap TTL to prevent overflow: max ~2 years in ticks at 100Hz */
+    if (ttl > 86400 * 365 * 2) {
+        ttl = 86400 * 365 * 2;
+    }
     uint64_t expires = now + ((uint64_t)ttl * 100);  /* Convert seconds to ticks (100Hz) */
 
     /* Find an empty slot or the oldest entry */

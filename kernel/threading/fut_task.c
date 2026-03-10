@@ -552,7 +552,7 @@ int fut_task_waitpid(int pid, int *status_out, int flags) {
             /* Accumulate child's CPU ticks into parent before reaping.
              * This provides tms_cutime data for sys_times(). */
             uint64_t child_ticks = 0;
-            for (fut_thread_t *t = match->threads; t; t = t->global_next) {
+            for (fut_thread_t *t = match->threads; t; t = t->next) {
                 child_ticks += t->stats.cpu_ticks;
             }
             parent->child_cpu_ticks += child_ticks + match->child_cpu_ticks;
@@ -647,7 +647,7 @@ int fut_task_waitpid_ex(int pid, int *status_out, int flags, uint32_t *uid_out) 
 
             /* Normal reap path */
             uint64_t child_ticks = 0;
-            for (fut_thread_t *t = match->threads; t; t = t->global_next) {
+            for (fut_thread_t *t = match->threads; t; t = t->next) {
                 child_ticks += t->stats.cpu_ticks;
             }
             parent->child_cpu_ticks += child_ticks + match->child_cpu_ticks;

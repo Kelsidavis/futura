@@ -89,7 +89,7 @@ void acct_write_record(fut_task_t *task, int status, int signal) {
 
     /* Sum CPU ticks across all threads (still attached at this point) */
     uint64_t total_ticks = 0;
-    for (fut_thread_t *t = task->threads; t != NULL; t = t->global_next) {
+    for (fut_thread_t *t = task->threads; t != NULL; t = t->next) {
         total_ticks += t->stats.cpu_ticks;
     }
     rec.ac_cpu_ticks = total_ticks + task->child_cpu_ticks;

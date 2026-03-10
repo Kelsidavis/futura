@@ -26,6 +26,7 @@ extern long sys_splice(int fd_in, int64_t *off_in, int fd_out, int64_t *off_out,
                        size_t len, unsigned int flags);
 extern long sys_vmsplice(int fd, const void *iov, size_t nr_segs, unsigned int flags);
 extern long sys_pipe(int pipefd[2]);
+extern long sys_fallocate(int fd, int mode, uint64_t offset, uint64_t len);
 
 /* Test IDs */
 #define SPLICE_TEST_STATFS           1
@@ -34,6 +35,7 @@ extern long sys_pipe(int pipefd[2]);
 #define SPLICE_TEST_FILE_TO_PIPE     4
 #define SPLICE_TEST_EINVAL_NO_PIPE   5
 #define SPLICE_TEST_VMSPLICE         6
+#define SPLICE_TEST_FALLOCATE        7
 
 /* Scratch files */
 #define SPLICE_SCRATCH_A  "/tmp/splice_test_a"
@@ -352,6 +354,99 @@ static void test_vmsplice(void) {
 }
 
 /* ============================================================
+ * Test 7: sys_fallocate ZERO_RANGE zeroes file data
+ * ============================================================ */
+#define FALLOCATE_FL_KEEP_SIZE  0x01
+#define FALLOCATE_FL_PUNCH_HOLE 0x02
+#define FALLOCATE_FL_ZERO_RANGE 0x08
+#define FALLOCATE_SCRATCH       "/tmp/fallocate_test"
+
+static void test_fallocate(void) {
+    fut_printf("[SPLICE-TEST] Test 7: sys_fallocate ZERO_RANGE and extend\n");
+
+    /* Create and write known data */
+    int fd = fut_vfs_open(FALLOCATE_SCRATCH, O_CREAT | O_RDWR, 0644);
+    if (fd < 0) {
+        fut_printf("[SPLICE-TEST] ✗ fallocate: open failed %d\n", fd);
+        fut_test_fail(SPLICE_TEST_FALLOCATE);
+        return;
+    }
+
+    const char data[16] = "AAAAAAAABBBBBBBB";
+    ssize_t wr = fut_vfs_write(fd, data, 16);
+    if (wr != 16) {
+        fut_printf("[SPLICE-TEST] ✗ fallocate: write failed %ld\n", wr);
+        fut_vfs_close(fd);
+        fut_test_fail(SPLICE_TEST_FALLOCATE);
+        return;
+    }
+    fut_vfs_close(fd);
+
+    /* Re-open and zero bytes [4,12) via ZERO_RANGE */
+    fd = fut_vfs_open(FALLOCATE_SCRATCH, O_RDWR, 0);
+    if (fd < 0) {
+        fut_printf("[SPLICE-TEST] ✗ fallocate: reopen failed %d\n", fd);
+        fut_test_fail(SPLICE_TEST_FALLOCATE);
+        return;
+    }
+
+    long ret = sys_fallocate(fd, FALLOCATE_FL_ZERO_RANGE | FALLOCATE_FL_KEEP_SIZE, 4, 8);
+    if (ret != 0) {
+        fut_printf("[SPLICE-TEST] ✗ fallocate ZERO_RANGE returned %ld\n", ret);
+        fut_vfs_close(fd);
+        fut_test_fail(SPLICE_TEST_FALLOCATE);
+        return;
+    }
+
+    /* Read back and verify: [0,4)='AAAA', [4,12)='\0'*8, [12,16)='BBBB' */
+    char buf[16] = {0};
+    /* Reset offset to 0 */
+    fut_vfs_close(fd);
+    fd = fut_vfs_open(FALLOCATE_SCRATCH, O_RDONLY, 0);
+    if (fd < 0) {
+        fut_printf("[SPLICE-TEST] ✗ fallocate: verify open failed %d\n", fd);
+        fut_test_fail(SPLICE_TEST_FALLOCATE);
+        return;
+    }
+    ssize_t rd = fut_vfs_read(fd, buf, 16);
+    fut_vfs_close(fd);
+
+    if (rd != 16) {
+        fut_printf("[SPLICE-TEST] ✗ fallocate: verify read returned %ld\n", rd);
+        fut_test_fail(SPLICE_TEST_FALLOCATE);
+        return;
+    }
+
+    /* First 4 bytes should still be 'A' */
+    for (int i = 0; i < 4; i++) {
+        if (buf[i] != 'A') {
+            fut_printf("[SPLICE-TEST] ✗ fallocate: byte[%d]=%02x expected 'A'\n", i, (unsigned char)buf[i]);
+            fut_test_fail(SPLICE_TEST_FALLOCATE);
+            return;
+        }
+    }
+    /* Middle 8 bytes should be zero */
+    for (int i = 4; i < 12; i++) {
+        if (buf[i] != 0) {
+            fut_printf("[SPLICE-TEST] ✗ fallocate: byte[%d]=%02x expected 0x00\n", i, (unsigned char)buf[i]);
+            fut_test_fail(SPLICE_TEST_FALLOCATE);
+            return;
+        }
+    }
+    /* Last 4 bytes should still be 'B' */
+    for (int i = 12; i < 16; i++) {
+        if (buf[i] != 'B') {
+            fut_printf("[SPLICE-TEST] ✗ fallocate: byte[%d]=%02x expected 'B'\n", i, (unsigned char)buf[i]);
+            fut_test_fail(SPLICE_TEST_FALLOCATE);
+            return;
+        }
+    }
+
+    fut_printf("[SPLICE-TEST] ✓ fallocate: ZERO_RANGE zeroed bytes [4,12), data integrity preserved\n");
+    fut_test_pass();
+}
+
+/* ============================================================
  * Main test harness thread
  * ============================================================ */
 void fut_splice_test_thread(void *arg) {
@@ -367,6 +462,7 @@ void fut_splice_test_thread(void *arg) {
     test_splice_file_to_pipe();
     test_splice_einval_no_pipe();
     test_vmsplice();
+    test_fallocate();
 
     fut_printf("[SPLICE-TEST] ========================================\n");
     fut_printf("[SPLICE-TEST] All splice/statfs/sysinfo tests done\n");

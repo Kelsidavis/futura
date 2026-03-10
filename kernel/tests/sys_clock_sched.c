@@ -280,9 +280,16 @@ static void test_getrusage(void) {
         return;
     }
 
-    fut_printf("[CLKSCHED-TEST] ✓ getrusage: utime=%lld.%06llds nvcsw=%ld\n",
+    /* ru_maxrss should be non-negative (Phase 5: computed from VMA list) */
+    if (ru.ru_maxrss < 0) {
+        fut_printf("[CLKSCHED-TEST] ✗ ru_maxrss=%ld (negative)\n", ru.ru_maxrss);
+        fut_test_fail(CLKSCHED_TEST_GETRUSAGE);
+        return;
+    }
+
+    fut_printf("[CLKSCHED-TEST] ✓ getrusage: utime=%lld.%06llds nvcsw=%ld maxrss=%ldKB\n",
                (long long)ru.ru_utime.tv_sec, (long long)ru.ru_utime.tv_usec,
-               ru.ru_nvcsw);
+               ru.ru_nvcsw, ru.ru_maxrss);
     fut_test_pass();
 }
 

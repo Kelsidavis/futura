@@ -1199,7 +1199,7 @@ void fut_kernel_main(void) {
         planned_tests += 5u; /* signal: handler installation, pending, ignored, multiple, delivery */
         planned_tests += 6u; /* capability: open, read, write, rights, invalid, close */
         planned_tests += 6u; /* epoll: create, close, ctl add/del, quota, EBADF, EEXIST */
-        planned_tests += 6u; /* splice: statfs, sysinfo, pipe→file, file→pipe, EINVAL, vmsplice */
+        planned_tests += 7u; /* splice: statfs, sysinfo, pipe→file, file→pipe, EINVAL, vmsplice, fallocate */
         planned_tests += 8u; /* clock_sched: getres, sched_param, sched_policy, itimer, rusage, times, getpriority, setpriority */
         planned_tests += 8u; /* vfs: O_TRUNC, O_APPEND, relpath, dir_mtime, readlink, hardlink, mount, renameat2 */
         planned_tests += 7u; /* poll: file ready, eventfd not-ready, eventfd ready, POLLNVAL, select file, select pipe, pselect6 pipe */

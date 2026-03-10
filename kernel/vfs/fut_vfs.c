@@ -2517,3 +2517,95 @@ int fut_vfs_link(const char *oldpath, const char *newpath) {
     fut_vnode_unref(old_vnode);
     return ret;
 }
+
+/**
+ * fut_vfs_rename() - Rename/move a file (kernel-level, no copy_from_user)
+ *
+ * Delegates to the parent directory vnode's rename operation.
+ * Used by kernel selftests where paths are kernel-space strings.
+ */
+int fut_vfs_rename(const char *oldpath, const char *newpath) {
+    if (!oldpath || !newpath || oldpath[0] == '\0' || newpath[0] == '\0')
+        return -EINVAL;
+
+    /* Find last slash to split parent dir / filename */
+    size_t old_len = strlen(oldpath);
+    size_t new_len = strlen(newpath);
+
+    int old_slash = -1, new_slash = -1;
+    for (size_t i = 0; i < old_len; i++)
+        if (oldpath[i] == '/') old_slash = (int)i;
+    for (size_t i = 0; i < new_len; i++)
+        if (newpath[i] == '/') new_slash = (int)i;
+
+    /* Build parent paths and leaf names */
+    char old_parent_buf[256], new_parent_buf[256];
+    const char *old_name, *new_name;
+
+    if (old_slash < 0) {
+        old_parent_buf[0] = '.'; old_parent_buf[1] = '\0';
+        old_name = oldpath;
+    } else if (old_slash == 0) {
+        old_parent_buf[0] = '/'; old_parent_buf[1] = '\0';
+        old_name = oldpath + 1;
+    } else {
+        size_t plen = (size_t)old_slash < 255 ? (size_t)old_slash : 255;
+        memcpy(old_parent_buf, oldpath, plen);
+        old_parent_buf[plen] = '\0';
+        old_name = oldpath + old_slash + 1;
+    }
+
+    if (new_slash < 0) {
+        new_parent_buf[0] = '.'; new_parent_buf[1] = '\0';
+        new_name = newpath;
+    } else if (new_slash == 0) {
+        new_parent_buf[0] = '/'; new_parent_buf[1] = '\0';
+        new_name = newpath + 1;
+    } else {
+        size_t plen = (size_t)new_slash < 255 ? (size_t)new_slash : 255;
+        memcpy(new_parent_buf, newpath, plen);
+        new_parent_buf[plen] = '\0';
+        new_name = newpath + new_slash + 1;
+    }
+
+    if (old_name[0] == '\0' || new_name[0] == '\0')
+        return -EINVAL;
+
+    /* Look up old parent directory */
+    struct fut_vnode *old_parent = NULL;
+    int ret = fut_vfs_lookup(old_parent_buf, &old_parent);
+    if (ret < 0 || !old_parent)
+        return ret < 0 ? ret : -ENOENT;
+
+    if (!old_parent->ops || !old_parent->ops->rename) {
+        fut_vnode_unref(old_parent);
+        return -ENOSYS;
+    }
+
+    /* Same parent: simple rename */
+    if (strcmp(old_parent_buf, new_parent_buf) == 0) {
+        ret = old_parent->ops->rename(old_parent, old_name, new_name);
+        fut_vnode_unref(old_parent);
+        return ret;
+    }
+
+    /* Cross-directory rename: lookup new parent too */
+    struct fut_vnode *new_parent = NULL;
+    ret = fut_vfs_lookup(new_parent_buf, &new_parent);
+    if (ret < 0 || !new_parent) {
+        fut_vnode_unref(old_parent);
+        return ret < 0 ? ret : -ENOENT;
+    }
+
+    if (!new_parent->ops || !new_parent->ops->rename) {
+        fut_vnode_unref(old_parent);
+        fut_vnode_unref(new_parent);
+        return -ENOSYS;
+    }
+
+    /* Use new parent's rename with full paths for cross-directory move */
+    ret = new_parent->ops->rename(old_parent, old_name, new_name);
+    fut_vnode_unref(old_parent);
+    fut_vnode_unref(new_parent);
+    return ret;
+}

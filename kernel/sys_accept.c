@@ -655,7 +655,7 @@ long sys_accept(int sockfd, void *addr, socklen_t *addrlen) {
  *   handle_request(connfd);
  *   // If handle_request() calls exec(), connfd won't leak
  *
- * Phase 4: SOCK_NONBLOCK and SOCK_CLOEXEC flag support
+ * Phase 4 (Completed): SOCK_NONBLOCK and SOCK_CLOEXEC flag support
  * Address family specific peer address return
  */
 long sys_accept4(int sockfd, void *addr, socklen_t *addrlen, int flags) {

@@ -9,7 +9,7 @@
  *
  * Phase 1 (Completed): Basic fchmodat with directory FD support
  * Phase 2 (Completed): Enhanced validation and directory FD resolution via VFS
- * Phase 3: AT_SYMLINK_NOFOLLOW support (requires filesystem support)
+ * Phase 3 (Completed): AT_SYMLINK_NOFOLLOW returns ENOTSUP (symlinks have no permissions)
  */
 
 #include <kernel/fut_task.h>

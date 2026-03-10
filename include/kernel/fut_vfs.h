@@ -872,6 +872,7 @@ int fut_vfs_chdir(const char *path);
 int fut_vfs_symlink(const char *target, const char *linkpath);
 ssize_t fut_vfs_readlink(const char *path, char *buf, size_t bufsiz);
 int fut_vfs_link(const char *oldpath, const char *newpath);
+int fut_vfs_rename(const char *oldpath, const char *newpath);
 
 /**
  * Sync all cached data for a specific filesystem.

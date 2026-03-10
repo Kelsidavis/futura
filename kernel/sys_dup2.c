@@ -102,7 +102,7 @@
  * Phase 1 (Completed): Basic FD duplication with per-task isolation
  * Phase 2 (Completed): Enhanced validation, operation categorization, detailed logging
  * Phase 3 (Completed): Atomic close-and-dup with proper error handling
- * Phase 4: O_CLOEXEC handling, dup3 support with flags
+ * Phase 4 (Completed): O_CLOEXEC handling, dup3 support with flags
  */
 long sys_dup2(int oldfd, int newfd) {
     /* ARM64 FIX: Copy parameters to local variables immediately to ensure they're preserved
@@ -312,7 +312,7 @@ long sys_dup2(int oldfd, int newfd) {
  *   - Can set O_CLOEXEC atomically without race condition
  *   - Only supports O_CLOEXEC flag (other flags return -EINVAL)
  *
- * Phase 4: Initial implementation with O_CLOEXEC support
+ * Phase 4 (Completed): Initial implementation with O_CLOEXEC support
  */
 long sys_dup3(int oldfd, int newfd, int flags) {
     /* Copy parameters to local variables for ARM64 */

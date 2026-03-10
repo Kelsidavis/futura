@@ -599,11 +599,13 @@ isr_common_stub:
      * Zeroing was causing crashes where GCC temporarily moved pointers to XMM regs.
      * Proper fix would be FXSAVE/FXRSTOR on interrupt entry/exit. */
 
-    /* Validate CS in IRETQ frame - corrupted CS causes #GP on IRETQ */
-    movq 8(%rsp), %rax
-    cmpw $0x08, %ax
+    /* Validate CS in IRETQ frame - corrupted CS causes #GP on IRETQ.
+     * IMPORTANT: Do NOT use RAX as a scratch register here — it was just
+     * restored from the interrupt frame and must not be modified before IRETQ.
+     * Use direct memory comparisons instead of loading into RAX. */
+    cmpw $0x08, 8(%rsp)
     je .exc_cs_ok
-    cmpw $0x23, %ax
+    cmpw $0x23, 8(%rsp)
     je .exc_cs_ok
     btq $63, (%rsp)
     jc .exc_fix_kcs
@@ -732,11 +734,13 @@ irq_common_stub:
      * Zeroing was causing crashes where GCC temporarily moved pointers to XMM regs.
      * Proper fix would be FXSAVE/FXRSTOR on interrupt entry/exit. */
 
-    /* Validate CS in IRETQ frame - corrupted CS causes #GP on IRETQ */
-    movq 8(%rsp), %rax
-    cmpw $0x08, %ax
+    /* Validate CS in IRETQ frame - corrupted CS causes #GP on IRETQ.
+     * IMPORTANT: Do NOT use RAX as a scratch register here — it was just
+     * restored from the interrupt frame and must not be modified before IRETQ.
+     * Use direct memory comparisons instead of loading into RAX. */
+    cmpw $0x08, 8(%rsp)
     je .girq_cs_ok
-    cmpw $0x23, %ax
+    cmpw $0x23, 8(%rsp)
     je .girq_cs_ok
     btq $63, (%rsp)
     jc .girq_fix_kcs
@@ -891,11 +895,13 @@ irq0_timer:
      * Zeroing was causing wl-term crashes where pixels pointer in XMM got zeroed. */
 
     /* Validate CS in IRETQ frame - corrupted CS causes #GP on IRETQ.
-     * Thread preempted mid-context-switch can corrupt the saved frame. */
-    movq 8(%rsp), %rax
-    cmpw $0x08, %ax
+     * Thread preempted mid-context-switch can corrupt the saved frame.
+     * IMPORTANT: Do NOT use RAX as a scratch register here — it was just
+     * restored from the interrupt frame and must not be modified before IRETQ.
+     * Use direct memory comparisons instead of loading into RAX. */
+    cmpw $0x08, 8(%rsp)
     je .irq0_cs_ok
-    cmpw $0x23, %ax
+    cmpw $0x23, 8(%rsp)
     je .irq0_cs_ok
     /* CS corrupted - determine correct value from RIP address space */
     btq $63, (%rsp)

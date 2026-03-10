@@ -10,6 +10,8 @@
 #include <kernel/fut_capability.h>
 #include <kernel/fut_object.h>
 #include <kernel/fut_task.h>
+#include <kernel/fut_thread.h>
+#include <kernel/fut_waitq.h>
 #include <kernel/fut_vfs.h>
 #include <kernel/fut_timer.h>
 #include <kernel/errno.h>
@@ -288,6 +290,37 @@ fut_handle_t fut_cap_handle_send(uint64_t target_pid, fut_handle_t source_handle
 
     /* Share object with target process using reduced rights */
     fut_handle_t target_handle = fut_object_share(source_handle, target_pid, shared_rights);
+    if (target_handle == FUT_INVALID_HANDLE) {
+        return FUT_INVALID_HANDLE;
+    }
+
+    /* Deposit handle into target task's receive queue so fut_cap_handle_recv()
+     * can retrieve it.  If queue is full the send fails and the alias is freed. */
+    fut_task_t *target = fut_task_by_pid(target_pid);
+    if (!target) {
+        fut_printf("[CAP] fut_cap_handle_send: target pid %llu not found\n", target_pid);
+        return FUT_INVALID_HANDLE;
+    }
+
+    uint64_t sender_pid = 0;
+    fut_task_t *self = fut_task_current();
+    if (self) sender_pid = self->pid;
+
+    fut_spinlock_acquire(&target->cap_recv_lock);
+    int next_tail = (target->cap_recv_tail + 1) % FUT_CAP_RECV_QUEUE_SIZE;
+    if (next_tail == target->cap_recv_head) {
+        /* Queue full */
+        fut_spinlock_release(&target->cap_recv_lock);
+        fut_printf("[CAP] fut_cap_handle_send: target pid %llu recv queue full\n", target_pid);
+        return FUT_INVALID_HANDLE;
+    }
+    target->cap_recv_queue[target->cap_recv_tail].handle     = (uint64_t)target_handle;
+    target->cap_recv_queue[target->cap_recv_tail].sender_pid = sender_pid;
+    target->cap_recv_tail = next_tail;
+    fut_spinlock_release(&target->cap_recv_lock);
+
+    /* Wake any thread blocked in fut_cap_handle_recv() */
+    fut_waitq_wake_all(&target->cap_recv_waitq);
 
     fut_printf("[CAP] fut_cap_handle_send(target_pid=%llu, source=%llu, rights=0x%llx) -> %llu\n",
                target_pid, source_handle, shared_rights, target_handle);
@@ -296,20 +329,54 @@ fut_handle_t fut_cap_handle_send(uint64_t target_pid, fut_handle_t source_handle
 }
 
 fut_handle_t fut_cap_handle_recv(uint64_t source_pid, fut_rights_t *received_rights) {
-    (void)received_rights;  /* Unused until implementation complete */
+    fut_task_t *task = fut_task_current();
+    if (!task) {
+        return FUT_INVALID_HANDLE;
+    }
 
-    /* TODO: Implement blocking receive of capability handle
-     * This requires adding a handle receive queue to fut_task structure
-     * and integrating with the scheduler for blocking wait.
-     *
-     * Planned implementation:
-     *   1. Check task's handle receive queue
-     *   2. If empty, block on waitq until handle arrives
-     *   3. Pop handle from queue and return
-     */
+    for (;;) {
+        fut_spinlock_acquire(&task->cap_recv_lock);
 
-    fut_printf("[CAP] fut_cap_handle_recv(source_pid=%llu) (STUB)\n", source_pid);
-    return FUT_INVALID_HANDLE;  /* Stub: not yet implemented */
+        /* Scan queue for a matching entry (source_pid == 0 accepts any sender) */
+        int head = task->cap_recv_head;
+        int tail = task->cap_recv_tail;
+        for (int i = head; i != tail; i = (i + 1) % FUT_CAP_RECV_QUEUE_SIZE) {
+            if (source_pid == 0 ||
+                task->cap_recv_queue[i].sender_pid == source_pid) {
+                /* Found a matching entry — dequeue it by shifting remaining
+                 * entries down one slot to preserve FIFO order. */
+                fut_handle_t h = (fut_handle_t)task->cap_recv_queue[i].handle;
+                int j = i;
+                while (j != task->cap_recv_head) {
+                    int prev = (j - 1 + FUT_CAP_RECV_QUEUE_SIZE) % FUT_CAP_RECV_QUEUE_SIZE;
+                    task->cap_recv_queue[j] = task->cap_recv_queue[prev];
+                    j = prev;
+                }
+                task->cap_recv_head = (task->cap_recv_head + 1) % FUT_CAP_RECV_QUEUE_SIZE;
+
+                if (received_rights) {
+                    /* Caller wants to know the rights on the received handle */
+                    fut_object_t *obj = fut_object_get(h, FUT_RIGHT_NONE);
+                    if (obj) {
+                        *received_rights = obj->rights;
+                        fut_object_put(obj);
+                    } else {
+                        *received_rights = FUT_RIGHT_NONE;
+                    }
+                }
+
+                fut_spinlock_release(&task->cap_recv_lock);
+                fut_printf("[CAP] fut_cap_handle_recv(source_pid=%llu) -> %llu\n",
+                           source_pid, h);
+                return h;
+            }
+        }
+
+        /* No matching entry yet — block until woken by a send */
+        fut_waitq_sleep_locked(&task->cap_recv_waitq, &task->cap_recv_lock,
+                               FUT_THREAD_BLOCKED);
+        /* Lock was released by sleep; loop and re-check */
+    }
 }
 
 fut_handle_t fut_cap_handle_dup(fut_handle_t source_handle, fut_rights_t new_rights) {

@@ -164,6 +164,17 @@ struct fut_task {
     /* chroot(2) filesystem isolation */
     struct fut_vnode *chroot_vnode;    // chroot jail root vnode (NULL = use global VFS root)
 
+    /* Capability handle receive queue (for fut_cap_handle_recv / fut_cap_handle_send IPC) */
+#define FUT_CAP_RECV_QUEUE_SIZE 8
+    struct {
+        uint64_t handle;      // Handle index in global object table
+        uint64_t sender_pid;  // PID of sender (0 = unset)
+    } cap_recv_queue[FUT_CAP_RECV_QUEUE_SIZE];
+    int cap_recv_head;         // Queue head (dequeue index)
+    int cap_recv_tail;         // Queue tail (enqueue index)
+    fut_spinlock_t cap_recv_lock;
+    fut_waitq_t cap_recv_waitq;
+
     fut_task_t *next;                  // Next task in system list
 };
 

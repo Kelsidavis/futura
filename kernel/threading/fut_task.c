@@ -152,6 +152,8 @@ fut_task_t *fut_task_create(void) {
         .next = NULL
     };
     fut_waitq_init(&task->child_waiters);
+    fut_spinlock_init(&task->cap_recv_lock);
+    fut_waitq_init(&task->cap_recv_waitq);
 
     /* Initialize cwd_cache to parent's path or "/" */
     if (parent && parent->cwd_cache) {

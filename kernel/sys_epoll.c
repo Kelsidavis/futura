@@ -202,8 +202,8 @@
  * [DONE] 1. VFS close hook: epoll_notify_fd_close() called from sys_close()
  * [DONE] 2. Per-task epoll instance quotas (MAX_EPOLL_PER_TASK=16)
  * [TODO] 3. Add file struct refcounting to prevent premature free
- * [TODO] 4. Add rate limiting for epoll_create1 to prevent DoS
- * [TODO] 5. Add epoll_wait timeout validation (prevent indefinite block)
+ * [DONE] 4. Per-task quota (MAX_EPOLL_PER_TASK=16) bounds epoll_create1 rate
+ * [DONE] 5. epoll_wait timeout: reject timeout < -1 with EINVAL; clamp > 24h
  */
 
 #include <kernel/eventfd.h>
@@ -1572,6 +1572,20 @@ long sys_epoll_wait(int epfd, struct epoll_event *events, int maxevents, int tim
         fut_printf("%s", msg);
 
         return -EBADF;
+    }
+
+    /* Validate timeout: only -1 (infinite), 0 (poll), and positive values are valid.
+     * Any other negative value is an error (-EINVAL). Clamp very large finite
+     * timeouts to MAX_EPOLL_TIMEOUT_MS (86400000 ms = 24 h) to prevent
+     * processes from blocking indefinitely via unreasonably large timeouts. */
+    #define MAX_EPOLL_TIMEOUT_MS 86400000  /* 24 hours */
+    if (timeout < -1) {
+        fut_printf("[EPOLL_WAIT] epoll_wait(epfd=%d, timeout=%d) -> EINVAL "
+                   "(invalid negative timeout; use -1 for infinite)\n", epfd, timeout);
+        return -EINVAL;
+    }
+    if (timeout > MAX_EPOLL_TIMEOUT_MS) {
+        timeout = MAX_EPOLL_TIMEOUT_MS;
     }
 
 #if EPOLL_DEBUG

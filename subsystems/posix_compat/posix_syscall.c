@@ -1222,6 +1222,12 @@ static int64_t sys_sigreturn_handler(uint64_t frame_ptr, uint64_t arg2, uint64_t
 #endif
     }
 
+    /* Clear SS_ONSTACK flag now that we've returned from the signal handler.
+     * The alternate stack is no longer in use for signal delivery. */
+    if (current->sig_altstack.ss_flags & SS_ONSTACK) {
+        current->sig_altstack.ss_flags &= ~SS_ONSTACK;
+    }
+
     /* Return value is overwritten by the restored register state */
     return 0;
 }

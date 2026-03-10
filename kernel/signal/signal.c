@@ -307,11 +307,27 @@ int fut_signal_deliver(struct fut_task *task, void *frame) {
         return signum;  /* Caller will handle default action */
     }
 
-    /* Allocate rt_sigframe on user stack with 16-byte alignment.
+    /* Phase 2: Select signal stack — use alternate stack if SA_ONSTACK set
+     * and the alternate stack is active (not disabled, not already on it). */
+    int handler_flags = task->signal_handler_flags[signum - 1];
+    uint64_t sp;
+    if ((handler_flags & SA_ONSTACK) &&
+        !(task->sig_altstack.ss_flags & SS_DISABLE) &&
+        !(task->sig_altstack.ss_flags & SS_ONSTACK) &&
+        task->sig_altstack.ss_sp != NULL &&
+        task->sig_altstack.ss_size >= sizeof(struct rt_sigframe)) {
+        /* Deliver on top of alternate stack (grows down from top) */
+        sp = (uint64_t)task->sig_altstack.ss_sp + task->sig_altstack.ss_size;
+        /* Mark we are now executing on the alternate stack */
+        task->sig_altstack.ss_flags |= SS_ONSTACK;
+    } else {
+        sp = f->sp;
+    }
+
+    /* Allocate rt_sigframe on selected stack with 16-byte alignment.
      * security: Subtract first, then align, to ensure the entire
      * frame fits below the original SP. Aligning before subtracting could
      * leave the frame partially overlapping with the interrupted context. */
-    uint64_t sp = f->sp;
     sp -= sizeof(struct rt_sigframe);
     sp &= ~0xFULL;  /* Align to 16 bytes */
 
@@ -319,7 +335,7 @@ int fut_signal_deliver(struct fut_task *task, void *frame) {
      * If sp wrapped past zero or is above the original stack pointer,
      * the subtraction overflowed. Also validate sp is in user space
      * using the platform-defined USER_SPACE_END constant. */
-    if (sp > f->sp || sp < 0x1000 || sp >= USER_SPACE_END) {
+    if (sp < 0x1000 || sp >= USER_SPACE_END) {
         return -EFAULT;
     }
 

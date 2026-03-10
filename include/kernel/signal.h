@@ -81,6 +81,7 @@ struct sigaction {
 
 /* sigaction() flags */
 #define SA_NOCLDSTOP  0x00000001  /* Don't send SIGCHLD when child stops */
+#define SA_ONSTACK    0x08000000  /* Deliver signal on alternate signal stack */
 #define SA_RESTART    0x10000000  /* Restart syscall when signal returns */
 #define SA_RESETHAND  0x80000000  /* Reset handler to SIG_DFL after delivery */
 

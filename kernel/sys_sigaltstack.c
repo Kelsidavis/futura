@@ -106,9 +106,9 @@
  * alternate stack is available (handler runs on separate stack).
  *
  * Implementation notes:
- *   - Phase 1: Store ss/old_ss with validation
- *   - Phase 2: Signal delivery integration (use alt stack in signal.c)
- *   - Phase 3: Stack pointer selection in rt_sigframe creation
+ *   - Phase 1 (Completed): Store ss/old_ss with validation
+ *   - Phase 2 (Completed): SA_ONSTACK delivery + SS_ONSTACK tracking in signal.c
+ *   - Phase 3: Stack pointer selection during nested signals
  *   - Atomicity: Not required (only one thread per task in this implementation)
  */
 long sys_sigaltstack(const struct sigaltstack *ss, struct sigaltstack *old_ss) {
@@ -135,6 +135,13 @@ long sys_sigaltstack(const struct sigaltstack *ss, struct sigaltstack *old_ss) {
         if (fut_copy_from_user(&new_stack, ss, sizeof(struct sigaltstack)) != 0) {
             fut_printf("[SIGALTSTACK] sigaltstack(ss=%p) -> EFAULT (invalid ss pointer)\n", ss);
             return -EFAULT;
+        }
+
+        /* POSIX: Cannot change alternate stack while currently executing on it */
+        if (current->sig_altstack.ss_flags & SS_ONSTACK) {
+            fut_printf("[SIGALTSTACK] sigaltstack(ss=%p) -> EPERM (currently executing on alt stack)\n",
+                      new_stack.ss_sp);
+            return -EPERM;
         }
 
         /* Validate flags */

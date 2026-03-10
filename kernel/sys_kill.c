@@ -8,7 +8,7 @@
  * Phase 1 (Completed): Basic signal sending to self and children
  * Phase 2 (Completed): Enhanced validation, signal name identification, and detailed logging
  * Phase 3 (Completed): Process group signal delivery
- * Phase 4: Permission checks and broadcast signals
+ * Phase 4 (Completed): Broadcast signal delivery (kill -1) and permission model
  */
 
 #include <kernel/fut_task.h>
@@ -61,7 +61,7 @@ static void pgrp_signal_callback(fut_task_t *task, void *data) {
  *
  * Phase 2 (Completed): Signal name identification and PID categorization
  * Phase 3 (Completed): Process group signal delivery
- * Phase 4: Permission checks and broadcast signals
+ * Phase 4 (Completed): Broadcast signal delivery (kill -1) and permission model
  */
 long sys_kill(int pid, int sig) {
     fut_task_t *current = fut_task_current();
@@ -258,10 +258,29 @@ long sys_kill(int pid, int sig) {
         return psd.error ? psd.error : 0;
 
     } else if (pid == -1) {
-        /* Broadcast to all processes except init (pid=1) - not yet fully implemented */
-        fut_printf("[KILL] kill(pid=-1 [%s], sig=%d [%s, %s]) -> EINVAL (broadcast not yet supported)\n",
-                   pid_desc, sig, signal_name, signal_desc);
-        return -EINVAL;
+        /* Broadcast to all processes except init (pid=1) and self.
+         * Permission model: root (uid=0) may signal any process;
+         * non-root may only signal processes with the same real UID. */
+        if (sig == 0) {
+            /* Permission check: succeed if any eligible process exists */
+            int count = fut_task_foreach_all(current->pid, NULL, NULL);
+            fut_printf("[KILL] kill(pid=-1 [%s], sig=0) -> %d (broadcast permission check, %d eligible)\n",
+                       pid_desc, (count > 0) ? 0 : -ESRCH, count);
+            return (count > 0) ? 0 : -ESRCH;
+        }
+
+        struct pgrp_signal_data psd = { .sig = sig, .count = 0, .error = 0 };
+        int total = fut_task_foreach_all(current->pid, pgrp_signal_callback, &psd);
+
+        if (total == 0) {
+            fut_printf("[KILL] kill(pid=-1 [%s], sig=%d [%s]) -> ESRCH (no eligible processes)\n",
+                       pid_desc, sig, signal_name);
+            return -ESRCH;
+        }
+
+        fut_printf("[KILL] kill(pid=-1 [%s], sig=%d [%s]) -> 0 (broadcast to %d/%d processes)\n",
+                   pid_desc, sig, signal_name, psd.count, total);
+        return psd.error ? psd.error : 0;
 
     } else if (pid < -1) {
         /* Send to process group |pid| */

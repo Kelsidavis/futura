@@ -689,6 +689,38 @@ int fut_task_count_by_uid(uint32_t uid) {
 }
 
 /**
+ * fut_task_foreach_all - Iterate all non-zombie tasks except init and one excluded PID.
+ *
+ * Used by kill(pid=-1) to broadcast signals to all eligible processes.
+ * Skips: zombie tasks, init (pid 1), and the task identified by exclude_pid.
+ *
+ * @param exclude_pid  PID to exclude (typically the caller's PID)
+ * @param callback     Function called for each matching task (may be NULL for count-only)
+ * @param data         Opaque pointer forwarded to callback
+ * @return Number of tasks visited (regardless of whether callback was supplied)
+ */
+int fut_task_foreach_all(uint64_t exclude_pid,
+                         void (*callback)(fut_task_t *task, void *data),
+                         void *data) {
+    int count = 0;
+    fut_spinlock_acquire(&task_list_lock);
+    fut_task_t *task = fut_task_list;
+    while (task) {
+        if (task->pid != 1 &&
+            task->pid != exclude_pid &&
+            task->state != FUT_TASK_ZOMBIE) {
+            if (callback) {
+                callback(task, data);
+            }
+            count++;
+        }
+        task = task->next;
+    }
+    fut_spinlock_release(&task_list_lock);
+    return count;
+}
+
+/**
  * fut_task_get_global_count - Get total number of active tasks
  *
  * Returns the current global task count. Used for enforcing system-wide

@@ -251,6 +251,19 @@ fut_task_t *fut_task_by_pid(uint64_t pid);
 int fut_task_foreach_pgid(uint64_t pgid, void (*callback)(fut_task_t *task, void *data), void *data);
 
 /**
+ * Iterate all non-zombie tasks except init (pid 1) and one excluded PID.
+ * Used by kill(pid=-1) for broadcast signal delivery.
+ *
+ * @param exclude_pid  PID to skip (caller's PID)
+ * @param callback     Called for each matching task (NULL = count only)
+ * @param data         Forwarded to callback
+ * @return Number of tasks visited
+ */
+int fut_task_foreach_all(uint64_t exclude_pid,
+                         void (*callback)(fut_task_t *task, void *data),
+                         void *data);
+
+/**
  * Count processes owned by a specific UID.
  *
  * @param uid User ID to count processes for

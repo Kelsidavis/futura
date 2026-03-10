@@ -92,7 +92,7 @@
  * Phase 2 (Completed): Enhanced validation with detailed operation reporting
  * Phase 3 (Completed): Implement shrinking (unmap tail) and same-size no-op
  * Phase 4 (Completed): Implement MREMAP_MAYMOVE (allocate-copy-free) and MREMAP_FIXED
- * Phase 6: Implement MREMAP_FIXED and MREMAP_DONTUNMAP
+ * Phase 5 (Completed): MREMAP_DONTUNMAP support (keep source mapping after remap)
  *
  * Performance notes:
  * - In-place expansion is much faster (no page copying)

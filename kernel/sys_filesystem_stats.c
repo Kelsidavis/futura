@@ -246,7 +246,7 @@ long sys_fstatfs(int fd, struct fut_linux_statfs *buf) {
  *
  * Phase 1 (Completed): Validate parameters, return success stub
  * Phase 2 (Completed): Implement basic preallocation by extending file size
- * Phase 3: Implement zero-copy hole punching and space reservation
+ * Phase 3 (Completed): ZERO_RANGE and PUNCH_HOLE via VFS write with zero buffer
  *
  * Mode flags:
  *   - 0x00: Default mode (allocate space)
@@ -385,8 +385,62 @@ long sys_fallocate(int fd, int mode, uint64_t offset, uint64_t len) {
             }
         }
     }
-    /* KEEP_SIZE, PUNCH_HOLE, COLLAPSE_RANGE, ZERO_RANGE: accept as no-op on ramfs */
+    /*
+     * Phase 3: ZERO_RANGE and PUNCH_HOLE write zeros over the byte range via
+     * the VFS write operation.  PUNCH_HOLE always specifies KEEP_SIZE so the
+     * file size is not altered; for in-memory ramfs "freeing" a hole is the
+     * same as zeroing it.  COLLAPSE_RANGE is deferred to Phase 4 (requires
+     * moving file data and is rarely used).
+     */
+    if ((mode & FALLOC_FL_ZERO_RANGE) ||
+        ((mode & FALLOC_FL_PUNCH_HOLE) && (mode & FALLOC_FL_KEEP_SIZE))) {
 
+        if (!vnode || !vnode->ops || !vnode->ops->write) {
+            fut_printf("[FALLOCATE] fallocate(fd=%d, mode=0x%x [%s], pid=%d) -> ENOSYS "
+                       "(filesystem does not support write)\n",
+                       fd, mode, op_type, task->pid);
+            return -ENOSYS;
+        }
+
+        /* Guard: range must lie within the current file */
+        if (offset >= vnode->size) {
+            fut_printf("[FALLOCATE] fallocate(fd=%d, mode=0x%x [%s], offset=%lu >= size=%llu, pid=%d) "
+                       "-> 0 (range beyond EOF, no-op)\n",
+                       fd, mode, op_type, offset, (unsigned long long)vnode->size, task->pid);
+            return 0;
+        }
+
+        uint64_t clamp_len = len;
+        if (offset + clamp_len > vnode->size)
+            clamp_len = vnode->size - offset;
+
+        /* Write zeros in 4 KB chunks to avoid a large stack allocation */
+        static const uint8_t zero_page[4096];  /* BSS-zero static buffer */
+        uint64_t remaining = clamp_len;
+        uint64_t cur_off   = offset;
+
+        while (remaining > 0) {
+            size_t chunk = (remaining > sizeof(zero_page))
+                           ? sizeof(zero_page) : (size_t)remaining;
+            ssize_t written = vnode->ops->write(vnode, zero_page, chunk, cur_off);
+            if (written < 0) {
+                fut_printf("[FALLOCATE] fallocate(fd=%d, mode=0x%x [%s], pid=%d) -> %zd "
+                           "(write zero failed at offset %llu)\n",
+                           fd, mode, op_type, task->pid, written, (unsigned long long)cur_off);
+                return (long)written;
+            }
+            cur_off   += (uint64_t)written;
+            remaining -= (uint64_t)written;
+        }
+
+        fut_printf("[FALLOCATE] fallocate(fd=%d, mode=0x%x [%s], offset=%lu, len=%llu [%s], pid=%d) "
+                   "-> 0 (Phase 3: zeroed %llu bytes)\n",
+                   fd, mode, op_type, offset, (unsigned long long)clamp_len,
+                   size_category, task->pid, (unsigned long long)clamp_len);
+        return 0;
+    }
+
+    /* KEEP_SIZE (reserve without extending) and COLLAPSE_RANGE: accept as no-op */
     fut_printf("[FALLOCATE] fallocate(fd=%d, mode=0x%x [%s], offset=%lu, len=%lu [%s], pid=%d) -> 0\n",
                fd, mode, op_type, offset, len, size_category, task->pid);
 

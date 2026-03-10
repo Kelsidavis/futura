@@ -464,6 +464,10 @@ static void task_cleanup_and_exit(fut_task_t *task, int status, int signal) {
     }
     fut_spinlock_release(&task_list_lock);
 
+    /* Write process accounting record before marking zombie.
+     * Threads are still attached here so cpu_ticks are readable. */
+    acct_write_record(task, status, signal);
+
     task_mark_exit(task, status, signal);
 
     /* Release user-space memory manager before exiting */

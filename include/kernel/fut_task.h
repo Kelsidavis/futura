@@ -297,3 +297,13 @@ uint32_t fut_task_get_gid(fut_task_t *task);
  * @param gid  New effective GID
  */
 void fut_task_set_credentials(fut_task_t *task, uint32_t uid, uint32_t gid);
+
+/**
+ * Write a process accounting record for a task on exit.
+ * No-op when accounting is disabled (acct(2) not called).
+ *
+ * @param task    Exiting task (threads still attached)
+ * @param status  Exit status code
+ * @param signal  Termination signal (0 = normal exit)
+ */
+void acct_write_record(fut_task_t *task, int status, int signal);

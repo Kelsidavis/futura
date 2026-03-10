@@ -9,17 +9,141 @@
  * Phase 1 (Completed): Validation and stub implementation
  * Phase 2 (Completed): Enhanced validation, file path handling, operation type categorization
  * Phase 3 (Completed): Open accounting file and initialize record structure
- * Phase 4: Generate and write accounting records on process exit
+ * Phase 4 (Completed): Generate and write accounting records on process exit
  */
 
 #include <kernel/fut_task.h>
+#include <kernel/fut_thread.h>
 #include <kernel/fut_vfs.h>
+#include <kernel/fut_timer.h>
 #include <kernel/errno.h>
 #include <stddef.h>
+#include <stdbool.h>
 
 #include <kernel/kprintf.h>
 #include <kernel/uaccess.h>
 #include <string.h>
+
+/* ============================================================
+ *   Accounting Record Format
+ * ============================================================ */
+
+/**
+ * fut_acct_record - Kernel process accounting record
+ *
+ * Written to the accounting file when a process exits (if acct(2) is enabled).
+ * Provides basic audit trail: who ran what, when it exited, and how much CPU
+ * it consumed.  Intentionally compact — fields not tracked yet are zero.
+ */
+struct fut_acct_record {
+    char     ac_comm[16];    /* Command identifier (PID as decimal string) */
+    uint32_t ac_pid;         /* Process ID */
+    uint32_t ac_ppid;        /* Parent process ID */
+    uint32_t ac_uid;         /* Real user ID */
+    uint32_t ac_gid;         /* Real group ID */
+    uint32_t ac_exitcode;    /* Exit code (0 if killed by signal) */
+    uint8_t  ac_term_signal; /* Termination signal (0 = normal exit) */
+    uint8_t  _pad[3];        /* Alignment padding */
+    uint64_t ac_etime_ms;    /* Monotonic time at exit (ms since boot) */
+    uint64_t ac_cpu_ticks;   /* Total CPU ticks consumed by all threads */
+};
+
+/* ============================================================
+ *   Global Accounting State
+ * ============================================================ */
+
+static char  acct_path[FUT_VFS_PATH_BUFFER_SIZE];
+static bool  acct_enabled = false;
+
+/* ============================================================
+ *   acct_write_record — called on process exit
+ * ============================================================ */
+
+/**
+ * acct_write_record - Write an accounting record for the exiting task.
+ *
+ * Called from task_cleanup_and_exit() before the task is marked as a zombie.
+ * At this point task->threads still contains the exiting thread so we can
+ * read its cpu_ticks.
+ *
+ * @param task    Exiting task
+ * @param status  Exit status code
+ * @param signal  Termination signal (0 = normal exit)
+ */
+void acct_write_record(fut_task_t *task, int status, int signal) {
+    if (!acct_enabled || !task) {
+        return;
+    }
+
+    /* Build the accounting record */
+    struct fut_acct_record rec;
+    memset(&rec, 0, sizeof(rec));
+
+    rec.ac_pid  = (uint32_t)task->pid;
+    rec.ac_ppid = task->parent ? (uint32_t)task->parent->pid : 0;
+    rec.ac_uid  = task->ruid;
+    rec.ac_gid  = task->rgid;
+    rec.ac_exitcode    = (uint8_t)(status & 0xFF);
+    rec.ac_term_signal = (uint8_t)(signal & 0xFF);
+    rec.ac_etime_ms    = fut_get_ticks();
+
+    /* Sum CPU ticks across all threads (still attached at this point) */
+    uint64_t total_ticks = 0;
+    for (fut_thread_t *t = task->threads; t != NULL; t = t->global_next) {
+        total_ticks += t->stats.cpu_ticks;
+    }
+    rec.ac_cpu_ticks = total_ticks + task->child_cpu_ticks;
+
+    /* Encode PID as command identifier (we have no argv[0] yet) */
+    /* Simple itoa into ac_comm */
+    uint64_t pid = task->pid;
+    int pos = 15;
+    rec.ac_comm[pos] = '\0';
+    if (pid == 0) {
+        rec.ac_comm[--pos] = '0';
+    } else {
+        while (pid > 0 && pos > 0) {
+            rec.ac_comm[--pos] = '0' + (int)(pid % 10);
+            pid /= 10;
+        }
+    }
+    /* Left-justify the string */
+    if (pos > 0) {
+        int len = 15 - pos;
+        for (int i = 0; i < len; i++) {
+            rec.ac_comm[i] = rec.ac_comm[pos + i];
+        }
+        rec.ac_comm[len] = '\0';
+    }
+
+    /* Open accounting file in append mode and write the record.
+     * Use the kernel-level VFS open so we bypass copy_from_user. */
+    int fd = fut_vfs_open(acct_path, O_WRONLY | O_APPEND, 0);
+    if (fd < 0) {
+        /* Silently disable accounting if the file becomes inaccessible */
+        fut_printf("[ACCT] acct_write_record: failed to open '%s' (err=%d) — disabling\n",
+                   acct_path, fd);
+        acct_enabled = false;
+        return;
+    }
+
+    ssize_t written = fut_vfs_write(fd, &rec, sizeof(rec));
+    fut_vfs_close(fd);
+
+    if (written != (ssize_t)sizeof(rec)) {
+        fut_printf("[ACCT] acct_write_record: short write (%zd/%zu) for pid=%u\n",
+                   written, sizeof(rec), rec.ac_pid);
+    } else {
+        fut_printf("[ACCT] acct_write_record: pid=%u uid=%u cpu=%llu ticks exit=%u sig=%u\n",
+                   rec.ac_pid, rec.ac_uid,
+                   (unsigned long long)rec.ac_cpu_ticks,
+                   rec.ac_exitcode, rec.ac_term_signal);
+    }
+}
+
+/* ============================================================
+ *   sys_acct
+ * ============================================================ */
 
 /**
  * acct() - Enable or disable process accounting
@@ -37,42 +161,13 @@
  *   - -EACCES if file is not a regular file
  *   - -EPERM if caller does not have CAP_SYS_PACCT capability
  *   - -EIO if I/O error occurs opening the file
- *   - -ENOSPC if insufficient disk space
+ *   - -ENOENT if file does not exist
  *   - -EROFS if filesystem is read-only
- *
- * Usage:
- *   // Enable accounting to /var/account/pacct
- *   if (acct("/var/account/pacct") < 0)
- *       perror("acct");
- *
- *   // Disable accounting
- *   acct(NULL);
- *
- * Accounting records contain:
- * - Process ID, parent PID, user/group IDs
- * - Command name (up to 16 characters)
- * - Exit status
- * - CPU time used (user and system)
- * - Memory usage
- * - I/O statistics
- * - Start and exit times
- *
- * Use cases:
- * - System administrators: Track resource usage for billing
- * - Security auditing: Monitor process execution patterns
- * - Performance analysis: Identify resource-intensive processes
- * - Capacity planning: Analyze historical usage trends
- *
- * Security considerations:
- * - Requires CAP_SYS_PACCT capability (root-equivalent)
- * - Accounting file should be protected (mode 0600)
- * - Records may contain sensitive information
- * - Can be used to detect unauthorized activity
  *
  * Phase 1 (Completed): Validate parameters and accept enable/disable requests
  * Phase 2 (Completed): Enhanced validation, file path categorization, operation type detection
  * Phase 3 (Completed): Open accounting file and initialize record structure
- * Phase 4: Generate and write accounting records on process exit
+ * Phase 4 (Completed): Generate and write accounting records on process exit
  */
 long sys_acct(const char *filename) {
     /* Phase 2: Get current task for validation and logging */
@@ -83,10 +178,11 @@ long sys_acct(const char *filename) {
 
     /* Phase 2: Check if disabling accounting (NULL filename) */
     if (filename == NULL) {
-        fut_printf("[ACCT] acct(filename=NULL [disable], pid=%d) -> ENOSYS "
-                   "(Phase 3: accounting file management not yet implemented)\n",
-                   task->pid);
-        return -ENOSYS;
+        acct_enabled = false;
+        acct_path[0] = '\0';
+        fut_printf("[ACCT] acct(NULL) -> 0 (accounting disabled, pid=%llu)\n",
+                   (unsigned long long)task->pid);
+        return 0;
     }
 
     /* Copy filename from userspace (full buffer to detect truncation)
@@ -96,62 +192,42 @@ long sys_acct(const char *filename) {
      * DEFENSE: Copy full buffer size so all bytes are initialized for memchr check. */
     char path_buf[FUT_VFS_PATH_BUFFER_SIZE];
     if (fut_copy_from_user(path_buf, filename, sizeof(path_buf)) != 0) {
-        fut_printf("[ACCT] acct(filename=?, pid=%d) -> EFAULT "
-                   "(filename copy_from_user failed)\n", task->pid);
+        fut_printf("[ACCT] acct(filename=?, pid=%llu) -> EFAULT "
+                   "(filename copy_from_user failed)\n",
+                   (unsigned long long)task->pid);
         return -EFAULT;
     }
     /* Verify path was not truncated */
     if (memchr(path_buf, '\0', sizeof(path_buf)) == NULL) {
-        fut_printf("[ACCT] acct(path exceeds %zu bytes, pid=%d) -> ENAMETOOLONG\n",
-                   sizeof(path_buf) - 1, task->pid);
+        fut_printf("[ACCT] acct(path exceeds %zu bytes, pid=%llu) -> ENAMETOOLONG\n",
+                   sizeof(path_buf) - 1, (unsigned long long)task->pid);
         return -ENAMETOOLONG;
     }
 
     /* Phase 2: Validate filename is not empty */
     if (path_buf[0] == '\0') {
-        fut_printf("[ACCT] acct(filename=\"\" [empty], pid=%d) -> EINVAL "
-                   "(empty filename)\n", task->pid);
+        fut_printf("[ACCT] acct(filename=\"\", pid=%llu) -> EINVAL (empty filename)\n",
+                   (unsigned long long)task->pid);
         return -EINVAL;
     }
 
-    /* Phase 2: Categorize path type */
-    const char *path_type;
-    if (path_buf[0] == '/') {
-        path_type = "absolute";
-    } else if (path_buf[0] == '.' && path_buf[1] == '/') {
-        path_type = "relative (explicit)";
-    } else if (path_buf[0] == '.') {
-        path_type = "relative (current/parent)";
-    } else {
-        path_type = "relative";
+    /* Phase 4: Validate or create the accounting file.
+     * The file must exist (or we create it) and be a regular file.
+     * Try to open it for writing to verify accessibility. */
+    int fd = fut_vfs_open(path_buf, O_WRONLY | O_CREAT | O_APPEND, 0600);
+    if (fd < 0) {
+        fut_printf("[ACCT] acct(filename='%s', pid=%llu) -> %d "
+                   "(failed to open accounting file)\n",
+                   path_buf, (unsigned long long)task->pid, fd);
+        return fd;
     }
+    fut_vfs_close(fd);
 
-    /* Phase 2: Calculate path length */
-    size_t path_len = strlen(path_buf);
+    /* Enable accounting and store the path */
+    memcpy(acct_path, path_buf, sizeof(acct_path));
+    acct_enabled = true;
 
-    /* Phase 2: Categorize path length */
-    const char *length_category;
-    if (path_len <= 16) {
-        length_category = "short (≤16 chars)";
-    } else if (path_len <= 64) {
-        length_category = "medium (≤64 chars)";
-    } else if (path_len <= 128) {
-        length_category = "long (≤128 chars)";
-    } else {
-        length_category = "very long (>128 chars)";
-    }
-
-    /*
-     * Phase 3: Open accounting file and initialize record structure (completed)
-     *
-     * Perform VFS lookup on the file path, validate it's a regular file,
-     * open it, and prepare for accounting record writes on process exit
-     */
-
-    /* Phase 4: File opening and validation - write accounting records on exit */
-    fut_printf("[ACCT] acct(filename='%s' [%s, %s], pid=%d) -> ENOSYS "
-               "(Phase 4: write accounting records on process exit not yet implemented)\n",
-               path_buf, path_type, length_category, task->pid);
-
-    return -ENOSYS;
+    fut_printf("[ACCT] acct(filename='%s', pid=%llu) -> 0 (accounting enabled)\n",
+               acct_path, (unsigned long long)task->pid);
+    return 0;
 }

@@ -270,6 +270,7 @@
 #define SYS_clock_getres    314  /* Linux: 229 (Futura: epoll_ctl) */
 #define SYS_clock_nanosleep 315  /* Linux: 230 (Futura: epoll_wait) */
 #define SYS_sysinfo         316  /* Linux:  99 (Futura: getrusage) */
+#define SYS_renameat2       317  /* Linux: 316 — extended range, no conflict */
 
 #ifndef SYS_time_millis
 #define SYS_time_millis  400
@@ -658,6 +659,16 @@ static int64_t sys_renameat_handler(uint64_t olddirfd, uint64_t oldpath, uint64_
     extern long sys_renameat(int olddirfd, const char *oldpath, int newdirfd, const char *newpath);
     return sys_renameat((int)olddirfd, (const char *)(uintptr_t)oldpath,
                         (int)newdirfd, (const char *)(uintptr_t)newpath);
+}
+
+static int64_t sys_renameat2_handler(uint64_t olddirfd, uint64_t oldpath, uint64_t newdirfd,
+                                     uint64_t newpath, uint64_t flags, uint64_t arg6) {
+    (void)arg6;
+    extern long sys_renameat2(int olddirfd, const char *oldpath, int newdirfd,
+                               const char *newpath, unsigned int flags);
+    return sys_renameat2((int)olddirfd, (const char *)(uintptr_t)oldpath,
+                         (int)newdirfd, (const char *)(uintptr_t)newpath,
+                         (unsigned int)flags);
 }
 
 static int64_t sys_linkat_handler(uint64_t olddirfd, uint64_t oldpath, uint64_t newdirfd,
@@ -2745,6 +2756,7 @@ static syscall_handler_t syscall_table[MAX_SYSCALL] = {
     [SYS_mount]             = sys_mount_handler,
     [SYS_umount2]           = sys_umount2_handler,
     [SYS_sysinfo]           = sys_sysinfo_handler,
+    [SYS_renameat2]         = sys_renameat2_handler,
     [SYS_set_tid_address]   = sys_set_tid_address_handler,
     [SYS_timer_create]      = sys_timer_create_handler,
     [SYS_timer_settime]     = sys_timer_settime_handler,

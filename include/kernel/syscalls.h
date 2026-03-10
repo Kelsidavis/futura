@@ -117,6 +117,8 @@ long sys_setrlimit(int resource, const struct rlimit *rlim);
 long sys_umask(uint32_t mask);
 long sys_uname(void *buf);
 long sys_rename(const char *oldpath, const char *newpath);
+long sys_renameat(int olddirfd, const char *oldpath, int newdirfd, const char *newpath);
+long sys_renameat2(int olddirfd, const char *oldpath, int newdirfd, const char *newpath, unsigned int flags);
 long sys_stat(const char *path, struct fut_stat *statbuf);
 long sys_fstat(int fd, struct fut_stat *statbuf);
 long sys_lstat(const char *path, struct fut_stat *statbuf);

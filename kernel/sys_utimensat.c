@@ -18,6 +18,7 @@
 #include <kernel/fut_vfs.h>
 #include <shared/fut_timespec.h>
 #include <stdint.h>
+#include <stdbool.h>
 #include <string.h>
 #include <time.h>
 
@@ -389,10 +390,24 @@ long sys_utimensat(int dirfd, const char *pathname, const fut_timespec_t *times,
             return -ENOTDIR;
         }
 
-        /* Construct path relative to directory */
-        size_t len = strnlen(path_buf, sizeof(resolved_path) - 1);
-        memcpy(resolved_path, path_buf, len);
-        resolved_path[len] = '\0';
+        /* Construct path relative to directory using stored file->path */
+        if (dir_file->path) {
+            size_t dir_len = strlen(dir_file->path);
+            size_t rel_len = strnlen(path_buf, sizeof(resolved_path) - 1);
+            bool has_trail = (dir_len > 0 && dir_file->path[dir_len - 1] == '/');
+            if (dir_len + (has_trail ? 0 : 1) + rel_len >= sizeof(resolved_path)) {
+                return -ENAMETOOLONG;
+            }
+            size_t pos = 0;
+            for (size_t j = 0; j < dir_len; j++) resolved_path[pos++] = dir_file->path[j];
+            if (!has_trail) resolved_path[pos++] = '/';
+            for (size_t j = 0; j <= rel_len; j++) resolved_path[pos++] = path_buf[j];
+        } else {
+            /* No stored path; fall through with relative path (best-effort) */
+            size_t len = strnlen(path_buf, sizeof(resolved_path) - 1);
+            memcpy(resolved_path, path_buf, len);
+            resolved_path[len] = '\0';
+        }
     }
 
     /* Lookup the vnode; AT_SYMLINK_NOFOLLOW means don't follow the final symlink */

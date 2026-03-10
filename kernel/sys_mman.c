@@ -320,7 +320,8 @@ long sys_munlock(const void *addr, size_t len) {
  *
  * Phase 1 (Completed): Validate flags, check privileges
  * Phase 2 (Completed): VMA count + RLIMIT_MEMLOCK validation, CAP_IPC_LOCK bypass
- * Phase 3: MCL_ONFAULT deferred locking (requires fault handler integration)
+ * Phase 3 (Completed): Update mm->locked_vm with total locked pages from VMA iteration
+ * Phase 4: MCL_ONFAULT deferred locking (requires fault handler integration)
  *
  * Returns:
  *   - 0 on success
@@ -518,13 +519,16 @@ long sys_mlockall(int flags) {
                    is_root ? "root" : "CAP_IPC_LOCK");
     }
 
-    /* Phase 2 validation complete - stub the actual locking */
-    /* Phase 3: Implement MCL_ONFAULT lazy locking */
+    /* Phase 3: Update mm->locked_vm with total locked pages from all VMAs */
+    size_t total_pages = (size_t)((total_bytes + PAGE_SIZE - 1) / PAGE_SIZE);
+    mm->locked_vm = total_pages;
+    /* MCL_FUTURE: future mappings will be locked at mmap/brk time (tracked via mm->locked_vm) */
+    /* MCL_ONFAULT deferred locking: requires fault handler integration (complex, deferred) */
 
     fut_printf("[MLOCKALL] mlockall(flags=0x%x) -> 0 "
-               "(validated: %d VMAs, %llu bytes, limit=%llu)\n",
+               "(Phase 3: %d VMAs, %llu bytes, %zu pages locked, limit=%llu)\n",
                local_flags, vma_count, (unsigned long long)total_bytes,
-               (unsigned long long)memlock_limit);
+               total_pages, (unsigned long long)memlock_limit);
     return 0;
 }
 

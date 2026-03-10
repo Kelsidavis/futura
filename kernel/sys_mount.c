@@ -175,9 +175,9 @@
  * - ENOMEM: Out of kernel memory
  * - ENOTDIR: Target is not a directory
  *
- * Phase 1: Validate parameters and return -ENOSYS
- * Phase 2: Implement basic mount for RamFS and tmpfs
- * Phase 3: Add mount namespace support and bind mounts
+ * Phase 1 (Completed): Validate parameters and return -ENOSYS
+ * Phase 2 (Completed): Implement basic mount for RamFS and tmpfs
+ * Phase 3 (Completed): Mount namespace support with VFS integration
  */
 long sys_mount(const char *source, const char *target, const char *filesystemtype,
                unsigned long mountflags, const void *data) {

@@ -8,8 +8,8 @@
  *
  * Phase 1 (Completed): Validation and stub implementation
  * Phase 2 (Completed): Basic unmount support with comprehensive flag validation and logging
- * Phase 3: Force and detach unmount modes with filesystem state checking
- * Phase 4: Advanced features (lazy unmount, expire handling)
+ * Phase 3 (Completed): Force and detach modes with CAP_SYS_ADMIN enforcement
+ * Phase 4: Advanced features (lazy unmount with open-file tracking, expire handling)
  */
 
 #include <kernel/fut_task.h>
@@ -176,8 +176,8 @@
  *
  * Phase 1 (Completed): Validate parameters and log unmount requests
  * Phase 2 (Completed): Accept validated unmount requests, return success with detailed logging
- * Phase 3: Implement force and detach modes with actual filesystem state checking
- * Phase 4: Add expire handling and advanced unmount modes
+ * Phase 3 (Completed): Unmount via VFS with CAP_SYS_ADMIN check; force/detach handled by VFS
+ * Phase 4: Add expire handling and lazy unmount with open-file tracking
  */
 long sys_umount2(const char *target, int flags) {
     fut_task_t *task = fut_task_current();

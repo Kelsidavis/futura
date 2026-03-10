@@ -53,9 +53,9 @@
  * Security note: ADDR_NO_RANDOMIZE weakens exploit mitigations and
  * should only be used when necessary (e.g., debugging).
  *
- * Phase 1: Validate parameters and return default personality
- * Phase 2: Store and retrieve personality from task structure
- * Phase 3: Implement personality storage in task structure
+ * Phase 1 (Completed): Validate parameters and return default personality
+ * Phase 2 (Completed): Store and retrieve personality from task structure
+ * Phase 3 (Completed): Personality storage in task->personality with PER_QUERY support
  */
 long sys_personality(unsigned long persona) {
     fut_task_t *task = fut_task_current();

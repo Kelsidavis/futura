@@ -257,6 +257,9 @@ static ssize_t ramfs_read(struct fut_vnode *vnode, void *buf, size_t size, uint6
         dest[i] = src[i];
     }
 
+    /* Update access time on successful read */
+    node->atime_ms = fut_get_ticks();
+
     return (ssize_t)to_read;
 }
 
@@ -706,6 +709,11 @@ static int ramfs_create(struct fut_vnode *dir, const char *name, uint32_t mode, 
     new_entry->next = dir_node->dir.entries;
     dir_node->dir.entries = new_entry;
 
+    /* Update parent directory mtime and ctime (new entry added) */
+    uint64_t now = fut_get_ticks();
+    dir_node->mtime_ms = now;
+    dir_node->ctime_ms = now;
+
     /* Take reference for caller - must match reference-taking in lookup */
     fut_vnode_ref(vnode);
     *result = vnode;
@@ -796,6 +804,11 @@ static int ramfs_mkdir(struct fut_vnode *dir, const char *name, uint32_t mode) {
     new_entry->next = dir_node->dir.entries;
     dir_node->dir.entries = new_entry;
 
+    /* Update parent directory mtime and ctime (new subdirectory added) */
+    uint64_t dir_now = fut_get_ticks();
+    dir_node->mtime_ms = dir_now;
+    dir_node->ctime_ms = dir_now;
+
     return 0;
 }
 
@@ -865,6 +878,11 @@ static int ramfs_unlink(struct fut_vnode *dir, const char *name) {
 
             /* Free the vnode */
             fut_free(vnode);
+
+            /* Update parent directory mtime and ctime (entry removed) */
+            uint64_t unlink_now = fut_get_ticks();
+            dir_node->mtime_ms = unlink_now;
+            dir_node->ctime_ms = unlink_now;
 
             /* Free the directory entry */
             fut_free(entry);
@@ -937,6 +955,11 @@ static int ramfs_rmdir(struct fut_vnode *dir, const char *name) {
 
             /* Free the vnode */
             fut_free(vnode);
+
+            /* Update parent directory mtime and ctime (subdirectory removed) */
+            uint64_t rmdir_now = fut_get_ticks();
+            dir_node->mtime_ms = rmdir_now;
+            dir_node->ctime_ms = rmdir_now;
 
             /* Free the directory entry */
             fut_free(entry);

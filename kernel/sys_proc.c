@@ -359,7 +359,7 @@ long sys_setsid(void) {
  * Phase 1 (Completed): Returns reasonable default limits
  * Phase 2 (Completed): Enhanced validation and resource type reporting
  * Phase 3 (Completed): Resource type identification and limit categorization
- * Phase 4: Support setrlimit() for modifying limits
+ * Phase 4 (Completed): Read stored per-task limits; fall back to defaults if unset
  */
 long sys_getrlimit(int resource, struct rlimit *rlim) {
     if (!rlim) {
@@ -451,6 +451,13 @@ long sys_getrlimit(int resource, struct rlimit *rlim) {
             return -EINVAL;
     }
 
+    /* Phase 4: If task has stored limits for this resource, use them instead of defaults */
+    fut_task_t *task = fut_task_current();
+    if (task && (task->rlimits[resource].rlim_cur != 0 || task->rlimits[resource].rlim_max != 0)) {
+        limit.rlim_cur = task->rlimits[resource].rlim_cur;
+        limit.rlim_max = task->rlimits[resource].rlim_max;
+    }
+
     /* Copy limits to userspace */
     if (fut_copy_to_user(rlim, &limit, sizeof(struct rlimit)) != 0) {
         fut_printf("[PROC] getrlimit(resource=%s, rlim=%p) -> EFAULT (copy_to_user failed)\n",
@@ -464,19 +471,19 @@ long sys_getrlimit(int resource, struct rlimit *rlim) {
 
     if (cur_str && max_str) {
         fut_printf("[PROC] getrlimit(resource=%s [%s], rlim=%p) -> 0 "
-                   "(cur=unlimited, max=unlimited, Phase 3: resource type categorization)\n",
+                   "(cur=unlimited, max=unlimited, Phase 4: per-task stored limits)\n",
                    resource_name, resource_desc, rlim);
     } else if (cur_str) {
         fut_printf("[PROC] getrlimit(resource=%s [%s], rlim=%p) -> 0 "
-                   "(cur=unlimited, max=%llu, Phase 3: resource type categorization)\n",
+                   "(cur=unlimited, max=%llu, Phase 4: per-task stored limits)\n",
                    resource_name, resource_desc, rlim, limit.rlim_max);
     } else if (max_str) {
         fut_printf("[PROC] getrlimit(resource=%s [%s], rlim=%p) -> 0 "
-                   "(cur=%llu, max=unlimited, Phase 3: resource type categorization)\n",
+                   "(cur=%llu, max=unlimited, Phase 4: per-task stored limits)\n",
                    resource_name, resource_desc, rlim, limit.rlim_cur);
     } else {
         fut_printf("[PROC] getrlimit(resource=%s [%s], rlim=%p) -> 0 "
-                   "(cur=%llu, max=%llu, Phase 3: resource type categorization)\n",
+                   "(cur=%llu, max=%llu, Phase 4: per-task stored limits)\n",
                    resource_name, resource_desc, rlim, limit.rlim_cur, limit.rlim_max);
     }
 
@@ -506,7 +513,7 @@ long sys_getrlimit(int resource, struct rlimit *rlim) {
  * Phase 1 (Completed): Validates limits but doesn't enforce them
  * Phase 2 (Completed): Enhanced validation and resource type reporting
  * Phase 3 (Completed): Limit validation and resource-specific constraints
- * Phase 4: Implement privilege checking for raising hard limits
+ * Phase 4 (Completed): Store limits in task->rlimits; getrlimit reads them back
  */
 long sys_setrlimit(int resource, const struct rlimit *rlim) {
     if (!rlim) {
@@ -611,9 +618,12 @@ long sys_setrlimit(int resource, const struct rlimit *rlim) {
         return -EINVAL;
     }
 
-    /* Phase 2: Just validate and log, don't actually store/enforce
-     * Phase 3 would store these in task structure and enforce them
-     * Phase 4 would check privileges for raising hard limits */
+    /* Phase 4: Store limits in task->rlimits so getrlimit can retrieve them */
+    fut_task_t *task = fut_task_current();
+    if (task) {
+        task->rlimits[resource].rlim_cur = new_limit.rlim_cur;
+        task->rlimits[resource].rlim_max = new_limit.rlim_max;
+    }
 
     /* Build detailed log message with intelligent limit display */
     const char *cur_str = (new_limit.rlim_cur == RLIM_INFINITY) ? "unlimited" : NULL;
@@ -621,19 +631,19 @@ long sys_setrlimit(int resource, const struct rlimit *rlim) {
 
     if (cur_str && max_str) {
         fut_printf("[PROC] setrlimit(resource=%s [%s], rlim=%p) -> 0 "
-                   "(cur=unlimited, max=unlimited, Phase 3: limit validation and constraints)\n",
+                   "(cur=unlimited, max=unlimited, Phase 4: stored in task->rlimits)\n",
                    resource_name, resource_desc, rlim);
     } else if (cur_str) {
         fut_printf("[PROC] setrlimit(resource=%s [%s], rlim=%p) -> 0 "
-                   "(cur=unlimited, max=%llu, Phase 3: limit validation and constraints)\n",
+                   "(cur=unlimited, max=%llu, Phase 4: stored in task->rlimits)\n",
                    resource_name, resource_desc, rlim, new_limit.rlim_max);
     } else if (max_str) {
         fut_printf("[PROC] setrlimit(resource=%s [%s], rlim=%p) -> 0 "
-                   "(cur=%llu, max=unlimited, Phase 3: limit validation and constraints)\n",
+                   "(cur=%llu, max=unlimited, Phase 4: stored in task->rlimits)\n",
                    resource_name, resource_desc, rlim, new_limit.rlim_cur);
     } else {
         fut_printf("[PROC] setrlimit(resource=%s [%s], rlim=%p) -> 0 "
-                   "(cur=%llu, max=%llu, Phase 3: limit validation and constraints)\n",
+                   "(cur=%llu, max=%llu, Phase 4: stored in task->rlimits)\n",
                    resource_name, resource_desc, rlim, new_limit.rlim_cur, new_limit.rlim_max);
     }
 

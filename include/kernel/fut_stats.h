@@ -74,3 +74,11 @@ void fut_debug_dump_stats(void);
  * Useful for benchmarking specific workloads.
  */
 void fut_stats_reset(void);
+
+/**
+ * Get system load averages (1, 5, 15 minute) scaled by 65536.
+ * Compatible with sysinfo(2) loads[] format.
+ *
+ * @param loads  Output array of 3 unsigned longs (1-min, 5-min, 15-min)
+ */
+void fut_get_load_avg(unsigned long loads[3]);

@@ -17,6 +17,7 @@
 #include <kernel/kprintf.h>
 #include <kernel/uaccess.h>
 #include <kernel/fut_timer.h>
+#include <kernel/fut_stats.h>
 
 /* Architecture-specific paging headers for KERNEL_VIRTUAL_BASE (kernel pointer detection) */
 #ifdef __x86_64__
@@ -402,7 +403,7 @@ long sys_fallocate(int fd, int mode, uint64_t offset, uint64_t len) {
  *
  * Phase 1 (Completed): Return stub data with reasonable values
  * Phase 2 (Completed): Real uptime, PMM-backed memory stats, and process count
- * Phase 3: Load average tracking (requires per-tick runqueue length sampling)
+ * Phase 3 (Completed): Load average via per-tick EWMA in fut_stats_tick()
  *
  * Returns:
  *   - 0 on success
@@ -422,16 +423,20 @@ long sys_sysinfo(struct fut_linux_sysinfo *info) {
         return -EFAULT;
     }
 
-    /* Phase 2: Fill with real kernel statistics */
+    /* Phase 2+3: Fill with real kernel statistics including load averages */
     const uint64_t fs_page_size = 4096;
     uint64_t total_pages = fut_pmm_total_pages();
     uint64_t free_pages  = fut_pmm_free_pages();
     uint64_t uptime_ms   = fut_get_ticks();
     uint32_t nprocs      = fut_task_get_global_count();
 
+    /* Phase 3: Get load averages from EWMA tracker in fut_stats */
+    unsigned long loads[3];
+    fut_get_load_avg(loads);
+
     struct fut_linux_sysinfo real_info = {
         .uptime    = (long)(uptime_ms / 1000),
-        .loads     = {0, 0, 0},        /* Load average not yet tracked */
+        .loads     = {loads[0], loads[1], loads[2]},
         .totalram  = total_pages * fs_page_size,
         .freeram   = free_pages  * fs_page_size,
         .sharedram = 0,
@@ -452,9 +457,13 @@ long sys_sysinfo(struct fut_linux_sysinfo *info) {
     }
 
     fut_printf("[SYSINFO] sysinfo(pid=%d) -> 0 "
-               "(uptime=%lus, totalram=%lluMB, freeram=%lluMB, procs=%u)\n",
+               "(uptime=%lus, load=%lu.%02lu/%lu.%02lu/%lu.%02lu, "
+               "totalram=%lluMB, freeram=%lluMB, procs=%u, Phase3)\n",
                task->pid,
                (unsigned long)(uptime_ms / 1000),
+               loads[0] >> 16, ((loads[0] & 0xffff) * 100) >> 16,
+               loads[1] >> 16, ((loads[1] & 0xffff) * 100) >> 16,
+               loads[2] >> 16, ((loads[2] & 0xffff) * 100) >> 16,
                (unsigned long long)(total_pages * fs_page_size / (1024 * 1024)),
                (unsigned long long)(free_pages  * fs_page_size / (1024 * 1024)),
                nprocs);

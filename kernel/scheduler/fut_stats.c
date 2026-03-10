@@ -16,6 +16,52 @@ extern fut_thread_t *fut_thread_current(void);
 /* Global statistics */
 static fut_global_stats_t global_stats = {0};
 
+/* ============================================================
+ *   Load Average Tracking (UNIX-style EWMA)
+ *
+ * Uses fixed-point arithmetic with FSHIFT=11 (FIXED_1=2048).
+ * Updated every LOAD_FREQ ticks (500 ticks = 5 seconds at HZ=100).
+ * Exponential factors precomputed for HZ=100, update interval=5s:
+ *   EXP_1  = exp(-5/60)  * 2048 ≈ 1884  (1-minute decay)
+ *   EXP_5  = exp(-5/300) * 2048 ≈ 2014  (5-minute decay)
+ *   EXP_15 = exp(-5/900) * 2048 ≈ 2037  (15-minute decay)
+ * ============================================================ */
+#define LOAD_FSHIFT     11
+#define LOAD_FIXED_1    (1 << LOAD_FSHIFT)   /* 2048 */
+#define LOAD_FREQ       500                   /* update every 5s at HZ=100 */
+#define LOAD_EXP_1      1884
+#define LOAD_EXP_5      2014
+#define LOAD_EXP_15     2037
+
+/* Load averages in FIXED_1 units (multiply by 32 for sysinfo scale) */
+static unsigned long g_load_avg[3] = {0, 0, 0};
+static uint64_t g_load_tick_count = 0;
+
+/* Count runnable (READY + RUNNING, excluding idle) threads */
+extern fut_task_t *fut_task_list;
+static uint32_t count_runnable_threads(void) {
+    uint32_t nr = 0;
+    for (fut_task_t *task = fut_task_list; task != NULL; task = task->next) {
+        for (fut_thread_t *t = task->threads; t != NULL; t = t->next) {
+            if (t->priority == 255) continue;  /* skip idle thread */
+            if (t->state == FUT_THREAD_RUNNING || t->state == FUT_THREAD_READY)
+                nr++;
+        }
+    }
+    return nr;
+}
+
+/* Update EWMA: new = old * exp + nr_running * (FIXED_1 - exp) */
+static void update_load_avg(void) {
+    uint32_t nr = count_runnable_threads();
+    unsigned long nr_fixed = (unsigned long)nr * LOAD_FIXED_1;
+    const unsigned long exps[3] = {LOAD_EXP_1, LOAD_EXP_5, LOAD_EXP_15};
+    for (int i = 0; i < 3; i++) {
+        g_load_avg[i] = (g_load_avg[i] * exps[i] + nr_fixed * (LOAD_FIXED_1 - exps[i]))
+                        / LOAD_FIXED_1;
+    }
+}
+
 /**
  * Initialize the statistics subsystem.
  */
@@ -59,6 +105,13 @@ void fut_stats_tick(void) {
         /* Tick attribution happens at context switch, not here */
         /* This avoids double-counting ticks */
     }
+
+    /* Update load averages every LOAD_FREQ ticks (every 5 seconds) */
+    g_load_tick_count++;
+    if (g_load_tick_count >= LOAD_FREQ) {
+        g_load_tick_count = 0;
+        update_load_avg();
+    }
 }
 
 /**
@@ -66,6 +119,17 @@ void fut_stats_tick(void) {
  */
 uint64_t fut_stats_get_ticks(void) {
     return global_stats.total_cpu_ticks;
+}
+
+/**
+ * Get system load averages scaled for sysinfo(2).
+ * sysinfo.loads[] uses SI_LOAD_SHIFT=16; our internal FSHIFT=11,
+ * so multiply by (1<<(16-11)) = 32 to convert.
+ */
+void fut_get_load_avg(unsigned long loads[3]) {
+    for (int i = 0; i < 3; i++) {
+        loads[i] = g_load_avg[i] << (16 - LOAD_FSHIFT);
+    }
 }
 
 /**

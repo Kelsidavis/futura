@@ -1779,6 +1779,61 @@ int fut_vfs_open_at(fut_task_t *task, int dirfd, const char *path, int flags, in
     return fut_vfs_open(combined, flags, mode);
 }
 
+int fut_vfs_resolve_at(fut_task_t *task, int dirfd, const char *path, char *out, size_t out_size) {
+    if (!path || !out || out_size == 0) {
+        return -EINVAL;
+    }
+
+    /* Absolute path or AT_FDCWD: copy unchanged */
+    if (path[0] == '/' || dirfd == AT_FDCWD) {
+        size_t len = strlen(path);
+        if (len >= out_size) {
+            return -ENAMETOOLONG;
+        }
+        memcpy(out, path, len + 1);
+        return 0;
+    }
+
+    /* Relative path with real dirfd */
+    if (!task || !task->fd_table || dirfd < 0 || dirfd >= task->max_fds) {
+        return -EBADF;
+    }
+
+    struct fut_file *dir_file = get_file_from_task(task, dirfd);
+    if (!dir_file) {
+        return -EBADF;
+    }
+
+    if (!dir_file->vnode || dir_file->vnode->type != VN_DIR) {
+        return -ENOTDIR;
+    }
+
+    if (!dir_file->path) {
+        /* No path stored - copy relative path as-is (best-effort) */
+        size_t len = strlen(path);
+        if (len >= out_size) {
+            return -ENAMETOOLONG;
+        }
+        memcpy(out, path, len + 1);
+        return 0;
+    }
+
+    /* Combine dir_path + "/" + rel_path */
+    size_t dir_len = strlen(dir_file->path);
+    size_t rel_len = strlen(path);
+    bool has_trail = (dir_len > 0 && dir_file->path[dir_len - 1] == '/');
+    size_t total = dir_len + (has_trail ? 0 : 1) + rel_len;
+    if (total >= out_size) {
+        return -ENAMETOOLONG;
+    }
+    size_t i = 0;
+    for (size_t j = 0; j < dir_len; j++) out[i++] = dir_file->path[j];
+    if (!has_trail) out[i++] = '/';
+    for (size_t j = 0; j < rel_len; j++) out[i++] = path[j];
+    out[i] = '\0';
+    return 0;
+}
+
 ssize_t fut_vfs_read(int fd, void *buf, size_t size) {
 #if DEBUG_READ
     fut_printf("[vfs-read] fd=%d buf=%p size=%zu\n", fd, buf, size);

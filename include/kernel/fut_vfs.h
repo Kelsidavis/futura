@@ -723,6 +723,23 @@ int fut_vfs_open(const char *path, int flags, int mode);
 int fut_vfs_open_at(struct fut_task *task, int dirfd, const char *path, int flags, int mode);
 
 /**
+ * Resolve a dirfd-relative path to an absolute path.
+ *
+ * Combines the stored absolute path of the directory referred to by dirfd
+ * with a relative path component to produce an absolute path. If path is
+ * already absolute or dirfd is AT_FDCWD, the path is copied unchanged.
+ *
+ * @param task     Current task (needed for fd_table access)
+ * @param dirfd    Directory fd, or AT_FDCWD for CWD-relative
+ * @param path     Relative (or absolute) path component
+ * @param out      Output buffer for the resolved absolute path
+ * @param out_size Size of the output buffer
+ * @return 0 on success, negative errno on failure
+ */
+int fut_vfs_resolve_at(struct fut_task *task, int dirfd, const char *path,
+                       char *out, size_t out_size);
+
+/**
  * Read from a file.
  *
  * @param fd   File descriptor

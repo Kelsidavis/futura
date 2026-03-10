@@ -169,68 +169,14 @@ long sys_symlinkat(const char *target, int newdirfd, const char *linkpath) {
     size_t target_len = strlen(target_buf);
     size_t link_len = strlen(linkpath_buf);
 
-    /* Phase 2: Implement proper directory FD resolution via VFS */
-
-    /* Resolve the full path based on newdirfd */
+    /* Resolve the full path using fut_vfs_resolve_at */
     char resolved_linkpath[256];
-
-    /* If linkpath is absolute, use it directly */
-    if (linkpath_buf[0] == '/') {
-        /* Copy absolute path */
-        size_t len = strnlen(linkpath_buf, sizeof(resolved_linkpath) - 1);
-        memcpy(resolved_linkpath, linkpath_buf, len);
-        resolved_linkpath[len] = '\0';
-    }
-    /* If newdirfd is AT_FDCWD, use current working directory */
-    else if (local_newdirfd == AT_FDCWD) {
-        /* For now, use relative path as-is (CWD resolution happens in VFS) */
-        size_t len = strnlen(linkpath_buf, sizeof(resolved_linkpath) - 1);
-        memcpy(resolved_linkpath, linkpath_buf, len);
-        resolved_linkpath[len] = '\0';
-    }
-    /* Newdirfd is a real FD - resolve via VFS */
-    else {
-        /* Validate newdirfd bounds before accessing FD table */
-        if (local_newdirfd < 0) {
-            fut_printf("[SYMLINKAT] symlinkat(newdirfd=%d) -> EBADF (invalid negative newdirfd)\n",
-                       local_newdirfd);
-            return -EBADF;
-        }
-
-        if (local_newdirfd >= task->max_fds) {
-            fut_printf("[SYMLINKAT] symlinkat(newdirfd=%d, max_fds=%d) -> EBADF "
-                       "(newdirfd exceeds max_fds, FD bounds validation)\n",
-                       local_newdirfd, task->max_fds);
-            return -EBADF;
-        }
-
-        /* Get file structure from newdirfd */
-        struct fut_file *dir_file = vfs_get_file_from_task(task, local_newdirfd);
-
-        if (!dir_file) {
-            fut_printf("[SYMLINKAT] symlinkat(newdirfd=%d) -> EBADF (newdirfd not open)\n",
-                       local_newdirfd);
-            return -EBADF;
-        }
-
-        /* Verify newdirfd refers to a directory */
-        if (!dir_file->vnode) {
-            fut_printf("[SYMLINKAT] symlinkat(newdirfd=%d) -> EBADF (newdirfd has no vnode)\n",
-                       local_newdirfd);
-            return -EBADF;
-        }
-
-        /* Check if vnode is a directory */
-        if (dir_file->vnode->type != VN_DIR) {
-            fut_printf("[SYMLINKAT] symlinkat(newdirfd=%d) -> ENOTDIR (newdirfd not a directory)\n",
-                       local_newdirfd);
-            return -ENOTDIR;
-        }
-
-        /* Phase 2: Construct path relative to directory */
-        size_t len = strnlen(linkpath_buf, sizeof(resolved_linkpath) - 1);
-        memcpy(resolved_linkpath, linkpath_buf, len);
-        resolved_linkpath[len] = '\0';
+    int rret = fut_vfs_resolve_at(task, local_newdirfd, linkpath_buf,
+                                   resolved_linkpath, sizeof(resolved_linkpath));
+    if (rret < 0) {
+        fut_printf("[SYMLINKAT] symlinkat(newdirfd=%d, linkpath='%s') -> %d (newdirfd resolve failed)\n",
+                   local_newdirfd, linkpath_buf, rret);
+        return rret;
     }
 
     /* Perform the symlink via existing sys_symlink implementation */

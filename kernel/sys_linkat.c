@@ -208,130 +208,24 @@ long sys_linkat(int olddirfd, const char *oldpath, int newdirfd, const char *new
     size_t old_path_len = strlen(oldpath_buf);
     size_t new_path_len = strlen(newpath_buf);
 
-    /* Phase 2: Implement proper directory FD resolution via VFS */
-
-    /* Resolve oldpath based on olddirfd */
+    /* Resolve both paths using fut_vfs_resolve_at */
     char resolved_oldpath[256];
-
-    /* If oldpath is absolute, use it directly */
-    if (oldpath_buf[0] == '/') {
-        /* Copy absolute path */
-        size_t len = strnlen(oldpath_buf, sizeof(resolved_oldpath) - 1);
-        memcpy(resolved_oldpath, oldpath_buf, len);
-        resolved_oldpath[len] = '\0';
-    }
-    /* If olddirfd is AT_FDCWD, use current working directory */
-    else if (local_olddirfd == AT_FDCWD) {
-        /* For now, use relative path as-is (CWD resolution happens in VFS) */
-        size_t len = strnlen(oldpath_buf, sizeof(resolved_oldpath) - 1);
-        memcpy(resolved_oldpath, oldpath_buf, len);
-        resolved_oldpath[len] = '\0';
-    }
-    /* Olddirfd is a real FD - resolve via VFS */
-    else {
-        /* Validate olddirfd bounds before accessing FD table */
-        if (local_olddirfd < 0) {
-            fut_printf("[LINKAT] linkat(olddirfd=%d) -> EBADF (invalid negative olddirfd)\n",
-                       local_olddirfd);
-            return -EBADF;
-        }
-
-        if (local_olddirfd >= task->max_fds) {
-            fut_printf("[LINKAT] linkat(olddirfd=%d, max_fds=%d) -> EBADF "
-                       "(olddirfd exceeds max_fds, FD bounds validation)\n",
-                       local_olddirfd, task->max_fds);
-            return -EBADF;
-        }
-
-        /* Get file structure from olddirfd */
-        struct fut_file *dir_file = vfs_get_file_from_task(task, local_olddirfd);
-
-        if (!dir_file) {
-            fut_printf("[LINKAT] linkat(olddirfd=%d) -> EBADF (olddirfd not open)\n",
-                       local_olddirfd);
-            return -EBADF;
-        }
-
-        /* Verify olddirfd refers to a directory */
-        if (!dir_file->vnode) {
-            fut_printf("[LINKAT] linkat(olddirfd=%d) -> EBADF (olddirfd has no vnode)\n",
-                       local_olddirfd);
-            return -EBADF;
-        }
-
-        /* Check if vnode is a directory */
-        if (dir_file->vnode->type != VN_DIR) {
-            fut_printf("[LINKAT] linkat(olddirfd=%d) -> ENOTDIR (olddirfd not a directory)\n",
-                       local_olddirfd);
-            return -ENOTDIR;
-        }
-
-        /* Phase 2: Construct path relative to directory */
-        size_t len = strnlen(oldpath_buf, sizeof(resolved_oldpath) - 1);
-        memcpy(resolved_oldpath, oldpath_buf, len);
-        resolved_oldpath[len] = '\0';
-    }
-
-    /* Resolve newpath based on newdirfd */
     char resolved_newpath[256];
 
-    /* If newpath is absolute, use it directly */
-    if (newpath_buf[0] == '/') {
-        /* Copy absolute path */
-        size_t len = strnlen(newpath_buf, sizeof(resolved_newpath) - 1);
-        memcpy(resolved_newpath, newpath_buf, len);
-        resolved_newpath[len] = '\0';
+    int rret = fut_vfs_resolve_at(task, local_olddirfd, oldpath_buf,
+                                   resolved_oldpath, sizeof(resolved_oldpath));
+    if (rret < 0) {
+        fut_printf("[LINKAT] linkat(olddirfd=%d, oldpath='%s') -> %d (olddirfd resolve failed)\n",
+                   local_olddirfd, oldpath_buf, rret);
+        return rret;
     }
-    /* If newdirfd is AT_FDCWD, use current working directory */
-    else if (local_newdirfd == AT_FDCWD) {
-        /* For now, use relative path as-is (CWD resolution happens in VFS) */
-        size_t len = strnlen(newpath_buf, sizeof(resolved_newpath) - 1);
-        memcpy(resolved_newpath, newpath_buf, len);
-        resolved_newpath[len] = '\0';
-    }
-    /* Newdirfd is a real FD - resolve via VFS */
-    else {
-        /* Validate newdirfd bounds before accessing FD table */
-        if (local_newdirfd < 0) {
-            fut_printf("[LINKAT] linkat(newdirfd=%d) -> EBADF (invalid negative newdirfd)\n",
-                       local_newdirfd);
-            return -EBADF;
-        }
 
-        if (local_newdirfd >= task->max_fds) {
-            fut_printf("[LINKAT] linkat(newdirfd=%d, max_fds=%d) -> EBADF "
-                       "(newdirfd exceeds max_fds, FD bounds validation)\n",
-                       local_newdirfd, task->max_fds);
-            return -EBADF;
-        }
-
-        /* Get file structure from newdirfd */
-        struct fut_file *dir_file = vfs_get_file_from_task(task, local_newdirfd);
-
-        if (!dir_file) {
-            fut_printf("[LINKAT] linkat(newdirfd=%d) -> EBADF (newdirfd not open)\n",
-                       local_newdirfd);
-            return -EBADF;
-        }
-
-        /* Verify newdirfd refers to a directory */
-        if (!dir_file->vnode) {
-            fut_printf("[LINKAT] linkat(newdirfd=%d) -> EBADF (newdirfd has no vnode)\n",
-                       local_newdirfd);
-            return -EBADF;
-        }
-
-        /* Check if vnode is a directory */
-        if (dir_file->vnode->type != VN_DIR) {
-            fut_printf("[LINKAT] linkat(newdirfd=%d) -> ENOTDIR (newdirfd not a directory)\n",
-                       local_newdirfd);
-            return -ENOTDIR;
-        }
-
-        /* Phase 2: Construct path relative to directory */
-        size_t len = strnlen(newpath_buf, sizeof(resolved_newpath) - 1);
-        memcpy(resolved_newpath, newpath_buf, len);
-        resolved_newpath[len] = '\0';
+    rret = fut_vfs_resolve_at(task, local_newdirfd, newpath_buf,
+                               resolved_newpath, sizeof(resolved_newpath));
+    if (rret < 0) {
+        fut_printf("[LINKAT] linkat(newdirfd=%d, newpath='%s') -> %d (newdirfd resolve failed)\n",
+                   local_newdirfd, newpath_buf, rret);
+        return rret;
     }
 
     /* Perform the link via existing sys_link implementation */

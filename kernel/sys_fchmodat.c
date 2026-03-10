@@ -184,73 +184,14 @@ long sys_fchmodat(int dirfd, const char *pathname, uint32_t mode, int flags) {
     /* Calculate path length */
     size_t path_len = strlen(path_buf);
 
-    /* Phase 2: Implement proper directory FD resolution via VFS */
-
-    /* Resolve the full path based on dirfd */
+    /* Resolve the full path using fut_vfs_resolve_at */
     char resolved_path[256];
-
-    /* If pathname is absolute, use it directly */
-    if (path_buf[0] == '/') {
-        /* Copy absolute path */
-        size_t len = strnlen(path_buf, sizeof(resolved_path) - 1);
-        memcpy(resolved_path, path_buf, len);
-        resolved_path[len] = '\0';
-    }
-    /* If dirfd is AT_FDCWD, use current working directory */
-    else if (local_dirfd == AT_FDCWD) {
-        /* For now, use relative path as-is (CWD resolution happens in VFS) */
-        size_t len = strnlen(path_buf, sizeof(resolved_path) - 1);
-        memcpy(resolved_path, path_buf, len);
-        resolved_path[len] = '\0';
-    }
-    /* Dirfd is a real FD - resolve via VFS */
-    else {
-        /* Validate dirfd bounds before accessing FD table */
-        if (local_dirfd < 0) {
-            fut_printf("[FCHMODAT] fchmodat(dirfd=%d) -> EBADF (invalid negative dirfd)\n",
-                       local_dirfd);
-            return -EBADF;
-        }
-
-        if (local_dirfd >= task->max_fds) {
-            fut_printf("[FCHMODAT] fchmodat(dirfd=%d, max_fds=%d) -> EBADF "
-                       "(dirfd exceeds max_fds, FD bounds validation)\n",
-                       local_dirfd, task->max_fds);
-            return -EBADF;
-        }
-
-        /* Get file structure from dirfd */
-        struct fut_file *dir_file = vfs_get_file_from_task(task, local_dirfd);
-
-        if (!dir_file) {
-            fut_printf("[FCHMODAT] fchmodat(dirfd=%d) -> EBADF (dirfd not open)\n",
-                       local_dirfd);
-            return -EBADF;
-        }
-
-        /* Verify dirfd refers to a directory */
-        if (!dir_file->vnode) {
-            fut_printf("[FCHMODAT] fchmodat(dirfd=%d) -> EBADF (dirfd has no vnode)\n",
-                       local_dirfd);
-            return -EBADF;
-        }
-
-        /* Check if vnode is a directory */
-        if (dir_file->vnode->type != VN_DIR) {
-            fut_printf("[FCHMODAT] fchmodat(dirfd=%d) -> ENOTDIR (dirfd not a directory)\n",
-                       local_dirfd);
-            return -ENOTDIR;
-        }
-
-        /* Phase 2: Construct path relative to directory
-         * For now, we'll use a simple approach of getting vnode info
-         * Future: Implement full path reconstruction via vnode->parent chain */
-
-        /* For Phase 2, use the pathname relative to the directory vnode
-         * The VFS layer will handle the lookup from this vnode */
-        size_t len = strnlen(path_buf, sizeof(resolved_path) - 1);
-        memcpy(resolved_path, path_buf, len);
-        resolved_path[len] = '\0';
+    int rret = fut_vfs_resolve_at(task, local_dirfd, path_buf,
+                                   resolved_path, sizeof(resolved_path));
+    if (rret < 0) {
+        fut_printf("[FCHMODAT] fchmodat(dirfd=%d, path='%s') -> %d (dirfd resolve failed)\n",
+                   local_dirfd, path_buf, rret);
+        return rret;
     }
 
     /* Note: AT_SYMLINK_NOFOLLOW for chmod is usually not supported on most filesystems

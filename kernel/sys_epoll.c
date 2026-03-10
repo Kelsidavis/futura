@@ -1666,6 +1666,14 @@ long sys_epoll_wait(int epfd, struct epoll_event *events, int maxevents, int tim
                 handled = true;
             }
 
+            if (!handled && fut_timerfd_poll(file, set->fds[i].events, &events_ready)) {
+                handled = true;
+            }
+
+            if (!handled && fut_signalfd_poll(file, set->fds[i].events, &events_ready)) {
+                handled = true;
+            }
+
             /* For sockets: check get_socket_from_fd first (sockets may not have vnodes) */
             if (!handled) {
                 fut_socket_t *socket = get_socket_from_fd(set->fds[i].fd);

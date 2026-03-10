@@ -23,3 +23,25 @@ struct fut_file;
  * @return true if @file refers to an eventfd, false otherwise.
  */
 bool fut_eventfd_poll(struct fut_file *file, uint32_t requested, uint32_t *ready_out);
+
+/**
+ * fut_timerfd_poll - Query readiness for a timerfd file descriptor.
+ *
+ * @param file        Kernel file structure to test.
+ * @param requested   Bitmask of EPOLL* events being requested.
+ * @param ready_out   Optional pointer that receives the ready mask.
+ *
+ * @return true if @file refers to a timerfd, false otherwise.
+ */
+bool fut_timerfd_poll(struct fut_file *file, uint32_t requested, uint32_t *ready_out);
+
+/**
+ * fut_signalfd_poll - Query readiness for a signalfd file descriptor.
+ *
+ * @param file        Kernel file structure to test.
+ * @param requested   Bitmask of EPOLL* events being requested.
+ * @param ready_out   Optional pointer that receives the ready mask.
+ *
+ * @return true if @file refers to a signalfd, false otherwise.
+ */
+bool fut_signalfd_poll(struct fut_file *file, uint32_t requested, uint32_t *ready_out);

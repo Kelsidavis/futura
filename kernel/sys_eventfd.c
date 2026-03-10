@@ -1351,6 +1351,27 @@ bool fut_timerfd_poll(struct fut_file *file, uint32_t requested, uint32_t *ready
     return true;
 }
 
+/* Check if a file is a signalfd and query pending signals for epoll polling */
+bool fut_signalfd_poll(struct fut_file *file, uint32_t requested, uint32_t *ready_out) {
+    if (!file || file->chr_private == NULL || file->chr_ops != &signalfd_fops) {
+        return false;
+    }
+    struct signalfd_file *sfile = (struct signalfd_file *)file->chr_private;
+    struct signalfd_ctx *ctx = sfile->ctx;
+    if (!ctx || !ctx->task) return false;
+
+    uint32_t ready = 0;
+    fut_spinlock_acquire(&ctx->lock);
+    uint64_t pending = ctx->task->pending_signals & ctx->sigmask;
+    if (pending != 0 && (requested & (EPOLLIN | EPOLLRDNORM))) {
+        ready |= (EPOLLIN | EPOLLRDNORM);
+    }
+    fut_spinlock_release(&ctx->lock);
+
+    if (ready_out) *ready_out = ready;
+    return true;
+}
+
 long sys_timerfd_create(int clockid, int flags) {
     fut_task_t *task = fut_task_current();
     if (!task) {

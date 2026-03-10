@@ -10,10 +10,12 @@
  *   - sys_vfs_mkdir_stat: directory mtime updates on file creation
  *   - sys_vfs_readlink: create and read back a symbolic link
  *   - sys_vfs_link: create hard link and verify shared inode
+ *   - sys_vfs_mount: mount/umount ramfs, verify isolated file namespace
  */
 
 #include <kernel/fut_task.h>
 #include <kernel/fut_vfs.h>
+#include <kernel/fut_object.h>
 #include <kernel/errno.h>
 #include <kernel/kprintf.h>
 #include <stddef.h>
@@ -27,6 +29,7 @@
 #define VFS_TEST_DIR_MTIME  4
 #define VFS_TEST_READLINK   5
 #define VFS_TEST_LINK       6
+#define VFS_TEST_MOUNT      7
 
 /* Use kernel-level VFS functions (no copy_from_user) */
 #define sys_mkdir(path, mode)           fut_vfs_mkdir(path, (uint32_t)(mode))
@@ -388,6 +391,86 @@ static void test_hardlink(void) {
 
 /* ------------------------------------------------------------------ */
 
+static void test_mount(void) {
+    fut_printf("[VFS-TEST] Test 7: mount/umount creates isolated ramfs namespace\n");
+
+    /* Create mount point directory */
+    const char *mntpoint = "/vfs_test_mnt";
+    int ret = fut_vfs_mkdir(mntpoint, 0755);
+    if (ret < 0 && ret != -EEXIST) {
+        fut_printf("[VFS-TEST] ✗ mount: mkdir failed (%d)\n", ret);
+        fut_test_fail(VFS_TEST_MOUNT);
+        return;
+    }
+
+    /* Mount a fresh ramfs at the mount point */
+    ret = fut_vfs_mount(NULL, mntpoint, "ramfs", 0, NULL, FUT_INVALID_HANDLE);
+    if (ret < 0) {
+        fut_printf("[VFS-TEST] ✗ mount: fut_vfs_mount failed (%d)\n", ret);
+        fut_test_fail(VFS_TEST_MOUNT);
+        return;
+    }
+
+    /* Create a file inside the mounted filesystem */
+    const char *testfile = "/vfs_test_mnt/mount_test.txt";
+    int fd = fut_vfs_open(testfile, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (fd < 0) {
+        fut_printf("[VFS-TEST] ✗ mount: open in mounted fs failed (%d)\n", fd);
+        fut_vfs_unmount(mntpoint);
+        fut_test_fail(VFS_TEST_MOUNT);
+        return;
+    }
+    const char *content = "mount-test";
+    ssize_t nw = fut_vfs_write(fd, content, 10);
+    fut_vfs_close(fd);
+    if (nw != 10) {
+        fut_printf("[VFS-TEST] ✗ mount: write in mounted fs failed (%zd)\n", nw);
+        fut_vfs_unmount(mntpoint);
+        fut_test_fail(VFS_TEST_MOUNT);
+        return;
+    }
+
+    /* Read back to verify */
+    fd = fut_vfs_open(testfile, O_RDONLY, 0);
+    if (fd < 0) {
+        fut_printf("[VFS-TEST] ✗ mount: re-open failed (%d)\n", fd);
+        fut_vfs_unmount(mntpoint);
+        fut_test_fail(VFS_TEST_MOUNT);
+        return;
+    }
+    char buf[16];
+    ssize_t nr = fut_vfs_read(fd, buf, sizeof(buf) - 1);
+    fut_vfs_close(fd);
+    if (nr != 10 || buf[0] != 'm') {
+        fut_printf("[VFS-TEST] ✗ mount: read-back mismatch (%zd bytes)\n", nr);
+        fut_vfs_unmount(mntpoint);
+        fut_test_fail(VFS_TEST_MOUNT);
+        return;
+    }
+
+    /* Unmount */
+    ret = fut_vfs_unmount(mntpoint);
+    if (ret < 0) {
+        fut_printf("[VFS-TEST] ✗ mount: umount failed (%d)\n", ret);
+        fut_test_fail(VFS_TEST_MOUNT);
+        return;
+    }
+
+    /* After unmount the file should no longer be visible */
+    fd = fut_vfs_open(testfile, O_RDONLY, 0);
+    if (fd >= 0) {
+        fut_printf("[VFS-TEST] ✗ mount: file still accessible after umount (fd=%d)\n", fd);
+        fut_vfs_close(fd);
+        fut_test_fail(VFS_TEST_MOUNT);
+        return;
+    }
+
+    fut_printf("[VFS-TEST] ✓ mount: ramfs mounted, file written/read, umounted, file gone\n");
+    fut_test_pass();
+}
+
+/* ------------------------------------------------------------------ */
+
 void fut_vfs_test_thread(void *arg) {
     (void)arg;
 
@@ -399,6 +482,7 @@ void fut_vfs_test_thread(void *arg) {
     test_dir_mtime();
     test_readlink();
     test_hardlink();
+    test_mount();
 
     fut_printf("[VFS-TEST] VFS correctness tests complete\n");
 }

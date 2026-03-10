@@ -686,6 +686,16 @@ int fut_vfs_statfs(const char *mountpoint, struct fut_statfs *out);
 int fut_vfs_lookup(const char *path, struct fut_vnode **out_vnode);
 
 /**
+ * Look up a path without following the final symlink component (lstat semantics).
+ * Intermediate symlinks in the path are still resolved.
+ *
+ * @param path      File path
+ * @param out_vnode Output: resolved vnode (caller must call fut_vnode_unref)
+ * @return 0 on success, negative error code on failure
+ */
+int fut_vfs_lookup_nofollow(const char *path, struct fut_vnode **out_vnode);
+
+/**
  * Open a file.
  *
  * @param path  File path

@@ -308,6 +308,12 @@ KERNEL_DEPS       :=
 KERNEL_DEPS      += $(GEN_VERSION_HDR)
 KERNEL_DEPS      += $(GEN_FEATURE_HDR)
 KERNEL_DEPS      += $(BOOT_CMDLINE_HEADER)
+# Linker scripts: changes require full relink
+ifeq ($(PLATFORM),x86_64)
+KERNEL_DEPS      += platform/x86_64/link.ld
+else ifeq ($(PLATFORM),arm64)
+KERNEL_DEPS      += platform/arm64/link.ld
+endif
 
 # Ensure 'all' is the default target even though generated-header rules
 # appear before the 'all:' line.

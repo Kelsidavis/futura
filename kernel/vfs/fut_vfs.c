@@ -941,6 +941,43 @@ static int lookup_parent_and_name(const char *path,
     return 0;
 }
 
+int fut_vfs_lookup_nofollow(const char *path, struct fut_vnode **out_vnode) {
+    if (!out_vnode) {
+        return -EINVAL;
+    }
+    *out_vnode = NULL;
+
+    /* Root is never a symlink; just use the regular lookup */
+    if (path && path[0] == '/' && path[1] == '\0') {
+        return fut_vfs_lookup(path, out_vnode);
+    }
+
+    struct fut_vnode *parent = NULL;
+    char name[FUT_VFS_NAME_MAX + 1];
+    int ret = lookup_parent_and_name(path, &parent, name);
+    if (ret < 0) {
+        return ret;
+    }
+
+    if (!parent->ops || !parent->ops->lookup) {
+        release_lookup_ref(parent);
+        return -ENOENT;
+    }
+
+    struct fut_vnode *vnode = NULL;
+    ret = parent->ops->lookup(parent, name, &vnode);
+    release_lookup_ref(parent);
+    if (ret < 0) {
+        return ret;
+    }
+    if (!vnode) {
+        return -ENOENT;
+    }
+
+    *out_vnode = vnode;
+    return 0;
+}
+
 int fut_vfs_readdir(const char *path, uint64_t *cookie, struct fut_vdirent *dirent) {
     if (!path || !cookie || !dirent) {
         return -EINVAL;

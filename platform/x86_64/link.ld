@@ -114,8 +114,10 @@ SECTIONS
 
     /* ============================================================
      *   Global Descriptor Table (GDT)
-     * ============================================================ */
-    .gdt ALIGN(8) : AT(_kernel_phys_offset + SIZEOF(.text) + SIZEOF(.rodata) + SIZEOF(.data))
+     * ============================================================
+     * No explicit AT() — linker maintains the VMA→LMA offset from .data
+     * for all subsequent sections in the :data phdr. */
+    .gdt ALIGN(8) :
     {
         _gdt_start = .;
         *(.gdt)
@@ -127,7 +129,7 @@ SECTIONS
     /* ============================================================
      *   Interrupt Descriptor Table (IDT)
      * ============================================================ */
-    .idt ALIGN(8) : AT(_kernel_phys_offset + SIZEOF(.text) + SIZEOF(.rodata) + SIZEOF(.data) + SIZEOF(.gdt))
+    .idt ALIGN(8) :
     {
         _idt_start = .;
         *(.idt)
@@ -139,7 +141,7 @@ SECTIONS
     /* ============================================================
      *   Task State Segment (TSS)
      * ============================================================ */
-    .tss ALIGN(8) : AT(_kernel_phys_offset + SIZEOF(.text) + SIZEOF(.rodata) + SIZEOF(.data) + SIZEOF(.gdt) + SIZEOF(.idt))
+    .tss ALIGN(8) :
     {
         _tss_start = .;
         *(.tss)
@@ -151,13 +153,13 @@ SECTIONS
     /* ============================================================
      *   Global Offset Tables
      * ============================================================ */
-    .got ALIGN(8) : AT(_kernel_phys_offset + SIZEOF(.text) + SIZEOF(.rodata) + SIZEOF(.data) + SIZEOF(.gdt) + SIZEOF(.idt) + SIZEOF(.tss))
+    .got ALIGN(8) :
     {
         *(.got)
         *(.igot)
     } :data
 
-    .got.plt ALIGN(8) : AT(_kernel_phys_offset + SIZEOF(.text) + SIZEOF(.rodata) + SIZEOF(.data) + SIZEOF(.gdt) + SIZEOF(.idt) + SIZEOF(.tss) + SIZEOF(.got))
+    .got.plt ALIGN(8) :
     {
         *(.got.plt)
         *(.igot.plt)
@@ -166,7 +168,7 @@ SECTIONS
     /* ============================================================
      *   BSS Section (Uninitialized Data)
      * ============================================================ */
-    .bss ALIGN(PAGE_SIZE) : AT(_kernel_phys_offset + SIZEOF(.text) + SIZEOF(.rodata) + SIZEOF(.data) + SIZEOF(.gdt) + SIZEOF(.idt) + SIZEOF(.tss) + SIZEOF(.got) + SIZEOF(.got.plt))
+    .bss ALIGN(PAGE_SIZE) :
     {
         _bss_start = .;
         *(.bss .bss.*)          /* Uninitialized data */
@@ -178,7 +180,7 @@ SECTIONS
     /* ============================================================
      *   Kernel Stack
      * ============================================================ */
-    .stack ALIGN(PAGE_SIZE) : AT(_kernel_phys_offset + SIZEOF(.text) + SIZEOF(.rodata) + SIZEOF(.data) + SIZEOF(.gdt) + SIZEOF(.idt) + SIZEOF(.tss) + SIZEOF(.got) + SIZEOF(.got.plt) + SIZEOF(.bss))
+    .stack ALIGN(PAGE_SIZE) :
     {
         _stack_bottom = .;
         . += 0x4000;            /* 16KB kernel stack */

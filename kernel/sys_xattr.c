@@ -85,6 +85,64 @@ static long vnode_removexattr_by_path(const char *path_buf, const char *name) {
     return ret;
 }
 
+/* Call setxattr on the vnode obtained from path (does NOT follow final symlink). */
+static long vnode_setxattr_nofollow(const char *path_buf, const char *name,
+                                    const void *value, size_t size, int flags) {
+    struct fut_vnode *vnode = NULL;
+    int ret = fut_vfs_lookup_nofollow(path_buf, &vnode);
+    if (ret < 0) return ret;
+    if (!vnode->ops || !vnode->ops->setxattr) {
+        fut_vnode_unref(vnode);
+        return -ENOTSUP;
+    }
+    ret = vnode->ops->setxattr(vnode, name, value, size, flags);
+    fut_vnode_unref(vnode);
+    return ret;
+}
+
+/* Call getxattr on the vnode obtained from path (does NOT follow final symlink). */
+static ssize_t vnode_getxattr_nofollow(const char *path_buf, const char *name,
+                                       void *kbuf, size_t size) {
+    struct fut_vnode *vnode = NULL;
+    int ret = fut_vfs_lookup_nofollow(path_buf, &vnode);
+    if (ret < 0) return ret;
+    if (!vnode->ops || !vnode->ops->getxattr) {
+        fut_vnode_unref(vnode);
+        return -ENOTSUP;
+    }
+    ssize_t r = vnode->ops->getxattr(vnode, name, kbuf, size);
+    fut_vnode_unref(vnode);
+    return r;
+}
+
+/* Call listxattr on the vnode obtained from path (does NOT follow final symlink). */
+static ssize_t vnode_listxattr_nofollow(const char *path_buf, char *kbuf, size_t size) {
+    struct fut_vnode *vnode = NULL;
+    int ret = fut_vfs_lookup_nofollow(path_buf, &vnode);
+    if (ret < 0) return ret;
+    if (!vnode->ops || !vnode->ops->listxattr) {
+        fut_vnode_unref(vnode);
+        return (ssize_t)0;
+    }
+    ssize_t r = vnode->ops->listxattr(vnode, kbuf, size);
+    fut_vnode_unref(vnode);
+    return r;
+}
+
+/* Call removexattr on the vnode obtained from path (does NOT follow final symlink). */
+static long vnode_removexattr_nofollow(const char *path_buf, const char *name) {
+    struct fut_vnode *vnode = NULL;
+    int ret = fut_vfs_lookup_nofollow(path_buf, &vnode);
+    if (ret < 0) return ret;
+    if (!vnode->ops || !vnode->ops->removexattr) {
+        fut_vnode_unref(vnode);
+        return -ENODATA;
+    }
+    ret = vnode->ops->removexattr(vnode, name);
+    fut_vnode_unref(vnode);
+    return ret;
+}
+
 /* Resolve fd to vnode (caller must not unref — vnode is owned by the file). */
 static struct fut_vnode *vnode_from_fd(struct fut_task *task, int fd) {
     if (fd < 0 || fd >= task->max_fds) return NULL;
@@ -394,8 +452,7 @@ long sys_lsetxattr(const char *path, const char *name, const void *value,
         return ret;
     }
 
-    /* lsetxattr operates on the symlink itself; fut_vfs_lookup follows symlinks.
-     * Until a no-follow VFS path exists, we fall through to the follow variant. */
+    /* lsetxattr operates on the symlink itself — use nofollow lookup. */
     void *kvalue = NULL;
     if (size > 0 && value) {
         kvalue = fut_malloc(size);
@@ -405,7 +462,7 @@ long sys_lsetxattr(const char *path, const char *name, const void *value,
             return -EFAULT;
         }
     }
-    ret = vnode_setxattr_by_path(path_buf, name_buf, kvalue, size, flags);
+    ret = vnode_setxattr_nofollow(path_buf, name_buf, kvalue, size, flags);
     if (kvalue) fut_free(kvalue);
     return ret;
 }
@@ -534,14 +591,15 @@ long sys_lgetxattr(const char *path, const char *name, void *value, size_t size)
         return ret;
     }
 
-    ssize_t attr_size = vnode_getxattr_by_path(path_buf, name_buf, NULL, 0);
+    /* lgetxattr operates on the symlink itself — use nofollow lookup. */
+    ssize_t attr_size = vnode_getxattr_nofollow(path_buf, name_buf, NULL, 0);
     if (attr_size < 0) return (long)attr_size;
     if (size == 0) return (long)attr_size;
     if ((size_t)attr_size > size) return -ERANGE;
 
     void *kbuf = fut_malloc((size_t)attr_size + 1);
     if (!kbuf) return -ENOMEM;
-    ssize_t got = vnode_getxattr_by_path(path_buf, name_buf, kbuf, (size_t)attr_size);
+    ssize_t got = vnode_getxattr_nofollow(path_buf, name_buf, kbuf, (size_t)attr_size);
     if (got < 0) { fut_free(kbuf); return (long)got; }
     if (value && fut_copy_to_user(value, kbuf, (size_t)got) != 0) {
         fut_free(kbuf); return -EFAULT;
@@ -660,14 +718,15 @@ long sys_llistxattr(const char *path, char *list, size_t size) {
         return ret;
     }
 
-    ssize_t total = vnode_listxattr_by_path(path_buf, NULL, 0);
+    /* llistxattr operates on the symlink itself — use nofollow lookup. */
+    ssize_t total = vnode_listxattr_nofollow(path_buf, NULL, 0);
     if (total < 0) return (long)total;
     if (size == 0) return (long)total;
     if ((size_t)total > size) return -ERANGE;
 
     char *kbuf = fut_malloc((size_t)total + 1);
     if (!kbuf) return -ENOMEM;
-    ssize_t got = vnode_listxattr_by_path(path_buf, kbuf, (size_t)total);
+    ssize_t got = vnode_listxattr_nofollow(path_buf, kbuf, (size_t)total);
     if (got < 0) { fut_free(kbuf); return (long)got; }
     if (got > 0 && list && fut_copy_to_user(list, kbuf, (size_t)got) != 0) {
         fut_free(kbuf); return -EFAULT;
@@ -762,7 +821,8 @@ long sys_lremovexattr(const char *path, const char *name) {
         return ret;
     }
 
-    return vnode_removexattr_by_path(path_buf, name_buf);
+    /* lremovexattr operates on the symlink itself — use nofollow lookup. */
+    return vnode_removexattr_nofollow(path_buf, name_buf);
 }
 
 /**

@@ -99,7 +99,7 @@ long sys_sched_yield(void) {
  * Phase 1 (Completed): Returns default priority (0) for calling process
  * Phase 2 (Completed): Enhanced validation and priority type reporting
  * Phase 3 (Completed): Priority type categorization with default priority
- * Phase 4: Support PRIO_PGRP and PRIO_USER with process/user lookups
+ * Phase 4 (Completed): Read actual task->nice values, PRIO_PGRP/PRIO_USER lookups
  */
 long sys_getpriority(int which, int who) {
     fut_task_t *task = fut_task_current();
@@ -132,21 +132,21 @@ long sys_getpriority(int which, int who) {
         uint64_t target_pid = (who == 0) ? task->pid : (uint64_t)who;
         for (fut_task_t *t = fut_task_list; t; t = t->next) {
             if (t->pid == target_pid && t->state != FUT_TASK_ZOMBIE) {
-                if (PRIO_DEFAULT < best_nice) best_nice = PRIO_DEFAULT;
+                if (t->nice < best_nice) best_nice = t->nice;
             }
         }
     } else if (which == PRIO_PGRP) {
         uint64_t target_pgid = (who == 0) ? task->pgid : (uint64_t)who;
         for (fut_task_t *t = fut_task_list; t; t = t->next) {
             if (t->pgid == target_pgid && t->state != FUT_TASK_ZOMBIE) {
-                if (PRIO_DEFAULT < best_nice) best_nice = PRIO_DEFAULT;
+                if (t->nice < best_nice) best_nice = t->nice;
             }
         }
     } else { /* PRIO_USER */
         uint32_t target_uid = (who == 0) ? task->uid : (uint32_t)who;
         for (fut_task_t *t = fut_task_list; t; t = t->next) {
             if (t->uid == target_uid && t->state != FUT_TASK_ZOMBIE) {
-                if (PRIO_DEFAULT < best_nice) best_nice = PRIO_DEFAULT;
+                if (t->nice < best_nice) best_nice = t->nice;
             }
         }
     }
@@ -181,7 +181,7 @@ long sys_getpriority(int which, int who) {
  * Phase 1 (Completed): Validates parameters but doesn't store value
  * Phase 2 (Completed): Enhanced validation and priority range reporting
  * Phase 3 (Completed): Priority range validation with detailed categorization
- * Phase 4: Implement privilege checking and PRIO_PGRP/PRIO_USER support
+ * Phase 4 (Completed): Actual nice storage, privilege checking, PRIO_PGRP/PRIO_USER
  */
 long sys_setpriority(int which, int who, int prio) {
     fut_task_t *task = fut_task_current();
@@ -231,23 +231,50 @@ long sys_setpriority(int which, int who, int prio) {
     if (which == PRIO_PROCESS) {
         uint64_t target_pid = (who == 0) ? task->pid : (uint64_t)who;
         for (fut_task_t *t = fut_task_list; t; t = t->next) {
-            if (t->pid == target_pid && t->state != FUT_TASK_ZOMBIE) {
-                matched = 1;
+            if (t->pid != target_pid || t->state == FUT_TASK_ZOMBIE)
+                continue;
+            /* Permission check: only root or same-UID can change another's priority */
+            if (task->uid != 0 && task->uid != t->uid) {
+                fut_printf("[SCHED] setpriority(%s, who=%d, prio=%d) -> EPERM (uid mismatch)\n",
+                           which_desc, who, prio);
+                return -EPERM;
             }
+            /* Privilege check: raising priority (lowering nice) requires root */
+            if (prio < t->nice && task->uid != 0) {
+                fut_printf("[SCHED] setpriority(%s, who=%d, prio=%d) -> EACCES (not privileged)\n",
+                           which_desc, who, prio);
+                return -EACCES;
+            }
+            t->nice = prio;
+            matched = 1;
         }
     } else if (which == PRIO_PGRP) {
         uint64_t target_pgid = (who == 0) ? task->pgid : (uint64_t)who;
         for (fut_task_t *t = fut_task_list; t; t = t->next) {
-            if (t->pgid == target_pgid && t->state != FUT_TASK_ZOMBIE) {
-                matched = 1;
-            }
+            if (t->pgid != target_pgid || t->state == FUT_TASK_ZOMBIE)
+                continue;
+            if (task->uid != 0 && task->uid != t->uid)
+                continue; /* skip tasks we don't own in group */
+            if (prio < t->nice && task->uid != 0)
+                continue; /* skip tasks we can't raise priority for */
+            t->nice = prio;
+            matched = 1;
         }
     } else { /* PRIO_USER */
         uint32_t target_uid = (who == 0) ? task->uid : (uint32_t)who;
+        /* Non-root can only modify own user's tasks */
+        if (task->uid != 0 && task->uid != target_uid) {
+            fut_printf("[SCHED] setpriority(%s, who=%d, prio=%d) -> EPERM (uid mismatch)\n",
+                       which_desc, who, prio);
+            return -EPERM;
+        }
         for (fut_task_t *t = fut_task_list; t; t = t->next) {
-            if (t->uid == target_uid && t->state != FUT_TASK_ZOMBIE) {
-                matched = 1;
-            }
+            if (t->uid != target_uid || t->state == FUT_TASK_ZOMBIE)
+                continue;
+            if (prio < t->nice && task->uid != 0)
+                continue; /* skip tasks we can't raise priority for */
+            t->nice = prio;
+            matched = 1;
         }
     }
 

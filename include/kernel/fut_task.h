@@ -125,6 +125,7 @@ struct fut_task {
     char cwd_cache_buf[256];           // Buffer for caching current working directory path
     uint32_t umask;                    // File creation mask (per-task, not global)
     unsigned long personality;         // Execution personality (PER_LINUX etc.)
+    int nice;                          // Nice value: -20 (highest) to +19 (lowest), default 0
 
     /* I/O priority */
     int ioprio;                        // I/O priority (class + level encoded)

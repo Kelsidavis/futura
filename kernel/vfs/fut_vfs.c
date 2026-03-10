@@ -2383,6 +2383,40 @@ int fut_vfs_sync_all(void) {
 }
 
 /**
+ * fut_vnode_build_path - Build absolute path string by walking parent vnode chain
+ *
+ * Walks vnode->parent links and vnode->name to reconstruct the full absolute path.
+ * Writes at most buf_size bytes into buf. Returns buf on success, NULL if truncated.
+ */
+char *fut_vnode_build_path(struct fut_vnode *vnode, char *buf, size_t buf_size) {
+    if (!vnode || !buf || buf_size == 0) return NULL;
+
+    /* Walk parents to determine depth and collect name pointers */
+#define VNODE_MAX_DEPTH 32
+    const char *parts[VNODE_MAX_DEPTH];
+    int depth = 0;
+    struct fut_vnode *v = vnode;
+    while (v && v->name && v->parent && v->parent != v && depth < VNODE_MAX_DEPTH) {
+        parts[depth++] = v->name;
+        v = v->parent;
+    }
+
+    /* Build path by reversing the parts */
+    size_t pos = 0;
+    if (pos < buf_size - 1) buf[pos++] = '/';
+    for (int i = depth - 1; i >= 0; i--) {
+        const char *part = parts[i];
+        size_t plen = strlen(part);
+        if (pos + plen + 1 >= buf_size) { buf[0] = '\0'; return NULL; }
+        for (size_t j = 0; j < plen; j++) buf[pos++] = part[j];
+        if (i > 0 && pos < buf_size - 1) buf[pos++] = '/';
+    }
+    buf[pos] = '\0';
+    return buf;
+#undef VNODE_MAX_DEPTH
+}
+
+/**
  * fut_vfs_chdir() - Change the current working directory (kernel-level, no copy_from_user)
  */
 int fut_vfs_chdir(const char *path) {

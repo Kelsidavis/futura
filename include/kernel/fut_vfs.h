@@ -889,6 +889,23 @@ int fut_vfs_sync_fs(struct fut_mount *mount);
  */
 int fut_vfs_sync_all(void);
 
+/**
+ * Build an absolute path string for a vnode by walking parent links.
+ * Writes at most buf_size bytes into buf, including the null terminator.
+ * Returns a pointer to buf on success, or NULL if the path was truncated.
+ */
+char *fut_vnode_build_path(struct fut_vnode *vnode, char *buf, size_t buf_size);
+
+/**
+ * inotify_dispatch_event - Deliver a VFS filesystem event to inotify watchers.
+ * Called by the VFS when files are created, deleted, or modified.
+ *
+ * @param dir_path  Absolute path of the directory where the event occurred
+ * @param mask      inotify event mask (IN_CREATE, IN_DELETE, IN_MODIFY, etc.)
+ * @param filename  Basename of the affected file (may be NULL for self-events)
+ */
+void inotify_dispatch_event(const char *dir_path, uint32_t mask, const char *filename);
+
 /* Per-task FD management (for multi-process isolation) */
 struct fut_file *vfs_get_file_from_task(struct fut_task *task, int fd);
 int vfs_alloc_fd_for_task(struct fut_task *task, struct fut_file *file);

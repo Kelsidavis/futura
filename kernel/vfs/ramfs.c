@@ -529,6 +529,15 @@ static ssize_t ramfs_write(struct fut_vnode *vnode, const void *buf, size_t size
     }
 #endif
 
+    /* Phase 4: Dispatch IN_MODIFY inotify event to watchers on the file's parent */
+    if (size > 0 && vnode->parent) {
+        char dir_path[256];
+        if (fut_vnode_build_path(vnode->parent, dir_path, sizeof(dir_path))) {
+            inotify_dispatch_event(dir_path, 0x00000002 /* IN_MODIFY */,
+                                   vnode->name ? vnode->name : "");
+        }
+    }
+
     return (ssize_t)size;
 }
 
@@ -729,6 +738,15 @@ static int ramfs_create(struct fut_vnode *dir, const char *name, uint32_t mode, 
     /* Take reference for caller - must match reference-taking in lookup */
     fut_vnode_ref(vnode);
     *result = vnode;
+
+    /* Phase 4: Dispatch IN_CREATE inotify event to watchers on the parent directory */
+    {
+        char dir_path[256];
+        if (fut_vnode_build_path(dir, dir_path, sizeof(dir_path))) {
+            inotify_dispatch_event(dir_path, 0x00000100 /* IN_CREATE */, name);
+        }
+    }
+
     return 0;
 }
 
@@ -824,6 +842,14 @@ static int ramfs_mkdir(struct fut_vnode *dir, const char *name, uint32_t mode) {
     dir_node->mtime_ms = dir_now;
     dir_node->ctime_ms = dir_now;
 
+    /* Phase 4: Dispatch IN_CREATE|IN_ISDIR inotify event */
+    {
+        char dir_path[256];
+        if (fut_vnode_build_path(dir, dir_path, sizeof(dir_path))) {
+            inotify_dispatch_event(dir_path, 0x00000100 | 0x40000000 /* IN_CREATE|IN_ISDIR */, name);
+        }
+    }
+
     return 0;
 }
 
@@ -909,6 +935,14 @@ static int ramfs_unlink(struct fut_vnode *dir, const char *name) {
             uint64_t unlink_now = fut_get_ticks();
             dir_node->mtime_ms = unlink_now;
             dir_node->ctime_ms = unlink_now;
+
+            /* Phase 4: Dispatch IN_DELETE inotify event */
+            {
+                char dir_path[256];
+                if (fut_vnode_build_path(dir, dir_path, sizeof(dir_path))) {
+                    inotify_dispatch_event(dir_path, 0x00000200 /* IN_DELETE */, name);
+                }
+            }
 
             return 0;
         }

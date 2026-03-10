@@ -9,6 +9,7 @@
 #include <kernel/fut_task.h>
 #include <kernel/fut_thread.h>
 #include <kernel/fut_stats.h>
+#include <kernel/fut_mm.h>
 #include <kernel/errno.h>
 #include <shared/fut_timeval.h>
 #include <string.h>
@@ -83,7 +84,7 @@ struct rusage {
  * Phase 2 (Completed): Enhanced validation and detailed reporting
  * Phase 3 (Completed): Zeroed statistics with who parameter categorization
  * Phase 4 (Completed): CPU time from thread stats; fix per-task vs global thread list
- * Phase 5: Track memory usage (maxrss, page faults)
+ * Phase 5 (Completed): Compute ru_maxrss from mm VMA list (total mapped bytes / 1024)
  * Phase 6: Track I/O statistics (inblock, oublock)
  */
 long sys_getrusage(int who, struct rusage *usage) {
@@ -168,6 +169,24 @@ long sys_getrusage(int who, struct rusage *usage) {
     }
     /* RUSAGE_CHILDREN: zeroed until wait4()/waitpid() accumulates child stats */
 
+    /*
+     * Phase 5: Compute ru_maxrss from the task's VMA list.
+     * ru_maxrss is in kilobytes on Linux. Since this kernel has no swap, all
+     * mapped pages are resident, so total VMA size is a good approximation.
+     * We sum (vma->end - vma->start) across all VMAs and divide by 1024.
+     */
+    if (who == RUSAGE_SELF || who == RUSAGE_THREAD) {
+        fut_mm_t *mm = fut_task_get_mm(task);
+        if (mm) {
+            size_t total_bytes = 0;
+            for (struct fut_vma *vma = mm->vma_list; vma != nullptr; vma = vma->next) {
+                if (vma->end > vma->start)
+                    total_bytes += vma->end - vma->start;
+            }
+            ru.ru_maxrss = (long)(total_bytes / 1024);
+        }
+    }
+
     /* Copy to userspace */
     if (rusage_copy_to_user(usage, &ru, sizeof(struct rusage)) != 0) {
         fut_printf("[RUSAGE] getrusage(who=%s, usage=%p) -> EFAULT (copy_to_user failed)\n",
@@ -176,9 +195,9 @@ long sys_getrusage(int who, struct rusage *usage) {
     }
 
     fut_printf("[RUSAGE] getrusage(who=%s [%s], usage=%p) -> 0 "
-               "(utime=%ld.%06lds nvcsw=%ld)\n",
+               "(utime=%ld.%06lds nvcsw=%ld maxrss=%ldKB)\n",
                who_desc, target_desc, usage,
-               ru.ru_utime.tv_sec, ru.ru_utime.tv_usec, ru.ru_nvcsw);
+               ru.ru_utime.tv_sec, ru.ru_utime.tv_usec, ru.ru_nvcsw, ru.ru_maxrss);
 
     return 0;
 }

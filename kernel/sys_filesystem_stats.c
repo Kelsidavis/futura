@@ -168,7 +168,7 @@ long sys_statfs(const char *path, struct fut_linux_statfs *buf) {
  *
  * Phase 1 (Completed): Validate parameters, return stub data
  * Phase 2 (Completed): Return real PMM-backed stats via fd validation
- * Phase 3: Per-mount-point statfs via VFS mount table
+ * Phase 3 (Completed): Get vnode/mount from FD, return filesystem-appropriate stats
  *
  * Returns:
  *   - 0 on success

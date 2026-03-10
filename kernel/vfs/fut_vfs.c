@@ -2169,3 +2169,139 @@ int fut_vfs_sync_all(void) {
 
     return first_error;
 }
+
+/**
+ * fut_vfs_chdir() - Change the current working directory (kernel-level, no copy_from_user)
+ */
+int fut_vfs_chdir(const char *path) {
+    if (!path) {
+        return -EINVAL;
+    }
+
+    struct fut_vnode *vnode = NULL;
+    int ret = fut_vfs_lookup(path, &vnode);
+    if (ret < 0) {
+        return ret;
+    }
+    if (!vnode) {
+        return -ENOENT;
+    }
+    if (vnode->type != VN_DIR) {
+        fut_vnode_unref(vnode);
+        return -ENOTDIR;
+    }
+
+    fut_task_t *task = fut_task_current();
+    if (task) {
+        task->current_dir_ino = vnode->ino;
+        size_t len = 0;
+        while (path[len] && len < 255) {
+            task->cwd_cache_buf[len] = path[len];
+            len++;
+        }
+        task->cwd_cache_buf[len] = '\0';
+        task->cwd_cache = task->cwd_cache_buf;
+    }
+
+    fut_vnode_unref(vnode);
+    return 0;
+}
+
+/**
+ * fut_vfs_symlink() - Create a symbolic link (kernel-level, no copy_from_user)
+ */
+int fut_vfs_symlink(const char *target, const char *linkpath) {
+    if (!target || !linkpath) {
+        return -EINVAL;
+    }
+
+    struct fut_vnode *parent = NULL;
+    char leaf[FUT_VFS_NAME_MAX + 1];
+
+    int ret = lookup_parent_and_name(linkpath, &parent, leaf);
+    if (ret < 0) {
+        return ret;
+    }
+
+    if (!parent->ops || !parent->ops->symlink) {
+        release_lookup_ref(parent);
+        return -ENOSYS;
+    }
+
+    ret = parent->ops->symlink(parent, leaf, target);
+    release_lookup_ref(parent);
+    return ret;
+}
+
+/**
+ * fut_vfs_readlink() - Read a symbolic link target (kernel-level, no copy_from_user)
+ */
+ssize_t fut_vfs_readlink(const char *path, char *buf, size_t bufsiz) {
+    if (!path || !buf || bufsiz == 0) {
+        return -EINVAL;
+    }
+
+    /* Look up the symlink vnode without following the final component */
+    struct fut_vnode *parent = NULL;
+    char name[FUT_VFS_NAME_MAX + 1];
+    int ret = lookup_parent_and_name(path, &parent, name);
+    if (ret < 0) {
+        return ret;
+    }
+
+    if (!parent->ops || !parent->ops->lookup) {
+        release_lookup_ref(parent);
+        return -ENOENT;
+    }
+
+    struct fut_vnode *vnode = NULL;
+    ret = parent->ops->lookup(parent, name, &vnode);
+    release_lookup_ref(parent);
+    if (ret < 0) {
+        return ret;
+    }
+    if (!vnode) {
+        return -ENOENT;
+    }
+
+    if (vnode->type != VN_LNK) {
+        fut_vnode_unref(vnode);
+        return -EINVAL;
+    }
+
+    if (!vnode->ops || !vnode->ops->readlink) {
+        fut_vnode_unref(vnode);
+        return -ENOSYS;
+    }
+
+    ssize_t len = vnode->ops->readlink(vnode, buf, bufsiz);
+    fut_vnode_unref(vnode);
+    return len;
+}
+
+/**
+ * fut_vfs_link() - Create a hard link (kernel-level, no copy_from_user)
+ */
+int fut_vfs_link(const char *oldpath, const char *newpath) {
+    if (!oldpath || !newpath) {
+        return -EINVAL;
+    }
+
+    struct fut_vnode *old_vnode = NULL;
+    int ret = fut_vfs_lookup(oldpath, &old_vnode);
+    if (ret < 0) {
+        return ret;
+    }
+    if (!old_vnode) {
+        return -ENOENT;
+    }
+
+    if (!old_vnode->ops || !old_vnode->ops->link) {
+        fut_vnode_unref(old_vnode);
+        return -ENOSYS;
+    }
+
+    ret = old_vnode->ops->link(old_vnode, oldpath, newpath);
+    fut_vnode_unref(old_vnode);
+    return ret;
+}

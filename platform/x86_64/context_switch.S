@@ -1376,6 +1376,35 @@ fut_switch_context_irq:
      * unwind does not incorrectly reuse prev's stale ISR frame pointer. */
     movq $0, fut_current_frame(%rip)
 
+    /* Send EOI to LAPIC and clear fut_in_interrupt — mirrors the IRETQ path
+     * (lines immediately before `iretq`).
+     *
+     * Why EOI here: for FRESH kernel threads (context.rip == trampoline) there
+     * is no ISR-unwind chain, so nobody else will call lapic_send_eoi().  The
+     * LAPIC keeps the timer vector set in its ISR register, which suppresses
+     * all future timer interrupts — the system hangs with 0/N tests.
+     *
+     * For NON-FRESH kernel threads the ISR unwind (fut_timer_irq → lapic_send_eoi)
+     * will write to EOI a second time; that write is a safe no-op if the ISR
+     * bit is already clear, or it correctly acknowledges the next timer tick
+     * that arrived in the window between the two writes. */
+    pushq %rax
+    pushq %rcx
+    movq lapic_base(%rip), %rcx
+    testq %rcx, %rcx
+    jz .kernel_coop_skip_eoi
+    movl $0, 0xB0(%rcx)             /* Write 0 to LAPIC EOI register (offset 0xB0) */
+.kernel_coop_skip_eoi:
+    popq %rcx
+    popq %rax
+
+    /* Clear fut_in_interrupt — same reason as IRETQ path.  The stale 1 would
+     * cause fut_schedule to use the IRETQ branch on the next voluntary switch,
+     * then find fut_current_frame==NULL and fall through to the cooperative
+     * path where it sends a spurious LAPIC EOI.  Clearing it here is simpler
+     * and matches what the IRETQ path does at lines 1314-1315. */
+    movb $0, fut_in_interrupt(%rip)
+
     /* Load next's cooperative context.
      * Context layout (all offsets relative to thread base, context at +48):
      *   r15(+48) r14(+56) r13(+64) r12(+72) rbx(+80) rbp(+88)

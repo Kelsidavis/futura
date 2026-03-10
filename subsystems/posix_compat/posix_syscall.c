@@ -152,9 +152,26 @@
 #define SYS_times        100
 #define SYS_setrlimit    160
 #define SYS_time         201
+#define SYS_futex        202
 #define SYS_getdents64   217
+/* Signal syscalls */
+#define SYS_sigpending   127
+#define SYS_sigsuspend   130
+#define SYS_sigaltstack  131
+/* pselect6/ppoll */
+#define SYS_pselect6     270
+#define SYS_ppoll        271
+/* accept4 / signalfd4 / dup3 / pipe2 */
+#define SYS_accept4      288
+#define SYS_signalfd4    289
 #define SYS_eventfd2     290
 #define SYS_epoll_create1 291
+#ifndef SYS_dup3
+#define SYS_dup3         292
+#endif
+#ifndef SYS_pipe2
+#define SYS_pipe2        293
+#endif
 #define SYS_getpriority  140
 #define SYS_setpriority  141
 #define SYS_sched_setparam      142
@@ -1165,6 +1182,91 @@ static int64_t sys_select_handler(uint64_t nfds, uint64_t readfds, uint64_t writ
     return sys_select((int)nfds, (void *)readfds, (void *)writefds, (void *)exceptfds, (fut_timeval_t *)timeout_ptr);
 }
 
+/* pselect6() handler */
+static int64_t sys_pselect6_handler(uint64_t nfds, uint64_t readfds, uint64_t writefds,
+                                    uint64_t exceptfds, uint64_t timeout_ptr, uint64_t sigmask) {
+    extern long sys_pselect6(int nfds, void *readfds, void *writefds, void *exceptfds,
+                              void *timeout, void *sigmask);
+    return sys_pselect6((int)nfds, (void *)readfds, (void *)writefds, (void *)exceptfds,
+                        (void *)timeout_ptr, (void *)sigmask);
+}
+
+/* ppoll() handler */
+static int64_t sys_ppoll_handler(uint64_t fds, uint64_t nfds, uint64_t tmo_p,
+                                  uint64_t sigmask, uint64_t arg5, uint64_t arg6) {
+    (void)arg5; (void)arg6;
+    extern long sys_ppoll(void *fds, unsigned int nfds, void *tmo_p, const void *sigmask);
+    return sys_ppoll((void *)fds, (unsigned int)nfds, (void *)tmo_p, (const void *)sigmask);
+}
+
+/* sigpending() handler */
+static int64_t sys_sigpending_handler(uint64_t set, uint64_t arg2, uint64_t arg3,
+                                       uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg2; (void)arg3; (void)arg4; (void)arg5; (void)arg6;
+    extern long sys_sigpending(sigset_t *set);
+    return sys_sigpending((sigset_t *)(uintptr_t)set);
+}
+
+/* sigsuspend() handler */
+static int64_t sys_sigsuspend_handler(uint64_t mask, uint64_t arg2, uint64_t arg3,
+                                       uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg2; (void)arg3; (void)arg4; (void)arg5; (void)arg6;
+    extern long sys_sigsuspend(const sigset_t *mask);
+    return sys_sigsuspend((const sigset_t *)(uintptr_t)mask);
+}
+
+/* sigaltstack() handler */
+static int64_t sys_sigaltstack_handler(uint64_t ss, uint64_t old_ss, uint64_t arg3,
+                                        uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg3; (void)arg4; (void)arg5; (void)arg6;
+    extern long sys_sigaltstack(const struct sigaltstack *ss, struct sigaltstack *old_ss);
+    return sys_sigaltstack((const struct sigaltstack *)(uintptr_t)ss,
+                           (struct sigaltstack *)(uintptr_t)old_ss);
+}
+
+/* futex() handler */
+static int64_t sys_futex_handler(uint64_t uaddr, uint64_t op, uint64_t val,
+                                  uint64_t timeout, uint64_t uaddr2, uint64_t val3) {
+    extern long sys_futex(uint32_t *uaddr, int op, uint32_t val,
+                          const fut_timespec_t *timeout, uint32_t *uaddr2, uint32_t val3);
+    return sys_futex((uint32_t *)(uintptr_t)uaddr, (int)op, (uint32_t)val,
+                     (const fut_timespec_t *)(uintptr_t)timeout,
+                     (uint32_t *)(uintptr_t)uaddr2, (uint32_t)val3);
+}
+
+/* pipe2() handler */
+static int64_t sys_pipe2_handler(uint64_t pipefd, uint64_t flags, uint64_t arg3,
+                                  uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg3; (void)arg4; (void)arg5; (void)arg6;
+    extern long sys_pipe2(int pipefd[2], int flags);
+    return sys_pipe2((int *)(uintptr_t)pipefd, (int)flags);
+}
+
+/* signalfd4() handler */
+static int64_t sys_signalfd4_handler(uint64_t ufd, uint64_t mask, uint64_t sizemask,
+                                      uint64_t flags, uint64_t arg5, uint64_t arg6) {
+    (void)arg5; (void)arg6;
+    extern long sys_signalfd4(int ufd, const void *mask, size_t sizemask, int flags);
+    return sys_signalfd4((int)ufd, (const void *)(uintptr_t)mask, (size_t)sizemask, (int)flags);
+}
+
+/* dup3() handler */
+static int64_t sys_dup3_handler(uint64_t oldfd, uint64_t newfd, uint64_t flags,
+                                 uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg4; (void)arg5; (void)arg6;
+    extern long sys_dup3(int oldfd, int newfd, int flags);
+    return sys_dup3((int)oldfd, (int)newfd, (int)flags);
+}
+
+/* accept4() handler */
+static int64_t sys_accept4_handler(uint64_t sockfd, uint64_t addr, uint64_t addrlen,
+                                    uint64_t flags, uint64_t arg5, uint64_t arg6) {
+    (void)arg5; (void)arg6;
+    extern long sys_accept4(int sockfd, void *addr, uint32_t *addrlen, int flags);
+    return sys_accept4((int)sockfd, (void *)(uintptr_t)addr,
+                       (uint32_t *)(uintptr_t)addrlen, (int)flags);
+}
+
 /* dup() handler - duplicate file descriptor with auto selection */
 static int64_t sys_dup_handler(uint64_t oldfd, uint64_t arg2, uint64_t arg3,
                                uint64_t arg4, uint64_t arg5, uint64_t arg6) {
@@ -2148,6 +2250,17 @@ static syscall_handler_t syscall_table[MAX_SYSCALL] = {
     [SYS_inotify_init1] = sys_inotify_init1_handler,
     [SYS_preadv]       = sys_preadv_handler,
     [SYS_pwritev]      = sys_pwritev_handler,
+    /* signal / io-multiplex */
+    [SYS_sigpending]   = sys_sigpending_handler,
+    [SYS_sigsuspend]   = sys_sigsuspend_handler,
+    [SYS_sigaltstack]  = sys_sigaltstack_handler,
+    [SYS_futex]        = sys_futex_handler,
+    [SYS_pselect6]     = sys_pselect6_handler,
+    [SYS_ppoll]        = sys_ppoll_handler,
+    [SYS_pipe2]        = sys_pipe2_handler,
+    [SYS_signalfd4]    = sys_signalfd4_handler,
+    [SYS_dup3]         = sys_dup3_handler,
+    [SYS_accept4]      = sys_accept4_handler,
     [SYS_msgget]       = sys_msgget_handler,
     [SYS_msgsnd]       = sys_msgsnd_handler,
     [SYS_msgrcv]       = sys_msgrcv_handler,

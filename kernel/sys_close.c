@@ -9,7 +9,7 @@
  * Phase 1 (Completed): Basic close with socket and file support
  * Phase 2 (Completed): Enhanced validation, FD type identification, and detailed logging
  * Phase 3 (Completed): Reference counting and delayed close for shared descriptors
- * Phase 4: Advanced features (close-on-exec handling, close_range support)
+ * Phase 4 (Completed): close_range bulk close and CLOSE_RANGE_CLOEXEC support
  */
 
 #include <kernel/fut_task.h>
@@ -19,6 +19,7 @@
 
 #include <kernel/kprintf.h>
 #include <kernel/debug_config.h>
+#include <fcntl.h>
 
 /* epoll close notification — auto-removes FD from all epoll instances */
 extern void epoll_notify_fd_close(int fd);
@@ -271,5 +272,84 @@ long sys_close(int fd) {
 
     close_printf("[CLOSE] close(fd=%d, type=%s [%s]) -> 0 (Phase 2)\n",
                local_fd, fd_type, fd_desc);
+    return 0;
+}
+
+/* close_range flags */
+#define CLOSE_RANGE_UNSHARE (1U << 1)
+#define CLOSE_RANGE_CLOEXEC (1U << 2)
+
+/**
+ * close_range() - Close or set close-on-exec on a range of file descriptors
+ *
+ * @param first: First fd in range (inclusive)
+ * @param last:  Last fd in range (inclusive); ~0U means "to max_fds"
+ * @param flags: 0 or CLOSE_RANGE_CLOEXEC
+ *
+ * Phase 4 (Completed): Bulk close and CLOSE_RANGE_CLOEXEC support
+ *
+ * With flags=0: closes every open FD in [first, last].
+ * With CLOSE_RANGE_CLOEXEC: sets FD_CLOEXEC on every open FD in the range
+ *   instead of closing them (used by glibc before execve).
+ * CLOSE_RANGE_UNSHARE is not supported (no FD-table sharing in Futura).
+ *
+ * Returns:
+ *   0 on success
+ *   -EINVAL if first > last or unsupported flags
+ *   -ESRCH  if no current task
+ */
+long sys_close_range(unsigned int first, unsigned int last, unsigned int flags) {
+    const unsigned int SUPPORTED = CLOSE_RANGE_CLOEXEC;
+
+    fut_task_t *task = fut_task_current();
+    if (!task) {
+        fut_printf("[CLOSE_RANGE] close_range(%u, %u, 0x%x) -> ESRCH\n", first, last, flags);
+        return -ESRCH;
+    }
+
+    if (first > last) {
+        fut_printf("[CLOSE_RANGE] close_range(%u, %u, 0x%x, pid=%d) -> EINVAL (first > last)\n",
+                   first, last, flags, task->pid);
+        return -EINVAL;
+    }
+
+    /* CLOSE_RANGE_UNSHARE requires FD-table unsharing; not supported */
+    if (flags & ~SUPPORTED) {
+        fut_printf("[CLOSE_RANGE] close_range(%u, %u, 0x%x, pid=%d) -> EINVAL (unsupported flags)\n",
+                   first, last, flags, task->pid);
+        return -EINVAL;
+    }
+
+    /* Clamp last to the task's actual FD limit */
+    unsigned int upper = (last >= (unsigned int)task->max_fds)
+                         ? (unsigned int)(task->max_fds - 1)
+                         : last;
+
+    int closed = 0;
+
+    if (flags & CLOSE_RANGE_CLOEXEC) {
+        /* Set FD_CLOEXEC on every open FD in the range instead of closing */
+        for (unsigned int fd = first; fd <= upper; fd++) {
+            struct fut_file *file = vfs_get_file_from_task(task, (int)fd);
+            if (!file)
+                continue;
+            file->fd_flags |= FD_CLOEXEC;
+            closed++;
+        }
+        fut_printf("[CLOSE_RANGE] close_range(%u, %u, CLOEXEC, pid=%d) -> 0 (%d fds marked)\n",
+                   first, last, task->pid, closed);
+    } else {
+        /* Close every open FD in the range.  Use sys_close() to reuse its
+         * socket / epoll / vfs dispatch and epoll notification logic. */
+        for (unsigned int fd = first; fd <= upper; fd++) {
+            long r = sys_close((int)fd);
+            /* EBADF just means the FD wasn't open; that's fine for close_range */
+            if (r == 0)
+                closed++;
+        }
+        fut_printf("[CLOSE_RANGE] close_range(%u, %u, 0, pid=%d) -> 0 (%d fds closed)\n",
+                   first, last, task->pid, closed);
+    }
+
     return 0;
 }

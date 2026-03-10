@@ -421,6 +421,14 @@
 #include <kernel/fut_waitq.h>
 #include <kernel/uaccess.h>
 #include <shared/fut_timespec.h>
+#include <string.h>
+
+/* Architecture-specific paging headers for KERNEL_VIRTUAL_BASE */
+#ifdef __x86_64__
+#include <platform/x86_64/memory/paging.h>
+#elif defined(__aarch64__)
+#include <platform/arm64/memory/paging.h>
+#endif
 #include <stdbool.h>
 #include <stdatomic.h>
 #include <stdint.h>
@@ -683,7 +691,10 @@ static ssize_t eventfd_read(void *inode, void *priv, void *u_buf, size_t len, of
     }
 
     /* Restore counter on copy failure to maintain consistency */
-    if (fut_copy_to_user(u_buf, &value, sizeof(value)) != 0) {
+    bool is_kbuf_r = ((uintptr_t)u_buf >= KERNEL_VIRTUAL_BASE);
+    int copy_r = is_kbuf_r ? (memcpy((void *)u_buf, &value, sizeof(value)), 0)
+                           : fut_copy_to_user(u_buf, &value, sizeof(value));
+    if (copy_r != 0) {
         /* Restore counter on copy failure */
         fut_spinlock_acquire(&ctx->lock);
         if (ctx->semaphore) {
@@ -713,7 +724,10 @@ static ssize_t eventfd_write(void *inode, void *priv, const void *u_buf, size_t 
     }
 
     uint64_t value = 0;
-    if (fut_copy_from_user(&value, u_buf, sizeof(value)) != 0) {
+    bool is_kbuf = ((uintptr_t)u_buf >= KERNEL_VIRTUAL_BASE);
+    int copy_ret = is_kbuf ? (memcpy(&value, u_buf, sizeof(value)), 0)
+                           : fut_copy_from_user(&value, u_buf, sizeof(value));
+    if (copy_ret != 0) {
         return -EFAULT;
     }
 

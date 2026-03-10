@@ -25,9 +25,9 @@
  * Changes the root directory for the calling process to the specified path.
  * This is used for filesystem isolation and sandboxing.
  *
- * Phase 1: Validate path, stub (don't actually change root)
- * Phase 2: Resolve path to vnode, store in task structure
- * Phase 3: Integrate with VFS path resolution
+ * Phase 1 (Completed): Validate path, check CAP_SYS_CHROOT
+ * Phase 2 (Completed): Resolve path to vnode, store in task->chroot_vnode
+ * Phase 3 (Completed): VFS path resolution integration with chroot inheritance
  *
  * Returns:
  *   - 0 on success
@@ -118,8 +118,8 @@ long sys_chroot(const char *path) {
  *
  * Phase 1 (Completed): Validate parameters, return stub value
  * Phase 2 (Completed): Copy offset parameter from userspace with validation
- * Phase 3: Implement via read()+write() loop (inefficient but functional)
- * Phase 4: Zero-copy transfer using kernel buffers
+ * Phase 3 (Completed): Read+write loop with kernel buffer, offset tracking
+ * Phase 4: Zero-copy transfer via page remapping
  *
  * Returns:
  *   - Number of bytes transferred on success

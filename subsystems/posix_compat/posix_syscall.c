@@ -34,6 +34,19 @@
 #define SYS_open        2
 #define SYS_close       3
 #define SYS_openat      257
+#define SYS_mkdirat     258
+#define SYS_mknodat     259
+#define SYS_fchownat    260
+#define SYS_futimesat   261  /* futimesat (not futimensat) - deprecated */
+#define SYS_fstatat     262  /* newfstatat on Linux */
+#define SYS_unlinkat    263
+#define SYS_renameat    264
+#define SYS_linkat      265
+#define SYS_symlinkat   266
+#define SYS_readlinkat  267
+#define SYS_fchmodat    268
+#define SYS_faccessat   269
+#define SYS_utimensat   280
 /* AT_FDCWD provided by fcntl.h */
 #define SYS_stat        4
 #define SYS_fstat       5
@@ -486,6 +499,97 @@ static int64_t sys_openat_handler(uint64_t dirfd, uint64_t pathname, uint64_t fl
     (void)arg5; (void)arg6;
     extern long sys_openat(int dirfd, const char *pathname, int flags, int mode);
     return sys_openat((int)dirfd, (const char *)(uintptr_t)pathname, (int)flags, (int)mode);
+}
+
+/* *at family syscall handlers */
+static int64_t sys_mkdirat_handler(uint64_t dirfd, uint64_t pathname, uint64_t mode,
+                                   uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg4; (void)arg5; (void)arg6;
+    extern long sys_mkdirat(int dirfd, const char *pathname, unsigned int mode);
+    return sys_mkdirat((int)dirfd, (const char *)(uintptr_t)pathname, (unsigned int)mode);
+}
+
+static int64_t sys_mknodat_handler(uint64_t dirfd, uint64_t pathname, uint64_t mode,
+                                   uint64_t dev, uint64_t arg5, uint64_t arg6) {
+    (void)arg5; (void)arg6;
+    extern long sys_mknodat(int dirfd, const char *pathname, uint32_t mode, uint32_t dev);
+    return sys_mknodat((int)dirfd, (const char *)(uintptr_t)pathname, (uint32_t)mode, (uint32_t)dev);
+}
+
+static int64_t sys_fchownat_handler(uint64_t dirfd, uint64_t pathname, uint64_t uid,
+                                    uint64_t gid, uint64_t flags, uint64_t arg6) {
+    (void)arg6;
+    extern long sys_fchownat(int dirfd, const char *pathname, uint32_t uid, uint32_t gid, int flags);
+    return sys_fchownat((int)dirfd, (const char *)(uintptr_t)pathname,
+                        (uint32_t)uid, (uint32_t)gid, (int)flags);
+}
+
+static int64_t sys_fstatat_handler(uint64_t dirfd, uint64_t pathname, uint64_t statbuf,
+                                   uint64_t flags, uint64_t arg5, uint64_t arg6) {
+    (void)arg5; (void)arg6;
+    extern long sys_fstatat(int dirfd, const char *pathname, void *statbuf, int flags);
+    return sys_fstatat((int)dirfd, (const char *)(uintptr_t)pathname, (void *)(uintptr_t)statbuf, (int)flags);
+}
+
+static int64_t sys_unlinkat_handler(uint64_t dirfd, uint64_t pathname, uint64_t flags,
+                                    uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg4; (void)arg5; (void)arg6;
+    extern long sys_unlinkat(int dirfd, const char *pathname, int flags);
+    return sys_unlinkat((int)dirfd, (const char *)(uintptr_t)pathname, (int)flags);
+}
+
+static int64_t sys_renameat_handler(uint64_t olddirfd, uint64_t oldpath, uint64_t newdirfd,
+                                    uint64_t newpath, uint64_t arg5, uint64_t arg6) {
+    (void)arg5; (void)arg6;
+    extern long sys_renameat(int olddirfd, const char *oldpath, int newdirfd, const char *newpath);
+    return sys_renameat((int)olddirfd, (const char *)(uintptr_t)oldpath,
+                        (int)newdirfd, (const char *)(uintptr_t)newpath);
+}
+
+static int64_t sys_linkat_handler(uint64_t olddirfd, uint64_t oldpath, uint64_t newdirfd,
+                                  uint64_t newpath, uint64_t flags, uint64_t arg6) {
+    (void)arg6;
+    extern long sys_linkat(int olddirfd, const char *oldpath, int newdirfd, const char *newpath, int flags);
+    return sys_linkat((int)olddirfd, (const char *)(uintptr_t)oldpath,
+                      (int)newdirfd, (const char *)(uintptr_t)newpath, (int)flags);
+}
+
+static int64_t sys_symlinkat_handler(uint64_t target, uint64_t newdirfd, uint64_t linkpath,
+                                     uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg4; (void)arg5; (void)arg6;
+    extern long sys_symlinkat(const char *target, int newdirfd, const char *linkpath);
+    return sys_symlinkat((const char *)(uintptr_t)target, (int)newdirfd,
+                         (const char *)(uintptr_t)linkpath);
+}
+
+static int64_t sys_readlinkat_handler(uint64_t dirfd, uint64_t pathname, uint64_t buf,
+                                      uint64_t bufsiz, uint64_t arg5, uint64_t arg6) {
+    (void)arg5; (void)arg6;
+    extern long sys_readlinkat(int dirfd, const char *pathname, char *buf, size_t bufsiz);
+    return sys_readlinkat((int)dirfd, (const char *)(uintptr_t)pathname,
+                          (char *)(uintptr_t)buf, (size_t)bufsiz);
+}
+
+static int64_t sys_fchmodat_handler(uint64_t dirfd, uint64_t pathname, uint64_t mode,
+                                    uint64_t flags, uint64_t arg5, uint64_t arg6) {
+    (void)arg5; (void)arg6;
+    extern long sys_fchmodat(int dirfd, const char *pathname, uint32_t mode, int flags);
+    return sys_fchmodat((int)dirfd, (const char *)(uintptr_t)pathname, (uint32_t)mode, (int)flags);
+}
+
+static int64_t sys_faccessat_handler(uint64_t dirfd, uint64_t pathname, uint64_t mode,
+                                     uint64_t flags, uint64_t arg5, uint64_t arg6) {
+    (void)arg5; (void)arg6;
+    extern long sys_faccessat(int dirfd, const char *pathname, int mode, int flags);
+    return sys_faccessat((int)dirfd, (const char *)(uintptr_t)pathname, (int)mode, (int)flags);
+}
+
+static int64_t sys_utimensat_handler(uint64_t dirfd, uint64_t pathname, uint64_t times,
+                                     uint64_t flags, uint64_t arg5, uint64_t arg6) {
+    (void)arg5; (void)arg6;
+    extern long sys_utimensat(int dirfd, const char *pathname, const fut_timespec_t *times, int flags);
+    return sys_utimensat((int)dirfd, (const char *)(uintptr_t)pathname,
+                         (const fut_timespec_t *)(uintptr_t)times, (int)flags);
 }
 
 static int64_t sys_close_handler(uint64_t fd, uint64_t arg2, uint64_t arg3,
@@ -1659,6 +1763,19 @@ static syscall_handler_t syscall_table[MAX_SYSCALL] = {
     [SYS_write]      = sys_write_handler,
     [SYS_open]       = sys_open_handler,
     [SYS_openat]     = sys_openat_handler,
+    /* *at family (Linux x86_64 258-269, 280) */
+    [SYS_mkdirat]    = sys_mkdirat_handler,
+    [SYS_mknodat]    = sys_mknodat_handler,
+    [SYS_fchownat]   = sys_fchownat_handler,
+    [SYS_fstatat]    = sys_fstatat_handler,
+    [SYS_unlinkat]   = sys_unlinkat_handler,
+    [SYS_renameat]   = sys_renameat_handler,
+    [SYS_linkat]     = sys_linkat_handler,
+    [SYS_symlinkat]  = sys_symlinkat_handler,
+    [SYS_readlinkat] = sys_readlinkat_handler,
+    [SYS_fchmodat]   = sys_fchmodat_handler,
+    [SYS_faccessat]  = sys_faccessat_handler,
+    [SYS_utimensat]  = sys_utimensat_handler,
     [SYS_close]      = sys_close_handler,
     [SYS_stat]       = sys_stat_handler,
     [SYS_fstat]      = sys_fstat_handler,

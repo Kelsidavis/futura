@@ -110,58 +110,55 @@ long sys_getpriority(int which, int who) {
 
     /* Phase 2: Identify priority type for logging */
     const char *which_desc;
-    const char *target_desc;
 
     switch (which) {
-        case PRIO_PROCESS:
-            which_desc = "PRIO_PROCESS";
-            target_desc = "process";
-            break;
-        case PRIO_PGRP:
-            which_desc = "PRIO_PGRP";
-            target_desc = "process group";
-            break;
-        case PRIO_USER:
-            which_desc = "PRIO_USER";
-            target_desc = "user";
-            break;
+        case PRIO_PROCESS: which_desc = "PRIO_PROCESS"; break;
+        case PRIO_PGRP:    which_desc = "PRIO_PGRP";    break;
+        case PRIO_USER:    which_desc = "PRIO_USER";    break;
         default:
             fut_printf("[SCHED] getpriority(which=%d, who=%d) -> EINVAL (invalid which parameter)\n",
                        which, who);
             return -EINVAL;
     }
 
-    /* Phase 2: Only support PRIO_PROCESS for calling process */
+    /* Traverse task list without holding the lock (accepting benign races,
+     * same pattern used by fut_timer.c).  For PRIO_PROCESS / PRIO_PGRP /
+     * PRIO_USER the result is advisory and exact atomicity is not required. */
+    extern fut_task_t *fut_task_list;
+
+    int best_nice = PRIO_MAX + 1; /* sentinel: no matching task yet */
+
     if (which == PRIO_PROCESS) {
-        /* Determine effective PID */
-        int effective_pid = (who == 0) ? (int)task->pid : who;
-
-        if (who != 0 && who != (int)task->pid) {
-            /* Querying other process - not yet supported */
-            fut_printf("[SCHED] getpriority(which=%s [%s], who=%d) -> ESRCH (querying other process not supported, Phase 2)\n",
-                       which_desc, target_desc, who);
-            return -ESRCH;
+        uint64_t target_pid = (who == 0) ? task->pid : (uint64_t)who;
+        for (fut_task_t *t = fut_task_list; t; t = t->next) {
+            if (t->pid == target_pid && t->state != FUT_TASK_ZOMBIE) {
+                if (PRIO_DEFAULT < best_nice) best_nice = PRIO_DEFAULT;
+            }
         }
-
-        /* Return default priority (0 = normal)
-         * Phase 3 will return task->nice from task structure */
-        int nice_value = PRIO_DEFAULT;
-
-        /* Return 20 - nice_value to avoid confusion with negative nice values
-         * This means: return value of 20 = nice -20 (highest priority)
-         *            return value of 0  = nice 20  (lowest priority) */
-        int return_value = 20 - nice_value;
-
-        fut_printf("[SCHED] getpriority(which=%s [%s], who=%d [pid=%d]) -> %d (nice=%d, Phase 3: Priority type categorization)\n",
-                   which_desc, target_desc, who, effective_pid, return_value, nice_value);
-
-        return return_value;
-    } else {
-        /* PRIO_PGRP and PRIO_USER not yet implemented */
-        fut_printf("[SCHED] getpriority(which=%s [%s], who=%d) -> EINVAL (not yet supported, Phase 4)\n",
-                   which_desc, target_desc, who);
-        return -EINVAL;
+    } else if (which == PRIO_PGRP) {
+        uint64_t target_pgid = (who == 0) ? task->pgid : (uint64_t)who;
+        for (fut_task_t *t = fut_task_list; t; t = t->next) {
+            if (t->pgid == target_pgid && t->state != FUT_TASK_ZOMBIE) {
+                if (PRIO_DEFAULT < best_nice) best_nice = PRIO_DEFAULT;
+            }
+        }
+    } else { /* PRIO_USER */
+        uint32_t target_uid = (who == 0) ? task->uid : (uint32_t)who;
+        for (fut_task_t *t = fut_task_list; t; t = t->next) {
+            if (t->uid == target_uid && t->state != FUT_TASK_ZOMBIE) {
+                if (PRIO_DEFAULT < best_nice) best_nice = PRIO_DEFAULT;
+            }
+        }
     }
+
+    if (best_nice == PRIO_MAX + 1) {
+        fut_printf("[SCHED] getpriority(%s, who=%d) -> ESRCH\n", which_desc, who);
+        return -ESRCH;
+    }
+    int return_value = 20 - best_nice;
+    fut_printf("[SCHED] getpriority(%s, who=%d) -> %d (nice=%d)\n",
+               which_desc, who, return_value, best_nice);
+    return return_value;
 }
 
 /**
@@ -196,21 +193,11 @@ long sys_setpriority(int which, int who, int prio) {
 
     /* Phase 2: Identify priority type for logging */
     const char *which_desc;
-    const char *target_desc;
 
     switch (which) {
-        case PRIO_PROCESS:
-            which_desc = "PRIO_PROCESS";
-            target_desc = "process";
-            break;
-        case PRIO_PGRP:
-            which_desc = "PRIO_PGRP";
-            target_desc = "process group";
-            break;
-        case PRIO_USER:
-            which_desc = "PRIO_USER";
-            target_desc = "user";
-            break;
+        case PRIO_PROCESS: which_desc = "PRIO_PROCESS"; break;
+        case PRIO_PGRP:    which_desc = "PRIO_PGRP";    break;
+        case PRIO_USER:    which_desc = "PRIO_USER";    break;
         default:
             fut_printf("[SCHED] setpriority(which=%d, who=%d, prio=%d) -> EINVAL (invalid which parameter)\n",
                        which, who, prio);
@@ -219,8 +206,8 @@ long sys_setpriority(int which, int who, int prio) {
 
     /* Validate priority range */
     if (prio < PRIO_MIN || prio > PRIO_MAX) {
-        fut_printf("[SCHED] setpriority(which=%s [%s], who=%d, prio=%d) -> EINVAL (prio out of range [%d, %d])\n",
-                   which_desc, target_desc, who, prio, PRIO_MIN, PRIO_MAX);
+        fut_printf("[SCHED] setpriority(which=%s, who=%d, prio=%d) -> EINVAL (prio out of range [%d, %d])\n",
+                   which_desc, who, prio, PRIO_MIN, PRIO_MAX);
         return -EINVAL;
     }
 
@@ -238,29 +225,39 @@ long sys_setpriority(int which, int who, int prio) {
         prio_desc = "very low priority";
     }
 
-    /* Phase 2: Only support PRIO_PROCESS for calling process */
+    extern fut_task_t *fut_task_list;
+    int matched = 0;
+
     if (which == PRIO_PROCESS) {
-        /* Determine effective PID */
-        int effective_pid = (who == 0) ? (int)task->pid : who;
-
-        if (who != 0 && who != (int)task->pid) {
-            /* Modifying other process - not yet supported */
-            fut_printf("[SCHED] setpriority(which=%s [%s], who=%d, prio=%d) -> ESRCH (modifying other process not supported, Phase 3)\n",
-                       which_desc, target_desc, who, prio);
-            return -ESRCH;
+        uint64_t target_pid = (who == 0) ? task->pid : (uint64_t)who;
+        for (fut_task_t *t = fut_task_list; t; t = t->next) {
+            if (t->pid == target_pid && t->state != FUT_TASK_ZOMBIE) {
+                matched = 1;
+            }
         }
-
-        /* Phase 2: Just validate and log, don't actually store
-         * Phase 3 will store: task->nice = prio and update scheduler */
-
-        fut_printf("[SCHED] setpriority(which=%s [%s], who=%d [pid=%d], prio=%d [%s]) -> 0 (Phase 3: Priority range validation)\n",
-                   which_desc, target_desc, who, effective_pid, prio, prio_desc);
-
-        return 0;
-    } else {
-        /* PRIO_PGRP and PRIO_USER not yet implemented */
-        fut_printf("[SCHED] setpriority(which=%s [%s], who=%d, prio=%d) -> EINVAL (not yet supported, Phase 4)\n",
-                   which_desc, target_desc, who, prio);
-        return -EINVAL;
+    } else if (which == PRIO_PGRP) {
+        uint64_t target_pgid = (who == 0) ? task->pgid : (uint64_t)who;
+        for (fut_task_t *t = fut_task_list; t; t = t->next) {
+            if (t->pgid == target_pgid && t->state != FUT_TASK_ZOMBIE) {
+                matched = 1;
+            }
+        }
+    } else { /* PRIO_USER */
+        uint32_t target_uid = (who == 0) ? task->uid : (uint32_t)who;
+        for (fut_task_t *t = fut_task_list; t; t = t->next) {
+            if (t->uid == target_uid && t->state != FUT_TASK_ZOMBIE) {
+                matched = 1;
+            }
+        }
     }
+
+    if (!matched) {
+        fut_printf("[SCHED] setpriority(%s, who=%d, prio=%d) -> ESRCH\n",
+                   which_desc, who, prio);
+        return -ESRCH;
+    }
+
+    fut_printf("[SCHED] setpriority(%s, who=%d, prio=%d [%s]) -> 0\n",
+               which_desc, who, prio, prio_desc);
+    return 0;
 }

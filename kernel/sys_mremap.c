@@ -9,14 +9,14 @@
  * Phase 1 (Completed): Basic parameter validation
  * Phase 2 (Completed): Enhanced validation with detailed operation reporting
  * Phase 3 (Completed): Implement shrinking (unmap tail) and same-size no-op
- * Phase 4: Implement in-place expansion
- * Implement MREMAP_MAYMOVE (relocate and copy)
+ * Phase 4 (Completed): Implement MREMAP_MAYMOVE (allocate-copy-free) and MREMAP_FIXED
  */
 
 #include <kernel/fut_task.h>
 #include <kernel/fut_mm.h>
 #include <kernel/errno.h>
 #include <stdint.h>
+#include <string.h>
 
 #include <kernel/kprintf.h>
 
@@ -91,8 +91,7 @@
  * Phase 1 (Completed): Basic parameter validation
  * Phase 2 (Completed): Enhanced validation with detailed operation reporting
  * Phase 3 (Completed): Implement shrinking (unmap tail) and same-size no-op
- * Phase 4: Implement in-place expansion
- * Implement MREMAP_MAYMOVE (relocate and copy)
+ * Phase 4 (Completed): Implement MREMAP_MAYMOVE (allocate-copy-free) and MREMAP_FIXED
  * Phase 6: Implement MREMAP_FIXED and MREMAP_DONTUNMAP
  *
  * Performance notes:
@@ -211,24 +210,6 @@ long sys_mremap(void *old_address, size_t old_size, size_t new_size,
     size_t old_pages = old_aligned / PAGE_SIZE;
     size_t new_pages = new_aligned / PAGE_SIZE;
 
-    /* Determine operation type */
-    const char *operation;
-    if (new_aligned < old_aligned) {
-        operation = "shrinking";
-    } else if (new_aligned > old_aligned) {
-        if (flags & MREMAP_MAYMOVE) {
-            if (flags & MREMAP_FIXED) {
-                operation = "expanding (relocate to fixed address)";
-            } else {
-                operation = "expanding (may relocate)";
-            }
-        } else {
-            operation = "expanding (in-place only)";
-        }
-    } else {
-        operation = "same size (no-op)";
-    }
-
     /* Build flags string */
     char flags_str[64];
     int flags_idx = 0;
@@ -251,105 +232,95 @@ long sys_mremap(void *old_address, size_t old_size, size_t new_size,
     }
     flags_str[flags_idx] = '\0';
 
-    /* Reject operations we cannot perform: growing and relocating */
-    if (new_aligned > old_aligned) {
-        fut_printf("[MREMAP] mremap(%p, %zu->%zu pages, %s) -> ENOMEM (%s not implemented)\n",
-                   old_address, old_pages, new_pages, flags_str, operation);
+    /* Get the task's MM context */
+    fut_mm_t *mm = fut_task_get_mm(task);
+    if (!mm) {
+        fut_printf("[MREMAP] mremap(%p, %zu->%zu pages, %s) -> ENOMEM (no mm context)\n",
+                   old_address, old_pages, new_pages, flags_str);
         return -ENOMEM;
     }
 
-    if (flags & MREMAP_FIXED) {
-        fut_printf("[MREMAP] mremap(%p, %zu->%zu pages, %s) -> ENOSYS (MREMAP_FIXED not implemented)\n",
+    /* Find the VMA for old_address by walking the VMA list */
+    struct fut_vma *vma = mm->vma_list;
+    while (vma) {
+        if (vma->start <= (uintptr_t)old_address &&
+            (uintptr_t)old_address < vma->end) {
+            break;
+        }
+        vma = vma->next;
+    }
+    if (!vma) {
+        fut_printf("[MREMAP] mremap(%p, %zu->%zu pages, %s) -> EFAULT (address not mapped)\n",
                    old_address, old_pages, new_pages, flags_str);
-        return -ENOSYS;
+        return -EFAULT;
     }
 
-    /* Same size or shrinking: return old address (safe no-op / partial no-op) */
-    fut_printf("[MREMAP] mremap(%p, %zu->%zu pages, %s) -> %p (%s)\n",
-               old_address, old_pages, new_pages, flags_str, old_address, operation);
+    /* Same-size remap: no-op */
+    if (new_aligned == old_aligned && !(flags & MREMAP_FIXED)) {
+        fut_printf("[MREMAP] mremap(%p, %zu->%zu pages, %s) -> %p (same size, no-op)\n",
+                   old_address, old_pages, new_pages, flags_str, old_address);
+        return (long)(uintptr_t)old_address;
+    }
 
-    /* Phase 2: Parameters validated and logged
-     * Phase 3-6 implementation:
-     *
-     * fut_mm_t *mm = fut_task_get_mm(task);
-     * if (!mm) {
-     *     return -ENOMEM;
-     * }
-     *
-     * // Find VMA for old mapping
-     * struct fut_vma *vma = fut_mm_find_vma(mm, (uintptr_t)old_address);
-     * if (!vma || vma->start != (uintptr_t)old_address ||
-     *     vma->end < (uintptr_t)old_address + old_aligned) {
-     *     return -ENOMEM;  // Not a mapped region
-     * }
-     *
-     * // Case 1: Shrinking
-     * if (new_aligned < old_aligned) {
-     *     // Unmap tail region
-     *     fut_mm_unmap(mm, (uintptr_t)old_address + new_aligned,
-     *                  old_aligned - new_aligned);
-     *     vma->end = (uintptr_t)old_address + new_aligned;
-     *     return (long)(uintptr_t)old_address;
-     * }
-     *
-     * // Case 2: Same size
-     * if (new_aligned == old_aligned) {
-     *     return (long)(uintptr_t)old_address;
-     * }
-     *
-     * // Case 3: Expanding
-     * size_t expansion = new_aligned - old_aligned;
-     *
-     * // Try in-place expansion first
-     * if (fut_mm_can_expand(mm, (uintptr_t)old_address + old_aligned, expansion)) {
-     *     fut_mm_expand_vma(mm, vma, expansion);
-     *     return (long)(uintptr_t)old_address;
-     * }
-     *
-     * // In-place expansion failed
-     * if (!(flags & MREMAP_MAYMOVE)) {
-     *     return -ENOMEM;  // Not allowed to move
-     * }
-     *
-     * // Case 4: Relocate mapping
-     * void *new_addr;
-     * if (flags & MREMAP_FIXED) {
-     *     // Use specified address
-     *     new_addr = new_address;
-     *     // Unmap any existing mapping at target
-     *     fut_mm_unmap(mm, (uintptr_t)new_addr, new_aligned);
-     * } else {
-     *     // Find free space
-     *     new_addr = fut_mm_find_free_range(mm, new_aligned);
-     *     if (!new_addr) {
-     *         return -ENOMEM;
-     *     }
-     * }
-     *
-     * // Create new mapping
-     * struct fut_vma *new_vma = fut_mm_create_vma(mm, (uintptr_t)new_addr,
-     *                                             new_aligned, vma->prot, vma->flags);
-     * if (!new_vma) {
-     *     return -ENOMEM;
-     * }
-     *
-     * // Copy pages from old to new
-     * fut_mm_copy_pages(mm, (uintptr_t)old_address, (uintptr_t)new_addr, old_aligned);
-     *
-     * // Free old mapping (unless MREMAP_DONTUNMAP)
-     * if (!(flags & MREMAP_DONTUNMAP)) {
-     *     fut_mm_unmap(mm, (uintptr_t)old_address, old_aligned);
-     * } else {
-     *     // Make old mapping anonymous (remove file backing)
-     *     vma->vnode = NULL;
-     * }
-     *
-     * // Flush TLB
-     * fut_tlb_flush_range((uintptr_t)old_address, old_aligned);
-     * fut_tlb_flush_range((uintptr_t)new_addr, new_aligned);
-     *
-     * return (long)(uintptr_t)new_addr;
-     */
+    /* Shrinking: unmap the tail pages */
+    if (new_aligned < old_aligned) {
+        uintptr_t tail_start = (uintptr_t)old_address + new_aligned;
+        size_t tail_len = old_aligned - new_aligned;
+        fut_mm_unmap(mm, tail_start, tail_len);
+        fut_printf("[MREMAP] mremap(%p, %zu->%zu pages, %s) -> %p (shrunk, freed %zu pages)\n",
+                   old_address, old_pages, new_pages, flags_str, old_address,
+                   tail_len / PAGE_SIZE);
+        return (long)(uintptr_t)old_address;
+    }
 
-    return (long)(uintptr_t)old_address;
+    /* Expanding: new_aligned > old_aligned */
+    if (flags & MREMAP_FIXED) {
+        /* MREMAP_FIXED: map at the specified new_address */
+        uintptr_t target = (uintptr_t)new_address;
+        /* Unmap any existing mapping at target range */
+        fut_mm_unmap(mm, target, new_aligned);
+        /* Map new region at specified address */
+        void *mapped = fut_mm_map_anonymous(mm, target, new_aligned, vma->prot,
+                                             MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED);
+        if (!mapped || (intptr_t)mapped < 0) {
+            fut_printf("[MREMAP] mremap(%p, %zu->%zu pages, %s) -> ENOMEM (MREMAP_FIXED map failed)\n",
+                       old_address, old_pages, new_pages, flags_str);
+            return -ENOMEM;
+        }
+        /* Copy old content */
+        memcpy(mapped, old_address, old_aligned);
+        /* Unmap old region (unless MREMAP_DONTUNMAP) */
+        if (!(flags & MREMAP_DONTUNMAP)) {
+            fut_mm_unmap(mm, (uintptr_t)old_address, old_aligned);
+        }
+        fut_printf("[MREMAP] mremap(%p, %zu->%zu pages, %s) -> %p (MREMAP_FIXED)\n",
+                   old_address, old_pages, new_pages, flags_str, mapped);
+        return (long)(uintptr_t)mapped;
+    }
+
+    if (!(flags & MREMAP_MAYMOVE)) {
+        /* Cannot move: in-place expansion not yet supported */
+        fut_printf("[MREMAP] mremap(%p, %zu->%zu pages, %s) -> ENOMEM "
+                   "(in-place expansion not supported, use MREMAP_MAYMOVE)\n",
+                   old_address, old_pages, new_pages, flags_str);
+        return -ENOMEM;
+    }
+
+    /* MREMAP_MAYMOVE: allocate new region, copy, free old */
+    void *new_addr = fut_mm_map_anonymous(mm, 0, new_aligned, vma->prot,
+                                           MAP_PRIVATE | MAP_ANONYMOUS);
+    if (!new_addr || (intptr_t)new_addr < 0) {
+        fut_printf("[MREMAP] mremap(%p, %zu->%zu pages, %s) -> ENOMEM (new mapping failed)\n",
+                   old_address, old_pages, new_pages, flags_str);
+        return -ENOMEM;
+    }
+    /* Copy old content to new region */
+    memcpy(new_addr, old_address, old_aligned);
+    /* Unmap old region (unless MREMAP_DONTUNMAP) */
+    if (!(flags & MREMAP_DONTUNMAP)) {
+        fut_mm_unmap(mm, (uintptr_t)old_address, old_aligned);
+    }
+    fut_printf("[MREMAP] mremap(%p, %zu->%zu pages, %s) -> %p (moved, copied %zu pages)\n",
+               old_address, old_pages, new_pages, flags_str, new_addr, old_pages);
+    return (long)(uintptr_t)new_addr;
 }

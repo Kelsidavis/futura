@@ -1758,6 +1758,11 @@ ssize_t fut_vfs_write(int fd, const void *buf, size_t size) {
         return -EPERM;
     }
 
+    /* O_APPEND: atomically seek to end before each write */
+    if (file->flags & O_APPEND) {
+        file->offset = file->vnode->size;
+    }
+
     VFSDBG("[vfs-write] calling vnode->ops->write\n");
     ssize_t ret = file->vnode->ops->write(file->vnode, buf, size, file->offset);
     VFSDBG("[vfs-write] vnode->ops->write returned %lld\n", (long long)ret);

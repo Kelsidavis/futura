@@ -1615,6 +1615,20 @@ int fut_vfs_open(const char *path, int flags, int mode) {
         }
     }
 
+    /* O_TRUNC: truncate existing regular files to zero length */
+    if ((flags & O_TRUNC) && !created && vnode->type == VN_REG) {
+        if (vnode->ops && vnode->ops->truncate) {
+            int trunc_ret = vnode->ops->truncate(vnode, 0);
+            if (trunc_ret < 0) {
+                VFSDBG("[VFS-OPEN] O_TRUNC failed for '%s': %d\n", path, trunc_ret);
+                fut_free(file);
+                release_lookup_ref(vnode);
+                return trunc_ret;
+            }
+            file->offset = 0;  /* Reset offset after truncation */
+        }
+    }
+
     /* Allocate file descriptor in task's FD table */
     int fd = alloc_fd_for_task(task, file);
     if (fd < 0) {

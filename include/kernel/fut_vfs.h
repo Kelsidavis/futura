@@ -355,6 +355,58 @@ struct fut_vnode_ops {
      *         -EACCES: permission denied
      */
     int (*rename)(struct fut_vnode *parent, const char *oldname, const char *newname);
+
+    /**
+     * Set extended attribute on a vnode.
+     *
+     * @param vnode  Target vnode
+     * @param name   Attribute name (e.g. "user.comment")
+     * @param value  Attribute value bytes
+     * @param size   Length of value in bytes
+     * @param flags  0, XATTR_CREATE, or XATTR_REPLACE
+     * @return 0 on success, negative error code on failure
+     *         -EEXIST: XATTR_CREATE and attribute already exists
+     *         -ENODATA: XATTR_REPLACE and attribute doesn't exist
+     *         -ENOSPC: no space for new attribute
+     *         -ERANGE: name or value too large
+     */
+    int (*setxattr)(struct fut_vnode *vnode, const char *name,
+                    const void *value, size_t size, int flags);
+
+    /**
+     * Get extended attribute from a vnode.
+     *
+     * @param vnode  Target vnode
+     * @param name   Attribute name
+     * @param value  Buffer for attribute value (NULL to query size)
+     * @param size   Size of value buffer (0 to query size)
+     * @return Attribute size on success, negative error code on failure
+     *         -ENODATA: attribute not found
+     *         -ERANGE: buffer too small
+     */
+    ssize_t (*getxattr)(struct fut_vnode *vnode, const char *name,
+                        void *value, size_t size);
+
+    /**
+     * List extended attribute names on a vnode.
+     *
+     * @param vnode  Target vnode
+     * @param list   Buffer for null-separated name list (NULL to query size)
+     * @param size   Size of list buffer (0 to query size)
+     * @return Total byte length of name list on success, negative error code on failure
+     *         -ERANGE: buffer too small
+     */
+    ssize_t (*listxattr)(struct fut_vnode *vnode, char *list, size_t size);
+
+    /**
+     * Remove an extended attribute from a vnode.
+     *
+     * @param vnode  Target vnode
+     * @param name   Attribute name to remove
+     * @return 0 on success, negative error code on failure
+     *         -ENODATA: attribute not found
+     */
+    int (*removexattr)(struct fut_vnode *vnode, const char *name);
 };
 
 /* ============================================================

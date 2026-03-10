@@ -15,12 +15,82 @@
 #include <kernel/fut_task.h>
 #include <kernel/errno.h>
 #include <kernel/fut_vfs.h>
+#include <kernel/fut_memory.h>
 #include <stdint.h>
 #include <stddef.h>
 #include <string.h>
 
 #include <kernel/kprintf.h>
 #include <kernel/uaccess.h>
+
+/* ============================================================================
+ * Internal VFS helpers for xattr dispatch
+ * ============================================================================ */
+
+/* Call setxattr on the vnode obtained from path (follows symlinks). */
+static long vnode_setxattr_by_path(const char *path_buf, const char *name,
+                                   const void *value, size_t size, int flags) {
+    struct fut_vnode *vnode = NULL;
+    int ret = fut_vfs_lookup(path_buf, &vnode);
+    if (ret < 0) return (ret == -ENOENT) ? -ENOENT : ret;
+    if (!vnode->ops || !vnode->ops->setxattr) {
+        fut_vnode_unref(vnode);
+        return -ENOTSUP;
+    }
+    ret = vnode->ops->setxattr(vnode, name, value, size, flags);
+    fut_vnode_unref(vnode);
+    return ret;
+}
+
+/* Call getxattr on the vnode obtained from path (follows symlinks). */
+static ssize_t vnode_getxattr_by_path(const char *path_buf, const char *name,
+                                      void *kbuf, size_t size) {
+    struct fut_vnode *vnode = NULL;
+    int ret = fut_vfs_lookup(path_buf, &vnode);
+    if (ret < 0) return (ret == -ENOENT) ? -ENOENT : ret;
+    if (!vnode->ops || !vnode->ops->getxattr) {
+        fut_vnode_unref(vnode);
+        return -ENOTSUP;
+    }
+    ssize_t r = vnode->ops->getxattr(vnode, name, kbuf, size);
+    fut_vnode_unref(vnode);
+    return r;
+}
+
+/* Call listxattr on the vnode obtained from path (follows symlinks). */
+static ssize_t vnode_listxattr_by_path(const char *path_buf, char *kbuf, size_t size) {
+    struct fut_vnode *vnode = NULL;
+    int ret = fut_vfs_lookup(path_buf, &vnode);
+    if (ret < 0) return (ret == -ENOENT) ? -ENOENT : ret;
+    if (!vnode->ops || !vnode->ops->listxattr) {
+        fut_vnode_unref(vnode);
+        return (ssize_t)0;  /* No xattrs supported: return empty list */
+    }
+    ssize_t r = vnode->ops->listxattr(vnode, kbuf, size);
+    fut_vnode_unref(vnode);
+    return r;
+}
+
+/* Call removexattr on the vnode obtained from path (follows symlinks). */
+static long vnode_removexattr_by_path(const char *path_buf, const char *name) {
+    struct fut_vnode *vnode = NULL;
+    int ret = fut_vfs_lookup(path_buf, &vnode);
+    if (ret < 0) return (ret == -ENOENT) ? -ENOENT : ret;
+    if (!vnode->ops || !vnode->ops->removexattr) {
+        fut_vnode_unref(vnode);
+        return -ENODATA;
+    }
+    ret = vnode->ops->removexattr(vnode, name);
+    fut_vnode_unref(vnode);
+    return ret;
+}
+
+/* Resolve fd to vnode (caller must not unref — vnode is owned by the file). */
+static struct fut_vnode *vnode_from_fd(struct fut_task *task, int fd) {
+    if (fd < 0 || fd >= task->max_fds) return NULL;
+    struct fut_file *file = vfs_get_file_from_task(task, fd);
+    return file ? file->vnode : NULL;
+}
 
 /* ENODATA (61) provided by errno.h for missing xattr */
 
@@ -279,13 +349,20 @@ long sys_setxattr(const char *path, const char *name, const void *value,
         return ret;
     }
 
-    /* Phase 1: Stub - accept and log */
-    fut_printf("[XATTR] setxattr(path='%s', name='%s', size=%zu [%s], flags=%s, pid=%d) "
-               "-> 0 (Phase 1 stub - not actually stored yet)\n",
-               path_buf, name_buf, size, xattr_get_size_desc(size),
-               xattr_get_flags_desc(flags), task->pid);
+    /* Copy value from userspace if needed */
+    void *kvalue = NULL;
+    if (size > 0 && value) {
+        kvalue = fut_malloc(size);
+        if (!kvalue) return -ENOMEM;
+        if (fut_copy_from_user(kvalue, value, size) != 0) {
+            fut_free(kvalue);
+            return -EFAULT;
+        }
+    }
 
-    return 0;
+    ret = vnode_setxattr_by_path(path_buf, name_buf, kvalue, size, flags);
+    if (kvalue) fut_free(kvalue);
+    return ret;
 }
 
 /**
@@ -317,12 +394,20 @@ long sys_lsetxattr(const char *path, const char *name, const void *value,
         return ret;
     }
 
-    fut_printf("[XATTR] lsetxattr(path='%s', name='%s', size=%zu [%s], flags=%s, pid=%d) "
-               "-> 0 (Phase 1 stub - symlink variant)\n",
-               path_buf, name_buf, size, xattr_get_size_desc(size),
-               xattr_get_flags_desc(flags), task->pid);
-
-    return 0;
+    /* lsetxattr operates on the symlink itself; fut_vfs_lookup follows symlinks.
+     * Until a no-follow VFS path exists, we fall through to the follow variant. */
+    void *kvalue = NULL;
+    if (size > 0 && value) {
+        kvalue = fut_malloc(size);
+        if (!kvalue) return -ENOMEM;
+        if (fut_copy_from_user(kvalue, value, size) != 0) {
+            fut_free(kvalue);
+            return -EFAULT;
+        }
+    }
+    ret = vnode_setxattr_by_path(path_buf, name_buf, kvalue, size, flags);
+    if (kvalue) fut_free(kvalue);
+    return ret;
 }
 
 /**
@@ -358,11 +443,22 @@ long sys_fsetxattr(int fd, const char *name, const void *value,
         return ret;
     }
 
-    fut_printf("[XATTR] fsetxattr(fd=%d, name='%s', size=%zu [%s], flags=%s, pid=%d) "
-               "-> 0 (Phase 1 stub)\n", fd, name_buf, size, xattr_get_size_desc(size),
-               xattr_get_flags_desc(flags), task->pid);
+    struct fut_vnode *vnode = vnode_from_fd(task, fd);
+    if (!vnode) return -EBADF;
+    if (!vnode->ops || !vnode->ops->setxattr) return -ENOTSUP;
 
-    return 0;
+    void *kvalue = NULL;
+    if (size > 0 && value) {
+        kvalue = fut_malloc(size);
+        if (!kvalue) return -ENOMEM;
+        if (fut_copy_from_user(kvalue, value, size) != 0) {
+            fut_free(kvalue);
+            return -EFAULT;
+        }
+    }
+    ret = vnode->ops->setxattr(vnode, name_buf, kvalue, size, flags);
+    if (kvalue) fut_free(kvalue);
+    return ret;
 }
 
 /**
@@ -390,8 +486,6 @@ long sys_getxattr(const char *path, const char *name, void *value, size_t size) 
         return -ESRCH;
     }
 
-    (void)value;  /* Suppress unused warning for Phase 1 stub */
-
     if (!path || !name) {
         return -EINVAL;
     }
@@ -403,11 +497,21 @@ long sys_getxattr(const char *path, const char *name, void *value, size_t size) 
         return ret;
     }
 
-    fut_printf("[XATTR] getxattr(path='%s', name='%s', size=%zu, pid=%d) "
-               "-> ENODATA (Phase 1 stub - no storage yet)\n",
-               path_buf, name_buf, size, task->pid);
+    /* Query size first, then copy to user */
+    ssize_t attr_size = vnode_getxattr_by_path(path_buf, name_buf, NULL, 0);
+    if (attr_size < 0) return (long)attr_size;
+    if (size == 0) return (long)attr_size;
+    if ((size_t)attr_size > size) return -ERANGE;
 
-    return -ENODATA;
+    void *kbuf = fut_malloc((size_t)attr_size + 1);
+    if (!kbuf) return -ENOMEM;
+    ssize_t got = vnode_getxattr_by_path(path_buf, name_buf, kbuf, (size_t)attr_size);
+    if (got < 0) { fut_free(kbuf); return (long)got; }
+    if (value && fut_copy_to_user(value, kbuf, (size_t)got) != 0) {
+        fut_free(kbuf); return -EFAULT;
+    }
+    fut_free(kbuf);
+    return (long)got;
 }
 
 /**
@@ -418,8 +522,6 @@ long sys_lgetxattr(const char *path, const char *name, void *value, size_t size)
     if (!task) {
         return -ESRCH;
     }
-
-    (void)value;
 
     if (!path || !name) {
         return -EINVAL;
@@ -432,11 +534,20 @@ long sys_lgetxattr(const char *path, const char *name, void *value, size_t size)
         return ret;
     }
 
-    fut_printf("[XATTR] lgetxattr(path='%s', name='%s', size=%zu, pid=%d) "
-               "-> ENODATA (Phase 1 stub - symlink variant)\n",
-               path_buf, name_buf, size, task->pid);
+    ssize_t attr_size = vnode_getxattr_by_path(path_buf, name_buf, NULL, 0);
+    if (attr_size < 0) return (long)attr_size;
+    if (size == 0) return (long)attr_size;
+    if ((size_t)attr_size > size) return -ERANGE;
 
-    return -ENODATA;
+    void *kbuf = fut_malloc((size_t)attr_size + 1);
+    if (!kbuf) return -ENOMEM;
+    ssize_t got = vnode_getxattr_by_path(path_buf, name_buf, kbuf, (size_t)attr_size);
+    if (got < 0) { fut_free(kbuf); return (long)got; }
+    if (value && fut_copy_to_user(value, kbuf, (size_t)got) != 0) {
+        fut_free(kbuf); return -EFAULT;
+    }
+    fut_free(kbuf);
+    return (long)got;
 }
 
 /**
@@ -447,8 +558,6 @@ long sys_fgetxattr(int fd, const char *name, void *value, size_t size) {
     if (!task) {
         return -ESRCH;
     }
-
-    (void)value;
 
     if (fd < 0) {
         return -EBADF;
@@ -464,10 +573,24 @@ long sys_fgetxattr(int fd, const char *name, void *value, size_t size) {
         return ret;
     }
 
-    fut_printf("[XATTR] fgetxattr(fd=%d, name='%s', size=%zu, pid=%d) "
-               "-> ENODATA (Phase 1 stub)\n", fd, name_buf, size, task->pid);
+    struct fut_vnode *vnode = vnode_from_fd(task, fd);
+    if (!vnode) return -EBADF;
+    if (!vnode->ops || !vnode->ops->getxattr) return -ENOTSUP;
 
-    return -ENODATA;
+    ssize_t attr_size = vnode->ops->getxattr(vnode, name_buf, NULL, 0);
+    if (attr_size < 0) return (long)attr_size;
+    if (size == 0) return (long)attr_size;
+    if ((size_t)attr_size > size) return -ERANGE;
+
+    void *kbuf = fut_malloc((size_t)attr_size + 1);
+    if (!kbuf) return -ENOMEM;
+    ssize_t got = vnode->ops->getxattr(vnode, name_buf, kbuf, (size_t)attr_size);
+    if (got < 0) { fut_free(kbuf); return (long)got; }
+    if (value && fut_copy_to_user(value, kbuf, (size_t)got) != 0) {
+        fut_free(kbuf); return -EFAULT;
+    }
+    fut_free(kbuf);
+    return (long)got;
 }
 
 /**
@@ -492,8 +615,6 @@ long sys_listxattr(const char *path, char *list, size_t size) {
         return -ESRCH;
     }
 
-    (void)list;
-
     if (!path) {
         return -EINVAL;
     }
@@ -504,11 +625,20 @@ long sys_listxattr(const char *path, char *list, size_t size) {
         return ret;
     }
 
-    fut_printf("[XATTR] listxattr(path='%s', size=%zu, pid=%d) "
-               "-> 0 (Phase 1 stub - no attributes yet)\n",
-               path_buf, size, task->pid);
+    ssize_t total = vnode_listxattr_by_path(path_buf, NULL, 0);
+    if (total < 0) return (long)total;
+    if (size == 0) return (long)total;
+    if ((size_t)total > size) return -ERANGE;
 
-    return 0;
+    char *kbuf = fut_malloc((size_t)total + 1);
+    if (!kbuf) return -ENOMEM;
+    ssize_t got = vnode_listxattr_by_path(path_buf, kbuf, (size_t)total);
+    if (got < 0) { fut_free(kbuf); return (long)got; }
+    if (got > 0 && list && fut_copy_to_user(list, kbuf, (size_t)got) != 0) {
+        fut_free(kbuf); return -EFAULT;
+    }
+    fut_free(kbuf);
+    return (long)got;
 }
 
 /**
@@ -520,8 +650,6 @@ long sys_llistxattr(const char *path, char *list, size_t size) {
         return -ESRCH;
     }
 
-    (void)list;
-
     if (!path) {
         return -EINVAL;
     }
@@ -532,11 +660,20 @@ long sys_llistxattr(const char *path, char *list, size_t size) {
         return ret;
     }
 
-    fut_printf("[XATTR] llistxattr(path='%s', size=%zu, pid=%d) "
-               "-> 0 (Phase 1 stub - symlink variant)\n",
-               path_buf, size, task->pid);
+    ssize_t total = vnode_listxattr_by_path(path_buf, NULL, 0);
+    if (total < 0) return (long)total;
+    if (size == 0) return (long)total;
+    if ((size_t)total > size) return -ERANGE;
 
-    return 0;
+    char *kbuf = fut_malloc((size_t)total + 1);
+    if (!kbuf) return -ENOMEM;
+    ssize_t got = vnode_listxattr_by_path(path_buf, kbuf, (size_t)total);
+    if (got < 0) { fut_free(kbuf); return (long)got; }
+    if (got > 0 && list && fut_copy_to_user(list, kbuf, (size_t)got) != 0) {
+        fut_free(kbuf); return -EFAULT;
+    }
+    fut_free(kbuf);
+    return (long)got;
 }
 
 /**
@@ -548,17 +685,28 @@ long sys_flistxattr(int fd, char *list, size_t size) {
         return -ESRCH;
     }
 
-    /* Suppress unused warnings for Phase 1 stub */
-    (void)list;
-
     if (fd < 0) {
         return -EBADF;
     }
 
-    fut_printf("[XATTR] flistxattr(fd=%d, size=%zu, pid=%d) "
-               "-> 0 (Phase 1 stub)\n", fd, size, task->pid);
+    struct fut_vnode *vnode = vnode_from_fd(task, fd);
+    if (!vnode) return -EBADF;
+    if (!vnode->ops || !vnode->ops->listxattr) return (ssize_t)0;
 
-    return 0;
+    ssize_t total = vnode->ops->listxattr(vnode, NULL, 0);
+    if (total < 0) return (long)total;
+    if (size == 0) return (long)total;
+    if ((size_t)total > size) return -ERANGE;
+
+    char *kbuf = fut_malloc((size_t)total + 1);
+    if (!kbuf) return -ENOMEM;
+    ssize_t got = vnode->ops->listxattr(vnode, kbuf, (size_t)total);
+    if (got < 0) { fut_free(kbuf); return (long)got; }
+    if (got > 0 && list && fut_copy_to_user(list, kbuf, (size_t)got) != 0) {
+        fut_free(kbuf); return -EFAULT;
+    }
+    fut_free(kbuf);
+    return (long)got;
 }
 
 /**
@@ -591,11 +739,7 @@ long sys_removexattr(const char *path, const char *name) {
         return ret;
     }
 
-    fut_printf("[XATTR] removexattr(path='%s', name='%s', pid=%d) "
-               "-> ENODATA (Phase 1 stub - no storage yet)\n",
-               path_buf, name_buf, task->pid);
-
-    return -ENODATA;
+    return vnode_removexattr_by_path(path_buf, name_buf);
 }
 
 /**
@@ -618,11 +762,7 @@ long sys_lremovexattr(const char *path, const char *name) {
         return ret;
     }
 
-    fut_printf("[XATTR] lremovexattr(path='%s', name='%s', pid=%d) "
-               "-> ENODATA (Phase 1 stub - symlink variant)\n",
-               path_buf, name_buf, task->pid);
-
-    return -ENODATA;
+    return vnode_removexattr_by_path(path_buf, name_buf);
 }
 
 /**
@@ -648,8 +788,8 @@ long sys_fremovexattr(int fd, const char *name) {
         return ret;
     }
 
-    fut_printf("[XATTR] fremovexattr(fd=%d, name='%s', pid=%d) "
-               "-> ENODATA (Phase 1 stub)\n", fd, name_buf, task->pid);
-
-    return -ENODATA;
+    struct fut_vnode *vnode = vnode_from_fd(task, fd);
+    if (!vnode) return -EBADF;
+    if (!vnode->ops || !vnode->ops->removexattr) return -ENODATA;
+    return vnode->ops->removexattr(vnode, name_buf);
 }

@@ -29,6 +29,14 @@ struct ramfs_dirent {
     struct ramfs_dirent *next;      /* Next entry in directory */
 };
 
+/* Extended attribute entry (name-value pair stored on a vnode) */
+struct ramfs_xattr {
+    char *name;                     /* Attribute name (heap-allocated) */
+    void *value;                    /* Attribute value bytes (heap-allocated) */
+    size_t size;                    /* Length of value in bytes */
+    struct ramfs_xattr *next;       /* Next entry in per-vnode list */
+};
+
 /* Per-vnode filesystem data */
 struct ramfs_node {
     uint64_t magic_guard_before;    /* Guard value to detect overflow into structure */
@@ -54,6 +62,7 @@ struct ramfs_node {
             char *target;           /* Target path string (not resolved) */
         } link;
     };
+    struct ramfs_xattr *xattrs;     /* Extended attributes list (NULL if none) */
     uint64_t magic_guard_after;     /* Guard value to detect overflow after structure */
 };
 
@@ -692,6 +701,9 @@ static int ramfs_create(struct fut_vnode *dir, const char *name, uint32_t mode, 
     node->mtime_ms = node->atime_ms;
     node->ctime_ms = node->atime_ms;
 
+    /* Initialize extended attributes list */
+    node->xattrs = NULL;
+
     /* Initialize file data */
     node->file.data = NULL;
     node->file.capacity = 0;
@@ -787,6 +799,9 @@ static int ramfs_mkdir(struct fut_vnode *dir, const char *name, uint32_t mode) {
     node->atime_ms = fut_get_ticks();
     node->mtime_ms = node->atime_ms;
     node->ctime_ms = node->atime_ms;
+
+    /* Initialize extended attributes list */
+    node->xattrs = NULL;
 
     /* Initialize directory */
     node->dir.entries = NULL;
@@ -1454,6 +1469,7 @@ static int ramfs_symlink(struct fut_vnode *parent, const char *linkpath, const c
     link_node->atime_ms = fut_get_ticks();
     link_node->mtime_ms = link_node->atime_ms;
     link_node->ctime_ms = link_node->atime_ms;
+    link_node->xattrs = NULL;
     link_node->link.target = target_buf;
     link_node->magic_guard_after = RAMFS_NODE_MAGIC;
 
@@ -1709,6 +1725,123 @@ static int ramfs_setattr(struct fut_vnode *vnode, const struct fut_stat *stat) {
     return 0;
 }
 
+/* ============================================================
+ *   Extended Attribute Operations
+ * ============================================================ */
+
+/* Flag constants mirroring userspace XATTR_CREATE / XATTR_REPLACE */
+#define RAMFS_XATTR_CREATE  0x1
+#define RAMFS_XATTR_REPLACE 0x2
+
+static int ramfs_setxattr(struct fut_vnode *vnode, const char *name,
+                          const void *value, size_t size, int flags) {
+    struct ramfs_node *node = (struct ramfs_node *)vnode->fs_data;
+    if (!node) return -EIO;
+
+    /* Search for an existing entry with this name */
+    struct ramfs_xattr *cur = node->xattrs;
+    while (cur) {
+        if (strcmp(cur->name, name) == 0) break;
+        cur = cur->next;
+    }
+
+    if (cur) {
+        /* Attribute already exists */
+        if (flags & RAMFS_XATTR_CREATE) return -EEXIST;
+        /* Replace value in-place */
+        void *new_val = fut_malloc(size);
+        if (!new_val && size > 0) return -ENOMEM;
+        fut_free(cur->value);
+        cur->value = new_val;
+        if (size > 0) memcpy(cur->value, value, size);
+        cur->size = size;
+    } else {
+        /* Attribute does not exist */
+        if (flags & RAMFS_XATTR_REPLACE) return -ENODATA;
+        /* Allocate new entry */
+        struct ramfs_xattr *entry = fut_malloc(sizeof(struct ramfs_xattr));
+        if (!entry) return -ENOMEM;
+        size_t name_len = strlen(name) + 1;
+        entry->name = fut_malloc(name_len);
+        if (!entry->name) { fut_free(entry); return -ENOMEM; }
+        memcpy(entry->name, name, name_len);
+        entry->value = (size > 0) ? fut_malloc(size) : NULL;
+        if (size > 0 && !entry->value) {
+            fut_free(entry->name);
+            fut_free(entry);
+            return -ENOMEM;
+        }
+        if (size > 0) memcpy(entry->value, value, size);
+        entry->size = size;
+        entry->next = node->xattrs;
+        node->xattrs = entry;
+    }
+
+    /* Update ctime on metadata change */
+    node->ctime_ms = fut_get_ticks();
+    return 0;
+}
+
+static ssize_t ramfs_getxattr(struct fut_vnode *vnode, const char *name,
+                              void *value, size_t size) {
+    struct ramfs_node *node = (struct ramfs_node *)vnode->fs_data;
+    if (!node) return -EIO;
+
+    for (struct ramfs_xattr *cur = node->xattrs; cur; cur = cur->next) {
+        if (strcmp(cur->name, name) != 0) continue;
+        /* Found: size=0 is a query for the required length */
+        if (size == 0) return (ssize_t)cur->size;
+        if (size < cur->size) return -ERANGE;
+        if (cur->size > 0) memcpy(value, cur->value, cur->size);
+        return (ssize_t)cur->size;
+    }
+    return -ENODATA;
+}
+
+static ssize_t ramfs_listxattr(struct fut_vnode *vnode, char *list, size_t size) {
+    struct ramfs_node *node = (struct ramfs_node *)vnode->fs_data;
+    if (!node) return -EIO;
+
+    /* Calculate total bytes needed: each name followed by a NUL byte */
+    size_t total = 0;
+    for (struct ramfs_xattr *cur = node->xattrs; cur; cur = cur->next) {
+        total += strlen(cur->name) + 1;
+    }
+
+    if (size == 0) return (ssize_t)total;
+    if (size < total) return -ERANGE;
+
+    char *p = list;
+    for (struct ramfs_xattr *cur = node->xattrs; cur; cur = cur->next) {
+        size_t n = strlen(cur->name) + 1;
+        memcpy(p, cur->name, n);
+        p += n;
+    }
+    return (ssize_t)total;
+}
+
+static int ramfs_removexattr(struct fut_vnode *vnode, const char *name) {
+    struct ramfs_node *node = (struct ramfs_node *)vnode->fs_data;
+    if (!node) return -EIO;
+
+    struct ramfs_xattr *prev = NULL;
+    struct ramfs_xattr *cur = node->xattrs;
+    while (cur) {
+        if (strcmp(cur->name, name) == 0) {
+            if (prev) prev->next = cur->next;
+            else node->xattrs = cur->next;
+            fut_free(cur->name);
+            if (cur->value) fut_free(cur->value);
+            fut_free(cur);
+            node->ctime_ms = fut_get_ticks();
+            return 0;
+        }
+        prev = cur;
+        cur = cur->next;
+    }
+    return -ENODATA;
+}
+
 /* Vnode operations structure - initialized at runtime to avoid relocation issues on ARM64 */
 static struct fut_vnode_ops ramfs_vnode_ops;
 
@@ -1733,6 +1866,10 @@ static void ramfs_init_vnode_ops(void) {
     ramfs_vnode_ops.symlink = ramfs_symlink;
     ramfs_vnode_ops.readlink = ramfs_readlink;
     ramfs_vnode_ops.rename = ramfs_rename;
+    ramfs_vnode_ops.setxattr = ramfs_setxattr;
+    ramfs_vnode_ops.getxattr = ramfs_getxattr;
+    ramfs_vnode_ops.listxattr = ramfs_listxattr;
+    ramfs_vnode_ops.removexattr = ramfs_removexattr;
 }
 
 /* ============================================================
@@ -1793,6 +1930,7 @@ static int ramfs_mount(const char *device, int flags, void *data, fut_handle_t b
     root_node->atime_ms = fut_get_ticks();
     root_node->mtime_ms = root_node->atime_ms;
     root_node->ctime_ms = root_node->atime_ms;
+    root_node->xattrs = NULL;
     root_node->magic_guard_after = RAMFS_NODE_MAGIC;
 
     /* Initialize root directory */

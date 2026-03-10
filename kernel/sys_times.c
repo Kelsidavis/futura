@@ -68,7 +68,7 @@ static inline int times_copy_to_user(void *dst, const void *src, size_t n) {
  * Phase 1 (Completed): Returns zero times and current tick count
  * Phase 2 (Completed): Enhanced validation and detailed time reporting
  * Phase 3 (Completed): Track and return actual CPU times from scheduler
- * Phase 4: Accumulate child times from wait4()/waitpid()
+ * Phase 4 (Completed): Accumulate child times from reaped children via child_cpu_ticks
  */
 long sys_times(struct tms *buf) {
     fut_task_t *task = fut_task_current();

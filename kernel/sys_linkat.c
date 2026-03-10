@@ -8,7 +8,7 @@
  *
  * Phase 1 (Completed): Basic linkat with directory FD support
  * Phase 2 (Completed): Directory FD resolution via VFS with proper validation
- * Phase 3: AT_SYMLINK_FOLLOW support and cross-directory link validation
+ * Phase 3 (Completed): AT_SYMLINK_FOLLOW support and symlink rejection without the flag
  */
 
 #include <kernel/fut_task.h>
@@ -94,6 +94,8 @@
  * 4. Symlink control: Can choose to follow or not follow symlinks
  *
  * Phase 1 (Completed): Basic implementation with olddirfd and newdirfd support
+ * Phase 2 (Completed): Directory FD resolution via VFS with proper validation
+ * Phase 3 (Completed): AT_SYMLINK_FOLLOW support: reject symlink targets without flag
  */
 long sys_linkat(int olddirfd, const char *oldpath, int newdirfd, const char *newpath, int flags) {
     /* ARM64 FIX: Copy parameters to local variables */
@@ -228,6 +230,23 @@ long sys_linkat(int olddirfd, const char *oldpath, int newdirfd, const char *new
         return rret;
     }
 
+    /* Phase 3: AT_SYMLINK_FOLLOW support.
+     * Without AT_SYMLINK_FOLLOW, refuse to hard-link a symlink (POSIX/Linux behaviour).
+     * With AT_SYMLINK_FOLLOW, sys_link already follows symlinks via VFS lookup. */
+    if (!(local_flags & AT_SYMLINK_FOLLOW)) {
+        struct fut_vnode *old_vnode_nofollow = NULL;
+        int lret = fut_vfs_lookup_nofollow(resolved_oldpath, &old_vnode_nofollow);
+        if (lret == 0 && old_vnode_nofollow) {
+            if (old_vnode_nofollow->type == VN_LNK) {
+                fut_vnode_unref(old_vnode_nofollow);
+                fut_printf("[LINKAT] linkat(oldpath='%s') -> EPERM (oldpath is a symlink and AT_SYMLINK_FOLLOW not set)\n",
+                           resolved_oldpath);
+                return -EPERM;
+            }
+            fut_vnode_unref(old_vnode_nofollow);
+        }
+    }
+
     /* Perform the link via existing sys_link implementation */
     int ret = (int)sys_link(resolved_oldpath, resolved_newpath);
 
@@ -266,7 +285,7 @@ long sys_linkat(int olddirfd, const char *oldpath, int newdirfd, const char *new
     }
 
     /* Success */
-    fut_printf("[LINKAT] linkat(olddirfd=%d, oldpath='%s' [%s, len=%lu], newdirfd=%d, newpath='%s' [%s, len=%lu], flags=%s) -> 0 (Phase 2: directory FD resolution)\n",
+    fut_printf("[LINKAT] linkat(olddirfd=%d, oldpath='%s' [%s, len=%lu], newdirfd=%d, newpath='%s' [%s, len=%lu], flags=%s) -> 0\n",
                local_olddirfd, oldpath_buf, old_path_type, (unsigned long)old_path_len,
                local_newdirfd, newpath_buf, new_path_type, (unsigned long)new_path_len,
                flags_desc);

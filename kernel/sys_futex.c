@@ -899,9 +899,9 @@ long sys_futex(uint32_t *uaddr, int op, uint32_t val,
  * Robust futexes handle the case where a thread dies while holding a lock.
  * The kernel walks the robust list on thread exit and wakes waiters.
  *
- * Phase 1: Stub - accepts parameters, returns success
- * Phase 2: Store robust list head in task structure
- * Phase 3: Walk robust list on thread exit and perform cleanup
+ * Phase 1 (Completed): Stub - accepts parameters, returns success
+ * Phase 2 (Completed): Store robust list head in thread structure with validation
+ * Phase 3 (Completed): Walk robust list on thread exit via exit_robust_list()
  *
  * Returns:
  *   - 0 on success
@@ -1028,8 +1028,8 @@ long sys_set_robust_list(struct robust_list_head *head, size_t len) {
  * Retrieves the robust list head for a given task. Requires appropriate
  * permissions to query other tasks.
  *
- * Phase 1: Stub - returns null pointer and zero length
- * Phase 2: Return actual robust list head from task structure
+ * Phase 1 (Completed): Stub - returns null pointer and zero length
+ * Phase 2 (Completed): Return actual robust list head from thread structure
  *
  * Returns:
  *   - 0 on success

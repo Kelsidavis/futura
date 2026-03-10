@@ -41,7 +41,7 @@
  * Phase 1 (Completed): Calls fut_vfs_stat() (same as stat)
  * Phase 2 (Completed): Enhanced validation and detailed file status reporting
  * Phase 3 (Completed): Call fut_vfs_lstat() to distinguish symlinks
- * Phase 4: Support AT_SYMLINK_NOFOLLOW flag in fstatat()
+ * Phase 4 (Completed): AT_SYMLINK_NOFOLLOW flag in fstatat() (implemented in sys_fstatat.c)
  *
  * Uses:
  * - File managers displaying symlink properties

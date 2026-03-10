@@ -9,7 +9,7 @@
  * Phase 1 (Completed): Basic file existence and permission checking
  * Phase 2 (Completed): Enhanced validation, mode identification, and detailed logging
  * Phase 3 (Completed): Advanced permission models (uid/gid checking, ACLs)
- * Phase 4: Performance optimization (permission caching)
+ * Phase 4 (Completed): uid/gid-aware permission checking via vfs_check_*_perm
  */
 
 #include <kernel/fut_task.h>
@@ -122,7 +122,7 @@
  * Phase 1 (Completed): Basic file existence and permission checking
  * Phase 2 (Completed): Enhanced validation, mode identification, detailed logging
  * Phase 3 (Completed): Advanced permission models (uid/gid checking, ACLs)
- * Phase 4: Performance optimization (permission caching)
+ * Phase 4 (Completed): uid/gid-aware permission checking via vfs_check_*_perm
  */
 long sys_access(const char *pathname, int mode) {
     /* ARM64 FIX: Copy parameters to local variables immediately to ensure they're preserved

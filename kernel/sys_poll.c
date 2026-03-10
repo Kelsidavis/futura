@@ -17,6 +17,9 @@
 #include <kernel/kprintf.h>
 #include <kernel/fut_memory.h>
 #include <kernel/debug_config.h>
+#include <kernel/eventfd.h>
+#include <kernel/fut_socket.h>
+#include <sys/epoll.h>
 
 /* Poll debugging (controlled via debug_config.h) */
 #define poll_printf(...) do { if (POLL_DEBUG) fut_printf(__VA_ARGS__); } while(0)
@@ -41,7 +44,7 @@
  *
  * Phase 1 (Completed): Stub implementation - returns all FDs as ready
  * Phase 2 (Completed): Enhanced validation and detailed event reporting
- * Phase 3 (Completed): Check actual FD readiness via VFS layer
+ * Phase 3 (Completed): Check actual FD readiness: eventfd, timerfd, signalfd, sockets, regular files
  * Phase 4: Add blocking support with wait queues
  * Integrate with epoll for efficient event notification
  */
@@ -262,18 +265,58 @@ long sys_poll(struct pollfd *fds, unsigned long nfds, int timeout) {
             continue;
         }
 
-        /* Phase 2: Still assumes all valid FDs are ready for requested events
-         * Phase 3 would check actual readiness via VFS/driver layer
-         */
-        if (kfds[i].events & POLLIN) {
-            kfds[i].revents |= POLLIN;
+        /* Phase 3: Check actual readiness via driver/VFS layer */
+        uint32_t epoll_req = 0;
+        if (kfds[i].events & POLLIN)  epoll_req |= EPOLLIN;
+        if (kfds[i].events & POLLOUT) epoll_req |= EPOLLOUT;
+        if (kfds[i].events & POLLPRI) epoll_req |= EPOLLPRI;
+
+        uint32_t epoll_ready = 0;
+        bool handled = false;
+
+        /* Eventfd: check counter > 0 */
+        if (!handled && fut_eventfd_poll(file, epoll_req, &epoll_ready))
+            handled = true;
+
+        /* Timerfd: check expiration counter > 0 */
+        if (!handled && fut_timerfd_poll(file, epoll_req, &epoll_ready))
+            handled = true;
+
+        /* Signalfd: check pending signals */
+        if (!handled && fut_signalfd_poll(file, epoll_req, &epoll_ready))
+            handled = true;
+
+        /* Socket: use socket-specific readiness */
+        if (!handled) {
+            fut_socket_t *socket = get_socket_from_fd(kfds[i].fd);
+            if (socket) {
+                int poll_events = 0;
+                if (kfds[i].events & POLLIN)  poll_events |= 0x1;
+                if (kfds[i].events & POLLOUT) poll_events |= 0x4;
+                int socket_ready = fut_socket_poll(socket, poll_events);
+                if (socket_ready & 0x1) epoll_ready |= EPOLLIN;
+                if (socket_ready & 0x4) epoll_ready |= EPOLLOUT;
+                handled = true;
+            }
         }
-        if (kfds[i].events & POLLOUT) {
-            kfds[i].revents |= POLLOUT;
+
+        /* Regular files are always ready for read/write */
+        if (!handled && file->vnode && file->vnode->type == VN_REG) {
+            if (epoll_req & EPOLLIN)  epoll_ready |= EPOLLIN;
+            if (epoll_req & EPOLLOUT) epoll_ready |= EPOLLOUT;
+            handled = true;
         }
-        if (kfds[i].events & POLLPRI) {
-            kfds[i].revents |= POLLPRI;
+
+        /* All other file types (pipes, char devs, etc.): assume ready */
+        if (!handled) {
+            if (epoll_req & EPOLLIN)  epoll_ready |= EPOLLIN;
+            if (epoll_req & EPOLLOUT) epoll_ready |= EPOLLOUT;
         }
+
+        /* Convert back to poll events */
+        if (epoll_ready & EPOLLIN)  kfds[i].revents |= POLLIN;
+        if (epoll_ready & EPOLLOUT) kfds[i].revents |= POLLOUT;
+        if (epoll_ready & EPOLLPRI) kfds[i].revents |= POLLPRI;
 
         if (kfds[i].revents != 0) {
             ready_count++;

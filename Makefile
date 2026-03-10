@@ -574,6 +574,9 @@ KERNEL_SOURCES := \
     kernel/sys_sched_advanced.c \
     kernel/sys_clock_advanced.c \
     kernel/sys_fileio_advanced.c \
+    kernel/sys_mman.c \
+    kernel/sys_cred_advanced.c \
+    kernel/sys_prlimit.c \
     kernel/video/virtio_gpu.c \
     drivers/tty/console.c \
     drivers/tty/tty_ldisc.c \
@@ -679,9 +682,6 @@ else ifeq ($(PLATFORM),arm64)
         tests/test_futfs.c \
         subsystems/futura_fs/futfs.c \
         subsystems/futura_fs/futfs_gc.c \
-        kernel/sys_mman.c \
-        kernel/sys_cred_advanced.c \
-        kernel/sys_prlimit.c \
         kernel/kernel_main.c \
         kernel/video/fb_mmio.c \
         kernel/video/virtio_gpu_mmio.c \

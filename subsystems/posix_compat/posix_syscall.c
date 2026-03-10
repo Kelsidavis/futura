@@ -211,6 +211,63 @@
 /* inotify_init1 (Linux x86_64 294) */
 #define SYS_inotify_init1    294
 
+/* time/itimer/clock (Linux x86_64) */
+#define SYS_getitimer        36
+#define SYS_setitimer        38
+/* These use Linux x86_64 numbers that don't conflict with Futura's custom scheme */
+#define SYS_sendfile         40
+#define SYS_fchdir           81
+#define SYS_setregid        114
+#define SYS_setresuid       117
+#define SYS_getresuid       118
+#define SYS_setresgid       119
+#define SYS_getresgid       120
+#define SYS_personality     135
+#define SYS_statfs          137
+#define SYS_fstatfs         138
+#define SYS_mlock           149
+#define SYS_munlock         150
+#define SYS_mlockall        151
+#define SYS_munlockall      152
+#define SYS_pivot_root      155
+#define SYS_adjtimex        159
+#define SYS_chroot          161
+#define SYS_sync            162
+#define SYS_acct            163
+#define SYS_settimeofday    164
+#define SYS_mount           165
+#define SYS_umount2         166
+#define SYS_ioprio_set      251
+#define SYS_ioprio_get      252
+#define SYS_set_tid_address 218
+#define SYS_timer_create    222
+#define SYS_timer_settime   223
+#define SYS_timer_gettime   224
+#define SYS_timer_getoverrun 225
+#define SYS_timer_delete    226
+#define SYS_clock_settime   227
+#define SYS_unshare         272
+#define SYS_set_robust_list 273
+#define SYS_get_robust_list 274
+#define SYS_sync_file_range 277
+#define SYS_epoll_pwait     281
+#define SYS_timerfd_create  283
+#define SYS_fallocate       285
+#define SYS_timerfd_settime 286
+#define SYS_timerfd_gettime 287
+#define SYS_prlimit64       302
+#define SYS_syncfs          306
+/* Syscalls whose Linux numbers conflict with Futura's custom scheme get
+ * extended Futura numbers (310+). The kernel functions are the same;
+ * only the dispatch slot differs from the Linux ABI. */
+#define SYS_vhangup         310  /* Linux: 111 (Futura: getpgrp) */
+#define SYS_setreuid        311  /* Linux: 113 (Futura: getppid) */
+#define SYS_capget          312  /* Linux: 125 (Futura: setpgid) */
+#define SYS_capset          313  /* Linux: 126 (Futura: getpgid) */
+#define SYS_clock_getres    314  /* Linux: 229 (Futura: epoll_ctl) */
+#define SYS_clock_nanosleep 315  /* Linux: 230 (Futura: epoll_wait) */
+#define SYS_sysinfo         316  /* Linux:  99 (Futura: getrusage) */
+
 #ifndef SYS_time_millis
 #define SYS_time_millis  400
 #endif
@@ -1267,6 +1324,390 @@ static int64_t sys_accept4_handler(uint64_t sockfd, uint64_t addr, uint64_t addr
                        (uint32_t *)(uintptr_t)addrlen, (int)flags);
 }
 
+/* ============================================================
+ *   Large syscall batch: time/cred/fs/mlock/misc handlers
+ * ============================================================ */
+
+static int64_t sys_getitimer_handler(uint64_t which, uint64_t value, uint64_t arg3,
+                                     uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg3; (void)arg4; (void)arg5; (void)arg6;
+    extern long sys_getitimer(int which, void *value);
+    return sys_getitimer((int)which, (void *)(uintptr_t)value);
+}
+
+static int64_t sys_setitimer_handler(uint64_t which, uint64_t value, uint64_t ovalue,
+                                     uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg4; (void)arg5; (void)arg6;
+    extern long sys_setitimer(int which, const void *value, void *ovalue);
+    return sys_setitimer((int)which, (const void *)(uintptr_t)value, (void *)(uintptr_t)ovalue);
+}
+
+static int64_t sys_sendfile_handler(uint64_t out_fd, uint64_t in_fd, uint64_t offset,
+                                    uint64_t count, uint64_t arg5, uint64_t arg6) {
+    (void)arg5; (void)arg6;
+    extern long sys_sendfile(int out_fd, int in_fd, uint64_t *offset, size_t count);
+    return sys_sendfile((int)out_fd, (int)in_fd, (uint64_t *)(uintptr_t)offset, (size_t)count);
+}
+
+static int64_t sys_fchdir_handler(uint64_t fd, uint64_t arg2, uint64_t arg3,
+                                   uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg2; (void)arg3; (void)arg4; (void)arg5; (void)arg6;
+    extern long sys_fchdir(int fd);
+    return sys_fchdir((int)fd);
+}
+
+static int64_t sys_vhangup_handler(uint64_t arg1, uint64_t arg2, uint64_t arg3,
+                                    uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg1; (void)arg2; (void)arg3; (void)arg4; (void)arg5; (void)arg6;
+    extern long sys_vhangup(void);
+    return sys_vhangup();
+}
+
+static int64_t sys_setreuid_handler(uint64_t ruid, uint64_t euid, uint64_t arg3,
+                                     uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg3; (void)arg4; (void)arg5; (void)arg6;
+    extern long sys_setreuid(uint32_t ruid, uint32_t euid);
+    return sys_setreuid((uint32_t)ruid, (uint32_t)euid);
+}
+
+static int64_t sys_setregid_handler(uint64_t rgid, uint64_t egid, uint64_t arg3,
+                                     uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg3; (void)arg4; (void)arg5; (void)arg6;
+    extern long sys_setregid(uint32_t rgid, uint32_t egid);
+    return sys_setregid((uint32_t)rgid, (uint32_t)egid);
+}
+
+static int64_t sys_setresuid_handler(uint64_t ruid, uint64_t euid, uint64_t suid,
+                                      uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg4; (void)arg5; (void)arg6;
+    extern long sys_setresuid(uint32_t ruid, uint32_t euid, uint32_t suid);
+    return sys_setresuid((uint32_t)ruid, (uint32_t)euid, (uint32_t)suid);
+}
+
+static int64_t sys_getresuid_handler(uint64_t ruid, uint64_t euid, uint64_t suid,
+                                      uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg4; (void)arg5; (void)arg6;
+    extern long sys_getresuid(uint32_t *ruid, uint32_t *euid, uint32_t *suid);
+    return sys_getresuid((uint32_t *)(uintptr_t)ruid, (uint32_t *)(uintptr_t)euid,
+                         (uint32_t *)(uintptr_t)suid);
+}
+
+static int64_t sys_setresgid_handler(uint64_t rgid, uint64_t egid, uint64_t sgid,
+                                      uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg4; (void)arg5; (void)arg6;
+    extern long sys_setresgid(uint32_t rgid, uint32_t egid, uint32_t sgid);
+    return sys_setresgid((uint32_t)rgid, (uint32_t)egid, (uint32_t)sgid);
+}
+
+static int64_t sys_getresgid_handler(uint64_t rgid, uint64_t egid, uint64_t sgid,
+                                      uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg4; (void)arg5; (void)arg6;
+    extern long sys_getresgid(uint32_t *rgid, uint32_t *egid, uint32_t *sgid);
+    return sys_getresgid((uint32_t *)(uintptr_t)rgid, (uint32_t *)(uintptr_t)egid,
+                         (uint32_t *)(uintptr_t)sgid);
+}
+
+static int64_t sys_capget_handler(uint64_t hdrp, uint64_t datap, uint64_t arg3,
+                                   uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg3; (void)arg4; (void)arg5; (void)arg6;
+    extern long sys_capget(void *hdrp, void *datap);
+    return sys_capget((void *)(uintptr_t)hdrp, (void *)(uintptr_t)datap);
+}
+
+static int64_t sys_capset_handler(uint64_t hdrp, uint64_t datap, uint64_t arg3,
+                                   uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg3; (void)arg4; (void)arg5; (void)arg6;
+    extern long sys_capset(void *hdrp, const void *datap);
+    return sys_capset((void *)(uintptr_t)hdrp, (const void *)(uintptr_t)datap);
+}
+
+static int64_t sys_personality_handler(uint64_t persona, uint64_t arg2, uint64_t arg3,
+                                        uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg2; (void)arg3; (void)arg4; (void)arg5; (void)arg6;
+    extern long sys_personality(unsigned long persona);
+    return sys_personality((unsigned long)persona);
+}
+
+static int64_t sys_statfs_handler(uint64_t path, uint64_t buf, uint64_t arg3,
+                                   uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg3; (void)arg4; (void)arg5; (void)arg6;
+    extern long sys_statfs(const char *path, void *buf);
+    return sys_statfs((const char *)(uintptr_t)path, (void *)(uintptr_t)buf);
+}
+
+static int64_t sys_fstatfs_handler(uint64_t fd, uint64_t buf, uint64_t arg3,
+                                    uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg3; (void)arg4; (void)arg5; (void)arg6;
+    extern long sys_fstatfs(int fd, void *buf);
+    return sys_fstatfs((int)fd, (void *)(uintptr_t)buf);
+}
+
+static int64_t sys_mlock_handler(uint64_t addr, uint64_t len, uint64_t arg3,
+                                   uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg3; (void)arg4; (void)arg5; (void)arg6;
+    extern long sys_mlock(const void *addr, size_t len);
+    return sys_mlock((const void *)(uintptr_t)addr, (size_t)len);
+}
+
+static int64_t sys_munlock_handler(uint64_t addr, uint64_t len, uint64_t arg3,
+                                    uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg3; (void)arg4; (void)arg5; (void)arg6;
+    extern long sys_munlock(const void *addr, size_t len);
+    return sys_munlock((const void *)(uintptr_t)addr, (size_t)len);
+}
+
+static int64_t sys_mlockall_handler(uint64_t flags, uint64_t arg2, uint64_t arg3,
+                                     uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg2; (void)arg3; (void)arg4; (void)arg5; (void)arg6;
+    extern long sys_mlockall(int flags);
+    return sys_mlockall((int)flags);
+}
+
+static int64_t sys_munlockall_handler(uint64_t arg1, uint64_t arg2, uint64_t arg3,
+                                       uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg1; (void)arg2; (void)arg3; (void)arg4; (void)arg5; (void)arg6;
+    extern long sys_munlockall(void);
+    return sys_munlockall();
+}
+
+static int64_t sys_pivot_root_handler(uint64_t new_root, uint64_t put_old, uint64_t arg3,
+                                       uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg3; (void)arg4; (void)arg5; (void)arg6;
+    extern long sys_pivot_root(const char *new_root, const char *put_old);
+    return sys_pivot_root((const char *)(uintptr_t)new_root, (const char *)(uintptr_t)put_old);
+}
+
+static int64_t sys_adjtimex_handler(uint64_t txc, uint64_t arg2, uint64_t arg3,
+                                     uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg2; (void)arg3; (void)arg4; (void)arg5; (void)arg6;
+    extern long sys_adjtimex(void *txc);
+    return sys_adjtimex((void *)(uintptr_t)txc);
+}
+
+static int64_t sys_chroot_handler(uint64_t path, uint64_t arg2, uint64_t arg3,
+                                   uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg2; (void)arg3; (void)arg4; (void)arg5; (void)arg6;
+    extern long sys_chroot(const char *path);
+    return sys_chroot((const char *)(uintptr_t)path);
+}
+
+static int64_t sys_sync_handler(uint64_t arg1, uint64_t arg2, uint64_t arg3,
+                                  uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg1; (void)arg2; (void)arg3; (void)arg4; (void)arg5; (void)arg6;
+    extern long sys_sync(void);
+    return sys_sync();
+}
+
+static int64_t sys_acct_handler(uint64_t filename, uint64_t arg2, uint64_t arg3,
+                                  uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg2; (void)arg3; (void)arg4; (void)arg5; (void)arg6;
+    extern long sys_acct(const char *filename);
+    return sys_acct((const char *)(uintptr_t)filename);
+}
+
+static int64_t sys_settimeofday_handler(uint64_t tv, uint64_t tz, uint64_t arg3,
+                                         uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg3; (void)arg4; (void)arg5; (void)arg6;
+    extern long sys_settimeofday(const void *tv, const void *tz);
+    return sys_settimeofday((const void *)(uintptr_t)tv, (const void *)(uintptr_t)tz);
+}
+
+static int64_t sys_mount_handler(uint64_t source, uint64_t target, uint64_t filesystemtype,
+                                   uint64_t mountflags, uint64_t data, uint64_t arg6) {
+    (void)arg6;
+    extern long sys_mount(const char *source, const char *target,
+                          const char *filesystemtype, unsigned long mountflags,
+                          const void *data);
+    return sys_mount((const char *)(uintptr_t)source, (const char *)(uintptr_t)target,
+                     (const char *)(uintptr_t)filesystemtype, (unsigned long)mountflags,
+                     (const void *)(uintptr_t)data);
+}
+
+static int64_t sys_umount2_handler(uint64_t target, uint64_t flags, uint64_t arg3,
+                                    uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg3; (void)arg4; (void)arg5; (void)arg6;
+    extern long sys_umount2(const char *target, int flags);
+    return sys_umount2((const char *)(uintptr_t)target, (int)flags);
+}
+
+static int64_t sys_sysinfo_handler(uint64_t info, uint64_t arg2, uint64_t arg3,
+                                    uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg2; (void)arg3; (void)arg4; (void)arg5; (void)arg6;
+    extern long sys_sysinfo(void *info);
+    return sys_sysinfo((void *)(uintptr_t)info);
+}
+
+static int64_t sys_set_tid_address_handler(uint64_t tidptr, uint64_t arg2, uint64_t arg3,
+                                            uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg2; (void)arg3; (void)arg4; (void)arg5; (void)arg6;
+    extern long sys_set_tid_address(int *tidptr);
+    return sys_set_tid_address((int *)(uintptr_t)tidptr);
+}
+
+static int64_t sys_timer_create_handler(uint64_t clockid, uint64_t sevp, uint64_t timerid,
+                                         uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg4; (void)arg5; (void)arg6;
+    extern long sys_timer_create(int clockid, void *sevp, void *timerid);
+    return sys_timer_create((int)clockid, (void *)(uintptr_t)sevp, (void *)(uintptr_t)timerid);
+}
+
+static int64_t sys_timer_settime_handler(uint64_t timerid, uint64_t flags,
+                                          uint64_t new_value, uint64_t old_value,
+                                          uint64_t arg5, uint64_t arg6) {
+    (void)arg5; (void)arg6;
+    extern long sys_timer_settime(int timerid, int flags,
+                                   const void *new_value, void *old_value);
+    return sys_timer_settime((int)timerid, (int)flags,
+                              (const void *)(uintptr_t)new_value, (void *)(uintptr_t)old_value);
+}
+
+static int64_t sys_timer_gettime_handler(uint64_t timerid, uint64_t curr_value,
+                                          uint64_t arg3, uint64_t arg4,
+                                          uint64_t arg5, uint64_t arg6) {
+    (void)arg3; (void)arg4; (void)arg5; (void)arg6;
+    extern long sys_timer_gettime(int timerid, void *curr_value);
+    return sys_timer_gettime((int)timerid, (void *)(uintptr_t)curr_value);
+}
+
+static int64_t sys_timer_getoverrun_handler(uint64_t timerid, uint64_t arg2, uint64_t arg3,
+                                             uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg2; (void)arg3; (void)arg4; (void)arg5; (void)arg6;
+    extern long sys_timer_getoverrun(int timerid);
+    return sys_timer_getoverrun((int)timerid);
+}
+
+static int64_t sys_timer_delete_handler(uint64_t timerid, uint64_t arg2, uint64_t arg3,
+                                         uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg2; (void)arg3; (void)arg4; (void)arg5; (void)arg6;
+    extern long sys_timer_delete(int timerid);
+    return sys_timer_delete((int)timerid);
+}
+
+static int64_t sys_clock_settime_handler(uint64_t clock_id, uint64_t tp, uint64_t arg3,
+                                          uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg3; (void)arg4; (void)arg5; (void)arg6;
+    extern long sys_clock_settime(int clock_id, const fut_timespec_t *tp);
+    return sys_clock_settime((int)clock_id, (const fut_timespec_t *)(uintptr_t)tp);
+}
+
+static int64_t sys_clock_getres_handler(uint64_t clock_id, uint64_t res, uint64_t arg3,
+                                         uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg3; (void)arg4; (void)arg5; (void)arg6;
+    extern long sys_clock_getres(int clock_id, fut_timespec_t *res);
+    return sys_clock_getres((int)clock_id, (fut_timespec_t *)(uintptr_t)res);
+}
+
+static int64_t sys_clock_nanosleep_handler(uint64_t clock_id, uint64_t flags,
+                                            uint64_t req, uint64_t rem,
+                                            uint64_t arg5, uint64_t arg6) {
+    (void)arg5; (void)arg6;
+    extern long sys_clock_nanosleep(int clock_id, int flags,
+                                     const fut_timespec_t *req, fut_timespec_t *rem);
+    return sys_clock_nanosleep((int)clock_id, (int)flags,
+                                (const fut_timespec_t *)(uintptr_t)req,
+                                (fut_timespec_t *)(uintptr_t)rem);
+}
+
+static int64_t sys_unshare_handler(uint64_t flags, uint64_t arg2, uint64_t arg3,
+                                    uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg2; (void)arg3; (void)arg4; (void)arg5; (void)arg6;
+    extern long sys_unshare(unsigned long flags);
+    return sys_unshare((unsigned long)flags);
+}
+
+static int64_t sys_set_robust_list_handler(uint64_t head, uint64_t len, uint64_t arg3,
+                                            uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg3; (void)arg4; (void)arg5; (void)arg6;
+    extern long sys_set_robust_list(void *head, size_t len);
+    return sys_set_robust_list((void *)(uintptr_t)head, (size_t)len);
+}
+
+static int64_t sys_get_robust_list_handler(uint64_t pid, uint64_t head_ptr, uint64_t len_ptr,
+                                            uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg4; (void)arg5; (void)arg6;
+    extern long sys_get_robust_list(int pid, void **head_ptr, size_t *len_ptr);
+    return sys_get_robust_list((int)pid, (void **)(uintptr_t)head_ptr,
+                                (size_t *)(uintptr_t)len_ptr);
+}
+
+static int64_t sys_sync_file_range_handler(uint64_t fd, uint64_t offset, uint64_t nbytes,
+                                            uint64_t flags, uint64_t arg5, uint64_t arg6) {
+    (void)arg5; (void)arg6;
+    extern long sys_sync_file_range(int fd, int64_t offset, int64_t nbytes, unsigned int flags);
+    return sys_sync_file_range((int)fd, (int64_t)offset, (int64_t)nbytes, (unsigned int)flags);
+}
+
+static int64_t sys_epoll_pwait_handler(uint64_t epfd, uint64_t events, uint64_t maxevents,
+                                        uint64_t timeout, uint64_t sigmask, uint64_t arg6) {
+    (void)arg6;
+    extern long sys_epoll_pwait(int epfd, void *events, int maxevents,
+                                 int timeout, const void *sigmask);
+    return sys_epoll_pwait((int)epfd, (void *)(uintptr_t)events, (int)maxevents,
+                            (int)timeout, (const void *)(uintptr_t)sigmask);
+}
+
+static int64_t sys_timerfd_create_handler(uint64_t clockid, uint64_t flags, uint64_t arg3,
+                                           uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg3; (void)arg4; (void)arg5; (void)arg6;
+    extern long sys_timerfd_create(int clockid, int flags);
+    return sys_timerfd_create((int)clockid, (int)flags);
+}
+
+static int64_t sys_fallocate_handler(uint64_t fd, uint64_t mode, uint64_t offset,
+                                      uint64_t len, uint64_t arg5, uint64_t arg6) {
+    (void)arg5; (void)arg6;
+    extern long sys_fallocate(int fd, int mode, uint64_t offset, uint64_t len);
+    return sys_fallocate((int)fd, (int)mode, (uint64_t)offset, (uint64_t)len);
+}
+
+static int64_t sys_timerfd_settime_handler(uint64_t ufd, uint64_t flags,
+                                            uint64_t new_value, uint64_t old_value,
+                                            uint64_t arg5, uint64_t arg6) {
+    (void)arg5; (void)arg6;
+    extern long sys_timerfd_settime(int ufd, int flags,
+                                     const void *new_value, void *old_value);
+    return sys_timerfd_settime((int)ufd, (int)flags,
+                                (const void *)(uintptr_t)new_value,
+                                (void *)(uintptr_t)old_value);
+}
+
+static int64_t sys_timerfd_gettime_handler(uint64_t ufd, uint64_t curr_value, uint64_t arg3,
+                                            uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg3; (void)arg4; (void)arg5; (void)arg6;
+    extern long sys_timerfd_gettime(int ufd, void *curr_value);
+    return sys_timerfd_gettime((int)ufd, (void *)(uintptr_t)curr_value);
+}
+
+static int64_t sys_prlimit64_handler(uint64_t pid, uint64_t resource,
+                                      uint64_t new_limit, uint64_t old_limit,
+                                      uint64_t arg5, uint64_t arg6) {
+    (void)arg5; (void)arg6;
+    extern long sys_prlimit64(int pid, int resource, const void *new_limit, void *old_limit);
+    return sys_prlimit64((int)pid, (int)resource,
+                          (const void *)(uintptr_t)new_limit, (void *)(uintptr_t)old_limit);
+}
+
+static int64_t sys_syncfs_handler(uint64_t fd, uint64_t arg2, uint64_t arg3,
+                                   uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg2; (void)arg3; (void)arg4; (void)arg5; (void)arg6;
+    extern long sys_syncfs(int fd);
+    return sys_syncfs((int)fd);
+}
+
+static int64_t sys_ioprio_set_handler(uint64_t which, uint64_t who, uint64_t ioprio,
+                                       uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg4; (void)arg5; (void)arg6;
+    extern long sys_ioprio_set(int which, int who, int ioprio);
+    return sys_ioprio_set((int)which, (int)who, (int)ioprio);
+}
+
+static int64_t sys_ioprio_get_handler(uint64_t which, uint64_t who, uint64_t arg3,
+                                       uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg3; (void)arg4; (void)arg5; (void)arg6;
+    extern long sys_ioprio_get(int which, int who);
+    return sys_ioprio_get((int)which, (int)who);
+}
+
 /* dup() handler - duplicate file descriptor with auto selection */
 static int64_t sys_dup_handler(uint64_t oldfd, uint64_t arg2, uint64_t arg3,
                                uint64_t arg4, uint64_t arg5, uint64_t arg6) {
@@ -2250,6 +2691,58 @@ static syscall_handler_t syscall_table[MAX_SYSCALL] = {
     [SYS_inotify_init1] = sys_inotify_init1_handler,
     [SYS_preadv]       = sys_preadv_handler,
     [SYS_pwritev]      = sys_pwritev_handler,
+    /* time / itimer / clock */
+    [SYS_getitimer]         = sys_getitimer_handler,
+    [SYS_setitimer]         = sys_setitimer_handler,
+    [SYS_sendfile]          = sys_sendfile_handler,
+    [SYS_fchdir]            = sys_fchdir_handler,
+    [SYS_vhangup]           = sys_vhangup_handler,
+    [SYS_setreuid]          = sys_setreuid_handler,
+    [SYS_setregid]          = sys_setregid_handler,
+    [SYS_setresuid]         = sys_setresuid_handler,
+    [SYS_getresuid]         = sys_getresuid_handler,
+    [SYS_setresgid]         = sys_setresgid_handler,
+    [SYS_getresgid]         = sys_getresgid_handler,
+    [SYS_capget]            = sys_capget_handler,
+    [SYS_capset]            = sys_capset_handler,
+    [SYS_personality]       = sys_personality_handler,
+    [SYS_statfs]            = sys_statfs_handler,
+    [SYS_fstatfs]           = sys_fstatfs_handler,
+    [SYS_mlock]             = sys_mlock_handler,
+    [SYS_munlock]           = sys_munlock_handler,
+    [SYS_mlockall]          = sys_mlockall_handler,
+    [SYS_munlockall]        = sys_munlockall_handler,
+    [SYS_pivot_root]        = sys_pivot_root_handler,
+    [SYS_adjtimex]          = sys_adjtimex_handler,
+    [SYS_chroot]            = sys_chroot_handler,
+    [SYS_sync]              = sys_sync_handler,
+    [SYS_acct]              = sys_acct_handler,
+    [SYS_settimeofday]      = sys_settimeofday_handler,
+    [SYS_mount]             = sys_mount_handler,
+    [SYS_umount2]           = sys_umount2_handler,
+    [SYS_sysinfo]           = sys_sysinfo_handler,
+    [SYS_set_tid_address]   = sys_set_tid_address_handler,
+    [SYS_timer_create]      = sys_timer_create_handler,
+    [SYS_timer_settime]     = sys_timer_settime_handler,
+    [SYS_timer_gettime]     = sys_timer_gettime_handler,
+    [SYS_timer_getoverrun]  = sys_timer_getoverrun_handler,
+    [SYS_timer_delete]      = sys_timer_delete_handler,
+    [SYS_clock_settime]     = sys_clock_settime_handler,
+    [SYS_clock_getres]      = sys_clock_getres_handler,
+    [SYS_clock_nanosleep]   = sys_clock_nanosleep_handler,
+    [SYS_unshare]           = sys_unshare_handler,
+    [SYS_set_robust_list]   = sys_set_robust_list_handler,
+    [SYS_get_robust_list]   = sys_get_robust_list_handler,
+    [SYS_sync_file_range]   = sys_sync_file_range_handler,
+    [SYS_epoll_pwait]       = sys_epoll_pwait_handler,
+    [SYS_timerfd_create]    = sys_timerfd_create_handler,
+    [SYS_fallocate]         = sys_fallocate_handler,
+    [SYS_timerfd_settime]   = sys_timerfd_settime_handler,
+    [SYS_timerfd_gettime]   = sys_timerfd_gettime_handler,
+    [SYS_prlimit64]         = sys_prlimit64_handler,
+    [SYS_syncfs]            = sys_syncfs_handler,
+    [SYS_ioprio_set]        = sys_ioprio_set_handler,
+    [SYS_ioprio_get]        = sys_ioprio_get_handler,
     /* signal / io-multiplex */
     [SYS_sigpending]   = sys_sigpending_handler,
     [SYS_sigsuspend]   = sys_sigsuspend_handler,

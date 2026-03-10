@@ -23,6 +23,7 @@
 #include <kernel/chrdev.h>
 #include <kernel/kprintf.h>
 #include <fcntl.h>
+#include <sched.h>
 
 /* ============================================================
  *   Syscall Numbers
@@ -156,6 +157,42 @@
 #define SYS_epoll_create1 291
 #define SYS_getpriority  140
 #define SYS_setpriority  141
+#define SYS_sched_setparam      142
+#define SYS_sched_getparam      143
+#define SYS_sched_setscheduler  144
+#define SYS_sched_getscheduler  145
+#define SYS_sched_get_priority_max  146
+#define SYS_sched_get_priority_min  147
+
+/* xattr syscalls (Linux x86_64 188-199) */
+#define SYS_setxattr     188
+#define SYS_lsetxattr    189
+#define SYS_fsetxattr    190
+#define SYS_getxattr     191
+#define SYS_lgetxattr    192
+#define SYS_fgetxattr    193
+#define SYS_listxattr    194
+#define SYS_llistxattr   195
+#define SYS_flistxattr   196
+#define SYS_removexattr  197
+#define SYS_lremovexattr 198
+#define SYS_fremovexattr 199
+
+/* waitid (Linux x86_64 247) */
+#define SYS_waitid       247
+
+/* inotify (Linux x86_64 253-255, 294) */
+#define SYS_inotify_init     253
+#define SYS_inotify_add_watch 254
+#define SYS_inotify_rm_watch  255
+
+/* splice/tee/vmsplice (Linux x86_64 275-278) */
+#define SYS_splice       275
+#define SYS_tee          276
+#define SYS_vmsplice     278
+
+/* inotify_init1 (Linux x86_64 294) */
+#define SYS_inotify_init1    294
 
 #ifndef SYS_time_millis
 #define SYS_time_millis  400
@@ -1267,6 +1304,202 @@ static int64_t sys_recvmsg_handler(uint64_t sockfd, uint64_t msg, uint64_t flags
     return sys_recvmsg((int)sockfd, (void *)msg, (int)flags);
 }
 
+/* sched_setparam/getparam/setscheduler/getscheduler handlers */
+static int64_t sys_sched_setparam_handler(uint64_t pid, uint64_t param, uint64_t arg3,
+                                          uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg3; (void)arg4; (void)arg5; (void)arg6;
+    extern long sys_sched_setparam(int pid, const struct sched_param *param);
+    return sys_sched_setparam((int)pid, (const struct sched_param *)(uintptr_t)param);
+}
+
+static int64_t sys_sched_getparam_handler(uint64_t pid, uint64_t param, uint64_t arg3,
+                                          uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg3; (void)arg4; (void)arg5; (void)arg6;
+    extern long sys_sched_getparam(int pid, struct sched_param *param);
+    return sys_sched_getparam((int)pid, (struct sched_param *)(uintptr_t)param);
+}
+
+static int64_t sys_sched_setscheduler_handler(uint64_t pid, uint64_t policy, uint64_t param,
+                                              uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg4; (void)arg5; (void)arg6;
+    extern long sys_sched_setscheduler(int pid, int policy, const struct sched_param *param);
+    return sys_sched_setscheduler((int)pid, (int)policy, (const struct sched_param *)(uintptr_t)param);
+}
+
+static int64_t sys_sched_getscheduler_handler(uint64_t pid, uint64_t arg2, uint64_t arg3,
+                                              uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg2; (void)arg3; (void)arg4; (void)arg5; (void)arg6;
+    extern long sys_sched_getscheduler(int pid);
+    return sys_sched_getscheduler((int)pid);
+}
+
+static int64_t sys_sched_get_priority_max_handler(uint64_t policy, uint64_t arg2, uint64_t arg3,
+                                                  uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg2; (void)arg3; (void)arg4; (void)arg5; (void)arg6;
+    extern long sys_sched_get_priority_max(int policy);
+    return sys_sched_get_priority_max((int)policy);
+}
+
+static int64_t sys_sched_get_priority_min_handler(uint64_t policy, uint64_t arg2, uint64_t arg3,
+                                                  uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg2; (void)arg3; (void)arg4; (void)arg5; (void)arg6;
+    extern long sys_sched_get_priority_min(int policy);
+    return sys_sched_get_priority_min((int)policy);
+}
+
+/* xattr handlers */
+static int64_t sys_setxattr_handler(uint64_t path, uint64_t name, uint64_t value,
+                                    uint64_t size, uint64_t flags, uint64_t arg6) {
+    (void)arg6;
+    extern long sys_setxattr(const char *path, const char *name, const void *value, size_t size, int flags);
+    return sys_setxattr((const char *)(uintptr_t)path, (const char *)(uintptr_t)name,
+                        (const void *)(uintptr_t)value, (size_t)size, (int)flags);
+}
+
+static int64_t sys_lsetxattr_handler(uint64_t path, uint64_t name, uint64_t value,
+                                     uint64_t size, uint64_t flags, uint64_t arg6) {
+    (void)arg6;
+    extern long sys_lsetxattr(const char *path, const char *name, const void *value, size_t size, int flags);
+    return sys_lsetxattr((const char *)(uintptr_t)path, (const char *)(uintptr_t)name,
+                         (const void *)(uintptr_t)value, (size_t)size, (int)flags);
+}
+
+static int64_t sys_fsetxattr_handler(uint64_t fd, uint64_t name, uint64_t value,
+                                     uint64_t size, uint64_t flags, uint64_t arg6) {
+    (void)arg6;
+    extern long sys_fsetxattr(int fd, const char *name, const void *value, size_t size, int flags);
+    return sys_fsetxattr((int)fd, (const char *)(uintptr_t)name,
+                         (const void *)(uintptr_t)value, (size_t)size, (int)flags);
+}
+
+static int64_t sys_getxattr_handler(uint64_t path, uint64_t name, uint64_t value,
+                                    uint64_t size, uint64_t arg5, uint64_t arg6) {
+    (void)arg5; (void)arg6;
+    extern long sys_getxattr(const char *path, const char *name, void *value, size_t size);
+    return sys_getxattr((const char *)(uintptr_t)path, (const char *)(uintptr_t)name,
+                        (void *)(uintptr_t)value, (size_t)size);
+}
+
+static int64_t sys_lgetxattr_handler(uint64_t path, uint64_t name, uint64_t value,
+                                     uint64_t size, uint64_t arg5, uint64_t arg6) {
+    (void)arg5; (void)arg6;
+    extern long sys_lgetxattr(const char *path, const char *name, void *value, size_t size);
+    return sys_lgetxattr((const char *)(uintptr_t)path, (const char *)(uintptr_t)name,
+                         (void *)(uintptr_t)value, (size_t)size);
+}
+
+static int64_t sys_fgetxattr_handler(uint64_t fd, uint64_t name, uint64_t value,
+                                     uint64_t size, uint64_t arg5, uint64_t arg6) {
+    (void)arg5; (void)arg6;
+    extern long sys_fgetxattr(int fd, const char *name, void *value, size_t size);
+    return sys_fgetxattr((int)fd, (const char *)(uintptr_t)name,
+                         (void *)(uintptr_t)value, (size_t)size);
+}
+
+static int64_t sys_listxattr_handler(uint64_t path, uint64_t list, uint64_t size,
+                                     uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg4; (void)arg5; (void)arg6;
+    extern long sys_listxattr(const char *path, char *list, size_t size);
+    return sys_listxattr((const char *)(uintptr_t)path, (char *)(uintptr_t)list, (size_t)size);
+}
+
+static int64_t sys_llistxattr_handler(uint64_t path, uint64_t list, uint64_t size,
+                                      uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg4; (void)arg5; (void)arg6;
+    extern long sys_llistxattr(const char *path, char *list, size_t size);
+    return sys_llistxattr((const char *)(uintptr_t)path, (char *)(uintptr_t)list, (size_t)size);
+}
+
+static int64_t sys_flistxattr_handler(uint64_t fd, uint64_t list, uint64_t size,
+                                      uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg4; (void)arg5; (void)arg6;
+    extern long sys_flistxattr(int fd, char *list, size_t size);
+    return sys_flistxattr((int)fd, (char *)(uintptr_t)list, (size_t)size);
+}
+
+static int64_t sys_removexattr_handler(uint64_t path, uint64_t name, uint64_t arg3,
+                                       uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg3; (void)arg4; (void)arg5; (void)arg6;
+    extern long sys_removexattr(const char *path, const char *name);
+    return sys_removexattr((const char *)(uintptr_t)path, (const char *)(uintptr_t)name);
+}
+
+static int64_t sys_lremovexattr_handler(uint64_t path, uint64_t name, uint64_t arg3,
+                                        uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg3; (void)arg4; (void)arg5; (void)arg6;
+    extern long sys_lremovexattr(const char *path, const char *name);
+    return sys_lremovexattr((const char *)(uintptr_t)path, (const char *)(uintptr_t)name);
+}
+
+static int64_t sys_fremovexattr_handler(uint64_t fd, uint64_t name, uint64_t arg3,
+                                        uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg3; (void)arg4; (void)arg5; (void)arg6;
+    extern long sys_fremovexattr(int fd, const char *name);
+    return sys_fremovexattr((int)fd, (const char *)(uintptr_t)name);
+}
+
+/* waitid handler */
+static int64_t sys_waitid_handler(uint64_t idtype, uint64_t id, uint64_t infop,
+                                  uint64_t options, uint64_t rusage, uint64_t arg6) {
+    (void)arg6;
+    extern long sys_waitid(int idtype, int id, void *infop, int options, void *rusage);
+    return sys_waitid((int)idtype, (int)id, (void *)(uintptr_t)infop,
+                      (int)options, (void *)(uintptr_t)rusage);
+}
+
+/* inotify handlers */
+static int64_t sys_inotify_init_handler(uint64_t arg1, uint64_t arg2, uint64_t arg3,
+                                        uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg1; (void)arg2; (void)arg3; (void)arg4; (void)arg5; (void)arg6;
+    extern long sys_inotify_init1(int flags);
+    return sys_inotify_init1(0);
+}
+
+static int64_t sys_inotify_init1_handler(uint64_t flags, uint64_t arg2, uint64_t arg3,
+                                         uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg2; (void)arg3; (void)arg4; (void)arg5; (void)arg6;
+    extern long sys_inotify_init1(int flags);
+    return sys_inotify_init1((int)flags);
+}
+
+static int64_t sys_inotify_add_watch_handler(uint64_t fd, uint64_t pathname, uint64_t mask,
+                                             uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg4; (void)arg5; (void)arg6;
+    extern long sys_inotify_add_watch(int fd, const char *pathname, uint32_t mask);
+    return sys_inotify_add_watch((int)fd, (const char *)(uintptr_t)pathname, (uint32_t)mask);
+}
+
+static int64_t sys_inotify_rm_watch_handler(uint64_t fd, uint64_t wd, uint64_t arg3,
+                                            uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg3; (void)arg4; (void)arg5; (void)arg6;
+    extern long sys_inotify_rm_watch(int fd, int wd);
+    return sys_inotify_rm_watch((int)fd, (int)wd);
+}
+
+/* splice/tee/vmsplice handlers */
+static int64_t sys_splice_handler(uint64_t fd_in, uint64_t off_in, uint64_t fd_out,
+                                  uint64_t off_out, uint64_t len, uint64_t flags) {
+    extern long sys_splice(int fd_in, int64_t *off_in, int fd_out, int64_t *off_out,
+                           size_t len, unsigned int flags);
+    return sys_splice((int)fd_in, (int64_t *)(uintptr_t)off_in,
+                      (int)fd_out, (int64_t *)(uintptr_t)off_out,
+                      (size_t)len, (unsigned int)flags);
+}
+
+static int64_t sys_tee_handler(uint64_t fd_in, uint64_t fd_out, uint64_t len,
+                                uint64_t flags, uint64_t arg5, uint64_t arg6) {
+    (void)arg5; (void)arg6;
+    extern long sys_tee(int fd_in, int fd_out, size_t len, unsigned int flags);
+    return sys_tee((int)fd_in, (int)fd_out, (size_t)len, (unsigned int)flags);
+}
+
+static int64_t sys_vmsplice_handler(uint64_t fd, uint64_t iov, uint64_t nr_segs,
+                                    uint64_t flags, uint64_t arg5, uint64_t arg6) {
+    (void)arg5; (void)arg6;
+    extern long sys_vmsplice(int fd, const void *iov, size_t nr_segs, unsigned int flags);
+    return sys_vmsplice((int)fd, (const void *)(uintptr_t)iov, (size_t)nr_segs, (unsigned int)flags);
+}
+
 /* Unimplemented syscall handler */
 static int64_t sys_unimplemented(uint64_t arg1, uint64_t arg2, uint64_t arg3,
                                   uint64_t arg4, uint64_t arg5, uint64_t arg6) {
@@ -1882,6 +2115,37 @@ static syscall_handler_t syscall_table[MAX_SYSCALL] = {
     [SYS_setrlimit]    = sys_setrlimit_handler,
     [SYS_getpriority]  = sys_getpriority_handler,
     [SYS_setpriority]  = sys_setpriority_handler,
+    /* Scheduler param/policy syscalls */
+    [SYS_sched_setparam]         = sys_sched_setparam_handler,
+    [SYS_sched_getparam]         = sys_sched_getparam_handler,
+    [SYS_sched_setscheduler]     = sys_sched_setscheduler_handler,
+    [SYS_sched_getscheduler]     = sys_sched_getscheduler_handler,
+    [SYS_sched_get_priority_max] = sys_sched_get_priority_max_handler,
+    [SYS_sched_get_priority_min] = sys_sched_get_priority_min_handler,
+    /* xattr syscalls */
+    [SYS_setxattr]     = sys_setxattr_handler,
+    [SYS_lsetxattr]    = sys_lsetxattr_handler,
+    [SYS_fsetxattr]    = sys_fsetxattr_handler,
+    [SYS_getxattr]     = sys_getxattr_handler,
+    [SYS_lgetxattr]    = sys_lgetxattr_handler,
+    [SYS_fgetxattr]    = sys_fgetxattr_handler,
+    [SYS_listxattr]    = sys_listxattr_handler,
+    [SYS_llistxattr]   = sys_llistxattr_handler,
+    [SYS_flistxattr]   = sys_flistxattr_handler,
+    [SYS_removexattr]  = sys_removexattr_handler,
+    [SYS_lremovexattr] = sys_lremovexattr_handler,
+    [SYS_fremovexattr] = sys_fremovexattr_handler,
+    /* waitid */
+    [SYS_waitid]            = sys_waitid_handler,
+    /* inotify */
+    [SYS_inotify_init]      = sys_inotify_init_handler,
+    [SYS_inotify_add_watch] = sys_inotify_add_watch_handler,
+    [SYS_inotify_rm_watch]  = sys_inotify_rm_watch_handler,
+    /* splice/tee/vmsplice */
+    [SYS_splice]       = sys_splice_handler,
+    [SYS_tee]          = sys_tee_handler,
+    [SYS_vmsplice]     = sys_vmsplice_handler,
+    [SYS_inotify_init1] = sys_inotify_init1_handler,
     [SYS_preadv]       = sys_preadv_handler,
     [SYS_pwritev]      = sys_pwritev_handler,
     [SYS_msgget]       = sys_msgget_handler,

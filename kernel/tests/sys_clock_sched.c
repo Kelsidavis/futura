@@ -35,6 +35,8 @@ extern long sys_setitimer(int which, const struct itimerval *value, struct itime
 extern long sys_getitimer(int which, struct itimerval *value);
 extern long sys_getrusage(int who, void *usage);
 extern long sys_times(struct tms *buf);
+extern long sys_getpriority(int which, int who);
+extern long sys_setpriority(int which, int who, int prio);
 
 /* rusage structure (mirrored from sys_rusage.c) */
 struct test_rusage {
@@ -66,6 +68,11 @@ struct test_rusage {
 #define CLKSCHED_TEST_ITIMER          4
 #define CLKSCHED_TEST_GETRUSAGE       5
 #define CLKSCHED_TEST_TIMES           6
+#define CLKSCHED_TEST_GETPRIORITY     7
+#define CLKSCHED_TEST_SETPRIORITY     8
+
+/* PRIO_PROCESS constant (matches sys_sched.c) */
+#define TEST_PRIO_PROCESS  0
 
 /* ============================================================
  * Test 1: sys_clock_getres returns timer-tick-accurate resolution
@@ -316,6 +323,70 @@ static void test_times(void) {
 }
 
 /* ============================================================
+ * Test 7: getpriority returns correct default nice value
+ * ============================================================ */
+static void test_getpriority(void) {
+    fut_printf("[CLKSCHED-TEST] Test 7: getpriority(PRIO_PROCESS, 0) default nice\n");
+
+    /* Default nice value is 0, getpriority returns 20 - nice = 20 */
+    long ret = sys_getpriority(TEST_PRIO_PROCESS, 0);
+    if (ret < 0) {
+        fut_printf("[CLKSCHED-TEST] ✗ getpriority returned error %ld\n", ret);
+        fut_test_fail(CLKSCHED_TEST_GETPRIORITY);
+        return;
+    }
+
+    /* Value should be 20 (nice=0) for a freshly-created task */
+    if (ret != 20) {
+        fut_printf("[CLKSCHED-TEST] ✗ getpriority expected 20 (nice=0), got %ld\n", ret);
+        fut_test_fail(CLKSCHED_TEST_GETPRIORITY);
+        return;
+    }
+
+    fut_printf("[CLKSCHED-TEST] ✓ getpriority -> %ld (nice=0)\n", ret);
+    fut_test_pass();
+}
+
+/* ============================================================
+ * Test 8: setpriority stores nice value, getpriority reflects it
+ * ============================================================ */
+static void test_setpriority(void) {
+    fut_printf("[CLKSCHED-TEST] Test 8: setpriority roundtrip\n");
+
+    /* Set nice to 5 */
+    long ret = sys_setpriority(TEST_PRIO_PROCESS, 0, 5);
+    if (ret != 0) {
+        fut_printf("[CLKSCHED-TEST] ✗ setpriority(5) returned %ld\n", ret);
+        fut_test_fail(CLKSCHED_TEST_SETPRIORITY);
+        return;
+    }
+
+    /* getpriority should now return 20 - 5 = 15 */
+    long prio = sys_getpriority(TEST_PRIO_PROCESS, 0);
+    if (prio != 15) {
+        fut_printf("[CLKSCHED-TEST] ✗ getpriority after setpriority(5): expected 15, got %ld\n",
+                   prio);
+        sys_setpriority(TEST_PRIO_PROCESS, 0, 0); /* restore */
+        fut_test_fail(CLKSCHED_TEST_SETPRIORITY);
+        return;
+    }
+
+    /* Restore nice to 0 */
+    sys_setpriority(TEST_PRIO_PROCESS, 0, 0);
+
+    /* Verify restoration: should be 20 again */
+    prio = sys_getpriority(TEST_PRIO_PROCESS, 0);
+    if (prio != 20) {
+        fut_printf("[CLKSCHED-TEST] ✗ getpriority after restore: expected 20, got %ld\n", prio);
+        fut_test_fail(CLKSCHED_TEST_SETPRIORITY);
+        return;
+    }
+
+    fut_printf("[CLKSCHED-TEST] ✓ setpriority/getpriority roundtrip OK\n");
+    fut_test_pass();
+}
+
+/* ============================================================
  * Main test harness thread
  * ============================================================ */
 void fut_clock_sched_test_thread(void *arg) {
@@ -331,6 +402,8 @@ void fut_clock_sched_test_thread(void *arg) {
     test_itimer();
     test_getrusage();
     test_times();
+    test_getpriority();
+    test_setpriority();
 
     fut_printf("[CLKSCHED-TEST] ========================================\n");
     fut_printf("[CLKSCHED-TEST] All clock/sched/timer tests done\n");

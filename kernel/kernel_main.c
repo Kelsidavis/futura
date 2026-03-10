@@ -871,8 +871,10 @@ static void selftest_sequential_runner(void *arg) {
 
     /* Wait for boot thread to finish all initialization.
      * Without this, the test thread can run while ramfs directories
-     * are still being created, seeing half-initialized entries. */
-    while (!g_init_complete) {
+     * are still being created, seeing half-initialized entries.
+     * Use acquire semantics to ensure all writes by the boot thread
+     * (VFS, ramfs, device setup) are visible once we see g_init_complete=1. */
+    while (!__atomic_load_n(&g_init_complete, __ATOMIC_ACQUIRE)) {
         extern void fut_schedule(void);
         fut_schedule();
     }
@@ -1789,8 +1791,10 @@ void fut_kernel_main(void) {
 
     fut_printf("[INIT] Kernel init complete. Entering idle loop.\n");
 
-    /* Signal test thread that init is done — safe to access VFS now */
-    g_init_complete = 1;
+    /* Signal test thread that init is done — safe to access VFS now.
+     * Full memory barrier ensures all preceding writes (VFS init, directory
+     * creation, device setup) are visible before the flag is seen as 1. */
+    __atomic_store_n(&g_init_complete, 1, __ATOMIC_SEQ_CST);
 
 #if defined(__x86_64__)
     /* Exit the boot thread to let the idle thread take over.

@@ -445,15 +445,57 @@ long sys_getrlimit(int resource, struct rlimit *rlim) {
             limit.rlim_max = RLIMIT_MEMLOCK_DEFAULT;
             break;
 
+        case RLIMIT_LOCKS:
+            resource_name = "RLIMIT_LOCKS";
+            resource_desc = "max file locks";
+            limit.rlim_cur = RLIM_INFINITY;
+            limit.rlim_max = RLIM_INFINITY;
+            break;
+
+        case RLIMIT_SIGPENDING:
+            resource_name = "RLIMIT_SIGPENDING";
+            resource_desc = "max pending signals";
+            limit.rlim_cur = RLIMIT_SIGPENDING_DEFAULT;
+            limit.rlim_max = RLIMIT_SIGPENDING_DEFAULT;
+            break;
+
+        case RLIMIT_MSGQUEUE:
+            resource_name = "RLIMIT_MSGQUEUE";
+            resource_desc = "max POSIX message queue bytes";
+            limit.rlim_cur = RLIMIT_MSGQUEUE_DEFAULT;
+            limit.rlim_max = RLIMIT_MSGQUEUE_DEFAULT;
+            break;
+
+        case RLIMIT_NICE:
+            resource_name = "RLIMIT_NICE";
+            resource_desc = "max nice priority";
+            limit.rlim_cur = RLIMIT_NICE_DEFAULT;
+            limit.rlim_max = RLIMIT_NICE_DEFAULT;
+            break;
+
+        case RLIMIT_RTPRIO:
+            resource_name = "RLIMIT_RTPRIO";
+            resource_desc = "max real-time priority";
+            limit.rlim_cur = RLIMIT_RTPRIO_DEFAULT;
+            limit.rlim_max = RLIMIT_RTPRIO_DEFAULT;
+            break;
+
+        case RLIMIT_RTTIME:
+            resource_name = "RLIMIT_RTTIME";
+            resource_desc = "max real-time CPU time (us)";
+            limit.rlim_cur = RLIM_INFINITY;
+            limit.rlim_max = RLIM_INFINITY;
+            break;
+
         default:
             fut_printf("[PROC] getrlimit(resource=%d, rlim=%p) -> EINVAL (unknown resource)\n",
                        resource, rlim);
             return -EINVAL;
     }
 
-    /* Phase 4: If task has stored limits for this resource, use them instead of defaults */
+    /* Phase 4: Use per-task stored limits (initialized with defaults at task creation) */
     fut_task_t *task = fut_task_current();
-    if (task && (task->rlimits[resource].rlim_cur != 0 || task->rlimits[resource].rlim_max != 0)) {
+    if (task) {
         limit.rlim_cur = task->rlimits[resource].rlim_cur;
         limit.rlim_max = task->rlimits[resource].rlim_max;
     }
@@ -566,6 +608,30 @@ long sys_setrlimit(int resource, const struct rlimit *rlim) {
         case RLIMIT_MEMLOCK:
             resource_name = "RLIMIT_MEMLOCK";
             resource_desc = "max locked memory";
+            break;
+        case RLIMIT_LOCKS:
+            resource_name = "RLIMIT_LOCKS";
+            resource_desc = "max file locks";
+            break;
+        case RLIMIT_SIGPENDING:
+            resource_name = "RLIMIT_SIGPENDING";
+            resource_desc = "max pending signals";
+            break;
+        case RLIMIT_MSGQUEUE:
+            resource_name = "RLIMIT_MSGQUEUE";
+            resource_desc = "max POSIX message queue bytes";
+            break;
+        case RLIMIT_NICE:
+            resource_name = "RLIMIT_NICE";
+            resource_desc = "max nice priority";
+            break;
+        case RLIMIT_RTPRIO:
+            resource_name = "RLIMIT_RTPRIO";
+            resource_desc = "max real-time priority";
+            break;
+        case RLIMIT_RTTIME:
+            resource_name = "RLIMIT_RTTIME";
+            resource_desc = "max real-time CPU time (us)";
             break;
         default:
             fut_printf("[PROC] setrlimit(resource=%d, rlim=%p) -> EINVAL (unknown resource)\n",

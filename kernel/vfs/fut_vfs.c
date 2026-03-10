@@ -662,6 +662,20 @@ static int lookup_vnode(const char *path, struct fut_vnode **vnode) {
     }
 
     struct fut_vnode *current = effective_root;
+
+    /* Defensive check: root vnode must always be VN_DIR.  If the type field
+     * is corrupted (e.g. by a heap allocator bug writing into adjacent memory),
+     * reset it and log a critical warning rather than returning a spurious
+     * ENOTDIR to callers.  The canaries around the ramfs_root_guard structure
+     * would have caught a full overflow; this handles a narrower corruption of
+     * just the type field. */
+    if (current == root_vnode_base && current && current->type != VN_DIR) {
+        fut_printf("[VFS] CRITICAL: root vnode type corrupted (was %d, expected %d=%s). "
+                   "Resetting. vnode=%p\n",
+                   (int)current->type, (int)VN_DIR, "VN_DIR", (void *)current);
+        current->type = VN_DIR;
+    }
+
     /* The global root_vnode_base is never refcounted during traversal (it's immortal).
      * A chroot vnode IS refcounted so that release_lookup_ref works correctly. */
     if (current != root_vnode_base) {
@@ -892,6 +906,15 @@ static int lookup_parent_and_name(const char *path,
 
     vfs_debug_stage = 8;  /* Before loop */
     struct fut_vnode *current = root_vnode;
+
+    /* Defensive check: same root-type guard as in lookup_vnode */
+    if (current == root_vnode_base && current && current->type != VN_DIR) {
+        fut_printf("[VFS] CRITICAL: root vnode type corrupted in lookup_parent_and_name "
+                   "(was %d). Resetting. vnode=%p\n",
+                   (int)current->type, (void *)current);
+        current->type = VN_DIR;
+    }
+
     /* Note: Do NOT take reference to root_vnode; it is never freed */
 
     for (int i = 0; i < num_components - 1; i++) {

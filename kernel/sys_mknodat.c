@@ -283,20 +283,22 @@ long sys_mknodat(int dirfd, const char *pathname, uint32_t mode, uint32_t dev) {
         return -EPERM;
     }
 
-    /* For relative paths with a real dirfd, we'd need directory-relative VFS support.
-     * Only AT_FDCWD and absolute paths are supported for now. */
-    if (local_dirfd != AT_FDCWD && path_buf[0] != '/') {
-        fut_printf("[MKNODAT] mknodat(dirfd=%d, pathname='%s' [relative], pid=%d) -> ENOTSUP "
-                   "(relative dirfd not yet implemented)\n",
-                   local_dirfd, path_buf, task->pid);
-        return -ENOTSUP;
+    /* Resolve path relative to dirfd if needed */
+    char resolved_path[256];
+    int rret = fut_vfs_resolve_at(task, local_dirfd, path_buf,
+                                   resolved_path, sizeof(resolved_path));
+    if (rret < 0) {
+        fut_printf("[MKNODAT] mknodat(dirfd=%d, pathname='%s') -> %d (dirfd resolve failed)\n",
+                   local_dirfd, path_buf, rret);
+        return rret;
     }
+    const char *use_path = resolved_path;
 
     int ret = 0;
 
     /* Regular file (S_IFREG or type 0): create directly via VFS without fd allocation */
     if (file_type == S_IFREG || file_type == 0) {
-        int ret = fut_vfs_create_file(path_buf, local_mode & 0777);
+        int ret = fut_vfs_create_file(use_path, local_mode & 0777);
         if (ret < 0) {
             fut_printf("[MKNODAT] mknodat(dirfd=%s, pathname='%s', type=%s, mode=0%o, pid=%d) -> %d "
                        "(VFS create failed)\n",
@@ -312,7 +314,7 @@ long sys_mknodat(int dirfd, const char *pathname, uint32_t mode, uint32_t dev) {
     /* FIFO and socket nodes: create via VFS mknod with full type bits */
     if (file_type == S_IFIFO || file_type == S_IFSOCK) {
         uint32_t full_mode = file_type | (local_mode & 0777);
-        ret = fut_vfs_mknod(path_buf, full_mode);
+        ret = fut_vfs_mknod(use_path, full_mode);
         if (ret < 0) {
             fut_printf("[MKNODAT] mknodat(dirfd=%s, pathname='%s', type=%s, mode=0%o, pid=%d) -> %d "
                        "(VFS mknod failed)\n",

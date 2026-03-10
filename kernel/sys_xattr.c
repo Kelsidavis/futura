@@ -8,7 +8,7 @@
  *
  * Phase 1 (Completed): Validation and stub implementations
  * Phase 2 (Completed): Implement actual xattr storage via vnode->ops->setxattr/getxattr
- * Phase 3: Add namespace validation and security checks
+ * Phase 3 (Completed): Namespace validation and privilege checks for trusted/security namespaces
  * Phase 4: Performance optimization with caching
  */
 
@@ -162,8 +162,69 @@ static struct fut_vnode *vnode_from_fd(struct fut_task *task, int fd) {
 #define XATTR_SECURITY_PREFIX  "security."
 #define XATTR_SYSTEM_PREFIX    "system."
 
-/* Maximum sizes */
+/* Capability for privileged xattr namespaces */
+#define CAP_SYS_ADMIN  21
+
+/* Maximum sizes (also used below in helpers) */
 #define XATTR_NAME_MAX  255    /* Maximum attribute name length */
+
+/**
+ * xattr_validate_namespace - Phase 3: Validate xattr name namespace and privileges
+ *
+ * Linux xattr names must belong to a known namespace separated by '.'.
+ * The 'trusted.' and 'security.' namespaces require CAP_SYS_ADMIN or uid==0.
+ *
+ * @param name_buf  Null-terminated attribute name (already copied from userspace)
+ * @param syscall   Syscall name for logging
+ *
+ * Returns: 0 on success, -ENOTSUP for unknown namespace, -EPERM if privileged
+ *          namespace requires privileges the caller lacks.
+ */
+static long xattr_validate_namespace(const char *name_buf, const char *syscall) {
+    fut_task_t *task = fut_task_current();
+    int64_t pid = task ? (int64_t)task->pid : -1;
+
+    /* Name must contain a '.' namespace separator */
+    const char *dot = (const char *)memchr(name_buf, '.', XATTR_NAME_MAX + 1);
+    if (!dot || dot == name_buf) {
+        fut_printf("[XATTR] %s(name='%s', pid=%d) -> ENOTSUP "
+                   "(name lacks namespace prefix, Phase 3)\n",
+                   syscall, name_buf, pid);
+        return -ENOTSUP;
+    }
+
+    /* Determine namespace prefix length */
+    size_t ns_len = (size_t)(dot - name_buf) + 1;  /* includes the '.' */
+
+    /* Validate against known namespaces */
+    bool is_user     = (ns_len == 5  && memcmp(name_buf, XATTR_USER_PREFIX,     5) == 0);
+    bool is_trusted  = (ns_len == 8  && memcmp(name_buf, XATTR_TRUSTED_PREFIX,  8) == 0);
+    bool is_security = (ns_len == 9  && memcmp(name_buf, XATTR_SECURITY_PREFIX, 9) == 0);
+    bool is_system   = (ns_len == 7  && memcmp(name_buf, XATTR_SYSTEM_PREFIX,   7) == 0);
+
+    if (!is_user && !is_trusted && !is_security && !is_system) {
+        fut_printf("[XATTR] %s(name='%s', pid=%d) -> ENOTSUP "
+                   "(unknown namespace, Phase 3)\n",
+                   syscall, name_buf, pid);
+        return -ENOTSUP;
+    }
+
+    /* 'trusted.' and 'security.' require CAP_SYS_ADMIN or root */
+    if (is_trusted || is_security) {
+        bool is_root = (task && task->uid == 0);
+        bool has_cap = (task && (task->cap_effective & (1ULL << CAP_SYS_ADMIN)) != 0);
+        if (!is_root && !has_cap) {
+            fut_printf("[XATTR] %s(name='%s', pid=%d) -> EPERM "
+                       "(namespace requires CAP_SYS_ADMIN, Phase 3)\n",
+                       syscall, name_buf, pid);
+            return -EPERM;
+        }
+    }
+
+    return 0;
+}
+
+/* Maximum sizes (XATTR_NAME_MAX defined above near CAP_SYS_ADMIN) */
 #define XATTR_SIZE_MAX  65536  /* Maximum attribute value size (64KB) */
 #define XATTR_LIST_MAX  65536  /* Maximum size for list operations */
 
@@ -227,7 +288,8 @@ static inline long xattr_copy_path_and_name(const char *path, const char *name,
         return -EINVAL;
     }
 
-    return 0;
+    /* Phase 3: Validate namespace prefix and check privileges */
+    return xattr_validate_namespace(name_buf, syscall);
 }
 
 /**
@@ -263,7 +325,8 @@ static inline long xattr_copy_name(const char *name, char *name_buf,
         return -EINVAL;
     }
 
-    return 0;
+    /* Phase 3: Validate namespace prefix and check privileges */
+    return xattr_validate_namespace(name_buf, syscall);
 }
 
 /**

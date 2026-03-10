@@ -257,7 +257,9 @@
 #define SYS_timerfd_gettime 287
 #define SYS_prlimit64       302
 #define SYS_syncfs          306
-#define SYS_close_range     436
+#define SYS_close_range      436
+#define SYS_sethostname      170
+#define SYS_setdomainname    171
 /* Syscalls whose Linux numbers conflict with Futura's custom scheme get
  * extended Futura numbers (310+). The kernel functions are the same;
  * only the dispatch slot differs from the Linux ABI. */
@@ -1702,6 +1704,20 @@ static int64_t sys_close_range_handler(uint64_t first, uint64_t last, uint64_t f
     return sys_close_range((unsigned int)first, (unsigned int)last, (unsigned int)flags);
 }
 
+static int64_t sys_sethostname_handler(uint64_t name, uint64_t len, uint64_t arg3,
+                                        uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg3; (void)arg4; (void)arg5; (void)arg6;
+    extern long sys_sethostname(const char *name, size_t len);
+    return sys_sethostname((const char *)(uintptr_t)name, (size_t)len);
+}
+
+static int64_t sys_setdomainname_handler(uint64_t name, uint64_t len, uint64_t arg3,
+                                          uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg3; (void)arg4; (void)arg5; (void)arg6;
+    extern long sys_setdomainname(const char *name, size_t len);
+    return sys_setdomainname((const char *)(uintptr_t)name, (size_t)len);
+}
+
 static int64_t sys_ioprio_set_handler(uint64_t which, uint64_t who, uint64_t ioprio,
                                        uint64_t arg4, uint64_t arg5, uint64_t arg6) {
     (void)arg4; (void)arg5; (void)arg6;
@@ -2750,6 +2766,8 @@ static syscall_handler_t syscall_table[MAX_SYSCALL] = {
     [SYS_prlimit64]         = sys_prlimit64_handler,
     [SYS_syncfs]            = sys_syncfs_handler,
     [SYS_close_range]       = sys_close_range_handler,
+    [SYS_sethostname]       = sys_sethostname_handler,
+    [SYS_setdomainname]     = sys_setdomainname_handler,
     [SYS_ioprio_set]        = sys_ioprio_set_handler,
     [SYS_ioprio_get]        = sys_ioprio_get_handler,
     /* signal / io-multiplex */

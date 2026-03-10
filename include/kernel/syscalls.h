@@ -170,6 +170,8 @@ ssize_t sys_write(int fd, const void *buf, size_t count);
 long sys_open(const char *pathname, int flags, int mode);
 long sys_close(int fd);
 long sys_close_range(unsigned int first, unsigned int last, unsigned int flags);
+long sys_sethostname(const char *name, size_t len);
+long sys_setdomainname(const char *name, size_t len);
 long sys_openat(int dirfd, const char *pathname, int flags, int mode);
 long sys_pipe(int pipefd[2]);
 long sys_pipe2(int pipefd[2], int flags);

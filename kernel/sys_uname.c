@@ -8,17 +8,25 @@
  *
  * Phase 1 (Completed): Basic uname with static system info
  * Phase 2 (Completed): Enhanced validation, field categorization, detailed logging
- * Phase 3: Dynamic hostname and domain name support with sethostname
+ * Phase 3 (Completed): Dynamic hostname and domain name via sethostname/setdomainname
  * Phase 4: Extended system info, capabilities reporting
  */
 
 #include <kernel/errno.h>
+#include <kernel/fut_task.h>
 #include <kernel/uaccess.h>
 #include <sys/utsname.h>
 #include <stdint.h>
 #include <string.h>
 
 #include <kernel/kprintf.h>
+
+/* Mutable hostname and domainname — writable by sethostname/setdomainname */
+#define HOSTNAME_MAX  65
+#define DOMAINNAME_MAX 65
+
+static char g_hostname[HOSTNAME_MAX]   = "futura";
+static char g_domainname[DOMAINNAME_MAX] = "(none)";
 
 /**
  * uname() syscall - Get system information.
@@ -134,8 +142,11 @@ long sys_uname(struct utsname *buf) {
     /* Operating system name */
     memcpy(info.sysname, "Futura", 7);  /* 6 chars + null */
 
-    /* Network node hostname (can be changed with sethostname) */
-    memcpy(info.nodename, "futura", 7);  /* 6 chars + null */
+    /* Network node hostname (writable via sethostname) */
+    size_t hn_len = 0;
+    while (g_hostname[hn_len] && hn_len < sizeof(info.nodename) - 1) hn_len++;
+    memcpy(info.nodename, g_hostname, hn_len);
+    info.nodename[hn_len] = '\0';
 
     /* Operating system release */
     memcpy(info.release, "0.1.0", 6);  /* 5 chars + null */
@@ -168,11 +179,109 @@ long sys_uname(struct utsname *buf) {
         return -EFAULT;
     }
 
-    /* Phase 2: Detailed success logging with all fields */
     fut_printf("[UNAME] uname(sysname=\"%s\", nodename=\"%s\", release=\"%s\", "
-               "version=\"%s\", machine=\"%s\" [%s]) -> 0 (Phase 3: System information with field validation)\n",
+               "version=\"%s\", machine=\"%s\" [%s]) -> 0\n",
                info.sysname, info.nodename, info.release,
                info.version, info.machine, arch_desc);
 
+    return 0;
+}
+
+/**
+ * sethostname() - Set the system hostname
+ *
+ * @param name:   New hostname string (not necessarily NUL-terminated)
+ * @param len:    Length of hostname (must be <= 64)
+ *
+ * Requires CAP_SYS_ADMIN or uid=0.
+ *
+ * Phase 3 (Completed): Dynamic hostname stored in g_hostname
+ *
+ * Returns:
+ *   0 on success
+ *   -EINVAL if len is out of range
+ *   -EFAULT if name is invalid
+ *   -EPERM  if caller lacks privilege
+ *   -ESRCH  if no current task
+ */
+long sys_sethostname(const char *name, size_t len) {
+    fut_task_t *task = fut_task_current();
+    if (!task) return -ESRCH;
+
+    /* Privilege check */
+    bool is_root = (task->uid == 0);
+    bool has_cap = (task->cap_effective & (1ULL << 21)) != 0; /* CAP_SYS_ADMIN = 21 */
+    if (!is_root && !has_cap) {
+        fut_printf("[SETHOSTNAME] sethostname(len=%zu, pid=%d) -> EPERM\n", len, task->pid);
+        return -EPERM;
+    }
+
+    if (len == 0 || len > (HOSTNAME_MAX - 1)) {
+        fut_printf("[SETHOSTNAME] sethostname(len=%zu, pid=%d) -> EINVAL\n", len, task->pid);
+        return -EINVAL;
+    }
+
+    char buf[HOSTNAME_MAX];
+    if (fut_copy_from_user(buf, name, len) != 0) {
+        fut_printf("[SETHOSTNAME] sethostname(len=%zu, pid=%d) -> EFAULT\n", len, task->pid);
+        return -EFAULT;
+    }
+    buf[len] = '\0';
+
+    memcpy(g_hostname, buf, len + 1);
+
+    fut_printf("[SETHOSTNAME] sethostname(\"%s\", pid=%d) -> 0\n", g_hostname, task->pid);
+    return 0;
+}
+
+/**
+ * setdomainname() - Set the NIS domain name
+ *
+ * @param name:   New domain name string (not necessarily NUL-terminated)
+ * @param len:    Length of domain name (must be <= 64)
+ *
+ * Requires CAP_SYS_ADMIN or uid=0.
+ *
+ * Phase 3 (Completed): Dynamic domain name stored in g_domainname
+ *
+ * Returns:
+ *   0 on success
+ *   -EINVAL if len is out of range
+ *   -EFAULT if name is invalid
+ *   -EPERM  if caller lacks privilege
+ *   -ESRCH  if no current task
+ */
+long sys_setdomainname(const char *name, size_t len) {
+    fut_task_t *task = fut_task_current();
+    if (!task) return -ESRCH;
+
+    bool is_root = (task->uid == 0);
+    bool has_cap = (task->cap_effective & (1ULL << 21)) != 0;
+    if (!is_root && !has_cap) {
+        fut_printf("[SETDOMAINNAME] setdomainname(len=%zu, pid=%d) -> EPERM\n", len, task->pid);
+        return -EPERM;
+    }
+
+    if (len > (DOMAINNAME_MAX - 1)) {
+        fut_printf("[SETDOMAINNAME] setdomainname(len=%zu, pid=%d) -> EINVAL\n", len, task->pid);
+        return -EINVAL;
+    }
+
+    if (len == 0) {
+        memcpy(g_domainname, "(none)", 7);
+        fut_printf("[SETDOMAINNAME] setdomainname(\"\", pid=%d) -> 0 (cleared)\n", task->pid);
+        return 0;
+    }
+
+    char buf[DOMAINNAME_MAX];
+    if (fut_copy_from_user(buf, name, len) != 0) {
+        fut_printf("[SETDOMAINNAME] setdomainname(len=%zu, pid=%d) -> EFAULT\n", len, task->pid);
+        return -EFAULT;
+    }
+    buf[len] = '\0';
+
+    memcpy(g_domainname, buf, len + 1);
+
+    fut_printf("[SETDOMAINNAME] setdomainname(\"%s\", pid=%d) -> 0\n", g_domainname, task->pid);
     return 0;
 }

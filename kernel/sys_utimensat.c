@@ -395,21 +395,14 @@ long sys_utimensat(int dirfd, const char *pathname, const fut_timespec_t *times,
         resolved_path[len] = '\0';
     }
 
-    /* Phase 3: AT_SYMLINK_NOFOLLOW support */
-    /* For now, we still use fut_vfs_lookup which follows symlinks
-     * Phase 4 will add fut_vfs_lstat support for AT_SYMLINK_NOFOLLOW */
-    if (flags & AT_SYMLINK_NOFOLLOW) {
-        fut_printf("[UTIMENSAT] utimensat(dirfd=%d [%s], path='%s' [%s, %s, len=%zu], times=%s, "
-                   "flags=%s, pid=%d) -> ENOSYS "
-                   "(AT_SYMLINK_NOFOLLOW requires lstat, not yet implemented, Phase 4)\n",
-                   dirfd, dirfd_desc, path_buf, path_type, path_len_cat, path_len,
-                   time_spec_desc, flags_desc, task->pid);
-        return -ENOSYS;
-    }
-
-    /* Lookup the vnode */
+    /* Lookup the vnode; AT_SYMLINK_NOFOLLOW means don't follow the final symlink */
     struct fut_vnode *vnode = NULL;
-    int ret = fut_vfs_lookup(resolved_path, &vnode);
+    int ret;
+    if (flags & AT_SYMLINK_NOFOLLOW) {
+        ret = fut_vfs_lookup_nofollow(resolved_path, &vnode);
+    } else {
+        ret = fut_vfs_lookup(resolved_path, &vnode);
+    }
 
     /* Handle lookup errors */
     if (ret < 0 || !vnode) {

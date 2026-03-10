@@ -159,9 +159,9 @@
  *   - Cleanup uses __atomic_sub_fetch for decrement (line 790)
  *   - Prevents race condition where concurrent forks overflow refcount
  *
- * [TODO] Implement per-process file descriptor limit:
- *   - Enforce RLIMIT_NOFILE during fork (currently only at open)
- *   - Reject fork if child would exceed file descriptor quota
+ * [DONE] Implement per-process file descriptor limit:
+ *   - Enforce RLIMIT_NOFILE during fork (lines ~810-821)
+ *   - Reject fork if open FD count exceeds soft NOFILE limit
  *   - Prevents mass forking with high FD count
  *
  * [TODO] Add file refcount stress test:
@@ -803,6 +803,19 @@ long sys_fork(void) {
                        "(RLIMIT_NPROC limit reached: %d >= %llu)\n",
                        parent_task->pid, parent_task->uid, current_count, rlim_nproc);
             return -EAGAIN;
+        }
+    }
+
+    /* Enforce RLIMIT_NOFILE: child inherits all parent FDs, so reject if parent's
+     * open FD count already exceeds the soft file descriptor limit.  This prevents
+     * a process from bypassing RLIMIT_NOFILE by opening files before forking. */
+    {
+        uint64_t rlim_nofile = parent_task->rlimits[RLIMIT_NOFILE].rlim_cur;
+        if (rlim_nofile != (uint64_t)-1 && (uint64_t)fd_count > rlim_nofile) {
+            FORK_LOG("[FORK] fork(parent_pid=%u) -> EMFILE "
+                       "(RLIMIT_NOFILE: %d open FDs > limit %llu)\n",
+                       parent_task->pid, fd_count, rlim_nofile);
+            return -EMFILE;
         }
     }
 

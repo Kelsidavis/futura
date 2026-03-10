@@ -164,6 +164,9 @@ struct fut_task {
     /* chroot(2) filesystem isolation */
     struct fut_vnode *chroot_vnode;    // chroot jail root vnode (NULL = use global VFS root)
 
+    /* Accumulated CPU ticks from reaped children (for tms_cutime in sys_times) */
+    uint64_t child_cpu_ticks;
+
     /* Capability handle receive queue (for fut_cap_handle_recv / fut_cap_handle_send IPC) */
 #define FUT_CAP_RECV_QUEUE_SIZE 8
     struct {

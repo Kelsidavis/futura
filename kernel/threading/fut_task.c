@@ -544,6 +544,15 @@ int fut_task_waitpid(int pid, int *status_out, int flags) {
         if (match) {
             int status = encode_wait_status(match);
             uint64_t child_pid = match->pid;
+
+            /* Accumulate child's CPU ticks into parent before reaping.
+             * This provides tms_cutime data for sys_times(). */
+            uint64_t child_ticks = 0;
+            for (fut_thread_t *t = match->threads; t; t = t->global_next) {
+                child_ticks += t->stats.cpu_ticks;
+            }
+            parent->child_cpu_ticks += child_ticks + match->child_cpu_ticks;
+
             task_detach_child(parent, match);
             fut_spinlock_release(&task_list_lock);
 

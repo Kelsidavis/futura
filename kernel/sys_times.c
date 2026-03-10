@@ -98,7 +98,8 @@ long sys_times(struct tms *buf) {
      * cpu_ticks is incremented every timer tick while the thread runs.
      * Since user/kernel time is not tracked separately, attribute all to
      * utime (stime = 0); this matches common kernel stubs for early-stage OSes.
-     * Phase 4: Accumulate child times from wait4()/waitpid() when available.
+     * Phase 4 (Completed): Accumulate child times from reaped children via
+     * child_cpu_ticks, which is incremented in fut_task_waitpid().
      */
     uint64_t total_cpu_ticks = 0;
     for (fut_thread_t *t = task->threads; t != nullptr; t = t->global_next) {
@@ -107,7 +108,8 @@ long sys_times(struct tms *buf) {
 
     struct tms times;
     memset(&times, 0, sizeof(times));
-    times.tms_utime = (clock_t)total_cpu_ticks;  /* cpu_ticks already in USER_HZ units */
+    times.tms_utime  = (clock_t)total_cpu_ticks;
+    times.tms_cutime = (clock_t)task->child_cpu_ticks;
 
     /* Copy to userspace */
     if (times_copy_to_user(buf, &times, sizeof(struct tms)) != 0) {

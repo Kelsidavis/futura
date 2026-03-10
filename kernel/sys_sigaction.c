@@ -10,7 +10,7 @@
  * Phase 1 (Completed): Basic validation stub
  * Phase 2 (Completed): Full sigaction implementation with sa_handler, sa_mask, sa_flags
  * Phase 3 (Completed): Signal delivery and trampoline setup
- * Phase 4: Nested signal handling and sigreturn
+ * Phase 4 (Completed): SA_RESETHAND + sa_mask blocking during signal delivery
  */
 
 #include <kernel/fut_task.h>
@@ -43,7 +43,7 @@
  *
  * Phase 2 (Completed): Fully manages signal action storage in task structure
  * Phase 3 (Completed): Signal delivery will invoke handlers with proper masking
- * Phase 4: Nested signals and SA_RESETHAND handling
+ * Phase 4 (Completed): SA_RESETHAND resets handler after delivery; sa_mask blocking
  */
 long sys_sigaction(int signum, const struct sigaction *act, struct sigaction *oldact) {
     fut_task_t *current = fut_task_current();

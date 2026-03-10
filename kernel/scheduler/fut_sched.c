@@ -67,6 +67,31 @@ static volatile bool scheduler_started = false;
  */
 
 /* ============================================================
+ *   Scheduler Local IRQ Helpers
+ * ============================================================ */
+
+/* Disable/enable local CPU interrupts around the scheduler's critical window:
+ * the gap between select_next_thread() (which dequeues a thread) and the actual
+ * context switch.  Without protection a timer IRQ can re-enter fut_schedule(),
+ * see an empty ready queue, switch to idle, and permanently orphan the dequeued
+ * thread.  In IRQ context IF is already 0, so these are no-ops there. */
+static inline void sched_irq_disable(void) {
+#if defined(__x86_64__)
+    __asm__ volatile("cli" ::: "memory");
+#elif defined(__aarch64__)
+    __asm__ volatile("msr daifset, #0x2" ::: "memory");
+#endif
+}
+
+static inline void sched_irq_enable(void) {
+#if defined(__x86_64__)
+    __asm__ volatile("sti" ::: "memory");
+#elif defined(__aarch64__)
+    __asm__ volatile("msr daifclr, #0x2" ::: "memory");
+#endif
+}
+
+/* ============================================================
  *   Idle Thread
  * ============================================================ */
 
@@ -618,6 +643,16 @@ void fut_schedule(void) {
         return;
     }
 
+    /* CRITICAL: Disable local interrupts to close the race window between
+     * select_next_thread() (which already removed 'next' from the ready queue)
+     * and the actual context switch.  If a timer IRQ fires in this gap and
+     * calls fut_schedule() again, it would see an empty ready queue, switch to
+     * the idle thread via IRETQ (never returning here), and permanently orphan
+     * 'next'.  With interrupts disabled no nested schedule can occur.
+     * The context switch itself re-enables interrupts: cooperative path via
+     * "sti; ret", IRQ path via IRETQ restoring RFLAGS.IF=1. */
+    sched_irq_disable();
+
     // If current thread is still runnable, put it back in ready queue
     if (prev && prev != idle && prev->state == FUT_THREAD_RUNNING) {
         prev->state = FUT_THREAD_READY;
@@ -659,6 +694,11 @@ void fut_schedule(void) {
     fut_stats_record_switch(prev, next);
 
     // Context switch if different thread
+    if (prev == next) {
+        /* No switch needed — re-enable interrupts that we disabled above. */
+        sched_irq_enable();
+        return;
+    }
     if (prev != next) {
 
         // Check if we're in interrupt context

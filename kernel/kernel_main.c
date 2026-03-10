@@ -1202,7 +1202,7 @@ void fut_kernel_main(void) {
         planned_tests += 6u; /* splice: statfs, sysinfo, pipe→file, file→pipe, EINVAL, vmsplice */
         planned_tests += 6u; /* clock_sched: getres, sched_param, sched_policy, itimer, rusage, times */
         planned_tests += 7u; /* vfs: O_TRUNC, O_APPEND, relpath, dir_mtime, readlink, hardlink, mount */
-        planned_tests += 6u; /* poll: file ready, eventfd not-ready, eventfd ready, POLLNVAL, select file, select pipe */
+        planned_tests += 7u; /* poll: file ready, eventfd not-ready, eventfd ready, POLLNVAL, select file, select pipe, pselect6 pipe */
         // planned_tests += 1u; /* block */
         // planned_tests += 1u; /* futfs */
         // planned_tests += 1u; /* net */

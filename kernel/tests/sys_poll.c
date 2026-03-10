@@ -35,6 +35,7 @@ extern long sys_eventfd2(unsigned int initval, int flags);
 #define POLL_TEST_POLLNVAL        4
 #define POLL_TEST_SELECT_FILE     5
 #define POLL_TEST_SELECT_PIPE     6
+#define POLL_TEST_PSELECT6_PIPE   7
 
 /* fd_set helpers (must match sys_select.c) */
 #define FD_SETSIZE 1024
@@ -271,6 +272,46 @@ static void test_select_pipe(void) {
 }
 
 /* ============================================================
+ * Test 7: pselect6() pipe write-end is always POLLOUT ready
+ * ============================================================ */
+static void test_pselect6_pipe(void) {
+    fut_printf("[POLL-TEST] Test 7: pselect6() pipe write-end ready\n");
+
+    int pipefd[2];
+    long pret = sys_pipe(pipefd);
+    if (pret != 0) {
+        fut_printf("[POLL-TEST] ✗ pipe() failed: %ld\n", pret);
+        fut_test_fail(POLL_TEST_PSELECT6_PIPE);
+        return;
+    }
+    int rfd = pipefd[0];
+    int wfd = pipefd[1];
+
+    int nfds = wfd + 1;
+    local_fd_set wfds;
+    local_fd_set_zero(&wfds);
+    local_fd_set_bit(wfd, &wfds);
+
+    long ret = sys_pselect6(nfds, NULL, &wfds, NULL, NULL, NULL);
+    fut_vfs_close(rfd);
+    fut_vfs_close(wfd);
+
+    if (ret < 0) {
+        fut_printf("[POLL-TEST] ✗ pselect6() returned %ld\n", ret);
+        fut_test_fail(POLL_TEST_PSELECT6_PIPE);
+        return;
+    }
+    if (!local_fd_is_set(wfd, &wfds)) {
+        fut_printf("[POLL-TEST] ✗ pselect6: pipe write-end not ready for writing\n");
+        fut_test_fail(POLL_TEST_PSELECT6_PIPE);
+        return;
+    }
+
+    fut_printf("[POLL-TEST] ✓ pselect6(pipe write-end) -> write ready\n");
+    fut_test_pass();
+}
+
+/* ============================================================
  * Main test harness
  * ============================================================ */
 void fut_poll_test_thread(void *arg) {
@@ -286,6 +327,7 @@ void fut_poll_test_thread(void *arg) {
     test_poll_pollnval();
     test_select_file_ready();
     test_select_pipe();
+    test_pselect6_pipe();
 
     fut_printf("[POLL-TEST] ========================================\n");
     fut_printf("[POLL-TEST] All poll/select tests done\n");

@@ -657,7 +657,7 @@ long sys_setegid(uint32_t egid) {
  *   - -EFAULT if any pointer is NULL
  *   - -ESRCH if no task context
  *
- * Phase 3: Implementation with atomic retrieval and copy to user
+ * Phase 3 (Completed): Implementation with atomic retrieval and copy to user
  */
 long sys_getresuid(uint32_t *ruid, uint32_t *euid, uint32_t *suid) {
     /* ARM64 FIX: Copy parameters to local variables immediately to ensure they're preserved
@@ -720,7 +720,7 @@ long sys_getresuid(uint32_t *ruid, uint32_t *euid, uint32_t *suid) {
  *   - -EFAULT if any pointer is NULL
  *   - -ESRCH if no task context
  *
- * Phase 3: Implementation with atomic retrieval and copy to user
+ * Phase 3 (Completed): Implementation with atomic retrieval and copy to user
  */
 long sys_getresgid(uint32_t *rgid, uint32_t *egid, uint32_t *sgid) {
     /* ARM64 FIX: Copy parameters to local variables immediately to ensure they're preserved

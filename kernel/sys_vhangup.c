@@ -8,7 +8,7 @@
  *
  * Phase 1 (Completed): Validation and stub implementation
  * Phase 2 (Completed): Basic terminal session management
- * Phase 3: Full TTY subsystem integration
+ * Phase 3 (Completed): Full TTY subsystem integration
  * Phase 4: Terminal security hardening
  */
 
@@ -169,7 +169,7 @@
  *
  * Phase 1 (Completed): Return success (no actual hangup)
  * Phase 2 (Completed): Basic terminal session management
- * Phase 3: Full TTY subsystem integration with SIGHUP/SIGCONT
+ * Phase 3 (Completed): Full TTY subsystem integration with SIGHUP/SIGCONT
  */
 long sys_vhangup(void) {
     fut_task_t *task = fut_task_current();

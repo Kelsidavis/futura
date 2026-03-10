@@ -211,7 +211,7 @@ long sys_fdatasync(int fd) {
     }
 
     /*
-     * Phase 3: Attempt filesystem-specific datasync() operation first
+     * Phase 3 (Completed): Attempt filesystem-specific datasync() operation first
      *
      * fdatasync() should only sync data and critical metadata (file size),
      * skipping atime/mtime updates for better performance. Phase 3 checks
@@ -283,7 +283,7 @@ long sys_fdatasync(int fd) {
     }
 
     /*
-     * Phase 3: No sync operation available - return success for backwards compatibility
+     * Phase 3 (Completed): No sync operation available - return success for backwards compatibility
      * This may occur for in-memory filesystems (RamFS) where sync is a no-op.
      *
      * Phase 4 additions:

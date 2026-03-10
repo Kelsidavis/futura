@@ -234,7 +234,7 @@ long sys_readlink(const char *path, char *buf, size_t bufsiz) {
     }
 
     /*
-     * Phase 3: VFS symbolic link support
+     * Phase 3 (Completed): VFS symbolic link support
      *
      * Lookup symlink vnode and call VFS readlink operation
      */

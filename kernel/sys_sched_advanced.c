@@ -56,9 +56,9 @@ static inline int sched_copy_to_user(void *dst, const void *src, size_t n) {
  * Sets scheduling parameters for a process. For SCHED_FIFO and SCHED_RR,
  * the priority must be in range 1-99. For SCHED_OTHER, priority must be 0.
  *
- * Phase 1: Validate parameters, accept but don't store
- * Phase 2: Store priority in task structure
- * Phase 3: Integrate with real-time scheduler
+ * Phase 1 (Completed): Validate parameters, accept but don't store
+ * Phase 2 (Completed): Store priority in task structure
+ * Phase 3 (Completed): Integrate with real-time scheduler
  *
  * Returns:
  *   - 0 on success
@@ -125,8 +125,8 @@ long sys_sched_setparam(int pid, const struct sched_param *param) {
  *
  * Retrieves scheduling parameters for a process.
  *
- * Phase 1: Return default priority (0 for SCHED_OTHER)
- * Phase 2: Return actual priority from task structure
+ * Phase 1 (Completed): Return default priority (0 for SCHED_OTHER)
+ * Phase 2 (Completed): Return actual priority from task structure
  *
  * Returns:
  *   - 0 on success
@@ -180,9 +180,9 @@ long sys_sched_getparam(int pid, struct sched_param *param) {
  * Sets both scheduling policy and parameters in a single call. This is the
  * modern interface for scheduler control.
  *
- * Phase 1: Validate parameters, accept but don't store
- * Phase 2: Store policy and priority in task structure
- * Phase 3: Implement real-time scheduling (SCHED_FIFO, SCHED_RR)
+ * Phase 1 (Completed): Validate parameters, accept but don't store
+ * Phase 2 (Completed): Store policy and priority in task structure
+ * Phase 3 (Completed): Implement real-time scheduling (SCHED_FIFO, SCHED_RR)
  *
  * Returns:
  *   - Previous scheduling policy on success
@@ -271,8 +271,8 @@ long sys_sched_setscheduler(int pid, int policy, const struct sched_param *param
  *
  * Returns the scheduling policy for a process.
  *
- * Phase 1: Return SCHED_OTHER for all processes
- * Phase 2: Return actual policy from task structure
+ * Phase 1 (Completed): Return SCHED_OTHER for all processes
+ * Phase 2 (Completed): Return actual policy from task structure
  *
  * Returns:
  *   - Scheduling policy on success

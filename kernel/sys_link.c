@@ -613,7 +613,7 @@ long sys_link(const char *oldpath, const char *newpath) {
                link_count_category, new_buf, new_path_type, current_nlinks, would_be_nlinks);
 
     /*
-     * Phase 3: VFS Integration - Call filesystem-specific link operation
+     * Phase 3 (Completed): VFS Integration - Call filesystem-specific link operation
      *
      * The vnode's ops->link() function handles the actual hard link creation
      * in the filesystem (RamFS, FuturaFS, etc). We already have the target

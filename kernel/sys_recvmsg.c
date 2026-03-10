@@ -292,7 +292,7 @@ ssize_t sys_recvmsg(int sockfd, struct msghdr *msg, int flags) {
     (void)msg_type;    /* Used only in debug logging */
 
     /* Phase 2: Iterate through iovecs and read each buffer
-     * Phase 3: Proper scatter-gather implementation with VFS support
+     * Phase 3 (Completed): Proper scatter-gather implementation with VFS support
      * Phase 4: Handle ancillary data (SCM_RIGHTS for FD receiving)
      */
 

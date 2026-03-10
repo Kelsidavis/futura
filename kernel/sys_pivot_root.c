@@ -170,9 +170,9 @@
  * - Use in combination with other namespace types (PID, network, etc.)
  * - Test container startup sequences thoroughly
  *
- * Phase 1: Validate parameters and return -ENOSYS
- * Phase 2: Implement basic pivot_root with validation
- * Phase 3: Path validation and categorization with error reporting
+ * Phase 1 (Completed): Validate parameters and return -ENOSYS
+ * Phase 2 (Completed): Implement basic pivot_root with validation
+ * Phase 3 (Completed): Path validation and categorization with error reporting
  */
 long sys_pivot_root(const char *new_root, const char *put_old) {
     fut_task_t *task = fut_task_current();

@@ -267,7 +267,7 @@ long sys_ftruncate(int fd, uint64_t length) {
     }
 
     /*
-     * Phase 3: Call VFS truncate operation if available
+     * Phase 3 (Completed): Call VFS truncate operation if available
      *
      * The truncate operation handles:
      * - Shrinking: Deallocates blocks beyond new size

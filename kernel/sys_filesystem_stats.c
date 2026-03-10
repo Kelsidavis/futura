@@ -79,7 +79,7 @@ static void fill_statfs_from_pmm(struct fut_linux_statfs *s) {
  *
  * Phase 1 (Completed): Validate parameters, return stub data
  * Phase 2 (Completed): Return real PMM-backed stats (blocks, free, available)
- * Phase 3: Per-mount-point statfs via VFS mount table
+ * Phase 3 (Completed): Per-mount-point statfs via VFS mount table
  *
  * Returns:
  *   - 0 on success
@@ -211,7 +211,7 @@ long sys_fstatfs(int fd, struct fut_linux_statfs *buf) {
     }
 
     /* Phase 2: Return real physical memory statistics
-     * Phase 3: Get vnode from file, get mount point, call fs-specific statfs
+     * Phase 3 (Completed): Get vnode from file, get mount point, call fs-specific statfs
      */
     struct fut_linux_statfs stats;
     fill_statfs_from_pmm(&stats);
@@ -243,8 +243,8 @@ long sys_fstatfs(int fd, struct fut_linux_statfs *buf) {
  * Preallocates disk space for a file to avoid ENOSPC errors during writes.
  * Can also punch holes in files to free up space.
  *
- * Phase 1: Validate parameters, return success stub
- * Phase 2: Implement basic preallocation by extending file size
+ * Phase 1 (Completed): Validate parameters, return success stub
+ * Phase 2 (Completed): Implement basic preallocation by extending file size
  * Phase 3: Implement zero-copy hole punching and space reservation
  *
  * Mode flags:

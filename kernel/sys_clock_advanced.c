@@ -196,8 +196,8 @@ long sys_clock_settime(int clock_id, const fut_timespec_t *tp) {
  *
  * Returns the resolution (precision) of the specified clock.
  *
- * Phase 1: Return fixed resolution (1 millisecond) for all clocks
- * Phase 2: Return accurate resolution per clock type
+ * Phase 1 (Completed): Return fixed resolution (1 millisecond) for all clocks
+ * Phase 2 (Completed): Return accurate resolution per clock type based on FUT_TIMER_HZ
  *
  * Returns:
  *   - 0 on success
@@ -709,8 +709,8 @@ long sys_settimeofday(const fut_timeval_t *tv, const void *tz) {
  *
  * Tunes kernel time variables. Used by NTP daemon for clock synchronization.
  *
- * Phase 1: Validate and return default values (no adjustments)
- * Phase 2: Implement basic time adjustment
+ * Phase 1 (Completed): Validate and return default values (no adjustments)
+ * Phase 2 (Completed): Apply ADJ_OFFSET and ADJ_SETOFFSET adjustments to g_realtime_offset_sec
  * Phase 3: Full NTP support with PLL
  *
  * Returns:
@@ -740,21 +740,57 @@ long sys_adjtimex(struct timex *txc) {
         return -EFAULT;
     }
 
-    /* Phase 1: Return default values (no adjustments) */
-    tx.offset = 0;
-    tx.freq = 0;
-    tx.maxerror = 0;
-    tx.esterror = 0;
-    tx.status = 0;
-    tx.constant = 0;
-    tx.precision = 1000;  /* 1 microsecond */
-    tx.tolerance = 0;
-    tx.tick = 10000;  /* 10ms tick */
+    /* adjtimex mode bits (Linux-compatible subset) */
+    #define ADJ_OFFSET      0x0001   /* time offset */
+    #define ADJ_FREQUENCY   0x0002   /* frequency offset */
+    #define ADJ_STATUS      0x0010   /* clock status */
+    #define ADJ_TICK        0x4000   /* tick value */
+    #define ADJ_SETOFFSET   0x0100   /* add 'time' to current time */
+    #define ADJ_OFFSET_SINGLESHOT 0x8001 /* old-style adjtime */
+    #define TIME_OK         0        /* clock synchronized */
+    #define TIME_ERROR      5        /* clock not synchronized */
 
-    /* Get current time */
+    unsigned int modes = tx.modes;
+
+    /* Phase 2: Apply requested adjustments */
+    if (modes & ADJ_SETOFFSET) {
+        /* Add the specified offset directly to the realtime clock */
+        int64_t delta_sec = (int64_t)tx.time.tv_sec;
+        int64_t delta_us  = (int64_t)tx.time.tv_usec;
+        /* Convert microsecond fraction to seconds (round toward zero) */
+        delta_sec += delta_us / 1000000;
+        g_realtime_offset_sec += delta_sec;
+        fut_printf("[ADJTIMEX] adjtimex(ADJ_SETOFFSET, delta=%llds %ldus) -> offset applied\n",
+                   (long long)delta_sec, tx.time.tv_usec % 1000000);
+    } else if (modes & ADJ_OFFSET) {
+        /* Apply a slew offset (microseconds) — accumulate whole seconds */
+        int64_t delta_us = (int64_t)tx.offset;
+        if (delta_us <= -1000000 || delta_us >= 1000000) {
+            int64_t delta_sec = delta_us / 1000000;
+            g_realtime_offset_sec += delta_sec;
+            fut_printf("[ADJTIMEX] adjtimex(ADJ_OFFSET, offset=%ldus) -> %lld sec applied\n",
+                       tx.offset, (long long)delta_sec);
+        }
+        /* Sub-second slew is ignored (no tick-level PLL yet) */
+    }
+    /* ADJ_FREQUENCY, ADJ_STATUS, ADJ_TICK: accepted but not acted on yet */
+
+    /* Fill in current read-back values */
     uint64_t ms = fut_get_ticks();
-    tx.time.tv_sec = ms / 1000;
-    tx.time.tv_usec = (ms % 1000) * 1000;
+    uint64_t now_sec = ms / 1000 + (uint64_t)g_realtime_offset_sec;
+    uint64_t now_us  = (ms % 1000) * 1000;
+
+    tx.offset    = 0;
+    tx.freq      = 0;
+    tx.maxerror  = 0;
+    tx.esterror  = 0;
+    tx.status    = 0;
+    tx.constant  = 0;
+    tx.precision = 1000;   /* 1 microsecond */
+    tx.tolerance = 0;
+    tx.tick      = 10000;  /* 10ms tick */
+    tx.time.tv_sec  = (long)now_sec;
+    tx.time.tv_usec = (long)now_us;
 
     /* Copy back to user */
     if (clock_copy_to_user(local_txc, &tx, sizeof(struct timex)) != 0) {
@@ -762,8 +798,7 @@ long sys_adjtimex(struct timex *txc) {
         return -EFAULT;
     }
 
-    fut_printf("[ADJTIMEX] adjtimex(modes=%u) -> 0 (no adjustments, Phase 1 stub)\n", tx.modes);
+    fut_printf("[ADJTIMEX] adjtimex(modes=0x%x) -> TIME_OK (Phase 2)\n", modes);
 
-    #define TIME_OK 0  /* Clock synchronized */
     return TIME_OK;
 }

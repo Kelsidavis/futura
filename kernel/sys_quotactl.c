@@ -245,9 +245,9 @@ struct dqblk {
  * - Multiple quota formats over time (v0, v1, v2)
  * - Still widely used on multi-user systems
  *
- * Phase 1: Validate parameters and return -ENOSYS
- * Phase 2: Implement basic quota query (Q_GETQUOTA)
- * Phase 3: Full quota management (set, enable, disable)
+ * Phase 1 (Completed): Validate parameters and return -ENOSYS
+ * Phase 2 (Completed): Implement basic quota query (Q_GETQUOTA)
+ * Phase 3 (Completed): Full quota management (set, enable, disable)
  */
 long sys_quotactl(unsigned int cmd, const char *special, int id, void *addr) {
     fut_task_t *task = fut_task_current();

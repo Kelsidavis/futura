@@ -133,7 +133,7 @@ long sys_getrusage(int who, struct rusage *usage) {
     }
 
     /*
-     * Phase 3: Populate CPU time and context switch counts from scheduler stats.
+     * Phase 3 (Completed): Populate CPU time and context switch counts from scheduler stats.
      * cpu_ticks is in timer ticks (FUT_TIMER_HZ = 100 Hz, so each tick = 10ms).
      * Since user/kernel time is not tracked separately, all attributed to ru_utime.
      * context_switches is used for ru_nvcsw (voluntary not separated from involuntary).

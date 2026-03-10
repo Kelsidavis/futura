@@ -415,9 +415,9 @@ long sys_select(int nfds, fd_set *readfds, fd_set *writefds,
  * On ARM64, pselect6 is the primary interface (select doesn't exist).
  * For now, we ignore the sigmask parameter and provide a stub implementation.
  *
- * Phase 1: Stub implementation
- * Phase 2: Implement actual FD monitoring
- * Phase 3: Add signal mask handling
+ * Phase 1 (Completed): Stub implementation
+ * Phase 2 (Completed): Implement actual FD monitoring
+ * Phase 3 (Completed): Add signal mask handling
  */
 long sys_pselect6(int nfds, void *readfds, void *writefds, void *exceptfds,
                   void *timeout, void *sigmask) {

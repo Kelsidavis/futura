@@ -94,7 +94,7 @@ long sys_times(struct tms *buf) {
     }
 
     /*
-     * Phase 3: Sum cpu_ticks across all threads of this task.
+     * Phase 3 (Completed): Sum cpu_ticks across all threads of this task.
      * cpu_ticks is incremented every timer tick while the thread runs.
      * Since user/kernel time is not tracked separately, attribute all to
      * utime (stime = 0); this matches common kernel stubs for early-stage OSes.

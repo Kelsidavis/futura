@@ -212,7 +212,7 @@ long sys_fsync(int fd) {
     }
 
     /*
-     * Phase 3: Call VFS backend sync operation if available
+     * Phase 3 (Completed): Call VFS backend sync operation if available
      *
      * Each filesystem implements its own sync strategy:
      * - RamFS: No-op (already in memory)

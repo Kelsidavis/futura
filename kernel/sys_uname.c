@@ -114,7 +114,7 @@ static char g_domainname[DOMAINNAME_MAX] = "(none)";
  *
  * Phase 1 (Completed): Basic uname with static system info
  * Phase 2 (Completed): Enhanced validation, field categorization, detailed logging
- * Phase 3: Dynamic hostname/domainname with sethostname support
+ * Phase 3 (Completed): Dynamic hostname and domain name via sethostname/setdomainname
  * Phase 4: Extended system info, kernel capabilities
  */
 long sys_uname(struct utsname *buf) {

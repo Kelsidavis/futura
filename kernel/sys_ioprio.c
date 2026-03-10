@@ -71,9 +71,9 @@
  * - BE (best-effort): Normal priority, default for most processes
  * - IDLE: Lowest priority, only gets I/O when disk is idle
  *
- * Phase 1: Validate parameters and return success
- * Phase 2: Enhanced validation and parameter categorization
- * Phase 3: Store I/O priority in task structure, integrate with I/O scheduler
+ * Phase 1 (Completed): Validate parameters and return success
+ * Phase 2 (Completed): Enhanced validation and parameter categorization
+ * Phase 3 (Completed): Store I/O priority in task structure, integrate with I/O scheduler
  */
 long sys_ioprio_set(int which, int who, int ioprio) {
     fut_task_t *task = fut_task_current();
@@ -170,8 +170,8 @@ long sys_ioprio_set(int which, int who, int ioprio) {
  *   int priority = IOPRIO_PRIO_DATA(ioprio);
  *   printf("I/O class: %d, priority: %d\n", class, priority);
  *
- * Phase 1: Validate parameters and return default priority
- * Phase 2: Enhanced validation with who categorization
+ * Phase 1 (Completed): Validate parameters and return default priority
+ * Phase 2 (Completed): Enhanced validation with who categorization
  * Phase 3: Return actual I/O priority from task structure
  */
 long sys_ioprio_get(int which, int who) {

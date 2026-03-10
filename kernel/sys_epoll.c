@@ -1877,7 +1877,7 @@ long sys_epoll_wait(int epfd, struct epoll_event *events, int maxevents, int tim
  *   - epoll file descriptor on success
  *   - -EINVAL if size <= 0
  *
- * Phase 2: Wrapper that delegates to epoll_create1(0)
+ * Phase 2 (Completed): Wrapper that delegates to epoll_create1(0)
  */
 long sys_epoll_create(int size) {
     /* Phase 2: Validate size parameter */

@@ -87,7 +87,7 @@
  * watches and with read() to receive events. Events are read as struct
  * inotify_event from the file descriptor.
  *
- * Phase 1: Validate flags and return dummy fd
+ * Phase 1 (Completed): Validate flags and return dummy fd
  * Phase 2: Create actual inotify instance with event queue
  */
 long sys_inotify_init1(int flags) {
@@ -214,8 +214,8 @@ long sys_inotify_init1(int flags) {
  * The watch descriptor can be used to identify events when reading from the
  * inotify fd and can be passed to inotify_rm_watch() to remove the watch.
  *
- * Phase 1: Validate parameters and return dummy watch descriptor
- * Phase 2: Enhanced validation, user-space data handling with copy_from_user, parameter categorization
+ * Phase 1 (Completed): Validate parameters and return dummy watch descriptor
+ * Phase 2 (Completed): Enhanced validation, user-space data handling with copy_from_user, parameter categorization
  * Phase 3: Create actual watch and register with VFS
  */
 long sys_inotify_add_watch(int fd, const char *pathname, uint32_t mask) {
@@ -342,7 +342,7 @@ long sys_inotify_add_watch(int fd, const char *pathname, uint32_t mask) {
  * Usage:
  *   if (inotify_rm_watch(fd, wd) < 0) perror("inotify_rm_watch");
  *
- * Phase 1: Validate parameters and return success
+ * Phase 1 (Completed): Validate parameters and return success
  * Phase 2: Actually remove watch from VFS monitoring
  */
 long sys_inotify_rm_watch(int fd, int wd) {

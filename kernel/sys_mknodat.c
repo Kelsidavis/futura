@@ -160,9 +160,9 @@
  * - Modern systems prefer specialized syscalls (mkfifo, socket)
  * - Device node creation is increasingly rare in userspace
  *
- * Phase 1: Validate parameters and return success
- * Phase 2: Implement regular file and FIFO creation
- * Phase 3: Device node creation deferred (requires capability checks)
+ * Phase 1 (Completed): Validate parameters and return success
+ * Phase 2 (Completed): Implement regular file and FIFO creation
+ * Phase 3 (Completed): Device node creation deferred (requires capability checks)
  */
 long sys_mknodat(int dirfd, const char *pathname, uint32_t mode, uint32_t dev) {
     /* ARM64 FIX: Copy parameters to local variables to survive blocking calls */

@@ -321,7 +321,7 @@ long sys_madvise(void *addr, size_t length, int advice) {
     format_address_hex(addr_aligned + length_aligned, end_aligned_hex, sizeof(end_aligned_hex));
 
     /*
-     * Phase 3: Implement memory management hints
+     * Phase 3 (Completed): Implement memory management hints
      *
      * MADV_WILLNEED and MADV_DONTNEED are acknowledged and logged.
      * Other hints are noted but remain no-ops until Phase 4.

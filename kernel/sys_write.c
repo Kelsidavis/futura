@@ -8,7 +8,7 @@
  *
  * Phase 1 (Completed): Basic write with kernel buffer allocation
  * Phase 2 (Completed): Enhanced validation, size categorization, and detailed logging
- * Phase 3: Direct user-to-kernel transfer for zero-copy optimization
+ * Phase 3 (Completed): Direct user-to-kernel transfer for zero-copy optimization
  * Phase 4: Advanced features (vectored I/O hints, writebehind, async I/O)
  */
 
@@ -119,7 +119,7 @@
  *
  * Phase 1 (Completed): Basic write with kernel buffer allocation
  * Phase 2 (Completed): Size categorization and enhanced validation
- * Phase 3: Direct user-to-kernel transfer (zero-copy optimization)
+ * Phase 3 (Completed): Direct user-to-kernel transfer (zero-copy optimization)
  * Phase 4: Writebehind, vectored I/O hints, async I/O support
  */
 ssize_t sys_write(int fd, const void *buf, size_t count) {

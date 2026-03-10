@@ -194,7 +194,7 @@ long sys_capget(struct __user_cap_header_struct *hdrp,
     }
 
     /*
-     * Phase 3: Capability retrieval from task structure
+     * Phase 3 (Completed): Capability retrieval from task structure
      *
      * Copy task capabilities (effective, permitted, inheritable) to userspace
      */
@@ -345,7 +345,7 @@ long sys_capset(struct __user_cap_header_struct *hdrp,
     }
 
     /*
-     * Phase 3: Capability storage and permission checking
+     * Phase 3 (Completed): Capability storage and permission checking
      *
      * Store new capabilities in task structure, validate permissions, and update effective set
      */

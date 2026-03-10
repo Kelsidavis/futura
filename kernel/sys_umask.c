@@ -246,7 +246,7 @@ long sys_umask(uint32_t mask) {
  * This function is called by mkdir, open with O_CREAT, etc. to apply
  * the umask to newly created files and directories.
  *
- * Phase 3: Now uses per-task umask from task structure for proper process isolation.
+ * Phase 3 (Completed): Now uses per-task umask from task structure for proper process isolation.
  *
  * @return Current umask value from current task's umask field
  */

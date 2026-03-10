@@ -10,7 +10,7 @@
  *
  * Phase 1 (Completed): Basic waitpid with status return
  * Phase 2 (Completed): Enhanced validation, PID/flag categorization, detailed logging
- * Phase 3: Non-blocking wait, wait for specific children, process groups
+ * Phase 3 (Completed): Non-blocking wait, wait for specific children, process groups
  * Phase 4: Advanced wait options (WSTOPPED, WCONTINUED), waitid support
  */
 
@@ -128,7 +128,7 @@
  *
  * Phase 1 (Completed): Basic waitpid with status return
  * Phase 2 (Completed): Enhanced validation, PID/flag categorization, detailed logging
- * Phase 3: Non-blocking wait (WNOHANG), process group support
+ * Phase 3 (Completed): Non-blocking wait (WNOHANG), process group support
  * Phase 4: Advanced options (WUNTRACED, WCONTINUED), waitid, rusage
  */
 long sys_waitpid(int pid, int *u_status, int flags) {

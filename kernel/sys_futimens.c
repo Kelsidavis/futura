@@ -117,9 +117,9 @@
  *   - Relative symlinks are not followed (operates on actual file)
  *   - No path traversal possible (uses fd directly)
  *
- * Phase 1: Stub returning ENOSYS
- * Phase 2: Enhanced validation and parameter categorization
- * Phase 3: FD lookup and setattr() integration
+ * Phase 1 (Completed): Stub returning ENOSYS
+ * Phase 2 (Completed): Enhanced validation and parameter categorization
+ * Phase 3 (Completed): FD lookup and setattr() integration
  * Phase 4: Performance optimization
  */
 long sys_futimens(int fd, const fut_timespec_t *times) {
@@ -186,7 +186,7 @@ long sys_futimens(int fd, const fut_timespec_t *times) {
     }
 
     /*
-     * Phase 3: FD lookup and VFS integration
+     * Phase 3 (Completed): FD lookup and VFS integration
      *
      * Get the file object from the fd table and dispatch to vnode->ops->setattr()
      */

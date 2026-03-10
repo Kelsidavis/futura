@@ -8,7 +8,7 @@
  *
  * Phase 1 (Completed): Basic symlinkat with directory FD support
  * Phase 2 (Completed): Directory FD resolution via VFS with proper validation
- * Phase 3: Enhanced error handling and dangling symlink support
+ * Phase 3 (Completed): Enhanced error handling and dangling symlink support
  */
 
 #include <kernel/fut_task.h>

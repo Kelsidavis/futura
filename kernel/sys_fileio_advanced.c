@@ -92,13 +92,15 @@ long sys_chroot(const char *path) {
         return -EPERM;
     }
 
-    /* TODO: store vnode in task->chroot_vnode and integrate with VFS path resolution */
+    /* Release old chroot vnode if already set */
+    if (task->chroot_vnode) {
+        fut_vnode_unref(task->chroot_vnode);
+    }
 
-    fut_vnode_unref(vnode);
+    /* Install new chroot root — vnode already ref'd by fut_vfs_lookup above */
+    task->chroot_vnode = vnode;
 
-    /* Stub: validated path exists and is a directory, but don't actually change root.
-     * Full implementation requires adding chroot_vnode to fut_task_t and updating
-     * VFS path resolution to use it as the root for this task. */
+    fut_printf("[CHROOT] chroot('%s') -> 0 (pid=%llu)\n", path_buf, (unsigned long long)task->pid);
     return 0;
 }
 

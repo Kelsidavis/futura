@@ -602,13 +602,24 @@ static int lookup_vnode(const char *path, struct fut_vnode **vnode) {
     char abs_buf[FUT_VFS_PATH_BUFFER_SIZE];
     path = resolve_path_to_abs(path, abs_buf);
 
+    /* Determine effective root: use chroot jail vnode if task has one set */
+    fut_task_t *task_for_root = fut_task_current();
+    struct fut_vnode *effective_root = root_vnode;
+    if (task_for_root && task_for_root->chroot_vnode) {
+        effective_root = task_for_root->chroot_vnode;
+    }
+
     /* Handle root directory */
     if (path[0] == '/' && path[1] == '\0') {
-        if (!root_vnode) {
+        if (!effective_root) {
             return -ENOENT;  /* Root not mounted */
         }
-        *vnode = root_vnode;
-        /* Note: Root vnode is never freed, so we don't take/release references to it */
+        *vnode = effective_root;
+        /* The global root vnode is immortal — no refcount needed.
+         * A chroot vnode must be refcounted so the caller can unref it. */
+        if (effective_root != root_vnode_base) {
+            fut_vnode_ref(effective_root);
+        }
         return 0;
     }
 
@@ -638,15 +649,19 @@ static int lookup_vnode(const char *path, struct fut_vnode **vnode) {
         return -EINVAL;
     }
 
-    /* Start from root */
-    if (!root_vnode) {
+    /* Start from effective root (global root or chroot jail) */
+    if (!effective_root) {
         VFSDBG("[vfs-heap] lookup_vnode freeing %p (no root)\n", (void*)components);
         fut_free(components);
         return -ENOENT;
     }
 
-    struct fut_vnode *current = root_vnode;
-    /* Note: We do not take a reference to root_vnode; it's always valid */
+    struct fut_vnode *current = effective_root;
+    /* The global root_vnode_base is never refcounted during traversal (it's immortal).
+     * A chroot vnode IS refcounted so that release_lookup_ref works correctly. */
+    if (current != root_vnode_base) {
+        fut_vnode_ref(current);
+    }
     VFSDBG("[vfs] lookup_vnode start current=%p ref=%u\n",
            (void *)current,
            current ? current->refcount : 0);

@@ -160,6 +160,9 @@ struct fut_task {
     uint64_t dupfd_ops_current;        // Current second's F_DUPFD operations consumed (resets every 1000ms)
     uint64_t dupfd_reset_time_ms;      // Last time F_DUPFD counter was reset (milliseconds)
 
+    /* chroot(2) filesystem isolation */
+    struct fut_vnode *chroot_vnode;    // chroot jail root vnode (NULL = use global VFS root)
+
     fut_task_t *next;                  // Next task in system list
 };
 

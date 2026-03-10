@@ -876,6 +876,12 @@ long sys_fork(void) {
     child_task->ioprio_class = parent_task->ioprio_class;
     child_task->ioprio_level = parent_task->ioprio_level;
 
+    /* Inherit chroot jail (POSIX: child stays in parent's chroot) */
+    if (parent_task->chroot_vnode) {
+        child_task->chroot_vnode = parent_task->chroot_vnode;
+        fut_vnode_ref(child_task->chroot_vnode);
+    }
+
     /* Copy parent's file descriptor table to child */
     #define FUT_FILE_REF_MAX 0xFFFFFFF0u  /* Leave headroom below UINT32_MAX */
     if (parent_task->fd_table) {

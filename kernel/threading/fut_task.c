@@ -327,6 +327,12 @@ void fut_task_destroy(fut_task_t *task) {
         task->mm = NULL;
     }
 
+    /* Release chroot jail vnode if set */
+    if (task->chroot_vnode) {
+        fut_vnode_unref(task->chroot_vnode);
+        task->chroot_vnode = NULL;
+    }
+
     fut_free(task);
 }
 

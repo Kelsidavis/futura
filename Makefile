@@ -624,6 +624,7 @@ ifeq ($(PLATFORM),x86_64)
         kernel/tests/sys_splice.c \
         kernel/tests/sys_clock_sched.c \
         kernel/tests/sys_vfs.c \
+        kernel/tests/sys_poll.c \
         kernel/tests/perf.c \
         kernel/tests/perf_ipc.c \
         kernel/tests/perf_sched.c \
@@ -672,6 +673,7 @@ else ifeq ($(PLATFORM),arm64)
         kernel/tests/sys_splice.c \
         kernel/tests/sys_clock_sched.c \
         kernel/tests/sys_vfs.c \
+        kernel/tests/sys_poll.c \
         tests/test_blkcore.c \
         tests/test_net.c \
         tests/test_futfs.c \

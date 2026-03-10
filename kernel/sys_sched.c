@@ -9,6 +9,7 @@
 
 #include <kernel/fut_task.h>
 #include <kernel/fut_sched.h>
+#include <kernel/fut_thread.h>
 #include <kernel/errno.h>
 
 #include <kernel/kprintf.h>
@@ -43,7 +44,7 @@
  * Phase 1 (Completed): Calls fut_schedule() to trigger reschedule
  * Phase 2 (Completed): Enhanced logging with task state categorization
  * Phase 3 (Completed): Task state categorization with scheduler reschedule
- * Phase 4: Track yield statistics for scheduler debugging
+ * Phase 4 (Completed): Track yield statistics for scheduler debugging
  */
 long sys_sched_yield(void) {
     fut_task_t *task = fut_task_current();
@@ -52,27 +53,19 @@ long sys_sched_yield(void) {
         return -ESRCH;
     }
 
-    /* Phase 2: Categorize task state for enhanced logging */
-    const char *task_state_desc;
-    if (task->state == 1) {  /* Assuming FUT_TASK_RUNNING = 1 */
-        task_state_desc = "running";
-    } else if (task->state == 2) {  /* Assuming FUT_TASK_READY = 2 */
-        task_state_desc = "ready";
-    } else if (task->state == 3) {  /* Assuming FUT_TASK_BLOCKED = 3 */
-        task_state_desc = "blocked";
-    } else if (task->state == 4) {  /* Assuming FUT_TASK_ZOMBIE = 4 */
-        task_state_desc = "zombie";
-    } else {
-        task_state_desc = "unknown";
-    }
+    /* Get current thread for yield statistics tracking */
+    fut_thread_t *thread = fut_thread_current();
 
-    /* Phase 3: Enhanced logging with task categorization */
-    fut_printf("[SCHED] sched_yield() called by task pid=%llu [state=%s], Phase 3: Task state categorization\n",
-               task->pid, task_state_desc);
+    fut_printf("[SCHED] sched_yield() pid=%llu\n", task->pid);
 
-    /* Trigger a reschedule, allowing other threads to run
-     * The scheduler will select the next runnable thread */
+    /* Trigger a reschedule, allowing other threads to run.
+     * The scheduler will select the next runnable thread. */
     fut_schedule();
+
+    /* Phase 4: Increment voluntary yield counter after returning from reschedule */
+    if (thread) {
+        thread->stats.voluntary_yields++;
+    }
 
     /* Always return success after yielding */
     return 0;

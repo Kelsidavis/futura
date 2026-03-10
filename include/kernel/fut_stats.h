@@ -24,6 +24,7 @@ typedef struct {
     uint64_t context_switches;    /* Number of times this thread was scheduled */
     uint64_t cpu_ticks;            /* Total CPU ticks consumed by this thread */
     uint64_t last_scheduled_tick;  /* Tick count when thread was last scheduled in */
+    uint64_t voluntary_yields;     /* Number of voluntary sched_yield() calls */
 } fut_thread_stats_t;
 
 /**

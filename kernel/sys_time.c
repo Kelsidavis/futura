@@ -33,6 +33,17 @@
  */
 volatile int64_t g_realtime_offset_sec = 0;
 
+/* NTP sub-second adjustment accumulator (microseconds, -999999..+999999).
+ * Applied additively to CLOCK_REALTIME nanoseconds. Updated by adjtimex(). */
+volatile int64_t g_ntp_adj_usec = 0;
+
+/* NTP frequency correction (ppm * FREQ_SCALE=65536, same encoding as Linux
+ * struct timex::freq). Updated by adjtimex() ADJ_FREQUENCY. */
+volatile int32_t g_ntp_freq_ppm = 0;
+
+/* NTP clock status (TIME_OK=0, TIME_ERROR=5, etc.). Updated by adjtimex(). */
+volatile int32_t g_ntp_status = 0;
+
 /* Kernel-pointer-safe copy helpers */
 static inline int time_copy_to_user(void *dst, const void *src, size_t n) {
 #ifdef KERNEL_VIRTUAL_BASE
@@ -283,6 +294,16 @@ long sys_clock_gettime(int clock_id, fut_timespec_t *tp) {
         /* CLOCK_REALTIME and CLOCK_REALTIME_COARSE add the wall clock offset */
         if (clock_id == CLOCK_REALTIME || clock_id == CLOCK_REALTIME_COARSE) {
             kernel_tp.tv_sec += g_realtime_offset_sec;
+            /* Apply sub-second NTP offset from adjtimex() ADJ_OFFSET */
+            int64_t adj_nsec = g_ntp_adj_usec * 1000LL;
+            kernel_tp.tv_nsec += adj_nsec;
+            if (kernel_tp.tv_nsec >= 1000000000LL) {
+                kernel_tp.tv_sec++;
+                kernel_tp.tv_nsec -= 1000000000LL;
+            } else if (kernel_tp.tv_nsec < 0) {
+                kernel_tp.tv_sec--;
+                kernel_tp.tv_nsec += 1000000000LL;
+            }
         }
     }
 

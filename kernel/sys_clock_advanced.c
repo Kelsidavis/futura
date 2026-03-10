@@ -56,8 +56,11 @@ static inline int clock_copy_from_user(void *dst, const void *src, size_t n) {
 /* CLOCK_* constants provided by time.h */
 /* ITIMER_* constants provided by sys/time.h */
 
-/* Wall clock offset maintained by sys_time.c */
+/* Wall clock offset and NTP state maintained by sys_time.c */
 extern volatile int64_t g_realtime_offset_sec;
+extern volatile int64_t g_ntp_adj_usec;
+extern volatile int32_t g_ntp_freq_ppm;
+extern volatile int32_t g_ntp_status;
 
 /* Interval timer structure — may already be provided by sys/time.h */
 #ifndef _STRUCT_ITIMERVAL
@@ -711,7 +714,7 @@ long sys_settimeofday(const fut_timeval_t *tv, const void *tz) {
  *
  * Phase 1 (Completed): Validate and return default values (no adjustments)
  * Phase 2 (Completed): Apply ADJ_OFFSET and ADJ_SETOFFSET adjustments to g_realtime_offset_sec
- * Phase 3: Full NTP support with PLL
+ * Phase 3 (Completed): Sub-second ADJ_OFFSET accumulation, ADJ_FREQUENCY and ADJ_STATUS tracking
  *
  * Returns:
  *   - Clock state on success
@@ -763,28 +766,48 @@ long sys_adjtimex(struct timex *txc) {
         fut_printf("[ADJTIMEX] adjtimex(ADJ_SETOFFSET, delta=%llds %ldus) -> offset applied\n",
                    (long long)delta_sec, tx.time.tv_usec % 1000000);
     } else if (modes & ADJ_OFFSET) {
-        /* Apply a slew offset (microseconds) — accumulate whole seconds */
+        /* Phase 3: Accumulate full (whole + sub-second) NTP offset */
         int64_t delta_us = (int64_t)tx.offset;
-        if (delta_us <= -1000000 || delta_us >= 1000000) {
-            int64_t delta_sec = delta_us / 1000000;
-            g_realtime_offset_sec += delta_sec;
-            fut_printf("[ADJTIMEX] adjtimex(ADJ_OFFSET, offset=%ldus) -> %lld sec applied\n",
-                       tx.offset, (long long)delta_sec);
+        int64_t delta_sec = delta_us / 1000000;
+        int64_t rem_us    = delta_us % 1000000;
+        g_realtime_offset_sec += delta_sec;
+        g_ntp_adj_usec += rem_us;
+        /* Roll over sub-second accumulator */
+        if (g_ntp_adj_usec >= 1000000) {
+            g_realtime_offset_sec++;
+            g_ntp_adj_usec -= 1000000;
+        } else if (g_ntp_adj_usec <= -1000000) {
+            g_realtime_offset_sec--;
+            g_ntp_adj_usec += 1000000;
         }
-        /* Sub-second slew is ignored (no tick-level PLL yet) */
+        fut_printf("[ADJTIMEX] adjtimex(ADJ_OFFSET, offset=%ldus) -> %lld sec + %lld us applied (Phase 3)\n",
+                   tx.offset, (long long)delta_sec, (long long)rem_us);
     }
-    /* ADJ_FREQUENCY, ADJ_STATUS, ADJ_TICK: accepted but not acted on yet */
+
+    /* Phase 3: ADJ_FREQUENCY — store frequency correction (ppm * FREQ_SCALE) */
+    if (modes & ADJ_FREQUENCY) {
+        g_ntp_freq_ppm = (int32_t)tx.freq;
+        fut_printf("[ADJTIMEX] adjtimex(ADJ_FREQUENCY, freq=%d) -> stored (Phase 3)\n", g_ntp_freq_ppm);
+    }
+
+    /* Phase 3: ADJ_STATUS — update NTP clock status */
+    if (modes & ADJ_STATUS) {
+        g_ntp_status = (int32_t)tx.status;
+        fut_printf("[ADJTIMEX] adjtimex(ADJ_STATUS, status=%d) -> stored (Phase 3)\n", g_ntp_status);
+    }
+    /* ADJ_TICK: accepted, not acted on (kernel tick rate is fixed at HZ=100) */
 
     /* Fill in current read-back values */
     uint64_t ms = fut_get_ticks();
     uint64_t now_sec = ms / 1000 + (uint64_t)g_realtime_offset_sec;
     uint64_t now_us  = (ms % 1000) * 1000;
 
-    tx.offset    = 0;
-    tx.freq      = 0;
+    /* Phase 3: Return current NTP state including stored freq and sub-second offset */
+    tx.offset    = (long)g_ntp_adj_usec;
+    tx.freq      = g_ntp_freq_ppm;
     tx.maxerror  = 0;
     tx.esterror  = 0;
-    tx.status    = 0;
+    tx.status    = g_ntp_status;
     tx.constant  = 0;
     tx.precision = 1000;   /* 1 microsecond */
     tx.tolerance = 0;
@@ -798,7 +821,8 @@ long sys_adjtimex(struct timex *txc) {
         return -EFAULT;
     }
 
-    fut_printf("[ADJTIMEX] adjtimex(modes=0x%x) -> TIME_OK (Phase 2)\n", modes);
+    fut_printf("[ADJTIMEX] adjtimex(modes=0x%x, freq=%d, status=%d, adj_usec=%lld) -> %d (Phase 3)\n",
+               modes, g_ntp_freq_ppm, g_ntp_status, (long long)g_ntp_adj_usec, g_ntp_status);
 
-    return TIME_OK;
+    return g_ntp_status;
 }

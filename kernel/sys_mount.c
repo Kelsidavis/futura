@@ -13,6 +13,9 @@
  */
 
 #include <kernel/fut_task.h>
+#include <kernel/fut_vfs.h>
+#include <kernel/fut_memory.h>
+#include <kernel/fut_object.h>
 #include <kernel/errno.h>
 #include <stdint.h>
 #include <stddef.h>
@@ -20,6 +23,8 @@
 
 #include <kernel/kprintf.h>
 #include <kernel/uaccess.h>
+
+#define CAP_SYS_ADMIN  21
 
 /* Mount flags */
 #define MS_RDONLY        1      /* Mount read-only */
@@ -354,78 +359,71 @@ long sys_mount(const char *source, const char *target, const char *filesystemtyp
         return -EINVAL;
     }
 
-    /* Categorize mount operation */
-    const char *op_type;
-    if (mountflags & MS_REMOUNT) {
-        op_type = "remount";
-    } else if (mountflags & MS_BIND) {
-        op_type = mountflags & MS_REC ? "recursive bind mount" : "bind mount";
-    } else if (mountflags & MS_MOVE) {
-        op_type = "move mount";
+    /* Check CAP_SYS_ADMIN: only privileged processes may mount */
+    bool has_cap = (task->cap_effective & (1ULL << CAP_SYS_ADMIN)) != 0;
+    bool is_root = (task->uid == 0);
+    if (!has_cap && !is_root) {
+        fut_printf("[MOUNT] mount(target='%s', fstype='%s', pid=%d) -> EPERM (need CAP_SYS_ADMIN)\n",
+                   target_buf, fstype_buf, task->pid);
+        return -EPERM;
+    }
+
+    /* Reject special mount operations not yet implemented */
+    if (mountflags & (MS_REMOUNT | MS_BIND | MS_MOVE)) {
+        fut_printf("[MOUNT] mount(target='%s', flags=0x%lx, pid=%d) -> ENOSYS "
+                   "(MS_REMOUNT/MS_BIND/MS_MOVE not implemented)\n",
+                   target_buf, mountflags, task->pid);
+        return -ENOSYS;
+    }
+
+    /* Verify target directory exists and is a directory */
+    struct fut_vnode *target_vnode = NULL;
+    int vret = fut_vfs_lookup(target_buf, &target_vnode);
+    if (vret < 0) {
+        fut_printf("[MOUNT] mount(target='%s', pid=%d) -> ENOENT (target not found)\n",
+                   target_buf, task->pid);
+        return -ENOENT;
+    }
+    if (target_vnode->type != VN_DIR) {
+        fut_vnode_unref(target_vnode);
+        fut_printf("[MOUNT] mount(target='%s', pid=%d) -> ENOTDIR\n", target_buf, task->pid);
+        return -ENOTDIR;
+    }
+    fut_vnode_unref(target_vnode);
+
+    /* Map filesystem type to registered kernel FS name.
+     * "tmpfs" is backed by "ramfs" (both are simple in-memory filesystems). */
+    const char *kernel_fstype;
+    if (strcmp(fstype_buf, "ramfs") == 0 || strcmp(fstype_buf, "tmpfs") == 0) {
+        kernel_fstype = "ramfs";
     } else {
-        op_type = "new mount";
+        fut_printf("[MOUNT] mount(target='%s', fstype='%s', pid=%d) -> ENODEV "
+                   "(unsupported filesystem type)\n",
+                   target_buf, fstype_buf, task->pid);
+        return -ENODEV;
     }
 
-    /* Extract common flags for logging */
-    char flags_buf[256];
-    char *p = flags_buf;
-    int flag_count = 0;
+    /* Allocate a persistent copy of the mountpoint path.
+     * fut_vfs_mount() stores the pointer directly — it must outlive the mount. */
+    size_t target_len = strlen(target_buf) + 1;
+    char *mountpoint = fut_malloc(target_len);
+    if (!mountpoint) {
+        fut_printf("[MOUNT] mount(target='%s', pid=%d) -> ENOMEM\n", target_buf, task->pid);
+        return -ENOMEM;
+    }
+    memcpy(mountpoint, target_buf, target_len);
 
-    if (mountflags & MS_RDONLY) {
-        const char *s = flag_count++ > 0 ? "|MS_RDONLY" : "MS_RDONLY";
-        while (*s) *p++ = *s++;
-    }
-    if (mountflags & MS_NOSUID) {
-        const char *s = flag_count++ > 0 ? "|MS_NOSUID" : "MS_NOSUID";
-        while (*s) *p++ = *s++;
-    }
-    if (mountflags & MS_NODEV) {
-        const char *s = flag_count++ > 0 ? "|MS_NODEV" : "MS_NODEV";
-        while (*s) *p++ = *s++;
-    }
-    if (mountflags & MS_NOEXEC) {
-        const char *s = flag_count++ > 0 ? "|MS_NOEXEC" : "MS_NOEXEC";
-        while (*s) *p++ = *s++;
-    }
-    if (mountflags & MS_NOATIME) {
-        const char *s = flag_count++ > 0 ? "|MS_NOATIME" : "MS_NOATIME";
-        while (*s) *p++ = *s++;
-    }
-    if (mountflags & MS_BIND) {
-        const char *s = flag_count++ > 0 ? "|MS_BIND" : "MS_BIND";
-        while (*s) *p++ = *s++;
-    }
-    if (mountflags & MS_REMOUNT) {
-        const char *s = flag_count++ > 0 ? "|MS_REMOUNT" : "MS_REMOUNT";
-        while (*s) *p++ = *s++;
-    }
-    if (flag_count == 0) {
-        const char *s = "0";
-        while (*s) *p++ = *s++;
-    }
-    *p = '\0';
-
-    /* Phase 2: Categorize filesystem type */
-    const char *fs_category = "unknown";
-    if (fstype_buf[0] != '\0') {
-        if (fstype_buf[0] == 't' && fstype_buf[1] == 'm') fs_category = "tmpfs (RAM-based)";
-        else if (fstype_buf[0] == 'p' && fstype_buf[1] == 'r') fs_category = "procfs (process info)";
-        else if (fstype_buf[0] == 's' && fstype_buf[1] == 'y') fs_category = "sysfs (kernel objects)";
-        else if (fstype_buf[0] == 'd' && fstype_buf[1] == 'e') fs_category = "devtmpfs (devices)";
-        else if (fstype_buf[0] == 'e' && fstype_buf[1] == 'x') fs_category = "ext4 (local filesystem)";
-        else fs_category = "other filesystem type";
+    int ret = fut_vfs_mount(NULL, mountpoint, kernel_fstype,
+                            (int)(mountflags & 0x7fffffff), NULL,
+                            FUT_INVALID_HANDLE);
+    if (ret < 0) {
+        fut_free(mountpoint);
+        fut_printf("[MOUNT] mount(target='%s', fstype='%s', pid=%d) -> %d (vfs_mount failed)\n",
+                   target_buf, kernel_fstype, task->pid, ret);
+        return ret;
     }
 
-    /* Phase 3: Enhanced logging with mount namespace support acknowledgment */
-    if (fstype_buf[0] != '\0') {
-        fut_printf("[MOUNT] mount(source=%p, target='%s', fstype='%s' [%s], type=%s, flags=%s, pid=%d) -> 0 "
-                   "(Phase 3: filesystem categorized, VFS mount integration acknowledged, actual mount deferred)\n",
-                   source, target_buf, fstype_buf, fs_category, op_type, flags_buf, task->pid);
-    } else {
-        fut_printf("[MOUNT] mount(source=%p, target='%s', fstype=NULL, type=%s, flags=%s, pid=%d) -> 0 "
-                   "(Phase 3: remount/bind/move operation categorized, namespace support acknowledged, deferred)\n",
-                   source, target_buf, op_type, flags_buf, task->pid);
-    }
-
+    fut_printf("[MOUNT] mount(target='%s', fstype='%s' -> '%s', flags=0x%lx, pid=%d) -> 0\n",
+               mountpoint, fstype_buf, kernel_fstype, mountflags, task->pid);
     return 0;
 }

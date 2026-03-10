@@ -13,12 +13,15 @@
  */
 
 #include <kernel/fut_task.h>
+#include <kernel/fut_vfs.h>
 #include <kernel/errno.h>
 #include <stddef.h>
 #include <string.h>
 
 #include <kernel/kprintf.h>
 #include <kernel/uaccess.h>
+
+#define CAP_SYS_ADMIN  21
 
 /* Unmount flags */
 #define MNT_FORCE       1       /* Force unmount even if busy */
@@ -262,10 +265,31 @@ long sys_umount2(const char *target, int flags) {
     }
     *p = '\0';
 
-    /* Accept validated unmount requests */
-    fut_printf("[UMOUNT2] umount2(target='%s', type=%s, flags=%s, pid=%d) -> 0 "
-               "(unmount request accepted)\n",
-               target_buf, umount_type, flags_buf, task->pid);
+    /* Check CAP_SYS_ADMIN: only privileged processes may unmount */
+    bool has_cap = (task->cap_effective & (1ULL << CAP_SYS_ADMIN)) != 0;
+    bool is_root = (task->uid == 0);
+    if (!has_cap && !is_root) {
+        fut_printf("[UMOUNT2] umount2(target='%s', pid=%d) -> EPERM (need CAP_SYS_ADMIN)\n",
+                   target_buf, task->pid);
+        return -EPERM;
+    }
 
-    return 0;  /* Phase 2: Accept all validated unmount requests */
+    /* MNT_EXPIRE is not implemented */
+    if (flags & MNT_EXPIRE) {
+        fut_printf("[UMOUNT2] umount2(target='%s', flags=%s, pid=%d) -> ENOSYS (MNT_EXPIRE not implemented)\n",
+                   target_buf, flags_buf, task->pid);
+        return -ENOSYS;
+    }
+
+    /* Perform the actual unmount via VFS */
+    int ret = fut_vfs_unmount(target_buf);
+    if (ret < 0) {
+        fut_printf("[UMOUNT2] umount2(target='%s', type=%s, flags=%s, pid=%d) -> %d\n",
+                   target_buf, umount_type, flags_buf, task->pid, ret);
+        return ret;
+    }
+
+    fut_printf("[UMOUNT2] umount2(target='%s', type=%s, flags=%s, pid=%d) -> 0\n",
+               target_buf, umount_type, flags_buf, task->pid);
+    return 0;
 }

@@ -859,6 +859,11 @@ static int ramfs_unlink(struct fut_vnode *dir, const char *name) {
                           node->open_count);
             }
 
+            /* Decrement link count */
+            if (vnode->nlinks > 0) {
+                vnode->nlinks--;
+            }
+
             /* Remove entry from linked list */
             if (prev) {
                 prev->next = entry->next;
@@ -866,26 +871,29 @@ static int ramfs_unlink(struct fut_vnode *dir, const char *name) {
                 dir_node->dir.entries = entry->next;
             }
 
-            /* Free file data if it exists */
-            if (node && node->file.data) {
-                fut_free(node->file.data);
-            }
+            /* Free the directory entry (always - this is the name being removed) */
+            fut_free(entry);
 
-            /* Free the ramfs_node */
-            if (node) {
-                fut_free(node);
-            }
+            /* Only free data and vnode when all hard links are gone */
+            if (vnode->nlinks == 0) {
+                /* Free file data if it exists */
+                if (node && node->file.data) {
+                    fut_free(node->file.data);
+                }
 
-            /* Free the vnode */
-            fut_free(vnode);
+                /* Free the ramfs_node */
+                if (node) {
+                    fut_free(node);
+                }
+
+                /* Free the vnode */
+                fut_free(vnode);
+            }
 
             /* Update parent directory mtime and ctime (entry removed) */
             uint64_t unlink_now = fut_get_ticks();
             dir_node->mtime_ms = unlink_now;
             dir_node->ctime_ms = unlink_now;
-
-            /* Free the directory entry */
-            fut_free(entry);
 
             return 0;
         }
@@ -1599,23 +1607,30 @@ static int ramfs_rename(struct fut_vnode *parent, const char *oldname, const cha
                 }
             }
 
+            /* Decrement link count for the displaced entry */
+            if (new_vnode->nlinks > 0) {
+                new_vnode->nlinks--;
+            }
+
             /* Remove new_entry from linked list */
             if (new_prev) {
                 new_prev->next = new_entry->next;
             } else {
                 parent_node->dir.entries = new_entry->next;
             }
-
-            /* Clean up newname */
-            struct ramfs_node *new_node = (struct ramfs_node *)new_vnode->fs_data;
-            if (new_node && new_node->file.data) {
-                fut_free(new_node->file.data);
-            }
-            if (new_node) {
-                fut_free(new_node);
-            }
-            fut_free(new_vnode);
             fut_free(new_entry);
+
+            /* Only free data when all hard links to displaced file are gone */
+            if (new_vnode->nlinks == 0) {
+                struct ramfs_node *new_node = (struct ramfs_node *)new_vnode->fs_data;
+                if (new_node && new_node->file.data) {
+                    fut_free(new_node->file.data);
+                }
+                if (new_node) {
+                    fut_free(new_node);
+                }
+                fut_free(new_vnode);
+            }
             break;
         }
         new_prev = new_entry;

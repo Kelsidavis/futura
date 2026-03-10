@@ -82,8 +82,8 @@ struct rusage {
  * Phase 1 (Completed): Returns zeroed statistics
  * Phase 2 (Completed): Enhanced validation and detailed reporting
  * Phase 3 (Completed): Zeroed statistics with who parameter categorization
- * Phase 4: Track CPU time (user/system) per task
- * Track memory usage (maxrss, page faults)
+ * Phase 4 (Completed): CPU time from thread stats; fix per-task vs global thread list
+ * Phase 5: Track memory usage (maxrss, page faults)
  * Phase 6: Track I/O statistics (inblock, oublock)
  */
 long sys_getrusage(int who, struct rusage *usage) {
@@ -153,8 +153,8 @@ long sys_getrusage(int who, struct rusage *usage) {
                 total_switches = t->stats.context_switches;
             }
         } else {
-            /* All threads of the task */
-            for (fut_thread_t *t = task->threads; t != nullptr; t = t->global_next) {
+            /* All threads of the task — use per-task ->next link, not global list */
+            for (fut_thread_t *t = task->threads; t != nullptr; t = t->next) {
                 total_ticks   += t->stats.cpu_ticks;
                 total_switches += t->stats.context_switches;
             }

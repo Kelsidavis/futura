@@ -251,16 +251,42 @@ long sys_fchownat(int dirfd, const char *pathname, uint32_t uid, uint32_t gid, i
         path_type = "relative";
     }
 
-    /* Phase 2: Handle dirfd resolution
-     * - Absolute paths: dirfd is ignored, path is used directly
-     * - Relative paths with AT_FDCWD: Use current working directory (handled by vfs_lookup)
-     * - Relative paths with valid dirfd: Phase 3 (full fd-table support) not yet implemented
+    /* Handle dirfd resolution:
+     * - Absolute paths: dirfd is ignored
+     * - Relative paths with AT_FDCWD: resolved relative to CWD by vfs_lookup
+     * - Relative paths with valid dirfd: resolved relative to dirfd's stored path
      */
     if (dirfd != AT_FDCWD && dirfd >= 0 && path_buf[0] != '/') {
-        fut_printf("[FCHOWNAT] fchownat(dirfd=%d [%s], path='%s' [%s], uid=%s, gid=%s, "
-                   "op=%s, flags=%s) -> ENOSYS (dirfd-relative path resolution not yet implemented, Phase 3)\n",
-                   dirfd, dirfd_desc, path_buf, path_type, uid_desc, gid_desc, operation_type, flags_desc);
-        return -ENOSYS;
+        /* Resolve path relative to dirfd using the dirfd's stored file->path */
+        fut_task_t *task = fut_task_current();
+        if (!task || !task->fd_table || dirfd >= task->max_fds) {
+            fut_printf("[FCHOWNAT] fchownat(dirfd=%d, path='%s') -> EBADF (invalid dirfd)\n",
+                       dirfd, path_buf);
+            return -EBADF;
+        }
+        struct fut_file *dir_file = task->fd_table[dirfd];
+        if (!dir_file || !dir_file->vnode || dir_file->vnode->type != VN_DIR) {
+            fut_printf("[FCHOWNAT] fchownat(dirfd=%d, path='%s') -> EBADF (dirfd not a directory)\n",
+                       dirfd, path_buf);
+            return -EBADF;
+        }
+        if (!dir_file->path) {
+            /* No stored path; fall through with relative path (best-effort) */
+        } else {
+            /* Combine dir_path + "/" + rel_path into path_buf */
+            char combined[256];
+            size_t dir_len = strlen(dir_file->path);
+            size_t rel_len = strlen(path_buf);
+            bool has_trail = (dir_len > 0 && dir_file->path[dir_len - 1] == '/');
+            if (dir_len + (has_trail ? 0 : 1) + rel_len >= sizeof(combined)) {
+                return -ENAMETOOLONG;
+            }
+            size_t pos = 0;
+            for (size_t j = 0; j < dir_len; j++) combined[pos++] = dir_file->path[j];
+            if (!has_trail) combined[pos++] = '/';
+            for (size_t j = 0; j <= rel_len; j++) combined[pos++] = path_buf[j];
+            memcpy(path_buf, combined, pos);
+        }
     }
 
     /* Phase 3: AT_SYMLINK_NOFOLLOW - change symlink ownership, not target

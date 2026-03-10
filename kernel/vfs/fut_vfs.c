@@ -18,6 +18,8 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <stdbool.h>
+#include <string.h>
+#include <fcntl.h>
 #include <sys/stat.h>
 
 #include <kernel/kprintf.h>
@@ -168,6 +170,9 @@ static void close_fd_in_task(fut_task_t *task, int fd) {
         fut_vnode_unref(file->vnode);
     }
 
+    if (file->path) {
+        fut_free(file->path);
+    }
     fut_free(file);
 }
 
@@ -1360,6 +1365,7 @@ static int try_open_chrdev(const char *path, int flags) {
     file->owner_pid = 0;
     file->fd_flags = 0;
     file->seals = 0;
+    file->path = NULL;
 
     if (ops->open) {
         int rc = ops->open(inode, flags, &file->chr_private);
@@ -1419,6 +1425,7 @@ int chrdev_alloc_fd(const struct fut_file_ops *ops, void *inode, void *priv) {
     file->fd_flags = 0;  /* No close-on-exec for device files by default */
     file->owner_pid = 0;
     file->seals = 0;
+    file->path = NULL;
 
     /* Get current task for per-task FD allocation */
     fut_task_t *task = fut_task_current();
@@ -1654,6 +1661,17 @@ int fut_vfs_open(const char *path, int flags, int mode) {
     file->owner_pid = 0;
     file->fd_flags = 0;
     file->seals = 0;
+    /* Resolve and store absolute path for dirfd-relative *at syscall resolution */
+    {
+        char abs_path_buf[FUT_VFS_PATH_BUFFER_SIZE];
+        const char *abs_path = resolve_path_to_abs(path, abs_path_buf);
+        size_t abs_len = strlen(abs_path);
+        file->path = fut_malloc(abs_len + 1);
+        if (file->path) {
+            memcpy(file->path, abs_path, abs_len + 1);
+        }
+        /* If malloc fails, path remains NULL; dirfd resolution will fall back gracefully */
+    }
 
     /* Check permissions for write access */
     if ((flags & (O_WRONLY | O_RDWR)) && !created) {
@@ -1661,6 +1679,7 @@ int fut_vfs_open(const char *path, int flags, int mode) {
         int perm_ret = check_file_permission(vnode, NULL, true);
         if (perm_ret < 0) {
             fut_printf("[VFS-OPEN] Write permission denied for '%s' (mode=0%o)\n", path, vnode->mode);
+            if (file->path) { fut_free(file->path); }
             fut_free(file);
             release_lookup_ref(vnode);
             return perm_ret;
@@ -1673,6 +1692,7 @@ int fut_vfs_open(const char *path, int flags, int mode) {
             int trunc_ret = vnode->ops->truncate(vnode, 0);
             if (trunc_ret < 0) {
                 VFSDBG("[VFS-OPEN] O_TRUNC failed for '%s': %d\n", path, trunc_ret);
+                if (file->path) { fut_free(file->path); }
                 fut_free(file);
                 release_lookup_ref(vnode);
                 return trunc_ret;
@@ -1684,6 +1704,7 @@ int fut_vfs_open(const char *path, int flags, int mode) {
     /* Allocate file descriptor in task's FD table */
     int fd = alloc_fd_for_task(task, file);
     if (fd < 0) {
+        if (file->path) { fut_free(file->path); }
         fut_free(file);
         release_lookup_ref(vnode);
         fut_printf("[VFS-OPEN] alloc_fd_for_task failed, returning %d\n", fd);
@@ -1699,6 +1720,63 @@ int fut_vfs_open(const char *path, int flags, int mode) {
     fut_printf("[VFS-OPEN] SUCCESS: opened '%s' as fd=%d (mode=0%o)\n", path, fd, vnode->mode);
 #endif
     return fd;
+}
+
+/**
+ * fut_vfs_open_at - Open a file relative to a directory FD.
+ *
+ * Implements the *at syscall convention: if path is absolute or dirfd is
+ * AT_FDCWD, this is identical to fut_vfs_open(). If path is relative and
+ * dirfd is a valid directory FD, resolves path relative to that directory
+ * using the stored fut_file.path of the dirfd.
+ */
+int fut_vfs_open_at(fut_task_t *task, int dirfd, const char *path, int flags, int mode) {
+    if (!path) {
+        return -EINVAL;
+    }
+
+    /* Absolute path or AT_FDCWD: delegate directly */
+    if (path[0] == '/' || dirfd == AT_FDCWD) {
+        return fut_vfs_open(path, flags, mode);
+    }
+
+    /* Relative path with real dirfd: resolve relative to the dirfd's path */
+    if (!task || !task->fd_table || dirfd < 0 || dirfd >= task->max_fds) {
+        return -EBADF;
+    }
+
+    struct fut_file *dir_file = get_file_from_task(task, dirfd);
+    if (!dir_file) {
+        return -EBADF;
+    }
+
+    if (!dir_file->vnode || dir_file->vnode->type != VN_DIR) {
+        return -ENOTDIR;
+    }
+
+    /* We need the directory's path to combine with the relative path.
+     * Use the stored file->path if available. */
+    if (!dir_file->path) {
+        /* No path stored - fall back to treating relative path as CWD-relative */
+        return fut_vfs_open(path, flags, mode);
+    }
+
+    /* Combine dir_path + "/" + rel_path into an absolute path */
+    char combined[FUT_VFS_PATH_BUFFER_SIZE];
+    size_t dir_len = strlen(dir_file->path);
+    size_t rel_len = strlen(path);
+    bool has_trail = (dir_len > 0 && dir_file->path[dir_len - 1] == '/');
+    size_t total = dir_len + (has_trail ? 0 : 1) + rel_len;
+    if (total >= FUT_VFS_PATH_BUFFER_SIZE) {
+        return -ENAMETOOLONG;
+    }
+    size_t i = 0;
+    for (size_t j = 0; j < dir_len; j++) combined[i++] = dir_file->path[j];
+    if (!has_trail) combined[i++] = '/';
+    for (size_t j = 0; j < rel_len; j++) combined[i++] = path[j];
+    combined[i] = '\0';
+
+    return fut_vfs_open(combined, flags, mode);
 }
 
 ssize_t fut_vfs_read(int fd, void *buf, size_t size) {
@@ -1862,6 +1940,7 @@ int fut_vfs_close(int fd) {
         if (file->chr_ops->release) {
             file->chr_ops->release(file->chr_inode, file->chr_private);
         }
+        if (file->path) { fut_free(file->path); }
         fut_free(file);
         return 0;
     }
@@ -1883,6 +1962,9 @@ int fut_vfs_close(int fd) {
 
     /* Free file structure */
     VFSDBG("[vfs-close] freeing file struct %p\n", (void*)file);
+    if (file->path) {
+        fut_free(file->path);
+    }
     fut_free(file);
 
     return 0;

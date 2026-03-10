@@ -183,34 +183,27 @@ long sys_openat(int dirfd, const char *pathname, int flags, int mode) {
         behavior_desc = "multiple";
     }
 
-    /* Phase 2: Validate dirfd for relative paths */
-    if (local_dirfd != AT_FDCWD && kpath[0] != '/') {
-        /* Relative path with real dirfd not yet supported in Phase 2 */
-        fut_printf("[OPENAT] openat(dirfd=%d [%s], path='%s' [%s], flags=0x%x [%s, %s], mode=0%o) "
-                   "-> ENOTSUP (real dirfd not yet supported, Phase 3: dirfd validation)\n",
-                   local_dirfd, dirfd_desc, kpath, path_type, local_flags, access_desc, creation_desc, local_mode);
-        return -ENOTSUP;
-    }
+    /* Open via VFS, using fut_vfs_open_at to handle dirfd-relative paths */
+    fut_task_t *open_task = fut_task_current();
+    int result = fut_vfs_open_at(open_task, local_dirfd, kpath, local_flags, local_mode);
 
-    /* Open via VFS */
-    int result = fut_vfs_open(kpath, local_flags, local_mode);
-
-    /* Phase 2: Detailed logging with flag categorization */
     if (result >= 0) {
         fut_printf("[OPENAT] openat(dirfd=%d [%s], path='%s' [%s], flags=0x%x [%s, %s, behavior: %s], mode=0%o) "
-                   "-> %d (Phase 3: dirfd validation, AT_FDCWD)\n",
+                   "-> %d\n",
                    local_dirfd, dirfd_desc, kpath, path_type, local_flags, access_desc, creation_desc,
                    behavior_desc, local_mode, result);
     } else {
         fut_printf("[OPENAT] openat(dirfd=%d [%s], path='%s' [%s], flags=0x%x [%s, %s, behavior: %s], mode=0%o) "
-                   "-> %d (%s, Phase 3: dirfd validation)\n",
+                   "-> %d (%s)\n",
                    local_dirfd, dirfd_desc, kpath, path_type, local_flags, access_desc, creation_desc,
                    behavior_desc, local_mode, result,
                    (result == -ENOENT) ? "not found" :
                    (result == -EACCES) ? "access denied" :
                    (result == -EEXIST) ? "already exists" :
                    (result == -EISDIR) ? "is directory" :
-                   (result == -ENOTDIR) ? "not directory" : "error");
+                   (result == -ENOTDIR) ? "not directory" :
+                   (result == -EBADF) ? "bad dirfd" :
+                   (result == -ENOTSUP) ? "not supported" : "error");
     }
 
     return (long)result;

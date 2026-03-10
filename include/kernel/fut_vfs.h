@@ -517,6 +517,7 @@ struct fut_file {
     int fd_flags;                   /* FD-specific flags (e.g., FD_CLOEXEC) */
     int owner_pid;                  /* Owner PID for async I/O signals (F_SETOWN/F_GETOWN) */
     uint32_t seals;                 /* File sealing flags (F_SEAL_*) */
+    char *path;                     /* Absolute path (heap-allocated); used by *at syscalls for dirfd resolution */
 };
 
 /* ============================================================
@@ -704,6 +705,22 @@ int fut_vfs_lookup_nofollow(const char *path, struct fut_vnode **out_vnode);
  * @return File descriptor, or negative error code
  */
 int fut_vfs_open(const char *path, int flags, int mode);
+
+/**
+ * Open a file relative to a directory file descriptor (for *at syscalls).
+ *
+ * If path is absolute or dirfd is AT_FDCWD, behaves identically to fut_vfs_open.
+ * If path is relative and dirfd is a valid directory FD, resolves path relative
+ * to that directory using the stored fut_file.path of the dirfd.
+ *
+ * @param task   Current task (for fd table lookup)
+ * @param dirfd  Directory file descriptor or AT_FDCWD
+ * @param path   Path to open (absolute or relative)
+ * @param flags  Open flags (O_RDONLY, O_WRONLY, O_CREAT, etc.)
+ * @param mode   File mode for newly created files
+ * @return File descriptor, or negative error code
+ */
+int fut_vfs_open_at(struct fut_task *task, int dirfd, const char *path, int flags, int mode);
 
 /**
  * Read from a file.

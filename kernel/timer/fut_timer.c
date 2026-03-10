@@ -207,15 +207,10 @@ static void process_timer_events(void) {
  * Increments tick counter, wakes sleeping threads, and triggers scheduling.
  */
 void fut_timer_tick(void) {
-    // Increment tick counter
-    uint64_t ticks = atomic_fetch_add_explicit(&system_ticks, 1, memory_order_relaxed);
-
-    // Debug: Log first few timer ticks and then periodically to confirm IRQs are firing
-    if (ticks < 5) {
-        fut_printf("[TIMER] Tick %llu\n", (unsigned long long)ticks);
-    } else if (ticks == 10 || ticks == 50 || ticks == 100 || ticks == 200 || ticks == 500 || ticks == 1000) {
-        fut_printf("[TIMER] Tick %llu (checkpoint)\n", (unsigned long long)ticks);
-    }
+    /* Increment tick counter.  Note: fut_printf is intentionally NOT called
+     * here — fut_serial_putc busy-waits for THRE with interrupts disabled,
+     * which can hang the kernel on CI when the QEMU serial FIFO is full. */
+    uint64_t current_ms = atomic_fetch_add_explicit(&system_ticks, 1, memory_order_relaxed);
 
     // Wake any threads whose sleep time has expired
     wake_sleeping_threads();
@@ -225,7 +220,6 @@ void fut_timer_tick(void) {
 
     // Check for expired alarms and deliver SIGALRM
     extern fut_task_t *fut_task_list;
-    uint64_t current_ms = atomic_load_explicit(&system_ticks, memory_order_relaxed);
 
     for (fut_task_t *task = fut_task_list; task != nullptr; task = task->next) {
         if (task->alarm_expires_ms > 0 && current_ms >= task->alarm_expires_ms) {

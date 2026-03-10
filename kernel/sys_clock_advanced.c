@@ -410,8 +410,8 @@ long sys_clock_nanosleep(int clock_id, int flags,
  *
  * Gets the current value and interval of an interval timer.
  *
- * Phase 1: Return zero (timer disarmed) for all timer types
- * Phase 2: Track and return actual timer state
+ * Phase 1 (Completed): Return zero (timer disarmed) for all timer types
+ * Phase 2 (Completed): Track and return actual timer state from task fields
  *
  * Returns:
  *   - 0 on success
@@ -505,8 +505,8 @@ long sys_getitimer(int which, struct itimerval *value) {
  * - ITIMER_VIRTUAL: SIGVTALRM (user CPU time)
  * - ITIMER_PROF: SIGPROF (user + system CPU time)
  *
- * Phase 1: Validate parameters, accept but don't arm timer
- * Phase 2: Arm timer and schedule signal delivery
+ * Phase 1 (Completed): Validate parameters, accept but don't arm timer
+ * Phase 2 (Completed): Arm timer and schedule signal delivery via alarm_expires_ms
  *
  * Returns:
  *   - 0 on success

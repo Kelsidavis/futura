@@ -94,7 +94,7 @@ extern bool epoll_try_close(int fd);
  * Phase 1 (Completed): Basic close with socket and file support
  * Phase 2 (Completed): FD type identification and enhanced validation
  * Phase 3 (Completed): Reference counting, delayed close for shared descriptors
- * Phase 4: close-on-exec flag handling, close_range bulk close
+ * Phase 4 (Completed): close_range bulk close with CLOSE_RANGE_CLOEXEC
  */
 long sys_close(int fd) {
     /* ARM64 FIX: Copy parameters to local variables immediately to ensure they're preserved

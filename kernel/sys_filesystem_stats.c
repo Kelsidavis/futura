@@ -77,9 +77,9 @@ static void fill_statfs_from_pmm(struct fut_linux_statfs *s) {
  * Returns information about the mounted filesystem containing the specified path.
  * This includes total/free space, block sizes, and filesystem type.
  *
- * Phase 1: Validate parameters, return stub data
- * Phase 2: Resolve path to vnode, query filesystem-specific statfs operation
- * Phase 3: Implement for all supported filesystems (tmpfs, ramfs, ext4)
+ * Phase 1 (Completed): Validate parameters, return stub data
+ * Phase 2 (Completed): Return real PMM-backed stats (blocks, free, available)
+ * Phase 3: Per-mount-point statfs via VFS mount table
  *
  * Returns:
  *   - 0 on success
@@ -165,9 +165,9 @@ long sys_statfs(const char *path, struct fut_linux_statfs *buf) {
  *
  * Like statfs, but takes a file descriptor instead of a path.
  *
- * Phase 1: Validate parameters, return stub data
- * Phase 2: Get vnode from fd, query filesystem-specific statfs operation
- * Phase 3: Implement for all supported filesystems
+ * Phase 1 (Completed): Validate parameters, return stub data
+ * Phase 2 (Completed): Return real PMM-backed stats via fd validation
+ * Phase 3: Per-mount-point statfs via VFS mount table
  *
  * Returns:
  *   - 0 on success
@@ -400,9 +400,9 @@ long sys_fallocate(int fd, int mode, uint64_t offset, uint64_t len) {
  * Returns overall system statistics including uptime, load averages, memory usage,
  * and process count. Used by tools like 'free', 'top', and 'uptime'.
  *
- * Phase 1: Return stub data with reasonable values
- * Phase 2: Implement real uptime, memory stats from kernel
- * Phase 3: Implement load averages and swap statistics
+ * Phase 1 (Completed): Return stub data with reasonable values
+ * Phase 2 (Completed): Real uptime, PMM-backed memory stats, and process count
+ * Phase 3: Load average tracking (requires per-tick runqueue length sampling)
  *
  * Returns:
  *   - 0 on success

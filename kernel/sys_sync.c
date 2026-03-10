@@ -8,7 +8,7 @@
  * and crash consistency.
  *
  * Phase 1 (Completed): Basic sync implementation
- * Phase 2: Per-filesystem synchronization optimization
+ * Phase 2 (Completed): VFS sync_all integration with per-filesystem dispatch
  */
 
 #include <kernel/fut_task.h>
@@ -106,7 +106,8 @@
  *   - No torn writes (assuming atomic sector writes)
  *   - Journal is flushed (if journaling filesystem)
  *
- * Phase 1: Basic implementation that logs sync operation
+ * Phase 1 (Completed): Basic sync implementation
+ * Phase 2 (Completed): VFS sync_all integration
  */
 long sys_sync(void) {
     fut_task_t *task = fut_task_current();

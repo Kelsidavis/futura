@@ -67,7 +67,12 @@ static inline int sched_copy_to_user(void *dst, const void *src, size_t n) {
  *   - -EPERM if insufficient privileges
  */
 long sys_sched_setparam(int pid, const struct sched_param *param) {
-    fut_task_t *task = fut_task_current();
+    /* Capture current thread once at entry; derive task from it.
+     * Calling fut_thread_current() twice (once for task, once for thread)
+     * risks a context switch between the two calls that stores rt_priority
+     * in the wrong thread (idle or another), causing a getparam mismatch. */
+    fut_thread_t *thread = fut_thread_current();
+    fut_task_t *task = thread ? thread->task : NULL;
     if (!task) {
         return -ESRCH;
     }
@@ -101,8 +106,7 @@ long sys_sched_setparam(int pid, const struct sched_param *param) {
         return -EINVAL;
     }
 
-    /* Store RT priority in current thread */
-    fut_thread_t *thread = fut_thread_current();
+    /* Store RT priority using the thread pointer captured at function entry */
     if (thread) {
         thread->rt_priority = kparam.sched_priority;
     }
@@ -130,7 +134,9 @@ long sys_sched_setparam(int pid, const struct sched_param *param) {
  *   - -ESRCH if pid not found
  */
 long sys_sched_getparam(int pid, struct sched_param *param) {
-    fut_task_t *task = fut_task_current();
+    /* Capture current thread once at entry; derive task from it. */
+    fut_thread_t *thread = fut_thread_current();
+    fut_task_t *task = thread ? thread->task : NULL;
     if (!task) {
         return -ESRCH;
     }
@@ -148,8 +154,7 @@ long sys_sched_getparam(int pid, struct sched_param *param) {
         return -ESRCH;
     }
 
-    /* Return RT priority from thread structure */
-    fut_thread_t *thread = fut_thread_current();
+    /* Return RT priority from thread structure captured at entry */
     struct sched_param kparam;
     kparam.sched_priority = thread ? thread->rt_priority : 0;
 
@@ -186,7 +191,8 @@ long sys_sched_getparam(int pid, struct sched_param *param) {
  *   - -EPERM if insufficient privileges for RT policies
  */
 long sys_sched_setscheduler(int pid, int policy, const struct sched_param *param) {
-    fut_task_t *task = fut_task_current();
+    fut_thread_t *thread = fut_thread_current();
+    fut_task_t *task = thread ? thread->task : NULL;
     if (!task) {
         return -ESRCH;
     }
@@ -245,8 +251,7 @@ long sys_sched_setscheduler(int pid, int policy, const struct sched_param *param
         return -EINVAL;
     }
 
-    /* Store policy and RT priority, return previous policy */
-    fut_thread_t *thread = fut_thread_current();
+    /* Store policy and RT priority, return previous policy (use thread captured at entry) */
     int old_policy = thread ? thread->sched_policy : SCHED_OTHER;
     if (thread) {
         thread->sched_policy = policy;
@@ -274,7 +279,8 @@ long sys_sched_setscheduler(int pid, int policy, const struct sched_param *param
  *   - -ESRCH if pid not found
  */
 long sys_sched_getscheduler(int pid) {
-    fut_task_t *task = fut_task_current();
+    fut_thread_t *thread = fut_thread_current();
+    fut_task_t *task = thread ? thread->task : NULL;
     if (!task) {
         return -ESRCH;
     }
@@ -286,8 +292,7 @@ long sys_sched_getscheduler(int pid) {
         return -ESRCH;
     }
 
-    /* Return actual scheduling policy from thread structure */
-    fut_thread_t *thread = fut_thread_current();
+    /* Return actual scheduling policy from thread captured at entry */
     int policy = thread ? thread->sched_policy : SCHED_OTHER;
 
     fut_printf("[SCHED] sched_getscheduler(pid=%d) -> %d\n", pid, policy);

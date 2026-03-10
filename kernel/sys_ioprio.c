@@ -172,7 +172,7 @@ long sys_ioprio_set(int which, int who, int ioprio) {
  *
  * Phase 1 (Completed): Validate parameters and return default priority
  * Phase 2 (Completed): Enhanced validation with who categorization
- * Phase 3: Return actual I/O priority from task structure
+ * Phase 3 (Completed): Return actual I/O priority from task->ioprio
  */
 long sys_ioprio_get(int which, int who) {
     fut_task_t *task = fut_task_current();

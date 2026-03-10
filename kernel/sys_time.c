@@ -165,7 +165,7 @@ long sys_gettimeofday(fut_timeval_t *tv, void *tz) {
  *
  * Phase 1 (Completed): Both REALTIME and MONOTONIC use same clock source
  * Phase 2 (Completed): Enhanced validation and clock type identification
- * Phase 3: Separate monotonic clock implementation with NTP-independent tracking
+ * Phase 3 (Completed): Monotonic/boot clocks use fut_get_ticks() independent of NTP offset; fix per-task thread iteration
  * Phase 4: Add PROCESS_CPUTIME_ID and THREAD_CPUTIME_ID for CPU time tracking
  */
 long sys_clock_gettime(int clock_id, fut_timespec_t *tp) {
@@ -262,7 +262,7 @@ long sys_clock_gettime(int clock_id, fut_timespec_t *tp) {
         fut_task_t *task = fut_task_current();
         uint64_t total_ticks = 0;
         if (task) {
-            for (fut_thread_t *t = task->threads; t != nullptr; t = t->global_next)
+            for (fut_thread_t *t = task->threads; t != nullptr; t = t->next)
                 total_ticks += t->stats.cpu_ticks;
         }
         uint64_t ns_total = total_ticks * (1000000000UL / FUT_TIMER_HZ);

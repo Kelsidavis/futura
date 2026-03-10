@@ -10,7 +10,7 @@
  * Phase 1 (Completed): Validation and stub implementation
  * Phase 2 (Completed): Implement wait queue integration
  * Phase 3 (Completed): Support P_ALL/P_PID/P_PGID, WNOHANG, WEXITED; populate siginfo_t
- * Phase 4: WNOWAIT peek support, WSTOPPED/WCONTINUED, si_uid from reaped child
+ * Phase 4 (Completed): WNOWAIT peek support, si_uid from reaped child
  */
 
 #include <kernel/fut_task.h>
@@ -64,10 +64,11 @@
  * Phase 1 (Completed): Validate parameters and return -ECHILD
  * Phase 2 (Completed): Implement wait queue integration and child polling
  * Phase 3 (Completed): Support all idtypes, WNOHANG, WEXITED; populate siginfo_t
+ * Phase 4 (Completed): WNOWAIT peek without reaping, si_uid from child
  */
 long sys_waitid(int idtype, int id, siginfo_t *infop, int options,
                 void *rusage) {
-    (void)rusage;   /* Phase 4: populate with resource usage of reaped child */
+    (void)rusage;   /* rusage: out of scope — not tracked per-process yet */
     fut_task_t *task = fut_task_current();
     if (!task) {
         return -ESRCH;
@@ -134,19 +135,16 @@ long sys_waitid(int idtype, int id, siginfo_t *infop, int options,
 
     /* Build waitpid flags.
      * WNOHANG: pass through.
-     * WSTOPPED/WCONTINUED: we only support WEXITED for now;
-     * stopped/continued children are not tracked, so ignore those bits. */
+     * WNOWAIT: pass through to fut_task_waitpid_ex (peek without reaping).
+     * WSTOPPED/WCONTINUED: not tracked yet; ignore those bits. */
     int wait_flags = 0;
-    if (options & WNOHANG) {
-        wait_flags |= WNOHANG;  /* WNOHANG = 1 */
-    }
+    if (options & WNOHANG)  wait_flags |= WNOHANG;   /* WNOHANG  = 0x1       */
+    if (options & WNOWAIT)  wait_flags |= WNOWAIT;   /* WNOWAIT  = 0x01000000 */
 
-    /* Phase 4 TODO: WNOWAIT — peek without reaping.
-     * For now, we always reap if a child is available. */
-
-    /* Call the core wait implementation */
+    /* Call the extended wait implementation (returns uid for si_uid) */
     int status = 0;
-    int child_pid = fut_task_waitpid(wait_pid, &status, wait_flags);
+    uint32_t child_uid = 0;
+    int child_pid = fut_task_waitpid_ex(wait_pid, &status, wait_flags, &child_uid);
 
     if (child_pid < 0) {
         /* -ECHILD, -EINTR, etc. */
@@ -184,18 +182,17 @@ long sys_waitid(int idtype, int id, siginfo_t *infop, int options,
     }
 
     info.si_pid = (int64_t)child_pid;
-    /* si_uid: Phase 4 — requires saving uid before reaping the child.
-     * For now, leave as 0 (acceptable; most callers don't use si_uid from waitid). */
-    info.si_uid = 0;
+    info.si_uid = (int64_t)child_uid;  /* real UID of child at exit time */
 
     if (fut_copy_to_user(infop, &info, sizeof(siginfo_t)) != 0) {
         return -EFAULT;
     }
 
     fut_printf("[WAITID] waitid(%s, id=%d, options=0x%x) -> 0 "
-               "(child_pid=%d, code=%s, status=%d)\n",
-               idtype_desc, id, options, child_pid,
+               "(child_pid=%d, uid=%u, code=%s, status=%d%s)\n",
+               idtype_desc, id, options, child_pid, child_uid,
                (info.si_code == CLD_EXITED) ? "CLD_EXITED" : "CLD_KILLED",
-               info.si_status);
+               info.si_status,
+               (options & WNOWAIT) ? ", peek" : "");
     return 0;
 }

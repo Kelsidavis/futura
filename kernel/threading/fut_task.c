@@ -579,6 +579,99 @@ int fut_task_waitpid(int pid, int *status_out, int flags) {
 }
 
 /**
+ * Extended waitpid: like fut_task_waitpid but also returns the child's real
+ * UID and supports WNOWAIT (peek without reaping).
+ *
+ * @param pid        Same semantics as fut_task_waitpid
+ * @param status_out Receives encoded wait status
+ * @param flags      WNOHANG (0x1) and/or WNOWAIT (0x01000000)
+ * @param uid_out    If non-NULL, receives child's real UID (ruid)
+ *
+ * Returns child PID on success, 0 for WNOHANG/no-ready-child, or -ECHILD/-EINTR.
+ */
+int fut_task_waitpid_ex(int pid, int *status_out, int flags, uint32_t *uid_out) {
+    fut_task_t *parent = fut_task_current();
+    if (!parent) {
+        return -ECHILD;
+    }
+
+    int peek = (flags & 0x01000000) ? 1 : 0;  /* WNOWAIT */
+    int nohang = (flags & 1) ? 1 : 0;          /* WNOHANG */
+
+    for (;;) {
+        fut_spinlock_acquire(&task_list_lock);
+
+        fut_task_t *child = parent->first_child;
+        fut_task_t *match = NULL;
+        bool has_matching_children = false;
+
+        while (child) {
+            bool matches = false;
+            if (pid > 0) {
+                matches = ((int)child->pid == pid);
+            } else if (pid == -1) {
+                matches = true;
+            } else if (pid == 0) {
+                matches = (child->pgid == parent->pgid);
+            } else {
+                matches = (child->pgid == (uint64_t)(-pid));
+            }
+
+            if (matches) {
+                has_matching_children = true;
+                if (child->state == FUT_TASK_ZOMBIE) {
+                    match = child;
+                    break;
+                }
+            }
+            child = child->sibling;
+        }
+
+        if (!has_matching_children) {
+            fut_spinlock_release(&task_list_lock);
+            return -ECHILD;
+        }
+
+        if (match) {
+            int status = encode_wait_status(match);
+            uint64_t child_pid = match->pid;
+            uint32_t child_uid = match->ruid;
+
+            if (peek) {
+                /* WNOWAIT: return child info without reaping */
+                fut_spinlock_release(&task_list_lock);
+                if (status_out) *status_out = status;
+                if (uid_out)    *uid_out    = child_uid;
+                return (int)child_pid;
+            }
+
+            /* Normal reap path */
+            uint64_t child_ticks = 0;
+            for (fut_thread_t *t = match->threads; t; t = t->global_next) {
+                child_ticks += t->stats.cpu_ticks;
+            }
+            parent->child_cpu_ticks += child_ticks + match->child_cpu_ticks;
+
+            task_detach_child(parent, match);
+            fut_spinlock_release(&task_list_lock);
+
+            if (status_out) *status_out = status;
+            if (uid_out)    *uid_out    = child_uid;
+
+            fut_task_destroy(match);
+            return (int)child_pid;
+        }
+
+        if (nohang) {
+            fut_spinlock_release(&task_list_lock);
+            return 0;
+        }
+
+        fut_waitq_sleep_locked(&parent->child_waiters, &task_list_lock, FUT_THREAD_BLOCKED);
+    }
+}
+
+/**
  * Get the effective UID of a task.
  * If task is NULL, returns the UID of the current task.
  */

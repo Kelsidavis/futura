@@ -407,7 +407,22 @@ fut_switch_context_irq:
     /* Debug: Check if we have a saved frame */
     testq %r11, %r11
     jz .no_saved_frame
-    /* We have a saved frame! Print 'S' */
+    /* We have a saved irq_frame.
+     *
+     * IMPORTANT: For kernel threads (CS=0x08 in the saved irq_frame), same-privilege
+     * IRETQ does NOT restore RSP — only RIP, CS, and RFLAGS are popped.  The restore
+     * path always places the frame at stack_top-208 and IRETQ from there, so RSP after
+     * IRETQ = stack_top-16 regardless of where the thread's call stack actually was.
+     * This clobbers the thread's RSP and corrupts its call stack, causing a crash.
+     *
+     * Instead, use the cooperative context that was saved alongside irq_frame (lines
+     * 346-394): switch to next's kernel stack at context.rsp (inside the ISR call
+     * chain) and "return" from fut_switch_context_irq back up through fut_schedule →
+     * fut_timer_tick → fut_timer_irq → ISR stub → ISR IRETQ.  That final IRETQ
+     * correctly restores the thread's user- or kernel-mode registers. */
+    cmpq $0x08, 176(%r11)   /* irq_frame->cs: 0x08=kernel, 0x23=user */
+    je .kernel_coop_restore  /* Kernel-mode frame: cooperative restore */
+    /* User thread: IRETQ restores RSP/SS on privilege change. Print 'S'. */
     pushq %rdx
     movw $SERIAL_PORT, %dx
     movb $'S', %al
@@ -415,7 +430,17 @@ fut_switch_context_irq:
     popq %rdx
     jmp .restore_saved_frame
 .no_saved_frame:
-    /* No saved frame, will construct from context. Print 'C' */
+    /* No saved irq_frame.
+     *
+     * context.cs is always 0x08 (set by thread_create and both cooperative-save
+     * paths), so this branch always goes to .kernel_coop_restore for the kernel
+     * threads that make up all tests.  The IRETQ-frame construction code below is
+     * only reached by threads whose context.cs has been set to user CS (0x23),
+     * which does not currently happen. */
+    cmpq $0x08, 120(%r13)   /* next->context.cs (context at +48, cs at +72 => +120) */
+    je .kernel_coop_restore
+
+    /* User thread with no saved frame: construct IRETQ frame from context. Print 'C' */
     pushq %rdx
     movw $SERIAL_PORT, %dx
     movb $'C', %al
@@ -600,17 +625,19 @@ fut_switch_context_irq:
     movq %rax, 176(%rdi)    /* frame->cs */
     movq 64(%rsi), %rax     /* context.rflags */
 
-    /* IMPORTANT: Do NOT override IF here for new threads!
-     * New threads start with IF=0 (configured in context) so they can execute
-     * their trampoline without being immediately preempted. The trampoline
-     * (or the thread's entry function) is responsible for enabling interrupts
-     * when it's ready to be preempted.
+    /* Ensure reserved bit 1 is always set (required by x86-64) AND force
+     * IF=1 so the thread starts with interrupts enabled.
      *
-     * For RESUMED threads (via .restore_saved_frame path), the saved frame
-     * already has the correct RFLAGS from when the thread was preempted.
+     * Threads initialize context.rflags = RFLAGS_KERNEL_INIT = 0x2 (IF=0),
+     * but when a thread is first scheduled via the IRQ path it takes this
+     * path and resumes with IF=0.  Since fut_malloc/fut_free preserve the
+     * current IF state rather than unconditionally re-enabling interrupts,
+     * the thread runs indefinitely with IF=0 — the timer can never preempt
+     * it, causing the whole system to hang if the thread blocks.
      *
-     * However, we must ensure reserved bit 1 is always set in RFLAGS. */
-    orq $0x2, %rax          /* Ensure bit 1 is set (required by x86-64) */
+     * The cooperative path always resumes with sti (IF=1), so we match that
+     * behaviour here by forcing IF=1 in the IRETQ frame. */
+    orq $0x202, %rax        /* Ensure bit 1 (reserved) + bit 9 (IF) are set */
     movq %rax, 184(%rdi)    /* frame->rflags */
 
     /* ALWAYS initialize RSP/SS in frame, even for kernel mode.
@@ -1288,6 +1315,119 @@ fut_switch_context_irq:
     movq $0, fut_current_frame(%rip)
 
     iretq
+
+/* ----------------------------------------------------------------
+ * .kernel_coop_restore — cooperative restore for kernel threads
+ *
+ * Called when the next thread runs in kernel mode (irq_frame->cs == 0x08
+ * or context.cs == 0x08, which is always the case for kernel threads).
+ *
+ * Why: same-privilege IRETQ does NOT restore RSP.  Placing the IRETQ frame
+ * at stack_top-208 and executing IRETQ always yields RSP=stack_top-16,
+ * completely discarding the thread's actual call-stack depth and corrupting
+ * its stack frame.
+ *
+ * Instead we do what fut_switch_context does: load next's cooperative
+ * context (rsp, rip, and callee-saved registers), push context.rip as a
+ * return address, and `sti; ret`.  This "returns" from fut_switch_context_irq
+ * back into fut_schedule → fut_timer_tick → fut_timer_irq → ISR stub, which
+ * then executes its own IRETQ to bring the thread back to the point at which
+ * it was originally interrupted — with the fully correct RSP.
+ *
+ * For freshly-started threads (no prior preemption), context.rip points to
+ * fut_thread_trampoline and context.rsp = aligned_top-8.  After `ret` the
+ * trampoline runs from scratch on a clean stack.
+ *
+ * Registers on entry (from fut_switch_context_irq):
+ *   r12 = prev thread pointer
+ *   r13 = next thread pointer
+ *   r14 = original interrupt frame pointer (prev's frame)
+ *   r11 = next->irq_frame (may be NULL)
+ * ---------------------------------------------------------------- */
+.kernel_coop_restore:
+    /* Debug: print 'G' (Grounded restore, avoiding broken IRETQ path) */
+    pushq %rdx
+    movw $SERIAL_PORT, %dx
+    movb $'G', %al
+    outb %al, %dx
+    popq %rdx
+
+    /* Clear next->irq_frame so the stale saved frame is not reused. */
+    movq $0, 720(%r13)      /* next->irq_frame = NULL */
+
+    /* Restore next thread's FPU/SSE state from context.fx_area (thread+208). */
+    leaq 208(%r13), %rax
+    fxrstor64 (%rax)
+
+    /* Write FS_BASE MSR for next thread's TLS (thread.fs_base at offset 728). */
+    pushq %rax
+    pushq %rcx
+    pushq %rdx
+    movq 728(%r13), %rax
+    movl $0xC0000100, %ecx  /* MSR_FS_BASE */
+    movq %rax, %rdx
+    shrq $32, %rdx
+    wrmsr
+    popq %rdx
+    popq %rcx
+    popq %rax
+
+    /* Clear fut_current_frame so a nested timer interrupt during the cooperative
+     * unwind does not incorrectly reuse prev's stale ISR frame pointer. */
+    movq $0, fut_current_frame(%rip)
+
+    /* Load next's cooperative context.
+     * Context layout (all offsets relative to thread base, context at +48):
+     *   r15(+48) r14(+56) r13(+64) r12(+72) rbx(+80) rbp(+88)
+     *   rip(+96) rsp(+104) rflags(+112) cs(+120) ss(+128)
+     *   ds(+136) es(+144) fs(+152) gs(+160)
+     *   rdi(+168) rsi(+176) rdx(+184) rcx(+192) rax(+200)
+     *
+     * We keep r13 (thread ptr) alive until after we've read everything, then
+     * overwrite it last. r10/r11 are used as temporaries. */
+    leaq 48(%r13), %r11     /* r11 = &next->context */
+
+    /* Stash rip and rsp before we overwrite r13/r14. */
+    movq 48(%r11), %r10     /* r10 = context.rip */
+    movq 56(%r11), %r14     /* r14 = context.rsp (caller's RSP as after a ret) */
+
+    /* Load RFLAGS with IF cleared; sti just before ret re-enables interrupts. */
+    movq 64(%r11), %rax
+    andq $~0x200, %rax      /* Clear IF */
+    pushq %rax
+    popfq
+
+    /* Restore callee-saved and argument registers. */
+    movq  0(%r11), %r15
+    movq 24(%r11), %r12
+    movq 32(%r11), %rbx
+    movq 40(%r11), %rbp
+    movq 120(%r11), %rdi
+    movq 128(%r11), %rsi
+    movq 136(%r11), %rdx
+    movq 144(%r11), %rcx
+    movq 152(%r11), %rax
+
+    /* Switch to next thread's kernel stack. */
+    movq %r14, %rsp
+
+    /* Push context.rip so that `ret` jumps to it (the return point from
+     * fut_switch_context_irq inside next's fut_schedule call). */
+    pushq %r10
+
+    /* Load r14 and r13 now that we no longer need them as temporaries. */
+    movq  8(%r11), %r14     /* context.r14 */
+    movq 16(%r11), %r13     /* context.r13 — destroys thread ptr, no longer needed */
+
+    /* Zero caller-saved scratch registers. */
+    xorq %r10, %r10
+    xorq %r11, %r11
+
+    /* Re-enable interrupts and return to context.rip.
+     * The sti-shadow guarantees the ret instruction executes before any
+     * pending interrupt is delivered, ensuring clean stack state. */
+    sti
+    ret
 
 .size fut_switch_context_irq, . - fut_switch_context_irq
 

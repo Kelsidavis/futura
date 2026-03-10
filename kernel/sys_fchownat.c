@@ -213,6 +213,8 @@ long sys_fchownat(int dirfd, const char *pathname, uint32_t uid, uint32_t gid, i
         struct fut_stat stat = {0};
         stat.st_uid = uid;
         stat.st_gid = gid;
+        stat.st_atime = (uint64_t)-1;
+        stat.st_mtime = (uint64_t)-1;
 
         int ret = vnode->ops && vnode->ops->setattr ? vnode->ops->setattr(vnode, &stat) : -ENOSYS;
         if (ret < 0) {
@@ -322,10 +324,13 @@ long sys_fchownat(int dirfd, const char *pathname, uint32_t uid, uint32_t gid, i
         return -ENOSYS;
     }
 
-    /* Create a stat structure with the new ownership */
+    /* Create a stat structure with the new ownership.
+     * Timestamps use (uint64_t)-1 sentinel to avoid resetting them. */
     struct fut_stat stat = {0};
     stat.st_uid = uid;
     stat.st_gid = gid;
+    stat.st_atime = (uint64_t)-1;
+    stat.st_mtime = (uint64_t)-1;
 
     /* Call the filesystem's setattr operation */
     ret = vnode->ops->setattr(vnode, &stat);

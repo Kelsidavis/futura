@@ -440,9 +440,14 @@ long sys_chmod(const char *pathname, uint32_t mode) {
         return -ENOSYS;
     }
 
-    /* Create a stat structure with the new mode */
+    /* Create a stat structure with the new mode.
+     * uid/gid use (uint32_t)-1 as "don't change" sentinel. */
     struct fut_stat stat = {0};
     stat.st_mode = local_mode;
+    stat.st_uid = (uint32_t)-1;
+    stat.st_gid = (uint32_t)-1;
+    stat.st_atime = (uint64_t)-1;
+    stat.st_mtime = (uint64_t)-1;
 
     /* Call the filesystem's setattr operation */
     ret = vnode->ops->setattr(vnode, &stat);

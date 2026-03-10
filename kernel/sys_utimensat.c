@@ -229,8 +229,11 @@ long sys_utimensat(int dirfd, const char *pathname, const fut_timespec_t *times,
             return -ENOSYS;
         }
 
-        /* Build stat structure with new timestamps */
+        /* Build stat structure with new timestamps.
+         * uid/gid use (uint32_t)-1 as "don't change" sentinel. */
         struct fut_stat stat = {0};
+        stat.st_uid = (uint32_t)-1;
+        stat.st_gid = (uint32_t)-1;
 
         /* Get current time if needed */
         uint64_t now_ns = 0;
@@ -449,8 +452,11 @@ long sys_utimensat(int dirfd, const char *pathname, const fut_timespec_t *times,
         return -ENOSYS;
     }
 
-    /* Build stat structure with new timestamps */
+    /* Build stat structure with new timestamps.
+     * uid/gid use (uint32_t)-1 as "don't change" sentinel. */
     struct fut_stat stat = {0};
+    stat.st_uid = (uint32_t)-1;
+    stat.st_gid = (uint32_t)-1;
 
     /* Get current time if needed */
     uint64_t now_ns = 0;

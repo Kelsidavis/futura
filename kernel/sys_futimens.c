@@ -223,8 +223,12 @@ long sys_futimens(int fd, const fut_timespec_t *times) {
         return -EINVAL;
     }
 
-    /* Build stat structure with only the timestamp fields set */
+    /* Build stat structure with only the timestamp fields set.
+     * uid/gid use (uint32_t)-1 as "don't change" sentinel so futimens
+     * doesn't accidentally reset ownership to root. */
     struct fut_stat stat_buf = {0};
+    stat_buf.st_uid = (uint32_t)-1;
+    stat_buf.st_gid = (uint32_t)-1;
 
     /* Get current time if needed */
     uint64_t now_ns = 0;

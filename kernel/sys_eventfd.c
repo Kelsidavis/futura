@@ -1114,8 +1114,8 @@ static int signalfd_release(void *inode, void *priv) {
  * signalfd allows receiving signals via read() instead of signal handlers.
  * Useful for integrating signal handling with event loops (epoll).
  *
- * Phase 1: Stub returning -ENOSYS
- * Phase 2: Full implementation with signal mask and file operations
+ * Phase 1 (Completed): Stub returning -ENOSYS
+ * Phase 2 (Completed): Full implementation with signal mask and file operations
  *
  * Returns:
  *   - File descriptor on success
@@ -1207,9 +1207,9 @@ long sys_signalfd4(int ufd, const void *mask, size_t sizemask, int flags) {
  * Can be armed with timerfd_settime and read to wait for expiration.
  * Integrates with epoll for event-driven timer handling.
  *
- * Phase 1: Stub - returns dummy file descriptor
- * Phase 2: Implement timer creation and file operations
- * Phase 3: Integrate with kernel timer infrastructure
+ * Phase 1 (Completed): Stub - returns dummy file descriptor
+ * Phase 2 (Completed): Implement timer creation and file operations
+ * Phase 3 (Completed): Integrate with kernel timer infrastructure
  *
  * Returns:
  *   - File descriptor on success

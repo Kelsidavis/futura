@@ -13,6 +13,7 @@
 #include <shared/fut_timespec.h>
 #include <shared/fut_timeval.h>
 #include <sys/time.h>
+#include <sys/capability.h>
 #include <stdint.h>
 #include <string.h>
 
@@ -94,15 +95,15 @@ struct timex {
  * Sets the specified clock to the given time. Most clocks are read-only;
  * only CLOCK_REALTIME can be set (and requires CAP_SYS_TIME capability).
  *
- * Phase 1: Validate parameters, accept but don't actually set time
- * Phase 2: Store real-time clock offset for CLOCK_REALTIME
- * Phase 3: Integrate with capability system for permission checks
+ * Phase 1 (Completed): Validate parameters, accept but don't actually set time
+ * Phase 2 (Completed): Store real-time clock offset for CLOCK_REALTIME
+ * Phase 3 (Completed): CAP_SYS_TIME capability check
  *
  * Returns:
  *   - 0 on success
  *   - -EINVAL if clock_id invalid or clock not settable
  *   - -EFAULT if tp invalid
- *   - -EPERM if insufficient privileges (Phase 3)
+ *   - -EPERM if insufficient privileges (missing CAP_SYS_TIME)
  */
 long sys_clock_settime(int clock_id, const fut_timespec_t *tp) {
     /* ARM64 FIX: Copy register params to local stack vars before blocking calls */
@@ -161,6 +162,15 @@ long sys_clock_settime(int clock_id, const fut_timespec_t *tp) {
                    "(%s is not settable)\n",
                    clock_name, time.tv_sec, time.tv_nsec, clock_name);
         return -EINVAL;
+    }
+
+    /* Phase 3: CAP_SYS_TIME required to set the realtime clock.
+     * Non-root processes without this capability get EPERM. */
+    if (task->uid != 0 && !(task->cap_effective & (1ULL << CAP_SYS_TIME))) {
+        fut_printf("[CLOCK_SETTIME] clock_settime(clock_id=%s, pid=%llu) -> EPERM "
+                   "(CAP_SYS_TIME required)\n",
+                   clock_name, (unsigned long long)task->pid);
+        return -EPERM;
     }
 
     /*
@@ -273,9 +283,9 @@ long sys_clock_getres(int clock_id, fut_timespec_t *res) {
  * Similar to nanosleep() but allows clock selection. Can sleep until
  * absolute time with TIMER_ABSTIME flag.
  *
- * Phase 1: Delegate to nanosleep for relative sleep, reject absolute
- * Phase 2: Implement absolute time sleep for CLOCK_REALTIME
- * Phase 3: Support CLOCK_MONOTONIC absolute sleep
+ * Phase 1 (Completed): Delegate to nanosleep for relative sleep, reject absolute
+ * Phase 2 (Completed): Implement absolute time sleep for CLOCK_REALTIME
+ * Phase 3 (Completed): Correct clock domain for TIMER_ABSTIME (REALTIME vs MONOTONIC)
  *
  * Returns:
  *   - 0 on success
@@ -336,20 +346,40 @@ long sys_clock_nanosleep(int clock_id, int flags,
     #define TIMER_ABSTIME 1
     const char *mode = (local_flags & TIMER_ABSTIME) ? "absolute" : "relative";
 
-    /* Phase 2: Implement absolute time sleep */
+    /* Phase 2/3: Implement absolute time sleep with correct clock domain.
+     *
+     * fut_get_time_ns() returns nanoseconds since boot (monotonic).
+     * For CLOCK_REALTIME, the caller supplies a wall-clock target_ns so we
+     * must account for the wall-clock offset to compute the monotonic delay.
+     * For CLOCK_MONOTONIC, no adjustment is needed.
+     */
     if (local_flags & TIMER_ABSTIME) {
-        uint64_t now_ns = fut_get_time_ns();
+        uint64_t now_monotonic_ns = fut_get_time_ns();
         uint64_t target_ns = (uint64_t)request.tv_sec * 1000000000ULL
                            + (uint64_t)request.tv_nsec;
 
-        if (now_ns >= target_ns) {
+        /* For CLOCK_REALTIME: convert wall-clock target to monotonic by
+         * subtracting the realtime offset so remain_ns is a pure monotonic delay. */
+        uint64_t target_monotonic_ns = target_ns;
+        if (local_clock_id == CLOCK_REALTIME) {
+            int64_t offset_ns = g_realtime_offset_sec * (int64_t)1000000000LL;
+            /* target_monotonic = target_wall - offset */
+            if (offset_ns >= 0) {
+                target_monotonic_ns = (target_ns > (uint64_t)offset_ns)
+                    ? (target_ns - (uint64_t)offset_ns) : 0;
+            } else {
+                target_monotonic_ns = target_ns + (uint64_t)(-offset_ns);
+            }
+        }
+
+        if (now_monotonic_ns >= target_monotonic_ns) {
             clock_nanosleep_printf("[CLOCK_NANOSLEEP] clock_nanosleep(clock_id=%s, mode=%s, "
                        "target=%lld.%09lld) -> 0 (time already passed)\n",
                        clock_name, mode, request.tv_sec, request.tv_nsec);
             return 0;
         }
 
-        uint64_t remain_ns = target_ns - now_ns;
+        uint64_t remain_ns = target_monotonic_ns - now_monotonic_ns;
         fut_timespec_t rel = {
             .tv_sec  = (long long)(remain_ns / 1000000000ULL),
             .tv_nsec = (long long)(remain_ns % 1000000000ULL),
@@ -610,15 +640,15 @@ long sys_setitimer(int which, const struct itimerval *value, struct itimerval *o
  *
  * Sets the system time. Requires CAP_SYS_TIME capability.
  *
- * Phase 1: Validate parameters, accept but don't set time
- * Phase 2: Store real-time clock offset
- * Phase 3: Integrate with capability system
+ * Phase 1 (Completed): Validate parameters, accept but don't set time
+ * Phase 2 (Completed): Store real-time clock offset
+ * Phase 3 (Completed): CAP_SYS_TIME capability check
  *
  * Returns:
  *   - 0 on success
  *   - -EINVAL if tz non-NULL
  *   - -EFAULT if tv invalid
- *   - -EPERM if insufficient privileges (Phase 3)
+ *   - -EPERM if insufficient privileges (missing CAP_SYS_TIME)
  */
 long sys_settimeofday(const fut_timeval_t *tv, const void *tz) {
     /* ARM64 FIX: Copy register params to local stack vars before blocking calls */
@@ -638,6 +668,13 @@ long sys_settimeofday(const fut_timeval_t *tv, const void *tz) {
     if (!local_tv) {
         fut_printf("[SETTIMEOFDAY] settimeofday(tv=%p) -> EFAULT (tv is NULL)\n", local_tv);
         return -EFAULT;
+    }
+
+    /* Phase 3: CAP_SYS_TIME required */
+    if (task->uid != 0 && !(task->cap_effective & (1ULL << CAP_SYS_TIME))) {
+        fut_printf("[SETTIMEOFDAY] settimeofday(pid=%llu) -> EPERM (CAP_SYS_TIME required)\n",
+                   (unsigned long long)task->pid);
+        return -EPERM;
     }
 
     /* Copy time from user */

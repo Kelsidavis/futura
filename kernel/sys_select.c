@@ -13,9 +13,13 @@
 #include <shared/fut_timeval.h>
 #include <poll.h>  /* For struct pollfd */
 #include <string.h>
+#include <stdbool.h>
 
 #include <kernel/kprintf.h>
 #include <kernel/uaccess.h>
+#include <kernel/eventfd.h>
+#include <kernel/fut_socket.h>
+#include <sys/epoll.h>
 
 /* fd_set helpers */
 #define FD_SETSIZE 1024
@@ -256,9 +260,9 @@ long sys_select(int nfds, fd_set *readfds, fd_set *writefds,
     }
 
     /*
-     * Phase 3: Actual FD readiness checking.
-     * For each FD in the sets, check if it's valid and report readiness.
-     * Current behavior matches sys_poll: all valid FDs report as ready.
+     * Phase 3: Actual FD readiness checking via driver/VFS layer.
+     * Uses the same dispatch as sys_poll: eventfd, timerfd, signalfd,
+     * sockets, regular files, and a fallback for other types.
      * Phase 4 would add blocking with wait queues and timeout support.
      */
 
@@ -302,17 +306,54 @@ long sys_select(int nfds, fd_set *readfds, fd_set *writefds,
             return -EBADF;
         }
 
-        /* All valid FDs report as ready (consistent with sys_poll Phase 2) */
+        /* Phase 3: Actual readiness checking via driver/VFS layer */
+        struct fut_file *file = task->fd_table[fd];
+        uint32_t epoll_req = 0;
+        if (check_read)  epoll_req |= EPOLLIN;
+        if (check_write) epoll_req |= EPOLLOUT;
+
+        uint32_t epoll_ready = 0;
+        bool handled = false;
+
+        if (!handled && fut_eventfd_poll(file, epoll_req, &epoll_ready))
+            handled = true;
+        if (!handled && fut_timerfd_poll(file, epoll_req, &epoll_ready))
+            handled = true;
+        if (!handled && fut_signalfd_poll(file, epoll_req, &epoll_ready))
+            handled = true;
+        if (!handled) {
+            fut_socket_t *socket = get_socket_from_fd(fd);
+            if (socket) {
+                int poll_events = 0;
+                if (check_read)  poll_events |= 0x1;
+                if (check_write) poll_events |= 0x4;
+                int socket_ready = fut_socket_poll(socket, poll_events);
+                if (socket_ready & 0x1) epoll_ready |= EPOLLIN;
+                if (socket_ready & 0x4) epoll_ready |= EPOLLOUT;
+                handled = true;
+            }
+        }
+        if (!handled && file->vnode && file->vnode->type == VN_REG) {
+            if (epoll_req & EPOLLIN)  epoll_ready |= EPOLLIN;
+            if (epoll_req & EPOLLOUT) epoll_ready |= EPOLLOUT;
+            handled = true;
+        }
+        if (!handled) {
+            /* Pipes, char devs, etc.: assume ready */
+            if (epoll_req & EPOLLIN)  epoll_ready |= EPOLLIN;
+            if (epoll_req & EPOLLOUT) epoll_ready |= EPOLLOUT;
+        }
+
         int counted = 0;
-        if (check_read) {
+        if (check_read && (epoll_ready & EPOLLIN)) {
             fd_setbit(fd, &r_readfds);
             counted = 1;
         }
-        if (check_write) {
+        if (check_write && (epoll_ready & EPOLLOUT)) {
             fd_setbit(fd, &r_writefds);
             counted = 1;
         }
-        /* Exceptions: not reported for regular files (no OOB data) */
+        /* Exceptions (out-of-band data): not reported here */
 
         if (counted)
             ready_count++;
@@ -332,7 +373,8 @@ long sys_select(int nfds, fd_set *readfds, fd_set *writefds,
             return -EFAULT;
     }
 
-    fut_printf("[SELECT] select(nfds=%d) -> %d ready\n", local_nfds, ready_count);
+    fut_printf("[SELECT] select(nfds=%d) -> %d ready (Phase 3: FD readiness checking)\n",
+               local_nfds, ready_count);
     return ready_count;
 }
 
@@ -447,12 +489,49 @@ long sys_pselect6(int nfds, void *readfds, void *writefds, void *exceptfds,
             return -EBADF;
         }
 
+        /* Phase 3: Actual readiness checking via driver/VFS layer */
+        struct fut_file *file = task->fd_table[fd];
+        uint32_t epoll_req = 0;
+        if (check_read)  epoll_req |= EPOLLIN;
+        if (check_write) epoll_req |= EPOLLOUT;
+
+        uint32_t epoll_ready = 0;
+        bool handled = false;
+
+        if (!handled && fut_eventfd_poll(file, epoll_req, &epoll_ready))
+            handled = true;
+        if (!handled && fut_timerfd_poll(file, epoll_req, &epoll_ready))
+            handled = true;
+        if (!handled && fut_signalfd_poll(file, epoll_req, &epoll_ready))
+            handled = true;
+        if (!handled) {
+            fut_socket_t *socket = get_socket_from_fd(fd);
+            if (socket) {
+                int poll_events = 0;
+                if (check_read)  poll_events |= 0x1;
+                if (check_write) poll_events |= 0x4;
+                int socket_ready = fut_socket_poll(socket, poll_events);
+                if (socket_ready & 0x1) epoll_ready |= EPOLLIN;
+                if (socket_ready & 0x4) epoll_ready |= EPOLLOUT;
+                handled = true;
+            }
+        }
+        if (!handled && file->vnode && file->vnode->type == VN_REG) {
+            if (epoll_req & EPOLLIN)  epoll_ready |= EPOLLIN;
+            if (epoll_req & EPOLLOUT) epoll_ready |= EPOLLOUT;
+            handled = true;
+        }
+        if (!handled) {
+            if (epoll_req & EPOLLIN)  epoll_ready |= EPOLLIN;
+            if (epoll_req & EPOLLOUT) epoll_ready |= EPOLLOUT;
+        }
+
         int counted = 0;
-        if (check_read) {
+        if (check_read && (epoll_ready & EPOLLIN)) {
             fd_setbit(fd, &r_readfds);
             counted = 1;
         }
-        if (check_write) {
+        if (check_write && (epoll_ready & EPOLLOUT)) {
             fd_setbit(fd, &r_writefds);
             counted = 1;
         }
@@ -474,7 +553,8 @@ long sys_pselect6(int nfds, void *readfds, void *writefds, void *exceptfds,
             return -EFAULT;
     }
 
-    fut_printf("[PSELECT6] pselect6(nfds=%d) -> %d ready\n", local_nfds, ready_count);
+    fut_printf("[PSELECT6] pselect6(nfds=%d) -> %d ready (Phase 3: FD readiness checking)\n",
+               local_nfds, ready_count);
     return ready_count;
 }
 

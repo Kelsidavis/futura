@@ -16,6 +16,7 @@
 #include <kernel/errno.h>
 #include <kernel/fut_vfs.h>
 #include <stdint.h>
+#include <stdbool.h>
 
 #include <kernel/kprintf.h>
 #include <kernel/uaccess.h>
@@ -328,15 +329,24 @@ long sys_fstatat(int dirfd, const char *pathname, void *statbuf, int flags) {
             return -ENOTDIR;
         }
 
-        /* Phase 2: Construct path relative to directory
-         * For now, we'll use a simple approach of getting vnode info
-         * Future: Implement full path reconstruction via vnode->parent chain */
-
-        /* For Phase 2, use the pathname relative to the directory vnode
-         * The VFS layer will handle the lookup from this vnode */
-        size_t len = strnlen(path_buf, sizeof(resolved_path) - 1);
-        memcpy(resolved_path, path_buf, len);
-        resolved_path[len] = '\0';
+        /* Construct path relative to directory using stored file->path */
+        if (dir_file->path) {
+            size_t dir_len = strlen(dir_file->path);
+            size_t rel_len = strnlen(path_buf, sizeof(resolved_path) - 1);
+            bool has_trail = (dir_len > 0 && dir_file->path[dir_len - 1] == '/');
+            if (dir_len + (has_trail ? 0 : 1) + rel_len >= sizeof(resolved_path)) {
+                return -ENAMETOOLONG;
+            }
+            size_t pos = 0;
+            for (size_t j = 0; j < dir_len; j++) resolved_path[pos++] = dir_file->path[j];
+            if (!has_trail) resolved_path[pos++] = '/';
+            for (size_t j = 0; j <= rel_len; j++) resolved_path[pos++] = path_buf[j];
+        } else {
+            /* No stored path; fall through with relative path (best-effort) */
+            size_t len = strnlen(path_buf, sizeof(resolved_path) - 1);
+            memcpy(resolved_path, path_buf, len);
+            resolved_path[len] = '\0';
+        }
     }
 
     /* Perform the stat operation via VFS */

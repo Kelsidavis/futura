@@ -22,6 +22,7 @@ use common::{alloc_page, free_page, log, map_mmio_region, thread_yield, thread_s
 use common::transport::MmioTransport;
 
 #[cfg(target_arch = "x86_64")]
+#[allow(unused_imports)]
 use common::transport::PciTransport;
 
 // Kernel thread functions
@@ -48,6 +49,7 @@ unsafe extern "C" {
 
 // Error codes
 const EINVAL: FutStatus = -22;
+#[allow(dead_code)]
 const EMSGSIZE: FutStatus = -90;
 const ENODEV: FutStatus = -19;
 const ENOMEM: FutStatus = -12;
@@ -58,6 +60,7 @@ const ETIMEDOUT: FutStatus = -110;
 const VIRTIO_VENDOR_ID: u16 = 0x1AF4;
 const VIRTIO_DEVICE_ID_NET_LEGACY: u16 = 0x1000;
 const VIRTIO_DEVICE_ID_NET_MODERN: u16 = 0x1041;
+#[allow(dead_code)]
 const VIRTIO_DEV_NET: u32 = 1;  // VirtIO device type for network
 
 const VIRTIO_STATUS_ACKNOWLEDGE: u8 = 1;
@@ -99,6 +102,7 @@ const VIRTIO_MMIO_QUEUE_DEVICE_LOW: u32 = 0x0a0;
 #[cfg(target_arch = "aarch64")]
 const VIRTIO_MMIO_QUEUE_DEVICE_HIGH: u32 = 0x0a4;
 
+#[allow(dead_code)]
 const VIRTQ_DESC_F_NEXT: u16 = 1;
 const VIRTQ_DESC_F_WRITE: u16 = 2;
 
@@ -107,6 +111,7 @@ const PCI_CONFIG_DATA: u16 = 0xCFC;
 const PCI_CAP_ID_VNDR: u8 = 0x09;
 const VIRTIO_PCI_CAP_COMMON_CFG: u8 = 1;
 const VIRTIO_PCI_CAP_NOTIFY_CFG: u8 = 2;
+#[allow(dead_code)]
 const VIRTIO_PCI_CAP_ISR_CFG: u8 = 3;
 const VIRTIO_PCI_CAP_DEVICE_CFG: u8 = 4;
 
@@ -135,6 +140,7 @@ static mut MMIO_DEVICE_HANDLE: *mut c_void = ptr::null_mut();
 
 // Virtio structures
 #[repr(C, packed)]
+#[allow(dead_code)]
 struct VirtioPciCap {
     cap_vndr: u8,
     cap_next: u8,
@@ -147,6 +153,7 @@ struct VirtioPciCap {
 }
 
 #[repr(C, packed)]
+#[allow(dead_code)]
 struct VirtioPciNotifyCap {
     cap: VirtioPciCap,
     notify_off_multiplier: u32,
@@ -214,6 +221,7 @@ struct VirtqUsed {
 }
 
 #[repr(C, packed)]
+#[allow(dead_code)]
 struct VirtioNetHdr {
     flags: u8,
     gso_type: u8,
@@ -225,6 +233,7 @@ struct VirtioNetHdr {
 }
 
 impl VirtioNetHdr {
+    #[allow(dead_code)]
     const fn zero() -> Self {
         Self {
             flags: 0,
@@ -556,13 +565,11 @@ impl VirtioNetDevice {
             return false;
         }
 
-        let mut cap_count = 0;
         while cap_ptr >= 0x40 && cap_ptr < 0xFF {
             let cap_id = pci_read8(self.pci.bus, self.pci.device, self.pci.function, cap_ptr);
             let next = pci_read8(self.pci.bus, self.pci.device, self.pci.function, cap_ptr + 1);
 
             if cap_id == PCI_CAP_ID_VNDR {
-                cap_count += 1;
                 self.handle_virtio_cap(cap_ptr);
             }
 
@@ -976,16 +983,11 @@ extern "C" fn rx_poll_thread(_arg: *mut c_void) {
 
     log("virtio-net: RX thread device is ready, starting polling loop");
 
-    let mut poll_count = 0u64;
     let mut rx_count = 0u64;
-    let mut first_iter = true;
 
     loop {
         let device = unsafe { &mut *DEVICE.device.get() };
         let dev_ptr = &mut device.dev as *mut FutNetDev;
-
-        // Poll for received packets
-        poll_count += 1;
 
         if let Some((data, len)) = device.poll_rx() {
             rx_count += 1;
@@ -996,13 +998,9 @@ extern "C" fn rx_poll_thread(_arg: *mut c_void) {
 
                 // Log first 14 bytes (Ethernet header)
                 if len >= 14 {
-                    unsafe {
-                        let dst_mac = core::slice::from_raw_parts(data.as_ptr(), 6);
-                        let src_mac = core::slice::from_raw_parts(data.as_ptr().add(6), 6);
-
-                        log("  Dst MAC: ");
-                        log("  Src MAC: ");
-                    }
+                    let _ = len;
+                    log("  Ethernet frame received");
+                    let _ = data;
                 }
             }
 

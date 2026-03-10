@@ -21,7 +21,7 @@ use core::ptr::{self, write_volatile, read_volatile};
 use core::sync::atomic::{AtomicU16, AtomicU64, AtomicU8, Ordering};
 
 use common::{
-    alloc, alloc_page, free, free_page, log, map_mmio_region, register, thread_yield, unmap_mmio_region,
+    alloc, alloc_page, free, log, map_mmio_region, register, thread_yield, unmap_mmio_region,
     FutBlkBackend, FutBlkDev, FutStatus, RawSpinLock, SpinLock, FUT_BLK_ADMIN, FUT_BLK_READ,
     FUT_BLK_WRITE, MMIO_DEFAULT_FLAGS,
 };
@@ -59,7 +59,9 @@ struct MsixTableEntry {
 }
 
 // MSI-X constants
+#[allow(dead_code)]
 const MSIX_VECTOR_MASKED: u32 = 0x1;
+#[allow(dead_code)]
 const APIC_BASE_ADDR: u32 = 0xFEE00000;  // Local APIC base address for MSI-X
 const MSIX_CONTROL_ENABLE: u16 = 1u16 << 15;  // MSI-X enable bit
 const MSIX_CONTROL_MASK: u16 = 1u16 << 14;    // MSI-X function mask bit
@@ -68,6 +70,7 @@ const MSIX_CONTROL_MASK: u16 = 1u16 << 14;    // MSI-X function mask bit
 // ICR = 0xFEE0 | (D7:D4 = delivery mode) | (D9:D8 = destination mode) | ...
 // For MSI-X: msg_addr_lo = 0xFEE00000 | (vector destination info)
 const APIC_MSG_ADDR_BASE: u32 = 0xFEE00000;
+#[allow(dead_code)]
 const APIC_DESTINATION_MODE_LOGICAL: u32 = 1 << 11;  // Logical destination
 
 // Interrupt handler for virtio-blk I/O completion - x86_64
@@ -190,6 +193,7 @@ const PCI_EXT_CAP_OFFSET: u32 = 0x100;
 
 const VIRTIO_PCI_CAP_COMMON_CFG: u8 = 1;
 const VIRTIO_PCI_CAP_NOTIFY_CFG: u8 = 2;
+#[allow(dead_code)]
 const VIRTIO_PCI_CAP_ISR_CFG: u8 = 3;
 const VIRTIO_PCI_CAP_DEVICE_CFG: u8 = 4;
 
@@ -256,6 +260,7 @@ const PCI_COMMAND_IO: u16 = 0x1;
 const PCI_COMMAND_MEMORY: u16 = 0x2;
 const PCI_COMMAND_BUS_MASTER: u16 = 0x4;
 
+#[allow(dead_code)]
 const VIRTQ_DESC_F_NEXT: u16 = 1;
 const VIRTQ_DESC_F_WRITE: u16 = 2;
 
@@ -307,6 +312,7 @@ struct PciAddress {
 }
 
 #[repr(C, packed)]
+#[allow(dead_code)]
 struct VirtioPciCap {
     cap_vndr: u8,
     cap_next: u8,
@@ -319,12 +325,14 @@ struct VirtioPciCap {
 }
 
 #[repr(C, packed)]
+#[allow(dead_code)]
 struct VirtioPciNotifyCap {
     cap: VirtioPciCap,
     notify_off_multiplier: u32,
 }
 
 #[repr(C, packed)]
+#[allow(dead_code)]
 struct VirtioPciCommonCfg {
     device_feature_select: u32,
     device_feature: u32,
@@ -353,8 +361,10 @@ const VIRTIO_PCI_COMMON_DF: usize = 0x04;          // device_feature
 const VIRTIO_PCI_COMMON_GFSELECT: usize = 0x08;    // driver_feature_select
 const VIRTIO_PCI_COMMON_GF: usize = 0x0C;          // driver_feature
 const VIRTIO_PCI_COMMON_MSIX: usize = 0x10;        // msix_config
+#[allow(dead_code)]
 const VIRTIO_PCI_COMMON_NUM_QUEUES: usize = 0x12;  // num_queues
 const VIRTIO_PCI_COMMON_STATUS: usize = 0x14;      // device_status
+#[allow(dead_code)]
 const VIRTIO_PCI_COMMON_CFG_GEN: usize = 0x15;     // config_generation
 const VIRTIO_PCI_COMMON_Q_SELECT: usize = 0x16;    // queue_select
 const VIRTIO_PCI_COMMON_Q_SIZE: usize = 0x18;      // queue_size
@@ -362,10 +372,13 @@ const VIRTIO_PCI_COMMON_Q_MSIX: usize = 0x1A;      // queue_msix_vector
 const VIRTIO_PCI_COMMON_Q_ENABLE: usize = 0x1C;    // queue_enable
 const VIRTIO_PCI_COMMON_Q_NOTIFYOFF: usize = 0x1E; // queue_notify_off
 const VIRTIO_PCI_COMMON_Q_DESCLO: usize = 0x20;    // queue_desc_lo
+#[allow(dead_code)]
 const VIRTIO_PCI_COMMON_Q_DESCHI: usize = 0x24;    // queue_desc_hi
 const VIRTIO_PCI_COMMON_Q_AVAILLO: usize = 0x28;   // queue_avail_lo
+#[allow(dead_code)]
 const VIRTIO_PCI_COMMON_Q_AVAILHI: usize = 0x2C;   // queue_avail_hi
 const VIRTIO_PCI_COMMON_Q_USEDLO: usize = 0x30;    // queue_used_lo
+#[allow(dead_code)]
 const VIRTIO_PCI_COMMON_Q_USEDHI: usize = 0x34;    // queue_used_hi
 
 // Common config MMIO access helpers with ARM64 memory barriers
@@ -1385,7 +1398,7 @@ impl VirtioBlkDevice {
 
             // Register interrupt handler with IDT
             unsafe {
-                let handler_addr = virtio_blk_irq_handler as u64;
+                let handler_addr = virtio_blk_irq_handler as unsafe extern "C" fn() as usize as u64;
                 fut_idt_set_entry(
                     irq_vector,
                     handler_addr,
@@ -1543,7 +1556,7 @@ impl VirtioBlkDevice {
                     io_vector as u32, cfg_vector as u32);
 
                 // Register the MSI-X interrupt vectors with the IDT
-                let handler_addr = virtio_blk_irq_handler as u64;
+                let handler_addr = virtio_blk_irq_handler as unsafe extern "C" fn() as usize as u64;
                 fut_idt_set_entry(io_vector, handler_addr, GDT_KERNEL_CODE, IDT_TYPE_INTERRUPT, 0);
                 fut_printf(b"[virtio-blk] Registered MSI-X I/O vector %d with IDT\n\0".as_ptr(),
                     io_vector as u32);

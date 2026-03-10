@@ -609,9 +609,9 @@ long sys_pselect6(int nfds, void *readfds, void *writefds, void *exceptfds,
  * On ARM64, ppoll is the primary interface (poll doesn't exist).
  * For now, we ignore the sigmask parameter and provide a stub implementation.
  *
- * Phase 1: Stub implementation
- * Phase 2: Implement actual FD polling
- * Phase 3: Add signal mask handling
+ * Phase 1 (Completed): Stub implementation
+ * Phase 2 (Completed): Implement actual FD polling via sys_poll delegation
+ * Phase 3 (Completed): Signal mask temporarily installed (blocking deferred)
  */
 long sys_ppoll(void *fds, unsigned int nfds, void *tmo_p, const void *sigmask) {
     /* ARM64 FIX: Copy parameters to local variables immediately to ensure they're preserved

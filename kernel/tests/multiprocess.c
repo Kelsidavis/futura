@@ -200,7 +200,14 @@ static void test_close_on_exec_flag(void) {
     /* Verify file has fd_flags field (should be 0 by default) */
     struct fut_file *file = task->fd_table[fd];
     if (!file) {
-        fut_printf("[MULTIPROCESS-TEST] ✗ File not in FD table\n");
+        /* Diagnostic: check if a fresh fut_task_current() differs */
+        fut_task_t *cur = fut_task_current();
+        struct fut_file *file2 = (cur && cur->fd_table && fd < cur->max_fds)
+                                 ? cur->fd_table[fd] : NULL;
+        fut_printf("[MULTIPROCESS-TEST] ✗ File not in FD table"
+                   " fd=%d task=%p cur=%p task->ft[fd]=%p cur->ft[fd]=%p\n",
+                   fd, (void*)task, (void*)cur,
+                   (void*)file, (void*)file2);
         fut_vfs_close(fd);
         fut_test_fail(MULTIPROCESS_TEST_CLOEXEC);
         return;

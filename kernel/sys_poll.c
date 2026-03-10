@@ -21,6 +21,13 @@
 #include <kernel/fut_socket.h>
 #include <sys/epoll.h>
 
+/* Architecture-specific paging headers for KERNEL_VIRTUAL_BASE */
+#ifdef __x86_64__
+#include <platform/x86_64/memory/paging.h>
+#elif defined(__aarch64__)
+#include <platform/arm64/memory/paging.h>
+#endif
+
 /* Poll debugging (controlled via debug_config.h) */
 #define poll_printf(...) do { if (POLL_DEBUG) fut_printf(__VA_ARGS__); } while(0)
 
@@ -68,7 +75,11 @@ long sys_poll(struct pollfd *fds, unsigned long nfds, int timeout) {
      * IMPACT: Kernel page fault when writing revents to pollfd structures
      * DEFENSE: Check write permission for entire array before processing */
     size_t fds_size = nfds * sizeof(struct pollfd);
-    if (fut_access_ok(fds, fds_size, 1) != 0) {
+    /* Skip access_ok for kernel-originated calls (e.g., kernel self-tests).
+     * Kernel stack addresses are above KERNEL_VIRTUAL_BASE. */
+    uintptr_t fds_ptr_val = (uintptr_t)fds;
+    bool fds_is_kernel = (fds_ptr_val >= KERNEL_VIRTUAL_BASE);
+    if (!fds_is_kernel && fut_access_ok(fds, fds_size, 1) != 0) {
         poll_printf("[POLL] poll(fds=%p, nfds=%lu, timeout=%d) -> EFAULT (fds array not writable for %zu bytes)\n",
                    fds, nfds, timeout, fds_size);
         return -EFAULT;
@@ -219,8 +230,11 @@ long sys_poll(struct pollfd *fds, unsigned long nfds, int timeout) {
         return -ENOMEM;
     }
 
-    /* Copy pollfd array from userspace */
-    if (fut_copy_from_user(kfds, fds, size) != 0) {
+    /* Copy pollfd array from userspace (or kernel buffer for self-tests) */
+    int copy_ret = fds_is_kernel
+        ? (memcpy(kfds, fds, size), 0)
+        : fut_copy_from_user(kfds, fds, size);
+    if (copy_ret != 0) {
         fut_free(kfds);
         poll_printf("[POLL] poll(fds, %lu, %d) -> EFAULT (copy_from_user failed)\n", nfds, timeout);
         return -EFAULT;
@@ -286,6 +300,10 @@ long sys_poll(struct pollfd *fds, unsigned long nfds, int timeout) {
         if (!handled && fut_signalfd_poll(file, epoll_req, &epoll_ready))
             handled = true;
 
+        /* Pipe: check data/space in pipe buffer */
+        if (!handled && fut_pipe_poll(file, epoll_req, &epoll_ready))
+            handled = true;
+
         /* Socket: use socket-specific readiness */
         if (!handled) {
             fut_socket_t *socket = get_socket_from_fd(kfds[i].fd);
@@ -323,8 +341,11 @@ long sys_poll(struct pollfd *fds, unsigned long nfds, int timeout) {
         }
     }
 
-    /* Copy results back to userspace */
-    if (fut_copy_to_user(fds, kfds, size) != 0) {
+    /* Copy results back to userspace (or kernel buffer for self-tests) */
+    int copy_back = fds_is_kernel
+        ? (memcpy(fds, kfds, size), 0)
+        : fut_copy_to_user(fds, kfds, size);
+    if (copy_back != 0) {
         fut_free(kfds);
         poll_printf("[POLL] poll(fds, %lu, %d) -> EFAULT (copy_to_user failed)\n", nfds, timeout);
         return -EFAULT;

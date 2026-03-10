@@ -701,6 +701,56 @@ long sys_pipe2(int pipefd[2], int flags) {
 }
 
 /**
+ * fut_pipe_poll - Query I/O readiness for a pipe file descriptor.
+ *
+ * For the read end: EPOLLIN when data is available, EPOLLHUP when write end closed.
+ * For the write end: EPOLLOUT when buffer has space, EPOLLERR when read end closed.
+ *
+ * @param file        Kernel file structure to test.
+ * @param requested   Bitmask of EPOLL* events being requested.
+ * @param ready_out   Receives the ready mask on success.
+ *
+ * @return true if @file is a pipe (read or write end), false otherwise.
+ */
+#include <kernel/eventfd.h>
+#include <sys/epoll.h>
+bool fut_pipe_poll(struct fut_file *file, uint32_t requested, uint32_t *ready_out) {
+    if (!file || !file->chr_private) {
+        return false;
+    }
+
+    bool is_read_end  = (file->chr_ops == &pipe_read_fops);
+    bool is_write_end = (file->chr_ops == &pipe_write_fops);
+    if (!is_read_end && !is_write_end) {
+        return false;
+    }
+
+    struct pipe_buffer *pipe = (struct pipe_buffer *)file->chr_private;
+    uint32_t ready = 0;
+
+    fut_spinlock_acquire(&pipe->lock);
+
+    if (is_read_end) {
+        if (pipe->count > 0 && (requested & EPOLLIN))
+            ready |= EPOLLIN;
+        if (pipe->write_closed)
+            ready |= EPOLLHUP;
+    } else {
+        /* write end */
+        if (pipe->count < pipe->size && (requested & EPOLLOUT))
+            ready |= EPOLLOUT;
+        if (pipe->read_closed)
+            ready |= EPOLLERR;
+    }
+
+    fut_spinlock_release(&pipe->lock);
+
+    if (ready_out)
+        *ready_out = ready;
+    return true;
+}
+
+/**
  * pipe_peek - Copy up to `len` bytes from a readable pipe without consuming them.
  *
  * Used by sys_tee() to duplicate data from one pipe to another while keeping

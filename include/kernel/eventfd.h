@@ -45,3 +45,17 @@ bool fut_timerfd_poll(struct fut_file *file, uint32_t requested, uint32_t *ready
  * @return true if @file refers to a signalfd, false otherwise.
  */
 bool fut_signalfd_poll(struct fut_file *file, uint32_t requested, uint32_t *ready_out);
+
+/**
+ * fut_pipe_poll - Query readiness for a pipe file descriptor.
+ *
+ * Checks actual data availability for the read end and space
+ * availability for the write end.
+ *
+ * @param file        Kernel file structure to test.
+ * @param requested   Bitmask of EPOLL* events being requested.
+ * @param ready_out   Optional pointer that receives the ready mask.
+ *
+ * @return true if @file refers to a pipe (read or write end), false otherwise.
+ */
+bool fut_pipe_poll(struct fut_file *file, uint32_t requested, uint32_t *ready_out);

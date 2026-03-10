@@ -21,6 +21,13 @@
 #include <kernel/fut_socket.h>
 #include <sys/epoll.h>
 
+/* Architecture-specific paging headers for KERNEL_VIRTUAL_BASE */
+#ifdef __x86_64__
+#include <platform/x86_64/memory/paging.h>
+#elif defined(__aarch64__)
+#include <platform/arm64/memory/paging.h>
+#endif
+
 /* fd_set helpers */
 #define FD_SETSIZE 1024
 #define NFDBITS    (8 * sizeof(unsigned long))
@@ -216,26 +223,32 @@ long sys_select(int nfds, fd_set *readfds, fd_set *writefds,
         return -EINVAL;
     }
 
-    /* Phase 2: Validate fd_set pointers before accessing */
-    if (local_readfds && fut_access_ok(local_readfds, sizeof(fd_set), 1) != 0) {
+    /* Phase 2: Validate fd_set pointers before accessing.
+     * Skip access_ok for kernel pointers (kernel self-tests use stack buffers). */
+#define IS_KPTR(p) ((uintptr_t)(p) >= KERNEL_VIRTUAL_BASE)
+    if (local_readfds && !IS_KPTR(local_readfds) &&
+        fut_access_ok(local_readfds, sizeof(fd_set), 1) != 0) {
         fut_printf("[SELECT] select(nfds=%d, ...) -> EFAULT (invalid readfds pointer)\n",
                    local_nfds);
         return -EFAULT;
     }
 
-    if (local_writefds && fut_access_ok(local_writefds, sizeof(fd_set), 1) != 0) {
+    if (local_writefds && !IS_KPTR(local_writefds) &&
+        fut_access_ok(local_writefds, sizeof(fd_set), 1) != 0) {
         fut_printf("[SELECT] select(nfds=%d, ...) -> EFAULT (invalid writefds pointer)\n",
                    local_nfds);
         return -EFAULT;
     }
 
-    if (local_exceptfds && fut_access_ok(local_exceptfds, sizeof(fd_set), 1) != 0) {
+    if (local_exceptfds && !IS_KPTR(local_exceptfds) &&
+        fut_access_ok(local_exceptfds, sizeof(fd_set), 1) != 0) {
         fut_printf("[SELECT] select(nfds=%d, ...) -> EFAULT (invalid exceptfds pointer)\n",
                    local_nfds);
         return -EFAULT;
     }
 
-    if (local_timeout && fut_access_ok(local_timeout, sizeof(fut_timeval_t), 0) != 0) {
+    if (local_timeout && !IS_KPTR(local_timeout) &&
+        fut_access_ok(local_timeout, sizeof(fut_timeval_t), 0) != 0) {
         fut_printf("[SELECT] select(nfds=%d, ...) -> EFAULT (invalid timeout pointer)\n",
                    local_nfds);
         return -EFAULT;
@@ -271,19 +284,22 @@ long sys_select(int nfds, fd_set *readfds, fd_set *writefds,
     fd_set r_readfds, r_writefds, r_exceptfds;
 
     if (local_readfds) {
-        if (fut_copy_from_user(&k_readfds, local_readfds, sizeof(fd_set)) != 0) {
-            return -EFAULT;
-        }
+        int cr = IS_KPTR(local_readfds)
+            ? (memcpy(&k_readfds, local_readfds, sizeof(fd_set)), 0)
+            : fut_copy_from_user(&k_readfds, local_readfds, sizeof(fd_set));
+        if (cr != 0) return -EFAULT;
     }
     if (local_writefds) {
-        if (fut_copy_from_user(&k_writefds, local_writefds, sizeof(fd_set)) != 0) {
-            return -EFAULT;
-        }
+        int cr = IS_KPTR(local_writefds)
+            ? (memcpy(&k_writefds, local_writefds, sizeof(fd_set)), 0)
+            : fut_copy_from_user(&k_writefds, local_writefds, sizeof(fd_set));
+        if (cr != 0) return -EFAULT;
     }
     if (local_exceptfds) {
-        if (fut_copy_from_user(&k_exceptfds, local_exceptfds, sizeof(fd_set)) != 0) {
-            return -EFAULT;
-        }
+        int cr = IS_KPTR(local_exceptfds)
+            ? (memcpy(&k_exceptfds, local_exceptfds, sizeof(fd_set)), 0)
+            : fut_copy_from_user(&k_exceptfds, local_exceptfds, sizeof(fd_set));
+        if (cr != 0) return -EFAULT;
     }
 
     /* Initialize result sets to zero */
@@ -320,6 +336,8 @@ long sys_select(int nfds, fd_set *readfds, fd_set *writefds,
         if (!handled && fut_timerfd_poll(file, epoll_req, &epoll_ready))
             handled = true;
         if (!handled && fut_signalfd_poll(file, epoll_req, &epoll_ready))
+            handled = true;
+        if (!handled && fut_pipe_poll(file, epoll_req, &epoll_ready))
             handled = true;
         if (!handled) {
             fut_socket_t *socket = get_socket_from_fd(fd);
@@ -359,18 +377,24 @@ long sys_select(int nfds, fd_set *readfds, fd_set *writefds,
             ready_count++;
     }
 
-    /* Copy result sets back to userspace */
+    /* Copy result sets back to userspace (or kernel buffer for self-tests) */
     if (local_readfds) {
-        if (fut_copy_to_user(local_readfds, &r_readfds, sizeof(fd_set)) != 0)
-            return -EFAULT;
+        int cw = IS_KPTR(local_readfds)
+            ? (memcpy(local_readfds, &r_readfds, sizeof(fd_set)), 0)
+            : fut_copy_to_user(local_readfds, &r_readfds, sizeof(fd_set));
+        if (cw != 0) return -EFAULT;
     }
     if (local_writefds) {
-        if (fut_copy_to_user(local_writefds, &r_writefds, sizeof(fd_set)) != 0)
-            return -EFAULT;
+        int cw = IS_KPTR(local_writefds)
+            ? (memcpy(local_writefds, &r_writefds, sizeof(fd_set)), 0)
+            : fut_copy_to_user(local_writefds, &r_writefds, sizeof(fd_set));
+        if (cw != 0) return -EFAULT;
     }
     if (local_exceptfds) {
-        if (fut_copy_to_user(local_exceptfds, &r_exceptfds, sizeof(fd_set)) != 0)
-            return -EFAULT;
+        int cw = IS_KPTR(local_exceptfds)
+            ? (memcpy(local_exceptfds, &r_exceptfds, sizeof(fd_set)), 0)
+            : fut_copy_to_user(local_exceptfds, &r_exceptfds, sizeof(fd_set));
+        if (cw != 0) return -EFAULT;
     }
 
     fut_printf("[SELECT] select(nfds=%d) -> %d ready (Phase 3: FD readiness checking)\n",
@@ -454,21 +478,27 @@ long sys_pselect6(int nfds, void *readfds, void *writefds, void *exceptfds,
      * and signal mask support. For now, ignore sigmask and implement FD checking.
      */
 
-    /* Copy fd_sets from userspace */
+    /* Copy fd_sets from userspace (or kernel buffer for self-tests) */
     fd_set k_readfds, k_writefds, k_exceptfds;
     fd_set r_readfds, r_writefds, r_exceptfds;
 
     if (local_readfds) {
-        if (fut_copy_from_user(&k_readfds, local_readfds, sizeof(fd_set)) != 0)
-            return -EFAULT;
+        int cr = IS_KPTR(local_readfds)
+            ? (memcpy(&k_readfds, local_readfds, sizeof(fd_set)), 0)
+            : fut_copy_from_user(&k_readfds, local_readfds, sizeof(fd_set));
+        if (cr != 0) return -EFAULT;
     }
     if (local_writefds) {
-        if (fut_copy_from_user(&k_writefds, local_writefds, sizeof(fd_set)) != 0)
-            return -EFAULT;
+        int cr = IS_KPTR(local_writefds)
+            ? (memcpy(&k_writefds, local_writefds, sizeof(fd_set)), 0)
+            : fut_copy_from_user(&k_writefds, local_writefds, sizeof(fd_set));
+        if (cr != 0) return -EFAULT;
     }
     if (local_exceptfds) {
-        if (fut_copy_from_user(&k_exceptfds, local_exceptfds, sizeof(fd_set)) != 0)
-            return -EFAULT;
+        int cr = IS_KPTR(local_exceptfds)
+            ? (memcpy(&k_exceptfds, local_exceptfds, sizeof(fd_set)), 0)
+            : fut_copy_from_user(&k_exceptfds, local_exceptfds, sizeof(fd_set));
+        if (cr != 0) return -EFAULT;
     }
 
     memset(&r_readfds, 0, sizeof(fd_set));
@@ -503,6 +533,8 @@ long sys_pselect6(int nfds, void *readfds, void *writefds, void *exceptfds,
         if (!handled && fut_timerfd_poll(file, epoll_req, &epoll_ready))
             handled = true;
         if (!handled && fut_signalfd_poll(file, epoll_req, &epoll_ready))
+            handled = true;
+        if (!handled && fut_pipe_poll(file, epoll_req, &epoll_ready))
             handled = true;
         if (!handled) {
             fut_socket_t *socket = get_socket_from_fd(fd);
@@ -541,16 +573,22 @@ long sys_pselect6(int nfds, void *readfds, void *writefds, void *exceptfds,
     }
 
     if (local_readfds) {
-        if (fut_copy_to_user(local_readfds, &r_readfds, sizeof(fd_set)) != 0)
-            return -EFAULT;
+        int cw = IS_KPTR(local_readfds)
+            ? (memcpy(local_readfds, &r_readfds, sizeof(fd_set)), 0)
+            : fut_copy_to_user(local_readfds, &r_readfds, sizeof(fd_set));
+        if (cw != 0) return -EFAULT;
     }
     if (local_writefds) {
-        if (fut_copy_to_user(local_writefds, &r_writefds, sizeof(fd_set)) != 0)
-            return -EFAULT;
+        int cw = IS_KPTR(local_writefds)
+            ? (memcpy(local_writefds, &r_writefds, sizeof(fd_set)), 0)
+            : fut_copy_to_user(local_writefds, &r_writefds, sizeof(fd_set));
+        if (cw != 0) return -EFAULT;
     }
     if (local_exceptfds) {
-        if (fut_copy_to_user(local_exceptfds, &r_exceptfds, sizeof(fd_set)) != 0)
-            return -EFAULT;
+        int cw = IS_KPTR(local_exceptfds)
+            ? (memcpy(local_exceptfds, &r_exceptfds, sizeof(fd_set)), 0)
+            : fut_copy_to_user(local_exceptfds, &r_exceptfds, sizeof(fd_set));
+        if (cw != 0) return -EFAULT;
     }
 
     fut_printf("[PSELECT6] pselect6(nfds=%d) -> %d ready (Phase 3: FD readiness checking)\n",

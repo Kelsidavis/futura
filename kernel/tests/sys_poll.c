@@ -15,6 +15,7 @@
 #include <kernel/kprintf.h>
 #include <kernel/signal.h>
 #include <kernel/uaccess.h>
+#include <kernel/fut_timer.h>
 #include <poll.h>
 #include <stdint.h>
 #include <string.h>
@@ -38,6 +39,7 @@ extern long sys_eventfd2(unsigned int initval, int flags);
 #define POLL_TEST_SELECT_PIPE     6
 #define POLL_TEST_PSELECT6_PIPE   7
 #define POLL_TEST_PSELECT6_SIGMASK 8
+#define POLL_TEST_TIMEOUT_ONLY    9
 
 /* fd_set helpers (must match sys_select.c) */
 #define FD_SETSIZE 1024
@@ -375,6 +377,36 @@ static void test_pselect6_sigmask_restore(void) {
 }
 
 /* ============================================================
+ * Test 9: poll() with nfds=0 honors finite timeout
+ * ============================================================ */
+static void test_poll_timeout_only(void) {
+    fut_printf("[POLL-TEST] Test 9: poll() timeout-only sleep\n");
+
+    const int timeout_ms = 25;
+    uint64_t start_ns = fut_get_time_ns();
+    long ret = sys_poll(NULL, 0, timeout_ms);
+    uint64_t end_ns = fut_get_time_ns();
+    uint64_t elapsed_ms = (end_ns - start_ns) / 1000000ULL;
+
+    if (ret != 0) {
+        fut_printf("[POLL-TEST] ✗ poll(NULL, 0, %d) returned %ld\n", timeout_ms, ret);
+        fut_test_fail(POLL_TEST_TIMEOUT_ONLY);
+        return;
+    }
+
+    if (elapsed_ms < 10) {
+        fut_printf("[POLL-TEST] ✗ poll timeout returned too quickly: %llu ms\n",
+                   (unsigned long long)elapsed_ms);
+        fut_test_fail(POLL_TEST_TIMEOUT_ONLY);
+        return;
+    }
+
+    fut_printf("[POLL-TEST] ✓ poll(NULL, 0, %d) delayed for %llu ms\n",
+               timeout_ms, (unsigned long long)elapsed_ms);
+    fut_test_pass();
+}
+
+/* ============================================================
  * Main test harness
  * ============================================================ */
 void fut_poll_test_thread(void *arg) {
@@ -392,6 +424,7 @@ void fut_poll_test_thread(void *arg) {
     test_select_pipe();
     test_pselect6_pipe();
     test_pselect6_sigmask_restore();
+    test_poll_timeout_only();
 
     fut_printf("[POLL-TEST] ========================================\n");
     fut_printf("[POLL-TEST] All poll/select tests done\n");

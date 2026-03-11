@@ -19,6 +19,7 @@
 #include <kernel/debug_config.h>
 #include <kernel/eventfd.h>
 #include <kernel/fut_socket.h>
+#include <kernel/fut_thread.h>
 #include <sys/epoll.h>
 
 /* Architecture-specific paging headers for KERNEL_VIRTUAL_BASE */
@@ -30,6 +31,85 @@
 
 /* Poll debugging (controlled via debug_config.h) */
 #define poll_printf(...) do { if (POLL_DEBUG) fut_printf(__VA_ARGS__); } while(0)
+
+struct poll_scan_stats {
+    int ready_count;
+    int invalid_count;
+};
+
+static struct poll_scan_stats poll_scan_fds(struct pollfd *kfds, unsigned long nfds, fut_task_t *task) {
+    struct poll_scan_stats stats = {0, 0};
+
+    for (unsigned long i = 0; i < nfds; i++) {
+        kfds[i].revents = 0;
+
+        if (kfds[i].fd < 0 || kfds[i].fd >= task->max_fds) {
+            kfds[i].revents = POLLNVAL;
+            stats.ready_count++;
+            stats.invalid_count++;
+            continue;
+        }
+
+        struct fut_file *file = task->fd_table[kfds[i].fd];
+        if (!file) {
+            kfds[i].revents = POLLNVAL;
+            stats.ready_count++;
+            stats.invalid_count++;
+            continue;
+        }
+
+        uint32_t epoll_req = 0;
+        if (kfds[i].events & POLLIN)  epoll_req |= EPOLLIN;
+        if (kfds[i].events & POLLOUT) epoll_req |= EPOLLOUT;
+        if (kfds[i].events & POLLPRI) epoll_req |= EPOLLPRI;
+
+        uint32_t epoll_ready = 0;
+        bool handled = false;
+
+        if (!handled && fut_eventfd_poll(file, epoll_req, &epoll_ready))
+            handled = true;
+        if (!handled && fut_timerfd_poll(file, epoll_req, &epoll_ready))
+            handled = true;
+        if (!handled && fut_signalfd_poll(file, epoll_req, &epoll_ready))
+            handled = true;
+        if (!handled && fut_pipe_poll(file, epoll_req, &epoll_ready))
+            handled = true;
+
+        if (!handled) {
+            fut_socket_t *socket = get_socket_from_fd(kfds[i].fd);
+            if (socket) {
+                int poll_events = 0;
+                if (kfds[i].events & POLLIN)  poll_events |= 0x1;
+                if (kfds[i].events & POLLOUT) poll_events |= 0x4;
+                int socket_ready = fut_socket_poll(socket, poll_events);
+                if (socket_ready & 0x1) epoll_ready |= EPOLLIN;
+                if (socket_ready & 0x4) epoll_ready |= EPOLLOUT;
+                handled = true;
+            }
+        }
+
+        if (!handled && file->vnode && file->vnode->type == VN_REG) {
+            if (epoll_req & EPOLLIN)  epoll_ready |= EPOLLIN;
+            if (epoll_req & EPOLLOUT) epoll_ready |= EPOLLOUT;
+            handled = true;
+        }
+
+        if (!handled) {
+            if (epoll_req & EPOLLIN)  epoll_ready |= EPOLLIN;
+            if (epoll_req & EPOLLOUT) epoll_ready |= EPOLLOUT;
+        }
+
+        if (epoll_ready & EPOLLIN)  kfds[i].revents |= POLLIN;
+        if (epoll_ready & EPOLLOUT) kfds[i].revents |= POLLOUT;
+        if (epoll_ready & EPOLLPRI) kfds[i].revents |= POLLPRI;
+
+        if (kfds[i].revents != 0) {
+            stats.ready_count++;
+        }
+    }
+
+    return stats;
+}
 
 /**
  * poll() syscall - Wait for events on file descriptors
@@ -62,10 +142,17 @@ long sys_poll(struct pollfd *fds, unsigned long nfds, int timeout) {
         return -EFAULT;
     }
 
+    if (timeout < -1) {
+        poll_printf("[POLL] poll(fds, %lu, timeout=%d) -> EINVAL (timeout must be >= -1)\n", nfds, timeout);
+        return -EINVAL;
+    }
+
     /* nfds == 0 is valid (wait for timeout only) */
     if (nfds == 0) {
-        poll_printf("[POLL] poll(fds, 0, %d) -> 0 (no FDs to monitor, Phase 2: timeout only)\n", timeout);
-        /* Phase 3+ would sleep for timeout milliseconds */
+        if (timeout > 0) {
+            fut_thread_sleep((uint64_t)timeout);
+        }
+        poll_printf("[POLL] poll(fds, 0, %d) -> 0 (no FDs to monitor)\n", timeout);
         return 0;
     }
 
@@ -88,12 +175,6 @@ long sys_poll(struct pollfd *fds, unsigned long nfds, int timeout) {
     /* Reasonable limit on number of file descriptors */
     if (nfds > 1024) {
         poll_printf("[POLL] poll(fds, %lu, %d) -> EINVAL (nfds exceeds limit of 1024)\n", nfds, timeout);
-        return -EINVAL;
-    }
-
-    /* Phase 3: Validate timeout is either non-negative or -1 (infinite) */
-    if (timeout < -1) {
-        poll_printf("[POLL] poll(fds, %lu, timeout=%d) -> EINVAL (timeout must be >= -1)\n", nfds, timeout);
         return -EINVAL;
     }
 
@@ -248,97 +329,22 @@ long sys_poll(struct pollfd *fds, unsigned long nfds, int timeout) {
     }
 
     /* Phase 2: Track event statistics */
-    int ready_count = 0;
-    int invalid_count = 0;
     int pollin_requested = 0;
     int pollout_requested = 0;
     int pollpri_requested = 0;
 
-    /* Check each file descriptor */
     for (unsigned long i = 0; i < nfds; i++) {
-        kfds[i].revents = 0;  /* Clear returned events */
-
-        /* Track requested events */
         if (kfds[i].events & POLLIN) pollin_requested++;
         if (kfds[i].events & POLLOUT) pollout_requested++;
         if (kfds[i].events & POLLPRI) pollpri_requested++;
+    }
 
-        /* Check if FD is valid */
-        if (kfds[i].fd < 0 || kfds[i].fd >= task->max_fds) {
-            kfds[i].revents = POLLNVAL;
-            ready_count++;
-            invalid_count++;
-            continue;
-        }
+    struct poll_scan_stats stats = poll_scan_fds(kfds, nfds, task);
 
-        struct fut_file *file = task->fd_table[kfds[i].fd];
-        if (!file) {
-            kfds[i].revents = POLLNVAL;
-            ready_count++;
-            invalid_count++;
-            continue;
-        }
-
-        /* Phase 3: Check actual readiness via driver/VFS layer */
-        uint32_t epoll_req = 0;
-        if (kfds[i].events & POLLIN)  epoll_req |= EPOLLIN;
-        if (kfds[i].events & POLLOUT) epoll_req |= EPOLLOUT;
-        if (kfds[i].events & POLLPRI) epoll_req |= EPOLLPRI;
-
-        uint32_t epoll_ready = 0;
-        bool handled = false;
-
-        /* Eventfd: check counter > 0 */
-        if (!handled && fut_eventfd_poll(file, epoll_req, &epoll_ready))
-            handled = true;
-
-        /* Timerfd: check expiration counter > 0 */
-        if (!handled && fut_timerfd_poll(file, epoll_req, &epoll_ready))
-            handled = true;
-
-        /* Signalfd: check pending signals */
-        if (!handled && fut_signalfd_poll(file, epoll_req, &epoll_ready))
-            handled = true;
-
-        /* Pipe: check data/space in pipe buffer */
-        if (!handled && fut_pipe_poll(file, epoll_req, &epoll_ready))
-            handled = true;
-
-        /* Socket: use socket-specific readiness */
-        if (!handled) {
-            fut_socket_t *socket = get_socket_from_fd(kfds[i].fd);
-            if (socket) {
-                int poll_events = 0;
-                if (kfds[i].events & POLLIN)  poll_events |= 0x1;
-                if (kfds[i].events & POLLOUT) poll_events |= 0x4;
-                int socket_ready = fut_socket_poll(socket, poll_events);
-                if (socket_ready & 0x1) epoll_ready |= EPOLLIN;
-                if (socket_ready & 0x4) epoll_ready |= EPOLLOUT;
-                handled = true;
-            }
-        }
-
-        /* Regular files are always ready for read/write */
-        if (!handled && file->vnode && file->vnode->type == VN_REG) {
-            if (epoll_req & EPOLLIN)  epoll_ready |= EPOLLIN;
-            if (epoll_req & EPOLLOUT) epoll_ready |= EPOLLOUT;
-            handled = true;
-        }
-
-        /* All other file types (pipes, char devs, etc.): assume ready */
-        if (!handled) {
-            if (epoll_req & EPOLLIN)  epoll_ready |= EPOLLIN;
-            if (epoll_req & EPOLLOUT) epoll_ready |= EPOLLOUT;
-        }
-
-        /* Convert back to poll events */
-        if (epoll_ready & EPOLLIN)  kfds[i].revents |= POLLIN;
-        if (epoll_ready & EPOLLOUT) kfds[i].revents |= POLLOUT;
-        if (epoll_ready & EPOLLPRI) kfds[i].revents |= POLLPRI;
-
-        if (kfds[i].revents != 0) {
-            ready_count++;
-        }
+    /* Phase 4-lite: honor finite timeout by waiting once and re-checking readiness. */
+    if (stats.ready_count == 0 && timeout > 0) {
+        fut_thread_sleep((uint64_t)timeout);
+        stats = poll_scan_fds(kfds, nfds, task);
     }
 
     /* Copy results back to userspace (or kernel buffer for self-tests) */
@@ -357,17 +363,17 @@ long sys_poll(struct pollfd *fds, unsigned long nfds, int timeout) {
     const char *timeout_desc = (timeout < 0) ? "infinite" :
                                (timeout == 0) ? "immediate" : "timed";
 
-    if (invalid_count > 0) {
+    if (stats.invalid_count > 0) {
         poll_printf("[POLL] poll(nfds=%lu, timeout=%d ms [%s]) -> %d ready (%d invalid, "
                    "requested: %dxIN %dxOUT %dxPRI, Phase 3: FD readiness checking)\n",
-                   nfds, timeout, timeout_desc, ready_count, invalid_count,
+                   nfds, timeout, timeout_desc, stats.ready_count, stats.invalid_count,
                    pollin_requested, pollout_requested, pollpri_requested);
     } else {
         poll_printf("[POLL] poll(nfds=%lu, timeout=%d ms [%s]) -> %d ready "
                    "(requested: %dxIN %dxOUT %dxPRI, Phase 3: FD readiness checking)\n",
-                   nfds, timeout, timeout_desc, ready_count,
+                   nfds, timeout, timeout_desc, stats.ready_count,
                    pollin_requested, pollout_requested, pollpri_requested);
     }
 
-    return ready_count;
+    return stats.ready_count;
 }

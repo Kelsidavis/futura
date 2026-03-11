@@ -493,6 +493,7 @@ struct fut_mount {
     const struct fut_fs_type *fs;   /* Filesystem type */
     struct fut_vnode *root;         /* Root vnode of mounted filesystem */
     int flags;                      /* Mount flags */
+    bool expire_marked;             /* MNT_EXPIRE first-pass marker */
     void *fs_data;                  /* Filesystem-specific data */
     uint64_t st_dev;                /* Device ID for stat() */
 
@@ -667,6 +668,18 @@ int fut_vfs_mount(const char *device, const char *mountpoint,
  * @return 0 on success, negative error code on failure
  */
 int fut_vfs_unmount(const char *mountpoint);
+
+/**
+ * Mark a mount as expirable, or unmount it on a second expire request.
+ *
+ * Behavior matches Linux umount2(MNT_EXPIRE):
+ * - First call marks mount and returns -EAGAIN
+ * - Second call unmounts (or returns unmount error)
+ *
+ * @param mountpoint Mount point path
+ * @return -EAGAIN on first mark, 0 on unmount, negative error otherwise
+ */
+int fut_vfs_expire_mount(const char *mountpoint);
 
 /**
  * Query filesystem statistics for a mounted filesystem.

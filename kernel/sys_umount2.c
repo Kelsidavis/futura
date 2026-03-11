@@ -200,6 +200,13 @@ long sys_umount2(const char *target, int flags) {
         return -EINVAL;
     }
 
+    /* MNT_EXPIRE cannot be combined with force/detach options. */
+    if ((flags & MNT_EXPIRE) && (flags & (MNT_FORCE | MNT_DETACH))) {
+        fut_printf("[UMOUNT2] umount2(target=%p, flags=0x%x [expire+force/detach], pid=%d) -> EINVAL\n",
+                   target, flags, task->pid);
+        return -EINVAL;
+    }
+
     /* Copy target path from userspace
      * VULNERABILITY: Missing User Pointer Validation
      * ATTACK: Raw user pointer passed to kernel string functions
@@ -274,11 +281,17 @@ long sys_umount2(const char *target, int flags) {
         return -EPERM;
     }
 
-    /* MNT_EXPIRE is not implemented */
+    /* MNT_EXPIRE: first call marks mount and returns -EAGAIN; second unmounts. */
     if (flags & MNT_EXPIRE) {
-        fut_printf("[UMOUNT2] umount2(target='%s', flags=%s, pid=%d) -> ENOSYS (MNT_EXPIRE not implemented)\n",
-                   target_buf, flags_buf, task->pid);
-        return -ENOSYS;
+        int expire_ret = fut_vfs_expire_mount(target_buf);
+        if (expire_ret < 0) {
+            fut_printf("[UMOUNT2] umount2(target='%s', type=%s, flags=%s, pid=%d) -> %d\n",
+                       target_buf, umount_type, flags_buf, task->pid, expire_ret);
+            return expire_ret;
+        }
+        fut_printf("[UMOUNT2] umount2(target='%s', type=%s, flags=%s, pid=%d) -> 0\n",
+                   target_buf, umount_type, flags_buf, task->pid);
+        return 0;
     }
 
     /* Perform the actual unmount via VFS */

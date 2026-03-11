@@ -33,6 +33,7 @@
 #define VFS_TEST_MOUNT      7
 #define VFS_TEST_RENAME2    8
 #define VFS_TEST_INOTIFY    9
+#define VFS_TEST_UMOUNT_EXPIRE 10
 
 /* Use kernel-level VFS functions (no copy_from_user) */
 #define sys_mkdir(path, mode)           fut_vfs_mkdir(path, (uint32_t)(mode))
@@ -496,6 +497,65 @@ static void test_mount(void) {
 
 /* ------------------------------------------------------------------ */
 
+static void test_umount_expire(void) {
+    fut_printf("[VFS-TEST] Test 10: umount2 MNT_EXPIRE mark then unmount semantics\n");
+
+    const char *mntpoint = "/vfs_expire_mnt";
+    const char *testfile = "/vfs_expire_mnt/expire.txt";
+
+    int ret = fut_vfs_mkdir(mntpoint, 0755);
+    if (ret < 0 && ret != -EEXIST) {
+        fut_printf("[VFS-TEST] ✗ umount expire: mkdir failed (%d)\n", ret);
+        fut_test_fail(VFS_TEST_UMOUNT_EXPIRE);
+        return;
+    }
+
+    ret = fut_vfs_mount(NULL, mntpoint, "ramfs", 0, NULL, FUT_INVALID_HANDLE);
+    if (ret < 0) {
+        fut_printf("[VFS-TEST] ✗ umount expire: mount failed (%d)\n", ret);
+        fut_test_fail(VFS_TEST_UMOUNT_EXPIRE);
+        return;
+    }
+
+    int fd = fut_vfs_open(testfile, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (fd < 0) {
+        fut_printf("[VFS-TEST] ✗ umount expire: create file failed (%d)\n", fd);
+        fut_vfs_unmount(mntpoint);
+        fut_test_fail(VFS_TEST_UMOUNT_EXPIRE);
+        return;
+    }
+    fut_vfs_close(fd);
+
+    ret = fut_vfs_expire_mount(mntpoint);
+    if (ret != -EAGAIN) {
+        fut_printf("[VFS-TEST] ✗ umount expire: first expire returned %d (expected -EAGAIN)\n", ret);
+        fut_vfs_unmount(mntpoint);
+        fut_test_fail(VFS_TEST_UMOUNT_EXPIRE);
+        return;
+    }
+
+    ret = fut_vfs_expire_mount(mntpoint);
+    if (ret != 0) {
+        fut_printf("[VFS-TEST] ✗ umount expire: second expire returned %d (expected 0)\n", ret);
+        fut_vfs_unmount(mntpoint);
+        fut_test_fail(VFS_TEST_UMOUNT_EXPIRE);
+        return;
+    }
+
+    fd = fut_vfs_open(testfile, O_RDONLY, 0);
+    if (fd >= 0) {
+        fut_printf("[VFS-TEST] ✗ umount expire: file still visible after expire unmount (fd=%d)\n", fd);
+        fut_vfs_close(fd);
+        fut_test_fail(VFS_TEST_UMOUNT_EXPIRE);
+        return;
+    }
+
+    fut_printf("[VFS-TEST] ✓ umount expire: first call marked, second call unmounted mountpoint\n");
+    fut_test_pass();
+}
+
+/* ------------------------------------------------------------------ */
+
 /*
  * test_renameat2 — verify RENAME_NOREPLACE and RENAME_EXCHANGE semantics.
  */
@@ -671,6 +731,7 @@ void fut_vfs_test_thread(void *arg) {
     test_hardlink();
     test_inotify();
     test_mount();
+    test_umount_expire();
     test_renameat2();
 
     fut_printf("[VFS-TEST] VFS correctness tests complete\n");

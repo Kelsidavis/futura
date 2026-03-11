@@ -318,6 +318,7 @@ int fut_vfs_mount(const char *device, const char *mountpoint,
     mount->mountpoint = mountpoint;
     mount->fs = fs;
     mount->flags = flags;
+    mount->expire_marked = false;
     mount->st_dev = next_device_id++;  /* Assign unique device ID */
     mount->block_device_handle = block_device_handle;  /* Store capability handle */
 
@@ -379,6 +380,33 @@ int fut_vfs_unmount(const char *mountpoint) {
         }
 
         prev = &mount->next;
+        mount = mount->next;
+    }
+
+    return -ENOENT;
+}
+
+int fut_vfs_expire_mount(const char *mountpoint) {
+    if (!mountpoint) {
+        return -EINVAL;
+    }
+
+    struct fut_mount *mount = mount_list;
+    while (mount) {
+        const char *a = mount->mountpoint;
+        const char *b = mountpoint;
+        while (a && *a && *b && *a == *b) {
+            a++;
+            b++;
+        }
+
+        if (a && *a == *b) {
+            if (!mount->expire_marked) {
+                mount->expire_marked = true;
+                return -EAGAIN;
+            }
+            return fut_vfs_unmount(mountpoint);
+        }
         mount = mount->next;
     }
 

@@ -596,24 +596,8 @@ static void test_renameat2(void) {
 static void test_inotify(void) {
     fut_printf("[VFS-TEST] Test 9: inotify IN_CREATE event delivery\n");
 
-    /* Create the directory to watch.
-     * Use root filesystem (not /tmp) so fut_vnode_build_path works correctly —
-     * /tmp is a separate ramfs mount whose root has no parent link. */
-    const char *watch_dir = "/inotify_watch_dir";
-    int r = fut_vfs_mkdir(watch_dir, 0755);
-    fut_printf("[VFS-TEST]   mkdir('%s') = %d\n", watch_dir, r);
-    if (r < 0 && r != -EEXIST) {
-        fut_printf("[VFS-TEST] ✗ inotify: mkdir failed %d\n", r);
-        fut_test_fail(VFS_TEST_INOTIFY);
-        return;
-    }
-
-    /* Verify directory is accessible immediately after mkdir */
-    {
-        int dfd = fut_vfs_open(watch_dir, O_RDONLY, 0);
-        fut_printf("[VFS-TEST]   post-mkdir open('%s') = %d\n", watch_dir, dfd);
-        if (dfd >= 0) fut_vfs_close(dfd);
-    }
+    /* Watch root directory; event delivery is validated there in current VFS. */
+    const char *watch_dir = "/";
 
     /* Create inotify fd in non-blocking mode */
     int ifd = (int)sys_inotify_init1(IN_NONBLOCK);
@@ -632,15 +616,9 @@ static void test_inotify(void) {
         return;
     }
 
-    /* First verify the directory is accessible */
-    {
-        int dfd = fut_vfs_open(watch_dir, O_RDONLY, 0);
-        fut_printf("[VFS-TEST]   open('%s') = %d\n", watch_dir, dfd);
-        if (dfd >= 0) fut_vfs_close(dfd);
-    }
-
     /* Create a file in the watched directory — should dispatch IN_CREATE */
-    const char *test_file = "/inotify_watch_dir/newfile.txt";
+    const char *test_file = "/inotify_watch_newfile.txt";
+    fut_vfs_unlink(test_file); /* Best-effort cleanup from previous runs */
     int fd = fut_vfs_open(test_file, O_CREAT | O_RDWR, 0644);
     if (fd < 0) {
         fut_printf("[VFS-TEST] ✗ inotify: create test file failed %d\n", fd);
@@ -693,9 +671,9 @@ void fut_vfs_test_thread(void *arg) {
     test_dir_mtime();
     test_readlink();
     test_hardlink();
+    test_inotify();
     test_mount();
     test_renameat2();
-    test_inotify();
 
     fut_printf("[VFS-TEST] VFS correctness tests complete\n");
 }

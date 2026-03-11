@@ -21,13 +21,51 @@
 #include <kernel/fut_vfs.h>
 #include <kernel/syscalls.h>
 #include <stdint.h>
+#include <stdbool.h>
 #include <string.h>
 
 #include <kernel/kprintf.h>
 #include <kernel/uaccess.h>
 #include <fcntl.h>
+#ifdef __x86_64__
+#include <platform/x86_64/memory/paging.h>
+#elif defined(__aarch64__)
+#include <platform/arm64/memory/paging.h>
+#endif
 
 /* AT_* constants provided by fcntl.h */
+
+static inline int renameat_copy_from_user(void *dst, const void *src, size_t n) {
+#ifdef KERNEL_VIRTUAL_BASE
+    if ((uintptr_t)src >= KERNEL_VIRTUAL_BASE) {
+        __builtin_memcpy(dst, src, n);
+        return 0;
+    }
+#endif
+    return fut_copy_from_user(dst, src, n);
+}
+
+static int build_exchange_temp_path(const char *base_path,
+                                    char *temp_path,
+                                    size_t temp_path_size,
+                                    int attempt) {
+    const char suffix[] = ".fut_swap_0";
+    size_t base_len = strlen(base_path);
+    size_t suffix_len = sizeof(suffix) - 1;
+
+    if (attempt < 0 || attempt > 9) {
+        return -EINVAL;
+    }
+
+    if (base_len + suffix_len >= temp_path_size) {
+        return -ENAMETOOLONG;
+    }
+
+    memcpy(temp_path, base_path, base_len);
+    memcpy(temp_path + base_len, suffix, suffix_len + 1);
+    temp_path[base_len + suffix_len - 1] = (char)('0' + attempt);
+    return 0;
+}
 
 /**
  * renameat() - Rename/move file relative to directory FDs
@@ -138,7 +176,7 @@ long sys_renameat(int olddirfd, const char *oldpath, int newdirfd, const char *n
 
     /* Copy oldpath from userspace */
     char oldpath_buf[FUT_VFS_PATH_BUFFER_SIZE];
-    if (fut_copy_from_user(oldpath_buf, local_oldpath, sizeof(oldpath_buf)) != 0) {
+    if (renameat_copy_from_user(oldpath_buf, local_oldpath, sizeof(oldpath_buf)) != 0) {
         fut_printf("[RENAMEAT] renameat(olddirfd=%d) -> EFAULT (copy_from_user oldpath failed)\n",
                    local_olddirfd);
         return -EFAULT;
@@ -151,7 +189,7 @@ long sys_renameat(int olddirfd, const char *oldpath, int newdirfd, const char *n
 
     /* Copy newpath from userspace */
     char newpath_buf[FUT_VFS_PATH_BUFFER_SIZE];
-    if (fut_copy_from_user(newpath_buf, local_newpath, sizeof(newpath_buf)) != 0) {
+    if (renameat_copy_from_user(newpath_buf, local_newpath, sizeof(newpath_buf)) != 0) {
         fut_printf("[RENAMEAT] renameat(newdirfd=%d) -> EFAULT (copy_from_user newpath failed)\n",
                    local_newdirfd);
         return -EFAULT;
@@ -289,19 +327,19 @@ long sys_renameat(int olddirfd, const char *oldpath, int newdirfd, const char *n
  *   RENAME_NOREPLACE (1): Fail with -EEXIST if newpath already exists.
  *                         Ordinary rename() silently replaces the destination;
  *                         this flag prevents that.
- *   RENAME_EXCHANGE  (2): Atomic swap of old and new — requires both to exist.
- *                         Not yet supported; returns -ENOSYS.
+ *   RENAME_EXCHANGE  (2): Swap old and new in one operation (best-effort in-kernel sequence).
  *   RENAME_WHITEOUT  (4): Create a whiteout at oldpath (overlayfs only).
  *                         Not yet supported; returns -ENOSYS.
  *
  * Returns:
  *   - 0 on success
  *   - -EEXIST if RENAME_NOREPLACE and newpath exists
- *   - -ENOSYS if RENAME_EXCHANGE or RENAME_WHITEOUT requested
+ *   - -ENOSYS if RENAME_WHITEOUT requested
  *   - -EINVAL for unknown flags
  *   - All errors from renameat() otherwise
  *
  * Phase 2 (Completed): RENAME_NOREPLACE via fut_vfs_lookup existence check
+ * Phase 3 (Completed): RENAME_EXCHANGE via three-step VFS rename with rollback
  */
 long sys_renameat2(int olddirfd, const char *oldpath,
                    int newdirfd, const char *newpath,
@@ -313,14 +351,143 @@ long sys_renameat2(int olddirfd, const char *oldpath,
         return -EINVAL;
     }
 
-    /* RENAME_EXCHANGE and RENAME_WHITEOUT require deeper VFS support */
-    if (flags & RENAME_EXCHANGE) {
-        fut_printf("[RENAMEAT2] renameat2(flags=RENAME_EXCHANGE) -> ENOSYS\n");
-        return -ENOSYS;
+    if ((flags & RENAME_EXCHANGE) && (flags & RENAME_NOREPLACE)) {
+        fut_printf("[RENAMEAT2] renameat2(flags=0x%x) -> EINVAL (RENAME_EXCHANGE with RENAME_NOREPLACE)\n",
+                   flags);
+        return -EINVAL;
     }
+
     if (flags & RENAME_WHITEOUT) {
         fut_printf("[RENAMEAT2] renameat2(flags=RENAME_WHITEOUT) -> ENOSYS\n");
         return -ENOSYS;
+    }
+
+    if (flags & RENAME_EXCHANGE) {
+        fut_task_t *task = fut_task_current();
+        if (!task) {
+            fut_printf("[RENAMEAT2] renameat2(RENAME_EXCHANGE) -> ESRCH (no current task)\n");
+            return -ESRCH;
+        }
+
+        if (!oldpath || !newpath) {
+            fut_printf("[RENAMEAT2] renameat2(RENAME_EXCHANGE) -> EINVAL (NULL path)\n");
+            return -EINVAL;
+        }
+
+        char oldpath_buf[FUT_VFS_PATH_BUFFER_SIZE];
+        char newpath_buf[FUT_VFS_PATH_BUFFER_SIZE];
+        if (renameat_copy_from_user(oldpath_buf, oldpath, sizeof(oldpath_buf)) != 0 ||
+            renameat_copy_from_user(newpath_buf, newpath, sizeof(newpath_buf)) != 0) {
+            fut_printf("[RENAMEAT2] renameat2(RENAME_EXCHANGE) -> EFAULT (copy path)\n");
+            return -EFAULT;
+        }
+        if (memchr(oldpath_buf, '\0', sizeof(oldpath_buf)) == NULL ||
+            memchr(newpath_buf, '\0', sizeof(newpath_buf)) == NULL) {
+            fut_printf("[RENAMEAT2] renameat2(RENAME_EXCHANGE) -> ENAMETOOLONG\n");
+            return -ENAMETOOLONG;
+        }
+        if (oldpath_buf[0] == '\0' || newpath_buf[0] == '\0') {
+            fut_printf("[RENAMEAT2] renameat2(RENAME_EXCHANGE) -> EINVAL (empty path)\n");
+            return -EINVAL;
+        }
+
+        char resolved_oldpath[FUT_VFS_PATH_BUFFER_SIZE];
+        char resolved_newpath[FUT_VFS_PATH_BUFFER_SIZE];
+        int rret = fut_vfs_resolve_at(task, olddirfd, oldpath_buf,
+                                      resolved_oldpath, sizeof(resolved_oldpath));
+        if (rret < 0) {
+            fut_printf("[RENAMEAT2] renameat2(RENAME_EXCHANGE old resolve) -> %d\n", rret);
+            return rret;
+        }
+
+        rret = fut_vfs_resolve_at(task, newdirfd, newpath_buf,
+                                  resolved_newpath, sizeof(resolved_newpath));
+        if (rret < 0) {
+            fut_printf("[RENAMEAT2] renameat2(RENAME_EXCHANGE new resolve) -> %d\n", rret);
+            return rret;
+        }
+
+        if (strcmp(resolved_oldpath, resolved_newpath) == 0) {
+            return 0;
+        }
+
+        struct fut_vnode *old_vnode = NULL;
+        struct fut_vnode *new_vnode = NULL;
+        int ret = fut_vfs_lookup(resolved_oldpath, &old_vnode);
+        if (ret < 0) {
+            fut_printf("[RENAMEAT2] renameat2(RENAME_EXCHANGE old lookup '%s') -> %d\n",
+                       resolved_oldpath, ret);
+            return ret;
+        }
+
+        ret = fut_vfs_lookup(resolved_newpath, &new_vnode);
+        if (ret < 0) {
+            fut_printf("[RENAMEAT2] renameat2(RENAME_EXCHANGE new lookup '%s') -> %d\n",
+                       resolved_newpath, ret);
+            fut_vnode_unref(old_vnode);
+            return ret;
+        }
+
+        if (old_vnode->mount != new_vnode->mount) {
+            fut_vnode_unref(old_vnode);
+            fut_vnode_unref(new_vnode);
+            fut_printf("[RENAMEAT2] renameat2(RENAME_EXCHANGE '%s' <-> '%s') -> EXDEV\n",
+                       resolved_oldpath, resolved_newpath);
+            return -EXDEV;
+        }
+        fut_vnode_unref(old_vnode);
+        fut_vnode_unref(new_vnode);
+
+        char temp_path[FUT_VFS_PATH_BUFFER_SIZE];
+        bool found_temp = false;
+        for (int attempt = 0; attempt < 10; attempt++) {
+            ret = build_exchange_temp_path(resolved_newpath, temp_path, sizeof(temp_path), attempt);
+            if (ret < 0) {
+                return ret;
+            }
+            struct fut_vnode *tmp_vnode = NULL;
+            int lret = fut_vfs_lookup(temp_path, &tmp_vnode);
+            if (lret == -ENOENT) {
+                found_temp = true;
+                break;
+            }
+            if (lret == 0 && tmp_vnode) {
+                fut_vnode_unref(tmp_vnode);
+            }
+        }
+        if (!found_temp) {
+            fut_printf("[RENAMEAT2] renameat2(RENAME_EXCHANGE '%s' <-> '%s') -> EEXIST (no temp path)\n",
+                       resolved_oldpath, resolved_newpath);
+            return -EEXIST;
+        }
+
+        ret = fut_vfs_rename(resolved_oldpath, temp_path);
+        if (ret < 0) {
+            fut_printf("[RENAMEAT2] renameat2(RENAME_EXCHANGE step1 '%s'->'%s') -> %d\n",
+                       resolved_oldpath, temp_path, ret);
+            return ret;
+        }
+
+        ret = fut_vfs_rename(resolved_newpath, resolved_oldpath);
+        if (ret < 0) {
+            int rollback = fut_vfs_rename(temp_path, resolved_oldpath);
+            fut_printf("[RENAMEAT2] renameat2(RENAME_EXCHANGE step2 '%s'->'%s') -> %d (rollback=%d)\n",
+                       resolved_newpath, resolved_oldpath, ret, rollback);
+            return ret;
+        }
+
+        ret = fut_vfs_rename(temp_path, resolved_newpath);
+        if (ret < 0) {
+            int rollback1 = fut_vfs_rename(resolved_oldpath, resolved_newpath);
+            int rollback2 = fut_vfs_rename(temp_path, resolved_oldpath);
+            fut_printf("[RENAMEAT2] renameat2(RENAME_EXCHANGE step3 '%s'->'%s') -> %d (rollback1=%d rollback2=%d)\n",
+                       temp_path, resolved_newpath, ret, rollback1, rollback2);
+            return ret;
+        }
+
+        fut_printf("[RENAMEAT2] renameat2(RENAME_EXCHANGE '%s' <-> '%s') -> 0\n",
+                   resolved_oldpath, resolved_newpath);
+        return 0;
     }
 
     /* flags=0: delegate directly */
@@ -337,7 +504,7 @@ long sys_renameat2(int olddirfd, const char *oldpath,
     }
 
     char newpath_buf[FUT_VFS_PATH_BUFFER_SIZE];
-    if (fut_copy_from_user(newpath_buf, newpath, sizeof(newpath_buf)) != 0) {
+    if (renameat_copy_from_user(newpath_buf, newpath, sizeof(newpath_buf)) != 0) {
         fut_printf("[RENAMEAT2] renameat2(newdirfd=%d) -> EFAULT (copy newpath)\n", newdirfd);
         return -EFAULT;
     }

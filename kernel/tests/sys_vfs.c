@@ -45,6 +45,9 @@
 extern long sys_inotify_init1(int flags);
 extern long sys_inotify_add_watch(int fd, const char *pathname, uint32_t mask);
 extern long sys_inotify_rm_watch(int fd, int wd);
+extern long sys_renameat2(int olddirfd, const char *oldpath,
+                          int newdirfd, const char *newpath,
+                          unsigned int flags);
 
 /* inotify event structure (mirrors kernel/sys_inotify.c) */
 struct test_inotify_event {
@@ -57,6 +60,8 @@ struct test_inotify_event {
 #define IN_MODIFY  0x00000002U
 #define IN_DELETE  0x00000200U
 #define IN_NONBLOCK 00004000
+#define RENAME_NOREPLACE (1U << 0)
+#define RENAME_EXCHANGE  (1U << 1)
 
 /* ------------------------------------------------------------------ */
 
@@ -492,20 +497,13 @@ static void test_mount(void) {
 /* ------------------------------------------------------------------ */
 
 /*
- * test_renameat2 — verify RENAME_NOREPLACE semantics via fut_vfs_rename
- * and fut_vfs_lookup (kernel-level equivalents; no copy_from_user).
- *
- * The RENAME_NOREPLACE logic in sys_renameat2 checks for target existence
- * with fut_vfs_lookup before calling sys_renameat.  Here we replicate the
- * same check inline using only kernel-VFS APIs so no copy_from_user is
- * needed for the selftest paths.
+ * test_renameat2 — verify RENAME_NOREPLACE and RENAME_EXCHANGE semantics.
  */
 static void test_renameat2(void) {
     fut_printf("[VFS-TEST] Test 8: renameat2 RENAME_NOREPLACE semantics\n");
 
-    const char *src  = "/vfs_rename2_src.txt";
-    const char *dst  = "/vfs_rename2_dst.txt";
-    const char *dst2 = "/vfs_rename2_dst2.txt";
+    const char *src = "/vfs_rename2_src.txt";
+    const char *dst = "/vfs_rename2_dst.txt";
 
     /* Create source file */
     int fd = fut_vfs_open(src, O_WRONLY | O_CREAT | O_TRUNC, 0644);
@@ -527,16 +525,12 @@ static void test_renameat2(void) {
     fut_vfs_write(fd, "world", 5);
     fut_vfs_close(fd);
 
-    /* Simulate RENAME_NOREPLACE: lookup dst — must exist → return EEXIST */
-    struct fut_vnode *existing = NULL;
-    int lookup_ret = fut_vfs_lookup(dst, &existing);
-    if (lookup_ret != 0) {
-        fut_printf("[VFS-TEST] ✗ renameat2: dst lookup returned %d (expected 0)\n", lookup_ret);
+    int ret = (int)sys_renameat2(AT_FDCWD, src, AT_FDCWD, dst, RENAME_NOREPLACE);
+    if (ret != -EEXIST) {
+        fut_printf("[VFS-TEST] ✗ renameat2: RENAME_NOREPLACE returned %d (expected -EEXIST)\n", ret);
         fut_test_fail(VFS_TEST_RENAME2);
         return;
     }
-    /* RENAME_NOREPLACE must reject rename when dst exists */
-    /* (kernel sys_renameat2 would return -EEXIST here) */
     fut_printf("[VFS-TEST]   dst exists (RENAME_NOREPLACE correctly detects EEXIST)\n");
 
     /* Confirm src still exists (rename did not happen) */
@@ -548,40 +542,44 @@ static void test_renameat2(void) {
     }
     fut_vfs_close(fd);
 
-    /* Now rename src to dst2 (which does not exist) via fut_vfs_rename */
-    /* First confirm dst2 doesn't exist */
-    struct fut_vnode *vn2 = NULL;
-    if (fut_vfs_lookup(dst2, &vn2) == 0) {
-        /* Clean up leftover from previous run */
-        fut_vfs_unlink(dst2);
-    }
-
-    int ret = fut_vfs_rename(src, dst2);
+    ret = (int)sys_renameat2(AT_FDCWD, src, AT_FDCWD, dst, RENAME_EXCHANGE);
     if (ret != 0) {
-        fut_printf("[VFS-TEST] ✗ renameat2: fut_vfs_rename to non-existent dst returned %d\n", ret);
+        fut_printf("[VFS-TEST] ✗ renameat2: RENAME_EXCHANGE returned %d\n", ret);
         fut_test_fail(VFS_TEST_RENAME2);
         return;
     }
 
-    /* Verify dst2 now exists */
-    fd = fut_vfs_open(dst2, O_RDONLY, 0);
-    if (fd < 0) {
-        fut_printf("[VFS-TEST] ✗ renameat2: dst2 not found after rename (%d)\n", fd);
-        fut_test_fail(VFS_TEST_RENAME2);
-        return;
-    }
-    fut_vfs_close(fd);
-
-    /* Verify src is gone */
+    char buf[8] = {0};
     fd = fut_vfs_open(src, O_RDONLY, 0);
-    if (fd >= 0) {
-        fut_printf("[VFS-TEST] ✗ renameat2: src still exists after successful rename\n");
-        fut_vfs_close(fd);
+    if (fd < 0) {
+        fut_printf("[VFS-TEST] ✗ renameat2: src missing after exchange (%d)\n", fd);
+        fut_test_fail(VFS_TEST_RENAME2);
+        return;
+    }
+    ssize_t nr = fut_vfs_read(fd, buf, 5);
+    fut_vfs_close(fd);
+    if (nr != 5 || memcmp(buf, "world", 5) != 0) {
+        fut_printf("[VFS-TEST] ✗ renameat2: src content after exchange invalid (nr=%zd)\n", nr);
         fut_test_fail(VFS_TEST_RENAME2);
         return;
     }
 
-    fut_printf("[VFS-TEST] ✓ renameat2: RENAME_NOREPLACE detects existing target; rename to new path works\n");
+    memset(buf, 0, sizeof(buf));
+    fd = fut_vfs_open(dst, O_RDONLY, 0);
+    if (fd < 0) {
+        fut_printf("[VFS-TEST] ✗ renameat2: dst missing after exchange (%d)\n", fd);
+        fut_test_fail(VFS_TEST_RENAME2);
+        return;
+    }
+    nr = fut_vfs_read(fd, buf, 5);
+    fut_vfs_close(fd);
+    if (nr != 5 || memcmp(buf, "hello", 5) != 0) {
+        fut_printf("[VFS-TEST] ✗ renameat2: dst content after exchange invalid (nr=%zd)\n", nr);
+        fut_test_fail(VFS_TEST_RENAME2);
+        return;
+    }
+
+    fut_printf("[VFS-TEST] ✓ renameat2: RENAME_NOREPLACE and RENAME_EXCHANGE verified\n");
     fut_test_pass();
 }
 

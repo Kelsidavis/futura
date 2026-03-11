@@ -1033,7 +1033,7 @@ stage: userland
 .PHONY: tests tools
 
 tests:
-	@$(MAKE) -C tests
+	@$(MAKE) -C tests all
 
 tools:
 	@$(MAKE) -C tools

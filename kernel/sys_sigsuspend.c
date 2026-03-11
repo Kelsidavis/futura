@@ -89,7 +89,7 @@
  * Implementation notes:
  *   - Phase 1: Stub returns -EINTR immediately (no actual blocking)
  *   - Phase 2 (Completed): Block on task->signal_waitq until unmasked signal arrives
- *   - Phase 3: Full signal delivery integration (signal handler invocation)
+ *   - Phase 3 (Completed): Eliminate check/sleep race with signal_waitq lock
  *   - Atomicity is critical: mask change and blocking must be atomic
  *
  * Atomicity guarantee:
@@ -122,18 +122,21 @@ long sys_sigsuspend(const sigset_t *mask) {
     /* Install new mask */
     __atomic_store_n(&current->signal_mask, newmask.__mask, __ATOMIC_RELEASE);
 
-    /* Phase 2: Block on signal_waitq until an unmasked signal is pending.
-     * If a signal is already pending and unmasked by newmask, return immediately.
-     */
-    uint64_t unblocked = __atomic_load_n(&current->pending_signals, __ATOMIC_ACQUIRE)
-                         & ~newmask.__mask;
+    /* Hold signal_waitq lock across check + enqueue to avoid lost wakeups. */
+    fut_spinlock_acquire(&current->signal_waitq.lock);
+
+    uint64_t unblocked =
+        __atomic_load_n(&current->pending_signals, __ATOMIC_ACQUIRE) &
+        ~newmask.__mask;
 
     if (unblocked == 0) {
         fut_printf("[SIGSUSPEND] sigsuspend(pid=%u, old_mask=0x%llx, new_mask=0x%llx) -> blocking\n",
                    current->pid, oldmask.__mask, newmask.__mask);
-        fut_waitq_sleep_locked(&current->signal_waitq, NULL, FUT_THREAD_BLOCKED);
+        fut_waitq_sleep_locked(&current->signal_waitq, &current->signal_waitq.lock,
+                               FUT_THREAD_BLOCKED);
         fut_printf("[SIGSUSPEND] sigsuspend(pid=%u) -> woke up (signal delivered)\n", current->pid);
     } else {
+        fut_spinlock_release(&current->signal_waitq.lock);
         fut_printf("[SIGSUSPEND] sigsuspend(pid=%u) -> signal already pending (0x%llx), not blocking\n",
                    current->pid, unblocked);
     }

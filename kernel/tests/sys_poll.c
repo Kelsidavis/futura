@@ -13,6 +13,7 @@
 #include <kernel/fut_vfs.h>
 #include <kernel/errno.h>
 #include <kernel/kprintf.h>
+#include <kernel/signal.h>
 #include <kernel/uaccess.h>
 #include <poll.h>
 #include <stdint.h>
@@ -36,6 +37,7 @@ extern long sys_eventfd2(unsigned int initval, int flags);
 #define POLL_TEST_SELECT_FILE     5
 #define POLL_TEST_SELECT_PIPE     6
 #define POLL_TEST_PSELECT6_PIPE   7
+#define POLL_TEST_PSELECT6_SIGMASK 8
 
 /* fd_set helpers (must match sys_select.c) */
 #define FD_SETSIZE 1024
@@ -312,6 +314,67 @@ static void test_pselect6_pipe(void) {
 }
 
 /* ============================================================
+ * Test 8: pselect6() temporarily installs and restores signal mask
+ * ============================================================ */
+static void test_pselect6_sigmask_restore(void) {
+    fut_printf("[POLL-TEST] Test 8: pselect6() restores signal mask\n");
+
+    fut_task_t *task = fut_task_current();
+    if (!task) {
+        fut_printf("[POLL-TEST] ✗ no current task\n");
+        fut_test_fail(POLL_TEST_PSELECT6_SIGMASK);
+        return;
+    }
+
+    uint64_t old_mask = __atomic_load_n(&task->signal_mask, __ATOMIC_ACQUIRE);
+    sigset_t req_mask = {
+        .__mask = (1ULL << (SIGUSR1 - 1)) | (1ULL << (SIGKILL - 1)),
+    };
+
+    int pipefd[2];
+    long pret = sys_pipe(pipefd);
+    if (pret != 0) {
+        fut_printf("[POLL-TEST] ✗ pipe() failed: %ld\n", pret);
+        fut_test_fail(POLL_TEST_PSELECT6_SIGMASK);
+        return;
+    }
+    int rfd = pipefd[0];
+    int wfd = pipefd[1];
+
+    int nfds = wfd + 1;
+    local_fd_set wfds;
+    local_fd_set_zero(&wfds);
+    local_fd_set_bit(wfd, &wfds);
+
+    long ret = sys_pselect6(nfds, NULL, &wfds, NULL, NULL, &req_mask);
+    fut_vfs_close(rfd);
+    fut_vfs_close(wfd);
+
+    if (ret != 1) {
+        fut_printf("[POLL-TEST] ✗ pselect6() returned %ld\n", ret);
+        fut_test_fail(POLL_TEST_PSELECT6_SIGMASK);
+        return;
+    }
+    if (!local_fd_is_set(wfd, &wfds)) {
+        fut_printf("[POLL-TEST] ✗ pselect6: pipe write-end not ready for writing\n");
+        fut_test_fail(POLL_TEST_PSELECT6_SIGMASK);
+        return;
+    }
+
+    uint64_t restored = __atomic_load_n(&task->signal_mask, __ATOMIC_ACQUIRE);
+    if (restored != old_mask) {
+        fut_printf("[POLL-TEST] ✗ signal mask not restored: old=0x%llx new=0x%llx\n",
+                   (unsigned long long)old_mask, (unsigned long long)restored);
+        __atomic_store_n(&task->signal_mask, old_mask, __ATOMIC_RELEASE);
+        fut_test_fail(POLL_TEST_PSELECT6_SIGMASK);
+        return;
+    }
+
+    fut_printf("[POLL-TEST] ✓ pselect6() temporarily applied and restored signal mask\n");
+    fut_test_pass();
+}
+
+/* ============================================================
  * Main test harness
  * ============================================================ */
 void fut_poll_test_thread(void *arg) {
@@ -328,6 +391,7 @@ void fut_poll_test_thread(void *arg) {
     test_select_file_ready();
     test_select_pipe();
     test_pselect6_pipe();
+    test_pselect6_sigmask_restore();
 
     fut_printf("[POLL-TEST] ========================================\n");
     fut_printf("[POLL-TEST] All poll/select tests done\n");

@@ -19,6 +19,7 @@
 #include <kernel/uaccess.h>
 #include <kernel/eventfd.h>
 #include <kernel/fut_socket.h>
+#include <kernel/signal.h>
 #include <sys/epoll.h>
 
 /* Architecture-specific paging headers for KERNEL_VIRTUAL_BASE */
@@ -410,10 +411,9 @@ long sys_select(int nfds, fd_set *readfds, fd_set *writefds,
  * @param writefds  Set of FDs to monitor for write
  * @param exceptfds Set of FDs to monitor for exceptions
  * @param timeout   Timeout (timespec format) or NULL to block indefinitely
- * @param sigmask   Signal mask to temporarily install (NULL = ignored)
+ * @param sigmask   Signal mask to temporarily install (NULL = no mask change)
  *
  * On ARM64, pselect6 is the primary interface (select doesn't exist).
- * For now, we ignore the sigmask parameter and provide a stub implementation.
  *
  * Phase 1 (Completed): Stub implementation
  * Phase 2 (Completed): Implement actual FD monitoring
@@ -430,8 +430,6 @@ long sys_pselect6(int nfds, void *readfds, void *writefds, void *exceptfds,
     void *local_exceptfds = exceptfds;
     void *local_timeout = timeout;
     void *local_sigmask = sigmask;
-
-    (void)local_sigmask;  /* Ignore signal mask for now */
 
     fut_printf("[PSELECT6] pselect6(nfds=%d, readfds=%p, writefds=%p, exceptfds=%p, "
                "timeout=%p, sigmask=%p)\n",
@@ -472,33 +470,88 @@ long sys_pselect6(int nfds, void *readfds, void *writefds, void *exceptfds,
         return -EINVAL;
     }
 
-    /*
-     * Phase 3: Delegate to select logic.
-     * pselect6 differs from select only in timeout format (timespec vs timeval)
-     * and signal mask support. For now, ignore sigmask and implement FD checking.
+    /* Validate timeout when provided (current implementation remains non-blocking). */
+    if (local_timeout) {
+        fut_timespec_t kts = {0};
+        int cr = IS_KPTR(local_timeout)
+            ? (memcpy(&kts, local_timeout, sizeof(kts)), 0)
+            : fut_copy_from_user(&kts, local_timeout, sizeof(kts));
+        if (cr != 0) {
+            return -EFAULT;
+        }
+        if (kts.tv_sec < 0 || kts.tv_nsec < 0 || kts.tv_nsec >= 1000000000L) {
+            return -EINVAL;
+        }
+    }
+
+    /* pselect6 signal mask handling:
+     * - Kernel self-tests/internal callers pass direct sigset_t* (kptr path).
+     * - Syscall callers pass Linux pselect6_arg { sigset_t *ss; size_t ss_len }.
      */
+    sigset_t saved_mask = {0};
+    bool mask_applied = false;
+    if (local_sigmask) {
+        sigset_t requested_mask = {0};
+
+        if (IS_KPTR(local_sigmask)) {
+            memcpy(&requested_mask, local_sigmask, sizeof(requested_mask));
+        } else {
+            struct pselect6_sigmask_arg {
+                const sigset_t *ss;
+                size_t ss_len;
+            } arg = {0};
+
+            if (fut_copy_from_user(&arg, local_sigmask, sizeof(arg)) != 0) {
+                return -EFAULT;
+            }
+            if (arg.ss_len != sizeof(sigset_t)) {
+                return -EINVAL;
+            }
+            if (arg.ss) {
+                if (fut_copy_from_user(&requested_mask, arg.ss, sizeof(requested_mask)) != 0) {
+                    return -EFAULT;
+                }
+            }
+        }
+
+        int mret = fut_signal_procmask(task, SIGPROCMASK_SETMASK, &requested_mask, &saved_mask);
+        if (mret < 0) {
+            return mret;
+        }
+        mask_applied = true;
+    }
 
     /* Copy fd_sets from userspace (or kernel buffer for self-tests) */
     fd_set k_readfds, k_writefds, k_exceptfds;
     fd_set r_readfds, r_writefds, r_exceptfds;
+    long ret = 0;
 
     if (local_readfds) {
         int cr = IS_KPTR(local_readfds)
             ? (memcpy(&k_readfds, local_readfds, sizeof(fd_set)), 0)
             : fut_copy_from_user(&k_readfds, local_readfds, sizeof(fd_set));
-        if (cr != 0) return -EFAULT;
+        if (cr != 0) {
+            ret = -EFAULT;
+            goto out_restore_sigmask;
+        }
     }
     if (local_writefds) {
         int cr = IS_KPTR(local_writefds)
             ? (memcpy(&k_writefds, local_writefds, sizeof(fd_set)), 0)
             : fut_copy_from_user(&k_writefds, local_writefds, sizeof(fd_set));
-        if (cr != 0) return -EFAULT;
+        if (cr != 0) {
+            ret = -EFAULT;
+            goto out_restore_sigmask;
+        }
     }
     if (local_exceptfds) {
         int cr = IS_KPTR(local_exceptfds)
             ? (memcpy(&k_exceptfds, local_exceptfds, sizeof(fd_set)), 0)
             : fut_copy_from_user(&k_exceptfds, local_exceptfds, sizeof(fd_set));
-        if (cr != 0) return -EFAULT;
+        if (cr != 0) {
+            ret = -EFAULT;
+            goto out_restore_sigmask;
+        }
     }
 
     memset(&r_readfds, 0, sizeof(fd_set));
@@ -516,7 +569,8 @@ long sys_pselect6(int nfds, void *readfds, void *writefds, void *exceptfds,
             continue;
 
         if (fd >= (int)task->max_fds || !task->fd_table || !task->fd_table[fd]) {
-            return -EBADF;
+            ret = -EBADF;
+            goto out_restore_sigmask;
         }
 
         /* Phase 3: Actual readiness checking via driver/VFS layer */
@@ -576,24 +630,46 @@ long sys_pselect6(int nfds, void *readfds, void *writefds, void *exceptfds,
         int cw = IS_KPTR(local_readfds)
             ? (memcpy(local_readfds, &r_readfds, sizeof(fd_set)), 0)
             : fut_copy_to_user(local_readfds, &r_readfds, sizeof(fd_set));
-        if (cw != 0) return -EFAULT;
+        if (cw != 0) {
+            ret = -EFAULT;
+            goto out_restore_sigmask;
+        }
     }
     if (local_writefds) {
         int cw = IS_KPTR(local_writefds)
             ? (memcpy(local_writefds, &r_writefds, sizeof(fd_set)), 0)
             : fut_copy_to_user(local_writefds, &r_writefds, sizeof(fd_set));
-        if (cw != 0) return -EFAULT;
+        if (cw != 0) {
+            ret = -EFAULT;
+            goto out_restore_sigmask;
+        }
     }
     if (local_exceptfds) {
         int cw = IS_KPTR(local_exceptfds)
             ? (memcpy(local_exceptfds, &r_exceptfds, sizeof(fd_set)), 0)
             : fut_copy_to_user(local_exceptfds, &r_exceptfds, sizeof(fd_set));
-        if (cw != 0) return -EFAULT;
+        if (cw != 0) {
+            ret = -EFAULT;
+            goto out_restore_sigmask;
+        }
     }
 
     fut_printf("[PSELECT6] pselect6(nfds=%d) -> %d ready (Phase 3: FD readiness checking)\n",
                local_nfds, ready_count);
-    return ready_count;
+    ret = ready_count;
+
+out_restore_sigmask:
+    if (mask_applied) {
+        int rret = fut_signal_procmask(task, SIGPROCMASK_SETMASK, &saved_mask, NULL);
+        if (rret < 0) {
+            fut_printf("[PSELECT6] failed to restore signal mask for pid=%u: %d\n",
+                       task->pid, rret);
+            if (ret >= 0) {
+                ret = rret;
+            }
+        }
+    }
+    return ret;
 }
 
 /* struct pollfd is provided by poll.h */

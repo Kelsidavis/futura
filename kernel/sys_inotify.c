@@ -27,6 +27,25 @@
 #include <kernel/kprintf.h>
 #include <kernel/uaccess.h>
 #include <fcntl.h>
+#ifdef __x86_64__
+#include <platform/x86_64/memory/paging.h>
+#elif defined(__aarch64__)
+#include <platform/arm64/memory/paging.h>
+#endif
+
+static inline int inotify_copy_from_user(void *dst, const void *src, size_t n) {
+#ifdef KERNEL_VIRTUAL_BASE
+    if ((uintptr_t)src >= KERNEL_VIRTUAL_BASE) { __builtin_memcpy(dst, src, n); return 0; }
+#endif
+    return fut_copy_from_user(dst, src, n);
+}
+
+static inline int inotify_copy_to_user(void *dst, const void *src, size_t n) {
+#ifdef KERNEL_VIRTUAL_BASE
+    if ((uintptr_t)dst >= KERNEL_VIRTUAL_BASE) { __builtin_memcpy(dst, src, n); return 0; }
+#endif
+    return fut_copy_to_user(dst, src, n);
+}
 
 /* inotify_init1 flags */
 #define IN_CLOEXEC  02000000  /* Close on exec */
@@ -270,7 +289,7 @@ static ssize_t inotify_read_op(void *inode, void *priv, void *u_buf, size_t len,
         ev.cookie = qev.cookie;
         ev.len    = 0;
 
-        if (fut_copy_to_user(out, &ev, sizeof(ev)) != 0) {
+        if (inotify_copy_to_user(out, &ev, sizeof(ev)) != 0) {
             if (total == 0) return -EFAULT;
             break;
         }
@@ -415,7 +434,7 @@ long sys_inotify_add_watch(int fd, const char *pathname, uint32_t mask) {
     }
 
     char path_buf[INOTIFY_PATH_MAX];
-    if (fut_copy_from_user(path_buf, pathname, sizeof(path_buf)) != 0) {
+    if (inotify_copy_from_user(path_buf, pathname, sizeof(path_buf)) != 0) {
         fut_printf("[INOTIFY] inotify_add_watch(fd=%d) -> EFAULT (copy_from_user)\n", fd);
         return -EFAULT;
     }

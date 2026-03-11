@@ -32,6 +32,7 @@
 #define VFS_TEST_LINK       6
 #define VFS_TEST_MOUNT      7
 #define VFS_TEST_RENAME2    8
+#define VFS_TEST_INOTIFY    9
 
 /* Use kernel-level VFS functions (no copy_from_user) */
 #define sys_mkdir(path, mode)           fut_vfs_mkdir(path, (uint32_t)(mode))
@@ -39,6 +40,23 @@
 #define sys_symlink(target, linkpath)   fut_vfs_symlink(target, linkpath)
 #define sys_readlink(path, buf, sz)     fut_vfs_readlink(path, buf, sz)
 #define sys_link(old, new)              fut_vfs_link(old, new)
+
+/* inotify syscall declarations */
+extern long sys_inotify_init1(int flags);
+extern long sys_inotify_add_watch(int fd, const char *pathname, uint32_t mask);
+extern long sys_inotify_rm_watch(int fd, int wd);
+
+/* inotify event structure (mirrors kernel/sys_inotify.c) */
+struct test_inotify_event {
+    int      wd;
+    uint32_t mask;
+    uint32_t cookie;
+    uint32_t len;
+};
+#define IN_CREATE  0x00000100U
+#define IN_MODIFY  0x00000002U
+#define IN_DELETE  0x00000200U
+#define IN_NONBLOCK 00004000
 
 /* ------------------------------------------------------------------ */
 
@@ -569,6 +587,101 @@ static void test_renameat2(void) {
 
 /* ------------------------------------------------------------------ */
 
+/*
+ * Test 9: inotify IN_CREATE event delivered when a file is created
+ * in a watched directory.
+ *
+ * Uses IN_NONBLOCK so the read doesn't block if the event wasn't queued.
+ */
+static void test_inotify(void) {
+    fut_printf("[VFS-TEST] Test 9: inotify IN_CREATE event delivery\n");
+
+    /* Create the directory to watch.
+     * Use root filesystem (not /tmp) so fut_vnode_build_path works correctly —
+     * /tmp is a separate ramfs mount whose root has no parent link. */
+    const char *watch_dir = "/inotify_watch_dir";
+    int r = fut_vfs_mkdir(watch_dir, 0755);
+    fut_printf("[VFS-TEST]   mkdir('%s') = %d\n", watch_dir, r);
+    if (r < 0 && r != -EEXIST) {
+        fut_printf("[VFS-TEST] ✗ inotify: mkdir failed %d\n", r);
+        fut_test_fail(VFS_TEST_INOTIFY);
+        return;
+    }
+
+    /* Verify directory is accessible immediately after mkdir */
+    {
+        int dfd = fut_vfs_open(watch_dir, O_RDONLY, 0);
+        fut_printf("[VFS-TEST]   post-mkdir open('%s') = %d\n", watch_dir, dfd);
+        if (dfd >= 0) fut_vfs_close(dfd);
+    }
+
+    /* Create inotify fd in non-blocking mode */
+    int ifd = (int)sys_inotify_init1(IN_NONBLOCK);
+    if (ifd < 0) {
+        fut_printf("[VFS-TEST] ✗ inotify_init1 returned %d\n", ifd);
+        fut_test_fail(VFS_TEST_INOTIFY);
+        return;
+    }
+
+    /* Add watch for IN_CREATE */
+    int wd = (int)sys_inotify_add_watch(ifd, watch_dir, IN_CREATE);
+    if (wd < 0) {
+        fut_printf("[VFS-TEST] ✗ inotify_add_watch returned %d\n", wd);
+        fut_vfs_close(ifd);
+        fut_test_fail(VFS_TEST_INOTIFY);
+        return;
+    }
+
+    /* First verify the directory is accessible */
+    {
+        int dfd = fut_vfs_open(watch_dir, O_RDONLY, 0);
+        fut_printf("[VFS-TEST]   open('%s') = %d\n", watch_dir, dfd);
+        if (dfd >= 0) fut_vfs_close(dfd);
+    }
+
+    /* Create a file in the watched directory — should dispatch IN_CREATE */
+    const char *test_file = "/inotify_watch_dir/newfile.txt";
+    int fd = fut_vfs_open(test_file, O_CREAT | O_RDWR, 0644);
+    if (fd < 0) {
+        fut_printf("[VFS-TEST] ✗ inotify: create test file failed %d\n", fd);
+        sys_inotify_rm_watch(ifd, wd);
+        fut_vfs_close(ifd);
+        fut_test_fail(VFS_TEST_INOTIFY);
+        return;
+    }
+    fut_vfs_close(fd);
+
+    /* Read event from inotify fd */
+    struct test_inotify_event ev;
+    ssize_t n = fut_vfs_read(ifd, &ev, sizeof(ev));
+    fut_vfs_close(ifd);
+
+    if (n != (ssize_t)sizeof(ev)) {
+        fut_printf("[VFS-TEST] ✗ inotify read returned %ld (expected %zu)\n",
+                   n, sizeof(ev));
+        fut_test_fail(VFS_TEST_INOTIFY);
+        return;
+    }
+
+    if (ev.wd != wd) {
+        fut_printf("[VFS-TEST] ✗ inotify event wd=%d expected %d\n", ev.wd, wd);
+        fut_test_fail(VFS_TEST_INOTIFY);
+        return;
+    }
+
+    if (!(ev.mask & IN_CREATE)) {
+        fut_printf("[VFS-TEST] ✗ inotify event mask=0x%x missing IN_CREATE\n", ev.mask);
+        fut_test_fail(VFS_TEST_INOTIFY);
+        return;
+    }
+
+    fut_printf("[VFS-TEST] ✓ inotify: IN_CREATE event received (wd=%d mask=0x%x)\n",
+               ev.wd, ev.mask);
+    fut_test_pass();
+}
+
+/* ------------------------------------------------------------------ */
+
 void fut_vfs_test_thread(void *arg) {
     (void)arg;
 
@@ -582,6 +695,7 @@ void fut_vfs_test_thread(void *arg) {
     test_hardlink();
     test_mount();
     test_renameat2();
+    test_inotify();
 
     fut_printf("[VFS-TEST] VFS correctness tests complete\n");
 }

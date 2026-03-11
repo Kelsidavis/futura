@@ -439,7 +439,7 @@ static void test_setpriority_negative_who(void) {
  * Test 11: unshare(0) succeeds as a no-op
  * ============================================================ */
 static void test_unshare_noop(void) {
-    fut_printf("[CLKSCHED-TEST] Test 11: unshare(0) -> 0\n");
+    fut_printf("[CLKSCHED-TEST] Test 11: unshare(0) and unshare(CLONE_FILES) -> 0\n");
 
     long ret = sys_unshare(0);
     if (ret != 0) {
@@ -448,7 +448,14 @@ static void test_unshare_noop(void) {
         return;
     }
 
-    fut_printf("[CLKSCHED-TEST] ✓ unshare(0) succeeded\n");
+    ret = sys_unshare(TEST_CLONE_FILES);
+    if (ret != 0) {
+        fut_printf("[CLKSCHED-TEST] ✗ unshare(CLONE_FILES): expected 0, got %ld\n", ret);
+        fut_test_fail(CLKSCHED_TEST_UNSHARE_NOOP);
+        return;
+    }
+
+    fut_printf("[CLKSCHED-TEST] ✓ unshare(0) and unshare(CLONE_FILES) succeeded\n");
     fut_test_pass();
 }
 

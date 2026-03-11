@@ -9,7 +9,8 @@
  *
  * Phase 1 (Completed): Validation and stub implementation
  * Phase 2 (Completed): Comprehensive flag validation and operation categorization with logging
- * Phase 3: Implement namespace creation and resource duplication
+ * Phase 3 (Partial): Implement non-namespace resource unshare as no-op success;
+ *                    namespace creation still returns ENOSYS
  * Phase 4: Full namespace support (mount, UTS, IPC, network, PID, user)
  */
 
@@ -89,7 +90,8 @@
  *
  * Phase 1 (Completed): Validate flags and return success
  * Phase 2 (Completed): Comprehensive flag validation, operation categorization, and detailed logging
- * Phase 3: Implement resource duplication (files, fs, sighand) — returns ENOSYS until namespace infra exists
+ * Phase 3 (Partial): CLONE_FILES/CLONE_FS/CLONE_SYSVSEM succeed as safe no-ops;
+ *                    namespace flags still return ENOSYS until infra exists
  * Phase 4: Implement full namespace creation and isolation
  */
 long sys_unshare(unsigned long flags) {
@@ -174,12 +176,24 @@ long sys_unshare(unsigned long flags) {
         operation_desc = "mixed resources";
     }
 
-    /* Return -ENOSYS: namespace isolation is not yet implemented.
-     * Returning 0 here would be a security issue — callers would
-     * believe they are isolated when they are not. */
+    const unsigned long NON_NS_FLAGS = CLONE_FILES | CLONE_FS | CLONE_SYSVSEM;
+    const unsigned long NS_FLAGS =
+        CLONE_NEWNS | CLONE_NEWCGROUP | CLONE_NEWUTS |
+        CLONE_NEWIPC | CLONE_NEWUSER | CLONE_NEWPID | CLONE_NEWNET;
+
+    /* Non-namespace unshare flags are compatibility no-ops in the current
+     * per-task model (these resources are not shared across independent tasks). */
+    if ((flags & NS_FLAGS) == 0 && (flags & ~NON_NS_FLAGS) == 0) {
+        fut_printf("[UNSHARE] unshare(flags=%s (0x%lx), pid=%d) -> 0 "
+                   "(non-namespace unshare no-op)\n",
+                   operation_desc, flags, task->pid);
+        return 0;
+    }
+
+    /* Namespace isolation is not implemented yet.
+     * Returning 0 here would let callers assume isolation that does not exist. */
     fut_printf("[UNSHARE] unshare(flags=%s (0x%lx), pid=%d) -> ENOSYS "
                "(namespace creation not yet implemented)\n",
                operation_desc, flags, task->pid);
-
     return -ENOSYS;
 }

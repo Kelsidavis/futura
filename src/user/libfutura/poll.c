@@ -73,27 +73,49 @@ int poll(struct pollfd *fds, nfds_t nfds, int timeout) {
                 continue;
             }
 
+            int handled = 0;
             if (__fut_timerfd_is_timer(pfd->fd)) {
                 uint32_t mask = requested;
                 if (__fut_timerfd_poll(pfd->fd, &mask) && mask) {
                     pfd->revents |= epoll_to_poll_mask(mask);
                 }
+                handled = 1;
             } else if (__fut_unix_socket_poll(pfd->fd, requested, &requested)) {
                 if (requested) {
                     pfd->revents |= epoll_to_poll_mask(requested);
                 }
+                handled = 1;
             } else if (__fut_eventfd_is(pfd->fd)) {
                 uint32_t mask = 0;
                 if (__fut_eventfd_poll(pfd->fd, poll_to_epoll_mask(pfd->events), &mask) && mask) {
                     pfd->revents |= epoll_to_poll_mask(mask);
                 }
+                handled = 1;
             } else if (__fut_signalfd_is(pfd->fd)) {
                 uint32_t mask = 0;
                 if (__fut_signalfd_poll(pfd->fd, &mask) && mask) {
                     pfd->revents |= POLLIN;
                 }
-            } else {
-                pfd->revents |= POLLNVAL;
+                handled = 1;
+            }
+
+            if (!handled) {
+                struct pollfd one = {
+                    .fd = pfd->fd,
+                    .events = pfd->events,
+                    .revents = 0,
+                };
+                long ret = sys_poll_call(&one, 1, 0);
+                if (ret < 0) {
+                    if (ret == -ENOSYS) {
+                        pfd->revents |= POLLNVAL;
+                    } else {
+                        errno = (int)-ret;
+                        return -1;
+                    }
+                } else {
+                    pfd->revents |= one.revents;
+                }
             }
 
             if (pfd->revents) {

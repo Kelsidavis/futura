@@ -118,6 +118,10 @@ static inline long sys_nanosleep_call(const fut_timespec_t *req, fut_timespec_t 
     return sys_call2(SYS_nanosleep, (long)req, (long)rem);
 }
 
+static inline long sys_poll_call(void *fds, unsigned long nfds, int timeout) {
+    return sys_call3(SYS_poll, (long)fds, (long)nfds, (long)timeout);
+}
+
 static inline long sys_fork_call(void) {
     return sys_call0(SYS_fork);
 }

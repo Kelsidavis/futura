@@ -670,6 +670,15 @@ int fut_vfs_mount(const char *device, const char *mountpoint,
 int fut_vfs_unmount(const char *mountpoint);
 
 /**
+ * Remount a filesystem and update its mount flags.
+ *
+ * @param mountpoint Mount point path
+ * @param flags      New persistent mount flags (without MS_REMOUNT bit)
+ * @return 0 on success, negative error code on failure
+ */
+int fut_vfs_remount(const char *mountpoint, int flags);
+
+/**
  * Mark a mount as expirable, or unmount it on a second expire request.
  *
  * Behavior matches Linux umount2(MNT_EXPIRE):

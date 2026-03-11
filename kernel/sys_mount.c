@@ -369,9 +369,9 @@ long sys_mount(const char *source, const char *target, const char *filesystemtyp
     }
 
     /* Reject special mount operations not yet implemented */
-    if (mountflags & (MS_REMOUNT | MS_BIND | MS_MOVE)) {
+    if (mountflags & (MS_BIND | MS_MOVE)) {
         fut_printf("[MOUNT] mount(target='%s', flags=0x%lx, pid=%d) -> ENOSYS "
-                   "(MS_REMOUNT/MS_BIND/MS_MOVE not implemented)\n",
+                   "(MS_BIND/MS_MOVE not implemented)\n",
                    target_buf, mountflags, task->pid);
         return -ENOSYS;
     }
@@ -390,6 +390,24 @@ long sys_mount(const char *source, const char *target, const char *filesystemtyp
         return -ENOTDIR;
     }
     fut_vnode_unref(target_vnode);
+
+    if (mountflags & MS_REMOUNT) {
+        int remount_flags = (int)(mountflags & 0x7fffffff);
+        remount_flags &= ~(int)MS_REMOUNT;
+
+        int ret = fut_vfs_remount(target_buf, remount_flags);
+        if (ret < 0) {
+            fut_printf("[MOUNT] mount(target='%s', flags=0x%lx, pid=%d) -> %d "
+                       "(remount failed)\n",
+                       target_buf, mountflags, task->pid, ret);
+            return ret;
+        }
+
+        fut_printf("[MOUNT] mount(target='%s', flags=0x%lx, pid=%d) -> 0 "
+                   "(MS_REMOUNT applied)\n",
+                   target_buf, mountflags, task->pid);
+        return 0;
+    }
 
     /* Map filesystem type to registered kernel FS name.
      * "tmpfs" is backed by "ramfs" (both are simple in-memory filesystems). */

@@ -386,6 +386,31 @@ int fut_vfs_unmount(const char *mountpoint) {
     return -ENOENT;
 }
 
+int fut_vfs_remount(const char *mountpoint, int flags) {
+    if (!mountpoint) {
+        return -EINVAL;
+    }
+
+    struct fut_mount *mount = mount_list;
+    while (mount) {
+        const char *a = mount->mountpoint;
+        const char *b = mountpoint;
+        while (a && *a && *b && *a == *b) {
+            a++;
+            b++;
+        }
+
+        if (a && *a == *b) {
+            mount->flags = flags;
+            mount->expire_marked = false;
+            return 0;
+        }
+        mount = mount->next;
+    }
+
+    return -ENOENT;
+}
+
 int fut_vfs_expire_mount(const char *mountpoint) {
     if (!mountpoint) {
         return -EINVAL;

@@ -3338,6 +3338,75 @@ static int futurafs_vnode_readdir(struct fut_vnode *dir,
     return FUTURAFS_ENOENT;
 }
 
+static int futurafs_vnode_setattr(struct fut_vnode *vnode, const struct fut_stat *stat) {
+    if (!vnode || !stat) {
+        return FUTURAFS_EINVAL;
+    }
+
+    struct futurafs_inode_info *inode_info = (struct futurafs_inode_info *)vnode->fs_data;
+    if (!inode_info || !inode_info->mount) {
+        return FUTURAFS_EIO;
+    }
+
+    bool changed = false;
+    struct futurafs_inode *disk_inode = &inode_info->disk_inode;
+
+    /* Preserve file type bits while allowing permission/special-bit changes. */
+    if (stat->st_mode != 0) {
+        uint32_t old_mode = disk_inode->mode;
+        uint32_t type_bits = old_mode & FUTURAFS_S_IFMT;
+        uint32_t new_mode = type_bits | (stat->st_mode & 07777);
+        if (new_mode != old_mode) {
+            disk_inode->mode = new_mode;
+            vnode->mode = new_mode;
+            changed = true;
+        }
+    }
+
+    if (stat->st_uid != (uint32_t)-1 && stat->st_uid != disk_inode->uid) {
+        disk_inode->uid = stat->st_uid;
+        vnode->uid = stat->st_uid;
+        changed = true;
+    }
+
+    if (stat->st_gid != (uint32_t)-1 && stat->st_gid != disk_inode->gid) {
+        disk_inode->gid = stat->st_gid;
+        vnode->gid = stat->st_gid;
+        changed = true;
+    }
+
+    if (stat->st_atime != (uint64_t)-1) {
+        uint64_t atime_ns = stat->st_atime * 1000000000ULL + stat->st_atime_nsec;
+        if (atime_ns != disk_inode->atime) {
+            disk_inode->atime = atime_ns;
+            changed = true;
+        }
+    }
+
+    if (stat->st_mtime != (uint64_t)-1) {
+        uint64_t mtime_ns = stat->st_mtime * 1000000000ULL + stat->st_mtime_nsec;
+        if (mtime_ns != disk_inode->mtime) {
+            disk_inode->mtime = mtime_ns;
+            changed = true;
+        }
+    }
+
+    if (!changed) {
+        return 0;
+    }
+
+    disk_inode->ctime = fut_get_time_ns();
+    inode_info->dirty = true;
+
+    int ret = futurafs_write_inode(inode_info->mount, inode_info->ino, disk_inode);
+    if (ret < 0) {
+        return ret;
+    }
+
+    inode_info->dirty = false;
+    return 0;
+}
+
 static int futurafs_vnode_lookup(struct fut_vnode *dir, const char *name, struct fut_vnode **result) {
     if (!dir || !result) {
         return FUTURAFS_EINVAL;
@@ -3767,7 +3836,7 @@ static void futurafs_init_vnode_ops(void) {
     futurafs_vnode_ops.mkdir = futurafs_vnode_mkdir;
     futurafs_vnode_ops.rmdir = futurafs_vnode_rmdir;
     futurafs_vnode_ops.getattr = NULL;
-    futurafs_vnode_ops.setattr = NULL;
+    futurafs_vnode_ops.setattr = futurafs_vnode_setattr;
     futurafs_vnode_ops.sync = NULL;
     futurafs_vnode_ops.datasync = NULL;
 }

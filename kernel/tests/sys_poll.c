@@ -16,10 +16,47 @@
 #include <kernel/signal.h>
 #include <kernel/uaccess.h>
 #include <kernel/fut_timer.h>
+#include <kernel/fut_memory.h>
 #include <poll.h>
 #include <stdint.h>
 #include <string.h>
+#include <sys/timerfd.h>
 #include "tests/test_api.h"
+
+#if defined(__x86_64__)
+#include <platform/x86_64/memory/paging.h>
+#include <platform/x86_64/memory/pmap.h>
+#endif
+
+#ifndef SFD_NONBLOCK
+#define SFD_NONBLOCK 0x0800
+#endif
+
+/* Kernel-side signalfd info layout (128 bytes). */
+struct test_signalfd_siginfo {
+    uint32_t ssi_signo;
+    int32_t ssi_errno;
+    int32_t ssi_code;
+    uint32_t ssi_pid;
+    uint32_t ssi_uid;
+    int32_t ssi_fd;
+    uint32_t ssi_tid;
+    uint32_t ssi_band;
+    uint32_t ssi_overrun;
+    uint32_t ssi_trapno;
+    int32_t ssi_status;
+    int32_t ssi_int;
+    uint64_t ssi_ptr;
+    uint64_t ssi_utime;
+    uint64_t ssi_stime;
+    uint64_t ssi_addr;
+    uint16_t ssi_addr_lsb;
+    uint16_t __pad2;
+    int32_t ssi_syscall;
+    uint64_t ssi_call_addr;
+    uint32_t ssi_arch;
+    uint8_t __pad[28];
+};
 
 /* Forward declarations */
 extern long sys_poll(struct pollfd *fds, unsigned long nfds, int timeout);
@@ -29,6 +66,11 @@ extern long sys_pselect6(int nfds, void *readfds, void *writefds,
                          void *exceptfds, void *timeout, void *sigmask);
 extern long sys_pipe(int pipefd[2]);
 extern long sys_eventfd2(unsigned int initval, int flags);
+extern long sys_signalfd4(int ufd, const void *mask, size_t sizemask, int flags);
+extern long sys_timerfd_create(int clockid, int flags);
+extern long sys_timerfd_settime(int ufd, int flags,
+                                const struct itimerspec *new_value,
+                                struct itimerspec *old_value);
 
 /* Test IDs */
 #define POLL_TEST_FILE_READY      1
@@ -40,6 +82,8 @@ extern long sys_eventfd2(unsigned int initval, int flags);
 #define POLL_TEST_PSELECT6_PIPE   7
 #define POLL_TEST_PSELECT6_SIGMASK 8
 #define POLL_TEST_TIMEOUT_ONLY    9
+#define POLL_TEST_TIMERFD_READY   10
+#define POLL_TEST_SIGNALFD_READY  11
 
 /* fd_set helpers (must match sys_select.c) */
 #define FD_SETSIZE 1024
@@ -59,6 +103,21 @@ static inline void local_fd_set_bit(int fd, local_fd_set *set) {
 
 static inline int local_fd_is_set(int fd, const local_fd_set *set) {
     return (set->fds_bits[fd / NFDBITS] >> (fd % NFDBITS)) & 1;
+}
+
+static void *map_user_page_for_test(uintptr_t uaddr) {
+#if defined(__x86_64__)
+    void *page = fut_pmm_alloc_page();
+    if (!page) return NULL;
+    phys_addr_t phys = pmap_virt_to_phys((uintptr_t)page);
+    if (pmap_map(uaddr, phys, PAGE_SIZE, PTE_PRESENT | PTE_WRITABLE | PTE_USER) != 0) {
+        return NULL;
+    }
+    return (void *)uaddr;
+#else
+    (void)uaddr;
+    return NULL;
+#endif
 }
 
 /* ============================================================
@@ -407,6 +466,181 @@ static void test_poll_timeout_only(void) {
 }
 
 /* ============================================================
+ * Test 10: timerfd transitions to readable after expiration
+ * ============================================================ */
+static void test_poll_timerfd_ready(void) {
+    fut_printf("[POLL-TEST] Test 10: timerfd poll/read readiness\n");
+
+    long tfd = sys_timerfd_create(CLOCK_MONOTONIC, TFD_NONBLOCK);
+    if (tfd < 0) {
+        fut_printf("[POLL-TEST] ✗ timerfd_create failed: %ld\n", tfd);
+        fut_test_fail(POLL_TEST_TIMERFD_READY);
+        return;
+    }
+
+    struct pollfd pfd = { .fd = (int)tfd, .events = POLLIN, .revents = 0 };
+    long ret = sys_poll(&pfd, 1, 0);
+    if (ret < 0 || (pfd.revents & POLLIN)) {
+        fut_printf("[POLL-TEST] ✗ disarmed timerfd unexpectedly readable (ret=%ld revents=0x%x)\n",
+                   ret, pfd.revents);
+        fut_vfs_close((int)tfd);
+        fut_test_fail(POLL_TEST_TIMERFD_READY);
+        return;
+    }
+
+    uintptr_t user_arm_addr = g_user_lo + 0x20000;
+    struct itimerspec *u_arm = (struct itimerspec *)map_user_page_for_test(user_arm_addr);
+    if (!u_arm) {
+        fut_printf("[POLL-TEST] ✗ failed to map user page for timerfd_settime\n");
+        fut_vfs_close((int)tfd);
+        fut_test_fail(POLL_TEST_TIMERFD_READY);
+        return;
+    }
+    struct itimerspec arm = {0};
+    arm.it_value.tv_nsec = 20 * 1000 * 1000;  /* 20 ms one-shot */
+    memcpy(u_arm, &arm, sizeof(arm));
+
+    ret = sys_timerfd_settime((int)tfd, 0, u_arm, NULL);
+    if (ret != 0) {
+        fut_printf("[POLL-TEST] ✗ timerfd_settime failed: %ld\n", ret);
+        fut_vfs_close((int)tfd);
+        fut_test_fail(POLL_TEST_TIMERFD_READY);
+        return;
+    }
+
+    pfd.revents = 0;
+    ret = sys_poll(&pfd, 1, 100);
+    if (ret <= 0 || !(pfd.revents & POLLIN)) {
+        fut_printf("[POLL-TEST] ✗ armed timerfd not readable after timeout (ret=%ld revents=0x%x)\n",
+                   ret, pfd.revents);
+        fut_vfs_close((int)tfd);
+        fut_test_fail(POLL_TEST_TIMERFD_READY);
+        return;
+    }
+
+    uintptr_t user_read_addr = g_user_lo + 0x22000;
+    uint64_t *u_expirations = (uint64_t *)map_user_page_for_test(user_read_addr);
+    if (!u_expirations) {
+        fut_printf("[POLL-TEST] ✗ failed to map user page for timerfd read\n");
+        fut_vfs_close((int)tfd);
+        fut_test_fail(POLL_TEST_TIMERFD_READY);
+        return;
+    }
+
+    ssize_t nr = fut_vfs_read((int)tfd, u_expirations, sizeof(*u_expirations));
+    uint64_t expirations = 0;
+    if (nr == (ssize_t)sizeof(*u_expirations)) {
+        if (fut_copy_from_user(&expirations, u_expirations, sizeof(expirations)) != 0) {
+            nr = -EFAULT;
+        }
+    }
+    if (nr != (ssize_t)sizeof(expirations) || expirations == 0) {
+        fut_printf("[POLL-TEST] ✗ timerfd read failed: nr=%zd expirations=%llu\n",
+                   nr, (unsigned long long)expirations);
+        fut_vfs_close((int)tfd);
+        fut_test_fail(POLL_TEST_TIMERFD_READY);
+        return;
+    }
+
+    fut_vfs_close((int)tfd);
+    fut_printf("[POLL-TEST] ✓ timerfd became readable and returned expirations=%llu\n",
+               (unsigned long long)expirations);
+    fut_test_pass();
+}
+
+/* ============================================================
+ * Test 11: signalfd poll/read readiness on pending signal
+ * ============================================================ */
+static void test_poll_signalfd_ready(void) {
+    fut_printf("[POLL-TEST] Test 11: signalfd poll/read readiness\n");
+
+    fut_task_t *task = fut_task_current();
+    if (!task) {
+        fut_printf("[POLL-TEST] ✗ no current task\n");
+        fut_test_fail(POLL_TEST_SIGNALFD_READY);
+        return;
+    }
+
+    const int test_signo = SIGUSR1;
+    uint64_t sig_bit = (1ULL << (test_signo - 1));
+    __atomic_fetch_and(&task->pending_signals, ~sig_bit, __ATOMIC_ACQ_REL);
+
+    uintptr_t user_mask_addr = g_user_lo + 0x21000;
+    uint64_t *u_mask = (uint64_t *)map_user_page_for_test(user_mask_addr);
+    if (!u_mask) {
+        fut_printf("[POLL-TEST] ✗ failed to map user page for signalfd4 mask\n");
+        fut_test_fail(POLL_TEST_SIGNALFD_READY);
+        return;
+    }
+    *u_mask = sig_bit;
+
+    long sfd = sys_signalfd4(-1, u_mask, sizeof(*u_mask), SFD_NONBLOCK);
+    if (sfd < 0) {
+        fut_printf("[POLL-TEST] ✗ signalfd4 failed: %ld\n", sfd);
+        fut_test_fail(POLL_TEST_SIGNALFD_READY);
+        return;
+    }
+
+    struct pollfd pfd = { .fd = (int)sfd, .events = POLLIN, .revents = 0 };
+    long ret = sys_poll(&pfd, 1, 0);
+    if (ret < 0 || (pfd.revents & POLLIN)) {
+        fut_printf("[POLL-TEST] ✗ empty signalfd unexpectedly readable (ret=%ld revents=0x%x)\n",
+                   ret, pfd.revents);
+        fut_vfs_close((int)sfd);
+        fut_test_fail(POLL_TEST_SIGNALFD_READY);
+        return;
+    }
+
+    int sret = fut_signal_send(task, test_signo);
+    if (sret != 0) {
+        fut_printf("[POLL-TEST] ✗ fut_signal_send(signo=%d) failed: %d\n", test_signo, sret);
+        fut_vfs_close((int)sfd);
+        fut_test_fail(POLL_TEST_SIGNALFD_READY);
+        return;
+    }
+
+    pfd.revents = 0;
+    ret = sys_poll(&pfd, 1, 0);
+    if (ret <= 0 || !(pfd.revents & POLLIN)) {
+        fut_printf("[POLL-TEST] ✗ signalfd not readable after queued signal (ret=%ld revents=0x%x)\n",
+                   ret, pfd.revents);
+        fut_vfs_close((int)sfd);
+        fut_test_fail(POLL_TEST_SIGNALFD_READY);
+        return;
+    }
+
+    uintptr_t user_info_addr = g_user_lo + 0x23000;
+    struct test_signalfd_siginfo *u_info =
+        (struct test_signalfd_siginfo *)map_user_page_for_test(user_info_addr);
+    if (!u_info) {
+        fut_printf("[POLL-TEST] ✗ failed to map user page for signalfd read\n");
+        fut_vfs_close((int)sfd);
+        fut_test_fail(POLL_TEST_SIGNALFD_READY);
+        return;
+    }
+
+    struct test_signalfd_siginfo info;
+    memset(&info, 0, sizeof(info));
+    ssize_t nr = fut_vfs_read((int)sfd, u_info, sizeof(info));
+    if (nr == (ssize_t)sizeof(info)) {
+        if (fut_copy_from_user(&info, u_info, sizeof(info)) != 0) {
+            nr = -EFAULT;
+        }
+    }
+    if (nr != (ssize_t)sizeof(info) || info.ssi_signo != (uint32_t)test_signo) {
+        fut_printf("[POLL-TEST] ✗ signalfd read mismatch: nr=%zd signo=%u\n",
+                   nr, info.ssi_signo);
+        fut_vfs_close((int)sfd);
+        fut_test_fail(POLL_TEST_SIGNALFD_READY);
+        return;
+    }
+
+    fut_vfs_close((int)sfd);
+    fut_printf("[POLL-TEST] ✓ signalfd readable with signo=%d info\n", test_signo);
+    fut_test_pass();
+}
+
+/* ============================================================
  * Main test harness
  * ============================================================ */
 void fut_poll_test_thread(void *arg) {
@@ -425,6 +659,8 @@ void fut_poll_test_thread(void *arg) {
     test_pselect6_pipe();
     test_pselect6_sigmask_restore();
     test_poll_timeout_only();
+    test_poll_timerfd_ready();
+    test_poll_signalfd_ready();
 
     fut_printf("[POLL-TEST] ========================================\n");
     fut_printf("[POLL-TEST] All poll/select tests done\n");

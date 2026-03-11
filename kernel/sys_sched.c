@@ -232,6 +232,8 @@ long sys_setpriority(int which, int who, int prio) {
 
     extern fut_task_t *fut_task_list;
     int matched = 0;
+    int saw_uid_mismatch = 0;
+    int saw_need_privilege = 0;
 
     if (which == PRIO_PROCESS) {
         uint64_t target_pid = (who == 0) ? task->pid : (uint64_t)who;
@@ -258,10 +260,14 @@ long sys_setpriority(int which, int who, int prio) {
         for (fut_task_t *t = fut_task_list; t; t = t->next) {
             if (t->pgid != target_pgid || t->state == FUT_TASK_ZOMBIE)
                 continue;
-            if (task->uid != 0 && task->uid != t->uid)
+            if (task->uid != 0 && task->uid != t->uid) {
+                saw_uid_mismatch = 1;
                 continue; /* skip tasks we don't own in group */
-            if (prio < t->nice && task->uid != 0)
+            }
+            if (prio < t->nice && task->uid != 0) {
+                saw_need_privilege = 1;
                 continue; /* skip tasks we can't raise priority for */
+            }
             t->nice = prio;
             matched = 1;
         }
@@ -276,14 +282,26 @@ long sys_setpriority(int which, int who, int prio) {
         for (fut_task_t *t = fut_task_list; t; t = t->next) {
             if (t->uid != target_uid || t->state == FUT_TASK_ZOMBIE)
                 continue;
-            if (prio < t->nice && task->uid != 0)
+            if (prio < t->nice && task->uid != 0) {
+                saw_need_privilege = 1;
                 continue; /* skip tasks we can't raise priority for */
+            }
             t->nice = prio;
             matched = 1;
         }
     }
 
     if (!matched) {
+        if (saw_uid_mismatch) {
+            fut_printf("[SCHED] setpriority(%s, who=%d, prio=%d) -> EPERM (uid mismatch)\n",
+                       which_desc, who, prio);
+            return -EPERM;
+        }
+        if (saw_need_privilege) {
+            fut_printf("[SCHED] setpriority(%s, who=%d, prio=%d) -> EACCES (not privileged)\n",
+                       which_desc, who, prio);
+            return -EACCES;
+        }
         fut_printf("[SCHED] setpriority(%s, who=%d, prio=%d) -> ESRCH\n",
                    which_desc, who, prio);
         return -ESRCH;

@@ -37,6 +37,7 @@ extern long sys_getrusage(int who, void *usage);
 extern long sys_times(struct tms *buf);
 extern long sys_getpriority(int which, int who);
 extern long sys_setpriority(int which, int who, int prio);
+extern long sys_unshare(unsigned long flags);
 
 /* rusage structure (mirrored from sys_rusage.c) */
 struct test_rusage {
@@ -72,9 +73,14 @@ struct test_rusage {
 #define CLKSCHED_TEST_SETPRIORITY     8
 #define CLKSCHED_TEST_GETPRIO_NEGWHO  9
 #define CLKSCHED_TEST_SETPRIO_NEGWHO 10
+#define CLKSCHED_TEST_UNSHARE_NOOP   11
+#define CLKSCHED_TEST_UNSHARE_INVAL  12
 
 /* PRIO_PROCESS constant (matches sys_sched.c) */
 #define TEST_PRIO_PROCESS  0
+
+/* unshare() flags (match kernel/sys_unshare.c) */
+#define TEST_CLONE_FILES 0x00000400UL
 
 /* ============================================================
  * Test 1: sys_clock_getres returns timer-tick-accurate resolution
@@ -430,6 +436,40 @@ static void test_setpriority_negative_who(void) {
 }
 
 /* ============================================================
+ * Test 11: unshare(0) succeeds as a no-op
+ * ============================================================ */
+static void test_unshare_noop(void) {
+    fut_printf("[CLKSCHED-TEST] Test 11: unshare(0) -> 0\n");
+
+    long ret = sys_unshare(0);
+    if (ret != 0) {
+        fut_printf("[CLKSCHED-TEST] ✗ unshare(0): expected 0, got %ld\n", ret);
+        fut_test_fail(CLKSCHED_TEST_UNSHARE_NOOP);
+        return;
+    }
+
+    fut_printf("[CLKSCHED-TEST] ✓ unshare(0) succeeded\n");
+    fut_test_pass();
+}
+
+/* ============================================================
+ * Test 12: unshare rejects unsupported bits with EINVAL
+ * ============================================================ */
+static void test_unshare_invalid_bits(void) {
+    fut_printf("[CLKSCHED-TEST] Test 12: unshare(unsupported_bits) -> EINVAL\n");
+
+    long ret = sys_unshare(TEST_CLONE_FILES | 0x1UL);
+    if (ret != -EINVAL) {
+        fut_printf("[CLKSCHED-TEST] ✗ unshare(unsupported_bits): expected -EINVAL, got %ld\n", ret);
+        fut_test_fail(CLKSCHED_TEST_UNSHARE_INVAL);
+        return;
+    }
+
+    fut_printf("[CLKSCHED-TEST] ✓ unshare unsupported bits rejected with EINVAL\n");
+    fut_test_pass();
+}
+
+/* ============================================================
  * Main test harness thread
  * ============================================================ */
 void fut_clock_sched_test_thread(void *arg) {
@@ -449,6 +489,8 @@ void fut_clock_sched_test_thread(void *arg) {
     test_setpriority();
     test_getpriority_negative_who();
     test_setpriority_negative_who();
+    test_unshare_noop();
+    test_unshare_invalid_bits();
 
     fut_printf("[CLKSCHED-TEST] ========================================\n");
     fut_printf("[CLKSCHED-TEST] All clock/sched/timer tests done\n");

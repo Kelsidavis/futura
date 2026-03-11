@@ -98,6 +98,25 @@ long sys_unshare(unsigned long flags) {
         return -ESRCH;
     }
 
+    const unsigned long SUPPORTED_UNSHARE_FLAGS =
+        CLONE_FILES | CLONE_FS | CLONE_SYSVSEM |
+        CLONE_NEWNS | CLONE_NEWCGROUP | CLONE_NEWUTS |
+        CLONE_NEWIPC | CLONE_NEWUSER | CLONE_NEWPID |
+        CLONE_NEWNET;
+
+    /* unshare(0) is a defined no-op and should succeed. */
+    if (flags == 0) {
+        fut_printf("[UNSHARE] unshare(flags=0x0 [no-op], pid=%d) -> 0\n", task->pid);
+        return 0;
+    }
+
+    /* Reject unknown flag bits up front. */
+    if (flags & ~SUPPORTED_UNSHARE_FLAGS) {
+        fut_printf("[UNSHARE] unshare(flags=0x%lx [unsupported bits], pid=%d) -> EINVAL\n",
+                   flags, task->pid);
+        return -EINVAL;
+    }
+
     /* Validate flags - check for unsupported combinations */
     /* Note: CLONE_THREAD, CLONE_SIGHAND, CLONE_VM have complex interdependencies */
     if ((flags & CLONE_THREAD) && !(flags & CLONE_SIGHAND)) {

@@ -236,15 +236,20 @@ long sys_readlink(const char *path, char *buf, size_t bufsiz) {
     /*
      * Phase 3 (Completed): VFS symbolic link support
      *
-     * Lookup symlink vnode and call VFS readlink operation
+     * Use VFS readlink helper so final component is not followed.
      */
 
-    /* Lookup the symbolic link vnode */
-    struct fut_vnode *vnode = NULL;
-    int ret = fut_vfs_lookup(path_buf, &vnode);
-    if (ret < 0) {
+    /* Allocate kernel buffer for readlink result */
+    char *target_buf = fut_malloc(local_bufsiz);
+    if (!target_buf) {
+        return -ENOMEM;
+    }
+
+    /* Read symbolic link target without following the final component */
+    ssize_t len = fut_vfs_readlink(path_buf, target_buf, local_bufsiz);
+    if (len < 0) {
         const char *error_desc;
-        switch (ret) {
+        switch ((int)len) {
             case -ENOENT:
                 error_desc = "symbolic link not found";
                 break;
@@ -254,59 +259,20 @@ long sys_readlink(const char *path, char *buf, size_t bufsiz) {
             case -EACCES:
                 error_desc = "permission denied";
                 break;
-            default:
-                error_desc = "lookup failed";
+            case -EINVAL:
+                error_desc = "not a symbolic link";
                 break;
-        }
-        fut_printf("[READLINK] readlink(path='%s' [%s, %s], bufsiz=%zu [%s]) -> %d (%s, Phase 3: VFS readlink operation)\n",
-                   path_buf, path_type, length_category, local_bufsiz, bufsiz_category,
-                   ret, error_desc);
-        return ret;
-    }
-
-    /* Verify vnode is a symbolic link */
-    if (vnode->type != VN_LNK) {
-        fut_printf("[READLINK] readlink(path='%s' [%s, %s], ino=%lu, bufsiz=%zu [%s]) -> EINVAL "
-                   "(not a symbolic link)\n",
-                   path_buf, path_type, length_category, vnode->ino, local_bufsiz, bufsiz_category);
-        fut_vnode_unref(vnode);
-        return -EINVAL;
-    }
-
-    /* Check if filesystem supports readlink operation */
-    if (!vnode->ops || !vnode->ops->readlink) {
-        fut_printf("[READLINK] readlink(path='%s' [%s, %s], ino=%lu, bufsiz=%zu [%s]) -> ENOSYS "
-                   "(filesystem doesn't support readlink)\n",
-                   path_buf, path_type, length_category, vnode->ino, local_bufsiz, bufsiz_category);
-        fut_vnode_unref(vnode);
-        return -ENOSYS;
-    }
-
-    /* Allocate kernel buffer for readlink result */
-
-    char *target_buf = fut_malloc(local_bufsiz);
-    if (!target_buf) {
-        fut_vnode_unref(vnode);
-        return -ENOMEM;
-    }
-
-    /* Call VFS readlink operation */
-    ssize_t len = vnode->ops->readlink(vnode, target_buf, local_bufsiz);
-    if (len < 0) {
-        const char *error_desc;
-        switch (len) {
-            case -EIO:
-                error_desc = "I/O error reading link";
+            case -ENOSYS:
+                error_desc = "filesystem doesn't support readlink";
                 break;
             default:
                 error_desc = "readlink operation failed";
                 break;
         }
-        fut_printf("[READLINK] readlink(path='%s' [%s, %s], ino=%lu, bufsiz=%zu [%s]) -> %d (%s, Phase 3: VFS readlink operation)\n",
-                   path_buf, path_type, length_category, vnode->ino, local_bufsiz, bufsiz_category,
+        fut_printf("[READLINK] readlink(path='%s' [%s, %s], bufsiz=%zu [%s]) -> %d (%s, Phase 3: VFS readlink operation)\n",
+                   path_buf, path_type, length_category, local_bufsiz, bufsiz_category,
                    (int)len, error_desc);
         fut_free(target_buf);
-        fut_vnode_unref(vnode);
         return len;
     }
 
@@ -334,11 +300,10 @@ long sys_readlink(const char *path, char *buf, size_t bufsiz) {
      * Prevents reading beyond kernel buffer (information disclosure)
      * Critical for FUSE and network filesystems */
     if (len > (ssize_t)local_bufsiz) {
-        fut_printf("[READLINK] readlink(path='%s', ino=%lu, bufsiz=%zu) -> ENAMETOOLONG "
+        fut_printf("[READLINK] readlink(path='%s', bufsiz=%zu) -> ENAMETOOLONG "
                    "(returned length %zd exceeds buffer size)\n",
-                   path_buf, vnode->ino, local_bufsiz, len);
+                   path_buf, local_bufsiz, len);
         fut_free(target_buf);
-        fut_vnode_unref(vnode);
         return -ENAMETOOLONG;
     }
 
@@ -348,28 +313,25 @@ long sys_readlink(const char *path, char *buf, size_t bufsiz) {
      * Secondary defense if bufsiz > PATH_MAX */
     #define PATH_MAX 4096
     if (len > PATH_MAX) {
-        fut_printf("[READLINK] readlink(path='%s', ino=%lu) -> ENAMETOOLONG "
+        fut_printf("[READLINK] readlink(path='%s') -> ENAMETOOLONG "
                    "(symlink target length %zd exceeds PATH_MAX %d)\n",
-                   path_buf, vnode->ino, len, PATH_MAX);
+                   path_buf, len, PATH_MAX);
         fut_free(target_buf);
-        fut_vnode_unref(vnode);
         return -ENAMETOOLONG;
     }
 
     /* Copy result to userspace buffer */
     if (fut_copy_to_user(local_buf, target_buf, len) != 0) {
         fut_free(target_buf);
-        fut_vnode_unref(vnode);
         return -EFAULT;
     }
 
     /* Clean up and return bytes read */
     fut_free(target_buf);
 
-    fut_printf("[READLINK] readlink(path='%s' [%s, %s], ino=%lu, bufsiz=%zu [%s], "
+    fut_printf("[READLINK] readlink(path='%s' [%s, %s], bufsiz=%zu [%s], "
                "target_len=%zd) -> %zd (Phase 3: VFS readlink operation)\n",
-               path_buf, path_type, length_category, vnode->ino, local_bufsiz, bufsiz_category,
+               path_buf, path_type, length_category, local_bufsiz, bufsiz_category,
                len, len);
-    fut_vnode_unref(vnode);
     return len;
 }

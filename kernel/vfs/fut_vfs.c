@@ -234,9 +234,12 @@ void fut_vfs_init(void) {
 }
 
 void fut_vfs_set_root(struct fut_vnode *vnode) {
-    if (root_vnode_base) {
-        fut_vnode_unref(root_vnode_base);
-        root_vnode_base = NULL;
+    struct fut_vnode *old_root = root_vnode_base;
+    /* Detach old root first so fut_vnode_unref() does not treat it as pinned. */
+    root_vnode = NULL;
+    root_vnode_base = NULL;
+    if (old_root) {
+        fut_vnode_unref(old_root);
     }
 
     root_vnode = vnode;
@@ -2276,6 +2279,11 @@ void fut_vnode_ref(struct fut_vnode *vnode) {
 
 void fut_vnode_unref(struct fut_vnode *vnode) {
     if (!vnode) {
+        return;
+    }
+
+    /* Keep active global root vnode pinned while mounted. */
+    if (vnode == root_vnode_base) {
         return;
     }
 

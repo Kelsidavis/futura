@@ -70,6 +70,8 @@ struct test_rusage {
 #define CLKSCHED_TEST_TIMES           6
 #define CLKSCHED_TEST_GETPRIORITY     7
 #define CLKSCHED_TEST_SETPRIORITY     8
+#define CLKSCHED_TEST_GETPRIO_NEGWHO  9
+#define CLKSCHED_TEST_SETPRIO_NEGWHO 10
 
 /* PRIO_PROCESS constant (matches sys_sched.c) */
 #define TEST_PRIO_PROCESS  0
@@ -394,6 +396,40 @@ static void test_setpriority(void) {
 }
 
 /* ============================================================
+ * Test 9: getpriority rejects negative who with EINVAL
+ * ============================================================ */
+static void test_getpriority_negative_who(void) {
+    fut_printf("[CLKSCHED-TEST] Test 9: getpriority(PRIO_PROCESS, -1) -> EINVAL\n");
+
+    long ret = sys_getpriority(TEST_PRIO_PROCESS, -1);
+    if (ret != -EINVAL) {
+        fut_printf("[CLKSCHED-TEST] ✗ getpriority(-1): expected -EINVAL, got %ld\n", ret);
+        fut_test_fail(CLKSCHED_TEST_GETPRIO_NEGWHO);
+        return;
+    }
+
+    fut_printf("[CLKSCHED-TEST] ✓ getpriority negative who rejected with EINVAL\n");
+    fut_test_pass();
+}
+
+/* ============================================================
+ * Test 10: setpriority rejects negative who with EINVAL
+ * ============================================================ */
+static void test_setpriority_negative_who(void) {
+    fut_printf("[CLKSCHED-TEST] Test 10: setpriority(PRIO_PROCESS, -1, 0) -> EINVAL\n");
+
+    long ret = sys_setpriority(TEST_PRIO_PROCESS, -1, 0);
+    if (ret != -EINVAL) {
+        fut_printf("[CLKSCHED-TEST] ✗ setpriority(-1,0): expected -EINVAL, got %ld\n", ret);
+        fut_test_fail(CLKSCHED_TEST_SETPRIO_NEGWHO);
+        return;
+    }
+
+    fut_printf("[CLKSCHED-TEST] ✓ setpriority negative who rejected with EINVAL\n");
+    fut_test_pass();
+}
+
+/* ============================================================
  * Main test harness thread
  * ============================================================ */
 void fut_clock_sched_test_thread(void *arg) {
@@ -411,6 +447,8 @@ void fut_clock_sched_test_thread(void *arg) {
     test_times();
     test_getpriority();
     test_setpriority();
+    test_getpriority_negative_who();
+    test_setpriority_negative_who();
 
     fut_printf("[CLKSCHED-TEST] ========================================\n");
     fut_printf("[CLKSCHED-TEST] All clock/sched/timer tests done\n");

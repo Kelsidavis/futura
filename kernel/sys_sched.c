@@ -114,6 +114,12 @@ long sys_getpriority(int which, int who) {
             return -EINVAL;
     }
 
+    if (who < 0) {
+        fut_printf("[SCHED] getpriority(%s, who=%d) -> EINVAL (negative who)\n",
+                   which_desc, who);
+        return -EINVAL;
+    }
+
     /* Traverse task list without holding the lock (accepting benign races,
      * same pattern used by fut_timer.c).  For PRIO_PROCESS / PRIO_PGRP /
      * PRIO_USER the result is advisory and exact atomicity is not required. */
@@ -195,6 +201,12 @@ long sys_setpriority(int which, int who, int prio) {
             fut_printf("[SCHED] setpriority(which=%d, who=%d, prio=%d) -> EINVAL (invalid which parameter)\n",
                        which, who, prio);
             return -EINVAL;
+    }
+
+    if (who < 0) {
+        fut_printf("[SCHED] setpriority(%s, who=%d, prio=%d) -> EINVAL (negative who)\n",
+                   which_desc, who, prio);
+        return -EINVAL;
     }
 
     /* Validate priority range */

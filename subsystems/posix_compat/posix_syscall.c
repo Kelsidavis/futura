@@ -152,6 +152,7 @@
 #define SYS_times        100
 #define SYS_setrlimit    160
 #define SYS_time         201
+#define SYS_syslog       103
 #define SYS_futex        202
 #define SYS_sched_setaffinity 203
 #define SYS_sched_getaffinity 204
@@ -1452,6 +1453,13 @@ static int64_t sys_personality_handler(uint64_t persona, uint64_t arg2, uint64_t
     (void)arg2; (void)arg3; (void)arg4; (void)arg5; (void)arg6;
     extern long sys_personality(unsigned long persona);
     return sys_personality((unsigned long)persona);
+}
+
+static int64_t sys_syslog_handler(uint64_t type, uint64_t buf, uint64_t len,
+                                   uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg4; (void)arg5; (void)arg6;
+    extern long sys_syslog(int type, char *buf, int len);
+    return sys_syslog((int)type, (char *)buf, (int)len);
 }
 
 static int64_t sys_fadvise64_handler(uint64_t fd, uint64_t offset, uint64_t len,
@@ -2804,6 +2812,7 @@ static syscall_handler_t syscall_table[MAX_SYSCALL] = {
     [SYS_munlockall]        = sys_munlockall_handler,
     [SYS_pivot_root]        = sys_pivot_root_handler,
     [SYS_prctl]             = sys_prctl_handler,
+    [SYS_syslog]            = sys_syslog_handler,
     [SYS_sched_setaffinity] = sys_sched_setaffinity_handler,
     [SYS_sched_getaffinity] = sys_sched_getaffinity_handler,
     [SYS_fadvise64]         = sys_fadvise64_handler,

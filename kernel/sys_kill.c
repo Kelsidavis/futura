@@ -215,22 +215,17 @@ long sys_kill(int pid, int sig) {
         return -EINVAL;
     }
 
-    /* Phase 2: Categorize PID target type */
+    /* Categorize PID target for error logging */
     const char *pid_desc;
-    const char *target_type;
 
     if (pid > 0) {
         pid_desc = "specific process";
-        target_type = "single";
     } else if (pid == 0) {
         pid_desc = "current process group";
-        target_type = "group";
     } else if (pid == -1) {
         pid_desc = "all processes (broadcast)";
-        target_type = "broadcast";
-    } else {  /* pid < -1 */
+    } else {
         pid_desc = "process group";
-        target_type = "group";
     }
 
     /* Handle different PID cases */
@@ -240,8 +235,6 @@ long sys_kill(int pid, int sig) {
 
         if (sig == 0) {
             /* Permission check only - just check if we have a process group */
-            fut_printf("[KILL] kill(pid=0 [%s], sig=0) -> 0 (permission check, pgrp=%llu)\n",
-                       pid_desc, current->pgid);
             return 0;
         }
 
@@ -253,8 +246,6 @@ long sys_kill(int pid, int sig) {
             return -ESRCH;
         }
 
-        fut_printf("[KILL] kill(pid=0 [%s], sig=%d [%s]) -> 0 (sent to %d/%d in pgrp %llu)\n",
-                   pid_desc, sig, signal_name, psd.count, total, current->pgid);
         return psd.error ? psd.error : 0;
 
     } else if (pid == -1) {
@@ -264,8 +255,6 @@ long sys_kill(int pid, int sig) {
         if (sig == 0) {
             /* Permission check: succeed if any eligible process exists */
             int count = fut_task_foreach_all(current->pid, NULL, NULL);
-            fut_printf("[KILL] kill(pid=-1 [%s], sig=0) -> %d (broadcast permission check, %d eligible)\n",
-                       pid_desc, (count > 0) ? 0 : -ESRCH, count);
             return (count > 0) ? 0 : -ESRCH;
         }
 
@@ -278,8 +267,6 @@ long sys_kill(int pid, int sig) {
             return -ESRCH;
         }
 
-        fut_printf("[KILL] kill(pid=-1 [%s], sig=%d [%s]) -> 0 (broadcast to %d/%d processes)\n",
-                   pid_desc, sig, signal_name, psd.count, total);
         return psd.error ? psd.error : 0;
 
     } else if (pid < -1) {
@@ -295,8 +282,6 @@ long sys_kill(int pid, int sig) {
                            pid, pid_desc, target_pgid);
                 return -ESRCH;
             }
-            fut_printf("[KILL] kill(pid=%d [%s %llu], sig=0) -> 0 (permission check, %d processes)\n",
-                       pid, pid_desc, target_pgid, count);
             return 0;
         }
 
@@ -308,8 +293,6 @@ long sys_kill(int pid, int sig) {
             return -ESRCH;
         }
 
-        fut_printf("[KILL] kill(pid=%d [%s %llu], sig=%d [%s]) -> 0 (sent to %d/%d)\n",
-                   pid, pid_desc, target_pgid, sig, signal_name, psd.count, total);
         return psd.error ? psd.error : 0;
 
     } else {
@@ -318,17 +301,8 @@ long sys_kill(int pid, int sig) {
 
         if ((uint64_t)pid == current->pid) {
             target = current;
-            target_type = "self";
         } else {
-            /* Look up by PID in global task list */
             target = fut_task_by_pid((uint64_t)pid);
-            if (target) {
-                if (target->parent == current) {
-                    target_type = "child";
-                } else {
-                    target_type = "other";
-                }
-            }
         }
 
         if (!target) {
@@ -339,8 +313,6 @@ long sys_kill(int pid, int sig) {
 
         /* Handle null signal (permission check only) */
         if (sig == 0) {
-            fut_printf("[KILL] kill(pid=%d [%s, target=%s], sig=0 [%s]) -> 0 (permission check only, target exists)\n",
-                       pid, pid_desc, target_type, signal_name);
             return 0;
         }
 
@@ -348,12 +320,9 @@ long sys_kill(int pid, int sig) {
         int result = fut_signal_send(target, sig);
 
         /* Detailed logging with signal and target information */
-        if (result == 0) {
-            fut_printf("[KILL] kill(pid=%d [%s, target=%s], sig=%d [%s, %s]) -> 0 (signal queued)\n",
-                       pid, pid_desc, target_type, sig, signal_name, signal_desc);
-        } else {
-            fut_printf("[KILL] kill(pid=%d [%s, target=%s], sig=%d [%s, %s]) -> %d (signal send failed)\n",
-                       pid, pid_desc, target_type, sig, signal_name, signal_desc, result);
+        if (result != 0) {
+            fut_printf("[KILL] kill(pid=%d, sig=%d) -> %d (signal send failed)\n",
+                       pid, sig, result);
         }
 
         return result;

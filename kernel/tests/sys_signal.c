@@ -281,6 +281,12 @@ void fut_signal_test_thread(void *arg) {
     test_signal_multiple();
     test_signal_delivery();
 
+    /* Clean up: clear all pending signals so later tests aren't affected */
+    fut_task_t *cleanup_task = fut_task_current();
+    if (cleanup_task) {
+        __atomic_store_n(&cleanup_task->pending_signals, (uint64_t)0, __ATOMIC_RELEASE);
+    }
+
     fut_printf("[SIGNAL-TEST] ========================================\n");
     fut_printf("[SIGNAL-TEST] All signal tests completed\n");
     fut_printf("[SIGNAL-TEST] ========================================\n");

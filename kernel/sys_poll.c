@@ -20,6 +20,8 @@
 #include <kernel/eventfd.h>
 #include <kernel/fut_socket.h>
 #include <kernel/fut_thread.h>
+#include <kernel/fut_timer.h>
+#include <kernel/signal.h>
 #include <sys/epoll.h>
 
 /* Architecture-specific paging headers for KERNEL_VIRTUAL_BASE */
@@ -341,10 +343,37 @@ long sys_poll(struct pollfd *fds, unsigned long nfds, int timeout) {
 
     struct poll_scan_stats stats = poll_scan_fds(kfds, nfds, task);
 
-    /* Phase 4-lite: honor finite timeout by waiting once and re-checking readiness. */
-    if (stats.ready_count == 0 && timeout > 0) {
-        fut_thread_sleep((uint64_t)timeout);
-        stats = poll_scan_fds(kfds, nfds, task);
+    /* Block until FDs are ready, timeout expires, or signal interrupts.
+     * For timeout=0: immediate return (no blocking).
+     * For timeout>0: retry with short sleeps until deadline.
+     * For timeout=-1: retry indefinitely until FDs ready or signal. */
+    if (stats.ready_count == 0 && timeout != 0) {
+        uint64_t deadline = 0;
+        if (timeout > 0) {
+            uint64_t timeout_ticks = (uint64_t)timeout / 10;
+            if ((uint64_t)timeout % 10 != 0) timeout_ticks++;
+            if (timeout_ticks == 0) timeout_ticks = 1;
+            deadline = fut_get_ticks() + timeout_ticks;
+        }
+
+        while (stats.ready_count == 0) {
+            /* Check for pending signals → EINTR */
+            uint64_t pending = __atomic_load_n(&task->pending_signals, __ATOMIC_ACQUIRE);
+            uint64_t blocked = task->signal_mask;
+            if (pending & ~blocked) {
+                fut_free(kfds);
+                return -EINTR;
+            }
+
+            /* Check timeout expiry */
+            if (timeout > 0 && fut_get_ticks() >= deadline)
+                break;
+
+            /* Sleep for 1 tick (10ms) then re-scan */
+            fut_thread_sleep(10);  /* 10ms */
+
+            stats = poll_scan_fds(kfds, nfds, task);
+        }
     }
 
     /* Copy results back to userspace (or kernel buffer for self-tests) */

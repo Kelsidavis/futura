@@ -966,8 +966,6 @@ long sys_eventfd2(unsigned int initval, int flags) {
         file->fd_flags |= FD_CLOEXEC;
     }
 
-    fut_printf("[EVENTFD2] eventfd created fd=%d init=%u flags=0x%x\n",
-               fd, initval, flags);
     return fd;
 }
 

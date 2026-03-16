@@ -515,33 +515,6 @@ long sys_pipe(int pipefd[2]) {
         return write_fd;
     }
 
-    /* Phase 2: Categorize FD ranges */
-    const char *read_fd_category;
-    if (read_fd <= 2) {
-        read_fd_category = "stdio (0-2)";
-    } else if (read_fd < 10) {
-        read_fd_category = "low (3-9)";
-    } else if (read_fd < 100) {
-        read_fd_category = "normal (10-99)";
-    } else if (read_fd < 1000) {
-        read_fd_category = "high (100-999)";
-    } else {
-        read_fd_category = "very high (≥1000)";
-    }
-
-    const char *write_fd_category;
-    if (write_fd <= 2) {
-        write_fd_category = "stdio (0-2)";
-    } else if (write_fd < 10) {
-        write_fd_category = "low (3-9)";
-    } else if (write_fd < 100) {
-        write_fd_category = "normal (10-99)";
-    } else if (write_fd < 1000) {
-        write_fd_category = "high (100-999)";
-    } else {
-        write_fd_category = "very high (≥1000)";
-    }
-
     /* Copy file descriptors to userspace safely
      * Validate write access IMMEDIATELY before use to prevent TOCTOU */
     int fds[2];
@@ -562,11 +535,6 @@ long sys_pipe(int pipefd[2]) {
             return -EFAULT;
         }
     }
-
-    /* Phase 2: Detailed success logging */
-    fut_printf("[PIPE] pipe(read_fd=%d [%s], write_fd=%d [%s], buf_size=%u) -> 0 "
-               "(pipe created, Phase 3: FD allocation and buffer management)\n",
-               read_fd, read_fd_category, write_fd, write_fd_category, PIPE_BUF_SIZE);
 
     return 0;
 }

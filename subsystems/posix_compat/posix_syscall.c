@@ -278,6 +278,7 @@
 #define SYS_sysinfo         316  /* Linux:  99 (Futura: getrusage) */
 #define SYS_renameat2       317  /* Linux: 316 — extended range, no conflict */
 #define SYS_getrandom       318  /* Linux: 318 */
+#define SYS_membarrier      324  /* Linux: 324 */
 
 #ifndef SYS_time_millis
 #define SYS_time_millis  400
@@ -1453,6 +1454,13 @@ static int64_t sys_personality_handler(uint64_t persona, uint64_t arg2, uint64_t
     (void)arg2; (void)arg3; (void)arg4; (void)arg5; (void)arg6;
     extern long sys_personality(unsigned long persona);
     return sys_personality((unsigned long)persona);
+}
+
+static int64_t sys_membarrier_handler(uint64_t cmd, uint64_t flags, uint64_t cpu_id,
+                                       uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg4; (void)arg5; (void)arg6;
+    extern long sys_membarrier(int cmd, unsigned int flags, int cpu_id);
+    return sys_membarrier((int)cmd, (unsigned int)flags, (int)cpu_id);
 }
 
 static int64_t sys_syslog_handler(uint64_t type, uint64_t buf, uint64_t len,
@@ -2827,6 +2835,7 @@ static syscall_handler_t syscall_table[MAX_SYSCALL] = {
     [SYS_sysinfo]           = sys_sysinfo_handler,
     [SYS_renameat2]         = sys_renameat2_handler,
     [SYS_getrandom]         = sys_getrandom_handler,
+    [SYS_membarrier]        = sys_membarrier_handler,
     [SYS_set_tid_address]   = sys_set_tid_address_handler,
     [SYS_timer_create]      = sys_timer_create_handler,
     [SYS_timer_settime]     = sys_timer_settime_handler,

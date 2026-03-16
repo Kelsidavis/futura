@@ -282,6 +282,4 @@ void vfs_init_vnode_ownership(struct fut_vnode *vnode,
         vnode->mode |= (requested_mode & 01000);
     }
 
-    fut_printf("[VFS-CRED] Initialized vnode ownership: uid=%u, gid=%u, mode=0%o\n",
-               vnode->uid, vnode->gid, vnode->mode);
 }

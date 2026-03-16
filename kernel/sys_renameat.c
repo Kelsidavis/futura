@@ -304,11 +304,6 @@ long sys_renameat(int olddirfd, const char *oldpath, int newdirfd, const char *n
         return ret;
     }
 
-    /* Success */
-    fut_printf("[RENAMEAT] renameat(olddirfd=%d, oldpath='%s' [%s, len=%lu], newdirfd=%d, newpath='%s' [%s, len=%lu]) -> 0\n",
-               local_olddirfd, oldpath_buf, old_path_type, (unsigned long)old_path_len,
-               local_newdirfd, newpath_buf, new_path_type, (unsigned long)new_path_len);
-
     return 0;
 }
 
@@ -485,8 +480,6 @@ long sys_renameat2(int olddirfd, const char *oldpath,
             return ret;
         }
 
-        fut_printf("[RENAMEAT2] renameat2(RENAME_EXCHANGE '%s' <-> '%s') -> 0\n",
-                   resolved_oldpath, resolved_newpath);
         return 0;
     }
 

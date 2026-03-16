@@ -485,7 +485,7 @@ ssize_t sys_recvfrom(int sockfd, void *buf, size_t len, int flags,
     /* Phase 4: Return peer address if requested (for connected sockets like SOCK_STREAM)
      * For connection-oriented protocols, recvfrom() returns the same address as getpeername()
      * For datagram sockets, this would return the sender's address for the specific packet */
-    const char *addr_family_hint = "no address requested";
+    /* Return peer address if requested */
 
     if (local_src_addr && local_addrlen) {
         /* Atomic copy of addrlen to prevent TOCTOU race */
@@ -544,21 +544,14 @@ ssize_t sys_recvfrom(int sockfd, void *buf, size_t len, int flags,
                                peer_path, actual_len, copy_len);
                 }
 
-                addr_family_hint = "AF_UNIX peer address returned";
+                /* AF_UNIX peer address returned */
             } else {
-                addr_family_hint = "AF_UNIX (not connected, no peer address)";
+                /* AF_UNIX not connected, no peer address */
             }
         } else {
-            addr_family_hint = "address requested (non-UNIX family not yet supported)";
+            /* non-UNIX family address not yet supported */
         }
     }
-
-    /* Phase 4: Detailed success logging with peer address info */
-    fut_printf("[RECVFROM] recvfrom(sockfd=%d [%s], buf=%p, len=%zu [%s], "
-               "flags=0x%x [%s], src_addr=%s, bytes_received=%zd, pid=%u) -> %zd "
-               "(Phase 4: Socket receive with peer address return)\n",
-               local_sockfd, fd_category, local_buf, local_len, size_category,
-               local_flags, flags_description, addr_family_hint, ret, task->pid, ret);
 
     return ret;
 }

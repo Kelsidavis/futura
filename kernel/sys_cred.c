@@ -261,39 +261,14 @@ long sys_setuid(uint32_t uid) {
 
     if (is_privileged) {
         /* Root can set both IDs to any value */
-        uint32_t old_ruid = task->ruid;
-        uint32_t old_euid = task->uid;
-
         task->ruid = uid;
         task->uid = uid;
-
-        /* Determine if this is a privilege drop */
-        const char *operation;
-        if (uid == 0) {
-            operation = "no change (already root)";
-        } else {
-            operation = "privilege drop (irreversible)";
-        }
-
-        fut_printf("[CRED] setuid(uid=%u [%s], pid=%u, old_ruid=%u [%s], "
-                   "old_euid=%u [%s], op=%s, privileged) -> 0 (Phase 2)\n",
-                   uid, uid_category, task->pid,
-                   old_ruid, old_ruid_category,
-                   old_euid, old_euid_category,
-                   operation);
 
         return 0;
     } else {
         /* Non-root can only set effective UID to real UID */
         if (uid == task->ruid) {
-            uint32_t old_euid = task->uid;
             task->uid = uid;
-
-            fut_printf("[CRED] setuid(uid=%u [%s], pid=%u, old_euid=%u [%s], "
-                       "op=set euid to ruid, unprivileged) -> 0 (Phase 2)\n",
-                       uid, uid_category, task->pid,
-                       old_euid, old_euid_category);
-
             return 0;
         } else {
             fut_printf("[CRED] setuid(uid=%u [%s], pid=%u, ruid=%u [%s], "
@@ -369,40 +344,11 @@ long sys_seteuid(uint32_t euid) {
     int is_privileged = (task->uid == 0);
 
     if (is_privileged) {
-        uint32_t old_euid = task->uid;
         task->uid = euid;
-
-        /* Determine operation type */
-        const char *operation;
-        if (euid == 0) {
-            if (old_euid == 0) {
-                operation = "no change (already root)";
-            } else {
-                operation = "regain privilege";
-            }
-        } else {
-            operation = "temporary privilege drop (reversible)";
-        }
-
-        fut_printf("[CRED] seteuid(euid=%u [%s], pid=%u, old_euid=%u [%s], "
-                   "ruid=%u [%s], op=%s, privileged) -> 0 (Phase 3: capability check)\n",
-                   euid, euid_category, task->pid,
-                   old_euid, old_euid_category,
-                   task->ruid, ruid_category,
-                   operation);
-
         return 0;
     } else {
         if (euid == task->ruid) {
-            uint32_t old_euid = task->uid;
             task->uid = euid;
-
-            fut_printf("[CRED] seteuid(euid=%u [%s], pid=%u, old_euid=%u [%s], "
-                       "ruid=%u [%s], op=set euid to ruid, unprivileged) -> 0 (Phase 3: capability check)\n",
-                       euid, euid_category, task->pid,
-                       old_euid, old_euid_category,
-                       task->ruid, ruid_category);
-
             return 0;
         } else {
             fut_printf("[CRED] seteuid(euid=%u [%s], pid=%u, ruid=%u [%s], "
@@ -463,39 +409,13 @@ long sys_setgid(uint32_t gid) {
 
     if (is_privileged) {
         /* Root group can set both GIDs to any value */
-        uint32_t old_rgid = task->rgid;
-        uint32_t old_egid = task->gid;
-
         task->rgid = gid;
         task->gid = gid;
-
-        /* Determine operation type */
-        const char *operation;
-        if (gid == 0) {
-            operation = "no change (already root group)";
-        } else {
-            operation = "group change";
-        }
-
-        fut_printf("[CRED] setgid(gid=%u [%s], pid=%u, old_rgid=%u [%s], "
-                   "old_egid=%u [%s], op=%s, privileged) -> 0 (Phase 3: capability check)\n",
-                   gid, gid_category, task->pid,
-                   old_rgid, old_rgid_category,
-                   old_egid, old_egid_category,
-                   operation);
-
         return 0;
     } else {
         /* Non-root can only set effective GID to real GID */
         if (gid == task->rgid) {
-            uint32_t old_egid = task->gid;
             task->gid = gid;
-
-            fut_printf("[CRED] setgid(gid=%u [%s], pid=%u, old_egid=%u [%s], "
-                       "op=set egid to rgid, unprivileged) -> 0 (Phase 3: capability check)\n",
-                       gid, gid_category, task->pid,
-                       old_egid, old_egid_category);
-
             return 0;
         } else {
             fut_printf("[CRED] setgid(gid=%u [%s], pid=%u, rgid=%u [%s], "
@@ -553,40 +473,11 @@ long sys_setegid(uint32_t egid) {
     int is_privileged = (task->gid == 0);
 
     if (is_privileged) {
-        uint32_t old_egid = task->gid;
         task->gid = egid;
-
-        /* Determine operation type */
-        const char *operation;
-        if (egid == 0) {
-            if (old_egid == 0) {
-                operation = "no change (already root group)";
-            } else {
-                operation = "regain privilege";
-            }
-        } else {
-            operation = "temporary group change (reversible)";
-        }
-
-        fut_printf("[CRED] setegid(egid=%u [%s], pid=%u, old_egid=%u [%s], "
-                   "rgid=%u [%s], op=%s, privileged) -> 0 (Phase 3: capability check)\n",
-                   egid, egid_category, task->pid,
-                   old_egid, old_egid_category,
-                   task->rgid, rgid_category,
-                   operation);
-
         return 0;
     } else {
         if (egid == task->rgid) {
-            uint32_t old_egid = task->gid;
             task->gid = egid;
-
-            fut_printf("[CRED] setegid(egid=%u [%s], pid=%u, old_egid=%u [%s], "
-                       "rgid=%u [%s], op=set egid to rgid, unprivileged) -> 0 (Phase 3: capability check)\n",
-                       egid, egid_category, task->pid,
-                       old_egid, old_egid_category,
-                       task->rgid, rgid_category);
-
             return 0;
         } else {
             fut_printf("[CRED] setegid(egid=%u [%s], pid=%u, rgid=%u [%s], "

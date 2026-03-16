@@ -293,8 +293,6 @@ long sys_mremap(void *old_address, size_t old_size, size_t new_size,
         if (!(flags & MREMAP_DONTUNMAP)) {
             fut_mm_unmap(mm, (uintptr_t)old_address, old_aligned);
         }
-        fut_printf("[MREMAP] mremap(%p, %zu->%zu pages, %s) -> %p (MREMAP_FIXED)\n",
-                   old_address, old_pages, new_pages, flags_str, mapped);
         return (long)(uintptr_t)mapped;
     }
 
@@ -320,7 +318,6 @@ long sys_mremap(void *old_address, size_t old_size, size_t new_size,
     if (!(flags & MREMAP_DONTUNMAP)) {
         fut_mm_unmap(mm, (uintptr_t)old_address, old_aligned);
     }
-    fut_printf("[MREMAP] mremap(%p, %zu->%zu pages, %s) -> %p (moved, copied %zu pages)\n",
-               old_address, old_pages, new_pages, flags_str, new_addr, old_pages);
+    /* Success: moved to new_addr */
     return (long)(uintptr_t)new_addr;
 }

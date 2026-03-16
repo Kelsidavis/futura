@@ -511,7 +511,11 @@ long sys_pselect6(int nfds, void *readfds, void *writefds, void *exceptfds,
         return -EINVAL;
     }
 
-    /* Validate timeout when provided (current implementation remains non-blocking). */
+    /* Parse timeout for blocking loop */
+    int ps_has_timeout = 0;
+    int ps_is_immediate = 0;
+    uint64_t ps_deadline_ticks = 0;
+
     if (local_timeout) {
         fut_timespec_t kts = {0};
         int cr = IS_KPTR(local_timeout)
@@ -522,6 +526,16 @@ long sys_pselect6(int nfds, void *readfds, void *writefds, void *exceptfds,
         }
         if (kts.tv_sec < 0 || kts.tv_nsec < 0 || kts.tv_nsec >= 1000000000L) {
             return -EINVAL;
+        }
+        if (kts.tv_sec == 0 && kts.tv_nsec == 0) {
+            ps_is_immediate = 1;
+        } else {
+            ps_has_timeout = 1;
+            uint64_t timeout_ms = (uint64_t)kts.tv_sec * 1000 + (uint64_t)kts.tv_nsec / 1000000;
+            uint64_t timeout_ticks = timeout_ms / 10;
+            if (timeout_ms % 10 != 0) timeout_ticks++;
+            if (timeout_ticks == 0) timeout_ticks = 1;
+            ps_deadline_ticks = fut_get_ticks() + timeout_ticks;
         }
     }
 
@@ -595,76 +609,103 @@ long sys_pselect6(int nfds, void *readfds, void *writefds, void *exceptfds,
         }
     }
 
-    memset(&r_readfds, 0, sizeof(fd_set));
-    memset(&r_writefds, 0, sizeof(fd_set));
-    memset(&r_exceptfds, 0, sizeof(fd_set));
-
     int ready_count = 0;
 
-    for (int fd = 0; fd < local_nfds; fd++) {
-        int check_read  = local_readfds  && fd_isset(fd, &k_readfds);
-        int check_write = local_writefds && fd_isset(fd, &k_writefds);
-        int check_except = local_exceptfds && fd_isset(fd, &k_exceptfds);
+    /* Blocking scan-and-retry loop (same pattern as select/poll) */
+    for (;;) {
+        ready_count = 0;
+        memset(&r_readfds, 0, sizeof(fd_set));
+        memset(&r_writefds, 0, sizeof(fd_set));
+        memset(&r_exceptfds, 0, sizeof(fd_set));
 
-        if (!check_read && !check_write && !check_except)
-            continue;
+        for (int fd = 0; fd < local_nfds; fd++) {
+            int check_read  = local_readfds  && fd_isset(fd, &k_readfds);
+            int check_write = local_writefds && fd_isset(fd, &k_writefds);
+            int check_except = local_exceptfds && fd_isset(fd, &k_exceptfds);
 
-        if (fd >= (int)task->max_fds || !task->fd_table || !task->fd_table[fd]) {
-            ret = -EBADF;
+            if (!check_read && !check_write && !check_except)
+                continue;
+
+            if (fd >= (int)task->max_fds || !task->fd_table || !task->fd_table[fd]) {
+                ret = -EBADF;
+                goto out_restore_sigmask;
+            }
+
+            struct fut_file *file = task->fd_table[fd];
+            uint32_t epoll_req = 0;
+            if (check_read)  epoll_req |= EPOLLIN;
+            if (check_write) epoll_req |= EPOLLOUT;
+
+            uint32_t epoll_ready = 0;
+            bool handled = false;
+
+            if (!handled && fut_eventfd_poll(file, epoll_req, &epoll_ready))
+                handled = true;
+            if (!handled && fut_timerfd_poll(file, epoll_req, &epoll_ready))
+                handled = true;
+            if (!handled && fut_signalfd_poll(file, epoll_req, &epoll_ready))
+                handled = true;
+            if (!handled && fut_pipe_poll(file, epoll_req, &epoll_ready))
+                handled = true;
+            if (!handled) {
+                fut_socket_t *socket = get_socket_from_fd(fd);
+                if (socket) {
+                    int poll_events = 0;
+                    if (check_read)  poll_events |= 0x1;
+                    if (check_write) poll_events |= 0x4;
+                    int socket_ready = fut_socket_poll(socket, poll_events);
+                    if (socket_ready & 0x1) epoll_ready |= EPOLLIN;
+                    if (socket_ready & 0x4) epoll_ready |= EPOLLOUT;
+                    handled = true;
+                }
+            }
+            if (!handled && file->vnode && file->vnode->type == VN_REG) {
+                if (epoll_req & EPOLLIN)  epoll_ready |= EPOLLIN;
+                if (epoll_req & EPOLLOUT) epoll_ready |= EPOLLOUT;
+                handled = true;
+            }
+            if (!handled) {
+                if (epoll_req & EPOLLIN)  epoll_ready |= EPOLLIN;
+                if (epoll_req & EPOLLOUT) epoll_ready |= EPOLLOUT;
+            }
+
+            int counted = 0;
+            if (check_read && (epoll_ready & EPOLLIN)) {
+                fd_setbit(fd, &r_readfds);
+                counted = 1;
+            }
+            if (check_write && (epoll_ready & EPOLLOUT)) {
+                fd_setbit(fd, &r_writefds);
+                counted = 1;
+            }
+
+            if (counted)
+                ready_count++;
+        }
+
+        /* If FDs ready or immediate mode, break */
+        if (ready_count > 0 || ps_is_immediate)
+            break;
+
+        /* No timeout given (NULL) means infinite: keep looping.
+         * Timeout={0,0} is handled by ps_is_immediate above. */
+        if (!ps_has_timeout && local_timeout)
+            break;  /* zero-timeout: already handled */
+
+        /* Check for pending unblocked signals → EINTR */
+        uint64_t pending = __atomic_load_n(&task->pending_signals, __ATOMIC_ACQUIRE);
+        uint64_t blocked = task->signal_mask;
+        if (pending & ~blocked) {
+            ret = -EINTR;
             goto out_restore_sigmask;
         }
 
-        /* Phase 3: Actual readiness checking via driver/VFS layer */
-        struct fut_file *file = task->fd_table[fd];
-        uint32_t epoll_req = 0;
-        if (check_read)  epoll_req |= EPOLLIN;
-        if (check_write) epoll_req |= EPOLLOUT;
+        /* Check timeout expiry */
+        if (ps_has_timeout && fut_get_ticks() >= ps_deadline_ticks)
+            break;
 
-        uint32_t epoll_ready = 0;
-        bool handled = false;
-
-        if (!handled && fut_eventfd_poll(file, epoll_req, &epoll_ready))
-            handled = true;
-        if (!handled && fut_timerfd_poll(file, epoll_req, &epoll_ready))
-            handled = true;
-        if (!handled && fut_signalfd_poll(file, epoll_req, &epoll_ready))
-            handled = true;
-        if (!handled && fut_pipe_poll(file, epoll_req, &epoll_ready))
-            handled = true;
-        if (!handled) {
-            fut_socket_t *socket = get_socket_from_fd(fd);
-            if (socket) {
-                int poll_events = 0;
-                if (check_read)  poll_events |= 0x1;
-                if (check_write) poll_events |= 0x4;
-                int socket_ready = fut_socket_poll(socket, poll_events);
-                if (socket_ready & 0x1) epoll_ready |= EPOLLIN;
-                if (socket_ready & 0x4) epoll_ready |= EPOLLOUT;
-                handled = true;
-            }
-        }
-        if (!handled && file->vnode && file->vnode->type == VN_REG) {
-            if (epoll_req & EPOLLIN)  epoll_ready |= EPOLLIN;
-            if (epoll_req & EPOLLOUT) epoll_ready |= EPOLLOUT;
-            handled = true;
-        }
-        if (!handled) {
-            if (epoll_req & EPOLLIN)  epoll_ready |= EPOLLIN;
-            if (epoll_req & EPOLLOUT) epoll_ready |= EPOLLOUT;
-        }
-
-        int counted = 0;
-        if (check_read && (epoll_ready & EPOLLIN)) {
-            fd_setbit(fd, &r_readfds);
-            counted = 1;
-        }
-        if (check_write && (epoll_ready & EPOLLOUT)) {
-            fd_setbit(fd, &r_writefds);
-            counted = 1;
-        }
-
-        if (counted)
-            ready_count++;
+        /* Sleep 10ms then retry */
+        fut_thread_sleep(10);
     }
 
     if (local_readfds) {

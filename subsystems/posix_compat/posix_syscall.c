@@ -153,7 +153,10 @@
 #define SYS_setrlimit    160
 #define SYS_time         201
 #define SYS_futex        202
+#define SYS_sched_setaffinity 203
+#define SYS_sched_getaffinity 204
 #define SYS_getdents64   217
+#define SYS_fadvise64    221
 /* Signal syscalls */
 #define SYS_sigpending   127
 #define SYS_sigsuspend   130
@@ -1449,6 +1452,27 @@ static int64_t sys_personality_handler(uint64_t persona, uint64_t arg2, uint64_t
     (void)arg2; (void)arg3; (void)arg4; (void)arg5; (void)arg6;
     extern long sys_personality(unsigned long persona);
     return sys_personality((unsigned long)persona);
+}
+
+static int64_t sys_fadvise64_handler(uint64_t fd, uint64_t offset, uint64_t len,
+                                      uint64_t advice, uint64_t arg5, uint64_t arg6) {
+    (void)arg5; (void)arg6;
+    extern long sys_fadvise64(int fd, int64_t offset, int64_t len, int advice);
+    return sys_fadvise64((int)fd, (int64_t)offset, (int64_t)len, (int)advice);
+}
+
+static int64_t sys_sched_setaffinity_handler(uint64_t pid, uint64_t len, uint64_t mask,
+                                              uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg4; (void)arg5; (void)arg6;
+    extern long sys_sched_setaffinity(int pid, unsigned int len, const void *user_mask);
+    return sys_sched_setaffinity((int)pid, (unsigned int)len, (const void *)mask);
+}
+
+static int64_t sys_sched_getaffinity_handler(uint64_t pid, uint64_t len, uint64_t mask,
+                                              uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg4; (void)arg5; (void)arg6;
+    extern long sys_sched_getaffinity(int pid, unsigned int len, void *user_mask);
+    return sys_sched_getaffinity((int)pid, (unsigned int)len, (void *)mask);
 }
 
 static int64_t sys_arch_prctl_handler(uint64_t code, uint64_t addr, uint64_t arg3,
@@ -2780,6 +2804,9 @@ static syscall_handler_t syscall_table[MAX_SYSCALL] = {
     [SYS_munlockall]        = sys_munlockall_handler,
     [SYS_pivot_root]        = sys_pivot_root_handler,
     [SYS_prctl]             = sys_prctl_handler,
+    [SYS_sched_setaffinity] = sys_sched_setaffinity_handler,
+    [SYS_sched_getaffinity] = sys_sched_getaffinity_handler,
+    [SYS_fadvise64]         = sys_fadvise64_handler,
     [SYS_arch_prctl]        = sys_arch_prctl_handler,
     [SYS_adjtimex]          = sys_adjtimex_handler,
     [SYS_chroot]            = sys_chroot_handler,

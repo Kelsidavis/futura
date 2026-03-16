@@ -628,6 +628,9 @@ static void test_prctl_invalid(void) {
 }
 
 extern long sys_getrandom(void *buf, size_t buflen, unsigned int flags);
+extern long sys_fadvise64(int fd, int64_t offset, int64_t len, int advice);
+extern long sys_sched_getaffinity(int pid, unsigned int len, void *user_mask);
+extern long sys_sched_setaffinity(int pid, unsigned int len, const void *user_mask);
 
 /* ============================================================
  * Test 15: getrandom fills buffer with non-zero data
@@ -685,6 +688,112 @@ static void test_getrandom(void) {
 }
 
 /* ============================================================
+ * Test 16: fadvise64 accepts valid hints
+ * ============================================================ */
+static void test_fadvise64(void) {
+    fut_printf("[MISC-TEST] Test 16: fadvise64 accepts valid hints\n");
+
+    /* Open a file to advise on */
+    int fd = fut_vfs_open("/fadvise_test.txt", 0x42, 0644);  /* O_RDWR|O_CREAT */
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ failed to open file: %d\n", fd);
+        fut_test_fail(16);
+        return;
+    }
+
+    /* Test all valid advice values */
+    long ret = sys_fadvise64(fd, 0, 0, 0);  /* POSIX_FADV_NORMAL */
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ fadvise64(NORMAL) returned %ld\n", ret);
+        fut_vfs_close(fd);
+        fut_test_fail(16);
+        return;
+    }
+
+    ret = sys_fadvise64(fd, 0, 4096, 2);  /* POSIX_FADV_SEQUENTIAL */
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ fadvise64(SEQUENTIAL) returned %ld\n", ret);
+        fut_vfs_close(fd);
+        fut_test_fail(16);
+        return;
+    }
+
+    /* Invalid advice should fail */
+    ret = sys_fadvise64(fd, 0, 0, 99);
+    if (ret != -EINVAL) {
+        fut_printf("[MISC-TEST] ✗ fadvise64(99) returned %ld (expected EINVAL)\n", ret);
+        fut_vfs_close(fd);
+        fut_test_fail(16);
+        return;
+    }
+
+    /* Invalid fd should fail */
+    ret = sys_fadvise64(999, 0, 0, 0);
+    if (ret != -EBADF) {
+        fut_printf("[MISC-TEST] ✗ fadvise64(fd=999) returned %ld (expected EBADF)\n", ret);
+        fut_vfs_close(fd);
+        fut_test_fail(16);
+        return;
+    }
+
+    fut_vfs_close(fd);
+    fut_printf("[MISC-TEST] ✓ fadvise64: valid hints accepted, invalid rejected\n");
+    fut_test_pass();
+}
+
+/* ============================================================
+ * Test 17: sched_getaffinity/setaffinity round-trip
+ * ============================================================ */
+static void test_sched_affinity(void) {
+    fut_printf("[MISC-TEST] Test 17: sched_getaffinity/setaffinity round-trip\n");
+
+    /* Get current affinity */
+    uint64_t mask = 0;
+    long ret = sys_sched_getaffinity(0, sizeof(mask), &mask);
+    if (ret < 0) {
+        fut_printf("[MISC-TEST] ✗ sched_getaffinity returned %ld\n", ret);
+        fut_test_fail(17);
+        return;
+    }
+
+    /* Set affinity to CPU 0 only */
+    uint64_t new_mask = 0x1;
+    ret = sys_sched_setaffinity(0, sizeof(new_mask), &new_mask);
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ sched_setaffinity returned %ld\n", ret);
+        fut_test_fail(17);
+        return;
+    }
+
+    /* Read back and verify */
+    uint64_t readback = 0;
+    ret = sys_sched_getaffinity(0, sizeof(readback), &readback);
+    if (ret < 0 || readback != 0x1) {
+        fut_printf("[MISC-TEST] ✗ readback mask=0x%llx (expected 0x1)\n",
+                   (unsigned long long)readback);
+        fut_test_fail(17);
+        return;
+    }
+
+    /* Empty mask should fail */
+    uint64_t empty = 0;
+    ret = sys_sched_setaffinity(0, sizeof(empty), &empty);
+    if (ret != -EINVAL) {
+        fut_printf("[MISC-TEST] ✗ sched_setaffinity(empty) returned %ld (expected EINVAL)\n", ret);
+        fut_test_fail(17);
+        return;
+    }
+
+    /* Restore original mask */
+    if (mask != 0) {
+        sys_sched_setaffinity(0, sizeof(mask), &mask);
+    }
+
+    fut_printf("[MISC-TEST] ✓ sched_affinity: get/set/verify round-trip works\n");
+    fut_test_pass();
+}
+
+/* ============================================================
  * Test entry point
  * ============================================================ */
 void fut_misc_test_thread(void *arg) {
@@ -709,6 +818,8 @@ void fut_misc_test_thread(void *arg) {
     test_prctl_no_new_privs();  /* Test 13: prctl no_new_privs */
     test_prctl_invalid();       /* Test 14: prctl invalid option */
     test_getrandom();           /* Test 15: getrandom */
+    test_fadvise64();           /* Test 16: fadvise64 */
+    test_sched_affinity();      /* Test 17: sched_affinity */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

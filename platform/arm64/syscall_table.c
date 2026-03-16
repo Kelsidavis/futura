@@ -281,6 +281,9 @@ extern long sys_personality(unsigned long persona);
 extern long sys_prctl(int option, unsigned long a2, unsigned long a3,
                       unsigned long a4, unsigned long a5);
 extern long sys_getrandom(void *buf, size_t buflen, unsigned int flags);
+extern long sys_fadvise64(int fd, int64_t offset, int64_t len, int advice);
+extern long sys_sched_setaffinity(int pid, unsigned int len, const void *user_mask);
+extern long sys_sched_getaffinity(int pid, unsigned int len, void *user_mask);
 extern long sys_unshare(unsigned long flags);
 
 /* Process accounting and thread management */
@@ -2359,6 +2362,27 @@ static int64_t sys_mount_wrapper(uint64_t source, uint64_t target, uint64_t file
                      (unsigned long)mountflags, (const void *)data);
 }
 
+/* sys_fadvise64_wrapper - file access advisory */
+static int64_t sys_fadvise64_wrapper(uint64_t fd, uint64_t offset, uint64_t len,
+                                      uint64_t advice, uint64_t arg4, uint64_t arg5) {
+    (void)arg4; (void)arg5;
+    return sys_fadvise64((int)fd, (int64_t)offset, (int64_t)len, (int)advice);
+}
+
+/* sys_sched_setaffinity_wrapper */
+static int64_t sys_sched_setaffinity_wrapper(uint64_t pid, uint64_t len, uint64_t mask,
+                                              uint64_t arg3, uint64_t arg4, uint64_t arg5) {
+    (void)arg3; (void)arg4; (void)arg5;
+    return sys_sched_setaffinity((int)pid, (unsigned int)len, (const void *)mask);
+}
+
+/* sys_sched_getaffinity_wrapper */
+static int64_t sys_sched_getaffinity_wrapper(uint64_t pid, uint64_t len, uint64_t mask,
+                                              uint64_t arg3, uint64_t arg4, uint64_t arg5) {
+    (void)arg3; (void)arg4; (void)arg5;
+    return sys_sched_getaffinity((int)pid, (unsigned int)len, (void *)mask);
+}
+
 /* sys_getrandom_wrapper - generate random bytes */
 static int64_t sys_getrandom_wrapper(uint64_t buf, uint64_t buflen, uint64_t flags,
                                       uint64_t arg3, uint64_t arg4, uint64_t arg5) {
@@ -2597,6 +2621,9 @@ struct syscall_entry {
 #define __NR_mincore        232
 #define __NR_madvise        233
 #define __NR_getrandom      278
+#define __NR_sched_setaffinity  122
+#define __NR_sched_getaffinity  123
+#define __NR_fadvise64     223
 #define __NR_wait4          260  /* wait4/waitpid */
 #define __NR_prlimit64      261
 
@@ -2805,6 +2832,12 @@ static void arm64_syscall_table_init(void) {
     syscall_table[__NR_prctl].name = "prctl";
     syscall_table[__NR_getrandom].handler = (syscall_fn_t)sys_getrandom_wrapper;
     syscall_table[__NR_getrandom].name = "getrandom";
+    syscall_table[__NR_fadvise64].handler = (syscall_fn_t)sys_fadvise64_wrapper;
+    syscall_table[__NR_fadvise64].name = "fadvise64";
+    syscall_table[__NR_sched_setaffinity].handler = (syscall_fn_t)sys_sched_setaffinity_wrapper;
+    syscall_table[__NR_sched_setaffinity].name = "sched_setaffinity";
+    syscall_table[__NR_sched_getaffinity].handler = (syscall_fn_t)sys_sched_getaffinity_wrapper;
+    syscall_table[__NR_sched_getaffinity].name = "sched_getaffinity";
     syscall_table[__NR_exit].handler = (syscall_fn_t)sys_exit;
     syscall_table[__NR_exit].name = "exit";
     syscall_table[__NR_exit_group].handler = (syscall_fn_t)sys_exit;

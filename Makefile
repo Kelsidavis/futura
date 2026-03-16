@@ -506,6 +506,8 @@ KERNEL_SOURCES := \
     kernel/sys_prctl.c \
     kernel/sys_arch_prctl.c \
     kernel/sys_getrandom.c \
+    kernel/sys_fadvise.c \
+    kernel/sys_sched_affinity.c \
     kernel/sys_unshare.c \
     kernel/sys_acct.c \
     kernel/sys_waitid.c \

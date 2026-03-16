@@ -436,7 +436,9 @@ static ssize_t ramfs_write(struct fut_vnode *vnode, const void *buf, size_t size
             return -EIO;
         }
 
+#ifdef DEBUG_RAMFS
         slab_debug_validate_all("ramfs_realloc");
+#endif
 
 #ifdef DEBUG_RAMFS
         fut_printf("[RAMFS-REALLOC] Reallocation complete: node->file.data=%p capacity=%llu\n",

@@ -246,10 +246,6 @@ long sys_fdatasync(int fd) {
             return ret;
         }
 
-        /* Phase 3: Success via datasync (data-only sync completed) */
-        fut_printf("[FDATASYNC] fdatasync(fd=%d [%s], type=%s, scope=%s, ino=%lu, pid=%d) -> 0 "
-                   "(datasync completed, data-only sync, Phase 4: Async optimization)\n",
-                   local_fd, fd_category, file_type, sync_scope, ino, task->pid);
         return 0;
     }
 
@@ -275,10 +271,6 @@ long sys_fdatasync(int fd) {
             return ret;
         }
 
-        /* Phase 3: Success via fallback full sync */
-        fut_printf("[FDATASYNC] fdatasync(fd=%d [%s], type=%s, scope=%s, ino=%lu, pid=%d) -> 0 "
-                   "(sync completed via full sync fallback, Phase 4: Async optimization)\n",
-                   local_fd, fd_category, file_type, sync_scope, ino, task->pid);
         return 0;
     }
 
@@ -291,9 +283,5 @@ long sys_fdatasync(int fd) {
      *   - Per-filesystem performance metrics
      *   - Selective metadata sync statistics
      */
-    fut_printf("[FDATASYNC] fdatasync(fd=%d [%s], type=%s, scope=%s, ino=%lu, pid=%d) -> 0 "
-               "(no-op for in-memory filesystem, Phase 4: Async optimization)\n",
-               local_fd, fd_category, file_type, sync_scope, ino, task->pid);
-
     return 0;
 }

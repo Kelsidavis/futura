@@ -114,8 +114,7 @@ long sys_setreuid(uint32_t ruid, uint32_t euid) {
     }
 
     /* Store old values for logging */
-    uint32_t old_ruid = task->ruid;
-    uint32_t old_euid = task->uid;
+    /* Apply changes */
 
     /* Phase 2: Apply changes */
     if (ruid != UID_NO_CHANGE) {
@@ -129,10 +128,6 @@ long sys_setreuid(uint32_t ruid, uint32_t euid) {
     if (ruid != UID_NO_CHANGE) {
         task->suid = task->uid;
     }
-
-    fut_printf("[CRED] setreuid(ruid=%u, euid=%u, pid=%llu) -> 0 "
-               "(Phase 2: ruid %u->%u, euid %u->%u, suid=%u)\n",
-               ruid, euid, task->pid, old_ruid, task->ruid, old_euid, task->uid, task->suid);
 
     return 0;
 }
@@ -188,8 +183,7 @@ long sys_setregid(uint32_t rgid, uint32_t egid) {
     }
 
     /* Store old values for logging */
-    uint32_t old_rgid = task->rgid;
-    uint32_t old_egid = task->gid;
+    /* Apply changes */
 
     /* Phase 2: Apply changes */
     if (rgid != GID_NO_CHANGE) {
@@ -203,10 +197,6 @@ long sys_setregid(uint32_t rgid, uint32_t egid) {
     if (rgid != GID_NO_CHANGE) {
         task->sgid = task->gid;
     }
-
-    fut_printf("[CRED] setregid(rgid=%u, egid=%u, pid=%llu) -> 0 "
-               "(Phase 2: rgid %u->%u, egid %u->%u, sgid=%u)\n",
-               rgid, egid, task->pid, old_rgid, task->rgid, old_egid, task->gid, task->sgid);
 
     return 0;
 }
@@ -265,9 +255,8 @@ long sys_setresuid(uint32_t ruid, uint32_t euid, uint32_t suid) {
     }
 
     /* Store old values for logging */
-    uint32_t old_ruid = task->ruid;
-    uint32_t old_euid = task->uid;
-    uint32_t old_suid = task->suid;
+    /* Apply changes */
+    /* setresuid: apply new UIDs */
 
     /* Phase 2: Apply changes */
     if (ruid != UID_NO_CHANGE) {
@@ -279,11 +268,6 @@ long sys_setresuid(uint32_t ruid, uint32_t euid, uint32_t suid) {
     if (suid != UID_NO_CHANGE) {
         task->suid = suid;
     }
-
-    fut_printf("[CRED] setresuid(ruid=%u, euid=%u, suid=%u, pid=%llu) -> 0 "
-               "(Phase 2: ruid %u->%u, euid %u->%u, suid %u->%u)\n",
-               ruid, euid, suid, task->pid,
-               old_ruid, task->ruid, old_euid, task->uid, old_suid, task->suid);
 
     return 0;
 }
@@ -341,9 +325,8 @@ long sys_setresgid(uint32_t rgid, uint32_t egid, uint32_t sgid) {
     }
 
     /* Store old values for logging */
-    uint32_t old_rgid = task->rgid;
-    uint32_t old_egid = task->gid;
-    uint32_t old_sgid = task->sgid;
+    /* Apply changes */
+    /* setresgid: apply new GIDs */
 
     /* Phase 2: Apply changes */
     if (rgid != GID_NO_CHANGE) {
@@ -355,11 +338,6 @@ long sys_setresgid(uint32_t rgid, uint32_t egid, uint32_t sgid) {
     if (sgid != GID_NO_CHANGE) {
         task->sgid = sgid;
     }
-
-    fut_printf("[CRED] setresgid(rgid=%u, egid=%u, sgid=%u, pid=%llu) -> 0 "
-               "(Phase 2: rgid %u->%u, egid %u->%u, sgid %u->%u)\n",
-               rgid, egid, sgid, task->pid,
-               old_rgid, task->rgid, old_egid, task->gid, old_sgid, task->sgid);
 
     return 0;
 }

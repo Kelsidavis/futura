@@ -596,27 +596,10 @@ long sys_ioctl(int fd, unsigned long request, void *argp) {
 
     /* Phase 3: Terminal ioctl implementations with parameter validation */
     switch (request) {
-        case TCGETS: {
-            /* Terminal get settings */
-            const char *impl = "get terminal settings";
-            fut_printf("[IOCTL] ioctl(fd=%d, request=0x%lx [%s], argp=%p) -> 0 (%s, Phase 3)\n",
-                       fd, request, request_name, argp, impl);
+        case TCGETS:
+        case TCSETS:
+        case TIOCGWINSZ:
             return 0;
-        }
-        case TCSETS: {
-            /* Terminal set settings */
-            const char *impl = "set terminal settings";
-            fut_printf("[IOCTL] ioctl(fd=%d, request=0x%lx [%s], argp=%p) -> 0 (%s, Phase 3)\n",
-                       fd, request, request_name, argp, impl);
-            return 0;
-        }
-        case TIOCGWINSZ: {
-            /* Terminal window size */
-            const char *impl = "get terminal window size";
-            fut_printf("[IOCTL] ioctl(fd=%d, request=0x%lx [%s], argp=%p) -> 0 (%s, Phase 3)\n",
-                       fd, request, request_name, argp, impl);
-            return 0;
-        }
         case FIONREAD: {
             /* FIONREAD - Return number of bytes available for reading
              * Phase 4: Full implementation for pipes, sockets, and regular files
@@ -697,8 +680,7 @@ long sys_ioctl(int fd, unsigned long request, void *argp) {
                 return -EFAULT;
             }
 
-            fut_printf("[IOCTL] ioctl(fd=%d, FIONREAD) -> 0 (available: %d bytes, Phase 4)\n",
-                       fd, bytes_available);
+            /* Success */
             return 0;
         }
         default:

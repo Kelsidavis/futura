@@ -184,10 +184,6 @@ long sys_clock_settime(int clock_id, const fut_timespec_t *tp) {
     int64_t now_sec = (int64_t)(now_ms / 1000);
     g_realtime_offset_sec = time.tv_sec - now_sec;
 
-    fut_printf("[CLOCK_SETTIME] clock_settime(clock_id=%s, sec=%lld, nsec=%lld) -> 0 "
-               "(offset=%lld s)\n",
-               clock_name, time.tv_sec, time.tv_nsec, (long long)g_realtime_offset_sec);
-
     return 0;
 }
 
@@ -268,9 +264,6 @@ long sys_clock_getres(int clock_id, fut_timespec_t *res) {
             return -EFAULT;
         }
     }
-
-    fut_printf("[CLOCK_GETRES] clock_getres(clock_id=%s) -> 0 (resolution=%lu ns)\n",
-               clock_name, (unsigned long)resolution.tv_nsec);
 
     return 0;
 }
@@ -488,11 +481,6 @@ long sys_getitimer(int which, struct itimerval *value) {
         return -EFAULT;
     }
 
-    fut_printf("[GETITIMER] getitimer(which=%s) -> 0 (value=%lld.%06llds interval=%lld.%06llds)\n",
-               timer_name,
-               (long long)timer.it_value.tv_sec, (long long)timer.it_value.tv_usec,
-               (long long)timer.it_interval.tv_sec, (long long)timer.it_interval.tv_usec);
-
     return 0;
 }
 
@@ -533,20 +521,18 @@ long sys_setitimer(int which, const struct itimerval *value, struct itimerval *o
     }
 
     const char *timer_name;
-    const char *signal_name;
 
     switch (local_which) {
         case ITIMER_REAL:
             timer_name = "ITIMER_REAL";
-            signal_name = "SIGALRM";
             break;
         case ITIMER_VIRTUAL:
             timer_name = "ITIMER_VIRTUAL";
-            signal_name = "SIGVTALRM";
+            /* SIGVTALRM */
             break;
         case ITIMER_PROF:
             timer_name = "ITIMER_PROF";
-            signal_name = "SIGPROF";
+            /* SIGPROF */
             break;
         default:
             fut_printf("[SETITIMER] setitimer(which=%d) -> EINVAL (invalid timer type)\n", local_which);
@@ -623,15 +609,6 @@ long sys_setitimer(int which, const struct itimerval *value, struct itimerval *o
         task->itimer_prof_interval_ms = intv_ms;
     }
 
-    int is_oneshot = (intv_ms == 0);
-    const char *timer_type = is_oneshot ? "one-shot" : "periodic";
-
-    fut_printf("[SETITIMER] setitimer(which=%s, type=%s, signal=%s, "
-               "value=%lld.%06llds, interval=%lld.%06llds) -> 0\n",
-               timer_name, timer_type, signal_name,
-               (long long)new_timer.it_value.tv_sec, (long long)new_timer.it_value.tv_usec,
-               (long long)new_timer.it_interval.tv_sec, (long long)new_timer.it_interval.tv_usec);
-
     return 0;
 }
 
@@ -698,9 +675,6 @@ long sys_settimeofday(const fut_timeval_t *tv, const void *tz) {
     uint64_t now_ms = fut_get_ticks();
     int64_t now_sec = (int64_t)(now_ms / 1000);
     g_realtime_offset_sec = (int64_t)time.tv_sec - now_sec;
-
-    fut_printf("[SETTIMEOFDAY] settimeofday(sec=%lld, usec=%lld) -> 0 (offset=%lld s)\n",
-               time.tv_sec, time.tv_usec, (long long)g_realtime_offset_sec);
 
     return 0;
 }

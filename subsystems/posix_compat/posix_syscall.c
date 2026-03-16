@@ -1512,6 +1512,13 @@ static int64_t sys_tkill_handler(uint64_t tid, uint64_t sig, uint64_t arg3,
     return sys_tkill((int)tid, (int)sig);
 }
 
+static int64_t sys_futimesat_handler(uint64_t dirfd, uint64_t pathname, uint64_t times,
+                                      uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg4; (void)arg5; (void)arg6;
+    extern long sys_futimesat(int dirfd, const char *pathname, const void *times);
+    return sys_futimesat((int)dirfd, (const char *)pathname, (const void *)times);
+}
+
 static int64_t sys_readahead_handler(uint64_t fd, uint64_t offset, uint64_t count,
                                       uint64_t arg4, uint64_t arg5, uint64_t arg6) {
     (void)arg4; (void)arg5; (void)arg6;
@@ -2922,6 +2929,7 @@ static syscall_handler_t syscall_table[MAX_SYSCALL] = {
     [SYS_exit_group]        = sys_exit_group_handler,
     [SYS_getcpu]            = sys_getcpu_handler,
     [SYS_readahead]         = sys_readahead_handler,
+    [SYS_futimesat]         = sys_futimesat_handler,
     [SYS_set_tid_address]   = sys_set_tid_address_handler,
     [SYS_timer_create]      = sys_timer_create_handler,
     [SYS_timer_settime]     = sys_timer_settime_handler,

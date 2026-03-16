@@ -1151,6 +1151,49 @@ static void test_tgkill(void) {
     fut_test_pass();
 }
 
+extern long sys_getcpu(unsigned int *cpup, unsigned int *nodep, void *unused);
+
+/* ============================================================
+ * Test 23: getcpu returns valid CPU number
+ * ============================================================ */
+static void test_getcpu(void) {
+    fut_printf("[MISC-TEST] Test 23: getcpu returns valid CPU\n");
+
+    unsigned int cpu = 0xFFFFFFFF;
+    unsigned int node = 0xFFFFFFFF;
+    long ret = sys_getcpu(&cpu, &node, NULL);
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ getcpu returned %ld\n", ret);
+        fut_test_fail(23);
+        return;
+    }
+
+    /* CPU should be a small number (0 for QEMU single-CPU) */
+    if (cpu > 255) {
+        fut_printf("[MISC-TEST] ✗ cpu=%u (unreasonably high)\n", cpu);
+        fut_test_fail(23);
+        return;
+    }
+
+    /* Node should be 0 (single NUMA) */
+    if (node != 0) {
+        fut_printf("[MISC-TEST] ✗ node=%u (expected 0)\n", node);
+        fut_test_fail(23);
+        return;
+    }
+
+    /* NULL pointers should be accepted */
+    ret = sys_getcpu(NULL, NULL, NULL);
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ getcpu(NULL, NULL) returned %ld\n", ret);
+        fut_test_fail(23);
+        return;
+    }
+
+    fut_printf("[MISC-TEST] ✓ getcpu: cpu=%u node=%u\n", cpu, node);
+    fut_test_pass();
+}
+
 /* ============================================================
  * Test entry point
  * ============================================================ */
@@ -1183,6 +1226,7 @@ void fut_misc_test_thread(void *arg) {
     test_statx_basic();         /* Test 20: statx basic */
     test_statx_errors();        /* Test 21: statx errors */
     test_tgkill();              /* Test 22: tgkill/tkill */
+    test_getcpu();              /* Test 23: getcpu */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

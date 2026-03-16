@@ -285,6 +285,8 @@
 #define SYS_statx           332  /* Linux: 332 */
 #define SYS_tgkill          234  /* Linux: 234 */
 #define SYS_tkill            200  /* Linux: 200 */
+#define SYS_exit_group       319  /* Linux: 231 — Futura: 319 (231 used by madvise) */
+#define SYS_getcpu           309  /* Linux: 309 */
 
 #ifndef SYS_time_millis
 #define SYS_time_millis  400
@@ -1507,6 +1509,20 @@ static int64_t sys_tkill_handler(uint64_t tid, uint64_t sig, uint64_t arg3,
     (void)arg3; (void)arg4; (void)arg5; (void)arg6;
     extern long sys_tkill(int tid, int sig);
     return sys_tkill((int)tid, (int)sig);
+}
+
+static int64_t sys_exit_group_handler(uint64_t status, uint64_t arg2, uint64_t arg3,
+                                       uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg2; (void)arg3; (void)arg4; (void)arg5; (void)arg6;
+    extern long sys_exit(int status);
+    return sys_exit((int)status);
+}
+
+static int64_t sys_getcpu_handler(uint64_t cpup, uint64_t nodep, uint64_t unused,
+                                   uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg4; (void)arg5; (void)arg6;
+    extern long sys_getcpu(unsigned int *cpup, unsigned int *nodep, void *unused);
+    return sys_getcpu((unsigned int *)cpup, (unsigned int *)nodep, (void *)unused);
 }
 
 static int64_t sys_syslog_handler(uint64_t type, uint64_t buf, uint64_t len,
@@ -2895,6 +2911,8 @@ static syscall_handler_t syscall_table[MAX_SYSCALL] = {
     [SYS_statx]             = sys_statx_handler,
     [SYS_tgkill]            = sys_tgkill_handler,
     [SYS_tkill]             = sys_tkill_handler,
+    [SYS_exit_group]        = sys_exit_group_handler,
+    [SYS_getcpu]            = sys_getcpu_handler,
     [SYS_set_tid_address]   = sys_set_tid_address_handler,
     [SYS_timer_create]      = sys_timer_create_handler,
     [SYS_timer_settime]     = sys_timer_settime_handler,

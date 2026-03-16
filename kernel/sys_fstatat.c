@@ -382,9 +382,5 @@ long sys_fstatat(int dirfd, const char *pathname, void *statbuf, int flags) {
         return ret;
     }
 
-    /* Success */
-    fut_printf("[FSTATAT] fstatat(dirfd=%d, pathname='%s' [%s, len=%lu], flags=%s) -> 0 (Phase 3: directory FD resolution + AT_EMPTY_PATH)\n",
-               local_dirfd, path_buf, path_type, (unsigned long)path_len, flags_desc);
-
     return 0;
 }

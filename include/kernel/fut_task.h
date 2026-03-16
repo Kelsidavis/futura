@@ -127,6 +127,12 @@ struct fut_task {
     unsigned long personality;         // Execution personality (PER_LINUX etc.)
     int nice;                          // Nice value: -20 (highest) to +19 (lowest), default 0
 
+    /* prctl state */
+    char comm[16];                     // Process name (PR_SET_NAME/PR_GET_NAME, max 15 chars + null)
+    int pdeathsig;                     // Signal to send on parent death (PR_SET_PDEATHSIG, 0=none)
+    unsigned long no_new_privs;        // PR_SET_NO_NEW_PRIVS flag (sticky, prevents execve setuid)
+    int dumpable;                      // PR_SET_DUMPABLE (1=dumpable, 0=not, default 1)
+
     /* I/O priority */
     int ioprio;                        // I/O priority (class + level encoded)
     int ioprio_class;                  // I/O priority class (0=none, 1=RT, 2=BE, 3=IDLE)

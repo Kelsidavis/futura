@@ -278,6 +278,8 @@ extern long sys_ioprio_get(int which, int who);
 extern long sys_capget(void *hdrp, void *datap);
 extern long sys_capset(void *hdrp, const void *datap);
 extern long sys_personality(unsigned long persona);
+extern long sys_prctl(int option, unsigned long a2, unsigned long a3,
+                      unsigned long a4, unsigned long a5);
 extern long sys_unshare(unsigned long flags);
 
 /* Process accounting and thread management */
@@ -2356,6 +2358,13 @@ static int64_t sys_mount_wrapper(uint64_t source, uint64_t target, uint64_t file
                      (unsigned long)mountflags, (const void *)data);
 }
 
+/* sys_prctl_wrapper - process control operations */
+static int64_t sys_prctl_wrapper(uint64_t option, uint64_t arg2, uint64_t arg3,
+                                  uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg6;
+    return sys_prctl((int)option, arg2, arg3, arg4, arg5);
+}
+
 /* sys_pivot_root_wrapper - change root filesystem
  * x0 = new_root, x1 = put_old
  */
@@ -2556,6 +2565,7 @@ struct syscall_entry {
 #define __NR_setrlimit      164
 #define __NR_getrusage      165
 #define __NR_umask          166
+#define __NR_prctl          167
 #define __NR_gettimeofday   169
 #define __NR_settimeofday   170
 #define __NR_adjtimex       171
@@ -2782,6 +2792,8 @@ static void arm64_syscall_table_init(void) {
     syscall_table[__NR_capset].name = "capset";
     syscall_table[__NR_personality].handler = (syscall_fn_t)sys_personality_wrapper;
     syscall_table[__NR_personality].name = "personality";
+    syscall_table[__NR_prctl].handler = (syscall_fn_t)sys_prctl_wrapper;
+    syscall_table[__NR_prctl].name = "prctl";
     syscall_table[__NR_exit].handler = (syscall_fn_t)sys_exit;
     syscall_table[__NR_exit].name = "exit";
     syscall_table[__NR_exit_group].handler = (syscall_fn_t)sys_exit;

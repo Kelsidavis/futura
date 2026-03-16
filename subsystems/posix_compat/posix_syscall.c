@@ -230,6 +230,7 @@
 #define SYS_mlockall        151
 #define SYS_munlockall      152
 #define SYS_pivot_root      155
+#define SYS_prctl           157
 #define SYS_adjtimex        159
 #define SYS_chroot          161
 #define SYS_sync            162
@@ -1446,6 +1447,14 @@ static int64_t sys_personality_handler(uint64_t persona, uint64_t arg2, uint64_t
     (void)arg2; (void)arg3; (void)arg4; (void)arg5; (void)arg6;
     extern long sys_personality(unsigned long persona);
     return sys_personality((unsigned long)persona);
+}
+
+static int64_t sys_prctl_handler(uint64_t option, uint64_t arg2, uint64_t arg3,
+                                  uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg6;
+    extern long sys_prctl(int option, unsigned long a2, unsigned long a3,
+                          unsigned long a4, unsigned long a5);
+    return sys_prctl((int)option, arg2, arg3, arg4, arg5);
 }
 
 static int64_t sys_statfs_handler(uint64_t path, uint64_t buf, uint64_t arg3,
@@ -2754,6 +2763,7 @@ static syscall_handler_t syscall_table[MAX_SYSCALL] = {
     [SYS_mlockall]          = sys_mlockall_handler,
     [SYS_munlockall]        = sys_munlockall_handler,
     [SYS_pivot_root]        = sys_pivot_root_handler,
+    [SYS_prctl]             = sys_prctl_handler,
     [SYS_adjtimex]          = sys_adjtimex_handler,
     [SYS_chroot]            = sys_chroot_handler,
     [SYS_sync]              = sys_sync_handler,

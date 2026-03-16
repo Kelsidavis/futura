@@ -479,6 +479,154 @@ static void test_fcntl_ebadf(void) {
     fut_test_pass();
 }
 
+/* prctl option constants */
+#define PR_SET_PDEATHSIG     1
+#define PR_GET_PDEATHSIG     2
+#define PR_SET_DUMPABLE      4
+#define PR_GET_DUMPABLE      3
+#define PR_SET_NAME         15
+#define PR_GET_NAME         16
+#define PR_SET_NO_NEW_PRIVS 38
+#define PR_GET_NO_NEW_PRIVS 39
+
+extern long sys_prctl(int option, unsigned long a2, unsigned long a3,
+                      unsigned long a4, unsigned long a5);
+
+/* ============================================================
+ * Test 11: prctl PR_SET_NAME / PR_GET_NAME
+ * ============================================================ */
+static void test_prctl_name(void) {
+    fut_printf("[MISC-TEST] Test 11: prctl PR_SET_NAME/PR_GET_NAME\n");
+
+    /* Set process name */
+    const char *name = "test_proc";
+    long ret = sys_prctl(PR_SET_NAME, (unsigned long)name, 0, 0, 0);
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ PR_SET_NAME returned %ld\n", ret);
+        fut_test_fail(11);
+        return;
+    }
+
+    /* Get it back and verify */
+    char buf[16] = {0};
+    ret = sys_prctl(PR_GET_NAME, (unsigned long)buf, 0, 0, 0);
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ PR_GET_NAME returned %ld\n", ret);
+        fut_test_fail(11);
+        return;
+    }
+
+    if (strcmp(buf, "test_proc") != 0) {
+        fut_printf("[MISC-TEST] ✗ PR_GET_NAME returned '%s' (expected 'test_proc')\n", buf);
+        fut_test_fail(11);
+        return;
+    }
+
+    fut_printf("[MISC-TEST] ✓ prctl PR_SET_NAME/PR_GET_NAME: '%s'\n", buf);
+    fut_test_pass();
+}
+
+/* ============================================================
+ * Test 12: prctl PR_SET_DUMPABLE / PR_GET_DUMPABLE
+ * ============================================================ */
+static void test_prctl_dumpable(void) {
+    fut_printf("[MISC-TEST] Test 12: prctl PR_SET_DUMPABLE/PR_GET_DUMPABLE\n");
+
+    /* Default should be dumpable (1) or at least non-negative */
+    long val = sys_prctl(PR_GET_DUMPABLE, 0, 0, 0, 0);
+    if (val < 0) {
+        fut_printf("[MISC-TEST] ✗ PR_GET_DUMPABLE returned %ld\n", val);
+        fut_test_fail(12);
+        return;
+    }
+
+    /* Set to not dumpable */
+    long ret = sys_prctl(PR_SET_DUMPABLE, 0, 0, 0, 0);
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ PR_SET_DUMPABLE(0) returned %ld\n", ret);
+        fut_test_fail(12);
+        return;
+    }
+
+    val = sys_prctl(PR_GET_DUMPABLE, 0, 0, 0, 0);
+    if (val != 0) {
+        fut_printf("[MISC-TEST] ✗ PR_GET_DUMPABLE after set 0: %ld\n", val);
+        fut_test_fail(12);
+        return;
+    }
+
+    /* Set back to dumpable */
+    sys_prctl(PR_SET_DUMPABLE, 1, 0, 0, 0);
+
+    /* Invalid value should fail */
+    ret = sys_prctl(PR_SET_DUMPABLE, 99, 0, 0, 0);
+    if (ret != -EINVAL) {
+        fut_printf("[MISC-TEST] ✗ PR_SET_DUMPABLE(99) returned %ld (expected EINVAL)\n", ret);
+        fut_test_fail(12);
+        return;
+    }
+
+    fut_printf("[MISC-TEST] ✓ prctl dumpable: set/get/validate works\n");
+    fut_test_pass();
+}
+
+/* ============================================================
+ * Test 13: prctl PR_SET_NO_NEW_PRIVS
+ * ============================================================ */
+static void test_prctl_no_new_privs(void) {
+    fut_printf("[MISC-TEST] Test 13: prctl PR_SET_NO_NEW_PRIVS/PR_GET_NO_NEW_PRIVS\n");
+
+    /* Should start as 0 (not set) */
+    long val = sys_prctl(PR_GET_NO_NEW_PRIVS, 0, 0, 0, 0);
+    if (val != 0) {
+        /* May already be set from a previous test run — still valid */
+        fut_printf("[MISC-TEST]   note: no_new_privs already set to %ld\n", val);
+    }
+
+    /* Set it (sticky — can only set to 1, never unset) */
+    long ret = sys_prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0);
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ PR_SET_NO_NEW_PRIVS(1) returned %ld\n", ret);
+        fut_test_fail(13);
+        return;
+    }
+
+    val = sys_prctl(PR_GET_NO_NEW_PRIVS, 0, 0, 0, 0);
+    if (val != 1) {
+        fut_printf("[MISC-TEST] ✗ PR_GET_NO_NEW_PRIVS after set: %ld (expected 1)\n", val);
+        fut_test_fail(13);
+        return;
+    }
+
+    /* Setting to 0 should fail (sticky) */
+    ret = sys_prctl(PR_SET_NO_NEW_PRIVS, 0, 0, 0, 0);
+    if (ret != -EINVAL) {
+        fut_printf("[MISC-TEST] ✗ PR_SET_NO_NEW_PRIVS(0) returned %ld (expected EINVAL)\n", ret);
+        fut_test_fail(13);
+        return;
+    }
+
+    fut_printf("[MISC-TEST] ✓ prctl no_new_privs: set sticky flag, verify, reject unset\n");
+    fut_test_pass();
+}
+
+/* ============================================================
+ * Test 14: prctl unknown option returns EINVAL
+ * ============================================================ */
+static void test_prctl_invalid(void) {
+    fut_printf("[MISC-TEST] Test 14: prctl unknown option returns EINVAL\n");
+
+    long ret = sys_prctl(9999, 0, 0, 0, 0);
+    if (ret != -EINVAL) {
+        fut_printf("[MISC-TEST] ✗ prctl(9999) returned %ld (expected EINVAL)\n", ret);
+        fut_test_fail(14);
+        return;
+    }
+
+    fut_printf("[MISC-TEST] ✓ prctl correctly rejects unknown option\n");
+    fut_test_pass();
+}
+
 /* ============================================================
  * Test entry point
  * ============================================================ */
@@ -499,6 +647,10 @@ void fut_misc_test_thread(void *arg) {
     test_fcntl_fd_flags();      /* Test 8: fcntl F_GETFD/F_SETFD */
     test_fcntl_dupfd();         /* Test 9: fcntl F_DUPFD */
     test_fcntl_ebadf();         /* Test 10: fcntl EBADF */
+    test_prctl_name();          /* Test 11: prctl PR_SET_NAME/PR_GET_NAME */
+    test_prctl_dumpable();      /* Test 12: prctl dumpable */
+    test_prctl_no_new_privs();  /* Test 13: prctl no_new_privs */
+    test_prctl_invalid();       /* Test 14: prctl invalid option */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

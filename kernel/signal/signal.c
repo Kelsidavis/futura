@@ -7,6 +7,8 @@
 
 #include <kernel/signal.h>
 #include <kernel/fut_task.h>
+#include <kernel/fut_thread.h>
+#include <kernel/fut_timer.h>
 #include <kernel/errno.h>
 #include <string.h>
 #include <stddef.h>
@@ -143,6 +145,15 @@ int fut_signal_send(struct fut_task *task, int signum) {
      * When the task wakes, sys_pause() will check pending_signals
      * and return -EINTR to deliver the signal. */
     fut_waitq_wake_one(&task->signal_waitq);
+
+    /* Wake any sleeping threads in this task for EINTR delivery.
+     * This interrupts nanosleep/poll/select so they can return -EINTR. */
+    fut_thread_t *t = task->threads;
+    while (t) {
+        if (t->state == FUT_THREAD_SLEEPING)
+            fut_thread_wake_sleeping(t);
+        t = t->next;
+    }
 
     fut_printf("[SIGNAL] Queued signal %d for task %llu\n", signum, task->pid);
 

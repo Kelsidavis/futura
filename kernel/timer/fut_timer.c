@@ -158,6 +158,43 @@ static void wake_sleeping_threads(void) {
     fut_spinlock_release(&sleep_lock);
 }
 
+/**
+ * Wake a specific sleeping thread early (e.g., for signal delivery).
+ * Removes the thread from the sleep queue and adds it to the ready queue.
+ * Returns 1 if the thread was found and woken, 0 otherwise.
+ */
+int fut_thread_wake_sleeping(fut_thread_t *target) {
+    if (!target || target->state != FUT_THREAD_SLEEPING)
+        return 0;
+
+    fut_spinlock_acquire(&sleep_lock);
+
+    /* Verify still sleeping (may have been woken by timer between check and lock) */
+    if (target->state != FUT_THREAD_SLEEPING) {
+        fut_spinlock_release(&sleep_lock);
+        return 0;
+    }
+
+    /* Remove from doubly-linked sleep queue */
+    if (target->prev) {
+        target->prev->next = target->next;
+    } else {
+        /* Target is the head */
+        sleep_queue_head = target->next;
+    }
+    if (target->next) {
+        target->next->prev = target->prev;
+    }
+    target->next = nullptr;
+    target->prev = nullptr;
+    target->state = FUT_THREAD_READY;
+
+    fut_spinlock_release(&sleep_lock);
+
+    fut_sched_add_thread(target);
+    return 1;
+}
+
 /* Drain the deferred-free list.  Must be called from non-IRQ context
  * (interrupts may be enabled; fut_free disables them internally). */
 static void drain_deferred_frees(void) {

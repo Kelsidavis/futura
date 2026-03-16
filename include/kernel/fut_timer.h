@@ -44,6 +44,12 @@ uint64_t fut_get_ticks(void);
  */
 void fut_sleep_until(fut_thread_t *thread, uint64_t millis);
 
+/**
+ * Wake a sleeping thread early (e.g., for signal delivery).
+ * @return 1 if thread was woken, 0 if not sleeping
+ */
+int fut_thread_wake_sleeping(fut_thread_t *target);
+
 int fut_timer_start(uint64_t ticks_from_now, void (*cb)(void *), void *arg);
 int fut_timer_cancel(void (*cb)(void *), void *arg);
 

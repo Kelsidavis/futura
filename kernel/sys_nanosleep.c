@@ -17,8 +17,10 @@
 #include <shared/fut_timespec.h>
 #include <kernel/uaccess.h>
 #include <kernel/errno.h>
+#include <kernel/fut_task.h>
 #include <kernel/fut_thread.h>
 #include <kernel/fut_timer.h>
+#include <kernel/signal.h>
 
 #include <kernel/kprintf.h>
 #include <kernel/debug_config.h>
@@ -200,23 +202,69 @@ long sys_nanosleep(const fut_timespec_t *u_req, fut_timespec_t *u_rem) {
                req.tv_sec, req.tv_nsec, duration_category, duration_desc,
                total_ns, millis);
 
-    /* Perform the sleep (currently millisecond resolution) */
+    /* Check for pending unblocked signals before sleeping */
+    fut_task_t *task = fut_task_current();
+    if (task) {
+        uint64_t pending = __atomic_load_n(&task->pending_signals, __ATOMIC_ACQUIRE);
+        uint64_t blocked = task->signal_mask;
+        if (pending & ~blocked) {
+            /* Signal already pending — return EINTR immediately */
+            if (u_rem) {
+                fut_timespec_t rem = req;  /* Full duration remaining */
+                fut_copy_to_user(u_rem, &rem, sizeof(rem));
+            }
+            return -EINTR;
+        }
+    }
+
+    /* Record start time for remainder calculation */
+    uint64_t start_ticks = fut_get_ticks();
+
+    /* Perform the sleep (may be interrupted by signal delivery) */
     fut_thread_sleep(millis);
 
-    /* Phase 2: Set remaining time to zero (no interruption support yet) */
+    /* Check if we were woken early by a signal */
+    if (task) {
+        uint64_t pending = __atomic_load_n(&task->pending_signals, __ATOMIC_ACQUIRE);
+        uint64_t blocked = task->signal_mask;
+        if (pending & ~blocked) {
+            /* Interrupted by signal — calculate remaining time.
+             * fut_get_ticks() and millis are in the same units (timer ticks,
+             * where each tick ≈ 10ms at FUT_TIMER_HZ=100). Convert back to
+             * nanoseconds for the remainder output. */
+            uint64_t elapsed_ticks = fut_get_ticks() - start_ticks;
+            uint64_t elapsed_ns = elapsed_ticks * 10000000ULL;  /* ticks * 10ms in ns */
+
+            if (u_rem && elapsed_ns < total_ns) {
+                uint64_t remaining_ns = total_ns - elapsed_ns;
+                fut_timespec_t rem = {
+                    .tv_sec = (int64_t)(remaining_ns / 1000000000ULL),
+                    .tv_nsec = (int64_t)(remaining_ns % 1000000000ULL)
+                };
+                fut_copy_to_user(u_rem, &rem, sizeof(rem));
+            } else if (u_rem) {
+                fut_timespec_t rem = {0, 0};
+                fut_copy_to_user(u_rem, &rem, sizeof(rem));
+            }
+
+            nanosleep_printf("[NANOSLEEP] nanosleep interrupted by signal after %llu ticks\n",
+                       elapsed_ticks);
+            return -EINTR;
+        }
+    }
+
+    /* Sleep completed normally */
     if (u_rem) {
         fut_timespec_t rem = {0, 0};
         int copy_ret = fut_copy_to_user(u_rem, &rem, sizeof(rem));
         if (copy_ret != 0) {
             nanosleep_printf("[NANOSLEEP] nanosleep(u_rem=%p) -> EFAULT "
                        "(copy_to_user failed for remaining time)\n", (void*)u_rem);
-            /* Sleep succeeded but can't report remaining time */
         }
     }
 
-    /* Phase 2: Detailed success logging */
     nanosleep_printf("[NANOSLEEP] nanosleep(sec=%lld, nsec=%lld [%s: %s], slept_ms=%llu) -> 0 "
-               "(completed, Phase 3: timer queue)\n",
+               "(completed)\n",
                req.tv_sec, req.tv_nsec, duration_category, duration_desc, millis);
 
     return 0;

@@ -393,7 +393,11 @@ long sys_futex(uint32_t *uaddr, int op, uint32_t val,
             if (has_timeout) {
                 timeout_ctx.thread = thread;
                 timeout_ctx.bucket = bucket;
-                fut_timer_start(timeout_ms, futex_timeout_callback, &timeout_ctx);
+                /* Convert ms to ticks (100 Hz = 10ms/tick) */
+                uint64_t timeout_ticks = timeout_ms / 10;
+                if (timeout_ms % 10 != 0) timeout_ticks++;
+                if (timeout_ticks == 0 && timeout_ms > 0) timeout_ticks = 1;
+                fut_timer_start(timeout_ticks, futex_timeout_callback, &timeout_ctx);
             }
 
             /* Sleep on wait queue (releases bucket lock) */

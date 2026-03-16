@@ -1587,7 +1587,11 @@ long sys_epoll_wait(int epfd, struct epoll_event *events, int maxevents, int tim
      * For positive timeout: use tick-based deadline. */
     uint64_t deadline_ticks = 0;
     if (timeout > 0) {
-        deadline_ticks = fut_get_ticks() + (uint64_t)timeout;
+        /* Convert timeout (ms) to ticks (100 Hz = 10ms/tick) */
+        uint64_t timeout_ticks = (uint64_t)timeout / 10;
+        if ((uint64_t)timeout % 10 != 0) timeout_ticks++;
+        if (timeout_ticks == 0) timeout_ticks = 1;
+        deadline_ticks = fut_get_ticks() + timeout_ticks;
     }
     int max_iterations = (timeout == 0) ? 1 : ((timeout < 0) ? 0x7FFFFFFF : 0x7FFFFFFF);
     int iteration = 0;

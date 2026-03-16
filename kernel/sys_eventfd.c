@@ -1480,16 +1480,19 @@ long sys_timerfd_settime(int ufd, int flags,
         fut_timer_cancel(timerfd_timer_cb, ctx);
     }
 
-    /* Return old value if requested */
+    /* Return old value if requested.
+     * interval_ms and next_expiry_ms are stored in ticks (10ms each). */
     if (old_value) {
         struct itimerspec old_its = {0};
-        old_its.it_interval.tv_sec = (long)(ctx->interval_ms / 1000);
-        old_its.it_interval.tv_nsec = (long)((ctx->interval_ms % 1000) * 1000000);
+        uint64_t interval_real_ms = ctx->interval_ms * 10;  /* ticks → ms */
+        old_its.it_interval.tv_sec = (long)(interval_real_ms / 1000);
+        old_its.it_interval.tv_nsec = (long)((interval_real_ms % 1000) * 1000000);
         if (ctx->armed) {
             uint64_t now = fut_get_ticks();
-            uint64_t remain = (ctx->next_expiry_ms > now) ? (ctx->next_expiry_ms - now) : 0;
-            old_its.it_value.tv_sec = (long)(remain / 1000);
-            old_its.it_value.tv_nsec = (long)((remain % 1000) * 1000000);
+            uint64_t remain_ticks = (ctx->next_expiry_ms > now) ? (ctx->next_expiry_ms - now) : 0;
+            uint64_t remain_ms = remain_ticks * 10;  /* ticks → ms */
+            old_its.it_value.tv_sec = (long)(remain_ms / 1000);
+            old_its.it_value.tv_nsec = (long)((remain_ms % 1000) * 1000000);
         }
         /* Check copy_to_user return to avoid silently ignoring EFAULT */
         if (fut_copy_to_user(old_value, &old_its, sizeof(old_its)) != 0) {
@@ -1502,7 +1505,6 @@ long sys_timerfd_settime(int ufd, int flags,
 
     fut_spinlock_acquire(&ctx->lock);
     ctx->counter = 0;
-    ctx->interval_ms = interval_ms;
 
     if (value_ms == 0 && kits.it_value.tv_sec == 0 && kits.it_value.tv_nsec == 0) {
         /* Disarm the timer */
@@ -1513,30 +1515,40 @@ long sys_timerfd_settime(int ufd, int flags,
         return 0;
     }
 
+    /* Convert ms to ticks (100 Hz = 10ms/tick). All timer internals use ticks. */
+    uint64_t value_ticks = value_ms / 10;
+    if (value_ms % 10 != 0) value_ticks++;
+    if (value_ticks == 0 && value_ms > 0) value_ticks = 1;
+
+    uint64_t interval_ticks = interval_ms / 10;
+    if (interval_ms % 10 != 0) interval_ticks++;
+
     uint64_t now = fut_get_ticks();
-    uint64_t delay;
+    uint64_t delay_ticks;
 
     if (flags & TFD_TIMER_ABSTIME) {
-        /* value_ms is absolute time in ms */
-        if (value_ms > now) {
-            delay = value_ms - now;
+        /* value_ticks is absolute time */
+        uint64_t abs_ticks = value_ticks;
+        if (abs_ticks > now) {
+            delay_ticks = abs_ticks - now;
         } else {
-            delay = 1; /* Already expired, fire ASAP */
+            delay_ticks = 1; /* Already expired, fire ASAP */
         }
-        ctx->next_expiry_ms = value_ms;
+        ctx->next_expiry_ms = abs_ticks;
     } else {
         /* Relative time */
-        delay = value_ms;
-        ctx->next_expiry_ms = now + value_ms;
+        delay_ticks = value_ticks;
+        ctx->next_expiry_ms = now + value_ticks;
     }
 
+    ctx->interval_ms = interval_ticks;  /* Store interval in ticks */
     ctx->armed = true;
     fut_spinlock_release(&ctx->lock);
 
-    fut_timer_start(delay, timerfd_timer_cb, ctx);
+    fut_timer_start(delay_ticks, timerfd_timer_cb, ctx);
 
     fut_printf("[TIMERFD_SETTIME] timerfd_settime(ufd=%d, delay=%llu, interval=%llu) -> armed\n",
-               ufd, (unsigned long long)delay, (unsigned long long)interval_ms);
+               ufd, (unsigned long long)delay_ticks, (unsigned long long)interval_ticks);
     return 0;
 }
 

@@ -89,9 +89,17 @@ void fut_sleep_until(fut_thread_t *thread, uint64_t millis) {
     /* Drain deferred frees from previous IRQ-context timer expirations */
     drain_deferred_frees();
 
+    /* Convert milliseconds to ticks. system_ticks increments at FUT_TIMER_HZ
+     * (100 Hz = every 10ms). Round up so sub-tick sleeps don't become zero. */
+    uint64_t ticks = millis / 10;
+    if (millis % 10 != 0)
+        ticks++;  /* Round up: 1ms → 1 tick (10ms), 15ms → 2 ticks (20ms) */
+    if (ticks == 0 && millis > 0)
+        ticks = 1;
+
     // Calculate absolute wake time
     uint64_t current = atomic_load_explicit(&system_ticks, memory_order_relaxed);
-    thread->wake_time = current + millis;
+    thread->wake_time = current + ticks;
     thread->state = FUT_THREAD_SLEEPING;
 
 

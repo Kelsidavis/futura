@@ -678,6 +678,7 @@ else ifeq ($(PLATFORM),arm64)
         kernel/tests/sys_clock_sched.c \
         kernel/tests/sys_vfs.c \
         kernel/tests/sys_poll.c \
+        kernel/tests/sys_misc.c \
         tests/test_blkcore.c \
         tests/test_net.c \
         tests/test_futfs.c \

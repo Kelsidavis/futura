@@ -19,15 +19,6 @@
 #include <kernel/kprintf.h>
 #include <kernel/uaccess.h>
 
-/* Phase 3: Helper to check capability-based privilege */
-static int has_cap_setuid(fut_task_t *task) {
-    if (!task) return 0;
-    /* Phase 3: Check CAP_SETUID capability (capability 7)
-     * Note: Capability fields exist in fut_task structure (cap_effective, cap_permitted, cap_inheritable)
-     * but full capability checking is not yet integrated. For now, grant privilege to root (uid 0) only. */
-    return (task->uid == 0) ? 1 : 0;
-}
-
 /* Helper to categorize UID/GID values */
 static const char *categorize_id(uint32_t id) {
     if (id == 0) {
@@ -79,17 +70,7 @@ long sys_getuid(void) {
         return 0;
     }
 
-    uint32_t ruid = task->ruid;
-    const char *category = categorize_id(ruid);
-
-    /* Phase 3: Track capability-based privilege for logging */
-    int has_setuid_cap = has_cap_setuid(task);
-    const char *cap_desc = has_setuid_cap ? "CAP_SETUID set" : "no CAP_SETUID";
-
-    fut_printf("[CRED] getuid(pid=%u) -> ruid=%u [%s], cap=%s (Phase 3)\n",
-               task->pid, ruid, category, cap_desc);
-
-    return (long)ruid;
+    return (long)task->ruid;
 }
 
 /**
@@ -140,18 +121,7 @@ long sys_geteuid(void) {
         return 0;
     }
 
-    uint32_t euid = task->uid;
-    const char *category = categorize_id(euid);
-
-    /* Phase 3: Track capability-based privilege for effective UID queries */
-    int has_setuid_cap = has_cap_setuid(task);
-    const char *cap_desc = has_setuid_cap ? "CAP_SETUID set" : "no CAP_SETUID";
-    const char *privilege_level = (euid == 0) ? "root" : "unprivileged";
-
-    fut_printf("[CRED] geteuid(pid=%u) -> euid=%u [%s], priv=%s, cap=%s (Phase 3)\n",
-               task->pid, euid, category, privilege_level, cap_desc);
-
-    return (long)euid;
+    return (long)task->uid;
 }
 
 /**
@@ -188,13 +158,7 @@ long sys_getgid(void) {
         return 0;
     }
 
-    uint32_t rgid = task->rgid;
-    const char *category = categorize_id(rgid);
-
-    fut_printf("[CRED] getgid(pid=%u) -> rgid=%u [%s] (Phase 3: GID categorization with namespace mapping)\n",
-               task->pid, rgid, category);
-
-    return (long)rgid;
+    return (long)task->rgid;
 }
 
 /**
@@ -231,13 +195,7 @@ long sys_getegid(void) {
         return 0;
     }
 
-    uint32_t egid = task->gid;
-    const char *category = categorize_id(egid);
-
-    fut_printf("[CRED] getegid(pid=%u) -> egid=%u [%s] (Phase 3: group check with categorization)\n",
-               task->pid, egid, category);
-
-    return (long)egid;
+    return (long)task->gid;
 }
 
 /**
@@ -695,14 +653,6 @@ long sys_getresuid(uint32_t *ruid, uint32_t *euid, uint32_t *suid) {
         return -EFAULT;
     }
 
-    /* Phase 3: Detailed logging with all three IDs */
-    fut_printf("[CRED] getresuid(pid=%u) -> ruid=%u [%s], euid=%u [%s], "
-               "suid=%u [%s] (Phase 3)\n",
-               task->pid,
-               task->ruid, categorize_id(task->ruid),
-               task->uid, categorize_id(task->uid),
-               saved_uid, categorize_id(saved_uid));
-
     return 0;
 }
 
@@ -757,14 +707,6 @@ long sys_getresgid(uint32_t *rgid, uint32_t *egid, uint32_t *sgid) {
     if (fut_copy_to_user(local_sgid, &saved_gid, sizeof(uint32_t)) != 0) {
         return -EFAULT;
     }
-
-    /* Phase 3: Detailed logging with all three IDs */
-    fut_printf("[CRED] getresgid(pid=%u) -> rgid=%u [%s], egid=%u [%s], "
-               "sgid=%u [%s] (Phase 3)\n",
-               task->pid,
-               task->rgid, categorize_id(task->rgid),
-               task->gid, categorize_id(task->gid),
-               saved_gid, categorize_id(saved_gid));
 
     return 0;
 }

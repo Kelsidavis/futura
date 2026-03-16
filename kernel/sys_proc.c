@@ -367,9 +367,8 @@ long sys_getrlimit(int resource, struct rlimit *rlim) {
         return -EFAULT;
     }
 
-    /* Phase 2: Identify resource type for logging */
+    /* Identify resource type for error logging */
     const char *resource_name = "UNKNOWN";
-    const char *resource_desc = "unknown resource";
 
     struct rlimit limit;
 
@@ -377,112 +376,96 @@ long sys_getrlimit(int resource, struct rlimit *rlim) {
     switch (resource) {
         case RLIMIT_NOFILE:
             resource_name = "RLIMIT_NOFILE";
-            resource_desc = "max open file descriptors";
             limit.rlim_cur = RLIMIT_NOFILE_SOFT_DEFAULT;
             limit.rlim_max = RLIMIT_NOFILE_HARD_DEFAULT;
             break;
 
         case RLIMIT_NPROC:
             resource_name = "RLIMIT_NPROC";
-            resource_desc = "max number of processes";
             limit.rlim_cur = RLIMIT_NPROC_SOFT_DEFAULT;
             limit.rlim_max = RLIMIT_NPROC_HARD_DEFAULT;
             break;
 
         case RLIMIT_STACK:
             resource_name = "RLIMIT_STACK";
-            resource_desc = "max stack size";
             limit.rlim_cur = RLIMIT_STACK_SOFT_DEFAULT;
             limit.rlim_max = RLIM_INFINITY;
             break;
 
         case RLIMIT_DATA:
             resource_name = "RLIMIT_DATA";
-            resource_desc = "max data segment size";
             limit.rlim_cur = RLIM_INFINITY;
             limit.rlim_max = RLIM_INFINITY;
             break;
 
         case RLIMIT_AS:
             resource_name = "RLIMIT_AS";
-            resource_desc = "max address space";
             limit.rlim_cur = RLIM_INFINITY;
             limit.rlim_max = RLIM_INFINITY;
             break;
 
         case RLIMIT_CORE:
             resource_name = "RLIMIT_CORE";
-            resource_desc = "max core file size";
             limit.rlim_cur = 0;         /* Disabled by default */
             limit.rlim_max = RLIM_INFINITY;
             break;
 
         case RLIMIT_CPU:
             resource_name = "RLIMIT_CPU";
-            resource_desc = "max CPU time (seconds)";
             limit.rlim_cur = RLIM_INFINITY;
             limit.rlim_max = RLIM_INFINITY;
             break;
 
         case RLIMIT_FSIZE:
             resource_name = "RLIMIT_FSIZE";
-            resource_desc = "max file size";
             limit.rlim_cur = RLIM_INFINITY;
             limit.rlim_max = RLIM_INFINITY;
             break;
 
         case RLIMIT_RSS:
             resource_name = "RLIMIT_RSS";
-            resource_desc = "max resident set size";
             limit.rlim_cur = RLIM_INFINITY;
             limit.rlim_max = RLIM_INFINITY;
             break;
 
         case RLIMIT_MEMLOCK:
             resource_name = "RLIMIT_MEMLOCK";
-            resource_desc = "max locked memory";
             limit.rlim_cur = RLIMIT_MEMLOCK_DEFAULT;
             limit.rlim_max = RLIMIT_MEMLOCK_DEFAULT;
             break;
 
         case RLIMIT_LOCKS:
             resource_name = "RLIMIT_LOCKS";
-            resource_desc = "max file locks";
             limit.rlim_cur = RLIM_INFINITY;
             limit.rlim_max = RLIM_INFINITY;
             break;
 
         case RLIMIT_SIGPENDING:
             resource_name = "RLIMIT_SIGPENDING";
-            resource_desc = "max pending signals";
             limit.rlim_cur = RLIMIT_SIGPENDING_DEFAULT;
             limit.rlim_max = RLIMIT_SIGPENDING_DEFAULT;
             break;
 
         case RLIMIT_MSGQUEUE:
             resource_name = "RLIMIT_MSGQUEUE";
-            resource_desc = "max POSIX message queue bytes";
             limit.rlim_cur = RLIMIT_MSGQUEUE_DEFAULT;
             limit.rlim_max = RLIMIT_MSGQUEUE_DEFAULT;
             break;
 
         case RLIMIT_NICE:
             resource_name = "RLIMIT_NICE";
-            resource_desc = "max nice priority";
             limit.rlim_cur = RLIMIT_NICE_DEFAULT;
             limit.rlim_max = RLIMIT_NICE_DEFAULT;
             break;
 
         case RLIMIT_RTPRIO:
             resource_name = "RLIMIT_RTPRIO";
-            resource_desc = "max real-time priority";
             limit.rlim_cur = RLIMIT_RTPRIO_DEFAULT;
             limit.rlim_max = RLIMIT_RTPRIO_DEFAULT;
             break;
 
         case RLIMIT_RTTIME:
             resource_name = "RLIMIT_RTTIME";
-            resource_desc = "max real-time CPU time (us)";
             limit.rlim_cur = RLIM_INFINITY;
             limit.rlim_max = RLIM_INFINITY;
             break;
@@ -505,28 +488,6 @@ long sys_getrlimit(int resource, struct rlimit *rlim) {
         fut_printf("[PROC] getrlimit(resource=%s, rlim=%p) -> EFAULT (copy_to_user failed)\n",
                    resource_name, rlim);
         return -EFAULT;
-    }
-
-    /* Phase 2: Detailed logging with resource identification */
-    const char *cur_str = (limit.rlim_cur == RLIM_INFINITY) ? "unlimited" : NULL;
-    const char *max_str = (limit.rlim_max == RLIM_INFINITY) ? "unlimited" : NULL;
-
-    if (cur_str && max_str) {
-        fut_printf("[PROC] getrlimit(resource=%s [%s], rlim=%p) -> 0 "
-                   "(cur=unlimited, max=unlimited, Phase 4: per-task stored limits)\n",
-                   resource_name, resource_desc, rlim);
-    } else if (cur_str) {
-        fut_printf("[PROC] getrlimit(resource=%s [%s], rlim=%p) -> 0 "
-                   "(cur=unlimited, max=%llu, Phase 4: per-task stored limits)\n",
-                   resource_name, resource_desc, rlim, limit.rlim_max);
-    } else if (max_str) {
-        fut_printf("[PROC] getrlimit(resource=%s [%s], rlim=%p) -> 0 "
-                   "(cur=%llu, max=unlimited, Phase 4: per-task stored limits)\n",
-                   resource_name, resource_desc, rlim, limit.rlim_cur);
-    } else {
-        fut_printf("[PROC] getrlimit(resource=%s [%s], rlim=%p) -> 0 "
-                   "(cur=%llu, max=%llu, Phase 4: per-task stored limits)\n",
-                   resource_name, resource_desc, rlim, limit.rlim_cur, limit.rlim_max);
     }
 
     return 0;

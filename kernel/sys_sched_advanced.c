@@ -90,14 +90,6 @@ long sys_sched_setparam(int pid, const struct sched_param *param) {
         return -EFAULT;
     }
 
-    /* Only support pid=0 (self) for now */
-    if (pid != 0) {
-        fut_printf("[SCHED] sched_setparam(pid=%d, priority=%d) -> ESRCH "
-                   "(setting other processes not yet supported)\n",
-                   pid, kparam.sched_priority);
-        return -ESRCH;
-    }
-
     /* Validate priority range (1-99 for RT, 0 for SCHED_OTHER) */
     if (kparam.sched_priority < 0 || kparam.sched_priority > 99) {
         fut_printf("[SCHED] sched_setparam(pid=%d, priority=%d) -> EINVAL "
@@ -106,9 +98,18 @@ long sys_sched_setparam(int pid, const struct sched_param *param) {
         return -EINVAL;
     }
 
-    /* Store RT priority using the thread pointer captured at function entry */
-    if (thread) {
-        thread->rt_priority = kparam.sched_priority;
+    /* Find target thread: pid=0 means self, otherwise look up by PID */
+    fut_thread_t *target_thread = thread;
+    if (pid != 0) {
+        fut_task_t *target_task = fut_task_by_pid((uint64_t)pid);
+        if (!target_task) {
+            return -ESRCH;
+        }
+        target_thread = target_task->threads;
+    }
+
+    if (target_thread) {
+        target_thread->rt_priority = kparam.sched_priority;
     }
 
     fut_printf("[SCHED] sched_setparam(pid=%d, priority=%d) -> 0\n",
@@ -147,25 +148,24 @@ long sys_sched_getparam(int pid, struct sched_param *param) {
         return -EINVAL;
     }
 
-    /* Phase 1: Only support pid=0 (self) for now */
+    /* Find target thread: pid=0 means self, otherwise look up by PID */
+    fut_thread_t *target_thread = thread;
     if (pid != 0) {
-        fut_printf("[SCHED] sched_getparam(pid=%d) -> ESRCH "
-                   "(querying other processes not yet supported)\n", pid);
-        return -ESRCH;
+        fut_task_t *target_task = fut_task_by_pid((uint64_t)pid);
+        if (!target_task) {
+            return -ESRCH;
+        }
+        target_thread = target_task->threads;
     }
 
-    /* Return RT priority from thread structure captured at entry */
+    /* Return RT priority from thread structure */
     struct sched_param kparam;
-    kparam.sched_priority = thread ? thread->rt_priority : 0;
+    kparam.sched_priority = target_thread ? target_thread->rt_priority : 0;
 
     /* Copy result to userspace */
     if (sched_copy_to_user(param, &kparam, sizeof(kparam)) != 0) {
-        fut_printf("[SCHED] sched_getparam(pid=%d) -> EFAULT (copy_to_user failed)\n", pid);
         return -EFAULT;
     }
-
-    fut_printf("[SCHED] sched_getparam(pid=%d) -> priority=%d\n",
-               pid, kparam.sched_priority);
 
     return 0;
 }
@@ -227,14 +227,6 @@ long sys_sched_setscheduler(int pid, int policy, const struct sched_param *param
             return -EINVAL;
     }
 
-    /* Only support pid=0 (self) for now */
-    if (pid != 0) {
-        fut_printf("[SCHED] sched_setscheduler(pid=%d, policy=%s, priority=%d) -> ESRCH "
-                   "(setting other processes not yet supported)\n",
-                   pid, policy_name, kparam.sched_priority);
-        return -ESRCH;
-    }
-
     /* Validate priority for policy */
     if ((policy == SCHED_FIFO || policy == SCHED_RR) &&
         (kparam.sched_priority < 1 || kparam.sched_priority > 99)) {
@@ -251,15 +243,22 @@ long sys_sched_setscheduler(int pid, int policy, const struct sched_param *param
         return -EINVAL;
     }
 
-    /* Store policy and RT priority, return previous policy (use thread captured at entry) */
-    int old_policy = thread ? thread->sched_policy : SCHED_OTHER;
-    if (thread) {
-        thread->sched_policy = policy;
-        thread->rt_priority  = kparam.sched_priority;
+    /* Find target thread: pid=0 means self, otherwise look up by PID */
+    fut_thread_t *target_thread = thread;
+    if (pid != 0) {
+        fut_task_t *target_task = fut_task_by_pid((uint64_t)pid);
+        if (!target_task) {
+            return -ESRCH;
+        }
+        target_thread = target_task->threads;
     }
 
-    fut_printf("[SCHED] sched_setscheduler(pid=%d, policy=%s, priority=%d) -> %d\n",
-               pid, policy_name, kparam.sched_priority, old_policy);
+    /* Store policy and RT priority, return previous policy */
+    int old_policy = target_thread ? target_thread->sched_policy : SCHED_OTHER;
+    if (target_thread) {
+        target_thread->sched_policy = policy;
+        target_thread->rt_priority  = kparam.sched_priority;
+    }
 
     return old_policy;
 }
@@ -285,17 +284,17 @@ long sys_sched_getscheduler(int pid) {
         return -ESRCH;
     }
 
-    /* Phase 1: Only support pid=0 (self) for now */
+    /* Find target thread: pid=0 means self, otherwise look up by PID */
+    fut_thread_t *target_thread = thread;
     if (pid != 0) {
-        fut_printf("[SCHED] sched_getscheduler(pid=%d) -> ESRCH "
-                   "(querying other processes not yet supported)\n", pid);
-        return -ESRCH;
+        fut_task_t *target_task = fut_task_by_pid((uint64_t)pid);
+        if (!target_task) {
+            return -ESRCH;
+        }
+        target_thread = target_task->threads;
     }
 
-    /* Return actual scheduling policy from thread captured at entry */
-    int policy = thread ? thread->sched_policy : SCHED_OTHER;
-
-    fut_printf("[SCHED] sched_getscheduler(pid=%d) -> %d\n", pid, policy);
+    int policy = target_thread ? target_thread->sched_policy : SCHED_OTHER;
 
     return policy;
 }

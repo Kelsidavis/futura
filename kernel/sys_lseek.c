@@ -303,38 +303,5 @@ int64_t sys_lseek(int fd, int64_t offset, int whence) {
         return new_offset;
     }
 
-    /* Phase 2: Categorize operation type */
-    const char *operation_type;
-    int64_t delta = (old_pos >= 0) ? (new_offset - old_pos) : 0;
-
-    if (old_pos < 0) {
-        operation_type = "initial seek (position was unknown)";
-    } else if (new_offset == old_pos) {
-        operation_type = "no-op (position unchanged)";
-    } else if (whence == SEEK_SET && offset == 0) {
-        operation_type = "rewind to start";
-    } else if (whence == SEEK_END && offset == 0) {
-        operation_type = "seek to end (get file size)";
-    } else if (whence == SEEK_CUR && offset == 0) {
-        operation_type = "query current position";
-    } else if (new_offset > old_pos) {
-        operation_type = "forward seek";
-    } else {
-        operation_type = "backward seek";
-    }
-
-    /* Phase 3: Detailed success logging with VFS delegation note */
-    if (old_pos >= 0 && delta != 0) {
-        fut_printf("[LSEEK] lseek(fd=%d [%s], offset=%lld [%s], whence=%s [%s], "
-                   "old_pos=%lld, delta=%lld) -> %lld (%s, Phase 3: VFS handles SEEK_DATA/HOLE)\n",
-                   fd, fd_category, offset, offset_category, whence_desc, whence_meaning,
-                   old_pos, delta, new_offset, operation_type);
-    } else {
-        fut_printf("[LSEEK] lseek(fd=%d [%s], offset=%lld [%s], whence=%s [%s]) -> %lld "
-                   "(%s, Phase 3: VFS handles SEEK_DATA/HOLE)\n",
-                   fd, fd_category, offset, offset_category, whence_desc, whence_meaning,
-                   new_offset, operation_type);
-    }
-
     return new_offset;
 }

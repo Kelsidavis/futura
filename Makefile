@@ -513,6 +513,7 @@ KERNEL_SOURCES := \
     kernel/sys_copy_file_range.c \
     kernel/sys_rseq.c \
     kernel/sys_statx.c \
+    kernel/sys_tgkill.c \
     kernel/sys_unshare.c \
     kernel/sys_acct.c \
     kernel/sys_waitid.c \

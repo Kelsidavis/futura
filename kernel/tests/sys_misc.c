@@ -13,6 +13,8 @@
  */
 
 #include <kernel/fut_task.h>
+#include <kernel/fut_thread.h>
+#include <kernel/fut_percpu.h>
 #include <kernel/fut_vfs.h>
 #include <kernel/errno.h>
 #include <kernel/kprintf.h>
@@ -1057,6 +1059,98 @@ static void test_statx_errors(void) {
     fut_test_pass();
 }
 
+extern long sys_tgkill(int tgid, int tid, int sig);
+extern long sys_tkill(int tid, int sig);
+
+/* ============================================================
+ * Test 22: tgkill sends signal to current thread
+ * ============================================================ */
+static void test_tgkill(void) {
+    fut_printf("[MISC-TEST] Test 22: tgkill/tkill thread-directed signals\n");
+
+    fut_task_t *task = fut_task_current();
+    if (!task) {
+        fut_printf("[MISC-TEST] ✗ no current task\n");
+        fut_test_fail(22);
+        return;
+    }
+
+    /* Get current thread's tid and task's pid */
+    fut_thread_t *thread = NULL;
+    fut_percpu_t *percpu = fut_percpu_get();
+    if (percpu && percpu->current_thread) {
+        thread = percpu->current_thread;
+    }
+    if (!thread) {
+        fut_printf("[MISC-TEST] ✗ no current thread\n");
+        fut_test_fail(22);
+        return;
+    }
+
+    int pid = (int)task->pid;
+    int tid = (int)thread->tid;
+
+    /* Signal 0 to self should succeed (permission check) */
+    long ret = sys_tgkill(pid, tid, 0);
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ tgkill(pid=%d, tid=%d, sig=0) returned %ld\n",
+                   pid, tid, ret);
+        fut_test_fail(22);
+        return;
+    }
+
+    /* Invalid signal → EINVAL */
+    ret = sys_tgkill(pid, tid, 99);
+    if (ret != -EINVAL) {
+        fut_printf("[MISC-TEST] ✗ tgkill(sig=99) returned %ld (expected EINVAL)\n", ret);
+        fut_test_fail(22);
+        return;
+    }
+
+    /* Invalid tgid → EINVAL */
+    ret = sys_tgkill(-1, tid, 0);
+    if (ret != -EINVAL) {
+        fut_printf("[MISC-TEST] ✗ tgkill(tgid=-1) returned %ld (expected EINVAL)\n", ret);
+        fut_test_fail(22);
+        return;
+    }
+
+    /* Non-existent tid → ESRCH */
+    ret = sys_tgkill(pid, 99999, 0);
+    if (ret != -ESRCH) {
+        fut_printf("[MISC-TEST] ✗ tgkill(tid=99999) returned %ld (expected ESRCH)\n", ret);
+        fut_test_fail(22);
+        return;
+    }
+
+    /* Wrong tgid for existing tid → ESRCH */
+    ret = sys_tgkill(99999, tid, 0);
+    if (ret != -ESRCH) {
+        fut_printf("[MISC-TEST] ✗ tgkill(tgid=99999) returned %ld (expected ESRCH)\n", ret);
+        fut_test_fail(22);
+        return;
+    }
+
+    /* tkill signal 0 to self should succeed */
+    ret = sys_tkill(tid, 0);
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ tkill(tid=%d, sig=0) returned %ld\n", tid, ret);
+        fut_test_fail(22);
+        return;
+    }
+
+    /* tkill invalid tid → EINVAL */
+    ret = sys_tkill(-1, 0);
+    if (ret != -EINVAL) {
+        fut_printf("[MISC-TEST] ✗ tkill(tid=-1) returned %ld (expected EINVAL)\n", ret);
+        fut_test_fail(22);
+        return;
+    }
+
+    fut_printf("[MISC-TEST] ✓ tgkill/tkill: sig=0 self, EINVAL, ESRCH all correct\n");
+    fut_test_pass();
+}
+
 /* ============================================================
  * Test entry point
  * ============================================================ */
@@ -1088,6 +1182,7 @@ void fut_misc_test_thread(void *arg) {
     test_membarrier();          /* Test 19: membarrier */
     test_statx_basic();         /* Test 20: statx basic */
     test_statx_errors();        /* Test 21: statx errors */
+    test_tgkill();              /* Test 22: tgkill/tkill */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

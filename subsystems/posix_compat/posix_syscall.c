@@ -282,6 +282,8 @@
 #define SYS_copy_file_range 326  /* Linux: 326 */
 #define SYS_rseq            334  /* Linux: 334 */
 #define SYS_statx           332  /* Linux: 332 */
+#define SYS_tgkill          234  /* Linux: 234 */
+#define SYS_tkill            200  /* Linux: 200 */
 
 #ifndef SYS_time_millis
 #define SYS_time_millis  400
@@ -1490,6 +1492,20 @@ static int64_t sys_statx_handler(uint64_t dirfd, uint64_t pathname, uint64_t fla
                           unsigned int mask, void *statxbuf);
     return sys_statx((int)dirfd, (const char *)pathname, (int)flags,
                      (unsigned int)mask, (void *)statxbuf);
+}
+
+static int64_t sys_tgkill_handler(uint64_t tgid, uint64_t tid, uint64_t sig,
+                                   uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg4; (void)arg5; (void)arg6;
+    extern long sys_tgkill(int tgid, int tid, int sig);
+    return sys_tgkill((int)tgid, (int)tid, (int)sig);
+}
+
+static int64_t sys_tkill_handler(uint64_t tid, uint64_t sig, uint64_t arg3,
+                                  uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg3; (void)arg4; (void)arg5; (void)arg6;
+    extern long sys_tkill(int tid, int sig);
+    return sys_tkill((int)tid, (int)sig);
 }
 
 static int64_t sys_syslog_handler(uint64_t type, uint64_t buf, uint64_t len,
@@ -2868,6 +2884,8 @@ static syscall_handler_t syscall_table[MAX_SYSCALL] = {
     [SYS_copy_file_range]   = sys_copy_file_range_handler,
     [SYS_rseq]              = sys_rseq_handler,
     [SYS_statx]             = sys_statx_handler,
+    [SYS_tgkill]            = sys_tgkill_handler,
+    [SYS_tkill]             = sys_tkill_handler,
     [SYS_set_tid_address]   = sys_set_tid_address_handler,
     [SYS_timer_create]      = sys_timer_create_handler,
     [SYS_timer_settime]     = sys_timer_settime_handler,

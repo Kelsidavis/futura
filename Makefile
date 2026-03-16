@@ -504,6 +504,7 @@ KERNEL_SOURCES := \
     kernel/sys_capability.c \
     kernel/sys_personality.c \
     kernel/sys_prctl.c \
+    kernel/sys_arch_prctl.c \
     kernel/sys_getrandom.c \
     kernel/sys_unshare.c \
     kernel/sys_acct.c \

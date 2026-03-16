@@ -296,6 +296,7 @@ extern long sys_statx(int dirfd, const char *pathname, int flags,
 extern long sys_tgkill(int tgid, int tid, int sig);
 extern long sys_tkill(int tid, int sig);
 extern long sys_getcpu(unsigned int *cpup, unsigned int *nodep, void *unused);
+extern long sys_readahead(int fd, int64_t offset, size_t count);
 extern long sys_unshare(unsigned long flags);
 
 /* Process accounting and thread management */
@@ -1781,6 +1782,13 @@ static int64_t sys_sched_get_priority_min_wrapper(uint64_t policy, uint64_t arg1
     return sys_sched_get_priority_min((int)policy);
 }
 
+/* sys_readahead_wrapper - read-ahead hint */
+static int64_t sys_readahead_wrapper(uint64_t fd, uint64_t offset, uint64_t count,
+                                      uint64_t arg3, uint64_t arg4, uint64_t arg5) {
+    (void)arg3; (void)arg4; (void)arg5;
+    return sys_readahead((int)fd, (int64_t)offset, (size_t)count);
+}
+
 /* sys_getcpu_wrapper - get current CPU and NUMA node */
 static int64_t sys_getcpu_wrapper(uint64_t cpup, uint64_t nodep, uint64_t unused,
                                    uint64_t arg3, uint64_t arg4, uint64_t arg5) {
@@ -2617,6 +2625,7 @@ struct syscall_entry {
 #define __NR_sched_get_priority_min 126
 #define __NR_sched_rr_get_interval 127
 #define __NR_getcpu         168
+#define __NR_readahead      213
 #define __NR_kill           129
 #define __NR_tkill          130
 #define __NR_tgkill         131
@@ -2971,6 +2980,8 @@ static void arm64_syscall_table_init(void) {
     syscall_table[__NR_sched_rr_get_interval].name = "sched_rr_get_interval";
     syscall_table[__NR_getcpu].handler = (syscall_fn_t)sys_getcpu_wrapper;
     syscall_table[__NR_getcpu].name = "getcpu";
+    syscall_table[__NR_readahead].handler = (syscall_fn_t)sys_readahead_wrapper;
+    syscall_table[__NR_readahead].name = "readahead";
     syscall_table[__NR_kill].handler = (syscall_fn_t)sys_kill_wrapper;
     syscall_table[__NR_kill].name = "kill";
     syscall_table[__NR_tkill].handler = (syscall_fn_t)sys_tkill_wrapper;

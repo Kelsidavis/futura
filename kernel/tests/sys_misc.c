@@ -1194,6 +1194,54 @@ static void test_getcpu(void) {
     fut_test_pass();
 }
 
+extern long sys_readahead(int fd, int64_t offset, size_t count);
+
+/* ============================================================
+ * Test 24: readahead accepts hints and rejects bad fds
+ * ============================================================ */
+static void test_readahead(void) {
+    fut_printf("[MISC-TEST] Test 24: readahead hint syscall\n");
+
+    /* Open a file to readahead on */
+    int fd = fut_vfs_open("/readahead_test.txt", 0x42, 0644);  /* O_RDWR|O_CREAT */
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ open failed: %d\n", fd);
+        fut_test_fail(24);
+        return;
+    }
+    fut_vfs_write(fd, "test data", 9);
+
+    /* readahead on valid file should succeed */
+    long ret = sys_readahead(fd, 0, 4096);
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ readahead(fd, 0, 4096) returned %ld\n", ret);
+        fut_vfs_close(fd);
+        fut_test_fail(24);
+        return;
+    }
+
+    fut_vfs_close(fd);
+
+    /* Bad fd → EBADF */
+    ret = sys_readahead(999, 0, 4096);
+    if (ret != -EBADF) {
+        fut_printf("[MISC-TEST] ✗ readahead(999) returned %ld (expected EBADF)\n", ret);
+        fut_test_fail(24);
+        return;
+    }
+
+    /* Negative offset → EINVAL */
+    ret = sys_readahead(0, -1, 4096);
+    if (ret != -EINVAL) {
+        fut_printf("[MISC-TEST] ✗ readahead(offset=-1) returned %ld (expected EINVAL)\n", ret);
+        fut_test_fail(24);
+        return;
+    }
+
+    fut_printf("[MISC-TEST] ✓ readahead: valid hint accepted, EBADF/EINVAL correct\n");
+    fut_test_pass();
+}
+
 /* ============================================================
  * Test entry point
  * ============================================================ */
@@ -1227,6 +1275,7 @@ void fut_misc_test_thread(void *arg) {
     test_statx_errors();        /* Test 21: statx errors */
     test_tgkill();              /* Test 22: tgkill/tkill */
     test_getcpu();              /* Test 23: getcpu */
+    test_readahead();           /* Test 24: readahead */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

@@ -515,6 +515,7 @@ KERNEL_SOURCES := \
     kernel/sys_statx.c \
     kernel/sys_tgkill.c \
     kernel/sys_getcpu.c \
+    kernel/sys_readahead.c \
     kernel/sys_unshare.c \
     kernel/sys_acct.c \
     kernel/sys_waitid.c \

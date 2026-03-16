@@ -287,6 +287,7 @@
 #define SYS_tkill            200  /* Linux: 200 */
 #define SYS_exit_group       319  /* Linux: 231 — Futura: 319 (231 used by madvise) */
 #define SYS_getcpu           309  /* Linux: 309 */
+#define SYS_readahead        187  /* Linux: 187 */
 
 #ifndef SYS_time_millis
 #define SYS_time_millis  400
@@ -1509,6 +1510,13 @@ static int64_t sys_tkill_handler(uint64_t tid, uint64_t sig, uint64_t arg3,
     (void)arg3; (void)arg4; (void)arg5; (void)arg6;
     extern long sys_tkill(int tid, int sig);
     return sys_tkill((int)tid, (int)sig);
+}
+
+static int64_t sys_readahead_handler(uint64_t fd, uint64_t offset, uint64_t count,
+                                      uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg4; (void)arg5; (void)arg6;
+    extern long sys_readahead(int fd, int64_t offset, size_t count);
+    return sys_readahead((int)fd, (int64_t)offset, (size_t)count);
 }
 
 static int64_t sys_exit_group_handler(uint64_t status, uint64_t arg2, uint64_t arg3,
@@ -2913,6 +2921,7 @@ static syscall_handler_t syscall_table[MAX_SYSCALL] = {
     [SYS_tkill]             = sys_tkill_handler,
     [SYS_exit_group]        = sys_exit_group_handler,
     [SYS_getcpu]            = sys_getcpu_handler,
+    [SYS_readahead]         = sys_readahead_handler,
     [SYS_set_tid_address]   = sys_set_tid_address_handler,
     [SYS_timer_create]      = sys_timer_create_handler,
     [SYS_timer_settime]     = sys_timer_settime_handler,

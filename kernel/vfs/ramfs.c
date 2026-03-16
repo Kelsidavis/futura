@@ -347,12 +347,14 @@ static ssize_t ramfs_write(struct fut_vnode *vnode, const void *buf, size_t size
             return -ENOMEM;
         }
 
+#ifdef DEBUG_RAMFS
         fut_printf("[RAMFS-REALLOC] required=%llu old_capacity=%llu -> new_capacity=%llu old=%p new=%p\n",
                    (unsigned long long)required,
                    (unsigned long long)node->file.capacity,
                    (unsigned long long)new_capacity,
                    (void*)node->file.data,
                    (void*)new_data);
+#endif
 
 #ifdef DEBUG_RAMFS
         fut_printf("[RAMFS-REALLOC] New buffer allocated: %p\n", (void*)new_data);
@@ -1426,9 +1428,6 @@ static int ramfs_link(struct fut_vnode *old_vnode, const char *oldpath, const ch
     /* Increment link count on the vnode */
     old_vnode->nlinks++;
 
-    fut_printf("[RAMFS-LINK] Created hard link '%s' to ino=%lu (nlinks now %u)\n",
-               new_basename, old_vnode->ino, old_vnode->nlinks);
-
     return 0;
 }
 
@@ -1543,8 +1542,6 @@ static int ramfs_symlink(struct fut_vnode *parent, const char *linkpath, const c
     new_entry->next = parent_node->dir.entries;
     parent_node->dir.entries = new_entry;
 
-    fut_printf("[RAMFS-SYMLINK] Created symlink '%s' -> '%s'\n", linkpath, target);
-
     return 0;
 }
 
@@ -1585,9 +1582,6 @@ static ssize_t ramfs_readlink(struct fut_vnode *vnode, char *buf, size_t size) {
     for (size_t i = 0; i < bytes_to_copy; i++) {
         buf[i] = node->link.target[i];
     }
-
-    fut_printf("[RAMFS-READLINK] Read symlink: %u bytes, target='%s'\n",
-               (unsigned int)bytes_to_copy, node->link.target);
 
     return (ssize_t)bytes_to_copy;
 }
@@ -1703,10 +1697,6 @@ static int ramfs_rename(struct fut_vnode *parent, const char *oldname, const cha
         old_entry->name[i] = newname[i];
     }
 
-    fut_printf("[RAMFS-RENAME] Renamed '%s' to '%s' (ino=%lu, type=%s)\n",
-               oldname, newname, old_vnode->ino,
-               old_vnode->type == VN_DIR ? "dir" : old_vnode->type == VN_REG ? "file" : "other");
-
     return 0;
 }
 
@@ -1734,20 +1724,14 @@ static int ramfs_setattr(struct fut_vnode *vnode, const struct fut_stat *stat) {
     /* Update mode: preserve only permission and special bits (not file type) */
     if (stat->st_mode != 0) {
         vnode->mode = stat->st_mode & 07777;
-        fut_printf("[RAMFS-SETATTR] Changed mode for ino=%lu to 0%o\n",
-                   vnode->ino, vnode->mode);
     }
 
     /* Update uid/gid: sentinel (uint32_t)-1 means "don't change" */
     if (stat->st_uid != (uint32_t)-1) {
         vnode->uid = stat->st_uid;
-        fut_printf("[RAMFS-SETATTR] Changed uid for ino=%lu to %u\n",
-                   vnode->ino, vnode->uid);
     }
     if (stat->st_gid != (uint32_t)-1) {
         vnode->gid = stat->st_gid;
-        fut_printf("[RAMFS-SETATTR] Changed gid for ino=%lu to %u\n",
-                   vnode->ino, vnode->gid);
     }
 
     /* Update timestamps: sentinel (uint64_t)-1 means "don't change" */

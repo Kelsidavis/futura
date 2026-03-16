@@ -90,6 +90,10 @@ struct fut_task {
     uint32_t suid;                     // Saved UID (backup for privilege swapping)
     uint32_t sgid;                     // Saved GID (backup for privilege swapping)
 
+    /* Supplementary groups (POSIX getgroups/setgroups) */
+    int ngroups;                       // Number of supplementary groups (0-32)
+    uint32_t groups[32];               // Supplementary group IDs (NGROUPS_MAX=32)
+
     /* Process group and session (job control) */
     uint64_t pgid;                     // Process group ID (for job control)
     uint64_t sid;                      // Session ID (controlling terminal session)

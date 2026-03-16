@@ -288,6 +288,8 @@
 #define SYS_exit_group       319  /* Linux: 231 — Futura: 319 (231 used by madvise) */
 #define SYS_getcpu           309  /* Linux: 309 */
 #define SYS_readahead        187  /* Linux: 187 */
+#define SYS_getgroups        115  /* Linux: 115 */
+#define SYS_setgroups        116  /* Linux: 116 */
 
 #ifndef SYS_time_millis
 #define SYS_time_millis  400
@@ -1510,6 +1512,20 @@ static int64_t sys_tkill_handler(uint64_t tid, uint64_t sig, uint64_t arg3,
     (void)arg3; (void)arg4; (void)arg5; (void)arg6;
     extern long sys_tkill(int tid, int sig);
     return sys_tkill((int)tid, (int)sig);
+}
+
+static int64_t sys_getgroups_handler(uint64_t size, uint64_t list, uint64_t arg3,
+                                      uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg3; (void)arg4; (void)arg5; (void)arg6;
+    extern long sys_getgroups(int size, uint32_t *list);
+    return sys_getgroups((int)size, (uint32_t *)list);
+}
+
+static int64_t sys_setgroups_handler(uint64_t size, uint64_t list, uint64_t arg3,
+                                      uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg3; (void)arg4; (void)arg5; (void)arg6;
+    extern long sys_setgroups(int size, const uint32_t *list);
+    return sys_setgroups((int)size, (const uint32_t *)list);
 }
 
 static int64_t sys_futimesat_handler(uint64_t dirfd, uint64_t pathname, uint64_t times,
@@ -2930,6 +2946,8 @@ static syscall_handler_t syscall_table[MAX_SYSCALL] = {
     [SYS_getcpu]            = sys_getcpu_handler,
     [SYS_readahead]         = sys_readahead_handler,
     [SYS_futimesat]         = sys_futimesat_handler,
+    [SYS_getgroups]         = sys_getgroups_handler,
+    [SYS_setgroups]         = sys_setgroups_handler,
     [SYS_set_tid_address]   = sys_set_tid_address_handler,
     [SYS_timer_create]      = sys_timer_create_handler,
     [SYS_timer_settime]     = sys_timer_settime_handler,

@@ -1195,6 +1195,8 @@ static void test_getcpu(void) {
 }
 
 extern long sys_readahead(int fd, int64_t offset, size_t count);
+extern long sys_getgroups(int size, uint32_t *list);
+extern long sys_setgroups(int size, const uint32_t *list);
 
 /* ============================================================
  * Test 24: readahead accepts hints and rejects bad fds
@@ -1243,6 +1245,67 @@ static void test_readahead(void) {
 }
 
 /* ============================================================
+ * Test 25: getgroups/setgroups round-trip
+ * ============================================================ */
+static void test_groups(void) {
+    fut_printf("[MISC-TEST] Test 25: getgroups/setgroups round-trip\n");
+
+    /* Query initial count (should be 0 for kernel thread) */
+    long count = sys_getgroups(0, NULL);
+    if (count < 0) {
+        fut_printf("[MISC-TEST] ✗ getgroups(0) returned %ld\n", count);
+        fut_test_fail(25);
+        return;
+    }
+
+    /* Set some groups */
+    uint32_t groups_to_set[] = {100, 200, 300};
+    long ret = sys_setgroups(3, groups_to_set);
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ setgroups(3) returned %ld\n", ret);
+        fut_test_fail(25);
+        return;
+    }
+
+    /* Read back */
+    count = sys_getgroups(0, NULL);
+    if (count != 3) {
+        fut_printf("[MISC-TEST] ✗ getgroups(0) returned %ld (expected 3)\n", count);
+        fut_test_fail(25);
+        return;
+    }
+
+    uint32_t readback[3] = {0};
+    ret = sys_getgroups(3, readback);
+    if (ret != 3) {
+        fut_printf("[MISC-TEST] ✗ getgroups(3) returned %ld\n", ret);
+        fut_test_fail(25);
+        return;
+    }
+
+    if (readback[0] != 100 || readback[1] != 200 || readback[2] != 300) {
+        fut_printf("[MISC-TEST] ✗ groups mismatch: %u %u %u\n",
+                   readback[0], readback[1], readback[2]);
+        fut_test_fail(25);
+        return;
+    }
+
+    /* Clear groups */
+    sys_setgroups(0, NULL);
+
+    /* Too many groups → EINVAL */
+    ret = sys_setgroups(33, groups_to_set);
+    if (ret != -EINVAL) {
+        fut_printf("[MISC-TEST] ✗ setgroups(33) returned %ld (expected EINVAL)\n", ret);
+        fut_test_fail(25);
+        return;
+    }
+
+    fut_printf("[MISC-TEST] ✓ getgroups/setgroups: set 3, readback matches, clear, EINVAL\n");
+    fut_test_pass();
+}
+
+/* ============================================================
  * Test entry point
  * ============================================================ */
 void fut_misc_test_thread(void *arg) {
@@ -1276,6 +1339,7 @@ void fut_misc_test_thread(void *arg) {
     test_tgkill();              /* Test 22: tgkill/tkill */
     test_getcpu();              /* Test 23: getcpu */
     test_readahead();           /* Test 24: readahead */
+    test_groups();              /* Test 25: getgroups/setgroups */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

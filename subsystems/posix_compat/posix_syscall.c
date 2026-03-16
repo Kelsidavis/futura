@@ -290,6 +290,7 @@
 #define SYS_readahead        187  /* Linux: 187 */
 #define SYS_getgroups        115  /* Linux: 115 */
 #define SYS_setgroups        116  /* Linux: 116 */
+#define SYS_utimes           235  /* Linux: 235 */
 
 #ifndef SYS_time_millis
 #define SYS_time_millis  400
@@ -1533,6 +1534,13 @@ static int64_t sys_futimesat_handler(uint64_t dirfd, uint64_t pathname, uint64_t
     (void)arg4; (void)arg5; (void)arg6;
     extern long sys_futimesat(int dirfd, const char *pathname, const void *times);
     return sys_futimesat((int)dirfd, (const char *)pathname, (const void *)times);
+}
+
+static int64_t sys_utimes_handler(uint64_t pathname, uint64_t times, uint64_t arg3,
+                                   uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg3; (void)arg4; (void)arg5; (void)arg6;
+    extern long sys_utimes(const char *pathname, const void *times);
+    return sys_utimes((const char *)pathname, (const void *)times);
 }
 
 static int64_t sys_readahead_handler(uint64_t fd, uint64_t offset, uint64_t count,
@@ -2948,6 +2956,7 @@ static syscall_handler_t syscall_table[MAX_SYSCALL] = {
     [SYS_futimesat]         = sys_futimesat_handler,
     [SYS_getgroups]         = sys_getgroups_handler,
     [SYS_setgroups]         = sys_setgroups_handler,
+    [SYS_utimes]            = sys_utimes_handler,
     [SYS_set_tid_address]   = sys_set_tid_address_handler,
     [SYS_timer_create]      = sys_timer_create_handler,
     [SYS_timer_settime]     = sys_timer_settime_handler,

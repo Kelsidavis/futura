@@ -78,3 +78,16 @@ long sys_futimesat(int dirfd, const char *pathname, const struct fut_timeval *ti
 
     return sys_utimensat(dirfd, pathname, ts, 0);
 }
+
+/**
+ * utimes() - Change file timestamps (microsecond precision, path-based)
+ *
+ * @param pathname Path to the file
+ * @param times    Array of 2 timeval structs [atime, mtime], or NULL for now
+ *
+ * Returns 0 on success, negative errno on failure.
+ * Equivalent to futimesat(AT_FDCWD, pathname, times).
+ */
+long sys_utimes(const char *pathname, const struct fut_timeval *times) {
+    return sys_futimesat(-100 /* AT_FDCWD */, pathname, times);
+}

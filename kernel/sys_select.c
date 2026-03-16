@@ -84,9 +84,6 @@ long sys_select(int nfds, fd_set *readfds, fd_set *writefds,
         return -ESRCH;
     }
 
-    fut_printf("[SELECT] nfds=%d readfds=0x%p writefds=0x%p exceptfds=0x%p timeout=0x%p\n",
-               local_nfds, local_readfds, local_writefds, local_exceptfds, local_timeout);
-
     /* Validate nfds against both static limit and task's actual FD table limit */
     if (local_nfds < 0) {
         fut_printf("[SELECT] select(nfds=%d, ...) -> EINVAL (negative nfds)\n",
@@ -398,8 +395,6 @@ long sys_select(int nfds, fd_set *readfds, fd_set *writefds,
         if (cw != 0) return -EFAULT;
     }
 
-    fut_printf("[SELECT] select(nfds=%d) -> %d ready (Phase 3: FD readiness checking)\n",
-               local_nfds, ready_count);
     return ready_count;
 }
 
@@ -430,10 +425,6 @@ long sys_pselect6(int nfds, void *readfds, void *writefds, void *exceptfds,
     void *local_exceptfds = exceptfds;
     void *local_timeout = timeout;
     void *local_sigmask = sigmask;
-
-    fut_printf("[PSELECT6] pselect6(nfds=%d, readfds=%p, writefds=%p, exceptfds=%p, "
-               "timeout=%p, sigmask=%p)\n",
-               local_nfds, local_readfds, local_writefds, local_exceptfds, local_timeout, local_sigmask);
 
     /* Get current task for FD table bounds checking */
     fut_task_t *task = fut_task_current();
@@ -654,8 +645,6 @@ long sys_pselect6(int nfds, void *readfds, void *writefds, void *exceptfds,
         }
     }
 
-    fut_printf("[PSELECT6] pselect6(nfds=%d) -> %d ready (Phase 3: FD readiness checking)\n",
-               local_nfds, ready_count);
     ret = ready_count;
 
 out_restore_sigmask:

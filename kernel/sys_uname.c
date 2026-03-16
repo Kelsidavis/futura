@@ -179,11 +179,7 @@ long sys_uname(struct utsname *buf) {
         return -EFAULT;
     }
 
-    fut_printf("[UNAME] uname(sysname=\"%s\", nodename=\"%s\", release=\"%s\", "
-               "version=\"%s\", machine=\"%s\" [%s]) -> 0\n",
-               info.sysname, info.nodename, info.release,
-               info.version, info.machine, arch_desc);
-
+    (void)arch_desc;
     return 0;
 }
 

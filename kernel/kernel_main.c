@@ -862,6 +862,7 @@ extern void fut_splice_test_thread(void *arg);
 extern void fut_clock_sched_test_thread(void *arg);
 extern void fut_vfs_test_thread(void *arg);
 extern void fut_poll_test_thread(void *arg);
+extern void fut_misc_test_thread(void *arg);
 
 /* Set by boot thread after all initialization is complete.
  * Test thread waits for this before starting to avoid races with init. */
@@ -890,6 +891,7 @@ static void selftest_sequential_runner(void *arg) {
     fut_clock_sched_test_thread(NULL);
     fut_vfs_test_thread(NULL);
     fut_poll_test_thread(NULL);
+    fut_misc_test_thread(NULL);
 }
 
 void fut_kernel_main(void) {
@@ -1203,6 +1205,7 @@ void fut_kernel_main(void) {
         planned_tests += 12u; /* clock_sched: getres, sched_param, sched_policy, itimer, rusage, times, getpriority, setpriority, getpriority(-who), setpriority(-who), unshare(0), unshare(invalid) */
         planned_tests += 10u; /* vfs: O_TRUNC, O_APPEND, relpath, dir_mtime, readlink, hardlink, mount, renameat2, inotify, umount expire */
         planned_tests += 11u; /* poll: file ready, eventfd not-ready, eventfd ready, POLLNVAL, select file, select pipe, pselect6 pipe, pselect6 sigmask restore, timeout-only sleep, timerfd readiness, signalfd readiness */
+        planned_tests += 10u; /* misc: getuid, cred_fields, personality, personality_invalid, uname_null, rlimits, personality_stored, fcntl_fd_flags, fcntl_dupfd, fcntl_ebadf */
         // planned_tests += 1u; /* block */
         // planned_tests += 1u; /* futfs */
         // planned_tests += 1u; /* net */

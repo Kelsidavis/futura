@@ -41,14 +41,12 @@ long sys_getpid(void) {
     fut_thread_t *thread = fut_thread_current();
     fut_task_t *task = fut_task_current();
 
-    fut_printf("[PROC] getpid() thread=%p task=%p\n", (void*)thread, (void*)task);
+    (void)thread;
 
     if (!task) {
-        fut_printf("[PROC] getpid() -> 1 (task is NULL!)\n");
-        return 1;  /* Default to init PID */
+        return 1;  /* Default to init PID for kernel threads */
     }
 
-    fut_printf("[PROC] getpid() -> pid=%llu\n", task->pid);
     return task->pid;
 }
 
@@ -68,8 +66,6 @@ long sys_gettid(void) {
         return 1;  /* Default to init TID */
     }
 
-    /* In Futura OS, task ID serves as thread ID */
-    fut_printf("[PROC] gettid() -> tid=%llu\n", task->pid);
     return task->pid;
 }
 
@@ -89,9 +85,7 @@ long sys_getppid(void) {
         return 1;  /* Default to init */
     }
 
-    uint64_t ppid = (task->parent) ? task->parent->pid : 1;
-    fut_printf("[PROC] getppid() -> ppid=%llu\n", ppid);
-    return ppid;
+    return (task->parent) ? task->parent->pid : 1;
 }
 
 /**
@@ -109,7 +103,6 @@ long sys_getpgrp(void) {
         return 1;  /* Default to init process group */
     }
 
-    fut_printf("[PROC] getpgrp() -> pgrp=%llu\n", task->pgid);
     return task->pgid;
 }
 
@@ -133,7 +126,6 @@ long sys_getpgid(uint64_t pid) {
 
     /* If pid is 0, use calling process */
     if (pid == 0) {
-        fut_printf("[PROC] getpgid(pid=0 -> %llu) -> pgrp=%llu\n", current->pid, current->pgid);
         return current->pgid;
     }
 
@@ -144,7 +136,6 @@ long sys_getpgid(uint64_t pid) {
         return -ESRCH;
     }
 
-    fut_printf("[PROC] getpgid(pid=%llu) -> pgrp=%llu\n", pid, target->pgid);
     return target->pgid;
 }
 
@@ -170,10 +161,7 @@ long sys_setpgrp(void) {
         return -EPERM;
     }
 
-    uint64_t old_pgid = task->pgid;
     task->pgid = task->pid;  /* Become leader of own process group */
-
-    fut_printf("[PROC] setpgrp() -> 0 (pgid %llu -> %llu)\n", old_pgid, task->pgid);
     return 0;
 }
 
@@ -260,10 +248,7 @@ long sys_setpgid(uint64_t pid, uint64_t pgid) {
         }
     }
 
-    uint64_t old_pgid = target->pgid;
     target->pgid = pgid;
-
-    fut_printf("[PROC] setpgid(pid=%llu, pgid=%llu) -> 0 (was %llu)\n", pid, pgid, old_pgid);
     return 0;
 }
 
@@ -286,7 +271,6 @@ long sys_getsid(uint64_t pid) {
 
     /* If pid is 0, use calling process */
     if (pid == 0) {
-        fut_printf("[PROC] getsid(pid=0 -> %llu) -> sid=%llu\n", current->pid, current->sid);
         return current->sid;
     }
 
@@ -297,7 +281,6 @@ long sys_getsid(uint64_t pid) {
         return -ESRCH;
     }
 
-    fut_printf("[PROC] getsid(pid=%llu) -> sid=%llu\n", pid, target->sid);
     return target->sid;
 }
 
@@ -336,8 +319,8 @@ long sys_setsid(void) {
     task->sid = task->pid;
     task->pgid = task->pid;
 
-    fut_printf("[PROC] setsid() -> sid=%llu (was sid=%llu, pgid=%llu)\n",
-               task->sid, old_sid, old_pgid);
+    (void)old_sid;
+    (void)old_pgid;
     return task->sid;
 }
 
@@ -650,28 +633,6 @@ long sys_setrlimit(int resource, const struct rlimit *rlim) {
     if (task) {
         task->rlimits[resource].rlim_cur = new_limit.rlim_cur;
         task->rlimits[resource].rlim_max = new_limit.rlim_max;
-    }
-
-    /* Build detailed log message with intelligent limit display */
-    const char *cur_str = (new_limit.rlim_cur == RLIM_INFINITY) ? "unlimited" : NULL;
-    const char *max_str = (new_limit.rlim_max == RLIM_INFINITY) ? "unlimited" : NULL;
-
-    if (cur_str && max_str) {
-        fut_printf("[PROC] setrlimit(resource=%s [%s], rlim=%p) -> 0 "
-                   "(cur=unlimited, max=unlimited, Phase 4: stored in task->rlimits)\n",
-                   resource_name, resource_desc, rlim);
-    } else if (cur_str) {
-        fut_printf("[PROC] setrlimit(resource=%s [%s], rlim=%p) -> 0 "
-                   "(cur=unlimited, max=%llu, Phase 4: stored in task->rlimits)\n",
-                   resource_name, resource_desc, rlim, new_limit.rlim_max);
-    } else if (max_str) {
-        fut_printf("[PROC] setrlimit(resource=%s [%s], rlim=%p) -> 0 "
-                   "(cur=%llu, max=unlimited, Phase 4: stored in task->rlimits)\n",
-                   resource_name, resource_desc, rlim, new_limit.rlim_cur);
-    } else {
-        fut_printf("[PROC] setrlimit(resource=%s [%s], rlim=%p) -> 0 "
-                   "(cur=%llu, max=%llu, Phase 4: stored in task->rlimits)\n",
-                   resource_name, resource_desc, rlim, new_limit.rlim_cur, new_limit.rlim_max);
     }
 
     return 0;

@@ -387,11 +387,9 @@ long sys_inotify_init1(int flags) {
     if (task->fd_table && fd < task->max_fds && task->fd_table[fd]) {
         inst->file = task->fd_table[fd];
         if (flags & IN_NONBLOCK) inst->file->flags |= O_NONBLOCK;
-        if (flags & IN_CLOEXEC)  inst->file->fd_flags |= 1; /* FD_CLOEXEC */
+        if (flags & IN_CLOEXEC)  inst->file->fd_flags |= FD_CLOEXEC;
     }
 
-    fut_printf("[INOTIFY] inotify_init1(flags=0x%x, pid=%d) -> %d (Phase 3: event queue created)\n",
-               flags, task->pid, fd);
     return fd;
 }
 

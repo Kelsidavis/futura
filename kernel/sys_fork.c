@@ -936,6 +936,11 @@ long sys_fork(void) {
     child_task->suid = parent_task->suid;
     child_task->sgid = parent_task->sgid;
 
+    /* Inherit supplementary groups */
+    child_task->ngroups = parent_task->ngroups;
+    for (int i = 0; i < parent_task->ngroups; i++)
+        child_task->groups[i] = parent_task->groups[i];
+
     /* Inherit parent's signal handlers and mask (POSIX requirement) */
     for (int i = 0; i < _NSIG; i++) {
         child_task->signal_handlers[i]      = parent_task->signal_handlers[i];
@@ -952,6 +957,15 @@ long sys_fork(void) {
     child_task->cap_effective   = parent_task->cap_effective;
     child_task->cap_permitted   = parent_task->cap_permitted;
     child_task->cap_inheritable = parent_task->cap_inheritable;
+
+    /* Inherit personality, dumpable, no_new_privs (POSIX/Linux semantics) */
+    child_task->personality   = parent_task->personality;
+    child_task->dumpable      = parent_task->dumpable;
+    child_task->no_new_privs  = parent_task->no_new_privs;
+    /* pdeathsig is NOT inherited — cleared on fork (Linux behavior) */
+    child_task->pdeathsig     = 0;
+    /* comm is inherited (child starts with same name) */
+    __builtin_memcpy(child_task->comm, parent_task->comm, sizeof(child_task->comm));
 
     /* Inherit I/O priority */
     child_task->ioprio       = parent_task->ioprio;

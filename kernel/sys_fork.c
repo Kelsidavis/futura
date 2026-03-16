@@ -233,7 +233,7 @@
  * [DONE] Add fork bomb detection:
  *   - Per-PID rate tracking via fork_bomb_pid_table
  *   - If >= 10 forks in 1 second from same PID: log warning
- *   - TODO: If >= 100 forks in 10 seconds: kill process tree (requires signal delivery)
+ *   - If >= 100 forks in 10 seconds: SIGKILL the forking process
  *
  * ATTACK SCENARIO 4: Memory Exhaustion Through Unbounded Fork Recursion
  * =======================================================================
@@ -579,6 +579,8 @@ static int fork_rate_check(uint32_t uid) {
  * Uses the same ring-buffer hash approach as fork_rate_check().
  */
 #define FORK_BOMB_WARN_RATE   10   /* Forks/sec threshold for warning */
+#define FORK_BOMB_KILL_RATE  100   /* Forks/10sec threshold for SIGKILL */
+#define FORK_BOMB_KILL_WINDOW 10   /* Window (in seconds) for kill threshold */
 #define FORK_BOMB_PID_SLOTS   32   /* Hash table size (power of 2) */
 
 struct fork_bomb_pid_entry {
@@ -590,16 +592,27 @@ struct fork_bomb_pid_entry {
 
 static struct fork_bomb_pid_entry fork_bomb_pid_table[FORK_BOMB_PID_SLOTS];
 
-static void fork_bomb_pid_check(uint64_t pid) {
+/**
+ * fork_bomb_pid_check - detect and kill fork bombers
+ *
+ * Uses a per-PID sliding window counter. Warns at FORK_BOMB_WARN_RATE
+ * forks in 1 second and escalates to SIGKILL at FORK_BOMB_KILL_RATE
+ * forks in FORK_BOMB_KILL_WINDOW seconds.
+ *
+ * Returns 0 normally, -EAGAIN if the process was killed for fork bombing.
+ */
+static int fork_bomb_pid_check(uint64_t pid) {
     uint64_t now = fut_timer_get_ticks();
     uint32_t slot = (uint32_t)(pid & (FORK_BOMB_PID_SLOTS - 1));
+    uint64_t kill_window_ticks = FORK_RATE_WINDOW_TICKS * FORK_BOMB_KILL_WINDOW;
 
     for (int i = 0; i < FORK_BOMB_PID_SLOTS; i++) {
         uint32_t idx = (slot + i) & (FORK_BOMB_PID_SLOTS - 1);
         struct fork_bomb_pid_entry *e = &fork_bomb_pid_table[idx];
 
         if (e->active && e->pid == pid) {
-            if (now - e->window_start >= FORK_RATE_WINDOW_TICKS) {
+            if (now - e->window_start >= kill_window_ticks) {
+                /* Window expired — reset counter */
                 e->window_start = now;
                 e->count = 1;
             } else {
@@ -609,20 +622,33 @@ static void fork_bomb_pid_check(uint64_t pid) {
                                "(%u forks in current second)\n",
                                (unsigned long long)pid, e->count);
                 }
+                if (e->count >= FORK_BOMB_KILL_RATE) {
+                    fut_printf("[FORK] KILL: fork bomb confirmed from pid=%llu "
+                               "(%u forks in %u seconds) — sending SIGKILL\n",
+                               (unsigned long long)pid, e->count,
+                               FORK_BOMB_KILL_WINDOW);
+                    fut_task_t *task = fut_task_current();
+                    if (task) {
+                        fut_signal_send(task, 9);  /* SIGKILL */
+                    }
+                    e->active = false;  /* Reset slot */
+                    return -EAGAIN;
+                }
             }
-            return;
+            return 0;
         }
 
         if (!e->active ||
-            now - e->window_start >= FORK_RATE_WINDOW_TICKS * 10) {
+            now - e->window_start >= kill_window_ticks) {
             e->active = true;
             e->pid = pid;
             e->count = 1;
             e->window_start = now;
-            return;
+            return 0;
         }
     }
     /* Table full — skip detection (fail open) */
+    return 0;
 }
 
 /* Forward declarations */
@@ -880,8 +906,10 @@ long sys_fork(void) {
         return -EAGAIN;
     }
 
-    /* Per-PID fork bomb detection: log warning if same process forks rapidly */
-    fork_bomb_pid_check(parent_task->pid);
+    /* Per-PID fork bomb detection: warn at 10/sec, SIGKILL at 100/10sec */
+    if (fork_bomb_pid_check(parent_task->pid) < 0) {
+        return -EAGAIN;
+    }
 
     /* Enforce global PID limit (Attack Scenario 3 defense) */
     /* Reserve some PIDs for root to allow admin recovery during fork bomb */

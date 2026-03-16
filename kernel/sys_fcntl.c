@@ -437,77 +437,16 @@ long sys_fcntl(int fd, int cmd, uint64_t arg) {
     }
 
     switch (local_cmd) {
-    case F_GETFD: {
-        /* Return file descriptor flags */
-        /* Phase 2: Identify flags */
-        const char *flags_desc = (file->fd_flags & FD_CLOEXEC) ?
-                                  "FD_CLOEXEC set" : "no flags set";
-
-        fut_printf("[FCNTL] fcntl(fd=%d [%s], cmd=%s [%s]) -> %d (%s, Phase 2)\n",
-                   local_fd, fd_category, cmd_name, cmd_category, file->fd_flags, flags_desc);
+    case F_GETFD:
         return file->fd_flags;
-    }
 
     case F_SETFD: {
-        /* Set file descriptor flags (only FD_CLOEXEC supported) */
-        int old_flags = file->fd_flags;
-        int new_flags = ((int)local_arg & FD_CLOEXEC);
-        file->fd_flags = new_flags;
-
-        /* Phase 2: Identify flag changes */
-        const char *change_desc;
-        if ((old_flags & FD_CLOEXEC) && !(new_flags & FD_CLOEXEC)) {
-            change_desc = "cleared FD_CLOEXEC";
-        } else if (!(old_flags & FD_CLOEXEC) && (new_flags & FD_CLOEXEC)) {
-            change_desc = "set FD_CLOEXEC";
-        } else if (new_flags & FD_CLOEXEC) {
-            change_desc = "FD_CLOEXEC unchanged (already set)";
-        } else {
-            change_desc = "FD_CLOEXEC unchanged (already clear)";
-        }
-
-        fut_printf("[FCNTL] fcntl(fd=%d [%s], cmd=%s [%s], arg=%d) -> 0 (%s, Phase 2)\n",
-                   local_fd, fd_category, cmd_name, cmd_category, new_flags, change_desc);
+        file->fd_flags = ((int)local_arg & FD_CLOEXEC);
         return 0;
     }
 
-    case F_GETFL: {
-        /* Return file status flags */
-        /* Phase 2: Identify flags */
-        char flags_buf[256];
-        char *p = flags_buf;
-
-        /* Access mode (not a bitmask, use exact match) */
-        int access_mode = file->flags & O_ACCMODE;
-        if (access_mode == 0) {
-            const char *s = "O_RDONLY";
-            while (*s) *p++ = *s++;
-        } else if (access_mode == 1) {
-            const char *s = "O_WRONLY";
-            while (*s) *p++ = *s++;
-        } else if (access_mode == 2) {
-            const char *s = "O_RDWR";
-            while (*s) *p++ = *s++;
-        }
-
-        /* Status flags */
-        if (file->flags & O_APPEND) {
-            const char *s = " | O_APPEND";
-            while (*s) *p++ = *s++;
-        }
-        if (file->flags & O_NONBLOCK) {
-            const char *s = " | O_NONBLOCK";
-            while (*s) *p++ = *s++;
-        }
-
-        *p = '\0';
-
-        const char *flags_desc = (flags_buf[0] != '\0') ? flags_buf : "no flags";
-
-        fut_printf("[FCNTL] fcntl(fd=%d [%s], cmd=%s [%s]) -> 0x%x (%s, Phase 2)\n",
-                   local_fd, fd_category, cmd_name, cmd_category, file->flags, flags_desc);
+    case F_GETFL:
         return file->flags;
-    }
 
     case F_SETFL: {
         /* Set file status flags (only O_NONBLOCK and O_APPEND supported) */
@@ -549,36 +488,7 @@ long sys_fcntl(int fd, int cmd, uint64_t arg) {
             }
         }
 
-        /* Phase 2: Identify flag changes */
-        char change_buf[256];
-        char *p = change_buf;
-        int changes = 0;
-
-        bool nonblock_changed = ((old_flags ^ new_flags) & O_NONBLOCK) != 0;
-        bool append_changed = ((old_flags ^ new_flags) & O_APPEND) != 0;
-
-        if (nonblock_changed) {
-            const char *s = (new_flags & O_NONBLOCK) ? "enabled O_NONBLOCK" : "disabled O_NONBLOCK";
-            while (*s) *p++ = *s++;
-            changes++;
-        }
-
-        if (append_changed) {
-            if (changes > 0) {
-                *p++ = ',';
-                *p++ = ' ';
-            }
-            const char *s = (new_flags & O_APPEND) ? "enabled O_APPEND" : "disabled O_APPEND";
-            while (*s) *p++ = *s++;
-            changes++;
-        }
-
-        *p = '\0';
-
-        const char *change_desc = (changes > 0) ? change_buf : "no flags changed";
-
-        fut_printf("[FCNTL] fcntl(fd=%d [%s], cmd=%s [%s], arg=0x%x) -> 0 (%s, Phase 2)\n",
-                   local_fd, fd_category, cmd_name, cmd_category, (int)local_arg, change_desc);
+        (void)old_flags;
         return 0;
     }
 
@@ -845,8 +755,6 @@ long sys_fcntl(int fd, int cmd, uint64_t arg) {
     }
 
     case F_GET_SEALS:
-        fut_printf("[FCNTL] fcntl(fd=%d [%s], cmd=%s [%s]) -> 0x%x\n",
-                   local_fd, fd_category, cmd_name, cmd_category, file->seals);
         return (long)file->seals;
 
     case F_ADD_SEALS: {
@@ -870,8 +778,6 @@ long sys_fcntl(int fd, int cmd, uint64_t arg) {
 
         /* Add new seals (seals can only be added, never removed) */
         file->seals |= new_seals;
-        fut_printf("[FCNTL] fcntl(fd=%d [%s], cmd=%s [%s], seals=0x%x) -> 0\n",
-                   local_fd, fd_category, cmd_name, cmd_category, file->seals);
         return 0;
     }
 
@@ -996,21 +902,11 @@ long sys_fcntl(int fd, int cmd, uint64_t arg) {
             file->owner_pid = owner_pid;
         }
 
-        fut_printf("[FCNTL] fcntl(fd=%d [%s], cmd=%s [%s], owner_pid=%d) -> 0 "
-                   "(owner set for async signals, Phase 3)\n",
-                   local_fd, fd_category, cmd_name, cmd_category, owner_pid);
         return 0;
     }
 
-    case F_GETOWN: {
-        /* Phase 3: Get owner process ID for async I/O signals */
-        int owner_pid = file ? file->owner_pid : 0;
-
-        fut_printf("[FCNTL] fcntl(fd=%d [%s], cmd=%s [%s]) -> %d "
-                   "(owner process retrieved, Phase 3)\n",
-                   local_fd, fd_category, cmd_name, cmd_category, owner_pid);
-        return (long)owner_pid;
-    }
+    case F_GETOWN:
+        return (long)(file ? file->owner_pid : 0);
 
     default:
         /* Unknown command */

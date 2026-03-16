@@ -65,11 +65,7 @@ long sys_personality(unsigned long persona) {
 
     /* Phase 3: Check if this is a query operation — return stored personality */
     if (persona == PER_QUERY) {
-        unsigned long current_persona = task->personality;
-        fut_printf("[PERSONALITY] personality(PER_QUERY [query], pid=%d) -> 0x%lx "
-                   "(Phase 3: task->personality)\n",
-                   task->pid, current_persona);
-        return (long)current_persona;
+        return (long)task->personality;
     }
 
     /* Validate persona parameter bounds
@@ -142,44 +138,9 @@ long sys_personality(unsigned long persona) {
         return -EINVAL;
     }
 
-    /* Phase 2: Categorize personality type */
-    const char *persona_desc;
-    switch (base_persona) {
-        case PER_LINUX:       persona_desc = "Linux"; break;
-        case PER_LINUX_32BIT: persona_desc = "Linux 32-bit"; break;
-        case PER_SVR4:        persona_desc = "SVR4"; break;
-        case PER_BSD:         persona_desc = "BSD"; break;
-        default:              persona_desc = "unknown"; break;
-    }
-
-    /* Phase 2: Categorize flags (may have multiple) */
-    const char *flags_desc;
-    if (flags == 0) {
-        flags_desc = "none";
-    } else if ((flags & ADDR_NO_RANDOMIZE) && (flags & ADDR_LIMIT_32BIT)) {
-        flags_desc = "no ASLR + 32-bit addressing";
-    } else if (flags & ADDR_NO_RANDOMIZE) {
-        flags_desc = "no ASLR";
-    } else if (flags & READ_IMPLIES_EXEC) {
-        flags_desc = "read implies exec";
-    } else if (flags & ADDR_LIMIT_32BIT) {
-        flags_desc = "32-bit addressing";
-    } else if (flags & ADDR_COMPAT_LAYOUT) {
-        flags_desc = "compat layout";
-    } else {
-        flags_desc = "custom flags";
-    }
-
-    /* Phase 2: Categorize operation type */
-    const char *operation_type = "set";
-
-    /* Phase 3: Save old personality, store new one in task structure */
+    /* Save old personality, store new one in task structure */
     unsigned long old_persona = task->personality;
     task->personality = persona;
-
-    fut_printf("[PERSONALITY] personality(persona=%s, flags=%s, op=%s, pid=%d) -> 0x%lx "
-               "(Phase 3: stored in task->personality)\n",
-               persona_desc, flags_desc, operation_type, task->pid, old_persona);
 
     return (long)old_persona;
 }

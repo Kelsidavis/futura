@@ -223,20 +223,6 @@ long sys_dup(int oldfd) {
         return -EMFILE;
     }
 
-    /* Phase 2: Categorize newfd range */
-    const char *newfd_category;
-    if (newfd <= 2) {
-        newfd_category = "standard (stdin/stdout/stderr)";
-    } else if (newfd < 10) {
-        newfd_category = "low (common user FDs)";
-    } else if (newfd < 100) {
-        newfd_category = "typical (normal range)";
-    } else if (newfd < 1024) {
-        newfd_category = "high (many open files)";
-    } else {
-        newfd_category = "very high (unusual)";
-    }
-
     /* Increment reference count on the file since we're creating another reference */
     vfs_file_ref(old_file);
 
@@ -245,11 +231,6 @@ long sys_dup(int oldfd) {
 
     /* Propagate socket ownership if oldfd is a socket */
     propagate_socket_dup(local_oldfd, newfd);
-
-    /* Detailed success logging */
-    fut_printf("[DUP] dup(oldfd=%d [%s]) -> %d [%s] (refcount=%u, "
-               "lowest available FD, FD bounds validation)\n",
-               local_oldfd, oldfd_category, newfd, newfd_category, old_file->refcount);
 
     return newfd;
 }

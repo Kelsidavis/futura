@@ -91,12 +91,13 @@ long sys_prlimit64(int pid, int resource,
 
     const char *resource_name = get_resource_name(local_resource);
 
-    /* Only support pid=0 (self) for now */
+    /* Find target task: pid=0 means self, otherwise look up by PID */
+    fut_task_t *target = task;
     if (local_pid != 0) {
-        fut_printf("[PRLIMIT] prlimit64(pid=%d, resource=%s) -> ESRCH "
-                   "(querying other processes not yet supported)\n",
-                   local_pid, resource_name);
-        return -ESRCH;
+        target = fut_task_by_pid((uint64_t)local_pid);
+        if (!target) {
+            return -ESRCH;
+        }
     }
 
     /* Validate userspace pointers before accessing */
@@ -115,7 +116,7 @@ long sys_prlimit64(int pid, int resource,
     }
 
     /* Get current limits from task structure */
-    struct rlimit64 current_limit = task->rlimits[local_resource];
+    struct rlimit64 current_limit = target->rlimits[local_resource];
 
     /* If new_limit provided, copy from userspace into kernel buffer to
      * avoid double-fetch TOCTOU vulnerabilities. */
@@ -198,11 +199,11 @@ long sys_prlimit64(int pid, int resource,
         }
 
         /* Store validated limits in task structure */
-        task->rlimits[local_resource].rlim_cur = knl_new.rlim_cur;
-        task->rlimits[local_resource].rlim_max = knl_new.rlim_max;
+        target->rlimits[local_resource].rlim_cur = knl_new.rlim_cur;
+        target->rlimits[local_resource].rlim_max = knl_new.rlim_max;
 
         fut_printf("[PRLIMIT] prlimit64(pid=%d, resource=%s) -> new_limit: "
-                   "cur=%llu, max=%llu (stored in task->rlimits[%d])\n",
+                   "cur=%llu, max=%llu (stored in target->rlimits[%d])\n",
                    local_pid, resource_name,
                    (unsigned long long)knl_new.rlim_cur,
                    (unsigned long long)knl_new.rlim_max,

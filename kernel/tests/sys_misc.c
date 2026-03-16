@@ -905,6 +905,158 @@ static void test_membarrier(void) {
     fut_test_pass();
 }
 
+/* statx structures for testing */
+struct fut_statx_timestamp {
+    int64_t  tv_sec;
+    uint32_t tv_nsec;
+    int32_t  __reserved;
+};
+
+struct fut_statx {
+    uint32_t stx_mask;
+    uint32_t stx_blksize;
+    uint64_t stx_attributes;
+    uint32_t stx_nlink;
+    uint32_t stx_uid;
+    uint32_t stx_gid;
+    uint16_t stx_mode;
+    uint16_t __spare0[1];
+    uint64_t stx_ino;
+    uint64_t stx_size;
+    uint64_t stx_blocks;
+    uint64_t stx_attributes_mask;
+    struct fut_statx_timestamp stx_atime;
+    struct fut_statx_timestamp stx_btime;
+    struct fut_statx_timestamp stx_ctime;
+    struct fut_statx_timestamp stx_mtime;
+    uint32_t stx_rdev_major;
+    uint32_t stx_rdev_minor;
+    uint32_t stx_dev_major;
+    uint32_t stx_dev_minor;
+    uint64_t stx_mnt_id;
+    uint32_t stx_dio_mem_align;
+    uint32_t stx_dio_offset_align;
+    uint64_t __spare3[12];
+};
+
+#define STATX_BASIC_STATS 0x000007ffU
+#define STATX_BTIME       0x00000800U
+#define STATX_TYPE        0x00000001U
+#define STATX_MODE        0x00000002U
+#define STATX_SIZE        0x00000200U
+#define STATX_INO         0x00000100U
+
+extern long sys_statx(int dirfd, const char *pathname, int flags,
+                      unsigned int mask, struct fut_statx *statxbuf);
+
+/* ============================================================
+ * Test 20: statx on a regular file returns correct metadata
+ * ============================================================ */
+static void test_statx_basic(void) {
+    fut_printf("[MISC-TEST] Test 20: statx on a regular file\n");
+
+    /* Create a test file with known content */
+    int fd = fut_vfs_open("/statx_test.txt", 0x42, 0644);  /* O_RDWR|O_CREAT */
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ failed to open test file: %d\n", fd);
+        fut_test_fail(20);
+        return;
+    }
+    const char *data = "statx test data";
+    fut_vfs_write(fd, data, 15);
+    fut_vfs_close(fd);
+
+    /* Call statx with AT_FDCWD and absolute path */
+    struct fut_statx sx;
+    memset(&sx, 0, sizeof(sx));
+    long ret = sys_statx(-100 /* AT_FDCWD */, "/statx_test.txt", 0,
+                         STATX_BASIC_STATS | STATX_BTIME, &sx);
+    if (ret != 0) {
+        fut_printf("[MISC-TEST] ✗ statx returned %ld\n", ret);
+        fut_test_fail(20);
+        return;
+    }
+
+    /* Verify mask reports what was filled */
+    if (!(sx.stx_mask & STATX_TYPE)) {
+        fut_printf("[MISC-TEST] ✗ stx_mask missing STATX_TYPE: 0x%x\n", sx.stx_mask);
+        fut_test_fail(20);
+        return;
+    }
+
+    /* Verify it's a regular file (S_IFREG = 0100000) */
+    if ((sx.stx_mode & 0170000) != 0100000) {
+        fut_printf("[MISC-TEST] ✗ stx_mode type=0%o (expected S_IFREG)\n", sx.stx_mode & 0170000);
+        fut_test_fail(20);
+        return;
+    }
+
+    /* Verify size matches what we wrote */
+    if (sx.stx_size != 15) {
+        fut_printf("[MISC-TEST] ✗ stx_size=%llu (expected 15)\n",
+                   (unsigned long long)sx.stx_size);
+        fut_test_fail(20);
+        return;
+    }
+
+    /* Verify inode is non-zero */
+    if (sx.stx_ino == 0) {
+        fut_printf("[MISC-TEST] ✗ stx_ino is 0\n");
+        fut_test_fail(20);
+        return;
+    }
+
+    /* Verify blksize is reasonable */
+    if (sx.stx_blksize == 0) {
+        fut_printf("[MISC-TEST] ✗ stx_blksize is 0\n");
+        fut_test_fail(20);
+        return;
+    }
+
+    fut_printf("[MISC-TEST] ✓ statx: ino=%llu size=%llu mode=0%o blksize=%u\n",
+               (unsigned long long)sx.stx_ino, (unsigned long long)sx.stx_size,
+               sx.stx_mode, sx.stx_blksize);
+    fut_test_pass();
+}
+
+/* ============================================================
+ * Test 21: statx error paths
+ * ============================================================ */
+static void test_statx_errors(void) {
+    fut_printf("[MISC-TEST] Test 21: statx error paths\n");
+
+    struct fut_statx sx;
+
+    /* Non-existent file → ENOENT */
+    long ret = sys_statx(-100 /* AT_FDCWD */, "/no_such_file_statx", 0,
+                         STATX_BASIC_STATS, &sx);
+    if (ret != -ENOENT) {
+        fut_printf("[MISC-TEST] ✗ statx(nonexistent) returned %ld (expected -ENOENT=%d)\n",
+                   ret, -ENOENT);
+        fut_test_fail(21);
+        return;
+    }
+
+    /* Invalid flags → EINVAL */
+    ret = sys_statx(-100, "/statx_test.txt", 0x80000000, STATX_BASIC_STATS, &sx);
+    if (ret != -EINVAL) {
+        fut_printf("[MISC-TEST] ✗ statx(invalid flags) returned %ld (expected -EINVAL)\n", ret);
+        fut_test_fail(21);
+        return;
+    }
+
+    /* NULL buffer → EFAULT */
+    ret = sys_statx(-100, "/statx_test.txt", 0, STATX_BASIC_STATS, NULL);
+    if (ret != -EFAULT) {
+        fut_printf("[MISC-TEST] ✗ statx(NULL buf) returned %ld (expected -EFAULT)\n", ret);
+        fut_test_fail(21);
+        return;
+    }
+
+    fut_printf("[MISC-TEST] ✓ statx errors: ENOENT, EINVAL, EFAULT all correct\n");
+    fut_test_pass();
+}
+
 /* ============================================================
  * Test entry point
  * ============================================================ */
@@ -934,6 +1086,8 @@ void fut_misc_test_thread(void *arg) {
     test_sched_affinity();      /* Test 17: sched_affinity */
     test_copy_file_range();     /* Test 18: copy_file_range */
     test_membarrier();          /* Test 19: membarrier */
+    test_statx_basic();         /* Test 20: statx basic */
+    test_statx_errors();        /* Test 21: statx errors */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

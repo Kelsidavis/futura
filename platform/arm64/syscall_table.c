@@ -290,6 +290,8 @@ extern long sys_copy_file_range(int fd_in, int64_t *off_in,
 extern long sys_rseq(void *rseq, uint32_t rseq_len, int flags, uint32_t sig);
 extern long sys_sched_setaffinity(int pid, unsigned int len, const void *user_mask);
 extern long sys_sched_getaffinity(int pid, unsigned int len, void *user_mask);
+extern long sys_statx(int dirfd, const char *pathname, int flags,
+                      unsigned int mask, void *statxbuf);
 extern long sys_unshare(unsigned long flags);
 
 /* Process accounting and thread management */
@@ -2390,6 +2392,14 @@ static int64_t sys_membarrier_wrapper(uint64_t cmd, uint64_t flags, uint64_t cpu
     return sys_membarrier((int)cmd, (unsigned int)flags, (int)cpu_id);
 }
 
+/* sys_statx_wrapper - extended file status */
+static int64_t sys_statx_wrapper(uint64_t dirfd, uint64_t pathname, uint64_t flags,
+                                  uint64_t mask, uint64_t statxbuf, uint64_t arg6) {
+    (void)arg6;
+    return sys_statx((int)dirfd, (const char *)pathname, (int)flags,
+                     (unsigned int)mask, (void *)statxbuf);
+}
+
 /* sys_syslog_wrapper - kernel log buffer */
 static int64_t sys_syslog_wrapper(uint64_t type, uint64_t buf, uint64_t len,
                                    uint64_t arg3, uint64_t arg4, uint64_t arg5) {
@@ -2663,6 +2673,7 @@ struct syscall_entry {
 #define __NR_membarrier    283
 #define __NR_copy_file_range 285
 #define __NR_rseq          293
+#define __NR_statx         291
 #define __NR_wait4          260  /* wait4/waitpid */
 #define __NR_prlimit64      261
 
@@ -2877,6 +2888,8 @@ static void arm64_syscall_table_init(void) {
     syscall_table[__NR_copy_file_range].name = "copy_file_range";
     syscall_table[__NR_rseq].handler = (syscall_fn_t)sys_rseq_wrapper;
     syscall_table[__NR_rseq].name = "rseq";
+    syscall_table[__NR_statx].handler = (syscall_fn_t)sys_statx_wrapper;
+    syscall_table[__NR_statx].name = "statx";
     syscall_table[__NR_syslog].handler = (syscall_fn_t)sys_syslog_wrapper;
     syscall_table[__NR_syslog].name = "syslog";
     syscall_table[__NR_fadvise64].handler = (syscall_fn_t)sys_fadvise64_wrapper;

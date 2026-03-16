@@ -281,6 +281,7 @@
 #define SYS_membarrier      324  /* Linux: 324 */
 #define SYS_copy_file_range 326  /* Linux: 326 */
 #define SYS_rseq            334  /* Linux: 334 */
+#define SYS_statx           332  /* Linux: 332 */
 
 #ifndef SYS_time_millis
 #define SYS_time_millis  400
@@ -1480,6 +1481,15 @@ static int64_t sys_membarrier_handler(uint64_t cmd, uint64_t flags, uint64_t cpu
     (void)arg4; (void)arg5; (void)arg6;
     extern long sys_membarrier(int cmd, unsigned int flags, int cpu_id);
     return sys_membarrier((int)cmd, (unsigned int)flags, (int)cpu_id);
+}
+
+static int64_t sys_statx_handler(uint64_t dirfd, uint64_t pathname, uint64_t flags,
+                                  uint64_t mask, uint64_t statxbuf, uint64_t arg6) {
+    (void)arg6;
+    extern long sys_statx(int dirfd, const char *pathname, int flags,
+                          unsigned int mask, void *statxbuf);
+    return sys_statx((int)dirfd, (const char *)pathname, (int)flags,
+                     (unsigned int)mask, (void *)statxbuf);
 }
 
 static int64_t sys_syslog_handler(uint64_t type, uint64_t buf, uint64_t len,
@@ -2857,6 +2867,7 @@ static syscall_handler_t syscall_table[MAX_SYSCALL] = {
     [SYS_membarrier]        = sys_membarrier_handler,
     [SYS_copy_file_range]   = sys_copy_file_range_handler,
     [SYS_rseq]              = sys_rseq_handler,
+    [SYS_statx]             = sys_statx_handler,
     [SYS_set_tid_address]   = sys_set_tid_address_handler,
     [SYS_timer_create]      = sys_timer_create_handler,
     [SYS_timer_settime]     = sys_timer_settime_handler,

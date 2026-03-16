@@ -184,6 +184,7 @@
 #define SYS_sched_getscheduler  145
 #define SYS_sched_get_priority_max  146
 #define SYS_sched_get_priority_min  147
+#define SYS_sched_rr_get_interval  148
 
 /* xattr syscalls (Linux x86_64 188-199) */
 #define SYS_setxattr     188
@@ -2041,6 +2042,13 @@ static int64_t sys_sched_get_priority_min_handler(uint64_t policy, uint64_t arg2
     return sys_sched_get_priority_min((int)policy);
 }
 
+static int64_t sys_sched_rr_get_interval_handler(uint64_t pid, uint64_t interval, uint64_t arg3,
+                                                  uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg3; (void)arg4; (void)arg5; (void)arg6;
+    extern long sys_sched_rr_get_interval(int pid, void *interval);
+    return sys_sched_rr_get_interval((int)pid, (void *)interval);
+}
+
 /* xattr handlers */
 static int64_t sys_setxattr_handler(uint64_t path, uint64_t name, uint64_t value,
                                     uint64_t size, uint64_t flags, uint64_t arg6) {
@@ -2816,6 +2824,7 @@ static syscall_handler_t syscall_table[MAX_SYSCALL] = {
     [SYS_sched_getscheduler]     = sys_sched_getscheduler_handler,
     [SYS_sched_get_priority_max] = sys_sched_get_priority_max_handler,
     [SYS_sched_get_priority_min] = sys_sched_get_priority_min_handler,
+    [SYS_sched_rr_get_interval]  = sys_sched_rr_get_interval_handler,
     /* xattr syscalls */
     [SYS_setxattr]     = sys_setxattr_handler,
     [SYS_lsetxattr]    = sys_lsetxattr_handler,

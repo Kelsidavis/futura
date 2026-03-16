@@ -12,6 +12,7 @@
 #include <kernel/fut_sched.h>
 #include <kernel/fut_thread.h>
 #include <kernel/errno.h>
+#include <shared/fut_timespec.h>
 #include <sched.h>
 #include <stdint.h>
 #include <string.h>
@@ -383,4 +384,52 @@ long sys_sched_get_priority_min(int policy) {
                policy_name, min_priority);
 
     return min_priority;
+}
+
+/**
+ * sched_rr_get_interval - Get the round-robin time quantum
+ *
+ * Returns the time quantum for the SCHED_RR scheduling policy. For
+ * SCHED_OTHER/SCHED_FIFO, the concept of a fixed quantum doesn't apply,
+ * but Linux returns the actual scheduler timeslice for all policies.
+ *
+ * @param pid      Process ID (0 = calling process)
+ * @param interval Pointer to timespec to receive the quantum
+ *
+ * Returns 0 on success, negative errno on failure.
+ */
+long sys_sched_rr_get_interval(int pid, fut_timespec_t *interval) {
+    fut_task_t *current = fut_task_current();
+    if (!current)
+        return -ESRCH;
+
+    /* Validate PID */
+    if (pid < 0)
+        return -EINVAL;
+
+    /* Look up target task (pid=0 means self) */
+    fut_task_t *target;
+    if (pid == 0) {
+        target = current;
+    } else {
+        target = fut_task_by_pid((uint64_t)pid);
+        if (!target)
+            return -ESRCH;
+    }
+
+    /* Validate output pointer */
+    if (!interval)
+        return -EFAULT;
+
+    /* The quantum is 1/FUT_TIMER_HZ = 10ms for all policies.
+     * Linux returns the timeslice for any policy, not just SCHED_RR. */
+    fut_timespec_t quantum = {
+        .tv_sec = 0,
+        .tv_nsec = 10000000  /* 10ms = 1/100 Hz */
+    };
+
+    if (sched_copy_to_user(interval, &quantum, sizeof(quantum)) != 0)
+        return -EFAULT;
+
+    return 0;
 }

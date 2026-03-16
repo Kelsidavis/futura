@@ -38,6 +38,7 @@ extern long sys_times(struct tms *buf);
 extern long sys_getpriority(int which, int who);
 extern long sys_setpriority(int which, int who, int prio);
 extern long sys_unshare(unsigned long flags);
+extern long sys_sched_rr_get_interval(int pid, fut_timespec_t *interval);
 
 /* rusage structure (mirrored from sys_rusage.c) */
 struct test_rusage {
@@ -75,6 +76,7 @@ struct test_rusage {
 #define CLKSCHED_TEST_SETPRIO_NEGWHO 10
 #define CLKSCHED_TEST_UNSHARE_NOOP   11
 #define CLKSCHED_TEST_UNSHARE_INVAL  12
+#define CLKSCHED_TEST_RR_INTERVAL   13
 
 /* PRIO_PROCESS constant (matches sys_sched.c) */
 #define TEST_PRIO_PROCESS  0
@@ -477,6 +479,40 @@ static void test_unshare_invalid_bits(void) {
 }
 
 /* ============================================================
+ * Test 13: sched_rr_get_interval returns valid quantum
+ * ============================================================ */
+static void test_sched_rr_get_interval(void) {
+    fut_printf("[CLKSCHED-TEST] Test 13: sched_rr_get_interval returns quantum\n");
+
+    fut_timespec_t interval = {0, 0};
+    long ret = sys_sched_rr_get_interval(0, &interval);
+    if (ret != 0) {
+        fut_printf("[CLKSCHED-TEST] ✗ sched_rr_get_interval(0) returned %ld\n", ret);
+        fut_test_fail(CLKSCHED_TEST_RR_INTERVAL);
+        return;
+    }
+
+    /* Should be 10ms (10000000 ns) for 100 Hz timer */
+    if (interval.tv_sec != 0 || interval.tv_nsec != 10000000) {
+        fut_printf("[CLKSCHED-TEST] ✗ interval=%lld.%09lld (expected 0.010000000)\n",
+                   (long long)interval.tv_sec, (long long)interval.tv_nsec);
+        fut_test_fail(CLKSCHED_TEST_RR_INTERVAL);
+        return;
+    }
+
+    /* ESRCH for nonexistent PID */
+    ret = sys_sched_rr_get_interval(99999, &interval);
+    if (ret != -ESRCH) {
+        fut_printf("[CLKSCHED-TEST] ✗ sched_rr_get_interval(99999) returned %ld (expected ESRCH)\n", ret);
+        fut_test_fail(CLKSCHED_TEST_RR_INTERVAL);
+        return;
+    }
+
+    fut_printf("[CLKSCHED-TEST] ✓ sched_rr_get_interval: quantum=10ms, ESRCH for bad PID\n");
+    fut_test_pass();
+}
+
+/* ============================================================
  * Main test harness thread
  * ============================================================ */
 void fut_clock_sched_test_thread(void *arg) {
@@ -498,6 +534,7 @@ void fut_clock_sched_test_thread(void *arg) {
     test_setpriority_negative_who();
     test_unshare_noop();
     test_unshare_invalid_bits();
+    test_sched_rr_get_interval();
 
     fut_printf("[CLKSCHED-TEST] ========================================\n");
     fut_printf("[CLKSCHED-TEST] All clock/sched/timer tests done\n");
